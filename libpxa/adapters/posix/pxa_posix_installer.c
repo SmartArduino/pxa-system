@@ -57,6 +57,8 @@
  * task stack small while reducing LittleFS I/O calls during package sync. */
 #define PXA_POSIX_INSTALLER_IO_BYTES ((size_t)4096)
 #define PXA_POSIX_INSTALLER_MAX_APP_ID ((size_t)64)
+#define PXA_POSIX_INSTALLER_MAX_IDENTITY_NAME \
+    (PXA_PACKAGE_DIGEST_BYTES * 2u + 1u + PXA_POSIX_INSTALLER_MAX_APP_ID)
 #define PXA_POSIX_INSTALLER_MAX_PACKAGE_PATH ((size_t)255)
 #define PXA_POSIX_INSTALLER_OWNER_BYTES ((size_t)40)
 
@@ -72,6 +74,7 @@ typedef struct {
     char *session;
     uint8_t publisher_key_id[PXA_PACKAGE_DIGEST_BYTES];
     char app_id[PXA_POSIX_INSTALLER_MAX_APP_ID + 1];
+    char identity_name[PXA_POSIX_INSTALLER_MAX_IDENTITY_NAME + 1];
     size_t app_id_size;
 } pxa_posix_slot_ctx_t;
 
@@ -155,6 +158,40 @@ static int safe_app_id(pxa_bytes_t app_id) {
             return 0;
         }
     }
+    return 1;
+}
+
+static int identity_storage_name(
+    const pxa_posix_installer_t *installer,
+    const pxa_posix_installer_identity_t *identity, char *output,
+    size_t capacity) {
+    static const char digits[] = "0123456789abcdef";
+    size_t offset = 0;
+    size_t index;
+    if (installer == NULL || identity == NULL || output == NULL ||
+        identity->publisher_key_id.data == NULL ||
+        identity->publisher_key_id.size != PXA_PACKAGE_DIGEST_BYTES ||
+        !safe_app_id(identity->app_id)) {
+        return 0;
+    }
+    if ((installer->flags & PXA_POSIX_INSTALLER_FLAG_COMPOSITE_IDENTITY) == 0) {
+        if (identity->app_id.size + 1u > capacity) return 0;
+        memcpy(output, identity->app_id.data, identity->app_id.size);
+        output[identity->app_id.size] = '\0';
+        return 1;
+    }
+    if (PXA_PACKAGE_DIGEST_BYTES * 2u + 1u + identity->app_id.size + 1u >
+        capacity) {
+        return 0;
+    }
+    for (index = 0; index < PXA_PACKAGE_DIGEST_BYTES; ++index) {
+        const uint8_t byte = identity->publisher_key_id.data[index];
+        output[offset++] = digits[byte >> 4];
+        output[offset++] = digits[byte & 0x0fu];
+    }
+    output[offset++] = '~';
+    memcpy(output + offset, identity->app_id.data, identity->app_id.size);
+    output[offset + identity->app_id.size] = '\0';
     return 1;
 }
 
@@ -1512,9 +1549,8 @@ static pxa_status_t fill_result_encoded(
 static pxa_status_t lock_identity(pxa_posix_installer_t *installer,
                                   const pxa_posix_installer_identity_t *identity,
                                   int *lock_fd) {
-    char app_id[PXA_POSIX_INSTALLER_MAX_APP_ID + 1];
-    char lock_name[PXA_POSIX_INSTALLER_MAX_APP_ID + 6];
-    char relative[PXA_POSIX_INSTALLER_MAX_APP_ID + 9];
+    char identity_name[PXA_POSIX_INSTALLER_MAX_IDENTITY_NAME + 1];
+    char lock_name[PXA_POSIX_INSTALLER_MAX_IDENTITY_NAME + 6];
     int root_fd = -1;
     int packages_fd = -1;
     pxa_status_t status = PXA_STATUS_INTERNAL;
@@ -1530,14 +1566,14 @@ static pxa_status_t lock_identity(pxa_posix_installer_t *installer,
     root_fd = open(installer->storage_root,
                    O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
     if (root_fd < 0) goto done;
-    memcpy(relative, "packages", 8);
-    relative[8] = '\0';
-    status = open_tree_at(root_fd, relative, 1, &packages_fd);
+    status = open_tree_at(root_fd, "packages", 1, &packages_fd);
     if (status != PXA_STATUS_OK) goto done;
-    memcpy(app_id, identity->app_id.data, identity->app_id.size);
-    app_id[identity->app_id.size] = '\0';
-    memcpy(lock_name, app_id, identity->app_id.size);
-    memcpy(lock_name + identity->app_id.size, ".lock", 6);
+    if (!identity_storage_name(installer, identity, identity_name,
+                               sizeof(identity_name))) {
+        status = PXA_STATUS_INVALID_ARGUMENT;
+        goto done;
+    }
+    snprintf(lock_name, sizeof(lock_name), "%s.lock", identity_name);
     *lock_fd = openat(packages_fd, lock_name,
                       O_RDWR | O_CREAT | O_CLOEXEC | O_NOFOLLOW, 0600);
     if (*lock_fd < 0) {
@@ -1826,10 +1862,10 @@ static pxa_status_t prepare_incoming(pxa_posix_installer_t *installer,
         goto done;
     }
     {
-        char relative[PXA_POSIX_INSTALLER_MAX_APP_ID + 16];
+        char relative[PXA_POSIX_INSTALLER_MAX_IDENTITY_NAME + 16];
         memcpy(relative, ".session-", 9);
-        memcpy(relative + 9, ctx->app_id, ctx->app_id_size);
-        memcpy(relative + 9 + ctx->app_id_size, "/incoming", 10);
+        strcpy(relative + 9, ctx->identity_name);
+        memcpy(relative + 9 + strlen(ctx->identity_name), "/incoming", 10);
         incoming_relative = malloc(strlen(relative) + 1);
         if (incoming_relative == NULL) {
             status = PXA_STATUS_INTERNAL;
@@ -1966,8 +2002,8 @@ static pxa_status_t prepare_incoming_container(
                            package_signature, sizeof(package_signature));
     if (status != PXA_STATUS_OK) return status;
     memcpy(relative, ".session-", 9);
-    memcpy(relative + 9, ctx->app_id, ctx->app_id_size);
-    memcpy(relative + 9 + ctx->app_id_size, "/incoming", 10);
+    strcpy(relative + 9, ctx->identity_name);
+    memcpy(relative + 9 + strlen(ctx->identity_name), "/incoming", 10);
     packages = join_path(installer->storage_root, "packages");
     if (packages == NULL) return PXA_STATUS_INTERNAL;
     packages_fd = open(packages,
@@ -2118,9 +2154,9 @@ static char *identity_root_path(pxa_posix_installer_t *installer,
 static char *session_root_path(pxa_posix_installer_t *installer,
                                const char *app_id) {
     char *packages = join_path(installer->storage_root, "packages");
-    char name[PXA_POSIX_INSTALLER_MAX_APP_ID + 9];
+    char name[PXA_POSIX_INSTALLER_MAX_IDENTITY_NAME + 10];
     char *session = NULL;
-    if (strlen(app_id) > PXA_POSIX_INSTALLER_MAX_APP_ID) return NULL;
+    if (strlen(app_id) > PXA_POSIX_INSTALLER_MAX_IDENTITY_NAME) return NULL;
     memcpy(name, ".session-", 9);
     strcpy(name + 9, app_id);
     if (packages != NULL) {
@@ -2150,8 +2186,12 @@ static int setup_ctx(pxa_posix_installer_t *installer,
            PXA_PACKAGE_DIGEST_BYTES);
     memcpy(ctx->app_id, app_id, identity->app_id.size + 1);
     ctx->app_id_size = identity->app_id.size;
-    ctx->root = identity_root_path(installer, app_id);
-    ctx->session = session_root_path(installer, app_id);
+    if (!identity_storage_name(installer, identity, ctx->identity_name,
+                               sizeof(ctx->identity_name))) {
+        return 0;
+    }
+    ctx->root = identity_root_path(installer, ctx->identity_name);
+    ctx->session = session_root_path(installer, ctx->identity_name);
     return ctx->root != NULL && ctx->session != NULL;
 }
 
@@ -2180,7 +2220,7 @@ static pxa_status_t identity_owner_check_or_claim(
     status = open_tree_at(state_fd, "owners", 1, &owners_fd);
     close(state_fd);
     if (status != PXA_STATUS_OK) return status;
-    owner_fd = openat(owners_fd, ctx->app_id,
+    owner_fd = openat(owners_fd, ctx->identity_name,
                       O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
     if (owner_fd >= 0) {
         if (fstat(owner_fd, &before) != 0 || !S_ISREG(before.st_mode) ||
@@ -2241,7 +2281,7 @@ static pxa_status_t identity_owner_check_or_claim(
             status = PXA_STATUS_INTERNAL;
             goto done;
         }
-        data_path = join_path(data_root, ctx->app_id);
+        data_path = join_path(data_root, ctx->identity_name);
         if (data_path == NULL) {
             status = PXA_STATUS_INTERNAL;
             goto done;
@@ -2259,7 +2299,7 @@ static pxa_status_t identity_owner_check_or_claim(
     memcpy(owner, owner_magic, sizeof(owner_magic));
     memcpy(owner + sizeof(owner_magic), ctx->publisher_key_id,
            PXA_PACKAGE_DIGEST_BYTES);
-    status = write_file_excl(owners_fd, ctx->app_id, owner, sizeof(owner));
+    status = write_file_excl(owners_fd, ctx->identity_name, owner, sizeof(owner));
     if (status == PXA_STATUS_OK) status = sync_tree(owners_fd);
 
 done:
@@ -2454,10 +2494,11 @@ static pxa_status_t validate_lineage_transition(
     return PXA_STATUS_OK;
 }
 
-pxa_status_t pxa_posix_installer_install(pxa_posix_installer_t *installer,
-                                         const char *source_dir,
-                                         pxa_posix_installer_result_t *result,
-                                         pxa_posix_install_disposition_t *disposition) {
+pxa_status_t pxa_posix_installer_install_for_identity(
+    pxa_posix_installer_t *installer, const char *source_dir,
+    const pxa_posix_installer_identity_t *expected,
+    pxa_posix_installer_result_t *result,
+    pxa_posix_install_disposition_t *disposition) {
     pxa_posix_slot_ctx_t ctx;
     pxa_slot_storage_t storage;
     uint8_t source_key_id[PXA_PACKAGE_DIGEST_BYTES];
@@ -2497,6 +2538,19 @@ pxa_status_t pxa_posix_installer_install(pxa_posix_installer_t *installer,
             &source_app_id_size);
     }
     if (status != PXA_STATUS_OK) goto done;
+    if (expected != NULL &&
+        (expected->publisher_key_id.data == NULL ||
+         expected->publisher_key_id.size != PXA_PACKAGE_DIGEST_BYTES ||
+         !safe_app_id(expected->app_id) ||
+         expected->app_id.size != source_app_id_size ||
+         memcmp(expected->publisher_key_id.data, source_key_id,
+                PXA_PACKAGE_DIGEST_BYTES) != 0 ||
+         memcmp(expected->app_id.data, source_app_id,
+                source_app_id_size) != 0)) {
+        stage = "match-expected-identity";
+        status = PXA_STATUS_DENIED;
+        goto done;
+    }
     identity.publisher_key_id =
         (pxa_bytes_t){source_key_id, PXA_PACKAGE_DIGEST_BYTES};
     identity.app_id =
@@ -2605,7 +2659,7 @@ pxa_status_t pxa_posix_installer_install(pxa_posix_installer_t *installer,
 
     {
         char *packages = join_path(installer->storage_root, "packages");
-        char session_name[PXA_POSIX_INSTALLER_MAX_APP_ID + 9];
+        char session_name[PXA_POSIX_INSTALLER_MAX_IDENTITY_NAME + 10];
         int packages_fd = -1;
         if (packages == NULL) {
             stage = "allocate-session-path";
@@ -2613,7 +2667,7 @@ pxa_status_t pxa_posix_installer_install(pxa_posix_installer_t *installer,
             goto done;
         }
         memcpy(session_name, ".session-", 9);
-        strcpy(session_name + 9, source_app_id);
+        strcpy(session_name + 9, ctx.identity_name);
         packages_fd = open(packages,
                            O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
         free(packages);
@@ -2681,6 +2735,14 @@ done:
     free(current_manifest);
     free_ctx(&ctx);
     return status;
+}
+
+pxa_status_t pxa_posix_installer_install(
+    pxa_posix_installer_t *installer, const char *source_dir,
+    pxa_posix_installer_result_t *result,
+    pxa_posix_install_disposition_t *disposition) {
+    return pxa_posix_installer_install_for_identity(
+        installer, source_dir, NULL, result, disposition);
 }
 
 pxa_status_t pxa_posix_installer_source_manifest_size(

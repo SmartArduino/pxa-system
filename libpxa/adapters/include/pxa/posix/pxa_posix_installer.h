@@ -52,6 +52,11 @@ typedef enum {
  * package sources that must self-heal after an interrupted installation. */
 #define PXA_POSIX_INSTALLER_FLAG_REPAIR_CORRUPT ((uint32_t)1u << 1)
 
+/* Store package, lock, owner and private-data names under a filesystem-safe
+ * encoding of (publisher lineage root, App ID). Without this flag the legacy
+ * App-ID-only layout is retained for compatibility. */
+#define PXA_POSIX_INSTALLER_FLAG_COMPOSITE_IDENTITY ((uint32_t)1u << 2)
+
 typedef struct {
     uint32_t struct_size;
     const char *storage_root;   /* directory that contains packages/ */
@@ -95,6 +100,13 @@ pxa_status_t pxa_posix_installer_source_manifest_size(
     pxa_posix_installer_t *installer, const char *source_path, size_t *size);
 pxa_status_t pxa_posix_installer_install(
     pxa_posix_installer_t *installer, const char *source_path,
+    pxa_posix_installer_result_t *result,
+    pxa_posix_install_disposition_t *disposition);
+/* As above, but denies the transaction before any destination mutation unless
+ * the verified source has exactly the expected publisher root and App ID. */
+pxa_status_t pxa_posix_installer_install_for_identity(
+    pxa_posix_installer_t *installer, const char *source_path,
+    const pxa_posix_installer_identity_t *expected,
     pxa_posix_installer_result_t *result,
     pxa_posix_install_disposition_t *disposition);
 /* Fully authenticate a read-only Package directory or single-file `.pxa`

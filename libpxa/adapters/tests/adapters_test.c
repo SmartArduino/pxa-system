@@ -1347,6 +1347,137 @@ static void test_installer(void) {
     (void)manifest_size;
 }
 
+static void test_composite_installer_identity(void) {
+    static const uint8_t artifact_one[] = "publisher one";
+    static const uint8_t artifact_two[] = "publisher two";
+    test_signer_t signers[2];
+    pxa_openssl_publisher_key_t keys[2];
+    uint8_t key_der[2][256];
+    char *storage_root = make_temp_dir("pxa-composite-storage");
+    char *package_one = make_temp_dir("pxa-composite-one");
+    char *package_two = make_temp_dir("pxa-composite-two");
+    pxa_posix_installer_config_t config;
+    pxa_posix_installer_t *installer = NULL;
+    pxa_posix_installer_result_t result;
+    pxa_posix_installer_identity_t identity[2];
+    pxa_package_manifest_t *manifest = NULL;
+    pxa_posix_install_disposition_t disposition;
+    uint8_t encoded[PXA_PACKAGE_TEST_MANIFEST_BYTES];
+    char root[512];
+    char roots[2][512];
+    void *workspace;
+    void *manifest_workspace;
+    size_t workspace_size;
+    size_t index;
+
+    memset(&config, 0, sizeof(config));
+    for (index = 0; index < 2; ++index) {
+        uint8_t *cursor;
+        int length;
+        generate_signer(&signers[index]);
+        length = i2d_PUBKEY(signers[index].key, NULL);
+        CHECK(length > 0 && length <= (int)sizeof(key_der[index]));
+        cursor = key_der[index];
+        CHECK(i2d_PUBKEY(signers[index].key, &cursor) == length);
+        keys[index].spki = key_der[index];
+        keys[index].spki_size = (size_t)length;
+        identity[index].publisher_key_id =
+            (pxa_bytes_t){signers[index].key_id, sizeof(signers[index].key_id)};
+        identity[index].app_id = (pxa_bytes_t){
+            (const uint8_t *)"com.example.shared",
+            sizeof("com.example.shared") - 1u};
+    }
+    build_package(package_one, &signers[0], "com.example.shared", "1.0.0",
+                  "artifacts/main.wasm", artifact_one,
+                  sizeof(artifact_one) - 1u);
+    build_package(package_two, &signers[1], "com.example.shared", "2.0.0",
+                  "artifacts/main.wasm", artifact_two,
+                  sizeof(artifact_two) - 1u);
+
+    config.struct_size = sizeof(config);
+    config.storage_root = storage_root;
+    config.trust.struct_size = sizeof(config.trust);
+    config.trust.keys = keys;
+    config.trust.key_count = 2;
+    config.flags = PXA_POSIX_INSTALLER_FLAG_COMPOSITE_IDENTITY;
+    pxa_package_limits_init(&config.limits);
+    workspace_size = pxa_posix_installer_workspace_size(&config);
+    workspace = malloc(workspace_size);
+    manifest_workspace =
+        malloc(pxa_package_manifest_workspace_size(&config.limits));
+    CHECK(workspace != NULL && manifest_workspace != NULL);
+    check_status("composite installer init",
+                 pxa_posix_installer_init(workspace, workspace_size, &config,
+                                          &installer),
+                 PXA_STATUS_OK);
+    memset(&result, 0, sizeof(result));
+    result.struct_size = sizeof(result);
+    result.manifest_workspace = manifest_workspace;
+    result.manifest_workspace_size =
+        pxa_package_manifest_workspace_size(&config.limits);
+    result.encoded = encoded;
+    result.encoded_capacity = sizeof(encoded);
+    result.manifest = &manifest;
+    result.root = root;
+    result.root_capacity = sizeof(root);
+
+    check_status("reject source with unexpected composite identity",
+                 pxa_posix_installer_install_for_identity(
+                     installer, package_two, &identity[0], &result,
+                     &disposition),
+                 PXA_STATUS_DENIED);
+    check_status("rejected source did not install expected identity",
+                 pxa_posix_installer_load_current(installer, &identity[0],
+                                                  &result),
+                 PXA_STATUS_NOT_FOUND);
+    check_status("rejected source did not install actual identity",
+                 pxa_posix_installer_load_current(installer, &identity[1],
+                                                  &result),
+                 PXA_STATUS_NOT_FOUND);
+
+    check_status("install first composite identity",
+                 pxa_posix_installer_install(installer, package_one, &result,
+                                             &disposition),
+                 PXA_STATUS_OK);
+    snprintf(roots[0], sizeof(roots[0]), "%s", root);
+    check_status("install colliding App ID from second publisher",
+                 pxa_posix_installer_install(installer, package_two, &result,
+                                             &disposition),
+                 PXA_STATUS_OK);
+    snprintf(roots[1], sizeof(roots[1]), "%s", root);
+    CHECK(strcmp(roots[0], roots[1]) != 0);
+    CHECK(strstr(roots[0], "~com.example.shared") != NULL);
+    CHECK(strstr(roots[1], "~com.example.shared") != NULL);
+
+    check_status("load first composite identity",
+                 pxa_posix_installer_load_current(installer, &identity[0],
+                                                  &result),
+                 PXA_STATUS_OK);
+    CHECK(strcmp(root, roots[0]) == 0);
+    check_status("load second composite identity",
+                 pxa_posix_installer_load_current(installer, &identity[1],
+                                                  &result),
+                 PXA_STATUS_OK);
+    CHECK(strcmp(root, roots[1]) == 0);
+    check_status("uninstall first composite identity",
+                 pxa_posix_installer_uninstall(installer, &identity[0]),
+                 PXA_STATUS_OK);
+    check_status("second identity survives first uninstall",
+                 pxa_posix_installer_load_current(installer, &identity[1],
+                                                  &result),
+                 PXA_STATUS_OK);
+
+    pxa_posix_installer_deinit(installer);
+    free(manifest_workspace);
+    free(workspace);
+    free(storage_root);
+    free(package_one);
+    free(package_two);
+    EVP_PKEY_free(signers[0].key);
+    EVP_PKEY_free(signers[1].key);
+    printf("test_composite_installer_identity OK\n");
+}
+
 int main(void) {
     test_openssl_sha256();
     test_fs_backend();
@@ -1355,6 +1486,7 @@ int main(void) {
     test_storage_rejects_hard_link_snapshot();
     test_scheduler_store();
     test_installer();
+    test_composite_installer_identity();
     if (failures != 0) {
         fprintf(stderr, "%d failure(s)\n", failures);
         return 1;

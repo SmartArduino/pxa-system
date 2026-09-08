@@ -37,6 +37,10 @@ extern "C" {
 
 #define PXA_UI_PRIMARY_SURFACE UINT32_C(1)
 
+typedef uint8_t pxa_ui_color_scheme_t;
+#define PXA_UI_COLOR_SCHEME_LIGHT ((pxa_ui_color_scheme_t)0)
+#define PXA_UI_COLOR_SCHEME_DARK ((pxa_ui_color_scheme_t)1)
+
 typedef uint8_t pxa_ui_transaction_kind_t;
 #define PXA_UI_PATCH ((pxa_ui_transaction_kind_t)1)
 #define PXA_UI_REPLACE_SUBTREE ((pxa_ui_transaction_kind_t)2)
@@ -256,6 +260,7 @@ typedef struct {
     uint32_t primary_height;
     uint32_t density_q16;
     uint32_t font_scale_q16;
+    pxa_ui_color_scheme_t color_scheme;
 } pxa_ui_config_t;
 
 typedef struct {

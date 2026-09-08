@@ -16,7 +16,8 @@ static int config_valid(const pxa_ui_config_t *config) {
            config->max_transaction_bytes <= config->max_dynamic_bytes &&
            config->max_canvas_bytes != 0 &&
            config->max_canvas_bytes <= config->max_dynamic_bytes &&
-           config->density_q16 != 0 && config->font_scale_q16 != 0;
+           config->density_q16 != 0 && config->font_scale_q16 != 0 &&
+           config->color_scheme <= PXA_UI_COLOR_SCHEME_DARK;
 }
 
 size_t pxa_ui_service_workspace_size(void) {
@@ -257,6 +258,7 @@ pxa_status_t pxa_ui_bind(pxa_ui_service_t *service,
     entry->primary.environment.font_scale_q16 = service->config.font_scale_q16;
     entry->primary.environment.features = service->config.features;
     entry->primary.environment.recommended_write_bytes = 1024;
+    entry->primary.environment.color_scheme = service->config.color_scheme;
     entry->surfaces = &entry->primary;
     entry->next_surface = PXA_UI_PRIMARY_SURFACE;
     entry->surface_count = 1;

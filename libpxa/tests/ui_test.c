@@ -818,6 +818,7 @@ int main(void) {
     pxa_ui_config_t config;
     pxa_ui_service_t *service = NULL;
     pxa_ui_backend_t backend;
+    pxa_ui_environment_t primary_environment;
     backend_state_t backend_state;
     allocator_state_t allocator;
     pxa_ui_memory_snapshot_t memory;
@@ -845,6 +846,7 @@ int main(void) {
     config.release = test_release;
     config.clock_context = &clock_us;
     config.now_us = test_now_us;
+    config.color_scheme = PXA_UI_COLOR_SCHEME_DARK;
     service_workspace = malloc(pxa_ui_service_workspace_size());
     assert(service_workspace != NULL);
     assert(pxa_ui_service_init(service_workspace,
@@ -866,6 +868,9 @@ int main(void) {
     backend.surface_close = backend_surface_close;
     backend.environment_changed = backend_environment_changed;
     assert(pxa_ui_bind(service, component, &backend) == PXA_STATUS_OK);
+    assert(pxa_ui_get_environment(service, component, PXA_UI_PRIMARY_SURFACE,
+                                  &primary_environment) == PXA_STATUS_OK);
+    assert(primary_environment.color_scheme == PXA_UI_COLOR_SCHEME_DARK);
     assert(pxa_component_begin_start(runtime, component) == PXA_STATUS_OK);
     test_initial_tree(runtime, component, service, &backend_state);
     test_registry_reserve_rollback(service, component, &allocator);

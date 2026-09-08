@@ -13,6 +13,7 @@ void pxa_ui_config_init(pxa_ui_config_t *config) {
     config->features = 0;
     config->density_q16 = UINT32_C(1) << 16;
     config->font_scale_q16 = UINT32_C(1) << 16;
+    config->color_scheme = PXA_UI_COLOR_SCHEME_LIGHT;
 }
 
 void *pxa_ui_alloc(pxa_ui_service_t *service, size_t size) {
