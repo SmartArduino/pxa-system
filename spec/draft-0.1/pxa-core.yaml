@@ -1,0 +1,180 @@
+{
+  "schema": "pxa-core-spec-0.1",
+  "status": "draft",
+  "abi": {
+    "major": 0,
+    "minor": 1,
+    "patch": 0,
+    "encoded": 1,
+    "byte_order": "little-endian",
+    "max_control_message": 4096,
+    "max_record_payload": 65535
+  },
+  "envelope": {
+    "size": 12,
+    "fields": [
+      {"name": "service", "type": "u16", "offset": 0},
+      {"name": "opcode", "type": "u16", "offset": 2},
+      {"name": "request_id", "type": "u32", "offset": 4},
+      {"name": "payload_len", "type": "u32", "offset": 8}
+    ]
+  },
+  "record": {
+    "header_size": 4,
+    "optional_mask": 32768,
+    "tag_mask": 32767,
+    "fields": [
+      {"name": "tag", "type": "u16", "offset": 0},
+      {"name": "payload_len", "type": "u16", "offset": 2}
+    ]
+  },
+  "imports": [
+    {
+      "module": "pxa.core.v0",
+      "name": "pxa_control",
+      "parameters": ["guest-read-buffer"],
+      "result": "status-i32",
+      "blocking": false
+    },
+    {
+      "module": "pxa.core.v0",
+      "name": "pxa_io",
+      "parameters": ["handle-u32", "operation-u32", "guest-read-write-buffer"],
+      "result": "byte-count-or-status-i32",
+      "blocking": false
+    }
+  ],
+  "exports": [
+    {"name": "pxa_app_api_version", "parameters": [], "result": "u32"},
+    {"name": "pxa_app_start", "parameters": ["guest-read-buffer"], "result": "status-i32"},
+    {"name": "pxa_app_on_event", "parameters": ["guest-read-buffer"], "result": "event-result-i32"},
+    {"name": "pxa_app_stop", "parameters": ["reason-u32"], "result": "void"}
+  ],
+  "statuses": [
+    {"name": "ok", "value": 0},
+    {"name": "invalid-argument", "value": -1},
+    {"name": "bad-state", "value": -2},
+    {"name": "unsupported", "value": -3},
+    {"name": "denied", "value": -4},
+    {"name": "not-found", "value": -5},
+    {"name": "busy", "value": -6},
+    {"name": "would-block", "value": -7},
+    {"name": "quota-exceeded", "value": -8},
+    {"name": "resource-limit", "value": -9},
+    {"name": "cancelled", "value": -10},
+    {"name": "internal", "value": -11},
+    {"name": "timed-out", "value": -12},
+    {"name": "unavailable", "value": -13},
+    {"name": "io-error", "value": -14},
+    {"name": "protocol-error", "value": -15},
+    {"name": "limit-exceeded", "value": -16}
+  ],
+  "event_results": [
+    {"name": "unhandled", "value": 0},
+    {"name": "handled", "value": 1}
+  ],
+  "services": [
+    {"name": "core", "id": 1, "state": "defined", "major": 0, "minor": 1, "patch": 0},
+    {"name": "window", "id": 2, "state": "defined", "major": 0, "minor": 1, "patch": 0},
+    {"name": "ui", "id": 3, "state": "defined", "major": 0, "minor": 1, "patch": 0},
+    {"name": "clock", "id": 4, "state": "defined", "major": 0, "minor": 1, "patch": 0},
+    {"name": "fs", "id": 5, "state": "defined", "major": 0, "minor": 1, "patch": 0},
+    {"name": "storage", "id": 6, "state": "defined", "major": 0, "minor": 1, "patch": 0},
+    {"name": "ipc", "id": 7, "state": "defined", "major": 0, "minor": 1, "patch": 0},
+    {"name": "sensor", "id": 8, "state": "defined", "major": 0, "minor": 1, "patch": 0},
+    {"name": "net", "id": 9, "state": "defined", "major": 0, "minor": 2, "patch": 0},
+    {"name": "audio", "id": 10, "state": "defined", "major": 0, "minor": 2, "patch": 0},
+    {"name": "permission", "id": 11, "state": "defined", "major": 0, "minor": 1, "patch": 0},
+    {"name": "secrets", "id": 12, "state": "reserved"},
+    {"name": "work", "id": 13, "state": "defined", "major": 0, "minor": 1, "patch": 0},
+    {"name": "wasi", "id": 14, "state": "defined", "major": 0, "minor": 1, "patch": 0},
+    {"name": "device", "id": 15, "state": "defined", "major": 0, "minor": 1, "patch": 0}
+  ],
+  "core_opcodes": [
+    {
+      "name": "cancel-request",
+      "id": 1,
+      "direction": "guest-to-host",
+      "request_id": "zero",
+      "payload": "target_request_id:u32"
+    },
+    {
+      "name": "close-handle",
+      "id": 2,
+      "direction": "guest-to-host",
+      "request_id": "zero",
+      "payload": "handle:u32"
+    },
+    {
+      "name": "acquire-lease",
+      "id": 3,
+      "direction": "bidirectional-result",
+      "request_id": "nonzero",
+      "payload": "record-list"
+    },
+    {
+      "name": "handle-ready",
+      "id": 32769,
+      "direction": "host-to-guest",
+      "request_id": "zero",
+      "payload": "handle:u32|ready_flags:u32"
+    },
+    {
+      "name": "handle-closed",
+      "id": 32770,
+      "direction": "host-to-guest",
+      "request_id": "zero",
+      "payload": "handle:u32|reason:i32"
+    },
+    {
+      "name": "lease-revoked",
+      "id": 32771,
+      "direction": "host-to-guest",
+      "request_id": "zero",
+      "payload": "lease_handle:u32|reason:i32"
+    }
+  ],
+  "io_operations": [
+    {"name": "read", "id": 1, "buffer": "host-to-guest"},
+    {"name": "write", "id": 2, "buffer": "guest-to-host"}
+  ],
+  "ready_flags": [
+    {"name": "readable", "value": 1},
+    {"name": "writable", "value": 2},
+    {"name": "hangup", "value": 4},
+    {"name": "error", "value": 8}
+  ],
+  "stop_reasons": [
+    {"name": "normal", "value": 0},
+    {"name": "replaced", "value": 1},
+    {"name": "policy", "value": 2},
+    {"name": "resource-pressure", "value": 3},
+    {"name": "permission-revoked", "value": 4},
+    {"name": "fault", "value": 5},
+    {"name": "shutdown", "value": 6}
+  ],
+  "lease_kinds": [
+    {"name": "foreground", "value": 1},
+    {"name": "audio-playback", "value": 2},
+    {"name": "audio-capture", "value": 3},
+    {"name": "network-transfer", "value": 4},
+    {"name": "sensor-monitor", "value": 5},
+    {"name": "scheduled-job", "value": 6}
+  ],
+  "config_tags": [
+    {"name": "instance-id", "id": 1, "payload": "u64", "cardinality": "one"},
+    {"name": "app-id", "id": 2, "payload": "utf8", "cardinality": "one"},
+    {"name": "component-id", "id": 3, "payload": "utf8", "cardinality": "one"},
+    {"name": "service-version", "id": 4, "payload": "service:u16|major:u16|minor:u16|flags:u16", "cardinality": "many"},
+    {"name": "capability", "id": 5, "payload": "service:u16|feature:u16|version:u16|flags:u16|value:u32", "cardinality": "many"},
+    {"name": "limit", "id": 6, "payload": "namespace:u16|limit:u16|value:u64", "cardinality": "many"},
+    {"name": "job-schedule-id", "id": 7, "payload": "u32", "cardinality": "job-start-one"},
+    {"name": "ui-environment", "id": 8, "payload": "ui-0.3-environment-records", "cardinality": "ui-start-one"}
+  ],
+  "lease_tags": [
+    {"name": "lease-kind", "id": 1, "payload": "u16", "cardinality": "one"},
+    {"name": "duration-ms", "id": 2, "payload": "u32", "cardinality": "zero-or-one"},
+    {"name": "reason", "id": 3, "payload": "utf8", "cardinality": "zero-or-one"},
+    {"name": "granted-handle", "id": 4, "payload": "u32", "cardinality": "result-one"}
+  ]
+}

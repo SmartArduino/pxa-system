@@ -1,0 +1,133 @@
+{
+  "schema": "pxa-container-spec-0.1",
+  "status": "draft",
+  "extension": ".pxa",
+  "byte_order": "little-endian",
+  "header": {
+    "magic": "PXAC",
+    "major": 0,
+    "minor": 1,
+    "patch": 0,
+    "size": 64,
+    "fields": [
+      {"name": "magic", "type": "bytes4", "offset": 0},
+      {"name": "major", "type": "u16", "offset": 4},
+      {"name": "minor", "type": "u16", "offset": 6},
+      {"name": "header_size", "type": "u16", "offset": 8},
+      {"name": "flags", "type": "u16", "offset": 10},
+      {"name": "codec", "type": "u16", "offset": 12},
+      {"name": "chunk_size_log2", "type": "u16", "offset": 14},
+      {"name": "manifest_size", "type": "u32", "offset": 16},
+      {"name": "package_signature_size", "type": "u32", "offset": 20},
+      {"name": "container_signature_size", "type": "u32", "offset": 24},
+      {"name": "file_count", "type": "u32", "offset": 28},
+      {"name": "payload_size", "type": "u64", "offset": 32},
+      {"name": "unpacked_size", "type": "u64", "offset": 40},
+      {"name": "container_size", "type": "u64", "offset": 48},
+      {"name": "reserved", "type": "u32", "offset": 56},
+      {"name": "header_crc32", "type": "u32", "offset": 60}
+    ],
+    "flags": 0,
+    "reserved": 0,
+    "crc32_range": [0, 60],
+    "crc32_polynomial": "ieee"
+  },
+  "package_manifest": {
+    "magic": "PXAM",
+    "max_size": 16384
+  },
+  "package_signature": {
+    "magic": "PXAS",
+    "version": "0.1.0",
+    "encoded_version": 1,
+    "size": 108
+  },
+  "container_signature": {
+    "magic": "PXCS",
+    "version": "0.1.0",
+    "encoded_version": 1,
+    "size": 108,
+    "algorithm": "ecdsa-p256-sha256",
+    "algorithm_id": 1,
+    "signature_size": 64,
+    "encoding": "p1363-low-s",
+    "domain": "PXA-PACKAGE-CONTAINER-DIGEST",
+    "message": "sha256(header || manifest || package_signature || payload)",
+    "covered_sections": ["header", "manifest", "package_signature", "payload"]
+  },
+  "codecs": [
+    {"name": "store", "value": 0},
+    {"name": "lz4-block-independent", "value": 1}
+  ],
+  "chunk_size_log2": 12,
+  "chunk_size": 4096,
+  "file_record": {
+    "size": 16,
+    "fields": [
+      {"name": "file_index", "type": "u16", "offset": 0},
+      {"name": "flags", "type": "u16", "offset": 2},
+      {"name": "chunk_count", "type": "u32", "offset": 4},
+      {"name": "encoded_size", "type": "u64", "offset": 8}
+    ],
+    "flags": 0
+  },
+  "chunk_record": {
+    "header_size": 4,
+    "fields": [
+      {"name": "stored_size", "type": "u16", "offset": 0},
+      {"name": "decoded_size", "type": "u16", "offset": 2}
+    ],
+    "max_stored_size": 4096,
+    "max_decoded_size": 4096
+  },
+  "manifest_0_2": {
+    "release_sequence_tag": 9,
+    "release_sequence_type": "u64",
+    "release_sequence_required": true,
+    "release_sequence_min": 1,
+    "publisher_lineage_tag": 10,
+    "publisher_lineage_required": false
+  },
+  "publisher_lineage": {
+    "magic": "PXKL",
+    "major": 0,
+    "minor": 1,
+    "patch": 0,
+    "header_size": 16,
+    "max_links": 8,
+    "max_spki_size": 160,
+    "signature_size": 64,
+    "signature_domain": "PXA-PUBLISHER-KEY-ROTATION",
+    "flags": [
+      {"name": "revoke-old-signer", "value": 1}
+    ],
+    "header_fields": [
+      {"name": "magic", "type": "bytes4", "offset": 0},
+      {"name": "major", "type": "u16", "offset": 4},
+      {"name": "minor", "type": "u16", "offset": 6},
+      {"name": "header_size", "type": "u16", "offset": 8},
+      {"name": "link_count", "type": "u16", "offset": 10},
+      {"name": "body_size", "type": "u32", "offset": 12}
+    ],
+    "link_header_size": 80,
+    "link_fields": [
+      {"name": "generation", "type": "u32", "offset": 0},
+      {"name": "flags", "type": "u32", "offset": 4},
+      {"name": "old_key_id", "type": "bytes32", "offset": 8},
+      {"name": "new_key_id", "type": "bytes32", "offset": 40},
+      {"name": "new_spki_size", "type": "u16", "offset": 72},
+      {"name": "signature_size", "type": "u16", "offset": 74},
+      {"name": "reserved", "type": "u32", "offset": 76}
+    ]
+  },
+  "update_policy": {
+    "downgrade_allowed": true,
+    "downgrade_requires_confirmation": true,
+    "automatic_downgrade_allowed": false,
+    "automatic_signer_rollback_allowed": false
+  },
+  "host_profiles": {
+    "portable_max_files": 128,
+    "esp_product_max_files": 32
+  }
+}

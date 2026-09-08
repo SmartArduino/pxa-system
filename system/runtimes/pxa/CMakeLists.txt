@@ -1,0 +1,72 @@
+if(NOT COMMAND idf_component_register)
+    cmake_minimum_required(VERSION 3.16)
+endif()
+
+include("${CMAKE_CURRENT_LIST_DIR}/../../../cmake/PxaSystemSources.cmake")
+
+if(COMMAND idf_component_register)
+    idf_component_register(
+        SRCS ${PXSYS_PXA_RUNTIME_SOURCES}
+        INCLUDE_DIRS "${CMAKE_CURRENT_LIST_DIR}/include"
+        REQUIRES pxa pxa_system_core)
+else()
+    if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+        project(pxa_system_pxa VERSION 0.1.0 LANGUAGES C)
+    endif()
+    if(NOT TARGET pxa)
+        set(PXA_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+        set(PXA_BUILD_ADAPTERS OFF CACHE BOOL "" FORCE)
+        add_subdirectory("${PXSYS_ROOT}/libpxa"
+                         "${CMAKE_CURRENT_BINARY_DIR}/libpxa" EXCLUDE_FROM_ALL)
+    endif()
+    if(NOT TARGET pxa_system_core)
+        add_subdirectory("${PXSYS_ROOT}/system/core"
+                         "${CMAKE_CURRENT_BINARY_DIR}/pxa_system_core")
+    endif()
+    if(NOT TARGET pxa_system_native)
+        add_subdirectory("${PXSYS_ROOT}/system/runtimes/native"
+                         "${CMAKE_CURRENT_BINARY_DIR}/pxa_system_native")
+    endif()
+    add_library(pxa_system_pxa ${PXSYS_PXA_RUNTIME_SOURCES})
+    add_library(pxsys::pxa ALIAS pxa_system_pxa)
+    set_target_properties(pxa_system_pxa PROPERTIES EXPORT_NAME pxa)
+    target_compile_features(pxa_system_pxa PUBLIC c_std_99)
+    target_include_directories(pxa_system_pxa PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_LIST_DIR}/include>)
+    target_link_libraries(pxa_system_pxa PUBLIC pxa::pxa pxsys::core)
+    if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(pxa_system_pxa PRIVATE -Wall -Wextra -Wpedantic -Werror)
+    endif()
+    if(PXSYS_BUILD_TESTS)
+    add_executable(pxsys_pxa_binding_test tests/pxa_binding_test.c)
+    target_link_libraries(pxsys_pxa_binding_test PRIVATE pxsys::pxa)
+    add_executable(pxsys_pxa_runtime_test tests/pxa_runtime_test.c)
+    target_link_libraries(pxsys_pxa_runtime_test PRIVATE pxsys::pxa)
+    add_executable(pxsys_pxa_catalog_test tests/pxa_catalog_test.c)
+    target_link_libraries(pxsys_pxa_catalog_test PRIVATE pxsys::pxa)
+    add_executable(pxsys_pxa_interop_test tests/pxa_interop_test.c)
+    target_link_libraries(pxsys_pxa_interop_test PRIVATE pxsys::pxa pxsys::native)
+    add_executable(pxsys_pxa_guest_system_test
+        "${PXSYS_ROOT}/sdk/guest-c/tests/system_test.c")
+    add_executable(pxsys_pxa_gateway_wire_test tests/pxa_gateway_wire_test.c)
+    target_link_libraries(pxsys_pxa_gateway_wire_test PRIVATE pxsys::pxa)
+    target_include_directories(pxsys_pxa_guest_system_test PRIVATE
+        "${PXSYS_ROOT}/sdk/guest-c/include")
+    if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(pxsys_pxa_binding_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
+        target_compile_options(pxsys_pxa_runtime_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
+        target_compile_options(pxsys_pxa_catalog_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
+        target_compile_options(pxsys_pxa_interop_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
+        target_compile_options(pxsys_pxa_guest_system_test PRIVATE
+            -Wall -Wextra -Wpedantic -Werror -Wno-attributes)
+        target_compile_options(pxsys_pxa_gateway_wire_test PRIVATE
+            -Wall -Wextra -Wpedantic -Werror)
+    endif()
+    add_test(NAME pxsys_pxa_binding_test COMMAND pxsys_pxa_binding_test)
+    add_test(NAME pxsys_pxa_runtime_test COMMAND pxsys_pxa_runtime_test)
+    add_test(NAME pxsys_pxa_catalog_test COMMAND pxsys_pxa_catalog_test)
+    add_test(NAME pxsys_pxa_interop_test COMMAND pxsys_pxa_interop_test)
+    add_test(NAME pxsys_pxa_guest_system_test COMMAND pxsys_pxa_guest_system_test)
+    add_test(NAME pxsys_pxa_gateway_wire_test COMMAND pxsys_pxa_gateway_wire_test)
+    endif()
+endif()

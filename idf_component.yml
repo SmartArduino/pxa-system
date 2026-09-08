@@ -1,0 +1,3 @@
+version: "0.1.0"
+description: "Portable PXA application system core and runtime bindings"
+license: "MIT"

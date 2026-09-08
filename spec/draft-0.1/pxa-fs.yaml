@@ -1,0 +1,46 @@
+{
+  "schema": "pxa-fs-spec-0.1",
+  "status": "draft",
+  "service": {"name": "fs", "id": 5, "major": 0, "minor": 1, "patch": 0},
+  "opcodes": [
+    {"name": "open", "id": 1, "direction": "bidirectional-result", "request_id": "nonzero", "payload": "record-list", "result": "handle:u32"},
+    {"name": "make-directory", "id": 2, "direction": "bidirectional-result", "request_id": "nonzero", "payload": "path-records"},
+    {"name": "remove", "id": 3, "direction": "bidirectional-result", "request_id": "nonzero", "payload": "path-records"},
+    {"name": "rename", "id": 4, "direction": "bidirectional-result", "request_id": "nonzero", "payload": "source-and-destination-path-records"},
+    {"name": "stat", "id": 5, "direction": "bidirectional-result", "request_id": "nonzero", "payload": "path-records", "result": "kind:u8|size:u64"},
+    {"name": "seek", "id": 6, "direction": "bidirectional-result", "request_id": "nonzero", "payload": "handle:u32|offset:i64|origin:u8", "result": "position:u64"},
+    {"name": "read-directory", "id": 7, "direction": "bidirectional-result", "request_id": "nonzero", "payload": "directory-handle:u32", "result": "entry-record-list"}
+  ],
+  "open_flags": [
+    {"name": "read", "value": 1},
+    {"name": "write", "value": 2},
+    {"name": "create", "value": 4},
+    {"name": "exclusive", "value": 8},
+    {"name": "truncate", "value": 16},
+    {"name": "append", "value": 32},
+    {"name": "directory", "value": 64}
+  ],
+  "record_tags": [
+    {"name": "path", "id": 1, "payload": "utf8-private-relative-path", "cardinality": "one"},
+    {"name": "destination-path", "id": 2, "payload": "utf8-private-relative-path", "cardinality": "one"},
+    {"name": "open-flags", "id": 3, "payload": "u32", "cardinality": "one"},
+    {"name": "entry-name", "id": 4, "payload": "utf8-path-segment", "cardinality": "result-one"},
+    {"name": "entry-kind", "id": 5, "payload": "u8", "cardinality": "result-one"},
+    {"name": "entry-size", "id": 6, "payload": "u64", "cardinality": "result-one"},
+    {"name": "end-of-directory", "id": 7, "payload": "empty", "cardinality": "result-one"}
+  ],
+  "file_kinds": [
+    {"name": "regular", "value": 1},
+    {"name": "directory", "value": 2}
+  ],
+  "seek_origins": [
+    {"name": "start", "value": 0},
+    {"name": "current", "value": 1},
+    {"name": "end", "value": 2}
+  ],
+  "limits": {
+    "max_path_bytes": 255,
+    "max_segment_bytes": 64,
+    "quota_unit": "logical-regular-file-bytes"
+  }
+}

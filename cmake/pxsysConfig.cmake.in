@@ -1,0 +1,8 @@
+@PACKAGE_INIT@
+
+include(CMakeFindDependencyMacro)
+if(@PXSYS_CONFIG_NEEDS_LIBPXA@)
+    find_dependency(pxa 0.1)
+endif()
+
+include("${CMAKE_CURRENT_LIST_DIR}/pxsysTargets.cmake")

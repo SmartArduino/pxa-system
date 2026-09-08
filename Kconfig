@@ -1,0 +1,10 @@
+menu "PXA System"
+
+config PXSYS_DEFAULT_DARK_THEME
+    bool "Use the dark theme by default"
+    default n
+    help
+        Selects the initial semantic theme. Products can still update the
+        theme service at runtime or replace theme persistence entirely.
+
+endmenu

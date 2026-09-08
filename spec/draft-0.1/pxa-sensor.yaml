@@ -1,0 +1,25 @@
+{
+  "schema": "pxa-sensor-spec-0.1",
+  "status": "draft",
+  "service": {"name": "sensor", "id": 8, "major": 0, "minor": 1, "patch": 0},
+  "opcodes": [
+    {"name": "list", "id": 1, "direction": "bidirectional-result", "request_id": "nonzero", "payload": "empty", "result": "descriptor-records"},
+    {"name": "subscribe", "id": 2, "direction": "bidirectional-result", "request_id": "nonzero", "payload": "sensor-id|period|permission-handle", "result": "sensor-handle:u32"},
+    {"name": "sample", "id": 32769, "direction": "host-to-guest", "request_id": "zero", "payload": "subscription|timestamp|batch"}
+  ],
+  "record_tags": [
+    {"name": "descriptor-or-sensor-id", "id": 1, "payload": "nested-descriptor|u16", "cardinality": "list-many|subscribe-one"},
+    {"name": "semantic-or-period-or-timestamp", "id": 2, "payload": "ascii|u32|u64", "cardinality": "descriptor-one|subscribe-one|sample-one"},
+    {"name": "unit-or-permission-handle-or-sample-count", "id": 3, "payload": "u16|u32|u16", "cardinality": "descriptor-one|subscribe-one|sample-one"},
+    {"name": "dimensions-or-subscription-handle-or-values", "id": 4, "payload": "u8|u32|i32-le[]", "cardinality": "descriptor-one|result-one|sample-one"},
+    {"name": "minimum-period-ms", "id": 5, "payload": "u32", "cardinality": "descriptor-one"},
+    {"name": "maximum-period-ms", "id": 6, "payload": "u32", "cardinality": "descriptor-one"}
+  ],
+  "units": [
+    {"name": "milli-celsius", "value": 1},
+    {"name": "micro-meters-per-second-squared", "value": 2},
+    {"name": "micro-radians-per-second", "value": 3},
+    {"name": "milli-lux", "value": 4}
+  ],
+  "limits": {"max_semantic_bytes": 64, "max_dimensions": 3, "max_subscriptions_per_component": 2, "max_samples_per_event": 8}
+}

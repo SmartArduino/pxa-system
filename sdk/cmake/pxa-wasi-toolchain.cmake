@@ -1,0 +1,31 @@
+set(CMAKE_SYSTEM_NAME Generic)
+set(CMAKE_SYSTEM_PROCESSOR wasm32)
+set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
+
+if(NOT DEFINED WASI_SDK_DIR OR WASI_SDK_DIR STREQUAL "")
+    message(FATAL_ERROR
+        "WASI_SDK_DIR is required (the directory containing bin/clang and share/wasi-sysroot)")
+endif()
+
+file(REAL_PATH "${WASI_SDK_DIR}" WASI_SDK_DIR EXPAND_TILDE)
+set(WASI_SDK_DIR "${WASI_SDK_DIR}" CACHE PATH "WASI SDK root" FORCE)
+list(APPEND CMAKE_TRY_COMPILE_PLATFORM_VARIABLES WASI_SDK_DIR)
+set(_pxa_wasi_bin "${WASI_SDK_DIR}/bin")
+set(_pxa_wasi_sysroot "${WASI_SDK_DIR}/share/wasi-sysroot")
+if(NOT EXISTS "${_pxa_wasi_bin}/clang" OR
+   NOT IS_DIRECTORY "${_pxa_wasi_sysroot}")
+    message(FATAL_ERROR "WASI_SDK_DIR does not contain a complete WASI SDK: ${WASI_SDK_DIR}")
+endif()
+
+set(CMAKE_C_COMPILER "${_pxa_wasi_bin}/clang" CACHE FILEPATH "" FORCE)
+set(CMAKE_CXX_COMPILER "${_pxa_wasi_bin}/clang++" CACHE FILEPATH "" FORCE)
+set(CMAKE_AR "${_pxa_wasi_bin}/llvm-ar" CACHE FILEPATH "" FORCE)
+set(CMAKE_RANLIB "${_pxa_wasi_bin}/llvm-ranlib" CACHE FILEPATH "" FORCE)
+set(CMAKE_C_COMPILER_TARGET wasm32-wasip1 CACHE STRING "" FORCE)
+set(CMAKE_CXX_COMPILER_TARGET wasm32-wasip1 CACHE STRING "" FORCE)
+set(CMAKE_SYSROOT "${_pxa_wasi_sysroot}" CACHE PATH "" FORCE)
+set(CMAKE_FIND_ROOT_PATH "${_pxa_wasi_sysroot}" CACHE STRING "" FORCE)
+set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
+set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)
+set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
+set(CMAKE_FIND_ROOT_PATH_MODE_PACKAGE ONLY)

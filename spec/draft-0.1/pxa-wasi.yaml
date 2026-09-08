@@ -1,0 +1,26 @@
+{
+  "schema": "pxa-wasi-spec-0.1",
+  "status": "draft",
+  "service": {"name": "wasi", "id": 14, "major": 0, "minor": 1, "patch": 0},
+  "abi": {"version": "preview1", "execution_model": "reactor", "libc": "wasi-libc"},
+  "features": [
+    {"name": "stdio", "bit": 0},
+    {"name": "monotonic-clock", "bit": 1},
+    {"name": "wall-clock", "bit": 2},
+    {"name": "random", "bit": 3},
+    {"name": "arguments", "bit": 4},
+    {"name": "environment", "bit": 5},
+    {"name": "private-fs", "bit": 6}
+  ],
+  "security": {
+    "default_features": [],
+    "base_stdio": "descriptors 0..2 are bound to a Host-owned null device",
+    "base_imports": ["fd_close", "fd_seek", "fd_write"],
+    "clock_import_features": ["monotonic-clock", "wall-clock"],
+    "noninteractive_features": ["monotonic-clock", "random", "wall-clock"],
+    "undeclared_imports": "reject",
+    "unknown_import_modules": "reject",
+    "ambient_preopens": "none"
+  },
+  "opcodes": []
+}

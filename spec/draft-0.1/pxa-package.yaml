@@ -1,0 +1,68 @@
+{
+  "schema": "pxa-package-spec-0.1",
+  "status": "draft",
+  "manifest": {"magic": "PXAM", "major": 0, "minor": 1, "patch": 0, "header_size": 12, "max_size": 16384},
+  "signature": {"magic": "PXAS", "version": "0.1.0", "encoded_version": 1, "header_size": 44, "algorithm": "ecdsa-p256-sha256", "algorithm_id": 1, "signature_size": 64, "encoding": "p1363-low-s", "domain": "PXA-PACKAGE-MANIFEST"},
+  "top_tags": [
+    {"name": "publisher-key-id", "id": 1, "cardinality": "one", "payload": "bytes32"},
+    {"name": "app-id", "id": 2, "cardinality": "one", "payload": "safe-id"},
+    {"name": "version", "id": 3, "cardinality": "one", "payload": "version-string"},
+    {"name": "name", "id": 4, "cardinality": "zero-or-one", "payload": "utf8"},
+    {"name": "description", "id": 5, "cardinality": "zero-or-one", "payload": "utf8"},
+    {"name": "icon-path", "id": 6, "cardinality": "zero-or-one", "payload": "package-path"},
+    {"name": "core-min-version", "id": 7, "cardinality": "one", "payload": "major-u16-minor-u16"},
+    {"name": "core-max-version", "id": 8, "cardinality": "one", "payload": "major-u16-minor-u16"},
+    {"name": "component", "id": 16, "cardinality": "many", "payload": "component-records"},
+    {"name": "file", "id": 17, "cardinality": "many", "payload": "file-records"},
+    {"name": "permission", "id": 18, "cardinality": "many", "payload": "permission-records"},
+    {"name": "ipc-endpoint", "id": 19, "cardinality": "many", "payload": "ipc-endpoint-records"}
+  ],
+  "component_tags": [
+    {"name": "id", "id": 1, "cardinality": "one", "payload": "safe-id"},
+    {"name": "kind", "id": 2, "cardinality": "one", "payload": "component-kind-u8"},
+    {"name": "artifact", "id": 4, "cardinality": "many", "payload": "artifact-records"},
+    {"name": "service", "id": 5, "cardinality": "many", "payload": "service-requirement-records"}
+  ],
+  "artifact_tags": [
+    {"name": "kind", "id": 1, "cardinality": "one", "payload": "artifact-kind-u8"},
+    {"name": "path", "id": 2, "cardinality": "one", "payload": "package-path"},
+    {"name": "target", "id": 3, "cardinality": "aot-one", "payload": "compat-id"},
+    {"name": "engine", "id": 4, "cardinality": "aot-one", "payload": "compat-id"},
+    {"name": "engine-abi", "id": 5, "cardinality": "aot-one", "payload": "compat-id"},
+    {"name": "required-features", "id": 6, "cardinality": "one", "payload": "u64-bitset"},
+    {"name": "memory-model", "id": 7, "cardinality": "one", "payload": "memory-model-u8"}
+  ],
+  "file_tags": [
+    {"name": "path", "id": 1, "cardinality": "one", "payload": "package-path"},
+    {"name": "size", "id": 2, "cardinality": "one", "payload": "u64"},
+    {"name": "sha256", "id": 3, "cardinality": "one", "payload": "bytes32"}
+  ],
+  "service_requirement_tags": [
+    {"name": "service", "id": 1, "cardinality": "one", "payload": "u16"},
+    {"name": "min-version", "id": 2, "cardinality": "one", "payload": "major-u16-minor-u16"},
+    {"name": "max-version", "id": 3, "cardinality": "one", "payload": "major-u16-minor-u16"},
+    {"name": "required-features", "id": 4, "cardinality": "one", "payload": "u64-bitset"}
+  ],
+  "permission_tags": [
+    {"name": "name", "id": 1, "cardinality": "one", "payload": "permission-id"},
+    {"name": "required", "id": 2, "cardinality": "one", "payload": "bool-u8"},
+    {"name": "scope", "id": 3, "cardinality": "zero-or-one", "payload": "service-defined-canonical-bytes"}
+  ],
+  "ipc_endpoint_tags": [
+    {"name": "name", "id": 1, "cardinality": "one", "payload": "safe-id"},
+    {"name": "component", "id": 2, "cardinality": "one", "payload": "safe-id"}
+  ],
+  "component_kinds": [{"name": "ui", "value": 1}, {"name": "service", "value": 2}, {"name": "job", "value": 3}],
+  "artifact_kinds": [{"name": "wasm", "value": 1}, {"name": "aot", "value": 2}],
+  "memory_models": [{"name": "wasm32", "value": 1}, {"name": "wasm32-shared", "value": 2}]
+  ,"wasm_features": [
+    {"name": "bulk-memory", "value": 1},
+    {"name": "reference-types", "value": 2},
+    {"name": "simd", "value": 4},
+    {"name": "multi-value", "value": 8},
+    {"name": "mutable-globals", "value": 16},
+    {"name": "sign-extension", "value": 32},
+    {"name": "nontrapping-float-to-int", "value": 64},
+    {"name": "threads", "value": 128}
+  ]
+}
