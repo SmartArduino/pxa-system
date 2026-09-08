@@ -1,0 +1,9 @@
+@PACKAGE_INIT@
+
+include("${CMAKE_CURRENT_LIST_DIR}/pxaTargets.cmake")
+if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/pxaAdaptersTargets.cmake")
+    include(CMakeFindDependencyMacro)
+    find_dependency(OpenSSL)
+    include("${CMAKE_CURRENT_LIST_DIR}/pxaAdaptersTargets.cmake")
+endif()
+check_required_components(pxa)

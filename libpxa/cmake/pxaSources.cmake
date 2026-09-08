@@ -1,0 +1,48 @@
+function(pxa_collect_sources output root)
+    set(relative_sources
+        src/common/bytes.c
+        src/core/runtime.c
+        src/core/component.c
+        src/core/request.c
+        src/core/handle.c
+        src/core/event.c
+        src/core/service_registry.c
+        src/core/wire.c
+        src/services/window/window_service.c
+        src/services/lease/lease_service.c
+        src/services/permission/permission_service.c
+        src/services/permission/permission_policy.c
+        src/services/ipc/ipc_service.c
+        src/services/ipc/ipc_codec.c
+        src/services/storage/storage_service.c
+        src/services/fs/fs_service.c
+        src/services/sensor/sensor_service.c
+        src/services/device/device_service.c
+        src/services/scheduler/scheduler_service.c
+        src/services/net/net_service.c
+        src/services/net/net_request.c
+        src/services/net/net_response.c
+        src/services/net/net_validate.c
+        src/services/audio/audio_service.c
+        src/services/surface/surface_service.c
+        src/ui/ui_service.c
+        src/ui/ui_memory.c
+        src/ui/ui_registry.c
+        src/ui/ui_decoder.c
+        src/ui/ui_transaction.c
+        src/ui/ui_canvas.c
+        src/ui/ui_surface.c
+        src/package/manifest.c
+        src/package/manifest_decode.c
+        src/package/manifest_security.c
+        src/package/inventory.c
+        src/package/artifact_select.c
+        src/package/container.c
+        src/package/activation.c
+        src/package/slot_transaction.c)
+    set(sources)
+    foreach(source IN LISTS relative_sources)
+        list(APPEND sources "${root}/${source}")
+    endforeach()
+    set(${output} "${sources}" PARENT_SCOPE)
+endfunction()
