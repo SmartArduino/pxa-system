@@ -25,6 +25,19 @@ Products can set `pxsys_reference_lvgl_config_t.wallpaper_source` to a borrowed
 LVGL image source; it is center-cropped with cover sizing for the active display
 profile. A null source keeps the allocation-free built-in wallpaper.
 
+Launcher icons are resolved by the optional
+`pxsys_reference_lvgl_config_t.resolve_app_icon` hook. The platform can return
+an icon from a native resource table or an installed PXA package together with
+its release callback. The LVGL adapter owns that reference only while the
+launcher is using it. If no resource is available, the standard UI selects a
+distinct semantic symbol from the canonical application id. Icon storage and
+decoding therefore remain outside the backend-neutral application registry.
+
+The optional `content_insets_changed` callback publishes the currently visible
+status and button-navigation reservations to compatibility Native surfaces.
+Gesture navigation reports no bottom reservation, so applications recover that
+space without learning reference-UI geometry or linking its layout module.
+
 Reference applications use ordinary canonical application identities and the
 same Intent/RPC/event protocol as third-party native and PXA applications.
 Nothing in the core gives a reference application a private navigation path.

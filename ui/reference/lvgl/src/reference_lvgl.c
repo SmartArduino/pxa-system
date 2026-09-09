@@ -139,6 +139,7 @@ typedef struct {
     pxsys_app_identity_t identity;
     char app_id[65];
     char runtime_name[12];
+    pxsys_reference_lvgl_app_icon_t icon;
 } launcher_item_t;
 
 typedef struct {
@@ -227,6 +228,12 @@ struct pxsys_reference_lvgl {
     const lv_font_t* fonts[PXSYS_TYPOGRAPHY_ROLE_COUNT];
     void* font_context;
     pxsys_reference_lvgl_resolve_font_fn resolve_font;
+    void* app_icon_context;
+    pxsys_reference_lvgl_resolve_app_icon_fn resolve_app_icon;
+    void* content_insets_context;
+    pxsys_reference_lvgl_content_insets_fn content_insets_changed;
+    uint16_t content_inset_top;
+    uint16_t content_inset_bottom;
     uint32_t features;
     size_t max_launcher_apps;
     size_t launcher_count;
@@ -1514,11 +1521,7 @@ static lv_obj_t* make_launcher_tile(pxsys_reference_lvgl_t* ui,
     uint32_t hash = UINT32_C(2166136261);
     size_t index;
     int32_t icon_size = ui->display.width < 360 ? 42 : 50;
-    char initial[2] = {'?', '\0'};
-    if (name != NULL && name[0] >= 0x20 && (unsigned char)name[0] < 0x80)
-        initial[0] = name[0];
-    else if (item != NULL && item->runtime_name[0] != '\0')
-        initial[0] = item->runtime_name[0];
+    const char* symbol = LV_SYMBOL_LIST;
     if (item != NULL) {
         for (index = 0; item->app_id[index] != '\0'; ++index) {
             hash ^= (uint8_t)item->app_id[index];
@@ -1558,9 +1561,29 @@ static lv_obj_t* make_launcher_tile(pxsys_reference_lvgl_t* ui,
     lv_obj_set_style_shadow_width(marker, 8, 0);
     lv_obj_set_style_shadow_opa(marker, LV_OPA_20, 0);
     lv_obj_set_style_shadow_offset_y(marker, 3, 0);
-    make_label(marker, initial, typography_font(ui, PXSYS_TYPOGRAPHY_TITLE),
-               color_token(ui, PXSYS_COLOR_ON_ACCENT));
-    lv_obj_center(lv_obj_get_child(marker, 0));
+    if (item != NULL && item->icon.source != NULL) {
+        lv_obj_t* image = lv_image_create(marker);
+        lv_obj_set_size(image, LV_PCT(100), LV_PCT(100));
+        lv_image_set_src(image, item->icon.source);
+        lv_image_set_inner_align(image, LV_IMAGE_ALIGN_CONTAIN);
+        lv_obj_center(image);
+    } else {
+        const char* app_id = item != NULL ? item->app_id : "";
+        if (strstr(app_id, "ai-chat") != NULL) symbol = LV_SYMBOL_AUDIO;
+        else if (strstr(app_id, "camera") != NULL) symbol = LV_SYMBOL_IMAGE;
+        else if (strstr(app_id, "weather") != NULL) symbol = LV_SYMBOL_TINT;
+        else if (strstr(app_id, "garden") != NULL) symbol = LV_SYMBOL_EYE_OPEN;
+        else if (strstr(app_id, "arcade") != NULL) symbol = LV_SYMBOL_PLAY;
+        else if (strstr(app_id, "lab") != NULL) symbol = LV_SYMBOL_SETTINGS;
+        else if (strstr(app_id, "plane") != NULL) symbol = LV_SYMBOL_GPS;
+        else if (strstr(app_id, "settings") != NULL) symbol = LV_SYMBOL_SETTINGS;
+        else if (strstr(app_id, "file") != NULL) symbol = LV_SYMBOL_DIRECTORY;
+        else if (strstr(app_id, "alarm") != NULL) symbol = LV_SYMBOL_BELL;
+        else if (strstr(app_id, "bluetooth") != NULL) symbol = LV_SYMBOL_BLUETOOTH;
+        make_label(marker, symbol, NULL,
+                   color_token(ui, PXSYS_COLOR_ON_ACCENT));
+        lv_obj_center(lv_obj_get_child(marker, 0));
+    }
     lv_obj_align(marker, LV_ALIGN_TOP_MID, 0, 0);
     label = make_label(tile, name, typography_font(ui, PXSYS_TYPOGRAPHY_CAPTION),
                        color_token(ui, PXSYS_COLOR_TEXT_PRIMARY));
@@ -1574,6 +1597,17 @@ static lv_obj_t* make_launcher_tile(pxsys_reference_lvgl_t* ui,
     lv_obj_align(label, LV_ALIGN_BOTTOM_MID, 0, 0);
     lv_obj_add_event_cb(tile, launcher_clicked, LV_EVENT_CLICKED, item);
     return tile;
+}
+
+static void release_launcher_icons(pxsys_reference_lvgl_t* ui) {
+    size_t index;
+    if (ui == NULL || ui->launcher_items == NULL) return;
+    for (index = 0; index < ui->launcher_count; ++index) {
+        pxsys_reference_lvgl_app_icon_t* icon = &ui->launcher_items[index].icon;
+        if (icon->release != NULL) icon->release(icon->release_context);
+        memset(icon, 0, sizeof(*icon));
+    }
+    ui->launcher_count = 0;
 }
 
 static int radio_has_explicit_capabilities(
@@ -2043,7 +2077,7 @@ static void build_home(pxsys_reference_lvgl_t* ui,
     uint32_t columns;
     uint32_t column_width;
     uint32_t gap = layout->size_class == PXSYS_UI_SIZE_COMPACT ? 4u : 8u;
-    ui->launcher_count = 0;
+    release_launcher_icons(ui);
     lv_obj_set_layout(ui->content, LV_LAYOUT_FLEX);
     lv_obj_set_flex_flow(ui->content, LV_FLEX_FLOW_ROW_WRAP);
     lv_obj_set_flex_align(ui->content, LV_FLEX_ALIGN_START,
@@ -2089,6 +2123,9 @@ static void build_home(pxsys_reference_lvgl_t* ui,
                         ? app->display_name.size : sizeof(name) - 1u;
         memcpy(name, app->display_name.data, name_size);
         name[name_size] = '\0';
+        if (ui->resolve_app_icon != NULL &&
+            !ui->resolve_app_icon(ui->app_icon_context, app, &item->icon))
+            memset(&item->icon, 0, sizeof(item->icon));
         tile = make_launcher_tile(ui, name, item);
         lv_obj_set_size(tile, (lv_coord_t)column_width, (lv_coord_t)row_height);
         ui->launcher_count++;
@@ -3203,6 +3240,7 @@ static void make_signal_icon(pxsys_reference_lvgl_t* ui, lv_obj_t* parent,
                                 index < level
                             ? PXSYS_COLOR_TEXT_PRIMARY : PXSYS_COLOR_BORDER),
             0);
+        lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, 0);
     }
 }
 #endif
@@ -3251,6 +3289,7 @@ static void make_battery_icon(pxsys_reference_lvgl_t* ui, lv_obj_t* parent,
                                  : percent <= 15 && ui->system_status.battery_valid
                                        ? PXSYS_COLOR_ERROR
                                        : PXSYS_COLOR_TEXT_PRIMARY), 0);
+    lv_obj_set_style_bg_opa(fill, LV_OPA_COVER, 0);
     cap = lv_obj_create(parent);
     style_plain(cap);
     lv_obj_set_pos(cap, x + 23, center_y - 3);
@@ -3258,6 +3297,7 @@ static void make_battery_icon(pxsys_reference_lvgl_t* ui, lv_obj_t* parent,
     lv_obj_set_style_radius(cap, 1, 0);
     lv_obj_set_style_bg_color(cap,
                               color_token(ui, PXSYS_COLOR_TEXT_PRIMARY), 0);
+    lv_obj_set_style_bg_opa(cap, LV_OPA_COVER, 0);
 }
 
 static void build_status_bar(pxsys_reference_lvgl_t* ui,
@@ -3444,6 +3484,25 @@ static void rebuild(pxsys_reference_lvgl_t* ui) {
     /* The touch target overlays content. Only a visible gesture handle needs
      * an exclusive strip; otherwise return the reservation to the page. */
     expand_content_into_hidden_gesture_area(ui, &layout);
+    if (ui->content_insets_changed != NULL) {
+        uint16_t top = 0;
+        uint16_t bottom = 0;
+        if ((ui->active_chrome & PXSYS_REFERENCE_UI_STATUS_BAR) &&
+            ui->window.status_bar_mode != PXSYS_WINDOW_BAR_HIDDEN &&
+            bar_is_visible(ui, ui->window.status_bar_mode))
+            top = (uint16_t)layout.status_bar.height;
+        if ((ui->active_chrome & PXSYS_REFERENCE_UI_NAVIGATION_BAR) &&
+            ui->navigation_mode == PXSYS_NAVIGATION_BUTTONS &&
+            ui->window.navigation_bar_mode != PXSYS_WINDOW_BAR_HIDDEN &&
+            bar_is_visible(ui, ui->window.navigation_bar_mode))
+            bottom = (uint16_t)layout.navigation_bar.height;
+        if (top != ui->content_inset_top ||
+            bottom != ui->content_inset_bottom) {
+            ui->content_inset_top = top;
+            ui->content_inset_bottom = bottom;
+            ui->content_insets_changed(ui->content_insets_context, top, bottom);
+        }
+    }
     application_backdrop_apply(ui);
     if (ui->content_active && ui->active_page == REFERENCE_PAGE_SETTINGS &&
         ui->content != NULL)
@@ -3883,6 +3942,10 @@ pxsys_status_t pxsys_reference_lvgl_create(
     memcpy(ui->fonts, config->fonts, sizeof(ui->fonts));
     ui->font_context = config->font_context;
     ui->resolve_font = config->resolve_font;
+    ui->app_icon_context = config->app_icon_context;
+    ui->resolve_app_icon = config->resolve_app_icon;
+    ui->content_insets_context = config->content_insets_context;
+    ui->content_insets_changed = config->content_insets_changed;
     ui->languages = config->language_count == 0 ? reference_languages
                                                  : config->languages;
     ui->language_count = config->language_count == 0
@@ -4060,6 +4123,8 @@ pxsys_status_t pxsys_reference_lvgl_destroy(pxsys_reference_lvgl_t* ui) {
     size_t preview_index;
 #endif
     if (!ui_valid(ui)) return PXSYS_STATUS_INVALID_ARGUMENT;
+    if (ui->content_insets_changed != NULL)
+        ui->content_insets_changed(ui->content_insets_context, 0, 0);
     (void)lv_async_call_cancel(rebuild_async, ui);
     if (ui->toast_subscribed)
         (void)pxsys_toast_service_unsubscribe(
@@ -4105,6 +4170,7 @@ pxsys_status_t pxsys_reference_lvgl_destroy(pxsys_reference_lvgl_t* ui) {
     if (ui->notification_shade != NULL) lv_obj_delete(ui->notification_shade);
     if (ui->task_switcher != NULL) lv_obj_delete(ui->task_switcher);
     if (ui->root != NULL) lv_obj_delete(ui->root);
+    release_launcher_icons(ui);
 #if PXSYS_REFERENCE_UI_TASK_SWITCHER == PXSYS_TASK_SWITCHER_CARDS && LV_USE_SNAPSHOT
     for (preview_index = 0;
          preview_index < PXSYS_REFERENCE_UI_TASK_PREVIEW_COUNT;

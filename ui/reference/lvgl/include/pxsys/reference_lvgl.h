@@ -27,6 +27,22 @@ typedef const lv_font_t* (*pxsys_reference_lvgl_resolve_font_fn)(
     void* context, pxsys_typography_role_t role, uint16_t requested_px,
     const pxsys_locale_snapshot_t* locale);
 
+typedef void (*pxsys_reference_lvgl_release_icon_fn)(void* context);
+
+typedef struct {
+    /* LVGL image source borrowed until release is called. */
+    const void* source;
+    pxsys_reference_lvgl_release_icon_fn release;
+    void* release_context;
+} pxsys_reference_lvgl_app_icon_t;
+
+typedef bool (*pxsys_reference_lvgl_resolve_app_icon_fn)(
+    void* context, const pxsys_app_descriptor_t* app,
+    pxsys_reference_lvgl_app_icon_t* icon);
+
+typedef void (*pxsys_reference_lvgl_content_insets_fn)(
+    void* context, uint16_t top, uint16_t bottom);
+
 typedef struct {
     pxsys_string_t locale;
     /* Native language name, for example "English" or "简体中文". */
@@ -78,6 +94,14 @@ typedef struct {
     const lv_font_t* fonts[PXSYS_TYPOGRAPHY_ROLE_COUNT];
     void* font_context;
     pxsys_reference_lvgl_resolve_font_fn resolve_font;
+    /* Optional backend resource hook. It keeps package/native icon ownership
+     * outside the system core and lets products replace the standard source. */
+    void* app_icon_context;
+    pxsys_reference_lvgl_resolve_app_icon_fn resolve_app_icon;
+    /* Compatibility surfaces can reserve visible system chrome without
+     * depending on the reference layout implementation. */
+    void* content_insets_context;
+    pxsys_reference_lvgl_content_insets_fn content_insets_changed;
     /* Borrowed for the UI lifetime. NULL selects the built-in en/zh list. */
     const pxsys_reference_language_t* languages;
     size_t language_count;
