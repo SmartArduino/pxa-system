@@ -226,10 +226,15 @@ static int32_t length_value(const pxa_lvgl_ui_t *ui,
 
 static const lv_font_t *font_for_role(const pxa_lvgl_ui_t *ui,
                                       uint16_t role) {
-    const void *font = role == PXA_UI_FONT_ROLE_CAPTION ? ui->theme.caption_font
-                       : role == PXA_UI_FONT_ROLE_TITLE ? ui->theme.title_font
-                       : role == PXA_UI_FONT_ROLE_ICON ? ui->theme.icon_font
-                                   : ui->theme.body_font;
+    const void *font =
+        role == PXA_UI_FONT_ROLE_CAPTION || role == PXA_UI_FONT_ROLE_LABEL
+            ? ui->theme.caption_font
+        : role == PXA_UI_FONT_ROLE_TITLE ||
+                  role == PXA_UI_FONT_ROLE_HEADLINE ||
+                  role == PXA_UI_FONT_ROLE_DISPLAY
+            ? ui->theme.title_font
+        : role == PXA_UI_FONT_ROLE_ICON ? ui->theme.icon_font
+                                        : ui->theme.body_font;
     return font == NULL ? LV_FONT_DEFAULT : (const lv_font_t *)font;
 }
 

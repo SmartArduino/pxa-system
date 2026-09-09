@@ -51,6 +51,11 @@ typedef struct {
     void* control_context;
     pxsys_level_control_set_fn set_level;
     pxsys_toggle_control_set_fn set_toggle;
+    size_t max_locale_observers;
+    pxsys_locale_snapshot_t initial_locale;
+    size_t max_resource_catalogs;
+    size_t max_resource_key_bytes;
+    size_t max_resource_value_bytes;
 } pxsys_standard_system_config_t;
 
 typedef struct pxsys_standard_system pxsys_standard_system_t;
@@ -68,6 +73,9 @@ pxsys_task_manager_t* pxsys_standard_system_tasks(pxsys_standard_system_t* syste
 pxsys_role_registry_t* pxsys_standard_system_roles(pxsys_standard_system_t* system);
 pxsys_role_host_t* pxsys_standard_system_role_host(pxsys_standard_system_t* system);
 pxsys_theme_service_t* pxsys_standard_system_theme(pxsys_standard_system_t* system);
+pxsys_locale_service_t* pxsys_standard_system_locale(pxsys_standard_system_t* system);
+pxsys_resource_service_t* pxsys_standard_system_resources(
+    pxsys_standard_system_t* system);
 pxsys_display_service_t* pxsys_standard_system_display(pxsys_standard_system_t* system);
 pxsys_system_status_service_t* pxsys_standard_system_status(pxsys_standard_system_t* system);
 pxsys_toast_service_t* pxsys_standard_system_toasts(pxsys_standard_system_t* system);

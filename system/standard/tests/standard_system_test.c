@@ -107,6 +107,8 @@ int main(void) {
     assert(pxsys_standard_system_services(system) != NULL);
     assert(pxsys_standard_system_events(system) != NULL);
     assert(pxsys_standard_system_toasts(system) != NULL);
+    assert(pxsys_standard_system_locale(system) != NULL);
+    assert(pxsys_standard_system_resources(system) != NULL);
     display.struct_size = sizeof(display);
     assert(pxsys_display_service_get(pxsys_standard_system_display(system),
                                      &display) == PXSYS_STATUS_OK);

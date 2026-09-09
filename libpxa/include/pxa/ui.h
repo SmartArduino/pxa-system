@@ -124,6 +124,11 @@ typedef uint16_t pxa_ui_property_t;
 #define PXA_UI_FONT_ROLE_BODY ((uint16_t)1)
 #define PXA_UI_FONT_ROLE_TITLE ((uint16_t)2)
 #define PXA_UI_FONT_ROLE_ICON ((uint16_t)3)
+/* Appended roles preserve the original wire values. Hosts without dedicated
+ * faces fall back to caption/body/title as appropriate. */
+#define PXA_UI_FONT_ROLE_LABEL ((uint16_t)4)
+#define PXA_UI_FONT_ROLE_HEADLINE ((uint16_t)5)
+#define PXA_UI_FONT_ROLE_DISPLAY ((uint16_t)6)
 
 #define PXA_UI_PROPERTY_TEXT ((pxa_ui_property_t)768)
 #define PXA_UI_PROPERTY_ICON ((pxa_ui_property_t)769)

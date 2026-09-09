@@ -175,7 +175,8 @@ static pxsys_status_t apply(void* context, pxsys_surface_ref_t surface,
 
 static pxsys_status_t theme_changed(void* context, const pxsys_theme_snapshot_t* theme) {
     pxsys_headless_renderer_t* renderer = (pxsys_headless_renderer_t*)context;
-    if (!renderer_valid(renderer) || theme == NULL || theme->struct_size < sizeof(*theme))
+    if (!renderer_valid(renderer) ||
+        pxsys_theme_snapshot_validate(theme) != PXSYS_STATUS_OK)
         return PXSYS_STATUS_INVALID_ARGUMENT;
     renderer->theme = *theme;
     renderer->theme.struct_size = sizeof(renderer->theme);

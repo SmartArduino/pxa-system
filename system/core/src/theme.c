@@ -23,16 +23,28 @@ static int service_valid(const pxsys_theme_service_t* service) {
     return service != NULL && service->magic == PXSYS_THEME_MAGIC;
 }
 
+pxsys_status_t pxsys_theme_snapshot_validate(
+    const pxsys_theme_snapshot_t* snapshot) {
+    size_t role;
+    if (snapshot == NULL || snapshot->struct_size < sizeof(*snapshot) ||
+        snapshot->configured_mode > PXSYS_THEME_MODE_CUSTOM ||
+        snapshot->effective_scheme > PXSYS_COLOR_SCHEME_DARK ||
+        snapshot->contrast > PXSYS_CONTRAST_HIGH || snapshot->base_font_px == 0 ||
+        snapshot->base_spacing_px == 0 || snapshot->motion_scale_per_mille > 1000 ||
+        snapshot->theme_id_size > PXSYS_THEME_ID_MAX_BYTES ||
+        snapshot->theme_id[snapshot->theme_id_size] != '\0' ||
+        (snapshot->configured_mode == PXSYS_THEME_MODE_CUSTOM &&
+         snapshot->theme_id_size == 0))
+        return PXSYS_STATUS_INVALID_ARGUMENT;
+    for (role = 0; role < PXSYS_TYPOGRAPHY_ROLE_COUNT; ++role) {
+        if (snapshot->typography_px[role] == 0)
+            return PXSYS_STATUS_INVALID_ARGUMENT;
+    }
+    return PXSYS_STATUS_OK;
+}
+
 static int snapshot_valid(const pxsys_theme_snapshot_t* snapshot) {
-    return snapshot != NULL && snapshot->struct_size >= sizeof(*snapshot) &&
-           snapshot->configured_mode <= PXSYS_THEME_MODE_CUSTOM &&
-           snapshot->effective_scheme <= PXSYS_COLOR_SCHEME_DARK &&
-           snapshot->contrast <= PXSYS_CONTRAST_HIGH && snapshot->base_font_px != 0 &&
-           snapshot->base_spacing_px != 0 && snapshot->motion_scale_per_mille <= 1000 &&
-           snapshot->theme_id_size <= PXSYS_THEME_ID_MAX_BYTES &&
-           snapshot->theme_id[snapshot->theme_id_size] == '\0' &&
-           (snapshot->configured_mode != PXSYS_THEME_MODE_CUSTOM ||
-            snapshot->theme_id_size != 0);
+    return pxsys_theme_snapshot_validate(snapshot) == PXSYS_STATUS_OK;
 }
 
 void pxsys_theme_snapshot_init(pxsys_theme_snapshot_t* snapshot, pxsys_color_scheme_t scheme) {
@@ -60,6 +72,20 @@ void pxsys_theme_snapshot_init(pxsys_theme_snapshot_t* snapshot, pxsys_color_sch
     snapshot->base_spacing_px = 4;
     snapshot->base_radius_px = 4;
     snapshot->motion_scale_per_mille = 1000;
+    snapshot->typography_px[PXSYS_TYPOGRAPHY_DISPLAY] = 28;
+    snapshot->typography_px[PXSYS_TYPOGRAPHY_HEADLINE] = 24;
+    snapshot->typography_px[PXSYS_TYPOGRAPHY_TITLE] = 20;
+    snapshot->typography_px[PXSYS_TYPOGRAPHY_BODY] = 16;
+    snapshot->typography_px[PXSYS_TYPOGRAPHY_LABEL] = 14;
+    snapshot->typography_px[PXSYS_TYPOGRAPHY_CAPTION] = 12;
+}
+
+uint16_t pxsys_theme_typography_px(const pxsys_theme_snapshot_t* snapshot,
+                                   pxsys_typography_role_t role) {
+    if (pxsys_theme_snapshot_validate(snapshot) != PXSYS_STATUS_OK ||
+        role >= PXSYS_TYPOGRAPHY_ROLE_COUNT)
+        return 0;
+    return snapshot->typography_px[role];
 }
 
 pxsys_status_t pxsys_theme_snapshot_init_custom(pxsys_theme_snapshot_t* snapshot,

@@ -35,16 +35,9 @@ static void changed(void* context, const pxsys_theme_snapshot_t* snapshot) {
 
 static pxsys_theme_snapshot_t theme(pxsys_color_scheme_t scheme) {
     pxsys_theme_snapshot_t value = {0};
-    value.struct_size = sizeof(value);
-    value.configured_mode = PXSYS_THEME_MODE_SYSTEM;
-    value.effective_scheme = scheme;
-    value.contrast = PXSYS_CONTRAST_NORMAL;
+    pxsys_theme_snapshot_init(&value, scheme);
     value.colors[PXSYS_COLOR_BACKGROUND] =
         scheme == PXSYS_COLOR_SCHEME_DARK ? UINT32_C(0xff101010) : UINT32_C(0xfffafafa);
-    value.base_font_px = 16;
-    value.base_spacing_px = 4;
-    value.base_radius_px = 4;
-    value.motion_scale_per_mille = 1000;
     return value;
 }
 
@@ -67,6 +60,8 @@ int main(void) {
     assert(pxsys_theme_service_subscribe(service, &observer, changed) == PXSYS_STATUS_OK);
     assert(observer.calls == 1 && observer.generation == 1 &&
            observer.scheme == PXSYS_COLOR_SCHEME_LIGHT);
+    assert(pxsys_theme_typography_px(&initial, PXSYS_TYPOGRAPHY_DISPLAY) == 28);
+    assert(pxsys_theme_typography_px(&initial, PXSYS_TYPOGRAPHY_CAPTION) == 12);
     assert(pxsys_theme_service_update(service, &dark) == PXSYS_STATUS_OK);
     assert(observer.calls == 2 && observer.generation == 2 &&
            observer.scheme == PXSYS_COLOR_SCHEME_DARK);

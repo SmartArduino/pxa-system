@@ -13,6 +13,8 @@ set(PXSYS_CORE_SOURCES
     "${PXSYS_ROOT}/system/core/src/event_broker.c"
     "${PXSYS_ROOT}/system/core/src/intent.c"
     "${PXSYS_ROOT}/system/core/src/intent_wire.c"
+    "${PXSYS_ROOT}/system/core/src/locale.c"
+    "${PXSYS_ROOT}/system/core/src/resources.c"
     "${PXSYS_ROOT}/system/core/src/task_manager.c"
     "${PXSYS_ROOT}/system/core/src/role_host.c"
     "${PXSYS_ROOT}/system/core/src/role_registry.c"

@@ -45,6 +45,18 @@ typedef enum {
     PXSYS_COLOR_TOKEN_COUNT,
 } pxsys_color_token_t;
 
+/* Semantic text roles are backend-neutral. A renderer or product font
+ * provider maps these requested pixel sizes to concrete font faces. */
+typedef enum {
+    PXSYS_TYPOGRAPHY_DISPLAY = 0,
+    PXSYS_TYPOGRAPHY_HEADLINE,
+    PXSYS_TYPOGRAPHY_TITLE,
+    PXSYS_TYPOGRAPHY_BODY,
+    PXSYS_TYPOGRAPHY_LABEL,
+    PXSYS_TYPOGRAPHY_CAPTION,
+    PXSYS_TYPOGRAPHY_ROLE_COUNT,
+} pxsys_typography_role_t;
+
 typedef struct {
     uint32_t struct_size;
     pxsys_theme_mode_t configured_mode;
@@ -60,6 +72,8 @@ typedef struct {
     /* Stable external theme identity. Empty for built-in themes. */
     uint16_t theme_id_size;
     char theme_id[PXSYS_THEME_ID_MAX_BYTES + 1u];
+    /* Requested rendered size for each semantic typography role. */
+    uint16_t typography_px[PXSYS_TYPOGRAPHY_ROLE_COUNT];
 } pxsys_theme_snapshot_t;
 
 typedef void (*pxsys_theme_changed_fn)(void* context, const pxsys_theme_snapshot_t* snapshot);
@@ -76,6 +90,10 @@ void pxsys_theme_snapshot_init(pxsys_theme_snapshot_t* snapshot, pxsys_color_sch
 pxsys_status_t pxsys_theme_snapshot_init_custom(pxsys_theme_snapshot_t* snapshot,
                                                 pxsys_string_t theme_id,
                                                 pxsys_color_scheme_t base_scheme);
+pxsys_status_t pxsys_theme_snapshot_validate(
+    const pxsys_theme_snapshot_t* snapshot);
+uint16_t pxsys_theme_typography_px(const pxsys_theme_snapshot_t* snapshot,
+                                   pxsys_typography_role_t role);
 void pxsys_theme_service_config_init(pxsys_theme_service_config_t* config);
 pxsys_status_t pxsys_theme_service_create(const pxsys_theme_service_config_t* config,
                                           const pxsys_theme_snapshot_t* initial,

@@ -32,9 +32,7 @@ static int renderer_valid(const pxsys_lvgl_renderer_t* renderer) {
 }
 
 static int theme_valid(const pxsys_theme_snapshot_t* theme) {
-    return theme != NULL && theme->struct_size >= sizeof(*theme) &&
-           theme->effective_scheme <= PXSYS_COLOR_SCHEME_DARK &&
-           theme->contrast <= PXSYS_CONTRAST_HIGH;
+    return pxsys_theme_snapshot_validate(theme) == PXSYS_STATUS_OK;
 }
 
 static surface_entry_t* resolve(const pxsys_lvgl_renderer_t* renderer,

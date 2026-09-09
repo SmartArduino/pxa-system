@@ -19,15 +19,7 @@ static int host_valid(const pxsys_renderer_host_t* host) {
 }
 
 static int theme_valid(const pxsys_theme_snapshot_t* theme) {
-    return theme != NULL && theme->struct_size >= sizeof(*theme) &&
-           theme->configured_mode <= PXSYS_THEME_MODE_CUSTOM &&
-           theme->effective_scheme <= PXSYS_COLOR_SCHEME_DARK &&
-           theme->contrast <= PXSYS_CONTRAST_HIGH && theme->base_font_px != 0 &&
-           theme->base_spacing_px != 0 && theme->motion_scale_per_mille <= 1000 &&
-           theme->theme_id_size <= PXSYS_THEME_ID_MAX_BYTES &&
-           theme->theme_id[theme->theme_id_size] == '\0' &&
-           (theme->configured_mode != PXSYS_THEME_MODE_CUSTOM ||
-            theme->theme_id_size != 0);
+    return pxsys_theme_snapshot_validate(theme) == PXSYS_STATUS_OK;
 }
 
 static int provider_valid(const pxsys_renderer_host_t* host,

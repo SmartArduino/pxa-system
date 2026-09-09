@@ -15,6 +15,8 @@ struct pxsys_standard_system {
     pxsys_role_registry_t* roles;
     pxsys_role_host_t* role_host;
     pxsys_theme_service_t* theme;
+    pxsys_locale_service_t* locale;
+    pxsys_resource_service_t* resources;
     pxsys_display_service_t* display;
     pxsys_system_status_service_t* status;
     pxsys_toast_service_t* toasts;
@@ -68,9 +70,15 @@ void pxsys_standard_system_config_init(pxsys_standard_system_config_t* config) {
     config->max_service_providers = 32;
     config->max_event_subscriptions = 64;
     config->max_theme_observers = 16;
+    config->max_locale_observers = 16;
+    config->max_resource_catalogs = 32;
+    config->max_resource_key_bytes = 95;
+    config->max_resource_value_bytes = 1024;
     config->max_intent_wire_bytes = 4096;
     config->max_renderer_id_bytes = 64;
     pxsys_theme_snapshot_init(&config->initial_theme, PXSYS_COLOR_SCHEME_LIGHT);
+    (void)pxsys_locale_snapshot_init(
+        &config->initial_locale, pxsys_string_from_cstr("en-US"));
     pxsys_display_profile_init(&config->initial_display, 320, 240);
     pxsys_system_status_snapshot_init(&config->initial_system_status);
     pxsys_window_snapshot_init(&config->initial_window);
@@ -88,9 +96,15 @@ static int config_valid(const pxsys_standard_system_config_t* config) {
            config->max_toast_observers != 0 && config->max_toast_message_bytes != 0 &&
            config->max_window_observers != 0 &&
            config->max_service_providers != 0 && config->max_theme_observers != 0 &&
+           config->max_locale_observers != 0 &&
+           config->max_resource_catalogs != 0 &&
+           config->max_resource_key_bytes != 0 &&
+           config->max_resource_value_bytes != 0 &&
            config->max_event_subscriptions != 0 && config->max_intent_wire_bytes != 0 &&
            config->max_renderer_id_bytes != 0 && config->max_renderer_id_bytes != SIZE_MAX &&
            pxsys_display_profile_validate(&config->initial_display) == PXSYS_STATUS_OK &&
+           pxsys_locale_snapshot_validate(&config->initial_locale) ==
+               PXSYS_STATUS_OK &&
            config->allocator.struct_size >= sizeof(config->allocator) &&
            config->allocator.allocate != NULL && config->allocator.release != NULL;
 }
@@ -123,6 +137,10 @@ static void destroy_partial(pxsys_standard_system_t* system) {
         (void)pxsys_renderer_host_destroy(system->renderer);
     if (system->theme != NULL)
         (void)pxsys_theme_service_destroy(system->theme);
+    if (system->resources != NULL)
+        (void)pxsys_resource_service_destroy(system->resources);
+    if (system->locale != NULL)
+        (void)pxsys_locale_service_destroy(system->locale);
     if (system->display != NULL)
         (void)pxsys_display_service_destroy(system->display);
     if (system->status != NULL)
@@ -150,6 +168,8 @@ pxsys_status_t pxsys_standard_system_create(const pxsys_standard_system_config_t
     pxsys_role_registry_config_t roles;
     pxsys_role_host_config_t role_host;
     pxsys_theme_service_config_t theme;
+    pxsys_locale_service_config_t locale;
+    pxsys_resource_service_config_t resources;
     pxsys_display_service_config_t display;
     pxsys_system_status_service_config_t system_status;
     pxsys_toast_service_config_t toasts;
@@ -245,6 +265,22 @@ pxsys_status_t pxsys_standard_system_create(const pxsys_standard_system_config_t
         PXSYS_STATUS_OK) {
         goto failed;
     }
+    pxsys_locale_service_config_init(&locale);
+    locale.max_observers = config->max_locale_observers;
+    locale.allocator = config->allocator;
+    if ((status = pxsys_locale_service_create(
+             &locale, &config->initial_locale, &system->locale)) !=
+        PXSYS_STATUS_OK)
+        goto failed;
+    pxsys_resource_service_config_init(&resources);
+    resources.max_catalogs = config->max_resource_catalogs;
+    resources.max_key_bytes = config->max_resource_key_bytes;
+    resources.max_value_bytes = config->max_resource_value_bytes;
+    resources.allocator = config->allocator;
+    if ((status = pxsys_resource_service_create(&resources,
+                                                &system->resources)) !=
+        PXSYS_STATUS_OK)
+        goto failed;
     pxsys_display_service_config_init(&display);
     display.max_observers = config->max_display_observers;
     display.allocator = config->allocator;
@@ -362,6 +398,8 @@ PXSYS_GETTER(pxsys_standard_system_tasks, pxsys_task_manager_t, tasks)
 PXSYS_GETTER(pxsys_standard_system_roles, pxsys_role_registry_t, roles)
 PXSYS_GETTER(pxsys_standard_system_role_host, pxsys_role_host_t, role_host)
 PXSYS_GETTER(pxsys_standard_system_theme, pxsys_theme_service_t, theme)
+PXSYS_GETTER(pxsys_standard_system_locale, pxsys_locale_service_t, locale)
+PXSYS_GETTER(pxsys_standard_system_resources, pxsys_resource_service_t, resources)
 PXSYS_GETTER(pxsys_standard_system_display, pxsys_display_service_t, display)
 PXSYS_GETTER(pxsys_standard_system_status, pxsys_system_status_service_t, status)
 PXSYS_GETTER(pxsys_standard_system_toasts, pxsys_toast_service_t, toasts)

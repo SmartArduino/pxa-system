@@ -42,6 +42,8 @@ separated from product naming and from the current ESP implementation.
   renderer backends, device providers and vendor extensions.
 - [Product integration](product-integration.md) defines the composition,
   replaceable system UI and external ESP service boundaries.
+- [Localization and typography](localization-and-typography.md) defines locale
+  fallback, overridable resource catalogs and semantic text roles.
 - [Migration plan](migration.md) maps the current `app_pages`, `page_manager`
   and PXA integration into incremental implementation milestones.
 - [Implementation status](implementation-status.md) records what exists on the

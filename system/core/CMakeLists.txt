@@ -52,6 +52,10 @@ else()
         target_link_libraries(pxsys_role_host_test PRIVATE pxsys::core)
         add_executable(pxsys_theme_test tests/theme_test.c)
         target_link_libraries(pxsys_theme_test PRIVATE pxsys::core)
+        add_executable(pxsys_locale_test tests/locale_test.c)
+        target_link_libraries(pxsys_locale_test PRIVATE pxsys::core)
+        add_executable(pxsys_resources_test tests/resources_test.c)
+        target_link_libraries(pxsys_resources_test PRIVATE pxsys::core)
         add_executable(pxsys_renderer_host_test tests/renderer_host_test.c)
         target_link_libraries(pxsys_renderer_host_test PRIVATE pxsys::core)
         add_executable(pxsys_service_registry_test tests/service_registry_test.c)
@@ -71,6 +75,7 @@ else()
                                 pxsys_api_compile_test pxsys_runtime_test pxsys_intent_test
                                 pxsys_intent_wire_test pxsys_task_manager_test
                                 pxsys_role_registry_test pxsys_role_host_test pxsys_theme_test
+                                pxsys_locale_test pxsys_resources_test
                                 pxsys_renderer_host_test
                                 pxsys_service_registry_test pxsys_event_broker_test
                                 pxsys_display_test pxsys_system_status_test pxsys_toast_test
@@ -83,6 +88,7 @@ else()
                                     pxsys_api_compile_test pxsys_runtime_test pxsys_intent_test
                                     pxsys_intent_wire_test pxsys_task_manager_test
                                     pxsys_role_registry_test pxsys_role_host_test pxsys_theme_test
+                                    pxsys_locale_test pxsys_resources_test
                                     pxsys_renderer_host_test
                                     pxsys_service_registry_test pxsys_event_broker_test
                                     pxsys_display_test pxsys_system_status_test pxsys_toast_test
@@ -101,6 +107,8 @@ else()
         add_test(NAME pxsys_role_registry_test COMMAND pxsys_role_registry_test)
         add_test(NAME pxsys_role_host_test COMMAND pxsys_role_host_test)
         add_test(NAME pxsys_theme_test COMMAND pxsys_theme_test)
+        add_test(NAME pxsys_locale_test COMMAND pxsys_locale_test)
+        add_test(NAME pxsys_resources_test COMMAND pxsys_resources_test)
         add_test(NAME pxsys_renderer_host_test COMMAND pxsys_renderer_host_test)
         add_test(NAME pxsys_service_registry_test COMMAND pxsys_service_registry_test)
         add_test(NAME pxsys_event_broker_test COMMAND pxsys_event_broker_test)
