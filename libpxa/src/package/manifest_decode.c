@@ -530,18 +530,19 @@ static pxa_status_t decode_scalar(pxa_package_manifest_t *manifest,
         status = parse_version(record->payload, &manifest->target_sdk);
         if (status != PXA_STATUS_OK) return status;
     } else if (record->tag == 9) {
-        if (record->payload.size != 8 || pxa_read_u64(record->payload.data) == 0) {
+        if (manifest->format_minor < 2 || record->payload.size != 8 ||
+            pxa_read_u64(record->payload.data) == 0) {
             return PXA_STATUS_INVALID_ARGUMENT;
         }
         manifest->release_sequence = pxa_read_u64(record->payload.data);
         manifest->has_release_sequence = 1;
     } else if (record->tag == 10) {
-        if (record->payload.size == 0) {
+        if (manifest->format_minor < 2 || record->payload.size == 0) {
             return PXA_STATUS_INVALID_ARGUMENT;
         }
         manifest->publisher_lineage = record->payload;
     } else if (record->tag == 11) {
-        if (record->payload.size == 0 ||
+        if (manifest->format_minor < 5 || record->payload.size == 0 ||
             record->payload.size > PXA_PACKAGE_MAX_PUBLISHER_SPKI_BYTES) {
             return PXA_STATUS_INVALID_ARGUMENT;
         }
@@ -659,7 +660,8 @@ pxa_status_t pxa_manifest_decode_finish(
     }
     manifest = parser->manifest;
     if ((singleton_seen & UINT32_C(0x018e)) != UINT32_C(0x018e) ||
-        !manifest->has_release_sequence || manifest->publisher_spki.size == 0 ||
+        (manifest->format_minor >= 2 && !manifest->has_release_sequence) ||
+        (manifest->format_minor >= 5 && manifest->publisher_spki.size == 0) ||
         manifest->component_count == 0 || manifest->file_count == 0 ||
         manifest->min_sdk.major != manifest->target_sdk.major ||
         version_less(manifest->target_sdk, manifest->min_sdk)) {
