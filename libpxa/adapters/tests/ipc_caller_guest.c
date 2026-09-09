@@ -45,7 +45,6 @@ static int payload_is_ok_echo(const uint8_t *payload, uint32_t length) {
     return 1;
 }
 
-uint32_t pxa_app_api_version(void) { return PXA_CORE_VERSION; }
 
 int32_t pxa_app_start(const uint8_t *config, uint32_t config_length) {
     uint8_t payload[128];

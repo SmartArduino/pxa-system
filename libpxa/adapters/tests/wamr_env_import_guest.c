@@ -3,7 +3,6 @@
 __attribute__((import_module("env"), import_name("puts")))
 int env_puts(const char *text);
 
-uint32_t pxa_app_api_version(void) { return PXA_CORE_VERSION; }
 
 int32_t pxa_app_start(const uint8_t *config, uint32_t config_length) {
     (void)config;

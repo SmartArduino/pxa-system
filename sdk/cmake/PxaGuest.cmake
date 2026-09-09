@@ -79,7 +79,6 @@ function(pxa_add_component target)
         -mexec-model=reactor
         -Wl,--gc-sections
         "-Wl,--allow-undefined-file=${PXA_GUEST_SDK_DIR}/pxa-imports.txt"
-        -Wl,--export=pxa_app_api_version
         -Wl,--export=pxa_app_start
         -Wl,--export=pxa_app_on_event
         -Wl,--export=pxa_app_stop

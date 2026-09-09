@@ -66,7 +66,6 @@ static int present_canvas(void) {
     return PXA_STATUS_OK;
 }
 
-uint32_t pxa_app_api_version(void) { return PXA_CORE_VERSION; }
 
 int32_t pxa_app_start(const uint8_t *config, uint32_t config_length) {
     (void)config;

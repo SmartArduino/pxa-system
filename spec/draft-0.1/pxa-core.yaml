@@ -45,7 +45,6 @@
     }
   ],
   "exports": [
-    {"name": "pxa_app_api_version", "parameters": [], "result": "u32"},
     {"name": "pxa_app_start", "parameters": ["guest-read-buffer"], "result": "status-i32"},
     {"name": "pxa_app_on_event", "parameters": ["guest-read-buffer"], "result": "event-result-i32"},
     {"name": "pxa_app_stop", "parameters": ["reason-u32"], "result": "void"}

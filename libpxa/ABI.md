@@ -13,6 +13,14 @@ carry only `major` and `minor`; patch is a source and release identifier and
 does not affect negotiation. The Wasm import namespace follows the ABI major
 and is therefore `pxa.core.v0` throughout the 0.x series.
 
+Manifest 0.5 records a deliberately small Android-style model: signed
+`minSdk` is the Core runtime floor, and signed `targetSdk` is the behavior
+contract expected by the App. `compileSdk` is build provenance/SBOM metadata,
+not a runtime gate. New Host compatibility shims must branch on `targetSdk`,
+not a package's release version. The Host does not call a Guest API-version
+entry point; signed manifest requirements, service ranges and feature bits
+decide whether a capability can be activated.
+
 UI 0.3 intentionally has no source or wire compatibility with UI 0.1. Hosts
 must reject a Package whose required UI version range is unsupported; they do
 not translate old UI transactions. Optional UI facilities are selected through

@@ -40,7 +40,6 @@ static int32_t storage_set(const char *key, const char *value) {
     return pxa_control(message.data, (uint32_t)message.length);
 }
 
-uint32_t pxa_app_api_version(void) { return PXA_CORE_VERSION; }
 
 int32_t pxa_app_start(const uint8_t *config, uint32_t config_length) {
     uint8_t payload[64];

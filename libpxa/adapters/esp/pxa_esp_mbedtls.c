@@ -27,6 +27,56 @@ static int constant_time_equal(const uint8_t *left, const uint8_t *right,
     return difference == 0;
 }
 
+static int is_container_digest_domain(pxa_bytes_t domain) {
+    static const uint8_t expected[] = "PXA-PACKAGE-CONTAINER-DIGEST\0";
+    return domain.size == sizeof(expected) - 1 &&
+           domain.data != NULL &&
+           memcmp(domain.data, expected, sizeof(expected) - 1) == 0;
+}
+
+/* This intentionally parses only the outer record framing. The portable
+ * manifest parser still validates all semantic fields before installation;
+ * this adapter only needs the signed public key needed to verify a new
+ * open-distribution signer. */
+static const uint8_t *manifest_publisher_spki(
+    pxa_bytes_t manifest, pxa_bytes_t publisher_key_id, size_t *size_output) {
+    size_t offset = 12;
+    if (size_output == NULL || manifest.data == NULL || manifest.size < 12 ||
+        memcmp(manifest.data, "PXAM", 4) != 0 ||
+        pxa_read_u16(manifest.data + 4) !=
+            PXA_PACKAGE_MANIFEST_FORMAT_MAJOR ||
+        pxa_read_u16(manifest.data + 6) !=
+            PXA_PACKAGE_MANIFEST_FORMAT_MINOR ||
+        pxa_read_u32(manifest.data + 8) != manifest.size - 12) {
+        return NULL;
+    }
+    while (offset < manifest.size) {
+        uint16_t raw_tag;
+        uint16_t size;
+        const uint8_t *value;
+        uint8_t key_id[PXA_ESP_MBEDTLS_SHA256_BYTES];
+        if (manifest.size - offset < 4) return NULL;
+        raw_tag = pxa_read_u16(manifest.data + offset);
+        size = pxa_read_u16(manifest.data + offset + 2);
+        offset += 4;
+        if (size > manifest.size - offset) return NULL;
+        value = manifest.data + offset;
+        offset += size;
+        if (raw_tag != 11 || size == 0 ||
+            size > PXA_PACKAGE_MAX_PUBLISHER_SPKI_BYTES) {
+            continue;
+        }
+        if (mbedtls_sha256(value, size, key_id, 0) != 0 ||
+            !constant_time_equal(key_id, publisher_key_id.data,
+                                 PXA_ESP_MBEDTLS_SHA256_BYTES)) {
+            return NULL;
+        }
+        *size_output = size;
+        return value;
+    }
+    return NULL;
+}
+
 static pxa_status_t verify_key(const uint8_t *spki, size_t spki_size,
                                pxa_bytes_t domain, pxa_bytes_t manifest,
                                pxa_bytes_t signature) {
@@ -146,8 +196,10 @@ pxa_status_t pxa_esp_mbedtls_p256_verify(void *context,
                                          pxa_bytes_t domain,
                                          pxa_bytes_t manifest,
                                          pxa_bytes_t signature) {
-    const pxa_esp_mbedtls_trust_t *trust;
+    pxa_esp_mbedtls_trust_t *trust;
     const pxa_esp_mbedtls_publisher_key_t *key = NULL;
+    const uint8_t *open_distribution_spki = NULL;
+    size_t open_distribution_spki_size = 0;
     size_t index;
     if (context == NULL || publisher_key_id.data == NULL ||
         publisher_key_id.size != PXA_ESP_MBEDTLS_SHA256_BYTES ||
@@ -155,7 +207,7 @@ pxa_status_t pxa_esp_mbedtls_p256_verify(void *context,
         manifest.data == NULL || manifest.size == 0) {
         return PXA_STATUS_INVALID_ARGUMENT;
     }
-    trust = (const pxa_esp_mbedtls_trust_t *)context;
+    trust = (pxa_esp_mbedtls_trust_t *)context;
     for (index = 0; index < trust->key_count; ++index) {
         uint8_t computed_key_id[PXA_ESP_MBEDTLS_SHA256_BYTES];
         if (trust->keys[index].spki == NULL) continue;
@@ -171,8 +223,34 @@ pxa_status_t pxa_esp_mbedtls_p256_verify(void *context,
         }
     }
     if (key == NULL) {
+        open_distribution_spki = manifest_publisher_spki(
+            manifest, publisher_key_id, &open_distribution_spki_size);
+        if (open_distribution_spki != NULL) {
+            trust->open_distribution_spki = open_distribution_spki;
+            trust->open_distribution_spki_size = open_distribution_spki_size;
+            memcpy(trust->open_distribution_key_id, publisher_key_id.data,
+                   PXA_ESP_MBEDTLS_SHA256_BYTES);
+            trust->has_open_distribution_key = 1;
+        /* The cached pointer is valid only between the package-signature and
+         * container-signature checks for one installer operation. Never use
+         * it to verify a later package manifest. */
+        } else if (is_container_digest_domain(domain) &&
+                   trust->has_open_distribution_key &&
+                   trust->open_distribution_spki != NULL &&
+                   constant_time_equal(trust->open_distribution_key_id,
+                                       publisher_key_id.data,
+                                       PXA_ESP_MBEDTLS_SHA256_BYTES)) {
+            open_distribution_spki = trust->open_distribution_spki;
+            open_distribution_spki_size = trust->open_distribution_spki_size;
+        }
+    }
+    if (key == NULL && open_distribution_spki == NULL) {
         ESP_LOGW(PXA_ESP_MBEDTLS_TAG, "Publisher key lookup failed");
         return PXA_STATUS_DENIED;
+    }
+    if (open_distribution_spki != NULL) {
+        return verify_key(open_distribution_spki, open_distribution_spki_size,
+                          domain, manifest, signature);
     }
     return verify_key(key->spki, key->spki_size, domain, manifest, signature);
 }

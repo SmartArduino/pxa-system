@@ -28,9 +28,10 @@ extern "C" {
 #define PXA_PACKAGE_MAX_IPC_ENDPOINTS UINT16_MAX
 #define PXA_PACKAGE_MAX_LINEAGE_LINKS UINT16_C(8)
 #define PXA_PACKAGE_MAX_LINEAGE_SPKI_BYTES UINT16_C(160)
+#define PXA_PACKAGE_MAX_PUBLISHER_SPKI_BYTES UINT16_C(160)
 
 #define PXA_PACKAGE_MANIFEST_FORMAT_MAJOR UINT16_C(0)
-#define PXA_PACKAGE_MANIFEST_FORMAT_MINOR UINT16_C(2)
+#define PXA_PACKAGE_MANIFEST_FORMAT_MINOR UINT16_C(5)
 #define PXA_PACKAGE_MANIFEST_FORMAT_PATCH UINT16_C(0)
 #define PXA_PACKAGE_SIGNATURE_FORMAT_MAJOR UINT16_C(0)
 #define PXA_PACKAGE_SIGNATURE_FORMAT_MINOR UINT16_C(1)
@@ -140,8 +141,11 @@ typedef struct pxa_package_manifest {
     uint64_t release_sequence;
     uint8_t has_release_sequence;
     pxa_bytes_t publisher_lineage;
-    pxa_package_version_t core_min;
-    pxa_package_version_t core_max;
+    pxa_bytes_t publisher_spki;
+    /* Manifest 0.5 compatibility declarations. min_sdk decides whether a
+     * Host can run the package; target_sdk selects behavior policy. */
+    pxa_package_version_t min_sdk;
+    pxa_package_version_t target_sdk;
     pxa_package_component_t *components;
     pxa_package_artifact_t *artifacts;
     pxa_package_service_requirement_t *services;

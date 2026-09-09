@@ -82,8 +82,8 @@ LZ4 source tree is preferred, pass
 - `wamr/` — Component engine over WAMR (`pxa_wamr_engine`): loads one
   Artifact per Component through a host `read_artifact` callback, binds the
   `pxa.core.v0` natives to `pxa_runtime_control` / `pxa_runtime_io`, calls the
-  guest exports `pxa_app_api_version` / `pxa_app_start` / `pxa_app_on_event` /
-  `pxa_app_stop`, and delivers events through transient `module_malloc`
+  guest exports `pxa_app_start` / `pxa_app_on_event` / `pxa_app_stop`, and
+  delivers events through transient `module_malloc`
   buffers. The optional `prepare_start` callback lets the host bind
   per-component services (e.g. Window) before `pxa_app_start`, mirroring the
   former C++ host's start ordering. Optional guest-call deadline aborts overdue

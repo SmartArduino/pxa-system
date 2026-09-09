@@ -263,6 +263,15 @@ def parse_wasi(value):
     return feature_bits
 
 
+def parse_sdk(metadata, name, default):
+    value = metadata.get(name, default)
+    require(isinstance(value, list) and len(value) == 2 and
+            all(isinstance(item, int) and not isinstance(item, bool) and
+                0 <= item <= 0xFFFF for item in value),
+            f"{name} must be [major, minor]")
+    return tuple(value)
+
+
 def main(argv):
     aot_only = False
     if len(argv) == 6 and argv[-1] == "--aot-only":
@@ -291,6 +300,12 @@ def main(argv):
             "release_sequence must be a positive u64")
     require(icon is None or (isinstance(icon, str) and PACKAGE_PATH.fullmatch(icon)),
             "invalid icon path")
+    min_sdk = parse_sdk(metadata, "min_sdk", [0, 1])
+    target_sdk = parse_sdk(metadata, "target_sdk", list(min_sdk))
+    compile_sdk = parse_sdk(metadata, "compile_sdk", list(target_sdk))
+    require(min_sdk[0] == target_sdk[0] == compile_sdk[0] and
+            min_sdk <= target_sdk <= compile_sdk,
+            "SDK versions must use one major and min <= target <= compile")
 
     public_der = openssl(["pkey", "-in", private_key_path, "-pubout", "-outform", "DER"])
     validate_p256_public_key(public_der)
@@ -306,7 +321,7 @@ def main(argv):
             top.append((tag, metadata[field].encode("utf-8")))
     if icon is not None:
         top.append((6, icon.encode("ascii")))
-    top.extend([(7, struct.pack("<HH", 0, 1)), (8, struct.pack("<HH", 0, 1))])
+    top.extend([(7, struct.pack("<HH", *min_sdk)), (8, struct.pack("<HH", *target_sdk))])
     top.append((9, struct.pack("<Q", release_sequence)))
     lineage_path = metadata.get("publisher_lineage")
     if lineage_path is not None:
@@ -321,6 +336,7 @@ def main(argv):
             raise PackageError(f"unable to read publisher_lineage: {error}") from error
         require(lineage.startswith(b"PXKL"), "invalid publisher_lineage")
         top.append((10, lineage))
+    top.append((11, public_der))
 
     permissions = metadata.get("permissions", [])
     require(isinstance(permissions, list) and len(permissions) <= 64,
@@ -406,7 +422,7 @@ def main(argv):
     top.extend((19, entry[2]) for entry in ipc_entries)
 
     body = records(top)
-    manifest = b"PXAM" + struct.pack("<HHI", 0, 2, len(body)) + body
+    manifest = b"PXAM" + struct.pack("<HHI", 0, 5, len(body)) + body
     require(len(manifest) <= 16 * 1024, "manifest exceeds Draft limit")
     signature_der = openssl(["dgst", "-sha256", "-sign", private_key_path],
                             b"PXA-PACKAGE-MANIFEST\0" + manifest)

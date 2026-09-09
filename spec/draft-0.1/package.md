@@ -21,7 +21,8 @@ must preserve and compare the exact signed path bytes.
 Installation proceeds in this order:
 
 1. bound and parse `manifest.pxm` without following package paths;
-2. resolve the publisher key from the device trust store;
+2. resolve the publisher key from the device trust store or, for a Manifest
+   0.3 open-distribution package, validate its embedded `publisher_spki`;
 3. verify `signature.pxs` over the exact manifest bytes;
 4. enumerate payload entries and reject missing or unlisted files;
 5. stream each file through SHA-256 while enforcing its declared size;
@@ -39,7 +40,7 @@ No Artifact is loaded before all these checks succeed.
 The manifest header is:
 
 ```text
-magic:"PXAM" | major:u16=0 | minor:u16=1 | body_len:u32
+magic:"PXAM" | major:u16=0 | minor:u16=5 | body_len:u32
 ```
 
 The body is a Core-style record list (`tag:u16 | length:u16 | payload`). Records
@@ -49,8 +50,41 @@ setting the optional bit on a known field is non-canonical. Unknown required
 records reject the manifest; unknown optional records may be skipped but still
 participate in the signature.
 
-Required top-level records identify the publisher key, App ID, version and Core
-version range. Repeated Component, file, permission and IPC endpoint records describe the
+### Manifest 0.5 trust and compatibility profile
+
+Manifest 0.5 is intentionally incompatible with the earlier experimental
+Manifest 0.x profiles. It has one coherent trust and SDK model:
+
+```text
+tag 7  | length 4       | min_sdk:major-u16-minor-u16
+tag 8  | length 4       | target_sdk:major-u16-minor-u16
+tag 9  | length 8       | release_sequence:u64
+tag 10 | length N       | publisher_lineage:PXKL (optional)
+tag 11 | length 1..160  | publisher_spki:canonical DER SubjectPublicKeyInfo
+```
+
+`SHA-256(publisher_spki)` must equal `publisher_key_id`. Hosts validate that
+the key is canonical ECDSA P-256 before verifying both signatures. This makes
+an ordinary PXA self-describing for first installation; it does not add the
+key to a system trust store. System packages, system roles and signed catalog
+metadata retain their product-specific trust roots. For an update, the host
+still requires the same managed lineage identity and a strictly increasing
+release sequence.
+
+`minSdk` is the only Core installation/runtime floor: a Host must have the
+same Core major and a minor version no lower than it. `targetSdk` is not an
+installation ceiling; it selects behavior-compatibility rules as Hosts evolve.
+The packager records `compileSdk` in signed-build provenance/SBOM rather than
+the package manifest. A package must use one Core major and satisfy
+`minSdk <= targetSdk <= compileSdk`. Service requirement ranges and feature
+bits remain the authoritative per-service capability checks.
+
+An AOT artifact has a separate, exact ABI contract: `target`, `engine` and
+`engine_abi` must match the Host. A package should include a WASM artifact so
+an AOT ABI change falls back safely instead of making the App unavailable.
+
+Required top-level records identify the publisher key, App ID, version and SDK
+floor. Repeated Component, file, permission and IPC endpoint records describe the
 complete package. Integers are little-endian. IDs, paths and compatibility
 identifiers use restricted ASCII; display metadata is strict UTF-8 without NUL
 or control characters.

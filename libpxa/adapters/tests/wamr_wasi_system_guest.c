@@ -11,7 +11,6 @@ __attribute__((import_module("wasi_snapshot_preview1"),
                import_name("random_get"))) uint32_t
 wasi_random_get(uint8_t *buffer, uint32_t length);
 
-uint32_t pxa_app_api_version(void) { return PXA_CORE_VERSION; }
 
 int32_t pxa_app_start(const uint8_t *config, uint32_t config_length) {
     uint8_t entropy[16];

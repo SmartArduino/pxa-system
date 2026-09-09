@@ -13,7 +13,6 @@ clang --target=wasm32-unknown-unknown -O2 -fno-builtin -nostdlib \
   -I"$project_dir/apps/pxa/common" \
   -Wl,--no-entry \
   -Wl,--allow-undefined-file="$project_dir/pxa-system/sdk/guest-c/pxa-imports.txt" \
-  -Wl,--export=pxa_app_api_version -Wl,--export=pxa_app_start \
   -Wl,--export=pxa_app_on_event -Wl,--export=pxa_app_stop \
   -DPXA_ARCADE_STANDALONE_TEST \
   "$project_dir/apps/pxa/arcade/modules/tetris.c" \
@@ -26,7 +25,6 @@ clang --target=wasm32-unknown-unknown -O2 -fno-builtin -nostdlib \
   -I"$project_dir/apps/pxa/common" \
   -Wl,--no-entry \
   -Wl,--allow-undefined-file="$project_dir/pxa-system/sdk/guest-c/pxa-imports.txt" \
-  -Wl,--export=pxa_app_api_version -Wl,--export=pxa_app_start \
   -Wl,--export=pxa_app_on_event -Wl,--export=pxa_app_stop \
   "$project_dir/apps/pxa/weather/main.c" \
   -o "$work_dir/weather-import-regression.wasm"

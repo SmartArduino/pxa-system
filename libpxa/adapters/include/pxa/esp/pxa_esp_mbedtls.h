@@ -26,6 +26,13 @@ typedef struct {
     uint32_t struct_size;
     const pxa_esp_mbedtls_publisher_key_t *keys;
     size_t key_count;
+    /* Learned from a Manifest 0.5 publisher-spki field after its SHA-256 has
+     * been matched to publisher_key_id. It is transient package input, not a
+     * product trust-store entry. */
+    const uint8_t *open_distribution_spki;
+    size_t open_distribution_spki_size;
+    uint8_t open_distribution_key_id[PXA_ESP_MBEDTLS_SHA256_BYTES];
+    uint8_t has_open_distribution_key;
 } pxa_esp_mbedtls_trust_t;
 
 /* SHA-256 of `data`. `output` must hold at least

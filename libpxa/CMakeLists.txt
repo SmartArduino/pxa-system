@@ -297,7 +297,6 @@ if(PXA_BUILD_ADAPTERS AND PXA_WAMR_SOURCE_DIR)
                             -ffreestanding -Wall -Wextra -Werror
                             -I${PXA_GUEST_SDK_INCLUDE}
                             -Wl,--no-entry
-                            -Wl,--export=pxa_app_api_version
                             -Wl,--export=pxa_app_start
                             -Wl,--export=pxa_app_on_event
                             -Wl,--export=pxa_app_stop
@@ -334,7 +333,6 @@ if(PXA_BUILD_ADAPTERS AND PXA_WAMR_SOURCE_DIR)
                             -O2 -mexec-model=reactor
                             -I${PXA_GUEST_SDK_INCLUDE}
                             -I${CMAKE_CURRENT_SOURCE_DIR}/../components/pxa/tests/cmake-wasi-app/logic/include
-                            -Wl,--export=pxa_app_api_version
                             -Wl,--export=pxa_app_start
                             -Wl,--export=pxa_app_on_event
                             -Wl,--export=pxa_app_stop
@@ -415,7 +413,6 @@ if(PXA_BUILD_ADAPTERS AND PXA_WAMR_SOURCE_DIR AND
                             -ffreestanding -Wall -Wextra -Werror
                             -I${PXA_GUEST_SDK_INCLUDE}
                             -Wl,--no-entry
-                            -Wl,--export=pxa_app_api_version
                             -Wl,--export=pxa_app_start
                             -Wl,--export=pxa_app_on_event
                             -Wl,--export=pxa_app_stop

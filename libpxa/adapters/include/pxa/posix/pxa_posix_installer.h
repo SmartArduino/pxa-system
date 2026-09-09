@@ -68,6 +68,10 @@ typedef struct {
      * every adapter (pxa_esp_mbedtls_trust_t, ...). NULL selects the
      * OpenSSL reference verifier. */
     pxa_package_signature_verify_fn verify;
+    /* Optional full adapter context. When omitted, the OpenSSL-compatible
+     * trust prefix above is used. ESP supplies this for per-install package
+     * state such as Manifest 0.5's transient publisher SPKI. */
+    void *verify_context;
 } pxa_posix_installer_config_t;
 
 typedef struct pxa_posix_installer pxa_posix_installer_t;

@@ -524,23 +524,30 @@ static pxa_status_t decode_scalar(pxa_package_manifest_t *manifest,
         }
         manifest->icon_path = record->payload;
     } else if (record->tag == 7) {
-        status = parse_version(record->payload, &manifest->core_min);
+        status = parse_version(record->payload, &manifest->min_sdk);
         if (status != PXA_STATUS_OK) return status;
     } else if (record->tag == 8) {
-        status = parse_version(record->payload, &manifest->core_max);
+        status = parse_version(record->payload, &manifest->target_sdk);
         if (status != PXA_STATUS_OK) return status;
     } else if (record->tag == 9) {
-        if (manifest->format_minor < 2 || record->payload.size != 8 ||
-            pxa_read_u64(record->payload.data) == 0) {
+        if (record->payload.size != 8 || pxa_read_u64(record->payload.data) == 0) {
             return PXA_STATUS_INVALID_ARGUMENT;
         }
         manifest->release_sequence = pxa_read_u64(record->payload.data);
         manifest->has_release_sequence = 1;
-    } else {
-        if (manifest->format_minor < 2 || record->payload.size == 0) {
+    } else if (record->tag == 10) {
+        if (record->payload.size == 0) {
             return PXA_STATUS_INVALID_ARGUMENT;
         }
         manifest->publisher_lineage = record->payload;
+    } else if (record->tag == 11) {
+        if (record->payload.size == 0 ||
+            record->payload.size > PXA_PACKAGE_MAX_PUBLISHER_SPKI_BYTES) {
+            return PXA_STATUS_INVALID_ARGUMENT;
+        }
+        manifest->publisher_spki = record->payload;
+    } else {
+        return PXA_STATUS_UNSUPPORTED;
     }
     return PXA_STATUS_OK;
 }
@@ -556,11 +563,11 @@ pxa_status_t pxa_manifest_decode_record(
     }
     manifest = parser->manifest;
     if (record->optional &&
-        ((record->tag >= 1 && record->tag <= 10) ||
+        ((record->tag >= 1 && record->tag <= 11) ||
          (record->tag >= 16 && record->tag <= 19))) {
         return PXA_STATUS_INVALID_ARGUMENT;
     }
-    if (record->tag <= 10) {
+    if (record->tag <= 11) {
         uint32_t bit = UINT32_C(1) << record->tag;
         if ((*singleton_seen & bit) != 0) {
             return PXA_STATUS_INVALID_ARGUMENT;
@@ -652,10 +659,10 @@ pxa_status_t pxa_manifest_decode_finish(
     }
     manifest = parser->manifest;
     if ((singleton_seen & UINT32_C(0x018e)) != UINT32_C(0x018e) ||
-        (manifest->format_minor >= 2 && !manifest->has_release_sequence) ||
+        !manifest->has_release_sequence || manifest->publisher_spki.size == 0 ||
         manifest->component_count == 0 || manifest->file_count == 0 ||
-        manifest->core_min.major != manifest->core_max.major ||
-        version_less(manifest->core_max, manifest->core_min)) {
+        manifest->min_sdk.major != manifest->target_sdk.major ||
+        version_less(manifest->target_sdk, manifest->min_sdk)) {
         return PXA_STATUS_INVALID_ARGUMENT;
     }
     status = validate_manifest_links(manifest);

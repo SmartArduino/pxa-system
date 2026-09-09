@@ -53,8 +53,8 @@ pxa_status_t pxa_package_requirements_validate(
         (host->services == NULL && host->service_count != 0)) {
         return PXA_STATUS_INVALID_ARGUMENT;
     }
-    if (!version_in_range(host->core_version, manifest->core_min,
-                          manifest->core_max)) {
+    if (host->core_version.major != manifest->min_sdk.major ||
+        host->core_version.minor < manifest->min_sdk.minor) {
         return PXA_STATUS_UNSUPPORTED;
     }
     for (capability_index = 0; capability_index < host->service_count;

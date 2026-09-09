@@ -5,7 +5,6 @@ module `pxa.core.v0`: `pxa_control` for one complete control message and
 `pxa_io` for bounded Handle reads and writes. Apps export:
 
 ```c
-uint32_t pxa_app_api_version(void);
 int32_t pxa_app_start(const uint8_t* config, uint32_t length);
 int32_t pxa_app_on_event(const uint8_t* event, uint32_t length);
 void pxa_app_stop(uint32_t reason);
@@ -13,6 +12,9 @@ void pxa_app_stop(uint32_t reason);
 
 Callbacks are serialized. Imports are legal during start and event callbacks,
 but forbidden during stop; the Host revokes Component resources before stop.
+The signed manifest's `minSdk` and Service requirements, rather than a Guest
+version export, define runtime compatibility. `compileSdk` is recorded in the
+build provenance sidecar.
 
 `pxa.h` contains the Core envelope, record helpers, Window fullscreen helper
 and periodic Clock helper. `pxa_ui.h` builds atomic UI 0.3 tree transactions.
@@ -73,6 +75,13 @@ the installed ABI manifest. `permissions` declares signed policy declarations;
 `audio`, `permission`, `secrets`, or `device`. The packager maps names to stable ABI IDs;
 Core is included for every Component automatically. Legacy source metadata
 describes one `main` UI Component from `main.c`. A
+
+Compatibility declarations in `package.json` are `min_sdk`, `target_sdk` and
+`compile_sdk`, each encoded as `[major, minor]`. The first two are signed into
+Manifest 0.5; `compile_sdk` is emitted only in the provenance/SBOM sidecar.
+Use `min_sdk` for required Core APIs, `target_sdk` for behavior-policy
+selection, and Service ranges/features for individual capabilities.
+
 `components` array may instead describe multiple Components with stable `id`,
 `kind`, `source`, and optional Component-local `services` fields. UI Components
 receive Window, UI and Clock; service and job Components do not. IPC callers

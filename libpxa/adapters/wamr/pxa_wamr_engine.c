@@ -985,7 +985,6 @@ static pxa_status_t engine_instantiate(void *context, pxa_bytes_t package_root,
     char path[PXA_WAMR_MAX_MODULE_PATH + 256];
     pxa_wamr_entry_t *slot = NULL;
     char error[192] = {0};
-    uint32_t api_version[1] = {0};
     pxa_status_t status;
     uint64_t wasi_features = 0;
     int wasi_declared;
@@ -1073,18 +1072,6 @@ static pxa_status_t engine_instantiate(void *context, pxa_bytes_t package_root,
         return discard_entry(engine, slot, PXA_STATUS_RESOURCE_LIMIT);
     }
     wasm_runtime_set_custom_data(slot->module_instance, slot);
-    {
-        wasm_function_inst_t version = wasm_runtime_lookup_function(
-            slot->module_instance, "pxa_app_api_version");
-        if (!has_signature(slot->module_instance, version, 0, 1) ||
-            !call(engine, slot, version, 0, api_version) ||
-            api_version[0] != PXA_CORE_VERSION) {
-            log_runtime_failure(
-                "validate-api-version", path,
-                wasm_runtime_get_exception(slot->module_instance));
-            return discard_entry(engine, slot, PXA_STATUS_UNSUPPORTED);
-        }
-    }
     /* Cache the guest entry points once: avoids repeated lookups and keeps
      * behavior stable with several modules loaded. */
     slot->start_fn =

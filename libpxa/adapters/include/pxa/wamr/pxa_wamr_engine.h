@@ -17,8 +17,7 @@ extern "C" {
  *    root through the `read_artifact` callback;
  *  - binds the two `pxa.core.v0` natives `pxa_control` and `pxa_io`, which
  *    dispatch through pxa_runtime_control / pxa_runtime_io;
- *  - calls the guest exports pxa_app_api_version / pxa_app_start /
- *    pxa_app_on_event / pxa_app_stop;
+ *  - calls the guest exports pxa_app_start / pxa_app_on_event / pxa_app_stop;
  *  - optional guest-call deadline: poll pxa_wamr_engine_poll_deadlines from a
  *    host timer to abort overdue calls with wasm_runtime_terminate. Hosts that
  *    need an operator decision can take an expired deadline, then extend or

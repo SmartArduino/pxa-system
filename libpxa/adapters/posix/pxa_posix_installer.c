@@ -88,6 +88,7 @@ struct pxa_posix_installer {
     uint8_t has_faults;
     uint32_t flags;
     pxa_package_signature_verify_fn verify;
+    void *verify_context;
     uint8_t *scratch;
     size_t scratch_size;
     pxa_package_limits_t scratch_limits;
@@ -952,7 +953,7 @@ static pxa_status_t verify_manifest_signature(
     if (status != PXA_STATUS_OK) return status;
     if (lineage.link_count == 0) {
         status = pxa_package_signature_verify(
-            manifest, signature, &installer->trust, installer->verify);
+            manifest, signature, installer->verify_context, installer->verify);
         if (status == PXA_STATUS_OK && lineage_out != NULL)
             *lineage_out = lineage;
         return status;
@@ -992,7 +993,7 @@ static pxa_status_t verify_manifest_signature(
                link->new_spki.size);
         message_size += link->new_spki.size;
         if (index == 0) {
-            trust_context = &installer->trust;
+            trust_context = installer->verify_context;
         } else {
             lineage_link_trust(&lineage.links[index - 1], &embedded_key,
                                &embedded_trust);
@@ -1249,7 +1250,7 @@ static pxa_status_t verify_opened_container(
                            &embedded_key, &embedded_trust);
     }
     status = installer->verify(
-        lineage.link_count == 0 ? (void *)&installer->trust
+        lineage.link_count == 0 ? installer->verify_context
                                 : (void *)&embedded_trust,
         (pxa_bytes_t){container_signature.publisher_key_id,
                       PXA_PACKAGE_DIGEST_BYTES},
@@ -2382,6 +2383,9 @@ pxa_status_t pxa_posix_installer_init(void *workspace, size_t workspace_size,
         installer->has_faults = 1;
     }
     installer->flags = config->flags;
+    installer->verify_context = config->verify_context != NULL
+                                    ? config->verify_context
+                                    : (void *)&installer->trust;
 #ifdef ESP_PLATFORM
     /* ESP hosts supply their own verifier (mbedTLS adapter). */
     installer->verify = config->verify;

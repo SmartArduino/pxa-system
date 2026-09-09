@@ -135,7 +135,7 @@ for component in components:
     component_id = component.get("id")
     if not isinstance(component_id, str):
         raise SystemExit("component id is required")
-    artifact = component.get("artifact", "aot")
+    artifact = component.get("artifact", "both")
     if artifact not in ("aot", "wasm", "both"):
         raise SystemExit("component artifact must be aot, wasm, or both")
     if build_system == "cmake":
@@ -244,7 +244,7 @@ else
       "${app_define_args[@]}" \
       -Wl,--no-entry \
       -Wl,--allow-undefined-file="$pxa_system_dir/sdk/guest-c/pxa-imports.txt" \
-      -Wl,--export=pxa_app_api_version -Wl,--export=pxa_app_start \
+      -Wl,--export=pxa_app_start \
       -Wl,--export=pxa_app_on_event -Wl,--export=pxa_app_stop \
       -Wl,--export=__heap_base -Wl,--export=__data_end \
       "${component_sources[@]}" -o "$package_dir/artifacts/$component_id.wasm"
@@ -272,7 +272,7 @@ fi
 
 "${PYTHON:-python3}" "$script_dir/build_package_manifest.py" \
   "$app_dir/package.json" "$package_dir" "$private_key" \
-  "$manifest_target" "$engine_abi" --aot-only
+  "$manifest_target" "$engine_abi"
 
 mkdir -p "$output_dir"
 find "$output_dir" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
@@ -281,3 +281,8 @@ cp -R "$package_dir"/. "$output_dir"/
 container_output="${PXA_CONTAINER_OUTPUT:-${output_dir}.pxa}"
 "${PYTHON:-python3}" "$script_dir/build_pxa_container.py" \
   "$package_dir" "$private_key" "$container_output" --codec lz4
+
+provenance_output="${PXA_PROVENANCE_OUTPUT:-${container_output}.provenance.json}"
+"${PYTHON:-python3}" "$script_dir/build_pxa_provenance.py" \
+  "$package_dir" "$container_output" "$app_dir/package.json" \
+  "$manifest_target" "$engine_abi" "$provenance_output"
