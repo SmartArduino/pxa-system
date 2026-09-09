@@ -22,6 +22,10 @@ typedef enum {
     PXSYS_NAVIGATION_GESTURES,
 } pxsys_navigation_mode_t;
 
+typedef const lv_font_t* (*pxsys_reference_lvgl_resolve_font_fn)(
+    void* context, pxsys_typography_role_t role, uint16_t requested_px,
+    const pxsys_locale_snapshot_t* locale);
+
 #ifndef PXSYS_REFERENCE_UI_ENABLE_ANIMATIONS
 #define PXSYS_REFERENCE_UI_ENABLE_ANIMATIONS 1
 #endif
@@ -59,6 +63,11 @@ typedef struct {
     pxsys_allocator_t allocator;
     pxsys_navigation_mode_t navigation_mode;
     uint8_t animations_enabled;
+    /* Optional semantic font mapping. Missing roles fall back to text_font or
+     * title_font, preserving small product ports with only one or two fonts. */
+    const lv_font_t* fonts[PXSYS_TYPOGRAPHY_ROLE_COUNT];
+    void* font_context;
+    pxsys_reference_lvgl_resolve_font_fn resolve_font;
 } pxsys_reference_lvgl_config_t;
 
 typedef struct pxsys_reference_lvgl pxsys_reference_lvgl_t;

@@ -88,6 +88,13 @@ the current branch.
 - The Theme snapshot now supports stable namespaced custom identities and a
   fully overridden semantic palette. The effective light/dark scheme remains
   metadata for accessibility and platform chrome, not a two-theme limit.
+- Theme snapshots now also carry six backend-neutral typography roles from
+  12 px caption text through 28 px display text. The reference LVGL UI accepts
+  per-role font faces, while constrained products retain one/two-font fallback.
+- The standard composition owns a canonical BCP 47 locale service and an
+  overridable, priority-ordered resource catalog. The reference UI ships
+  English and Simplified Chinese resources under `system.ui`; simulator startup
+  and automation can change locale without restarting the system.
 - The product `app_pages` compatibility bridge now receives the complete
   semantic palette, so custom themes apply to Native pages, Toasts and the edge
   Back indicator instead of being reduced to light/dark metadata.
@@ -135,7 +142,7 @@ tests also pass under AddressSanitizer and UndefinedBehaviorSanitizer. The
 legacy page adapter passes a strict syntax check against the repository's real
 LVGL and `app_pages` headers.
 
-The consolidated top-level CMake build currently runs 30 host tests, including
+The consolidated top-level CMake build currently runs 36 host tests, including
 the backend-neutral simulator smoke test. The product SDL simulator separately
 passes `--pxa-system-self-test` against the same relocated libraries.
 

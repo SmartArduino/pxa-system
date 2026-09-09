@@ -11,6 +11,67 @@
 #define NAVIGATION_GESTURE_COMMIT_DISTANCE 32
 #define NAVIGATION_GESTURE_HOLD_MS 180u
 #define NAVIGATION_GESTURE_MOTION_SLOP 4
+#define REFERENCE_RESOURCE_NAMESPACE "system.ui"
+#define REFERENCE_TRANSLATION_SCRATCH_COUNT 12u
+#define REFERENCE_TRANSLATION_SCRATCH_BYTES 96u
+
+#define RESOURCE_ENTRY(key_value, text_value)                              \
+    {{key_value, sizeof(key_value) - 1u}, {text_value, sizeof(text_value) - 1u}}
+
+static const pxsys_resource_entry_t reference_en_resources[] = {
+    RESOURCE_ENTRY("apps.empty", "No apps installed"),
+    RESOURCE_ENTRY("recents.empty", "No recent apps"),
+    RESOURCE_ENTRY("settings.title", "Settings"),
+    RESOURCE_ENTRY("settings.wifi", "Wi-Fi"),
+    RESOURCE_ENTRY("settings.mobile", "Mobile network"),
+    RESOURCE_ENTRY("settings.appearance", "Appearance"),
+    RESOURCE_ENTRY("settings.display", "Display"),
+    RESOURCE_ENTRY("state.connected", "Connected"),
+    RESOURCE_ENTRY("state.on", "On"),
+    RESOURCE_ENTRY("state.off", "Off"),
+    RESOURCE_ENTRY("theme.light", "Light"),
+    RESOURCE_ENTRY("theme.dark", "Dark"),
+    RESOURCE_ENTRY("control.mobile", "Mobile"),
+    RESOURCE_ENTRY("control.volume", "Volume"),
+    RESOURCE_ENTRY("control.brightness", "Brightness"),
+    RESOURCE_ENTRY("control.bluetooth", "Bluetooth"),
+    RESOURCE_ENTRY("control.focus", "Focus"),
+    RESOURCE_ENTRY("control.light", "Light"),
+    RESOURCE_ENTRY("control.theme", "Theme"),
+};
+
+static const pxsys_resource_entry_t reference_zh_resources[] = {
+    RESOURCE_ENTRY("apps.empty", "没有已安装的应用"),
+    RESOURCE_ENTRY("recents.empty", "没有最近任务"),
+    RESOURCE_ENTRY("settings.title", "设置"),
+    RESOURCE_ENTRY("settings.wifi", "无线网络"),
+    RESOURCE_ENTRY("settings.mobile", "移动网络"),
+    RESOURCE_ENTRY("settings.appearance", "外观"),
+    RESOURCE_ENTRY("settings.display", "显示"),
+    RESOURCE_ENTRY("state.connected", "已连接"),
+    RESOURCE_ENTRY("state.on", "已开启"),
+    RESOURCE_ENTRY("state.off", "已关闭"),
+    RESOURCE_ENTRY("theme.light", "浅色"),
+    RESOURCE_ENTRY("theme.dark", "深色"),
+    RESOURCE_ENTRY("control.mobile", "移动网络"),
+    RESOURCE_ENTRY("control.volume", "音量"),
+    RESOURCE_ENTRY("control.brightness", "亮度"),
+    RESOURCE_ENTRY("control.bluetooth", "蓝牙"),
+    RESOURCE_ENTRY("control.focus", "勿扰"),
+    RESOURCE_ENTRY("control.light", "手电筒"),
+    RESOURCE_ENTRY("control.theme", "主题"),
+};
+
+static const pxsys_resource_catalog_t reference_catalog_en = {
+    sizeof(pxsys_resource_catalog_t),
+    {REFERENCE_RESOURCE_NAMESPACE, sizeof(REFERENCE_RESOURCE_NAMESPACE) - 1u},
+    {"en", 2}, reference_en_resources,
+    sizeof(reference_en_resources) / sizeof(reference_en_resources[0]), -100};
+static const pxsys_resource_catalog_t reference_catalog_zh = {
+    sizeof(pxsys_resource_catalog_t),
+    {REFERENCE_RESOURCE_NAMESPACE, sizeof(REFERENCE_RESOURCE_NAMESPACE) - 1u},
+    {"zh", 2}, reference_zh_resources,
+    sizeof(reference_zh_resources) / sizeof(reference_zh_resources[0]), -100};
 
 typedef enum {
     REFERENCE_PAGE_HOME = 0,
@@ -112,6 +173,9 @@ struct pxsys_reference_lvgl {
     lv_timer_t* transient_timer;
     const lv_font_t* text_font;
     const lv_font_t* title_font;
+    const lv_font_t* fonts[PXSYS_TYPOGRAPHY_ROLE_COUNT];
+    void* font_context;
+    pxsys_reference_lvgl_resolve_font_fn resolve_font;
     uint32_t features;
     size_t max_launcher_apps;
     size_t launcher_count;
@@ -139,6 +203,9 @@ struct pxsys_reference_lvgl {
     uint8_t status_subscribed;
     uint8_t toast_subscribed;
     uint8_t window_subscribed;
+    uint8_t locale_subscribed;
+    uint8_t resource_catalog_en_registered;
+    uint8_t resource_catalog_zh_registered;
     uint8_t toast_visible;
     pxsys_toast_tone_t toast_tone;
     uint8_t active_chrome;
@@ -171,6 +238,10 @@ struct pxsys_reference_lvgl {
     pxsys_theme_snapshot_t theme;
     pxsys_system_status_snapshot_t system_status;
     pxsys_window_snapshot_t window;
+    pxsys_locale_snapshot_t locale;
+    char translation_scratch[REFERENCE_TRANSLATION_SCRATCH_COUNT]
+                            [REFERENCE_TRANSLATION_SCRATCH_BYTES];
+    size_t translation_scratch_cursor;
 };
 
 static void rebuild(pxsys_reference_lvgl_t* ui);
@@ -192,6 +263,46 @@ static int ui_valid(const pxsys_reference_lvgl_t* ui) {
 static lv_color_t color_token(const pxsys_reference_lvgl_t* ui,
                               pxsys_color_token_t token) {
     return lv_color_hex(ui->theme.colors[token] & UINT32_C(0x00ffffff));
+}
+
+static const lv_font_t* typography_font(const pxsys_reference_lvgl_t* ui,
+                                        pxsys_typography_role_t role) {
+    const lv_font_t* resolved;
+    if (role >= PXSYS_TYPOGRAPHY_ROLE_COUNT) return ui->text_font;
+    if (ui->resolve_font != NULL) {
+        resolved = ui->resolve_font(
+            ui->font_context, role, ui->theme.typography_px[role],
+            &ui->locale);
+        if (resolved != NULL) return resolved;
+    }
+    if (ui->fonts[role] != NULL)
+        return ui->fonts[role];
+    if (role == PXSYS_TYPOGRAPHY_DISPLAY ||
+        role == PXSYS_TYPOGRAPHY_HEADLINE || role == PXSYS_TYPOGRAPHY_TITLE)
+        return ui->title_font;
+    return ui->text_font;
+}
+
+static const char* translated(pxsys_reference_lvgl_t* ui, const char* key,
+                              const char* fallback) {
+    pxsys_string_t value;
+    char* output;
+    size_t size;
+    if (pxsys_resource_resolve(
+            pxsys_standard_system_resources(ui->system),
+            pxsys_string_from_cstr(REFERENCE_RESOURCE_NAMESPACE),
+            pxsys_string_from_cstr(key),
+            pxsys_string(ui->locale.tag, ui->locale.tag_size), &value) !=
+        PXSYS_STATUS_OK)
+        return fallback;
+    output = ui->translation_scratch[
+        ui->translation_scratch_cursor++ % REFERENCE_TRANSLATION_SCRATCH_COUNT];
+    size = value.size < REFERENCE_TRANSLATION_SCRATCH_BYTES - 1u
+               ? value.size
+               : REFERENCE_TRANSLATION_SCRATCH_BYTES - 1u;
+    memcpy(output, value.data, size);
+    output[size] = '\0';
+    return output;
 }
 
 static uint32_t gesture_strip_height(const pxsys_reference_layout_t* layout) {
@@ -1255,7 +1366,10 @@ static void build_task_switcher(pxsys_reference_lvgl_t* ui) {
                                   LV_FLEX_ALIGN_CENTER,
                                   LV_FLEX_ALIGN_CENTER);
 #endif
-            empty = make_label(panel, "No recent apps", ui->text_font,
+            empty = make_label(panel,
+                               translated(ui, "recents.empty",
+                                          "No recent apps"),
+                               typography_font(ui, PXSYS_TYPOGRAPHY_BODY),
                                color_token(ui, PXSYS_COLOR_TEXT_SECONDARY));
             lv_obj_center(empty);
         }
@@ -1301,18 +1415,22 @@ static lv_obj_t* make_launcher_tile(pxsys_reference_lvgl_t* ui,
     lv_obj_set_size(marker, 32, 32);
     lv_obj_set_style_radius(marker, 6, 0);
     lv_obj_set_style_bg_color(marker, color_token(ui, PXSYS_COLOR_ACCENT), 0);
-    make_label(marker, initial, ui->text_font,
+    make_label(marker, initial, typography_font(ui, PXSYS_TYPOGRAPHY_LABEL),
                color_token(ui, PXSYS_COLOR_ON_ACCENT));
     lv_obj_center(lv_obj_get_child(marker, 0));
     lv_obj_align(marker, LV_ALIGN_TOP_LEFT, 0, 0);
-    label = make_label(tile, name, ui->text_font,
+    label = make_label(tile, name, typography_font(ui, PXSYS_TYPOGRAPHY_BODY),
                        color_token(ui, PXSYS_COLOR_TEXT_PRIMARY));
     lv_obj_set_width(label, LV_PCT(100));
-    lv_obj_set_height(label, ui->text_font != NULL
-                                 ? (lv_coord_t)ui->text_font->line_height + 2 : 18);
+    lv_obj_set_height(
+        label, typography_font(ui, PXSYS_TYPOGRAPHY_BODY) != NULL
+                   ? (lv_coord_t)typography_font(ui, PXSYS_TYPOGRAPHY_BODY)
+                             ->line_height + 2
+                   : 18);
     lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_LEFT, 0);
     lv_obj_align(label, LV_ALIGN_BOTTOM_LEFT, 0, 0);
-    label = make_label(tile, item->runtime_name, NULL,
+    label = make_label(tile, item->runtime_name,
+                       typography_font(ui, PXSYS_TYPOGRAPHY_CAPTION),
                        color_token(ui, PXSYS_COLOR_TEXT_SECONDARY));
     lv_obj_align(label, LV_ALIGN_TOP_RIGHT, 0, 4);
     lv_obj_add_event_cb(tile, launcher_clicked, LV_EVENT_CLICKED, item);
@@ -1396,9 +1514,13 @@ static void make_network_setting(pxsys_reference_lvgl_t* ui,
     char text[64];
     int connected = radio_connected(ui, network);
     snprintf(text, sizeof(text), "%s  %s",
-             network == PXSYS_NETWORK_WIFI ? "Wi-Fi" : "Mobile network",
-             connected ? "Connected" : radio_enabled(ui, network)
-                                         ? "On" : "Off");
+             network == PXSYS_NETWORK_WIFI
+                 ? translated(ui, "settings.wifi", "Wi-Fi")
+                 : translated(ui, "settings.mobile", "Mobile network"),
+             connected ? translated(ui, "state.connected", "Connected")
+                       : radio_enabled(ui, network)
+                             ? translated(ui, "state.on", "On")
+                             : translated(ui, "state.off", "Off"));
     style_plain(row);
     lv_obj_set_style_bg_color(row, color_token(ui, PXSYS_COLOR_SURFACE), 0);
     lv_obj_set_style_bg_opa(row, LV_OPA_COVER, 0);
@@ -1412,7 +1534,7 @@ static void make_network_setting(pxsys_reference_lvgl_t* ui,
     lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(row, LV_FLEX_ALIGN_SPACE_BETWEEN,
                           LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    label = make_label(row, text, ui->text_font,
+    label = make_label(row, text, typography_font(ui, PXSYS_TYPOGRAPHY_BODY),
                        color_token(ui, PXSYS_COLOR_TEXT_PRIMARY));
     lv_obj_set_flex_grow(label, 1);
     toggle = lv_switch_create(row);
@@ -1486,8 +1608,9 @@ static void build_home(pxsys_reference_lvgl_t* ui,
         ui->launcher_count++;
     }
     if (ui->launcher_count == 0) {
-        lv_obj_t* empty = make_label(ui->content, "No apps installed",
-                                    ui->text_font,
+        lv_obj_t* empty = make_label(
+            ui->content, translated(ui, "apps.empty", "No apps installed"),
+            typography_font(ui, PXSYS_TYPOGRAPHY_BODY),
                                     color_token(ui, PXSYS_COLOR_TEXT_SECONDARY));
         lv_obj_center(empty);
     }
@@ -1521,17 +1644,21 @@ static void build_settings(pxsys_reference_lvgl_t* ui,
                              &ui->network_controls[1]);
 #endif
     if (ui->theme.configured_mode == PXSYS_THEME_MODE_CUSTOM)
-        snprintf(appearance_text, sizeof(appearance_text), "Appearance  %.*s",
+        snprintf(appearance_text, sizeof(appearance_text), "%s  %.*s",
+                 translated(ui, "settings.appearance", "Appearance"),
                  (int)ui->theme.theme_id_size, ui->theme.theme_id);
     else
-        snprintf(appearance_text, sizeof(appearance_text), "Appearance  %s",
+        snprintf(appearance_text, sizeof(appearance_text), "%s  %s",
+                 translated(ui, "settings.appearance", "Appearance"),
                  ui->theme.effective_scheme == PXSYS_COLOR_SCHEME_DARK
-                     ? "Dark" : "Light");
+                     ? translated(ui, "theme.dark", "Dark")
+                     : translated(ui, "theme.light", "Light"));
     appearance = make_button(ui, ui->content, appearance_text, theme_clicked, ui);
     lv_obj_set_width(appearance, LV_PCT(100));
     lv_obj_set_height(appearance,
                       layout->size_class == PXSYS_UI_SIZE_COMPACT ? 48 : 58);
-    snprintf(geometry, sizeof(geometry), "Display  %ux%u  %u dpi",
+    snprintf(geometry, sizeof(geometry), "%s  %ux%u  %u dpi",
+             translated(ui, "settings.display", "Display"),
              (unsigned)ui->display.width, (unsigned)ui->display.height,
              (unsigned)ui->display.density_dpi);
     display = make_button(ui, ui->content, geometry, NULL, NULL);
@@ -1868,10 +1995,12 @@ static lv_obj_t* make_control_tile(pxsys_reference_lvgl_t* ui,
             lv_obj_set_style_bg_color(icon, foreground, 0);
         }
     }
-    label = make_label(tile, title, ui->text_font, foreground);
+    label = make_label(tile, title,
+                       typography_font(ui, PXSYS_TYPOGRAPHY_BODY), foreground);
     lv_obj_set_pos(label, 34, 5);
     lv_obj_set_width(label, width - 40);
-    label = make_label(tile, state, NULL,
+    label = make_label(tile, state,
+                       typography_font(ui, PXSYS_TYPOGRAPHY_CAPTION),
                        active ? foreground
                               : color_token(ui, PXSYS_COLOR_TEXT_SECONDARY));
     lv_obj_set_pos(label, 34, height - 20);
@@ -1898,7 +2027,8 @@ static void make_control_slider(pxsys_reference_lvgl_t* ui, lv_obj_t* parent,
     icon = make_label(row, symbol, NULL,
                       color_token(ui, PXSYS_COLOR_TEXT_SECONDARY));
     lv_obj_set_pos(icon, 11, 8);
-    icon = make_label(row, title, NULL,
+    icon = make_label(row, title,
+                      typography_font(ui, PXSYS_TYPOGRAPHY_LABEL),
                       color_token(ui, PXSYS_COLOR_TEXT_PRIMARY));
     lv_obj_set_pos(icon, 37, 5);
     slider = lv_slider_create(row);
@@ -1951,7 +2081,8 @@ static void make_round_control(pxsys_reference_lvgl_t* ui, lv_obj_t* parent,
                                              : PXSYS_COLOR_TEXT_PRIMARY));
     lv_obj_center(icon);
     lv_obj_add_event_cb(button, clicked, LV_EVENT_CLICKED, user_data);
-    label = make_label(parent, title, NULL,
+    label = make_label(parent, title,
+                       typography_font(ui, PXSYS_TYPOGRAPHY_CAPTION),
                        color_token(ui, PXSYS_COLOR_TEXT_SECONDARY));
     lv_obj_set_pos(label, slot_x, y + diameter + 4);
     lv_obj_set_width(label, slot_width);
@@ -2055,7 +2186,8 @@ static void build_notification_shade(pxsys_reference_lvgl_t* ui,
              ui->system_status.time_valid ? "%02u:%02u" : "--:--",
              (unsigned)ui->system_status.hour,
              (unsigned)ui->system_status.minute);
-    time = make_label(ui->notification_panel, time_text, ui->title_font,
+    time = make_label(ui->notification_panel, time_text,
+                      typography_font(ui, PXSYS_TYPOGRAPHY_DISPLAY),
                       color_token(ui, PXSYS_COLOR_TEXT_PRIMARY));
     lv_obj_set_pos(time, content_x, header_y);
     if (ui->system_status.date_valid)
@@ -2065,7 +2197,8 @@ static void build_notification_shade(pxsys_reference_lvgl_t* ui,
                  (unsigned)ui->system_status.day);
     else
         snprintf(date_text, sizeof(date_text), "---- -- --");
-    label = make_label(ui->notification_panel, date_text, ui->text_font,
+    label = make_label(ui->notification_panel, date_text,
+                       typography_font(ui, PXSYS_TYPOGRAPHY_LABEL),
                        color_token(ui, PXSYS_COLOR_TEXT_SECONDARY));
     lv_obj_set_pos(label, content_x, header_y + 27);
     lv_obj_set_width(label, content_width - 44);
@@ -2128,9 +2261,13 @@ static void build_notification_shade(pxsys_reference_lvgl_t* ui,
         make_control_tile(
             ui, body,
             content_x + network_index * (tile_width + tile_gap), tile_y,
-            tile_width, tile_height, LV_SYMBOL_WIFI, "Wi-Fi",
-            radio_connected(ui, PXSYS_NETWORK_WIFI) ? "Connected"
-            : radio_enabled(ui, PXSYS_NETWORK_WIFI) ? "On" : "Off",
+            tile_width, tile_height, LV_SYMBOL_WIFI,
+            translated(ui, "settings.wifi", "Wi-Fi"),
+            radio_connected(ui, PXSYS_NETWORK_WIFI)
+                ? translated(ui, "state.connected", "Connected")
+                : radio_enabled(ui, PXSYS_NETWORK_WIFI)
+                      ? translated(ui, "state.on", "On")
+                      : translated(ui, "state.off", "Off"),
             radio_enabled(ui, PXSYS_NETWORK_WIFI), control_network_clicked,
             &ui->network_controls[0]);
         network_index++;
@@ -2141,9 +2278,13 @@ static void build_notification_shade(pxsys_reference_lvgl_t* ui,
         make_control_tile(
             ui, body,
             content_x + network_index * (tile_width + tile_gap), tile_y,
-            tile_width, tile_height, NULL, "Mobile",
-            radio_connected(ui, PXSYS_NETWORK_CELLULAR) ? "Connected"
-            : radio_enabled(ui, PXSYS_NETWORK_CELLULAR) ? "On" : "Off",
+            tile_width, tile_height, NULL,
+            translated(ui, "control.mobile", "Mobile"),
+            radio_connected(ui, PXSYS_NETWORK_CELLULAR)
+                ? translated(ui, "state.connected", "Connected")
+                : radio_enabled(ui, PXSYS_NETWORK_CELLULAR)
+                      ? translated(ui, "state.on", "On")
+                      : translated(ui, "state.off", "Off"),
             radio_enabled(ui, PXSYS_NETWORK_CELLULAR),
             control_network_clicked, &ui->network_controls[1]);
     }
@@ -2151,7 +2292,8 @@ static void build_notification_shade(pxsys_reference_lvgl_t* ui,
     slider_y = tile_y + (network_count ? tile_height + 10 : 0);
     if (ui->system_status.volume_supported) {
         make_control_slider(ui, body, content_x, slider_y, content_width,
-                            LV_SYMBOL_VOLUME_MAX, "Volume",
+                            LV_SYMBOL_VOLUME_MAX,
+                            translated(ui, "control.volume", "Volume"),
                             ui->system_status.volume_percent,
                             PXSYS_LEVEL_CONTROL_VOLUME,
                             &ui->level_controls[0]);
@@ -2159,7 +2301,8 @@ static void build_notification_shade(pxsys_reference_lvgl_t* ui,
     }
     if (ui->system_status.brightness_supported) {
         make_control_slider(ui, body, content_x, slider_y, content_width,
-                            LV_SYMBOL_EYE_OPEN, "Brightness",
+                            LV_SYMBOL_EYE_OPEN,
+                            translated(ui, "control.brightness", "Brightness"),
                             ui->system_status.brightness_percent,
                             PXSYS_LEVEL_CONTROL_BRIGHTNESS,
                             &ui->level_controls[1]);
@@ -2179,7 +2322,8 @@ static void build_notification_shade(pxsys_reference_lvgl_t* ui,
         ui->toggle_controls[0].ui = ui;
         ui->toggle_controls[0].control = PXSYS_TOGGLE_BLUETOOTH;
         make_round_control(ui, body, content_x, quick_y, quick_slot_width,
-                           quick_size, LV_SYMBOL_BLUETOOTH, "Bluetooth",
+                           quick_size, LV_SYMBOL_BLUETOOTH,
+                           translated(ui, "control.bluetooth", "Bluetooth"),
                            ui->system_status.bluetooth_enabled,
                            control_toggle_clicked, &ui->toggle_controls[0]);
         quick_index++;
@@ -2191,7 +2335,8 @@ static void build_notification_shade(pxsys_reference_lvgl_t* ui,
             ui, body,
             content_x + (quick_index % quick_columns) * quick_slot_width,
             quick_y + (quick_index / quick_columns) * 78,
-            quick_slot_width, quick_size, LV_SYMBOL_BELL, "Focus",
+            quick_slot_width, quick_size, LV_SYMBOL_BELL,
+            translated(ui, "control.focus", "Focus"),
             ui->system_status.do_not_disturb_enabled,
             control_toggle_clicked, &ui->toggle_controls[1]);
         quick_index++;
@@ -2203,7 +2348,8 @@ static void build_notification_shade(pxsys_reference_lvgl_t* ui,
             ui, body,
             content_x + (quick_index % quick_columns) * quick_slot_width,
             quick_y + (quick_index / quick_columns) * 78,
-            quick_slot_width, quick_size, LV_SYMBOL_CHARGE, "Light",
+            quick_slot_width, quick_size, LV_SYMBOL_CHARGE,
+            translated(ui, "control.light", "Light"),
             ui->system_status.flashlight_enabled, control_toggle_clicked,
             &ui->toggle_controls[2]);
         quick_index++;
@@ -2215,7 +2361,8 @@ static void build_notification_shade(pxsys_reference_lvgl_t* ui,
         quick_slot_width, quick_size,
         ui->theme.effective_scheme == PXSYS_COLOR_SCHEME_DARK
             ? LV_SYMBOL_EYE_OPEN : LV_SYMBOL_EYE_CLOSE,
-        "Theme", ui->theme.effective_scheme == PXSYS_COLOR_SCHEME_DARK,
+        translated(ui, "control.theme", "Theme"),
+        ui->theme.effective_scheme == PXSYS_COLOR_SCHEME_DARK,
         theme_clicked, ui);
     quick_index++;
     {
@@ -2811,7 +2958,9 @@ static void rebuild(pxsys_reference_lvgl_t* ui) {
              * row would only waste vertical space on small displays. */
             ui->title = NULL;
         } else {
-            ui->title = make_label(ui->content, "Settings", ui->title_font,
+            ui->title = make_label(
+                ui->content, translated(ui, "settings.title", "Settings"),
+                typography_font(ui, PXSYS_TYPOGRAPHY_HEADLINE),
                                    color_token(ui, PXSYS_COLOR_TEXT_PRIMARY));
             lv_obj_set_width(ui->title, LV_PCT(100));
             lv_obj_set_height(ui->title,
@@ -2933,6 +3082,14 @@ static void theme_changed(void* context,
     ui->theme = *theme;
     rebuild(ui);
     toast_apply_theme(ui, ui->toast_tone);
+}
+
+static void locale_changed(void* context,
+                           const pxsys_locale_snapshot_t* locale) {
+    pxsys_reference_lvgl_t* ui = (pxsys_reference_lvgl_t*)context;
+    if (!ui_valid(ui) || locale == NULL) return;
+    ui->locale = *locale;
+    rebuild(ui);
 }
 
 static void system_status_changed(
@@ -3164,6 +3321,13 @@ pxsys_status_t pxsys_reference_lvgl_create(
     ui->text_font = config->text_font;
     ui->title_font = config->title_font != NULL ? config->title_font
                                                 : config->text_font;
+    memcpy(ui->fonts, config->fonts, sizeof(ui->fonts));
+    ui->font_context = config->font_context;
+    ui->resolve_font = config->resolve_font;
+    if (ui->fonts[PXSYS_TYPOGRAPHY_BODY] == NULL)
+        ui->fonts[PXSYS_TYPOGRAPHY_BODY] = ui->text_font;
+    if (ui->fonts[PXSYS_TYPOGRAPHY_TITLE] == NULL)
+        ui->fonts[PXSYS_TYPOGRAPHY_TITLE] = ui->title_font;
     ui->features = config->features;
     ui->max_launcher_apps = config->max_launcher_apps;
     ui->navigation_mode = config->navigation_mode;
@@ -3194,6 +3358,20 @@ pxsys_status_t pxsys_reference_lvgl_create(
     status = pxsys_window_service_get(
         pxsys_standard_system_window(ui->system), &ui->window);
     if (status != PXSYS_STATUS_OK) goto failed;
+    status = pxsys_resource_catalog_register(
+        pxsys_standard_system_resources(ui->system), &reference_catalog_en);
+    if (status != PXSYS_STATUS_OK && status != PXSYS_STATUS_ALREADY_EXISTS)
+        goto failed;
+    ui->resource_catalog_en_registered = status == PXSYS_STATUS_OK;
+    status = pxsys_resource_catalog_register(
+        pxsys_standard_system_resources(ui->system), &reference_catalog_zh);
+    if (status != PXSYS_STATUS_OK && status != PXSYS_STATUS_ALREADY_EXISTS)
+        goto failed;
+    ui->resource_catalog_zh_registered = status == PXSYS_STATUS_OK;
+    ui->locale.struct_size = sizeof(ui->locale);
+    status = pxsys_locale_service_get(
+        pxsys_standard_system_locale(ui->system), &ui->locale);
+    if (status != PXSYS_STATUS_OK) goto failed;
     status = register_apps(ui);
     if (status != PXSYS_STATUS_OK) goto failed;
     status = pxsys_display_service_subscribe(
@@ -3204,6 +3382,10 @@ pxsys_status_t pxsys_reference_lvgl_create(
         pxsys_standard_system_theme(ui->system), ui, theme_changed);
     if (status != PXSYS_STATUS_OK) goto failed;
     ui->theme_subscribed = 1;
+    status = pxsys_locale_service_subscribe(
+        pxsys_standard_system_locale(ui->system), ui, locale_changed);
+    if (status != PXSYS_STATUS_OK) goto failed;
+    ui->locale_subscribed = 1;
     status = pxsys_system_status_service_subscribe(
         pxsys_standard_system_status(ui->system), ui, system_status_changed);
     if (status != PXSYS_STATUS_OK) goto failed;
@@ -3322,6 +3504,9 @@ pxsys_status_t pxsys_reference_lvgl_destroy(pxsys_reference_lvgl_t* ui) {
     if (ui->theme_subscribed)
         (void)pxsys_theme_service_unsubscribe(
             pxsys_standard_system_theme(ui->system), ui, theme_changed);
+    if (ui->locale_subscribed)
+        (void)pxsys_locale_service_unsubscribe(
+            pxsys_standard_system_locale(ui->system), ui, locale_changed);
     if (ui->display_subscribed)
         (void)pxsys_display_service_unsubscribe(
             pxsys_standard_system_display(ui->system), ui, display_changed);
@@ -3336,6 +3521,14 @@ pxsys_status_t pxsys_reference_lvgl_destroy(pxsys_reference_lvgl_t* ui) {
     (void)pxsys_task_manager_finish_all(pxsys_standard_system_tasks(ui->system),
                                         PXSYS_STOP_SHUTDOWN);
     unregister_apps(ui);
+    if (ui->resource_catalog_zh_registered)
+        (void)pxsys_resource_catalog_unregister(
+            pxsys_standard_system_resources(ui->system),
+            &reference_catalog_zh);
+    if (ui->resource_catalog_en_registered)
+        (void)pxsys_resource_catalog_unregister(
+            pxsys_standard_system_resources(ui->system),
+            &reference_catalog_en);
     if (ui->toast_timer != NULL) lv_timer_delete(ui->toast_timer);
     if (ui->transient_timer != NULL) lv_timer_delete(ui->transient_timer);
     if (ui->toast != NULL) lv_obj_delete(ui->toast);
