@@ -16,6 +16,14 @@ the standard system. They can change the locale later with
 `pxsys_locale_service_update()`. The simulator accepts `--locale zh-CN`, and
 its automation protocol accepts `locale zh-CN` for runtime switching.
 
+The standard Settings application includes a scrollable language picker. Its
+LVGL adapter ships an English/Simplified Chinese list by default, while
+`pxsys_reference_lvgl_config_t.languages` accepts a product-owned list of
+canonical BCP 47 tags and native display names. The list is borrowed for the UI
+lifetime so embedded products can keep it in flash. Selecting an item only
+updates the backend-neutral locale service; every native or PXA consumer sees
+the same locale generation.
+
 ## Resource catalogs
 
 `pxsys_resource_service_t` mounts immutable catalogs under a string namespace.

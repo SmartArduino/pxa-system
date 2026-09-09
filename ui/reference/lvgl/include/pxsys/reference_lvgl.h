@@ -26,6 +26,12 @@ typedef const lv_font_t* (*pxsys_reference_lvgl_resolve_font_fn)(
     void* context, pxsys_typography_role_t role, uint16_t requested_px,
     const pxsys_locale_snapshot_t* locale);
 
+typedef struct {
+    pxsys_string_t locale;
+    /* Native language name, for example "English" or "简体中文". */
+    pxsys_string_t display_name;
+} pxsys_reference_language_t;
+
 #ifndef PXSYS_REFERENCE_UI_ENABLE_ANIMATIONS
 #define PXSYS_REFERENCE_UI_ENABLE_ANIMATIONS 1
 #endif
@@ -68,6 +74,9 @@ typedef struct {
     const lv_font_t* fonts[PXSYS_TYPOGRAPHY_ROLE_COUNT];
     void* font_context;
     pxsys_reference_lvgl_resolve_font_fn resolve_font;
+    /* Borrowed for the UI lifetime. NULL selects the built-in en/zh list. */
+    const pxsys_reference_language_t* languages;
+    size_t language_count;
 } pxsys_reference_lvgl_config_t;
 
 typedef struct pxsys_reference_lvgl pxsys_reference_lvgl_t;
