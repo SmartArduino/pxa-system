@@ -6,6 +6,8 @@
 
 #include "pxsys/runtime.h"
 
+#include "pxsys/display.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -14,6 +16,11 @@ extern "C" {
 
 typedef pxsys_status_t (*pxsys_native_create_fn)(void* context, const pxsys_app_descriptor_t* app,
                                                  uint64_t instance_id, void** app_instance);
+/* Optional create variant which also receives the current display profile so
+ * the app can lay out against safe insets, cutouts and shape. */
+typedef pxsys_status_t (*pxsys_native_create_display_fn)(
+    void* context, const pxsys_app_descriptor_t* app, uint64_t instance_id,
+    const pxsys_display_profile_t* display, void** app_instance);
 typedef pxsys_status_t (*pxsys_native_start_fn)(void* context, void* app_instance,
                                                 const pxsys_message_t* launch);
 typedef pxsys_status_t (*pxsys_native_state_fn)(void* context, void* app_instance);
@@ -35,6 +42,11 @@ typedef struct {
     pxsys_native_back_fn back;
     pxsys_native_stop_fn stop;
     pxsys_native_destroy_fn destroy;
+    /* Appended SPI fields: older struct_size prefixes keep their layout. */
+    /* Optional display service resolved for create_display. May be NULL, in
+     * which case create_display receives a NULL profile. */
+    const pxsys_display_service_t* display;
+    pxsys_native_create_display_fn create_display;
 } pxsys_native_app_t;
 
 typedef struct {

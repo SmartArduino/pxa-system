@@ -86,6 +86,14 @@ void pxsys_display_profile_init(pxsys_display_profile_t* profile,
 pxsys_status_t pxsys_display_profile_validate(const pxsys_display_profile_t* profile);
 pxsys_status_t pxsys_display_safe_rect(const pxsys_display_profile_t* profile,
                                        pxsys_rect_t* output);
+/* Safe insets merged with per-side cutout (notch, punch-hole) coverage. Apps
+ * should lay out against this instead of raw safe_insets on shaped panels. */
+pxsys_status_t pxsys_display_effective_insets(
+    const pxsys_display_profile_t* profile, pxsys_insets_t* output);
+/* Rectangular content region after effective insets; shape corners are not
+ * subtracted here, use pxsys_display_contains_point for shape hit testing. */
+pxsys_status_t pxsys_display_content_rect(const pxsys_display_profile_t* profile,
+                                          pxsys_rect_t* output);
 int pxsys_display_contains_point(const pxsys_display_profile_t* profile,
                                  int32_t x, int32_t y);
 

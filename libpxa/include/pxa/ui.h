@@ -233,6 +233,9 @@ typedef struct {
     uint32_t height;
     uint32_t density_q16;
     uint32_t font_scale_q16;
+    /* Safe-area insets in logical pixels, ordered top, right, bottom, left.
+     * Includes cutout coverage and physical safe margins but not system
+     * chrome; use the window service snapshot for system bar insets. */
     uint32_t safe_insets[4];
     uint64_t input_capabilities;
     pxa_ui_features_t features;

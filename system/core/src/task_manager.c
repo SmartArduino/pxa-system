@@ -357,6 +357,29 @@ pxsys_status_t pxsys_task_manager_finish_top(pxsys_task_manager_t* manager,
     return foreground_after_top(manager);
 }
 
+pxsys_status_t pxsys_task_manager_finish_instance(pxsys_task_manager_t* manager,
+                                                  pxsys_instance_ref_t instance,
+                                                  pxsys_stop_reason_t reason) {
+    size_t index;
+    pxsys_status_t status;
+    if (!manager_valid(manager))
+        return PXSYS_STATUS_INVALID_ARGUMENT;
+    for (index = 0; index < manager->count; ++index) {
+        if (manager->stack[index].slot == instance.slot &&
+            manager->stack[index].generation == instance.generation)
+            break;
+    }
+    if (index == manager->count)
+        return PXSYS_STATUS_NOT_FOUND;
+    status = pxsys_runtime_stop(manager->runtime, manager->stack[index], reason);
+    if (status == PXSYS_STATUS_PENDING || status != PXSYS_STATUS_OK)
+        return status;
+    memmove(&manager->stack[index], &manager->stack[index + 1u],
+            (manager->count - index - 1u) * sizeof(manager->stack[0]));
+    manager->count--;
+    return index == manager->count ? foreground_after_top(manager) : PXSYS_STATUS_OK;
+}
+
 pxsys_status_t pxsys_task_manager_finish_all(pxsys_task_manager_t* manager,
                                              pxsys_stop_reason_t reason) {
     if (!manager_valid(manager))

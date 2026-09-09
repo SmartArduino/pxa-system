@@ -20,15 +20,50 @@ static void changed(void* context,
     (*count)++;
 }
 
+static pxsys_status_t set_network(void* context,
+                                  pxsys_network_type_t network,
+                                  uint8_t enabled) {
+    unsigned* calls = (unsigned*)context;
+    assert(network == PXSYS_NETWORK_WIFI);
+    assert(enabled == 0);
+    (*calls)++;
+    return PXSYS_STATUS_OK;
+}
+
+static pxsys_status_t set_level(void* context, pxsys_level_control_t control,
+                                uint8_t percent) {
+    unsigned* calls = (unsigned*)context;
+    assert(control == PXSYS_LEVEL_CONTROL_BRIGHTNESS);
+    assert(percent == 42);
+    (*calls)++;
+    return PXSYS_STATUS_OK;
+}
+
+static pxsys_status_t set_toggle(void* context,
+                                 pxsys_toggle_control_t control,
+                                 uint8_t enabled) {
+    unsigned* calls = (unsigned*)context;
+    assert(control == PXSYS_TOGGLE_BLUETOOTH);
+    assert(enabled == 1);
+    (*calls)++;
+    return PXSYS_STATUS_OK;
+}
+
 int main(void) {
     pxsys_system_status_snapshot_t snapshot;
     pxsys_system_status_service_config_t config;
     pxsys_system_status_service_t* service = NULL;
     unsigned notifications = 0;
+    unsigned control_calls = 0;
     pxsys_system_status_snapshot_init(&snapshot);
     pxsys_system_status_service_config_init(&config);
     config.allocator.allocate = allocate;
     config.allocator.release = release;
+    config.network_control_context = &control_calls;
+    config.set_network_enabled = set_network;
+    config.control_context = &control_calls;
+    config.set_level = set_level;
+    config.set_toggle = set_toggle;
     assert(pxsys_system_status_service_create(&config, &snapshot, &service) ==
            PXSYS_STATUS_OK);
     assert(pxsys_system_status_service_subscribe(service, &notifications, changed) ==
@@ -47,6 +82,15 @@ int main(void) {
     snapshot.struct_size = sizeof(snapshot);
     assert(pxsys_system_status_service_get(service, &snapshot) == PXSYS_STATUS_OK);
     assert(snapshot.battery_percent == 75 && snapshot.hour == 9);
+    assert(pxsys_system_status_service_set_network_enabled(
+               service, PXSYS_NETWORK_WIFI, 0) == PXSYS_STATUS_OK);
+    assert(control_calls == 1);
+    assert(pxsys_system_status_service_set_level(
+               service, PXSYS_LEVEL_CONTROL_BRIGHTNESS, 42) ==
+           PXSYS_STATUS_OK);
+    assert(pxsys_system_status_service_set_toggle(
+               service, PXSYS_TOGGLE_BLUETOOTH, 1) == PXSYS_STATUS_OK);
+    assert(control_calls == 3);
     snapshot.battery_percent = 101;
     assert(pxsys_system_status_service_update(service, &snapshot) ==
            PXSYS_STATUS_INVALID_ARGUMENT);

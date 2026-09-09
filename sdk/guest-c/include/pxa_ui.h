@@ -259,6 +259,7 @@ typedef struct {
     uint32_t height;
     uint32_t density_q16;
     uint32_t font_scale_q16;
+    /* Safe-area insets in logical pixels: top, right, bottom, left. */
     uint32_t safe_insets[4];
     uint64_t input_capabilities;
     uint64_t features;

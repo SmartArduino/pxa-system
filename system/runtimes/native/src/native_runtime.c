@@ -1,5 +1,6 @@
 #include "pxsys/native_runtime.h"
 
+#include <stddef.h>
 #include <string.h>
 
 #define PXSYS_NATIVE_MAGIC UINT32_C(0x50584e52)
@@ -106,10 +107,16 @@ pxsys_status_t pxsys_native_runtime_destroy(pxsys_native_runtime_t* runtime) {
 }
 
 static int native_app_valid(const pxsys_native_runtime_t* runtime, const pxsys_native_app_t* app) {
-    return app != NULL && app->struct_size >= sizeof(*app) &&
+    const size_t base_size = offsetof(pxsys_native_app_t, display);
+    int has_display_create;
+    if (app == NULL || app->struct_size < base_size) return 0;
+    has_display_create = app->struct_size >= sizeof(*app) &&
+                         app->create_display != NULL;
+    return
            pxsys_app_identity_validate(&app->identity, runtime->max_app_id_bytes) ==
                PXSYS_STATUS_OK &&
-           app->create != NULL && app->start != NULL && app->foreground != NULL &&
+           (app->create != NULL || has_display_create) &&
+           app->start != NULL && app->foreground != NULL &&
            app->background != NULL && app->event != NULL && app->back != NULL &&
            app->stop != NULL && app->destroy != NULL;
 }
@@ -137,7 +144,10 @@ pxsys_status_t pxsys_native_runtime_register_app(pxsys_native_runtime_t* runtime
         return PXSYS_STATUS_NO_MEMORY;
     memcpy(entry->app_id, app->identity.app_id.data, app->identity.app_id.size);
     entry->app_id[app->identity.app_id.size] = '\0';
-    entry->app = *app;
+    memset(&entry->app, 0, sizeof(entry->app));
+    memcpy(&entry->app, app,
+           app->struct_size < sizeof(entry->app) ? app->struct_size
+                                                 : sizeof(entry->app));
     entry->app.struct_size = sizeof(entry->app);
     entry->app.identity.app_id.data = entry->app_id;
     entry->app.identity.app_id.size = app->identity.app_id.size;
@@ -186,6 +196,17 @@ static pxsys_status_t provider_instantiate(void* context, const pxsys_app_descri
     entry->active_instances++;
     runtime->active_instances++;
     *runtime_instance = instance;
+    if (entry->app.create_display != NULL) {
+        pxsys_display_profile_t profile;
+        const pxsys_display_profile_t* display = NULL;
+        if (entry->app.display != NULL &&
+            pxsys_display_service_get(entry->app.display, &profile) ==
+                PXSYS_STATUS_OK) {
+            display = &profile;
+        }
+        return entry->app.create_display(entry->app.context, app, instance_id,
+                                         display, &instance->app_instance);
+    }
     status = entry->app.create(entry->app.context, app, instance_id, &instance->app_instance);
     return status;
 }

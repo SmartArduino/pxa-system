@@ -65,6 +65,12 @@ pxsys_status_t pxsys_task_manager_report_stopped(pxsys_task_manager_t* manager,
 pxsys_status_t pxsys_task_manager_back(pxsys_task_manager_t* manager, pxsys_back_result_t* result);
 pxsys_status_t pxsys_task_manager_finish_top(pxsys_task_manager_t* manager,
                                              pxsys_stop_reason_t reason);
+/* Stops one specific task (for example from a recents UI) and restores the
+ * previous task when the finished App was on top. PENDING means the runtime
+ * stops asynchronously; the instance is removed on report_stopped. */
+pxsys_status_t pxsys_task_manager_finish_instance(pxsys_task_manager_t* manager,
+                                                  pxsys_instance_ref_t instance,
+                                                  pxsys_stop_reason_t reason);
 pxsys_status_t pxsys_task_manager_finish_all(pxsys_task_manager_t* manager,
                                              pxsys_stop_reason_t reason);
 size_t pxsys_task_manager_count(const pxsys_task_manager_t* manager);

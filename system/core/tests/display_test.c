@@ -43,6 +43,38 @@ int main(void) {
     assert(pxsys_display_contains_point(&profile, 120, 0));
     assert(pxsys_display_contains_point(&profile, 160, 100));
 
+    /* The centered top notch extends the effective top inset to 20. */
+    {
+        pxsys_insets_t insets;
+        pxsys_rect_t content;
+        assert(pxsys_display_effective_insets(&profile, &insets) ==
+               PXSYS_STATUS_OK);
+        assert(insets.top == 20 && insets.bottom == 12 &&
+               insets.left == 10 && insets.right == 10);
+        assert(pxsys_display_content_rect(&profile, &content) ==
+               PXSYS_STATUS_OK);
+        assert(content.x == 10 && content.y == 20 &&
+               content.width == 300 && content.height == 208);
+    }
+    /* A left-edge punch hole extends only the left inset. */
+    profile.cutouts[0].bounds = (pxsys_rect_t){0, 100, 24, 24};
+    profile.cutouts[0].radius = 12;
+    {
+        pxsys_insets_t insets;
+        assert(pxsys_display_effective_insets(&profile, &insets) ==
+               PXSYS_STATUS_OK);
+        assert(insets.top == 8 && insets.left == 24 &&
+               insets.right == 10 && insets.bottom == 12);
+    }
+    /* Overlapping insets that would consume the display are rejected. */
+    profile.safe_insets = (pxsys_insets_t){200, 10, 100, 10};
+    {
+        pxsys_insets_t insets;
+        assert(pxsys_display_effective_insets(&profile, &insets) ==
+               PXSYS_STATUS_INVALID_ARGUMENT);
+    }
+    profile.safe_insets = (pxsys_insets_t){8, 10, 12, 10};
+
     pxsys_display_service_config_init(&config);
     config.allocator.struct_size = sizeof(config.allocator);
     config.allocator.allocate = allocate;

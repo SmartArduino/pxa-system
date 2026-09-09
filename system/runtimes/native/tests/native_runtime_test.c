@@ -57,6 +57,13 @@ static pxsys_status_t app_create(void* context, const pxsys_app_descriptor_t* ap
     return PXSYS_STATUS_OK;
 }
 
+static pxsys_status_t app_create_display(
+    void* context, const pxsys_app_descriptor_t* app, uint64_t instance_id,
+    const pxsys_display_profile_t* display, void** app_instance) {
+    assert(display == NULL);
+    return app_create(context, app, instance_id, app_instance);
+}
+
 static pxsys_status_t app_start(void* context, void* app_instance, const pxsys_message_t* launch) {
     native_app_state_t* state = (native_app_state_t*)context;
     assert(app_instance == state && launch != NULL && launch->operation == 42);
@@ -186,9 +193,28 @@ int main(void) {
     assert(pxsys_runtime_foreground(runtime, instance) == PXSYS_STATUS_OK);
     assert(pxsys_runtime_stop(runtime, instance, PXSYS_STOP_NORMAL) == PXSYS_STATUS_OK);
 
-    assert(state.create_calls == 1 && state.start_calls == 1 && state.foreground_calls == 2 &&
+    implementation.create = NULL;
+    implementation.create_display = app_create_display;
+    assert(pxsys_native_runtime_unregister_app(native, &descriptor.identity) ==
+           PXSYS_STATUS_OK);
+    implementation.create = app_create;
+    implementation.struct_size = offsetof(pxsys_native_app_t, display);
+    assert(pxsys_native_runtime_register_app(native, &implementation) ==
+           PXSYS_STATUS_OK);
+    assert(pxsys_native_runtime_unregister_app(native, &descriptor.identity) ==
+           PXSYS_STATUS_OK);
+    implementation.struct_size = sizeof(implementation);
+    implementation.create = NULL;
+    assert(pxsys_native_runtime_register_app(native, &implementation) ==
+           PXSYS_STATUS_OK);
+    assert(pxsys_runtime_launch(runtime, &descriptor.identity, &launch, 2,
+                                &instance) == PXSYS_STATUS_OK);
+    assert(pxsys_runtime_stop(runtime, instance, PXSYS_STOP_NORMAL) ==
+           PXSYS_STATUS_OK);
+
+    assert(state.create_calls == 2 && state.start_calls == 2 && state.foreground_calls == 3 &&
            state.background_calls == 1 && state.event_calls == 1 && state.back_calls == 1 &&
-           state.stop_calls == 1 && state.destroy_calls == 1);
+           state.stop_calls == 2 && state.destroy_calls == 2);
     assert(pxsys_native_runtime_unregister_app(native, &descriptor.identity) == PXSYS_STATUS_OK);
     assert(pxsys_runtime_unregister_provider(
                runtime, pxsys_string_from_cstr(PXSYS_NATIVE_RUNTIME_ID)) == PXSYS_STATUS_OK);

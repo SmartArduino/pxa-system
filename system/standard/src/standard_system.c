@@ -255,6 +255,11 @@ pxsys_status_t pxsys_standard_system_create(const pxsys_standard_system_config_t
     pxsys_system_status_service_config_init(&system_status);
     system_status.max_observers = config->max_system_status_observers;
     system_status.allocator = config->allocator;
+    system_status.network_control_context = config->network_control_context;
+    system_status.set_network_enabled = config->set_network_enabled;
+    system_status.control_context = config->control_context;
+    system_status.set_level = config->set_level;
+    system_status.set_toggle = config->set_toggle;
     if ((status = pxsys_system_status_service_create(
              &system_status, &config->initial_system_status,
              &system->status)) != PXSYS_STATUS_OK) {

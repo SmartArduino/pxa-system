@@ -46,6 +46,11 @@ typedef struct {
     pxsys_system_status_snapshot_t initial_system_status;
     size_t max_window_observers;
     pxsys_window_snapshot_t initial_window;
+    void* network_control_context;
+    pxsys_network_set_enabled_fn set_network_enabled;
+    void* control_context;
+    pxsys_level_control_set_fn set_level;
+    pxsys_toggle_control_set_fn set_toggle;
 } pxsys_standard_system_config_t;
 
 typedef struct pxsys_standard_system pxsys_standard_system_t;

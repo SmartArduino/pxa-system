@@ -94,6 +94,58 @@ pxsys_status_t pxsys_display_safe_rect(const pxsys_display_profile_t* profile,
     return PXSYS_STATUS_OK;
 }
 
+static void insets_merge_edge(pxsys_insets_t* insets, const pxsys_rect_t* bounds,
+                              uint32_t width, uint32_t height) {
+    /* A cutout contributes to an edge when it is attached to that half of the
+     * display, mirroring Android's per-side display-cutout handling. */
+    if ((uint32_t)bounds->y + bounds->height <= height / 2u &&
+        (uint32_t)bounds->y + bounds->height > insets->top) {
+        insets->top = (uint16_t)(bounds->y + bounds->height);
+    }
+    if ((uint32_t)bounds->y >= height / 2u &&
+        height - (uint32_t)bounds->y > insets->bottom) {
+        insets->bottom = (uint16_t)(height - (uint32_t)bounds->y);
+    }
+    if ((uint32_t)bounds->x + bounds->width <= width / 2u &&
+        (uint32_t)bounds->x + bounds->width > insets->left) {
+        insets->left = (uint16_t)(bounds->x + bounds->width);
+    }
+    if ((uint32_t)bounds->x >= width / 2u &&
+        width - (uint32_t)bounds->x > insets->right) {
+        insets->right = (uint16_t)(width - (uint32_t)bounds->x);
+    }
+}
+
+pxsys_status_t pxsys_display_effective_insets(
+    const pxsys_display_profile_t* profile, pxsys_insets_t* output) {
+    size_t index;
+    if (output == NULL || pxsys_display_profile_validate(profile) != PXSYS_STATUS_OK)
+        return PXSYS_STATUS_INVALID_ARGUMENT;
+    *output = profile->safe_insets;
+    for (index = 0; index < profile->cutout_count; ++index) {
+        insets_merge_edge(output, &profile->cutouts[index].bounds,
+                          profile->width, profile->height);
+    }
+    if ((uint32_t)output->left + output->right >= profile->width ||
+        (uint32_t)output->top + output->bottom >= profile->height) {
+        return PXSYS_STATUS_INVALID_ARGUMENT;
+    }
+    return PXSYS_STATUS_OK;
+}
+
+pxsys_status_t pxsys_display_content_rect(const pxsys_display_profile_t* profile,
+                                          pxsys_rect_t* output) {
+    pxsys_insets_t insets;
+    if (output == NULL ||
+        pxsys_display_effective_insets(profile, &insets) != PXSYS_STATUS_OK)
+        return PXSYS_STATUS_INVALID_ARGUMENT;
+    output->x = insets.left;
+    output->y = insets.top;
+    output->width = profile->width - insets.left - insets.right;
+    output->height = profile->height - insets.top - insets.bottom;
+    return PXSYS_STATUS_OK;
+}
+
 static int outside_rounded_corner(int32_t x, int32_t y, int32_t width,
                                   int32_t height, int32_t radius,
                                   int32_t corner_x, int32_t corner_y) {

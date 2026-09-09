@@ -265,13 +265,30 @@ static void test_navigation_and_single_instance(void) {
            PXSYS_STATUS_NOT_FOUND);
     assert(pxsys_task_manager_back(tasks, &back_result) == PXSYS_STATUS_OK);
     assert(back_result == PXSYS_BACK_HANDLED && pxsys_task_manager_count(tasks) == 1);
-    fake.pending_stop = 1;
-    assert(pxsys_task_manager_current(tasks, &instance) == PXSYS_STATUS_OK);
-    assert(pxsys_task_manager_finish_top(tasks, PXSYS_STOP_SHUTDOWN) == PXSYS_STATUS_PENDING);
-    assert(pxsys_task_manager_count(tasks) == 1 && fake.active == 1);
-    assert(pxsys_task_manager_report_stopped(tasks, instance, PXSYS_STOP_SHUTDOWN) ==
+    intent.target = &settings.identity;
+    assert(pxsys_task_manager_start(tasks, &intent, &settings_instance) ==
            PXSYS_STATUS_OK);
-    assert(fake.active == 0 && fake.stops == 3);
+    assert(pxsys_task_manager_finish_instance(
+               tasks, settings_instance, PXSYS_STOP_NORMAL) == PXSYS_STATUS_OK);
+    assert(pxsys_task_manager_count(tasks) == 1 && fake.active == 1);
+    assert(pxsys_task_manager_start(tasks, &intent, &settings_instance) ==
+           PXSYS_STATUS_OK);
+    fake.pending_stop = 1;
+    assert(pxsys_task_manager_finish_instance(
+               tasks, settings_instance, PXSYS_STOP_NORMAL) ==
+           PXSYS_STATUS_PENDING);
+    assert(pxsys_task_manager_count(tasks) == 2 && fake.active == 2);
+    assert(pxsys_task_manager_report_stopped(tasks, settings_instance,
+                                             PXSYS_STOP_NORMAL) ==
+           PXSYS_STATUS_OK);
+    assert(pxsys_task_manager_count(tasks) == 1 && fake.active == 1);
+    assert(pxsys_task_manager_current(tasks, &instance) == PXSYS_STATUS_OK);
+    assert(pxsys_task_manager_finish_top(tasks, PXSYS_STOP_SHUTDOWN) ==
+           PXSYS_STATUS_PENDING);
+    assert(pxsys_task_manager_report_stopped(tasks, instance,
+                                             PXSYS_STOP_SHUTDOWN) ==
+           PXSYS_STATUS_OK);
+    assert(fake.active == 0 && fake.stops == 5);
 
     assert(pxsys_task_manager_destroy(tasks) == PXSYS_STATUS_OK);
     assert(pxsys_intent_resolver_destroy(resolver) == PXSYS_STATUS_OK);
