@@ -35,6 +35,10 @@ if(DEFINED PXSYS_REFERENCE_UI_GESTURE_HANDLE AND
     target_compile_definitions(pxa_system_reference_lvgl PRIVATE
         PXSYS_REFERENCE_UI_GESTURE_HANDLE=1)
 endif()
+if(DEFINED PXSYS_REFERENCE_UI_WALLPAPER AND NOT PXSYS_REFERENCE_UI_WALLPAPER)
+    target_compile_definitions(pxa_system_reference_lvgl PRIVATE
+        PXSYS_REFERENCE_UI_ENABLE_WALLPAPER=0)
+endif()
 if(DEFINED PXSYS_REFERENCE_UI_TASK_SWITCHER)
     if(PXSYS_REFERENCE_UI_TASK_SWITCHER STREQUAL "cards")
         target_compile_definitions(pxa_system_reference_lvgl PRIVATE

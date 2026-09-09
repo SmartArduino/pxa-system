@@ -15,7 +15,8 @@ extern "C" {
 #define PXSYS_REFERENCE_UI_STATUS_BAR UINT32_C(4)
 #define PXSYS_REFERENCE_UI_NAVIGATION_BAR UINT32_C(8)
 #define PXSYS_REFERENCE_UI_NOTIFICATION_SHADE UINT32_C(16)
-#define PXSYS_REFERENCE_UI_ALL UINT32_C(31)
+#define PXSYS_REFERENCE_UI_WALLPAPER UINT32_C(32)
+#define PXSYS_REFERENCE_UI_ALL UINT32_C(63)
 
 typedef enum {
     PXSYS_NAVIGATION_BUTTONS = 0,
@@ -47,6 +48,9 @@ typedef struct {
 #ifndef PXSYS_REFERENCE_UI_GESTURE_HANDLE
 #define PXSYS_REFERENCE_UI_GESTURE_HANDLE 0
 #endif
+#ifndef PXSYS_REFERENCE_UI_ENABLE_WALLPAPER
+#define PXSYS_REFERENCE_UI_ENABLE_WALLPAPER 1
+#endif
 
 #define PXSYS_TASK_SWITCHER_LIST 0
 #define PXSYS_TASK_SWITCHER_CARDS 1
@@ -77,6 +81,9 @@ typedef struct {
     /* Borrowed for the UI lifetime. NULL selects the built-in en/zh list. */
     const pxsys_reference_language_t* languages;
     size_t language_count;
+    /* Optional borrowed LVGL image source. NULL uses the built-in adaptive
+     * wallpaper; the WALLPAPER feature bit or compile option can remove it. */
+    const void* wallpaper_source;
 } pxsys_reference_lvgl_config_t;
 
 typedef struct pxsys_reference_lvgl pxsys_reference_lvgl_t;

@@ -287,6 +287,7 @@ struct pxsys_reference_lvgl {
     settings_action_t settings_actions[REFERENCE_SETTINGS_ACTION_COUNT];
     const pxsys_reference_language_t* languages;
     size_t language_count;
+    const void* wallpaper_source;
     pxsys_navigation_mode_t navigation_mode;
     reference_page_t active_page;
     pxsys_display_profile_t display;
@@ -1509,44 +1510,68 @@ static lv_obj_t* make_launcher_tile(pxsys_reference_lvgl_t* ui,
     lv_obj_t* tile = lv_button_create(ui->content);
     lv_obj_t* marker;
     lv_obj_t* label;
+    pxsys_color_token_t icon_token;
+    uint32_t hash = UINT32_C(2166136261);
+    size_t index;
+    int32_t icon_size = ui->display.width < 360 ? 42 : 50;
     char initial[2] = {'?', '\0'};
     if (name != NULL && name[0] >= 0x20 && (unsigned char)name[0] < 0x80)
         initial[0] = name[0];
     else if (item != NULL && item->runtime_name[0] != '\0')
         initial[0] = item->runtime_name[0];
+    if (item != NULL) {
+        for (index = 0; item->app_id[index] != '\0'; ++index) {
+            hash ^= (uint8_t)item->app_id[index];
+            hash *= UINT32_C(16777619);
+        }
+    }
+    switch (hash % 4u) {
+    case 1:
+        icon_token = PXSYS_COLOR_SUCCESS;
+        break;
+    case 2:
+        icon_token = PXSYS_COLOR_WARNING;
+        break;
+    case 3:
+        icon_token = PXSYS_COLOR_ERROR;
+        break;
+    default:
+        icon_token = PXSYS_COLOR_ACCENT;
+        break;
+    }
     lv_obj_set_style_radius(tile, ui->theme.base_radius_px * 2u, 0);
-    lv_obj_set_style_bg_color(tile, color_token(ui, PXSYS_COLOR_SURFACE), 0);
-    lv_obj_set_style_bg_color(tile, color_token(ui, PXSYS_COLOR_BORDER),
+    lv_obj_set_style_bg_opa(tile, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_bg_color(tile, color_token(ui, PXSYS_COLOR_SURFACE),
                               LV_STATE_PRESSED);
+    lv_obj_set_style_bg_opa(tile, LV_OPA_40, LV_STATE_PRESSED);
     lv_obj_set_style_shadow_width(tile, 0, 0);
-    lv_obj_set_style_border_width(tile, 1, 0);
-    lv_obj_set_style_border_color(tile, color_token(ui, PXSYS_COLOR_BORDER), 0);
-    lv_obj_set_style_pad_all(tile, 8, 0);
+    lv_obj_set_style_border_width(tile, 0, 0);
+    lv_obj_set_style_pad_all(tile, 3, 0);
     lv_obj_clear_flag(tile, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_remove_flag(tile, LV_OBJ_FLAG_SCROLL_ON_FOCUS);
     marker = lv_obj_create(tile);
     style_plain(marker);
-    lv_obj_set_size(marker, 32, 32);
-    lv_obj_set_style_radius(marker, 6, 0);
-    lv_obj_set_style_bg_color(marker, color_token(ui, PXSYS_COLOR_ACCENT), 0);
-    make_label(marker, initial, typography_font(ui, PXSYS_TYPOGRAPHY_LABEL),
+    lv_obj_set_size(marker, icon_size, icon_size);
+    lv_obj_set_style_radius(marker, icon_size / 4, 0);
+    lv_obj_set_style_bg_color(marker, color_token(ui, icon_token), 0);
+    lv_obj_set_style_bg_opa(marker, LV_OPA_COVER, 0);
+    lv_obj_set_style_shadow_width(marker, 8, 0);
+    lv_obj_set_style_shadow_opa(marker, LV_OPA_20, 0);
+    lv_obj_set_style_shadow_offset_y(marker, 3, 0);
+    make_label(marker, initial, typography_font(ui, PXSYS_TYPOGRAPHY_TITLE),
                color_token(ui, PXSYS_COLOR_ON_ACCENT));
     lv_obj_center(lv_obj_get_child(marker, 0));
-    lv_obj_align(marker, LV_ALIGN_TOP_LEFT, 0, 0);
-    label = make_label(tile, name, typography_font(ui, PXSYS_TYPOGRAPHY_BODY),
+    lv_obj_align(marker, LV_ALIGN_TOP_MID, 0, 0);
+    label = make_label(tile, name, typography_font(ui, PXSYS_TYPOGRAPHY_CAPTION),
                        color_token(ui, PXSYS_COLOR_TEXT_PRIMARY));
     lv_obj_set_width(label, LV_PCT(100));
-    lv_obj_set_height(
-        label, typography_font(ui, PXSYS_TYPOGRAPHY_BODY) != NULL
-                   ? (lv_coord_t)typography_font(ui, PXSYS_TYPOGRAPHY_BODY)
-                             ->line_height + 2
-                   : 18);
-    lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_LEFT, 0);
-    lv_obj_align(label, LV_ALIGN_BOTTOM_LEFT, 0, 0);
-    label = make_label(tile, item->runtime_name,
-                       typography_font(ui, PXSYS_TYPOGRAPHY_CAPTION),
-                       color_token(ui, PXSYS_COLOR_TEXT_SECONDARY));
-    lv_obj_align(label, LV_ALIGN_TOP_RIGHT, 0, 4);
+    lv_obj_set_height(label,
+                      typography_font(ui, PXSYS_TYPOGRAPHY_CAPTION) != NULL
+                          ? (lv_coord_t)typography_font(
+                                ui, PXSYS_TYPOGRAPHY_CAPTION)->line_height + 2
+                          : 16);
+    lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_align(label, LV_ALIGN_BOTTOM_MID, 0, 0);
     lv_obj_add_event_cb(tile, launcher_clicked, LV_EVENT_CLICKED, item);
     return tile;
 }
@@ -1626,7 +1651,7 @@ static lv_obj_t* make_settings_section(pxsys_reference_lvgl_t* ui,
     lv_obj_set_height(group, LV_SIZE_CONTENT);
     lv_obj_set_layout(group, LV_LAYOUT_FLEX);
     lv_obj_set_flex_flow(group, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_style_pad_row(group, 4, 0);
+    lv_obj_set_style_pad_row(group, 2, 0);
     lv_obj_set_width(label, LV_PCT(100));
     lv_obj_set_style_pad_left(label, 6, 0);
     style_plain(section);
@@ -1637,7 +1662,7 @@ static lv_obj_t* make_settings_section(pxsys_reference_lvgl_t* ui,
     lv_obj_set_style_border_width(section, 1, 0);
     lv_obj_set_style_border_color(section, color_token(ui, PXSYS_COLOR_BORDER),
                                   0);
-    lv_obj_set_style_radius(section, ui->theme.base_radius_px * 3u, 0);
+    lv_obj_set_style_radius(section, ui->theme.base_radius_px * 2u, 0);
     lv_obj_set_style_clip_corner(section, true, 0);
     lv_obj_set_layout(section, LV_LAYOUT_FLEX);
     lv_obj_set_flex_flow(section, LV_FLEX_FLOW_COLUMN);
@@ -1651,7 +1676,20 @@ static lv_obj_t* make_settings_row(pxsys_reference_lvgl_t* ui,
                                    pxsys_color_token_t icon_color,
                                    const char* title, const char* subtitle,
                                    lv_event_cb_t clicked, void* user_data) {
-    int32_t height = layout->size_class == PXSYS_UI_SIZE_COMPACT ? 54 : 62;
+    const lv_font_t* title_font =
+        typography_font(ui, PXSYS_TYPOGRAPHY_LABEL);
+    const lv_font_t* subtitle_font =
+        typography_font(ui, PXSYS_TYPOGRAPHY_CAPTION);
+    int32_t title_height = title_font != NULL ? title_font->line_height + 2 : 18;
+    int32_t subtitle_height =
+        subtitle_font != NULL ? subtitle_font->line_height + 2 : 16;
+    int32_t text_height =
+        subtitle == NULL ? title_height : title_height + subtitle_height;
+    int32_t minimum_height =
+        layout->size_class == PXSYS_UI_SIZE_COMPACT ? 48 : 54;
+    int32_t height = text_height + 8 > minimum_height ? text_height + 8
+                                                     : minimum_height;
+    int32_t icon_size = layout->size_class == PXSYS_UI_SIZE_COMPACT ? 28 : 30;
     lv_obj_t* row = lv_obj_create(section);
     lv_obj_t* icon_background;
     lv_obj_t* text;
@@ -1670,17 +1708,17 @@ static lv_obj_t* make_settings_row(pxsys_reference_lvgl_t* ui,
     lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER,
                           LV_FLEX_ALIGN_CENTER);
-    lv_obj_set_style_pad_hor(row, 10, 0);
-    lv_obj_set_style_pad_column(row, 10, 0);
+    lv_obj_set_style_pad_hor(row, 8, 0);
+    lv_obj_set_style_pad_column(row, 8, 0);
     if (clicked != NULL) {
         lv_obj_add_flag(row, LV_OBJ_FLAG_CLICKABLE);
         lv_obj_add_event_cb(row, clicked, LV_EVENT_CLICKED, user_data);
     }
     icon_background = lv_obj_create(row);
     style_plain(icon_background);
-    lv_obj_set_size(icon_background, 32, 32);
-    lv_obj_set_style_min_width(icon_background, 32, 0);
-    lv_obj_set_style_radius(icon_background, 9, 0);
+    lv_obj_set_size(icon_background, icon_size, icon_size);
+    lv_obj_set_style_min_width(icon_background, icon_size, 0);
+    lv_obj_set_style_radius(icon_background, 8, 0);
     lv_obj_set_style_bg_color(icon_background, color_token(ui, icon_color), 0);
     lv_obj_set_style_bg_opa(icon_background, LV_OPA_30, 0);
     label = make_label(icon_background, symbol, NULL,
@@ -1688,20 +1726,22 @@ static lv_obj_t* make_settings_row(pxsys_reference_lvgl_t* ui,
     lv_obj_center(label);
     text = lv_obj_create(row);
     style_plain(text);
-    lv_obj_set_height(text, subtitle == NULL ? 28 : 43);
+    lv_obj_set_width(text, 0);
+    lv_obj_set_height(text, text_height);
     lv_obj_set_flex_grow(text, 1);
-    lv_obj_set_layout(text, LV_LAYOUT_FLEX);
-    lv_obj_set_flex_flow(text, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_flex_align(text, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START,
-                          LV_FLEX_ALIGN_START);
-    label = make_label(text, title, typography_font(ui, PXSYS_TYPOGRAPHY_BODY),
+    label = make_label(text, title, title_font,
                        color_token(ui, PXSYS_COLOR_TEXT_PRIMARY));
     lv_obj_set_width(label, LV_PCT(100));
+    lv_obj_set_height(label, title_height);
+    lv_obj_align(label, subtitle == NULL ? LV_ALIGN_LEFT_MID
+                                         : LV_ALIGN_TOP_LEFT,
+                 0, 0);
     if (subtitle != NULL) {
-        label = make_label(text, subtitle,
-                           typography_font(ui, PXSYS_TYPOGRAPHY_CAPTION),
+        label = make_label(text, subtitle, subtitle_font,
                            color_token(ui, PXSYS_COLOR_TEXT_SECONDARY));
         lv_obj_set_width(label, LV_PCT(100));
+        lv_obj_set_height(label, subtitle_height);
+        lv_obj_align(label, LV_ALIGN_BOTTOM_LEFT, 0, 0);
     }
     return row;
 }
@@ -1938,21 +1978,84 @@ static void language_clicked(lv_event_t* event) {
     if (ui->navigation_bar != NULL) lv_obj_move_foreground(ui->navigation_bar);
 }
 
+#if PXSYS_REFERENCE_UI_ENABLE_WALLPAPER
+static void make_wallpaper_shape(pxsys_reference_lvgl_t* ui,
+                                 lv_obj_t* wallpaper, int32_t x, int32_t y,
+                                 int32_t width, int32_t height,
+                                 int32_t rotation,
+                                 pxsys_color_token_t color, lv_opa_t opacity) {
+    lv_obj_t* shape = lv_obj_create(wallpaper);
+    style_plain(shape);
+    lv_obj_set_pos(shape, x, y);
+    lv_obj_set_size(shape, width, height);
+    lv_obj_set_style_radius(shape, ui->theme.base_radius_px * 4u, 0);
+    lv_obj_set_style_bg_color(shape, color_token(ui, color), 0);
+    lv_obj_set_style_bg_opa(shape, opacity, 0);
+    lv_obj_set_style_transform_pivot_x(shape, width / 2, 0);
+    lv_obj_set_style_transform_pivot_y(shape, height / 2, 0);
+    lv_obj_set_style_transform_rotation(shape, rotation, 0);
+}
+
+static void build_home_wallpaper(pxsys_reference_lvgl_t* ui) {
+    lv_obj_t* wallpaper = lv_obj_create(ui->root);
+    style_plain(wallpaper);
+    lv_obj_set_pos(wallpaper, 0, 0);
+    lv_obj_set_size(wallpaper, (lv_coord_t)ui->display.width,
+                    (lv_coord_t)ui->display.height);
+    lv_obj_set_style_bg_color(wallpaper,
+                              color_token(ui, PXSYS_COLOR_BACKGROUND), 0);
+    lv_obj_set_style_bg_opa(wallpaper, LV_OPA_COVER, 0);
+    lv_obj_set_style_clip_corner(wallpaper, true, 0);
+    if (ui->wallpaper_source != NULL) {
+        lv_obj_t* image = lv_image_create(wallpaper);
+        lv_obj_set_size(image, LV_PCT(100), LV_PCT(100));
+        lv_image_set_src(image, ui->wallpaper_source);
+        lv_image_set_inner_align(image, LV_IMAGE_ALIGN_COVER);
+        lv_obj_remove_flag(image,
+                           LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+        return;
+    }
+    make_wallpaper_shape(
+        ui, wallpaper, -(int32_t)ui->display.width / 3,
+        -(int32_t)ui->display.height / 5,
+        (int32_t)ui->display.width, (int32_t)ui->display.height / 2,
+        120, PXSYS_COLOR_ACCENT, LV_OPA_20);
+    make_wallpaper_shape(
+        ui, wallpaper, (int32_t)ui->display.width / 2,
+        (int32_t)ui->display.height / 4,
+        (int32_t)ui->display.width * 3 / 4,
+        (int32_t)ui->display.height * 2 / 3,
+        -180, PXSYS_COLOR_SUCCESS, LV_OPA_10);
+    make_wallpaper_shape(
+        ui, wallpaper, -(int32_t)ui->display.width / 5,
+        (int32_t)ui->display.height * 3 / 4,
+        (int32_t)ui->display.width * 4 / 5,
+        (int32_t)ui->display.height / 4,
+        -80, PXSYS_COLOR_SURFACE, LV_OPA_50);
+}
+#endif
+
 static void build_home(pxsys_reference_lvgl_t* ui,
                        const pxsys_reference_layout_t* layout) {
     pxsys_app_registry_t* registry = pxsys_standard_system_apps(ui->system);
     size_t index;
     uint32_t row_height;
-    uint32_t columns = layout->grid_columns;
+    uint32_t columns;
     uint32_t column_width;
+    uint32_t gap = layout->size_class == PXSYS_UI_SIZE_COMPACT ? 4u : 8u;
     ui->launcher_count = 0;
     lv_obj_set_layout(ui->content, LV_LAYOUT_FLEX);
     lv_obj_set_flex_flow(ui->content, LV_FLEX_FLOW_ROW_WRAP);
     lv_obj_set_flex_align(ui->content, LV_FLEX_ALIGN_START,
                           LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+    columns = layout->content.width < 180u
+                  ? 3u
+                  : layout->content.width < 500u ? 4u : 5u;
+    lv_obj_set_style_pad_column(ui->content, gap, 0);
+    lv_obj_set_style_pad_row(ui->content, gap, 0);
     column_width = (layout->content.width -
-                    (columns - 1u) * layout->item_gap) / columns;
-    row_height = layout->size_class == PXSYS_UI_SIZE_COMPACT ? 72u : 88u;
+                    (columns - 1u) * gap) / columns;
+    row_height = layout->size_class == PXSYS_UI_SIZE_COMPACT ? 64u : 76u;
     lv_obj_add_flag(ui->content,
                     LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
     lv_obj_set_scroll_dir(ui->content, LV_DIR_VER);
@@ -2019,8 +2122,9 @@ static void build_settings(pxsys_reference_lvgl_t* ui,
     int has_about = settings_role_available(ui, PXSYS_ROLE_DEVICE_INFO);
     lv_obj_set_layout(ui->content, LV_LAYOUT_FLEX);
     lv_obj_set_flex_flow(ui->content, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_style_pad_row(ui->content, layout->item_gap, 0);
-    lv_obj_set_style_pad_bottom(ui->content, layout->item_gap, 0);
+    lv_obj_set_style_pad_row(
+        ui->content, layout->item_gap > 6 ? 6 : layout->item_gap, 0);
+    lv_obj_set_style_pad_bottom(ui->content, 4, 0);
     /* Keep the scroll container itself hit-testable. Non-interactive rows and
      * gaps otherwise fall through to the root, so scrolling only starts when
      * the pointer happens to land on a button or switch. */
@@ -3368,6 +3472,11 @@ static void rebuild(pxsys_reference_lvgl_t* ui) {
                               color_token(ui, PXSYS_COLOR_BACKGROUND), 0);
     lv_obj_set_style_bg_opa(ui->root,
                             ui->content_active ? LV_OPA_COVER : LV_OPA_TRANSP, 0);
+#if PXSYS_REFERENCE_UI_ENABLE_WALLPAPER
+    if (ui->content_active && ui->active_page == REFERENCE_PAGE_HOME &&
+        (ui->features & PXSYS_REFERENCE_UI_WALLPAPER))
+        build_home_wallpaper(ui);
+#endif
 
     if ((ui->active_chrome & PXSYS_REFERENCE_UI_STATUS_BAR) &&
         ui->window.status_bar_mode != PXSYS_WINDOW_BAR_HIDDEN) {
@@ -3780,6 +3889,7 @@ pxsys_status_t pxsys_reference_lvgl_create(
                              ? sizeof(reference_languages) /
                                    sizeof(reference_languages[0])
                              : config->language_count;
+    ui->wallpaper_source = config->wallpaper_source;
     if (ui->fonts[PXSYS_TYPOGRAPHY_BODY] == NULL)
         ui->fonts[PXSYS_TYPOGRAPHY_BODY] = ui->text_font;
     if (ui->fonts[PXSYS_TYPOGRAPHY_TITLE] == NULL)

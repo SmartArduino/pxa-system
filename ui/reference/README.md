@@ -14,8 +14,16 @@ identities and replaceable system roles; launching native or PXA applications
 always goes through the same task manager and Intent protocol.
 
 The reference feature mask lets constrained products omit Home, Settings,
-status bar, or navigation bar. Products may also replace either role with a
-higher-priority native or PXA implementation.
+status bar, navigation bar, or the Home wallpaper. Products may also replace
+either role with a higher-priority native or PXA implementation.
+
+The reference Home uses a responsive phone-style icon grid over an adaptive
+theme-colored wallpaper. Set `PXSYS_REFERENCE_UI_ENABLE_WALLPAPER=0` to remove
+wallpaper rendering from constrained builds, or clear
+`PXSYS_REFERENCE_UI_WALLPAPER` from the runtime feature mask without rebuilding.
+Products can set `pxsys_reference_lvgl_config_t.wallpaper_source` to a borrowed
+LVGL image source; it is center-cropped with cover sizing for the active display
+profile. A null source keeps the allocation-free built-in wallpaper.
 
 Reference applications use ordinary canonical application identities and the
 same Intent/RPC/event protocol as third-party native and PXA applications.

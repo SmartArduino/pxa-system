@@ -45,6 +45,8 @@ option(PXSYS_REFERENCE_UI_BATTERY_PERCENT
        "Show numeric battery percentage in the standard system UI" ON)
 option(PXSYS_REFERENCE_UI_GESTURE_HANDLE
        "Show the gesture navigation handle" OFF)
+option(PXSYS_REFERENCE_UI_WALLPAPER
+       "Compile the standard Home wallpaper" ON)
 set(PXSYS_REFERENCE_UI_TASK_SWITCHER "cards" CACHE STRING
     "Standard task switcher layout: cards or list")
 set_property(CACHE PXSYS_REFERENCE_UI_TASK_SWITCHER PROPERTY STRINGS cards list)
