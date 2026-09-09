@@ -175,12 +175,25 @@ system.role.package-installer
 system.role.app-manager
 system.role.file-picker
 system.role.theme-provider
+system.role.settings.sound
+system.role.settings.network
+system.role.settings.bluetooth
+system.role.settings.alarm
+system.role.file-manager
+system.role.device-info
 ```
 
 A product profile maps each role to ordered provider candidates. Selection
 considers trust, compatibility, enabled state, health and explicit product or
 user policy. Role assignment changes are transactional and fall back to the
 last healthy provider or recovery implementation.
+
+Settings launches these roles through the same Intent path used by every other
+application. A provider may therefore be a firmware-built Native application
+or an installed PXA application. The legacy `app_pages` bridge publishes its
+sound/display, network, Bluetooth audio, alarm, file manager and device-info
+pages as low-priority candidates; a product can replace any one of them without
+forking the standard Settings UI.
 
 ## 8. Theme contract
 

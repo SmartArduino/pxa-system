@@ -26,6 +26,13 @@ package installer, app manager, file picker and theme provider are role IDs,
 not linked singleton implementations. The role registry accepts native or PXA
 application identities. Role authorization is a product policy decision.
 
+Settings capability pages follow that rule too. Sound/display, network,
+Bluetooth audio, alarms, file management and device information each have a
+stable role. The standard Settings UI hides a capability row when no provider
+is registered and resolves the selected provider at click time, so late package
+installation and higher-priority product overrides do not require rebuilding
+the Settings application.
+
 The backend-neutral reference layout and optional LVGL implementation live
 under `ui/reference/`. An ESP product can use the standard component or provide
 its own implementation, for example:

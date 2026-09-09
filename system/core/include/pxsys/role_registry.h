@@ -20,6 +20,12 @@ extern "C" {
 #define PXSYS_ROLE_APP_MANAGER "system.role.app-manager"
 #define PXSYS_ROLE_FILE_PICKER "system.role.file-picker"
 #define PXSYS_ROLE_THEME_PROVIDER "system.role.theme-provider"
+#define PXSYS_ROLE_SOUND_SETTINGS "system.role.settings.sound"
+#define PXSYS_ROLE_NETWORK_SETTINGS "system.role.settings.network"
+#define PXSYS_ROLE_BLUETOOTH_SETTINGS "system.role.settings.bluetooth"
+#define PXSYS_ROLE_ALARM_SETTINGS "system.role.settings.alarm"
+#define PXSYS_ROLE_FILE_MANAGER "system.role.file-manager"
+#define PXSYS_ROLE_DEVICE_INFO "system.role.device-info"
 
 typedef struct {
     uint32_t struct_size;
