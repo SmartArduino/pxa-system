@@ -39,6 +39,12 @@ option(PXSYS_BUILD_STANDARD "Build the standard system composition" ON)
 option(PXSYS_BUILD_REFERENCE_UI "Build the backend-neutral reference UI layout" ON)
 option(PXSYS_BUILD_REFERENCE_LVGL "Build the LVGL standard UI adapter" OFF)
 option(PXSYS_REFERENCE_UI_ANIMATIONS "Compile standard system UI animations" ON)
+option(PXSYS_REFERENCE_UI_WIFI "Compile standard Wi-Fi status and settings UI" ON)
+option(PXSYS_REFERENCE_UI_CELLULAR "Compile standard cellular status and settings UI" ON)
+option(PXSYS_REFERENCE_UI_BATTERY_PERCENT
+       "Show numeric battery percentage in the standard system UI" ON)
+option(PXSYS_REFERENCE_UI_GESTURE_HANDLE
+       "Show the gesture navigation handle" OFF)
 set(PXSYS_REFERENCE_UI_TASK_SWITCHER "cards" CACHE STRING
     "Standard task switcher layout: cards or list")
 set_property(CACHE PXSYS_REFERENCE_UI_TASK_SWITCHER PROPERTY STRINGS cards list)

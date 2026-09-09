@@ -73,6 +73,10 @@ the current branch.
   edge Back and bottom-up Home into the same task/runtime contracts used by
   buttons. Simulator automation can hold pointer phases to capture an
   in-progress, theme-colored Back indicator directly from the framebuffer.
+- Card recents captures the final transformed application frame on Home-gesture
+  release and animates that image directly into its task card. Persistent RGB565
+  previews are clipped and downsampled to the release-time bounds, avoiding the
+  old full-screen reset frame and reducing retained preview memory.
 - Standard chrome and renderer surface containers no longer consume input in
   transparent or decorative regions. A simulator regression launches Arcade,
   delivers a real retained-widget click, verifies guest-internal Back, and then

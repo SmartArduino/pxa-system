@@ -17,6 +17,24 @@ if(DEFINED PXSYS_REFERENCE_UI_ANIMATIONS AND NOT PXSYS_REFERENCE_UI_ANIMATIONS)
     target_compile_definitions(pxa_system_reference_lvgl PRIVATE
         PXSYS_REFERENCE_UI_ENABLE_ANIMATIONS=0)
 endif()
+if(DEFINED PXSYS_REFERENCE_UI_WIFI AND NOT PXSYS_REFERENCE_UI_WIFI)
+    target_compile_definitions(pxa_system_reference_lvgl PRIVATE
+        PXSYS_REFERENCE_UI_WIFI=0)
+endif()
+if(DEFINED PXSYS_REFERENCE_UI_CELLULAR AND NOT PXSYS_REFERENCE_UI_CELLULAR)
+    target_compile_definitions(pxa_system_reference_lvgl PRIVATE
+        PXSYS_REFERENCE_UI_CELLULAR=0)
+endif()
+if(DEFINED PXSYS_REFERENCE_UI_BATTERY_PERCENT AND
+   NOT PXSYS_REFERENCE_UI_BATTERY_PERCENT)
+    target_compile_definitions(pxa_system_reference_lvgl PRIVATE
+        PXSYS_REFERENCE_UI_BATTERY_PERCENT=0)
+endif()
+if(DEFINED PXSYS_REFERENCE_UI_GESTURE_HANDLE AND
+   PXSYS_REFERENCE_UI_GESTURE_HANDLE)
+    target_compile_definitions(pxa_system_reference_lvgl PRIVATE
+        PXSYS_REFERENCE_UI_GESTURE_HANDLE=1)
+endif()
 if(DEFINED PXSYS_REFERENCE_UI_TASK_SWITCHER)
     if(PXSYS_REFERENCE_UI_TASK_SWITCHER STREQUAL "cards")
         target_compile_definitions(pxa_system_reference_lvgl PRIVATE

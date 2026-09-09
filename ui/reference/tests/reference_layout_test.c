@@ -17,7 +17,8 @@ int main(void) {
     assert(layout.navigation_bar.x == 0 &&
            layout.navigation_bar.y + (int32_t)layout.navigation_bar.height ==
                (int32_t)display.height);
-    assert(layout.content.height > 0 && layout.grid_columns >= 2);
+    assert(layout.content.y == 32 && layout.content.height == 166);
+    assert(layout.grid_columns >= 2);
 
     pxsys_display_profile_init(&display, 454, 454);
     display.shape = PXSYS_DISPLAY_SHAPE_CIRCLE;

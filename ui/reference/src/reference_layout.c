@@ -6,15 +6,16 @@ static uint32_t minimum(uint32_t left, uint32_t right) {
     return left < right ? left : right;
 }
 
-static pxsys_rect_t inset_rect(pxsys_rect_t rect, uint32_t inset) {
-    uint32_t horizontal = inset * 2u;
-    uint32_t vertical = inset * 2u;
-    if (horizontal >= rect.width) inset = rect.width > 2u ? (rect.width - 1u) / 2u : 0;
-    if (vertical >= rect.height) inset = rect.height > 2u ? (rect.height - 1u) / 2u : 0;
-    rect.x += (int32_t)inset;
-    rect.y += (int32_t)inset;
-    rect.width -= inset * 2u;
-    rect.height -= inset * 2u;
+static pxsys_rect_t inset_rect(pxsys_rect_t rect, uint32_t horizontal_inset,
+                               uint32_t vertical_inset) {
+    if (horizontal_inset * 2u >= rect.width)
+        horizontal_inset = rect.width > 2u ? (rect.width - 1u) / 2u : 0;
+    if (vertical_inset * 2u >= rect.height)
+        vertical_inset = rect.height > 2u ? (rect.height - 1u) / 2u : 0;
+    rect.x += (int32_t)horizontal_inset;
+    rect.y += (int32_t)vertical_inset;
+    rect.width -= horizontal_inset * 2u;
+    rect.height -= vertical_inset * 2u;
     return rect;
 }
 
@@ -28,7 +29,7 @@ pxsys_status_t pxsys_reference_layout_compute(
     uint32_t usable_width;
     uint32_t columns;
     if (output == NULL ||
-        pxsys_display_safe_rect(display, &safe) != PXSYS_STATUS_OK)
+        pxsys_display_content_rect(display, &safe) != PXSYS_STATUS_OK)
         return PXSYS_STATUS_INVALID_ARGUMENT;
     memset(output, 0, sizeof(*output));
     output->struct_size = sizeof(*output);
@@ -52,22 +53,22 @@ pxsys_status_t pxsys_reference_layout_compute(
         output->outer_padding = 8;
         output->item_gap = 8;
         output->tile_min_width = 118;
-        status_height = 30;
-        navigation_height = 38;
+        status_height = 20;
+        navigation_height = 30;
     } else if (shortest <= 480u) {
         output->size_class = PXSYS_UI_SIZE_REGULAR;
         output->outer_padding = 12;
         output->item_gap = 10;
         output->tile_min_width = 150;
-        status_height = 38;
-        navigation_height = 48;
+        status_height = 24;
+        navigation_height = 38;
     } else {
         output->size_class = PXSYS_UI_SIZE_EXPANDED;
         output->outer_padding = 16;
         output->item_gap = 12;
         output->tile_min_width = 180;
-        status_height = 46;
-        navigation_height = 56;
+        status_height = 28;
+        navigation_height = 44;
     }
     if (status_height + navigation_height + 1u >= safe.height) {
         status_height = minimum(status_height, safe.height / 5u);
@@ -85,7 +86,11 @@ pxsys_status_t pxsys_reference_layout_compute(
     output->content = safe;
     output->content.y += (int32_t)status_height;
     output->content.height -= status_height + navigation_height;
-    output->content = inset_rect(output->content, output->outer_padding);
+    /* Horizontal padding protects rounded edges. Vertical padding can be
+     * tighter because status/navigation geometry already protects those
+     * edges, which matters on short embedded displays. */
+    output->content = inset_rect(output->content, output->outer_padding,
+                                 output->outer_padding / 2u);
 
     usable_width = output->content.width + output->item_gap;
     columns = usable_width / (output->tile_min_width + output->item_gap);

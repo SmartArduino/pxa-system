@@ -2,6 +2,8 @@
 
 #include <string.h>
 
+#include "lvgl.h"
+
 #define PXSYS_LVGL_RENDERER_MAGIC UINT32_C(0x50584c56)
 
 typedef struct {
@@ -117,6 +119,13 @@ pxsys_status_t pxsys_lvgl_renderer_create(const pxsys_lvgl_renderer_config_t* co
            config->max_surfaces * sizeof(*renderer->surfaces));
     renderer->capacity = config->max_surfaces;
     renderer->parent = config->parent;
+    if (lv_obj_get_parent(renderer->parent) == NULL) {
+        /* Application surfaces fill their screen exactly. A scrollable screen
+         * only adds scrollbars around the app frame when a gesture reaches
+         * it, so keep the screen fixed. */
+        lv_obj_remove_flag(renderer->parent, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_set_scrollbar_mode(renderer->parent, LV_SCROLLBAR_MODE_OFF);
+    }
     renderer->transaction_context = config->transaction_context;
     renderer->apply_transaction = config->apply_transaction;
     renderer->allocator = config->allocator;
