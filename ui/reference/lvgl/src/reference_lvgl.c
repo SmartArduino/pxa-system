@@ -310,6 +310,7 @@ struct pxsys_reference_lvgl {
 static void rebuild(pxsys_reference_lvgl_t* ui);
 static void build_task_switcher(pxsys_reference_lvgl_t* ui);
 static void close_notification_shade(pxsys_reference_lvgl_t* ui);
+static void toast_restack(pxsys_reference_lvgl_t* ui);
 static void capture_current_task(pxsys_reference_lvgl_t* ui,
                                  int transition_pending);
 static void dismiss_recent_item(pxsys_reference_lvgl_t* ui,
@@ -3014,7 +3015,7 @@ static void build_notification_shade(pxsys_reference_lvgl_t* ui,
         lv_obj_move_foreground(ui->navigation_bar);
     ui->notification_shade_open = 1;
     notification_shade_progress_set(ui, initial_progress);
-    if (ui->toast_visible && ui->toast != NULL) lv_obj_move_foreground(ui->toast);
+    if (ui->toast_visible && ui->toast != NULL) toast_restack(ui);
 }
 
 static void status_bar_event(lv_event_t* event) {
@@ -3422,6 +3423,20 @@ static void toast_reposition(pxsys_reference_lvgl_t* ui) {
     lv_obj_align(ui->toast, LV_ALIGN_BOTTOM_MID, 0, -bottom_offset);
 }
 
+static void toast_restack(pxsys_reference_lvgl_t* ui) {
+    lv_obj_t* top_layer;
+    int32_t root_index;
+    if (ui->toast == NULL || ui->root == NULL) return;
+    top_layer = lv_display_get_layer_top(lv_obj_get_display(ui->root));
+    if (ui->parent != top_layer) {
+        lv_obj_move_foreground(ui->toast);
+        return;
+    }
+    root_index = lv_obj_get_index(ui->root);
+    if (root_index >= 0)
+        lv_obj_move_to_index(ui->toast, root_index + 1);
+}
+
 static void toast_hide(lv_timer_t* timer) {
     pxsys_reference_lvgl_t* ui =
         (pxsys_reference_lvgl_t*)lv_timer_get_user_data(timer);
@@ -3460,7 +3475,7 @@ static void toast_posted(void* context, const pxsys_toast_message_t* toast) {
     ui->toast_tone = toast->tone;
     toast_reposition(ui);
     lv_obj_remove_flag(ui->toast, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_move_foreground(ui->toast);
+    toast_restack(ui);
     ui->toast_visible = 1;
     lv_anim_delete(ui->toast, NULL);
     lv_obj_set_style_opa(ui->toast, LV_OPA_TRANSP, 0);
@@ -3676,9 +3691,15 @@ static void rebuild(pxsys_reference_lvgl_t* ui) {
      * page transition transforms. */
     if (ui->status_bar != NULL) lv_obj_move_foreground(ui->status_bar);
     if (ui->navigation_bar != NULL) lv_obj_move_foreground(ui->navigation_bar);
-    lv_obj_move_foreground(ui->root);
+    /* A root hosted directly on layer_top is already above application
+     * surfaces. Reordering that root on every status/locale refresh would
+     * jump it over newer global overlays such as the lock screen. Custom
+     * parents still need the old foreground behavior. */
+    if (lv_obj_get_parent(ui->root) !=
+        lv_display_get_layer_top(lv_obj_get_display(ui->root)))
+        lv_obj_move_foreground(ui->root);
     toast_reposition(ui);
-    if (ui->toast_visible) lv_obj_move_foreground(ui->toast);
+    if (ui->toast_visible) toast_restack(ui);
     if (ui->notification_shade_open)
         build_notification_shade(ui, ui->notification_dragging
                                          ? ui->notification_progress : 256);
