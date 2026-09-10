@@ -34,6 +34,8 @@ option(PXSYS_BUILD_TESTS "Build PXA System host tests" ${PXSYS_TOP_LEVEL})
 option(PXSYS_WARNINGS_AS_ERRORS "Treat PXA System warnings as errors"
        ${PXSYS_TOP_LEVEL})
 option(PXSYS_BUILD_LIBPXA "Build the bundled libpxa" ON)
+option(PXSYS_BUILD_WAMR_ADAPTER "Build bundled upstream WAMR host adapter"
+       ${PXSYS_TOP_LEVEL})
 option(PXSYS_BUILD_PXA_RUNTIME "Build the PXA application runtime" ON)
 option(PXSYS_BUILD_STANDARD "Build the standard system composition" ON)
 option(PXSYS_BUILD_REFERENCE_UI "Build the backend-neutral reference UI layout" ON)
@@ -54,6 +56,7 @@ set(PXSYS_REFERENCE_UI_TASK_PREVIEW_COUNT 4 CACHE STRING
     "Maximum cached task preview images in card mode")
 option(PXSYS_BUILD_RENDERER_HEADLESS "Build the headless renderer" ON)
 option(PXSYS_BUILD_RENDERER_LVGL "Build the LVGL renderer" OFF)
+option(PXSYS_BUILD_LVGL_PAGE_MANAGER "Build the LVGL page manager backend" OFF)
 option(PXSYS_BUILD_SIMULATOR "Build the portable system simulator"
        ${PXSYS_TOP_LEVEL})
 
@@ -64,7 +67,10 @@ endif()
 if(PXSYS_BUILD_LIBPXA)
     set(PXA_BUILD_TESTS ${PXSYS_BUILD_TESTS} CACHE BOOL "" FORCE)
     set(PXA_WARNINGS_AS_ERRORS ${PXSYS_WARNINGS_AS_ERRORS} CACHE BOOL "" FORCE)
-    set(PXA_BUILD_ADAPTERS OFF CACHE BOOL "" FORCE)
+    set(PXA_BUILD_ADAPTERS ${PXSYS_BUILD_WAMR_ADAPTER} CACHE BOOL "" FORCE)
+    if(PXSYS_BUILD_WAMR_ADAPTER)
+        set(PXA_WAMR_SOURCE_DIR "${PXSYS_ROOT}/wamr" CACHE PATH "" FORCE)
+    endif()
     add_subdirectory(libpxa)
 endif()
 
@@ -93,6 +99,15 @@ endif()
 
 if(PXSYS_BUILD_RENDERER_LVGL)
     add_subdirectory(ui/renderers/lvgl)
+endif()
+
+if(PXSYS_BUILD_LVGL_PAGE_MANAGER)
+    if(NOT TARGET lvgl)
+        message(FATAL_ERROR
+            "PXSYS_BUILD_LVGL_PAGE_MANAGER requires an lvgl CMake target")
+    endif()
+    add_subdirectory(ui/backends/lvgl/page_manager)
+    add_library(pxsys::page_manager ALIAS page_manager)
 endif()
 
 if(PXSYS_BUILD_REFERENCE_LVGL)

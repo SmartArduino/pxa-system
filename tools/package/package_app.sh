@@ -73,13 +73,21 @@ case "$package_target" in
   esp32s3)
     aot_target="xtensa"
     manifest_target="esp32-s3"
-    engine_abi="wamr-2.4.0-aot-v1-pxa-core-0"
-    wamrc_extra_args=(--mllvm=-mtext-section-literals)
+    engine_abi="wamr-2.4.3-aot-v1-pxa-core-1"
+    # Select the actual ESP32-S3 instruction model and match the firmware's
+    # windowed ABI. Keep the CPU explicit so a future LLVM default change
+    # cannot silently switch packages to a generic or call0 configuration.
+    # The board disables FreeRTOS trace, so WAMR cannot obtain a native stack
+    # boundary for per-function checks.
+    wamrc_extra_args=(--cpu=esp32s3
+                      --stack-bounds-checks=0
+                      --opt-level=3 --size-level=3
+                      --mllvm=-mtext-section-literals)
     ;;
   simulator)
     aot_target="x86_64"
     manifest_target="linux-x86_64"
-    engine_abi="wamr-2.4.0-aot-v1-pxa-core-0"
+    engine_abi="wamr-2.4.3-aot-v1-pxa-core-1"
     wamrc_extra_args=()
     ;;
   *)
@@ -216,6 +224,7 @@ if [[ -n "${PXA_EXTRA_AOT_DIR:-}" ]]; then
 fi
 
 if [[ "$build_system" == "cmake" ]]; then
+  wasi_sdk_dir="$("$script_dir/resolve_wasi_sdk.sh")"
   cmake_source_dir="$(realpath -m -- "$app_dir/$build_source_dir")"
   if [[ "$cmake_source_dir" != "$app_dir" && "$cmake_source_dir" != "$app_dir/"* ]] ||
      [[ ! -f "$cmake_source_dir/CMakeLists.txt" ]]; then
@@ -225,7 +234,7 @@ if [[ "$build_system" == "cmake" ]]; then
   joined_definitions="$(IFS=';'; printf '%s' "${app_definitions[*]}")"
   "$cmake_bin" -S "$cmake_source_dir" -B "$work_dir/cmake-build" \
     -DCMAKE_TOOLCHAIN_FILE="$pxa_system_dir/sdk/cmake/pxa-wasi-toolchain.cmake" \
-    -DWASI_SDK_DIR="${WASI_SDK_DIR:-}" \
+    -DWASI_SDK_DIR="$wasi_sdk_dir" \
     -DPXA_GUEST_SDK_DIR="$pxa_system_dir/sdk/guest-c" \
     -DPXA_ARTIFACT_DIR="$package_dir/artifacts" \
     -DPXA_APP_DEFINITIONS="$joined_definitions" \

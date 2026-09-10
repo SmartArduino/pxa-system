@@ -105,9 +105,9 @@ LZ4 source tree is preferred, pass
   source-tree fallback `-DPXA_LVGL_SOURCE_DIR=<path>`. The host test runs a real
   LVGL instance with a virtual display and a simulated pointer input device.
 
-The WAMR adapter builds against any WAMR source tree (the in-repo
-`managed_components/espressif__wasm-micro-runtime` works): configure with
-`-DPXA_WAMR_SOURCE_DIR=<path>`. WAMR's interpreter installs its own signal
+The WAMR adapter defaults to the bundled upstream checkout at `../wamr`.
+Override it with `-DPXA_WAMR_SOURCE_DIR=<path>` when embedding libpxa elsewhere.
+WAMR's interpreter installs its own signal
 handlers, so the third-party `vmlib` is compiled unsanitized while the
 adapter and tests remain fully covered.
 

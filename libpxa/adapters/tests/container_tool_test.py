@@ -39,7 +39,7 @@ def signed_package(root: Path, tools: Path, key: Path, meta: Path,
     (artifacts / "main.wasm").write_bytes(b"wasm" * 300)
     (artifacts / "main.linux-x86_64.aot").write_bytes(b"aot" * 500)
     run(sys.executable, tools / "build_package_manifest.py", meta, package,
-        key, "linux-x86_64", "wamr-2.4.0-aot-v1-pxa-core-0")
+        key, "linux-x86_64", "wamr-2.4.3-aot-v1-pxa-core-1")
     run(sys.executable, tools / "build_pxa_container.py", package, key, output)
     return output
 

@@ -18,7 +18,11 @@ option(PXA_BUILD_ADAPTERS "Build Layer 2 POSIX/OpenSSL adapters"
 if(PXA_BUILD_TESTS)
     find_package(Python3 COMPONENTS Interpreter QUIET)
 endif()
-set(PXA_WAMR_SOURCE_DIR "" CACHE PATH
+set(_PXA_WAMR_DEFAULT_SOURCE_DIR "")
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../wamr/CMakeLists.txt")
+    set(_PXA_WAMR_DEFAULT_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../wamr")
+endif()
+set(PXA_WAMR_SOURCE_DIR "${_PXA_WAMR_DEFAULT_SOURCE_DIR}" CACHE PATH
     "Path to a WAMR source tree (built as vmlib) for the WAMR engine adapter")
 set(PXA_WASI_SDK_DIR "" CACHE PATH
     "Optional WASI SDK root for the wasi-libc WAMR integration test")
@@ -28,12 +32,7 @@ set(PXA_LVGL_SOURCE_DIR "" CACHE PATH
     "Path to an LVGL source tree for the LVGL canvas adapter")
 set(PXA_LVGL_TARGET "" CACHE STRING
     "Existing configured LVGL target to use instead of compiling a source tree")
-set(_PXA_LZ4_DEFAULT_SOURCE_DIR "")
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../../components/lz4/lz4.c")
-    set(_PXA_LZ4_DEFAULT_SOURCE_DIR
-        "${CMAKE_CURRENT_SOURCE_DIR}/../../components/lz4")
-endif()
-set(PXA_LZ4_SOURCE_DIR "${_PXA_LZ4_DEFAULT_SOURCE_DIR}" CACHE PATH
+set(PXA_LZ4_SOURCE_DIR "" CACHE PATH
     "Optional path containing lz4.c and lz4.h; otherwise use system liblz4")
 set(_PXA_PACKAGE_TOOLS_DEFAULT_DIR "")
 if(EXISTS
@@ -315,7 +314,7 @@ if(PXA_BUILD_ADAPTERS AND PXA_WAMR_SOURCE_DIR)
             pxa_build_guest(wamr_guest
                 ${CMAKE_CURRENT_SOURCE_DIR}/adapters/tests/wamr_guest.c)
             pxa_build_guest(wamr_wasi_import_guest
-                ${CMAKE_CURRENT_SOURCE_DIR}/../components/pxa/tests/apps/wasi-undeclared-random/main.c)
+                ${CMAKE_CURRENT_SOURCE_DIR}/adapters/tests/wamr_wasi_import_guest.c)
             pxa_build_guest(wamr_wasi_system_guest
                 ${CMAKE_CURRENT_SOURCE_DIR}/adapters/tests/wamr_wasi_system_guest.c)
             pxa_build_guest(wamr_env_import_guest
@@ -332,16 +331,16 @@ if(PXA_BUILD_ADAPTERS AND PXA_WAMR_SOURCE_DIR)
                             --sysroot=${PXA_WASI_SDK_DIR}/share/wasi-sysroot
                             -O2 -mexec-model=reactor
                             -I${PXA_GUEST_SDK_INCLUDE}
-                            -I${CMAKE_CURRENT_SOURCE_DIR}/../components/pxa/tests/cmake-wasi-app/logic/include
+                            -I${CMAKE_CURRENT_SOURCE_DIR}/adapters/tests/wasi_libc_guest
                             -Wl,--export=pxa_app_start
                             -Wl,--export=pxa_app_on_event
                             -Wl,--export=pxa_app_stop
                             -o ${wamr_wasi_libc_guest_WASM}
-                            ${CMAKE_CURRENT_SOURCE_DIR}/../components/pxa/tests/cmake-wasi-app/main.c
-                            ${CMAKE_CURRENT_SOURCE_DIR}/../components/pxa/tests/cmake-wasi-app/logic/arithmetic.c
+                            ${CMAKE_CURRENT_SOURCE_DIR}/adapters/tests/wasi_libc_guest/main.c
+                            ${CMAKE_CURRENT_SOURCE_DIR}/adapters/tests/wasi_libc_guest/arithmetic.c
                     DEPENDS
-                        ${CMAKE_CURRENT_SOURCE_DIR}/../components/pxa/tests/cmake-wasi-app/main.c
-                        ${CMAKE_CURRENT_SOURCE_DIR}/../components/pxa/tests/cmake-wasi-app/logic/arithmetic.c
+                        ${CMAKE_CURRENT_SOURCE_DIR}/adapters/tests/wasi_libc_guest/main.c
+                        ${CMAKE_CURRENT_SOURCE_DIR}/adapters/tests/wasi_libc_guest/arithmetic.c
                     COMMENT "Compiling PXA wasi-libc integration guest")
                 add_custom_target(wamr_wasi_libc_guest
                     DEPENDS ${wamr_wasi_libc_guest_WASM})

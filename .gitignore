@@ -1,4 +1,5 @@
 /build/
 /dist/
+/.pxa/
 __pycache__/
 *.py[cod]
