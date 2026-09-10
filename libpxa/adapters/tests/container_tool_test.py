@@ -8,6 +8,11 @@ import tempfile
 from pathlib import Path
 
 
+PXA_SYSTEM_ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(PXA_SYSTEM_ROOT / "tools/wamr"))
+from metadata import load as load_wamr_metadata
+
+
 def run(*args: object, ok: bool = True) -> subprocess.CompletedProcess:
     result = subprocess.run([str(arg) for arg in args], check=False,
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -39,7 +44,7 @@ def signed_package(root: Path, tools: Path, key: Path, meta: Path,
     (artifacts / "main.wasm").write_bytes(b"wasm" * 300)
     (artifacts / "main.linux-x86_64.aot").write_bytes(b"aot" * 500)
     run(sys.executable, tools / "build_package_manifest.py", meta, package,
-        key, "linux-x86_64", "wamr-2.4.3-aot-v1-pxa-core-1")
+        key, "linux-x86_64", load_wamr_metadata()["engine_abi"])
     run(sys.executable, tools / "build_pxa_container.py", package, key, output)
     return output
 

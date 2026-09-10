@@ -1,0 +1,20 @@
+{
+  "format": "pxa-package-source-0.1",
+  "id": "pxa-wasi-system-lab",
+  "version": "0.1.0",
+  "name": "WASI System Lab",
+  "description": "验证受签名能力约束的 WASI 时钟和设备随机数",
+  "build": {"system": "cmake", "source_dir": "."},
+  "components": [
+    {
+      "id": "main",
+      "kind": "ui",
+      "cmake_target": "pxa_main",
+      "wasi": {
+        "version": "preview1",
+        "libc": "wasi-libc",
+        "features": ["monotonic-clock", "random", "wall-clock"]
+      }
+    }
+  ]
+}

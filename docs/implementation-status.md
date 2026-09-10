@@ -1,5 +1,7 @@
 # Implementation Status
 
+[简体中文](zh-CN/implementation-status.md)
+
 This page distinguishes implemented contracts from the remaining product
 migration. The architecture documents describe the target; this page describes
 the current branch.
@@ -56,7 +58,13 @@ the current branch.
   `app_pages` bridge after legacy callbacks are ready. Existing pages therefore
   navigate through the common Task/Intent path. Creation failure is logged and
   falls back to the previous navigation implementation.
-- The SDL simulator now composes the same standard system, `app_pages` bridge,
+- The standalone `simulator/desktop` target composes the standard system and
+  LVGL renderer directly on SDL2, with light/dark/custom themes, locale,
+  display-shape, safe-area and deterministic status controls. Its built-in
+  launcher catalog is generated from `apps/pxa` manifests and launches through
+  the common Intent/task/PXA-runtime lifecycle without requiring Guest
+  toolchains. The product SDL
+  simulator separately composes the same standard system, `app_pages` bridge,
   and LVGL renderer. Installed simulator packages are registered under their
   publisher-root/App-ID identity and launch through a `pxa-simulator` runtime
   provider, so native-to-PXA transitions and Back restoration use the common
@@ -142,9 +150,12 @@ tests also pass under AddressSanitizer and UndefinedBehaviorSanitizer. The
 legacy page adapter passes a strict syntax check against the repository's real
 LVGL and `app_pages` headers.
 
-The consolidated top-level CMake build currently runs 36 host tests, including
-the backend-neutral simulator smoke test. The product SDL simulator separately
-passes `--pxa-system-self-test` against the same relocated libraries.
+The consolidated top-level CMake build currently runs 51 host tests, including
+headless and SDL2/LVGL simulator smoke/self tests, a six-case visual matrix,
+the isolated LVGL renderer test, and WAMR overlay verification. The visual
+matrix covers 296x240, 390x844 and 454x454 round profiles across light, dark,
+custom, English and Simplified Chinese configurations. The product SDL simulator separately passes
+`--pxa-system-self-test` against the same relocated libraries.
 
 ## Remaining product integration
 
@@ -166,7 +177,7 @@ apps (for example a PXA status bar over a PXA foreground app) require a future
 multi-instance WAMR Host. Native and PXA combinations already use the same role
 and foreground orchestration contracts.
 
-The simulator host currently has the same single-active-PXA limitation. A PXA
+The product integration simulator host currently has the same single-active-PXA limitation. A PXA
 task is stopped when backgrounded behind a native task and restarted if it is
 foregrounded again; the logical task and shared application identity remain in
 the system stack. The remaining PXA System service gateway operations (RPC,

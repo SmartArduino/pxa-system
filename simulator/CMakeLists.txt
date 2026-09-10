@@ -1,14 +1,7 @@
-add_executable(pxsys_simulator main.c)
-target_compile_features(pxsys_simulator PRIVATE c_std_99)
-target_link_libraries(pxsys_simulator PRIVATE
-    pxsys::standard pxsys::renderer_headless)
-if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
-    target_compile_options(pxsys_simulator PRIVATE -Wall -Wextra -Wpedantic)
-    if(PXSYS_WARNINGS_AS_ERRORS)
-        target_compile_options(pxsys_simulator PRIVATE -Werror)
-    endif()
+if(PXSYS_BUILD_HEADLESS_SIMULATOR)
+    add_subdirectory(headless)
 endif()
 
-if(PXSYS_BUILD_TESTS)
-    add_test(NAME pxsys_simulator_smoke COMMAND pxsys_simulator)
+if(PXSYS_BUILD_DESKTOP_SIMULATOR)
+    add_subdirectory(desktop)
 endif()

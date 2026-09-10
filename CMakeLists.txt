@@ -59,9 +59,19 @@ option(PXSYS_BUILD_RENDERER_LVGL "Build the LVGL renderer" OFF)
 option(PXSYS_BUILD_LVGL_PAGE_MANAGER "Build the LVGL page manager backend" OFF)
 option(PXSYS_BUILD_SIMULATOR "Build the portable system simulator"
        ${PXSYS_TOP_LEVEL})
+option(PXSYS_BUILD_HEADLESS_SIMULATOR "Build the CI-oriented headless simulator"
+       ${PXSYS_TOP_LEVEL})
+option(PXSYS_BUILD_DESKTOP_SIMULATOR "Build the SDL2/LVGL standard UI simulator"
+       ${PXSYS_TOP_LEVEL})
+option(PXSYS_ENABLE_INSTALL "Generate install and CMake package rules"
+       ${PXSYS_TOP_LEVEL})
 
 if(PXSYS_BUILD_TESTS)
     include(CTest)
+    find_package(Python3 COMPONENTS Interpreter REQUIRED)
+    add_test(NAME pxsys_wamr_overlay_test
+        COMMAND ${Python3_EXECUTABLE}
+                "${PXSYS_ROOT}/tools/wamr/test_overlay.py")
 endif()
 
 if(PXSYS_BUILD_LIBPXA)
@@ -122,6 +132,7 @@ if(PXSYS_BUILD_SIMULATOR)
     add_subdirectory(simulator)
 endif()
 
+if(PXSYS_ENABLE_INSTALL)
 include(CMakePackageConfigHelpers)
 include(GNUInstallDirs)
 
@@ -196,3 +207,4 @@ install(EXPORT pxsysTargets
     FILE pxsysTargets.cmake
     NAMESPACE pxsys::
     DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/pxsys")
+endif()

@@ -1,8 +1,7 @@
 # Compatibility policy
 
-PXA services are versioned independently. Core, Package and services other
-than UI remain governed by `spec/draft-0.1`; UI service 0.3 is governed by
-`spec/draft-0.2`. A `libpxa` implementation change
+PXA services are versioned independently. Core, Package, UI 0.3 and the other
+services are governed by the consolidated `spec/draft`. A `libpxa` implementation change
 must not alter either wire format without a corresponding service-version
 change and golden-vector update.
 

@@ -1,5 +1,7 @@
 # Application and Protocol Model
 
+[简体中文](zh-CN/app-protocol.md)
+
 ## 1. Application identity
 
 The canonical application identity is the tuple:

@@ -1,5 +1,7 @@
 # PXA System
 
+[简体中文](README.zh-CN.md)
+
 PXA System is a portable application environment for embedded products. It
 defines the application model above an RTOS or desktop host: identity,
 lifecycle, discovery, navigation, communication, system services, UI surfaces,
@@ -42,12 +44,18 @@ separated from product naming and from the current ESP implementation.
   renderer backends, device providers and vendor extensions.
 - [Product integration](product-integration.md) defines the composition,
   replaceable system UI and external ESP service boundaries.
+- [Display profiles and standard UI](display-and-system-ui.md) defines
+  responsive layout, role replacement and UI backend ports.
 - [Localization and typography](localization-and-typography.md) defines locale
   fallback, overridable resource catalogs and semantic text roles.
 - [Migration plan](migration.md) maps the current `app_pages`, `page_manager`
   and PXA integration into incremental implementation milestones.
 - [Implementation status](implementation-status.md) records what exists on the
   current branch, its verification, and the remaining ESP product integration.
+
+Each document above has a maintained Simplified Chinese counterpart under
+[`zh-CN/`](zh-CN/). Machine-readable protocol values are authoritative in
+`../spec/draft/*.json` in either language.
 
 ## Normative language
 

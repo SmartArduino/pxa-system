@@ -1,5 +1,7 @@
 # PXA System
 
+[简体中文](README.zh-CN.md)
+
 PXA System is a portable application system for embedded products. This tree
 is intentionally self-contained so it can become its own Git repository or be
 embedded directly in a product repository.
@@ -14,6 +16,7 @@ not a dependency of the system core.
 ```text
 pxa-system/
   CMakeLists.txt              standalone CMake and ESP component entry
+  apps/pxa/                   reference PXA Apps and shared App assets
   cmake/                      shared source manifests and package helpers
   wamr/                        upstream WAMR runtime submodule
   libpxa/                     platform-neutral PXA Host library
@@ -28,6 +31,7 @@ pxa-system/
   sdk/guest-c/                PXA Guest C SDK
   sdk/cmake/                  WASI toolchain and PXA App CMake helpers
   tools/package/              manifest, signing and package tools
+  tools/wamr/                 WAMR metadata and patch verification
   scripts/                    host build, test and SDK release scripts
   platforms/esp-idf/          ESP-IDF integration helpers
   simulator/                  backend-neutral smoke simulator
@@ -45,19 +49,21 @@ Clone this tree with its runtime and UI dependencies:
 
 ```sh
 git clone --recurse-submodules <pxa-system-repository>
+cd pxa-system
 ```
 
-The checked-in WAMR revision follows its upstream `main` branch and currently
-uses WAMR 2.4.3. Updating that submodule is an ABI-changing operation for AOT
-packages: update the declared engine ABI and regenerate packages with the
-bundled `tools/package/build_wamrc.sh` flow before deployment.
+The checked-in WAMR submodule is detached at the exact commit declared in
+`config/wamr.json`; it currently identifies as WAMR 2.4.3. The same metadata
+file owns the AOT engine ABI and Espressif LLVM pin. Updating WAMR is an
+ABI-impacting operation: rebase and verify the ordered ESP patches, update the
+metadata, and regenerate packages with `tools/package/build_wamrc.sh` before
+deployment.
 
 `build_wamrc.sh` uses `wamr/` as its only WAMR source checkout. It stores the
 host LLVM checkout, the out-of-tree `wamrc` build and compiler cache under
-`pxa-system/.pxa/`; those generated files can be relocated with
+`.pxa/`; those generated files can be relocated with
 `PXA_WAMR_CACHE_DIR`. Its Xtensa backend is pinned to Espressif LLVM 18.1.2
-commit `344b928e67bfc1d07cb150609c55548e86a9bf19` from
-`xtensa_release_18.1.2`. The `wamrc` cache key includes both the WAMR and LLVM
+revision declared in `config/wamr.json`. The `wamrc` cache key includes both the WAMR and LLVM
 commits so switching toolchains cannot reuse an incompatible compiler binary.
 The host compiler retains the AArch64, ARM, Mips, RISC-V, X86 and Xtensa
 backends, so the same toolchain can generate AOT artifacts for ESP32-P4 and
@@ -67,7 +73,7 @@ required because WAMR otherwise defaults RISC-V 32-bit output to `ilp32d`.
 
 CMake/WASI Apps additionally need wasi-sdk 29.0. Packaging first honors
 `PXA_WASI_SDK_DIR`, `WASI_SDK_DIR` and `WASI_SDK_PATH`, then `/opt/wasi-sdk`,
-and finally the cached SDK under `pxa-system/.pxa`. If none exists, it downloads
+and finally the cached SDK under `.pxa`. If none exists, it downloads
 the pinned, checksum-verified SDK to that cache. Set
 `PXA_WASI_SDK_AUTO_DOWNLOAD=0` to prohibit downloads in an offline build.
 Set `PXA_WASI_SDK_CACHE_DIR` to relocate the cache.
@@ -75,17 +81,19 @@ Set `PXA_WASI_SDK_CACHE_DIR` to relocate the cache.
 ## Standalone build
 
 ```sh
-cmake -S pxa-system -B /tmp/pxa-system-build
+cmake -S . -B /tmp/pxa-system-build
 cmake --build /tmp/pxa-system-build
 ctest --test-dir /tmp/pxa-system-build --output-on-failure
 ```
 
 The default build includes libpxa with the bundled WAMR adapter, native and
 PXA runtime bindings, the standard composition, headless renderer, tests and
-the portable simulator. It needs OpenSSL and `liblz4` development packages for
-the host installer adapter.
-Enable the LVGL renderer with `-DPXSYS_BUILD_RENDERER_LVGL=ON` after providing
-an `lvgl` CMake target.
+the headless and SDL2/LVGL standard-UI simulators. It needs OpenSSL, `liblz4`
+and SDL2 development packages for
+the host installer adapter. The desktop simulator additionally needs libpng.
+The desktop simulator downloads pinned LVGL 9.5 by default. For offline builds,
+set `PXSYS_LVGL_SOURCE_DIR` to an existing LVGL 9.5 checkout. See
+[`simulator/desktop`](simulator/desktop/README.md).
 
 `scripts/test-host.sh` provides the same default build and test flow.
 `scripts/package-sdk.sh` creates an installable SDK archive containing libpxa,
@@ -112,6 +120,7 @@ See [Product integration](docs/product-integration.md) for system UI, service
 and driver overrides.
 See [Display profiles and standard UI](docs/display-and-system-ui.md) for
 responsive layout, shape simulation, role replacement, and UI backend ports.
+The complete bilingual document map is in [`docs/`](docs/README.md).
 
 ## Compatibility policy
 

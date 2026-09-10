@@ -1,5 +1,7 @@
 # Architecture
 
+[简体中文](zh-CN/architecture.md)
+
 ## 1. Scope
 
 PXA System owns the user-space application environment:

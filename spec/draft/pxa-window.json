@@ -1,0 +1,181 @@
+{
+  "schema": "pxa-window-spec-0.1",
+  "status": "draft",
+  "service": {
+    "name": "window",
+    "id": 2,
+    "major": 0,
+    "minor": 1,
+    "patch": 0
+  },
+  "opcodes": [
+    {
+      "name": "configure",
+      "id": 1,
+      "direction": "guest-to-host",
+      "request_id": "zero",
+      "payload": "configure-records"
+    },
+    {
+      "name": "get-snapshot",
+      "id": 2,
+      "direction": "bidirectional-result",
+      "request_id": "nonzero",
+      "payload": "empty"
+    },
+    {
+      "name": "metrics-changed",
+      "id": 32769,
+      "direction": "host-to-guest",
+      "request_id": "zero",
+      "payload": "snapshot-records",
+      "delivery": "coalescible"
+    },
+    {
+      "name": "back-requested",
+      "id": 32770,
+      "direction": "host-to-guest",
+      "request_id": "zero",
+      "payload": "empty",
+      "delivery": "reliable",
+      "default_action": "close-window"
+    }
+  ],
+  "configure_tags": [
+    {
+      "name": "edge-to-edge",
+      "id": 1,
+      "payload": "bool-u8",
+      "cardinality": "zero-or-one"
+    },
+    {
+      "name": "status-bar-mode",
+      "id": 2,
+      "payload": "bar-mode-u8",
+      "cardinality": "zero-or-one"
+    },
+    {
+      "name": "navigation-bar-mode",
+      "id": 3,
+      "payload": "bar-mode-u8",
+      "cardinality": "zero-or-one"
+    },
+    {
+      "name": "status-bar-icons",
+      "id": 4,
+      "payload": "icon-style-u8",
+      "cardinality": "zero-or-one"
+    },
+    {
+      "name": "navigation-bar-icons",
+      "id": 5,
+      "payload": "icon-style-u8",
+      "cardinality": "zero-or-one"
+    },
+    {
+      "name": "status-bar-color",
+      "id": 6,
+      "payload": "rgba8888-u32",
+      "cardinality": "zero-or-one"
+    },
+    {
+      "name": "navigation-bar-color",
+      "id": 7,
+      "payload": "rgba8888-u32",
+      "cardinality": "zero-or-one"
+    }
+  ],
+  "snapshot_tags": [
+    {
+      "name": "revision",
+      "id": 1,
+      "payload": "u64",
+      "cardinality": "one"
+    },
+    {
+      "name": "logical-size",
+      "id": 2,
+      "payload": "u32-u32",
+      "cardinality": "one"
+    },
+    {
+      "name": "pixel-size",
+      "id": 3,
+      "payload": "u32-u32",
+      "cardinality": "one"
+    },
+    {
+      "name": "density",
+      "id": 4,
+      "payload": "u32-u32",
+      "cardinality": "one"
+    },
+    {
+      "name": "safe-insets",
+      "id": 5,
+      "payload": "u32-u32-u32-u32",
+      "cardinality": "one"
+    },
+    {
+      "name": "system-bar-insets",
+      "id": 6,
+      "payload": "u32-u32-u32-u32",
+      "cardinality": "one"
+    },
+    {
+      "name": "orientation",
+      "id": 7,
+      "payload": "orientation-u8",
+      "cardinality": "one"
+    },
+    {
+      "name": "focused",
+      "id": 8,
+      "payload": "bool-u8",
+      "cardinality": "one"
+    }
+  ],
+  "bar_modes": [
+    {
+      "name": "visible",
+      "value": 0
+    },
+    {
+      "name": "hidden",
+      "value": 1
+    },
+    {
+      "name": "transient",
+      "value": 2
+    }
+  ],
+  "icon_styles": [
+    {
+      "name": "auto",
+      "value": 0
+    },
+    {
+      "name": "light",
+      "value": 1
+    },
+    {
+      "name": "dark",
+      "value": 2
+    }
+  ],
+  "orientations": [
+    {
+      "name": "unspecified",
+      "value": 0
+    },
+    {
+      "name": "portrait",
+      "value": 1
+    },
+    {
+      "name": "landscape",
+      "value": 2
+    }
+  ],
+  "protocol_version": "0.1.0"
+}

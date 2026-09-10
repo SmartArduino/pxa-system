@@ -1,0 +1,69 @@
+{
+  "schema": "pxa-ipc-spec-0.1",
+  "status": "draft",
+  "service": {
+    "name": "ipc",
+    "id": 7,
+    "major": 0,
+    "minor": 1,
+    "patch": 0
+  },
+  "scope": "one-activated-signed-app",
+  "opcodes": [
+    {
+      "name": "call",
+      "id": 1,
+      "direction": "guest-request/result-event",
+      "request_id": "nonzero",
+      "payload": "endpoint-and-optional-payload-records",
+      "result": "call-id"
+    },
+    {
+      "name": "reply",
+      "id": 2,
+      "direction": "guest-request/result-event",
+      "request_id": "nonzero",
+      "payload": "call-id-status-and-optional-payload-records"
+    }
+  ],
+  "events": [
+    {
+      "name": "request",
+      "opcode": 32769,
+      "request_id": "call-id",
+      "payload": "endpoint-and-optional-payload-records"
+    },
+    {
+      "name": "result",
+      "opcode": 32770,
+      "request_id": "call-id",
+      "payload": "status-i32-and-optional-payload-record"
+    }
+  ],
+  "record_tags": [
+    {
+      "name": "endpoint-or-call-id",
+      "id": 1,
+      "payload": "endpoint-id-for-call-or-u32-for-reply",
+      "cardinality": "one"
+    },
+    {
+      "name": "payload-or-status",
+      "id": 2,
+      "payload": "bytes-for-call-or-status-i32-for-reply",
+      "cardinality": "call-zero-or-one-reply-one"
+    },
+    {
+      "name": "reply-payload",
+      "id": 3,
+      "payload": "bytes",
+      "cardinality": "reply-zero-or-one"
+    }
+  ],
+  "limits": {
+    "max_endpoint_bytes": 64,
+    "max_payload_bytes": 1024,
+    "max_pending_calls": 16
+  },
+  "protocol_version": "0.1.0"
+}

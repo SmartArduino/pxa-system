@@ -13,9 +13,11 @@ The host supplies allocation functions and selects registry limits.
 For standalone host tests:
 
 ```sh
-cmake -S pxa-system/system/core -B /tmp/pxsys-core-build
+cmake -S . -B /tmp/pxsys-core-build \
+  -DPXSYS_BUILD_LIBPXA=OFF -DPXSYS_BUILD_PXA_RUNTIME=OFF \
+  -DPXSYS_BUILD_SIMULATOR=OFF
 cmake --build /tmp/pxsys-core-build
 ctest --test-dir /tmp/pxsys-core-build --output-on-failure
 ```
 
-See `docs/pxa-system/` for the architecture and migration plan.
+See [`docs/`](../../docs/README.md) for the architecture and migration plan.

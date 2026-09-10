@@ -1,0 +1,44 @@
+{
+  "schema": "pxa-clock-spec-0.1",
+  "status": "draft",
+  "service": {
+    "name": "clock",
+    "id": 4,
+    "major": 0,
+    "minor": 1,
+    "patch": 0
+  },
+  "opcodes": [
+    {
+      "name": "set-period",
+      "id": 1,
+      "direction": "guest-to-host",
+      "request_id": "zero",
+      "payload": "period-ms:u16",
+      "constraint": "zero-or-16-through-1000"
+    },
+    {
+      "name": "now",
+      "id": 2,
+      "direction": "guest-to-host",
+      "request_id": "nonzero",
+      "payload": "empty"
+    },
+    {
+      "name": "tick",
+      "id": 32769,
+      "direction": "host-to-guest",
+      "request_id": "zero",
+      "payload": "monotonic-us:u64",
+      "delivery": "coalescible"
+    },
+    {
+      "name": "now-result",
+      "id": 32770,
+      "direction": "host-to-guest",
+      "request_id": "echo",
+      "payload": "status:i32,monotonic-us:u64"
+    }
+  ],
+  "protocol_version": "0.1.0"
+}

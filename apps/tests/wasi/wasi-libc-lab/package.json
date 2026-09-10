@@ -1,0 +1,20 @@
+{
+  "format": "pxa-package-source-0.1",
+  "id": "pxa-wasi-libc-lab",
+  "version": "0.1.0",
+  "name": "WASI libc Lab",
+  "description": "验证纯计算 libc、多目录源码和 CMake 模块链接",
+  "build": {"system": "cmake", "source_dir": "."},
+  "components": [
+    {
+      "id": "main",
+      "kind": "ui",
+      "cmake_target": "pxa_main",
+      "wasi": {
+        "version": "preview1",
+        "libc": "wasi-libc",
+        "features": []
+      }
+    }
+  ]
+}

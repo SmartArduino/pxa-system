@@ -20,9 +20,11 @@ typedef struct lv_obj_t {
 
 #define LV_OBJ_FLAG_HIDDEN UINT32_C(1)
 #define LV_OBJ_FLAG_SCROLLABLE UINT32_C(2)
+#define LV_OBJ_FLAG_CLICKABLE UINT32_C(4)
 #define LV_SCROLLBAR_MODE_OFF 0
 
 lv_color_t lv_color_hex(uint32_t value);
+lv_obj_t* lv_obj_get_parent(const lv_obj_t* object);
 lv_obj_t* lv_obj_create(lv_obj_t* parent);
 void lv_obj_delete(lv_obj_t* object);
 void lv_obj_set_pos(lv_obj_t* object, int32_t x, int32_t y);

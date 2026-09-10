@@ -1,0 +1,67 @@
+{
+  "schema": "pxa-surface-spec-0.1",
+  "status": "draft",
+  "service": {
+    "name": "surface",
+    "id": 16,
+    "major": 0,
+    "minor": 1,
+    "patch": 0
+  },
+  "opcodes": [
+    {
+      "name": "create",
+      "id": 1,
+      "direction": "bidirectional-result",
+      "request_id": "nonzero",
+      "payload": "width:u16|height:u16|format:u16|buffer-count:u8|flags:u8",
+      "result": "handle:u32|stride:u32|frame-bytes:u32|buffer-count:u8|reserved:bytes[3]"
+    },
+    {
+      "name": "configure-layer",
+      "id": 2,
+      "direction": "bidirectional-result",
+      "request_id": "nonzero",
+      "payload": "handle:u32|x:i32|y:i32|width:u16|height:u16|z:i16|visible:u8|reserved:u8"
+    },
+    {
+      "name": "queue-frame",
+      "id": 3,
+      "direction": "guest-to-host",
+      "request_id": "zero",
+      "payload": "handle:u32|frame-id:u64|damage-count:u8|reserved:bytes[3]|damage:rect[damage-count]"
+    },
+    {
+      "name": "query-state",
+      "id": 4,
+      "direction": "bidirectional-result",
+      "request_id": "nonzero",
+      "payload": "handle:u32",
+      "result": "submitted:u64|presented:u64|dropped:u64|free-buffers:u32|flags:u32"
+    },
+    {
+      "name": "configure-opaque-ui-regions",
+      "id": 5,
+      "direction": "bidirectional-result",
+      "request_id": "nonzero",
+      "payload": "handle:u32|count:u8|reserved:bytes[3]|regions:rect[count]"
+    }
+  ],
+  "formats": [
+    {"name": "rgb565", "value": 1},
+    {"name": "argb8888-premultiplied", "value": 2}
+  ],
+  "create_flags": [
+    {"name": "premultiplied-alpha", "bit": 0}
+  ],
+  "state_flags": [
+    {"name": "supports-opaque-ui-regions", "bit": 0},
+    {"name": "supports-alpha-compositing", "bit": 1},
+    {"name": "ui-alpha-plane-active", "bit": 2}
+  ],
+  "limits": {
+    "damage_rectangles": 8,
+    "opaque_ui_regions": 8
+  },
+  "protocol_version": "0.1.0"
+}

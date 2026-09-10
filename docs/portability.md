@@ -1,5 +1,7 @@
 # Portability and Extensions
 
+[简体中文](zh-CN/portability.md)
+
 ## 1. Platform SPI
 
 The portable system core receives platform operations through configuration.

@@ -34,13 +34,30 @@ else()
             -Wall -Wextra -Wpedantic -Werror)
     endif()
     if(PXSYS_BUILD_TESTS)
-    add_executable(pxsys_lvgl_renderer_test "tests/lvgl_renderer_test.c")
-    target_link_libraries(pxsys_lvgl_renderer_test PRIVATE
-        pxsys::renderer_lvgl pxsys::core)
-    if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
-        target_compile_options(pxsys_lvgl_renderer_test PRIVATE
-            -Wall -Wextra -Wpedantic -Werror)
-    endif()
-    add_test(NAME pxsys_lvgl_renderer_test COMMAND pxsys_lvgl_renderer_test)
+        # The unit test inspects a deliberately small fake LVGL object. Build a
+        # private renderer copy so a real LVGL target supplied by the desktop
+        # simulator cannot leak opaque production types into the test.
+        add_library(pxsys_lvgl_renderer_test_adapter STATIC
+            ${PXSYS_LVGL_RENDERER_SOURCES}
+            "tests/lvgl_stub.c")
+        target_compile_features(pxsys_lvgl_renderer_test_adapter PRIVATE c_std_99)
+        target_include_directories(pxsys_lvgl_renderer_test_adapter BEFORE PRIVATE
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/stubs"
+            "${CMAKE_CURRENT_LIST_DIR}/include")
+        target_link_libraries(pxsys_lvgl_renderer_test_adapter PRIVATE pxsys::core)
+
+        add_executable(pxsys_lvgl_renderer_test "tests/lvgl_renderer_test.c")
+        target_include_directories(pxsys_lvgl_renderer_test BEFORE PRIVATE
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/stubs"
+            "${CMAKE_CURRENT_LIST_DIR}/include")
+        target_link_libraries(pxsys_lvgl_renderer_test PRIVATE
+            pxsys_lvgl_renderer_test_adapter pxsys::core)
+        if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+            target_compile_options(pxsys_lvgl_renderer_test_adapter PRIVATE
+                -Wall -Wextra -Wpedantic -Werror)
+            target_compile_options(pxsys_lvgl_renderer_test PRIVATE
+                -Wall -Wextra -Wpedantic -Werror)
+        endif()
+        add_test(NAME pxsys_lvgl_renderer_test COMMAND pxsys_lvgl_renderer_test)
     endif()
 endif()

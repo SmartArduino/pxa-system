@@ -1,5 +1,7 @@
 # Product Integration
 
+[简体中文](zh-CN/product-integration.md)
+
 ## Composition boundary
 
 `pxsys_standard_system_create()` creates the registries, native runtime, task

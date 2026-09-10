@@ -1,0 +1,6 @@
+[submodule "wamr"]
+	path = wamr
+	url = https://github.com/wasm-micro-runtime/wasm-micro-runtime.git
+[submodule "ui/backends/lvgl/page_manager"]
+	path = ui/backends/lvgl/page_manager
+	url = https://github.com/lucinhu/page_manager.git

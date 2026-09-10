@@ -1,15 +1,21 @@
 # PXA Specifications
 
-This directory contains the PXA specifications. Versions under `draft-*` are
-intentionally unstable until explicitly promoted to a stable ABI.
+[简体中文](README.zh-CN.md)
 
-The current Core, Package and non-UI service baseline is
-[draft-0.1](draft-0.1/README.md). The current UI service baseline is the
-breaking [UI 0.3 Draft 0.2](draft-0.2/ui.md).
+This directory contains one consolidated, intentionally unstable
+[current draft](draft/README.md). Services retain their own protocol versions;
+the directory name is not a compatibility version.
 
-The source of truth for numeric Core ABI assignments is
-`draft-0.1/pxa-core.yaml`; UI 0.3 assignments are defined by
-`draft-0.2/pxa-ui.yaml`. Prose documents explain semantics but must not assign
-different wire values. Run `draft-0.1/tools/check_spec.rb` and
-`../tools/test_ui_v2_vectors.py` to validate the checked-in sources and golden
-vectors.
+The `draft/pxa-*.json` files are the machine-readable sources of truth for
+numeric assignments and protocol versions. Prose documents explain semantics
+but must not assign different wire values. Run the dependency-free Python
+checks from the repository root:
+
+```sh
+python3 spec/draft/tools/test.py
+python3 tools/package/test_ui_vectors.py
+```
+
+The draft currently specifies Core 0.1, Window 0.1, UI 0.3, Network 0.2,
+Audio 0.2, Package Manifest 0.6, Container 0.1 and the remaining published
+services at 0.1.

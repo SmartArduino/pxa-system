@@ -1,5 +1,7 @@
 # Migration Plan
 
+[简体中文](zh-CN/migration.md)
+
 Progress on the current branch is tracked in
 [Implementation status](implementation-status.md). Milestones are exit
 conditions, not claims that adding an interface alone completes the migration.

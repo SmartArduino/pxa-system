@@ -1,0 +1,15 @@
+diff --git a/core/iwasm/aot/aot_loader.c b/core/iwasm/aot/aot_loader.c
+--- a/core/iwasm/aot/aot_loader.c
++++ b/core/iwasm/aot/aot_loader.c
+@@ -4384,5 +4384,11 @@
+                     if ((uint32)total_size > section->section_body_size) {
++#if (WASM_MEM_DUAL_BUS_MIRROR != 0)
++                        memset(os_get_dbus_mirror(aot_text)
++                                   + (uint32)section_size, 0,
++                               (uint32)total_size - section_size);
++#else
+                         memset(aot_text + (uint32)section_size, 0,
+                                (uint32)total_size - section_size);
++#endif
+                         section->section_body_size = (uint32)total_size;
+                     }

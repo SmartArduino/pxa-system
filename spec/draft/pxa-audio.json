@@ -1,0 +1,161 @@
+{
+  "schema": "pxa-audio-spec-0.2",
+  "status": "draft",
+  "service": {
+    "name": "audio",
+    "id": 10,
+    "major": 0,
+    "minor": 2,
+    "patch": 0
+  },
+  "opcodes": [
+    {
+      "name": "open-session",
+      "id": 1,
+      "direction": "bidirectional-result",
+      "request_id": "nonzero",
+      "payload": "permission-handle|media-usage",
+      "result": "status|session-handle|format"
+    },
+    {
+      "name": "commit-graph",
+      "id": 2,
+      "direction": "bidirectional-result",
+      "request_id": "nonzero",
+      "payload": "session-handle|gain|eq-band*|speaker-route",
+      "result": "status"
+    },
+    {
+      "name": "query-state",
+      "id": 3,
+      "direction": "bidirectional-result",
+      "request_id": "nonzero",
+      "payload": "session-handle",
+      "result": "status|submitted-samples|accepted-samples|queued-samples|state-flags",
+      "since": "0.2"
+    },
+    {
+      "name": "flush",
+      "id": 4,
+      "direction": "bidirectional-result",
+      "request_id": "nonzero",
+      "payload": "session-handle",
+      "result": "status",
+      "since": "0.2"
+    }
+  ],
+  "record_tags": [
+    {
+      "name": "permission-handle",
+      "id": 1,
+      "payload": "permission-handle:u32",
+      "cardinality": "open-request-one"
+    },
+    {
+      "name": "usage",
+      "id": 2,
+      "payload": "u16",
+      "cardinality": "open-request-one"
+    },
+    {
+      "name": "session-handle",
+      "id": 3,
+      "payload": "audio-graph-handle:u32",
+      "cardinality": "open-result-one"
+    },
+    {
+      "name": "sample-rate",
+      "id": 4,
+      "payload": "u32",
+      "cardinality": "open-result-one"
+    },
+    {
+      "name": "channels",
+      "id": 5,
+      "payload": "u8",
+      "cardinality": "open-result-one"
+    },
+    {
+      "name": "frame-ms",
+      "id": 6,
+      "payload": "u16",
+      "cardinality": "open-result-one"
+    }
+  ],
+  "query_state_tags": [
+    {
+      "name": "submitted-samples",
+      "id": 2,
+      "payload": "u64",
+      "cardinality": "query-result-one"
+    },
+    {
+      "name": "accepted-samples",
+      "id": 3,
+      "payload": "u64",
+      "cardinality": "query-result-one"
+    },
+    {
+      "name": "queued-samples",
+      "id": 4,
+      "payload": "u32",
+      "cardinality": "query-result-one"
+    },
+    {
+      "name": "state-flags",
+      "id": 5,
+      "payload": "u32",
+      "cardinality": "query-result-one",
+      "flags": {
+        "accepted-is-sink-submitted": 1
+      }
+    }
+  ],
+  "graph_tags": [
+    {
+      "name": "session-handle",
+      "id": 1,
+      "payload": "audio-graph-handle:u32",
+      "cardinality": "graph-request-one"
+    },
+    {
+      "name": "gain-db-q8",
+      "id": 2,
+      "payload": "i16:q8",
+      "cardinality": "graph-request-one"
+    },
+    {
+      "name": "eq-band",
+      "id": 3,
+      "payload": "frequency-hz:u16|gain-db-q8:i16|q-q8:u16",
+      "cardinality": "graph-request-many"
+    },
+    {
+      "name": "route",
+      "id": 4,
+      "payload": "u16",
+      "cardinality": "graph-request-one"
+    }
+  ],
+  "usages": [
+    {
+      "name": "media",
+      "value": 1
+    }
+  ],
+  "routes": [
+    {
+      "name": "speaker",
+      "value": 1
+    }
+  ],
+  "limits": {
+    "max_sessions_per_component": 1,
+    "max_eq_bands": 5,
+    "min_sample_rate": 8000,
+    "max_sample_rate": 48000,
+    "min_frame_ms": 5,
+    "max_frame_ms": 120
+  },
+  "protocol_version": "0.2.0"
+}

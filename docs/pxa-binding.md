@@ -1,5 +1,7 @@
 # PXA Binding
 
+[简体中文](zh-CN/pxa-binding.md)
+
 ## 1. Service envelope
 
 The PXA binding reserves service ID `17` for the PXA System gateway. Version

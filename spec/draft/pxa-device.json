@@ -1,0 +1,78 @@
+{
+  "schema": "pxa-device-spec-0.1",
+  "status": "draft",
+  "service": {
+    "name": "device",
+    "id": 15,
+    "major": 0,
+    "minor": 1,
+    "patch": 0
+  },
+  "opcodes": [
+    {
+      "name": "get-mac",
+      "id": 1,
+      "direction": "bidirectional-result",
+      "request_id": "nonzero",
+      "payload": "kind|permission-handle",
+      "result": "kind|mac|flags"
+    }
+  ],
+  "record_tags": [
+    {
+      "name": "mac-kind",
+      "id": 1,
+      "payload": "u16",
+      "cardinality": "request-one|result-one"
+    },
+    {
+      "name": "permission-handle-or-mac",
+      "id": 2,
+      "payload": "u32|bytes[6]",
+      "cardinality": "request-one|result-one"
+    },
+    {
+      "name": "flags",
+      "id": 3,
+      "payload": "u32",
+      "cardinality": "result-one"
+    }
+  ],
+  "mac_kinds": [
+    {
+      "name": "wifi-station-hardware",
+      "value": 1
+    },
+    {
+      "name": "wifi-softap-hardware",
+      "value": 2
+    },
+    {
+      "name": "bluetooth-hardware",
+      "value": 3
+    },
+    {
+      "name": "ethernet-hardware",
+      "value": 4
+    },
+    {
+      "name": "wifi-station-current",
+      "value": 5
+    }
+  ],
+  "flags": [
+    {
+      "name": "hardware",
+      "value": 1
+    },
+    {
+      "name": "current",
+      "value": 2
+    },
+    {
+      "name": "locally-administered",
+      "value": 4
+    }
+  ],
+  "protocol_version": "0.1.0"
+}

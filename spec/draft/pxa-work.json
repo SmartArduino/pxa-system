@@ -1,0 +1,94 @@
+{
+  "schema": "pxa-work-spec-0.1",
+  "status": "draft",
+  "service": {
+    "name": "work",
+    "id": 13,
+    "major": 0,
+    "minor": 1,
+    "patch": 0
+  },
+  "opcodes": [
+    {
+      "name": "enqueue",
+      "id": 1,
+      "direction": "bidirectional-result",
+      "request_id": "nonzero",
+      "payload": "worker|initial-delay-ms|execution-hint-ms|input?|retry-delay-ms|max-attempts",
+      "result": "status|work-id|granted-execution-ms"
+    },
+    {
+      "name": "cancel",
+      "id": 2,
+      "direction": "bidirectional-result",
+      "request_id": "nonzero",
+      "payload": "work-id",
+      "result": "status"
+    },
+    {
+      "name": "complete",
+      "id": 3,
+      "direction": "bidirectional-result",
+      "request_id": "nonzero",
+      "payload": "work-id|result",
+      "result": "status"
+    },
+    {
+      "name": "stop-requested",
+      "id": 32769,
+      "direction": "host-event",
+      "request_id": "zero",
+      "payload": "work-id:u32|deadline-ms:u64"
+    }
+  ],
+  "record_tags": [
+    {
+      "name": "worker",
+      "id": 1
+    },
+    {
+      "name": "initial-delay-ms",
+      "id": 2
+    },
+    {
+      "name": "execution-hint-ms",
+      "id": 3
+    },
+    {
+      "name": "work-id",
+      "id": 4
+    },
+    {
+      "name": "input",
+      "id": 5
+    },
+    {
+      "name": "retry-delay-ms",
+      "id": 6
+    },
+    {
+      "name": "max-attempts",
+      "id": 7
+    },
+    {
+      "name": "granted-execution-ms",
+      "id": 8
+    },
+    {
+      "name": "result",
+      "id": 9
+    }
+  ],
+  "limits": {
+    "max_entries_per_app": 8,
+    "min_initial_delay_ms": 0,
+    "max_delay_ms": 604800000,
+    "default_execution_ms": 10000,
+    "max_execution_ms": 60000,
+    "max_input_bytes": 24,
+    "max_attempts": 5,
+    "min_retry_delay_ms": 1000,
+    "stop_grace_ms": 500
+  },
+  "protocol_version": "0.1.0"
+}

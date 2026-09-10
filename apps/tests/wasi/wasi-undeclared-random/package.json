@@ -1,0 +1,20 @@
+{
+  "format": "pxa-package-source-0.1",
+  "id": "pxa-wasi-undeclared-random",
+  "version": "0.1.0",
+  "name": "WASI Undeclared Random Negative",
+  "description": "安全负例：实际导入 random_get 但签名能力未声明",
+  "build": {"system": "cmake", "source_dir": "."},
+  "components": [
+    {
+      "id": "main",
+      "kind": "ui",
+      "cmake_target": "pxa_main",
+      "wasi": {
+        "version": "preview1",
+        "libc": "wasi-libc",
+        "features": []
+      }
+    }
+  ]
+}

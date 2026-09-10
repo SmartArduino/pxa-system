@@ -9,7 +9,6 @@ fi
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 pxa_system_dir="$(cd "$script_dir/../.." && pwd)"
-workspace_dir="$(realpath -m -- "${PXA_WORKSPACE_ROOT:-$pxa_system_dir/..}")"
 app_name="$1"
 package_target="$2"
 output_dir="$3"
@@ -17,15 +16,7 @@ if [[ ! "$app_name" =~ ^[a-z][a-z0-9._-]{0,63}$ ]]; then
   echo "Invalid PXA App directory name: $app_name" >&2
   exit 2
 fi
-default_app_source_root="$pxa_system_dir/apps"
-if [[ -z "${PXA_APP_SOURCE_ROOT:-}" ]]; then
-  if [[ -d "$workspace_dir/apps/pxa/$app_name" ]]; then
-    default_app_source_root="$workspace_dir/apps/pxa"
-  elif [[ ! -d "$default_app_source_root/$app_name" ]]; then
-    echo "PXA App source is incomplete in both standard and workspace roots: $app_name" >&2
-    exit 1
-  fi
-fi
+default_app_source_root="$pxa_system_dir/apps/pxa"
 app_source_root="$(realpath -m -- "${PXA_APP_SOURCE_ROOT:-$default_app_source_root}")"
 app_dir="$(realpath -m -- "$app_source_root/$app_name")"
 if [[ "$app_dir" != "$app_source_root/$app_name" ]]; then
@@ -36,10 +27,9 @@ clang_bin="${CLANG:-clang}"
 cmake_bin="${CMAKE:-cmake}"
 wamrc_bin="${WAMRC:-}"
 private_key="${PXA_SIGNING_KEY:-$app_source_root/.dev-signing/publisher-private.pem}"
+engine_abi="$("${PYTHON:-python3}" "$pxa_system_dir/tools/wamr/metadata.py" engine_abi)"
 output_dir="$(realpath -m -- "$output_dir")"
-default_output_root="$workspace_dir/assets/system/pxa/builtin"
-inbox_output_root="$workspace_dir/assets/pxa-state/inbox"
-simulator_output_root="$workspace_dir/simulator/assets/system/pxa/builtin"
+default_output_root="$pxa_system_dir/out/packages"
 extra_output_root="${PXA_PACKAGE_OUTPUT_ROOT:-}"
 app_define_args=()
 app_definitions=()
@@ -56,7 +46,7 @@ if [[ -n "${PXA_APP_DEFINES:-}" ]]; then
 fi
 
 output_allowed=0
-for output_root in "$default_output_root" "$inbox_output_root" "$simulator_output_root" "$extra_output_root"; do
+for output_root in "$default_output_root" "$extra_output_root"; do
   [[ -n "$output_root" ]] || continue
   output_root="$(realpath -m -- "$output_root")"
   if [[ "$output_dir" == "$output_root/pxa-$app_name" ]]; then
@@ -73,7 +63,6 @@ case "$package_target" in
   esp32s3)
     aot_target="xtensa"
     manifest_target="esp32-s3"
-    engine_abi="wamr-2.4.3-aot-v1-pxa-core-1"
     # Select the actual ESP32-S3 instruction model and match the firmware's
     # windowed ABI. Keep the CPU explicit so a future LLVM default change
     # cannot silently switch packages to a generic or call0 configuration.
@@ -87,7 +76,6 @@ case "$package_target" in
   simulator)
     aot_target="x86_64"
     manifest_target="linux-x86_64"
-    engine_abi="wamr-2.4.3-aot-v1-pxa-core-1"
     wamrc_extra_args=()
     ;;
   *)

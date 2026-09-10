@@ -3,16 +3,22 @@ set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 pxa_system_dir="$(cd "$script_dir/../.." && pwd)"
-readonly wamr_ref="main"
-readonly wamr_commit="cd0497e26a7355973948f1fd903b049003cf0e85"
-readonly llvm_repo="https://github.com/espressif/llvm-project.git"
-readonly llvm_ref="xtensa_release_18.1.2"
-readonly llvm_commit="344b928e67bfc1d07cb150609c55548e86a9bf19"
+metadata_tool="$pxa_system_dir/tools/wamr/metadata.py"
+python_bin="${PYTHON:-python3}"
+if ! command -v "$python_bin" >/dev/null 2>&1; then
+  printf 'Missing required command: %s\n' "$python_bin" >&2
+  exit 1
+fi
+readonly wamr_commit="$("$python_bin" "$metadata_tool" commit)"
+readonly wamr_version="$("$python_bin" "$metadata_tool" version)"
+readonly llvm_repo="$("$python_bin" "$metadata_tool" llvm.repository)"
+readonly llvm_ref="$("$python_bin" "$metadata_tool" llvm.ref)"
+readonly llvm_commit="$("$python_bin" "$metadata_tool" llvm.commit)"
 wamr_source_dir="${PXA_WAMR_SOURCE_DIR:-${PXA_WAMR_COMPILER_DIR:-$pxa_system_dir/wamr}}"
 cache_dir="${PXA_WAMR_CACHE_DIR:-$pxa_system_dir/.pxa}"
 build_dir="${PXA_WAMR_BUILD_DIR:-$cache_dir/wamrc-build-$wamr_commit-llvm-$llvm_commit}"
 llvm_dir="${PXA_WAMR_LLVM_DIR:-$cache_dir/llvm-$llvm_commit}"
-wamrc_bin="$build_dir/wamrc-2.4.3"
+wamrc_bin="$build_dir/wamrc-$wamr_version"
 lock_file="${PXA_WAMR_LOCK_FILE:-$cache_dir/wamrc-$wamr_commit-llvm-$llvm_commit.lock}"
 build_jobs="${PXA_WAMR_JOBS:-}"
 host_arch="$(uname -m)"
@@ -73,13 +79,13 @@ fi
 
 if ! git -C "$wamr_source_dir" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   say "WAMR source checkout is missing: $wamr_source_dir"
-  say "Initialize pxa-system/wamr with: git submodule update --init pxa-system/wamr"
+  say "Initialize WAMR with: git submodule update --init wamr"
   exit 1
 fi
 
 actual_commit="$(git -C "$wamr_source_dir" rev-parse HEAD)"
 if [[ "$actual_commit" != "$wamr_commit" ]]; then
-  say "WAMR checkout is $actual_commit; expected $wamr_commit from $wamr_ref"
+  say "WAMR checkout is $actual_commit; expected pinned commit $wamr_commit"
   exit 1
 fi
 

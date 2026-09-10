@@ -1,0 +1,48 @@
+diff --git a/core/shared/platform/esp-idf/espidf_file.c b/core/shared/platform/esp-idf/espidf_file.c
+--- a/core/shared/platform/esp-idf/espidf_file.c
++++ b/core/shared/platform/esp-idf/espidf_file.c
+@@ -435,7 +435,16 @@
+     int ret = fcntl(handle, F_GETFL, 0);
+ 
+-    if (ret < 0)
+-        return convert_errno(errno);
++    if (ret < 0) {
++        int getfl_errno = errno;
++        struct stat stat_buf;
++
++        if (getfl_errno == ENOSYS && fstat(handle, &stat_buf) == 0
++            && S_ISCHR(stat_buf.st_mode)) {
++            *access_mode = WASI_LIBC_ACCESS_MODE_READ_WRITE;
++            return __WASI_ESUCCESS;
++        }
++        return convert_errno(getfl_errno);
++    }
+ 
+     switch (ret & O_ACCMODE) {
+         case O_RDONLY:
+@@ -1043,11 +1052,23 @@
+ int
+ os_ioctl(os_file_handle handle, int request, ...)
+ {
+-    return BHT_ERROR;
++    va_list arguments;
++    void *argument;
++
++    va_start(arguments, request);
++    argument = va_arg(arguments, void *);
++    va_end(arguments);
++    return ioctl(handle, request, argument);
+ }
+ 
+ int
+ os_poll(os_poll_file_handle *fds, os_nfds_t nfs, int timeout)
+ {
+-    return BHT_ERROR;
++    return poll(fds, nfs, timeout);
++}
++
++bool
++os_compare_file_handle(os_file_handle handle1, os_file_handle handle2)
++{
++    return handle1 == handle2;
+ }

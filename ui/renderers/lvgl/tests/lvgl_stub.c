@@ -6,6 +6,10 @@ lv_color_t lv_color_hex(uint32_t value) {
     return value & UINT32_C(0x00ffffff);
 }
 
+lv_obj_t* lv_obj_get_parent(const lv_obj_t* object) {
+    return object != NULL ? object->parent : NULL;
+}
+
 lv_obj_t* lv_obj_create(lv_obj_t* parent) {
     lv_obj_t* object = (lv_obj_t*)calloc(1, sizeof(*object));
     if (object != NULL)

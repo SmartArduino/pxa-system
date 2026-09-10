@@ -513,7 +513,7 @@ static void test_package_golden(void) {
         2, {0, 1}, 0,
     };
     capabilities[1] = (pxa_package_service_capability_t){
-        3, {0, 1}, 1,
+        3, {0, 3}, 1,
     };
     capabilities[2] = (pxa_package_service_capability_t){
         7, {0, 1}, 0,

@@ -1,5 +1,7 @@
 # ESP-IDF Integration
 
+[简体中文](README.zh-CN.md)
+
 The repository root is the backend-neutral ESP component. Optional adapters
 that require extra ESP components live below `components/` so a product opts
 into those dependencies explicitly through `EXTRA_COMPONENT_DIRS`. Add the
@@ -11,10 +13,13 @@ product components. WAMR configuration and ESP32-S3 compatibility fixes belong
 to this platform layer. Products may replace reference providers by normal
 registration and policy, without overriding or weak-linking core symbols.
 
-The WAMR compatibility layer also patches upstream libc-WASI's ESP-IDF adapter
-at configuration time. It maps WAMR's POSIX abstractions to ESP-IDF's `poll`,
-`ioctl`, `struct pollfd` and `struct timespec` APIs. The WAMR submodule stays
-unmodified so this platform patch can be submitted upstream independently.
+The WAMR compatibility layer applies the explicit patch list in
+`wamr/patches/series` to a build-directory overlay. It maps WAMR's POSIX
+abstractions to ESP-IDF's `poll`, `ioctl`, `struct pollfd` and `struct
+timespec` APIs. The full project-owned executable-memory implementation lives
+in `wamr/overrides`. The WAMR submodule stays unmodified throughout configure
+and build; `tools/wamr/prepare_overlay.py` verifies both its pinned commit and
+clean status.
 
 The layer exports ESP libgcc's 32-bit division and remainder helpers through
 WAMR's Xtensa relocation table. This supports AOT artifacts that emit calls to

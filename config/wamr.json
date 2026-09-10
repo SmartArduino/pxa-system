@@ -1,0 +1,11 @@
+{
+  "repository": "https://github.com/wasm-micro-runtime/wasm-micro-runtime.git",
+  "commit": "cd0497e26a7355973948f1fd903b049003cf0e85",
+  "version": "2.4.3",
+  "engine_abi": "wamr-2.4.3-aot-v1-pxa-core-1",
+  "llvm": {
+    "repository": "https://github.com/espressif/llvm-project.git",
+    "ref": "xtensa_release_18.1.2",
+    "commit": "344b928e67bfc1d07cb150609c55548e86a9bf19"
+  }
+}

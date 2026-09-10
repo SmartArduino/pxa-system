@@ -1,5 +1,7 @@
 # Localization and typography
 
+[简体中文](zh-CN/localization-and-typography.md)
+
 PXA System keeps language, resources, and typography above the rendering
 backend. LVGL is one consumer of these contracts; it is not part of their
 public meaning.

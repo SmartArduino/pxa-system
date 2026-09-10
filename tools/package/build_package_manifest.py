@@ -9,40 +9,20 @@ import subprocess
 import sys
 from pathlib import Path
 
+TOOL_DIR = Path(__file__).resolve().parent
+if str(TOOL_DIR) not in sys.path:
+    sys.path.insert(0, str(TOOL_DIR))
+from protocol_metadata import (  # noqa: E402
+    DECLARABLE_SERVICE_IDS,
+    SERVICE_IDS,
+    SERVICE_VERSIONS,
+    WASI_FEATURES,
+)
 
 SAFE_ID = re.compile(r"[a-z][a-z0-9._-]{0,63}")
 PERMISSION_ID = re.compile(r"[a-z][a-z0-9._-]{0,95}")
 PACKAGE_PATH = re.compile(r"[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*")
 VERSION = re.compile(r"[0-9A-Za-z][0-9A-Za-z._+-]{0,63}")
-SERVICE_IDS = {
-    "core": 1,
-    "window": 2,
-    "ui": 3,
-    "clock": 4,
-    "fs": 5,
-    "storage": 6,
-    "ipc": 7,
-    "sensor": 8,
-    "net": 9,
-    "audio": 10,
-    "permission": 11,
-    "secrets": 12,
-    "work": 13,
-    "wasi": 14,
-    "device": 15,
-    "surface": 16,
-}
-DECLARABLE_SERVICE_IDS = {name: value for name, value in SERVICE_IDS.items()
-                           if name != "wasi"}
-WASI_FEATURES = {
-    "stdio": 1 << 0,
-    "monotonic-clock": 1 << 1,
-    "wall-clock": 1 << 2,
-    "random": 1 << 3,
-    "arguments": 1 << 4,
-    "environment": 1 << 5,
-    "private-fs": 1 << 6,
-}
 COMPONENT_KINDS = {"ui": 1, "service": 2, "job": 3}
 P256_ORDER = int("FFFFFFFF00000000FFFFFFFFFFFFFFFFBCE6FAADA7179E84F3B9CAC2FC632551", 16)
 EC_PUBLIC_KEY_OID = bytes.fromhex("2a8648ce3d0201")
@@ -68,11 +48,8 @@ def records(items):
 
 
 def service(service_id, features=0):
-    major = 0
-    min_minor = (3 if service_id == SERVICE_IDS["ui"] else
-                 2 if service_id in (SERVICE_IDS["net"],
-                                     SERVICE_IDS["audio"]) else 1)
-    max_minor = 3 if service_id == SERVICE_IDS["ui"] else min_minor
+    major, min_minor = SERVICE_VERSIONS[service_id]
+    max_minor = min_minor
     return records([
         (1, struct.pack("<H", service_id)),
         (2, struct.pack("<HH", major, min_minor)),

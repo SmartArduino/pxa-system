@@ -512,130 +512,7 @@ endif()
 
 if(PXA_BUILD_TESTS)
     enable_testing()
-    set(PXA_HOST_ARENA_ROOT
-        "${CMAKE_CURRENT_SOURCE_DIR}/../components/pxa")
-    if(EXISTS "${PXA_HOST_ARENA_ROOT}/src/pxa_host_activation_arena.c")
-        add_executable(pxa_host_activation_arena_test
-            "${PXA_HOST_ARENA_ROOT}/src/pxa_host_activation_arena.c"
-            "${PXA_HOST_ARENA_ROOT}/tests/pxa_host_activation_arena_test.c")
-        target_include_directories(pxa_host_activation_arena_test PRIVATE
-            "${PXA_HOST_ARENA_ROOT}/src")
-        if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
-            target_compile_options(pxa_host_activation_arena_test PRIVATE
-                -Wall -Wextra -Wpedantic)
-            if(PXA_WARNINGS_AS_ERRORS)
-                target_compile_options(pxa_host_activation_arena_test PRIVATE
-                    -Werror)
-            endif()
-        endif()
-        add_test(NAME pxa_host_activation_arena_test
-            COMMAND pxa_host_activation_arena_test)
-    endif()
-    if(EXISTS "${PXA_HOST_ARENA_ROOT}/src/pxa_host_clock_slots.c")
-        add_executable(pxa_host_clock_slots_test
-            "${PXA_HOST_ARENA_ROOT}/src/pxa_host_clock_slots.c"
-            "${PXA_HOST_ARENA_ROOT}/tests/pxa_host_clock_slots_test.c")
-        target_include_directories(pxa_host_clock_slots_test PRIVATE
-            "${PXA_HOST_ARENA_ROOT}/src")
-        if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
-            target_compile_options(pxa_host_clock_slots_test PRIVATE
-                -Wall -Wextra -Wpedantic)
-            if(PXA_WARNINGS_AS_ERRORS)
-                target_compile_options(pxa_host_clock_slots_test PRIVATE
-                    -Werror)
-            endif()
-        endif()
-        add_test(NAME pxa_host_clock_slots_test
-            COMMAND pxa_host_clock_slots_test)
-    endif()
-    if(EXISTS "${PXA_HOST_ARENA_ROOT}/src/pxa_host_pointer_mailbox.c")
-        add_executable(pxa_host_pointer_mailbox_test
-            "${PXA_HOST_ARENA_ROOT}/src/pxa_host_pointer_mailbox.c"
-            "${PXA_HOST_ARENA_ROOT}/tests/pxa_host_pointer_mailbox_test.c")
-        target_include_directories(pxa_host_pointer_mailbox_test PRIVATE
-            "${PXA_HOST_ARENA_ROOT}/src")
-        if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
-            target_compile_options(pxa_host_pointer_mailbox_test PRIVATE
-                -Wall -Wextra -Wpedantic)
-            if(PXA_WARNINGS_AS_ERRORS)
-                target_compile_options(pxa_host_pointer_mailbox_test PRIVATE
-                    -Werror)
-            endif()
-        endif()
-        add_test(NAME pxa_host_pointer_mailbox_test
-            COMMAND pxa_host_pointer_mailbox_test)
-    endif()
-    if(EXISTS "${PXA_HOST_ARENA_ROOT}/src/pxa_package_disabled_policy.c")
-        add_executable(pxa_package_disabled_policy_test
-            "${PXA_HOST_ARENA_ROOT}/src/pxa_package_disabled_policy.c"
-            "${PXA_HOST_ARENA_ROOT}/tests/pxa_package_disabled_policy_test.c")
-        target_include_directories(pxa_package_disabled_policy_test PRIVATE
-            "${PXA_HOST_ARENA_ROOT}/src")
-        if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
-            target_compile_options(pxa_package_disabled_policy_test PRIVATE
-                -Wall -Wextra -Wpedantic)
-            if(PXA_WARNINGS_AS_ERRORS)
-                target_compile_options(pxa_package_disabled_policy_test PRIVATE
-                    -Werror)
-            endif()
-        endif()
-        add_test(NAME pxa_package_disabled_policy_test
-            COMMAND pxa_package_disabled_policy_test)
-    endif()
     add_executable(pxa_api_compile_test tests/api_compile_test.c)
-    if(PXA_BUILD_ADAPTERS AND CMAKE_C_COMPILER_ID MATCHES "GNU|Clang" AND
-       CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
-       EXISTS "${PXA_HOST_ARENA_ROOT}/tests/pxa_esp_lazy_storage_test.c")
-        add_executable(pxa_esp_lazy_storage_test
-            "${PXA_HOST_ARENA_ROOT}/tests/pxa_esp_lazy_storage_test.c")
-        target_include_directories(pxa_esp_lazy_storage_test PRIVATE
-            "${PXA_HOST_ARENA_ROOT}/tests/esp_stubs"
-            "${PXA_HOST_ARENA_ROOT}/include")
-        target_link_libraries(pxa_esp_lazy_storage_test PRIVATE pxa_adapters_posix)
-        target_compile_options(pxa_esp_lazy_storage_test PRIVATE
-            -Wall -Wextra -Werror -Wno-unused-function -UNDEBUG -ffunction-sections)
-        target_link_options(pxa_esp_lazy_storage_test PRIVATE -Wl,--gc-sections)
-        add_test(NAME pxa_esp_lazy_storage_test COMMAND pxa_esp_lazy_storage_test)
-    endif()
-    if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang" AND
-       CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
-       EXISTS "${PXA_HOST_ARENA_ROOT}/tests/pxa_esp_net_backend_test.c")
-        add_executable(pxa_esp_audio_backend_test
-            "${PXA_HOST_ARENA_ROOT}/tests/pxa_esp_audio_backend_test.c")
-        target_include_directories(pxa_esp_audio_backend_test PRIVATE
-            "${PXA_HOST_ARENA_ROOT}/tests/esp_stubs"
-            "${PXA_HOST_ARENA_ROOT}/include")
-        target_link_libraries(pxa_esp_audio_backend_test PRIVATE pxa)
-        if(UNIX)
-            target_link_libraries(pxa_esp_audio_backend_test PRIVATE m)
-        endif()
-        if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
-            target_compile_options(pxa_esp_audio_backend_test PRIVATE
-                -Wall -Wextra -Werror -UNDEBUG)
-        endif()
-        add_test(NAME pxa_esp_audio_backend_test COMMAND pxa_esp_audio_backend_test)
-        add_executable(pxa_esp_surface_backend_test
-            "${PXA_HOST_ARENA_ROOT}/tests/pxa_esp_surface_backend_test.c")
-        target_include_directories(pxa_esp_surface_backend_test PRIVATE
-            "${PXA_HOST_ARENA_ROOT}/tests/esp_stubs"
-            "${PXA_HOST_ARENA_ROOT}/include")
-        target_link_libraries(pxa_esp_surface_backend_test PRIVATE pxa)
-        target_compile_options(pxa_esp_surface_backend_test PRIVATE
-            -Wall -Wextra -Werror -UNDEBUG)
-        add_test(NAME pxa_esp_surface_backend_test
-            COMMAND pxa_esp_surface_backend_test)
-        add_executable(pxa_esp_net_backend_test
-            "${PXA_HOST_ARENA_ROOT}/tests/pxa_esp_net_backend_test.c")
-        target_include_directories(pxa_esp_net_backend_test PRIVATE
-            "${PXA_HOST_ARENA_ROOT}/tests/esp_stubs"
-            "${PXA_HOST_ARENA_ROOT}/include")
-        target_link_libraries(pxa_esp_net_backend_test PRIVATE pxa)
-        if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
-            target_compile_options(pxa_esp_net_backend_test PRIVATE
-                -Wall -Wextra -Werror -UNDEBUG)
-        endif()
-        add_test(NAME pxa_esp_net_backend_test COMMAND pxa_esp_net_backend_test)
-    endif()
     target_link_libraries(pxa_api_compile_test PRIVATE pxa)
     add_test(NAME pxa_api_compile_test COMMAND pxa_api_compile_test)
 
@@ -693,7 +570,7 @@ if(PXA_BUILD_TESTS)
             NAME pxa_ui_vectors_test
             COMMAND ${Python3_EXECUTABLE}
                     ${CMAKE_CURRENT_SOURCE_DIR}/tests/ui_vectors_test.py
-                    ${CMAKE_CURRENT_SOURCE_DIR}/tests/data/ui-v2-vectors.json)
+                    ${CMAKE_CURRENT_SOURCE_DIR}/tests/data/ui-vectors.json)
     endif()
 
     if(MSVC)

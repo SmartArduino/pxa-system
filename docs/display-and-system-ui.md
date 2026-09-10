@@ -1,5 +1,7 @@
 # Display Profiles and Standard System UI
 
+[简体中文](zh-CN/display-and-system-ui.md)
+
 ## Contract boundaries
 
 `pxsys_display_profile_t` is the renderer-independent description of a logical

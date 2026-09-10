@@ -1,0 +1,36 @@
+{
+  "format": "pxa-package-source-0.1",
+  "id": "pxa-cmake-components-lab",
+  "version": "0.1.1",
+  "release_sequence": 2,
+  "name": "CMake Components Lab",
+  "description": "验证 CMake 多 Component、目录源码和 PXA IPC 隔离",
+  "build": {"system": "cmake", "source_dir": "."},
+  "components": [
+    {
+      "id": "main",
+      "kind": "ui",
+      "cmake_target": "pxa_main",
+      "services": ["ipc"],
+      "wasi": {
+        "version": "preview1",
+        "libc": "wasi-libc",
+        "features": []
+      }
+    },
+    {
+      "id": "responder",
+      "kind": "service",
+      "cmake_target": "pxa_responder",
+      "services": ["ipc"],
+      "wasi": {
+        "version": "preview1",
+        "libc": "wasi-libc",
+        "features": []
+      }
+    }
+  ],
+  "ipc_endpoints": [
+    {"name": "cmake.echo", "component": "responder"}
+  ]
+}

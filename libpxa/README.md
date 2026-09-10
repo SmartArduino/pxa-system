@@ -1,5 +1,7 @@
 # libpxa
 
+[简体中文](README.zh-CN.md)
+
 PXA means **Portable eXecutable Application**. The PXA Platform is the Host,
 service contracts, and tools for that portable execution and packaging model.
 
@@ -45,10 +47,9 @@ Implemented modules:
 - fixed-capacity activation planning/coordinating and recoverable package-slot
   transactions.
 
-Core, Package and non-UI Guest wire compatibility is defined by
-`spec/draft-0.1`. UI service 0.3 is defined separately by
-`spec/draft-0.2`; it is a deliberate breaking replacement for
-UI 0.1.
+Core, Package, UI 0.3 and other Guest wire compatibility is defined by the
+consolidated `spec/draft`. UI 0.3 is a deliberate breaking replacement for the
+obsolete UI 0.1 snapshot, which is no longer part of the current draft.
 
 ## Layer 2 adapters
 
@@ -151,22 +152,21 @@ v1.1 HTTPS POST with a request header, inline body and selected response header
 through the simulated net backend, verifies response metadata, reads the body
 with `pxa_io`, opens an audio session and commits a speaker graph through the
 counting audio backend.
-## Simulator on the C stack
+## Simulators
 
-The desktop simulator (`simulator/`) no longer uses the C++ core. Its host is
-`simulator/pxa_c_host.c`, a pure-C file implementing the `simulator_pxa_*`
-interface on libpxa: the C installer installs the signed built-in apps, all C
-services run with simulated backends, the C WAMR engine executes the apps and
-the C LVGL UI backend renders them, with a maintenance timer driving lease
-expiry, sensor samples, net polls, scheduler due jobs and clock ticks. Both
-simulator self-tests pass:
+PXA System includes two standalone hosts. `simulator/headless` exercises the
+portable composition and renderer contract for CI. `simulator/desktop` runs the
+standard UI through SDL2 and LVGL without product code:
 
 ```sh
-cmake -S simulator -B /tmp/sim-build
-cmake --build /tmp/sim-build --target app_pages_simulator -j
-SDL_VIDEODRIVER=dummy /tmp/sim-build/app_pages_simulator --pxa-management-self-test
-SDL_VIDEODRIVER=dummy /tmp/sim-build/app_pages_simulator --pxa-trace-self-test
+cmake -S simulator/desktop -B /tmp/pxsys-desktop
+cmake --build /tmp/pxsys-desktop
+/tmp/pxsys-desktop/pxsys_desktop_simulator --dark
 ```
+
+A product repository may keep a richer simulator that binds product pages,
+fonts, assets and service adapters. That host consumes libpxa and PXA System;
+it is not part of this portable repository.
 
 ## Platform contract
 
@@ -213,7 +213,7 @@ external build-tree targets and are not installed as standalone binaries.
 `BUILD_SHARED_LIBS=ON` is supported for host use; embedded builds default to a
 static library.
 
-The ESP platform uses `components/pxa/src/pxa_esp_host.c` to run the C Core,
+The ESP platform uses `components/pxa/src/runtime/pxa_esp_host.c` to run the C Core,
 services, WAMR engine adapter and LVGL UI adapter. Its public
 `pxa_host_*` facade and bundled development trust provider are C; the legacy
 C++ Core is not linked into the ESP component. Neither is a dependency of the
@@ -222,7 +222,7 @@ standalone library.
 Host-only tests can be run without ESP-IDF:
 
 ```sh
-cmake -S pxa-system/libpxa -B /tmp/libpxa-build
+cmake -S libpxa -B /tmp/libpxa-build
 cmake --build /tmp/libpxa-build
 ctest --test-dir /tmp/libpxa-build --output-on-failure
 ```
@@ -248,7 +248,7 @@ ctest --test-dir /tmp/libpxa-build-asan --output-on-failure
 Run the portable C runtime microbenchmark with:
 
 ```sh
-PXA_BENCH_RUNS=3 pxa-system/libpxa/bench/run.sh
+PXA_BENCH_RUNS=3 libpxa/bench/run.sh
 ```
 
 The benchmark measures snapshot, event delivery and request round trips for the

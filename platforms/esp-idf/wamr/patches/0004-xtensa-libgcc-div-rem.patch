@@ -1,0 +1,54 @@
+diff --git a/core/iwasm/aot/arch/aot_reloc_xtensa.c b/core/iwasm/aot/arch/aot_reloc_xtensa.c
+--- a/core/iwasm/aot/arch/aot_reloc_xtensa.c
++++ b/core/iwasm/aot/arch/aot_reloc_xtensa.c
+@@ -21,22 +21,25 @@
+ void __modsi3(void);
++void __divsi3(void);
+ 
+ void __divdi3(void);
+ 
++void __udivsi3(void);
+ void __udivdi3(void);
+ void __unorddf2(void);
+ void __adddf3(void);
+ void __eqdf2(void);
+ void __muldf3(void);
+ void __gedf2(void);
+ void __ledf2(void);
+ void __fixunsdfsi(void);
+ void __floatunsidf(void);
+ void __subdf3(void);
+ void __nedf2(void);
+ void __fixdfsi(void);
+ void __moddi3(void);
+ void __extendsfdf2(void);
+ void __truncdfsf2(void);
+ void __gtdf2(void);
++void __umodsi3(void);
+ void __umoddi3(void);
+ void __floatdidf(void);
+@@ -69,21 +72,24 @@
+     REG_SYM(__modsi3),
++    REG_SYM(__divsi3),
+     REG_SYM(__divdi3),
+ 
++    REG_SYM(__udivsi3),
+     REG_SYM(__udivdi3),
+     REG_SYM(__unorddf2),
+     REG_SYM(__adddf3),
+     REG_SYM(__eqdf2),
+     REG_SYM(__muldf3),
+     REG_SYM(__gedf2),
+     REG_SYM(__ledf2),
+     REG_SYM(__fixunsdfsi),
+     REG_SYM(__floatunsidf),
+     REG_SYM(__subdf3),
+     REG_SYM(__nedf2),
+     REG_SYM(__fixdfsi),
+     REG_SYM(__moddi3),
+     REG_SYM(__extendsfdf2),
+     REG_SYM(__truncdfsf2),
+     REG_SYM(__gtdf2),
++    REG_SYM(__umodsi3),
+     REG_SYM(__umoddi3),
+     REG_SYM(__floatdidf),

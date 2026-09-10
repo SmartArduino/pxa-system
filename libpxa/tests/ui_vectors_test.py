@@ -8,9 +8,9 @@ import sys
 def main() -> int:
     path = (pathlib.Path(sys.argv[1]) if len(sys.argv) > 1 else
             pathlib.Path(__file__).resolve().parent /
-            "data/ui-v2-vectors.json")
+            "data/ui-vectors.json")
     document = json.loads(path.read_text(encoding="utf-8"))
-    assert document["schema"] == "pxa-ui-v2-golden-1"
+    assert document["schema"] == "pxa-ui-golden-0.3"
     vectors = {item["name"]: item for item in document["vectors"]}
     expected = {
         "begin-replace-primary-surface": (

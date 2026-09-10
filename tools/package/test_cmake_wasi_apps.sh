@@ -2,8 +2,8 @@
 set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-project_dir="$(cd "$script_dir/../../.." && pwd)"
-test_apps_root="$project_dir/components/pxa/tests/apps"
+pxa_system_dir="$(cd "$script_dir/../.." && pwd)"
+test_apps_root="$pxa_system_dir/apps/tests/wasi"
 wasi_sdk_dir="${WASI_SDK_DIR:-}"
 wamrc_bin="${WAMRC:-}"
 
@@ -26,7 +26,7 @@ trap 'rm -rf "$work_dir"' EXIT
 libc_lab="$test_apps_root/wasi-libc-lab"
 "${CC:-cc}" -std=c11 -O2 -Wall -Wextra -Werror -Wpedantic \
   -I"$libc_lab/include" \
-  "$project_dir/components/pxa/tests/wasi_libc_lab_test.c" \
+  "$pxa_system_dir/sdk/guest-c/tests/wasi_libc_lab_test.c" \
   "$libc_lab/checks/memory_checks.c" \
   "$libc_lab/checks/runner.c" \
   "$libc_lab/checks/string_checks.c" \
@@ -39,6 +39,7 @@ for app in "${apps[@]}"; do
   PXA_APP_SOURCE_ROOT="$test_apps_root" \
   PXA_PACKAGE_OUTPUT_ROOT="$work_dir" \
   PXA_CONTAINER_OUTPUT="$work_dir/pxa-$app.pxa" \
+  PXA_SIGNING_KEY="$pxa_system_dir/apps/pxa/.dev-signing/publisher-private.pem" \
   WASI_SDK_DIR="$wasi_sdk_dir" \
   WAMRC="$wamrc_bin" \
     "$script_dir/package_app.sh" "$app" simulator "$work_dir/pxa-$app"
