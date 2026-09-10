@@ -23,6 +23,8 @@ static void release(void* context, void* memory) {
 int main(void) {
     static const uint8_t app_id[] = "weather";
     static const uint8_t name[] = "Weather";
+    static const uint8_t description[] = "Local weather";
+    static const uint8_t icon[] = "assets/icon.png";
     static const uint8_t version_one[] = "1.0.0";
     static const uint8_t version_two[] = "2.0.0";
     size_t allocations = 0;
@@ -38,6 +40,9 @@ int main(void) {
     manifest.management_key_id = management_key;
     manifest.app_id = (pxa_bytes_t){app_id, sizeof(app_id) - 1u};
     manifest.name = (pxa_bytes_t){name, sizeof(name) - 1u};
+    manifest.description =
+        (pxa_bytes_t){description, sizeof(description) - 1u};
+    manifest.icon_path = (pxa_bytes_t){icon, sizeof(icon) - 1u};
     manifest.version = (pxa_bytes_t){version_one, sizeof(version_one) - 1u};
     pxsys_app_registry_config_init(&config);
     config.allocator.struct_size = sizeof(config.allocator);
@@ -53,6 +58,12 @@ int main(void) {
     identity.app_id = pxsys_string_from_cstr("weather");
     stored = pxsys_app_registry_find(apps, &identity);
     assert(stored != NULL && stored->version.size == 5);
+    assert(stored->description.size == sizeof(description) - 1u &&
+           memcmp(stored->description.data, description,
+                  stored->description.size) == 0);
+    assert(stored->icon_reference.size == sizeof(icon) - 1u &&
+           memcmp(stored->icon_reference.data, icon,
+                  stored->icon_reference.size) == 0);
 
     manifest.version = (pxa_bytes_t){version_two, sizeof(version_two) - 1u};
     assert(pxsys_pxa_catalog_publish(

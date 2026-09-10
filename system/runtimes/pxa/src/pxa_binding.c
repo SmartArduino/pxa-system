@@ -27,6 +27,12 @@ pxsys_status_t pxsys_pxa_manifest_descriptor(const pxa_package_manifest_t* manif
     if (pxsys_pxa_manifest_identity(manifest, &descriptor->identity) != PXSYS_STATUS_OK)
         return PXSYS_STATUS_INVALID_ARGUMENT;
     descriptor->display_name = pxsys_string((const char*)manifest->name.data, manifest->name.size);
+    descriptor->description =
+        pxsys_string((const char*)manifest->description.data,
+                     manifest->description.size);
+    descriptor->icon_reference =
+        pxsys_string((const char*)manifest->icon_path.data,
+                     manifest->icon_path.size);
     descriptor->version = pxsys_string((const char*)manifest->version.data, manifest->version.size);
     descriptor->runtime_id = runtime_id;
     descriptor->flags = app_flags;

@@ -28,6 +28,16 @@
       {"name": "payload_len", "type": "u16", "offset": 2}
     ]
   },
+  "startup_configuration": {
+    "system_environment": {
+      "tag": 12,
+      "payload": "configuration-record-list",
+      "records": [
+        {"name": "locale", "tag": 1, "type": "canonical-bcp47", "required": true},
+        {"name": "text-direction", "tag": 2, "type": "u8", "optional": true}
+      ]
+    }
+  },
   "imports": [
     {
       "module": "pxa.core.v0",

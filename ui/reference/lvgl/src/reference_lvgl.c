@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "pxsys/app_metadata.h"
 #include "pxsys/reference_layout.h"
 
 #define REFERENCE_MAGIC UINT32_C(0x50585255)
@@ -57,6 +58,12 @@ static const pxsys_resource_entry_t reference_en_resources[] = {
     RESOURCE_ENTRY("control.focus", "Focus"),
     RESOURCE_ENTRY("control.light", "Light"),
     RESOURCE_ENTRY("control.theme", "Theme"),
+    RESOURCE_ENTRY("app.system-home.name", "System Home"),
+    RESOURCE_ENTRY("app.system-home.description", "Standard system launcher"),
+    RESOURCE_ENTRY("app.system-settings.name", "Settings"),
+    RESOURCE_ENTRY("app.system-settings.description", "System and device settings"),
+    RESOURCE_ENTRY("app.system-status-bar.name", "System Status Bar"),
+    RESOURCE_ENTRY("app.system-navigation-bar.name", "System Navigation Bar"),
 };
 
 static const pxsys_resource_entry_t reference_zh_resources[] = {
@@ -98,6 +105,12 @@ static const pxsys_resource_entry_t reference_zh_resources[] = {
     RESOURCE_ENTRY("control.focus", "勿扰"),
     RESOURCE_ENTRY("control.light", "手电筒"),
     RESOURCE_ENTRY("control.theme", "主题"),
+    RESOURCE_ENTRY("app.system-home.name", "系统桌面"),
+    RESOURCE_ENTRY("app.system-home.description", "标准系统桌面"),
+    RESOURCE_ENTRY("app.system-settings.name", "设置"),
+    RESOURCE_ENTRY("app.system-settings.description", "系统与设备设置"),
+    RESOURCE_ENTRY("app.system-status-bar.name", "系统状态栏"),
+    RESOURCE_ENTRY("app.system-navigation-bar.name", "系统导航栏"),
 };
 
 static const pxsys_resource_catalog_t reference_catalog_en = {
@@ -230,6 +243,8 @@ struct pxsys_reference_lvgl {
     pxsys_reference_lvgl_resolve_font_fn resolve_font;
     void* app_icon_context;
     pxsys_reference_lvgl_resolve_app_icon_fn resolve_app_icon;
+    void* app_metadata_context;
+    pxsys_reference_lvgl_resolve_app_metadata_fn resolve_app_metadata;
     void* content_insets_context;
     pxsys_reference_lvgl_content_insets_fn content_insets_changed;
     uint16_t content_inset_top;
@@ -385,6 +400,35 @@ static const char* translated(pxsys_reference_lvgl_t* ui, const char* key,
     memcpy(output, value.data, size);
     output[size] = '\0';
     return output;
+}
+
+static pxsys_string_t localized_app_name(
+    pxsys_reference_lvgl_t* ui, const pxsys_app_descriptor_t* app) {
+    pxsys_app_metadata_t catalog_metadata = {0};
+    pxsys_app_metadata_t platform_metadata = {0};
+    pxsys_status_t catalog_status;
+    if (ui == NULL || app == NULL) return pxsys_string(NULL, 0);
+    catalog_metadata.struct_size = sizeof(catalog_metadata);
+    catalog_status = pxsys_app_metadata_resolve(
+        pxsys_standard_system_resources(ui->system), app,
+        pxsys_string(ui->locale.tag, ui->locale.tag_size),
+        &catalog_metadata);
+    if (catalog_status == PXSYS_STATUS_OK &&
+        (catalog_metadata.catalog_fields &
+         PXSYS_APP_METADATA_CATALOG_DISPLAY_NAME) != 0) {
+        return catalog_metadata.display_name;
+    }
+    platform_metadata.struct_size = sizeof(platform_metadata);
+    if (ui->resolve_app_metadata != NULL &&
+        ui->resolve_app_metadata(ui->app_metadata_context, app, &ui->locale,
+                                 &platform_metadata) &&
+        pxsys_display_text_validate(platform_metadata.display_name,
+                                    SIZE_MAX)) {
+        return platform_metadata.display_name;
+    }
+    if (catalog_status == PXSYS_STATUS_OK)
+        return catalog_metadata.display_name;
+    return app->display_name;
 }
 
 static const char* borrowed_text(pxsys_reference_lvgl_t* ui,
@@ -848,6 +892,7 @@ static lv_draw_buf_t* capture_transformed_application(
 static void record_recent_history(pxsys_reference_lvgl_t* ui,
                                   const pxsys_app_descriptor_t* app) {
     char app_id[65];
+    pxsys_string_t display_name;
     size_t index;
     size_t match;
     if (!ui_valid(ui) || app == NULL) return;
@@ -882,8 +927,9 @@ static void record_recent_history(pxsys_reference_lvgl_t* ui,
     memcpy(ui->recent_history[0].publisher_root, app->identity.publisher_root,
            PXSYS_PUBLISHER_ROOT_BYTES);
     memcpy(ui->recent_history[0].app_id, app_id, sizeof(app_id));
+    display_name = localized_app_name(ui, app);
     snprintf(ui->recent_history[0].label, sizeof(ui->recent_history[0].label),
-             "%.*s", (int)app->display_name.size, app->display_name.data);
+             "%.*s", (int)display_name.size, display_name.data);
     ui->recent_history[0].last_used = ++ui->preview_clock;
 }
 
@@ -1395,6 +1441,7 @@ static void build_task_switcher(pxsys_reference_lvgl_t* ui) {
         for (index = 0; index < count && added < item_capacity; ++index) {
             pxsys_instance_snapshot_t snapshot = {0};
             recent_item_t* item = &ui->recent_items[added];
+            pxsys_string_t display_name;
             snapshot.struct_size = sizeof(snapshot);
             memset(item, 0, sizeof(*item));
             item->ui = ui;
@@ -1403,9 +1450,9 @@ static void build_task_switcher(pxsys_reference_lvgl_t* ui) {
                 snapshot.app == NULL || app_is_system_home(ui, snapshot.app) ||
                 dismissal_pending(ui, item->instance))
                 continue;
+            display_name = localized_app_name(ui, snapshot.app);
             snprintf(item->label, sizeof(item->label), "%.*s",
-                     (int)snapshot.app->display_name.size,
-                     snapshot.app->display_name.data);
+                     (int)display_name.size, display_name.data);
             memcpy(item->app_id, snapshot.app->identity.app_id.data,
                    snapshot.app->identity.app_id.size);
             item->app_id[snapshot.app->identity.app_id.size] = '\0';
@@ -1421,6 +1468,8 @@ static void build_task_switcher(pxsys_reference_lvgl_t* ui) {
              ++hindex) {
             recent_app_t* entry = &ui->recent_history[hindex];
             recent_item_t* item;
+            const pxsys_app_descriptor_t* app;
+            pxsys_string_t display_name;
             int duplicate = 0;
             for (index = 0; index < added; ++index) {
                 recent_item_t* known = &ui->recent_items[index];
@@ -1441,7 +1490,12 @@ static void build_task_switcher(pxsys_reference_lvgl_t* ui) {
             memcpy(item->identity.publisher_root, entry->publisher_root,
                    PXSYS_PUBLISHER_ROOT_BYTES);
             item->identity.app_id = pxsys_string_from_cstr(item->app_id);
-            snprintf(item->label, sizeof(item->label), "%s", entry->label);
+            app = pxsys_app_registry_find(
+                pxsys_standard_system_apps(ui->system), &item->identity);
+            display_name = app == NULL ? pxsys_string_from_cstr(entry->label)
+                                       : localized_app_name(ui, app);
+            snprintf(item->label, sizeof(item->label), "%.*s",
+                     (int)display_name.size, display_name.data);
             item->running = 0;
             added++;
         }
@@ -2102,6 +2156,7 @@ static void build_home(pxsys_reference_lvgl_t* ui,
         launcher_item_t* item;
         lv_obj_t* tile;
         char name[96];
+        pxsys_string_t display_name;
         size_t name_size;
         if (app == NULL || !(app->flags & PXSYS_APP_FLAG_ENABLED) ||
             !(app->flags & PXSYS_APP_FLAG_LAUNCHER))
@@ -2120,9 +2175,10 @@ static void build_home(pxsys_reference_lvgl_t* ui,
                          memcmp(app->runtime_id.data, PXSYS_NATIVE_RUNTIME_ID,
                                 app->runtime_id.size) == 0
                      ? "Native" : "PXA");
-        name_size = app->display_name.size < sizeof(name) - 1u
-                        ? app->display_name.size : sizeof(name) - 1u;
-        memcpy(name, app->display_name.data, name_size);
+        display_name = localized_app_name(ui, app);
+        name_size = display_name.size < sizeof(name) - 1u
+                        ? display_name.size : sizeof(name) - 1u;
+        memcpy(name, display_name.data, name_size);
         name[name_size] = '\0';
         if (ui->resolve_app_icon != NULL &&
             !ui->resolve_app_icon(ui->app_icon_context, app, &item->icon))
@@ -3853,6 +3909,13 @@ static pxsys_status_t register_apps(pxsys_reference_lvgl_t* ui) {
     static const char* const names[] = {
         "System Home", "System Settings", "System Status Bar",
         "System Navigation Bar"};
+    static const char* const name_resource_keys[] = {
+        "app.system-home.name", "app.system-settings.name",
+        "app.system-status-bar.name", "app.system-navigation-bar.name"};
+    static const char* const descriptions[] = {
+        "Standard system launcher", "System and device settings", "", ""};
+    static const char* const description_resource_keys[] = {
+        "app.system-home.description", "app.system-settings.description", "", ""};
     static const char* const roles[] = {
         PXSYS_ROLE_HOME, PXSYS_ROLE_SETTINGS, PXSYS_ROLE_STATUS_BAR,
         PXSYS_ROLE_NAVIGATION_BAR};
@@ -3872,6 +3935,13 @@ static pxsys_status_t register_apps(pxsys_reference_lvgl_t* ui) {
         descriptor.struct_size = sizeof(descriptor);
         descriptor.identity = ui->identities[index];
         descriptor.display_name = pxsys_string_from_cstr(names[index]);
+        descriptor.description = pxsys_string_from_cstr(descriptions[index]);
+        descriptor.resource_namespace =
+            pxsys_string_from_cstr(REFERENCE_RESOURCE_NAMESPACE);
+        descriptor.display_name_resource_key =
+            pxsys_string_from_cstr(name_resource_keys[index]);
+        descriptor.description_resource_key =
+            pxsys_string_from_cstr(description_resource_keys[index]);
         descriptor.version = pxsys_string_from_cstr("1.0.0");
         descriptor.runtime_id = pxsys_string_from_cstr(PXSYS_NATIVE_RUNTIME_ID);
         descriptor.flags = PXSYS_APP_FLAG_SYSTEM | PXSYS_APP_FLAG_ENABLED |
@@ -3965,6 +4035,8 @@ pxsys_status_t pxsys_reference_lvgl_create(
     ui->resolve_font = config->resolve_font;
     ui->app_icon_context = config->app_icon_context;
     ui->resolve_app_icon = config->resolve_app_icon;
+    ui->app_metadata_context = config->app_metadata_context;
+    ui->resolve_app_metadata = config->resolve_app_metadata;
     ui->content_insets_context = config->content_insets_context;
     ui->content_insets_changed = config->content_insets_changed;
     ui->languages = config->language_count == 0 ? reference_languages

@@ -40,7 +40,7 @@ No Artifact is loaded before all these checks succeed.
 The manifest header is:
 
 ```text
-magic:"PXAM" | major:u16=0 | minor:u16=5 | body_len:u32
+magic:"PXAM" | major:u16=0 | minor:u16=6 | body_len:u32
 ```
 
 The body is a Core-style record list (`tag:u16 | length:u16 | payload`). Records
@@ -78,6 +78,35 @@ The packager records `compileSdk` in signed-build provenance/SBOM rather than
 the package manifest. A package must use one Core major and satisfy
 `minSdk <= targetSdk <= compileSdk`. Service requirement ranges and feature
 bits remain the authoritative per-service capability checks.
+
+### Manifest 0.6 localized application metadata
+
+Manifest 0.6 adds a bounded repeated top-level localization record:
+
+```text
+tag 20 | length N | localization records
+
+localization tag 1 | canonical BCP 47 locale (required)
+localization tag 2 | localized App name (optional, non-empty UTF-8)
+localization tag 3 | localized description (optional, non-empty UTF-8)
+localization tag 4 | localized icon package path (optional)
+```
+
+At least one localized field is required. Localization records are sorted
+uniquely by locale. Hosts resolve each field independently using the exact
+locale, parent locale tags, and finally the language-independent top-level
+`name`, `description`, or `icon-path`. An unsupported language therefore never
+changes identity or prevents an App from launching. Every localized icon path
+must also occur in the signed file inventory.
+
+The source `package.json` contains the language-independent `name`,
+`description`, and optional `icon` fallback. A locale YAML file may contain an
+optional `metadata` mapping with localized `name`, `description`, and `icon`
+fields. The packager derives the records above from these mappings; authors do
+not maintain a duplicate `package.json.localizations` tree. Apps without an
+`i18n` directory remain valid. This authoring rule does not change the binary
+Manifest 0.6 wire format, so installers can resolve metadata before launching
+an App.
 
 An AOT artifact has a separate, exact ABI contract: `target`, `engine` and
 `engine_abi` must match the Host. A package should include a WASM artifact so

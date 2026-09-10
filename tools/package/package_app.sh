@@ -117,6 +117,20 @@ trap 'rm -rf "$work_dir"' EXIT
 package_dir="$work_dir/package"
 mkdir -p "$package_dir/artifacts"
 
+generated_include_dir="$work_dir/generated/include"
+generated_include_args=()
+if [[ -f "$app_dir/i18n/messages.yaml" ]]; then
+  mapfile -t locale_catalogs < <(
+    find "$app_dir/i18n" -maxdepth 1 -type f -name '*.yaml' \
+      ! -name 'messages.yaml' -print | LC_ALL=C sort
+  )
+  "${PYTHON:-python3}" \
+    "$pxa_system_dir/tools/i18n/compile_catalog.py" \
+    "$app_dir/i18n/messages.yaml" "${locale_catalogs[@]}" \
+    --output "$generated_include_dir/pxa_app_messages.h"
+  generated_include_args=("-I$generated_include_dir")
+fi
+
 component_rows="$work_dir/components.tsv"
 build_settings="$work_dir/build.tsv"
 "${PYTHON:-python3}" - "$app_dir/package.json" "$build_settings" > "$component_rows" <<'PYTHON'
@@ -236,6 +250,7 @@ if [[ "$build_system" == "cmake" ]]; then
     -DCMAKE_TOOLCHAIN_FILE="$pxa_system_dir/sdk/cmake/pxa-wasi-toolchain.cmake" \
     -DWASI_SDK_DIR="$wasi_sdk_dir" \
     -DPXA_GUEST_SDK_DIR="$pxa_system_dir/sdk/guest-c" \
+    -DPXA_GENERATED_INCLUDE_DIR="$generated_include_dir" \
     -DPXA_ARTIFACT_DIR="$package_dir/artifacts" \
     -DPXA_APP_DEFINITIONS="$joined_definitions" \
     -DPXA_CMAKE_MODULE_DIR="$pxa_system_dir/sdk/cmake"
@@ -250,6 +265,7 @@ else
     "$clang_bin" --target=wasm32-unknown-unknown -O2 -fno-builtin -nostdlib \
       -I"$pxa_system_dir/sdk/guest-c/include" \
       -I"${PXA_APP_COMMON_DIR:-$app_source_root/common}" \
+      "${generated_include_args[@]}" \
       "${app_define_args[@]}" \
       -Wl,--no-entry \
       -Wl,--allow-undefined-file="$pxa_system_dir/sdk/guest-c/pxa-imports.txt" \
@@ -278,7 +294,6 @@ done
 if [[ -d "$app_dir/assets" ]]; then
   cp -R "$app_dir/assets" "$package_dir/assets"
 fi
-
 "${PYTHON:-python3}" "$script_dir/build_package_manifest.py" \
   "$app_dir/package.json" "$package_dir" "$private_key" \
   "$manifest_target" "$engine_abi"

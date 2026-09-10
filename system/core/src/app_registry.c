@@ -75,15 +75,60 @@ static char* copy_string(char** cursor, pxsys_string_t value) {
     return result;
 }
 
+static int descriptor_has(const pxsys_app_descriptor_t* descriptor,
+                          size_t end) {
+    return descriptor->struct_size >= end;
+}
+
+#define DESCRIPTOR_HAS(descriptor, member)                                \
+    descriptor_has((descriptor), offsetof(pxsys_app_descriptor_t, member) + \
+                                      sizeof((descriptor)->member))
+
+static int add_optional_string_size(size_t* total, pxsys_string_t value) {
+    return value.size == 0 || add_string_size(total, value);
+}
+
+static pxsys_string_t copy_optional_string(char** cursor,
+                                           pxsys_string_t value) {
+    pxsys_string_t result = {0};
+    if (value.size == 0) return result;
+    result.data = copy_string(cursor, value);
+    result.size = value.size;
+    return result;
+}
+
 static pxsys_status_t copy_descriptor(pxsys_app_registry_t* registry,
                                       const pxsys_app_descriptor_t* source,
                                       pxsys_app_descriptor_t* destination, void** strings) {
+    pxsys_string_t description = {0};
+    pxsys_string_t icon_reference = {0};
+    pxsys_string_t resource_namespace = {0};
+    pxsys_string_t display_name_resource_key = {0};
+    pxsys_string_t description_resource_key = {0};
+    pxsys_string_t icon_resource_key = {0};
     size_t strings_size = 0;
     char* cursor;
+    if (DESCRIPTOR_HAS(source, description)) description = source->description;
+    if (DESCRIPTOR_HAS(source, icon_reference))
+        icon_reference = source->icon_reference;
+    if (DESCRIPTOR_HAS(source, resource_namespace))
+        resource_namespace = source->resource_namespace;
+    if (DESCRIPTOR_HAS(source, display_name_resource_key))
+        display_name_resource_key = source->display_name_resource_key;
+    if (DESCRIPTOR_HAS(source, description_resource_key))
+        description_resource_key = source->description_resource_key;
+    if (DESCRIPTOR_HAS(source, icon_resource_key))
+        icon_resource_key = source->icon_resource_key;
     if (!add_string_size(&strings_size, source->identity.app_id) ||
         !add_string_size(&strings_size, source->display_name) ||
         !add_string_size(&strings_size, source->version) ||
-        !add_string_size(&strings_size, source->runtime_id)) {
+        !add_string_size(&strings_size, source->runtime_id) ||
+        !add_optional_string_size(&strings_size, description) ||
+        !add_optional_string_size(&strings_size, icon_reference) ||
+        !add_optional_string_size(&strings_size, resource_namespace) ||
+        !add_optional_string_size(&strings_size, display_name_resource_key) ||
+        !add_optional_string_size(&strings_size, description_resource_key) ||
+        !add_optional_string_size(&strings_size, icon_resource_key)) {
         return PXSYS_STATUS_RESOURCE_LIMIT;
     }
     *strings = registry->allocator.allocate(registry->allocator.context, strings_size);
@@ -103,6 +148,17 @@ static pxsys_status_t copy_descriptor(pxsys_app_registry_t* registry,
     destination->runtime_id.data = copy_string(&cursor, source->runtime_id);
     destination->runtime_id.size = source->runtime_id.size;
     destination->flags = source->flags;
+    destination->description = copy_optional_string(&cursor, description);
+    destination->icon_reference =
+        copy_optional_string(&cursor, icon_reference);
+    destination->resource_namespace =
+        copy_optional_string(&cursor, resource_namespace);
+    destination->display_name_resource_key =
+        copy_optional_string(&cursor, display_name_resource_key);
+    destination->description_resource_key =
+        copy_optional_string(&cursor, description_resource_key);
+    destination->icon_resource_key =
+        copy_optional_string(&cursor, icon_resource_key);
     return PXSYS_STATUS_OK;
 }
 
@@ -203,12 +259,54 @@ pxsys_status_t pxsys_app_registry_destroy(pxsys_app_registry_t* registry) {
 
 static pxsys_status_t descriptor_validate(const pxsys_app_registry_t* registry,
                                           const pxsys_app_descriptor_t* descriptor) {
-    if (descriptor == NULL || descriptor->struct_size < sizeof(*descriptor) ||
+    pxsys_string_t description = {0};
+    pxsys_string_t icon_reference = {0};
+    pxsys_string_t resource_namespace = {0};
+    pxsys_string_t display_name_resource_key = {0};
+    pxsys_string_t description_resource_key = {0};
+    pxsys_string_t icon_resource_key = {0};
+    if (descriptor == NULL ||
+        descriptor->struct_size < PXSYS_APP_DESCRIPTOR_V1_SIZE ||
         pxsys_app_identity_validate(&descriptor->identity, registry->max_app_id_bytes) !=
             PXSYS_STATUS_OK ||
         !pxsys_display_text_validate(descriptor->display_name, registry->max_display_name_bytes) ||
         !ascii_metadata_valid(descriptor->version, registry->max_version_bytes) ||
         !pxsys_identifier_validate(descriptor->runtime_id, registry->max_runtime_id_bytes)) {
+        return PXSYS_STATUS_INVALID_ARGUMENT;
+    }
+    if (DESCRIPTOR_HAS(descriptor, description))
+        description = descriptor->description;
+    if (DESCRIPTOR_HAS(descriptor, icon_reference))
+        icon_reference = descriptor->icon_reference;
+    if (DESCRIPTOR_HAS(descriptor, resource_namespace))
+        resource_namespace = descriptor->resource_namespace;
+    if (DESCRIPTOR_HAS(descriptor, display_name_resource_key))
+        display_name_resource_key = descriptor->display_name_resource_key;
+    if (DESCRIPTOR_HAS(descriptor, description_resource_key))
+        description_resource_key = descriptor->description_resource_key;
+    if (DESCRIPTOR_HAS(descriptor, icon_resource_key))
+        icon_resource_key = descriptor->icon_resource_key;
+    if ((description.size != 0 &&
+         !pxsys_display_text_validate(description,
+                                      PXSYS_APP_DESCRIPTION_MAX_BYTES)) ||
+        (icon_reference.size != 0 &&
+         !pxsys_display_text_validate(icon_reference,
+                                      PXSYS_APP_ICON_REFERENCE_MAX_BYTES)) ||
+        (resource_namespace.size != 0 &&
+         !pxsys_identifier_validate(resource_namespace,
+                                    PXSYS_APP_RESOURCE_NAMESPACE_MAX_BYTES)) ||
+        (display_name_resource_key.size != 0 &&
+         !pxsys_identifier_validate(display_name_resource_key,
+                                    PXSYS_APP_RESOURCE_KEY_MAX_BYTES)) ||
+        (description_resource_key.size != 0 &&
+         !pxsys_identifier_validate(description_resource_key,
+                                    PXSYS_APP_RESOURCE_KEY_MAX_BYTES)) ||
+        (icon_resource_key.size != 0 &&
+         !pxsys_identifier_validate(icon_resource_key,
+                                    PXSYS_APP_RESOURCE_KEY_MAX_BYTES)) ||
+        (resource_namespace.size == 0 &&
+         (display_name_resource_key.size != 0 ||
+          description_resource_key.size != 0 || icon_resource_key.size != 0))) {
         return PXSYS_STATUS_INVALID_ARGUMENT;
     }
     return PXSYS_STATUS_OK;

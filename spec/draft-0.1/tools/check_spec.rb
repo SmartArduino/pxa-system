@@ -341,7 +341,7 @@ fail_spec("unexpected Package schema") unless package_spec["schema"] == "pxa-pac
 fail_spec("Package draft must remain marked draft") unless package_spec["status"] == "draft"
 manifest_spec = package_spec.fetch("manifest")
 fail_spec("Package manifest constants mismatch") unless manifest_spec == {
-  "magic" => "PXAM", "major" => 0, "minor" => 1, "patch" => 0,
+  "magic" => "PXAM", "major" => 0, "minor" => 6, "patch" => 0,
   "header_size" => 12, "max_size" => 16_384
 }
 signature_spec = package_spec.fetch("signature")
@@ -352,7 +352,7 @@ fail_spec("Package signature constants mismatch") unless signature_spec == {
   "signature_size" => 64, "encoding" => "p1363-low-s",
   "domain" => "PXA-PACKAGE-MANIFEST"
 }
-%w[top_tags component_tags artifact_tags file_tags service_requirement_tags permission_tags ipc_endpoint_tags].each do |section|
+%w[top_tags component_tags artifact_tags file_tags service_requirement_tags permission_tags ipc_endpoint_tags localization_tags].each do |section|
   items = package_spec.fetch(section)
   unique_values!(items, "name", "Package #{section} name")
   unique_values!(items, "id", "Package #{section} ID")

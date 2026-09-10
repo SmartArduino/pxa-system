@@ -55,6 +55,14 @@ def main(argv: list[str]) -> None:
             "<target> <engine-abi> <output>"
         )
     package_dir, pxa_path, metadata_path, target, engine_abi, output_path = map(Path, argv)
+    i18n_dir = metadata_path.resolve().parent / "i18n"
+    i18n_inputs = [
+        {
+            "path": str(path.relative_to(metadata_path.resolve().parent)),
+            "sha256": sha256(path),
+        }
+        for path in sorted(i18n_dir.glob("*.yaml"))
+    ] if i18n_dir.is_dir() else []
     manifest_path = package_dir / "manifest.pxm"
     manifest = manifest_path.read_bytes()
     if len(manifest) < 12 or manifest[:4] != b"PXAM":
@@ -99,6 +107,7 @@ def main(argv: list[str]) -> None:
         },
         "inputs": {
             "package_json_sha256": sha256(metadata_path),
+            "i18n_catalogs": i18n_inputs,
             "compile_sdk": json.loads(metadata_path.read_text(encoding="utf-8")).get(
                 "compile_sdk", "not-declared"
             ),

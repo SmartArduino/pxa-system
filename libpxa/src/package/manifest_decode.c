@@ -60,10 +60,53 @@ static int valid_utf8(pxa_bytes_t value, size_t max_size) {
         PXA_UTF8_REJECT_C0 | PXA_UTF8_REJECT_DEL | PXA_UTF8_REJECT_C1);
 }
 
+static int canonical_locale(pxa_bytes_t value) {
+    size_t subtag_start = 0;
+    size_t index;
+    unsigned subtag = 0;
+    if (value.data == NULL || value.size < 2 || value.size > 63) return 0;
+    for (index = 0; index <= value.size; ++index) {
+        size_t cursor;
+        size_t length;
+        if (index != value.size && value.data[index] != '-') continue;
+        length = index - subtag_start;
+        if (length == 0 || length > 8 ||
+            (subtag == 0 && (length < 2 || length > 8))) {
+            return 0;
+        }
+        for (cursor = subtag_start; cursor < index; ++cursor) {
+            uint8_t ch = value.data[cursor];
+            int alpha = (ch >= 'a' && ch <= 'z') ||
+                        (ch >= 'A' && ch <= 'Z');
+            int digit = ch >= '0' && ch <= '9';
+            if ((!alpha && !digit) || (subtag == 0 && !alpha)) return 0;
+            if (subtag == 0 || (length != 2 && length != 4)) {
+                if (alpha && (ch < 'a' || ch > 'z')) return 0;
+            } else if (length == 2) {
+                if (alpha && (ch < 'A' || ch > 'Z')) return 0;
+            } else if (alpha &&
+                       (cursor == subtag_start
+                            ? (ch < 'A' || ch > 'Z')
+                            : (ch < 'a' || ch > 'z'))) {
+                return 0;
+            }
+        }
+        subtag_start = index + 1;
+        ++subtag;
+    }
+    return 1;
+}
+
 static int version_less(pxa_package_version_t left,
                         pxa_package_version_t right) {
     return left.major < right.major ||
            (left.major == right.major && left.minor < right.minor);
+}
+
+static uint16_t max_localizations(const pxa_package_limits_t *limits) {
+    return limits->struct_size >= sizeof(*limits)
+               ? limits->max_localizations
+               : 0;
 }
 
 static pxa_status_t parse_version(pxa_bytes_t bytes,
@@ -413,6 +456,61 @@ static pxa_status_t parse_ipc_endpoint(
     return seen == 3u ? PXA_STATUS_OK : PXA_STATUS_INVALID_ARGUMENT;
 }
 
+static pxa_status_t parse_localization(
+    pxa_bytes_t bytes, pxa_package_localization_t *output) {
+    pxa_record_iterator_t iterator;
+    pxa_record_view_t record;
+    uint16_t previous = 0;
+    uint8_t seen = 0;
+    pxa_status_t status;
+    memset(output, 0, sizeof(*output));
+    pxa_record_iterator_init(&iterator, bytes);
+    for (;;) {
+        uint8_t bit;
+        status = pxa_record_next(&iterator, &record);
+        if (status == PXA_STATUS_WOULD_BLOCK) break;
+        if (status != PXA_STATUS_OK) return status;
+        if (record.raw_tag < previous) return PXA_STATUS_INVALID_ARGUMENT;
+        previous = record.raw_tag;
+        if (record.optional && record.tag >= 1 && record.tag <= 4) {
+            return PXA_STATUS_INVALID_ARGUMENT;
+        }
+        if (record.tag < 1 || record.tag > 4) {
+            if (!record.optional) return PXA_STATUS_UNSUPPORTED;
+            continue;
+        }
+        bit = (uint8_t)(UINT8_C(1) << (record.tag - 1u));
+        if ((seen & bit) != 0) return PXA_STATUS_INVALID_ARGUMENT;
+        seen = (uint8_t)(seen | bit);
+        if (record.tag == 1) {
+            if (!canonical_locale(record.payload)) {
+                return PXA_STATUS_INVALID_ARGUMENT;
+            }
+            output->locale = record.payload;
+        } else if (record.tag == 2) {
+            if (record.payload.size == 0 ||
+                !valid_utf8(record.payload, 128)) {
+                return PXA_STATUS_INVALID_ARGUMENT;
+            }
+            output->name = record.payload;
+        } else if (record.tag == 3) {
+            if (record.payload.size == 0 ||
+                !valid_utf8(record.payload, 512)) {
+                return PXA_STATUS_INVALID_ARGUMENT;
+            }
+            output->description = record.payload;
+        } else {
+            if (!pxa_package_path_is_valid(record.payload)) {
+                return PXA_STATUS_INVALID_ARGUMENT;
+            }
+            output->icon_path = record.payload;
+        }
+    }
+    return (seen & UINT8_C(1)) != 0 && (seen & UINT8_C(0x0e)) != 0
+               ? PXA_STATUS_OK
+               : PXA_STATUS_INVALID_ARGUMENT;
+}
+
 const pxa_package_file_t *pxa_package_file_find(
     const pxa_package_manifest_t *manifest, pxa_bytes_t path) {
     uint16_t begin = 0;
@@ -431,6 +529,63 @@ const pxa_package_file_t *pxa_package_file_find(
                    pxa_bytes_equal_internal(manifest->files[begin].path, path)
                ? &manifest->files[begin]
                : NULL;
+}
+
+static int locale_is_candidate(pxa_bytes_t requested, pxa_bytes_t candidate) {
+    return candidate.data != NULL && candidate.size != 0 &&
+           candidate.size <= requested.size &&
+           memcmp(requested.data, candidate.data, candidate.size) == 0 &&
+           (candidate.size == requested.size ||
+            requested.data[candidate.size] == '-');
+}
+
+pxa_status_t pxa_package_metadata_resolve(
+    const pxa_package_manifest_t *manifest, pxa_bytes_t locale,
+    pxa_package_metadata_t *metadata) {
+    const pxa_package_localization_t *best_name = NULL;
+    const pxa_package_localization_t *best_description = NULL;
+    const pxa_package_localization_t *best_icon = NULL;
+    uint16_t index;
+    if (manifest == NULL || metadata == NULL || !canonical_locale(locale) ||
+        manifest->name.data == NULL || manifest->name.size == 0 ||
+        (manifest->localization_count != 0 &&
+         manifest->localizations == NULL)) {
+        return PXA_STATUS_INVALID_ARGUMENT;
+    }
+    memset(metadata, 0, sizeof(*metadata));
+    metadata->name = manifest->name;
+    metadata->description = manifest->description;
+    metadata->icon_path = manifest->icon_path;
+    for (index = 0; index < manifest->localization_count; ++index) {
+        const pxa_package_localization_t *candidate =
+            &manifest->localizations[index];
+        if (!locale_is_candidate(locale, candidate->locale)) continue;
+        if (candidate->name.size != 0 &&
+            (best_name == NULL ||
+             candidate->locale.size > best_name->locale.size))
+            best_name = candidate;
+        if (candidate->description.size != 0 &&
+            (best_description == NULL ||
+             candidate->locale.size > best_description->locale.size))
+            best_description = candidate;
+        if (candidate->icon_path.size != 0 &&
+            (best_icon == NULL ||
+             candidate->locale.size > best_icon->locale.size))
+            best_icon = candidate;
+    }
+    if (best_name != NULL) {
+        metadata->name = best_name->name;
+        metadata->localized_fields |= PXA_PACKAGE_METADATA_NAME;
+    }
+    if (best_description != NULL) {
+        metadata->description = best_description->description;
+        metadata->localized_fields |= PXA_PACKAGE_METADATA_DESCRIPTION;
+    }
+    if (best_icon != NULL) {
+        metadata->icon_path = best_icon->icon_path;
+        metadata->localized_fields |= PXA_PACKAGE_METADATA_ICON;
+    }
+    return PXA_STATUS_OK;
 }
 
 static const pxa_package_component_t *find_component(
@@ -457,10 +612,19 @@ static pxa_status_t validate_manifest_links(
     const pxa_package_manifest_t *manifest) {
     uint16_t component_index;
     uint16_t endpoint_index;
+    uint16_t localization_index;
     uint16_t ui_count = 0;
     if (manifest->icon_path.size != 0 &&
         pxa_package_file_find(manifest, manifest->icon_path) == NULL) {
         return PXA_STATUS_INVALID_ARGUMENT;
+    }
+    for (localization_index = 0;
+         localization_index < manifest->localization_count;
+         ++localization_index) {
+        pxa_bytes_t icon = manifest->localizations[localization_index].icon_path;
+        if (icon.size != 0 && pxa_package_file_find(manifest, icon) == NULL) {
+            return PXA_STATUS_INVALID_ARGUMENT;
+        }
     }
     for (component_index = 0;
          component_index < manifest->component_count; ++component_index) {
@@ -565,7 +729,7 @@ pxa_status_t pxa_manifest_decode_record(
     manifest = parser->manifest;
     if (record->optional &&
         ((record->tag >= 1 && record->tag <= 11) ||
-         (record->tag >= 16 && record->tag <= 19))) {
+         (record->tag >= 16 && record->tag <= 20))) {
         return PXA_STATUS_INVALID_ARGUMENT;
     }
     if (record->tag <= 11) {
@@ -644,6 +808,27 @@ pxa_status_t pxa_manifest_decode_record(
             return PXA_STATUS_INVALID_ARGUMENT;
         }
         manifest->ipc_endpoint_count++;
+    } else if (record->tag == 20) {
+        pxa_package_localization_t *localization;
+        uint16_t limit = max_localizations(parser->limits);
+        if (manifest->format_minor < 6) {
+            return PXA_STATUS_INVALID_ARGUMENT;
+        }
+        if (manifest->localization_count >= limit) {
+            return PXA_STATUS_RESOURCE_LIMIT;
+        }
+        localization =
+            &manifest->localizations[manifest->localization_count];
+        status = parse_localization(record->payload, localization);
+        if (status != PXA_STATUS_OK) return status;
+        if (manifest->localization_count != 0 &&
+            pxa_bytes_compare_internal(
+                manifest->localizations[
+                    manifest->localization_count - 1].locale,
+                localization->locale) >= 0) {
+            return PXA_STATUS_INVALID_ARGUMENT;
+        }
+        manifest->localization_count++;
     } else if (!record->optional) {
         return PXA_STATUS_UNSUPPORTED;
     }

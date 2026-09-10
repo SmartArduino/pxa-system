@@ -8,6 +8,7 @@ set(PXSYS_CORE_SOURCES
     "${PXSYS_ROOT}/system/core/src/toast.c"
     "${PXSYS_ROOT}/system/core/src/window.c"
     "${PXSYS_ROOT}/system/core/src/app_registry.c"
+    "${PXSYS_ROOT}/system/core/src/app_metadata.c"
     "${PXSYS_ROOT}/system/core/src/app_lifecycle.c"
     "${PXSYS_ROOT}/system/core/src/bound_client.c"
     "${PXSYS_ROOT}/system/core/src/event_broker.c"

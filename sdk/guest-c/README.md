@@ -60,6 +60,11 @@ The startup environment describes logical viewport size, density, font scale,
 safe insets, input capabilities, theme direction and optional feature bits.
 `pxa_ui_parse_start_environment()` reads it from startup configuration without
 requiring the App to understand unrelated Core configuration records.
+Localized Apps call `pxa_i18n_init_from_start_config()` before their first
+render. It selects the Host locale from startup record 12 and falls back to the
+bundle's source locale when an older Host does not provide that record. Runtime
+locale changes continue through the System configuration event and
+`pxa_i18n_handle_event()`.
 Baseline tree controls require no handshake. Apps test optional features before
 using Canvas, VirtualList, Grid, media, additional Surfaces or other extensions,
 and rebuild responsive layout after `ENVIRONMENT_CHANGED`. Resource pressure is
@@ -90,3 +95,11 @@ Package Component records and endpoint routes are sorted by ID/name, so the
 generated signed manifest stays canonical.
 `build_package_manifest.py` produces the canonical signed `manifest.pxm` and
 complete SHA-256 file inventory.
+
+`package.json` directly defines the default App `name`, `description`, and
+optional `icon`, so i18n is not required for small or rapidly developed Apps.
+When localization is needed, `messages.yaml` defines semantic in-App messages
+and locale files such as `zh-CN.yaml` may contain both `translations` and an
+optional `metadata` mapping. The packager generates `pxa_app_messages.h` and
+signed locale metadata from these files; standard App sources do not use a
+`package.json.localizations` object.

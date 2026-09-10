@@ -26,12 +26,13 @@ extern "C" {
 #define PXA_PACKAGE_MAX_FILES UINT16_MAX
 #define PXA_PACKAGE_MAX_PERMISSIONS UINT16_MAX
 #define PXA_PACKAGE_MAX_IPC_ENDPOINTS UINT16_MAX
+#define PXA_PACKAGE_MAX_LOCALIZATIONS UINT16_C(32)
 #define PXA_PACKAGE_MAX_LINEAGE_LINKS UINT16_C(8)
 #define PXA_PACKAGE_MAX_LINEAGE_SPKI_BYTES UINT16_C(160)
 #define PXA_PACKAGE_MAX_PUBLISHER_SPKI_BYTES UINT16_C(160)
 
 #define PXA_PACKAGE_MANIFEST_FORMAT_MAJOR UINT16_C(0)
-#define PXA_PACKAGE_MANIFEST_FORMAT_MINOR UINT16_C(5)
+#define PXA_PACKAGE_MANIFEST_FORMAT_MINOR UINT16_C(6)
 #define PXA_PACKAGE_MANIFEST_FORMAT_PATCH UINT16_C(0)
 #define PXA_PACKAGE_SIGNATURE_FORMAT_MAJOR UINT16_C(0)
 #define PXA_PACKAGE_SIGNATURE_FORMAT_MINOR UINT16_C(1)
@@ -102,6 +103,24 @@ typedef struct {
     pxa_bytes_t component_id;
 } pxa_package_ipc_endpoint_t;
 
+#define PXA_PACKAGE_METADATA_NAME UINT8_C(1)
+#define PXA_PACKAGE_METADATA_DESCRIPTION UINT8_C(2)
+#define PXA_PACKAGE_METADATA_ICON UINT8_C(4)
+
+typedef struct {
+    pxa_bytes_t locale;
+    pxa_bytes_t name;
+    pxa_bytes_t description;
+    pxa_bytes_t icon_path;
+} pxa_package_localization_t;
+
+typedef struct {
+    pxa_bytes_t name;
+    pxa_bytes_t description;
+    pxa_bytes_t icon_path;
+    uint8_t localized_fields;
+} pxa_package_metadata_t;
+
 typedef struct {
     uint32_t generation;
     uint32_t flags;
@@ -126,6 +145,7 @@ typedef struct {
     uint16_t max_files;
     uint16_t max_permissions;
     uint16_t max_ipc_endpoints;
+    uint16_t max_localizations;
 } pxa_package_limits_t;
 
 typedef struct pxa_package_manifest {
@@ -158,6 +178,9 @@ typedef struct pxa_package_manifest {
     uint16_t file_count;
     uint16_t permission_count;
     uint16_t ipc_endpoint_count;
+    /* Manifest 0.6 fields are appended to preserve the original struct prefix. */
+    pxa_package_localization_t *localizations;
+    uint16_t localization_count;
 } pxa_package_manifest_t;
 
 typedef struct {
@@ -225,6 +248,11 @@ pxa_status_t pxa_package_inventory_validate(
     const pxa_package_inventory_entry_t *inventory, size_t count);
 const pxa_package_file_t *pxa_package_file_find(
     const pxa_package_manifest_t *manifest, pxa_bytes_t path);
+/* Resolves fields independently using an exact canonical BCP 47 locale, then
+ * its parent locales, then the manifest's language-independent defaults. */
+pxa_status_t pxa_package_metadata_resolve(
+    const pxa_package_manifest_t *manifest, pxa_bytes_t locale,
+    pxa_package_metadata_t *metadata);
 pxa_status_t pxa_package_requirements_validate(
     const pxa_package_manifest_t *manifest,
     const pxa_package_component_t *component,

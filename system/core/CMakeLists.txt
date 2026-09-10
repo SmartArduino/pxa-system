@@ -34,6 +34,8 @@ else()
         enable_testing()
         add_executable(pxsys_app_registry_test tests/app_registry_test.c)
         target_link_libraries(pxsys_app_registry_test PRIVATE pxsys::core)
+        add_executable(pxsys_app_metadata_test tests/app_metadata_test.c)
+        target_link_libraries(pxsys_app_metadata_test PRIVATE pxsys::core)
         add_executable(pxsys_app_lifecycle_test tests/app_lifecycle_test.c)
         target_link_libraries(pxsys_app_lifecycle_test PRIVATE pxsys::core)
         add_executable(pxsys_api_compile_test tests/api_compile_test.c)
@@ -71,7 +73,8 @@ else()
         add_executable(pxsys_window_test tests/window_test.c)
         target_link_libraries(pxsys_window_test PRIVATE pxsys::core)
         if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
-            foreach(pxsys_test pxsys_app_registry_test pxsys_app_lifecycle_test
+            foreach(pxsys_test pxsys_app_registry_test pxsys_app_metadata_test
+                                pxsys_app_lifecycle_test
                                 pxsys_api_compile_test pxsys_runtime_test pxsys_intent_test
                                 pxsys_intent_wire_test pxsys_task_manager_test
                                 pxsys_role_registry_test pxsys_role_host_test pxsys_theme_test
@@ -84,7 +87,8 @@ else()
                     -Wall -Wextra -Wpedantic)
             endforeach()
             if(PXSYS_WARNINGS_AS_ERRORS)
-                foreach(pxsys_test pxsys_app_registry_test pxsys_app_lifecycle_test
+                foreach(pxsys_test pxsys_app_registry_test pxsys_app_metadata_test
+                                    pxsys_app_lifecycle_test
                                     pxsys_api_compile_test pxsys_runtime_test pxsys_intent_test
                                     pxsys_intent_wire_test pxsys_task_manager_test
                                     pxsys_role_registry_test pxsys_role_host_test pxsys_theme_test
@@ -98,6 +102,7 @@ else()
             endif()
         endif()
         add_test(NAME pxsys_app_registry_test COMMAND pxsys_app_registry_test)
+        add_test(NAME pxsys_app_metadata_test COMMAND pxsys_app_metadata_test)
         add_test(NAME pxsys_app_lifecycle_test COMMAND pxsys_app_lifecycle_test)
         add_test(NAME pxsys_api_compile_test COMMAND pxsys_api_compile_test)
         add_test(NAME pxsys_runtime_test COMMAND pxsys_runtime_test)

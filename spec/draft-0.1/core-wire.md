@@ -135,6 +135,14 @@ The startup configuration reports actual Host grants. Manifest requirements are
 installation or activation constraints; they are not a substitute for runtime
 capability checks.
 
+Record 12 (`system-environment`) contains the initial system configuration for
+the Component. Its nested records use the same payload as the System service
+`configuration-changed` event: canonical BCP 47 locale is required record 1,
+and text direction is optional record 2. A UI App applies this record before
+its first render; later changes arrive through the event. This avoids exposing
+the App's source-language fallback while an asynchronous configuration event is
+still queued.
+
 ## Event callback result
 
 `pxa_app_on_event` returns:

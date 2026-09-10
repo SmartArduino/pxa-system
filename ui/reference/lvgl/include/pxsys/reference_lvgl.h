@@ -4,6 +4,7 @@
 #include <stdint.h>
 
 #include "lvgl.h"
+#include "pxsys/app_metadata.h"
 #include "pxsys/standard_system.h"
 
 #ifdef __cplusplus
@@ -39,6 +40,12 @@ typedef struct {
 typedef bool (*pxsys_reference_lvgl_resolve_app_icon_fn)(
     void* context, const pxsys_app_descriptor_t* app,
     pxsys_reference_lvgl_app_icon_t* icon);
+
+/* Optional platform metadata source for dynamically installed Apps. Native
+ * and packaged Apps both return the same system metadata representation. */
+typedef bool (*pxsys_reference_lvgl_resolve_app_metadata_fn)(
+    void* context, const pxsys_app_descriptor_t* app,
+    const pxsys_locale_snapshot_t* locale, pxsys_app_metadata_t* metadata);
 
 typedef void (*pxsys_reference_lvgl_content_insets_fn)(
     void* context, uint16_t top, uint16_t bottom);
@@ -108,6 +115,10 @@ typedef struct {
     /* Optional borrowed LVGL image source. NULL uses the built-in adaptive
      * wallpaper; the WALLPAPER feature bit or compile option can remove it. */
     const void* wallpaper_source;
+    /* Optional dynamic metadata source, appended to preserve older config
+     * initializers. Catalog-backed metadata remains the normal fallback. */
+    void* app_metadata_context;
+    pxsys_reference_lvgl_resolve_app_metadata_fn resolve_app_metadata;
 } pxsys_reference_lvgl_config_t;
 
 typedef struct pxsys_reference_lvgl pxsys_reference_lvgl_t;

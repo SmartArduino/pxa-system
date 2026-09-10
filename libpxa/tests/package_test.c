@@ -612,9 +612,64 @@ static void test_package_golden(void) {
     free(manifest_bytes);
 }
 
+static void test_localized_metadata(void) {
+    static const uint8_t default_name[] = "Weather";
+    static const uint8_t default_description[] = "Weather near you";
+    static const uint8_t english_description[] = "Nearby conditions";
+    static const uint8_t english_name[] = "Local Weather";
+    static const uint8_t chinese_name[] = "\xe5\xa4\xa9\xe6\xb0\x94";
+    static pxa_package_localization_t localizations[] = {
+        {{(const uint8_t *)"en", 2},
+         {NULL, 0},
+         {english_description, sizeof(english_description) - 1u},
+         {NULL, 0}},
+        {{(const uint8_t *)"en-US", 5},
+         {english_name, sizeof(english_name) - 1u},
+         {NULL, 0},
+         {NULL, 0}},
+        {{(const uint8_t *)"zh-CN", 5},
+         {chinese_name, sizeof(chinese_name) - 1u},
+         {NULL, 0},
+         {NULL, 0}},
+    };
+    pxa_package_manifest_t manifest;
+    pxa_package_metadata_t metadata;
+
+    memset(&manifest, 0, sizeof(manifest));
+    manifest.name =
+        (pxa_bytes_t){default_name, sizeof(default_name) - 1u};
+    manifest.description = (pxa_bytes_t){
+        default_description, sizeof(default_description) - 1u};
+    manifest.localizations = localizations;
+    manifest.localization_count = 3;
+
+    assert(pxa_package_metadata_resolve(
+               &manifest, (pxa_bytes_t){(const uint8_t *)"en-US", 5},
+               &metadata) == PXA_STATUS_OK);
+    assert(bytes_are(metadata.name, "Local Weather") &&
+           bytes_are(metadata.description, "Nearby conditions") &&
+           metadata.localized_fields ==
+               (PXA_PACKAGE_METADATA_NAME |
+                PXA_PACKAGE_METADATA_DESCRIPTION));
+    assert(pxa_package_metadata_resolve(
+               &manifest, (pxa_bytes_t){(const uint8_t *)"zh-CN", 5},
+               &metadata) == PXA_STATUS_OK);
+    assert(metadata.name.size == sizeof(chinese_name) - 1u &&
+           memcmp(metadata.name.data, chinese_name, metadata.name.size) == 0);
+    assert(pxa_package_metadata_resolve(
+               &manifest, (pxa_bytes_t){(const uint8_t *)"fr-FR", 5},
+               &metadata) == PXA_STATUS_OK);
+    assert(bytes_are(metadata.name, "Weather") &&
+           metadata.localized_fields == 0);
+    assert(pxa_package_metadata_resolve(
+               &manifest, (pxa_bytes_t){(const uint8_t *)"EN-us", 5},
+               &metadata) == PXA_STATUS_INVALID_ARGUMENT);
+}
+
 int main(void) {
     test_recovery_states();
     test_commit_and_recovery();
     test_package_golden();
+    test_localized_metadata();
     return 0;
 }

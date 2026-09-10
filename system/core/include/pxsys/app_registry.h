@@ -20,12 +20,27 @@ extern "C" {
 typedef struct {
     uint32_t struct_size;
     pxsys_app_identity_t identity;
+    /* Required language-independent fallback shown when no catalog matches. */
     pxsys_string_t display_name;
     pxsys_string_t version;
     /* Runtime selection is metadata, never part of application identity. */
     pxsys_string_t runtime_id;
     uint32_t flags;
+    /* Optional fields appended in descriptor v2. The resource namespace and
+     * keys are interpreted by app_metadata.h for both Native and PXA Apps. */
+    pxsys_string_t description;
+    pxsys_string_t icon_reference;
+    pxsys_string_t resource_namespace;
+    pxsys_string_t display_name_resource_key;
+    pxsys_string_t description_resource_key;
+    pxsys_string_t icon_resource_key;
 } pxsys_app_descriptor_t;
+
+#define PXSYS_APP_DESCRIPTOR_V1_SIZE offsetof(pxsys_app_descriptor_t, description)
+#define PXSYS_APP_DESCRIPTION_MAX_BYTES ((size_t)512)
+#define PXSYS_APP_ICON_REFERENCE_MAX_BYTES ((size_t)255)
+#define PXSYS_APP_RESOURCE_NAMESPACE_MAX_BYTES ((size_t)95)
+#define PXSYS_APP_RESOURCE_KEY_MAX_BYTES ((size_t)95)
 
 typedef struct {
     uint32_t struct_size;

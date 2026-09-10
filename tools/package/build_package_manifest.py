@@ -136,6 +136,88 @@ def ipc_endpoint(item):
     return records([(1, name.encode("ascii")), (2, component_id.encode("ascii"))])
 
 
+def canonical_locale_tag(value):
+    if not isinstance(value, str):
+        return False
+    try:
+        encoded = value.encode("ascii")
+    except UnicodeEncodeError:
+        return False
+    if not 2 <= len(encoded) <= 63:
+        return False
+    subtags = value.split("-")
+    if not 2 <= len(subtags[0]) <= 8 or not subtags[0].isalpha() or not subtags[0].islower():
+        return False
+    for subtag in subtags[1:]:
+        if not 1 <= len(subtag) <= 8 or not subtag.isalnum():
+            return False
+        if len(subtag) == 4:
+            if subtag != subtag[:1].upper() + subtag[1:].lower():
+                return False
+        elif len(subtag) == 2:
+            if subtag != subtag.upper():
+                return False
+        elif any(character.isalpha() and not character.islower() for character in subtag):
+            return False
+    return True
+
+
+def localization(locale, item, file_paths):
+    require(canonical_locale_tag(locale), f"invalid localization locale: {locale}")
+    require(isinstance(item, dict) and set(item).issubset({"name", "description", "icon"}),
+            f"invalid localization for {locale}")
+    require(item, f"empty localization for {locale}")
+    encoded = [(1, locale.encode("ascii"))]
+    if "name" in item:
+        name = item["name"]
+        require(isinstance(name, str) and name and "\0" not in name and
+                len(name.encode("utf-8")) <= 128,
+                f"invalid localized name for {locale}")
+        encoded.append((2, name.encode("utf-8")))
+    if "description" in item:
+        description = item["description"]
+        require(isinstance(description, str) and description and
+                "\0" not in description and
+                len(description.encode("utf-8")) <= 512,
+                f"invalid localized description for {locale}")
+        encoded.append((3, description.encode("utf-8")))
+    if "icon" in item:
+        icon = item["icon"]
+        require(isinstance(icon, str) and PACKAGE_PATH.fullmatch(icon) and
+                icon in file_paths, f"invalid localized icon for {locale}")
+        encoded.append((4, icon.encode("ascii")))
+    return records(encoded)
+
+
+def catalog_application_localizations(package_source_dir, app_id):
+    i18n_dir = package_source_dir / "i18n"
+    source_path = i18n_dir / "messages.yaml"
+    if not source_path.is_file():
+        require(not i18n_dir.is_dir() or not any(i18n_dir.glob("*.yaml")),
+                "i18n/messages.yaml is required when locale catalogs exist")
+        return {}
+    i18n_tool_dir = Path(__file__).resolve().parent.parent / "i18n"
+    if str(i18n_tool_dir) not in sys.path:
+        sys.path.insert(0, str(i18n_tool_dir))
+    try:
+        from compile_catalog import validate as validate_i18n_catalog
+    except ImportError as error:
+        raise PackageError("i18n catalog compiler is unavailable") from error
+    locale_paths = sorted(
+        path for path in source_path.parent.glob("*.yaml")
+        if path.name != source_path.name
+    )
+    try:
+        namespace, _default_locale, _messages, _catalogs, metadata_catalogs = (
+            validate_i18n_catalog(source_path, locale_paths))
+    except ValueError as error:
+        raise PackageError(f"invalid i18n catalog: {error}") from error
+    require(namespace == f"app.{app_id}",
+            f"i18n namespace must be app.{app_id}")
+
+    return metadata_catalogs
+
+
 def read_der_tlv(data, offset):
     require(offset < len(data), "invalid DER")
     tag = data[offset]
@@ -282,6 +364,7 @@ def main(argv):
             "<private-key.pem> <target> <engine-abi> [--aot-only]")
     metadata_path, package_dir_arg, private_key_path, target, engine_abi = argv
     package_dir = Path(package_dir_arg).resolve()
+    package_source_dir = Path(metadata_path).resolve().parent
     try:
         metadata = json.loads(Path(metadata_path).read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
@@ -291,15 +374,12 @@ def main(argv):
 
     app_id = metadata.get("id")
     version = metadata.get("version")
-    icon = metadata.get("icon")
     require(isinstance(app_id, str) and SAFE_ID.fullmatch(app_id), "invalid app id")
     require(isinstance(version, str) and VERSION.fullmatch(version), "invalid version")
     release_sequence = metadata.get("release_sequence", 1)
     require(isinstance(release_sequence, int) and not isinstance(release_sequence, bool)
             and 0 < release_sequence <= 0xFFFFFFFFFFFFFFFF,
             "release_sequence must be a positive u64")
-    require(icon is None or (isinstance(icon, str) and PACKAGE_PATH.fullmatch(icon)),
-            "invalid icon path")
     min_sdk = parse_sdk(metadata, "min_sdk", [0, 1])
     target_sdk = parse_sdk(metadata, "target_sdk", list(min_sdk))
     compile_sdk = parse_sdk(metadata, "compile_sdk", list(target_sdk))
@@ -312,13 +392,41 @@ def main(argv):
     publisher_id = hashlib.sha256(public_der).digest()
     files = package_files(package_dir)
     file_paths = {path for path, _ in files}
+    catalog_localizations = catalog_application_localizations(
+        package_source_dir, app_id)
+
+    name = metadata.get("name")
+    description = metadata.get("description")
+    icon = metadata.get("icon")
+    require(name is None or
+            (isinstance(name, str) and name and "\0" not in name and
+             len(name.encode("utf-8")) <= 128), "invalid name")
+    require(description is None or
+            (isinstance(description, str) and description and
+             "\0" not in description and
+             len(description.encode("utf-8")) <= 512),
+            "invalid description")
+    require(icon is None or
+            (isinstance(icon, str) and PACKAGE_PATH.fullmatch(icon)),
+            "invalid icon path")
     require(icon is None or icon in file_paths, "icon is missing")
 
+    raw_localizations = metadata.get("localizations")
+    require(raw_localizations is None or not catalog_localizations,
+            "package.json localizations conflict with i18n metadata resources")
+    if raw_localizations is None:
+        raw_localizations = catalog_localizations
+    require(isinstance(raw_localizations, dict) and len(raw_localizations) <= 32,
+            "localizations must be an object with at most 32 locales")
+    localization_entries = [
+        (locale, localization(locale, item, file_paths))
+        for locale, item in sorted(raw_localizations.items())
+    ]
+
     top = [(1, publisher_id), (2, app_id.encode("ascii")), (3, version.encode("ascii"))]
-    for tag, field in ((4, "name"), (5, "description")):
-        if field in metadata:
-            require(isinstance(metadata[field], str), f"invalid {field}")
-            top.append((tag, metadata[field].encode("utf-8")))
+    for tag, value in ((4, name), (5, description)):
+        if value is not None:
+            top.append((tag, value.encode("utf-8")))
     if icon is not None:
         top.append((6, icon.encode("ascii")))
     top.extend([(7, struct.pack("<HH", *min_sdk)), (8, struct.pack("<HH", *target_sdk))])
@@ -420,9 +528,11 @@ def main(argv):
         ])))
     top.extend((18, entry[2]) for entry in permission_entries)
     top.extend((19, entry[2]) for entry in ipc_entries)
+    top.extend((20, entry[1]) for entry in localization_entries)
 
     body = records(top)
-    manifest = b"PXAM" + struct.pack("<HHI", 0, 5, len(body)) + body
+    manifest_minor = 6 if localization_entries else 5
+    manifest = b"PXAM" + struct.pack("<HHI", 0, manifest_minor, len(body)) + body
     require(len(manifest) <= 16 * 1024, "manifest exceeds Draft limit")
     signature_der = openssl(["dgst", "-sha256", "-sign", private_key_path],
                             b"PXA-PACKAGE-MANIFEST\0" + manifest)

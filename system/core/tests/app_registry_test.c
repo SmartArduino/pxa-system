@@ -56,9 +56,19 @@ static void test_identity_namespace_and_deep_copy(void) {
     pxsys_app_registry_t* registry = create_registry(4, &allocations);
     char app_id[] = "camera";
     char name[] = "Camera";
+    char description[] = "Take photos";
+    char icon[] = "assets/camera.png";
     pxsys_app_descriptor_t native = descriptor(0x11, app_id, name, "native-static");
     pxsys_app_descriptor_t pxa = descriptor(0x22, app_id, "Camera PXA", "wamr-aot");
     const pxsys_app_descriptor_t* stored;
+
+    native.description = pxsys_string_from_cstr(description);
+    native.icon_reference = pxsys_string_from_cstr(icon);
+    native.resource_namespace = pxsys_string_from_cstr("app.camera");
+    native.display_name_resource_key = pxsys_string_from_cstr("metadata.name");
+    native.description_resource_key =
+        pxsys_string_from_cstr("metadata.description");
+    native.icon_resource_key = pxsys_string_from_cstr("metadata.icon");
 
     assert(pxsys_app_registry_register(registry, &native) == PXSYS_STATUS_OK);
     assert(pxsys_app_registry_generation(registry) == 2);
@@ -66,6 +76,8 @@ static void test_identity_namespace_and_deep_copy(void) {
     assert(pxsys_app_registry_generation(registry) == 3);
     app_id[0] = 'x';
     name[0] = 'X';
+    description[0] = 'X';
+    icon[0] = 'X';
 
     stored = pxsys_app_registry_find(registry, &native.identity);
     assert(stored == NULL);
@@ -77,6 +89,15 @@ static void test_identity_namespace_and_deep_copy(void) {
     assert(stored->identity.app_id.size == 6);
     assert(memcmp(stored->identity.app_id.data, "camera", 6) == 0);
     assert(memcmp(stored->display_name.data, "Camera", 6) == 0);
+    assert(stored->description.size == strlen("Take photos") &&
+           memcmp(stored->description.data, "Take photos",
+                  stored->description.size) == 0);
+    assert(stored->icon_reference.size == strlen("assets/camera.png") &&
+           memcmp(stored->icon_reference.data, "assets/camera.png",
+                  stored->icon_reference.size) == 0);
+    assert(stored->resource_namespace.size == strlen("app.camera") &&
+           memcmp(stored->resource_namespace.data, "app.camera",
+                  stored->resource_namespace.size) == 0);
     assert(memcmp(stored->runtime_id.data, "native-static", 13) == 0);
     assert(pxsys_app_registry_count(registry) == 2);
 
@@ -113,11 +134,56 @@ static void test_validation(void) {
     pxsys_app_descriptor_t invalid_name = descriptor(1, "bad", "\xC0\xAF", "native-static");
     pxsys_app_descriptor_t valid_utf8 =
         descriptor(1, "weather", "\xE5\xA4\xA9\xE6\xB0\x94", "wamr-aot");
+    pxsys_app_descriptor_t key_without_namespace =
+        descriptor(1, "files", "Files", "native-static");
+    pxsys_app_descriptor_t invalid_description =
+        descriptor(1, "about", "About", "native-static");
+
+    key_without_namespace.display_name_resource_key =
+        pxsys_string_from_cstr("metadata.name");
+    invalid_description.description = pxsys_string("bad\ntext", 8);
 
     assert(pxsys_app_registry_register(registry, &invalid_id) == PXSYS_STATUS_INVALID_ARGUMENT);
     assert(pxsys_app_registry_register(registry, &invalid_name) == PXSYS_STATUS_INVALID_ARGUMENT);
+    assert(pxsys_app_registry_register(registry, &key_without_namespace) ==
+           PXSYS_STATUS_INVALID_ARGUMENT);
+    assert(pxsys_app_registry_register(registry, &invalid_description) ==
+           PXSYS_STATUS_INVALID_ARGUMENT);
     assert(pxsys_app_registry_register(registry, &valid_utf8) == PXSYS_STATUS_OK);
 
+    assert(pxsys_app_registry_destroy(registry) == PXSYS_STATUS_OK);
+    assert(allocations == 0);
+}
+
+static void test_v1_descriptor_compatibility(void) {
+    typedef struct {
+        uint32_t struct_size;
+        pxsys_app_identity_t identity;
+        pxsys_string_t display_name;
+        pxsys_string_t version;
+        pxsys_string_t runtime_id;
+        uint32_t flags;
+    } v1_descriptor_t;
+    size_t allocations = 0;
+    pxsys_app_registry_t* registry = create_registry(1, &allocations);
+    v1_descriptor_t old = {0};
+    const pxsys_app_descriptor_t* stored;
+
+    assert(sizeof(old) == PXSYS_APP_DESCRIPTOR_V1_SIZE);
+    old.struct_size = sizeof(old);
+    old.identity = identity(9, "legacy");
+    old.display_name = pxsys_string_from_cstr("Legacy");
+    old.version = pxsys_string_from_cstr("1.0.0");
+    old.runtime_id = pxsys_string_from_cstr("native-static");
+    old.flags = PXSYS_APP_FLAG_ENABLED;
+    assert(pxsys_app_registry_register(
+               registry, (const pxsys_app_descriptor_t*)&old) ==
+           PXSYS_STATUS_OK);
+    stored = pxsys_app_registry_at(registry, 0);
+    assert(stored != NULL && stored->struct_size == sizeof(*stored));
+    assert(stored->description.size == 0);
+    assert(stored->icon_reference.size == 0);
+    assert(stored->resource_namespace.size == 0);
     assert(pxsys_app_registry_destroy(registry) == PXSYS_STATUS_OK);
     assert(allocations == 0);
 }
@@ -174,6 +240,7 @@ int main(void) {
     test_identity_namespace_and_deep_copy();
     test_duplicate_capacity_and_remove();
     test_validation();
+    test_v1_descriptor_compatibility();
     test_acquired_entry_blocks_removal();
     test_atomic_metadata_update();
     puts("pxa_system_core app registry tests passed");

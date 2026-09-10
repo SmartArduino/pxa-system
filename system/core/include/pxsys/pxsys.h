@@ -2,6 +2,7 @@
 #define PXSYS_PXSYS_H
 
 #include "pxsys/app_lifecycle.h"
+#include "pxsys/app_metadata.h"
 #include "pxsys/app_registry.h"
 #include "pxsys/bound_client.h"
 #include "pxsys/display.h"

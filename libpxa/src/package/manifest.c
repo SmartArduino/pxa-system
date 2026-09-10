@@ -58,6 +58,13 @@ void pxa_package_limits_init(pxa_package_limits_t *limits) {
     limits->max_files = PXA_PACKAGE_MAX_FILES;
     limits->max_permissions = PXA_PACKAGE_MAX_PERMISSIONS;
     limits->max_ipc_endpoints = PXA_PACKAGE_MAX_IPC_ENDPOINTS;
+    limits->max_localizations = PXA_PACKAGE_MAX_LOCALIZATIONS;
+}
+
+static uint16_t max_localizations(const pxa_package_limits_t *limits) {
+    return limits->struct_size >= sizeof(*limits)
+               ? limits->max_localizations
+               : 0;
 }
 
 static int limits_valid(const pxa_package_limits_t *limits) {
@@ -148,7 +155,9 @@ size_t pxa_package_manifest_workspace_size(
         !add_workspace(&size, limits->max_permissions,
                        sizeof(pxa_package_permission_t)) ||
         !add_workspace(&size, limits->max_ipc_endpoints,
-                       sizeof(pxa_package_ipc_endpoint_t))) {
+                       sizeof(pxa_package_ipc_endpoint_t)) ||
+        !add_workspace(&size, max_localizations(limits),
+                       sizeof(pxa_package_localization_t))) {
         return 0;
     }
     return size;
@@ -173,6 +182,7 @@ pxa_status_t pxa_package_manifest_measure(
     measured.max_files = 0;
     measured.max_permissions = 0;
     measured.max_ipc_endpoints = 0;
+    measured.max_localizations = 0;
     pxa_record_iterator_init(
         &iterator,
         (pxa_bytes_t){encoded.data + PXA_MANIFEST_HEADER_SIZE,
@@ -207,6 +217,11 @@ pxa_status_t pxa_package_manifest_measure(
                 return PXA_STATUS_RESOURCE_LIMIT;
             }
             ++measured.max_ipc_endpoints;
+        } else if (record.tag == 20) {
+            if (measured.max_localizations >= max_localizations(limits)) {
+                return PXA_STATUS_RESOURCE_LIMIT;
+            }
+            ++measured.max_localizations;
         }
     }
     /* A malformed manifest with no components, artifacts, or files still
@@ -265,12 +280,17 @@ static pxa_status_t initialize_manifest_workspace(
     manifest->ipc_endpoints = (pxa_package_ipc_endpoint_t *)take_array(
         &cursor, end, limits->max_ipc_endpoints,
         sizeof(manifest->ipc_endpoints[0]));
+    manifest->localizations = (pxa_package_localization_t *)take_array(
+        &cursor, end, max_localizations(limits),
+        sizeof(manifest->localizations[0]));
     if (manifest->components == NULL || manifest->artifacts == NULL ||
         (limits->max_services != 0 && manifest->services == NULL) ||
         manifest->files == NULL ||
         (limits->max_permissions != 0 && manifest->permissions == NULL) ||
         (limits->max_ipc_endpoints != 0 &&
-         manifest->ipc_endpoints == NULL)) {
+         manifest->ipc_endpoints == NULL) ||
+        (max_localizations(limits) != 0 &&
+         manifest->localizations == NULL)) {
         return PXA_STATUS_INVALID_ARGUMENT;
     }
     *output = manifest;
