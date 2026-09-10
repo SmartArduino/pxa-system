@@ -6,11 +6,23 @@ project_dir="$(cd "$script_dir/../../.." && pwd)"
 work_dir="$(mktemp -d "${TMPDIR:-/tmp}/pxa-package-tool-test.XXXXXX")"
 trap 'rm -rf "$work_dir"' EXIT
 package_dir="$work_dir/package"
-mkdir -p "$package_dir/artifacts" "$package_dir/assets/flappy-bird"
+mkdir -p "$package_dir/artifacts" "$package_dir/assets/flappy-bird" \
+  "$work_dir/i18n" "$work_dir/generated/arcade" \
+  "$work_dir/generated/weather"
+
+"${PYTHON:-python3}" "$project_dir/pxa-system/tools/i18n/compile_catalog.py" \
+  "$project_dir/apps/pxa/arcade/i18n/messages.yaml" \
+  "$project_dir/apps/pxa/arcade/i18n/zh-CN.yaml" \
+  --output "$work_dir/generated/arcade/pxa_app_messages.h"
+"${PYTHON:-python3}" "$project_dir/pxa-system/tools/i18n/compile_catalog.py" \
+  "$project_dir/apps/pxa/weather/i18n/messages.yaml" \
+  "$project_dir/apps/pxa/weather/i18n/zh-CN.yaml" \
+  --output "$work_dir/generated/weather/pxa_app_messages.h"
 
 clang --target=wasm32-unknown-unknown -O2 -fno-builtin -nostdlib \
   -I"$project_dir/pxa-system/sdk/guest-c/include" \
   -I"$project_dir/apps/pxa/common" \
+  -I"$work_dir/generated/arcade" \
   -Wl,--no-entry \
   -Wl,--allow-undefined-file="$project_dir/pxa-system/sdk/guest-c/pxa-imports.txt" \
   -Wl,--export=pxa_app_on_event -Wl,--export=pxa_app_stop \
@@ -23,6 +35,7 @@ clang --target=wasm32-unknown-unknown -O2 -fno-builtin -nostdlib \
 clang --target=wasm32-unknown-unknown -O2 -fno-builtin -nostdlib \
   -I"$project_dir/pxa-system/sdk/guest-c/include" \
   -I"$project_dir/apps/pxa/common" \
+  -I"$work_dir/generated/weather" \
   -Wl,--no-entry \
   -Wl,--allow-undefined-file="$project_dir/pxa-system/sdk/guest-c/pxa-imports.txt" \
   -Wl,--export=pxa_app_on_event -Wl,--export=pxa_app_stop \
@@ -41,6 +54,9 @@ cp "$project_dir/apps/pxa/arcade/assets/flappy-bird/icon.png" \
    "$package_dir/assets/flappy-bird/icon.png"
 cp "$project_dir/apps/pxa/garden-guard/assets/SOURCES.md" \
    "$package_dir/assets/SOURCES.md"
+cp "$project_dir/apps/pxa/arcade/i18n/messages.yaml" \
+   "$project_dir/apps/pxa/arcade/i18n/zh-CN.yaml" \
+   "$work_dir/i18n/"
 
 metadata="$work_dir/package.json"
 sed '/^}/i\\  ,"services": ["fs","net"]\n  ,"components": [{"id": "main", "kind": "ui", "wasi": {"version": "preview1", "libc": "wasi-libc", "features": ["monotonic-clock", "stdio"]}}, {"id": "responder", "kind": "service", "artifact": "wasm", "services": ["ipc"]}]\n  ,"permissions": [{"name": "net.client", "required": false, "scope": "api.example"}]\n  ,"ipc_endpoints": [{"name": "demo.echo", "component": "responder"}]' \
@@ -49,14 +65,14 @@ sed '/^}/i\\  ,"services": ["fs","net"]\n  ,"components": [{"id": "main", "kind"
 "${PYTHON:-python3}" "$script_dir/build_package_manifest.py" \
   "$metadata" "$package_dir" \
   "$project_dir/apps/pxa/.dev-signing/publisher-private.pem" \
-  linux-x86_64 wamr-2.4.0-aot-v1-pxa-core-0
+  linux-x86_64 wamr-2.4.3-aot-v1-pxa-core-1
 
 invalid_metadata="$work_dir/package-invalid.json"
 sed 's/"services": \["fs","net"\]/"services": [5]/' "$metadata" > "$invalid_metadata"
 if "${PYTHON:-python3}" "$script_dir/build_package_manifest.py" \
   "$invalid_metadata" "$package_dir" \
   "$project_dir/apps/pxa/.dev-signing/publisher-private.pem" \
-  linux-x86_64 wamr-2.4.0-aot-v1-pxa-core-0 >/dev/null 2>&1; then
+  linux-x86_64 wamr-2.4.3-aot-v1-pxa-core-1 >/dev/null 2>&1; then
   echo "numeric service IDs must be rejected" >&2
   exit 1
 fi
@@ -67,7 +83,7 @@ sed 's/"monotonic-clock", "stdio"/"private-fs", "unknown"/' \
 if "${PYTHON:-python3}" "$script_dir/build_package_manifest.py" \
   "$invalid_wasi_metadata" "$package_dir" \
   "$project_dir/apps/pxa/.dev-signing/publisher-private.pem" \
-  linux-x86_64 wamr-2.4.0-aot-v1-pxa-core-0 >/dev/null 2>&1; then
+  linux-x86_64 wamr-2.4.3-aot-v1-pxa-core-1 >/dev/null 2>&1; then
   echo "unknown WASI features must be rejected" >&2
   exit 1
 fi
