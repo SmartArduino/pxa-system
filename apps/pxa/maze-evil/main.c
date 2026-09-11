@@ -203,8 +203,9 @@ int32_t pxa_app_start(const uint8_t *config, uint32_t length) {
     if (!setup_pointer_node() || !pxa_window_fullscreen()) {
         return PXA_STATUS_INTERNAL;
     }
-    if (!pxa_surface_create_rgb565(CREATE_REQUEST, VIEW_WIDTH, VIEW_HEIGHT, 3,
-                                   g_packet, sizeof(g_packet))) {
+    if (!pxa_surface_create_rgb565_direct(CREATE_REQUEST, VIEW_WIDTH,
+                                          VIEW_HEIGHT, 3, g_packet,
+                                          sizeof(g_packet))) {
         return PXA_STATUS_INTERNAL;
     }
     return PXA_STATUS_OK;

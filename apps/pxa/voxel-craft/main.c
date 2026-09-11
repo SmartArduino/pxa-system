@@ -1,0 +1,1897 @@
+/* Voxel Craft: a first-person voxel sandbox for PXA.
+ *
+ * The world is a 64 x 24 x 64 block grid generated from value noise. The scene
+ * is ray cast per pixel at 148 x 120 and upscaled 2x into a full RGB565
+ * Surface frame. Touch
+ * controls: left half is a movement stick, right half looks around. The MINE
+ * button holds a mining action with per-block progress and break particles,
+ * ATTACK swings at slimes, PLACE builds with the hotbar selection, and JUMP
+ * doubles as fly-up; double-tap toggles fly mode. A small PCM synth plays
+ * mining, break, place, attack, hit and jump effects.
+ */
+#include "pxa.h"
+#include "pxa_storage.h"
+#include "pxa_surface.h"
+#include "pxa_ui.h"
+
+#include "game.h"
+#include "rc_math.h"
+#include "render.h"
+#include "sfx.h"
+
+#define FRAME_NODE UINT32_C(2)
+#define FRAME_PERIOD_MS 16u
+#define MAX_CATCHUP_STEPS 3u
+#define RENDER_TIME_REQUEST UINT32_C(2)
+#define WINDOW_SNAPSHOT_REQUEST UINT32_C(3)
+#define SURFACE_CREATE_REQUEST UINT32_C(4)
+#define SURFACE_CONFIGURE_REQUEST UINT32_C(5)
+#define PXA_WINDOW_GET_SNAPSHOT_OP 2u
+#define PXA_WINDOW_METRICS_CHANGED_OP 0x8001u
+#define WINDOW_SNAPSHOT_PERIOD_TICKS 125u
+#define QUALITY_WINDOW_FRAMES 3u
+#define QUALITY_WARMUP_FRAMES 0u
+#define QUALITY_DOWNGRADE_US UINT64_C(18000)
+#define QUALITY_UPGRADE_US UINT64_C(9000)
+#define QUALITY_PANIC_US UINT64_C(60000)
+#define QUALITY_SAMPLE_CAP_US UINT64_C(250000)
+#define TICK_SECONDS 0.016F
+#define LOOK_PER_PIXEL 0.0062F
+#define STICK_RADIUS 40.0F
+#define DOUBLE_TAP_US UINT64_C(320000)
+#define MINE_SOUND_PERIOD 0.22F
+#define PAD_TURN_RATE 2.2F
+#define PAD_PITCH_RATE 1.6F
+#define FRAME_PIXELS ((size_t)SCREEN_W_MAX * SCREEN_H_MAX)
+#define FRAME_BYTES_MAX (FRAME_PIXELS * sizeof(uint16_t))
+
+enum {
+    BTN_NONE = 0,
+    BTN_JUMP,
+    BTN_ACTION,
+    BTN_PLACE,
+    BTN_DOWN,
+    BTN_FLY,
+    BTN_HOTBAR,
+};
+
+typedef struct {
+    uint8_t active;
+    uint8_t id;
+    int16_t origin_x;
+    int16_t origin_y;
+    int16_t x;
+    int16_t y;
+    int16_t travel;
+    uint64_t down_us;
+} finger_t;
+
+static uint16_t g_pixels[FRAME_PIXELS];
+static uint8_t g_packet[128];
+static uint32_t g_surface_handle;
+static uint16_t g_surface_width;
+static uint16_t g_surface_height;
+static uint64_t g_frame_id;
+static uint8_t g_surface_create_pending;
+static uint8_t g_input_initialized;
+static player_t g_player;
+static voxel_sfx_t g_sfx;
+static uint64_t g_last_tick_us;
+static uint32_t g_now_ms;
+static uint32_t g_fps_x10;
+static uint64_t g_fps_window_start_us;
+static uint32_t g_fps_window_frames;
+static uint8_t g_hotbar_selected;
+static char g_toast[24];
+static uint32_t g_toast_until_ms;
+
+static finger_t g_move_finger;
+static finger_t g_look_finger;
+static finger_t g_button_finger;
+static uint8_t g_button_kind;
+static int16_t g_stick_dx;
+static int16_t g_stick_dy;
+static uint8_t g_jump_held;
+static uint8_t g_down_held;
+static uint8_t g_action_held;
+static float g_attack_cooldown;
+static float g_mine_progress;
+static float g_mine_sound_timer;
+static ray_hit_t g_mine_target;
+static float g_swing_timer;
+static uint64_t g_last_jump_tap_us;
+static uint64_t g_render_start_us;
+static uint32_t g_render_ema_us;
+static uint32_t g_quality_frames;
+static uint8_t g_quality_warmup;
+static uint32_t g_snapshot_ticks;
+static uint8_t g_present_failures;
+static uint8_t g_quality_manual;
+static uint8_t g_inventory_open;
+static uint8_t g_craft_table;
+static item_stack_t g_cursor;
+static int16_t g_pointer_x;
+static int16_t g_pointer_y;
+static uint8_t g_inv_press_active;
+static int16_t g_inv_press_x;
+static int16_t g_inv_press_y;
+static int16_t g_inv_press_travel;
+static uint64_t g_inv_press_us;
+static uint32_t g_pad_buttons;
+static uint32_t g_pad_previous;
+static uint8_t g_pad_seen;
+static uint8_t g_pad_jump;
+static uint8_t g_pad_mine;
+static float g_pad_move_z;
+static float g_pad_turn;
+static float g_pad_pitch;
+static uint64_t g_pad_last_a_us;
+
+static int hit_circle(int x, int y, int cx, int cy, int radius) {
+    const int dx = x - cx;
+    const int dy = y - cy;
+    const int reach = radius + 6;
+    return dx * dx + dy * dy <= reach * reach;
+}
+
+static void set_toast(const char *text) {
+    int index = 0;
+    while (text[index] != '\0' && index < (int)sizeof(g_toast) - 1) {
+        g_toast[index] = text[index];
+        ++index;
+    }
+    g_toast[index] = '\0';
+    g_toast_until_ms = g_now_ms + 1200u;
+}
+
+static char *put_u32_text(char *out, uint32_t value) {
+    char reversed[10];
+    int digits = 0;
+    do {
+        reversed[digits++] = (char)('0' + value % 10u);
+        value /= 10u;
+    } while (value != 0);
+    while (digits != 0) {
+        *out++ = reversed[--digits];
+    }
+    return out;
+}
+
+static void toast_view(void) {
+    char text[24];
+    char *out = text;
+    *out++ = 'V';
+    *out++ = 'I';
+    *out++ = 'E';
+    *out++ = 'W';
+    *out++ = ' ';
+    out = put_u32_text(out, (uint32_t)g_layout.view_w);
+    *out++ = 'X';
+    out = put_u32_text(out, (uint32_t)g_layout.view_h);
+    *out = '\0';
+    set_toast(text);
+}
+
+static void toast_quality_mode(void) {
+    char text[24];
+    char *out = text;
+    static const char prefix[] = "QUALITY ";
+    int index;
+    for (index = 0; index < (int)sizeof(prefix) - 1; ++index) {
+        *out++ = prefix[index];
+    }
+    if (g_quality_manual == 0) {
+        *out++ = 'A';
+        *out++ = 'U';
+        *out++ = 'T';
+        *out++ = 'O';
+    } else {
+        *out++ = (char)('0' + render_quality());
+        *out++ = 'X';
+    }
+    *out = '\0';
+    set_toast(text);
+}
+
+static void apply_quality(void) {
+    if (g_quality_manual != 0) {
+        render_set_quality(g_quality_manual);
+    }
+}
+
+static void cycle_quality(void) {
+    if (g_quality_manual == 0) {
+        g_quality_manual = 1;
+    } else if (g_quality_manual >= QUALITY_MAX) {
+        g_quality_manual = 0;
+    } else {
+        ++g_quality_manual;
+    }
+    if (g_quality_manual != 0) {
+        render_set_quality(g_quality_manual);
+    } else {
+        g_render_ema_us = 0;
+        g_quality_frames = 0;
+    }
+    toast_quality_mode();
+}
+
+static void toast_quality(void) {
+    char text[24];
+    char *out = text;
+    *out++ = 'R';
+    *out++ = 'E';
+    *out++ = 'S';
+    *out++ = ' ';
+    out = put_u32_text(out, (uint32_t)render_scene_width());
+    *out++ = 'X';
+    out = put_u32_text(out, (uint32_t)render_scene_height());
+    *out = '\0';
+    set_toast(text);
+}
+
+static void update_quality(uint64_t duration_us) {
+    int quality = render_quality();
+    uint32_t sample;
+    if (g_quality_manual != 0) {
+        return;
+    }
+    if (g_quality_warmup > 0) {
+        /* The first frames include one-time setup and the initial control
+         * message upload, so they must not steer the adaptation. */
+        --g_quality_warmup;
+        return;
+    }
+    if (duration_us > QUALITY_SAMPLE_CAP_US) {
+        duration_us = QUALITY_SAMPLE_CAP_US;
+    }
+    sample = (uint32_t)duration_us;
+    if (duration_us >= QUALITY_PANIC_US) {
+        /* A single very slow frame drops straight to the lowest quality. */
+        if (quality < QUALITY_MAX) {
+            render_set_quality(QUALITY_MAX);
+            toast_quality();
+        }
+        g_render_ema_us = sample;
+        g_quality_frames = 0;
+        return;
+    }
+    if (g_render_ema_us == 0) {
+        g_render_ema_us = sample;
+    } else {
+        g_render_ema_us = (g_render_ema_us * 3u + sample) / 4u;
+    }
+    ++g_quality_frames;
+    if (g_quality_frames < QUALITY_WINDOW_FRAMES) {
+        return;
+    }
+    g_quality_frames = 0;
+    if (g_render_ema_us > QUALITY_DOWNGRADE_US && quality < QUALITY_MAX) {
+        render_set_quality(quality + 1);
+        toast_quality();
+    } else if (g_render_ema_us < QUALITY_UPGRADE_US &&
+               quality > render_min_quality()) {
+        render_set_quality(quality - 1);
+        toast_quality();
+    }
+}
+
+static int render_frame(void);
+
+static int initialize_input_surface(void) {
+    pxa_ui_transaction_t transaction = {0};
+    if (g_input_initialized) {
+        return 1;
+    }
+    if (!pxa_ui_transaction_begin(&transaction, 1,
+                                  PXA_UI_TRANSACTION_REPLACE_SURFACE,
+                                  g_packet, sizeof(g_packet)) ||
+        !pxa_ui_create(&transaction, 1, 0, 0, PXA_UI_NODE_ROOT) ||
+        !pxa_ui_create(&transaction, FRAME_NODE, 1, 0,
+                       PXA_UI_NODE_CANVAS) ||
+        !pxa_ui_set_event_mask(&transaction, 1,
+                               PXA_UI_EVENT_MASK_CONTROLLER_STATE |
+                                   PXA_UI_EVENT_MASK_KEY) ||
+        !pxa_ui_set_length(&transaction, FRAME_NODE, PXA_UI_PROPERTY_WIDTH,
+                           PXA_UI_LENGTH_FILL, 0) ||
+        !pxa_ui_set_length(&transaction, FRAME_NODE, PXA_UI_PROPERTY_HEIGHT,
+                           PXA_UI_LENGTH_FILL, 0) ||
+        !pxa_ui_set_event_mask(&transaction, FRAME_NODE,
+                               PXA_UI_EVENT_MASK_POINTER) ||
+        !pxa_ui_transaction_commit(&transaction)) {
+        if (transaction.active) {
+            (void)pxa_ui_transaction_cancel(&transaction);
+        }
+        return 0;
+    }
+    g_input_initialized = 1;
+    return 1;
+}
+
+static int request_surface_create(void) {
+    /* The Surface is sized to the game view, not the whole display, so a
+     * window larger than the pixel budget still renders (centred). */
+    if (g_surface_create_pending || g_surface_handle != 0 ||
+        g_layout.view_w <= 0 || g_layout.view_h <= 0) {
+        return 0;
+    }
+    g_surface_width = (uint16_t)g_layout.view_w;
+    g_surface_height = (uint16_t)g_layout.view_h;
+    if (!pxa_surface_create_rgb565_direct(
+            SURFACE_CREATE_REQUEST, g_surface_width, g_surface_height, 3,
+            g_packet, sizeof(g_packet))) {
+        return 0;
+    }
+    g_surface_create_pending = 1;
+    return 1;
+}
+
+static void recreate_surface(void) {
+    if (g_surface_handle != 0) {
+        (void)pxa_close_handle(g_surface_handle);
+        g_surface_handle = 0;
+    }
+    if (!g_surface_create_pending) {
+        (void)request_surface_create();
+    }
+}
+
+/* The window snapshot carries the authoritative logical display size. It is
+ * used both for the metrics-changed event and as a periodic fallback, so a
+ * resize is picked up even if the UI environment event is missed. */
+static int parse_window_snapshot(const uint8_t *payload, uint32_t length,
+                                 uint32_t *out_width, uint32_t *out_height) {
+    uint32_t offset = 0;
+    uint32_t width = 0;
+    uint32_t height = 0;
+    while (offset + 4u <= length) {
+        const uint16_t tag = pxa_read_u16(payload + offset);
+        const uint16_t size = pxa_read_u16(payload + offset + 2u);
+        offset += 4u;
+        if (size > length - offset) {
+            return 0;
+        }
+        if (tag == 2u && size == 8u) {
+            width = pxa_read_u32(payload + offset);
+            height = pxa_read_u32(payload + offset + 4u);
+        }
+        offset += size;
+    }
+    if (width == 0 || height == 0) {
+        return 0;
+    }
+    *out_width = width;
+    *out_height = height;
+    return 1;
+}
+
+static void apply_screen_size(int width, int height) {
+    if (width == g_layout.screen_w && height == g_layout.screen_h) {
+        return;
+    }
+    render_configure(width, height);
+    apply_quality();
+    recreate_surface();
+}
+
+static void request_window_snapshot(void) {
+    (void)pxa_send(PXA_SERVICE_WINDOW, PXA_WINDOW_GET_SNAPSHOT_OP,
+                   WINDOW_SNAPSHOT_REQUEST, (const uint8_t *)0, 0);
+}
+
+/* --- menu, settings and save data --------------------------------------- */
+
+#define SCREEN_MENU 0u
+#define SCREEN_SETTINGS 1u
+#define SCREEN_PLAY 2u
+#define SCREEN_PAUSE 3u
+
+#define STORAGE_META_KEY "vx.meta"
+#define STORAGE_META_KEY_LEN 7
+#define STORAGE_META_GET_REQUEST UINT32_C(0x51)
+#define STORAGE_META_SET_REQUEST UINT32_C(0x52)
+#define STORAGE_CHUNK_GET_REQUEST UINT32_C(0x53)
+#define STORAGE_CHUNK_SET_REQUEST UINT32_C(0x54)
+#define STORAGE_REMOVE_REQUEST UINT32_C(0x55)
+#define STORAGE_PREFS_GET_REQUEST UINT32_C(0x56)
+#define STORAGE_PREFS_SET_REQUEST UINT32_C(0x57)
+#define STORAGE_PREFS_KEY "vx.prefs"
+#define STORAGE_PREFS_KEY_LEN 8
+#define SEED_CLOCK_REQUEST UINT32_C(0x60)
+#define SAVE_CHUNK_BYTES 2048
+#define SAVE_MAX_CHUNKS 12
+#define SAVE_HEADER_BYTES 28
+#define SAVE_EDIT_BYTES 11
+#define SAVE_BLOB_BYTES (SAVE_HEADER_BYTES + MAX_EDITS * SAVE_EDIT_BYTES)
+
+static void release_finger(finger_t *finger);
+
+static uint8_t g_screen = SCREEN_MENU;
+static uint8_t g_has_save;
+static uint8_t g_game_started;
+static uint8_t g_settings_return = SCREEN_MENU;
+static uint8_t g_save_active;
+static uint8_t g_load_active;
+static int g_save_next;
+static int g_save_chunks;
+static int g_save_length;
+static int g_load_next;
+static int g_load_chunks;
+static uint8_t g_save_blob[SAVE_BLOB_BYTES];
+static uint8_t g_storage_payload[2304];
+static char g_menu_toast[24];
+static uint32_t g_menu_toast_until;
+static uint32_t g_clock_seed;
+static uint32_t g_seed_counter;
+static uint8_t g_show_performance = 1;
+static uint8_t g_menu_press_active;
+static int16_t g_menu_press_x;
+static int16_t g_menu_press_y;
+static int16_t g_menu_press_travel;
+static uint64_t g_menu_press_us;
+
+static void save_preferences(void) {
+    const uint8_t value = g_show_performance ? 1u : 0u;
+    (void)pxa_storage_set(STORAGE_PREFS_SET_REQUEST, STORAGE_PREFS_KEY,
+                          STORAGE_PREFS_KEY_LEN, &value, 1,
+                          g_storage_payload, sizeof(g_storage_payload),
+                          g_packet, sizeof(g_packet));
+}
+
+static void menu_toast(const char *text) {
+    int index = 0;
+    while (text[index] != '\0' && index < (int)sizeof(g_menu_toast) - 1) {
+        g_menu_toast[index] = text[index];
+        ++index;
+    }
+    g_menu_toast[index] = '\0';
+    g_menu_toast_until = g_now_ms + 2500u;
+}
+
+static void storage_chunk_key(char *key, int index) {
+    key[0] = 'v';
+    key[1] = 'x';
+    key[2] = '.';
+    key[3] = 'c';
+    if (index < 10) {
+        key[4] = (char)('0' + index);
+    } else {
+        key[4] = (char)('a' + (index - 10));
+    }
+    key[5] = '\0';
+}
+
+static void reset_runtime_state(void) {
+    g_mine_progress = 0.0F;
+    g_mine_sound_timer = 0.0F;
+    g_mine_target.hit = 0;
+    g_action_held = 0;
+    g_attack_cooldown = 0.0F;
+    g_swing_timer = 0.0F;
+    g_stick_dx = 0;
+    g_stick_dy = 0;
+    release_finger(&g_move_finger);
+    release_finger(&g_look_finger);
+    release_finger(&g_button_finger);
+    g_button_kind = BTN_NONE;
+    g_inventory_open = 0;
+    g_craft_table = 0;
+    g_cursor.item = BLOCK_AIR;
+    g_cursor.count = 0;
+    g_inv_press_active = 0;
+    g_last_jump_tap_us = 0;
+    g_jump_held = 0;
+    g_down_held = 0;
+    g_toast[0] = '\0';
+    g_toast_until_ms = 0;
+}
+
+static void start_new_game(void) {
+    const uint32_t base = g_clock_seed != 0 ? g_clock_seed : 0x5eed1234u;
+    const uint32_t seed = base + g_seed_counter * 2654435761u;
+    ++g_seed_counter;
+    game_generate(seed);
+    game_inventory_init();
+    game_spawn(&g_player);
+    game_spawn_mobs(seed ^ 0xabcd1234u, &g_player);
+    reset_runtime_state();
+    g_game_started = 1;
+    g_screen = SCREEN_PLAY;
+    (void)render_frame();
+}
+
+static void save_write_next_chunk(void) {
+    char key[8];
+    int offset;
+    int length;
+    if (!g_save_active) {
+        return;
+    }
+    if (g_save_next >= g_save_chunks) {
+        g_save_active = 0;
+        g_has_save = 1;
+        menu_toast("SAVED");
+        return;
+    }
+    storage_chunk_key(key, g_save_next);
+    offset = g_save_next * SAVE_CHUNK_BYTES;
+    length = g_save_length - offset;
+    if (length > SAVE_CHUNK_BYTES) {
+        length = SAVE_CHUNK_BYTES;
+    }
+    if (!pxa_storage_set(STORAGE_CHUNK_SET_REQUEST, key, 5,
+                         g_save_blob + offset, (size_t)length,
+                         g_storage_payload, sizeof(g_storage_payload),
+                         g_packet, sizeof(g_packet))) {
+        menu_toast("SAVE FAILED");
+        g_save_active = 0;
+        return;
+    }
+    ++g_save_next;
+}
+
+static void save_start(void) {
+    uint8_t meta[8];
+    if (g_save_active || g_load_active || !g_game_started) {
+        if (!g_game_started) {
+            menu_toast("NO GAME TO SAVE");
+        }
+        return;
+    }
+    g_save_length =
+        game_serialize(&g_player, g_save_blob, (int)sizeof(g_save_blob));
+    if (g_save_length <= 0) {
+        menu_toast("SAVE FAILED");
+        return;
+    }
+    g_save_chunks = (g_save_length + SAVE_CHUNK_BYTES - 1) / SAVE_CHUNK_BYTES;
+    if (g_save_chunks > SAVE_MAX_CHUNKS) {
+        menu_toast("SAVE TOO BIG");
+        return;
+    }
+    g_save_active = 1;
+    g_save_next = 0;
+    meta[0] = (uint8_t)g_save_length;
+    meta[1] = (uint8_t)((uint32_t)g_save_length >> 8);
+    meta[2] = (uint8_t)((uint32_t)g_save_length >> 16);
+    meta[3] = (uint8_t)((uint32_t)g_save_length >> 24);
+    meta[4] = (uint8_t)g_save_chunks;
+    meta[5] = (uint8_t)((uint32_t)g_save_chunks >> 8);
+    meta[6] = 0;
+    meta[7] = 0;
+    if (!pxa_storage_set(STORAGE_META_SET_REQUEST, STORAGE_META_KEY,
+                         STORAGE_META_KEY_LEN, meta, sizeof(meta),
+                         g_storage_payload, sizeof(g_storage_payload),
+                         g_packet, sizeof(g_packet))) {
+        menu_toast("SAVE FAILED");
+        g_save_active = 0;
+        return;
+    }
+    menu_toast("SAVING...");
+}
+
+static void load_request_chunk(void) {
+    char key[8];
+    if (g_load_next >= g_load_chunks) {
+        if (game_deserialize(g_save_blob, g_save_length, &g_player)) {
+            game_spawn_mobs(game_seed() ^ 0xabcd1234u, &g_player);
+            reset_runtime_state();
+            g_game_started = 1;
+            g_screen = SCREEN_PLAY;
+            menu_toast("LOADED");
+            (void)render_frame();
+        } else {
+            menu_toast("LOAD FAILED");
+        }
+        g_load_active = 0;
+        return;
+    }
+    storage_chunk_key(key, g_load_next);
+    if (!pxa_storage_get(STORAGE_CHUNK_GET_REQUEST, key, 5,
+                         g_storage_payload, sizeof(g_storage_payload),
+                         g_packet, sizeof(g_packet))) {
+        menu_toast("LOAD FAILED");
+        g_load_active = 0;
+    }
+}
+
+static void load_start(void) {
+    if (g_save_active || g_load_active) {
+        return;
+    }
+    g_load_active = 1;
+    menu_toast("LOADING...");
+    if (!pxa_storage_get(STORAGE_META_GET_REQUEST, STORAGE_META_KEY,
+                         STORAGE_META_KEY_LEN, g_storage_payload,
+                         sizeof(g_storage_payload), g_packet,
+                         sizeof(g_packet))) {
+        menu_toast("LOAD FAILED");
+        g_load_active = 0;
+    }
+}
+
+static void delete_save(void) {
+    if (!pxa_storage_remove(STORAGE_REMOVE_REQUEST, STORAGE_META_KEY,
+                            STORAGE_META_KEY_LEN, g_storage_payload,
+                            sizeof(g_storage_payload), g_packet,
+                            sizeof(g_packet))) {
+        menu_toast("DELETE FAILED");
+    }
+}
+
+static void menu_activate(int index) {
+    if (g_screen == SCREEN_MENU) {
+        if (index == 0) {
+            start_new_game();
+        } else if (index == 1 && g_has_save) {
+            load_start();
+        } else if (index == 2) {
+            g_settings_return = SCREEN_MENU;
+            g_screen = SCREEN_SETTINGS;
+            (void)render_frame();
+        }
+        return;
+    }
+    if (g_screen == SCREEN_PAUSE) {
+        if (index == 0) {
+            g_screen = SCREEN_PLAY;
+            (void)render_frame();
+        } else if (index == 1) {
+            save_start();
+            (void)render_frame();
+        } else if (index == 2) {
+            g_settings_return = SCREEN_PAUSE;
+            g_screen = SCREEN_SETTINGS;
+            (void)render_frame();
+        } else if (index == 3) {
+            save_start();
+            g_screen = SCREEN_MENU;
+            (void)render_frame();
+        }
+        return;
+    }
+    if (g_screen == SCREEN_SETTINGS) {
+        if (index == 0) {
+            cycle_quality();
+            (void)render_frame();
+        } else if (index == 1) {
+            g_show_performance = g_show_performance ? 0 : 1;
+            save_preferences();
+            menu_toast(g_show_performance ? "PERFORMANCE ON"
+                                          : "PERFORMANCE OFF");
+            (void)render_frame();
+        } else if (index == 2) {
+            save_start();
+            (void)render_frame();
+        } else if (index == 3 && g_has_save) {
+            delete_save();
+        } else if (index == 4) {
+            g_screen = g_settings_return;
+            (void)render_frame();
+        }
+    }
+}
+
+static void on_menu_tap(int x, int y) {
+    int index;
+    for (index = 0; index < g_menu_button_count; ++index) {
+        const menu_button_t *button = &g_menu_buttons[index];
+        if (!button->enabled) {
+            continue;
+        }
+        if (x >= button->x && x < button->x + button->w && y >= button->y &&
+            y < button->y + button->h) {
+            menu_activate(index);
+            return;
+        }
+    }
+}
+
+static void handle_storage_event(const pxa_event_t *event) {
+    if (event->opcode == PXA_STORAGE_GET &&
+        event->request_id == STORAGE_META_GET_REQUEST) {
+        pxa_storage_get_result_t result;
+        if (pxa_storage_parse_get(event, &result) &&
+            result.status == PXA_STATUS_OK && result.value_length == 8) {
+            g_save_length = (int)pxa_read_u32(result.value);
+            g_load_chunks = (int)pxa_read_u32(result.value + 4);
+            g_has_save = 1;
+            if (g_load_active) {
+                if (g_save_length <= 0 ||
+                    g_save_length > (int)sizeof(g_save_blob) ||
+                    g_load_chunks <= 0 || g_load_chunks > SAVE_MAX_CHUNKS) {
+                    menu_toast("SAVE CORRUPT");
+                    g_load_active = 0;
+                } else {
+                    g_load_next = 0;
+                    load_request_chunk();
+                }
+            }
+        } else {
+            g_has_save = 0;
+            if (g_load_active) {
+                menu_toast("NO SAVE");
+                g_load_active = 0;
+            }
+        }
+        return;
+    }
+    if (event->opcode == PXA_STORAGE_GET &&
+        event->request_id == STORAGE_CHUNK_GET_REQUEST) {
+        pxa_storage_get_result_t result;
+        if (pxa_storage_parse_get(event, &result) &&
+            result.status == PXA_STATUS_OK && g_load_active &&
+            g_load_next < g_load_chunks) {
+            const int offset = g_load_next * SAVE_CHUNK_BYTES;
+            int length = result.value_length;
+            int index;
+            if (offset + length > (int)sizeof(g_save_blob)) {
+                length = (int)sizeof(g_save_blob) - offset;
+            }
+            for (index = 0; index < length; ++index) {
+                g_save_blob[offset + index] = result.value[index];
+            }
+            ++g_load_next;
+            load_request_chunk();
+        } else {
+            menu_toast("LOAD FAILED");
+            g_load_active = 0;
+        }
+        return;
+    }
+    if (event->opcode == PXA_STORAGE_SET &&
+        event->request_id == STORAGE_META_SET_REQUEST) {
+        int32_t status;
+        if (pxa_storage_parse_status(event, PXA_STORAGE_SET, &status) &&
+            status == PXA_STATUS_OK) {
+            g_save_next = 0;
+            save_write_next_chunk();
+        } else {
+            menu_toast("SAVE FAILED");
+            g_save_active = 0;
+        }
+        return;
+    }
+    if (event->opcode == PXA_STORAGE_SET &&
+        event->request_id == STORAGE_CHUNK_SET_REQUEST) {
+        int32_t status;
+        if (pxa_storage_parse_status(event, PXA_STORAGE_SET, &status) &&
+            status == PXA_STATUS_OK) {
+            save_write_next_chunk();
+        } else {
+            menu_toast("SAVE FAILED");
+            g_save_active = 0;
+        }
+        return;
+    }
+    if (event->opcode == PXA_STORAGE_REMOVE &&
+        event->request_id == STORAGE_REMOVE_REQUEST) {
+        g_has_save = 0;
+        menu_toast("SAVE DELETED");
+        return;
+    }
+    if (event->opcode == PXA_STORAGE_GET &&
+        event->request_id == STORAGE_PREFS_GET_REQUEST) {
+        pxa_storage_get_result_t result;
+        if (pxa_storage_parse_get(event, &result) &&
+            result.status == PXA_STATUS_OK && result.value_length >= 1) {
+            g_show_performance = result.value[0] & 1u;
+            (void)render_frame();
+        }
+    }
+}
+
+static void begin_button(const pxa_ui_pointer_data_t *pointer, uint8_t kind) {
+    if (g_button_finger.active) {
+        return;
+    }
+    g_button_finger.active = 1;
+    g_button_finger.id = pointer->pointer_id;
+    g_button_finger.travel = 0;
+    g_button_finger.down_us = pointer->timestamp_us;
+    g_button_kind = kind;
+}
+
+static void begin_finger(finger_t *finger,
+                         const pxa_ui_pointer_data_t *pointer) {
+    finger->active = 1;
+    finger->id = pointer->pointer_id;
+    finger->origin_x = (int16_t)pointer->x;
+    finger->origin_y = (int16_t)pointer->y;
+    finger->x = (int16_t)pointer->x;
+    finger->y = (int16_t)pointer->y;
+    finger->travel = 0;
+    finger->down_us = pointer->timestamp_us;
+}
+
+static void toggle_fly(void) {
+    g_player.flying = g_player.flying ? 0 : 1;
+    g_player.vy = 0.0F;
+    set_toast(g_player.flying ? "FLY MODE ON" : "FLY MODE OFF");
+}
+
+static void reset_mining(void) {
+    g_mine_progress = 0.0F;
+    g_mine_sound_timer = 0.0F;
+    g_mine_target.hit = 0;
+}
+
+static void open_craft_table(void);
+
+static void open_craft_table(void);
+static void release_finger(finger_t *finger);
+
+static int do_attack(void) {
+    ray_hit_t target;
+    if (game_target_block(&g_player, &target) && target.hit &&
+        game_block(target.x, target.y, target.z) == BLOCK_TABLE) {
+        open_craft_table();
+        return 1;
+    }
+    voxel_sfx_play(&g_sfx, VOXEL_SFX_ATTACK);
+    g_swing_timer = 0.25F;
+    if (game_attack(&g_player, g_inventory[g_hotbar_selected].item)) {
+        voxel_sfx_play(&g_sfx, VOXEL_SFX_HIT);
+        set_toast("HIT");
+        return 1;
+    }
+    return 0;
+}
+
+static void do_place(void) {
+    item_stack_t *slot = &g_inventory[g_hotbar_selected];
+    if (slot->item == BLOCK_AIR || slot->count == 0) {
+        set_toast("NO BLOCKS");
+        return;
+    }
+    if (!game_item_is_block(slot->item)) {
+        set_toast("NOT A BLOCK");
+        return;
+    }
+    if (game_place_block(&g_player, slot->item)) {
+        const int placed = slot->item;
+        (void)game_inventory_remove(g_hotbar_selected, 1);
+        voxel_sfx_play(&g_sfx, VOXEL_SFX_PLACE);
+        set_toast("PLACED");
+        if (placed == BLOCK_TABLE) {
+            open_craft_table();
+        }
+    }
+}
+
+static item_stack_t *inventory_slot_ptr(int hit) {
+    const int index = render_inventory_slot(hit);
+    if (index < 0) {
+        return (item_stack_t *)0;
+    }
+    if (hit >= INV_HIT_CRAFT && hit < INV_HIT_RESULT) {
+        return g_craft_table ? &g_table_craft[index] : &g_craft[index];
+    }
+    return &g_inventory[index];
+}
+
+static void inventory_update_craft(void) {
+    if (g_craft_table) {
+        game_table_craft_update();
+    } else {
+        game_craft_update();
+    }
+}
+
+static int inventory_take_result(void) {
+    uint8_t item;
+    uint8_t count;
+    if (g_craft_table) {
+        if (!game_table_craft_take(&item, &count)) {
+            return 0;
+        }
+    } else {
+        if (!game_craft_take(&item, &count)) {
+            return 0;
+        }
+    }
+    if (g_cursor.item == BLOCK_AIR) {
+        g_cursor.item = item;
+        g_cursor.count = count;
+    } else if (g_cursor.item == item &&
+               (int)g_cursor.count + count <= ITEM_MAX_STACK) {
+        g_cursor.count = (uint8_t)(g_cursor.count + count);
+    } else {
+        (void)game_inventory_add(item, count);
+    }
+    voxel_sfx_play(&g_sfx, VOXEL_SFX_PLACE);
+    return 1;
+}
+
+static void inventory_return_items(void) {
+    int index;
+    if (g_cursor.item != BLOCK_AIR && g_cursor.count != 0) {
+        (void)game_inventory_add(g_cursor.item, g_cursor.count);
+    }
+    g_cursor.item = BLOCK_AIR;
+    g_cursor.count = 0;
+    for (index = 0; index < CRAFT_SLOTS; ++index) {
+        if (g_craft[index].item != BLOCK_AIR && g_craft[index].count != 0) {
+            (void)game_inventory_add(g_craft[index].item,
+                                     g_craft[index].count);
+        }
+        g_craft[index].item = BLOCK_AIR;
+        g_craft[index].count = 0;
+    }
+    for (index = 0; index < TABLE_CRAFT_SLOTS; ++index) {
+        if (g_table_craft[index].item != BLOCK_AIR &&
+            g_table_craft[index].count != 0) {
+            (void)game_inventory_add(g_table_craft[index].item,
+                                     g_table_craft[index].count);
+        }
+        g_table_craft[index].item = BLOCK_AIR;
+        g_table_craft[index].count = 0;
+    }
+    game_craft_update();
+    game_table_craft_update();
+}
+
+static void close_inventory(void) {
+    inventory_return_items();
+    g_inventory_open = 0;
+}
+
+static void open_inventory(void) {
+    g_inventory_open = 1;
+    g_craft_table = 0;
+    release_finger(&g_move_finger);
+    release_finger(&g_look_finger);
+    g_stick_dx = 0;
+    g_stick_dy = 0;
+    g_cursor.item = BLOCK_AIR;
+    g_cursor.count = 0;
+    render_inventory_set_mode(0);
+    game_craft_update();
+}
+
+static void open_craft_table(void) {
+    g_inventory_open = 1;
+    g_craft_table = 1;
+    release_finger(&g_move_finger);
+    release_finger(&g_look_finger);
+    g_stick_dx = 0;
+    g_stick_dy = 0;
+    g_cursor.item = BLOCK_AIR;
+    g_cursor.count = 0;
+    render_inventory_set_mode(1);
+    game_table_craft_update();
+    set_toast("CRAFTING TABLE");
+}
+
+/* Long press: take half a stack, or drop a single item when one is held. */
+static void inventory_split(int x, int y) {
+    const int hit = render_inventory_hit(x, y);
+    item_stack_t *slot;
+    if (hit == INV_HIT_NONE) {
+        return;
+    }
+    if (hit == INV_HIT_CLOSE) {
+        close_inventory();
+        return;
+    }
+    if (hit == INV_HIT_RESULT) {
+        inventory_take_result();
+        return;
+    }
+    slot = inventory_slot_ptr(hit);
+    if (slot == (item_stack_t *)0) {
+        return;
+    }
+    if (g_cursor.item == BLOCK_AIR) {
+        if (slot->item == BLOCK_AIR) {
+            return;
+        }
+        if (slot->count > 1) {
+            const int half = (slot->count + 1) / 2;
+            g_cursor.item = slot->item;
+            g_cursor.count = (uint8_t)half;
+            slot->count = (uint8_t)(slot->count - half);
+        } else {
+            g_cursor = *slot;
+            slot->item = BLOCK_AIR;
+            slot->count = 0;
+        }
+    } else if (slot->item == BLOCK_AIR) {
+        slot->item = g_cursor.item;
+        slot->count = 1;
+        if (--g_cursor.count == 0) {
+            g_cursor.item = BLOCK_AIR;
+        }
+    } else if (slot->item == g_cursor.item &&
+               slot->count < ITEM_MAX_STACK) {
+        ++slot->count;
+        if (--g_cursor.count == 0) {
+            g_cursor.item = BLOCK_AIR;
+        }
+    } else {
+        return;
+    }
+    if (hit >= INV_HIT_CRAFT && hit < INV_HIT_RESULT) {
+        inventory_update_craft();
+    }
+}
+
+static void inventory_tap(int x, int y) {
+    const int hit = render_inventory_hit(x, y);
+    item_stack_t *slot;
+    if (hit == INV_HIT_NONE) {
+        return;
+    }
+    if (hit == INV_HIT_CLOSE) {
+        close_inventory();
+        return;
+    }
+    if (hit == INV_HIT_RESULT) {
+        inventory_take_result();
+        return;
+    }
+    slot = inventory_slot_ptr(hit);
+    if (slot == (item_stack_t *)0) {
+        return;
+    }
+    if (g_cursor.item == BLOCK_AIR) {
+        if (slot->item != BLOCK_AIR) {
+            g_cursor = *slot;
+            slot->item = BLOCK_AIR;
+            slot->count = 0;
+        }
+    } else if (slot->item == BLOCK_AIR) {
+        *slot = g_cursor;
+        g_cursor.item = BLOCK_AIR;
+        g_cursor.count = 0;
+    } else if (slot->item == g_cursor.item) {
+        const int room = ITEM_MAX_STACK - (int)slot->count;
+        const int take =
+            (int)g_cursor.count < room ? g_cursor.count : room;
+        slot->count = (uint8_t)(slot->count + take);
+        g_cursor.count = (uint8_t)(g_cursor.count - take);
+        if (g_cursor.count == 0) {
+            g_cursor.item = BLOCK_AIR;
+        }
+    } else {
+        const item_stack_t swap = *slot;
+        *slot = g_cursor;
+        g_cursor = swap;
+    }
+    if (hit >= INV_HIT_CRAFT && hit < INV_HIT_RESULT) {
+        inventory_update_craft();
+    }
+}
+
+static int jump_active(void) {
+    return g_jump_held != 0 || g_pad_jump != 0;
+}
+
+static int action_active(void) {
+    return g_action_held != 0 || (g_pad_mine != 0 && !g_player.flying);
+}
+
+static int descend_active(void) {
+    return g_down_held != 0 || (g_pad_mine != 0 && g_player.flying);
+}
+
+/* Simulator pad mapping: arrows = d-pad (up/down move, left/right turn),
+ * Z = A (jump, double tap toggles fly), X = B (mine; descend while flying),
+ * Enter = Start (place), Tab = Select (attack). */
+static void on_controller_state(const pxa_ui_controller_data_t *state) {
+    const uint32_t pressed = state->buttons & ~g_pad_previous;
+    const uint32_t released_buttons = g_pad_previous & ~state->buttons;
+    g_pad_previous = state->buttons;
+    if (!state->connected) {
+        g_pad_buttons = 0;
+        g_pad_jump = 0;
+        g_pad_mine = 0;
+        g_pad_move_z = 0.0F;
+        g_pad_turn = 0.0F;
+        return;
+    }
+    g_pad_buttons = state->buttons;
+    if (!g_pad_seen) {
+        g_pad_seen = 1;
+        set_toast("GAMEPAD READY");
+    }
+    if ((pressed & PXA_CONTROLLER_A) != 0) {
+        if (g_pad_last_a_us != 0 &&
+            state->timestamp_us - g_pad_last_a_us < DOUBLE_TAP_US) {
+            toggle_fly();
+            g_pad_last_a_us = 0;
+        } else {
+            g_pad_last_a_us = state->timestamp_us;
+        }
+    }
+    if ((pressed & PXA_CONTROLLER_START) != 0) {
+        do_place();
+    }
+    if ((pressed & PXA_CONTROLLER_SELECT) != 0) {
+        if (!do_attack()) {
+            /* Nothing to attack: toggle mining on the next tick. */
+            g_action_held = 1;
+        }
+    }
+    if ((released_buttons & PXA_CONTROLLER_SELECT) != 0) {
+        g_action_held = 0;
+        reset_mining();
+    }
+    g_pad_move_z = ((state->buttons & PXA_CONTROLLER_UP) != 0 ? 1.0F : 0.0F) -
+                   ((state->buttons & PXA_CONTROLLER_DOWN) != 0 ? 1.0F : 0.0F);
+    g_pad_turn = ((state->buttons & PXA_CONTROLLER_RIGHT) != 0 ? 1.0F : 0.0F) -
+                 ((state->buttons & PXA_CONTROLLER_LEFT) != 0 ? 1.0F : 0.0F);
+    g_pad_jump = (state->buttons & PXA_CONTROLLER_A) != 0;
+    g_pad_mine = (state->buttons & PXA_CONTROLLER_B) != 0;
+}
+
+static void on_key_event(const pxa_ui_event_data_t *event) {
+    switch (event->value) {
+        case PXA_UI_KEY_VOLUME_UP:
+            g_pad_pitch = 1.0F;
+            break;
+        case PXA_UI_KEY_VOLUME_DOWN:
+            g_pad_pitch = -1.0F;
+            break;
+        case PXA_UI_KEY_VOLUME_UP_RELEASED:
+            if (g_pad_pitch > 0.0F) {
+                g_pad_pitch = 0.0F;
+            }
+            break;
+        case PXA_UI_KEY_VOLUME_DOWN_RELEASED:
+            if (g_pad_pitch < 0.0F) {
+                g_pad_pitch = 0.0F;
+            }
+            break;
+        default:
+            break;
+    }
+}
+
+static void on_pointer_down(const pxa_ui_pointer_data_t *pointer) {
+    const int x = (int)pointer->x;
+    const int y = (int)pointer->y;
+    g_pointer_x = (int16_t)x;
+    g_pointer_y = (int16_t)y;
+    if (g_screen != SCREEN_PLAY) {
+        g_menu_press_active = 1;
+        g_menu_press_x = (int16_t)x;
+        g_menu_press_y = (int16_t)y;
+        g_menu_press_travel = 0;
+        g_menu_press_us = pointer->timestamp_us;
+        return;
+    }
+    if (g_inventory_open) {
+        g_inv_press_active = 1;
+        g_inv_press_x = (int16_t)x;
+        g_inv_press_y = (int16_t)y;
+        g_inv_press_travel = 0;
+        g_inv_press_us = pointer->timestamp_us;
+        return;
+    }
+    if (!g_button_finger.active) {
+        if (hit_circle(x, y, g_layout.menu_x, g_layout.menu_y,
+                       g_layout.menu_r)) {
+            reset_runtime_state();
+            g_screen = SCREEN_PAUSE;
+            (void)render_frame();
+            return;
+        }
+        if (hit_circle(x, y, g_layout.bag_x, g_layout.bag_y,
+                       g_layout.bag_r)) {
+            open_inventory();
+            return;
+        }
+        if (x >= g_layout.quality_x &&
+            x < g_layout.quality_x + g_layout.quality_w &&
+            y >= g_layout.quality_y &&
+            y < g_layout.quality_y + g_layout.quality_h) {
+            cycle_quality();
+            return;
+        }
+        if (hit_circle(x, y, g_layout.fly_x, g_layout.fly_y, g_layout.fly_r)) {
+            toggle_fly();
+            begin_button(pointer, BTN_FLY);
+            return;
+        }
+        if (hit_circle(x, y, g_layout.jump_x, g_layout.jump_y,
+                       g_layout.jump_r)) {
+            const uint64_t now = pointer->timestamp_us;
+            if (g_last_jump_tap_us != 0 &&
+                now - g_last_jump_tap_us < DOUBLE_TAP_US) {
+                toggle_fly();
+                g_last_jump_tap_us = 0;
+            } else {
+                g_last_jump_tap_us = now;
+            }
+            g_jump_held = 1;
+            begin_button(pointer, BTN_JUMP);
+            return;
+        }
+        if (hit_circle(x, y, g_layout.action_x, g_layout.action_y,
+                       g_layout.action_r)) {
+            ray_hit_t target;
+            if (game_target_block(&g_player, &target) && target.hit &&
+                game_block(target.x, target.y, target.z) == BLOCK_TABLE) {
+                open_craft_table();
+                return;
+            }
+            g_action_held = 1;
+            reset_mining();
+            begin_button(pointer, BTN_ACTION);
+            return;
+        }
+        if (hit_circle(x, y, g_layout.place_x, g_layout.place_y,
+                       g_layout.place_r)) {
+            do_place();
+            begin_button(pointer, BTN_PLACE);
+            return;
+        }
+        if (g_player.flying &&
+            hit_circle(x, y, g_layout.down_x, g_layout.down_y,
+                       g_layout.down_r)) {
+            g_down_held = 1;
+            begin_button(pointer, BTN_DOWN);
+            return;
+        }
+        if (y >= g_layout.hotbar_y &&
+            y < g_layout.hotbar_y + HOTBAR_SLOT &&
+            x >= g_layout.hotbar_x &&
+            x < g_layout.hotbar_x + HOTBAR_SLOTS * HOTBAR_SLOT) {
+            const int slot = (x - g_layout.hotbar_x) / HOTBAR_SLOT;
+            g_hotbar_selected = (uint8_t)slot;
+            set_toast(g_inventory[slot].item == BLOCK_AIR
+                          ? "EMPTY"
+                          : game_item_name(g_inventory[slot].item));
+            begin_button(pointer, BTN_HOTBAR);
+            return;
+        }
+    }
+    if (x < g_layout.view_x + g_layout.view_w / 2) {
+        if (!g_move_finger.active) {
+            begin_finger(&g_move_finger, pointer);
+        }
+    } else if (!g_look_finger.active) {
+        begin_finger(&g_look_finger, pointer);
+    }
+}
+
+static int abs_int(int value) { return value < 0 ? -value : value; }
+
+static void on_pointer_move(const pxa_ui_pointer_data_t *pointer) {
+    const int x = (int)pointer->x;
+    const int y = (int)pointer->y;
+    g_pointer_x = (int16_t)x;
+    g_pointer_y = (int16_t)y;
+    if (g_screen != SCREEN_PLAY) {
+        if (g_menu_press_active) {
+            g_menu_press_travel = (int16_t)(g_menu_press_travel +
+                                            abs_int(x - g_menu_press_x) +
+                                            abs_int(y - g_menu_press_y));
+            g_menu_press_x = (int16_t)x;
+            g_menu_press_y = (int16_t)y;
+        }
+        return;
+    }
+    if (g_inventory_open) {
+        if (g_inv_press_active) {
+            g_inv_press_travel = (int16_t)(g_inv_press_travel +
+                                           abs_int(x - g_inv_press_x) +
+                                           abs_int(y - g_inv_press_y));
+            g_inv_press_x = (int16_t)x;
+            g_inv_press_y = (int16_t)y;
+        }
+        return;
+    }
+    if (g_move_finger.active && g_move_finger.id == pointer->pointer_id) {
+        int dx = x - g_move_finger.origin_x;
+        int dy = y - g_move_finger.origin_y;
+        g_move_finger.x = (int16_t)x;
+        g_move_finger.y = (int16_t)y;
+        if (dx > (int)STICK_RADIUS) {
+            dx = (int)STICK_RADIUS;
+        } else if (dx < -(int)STICK_RADIUS) {
+            dx = -(int)STICK_RADIUS;
+        }
+        if (dy > (int)STICK_RADIUS) {
+            dy = (int)STICK_RADIUS;
+        } else if (dy < -(int)STICK_RADIUS) {
+            dy = -(int)STICK_RADIUS;
+        }
+        g_stick_dx = (int16_t)dx;
+        g_stick_dy = (int16_t)dy;
+    } else if (g_look_finger.active &&
+               g_look_finger.id == pointer->pointer_id) {
+        const int dx = x - g_look_finger.x;
+        const int dy = y - g_look_finger.y;
+        g_look_finger.x = (int16_t)x;
+        g_look_finger.y = (int16_t)y;
+        g_look_finger.travel = (int16_t)(g_look_finger.travel + abs_int(dx) +
+                                         abs_int(dy));
+        g_player.yaw += (float)dx * LOOK_PER_PIXEL;
+        if (g_player.yaw > RC_PI) {
+            g_player.yaw -= RC_TWO_PI;
+        } else if (g_player.yaw < -RC_PI) {
+            g_player.yaw += RC_TWO_PI;
+        }
+        g_player.pitch = rc_clampf(
+            g_player.pitch - (float)dy * LOOK_PER_PIXEL, -1.55F, 1.55F);
+    } else if (g_button_finger.active &&
+               g_button_finger.id == pointer->pointer_id) {
+        g_button_finger.travel = (int16_t)(g_button_finger.travel +
+                                           abs_int(x - g_button_finger.x) +
+                                           abs_int(y - g_button_finger.y));
+        g_button_finger.x = (int16_t)x;
+        g_button_finger.y = (int16_t)y;
+    }
+}
+
+static void release_finger(finger_t *finger) {
+    finger->active = 0;
+    finger->id = 0;
+}
+
+static void on_pointer_up(const pxa_ui_pointer_data_t *pointer,
+                          int cancelled) {
+    if (g_screen != SCREEN_PLAY) {
+        if (g_menu_press_active) {
+            if (!cancelled && g_menu_press_travel < 14) {
+                on_menu_tap((int)pointer->x, (int)pointer->y);
+            }
+            g_menu_press_active = 0;
+        }
+        return;
+    }
+    if (g_inventory_open) {
+        /* A button that opened this screen (for example PLACE on a crafting
+         * table) is still held: release it here or it would stay stuck and
+         * block every later button press. */
+        if (g_move_finger.active &&
+            g_move_finger.id == pointer->pointer_id) {
+            release_finger(&g_move_finger);
+            g_stick_dx = 0;
+            g_stick_dy = 0;
+        }
+        if (g_look_finger.active &&
+            g_look_finger.id == pointer->pointer_id) {
+            release_finger(&g_look_finger);
+        }
+        if (g_button_finger.active &&
+            g_button_finger.id == pointer->pointer_id) {
+            if (g_button_kind == BTN_JUMP) {
+                g_jump_held = 0;
+            } else if (g_button_kind == BTN_DOWN) {
+                g_down_held = 0;
+            } else if (g_button_kind == BTN_ACTION) {
+                g_action_held = 0;
+                reset_mining();
+            }
+            release_finger(&g_button_finger);
+            g_button_kind = BTN_NONE;
+        }
+        if (g_inv_press_active) {
+            const uint64_t held = pointer->timestamp_us - g_inv_press_us;
+            if (!cancelled && g_inv_press_travel < 14) {
+                if (held < UINT64_C(350000)) {
+                    inventory_tap((int)pointer->x, (int)pointer->y);
+                } else {
+                    inventory_split((int)pointer->x, (int)pointer->y);
+                }
+            }
+            g_inv_press_active = 0;
+        }
+        return;
+    }
+    if (g_move_finger.active && g_move_finger.id == pointer->pointer_id) {
+        release_finger(&g_move_finger);
+        g_stick_dx = 0;
+        g_stick_dy = 0;
+        return;
+    }
+    if (g_look_finger.active && g_look_finger.id == pointer->pointer_id) {
+        (void)cancelled;
+        release_finger(&g_look_finger);
+        return;
+    }
+    if (g_button_finger.active &&
+        g_button_finger.id == pointer->pointer_id) {
+        if (g_button_kind == BTN_JUMP) {
+            g_jump_held = 0;
+        } else if (g_button_kind == BTN_DOWN) {
+            g_down_held = 0;
+        } else if (g_button_kind == BTN_ACTION) {
+            g_action_held = 0;
+            reset_mining();
+        }
+        release_finger(&g_button_finger);
+        g_button_kind = BTN_NONE;
+    }
+}
+
+static void update_mining(float dt) {
+    ray_hit_t hit;
+    float hardness;
+    int block;
+    if (!action_active()) {
+        return;
+    }
+    if (!game_target_block(&g_player, &hit) || !hit.hit) {
+        reset_mining();
+        return;
+    }
+    block = game_block(hit.x, hit.y, hit.z);
+    hardness = game_block_hardness(block);
+    if (hardness <= 0.0F) {
+        reset_mining();
+        return;
+    }
+    if (!g_mine_target.hit || g_mine_target.x != hit.x ||
+        g_mine_target.y != hit.y || g_mine_target.z != hit.z) {
+        g_mine_target = hit;
+        g_mine_progress = 0.0F;
+    }
+    g_mine_progress += dt * game_mining_speed(
+                                 g_inventory[g_hotbar_selected].item, block) /
+                       hardness;
+    g_mine_sound_timer -= dt;
+    if (g_mine_sound_timer <= 0.0F) {
+        voxel_sfx_play(&g_sfx, VOXEL_SFX_MINE);
+        g_mine_sound_timer = MINE_SOUND_PERIOD;
+    }
+    if (g_mine_progress >= 1.0F) {
+        game_set_block(hit.x, hit.y, hit.z, BLOCK_AIR);
+        (void)game_inventory_add(block, 1);
+        game_spawn_particles((float)hit.x + 0.5F, (float)hit.y + 0.5F,
+                             (float)hit.z + 0.5F, block, 12);
+        voxel_sfx_play(&g_sfx, VOXEL_SFX_BREAK);
+        set_toast("MINED");
+        reset_mining();
+    }
+}
+
+static void build_hud(hud_state_t *hud) {
+    hud->now_ms = g_now_ms;
+    hud->fps_x10 = g_fps_x10;
+    hud->pos_x = rc_floor_int(g_player.x);
+    hud->pos_z = rc_floor_int(g_player.z);
+    hud->hotbar_selected = g_hotbar_selected;
+    hud->flying = g_player.flying;
+    hud->move_active = g_move_finger.active;
+    hud->move_origin_x = g_move_finger.origin_x;
+    hud->move_origin_y = g_move_finger.origin_y;
+    hud->move_dx = g_stick_dx;
+    hud->move_dy = g_stick_dy;
+    hud->jump_held = jump_active();
+    hud->down_held = g_down_held;
+    hud->action_held = action_active();
+    hud->show_performance = g_show_performance;
+    hud->quality = (uint8_t)render_quality();
+    hud->quality_manual = g_quality_manual;
+    hud->inventory_open = g_inventory_open;
+    hud->craft_table = g_craft_table;
+    hud->cursor_item = g_cursor.item;
+    hud->cursor_count = g_cursor.count;
+    hud->pointer_x = g_pointer_x;
+    hud->pointer_y = g_pointer_y;
+    hud->mine_progress = g_mine_progress;
+    hud->swing = g_swing_timer > 0.0F ? 1.0F : 0.0F;
+    hud->toast = g_toast_until_ms > g_now_ms ? g_toast : NULL;
+}
+
+static int render_frame(void) {
+    hud_state_t hud;
+    ray_hit_t target;
+    const size_t pixels = (size_t)g_layout.view_w * g_layout.view_h;
+    const uint32_t frame_bytes = (uint32_t)(pixels * sizeof(*g_pixels));
+    int32_t write_result;
+    int32_t queue_result;
+    size_t index;
+    if (g_surface_handle == 0 || pixels > FRAME_PIXELS) {
+        return 0;
+    }
+    for (index = 0; index < pixels; ++index) {
+        g_pixels[index] = UINT16_C(0x0841);
+    }
+    if (g_screen == SCREEN_PLAY || g_screen == SCREEN_PAUSE) {
+        game_target_block(&g_player, &target);
+        if (!render_3d(g_pixels, (uint32_t)g_layout.view_w, &g_player,
+                       g_now_ms, &target, g_mine_progress)) {
+            return 0;
+        }
+        if (g_screen == SCREEN_PLAY) {
+            build_hud(&hud);
+            hud.target_table = (target.hit &&
+                                game_block(target.x, target.y, target.z) ==
+                                    BLOCK_TABLE)
+                                   ? 1
+                                   : 0;
+            hud.action_mode = 0;
+            if (hud.target_table) {
+                hud.action_mode = 2;
+            } else if (game_attack_target(&g_player)) {
+                hud.action_mode = 1;
+            }
+            render_hud(&hud);
+        }
+    }
+    if (g_screen != SCREEN_PLAY) {
+        menu_state_t menu;
+        const uint32_t base =
+            g_clock_seed != 0 ? g_clock_seed : 0x5eed1234u;
+        render_target(g_pixels, (uint32_t)g_layout.view_w);
+        menu.overlay = (uint8_t)(g_screen == SCREEN_PAUSE ? 1 : 0);
+        menu.screen = (uint8_t)(g_screen == SCREEN_SETTINGS
+                                    ? 1
+                                    : (g_screen == SCREEN_PAUSE ? 2 : 0));
+        menu.has_save = g_has_save;
+        menu.has_game = g_game_started;
+        menu.quality_manual = g_quality_manual;
+        menu.quality = (uint8_t)render_quality();
+        menu.show_performance = g_show_performance;
+        menu.seed = base + g_seed_counter * 2654435761u;
+        menu.toast = g_menu_toast_until > g_now_ms ? g_menu_toast : NULL;
+        render_menu(&menu);
+    }
+    write_result = pxa_surface_write_frame(g_surface_handle,
+                                           (uint8_t *)g_pixels, frame_bytes);
+    if (write_result == PXA_STATUS_WOULD_BLOCK) {
+        return 1;
+    }
+    if (write_result != (int32_t)frame_bytes) {
+        return 0;
+    }
+    queue_result = pxa_surface_queue_frame(g_surface_handle, ++g_frame_id,
+                                            NULL, 0, g_packet,
+                                            sizeof(g_packet));
+    return queue_result == PXA_STATUS_OK || queue_result == PXA_STATUS_WOULD_BLOCK;
+}
+
+static int handle_surface_create(const pxa_event_t *event) {
+    pxa_surface_create_result_t created;
+    const uint32_t expected_stride = (uint32_t)g_surface_width *
+                                     sizeof(*g_pixels);
+    const uint32_t expected_bytes = expected_stride * g_surface_height;
+    if (!pxa_surface_parse_create(event, &created) ||
+        event->request_id != SURFACE_CREATE_REQUEST) {
+        return 0;
+    }
+    g_surface_create_pending = 0;
+    if (created.status != PXA_STATUS_OK || created.stride_bytes != expected_stride ||
+        created.frame_bytes != expected_bytes || created.buffer_count < 2) {
+        return 1;
+    }
+    if (g_surface_width != (uint16_t)g_layout.view_w ||
+        g_surface_height != (uint16_t)g_layout.view_h) {
+        (void)pxa_close_handle(created.surface_handle);
+        (void)request_surface_create();
+        return 1;
+    }
+    g_surface_handle = created.surface_handle;
+    if (!pxa_surface_configure_layer(
+            SURFACE_CONFIGURE_REQUEST, g_surface_handle, g_layout.view_x,
+            g_layout.view_y, g_surface_width, g_surface_height, 0, 1,
+            g_packet, sizeof(g_packet))) {
+        (void)pxa_close_handle(g_surface_handle);
+        g_surface_handle = 0;
+        return 1;
+    }
+    (void)render_frame();
+    return 1;
+}
+
+static void update_fps(uint64_t timestamp_us) {
+    if (g_fps_window_start_us == 0) {
+        g_fps_window_start_us = timestamp_us;
+        g_fps_window_frames = 0;
+        return;
+    }
+    ++g_fps_window_frames;
+    if (timestamp_us > g_fps_window_start_us &&
+        timestamp_us - g_fps_window_start_us >= UINT64_C(500000)) {
+        uint64_t measured = (uint64_t)g_fps_window_frames * UINT64_C(10000000) /
+                            (timestamp_us - g_fps_window_start_us);
+        if (measured > 9999u) {
+            measured = 9999u;
+        }
+        g_fps_x10 = (uint32_t)measured;
+        g_fps_window_start_us = timestamp_us;
+        g_fps_window_frames = 0;
+    }
+}
+
+int32_t pxa_app_start(const uint8_t *config, uint32_t length) {
+    pxa_ui_environment_t environment;
+    if (pxa_ui_parse_start_environment(config, length, &environment) &&
+        environment.width > 0 && environment.height > 0) {
+        render_configure((int)environment.width, (int)environment.height);
+    } else {
+        render_configure(SCREEN_W_DEFAULT, SCREEN_H_DEFAULT);
+    }
+    /* Establish a responsive baseline before timing feedback is available.
+     * Faster hosts recover detail automatically within a few frames. */
+    render_set_quality(QUALITY_MAX);
+    g_surface_handle = 0;
+    g_surface_width = 0;
+    g_surface_height = 0;
+    g_frame_id = 0;
+    g_surface_create_pending = 0;
+    g_input_initialized = 0;
+    g_last_tick_us = 0;
+    g_now_ms = 0;
+    g_fps_x10 = 0;
+    g_fps_window_start_us = 0;
+    g_fps_window_frames = 0;
+    g_hotbar_selected = 0;
+    g_toast[0] = '\0';
+    g_toast_until_ms = 0;
+    release_finger(&g_move_finger);
+    release_finger(&g_look_finger);
+    release_finger(&g_button_finger);
+    g_button_kind = BTN_NONE;
+    g_stick_dx = 0;
+    g_stick_dy = 0;
+    g_jump_held = 0;
+    g_down_held = 0;
+    g_action_held = 0;
+    g_attack_cooldown = 0.0F;
+    g_mine_progress = 0.0F;
+    g_mine_sound_timer = 0.0F;
+    g_mine_target.hit = 0;
+    g_swing_timer = 0.0F;
+    g_last_jump_tap_us = 0;
+    g_render_start_us = 0;
+    g_render_ema_us = 0;
+    g_quality_frames = 0;
+    g_quality_warmup = QUALITY_WARMUP_FRAMES;
+    g_snapshot_ticks = 0;
+    g_present_failures = 0;
+    g_quality_manual = 0;
+    g_inventory_open = 0;
+    g_craft_table = 0;
+    g_cursor.item = BLOCK_AIR;
+    g_cursor.count = 0;
+    g_pointer_x = 0;
+    g_pointer_y = 0;
+    g_inv_press_active = 0;
+    g_inv_press_travel = 0;
+    g_inv_press_us = 0;
+    g_pad_buttons = 0;
+    g_pad_previous = 0;
+    g_pad_seen = 0;
+    g_pad_jump = 0;
+    g_pad_mine = 0;
+    g_pad_move_z = 0.0F;
+    g_pad_turn = 0.0F;
+    g_pad_pitch = 0.0F;
+    g_pad_last_a_us = 0;
+    g_sfx.state = VOXEL_SFX_OFF;
+    g_sfx.noise_state = 0;
+    g_screen = SCREEN_MENU;
+    g_has_save = 0;
+    g_game_started = 0;
+    g_save_active = 0;
+    g_load_active = 0;
+    g_save_next = 0;
+    g_save_chunks = 0;
+    g_save_length = 0;
+    g_load_next = 0;
+    g_load_chunks = 0;
+    g_menu_toast[0] = '\0';
+    g_menu_toast_until = 0;
+    g_show_performance = 1;
+    g_clock_seed = 0;
+    g_seed_counter = 0;
+    g_menu_press_active = 0;
+    g_menu_press_travel = 0;
+    g_menu_press_us = 0;
+    game_inventory_init();
+    if (!pxa_window_fullscreen()) {
+        return PXA_STATUS_INTERNAL;
+    }
+    if (!initialize_input_surface() || !request_surface_create()) {
+        return PXA_STATUS_INTERNAL;
+    }
+    voxel_sfx_start(&g_sfx, g_packet, sizeof(g_packet));
+    request_window_snapshot();
+    (void)pxa_clock_now(SEED_CLOCK_REQUEST);
+    (void)pxa_storage_get(STORAGE_PREFS_GET_REQUEST, STORAGE_PREFS_KEY,
+                          STORAGE_PREFS_KEY_LEN, g_storage_payload,
+                          sizeof(g_storage_payload), g_packet,
+                          sizeof(g_packet));
+    (void)pxa_storage_get(STORAGE_META_GET_REQUEST, STORAGE_META_KEY,
+                          STORAGE_META_KEY_LEN, g_storage_payload,
+                          sizeof(g_storage_payload), g_packet,
+                          sizeof(g_packet));
+    return pxa_clock_set_period(FRAME_PERIOD_MS) ? PXA_STATUS_OK
+                                                 : PXA_STATUS_INTERNAL;
+}
+
+int32_t pxa_app_on_event(const uint8_t *event, uint32_t length) {
+    pxa_event_t parsed;
+    pxa_ui_pointer_data_t pointer;
+    uint64_t timestamp_us;
+    if (!pxa_parse_event(event, length, &parsed)) {
+        return PXA_EVENT_UNHANDLED;
+    }
+    if (voxel_sfx_handle_event(&g_sfx, &parsed, g_packet, sizeof(g_packet))) {
+        return PXA_EVENT_HANDLED;
+    }
+    if (handle_surface_create(&parsed)) {
+        return PXA_EVENT_HANDLED;
+    }
+    if (parsed.service == PXA_SERVICE_STORAGE) {
+        handle_storage_event(&parsed);
+        return PXA_EVENT_HANDLED;
+    }
+    {
+        pxa_ui_environment_t environment;
+        if (pxa_ui_parse_environment_event(&parsed, &environment)) {
+            if (environment.width > 0 && environment.height > 0) {
+                apply_screen_size((int)environment.width,
+                                  (int)environment.height);
+            }
+            return PXA_EVENT_HANDLED;
+        }
+    }
+    {
+        pxa_ui_controller_data_t state;
+        if (pxa_ui_parse_controller(&parsed, &state)) {
+            on_controller_state(&state);
+            return PXA_EVENT_HANDLED;
+        }
+    }
+    {
+        pxa_ui_event_data_t ui_event;
+        if (pxa_ui_parse_event(&parsed, &ui_event) &&
+            ui_event.kind == PXA_UI_EVENT_KEY_KIND) {
+            on_key_event(&ui_event);
+            return PXA_EVENT_HANDLED;
+        }
+    }
+    if (parsed.service == PXA_SERVICE_WINDOW &&
+        (parsed.opcode == PXA_WINDOW_METRICS_CHANGED_OP ||
+         (parsed.opcode == PXA_WINDOW_GET_SNAPSHOT_OP &&
+          parsed.request_id == WINDOW_SNAPSHOT_REQUEST))) {
+        uint32_t width;
+        uint32_t height;
+        if (parse_window_snapshot(parsed.payload, parsed.payload_length,
+                                  &width, &height)) {
+            apply_screen_size((int)width, (int)height);
+        }
+        return PXA_EVENT_HANDLED;
+    }
+    if (parsed.service == PXA_SERVICE_CLOCK &&
+        parsed.opcode == PXA_CLOCK_NOW_RESULT &&
+        parsed.request_id == SEED_CLOCK_REQUEST) {
+        int32_t status;
+        uint64_t seed_us;
+        if (pxa_clock_parse_now(&parsed, &status, &seed_us) &&
+            status == PXA_STATUS_OK) {
+            g_clock_seed =
+                (uint32_t)seed_us ^ (uint32_t)(seed_us >> 32);
+        }
+        return PXA_EVENT_HANDLED;
+    }
+    if (parsed.service == PXA_SERVICE_CLOCK &&
+        parsed.opcode == PXA_CLOCK_NOW_RESULT &&
+        parsed.request_id == RENDER_TIME_REQUEST) {
+        int32_t status;
+        uint64_t end_us;
+        if (pxa_clock_parse_now(&parsed, &status, &end_us) &&
+            status == PXA_STATUS_OK && g_render_start_us != 0 &&
+            end_us > g_render_start_us) {
+            update_quality(end_us - g_render_start_us);
+        }
+        return PXA_EVENT_HANDLED;
+    }
+    if (pxa_clock_tick_timestamp_us(&parsed, &timestamp_us)) {
+        const uint8_t steps = pxa_clock_tick_steps(
+            &g_last_tick_us, &parsed, FRAME_PERIOD_MS, MAX_CATCHUP_STEPS);
+        uint8_t index;
+        float move_x;
+        float move_z;
+        update_fps(timestamp_us);
+        voxel_sfx_tick(&g_sfx, &parsed);
+        if (++g_snapshot_ticks >= WINDOW_SNAPSHOT_PERIOD_TICKS) {
+            g_snapshot_ticks = 0;
+            request_window_snapshot();
+        }
+        if (g_screen != SCREEN_PLAY) {
+            g_now_ms += FRAME_PERIOD_MS;
+            (void)render_frame();
+            return PXA_EVENT_HANDLED;
+        }
+        for (index = 0; index < steps; ++index) {
+            const uint8_t was_ground = g_player.on_ground;
+            if (g_inventory_open) {
+                g_now_ms += FRAME_PERIOD_MS;
+                continue;
+            }
+            move_x = rc_clampf((float)g_stick_dx / STICK_RADIUS, -1.0F, 1.0F);
+            move_z = rc_clampf(-(float)g_stick_dy / STICK_RADIUS +
+                                   g_pad_move_z,
+                               -1.0F, 1.0F);
+            g_player.yaw += g_pad_turn * PAD_TURN_RATE * TICK_SECONDS;
+            if (g_player.yaw > RC_PI) {
+                g_player.yaw -= RC_TWO_PI;
+            } else if (g_player.yaw < -RC_PI) {
+                g_player.yaw += RC_TWO_PI;
+            }
+            if (g_pad_pitch != 0.0F) {
+                g_player.pitch = rc_clampf(
+                    g_player.pitch + g_pad_pitch * PAD_PITCH_RATE * TICK_SECONDS,
+                    -1.55F, 1.55F);
+            }
+            game_step(&g_player, TICK_SECONDS, move_x, move_z, jump_active(),
+                      jump_active(), descend_active());
+            if (was_ground && !g_player.on_ground && g_player.vy > 6.0F) {
+                voxel_sfx_play(&g_sfx, VOXEL_SFX_JUMP);
+            }
+            {
+                int attacked = 0;
+                if (g_action_held && g_attack_cooldown <= 0.0F &&
+                    game_attack(&g_player,
+                                g_inventory[g_hotbar_selected].item)) {
+                    g_attack_cooldown = 0.35F;
+                    attacked = 1;
+                    voxel_sfx_play(&g_sfx, VOXEL_SFX_HIT);
+                    set_toast("HIT");
+                }
+                if (g_attack_cooldown > 0.0F) {
+                    g_attack_cooldown -= TICK_SECONDS;
+                }
+                if (!attacked) {
+                    update_mining(TICK_SECONDS);
+                }
+            }
+            game_update_mobs(TICK_SECONDS, &g_player);
+            game_update_particles(TICK_SECONDS);
+            if (g_swing_timer > 0.0F) {
+                g_swing_timer -= TICK_SECONDS;
+            }
+            g_now_ms += FRAME_PERIOD_MS;
+        }
+        if (steps != 0) {
+            g_render_start_us = timestamp_us;
+            if (render_frame()) {
+                g_present_failures = 0;
+            } else if (++g_present_failures >= 3u) {
+                /* The Host refused the display list, usually because the view
+                 * is larger than its Canvas budget: shrink and retry. */
+                g_present_failures = 0;
+                render_shrink_view();
+                apply_quality();
+                (void)render_frame();
+                toast_view();
+            }
+            (void)pxa_clock_now(RENDER_TIME_REQUEST);
+        }
+        return PXA_EVENT_HANDLED;
+    }
+    if (!pxa_ui_parse_pointer(&parsed, &pointer) || pointer.node != FRAME_NODE) {
+        return PXA_EVENT_UNHANDLED;
+    }
+    if (pointer.phase == PXA_POINTER_DOWN) {
+        on_pointer_down(&pointer);
+    } else if (pointer.phase == PXA_POINTER_MOVE) {
+        on_pointer_move(&pointer);
+    } else if (pointer.phase == PXA_POINTER_UP) {
+        on_pointer_up(&pointer, 0);
+    } else if (pointer.phase == PXA_POINTER_CANCEL) {
+        on_pointer_up(&pointer, 1);
+    }
+    return PXA_EVENT_HANDLED;
+}
+
+void pxa_app_stop(uint32_t reason) {
+    (void)reason;
+    (void)pxa_clock_set_period(0);
+    if (g_sfx.session_handle != 0) {
+        (void)pxa_close_handle(g_sfx.session_handle);
+        g_sfx.session_handle = 0;
+    }
+    if (g_surface_handle != 0) {
+        (void)pxa_close_handle(g_surface_handle);
+        g_surface_handle = 0;
+    }
+}
