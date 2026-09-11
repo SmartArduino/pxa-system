@@ -307,6 +307,29 @@ static int32_t audio_stream_io(void *context, uint32_t operation,
         session->provider_session == 0 || session->service == NULL) {
         return PXA_STATUS_NOT_FOUND;
     }
+    if (operation == PXA_AUDIO_IO_PLAY_TONE) {
+        pxa_audio_tone_t tone;
+        if (data == NULL || size != 8 ||
+            session->service->backend.play_tone == NULL) {
+            return data == NULL || size != 8 ? PXA_STATUS_INVALID_ARGUMENT
+                                             : PXA_STATUS_UNSUPPORTED;
+        }
+        tone.frequency_hz = pxa_read_u16(data);
+        tone.duration_ms = pxa_read_u16(data + 2);
+        tone.gain_db_q8 = read_i16(data + 4);
+        tone.waveform = data[6];
+        if (data[7] != 0 || tone.frequency_hz < 40 ||
+            tone.frequency_hz > 8000 || tone.duration_ms < 10 ||
+            tone.duration_ms > 1000 || tone.gain_db_q8 > 0 ||
+            tone.gain_db_q8 < -60 * 256 ||
+            tone.waveform > PXA_AUDIO_TONE_NOISE) {
+            return PXA_STATUS_INVALID_ARGUMENT;
+        }
+        status = pxa_status_normalize(session->service->backend.play_tone(
+            session->service->backend.context, session->provider_session,
+            &tone));
+        return status == PXA_STATUS_OK ? (int32_t)size : status;
+    }
     if (operation != PXA_IO_WRITE) return PXA_STATUS_UNSUPPORTED;
     if (size == 0) return 0;
     sample_bytes = (size_t)session->format.channels * 2u;

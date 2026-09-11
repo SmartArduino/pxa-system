@@ -12,7 +12,7 @@ extern "C" {
 
 #define PXA_AUDIO_SERVICE_ID UINT16_C(10)
 #define PXA_AUDIO_SERVICE_MAJOR UINT16_C(0)
-#define PXA_AUDIO_SERVICE_MINOR UINT16_C(2)
+#define PXA_AUDIO_SERVICE_MINOR UINT16_C(3)
 #define PXA_AUDIO_SERVICE_PATCH UINT16_C(0)
 #define PXA_AUDIO_OPEN_SESSION UINT16_C(1)
 #define PXA_AUDIO_COMMIT_GRAPH UINT16_C(2)
@@ -21,6 +21,11 @@ extern "C" {
 #define PXA_AUDIO_USAGE_MEDIA UINT16_C(1)
 #define PXA_AUDIO_ROUTE_SPEAKER UINT16_C(1)
 #define PXA_AUDIO_MAX_EQ_BANDS UINT8_C(5)
+#define PXA_AUDIO_IO_PLAY_TONE UINT32_C(0x100)
+#define PXA_AUDIO_TONE_SINE UINT8_C(0)
+#define PXA_AUDIO_TONE_SQUARE UINT8_C(1)
+#define PXA_AUDIO_TONE_TRIANGLE UINT8_C(2)
+#define PXA_AUDIO_TONE_NOISE UINT8_C(3)
 
 typedef struct {
     uint32_t sample_rate;
@@ -50,6 +55,13 @@ typedef struct {
     uint32_t flags;
 } pxa_audio_state_t;
 
+typedef struct {
+    uint16_t frequency_hz;
+    uint16_t duration_ms;
+    int16_t gain_db_q8;
+    uint8_t waveform;
+} pxa_audio_tone_t;
+
 typedef pxa_status_t (*pxa_audio_open_fn)(
     void *context, uint16_t usage, pxa_audio_format_t *format,
     uint64_t *provider_session);
@@ -59,6 +71,9 @@ typedef pxa_status_t (*pxa_audio_commit_fn)(
 typedef pxa_status_t (*pxa_audio_submit_fn)(
     void *context, uint64_t provider_session, const uint8_t *pcm,
     size_t size);
+typedef pxa_status_t (*pxa_audio_play_tone_fn)(
+    void *context, uint64_t provider_session,
+    const pxa_audio_tone_t *tone);
 typedef pxa_status_t (*pxa_audio_query_fn)(
     void *context, uint64_t provider_session, pxa_audio_state_t *state);
 typedef pxa_status_t (*pxa_audio_flush_fn)(
@@ -75,6 +90,7 @@ typedef struct {
     pxa_audio_close_fn close;
     pxa_audio_query_fn query;
     pxa_audio_flush_fn flush;
+    pxa_audio_play_tone_fn play_tone;
 } pxa_audio_backend_t;
 
 typedef struct {

@@ -1,11 +1,11 @@
 {
-  "schema": "pxa-audio-spec-0.2",
+  "schema": "pxa-audio-spec-0.3",
   "status": "draft",
   "service": {
     "name": "audio",
     "id": 10,
     "major": 0,
-    "minor": 2,
+    "minor": 3,
     "patch": 0
   },
   "opcodes": [
@@ -42,6 +42,15 @@
       "payload": "session-handle",
       "result": "status",
       "since": "0.2"
+    }
+  ],
+  "resource_io": [
+    {
+      "name": "play-tone",
+      "id": 256,
+      "payload": "frequency-hz:u16|duration-ms:u16|gain-db-q8:i16|waveform:u8|reserved:u8",
+      "result": "payload-size-or-status",
+      "since": "0.3"
     }
   ],
   "record_tags": [
@@ -157,5 +166,5 @@
     "min_frame_ms": 5,
     "max_frame_ms": 120
   },
-  "protocol_version": "0.2.0"
+  "protocol_version": "0.3.0"
 }

@@ -135,6 +135,7 @@ typedef struct {
     unsigned opens;
     unsigned commits;
     unsigned submits;
+    unsigned tones;
     unsigned queries;
     unsigned flushes;
     unsigned closes;
@@ -916,6 +917,18 @@ static pxa_status_t audio_submit(void *context, uint64_t provider_session,
     assert(provider_session == backend->session && size == sizeof(expected) &&
            memcmp(pcm, expected, sizeof(expected)) == 0);
     backend->submits++;
+    return PXA_STATUS_OK;
+}
+
+static pxa_status_t audio_play_tone(void *context,
+                                    uint64_t provider_session,
+                                    const pxa_audio_tone_t *tone) {
+    test_audio_backend_t *backend = (test_audio_backend_t *)context;
+    assert(provider_session == backend->session && tone != NULL &&
+           tone->frequency_hz == 440 && tone->duration_ms == 80 &&
+           tone->gain_db_q8 == -6 * 256 &&
+           tone->waveform == PXA_AUDIO_TONE_TRIANGLE);
+    backend->tones++;
     return PXA_STATUS_OK;
 }
 
@@ -4163,6 +4176,7 @@ static void test_audio_service(void) {
     audio_config.backend.submit = audio_submit;
     audio_config.backend.query = audio_query;
     audio_config.backend.flush = audio_flush;
+    audio_config.backend.play_tone = audio_play_tone;
     audio_config.backend.close = audio_close;
     audio_config.permissions = permission;
     audio_size = pxa_audio_service_workspace_size(&audio_config);
@@ -4274,6 +4288,18 @@ static void test_audio_service(void) {
                            PXA_IO_WRITE, pcm, sizeof(pcm)) ==
                (int32_t)sizeof(pcm));
         assert(backend.submits == 1);
+    }
+    {
+        uint8_t tone[] = {0xb8, 0x01, 80, 0, 0, 0xfa,
+                          PXA_AUDIO_TONE_TRIANGLE, 0};
+        assert(dispatch_io(test.runtime, component, reused_session_handle,
+                           PXA_AUDIO_IO_PLAY_TONE, tone, sizeof(tone)) ==
+               (int32_t)sizeof(tone));
+        assert(backend.tones == 1);
+        tone[7] = 1;
+        assert(dispatch_io(test.runtime, component, reused_session_handle,
+                           PXA_AUDIO_IO_PLAY_TONE, tone, sizeof(tone)) ==
+               PXA_STATUS_INVALID_ARGUMENT);
     }
 
     command_size = make_audio_session_command(

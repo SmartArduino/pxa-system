@@ -8,6 +8,7 @@ static uint32_t captured_length;
 static uint32_t io_handle;
 static uint32_t io_operation;
 static uint32_t io_length;
+static uint8_t io_data[8];
 
 static void write_u16(uint8_t *output, uint16_t value) {
     output[0] = (uint8_t)value;
@@ -32,10 +33,11 @@ int32_t pxa_control(const uint8_t *data, uint32_t length) {
 }
 
 int32_t pxa_io(uint32_t handle, uint32_t operation, uint8_t *data, uint32_t length) {
-    (void)data;
     io_handle = handle;
     io_operation = operation;
     io_length = length;
+    if (length <= sizeof(io_data) && data != NULL)
+        memcpy(io_data, data, length);
     return (int32_t)length;
 }
 
@@ -58,6 +60,13 @@ int main(void) {
     assert(pxa_audio_write_pcm(99, pcm, sizeof(pcm)) == (int32_t)sizeof(pcm));
     assert(io_handle == 99 && io_operation == PXA_IO_WRITE &&
            io_length == sizeof(pcm));
+    assert(pxa_audio_play_tone(99, PXA_AUDIO_TONE_TRIANGLE, 440, 80,
+                               -6 * 256) == 8);
+    assert(io_handle == 99 && io_operation == PXA_AUDIO_IO_PLAY_TONE &&
+           io_length == 8 && io_data[0] == 0xb8 && io_data[1] == 0x01 &&
+           io_data[2] == 80 && io_data[3] == 0 && io_data[4] == 0 &&
+           io_data[5] == 0xfa && io_data[6] == PXA_AUDIO_TONE_TRIANGLE &&
+           io_data[7] == 0);
     assert(pxa_parse_event(opened, sizeof(opened), &event));
     assert(pxa_audio_parse_open(&event, &result));
     assert(result.session_handle == 9 && result.sample_rate == 16000 && result.frame_ms == 20);

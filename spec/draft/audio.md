@@ -1,6 +1,6 @@
-# PXA Audio Draft 0.1
+# PXA Audio Draft 0.3
 
-Audio 0.2 defines a permission-bound session and an atomic, App-owned playback
+Audio 0.3 defines a permission-bound session and an atomic, App-owned playback
 graph control plane. `open-session` requires an `audio.playback` Permission
 Handle whose exact scope is `media`. It returns a Component-owned audio-graph
 Handle plus the Host-selected PCM format. v1 currently defines only the media
@@ -25,7 +25,13 @@ memory before queuing it to its renderer. Encoded framing, microphone capture,
 decoder/encoder selection and direct hardware endpoints remain outside this
 minor. Hosts own resampling, mixing and focus policy.
 
-The simulator provides a deterministic, silent Provider. The ESP provider
+Audio service minor 3 adds `play-tone` on the session resource. Its fixed
+8-byte command describes one bounded procedural tone. The Host copies only the
+descriptor and generates PCM on its audio task, so a slow render callback
+cannot starve an already accepted effect. This is intended for short UI and
+game effects; PCM write remains the compatibility and streaming path.
+
+The simulator sends PCM and generated tones to its SDL device. The ESP provider
 accepts 16 kHz mono 20 ms frames and routes up to three concurrent PXA sessions
 to independent Game mixer inputs; it cannot address master gain, voice or other
 Apps' streams.

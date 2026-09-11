@@ -8,6 +8,11 @@
 #define PXA_AUDIO_COMMIT_GRAPH 2u
 #define PXA_AUDIO_QUERY_STATE 3u
 #define PXA_AUDIO_FLUSH 4u
+#define PXA_AUDIO_IO_PLAY_TONE 0x100u
+#define PXA_AUDIO_TONE_SINE 0u
+#define PXA_AUDIO_TONE_SQUARE 1u
+#define PXA_AUDIO_TONE_TRIANGLE 2u
+#define PXA_AUDIO_TONE_NOISE 3u
 
 #define PXA_AUDIO_PERMISSION_HANDLE 1u
 #define PXA_AUDIO_USAGE 2u
@@ -151,6 +156,29 @@ static inline int32_t pxa_audio_write_pcm(uint32_t session_handle,
         return PXA_STATUS_INVALID_ARGUMENT;
     }
     return pxa_io(session_handle, PXA_IO_WRITE, pcm, length);
+}
+
+static inline int32_t pxa_audio_play_tone(uint32_t session_handle,
+                                          uint8_t waveform,
+                                          uint16_t frequency_hz,
+                                          uint16_t duration_ms,
+                                          int16_t gain_db_q8) {
+    uint8_t command[8];
+    if (session_handle == 0 || waveform > PXA_AUDIO_TONE_NOISE ||
+        frequency_hz < 40 || frequency_hz > 8000 || duration_ms < 10 ||
+        duration_ms > 1000 || gain_db_q8 > 0 || gain_db_q8 < -60 * 256) {
+        return PXA_STATUS_INVALID_ARGUMENT;
+    }
+    command[0] = (uint8_t)frequency_hz;
+    command[1] = (uint8_t)(frequency_hz >> 8);
+    command[2] = (uint8_t)duration_ms;
+    command[3] = (uint8_t)(duration_ms >> 8);
+    command[4] = (uint8_t)gain_db_q8;
+    command[5] = (uint8_t)((uint16_t)gain_db_q8 >> 8);
+    command[6] = waveform;
+    command[7] = 0;
+    return pxa_io(session_handle, PXA_AUDIO_IO_PLAY_TONE, command,
+                  sizeof(command));
 }
 
 static inline int pxa_audio_parse_open(const pxa_event_t *event,
