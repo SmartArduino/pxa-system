@@ -6,8 +6,8 @@
 
 /* Large enough for a native (1X) render of the product's 296x240 view and of
  * a 320x240 view. Larger views fall back to 2X or coarser. */
-#define SCENE_MAX_W 320
-#define SCENE_MAX_H 240
+#define SCENE_MAX_W RENDER_SCENE_MAX_W
+#define SCENE_MAX_H RENDER_SCENE_MAX_H
 #define TAN_HALF 0.70F
 #define FOG_START 14.0F
 
@@ -30,11 +30,12 @@
 #define FOG_G 205
 #define FOG_B 244
 
-static uint16_t g_scene[SCENE_MAX_W * SCENE_MAX_H];
+static uint16_t *g_scene;
 static uint16_t g_depth[SCENE_MAX_W * SCENE_MAX_H];
+static float g_ndc_x[SCENE_MAX_W];
+static float g_ndc_y[SCENE_MAX_H];
+static uint16_t g_ray_len_q12[SCENE_MAX_W * SCENE_MAX_H];
 static uint16_t *g_row_ptr[SCREEN_H_MAX];
-static int16_t g_col_map[SCREEN_W_MAX];
-static int16_t g_row_map[SCREEN_H_MAX];
 static int g_scene_w = 148;
 static int g_scene_h = 120;
 static int g_scale = 2;
@@ -43,6 +44,7 @@ static float g_fog_end = 46.0F;
 static float g_fog_inv = 1.0F / 32.0F;
 /* Keep the direct Surface within the Guest's fixed RGB565 frame buffer. */
 static int g_view_pixel_budget = 115000;
+static render_perf_stats_t g_perf_stats;
 
 render_layout_t g_layout = {
     SCREEN_W_DEFAULT, SCREEN_H_DEFAULT, 0, 0, SCREEN_W_DEFAULT,
@@ -75,8 +77,6 @@ static void render_update_scene(void) {
     const int view_h = g_layout.view_h;
     int width = (view_w + g_scale - 1) / g_scale;
     int height = (view_h + g_scale - 1) / g_scale;
-    int x;
-    int y;
     /* Clamp the scene proportionally so a very wide or tall view keeps its
      * aspect instead of stretching. */
     if (width > SCENE_MAX_W) {
@@ -97,10 +97,10 @@ static void render_update_scene(void) {
     g_scene_h = height;
     /* Lower quality also shortens the view distance, which cuts the number of
      * DDA steps per ray on top of the lower ray count. */
-    if (g_scale >= 4) {
+    if (g_scale == QUALITY_PERFORMANCE) {
         g_max_steps = 48;
         g_fog_end = 30.0F;
-    } else if (g_scale == 3) {
+    } else if (g_scale == QUALITY_BALANCED) {
         g_max_steps = 64;
         g_fog_end = 38.0F;
     } else {
@@ -108,11 +108,26 @@ static void render_update_scene(void) {
         g_fog_end = 46.0F;
     }
     g_fog_inv = 1.0F / (g_fog_end - FOG_START);
-    for (x = 0; x < view_w; ++x) {
-        g_col_map[x] = (int16_t)((x * g_scene_w) / view_w);
-    }
-    for (y = 0; y < view_h; ++y) {
-        g_row_map[y] = (int16_t)((y * g_scene_h) / view_h);
+    {
+        const float inv_w = 1.0F / (float)g_scene_w;
+        const float inv_h = 1.0F / (float)g_scene_h;
+        const float tan_x = TAN_HALF * ((float)g_scene_w / (float)g_scene_h);
+        int y;
+        for (int x = 0; x < g_scene_w; ++x) {
+            g_ndc_x[x] =
+                (2.0F * ((float)x + 0.5F) * inv_w - 1.0F) * tan_x;
+        }
+        for (y = 0; y < g_scene_h; ++y) {
+            const float ndc_y =
+                (1.0F - 2.0F * ((float)y + 0.5F) * inv_h) * TAN_HALF;
+            uint16_t *lengths = &g_ray_len_q12[y * g_scene_w];
+            g_ndc_y[y] = ndc_y;
+            for (int x = 0; x < g_scene_w; ++x) {
+                const float length = rc_sqrt(
+                    1.0F + g_ndc_x[x] * g_ndc_x[x] + ndc_y * ndc_y);
+                lengths[x] = (uint16_t)(length * 4096.0F + 0.5F);
+            }
+        }
     }
 }
 
@@ -208,6 +223,8 @@ void render_set_quality(int scale) {
     const int minimum = render_min_quality();
     if (scale < minimum) {
         scale = minimum;
+    } else if (scale > QUALITY_BALANCED && scale < QUALITY_PERFORMANCE) {
+        scale = QUALITY_PERFORMANCE;
     } else if (scale > QUALITY_MAX) {
         scale = QUALITY_MAX;
     }
@@ -225,6 +242,9 @@ void render_shrink_view(void) {
 int render_quality(void) { return g_scale; }
 int render_scene_width(void) { return g_scene_w; }
 int render_scene_height(void) { return g_scene_h; }
+void render_get_perf_stats(render_perf_stats_t *stats) {
+    if (stats != NULL) *stats = g_perf_stats;
+}
 
 static const uint8_t kBaseR[BLOCK_TYPE_COUNT] = {
     0,   95,  134, 126, 218, 102, 58,  48,  157, 150,
@@ -735,24 +755,20 @@ static void render_scene(const camera_t *cam, uint32_t now_ms) {
     const float cam_x = cam->cam_x;
     const float cam_y = cam->cam_y;
     const float cam_z = cam->cam_z;
-    const float tan_x = cam->tan_x;
-    const float inv_w = 1.0F / (float)g_scene_w;
-    const float inv_h = 1.0F / (float)g_scene_h;
     int py;
+    g_perf_stats = (render_perf_stats_t){0};
     for (py = 0; py < g_scene_h; ++py) {
-        const float ndc_y =
-            (1.0F - 2.0F * ((float)py + 0.5F) * inv_h) * TAN_HALF;
+        const float ndc_y = g_ndc_y[py];
         const float dir_y = fy + uy * ndc_y;
-        const float dy2 = ndc_y * ndc_y;
+        const uint16_t *ray_lengths = &g_ray_len_q12[py * g_scene_w];
         uint16_t *out = &g_scene[py * g_scene_w];
         uint16_t *depth_out = &g_depth[py * g_scene_w];
         int px;
         for (px = 0; px < g_scene_w; ++px) {
-            const float ndc_x =
-                (2.0F * ((float)px + 0.5F) * inv_w - 1.0F) * tan_x;
+            const float ndc_x = g_ndc_x[px];
             const float dir_x = fx + rx * ndc_x + ux * ndc_y;
             const float dir_z = fz + rz * ndc_x + uz * ndc_y;
-            const float ray_len = rc_sqrt(1.0F + ndc_x * ndc_x + dy2);
+            const float ray_len = (float)ray_lengths[px] * (1.0F / 4096.0F);
             int map_x = rc_floor_int(cam_x);
             int map_y = rc_floor_int(cam_y);
             int map_z = rc_floor_int(cam_z);
@@ -804,6 +820,10 @@ static void render_scene(const camera_t *cam, uint32_t now_ms) {
                     face = 2;
                     sign = step_z;
                 }
+                if (travel > g_fog_end) {
+                    block = BLOCK_AIR;
+                    break;
+                }
                 {
                     const int ci = (map_x >> CHUNK_BITS) - g_chunk_origin_cx;
                     const int cj = (map_z >> CHUNK_BITS) - g_chunk_origin_cz;
@@ -825,10 +845,14 @@ static void render_scene(const camera_t *cam, uint32_t now_ms) {
                 if (block != BLOCK_AIR) {
                     break;
                 }
-                if (travel > g_fog_end) {
-                    block = BLOCK_AIR;
-                    break;
-                }
+            }
+            {
+                const uint16_t steps = (uint16_t)(
+                    step < g_max_steps ? step + 1 : g_max_steps);
+                ++g_perf_stats.rays;
+                g_perf_stats.total_steps += steps;
+                if (steps > g_perf_stats.max_steps)
+                    g_perf_stats.max_steps = steps;
             }
             if (block == BLOCK_AIR) {
                 const float inv_len = 1.0F / ray_len;
@@ -973,19 +997,16 @@ static void render_entities(const camera_t *cam) {
                     (int)g_depth[py * g_scene_w + px]) {
                     continue;
                 }
-                const float ndc_x =
-                    (2.0F * ((float)px + 0.5F) / (float)g_scene_w - 1.0F) *
-                    cam->tan_x;
-                const float ndc_y =
-                    (1.0F - 2.0F * ((float)py + 0.5F) / (float)g_scene_h) *
-                    TAN_HALF;
+                const float ndc_x = g_ndc_x[px];
+                const float ndc_y = g_ndc_y[py];
                 const float dir_x = cam->fx + cam->rx * ndc_x +
                                     cam->ux * ndc_y;
                 const float dir_y = cam->fy + cam->uy * ndc_y;
                 const float dir_z = cam->fz + cam->rz * ndc_x +
                                     cam->uz * ndc_y;
-                const float ray_len = rc_sqrt(1.0F + ndc_x * ndc_x +
-                                              ndc_y * ndc_y);
+                const float ray_len =
+                    (float)g_ray_len_q12[py * g_scene_w + px] *
+                    (1.0F / 4096.0F);
                 float t_min = -1.0e30F;
                 float t_max = 1.0e30F;
                 int face = 0;
@@ -1295,23 +1316,10 @@ static void render_highlight(const camera_t *cam, const ray_hit_t *target,
     }
 }
 
-static void render_upscale(void) {
-    const int view_w = g_layout.view_w;
-    const int view_h = g_layout.view_h;
-    int y;
-    for (y = 0; y < view_h; ++y) {
-        const uint16_t *src = &g_scene[(int)g_row_map[y] * g_scene_w];
-        uint16_t *dst = frame_row(y);
-        int x;
-        for (x = 0; x < view_w; ++x) {
-            dst[x] = src[g_col_map[x]];
-        }
-    }
-}
-
 void render_target(uint16_t *pixels, uint32_t stride_pixels) {
     int row;
-    for (row = 0; row < g_layout.view_h; ++row) {
+    g_scene = pixels;
+    for (row = 0; row < g_scene_h; ++row) {
         g_row_ptr[row] = pixels + (size_t)row * stride_pixels;
     }
 }
@@ -1320,7 +1328,7 @@ int render_3d(uint16_t *pixels, uint32_t stride_pixels,
               const player_t *player, uint32_t now_ms,
               const ray_hit_t *target, float mine_progress) {
     camera_t cam;
-    if (pixels == NULL || stride_pixels < (uint32_t)g_layout.view_w) {
+    if (pixels == NULL || stride_pixels < (uint32_t)g_scene_w) {
         return 0;
     }
     render_ensure_textures();
@@ -1329,18 +1337,21 @@ int render_3d(uint16_t *pixels, uint32_t stride_pixels,
     render_scene(&cam, now_ms);
     render_entities(&cam);
     render_highlight(&cam, target, mine_progress);
-    render_upscale();
     return 1;
 }
 
 /* --- HUD primitives ----------------------------------------------------- */
 
 static void hud_pixel(int x, int y, uint16_t color) {
+    int target_x;
+    int target_y;
     if (x < g_layout.view_x || x >= g_layout.view_x + g_layout.view_w ||
         y < g_layout.view_y || y >= g_layout.view_y + g_layout.view_h) {
         return;
     }
-    frame_row(y - g_layout.view_y)[x - g_layout.view_x] = color;
+    target_x = (x - g_layout.view_x) * g_scene_w / g_layout.view_w;
+    target_y = (y - g_layout.view_y) * g_scene_h / g_layout.view_h;
+    frame_row(target_y)[target_x] = color;
 }
 
 static void hud_rect(int x, int y, int width, int height, uint16_t color) {
@@ -1640,9 +1651,17 @@ static void dim_region(int x, int y, int width, int height) {
                 column >= g_layout.view_x + g_layout.view_w) {
                 continue;
             }
-            if (((column ^ row) & 1) == 0) {
-                uint16_t *pixel = &frame_row(row - g_layout.view_y)
-                                       [column - g_layout.view_x];
+            if (((column ^ row) & 1) == 0 &&
+                ((column - g_layout.view_x) * g_scene_w) %
+                        g_layout.view_w ==
+                    0 &&
+                ((row - g_layout.view_y) * g_scene_h) % g_layout.view_h ==
+                    0) {
+                const int target_x =
+                    (column - g_layout.view_x) * g_scene_w / g_layout.view_w;
+                const int target_y =
+                    (row - g_layout.view_y) * g_scene_h / g_layout.view_h;
+                uint16_t *pixel = &frame_row(target_y)[target_x];
                 *pixel = (uint16_t)((*pixel >> 1) & 0x7BEFu);
             }
         }
@@ -1952,6 +1971,7 @@ static void draw_status(const hud_state_t *hud) {
         *out++ = 'Y';
         *out++ = ' ';
     }
+    *out++ = 'G';
     *out++ = 'F';
     *out++ = 'P';
     *out++ = 'S';
@@ -1996,9 +2016,41 @@ static void draw_status(const hud_state_t *hud) {
         *out = '\0';
         hud_text_centered(g_layout.view_y + 19, position, COL_SHADOW, 1);
         hud_text_centered(g_layout.view_y + 18, position, COL_TEXT, 1);
+        out = position;
+        *out++ = 'D';
+        *out++ = 'D';
+        *out++ = 'A';
+        *out++ = ' ';
+        out = put_i32(out, (int32_t)(hud->dda_steps_x10 / 10u));
+        *out++ = '.';
+        *out++ = (char)('0' + hud->dda_steps_x10 % 10u);
+        *out++ = '/';
+        out = put_i32(out, hud->dda_steps_max);
+        *out = '\0';
+        hud_text_centered(g_layout.view_y + 31, position, COL_SHADOW, 1);
+        hud_text_centered(g_layout.view_y + 30, position, COL_TEXT, 1);
+        out = position;
+        *out++ = 'R';
+        *out++ = ' ';
+        out = put_i32(out, hud->guest_render_us_div_100 / 10u);
+        *out++ = '.';
+        *out++ = (char)('0' + hud->guest_render_us_div_100 % 10u);
+        *out++ = 'M';
+        *out++ = 'S';
+        *out++ = ' ';
+        *out++ = 'B';
+        *out++ = ' ';
+        out = put_i32(out, hud->buffer_wait_us_div_100 / 10u);
+        *out++ = '.';
+        *out++ = (char)('0' + hud->buffer_wait_us_div_100 % 10u);
+        *out++ = 'M';
+        *out++ = 'S';
+        *out = '\0';
+        hud_text_centered(g_layout.view_y + 43, position, COL_SHADOW, 1);
+        hud_text_centered(g_layout.view_y + 42, position, COL_TEXT, 1);
     }
 
-    if (hud->now_ms < 10000u) {
+    if (hud->now_ms < 10000u && !hud->show_performance) {
         hud_text_centered(34, "LEFT MOVE   RIGHT LOOK", COL_SHADOW, 1);
         hud_text_centered(33, "LEFT MOVE   RIGHT LOOK", COL_TEXT, 1);
         hud_text_centered(46, "HOLD ACTION: MINE/ATTACK/USE", COL_SHADOW, 1);

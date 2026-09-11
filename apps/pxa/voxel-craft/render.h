@@ -1,6 +1,7 @@
 #ifndef VOXEL_CRAFT_RENDER_H
 #define VOXEL_CRAFT_RENDER_H
 
+#include <stddef.h>
 #include <stdint.h>
 
 #include "game.h"
@@ -12,10 +13,16 @@
 #define SCREEN_H_MAX 384
 #define SCREEN_W_DEFAULT 296
 #define SCREEN_H_DEFAULT 240
+#define RENDER_SCENE_MAX_W 320
+#define RENDER_SCENE_MAX_H 240
+#define RENDER_SCENE_PIXELS_MAX \
+    ((size_t)RENDER_SCENE_MAX_W * RENDER_SCENE_MAX_H)
 
 #define HOTBAR_SLOT 24
 #define QUALITY_MIN 1
-#define QUALITY_MAX 4
+#define QUALITY_BALANCED 2
+#define QUALITY_PERFORMANCE 4
+#define QUALITY_MAX QUALITY_PERFORMANCE
 
 typedef struct {
     int screen_w;
@@ -74,6 +81,10 @@ typedef struct {
 typedef struct {
     uint32_t now_ms;
     uint32_t fps_x10;
+    uint16_t guest_render_us_div_100;
+    uint16_t buffer_wait_us_div_100;
+    uint16_t dda_steps_x10;
+    uint16_t dda_steps_max;
     int32_t pos_x;
     int32_t pos_z;
     uint8_t hotbar_selected;
@@ -101,6 +112,12 @@ typedef struct {
     float swing;
     const char *toast;
 } hud_state_t;
+
+typedef struct {
+    uint32_t rays;
+    uint32_t total_steps;
+    uint16_t max_steps;
+} render_perf_stats_t;
 
 /* Inventory screen hit zones. */
 #define INV_HIT_NONE (-1)
@@ -162,6 +179,7 @@ int render_quality(void);
 int render_min_quality(void);
 int render_scene_width(void);
 int render_scene_height(void);
+void render_get_perf_stats(render_perf_stats_t *stats);
 
 int render_3d(uint16_t *pixels, uint32_t stride_pixels,
               const player_t *player, uint32_t now_ms,

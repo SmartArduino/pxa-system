@@ -1,8 +1,8 @@
 /* Voxel Craft: a first-person voxel sandbox for PXA.
  *
  * The world is a 64 x 24 x 64 block grid generated from value noise. The scene
- * is ray cast per pixel at 148 x 120 and upscaled 2x into a full RGB565
- * Surface frame. Touch
+ * is ray cast per pixel at 148 x 120 into a Guest-mapped RGB565 Surface. The
+ * Host fuses nearest upscale, rotation and panel byte order conversion. Touch
  * controls: left half is a movement stick, right half looks around. The MINE
  * button holds a mining action with per-block progress and break particles,
  * ATTACK swings at slimes, PLACE builds with the hotbar selection, and JUMP
@@ -20,7 +20,7 @@
 #include "sfx.h"
 
 #define FRAME_NODE UINT32_C(2)
-#define FRAME_PERIOD_MS 16u
+#define FRAME_PERIOD_MS 33u
 #define MAX_CATCHUP_STEPS 3u
 #define RENDER_TIME_REQUEST UINT32_C(2)
 #define WINDOW_SNAPSHOT_REQUEST UINT32_C(3)
@@ -29,21 +29,24 @@
 #define PXA_WINDOW_GET_SNAPSHOT_OP 2u
 #define PXA_WINDOW_METRICS_CHANGED_OP 0x8001u
 #define WINDOW_SNAPSHOT_PERIOD_TICKS 125u
-#define QUALITY_WINDOW_FRAMES 3u
-#define QUALITY_WARMUP_FRAMES 0u
-#define QUALITY_DOWNGRADE_US UINT64_C(18000)
-#define QUALITY_UPGRADE_US UINT64_C(9000)
-#define QUALITY_PANIC_US UINT64_C(60000)
+#define QUALITY_WINDOW_FRAMES 30u
+#define QUALITY_WARMUP_FRAMES 15u
+#define QUALITY_DOWNGRADE_US UINT64_C(26000)
+#define QUALITY_UPGRADE_US UINT64_C(12000)
+#define QUALITY_PANIC_US UINT64_C(80000)
 #define QUALITY_SAMPLE_CAP_US UINT64_C(250000)
-#define TICK_SECONDS 0.016F
+#define QUALITY_DOWNGRADE_WINDOWS 2u
+#define QUALITY_UPGRADE_WINDOWS 5u
+#define QUALITY_COOLDOWN_FRAMES 90u
+#define TICK_SECONDS 0.033F
 #define LOOK_PER_PIXEL 0.0062F
 #define STICK_RADIUS 40.0F
 #define DOUBLE_TAP_US UINT64_C(320000)
 #define MINE_SOUND_PERIOD 0.22F
 #define PAD_TURN_RATE 2.2F
 #define PAD_PITCH_RATE 1.6F
-#define FRAME_PIXELS ((size_t)SCREEN_W_MAX * SCREEN_H_MAX)
-#define FRAME_BYTES_MAX (FRAME_PIXELS * sizeof(uint16_t))
+#define SURFACE_BUFFER_COUNT 3u
+#define FRAME_PIXELS_MAX RENDER_SCENE_PIXELS_MAX
 
 enum {
     BTN_NONE = 0,
@@ -66,7 +69,8 @@ typedef struct {
     uint64_t down_us;
 } finger_t;
 
-static uint16_t g_pixels[FRAME_PIXELS];
+static uint16_t g_surface_buffers[SURFACE_BUFFER_COUNT * FRAME_PIXELS_MAX]
+    __attribute__((aligned(PXA_SURFACE_BUFFER_ALIGNMENT)));
 static uint8_t g_packet[128];
 static uint32_t g_surface_handle;
 static uint16_t g_surface_width;
@@ -102,8 +106,16 @@ static float g_swing_timer;
 static uint64_t g_last_jump_tap_us;
 static uint64_t g_render_start_us;
 static uint32_t g_render_ema_us;
+static uint32_t g_render_max_us;
 static uint32_t g_quality_frames;
 static uint8_t g_quality_warmup;
+static uint8_t g_quality_bad_windows;
+static uint8_t g_quality_good_windows;
+static uint8_t g_quality_panic_samples;
+static uint16_t g_quality_cooldown_frames;
+static uint64_t g_buffer_wait_started_us;
+static uint32_t g_buffer_wait_ema_us;
+static uint32_t g_buffer_wait_max_us;
 static uint32_t g_snapshot_ticks;
 static uint8_t g_present_failures;
 static uint8_t g_quality_manual;
@@ -126,6 +138,19 @@ static float g_pad_move_z;
 static float g_pad_turn;
 static float g_pad_pitch;
 static uint64_t g_pad_last_a_us;
+
+static void recreate_surface(void);
+
+static int next_lower_quality(int quality) {
+    return quality <= QUALITY_MIN ? QUALITY_MIN
+           : quality <= QUALITY_BALANCED ? QUALITY_MIN
+                                         : QUALITY_BALANCED;
+}
+
+static int next_higher_quality(int quality) {
+    return quality < QUALITY_BALANCED ? QUALITY_BALANCED
+                                     : QUALITY_PERFORMANCE;
+}
 
 static int hit_circle(int x, int y, int cx, int cy, int radius) {
     const int dx = x - cx;
@@ -202,10 +227,12 @@ static void apply_quality(void) {
 static void cycle_quality(void) {
     if (g_quality_manual == 0) {
         g_quality_manual = 1;
-    } else if (g_quality_manual >= QUALITY_MAX) {
-        g_quality_manual = 0;
+    } else if (g_quality_manual == QUALITY_MIN) {
+        g_quality_manual = QUALITY_BALANCED;
+    } else if (g_quality_manual == QUALITY_BALANCED) {
+        g_quality_manual = QUALITY_PERFORMANCE;
     } else {
-        ++g_quality_manual;
+        g_quality_manual = 0;
     }
     if (g_quality_manual != 0) {
         render_set_quality(g_quality_manual);
@@ -213,6 +240,7 @@ static void cycle_quality(void) {
         g_render_ema_us = 0;
         g_quality_frames = 0;
     }
+    recreate_surface();
     toast_quality_mode();
 }
 
@@ -246,33 +274,51 @@ static void update_quality(uint64_t duration_us) {
         duration_us = QUALITY_SAMPLE_CAP_US;
     }
     sample = (uint32_t)duration_us;
-    if (duration_us >= QUALITY_PANIC_US) {
-        /* A single very slow frame drops straight to the lowest quality. */
-        if (quality < QUALITY_MAX) {
-            render_set_quality(QUALITY_MAX);
-            toast_quality();
-        }
-        g_render_ema_us = sample;
-        g_quality_frames = 0;
-        return;
-    }
+    if (sample > g_render_max_us) g_render_max_us = sample;
     if (g_render_ema_us == 0) {
         g_render_ema_us = sample;
     } else {
-        g_render_ema_us = (g_render_ema_us * 3u + sample) / 4u;
+        g_render_ema_us = (g_render_ema_us * 7u + sample) / 8u;
     }
+    if (duration_us >= QUALITY_PANIC_US) {
+        if (g_quality_panic_samples < UINT8_MAX) ++g_quality_panic_samples;
+    } else {
+        g_quality_panic_samples = 0;
+    }
+    if (g_quality_cooldown_frames != 0) --g_quality_cooldown_frames;
     ++g_quality_frames;
     if (g_quality_frames < QUALITY_WINDOW_FRAMES) {
         return;
     }
     g_quality_frames = 0;
-    if (g_render_ema_us > QUALITY_DOWNGRADE_US && quality < QUALITY_MAX) {
-        render_set_quality(quality + 1);
+    if (g_render_ema_us > QUALITY_DOWNGRADE_US) {
+        if (g_quality_bad_windows < UINT8_MAX) ++g_quality_bad_windows;
+        g_quality_good_windows = 0;
+    } else if (g_render_ema_us < QUALITY_UPGRADE_US) {
+        if (g_quality_good_windows < UINT8_MAX) ++g_quality_good_windows;
+        g_quality_bad_windows = 0;
+    } else {
+        g_quality_bad_windows = 0;
+        g_quality_good_windows = 0;
+    }
+    if (g_quality_cooldown_frames != 0) return;
+    if ((g_quality_bad_windows >= QUALITY_DOWNGRADE_WINDOWS ||
+         g_quality_panic_samples >= 3u) && quality < QUALITY_MAX) {
+        render_set_quality(next_higher_quality(quality));
+        recreate_surface();
         toast_quality();
-    } else if (g_render_ema_us < QUALITY_UPGRADE_US &&
+        g_quality_bad_windows = 0;
+        g_quality_good_windows = 0;
+        g_quality_panic_samples = 0;
+        g_quality_cooldown_frames = QUALITY_COOLDOWN_FRAMES;
+    } else if (g_quality_good_windows >= QUALITY_UPGRADE_WINDOWS &&
                quality > render_min_quality()) {
-        render_set_quality(quality - 1);
+        render_set_quality(next_lower_quality(quality));
+        recreate_surface();
         toast_quality();
+        g_quality_bad_windows = 0;
+        g_quality_good_windows = 0;
+        g_quality_cooldown_frames = QUALITY_COOLDOWN_FRAMES;
     }
 }
 
@@ -309,17 +355,17 @@ static int initialize_input_surface(void) {
 }
 
 static int request_surface_create(void) {
-    /* The Surface is sized to the game view, not the whole display, so a
-     * window larger than the pixel budget still renders (centred). */
+    /* GuestMapped frames use the current internal quality resolution. The
+     * Host performs nearest upscale and panel rotation in one native pass. */
     if (g_surface_create_pending || g_surface_handle != 0 ||
         g_layout.view_w <= 0 || g_layout.view_h <= 0) {
         return 0;
     }
-    g_surface_width = (uint16_t)g_layout.view_w;
-    g_surface_height = (uint16_t)g_layout.view_h;
-    if (!pxa_surface_create_rgb565_direct(
-            SURFACE_CREATE_REQUEST, g_surface_width, g_surface_height, 3,
-            g_packet, sizeof(g_packet))) {
+    g_surface_width = (uint16_t)render_scene_width();
+    g_surface_height = (uint16_t)render_scene_height();
+    if (!pxa_surface_create_rgb565_mapped(
+            SURFACE_CREATE_REQUEST, g_surface_width, g_surface_height,
+            SURFACE_BUFFER_COUNT, 1, g_packet, sizeof(g_packet))) {
         return 0;
     }
     g_surface_create_pending = 1;
@@ -1450,8 +1496,19 @@ static void update_mining(float dt) {
 }
 
 static void build_hud(hud_state_t *hud) {
+    render_perf_stats_t perf;
+    render_get_perf_stats(&perf);
     hud->now_ms = g_now_ms;
     hud->fps_x10 = g_fps_x10;
+    hud->guest_render_us_div_100 = (uint16_t)(
+        g_render_ema_us / 100u > UINT16_MAX ? UINT16_MAX :
+                                              g_render_ema_us / 100u);
+    hud->buffer_wait_us_div_100 = (uint16_t)(
+        g_buffer_wait_ema_us / 100u > UINT16_MAX ? UINT16_MAX :
+                                                   g_buffer_wait_ema_us / 100u);
+    hud->dda_steps_x10 = perf.rays == 0 ? 0 :
+        (uint16_t)((perf.total_steps * 10u) / perf.rays);
+    hud->dda_steps_max = perf.max_steps;
     hud->pos_x = rc_floor_int(g_player.x);
     hud->pos_z = rc_floor_int(g_player.z);
     hud->hotbar_selected = g_hotbar_selected;
@@ -1481,20 +1538,41 @@ static void build_hud(hud_state_t *hud) {
 static int render_frame(void) {
     hud_state_t hud;
     ray_hit_t target;
-    const size_t pixels = (size_t)g_layout.view_w * g_layout.view_h;
-    const uint32_t frame_bytes = (uint32_t)(pixels * sizeof(*g_pixels));
-    int32_t write_result;
-    int32_t queue_result;
+    const size_t pixels = (size_t)g_surface_width * g_surface_height;
+    uint16_t *frame;
+    uint8_t buffer_index;
+    int32_t acquire_result;
+    int32_t present_result;
     size_t index;
-    if (g_surface_handle == 0 || pixels > FRAME_PIXELS) {
+    if (g_surface_handle == 0 || pixels > FRAME_PIXELS_MAX ||
+        g_surface_width != (uint16_t)render_scene_width() ||
+        g_surface_height != (uint16_t)render_scene_height()) {
         return 0;
     }
+    acquire_result = pxa_surface_acquire_buffer(g_surface_handle,
+                                                &buffer_index);
+    if (acquire_result == PXA_STATUS_WOULD_BLOCK) {
+        if (g_buffer_wait_started_us == 0) g_buffer_wait_started_us = g_last_tick_us;
+        return 1;
+    }
+    if (acquire_result != 4 || buffer_index >= SURFACE_BUFFER_COUNT) return 0;
+    if (g_buffer_wait_started_us != 0 &&
+        g_last_tick_us > g_buffer_wait_started_us) {
+        const uint64_t elapsed = g_last_tick_us - g_buffer_wait_started_us;
+        const uint32_t sample = elapsed > UINT32_MAX ? UINT32_MAX :
+                                                       (uint32_t)elapsed;
+        g_buffer_wait_ema_us = g_buffer_wait_ema_us == 0 ? sample :
+            (g_buffer_wait_ema_us * 7u + sample) / 8u;
+        if (sample > g_buffer_wait_max_us) g_buffer_wait_max_us = sample;
+    }
+    g_buffer_wait_started_us = 0;
+    frame = g_surface_buffers + (size_t)buffer_index * pixels;
     for (index = 0; index < pixels; ++index) {
-        g_pixels[index] = UINT16_C(0x0841);
+        frame[index] = UINT16_C(0x0841);
     }
     if (g_screen == SCREEN_PLAY || g_screen == SCREEN_PAUSE) {
         game_target_block(&g_player, &target);
-        if (!render_3d(g_pixels, (uint32_t)g_layout.view_w, &g_player,
+        if (!render_3d(frame, g_surface_width, &g_player,
                        g_now_ms, &target, g_mine_progress)) {
             return 0;
         }
@@ -1518,7 +1596,7 @@ static int render_frame(void) {
         menu_state_t menu;
         const uint32_t base =
             g_clock_seed != 0 ? g_clock_seed : 0x5eed1234u;
-        render_target(g_pixels, (uint32_t)g_layout.view_w);
+        render_target(frame, g_surface_width);
         menu.overlay = (uint8_t)(g_screen == SCREEN_PAUSE ? 1 : 0);
         menu.screen = (uint8_t)(g_screen == SCREEN_SETTINGS
                                     ? 1
@@ -1532,41 +1610,46 @@ static int render_frame(void) {
         menu.toast = g_menu_toast_until > g_now_ms ? g_menu_toast : NULL;
         render_menu(&menu);
     }
-    write_result = pxa_surface_write_frame(g_surface_handle,
-                                           (uint8_t *)g_pixels, frame_bytes);
-    if (write_result == PXA_STATUS_WOULD_BLOCK) {
+    present_result = pxa_surface_present_buffer(
+        g_surface_handle, buffer_index, g_frame_id + 1u);
+    if (present_result == 16) {
+        ++g_frame_id;
         return 1;
     }
-    if (write_result != (int32_t)frame_bytes) {
-        return 0;
-    }
-    queue_result = pxa_surface_queue_frame(g_surface_handle, ++g_frame_id,
-                                            NULL, 0, g_packet,
-                                            sizeof(g_packet));
-    return queue_result == PXA_STATUS_OK || queue_result == PXA_STATUS_WOULD_BLOCK;
+    return present_result == PXA_STATUS_WOULD_BLOCK;
 }
 
 static int handle_surface_create(const pxa_event_t *event) {
     pxa_surface_create_result_t created;
     const uint32_t expected_stride = (uint32_t)g_surface_width *
-                                     sizeof(*g_pixels);
+                                     sizeof(g_surface_buffers[0]);
     const uint32_t expected_bytes = expected_stride * g_surface_height;
     if (!pxa_surface_parse_create(event, &created) ||
         event->request_id != SURFACE_CREATE_REQUEST) {
         return 0;
     }
     g_surface_create_pending = 0;
-    if (created.status != PXA_STATUS_OK || created.stride_bytes != expected_stride ||
-        created.frame_bytes != expected_bytes || created.buffer_count < 2) {
+    if (created.status != PXA_STATUS_OK ||
+        created.stride_bytes != expected_stride ||
+        created.frame_bytes != expected_bytes ||
+        created.buffer_count != SURFACE_BUFFER_COUNT) {
         return 1;
     }
-    if (g_surface_width != (uint16_t)g_layout.view_w ||
-        g_surface_height != (uint16_t)g_layout.view_h) {
+    if (g_surface_width != (uint16_t)render_scene_width() ||
+        g_surface_height != (uint16_t)render_scene_height()) {
         (void)pxa_close_handle(created.surface_handle);
         (void)request_surface_create();
         return 1;
     }
     g_surface_handle = created.surface_handle;
+    if (pxa_surface_register_buffers(
+            g_surface_handle, g_surface_buffers, created.frame_bytes,
+            created.buffer_count) !=
+        (int32_t)(created.frame_bytes * created.buffer_count)) {
+        (void)pxa_close_handle(g_surface_handle);
+        g_surface_handle = 0;
+        return 1;
+    }
     if (!pxa_surface_configure_layer(
             SURFACE_CONFIGURE_REQUEST, g_surface_handle, g_layout.view_x,
             g_layout.view_y, g_surface_width, g_surface_height, 0, 1,
@@ -1608,8 +1691,8 @@ int32_t pxa_app_start(const uint8_t *config, uint32_t length) {
         render_configure(SCREEN_W_DEFAULT, SCREEN_H_DEFAULT);
     }
     /* Establish a responsive baseline before timing feedback is available.
-     * Faster hosts recover detail automatically within a few frames. */
-    render_set_quality(QUALITY_MAX);
+     * Faster hosts recover detail only after sustained headroom. */
+    render_set_quality(QUALITY_BALANCED);
     g_surface_handle = 0;
     g_surface_width = 0;
     g_surface_height = 0;
@@ -1641,8 +1724,16 @@ int32_t pxa_app_start(const uint8_t *config, uint32_t length) {
     g_last_jump_tap_us = 0;
     g_render_start_us = 0;
     g_render_ema_us = 0;
+    g_render_max_us = 0;
     g_quality_frames = 0;
     g_quality_warmup = QUALITY_WARMUP_FRAMES;
+    g_quality_bad_windows = 0;
+    g_quality_good_windows = 0;
+    g_quality_panic_samples = 0;
+    g_quality_cooldown_frames = 0;
+    g_buffer_wait_started_us = 0;
+    g_buffer_wait_ema_us = 0;
+    g_buffer_wait_max_us = 0;
     g_snapshot_ticks = 0;
     g_present_failures = 0;
     g_quality_manual = 0;
@@ -1665,7 +1756,6 @@ int32_t pxa_app_start(const uint8_t *config, uint32_t length) {
     g_pad_pitch = 0.0F;
     g_pad_last_a_us = 0;
     g_sfx.state = VOXEL_SFX_OFF;
-    g_sfx.noise_state = 0;
     g_screen = SCREEN_MENU;
     g_has_save = 0;
     g_game_started = 0;
@@ -1718,6 +1808,14 @@ int32_t pxa_app_on_event(const uint8_t *event, uint32_t length) {
     }
     if (handle_surface_create(&parsed)) {
         return PXA_EVENT_HANDLED;
+    }
+    {
+        pxa_surface_released_event_t released;
+        if (pxa_surface_parse_released(&parsed, &released)) {
+            return released.surface_handle == g_surface_handle
+                       ? PXA_EVENT_HANDLED
+                       : PXA_EVENT_UNHANDLED;
+        }
     }
     if (parsed.service == PXA_SERVICE_STORAGE) {
         handle_storage_event(&parsed);
