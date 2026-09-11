@@ -57,6 +57,11 @@ typedef enum {
  * App-ID-only layout is retained for compatibility. */
 #define PXA_POSIX_INSTALLER_FLAG_COMPOSITE_IDENTITY ((uint32_t)1u << 2)
 
+/* Permit a host-controlled migration of legacy private-data roots only when
+ * they contain no user data. An empty .pxa-storage directory is allowed so
+ * hosts can recover from an interrupted first launch. */
+#define PXA_POSIX_INSTALLER_FLAG_CLAIM_EMPTY_UNOWNED_DATA ((uint32_t)1u << 3)
+
 typedef struct {
     uint32_t struct_size;
     const char *storage_root;   /* directory that contains packages/ */

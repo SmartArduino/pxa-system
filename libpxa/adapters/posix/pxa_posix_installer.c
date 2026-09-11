@@ -38,9 +38,8 @@
 #else
 #define PXA_POSIX_INSTALLER_LOG_FAILURE(subject, stage, status)              \
     do {                                                                      \
-        (void)(subject);                                                      \
-        (void)(stage);                                                        \
-        (void)(status);                                                       \
+        fprintf(stderr, "PxaInstaller: %s failed at %s: status=%d errno=%d\n", \
+                subject, stage, (int)status, errno);                         \
     } while (0)
 #endif
 
@@ -160,6 +159,82 @@ static int safe_app_id(pxa_bytes_t app_id) {
         }
     }
     return 1;
+}
+
+static pxa_status_t empty_directory(int directory, int *is_empty) {
+    DIR *stream;
+    struct dirent *entry;
+    int duplicate;
+    if (is_empty == NULL) return PXA_STATUS_INVALID_ARGUMENT;
+    *is_empty = 0;
+    duplicate = openat(directory, ".", O_RDONLY | O_DIRECTORY | O_NOFOLLOW |
+                                        O_CLOEXEC);
+    if (duplicate < 0) return PXA_STATUS_INTERNAL;
+    stream = fdopendir(duplicate);
+    if (stream == NULL) {
+        close(duplicate);
+        return PXA_STATUS_INTERNAL;
+    }
+    errno = 0;
+    while ((entry = readdir(stream)) != NULL) {
+        if (strcmp(entry->d_name, ".") != 0 && strcmp(entry->d_name, "..") != 0)
+            break;
+    }
+    if (entry == NULL && errno != 0) {
+        (void)closedir(stream);
+        return PXA_STATUS_INTERNAL;
+    }
+    *is_empty = entry == NULL;
+    return closedir(stream) == 0 ? PXA_STATUS_OK : PXA_STATUS_INTERNAL;
+}
+
+static pxa_status_t legacy_data_is_empty(const char *path, int *is_empty) {
+    DIR *stream = NULL;
+    struct dirent *entry;
+    int root = -1;
+    int storage = -1;
+    int found_storage = 0;
+    pxa_status_t status = PXA_STATUS_OK;
+    if (path == NULL || is_empty == NULL) return PXA_STATUS_INVALID_ARGUMENT;
+    *is_empty = 0;
+    root = open(path, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+    if (root < 0) return PXA_STATUS_INTERNAL;
+    stream = fdopendir(root);
+    if (stream == NULL) {
+        close(root);
+        return PXA_STATUS_INTERNAL;
+    }
+    errno = 0;
+    while ((entry = readdir(stream)) != NULL) {
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
+            continue;
+        if (found_storage || strcmp(entry->d_name, ".pxa-storage") != 0) {
+            status = PXA_STATUS_OK;
+            goto done;
+        }
+        storage = openat(root, entry->d_name,
+                         O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+        if (storage < 0) {
+            status = PXA_STATUS_OK;
+            goto done;
+        }
+        status = empty_directory(storage, &found_storage);
+        close(storage);
+        storage = -1;
+        if (status != PXA_STATUS_OK || !found_storage) goto done;
+    }
+    if (errno != 0) {
+        status = PXA_STATUS_INTERNAL;
+        goto done;
+    }
+    *is_empty = 1;
+done:
+    if (storage >= 0) close(storage);
+    if (stream != NULL) {
+        if (closedir(stream) != 0 && status == PXA_STATUS_OK)
+            status = PXA_STATUS_INTERNAL;
+    }
+    return status;
 }
 
 static int identity_storage_name(
@@ -2288,10 +2363,16 @@ static pxa_status_t identity_owner_check_or_claim(
             goto done;
         }
         if (lstat(data_path, &data_metadata) == 0) {
-            status = PXA_STATUS_DENIED;
-            goto done;
-        }
-        if (errno != ENOENT) {
+            int is_empty = 0;
+            if ((installer->flags &
+                 PXA_POSIX_INSTALLER_FLAG_CLAIM_EMPTY_UNOWNED_DATA) == 0 ||
+                !S_ISDIR(data_metadata.st_mode) ||
+                legacy_data_is_empty(data_path, &is_empty) != PXA_STATUS_OK ||
+                !is_empty) {
+                status = PXA_STATUS_DENIED;
+                goto done;
+            }
+        } else if (errno != ENOENT) {
             status = PXA_STATUS_INTERNAL;
             goto done;
         }
