@@ -68,9 +68,13 @@ case "$package_target" in
     # cannot silently switch packages to a generic or call0 configuration.
     # The board disables FreeRTOS trace, so WAMR cannot obtain a native stack
     # boundary for per-function checks.
+    # Performance first: size-level 0 selects the LLVM large code model, which
+    # is what WAMR's xtensa AOT loader wants for modules whose text exceeds the
+    # l32r literal range (literal islands). The AOT is larger but the raster
+    # loops keep their full optimization.
     wamrc_extra_args=(--cpu=esp32s3
                       --stack-bounds-checks=0
-                      --opt-level=3 --size-level=3
+                      --opt-level=3 --size-level=0
                       --mllvm=-mtext-section-literals)
     ;;
   simulator)
@@ -250,7 +254,7 @@ if [[ "$build_system" == "cmake" ]]; then
 else
   for component_id in "${component_ids[@]}"; do
     readarray -t component_sources <<< "${component_value_map[$component_id]}"
-    "$clang_bin" --target=wasm32-unknown-unknown -O2 -fno-builtin -nostdlib \
+    "$clang_bin" --target=wasm32-unknown-unknown -O3 -fno-builtin -nostdlib \
       -I"$pxa_system_dir/sdk/guest-c/include" \
       -I"${PXA_APP_COMMON_DIR:-$app_source_root/common}" \
       "${generated_include_args[@]}" \

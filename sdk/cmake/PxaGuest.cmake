@@ -12,7 +12,7 @@ function(_pxa_guest_target_defaults target)
     target_compile_features(${target} PRIVATE c_std_11)
     target_include_directories(${target} PUBLIC "${PXA_GUEST_SDK_DIR}/include")
     target_compile_options(${target} PRIVATE
-        -O2 -fno-builtin -ffunction-sections -fdata-sections)
+        -O3 -fno-builtin -ffunction-sections -fdata-sections)
     if(PXA_APP_DEFINITIONS)
         target_compile_definitions(${target} PRIVATE ${PXA_APP_DEFINITIONS})
     endif()

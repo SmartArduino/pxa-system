@@ -69,9 +69,9 @@ option(PXSYS_ENABLE_INSTALL "Generate install and CMake package rules"
 if(PXSYS_BUILD_TESTS)
     include(CTest)
     find_package(Python3 COMPONENTS Interpreter REQUIRED)
-    add_test(NAME pxsys_wamr_overlay_test
+    add_test(NAME pxsys_wamr_source_pin_test
         COMMAND ${Python3_EXECUTABLE}
-                "${PXSYS_ROOT}/tools/wamr/test_overlay.py")
+                "${PXSYS_ROOT}/tools/wamr/test_source_pin.py")
 endif()
 
 if(PXSYS_BUILD_LIBPXA)
