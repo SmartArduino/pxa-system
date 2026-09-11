@@ -34,6 +34,9 @@ int main(void) {
     assert(captured_length == 20 &&
            pxa_read_u16(captured) == PXA_SERVICE_SURFACE &&
            pxa_read_u16(captured + 2) == PXA_SURFACE_CREATE);
+    assert(pxa_surface_create_rgb565_direct(9, 4, 4, 2, packet,
+                                             sizeof(packet)));
+    assert(captured[19] == PXA_SURFACE_FLAG_PREFER_DIRECT_SCANOUT);
     assert(pxa_surface_create_argb8888_premultiplied(
         8, 4, 4, 2, packet, sizeof(packet)));
     assert(captured_length == 20 && pxa_read_u16(captured + 12) == 4 &&

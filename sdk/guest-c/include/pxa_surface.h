@@ -11,6 +11,7 @@
 #define PXA_SURFACE_FORMAT_RGB565 1u
 #define PXA_SURFACE_FORMAT_ARGB8888_PREMULTIPLIED 2u
 #define PXA_SURFACE_FLAG_PREMULTIPLIED_ALPHA 1u
+#define PXA_SURFACE_FLAG_PREFER_DIRECT_SCANOUT 2u
 #define PXA_SURFACE_MAX_DAMAGE_RECTS 8u
 #define PXA_SURFACE_MAX_OPAQUE_UI_REGIONS 8u
 #define PXA_SURFACE_STATE_FLAG_SUPPORTS_OPAQUE_UI_REGIONS UINT32_C(1)
@@ -66,7 +67,8 @@ static inline int pxa_surface_create(
         packet == NULL ||
         (format != PXA_SURFACE_FORMAT_RGB565 &&
          format != PXA_SURFACE_FORMAT_ARGB8888_PREMULTIPLIED) ||
-        (format == PXA_SURFACE_FORMAT_RGB565 && flags != 0) ||
+        (format == PXA_SURFACE_FORMAT_RGB565 &&
+         flags != 0 && flags != PXA_SURFACE_FLAG_PREFER_DIRECT_SCANOUT) ||
         (format == PXA_SURFACE_FORMAT_ARGB8888_PREMULTIPLIED &&
          flags != PXA_SURFACE_FLAG_PREMULTIPLIED_ALPHA))
         return 0;
@@ -88,6 +90,15 @@ static inline int pxa_surface_create_rgb565(
     return pxa_surface_create(
         request_id, width, height, PXA_SURFACE_FORMAT_RGB565, 0,
         buffer_count, packet, packet_capacity);
+}
+
+static inline int pxa_surface_create_rgb565_direct(
+    uint32_t request_id, uint16_t width, uint16_t height,
+    uint8_t buffer_count, uint8_t *packet, size_t packet_capacity) {
+    return pxa_surface_create(
+        request_id, width, height, PXA_SURFACE_FORMAT_RGB565,
+        PXA_SURFACE_FLAG_PREFER_DIRECT_SCANOUT, buffer_count, packet,
+        packet_capacity);
 }
 
 /* Pixels are native-endian 0xAARRGGBB words whose RGB channels have already

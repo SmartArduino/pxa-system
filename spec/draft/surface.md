@@ -38,8 +38,11 @@ All integers are little-endian.
 | `PXA_SURFACE_QUERY_STATE` (4) | nonzero | `handle:u32` | `submitted:u64, presented:u64, dropped:u64, free_buffers:u32, flags:u32` |
 | `PXA_SURFACE_CONFIGURE_OPAQUE_UI_REGIONS` (5) | nonzero | `handle:u32, count:u8, reserved[3], regions[count]` | empty |
 
-`format=1` is RGB565 and requires `flags=0`. `format=2` is native-endian
-`0xAARRGGBB` with premultiplied RGB channels and requires
+`format=1` is RGB565 and accepts `flags=0` or
+`PXA_SURFACE_FLAG_PREFER_DIRECT_SCANOUT`. The latter is an opt-in request,
+not a guarantee: a Host can bypass its UI compositor only for an exact
+full-screen RGB565 layer with no retained or trusted UI above it. `format=2`
+is native-endian `0xAARRGGBB` with premultiplied RGB channels and requires
 `flags & 1 = PREMULTIPLIED_ALPHA`. Hosts blend it with the fixed `src-over`
 equation. Layer width and height must equal Surface width and height, so
 composition is 1:1. Coordinates are in the primary display's logical
@@ -109,6 +112,20 @@ declared opaque control regions within that rectangle. Host system layers such
 as the lock screen suspend app Surface presentation and resume with the newest
 pending frame when dismissed. `z` records the requested layer order but does
 not make arbitrary LVGL pixels inside the Surface rectangle visible.
+
+### Direct scanout profile
+
+An App may create a full-screen RGB565 Surface with
+`PXA_SURFACE_FLAG_PREFER_DIRECT_SCANOUT`. On supported boards, the presenter
+uses that Surface as the rotation source and bypasses LVGL frame production
+until composition becomes necessary. This avoids a full LVGL refresh for an
+App that owns every pixel, but a rotated panel can still require a copy into a
+board-owned DMA buffer.
+
+The Host remains authoritative. Any trusted UI transaction, system foreground
+change, alpha overlay, or ineligible Surface configuration returns presentation
+to the normal LVGL composition path after outstanding output transfers drain.
+Existing Surfaces without this flag always use composition.
 
 ### Transparent overlay profile
 

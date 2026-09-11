@@ -27,7 +27,8 @@ static pxa_status_t backend_create(
     backend_t *backend = (backend_t *)context;
     uint32_t bytes_per_pixel;
     if (desc->format == PXA_SURFACE_FORMAT_RGB565) {
-        assert(desc->flags == 0);
+        assert(desc->flags == 0 ||
+               desc->flags == PXA_SURFACE_FLAG_PREFER_DIRECT_SCANOUT);
         bytes_per_pixel = 2;
     } else {
         assert(desc->format == PXA_SURFACE_FORMAT_ARGB8888_PREMULTIPLIED);

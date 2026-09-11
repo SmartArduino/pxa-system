@@ -189,7 +189,9 @@ static int surface_valid(const pxa_surface_resource_t *surface) {
 
 static uint8_t surface_bytes_per_pixel(
     const pxa_surface_desc_t *desc) {
-    if (desc->format == PXA_SURFACE_FORMAT_RGB565 && desc->flags == 0)
+    if (desc->format == PXA_SURFACE_FORMAT_RGB565 &&
+        (desc->flags == 0 ||
+         desc->flags == PXA_SURFACE_FLAG_PREFER_DIRECT_SCANOUT))
         return 2;
     if (desc->format == PXA_SURFACE_FORMAT_ARGB8888_PREMULTIPLIED &&
         desc->flags == PXA_SURFACE_FLAG_PREMULTIPLIED_ALPHA)

@@ -24,6 +24,9 @@ extern "C" {
 #define PXA_SURFACE_FORMAT_RGB565 UINT16_C(1)
 #define PXA_SURFACE_FORMAT_ARGB8888_PREMULTIPLIED UINT16_C(2)
 #define PXA_SURFACE_FLAG_PREMULTIPLIED_ALPHA UINT8_C(1)
+/* Requests direct panel ownership when the Host can safely bypass its UI
+ * compositor. The Host may still compose any frame when trusted UI is active. */
+#define PXA_SURFACE_FLAG_PREFER_DIRECT_SCANOUT UINT8_C(2)
 #define PXA_SURFACE_MAX_DAMAGE_RECTS UINT8_C(8)
 #define PXA_SURFACE_MAX_OPAQUE_UI_REGIONS UINT8_C(8)
 #define PXA_SURFACE_STATE_FLAG_SUPPORTS_OPAQUE_UI_REGIONS UINT32_C(1)
