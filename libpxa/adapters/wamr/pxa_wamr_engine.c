@@ -985,6 +985,7 @@ static pxa_status_t engine_instantiate(void *context, pxa_bytes_t package_root,
     char path[PXA_WAMR_MAX_MODULE_PATH + 256];
     pxa_wamr_entry_t *slot = NULL;
     char error[192] = {0};
+    LoadArgs load_args = {0};
     pxa_status_t status;
     uint64_t wasi_features = 0;
     int wasi_declared;
@@ -1025,15 +1026,22 @@ static pxa_status_t engine_instantiate(void *context, pxa_bytes_t package_root,
 #endif
         return discard_entry(engine, slot, status);
     }
-    /* WAMR 2.4 retains references into AOT and Wasm Artifact metadata for the
-     * life of the module. Keep the exact-sized, dynamically allocated buffer
-     * until wasm_runtime_unload() instead of handing the runtime stale data. */
-    slot->module = wasm_runtime_load(slot->module_bytes,
-                                     (uint32_t)slot->module_size, error,
-                                     sizeof(error));
+    /* XIP modules execute from their input buffer. For regular AOT and fast
+     * interpreter modules, ask WAMR to clone retained metadata and release the
+     * temporary Artifact as soon as WAMR confirms that it is independent. */
+    load_args.name = "";
+    load_args.wasm_binary_freeable =
+        !wasm_runtime_is_xip_file(slot->module_bytes,
+                                  (uint32_t)slot->module_size);
+    slot->module = wasm_runtime_load_ex(slot->module_bytes,
+                                        (uint32_t)slot->module_size,
+                                        &load_args, error, sizeof(error));
     if (slot->module == NULL) {
         log_runtime_failure("load", path, error);
         return discard_entry(engine, slot, PXA_STATUS_UNSUPPORTED);
+    }
+    if (wasm_runtime_is_underlying_binary_freeable(slot->module)) {
+        release_module_buffer(engine, slot);
     }
     wasi_declared = component_wasi_features(entry->component, &wasi_features);
     if (wasi_declared && !engine->wasi_enabled) {

@@ -28,9 +28,11 @@ extern "C" {
  * provides the runtime allocator callbacks, in which case all WAMR allocations
  * are made and released on demand. By default each Component also gets a
  * distinct maximum-sized module buffer in the workspace. Hosts may instead
- * provide the paired Artifact allocator callbacks to retain only each
- * Artifact's actual byte size until WAMR unloads it. Event delivery copies
- * through a transient module_malloc buffer per event.
+ * provide the paired Artifact allocator callbacks. The adapter releases each
+ * temporary Artifact after loading when WAMR reports that its underlying
+ * buffer is freeable; XIP and unsupported interpreter modes retain it until
+ * WAMR unloads the module. Event delivery copies through a transient
+ * module_malloc buffer per event.
  */
 
 #define PXA_WAMR_ENGINE_MAX_CONFIG_BYTES ((size_t)256)
@@ -80,8 +82,9 @@ typedef struct {
     pxa_wamr_synchronize_fn leave_critical;
     /* Optional pair. When absent, max_components independent module buffers
      * are included in the engine workspace. When present, the adapter queries
-     * the Artifact size and retains one exact-sized allocation per loaded
-     * Component until wasm_runtime_unload() completes. */
+     * the Artifact size and makes one exact-sized allocation per load. WAMR's
+     * ownership result determines whether it is released after loading or
+     * retained until wasm_runtime_unload() completes. */
     void *artifact_allocator_context;
     pxa_wamr_artifact_allocate_fn allocate_artifact;
     pxa_wamr_artifact_release_fn release_artifact;

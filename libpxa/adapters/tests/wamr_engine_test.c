@@ -110,6 +110,7 @@ static void release_artifact(void *context, void *memory) {
     if (header->size <= probe->current_bytes)
         probe->current_bytes -= header->size;
     probe->release_count++;
+    memset(memory, 0xa5, header->size);
     free(header);
 }
 
@@ -260,13 +261,17 @@ static void check_wasi_guest(const char *label, const char *guest_path,
                              const char *artifact_name,
                              pxa_component_t component, uint64_t features,
                              const char *package_dir,
-                             pxa_component_engine_t *engine_ops) {
+                             pxa_component_engine_t *engine_ops,
+                             artifact_allocation_probe_t *artifact_probe) {
     char destination[512];
     char artifact_path[96];
     pxa_package_artifact_t artifact;
     pxa_package_service_requirement_t requirement;
     pxa_package_component_t package_component;
     pxa_activation_entry_t activation_entry;
+    const size_t current_bytes = artifact_probe->current_bytes;
+    const unsigned allocate_count = artifact_probe->allocate_count;
+    const unsigned release_count = artifact_probe->release_count;
     snprintf(artifact_path, sizeof(artifact_path), "artifacts/%s",
              artifact_name);
     snprintf(destination, sizeof(destination), "%s/%s", package_dir,
@@ -298,6 +303,9 @@ static void check_wasi_guest(const char *label, const char *guest_path,
             (pxa_bytes_t){(const uint8_t *)package_dir, strlen(package_dir)},
             &activation_entry, component, UINT64_C(98)),
         PXA_STATUS_OK);
+    CHECK(artifact_probe->current_bytes == current_bytes);
+    CHECK(artifact_probe->allocate_count == allocate_count + 1);
+    CHECK(artifact_probe->release_count == release_count + 1);
     check_status(label, engine_ops->start(engine_ops->context, component),
                  PXA_STATUS_OK);
     engine_ops->stop(engine_ops->context, component, PXA_STOP_NORMAL);
@@ -655,8 +663,8 @@ int main(void) {
                  PXA_STATUS_OK);
     CHECK(component != PXA_COMPONENT_INVALID);
     CHECK(artifact_probe.allocate_count == 1);
-    CHECK(artifact_probe.release_count == 0);
-    CHECK(artifact_probe.current_bytes == wasm_size);
+    CHECK(artifact_probe.release_count == 1);
+    CHECK(artifact_probe.current_bytes == 0);
     CHECK(pxa_wamr_engine_busy(engine) == 0);
     CHECK(synchronization_probe.depth == 0);
     CHECK(synchronization_probe.enter_count != 0);
@@ -774,15 +782,15 @@ int main(void) {
                          PXA_WAMR_TEST_WASI_SYSTEM_PATH, "wasi-system.wasm",
                          UINT32_C(0x7ffffffb),
                          PXA_WASI_FEATURE_CLOCKS | PXA_WASI_FEATURE_RANDOM,
-                         package_dir, &engine_ops);
+                         package_dir, &engine_ops, &artifact_probe);
 #ifdef PXA_WAMR_TEST_WASI_LIBC_PATH
         check_wasi_guest("wasi-libc Wasm", PXA_WAMR_TEST_WASI_LIBC_PATH,
                          "wasi-libc.wasm", UINT32_C(0x7ffffffd), 0, package_dir,
-                         &engine_ops);
+                         &engine_ops, &artifact_probe);
 #ifdef PXA_WAMR_TEST_WASI_LIBC_AOT_PATH
         check_wasi_guest("wasi-libc AOT", PXA_WAMR_TEST_WASI_LIBC_AOT_PATH,
                          "wasi-libc.aot", UINT32_C(0x7ffffffc), 0, package_dir,
-                         &engine_ops);
+                         &engine_ops, &artifact_probe);
 #endif
 #endif
     }
@@ -849,7 +857,7 @@ int main(void) {
                                        strlen(package_dir)},
                          &plan->entries[0], second_component, UINT64_C(102)),
                      PXA_STATUS_OK);
-        CHECK(artifact_probe.current_bytes == wasm_size);
+        CHECK(artifact_probe.current_bytes == 0);
         check_status("occupied plus pending capacity",
                      pxa_wamr_engine_set_config(
                          engine, UINT64_C(103),
