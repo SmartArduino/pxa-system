@@ -10,7 +10,6 @@ if ! command -v "$python_bin" >/dev/null 2>&1; then
   exit 1
 fi
 readonly wamr_commit="$("$python_bin" "$metadata_tool" commit)"
-readonly wamr_version="$("$python_bin" "$metadata_tool" version)"
 readonly llvm_repo="$("$python_bin" "$metadata_tool" llvm.repository)"
 readonly llvm_ref="$("$python_bin" "$metadata_tool" llvm.ref)"
 readonly llvm_commit="$("$python_bin" "$metadata_tool" llvm.commit)"
@@ -18,7 +17,9 @@ wamr_source_dir="${PXA_WAMR_SOURCE_DIR:-${PXA_WAMR_COMPILER_DIR:-$pxa_system_dir
 cache_dir="${PXA_WAMR_CACHE_DIR:-$pxa_system_dir/.pxa}"
 build_dir="${PXA_WAMR_BUILD_DIR:-$cache_dir/wamrc-build-$wamr_commit-llvm-$llvm_commit}"
 llvm_dir="${PXA_WAMR_LLVM_DIR:-$cache_dir/llvm-$llvm_commit}"
-wamrc_bin="$build_dir/wamrc-$wamr_version"
+# CMake's stable target name is "wamrc". Its versioned filename comes from
+# WAMR's own version.cmake, not from PXA's runtime compatibility label.
+wamrc_bin="$build_dir/wamrc"
 lock_file="${PXA_WAMR_LOCK_FILE:-$cache_dir/wamrc-$wamr_commit-llvm-$llvm_commit.lock}"
 build_jobs="${PXA_WAMR_JOBS:-}"
 host_arch="$(uname -m)"
