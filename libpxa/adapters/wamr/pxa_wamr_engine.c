@@ -830,6 +830,12 @@ pxa_status_t pxa_wamr_engine_init(void *workspace, size_t workspace_size,
         if (runtime_allocator_engine == engine) runtime_allocator_engine = NULL;
         return PXA_STATUS_INTERNAL;
     }
+#if defined(WASM_LINEAR_MEMORY_RESERVE_MAX) && \
+    WASM_LINEAR_MEMORY_RESERVE_MAX != 0
+    /* Surface GuestMapped retains validated native pointers between Guest
+     * calls. Reserve the declared maximum so memory.grow commits in place. */
+    wasm_runtime_set_linear_memory_reserve_max(true);
+#endif
     for (index = 0; index < engine->max_components; ++index) {
         engine->entries[index].component = PXA_COMPONENT_INVALID;
         engine->entries[index].wasi_null_fd = -1;

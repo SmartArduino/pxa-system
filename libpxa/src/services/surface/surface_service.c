@@ -189,12 +189,15 @@ static int surface_valid(const pxa_surface_resource_t *surface) {
 
 static uint8_t surface_bytes_per_pixel(
     const pxa_surface_desc_t *desc) {
+    if ((desc->flags & ~PXA_SURFACE_FLAG_KNOWN_MASK) != 0)
+        return 0;
     if (desc->format == PXA_SURFACE_FORMAT_RGB565 &&
-        (desc->flags == 0 ||
-         desc->flags == PXA_SURFACE_FLAG_PREFER_DIRECT_SCANOUT))
+        (desc->flags & PXA_SURFACE_FLAG_PREMULTIPLIED_ALPHA) == 0)
         return 2;
     if (desc->format == PXA_SURFACE_FORMAT_ARGB8888_PREMULTIPLIED &&
-        desc->flags == PXA_SURFACE_FLAG_PREMULTIPLIED_ALPHA)
+        (desc->flags & PXA_SURFACE_FLAG_PREMULTIPLIED_ALPHA) != 0 &&
+        (desc->flags & (PXA_SURFACE_FLAG_PREFER_DIRECT_SCANOUT |
+                        PXA_SURFACE_FLAG_GUEST_MAPPED)) == 0)
         return 4;
     return 0;
 }
@@ -204,13 +207,56 @@ static int32_t surface_io(void *context, uint32_t operation, uint8_t *data,
     pxa_surface_resource_t *surface = (pxa_surface_resource_t *)context;
     pxa_status_t status;
     if (!surface_valid(surface)) return PXA_STATUS_BAD_STATE;
-    if (operation != PXA_IO_WRITE || data == NULL ||
-        size != surface->frame_bytes)
-        return PXA_STATUS_INVALID_ARGUMENT;
-    if (size > (size_t)INT32_MAX) return PXA_STATUS_LIMIT_EXCEEDED;
-    status = pxa_status_normalize(surface->service->backend.write(
-        surface->service->backend.context, surface->provider_surface, data,
-        size));
+    if (data == NULL) return PXA_STATUS_INVALID_ARGUMENT;
+    if (operation == PXA_IO_WRITE) {
+        if (size != surface->frame_bytes ||
+            (surface->desc.flags & PXA_SURFACE_FLAG_GUEST_MAPPED) != 0)
+            return PXA_STATUS_INVALID_ARGUMENT;
+        if (size > (size_t)INT32_MAX) return PXA_STATUS_LIMIT_EXCEEDED;
+        status = pxa_status_normalize(surface->service->backend.write(
+            surface->service->backend.context, surface->provider_surface, data,
+            size));
+    } else if (operation == PXA_SURFACE_IO_REGISTER_BUFFERS) {
+        uint64_t required =
+            (uint64_t)surface->frame_bytes * surface->desc.buffer_count;
+        if ((surface->desc.flags & PXA_SURFACE_FLAG_GUEST_MAPPED) == 0 ||
+            surface->service->backend.register_buffers == NULL)
+            return PXA_STATUS_UNSUPPORTED;
+        if (required > SIZE_MAX || size != (size_t)required)
+            return PXA_STATUS_INVALID_ARGUMENT;
+        status = pxa_status_normalize(
+            surface->service->backend.register_buffers(
+                surface->service->backend.context,
+                surface->provider_surface, data, size));
+    } else if (operation == PXA_SURFACE_IO_ACQUIRE) {
+        if ((surface->desc.flags & PXA_SURFACE_FLAG_GUEST_MAPPED) == 0 ||
+            surface->service->backend.acquire_buffer == NULL)
+            return PXA_STATUS_UNSUPPORTED;
+        if (size != PXA_SURFACE_ACQUIRE_RECORD_BYTES)
+            return PXA_STATUS_INVALID_ARGUMENT;
+        status = pxa_status_normalize(
+            surface->service->backend.acquire_buffer(
+                surface->service->backend.context,
+                surface->provider_surface, data));
+        if (status == PXA_STATUS_OK) data[1] = data[2] = data[3] = 0;
+    } else if (operation == PXA_SURFACE_IO_PRESENT) {
+        uint64_t frame_id;
+        if ((surface->desc.flags & PXA_SURFACE_FLAG_GUEST_MAPPED) == 0 ||
+            surface->service->backend.present_buffer == NULL)
+            return PXA_STATUS_UNSUPPORTED;
+        if (size != PXA_SURFACE_PRESENT_RECORD_BYTES || data[1] != 0 ||
+            data[2] != 0 || data[3] != 0 || data[4] != 0 || data[5] != 0 ||
+            data[6] != 0 || data[7] != 0)
+            return PXA_STATUS_INVALID_ARGUMENT;
+        frame_id = pxa_read_u64(data + 8);
+        if (frame_id == 0) return PXA_STATUS_INVALID_ARGUMENT;
+        status = pxa_status_normalize(
+            surface->service->backend.present_buffer(
+                surface->service->backend.context,
+                surface->provider_surface, data[0], frame_id));
+    } else {
+        return PXA_STATUS_UNSUPPORTED;
+    }
     return status == PXA_STATUS_OK ? (int32_t)size : (int32_t)status;
 }
 
@@ -364,6 +410,8 @@ static pxa_status_t queue_frame(pxa_surface_service_t *service,
         return PXA_STATUS_INVALID_ARGUMENT;
     if (resolve_surface(service, component, handle, &surface) != PXA_STATUS_OK)
         return PXA_STATUS_NOT_FOUND;
+    if ((surface->desc.flags & PXA_SURFACE_FLAG_GUEST_MAPPED) != 0)
+        return PXA_STATUS_BAD_STATE;
     for (index = 0; index < count; ++index) {
         const uint8_t *record = message->payload.data + 16u + index * 8u;
         uint32_t right;
@@ -421,7 +469,7 @@ static pxa_status_t configure_opaque_ui_regions(pxa_surface_service_t *service,
 
 static pxa_status_t query_state(pxa_surface_service_t *service,
                                 pxa_component_t component,
-                                pxa_bytes_t payload, uint8_t result[32],
+                                pxa_bytes_t payload, uint8_t result[48],
                                 size_t *result_size) {
     pxa_surface_resource_t *surface;
     pxa_surface_state_t state;
@@ -437,9 +485,11 @@ static pxa_status_t query_state(pxa_surface_service_t *service,
     pxa_write_u64(result, state.submitted_frames);
     pxa_write_u64(result + 8, state.presented_frames);
     pxa_write_u64(result + 16, state.dropped_frames);
-    pxa_write_u32(result + 24, state.free_buffers);
-    pxa_write_u32(result + 28, state.flags);
-    *result_size = 32;
+    pxa_write_u64(result + 24, state.replaced_frames);
+    pxa_write_u64(result + 32, state.released_frames);
+    pxa_write_u32(result + 40, state.free_buffers);
+    pxa_write_u32(result + 44, state.flags);
+    *result_size = 48;
     return PXA_STATUS_OK;
 }
 
@@ -447,7 +497,7 @@ static pxa_status_t surface_control(void *context, pxa_runtime_t *runtime,
                                      pxa_component_t component,
                                      const pxa_message_view_t *message) {
     pxa_surface_service_t *service = (pxa_surface_service_t *)context;
-    uint8_t result[32] = {0};
+    uint8_t result[48] = {0};
     size_t result_size = 0;
     pxa_handle_t opened_handle = PXA_HANDLE_INVALID;
     pxa_status_t status;
@@ -511,4 +561,39 @@ int pxa_surface_has_active_surfaces(
     const pxa_surface_service_t *service) {
     return service_valid(service) &&
            service->active_head != PXA_SURFACE_SLOT_NONE;
+}
+
+int32_t pxa_surface_service_flush_releases(pxa_surface_service_t *service) {
+    int32_t posted = 0;
+    uint16_t cursor;
+    if (!service_valid(service)) return PXA_STATUS_INVALID_ARGUMENT;
+    if (service->backend.peek_release == NULL ||
+        service->backend.consume_release == NULL)
+        return 0;
+    for (cursor = service->active_head; cursor != PXA_SURFACE_SLOT_NONE;
+         cursor = service->surfaces[cursor].next) {
+        pxa_surface_resource_t *surface = &service->surfaces[cursor];
+        for (;;) {
+            pxa_surface_release_t release;
+            uint8_t payload[PXA_SURFACE_RELEASED_PAYLOAD_BYTES] = {0};
+            pxa_status_t status = pxa_status_normalize(
+                service->backend.peek_release(
+                    service->backend.context, surface->provider_surface,
+                    &release));
+            if (status == PXA_STATUS_WOULD_BLOCK) break;
+            if (status != PXA_STATUS_OK) return status;
+            pxa_write_u32(payload, surface->handle);
+            payload[4] = release.buffer_index;
+            pxa_write_u64(payload + 8, release.frame_id);
+            status = pxa_event_post_message(
+                service->runtime, surface->component,
+                PXA_SURFACE_SERVICE_ID, PXA_SURFACE_RELEASED, 0,
+                (pxa_bytes_t){payload, sizeof(payload)}, 1, 0);
+            if (status != PXA_STATUS_OK) return status;
+            service->backend.consume_release(
+                service->backend.context, surface->provider_surface);
+            ++posted;
+        }
+    }
+    return posted;
 }

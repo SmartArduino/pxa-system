@@ -1,11 +1,11 @@
 {
-  "schema": "pxa-surface-spec-0.1",
+  "schema": "pxa-surface-spec-0.2",
   "status": "draft",
   "service": {
     "name": "surface",
     "id": 16,
     "major": 0,
-    "minor": 1,
+    "minor": 2,
     "patch": 0
   },
   "opcodes": [
@@ -37,7 +37,7 @@
       "direction": "bidirectional-result",
       "request_id": "nonzero",
       "payload": "handle:u32",
-      "result": "submitted:u64|presented:u64|dropped:u64|free-buffers:u32|flags:u32"
+      "result": "submitted:u64|presented:u64|dropped:u64|replaced:u64|released:u64|free-buffers:u32|flags:u32"
     },
     {
       "name": "configure-opaque-ui-regions",
@@ -45,23 +45,40 @@
       "direction": "bidirectional-result",
       "request_id": "nonzero",
       "payload": "handle:u32|count:u8|reserved:bytes[3]|regions:rect[count]"
+    },
+    {
+      "name": "released",
+      "id": 32769,
+      "direction": "host-to-guest-event",
+      "request_id": "zero",
+      "payload": "buffer-index:u8|reserved:bytes[7]|frame-id:u64"
     }
+  ],
+  "io_operations": [
+    {"name": "register-buffers", "id": 256, "payload": "rgb565-buffer-range", "result": "accepted-bytes"},
+    {"name": "acquire", "id": 257, "payload": "buffer-index:u8|reserved:bytes[3]", "result": "record-bytes"},
+    {"name": "present", "id": 258, "payload": "buffer-index:u8|reserved:bytes[7]|frame-id:u64", "result": "record-bytes"}
   ],
   "formats": [
     {"name": "rgb565", "value": 1},
     {"name": "argb8888-premultiplied", "value": 2}
   ],
   "create_flags": [
-    {"name": "premultiplied-alpha", "bit": 0}
+    {"name": "premultiplied-alpha", "bit": 0},
+    {"name": "prefer-direct-scanout", "bit": 1},
+    {"name": "guest-mapped", "bit": 2}
   ],
   "state_flags": [
     {"name": "supports-opaque-ui-regions", "bit": 0},
     {"name": "supports-alpha-compositing", "bit": 1},
-    {"name": "ui-alpha-plane-active", "bit": 2}
+    {"name": "ui-alpha-plane-active", "bit": 2},
+    {"name": "supports-guest-mapped", "bit": 3}
   ],
   "limits": {
     "damage_rectangles": 8,
-    "opaque_ui_regions": 8
+    "opaque_ui_regions": 8,
+    "mapped_buffer_alignment": 64,
+    "mapped_buffer_count_recommended": 3
   },
-  "protocol_version": "0.1.0"
+  "protocol_version": "0.2.0"
 }

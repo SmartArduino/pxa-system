@@ -9,6 +9,14 @@
 typedef struct {
     uint8_t staged;
     uint8_t pending;
+    int8_t acquired;
+    uint8_t buffer_count;
+    uint8_t buffer_state[3];
+    uint8_t mapped_registered;
+    uint8_t has_release;
+    uint8_t pending_index;
+    uint64_t pending_frame_id;
+    pxa_surface_release_t release;
     unsigned creates;
     unsigned writes;
     unsigned queues;
@@ -27,8 +35,8 @@ static pxa_status_t backend_create(
     backend_t *backend = (backend_t *)context;
     uint32_t bytes_per_pixel;
     if (desc->format == PXA_SURFACE_FORMAT_RGB565) {
-        assert(desc->flags == 0 ||
-               desc->flags == PXA_SURFACE_FLAG_PREFER_DIRECT_SCANOUT);
+        assert((desc->flags & ~(PXA_SURFACE_FLAG_PREFER_DIRECT_SCANOUT |
+                               PXA_SURFACE_FLAG_GUEST_MAPPED)) == 0);
         bytes_per_pixel = 2;
     } else {
         assert(desc->format == PXA_SURFACE_FORMAT_ARGB8888_PREMULTIPLIED);
@@ -36,10 +44,91 @@ static pxa_status_t backend_create(
         bytes_per_pixel = 4;
     }
     ++backend->creates;
+    backend->staged = 0;
+    backend->pending = 0;
+    backend->acquired = -1;
+    backend->buffer_count = desc->buffer_count;
+    backend->mapped_registered = 0;
+    backend->has_release = 0;
+    memset(backend->buffer_state, 0, sizeof(backend->buffer_state));
+    memset(&backend->state, 0, sizeof(backend->state));
     *surface = 0x1234;
     *stride = (uint32_t)desc->width * bytes_per_pixel;
     backend->state.free_buffers = desc->buffer_count;
     return PXA_STATUS_OK;
+}
+
+static pxa_status_t backend_register_buffers(
+    void *context, uint64_t surface, uint8_t *pixels, size_t size) {
+    backend_t *backend = (backend_t *)context;
+    assert(surface == 0x1234 && pixels != NULL);
+    if (backend->mapped_registered) return PXA_STATUS_BAD_STATE;
+    if (size != (size_t)backend->buffer_count * 32u)
+        return PXA_STATUS_INVALID_ARGUMENT;
+    backend->mapped_registered = 1;
+    return PXA_STATUS_OK;
+}
+
+static pxa_status_t backend_acquire_buffer(
+    void *context, uint64_t surface, uint8_t *buffer_index) {
+    backend_t *backend = (backend_t *)context;
+    uint8_t index;
+    assert(surface == 0x1234 && buffer_index != NULL);
+    if (!backend->mapped_registered || backend->acquired >= 0)
+        return PXA_STATUS_BAD_STATE;
+    for (index = 0; index < backend->buffer_count; ++index) {
+        if (backend->buffer_state[index] == 0) {
+            backend->buffer_state[index] = 1;
+            backend->acquired = (int8_t)index;
+            --backend->state.free_buffers;
+            *buffer_index = index;
+            return PXA_STATUS_OK;
+        }
+    }
+    return PXA_STATUS_WOULD_BLOCK;
+}
+
+static pxa_status_t backend_present_buffer(
+    void *context, uint64_t surface, uint8_t buffer_index,
+    uint64_t frame_id) {
+    backend_t *backend = (backend_t *)context;
+    assert(surface == 0x1234);
+    if (backend->acquired != (int8_t)buffer_index || frame_id == 0)
+        return PXA_STATUS_BAD_STATE;
+    if (backend->pending) {
+        if (backend->has_release) return PXA_STATUS_WOULD_BLOCK;
+        backend->release.buffer_index = backend->pending_index;
+        backend->release.frame_id = backend->pending_frame_id;
+        backend->has_release = 1;
+        ++backend->state.dropped_frames;
+        ++backend->state.replaced_frames;
+    }
+    backend->pending = 1;
+    backend->pending_index = buffer_index;
+    backend->pending_frame_id = frame_id;
+    backend->buffer_state[buffer_index] = 2;
+    backend->acquired = -1;
+    ++backend->state.submitted_frames;
+    return PXA_STATUS_OK;
+}
+
+static pxa_status_t backend_peek_release(
+    void *context, uint64_t surface, pxa_surface_release_t *release) {
+    backend_t *backend = (backend_t *)context;
+    assert(surface == 0x1234 && release != NULL);
+    if (!backend->has_release) return PXA_STATUS_WOULD_BLOCK;
+    *release = backend->release;
+    return PXA_STATUS_OK;
+}
+
+static void backend_consume_release(void *context, uint64_t surface) {
+    backend_t *backend = (backend_t *)context;
+    assert(surface == 0x1234 && backend->has_release);
+    backend->buffer_state[backend->release.buffer_index] = 0;
+    ++backend->state.free_buffers;
+    ++backend->state.released_frames;
+    backend->has_release = 0;
+    memset(&backend->release, 0, sizeof(backend->release));
 }
 
 static pxa_status_t backend_write(void *context, uint64_t surface,
@@ -131,16 +220,25 @@ static pxa_status_t dispatch(pxa_runtime_t *runtime,
     return result;
 }
 
-static int32_t dispatch_io(pxa_runtime_t *runtime,
-                           pxa_component_t component, pxa_handle_t handle,
-                           uint8_t *pixels, size_t size) {
+static int32_t dispatch_io_op(pxa_runtime_t *runtime,
+                              pxa_component_t component,
+                              pxa_handle_t handle, uint32_t operation,
+                              uint8_t *pixels, size_t size) {
     int32_t result;
     assert(pxa_component_begin_event(runtime, component) == PXA_STATUS_OK);
-    result = pxa_runtime_io(runtime, component, handle, PXA_IO_WRITE, pixels,
+    result = pxa_runtime_io(runtime, component, handle, operation, pixels,
                             size);
     assert(pxa_component_finish_event(runtime, component, 1) ==
            PXA_STATUS_OK);
     return result;
+}
+
+
+static int32_t dispatch_io(pxa_runtime_t *runtime,
+                           pxa_component_t component, pxa_handle_t handle,
+                           uint8_t *pixels, size_t size) {
+    return dispatch_io_op(runtime, component, handle, PXA_IO_WRITE, pixels,
+                          size);
 }
 
 static size_t completion(pxa_runtime_t *runtime, pxa_component_t component,
@@ -173,10 +271,18 @@ int main(void) {
     uint8_t event_bytes[128];
     uint8_t create[8] = {4, 0, 4, 0, 1, 0, 2, 0};
     uint8_t create_alpha[8] = {4, 0, 4, 0, 2, 0, 2, 1};
+    uint8_t create_mapped[8] = {
+        4, 0, 4, 0, 1, 0, 3,
+        PXA_SURFACE_FLAG_PREFER_DIRECT_SCANOUT |
+            PXA_SURFACE_FLAG_GUEST_MAPPED};
     uint8_t configure[20] = {0};
     uint8_t overlay[16] = {0};
     uint8_t queue[24] = {0};
     uint8_t pixels[32] = {0};
+    static uint8_t mapped_pixels[96]
+        __attribute__((aligned(PXA_SURFACE_BUFFER_ALIGNMENT)));
+    uint8_t acquire_record[4] = {0};
+    uint8_t present_record[16] = {0};
     pxa_message_view_t event;
     pxa_handle_t handle;
     size_t size;
@@ -216,6 +322,11 @@ int main(void) {
     config.backend.configure_opaque_ui_regions = backend_configure_opaque_ui_regions;
     config.backend.query = backend_query;
     config.backend.close = backend_close;
+    config.backend.register_buffers = backend_register_buffers;
+    config.backend.acquire_buffer = backend_acquire_buffer;
+    config.backend.present_buffer = backend_present_buffer;
+    config.backend.peek_release = backend_peek_release;
+    config.backend.consume_release = backend_consume_release;
     surface_size = pxa_surface_service_workspace_size(&config);
     surface_workspace = malloc(surface_size);
     assert(surface_workspace != NULL);
@@ -309,10 +420,12 @@ int main(void) {
     }
     assert(dispatch(runtime, component, packet, size) == PXA_STATUS_OK);
     completion(runtime, component, event_bytes, sizeof(event_bytes), &event);
-    assert(event.payload.size == 36 &&
+    assert(event.payload.size == 52 &&
            (int32_t)pxa_read_u32(event.payload.data) == PXA_STATUS_OK &&
            pxa_read_u64(event.payload.data + 4) == 2 &&
            pxa_read_u64(event.payload.data + 20) == 1 &&
+           pxa_read_u64(event.payload.data + 28) == 0 &&
+           pxa_read_u64(event.payload.data + 36) == 0 &&
            backend.queries == 1);
 
     assert(pxa_handle_close(runtime, component, handle) == PXA_STATUS_OK);
@@ -330,6 +443,55 @@ int main(void) {
     handle = pxa_read_u32(event.payload.data + 4);
     assert(pxa_handle_close(runtime, component, handle) == PXA_STATUS_OK);
     assert(backend.closes == 2 && !pxa_surface_has_active_surfaces(surface));
+
+    size = message(packet, sizeof(packet), PXA_SURFACE_CREATE, 6,
+                   create_mapped, sizeof(create_mapped));
+    assert(dispatch(runtime, component, packet, size) == PXA_STATUS_OK);
+    completion(runtime, component, event_bytes, sizeof(event_bytes), &event);
+    assert(event.opcode == PXA_SURFACE_CREATE &&
+           event.request_id == 6 && event.payload.size == 20 &&
+           (int32_t)pxa_read_u32(event.payload.data) == PXA_STATUS_OK);
+    handle = pxa_read_u32(event.payload.data + 4);
+    assert(dispatch_io_op(runtime, component, handle,
+                          PXA_SURFACE_IO_REGISTER_BUFFERS, mapped_pixels,
+                          sizeof(mapped_pixels)) ==
+           (int32_t)sizeof(mapped_pixels));
+    assert(dispatch_io_op(runtime, component, handle,
+                          PXA_SURFACE_IO_ACQUIRE, acquire_record,
+                          sizeof(acquire_record)) ==
+               (int32_t)sizeof(acquire_record) &&
+           acquire_record[0] == 0);
+    present_record[0] = 0;
+    pxa_write_u64(present_record + 8, 1);
+    assert(dispatch_io_op(runtime, component, handle,
+                          PXA_SURFACE_IO_PRESENT, present_record,
+                          sizeof(present_record)) ==
+           (int32_t)sizeof(present_record));
+    memset(acquire_record, 0, sizeof(acquire_record));
+    assert(dispatch_io_op(runtime, component, handle,
+                          PXA_SURFACE_IO_ACQUIRE, acquire_record,
+                          sizeof(acquire_record)) ==
+               (int32_t)sizeof(acquire_record) &&
+           acquire_record[0] == 1);
+    memset(present_record, 0, sizeof(present_record));
+    present_record[0] = 1;
+    pxa_write_u64(present_record + 8, 2);
+    assert(dispatch_io_op(runtime, component, handle,
+                          PXA_SURFACE_IO_PRESENT, present_record,
+                          sizeof(present_record)) ==
+           (int32_t)sizeof(present_record));
+    assert(pxa_surface_service_flush_releases(surface) == 1);
+    completion(runtime, component, event_bytes, sizeof(event_bytes), &event);
+    assert(event.opcode == PXA_SURFACE_RELEASED && event.request_id == 0 &&
+           event.payload.size == PXA_SURFACE_RELEASED_PAYLOAD_BYTES &&
+           pxa_read_u32(event.payload.data) == handle &&
+           event.payload.data[4] == 0 &&
+           pxa_read_u64(event.payload.data + 8) == 1 &&
+           backend.state.released_frames == 1 &&
+           backend.state.free_buffers == 2);
+    assert(pxa_surface_service_flush_releases(surface) == 0);
+    assert(pxa_handle_close(runtime, component, handle) == PXA_STATUS_OK);
+    assert(backend.closes == 3 && !pxa_surface_has_active_surfaces(surface));
     pxa_runtime_deinit(runtime);
     free(surface_workspace);
     free(runtime_workspace);

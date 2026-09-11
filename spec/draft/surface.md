@@ -1,4 +1,4 @@
-# PXA Surface Service 0.1.0
+# PXA Surface Service 0.2.0
 
 Surface is the bulk-pixel path for emulators, video and other producers that
 already own complete frames. It is independent from the retained UI service.
@@ -8,7 +8,7 @@ the bounded control envelope.
 
 ## Service and resource
 
-The service ID is 16 and the initial version is 0.1.0. `PXA_SURFACE_CREATE`
+The service ID is 16 and this version is 0.2.0. `PXA_SURFACE_CREATE`
 returns a `PXA_RESOURCE_SURFACE` handle. The handle is both the Surface lifetime
 token and its byte-stream endpoint. Closing it removes the layer and eventually
 releases all buffers after an active presenter lease completes.
@@ -24,7 +24,9 @@ pxa_io(surface, PXA_IO_WRITE, pixels, frame_bytes)
 
 The Host copies the write into a free producer buffer and stages it atomically.
 It returns `WOULD_BLOCK` when no producer buffer is free. Guests retry on a
-later clock/input event and must not spin inside one callback.
+later clock/input event and must not spin inside one callback. Version 0.2 adds
+an optional GuestMapped RGB565 path that removes this per-frame pixel copy;
+the 0.1 Host-owned write path remains compatible.
 
 ## Control messages
 
@@ -35,7 +37,7 @@ All integers are little-endian.
 | `PXA_SURFACE_CREATE` (1) | nonzero | `width:u16, height:u16, format:u16, buffer_count:u8, flags:u8` | `handle:u32, stride:u32, frame_bytes:u32, buffer_count:u8, reserved[3]` |
 | `PXA_SURFACE_CONFIGURE_LAYER` (2) | nonzero | `handle:u32, x:i32, y:i32, width:u16, height:u16, z:i16, visible:u8, reserved:u8` | empty |
 | `PXA_SURFACE_QUEUE_FRAME` (3) | zero | header plus damage rectangles below | no completion event |
-| `PXA_SURFACE_QUERY_STATE` (4) | nonzero | `handle:u32` | `submitted:u64, presented:u64, dropped:u64, free_buffers:u32, flags:u32` |
+| `PXA_SURFACE_QUERY_STATE` (4) | nonzero | `handle:u32` | `submitted:u64, presented:u64, dropped:u64, replaced:u64, released:u64, free_buffers:u32, flags:u32` |
 | `PXA_SURFACE_CONFIGURE_OPAQUE_UI_REGIONS` (5) | nonzero | `handle:u32, count:u8, reserved[3], regions[count]` | empty |
 
 `format=1` is RGB565 and accepts `flags=0` or
@@ -44,9 +46,10 @@ not a guarantee: a Host can bypass its UI compositor only for an exact
 full-screen RGB565 layer with no retained or trusted UI above it. `format=2`
 is native-endian `0xAARRGGBB` with premultiplied RGB channels and requires
 `flags & 1 = PREMULTIPLIED_ALPHA`. Hosts blend it with the fixed `src-over`
-equation. Layer width and height must equal Surface width and height, so
-composition is 1:1. Coordinates are in the primary display's logical
-orientation and are clipped by the Host.
+equation. The legacy composition path requires layer width and height to equal
+Surface width and height. A mapped direct-scanout profile may negotiate an
+exact 2x or 4x nearest-neighbor scale to the full logical display. Coordinates
+are in the primary display's logical orientation and are clipped by the Host.
 
 `PXA_SURFACE_QUEUE_FRAME` is the per-frame fast control path:
 
@@ -76,6 +79,47 @@ configured outside the frame loop. A Host without this profile returns
 `PXA_SURFACE_STATE_FLAG_SUPPORTS_ALPHA_COMPOSITING` for Host capabilities.
 `PXA_SURFACE_STATE_FLAG_UI_ALPHA_PLANE_ACTIVE` indicates that the Host currently
 has an alpha-bearing UI plane installed over the Surface.
+`PXA_SURFACE_STATE_FLAG_SUPPORTS_GUEST_MAPPED` advertises the mapped profile.
+
+## GuestMapped profile
+
+A Guest requests this profile with `PXA_SURFACE_FLAG_GUEST_MAPPED` on an
+RGB565 Surface. A Host returns `UNSUPPORTED` unless its runtime guarantees that
+the linear-memory base remains pinned for the complete Surface lifetime. WAMR
+Hosts reserve the module's declared maximum memory before instantiation so
+`memory.grow` commits in place. A Host must not silently retain a pointer that
+can move.
+
+The Guest allocates one contiguous, 64-byte-aligned range containing exactly
+`frame_bytes * buffer_count` bytes and registers it once:
+
+```text
+pxa_io(surface, PXA_SURFACE_IO_REGISTER_BUFFERS, range, total_bytes)
+```
+
+No frame pixels are copied by registration or presentation. The Guest obtains
+an index with a 4-byte `PXA_SURFACE_IO_ACQUIRE` record, renders only into that
+buffer, then submits a 16-byte `PXA_SURFACE_IO_PRESENT` record containing the
+index and a nonzero monotonically increasing frame ID. The old stream write and
+`QUEUE_FRAME` operations are invalid on a GuestMapped Surface.
+
+`PRESENT` is a mailbox operation. It must not take a UI lock, rotate pixels,
+wait for TE, or wait for panel I/O on the Guest runtime stack. A presenter task
+consumes the newest pending index. Replacing an unconsumed pending frame counts
+as both `dropped` and `replaced`.
+
+After the Host no longer reads a submitted buffer it posts reliable
+`PXA_SURFACE_RELEASED` (0x8001):
+
+```text
+buffer_index:u8
+reserved[7]
+frame_id:u64
+```
+
+The index does not become acquirable again until the Runtime accepts this
+event. This prevents an event-queue stall from becoming a write/read race.
+Closing the Surface ends the mapping; the Host never frees Guest memory.
 
 ## BufferQueue semantics
 
@@ -95,6 +139,12 @@ they permit pending replacement while one current buffer is retained.
 `submitted` counts accepted queue operations. `presented` counts frames that
 completed compositor access. `free_buffers` excludes current, pending, staged,
 writing and presenter-acquired buffers.
+
+For GuestMapped Surfaces the buffers are Guest-owned but their state machine is
+Host-authoritative: `FREE -> GUEST_WRITING -> PENDING -> HOST_READING ->
+RELEASE_QUEUED -> FREE`. Only `FREE` can be acquired. Three mapped buffers are
+the recommended game configuration: one can be read by the presenter, one can
+be pending, and one can be written by the Guest.
 
 ## UI composition
 
@@ -121,6 +171,11 @@ uses that Surface as the rotation source and bypasses LVGL frame production
 until composition becomes necessary. This avoids a full LVGL refresh for an
 App that owns every pixel, but a rotated panel can still require a copy into a
 board-owned DMA buffer.
+
+For an exact 1x, 2x or 4x mapped RGB565 frame, a board presenter may fuse
+nearest-neighbor scaling, logical-to-panel rotation, RGB565 byte-order
+conversion and output-buffer writes in that single required pass. The Guest
+must not pre-upscale such a frame.
 
 The Host remains authoritative. Any trusted UI transaction, system foreground
 change, alpha overlay, or ineligible Surface configuration returns presentation
@@ -154,6 +209,5 @@ the LVGL capture producer remains Host-private. Capability negotiation
 distinguishes opaque regions, alpha Surface composition and a currently active
 UI alpha plane.
 
-Multiple Surface layers, scaling, additional formats, release events and
-mapped shared buffers can be added without changing the v1.0 stream-and-queue
-contract.
+Multiple Surface layers and additional formats remain future extensions. The
+0.1 stream-and-queue path remains supported alongside the 0.2 mapped profile.
