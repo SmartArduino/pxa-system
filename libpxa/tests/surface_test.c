@@ -23,6 +23,9 @@ typedef struct {
     unsigned configures;
     unsigned overlay_configures;
     unsigned queries;
+    unsigned raster_uploads;
+    unsigned raster_submits;
+    unsigned raster_queries;
     unsigned closes;
     pxa_surface_layer_t layer;
     pxa_surface_damage_rect_t overlay;
@@ -36,7 +39,8 @@ static pxa_status_t backend_create(
     uint32_t bytes_per_pixel;
     if (desc->format == PXA_SURFACE_FORMAT_RGB565) {
         assert((desc->flags & ~(PXA_SURFACE_FLAG_PREFER_DIRECT_SCANOUT |
-                               PXA_SURFACE_FLAG_GUEST_MAPPED)) == 0);
+                               PXA_SURFACE_FLAG_GUEST_MAPPED |
+                               PXA_SURFACE_FLAG_HOST_RASTER)) == 0);
         bytes_per_pixel = 2;
     } else {
         assert(desc->format == PXA_SURFACE_FORMAT_ARGB8888_PREMULTIPLIED);
@@ -192,6 +196,35 @@ static pxa_status_t backend_query(void *context, uint64_t surface,
     return PXA_STATUS_OK;
 }
 
+static pxa_status_t backend_raster_upload(void *context, uint64_t surface,
+                                          const uint8_t *bytes, size_t size) {
+    backend_t *backend = (backend_t *)context;
+    assert(surface == 0x1234 && bytes != NULL && size != 0);
+    ++backend->raster_uploads;
+    return PXA_STATUS_OK;
+}
+
+static pxa_status_t backend_raster_submit(void *context, uint64_t surface,
+                                          const uint8_t *bytes, size_t size) {
+    backend_t *backend = (backend_t *)context;
+    assert(surface == 0x1234 && bytes != NULL && size != 0);
+    ++backend->raster_submits;
+    return PXA_STATUS_OK;
+}
+
+static pxa_status_t backend_raster_query(
+    void *context, uint64_t surface, pxa_raster_telemetry_t *telemetry) {
+    backend_t *backend = (backend_t *)context;
+    assert(surface == 0x1234 && telemetry != NULL);
+    memset(telemetry, 0, sizeof(*telemetry));
+    telemetry->submitted_frames = 7;
+    telemetry->draw_list_bytes = 1234;
+    telemetry->dropped_frames = 2;
+    telemetry->last_host_raster_us = 456;
+    ++backend->raster_queries;
+    return PXA_STATUS_OK;
+}
+
 static void backend_close(void *context, uint64_t surface) {
     backend_t *backend = (backend_t *)context;
     assert(surface == 0x1234);
@@ -275,6 +308,10 @@ int main(void) {
         4, 0, 4, 0, 1, 0, 3,
         PXA_SURFACE_FLAG_PREFER_DIRECT_SCANOUT |
             PXA_SURFACE_FLAG_GUEST_MAPPED};
+    uint8_t create_raster[8] = {
+        4, 0, 4, 0, 1, 0, 3,
+        PXA_SURFACE_FLAG_PREFER_DIRECT_SCANOUT |
+            PXA_SURFACE_FLAG_HOST_RASTER};
     uint8_t configure[20] = {0};
     uint8_t overlay[16] = {0};
     uint8_t queue[24] = {0};
@@ -283,6 +320,7 @@ int main(void) {
         __attribute__((aligned(PXA_SURFACE_BUFFER_ALIGNMENT)));
     uint8_t acquire_record[4] = {0};
     uint8_t present_record[16] = {0};
+    uint8_t raster_telemetry[PXA_SURFACE_RASTER_TELEMETRY_BYTES] = {0};
     pxa_message_view_t event;
     pxa_handle_t handle;
     size_t size;
@@ -327,6 +365,9 @@ int main(void) {
     config.backend.present_buffer = backend_present_buffer;
     config.backend.peek_release = backend_peek_release;
     config.backend.consume_release = backend_consume_release;
+    config.backend.raster_upload = backend_raster_upload;
+    config.backend.raster_submit = backend_raster_submit;
+    config.backend.raster_query = backend_raster_query;
     surface_size = pxa_surface_service_workspace_size(&config);
     surface_workspace = malloc(surface_size);
     assert(surface_workspace != NULL);
@@ -492,6 +533,34 @@ int main(void) {
     assert(pxa_surface_service_flush_releases(surface) == 0);
     assert(pxa_handle_close(runtime, component, handle) == PXA_STATUS_OK);
     assert(backend.closes == 3 && !pxa_surface_has_active_surfaces(surface));
+
+    size = message(packet, sizeof(packet), PXA_SURFACE_CREATE, 7,
+                   create_raster, sizeof(create_raster));
+    assert(dispatch(runtime, component, packet, size) == PXA_STATUS_OK);
+    completion(runtime, component, event_bytes, sizeof(event_bytes), &event);
+    assert(event.opcode == PXA_SURFACE_CREATE && event.request_id == 7 &&
+           (int32_t)pxa_read_u32(event.payload.data) == PXA_STATUS_OK);
+    handle = pxa_read_u32(event.payload.data + 4);
+    assert(dispatch_io(runtime, component, handle, pixels, sizeof(pixels)) ==
+           PXA_STATUS_INVALID_ARGUMENT);
+    assert(dispatch_io_op(runtime, component, handle,
+                          PXA_SURFACE_IO_RASTER_UPLOAD, pixels,
+                          sizeof(pixels)) == (int32_t)sizeof(pixels));
+    assert(dispatch_io_op(runtime, component, handle,
+                          PXA_SURFACE_IO_RASTER_SUBMIT, pixels,
+                          sizeof(pixels)) == (int32_t)sizeof(pixels));
+    assert(dispatch_io_op(runtime, component, handle,
+                          PXA_SURFACE_IO_RASTER_TELEMETRY, raster_telemetry,
+                          sizeof(raster_telemetry)) ==
+               (int32_t)sizeof(raster_telemetry) &&
+           pxa_read_u64(raster_telemetry) == 7 &&
+           pxa_read_u64(raster_telemetry + 8) == 1234 &&
+           pxa_read_u64(raster_telemetry + 48) == 2 &&
+           pxa_read_u32(raster_telemetry + 84) == 456 &&
+           backend.raster_uploads == 1 && backend.raster_submits == 1 &&
+           backend.raster_queries == 1);
+    assert(pxa_handle_close(runtime, component, handle) == PXA_STATUS_OK);
+    assert(backend.closes == 4 && !pxa_surface_has_active_surfaces(surface));
     pxa_runtime_deinit(runtime);
     free(surface_workspace);
     free(runtime_workspace);

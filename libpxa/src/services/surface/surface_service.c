@@ -192,12 +192,16 @@ static uint8_t surface_bytes_per_pixel(
     if ((desc->flags & ~PXA_SURFACE_FLAG_KNOWN_MASK) != 0)
         return 0;
     if (desc->format == PXA_SURFACE_FORMAT_RGB565 &&
-        (desc->flags & PXA_SURFACE_FLAG_PREMULTIPLIED_ALPHA) == 0)
+        (desc->flags & PXA_SURFACE_FLAG_PREMULTIPLIED_ALPHA) == 0 &&
+        (desc->flags & (PXA_SURFACE_FLAG_GUEST_MAPPED |
+                        PXA_SURFACE_FLAG_HOST_RASTER)) !=
+            (PXA_SURFACE_FLAG_GUEST_MAPPED | PXA_SURFACE_FLAG_HOST_RASTER))
         return 2;
     if (desc->format == PXA_SURFACE_FORMAT_ARGB8888_PREMULTIPLIED &&
         (desc->flags & PXA_SURFACE_FLAG_PREMULTIPLIED_ALPHA) != 0 &&
         (desc->flags & (PXA_SURFACE_FLAG_PREFER_DIRECT_SCANOUT |
-                        PXA_SURFACE_FLAG_GUEST_MAPPED)) == 0)
+                        PXA_SURFACE_FLAG_GUEST_MAPPED |
+                        PXA_SURFACE_FLAG_HOST_RASTER)) == 0)
         return 4;
     return 0;
 }
@@ -210,7 +214,8 @@ static int32_t surface_io(void *context, uint32_t operation, uint8_t *data,
     if (data == NULL) return PXA_STATUS_INVALID_ARGUMENT;
     if (operation == PXA_IO_WRITE) {
         if (size != surface->frame_bytes ||
-            (surface->desc.flags & PXA_SURFACE_FLAG_GUEST_MAPPED) != 0)
+            (surface->desc.flags & (PXA_SURFACE_FLAG_GUEST_MAPPED |
+                                    PXA_SURFACE_FLAG_HOST_RASTER)) != 0)
             return PXA_STATUS_INVALID_ARGUMENT;
         if (size > (size_t)INT32_MAX) return PXA_STATUS_LIMIT_EXCEEDED;
         status = pxa_status_normalize(surface->service->backend.write(
@@ -254,6 +259,48 @@ static int32_t surface_io(void *context, uint32_t operation, uint8_t *data,
             surface->service->backend.present_buffer(
                 surface->service->backend.context,
                 surface->provider_surface, data[0], frame_id));
+    } else if (operation == PXA_SURFACE_IO_RASTER_UPLOAD) {
+        if ((surface->desc.flags & PXA_SURFACE_FLAG_HOST_RASTER) == 0 ||
+            surface->service->backend.raster_upload == NULL)
+            return PXA_STATUS_UNSUPPORTED;
+        status = pxa_status_normalize(surface->service->backend.raster_upload(
+            surface->service->backend.context, surface->provider_surface,
+            data, size));
+    } else if (operation == PXA_SURFACE_IO_RASTER_SUBMIT) {
+        if ((surface->desc.flags & PXA_SURFACE_FLAG_HOST_RASTER) == 0 ||
+            surface->service->backend.raster_submit == NULL)
+            return PXA_STATUS_UNSUPPORTED;
+        status = pxa_status_normalize(surface->service->backend.raster_submit(
+            surface->service->backend.context, surface->provider_surface,
+            data, size));
+    } else if (operation == PXA_SURFACE_IO_RASTER_TELEMETRY) {
+        pxa_raster_telemetry_t telemetry;
+        if ((surface->desc.flags & PXA_SURFACE_FLAG_HOST_RASTER) == 0 ||
+            surface->service->backend.raster_query == NULL)
+            return PXA_STATUS_UNSUPPORTED;
+        if (size != PXA_SURFACE_RASTER_TELEMETRY_BYTES)
+            return PXA_STATUS_INVALID_ARGUMENT;
+        memset(&telemetry, 0, sizeof(telemetry));
+        status = pxa_status_normalize(surface->service->backend.raster_query(
+            surface->service->backend.context, surface->provider_surface,
+            &telemetry));
+        if (status == PXA_STATUS_OK) {
+            pxa_write_u64(data, telemetry.submitted_frames);
+            pxa_write_u64(data + 8, telemetry.draw_list_bytes);
+            pxa_write_u64(data + 16, telemetry.covered_pixels);
+            pxa_write_u64(data + 24, telemetry.host_raster_us);
+            pxa_write_u64(data + 32, telemetry.queue_wait_us);
+            pxa_write_u64(data + 40, telemetry.present_us);
+            pxa_write_u64(data + 48, telemetry.dropped_frames);
+            pxa_write_u32(data + 56, telemetry.clear_commands);
+            pxa_write_u32(data + 60, telemetry.flat_quad_commands);
+            pxa_write_u32(data + 64, telemetry.textured_quad_commands);
+            pxa_write_u32(data + 68, telemetry.sprite_commands);
+            pxa_write_u32(data + 72, telemetry.rejected_lists);
+            pxa_write_u32(data + 76, telemetry.last_draw_list_bytes);
+            pxa_write_u32(data + 80, telemetry.last_covered_pixels);
+            pxa_write_u32(data + 84, telemetry.last_host_raster_us);
+        }
     } else {
         return PXA_STATUS_UNSUPPORTED;
     }

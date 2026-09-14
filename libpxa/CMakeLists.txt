@@ -538,6 +538,17 @@ if(PXA_BUILD_TESTS)
     endif()
     add_test(NAME pxa_surface_test COMMAND pxa_surface_test)
 
+    add_executable(pxa_raster_test tests/raster_test.c)
+    target_link_libraries(pxa_raster_test PRIVATE pxa)
+    if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(pxa_raster_test PRIVATE
+            -Wall -Wextra -Wpedantic)
+        if(PXA_WARNINGS_AS_ERRORS)
+            target_compile_options(pxa_raster_test PRIVATE -Werror)
+        endif()
+    endif()
+    add_test(NAME pxa_raster_test COMMAND pxa_raster_test)
+
     add_executable(pxa_ui_test tests/ui_test.c)
     target_include_directories(pxa_ui_test PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src)

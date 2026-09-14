@@ -14,16 +14,25 @@
 #define PXA_SURFACE_FLAG_PREMULTIPLIED_ALPHA 1u
 #define PXA_SURFACE_FLAG_PREFER_DIRECT_SCANOUT 2u
 #define PXA_SURFACE_FLAG_GUEST_MAPPED 4u
+#define PXA_SURFACE_FLAG_HOST_RASTER 8u
 #define PXA_SURFACE_MAX_DAMAGE_RECTS 8u
 #define PXA_SURFACE_MAX_OPAQUE_UI_REGIONS 8u
 #define PXA_SURFACE_STATE_FLAG_SUPPORTS_OPAQUE_UI_REGIONS UINT32_C(1)
 #define PXA_SURFACE_STATE_FLAG_SUPPORTS_ALPHA_COMPOSITING UINT32_C(2)
 #define PXA_SURFACE_STATE_FLAG_UI_ALPHA_PLANE_ACTIVE UINT32_C(4)
 #define PXA_SURFACE_STATE_FLAG_SUPPORTS_GUEST_MAPPED UINT32_C(8)
+#define PXA_SURFACE_STATE_FLAG_SUPPORTS_HOST_RASTER UINT32_C(16)
+#define PXA_SURFACE_STATE_FLAG_RASTER_TEXTURED_QUAD UINT32_C(32)
+#define PXA_SURFACE_STATE_FLAG_RASTER_ADDITIVE_SPRITE UINT32_C(64)
 #define PXA_SURFACE_IO_REGISTER_BUFFERS UINT32_C(0x100)
 #define PXA_SURFACE_IO_ACQUIRE UINT32_C(0x101)
 #define PXA_SURFACE_IO_PRESENT UINT32_C(0x102)
+#define PXA_SURFACE_IO_RASTER_UPLOAD UINT32_C(0x103)
+#define PXA_SURFACE_IO_RASTER_SUBMIT UINT32_C(0x104)
+#define PXA_SURFACE_IO_RASTER_TELEMETRY UINT32_C(0x105)
 #define PXA_SURFACE_BUFFER_ALIGNMENT UINT32_C(64)
+#define PXA_SURFACE_ACQUIRE_RECORD_BYTES ((size_t)4)
+#define PXA_SURFACE_PRESENT_RECORD_BYTES ((size_t)16)
 
 typedef struct {
     uint16_t x;
@@ -84,7 +93,10 @@ static inline int pxa_surface_create(
          format != PXA_SURFACE_FORMAT_ARGB8888_PREMULTIPLIED) ||
         (format == PXA_SURFACE_FORMAT_RGB565 &&
          (flags & ~(PXA_SURFACE_FLAG_PREFER_DIRECT_SCANOUT |
-                    PXA_SURFACE_FLAG_GUEST_MAPPED)) != 0) ||
+                    PXA_SURFACE_FLAG_GUEST_MAPPED |
+                    PXA_SURFACE_FLAG_HOST_RASTER)) != 0) ||
+        ((flags & PXA_SURFACE_FLAG_GUEST_MAPPED) != 0 &&
+         (flags & PXA_SURFACE_FLAG_HOST_RASTER) != 0) ||
         (format == PXA_SURFACE_FORMAT_ARGB8888_PREMULTIPLIED &&
          flags != PXA_SURFACE_FLAG_PREMULTIPLIED_ALPHA))
         return 0;
@@ -117,6 +129,17 @@ static inline int pxa_surface_create_rgb565(
     return pxa_surface_create(
         request_id, width, height, PXA_SURFACE_FORMAT_RGB565, 0,
         buffer_count, packet, packet_capacity);
+}
+
+static inline int pxa_surface_create_rgb565_host_raster(
+    uint32_t request_id, uint16_t width, uint16_t height,
+    uint8_t buffer_count, uint8_t prefer_direct, uint8_t *packet,
+    size_t packet_capacity) {
+    uint8_t flags = PXA_SURFACE_FLAG_HOST_RASTER;
+    if (prefer_direct) flags |= PXA_SURFACE_FLAG_PREFER_DIRECT_SCANOUT;
+    return pxa_surface_create(request_id, width, height,
+                              PXA_SURFACE_FORMAT_RGB565, flags,
+                              buffer_count, packet, packet_capacity);
 }
 
 static inline int pxa_surface_create_rgb565_direct(
