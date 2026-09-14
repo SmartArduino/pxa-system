@@ -17,6 +17,13 @@
   "name": "Voxel Craft",
   "description": "First-person voxel sandbox: mine blocks, build structures, fight slimes, walk and fly",
   "icon": "assets/icon.png",
+  "build": {
+    "system": "direct",
+    "linear_memory": {
+      "maximum_bytes": 2097152,
+      "pinned": true
+    }
+  },
   "components": [
     {
       "id": "main",

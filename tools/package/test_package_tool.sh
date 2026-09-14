@@ -5,6 +5,7 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 pxa_system_dir="$(cd "$script_dir/../.." && pwd)"
 work_dir="$(mktemp -d "${TMPDIR:-/tmp}/pxa-package-tool-test.XXXXXX")"
 trap 'rm -rf "$work_dir"' EXIT
+"${PYTHON:-python3}" "$script_dir/test_verify_wasm_memory.py"
 engine_abi="$("${PYTHON:-python3}" "$pxa_system_dir/tools/wamr/metadata.py" engine_abi)"
 package_dir="$work_dir/package"
 mkdir -p "$package_dir/artifacts" "$package_dir/assets/flappy-bird" \

@@ -131,15 +131,36 @@ import sys
 
 metadata = json.load(open(sys.argv[1], encoding="utf-8"))
 build = metadata.get("build", {"system": "direct"})
-if not isinstance(build, dict) or set(build) - {"system", "source_dir"}:
-    raise SystemExit("build must be an object with system and optional source_dir")
+if not isinstance(build, dict) or set(build) - {"system", "source_dir", "linear_memory"}:
+    raise SystemExit(
+        "build must be an object with system, optional source_dir, and optional linear_memory")
 build_system = build.get("system", "direct")
 if build_system not in ("direct", "cmake"):
     raise SystemExit("build system must be direct or cmake")
 source_dir = build.get("source_dir", ".")
 if not isinstance(source_dir, str) or not source_dir:
     raise SystemExit("build source_dir must be a non-empty string")
-open(sys.argv[2], "w", encoding="utf-8").write(f"{build_system}\t{source_dir}\n")
+linear_memory = build.get("linear_memory")
+linear_memory_maximum = 0
+if linear_memory is not None:
+    if build_system != "direct":
+        raise SystemExit("build linear_memory is only supported by direct builds")
+    if (not isinstance(linear_memory, dict) or
+            set(linear_memory) != {"maximum_bytes", "pinned"}):
+        raise SystemExit(
+            "build linear_memory must contain maximum_bytes and pinned")
+    linear_memory_maximum = linear_memory["maximum_bytes"]
+    if (not isinstance(linear_memory_maximum, int) or
+            isinstance(linear_memory_maximum, bool) or
+            linear_memory_maximum < 65536 or
+            linear_memory_maximum > 4294967296 or
+            linear_memory_maximum % 65536 != 0):
+        raise SystemExit(
+            "build linear_memory maximum_bytes must be a WebAssembly page multiple")
+    if linear_memory["pinned"] is not True:
+        raise SystemExit("build linear_memory pinned must be true")
+open(sys.argv[2], "w", encoding="utf-8").write(
+    f"{build_system}\t{source_dir}\t{linear_memory_maximum}\n")
 components = metadata.get("components", [{"id": "main", "source": "main.c"}])
 if not isinstance(components, list) or not components:
     raise SystemExit("components must be a non-empty array")
@@ -172,7 +193,8 @@ for component in components:
         print(f"{component_id}\t{artifact}\t{source}")
 PYTHON
 
-IFS=$'\t' read -r build_system build_source_dir < "$build_settings"
+IFS=$'\t' read -r build_system build_source_dir linear_memory_maximum \
+  < "$build_settings"
 component_ids=()
 declare -A component_seen=()
 declare -A component_value_map=()
@@ -252,6 +274,10 @@ if [[ "$build_system" == "cmake" ]]; then
   done
   "$cmake_bin" --build "$work_dir/cmake-build" --target "${cmake_targets[@]}"
 else
+  linear_memory_link_args=()
+  if [[ "$linear_memory_maximum" -ne 0 ]]; then
+    linear_memory_link_args=("-Wl,--max-memory=$linear_memory_maximum")
+  fi
   for component_id in "${component_ids[@]}"; do
     readarray -t component_sources <<< "${component_value_map[$component_id]}"
     "$clang_bin" --target=wasm32-unknown-unknown -O3 -fno-builtin -nostdlib \
@@ -264,7 +290,13 @@ else
       -Wl,--export=pxa_app_start \
       -Wl,--export=pxa_app_on_event -Wl,--export=pxa_app_stop \
       -Wl,--export=__heap_base -Wl,--export=__data_end \
+      "${linear_memory_link_args[@]}" \
       "${component_sources[@]}" -o "$package_dir/artifacts/$component_id.wasm"
+    if [[ "$linear_memory_maximum" -ne 0 ]]; then
+      "${PYTHON:-python3}" "$script_dir/verify_wasm_memory.py" \
+        "$package_dir/artifacts/$component_id.wasm" \
+        --maximum-bytes "$linear_memory_maximum"
+    fi
   done
 fi
 

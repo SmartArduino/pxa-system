@@ -13,6 +13,21 @@ i18n、语义主题、系统服务、Canvas 和多 Component 运行时。
 打包工具默认从 `apps/pxa` 读取应用。产品可以只选择其中一部分，也可以用
 `PXA_APP_SOURCE_ROOT` 指向外部应用树。可移植系统库本身不依赖任何具体应用。
 
+direct 构建的应用如果要长期保留 GuestMapped Surface buffer，必须在
+`package.json` 中声明有界且固定的线性内存：
+
+```json
+"build": {
+  "system": "direct",
+  "linear_memory": {"maximum_bytes": 2097152, "pinned": true}
+}
+```
+
+`maximum_bytes` 必须是 64 KiB WebAssembly 页的整数倍。打包器会把该上限写入
+每个 Component module 并校验产物；支持此能力的 WAMR Host 可据此预留完整
+地址范围，使 `memory.grow` 不会移动已注册的像素地址。如果 Host 报告不支持
+GuestMapped，该声明不会把固定映射能力强加给 Host。
+
 `apps/pxa/.dev-signing` 只包含开发测试密钥，不能用于生产。产品必须提供受
 保护的签名流程和信任策略。
 

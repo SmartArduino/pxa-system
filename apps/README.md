@@ -15,6 +15,22 @@ The package tools use `apps/pxa` by default. Products may select a subset of
 these applications or point `PXA_APP_SOURCE_ROOT` at another source tree; the
 portable system libraries never require a particular application set.
 
+A direct-build application that retains GuestMapped Surface buffers declares a
+bounded, pinned linear memory in `package.json`:
+
+```json
+"build": {
+  "system": "direct",
+  "linear_memory": {"maximum_bytes": 2097152, "pinned": true}
+}
+```
+
+`maximum_bytes` is a 64 KiB WebAssembly page multiple. The packager writes and
+verifies that maximum in every component module. It lets a supporting WAMR Host
+reserve the complete range so `memory.grow` cannot relocate registered pixels;
+it does not make mapping portable to a Host that reports GuestMapped as
+unsupported.
+
 The key under `apps/pxa/.dev-signing` is an explicitly non-production test
 fixture. Products must supply their own protected signing process and trust
 policy.
