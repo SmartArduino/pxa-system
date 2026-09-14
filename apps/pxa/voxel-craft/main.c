@@ -15,6 +15,7 @@
 #include "pxa_ui.h"
 
 #include "game.h"
+#include "quality_controller.h"
 #include "rc_math.h"
 #include "render.h"
 #include "sfx.h"
@@ -31,20 +32,10 @@
 #define PERF_CLOCK_RAYCAST_START UINT32_C(0x72)
 #define PERF_CLOCK_RAYCAST_END UINT32_C(0x73)
 #define PERF_CLOCK_FRAME_END UINT32_C(0x74)
-#define PERF_SAMPLE_INTERVAL_FRAMES 8u
 #define PXA_WINDOW_GET_SNAPSHOT_OP 2u
 #define PXA_WINDOW_METRICS_CHANGED_OP 0x8001u
 #define WINDOW_SNAPSHOT_PERIOD_TICKS 125u
-#define QUALITY_WINDOW_FRAMES 30u
-#define QUALITY_WARMUP_FRAMES 15u
-#define QUALITY_DOWNGRADE_US UINT64_C(26000)
-#define QUALITY_UPGRADE_US UINT64_C(12000)
-#define QUALITY_PANIC_US UINT64_C(80000)
 #define QUALITY_SAMPLE_CAP_US UINT64_C(250000)
-#define QUALITY_DOWNGRADE_WINDOWS 2u
-#define QUALITY_UPGRADE_WINDOWS 5u
-#define QUALITY_COOLDOWN_FRAMES 90u
-#define QUALITY_BUFFER_WAIT_BLOCK_UPGRADE_US UINT32_C(10000)
 #define TICK_SECONDS 0.033F
 #define LOOK_PER_PIXEL 0.0062F
 #define STICK_RADIUS 40.0F
@@ -125,16 +116,9 @@ static perf_timing_sample_t g_perf_timing;
 static uint8_t g_perf_sample_counter;
 static uint32_t g_update_ema_us;
 static uint32_t g_update_max_us;
-static uint32_t g_render_ema_us;
-static uint32_t g_render_max_us;
+static voxel_quality_controller_t g_quality_controller;
 static uint32_t g_render_total_ema_us;
 static uint32_t g_render_total_max_us;
-static uint32_t g_quality_frames;
-static uint8_t g_quality_warmup;
-static uint8_t g_quality_bad_windows;
-static uint8_t g_quality_good_windows;
-static uint8_t g_quality_panic_samples;
-static uint16_t g_quality_cooldown_frames;
 static uint64_t g_buffer_wait_started_us;
 static uint32_t g_buffer_wait_ema_us;
 static uint32_t g_buffer_wait_max_us;
@@ -262,14 +246,7 @@ static void cycle_quality(void) {
         render_set_quality(g_quality_manual);
     } else {
         render_set_quality(QUALITY_BALANCED);
-        g_render_ema_us = 0;
-        g_render_max_us = 0;
-        g_quality_frames = 0;
-        g_quality_warmup = QUALITY_WARMUP_FRAMES;
-        g_quality_bad_windows = 0;
-        g_quality_good_windows = 0;
-        g_quality_panic_samples = 0;
-        g_quality_cooldown_frames = 0;
+        voxel_quality_controller_reset(&g_quality_controller);
     }
     recreate_surface();
     toast_quality_mode();
@@ -290,68 +267,20 @@ static void toast_quality(void) {
 }
 
 static void update_quality(uint64_t duration_us) {
-    int quality = render_quality();
-    uint32_t sample;
-    if (g_quality_manual != 0) {
-        return;
-    }
-    if (g_quality_warmup > 0) {
-        /* The first frames include one-time setup and the initial control
-         * message upload, so they must not steer the adaptation. */
-        --g_quality_warmup;
-        return;
-    }
-    if (duration_us > QUALITY_SAMPLE_CAP_US) {
-        duration_us = QUALITY_SAMPLE_CAP_US;
-    }
-    sample = (uint32_t)duration_us;
-    if (sample > g_render_max_us) g_render_max_us = sample;
-    if (g_render_ema_us == 0) {
-        g_render_ema_us = sample;
-    } else {
-        g_render_ema_us = (g_render_ema_us * 7u + sample) / 8u;
-    }
-    if (duration_us >= QUALITY_PANIC_US) {
-        if (g_quality_panic_samples < UINT8_MAX) ++g_quality_panic_samples;
-    } else {
-        g_quality_panic_samples = 0;
-    }
-    if (g_quality_cooldown_frames != 0) --g_quality_cooldown_frames;
-    ++g_quality_frames;
-    if (g_quality_frames < QUALITY_WINDOW_FRAMES) {
-        return;
-    }
-    g_quality_frames = 0;
-    if (g_render_ema_us > QUALITY_DOWNGRADE_US) {
-        if (g_quality_bad_windows < UINT8_MAX) ++g_quality_bad_windows;
-        g_quality_good_windows = 0;
-    } else if (g_render_ema_us < QUALITY_UPGRADE_US &&
-               g_buffer_wait_ema_us <
-                   QUALITY_BUFFER_WAIT_BLOCK_UPGRADE_US) {
-        if (g_quality_good_windows < UINT8_MAX) ++g_quality_good_windows;
-        g_quality_bad_windows = 0;
-    } else {
-        g_quality_bad_windows = 0;
-        g_quality_good_windows = 0;
-    }
-    if (g_quality_cooldown_frames != 0) return;
-    if ((g_quality_bad_windows >= QUALITY_DOWNGRADE_WINDOWS ||
-         g_quality_panic_samples >= 3u) && quality < QUALITY_MAX) {
+    const int quality = render_quality();
+    voxel_quality_action_t action;
+    if (g_quality_manual != 0) return;
+    action = voxel_quality_observe(
+        &g_quality_controller, duration_us, g_buffer_wait_ema_us,
+        (uint8_t)quality, (uint8_t)render_min_quality(), QUALITY_MAX);
+    if (action == VOXEL_QUALITY_ACTION_LOWER_DETAIL) {
         render_set_quality(next_higher_quality(quality));
         recreate_surface();
         toast_quality();
-        g_quality_bad_windows = 0;
-        g_quality_good_windows = 0;
-        g_quality_panic_samples = 0;
-        g_quality_cooldown_frames = QUALITY_COOLDOWN_FRAMES;
-    } else if (g_quality_good_windows >= QUALITY_UPGRADE_WINDOWS &&
-               quality > render_min_quality()) {
+    } else if (action == VOXEL_QUALITY_ACTION_HIGHER_DETAIL) {
         render_set_quality(next_lower_quality(quality));
         recreate_surface();
         toast_quality();
-        g_quality_bad_windows = 0;
-        g_quality_good_windows = 0;
-        g_quality_cooldown_frames = QUALITY_COOLDOWN_FRAMES;
     }
 }
 
@@ -389,7 +318,7 @@ static int perf_timing_surface_ready(void) {
 
 static void maybe_begin_perf_timing(void) {
     if (g_perf_timing.active || !perf_timing_surface_ready()) return;
-    if (++g_perf_sample_counter < PERF_SAMPLE_INTERVAL_FRAMES) return;
+    if (++g_perf_sample_counter < VOXEL_QUALITY_SAMPLE_INTERVAL_FRAMES) return;
     g_perf_sample_counter = 0;
     g_perf_timing = (perf_timing_sample_t){.active = 1};
     (void)mark_perf_timing(PERF_CLOCK_FRAME_START);
@@ -441,8 +370,6 @@ static int handle_perf_clock_event(const pxa_event_t *event) {
                     g_perf_timing.update_end_us -
                         g_perf_timing.frame_start_us,
                     &g_update_ema_us, &g_update_max_us);
-                update_duration_stats(raycast_us, &g_render_ema_us,
-                                      &g_render_max_us);
                 update_duration_stats(
                     g_perf_timing.frame_end_us -
                         g_perf_timing.frame_start_us,
@@ -1653,8 +1580,9 @@ static void build_hud(hud_state_t *hud) {
         g_update_ema_us / 100u > UINT16_MAX ? UINT16_MAX :
                                               g_update_ema_us / 100u);
     hud->guest_render_us_div_100 = (uint16_t)(
-        g_render_ema_us / 100u > UINT16_MAX ? UINT16_MAX :
-                                              g_render_ema_us / 100u);
+        g_quality_controller.raycast_ema_us / 100u > UINT16_MAX
+            ? UINT16_MAX
+            : g_quality_controller.raycast_ema_us / 100u);
     hud->guest_total_us_div_100 = (uint16_t)(
         g_render_total_ema_us / 100u > UINT16_MAX ? UINT16_MAX :
                                                    g_render_total_ema_us / 100u);
@@ -1938,16 +1866,9 @@ int32_t pxa_app_start(const uint8_t *config, uint32_t length) {
     g_perf_sample_counter = 0;
     g_update_ema_us = 0;
     g_update_max_us = 0;
-    g_render_ema_us = 0;
-    g_render_max_us = 0;
+    voxel_quality_controller_reset(&g_quality_controller);
     g_render_total_ema_us = 0;
     g_render_total_max_us = 0;
-    g_quality_frames = 0;
-    g_quality_warmup = QUALITY_WARMUP_FRAMES;
-    g_quality_bad_windows = 0;
-    g_quality_good_windows = 0;
-    g_quality_panic_samples = 0;
-    g_quality_cooldown_frames = 0;
     g_buffer_wait_started_us = 0;
     g_buffer_wait_ema_us = 0;
     g_buffer_wait_max_us = 0;
