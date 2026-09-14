@@ -1429,6 +1429,11 @@ typedef struct {
     uint8_t rows[7];
 } glyph_t;
 
+typedef struct {
+    char ch;
+    uint8_t rows[5];
+} compact_glyph_t;
+
 static const glyph_t kGlyphs[] = {
     {'0', {14, 17, 19, 21, 25, 17, 14}},
     {'1', {4, 12, 4, 4, 4, 4, 14}},
@@ -1474,6 +1479,33 @@ static const glyph_t kGlyphs[] = {
     {' ', {0, 0, 0, 0, 0, 0, 0}},
 };
 
+/* At 4X, a logical 2-pixel font stroke aliases into half a source pixel.
+ * Draw this compact font on the source-pixel grid so labels stay readable
+ * after nearest-neighbor scanout from the 74x60 Performance surface. */
+static const compact_glyph_t kCompactGlyphs[] = {
+    {'0', {7, 5, 5, 5, 7}}, {'1', {2, 6, 2, 2, 7}},
+    {'2', {7, 1, 7, 4, 7}}, {'3', {7, 1, 7, 1, 7}},
+    {'4', {5, 5, 7, 1, 1}}, {'5', {7, 4, 7, 1, 7}},
+    {'6', {7, 4, 7, 5, 7}}, {'7', {7, 1, 1, 1, 1}},
+    {'8', {7, 5, 7, 5, 7}}, {'9', {7, 5, 7, 1, 7}},
+    {'.', {0, 0, 0, 0, 2}}, {':', {0, 2, 0, 2, 0}},
+    {'-', {0, 0, 7, 0, 0}}, {'/', {1, 1, 2, 4, 4}},
+    {'+', {0, 2, 7, 2, 0}}, {'A', {7, 5, 7, 5, 5}},
+    {'B', {6, 5, 6, 5, 6}}, {'C', {7, 4, 4, 4, 7}},
+    {'D', {6, 5, 5, 5, 6}}, {'E', {7, 4, 6, 4, 7}},
+    {'F', {7, 4, 6, 4, 4}}, {'G', {7, 4, 5, 5, 7}},
+    {'H', {5, 5, 7, 5, 5}}, {'I', {7, 2, 2, 2, 7}},
+    {'J', {1, 1, 1, 5, 7}}, {'K', {5, 5, 6, 5, 5}},
+    {'L', {4, 4, 4, 4, 7}}, {'M', {5, 7, 7, 5, 5}},
+    {'N', {5, 7, 7, 7, 5}}, {'O', {7, 5, 5, 5, 7}},
+    {'P', {7, 5, 7, 4, 4}}, {'Q', {7, 5, 5, 7, 1}},
+    {'R', {6, 5, 6, 5, 5}}, {'S', {7, 4, 7, 1, 7}},
+    {'T', {7, 2, 2, 2, 2}}, {'U', {5, 5, 5, 5, 7}},
+    {'V', {5, 5, 5, 5, 2}}, {'W', {5, 5, 7, 7, 5}},
+    {'X', {5, 5, 2, 5, 5}}, {'Y', {5, 5, 2, 2, 2}},
+    {'Z', {7, 1, 2, 4, 7}}, {' ', {0, 0, 0, 0, 0}},
+};
+
 static const uint8_t *glyph_for(char ch) {
     unsigned index;
     for (index = 0; index < sizeof(kGlyphs) / sizeof(kGlyphs[0]); ++index) {
@@ -1484,10 +1516,26 @@ static const uint8_t *glyph_for(char ch) {
     return kGlyphs[sizeof(kGlyphs) / sizeof(kGlyphs[0]) - 1].rows;
 }
 
+static const uint8_t *compact_glyph_for(char ch) {
+    unsigned index;
+    for (index = 0;
+         index < sizeof(kCompactGlyphs) / sizeof(kCompactGlyphs[0]);
+         ++index) {
+        if (kCompactGlyphs[index].ch == ch) {
+            return kCompactGlyphs[index].rows;
+        }
+    }
+    return kCompactGlyphs[
+        sizeof(kCompactGlyphs) / sizeof(kCompactGlyphs[0]) - 1].rows;
+}
+
 static int text_width(const char *text, int scale) {
     int length = 0;
     while (text[length] != '\0') {
         ++length;
+    }
+    if (g_scale == QUALITY_PERFORMANCE) {
+        return length * 4 * QUALITY_PERFORMANCE;
     }
     return length * 6 * scale;
 }
@@ -1495,6 +1543,29 @@ static int text_width(const char *text, int scale) {
 static void hud_text(int x, int y, const char *text, uint16_t color,
                      int scale) {
     int cursor = x;
+    if (g_scale == QUALITY_PERFORMANCE) {
+        const int pixel = QUALITY_PERFORMANCE;
+        const int aligned_y = g_layout.view_y +
+            ((y - g_layout.view_y + pixel / 2) / pixel) * pixel;
+        cursor = g_layout.view_x +
+            ((x - g_layout.view_x + pixel / 2) / pixel) * pixel;
+        while (*text != '\0') {
+            const uint8_t *rows = compact_glyph_for(*text++);
+            int row;
+            for (row = 0; row < 5; ++row) {
+                int column;
+                for (column = 0; column < 3; ++column) {
+                    if ((rows[row] & (4u >> column)) != 0u) {
+                        hud_rect(cursor + column * pixel,
+                                 aligned_y + row * pixel,
+                                 pixel, pixel, color);
+                    }
+                }
+            }
+            cursor += 4 * pixel;
+        }
+        return;
+    }
     while (*text != '\0') {
         const uint8_t *rows = glyph_for(*text++);
         int row;
@@ -2215,8 +2286,11 @@ void render_menu(const menu_state_t *menu) {
         y = g_layout.view_y + 68;
         menu_draw_button(0, y, 28, quality_text, 1);
         menu_draw_button(1, y + 30, 28,
-                         menu->show_performance ? "PERFORMANCE: ON"
-                                                : "PERFORMANCE: OFF",
+                         g_scale == QUALITY_PERFORMANCE
+                             ? (menu->show_performance ? "PERF: ON"
+                                                       : "PERF: OFF")
+                             : (menu->show_performance ? "PERFORMANCE: ON"
+                                                       : "PERFORMANCE: OFF"),
                          1);
         menu_draw_button(2, y + 60, 28, "SAVE GAME", menu->has_game);
         menu_draw_button(3, y + 90, 28, "DELETE SAVE", menu->has_save);

@@ -243,8 +243,15 @@ static void cycle_quality(void) {
     if (g_quality_manual != 0) {
         render_set_quality(g_quality_manual);
     } else {
+        render_set_quality(QUALITY_BALANCED);
         g_render_ema_us = 0;
+        g_render_max_us = 0;
         g_quality_frames = 0;
+        g_quality_warmup = QUALITY_WARMUP_FRAMES;
+        g_quality_bad_windows = 0;
+        g_quality_good_windows = 0;
+        g_quality_panic_samples = 0;
+        g_quality_cooldown_frames = 0;
     }
     recreate_surface();
     toast_quality_mode();
