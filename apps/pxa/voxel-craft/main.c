@@ -45,6 +45,11 @@
 #define PAD_PITCH_RATE 1.6F
 #define SURFACE_BUFFER_COUNT 3u
 #define FRAME_PIXELS_MAX RENDER_SCENE_PIXELS_MAX
+#define SCREEN_MENU 0u
+#define SCREEN_SETTINGS 1u
+#define SCREEN_PLAY 2u
+#define SCREEN_PAUSE 3u
+#define UI_RENDER_QUALITY QUALITY_BALANCED
 
 enum {
     BTN_NONE = 0,
@@ -125,6 +130,9 @@ static uint32_t g_buffer_wait_max_us;
 static uint32_t g_snapshot_ticks;
 static uint8_t g_present_failures;
 static uint8_t g_quality_manual;
+static uint8_t g_game_quality = QUALITY_BALANCED;
+static uint8_t g_screen = SCREEN_MENU;
+static uint8_t g_settings_return = SCREEN_MENU;
 static uint8_t g_inventory_open;
 static uint8_t g_craft_table;
 static item_stack_t g_cursor;
@@ -219,7 +227,7 @@ static void toast_quality_mode(void) {
         *out++ = 'T';
         *out++ = 'O';
     } else {
-        *out++ = (char)('0' + render_quality());
+        *out++ = (char)('0' + g_game_quality);
         *out++ = 'X';
     }
     *out = '\0';
@@ -228,8 +236,10 @@ static void toast_quality_mode(void) {
 
 static void apply_quality(void) {
     if (g_quality_manual != 0) {
-        render_set_quality(g_quality_manual);
+        g_game_quality = g_quality_manual;
     }
+    render_set_quality(g_screen == SCREEN_PLAY ? g_game_quality
+                                               : UI_RENDER_QUALITY);
 }
 
 static void cycle_quality(void) {
@@ -242,13 +252,15 @@ static void cycle_quality(void) {
     } else {
         g_quality_manual = 0;
     }
-    if (g_quality_manual != 0) {
-        render_set_quality(g_quality_manual);
-    } else {
-        render_set_quality(QUALITY_BALANCED);
+    g_game_quality = g_quality_manual != 0 ? g_quality_manual
+                                          : QUALITY_BALANCED;
+    if (g_quality_manual == 0) {
         voxel_quality_controller_reset(&g_quality_controller);
     }
-    recreate_surface();
+    if (g_screen == SCREEN_PLAY) {
+        render_set_quality(g_game_quality);
+        recreate_surface();
+    }
     toast_quality_mode();
 }
 
@@ -274,11 +286,13 @@ static void update_quality(uint64_t duration_us) {
         &g_quality_controller, duration_us, g_buffer_wait_ema_us,
         (uint8_t)quality, (uint8_t)render_min_quality(), QUALITY_MAX);
     if (action == VOXEL_QUALITY_ACTION_LOWER_DETAIL) {
-        render_set_quality(next_higher_quality(quality));
+        g_game_quality = (uint8_t)next_higher_quality(quality);
+        render_set_quality(g_game_quality);
         recreate_surface();
         toast_quality();
     } else if (action == VOXEL_QUALITY_ACTION_HIGHER_DETAIL) {
-        render_set_quality(next_lower_quality(quality));
+        g_game_quality = (uint8_t)next_lower_quality(quality);
+        render_set_quality(g_game_quality);
         recreate_surface();
         toast_quality();
     }
@@ -503,11 +517,6 @@ static void request_window_snapshot(void) {
 
 /* --- menu, settings and save data --------------------------------------- */
 
-#define SCREEN_MENU 0u
-#define SCREEN_SETTINGS 1u
-#define SCREEN_PLAY 2u
-#define SCREEN_PAUSE 3u
-
 #define STORAGE_META_KEY "vx.meta"
 #define STORAGE_META_KEY_LEN 7
 #define STORAGE_META_GET_REQUEST UINT32_C(0x51)
@@ -528,10 +537,8 @@ static void request_window_snapshot(void) {
 
 static void release_finger(finger_t *finger);
 
-static uint8_t g_screen = SCREEN_MENU;
 static uint8_t g_has_save;
 static uint8_t g_game_started;
-static uint8_t g_settings_return = SCREEN_MENU;
 static uint8_t g_save_active;
 static uint8_t g_load_active;
 static int g_save_next;
@@ -551,6 +558,21 @@ static int16_t g_menu_press_x;
 static int16_t g_menu_press_y;
 static int16_t g_menu_press_travel;
 static uint64_t g_menu_press_us;
+
+static void set_screen(uint8_t screen) {
+    int target_quality = UI_RENDER_QUALITY;
+    if (g_screen == SCREEN_PLAY) {
+        g_game_quality = (uint8_t)render_quality();
+    }
+    g_screen = screen;
+    if (screen == SCREEN_PLAY) {
+        target_quality = g_game_quality;
+    }
+    if (target_quality != render_quality()) {
+        render_set_quality(target_quality);
+        recreate_surface();
+    }
+}
 
 static void save_preferences(void) {
     const uint8_t value = g_show_performance ? 1u : 0u;
@@ -618,7 +640,7 @@ static void start_new_game(void) {
     game_spawn_mobs(seed ^ 0xabcd1234u, &g_player);
     reset_runtime_state();
     g_game_started = 1;
-    g_screen = SCREEN_PLAY;
+    set_screen(SCREEN_PLAY);
     (void)render_frame();
 }
 
@@ -699,7 +721,7 @@ static void load_request_chunk(void) {
             game_spawn_mobs(game_seed() ^ 0xabcd1234u, &g_player);
             reset_runtime_state();
             g_game_started = 1;
-            g_screen = SCREEN_PLAY;
+            set_screen(SCREEN_PLAY);
             menu_toast("LOADED");
             (void)render_frame();
         } else {
@@ -749,25 +771,25 @@ static void menu_activate(int index) {
             load_start();
         } else if (index == 2) {
             g_settings_return = SCREEN_MENU;
-            g_screen = SCREEN_SETTINGS;
+            set_screen(SCREEN_SETTINGS);
             (void)render_frame();
         }
         return;
     }
     if (g_screen == SCREEN_PAUSE) {
         if (index == 0) {
-            g_screen = SCREEN_PLAY;
+            set_screen(SCREEN_PLAY);
             (void)render_frame();
         } else if (index == 1) {
             save_start();
             (void)render_frame();
         } else if (index == 2) {
             g_settings_return = SCREEN_PAUSE;
-            g_screen = SCREEN_SETTINGS;
+            set_screen(SCREEN_SETTINGS);
             (void)render_frame();
         } else if (index == 3) {
             save_start();
-            g_screen = SCREEN_MENU;
+            set_screen(SCREEN_MENU);
             (void)render_frame();
         }
         return;
@@ -788,7 +810,7 @@ static void menu_activate(int index) {
         } else if (index == 3 && g_has_save) {
             delete_save();
         } else if (index == 4) {
-            g_screen = g_settings_return;
+            set_screen(g_settings_return);
             (void)render_frame();
         }
     }
@@ -1295,7 +1317,7 @@ static void on_pointer_down(const pxa_ui_pointer_data_t *pointer) {
         if (hit_circle(x, y, g_layout.menu_x, g_layout.menu_y,
                        g_layout.menu_r)) {
             reset_runtime_state();
-            g_screen = SCREEN_PAUSE;
+            set_screen(SCREEN_PAUSE);
             (void)render_frame();
             return;
         }
@@ -1744,7 +1766,7 @@ static int render_frame(void) {
         menu.has_save = g_has_save;
         menu.has_game = g_game_started;
         menu.quality_manual = g_quality_manual;
-        menu.quality = (uint8_t)render_quality();
+        menu.quality = g_game_quality;
         menu.show_performance = g_show_performance;
         menu.seed = base + g_seed_counter * 2654435761u;
         menu.toast = g_menu_toast_until > g_now_ms ? g_menu_toast : NULL;
@@ -1823,6 +1845,8 @@ static void update_fps(uint64_t timestamp_us) {
 
 int32_t pxa_app_start(const uint8_t *config, uint32_t length) {
     pxa_ui_environment_t environment;
+    g_screen = SCREEN_MENU;
+    g_game_quality = QUALITY_BALANCED;
     if (pxa_ui_parse_start_environment(config, length, &environment) &&
         environment.width > 0 && environment.height > 0) {
         render_configure((int)environment.width, (int)environment.height);
@@ -1894,7 +1918,6 @@ int32_t pxa_app_start(const uint8_t *config, uint32_t length) {
     g_pad_pitch = 0.0F;
     g_pad_last_a_us = 0;
     g_sfx.state = VOXEL_SFX_OFF;
-    g_screen = SCREEN_MENU;
     g_has_save = 0;
     g_game_started = 0;
     g_save_active = 0;
