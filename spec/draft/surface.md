@@ -1,4 +1,4 @@
-# PXA Surface Service 0.2.0
+# PXA Surface Service 0.3.0
 
 Surface is the bulk-pixel path for emulators, video and other producers that
 already own complete frames. It is independent from the retained UI service.
@@ -8,7 +8,7 @@ the bounded control envelope.
 
 ## Service and resource
 
-The service ID is 16 and this version is 0.2.0. `PXA_SURFACE_CREATE`
+The service ID is 16 and this version is 0.3.0. `PXA_SURFACE_CREATE`
 returns a `PXA_RESOURCE_SURFACE` handle. The handle is both the Surface lifetime
 token and its byte-stream endpoint. Closing it removes the layer and eventually
 releases all buffers after an active presenter lease completes.
@@ -27,6 +27,9 @@ It returns `WOULD_BLOCK` when no producer buffer is free. Guests retry on a
 later clock/input event and must not spin inside one callback. Version 0.2 adds
 an optional GuestMapped RGB565 path that removes this per-frame pixel copy;
 the 0.1 Host-owned write path remains compatible.
+Version 0.3 adds an optional HostRaster RGB565 producer profile. It reuses the
+same Surface lifetime, layer, latest-frame and presenter rules rather than
+introducing another display service.
 
 ## Control messages
 
@@ -80,6 +83,53 @@ configured outside the frame loop. A Host without this profile returns
 `PXA_SURFACE_STATE_FLAG_UI_ALPHA_PLANE_ACTIVE` indicates that the Host currently
 has an alpha-bearing UI plane installed over the Surface.
 `PXA_SURFACE_STATE_FLAG_SUPPORTS_GUEST_MAPPED` advertises the mapped profile.
+`PXA_SURFACE_STATE_FLAG_SUPPORTS_HOST_RASTER` advertises the 0.3 producer
+profile. `PXA_SURFACE_STATE_FLAG_RASTER_TEXTURED_QUAD` and
+`PXA_SURFACE_STATE_FLAG_RASTER_ADDITIVE_SPRITE` advertise optional Raster
+commands. A Guest must query these bits and must not set an unadvertised command
+flag or required-capability bit.
+
+## HostRaster profile
+
+A Guest requests this profile with `PXA_SURFACE_FLAG_HOST_RASTER` on an RGB565
+Surface. `HOST_RASTER` and `GUEST_MAPPED` are mutually exclusive. The 0.1
+stream write, `QUEUE_FRAME`, mapped registration, acquire and present operations
+are invalid for this profile; they remain unchanged for older Surfaces.
+
+The Surface handle accepts three 0.3 `pxa_io` operations:
+
+```text
+PXA_SURFACE_IO_RASTER_UPLOAD     0x103
+PXA_SURFACE_IO_RASTER_SUBMIT     0x104
+PXA_SURFACE_IO_RASTER_TELEMETRY  0x105
+```
+
+Uploads are versioned records for one 256-entry little-endian RGB565 palette or
+an INDEX8 texture slot. A Host validates dimensions and payload length before
+atomically replacing a resource. The ESP profile freezes resources after the
+first accepted DrawList so a presenter can read them without a lifetime race.
+
+A DrawList has a versioned header, total byte count, required capability mask,
+command count, monotonically increasing frame ID and reserved flags. Version
+1 commands are clear RGB565, flat quad, INDEX8 textured quad and sprite. Screen
+and UV coordinates are signed 12.4 fixed point. The Host validates the complete
+list before making any part of it visible. Unknown versions, flags, commands,
+unavailable capabilities, missing resources and malformed lengths reject the
+whole list.
+
+`RASTER_SUBMIT` is an asynchronous latest-frame mailbox operation. The Runtime
+call stack may validate and copy the bounded DrawList, but must not rasterize a
+frame, lock LVGL, rotate pixels or wait for TE/SPI. A display-side consumer
+rasterizes the newest list into a free Host-owned RGB565 buffer. Replacing an
+unconsumed list increments `dropped` and `replaced`. At least three RGB565
+buffers are recommended so current, pending and writer ownership remain
+separate.
+
+The 88-byte telemetry record contains cumulative submitted frames, DrawList
+bytes, covered pixels, Host raster time, mailbox wait, presentation time and
+dropped frames, followed by command counters, rejected lists and last-frame
+byte/pixel/raster values. Simulator Hosts implement the same mailbox and
+front-buffer semantics, but simulator timing is not a device performance claim.
 
 ## GuestMapped profile
 
@@ -210,4 +260,5 @@ distinguishes opaque regions, alpha Surface composition and a currently active
 UI alpha plane.
 
 Multiple Surface layers and additional formats remain future extensions. The
-0.1 stream-and-queue path remains supported alongside the 0.2 mapped profile.
+0.1 stream-and-queue and 0.2 mapped paths remain supported alongside the 0.3
+HostRaster profile.
