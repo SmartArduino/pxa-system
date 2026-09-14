@@ -10,6 +10,7 @@ from pathlib import Path
 
 SEMANTIC_APPS = ("arcade", "lab", "wasi-lab", "weather")
 CANVAS_APPS = ("garden-guard", "plane-shooter")
+RASTER_SURFACE_APPS = ("maze-evil", "maze-spike", "voxel-craft")
 REQUIRED_THEME_TOKENS = (
     "PXA_UI_THEME_BACKGROUND",
     "PXA_UI_THEME_TEXT",
@@ -24,16 +25,19 @@ def main() -> int:
 
     package_dirs = sorted(path.parent for path in apps.glob("*/package.json"))
     found = {path.name for path in package_dirs}
-    expected = set(SEMANTIC_APPS + CANVAS_APPS)
+    expected = set(SEMANTIC_APPS + CANVAS_APPS + RASTER_SURFACE_APPS)
     if found != expected:
         raise SystemExit(
             "reference app set mismatch: " + ", ".join(sorted(found ^ expected))
         )
 
+    localized_apps = set(SEMANTIC_APPS + CANVAS_APPS)
     for app_dir in package_dirs:
         manifest = json.loads((app_dir / "package.json").read_text(encoding="utf-8"))
         if manifest.get("id") != f"pxa-{app_dir.name}":
             raise SystemExit(f"{app_dir}: package id must match its directory")
+        if app_dir.name not in localized_apps:
+            continue
         for catalog in ("messages.yaml", "zh-CN.yaml"):
             if not (app_dir / "i18n" / catalog).is_file():
                 raise SystemExit(f"{app_dir}: missing i18n/{catalog}")
@@ -52,6 +56,11 @@ def main() -> int:
         source = (apps / app_name / "main.c").read_text(encoding="utf-8")
         if "pxa_canvas_" not in source:
             raise SystemExit(f"{app_name}: expected an app-owned Canvas surface")
+
+    for app_name in RASTER_SURFACE_APPS:
+        source = (apps / app_name / "main.c").read_text(encoding="utf-8")
+        if "pxa_surface_" not in source:
+            raise SystemExit(f"{app_name}: expected an app-owned raster Surface")
 
     print("PXA reference UI theme and locale boundaries OK")
     return 0
