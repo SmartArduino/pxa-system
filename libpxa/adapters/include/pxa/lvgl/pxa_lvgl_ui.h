@@ -78,6 +78,9 @@ void pxa_lvgl_ui_reset(pxa_lvgl_ui_t *ui);
 void pxa_lvgl_ui_deinit(pxa_lvgl_ui_t *ui);
 bool pxa_lvgl_ui_alpha_plane(const pxa_lvgl_ui_t *ui,
                               pxa_lvgl_ui_alpha_plane_t *output);
+/* Valid only while event_callback is running. Pointer events preserve the
+ * LVGL input sample time instead of replacing it at the Host boundary. */
+uint64_t pxa_lvgl_ui_event_timestamp_us(const pxa_lvgl_ui_t *ui);
 
 #ifdef __cplusplus
 }

@@ -5,6 +5,7 @@
 #include <string.h>
 
 #include "lvgl.h"
+#include "src/indev/lv_indev_private.h"
 
 #define PXA_LVGL_UI_MAGIC UINT32_C(0x504c5632)
 #define PXA_LVGL_UI_ALIGNMENT ((size_t)16)
@@ -102,6 +103,7 @@ struct pxa_lvgl_ui {
     int32_t alpha_y;
     uint16_t alpha_width;
     uint16_t alpha_height;
+    uint64_t event_timestamp_us;
 };
 
 static void *ui_allocate(pxa_lvgl_ui_t *ui, size_t size) {
@@ -247,15 +249,35 @@ static const char *icon_text(uint32_t icon) {
     return icon < sizeof(icons) / sizeof(icons[0]) ? icons[icon] : "?";
 }
 
-static void emit_event(pxa_lvgl_ui_node_t *node,
+static uint64_t input_timestamp_us(const pxa_lvgl_ui_t *ui,
+                                   const lv_indev_t *input) {
+    uint64_t now_us;
+    uint64_t age_us;
+    uint32_t age_ms;
+    if (ui == NULL || ui->config.now_us == NULL) return 0;
+    now_us = ui->config.now_us(ui->config.callback_user_data);
+    if (input == NULL) return now_us;
+    age_ms = lv_tick_diff((uint32_t)(now_us / 1000u), input->timestamp);
+    /* Reject timestamps from a different clock domain or stale synthetic
+     * events. A real pointer sample reaches the Canvas in the same LVGL pass. */
+    if (age_ms > 1000u) return now_us;
+    age_us = (uint64_t)age_ms * 1000u;
+    return age_us <= now_us ? now_us - age_us : now_us;
+}
+
+static void emit_event(pxa_lvgl_ui_node_t *node, lv_indev_t *input,
                        pxa_ui_event_kind_t kind, uint16_t flags,
                        const void *value, size_t value_size) {
+    uint64_t previous_timestamp_us;
     if (node->ui->config.event_callback == NULL ||
         (node->event_mask & (UINT64_C(1) << (kind - 1u))) == 0)
         return;
+    previous_timestamp_us = node->ui->event_timestamp_us;
+    node->ui->event_timestamp_us = input_timestamp_us(node->ui, input);
     node->ui->config.event_callback(node->surface, node->id, kind, flags,
                                     value, value_size,
                                     node->ui->config.callback_user_data);
+    node->ui->event_timestamp_us = previous_timestamp_us;
 }
 
 static void on_widget_event(lv_event_t *event) {
@@ -267,7 +289,7 @@ static void on_widget_event(lv_event_t *event) {
     if (node->owner_command != NULL)
         node->owner_command->created = NULL;
     if (code == LV_EVENT_CLICKED) {
-        emit_event(node, PXA_UI_EVENT_ACTION,
+        emit_event(node, lv_event_get_indev(event), PXA_UI_EVENT_ACTION,
                    PXA_UI_EVENT_FLAG_RELIABLE, NULL, 0);
     } else if (code == LV_EVENT_VALUE_CHANGED) {
         if (node->type != PXA_UI_NODE_CONTROL) return;
@@ -277,12 +299,14 @@ static void on_widget_event(lv_event_t *event) {
             value = lv_slider_get_value(node->object);
         else
             return;
-        emit_event(node, PXA_UI_EVENT_VALUE_CHANGED, 0,
+        emit_event(node, lv_event_get_indev(event),
+                   PXA_UI_EVENT_VALUE_CHANGED, 0,
                    &value, sizeof(value));
     } else if (code == LV_EVENT_SCROLL) {
         int32_t scroll_y = lv_obj_get_scroll_y(node->object);
         value = canvas_logical_pixels(node->ui, scroll_y);
-        emit_event(node, PXA_UI_EVENT_SCROLL, 0, &value, sizeof(value));
+        emit_event(node, lv_event_get_indev(event), PXA_UI_EVENT_SCROLL, 0,
+                   &value, sizeof(value));
         if (node->type == PXA_UI_NODE_VIRTUAL_LIST &&
             node->item_extent > 0 && node->item_count != 0) {
             uint8_t range[8];
@@ -308,7 +332,8 @@ static void on_widget_event(lv_event_t *event) {
                 node->visible_count = count;
                 pxa_write_u32(range, first);
                 pxa_write_u32(range + 4, count);
-                emit_event(node, PXA_UI_EVENT_VISIBLE_RANGE, 0, range,
+                emit_event(node, lv_event_get_indev(event),
+                           PXA_UI_EVENT_VISIBLE_RANGE, 0, range,
                            sizeof(range));
             }
         }
@@ -1958,7 +1983,8 @@ static void on_canvas_pointer(lv_event_t *event) {
     pxa_write_u32(value + 8, (uint32_t)canvas_logical_pixels(
         node->ui, point.y - area.y1));
     flags = phase == 1 ? 0 : PXA_UI_EVENT_FLAG_RELIABLE;
-    emit_event(node, PXA_UI_EVENT_POINTER, flags, value, sizeof(value));
+    emit_event(node, input, PXA_UI_EVENT_POINTER, flags, value,
+               sizeof(value));
 }
 
 void pxa_lvgl_ui_theme_init(pxa_lvgl_ui_theme_t *theme) {
@@ -2073,6 +2099,12 @@ bool pxa_lvgl_ui_alpha_plane(const pxa_lvgl_ui_t *ui,
     output->width = ui->alpha_width;
     output->height = ui->alpha_height;
     return true;
+}
+
+uint64_t pxa_lvgl_ui_event_timestamp_us(const pxa_lvgl_ui_t *ui) {
+    return ui != NULL && ui->magic == PXA_LVGL_UI_MAGIC
+               ? ui->event_timestamp_us
+               : 0;
 }
 
 void pxa_lvgl_ui_deinit(pxa_lvgl_ui_t *ui) {

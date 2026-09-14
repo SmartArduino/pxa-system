@@ -27,8 +27,17 @@ typedef struct {
     size_t size;
 } bytes_t;
 
+typedef struct {
+    lv_point_t point;
+    uint32_t timestamp_ms;
+    int pressed;
+} pointer_input_t;
+
 static pxa_runtime_t *g_runtime;
 static pxa_component_t g_component;
+static pxa_lvgl_ui_t *g_adapter;
+static uint64_t g_now_us;
+static uint64_t g_event_timestamp_us;
 static unsigned g_events;
 static unsigned g_asset_resolves;
 static unsigned g_asset_releases;
@@ -73,12 +82,27 @@ static pxa_status_t sync_execute(
     return PXA_STATUS_OK;
 }
 
+static uint64_t test_now_us(void *user_data) {
+    (void)user_data;
+    return g_now_us;
+}
+
+static void read_pointer(lv_indev_t *input, lv_indev_data_t *data) {
+    pointer_input_t *state = (pointer_input_t *)lv_indev_get_user_data(input);
+    assert(state != NULL && data != NULL);
+    data->point = state->point;
+    data->state = state->pressed ? LV_INDEV_STATE_PRESSED
+                                 : LV_INDEV_STATE_RELEASED;
+    data->timestamp = state->timestamp_ms;
+}
+
 static void on_event(uint32_t surface, uint32_t node,
                      pxa_ui_event_kind_t kind, uint16_t flags,
                      const void *value, size_t value_size, void *user_data) {
     (void)flags;
     (void)user_data;
     ++g_events;
+    g_event_timestamp_us = pxa_lvgl_ui_event_timestamp_us(g_adapter);
     g_event_surface = surface;
     g_event_node = node;
     g_event_kind = kind;
@@ -234,6 +258,7 @@ static lv_obj_t *find_label(lv_obj_t *object, const char *text) {
 static void build_initial_surface(void) {
     bytes_t stream = {{0}, 0};
     uint8_t event_mask[8];
+    uint8_t pointer_mask[8];
     uint8_t range_mask[8];
     uint8_t item_count[4];
     uint8_t item_extent[4];
@@ -248,6 +273,8 @@ static void build_initial_surface(void) {
     static const char direct_button[] = "Direct";
     pxa_write_u64(event_mask,
                   UINT64_C(1) << (PXA_UI_EVENT_ACTION - 1u));
+    pxa_write_u64(pointer_mask,
+                  UINT64_C(1) << (PXA_UI_EVENT_POINTER - 1u));
     pxa_write_u64(range_mask,
                   UINT64_C(1) << (PXA_UI_EVENT_VISIBLE_RANGE - 1u));
     pxa_write_u32(item_count, 100);
@@ -282,6 +309,8 @@ static void build_initial_surface(void) {
                  canvas_size, sizeof(canvas_size));
     set_property(&stream, 5, PXA_UI_PROPERTY_HEIGHT,
                  canvas_size, sizeof(canvas_size));
+    set_property(&stream, 5, PXA_UI_PROPERTY_EVENT_MASK,
+                 pointer_mask, sizeof(pointer_mask));
     set_property(&stream, 6, PXA_UI_PROPERTY_WIDTH, fill, sizeof(fill));
     set_property(&stream, 6, PXA_UI_PROPERTY_HEIGHT,
                  canvas_size, sizeof(canvas_size));
@@ -429,6 +458,8 @@ int main(void) {
     lv_obj_t *icon;
     lv_obj_t *list;
     lv_obj_t *canvas;
+    lv_indev_t *pointer_input;
+    pointer_input_t pointer_state = {{0, 0}, 0, 0};
     lv_area_t canvas_area;
     size_t size;
     size_t canvas_resident;
@@ -467,6 +498,7 @@ int main(void) {
     adapter_config.resolve_asset = resolve_asset;
     adapter_config.release_asset = release_asset;
     adapter_config.event_callback = on_event;
+    adapter_config.now_us = test_now_us;
     adapter_config.primary_environment.surface = PXA_UI_PRIMARY_SURFACE;
     adapter_config.primary_environment.width = 320;
     adapter_config.primary_environment.height = 240;
@@ -481,6 +513,7 @@ int main(void) {
                                pxa_lvgl_ui_workspace_size(),
                                &adapter_config, &adapter,
                                &backend) == PXA_STATUS_OK);
+    g_adapter = adapter;
 
     assert(pxa_component_create(g_runtime, 1, &g_component) == PXA_STATUS_OK);
     assert(pxa_ui_bind(service, g_component, &backend) == PXA_STATUS_OK);
@@ -508,9 +541,12 @@ int main(void) {
            &lv_font_montserrat_20);
     lv_obj_send_event(root, LV_EVENT_CLICKED, NULL);
     assert(g_events == 0);
+    g_now_us = UINT64_C(123456000);
     lv_obj_send_event(button, LV_EVENT_CLICKED, NULL);
     assert(g_events == 1 && g_event_surface == PXA_UI_PRIMARY_SURFACE &&
-           g_event_node == 4 && g_event_kind == PXA_UI_EVENT_ACTION);
+           g_event_node == 4 && g_event_kind == PXA_UI_EVENT_ACTION &&
+           g_event_timestamp_us == g_now_us);
+    assert(pxa_lvgl_ui_event_timestamp_us(adapter) == 0);
     list = lv_obj_get_child(lv_obj_get_child(root, 0), 3);
     assert(list != NULL);
     lv_obj_scroll_to_y(list, 100, LV_ANIM_OFF);
@@ -535,6 +571,24 @@ int main(void) {
     lv_obj_update_layout(root);
     lv_obj_get_coords(canvas, &canvas_area);
     lv_obj_move_foreground(canvas);
+    pointer_input = lv_indev_create();
+    assert(pointer_input != NULL);
+    lv_indev_set_type(pointer_input, LV_INDEV_TYPE_POINTER);
+    lv_indev_set_display(pointer_input, g_test_display);
+    lv_indev_set_user_data(pointer_input, &pointer_state);
+    lv_indev_set_read_cb(pointer_input, read_pointer);
+    pointer_state.point.x = canvas_area.x1 + 2;
+    pointer_state.point.y = canvas_area.y1 + 2;
+    pointer_state.pressed = 1;
+    g_now_us = UINT64_C(200000000);
+    pointer_state.timestamp_ms = (uint32_t)(g_now_us / 1000u) - 7u;
+    lv_indev_read(pointer_input);
+    assert(g_event_kind == PXA_UI_EVENT_POINTER &&
+           g_event_timestamp_us == g_now_us - 7000u);
+    pointer_state.pressed = 0;
+    pointer_state.timestamp_ms = (uint32_t)(g_now_us / 1000u);
+    lv_indev_read(pointer_input);
+    lv_indev_delete(pointer_input);
     g_test_rgb565_x = canvas_area.x1 + 50;
     g_test_rgb565_y = canvas_area.y1 + 20;
     g_test_rgb565_pixels = 0;
