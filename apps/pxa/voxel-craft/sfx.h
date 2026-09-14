@@ -9,6 +9,7 @@
 #define VOXEL_SFX_GRAPH_REQUEST UINT32_C(0x56435803)
 #define VOXEL_SFX_SAMPLE_RATE 16000u
 #define VOXEL_SFX_GRAPH_GAIN_DB_Q8 (-320)
+#define VOXEL_BGM_GAIN_DB_Q8 (-14 * 256)
 
 enum {
     VOXEL_SFX_OFF = 0,
@@ -33,6 +34,8 @@ typedef struct {
     uint32_t permission_handle;
     uint32_t session_handle;
     uint8_t state;
+    uint8_t bgm_pending;
+    uint8_t bgm_active;
     uint8_t payload[96];
 } voxel_sfx_t;
 
@@ -105,6 +108,7 @@ static inline int voxel_sfx_handle_event(voxel_sfx_t *sfx,
             sfx->state = VOXEL_SFX_UNAVAILABLE;
         } else {
             sfx->state = VOXEL_SFX_READY;
+            sfx->bgm_pending = 1;
         }
         return 1;
     }
@@ -137,8 +141,20 @@ static inline void voxel_sfx_play(voxel_sfx_t *sfx, uint8_t kind) {
 
 static inline void voxel_sfx_tick(voxel_sfx_t *sfx,
                                   const pxa_event_t *event) {
-    (void)sfx;
     (void)event;
+    if (sfx != NULL && sfx->state == VOXEL_SFX_READY &&
+        sfx->bgm_pending) {
+        static const char path[] = "assets/bgm.ogg";
+        const int32_t result = pxa_audio_play_asset(
+            sfx->session_handle, path, sizeof(path) - 1u, 1,
+            VOXEL_BGM_GAIN_DB_Q8, sfx->payload, sizeof(sfx->payload));
+        if (result > 0) {
+            sfx->bgm_pending = 0;
+            sfx->bgm_active = 1;
+        } else if (result != PXA_STATUS_WOULD_BLOCK) {
+            sfx->bgm_pending = 0;
+        }
+    }
 }
 
 #endif

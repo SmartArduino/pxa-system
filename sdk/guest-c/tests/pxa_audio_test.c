@@ -8,7 +8,7 @@ static uint32_t captured_length;
 static uint32_t io_handle;
 static uint32_t io_operation;
 static uint32_t io_length;
-static uint8_t io_data[8];
+static uint8_t io_data[64];
 
 static void write_u16(uint8_t *output, uint16_t value) {
     output[0] = (uint8_t)value;
@@ -67,6 +67,29 @@ int main(void) {
            io_data[2] == 80 && io_data[3] == 0 && io_data[4] == 0 &&
            io_data[5] == 0xfa && io_data[6] == PXA_AUDIO_TONE_TRIANGLE &&
            io_data[7] == 0);
+    {
+        static const char path[] = "audio/music.ogg";
+        uint8_t command[32];
+        assert(pxa_audio_play_asset(99, path, sizeof(path) - 1u, 1,
+                                    -12 * 256, command,
+                                    sizeof(command)) ==
+               (int32_t)(8 + sizeof(path) - 1u));
+        assert(io_handle == 99 && io_operation == PXA_AUDIO_IO_PLAY_ASSET &&
+               io_length == 8 + sizeof(path) - 1u && io_data[0] == 15 &&
+               io_data[2] == 0 && io_data[3] == 0xf4 &&
+               io_data[4] == PXA_AUDIO_ASSET_LOOP &&
+               memcmp(io_data + 8, path, sizeof(path) - 1u) == 0);
+        assert(pxa_audio_play_asset(99, path, sizeof(path) - 1u, 0, 1,
+                                    command, sizeof(command)) ==
+               PXA_STATUS_INVALID_ARGUMENT);
+    }
+    assert(pxa_audio_control_asset(99, PXA_AUDIO_ASSET_PAUSE, 0) == 4);
+    assert(io_operation == PXA_AUDIO_IO_CONTROL_ASSET &&
+           io_data[0] == PXA_AUDIO_ASSET_PAUSE);
+    assert(pxa_audio_control_asset(99, PXA_AUDIO_ASSET_SET_GAIN,
+                                   -18 * 256) == 4);
+    assert(io_data[0] == PXA_AUDIO_ASSET_SET_GAIN && io_data[2] == 0 &&
+           io_data[3] == 0xee);
     assert(pxa_parse_event(opened, sizeof(opened), &event));
     assert(pxa_audio_parse_open(&event, &result));
     assert(result.session_handle == 9 && result.sample_rate == 16000 && result.frame_ms == 20);

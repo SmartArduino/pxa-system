@@ -1,11 +1,11 @@
 {
-  "schema": "pxa-audio-spec-0.3",
+  "schema": "pxa-audio-spec-0.4",
   "status": "draft",
   "service": {
     "name": "audio",
     "id": 10,
     "major": 0,
-    "minor": 3,
+    "minor": 4,
     "patch": 0
   },
   "opcodes": [
@@ -51,6 +51,20 @@
       "payload": "frequency-hz:u16|duration-ms:u16|gain-db-q8:i16|waveform:u8|reserved:u8",
       "result": "payload-size-or-status",
       "since": "0.3"
+    },
+    {
+      "name": "play-asset",
+      "id": 257,
+      "payload": "path-size:u16|gain-db-q8:i16|flags:u8|reserved:3*u8|package-path:bytes",
+      "result": "payload-size-or-status",
+      "since": "0.4"
+    },
+    {
+      "name": "control-asset",
+      "id": 258,
+      "payload": "action:u8|reserved:u8|gain-db-q8:i16",
+      "result": "payload-size-or-status",
+      "since": "0.4"
     }
   ],
   "record_tags": [
@@ -166,5 +180,5 @@
     "min_frame_ms": 5,
     "max_frame_ms": 120
   },
-  "protocol_version": "0.3.0"
+  "protocol_version": "0.4.0"
 }

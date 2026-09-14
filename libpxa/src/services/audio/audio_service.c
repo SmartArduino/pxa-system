@@ -330,6 +330,52 @@ static int32_t audio_stream_io(void *context, uint32_t operation,
             &tone));
         return status == PXA_STATUS_OK ? (int32_t)size : status;
     }
+    if (operation == PXA_AUDIO_IO_PLAY_ASSET) {
+        pxa_audio_asset_t asset;
+        uint16_t path_size;
+        if (data == NULL || size < 9 ||
+            session->service->backend.play_asset == NULL) {
+            return data == NULL || size < 9 ? PXA_STATUS_INVALID_ARGUMENT
+                                            : PXA_STATUS_UNSUPPORTED;
+        }
+        path_size = pxa_read_u16(data);
+        asset.gain_db_q8 = read_i16(data + 2);
+        asset.flags = data[4];
+        asset.path = data + 8;
+        asset.path_size = path_size;
+        if ((size_t)path_size != size - 8u || path_size == 0 ||
+            data[5] != 0 || data[6] != 0 || data[7] != 0 ||
+            (asset.flags & ~PXA_AUDIO_ASSET_LOOP) != 0 ||
+            asset.gain_db_q8 > 0 || asset.gain_db_q8 < -60 * 256) {
+            return PXA_STATUS_INVALID_ARGUMENT;
+        }
+        status = pxa_status_normalize(session->service->backend.play_asset(
+            session->service->backend.context, session->provider_session,
+            &asset));
+        return status == PXA_STATUS_OK ? (int32_t)size : status;
+    }
+    if (operation == PXA_AUDIO_IO_CONTROL_ASSET) {
+        pxa_audio_asset_control_t control;
+        if (data == NULL || size != 4 ||
+            session->service->backend.control_asset == NULL) {
+            return data == NULL || size != 4 ? PXA_STATUS_INVALID_ARGUMENT
+                                             : PXA_STATUS_UNSUPPORTED;
+        }
+        control.action = data[0];
+        control.gain_db_q8 = read_i16(data + 2);
+        if (data[1] != 0 || control.action < PXA_AUDIO_ASSET_PAUSE ||
+            control.action > PXA_AUDIO_ASSET_SET_GAIN ||
+            (control.action == PXA_AUDIO_ASSET_SET_GAIN
+                 ? (control.gain_db_q8 < -60 * 256 ||
+                    control.gain_db_q8 > 0)
+                 : control.gain_db_q8 != 0)) {
+            return PXA_STATUS_INVALID_ARGUMENT;
+        }
+        status = pxa_status_normalize(session->service->backend.control_asset(
+            session->service->backend.context, session->provider_session,
+            &control));
+        return status == PXA_STATUS_OK ? (int32_t)size : status;
+    }
     if (operation != PXA_IO_WRITE) return PXA_STATUS_UNSUPPORTED;
     if (size == 0) return 0;
     sample_bytes = (size_t)session->format.channels * 2u;

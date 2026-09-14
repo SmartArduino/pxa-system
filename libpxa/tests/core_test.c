@@ -136,6 +136,8 @@ typedef struct {
     unsigned commits;
     unsigned submits;
     unsigned tones;
+    unsigned assets;
+    unsigned asset_controls;
     unsigned queries;
     unsigned flushes;
     unsigned closes;
@@ -929,6 +931,31 @@ static pxa_status_t audio_play_tone(void *context,
            tone->gain_db_q8 == -6 * 256 &&
            tone->waveform == PXA_AUDIO_TONE_TRIANGLE);
     backend->tones++;
+    return PXA_STATUS_OK;
+}
+
+static pxa_status_t audio_play_asset(void *context,
+                                     uint64_t provider_session,
+                                     const pxa_audio_asset_t *asset) {
+    static const uint8_t path[] = "audio/music.ogg";
+    test_audio_backend_t *backend = (test_audio_backend_t *)context;
+    assert(provider_session == backend->session && asset != NULL &&
+           asset->path_size == sizeof(path) - 1u &&
+           memcmp(asset->path, path, sizeof(path) - 1u) == 0 &&
+           asset->gain_db_q8 == -12 * 256 &&
+           asset->flags == PXA_AUDIO_ASSET_LOOP);
+    backend->assets++;
+    return PXA_STATUS_OK;
+}
+
+static pxa_status_t audio_control_asset(
+    void *context, uint64_t provider_session,
+    const pxa_audio_asset_control_t *control) {
+    test_audio_backend_t *backend = (test_audio_backend_t *)context;
+    assert(provider_session == backend->session && control != NULL &&
+           control->action == PXA_AUDIO_ASSET_SET_GAIN &&
+           control->gain_db_q8 == -18 * 256);
+    backend->asset_controls++;
     return PXA_STATUS_OK;
 }
 
@@ -4177,6 +4204,8 @@ static void test_audio_service(void) {
     audio_config.backend.query = audio_query;
     audio_config.backend.flush = audio_flush;
     audio_config.backend.play_tone = audio_play_tone;
+    audio_config.backend.play_asset = audio_play_asset;
+    audio_config.backend.control_asset = audio_control_asset;
     audio_config.backend.close = audio_close;
     audio_config.permissions = permission;
     audio_size = pxa_audio_service_workspace_size(&audio_config);
@@ -4300,6 +4329,32 @@ static void test_audio_service(void) {
         assert(dispatch_io(test.runtime, component, reused_session_handle,
                            PXA_AUDIO_IO_PLAY_TONE, tone, sizeof(tone)) ==
                PXA_STATUS_INVALID_ARGUMENT);
+    }
+    {
+        static const uint8_t path[] = "audio/music.ogg";
+        uint8_t asset[8 + sizeof(path) - 1u] = {
+            (uint8_t)(sizeof(path) - 1u), 0, 0, 0xf4,
+            PXA_AUDIO_ASSET_LOOP, 0, 0, 0};
+        memcpy(asset + 8, path, sizeof(path) - 1u);
+        assert(dispatch_io(test.runtime, component, reused_session_handle,
+                           PXA_AUDIO_IO_PLAY_ASSET, asset, sizeof(asset)) ==
+               (int32_t)sizeof(asset));
+        assert(backend.assets == 1);
+        asset[5] = 1;
+        assert(dispatch_io(test.runtime, component, reused_session_handle,
+                           PXA_AUDIO_IO_PLAY_ASSET, asset, sizeof(asset)) ==
+               PXA_STATUS_INVALID_ARGUMENT);
+    }
+    {
+        uint8_t control[] = {PXA_AUDIO_ASSET_SET_GAIN, 0, 0, 0xee};
+        assert(dispatch_io(test.runtime, component, reused_session_handle,
+                           PXA_AUDIO_IO_CONTROL_ASSET, control,
+                           sizeof(control)) == (int32_t)sizeof(control));
+        assert(backend.asset_controls == 1);
+        control[0] = PXA_AUDIO_ASSET_PAUSE;
+        assert(dispatch_io(test.runtime, component, reused_session_handle,
+                           PXA_AUDIO_IO_CONTROL_ASSET, control,
+                           sizeof(control)) == PXA_STATUS_INVALID_ARGUMENT);
     }
 
     command_size = make_audio_session_command(

@@ -9,10 +9,17 @@
 #define PXA_AUDIO_QUERY_STATE 3u
 #define PXA_AUDIO_FLUSH 4u
 #define PXA_AUDIO_IO_PLAY_TONE 0x100u
+#define PXA_AUDIO_IO_PLAY_ASSET 0x101u
+#define PXA_AUDIO_IO_CONTROL_ASSET 0x102u
 #define PXA_AUDIO_TONE_SINE 0u
 #define PXA_AUDIO_TONE_SQUARE 1u
 #define PXA_AUDIO_TONE_TRIANGLE 2u
 #define PXA_AUDIO_TONE_NOISE 3u
+#define PXA_AUDIO_ASSET_LOOP 1u
+#define PXA_AUDIO_ASSET_PAUSE 1u
+#define PXA_AUDIO_ASSET_RESUME 2u
+#define PXA_AUDIO_ASSET_STOP 3u
+#define PXA_AUDIO_ASSET_SET_GAIN 4u
 
 #define PXA_AUDIO_PERMISSION_HANDLE 1u
 #define PXA_AUDIO_USAGE 2u
@@ -178,6 +185,52 @@ static inline int32_t pxa_audio_play_tone(uint32_t session_handle,
     command[6] = waveform;
     command[7] = 0;
     return pxa_io(session_handle, PXA_AUDIO_IO_PLAY_TONE, command,
+                  sizeof(command));
+}
+
+static inline int32_t pxa_audio_play_asset(uint32_t session_handle,
+                                           const char *path,
+                                           uint16_t path_size, int loop,
+                                           int16_t gain_db_q8,
+                                           uint8_t *command,
+                                           size_t command_capacity) {
+    size_t size = (size_t)path_size + 8u;
+    uint16_t index;
+    if (session_handle == 0 || path == NULL || path_size == 0 ||
+        command == NULL || command_capacity < size ||
+        gain_db_q8 > 0 || gain_db_q8 < -60 * 256) {
+        return PXA_STATUS_INVALID_ARGUMENT;
+    }
+    command[0] = (uint8_t)path_size;
+    command[1] = (uint8_t)(path_size >> 8);
+    command[2] = (uint8_t)gain_db_q8;
+    command[3] = (uint8_t)((uint16_t)gain_db_q8 >> 8);
+    command[4] = loop ? PXA_AUDIO_ASSET_LOOP : 0;
+    command[5] = 0;
+    command[6] = 0;
+    command[7] = 0;
+    for (index = 0; index < path_size; ++index)
+        command[8u + index] = (uint8_t)path[index];
+    return pxa_io(session_handle, PXA_AUDIO_IO_PLAY_ASSET, command,
+                  (uint32_t)size);
+}
+
+static inline int32_t pxa_audio_control_asset(uint32_t session_handle,
+                                              uint8_t action,
+                                              int16_t gain_db_q8) {
+    uint8_t command[4];
+    if (session_handle == 0 || action < PXA_AUDIO_ASSET_PAUSE ||
+        action > PXA_AUDIO_ASSET_SET_GAIN ||
+        (action == PXA_AUDIO_ASSET_SET_GAIN &&
+         (gain_db_q8 > 0 || gain_db_q8 < -60 * 256)) ||
+        (action != PXA_AUDIO_ASSET_SET_GAIN && gain_db_q8 != 0)) {
+        return PXA_STATUS_INVALID_ARGUMENT;
+    }
+    command[0] = action;
+    command[1] = 0;
+    command[2] = (uint8_t)gain_db_q8;
+    command[3] = (uint8_t)((uint16_t)gain_db_q8 >> 8);
+    return pxa_io(session_handle, PXA_AUDIO_IO_CONTROL_ASSET, command,
                   sizeof(command));
 }
 

@@ -12,7 +12,7 @@ extern "C" {
 
 #define PXA_AUDIO_SERVICE_ID UINT16_C(10)
 #define PXA_AUDIO_SERVICE_MAJOR UINT16_C(0)
-#define PXA_AUDIO_SERVICE_MINOR UINT16_C(3)
+#define PXA_AUDIO_SERVICE_MINOR UINT16_C(4)
 #define PXA_AUDIO_SERVICE_PATCH UINT16_C(0)
 #define PXA_AUDIO_OPEN_SESSION UINT16_C(1)
 #define PXA_AUDIO_COMMIT_GRAPH UINT16_C(2)
@@ -22,10 +22,17 @@ extern "C" {
 #define PXA_AUDIO_ROUTE_SPEAKER UINT16_C(1)
 #define PXA_AUDIO_MAX_EQ_BANDS UINT8_C(5)
 #define PXA_AUDIO_IO_PLAY_TONE UINT32_C(0x100)
+#define PXA_AUDIO_IO_PLAY_ASSET UINT32_C(0x101)
+#define PXA_AUDIO_IO_CONTROL_ASSET UINT32_C(0x102)
 #define PXA_AUDIO_TONE_SINE UINT8_C(0)
 #define PXA_AUDIO_TONE_SQUARE UINT8_C(1)
 #define PXA_AUDIO_TONE_TRIANGLE UINT8_C(2)
 #define PXA_AUDIO_TONE_NOISE UINT8_C(3)
+#define PXA_AUDIO_ASSET_LOOP UINT8_C(1)
+#define PXA_AUDIO_ASSET_PAUSE UINT8_C(1)
+#define PXA_AUDIO_ASSET_RESUME UINT8_C(2)
+#define PXA_AUDIO_ASSET_STOP UINT8_C(3)
+#define PXA_AUDIO_ASSET_SET_GAIN UINT8_C(4)
 
 typedef struct {
     uint32_t sample_rate;
@@ -62,6 +69,18 @@ typedef struct {
     uint8_t waveform;
 } pxa_audio_tone_t;
 
+typedef struct {
+    const uint8_t *path;
+    size_t path_size;
+    int16_t gain_db_q8;
+    uint8_t flags;
+} pxa_audio_asset_t;
+
+typedef struct {
+    int16_t gain_db_q8;
+    uint8_t action;
+} pxa_audio_asset_control_t;
+
 typedef pxa_status_t (*pxa_audio_open_fn)(
     void *context, uint16_t usage, pxa_audio_format_t *format,
     uint64_t *provider_session);
@@ -74,6 +93,12 @@ typedef pxa_status_t (*pxa_audio_submit_fn)(
 typedef pxa_status_t (*pxa_audio_play_tone_fn)(
     void *context, uint64_t provider_session,
     const pxa_audio_tone_t *tone);
+typedef pxa_status_t (*pxa_audio_play_asset_fn)(
+    void *context, uint64_t provider_session,
+    const pxa_audio_asset_t *asset);
+typedef pxa_status_t (*pxa_audio_control_asset_fn)(
+    void *context, uint64_t provider_session,
+    const pxa_audio_asset_control_t *control);
 typedef pxa_status_t (*pxa_audio_query_fn)(
     void *context, uint64_t provider_session, pxa_audio_state_t *state);
 typedef pxa_status_t (*pxa_audio_flush_fn)(
@@ -91,6 +116,8 @@ typedef struct {
     pxa_audio_query_fn query;
     pxa_audio_flush_fn flush;
     pxa_audio_play_tone_fn play_tone;
+    pxa_audio_play_asset_fn play_asset;
+    pxa_audio_control_asset_fn control_asset;
 } pxa_audio_backend_t;
 
 typedef struct {
