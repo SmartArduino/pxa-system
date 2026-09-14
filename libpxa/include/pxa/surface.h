@@ -41,7 +41,9 @@ extern "C" {
 
 /* Surface-specific pxa_io operations. REGISTER retains the validated Guest
  * address for the Surface lifetime, so it is only supported by runtimes whose
- * linear-memory base is pinned. ACQUIRE and PRESENT use the fixed records
+ * linear-memory base is pinned. PXA_SURFACE_BUFFER_ALIGNMENT applies to the
+ * Guest linear-memory offset; the translated native address only needs the
+ * pixel format's natural alignment. ACQUIRE and PRESENT use the fixed records
  * below and never copy frame pixels. */
 #define PXA_SURFACE_IO_REGISTER_BUFFERS UINT32_C(0x100)
 #define PXA_SURFACE_IO_ACQUIRE UINT32_C(0x101)
