@@ -435,10 +435,6 @@ static int initialize_input_surface(void) {
 static int request_surface_create(void) {
     /* GuestMapped frames use the current internal quality resolution. The
      * Host performs nearest upscale and panel rotation in one native pass. */
-    if (g_sfx.state == VOXEL_SFX_WAIT_PERMISSION) {
-        g_surface_start_pending = 1;
-        return 1;
-    }
     if (g_surface_create_pending || g_surface_handle != 0 ||
         g_layout.view_w <= 0 || g_layout.view_h <= 0) {
         return 0;
@@ -1955,10 +1951,12 @@ int32_t pxa_app_start(const uint8_t *config, uint32_t length) {
     if (!initialize_input_surface()) {
         return PXA_STATUS_INTERNAL;
     }
-    voxel_sfx_start(&g_sfx, g_packet, sizeof(g_packet));
     if (!request_surface_create()) {
         return PXA_STATUS_INTERNAL;
     }
+    /* Audio is optional and may open a runtime modal. The Host modal barrier
+     * keeps this already-requested Surface behind trusted UI until dismissal. */
+    voxel_sfx_start(&g_sfx, g_packet, sizeof(g_packet));
     (void)pxa_storage_get(STORAGE_PREFS_GET_REQUEST, STORAGE_PREFS_KEY,
                           STORAGE_PREFS_KEY_LEN, g_storage_payload,
                           sizeof(g_storage_payload), g_packet,
@@ -1979,8 +1977,7 @@ int32_t pxa_app_on_event(const uint8_t *event, uint32_t length) {
         return PXA_EVENT_UNHANDLED;
     }
     if (voxel_sfx_handle_event(&g_sfx, &parsed, g_packet, sizeof(g_packet))) {
-        if (g_surface_start_pending &&
-            g_sfx.state != VOXEL_SFX_WAIT_PERMISSION) {
+        if (g_surface_start_pending) {
             (void)request_surface_create();
         }
         return PXA_EVENT_HANDLED;
@@ -2066,8 +2063,7 @@ int32_t pxa_app_on_event(const uint8_t *event, uint32_t length) {
         float move_x;
         float move_z;
         voxel_sfx_tick(&g_sfx, &parsed);
-        if (g_surface_start_pending &&
-            g_sfx.state != VOXEL_SFX_WAIT_PERMISSION) {
+        if (g_surface_start_pending) {
             (void)request_surface_create();
         }
         if (g_bootstrap_requests_pending) {
