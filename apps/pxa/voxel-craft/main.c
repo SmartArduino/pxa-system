@@ -44,6 +44,7 @@
 #define PAD_TURN_RATE 2.2F
 #define PAD_PITCH_RATE 1.6F
 #define SURFACE_BUFFER_COUNT 3u
+#define SURFACE_RETRY_TICKS 15u
 #define FRAME_PIXELS_MAX RENDER_SCENE_PIXELS_MAX
 #define SCREEN_MENU 0u
 #define SCREEN_SETTINGS 1u
@@ -90,6 +91,7 @@ static uint16_t g_surface_height;
 static uint64_t g_frame_id;
 static uint8_t g_surface_create_pending;
 static uint8_t g_surface_start_pending;
+static uint8_t g_surface_retry_ticks;
 static voxel_surface_ownership_t g_surface_ownership;
 static uint8_t g_input_initialized;
 static player_t g_player;
@@ -445,11 +447,26 @@ static int request_surface_create(void) {
             SURFACE_CREATE_REQUEST, g_surface_width, g_surface_height,
             SURFACE_BUFFER_COUNT, 1, g_packet, sizeof(g_packet))) {
         g_surface_start_pending = 1;
+        g_surface_retry_ticks = SURFACE_RETRY_TICKS;
         return 0;
     }
     g_surface_start_pending = 0;
     g_surface_create_pending = 1;
     return 1;
+}
+
+static void schedule_surface_retry(void) {
+    g_surface_start_pending = 1;
+    g_surface_retry_ticks = SURFACE_RETRY_TICKS;
+}
+
+static void retry_surface_on_tick(void) {
+    if (!g_surface_start_pending) return;
+    if (g_surface_retry_ticks != 0) {
+        --g_surface_retry_ticks;
+        return;
+    }
+    (void)request_surface_create();
 }
 
 static void reset_surface_ownership(void) {
@@ -1795,7 +1812,7 @@ static int handle_surface_create(const pxa_event_t *event) {
         created.stride_bytes != expected_stride ||
         created.frame_bytes != expected_bytes ||
         created.buffer_count != SURFACE_BUFFER_COUNT) {
-        g_surface_start_pending = 1;
+        schedule_surface_retry();
         return 1;
     }
     if (g_surface_width != (uint16_t)render_scene_width() ||
@@ -1814,7 +1831,7 @@ static int handle_surface_create(const pxa_event_t *event) {
         (int32_t)(created.frame_bytes * created.buffer_count)) {
         (void)pxa_close_handle(g_surface_handle);
         g_surface_handle = 0;
-        g_surface_start_pending = 1;
+        schedule_surface_retry();
         return 1;
     }
     if (!pxa_surface_configure_layer(
@@ -1823,9 +1840,10 @@ static int handle_surface_create(const pxa_event_t *event) {
             g_packet, sizeof(g_packet))) {
         (void)pxa_close_handle(g_surface_handle);
         g_surface_handle = 0;
-        g_surface_start_pending = 1;
+        schedule_surface_retry();
         return 1;
     }
+    g_surface_retry_ticks = 0;
     (void)render_frame();
     return 1;
 }
@@ -1869,6 +1887,7 @@ int32_t pxa_app_start(const uint8_t *config, uint32_t length) {
     g_frame_id = 0;
     g_surface_create_pending = 0;
     g_surface_start_pending = 0;
+    g_surface_retry_ticks = 0;
     reset_surface_ownership();
     g_input_initialized = 0;
     g_last_tick_us = 0;
@@ -1977,9 +1996,6 @@ int32_t pxa_app_on_event(const uint8_t *event, uint32_t length) {
         return PXA_EVENT_UNHANDLED;
     }
     if (voxel_sfx_handle_event(&g_sfx, &parsed, g_packet, sizeof(g_packet))) {
-        if (g_surface_start_pending) {
-            (void)request_surface_create();
-        }
         return PXA_EVENT_HANDLED;
     }
     if (handle_surface_create(&parsed)) {
@@ -2063,9 +2079,7 @@ int32_t pxa_app_on_event(const uint8_t *event, uint32_t length) {
         float move_x;
         float move_z;
         voxel_sfx_tick(&g_sfx, &parsed);
-        if (g_surface_start_pending) {
-            (void)request_surface_create();
-        }
+        retry_surface_on_tick();
         if (g_bootstrap_requests_pending) {
             /* Async completion events cannot be delivered until start has
              * returned and the component is RUNNING. The first timer event is
@@ -2179,4 +2193,5 @@ void pxa_app_stop(uint32_t reason) {
     g_surface_handle = 0;
     g_surface_create_pending = 0;
     g_surface_start_pending = 0;
+    g_surface_retry_ticks = 0;
 }
