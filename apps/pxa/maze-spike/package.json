@@ -6,7 +6,14 @@
   "id": "pxa-maze-spike",
   "version": "0.1.0",
   "name": "Maze Spike",
-  "description": "Guest-side raycaster rasterized into a PXA Surface (maze-evil port spike)",
+  "description": "Guest raycaster using a mapped RGB565 triple buffer and Host 2x presentation",
+  "build": {
+    "system": "direct",
+    "linear_memory": {
+      "maximum_bytes": 1048576,
+      "pinned": true
+    }
+  },
   "components": [
     {
       "id": "main",

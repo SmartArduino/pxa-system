@@ -1,11 +1,10 @@
 /* Maze Evil: full port of micropixel's maze-evil to PXA.
  *
- * The raycaster and the micropixel Host raster kernels run in the Guest and
- * write canonical RGB565 frames into a static buffer submitted through the PXA
- * Surface service. Input is the PXA pointer stream over a full-size transparent
- * Canvas node; audio is a Guest-side port of the Host tone synth writing 16 kHz
- * mono PCM to the PXA audio sink. The Ogg Opus BGM and the IMU controls have no
- * PXA equivalent in this product and are not ported.
+ * The raycaster writes a 148x120 canonical RGB565 frame directly into a
+ * GuestMapped triple buffer. The Host performs 2x nearest upscale and the panel
+ * transform asynchronously. Older Hosts fall back to the original 296x240
+ * copied Surface. Input remains in panel coordinates; sound profiles prefer
+ * Host tone commands and retain Guest PCM synthesis as a compatibility path.
  */
 #include <stdint.h>
 
@@ -16,14 +15,21 @@
 #include "palette.h"
 #include "pxa.h"
 #include "pxa_canvas.h"
+#include "pxa_mapped_surface.h"
 #include "pxa_surface.h"
 #include "raycast.h"
 #include "render.h"
 #include "world.h"
 
-#define VIEW_WIDTH 296
-#define VIEW_HEIGHT 240
-#define FRAME_BYTES (VIEW_WIDTH * VIEW_HEIGHT * 2u)
+#define DISPLAY_WIDTH 296
+#define DISPLAY_HEIGHT 240
+#define VIEW_WIDTH 148
+#define VIEW_HEIGHT 120
+#define VIEW_SCALE 2
+#define SURFACE_BUFFER_COUNT 3u
+#define VIEW_PIXELS (VIEW_WIDTH * VIEW_HEIGHT)
+#define VIEW_FRAME_BYTES (VIEW_PIXELS * 2u)
+#define FALLBACK_FRAME_BYTES (DISPLAY_WIDTH * DISPLAY_HEIGHT * 2u)
 #define FRAME_PERIOD_MS 33u
 #define STATS_TICKS 30u
 #define POINTER_NODE 2u
@@ -32,7 +38,13 @@
 #define QUERY_REQUEST UINT32_C(100)
 #define CLOCK_END_REQUEST UINT32_C(201)
 
-static uint16_t g_pixels[VIEW_WIDTH * VIEW_HEIGHT];
+typedef union {
+    uint16_t mapped[SURFACE_BUFFER_COUNT * VIEW_PIXELS];
+    uint16_t fallback[DISPLAY_WIDTH * DISPLAY_HEIGHT];
+} frame_storage_t;
+
+static frame_storage_t g_frames
+    __attribute__((aligned(PXA_SURFACE_BUFFER_ALIGNMENT)));
 static target_t g_target;
 static uint8_t g_packet[128];
 static uint8_t g_canvas_buffer[64];
@@ -40,6 +52,13 @@ static uint8_t g_canvas_packet[128];
 static uint32_t g_canvas_generation;
 static uint8_t g_canvas_initialized;
 static uint32_t g_surface_handle;
+static uint32_t g_surface_frame_bytes;
+static uint16_t g_surface_width;
+static uint16_t g_surface_height;
+static uint8_t g_surface_mapped;
+static uint8_t g_request_mapped;
+static uint8_t g_rendered_this_call;
+static pxa_mapped_surface_t g_surface_ownership;
 static uint64_t g_frame_id;
 static uint64_t g_prev_tick_us;
 static uint64_t g_now_us;
@@ -81,16 +100,45 @@ static void pump_sounds(void) {
     }
 }
 
-static int submit_frame(void) {
-    int32_t status = pxa_surface_write_frame(
-        g_surface_handle, (uint8_t *)g_pixels, FRAME_BYTES);
+static int present_mapped_frame(void) {
+    const uint64_t frame_id = g_surface_ownership.writing_frame_id;
+    int32_t status = pxa_surface_present_buffer(
+        g_surface_handle, g_surface_ownership.writing_buffer, frame_id);
     if (status == PXA_STATUS_WOULD_BLOCK) {
         ++g_blocked;
         return 1;
     }
-    if (status != (int32_t)FRAME_BYTES) {
+    if (status != (int32_t)PXA_SURFACE_PRESENT_RECORD_BYTES ||
+        !pxa_mapped_surface_presented(&g_surface_ownership,
+                                      SURFACE_BUFFER_COUNT)) {
         return 0;
     }
+    g_frame_id = frame_id;
+    return 1;
+}
+
+static int render_and_submit_frame(void);
+
+static int request_surface(void) {
+    if (g_request_mapped) {
+        return pxa_surface_create_rgb565_mapped(
+            CREATE_REQUEST, VIEW_WIDTH, VIEW_HEIGHT, SURFACE_BUFFER_COUNT, 1,
+            g_packet, sizeof(g_packet));
+    }
+    return pxa_surface_create_rgb565_direct(
+        CREATE_REQUEST, DISPLAY_WIDTH, DISPLAY_HEIGHT, SURFACE_BUFFER_COUNT,
+        g_packet, sizeof(g_packet));
+}
+
+static int submit_fallback_frame(void) {
+    int32_t status = pxa_surface_write_frame(
+        g_surface_handle, (uint8_t *)g_frames.fallback,
+        FALLBACK_FRAME_BYTES);
+    if (status == PXA_STATUS_WOULD_BLOCK) {
+        ++g_blocked;
+        return 1;
+    }
+    if (status != (int32_t)FALLBACK_FRAME_BYTES) return 0;
     status = pxa_surface_queue_frame(g_surface_handle, g_frame_id + 1u, NULL, 0,
                                      g_packet, sizeof(g_packet));
     if (status != PXA_STATUS_OK) {
@@ -105,8 +153,14 @@ static void render_frame(void) {
         renderer_render(&g_renderer, &g_world, &g_hud, &g_target);
         if (g_touch.stick.down) {
             renderer_draw_stick(&g_renderer, &g_target, 1,
-                                g_touch.stick.origin_x, g_touch.stick.origin_y,
-                                g_touch.stick.x, g_touch.stick.y);
+                                g_touch.stick.origin_x /
+                                    (g_surface_mapped ? VIEW_SCALE : 1),
+                                g_touch.stick.origin_y /
+                                    (g_surface_mapped ? VIEW_SCALE : 1),
+                                g_touch.stick.x /
+                                    (g_surface_mapped ? VIEW_SCALE : 1),
+                                g_touch.stick.y /
+                                    (g_surface_mapped ? VIEW_SCALE : 1));
         }
     } else {
         hud_stats_t hidden = g_hud;
@@ -114,6 +168,37 @@ static void render_frame(void) {
         renderer_render(&g_renderer, &g_world, &hidden, &g_target);
         renderer_draw_instructions(&g_renderer, &g_target);
     }
+}
+
+static int render_and_submit_frame(void) {
+    int32_t status;
+    g_rendered_this_call = 0;
+    if (g_surface_mapped) {
+        uint8_t buffer_index;
+        if (g_surface_ownership.writing_buffer !=
+            PXA_MAPPED_SURFACE_BUFFER_NONE) {
+            return present_mapped_frame();
+        }
+        status = pxa_surface_acquire_buffer(g_surface_handle, &buffer_index);
+        if (status == PXA_STATUS_WOULD_BLOCK) {
+            ++g_blocked;
+            return 1;
+        }
+        if (status != (int32_t)PXA_SURFACE_ACQUIRE_RECORD_BYTES ||
+            !pxa_mapped_surface_begin(&g_surface_ownership, buffer_index,
+                                      SURFACE_BUFFER_COUNT, g_frame_id + 1u)) {
+            return 0;
+        }
+        g_target.pixels = g_frames.mapped + (size_t)buffer_index * VIEW_PIXELS;
+        g_rendered_this_call = 1;
+        render_frame();
+        return present_mapped_frame();
+    }
+
+    g_target.pixels = g_frames.fallback;
+    g_rendered_this_call = 1;
+    render_frame();
+    return submit_fallback_frame();
 }
 
 static void update_stats_from_state(const pxa_surface_state_result_t *state) {
@@ -188,7 +273,13 @@ static int setup_pointer_node(void) {
 int32_t pxa_app_start(const uint8_t *config, uint32_t length) {
     (void)config;
     (void)length;
-    g_target.pixels = g_pixels;
+    g_surface_handle = 0;
+    g_frame_id = 0;
+    g_request_mapped = 1;
+    g_surface_mapped = 0;
+    g_surface_frame_bytes = 0;
+    pxa_mapped_surface_reset(&g_surface_ownership);
+    g_target.pixels = g_frames.mapped;
     g_target.width = VIEW_WIDTH;
     g_target.height = VIEW_HEIGHT;
     palette_build();
@@ -196,16 +287,14 @@ int32_t pxa_app_start(const uint8_t *config, uint32_t length) {
     font_build_atlas();
     world_reset(&g_world);
     renderer_init(&g_renderer, VIEW_WIDTH, VIEW_HEIGHT, 1);
-    touch_init(&g_touch, VIEW_WIDTH);
+    touch_init(&g_touch, DISPLAY_WIDTH);
     audio_init(&g_audio);
     g_hud.visible = 1;
     g_hud.show_perf = 1;
     if (!setup_pointer_node() || !pxa_window_fullscreen()) {
         return PXA_STATUS_INTERNAL;
     }
-    if (!pxa_surface_create_rgb565_direct(CREATE_REQUEST, VIEW_WIDTH,
-                                          VIEW_HEIGHT, 3, g_packet,
-                                          sizeof(g_packet))) {
+    if (!request_surface()) {
         return PXA_STATUS_INTERNAL;
     }
     return PXA_STATUS_OK;
@@ -224,15 +313,39 @@ int32_t pxa_app_on_event(const uint8_t *event, uint32_t length) {
         parsed.opcode == PXA_SURFACE_CREATE &&
         parsed.request_id == CREATE_REQUEST) {
         pxa_surface_create_result_t result;
-        if (!pxa_surface_parse_create(&parsed, &result) ||
-            result.status != PXA_STATUS_OK ||
-            result.frame_bytes != FRAME_BYTES) {
+        if (!pxa_surface_parse_create(&parsed, &result)) {
+            return PXA_STATUS_INTERNAL;
+        }
+        if (result.status == PXA_STATUS_UNSUPPORTED && g_request_mapped) {
+            g_request_mapped = 0;
+            g_target.pixels = g_frames.fallback;
+            g_target.width = DISPLAY_WIDTH;
+            g_target.height = DISPLAY_HEIGHT;
+            renderer_init(&g_renderer, DISPLAY_WIDTH, DISPLAY_HEIGHT, 1);
+            return request_surface() ? PXA_EVENT_HANDLED : PXA_STATUS_INTERNAL;
+        }
+        g_surface_width = g_request_mapped ? VIEW_WIDTH : DISPLAY_WIDTH;
+        g_surface_height = g_request_mapped ? VIEW_HEIGHT : DISPLAY_HEIGHT;
+        g_surface_frame_bytes = g_request_mapped ? VIEW_FRAME_BYTES
+                                                 : FALLBACK_FRAME_BYTES;
+        if (result.status != PXA_STATUS_OK ||
+            result.stride_bytes != (uint32_t)g_surface_width * 2u ||
+            result.frame_bytes != g_surface_frame_bytes ||
+            result.buffer_count != SURFACE_BUFFER_COUNT) {
             return PXA_STATUS_INTERNAL;
         }
         g_surface_handle = result.surface_handle;
+        g_surface_mapped = g_request_mapped;
+        if (g_surface_mapped &&
+            pxa_surface_register_buffers(
+                g_surface_handle, g_frames.mapped, g_surface_frame_bytes,
+                SURFACE_BUFFER_COUNT) !=
+                (int32_t)(g_surface_frame_bytes * SURFACE_BUFFER_COUNT)) {
+            return PXA_STATUS_INTERNAL;
+        }
         return pxa_surface_configure_layer(
-                   CONFIGURE_REQUEST, g_surface_handle, 0, 0, VIEW_WIDTH,
-                   VIEW_HEIGHT, 0, 1, g_packet, sizeof(g_packet))
+                   CONFIGURE_REQUEST, g_surface_handle, 0, 0, g_surface_width,
+                   g_surface_height, 0, 1, g_packet, sizeof(g_packet))
                    ? PXA_EVENT_HANDLED
                    : PXA_STATUS_INTERNAL;
     }
@@ -243,8 +356,7 @@ int32_t pxa_app_on_event(const uint8_t *event, uint32_t length) {
             (int32_t)pxa_read_u32(parsed.payload) != PXA_STATUS_OK) {
             return PXA_STATUS_INTERNAL;
         }
-        render_frame();
-        if (!submit_frame()) {
+        if (!render_and_submit_frame()) {
             return PXA_STATUS_INTERNAL;
         }
         return pxa_clock_set_period(FRAME_PERIOD_MS) ? PXA_EVENT_HANDLED
@@ -320,6 +432,18 @@ int32_t pxa_app_on_event(const uint8_t *event, uint32_t length) {
         update_stats_from_state(&result);
         return PXA_EVENT_HANDLED;
     }
+    {
+        pxa_surface_released_event_t released;
+        if (pxa_surface_parse_released(&parsed, &released)) {
+            if (!g_surface_mapped || released.surface_handle != g_surface_handle ||
+                !pxa_mapped_surface_released(&g_surface_ownership,
+                                             released.buffer_index,
+                                             SURFACE_BUFFER_COUNT)) {
+                return PXA_EVENT_UNHANDLED;
+            }
+            return PXA_EVENT_HANDLED;
+        }
+    }
     if (!pxa_clock_tick_timestamp_us(&parsed, &timestamp_us) ||
         g_surface_handle == 0) {
         return PXA_EVENT_UNHANDLED;
@@ -353,7 +477,7 @@ int32_t pxa_app_on_event(const uint8_t *event, uint32_t length) {
                 /* Win and death retries return to the start screen. */
                 g_started = 0;
                 g_start_touch_down = 0;
-                touch_init(&g_touch, VIEW_WIDTH);
+                touch_init(&g_touch, DISPLAY_WIDTH);
             }
             pump_sounds();
         }
@@ -365,11 +489,10 @@ int32_t pxa_app_on_event(const uint8_t *event, uint32_t length) {
          * plus the Guest-side render. One CLOCK_NOW per tick: transient Host
          * replies coalesce by service/opcode. */
         g_render_ref_us = timestamp_us;
-        render_frame();
-        (void)pxa_clock_now(CLOCK_END_REQUEST);
-        if (!submit_frame()) {
+        if (!render_and_submit_frame()) {
             return PXA_STATUS_INTERNAL;
         }
+        if (g_rendered_this_call) (void)pxa_clock_now(CLOCK_END_REQUEST);
     }
 
     ++g_ticks_since_stats;

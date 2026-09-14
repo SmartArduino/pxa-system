@@ -10,6 +10,7 @@ typedef struct {
     int width;
     int height;
     int hud_scale; /* 1 at 240 px wide, 2 at 480, 3 at 720 */
+    int design_divisor; /* 2 for the 148x120 internal render target */
 } view_config_t;
 
 typedef struct {
@@ -43,7 +44,7 @@ void renderer_draw_circle(renderer_t *renderer, target_t *target, int cx,
 /* Start-screen diagram over a frozen first frame. */
 void renderer_draw_instructions(renderer_t *renderer, target_t *target);
 
-/* Virtual stick ring and knob, in panel pixels. */
+/* Virtual stick ring and knob, in render-target pixels. */
 void renderer_draw_stick(renderer_t *renderer, target_t *target,
                          int stick_active, int origin_x, int origin_y,
                          int stick_x, int stick_y);

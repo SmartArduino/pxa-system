@@ -39,6 +39,8 @@ static uint8_t g_light_levels = LIGHT_LEVELS - 3;
 static uint8_t g_side_shade = 4;
 static float g_billboard_depth[RAY_MAX_BILLBOARDS];
 static uint8_t g_billboard_order[RAY_MAX_BILLBOARDS];
+static float g_camera_x[RAY_MAX_COLUMNS];
+static int g_camera_x_width;
 
 void raycast_init_light(void) {
     const float curve_levels = 31.0F;
@@ -104,8 +106,15 @@ void raycast_frame(const ray_cell_t *cells, int map_width, int map_height,
     const ray_camera_t *p = camera;
     int x;
 
+    if (g_camera_x_width != width) {
+        for (x = 0; x < width; ++x) {
+            g_camera_x[x] = 2.0F * (float)x * inv_width - 1.0F;
+        }
+        g_camera_x_width = width;
+    }
+
     for (x = 0; x < width; ++x) {
-        const float camera_x = 2.0F * (float)x / (float)width - 1.0F;
+        const float camera_x = g_camera_x[x];
         const float ray_x = p->dir_x + p->plane_x * camera_x;
         const float ray_y = p->dir_y + p->plane_y * camera_x;
         int map_x = rc_floor_int(p->x);

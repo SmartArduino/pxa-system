@@ -32,12 +32,31 @@ static uint16_t ramp_color(int ramp, int level) {
     return palette_color((uint8_t)(ramp * LIGHT_LEVELS + level));
 }
 
+static int design_px(const renderer_t *renderer, int value) {
+    const int divisor = renderer->view.design_divisor;
+    const int scaled = value * renderer->view.hud_scale;
+    return (scaled + divisor / 2) / divisor;
+}
+
+static int design_size(const renderer_t *renderer, int value) {
+    const int size = design_px(renderer, value);
+    return size > 0 ? size : 1;
+}
+
+static int design_text_scale(const renderer_t *renderer, int value) {
+    const int divisor = renderer->view.design_divisor;
+    const int scale = (value * renderer->view.hud_scale + divisor - 1) /
+                      divisor;
+    return scale > 0 ? scale : 1;
+}
+
 void renderer_init(renderer_t *renderer, int width, int height, int hud_scale) {
     renderer->view.width = width;
     renderer->view.height = height;
     renderer->view.hud_scale = hud_scale < 1 ? 1 : hud_scale;
+    renderer->view.design_divisor = width <= 148 ? 2 : 1;
     renderer->half_height = height / 2;
-    renderer->hud_height = 26 * renderer->view.hud_scale;
+    renderer->hud_height = design_size(renderer, 26);
 }
 
 void renderer_draw_text(renderer_t *renderer, target_t *target, int x, int y,
@@ -93,31 +112,32 @@ void renderer_draw_circle(renderer_t *renderer, target_t *target, int cx,
 static void draw_sprite(renderer_t *renderer, target_t *target, int sprite_id,
                         int x, int y, int scale) {
     const sprite_t *sprite = &kSprites[sprite_id];
-    (void)renderer;
+    const int width = design_size(renderer, sprite->width * scale);
+    const int height = design_size(renderer, sprite->height * scale);
     raster_sprite(target, sprite, palette_light(LIGHT_LEVELS - 1), x, y,
-                  sprite->width * scale, sprite->height * scale, 0, 0,
-                  sprite->width, sprite->height, 1);
+                  width, height, 0, 0, sprite->width, sprite->height, 1);
 }
 
 static void draw_weapon(renderer_t *renderer, target_t *target,
                         const world_t *world) {
     const int width = renderer->view.width;
     const int height = renderer->view.height;
-    const int s = renderer->view.hud_scale;
     const player_t *p = &world->player;
     const sprite_t *gun = &kSprites[SPR_SHOTGUN];
     const int bob_amount = p->speed > 0.2F ? 1 : 0;
     const int bob_x =
-        (int)(rc_sin(p->bob_phase) * 6.0F * (float)bob_amount) * s;
+        design_px(renderer,
+                  (int)(rc_sin(p->bob_phase) * 6.0F * (float)bob_amount));
     const int bob_y =
-        (int)(rc_fabs(rc_cos(p->bob_phase)) * 4.0F * (float)bob_amount) * s;
-    const int recoil = (int)(p->recoil * 16.0F) * s;
-    const int gun_scale = s;
-    const int flash_scale = s;
+        design_px(renderer, (int)(rc_fabs(rc_cos(p->bob_phase)) * 4.0F *
+                                  (float)bob_amount));
+    const int recoil = design_px(renderer, (int)(p->recoil * 16.0F));
     const int resting_y =
-        height - renderer->hud_height - gun->height * gun_scale + 8 * s;
-    const int muzzle_y = resting_y + 2 * s;
-    const int gun_x = width / 2 - 48 * s + (muzzle_y - height / 2) / 3 + bob_x;
+        height - renderer->hud_height - design_size(renderer, gun->height) +
+        design_px(renderer, 8);
+    const int muzzle_y = resting_y + design_px(renderer, 2);
+    const int gun_x = width / 2 - design_px(renderer, 48) +
+                      (muzzle_y - height / 2) / 3 + bob_x;
     const int gun_y = resting_y + bob_y + recoil;
     if (world->phase == PHASE_DEAD) {
         return;
@@ -125,10 +145,13 @@ static void draw_weapon(renderer_t *renderer, target_t *target,
     if (world_muzzle_flash(world)) {
         const sprite_t *flash = &kSprites[SPR_MUZZLE_FLASH];
         draw_sprite(renderer, target, SPR_MUZZLE_FLASH,
-                    gun_x + 48 * s - flash->width * flash_scale / 2,
-                    gun_y - flash->height * flash_scale + 6 * s, flash_scale);
+                    gun_x + design_px(renderer, 48) -
+                        design_size(renderer, flash->width) / 2,
+                    gun_y - design_size(renderer, flash->height) +
+                        design_px(renderer, 6),
+                    1);
     }
-    draw_sprite(renderer, target, SPR_SHOTGUN, gun_x, gun_y, gun_scale);
+    draw_sprite(renderer, target, SPR_SHOTGUN, gun_x, gun_y, 1);
 }
 
 static void draw_damage_tint(renderer_t *renderer, target_t *target,
@@ -186,7 +209,8 @@ static void draw_hud(renderer_t *renderer, target_t *target,
     const int width = renderer->view.width;
     const int height = renderer->view.height;
     const int half = renderer->half_height;
-    const int s = renderer->view.hud_scale;
+    const int label_scale = design_text_scale(renderer, 1);
+    const int value_scale = design_text_scale(renderer, 2);
     const player_t *p = &world->player;
     const int bar_top = height - renderer->hud_height;
     const uint16_t label = ramp_color(RAMP_GRAY, 9);
@@ -202,73 +226,99 @@ static void draw_hud(renderer_t *renderer, target_t *target,
     raster_rect(target, 0, bar_top + 1, width, renderer->hud_height - 1,
                 ramp_color(RAMP_GRAY, 1));
 
-    renderer_draw_text(renderer, target, 8 * s, bar_top + 3 * s, "HEALTH",
-                       label, s);
+    renderer_draw_text(renderer, target, design_px(renderer, 8),
+                       bar_top + design_px(renderer, 3), "HEALTH", label,
+                       label_scale);
     text.size = 0;
     text.text[0] = '\0';
     tb_append_int(&text, p->health);
     tb_append(&text, "%");
-    renderer_draw_text(renderer, target, 8 * s, bar_top + 11 * s, text.text,
-                       health_color, 2 * s);
+    renderer_draw_text(renderer, target, design_px(renderer, 8),
+                       bar_top + design_px(renderer, 11), text.text,
+                       health_color, value_scale);
 
-    renderer_draw_text(renderer, target, 92 * s, bar_top + 3 * s, "SHELLS",
-                       label, s);
+    renderer_draw_text(renderer, target, design_px(renderer, 92),
+                       bar_top + design_px(renderer, 3), "SHELLS", label,
+                       label_scale);
     text.size = 0;
     text.text[0] = '\0';
     tb_append_int(&text, p->ammo);
-    renderer_draw_text(renderer, target, 92 * s, bar_top + 11 * s, text.text,
-                       ammo_color, 2 * s);
+    renderer_draw_text(renderer, target, design_px(renderer, 92),
+                       bar_top + design_px(renderer, 11), text.text,
+                       ammo_color, value_scale);
 
-    renderer_draw_text(renderer, target, 164 * s, bar_top + 3 * s, "IMPS",
-                       label, s);
+    renderer_draw_text(renderer, target, design_px(renderer, 164),
+                       bar_top + design_px(renderer, 3), "IMPS", label,
+                       label_scale);
     text.size = 0;
     text.text[0] = '\0';
     tb_append_int(&text, world->kills);
     tb_append(&text, "/");
     tb_append_int(&text, world->imp_count);
-    renderer_draw_text(renderer, target, 164 * s, bar_top + 11 * s, text.text,
-                       kills_color, 2 * s);
+    renderer_draw_text(renderer, target, design_px(renderer, 164),
+                       bar_top + design_px(renderer, 11), text.text,
+                       kills_color, value_scale);
 
     /* Crosshair: four arms leaving the centre open. */
     if (world->phase == PHASE_PLAYING) {
         const uint16_t white = ramp_color(RAMP_WHITE, 15);
         const int cx = width / 2;
-        const int arm = 3 * s;
-        raster_rect(target, cx - 4 * s, half, arm, s, white);
-        raster_rect(target, cx + 2 * s, half, arm, s, white);
-        raster_rect(target, cx, half - 4 * s, s, arm, white);
-        raster_rect(target, cx, half + 2 * s, s, arm, white);
+        const int arm = design_size(renderer, 3);
+        const int stroke = design_size(renderer, 1);
+        raster_rect(target, cx - design_px(renderer, 4), half, arm, stroke,
+                    white);
+        raster_rect(target, cx + design_px(renderer, 2), half, arm, stroke,
+                    white);
+        raster_rect(target, cx, half - design_px(renderer, 4), stroke, arm,
+                    white);
+        raster_rect(target, cx, half + design_px(renderer, 2), stroke, arm,
+                    white);
     }
 
     /* Centre message with a drop shadow. */
     if (world_message(world) != 0) {
         const char *message = world_message(world);
-        const int text_width = font_text_width(message, s);
+        const int text_width = font_text_width(message, label_scale);
         const int x = (width - text_width) / 2;
-        const int y =
-            world->phase == PHASE_PLAYING ? 88 * s : half - 16 * s;
-        renderer_draw_text(renderer, target, x + s, y + s, message,
-                           ramp_color(RAMP_GRAY, 1), s);
+        const int y = world->phase == PHASE_PLAYING
+                          ? design_px(renderer, 88)
+                          : half - design_px(renderer, 16);
+        renderer_draw_text(renderer, target, x + design_size(renderer, 1),
+                           y + design_size(renderer, 1), message,
+                           ramp_color(RAMP_GRAY, 1), label_scale);
         renderer_draw_text(renderer, target, x, y, message,
-                           ramp_color(RAMP_YELLOW, 14), s);
+                           ramp_color(RAMP_YELLOW, 14), label_scale);
     }
 
     if (hud->show_perf) {
         text.size = 0;
         text.text[0] = '\0';
-        tb_append(&text, "FPS ");
-        tb_append_int(&text, (int)hud->fps);
-        tb_append(&text, " RENDER ");
-        tb_append_tenths(&text, hud->render_ms_x10);
-        tb_append(&text, "MS TICK ");
-        tb_append_int(&text, (int)hud->tick_avg_ms);
-        tb_append(&text, "/");
-        tb_append_int(&text, (int)hud->tick_max_ms);
-        tb_append(&text, "MS");
-        renderer_draw_text(renderer, target, 15 * s, 3 * s, text.text,
-                           ramp_color(RAMP_GRAY, 1), s);
-        renderer_draw_text(renderer, target, 14 * s, 2 * s, text.text,
-                           ramp_color(RAMP_CYAN, 13), s);
+        if (renderer->view.design_divisor > 1) {
+            tb_append(&text, "F");
+            tb_append_int(&text, (int)hud->fps);
+            tb_append(&text, " R");
+            tb_append_tenths(&text, hud->render_ms_x10);
+            tb_append(&text, " T");
+            tb_append_int(&text, (int)hud->tick_avg_ms);
+            tb_append(&text, "/");
+            tb_append_int(&text, (int)hud->tick_max_ms);
+        } else {
+            tb_append(&text, "FPS ");
+            tb_append_int(&text, (int)hud->fps);
+            tb_append(&text, " RENDER ");
+            tb_append_tenths(&text, hud->render_ms_x10);
+            tb_append(&text, "MS TICK ");
+            tb_append_int(&text, (int)hud->tick_avg_ms);
+            tb_append(&text, "/");
+            tb_append_int(&text, (int)hud->tick_max_ms);
+            tb_append(&text, "MS");
+        }
+        renderer_draw_text(renderer, target, design_px(renderer, 15),
+                           design_px(renderer, 3), text.text,
+                           ramp_color(RAMP_GRAY, 1), label_scale);
+        renderer_draw_text(renderer, target, design_px(renderer, 14),
+                           design_px(renderer, 2), text.text,
+                           ramp_color(RAMP_CYAN, 13), label_scale);
     }
 }
 
@@ -424,8 +474,8 @@ void renderer_draw_stick(renderer_t *renderer, target_t *target,
                          int stick_x, int stick_y) {
     const uint16_t ring = ramp_color(RAMP_WHITE, 9);
     const uint16_t knob = ramp_color(RAMP_CYAN, 12);
-    const int ring_radius = 30 * renderer->view.hud_scale;
-    const int knob_radius = 8 * renderer->view.hud_scale;
+    const int ring_radius = design_size(renderer, 30);
+    const int knob_radius = design_size(renderer, 8);
     int dx;
     int dy;
     float len;
