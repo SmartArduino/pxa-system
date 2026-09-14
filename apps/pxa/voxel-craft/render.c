@@ -2060,6 +2060,41 @@ static char *put_i32(char *out, int32_t value) {
     return out;
 }
 
+static void draw_compact_performance(const hud_state_t *hud, int fps) {
+    char line[20];
+    char *out = line;
+    const int x = g_layout.view_x + 8;
+
+    if (hud->flying) {
+        *out++ = 'F';
+        *out++ = ' ';
+    }
+    *out++ = 'F';
+    out = put_i32(out, fps);
+    *out++ = ' ';
+    *out++ = 'Q';
+    *out++ = (char)('0' + hud->quality);
+    *out = '\0';
+    hud_text(x, g_layout.view_y + 4, line, COL_TEXT, 1);
+
+    out = line;
+    *out++ = 'D';
+    out = put_i32(out, (int32_t)(hud->dda_steps_x10 / 10u));
+    *out++ = '/';
+    out = put_i32(out, hud->dda_steps_max);
+    *out = '\0';
+    hud_text(x, g_layout.view_y + 28, line, COL_TEXT, 1);
+
+    out = line;
+    *out++ = 'R';
+    out = put_i32(out, hud->guest_render_us_div_100 / 10u);
+    *out++ = ' ';
+    *out++ = 'B';
+    out = put_i32(out, hud->buffer_wait_us_div_100 / 10u);
+    *out = '\0';
+    hud_text(x, g_layout.view_y + 52, line, COL_TEXT, 1);
+}
+
 static void draw_status(const hud_state_t *hud) {
     char line[32];
     char *out = line;
@@ -2101,12 +2136,14 @@ static void draw_status(const hud_state_t *hud) {
     *out++ = (char)('0' + hud->quality);
     *out++ = 'X';
     *out = '\0';
-    if (hud->show_performance) {
+    if (hud->show_performance && g_scale == QUALITY_PERFORMANCE) {
+        draw_compact_performance(hud, fps);
+    } else if (hud->show_performance) {
         hud_text_centered(g_layout.view_y + 5, line, COL_SHADOW, 2);
         hud_text_centered(g_layout.view_y + 4, line, COL_TEXT, 2);
     }
 
-    if (hud->show_performance) {
+    if (hud->show_performance && g_scale != QUALITY_PERFORMANCE) {
         char position[32];
         char *out = position;
         *out++ = 'X';
@@ -2174,7 +2211,8 @@ static void draw_status(const hud_state_t *hud) {
         hud_text_centered(g_layout.view_y + 54, position, COL_TEXT, 1);
     }
 
-    if (hud->now_ms < 10000u && !hud->show_performance) {
+    if (hud->now_ms < 10000u && !hud->show_performance &&
+        g_scale != QUALITY_PERFORMANCE) {
         hud_text_centered(34, "LEFT MOVE   RIGHT LOOK", COL_SHADOW, 1);
         hud_text_centered(33, "LEFT MOVE   RIGHT LOOK", COL_TEXT, 1);
         hud_text_centered(46, "HOLD ACTION: MINE/ATTACK/USE", COL_SHADOW, 1);
