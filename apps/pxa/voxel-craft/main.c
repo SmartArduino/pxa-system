@@ -128,6 +128,7 @@ static uint64_t g_buffer_wait_started_us;
 static uint32_t g_buffer_wait_ema_us;
 static uint32_t g_buffer_wait_max_us;
 static uint32_t g_snapshot_ticks;
+static uint8_t g_bootstrap_requests_pending;
 static uint8_t g_present_failures;
 static uint8_t g_quality_manual;
 static uint8_t g_game_quality = QUALITY_BALANCED;
@@ -1897,6 +1898,7 @@ int32_t pxa_app_start(const uint8_t *config, uint32_t length) {
     g_buffer_wait_ema_us = 0;
     g_buffer_wait_max_us = 0;
     g_snapshot_ticks = 0;
+    g_bootstrap_requests_pending = 1;
     g_present_failures = 0;
     g_quality_manual = 0;
     g_inventory_open = 0;
@@ -1943,8 +1945,6 @@ int32_t pxa_app_start(const uint8_t *config, uint32_t length) {
         return PXA_STATUS_INTERNAL;
     }
     voxel_sfx_start(&g_sfx, g_packet, sizeof(g_packet));
-    request_window_snapshot();
-    (void)pxa_clock_now(SEED_CLOCK_REQUEST);
     (void)pxa_storage_get(STORAGE_PREFS_GET_REQUEST, STORAGE_PREFS_KEY,
                           STORAGE_PREFS_KEY_LEN, g_storage_payload,
                           sizeof(g_storage_payload), g_packet,
@@ -2048,6 +2048,14 @@ int32_t pxa_app_on_event(const uint8_t *event, uint32_t length) {
         float move_x;
         float move_z;
         voxel_sfx_tick(&g_sfx, &parsed);
+        if (g_bootstrap_requests_pending) {
+            /* Async completion events cannot be delivered until start has
+             * returned and the component is RUNNING. The first timer event is
+             * the earliest portable point for these bootstrap requests. */
+            g_bootstrap_requests_pending = 0;
+            request_window_snapshot();
+            (void)pxa_clock_now(SEED_CLOCK_REQUEST);
+        }
         if (++g_snapshot_ticks >= WINDOW_SNAPSHOT_PERIOD_TICKS) {
             g_snapshot_ticks = 0;
             request_window_snapshot();
