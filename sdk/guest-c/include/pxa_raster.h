@@ -3,7 +3,6 @@
 
 #include <stddef.h>
 #include <stdint.h>
-#include <string.h>
 
 #include "pxa_surface.h"
 
@@ -72,6 +71,19 @@ typedef struct {
     uint32_t last_host_raster_us;
 } pxa_raster_telemetry_t;
 
+static inline void pxa_raster_zero_bytes(void *memory, size_t size) {
+    uint8_t *bytes = (uint8_t *)memory;
+    size_t index;
+    for (index = 0; index < size; ++index) bytes[index] = 0;
+}
+
+static inline void pxa_raster_copy_bytes(uint8_t *destination,
+                                         const uint8_t *source,
+                                         size_t size) {
+    size_t index;
+    for (index = 0; index < size; ++index) destination[index] = source[index];
+}
+
 static inline int32_t pxa_raster_upload(
     uint32_t surface_handle, uint8_t kind, uint8_t slot, uint16_t width,
     uint16_t height, const uint8_t *payload, uint32_t payload_bytes,
@@ -90,8 +102,8 @@ static inline int32_t pxa_raster_upload(
     pxa_surface_store_u16(scratch + 14, height);
     pxa_surface_store_u32(scratch + 16, payload_bytes);
     if (payload != scratch + PXA_RASTER_UPLOAD_HEADER_BYTES)
-        memcpy(scratch + PXA_RASTER_UPLOAD_HEADER_BYTES, payload,
-               payload_bytes);
+        pxa_raster_copy_bytes(scratch + PXA_RASTER_UPLOAD_HEADER_BYTES,
+                              payload, payload_bytes);
     return pxa_io(surface_handle, PXA_SURFACE_IO_RASTER_UPLOAD, scratch, total);
 }
 
@@ -125,7 +137,7 @@ static inline void pxa_raster_draw_list_begin(
     pxa_raster_draw_list_t *list, uint8_t *bytes, uint32_t capacity,
     uint64_t frame_id) {
     if (list == NULL) return;
-    memset(list, 0, sizeof(*list));
+    pxa_raster_zero_bytes(list, sizeof(*list));
     list->bytes = bytes;
     list->capacity = capacity;
     list->frame_id = frame_id;
@@ -133,7 +145,7 @@ static inline void pxa_raster_draw_list_begin(
         list->status = PXA_STATUS_INVALID_ARGUMENT;
         return;
     }
-    memset(bytes, 0, PXA_RASTER_DRAW_HEADER_BYTES);
+    pxa_raster_zero_bytes(bytes, PXA_RASTER_DRAW_HEADER_BYTES);
     list->length = PXA_RASTER_DRAW_HEADER_BYTES;
 }
 
@@ -148,7 +160,7 @@ static inline uint8_t *pxa_raster_append(pxa_raster_draw_list_t *list,
         return NULL;
     }
     record = list->bytes + list->length;
-    memset(record, 0, size);
+    pxa_raster_zero_bytes(record, size);
     record[0] = type;
     pxa_surface_store_u16(record + 2, size);
     list->length += size;

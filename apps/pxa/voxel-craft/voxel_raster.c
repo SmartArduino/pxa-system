@@ -1,7 +1,6 @@
 #include "voxel_raster.h"
 
 #include <stddef.h>
-#include <string.h>
 
 #include "pxa_raster.h"
 #include "rc_math.h"
@@ -169,7 +168,7 @@ int voxel_raster_upload_assets(uint32_t surface_handle) {
         if (result != (int32_t)(PXA_RASTER_UPLOAD_HEADER_BYTES + 256u))
             return 0;
     }
-    memset(g_font_texture, 0, sizeof(g_font_texture));
+    pxa_raster_zero_bytes(g_font_texture, sizeof(g_font_texture));
     for (slot = 0; slot < VOXEL_RASTER_FONT_GLYPHS; ++slot) {
         uint8_t row;
         for (row = 0; row < 5; ++row) {
@@ -212,7 +211,7 @@ static void append_mesh_quad(chunk_mesh_t *mesh, int axis, int sign,
         return;
     }
     quad = &mesh->quads[mesh->quad_count++];
-    memset(quad, 0, sizeof(*quad));
+    pxa_raster_zero_bytes(quad, sizeof(*quad));
     quad->axis = (uint8_t)axis;
     quad->sign = (int8_t)sign;
     quad->block = (uint8_t)block;
@@ -242,7 +241,7 @@ static void build_axis_faces(chunk_mesh_t *mesh, const chunk_t *chunk,
     int slice;
     for (slice = 0; slice < axis_length; ++slice) {
         int v;
-        memset(mask, 0, sizeof(mask));
+        pxa_raster_zero_bytes(mask, sizeof(mask));
         for (v = 0; v < v_length; ++v) {
             int u;
             for (u = 0; u < u_length; ++u) {
@@ -294,7 +293,7 @@ static void build_axis_faces(chunk_mesh_t *mesh, const chunk_t *chunk,
 
 static void rebuild_mesh(chunk_mesh_t *mesh, const chunk_t *chunk) {
     int axis;
-    memset(mesh, 0, sizeof(*mesh));
+    pxa_raster_zero_bytes(mesh, sizeof(*mesh));
     mesh->chunk = chunk;
     mesh->revision = chunk->revision;
     for (axis = 0; axis < 3; ++axis) {
@@ -304,8 +303,8 @@ static void rebuild_mesh(chunk_mesh_t *mesh, const chunk_t *chunk) {
 }
 
 void voxel_raster_reset(void) {
-    memset(g_meshes, 0, sizeof(g_meshes));
-    memset(&g_stats, 0, sizeof(g_stats));
+    pxa_raster_zero_bytes(g_meshes, sizeof(g_meshes));
+    pxa_raster_zero_bytes(&g_stats, sizeof(g_stats));
 }
 
 static void build_camera(raster_camera_t *camera, const player_t *player,
@@ -703,7 +702,7 @@ int32_t voxel_raster_render(uint32_t surface_handle, uint64_t frame_id,
     int grid_z;
     if (surface_handle == 0 || frame_id == 0 || player == NULL)
         return PXA_STATUS_INVALID_ARGUMENT;
-    memset(&g_stats, 0, sizeof(g_stats));
+    pxa_raster_zero_bytes(&g_stats, sizeof(g_stats));
     build_camera(&camera, player, quality);
     append_entities(&camera, candidate_limit, &candidate_count);
     for (grid_z = 0; grid_z < GRID_W; ++grid_z) {
