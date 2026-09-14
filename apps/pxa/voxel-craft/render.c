@@ -793,6 +793,7 @@ static void render_scene(const camera_t *cam, uint32_t now_ms) {
             uint8_t block = BLOCK_AIR;
             int face = 0;
             int sign = 1;
+            int fog_terminated = 0;
             float travel = 0.0F;
             int step;
             /* Rays stay inside one chunk for many steps; cache the chunk
@@ -822,6 +823,7 @@ static void render_scene(const camera_t *cam, uint32_t now_ms) {
                 }
                 if (travel > g_fog_end) {
                     block = BLOCK_AIR;
+                    fog_terminated = 1;
                     break;
                 }
                 {
@@ -853,6 +855,8 @@ static void render_scene(const camera_t *cam, uint32_t now_ms) {
                 g_perf_stats.total_steps += steps;
                 if (steps > g_perf_stats.max_steps)
                     g_perf_stats.max_steps = steps;
+                if (fog_terminated) ++g_perf_stats.fog_terminated_rays;
+                if (block != BLOCK_AIR) ++g_perf_stats.solid_hit_rays;
             }
             if (block == BLOCK_AIR) {
                 const float inv_len = 1.0F / ray_len;
@@ -2125,10 +2129,22 @@ static void draw_status(const hud_state_t *hud) {
         *out++ = (char)('0' + hud->dda_steps_x10 % 10u);
         *out++ = '/';
         out = put_i32(out, hud->dda_steps_max);
+        *out++ = ' ';
+        *out++ = 'F';
+        out = put_i32(out, hud->fog_terminated_percent);
+        *out++ = ' ';
+        *out++ = 'H';
+        out = put_i32(out, hud->solid_hit_percent);
         *out = '\0';
         hud_text_centered(g_layout.view_y + 31, position, COL_SHADOW, 1);
         hud_text_centered(g_layout.view_y + 30, position, COL_TEXT, 1);
         out = position;
+        *out++ = 'U';
+        *out++ = ' ';
+        out = put_i32(out, hud->guest_update_us_div_100 / 10u);
+        *out++ = '.';
+        *out++ = (char)('0' + hud->guest_update_us_div_100 % 10u);
+        *out++ = ' ';
         *out++ = 'R';
         *out++ = ' ';
         out = put_i32(out, hud->guest_render_us_div_100 / 10u);
@@ -2136,6 +2152,15 @@ static void draw_status(const hud_state_t *hud) {
         *out++ = (char)('0' + hud->guest_render_us_div_100 % 10u);
         *out++ = 'M';
         *out++ = 'S';
+        *out = '\0';
+        hud_text_centered(g_layout.view_y + 43, position, COL_SHADOW, 1);
+        hud_text_centered(g_layout.view_y + 42, position, COL_TEXT, 1);
+        out = position;
+        *out++ = 'T';
+        *out++ = ' ';
+        out = put_i32(out, hud->guest_total_us_div_100 / 10u);
+        *out++ = '.';
+        *out++ = (char)('0' + hud->guest_total_us_div_100 % 10u);
         *out++ = ' ';
         *out++ = 'B';
         *out++ = ' ';
@@ -2145,8 +2170,8 @@ static void draw_status(const hud_state_t *hud) {
         *out++ = 'M';
         *out++ = 'S';
         *out = '\0';
-        hud_text_centered(g_layout.view_y + 43, position, COL_SHADOW, 1);
-        hud_text_centered(g_layout.view_y + 42, position, COL_TEXT, 1);
+        hud_text_centered(g_layout.view_y + 55, position, COL_SHADOW, 1);
+        hud_text_centered(g_layout.view_y + 54, position, COL_TEXT, 1);
     }
 
     if (hud->now_ms < 10000u && !hud->show_performance) {

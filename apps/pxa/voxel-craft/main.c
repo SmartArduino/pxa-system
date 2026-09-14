@@ -23,10 +23,15 @@
 #define FRAME_NODE UINT32_C(2)
 #define FRAME_PERIOD_MS 33u
 #define MAX_CATCHUP_STEPS 3u
-#define RENDER_TIME_REQUEST UINT32_C(2)
 #define WINDOW_SNAPSHOT_REQUEST UINT32_C(3)
 #define SURFACE_CREATE_REQUEST UINT32_C(4)
 #define SURFACE_CONFIGURE_REQUEST UINT32_C(5)
+#define PERF_CLOCK_FRAME_START UINT32_C(0x70)
+#define PERF_CLOCK_UPDATE_END UINT32_C(0x71)
+#define PERF_CLOCK_RAYCAST_START UINT32_C(0x72)
+#define PERF_CLOCK_RAYCAST_END UINT32_C(0x73)
+#define PERF_CLOCK_FRAME_END UINT32_C(0x74)
+#define PERF_SAMPLE_INTERVAL_FRAMES 8u
 #define PXA_WINDOW_GET_SNAPSHOT_OP 2u
 #define PXA_WINDOW_METRICS_CHANGED_OP 0x8001u
 #define WINDOW_SNAPSHOT_PERIOD_TICKS 125u
@@ -71,6 +76,15 @@ typedef struct {
     uint64_t down_us;
 } finger_t;
 
+typedef struct {
+    uint64_t frame_start_us;
+    uint64_t update_end_us;
+    uint64_t raycast_start_us;
+    uint64_t raycast_end_us;
+    uint64_t frame_end_us;
+    uint8_t active;
+} perf_timing_sample_t;
+
 static uint16_t g_surface_buffers[SURFACE_BUFFER_COUNT * FRAME_PIXELS_MAX]
     __attribute__((aligned(PXA_SURFACE_BUFFER_ALIGNMENT)));
 static uint8_t g_packet[128];
@@ -107,10 +121,14 @@ static float g_mine_sound_timer;
 static ray_hit_t g_mine_target;
 static float g_swing_timer;
 static uint64_t g_last_jump_tap_us;
-static uint64_t g_render_start_us;
-static uint8_t g_render_sample_pending;
+static perf_timing_sample_t g_perf_timing;
+static uint8_t g_perf_sample_counter;
+static uint32_t g_update_ema_us;
+static uint32_t g_update_max_us;
 static uint32_t g_render_ema_us;
 static uint32_t g_render_max_us;
+static uint32_t g_render_total_ema_us;
+static uint32_t g_render_total_max_us;
 static uint32_t g_quality_frames;
 static uint8_t g_quality_warmup;
 static uint8_t g_quality_bad_windows;
@@ -335,6 +353,108 @@ static void update_quality(uint64_t duration_us) {
         g_quality_good_windows = 0;
         g_quality_cooldown_frames = QUALITY_COOLDOWN_FRAMES;
     }
+}
+
+static void update_duration_stats(uint64_t duration_us, uint32_t *ema_us,
+                                  uint32_t *maximum_us) {
+    uint32_t sample;
+    if (duration_us > QUALITY_SAMPLE_CAP_US) {
+        duration_us = QUALITY_SAMPLE_CAP_US;
+    }
+    sample = (uint32_t)duration_us;
+    if (*ema_us == 0) {
+        *ema_us = sample;
+    } else {
+        *ema_us = (*ema_us * 7u + sample) / 8u;
+    }
+    if (sample > *maximum_us) *maximum_us = sample;
+}
+
+static int mark_perf_timing(uint32_t request_id) {
+    if (!g_perf_timing.active) return 0;
+    if (pxa_clock_now(request_id)) return 1;
+    g_perf_timing.active = 0;
+    return 0;
+}
+
+static int perf_timing_surface_ready(void) {
+    const uint8_t all_buffers = (uint8_t)((1u << SURFACE_BUFFER_COUNT) - 1u);
+    return g_surface_handle != 0 && !g_surface_create_pending &&
+           !g_surface_ownership.recreate_pending &&
+           g_surface_ownership.writing_buffer == VOXEL_SURFACE_BUFFER_NONE &&
+           g_surface_ownership.host_owned_mask != all_buffers &&
+           g_surface_width == (uint16_t)render_scene_width() &&
+           g_surface_height == (uint16_t)render_scene_height();
+}
+
+static void maybe_begin_perf_timing(void) {
+    if (g_perf_timing.active || !perf_timing_surface_ready()) return;
+    if (++g_perf_sample_counter < PERF_SAMPLE_INTERVAL_FRAMES) return;
+    g_perf_sample_counter = 0;
+    g_perf_timing = (perf_timing_sample_t){.active = 1};
+    (void)mark_perf_timing(PERF_CLOCK_FRAME_START);
+}
+
+static int handle_perf_clock_event(const pxa_event_t *event) {
+    int32_t status;
+    uint64_t timestamp_us;
+    if (event->service != PXA_SERVICE_CLOCK ||
+        event->opcode != PXA_CLOCK_NOW_RESULT ||
+        event->request_id < PERF_CLOCK_FRAME_START ||
+        event->request_id > PERF_CLOCK_FRAME_END) {
+        return 0;
+    }
+    if (!pxa_clock_parse_now(event, &status, &timestamp_us) ||
+        status != PXA_STATUS_OK || !g_perf_timing.active) {
+        if (event->request_id == PERF_CLOCK_FRAME_END) {
+            g_perf_timing.active = 0;
+        }
+        return 1;
+    }
+    switch (event->request_id) {
+        case PERF_CLOCK_FRAME_START:
+            g_perf_timing.frame_start_us = timestamp_us;
+            break;
+        case PERF_CLOCK_UPDATE_END:
+            g_perf_timing.update_end_us = timestamp_us;
+            break;
+        case PERF_CLOCK_RAYCAST_START:
+            g_perf_timing.raycast_start_us = timestamp_us;
+            break;
+        case PERF_CLOCK_RAYCAST_END:
+            g_perf_timing.raycast_end_us = timestamp_us;
+            break;
+        case PERF_CLOCK_FRAME_END:
+            g_perf_timing.frame_end_us = timestamp_us;
+            if (g_perf_timing.frame_start_us <=
+                    g_perf_timing.update_end_us &&
+                g_perf_timing.update_end_us <=
+                    g_perf_timing.raycast_start_us &&
+                g_perf_timing.raycast_start_us <
+                    g_perf_timing.raycast_end_us &&
+                g_perf_timing.raycast_end_us <=
+                    g_perf_timing.frame_end_us) {
+                const uint64_t raycast_us =
+                    g_perf_timing.raycast_end_us -
+                    g_perf_timing.raycast_start_us;
+                update_duration_stats(
+                    g_perf_timing.update_end_us -
+                        g_perf_timing.frame_start_us,
+                    &g_update_ema_us, &g_update_max_us);
+                update_duration_stats(raycast_us, &g_render_ema_us,
+                                      &g_render_max_us);
+                update_duration_stats(
+                    g_perf_timing.frame_end_us -
+                        g_perf_timing.frame_start_us,
+                    &g_render_total_ema_us, &g_render_total_max_us);
+                update_quality(raycast_us);
+            }
+            g_perf_timing.active = 0;
+            break;
+        default:
+            break;
+    }
+    return 1;
 }
 
 static int render_frame(void);
@@ -1529,15 +1649,25 @@ static void build_hud(hud_state_t *hud) {
     render_get_perf_stats(&perf);
     hud->now_ms = g_now_ms;
     hud->fps_x10 = g_fps_x10;
+    hud->guest_update_us_div_100 = (uint16_t)(
+        g_update_ema_us / 100u > UINT16_MAX ? UINT16_MAX :
+                                              g_update_ema_us / 100u);
     hud->guest_render_us_div_100 = (uint16_t)(
         g_render_ema_us / 100u > UINT16_MAX ? UINT16_MAX :
                                               g_render_ema_us / 100u);
+    hud->guest_total_us_div_100 = (uint16_t)(
+        g_render_total_ema_us / 100u > UINT16_MAX ? UINT16_MAX :
+                                                   g_render_total_ema_us / 100u);
     hud->buffer_wait_us_div_100 = (uint16_t)(
         g_buffer_wait_ema_us / 100u > UINT16_MAX ? UINT16_MAX :
                                                    g_buffer_wait_ema_us / 100u);
     hud->dda_steps_x10 = perf.rays == 0 ? 0 :
         (uint16_t)((perf.total_steps * 10u) / perf.rays);
     hud->dda_steps_max = perf.max_steps;
+    hud->fog_terminated_percent = perf.rays == 0 ? 0 :
+        (uint8_t)((perf.fog_terminated_rays * 100u) / perf.rays);
+    hud->solid_hit_percent = perf.rays == 0 ? 0 :
+        (uint8_t)((perf.solid_hit_rays * 100u) / perf.rays);
     hud->pos_x = rc_floor_int(g_player.x);
     hud->pos_z = rc_floor_int(g_player.z);
     hud->hotbar_selected = g_hotbar_selected;
@@ -1621,7 +1751,6 @@ static int render_frame(void) {
     uint8_t buffer_index;
     int32_t acquire_result;
     int present_result;
-    g_render_sample_pending = 0;
     if (g_surface_ownership.recreate_pending) {
         try_finish_surface_recreate();
         return 1;
@@ -1652,12 +1781,13 @@ static int render_frame(void) {
     frame = g_surface_buffers + (size_t)buffer_index * pixels;
     if (g_screen == SCREEN_PLAY || g_screen == SCREEN_PAUSE) {
         game_target_block(&g_player, &target);
+        (void)mark_perf_timing(PERF_CLOCK_RAYCAST_START);
         if (!render_3d(frame, g_surface_width, &g_player,
                        g_now_ms, &target, g_mine_progress)) {
             recreate_surface();
             return 0;
         }
-        g_render_sample_pending = 1;
+        (void)mark_perf_timing(PERF_CLOCK_RAYCAST_END);
         if (g_screen == SCREEN_PLAY) {
             build_hud(&hud);
             hud.target_table = (target.hit &&
@@ -1804,10 +1934,14 @@ int32_t pxa_app_start(const uint8_t *config, uint32_t length) {
     g_mine_target.hit = 0;
     g_swing_timer = 0.0F;
     g_last_jump_tap_us = 0;
-    g_render_start_us = 0;
-    g_render_sample_pending = 0;
+    g_perf_timing = (perf_timing_sample_t){0};
+    g_perf_sample_counter = 0;
+    g_update_ema_us = 0;
+    g_update_max_us = 0;
     g_render_ema_us = 0;
     g_render_max_us = 0;
+    g_render_total_ema_us = 0;
+    g_render_total_max_us = 0;
     g_quality_frames = 0;
     g_quality_warmup = QUALITY_WARMUP_FRAMES;
     g_quality_bad_windows = 0;
@@ -1960,18 +2094,7 @@ int32_t pxa_app_on_event(const uint8_t *event, uint32_t length) {
         }
         return PXA_EVENT_HANDLED;
     }
-    if (parsed.service == PXA_SERVICE_CLOCK &&
-        parsed.opcode == PXA_CLOCK_NOW_RESULT &&
-        parsed.request_id == RENDER_TIME_REQUEST) {
-        int32_t status;
-        uint64_t end_us;
-        const uint64_t start_us = g_render_start_us;
-        g_render_start_us = 0;
-        if (pxa_clock_parse_now(&parsed, &status, &end_us) &&
-            status == PXA_STATUS_OK && start_us != 0 &&
-            end_us > start_us) {
-            update_quality(end_us - start_us);
-        }
+    if (handle_perf_clock_event(&parsed)) {
         return PXA_EVENT_HANDLED;
     }
     if (pxa_clock_tick_timestamp_us(&parsed, &timestamp_us)) {
@@ -1990,6 +2113,7 @@ int32_t pxa_app_on_event(const uint8_t *event, uint32_t length) {
             (void)render_frame();
             return PXA_EVENT_HANDLED;
         }
+        if (steps != 0) maybe_begin_perf_timing();
         for (index = 0; index < steps; ++index) {
             const uint8_t was_ground = g_player.on_ground;
             if (g_inventory_open) {
@@ -2041,6 +2165,7 @@ int32_t pxa_app_on_event(const uint8_t *event, uint32_t length) {
             g_now_ms += FRAME_PERIOD_MS;
         }
         if (steps != 0) {
+            (void)mark_perf_timing(PERF_CLOCK_UPDATE_END);
             if (render_frame()) {
                 g_present_failures = 0;
             } else if (++g_present_failures >= 3u) {
@@ -2052,12 +2177,7 @@ int32_t pxa_app_on_event(const uint8_t *event, uint32_t length) {
                 (void)render_frame();
                 toast_view();
             }
-            if (g_render_sample_pending && g_render_start_us == 0) {
-                g_render_start_us = timestamp_us;
-                if (!pxa_clock_now(RENDER_TIME_REQUEST)) {
-                    g_render_start_us = 0;
-                }
-            }
+            (void)mark_perf_timing(PERF_CLOCK_FRAME_END);
         }
         return PXA_EVENT_HANDLED;
     }

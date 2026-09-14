@@ -81,10 +81,14 @@ typedef struct {
 typedef struct {
     uint32_t now_ms;
     uint32_t fps_x10;
+    uint16_t guest_update_us_div_100;
     uint16_t guest_render_us_div_100;
+    uint16_t guest_total_us_div_100;
     uint16_t buffer_wait_us_div_100;
     uint16_t dda_steps_x10;
     uint16_t dda_steps_max;
+    uint8_t fog_terminated_percent;
+    uint8_t solid_hit_percent;
     int32_t pos_x;
     int32_t pos_z;
     uint8_t hotbar_selected;
@@ -116,6 +120,8 @@ typedef struct {
 typedef struct {
     uint32_t rays;
     uint32_t total_steps;
+    uint32_t fog_terminated_rays;
+    uint32_t solid_hit_rays;
     uint16_t max_steps;
 } render_perf_stats_t;
 
