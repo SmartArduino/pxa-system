@@ -830,12 +830,6 @@ pxa_status_t pxa_wamr_engine_init(void *workspace, size_t workspace_size,
         if (runtime_allocator_engine == engine) runtime_allocator_engine = NULL;
         return PXA_STATUS_INTERNAL;
     }
-#if defined(WASM_LINEAR_MEMORY_RESERVE_MAX) && \
-    WASM_LINEAR_MEMORY_RESERVE_MAX != 0
-    /* Surface GuestMapped retains validated native pointers between Guest
-     * calls. Reserve the declared maximum so memory.grow commits in place. */
-    wasm_runtime_set_linear_memory_reserve_max(true);
-#endif
     for (index = 0; index < engine->max_components; ++index) {
         engine->entries[index].component = PXA_COMPONENT_INVALID;
         engine->entries[index].wasi_null_fd = -1;
@@ -1071,10 +1065,22 @@ static pxa_status_t engine_instantiate(void *context, pxa_bytes_t package_root,
                                       slot->wasi_null_fd, slot->wasi_null_fd);
 #endif
     }
-    slot->module_instance =
-        wasm_runtime_instantiate(slot->module, engine->guest_stack_size,
-                                 engine->host_managed_heap_size, error,
-                                 sizeof(error));
+#if defined(WASM_LINEAR_MEMORY_RESERVE_MAX) && \
+    WASM_LINEAR_MEMORY_RESERVE_MAX != 0
+    /* GuestMapped Surface buffers retain validated native pointers between
+     * Guest calls. Only bounded modules can reserve their maximum safely;
+     * an omitted WebAssembly maximum otherwise expands to WAMR's platform
+     * default and is not a viable physical allocation on an MCU. */
+    wasm_runtime_set_linear_memory_reserve_max(
+        wasm_runtime_module_memory_is_bounded(slot->module));
+#endif
+    slot->module_instance = wasm_runtime_instantiate(
+        slot->module, engine->guest_stack_size, engine->host_managed_heap_size,
+        error, sizeof(error));
+#if defined(WASM_LINEAR_MEMORY_RESERVE_MAX) && \
+    WASM_LINEAR_MEMORY_RESERVE_MAX != 0
+    wasm_runtime_set_linear_memory_reserve_max(false);
+#endif
     if (slot->module_instance == NULL) {
         log_runtime_failure("instantiate", path, error);
         return discard_entry(engine, slot, PXA_STATUS_RESOURCE_LIMIT);
