@@ -192,6 +192,12 @@ PYTHON
 "$work_dir/pxa_surface_test"
 
 "$cc_bin" "${flags[@]}" \
+  -I"$pxa_system_dir/apps/pxa/voxel-craft" \
+  "$pxa_system_dir/sdk/guest-c/tests/pxa_voxel_surface_ownership_test.c" \
+  -o "$work_dir/pxa_voxel_surface_ownership_test"
+"$work_dir/pxa_voxel_surface_ownership_test"
+
+"$cc_bin" "${flags[@]}" \
   "$pxa_system_dir/sdk/guest-c/tests/pxa_game_sfx_test.c" \
   -o "$work_dir/pxa_game_sfx_test"
 "$work_dir/pxa_game_sfx_test"

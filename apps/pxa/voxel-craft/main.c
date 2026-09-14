@@ -18,6 +18,7 @@
 #include "rc_math.h"
 #include "render.h"
 #include "sfx.h"
+#include "surface_ownership.h"
 
 #define FRAME_NODE UINT32_C(2)
 #define FRAME_PERIOD_MS 33u
@@ -38,6 +39,7 @@
 #define QUALITY_DOWNGRADE_WINDOWS 2u
 #define QUALITY_UPGRADE_WINDOWS 5u
 #define QUALITY_COOLDOWN_FRAMES 90u
+#define QUALITY_BUFFER_WAIT_BLOCK_UPGRADE_US UINT32_C(10000)
 #define TICK_SECONDS 0.033F
 #define LOOK_PER_PIXEL 0.0062F
 #define STICK_RADIUS 40.0F
@@ -77,6 +79,7 @@ static uint16_t g_surface_width;
 static uint16_t g_surface_height;
 static uint64_t g_frame_id;
 static uint8_t g_surface_create_pending;
+static voxel_surface_ownership_t g_surface_ownership;
 static uint8_t g_input_initialized;
 static player_t g_player;
 static voxel_sfx_t g_sfx;
@@ -105,6 +108,7 @@ static ray_hit_t g_mine_target;
 static float g_swing_timer;
 static uint64_t g_last_jump_tap_us;
 static uint64_t g_render_start_us;
+static uint8_t g_render_sample_pending;
 static uint32_t g_render_ema_us;
 static uint32_t g_render_max_us;
 static uint32_t g_quality_frames;
@@ -140,6 +144,8 @@ static float g_pad_pitch;
 static uint64_t g_pad_last_a_us;
 
 static void recreate_surface(void);
+static void try_finish_surface_recreate(void);
+static void update_fps(uint64_t timestamp_us);
 
 static int next_lower_quality(int quality) {
     return quality <= QUALITY_MIN ? QUALITY_MIN
@@ -294,7 +300,9 @@ static void update_quality(uint64_t duration_us) {
     if (g_render_ema_us > QUALITY_DOWNGRADE_US) {
         if (g_quality_bad_windows < UINT8_MAX) ++g_quality_bad_windows;
         g_quality_good_windows = 0;
-    } else if (g_render_ema_us < QUALITY_UPGRADE_US) {
+    } else if (g_render_ema_us < QUALITY_UPGRADE_US &&
+               g_buffer_wait_ema_us <
+                   QUALITY_BUFFER_WAIT_BLOCK_UPGRADE_US) {
         if (g_quality_good_windows < UINT8_MAX) ++g_quality_good_windows;
         g_quality_bad_windows = 0;
     } else {
@@ -372,14 +380,28 @@ static int request_surface_create(void) {
     return 1;
 }
 
-static void recreate_surface(void) {
+static void reset_surface_ownership(void) {
+    voxel_surface_ownership_reset(&g_surface_ownership);
+}
+
+static void try_finish_surface_recreate(void) {
+    if (!voxel_surface_can_recreate(&g_surface_ownership)) return;
     if (g_surface_handle != 0) {
         (void)pxa_close_handle(g_surface_handle);
         g_surface_handle = 0;
+        g_surface_width = 0;
+        g_surface_height = 0;
+        reset_surface_ownership();
     }
     if (!g_surface_create_pending) {
+        g_surface_ownership.recreate_pending = 0;
         (void)request_surface_create();
     }
+}
+
+static void recreate_surface(void) {
+    voxel_surface_request_recreate(&g_surface_ownership);
+    try_finish_surface_recreate();
 }
 
 /* The window snapshot carries the authoritative logical display size. It is
@@ -1535,29 +1557,19 @@ static void build_hud(hud_state_t *hud) {
     hud->toast = g_toast_until_ms > g_now_ms ? g_toast : NULL;
 }
 
-static int render_frame(void) {
-    hud_state_t hud;
-    ray_hit_t target;
-    const size_t pixels = (size_t)g_surface_width * g_surface_height;
-    uint16_t *frame;
-    uint8_t buffer_index;
-    int32_t acquire_result;
-    int32_t present_result;
-    size_t index;
-    if (g_surface_handle == 0 || pixels > FRAME_PIXELS_MAX ||
-        g_surface_width != (uint16_t)render_scene_width() ||
-        g_surface_height != (uint16_t)render_scene_height()) {
-        return 0;
+static void begin_buffer_wait(void) {
+    if (g_buffer_wait_started_us == 0) {
+        g_buffer_wait_started_us = g_last_tick_us;
     }
-    acquire_result = pxa_surface_acquire_buffer(g_surface_handle,
-                                                &buffer_index);
-    if (acquire_result == PXA_STATUS_WOULD_BLOCK) {
-        if (g_buffer_wait_started_us == 0) g_buffer_wait_started_us = g_last_tick_us;
-        return 1;
+}
+
+static void end_buffer_wait(void) {
+    if (g_buffer_wait_started_us == 0) {
+        g_buffer_wait_ema_us =
+            (g_buffer_wait_ema_us * 15u) / 16u;
+        return;
     }
-    if (acquire_result != 4 || buffer_index >= SURFACE_BUFFER_COUNT) return 0;
-    if (g_buffer_wait_started_us != 0 &&
-        g_last_tick_us > g_buffer_wait_started_us) {
+    if (g_last_tick_us > g_buffer_wait_started_us) {
         const uint64_t elapsed = g_last_tick_us - g_buffer_wait_started_us;
         const uint32_t sample = elapsed > UINT32_MAX ? UINT32_MAX :
                                                        (uint32_t)elapsed;
@@ -1566,16 +1578,79 @@ static int render_frame(void) {
         if (sample > g_buffer_wait_max_us) g_buffer_wait_max_us = sample;
     }
     g_buffer_wait_started_us = 0;
-    frame = g_surface_buffers + (size_t)buffer_index * pixels;
-    for (index = 0; index < pixels; ++index) {
-        frame[index] = UINT16_C(0x0841);
+}
+
+/* Returns 1 once ownership moved to Host, 0 while back-pressured and -1 when
+ * the Surface must be recreated. A blocked Present retains the acquired
+ * buffer and retries it without rendering over those pixels. */
+static int present_writing_buffer(void) {
+    int32_t result;
+    const uint8_t index = g_surface_ownership.writing_buffer;
+    if (index == VOXEL_SURFACE_BUFFER_NONE) return 1;
+    result = pxa_surface_present_buffer(g_surface_handle, index,
+                                        g_surface_ownership.writing_frame_id);
+    if (result == 16) {
+        g_frame_id = g_surface_ownership.writing_frame_id;
+        if (!voxel_surface_mark_presented(&g_surface_ownership,
+                                          SURFACE_BUFFER_COUNT)) {
+            return -1;
+        }
+        end_buffer_wait();
+        update_fps(g_last_tick_us);
+        return 1;
     }
+    if (result == PXA_STATUS_WOULD_BLOCK) {
+        begin_buffer_wait();
+        return 0;
+    }
+    return -1;
+}
+
+static int render_frame(void) {
+    hud_state_t hud;
+    ray_hit_t target;
+    const size_t pixels = (size_t)g_surface_width * g_surface_height;
+    uint16_t *frame;
+    uint8_t buffer_index;
+    int32_t acquire_result;
+    int present_result;
+    g_render_sample_pending = 0;
+    if (g_surface_ownership.recreate_pending) {
+        try_finish_surface_recreate();
+        return 1;
+    }
+    if (g_surface_handle == 0 || pixels > FRAME_PIXELS_MAX ||
+        g_surface_width != (uint16_t)render_scene_width() ||
+        g_surface_height != (uint16_t)render_scene_height()) {
+        return 0;
+    }
+    if (g_surface_ownership.writing_buffer != VOXEL_SURFACE_BUFFER_NONE) {
+        present_result = present_writing_buffer();
+        if (present_result < 0) recreate_surface();
+        return present_result >= 0;
+    }
+    acquire_result = pxa_surface_acquire_buffer(g_surface_handle,
+                                                &buffer_index);
+    if (acquire_result == PXA_STATUS_WOULD_BLOCK) {
+        begin_buffer_wait();
+        return 1;
+    }
+    if (acquire_result != 4 || buffer_index >= SURFACE_BUFFER_COUNT) return 0;
+    end_buffer_wait();
+    if (!voxel_surface_begin_write(&g_surface_ownership, buffer_index,
+                                   SURFACE_BUFFER_COUNT, g_frame_id + 1u)) {
+        recreate_surface();
+        return 0;
+    }
+    frame = g_surface_buffers + (size_t)buffer_index * pixels;
     if (g_screen == SCREEN_PLAY || g_screen == SCREEN_PAUSE) {
         game_target_block(&g_player, &target);
         if (!render_3d(frame, g_surface_width, &g_player,
                        g_now_ms, &target, g_mine_progress)) {
+            recreate_surface();
             return 0;
         }
+        g_render_sample_pending = 1;
         if (g_screen == SCREEN_PLAY) {
             build_hud(&hud);
             hud.target_table = (target.hit &&
@@ -1610,13 +1685,9 @@ static int render_frame(void) {
         menu.toast = g_menu_toast_until > g_now_ms ? g_menu_toast : NULL;
         render_menu(&menu);
     }
-    present_result = pxa_surface_present_buffer(
-        g_surface_handle, buffer_index, g_frame_id + 1u);
-    if (present_result == 16) {
-        ++g_frame_id;
-        return 1;
-    }
-    return present_result == PXA_STATUS_WOULD_BLOCK;
+    present_result = present_writing_buffer();
+    if (present_result < 0) recreate_surface();
+    return present_result >= 0;
 }
 
 static int handle_surface_create(const pxa_event_t *event) {
@@ -1638,10 +1709,13 @@ static int handle_surface_create(const pxa_event_t *event) {
     if (g_surface_width != (uint16_t)render_scene_width() ||
         g_surface_height != (uint16_t)render_scene_height()) {
         (void)pxa_close_handle(created.surface_handle);
+        g_surface_ownership.recreate_pending = 0;
         (void)request_surface_create();
         return 1;
     }
     g_surface_handle = created.surface_handle;
+    g_surface_ownership.recreate_pending = 0;
+    reset_surface_ownership();
     if (pxa_surface_register_buffers(
             g_surface_handle, g_surface_buffers, created.frame_bytes,
             created.buffer_count) !=
@@ -1698,6 +1772,7 @@ int32_t pxa_app_start(const uint8_t *config, uint32_t length) {
     g_surface_height = 0;
     g_frame_id = 0;
     g_surface_create_pending = 0;
+    reset_surface_ownership();
     g_input_initialized = 0;
     g_last_tick_us = 0;
     g_now_ms = 0;
@@ -1723,6 +1798,7 @@ int32_t pxa_app_start(const uint8_t *config, uint32_t length) {
     g_swing_timer = 0.0F;
     g_last_jump_tap_us = 0;
     g_render_start_us = 0;
+    g_render_sample_pending = 0;
     g_render_ema_us = 0;
     g_render_max_us = 0;
     g_quality_frames = 0;
@@ -1812,9 +1888,16 @@ int32_t pxa_app_on_event(const uint8_t *event, uint32_t length) {
     {
         pxa_surface_released_event_t released;
         if (pxa_surface_parse_released(&parsed, &released)) {
-            return released.surface_handle == g_surface_handle
-                       ? PXA_EVENT_HANDLED
-                       : PXA_EVENT_UNHANDLED;
+            if (released.surface_handle != g_surface_handle) {
+                return PXA_EVENT_UNHANDLED;
+            }
+            if (released.buffer_index < SURFACE_BUFFER_COUNT) {
+                (void)voxel_surface_mark_released(
+                    &g_surface_ownership, released.buffer_index,
+                    SURFACE_BUFFER_COUNT);
+                try_finish_surface_recreate();
+            }
+            return PXA_EVENT_HANDLED;
         }
     }
     if (parsed.service == PXA_SERVICE_STORAGE) {
@@ -1875,10 +1958,12 @@ int32_t pxa_app_on_event(const uint8_t *event, uint32_t length) {
         parsed.request_id == RENDER_TIME_REQUEST) {
         int32_t status;
         uint64_t end_us;
+        const uint64_t start_us = g_render_start_us;
+        g_render_start_us = 0;
         if (pxa_clock_parse_now(&parsed, &status, &end_us) &&
-            status == PXA_STATUS_OK && g_render_start_us != 0 &&
-            end_us > g_render_start_us) {
-            update_quality(end_us - g_render_start_us);
+            status == PXA_STATUS_OK && start_us != 0 &&
+            end_us > start_us) {
+            update_quality(end_us - start_us);
         }
         return PXA_EVENT_HANDLED;
     }
@@ -1888,7 +1973,6 @@ int32_t pxa_app_on_event(const uint8_t *event, uint32_t length) {
         uint8_t index;
         float move_x;
         float move_z;
-        update_fps(timestamp_us);
         voxel_sfx_tick(&g_sfx, &parsed);
         if (++g_snapshot_ticks >= WINDOW_SNAPSHOT_PERIOD_TICKS) {
             g_snapshot_ticks = 0;
@@ -1950,7 +2034,6 @@ int32_t pxa_app_on_event(const uint8_t *event, uint32_t length) {
             g_now_ms += FRAME_PERIOD_MS;
         }
         if (steps != 0) {
-            g_render_start_us = timestamp_us;
             if (render_frame()) {
                 g_present_failures = 0;
             } else if (++g_present_failures >= 3u) {
@@ -1962,7 +2045,12 @@ int32_t pxa_app_on_event(const uint8_t *event, uint32_t length) {
                 (void)render_frame();
                 toast_view();
             }
-            (void)pxa_clock_now(RENDER_TIME_REQUEST);
+            if (g_render_sample_pending && g_render_start_us == 0) {
+                g_render_start_us = timestamp_us;
+                if (!pxa_clock_now(RENDER_TIME_REQUEST)) {
+                    g_render_start_us = 0;
+                }
+            }
         }
         return PXA_EVENT_HANDLED;
     }
