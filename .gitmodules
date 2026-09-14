@@ -1,6 +1,8 @@
 [submodule "wamr"]
 	path = wamr
-	url = https://github.com/wasm-micro-runtime/wasm-micro-runtime.git
+	url = https://github.com/78/wasm-micro-runtime.git
+	branch = wamr-host/esp-idf-psram
 [submodule "ui/backends/lvgl/page_manager"]
 	path = ui/backends/lvgl/page_manager
 	url = https://github.com/lucinhu/page_manager.git
+	branch = master
