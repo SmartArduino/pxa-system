@@ -67,6 +67,15 @@ int main(void) {
            io_data[2] == 80 && io_data[3] == 0 && io_data[4] == 0 &&
            io_data[5] == 0xfa && io_data[6] == PXA_AUDIO_TONE_TRIANGLE &&
            io_data[7] == 0);
+    assert(pxa_audio_play_tone_enveloped(
+               99, PXA_AUDIO_TONE_TRIANGLE, 440, 80, -6 * 256,
+               5, 30, 40) == 14);
+    assert(io_length == 14 && io_data[8] == 5 && io_data[9] == 0 &&
+           io_data[10] == 30 && io_data[11] == 0 && io_data[12] == 40 &&
+           io_data[13] == 0);
+    assert(pxa_audio_play_tone_enveloped(
+               99, PXA_AUDIO_TONE_TRIANGLE, 440, 80, -6 * 256,
+               81, 30, 40) == PXA_STATUS_INVALID_ARGUMENT);
     {
         static const char path[] = "audio/music.ogg";
         uint8_t command[32];

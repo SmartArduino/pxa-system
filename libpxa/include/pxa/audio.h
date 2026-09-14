@@ -12,7 +12,7 @@ extern "C" {
 
 #define PXA_AUDIO_SERVICE_ID UINT16_C(10)
 #define PXA_AUDIO_SERVICE_MAJOR UINT16_C(0)
-#define PXA_AUDIO_SERVICE_MINOR UINT16_C(4)
+#define PXA_AUDIO_SERVICE_MINOR UINT16_C(5)
 #define PXA_AUDIO_SERVICE_PATCH UINT16_C(0)
 #define PXA_AUDIO_OPEN_SESSION UINT16_C(1)
 #define PXA_AUDIO_COMMIT_GRAPH UINT16_C(2)
@@ -66,6 +66,9 @@ typedef struct {
     uint16_t frequency_hz;
     uint16_t duration_ms;
     int16_t gain_db_q8;
+    uint16_t attack_ms;
+    uint16_t release_ms;
+    uint16_t delay_ms;
     uint8_t waveform;
 } pxa_audio_tone_t;
 

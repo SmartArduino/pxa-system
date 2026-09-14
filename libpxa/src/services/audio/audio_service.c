@@ -309,20 +309,26 @@ static int32_t audio_stream_io(void *context, uint32_t operation,
     }
     if (operation == PXA_AUDIO_IO_PLAY_TONE) {
         pxa_audio_tone_t tone;
-        if (data == NULL || size != 8 ||
+        if (data == NULL || (size != 8 && size != 14) ||
             session->service->backend.play_tone == NULL) {
-            return data == NULL || size != 8 ? PXA_STATUS_INVALID_ARGUMENT
-                                             : PXA_STATUS_UNSUPPORTED;
+            return data == NULL || (size != 8 && size != 14)
+                       ? PXA_STATUS_INVALID_ARGUMENT
+                       : PXA_STATUS_UNSUPPORTED;
         }
         tone.frequency_hz = pxa_read_u16(data);
         tone.duration_ms = pxa_read_u16(data + 2);
         tone.gain_db_q8 = read_i16(data + 4);
         tone.waveform = data[6];
+        tone.attack_ms = size == 14 ? pxa_read_u16(data + 8) : 4;
+        tone.release_ms = size == 14 ? pxa_read_u16(data + 10) : 4;
+        tone.delay_ms = size == 14 ? pxa_read_u16(data + 12) : 0;
         if (data[7] != 0 || tone.frequency_hz < 40 ||
             tone.frequency_hz > 8000 || tone.duration_ms < 10 ||
             tone.duration_ms > 1000 || tone.gain_db_q8 > 0 ||
             tone.gain_db_q8 < -60 * 256 ||
-            tone.waveform > PXA_AUDIO_TONE_NOISE) {
+            tone.waveform > PXA_AUDIO_TONE_NOISE ||
+            tone.attack_ms > tone.duration_ms ||
+            tone.release_ms > tone.duration_ms || tone.delay_ms > 1000) {
             return PXA_STATUS_INVALID_ARGUMENT;
         }
         status = pxa_status_normalize(session->service->backend.play_tone(

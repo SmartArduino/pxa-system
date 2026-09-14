@@ -125,6 +125,12 @@ static inline void voxel_sfx_play(voxel_sfx_t *sfx, uint8_t kind) {
     static const int16_t gain_db_q8[VOXEL_SFX_KIND_COUNT] = {
         -7 * 256, -5 * 256, -8 * 256, -8 * 256, -6 * 256, -8 * 256,
     };
+    static const uint16_t attack_ms[VOXEL_SFX_KIND_COUNT] = {
+        2, 1, 2, 2, 2, 4,
+    };
+    static const uint16_t release_ms[VOXEL_SFX_KIND_COUNT] = {
+        20, 80, 30, 30, 60, 50,
+    };
     static const uint8_t waveform[VOXEL_SFX_KIND_COUNT] = {
         PXA_AUDIO_TONE_TRIANGLE, PXA_AUDIO_TONE_NOISE,
         PXA_AUDIO_TONE_SQUARE, PXA_AUDIO_TONE_NOISE,
@@ -134,9 +140,10 @@ static inline void voxel_sfx_play(voxel_sfx_t *sfx, uint8_t kind) {
         kind >= VOXEL_SFX_KIND_COUNT) {
         return;
     }
-    (void)pxa_audio_play_tone(sfx->session_handle, waveform[kind],
-                              frequency_hz[kind], duration_ms[kind],
-                              gain_db_q8[kind]);
+    (void)pxa_audio_play_tone_enveloped(
+        sfx->session_handle, waveform[kind], frequency_hz[kind],
+        duration_ms[kind], gain_db_q8[kind], attack_ms[kind],
+        release_ms[kind], 0);
 }
 
 static inline void voxel_sfx_tick(voxel_sfx_t *sfx,

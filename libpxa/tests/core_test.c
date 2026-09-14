@@ -930,6 +930,13 @@ static pxa_status_t audio_play_tone(void *context,
            tone->frequency_hz == 440 && tone->duration_ms == 80 &&
            tone->gain_db_q8 == -6 * 256 &&
            tone->waveform == PXA_AUDIO_TONE_TRIANGLE);
+    if (backend->tones == 0) {
+        assert(tone->attack_ms == 4 && tone->release_ms == 4 &&
+               tone->delay_ms == 0);
+    } else {
+        assert(tone->attack_ms == 5 && tone->release_ms == 30 &&
+               tone->delay_ms == 40);
+    }
     backend->tones++;
     return PXA_STATUS_OK;
 }
@@ -4325,6 +4332,23 @@ static void test_audio_service(void) {
                            PXA_AUDIO_IO_PLAY_TONE, tone, sizeof(tone)) ==
                (int32_t)sizeof(tone));
         assert(backend.tones == 1);
+        {
+            uint8_t enveloped[] = {
+                0xb8, 0x01, 80, 0, 0, 0xfa,
+                PXA_AUDIO_TONE_TRIANGLE, 0, 5, 0, 30, 0, 40, 0};
+            assert(dispatch_io(test.runtime, component,
+                               reused_session_handle,
+                               PXA_AUDIO_IO_PLAY_TONE, enveloped,
+                               sizeof(enveloped)) ==
+                   (int32_t)sizeof(enveloped));
+            assert(backend.tones == 2);
+            enveloped[8] = 81;
+            assert(dispatch_io(test.runtime, component,
+                               reused_session_handle,
+                               PXA_AUDIO_IO_PLAY_TONE, enveloped,
+                               sizeof(enveloped)) ==
+                   PXA_STATUS_INVALID_ARGUMENT);
+        }
         tone[7] = 1;
         assert(dispatch_io(test.runtime, component, reused_session_handle,
                            PXA_AUDIO_IO_PLAY_TONE, tone, sizeof(tone)) ==
