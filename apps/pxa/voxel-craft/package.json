@@ -31,7 +31,8 @@
       "sources": [
         "main.c",
         "game.c",
-        "render.c"
+        "render.c",
+        "voxel_raster.c"
       ],
       "services": [
         "audio",

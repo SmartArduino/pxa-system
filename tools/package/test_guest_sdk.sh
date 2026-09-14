@@ -192,6 +192,11 @@ PYTHON
 "$work_dir/pxa_surface_test"
 
 "$cc_bin" "${flags[@]}" \
+  "$pxa_system_dir/sdk/guest-c/tests/pxa_raster_test.c" \
+  -o "$work_dir/pxa_raster_test"
+"$work_dir/pxa_raster_test"
+
+"$cc_bin" "${flags[@]}" \
   -I"$pxa_system_dir/apps/pxa/voxel-craft" \
   "$pxa_system_dir/sdk/guest-c/tests/pxa_voxel_surface_ownership_test.c" \
   -o "$work_dir/pxa_voxel_surface_ownership_test"
@@ -202,6 +207,13 @@ PYTHON
   "$pxa_system_dir/sdk/guest-c/tests/pxa_voxel_quality_controller_test.c" \
   -o "$work_dir/pxa_voxel_quality_controller_test"
 "$work_dir/pxa_voxel_quality_controller_test"
+
+"$cc_bin" "${flags[@]}" \
+  -I"$pxa_system_dir/apps/pxa/voxel-craft" \
+  "$pxa_system_dir/sdk/guest-c/tests/pxa_voxel_raster_pipeline_test.c" \
+  "$pxa_system_dir/apps/pxa/voxel-craft/voxel_raster.c" \
+  -o "$work_dir/pxa_voxel_raster_pipeline_test"
+"$work_dir/pxa_voxel_raster_pipeline_test"
 
 "$cc_bin" "${flags[@]}" \
   "$pxa_system_dir/sdk/guest-c/tests/pxa_game_sfx_test.c" \

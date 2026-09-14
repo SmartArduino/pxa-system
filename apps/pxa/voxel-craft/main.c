@@ -1,8 +1,9 @@
 /* Voxel Craft: a first-person voxel sandbox for PXA.
  *
  * The world is a 64 x 24 x 64 block grid generated from value noise. The scene
- * is ray cast per pixel at 148 x 120 into a Guest-mapped RGB565 Surface. The
- * Host fuses nearest upscale, rotation and panel byte order conversion. Touch
+ * uses a capability-gated Host Raster Surface during play and keeps the
+ * GuestMapped pixel renderer as its compatibility and complex-UI fallback.
+ * The Host fuses nearest upscale, rotation and panel byte order conversion. Touch
  * controls: left half is a movement stick, right half looks around. The MINE
  * button holds a mining action with per-block progress and break particles,
  * ATTACK swings at slimes, PLACE builds with the hotbar selection, and JUMP
@@ -10,6 +11,7 @@
  * mining, break, place, attack, hit and jump effects.
  */
 #include "pxa.h"
+#include "pxa_raster.h"
 #include "pxa_storage.h"
 #include "pxa_surface.h"
 #include "pxa_ui.h"
@@ -20,13 +22,16 @@
 #include "render.h"
 #include "sfx.h"
 #include "surface_ownership.h"
+#include "voxel_raster.h"
 
 #define FRAME_NODE UINT32_C(2)
 #define FRAME_PERIOD_MS 33u
+#define CLOCK_POLL_PERIOD_MS 16u
 #define MAX_CATCHUP_STEPS 3u
 #define WINDOW_SNAPSHOT_REQUEST UINT32_C(3)
 #define SURFACE_CREATE_REQUEST UINT32_C(4)
 #define SURFACE_CONFIGURE_REQUEST UINT32_C(5)
+#define SURFACE_CAPABILITIES_REQUEST_BASE UINT32_C(0x60000000)
 #define PERF_CLOCK_FRAME_START UINT32_C(0x70)
 #define PERF_CLOCK_UPDATE_END UINT32_C(0x71)
 #define PERF_CLOCK_RAYCAST_START UINT32_C(0x72)
@@ -34,7 +39,7 @@
 #define PERF_CLOCK_FRAME_END UINT32_C(0x74)
 #define PXA_WINDOW_GET_SNAPSHOT_OP 2u
 #define PXA_WINDOW_METRICS_CHANGED_OP 0x8001u
-#define WINDOW_SNAPSHOT_PERIOD_TICKS 125u
+#define WINDOW_SNAPSHOT_PERIOD_TICKS 250u
 #define QUALITY_SAMPLE_CAP_US UINT64_C(250000)
 #define TICK_SECONDS 0.033F
 #define LOOK_PER_PIXEL 0.0062F
@@ -44,13 +49,15 @@
 #define PAD_TURN_RATE 2.2F
 #define PAD_PITCH_RATE 1.6F
 #define SURFACE_BUFFER_COUNT 3u
-#define SURFACE_RETRY_TICKS 15u
+#define SURFACE_RETRY_TICKS 31u
 #define FRAME_PIXELS_MAX RENDER_SCENE_PIXELS_MAX
 #define SCREEN_MENU 0u
 #define SCREEN_SETTINGS 1u
 #define SCREEN_PLAY 2u
 #define SCREEN_PAUSE 3u
 #define UI_RENDER_QUALITY QUALITY_BALANCED
+#define SURFACE_MODE_MAPPED 0u
+#define SURFACE_MODE_RASTER 1u
 
 enum {
     BTN_NONE = 0,
@@ -92,11 +99,17 @@ static uint64_t g_frame_id;
 static uint8_t g_surface_create_pending;
 static uint8_t g_surface_start_pending;
 static uint8_t g_surface_retry_ticks;
+static uint8_t g_surface_mode;
+static uint8_t g_surface_request_mode;
+static uint8_t g_raster_supported;
+static uint8_t g_raster_ready;
+static uint32_t g_surface_capabilities_request;
 static voxel_surface_ownership_t g_surface_ownership;
 static uint8_t g_input_initialized;
 static player_t g_player;
 static voxel_sfx_t g_sfx;
 static uint64_t g_last_tick_us;
+static uint64_t g_tick_accumulator_us;
 static uint32_t g_now_ms;
 static uint32_t g_fps_x10;
 static uint64_t g_fps_window_start_us;
@@ -130,6 +143,13 @@ static uint32_t g_render_total_max_us;
 static uint64_t g_buffer_wait_started_us;
 static uint32_t g_buffer_wait_ema_us;
 static uint32_t g_buffer_wait_max_us;
+static uint32_t g_host_raster_ema_us;
+static uint32_t g_host_raster_max_us;
+static uint32_t g_host_queue_ema_us;
+static uint32_t g_host_present_ema_us;
+static uint64_t g_host_queue_total_us;
+static uint64_t g_host_present_total_us;
+static uint64_t g_host_telemetry_frames;
 static uint32_t g_snapshot_ticks;
 static uint8_t g_bootstrap_requests_pending;
 static uint8_t g_present_failures;
@@ -160,6 +180,8 @@ static uint64_t g_pad_last_a_us;
 static void recreate_surface(void);
 static void try_finish_surface_recreate(void);
 static void update_fps(uint64_t timestamp_us);
+static void update_duration_stats(uint64_t duration_us, uint32_t *ema_us,
+                                  uint32_t *maximum_us);
 
 static int next_lower_quality(int quality) {
     return quality <= QUALITY_MIN ? QUALITY_MIN
@@ -284,10 +306,59 @@ static void toast_quality(void) {
 
 static void update_quality(uint64_t duration_us) {
     const int quality = render_quality();
+    uint64_t effective_render_us = duration_us;
+    uint32_t consumer_wait_us = g_buffer_wait_ema_us;
     voxel_quality_action_t action;
     if (g_quality_manual != 0) return;
+    if (g_surface_mode == SURFACE_MODE_RASTER && g_raster_ready) {
+        pxa_raster_telemetry_t telemetry;
+        if (pxa_raster_query_telemetry(g_surface_handle, &telemetry) ==
+            (int32_t)PXA_RASTER_TELEMETRY_BYTES) {
+            if (telemetry.last_host_raster_us != 0)
+                update_duration_stats(telemetry.last_host_raster_us,
+                                      &g_host_raster_ema_us,
+                                      &g_host_raster_max_us);
+            if (telemetry.submitted_frames > g_host_telemetry_frames) {
+                const uint64_t frames = telemetry.submitted_frames -
+                                        g_host_telemetry_frames;
+                const uint64_t queue_delta =
+                    telemetry.queue_wait_us >= g_host_queue_total_us
+                        ? telemetry.queue_wait_us - g_host_queue_total_us
+                        : 0;
+                const uint64_t present_delta =
+                    telemetry.present_us >= g_host_present_total_us
+                        ? telemetry.present_us - g_host_present_total_us
+                        : 0;
+                const uint64_t queue_average = queue_delta / frames;
+                const uint64_t present_average = present_delta / frames;
+                uint32_t queue_sample = queue_average > UINT32_MAX
+                                            ? UINT32_MAX
+                                            : (uint32_t)queue_average;
+                uint32_t present_sample = present_average > UINT32_MAX
+                                              ? UINT32_MAX
+                                              : (uint32_t)present_average;
+                g_host_queue_ema_us = g_host_queue_ema_us == 0
+                                          ? queue_sample
+                                          : (g_host_queue_ema_us * 7u +
+                                             queue_sample) /
+                                                8u;
+                g_host_present_ema_us = g_host_present_ema_us == 0
+                                            ? present_sample
+                                            : (g_host_present_ema_us * 7u +
+                                               present_sample) /
+                                                  8u;
+            }
+            g_host_queue_total_us = telemetry.queue_wait_us;
+            g_host_present_total_us = telemetry.present_us;
+            g_host_telemetry_frames = telemetry.submitted_frames;
+        }
+        if (g_host_raster_ema_us > effective_render_us)
+            effective_render_us = g_host_raster_ema_us;
+        if (g_host_queue_ema_us > consumer_wait_us)
+            consumer_wait_us = g_host_queue_ema_us;
+    }
     action = voxel_quality_observe(
-        &g_quality_controller, duration_us, g_buffer_wait_ema_us,
+        &g_quality_controller, effective_render_us, consumer_wait_us,
         (uint8_t)quality, (uint8_t)render_min_quality(), QUALITY_MAX);
     if (action == VOXEL_QUALITY_ACTION_LOWER_DETAIL) {
         g_game_quality = (uint8_t)next_higher_quality(quality);
@@ -443,9 +514,19 @@ static int request_surface_create(void) {
     }
     g_surface_width = (uint16_t)render_scene_width();
     g_surface_height = (uint16_t)render_scene_height();
-    if (!pxa_surface_create_rgb565_mapped(
-            SURFACE_CREATE_REQUEST, g_surface_width, g_surface_height,
-            SURFACE_BUFFER_COUNT, 1, g_packet, sizeof(g_packet))) {
+    g_surface_request_mode =
+        g_screen == SCREEN_PLAY && !g_inventory_open && g_raster_supported
+            ? SURFACE_MODE_RASTER
+            : SURFACE_MODE_MAPPED;
+    if (!(g_surface_request_mode == SURFACE_MODE_RASTER
+              ? pxa_surface_create_rgb565_host_raster(
+                    SURFACE_CREATE_REQUEST, g_surface_width,
+                    g_surface_height, SURFACE_BUFFER_COUNT, 1, g_packet,
+                    sizeof(g_packet))
+              : pxa_surface_create_rgb565_mapped(
+                    SURFACE_CREATE_REQUEST, g_surface_width,
+                    g_surface_height, SURFACE_BUFFER_COUNT, 1, g_packet,
+                    sizeof(g_packet)))) {
         g_surface_start_pending = 1;
         g_surface_retry_ticks = SURFACE_RETRY_TICKS;
         return 0;
@@ -480,6 +561,8 @@ static void try_finish_surface_recreate(void) {
         g_surface_handle = 0;
         g_surface_width = 0;
         g_surface_height = 0;
+        g_raster_ready = 0;
+        voxel_raster_set_capabilities(0);
         reset_surface_ownership();
     }
     if (!g_surface_create_pending) {
@@ -582,6 +665,7 @@ static uint64_t g_menu_press_us;
 
 static void set_screen(uint8_t screen) {
     int target_quality = UI_RENDER_QUALITY;
+    const uint8_t old_screen = g_screen;
     if (g_screen == SCREEN_PLAY) {
         g_game_quality = (uint8_t)render_quality();
     }
@@ -591,6 +675,8 @@ static void set_screen(uint8_t screen) {
     }
     if (target_quality != render_quality()) {
         render_set_quality(target_quality);
+        recreate_surface();
+    } else if ((old_screen == SCREEN_PLAY) != (screen == SCREEN_PLAY)) {
         recreate_surface();
     }
 }
@@ -1099,6 +1185,7 @@ static void inventory_return_items(void) {
 static void close_inventory(void) {
     inventory_return_items();
     g_inventory_open = 0;
+    recreate_surface();
 }
 
 static void open_inventory(void) {
@@ -1112,6 +1199,7 @@ static void open_inventory(void) {
     g_cursor.count = 0;
     render_inventory_set_mode(0);
     game_craft_update();
+    recreate_surface();
 }
 
 static void open_craft_table(void) {
@@ -1126,6 +1214,7 @@ static void open_craft_table(void) {
     render_inventory_set_mode(1);
     game_table_craft_update();
     set_toast("CRAFTING TABLE");
+    recreate_surface();
 }
 
 /* Long press: take half a stack, or drop a single item when one is held. */
@@ -1697,7 +1786,7 @@ static int present_writing_buffer(void) {
     if (index == VOXEL_SURFACE_BUFFER_NONE) return 1;
     result = pxa_surface_present_buffer(g_surface_handle, index,
                                         g_surface_ownership.writing_frame_id);
-    if (result == 16) {
+    if (result == (int32_t)PXA_SURFACE_PRESENT_RECORD_BYTES) {
         g_frame_id = g_surface_ownership.writing_frame_id;
         if (!voxel_surface_mark_presented(&g_surface_ownership,
                                           SURFACE_BUFFER_COUNT)) {
@@ -1731,6 +1820,42 @@ static int render_frame(void) {
         g_surface_height != (uint16_t)render_scene_height()) {
         return 0;
     }
+    if (g_surface_mode == SURFACE_MODE_RASTER) {
+        int32_t raster_result;
+        if (!g_raster_ready) return 1;
+        if (g_screen != SCREEN_PLAY) {
+            recreate_surface();
+            return 1;
+        }
+        game_target_block(&g_player, &target);
+        build_hud(&hud);
+        hud.target_table = (target.hit &&
+                            game_block(target.x, target.y, target.z) ==
+                                BLOCK_TABLE)
+                               ? 1
+                               : 0;
+        hud.action_mode = hud.target_table ? 2
+                          : game_attack_target(&g_player) ? 1
+                                                         : 0;
+        (void)mark_perf_timing(PERF_CLOCK_RAYCAST_START);
+        raster_result = voxel_raster_render(
+            g_surface_handle, g_frame_id + 1u, &g_player,
+            (uint8_t)render_quality(), &hud);
+        (void)mark_perf_timing(PERF_CLOCK_RAYCAST_END);
+        if (raster_result > 0) {
+            ++g_frame_id;
+            end_buffer_wait();
+            update_fps(g_last_tick_us);
+            return 1;
+        }
+        if (raster_result == PXA_STATUS_WOULD_BLOCK) {
+            begin_buffer_wait();
+            return 1;
+        }
+        g_raster_supported = 0;
+        recreate_surface();
+        return 0;
+    }
     if (g_surface_ownership.writing_buffer != VOXEL_SURFACE_BUFFER_NONE) {
         present_result = present_writing_buffer();
         if (present_result < 0) recreate_surface();
@@ -1742,7 +1867,10 @@ static int render_frame(void) {
         begin_buffer_wait();
         return 1;
     }
-    if (acquire_result != 4 || buffer_index >= SURFACE_BUFFER_COUNT) return 0;
+    if (acquire_result != (int32_t)PXA_SURFACE_ACQUIRE_RECORD_BYTES ||
+        buffer_index >= SURFACE_BUFFER_COUNT) {
+        return 0;
+    }
     end_buffer_wait();
     if (!voxel_surface_begin_write(&g_surface_ownership, buffer_index,
                                    SURFACE_BUFFER_COUNT, g_frame_id + 1u)) {
@@ -1808,6 +1936,12 @@ static int handle_surface_create(const pxa_event_t *event) {
         return 0;
     }
     g_surface_create_pending = 0;
+    if (created.status == PXA_STATUS_UNSUPPORTED &&
+        g_surface_request_mode == SURFACE_MODE_RASTER) {
+        g_raster_supported = 0;
+        schedule_surface_retry();
+        return 1;
+    }
     if (created.status != PXA_STATUS_OK ||
         created.stride_bytes != expected_stride ||
         created.frame_bytes != expected_bytes ||
@@ -1823,12 +1957,25 @@ static int handle_surface_create(const pxa_event_t *event) {
         return 1;
     }
     g_surface_handle = created.surface_handle;
+    g_surface_mode = g_surface_request_mode;
     g_surface_ownership.recreate_pending = 0;
     reset_surface_ownership();
-    if (pxa_surface_register_buffers(
-            g_surface_handle, g_surface_buffers, created.frame_bytes,
-            created.buffer_count) !=
-        (int32_t)(created.frame_bytes * created.buffer_count)) {
+    if (g_surface_mode == SURFACE_MODE_RASTER) {
+        if (++g_surface_capabilities_request == 0)
+            ++g_surface_capabilities_request;
+        if (!pxa_surface_query_state(g_surface_capabilities_request,
+                                     g_surface_handle, g_packet,
+                                     sizeof(g_packet))) {
+            (void)pxa_close_handle(g_surface_handle);
+            g_surface_handle = 0;
+            g_raster_supported = 0;
+            schedule_surface_retry();
+            return 1;
+        }
+    } else if (pxa_surface_register_buffers(
+                   g_surface_handle, g_surface_buffers, created.frame_bytes,
+                   created.buffer_count) !=
+               (int32_t)(created.frame_bytes * created.buffer_count)) {
         (void)pxa_close_handle(g_surface_handle);
         g_surface_handle = 0;
         schedule_surface_retry();
@@ -1844,6 +1991,34 @@ static int handle_surface_create(const pxa_event_t *event) {
         return 1;
     }
     g_surface_retry_ticks = 0;
+    voxel_raster_reset();
+    if (g_surface_mode != SURFACE_MODE_RASTER) (void)render_frame();
+    return 1;
+}
+
+static int handle_surface_capabilities(const pxa_event_t *event) {
+    pxa_surface_state_result_t state;
+    const uint32_t required =
+        PXA_SURFACE_STATE_FLAG_SUPPORTS_HOST_RASTER |
+        PXA_SURFACE_STATE_FLAG_RASTER_TEXTURED_QUAD;
+    if (!pxa_surface_parse_state(event, &state) ||
+        event->request_id != g_surface_capabilities_request)
+        return 0;
+    if (g_surface_handle == 0 || g_surface_mode != SURFACE_MODE_RASTER)
+        return 1;
+    if (state.status != PXA_STATUS_OK ||
+        (state.flags & required) != required ||
+        !voxel_raster_upload_assets(g_surface_handle)) {
+        if (g_surface_handle != 0) (void)pxa_close_handle(g_surface_handle);
+        g_surface_handle = 0;
+        g_raster_ready = 0;
+        voxel_raster_set_capabilities(0);
+        g_raster_supported = 0;
+        schedule_surface_retry();
+        return 1;
+    }
+    voxel_raster_set_capabilities(state.flags);
+    g_raster_ready = 1;
     (void)render_frame();
     return 1;
 }
@@ -1888,9 +2063,17 @@ int32_t pxa_app_start(const uint8_t *config, uint32_t length) {
     g_surface_create_pending = 0;
     g_surface_start_pending = 0;
     g_surface_retry_ticks = 0;
+    g_surface_mode = SURFACE_MODE_MAPPED;
+    g_surface_request_mode = SURFACE_MODE_MAPPED;
+    g_raster_supported = 1;
+    g_raster_ready = 0;
+    g_surface_capabilities_request = SURFACE_CAPABILITIES_REQUEST_BASE;
+    voxel_raster_set_capabilities(0);
     reset_surface_ownership();
+    voxel_raster_reset();
     g_input_initialized = 0;
     g_last_tick_us = 0;
+    g_tick_accumulator_us = 0;
     g_now_ms = 0;
     g_fps_x10 = 0;
     g_fps_window_start_us = 0;
@@ -1923,6 +2106,13 @@ int32_t pxa_app_start(const uint8_t *config, uint32_t length) {
     g_buffer_wait_started_us = 0;
     g_buffer_wait_ema_us = 0;
     g_buffer_wait_max_us = 0;
+    g_host_raster_ema_us = 0;
+    g_host_raster_max_us = 0;
+    g_host_queue_ema_us = 0;
+    g_host_present_ema_us = 0;
+    g_host_queue_total_us = 0;
+    g_host_present_total_us = 0;
+    g_host_telemetry_frames = 0;
     g_snapshot_ticks = 0;
     g_bootstrap_requests_pending = 1;
     g_present_failures = 0;
@@ -1984,8 +2174,29 @@ int32_t pxa_app_start(const uint8_t *config, uint32_t length) {
                           STORAGE_META_KEY_LEN, g_storage_payload,
                           sizeof(g_storage_payload), g_packet,
                           sizeof(g_packet));
-    return pxa_clock_set_period(FRAME_PERIOD_MS) ? PXA_STATUS_OK
+    return pxa_clock_set_period(CLOCK_POLL_PERIOD_MS) ? PXA_STATUS_OK
                                                  : PXA_STATUS_INTERNAL;
+}
+
+static uint8_t consume_simulation_steps(uint64_t timestamp_us) {
+    const uint64_t step_us = (uint64_t)FRAME_PERIOD_MS * 1000u;
+    const uint64_t maximum_elapsed_us = step_us * MAX_CATCHUP_STEPS;
+    uint64_t elapsed_us;
+    uint64_t steps;
+    if (timestamp_us == 0) return 0;
+    if (g_last_tick_us == 0 || timestamp_us <= g_last_tick_us) {
+        g_last_tick_us = timestamp_us;
+        g_tick_accumulator_us = 0;
+        return 1;
+    }
+    elapsed_us = timestamp_us - g_last_tick_us;
+    g_last_tick_us = timestamp_us;
+    if (elapsed_us > maximum_elapsed_us) elapsed_us = maximum_elapsed_us;
+    g_tick_accumulator_us += elapsed_us;
+    steps = g_tick_accumulator_us / step_us;
+    if (steps > MAX_CATCHUP_STEPS) steps = MAX_CATCHUP_STEPS;
+    g_tick_accumulator_us -= steps * step_us;
+    return (uint8_t)steps;
 }
 
 int32_t pxa_app_on_event(const uint8_t *event, uint32_t length) {
@@ -1999,6 +2210,9 @@ int32_t pxa_app_on_event(const uint8_t *event, uint32_t length) {
         return PXA_EVENT_HANDLED;
     }
     if (handle_surface_create(&parsed)) {
+        return PXA_EVENT_HANDLED;
+    }
+    if (handle_surface_capabilities(&parsed)) {
         return PXA_EVENT_HANDLED;
     }
     {
@@ -2073,8 +2287,7 @@ int32_t pxa_app_on_event(const uint8_t *event, uint32_t length) {
         return PXA_EVENT_HANDLED;
     }
     if (pxa_clock_tick_timestamp_us(&parsed, &timestamp_us)) {
-        const uint8_t steps = pxa_clock_tick_steps(
-            &g_last_tick_us, &parsed, FRAME_PERIOD_MS, MAX_CATCHUP_STEPS);
+        const uint8_t steps = consume_simulation_steps(timestamp_us);
         uint8_t index;
         float move_x;
         float move_z;
@@ -2093,8 +2306,10 @@ int32_t pxa_app_on_event(const uint8_t *event, uint32_t length) {
             request_window_snapshot();
         }
         if (g_screen != SCREEN_PLAY) {
-            g_now_ms += FRAME_PERIOD_MS;
-            (void)render_frame();
+            if (steps != 0) {
+                g_now_ms += (uint32_t)steps * FRAME_PERIOD_MS;
+                (void)render_frame();
+            }
             return PXA_EVENT_HANDLED;
         }
         if (steps != 0) maybe_begin_perf_timing();
@@ -2194,4 +2409,6 @@ void pxa_app_stop(uint32_t reason) {
     g_surface_create_pending = 0;
     g_surface_start_pending = 0;
     g_surface_retry_ticks = 0;
+    g_raster_ready = 0;
+    voxel_raster_set_capabilities(0);
 }

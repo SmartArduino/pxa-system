@@ -147,6 +147,7 @@ typedef struct {
 typedef struct {
     int16_t cx;
     int16_t cz;
+    uint32_t revision;
     uint8_t loaded;
     uint8_t blocks[CHUNK_VOLUME];
 } chunk_t;

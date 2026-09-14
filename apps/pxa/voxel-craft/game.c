@@ -22,6 +22,14 @@ static chunk_t g_chunk_pool[GRID_COUNT];
 static uint8_t g_grid_ready;
 static edit_t g_edits[MAX_EDITS];
 static int g_edit_count;
+static uint32_t g_chunk_revision = 1u;
+
+static void touch_chunk_revision(chunk_t *chunk) {
+    if (chunk == NULL) return;
+    ++g_chunk_revision;
+    if (g_chunk_revision == 0) ++g_chunk_revision;
+    chunk->revision = g_chunk_revision;
+}
 
 static const char *const kBlockNames[BLOCK_TYPE_COUNT] = {
     "AIR",    "GRASS", "DIRT",  "STONE", "SAND",  "WOOD",   "LEAVES",
@@ -162,6 +170,15 @@ void game_set_block(int x, int y, int z, int block) {
         return;
     }
     chunk->blocks[index] = (uint8_t)block;
+    touch_chunk_revision(chunk);
+    if ((x & CHUNK_MASK) == 0 && i > 0)
+        touch_chunk_revision(g_chunk_grid[j][i - 1]);
+    if ((x & CHUNK_MASK) == CHUNK_MASK && i + 1 < GRID_W)
+        touch_chunk_revision(g_chunk_grid[j][i + 1]);
+    if ((z & CHUNK_MASK) == 0 && j > 0)
+        touch_chunk_revision(g_chunk_grid[j - 1][i]);
+    if ((z & CHUNK_MASK) == CHUNK_MASK && j + 1 < GRID_W)
+        touch_chunk_revision(g_chunk_grid[j + 1][i]);
     if (g_edit_count < MAX_EDITS) {
         g_edits[g_edit_count].x = x;
         g_edits[g_edit_count].y = (int16_t)y;
@@ -603,6 +620,7 @@ static void generate_chunk(chunk_t *chunk, int cx, int cz) {
                       edit->block);
         }
     }
+    touch_chunk_revision(chunk);
 }
 
 static void ensure_at(int px, int pz) {
