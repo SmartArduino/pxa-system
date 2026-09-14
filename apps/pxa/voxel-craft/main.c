@@ -89,6 +89,7 @@ static uint16_t g_surface_width;
 static uint16_t g_surface_height;
 static uint64_t g_frame_id;
 static uint8_t g_surface_create_pending;
+static uint8_t g_surface_start_pending;
 static voxel_surface_ownership_t g_surface_ownership;
 static uint8_t g_input_initialized;
 static player_t g_player;
@@ -434,6 +435,10 @@ static int initialize_input_surface(void) {
 static int request_surface_create(void) {
     /* GuestMapped frames use the current internal quality resolution. The
      * Host performs nearest upscale and panel rotation in one native pass. */
+    if (g_sfx.state == VOXEL_SFX_WAIT_PERMISSION) {
+        g_surface_start_pending = 1;
+        return 1;
+    }
     if (g_surface_create_pending || g_surface_handle != 0 ||
         g_layout.view_w <= 0 || g_layout.view_h <= 0) {
         return 0;
@@ -443,8 +448,10 @@ static int request_surface_create(void) {
     if (!pxa_surface_create_rgb565_mapped(
             SURFACE_CREATE_REQUEST, g_surface_width, g_surface_height,
             SURFACE_BUFFER_COUNT, 1, g_packet, sizeof(g_packet))) {
+        g_surface_start_pending = 1;
         return 0;
     }
+    g_surface_start_pending = 0;
     g_surface_create_pending = 1;
     return 1;
 }
@@ -1792,6 +1799,7 @@ static int handle_surface_create(const pxa_event_t *event) {
         created.stride_bytes != expected_stride ||
         created.frame_bytes != expected_bytes ||
         created.buffer_count != SURFACE_BUFFER_COUNT) {
+        g_surface_start_pending = 1;
         return 1;
     }
     if (g_surface_width != (uint16_t)render_scene_width() ||
@@ -1810,6 +1818,7 @@ static int handle_surface_create(const pxa_event_t *event) {
         (int32_t)(created.frame_bytes * created.buffer_count)) {
         (void)pxa_close_handle(g_surface_handle);
         g_surface_handle = 0;
+        g_surface_start_pending = 1;
         return 1;
     }
     if (!pxa_surface_configure_layer(
@@ -1818,6 +1827,7 @@ static int handle_surface_create(const pxa_event_t *event) {
             g_packet, sizeof(g_packet))) {
         (void)pxa_close_handle(g_surface_handle);
         g_surface_handle = 0;
+        g_surface_start_pending = 1;
         return 1;
     }
     (void)render_frame();
@@ -1862,6 +1872,7 @@ int32_t pxa_app_start(const uint8_t *config, uint32_t length) {
     g_surface_height = 0;
     g_frame_id = 0;
     g_surface_create_pending = 0;
+    g_surface_start_pending = 0;
     reset_surface_ownership();
     g_input_initialized = 0;
     g_last_tick_us = 0;
@@ -1941,10 +1952,13 @@ int32_t pxa_app_start(const uint8_t *config, uint32_t length) {
     if (!pxa_window_fullscreen()) {
         return PXA_STATUS_INTERNAL;
     }
-    if (!initialize_input_surface() || !request_surface_create()) {
+    if (!initialize_input_surface()) {
         return PXA_STATUS_INTERNAL;
     }
     voxel_sfx_start(&g_sfx, g_packet, sizeof(g_packet));
+    if (!request_surface_create()) {
+        return PXA_STATUS_INTERNAL;
+    }
     (void)pxa_storage_get(STORAGE_PREFS_GET_REQUEST, STORAGE_PREFS_KEY,
                           STORAGE_PREFS_KEY_LEN, g_storage_payload,
                           sizeof(g_storage_payload), g_packet,
@@ -1965,6 +1979,10 @@ int32_t pxa_app_on_event(const uint8_t *event, uint32_t length) {
         return PXA_EVENT_UNHANDLED;
     }
     if (voxel_sfx_handle_event(&g_sfx, &parsed, g_packet, sizeof(g_packet))) {
+        if (g_surface_start_pending &&
+            g_sfx.state != VOXEL_SFX_WAIT_PERMISSION) {
+            (void)request_surface_create();
+        }
         return PXA_EVENT_HANDLED;
     }
     if (handle_surface_create(&parsed)) {
@@ -2048,6 +2066,10 @@ int32_t pxa_app_on_event(const uint8_t *event, uint32_t length) {
         float move_x;
         float move_z;
         voxel_sfx_tick(&g_sfx, &parsed);
+        if (g_surface_start_pending &&
+            g_sfx.state != VOXEL_SFX_WAIT_PERMISSION) {
+            (void)request_surface_create();
+        }
         if (g_bootstrap_requests_pending) {
             /* Async completion events cannot be delivered until start has
              * returned and the component is RUNNING. The first timer event is
@@ -2157,6 +2179,8 @@ void pxa_app_stop(uint32_t reason) {
     }
     if (g_surface_handle != 0) {
         (void)pxa_close_handle(g_surface_handle);
-        g_surface_handle = 0;
     }
+    g_surface_handle = 0;
+    g_surface_create_pending = 0;
+    g_surface_start_pending = 0;
 }
