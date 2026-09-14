@@ -192,6 +192,33 @@ PYTHON
 "$work_dir/pxa_surface_test"
 
 "$cc_bin" "${flags[@]}" \
+  "$pxa_system_dir/sdk/guest-c/tests/pxa_mapped_surface_test.c" \
+  -o "$work_dir/pxa_mapped_surface_test"
+"$work_dir/pxa_mapped_surface_test"
+
+"$cc_bin" "${flags[@]}" \
+  -I"$pxa_system_dir/apps/pxa/maze-evil" \
+  "$pxa_system_dir/sdk/guest-c/tests/pxa_maze_audio_test.c" \
+  "$pxa_system_dir/apps/pxa/maze-evil/audio.c" \
+  -o "$work_dir/pxa_maze_audio_test"
+"$work_dir/pxa_maze_audio_test"
+
+"$cc_bin" "${flags[@]}" -Wno-unused-function \
+  -I"$pxa_system_dir/apps/pxa/maze-evil" \
+  "$pxa_system_dir/sdk/guest-c/tests/pxa_maze_render_test.c" \
+  "$pxa_system_dir/apps/pxa/maze-evil/raster.c" \
+  "$pxa_system_dir/apps/pxa/maze-evil/palette.c" \
+  "$pxa_system_dir/apps/pxa/maze-evil/font.c" \
+  "$pxa_system_dir/apps/pxa/maze-evil/assets.c" \
+  "$pxa_system_dir/apps/pxa/maze-evil/sprites.c" \
+  "$pxa_system_dir/apps/pxa/maze-evil/raycast.c" \
+  "$pxa_system_dir/apps/pxa/maze-evil/world.c" \
+  "$pxa_system_dir/apps/pxa/maze-evil/render.c" \
+  -lm \
+  -o "$work_dir/pxa_maze_render_test"
+"$work_dir/pxa_maze_render_test"
+
+"$cc_bin" "${flags[@]}" \
   "$pxa_system_dir/sdk/guest-c/tests/pxa_raster_test.c" \
   -o "$work_dir/pxa_raster_test"
 "$work_dir/pxa_raster_test"
@@ -271,6 +298,13 @@ done
   "$pxa_system_dir/apps/pxa/lab/responder.c"
 "$cc_bin" "${flags[@]}" -I"$work_dir/generated/lab" -fsyntax-only \
   "$pxa_system_dir/apps/pxa/lab/worker.c"
+
+for app_id in maze-spike maze-evil; do
+  for app_source in "$pxa_system_dir"/apps/pxa/"$app_id"/*.c; do
+    "$cc_bin" "${flags[@]}" -I"$pxa_system_dir/apps/pxa/$app_id" \
+      -fsyntax-only "$app_source"
+  done
+done
 
 "$cc_bin" "${flags[@]}" -DPXA_ARCADE_STANDALONE_TEST \
   -I"$work_dir/generated/arcade" \

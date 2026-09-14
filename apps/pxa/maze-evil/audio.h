@@ -43,6 +43,12 @@ enum {
     AUDIO_UNAVAILABLE,
 };
 
+enum {
+    AUDIO_TONE_MODE_UNKNOWN = 0,
+    AUDIO_TONE_MODE_HOST,
+    AUDIO_TONE_MODE_PCM_FALLBACK,
+};
+
 typedef struct {
     uint32_t permission_handle;
     uint32_t session_handle;
@@ -53,6 +59,7 @@ typedef struct {
     uint32_t query_pending;
     uint8_t state;
     uint8_t clock_started;
+    uint8_t tone_mode;
     int16_t sine[AUDIO_SINE_ENTRIES];
     int16_t frame[AUDIO_FRAME_SAMPLES];
     audio_voice_t voices[AUDIO_MAX_VOICES];
@@ -60,7 +67,7 @@ typedef struct {
     uint8_t payload[96];
 } game_audio_t;
 
-/* Requests the audio.playback permission and opens the 16 kHz mono PCM sink. */
+/* Requests audio.playback and opens a media session. */
 void audio_init(game_audio_t *audio);
 
 /* Drives the permission -> open -> graph handshake. Returns 1 when the event
@@ -68,12 +75,11 @@ void audio_init(game_audio_t *audio);
 int audio_handle_event(game_audio_t *audio, const pxa_event_t *event,
                        uint8_t *packet, size_t packet_capacity);
 
-/* Starts every tone of a sound profile; `gain` is 0..255 (distance-attenuated).
- * Delayed tones are scheduled sample-accurately and fired by the mixer. */
+/* Starts every tone of a sound profile; `gain` is 0..255. Host tone commands
+ * are preferred; the local mixer is retained for older Hosts. */
 void audio_play(game_audio_t *audio, uint8_t sound_id, uint8_t gain);
 
-/* Keeps the PCM queue topped up to a small cushion and resyncs with the
- * provider every few ticks. Call once per clock tick. */
+/* Pumps the PCM compatibility path only while it has active sound. */
 void audio_tick(game_audio_t *audio, const pxa_event_t *event);
 
 void audio_stop(game_audio_t *audio);

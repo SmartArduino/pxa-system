@@ -214,6 +214,46 @@ static const tone_spec_t *profile_for(uint8_t sound_id, uint32_t *count) {
     }
 }
 
+static int16_t host_gain_db_q8(uint16_t volume_per_mille) {
+    static const uint16_t thresholds[] = {
+        708, 501, 355, 251, 178, 126, 89, 63, 45, 32, 22, 16, 11, 8,
+    };
+    uint32_t index;
+    if (volume_per_mille >= 1000) return 0;
+    for (index = 0; index < sizeof(thresholds) / sizeof(thresholds[0]);
+         ++index) {
+        if (volume_per_mille >= thresholds[index]) {
+            return (int16_t)(-(int32_t)(index + 1u) * 3 * 256);
+        }
+    }
+    return (int16_t)(-48 * 256);
+}
+
+static int32_t submit_host_tone(game_audio_t *audio, const tone_spec_t *spec,
+                                uint8_t gain) {
+    const uint16_t volume =
+        (uint16_t)(((uint32_t)spec->volume_per_mille * gain + 127u) / 255u);
+    const uint16_t frequency = spec->frequency_hz < 40u
+                                   ? 40u
+                                   : spec->frequency_hz;
+    if (volume == 0) return PXA_STATUS_OK;
+    return pxa_audio_play_tone_enveloped(
+        audio->session_handle, (uint8_t)(spec->waveform - 1u), frequency,
+        spec->duration_ms, host_gain_db_q8(volume), spec->attack_ms,
+        spec->release_ms, spec->delay_ms);
+}
+
+static int audio_has_pcm_work(const game_audio_t *audio) {
+    int index;
+    for (index = 0; index < AUDIO_MAX_VOICES; ++index) {
+        if (audio->voices[index].active) return 1;
+    }
+    for (index = 0; index < AUDIO_MAX_SCHEDULED; ++index) {
+        if (audio->scheduled[index].active) return 1;
+    }
+    return 0;
+}
+
 void audio_init(game_audio_t *audio) {
     static const char permission_name[] = "audio.playback";
     static const uint8_t permission_scope[] = "media";
@@ -242,6 +282,27 @@ void audio_play(game_audio_t *audio, uint8_t sound_id, uint8_t gain) {
     uint32_t index;
     if (tones == 0 || gain < 8u) {
         return;
+    }
+    if (audio->state == AUDIO_READY &&
+        audio->tone_mode != AUDIO_TONE_MODE_PCM_FALLBACK) {
+        int host_supported = 0;
+        for (index = 0; index < count; ++index) {
+            const int32_t status = submit_host_tone(audio, &tones[index], gain);
+            if (status == PXA_STATUS_UNSUPPORTED) {
+                if (!host_supported) {
+                    audio->tone_mode = AUDIO_TONE_MODE_PCM_FALLBACK;
+                    break;
+                }
+                return;
+            }
+            host_supported = 1;
+        }
+        if (audio->tone_mode != AUDIO_TONE_MODE_PCM_FALLBACK) {
+            audio->tone_mode = AUDIO_TONE_MODE_HOST;
+            return;
+        }
+    } else if (audio->state != AUDIO_READY) {
+        audio->tone_mode = AUDIO_TONE_MODE_PCM_FALLBACK;
     }
     for (index = 0; index < count; ++index) {
         const tone_spec_t *spec = &tones[index];
@@ -280,7 +341,8 @@ void audio_tick(game_audio_t *audio, const pxa_event_t *event) {
     uint64_t elapsed_us;
     uint32_t consumed;
     uint32_t to_write;
-    if (audio->state != AUDIO_READY || event == 0 ||
+    if (audio->state != AUDIO_READY ||
+        audio->tone_mode != AUDIO_TONE_MODE_PCM_FALLBACK || event == 0 ||
         event->service != PXA_SERVICE_CLOCK ||
         event->opcode != PXA_CLOCK_TICK || event->payload_length != 8) {
         return;
@@ -302,6 +364,8 @@ void audio_tick(game_audio_t *audio, const pxa_event_t *event) {
             audio->queued_frames -= consumed;
         }
     }
+
+    if (!audio_has_pcm_work(audio)) return;
 
     /* Top the provider queue back up to the target cushion. */
     if (audio->queued_frames < AUDIO_TARGET_FRAMES) {
@@ -385,13 +449,15 @@ int audio_handle_event(game_audio_t *audio, const pxa_event_t *event,
             status != PXA_STATUS_OK) {
             audio->state = AUDIO_UNAVAILABLE;
         } else {
-            uint32_t frame;
             audio->state = AUDIO_READY;
-            for (frame = 0; frame < AUDIO_TARGET_FRAMES; ++frame) {
-                if (submit_frame(audio) != (int32_t)sizeof(audio->frame)) {
-                    break;
+            if (audio->tone_mode == AUDIO_TONE_MODE_PCM_FALLBACK) {
+                uint32_t frame;
+                for (frame = 0; frame < AUDIO_TARGET_FRAMES; ++frame) {
+                    if (submit_frame(audio) != (int32_t)sizeof(audio->frame)) {
+                        break;
+                    }
+                    ++audio->queued_frames;
                 }
-                ++audio->queued_frames;
             }
         }
         return 1;
