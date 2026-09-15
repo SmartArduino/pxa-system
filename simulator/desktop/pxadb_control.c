@@ -19,7 +19,8 @@
 
 static int set_nonblocking(int descriptor) {
     const int flags = fcntl(descriptor, F_GETFL, 0);
-    return flags >= 0 && fcntl(descriptor, F_SETFL, flags | O_NONBLOCK) == 0;
+    return flags >= 0 && fcntl(descriptor, F_SETFL, flags | O_NONBLOCK) == 0 &&
+           fcntl(descriptor, F_SETFD, FD_CLOEXEC) == 0;
 }
 
 static int bind_listener(pxsys_pxadb_control_t *control) {

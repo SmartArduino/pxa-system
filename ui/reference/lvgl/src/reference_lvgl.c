@@ -234,6 +234,7 @@ struct pxsys_reference_lvgl {
     lv_obj_t* task_switcher;
     lv_obj_t* language_dialog;
     lv_obj_t* navigation_handle;
+    lv_obj_t* navigation_back_indicator;
     int32_t navigation_handle_width;
     lv_timer_t* toast_timer;
     lv_timer_t* transient_timer;
@@ -501,6 +502,59 @@ static pxsys_status_t open_role(pxsys_reference_lvgl_t* ui, const char* role) {
 static void back_clicked(lv_event_t* event) {
     pxsys_reference_lvgl_t* ui =
         (pxsys_reference_lvgl_t*)lv_event_get_user_data(event);
+    if (!ui_valid(ui)) return;
+    if (pxsys_reference_lvgl_dismiss_overlay(ui)) return;
+    {
+        pxsys_back_result_t result;
+        (void)pxsys_task_manager_back(pxsys_standard_system_tasks(ui->system),
+                                      &result);
+    }
+}
+
+static void navigation_back_indicator_reset(pxsys_reference_lvgl_t* ui) {
+    if (ui->navigation_back_indicator == NULL) return;
+    lv_obj_delete(ui->navigation_back_indicator);
+    ui->navigation_back_indicator = NULL;
+}
+
+static void navigation_back_indicator_update(pxsys_reference_lvgl_t* ui,
+                                             int32_t press_x, int32_t x,
+                                             int32_t y) {
+    lv_obj_t* label;
+    int32_t distance = x - press_x;
+    int32_t indicator_x;
+    int32_t indicator_y;
+    if (distance <= 0) return;
+    if (ui->navigation_back_indicator == NULL) {
+        ui->navigation_back_indicator = lv_obj_create(ui->root);
+        style_plain(ui->navigation_back_indicator);
+        lv_obj_set_size(ui->navigation_back_indicator, 32, 32);
+        lv_obj_set_style_bg_color(
+            ui->navigation_back_indicator,
+            color_token(ui, PXSYS_COLOR_ACCENT), 0);
+        lv_obj_set_style_bg_opa(ui->navigation_back_indicator, LV_OPA_COVER,
+                                0);
+        lv_obj_set_style_radius(ui->navigation_back_indicator, LV_RADIUS_CIRCLE,
+                                0);
+        label = lv_label_create(ui->navigation_back_indicator);
+        lv_label_set_text(label, "<");
+        lv_obj_set_style_text_font(label, ui->title_font, 0);
+        lv_obj_set_style_text_color(
+            label, color_token(ui, PXSYS_COLOR_ON_ACCENT), 0);
+        lv_obj_center(label);
+        lv_obj_move_foreground(ui->navigation_back_indicator);
+    }
+    if (distance > NAVIGATION_GESTURE_COMMIT_DISTANCE)
+        distance = NAVIGATION_GESTURE_COMMIT_DISTANCE;
+    indicator_x = -22 + distance * 22 / NAVIGATION_GESTURE_COMMIT_DISTANCE;
+    indicator_y = y - 16;
+    if (indicator_y < 0) indicator_y = 0;
+    if (indicator_y > (int32_t)ui->display.height - 32)
+        indicator_y = (int32_t)ui->display.height - 32;
+    lv_obj_set_pos(ui->navigation_back_indicator, indicator_x, indicator_y);
+}
+
+static void navigation_back(pxsys_reference_lvgl_t* ui) {
     pxsys_back_result_t result;
     if (!ui_valid(ui)) return;
     if (pxsys_reference_lvgl_dismiss_overlay(ui)) return;
@@ -524,19 +578,24 @@ static void navigation_back_gesture_event(lv_event_t* event) {
         ui->navigation_back_press_y = point.y;
         return;
     }
+    if (code == LV_EVENT_PRESSING) {
+        navigation_back_indicator_update(ui, ui->navigation_back_press_x,
+                                         point.x, point.y);
+        return;
+    }
+    if (code == LV_EVENT_PRESS_LOST) {
+        navigation_back_indicator_reset(ui);
+        return;
+    }
     if (code != LV_EVENT_RELEASED) return;
     horizontal = point.x - ui->navigation_back_press_x;
     vertical = point.y - ui->navigation_back_press_y;
     if (vertical < 0) vertical = -vertical;
+    navigation_back_indicator_reset(ui);
     if (horizontal < NAVIGATION_GESTURE_COMMIT_DISTANCE ||
         horizontal <= vertical)
         return;
-    if (pxsys_reference_lvgl_dismiss_overlay(ui)) return;
-    {
-        pxsys_back_result_t result;
-        (void)pxsys_task_manager_back(pxsys_standard_system_tasks(ui->system),
-                                      &result);
-    }
+    navigation_back(ui);
 }
 
 static void theme_clicked(lv_event_t* event) {
@@ -3680,6 +3739,7 @@ static void rebuild(pxsys_reference_lvgl_t* ui) {
     ui->status_bar = NULL;
     ui->navigation_bar = NULL;
     ui->navigation_handle = NULL;
+    ui->navigation_back_indicator = NULL;
     lv_obj_set_pos(ui->root, 0, 0);
     lv_obj_set_size(ui->root, (lv_coord_t)ui->display.width,
                     (lv_coord_t)ui->display.height);
@@ -3853,7 +3913,11 @@ static void rebuild(pxsys_reference_lvgl_t* ui) {
             lv_obj_add_event_cb(back_gesture, navigation_back_gesture_event,
                                 LV_EVENT_PRESSED, ui);
             lv_obj_add_event_cb(back_gesture, navigation_back_gesture_event,
+                                LV_EVENT_PRESSING, ui);
+            lv_obj_add_event_cb(back_gesture, navigation_back_gesture_event,
                                 LV_EVENT_RELEASED, ui);
+            lv_obj_add_event_cb(back_gesture, navigation_back_gesture_event,
+                                LV_EVENT_PRESS_LOST, ui);
         }
     }
     /* Content is constructed after the status bar, so creation order alone

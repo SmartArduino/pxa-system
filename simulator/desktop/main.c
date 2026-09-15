@@ -1023,7 +1023,9 @@ static int run_simulator(const simulator_options_t* options) {
     while (lv_display_get_default() != NULL &&
            (options->duration_ms == 0 ||
             lv_tick_elaps(started) < options->duration_ms)) {
-        pxsys_pxadb_control_poll(&pxadb_control);
+        pxsys_desktop_runtime_poll(simulator_runtime);
+        if (!pxsys_desktop_runtime_has_active_product(simulator_runtime))
+            pxsys_pxadb_control_poll(&pxadb_control);
         uint32_t delay = lv_timer_handler();
         if (delay < 1) delay = 1;
         if (delay > 16) delay = 16;

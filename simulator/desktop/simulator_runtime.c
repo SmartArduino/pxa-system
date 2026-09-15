@@ -1,8 +1,11 @@
 #include "simulator_runtime.h"
 
 #include <stdio.h>
+#include <signal.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/types.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 #define PXSYS_DESKTOP_RUNTIME_MAGIC UINT32_C(0x50584452)
@@ -18,6 +21,9 @@ typedef struct simulator_instance {
     lv_obj_t* description;
     lv_obj_t* status;
     pxsys_rect_t content_rect;
+    uint32_t display_width;
+    uint32_t display_height;
+    pid_t product_process;
 } simulator_instance_t;
 
 struct pxsys_desktop_runtime {
@@ -77,7 +83,10 @@ static void update_locale(simulator_instance_t* instance) {
 static int launch_installed_application(simulator_instance_t* instance) {
     const pxsys_desktop_runtime_fixture_t* fixture;
     char package_path[1200];
+    char width[16];
+    char height[16];
     struct stat metadata;
+    pid_t child;
     if (instance == NULL || instance->app == NULL) return 0;
     fixture = &instance->runtime->fixture;
     if (fixture->installed_packages_root == NULL || fixture->product_runner == NULL ||
@@ -91,17 +100,32 @@ static int launch_installed_application(simulator_instance_t* instance) {
                  instance->app->identity.app_id.data) >= (int)sizeof(package_path) ||
         stat(package_path, &metadata) != 0 || !S_ISDIR(metadata.st_mode))
         return 0;
-    if (fixture->pxadb_control_socket != NULL) {
-        execl(fixture->product_runner, fixture->product_runner,
-              "--package", package_path, "--publisher-key", fixture->publisher_key,
-              "--state-root", fixture->state_root, "--pxadb-control-socket",
-              fixture->pxadb_control_socket, (char*)NULL);
-    } else {
-        execl(fixture->product_runner, fixture->product_runner,
-              "--package", package_path, "--publisher-key", fixture->publisher_key,
-              "--state-root", fixture->state_root, (char*)NULL);
+    if (instance->product_process > 0) return 1;
+    if (snprintf(width, sizeof(width), "%u", instance->display_width) >=
+            (int)sizeof(width) ||
+        snprintf(height, sizeof(height), "%u", instance->display_height) >=
+            (int)sizeof(height))
+        return 0;
+    child = fork();
+    if (child < 0) return 0;
+    if (child == 0) {
+        if (fixture->pxadb_control_socket != NULL) {
+            execl(fixture->product_runner, fixture->product_runner,
+                  "--package", package_path, "--publisher-key",
+                  fixture->publisher_key, "--state-root", fixture->state_root,
+                  "--width", width, "--height", height,
+                  "--pxadb-control-socket", fixture->pxadb_control_socket,
+                  (char*)NULL);
+        } else {
+            execl(fixture->product_runner, fixture->product_runner,
+                  "--package", package_path, "--publisher-key",
+                  fixture->publisher_key, "--state-root", fixture->state_root,
+                  "--width", width, "--height", height, (char*)NULL);
+        }
+        _exit(127);
     }
-    return 0;
+    instance->product_process = child;
+    return 1;
 }
 
 static void theme_changed(void* context,
@@ -156,6 +180,8 @@ static pxsys_status_t backend_instantiate(
         runtime->allocator.release(runtime->allocator.context, instance);
         return PXSYS_STATUS_BAD_STATE;
     }
+    instance->display_width = display.width;
+    instance->display_height = display.height;
     config.struct_size = sizeof(config);
     config.width = display.width;
     config.height = display.height;
@@ -269,8 +295,43 @@ static pxsys_back_result_t backend_back(void* context, void* opaque) {
 
 static void backend_stop(void* context, void* opaque,
                          pxsys_stop_reason_t reason) {
+    simulator_instance_t* instance = (simulator_instance_t*)opaque;
     (void)reason;
+    if (instance != NULL && instance->product_process > 0) {
+        (void)kill(instance->product_process, SIGTERM);
+        (void)waitpid(instance->product_process, NULL, 0);
+        instance->product_process = 0;
+    }
     (void)backend_background(context, opaque);
+}
+
+void pxsys_desktop_runtime_poll(pxsys_desktop_runtime_t* runtime) {
+    simulator_instance_t* instance;
+    if (runtime == NULL || runtime->magic != PXSYS_DESKTOP_RUNTIME_MAGIC)
+        return;
+    for (instance = runtime->instances; instance != NULL;
+         instance = instance->next) {
+        if (instance->product_process <= 0 ||
+            waitpid(instance->product_process, NULL, WNOHANG) !=
+                instance->product_process)
+            continue;
+        instance->product_process = 0;
+        (void)pxsys_task_manager_finish_top(
+            pxsys_standard_system_tasks(runtime->system), PXSYS_STOP_NORMAL);
+        break;
+    }
+}
+
+int pxsys_desktop_runtime_has_active_product(
+    const pxsys_desktop_runtime_t* runtime) {
+    const simulator_instance_t* instance;
+    if (runtime == NULL || runtime->magic != PXSYS_DESKTOP_RUNTIME_MAGIC)
+        return 0;
+    for (instance = runtime->instances; instance != NULL;
+         instance = instance->next) {
+        if (instance->product_process > 0) return 1;
+    }
+    return 0;
 }
 
 static void backend_destroy(void* context, void* opaque) {

@@ -32,6 +32,9 @@
 #define PRODUCT_CLOCK_SERVICE UINT16_C(4)
 #define PRODUCT_CLOCK_TICK UINT16_C(0x8001)
 #define PRODUCT_COMPONENTS UINT16_C(8)
+#define PRODUCT_SYSTEM_GESTURE_EDGE_WIDTH 16
+#define PRODUCT_SYSTEM_GESTURE_HOME_HEIGHT 20
+#define PRODUCT_SYSTEM_GESTURE_COMMIT_DISTANCE 32
 
 typedef struct {
     const char *package_path;
@@ -43,6 +46,7 @@ typedef struct {
 } options_t;
 
 typedef struct {
+    lv_display_t *display;
     pxa_runtime_t *runtime;
     pxa_window_service_t *window;
     pxa_ui_service_t *ui;
@@ -100,6 +104,12 @@ typedef struct {
     uint32_t height;
     uint16_t clock_period_ms;
     uint64_t next_clock_tick_us;
+    lv_obj_t *system_back_gesture;
+    lv_obj_t *system_home_gesture;
+    lv_obj_t *system_back_indicator;
+    int32_t system_gesture_press_x;
+    int32_t system_gesture_press_y;
+    uint8_t exit_requested;
 } product_host_t;
 
 static uint64_t now_us(void *context) {
@@ -108,6 +118,142 @@ static uint64_t now_us(void *context) {
     clock_gettime(CLOCK_MONOTONIC, &now);
     return (uint64_t)now.tv_sec * UINT64_C(1000000) +
            (uint64_t)now.tv_nsec / UINT64_C(1000);
+}
+
+static void system_back_indicator_reset(product_host_t *host) {
+    if (host->system_back_indicator == NULL) return;
+    lv_obj_delete(host->system_back_indicator);
+    host->system_back_indicator = NULL;
+}
+
+static void system_back_indicator_update(product_host_t *host, int32_t x,
+                                         int32_t y) {
+    lv_obj_t *label;
+    int32_t distance = x - host->system_gesture_press_x;
+    int32_t indicator_x;
+    int32_t indicator_y;
+    if (host->display == NULL || distance <= 0) return;
+    if (host->system_back_indicator == NULL) {
+        host->system_back_indicator =
+            lv_obj_create(lv_display_get_layer_top(host->display));
+        lv_obj_set_size(host->system_back_indicator, 32, 32);
+        lv_obj_set_style_bg_color(host->system_back_indicator,
+                                  lv_color_hex(0x3e526d), 0);
+        lv_obj_set_style_bg_opa(host->system_back_indicator, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_width(host->system_back_indicator, 0, 0);
+        lv_obj_set_style_radius(host->system_back_indicator, LV_RADIUS_CIRCLE,
+                                0);
+        lv_obj_set_style_pad_all(host->system_back_indicator, 0, 0);
+        label = lv_label_create(host->system_back_indicator);
+        lv_label_set_text(label, "<");
+        lv_obj_set_style_text_font(label, &lv_font_montserrat_20, 0);
+        lv_obj_set_style_text_color(label, lv_color_hex(0xffffff), 0);
+        lv_obj_center(label);
+    }
+    if (distance > PRODUCT_SYSTEM_GESTURE_COMMIT_DISTANCE)
+        distance = PRODUCT_SYSTEM_GESTURE_COMMIT_DISTANCE;
+    indicator_x = -22 + distance * 22 / PRODUCT_SYSTEM_GESTURE_COMMIT_DISTANCE;
+    indicator_y = y - 16;
+    if (indicator_y < 0) indicator_y = 0;
+    if (indicator_y > (int32_t)host->height - 32)
+        indicator_y = (int32_t)host->height - 32;
+    lv_obj_set_pos(host->system_back_indicator, indicator_x, indicator_y);
+}
+
+static void system_back_gesture_event(lv_event_t *event) {
+    product_host_t *host = (product_host_t *)lv_event_get_user_data(event);
+    lv_indev_t *indev = lv_event_get_indev(event);
+    lv_point_t point;
+    int32_t horizontal;
+    int32_t vertical;
+    if (host == NULL || indev == NULL) return;
+    lv_indev_get_point(indev, &point);
+    if (lv_event_get_code(event) == LV_EVENT_PRESSED) {
+        host->system_gesture_press_x = point.x;
+        host->system_gesture_press_y = point.y;
+        return;
+    }
+    if (lv_event_get_code(event) == LV_EVENT_PRESSING) {
+        system_back_indicator_update(host, point.x, point.y);
+        return;
+    }
+    if (lv_event_get_code(event) == LV_EVENT_PRESS_LOST) {
+        system_back_indicator_reset(host);
+        return;
+    }
+    if (lv_event_get_code(event) != LV_EVENT_RELEASED) return;
+    horizontal = point.x - host->system_gesture_press_x;
+    vertical = point.y - host->system_gesture_press_y;
+    if (vertical < 0) vertical = -vertical;
+    system_back_indicator_reset(host);
+    if (horizontal >= PRODUCT_SYSTEM_GESTURE_COMMIT_DISTANCE &&
+        horizontal > vertical)
+        host->exit_requested = 1;
+}
+
+static void system_home_gesture_event(lv_event_t *event) {
+    product_host_t *host = (product_host_t *)lv_event_get_user_data(event);
+    lv_indev_t *indev = lv_event_get_indev(event);
+    lv_point_t point;
+    int32_t vertical;
+    int32_t horizontal;
+    if (host == NULL || indev == NULL) return;
+    lv_indev_get_point(indev, &point);
+    if (lv_event_get_code(event) == LV_EVENT_PRESSED) {
+        host->system_gesture_press_x = point.x;
+        host->system_gesture_press_y = point.y;
+        return;
+    }
+    if (lv_event_get_code(event) == LV_EVENT_PRESS_LOST) return;
+    if (lv_event_get_code(event) != LV_EVENT_RELEASED) return;
+    vertical = host->system_gesture_press_y - point.y;
+    horizontal = point.x - host->system_gesture_press_x;
+    if (horizontal < 0) horizontal = -horizontal;
+    if (vertical >= PRODUCT_SYSTEM_GESTURE_COMMIT_DISTANCE &&
+        vertical > horizontal)
+        host->exit_requested = 1;
+}
+
+static void install_system_gestures(product_host_t *host) {
+    lv_obj_t *layer;
+    if (host == NULL || host->display == NULL) return;
+    layer = lv_display_get_layer_top(host->display);
+    host->system_back_gesture = lv_obj_create(layer);
+    lv_obj_set_pos(host->system_back_gesture, 0, 0);
+    lv_obj_set_size(host->system_back_gesture,
+                    PRODUCT_SYSTEM_GESTURE_EDGE_WIDTH,
+                    (int32_t)host->height - PRODUCT_SYSTEM_GESTURE_HOME_HEIGHT);
+    lv_obj_set_style_bg_opa(host->system_back_gesture, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(host->system_back_gesture, 0, 0);
+    lv_obj_set_style_pad_all(host->system_back_gesture, 0, 0);
+    lv_obj_clear_flag(host->system_back_gesture, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(host->system_back_gesture,
+                    LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_PRESS_LOCK);
+    lv_obj_add_event_cb(host->system_back_gesture, system_back_gesture_event,
+                        LV_EVENT_PRESSED, host);
+    lv_obj_add_event_cb(host->system_back_gesture, system_back_gesture_event,
+                        LV_EVENT_PRESSING, host);
+    lv_obj_add_event_cb(host->system_back_gesture, system_back_gesture_event,
+                        LV_EVENT_RELEASED, host);
+    lv_obj_add_event_cb(host->system_back_gesture, system_back_gesture_event,
+                        LV_EVENT_PRESS_LOST, host);
+    host->system_home_gesture = lv_obj_create(layer);
+    lv_obj_set_pos(host->system_home_gesture, 0,
+                   (int32_t)host->height - PRODUCT_SYSTEM_GESTURE_HOME_HEIGHT);
+    lv_obj_set_size(host->system_home_gesture, (int32_t)host->width,
+                    PRODUCT_SYSTEM_GESTURE_HOME_HEIGHT);
+    lv_obj_set_style_bg_opa(host->system_home_gesture, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(host->system_home_gesture, 0, 0);
+    lv_obj_set_style_pad_all(host->system_home_gesture, 0, 0);
+    lv_obj_clear_flag(host->system_home_gesture, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(host->system_home_gesture,
+                    LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_PRESS_LOCK);
+    lv_obj_add_event_cb(host->system_home_gesture, system_home_gesture_event,
+                        LV_EVENT_PRESSED, host);
+    lv_obj_add_event_cb(host->system_home_gesture, system_home_gesture_event,
+                        LV_EVENT_RELEASED, host);
+    lv_obj_add_event_cb(host->system_home_gesture, system_home_gesture_event,
+                        LV_EVENT_PRESS_LOST, host);
 }
 
 static void *allocate_memory(void *context, size_t size) {
@@ -1043,6 +1189,7 @@ int main(int argc, char **argv) {
     mouse = lv_sdl_mouse_create();
     keyboard = lv_sdl_keyboard_create();
     if (display == NULL || mouse == NULL || keyboard == NULL) goto done;
+    host.display = display;
     lv_indev_set_display(mouse, display);
     lv_indev_set_display(keyboard, display);
     lv_sdl_window_set_title(display, "PXA Product Simulator");
@@ -1244,6 +1391,7 @@ int main(int argc, char **argv) {
     }
     if (pxa_window_flush_metrics(host.window, component) == PXA_STATUS_OK)
         dispatch_component_events(&host);
+    install_system_gestures(&host);
     if (options.pxadb_control_socket != NULL &&
         !pxsys_pxadb_control_start(&pxadb_control,
                                    options.pxadb_control_socket, display,
@@ -1251,6 +1399,7 @@ int main(int argc, char **argv) {
         goto done;
     while (lv_display_get_default() != NULL) {
         pxsys_pxadb_control_poll(&pxadb_control);
+        if (host.exit_requested) break;
         uint32_t delay = lv_timer_handler();
         if (drain_surface_updates(&host) < 0) goto done;
         dispatch_clock_tick(&host);
