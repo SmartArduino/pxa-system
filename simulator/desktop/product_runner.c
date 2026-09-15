@@ -55,9 +55,14 @@ typedef struct {
     uint8_t *surface_display_buffer;
     uint32_t surface_frame_bytes;
     uint32_t surface_stride_bytes;
+    uint32_t surface_display_frame_bytes;
+    uint32_t surface_display_stride_bytes;
     uint16_t surface_width;
     uint16_t surface_height;
+    uint16_t surface_display_width;
+    uint16_t surface_display_height;
     uint8_t surface_buffer_count;
+    uint8_t surface_scale;
     uint8_t surface_registered;
     int8_t surface_writing_buffer;
     int8_t surface_pending_buffer;
@@ -105,6 +110,7 @@ static void release_memory(void *context, void *memory) {
 static pxa_status_t surface_create(void *context, const pxa_surface_desc_t *desc,
                                    uint64_t *surface, uint32_t *stride) {
     product_host_t *host = context;
+    uint8_t scale;
     if (host == NULL || desc == NULL || surface == NULL || stride == NULL ||
         desc->format != PXA_SURFACE_FORMAT_RGB565 ||
         (desc->flags & ~PXA_SURFACE_FLAG_KNOWN_MASK) != 0 ||
@@ -114,13 +120,25 @@ static pxa_status_t surface_create(void *context, const pxa_surface_desc_t *desc
         desc->buffer_count < 2 || desc->buffer_count > 3 ||
         host->surface_frame_bytes != 0)
         return PXA_STATUS_UNSUPPORTED;
+    if (host->width % desc->width != 0 || host->height % desc->height != 0 ||
+        host->width / desc->width != host->height / desc->height)
+        return PXA_STATUS_UNSUPPORTED;
+    scale = (uint8_t)(host->width / desc->width);
+    if (scale != 1 && scale != 2 && scale != 4)
+        return PXA_STATUS_UNSUPPORTED;
     *surface = 1;
     *stride = (uint32_t)desc->width * 2u;
     host->surface_stride_bytes = *stride;
     host->surface_width = desc->width;
     host->surface_height = desc->height;
     host->surface_frame_bytes = *stride * desc->height;
+    host->surface_display_width = (uint16_t)host->width;
+    host->surface_display_height = (uint16_t)host->height;
+    host->surface_display_stride_bytes = host->width * 2u;
+    host->surface_display_frame_bytes =
+        host->surface_display_stride_bytes * host->height;
     host->surface_buffer_count = desc->buffer_count;
+    host->surface_scale = scale;
     host->surface_writing_buffer = -1;
     host->surface_pending_buffer = -1;
     host->surface_layer.x = 0;
@@ -148,17 +166,17 @@ static pxa_status_t surface_register_buffers(void *context, uint64_t surface,
         ((uintptr_t)pixels & 1u) != 0 ||
         size != (size_t)host->surface_frame_bytes * host->surface_buffer_count)
         return PXA_STATUS_INVALID_ARGUMENT;
-    host->surface_display_buffer = malloc(host->surface_frame_bytes);
+    host->surface_display_buffer = malloc(host->surface_display_frame_bytes);
     if (host->surface_display_buffer == NULL) return PXA_STATUS_RESOURCE_LIMIT;
     host->surface_buffers = pixels;
     host->surface_registered = 1;
     memset(&host->surface_bitmap, 0, sizeof(host->surface_bitmap));
     host->surface_bitmap.header.magic = LV_IMAGE_HEADER_MAGIC;
     host->surface_bitmap.header.cf = LV_COLOR_FORMAT_RGB565;
-    host->surface_bitmap.header.w = host->surface_width;
-    host->surface_bitmap.header.h = host->surface_height;
-    host->surface_bitmap.header.stride = host->surface_stride_bytes;
-    host->surface_bitmap.data_size = host->surface_frame_bytes;
+    host->surface_bitmap.header.w = host->surface_display_width;
+    host->surface_bitmap.header.h = host->surface_display_height;
+    host->surface_bitmap.header.stride = host->surface_display_stride_bytes;
+    host->surface_bitmap.data_size = host->surface_display_frame_bytes;
     host->surface_bitmap.data = host->surface_display_buffer;
     host->surface_image = lv_image_create(lv_screen_active());
     if (host->surface_image == NULL) {
@@ -172,9 +190,11 @@ static pxa_status_t surface_register_buffers(void *context, uint64_t surface,
     lv_image_set_inner_align(host->surface_image, LV_IMAGE_ALIGN_TOP_LEFT);
     lv_obj_clear_flag(host->surface_image, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_clear_flag(host->surface_image, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_set_size(host->surface_image, host->surface_width, host->surface_height);
-    lv_obj_set_pos(host->surface_image, host->surface_layer.x,
-                   host->surface_layer.y);
+    lv_obj_set_size(host->surface_image, host->surface_display_width,
+                    host->surface_display_height);
+    lv_obj_set_pos(host->surface_image,
+                   host->surface_layer.x * host->surface_scale,
+                   host->surface_layer.y * host->surface_scale);
     lv_obj_move_foreground(host->surface_image);
     return PXA_STATUS_OK;
 }
@@ -259,7 +279,8 @@ static pxa_status_t surface_configure(void *context, uint64_t surface,
         return PXA_STATUS_INVALID_ARGUMENT;
     host->surface_layer = *layer;
     if (host->surface_image != NULL) {
-        lv_obj_set_pos(host->surface_image, layer->x, layer->y);
+        lv_obj_set_pos(host->surface_image, layer->x * host->surface_scale,
+                       layer->y * host->surface_scale);
         if (layer->visible)
             lv_obj_remove_flag(host->surface_image, LV_OBJ_FLAG_HIDDEN);
         else
@@ -300,9 +321,14 @@ static void surface_close(void *context, uint64_t surface) {
     host->surface_display_buffer = NULL;
     host->surface_frame_bytes = 0;
     host->surface_stride_bytes = 0;
+    host->surface_display_frame_bytes = 0;
+    host->surface_display_stride_bytes = 0;
     host->surface_width = 0;
     host->surface_height = 0;
+    host->surface_display_width = 0;
+    host->surface_display_height = 0;
     host->surface_buffer_count = 0;
+    host->surface_scale = 0;
     host->surface_registered = 0;
     host->surface_writing_buffer = -1;
     host->surface_pending_buffer = -1;
@@ -319,9 +345,20 @@ static int surface_process_pending(product_host_t *host) {
         return 0;
     buffer_index = (uint8_t)host->surface_pending_buffer;
     frame_id = host->surface_pending_frame_id;
-    memcpy(host->surface_display_buffer,
-           host->surface_buffers + (size_t)buffer_index * host->surface_frame_bytes,
-           host->surface_frame_bytes);
+    {
+        const uint16_t *source = (const uint16_t *)(host->surface_buffers +
+            (size_t)buffer_index * host->surface_frame_bytes);
+        uint16_t *destination = (uint16_t *)host->surface_display_buffer;
+        const uint32_t source_stride = host->surface_stride_bytes / 2u;
+        const uint32_t destination_stride = host->surface_display_stride_bytes / 2u;
+        for (uint16_t y = 0; y < host->surface_display_height; ++y) {
+            const uint16_t *source_row = source +
+                (uint32_t)(y / host->surface_scale) * source_stride;
+            uint16_t *destination_row = destination + (uint32_t)y * destination_stride;
+            for (uint16_t x = 0; x < host->surface_display_width; ++x)
+                destination_row[x] = source_row[x / host->surface_scale];
+        }
+    }
     host->surface_pending_buffer = -1;
     host->surface_pending_frame_id = 0;
     ++host->surface_presented_frames;
