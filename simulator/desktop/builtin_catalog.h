@@ -11,6 +11,7 @@ typedef struct {
     const char* name;
     const char* version;
     const char* description;
+    const char* icon_reference;
 } pxsys_desktop_builtin_app_t;
 
 size_t pxsys_desktop_builtin_app_count(void);

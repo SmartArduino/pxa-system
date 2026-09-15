@@ -26,8 +26,11 @@ def main() -> int:
             "name": manifest["name"],
             "version": manifest["version"],
             "description": manifest.get("description", "PXA reference application"),
+            "icon": manifest.get("icon", ""),
         }
         for key, value in entry.items():
+            if key == "icon" and not value:
+                continue
             if not isinstance(value, str) or not value:
                 raise ValueError(f"{manifest_path}: {key} must be a non-empty string")
         entries.append(entry)
@@ -40,8 +43,8 @@ def main() -> int:
     ]
     for entry in entries:
         lines.append(
-            "    {%s, %s, %s, %s},"
-            % tuple(c_string(entry[key]) for key in ("id", "name", "version", "description"))
+            "    {%s, %s, %s, %s, %s},"
+            % tuple(c_string(entry[key]) for key in ("id", "name", "version", "description", "icon"))
         )
     lines.extend(["};", ""])
     output = "\n".join(lines)

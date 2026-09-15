@@ -36,6 +36,7 @@ pxsys_status_t pxsys_desktop_register_builtin_apps(
         descriptor.flags = PXSYS_APP_FLAG_REMOVABLE | PXSYS_APP_FLAG_ENABLED |
                            PXSYS_APP_FLAG_LAUNCHER;
         descriptor.description = pxsys_string_from_cstr(app->description);
+        descriptor.icon_reference = pxsys_string_from_cstr(app->icon_reference);
         status = pxsys_app_registry_register(registry, &descriptor);
         if (status != PXSYS_STATUS_OK) return status;
     }

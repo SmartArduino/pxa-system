@@ -82,6 +82,8 @@ add_executable(pxsys_desktop_simulator
 target_compile_features(pxsys_desktop_simulator PRIVATE c_std_99)
 target_include_directories(pxsys_desktop_simulator PRIVATE
     "${CMAKE_CURRENT_BINARY_DIR}/generated")
+target_compile_definitions(pxsys_desktop_simulator PRIVATE
+    PXSYS_DESKTOP_APP_SOURCE_ROOT="${PXSYS_DESKTOP_APP_SOURCE_ROOT}")
 target_link_libraries(pxsys_desktop_simulator PRIVATE
     pxsys::standard pxsys::pxa pxsys::renderer_lvgl pxsys::reference_lvgl
     lvgl SDL2::SDL2 PNG::PNG m)

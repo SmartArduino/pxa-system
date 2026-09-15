@@ -1,13 +1,16 @@
 #define _POSIX_C_SOURCE 200809L
 
 #include <errno.h>
+#include <fcntl.h>
 #include <math.h>
 #include <png.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <time.h>
+#include <unistd.h>
 
 #include <SDL2/SDL.h>
 
@@ -27,6 +30,18 @@
 typedef struct {
     size_t allocations;
 } simulator_memory_t;
+
+#define PXSYS_DESKTOP_ICON_MAX_BYTES (256u * 1024u)
+#define PXSYS_DESKTOP_ICON_MAX_DIMENSION 512u
+
+typedef struct {
+    const char* installed_packages_root;
+} simulator_icon_resolver_t;
+
+typedef struct {
+    lv_image_dsc_t descriptor;
+    uint8_t* bytes;
+} simulator_icon_t;
 
 typedef enum {
     SIMULATOR_SHAPE_BACKGROUND_BLACK = 0,
@@ -65,6 +80,145 @@ typedef struct {
 static pxsys_display_profile_t s_display_profile;
 static simulator_shape_background_t s_shape_background =
     SIMULATOR_SHAPE_BACKGROUND_MATTE;
+
+static uint32_t read_be_u32(const uint8_t* value) {
+    return ((uint32_t)value[0] << 24) | ((uint32_t)value[1] << 16) |
+           ((uint32_t)value[2] << 8) | (uint32_t)value[3];
+}
+
+static int path_part_is_safe(const char* data, size_t size) {
+    size_t index;
+    if (data == NULL || size == 0 || (size == 1 && data[0] == '.') ||
+        (size == 2 && data[0] == '.' && data[1] == '.'))
+        return 0;
+    for (index = 0; index < size; ++index) {
+        if (data[index] == '\\' || (unsigned char)data[index] < 0x20u)
+            return 0;
+    }
+    return 1;
+}
+
+static int icon_path_is_safe(pxsys_string_t path) {
+    size_t part_start = 0;
+    size_t index;
+    if (path.data == NULL || path.size == 0 ||
+        path.size > PXSYS_APP_ICON_REFERENCE_MAX_BYTES || path.data[0] == '/')
+        return 0;
+    for (index = 0; index <= path.size; ++index) {
+        if (index != path.size && path.data[index] != '/') continue;
+        if (!path_part_is_safe(path.data + part_start, index - part_start))
+            return 0;
+        part_start = index + 1;
+    }
+    return 1;
+}
+
+static int app_id_is_safe(pxsys_string_t app_id) {
+    size_t index;
+    if (app_id.data == NULL || app_id.size == 0 || app_id.size > 120) return 0;
+    for (index = 0; index < app_id.size; ++index) {
+        unsigned char character = (unsigned char)app_id.data[index];
+        if (!(character == '-' || character == '_' || character == '.' ||
+              (character >= '0' && character <= '9') ||
+              (character >= 'a' && character <= 'z')))
+            return 0;
+    }
+    return 1;
+}
+
+static void release_launcher_icon(void* context) {
+    simulator_icon_t* icon = (simulator_icon_t*)context;
+    if (icon == NULL) return;
+    free(icon->bytes);
+    free(icon);
+}
+
+static int read_icon_file(const char* path,
+                          pxsys_reference_lvgl_app_icon_t* output) {
+    static const uint8_t png_signature[] = {
+        0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+    };
+    struct stat metadata;
+    simulator_icon_t* icon;
+    int descriptor;
+    size_t offset = 0;
+    if (path == NULL || output == NULL) return 0;
+    descriptor = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+    if (descriptor < 0 || fstat(descriptor, &metadata) != 0 ||
+        !S_ISREG(metadata.st_mode) || metadata.st_size < 24 ||
+        (uintmax_t)metadata.st_size > PXSYS_DESKTOP_ICON_MAX_BYTES) {
+        if (descriptor >= 0) close(descriptor);
+        return 0;
+    }
+    icon = calloc(1, sizeof(*icon));
+    if (icon == NULL) {
+        close(descriptor);
+        return 0;
+    }
+    icon->bytes = malloc((size_t)metadata.st_size);
+    if (icon->bytes == NULL) {
+        close(descriptor);
+        free(icon);
+        return 0;
+    }
+    while (offset < (size_t)metadata.st_size) {
+        ssize_t count = read(descriptor, icon->bytes + offset,
+                             (size_t)metadata.st_size - offset);
+        if (count <= 0) {
+            close(descriptor);
+            release_launcher_icon(icon);
+            return 0;
+        }
+        offset += (size_t)count;
+    }
+    close(descriptor);
+    if (memcmp(icon->bytes, png_signature, sizeof(png_signature)) != 0 ||
+        memcmp(icon->bytes + 12, "IHDR", 4) != 0 ||
+        read_be_u32(icon->bytes + 16) == 0 ||
+        read_be_u32(icon->bytes + 20) == 0 ||
+        read_be_u32(icon->bytes + 16) > PXSYS_DESKTOP_ICON_MAX_DIMENSION ||
+        read_be_u32(icon->bytes + 20) > PXSYS_DESKTOP_ICON_MAX_DIMENSION) {
+        release_launcher_icon(icon);
+        return 0;
+    }
+    icon->descriptor.header.magic = LV_IMAGE_HEADER_MAGIC;
+    icon->descriptor.header.cf = LV_COLOR_FORMAT_RAW_ALPHA;
+    icon->descriptor.header.w = read_be_u32(icon->bytes + 16);
+    icon->descriptor.header.h = read_be_u32(icon->bytes + 20);
+    icon->descriptor.data_size = (size_t)metadata.st_size;
+    icon->descriptor.data = icon->bytes;
+    output->source = &icon->descriptor;
+    output->release = release_launcher_icon;
+    output->release_context = icon;
+    return 1;
+}
+
+static bool resolve_launcher_icon(
+    void* context, const pxsys_app_descriptor_t* app,
+    pxsys_reference_lvgl_app_icon_t* output) {
+    const simulator_icon_resolver_t* resolver =
+        (const simulator_icon_resolver_t*)context;
+    char path[1400];
+    if (app == NULL || output == NULL || !app_id_is_safe(app->identity.app_id) ||
+        !icon_path_is_safe(app->icon_reference))
+        return false;
+    memset(output, 0, sizeof(*output));
+    if (resolver != NULL && resolver->installed_packages_root != NULL &&
+        snprintf(path, sizeof(path), "%s/%.*s/%.*s",
+                 resolver->installed_packages_root,
+                 (int)app->identity.app_id.size, app->identity.app_id.data,
+                 (int)app->icon_reference.size, app->icon_reference.data) <
+            (int)sizeof(path) &&
+        read_icon_file(path, output))
+        return true;
+    if (snprintf(path, sizeof(path), "%s/%.*s/%.*s",
+                 PXSYS_DESKTOP_APP_SOURCE_ROOT,
+                 (int)app->identity.app_id.size, app->identity.app_id.data,
+                 (int)app->icon_reference.size, app->icon_reference.data) >=
+        (int)sizeof(path))
+        return false;
+    return read_icon_file(path, output) != 0;
+}
 
 static void* simulator_allocate(void* context, size_t size) {
     simulator_memory_t* memory = (simulator_memory_t*)context;
@@ -496,6 +650,7 @@ static int run_simulator(const simulator_options_t* options) {
     pxsys_desktop_runtime_t* simulator_runtime = NULL;
     pxsys_runtime_provider_t runtime_provider;
     pxsys_desktop_runtime_fixture_t runtime_fixture;
+    simulator_icon_resolver_t icon_resolver = {0};
     pxsys_reference_lvgl_config_t ui_config;
     pxsys_reference_lvgl_t* ui = NULL;
     lv_display_t* display = NULL;
@@ -621,6 +776,7 @@ static int run_simulator(const simulator_options_t* options) {
     runtime_fixture.publisher_key = options->publisher_key;
     runtime_fixture.state_root = options->state_root;
     runtime_fixture.pxadb_control_socket = options->pxadb_control_socket;
+    icon_resolver.installed_packages_root = options->installed_packages_root;
     if (pxsys_desktop_runtime_create(system, renderer, &runtime_fixture, allocator,
                                      &simulator_runtime) != PXSYS_STATUS_OK)
         goto done;
@@ -647,6 +803,8 @@ static int run_simulator(const simulator_options_t* options) {
     ui_config.fonts[PXSYS_TYPOGRAPHY_CAPTION] = &lv_font_montserrat_12;
     ui_config.allocator = allocator;
     ui_config.navigation_mode = options->navigation;
+    ui_config.app_icon_context = &icon_resolver;
+    ui_config.resolve_app_icon = resolve_launcher_icon;
     memcpy(ui_config.publisher_root, publisher_root,
            sizeof(ui_config.publisher_root));
     if (pxsys_reference_lvgl_create(&ui_config, &ui) != PXSYS_STATUS_OK)
