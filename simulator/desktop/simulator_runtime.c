@@ -3,8 +3,8 @@
 #include <stdio.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <unistd.h>
 
-#include "product_runner.h"
 #define PXSYS_DESKTOP_RUNTIME_MAGIC UINT32_C(0x50584452)
 #define PXSYS_DESKTOP_RUNTIME_ID "pxa-sim"
 
@@ -80,8 +80,8 @@ static int launch_installed_application(simulator_instance_t* instance) {
     struct stat metadata;
     if (instance == NULL || instance->app == NULL) return 0;
     fixture = &instance->runtime->fixture;
-    if (fixture->installed_packages_root == NULL || fixture->publisher_key == NULL ||
-        fixture->state_root == NULL ||
+    if (fixture->installed_packages_root == NULL || fixture->product_runner == NULL ||
+        fixture->publisher_key == NULL || fixture->state_root == NULL ||
         instance->app->identity.app_id.size == 0 ||
         instance->app->identity.app_id.size > 120)
         return 0;
@@ -91,9 +91,10 @@ static int launch_installed_application(simulator_instance_t* instance) {
                  instance->app->identity.app_id.data) >= (int)sizeof(package_path) ||
         stat(package_path, &metadata) != 0 || !S_ISDIR(metadata.st_mode))
         return 0;
-    return pxsys_product_simulator_run_embedded(package_path,
-                                                fixture->publisher_key,
-                                                fixture->state_root) == 0;
+    execl(fixture->product_runner, fixture->product_runner, "--package", package_path,
+          "--publisher-key", fixture->publisher_key, "--state-root", fixture->state_root,
+          (char*)NULL);
+    return 0;
 }
 
 static void theme_changed(void* context,
