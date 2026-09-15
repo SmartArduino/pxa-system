@@ -16,6 +16,7 @@
 #include "pxsys/lvgl_renderer.h"
 #include "pxsys/reference_lvgl.h"
 #include "pxsys/standard_system.h"
+#include "pxadb_control.h"
 #include "simulator_runtime.h"
 #include "src/core/lv_obj_event_private.h"
 #include "src/drivers/sdl/lv_sdl_private.h"
@@ -58,6 +59,7 @@ typedef struct {
     const char* product_runner;
     const char* publisher_key;
     const char* state_root;
+    const char* pxadb_control_socket;
 } simulator_options_t;
 
 static pxsys_display_profile_t s_display_profile;
@@ -240,7 +242,7 @@ static int parse_options(int argc, char** argv, simulator_options_t* options) {
         PXSYS_DISPLAY_SHAPE_RECTANGLE, 0, SIMULATOR_SHAPE_BACKGROUND_MATTE,
         {0, 0, 0, 0}, 0, 0,
         9, 41, 82, 4, PXSYS_NETWORK_WIFI, 1, 24u * 1024u,
-        NULL, NULL, NULL, NULL,
+        NULL, NULL, NULL, NULL, NULL,
     };
     for (index = 1; index < argc; ++index) {
         if (strcmp(argv[index], "--dark") == 0) {
@@ -365,6 +367,9 @@ static int parse_options(int argc, char** argv, simulator_options_t* options) {
         } else if (strcmp(argv[index], "--state-root") == 0 &&
                    index + 1 < argc) {
             options->state_root = argv[++index];
+        } else if (strcmp(argv[index], "--pxadb-control-socket") == 0 &&
+                   index + 1 < argc) {
+            options->pxadb_control_socket = argv[++index];
         } else if (strcmp(argv[index], "--locale") == 0 && index + 1 < argc) {
             options->locale = argv[++index];
         } else if (strcmp(argv[index], "--width") == 0 && index + 1 < argc) {
@@ -496,6 +501,7 @@ static int run_simulator(const simulator_options_t* options) {
     lv_display_t* display = NULL;
     lv_indev_t* mouse = NULL;
     lv_indev_t* keyboard = NULL;
+    pxsys_pxadb_control_t pxadb_control = {.listener = -1};
     uint32_t started;
     uint8_t publisher_root[PXSYS_PUBLISHER_ROOT_BYTES];
     int result = 1;
@@ -614,6 +620,7 @@ static int run_simulator(const simulator_options_t* options) {
     runtime_fixture.product_runner = options->product_runner;
     runtime_fixture.publisher_key = options->publisher_key;
     runtime_fixture.state_root = options->state_root;
+    runtime_fixture.pxadb_control_socket = options->pxadb_control_socket;
     if (pxsys_desktop_runtime_create(system, renderer, &runtime_fixture, allocator,
                                      &simulator_runtime) != PXSYS_STATUS_OK)
         goto done;
@@ -678,11 +685,16 @@ static int run_simulator(const simulator_options_t* options) {
                                         &locale) != PXSYS_STATUS_OK)
             goto done;
     }
+    if (options->pxadb_control_socket != NULL &&
+        !pxsys_pxadb_control_start(&pxadb_control,
+                                   options->pxadb_control_socket, display))
+        goto done;
 
     started = lv_tick_get();
     while (lv_display_get_default() != NULL &&
            (options->duration_ms == 0 ||
             lv_tick_elaps(started) < options->duration_ms)) {
+        pxsys_pxadb_control_poll(&pxadb_control);
         uint32_t delay = lv_timer_handler();
         if (delay < 1) delay = 1;
         if (delay > 16) delay = 16;
@@ -703,6 +715,7 @@ static int run_simulator(const simulator_options_t* options) {
     result = 0;
 
 done:
+    pxsys_pxadb_control_stop(&pxadb_control);
     if (system != NULL)
         (void)pxsys_task_manager_finish_all(
             pxsys_standard_system_tasks(system), PXSYS_STOP_SHUTDOWN);

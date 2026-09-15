@@ -77,7 +77,7 @@ add_custom_command(
     VERBATIM)
 
 add_executable(pxsys_desktop_simulator
-    main.c builtin_catalog.c simulator_runtime.c
+    main.c builtin_catalog.c simulator_runtime.c pxadb_control.c
     "${PXSYS_DESKTOP_CATALOG_DATA}")
 target_compile_features(pxsys_desktop_simulator PRIVATE c_std_99)
 target_include_directories(pxsys_desktop_simulator PRIVATE
@@ -86,11 +86,11 @@ target_link_libraries(pxsys_desktop_simulator PRIVATE
     pxsys::standard pxsys::pxa pxsys::renderer_lvgl pxsys::reference_lvgl
     lvgl SDL2::SDL2 PNG::PNG m)
 
-add_executable(pxsys_product_simulator product_runner.c)
+add_executable(pxsys_product_simulator product_runner.c pxadb_control.c)
 target_compile_features(pxsys_product_simulator PRIVATE c_std_99)
 target_link_libraries(pxsys_product_simulator PRIVATE
     pxa::pxa pxa_adapters_openssl pxa_adapters_posix pxa_adapters_lvgl
-    pxa_adapters_wamr lvgl SDL2::SDL2 m)
+    pxa_adapters_wamr lvgl SDL2::SDL2 PNG::PNG m)
 if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(pxsys_product_simulator PRIVATE
         -Wall -Wextra -Wpedantic)

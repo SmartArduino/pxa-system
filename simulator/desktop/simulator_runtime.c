@@ -91,9 +91,16 @@ static int launch_installed_application(simulator_instance_t* instance) {
                  instance->app->identity.app_id.data) >= (int)sizeof(package_path) ||
         stat(package_path, &metadata) != 0 || !S_ISDIR(metadata.st_mode))
         return 0;
-    execl(fixture->product_runner, fixture->product_runner, "--package", package_path,
-          "--publisher-key", fixture->publisher_key, "--state-root", fixture->state_root,
-          (char*)NULL);
+    if (fixture->pxadb_control_socket != NULL) {
+        execl(fixture->product_runner, fixture->product_runner,
+              "--package", package_path, "--publisher-key", fixture->publisher_key,
+              "--state-root", fixture->state_root, "--pxadb-control-socket",
+              fixture->pxadb_control_socket, (char*)NULL);
+    } else {
+        execl(fixture->product_runner, fixture->product_runner,
+              "--package", package_path, "--publisher-key", fixture->publisher_key,
+              "--state-root", fixture->state_root, (char*)NULL);
+    }
     return 0;
 }
 

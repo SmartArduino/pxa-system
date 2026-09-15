@@ -25,6 +25,8 @@
 #include "pxa/ui.h"
 #include "pxa/wamr/pxa_wamr_engine.h"
 #include "pxa/window.h"
+#include "pxadb_control.h"
+#include "src/drivers/sdl/lv_sdl_keyboard.h"
 
 #define PRODUCT_CLOCK_SERVICE UINT16_C(4)
 #define PRODUCT_CLOCK_TICK UINT16_C(0x8001)
@@ -34,6 +36,7 @@ typedef struct {
     const char *package_path;
     const char *publisher_key;
     const char *state_root;
+    const char *pxadb_control_socket;
     uint32_t width;
     uint32_t height;
 } options_t;
@@ -583,7 +586,7 @@ static pxa_status_t permission_save(void *context, pxa_bytes_t identity,
 }
 
 static void print_usage(const char *program) {
-    fprintf(stderr, "Usage: %s --package DIR --publisher-key DER [--state-root DIR] [--width PX --height PX]\n",
+    fprintf(stderr, "Usage: %s --package DIR --publisher-key DER [--state-root DIR] [--pxadb-control-socket PATH] [--width PX --height PX]\n",
             program);
 }
 
@@ -599,6 +602,8 @@ static int parse_options(int argc, char **argv, options_t *options) {
             options->publisher_key = argv[++index];
         else if (strcmp(argv[index], "--state-root") == 0 && index + 1 < argc)
             options->state_root = argv[++index];
+        else if (strcmp(argv[index], "--pxadb-control-socket") == 0 && index + 1 < argc)
+            options->pxadb_control_socket = argv[++index];
         else if (strcmp(argv[index], "--width") == 0 && index + 1 < argc)
             options->width = (uint32_t)strtoul(argv[++index], NULL, 10);
         else if (strcmp(argv[index], "--height") == 0 && index + 1 < argc)
@@ -651,6 +656,8 @@ int main(int argc, char **argv) {
     char *storage_path = NULL;
     lv_display_t *display = NULL;
     lv_indev_t *mouse = NULL;
+    lv_indev_t *keyboard = NULL;
+    pxsys_pxadb_control_t pxadb_control = {.listener = -1};
     pxa_component_t component;
     pxa_status_t status;
     const char *stage = "arguments";
@@ -719,8 +726,10 @@ int main(int argc, char **argv) {
     lv_init();
     display = lv_sdl_window_create((int32_t)options.width, (int32_t)options.height);
     mouse = lv_sdl_mouse_create();
-    if (display == NULL || mouse == NULL) goto done;
+    keyboard = lv_sdl_keyboard_create();
+    if (display == NULL || mouse == NULL || keyboard == NULL) goto done;
     lv_indev_set_display(mouse, display);
+    lv_indev_set_display(keyboard, display);
     lv_sdl_window_set_title(display, "PXA Product Simulator");
     pxa_runtime_limits_init(&runtime_limits); runtime_limits.max_components = PRODUCT_COMPONENTS;
     stage = "runtime";
@@ -917,7 +926,12 @@ int main(int argc, char **argv) {
     }
     if (pxa_window_flush_metrics(host.window, component) == PXA_STATUS_OK)
         dispatch_component_events(&host);
+    if (options.pxadb_control_socket != NULL &&
+        !pxsys_pxadb_control_start(&pxadb_control,
+                                   options.pxadb_control_socket, display))
+        goto done;
     while (lv_display_get_default() != NULL) {
+        pxsys_pxadb_control_poll(&pxadb_control);
         if (surface_process_pending(&host)) {
             const int32_t released = pxa_surface_service_flush_releases(host.surfaces);
             if (released < 0) {
@@ -934,6 +948,7 @@ int main(int argc, char **argv) {
     }
     result = 0;
 done:
+    pxsys_pxadb_control_stop(&pxadb_control);
     if (result != 0) fprintf(stderr, "PXA product simulator failed at %s\n", stage);
     if (host.coordinator != NULL && lv_display_get_default() != NULL)
         pxa_activation_deactivate_all(host.coordinator, PXA_STOP_SHUTDOWN);
