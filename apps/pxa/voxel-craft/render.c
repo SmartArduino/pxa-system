@@ -743,6 +743,29 @@ static uint16_t shade_block(uint8_t block, int face, int sign, float uu,
     return (uint16_t)((r << 11) | (g << 5) | b);
 }
 
+#define RAY_Q_SHIFT 12
+#define RAY_Q_ONE (1 << RAY_Q_SHIFT)
+#define RAY_DELTA_NUMERATOR (1 << (RAY_Q_SHIFT * 2))
+
+static int32_t ray_delta_q12(float direction) {
+    const int32_t fixed = (int32_t)(direction * (float)RAY_Q_ONE);
+    const uint32_t magnitude = fixed < 0
+                                   ? (uint32_t)(-(fixed + 1)) + 1u
+                                   : (uint32_t)fixed;
+    if (magnitude == 0) return RAY_DELTA_NUMERATOR;
+    {
+        const uint32_t delta = RAY_DELTA_NUMERATOR / magnitude;
+        return (int32_t)(delta == 0 ? 1u : delta);
+    }
+}
+
+static int32_t ray_side_q12(float distance, int32_t delta_q12) {
+    int32_t distance_q12 = (int32_t)(distance * (float)RAY_Q_ONE);
+    if (distance_q12 < 0) distance_q12 = 0;
+    if (distance_q12 > RAY_Q_ONE) distance_q12 = RAY_Q_ONE;
+    return (int32_t)(((int64_t)distance_q12 * delta_q12) >> RAY_Q_SHIFT);
+}
+
 static void render_scene(const camera_t *cam, uint32_t now_ms) {
     const float fx = cam->fx;
     const float fy = cam->fy;
@@ -755,46 +778,55 @@ static void render_scene(const camera_t *cam, uint32_t now_ms) {
     const float cam_x = cam->cam_x;
     const float cam_y = cam->cam_y;
     const float cam_z = cam->cam_z;
+    const int initial_map_x = rc_floor_int(cam_x);
+    const int initial_map_y = rc_floor_int(cam_y);
+    const int initial_map_z = rc_floor_int(cam_z);
+    const float negative_x = cam_x - (float)initial_map_x;
+    const float negative_y = cam_y - (float)initial_map_y;
+    const float negative_z = cam_z - (float)initial_map_z;
+    const float positive_x = 1.0F - negative_x;
+    const float positive_y = 1.0F - negative_y;
+    const float positive_z = 1.0F - negative_z;
+    const int32_t fog_end_q12 = (int32_t)(g_fog_end * (float)RAY_Q_ONE);
+    /* WAMR Guest execution cannot sustain one full DDA ray per internal pixel
+     * at the balanced touch profile. Reuse each result over a 2x2 block so
+     * AUTO 2X stays within the application's 30 FPS frame budget. */
+    const int ray_pixel_step =
+        g_scale >= QUALITY_BALANCED ? 2 : 1;
     int py;
     g_perf_stats = (render_perf_stats_t){0};
-    for (py = 0; py < g_scene_h; ++py) {
+    for (py = 0; py < g_scene_h; py += ray_pixel_step) {
         const float ndc_y = g_ndc_y[py];
         const float dir_y = fy + uy * ndc_y;
         const uint16_t *ray_lengths = &g_ray_len_q12[py * g_scene_w];
         uint16_t *out = &g_scene[py * g_scene_w];
         uint16_t *depth_out = &g_depth[py * g_scene_w];
         int px;
-        for (px = 0; px < g_scene_w; ++px) {
+        for (px = 0; px < g_scene_w; px += ray_pixel_step) {
             const float ndc_x = g_ndc_x[px];
             const float dir_x = fx + rx * ndc_x + ux * ndc_y;
             const float dir_z = fz + rz * ndc_x + uz * ndc_y;
             const float ray_len = (float)ray_lengths[px] * (1.0F / 4096.0F);
-            int map_x = rc_floor_int(cam_x);
-            int map_y = rc_floor_int(cam_y);
-            int map_z = rc_floor_int(cam_z);
+            int map_x = initial_map_x;
+            int map_y = initial_map_y;
+            int map_z = initial_map_z;
             const int step_x = dir_x > 0.0F ? 1 : -1;
             const int step_y = dir_y > 0.0F ? 1 : -1;
             const int step_z = dir_z > 0.0F ? 1 : -1;
-            const float delta_x =
-                dir_x != 0.0F ? rc_fabs(1.0F / dir_x) : 1.0e30F;
-            const float delta_y =
-                dir_y != 0.0F ? rc_fabs(1.0F / dir_y) : 1.0e30F;
-            const float delta_z =
-                dir_z != 0.0F ? rc_fabs(1.0F / dir_z) : 1.0e30F;
-            float side_x = dir_x > 0.0F
-                               ? ((float)map_x + 1.0F - cam_x) * delta_x
-                               : (cam_x - (float)map_x) * delta_x;
-            float side_y = dir_y > 0.0F
-                               ? ((float)map_y + 1.0F - cam_y) * delta_y
-                               : (cam_y - (float)map_y) * delta_y;
-            float side_z = dir_z > 0.0F
-                               ? ((float)map_z + 1.0F - cam_z) * delta_z
-                               : (cam_z - (float)map_z) * delta_z;
+            const int32_t delta_x = ray_delta_q12(dir_x);
+            const int32_t delta_y = ray_delta_q12(dir_y);
+            const int32_t delta_z = ray_delta_q12(dir_z);
+            int32_t side_x = ray_side_q12(
+                dir_x > 0.0F ? positive_x : negative_x, delta_x);
+            int32_t side_y = ray_side_q12(
+                dir_y > 0.0F ? positive_y : negative_y, delta_y);
+            int32_t side_z = ray_side_q12(
+                dir_z > 0.0F ? positive_z : negative_z, delta_z);
             uint8_t block = BLOCK_AIR;
             int face = 0;
             int sign = 1;
             int fog_terminated = 0;
-            float travel = 0.0F;
+            int32_t travel_q12 = 0;
             int step;
             /* Rays stay inside one chunk for many steps; cache the chunk
              * pointer so the hot loop only pays one data load per step. */
@@ -804,24 +836,24 @@ static void render_scene(const camera_t *cam, uint32_t now_ms) {
             for (step = 0; step < g_max_steps; ++step) {
                 if (side_x <= side_y && side_x <= side_z) {
                     map_x += step_x;
-                    travel = side_x;
+                    travel_q12 = side_x;
                     side_x += delta_x;
                     face = 0;
                     sign = step_x;
                 } else if (side_y <= side_z) {
                     map_y += step_y;
-                    travel = side_y;
+                    travel_q12 = side_y;
                     side_y += delta_y;
                     face = 1;
                     sign = step_y;
                 } else {
                     map_z += step_z;
-                    travel = side_z;
+                    travel_q12 = side_z;
                     side_z += delta_z;
                     face = 2;
                     sign = step_z;
                 }
-                if (travel > g_fog_end) {
+                if (travel_q12 > fog_end_q12) {
                     block = BLOCK_AIR;
                     fog_terminated = 1;
                     break;
@@ -864,6 +896,8 @@ static void render_scene(const camera_t *cam, uint32_t now_ms) {
                                     dir_z * inv_len);
                 depth_out[px] = 0xFFFFu;
             } else {
+                const float travel =
+                    (float)travel_q12 * (1.0F / (float)RAY_Q_ONE);
                 const float hit_x = cam_x + dir_x * travel;
                 const float hit_y = cam_y + dir_y * travel;
                 const float hit_z = cam_z + dir_z * travel;
@@ -886,6 +920,28 @@ static void render_scene(const camera_t *cam, uint32_t now_ms) {
                 fixed = (int)(distance * 16.0F);
                 depth_out[px] =
                     fixed > 0xFFFE ? 0xFFFE : (uint16_t)fixed;
+            }
+            if (ray_pixel_step != 1) {
+                const uint16_t color = out[px];
+                const uint16_t depth = depth_out[px];
+                const int last_x = px + ray_pixel_step < g_scene_w
+                                       ? px + ray_pixel_step
+                                       : g_scene_w;
+                const int last_y = py + ray_pixel_step < g_scene_h
+                                       ? py + ray_pixel_step
+                                       : g_scene_h;
+                int fill_y;
+                for (fill_y = py; fill_y < last_y; ++fill_y) {
+                    uint16_t *fill_color =
+                        &g_scene[fill_y * g_scene_w + px];
+                    uint16_t *fill_depth =
+                        &g_depth[fill_y * g_scene_w + px];
+                    int fill_x;
+                    for (fill_x = px; fill_x < last_x; ++fill_x) {
+                        fill_color[fill_x - px] = color;
+                        fill_depth[fill_x - px] = depth;
+                    }
+                }
             }
         }
     }
@@ -2098,7 +2154,7 @@ static void draw_compact_performance(const hud_state_t *hud, int fps) {
 static void draw_status(const hud_state_t *hud) {
     char line[32];
     char *out = line;
-    const int fps = (int)(hud->fps_x10 / 10u);
+    const int fps = (int)((hud->fps_x10 + 5u) / 10u);
     const char *selected =
         g_inventory[hud->hotbar_selected].item == BLOCK_AIR
             ? "EMPTY"

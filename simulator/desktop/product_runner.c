@@ -688,6 +688,7 @@ static int drain_surface_updates(product_host_t *host) {
 
 static void dispatch_clock_tick(product_host_t *host) {
     uint64_t now;
+    uint64_t period_us;
     uint8_t payload[8];
     pxa_status_t status;
     if (host == NULL || host->runtime == NULL ||
@@ -696,8 +697,12 @@ static void dispatch_clock_tick(product_host_t *host) {
         return;
     now = now_us(NULL);
     if (now < host->next_clock_tick_us) return;
-    host->next_clock_tick_us =
-        now + (uint64_t)host->clock_period_ms * UINT64_C(1000);
+    period_us = (uint64_t)host->clock_period_ms * UINT64_C(1000);
+    /* Keep the cadence anchored to its original deadline. Re-basing on
+     * `now` makes ordinary scheduler jitter accumulate into a slower clock. */
+    do {
+        host->next_clock_tick_us += period_us;
+    } while (host->next_clock_tick_us <= now);
     pxa_write_u64(payload, now);
     status = pxa_event_post_message(host->runtime, host->active_component,
                                     PRODUCT_CLOCK_SERVICE, PRODUCT_CLOCK_TICK, 0,
@@ -705,6 +710,23 @@ static void dispatch_clock_tick(product_host_t *host) {
                                     UINT64_C(0x000400008001));
     if (status == PXA_STATUS_OK)
         dispatch_component_events(host);
+}
+
+static uint32_t limit_delay_to_clock_deadline(const product_host_t *host,
+                                              uint32_t delay_ms) {
+    uint64_t remaining_us;
+    uint32_t clock_delay_ms;
+    if (host == NULL || host->clock_period_ms == 0 ||
+        host->next_clock_tick_us == 0)
+        return delay_ms;
+    {
+        const uint64_t now = now_us(NULL);
+        if (now >= host->next_clock_tick_us) return 1;
+        remaining_us = host->next_clock_tick_us - now;
+    }
+    clock_delay_ms = (uint32_t)((remaining_us + 999u) / 1000u);
+    if (clock_delay_ms == 0) clock_delay_ms = 1;
+    return clock_delay_ms < delay_ms ? clock_delay_ms : delay_ms;
 }
 
 static void ui_event(uint32_t surface, uint32_t node, pxa_ui_event_kind_t kind,
@@ -1234,6 +1256,7 @@ int main(int argc, char **argv) {
         if (drain_surface_updates(&host) < 0) goto done;
         if (delay < 1) delay = 1;
         if (delay > 16) delay = 16;
+        delay = limit_delay_to_clock_deadline(&host, delay);
         SDL_Delay(delay);
     }
     result = 0;
