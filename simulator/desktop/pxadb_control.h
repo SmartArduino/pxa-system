@@ -2,12 +2,18 @@
 #define PXSYS_PXADB_CONTROL_H
 
 #include <stddef.h>
+#include <stdint.h>
 
 #include "lvgl.h"
 
 typedef struct {
     int listener;
     lv_display_t *display;
+    uint32_t window_id;
+    uint8_t tap_pending;
+    int16_t tap_x;
+    int16_t tap_y;
+    uint32_t tap_release_at;
     char path[108];
 } pxsys_pxadb_control_t;
 

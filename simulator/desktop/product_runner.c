@@ -63,6 +63,7 @@ typedef struct {
     uint16_t surface_display_height;
     uint8_t surface_buffer_count;
     uint8_t surface_scale;
+    uint8_t surface_flags;
     uint8_t surface_registered;
     int8_t surface_writing_buffer;
     int8_t surface_pending_buffer;
@@ -78,6 +79,17 @@ typedef struct {
     uint8_t surface_release_pending_mask;
     pxa_surface_release_t surface_releases[3];
     pxa_surface_layer_t surface_layer;
+    uint8_t *raster_buffers[2];
+    uint8_t *raster_draw_lists[2];
+    uint32_t raster_draw_sizes[2];
+    int8_t raster_current_buffer;
+    int8_t raster_draw_pending;
+    uint64_t raster_last_frame_id;
+    uint16_t *raster_palette;
+    uint8_t *raster_textures[PXA_RASTER_MAX_TEXTURES];
+    uint16_t raster_texture_width[PXA_RASTER_MAX_TEXTURES];
+    uint16_t raster_texture_height[PXA_RASTER_MAX_TEXTURES];
+    pxa_raster_telemetry_t raster_telemetry;
     pxa_wamr_engine_t *engine;
     pxa_component_engine_t engine_ops;
     pxa_activation_coordinator_t *coordinator;
@@ -111,11 +123,14 @@ static pxa_status_t surface_create(void *context, const pxa_surface_desc_t *desc
                                    uint64_t *surface, uint32_t *stride) {
     product_host_t *host = context;
     uint8_t scale;
+    const int mapped = desc != NULL &&
+        (desc->flags & PXA_SURFACE_FLAG_GUEST_MAPPED) != 0;
+    const int raster = desc != NULL &&
+        (desc->flags & PXA_SURFACE_FLAG_HOST_RASTER) != 0;
     if (host == NULL || desc == NULL || surface == NULL || stride == NULL ||
         desc->format != PXA_SURFACE_FORMAT_RGB565 ||
         (desc->flags & ~PXA_SURFACE_FLAG_KNOWN_MASK) != 0 ||
-        (desc->flags & PXA_SURFACE_FLAG_GUEST_MAPPED) == 0 ||
-        (desc->flags & PXA_SURFACE_FLAG_HOST_RASTER) != 0 ||
+        mapped == raster ||
         desc->width == 0 || desc->height == 0 ||
         desc->buffer_count < 2 || desc->buffer_count > 3 ||
         host->surface_frame_bytes != 0)
@@ -139,6 +154,7 @@ static pxa_status_t surface_create(void *context, const pxa_surface_desc_t *desc
         host->surface_display_stride_bytes * host->height;
     host->surface_buffer_count = desc->buffer_count;
     host->surface_scale = scale;
+    host->surface_flags = desc->flags;
     host->surface_writing_buffer = -1;
     host->surface_pending_buffer = -1;
     host->surface_layer.x = 0;
@@ -146,7 +162,64 @@ static pxa_status_t surface_create(void *context, const pxa_surface_desc_t *desc
     host->surface_layer.width = desc->width;
     host->surface_layer.height = desc->height;
     host->surface_layer.visible = 1;
+    host->raster_current_buffer = -1;
+    host->raster_draw_pending = -1;
+    if (raster) {
+        uint8_t index;
+        host->surface_display_buffer = malloc(host->surface_display_frame_bytes);
+        if (host->surface_display_buffer == NULL) goto failed;
+        for (index = 0; index < 2; ++index) {
+            host->raster_buffers[index] = malloc(host->surface_frame_bytes);
+            host->raster_draw_lists[index] = malloc(PXA_RASTER_MAX_DRAW_BYTES);
+            if (host->raster_buffers[index] == NULL ||
+                host->raster_draw_lists[index] == NULL) goto failed;
+        }
+        host->surface_registered = 1;
+        memset(&host->surface_bitmap, 0, sizeof(host->surface_bitmap));
+        host->surface_bitmap.header.magic = LV_IMAGE_HEADER_MAGIC;
+        host->surface_bitmap.header.cf = LV_COLOR_FORMAT_RGB565;
+        host->surface_bitmap.header.w = host->surface_display_width;
+        host->surface_bitmap.header.h = host->surface_display_height;
+        host->surface_bitmap.header.stride = host->surface_display_stride_bytes;
+        host->surface_bitmap.data_size = host->surface_display_frame_bytes;
+        host->surface_bitmap.data = host->surface_display_buffer;
+        host->surface_image = lv_image_create(lv_screen_active());
+        if (host->surface_image == NULL) goto failed;
+        lv_image_set_src(host->surface_image, &host->surface_bitmap);
+        lv_image_set_inner_align(host->surface_image, LV_IMAGE_ALIGN_TOP_LEFT);
+        lv_obj_clear_flag(host->surface_image, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_clear_flag(host->surface_image, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_set_size(host->surface_image, host->surface_display_width,
+                        host->surface_display_height);
+        lv_obj_move_foreground(host->surface_image);
+    }
     return PXA_STATUS_OK;
+failed:
+    for (uint8_t index = 0; index < 2; ++index) {
+        free(host->raster_buffers[index]);
+        free(host->raster_draw_lists[index]);
+        host->raster_buffers[index] = NULL;
+        host->raster_draw_lists[index] = NULL;
+    }
+    if (host->surface_image != NULL) lv_obj_delete(host->surface_image);
+    host->surface_image = NULL;
+    free(host->surface_display_buffer);
+    host->surface_display_buffer = NULL;
+    host->surface_frame_bytes = 0;
+    host->surface_stride_bytes = 0;
+    host->surface_display_frame_bytes = 0;
+    host->surface_display_stride_bytes = 0;
+    host->surface_width = 0;
+    host->surface_height = 0;
+    host->surface_display_width = 0;
+    host->surface_display_height = 0;
+    host->surface_buffer_count = 0;
+    host->surface_scale = 0;
+    host->surface_flags = 0;
+    host->surface_registered = 0;
+    host->raster_current_buffer = -1;
+    host->raster_draw_pending = -1;
+    return PXA_STATUS_RESOURCE_LIMIT;
 }
 
 static pxa_status_t surface_write(void *context, uint64_t surface,
@@ -163,6 +236,7 @@ static pxa_status_t surface_register_buffers(void *context, uint64_t surface,
     product_host_t *host = context;
     if (host == NULL || surface != 1 || pixels == NULL ||
         host->surface_registered || host->surface_frame_bytes == 0 ||
+        (host->surface_flags & PXA_SURFACE_FLAG_GUEST_MAPPED) == 0 ||
         ((uintptr_t)pixels & 1u) != 0 ||
         size != (size_t)host->surface_frame_bytes * host->surface_buffer_count)
         return PXA_STATUS_INVALID_ARGUMENT;
@@ -227,7 +301,8 @@ static pxa_status_t surface_acquire_buffer(void *context, uint64_t surface,
                                            uint8_t *buffer_index) {
     product_host_t *host = context;
     if (host == NULL || surface != 1 || buffer_index == NULL ||
-        !host->surface_registered || host->surface_writing_buffer >= 0)
+        !host->surface_registered || host->surface_writing_buffer >= 0 ||
+        (host->surface_flags & PXA_SURFACE_FLAG_GUEST_MAPPED) == 0)
         return PXA_STATUS_BAD_STATE;
     for (uint8_t index = 0; index < host->surface_buffer_count; ++index) {
         if (surface_buffer_available(host, index)) {
@@ -245,6 +320,7 @@ static pxa_status_t surface_present_buffer(void *context, uint64_t surface,
     if (host == NULL || surface != 1 || frame_id == 0 ||
         !host->surface_registered || buffer_index >= host->surface_buffer_count ||
         host->surface_writing_buffer != (int8_t)buffer_index ||
+        (host->surface_flags & PXA_SURFACE_FLAG_GUEST_MAPPED) == 0 ||
         frame_id <= host->surface_last_frame_id)
         return PXA_STATUS_BAD_STATE;
     if (host->surface_pending_buffer >= 0) {
@@ -306,8 +382,106 @@ static pxa_status_t surface_query(void *context, uint64_t surface,
     state->released_frames = host->surface_released_frames;
     for (uint8_t index = 0; index < host->surface_buffer_count; ++index)
         if (!surface_buffer_available(host, index)) ++used;
-    state->free_buffers = host->surface_buffer_count - used;
-    state->flags = PXA_SURFACE_STATE_FLAG_SUPPORTS_GUEST_MAPPED;
+    state->free_buffers = (host->surface_flags & PXA_SURFACE_FLAG_GUEST_MAPPED) != 0
+                              ? host->surface_buffer_count - used : 2;
+    state->flags = PXA_SURFACE_STATE_FLAG_SUPPORTS_GUEST_MAPPED |
+                   PXA_SURFACE_STATE_FLAG_SUPPORTS_HOST_RASTER |
+                   PXA_SURFACE_STATE_FLAG_RASTER_TEXTURED_QUAD |
+                   PXA_SURFACE_STATE_FLAG_RASTER_ADDITIVE_SPRITE;
+    return PXA_STATUS_OK;
+}
+
+static void raster_resources(const product_host_t *host,
+                             pxa_raster_resources_t *resources) {
+    memset(resources, 0, sizeof(*resources));
+    resources->palette = host->raster_palette;
+    resources->capabilities = PXA_RASTER_CAP_FLAT_QUAD |
+                              PXA_RASTER_CAP_TEXTURED_QUAD |
+                              PXA_RASTER_CAP_ADDITIVE_SPRITE;
+    for (uint8_t index = 0; index < PXA_RASTER_MAX_TEXTURES; ++index) {
+        resources->textures[index].pixels = host->raster_textures[index];
+        resources->textures[index].width = host->raster_texture_width[index];
+        resources->textures[index].height = host->raster_texture_height[index];
+    }
+}
+
+static pxa_status_t surface_raster_upload(void *context, uint64_t surface,
+                                          const uint8_t *bytes, size_t size) {
+    product_host_t *host = context;
+    pxa_raster_upload_view_t upload;
+    uint8_t *replacement;
+    uint8_t *previous;
+    pxa_status_t status;
+    if (host == NULL || surface != 1 || bytes == NULL ||
+        (host->surface_flags & PXA_SURFACE_FLAG_HOST_RASTER) == 0 ||
+        host->raster_last_frame_id != 0 || host->raster_draw_pending >= 0)
+        return PXA_STATUS_BAD_STATE;
+    status = pxa_raster_decode_upload(bytes, size, &upload);
+    if (status != PXA_STATUS_OK) return status;
+    replacement = malloc(upload.payload_bytes);
+    if (replacement == NULL) return PXA_STATUS_RESOURCE_LIMIT;
+    if (upload.kind == PXA_RASTER_UPLOAD_PALETTE_RGB565) {
+        for (uint16_t index = 0; index < PXA_RASTER_PALETTE_COLORS; ++index)
+            ((uint16_t *)replacement)[index] =
+                pxa_read_u16(upload.payload + (size_t)index * 2u);
+        previous = (uint8_t *)host->raster_palette;
+        host->raster_palette = (uint16_t *)replacement;
+    } else {
+        memcpy(replacement, upload.payload, upload.payload_bytes);
+        previous = host->raster_textures[upload.slot];
+        host->raster_textures[upload.slot] = replacement;
+        host->raster_texture_width[upload.slot] = upload.width;
+        host->raster_texture_height[upload.slot] = upload.height;
+    }
+    free(previous);
+    return PXA_STATUS_OK;
+}
+
+static pxa_status_t surface_raster_submit(void *context, uint64_t surface,
+                                          const uint8_t *bytes, size_t size) {
+    product_host_t *host = context;
+    pxa_raster_resources_t resources;
+    pxa_raster_target_t target;
+    pxa_raster_draw_list_view_t list;
+    pxa_status_t status;
+    uint8_t mailbox;
+    if (host == NULL || surface != 1 || bytes == NULL ||
+        host->raster_palette == NULL ||
+        (host->surface_flags & PXA_SURFACE_FLAG_HOST_RASTER) == 0)
+        return PXA_STATUS_BAD_STATE;
+    raster_resources(host, &resources);
+    target.pixels = (uint16_t *)host->raster_buffers[0];
+    target.stride_pixels = host->surface_stride_bytes / 2u;
+    target.width = host->surface_width;
+    target.height = host->surface_height;
+    status = pxa_raster_validate_draw_list(bytes, size, &target, &resources, &list);
+    if (status != PXA_STATUS_OK || list.frame_id <= host->raster_last_frame_id) {
+        ++host->raster_telemetry.rejected_lists;
+        return status != PXA_STATUS_OK ? status : PXA_STATUS_BAD_STATE;
+    }
+    mailbox = host->raster_draw_pending >= 0 ?
+                  (uint8_t)host->raster_draw_pending : (uint8_t)(list.frame_id & 1u);
+    if (host->raster_draw_pending >= 0) {
+        ++host->surface_dropped_frames;
+        ++host->surface_replaced_frames;
+        ++host->raster_telemetry.dropped_frames;
+    }
+    memcpy(host->raster_draw_lists[mailbox], bytes, size);
+    host->raster_draw_sizes[mailbox] = (uint32_t)size;
+    host->raster_draw_pending = (int8_t)mailbox;
+    host->raster_last_frame_id = list.frame_id;
+    ++host->surface_submitted_frames;
+    ++host->raster_telemetry.submitted_frames;
+    return PXA_STATUS_OK;
+}
+
+static pxa_status_t surface_raster_query(void *context, uint64_t surface,
+                                         pxa_raster_telemetry_t *telemetry) {
+    product_host_t *host = context;
+    if (host == NULL || surface != 1 || telemetry == NULL ||
+        (host->surface_flags & PXA_SURFACE_FLAG_HOST_RASTER) == 0)
+        return PXA_STATUS_BAD_STATE;
+    *telemetry = host->raster_telemetry;
     return PXA_STATUS_OK;
 }
 
@@ -319,6 +493,18 @@ static void surface_close(void *context, uint64_t surface) {
     host->surface_buffers = NULL;
     free(host->surface_display_buffer);
     host->surface_display_buffer = NULL;
+    for (uint8_t index = 0; index < 2; ++index) {
+        free(host->raster_buffers[index]);
+        free(host->raster_draw_lists[index]);
+        host->raster_buffers[index] = NULL;
+        host->raster_draw_lists[index] = NULL;
+    }
+    for (uint8_t index = 0; index < PXA_RASTER_MAX_TEXTURES; ++index) {
+        free(host->raster_textures[index]);
+        host->raster_textures[index] = NULL;
+    }
+    free(host->raster_palette);
+    host->raster_palette = NULL;
     host->surface_frame_bytes = 0;
     host->surface_stride_bytes = 0;
     host->surface_display_frame_bytes = 0;
@@ -329,25 +515,68 @@ static void surface_close(void *context, uint64_t surface) {
     host->surface_display_height = 0;
     host->surface_buffer_count = 0;
     host->surface_scale = 0;
+    host->surface_flags = 0;
     host->surface_registered = 0;
     host->surface_writing_buffer = -1;
     host->surface_pending_buffer = -1;
     host->surface_release_head = 0;
     host->surface_release_count = 0;
     host->surface_release_pending_mask = 0;
+    host->raster_current_buffer = -1;
+    host->raster_draw_pending = -1;
+    host->raster_last_frame_id = 0;
+    memset(&host->raster_telemetry, 0, sizeof(host->raster_telemetry));
 }
 
 static int surface_process_pending(product_host_t *host) {
-    uint8_t buffer_index;
+    uint8_t buffer_index = 0;
     uint64_t frame_id;
+    const uint16_t *source;
     if (host == NULL || !host->surface_registered ||
-        host->surface_pending_buffer < 0 || host->surface_image == NULL)
+        host->surface_image == NULL)
         return 0;
-    buffer_index = (uint8_t)host->surface_pending_buffer;
-    frame_id = host->surface_pending_frame_id;
-    {
-        const uint16_t *source = (const uint16_t *)(host->surface_buffers +
+    if ((host->surface_flags & PXA_SURFACE_FLAG_HOST_RASTER) != 0) {
+        pxa_raster_resources_t resources;
+        pxa_raster_target_t target;
+        pxa_raster_draw_list_view_t list;
+        pxa_raster_telemetry_t frame_telemetry = {0};
+        pxa_status_t status;
+        const uint8_t draw_index = (uint8_t)host->raster_draw_pending;
+        if (host->raster_draw_pending < 0) return 0;
+        buffer_index = host->raster_current_buffer == 0 ? 1 : 0;
+        raster_resources(host, &resources);
+        target.pixels = (uint16_t *)host->raster_buffers[buffer_index];
+        target.stride_pixels = host->surface_stride_bytes / 2u;
+        target.width = host->surface_width;
+        target.height = host->surface_height;
+        status = pxa_raster_validate_draw_list(host->raster_draw_lists[draw_index],
+                                               host->raster_draw_sizes[draw_index],
+                                               &target, &resources, &list);
+        host->raster_draw_pending = -1;
+        if (status != PXA_STATUS_OK) {
+            ++host->raster_telemetry.rejected_lists;
+            return 0;
+        }
+        pxa_raster_execute_draw_list(host->raster_draw_lists[draw_index], &list,
+                                     &target, &resources, &frame_telemetry);
+        host->raster_telemetry.draw_list_bytes += frame_telemetry.draw_list_bytes;
+        host->raster_telemetry.covered_pixels += frame_telemetry.covered_pixels;
+        host->raster_telemetry.clear_commands += frame_telemetry.clear_commands;
+        host->raster_telemetry.flat_quad_commands += frame_telemetry.flat_quad_commands;
+        host->raster_telemetry.textured_quad_commands += frame_telemetry.textured_quad_commands;
+        host->raster_telemetry.sprite_commands += frame_telemetry.sprite_commands;
+        host->raster_telemetry.last_draw_list_bytes = frame_telemetry.last_draw_list_bytes;
+        host->raster_telemetry.last_covered_pixels = frame_telemetry.last_covered_pixels;
+        host->raster_current_buffer = (int8_t)buffer_index;
+        source = (const uint16_t *)host->raster_buffers[buffer_index];
+    } else {
+        if (host->surface_pending_buffer < 0) return 0;
+        buffer_index = (uint8_t)host->surface_pending_buffer;
+        frame_id = host->surface_pending_frame_id;
+        source = (const uint16_t *)(host->surface_buffers +
             (size_t)buffer_index * host->surface_frame_bytes);
+    }
+    {
         uint16_t *destination = (uint16_t *)host->surface_display_buffer;
         const uint32_t source_stride = host->surface_stride_bytes / 2u;
         const uint32_t destination_stride = host->surface_display_stride_bytes / 2u;
@@ -359,10 +588,13 @@ static int surface_process_pending(product_host_t *host) {
                 destination_row[x] = source_row[x / host->surface_scale];
         }
     }
-    host->surface_pending_buffer = -1;
-    host->surface_pending_frame_id = 0;
+    if ((host->surface_flags & PXA_SURFACE_FLAG_GUEST_MAPPED) != 0) {
+        host->surface_pending_buffer = -1;
+        host->surface_pending_frame_id = 0;
+    }
     ++host->surface_presented_frames;
-    if (!surface_enqueue_release(host, buffer_index, frame_id)) return 0;
+    if ((host->surface_flags & PXA_SURFACE_FLAG_GUEST_MAPPED) != 0 &&
+        !surface_enqueue_release(host, buffer_index, frame_id)) return 0;
     lv_image_set_src(host->surface_image, &host->surface_bitmap);
     lv_obj_move_foreground(host->surface_image);
     lv_obj_invalidate(host->surface_image);
@@ -907,6 +1139,9 @@ int main(int argc, char **argv) {
     surface_config.backend.present_buffer = surface_present_buffer;
     surface_config.backend.peek_release = surface_peek_release;
     surface_config.backend.consume_release = surface_consume_release;
+    surface_config.backend.raster_upload = surface_raster_upload;
+    surface_config.backend.raster_submit = surface_raster_submit;
+    surface_config.backend.raster_query = surface_raster_query;
     surface_workspace = malloc(pxa_surface_service_workspace_size(&surface_config));
     if (surface_workspace == NULL || pxa_surface_service_init(surface_workspace,
         pxa_surface_service_workspace_size(&surface_config), host.runtime,

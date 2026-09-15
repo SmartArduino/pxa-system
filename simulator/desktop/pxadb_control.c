@@ -15,6 +15,8 @@
 
 #include <SDL2/SDL.h>
 
+#include "src/drivers/sdl/lv_sdl_window.h"
+
 static int set_nonblocking(int descriptor) {
     const int flags = fcntl(descriptor, F_GETFL, 0);
     return flags >= 0 && fcntl(descriptor, F_SETFL, flags | O_NONBLOCK) == 0;
@@ -136,23 +138,26 @@ static SDL_Keycode keycode_from_name(const char *name) {
     return SDLK_UNKNOWN;
 }
 
-static int push_pointer(const char *action, int x, int y) {
+static int push_pointer(uint32_t window_id, const char *action, int x, int y) {
     SDL_Event event;
     memset(&event, 0, sizeof(event));
     if (strcmp(action, "MOVE") == 0) {
         event.type = SDL_MOUSEMOTION;
+        event.motion.windowID = window_id;
         event.motion.x = x;
         event.motion.y = y;
     } else if (strcmp(action, "DOWN") == 0 || strcmp(action, "UP") == 0) {
         SDL_Event motion;
         memset(&motion, 0, sizeof(motion));
         motion.type = SDL_MOUSEMOTION;
+        motion.motion.windowID = window_id;
         motion.motion.x = x;
         motion.motion.y = y;
         if (SDL_PushEvent(&motion) != 1) return 0;
         event.type = strcmp(action, "DOWN") == 0 ? SDL_MOUSEBUTTONDOWN
                                                    : SDL_MOUSEBUTTONUP;
         event.button.button = SDL_BUTTON_LEFT;
+        event.button.windowID = window_id;
         event.button.state = event.type == SDL_MOUSEBUTTONDOWN ? SDL_PRESSED
                                                                  : SDL_RELEASED;
         event.button.x = x;
@@ -163,12 +168,13 @@ static int push_pointer(const char *action, int x, int y) {
     return SDL_PushEvent(&event) == 1;
 }
 
-static int push_key(const char *name) {
+static int push_key(uint32_t window_id, const char *name) {
     SDL_Event event;
     const SDL_Keycode keycode = keycode_from_name(name);
     if (keycode == SDLK_UNKNOWN) return 0;
     memset(&event, 0, sizeof(event));
     event.type = SDL_KEYDOWN;
+    event.key.windowID = window_id;
     event.key.state = SDL_PRESSED;
     event.key.keysym.sym = keycode;
     event.key.keysym.scancode = SDL_GetScancodeFromKey(keycode);
@@ -201,13 +207,21 @@ static void handle_client(pxsys_pxadb_control_t *control, int client) {
             (void)send_text(client, "ERR screenshot_failed\n");
         free(png);
     } else if (sscanf(command, "POINTER %15s %d %d", action, &x, &y) == 3) {
-        (void)send_text(client, push_pointer(action, x, y) ? "OK\n"
+        if (strcmp(action, "UP") == 0) control->tap_pending = 0;
+        (void)send_text(client, push_pointer(control->window_id, action, x, y) ? "OK\n"
                                                             : "ERR invalid_pointer\n");
     } else if (sscanf(command, "TAP %d %d", &x, &y) == 2) {
-        const int ok = push_pointer("DOWN", x, y) && push_pointer("UP", x, y);
+        const int ok = !control->tap_pending &&
+                       push_pointer(control->window_id, "DOWN", x, y);
+        if (ok) {
+            control->tap_pending = 1;
+            control->tap_x = (int16_t)x;
+            control->tap_y = (int16_t)y;
+            control->tap_release_at = lv_tick_get() + 16u;
+        }
         (void)send_text(client, ok ? "OK\n" : "ERR input_queue_full\n");
     } else if (sscanf(command, "KEY %23s", key) == 1) {
-        (void)send_text(client, push_key(key) ? "OK\n" : "ERR unsupported_key\n");
+        (void)send_text(client, push_key(control->window_id, key) ? "OK\n" : "ERR unsupported_key\n");
     } else if (strcmp(command, "SYNC\n") == 0) {
         (void)send_text(client, "OK\n");
     } else if (strcmp(command, "CAPABILITIES\n") == 0) {
@@ -226,6 +240,8 @@ int pxsys_pxadb_control_start(pxsys_pxadb_control_t *control,
     memset(control, 0, sizeof(*control));
     control->listener = -1;
     control->display = display;
+    control->window_id = SDL_GetWindowID(lv_sdl_window_get_window(display));
+    if (control->window_id == 0) return 0;
     strcpy(control->path, socket_path);
     return bind_listener(control);
 }
@@ -236,6 +252,12 @@ void pxsys_pxadb_control_poll(pxsys_pxadb_control_t *control) {
         (control->path[0] != '\0' && access(control->path, F_OK) != 0 &&
          !bind_listener(control)))
         return;
+    if (control->tap_pending &&
+        (int32_t)(lv_tick_get() - control->tap_release_at) >= 0) {
+        (void)push_pointer(control->window_id, "UP", control->tap_x,
+                           control->tap_y);
+        control->tap_pending = 0;
+    }
     for (;;) {
         client = accept(control->listener, NULL, NULL);
         if (client < 0) {
