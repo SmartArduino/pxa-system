@@ -44,7 +44,8 @@ if(PXSYS_DESKTOP_STANDALONE)
     set(PXSYS_BUILD_SIMULATOR OFF CACHE BOOL "" FORCE)
     set(PXSYS_BUILD_REFERENCE_LVGL ON CACHE BOOL "" FORCE)
     set(PXSYS_BUILD_RENDERER_LVGL ON CACHE BOOL "" FORCE)
-    set(PXSYS_BUILD_WAMR_ADAPTER OFF CACHE BOOL "" FORCE)
+    set(PXSYS_BUILD_WAMR_ADAPTER ON CACHE BOOL "" FORCE)
+    set(PXA_LVGL_TARGET lvgl CACHE STRING "" FORCE)
     add_subdirectory("${CMAKE_CURRENT_LIST_DIR}/../.."
                      "${CMAKE_CURRENT_BINARY_DIR}/pxa-system")
 else()
@@ -84,6 +85,16 @@ target_include_directories(pxsys_desktop_simulator PRIVATE
 target_link_libraries(pxsys_desktop_simulator PRIVATE
     pxsys::standard pxsys::pxa pxsys::renderer_lvgl pxsys::reference_lvgl
     lvgl SDL2::SDL2 PNG::PNG m)
+
+add_executable(pxsys_product_simulator product_runner.c)
+target_compile_features(pxsys_product_simulator PRIVATE c_std_99)
+target_link_libraries(pxsys_product_simulator PRIVATE
+    pxa::pxa pxa_adapters_openssl pxa_adapters_posix pxa_adapters_lvgl
+    pxa_adapters_wamr lvgl SDL2::SDL2 m)
+if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(pxsys_product_simulator PRIVATE
+        -Wall -Wextra -Wpedantic)
+endif()
 if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(pxsys_desktop_simulator PRIVATE
         -Wall -Wextra -Wpedantic)

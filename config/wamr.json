@@ -1,8 +1,8 @@
 {
   "repository": "https://github.com/78/wasm-micro-runtime.git",
   "commit": "af07c787ac6f7d1d20555f97ddc184f5fc13731a",
-  "version": "micropixel-wamr-af07c787",
-  "engine_abi": "wamr-micropixel-aot-v6-pxa-core-1",
+  "version": "78-wamr-af07c787",
+  "engine_abi": "wamr-pxa-aot-v6-core-1",
   "llvm": {
     "repository": "https://github.com/espressif/llvm-project.git",
     "ref": "xtensa_release_18.1.2",

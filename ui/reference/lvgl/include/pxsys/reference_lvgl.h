@@ -129,6 +129,8 @@ pxsys_status_t pxsys_reference_lvgl_create(
     pxsys_reference_lvgl_t** output);
 pxsys_status_t pxsys_reference_lvgl_start(pxsys_reference_lvgl_t* ui);
 pxsys_status_t pxsys_reference_lvgl_destroy(pxsys_reference_lvgl_t* ui);
+/* Brings the system launcher to the foreground through the role host. */
+pxsys_status_t pxsys_reference_lvgl_home(pxsys_reference_lvgl_t* ui);
 void pxsys_reference_lvgl_refresh_apps(pxsys_reference_lvgl_t* ui);
 pxsys_status_t pxsys_reference_lvgl_set_navigation_mode(
     pxsys_reference_lvgl_t* ui, pxsys_navigation_mode_t mode);

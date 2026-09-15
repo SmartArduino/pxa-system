@@ -59,6 +59,10 @@ ABI-impacting operation: rebase and verify the ordered ESP patches, update the
 metadata, and regenerate packages with `tools/package/build_wamrc.sh` before
 deployment.
 
+Its ESP runtime uses the pinned WAMR API to reserve linear memory only for
+Components whose signed package manifest declares pinned memory; ordinary
+Components keep WAMR's normal growable-memory behavior.
+
 `build_wamrc.sh` uses `wamr/` as its only WAMR source checkout. It stores the
 host LLVM checkout, the out-of-tree `wamrc` build and compiler cache under
 `.pxa/`; those generated files can be relocated with

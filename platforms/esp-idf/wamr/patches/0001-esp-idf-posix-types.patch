@@ -12,7 +12,7 @@ diff --git a/core/shared/platform/esp-idf/platform_internal.h b/core/shared/plat
  
  #include "esp_pthread.h"
  #include "esp_timer.h"
-@@ -147,7 +150,7 @@
+@@ -148,7 +151,7 @@
  /* The below types are used in platform_api_extension.h,
     we just define them to make the compiler happy */
 -typedef int os_poll_file_handle;

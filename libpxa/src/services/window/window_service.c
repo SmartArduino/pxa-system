@@ -432,7 +432,13 @@ pxa_status_t pxa_window_update_snapshot(pxa_window_service_t *service,
     entry->snapshot.revision = revision;
     entry->has_snapshot = 1;
     entry->metrics_dirty = 1;
-    return flush_metrics_entry(service, component, entry);
+    /* Initial snapshots may be installed while a component is STARTING.
+     * Event delivery begins only once it is RUNNING, so retain the dirty flag
+     * and let the host flush the initial metrics after startup completes. */
+    {
+        pxa_status_t status = flush_metrics_entry(service, component, entry);
+        return status == PXA_STATUS_BAD_STATE ? PXA_STATUS_OK : status;
+    }
 }
 
 pxa_status_t pxa_window_flush_metrics(pxa_window_service_t *service,

@@ -61,7 +61,7 @@ cp "$pxa_system_dir/apps/pxa/arcade/i18n/messages.yaml" \
    "$work_dir/i18n/"
 
 metadata="$work_dir/package.json"
-sed '/^}/i\\  ,"services": ["fs","net"]\n  ,"components": [{"id": "main", "kind": "ui", "wasi": {"version": "preview1", "libc": "wasi-libc", "features": ["monotonic-clock", "stdio"]}}, {"id": "responder", "kind": "service", "artifact": "wasm", "services": ["ipc"]}]\n  ,"permissions": [{"name": "net.client", "required": false, "scope": "api.example"}]\n  ,"ipc_endpoints": [{"name": "demo.echo", "component": "responder"}]' \
+sed '/^}/i\\  ,"build": {"system": "direct", "linear_memory": {"maximum_bytes": 65536, "pinned": true}}\n  ,"services": ["fs","net"]\n  ,"components": [{"id": "main", "kind": "ui", "wasi": {"version": "preview1", "libc": "wasi-libc", "features": ["monotonic-clock", "stdio"]}}, {"id": "responder", "kind": "service", "artifact": "wasm", "services": ["ipc"]}]\n  ,"permissions": [{"name": "net.client", "required": false, "scope": "api.example"}]\n  ,"ipc_endpoints": [{"name": "demo.echo", "component": "responder"}]' \
   "$pxa_system_dir/apps/pxa/arcade/package.json" > "$metadata"
 
 "${PYTHON:-python3}" "$script_dir/build_package_manifest.py" \

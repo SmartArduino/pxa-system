@@ -249,6 +249,7 @@ static pxa_status_t parse_component(pxa_manifest_parser_t *parser,
     uint16_t previous = 0;
     uint8_t seen_id = 0;
     uint8_t seen_kind = 0;
+    uint8_t seen_flags = 0;
     pxa_status_t status;
     memset(output, 0, sizeof(*output));
     output->artifacts = &manifest->artifacts[manifest->artifact_count];
@@ -263,7 +264,8 @@ static pxa_status_t parse_component(pxa_manifest_parser_t *parser,
         if (record.raw_tag < previous) return PXA_STATUS_INVALID_ARGUMENT;
         previous = record.raw_tag;
         if (record.optional &&
-            (record.tag == 1 || record.tag == 2 || record.tag == 4 ||
+            (record.tag == 1 || record.tag == 2 || record.tag == 3 ||
+             record.tag == 4 ||
              record.tag == 5)) {
             return PXA_STATUS_INVALID_ARGUMENT;
         }
@@ -281,6 +283,15 @@ static pxa_status_t parse_component(pxa_manifest_parser_t *parser,
             }
             seen_kind = 1;
             output->kind = record.payload.data[0];
+        } else if (record.tag == 3) {
+            if (seen_flags || parser->manifest->format_minor < 7 ||
+                record.payload.size != 1 ||
+                (record.payload.data[0] &
+                 ~PXA_PACKAGE_COMPONENT_FLAG_KNOWN_MASK) != 0) {
+                return PXA_STATUS_INVALID_ARGUMENT;
+            }
+            seen_flags = 1;
+            output->flags = record.payload.data[0];
         } else if (record.tag == 4) {
             pxa_package_artifact_t *artifact;
             if (output->artifact_count >=
@@ -320,7 +331,8 @@ static pxa_status_t parse_component(pxa_manifest_parser_t *parser,
             return PXA_STATUS_UNSUPPORTED;
         }
     }
-    return seen_id && seen_kind && output->artifact_count != 0
+    return seen_id && seen_kind && output->artifact_count != 0 &&
+                   (parser->manifest->format_minor < 7 || seen_flags)
                ? PXA_STATUS_OK
                : PXA_STATUS_INVALID_ARGUMENT;
 }

@@ -13,6 +13,11 @@ product components. WAMR configuration and ESP32-S3 compatibility fixes belong
 to this platform layer. Products may replace reference providers by normal
 registration and policy, without overriding or weak-linking core symbols.
 
+PXA uses its own `wamr/` submodule pinned by `config/wamr.json`. The ESP-IDF
+declaration compatibility header lives at
+`platforms/esp-idf/wamr/wamr_espidf_compat.h` and does not modify WAMR source
+or the AOT ABI.
+
 The WAMR compatibility layer applies the explicit patch list in
 `wamr/patches/series` to a build-directory overlay. It maps WAMR's POSIX
 abstractions to ESP-IDF's `poll`, `ioctl`, `struct pollfd` and `struct

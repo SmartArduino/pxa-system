@@ -40,7 +40,7 @@ No Artifact is loaded before all these checks succeed.
 The manifest header is:
 
 ```text
-magic:"PXAM" | major:u16=0 | minor:u16=6 | body_len:u32
+magic:"PXAM" | major:u16=0 | minor:u16=7 | body_len:u32
 ```
 
 The body is a Core-style record list (`tag:u16 | length:u16 | payload`). Records
@@ -107,6 +107,27 @@ not maintain a duplicate `package.json.localizations` tree. Apps without an
 `i18n` directory remain valid. This authoring rule does not change the binary
 Manifest 0.6 wire format, so installers can resolve metadata before launching
 an App.
+
+### Manifest 0.7 pinned Component memory
+
+Manifest 0.7 adds one required Component record:
+
+```text
+component tag 3 | length 1 | flags:u8
+```
+
+Bit 0 is `pinned_memory`. The package tool sets it only when a direct-build
+source package declares a page-aligned `build.linear_memory.maximum_bytes` and
+`build.linear_memory.pinned: true`; it applies to every Component produced by
+that direct build. The record is signed with the rest of the manifest. A Host
+that does not recognize this required record rejects the package instead of
+silently permitting retained Guest pointers.
+
+For a flagged Component, a compatible WAMR Host reserves its declared maximum
+linear-memory range during that Component's instantiation. This makes
+`memory.grow` commit in place and is required before a Host may retain a
+translated Guest pointer, including a GuestMapped Surface buffer. A non-flagged
+Component must not receive such a retained-pointer capability.
 
 An AOT artifact has a separate, exact ABI contract: `target`, `engine` and
 `engine_abi` must match the Host. A package should include a WASM artifact so

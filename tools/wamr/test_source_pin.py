@@ -12,7 +12,6 @@ import sys
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 METADATA = ROOT / "config" / "wamr.json"
 WAMR = ROOT / "wamr"
-MICROPIXEL_WAMR = ROOT.parent / "third_party" / "micropixel" / "firmware" / "espressif" / "components" / "wasm-micro-runtime"
 
 
 def revision(path: pathlib.Path) -> str | None:
@@ -32,8 +31,7 @@ def main() -> int:
     metadata = json.loads(METADATA.read_text(encoding="utf-8"))
     expected = metadata["commit"]
     actual = revision(WAMR)
-    micropixel = revision(MICROPIXEL_WAMR)
-    if actual is None or micropixel is None:
+    if actual is None:
         return 1
     if actual != expected:
         print(
@@ -41,13 +39,7 @@ def main() -> int:
             file=sys.stderr,
         )
         return 1
-    if micropixel != expected:
-        print(
-            f"MicroPixel WAMR is {micropixel}; expected {expected}",
-            file=sys.stderr,
-        )
-        return 1
-    print(f"PXA and MicroPixel WAMR source pins verified: {expected}")
+    print(f"PXA WAMR source pin verified: {expected}")
     return 0
 
 

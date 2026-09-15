@@ -24,6 +24,7 @@ PERMISSION_ID = re.compile(r"[a-z][a-z0-9._-]{0,95}")
 PACKAGE_PATH = re.compile(r"[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*")
 VERSION = re.compile(r"[0-9A-Za-z][0-9A-Za-z._+-]{0,63}")
 COMPONENT_KINDS = {"ui": 1, "service": 2, "job": 3}
+COMPONENT_FLAG_PINNED_MEMORY = 1
 P256_ORDER = int("FFFFFFFF00000000FFFFFFFFFFFFFFFFBCE6FAADA7179E84F3B9CAC2FC632551", 16)
 EC_PUBLIC_KEY_OID = bytes.fromhex("2a8648ce3d0201")
 P256_OID = bytes.fromhex("2a8648ce3d030107")
@@ -70,7 +71,7 @@ def artifact(kind, path, features, memory, target=None, engine=None, engine_abi=
     return records(items)
 
 
-def component(component_id, kind, aot_targets, engine_abi, services, include_wasm):
+def component(component_id, kind, flags, aot_targets, engine_abi, services, include_wasm):
     artifacts = [
         (f"artifacts/{component_id}.{target}.aot",
          artifact(2, f"artifacts/{component_id}.{target}.aot", 0, 1,
@@ -81,7 +82,8 @@ def component(component_id, kind, aot_targets, engine_abi, services, include_was
         artifacts.append((f"artifacts/{component_id}.wasm",
                           artifact(1, f"artifacts/{component_id}.wasm", 0, 1)))
     return records(
-        [(1, component_id.encode("ascii")), (2, struct.pack("<B", kind))]
+        [(1, component_id.encode("ascii")), (2, struct.pack("<B", kind)),
+         (3, struct.pack("<B", flags))]
         + [(4, value) for _, value in sorted(artifacts)]
         + [(5, service(service_id, features)) for service_id, features in services]
     )
@@ -446,6 +448,28 @@ def main(argv):
     require(all(left[0] < right[0] for left, right in zip(ipc_entries, ipc_entries[1:])),
             "IPC endpoints must be sorted uniquely")
 
+    build = metadata.get("build", {"system": "direct"})
+    require(isinstance(build, dict) and
+            set(build) <= {"system", "source_dir", "linear_memory"},
+            "build must contain only system, source_dir, and linear_memory")
+    build_system = build.get("system", "direct")
+    require(build_system in ("direct", "cmake"),
+            "build system must be direct or cmake")
+    linear_memory = build.get("linear_memory")
+    pinned_memory = False
+    if linear_memory is not None:
+        require(build_system == "direct",
+                "build linear_memory is only supported by direct builds")
+        require(isinstance(linear_memory, dict) and
+                set(linear_memory) == {"maximum_bytes", "pinned"} and
+                isinstance(linear_memory["maximum_bytes"], int) and
+                not isinstance(linear_memory["maximum_bytes"], bool) and
+                65536 <= linear_memory["maximum_bytes"] <= 4294967296 and
+                linear_memory["maximum_bytes"] % 65536 == 0 and
+                linear_memory["pinned"] is True,
+                "build linear_memory must declare a page-aligned maximum_bytes and pinned=true")
+        pinned_memory = True
+
     declared_services = parse_services(metadata.get("services", []), "services")
     raw_components = metadata.get("components", [{"id": "main", "kind": "ui"}])
     require(isinstance(raw_components, list) and 0 < len(raw_components) <= 32,
@@ -464,19 +488,20 @@ def main(argv):
         artifact_mode = item.get("artifact", "aot" if aot_only else "both")
         require(artifact_mode in ("aot", "wasm", "both"),
                 "component artifact must be aot, wasm, or both")
-        components.append((component_id, COMPONENT_KINDS[kind_name], service_names,
-                           wasi_features, artifact_mode))
+        flags = COMPONENT_FLAG_PINNED_MEMORY if pinned_memory else 0
+        components.append((component_id, COMPONENT_KINDS[kind_name], flags,
+                           service_names, wasi_features, artifact_mode))
     require(all(left[0] < right[0] for left, right in zip(components, components[1:])),
             "components must be sorted uniquely")
     require(sum(component_id == "main" and kind == COMPONENT_KINDS["ui"]
-                for component_id, kind, _, _, _ in components) == 1,
+                for component_id, kind, _, _, _, _ in components) == 1,
             "Package requires exactly one main UI component")
-    component_ids = {component_id for component_id, _, _, _, _ in components}
+    component_ids = {component_id for component_id, _, _, _, _, _ in components}
     require(all(component_id in component_ids for _, component_id, _ in ipc_entries),
             "IPC endpoint references an unknown component")
 
     endpoint_components = {component_id for _, component_id, _ in ipc_entries}
-    for component_id, kind, service_names, wasi_features, artifact_mode in components:
+    for component_id, kind, flags, service_names, wasi_features, artifact_mode in components:
         automatic_services = [1]
         if kind == COMPONENT_KINDS["ui"]:
             automatic_services.extend([2, 3, 4])
@@ -494,7 +519,7 @@ def main(argv):
         services = sorted(service_features.items())
         aot_targets, include_wasm = component_artifacts(
             file_paths, component_id, target, artifact_mode)
-        top.append((16, component(component_id, kind, aot_targets, engine_abi,
+        top.append((16, component(component_id, kind, flags, aot_targets, engine_abi,
                                   services, include_wasm=include_wasm)))
 
     for path, content in files:
@@ -508,7 +533,7 @@ def main(argv):
     top.extend((20, entry[1]) for entry in localization_entries)
 
     body = records(top)
-    manifest_minor = 6 if localization_entries else 5
+    manifest_minor = 7
     manifest = b"PXAM" + struct.pack("<HHI", 0, manifest_minor, len(body)) + body
     require(len(manifest) <= 16 * 1024, "manifest exceeds Draft limit")
     signature_der = openssl(["dgst", "-sha256", "-sign", private_key_path],

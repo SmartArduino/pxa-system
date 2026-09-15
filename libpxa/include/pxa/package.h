@@ -32,7 +32,7 @@ extern "C" {
 #define PXA_PACKAGE_MAX_PUBLISHER_SPKI_BYTES UINT16_C(160)
 
 #define PXA_PACKAGE_MANIFEST_FORMAT_MAJOR UINT16_C(0)
-#define PXA_PACKAGE_MANIFEST_FORMAT_MINOR UINT16_C(6)
+#define PXA_PACKAGE_MANIFEST_FORMAT_MINOR UINT16_C(7)
 #define PXA_PACKAGE_MANIFEST_FORMAT_PATCH UINT16_C(0)
 #define PXA_PACKAGE_SIGNATURE_FORMAT_MAJOR UINT16_C(0)
 #define PXA_PACKAGE_SIGNATURE_FORMAT_MINOR UINT16_C(1)
@@ -51,6 +51,13 @@ typedef uint8_t pxa_component_kind_t;
 #define PXA_COMPONENT_KIND_UI ((pxa_component_kind_t)1)
 #define PXA_COMPONENT_KIND_SERVICE ((pxa_component_kind_t)2)
 #define PXA_COMPONENT_KIND_JOB ((pxa_component_kind_t)3)
+
+/* A pinned component may use APIs that retain translated Guest pointers, such
+ * as GuestMapped Surface buffers. The declaration is part of the signed
+ * component manifest and is consumed when its WAMR instance is created. */
+#define PXA_PACKAGE_COMPONENT_FLAG_PINNED_MEMORY UINT8_C(1)
+#define PXA_PACKAGE_COMPONENT_FLAG_KNOWN_MASK \
+    PXA_PACKAGE_COMPONENT_FLAG_PINNED_MEMORY
 
 typedef uint8_t pxa_artifact_kind_t;
 #define PXA_ARTIFACT_WASM ((pxa_artifact_kind_t)1)
@@ -80,6 +87,7 @@ typedef struct {
 typedef struct {
     pxa_bytes_t id;
     pxa_component_kind_t kind;
+    uint8_t flags;
     pxa_package_artifact_t *artifacts;
     pxa_package_service_requirement_t *services;
     uint16_t artifact_count;

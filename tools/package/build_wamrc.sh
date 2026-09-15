@@ -168,6 +168,7 @@ fi
 say "Building x86_64 host wamrc"
 cmake -S "$wamr_source_dir/wamr-compiler" -B "$build_dir" \
   -DCMAKE_BUILD_TYPE=Release \
+  -DWAMR_BUILD_WITH_CUSTOM_LLVM=1 \
   -DLLVM_DIR="$llvm_build_dir/lib/cmake/llvm" \
   -DWAMR_BUILD_TARGET="$host_wamr_target" >&2
 cmake --build "$build_dir" --parallel "$build_jobs" >&2

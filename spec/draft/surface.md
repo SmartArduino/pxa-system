@@ -136,9 +136,9 @@ front-buffer semantics, but simulator timing is not a device performance claim.
 A Guest requests this profile with `PXA_SURFACE_FLAG_GUEST_MAPPED` on an
 RGB565 Surface. A Host returns `UNSUPPORTED` unless its runtime guarantees that
 the linear-memory base remains pinned for the complete Surface lifetime. WAMR
-Hosts reserve the module's declared maximum memory before instantiation so
-`memory.grow` commits in place. A Host must not silently retain a pointer that
-can move.
+Hosts reserve the Component's declared maximum memory before instantiation only
+when its signed package manifest declares pinned memory, so `memory.grow`
+commits in place. A Host must not silently retain a pointer that can move.
 
 The Guest allocates one contiguous, 64-byte-aligned range containing exactly
 `frame_bytes * buffer_count` bytes and registers it once:

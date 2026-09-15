@@ -1,4 +1,3 @@
 0001-esp-idf-posix-types.patch
 0002-esp-idf-libc-wasi-file-ops.patch
-0003-aot-dual-bus-zero-fill.patch
 0004-xtensa-libgcc-div-rem.patch

@@ -24,7 +24,8 @@ direct 构建的应用如果要长期保留 GuestMapped Surface buffer，必须�
 ```
 
 `maximum_bytes` 必须是 64 KiB WebAssembly 页的整数倍。打包器会把该上限写入
-每个 Component module 并校验产物；支持此能力的 WAMR Host 可据此预留完整
+每个 Component module 并校验产物，再把 `pinned: true` 写入该 Component 的
+已签名清单项。支持此能力的 WAMR Host 只会在实例化这个 Component 时预留完整
 地址范围，使 `memory.grow` 不会移动已注册的像素地址。如果 Host 报告不支持
 GuestMapped，该声明不会把固定映射能力强加给 Host。
 

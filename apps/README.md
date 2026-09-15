@@ -26,10 +26,11 @@ bounded, pinned linear memory in `package.json`:
 ```
 
 `maximum_bytes` is a 64 KiB WebAssembly page multiple. The packager writes and
-verifies that maximum in every component module. It lets a supporting WAMR Host
-reserve the complete range so `memory.grow` cannot relocate registered pixels;
-it does not make mapping portable to a Host that reports GuestMapped as
-unsupported.
+verifies that maximum in every component module, then records `pinned: true` in
+each Component's signed manifest entry. A supporting WAMR Host reserves that
+Component's complete range only while instantiating it, so `memory.grow` cannot
+relocate registered pixels. This does not make mapping portable to a Host that
+reports GuestMapped as unsupported.
 
 The key under `apps/pxa/.dev-signing` is an explicitly non-production test
 fixture. Products must supply their own protected signing process and trust

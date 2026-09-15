@@ -45,7 +45,8 @@ static const uint8_t *manifest_publisher_spki(
         memcmp(manifest.data, "PXAM", 4) != 0 ||
         pxa_read_u16(manifest.data + 4) !=
             PXA_PACKAGE_MANIFEST_FORMAT_MAJOR ||
-        pxa_read_u16(manifest.data + 6) !=
+        pxa_read_u16(manifest.data + 6) < 5 ||
+        pxa_read_u16(manifest.data + 6) >
             PXA_PACKAGE_MANIFEST_FORMAT_MINOR ||
         pxa_read_u32(manifest.data + 8) != manifest.size - 12) {
         return NULL;

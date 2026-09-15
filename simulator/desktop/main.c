@@ -1,6 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
 
 #include <errno.h>
+#include <math.h>
 #include <png.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -16,6 +17,7 @@
 #include "pxsys/reference_lvgl.h"
 #include "pxsys/standard_system.h"
 #include "simulator_runtime.h"
+#include "src/core/lv_obj_event_private.h"
 #include "src/drivers/sdl/lv_sdl_private.h"
 #include "src/drivers/sdl/lv_sdl_keyboard.h"
 #include "src/drivers/sdl/lv_sdl_mouse.h"
@@ -24,6 +26,11 @@
 typedef struct {
     size_t allocations;
 } simulator_memory_t;
+
+typedef enum {
+    SIMULATOR_SHAPE_BACKGROUND_BLACK = 0,
+    SIMULATOR_SHAPE_BACKGROUND_MATTE,
+} simulator_shape_background_t;
 
 typedef struct {
     uint32_t width;
@@ -35,6 +42,8 @@ typedef struct {
     const char* launch_app;
     const char* screenshot;
     pxsys_display_shape_t shape;
+    uint16_t corner_radius;
+    simulator_shape_background_t shape_background;
     pxsys_insets_t safe_insets;
     uint8_t custom_theme;
     uint8_t self_test;
@@ -46,6 +55,10 @@ typedef struct {
     uint8_t permission_allowed;
     uint32_t storage_bytes;
 } simulator_options_t;
+
+static pxsys_display_profile_t s_display_profile;
+static simulator_shape_background_t s_shape_background =
+    SIMULATOR_SHAPE_BACKGROUND_MATTE;
 
 static void* simulator_allocate(void* context, size_t size) {
     simulator_memory_t* memory = (simulator_memory_t*)context;
@@ -90,12 +103,138 @@ static int parse_u32(const char* value, uint32_t minimum, uint32_t maximum,
     return 1;
 }
 
+static int parse_shape_background(const char* value,
+                                  simulator_shape_background_t* output) {
+    if (strcmp(value, "black") == 0)
+        *output = SIMULATOR_SHAPE_BACKGROUND_BLACK;
+    else if (strcmp(value, "matte") == 0)
+        *output = SIMULATOR_SHAPE_BACKGROUND_MATTE;
+    else
+        return 0;
+    return 1;
+}
+
+static void draw_mask_rect(lv_layer_t* layer,
+                           const lv_draw_rect_dsc_t* descriptor, int32_t x1,
+                           int32_t y1, int32_t x2, int32_t y2) {
+    lv_area_t area;
+    if (layer == NULL || descriptor == NULL || x1 > x2 || y1 > y2) return;
+    area.x1 = x1;
+    area.y1 = y1;
+    area.x2 = x2;
+    area.y2 = y2;
+    lv_draw_rect(layer, descriptor, &area);
+}
+
+static int32_t circle_extent(int32_t radius, int32_t delta) {
+    int64_t square = (int64_t)radius * radius - (int64_t)delta * delta;
+    return square > 0 ? (int32_t)sqrt((double)square) : 0;
+}
+
+static void display_shape_mask_draw(lv_event_t* event) {
+    lv_layer_t* layer = lv_event_get_layer(event);
+    lv_draw_rect_dsc_t descriptor;
+    int32_t width = (int32_t)s_display_profile.width;
+    int32_t height = (int32_t)s_display_profile.height;
+    int32_t y;
+    if (layer == NULL || width <= 0 || height <= 0) return;
+    if (s_display_profile.shape != PXSYS_DISPLAY_SHAPE_ROUNDED_RECTANGLE &&
+        s_display_profile.shape != PXSYS_DISPLAY_SHAPE_CIRCLE)
+        return;
+
+    lv_draw_rect_dsc_init(&descriptor);
+    descriptor.bg_color = s_shape_background == SIMULATOR_SHAPE_BACKGROUND_BLACK
+                              ? lv_color_black()
+                              : lv_color_hex(UINT32_C(0x7a8494));
+    descriptor.bg_opa = LV_OPA_COVER;
+
+    if (s_display_profile.shape == PXSYS_DISPLAY_SHAPE_CIRCLE) {
+        int32_t radius = width < height ? width / 2 : height / 2;
+        int32_t center_x = width / 2;
+        int32_t center_y = height / 2;
+        for (y = 0; y < height; ++y) {
+            int32_t delta = y - center_y;
+            int32_t extent;
+            int32_t left;
+            int32_t right;
+            if (delta < -radius || delta > radius) {
+                draw_mask_rect(layer, &descriptor, 0, y, width - 1, y);
+                continue;
+            }
+            extent = circle_extent(radius, delta);
+            left = center_x - extent;
+            right = center_x + extent;
+            draw_mask_rect(layer, &descriptor, 0, y, left - 1, y);
+            draw_mask_rect(layer, &descriptor, right + 1, y, width - 1, y);
+        }
+        return;
+    }
+
+#define DRAW_CORNER_MASK(radius_value, top_side, left_side)                 \
+    do {                                                                      \
+        int32_t radius = (int32_t)(radius_value);                             \
+        int32_t row;                                                          \
+        for (row = 0; row < radius; ++row) {                                  \
+            int32_t draw_y = (top_side) ? row : height - row - 1;             \
+            int32_t extent = circle_extent(radius, row - radius);             \
+            int32_t masked = radius - extent;                                 \
+            if (left_side)                                                     \
+                draw_mask_rect(layer, &descriptor, 0, draw_y, masked - 1,     \
+                               draw_y);                                        \
+            else                                                               \
+                draw_mask_rect(layer, &descriptor, width - masked, draw_y,    \
+                               width - 1, draw_y);                             \
+        }                                                                      \
+    } while (0)
+    DRAW_CORNER_MASK(s_display_profile.corner_radii.top_left, 1, 1);
+    DRAW_CORNER_MASK(s_display_profile.corner_radii.top_right, 1, 0);
+    DRAW_CORNER_MASK(s_display_profile.corner_radii.bottom_left, 0, 1);
+    DRAW_CORNER_MASK(s_display_profile.corner_radii.bottom_right, 0, 0);
+#undef DRAW_CORNER_MASK
+}
+
+static void display_shape_input_filter(lv_event_t* event) {
+    lv_hit_test_info_t* hit_test = lv_event_get_hit_test_info(event);
+    if (hit_test == NULL || hit_test->point == NULL) return;
+    /* Consume only clicks outside the physical display shape. */
+    hit_test->res = !pxsys_display_contains_point(&s_display_profile,
+                                                  hit_test->point->x,
+                                                  hit_test->point->y);
+}
+
+static void apply_display_shape_mask(
+    lv_display_t* display, const pxsys_display_profile_t* profile,
+    simulator_shape_background_t shape_background) {
+    lv_obj_t* overlay;
+    if (display == NULL || profile == NULL) return;
+    s_display_profile = *profile;
+    s_shape_background = shape_background;
+    if (profile->shape != PXSYS_DISPLAY_SHAPE_ROUNDED_RECTANGLE &&
+        profile->shape != PXSYS_DISPLAY_SHAPE_CIRCLE)
+        return;
+    overlay = lv_obj_create(lv_display_get_layer_sys(display));
+    if (overlay == NULL) return;
+    lv_obj_set_size(overlay, LV_PCT(100), LV_PCT(100));
+    lv_obj_set_style_bg_opa(overlay, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(overlay, 0, 0);
+    lv_obj_set_style_pad_all(overlay, 0, 0);
+    lv_obj_clear_flag(overlay, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(overlay,
+                    LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_ADV_HITTEST);
+    lv_obj_add_event_cb(overlay, display_shape_input_filter,
+                        LV_EVENT_HIT_TEST, NULL);
+    lv_obj_add_event_cb(overlay, display_shape_mask_draw, LV_EVENT_DRAW_MAIN,
+                        NULL);
+    lv_obj_move_foreground(overlay);
+}
+
 static int parse_options(int argc, char** argv, simulator_options_t* options) {
     int index;
     *options = (simulator_options_t){
         480, 320, 0, PXSYS_COLOR_SCHEME_LIGHT,
         PXSYS_NAVIGATION_BUTTONS, "en-US", NULL, NULL,
-        PXSYS_DISPLAY_SHAPE_RECTANGLE, {0, 0, 0, 0}, 0, 0,
+        PXSYS_DISPLAY_SHAPE_RECTANGLE, 0, SIMULATOR_SHAPE_BACKGROUND_MATTE,
+        {0, 0, 0, 0}, 0, 0,
         9, 41, 82, 4, PXSYS_NETWORK_WIFI, 1, 24u * 1024u,
     };
     for (index = 1; index < argc; ++index) {
@@ -114,6 +253,19 @@ static int parse_options(int argc, char** argv, simulator_options_t* options) {
             options->custom_theme = 1;
         } else if (strcmp(argv[index], "--round") == 0) {
             options->shape = PXSYS_DISPLAY_SHAPE_CIRCLE;
+            options->corner_radius = 0;
+        } else if (strcmp(argv[index], "--corner-radius") == 0 &&
+                   index + 1 < argc) {
+            uint32_t radius;
+            if (!parse_u32(argv[++index], 0, UINT16_MAX, &radius)) return 0;
+            options->corner_radius = (uint16_t)radius;
+            options->shape = radius == 0 ? PXSYS_DISPLAY_SHAPE_RECTANGLE
+                                         : PXSYS_DISPLAY_SHAPE_ROUNDED_RECTANGLE;
+        } else if (strcmp(argv[index], "--shape-background") == 0 &&
+                   index + 1 < argc) {
+            if (!parse_shape_background(argv[++index],
+                                        &options->shape_background))
+                return 0;
         } else if (strcmp(argv[index], "--profile") == 0 && index + 1 < argc) {
             const char* profile = argv[++index];
             if (strcmp(profile, "compact") == 0) {
@@ -216,7 +368,8 @@ static void print_usage(const char* program) {
     fprintf(stderr,
             "Usage: %s [--light|--dark] [--gestures] [--locale TAG] "
             "[--profile compact|phone|round] [--width PX] [--height PX] "
-            "[--round] [--safe-insets T,R,B,L] [--custom-theme] "
+            "[--round|--corner-radius PX] [--shape-background matte|black] "
+            "[--safe-insets T,R,B,L] [--custom-theme] "
             "[--time HH:MM] [--battery 0..100] "
             "[--network none|wifi|cellular|ethernet] [--network-signal 0..4] "
             "[--permission allow|deny] [--storage-bytes N] "
@@ -235,6 +388,7 @@ static int save_png(lv_display_t* display, const char* path) {
     int width;
     int height;
     uint32_t source_stride;
+    int x;
     int y;
     int ok = 0;
     if (display == NULL || path == NULL) return 0;
@@ -255,6 +409,17 @@ static int save_png(lv_display_t* display, const char* path) {
                           draw_buffer->data, (int)source_stride,
                           SDL_PIXELFORMAT_RGBA32, pixels, width * 4) != 0)
         goto done;
+    for (y = 0; y < height; ++y) {
+        for (x = 0; x < width; ++x) {
+            uint8_t* pixel = pixels + ((size_t)y * (size_t)width + (size_t)x) * 4u;
+            if (!pxsys_display_contains_point(&s_display_profile, x, y)) {
+                pixel[0] = 0;
+                pixel[1] = 0;
+                pixel[2] = 0;
+                pixel[3] = 0;
+            }
+        }
+    }
     file = fopen(path, "wb");
     if (file == NULL) goto done;
     png = png_create_write_struct(PNG_LIBPNG_VER_STRING, NULL, NULL, NULL);
@@ -322,9 +487,13 @@ static int run_simulator(const simulator_options_t* options) {
     display = lv_sdl_window_create((int32_t)options->width,
                                    (int32_t)options->height);
     if (display == NULL) goto done;
-    if (options->shape == PXSYS_DISPLAY_SHAPE_CIRCLE) {
+    if (options->shape == PXSYS_DISPLAY_SHAPE_CIRCLE ||
+        options->shape == PXSYS_DISPLAY_SHAPE_ROUNDED_RECTANGLE) {
+        uint16_t radius = options->shape == PXSYS_DISPLAY_SHAPE_CIRCLE
+                              ? LV_RADIUS_CIRCLE
+                              : options->corner_radius;
         lv_obj_set_style_bg_color(lv_screen_active(), lv_color_black(), 0);
-        lv_obj_set_style_radius(lv_screen_active(), LV_RADIUS_CIRCLE, 0);
+        lv_obj_set_style_radius(lv_screen_active(), radius, 0);
         lv_obj_set_style_clip_corner(lv_screen_active(), true, 0);
     }
     lv_sdl_window_set_title(display, "PXA System Standard UI");
@@ -350,14 +519,20 @@ static int run_simulator(const simulator_options_t* options) {
                                options->width, options->height);
     system_config.initial_display.shape = options->shape;
     system_config.initial_display.safe_insets = options->safe_insets;
-    if (options->shape == PXSYS_DISPLAY_SHAPE_CIRCLE) {
-        uint16_t radius = (uint16_t)(options->width / 2u);
+    if (options->shape == PXSYS_DISPLAY_SHAPE_CIRCLE ||
+        options->shape == PXSYS_DISPLAY_SHAPE_ROUNDED_RECTANGLE) {
+        uint16_t radius = options->shape == PXSYS_DISPLAY_SHAPE_CIRCLE
+                              ? (uint16_t)((options->width < options->height
+                                                ? options->width : options->height) / 2u)
+                              : options->corner_radius;
         system_config.initial_display.corner_radii =
             (pxsys_corner_radii_t){radius, radius, radius, radius};
     }
     if (pxsys_display_profile_validate(&system_config.initial_display) !=
         PXSYS_STATUS_OK)
         goto done;
+    apply_display_shape_mask(display, &system_config.initial_display,
+                             options->shape_background);
     if (options->custom_theme) {
         if (pxsys_theme_snapshot_init_custom(
                 &system_config.initial_theme,
@@ -496,7 +671,12 @@ static int run_simulator(const simulator_options_t* options) {
                 options->screenshot);
         goto done;
     }
-    if (lv_display_get_default() == NULL) display = NULL;
+    if (lv_display_get_default() == NULL) {
+        /* SDL has already destroyed the display and every LVGL object below
+         * it. Do not run App-stop or UI-destroy callbacks against those stale
+         * objects; this desktop process is terminating immediately. */
+        return 0;
+    }
     result = 0;
 
 done:

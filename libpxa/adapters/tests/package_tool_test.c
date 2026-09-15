@@ -179,7 +179,8 @@ int main(int argc, char **argv) {
     ui_requirement = main_component == NULL ? NULL : find_service(main_component, 3);
     net_requirement = main_component == NULL ? NULL : find_service(main_component, 9);
     wasi_requirement = main_component == NULL ? NULL : find_service(main_component, 14);
-    if (manifest->component_count != 2 || manifest->permission_count != 1 ||
+    if (manifest->format_minor != PXA_PACKAGE_MANIFEST_FORMAT_MINOR ||
+        manifest->component_count != 2 || manifest->permission_count != 1 ||
         manifest->ipc_endpoint_count != 1 || main_component == NULL ||
         responder_component == NULL || ui_requirement == NULL ||
         net_requirement == NULL || wasi_requirement == NULL ||
@@ -197,6 +198,8 @@ int main(int argc, char **argv) {
         wasi_requirement->max_version.minor != 1 ||
         wasi_requirement->required_features !=
             (PXA_WASI_FEATURE_STDIO | PXA_WASI_FEATURE_MONOTONIC_CLOCK) ||
+        main_component->flags != PXA_PACKAGE_COMPONENT_FLAG_PINNED_MEMORY ||
+        responder_component->flags != PXA_PACKAGE_COMPONENT_FLAG_PINNED_MEMORY ||
         main_component->artifact_count != 3 ||
         responder_component->artifact_count != 1 ||
         !bytes_equal_text(manifest->permissions[0].name, "net.client") ||

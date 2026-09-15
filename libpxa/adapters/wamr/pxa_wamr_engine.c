@@ -8,6 +8,7 @@
 #include <unistd.h>
 
 #include "pxa/wasi.h"
+#include "pxa/surface.h"
 #include "wasm_export.h"
 
 #if defined(ESP_PLATFORM)
@@ -30,6 +31,7 @@ typedef struct {
     uint64_t pending_instance_id;
     uint8_t pending;
     pxa_component_t component;
+    const pxa_package_component_t *package_component;
     uint16_t config_size;
     uint8_t kind;
     uint8_t occupied;
@@ -465,6 +467,7 @@ static pxa_status_t discard_entry(pxa_wamr_engine_t *engine,
     entry->pending = 0;
     entry->instance_id = 0;
     entry->component = PXA_COMPONENT_INVALID;
+    entry->package_component = NULL;
     entry->kind = 0;
     entry->start_fn = NULL;
     entry->event_fn = NULL;
@@ -558,6 +561,14 @@ static int32_t native_io(void *opaque_exec_env, uint32_t handle,
     if (entry == NULL) return PXA_STATUS_BAD_STATE;
     engine = entry_engine(entry);
     if (engine->runtime == NULL) return PXA_STATUS_BAD_STATE;
+    /* REGISTER_BUFFERS makes the ESP Surface backend retain `data`. Permit it
+     * only for a component whose signed manifest requested a pinned base. */
+    if (operation == PXA_SURFACE_IO_REGISTER_BUFFERS &&
+        (entry->package_component == NULL ||
+         (entry->package_component->flags &
+          PXA_PACKAGE_COMPONENT_FLAG_PINNED_MEMORY) == 0)) {
+        return PXA_STATUS_UNSUPPORTED;
+    }
     return pxa_runtime_io(engine->runtime, entry->component, handle, operation,
                           data, size);
 }
@@ -1016,6 +1027,7 @@ static pxa_status_t engine_instantiate(void *context, pxa_bytes_t package_root,
         }
     }
     if (slot == NULL) return PXA_STATUS_RESOURCE_LIMIT;
+    slot->package_component = entry->component;
     status = load_module_buffer(
         engine, slot, (pxa_bytes_t){(const uint8_t *)path, strlen(path)});
     if (status != PXA_STATUS_OK) {
@@ -1067,12 +1079,11 @@ static pxa_status_t engine_instantiate(void *context, pxa_bytes_t package_root,
     }
 #if defined(WASM_LINEAR_MEMORY_RESERVE_MAX) && \
     WASM_LINEAR_MEMORY_RESERVE_MAX != 0
-    /* GuestMapped Surface buffers retain validated native pointers between
-     * Guest calls. Only bounded modules can reserve their maximum safely;
-     * an omitted WebAssembly maximum otherwise expands to WAMR's platform
-     * default and is not a viable physical allocation on an MCU. */
+    /* AF07 selects this policy for the next instantiation. Package metadata is
+     * signed, unlike WebAssembly module contents supplied after installation. */
     wasm_runtime_set_linear_memory_reserve_max(
-        wasm_runtime_module_memory_is_bounded(slot->module));
+        (slot->package_component->flags &
+         PXA_PACKAGE_COMPONENT_FLAG_PINNED_MEMORY) != 0);
 #endif
     slot->module_instance = wasm_runtime_instantiate(
         slot->module, engine->guest_stack_size, engine->host_managed_heap_size,

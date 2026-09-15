@@ -47,21 +47,33 @@ cmake -S simulator/desktop -B build/desktop \
 Profiles are `compact` (296x240), `phone` (390x844), and `round` (454x454 with
 a circular display profile and safe insets). Options also include `--light`,
 `--dark`, `--custom-theme`, `--gestures`, `--locale TAG`, `--width`, `--height`,
-`--round`, `--safe-insets T,R,B,L`, `--launch APP_ID`, `--screenshot PNG`, and
+`--round`, `--corner-radius PX`, `--shape-background matte|black`,
+`--safe-insets T,R,B,L`, `--launch APP_ID`, `--screenshot PNG`, and
 `--duration-ms`. Deterministic fixtures can be selected with `--time HH:MM`,
 `--battery 0..100`, `--network`, `--network-signal`, `--permission allow|deny`,
 and `--storage-bytes`. `--smoke-test` and `--self-test` render briefly and exit for CI.
 CTest covers every profile across light, dark, custom, English, and Simplified
 Chinese cases and rejects blank or incorrectly sized screenshots.
 
+For rounded and circular displays, `--shape-background matte|black` selects
+the host-window backdrop outside the logical panel. `matte` is the default for
+clear visual inspection. PNG screenshots always make those outside pixels
+transparent, so the host-only backdrop does not enter UI assets or visual
+comparisons.
+
 内置 profile 包括 `compact`（296x240）、`phone`（390x844）和 `round`
 （454x454、圆屏语义与安全区）。此外可使用 `--light`、`--dark`、
 `--custom-theme`、`--gestures`、`--locale TAG`、`--width`、`--height`、
-`--round`、`--safe-insets T,R,B,L`、`--launch APP_ID`、`--screenshot PNG`
+`--round`、`--corner-radius PX`、`--shape-background matte|black`、
+`--safe-insets T,R,B,L`、`--launch APP_ID`、`--screenshot PNG`
 与 `--duration-ms`。确定性夹具可通过 `--time HH:MM`、`--battery 0..100`、
 `--network`、`--network-signal`、`--permission allow|deny` 和
 `--storage-bytes` 设置。`--smoke-test` 和 `--self-test` 用于 CI。CTest 会覆盖三种
 尺寸、明暗/自定义主题和中英文，并检查截图尺寸与非空像素。
+
+圆角和圆形显示可使用 `--shape-background matte|black` 选择逻辑屏幕外的主机窗口背景。
+默认 `matte`，便于观察外形；PNG 截图会将这些屏幕外像素写为透明，因此主机背景不会进入
+UI 资源或视觉对比。
 
 Set `PXSYS_DESKTOP_APP_SOURCE_ROOT` to generate the catalog from another PXA
 application tree. The source root must contain one `package.json` per app.

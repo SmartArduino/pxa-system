@@ -4188,9 +4188,7 @@ pxsys_status_t pxsys_reference_lvgl_start(pxsys_reference_lvgl_t* ui) {
     pxsys_instance_ref_t instance;
     pxsys_status_t status;
     if (!ui_valid(ui)) return PXSYS_STATUS_INVALID_ARGUMENT;
-    if (!(ui->features & PXSYS_REFERENCE_UI_HOME))
-        return PXSYS_STATUS_NOT_FOUND;
-    status = open_role(ui, PXSYS_ROLE_HOME);
+    status = pxsys_reference_lvgl_home(ui);
     if (status != PXSYS_STATUS_OK && status != PXSYS_STATUS_PENDING)
         return status;
     intent.struct_size = sizeof(intent);
@@ -4210,6 +4208,13 @@ pxsys_status_t pxsys_reference_lvgl_start(pxsys_reference_lvgl_t* ui) {
             return status;
     }
     return PXSYS_STATUS_OK;
+}
+
+pxsys_status_t pxsys_reference_lvgl_home(pxsys_reference_lvgl_t* ui) {
+    if (!ui_valid(ui)) return PXSYS_STATUS_INVALID_ARGUMENT;
+    if (!(ui->features & PXSYS_REFERENCE_UI_HOME))
+        return PXSYS_STATUS_NOT_FOUND;
+    return open_role(ui, PXSYS_ROLE_HOME);
 }
 
 void pxsys_reference_lvgl_refresh_apps(pxsys_reference_lvgl_t* ui) {

@@ -4,7 +4,7 @@
   "manifest": {
     "magic": "PXAM",
     "major": 0,
-    "minor": 6,
+    "minor": 7,
     "patch": 0,
     "header_size": 12,
     "max_size": 16384
@@ -130,6 +130,12 @@
       "id": 2,
       "cardinality": "one",
       "payload": "component-kind-u8"
+    },
+    {
+      "name": "flags",
+      "id": 3,
+      "cardinality": "one",
+      "payload": "component-flags-u8"
     },
     {
       "name": "artifact",
@@ -362,5 +368,5 @@
       "value": 128
     }
   ],
-  "protocol_version": "0.6.0"
+  "protocol_version": "0.7.0"
 }

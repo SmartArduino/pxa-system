@@ -51,6 +51,9 @@ WAMR 必须保持在 `config/wamr.json` 指定的提交。该文件同时维护 
 目录 overlay，完整内存映射替代实现位于
 `platforms/esp-idf/wamr/overrides`，不会修改子模块。
 
+ESP 运行时仅在已签名包清单声明固定内存的 Component 实例化期间预留线性内存；
+普通 Component 仍使用 WAMR 默认的可增长内存行为。
+
 ## ESP-IDF 集成
 
 可把仓库放在 `components/pxa_system`，通过 Git component 引入，或将其

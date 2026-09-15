@@ -201,12 +201,12 @@ def validate_specs() -> tuple[int, int]:
 
     package = specs["package"]
     container = specs["container"]
-    require(package.get("protocol_version") == "0.6.0",
+    require(package.get("protocol_version") == "0.7.0",
             "Package manifest protocol version mismatch")
     require(container.get("protocol_version") == "0.1.0",
             "Container protocol version mismatch")
     require(package["manifest"] == {
-        "magic": "PXAM", "major": 0, "minor": 6, "patch": 0,
+        "magic": "PXAM", "major": 0, "minor": 7, "patch": 0,
         "header_size": 12, "max_size": 16384,
     }, "Package manifest constants mismatch")
     require(container["header"]["magic"] == "PXAC" and
