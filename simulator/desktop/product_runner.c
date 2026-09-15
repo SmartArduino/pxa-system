@@ -24,6 +24,7 @@
 #include "pxa/surface.h"
 #include "pxa/ui.h"
 #include "pxa/wamr/pxa_wamr_engine.h"
+#include "pxa/wire.h"
 #include "pxa/window.h"
 #include "pxadb_control.h"
 #include "src/drivers/sdl/lv_sdl_keyboard.h"
@@ -669,6 +670,8 @@ static void dispatch_component_events(product_host_t *host) {
 
 static void dispatch_clock_tick(product_host_t *host) {
     uint64_t now;
+    uint8_t payload[8];
+    pxa_status_t status;
     if (host == NULL || host->runtime == NULL ||
         host->active_component == PXA_COMPONENT_INVALID ||
         host->clock_period_ms == 0)
@@ -677,9 +680,12 @@ static void dispatch_clock_tick(product_host_t *host) {
     if (now < host->next_clock_tick_us) return;
     host->next_clock_tick_us =
         now + (uint64_t)host->clock_period_ms * UINT64_C(1000);
-    if (pxa_event_post_message(host->runtime, host->active_component,
-                               PRODUCT_CLOCK_SERVICE, PRODUCT_CLOCK_TICK, 0,
-                               (pxa_bytes_t){NULL, 0}, 0, 0) == PXA_STATUS_OK)
+    pxa_write_u64(payload, now);
+    status = pxa_event_post_message(host->runtime, host->active_component,
+                                    PRODUCT_CLOCK_SERVICE, PRODUCT_CLOCK_TICK, 0,
+                                    (pxa_bytes_t){payload, sizeof(payload)}, 0,
+                                    UINT64_C(0x000400008001));
+    if (status == PXA_STATUS_OK)
         dispatch_component_events(host);
 }
 
