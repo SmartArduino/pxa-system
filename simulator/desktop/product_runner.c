@@ -49,12 +49,27 @@ typedef struct {
     lv_obj_t *surface_image;
     lv_image_dsc_t surface_bitmap;
     uint8_t *surface_buffers;
+    uint8_t *surface_display_buffer;
     uint32_t surface_frame_bytes;
     uint32_t surface_stride_bytes;
     uint16_t surface_width;
     uint16_t surface_height;
     uint8_t surface_buffer_count;
-    uint8_t next_surface_buffer;
+    uint8_t surface_registered;
+    int8_t surface_writing_buffer;
+    int8_t surface_pending_buffer;
+    uint64_t surface_pending_frame_id;
+    uint64_t surface_last_frame_id;
+    uint64_t surface_submitted_frames;
+    uint64_t surface_presented_frames;
+    uint64_t surface_dropped_frames;
+    uint64_t surface_replaced_frames;
+    uint64_t surface_released_frames;
+    uint8_t surface_release_head;
+    uint8_t surface_release_count;
+    uint8_t surface_release_pending_mask;
+    pxa_surface_release_t surface_releases[3];
+    pxa_surface_layer_t surface_layer;
     pxa_wamr_engine_t *engine;
     pxa_component_engine_t engine_ops;
     pxa_activation_coordinator_t *coordinator;
@@ -89,7 +104,12 @@ static pxa_status_t surface_create(void *context, const pxa_surface_desc_t *desc
     product_host_t *host = context;
     if (host == NULL || desc == NULL || surface == NULL || stride == NULL ||
         desc->format != PXA_SURFACE_FORMAT_RGB565 ||
-        (desc->flags & PXA_SURFACE_FLAG_HOST_RASTER) != 0)
+        (desc->flags & ~PXA_SURFACE_FLAG_KNOWN_MASK) != 0 ||
+        (desc->flags & PXA_SURFACE_FLAG_GUEST_MAPPED) == 0 ||
+        (desc->flags & PXA_SURFACE_FLAG_HOST_RASTER) != 0 ||
+        desc->width == 0 || desc->height == 0 ||
+        desc->buffer_count < 2 || desc->buffer_count > 3 ||
+        host->surface_frame_bytes != 0)
         return PXA_STATUS_UNSUPPORTED;
     *surface = 1;
     *stride = (uint32_t)desc->width * 2u;
@@ -98,7 +118,13 @@ static pxa_status_t surface_create(void *context, const pxa_surface_desc_t *desc
     host->surface_height = desc->height;
     host->surface_frame_bytes = *stride * desc->height;
     host->surface_buffer_count = desc->buffer_count;
-    host->next_surface_buffer = 0;
+    host->surface_writing_buffer = -1;
+    host->surface_pending_buffer = -1;
+    host->surface_layer.x = 0;
+    host->surface_layer.y = 0;
+    host->surface_layer.width = desc->width;
+    host->surface_layer.height = desc->height;
+    host->surface_layer.visible = 1;
     return PXA_STATUS_OK;
 }
 
@@ -115,9 +141,14 @@ static pxa_status_t surface_register_buffers(void *context, uint64_t surface,
                                              uint8_t *pixels, size_t size) {
     product_host_t *host = context;
     if (host == NULL || surface != 1 || pixels == NULL ||
+        host->surface_registered || host->surface_frame_bytes == 0 ||
+        ((uintptr_t)pixels & 1u) != 0 ||
         size != (size_t)host->surface_frame_bytes * host->surface_buffer_count)
         return PXA_STATUS_INVALID_ARGUMENT;
+    host->surface_display_buffer = malloc(host->surface_frame_bytes);
+    if (host->surface_display_buffer == NULL) return PXA_STATUS_RESOURCE_LIMIT;
     host->surface_buffers = pixels;
+    host->surface_registered = 1;
     memset(&host->surface_bitmap, 0, sizeof(host->surface_bitmap));
     host->surface_bitmap.header.magic = LV_IMAGE_HEADER_MAGIC;
     host->surface_bitmap.header.cf = LV_COLOR_FORMAT_RGB565;
@@ -125,35 +156,86 @@ static pxa_status_t surface_register_buffers(void *context, uint64_t surface,
     host->surface_bitmap.header.h = host->surface_height;
     host->surface_bitmap.header.stride = host->surface_stride_bytes;
     host->surface_bitmap.data_size = host->surface_frame_bytes;
-    host->surface_bitmap.data = pixels;
+    host->surface_bitmap.data = host->surface_display_buffer;
     host->surface_image = lv_image_create(lv_screen_active());
-    if (host->surface_image == NULL) return PXA_STATUS_RESOURCE_LIMIT;
+    if (host->surface_image == NULL) {
+        free(host->surface_display_buffer);
+        host->surface_display_buffer = NULL;
+        host->surface_buffers = NULL;
+        host->surface_registered = 0;
+        return PXA_STATUS_RESOURCE_LIMIT;
+    }
     lv_image_set_src(host->surface_image, &host->surface_bitmap);
-    lv_obj_set_size(host->surface_image, LV_PCT(100), LV_PCT(100));
-    lv_obj_move_background(host->surface_image);
+    lv_image_set_inner_align(host->surface_image, LV_IMAGE_ALIGN_TOP_LEFT);
+    lv_obj_clear_flag(host->surface_image, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_clear_flag(host->surface_image, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_size(host->surface_image, host->surface_width, host->surface_height);
+    lv_obj_set_pos(host->surface_image, host->surface_layer.x,
+                   host->surface_layer.y);
+    lv_obj_move_foreground(host->surface_image);
     return PXA_STATUS_OK;
+}
+
+static int surface_buffer_available(const product_host_t *host, uint8_t index) {
+    return host != NULL && index < host->surface_buffer_count &&
+           host->surface_writing_buffer != (int8_t)index &&
+           host->surface_pending_buffer != (int8_t)index &&
+           (host->surface_release_pending_mask & (uint8_t)(1u << index)) == 0;
+}
+
+static int surface_enqueue_release(product_host_t *host, uint8_t buffer_index,
+                                   uint64_t frame_id) {
+    uint8_t tail;
+    if (host == NULL || buffer_index >= host->surface_buffer_count ||
+        frame_id == 0 || host->surface_release_count >= host->surface_buffer_count ||
+        (host->surface_release_pending_mask & (uint8_t)(1u << buffer_index)) != 0)
+        return 0;
+    tail = (uint8_t)((host->surface_release_head + host->surface_release_count) %
+                     host->surface_buffer_count);
+    memset(&host->surface_releases[tail], 0, sizeof(host->surface_releases[tail]));
+    host->surface_releases[tail].buffer_index = buffer_index;
+    host->surface_releases[tail].frame_id = frame_id;
+    host->surface_release_pending_mask |= (uint8_t)(1u << buffer_index);
+    ++host->surface_release_count;
+    return 1;
 }
 
 static pxa_status_t surface_acquire_buffer(void *context, uint64_t surface,
                                            uint8_t *buffer_index) {
     product_host_t *host = context;
     if (host == NULL || surface != 1 || buffer_index == NULL ||
-        host->surface_buffers == NULL || host->surface_buffer_count == 0)
+        !host->surface_registered || host->surface_writing_buffer >= 0)
         return PXA_STATUS_BAD_STATE;
-    *buffer_index = host->next_surface_buffer++ % host->surface_buffer_count;
-    return PXA_STATUS_OK;
+    for (uint8_t index = 0; index < host->surface_buffer_count; ++index) {
+        if (surface_buffer_available(host, index)) {
+            host->surface_writing_buffer = (int8_t)index;
+            *buffer_index = index;
+            return PXA_STATUS_OK;
+        }
+    }
+    return PXA_STATUS_WOULD_BLOCK;
 }
 
 static pxa_status_t surface_present_buffer(void *context, uint64_t surface,
                                            uint8_t buffer_index, uint64_t frame_id) {
     product_host_t *host = context;
     if (host == NULL || surface != 1 || frame_id == 0 ||
-        buffer_index >= host->surface_buffer_count || host->surface_image == NULL)
+        !host->surface_registered || buffer_index >= host->surface_buffer_count ||
+        host->surface_writing_buffer != (int8_t)buffer_index ||
+        frame_id <= host->surface_last_frame_id)
         return PXA_STATUS_BAD_STATE;
-    host->surface_bitmap.data = host->surface_buffers +
-        (size_t)buffer_index * host->surface_frame_bytes;
-    lv_image_set_src(host->surface_image, &host->surface_bitmap);
-    lv_obj_invalidate(host->surface_image);
+    if (host->surface_pending_buffer >= 0) {
+        if (!surface_enqueue_release(host, (uint8_t)host->surface_pending_buffer,
+                                    host->surface_pending_frame_id))
+            return PXA_STATUS_WOULD_BLOCK;
+        ++host->surface_dropped_frames;
+        ++host->surface_replaced_frames;
+    }
+    host->surface_pending_buffer = (int8_t)buffer_index;
+    host->surface_pending_frame_id = frame_id;
+    host->surface_last_frame_id = frame_id;
+    host->surface_writing_buffer = -1;
+    ++host->surface_submitted_frames;
     return PXA_STATUS_OK;
 }
 
@@ -167,15 +249,40 @@ static pxa_status_t surface_queue(void *context, uint64_t surface,
 
 static pxa_status_t surface_configure(void *context, uint64_t surface,
                                       const pxa_surface_layer_t *layer) {
-    (void)context; (void)surface; (void)layer;
+    product_host_t *host = context;
+    if (host == NULL || surface != 1 || layer == NULL ||
+        layer->width != host->surface_width || layer->height != host->surface_height ||
+        layer->visible > 1)
+        return PXA_STATUS_INVALID_ARGUMENT;
+    host->surface_layer = *layer;
+    if (host->surface_image != NULL) {
+        lv_obj_set_pos(host->surface_image, layer->x, layer->y);
+        if (layer->visible)
+            lv_obj_remove_flag(host->surface_image, LV_OBJ_FLAG_HIDDEN);
+        else
+            lv_obj_add_flag(host->surface_image, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_move_foreground(host->surface_image);
+        lv_obj_invalidate(host->surface_image);
+    }
     return PXA_STATUS_OK;
 }
 
 static pxa_status_t surface_query(void *context, uint64_t surface,
                                   pxa_surface_state_t *state) {
-    (void)context;
-    if (surface != 1 || state == NULL) return PXA_STATUS_NOT_FOUND;
+    product_host_t *host = context;
+    uint32_t used = 0;
+    if (host == NULL || surface != 1 || state == NULL ||
+        host->surface_frame_bytes == 0)
+        return PXA_STATUS_NOT_FOUND;
     memset(state, 0, sizeof(*state));
+    state->submitted_frames = host->surface_submitted_frames;
+    state->presented_frames = host->surface_presented_frames;
+    state->dropped_frames = host->surface_dropped_frames;
+    state->replaced_frames = host->surface_replaced_frames;
+    state->released_frames = host->surface_released_frames;
+    for (uint8_t index = 0; index < host->surface_buffer_count; ++index)
+        if (!surface_buffer_available(host, index)) ++used;
+    state->free_buffers = host->surface_buffer_count - used;
     state->flags = PXA_SURFACE_STATE_FLAG_SUPPORTS_GUEST_MAPPED;
     return PXA_STATUS_OK;
 }
@@ -186,6 +293,65 @@ static void surface_close(void *context, uint64_t surface) {
     if (host->surface_image != NULL) lv_obj_delete(host->surface_image);
     host->surface_image = NULL;
     host->surface_buffers = NULL;
+    free(host->surface_display_buffer);
+    host->surface_display_buffer = NULL;
+    host->surface_frame_bytes = 0;
+    host->surface_stride_bytes = 0;
+    host->surface_width = 0;
+    host->surface_height = 0;
+    host->surface_buffer_count = 0;
+    host->surface_registered = 0;
+    host->surface_writing_buffer = -1;
+    host->surface_pending_buffer = -1;
+    host->surface_release_head = 0;
+    host->surface_release_count = 0;
+    host->surface_release_pending_mask = 0;
+}
+
+static int surface_process_pending(product_host_t *host) {
+    uint8_t buffer_index;
+    uint64_t frame_id;
+    if (host == NULL || !host->surface_registered ||
+        host->surface_pending_buffer < 0 || host->surface_image == NULL)
+        return 0;
+    buffer_index = (uint8_t)host->surface_pending_buffer;
+    frame_id = host->surface_pending_frame_id;
+    memcpy(host->surface_display_buffer,
+           host->surface_buffers + (size_t)buffer_index * host->surface_frame_bytes,
+           host->surface_frame_bytes);
+    host->surface_pending_buffer = -1;
+    host->surface_pending_frame_id = 0;
+    ++host->surface_presented_frames;
+    if (!surface_enqueue_release(host, buffer_index, frame_id)) return 0;
+    lv_image_set_src(host->surface_image, &host->surface_bitmap);
+    lv_obj_move_foreground(host->surface_image);
+    lv_obj_invalidate(host->surface_image);
+    return 1;
+}
+
+static pxa_status_t surface_peek_release(void *context, uint64_t surface,
+                                         pxa_surface_release_t *release) {
+    product_host_t *host = context;
+    if (host == NULL || surface != 1 || release == NULL)
+        return PXA_STATUS_INVALID_ARGUMENT;
+    if (host->surface_release_count == 0) return PXA_STATUS_WOULD_BLOCK;
+    *release = host->surface_releases[host->surface_release_head];
+    return PXA_STATUS_OK;
+}
+
+static void surface_consume_release(void *context, uint64_t surface) {
+    product_host_t *host = context;
+    pxa_surface_release_t *release;
+    if (host == NULL || surface != 1 || host->surface_release_count == 0)
+        return;
+    release = &host->surface_releases[host->surface_release_head];
+    host->surface_release_pending_mask &=
+        (uint8_t)~(uint8_t)(1u << release->buffer_index);
+    memset(release, 0, sizeof(*release));
+    host->surface_release_head =
+        (uint8_t)((host->surface_release_head + 1u) % host->surface_buffer_count);
+    --host->surface_release_count;
+    ++host->surface_released_frames;
 }
 
 static void *reallocate_memory(void *context, void *memory, size_t size) {
@@ -693,6 +859,8 @@ int main(int argc, char **argv) {
     surface_config.backend.register_buffers = surface_register_buffers;
     surface_config.backend.acquire_buffer = surface_acquire_buffer;
     surface_config.backend.present_buffer = surface_present_buffer;
+    surface_config.backend.peek_release = surface_peek_release;
+    surface_config.backend.consume_release = surface_consume_release;
     surface_workspace = malloc(pxa_surface_service_workspace_size(&surface_config));
     if (surface_workspace == NULL || pxa_surface_service_init(surface_workspace,
         pxa_surface_service_workspace_size(&surface_config), host.runtime,
@@ -750,6 +918,14 @@ int main(int argc, char **argv) {
     if (pxa_window_flush_metrics(host.window, component) == PXA_STATUS_OK)
         dispatch_component_events(&host);
     while (lv_display_get_default() != NULL) {
+        if (surface_process_pending(&host)) {
+            const int32_t released = pxa_surface_service_flush_releases(host.surfaces);
+            if (released < 0) {
+                fprintf(stderr, "PXA surface release status=%d\n", (int)released);
+                goto done;
+            }
+            if (released > 0) dispatch_component_events(&host);
+        }
         uint32_t delay = lv_timer_handler();
         dispatch_clock_tick(&host);
         if (delay < 1) delay = 1;
