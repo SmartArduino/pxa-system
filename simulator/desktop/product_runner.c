@@ -26,6 +26,8 @@
 #include "pxa/wamr/pxa_wamr_engine.h"
 #include "pxa/window.h"
 
+#include "product_runner.h"
+
 #define PRODUCT_CLOCK_SERVICE UINT16_C(4)
 #define PRODUCT_CLOCK_TICK UINT16_C(0x8001)
 #define PRODUCT_COMPONENTS UINT16_C(8)
@@ -416,6 +418,7 @@ static pxa_status_t permission_save(void *context, pxa_bytes_t identity,
     return PXA_STATUS_OK;
 }
 
+#ifndef PXSYS_PRODUCT_RUNNER_EMBEDDED
 static void print_usage(const char *program) {
     fprintf(stderr, "Usage: %s --package DIR --publisher-key DER [--state-root DIR] [--width PX --height PX]\n",
             program);
@@ -442,9 +445,10 @@ static int parse_options(int argc, char **argv, options_t *options) {
     return options->package_path != NULL && options->publisher_key != NULL &&
            options->width > 0 && options->height > 0;
 }
+#endif
 
-int main(int argc, char **argv) {
-    options_t options;
+static int run_product(const options_t *configured, int embedded) {
+    options_t options = *configured;
     product_host_t host = {0};
     pxa_package_limits_t limits;
     pxa_posix_installer_config_t installer_config = {0};
@@ -492,11 +496,9 @@ int main(int argc, char **argv) {
 
     {
         struct stat metadata;
-        if (!parse_options(argc, argv, &options)) {
-            print_usage(argv[0]);
-            return 2;
-        }
-        if (stat(options.package_path, &metadata) != 0 ||
+        if (options.package_path == NULL || options.publisher_key == NULL ||
+            options.width == 0 || options.height == 0 ||
+            stat(options.package_path, &metadata) != 0 ||
             !S_ISDIR(metadata.st_mode)) {
             fprintf(stderr, "PXA product simulator requires an unpacked package directory: %s\n",
                     options.package_path);
@@ -550,12 +552,18 @@ int main(int argc, char **argv) {
     stage = "display";
     if (strlen(root) >= sizeof(host.package_root)) goto done;
     strcpy(host.package_root, root); host.width = options.width; host.height = options.height;
-    lv_init();
-    display = lv_sdl_window_create((int32_t)options.width, (int32_t)options.height);
-    mouse = lv_sdl_mouse_create();
-    if (display == NULL || mouse == NULL) goto done;
-    lv_indev_set_display(mouse, display);
-    lv_sdl_window_set_title(display, "PXA Product Simulator");
+    if (embedded) {
+        display = lv_display_get_default();
+        if (display == NULL) goto done;
+        lv_obj_add_flag(lv_display_get_layer_top(display), LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_init();
+        display = lv_sdl_window_create((int32_t)options.width, (int32_t)options.height);
+        mouse = lv_sdl_mouse_create();
+        if (display == NULL || mouse == NULL) goto done;
+        lv_indev_set_display(mouse, display);
+        lv_sdl_window_set_title(display, "PXA Product Simulator");
+    }
     pxa_runtime_limits_init(&runtime_limits); runtime_limits.max_components = PRODUCT_COMPONENTS;
     stage = "runtime";
     runtime_workspace = malloc(pxa_runtime_workspace_size(&runtime_limits));
@@ -774,5 +782,33 @@ done:
     free(ui_workspace); free(window_workspace); free(permission_workspace); free(runtime_workspace); free(manifest_workspace);
     free(storage_service_workspace); free(storage_workspace); free(storage_path); free(storage_parent);
     free(encoded); free(installer_workspace); free(public_key);
+    if (embedded && result != 0 && display != NULL &&
+        lv_display_get_default() != NULL)
+        lv_obj_remove_flag(lv_display_get_layer_top(display), LV_OBJ_FLAG_HIDDEN);
     return result;
 }
+
+int pxsys_product_simulator_run_embedded(const char *package_path,
+                                         const char *publisher_key,
+                                         const char *state_root) {
+    lv_display_t *display = lv_display_get_default();
+    options_t options = {0};
+    if (display == NULL) return 1;
+    options.package_path = package_path;
+    options.publisher_key = publisher_key;
+    options.state_root = state_root;
+    options.width = (uint32_t)lv_display_get_horizontal_resolution(display);
+    options.height = (uint32_t)lv_display_get_vertical_resolution(display);
+    return run_product(&options, 1);
+}
+
+#ifndef PXSYS_PRODUCT_RUNNER_EMBEDDED
+int main(int argc, char **argv) {
+    options_t options;
+    if (!parse_options(argc, argv, &options)) {
+        print_usage(argv[0]);
+        return 2;
+    }
+    return run_product(&options, 0);
+}
+#endif
