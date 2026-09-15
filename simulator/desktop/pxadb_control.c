@@ -224,6 +224,13 @@ static void handle_client(pxsys_pxadb_control_t *control, int client) {
         (void)send_text(client, push_key(control->window_id, key) ? "OK\n" : "ERR unsupported_key\n");
     } else if (strcmp(command, "SYNC\n") == 0) {
         (void)send_text(client, "OK\n");
+    } else if (strcmp(command, "CATALOG REFRESH\n") == 0) {
+        (void)send_text(
+            client,
+            (control->refresh_catalog == NULL ||
+             control->refresh_catalog(control->catalog_context))
+                ? "OK\n"
+                : "ERR catalog_refresh_failed\n");
     } else if (strcmp(command, "CAPABILITIES\n") == 0) {
         (void)send_text(client, "OK\n");
     } else {
@@ -233,13 +240,16 @@ static void handle_client(pxsys_pxadb_control_t *control, int client) {
 
 int pxsys_pxadb_control_start(pxsys_pxadb_control_t *control,
                               const char *socket_path,
-                              lv_display_t *display) {
+                              lv_display_t *display, void *catalog_context,
+                              pxsys_pxadb_catalog_refresh_fn refresh_catalog) {
     if (control == NULL || socket_path == NULL || display == NULL ||
         strlen(socket_path) >= sizeof(control->path))
         return 0;
     memset(control, 0, sizeof(*control));
     control->listener = -1;
     control->display = display;
+    control->catalog_context = catalog_context;
+    control->refresh_catalog = refresh_catalog;
     control->window_id = SDL_GetWindowID(lv_sdl_window_get_window(display));
     if (control->window_id == 0) return 0;
     strcpy(control->path, socket_path);
@@ -276,4 +286,6 @@ void pxsys_pxadb_control_stop(pxsys_pxadb_control_t *control) {
     control->listener = -1;
     control->path[0] = '\0';
     control->display = NULL;
+    control->catalog_context = NULL;
+    control->refresh_catalog = NULL;
 }

@@ -132,17 +132,17 @@ if(PXSYS_BUILD_TESTS OR BUILD_TESTING)
                     --width ${width} --height ${height} -- ${ARGN})
     endfunction()
     pxsys_add_desktop_visual_test(compact_light_en 296 240
-        --profile compact --light --locale en-US --launch pxa-weather)
+        --profile compact --light --locale en-US)
     pxsys_add_desktop_visual_test(compact_dark_zh 296 240
-        --profile compact --dark --locale zh-CN --launch pxa-wasi-lab
+        --profile compact --dark --locale zh-CN
         --time 07:05 --battery 18 --network none --permission deny
         --storage-bytes 4096)
     pxsys_add_desktop_visual_test(phone_light_en 390 844
-        --profile phone --light --locale en-US --launch pxa-arcade)
+        --profile phone --light --locale en-US)
     pxsys_add_desktop_visual_test(phone_dark_zh 390 844
-        --profile phone --dark --locale zh-CN --launch pxa-plane-shooter)
+        --profile phone --dark --locale zh-CN)
     pxsys_add_desktop_visual_test(round_light_en 454 454
-        --profile round --light --locale en-US --launch pxa-garden-guard)
+        --profile round --light --locale en-US)
     pxsys_add_desktop_visual_test(round_custom_zh 454 454
-        --profile round --custom-theme --locale zh-CN --launch pxa-lab)
+        --profile round --custom-theme --locale zh-CN)
 endif()

@@ -1,5 +1,6 @@
 #define _POSIX_C_SOURCE 200809L
 
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <math.h>
@@ -14,9 +15,10 @@
 
 #include <SDL2/SDL.h>
 
-#include "builtin_catalog.h"
 #include "lvgl.h"
+#include "pxa/package.h"
 #include "pxsys/lvgl_renderer.h"
+#include "pxsys/pxa_catalog.h"
 #include "pxsys/reference_lvgl.h"
 #include "pxsys/standard_system.h"
 #include "pxadb_control.h"
@@ -33,6 +35,8 @@ typedef struct {
 
 #define PXSYS_DESKTOP_ICON_MAX_BYTES (256u * 1024u)
 #define PXSYS_DESKTOP_ICON_MAX_DIMENSION 512u
+#define PXSYS_DESKTOP_MANIFEST_MAX_BYTES (128u * 1024u)
+#define PXSYS_DESKTOP_RUNTIME_ID "pxa-sim"
 
 typedef struct {
     const char* installed_packages_root;
@@ -42,6 +46,12 @@ typedef struct {
     lv_image_dsc_t descriptor;
     uint8_t* bytes;
 } simulator_icon_t;
+
+typedef struct {
+    pxsys_standard_system_t* system;
+    pxsys_reference_lvgl_t* ui;
+    const char* installed_packages_root;
+} simulator_catalog_t;
 
 typedef enum {
     SIMULATOR_SHAPE_BACKGROUND_BLACK = 0,
@@ -218,6 +228,139 @@ static bool resolve_launcher_icon(
         (int)sizeof(path))
         return false;
     return read_icon_file(path, output) != 0;
+}
+
+static int read_regular_file(const char* path, size_t maximum_size,
+                             uint8_t** output, size_t* output_size) {
+    struct stat metadata;
+    uint8_t* bytes;
+    int descriptor;
+    size_t offset = 0;
+    if (path == NULL || output == NULL || output_size == NULL) return 0;
+    *output = NULL;
+    *output_size = 0;
+    descriptor = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+    if (descriptor < 0 || fstat(descriptor, &metadata) != 0 ||
+        !S_ISREG(metadata.st_mode) || metadata.st_size <= 0 ||
+        (uintmax_t)metadata.st_size > maximum_size) {
+        if (descriptor >= 0) close(descriptor);
+        return 0;
+    }
+    bytes = malloc((size_t)metadata.st_size);
+    if (bytes == NULL) {
+        close(descriptor);
+        return 0;
+    }
+    while (offset < (size_t)metadata.st_size) {
+        ssize_t count = read(descriptor, bytes + offset,
+                             (size_t)metadata.st_size - offset);
+        if (count <= 0) {
+            close(descriptor);
+            free(bytes);
+            return 0;
+        }
+        offset += (size_t)count;
+    }
+    close(descriptor);
+    *output = bytes;
+    *output_size = (size_t)metadata.st_size;
+    return 1;
+}
+
+static int manifest_app_id_matches(const pxa_package_manifest_t* manifest,
+                                   const char* app_id) {
+    const size_t app_id_size = app_id == NULL ? 0 : strlen(app_id);
+    return manifest != NULL && manifest->app_id.size == app_id_size &&
+           memcmp(manifest->app_id.data, app_id, app_id_size) == 0;
+}
+
+static pxsys_status_t publish_installed_package(
+    pxsys_app_registry_t* apps, const char* root, const char* app_id) {
+    char manifest_path[1400];
+    uint8_t* encoded = NULL;
+    size_t encoded_size = 0;
+    pxa_package_limits_t limits;
+    pxa_package_manifest_t* manifest = NULL;
+    void* workspace = NULL;
+    size_t workspace_size;
+    pxsys_pxa_catalog_change_t change;
+    pxsys_status_t result = PXSYS_STATUS_INVALID_ARGUMENT;
+    if (apps == NULL || root == NULL || app_id == NULL ||
+        snprintf(manifest_path, sizeof(manifest_path), "%s/manifest.pxm", root) >=
+            (int)sizeof(manifest_path) ||
+        !read_regular_file(manifest_path, PXSYS_DESKTOP_MANIFEST_MAX_BYTES,
+                           &encoded, &encoded_size))
+        return PXSYS_STATUS_NOT_FOUND;
+    pxa_package_limits_init(&limits);
+    workspace_size = pxa_package_manifest_workspace_size(&limits);
+    workspace = malloc(workspace_size);
+    if (workspace == NULL) {
+        result = PXSYS_STATUS_NO_MEMORY;
+        goto done;
+    }
+    if (pxa_package_manifest_parse(
+            workspace, workspace_size, (pxa_bytes_t){encoded, encoded_size},
+            &limits, &manifest) != PXA_STATUS_OK ||
+        !manifest_app_id_matches(manifest, app_id)) {
+        result = PXSYS_STATUS_INVALID_ARGUMENT;
+        goto done;
+    }
+    result = pxsys_pxa_catalog_publish(
+        apps, manifest, pxsys_string_from_cstr(PXSYS_DESKTOP_RUNTIME_ID),
+        PXSYS_APP_FLAG_REMOVABLE | PXSYS_APP_FLAG_ENABLED |
+            PXSYS_APP_FLAG_LAUNCHER,
+        &change);
+done:
+    free(workspace);
+    free(encoded);
+    return result;
+}
+
+static pxsys_status_t sync_installed_catalog(simulator_catalog_t* catalog) {
+    DIR* directory;
+    struct dirent* entry;
+    pxsys_app_registry_t* apps;
+    if (catalog == NULL || catalog->system == NULL)
+        return PXSYS_STATUS_INVALID_ARGUMENT;
+    if (catalog->installed_packages_root == NULL) return PXSYS_STATUS_OK;
+    directory = opendir(catalog->installed_packages_root);
+    if (directory == NULL)
+        return errno == ENOENT ? PXSYS_STATUS_OK : PXSYS_STATUS_UNAVAILABLE;
+    apps = pxsys_standard_system_apps(catalog->system);
+    while ((entry = readdir(directory)) != NULL) {
+        char package_root[1400];
+        char current_root[1400];
+        struct stat metadata;
+        pxsys_status_t status;
+        pxsys_string_t app_id = pxsys_string_from_cstr(entry->d_name);
+        const char* selected_root = package_root;
+        if (!app_id_is_safe(app_id) ||
+            snprintf(package_root, sizeof(package_root), "%s/%s",
+                     catalog->installed_packages_root, entry->d_name) >=
+                (int)sizeof(package_root) ||
+            stat(package_root, &metadata) != 0 || !S_ISDIR(metadata.st_mode))
+            continue;
+        if (snprintf(current_root, sizeof(current_root), "%s/current",
+                     package_root) < (int)sizeof(current_root) &&
+            stat(current_root, &metadata) == 0 && S_ISDIR(metadata.st_mode))
+            selected_root = current_root;
+        status = publish_installed_package(apps, selected_root, entry->d_name);
+        if (status != PXSYS_STATUS_OK && status != PXSYS_STATUS_ALREADY_EXISTS &&
+            status != PXSYS_STATUS_INVALID_ARGUMENT &&
+            status != PXSYS_STATUS_NOT_FOUND) {
+            closedir(directory);
+            return status;
+        }
+    }
+    closedir(directory);
+    return PXSYS_STATUS_OK;
+}
+
+static int refresh_installed_catalog(void* context) {
+    simulator_catalog_t* catalog = (simulator_catalog_t*)context;
+    if (sync_installed_catalog(catalog) != PXSYS_STATUS_OK) return 0;
+    if (catalog->ui != NULL) pxsys_reference_lvgl_refresh_apps(catalog->ui);
+    return 1;
 }
 
 static void* simulator_allocate(void* context, size_t size) {
@@ -651,6 +794,7 @@ static int run_simulator(const simulator_options_t* options) {
     pxsys_runtime_provider_t runtime_provider;
     pxsys_desktop_runtime_fixture_t runtime_fixture;
     simulator_icon_resolver_t icon_resolver = {0};
+    simulator_catalog_t catalog = {0};
     pxsys_reference_lvgl_config_t ui_config;
     pxsys_reference_lvgl_t* ui = NULL;
     lv_display_t* display = NULL;
@@ -777,6 +921,8 @@ static int run_simulator(const simulator_options_t* options) {
     runtime_fixture.state_root = options->state_root;
     runtime_fixture.pxadb_control_socket = options->pxadb_control_socket;
     icon_resolver.installed_packages_root = options->installed_packages_root;
+    catalog.system = system;
+    catalog.installed_packages_root = options->installed_packages_root;
     if (pxsys_desktop_runtime_create(system, renderer, &runtime_fixture, allocator,
                                      &simulator_runtime) != PXSYS_STATUS_OK)
         goto done;
@@ -785,9 +931,7 @@ static int run_simulator(const simulator_options_t* options) {
         pxsys_runtime_register_provider(pxsys_standard_system_runtime(system),
                                         &runtime_provider) != PXSYS_STATUS_OK)
         goto done;
-    if (pxsys_desktop_register_builtin_apps(
-            pxsys_standard_system_apps(system), publisher_root) !=
-        PXSYS_STATUS_OK)
+    if (sync_installed_catalog(&catalog) != PXSYS_STATUS_OK)
         goto done;
 
     pxsys_reference_lvgl_config_init(&ui_config);
@@ -810,6 +954,7 @@ static int run_simulator(const simulator_options_t* options) {
     if (pxsys_reference_lvgl_create(&ui_config, &ui) != PXSYS_STATUS_OK)
         goto done;
     if (pxsys_reference_lvgl_start(ui) != PXSYS_STATUS_OK) goto done;
+    catalog.ui = ui;
 
     if (options->launch_app != NULL &&
         launch_app(system, publisher_root, options->launch_app) !=
@@ -819,17 +964,8 @@ static int run_simulator(const simulator_options_t* options) {
         goto done;
     }
     if (options->self_test) {
-        const pxsys_desktop_builtin_app_t* first =
-            pxsys_desktop_builtin_app(0);
         pxsys_theme_snapshot_t changed;
         pxsys_locale_snapshot_t locale;
-        if (first == NULL || pxsys_app_registry_count(
-                                 pxsys_standard_system_apps(system)) <
-                                 pxsys_desktop_builtin_app_count() ||
-            (options->launch_app == NULL &&
-             launch_app(system, publisher_root, first->id) !=
-                 PXSYS_STATUS_OK))
-            goto done;
         pxsys_theme_snapshot_init(
             &changed, options->scheme == PXSYS_COLOR_SCHEME_DARK
                           ? PXSYS_COLOR_SCHEME_LIGHT
@@ -845,7 +981,8 @@ static int run_simulator(const simulator_options_t* options) {
     }
     if (options->pxadb_control_socket != NULL &&
         !pxsys_pxadb_control_start(&pxadb_control,
-                                   options->pxadb_control_socket, display))
+                                   options->pxadb_control_socket, display,
+                                   &catalog, refresh_installed_catalog))
         goto done;
 
     started = lv_tick_get();

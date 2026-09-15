@@ -1246,7 +1246,8 @@ int main(int argc, char **argv) {
         dispatch_component_events(&host);
     if (options.pxadb_control_socket != NULL &&
         !pxsys_pxadb_control_start(&pxadb_control,
-                                   options.pxadb_control_socket, display))
+                                   options.pxadb_control_socket, display,
+                                   NULL, NULL))
         goto done;
     while (lv_display_get_default() != NULL) {
         pxsys_pxadb_control_poll(&pxadb_control);
