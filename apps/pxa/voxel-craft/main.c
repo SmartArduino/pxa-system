@@ -27,6 +27,7 @@
 #define FRAME_NODE UINT32_C(2)
 #define FRAME_PERIOD_MS 33u
 #define CLOCK_POLL_PERIOD_MS 16u
+#define VOXEL_HOST_RASTER_DEFAULT 0u
 #define MAX_CATCHUP_STEPS 3u
 #define WINDOW_SNAPSHOT_REQUEST UINT32_C(3)
 #define SURFACE_CREATE_REQUEST UINT32_C(4)
@@ -2065,7 +2066,10 @@ int32_t pxa_app_start(const uint8_t *config, uint32_t length) {
     g_surface_retry_ticks = 0;
     g_surface_mode = SURFACE_MODE_MAPPED;
     g_surface_request_mode = SURFACE_MODE_MAPPED;
-    g_raster_supported = 1;
+    /* The host-raster scene path is still an optional accelerated backend.
+     * Keep the complete software renderer as Voxel Craft's default until the
+     * two paths provide equivalent clipping and HUD output on devices. */
+    g_raster_supported = VOXEL_HOST_RASTER_DEFAULT;
     g_raster_ready = 0;
     g_surface_capabilities_request = SURFACE_CAPABILITIES_REQUEST_BASE;
     voxel_raster_set_capabilities(0);
