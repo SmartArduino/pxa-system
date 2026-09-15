@@ -78,6 +78,7 @@ add_custom_command(
 
 add_executable(pxsys_desktop_simulator
     main.c builtin_catalog.c simulator_runtime.c pxadb_control.c
+    fonts/pxsys_simulator_cjk_14.c fonts/pxsys_simulator_cjk_16.c
     "${PXSYS_DESKTOP_CATALOG_DATA}")
 target_compile_features(pxsys_desktop_simulator PRIVATE c_std_99)
 target_include_directories(pxsys_desktop_simulator PRIVATE

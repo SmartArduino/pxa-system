@@ -29,6 +29,9 @@
 #include "src/drivers/sdl/lv_sdl_mouse.h"
 #include "src/drivers/sdl/lv_sdl_window.h"
 
+extern const lv_font_t pxsys_simulator_cjk_14;
+extern const lv_font_t pxsys_simulator_cjk_16;
+
 typedef struct {
     size_t allocations;
 } simulator_memory_t;
@@ -48,10 +51,29 @@ typedef struct {
 } simulator_icon_t;
 
 typedef struct {
+    lv_font_t display;
+    lv_font_t headline;
+    lv_font_t title;
+    lv_font_t body;
+    lv_font_t label;
+    lv_font_t caption;
+} simulator_ui_fonts_t;
+
+typedef struct {
     pxsys_standard_system_t* system;
     pxsys_reference_lvgl_t* ui;
     const char* installed_packages_root;
 } simulator_catalog_t;
+
+static simulator_ui_fonts_t simulator_ui_fonts;
+
+static const lv_font_t* with_cjk_fallback(lv_font_t* destination,
+                                          const lv_font_t* primary,
+                                          const lv_font_t* fallback) {
+    *destination = *primary;
+    destination->fallback = fallback;
+    return destination;
+}
 
 typedef enum {
     SIMULATOR_SHAPE_BACKGROUND_BLACK = 0,
@@ -937,14 +959,26 @@ static int run_simulator(const simulator_options_t* options) {
     pxsys_reference_lvgl_config_init(&ui_config);
     ui_config.system = system;
     ui_config.parent = lv_screen_active();
-    ui_config.text_font = &lv_font_montserrat_16;
-    ui_config.title_font = &lv_font_montserrat_24;
-    ui_config.fonts[PXSYS_TYPOGRAPHY_DISPLAY] = &lv_font_montserrat_28;
-    ui_config.fonts[PXSYS_TYPOGRAPHY_HEADLINE] = &lv_font_montserrat_24;
-    ui_config.fonts[PXSYS_TYPOGRAPHY_TITLE] = &lv_font_montserrat_20;
-    ui_config.fonts[PXSYS_TYPOGRAPHY_BODY] = &lv_font_montserrat_16;
-    ui_config.fonts[PXSYS_TYPOGRAPHY_LABEL] = &lv_font_montserrat_14;
-    ui_config.fonts[PXSYS_TYPOGRAPHY_CAPTION] = &lv_font_montserrat_12;
+    ui_config.text_font = with_cjk_fallback(
+        &simulator_ui_fonts.body, &lv_font_montserrat_16,
+        &pxsys_simulator_cjk_16);
+    ui_config.title_font = with_cjk_fallback(
+        &simulator_ui_fonts.headline, &lv_font_montserrat_24,
+        &pxsys_simulator_cjk_16);
+    ui_config.fonts[PXSYS_TYPOGRAPHY_DISPLAY] = with_cjk_fallback(
+        &simulator_ui_fonts.display, &lv_font_montserrat_28,
+        &pxsys_simulator_cjk_16);
+    ui_config.fonts[PXSYS_TYPOGRAPHY_HEADLINE] = ui_config.title_font;
+    ui_config.fonts[PXSYS_TYPOGRAPHY_TITLE] = with_cjk_fallback(
+        &simulator_ui_fonts.title, &lv_font_montserrat_20,
+        &pxsys_simulator_cjk_16);
+    ui_config.fonts[PXSYS_TYPOGRAPHY_BODY] = ui_config.text_font;
+    ui_config.fonts[PXSYS_TYPOGRAPHY_LABEL] = with_cjk_fallback(
+        &simulator_ui_fonts.label, &lv_font_montserrat_14,
+        &pxsys_simulator_cjk_14);
+    ui_config.fonts[PXSYS_TYPOGRAPHY_CAPTION] = with_cjk_fallback(
+        &simulator_ui_fonts.caption, &lv_font_montserrat_12,
+        &pxsys_simulator_cjk_14);
     ui_config.allocator = allocator;
     ui_config.navigation_mode = options->navigation;
     ui_config.app_icon_context = &icon_resolver;

@@ -12,6 +12,7 @@
 #define NAVIGATION_GESTURE_COMMIT_DISTANCE 32
 #define NAVIGATION_GESTURE_HOLD_MS 180u
 #define NAVIGATION_GESTURE_MOTION_SLOP 4
+#define NAVIGATION_BACK_GESTURE_EDGE_WIDTH 16
 #define REFERENCE_RESOURCE_NAMESPACE "system.ui"
 #define REFERENCE_TRANSLATION_SCRATCH_COUNT 12u
 #define REFERENCE_TRANSLATION_SCRATCH_BYTES 96u
@@ -302,6 +303,8 @@ struct pxsys_reference_lvgl {
     int32_t navigation_press_y;
     int32_t navigation_last_x;
     int32_t navigation_last_y;
+    int32_t navigation_back_press_x;
+    int32_t navigation_back_press_y;
     uint32_t navigation_last_motion_tick;
     network_control_t network_controls[2];
     level_control_t level_controls[2];
@@ -499,9 +502,41 @@ static void back_clicked(lv_event_t* event) {
     pxsys_reference_lvgl_t* ui =
         (pxsys_reference_lvgl_t*)lv_event_get_user_data(event);
     pxsys_back_result_t result;
+    if (!ui_valid(ui)) return;
     if (pxsys_reference_lvgl_dismiss_overlay(ui)) return;
     (void)pxsys_task_manager_back(pxsys_standard_system_tasks(ui->system),
                                   &result);
+}
+
+static void navigation_back_gesture_event(lv_event_t* event) {
+    pxsys_reference_lvgl_t* ui =
+        (pxsys_reference_lvgl_t*)lv_event_get_user_data(event);
+    lv_indev_t* indev = lv_event_get_indev(event);
+    lv_point_t point;
+    lv_event_code_t code;
+    int32_t horizontal;
+    int32_t vertical;
+    if (!ui_valid(ui) || indev == NULL) return;
+    lv_indev_get_point(indev, &point);
+    code = lv_event_get_code(event);
+    if (code == LV_EVENT_PRESSED) {
+        ui->navigation_back_press_x = point.x;
+        ui->navigation_back_press_y = point.y;
+        return;
+    }
+    if (code != LV_EVENT_RELEASED) return;
+    horizontal = point.x - ui->navigation_back_press_x;
+    vertical = point.y - ui->navigation_back_press_y;
+    if (vertical < 0) vertical = -vertical;
+    if (horizontal < NAVIGATION_GESTURE_COMMIT_DISTANCE ||
+        horizontal <= vertical)
+        return;
+    if (pxsys_reference_lvgl_dismiss_overlay(ui)) return;
+    {
+        pxsys_back_result_t result;
+        (void)pxsys_task_manager_back(pxsys_standard_system_tasks(ui->system),
+                                      &result);
+    }
 }
 
 static void theme_clicked(lv_event_t* event) {
@@ -3598,6 +3633,7 @@ static void rebuild(pxsys_reference_lvgl_t* ui) {
     pxsys_reference_layout_t layout;
     lv_obj_t* navigation;
     lv_obj_t* action;
+    lv_obj_t* back_gesture = NULL;
     if (!ui_valid(ui) || ui->root == NULL ||
         pxsys_reference_layout_compute(&ui->display, &layout) != PXSYS_STATUS_OK)
         return;
@@ -3796,11 +3832,36 @@ static void rebuild(pxsys_reference_lvgl_t* ui) {
             lv_obj_align(action, LV_ALIGN_RIGHT_MID, 0, 0);
         }
     }
+    if (ui->navigation_mode == PXSYS_NAVIGATION_GESTURES &&
+        ui->content_active) {
+        int32_t top = (int32_t)layout.safe_area.y;
+        int32_t bottom = (int32_t)ui->display.height -
+                         (int32_t)gesture_strip_height(&layout);
+        if ((ui->active_chrome & PXSYS_REFERENCE_UI_STATUS_BAR) &&
+            ui->window.status_bar_mode != PXSYS_WINDOW_BAR_HIDDEN &&
+            bar_is_visible(ui, ui->window.status_bar_mode))
+            top += (int32_t)layout.status_bar.height;
+        if (bottom > top) {
+            back_gesture = lv_obj_create(ui->root);
+            style_plain(back_gesture);
+            lv_obj_set_pos(back_gesture, 0, top);
+            lv_obj_set_size(back_gesture, NAVIGATION_BACK_GESTURE_EDGE_WIDTH,
+                            bottom - top);
+            lv_obj_set_style_bg_opa(back_gesture, LV_OPA_TRANSP, 0);
+            lv_obj_add_flag(back_gesture,
+                            LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_PRESS_LOCK);
+            lv_obj_add_event_cb(back_gesture, navigation_back_gesture_event,
+                                LV_EVENT_PRESSED, ui);
+            lv_obj_add_event_cb(back_gesture, navigation_back_gesture_event,
+                                LV_EVENT_RELEASED, ui);
+        }
+    }
     /* Content is constructed after the status bar, so creation order alone
      * would put Home/Settings above system chrome. Reassert the invariant at
      * the end of every rebuild; this also protects against scroll overflow and
      * page transition transforms. */
     if (ui->status_bar != NULL) lv_obj_move_foreground(ui->status_bar);
+    if (back_gesture != NULL) lv_obj_move_foreground(back_gesture);
     if (ui->navigation_bar != NULL) lv_obj_move_foreground(ui->navigation_bar);
     /* A root hosted directly on layer_top is already above application
      * surfaces. Reordering that root on every status/locale refresh would

@@ -21,7 +21,8 @@
 #define LV_DRAW_SW_COMPLEX 1
 #define LV_USE_LOG 0
 #define LV_USE_FONT_COMPRESSED 1
-#define LV_USE_FONT_PLACEHOLDER 1
+/* Missing glyphs must continue to the configured CJK fallback font. */
+#define LV_USE_FONT_PLACEHOLDER 0
 #define LV_USE_LODEPNG 1
 #define LV_FONT_MONTSERRAT_12 1
 #define LV_FONT_MONTSERRAT_14 1
