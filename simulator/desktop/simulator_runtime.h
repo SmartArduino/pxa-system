@@ -15,6 +15,7 @@ typedef struct {
     const char *publisher_key;
     const char *state_root;
     const char *pxadb_control_socket;
+    void *desktop_window;
 } pxsys_desktop_runtime_fixture_t;
 
 pxsys_status_t pxsys_desktop_runtime_create(

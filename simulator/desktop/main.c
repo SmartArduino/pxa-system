@@ -942,6 +942,7 @@ static int run_simulator(const simulator_options_t* options) {
     runtime_fixture.publisher_key = options->publisher_key;
     runtime_fixture.state_root = options->state_root;
     runtime_fixture.pxadb_control_socket = options->pxadb_control_socket;
+    runtime_fixture.desktop_window = lv_sdl_window_get_window(display);
     icon_resolver.installed_packages_root = options->installed_packages_root;
     catalog.system = system;
     catalog.installed_packages_root = options->installed_packages_root;

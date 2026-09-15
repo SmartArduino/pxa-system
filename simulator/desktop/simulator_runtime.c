@@ -8,6 +8,8 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include <SDL2/SDL.h>
+
 #define PXSYS_DESKTOP_RUNTIME_MAGIC UINT32_C(0x50584452)
 #define PXSYS_DESKTOP_RUNTIME_ID "pxa-sim"
 
@@ -80,6 +82,20 @@ static void update_locale(simulator_instance_t* instance) {
     lv_label_set_text(instance->status, status);
 }
 
+static void set_desktop_window_visible(simulator_instance_t* instance,
+                                       int visible) {
+    SDL_Window* window;
+    if (instance == NULL) return;
+    window = (SDL_Window*)instance->runtime->fixture.desktop_window;
+    if (window == NULL) return;
+    if (visible) {
+        SDL_ShowWindow(window);
+        SDL_RaiseWindow(window);
+    } else {
+        SDL_HideWindow(window);
+    }
+}
+
 static int launch_installed_application(simulator_instance_t* instance) {
     const pxsys_desktop_runtime_fixture_t* fixture;
     char package_path[1200];
@@ -125,6 +141,7 @@ static int launch_installed_application(simulator_instance_t* instance) {
         _exit(127);
     }
     instance->product_process = child;
+    set_desktop_window_visible(instance, 0);
     return 1;
 }
 
@@ -303,6 +320,7 @@ static void backend_stop(void* context, void* opaque,
         instance->product_process = 0;
     }
     (void)backend_background(context, opaque);
+    set_desktop_window_visible(instance, 1);
 }
 
 void pxsys_desktop_runtime_poll(pxsys_desktop_runtime_t* runtime) {
@@ -318,6 +336,7 @@ void pxsys_desktop_runtime_poll(pxsys_desktop_runtime_t* runtime) {
         instance->product_process = 0;
         (void)pxsys_task_manager_finish_top(
             pxsys_standard_system_tasks(runtime->system), PXSYS_STOP_NORMAL);
+        set_desktop_window_visible(instance, 1);
         break;
     }
 }
