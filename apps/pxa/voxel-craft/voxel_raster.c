@@ -568,6 +568,19 @@ static void sort_candidates(uint32_t count) {
     }
 }
 
+static int projected_quad_has_area(const projected_quad_t *quad) {
+    int64_t area = 0;
+    uint8_t corner;
+    if (quad == NULL) return 0;
+    for (corner = 0; corner < 4; ++corner) {
+        const pxa_raster_vertex_t *a = &quad->vertices[corner];
+        const pxa_raster_vertex_t *b = &quad->vertices[(corner + 1u) & 3u];
+        area += (int64_t)a->x_q4 * b->y_q4 -
+                (int64_t)b->x_q4 * a->y_q4;
+    }
+    return area != 0;
+}
+
 static int font_character_index(char character) {
     uint8_t index;
     for (index = 0; index < VOXEL_RASTER_FONT_GLYPHS; ++index)
@@ -739,6 +752,10 @@ int32_t voxel_raster_render(uint32_t surface_handle, uint64_t frame_id,
     for (uint32_t index = 0; index < candidate_count; ++index) {
         projected_quad_t *quad = &g_candidates[index];
         int added;
+        if (!projected_quad_has_area(quad)) {
+            ++g_stats.dropped_quads;
+            continue;
+        }
         if (quad->textured &&
             (g_raster_capabilities & PXA_RASTER_CAP_TEXTURED_QUAD) != 0) {
             added = pxa_raster_textured_quad(&list, quad->vertices,

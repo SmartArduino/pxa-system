@@ -668,6 +668,24 @@ static void dispatch_component_events(product_host_t *host) {
     }
 }
 
+/* Consume a short event/presentation chain in one UI turn. This avoids adding
+ * a full simulator-loop delay between a Guest frame submission and scanout. */
+static int drain_surface_updates(product_host_t *host) {
+    uint8_t round;
+    if (host == NULL || host->surfaces == NULL) return 0;
+    for (round = 0; round < 4; ++round) {
+        int32_t released;
+        if (!surface_process_pending(host)) return 0;
+        released = pxa_surface_service_flush_releases(host->surfaces);
+        if (released < 0) {
+            fprintf(stderr, "PXA surface release status=%d\n", (int)released);
+            return -1;
+        }
+        if (released > 0) dispatch_component_events(host);
+    }
+    return 0;
+}
+
 static void dispatch_clock_tick(product_host_t *host) {
     uint64_t now;
     uint8_t payload[8];
@@ -1210,16 +1228,10 @@ int main(int argc, char **argv) {
         goto done;
     while (lv_display_get_default() != NULL) {
         pxsys_pxadb_control_poll(&pxadb_control);
-        if (surface_process_pending(&host)) {
-            const int32_t released = pxa_surface_service_flush_releases(host.surfaces);
-            if (released < 0) {
-                fprintf(stderr, "PXA surface release status=%d\n", (int)released);
-                goto done;
-            }
-            if (released > 0) dispatch_component_events(&host);
-        }
         uint32_t delay = lv_timer_handler();
+        if (drain_surface_updates(&host) < 0) goto done;
         dispatch_clock_tick(&host);
+        if (drain_surface_updates(&host) < 0) goto done;
         if (delay < 1) delay = 1;
         if (delay > 16) delay = 16;
         SDL_Delay(delay);
