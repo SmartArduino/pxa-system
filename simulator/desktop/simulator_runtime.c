@@ -2,6 +2,8 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 #define PXSYS_DESKTOP_RUNTIME_MAGIC UINT32_C(0x50584452)
 #define PXSYS_DESKTOP_RUNTIME_ID "pxa-sim"
@@ -70,6 +72,32 @@ static void update_locale(simulator_instance_t* instance) {
                    (unsigned long)(instance->runtime->fixture.storage_bytes /
                                    1024u));
     lv_label_set_text(instance->status, status);
+}
+
+static int launch_installed_application(simulator_instance_t* instance) {
+    const pxsys_desktop_runtime_fixture_t* fixture;
+    char package_path[1200];
+    struct stat metadata;
+    pid_t child;
+    if (instance == NULL || instance->app == NULL) return 0;
+    fixture = &instance->runtime->fixture;
+    if (fixture->installed_packages_root == NULL || fixture->product_runner == NULL ||
+        fixture->publisher_key == NULL || fixture->state_root == NULL ||
+        instance->app->identity.app_id.size == 0 ||
+        instance->app->identity.app_id.size > 120)
+        return 0;
+    if (snprintf(package_path, sizeof(package_path), "%s/%.*s",
+                 fixture->installed_packages_root,
+                 (int)instance->app->identity.app_id.size,
+                 instance->app->identity.app_id.data) >= (int)sizeof(package_path) ||
+        stat(package_path, &metadata) != 0 || !S_ISDIR(metadata.st_mode))
+        return 0;
+    child = fork();
+    if (child != 0) return child > 0;
+    execl(fixture->product_runner, fixture->product_runner, "--package", package_path,
+          "--publisher-key", fixture->publisher_key, "--state-root", fixture->state_root,
+          (char*)NULL);
+    _exit(127);
 }
 
 static void theme_changed(void* context,
@@ -154,6 +182,7 @@ static pxsys_status_t backend_start(void* context, void* opaque,
     (void)launch;
     if (instance == NULL || instance->root == NULL)
         return PXSYS_STATUS_BAD_STATE;
+    if (launch_installed_application(instance)) return PXSYS_STATUS_OK;
     content = lv_obj_create(instance->root);
     lv_obj_set_size(content,
                     (int32_t)(instance->content_rect.width * 9u / 10u),

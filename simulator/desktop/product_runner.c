@@ -1,5 +1,6 @@
 #define _POSIX_C_SOURCE 200809L
 
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -16,8 +17,11 @@
 #include "pxa/package.h"
 #include "pxa/permission.h"
 #include "pxa/posix/pxa_posix_installer.h"
+#include "pxa/posix/pxa_posix_storage.h"
 #include "pxa/runtime.h"
 #include "pxa/service.h"
+#include "pxa/storage.h"
+#include "pxa/surface.h"
 #include "pxa/ui.h"
 #include "pxa/wamr/pxa_wamr_engine.h"
 #include "pxa/window.h"
@@ -29,6 +33,7 @@
 typedef struct {
     const char *package_path;
     const char *publisher_key;
+    const char *state_root;
     uint32_t width;
     uint32_t height;
 } options_t;
@@ -40,6 +45,16 @@ typedef struct {
     pxa_ui_backend_t ui_backend;
     pxa_audio_service_t *audio;
     pxa_permission_service_t *permissions;
+    pxa_surface_service_t *surfaces;
+    lv_obj_t *surface_image;
+    lv_image_dsc_t surface_bitmap;
+    uint8_t *surface_buffers;
+    uint32_t surface_frame_bytes;
+    uint32_t surface_stride_bytes;
+    uint16_t surface_width;
+    uint16_t surface_height;
+    uint8_t surface_buffer_count;
+    uint8_t next_surface_buffer;
     pxa_wamr_engine_t *engine;
     pxa_component_engine_t engine_ops;
     pxa_activation_coordinator_t *coordinator;
@@ -67,6 +82,110 @@ static void *allocate_memory(void *context, size_t size) {
 static void release_memory(void *context, void *memory) {
     (void)context;
     free(memory);
+}
+
+static pxa_status_t surface_create(void *context, const pxa_surface_desc_t *desc,
+                                   uint64_t *surface, uint32_t *stride) {
+    product_host_t *host = context;
+    if (host == NULL || desc == NULL || surface == NULL || stride == NULL ||
+        desc->format != PXA_SURFACE_FORMAT_RGB565 ||
+        (desc->flags & PXA_SURFACE_FLAG_HOST_RASTER) != 0)
+        return PXA_STATUS_UNSUPPORTED;
+    *surface = 1;
+    *stride = (uint32_t)desc->width * 2u;
+    host->surface_stride_bytes = *stride;
+    host->surface_width = desc->width;
+    host->surface_height = desc->height;
+    host->surface_frame_bytes = *stride * desc->height;
+    host->surface_buffer_count = desc->buffer_count;
+    host->next_surface_buffer = 0;
+    return PXA_STATUS_OK;
+}
+
+static pxa_status_t surface_write(void *context, uint64_t surface,
+                                  const uint8_t *pixels, size_t size) {
+    (void)context;
+    (void)surface;
+    (void)pixels;
+    (void)size;
+    return PXA_STATUS_UNSUPPORTED;
+}
+
+static pxa_status_t surface_register_buffers(void *context, uint64_t surface,
+                                             uint8_t *pixels, size_t size) {
+    product_host_t *host = context;
+    if (host == NULL || surface != 1 || pixels == NULL ||
+        size != (size_t)host->surface_frame_bytes * host->surface_buffer_count)
+        return PXA_STATUS_INVALID_ARGUMENT;
+    host->surface_buffers = pixels;
+    memset(&host->surface_bitmap, 0, sizeof(host->surface_bitmap));
+    host->surface_bitmap.header.magic = LV_IMAGE_HEADER_MAGIC;
+    host->surface_bitmap.header.cf = LV_COLOR_FORMAT_RGB565;
+    host->surface_bitmap.header.w = host->surface_width;
+    host->surface_bitmap.header.h = host->surface_height;
+    host->surface_bitmap.header.stride = host->surface_stride_bytes;
+    host->surface_bitmap.data_size = host->surface_frame_bytes;
+    host->surface_bitmap.data = pixels;
+    host->surface_image = lv_image_create(lv_screen_active());
+    if (host->surface_image == NULL) return PXA_STATUS_RESOURCE_LIMIT;
+    lv_image_set_src(host->surface_image, &host->surface_bitmap);
+    lv_obj_set_size(host->surface_image, LV_PCT(100), LV_PCT(100));
+    lv_obj_move_background(host->surface_image);
+    return PXA_STATUS_OK;
+}
+
+static pxa_status_t surface_acquire_buffer(void *context, uint64_t surface,
+                                           uint8_t *buffer_index) {
+    product_host_t *host = context;
+    if (host == NULL || surface != 1 || buffer_index == NULL ||
+        host->surface_buffers == NULL || host->surface_buffer_count == 0)
+        return PXA_STATUS_BAD_STATE;
+    *buffer_index = host->next_surface_buffer++ % host->surface_buffer_count;
+    return PXA_STATUS_OK;
+}
+
+static pxa_status_t surface_present_buffer(void *context, uint64_t surface,
+                                           uint8_t buffer_index, uint64_t frame_id) {
+    product_host_t *host = context;
+    if (host == NULL || surface != 1 || frame_id == 0 ||
+        buffer_index >= host->surface_buffer_count || host->surface_image == NULL)
+        return PXA_STATUS_BAD_STATE;
+    host->surface_bitmap.data = host->surface_buffers +
+        (size_t)buffer_index * host->surface_frame_bytes;
+    lv_image_set_src(host->surface_image, &host->surface_bitmap);
+    lv_obj_invalidate(host->surface_image);
+    return PXA_STATUS_OK;
+}
+
+static pxa_status_t surface_queue(void *context, uint64_t surface,
+                                  uint64_t frame_id,
+                                  const pxa_surface_damage_rect_t *damage,
+                                  uint8_t damage_count) {
+    (void)context; (void)surface; (void)frame_id; (void)damage; (void)damage_count;
+    return PXA_STATUS_OK;
+}
+
+static pxa_status_t surface_configure(void *context, uint64_t surface,
+                                      const pxa_surface_layer_t *layer) {
+    (void)context; (void)surface; (void)layer;
+    return PXA_STATUS_OK;
+}
+
+static pxa_status_t surface_query(void *context, uint64_t surface,
+                                  pxa_surface_state_t *state) {
+    (void)context;
+    if (surface != 1 || state == NULL) return PXA_STATUS_NOT_FOUND;
+    memset(state, 0, sizeof(*state));
+    state->flags = PXA_SURFACE_STATE_FLAG_SUPPORTS_GUEST_MAPPED;
+    return PXA_STATUS_OK;
+}
+
+static void surface_close(void *context, uint64_t surface) {
+    product_host_t *host = context;
+    if (host == NULL || surface != 1) return;
+    if (host->surface_image != NULL) lv_obj_delete(host->surface_image);
+    host->surface_image = NULL;
+    host->surface_buffers = NULL;
 }
 
 static void *reallocate_memory(void *context, void *memory, size_t size) {
@@ -298,7 +417,7 @@ static pxa_status_t permission_save(void *context, pxa_bytes_t identity,
 }
 
 static void print_usage(const char *program) {
-    fprintf(stderr, "Usage: %s --package DIR --publisher-key DER [--width PX --height PX]\n",
+    fprintf(stderr, "Usage: %s --package DIR --publisher-key DER [--state-root DIR] [--width PX --height PX]\n",
             program);
 }
 
@@ -312,6 +431,8 @@ static int parse_options(int argc, char **argv, options_t *options) {
             options->package_path = argv[++index];
         else if (strcmp(argv[index], "--publisher-key") == 0 && index + 1 < argc)
             options->publisher_key = argv[++index];
+        else if (strcmp(argv[index], "--state-root") == 0 && index + 1 < argc)
+            options->state_root = argv[++index];
         else if (strcmp(argv[index], "--width") == 0 && index + 1 < argc)
             options->width = (uint32_t)strtoul(argv[++index], NULL, 10);
         else if (strcmp(argv[index], "--height") == 0 && index + 1 < argc)
@@ -339,19 +460,29 @@ int main(int argc, char **argv) {
     pxa_audio_config_t audio_config = {0};
     pxa_audio_backend_t audio_backend = {0};
     pxa_permission_config_t permission_config = {0};
+    pxa_posix_storage_config_t posix_storage_config = {0};
+    pxa_storage_config_t storage_config = {0};
+    pxa_storage_backend_t storage_backend = {0};
+    pxa_posix_storage_t *posix_storage = NULL;
+    pxa_storage_service_t *storage = NULL;
+    pxa_surface_config_t surface_config = {0};
     pxa_service_ops_t clock_service = {0};
     pxa_wamr_engine_config_t engine_config = {0};
-    pxa_package_service_capability_t capabilities[6] = {0};
+    pxa_package_service_capability_t capabilities[8] = {0};
     pxa_package_activation_profile_t activation = {0};
     pxa_package_host_profile_t profile = {0};
     pxa_activation_plan_t *plan = NULL;
     void *installer_workspace = NULL, *manifest_workspace = NULL;
     void *runtime_workspace = NULL, *window_workspace = NULL, *ui_workspace = NULL;
-    void *permission_workspace = NULL, *audio_workspace = NULL, *lvgl_workspace = NULL, *engine_workspace = NULL;
+    void *permission_workspace = NULL, *audio_workspace = NULL, *storage_workspace = NULL;
+    void *storage_service_workspace = NULL, *lvgl_workspace = NULL, *engine_workspace = NULL;
+    void *surface_workspace = NULL;
     void *plan_workspace = NULL, *coordinator_workspace = NULL;
     uint8_t *encoded = NULL, *public_key = NULL;
     size_t manifest_size = 0, public_key_size = 0;
     char root[1024] = {0};
+    char *storage_parent = NULL;
+    char *storage_path = NULL;
     lv_display_t *display = NULL;
     lv_indev_t *mouse = NULL;
     pxa_component_t component;
@@ -441,7 +572,9 @@ int main(int argc, char **argv) {
     stage = "ui service";
     ui_config.allocate = allocate_memory; ui_config.release = release_memory;
     ui_config.now_us = now_us; ui_config.features = PXA_UI_FEATURE_CANVAS |
-        PXA_UI_FEATURE_VIRTUAL_LIST | PXA_UI_FEATURE_RGB565_BITMAP;
+        PXA_UI_FEATURE_VIRTUAL_LIST | PXA_UI_FEATURE_RGB565_BITMAP |
+        PXA_UI_FEATURE_CONTROLLER_INPUT | PXA_UI_FEATURE_MULTIPLE_SURFACES |
+        PXA_UI_FEATURE_CANVAS_STREAM_IO;
     ui_config.primary_width = options.width; ui_config.primary_height = options.height;
     ui_workspace = malloc(pxa_ui_service_workspace_size());
     if (ui_workspace == NULL || pxa_ui_service_init(ui_workspace,
@@ -464,6 +597,40 @@ int main(int argc, char **argv) {
         &permission_config, &host.permissions) != PXA_STATUS_OK ||
         pxa_permission_policy_load(host.permissions) != PXA_STATUS_OK ||
         pxa_permission_service_register(host.permissions) != PXA_STATUS_OK) goto done;
+    stage = "storage service";
+    {
+        const char *state_root = options.state_root != NULL ? options.state_root : options.package_path;
+        size_t state_root_size = strlen(state_root);
+        storage_parent = malloc(state_root_size + sizeof("/app-data"));
+        if (storage_parent == NULL) goto done;
+        snprintf(storage_parent, state_root_size + sizeof("/app-data"),
+                 "%s/app-data", state_root);
+        if (mkdir(storage_parent, 0700) != 0 && errno != EEXIST) goto done;
+        storage_path = malloc(strlen(storage_parent) + 1 + manifest->app_id.size + 1);
+        if (storage_path == NULL) goto done;
+        snprintf(storage_path, strlen(storage_parent) + 1 + manifest->app_id.size + 1,
+                 "%s/%.*s", storage_parent, (int)manifest->app_id.size,
+                 (const char *)manifest->app_id.data);
+    }
+    posix_storage_config.struct_size = sizeof(posix_storage_config);
+    posix_storage_config.root_path = storage_path;
+    posix_storage_config.max_keys = 128;
+    posix_storage_config.max_value_bytes = PXA_STORAGE_MAX_VALUE_BYTES;
+    posix_storage_config.quota_bytes = 256u * 1024u;
+    storage_workspace = malloc(pxa_posix_storage_workspace_size(&posix_storage_config));
+    if (storage_workspace == NULL ||
+        pxa_posix_storage_init(storage_workspace,
+            pxa_posix_storage_workspace_size(&posix_storage_config),
+            &posix_storage_config, &posix_storage, &storage_backend) != PXA_STATUS_OK) goto done;
+    storage_config.struct_size = sizeof(storage_config);
+    storage_config.max_value_bytes = PXA_STORAGE_MAX_VALUE_BYTES;
+    storage_config.backend = storage_backend;
+    storage_service_workspace = malloc(pxa_storage_service_workspace_size(&storage_config));
+    if (storage_service_workspace == NULL ||
+        pxa_storage_service_init(storage_service_workspace,
+            pxa_storage_service_workspace_size(&storage_config), host.runtime,
+            &storage_config, &storage) != PXA_STATUS_OK ||
+        pxa_storage_service_register(storage) != PXA_STATUS_OK) goto done;
     audio_backend.struct_size = sizeof(audio_backend);
     stage = "audio service";
     audio_backend.open = audio_open; audio_backend.commit = audio_commit;
@@ -506,6 +673,31 @@ int main(int argc, char **argv) {
         goto done;
     /* The UI backend is bound during prepare_start. */
     host.ui_backend = ui_backend;
+    stage = "surface service";
+    surface_config.struct_size = sizeof(surface_config);
+    surface_config.max_surfaces = 1;
+    surface_config.max_surfaces_per_component = 1;
+    surface_config.max_width = options.width;
+    surface_config.max_height = options.height;
+    surface_config.max_frame_bytes = options.width * options.height * 2u;
+    surface_config.min_buffer_count = 2;
+    surface_config.max_buffer_count = 3;
+    surface_config.backend.struct_size = sizeof(surface_config.backend);
+    surface_config.backend.context = &host;
+    surface_config.backend.create = surface_create;
+    surface_config.backend.write = surface_write;
+    surface_config.backend.queue = surface_queue;
+    surface_config.backend.configure = surface_configure;
+    surface_config.backend.query = surface_query;
+    surface_config.backend.close = surface_close;
+    surface_config.backend.register_buffers = surface_register_buffers;
+    surface_config.backend.acquire_buffer = surface_acquire_buffer;
+    surface_config.backend.present_buffer = surface_present_buffer;
+    surface_workspace = malloc(pxa_surface_service_workspace_size(&surface_config));
+    if (surface_workspace == NULL || pxa_surface_service_init(surface_workspace,
+        pxa_surface_service_workspace_size(&surface_config), host.runtime,
+        &surface_config, &host.surfaces) != PXA_STATUS_OK ||
+        pxa_surface_service_register(host.surfaces) != PXA_STATUS_OK) goto done;
     engine_config.struct_size = sizeof(engine_config); engine_config.host_context = &host;
     stage = "WAMR engine";
     engine_config.read_artifact = read_artifact; engine_config.now_us = now_us;
@@ -525,8 +717,10 @@ int main(int argc, char **argv) {
     capabilities[3].service = PRODUCT_CLOCK_SERVICE; capabilities[3].version.major = 0; capabilities[3].version.minor = 1;
     capabilities[4].service = PXA_AUDIO_SERVICE_ID; capabilities[4].version.major = 0; capabilities[4].version.minor = 5;
     capabilities[5].service = PXA_PERMISSION_SERVICE_ID; capabilities[5].version.major = 0; capabilities[5].version.minor = 1;
+    capabilities[6].service = PXA_STORAGE_SERVICE_ID; capabilities[6].version.major = 0; capabilities[6].version.minor = 1;
+    capabilities[7].service = PXA_SURFACE_SERVICE_ID; capabilities[7].version.major = 0; capabilities[7].version.minor = 3;
     activation.core_version.major = 0; activation.core_version.minor = 1;
-    activation.services = capabilities; activation.service_count = 6;
+    activation.services = capabilities; activation.service_count = 8;
     profile.target = (pxa_bytes_t){(const uint8_t *)"linux-x86_64", 13};
     profile.engine = (pxa_bytes_t){(const uint8_t *)"wamr", 4};
     profile.engine_abi = (pxa_bytes_t){(const uint8_t *)"wasm32", 6};
@@ -573,9 +767,12 @@ done:
         if (host.ui != NULL) pxa_ui_service_deinit(host.ui);
     }
     if (host.runtime != NULL) pxa_runtime_deinit(host.runtime);
+    if (posix_storage != NULL) pxa_posix_storage_deinit(posix_storage);
     if (installer != NULL) pxa_posix_installer_deinit(installer);
     free(coordinator_workspace); free(plan_workspace); free(engine_workspace); free(lvgl_workspace);
+    free(surface_workspace);
     free(ui_workspace); free(window_workspace); free(permission_workspace); free(runtime_workspace); free(manifest_workspace);
+    free(storage_service_workspace); free(storage_workspace); free(storage_path); free(storage_parent);
     free(encoded); free(installer_workspace); free(public_key);
     return result;
 }

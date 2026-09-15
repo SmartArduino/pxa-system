@@ -95,6 +95,15 @@ if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(pxsys_product_simulator PRIVATE
         -Wall -Wextra -Wpedantic)
 endif()
+
+add_executable(pxsys_package_installer package_installer.c)
+target_compile_features(pxsys_package_installer PRIVATE c_std_99)
+target_link_libraries(pxsys_package_installer PRIVATE
+    pxa::pxa pxa_adapters_openssl pxa_adapters_posix)
+if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(pxsys_package_installer PRIVATE
+        -Wall -Wextra -Wpedantic)
+endif()
 if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(pxsys_desktop_simulator PRIVATE
         -Wall -Wextra -Wpedantic)

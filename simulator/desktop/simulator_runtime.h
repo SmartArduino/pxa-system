@@ -10,6 +10,10 @@ typedef struct pxsys_desktop_runtime pxsys_desktop_runtime_t;
 typedef struct {
     uint8_t permission_allowed;
     uint32_t storage_bytes;
+    const char *installed_packages_root;
+    const char *product_runner;
+    const char *publisher_key;
+    const char *state_root;
 } pxsys_desktop_runtime_fixture_t;
 
 pxsys_status_t pxsys_desktop_runtime_create(

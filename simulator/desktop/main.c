@@ -54,6 +54,10 @@ typedef struct {
     pxsys_network_type_t network;
     uint8_t permission_allowed;
     uint32_t storage_bytes;
+    const char* installed_packages_root;
+    const char* product_runner;
+    const char* publisher_key;
+    const char* state_root;
 } simulator_options_t;
 
 static pxsys_display_profile_t s_display_profile;
@@ -236,6 +240,7 @@ static int parse_options(int argc, char** argv, simulator_options_t* options) {
         PXSYS_DISPLAY_SHAPE_RECTANGLE, 0, SIMULATOR_SHAPE_BACKGROUND_MATTE,
         {0, 0, 0, 0}, 0, 0,
         9, 41, 82, 4, PXSYS_NETWORK_WIFI, 1, 24u * 1024u,
+        NULL, NULL, NULL, NULL,
     };
     for (index = 1; index < argc; ++index) {
         if (strcmp(argv[index], "--dark") == 0) {
@@ -348,6 +353,18 @@ static int parse_options(int argc, char** argv, simulator_options_t* options) {
             if (!parse_u32(argv[++index], 0, UINT32_MAX,
                            &options->storage_bytes))
                 return 0;
+        } else if (strcmp(argv[index], "--installed-packages-root") == 0 &&
+                   index + 1 < argc) {
+            options->installed_packages_root = argv[++index];
+        } else if (strcmp(argv[index], "--product-runner") == 0 &&
+                   index + 1 < argc) {
+            options->product_runner = argv[++index];
+        } else if (strcmp(argv[index], "--publisher-key") == 0 &&
+                   index + 1 < argc) {
+            options->publisher_key = argv[++index];
+        } else if (strcmp(argv[index], "--state-root") == 0 &&
+                   index + 1 < argc) {
+            options->state_root = argv[++index];
         } else if (strcmp(argv[index], "--locale") == 0 && index + 1 < argc) {
             options->locale = argv[++index];
         } else if (strcmp(argv[index], "--width") == 0 && index + 1 < argc) {
@@ -373,6 +390,8 @@ static void print_usage(const char* program) {
             "[--time HH:MM] [--battery 0..100] "
             "[--network none|wifi|cellular|ethernet] [--network-signal 0..4] "
             "[--permission allow|deny] [--storage-bytes N] "
+            "[--installed-packages-root DIR --product-runner PATH "
+            "--publisher-key DER --state-root DIR] "
             "[--launch APP_ID] [--screenshot PNG] [--duration-ms MS] "
             "[--smoke-test|--self-test]\n",
             program);
@@ -591,6 +610,10 @@ static int run_simulator(const simulator_options_t* options) {
 
     runtime_fixture.permission_allowed = options->permission_allowed;
     runtime_fixture.storage_bytes = options->storage_bytes;
+    runtime_fixture.installed_packages_root = options->installed_packages_root;
+    runtime_fixture.product_runner = options->product_runner;
+    runtime_fixture.publisher_key = options->publisher_key;
+    runtime_fixture.state_root = options->state_root;
     if (pxsys_desktop_runtime_create(system, renderer, &runtime_fixture, allocator,
                                      &simulator_runtime) != PXSYS_STATUS_OK)
         goto done;
