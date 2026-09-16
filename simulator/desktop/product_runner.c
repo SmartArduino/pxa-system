@@ -13,6 +13,7 @@
 #include "pxa/activation.h"
 #include "pxa/audio.h"
 #include "pxa/game_render.h"
+#include "pxa/log.h"
 #include "pxa/lvgl/pxa_lvgl_ui.h"
 #include "pxa/openssl/pxa_openssl.h"
 #include "pxa/package.h"
@@ -57,6 +58,7 @@ typedef struct {
     pxa_permission_service_t *permissions;
     pxa_surface_service_t *surfaces;
     pxa_game_render_service_t *game_render;
+    pxa_log_service_t *log;
     lv_obj_t *surface_image;
     lv_image_dsc_t surface_bitmap;
     uint8_t *surface_buffers;
@@ -115,6 +117,25 @@ typedef struct {
     int32_t system_gesture_press_y;
     uint8_t exit_requested;
 } product_host_t;
+
+static pxa_status_t simulator_log_write(
+    void *context, pxa_component_t component, pxa_bytes_t app_id,
+    pxa_log_level_t level, pxa_bytes_t message) {
+    static const char *const names[] = {
+        "TRACE", "DEBUG", "INFO", "WARN", "ERROR",
+    };
+    static const char *const colors[] = {
+        "\033[90m", "\033[36m", "\033[32m", "\033[33m", "\033[31m",
+    };
+    (void)context;
+    if (level > PXA_LOG_LEVEL_ERROR) return PXA_STATUS_INVALID_ARGUMENT;
+    fprintf(stderr,
+            "%s[PXA app=%.*s component=%u level=%s] %.*s\033[0m\n",
+            colors[level], (int)app_id.size, (const char *)app_id.data,
+            (unsigned)component, names[level], (int)message.size,
+            (const char *)message.data);
+    return PXA_STATUS_OK;
+}
 
 static uint64_t now_us(void *context) {
     struct timespec now;
@@ -1153,9 +1174,10 @@ int main(int argc, char **argv) {
     pxa_storage_service_t *storage = NULL;
     pxa_surface_config_t surface_config = {0};
     pxa_game_render_config_t game_render_config = {0};
+    pxa_log_config_t log_config = {0};
     pxa_service_ops_t clock_service = {0};
     pxa_wamr_engine_config_t engine_config = {0};
-    pxa_package_service_capability_t capabilities[9] = {0};
+    pxa_package_service_capability_t capabilities[10] = {0};
     pxa_package_activation_profile_t activation = {0};
     pxa_package_host_profile_t profile = {0};
     pxa_activation_plan_t *plan = NULL;
@@ -1164,6 +1186,7 @@ int main(int argc, char **argv) {
     void *permission_workspace = NULL, *audio_workspace = NULL, *storage_workspace = NULL;
     void *storage_service_workspace = NULL, *lvgl_workspace = NULL, *engine_workspace = NULL;
     void *surface_workspace = NULL, *game_render_workspace = NULL;
+    void *log_workspace = NULL;
     void *plan_workspace = NULL, *coordinator_workspace = NULL;
     uint8_t *encoded = NULL, *public_key = NULL;
     size_t manifest_size = 0, public_key_size = 0;
@@ -1417,6 +1440,19 @@ int main(int argc, char **argv) {
             PXA_STATUS_OK ||
         pxa_game_render_service_register(host.game_render) != PXA_STATUS_OK)
         goto done;
+    stage = "log service";
+    log_config.struct_size = sizeof(log_config);
+    log_config.write = simulator_log_write;
+    log_config.app_id = manifest->app_id;
+    log_config.max_message_bytes = PXA_LOG_MAX_MESSAGE_BYTES;
+    log_workspace = malloc(pxa_log_service_workspace_size(&log_config));
+    if (log_workspace == NULL ||
+        pxa_log_service_init(log_workspace,
+                             pxa_log_service_workspace_size(&log_config),
+                             host.runtime, &log_config, &host.log) !=
+            PXA_STATUS_OK ||
+        pxa_log_service_register(host.log) != PXA_STATUS_OK)
+        goto done;
     engine_config.struct_size = sizeof(engine_config); engine_config.host_context = &host;
     stage = "WAMR engine";
     engine_config.read_artifact = read_artifact; engine_config.now_us = now_us;
@@ -1439,8 +1475,9 @@ int main(int argc, char **argv) {
     capabilities[6].service = PXA_STORAGE_SERVICE_ID; capabilities[6].version.major = 0; capabilities[6].version.minor = 1;
     capabilities[7].service = PXA_SURFACE_SERVICE_ID; capabilities[7].version.major = 0; capabilities[7].version.minor = 2;
     capabilities[8].service = PXA_GAME_RENDER_SERVICE_ID; capabilities[8].version.major = PXA_GAME_RENDER_SERVICE_MAJOR; capabilities[8].version.minor = PXA_GAME_RENDER_SERVICE_MINOR;
+    capabilities[9].service = PXA_LOG_SERVICE_ID; capabilities[9].version.major = PXA_LOG_SERVICE_MAJOR; capabilities[9].version.minor = PXA_LOG_SERVICE_MINOR;
     activation.core_version.major = 0; activation.core_version.minor = 1;
-    activation.services = capabilities; activation.service_count = 9;
+    activation.services = capabilities; activation.service_count = 10;
     profile.target = (pxa_bytes_t){(const uint8_t *)"linux-x86_64", 13};
     profile.engine = (pxa_bytes_t){(const uint8_t *)"wamr", 4};
     profile.engine_abi = (pxa_bytes_t){(const uint8_t *)"wasm32", 6};
@@ -1502,7 +1539,7 @@ done:
     if (posix_storage != NULL) pxa_posix_storage_deinit(posix_storage);
     if (installer != NULL) pxa_posix_installer_deinit(installer);
     free(coordinator_workspace); free(plan_workspace); free(engine_workspace); free(lvgl_workspace);
-    free(game_render_workspace); free(surface_workspace);
+    free(log_workspace); free(game_render_workspace); free(surface_workspace);
     free(ui_workspace); free(window_workspace); free(permission_workspace); free(runtime_workspace); free(manifest_workspace);
     free(storage_service_workspace); free(storage_workspace); free(storage_path); free(storage_parent);
     free(encoded); free(installer_workspace); free(public_key);

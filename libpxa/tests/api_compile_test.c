@@ -12,11 +12,14 @@ int main(void) {
         uint64_t) = pxa_event_post_messagev;
     size_t (*device_workspace_size)(const pxa_device_config_t *) =
         pxa_device_service_workspace_size;
+    size_t (*log_workspace_size)(const pxa_log_config_t *) =
+        pxa_log_service_workspace_size;
     pxa_runtime_limits_init(&limits);
     (void)usage;
     (void)post_message;
     (void)post_messagev;
     (void)device_workspace_size;
+    (void)log_workspace_size;
     return PXA_VERSION_MAJOR == 0 && limits.struct_size == sizeof(limits)
                ? 0
                : 1;

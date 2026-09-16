@@ -330,6 +330,14 @@
       "major": 0,
       "minor": 2,
       "patch": 0
+    },
+    {
+      "name": "log",
+      "id": 19,
+      "state": "defined",
+      "major": 0,
+      "minor": 1,
+      "patch": 0
     }
   ],
   "core_opcodes": [

@@ -9,6 +9,7 @@
 #include "pxa/surface.h"
 #include "pxa/ipc.h"
 #include "pxa/lease.h"
+#include "pxa/log.h"
 #include "pxa/net.h"
 #include "pxa/package.h"
 #include "pxa/permission.h"

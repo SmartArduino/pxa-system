@@ -228,6 +228,11 @@ PYTHON
   -o "$work_dir/pxa_game_render_test"
 "$work_dir/pxa_game_render_test"
 
+"$cc_bin" "${flags[@]}" \
+  "$pxa_system_dir/sdk/guest-c/tests/pxa_log_test.c" \
+  -o "$work_dir/pxa_log_test"
+"$work_dir/pxa_log_test"
+
 "$cc_bin" "${flags[@]}" -c \
   "$pxa_system_dir/apps/pxa/game-render-bench/main.c" \
   -o "$work_dir/game_render_bench.o"

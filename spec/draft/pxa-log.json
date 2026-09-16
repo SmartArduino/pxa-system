@@ -1,0 +1,33 @@
+{
+  "schema": "pxa-log-spec-0.1",
+  "status": "draft",
+  "service": {
+    "name": "log",
+    "id": 19,
+    "major": 0,
+    "minor": 1,
+    "patch": 0
+  },
+  "opcodes": [
+    {
+      "name": "write",
+      "id": 1,
+      "direction": "guest-to-host",
+      "request_id": "zero",
+      "payload": "level:u8|message:utf8"
+    }
+  ],
+  "levels": [
+    {"name": "trace", "value": 0},
+    {"name": "debug", "value": 1},
+    {"name": "info", "value": 2},
+    {"name": "warn", "value": 3},
+    {"name": "error", "value": 4}
+  ],
+  "constraints": {
+    "max_message_bytes": 256,
+    "encoding": "well-formed UTF-8",
+    "control_policy": "TAB is allowed; C0 controls other than TAB and DEL are rejected"
+  },
+  "protocol_version": "0.1.0"
+}
