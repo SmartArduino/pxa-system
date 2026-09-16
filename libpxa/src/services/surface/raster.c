@@ -5,6 +5,12 @@
 
 #include "pxa/wire.h"
 
+#if defined(__GNUC__) || defined(__clang__)
+#define RASTER_NOINLINE __attribute__((noinline))
+#else
+#define RASTER_NOINLINE
+#endif
+
 typedef struct {
     int16_t x;
     int16_t y;
@@ -364,32 +370,39 @@ static int64_t edge(const raster_vertex_t *a, const raster_vertex_t *b,
            (int64_t)(y - a->y) * (b->x - a->x);
 }
 
-#define RASTER_RECIPROCAL_DEPTH_ONE INT64_C(524288)
+#define RASTER_RECIPROCAL_DEPTH_ONE UINT32_C(524288)
 #define RASTER_INTERPOLANT_SCALE INT64_C(16)
 #define RASTER_AREA_RECIPROCAL_BITS 35
 
-static int64_t scaled_divide(int64_t numerator, int64_t denominator) {
+static int64_t scaled_divide(int64_t numerator, int64_t denominator,
+                             int64_t scale) {
     const int64_t quotient = numerator / denominator;
     const int64_t remainder = numerator % denominator;
-    return quotient * RASTER_INTERPOLANT_SCALE +
-           remainder * RASTER_INTERPOLANT_SCALE / denominator;
+    return quotient * scale + remainder * scale / denominator;
 }
 
-static int64_t interpolate_scaled_reciprocal(
-    int64_t w0, int64_t w1, int64_t w2, int64_t a, int64_t b, int64_t c,
-    int64_t denominator, int64_t area_reciprocal) {
-    const int64_t numerator = w0 * a + w1 * b + w2 * c;
+static RASTER_NOINLINE int64_t scale_interpolant(
+    int64_t numerator, int64_t denominator, int64_t area_reciprocal,
+    uint8_t scale_bits) {
+    const int64_t scale = INT64_C(1) << scale_bits;
+    int64_t product;
+#if defined(__GNUC__) || defined(__clang__)
+    const int product_fits =
+        !__builtin_mul_overflow(numerator, area_reciprocal, &product);
+#else
     const int64_t limit = INT64_MAX / area_reciprocal;
-    if (numerator >= -limit && numerator <= limit) {
-        return (numerator * area_reciprocal) /
+    const int product_fits = numerator >= -limit && numerator <= limit;
+    if (product_fits) product = numerator * area_reciprocal;
+#endif
+    if (product_fits)
+        return product /
                (INT64_C(1) <<
-                (RASTER_AREA_RECIPROCAL_BITS - 4));
-    }
-    return scaled_divide(numerator, denominator);
+                (RASTER_AREA_RECIPROCAL_BITS - scale_bits));
+    return scaled_divide(numerator, denominator, scale);
 }
 
 static int64_t reciprocal_depth(uint16_t depth) {
-    return depth == 0 ? 0 : RASTER_RECIPROCAL_DEPTH_ONE / depth;
+    return depth == 0 ? 0 : (int64_t)(RASTER_RECIPROCAL_DEPTH_ONE / depth);
 }
 
 #define RASTER_PERSPECTIVE_BLOCK_PIXELS 8
@@ -491,41 +504,49 @@ static uint32_t draw_triangle(const raster_vertex_t *a,
         w1_dy = -INT64_C(16) * (a->x - c->x) * sign;
         w2_dy = -INT64_C(16) * (b->x - a->x) * sign;
         if (texture != NULL) {
-            const int64_t precision = INT64_C(4096);
-            light_row = (w0_row * a->light + w1_row * b->light +
-                         w2_row * c->light) * precision / denominator;
-            light_dx = (w0_dx * a->light + w1_dx * b->light +
-                        w2_dx * c->light) * precision / denominator;
-            light_dy = (w0_dy * a->light + w1_dy * b->light +
-                        w2_dy * c->light) * precision / denominator;
+            light_row = scale_interpolant(
+                w0_row * a->light + w1_row * b->light + w2_row * c->light,
+                denominator, area_reciprocal, 12);
+            light_dx = scale_interpolant(
+                w0_dx * a->light + w1_dx * b->light + w2_dx * c->light,
+                denominator, area_reciprocal, 12);
+            light_dy = scale_interpolant(
+                w0_dy * a->light + w1_dy * b->light + w2_dy * c->light,
+                denominator, area_reciprocal, 12);
             if (!perspective) {
-                u_row = (w0_row * a->u + w1_row * b->u + w2_row * c->u) *
-                        precision / denominator;
-                v_row = (w0_row * a->v + w1_row * b->v + w2_row * c->v) *
-                        precision / denominator;
-                u_dx = (w0_dx * a->u + w1_dx * b->u + w2_dx * c->u) *
-                       precision / denominator;
-                v_dx = (w0_dx * a->v + w1_dx * b->v + w2_dx * c->v) *
-                       precision / denominator;
-                u_dy = (w0_dy * a->u + w1_dy * b->u + w2_dy * c->u) *
-                       precision / denominator;
-                v_dy = (w0_dy * a->v + w1_dy * b->v + w2_dy * c->v) *
-                       precision / denominator;
+                u_row = scale_interpolant(
+                    w0_row * a->u + w1_row * b->u + w2_row * c->u,
+                    denominator, area_reciprocal, 12);
+                v_row = scale_interpolant(
+                    w0_row * a->v + w1_row * b->v + w2_row * c->v,
+                    denominator, area_reciprocal, 12);
+                u_dx = scale_interpolant(
+                    w0_dx * a->u + w1_dx * b->u + w2_dx * c->u,
+                    denominator, area_reciprocal, 12);
+                v_dx = scale_interpolant(
+                    w0_dx * a->v + w1_dx * b->v + w2_dx * c->v,
+                    denominator, area_reciprocal, 12);
+                u_dy = scale_interpolant(
+                    w0_dy * a->u + w1_dy * b->u + w2_dy * c->u,
+                    denominator, area_reciprocal, 12);
+                v_dy = scale_interpolant(
+                    w0_dy * a->v + w1_dy * b->v + w2_dy * c->v,
+                    denominator, area_reciprocal, 12);
             }
         }
         if (perspective) {
             const int64_t qa = reciprocal_depth(a->depth);
             const int64_t qb = reciprocal_depth(b->depth);
             const int64_t qc = reciprocal_depth(c->depth);
-            reciprocal_row = interpolate_scaled_reciprocal(
-                w0_row, w1_row, w2_row, qa, qb, qc, denominator,
-                area_reciprocal);
-            reciprocal_dx = interpolate_scaled_reciprocal(
-                w0_dx, w1_dx, w2_dx, qa, qb, qc, denominator,
-                area_reciprocal);
-            reciprocal_dy = interpolate_scaled_reciprocal(
-                w0_dy, w1_dy, w2_dy, qa, qb, qc, denominator,
-                area_reciprocal);
+            reciprocal_row = scale_interpolant(
+                w0_row * qa + w1_row * qb + w2_row * qc, denominator,
+                area_reciprocal, 4);
+            reciprocal_dx = scale_interpolant(
+                w0_dx * qa + w1_dx * qb + w2_dx * qc, denominator,
+                area_reciprocal, 4);
+            reciprocal_dy = scale_interpolant(
+                w0_dy * qa + w1_dy * qb + w2_dy * qc, denominator,
+                area_reciprocal, 4);
             if (texture != NULL) {
                 const int64_t uqa = (int64_t)a->u * qa;
                 const int64_t uqb = (int64_t)b->u * qb;
@@ -533,24 +554,24 @@ static uint32_t draw_triangle(const raster_vertex_t *a,
                 const int64_t vqa = (int64_t)a->v * qa;
                 const int64_t vqb = (int64_t)b->v * qb;
                 const int64_t vqc = (int64_t)c->v * qc;
-                u_reciprocal_row = interpolate_scaled_reciprocal(
-                    w0_row, w1_row, w2_row, uqa, uqb, uqc, denominator,
-                    area_reciprocal);
-                u_reciprocal_dx = interpolate_scaled_reciprocal(
-                    w0_dx, w1_dx, w2_dx, uqa, uqb, uqc, denominator,
-                    area_reciprocal);
-                u_reciprocal_dy = interpolate_scaled_reciprocal(
-                    w0_dy, w1_dy, w2_dy, uqa, uqb, uqc, denominator,
-                    area_reciprocal);
-                v_reciprocal_row = interpolate_scaled_reciprocal(
-                    w0_row, w1_row, w2_row, vqa, vqb, vqc, denominator,
-                    area_reciprocal);
-                v_reciprocal_dx = interpolate_scaled_reciprocal(
-                    w0_dx, w1_dx, w2_dx, vqa, vqb, vqc, denominator,
-                    area_reciprocal);
-                v_reciprocal_dy = interpolate_scaled_reciprocal(
-                    w0_dy, w1_dy, w2_dy, vqa, vqb, vqc, denominator,
-                    area_reciprocal);
+                u_reciprocal_row = scale_interpolant(
+                    w0_row * uqa + w1_row * uqb + w2_row * uqc, denominator,
+                    area_reciprocal, 4);
+                u_reciprocal_dx = scale_interpolant(
+                    w0_dx * uqa + w1_dx * uqb + w2_dx * uqc, denominator,
+                    area_reciprocal, 4);
+                u_reciprocal_dy = scale_interpolant(
+                    w0_dy * uqa + w1_dy * uqb + w2_dy * uqc, denominator,
+                    area_reciprocal, 4);
+                v_reciprocal_row = scale_interpolant(
+                    w0_row * vqa + w1_row * vqb + w2_row * vqc, denominator,
+                    area_reciprocal, 4);
+                v_reciprocal_dx = scale_interpolant(
+                    w0_dx * vqa + w1_dx * vqb + w2_dx * vqc, denominator,
+                    area_reciprocal, 4);
+                v_reciprocal_dy = scale_interpolant(
+                    w0_dy * vqa + w1_dy * vqb + w2_dy * vqc, denominator,
+                    area_reciprocal, 4);
             }
         }
     }
@@ -743,30 +764,64 @@ static uint32_t draw_sprite_instance(
     const uint32_t source_y = read_u16(instance + 10);
     const uint32_t source_width = read_u16(instance + 12);
     const uint32_t source_height = read_u16(instance + 14);
+    uint32_t dx_begin = x0 < 0 ? (uint32_t)-x0 : 0;
+    uint32_t dy_begin = y0 < 0 ? (uint32_t)-y0 : 0;
+    uint32_t dx_end = width;
+    uint32_t dy_end = height;
+    uint32_t x_advance = source_width / width;
+    uint32_t x_remainder_step = source_width % width;
+    uint32_t y_advance = source_height / height;
+    uint32_t y_remainder_step = source_height % height;
+    uint32_t x_numerator = dx_begin * source_width;
+    uint32_t tx_begin = source_x + x_numerator / width;
+    uint32_t x_error_begin = x_numerator % width;
+    uint32_t y_numerator = dy_begin * source_height;
+    uint32_t ty = source_y + y_numerator / height;
+    uint32_t y_error = y_numerator % height;
     uint32_t covered = 0;
     uint32_t dy;
-    for (dy = 0; dy < height; ++dy) {
+    if (x0 >= target->width || y0 >= target->height || dx_begin >= width ||
+        dy_begin >= height)
+        return 0;
+    if ((uint32_t)(target->width - x0) < dx_end)
+        dx_end = (uint32_t)(target->width - x0);
+    if ((uint32_t)(target->height - y0) < dy_end)
+        dy_end = (uint32_t)(target->height - y0);
+    for (dy = dy_begin; dy < dy_end; ++dy) {
         const int32_t y = y0 + (int32_t)dy;
+        uint32_t tx = tx_begin;
+        uint32_t x_error = x_error_begin;
         uint32_t dx;
-        if (y < 0 || y >= target->height) continue;
-        for (dx = 0; dx < width; ++dx) {
+        for (dx = dx_begin; dx < dx_end; ++dx) {
             const int32_t x = x0 + (int32_t)dx;
-            const uint32_t tx = source_x + dx * source_width / width;
-            const uint32_t ty = source_y + dy * source_height / height;
-            const uint8_t texel = texture->pixels[(size_t)ty * texture->width + tx];
+            const uint8_t texel =
+                texture->pixels[(size_t)ty * texture->width + tx];
             uint16_t color;
             uint16_t *destination;
-            if (x < 0 || x >= target->width) continue;
-            if ((flags & PXA_RASTER_SPRITE_TRANSPARENT_INDEX0) != 0 && texel == 0)
-                continue;
-            color = (flags & PXA_RASTER_SPRITE_SOLID_COLOR) != 0
-                        ? solid_color
-                        : resources->palette[texel];
-            destination = target->pixels + (size_t)y * target->stride_pixels + x;
-            *destination = (flags & PXA_RASTER_SPRITE_ADDITIVE) != 0
-                               ? saturating_add_rgb565(*destination, color)
-                               : color;
-            ++covered;
+            if ((flags & PXA_RASTER_SPRITE_TRANSPARENT_INDEX0) == 0 ||
+                texel != 0) {
+                color = (flags & PXA_RASTER_SPRITE_SOLID_COLOR) != 0
+                            ? solid_color
+                            : resources->palette[texel];
+                destination =
+                    target->pixels + (size_t)y * target->stride_pixels + x;
+                *destination = (flags & PXA_RASTER_SPRITE_ADDITIVE) != 0
+                                   ? saturating_add_rgb565(*destination, color)
+                                   : color;
+                ++covered;
+            }
+            tx += x_advance;
+            x_error += x_remainder_step;
+            if (x_error >= width) {
+                x_error -= width;
+                ++tx;
+            }
+        }
+        ty += y_advance;
+        y_error += y_remainder_step;
+        if (y_error >= height) {
+            y_error -= height;
+            ++ty;
         }
     }
     return covered;

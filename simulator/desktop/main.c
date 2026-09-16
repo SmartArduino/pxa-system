@@ -29,9 +29,6 @@
 #include "src/drivers/sdl/lv_sdl_mouse.h"
 #include "src/drivers/sdl/lv_sdl_window.h"
 
-extern const lv_font_t pxsys_simulator_cjk_14;
-extern const lv_font_t pxsys_simulator_cjk_16;
-
 typedef struct {
     size_t allocations;
 } simulator_memory_t;
@@ -51,12 +48,12 @@ typedef struct {
 } simulator_icon_t;
 
 typedef struct {
-    lv_font_t display;
-    lv_font_t headline;
-    lv_font_t title;
-    lv_font_t body;
-    lv_font_t label;
-    lv_font_t caption;
+    lv_font_t* display;
+    lv_font_t* headline;
+    lv_font_t* title;
+    lv_font_t* body;
+    lv_font_t* label;
+    lv_font_t* caption;
 } simulator_ui_fonts_t;
 
 typedef struct {
@@ -67,12 +64,49 @@ typedef struct {
 
 static simulator_ui_fonts_t simulator_ui_fonts;
 
-static const lv_font_t* with_cjk_fallback(lv_font_t* destination,
-                                          const lv_font_t* primary,
-                                          const lv_font_t* fallback) {
-    *destination = *primary;
-    destination->fallback = fallback;
-    return destination;
+static int create_ui_font(lv_font_t** destination, uint32_t size,
+                          const lv_font_t* symbol_fallback) {
+    *destination = lv_freetype_font_create(
+        PXSYS_DESKTOP_TEXT_FONT, LV_FREETYPE_FONT_RENDER_MODE_BITMAP, size,
+        LV_FREETYPE_FONT_STYLE_NORMAL);
+    if (*destination == NULL) return 0;
+    (*destination)->fallback = symbol_fallback;
+    return 1;
+}
+
+static int create_ui_fonts(void) {
+    if (!create_ui_font(&simulator_ui_fonts.display, 28,
+                        &lv_font_montserrat_28) ||
+        !create_ui_font(&simulator_ui_fonts.headline, 24,
+                        &lv_font_montserrat_24) ||
+        !create_ui_font(&simulator_ui_fonts.title, 20,
+                        &lv_font_montserrat_20) ||
+        !create_ui_font(&simulator_ui_fonts.body, 16,
+                        &lv_font_montserrat_16) ||
+        !create_ui_font(&simulator_ui_fonts.label, 14,
+                        &lv_font_montserrat_14) ||
+        !create_ui_font(&simulator_ui_fonts.caption, 12,
+                        &lv_font_montserrat_12))
+        return 0;
+    return 1;
+}
+
+static void destroy_ui_fonts(void) {
+    lv_font_t** fonts[] = {
+        &simulator_ui_fonts.display,
+        &simulator_ui_fonts.headline,
+        &simulator_ui_fonts.title,
+        &simulator_ui_fonts.body,
+        &simulator_ui_fonts.label,
+        &simulator_ui_fonts.caption,
+    };
+    size_t index;
+    for (index = 0; index < sizeof(fonts) / sizeof(fonts[0]); ++index) {
+        if (*fonts[index] != NULL) {
+            lv_freetype_font_delete(*fonts[index]);
+            *fonts[index] = NULL;
+        }
+    }
 }
 
 typedef enum {
@@ -830,6 +864,7 @@ static int run_simulator(const simulator_options_t* options) {
     memset(publisher_root, 0x52, sizeof(publisher_root));
 
     lv_init();
+    if (!create_ui_fonts()) goto done;
     display = lv_sdl_window_create((int32_t)options->width,
                                    (int32_t)options->height);
     if (display == NULL) goto done;
@@ -960,26 +995,14 @@ static int run_simulator(const simulator_options_t* options) {
     pxsys_reference_lvgl_config_init(&ui_config);
     ui_config.system = system;
     ui_config.parent = lv_screen_active();
-    ui_config.text_font = with_cjk_fallback(
-        &simulator_ui_fonts.body, &lv_font_montserrat_16,
-        &pxsys_simulator_cjk_16);
-    ui_config.title_font = with_cjk_fallback(
-        &simulator_ui_fonts.headline, &lv_font_montserrat_24,
-        &pxsys_simulator_cjk_16);
-    ui_config.fonts[PXSYS_TYPOGRAPHY_DISPLAY] = with_cjk_fallback(
-        &simulator_ui_fonts.display, &lv_font_montserrat_28,
-        &pxsys_simulator_cjk_16);
+    ui_config.text_font = simulator_ui_fonts.body;
+    ui_config.title_font = simulator_ui_fonts.headline;
+    ui_config.fonts[PXSYS_TYPOGRAPHY_DISPLAY] = simulator_ui_fonts.display;
     ui_config.fonts[PXSYS_TYPOGRAPHY_HEADLINE] = ui_config.title_font;
-    ui_config.fonts[PXSYS_TYPOGRAPHY_TITLE] = with_cjk_fallback(
-        &simulator_ui_fonts.title, &lv_font_montserrat_20,
-        &pxsys_simulator_cjk_16);
+    ui_config.fonts[PXSYS_TYPOGRAPHY_TITLE] = simulator_ui_fonts.title;
     ui_config.fonts[PXSYS_TYPOGRAPHY_BODY] = ui_config.text_font;
-    ui_config.fonts[PXSYS_TYPOGRAPHY_LABEL] = with_cjk_fallback(
-        &simulator_ui_fonts.label, &lv_font_montserrat_14,
-        &pxsys_simulator_cjk_14);
-    ui_config.fonts[PXSYS_TYPOGRAPHY_CAPTION] = with_cjk_fallback(
-        &simulator_ui_fonts.caption, &lv_font_montserrat_12,
-        &pxsys_simulator_cjk_14);
+    ui_config.fonts[PXSYS_TYPOGRAPHY_LABEL] = simulator_ui_fonts.label;
+    ui_config.fonts[PXSYS_TYPOGRAPHY_CAPTION] = simulator_ui_fonts.caption;
     ui_config.allocator = allocator;
     ui_config.navigation_mode = options->navigation;
     ui_config.app_icon_context = &icon_resolver;
@@ -1067,6 +1090,7 @@ done:
         result = 1;
     if (display != NULL && lv_display_get_default() != NULL)
         lv_display_delete(display);
+    destroy_ui_fonts();
     lv_deinit();
     if (memory.allocations != 0) {
         fprintf(stderr, "PXA simulator leaked %zu owned allocations\n",

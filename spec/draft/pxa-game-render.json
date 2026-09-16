@@ -1,11 +1,11 @@
 {
-  "schema": "pxa-game-render-spec-0.1",
+  "schema": "pxa-game-render-spec-0.2",
   "status": "draft",
   "service": {
     "name": "game-render",
     "id": 18,
     "major": 0,
-    "minor": 1,
+    "minor": 2,
     "patch": 0
   },
   "opcodes": [
@@ -40,5 +40,5 @@
     "texture_dimension": 256,
     "palette_colors": 256
   },
-  "protocol_version": "0.1.0"
+  "protocol_version": "0.2.0"
 }

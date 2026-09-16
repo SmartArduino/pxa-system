@@ -55,6 +55,8 @@ static pxa_status_t backend_query(void *context, uint64_t provider_context,
     telemetry->submitted_frames = 12;
     telemetry->draw_list_bytes = 4096;
     telemetry->last_host_raster_us = 321;
+    telemetry->rendered_frames = 10;
+    telemetry->visible_frames = 9;
     ++backend->queries;
     return PXA_STATUS_OK;
 }
@@ -87,7 +89,7 @@ int main(void) {
     void *service_workspace;
     uint8_t packet[64];
     uint8_t event_bytes[64];
-    uint8_t io[88] = {0};
+    uint8_t io[PXA_GAME_RENDER_TELEMETRY_BYTES] = {0};
     pxa_event_view_t view;
     pxa_message_view_t event;
     pxa_handle_t handle;
@@ -163,7 +165,8 @@ int main(void) {
                           PXA_GAME_RENDER_IO_TELEMETRY, io, sizeof(io)) ==
            (int32_t)sizeof(io));
     assert(pxa_read_u64(io) == 12 && pxa_read_u64(io + 8) == 4096 &&
-           pxa_read_u32(io + 84) == 321);
+           pxa_read_u32(io + 84) == 321 && pxa_read_u64(io + 88) == 10 &&
+           pxa_read_u64(io + 96) == 9);
     assert(pxa_handle_close(runtime, component, handle) == PXA_STATUS_OK);
     assert(pxa_component_finish_event(runtime, component, 1) == PXA_STATUS_OK);
     assert(backend.creates == 1 && backend.uploads == 1 &&

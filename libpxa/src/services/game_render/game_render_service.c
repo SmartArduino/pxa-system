@@ -217,6 +217,8 @@ static int32_t context_io(void *context, uint32_t operation, uint8_t *data,
             pxa_write_u32(data + 76, telemetry.last_draw_list_bytes);
             pxa_write_u32(data + 80, telemetry.last_covered_pixels);
             pxa_write_u32(data + 84, telemetry.last_host_raster_us);
+            pxa_write_u64(data + 88, telemetry.rendered_frames);
+            pxa_write_u64(data + 96, telemetry.visible_frames);
         }
     } else {
         return PXA_STATUS_UNSUPPORTED;

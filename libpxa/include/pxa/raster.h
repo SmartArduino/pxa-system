@@ -104,6 +104,8 @@ typedef struct {
     uint32_t last_draw_list_bytes;
     uint32_t last_covered_pixels;
     uint32_t last_host_raster_us;
+    uint64_t rendered_frames;
+    uint64_t visible_frames;
 } pxa_raster_telemetry_t;
 
 typedef struct {

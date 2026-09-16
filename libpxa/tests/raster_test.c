@@ -190,6 +190,98 @@ static void test_additive_capability_fallback(void) {
     assert(pixel == UINT16_C(0xffff));
 }
 
+static void test_sprite_scaling_and_clipping(void) {
+    uint8_t bytes[PXA_RASTER_DRAW_HEADER_BYTES + PXA_RASTER_SPRITE_BYTES];
+    uint8_t texture[3 * 2] = {1, 2, 3, 4, 5, 6};
+    uint16_t palette[256] = {0};
+    uint16_t pixels[5 * 4] = {0};
+    pxa_raster_resources_t resources;
+    pxa_raster_target_t target;
+    pxa_raster_draw_list_view_t list;
+    uint8_t *record;
+    uint32_t x;
+    uint32_t y;
+    for (x = 1; x <= 6; ++x) palette[x] = (uint16_t)(0x1000u + x);
+    memset(&resources, 0, sizeof(resources));
+    memset(&target, 0, sizeof(target));
+    resources.palette = palette;
+    resources.textures[0].pixels = texture;
+    resources.textures[0].width = 3;
+    resources.textures[0].height = 2;
+    target.pixels = pixels;
+    target.stride_pixels = 5;
+    target.width = 5;
+    target.height = 4;
+    begin_list(bytes, 0, 1, 2, sizeof(bytes));
+    record = bytes + PXA_RASTER_DRAW_HEADER_BYTES;
+    record[0] = PXA_RASTER_RECORD_SPRITE;
+    put_u16(record + 2, PXA_RASTER_SPRITE_BYTES);
+    put_u16(record + 8, (uint16_t)-2);
+    put_u16(record + 10, (uint16_t)-1);
+    put_u16(record + 12, 9);
+    put_u16(record + 14, 6);
+    put_u16(record + 20, 3);
+    put_u16(record + 22, 2);
+    assert(pxa_raster_validate_draw_list(bytes, sizeof(bytes), &target,
+                                         &resources, &list) == PXA_STATUS_OK);
+    pxa_raster_execute_draw_list(bytes, &list, &target, &resources, NULL);
+    for (y = 0; y < target.height; ++y) {
+        const uint32_t source_y = (y + 1u) * 2u / 6u;
+        for (x = 0; x < target.width; ++x) {
+            const uint32_t source_x = (x + 2u) * 3u / 9u;
+            const uint8_t texel = texture[source_y * 3u + source_x];
+            assert(pixels[y * target.stride_pixels + x] == palette[texel]);
+        }
+    }
+}
+
+static void test_sprite_scaling_ratios(void) {
+    uint8_t bytes[PXA_RASTER_DRAW_HEADER_BYTES + PXA_RASTER_SPRITE_BYTES];
+    uint8_t texture[16];
+    uint16_t palette[256] = {0};
+    uint16_t pixels[31];
+    pxa_raster_resources_t resources;
+    pxa_raster_target_t target;
+    pxa_raster_draw_list_view_t list;
+    uint8_t *record;
+    uint32_t output_width;
+    uint32_t x;
+    for (x = 0; x < 16; ++x) {
+        texture[x] = (uint8_t)(x + 1u);
+        palette[x + 1u] = (uint16_t)(0x2000u + x);
+    }
+    memset(&resources, 0, sizeof(resources));
+    memset(&target, 0, sizeof(target));
+    resources.palette = palette;
+    resources.textures[0].pixels = texture;
+    resources.textures[0].width = 16;
+    resources.textures[0].height = 1;
+    target.pixels = pixels;
+    target.stride_pixels = 31;
+    target.width = 31;
+    target.height = 1;
+    begin_list(bytes, 0, 1, 3, sizeof(bytes));
+    record = bytes + PXA_RASTER_DRAW_HEADER_BYTES;
+    record[0] = PXA_RASTER_RECORD_SPRITE;
+    put_u16(record + 2, PXA_RASTER_SPRITE_BYTES);
+    put_u16(record + 14, 1);
+    put_u16(record + 20, 16);
+    put_u16(record + 22, 1);
+    for (output_width = 1; output_width <= 31; ++output_width) {
+        memset(pixels, 0, sizeof(pixels));
+        put_u16(record + 12, (uint16_t)output_width);
+        assert(pxa_raster_validate_draw_list(bytes, sizeof(bytes), &target,
+                                             &resources, &list) ==
+               PXA_STATUS_OK);
+        pxa_raster_execute_draw_list(bytes, &list, &target, &resources, NULL);
+        for (x = 0; x < output_width; ++x) {
+            const uint32_t source_x = x * 16u / output_width;
+            assert(pixels[x] == palette[texture[source_x]]);
+        }
+        for (; x < target.width; ++x) assert(pixels[x] == 0);
+    }
+}
+
 static void test_perspective_uv_and_solid_depth(void) {
     uint8_t bytes[PXA_RASTER_DRAW_HEADER_BYTES + PXA_RASTER_CLEAR_BYTES +
                   PXA_RASTER_TEXTURED_QUAD_BYTES * 2u];
@@ -333,6 +425,8 @@ int main(void) {
     test_upload_validation();
     test_quads_clipping_uv_and_telemetry();
     test_additive_capability_fallback();
+    test_sprite_scaling_and_clipping();
+    test_sprite_scaling_ratios();
     test_perspective_uv_and_solid_depth();
     test_sprite_and_triangle_batches();
     return 0;

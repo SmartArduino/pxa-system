@@ -10,7 +10,15 @@ endif()
 
 find_package(SDL2 REQUIRED)
 find_package(PNG REQUIRED)
+find_package(Freetype REQUIRED)
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
+
+set(PXSYS_DESKTOP_TEXT_FONT
+    "${CMAKE_CURRENT_LIST_DIR}/../../../../factory/base/system/fonts/noto_sans_cjk_common.ttf"
+    CACHE FILEPATH "TTF used for all desktop simulator text")
+if(NOT EXISTS "${PXSYS_DESKTOP_TEXT_FONT}")
+    message(FATAL_ERROR "Desktop simulator text font is missing: ${PXSYS_DESKTOP_TEXT_FONT}")
+endif()
 
 if(NOT TARGET lvgl)
     set(PXSYS_LVGL_SOURCE_DIR "" CACHE PATH
@@ -38,7 +46,7 @@ if(NOT TARGET lvgl)
 endif()
 
 target_include_directories(lvgl PUBLIC "${CMAKE_CURRENT_LIST_DIR}")
-target_link_libraries(lvgl PUBLIC SDL2::SDL2)
+target_link_libraries(lvgl PUBLIC SDL2::SDL2 Freetype::Freetype)
 
 if(PXSYS_DESKTOP_STANDALONE)
     set(PXSYS_BUILD_SIMULATOR OFF CACHE BOOL "" FORCE)
@@ -78,13 +86,13 @@ add_custom_command(
 
 add_executable(pxsys_desktop_simulator
     main.c builtin_catalog.c simulator_runtime.c pxadb_control.c
-    fonts/pxsys_simulator_cjk_14.c fonts/pxsys_simulator_cjk_16.c
     "${PXSYS_DESKTOP_CATALOG_DATA}")
 target_compile_features(pxsys_desktop_simulator PRIVATE c_std_99)
 target_include_directories(pxsys_desktop_simulator PRIVATE
     "${CMAKE_CURRENT_BINARY_DIR}/generated")
 target_compile_definitions(pxsys_desktop_simulator PRIVATE
-    PXSYS_DESKTOP_APP_SOURCE_ROOT="${PXSYS_DESKTOP_APP_SOURCE_ROOT}")
+    PXSYS_DESKTOP_APP_SOURCE_ROOT="${PXSYS_DESKTOP_APP_SOURCE_ROOT}"
+    PXSYS_DESKTOP_TEXT_FONT="${PXSYS_DESKTOP_TEXT_FONT}")
 target_link_libraries(pxsys_desktop_simulator PRIVATE
     pxsys::standard pxsys::pxa pxsys::renderer_lvgl pxsys::reference_lvgl
     lvgl SDL2::SDL2 PNG::PNG m)

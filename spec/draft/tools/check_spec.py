@@ -180,7 +180,7 @@ def validate_specs() -> tuple[int, int]:
         "audio": (10, "0.5.0"), "permission": (11, "0.1.0"),
         "work": (13, "0.1.0"), "wasi": (14, "0.1.0"),
         "device": (15, "0.1.0"), "surface": (16, "0.2.0"),
-        "game-render": (18, "0.1.0"),
+        "game-render": (18, "0.2.0"),
     }
     core_services = {item["name"]: item for item in core["services"]}
     for name, (service_id, version) in expected_services.items():

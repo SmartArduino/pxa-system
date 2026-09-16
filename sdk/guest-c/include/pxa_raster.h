@@ -41,7 +41,7 @@
 #define PXA_RASTER_SPRITE_TRANSPARENT_INDEX0 UINT8_C(1)
 #define PXA_RASTER_SPRITE_SOLID_COLOR UINT8_C(2)
 #define PXA_RASTER_SPRITE_ADDITIVE UINT8_C(4)
-#define PXA_RASTER_TELEMETRY_BYTES UINT32_C(88)
+#define PXA_RASTER_TELEMETRY_BYTES UINT32_C(104)
 
 typedef struct {
     int16_t x_q4;
@@ -89,6 +89,8 @@ typedef struct {
     uint32_t last_draw_list_bytes;
     uint32_t last_covered_pixels;
     uint32_t last_host_raster_us;
+    uint64_t rendered_frames;
+    uint64_t visible_frames;
 } pxa_raster_telemetry_t;
 
 static inline void pxa_raster_zero_bytes(void *memory, size_t size) {
@@ -423,6 +425,8 @@ static inline int32_t pxa_raster_query_telemetry(
     telemetry->last_draw_list_bytes = pxa_read_u32(bytes + 76);
     telemetry->last_covered_pixels = pxa_read_u32(bytes + 80);
     telemetry->last_host_raster_us = pxa_read_u32(bytes + 84);
+    telemetry->rendered_frames = pxa_read_u64(bytes + 88);
+    telemetry->visible_frames = pxa_read_u64(bytes + 96);
     return result;
 }
 

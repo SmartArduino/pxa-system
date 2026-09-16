@@ -726,6 +726,8 @@ static int surface_process_pending(product_host_t *host) {
         pxa_raster_target_t target;
         pxa_raster_draw_list_view_t list;
         pxa_raster_telemetry_t frame_telemetry = {0};
+        uint64_t raster_started_us;
+        uint64_t raster_finished_us;
         pxa_status_t status;
         const uint8_t draw_index = (uint8_t)host->raster_draw_pending;
         if (host->raster_draw_pending < 0) return 0;
@@ -745,8 +747,17 @@ static int surface_process_pending(product_host_t *host) {
             ++host->raster_telemetry.rejected_lists;
             return 0;
         }
+        raster_started_us = now_us(NULL);
         pxa_raster_execute_draw_list(host->raster_draw_lists[draw_index], &list,
                                      &target, &resources, &frame_telemetry);
+        raster_finished_us = now_us(NULL);
+        ++host->raster_telemetry.rendered_frames;
+        host->raster_telemetry.host_raster_us +=
+            raster_finished_us - raster_started_us;
+        host->raster_telemetry.last_host_raster_us =
+            raster_finished_us - raster_started_us > UINT32_MAX
+                ? UINT32_MAX
+                : (uint32_t)(raster_finished_us - raster_started_us);
         host->raster_telemetry.draw_list_bytes += frame_telemetry.draw_list_bytes;
         host->raster_telemetry.covered_pixels += frame_telemetry.covered_pixels;
         host->raster_telemetry.clear_commands += frame_telemetry.clear_commands;
@@ -781,6 +792,8 @@ static int surface_process_pending(product_host_t *host) {
         host->surface_pending_frame_id = 0;
     }
     ++host->surface_presented_frames;
+    if ((host->surface_flags & PRODUCT_SURFACE_FLAG_GAME_RENDER) != 0)
+        ++host->raster_telemetry.visible_frames;
     if ((host->surface_flags & PXA_SURFACE_FLAG_GUEST_MAPPED) != 0 &&
         !surface_enqueue_release(host, buffer_index, frame_id)) return 0;
     lv_image_set_src(host->surface_image, &host->surface_bitmap);
@@ -1425,7 +1438,7 @@ int main(int argc, char **argv) {
     capabilities[5].service = PXA_PERMISSION_SERVICE_ID; capabilities[5].version.major = 0; capabilities[5].version.minor = 1;
     capabilities[6].service = PXA_STORAGE_SERVICE_ID; capabilities[6].version.major = 0; capabilities[6].version.minor = 1;
     capabilities[7].service = PXA_SURFACE_SERVICE_ID; capabilities[7].version.major = 0; capabilities[7].version.minor = 2;
-    capabilities[8].service = PXA_GAME_RENDER_SERVICE_ID; capabilities[8].version.major = 0; capabilities[8].version.minor = 1;
+    capabilities[8].service = PXA_GAME_RENDER_SERVICE_ID; capabilities[8].version.major = PXA_GAME_RENDER_SERVICE_MAJOR; capabilities[8].version.minor = PXA_GAME_RENDER_SERVICE_MINOR;
     activation.core_version.major = 0; activation.core_version.minor = 1;
     activation.services = capabilities; activation.service_count = 9;
     profile.target = (pxa_bytes_t){(const uint8_t *)"linux-x86_64", 13};
