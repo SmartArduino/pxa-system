@@ -4,7 +4,6 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "pxa/raster.h"
 #include "pxa/runtime.h"
 
 #ifdef __cplusplus
@@ -13,7 +12,7 @@ extern "C" {
 
 #define PXA_SURFACE_SERVICE_ID UINT16_C(16)
 #define PXA_SURFACE_SERVICE_MAJOR UINT16_C(0)
-#define PXA_SURFACE_SERVICE_MINOR UINT16_C(3)
+#define PXA_SURFACE_SERVICE_MINOR UINT16_C(2)
 #define PXA_SURFACE_SERVICE_PATCH UINT16_C(0)
 
 #define PXA_SURFACE_CREATE UINT16_C(1)
@@ -30,20 +29,15 @@ extern "C" {
  * compositor. The Host may still compose any frame when trusted UI is active. */
 #define PXA_SURFACE_FLAG_PREFER_DIRECT_SCANOUT UINT8_C(2)
 #define PXA_SURFACE_FLAG_GUEST_MAPPED UINT8_C(4)
-#define PXA_SURFACE_FLAG_HOST_RASTER UINT8_C(8)
 #define PXA_SURFACE_FLAG_KNOWN_MASK                                      \
     (PXA_SURFACE_FLAG_PREMULTIPLIED_ALPHA |                             \
-     PXA_SURFACE_FLAG_PREFER_DIRECT_SCANOUT | PXA_SURFACE_FLAG_GUEST_MAPPED | \
-     PXA_SURFACE_FLAG_HOST_RASTER)
+     PXA_SURFACE_FLAG_PREFER_DIRECT_SCANOUT | PXA_SURFACE_FLAG_GUEST_MAPPED)
 #define PXA_SURFACE_MAX_DAMAGE_RECTS UINT8_C(8)
 #define PXA_SURFACE_MAX_OPAQUE_UI_REGIONS UINT8_C(8)
 #define PXA_SURFACE_STATE_FLAG_SUPPORTS_OPAQUE_UI_REGIONS UINT32_C(1)
 #define PXA_SURFACE_STATE_FLAG_SUPPORTS_ALPHA_COMPOSITING UINT32_C(2)
 #define PXA_SURFACE_STATE_FLAG_UI_ALPHA_PLANE_ACTIVE UINT32_C(4)
 #define PXA_SURFACE_STATE_FLAG_SUPPORTS_GUEST_MAPPED UINT32_C(8)
-#define PXA_SURFACE_STATE_FLAG_SUPPORTS_HOST_RASTER UINT32_C(16)
-#define PXA_SURFACE_STATE_FLAG_RASTER_TEXTURED_QUAD UINT32_C(32)
-#define PXA_SURFACE_STATE_FLAG_RASTER_ADDITIVE_SPRITE UINT32_C(64)
 
 /* Surface-specific pxa_io operations. REGISTER retains the validated Guest
  * address for the Surface lifetime, so it is only supported by runtimes whose
@@ -54,14 +48,10 @@ extern "C" {
 #define PXA_SURFACE_IO_REGISTER_BUFFERS UINT32_C(0x100)
 #define PXA_SURFACE_IO_ACQUIRE UINT32_C(0x101)
 #define PXA_SURFACE_IO_PRESENT UINT32_C(0x102)
-#define PXA_SURFACE_IO_RASTER_UPLOAD UINT32_C(0x103)
-#define PXA_SURFACE_IO_RASTER_SUBMIT UINT32_C(0x104)
-#define PXA_SURFACE_IO_RASTER_TELEMETRY UINT32_C(0x105)
 #define PXA_SURFACE_BUFFER_ALIGNMENT UINT32_C(64)
 #define PXA_SURFACE_ACQUIRE_RECORD_BYTES ((size_t)4)
 #define PXA_SURFACE_PRESENT_RECORD_BYTES ((size_t)16)
 #define PXA_SURFACE_RELEASED_PAYLOAD_BYTES ((size_t)16)
-#define PXA_SURFACE_RASTER_TELEMETRY_BYTES ((size_t)88)
 
 typedef struct {
     uint16_t width;
@@ -134,15 +124,6 @@ typedef pxa_status_t (*pxa_surface_peek_release_fn)(
     void *context, uint64_t provider_surface, pxa_surface_release_t *release);
 typedef void (*pxa_surface_consume_release_fn)(
     void *context, uint64_t provider_surface);
-typedef pxa_status_t (*pxa_surface_raster_upload_fn)(
-    void *context, uint64_t provider_surface, const uint8_t *bytes,
-    size_t size);
-typedef pxa_status_t (*pxa_surface_raster_submit_fn)(
-    void *context, uint64_t provider_surface, const uint8_t *bytes,
-    size_t size);
-typedef pxa_status_t (*pxa_surface_raster_query_fn)(
-    void *context, uint64_t provider_surface,
-    pxa_raster_telemetry_t *telemetry);
 typedef pxa_status_t (*pxa_surface_queue_fn)(
     void *context, uint64_t provider_surface, uint64_t frame_id,
     const pxa_surface_damage_rect_t *damage, uint8_t damage_count);
@@ -175,9 +156,6 @@ typedef struct {
     pxa_surface_present_buffer_fn present_buffer;
     pxa_surface_peek_release_fn peek_release;
     pxa_surface_consume_release_fn consume_release;
-    pxa_surface_raster_upload_fn raster_upload;
-    pxa_surface_raster_submit_fn raster_submit;
-    pxa_surface_raster_query_fn raster_query;
 } pxa_surface_backend_t;
 
 typedef struct {

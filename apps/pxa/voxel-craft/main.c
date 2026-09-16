@@ -1,8 +1,8 @@
 /* Voxel Craft: a first-person voxel sandbox for PXA.
  *
  * The world is a 64 x 24 x 64 block grid generated from value noise. The scene
- * uses a capability-gated Host Raster Surface during play and keeps the
- * GuestMapped pixel renderer as its compatibility and complex-UI fallback.
+ * uses a capability-gated GameRender context during play and keeps the
+ * GuestMapped pixel renderer as its complex-UI fallback.
  * The Host fuses nearest upscale, rotation and panel byte order conversion. Touch
  * controls: left half is a movement stick, right half looks around. The MINE
  * button holds a mining action with per-block progress and break particles,
@@ -11,6 +11,7 @@
  * mining, break, place, attack, hit and jump effects.
  */
 #include "pxa.h"
+#include "pxa_game_render.h"
 #include "pxa_raster.h"
 #include "pxa_storage.h"
 #include "pxa_surface.h"
@@ -32,7 +33,6 @@
 #define WINDOW_SNAPSHOT_REQUEST UINT32_C(3)
 #define SURFACE_CREATE_REQUEST UINT32_C(4)
 #define SURFACE_CONFIGURE_REQUEST UINT32_C(5)
-#define SURFACE_CAPABILITIES_REQUEST_BASE UINT32_C(0x60000000)
 #define PERF_CLOCK_FRAME_START UINT32_C(0x70)
 #define PERF_CLOCK_UPDATE_END UINT32_C(0x71)
 #define PERF_CLOCK_RAYCAST_START UINT32_C(0x72)
@@ -104,7 +104,6 @@ static uint8_t g_surface_mode;
 static uint8_t g_surface_request_mode;
 static uint8_t g_raster_supported;
 static uint8_t g_raster_ready;
-static uint32_t g_surface_capabilities_request;
 static voxel_surface_ownership_t g_surface_ownership;
 static uint8_t g_input_initialized;
 static player_t g_player;
@@ -520,7 +519,7 @@ static int request_surface_create(void) {
             ? SURFACE_MODE_RASTER
             : SURFACE_MODE_MAPPED;
     if (!(g_surface_request_mode == SURFACE_MODE_RASTER
-              ? pxa_surface_create_rgb565_host_raster(
+              ? pxa_game_render_create(
                     SURFACE_CREATE_REQUEST, g_surface_width,
                     g_surface_height, SURFACE_BUFFER_COUNT, 1, g_packet,
                     sizeof(g_packet))
@@ -1940,17 +1939,48 @@ static int handle_surface_create(const pxa_event_t *event) {
     const uint32_t expected_stride = (uint32_t)g_surface_width *
                                      sizeof(g_surface_buffers[0]);
     const uint32_t expected_bytes = expected_stride * g_surface_height;
-    if (!pxa_surface_parse_create(event, &created) ||
-        event->request_id != SURFACE_CREATE_REQUEST) {
+    if (event == NULL || event->request_id != SURFACE_CREATE_REQUEST)
         return 0;
-    }
-    g_surface_create_pending = 0;
-    if (created.status == PXA_STATUS_UNSUPPORTED &&
-        g_surface_request_mode == SURFACE_MODE_RASTER) {
-        g_raster_supported = 0;
-        schedule_surface_retry();
+    if (g_surface_request_mode == SURFACE_MODE_RASTER) {
+        pxa_game_render_create_result_t renderer;
+        const uint32_t required = PXA_RASTER_CAP_TEXTURED_QUAD;
+        if (!pxa_game_render_parse_create(event, &renderer)) return 0;
+        g_surface_create_pending = 0;
+        if (renderer.status == PXA_STATUS_UNSUPPORTED) {
+            g_raster_supported = 0;
+            schedule_surface_retry();
+            return 1;
+        }
+        if (renderer.status != PXA_STATUS_OK ||
+            (renderer.capabilities & required) != required ||
+            g_surface_width != (uint16_t)render_scene_width() ||
+            g_surface_height != (uint16_t)render_scene_height()) {
+            if (renderer.context_handle != 0)
+                (void)pxa_close_handle(renderer.context_handle);
+            schedule_surface_retry();
+            return 1;
+        }
+        g_surface_handle = renderer.context_handle;
+        g_surface_mode = SURFACE_MODE_RASTER;
+        g_surface_ownership.recreate_pending = 0;
+        reset_surface_ownership();
+        voxel_raster_reset();
+        voxel_raster_set_capabilities(renderer.capabilities);
+        if (!voxel_raster_upload_assets(g_surface_handle)) {
+            (void)pxa_close_handle(g_surface_handle);
+            g_surface_handle = 0;
+            g_raster_supported = 0;
+            voxel_raster_set_capabilities(0);
+            schedule_surface_retry();
+            return 1;
+        }
+        g_raster_ready = 1;
+        g_surface_retry_ticks = 0;
+        (void)render_frame();
         return 1;
     }
+    if (!pxa_surface_parse_create(event, &created)) return 0;
+    g_surface_create_pending = 0;
     if (created.status != PXA_STATUS_OK ||
         created.stride_bytes != expected_stride ||
         created.frame_bytes != expected_bytes ||
@@ -1969,19 +1999,7 @@ static int handle_surface_create(const pxa_event_t *event) {
     g_surface_mode = g_surface_request_mode;
     g_surface_ownership.recreate_pending = 0;
     reset_surface_ownership();
-    if (g_surface_mode == SURFACE_MODE_RASTER) {
-        if (++g_surface_capabilities_request == 0)
-            ++g_surface_capabilities_request;
-        if (!pxa_surface_query_state(g_surface_capabilities_request,
-                                     g_surface_handle, g_packet,
-                                     sizeof(g_packet))) {
-            (void)pxa_close_handle(g_surface_handle);
-            g_surface_handle = 0;
-            g_raster_supported = 0;
-            schedule_surface_retry();
-            return 1;
-        }
-    } else if (pxa_surface_register_buffers(
+    if (pxa_surface_register_buffers(
                    g_surface_handle, g_surface_buffers, created.frame_bytes,
                    created.buffer_count) !=
                (int32_t)(created.frame_bytes * created.buffer_count)) {
@@ -2001,33 +2019,6 @@ static int handle_surface_create(const pxa_event_t *event) {
     }
     g_surface_retry_ticks = 0;
     voxel_raster_reset();
-    if (g_surface_mode != SURFACE_MODE_RASTER) (void)render_frame();
-    return 1;
-}
-
-static int handle_surface_capabilities(const pxa_event_t *event) {
-    pxa_surface_state_result_t state;
-    const uint32_t required =
-        PXA_SURFACE_STATE_FLAG_SUPPORTS_HOST_RASTER |
-        PXA_SURFACE_STATE_FLAG_RASTER_TEXTURED_QUAD;
-    if (!pxa_surface_parse_state(event, &state) ||
-        event->request_id != g_surface_capabilities_request)
-        return 0;
-    if (g_surface_handle == 0 || g_surface_mode != SURFACE_MODE_RASTER)
-        return 1;
-    if (state.status != PXA_STATUS_OK ||
-        (state.flags & required) != required ||
-        !voxel_raster_upload_assets(g_surface_handle)) {
-        if (g_surface_handle != 0) (void)pxa_close_handle(g_surface_handle);
-        g_surface_handle = 0;
-        g_raster_ready = 0;
-        voxel_raster_set_capabilities(0);
-        g_raster_supported = 0;
-        schedule_surface_retry();
-        return 1;
-    }
-    voxel_raster_set_capabilities(state.flags);
-    g_raster_ready = 1;
     (void)render_frame();
     return 1;
 }
@@ -2078,7 +2069,6 @@ int32_t pxa_app_start(const uint8_t *config, uint32_t length) {
      * the same UI state used by the mapped renderer. */
     g_raster_supported = VOXEL_HOST_RASTER_DEFAULT;
     g_raster_ready = 0;
-    g_surface_capabilities_request = SURFACE_CAPABILITIES_REQUEST_BASE;
     voxel_raster_set_capabilities(0);
     reset_surface_ownership();
     voxel_raster_reset();
@@ -2221,9 +2211,6 @@ int32_t pxa_app_on_event(const uint8_t *event, uint32_t length) {
         return PXA_EVENT_HANDLED;
     }
     if (handle_surface_create(&parsed)) {
-        return PXA_EVENT_HANDLED;
-    }
-    if (handle_surface_capabilities(&parsed)) {
         return PXA_EVENT_HANDLED;
     }
     {

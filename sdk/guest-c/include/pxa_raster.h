@@ -4,10 +4,10 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "pxa_surface.h"
+#include "pxa_game_render.h"
 
 #define PXA_RASTER_ABI_MAJOR UINT16_C(1)
-#define PXA_RASTER_ABI_MINOR UINT16_C(1)
+#define PXA_RASTER_ABI_MINOR UINT16_C(2)
 #define PXA_RASTER_DRAW_MAGIC UINT32_C(0x4c525850)
 #define PXA_RASTER_UPLOAD_MAGIC UINT32_C(0x52555850)
 #define PXA_RASTER_MAX_TEXTURES UINT8_C(16)
@@ -17,6 +17,8 @@
 #define PXA_RASTER_CAP_FLAT_QUAD UINT32_C(1)
 #define PXA_RASTER_CAP_TEXTURED_QUAD UINT32_C(2)
 #define PXA_RASTER_CAP_ADDITIVE_SPRITE UINT32_C(4)
+#define PXA_RASTER_CAP_SPRITE_BATCH UINT32_C(8)
+#define PXA_RASTER_CAP_TRIANGLE_BATCH UINT32_C(16)
 #define PXA_RASTER_UPLOAD_PALETTE_RGB565 UINT8_C(1)
 #define PXA_RASTER_UPLOAD_TEXTURE_INDEX8 UINT8_C(2)
 #define PXA_RASTER_UPLOAD_HEADER_BYTES UINT32_C(20)
@@ -25,11 +27,16 @@
 #define PXA_RASTER_RECORD_FLAT_QUAD UINT8_C(2)
 #define PXA_RASTER_RECORD_TEXTURED_QUAD UINT8_C(3)
 #define PXA_RASTER_RECORD_SPRITE UINT8_C(4)
+#define PXA_RASTER_RECORD_SPRITE_BATCH UINT8_C(5)
+#define PXA_RASTER_RECORD_TRIANGLE_BATCH UINT8_C(6)
 #define PXA_RASTER_CLEAR_BYTES UINT16_C(8)
 #define PXA_RASTER_FLAT_QUAD_BYTES UINT16_C(24)
 #define PXA_RASTER_TEXTURED_QUAD_BYTES UINT16_C(56)
 #define PXA_RASTER_SPRITE_BYTES UINT16_C(24)
 #define PXA_RASTER_VERTEX_BYTES UINT16_C(12)
+#define PXA_RASTER_SPRITE_BATCH_HEADER_BYTES UINT16_C(12)
+#define PXA_RASTER_SPRITE_INSTANCE_BYTES UINT16_C(16)
+#define PXA_RASTER_TRIANGLE_BATCH_HEADER_BYTES UINT16_C(12)
 #define PXA_RASTER_QUAD_SOLID_COLOR UINT8_C(1)
 #define PXA_RASTER_SPRITE_TRANSPARENT_INDEX0 UINT8_C(1)
 #define PXA_RASTER_SPRITE_SOLID_COLOR UINT8_C(2)
@@ -44,6 +51,17 @@ typedef struct {
     uint8_t light;
     uint16_t depth_q8;
 } pxa_raster_vertex_t;
+
+typedef struct {
+    int16_t x;
+    int16_t y;
+    uint16_t width;
+    uint16_t height;
+    uint16_t source_x;
+    uint16_t source_y;
+    uint16_t source_width;
+    uint16_t source_height;
+} pxa_raster_sprite_instance_t;
 
 typedef struct {
     uint8_t *bytes;
@@ -87,50 +105,50 @@ static inline void pxa_raster_copy_bytes(uint8_t *destination,
 }
 
 static inline int32_t pxa_raster_upload(
-    uint32_t surface_handle, uint8_t kind, uint8_t slot, uint16_t width,
+    uint32_t context_handle, uint8_t kind, uint8_t slot, uint16_t width,
     uint16_t height, const uint8_t *payload, uint32_t payload_bytes,
     uint8_t *scratch, uint32_t scratch_capacity) {
     uint32_t total = PXA_RASTER_UPLOAD_HEADER_BYTES + payload_bytes;
-    if (surface_handle == 0 || payload == NULL || scratch == NULL ||
+    if (context_handle == 0 || payload == NULL || scratch == NULL ||
         total < payload_bytes || total > scratch_capacity)
         return PXA_STATUS_INVALID_ARGUMENT;
-    pxa_surface_store_u32(scratch, PXA_RASTER_UPLOAD_MAGIC);
-    pxa_surface_store_u16(scratch + 4, PXA_RASTER_ABI_MAJOR);
-    pxa_surface_store_u16(scratch + 6, PXA_RASTER_ABI_MINOR);
+    pxa_game_render_store_u32(scratch, PXA_RASTER_UPLOAD_MAGIC);
+    pxa_game_render_store_u16(scratch + 4, PXA_RASTER_ABI_MAJOR);
+    pxa_game_render_store_u16(scratch + 6, PXA_RASTER_ABI_MINOR);
     scratch[8] = kind;
     scratch[9] = slot;
-    pxa_surface_store_u16(scratch + 10, 0);
-    pxa_surface_store_u16(scratch + 12, width);
-    pxa_surface_store_u16(scratch + 14, height);
-    pxa_surface_store_u32(scratch + 16, payload_bytes);
+    pxa_game_render_store_u16(scratch + 10, 0);
+    pxa_game_render_store_u16(scratch + 12, width);
+    pxa_game_render_store_u16(scratch + 14, height);
+    pxa_game_render_store_u32(scratch + 16, payload_bytes);
     if (payload != scratch + PXA_RASTER_UPLOAD_HEADER_BYTES)
         pxa_raster_copy_bytes(scratch + PXA_RASTER_UPLOAD_HEADER_BYTES,
                               payload, payload_bytes);
-    return pxa_io(surface_handle, PXA_SURFACE_IO_RASTER_UPLOAD, scratch, total);
+    return pxa_io(context_handle, PXA_GAME_RENDER_IO_UPLOAD, scratch, total);
 }
 
 static inline int32_t pxa_raster_upload_palette_rgb565(
-    uint32_t surface_handle, const uint16_t palette[256], uint8_t *scratch,
+    uint32_t context_handle, const uint16_t palette[256], uint8_t *scratch,
     uint32_t scratch_capacity) {
     uint32_t index;
     if (palette == NULL || scratch == NULL || scratch_capacity < 532u)
         return PXA_STATUS_INVALID_ARGUMENT;
     for (index = 0; index < 256u; ++index)
-        pxa_surface_store_u16(scratch + PXA_RASTER_UPLOAD_HEADER_BYTES +
+        pxa_game_render_store_u16(scratch + PXA_RASTER_UPLOAD_HEADER_BYTES +
                                            index * 2u,
                               palette[index]);
     return pxa_raster_upload(
-        surface_handle, PXA_RASTER_UPLOAD_PALETTE_RGB565, 0, 256, 1,
+        context_handle, PXA_RASTER_UPLOAD_PALETTE_RGB565, 0, 256, 1,
         scratch + PXA_RASTER_UPLOAD_HEADER_BYTES, 512, scratch,
         scratch_capacity);
 }
 
 static inline int32_t pxa_raster_upload_texture_index8(
-    uint32_t surface_handle, uint8_t slot, uint16_t width, uint16_t height,
+    uint32_t context_handle, uint8_t slot, uint16_t width, uint16_t height,
     const uint8_t *pixels, uint8_t *scratch, uint32_t scratch_capacity) {
     uint64_t bytes = (uint64_t)width * height;
     if (bytes == 0 || bytes > UINT32_MAX) return PXA_STATUS_INVALID_ARGUMENT;
-    return pxa_raster_upload(surface_handle, PXA_RASTER_UPLOAD_TEXTURE_INDEX8,
+    return pxa_raster_upload(context_handle, PXA_RASTER_UPLOAD_TEXTURE_INDEX8,
                              slot, width, height, pixels, (uint32_t)bytes,
                              scratch, scratch_capacity);
 }
@@ -164,7 +182,7 @@ static inline uint8_t *pxa_raster_append(pxa_raster_draw_list_t *list,
     record = list->bytes + list->length;
     pxa_raster_zero_bytes(record, size);
     record[0] = type;
-    pxa_surface_store_u16(record + 2, size);
+    pxa_game_render_store_u16(record + 2, size);
     list->length += size;
     ++list->command_count;
     return record;
@@ -175,7 +193,7 @@ static inline int pxa_raster_clear(pxa_raster_draw_list_t *list,
     uint8_t *record = pxa_raster_append(list, PXA_RASTER_RECORD_CLEAR_RGB565,
                                         PXA_RASTER_CLEAR_BYTES);
     if (record == NULL) return 0;
-    pxa_surface_store_u16(record + 4, color);
+    pxa_game_render_store_u16(record + 4, color);
     return 1;
 }
 
@@ -188,9 +206,9 @@ static inline int pxa_raster_flat_quad(pxa_raster_draw_list_t *list,
     record = pxa_raster_append(list, PXA_RASTER_RECORD_FLAT_QUAD,
                                PXA_RASTER_FLAT_QUAD_BYTES);
     if (record == NULL) return 0;
-    pxa_surface_store_u16(record + 4, color);
+    pxa_game_render_store_u16(record + 4, color);
     for (index = 0; index < 8; ++index)
-        pxa_surface_store_u16(record + 8 + index * 2u, (uint16_t)xy_q4[index]);
+        pxa_game_render_store_u16(record + 8 + index * 2u, (uint16_t)xy_q4[index]);
     list->required_capabilities |= PXA_RASTER_CAP_FLAT_QUAD;
     return 1;
 }
@@ -207,12 +225,12 @@ static inline int pxa_raster_textured_quad(
     record[4] = texture_slot;
     for (index = 0; index < 4; ++index) {
         uint8_t *wire = record + 8 + index * PXA_RASTER_VERTEX_BYTES;
-        pxa_surface_store_u16(wire, (uint16_t)vertices[index].x_q4);
-        pxa_surface_store_u16(wire + 2, (uint16_t)vertices[index].y_q4);
-        pxa_surface_store_u16(wire + 4, (uint16_t)vertices[index].u_q4);
-        pxa_surface_store_u16(wire + 6, (uint16_t)vertices[index].v_q4);
+        pxa_game_render_store_u16(wire, (uint16_t)vertices[index].x_q4);
+        pxa_game_render_store_u16(wire + 2, (uint16_t)vertices[index].y_q4);
+        pxa_game_render_store_u16(wire + 4, (uint16_t)vertices[index].u_q4);
+        pxa_game_render_store_u16(wire + 6, (uint16_t)vertices[index].v_q4);
         wire[8] = vertices[index].light;
-        pxa_surface_store_u16(wire + 10, vertices[index].depth_q8);
+        pxa_game_render_store_u16(wire + 10, vertices[index].depth_q8);
     }
     list->required_capabilities |= PXA_RASTER_CAP_TEXTURED_QUAD;
     return 1;
@@ -228,15 +246,15 @@ static inline int pxa_raster_solid_depth_quad(
                                PXA_RASTER_TEXTURED_QUAD_BYTES);
     if (record == NULL) return 0;
     record[1] = PXA_RASTER_QUAD_SOLID_COLOR;
-    pxa_surface_store_u16(record + 6, color);
+    pxa_game_render_store_u16(record + 6, color);
     for (index = 0; index < 4; ++index) {
         uint8_t *wire = record + 8 + index * PXA_RASTER_VERTEX_BYTES;
-        pxa_surface_store_u16(wire, (uint16_t)vertices[index].x_q4);
-        pxa_surface_store_u16(wire + 2, (uint16_t)vertices[index].y_q4);
-        pxa_surface_store_u16(wire + 4, (uint16_t)vertices[index].u_q4);
-        pxa_surface_store_u16(wire + 6, (uint16_t)vertices[index].v_q4);
+        pxa_game_render_store_u16(wire, (uint16_t)vertices[index].x_q4);
+        pxa_game_render_store_u16(wire + 2, (uint16_t)vertices[index].y_q4);
+        pxa_game_render_store_u16(wire + 4, (uint16_t)vertices[index].u_q4);
+        pxa_game_render_store_u16(wire + 6, (uint16_t)vertices[index].v_q4);
         wire[8] = vertices[index].light;
-        pxa_surface_store_u16(wire + 10, vertices[index].depth_q8);
+        pxa_game_render_store_u16(wire + 10, vertices[index].depth_q8);
     }
     list->required_capabilities |= PXA_RASTER_CAP_TEXTURED_QUAD;
     return 1;
@@ -265,46 +283,129 @@ static inline int pxa_raster_sprite(
     if (record == NULL) return 0;
     record[1] = flags;
     record[4] = texture_slot;
-    pxa_surface_store_u16(record + 6, solid_color);
-    pxa_surface_store_u16(record + 8, (uint16_t)x);
-    pxa_surface_store_u16(record + 10, (uint16_t)y);
-    pxa_surface_store_u16(record + 12, width);
-    pxa_surface_store_u16(record + 14, height);
-    pxa_surface_store_u16(record + 16, source_x);
-    pxa_surface_store_u16(record + 18, source_y);
-    pxa_surface_store_u16(record + 20, source_width);
-    pxa_surface_store_u16(record + 22, source_height);
+    pxa_game_render_store_u16(record + 6, solid_color);
+    pxa_game_render_store_u16(record + 8, (uint16_t)x);
+    pxa_game_render_store_u16(record + 10, (uint16_t)y);
+    pxa_game_render_store_u16(record + 12, width);
+    pxa_game_render_store_u16(record + 14, height);
+    pxa_game_render_store_u16(record + 16, source_x);
+    pxa_game_render_store_u16(record + 18, source_y);
+    pxa_game_render_store_u16(record + 20, source_width);
+    pxa_game_render_store_u16(record + 22, source_height);
     if ((flags & PXA_RASTER_SPRITE_ADDITIVE) != 0)
         list->required_capabilities |= PXA_RASTER_CAP_ADDITIVE_SPRITE;
     return 1;
 }
 
-static inline int32_t pxa_raster_submit(uint32_t surface_handle,
+static inline int pxa_raster_sprite_batch(
+    pxa_raster_draw_list_t *list, uint8_t texture_slot, uint8_t flags,
+    uint32_t available_capabilities,
+    const pxa_raster_sprite_instance_t *instances, uint16_t count,
+    uint16_t solid_color) {
+    const uint8_t known = PXA_RASTER_SPRITE_TRANSPARENT_INDEX0 |
+                          PXA_RASTER_SPRITE_SOLID_COLOR |
+                          PXA_RASTER_SPRITE_ADDITIVE;
+    uint32_t size = PXA_RASTER_SPRITE_BATCH_HEADER_BYTES +
+                    (uint32_t)count * PXA_RASTER_SPRITE_INSTANCE_BYTES;
+    uint8_t *record;
+    uint16_t index;
+    if (list == NULL || texture_slot >= PXA_RASTER_MAX_TEXTURES ||
+        instances == NULL || count == 0 || size > UINT16_MAX ||
+        (flags & ~known) != 0 ||
+        (available_capabilities & PXA_RASTER_CAP_SPRITE_BATCH) == 0)
+        return 0;
+    if ((available_capabilities & PXA_RASTER_CAP_ADDITIVE_SPRITE) == 0)
+        flags &= (uint8_t)~PXA_RASTER_SPRITE_ADDITIVE;
+    record = pxa_raster_append(list, PXA_RASTER_RECORD_SPRITE_BATCH,
+                               (uint16_t)size);
+    if (record == NULL) return 0;
+    record[1] = flags;
+    record[4] = texture_slot;
+    pxa_game_render_store_u16(record + 6, solid_color);
+    pxa_game_render_store_u16(record + 8, count);
+    for (index = 0; index < count; ++index) {
+        const pxa_raster_sprite_instance_t *instance = &instances[index];
+        uint8_t *wire = record + PXA_RASTER_SPRITE_BATCH_HEADER_BYTES +
+                        (uint32_t)index * PXA_RASTER_SPRITE_INSTANCE_BYTES;
+        if (instance->width == 0 || instance->height == 0 ||
+            instance->source_width == 0 || instance->source_height == 0) {
+            list->status = PXA_STATUS_INVALID_ARGUMENT;
+            return 0;
+        }
+        pxa_game_render_store_u16(wire, (uint16_t)instance->x);
+        pxa_game_render_store_u16(wire + 2, (uint16_t)instance->y);
+        pxa_game_render_store_u16(wire + 4, instance->width);
+        pxa_game_render_store_u16(wire + 6, instance->height);
+        pxa_game_render_store_u16(wire + 8, instance->source_x);
+        pxa_game_render_store_u16(wire + 10, instance->source_y);
+        pxa_game_render_store_u16(wire + 12, instance->source_width);
+        pxa_game_render_store_u16(wire + 14, instance->source_height);
+    }
+    list->required_capabilities |= PXA_RASTER_CAP_SPRITE_BATCH;
+    if ((flags & PXA_RASTER_SPRITE_ADDITIVE) != 0)
+        list->required_capabilities |= PXA_RASTER_CAP_ADDITIVE_SPRITE;
+    return 1;
+}
+
+static inline int pxa_raster_triangle_batch(
+    pxa_raster_draw_list_t *list, const pxa_raster_vertex_t *vertices,
+    uint16_t triangle_count, uint8_t texture_slot, uint8_t solid,
+    uint16_t solid_color) {
+    uint32_t vertex_count = (uint32_t)triangle_count * 3u;
+    uint32_t size = PXA_RASTER_TRIANGLE_BATCH_HEADER_BYTES +
+                    vertex_count * PXA_RASTER_VERTEX_BYTES;
+    uint8_t *record;
+    uint32_t index;
+    if (list == NULL || vertices == NULL || triangle_count == 0 ||
+        texture_slot >= PXA_RASTER_MAX_TEXTURES || size > UINT16_MAX)
+        return 0;
+    record = pxa_raster_append(list, PXA_RASTER_RECORD_TRIANGLE_BATCH,
+                               (uint16_t)size);
+    if (record == NULL) return 0;
+    record[1] = solid ? PXA_RASTER_QUAD_SOLID_COLOR : 0;
+    record[4] = texture_slot;
+    pxa_game_render_store_u16(record + 6, solid_color);
+    pxa_game_render_store_u16(record + 8, triangle_count);
+    for (index = 0; index < vertex_count; ++index) {
+        uint8_t *wire = record + PXA_RASTER_TRIANGLE_BATCH_HEADER_BYTES +
+                        index * PXA_RASTER_VERTEX_BYTES;
+        pxa_game_render_store_u16(wire, (uint16_t)vertices[index].x_q4);
+        pxa_game_render_store_u16(wire + 2, (uint16_t)vertices[index].y_q4);
+        pxa_game_render_store_u16(wire + 4, (uint16_t)vertices[index].u_q4);
+        pxa_game_render_store_u16(wire + 6, (uint16_t)vertices[index].v_q4);
+        wire[8] = vertices[index].light;
+        pxa_game_render_store_u16(wire + 10, vertices[index].depth_q8);
+    }
+    list->required_capabilities |= PXA_RASTER_CAP_TRIANGLE_BATCH;
+    return 1;
+}
+
+static inline int32_t pxa_raster_submit(uint32_t context_handle,
                                         pxa_raster_draw_list_t *list) {
-    if (surface_handle == 0 || list == NULL || list->status != PXA_STATUS_OK ||
+    if (context_handle == 0 || list == NULL || list->status != PXA_STATUS_OK ||
         list->command_count == 0)
         return list != NULL && list->status != PXA_STATUS_OK
                    ? list->status
                    : PXA_STATUS_INVALID_ARGUMENT;
-    pxa_surface_store_u32(list->bytes, PXA_RASTER_DRAW_MAGIC);
-    pxa_surface_store_u16(list->bytes + 4, PXA_RASTER_ABI_MAJOR);
-    pxa_surface_store_u16(list->bytes + 6, PXA_RASTER_ABI_MINOR);
-    pxa_surface_store_u32(list->bytes + 8, list->length);
-    pxa_surface_store_u32(list->bytes + 12, list->required_capabilities);
-    pxa_surface_store_u32(list->bytes + 16, list->command_count);
-    pxa_surface_store_u64(list->bytes + 20, list->frame_id);
-    pxa_surface_store_u32(list->bytes + 28, 0);
-    return pxa_io(surface_handle, PXA_SURFACE_IO_RASTER_SUBMIT, list->bytes,
+    pxa_game_render_store_u32(list->bytes, PXA_RASTER_DRAW_MAGIC);
+    pxa_game_render_store_u16(list->bytes + 4, PXA_RASTER_ABI_MAJOR);
+    pxa_game_render_store_u16(list->bytes + 6, PXA_RASTER_ABI_MINOR);
+    pxa_game_render_store_u32(list->bytes + 8, list->length);
+    pxa_game_render_store_u32(list->bytes + 12, list->required_capabilities);
+    pxa_game_render_store_u32(list->bytes + 16, list->command_count);
+    pxa_game_render_store_u64(list->bytes + 20, list->frame_id);
+    pxa_game_render_store_u32(list->bytes + 28, 0);
+    return pxa_io(context_handle, PXA_GAME_RENDER_IO_SUBMIT, list->bytes,
                   list->length);
 }
 
 static inline int32_t pxa_raster_query_telemetry(
-    uint32_t surface_handle, pxa_raster_telemetry_t *telemetry) {
+    uint32_t context_handle, pxa_raster_telemetry_t *telemetry) {
     uint8_t bytes[PXA_RASTER_TELEMETRY_BYTES];
     int32_t result;
-    if (surface_handle == 0 || telemetry == NULL)
+    if (context_handle == 0 || telemetry == NULL)
         return PXA_STATUS_INVALID_ARGUMENT;
-    result = pxa_io(surface_handle, PXA_SURFACE_IO_RASTER_TELEMETRY, bytes,
+    result = pxa_io(context_handle, PXA_GAME_RENDER_IO_TELEMETRY, bytes,
                     sizeof(bytes));
     if (result != (int32_t)sizeof(bytes)) return result;
     telemetry->submitted_frames = pxa_read_u64(bytes);

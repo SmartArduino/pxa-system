@@ -538,6 +538,17 @@ if(PXA_BUILD_TESTS)
     endif()
     add_test(NAME pxa_surface_test COMMAND pxa_surface_test)
 
+    add_executable(pxa_game_render_test tests/game_render_test.c)
+    target_link_libraries(pxa_game_render_test PRIVATE pxa)
+    if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(pxa_game_render_test PRIVATE
+            -Wall -Wextra -Wpedantic)
+        if(PXA_WARNINGS_AS_ERRORS)
+            target_compile_options(pxa_game_render_test PRIVATE -Werror)
+        endif()
+    endif()
+    add_test(NAME pxa_game_render_test COMMAND pxa_game_render_test)
+
     add_executable(pxa_raster_test tests/raster_test.c)
     target_link_libraries(pxa_raster_test PRIVATE pxa)
     if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")

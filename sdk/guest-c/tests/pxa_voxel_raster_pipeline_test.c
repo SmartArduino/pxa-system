@@ -24,7 +24,7 @@ int32_t pxa_control(const uint8_t *data, uint32_t length) {
 int32_t pxa_io(uint32_t handle, uint32_t operation, uint8_t *data,
                uint32_t length) {
     assert(handle == 3 && data != NULL);
-    if (operation == PXA_SURFACE_IO_RASTER_SUBMIT) {
+    if (operation == PXA_GAME_RENDER_IO_SUBMIT) {
         assert(pxa_read_u32(data) == PXA_RASTER_DRAW_MAGIC);
         submitted_bytes = length;
         submitted_commands = pxa_read_u32(data + 16);
@@ -66,9 +66,8 @@ int main(void) {
                     .blocks[(y << 8) | (z << CHUNK_BITS) | x] = BLOCK_STONE;
 
     voxel_raster_reset();
-    voxel_raster_set_capabilities(
-        PXA_SURFACE_STATE_FLAG_SUPPORTS_HOST_RASTER |
-        PXA_SURFACE_STATE_FLAG_RASTER_TEXTURED_QUAD);
+    voxel_raster_set_capabilities(PXA_RASTER_CAP_FLAT_QUAD |
+                                  PXA_RASTER_CAP_TEXTURED_QUAD);
     assert(voxel_raster_upload_assets(3));
     assert(voxel_raster_render(3, 1, &player, QUALITY_BALANCED, &hud) > 0);
     voxel_raster_get_stats(&stats);

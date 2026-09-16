@@ -183,6 +183,89 @@ static pxa_status_t validate_sprite(const uint8_t *record, uint16_t size,
     return PXA_STATUS_OK;
 }
 
+static pxa_status_t validate_sprite_batch(
+    const uint8_t *record, uint16_t size,
+    const pxa_raster_resources_t *resources) {
+    const uint8_t flags = record[1];
+    const uint8_t slot = record[4];
+    const uint8_t known = PXA_RASTER_SPRITE_TRANSPARENT_INDEX0 |
+                          PXA_RASTER_SPRITE_SOLID_COLOR |
+                          PXA_RASTER_SPRITE_ADDITIVE;
+    const uint16_t count = read_u16(record + 8);
+    uint16_t index;
+    if (size < PXA_RASTER_SPRITE_BATCH_HEADER_BYTES || count == 0 ||
+        size != PXA_RASTER_SPRITE_BATCH_HEADER_BYTES +
+                    (uint32_t)count * PXA_RASTER_SPRITE_INSTANCE_BYTES)
+        return PXA_STATUS_PROTOCOL_ERROR;
+    if ((flags & ~known) != 0) return PXA_STATUS_UNSUPPORTED;
+    if ((flags & PXA_RASTER_SPRITE_ADDITIVE) != 0 &&
+        (resources->capabilities & PXA_RASTER_CAP_ADDITIVE_SPRITE) == 0)
+        return PXA_STATUS_UNSUPPORTED;
+    if (slot >= PXA_RASTER_MAX_TEXTURES ||
+        resources->textures[slot].pixels == NULL || resources->palette == NULL)
+        return PXA_STATUS_BAD_STATE;
+    if (record[5] != 0 || read_u16(record + 10) != 0 ||
+        ((flags & PXA_RASTER_SPRITE_SOLID_COLOR) == 0 &&
+         read_u16(record + 6) != 0))
+        return PXA_STATUS_PROTOCOL_ERROR;
+    for (index = 0; index < count; ++index) {
+        const uint8_t *instance =
+            record + PXA_RASTER_SPRITE_BATCH_HEADER_BYTES +
+            (uint32_t)index * PXA_RASTER_SPRITE_INSTANCE_BYTES;
+        const uint32_t source_right =
+            (uint32_t)read_u16(instance + 8) + read_u16(instance + 12);
+        const uint32_t source_bottom =
+            (uint32_t)read_u16(instance + 10) + read_u16(instance + 14);
+        if (read_u16(instance + 4) == 0 || read_u16(instance + 6) == 0 ||
+            read_u16(instance + 12) == 0 || read_u16(instance + 14) == 0 ||
+            source_right > resources->textures[slot].width ||
+            source_bottom > resources->textures[slot].height)
+            return PXA_STATUS_INVALID_ARGUMENT;
+    }
+    return PXA_STATUS_OK;
+}
+
+static pxa_status_t validate_triangle_batch(
+    const uint8_t *record, uint16_t size,
+    const pxa_raster_resources_t *resources) {
+    const uint8_t flags = record[1];
+    const uint8_t slot = record[4];
+    const uint16_t count = read_u16(record + 8);
+    const uint8_t solid = flags & PXA_RASTER_QUAD_SOLID_COLOR;
+    uint16_t triangle;
+    if (size < PXA_RASTER_TRIANGLE_BATCH_HEADER_BYTES || count == 0 ||
+        size != PXA_RASTER_TRIANGLE_BATCH_HEADER_BYTES +
+                    (uint32_t)count * 3u * PXA_RASTER_VERTEX_BYTES)
+        return PXA_STATUS_PROTOCOL_ERROR;
+    if ((flags & ~PXA_RASTER_QUAD_SOLID_COLOR) != 0 || record[5] != 0 ||
+        read_u16(record + 10) != 0 ||
+        (solid == 0 && read_u16(record + 6) != 0))
+        return PXA_STATUS_PROTOCOL_ERROR;
+    if (solid == 0 &&
+        (slot >= PXA_RASTER_MAX_TEXTURES || resources->palette == NULL ||
+         resources->textures[slot].pixels == NULL))
+        return PXA_STATUS_BAD_STATE;
+    for (triangle = 0; triangle < count; ++triangle) {
+        raster_vertex_t vertices[3];
+        uint8_t vertex;
+        int64_t area;
+        for (vertex = 0; vertex < 3; ++vertex) {
+            const uint8_t *wire =
+                record + PXA_RASTER_TRIANGLE_BATCH_HEADER_BYTES +
+                ((uint32_t)triangle * 3u + vertex) * PXA_RASTER_VERTEX_BYTES;
+            decode_vertex(wire, &vertices[vertex]);
+            if (wire[9] != 0 || vertices[vertex].depth == 0)
+                return PXA_STATUS_PROTOCOL_ERROR;
+        }
+        area = (int64_t)(vertices[1].x - vertices[0].x) *
+                   (vertices[2].y - vertices[0].y) -
+               (int64_t)(vertices[1].y - vertices[0].y) *
+                   (vertices[2].x - vertices[0].x);
+        if (area == 0) return PXA_STATUS_INVALID_ARGUMENT;
+    }
+    return PXA_STATUS_OK;
+}
+
 pxa_status_t pxa_raster_validate_draw_list(
     const uint8_t *bytes, size_t size, const pxa_raster_target_t *target,
     const pxa_raster_resources_t *resources,
@@ -248,6 +331,18 @@ pxa_status_t pxa_raster_validate_draw_list(
                                        abi_minor, resources);
         } else if (type == PXA_RASTER_RECORD_SPRITE) {
             status = validate_sprite(bytes + offset, record_size, resources);
+        } else if (type == PXA_RASTER_RECORD_SPRITE_BATCH) {
+            if ((required & PXA_RASTER_CAP_SPRITE_BATCH) == 0)
+                status = PXA_STATUS_PROTOCOL_ERROR;
+            else
+                status = validate_sprite_batch(bytes + offset, record_size,
+                                               resources);
+        } else if (type == PXA_RASTER_RECORD_TRIANGLE_BATCH) {
+            if ((required & PXA_RASTER_CAP_TRIANGLE_BATCH) == 0)
+                status = PXA_STATUS_PROTOCOL_ERROR;
+            else
+                status = validate_triangle_batch(bytes + offset, record_size,
+                                                 resources);
         } else {
             return PXA_STATUS_UNSUPPORTED;
         }
@@ -635,20 +730,19 @@ static uint32_t draw_quad(const uint8_t *record, uint8_t textured,
                          texture, resources->palette, perspective, target);
 }
 
-static uint32_t draw_sprite(const uint8_t *record,
-                            const pxa_raster_target_t *target,
-                            const pxa_raster_resources_t *resources) {
-    const pxa_raster_texture_t *texture = &resources->textures[record[4]];
-    const uint8_t flags = record[1];
-    const uint16_t solid_color = read_u16(record + 6);
-    const int32_t x0 = read_i16(record + 8);
-    const int32_t y0 = read_i16(record + 10);
-    const uint32_t width = read_u16(record + 12);
-    const uint32_t height = read_u16(record + 14);
-    const uint32_t source_x = read_u16(record + 16);
-    const uint32_t source_y = read_u16(record + 18);
-    const uint32_t source_width = read_u16(record + 20);
-    const uint32_t source_height = read_u16(record + 22);
+static uint32_t draw_sprite_instance(
+    const uint8_t *instance, const pxa_raster_texture_t *texture,
+    uint8_t flags, uint16_t solid_color,
+    const pxa_raster_target_t *target,
+    const pxa_raster_resources_t *resources) {
+    const int32_t x0 = read_i16(instance);
+    const int32_t y0 = read_i16(instance + 2);
+    const uint32_t width = read_u16(instance + 4);
+    const uint32_t height = read_u16(instance + 6);
+    const uint32_t source_x = read_u16(instance + 8);
+    const uint32_t source_y = read_u16(instance + 10);
+    const uint32_t source_width = read_u16(instance + 12);
+    const uint32_t source_height = read_u16(instance + 14);
     uint32_t covered = 0;
     uint32_t dy;
     for (dy = 0; dy < height; ++dy) {
@@ -674,6 +768,57 @@ static uint32_t draw_sprite(const uint8_t *record,
                                : color;
             ++covered;
         }
+    }
+    return covered;
+}
+
+static uint32_t draw_sprite(const uint8_t *record,
+                            const pxa_raster_target_t *target,
+                            const pxa_raster_resources_t *resources) {
+    return draw_sprite_instance(record + 8, &resources->textures[record[4]],
+                                record[1], read_u16(record + 6), target,
+                                resources);
+}
+
+static uint32_t draw_sprite_batch(
+    const uint8_t *record, const pxa_raster_target_t *target,
+    const pxa_raster_resources_t *resources) {
+    const pxa_raster_texture_t *texture = &resources->textures[record[4]];
+    const uint16_t count = read_u16(record + 8);
+    uint32_t covered = 0;
+    uint16_t index;
+    for (index = 0; index < count; ++index) {
+        covered += draw_sprite_instance(
+            record + PXA_RASTER_SPRITE_BATCH_HEADER_BYTES +
+                (uint32_t)index * PXA_RASTER_SPRITE_INSTANCE_BYTES,
+            texture, record[1], read_u16(record + 6), target, resources);
+    }
+    return covered;
+}
+
+static uint32_t draw_triangle_batch(
+    const uint8_t *record, const pxa_raster_target_t *target,
+    const pxa_raster_resources_t *resources) {
+    const uint8_t solid = record[1] & PXA_RASTER_QUAD_SOLID_COLOR;
+    const pxa_raster_texture_t *texture =
+        solid ? NULL : &resources->textures[record[4]];
+    const uint16_t color = solid ? read_u16(record + 6) : 0;
+    const uint16_t count = read_u16(record + 8);
+    uint32_t covered = 0;
+    uint16_t triangle;
+    for (triangle = 0; triangle < count; ++triangle) {
+        raster_vertex_t vertices[3];
+        uint8_t vertex;
+        for (vertex = 0; vertex < 3; ++vertex) {
+            decode_vertex(
+                record + PXA_RASTER_TRIANGLE_BATCH_HEADER_BYTES +
+                    ((uint32_t)triangle * 3u + vertex) *
+                        PXA_RASTER_VERTEX_BYTES,
+                &vertices[vertex]);
+        }
+        covered += draw_triangle(&vertices[0], &vertices[1], &vertices[2],
+                                 color, texture, resources->palette, 1,
+                                 target);
     }
     return covered;
 }
@@ -715,6 +860,14 @@ void pxa_raster_execute_draw_list(const uint8_t *bytes,
         } else if (record[0] == PXA_RASTER_RECORD_SPRITE) {
             covered += draw_sprite(record, target, resources);
             if (telemetry != NULL) ++telemetry->sprite_commands;
+        } else if (record[0] == PXA_RASTER_RECORD_SPRITE_BATCH) {
+            const uint16_t count = read_u16(record + 8);
+            covered += draw_sprite_batch(record, target, resources);
+            if (telemetry != NULL) telemetry->sprite_commands += count;
+        } else if (record[0] == PXA_RASTER_RECORD_TRIANGLE_BATCH) {
+            const uint16_t count = read_u16(record + 8);
+            covered += draw_triangle_batch(record, target, resources);
+            if (telemetry != NULL) telemetry->textured_quad_commands += count;
         }
         offset += size;
     }

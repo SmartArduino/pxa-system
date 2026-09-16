@@ -53,7 +53,8 @@ Status: **design draft; no compatibility guarantee**.
   [pxa-audio.json](pxa-audio.json), [pxa-permission.json](pxa-permission.json),
   [pxa-device.json](pxa-device.json), and [pxa-work.json](pxa-work.json) define
   published Draft service assignments. [pxa-surface.json](pxa-surface.json)
-  defines the bulk-pixel Surface service.
+  defines the bulk-pixel Surface service. [pxa-game-render.json](pxa-game-render.json)
+  defines the game-oriented persistent-resource renderer.
 - `golden/` contains reproducible Core, Package and UI 0.3 wire examples.
 - `tools/check_spec.py` validates the specification and golden vectors without
   third-party dependencies.
@@ -81,6 +82,7 @@ not the same as publishing that service ABI.
 | 14 | `wasi` | WASI Preview 1 reactor and explicitly bounded ambient capabilities |
 | 15 | `device` | Permission-bound physical interface identifiers |
 | 16 | `surface` | Host-owned bulk-pixel BufferQueue and composition |
+| 18 | `game-render` | Persistent 2D/software-3D resources and asynchronous draw lists |
 
 Canvas is not a top-level service. It is a UI node plus a length-delimited
 display-list subprotocol, so a UI transaction can atomically create and update

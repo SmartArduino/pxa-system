@@ -1,10 +1,10 @@
-# Voxel Craft Host Raster 迁移设计
+# Voxel Craft GameRender 迁移设计
 
 ## 目标与边界
 
-Voxel Craft 的世界模拟、可见块选择、greedy mesh、背面剔除、视锥裁剪和投影仍在 Guest。Host 只接收已经投影到 Surface 像素坐标的紧凑 DrawList，在 Host-owned RGB565 buffer 上执行清屏、平面色 Quad、INDEX8 纹理 Quad 和能力受控的 additive sprite，然后把完成的 buffer 交给现有 Surface latest-frame mailbox。
+Voxel Craft 的世界模拟、可见块选择、greedy mesh、背面剔除、视锥裁剪和投影仍在 Guest。Host 只接收已经投影到屏幕坐标的紧凑 DrawList，在 Host-owned RGB565 buffer 上执行清屏、平面色 Quad、INDEX8 纹理 Quad 和能力受控的 additive sprite，然后把完成的 buffer 交给现有显示 presenter。
 
-Raster 不是另一套窗口或显示服务。Surface 继续拥有 buffer 生命周期、前后台帧、系统 UI 接管、缩放、旋转和 panel 提交；Raster 是 Surface 的可选生产 profile。这样权限框、锁屏和 Toast 仍沿用现有合成规则，也不会让 Raster kernel 获取 LVGL 锁、等待 TE 或等待 SPI。
+GameRender 是独立的游戏渲染服务，拥有持久纹理、DrawList mailbox 和渲染 context；Surface 只保留完整像素帧的 stream/GuestMapped 语义。两者在 ESP backend 内共享前后台帧、系统 UI 接管、缩放、旋转和 panel presenter。这样权限框、锁屏和 Toast 仍沿用现有合成规则，也不会让 raster kernel 获取 LVGL 锁、等待 TE 或等待 SPI。
 
 ## 旧链路
 
@@ -29,8 +29,8 @@ Guest update
   -> chunk/face back-face + fog distance + frustum culling
   -> project and depth-sort visible quads
   -> compact Raster DrawList
-  -> pxa_io(surface, RASTER_SUBMIT, list)
-Host Surface backend
+  -> pxa_io(game_render_context, SUBMIT, list)
+Host GameRender backend
   -> validate complete list and capabilities
   -> copy compact list into a two-slot latest-frame mailbox
 Presenter task
@@ -42,27 +42,28 @@ Presenter task
 
 DrawList 提交只做完整校验并把紧凑命令复制到预分配 mailbox。它不执行 raster、不进入 LVGL、不等待 display DMA/TE/SPI。显示侧消费 mailbox 时才执行 native raster；新提交会替换尚未开始 raster 的旧列表并统计 dropped/replaced。三张 RGB565 buffer 仍由 Surface lease 状态机管理。
 
-## Surface 0.3 Raster profile
+## GameRender 0.1
 
-RGB565 Surface 通过 `PXA_SURFACE_FLAG_HOST_RASTER` 请求 Raster profile。它与 `GUEST_MAPPED` 互斥。Host 不支持时在 `CREATE` 返回 `UNSUPPORTED`，Guest 随即回退到 0.2 GuestMapped 路径；再旧的 Host 则会把未知 create flag 拒绝，同样可以回退。`pxa_surface_write_frame` 保持不变。
+游戏画面通过 `PXA_GAME_RENDER_CREATE_CONTEXT` 创建独立 context。Host 不支持时返回 `UNSUPPORTED`，Voxel Craft 随即回退到 Surface 0.2 GuestMapped 路径。`pxa_surface_write_frame` 和 mapped buffer ABI 不承担任何绘制命令。
 
-Surface state 增加以下能力位：
+创建结果返回以下能力位：
 
-- `HOST_RASTER`：资源上传和 DrawList 提交可用；
-- `RASTER_TEXTURED_QUAD`：INDEX8 纹理 Quad 可用；
-- `RASTER_ADDITIVE_SPRITE`：sprite 的逐通道饱和加法可用。
+- `TEXTURED_QUAD`：INDEX8 纹理 Quad 可用；
+- `ADDITIVE_SPRITE`：sprite 的逐通道饱和加法可用；
+- `SPRITE_BATCH`：共享材质状态的批量 2D 实例；
+- `TRIANGLE_BATCH`：共享材质状态的批量深度三角形。
 
-Guest 只能在 state 中存在相应能力时设置 `required_capabilities` 或 additive flag。Host 在执行任何命令前验证整份列表，避免半帧更新。
+Guest 只能在创建结果中存在相应能力时设置 `required_capabilities` 或 additive flag。Host 在执行任何命令前验证整份列表，避免半帧更新。
 
 ### 资源上传
 
-资源通过 Surface handle 的 `PXA_SURFACE_IO_RASTER_UPLOAD` 上传并绑定到 Surface 生命周期。首版固定 16 个 texture slot 和一个 256 色 RGB565 palette：
+资源通过 GameRender handle 的 `PXA_GAME_RENDER_IO_UPLOAD` 上传并绑定到 context 生命周期。首版固定 16 个 texture slot 和一个 256 色 RGB565 palette：
 
 - `PALETTE_RGB565`：正好 256 个 little-endian canonical RGB565；
 - `TEXTURE_INDEX8`：row-major INDEX8，宽高和 payload 长度必须完全一致；
 - 第一帧提交前，同一 slot 的成功上传原子替换旧资源；失败时旧资源仍有效。首帧后资源被冻结，避免异步 raster 与资源释放竞态。
 
-ESP backend 把资源、一个与逻辑 Surface 同尺寸的 16-bit reciprocal-depth scratch buffer 和两个 48 KiB DrawList mailbox 放入 PSRAM。depth scratch 由串行 Raster consumer 复用，不跟随三张颜色 buffer 重复分配。DrawList 执行期间不分配内存，关闭 Surface 时统一释放。
+ESP backend 把资源、一个与逻辑输出同尺寸的 16-bit reciprocal-depth scratch buffer 和两个 48 KiB DrawList mailbox 放入 PSRAM。depth scratch 由串行 GameRender consumer 复用，不跟随颜色 buffer 重复分配。DrawList 执行期间不分配内存，关闭 context 时统一释放。
 
 ### DrawList
 
@@ -71,7 +72,9 @@ Header 包含 magic、ABI major/minor、总字节数、required capability、com
 - `CLEAR_RGB565`；
 - `FLAT_QUAD`；
 - `TEXTURED_QUAD`，顶点使用 12.4 屏幕坐标、12.4 UV、0..255 光照和 Q8 view depth；ABI 1.1 对 `u/z`、`v/z`、`1/z` 做透视校正。Host 在扫描线覆盖区间内以 8 像素小段计算端点透视坐标并做 Q8 增量，避免 ESP32-S3 上逐像素软件整数除法；同一记录也可通过 solid-color flag 表示带深度的纯色场景面；
-- `SPRITE`，仅在 capability 允许时接受 additive。
+- `SPRITE`，仅在 capability 允许时接受 additive；
+- `SPRITE_BATCH`，一个状态头后跟多个 16-byte 实例；
+- `TRIANGLE_BATCH`，一个状态头后跟每三点成面的 12-byte 顶点。
 
 校验包括 header/version/长度/record count、已知 flags、required capabilities、slot 是否已上传、顶点与 UV 的数值范围、退化多边形、目标尺寸、frame ID 单调性以及每帧命令/字节上限。协议错误返回 `PROTOCOL_ERROR`，超限返回 `LIMIT_EXCEEDED`，缺能力返回 `UNSUPPORTED`，无空闲 buffer 返回 `WOULD_BLOCK`。
 
@@ -83,7 +86,7 @@ Header 包含 magic、ABI major/minor、总字节数、required capability、com
 
 ## 分辨率与质量
 
-Raster Surface 的逻辑分辨率独立于 mesh 密度。High/Balanced/Performance 继续控制雾距离、可见 chunk 数、最大 Quad 和像素覆盖预算，Host 用 nearest-neighbor 放大。质量控制同时观察：
+GameRender context 的逻辑分辨率独立于 mesh 密度。High/Balanced/Performance 继续控制雾距离、可见 chunk 数、最大 Quad 和像素覆盖预算，Host 用 nearest-neighbor 放大。质量控制同时观察：
 
 - Guest update、mesh rebuild、cull/project/sort 时间；
 - DrawList bytes/command count；
@@ -100,7 +103,7 @@ Raster Surface 的逻辑分辨率独立于 mesh 密度。High/Balanced/Performan
 
 ## 前台缓冲与截图
 
-Raster 只写 Surface backend 选出的空闲 buffer。presenter 完成消费前该 buffer 不可重用；最新 pending buffer 也不是截图源。截图和像素采样必须从 presenter 已确认完成的 foreground/current buffer 获取。系统模态 UI 出现时 direct scanout 暂停，旧 foreground 可用于 LVGL 合成；模态消失后仍要求一帧新的完整 Surface 才恢复 direct scanout。
+GameRender 只写 backend 选出的空闲 buffer。presenter 完成消费前该 buffer 不可重用；最新 pending buffer 也不是截图源。截图和像素采样必须从 presenter 已确认完成的 foreground/current buffer 获取。系统模态 UI 出现时 direct scanout 暂停，旧 foreground 可用于 LVGL 合成；模态消失后仍要求一帧新的完整输出才恢复 direct scanout。
 
 ## 验证与风险
 

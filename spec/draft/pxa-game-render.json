@@ -1,0 +1,44 @@
+{
+  "schema": "pxa-game-render-spec-0.1",
+  "status": "draft",
+  "service": {
+    "name": "game-render",
+    "id": 18,
+    "major": 0,
+    "minor": 1,
+    "patch": 0
+  },
+  "opcodes": [
+    {
+      "name": "create-context",
+      "id": 1,
+      "direction": "bidirectional-result",
+      "request_id": "nonzero",
+      "payload": "width:u16|height:u16|buffer-count:u8|flags:u8|reserved:u16",
+      "result": "handle:u32|capabilities:u32|max-draw-bytes:u32|max-texture-dimension:u16|max-textures:u8|reserved:u8"
+    }
+  ],
+  "io_operations": [
+    {"name": "upload", "id": 256, "payload": "resource-record", "result": "accepted-bytes"},
+    {"name": "submit", "id": 257, "payload": "draw-list", "result": "accepted-bytes"},
+    {"name": "telemetry", "id": 258, "payload": "zeroed-telemetry-buffer", "result": "telemetry-record"}
+  ],
+  "create_flags": [
+    {"name": "prefer-direct-scanout", "bit": 0}
+  ],
+  "capabilities": [
+    {"name": "flat-quad", "bit": 0},
+    {"name": "textured-quad", "bit": 1},
+    {"name": "additive-sprite", "bit": 2},
+    {"name": "sprite-batch", "bit": 3},
+    {"name": "triangle-batch", "bit": 4}
+  ],
+  "limits": {
+    "draw_list_bytes": 49152,
+    "draw_commands": 768,
+    "texture_slots": 16,
+    "texture_dimension": 256,
+    "palette_colors": 256
+  },
+  "protocol_version": "0.1.0"
+}

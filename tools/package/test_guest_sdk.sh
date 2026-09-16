@@ -224,6 +224,15 @@ PYTHON
 "$work_dir/pxa_raster_test"
 
 "$cc_bin" "${flags[@]}" \
+  "$pxa_system_dir/sdk/guest-c/tests/pxa_game_render_test.c" \
+  -o "$work_dir/pxa_game_render_test"
+"$work_dir/pxa_game_render_test"
+
+"$cc_bin" "${flags[@]}" -c \
+  "$pxa_system_dir/apps/pxa/game-render-bench/main.c" \
+  -o "$work_dir/game_render_bench.o"
+
+"$cc_bin" "${flags[@]}" \
   -I"$pxa_system_dir/apps/pxa/voxel-craft" \
   "$pxa_system_dir/sdk/guest-c/tests/pxa_voxel_surface_ownership_test.c" \
   -o "$work_dir/pxa_voxel_surface_ownership_test"

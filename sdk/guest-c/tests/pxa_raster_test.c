@@ -42,7 +42,7 @@ int main(void) {
                                              sizeof(upload)) ==
            (int32_t)sizeof(upload));
     assert(captured_handle == 9 &&
-           captured_operation == PXA_SURFACE_IO_RASTER_UPLOAD &&
+           captured_operation == PXA_GAME_RENDER_IO_UPLOAD &&
            captured_length == sizeof(upload) &&
            pxa_read_u32(captured) == PXA_RASTER_UPLOAD_MAGIC &&
            pxa_read_u16(captured + 20 + 510) == 255);
@@ -57,7 +57,7 @@ int main(void) {
     assert((draw[PXA_RASTER_DRAW_HEADER_BYTES + PXA_RASTER_CLEAR_BYTES + 1] &
             PXA_RASTER_SPRITE_ADDITIVE) == 0);
     assert(pxa_raster_submit(9, &list) == (int32_t)list.length);
-    assert(captured_operation == PXA_SURFACE_IO_RASTER_SUBMIT &&
+    assert(captured_operation == PXA_GAME_RENDER_IO_SUBMIT &&
            pxa_read_u32(captured + 12) == 0 &&
            pxa_read_u64(captured + 20) == 7);
 

@@ -250,10 +250,90 @@ static void test_perspective_uv_and_solid_depth(void) {
     assert(depth[1 * 8 + 4] > depth[7 * 8 + 4]);
 }
 
+static void test_sprite_and_triangle_batches(void) {
+    enum {
+        SPRITE_RECORD_BYTES = PXA_RASTER_SPRITE_BATCH_HEADER_BYTES +
+                              2 * PXA_RASTER_SPRITE_INSTANCE_BYTES,
+        TRIANGLE_RECORD_BYTES = PXA_RASTER_TRIANGLE_BATCH_HEADER_BYTES +
+                                3 * PXA_RASTER_VERTEX_BYTES,
+        TOTAL_BYTES = PXA_RASTER_DRAW_HEADER_BYTES + PXA_RASTER_CLEAR_BYTES +
+                      SPRITE_RECORD_BYTES + TRIANGLE_RECORD_BYTES,
+    };
+    uint8_t bytes[TOTAL_BYTES];
+    uint8_t texture = 1;
+    uint16_t palette[256] = {0};
+    uint16_t pixels[8 * 8];
+    uint16_t depth[8 * 8];
+    pxa_raster_resources_t resources;
+    pxa_raster_target_t target;
+    pxa_raster_draw_list_view_t list;
+    pxa_raster_telemetry_t telemetry = {0};
+    uint32_t offset;
+    uint8_t *record;
+    uint8_t *instance;
+    palette[1] = UINT16_C(0x07e0);
+    memset(&resources, 0, sizeof(resources));
+    memset(&target, 0, sizeof(target));
+    resources.palette = palette;
+    resources.capabilities = PXA_RASTER_CAP_SPRITE_BATCH |
+                             PXA_RASTER_CAP_TRIANGLE_BATCH;
+    resources.textures[0].pixels = &texture;
+    resources.textures[0].width = 1;
+    resources.textures[0].height = 1;
+    target.pixels = pixels;
+    target.depth_pixels = depth;
+    target.stride_pixels = 8;
+    target.depth_stride_pixels = 8;
+    target.width = 8;
+    target.height = 8;
+    offset = begin_list(bytes, resources.capabilities, 3, 10, sizeof(bytes));
+    record = bytes + offset;
+    record[0] = PXA_RASTER_RECORD_CLEAR_RGB565;
+    put_u16(record + 2, PXA_RASTER_CLEAR_BYTES);
+    offset += PXA_RASTER_CLEAR_BYTES;
+    record = bytes + offset;
+    record[0] = PXA_RASTER_RECORD_SPRITE_BATCH;
+    put_u16(record + 2, SPRITE_RECORD_BYTES);
+    put_u16(record + 8, 2);
+    instance = record + PXA_RASTER_SPRITE_BATCH_HEADER_BYTES;
+    put_u16(instance + 4, 2);
+    put_u16(instance + 6, 2);
+    put_u16(instance + 12, 1);
+    put_u16(instance + 14, 1);
+    instance += PXA_RASTER_SPRITE_INSTANCE_BYTES;
+    put_u16(instance, 32);
+    put_u16(instance + 4, 2);
+    put_u16(instance + 6, 2);
+    put_u16(instance + 12, 1);
+    put_u16(instance + 14, 1);
+    offset += SPRITE_RECORD_BYTES;
+    record = bytes + offset;
+    record[0] = PXA_RASTER_RECORD_TRIANGLE_BATCH;
+    record[1] = PXA_RASTER_QUAD_SOLID_COLOR;
+    put_u16(record + 2, TRIANGLE_RECORD_BYTES);
+    put_u16(record + 6, UINT16_C(0xf800));
+    put_u16(record + 8, 1);
+    put_vertex_depth(record + PXA_RASTER_TRIANGLE_BATCH_HEADER_BYTES,
+                     0, 64, 0, 0, 255, 256);
+    put_vertex_depth(record + PXA_RASTER_TRIANGLE_BATCH_HEADER_BYTES + 12,
+                     64, 64, 0, 0, 255, 256);
+    put_vertex_depth(record + PXA_RASTER_TRIANGLE_BATCH_HEADER_BYTES + 24,
+                     64, 0, 0, 0, 255, 256);
+    assert(pxa_raster_validate_draw_list(bytes, sizeof(bytes), &target,
+                                         &resources, &list) == PXA_STATUS_OK);
+    pxa_raster_execute_draw_list(bytes, &list, &target, &resources,
+                                 &telemetry);
+    assert(telemetry.sprite_commands == 2 &&
+           telemetry.textured_quad_commands == 1 &&
+           telemetry.last_draw_list_bytes == sizeof(bytes));
+    assert(pixels[0] == palette[1] && pixels[3 * 8 + 3] == UINT16_C(0xf800));
+}
+
 int main(void) {
     test_upload_validation();
     test_quads_clipping_uv_and_telemetry();
     test_additive_capability_fallback();
     test_perspective_uv_and_solid_depth();
+    test_sprite_and_triangle_batches();
     return 0;
 }

@@ -112,14 +112,8 @@ static uint16_t rgb565(uint8_t red, uint8_t green, uint8_t blue) {
                       ((uint16_t)(green >> 2) << 5) | (blue >> 3));
 }
 
-void voxel_raster_set_capabilities(uint32_t surface_state_flags) {
-    g_raster_capabilities = PXA_RASTER_CAP_FLAT_QUAD;
-    if ((surface_state_flags &
-         PXA_SURFACE_STATE_FLAG_RASTER_TEXTURED_QUAD) != 0)
-        g_raster_capabilities |= PXA_RASTER_CAP_TEXTURED_QUAD;
-    if ((surface_state_flags &
-         PXA_SURFACE_STATE_FLAG_RASTER_ADDITIVE_SPRITE) != 0)
-        g_raster_capabilities |= PXA_RASTER_CAP_ADDITIVE_SPRITE;
+void voxel_raster_set_capabilities(uint32_t capabilities) {
+    g_raster_capabilities = capabilities;
 }
 
 static uint8_t rgb565_to_rgb332(uint16_t color) {

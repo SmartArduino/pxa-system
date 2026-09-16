@@ -10,7 +10,8 @@ from pathlib import Path
 
 SEMANTIC_APPS = ("arcade", "lab", "wasi-lab", "weather")
 CANVAS_APPS = ("garden-guard", "plane-shooter")
-RASTER_SURFACE_APPS = ("maze-evil", "maze-spike", "voxel-craft")
+RASTER_SURFACE_APPS = ("maze-evil", "maze-spike")
+GAME_RENDER_APPS = ("game-render-bench", "voxel-craft")
 REQUIRED_THEME_TOKENS = (
     "PXA_UI_THEME_BACKGROUND",
     "PXA_UI_THEME_TEXT",
@@ -25,7 +26,9 @@ def main() -> int:
 
     package_dirs = sorted(path.parent for path in apps.glob("*/package.json"))
     found = {path.name for path in package_dirs}
-    expected = set(SEMANTIC_APPS + CANVAS_APPS + RASTER_SURFACE_APPS)
+    expected = set(
+        SEMANTIC_APPS + CANVAS_APPS + RASTER_SURFACE_APPS + GAME_RENDER_APPS
+    )
     if found != expected:
         raise SystemExit(
             "reference app set mismatch: " + ", ".join(sorted(found ^ expected))
@@ -61,6 +64,11 @@ def main() -> int:
         source = (apps / app_name / "main.c").read_text(encoding="utf-8")
         if "pxa_surface_" not in source:
             raise SystemExit(f"{app_name}: expected an app-owned raster Surface")
+
+    for app_name in GAME_RENDER_APPS:
+        source = (apps / app_name / "main.c").read_text(encoding="utf-8")
+        if "pxa_game_render_" not in source:
+            raise SystemExit(f"{app_name}: expected an app-owned GameRender context")
 
     print("PXA reference UI theme and locale boundaries OK")
     return 0

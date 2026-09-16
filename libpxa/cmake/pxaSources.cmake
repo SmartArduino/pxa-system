@@ -24,6 +24,7 @@ function(pxa_collect_sources output root)
         src/services/net/net_response.c
         src/services/net/net_validate.c
         src/services/audio/audio_service.c
+        src/services/game_render/game_render_service.c
         src/services/surface/raster.c
         src/services/surface/surface_service.c
         src/ui/ui_service.c

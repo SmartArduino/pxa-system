@@ -50,10 +50,6 @@ int main(void) {
                                              sizeof(packet)));
     assert(captured[19] == (PXA_SURFACE_FLAG_GUEST_MAPPED |
                             PXA_SURFACE_FLAG_PREFER_DIRECT_SCANOUT));
-    assert(pxa_surface_create_rgb565_host_raster(11, 4, 4, 3, 1, packet,
-                                                  sizeof(packet)));
-    assert(captured[19] == (PXA_SURFACE_FLAG_HOST_RASTER |
-                            PXA_SURFACE_FLAG_PREFER_DIRECT_SCANOUT));
     assert(pxa_surface_create_argb8888_premultiplied(
         8, 4, 4, 2, packet, sizeof(packet)));
     assert(captured_length == 20 && pxa_read_u16(captured + 12) == 4 &&

@@ -12,6 +12,7 @@
 #include "lvgl.h"
 #include "pxa/activation.h"
 #include "pxa/audio.h"
+#include "pxa/game_render.h"
 #include "pxa/lvgl/pxa_lvgl_ui.h"
 #include "pxa/openssl/pxa_openssl.h"
 #include "pxa/package.h"
@@ -35,6 +36,7 @@
 #define PRODUCT_SYSTEM_GESTURE_EDGE_WIDTH 16
 #define PRODUCT_SYSTEM_GESTURE_HOME_HEIGHT 20
 #define PRODUCT_SYSTEM_GESTURE_COMMIT_DISTANCE 32
+#define PRODUCT_SURFACE_FLAG_GAME_RENDER UINT8_C(8)
 
 typedef struct {
     const char *package_path;
@@ -54,6 +56,7 @@ typedef struct {
     pxa_audio_service_t *audio;
     pxa_permission_service_t *permissions;
     pxa_surface_service_t *surfaces;
+    pxa_game_render_service_t *game_render;
     lv_obj_t *surface_image;
     lv_image_dsc_t surface_bitmap;
     uint8_t *surface_buffers;
@@ -274,10 +277,11 @@ static pxa_status_t surface_create(void *context, const pxa_surface_desc_t *desc
     const int mapped = desc != NULL &&
         (desc->flags & PXA_SURFACE_FLAG_GUEST_MAPPED) != 0;
     const int raster = desc != NULL &&
-        (desc->flags & PXA_SURFACE_FLAG_HOST_RASTER) != 0;
+        (desc->flags & PRODUCT_SURFACE_FLAG_GAME_RENDER) != 0;
     if (host == NULL || desc == NULL || surface == NULL || stride == NULL ||
         desc->format != PXA_SURFACE_FORMAT_RGB565 ||
-        (desc->flags & ~PXA_SURFACE_FLAG_KNOWN_MASK) != 0 ||
+        (desc->flags & ~(PXA_SURFACE_FLAG_KNOWN_MASK |
+                         PRODUCT_SURFACE_FLAG_GAME_RENDER)) != 0 ||
         mapped == raster ||
         desc->width == 0 || desc->height == 0 ||
         desc->buffer_count < 2 || desc->buffer_count > 3 ||
@@ -538,10 +542,7 @@ static pxa_status_t surface_query(void *context, uint64_t surface,
         if (!surface_buffer_available(host, index)) ++used;
     state->free_buffers = (host->surface_flags & PXA_SURFACE_FLAG_GUEST_MAPPED) != 0
                               ? host->surface_buffer_count - used : 2;
-    state->flags = PXA_SURFACE_STATE_FLAG_SUPPORTS_GUEST_MAPPED |
-                   PXA_SURFACE_STATE_FLAG_SUPPORTS_HOST_RASTER |
-                   PXA_SURFACE_STATE_FLAG_RASTER_TEXTURED_QUAD |
-                   PXA_SURFACE_STATE_FLAG_RASTER_ADDITIVE_SPRITE;
+    state->flags = PXA_SURFACE_STATE_FLAG_SUPPORTS_GUEST_MAPPED;
     return PXA_STATUS_OK;
 }
 
@@ -551,7 +552,9 @@ static void raster_resources(const product_host_t *host,
     resources->palette = host->raster_palette;
     resources->capabilities = PXA_RASTER_CAP_FLAT_QUAD |
                               PXA_RASTER_CAP_TEXTURED_QUAD |
-                              PXA_RASTER_CAP_ADDITIVE_SPRITE;
+                              PXA_RASTER_CAP_ADDITIVE_SPRITE |
+                              PXA_RASTER_CAP_SPRITE_BATCH |
+                              PXA_RASTER_CAP_TRIANGLE_BATCH;
     for (uint8_t index = 0; index < PXA_RASTER_MAX_TEXTURES; ++index) {
         resources->textures[index].pixels = host->raster_textures[index];
         resources->textures[index].width = host->raster_texture_width[index];
@@ -567,7 +570,7 @@ static pxa_status_t surface_raster_upload(void *context, uint64_t surface,
     uint8_t *previous;
     pxa_status_t status;
     if (host == NULL || surface != 1 || bytes == NULL ||
-        (host->surface_flags & PXA_SURFACE_FLAG_HOST_RASTER) == 0 ||
+        (host->surface_flags & PRODUCT_SURFACE_FLAG_GAME_RENDER) == 0 ||
         host->raster_last_frame_id != 0 || host->raster_draw_pending >= 0)
         return PXA_STATUS_BAD_STATE;
     status = pxa_raster_decode_upload(bytes, size, &upload);
@@ -601,7 +604,7 @@ static pxa_status_t surface_raster_submit(void *context, uint64_t surface,
     uint8_t mailbox;
     if (host == NULL || surface != 1 || bytes == NULL ||
         host->raster_palette == NULL ||
-        (host->surface_flags & PXA_SURFACE_FLAG_HOST_RASTER) == 0)
+        (host->surface_flags & PRODUCT_SURFACE_FLAG_GAME_RENDER) == 0)
         return PXA_STATUS_BAD_STATE;
     raster_resources(host, &resources);
     target.pixels = (uint16_t *)host->raster_buffers[0];
@@ -635,7 +638,7 @@ static pxa_status_t surface_raster_query(void *context, uint64_t surface,
                                          pxa_raster_telemetry_t *telemetry) {
     product_host_t *host = context;
     if (host == NULL || surface != 1 || telemetry == NULL ||
-        (host->surface_flags & PXA_SURFACE_FLAG_HOST_RASTER) == 0)
+        (host->surface_flags & PRODUCT_SURFACE_FLAG_GAME_RENDER) == 0)
         return PXA_STATUS_BAD_STATE;
     *telemetry = host->raster_telemetry;
     return PXA_STATUS_OK;
@@ -686,6 +689,31 @@ static void surface_close(void *context, uint64_t surface) {
     memset(&host->raster_telemetry, 0, sizeof(host->raster_telemetry));
 }
 
+static pxa_status_t game_render_create(
+    void *context, const pxa_game_render_desc_t *desc,
+    uint64_t *provider_context, uint32_t *capabilities) {
+    pxa_surface_desc_t surface_desc = {0};
+    uint32_t stride;
+    pxa_status_t status;
+    if (desc == NULL || provider_context == NULL || capabilities == NULL)
+        return PXA_STATUS_INVALID_ARGUMENT;
+    surface_desc.width = desc->width;
+    surface_desc.height = desc->height;
+    surface_desc.format = PXA_SURFACE_FORMAT_RGB565;
+    surface_desc.buffer_count = desc->buffer_count;
+    surface_desc.flags = PRODUCT_SURFACE_FLAG_GAME_RENDER;
+    if ((desc->flags & PXA_GAME_RENDER_FLAG_PREFER_DIRECT_SCANOUT) != 0)
+        surface_desc.flags |= PXA_SURFACE_FLAG_PREFER_DIRECT_SCANOUT;
+    status = surface_create(context, &surface_desc, provider_context, &stride);
+    if (status != PXA_STATUS_OK) return status;
+    *capabilities = PXA_RASTER_CAP_FLAT_QUAD |
+                    PXA_RASTER_CAP_TEXTURED_QUAD |
+                    PXA_RASTER_CAP_ADDITIVE_SPRITE |
+                    PXA_RASTER_CAP_SPRITE_BATCH |
+                    PXA_RASTER_CAP_TRIANGLE_BATCH;
+    return PXA_STATUS_OK;
+}
+
 static int surface_process_pending(product_host_t *host) {
     uint8_t buffer_index = 0;
     uint64_t frame_id;
@@ -693,7 +721,7 @@ static int surface_process_pending(product_host_t *host) {
     if (host == NULL || !host->surface_registered ||
         host->surface_image == NULL)
         return 0;
-    if ((host->surface_flags & PXA_SURFACE_FLAG_HOST_RASTER) != 0) {
+    if ((host->surface_flags & PRODUCT_SURFACE_FLAG_GAME_RENDER) != 0) {
         pxa_raster_resources_t resources;
         pxa_raster_target_t target;
         pxa_raster_draw_list_view_t list;
@@ -1111,9 +1139,10 @@ int main(int argc, char **argv) {
     pxa_posix_storage_t *posix_storage = NULL;
     pxa_storage_service_t *storage = NULL;
     pxa_surface_config_t surface_config = {0};
+    pxa_game_render_config_t game_render_config = {0};
     pxa_service_ops_t clock_service = {0};
     pxa_wamr_engine_config_t engine_config = {0};
-    pxa_package_service_capability_t capabilities[8] = {0};
+    pxa_package_service_capability_t capabilities[9] = {0};
     pxa_package_activation_profile_t activation = {0};
     pxa_package_host_profile_t profile = {0};
     pxa_activation_plan_t *plan = NULL;
@@ -1121,7 +1150,7 @@ int main(int argc, char **argv) {
     void *runtime_workspace = NULL, *window_workspace = NULL, *ui_workspace = NULL;
     void *permission_workspace = NULL, *audio_workspace = NULL, *storage_workspace = NULL;
     void *storage_service_workspace = NULL, *lvgl_workspace = NULL, *engine_workspace = NULL;
-    void *surface_workspace = NULL;
+    void *surface_workspace = NULL, *game_render_workspace = NULL;
     void *plan_workspace = NULL, *coordinator_workspace = NULL;
     uint8_t *encoded = NULL, *public_key = NULL;
     size_t manifest_size = 0, public_key_size = 0;
@@ -1345,14 +1374,36 @@ int main(int argc, char **argv) {
     surface_config.backend.present_buffer = surface_present_buffer;
     surface_config.backend.peek_release = surface_peek_release;
     surface_config.backend.consume_release = surface_consume_release;
-    surface_config.backend.raster_upload = surface_raster_upload;
-    surface_config.backend.raster_submit = surface_raster_submit;
-    surface_config.backend.raster_query = surface_raster_query;
     surface_workspace = malloc(pxa_surface_service_workspace_size(&surface_config));
     if (surface_workspace == NULL || pxa_surface_service_init(surface_workspace,
         pxa_surface_service_workspace_size(&surface_config), host.runtime,
         &surface_config, &host.surfaces) != PXA_STATUS_OK ||
         pxa_surface_service_register(host.surfaces) != PXA_STATUS_OK) goto done;
+    stage = "game render service";
+    game_render_config.struct_size = sizeof(game_render_config);
+    game_render_config.max_contexts = 1;
+    game_render_config.max_contexts_per_component = 1;
+    game_render_config.max_width = options.width;
+    game_render_config.max_height = options.height;
+    game_render_config.min_buffer_count = 2;
+    game_render_config.max_buffer_count = 3;
+    game_render_config.backend.struct_size = sizeof(game_render_config.backend);
+    game_render_config.backend.context = &host;
+    game_render_config.backend.create = game_render_create;
+    game_render_config.backend.upload = surface_raster_upload;
+    game_render_config.backend.submit = surface_raster_submit;
+    game_render_config.backend.query = surface_raster_query;
+    game_render_config.backend.close = surface_close;
+    game_render_workspace = malloc(
+        pxa_game_render_service_workspace_size(&game_render_config));
+    if (game_render_workspace == NULL ||
+        pxa_game_render_service_init(
+            game_render_workspace,
+            pxa_game_render_service_workspace_size(&game_render_config),
+            host.runtime, &game_render_config, &host.game_render) !=
+            PXA_STATUS_OK ||
+        pxa_game_render_service_register(host.game_render) != PXA_STATUS_OK)
+        goto done;
     engine_config.struct_size = sizeof(engine_config); engine_config.host_context = &host;
     stage = "WAMR engine";
     engine_config.read_artifact = read_artifact; engine_config.now_us = now_us;
@@ -1373,9 +1424,10 @@ int main(int argc, char **argv) {
     capabilities[4].service = PXA_AUDIO_SERVICE_ID; capabilities[4].version.major = 0; capabilities[4].version.minor = 5;
     capabilities[5].service = PXA_PERMISSION_SERVICE_ID; capabilities[5].version.major = 0; capabilities[5].version.minor = 1;
     capabilities[6].service = PXA_STORAGE_SERVICE_ID; capabilities[6].version.major = 0; capabilities[6].version.minor = 1;
-    capabilities[7].service = PXA_SURFACE_SERVICE_ID; capabilities[7].version.major = 0; capabilities[7].version.minor = 3;
+    capabilities[7].service = PXA_SURFACE_SERVICE_ID; capabilities[7].version.major = 0; capabilities[7].version.minor = 2;
+    capabilities[8].service = PXA_GAME_RENDER_SERVICE_ID; capabilities[8].version.major = 0; capabilities[8].version.minor = 1;
     activation.core_version.major = 0; activation.core_version.minor = 1;
-    activation.services = capabilities; activation.service_count = 8;
+    activation.services = capabilities; activation.service_count = 9;
     profile.target = (pxa_bytes_t){(const uint8_t *)"linux-x86_64", 13};
     profile.engine = (pxa_bytes_t){(const uint8_t *)"wamr", 4};
     profile.engine_abi = (pxa_bytes_t){(const uint8_t *)"wasm32", 6};
@@ -1437,7 +1489,7 @@ done:
     if (posix_storage != NULL) pxa_posix_storage_deinit(posix_storage);
     if (installer != NULL) pxa_posix_installer_deinit(installer);
     free(coordinator_workspace); free(plan_workspace); free(engine_workspace); free(lvgl_workspace);
-    free(surface_workspace);
+    free(game_render_workspace); free(surface_workspace);
     free(ui_workspace); free(window_workspace); free(permission_workspace); free(runtime_workspace); free(manifest_workspace);
     free(storage_service_workspace); free(storage_workspace); free(storage_path); free(storage_parent);
     free(encoded); free(installer_workspace); free(public_key);

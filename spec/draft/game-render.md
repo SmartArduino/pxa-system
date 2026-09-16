@@ -1,0 +1,53 @@
+# PXA GameRender Service 0.1.0
+
+GameRender is the low-overhead 2D and software-3D path. It owns persistent
+palettes and textures, validates compact draw lists, and rasterizes into
+Host-owned RGB565 buffers. Surface remains the API for applications that
+already own complete pixel frames.
+
+The service ID is 18. `CREATE_CONTEXT` returns a
+`PXA_RESOURCE_GAME_RENDER_CONTEXT` handle plus the supported command mask and
+resource limits. Closing the handle releases all renderer resources and removes
+its visible layer.
+
+## Context creation
+
+The eight-byte request is `width:u16, height:u16, buffer_count:u8, flags:u8,
+reserved:u16`. The successful result after status is `handle:u32,
+capabilities:u32, max_draw_bytes:u32, max_texture_dimension:u16,
+max_textures:u8, reserved:u8`.
+
+`PREFER_DIRECT_SCANOUT` is advisory. A Host may still compose when trusted UI
+or system overlays are visible. The ESP profile supports one Surface or
+GameRender context at a time because both ultimately target the same panel.
+
+## Resource and frame IO
+
+The context handle accepts three operations:
+
+```text
+PXA_GAME_RENDER_IO_UPLOAD     0x100
+PXA_GAME_RENDER_IO_SUBMIT     0x101
+PXA_GAME_RENDER_IO_TELEMETRY  0x102
+```
+
+Uploads install a 256-entry RGB565 palette or an INDEX8 texture in one of 16
+persistent slots. Resources remain resident across frames. The ESP profile
+freezes resources after the first accepted frame to keep presenter reads free
+of lifetime races.
+
+Submit validates and copies a complete, bounded DrawList into a latest-wins
+mailbox. It never waits for rasterization, display rotation, TE, or SPI. The
+presenter rasterizes only the newest pending list and counts replaced lists as
+dropped frames.
+
+Raster ABI 1.2 supports clear, flat quad, textured depth quad, sprite, sprite
+batch, and triangle batch records. Sprite batches share texture, blend flags,
+and optional solid color across compact 16-byte instances. Triangle batches
+share texture or solid color across screen-space 12-byte vertices; every three
+vertices form one depth-tested triangle. Coordinates and UV values use signed
+12.4 fixed point and depth uses reciprocal-compatible Q8 values.
+
+The 88-byte telemetry record reports submitted and dropped frames, draw bytes,
+covered pixels, host raster time, queue/presentation time, command counts,
+rejected lists, and last-frame values.

@@ -58,6 +58,7 @@ typedef uint16_t pxa_resource_type_t;
 #define PXA_RESOURCE_AUDIO_STREAM ((pxa_resource_type_t)10)
 #define PXA_RESOURCE_PERMISSION ((pxa_resource_type_t)11)
 #define PXA_RESOURCE_SURFACE ((pxa_resource_type_t)12)
+#define PXA_RESOURCE_GAME_RENDER_CONTEXT ((pxa_resource_type_t)13)
 
 /* Operations shared by byte-oriented resource streams. */
 #define PXA_IO_READ UINT32_C(1)

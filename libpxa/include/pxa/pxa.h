@@ -5,6 +5,7 @@
 #include "pxa/audio.h"
 #include "pxa/device.h"
 #include "pxa/fs.h"
+#include "pxa/game_render.h"
 #include "pxa/surface.h"
 #include "pxa/ipc.h"
 #include "pxa/lease.h"

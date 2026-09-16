@@ -19,7 +19,7 @@ typedef struct {
 } voxel_raster_stats_t;
 
 void voxel_raster_reset(void);
-void voxel_raster_set_capabilities(uint32_t surface_state_flags);
+void voxel_raster_set_capabilities(uint32_t capabilities);
 int voxel_raster_upload_assets(uint32_t surface_handle);
 int32_t voxel_raster_render(uint32_t surface_handle, uint64_t frame_id,
                             const player_t *player, uint8_t quality,
