@@ -11,7 +11,7 @@
     "system": "direct",
     "linear_memory": {
       "maximum_bytes": 524288,
-      "pinned": false
+      "pinned": true
     }
   },
   "components": [

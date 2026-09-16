@@ -2742,6 +2742,12 @@ pxa_status_t pxa_posix_installer_install_for_identity(
     free(current_manifest);
     current_manifest = NULL;
 
+    /* A reset can interrupt cleanup after an incoming-slot failure. The
+     * identity lock makes this transaction directory exclusively ours. */
+    stage = "remove-stale-session";
+    status = remove_tree(ctx.session);
+    if (status != PXA_STATUS_OK) goto done;
+
     {
         char *packages = join_path(installer->storage_root, "packages");
         char session_name[PXA_POSIX_INSTALLER_MAX_IDENTITY_NAME + 10];
