@@ -4,9 +4,9 @@
   "target_sdk": [0, 1],
   "compile_sdk": [0, 1],
   "id": "pxa-game-render-bench",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "name": "GameRender Bench",
-  "description": "Alternating 2D sprite-batch and 3D triangle-batch performance test",
+  "description": "Nine-stage 2D and 3D GameRender performance benchmark",
   "build": {
     "system": "direct",
     "linear_memory": {

@@ -10,6 +10,7 @@
 #define FRAME_PERIOD_MS 16u
 #define SPRITE_COUNT 192u
 #define QUAD_COUNT 96u
+#define TEXTURED_QUAD_COUNT 24u
 #define MAX_CUBE_COUNT 12u
 #define TRIANGLES_PER_GROUP (MAX_CUBE_COUNT * 4u)
 #define VERTICES_PER_GROUP (TRIANGLES_PER_GROUP * 3u)
@@ -18,10 +19,14 @@
 #define FONT_GLYPHS 42u
 #define FONT_WIDTH (FONT_GLYPHS * 4u)
 #define HUD_SCALE 2
-#define HUD_TEXT_LENGTH 14u
-#define BENCH_GROUPS 4u
-#define BENCH_GROUP_DURATION_US UINT64_C(5000000)
+#define RESULT_TEXT_LENGTH 17u
+#define BENCH_GROUPS 9u
+#define BENCH_GROUP_DURATION_US UINT64_C(4000000)
 #define TELEMETRY_TICK_PERIOD 12u
+#define REQUIRED_CAPABILITIES                                           \
+    (PXA_RASTER_CAP_FLAT_QUAD | PXA_RASTER_CAP_TEXTURED_QUAD |         \
+     PXA_RASTER_CAP_ADDITIVE_SPRITE | PXA_RASTER_CAP_SPRITE_BATCH |    \
+     PXA_RASTER_CAP_TRIANGLE_BATCH)
 
 static uint8_t g_packet[64];
 static uint8_t g_upload[PXA_RASTER_UPLOAD_HEADER_BYTES + FONT_WIDTH * 5u];
@@ -36,10 +41,6 @@ static uint32_t g_context;
 static uint32_t g_capabilities;
 static uint32_t g_tick;
 static uint64_t g_frame_id;
-static uint64_t g_fps_window_us;
-static uint64_t g_fps_window_visible_frames;
-static uint32_t g_fps;
-static uint32_t g_host_raster_us;
 static uint8_t g_group;
 static uint8_t g_finished;
 static uint8_t g_have_group_baseline;
@@ -49,8 +50,13 @@ static uint64_t g_group_rendered_start;
 static uint64_t g_group_raster_start_us;
 
 typedef enum {
-    BENCH_SPRITES,
+    BENCH_CLEAR,
+    BENCH_SPRITES_NATIVE,
+    BENCH_SPRITES_SCALED,
+    BENCH_SPRITES_ADDITIVE,
     BENCH_QUADS,
+    BENCH_TEXTURED_QUADS,
+    BENCH_CUBES_3,
     BENCH_CUBES_6,
     BENCH_CUBES_12,
 } bench_kind_t;
@@ -61,13 +67,19 @@ typedef struct {
 } bench_group_t;
 
 typedef struct {
-    uint32_t fps;
+    uint32_t visible_fps;
+    uint32_t rendered_fps;
     uint32_t raster_ms;
 } bench_result_t;
 
 static const bench_group_t kBenchGroups[BENCH_GROUPS] = {
-    {"2D-SP", BENCH_SPRITES},
+    {"2D-CL", BENCH_CLEAR},
+    {"2D-SN", BENCH_SPRITES_NATIVE},
+    {"2D-SS", BENCH_SPRITES_SCALED},
+    {"2D-AD", BENCH_SPRITES_ADDITIVE},
     {"2D-QD", BENCH_QUADS},
+    {"2D-TX", BENCH_TEXTURED_QUADS},
+    {"3D-03", BENCH_CUBES_3},
     {"3D-06", BENCH_CUBES_6},
     {"3D-12", BENCH_CUBES_12},
 };
@@ -114,7 +126,10 @@ static void prepare_resources(void) {
     for (index = 0; index < sizeof(g_texture); ++index) {
         const uint32_t x = index & 15u;
         const uint32_t y = index >> 4;
-        g_texture[index] = (uint8_t)(1u + ((x >> 2) + (y >> 2) * 4u) * 11u);
+        g_texture[index] = ((x + y * 3u) & 7u) == 0
+                               ? 0
+                               : (uint8_t)(1u +
+                                           ((x >> 2) + (y >> 2) * 4u) * 11u);
     }
     for (index = 0; index < FONT_GLYPHS; ++index) {
         uint8_t row;
@@ -180,41 +195,27 @@ static void append_text(pxa_raster_draw_list_t *list, int x, int y,
     }
 }
 
-static void append_telemetry(pxa_raster_draw_list_t *list, uint8_t mode) {
-    char text[HUD_TEXT_LENGTH + 1] = "2D 00FPS 000MS";
-    uint32_t frame_ms = (g_host_raster_us + 500u) / 1000u;
-    uint32_t fps = g_fps;
-    const int text_width = (int)HUD_TEXT_LENGTH * 4 * HUD_SCALE;
-    if (fps > 99u) fps = 99u;
-    if (frame_ms > 999u) frame_ms = 999u;
-    text[0] = mode == 0 ? '2' : '3';
-    write_decimal(text + 3, fps, 2);
-    write_decimal(text + 9, frame_ms, 3);
-    append_rect(list, (WIDTH - text_width) / 2 - 4, 1, text_width + 8, 14,
-                rgb565(9, 12, 18));
-    append_text(list, (WIDTH - text_width) / 2, 3, text,
-                mode == 0 ? rgb565(80, 230, 235) : rgb565(255, 185, 70));
-}
-
-static int render_sprites(pxa_raster_draw_list_t *list) {
+static int render_sprites(pxa_raster_draw_list_t *list, uint8_t flags,
+                          uint8_t scaled) {
     uint32_t index;
     for (index = 0; index < SPRITE_COUNT; ++index) {
         const uint32_t column = index % 16u;
         const uint32_t row = index / 16u;
         const int wave = (int)((g_tick * (1u + row % 3u) + index * 7u) % 22u);
         pxa_raster_sprite_instance_t *sprite = &g_sprites[index];
+        const uint16_t size = scaled ? (uint16_t)(10u + index % 11u) : 16u;
         sprite->x = (int16_t)(column * 18u + (row & 1u) * 8u - 2u);
         sprite->y = (int16_t)(18u + row * 18u +
                               (wave < 11 ? wave : 21 - wave) - 5);
-        sprite->width = 14;
-        sprite->height = 14;
+        sprite->width = size;
+        sprite->height = size;
         sprite->source_x = 0;
         sprite->source_y = 0;
         sprite->source_width = 16;
         sprite->source_height = 16;
     }
     return pxa_raster_sprite_batch(
-        list, 0, 0, g_capabilities, g_sprites, SPRITE_COUNT, 0);
+        list, 0, flags, g_capabilities, g_sprites, SPRITE_COUNT, 0);
 }
 
 static int render_quads(pxa_raster_draw_list_t *list) {
@@ -232,6 +233,47 @@ static int render_quads(pxa_raster_draw_list_t *list) {
                            (uint8_t)(220u - row * 16u)));
     }
     return list->status == PXA_STATUS_OK;
+}
+
+static int render_textured_quads(pxa_raster_draw_list_t *list) {
+    uint32_t index;
+    for (index = 0; index < TEXTURED_QUAD_COUNT; ++index) {
+        const uint32_t column = index % 6u;
+        const uint32_t row = index / 6u;
+        const int phase = (int)((g_tick / 2u + index * 3u) & 15u);
+        const int offset = kSinQ10[phase] / 256;
+        const int x = 5 + (int)column * 49 + offset;
+        const int y = 20 + (int)row * 53 - offset;
+        const uint16_t depth = (uint16_t)(320u + row * 48u);
+        pxa_raster_vertex_t vertices[4] = {
+            {.x_q4 = (int16_t)(x * 16),
+             .y_q4 = (int16_t)(y * 16),
+             .u_q4 = 0,
+             .v_q4 = 0,
+             .light = 255,
+             .depth_q8 = depth},
+            {.x_q4 = (int16_t)((x + 42) * 16),
+             .y_q4 = (int16_t)((y + 2) * 16),
+             .u_q4 = 15 * 16,
+             .v_q4 = 0,
+             .light = 230,
+             .depth_q8 = (uint16_t)(depth + 64u)},
+            {.x_q4 = (int16_t)((x + 40) * 16),
+             .y_q4 = (int16_t)((y + 44) * 16),
+             .u_q4 = 15 * 16,
+             .v_q4 = 15 * 16,
+             .light = 205,
+             .depth_q8 = (uint16_t)(depth + 96u)},
+            {.x_q4 = (int16_t)((x - 2) * 16),
+             .y_q4 = (int16_t)((y + 42) * 16),
+             .u_q4 = 0,
+             .v_q4 = 15 * 16,
+             .light = 230,
+             .depth_q8 = (uint16_t)(depth + 32u)},
+        };
+        if (!pxa_raster_textured_quad(list, vertices, 0)) return 0;
+    }
+    return 1;
 }
 
 typedef struct {
@@ -276,8 +318,8 @@ static void append_cube(uint32_t cube, uint8_t phase) {
     point3_t points[8];
     const int32_t sine = kSinQ10[phase & 15u];
     const int32_t cosine = kSinQ10[(phase + 4u) & 15u];
-    const int center_x = 58 + (int)(cube % 3u) * 90;
-    const int center_y = 70 + (int)(cube / 3u) * 100;
+    const int center_x = 38 + (int)(cube % 4u) * 73;
+    const int center_y = 48 + (int)(cube / 4u) * 72;
     uint8_t corner;
     uint8_t face;
     for (corner = 0; corner < 8; ++corner) {
@@ -334,15 +376,17 @@ static int render_3d(pxa_raster_draw_list_t *list, uint32_t cube_count) {
 }
 
 static void append_results(pxa_raster_draw_list_t *list) {
-    char line[HUD_TEXT_LENGTH + 1] = "1 2D-SP 00/000";
-    const int header_width = 7 * 4 * HUD_SCALE;
+    char line[RESULT_TEXT_LENGTH + 1] = "1 2D-CL 00/00/000";
+    const int header_width = 13 * 4 * HUD_SCALE;
     uint8_t index;
-    append_text(list, (WIDTH - header_width) / 2, 24, "RESULTS",
+    append_text(list, (WIDTH - header_width) / 2, 5, "RESULT V/R/MS",
                 rgb565(245, 245, 250));
     for (index = 0; index < BENCH_GROUPS; ++index) {
-        uint32_t fps = g_results[index].fps;
+        uint32_t visible_fps = g_results[index].visible_fps;
+        uint32_t rendered_fps = g_results[index].rendered_fps;
         uint32_t raster_ms = g_results[index].raster_ms;
-        if (fps > 99u) fps = 99u;
+        if (visible_fps > 99u) visible_fps = 99u;
+        if (rendered_fps > 99u) rendered_fps = 99u;
         if (raster_ms > 999u) raster_ms = 999u;
         line[0] = (char)('1' + index);
         line[2] = kBenchGroups[index].label[0];
@@ -350,18 +394,20 @@ static void append_results(pxa_raster_draw_list_t *list) {
         line[4] = kBenchGroups[index].label[2];
         line[5] = kBenchGroups[index].label[3];
         line[6] = kBenchGroups[index].label[4];
-        write_decimal(line + 8, fps, 2);
-        write_decimal(line + 11, raster_ms, 3);
-        append_text(list, (WIDTH - HUD_TEXT_LENGTH * 4 * HUD_SCALE) / 2,
-                    52 + index * 34, line,
-                    index < 2 ? rgb565(80, 230, 235) : rgb565(255, 185, 70));
+        write_decimal(line + 8, visible_fps, 2);
+        write_decimal(line + 11, rendered_fps, 2);
+        write_decimal(line + 14, raster_ms, 3);
+        append_text(list,
+                    (WIDTH - RESULT_TEXT_LENGTH * 4 * HUD_SCALE) / 2,
+                    24 + index * 23, line,
+                    index < 6 ? rgb565(80, 230, 235)
+                              : rgb565(255, 185, 70));
     }
 }
 
 static int render_frame(void) {
     pxa_raster_draw_list_t list;
     const bench_group_t *group;
-    uint8_t mode;
     pxa_raster_draw_list_begin(&list, g_draw, sizeof(g_draw), ++g_frame_id);
     if (g_finished) {
         (void)pxa_raster_clear(&list, rgb565(8, 12, 20));
@@ -369,15 +415,27 @@ static int render_frame(void) {
         return pxa_raster_submit(g_context, &list) > 0;
     }
     group = &kBenchGroups[g_group];
-    mode = group->kind < BENCH_CUBES_6 ? 0 : 1;
     (void)pxa_raster_clear(&list,
-                           mode == 0 ? rgb565(7, 18, 27)
-                                     : rgb565(18, 12, 20));
-    if (group->kind == BENCH_SPRITES && !render_sprites(&list)) return 0;
+                           group->kind < BENCH_CUBES_3 ? rgb565(7, 18, 27)
+                                                       : rgb565(18, 12, 20));
+    if (group->kind == BENCH_SPRITES_NATIVE &&
+        !render_sprites(&list, 0, 0))
+        return 0;
+    if (group->kind == BENCH_SPRITES_SCALED &&
+        !render_sprites(&list, 0, 1))
+        return 0;
+    if (group->kind == BENCH_SPRITES_ADDITIVE &&
+        !render_sprites(&list, PXA_RASTER_SPRITE_TRANSPARENT_INDEX0 |
+                                   PXA_RASTER_SPRITE_ADDITIVE,
+                        0))
+        return 0;
     if (group->kind == BENCH_QUADS && !render_quads(&list)) return 0;
+    if (group->kind == BENCH_TEXTURED_QUADS &&
+        !render_textured_quads(&list))
+        return 0;
+    if (group->kind == BENCH_CUBES_3 && !render_3d(&list, 3)) return 0;
     if (group->kind == BENCH_CUBES_6 && !render_3d(&list, 6)) return 0;
     if (group->kind == BENCH_CUBES_12 && !render_3d(&list, 12)) return 0;
-    append_telemetry(&list, mode);
     return pxa_raster_submit(g_context, &list) > 0;
 }
 
@@ -390,8 +448,10 @@ static void finish_group(uint64_t timestamp_us,
         telemetry->rendered_frames - g_group_rendered_start;
     const uint64_t raster_us = telemetry->host_raster_us -
                                g_group_raster_start_us;
-    g_results[g_group].fps =
+    g_results[g_group].visible_fps =
         (uint32_t)(visible_frames * UINT64_C(1000000) / elapsed_us);
+    g_results[g_group].rendered_fps =
+        (uint32_t)(rendered_frames * UINT64_C(1000000) / elapsed_us);
     g_results[g_group].raster_ms = rendered_frames == 0
                                        ? 0
                                        : (uint32_t)((raster_us / rendered_frames +
@@ -407,18 +467,6 @@ static void sample_telemetry(uint64_t timestamp_us) {
     if (pxa_raster_query_telemetry(g_context, &telemetry) !=
         (int32_t)PXA_RASTER_TELEMETRY_BYTES)
         return;
-    g_host_raster_us = telemetry.last_host_raster_us;
-    if (g_fps_window_us == 0) {
-        g_fps_window_us = timestamp_us;
-        g_fps_window_visible_frames = telemetry.visible_frames;
-    } else if (timestamp_us - g_fps_window_us >= UINT64_C(1000000)) {
-        g_fps = (uint32_t)((telemetry.visible_frames -
-                            g_fps_window_visible_frames) *
-                           UINT64_C(1000000) /
-                           (timestamp_us - g_fps_window_us));
-        g_fps_window_us = timestamp_us;
-        g_fps_window_visible_frames = telemetry.visible_frames;
-    }
     if (g_finished) return;
     if (!g_have_group_baseline) {
         g_group_started_us = timestamp_us;
@@ -437,10 +485,6 @@ int32_t pxa_app_start(const uint8_t *config, uint32_t length) {
     prepare_resources();
     g_tick = 0;
     g_frame_id = 0;
-    g_fps_window_us = 0;
-    g_fps_window_visible_frames = 0;
-    g_fps = 0;
-    g_host_raster_us = 0;
     g_group = 0;
     g_finished = 0;
     g_have_group_baseline = 0;
@@ -460,10 +504,8 @@ int32_t pxa_app_on_event(const uint8_t *bytes, uint32_t length) {
         if (!pxa_game_render_parse_create(&event, &created))
             return PXA_EVENT_UNHANDLED;
         if (created.status != PXA_STATUS_OK ||
-            (created.capabilities & (PXA_RASTER_CAP_SPRITE_BATCH |
-                                     PXA_RASTER_CAP_TRIANGLE_BATCH)) !=
-                (PXA_RASTER_CAP_SPRITE_BATCH |
-                 PXA_RASTER_CAP_TRIANGLE_BATCH))
+            (created.capabilities & REQUIRED_CAPABILITIES) !=
+                REQUIRED_CAPABILITIES)
             return PXA_EVENT_HANDLED;
         g_context = created.context_handle;
         g_capabilities = created.capabilities;
