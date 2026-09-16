@@ -301,6 +301,14 @@ static int stat_same(const struct stat *left, const struct stat *right) {
            left->st_ctim.tv_nsec == right->st_ctim.tv_nsec;
 }
 
+/* POSIX filesystems report one link for a regular file. LittleFS leaves
+ * st_nlink at zero because the VFS never fills the field, so accept any value
+ * up to one: hard-linked files still report two or more on POSIX and remain
+ * rejected. */
+static int stat_single_link(const struct stat *metadata) {
+    return metadata->st_nlink <= 1;
+}
+
 /* Open (creating when requested) the directory `relative` below `parent_fd`.
  * `relative` must be a slash-separated sequence of safe segments. */
 static pxa_status_t open_tree_at(int parent_fd, const char *relative,
@@ -378,7 +386,8 @@ static pxa_status_t open_relative(int root, const char *relative, int *file,
             child = openat(current, name, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
             close(current);
             if (child < 0 || fstat(child, metadata) != 0 ||
-                !S_ISREG(metadata->st_mode) || metadata->st_nlink != 1) {
+                !S_ISREG(metadata->st_mode) ||
+                !stat_single_link(metadata)) {
                 if (child >= 0) close(child);
                 return PXA_STATUS_DENIED;
             }
@@ -651,7 +660,7 @@ static pxa_status_t enumerate_files(int directory, const char *prefix,
             break;
         }
         if (S_ISREG(metadata.st_mode)) {
-            if (metadata.st_nlink != 1 ||
+            if (!stat_single_link(&metadata) ||
                 !path_append(output, prefix, item->d_name, name_size)) {
                 status = PXA_STATUS_DENIED;
                 break;
@@ -1137,7 +1146,7 @@ static pxa_status_t verify_opened_container(
         publisher_key_id_out == NULL || app_id_out == NULL ||
         app_id_size_out == NULL || header_out == NULL ||
         fstat(source_fd, &before) != 0 || !S_ISREG(before.st_mode) ||
-        before.st_nlink != 1 || before.st_size < 0) {
+        !stat_single_link(&before) || before.st_size < 0) {
         return PXA_STATUS_DENIED;
     }
     *manifest_size_out = 0;
@@ -2061,22 +2070,39 @@ static pxa_status_t prepare_incoming_container(
     pxa_status_t status;
 
     if (fstat(source_fd, &before) != 0 || !S_ISREG(before.st_mode) ||
-        before.st_nlink != 1 || before.st_size < 0 ||
+        !stat_single_link(&before) || before.st_size < 0 ||
         (uint64_t)before.st_size != header->container_size) {
+        PXA_POSIX_INSTALLER_LOG_FAILURE("incoming", "prepare-incoming-stat",
+                                        PXA_STATUS_DENIED);
         return PXA_STATUS_DENIED;
     }
     status = ensure_manifest_workspace(
         installer, (pxa_bytes_t){manifest_bytes, manifest_size});
-    if (status != PXA_STATUS_OK) return status;
+    if (status != PXA_STATUS_OK) {
+        PXA_POSIX_INSTALLER_LOG_FAILURE("incoming",
+                                        "prepare-incoming-manifest-workspace",
+                                        status);
+        return status;
+    }
     status = pxa_package_manifest_parse(
         installer->scratch, installer->scratch_size,
         (pxa_bytes_t){manifest_bytes, manifest_size},
         &installer->scratch_limits,
         &manifest);
-    if (status != PXA_STATUS_OK) return status;
+    if (status != PXA_STATUS_OK) {
+        PXA_POSIX_INSTALLER_LOG_FAILURE("incoming",
+                                        "prepare-incoming-manifest-parse",
+                                        status);
+        return status;
+    }
     status = read_exact_at(source_fd, header->package_signature_offset,
                            package_signature, sizeof(package_signature));
-    if (status != PXA_STATUS_OK) return status;
+    if (status != PXA_STATUS_OK) {
+        PXA_POSIX_INSTALLER_LOG_FAILURE("incoming",
+                                        "prepare-incoming-package-signature",
+                                        status);
+        return status;
+    }
     memcpy(relative, ".session-", 9);
     strcpy(relative + 9, ctx->identity_name);
     memcpy(relative + 9 + strlen(ctx->identity_name), "/incoming", 10);
@@ -2088,13 +2114,22 @@ static pxa_status_t prepare_incoming_container(
     if (packages_fd < 0) return PXA_STATUS_INTERNAL;
     status = open_tree_at(packages_fd, relative, 1, &incoming_fd);
     close(packages_fd);
-    if (status != PXA_STATUS_OK) return status;
+    if (status != PXA_STATUS_OK) {
+        PXA_POSIX_INSTALLER_LOG_FAILURE("incoming",
+                                        "prepare-incoming-open-tree", status);
+        return status;
+    }
     status = write_file_excl(incoming_fd, "manifest.pxm", manifest_bytes,
                              manifest_size);
     if (status == PXA_STATUS_OK) {
         status = write_file_excl(incoming_fd, "signature.pxs",
                                  package_signature,
                                  sizeof(package_signature));
+    }
+    if (status != PXA_STATUS_OK) {
+        PXA_POSIX_INSTALLER_LOG_FAILURE("incoming",
+                                        "prepare-incoming-write-metadata",
+                                        status);
     }
     payload_position = header->payload_offset;
     for (index = 0; status == PXA_STATUS_OK && index < manifest->file_count;
@@ -2123,10 +2158,18 @@ static pxa_status_t prepare_incoming_container(
             pxa_read_u16(file_record + 2) != 0 ||
             chunk_count != expected_chunks) {
             status = PXA_STATUS_DENIED;
+            PXA_POSIX_INSTALLER_LOG_FAILURE("incoming",
+                                            "prepare-incoming-file-record",
+                                            status);
             break;
         }
         status = open_output_excl(incoming_fd, expected->path, &target);
-        if (status != PXA_STATUS_OK) break;
+        if (status != PXA_STATUS_OK) {
+            PXA_POSIX_INSTALLER_LOG_FAILURE("incoming",
+                                            "prepare-incoming-open-output",
+                                            status);
+            break;
+        }
         status = pxa_openssl_sha256_stream_begin(&hash_stream);
         if (status != PXA_STATUS_OK) {
             close(target);
@@ -2160,11 +2203,19 @@ static pxa_status_t prepare_incoming_container(
                 decoded_total > expected->size ||
                 decoded_size > expected->size - decoded_total) {
                 status = PXA_STATUS_DENIED;
+                PXA_POSIX_INSTALLER_LOG_FAILURE("incoming",
+                                                "prepare-incoming-chunk-header",
+                                                status);
                 break;
             }
             status = read_exact_at(source_fd, payload_position,
                                    installer->compressed_buffer, stored_size);
-            if (status != PXA_STATUS_OK) break;
+            if (status != PXA_STATUS_OK) {
+                PXA_POSIX_INSTALLER_LOG_FAILURE("incoming",
+                                                "prepare-incoming-chunk-read",
+                                                status);
+                break;
+            }
             payload_position += stored_size;
             encoded_total += stored_size;
             if (stored_size == decoded_size) {
@@ -2175,11 +2226,15 @@ static pxa_status_t prepare_incoming_container(
                     (char *)installer->io_buffer, stored_size, decoded_size);
                 if (lz4_size != decoded_size) {
                     status = PXA_STATUS_DENIED;
+                    PXA_POSIX_INSTALLER_LOG_FAILURE(
+                        "incoming", "prepare-incoming-chunk-decode", status);
                     break;
                 }
                 decoded = installer->io_buffer;
             } else {
                 status = PXA_STATUS_DENIED;
+                PXA_POSIX_INSTALLER_LOG_FAILURE(
+                    "incoming", "prepare-incoming-chunk-codec", status);
                 break;
             }
             status = pxa_openssl_sha256_stream_update(&hash_stream, decoded,
@@ -2189,15 +2244,23 @@ static pxa_status_t prepare_incoming_container(
             decoded_total += decoded_size;
         }
         if (status == PXA_STATUS_OK &&
-            (decoded_total != expected->size || encoded_total != encoded_size))
+            (decoded_total != expected->size || encoded_total != encoded_size)) {
             status = PXA_STATUS_DENIED;
+            PXA_POSIX_INSTALLER_LOG_FAILURE("incoming",
+                                            "prepare-incoming-file-size",
+                                            status);
+        }
         if (status == PXA_STATUS_OK)
             status = pxa_openssl_sha256_stream_finish(&hash_stream, digest);
         else
             pxa_openssl_sha256_stream_abort(&hash_stream);
         if (status == PXA_STATUS_OK &&
-            memcmp(digest, expected->sha256, sizeof(digest)) != 0)
+            memcmp(digest, expected->sha256, sizeof(digest)) != 0) {
             status = PXA_STATUS_DENIED;
+            PXA_POSIX_INSTALLER_LOG_FAILURE("incoming",
+                                            "prepare-incoming-file-digest",
+                                            status);
+        }
 #ifndef ESP_PLATFORM
         if (status == PXA_STATUS_OK && fsync(target) != 0)
             status = PXA_STATUS_INTERNAL;
@@ -2206,11 +2269,19 @@ static pxa_status_t prepare_incoming_container(
             status = PXA_STATUS_INTERNAL;
     }
     if (status == PXA_STATUS_OK &&
-        payload_position != header->payload_offset + header->payload_size)
+        payload_position != header->payload_offset + header->payload_size) {
         status = PXA_STATUS_DENIED;
+        PXA_POSIX_INSTALLER_LOG_FAILURE("incoming",
+                                        "prepare-incoming-payload-end",
+                                        status);
+    }
     if (status == PXA_STATUS_OK &&
-        (fstat(source_fd, &after) != 0 || !stat_same(&before, &after)))
+        (fstat(source_fd, &after) != 0 || !stat_same(&before, &after))) {
         status = PXA_STATUS_DENIED;
+        PXA_POSIX_INSTALLER_LOG_FAILURE("incoming",
+                                        "prepare-incoming-source-changed",
+                                        status);
+    }
     if (status == PXA_STATUS_OK) status = sync_tree(incoming_fd);
     close(incoming_fd);
     return status;
@@ -2300,7 +2371,7 @@ static pxa_status_t identity_owner_check_or_claim(
                       O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
     if (owner_fd >= 0) {
         if (fstat(owner_fd, &before) != 0 || !S_ISREG(before.st_mode) ||
-            before.st_nlink != 1 ||
+            !stat_single_link(&before) ||
             before.st_size != PXA_POSIX_INSTALLER_OWNER_BYTES) {
             status = PXA_STATUS_DENIED;
             goto done;

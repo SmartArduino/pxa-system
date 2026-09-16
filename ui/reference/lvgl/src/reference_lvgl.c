@@ -1,13 +1,14 @@
 #include "pxsys/reference_lvgl.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "pxsys/app_metadata.h"
 #include "pxsys/reference_layout.h"
 
 #define REFERENCE_MAGIC UINT32_C(0x50585255)
-#define REFERENCE_APP_COUNT 4u
+#define REFERENCE_APP_COUNT 8u
 #define TRANSIENT_BAR_TIMEOUT_MS 2500u
 #define NAVIGATION_GESTURE_COMMIT_DISTANCE 32
 #define NAVIGATION_GESTURE_HOLD_MS 180u
@@ -65,6 +66,35 @@ static const pxsys_resource_entry_t reference_en_resources[] = {
     RESOURCE_ENTRY("app.system-settings.description", "System and device settings"),
     RESOURCE_ENTRY("app.system-status-bar.name", "System Status Bar"),
     RESOURCE_ENTRY("app.system-navigation-bar.name", "System Navigation Bar"),
+    RESOURCE_ENTRY("settings.sound.volume", "Volume"),
+    RESOURCE_ENTRY("settings.sound.brightness", "Brightness"),
+    RESOURCE_ENTRY("settings.sound.unsupported", "No adjustable levels"),
+    RESOURCE_ENTRY("settings.about.section.system", "System"),
+    RESOURCE_ENTRY("settings.about.section.memory", "Memory & storage"),
+    RESOURCE_ENTRY("settings.about.firmware.name", "Firmware"),
+    RESOURCE_ENTRY("settings.about.firmware.version", "Firmware version"),
+    RESOURCE_ENTRY("settings.about.system.version", "System version"),
+    RESOURCE_ENTRY("settings.about.display", "Display"),
+    RESOURCE_ENTRY("settings.about.memory", "Memory"),
+    RESOURCE_ENTRY("settings.about.storage", "Storage"),
+    RESOURCE_ENTRY("settings.apps.empty", "No installed apps"),
+    RESOURCE_ENTRY("settings.apps.system", "System app"),
+    RESOURCE_ENTRY("settings.apps.user", "User app"),
+    RESOURCE_ENTRY("settings.apps.disabled", "Disabled"),
+    RESOURCE_ENTRY("settings.apps.enable", "Enable"),
+    RESOURCE_ENTRY("settings.apps.disable", "Disable"),
+    RESOURCE_ENTRY("settings.apps.clear", "Clear data"),
+    RESOURCE_ENTRY("settings.apps.uninstall", "Uninstall"),
+    RESOURCE_ENTRY("settings.apps.close", "Close"),
+    RESOURCE_ENTRY("settings.apps.confirm.clear", "Clear all app data?"),
+    RESOURCE_ENTRY("settings.apps.confirm.uninstall", "Uninstall this app?"),
+    RESOURCE_ENTRY("settings.files.up", "Up one level"),
+    RESOURCE_ENTRY("settings.files.empty", "Empty folder"),
+    RESOURCE_ENTRY("settings.files.folder", "Folder"),
+    RESOURCE_ENTRY("settings.files.delete", "Delete"),
+    RESOURCE_ENTRY("settings.files.confirm.delete", "Delete this item?"),
+    RESOURCE_ENTRY("settings.confirm", "Confirm"),
+    RESOURCE_ENTRY("settings.cancel", "Cancel"),
 };
 
 static const pxsys_resource_entry_t reference_zh_resources[] = {
@@ -112,6 +142,35 @@ static const pxsys_resource_entry_t reference_zh_resources[] = {
     RESOURCE_ENTRY("app.system-settings.description", "系统与设备设置"),
     RESOURCE_ENTRY("app.system-status-bar.name", "系统状态栏"),
     RESOURCE_ENTRY("app.system-navigation-bar.name", "系统导航栏"),
+    RESOURCE_ENTRY("settings.sound.volume", "音量"),
+    RESOURCE_ENTRY("settings.sound.brightness", "亮度"),
+    RESOURCE_ENTRY("settings.sound.unsupported", "暂无可调节项"),
+    RESOURCE_ENTRY("settings.about.section.system", "系统"),
+    RESOURCE_ENTRY("settings.about.section.memory", "内存与存储"),
+    RESOURCE_ENTRY("settings.about.firmware.name", "固件名称"),
+    RESOURCE_ENTRY("settings.about.firmware.version", "固件版本"),
+    RESOURCE_ENTRY("settings.about.system.version", "系统版本"),
+    RESOURCE_ENTRY("settings.about.display", "屏幕分辨率"),
+    RESOURCE_ENTRY("settings.about.memory", "内存"),
+    RESOURCE_ENTRY("settings.about.storage", "存储空间"),
+    RESOURCE_ENTRY("settings.apps.empty", "没有已安装的应用"),
+    RESOURCE_ENTRY("settings.apps.system", "系统应用"),
+    RESOURCE_ENTRY("settings.apps.user", "用户应用"),
+    RESOURCE_ENTRY("settings.apps.disabled", "已停用"),
+    RESOURCE_ENTRY("settings.apps.enable", "启用"),
+    RESOURCE_ENTRY("settings.apps.disable", "停用"),
+    RESOURCE_ENTRY("settings.apps.clear", "清除数据"),
+    RESOURCE_ENTRY("settings.apps.uninstall", "卸载"),
+    RESOURCE_ENTRY("settings.apps.close", "关闭"),
+    RESOURCE_ENTRY("settings.apps.confirm.clear", "确认清除应用数据？"),
+    RESOURCE_ENTRY("settings.apps.confirm.uninstall", "确认卸载该应用？"),
+    RESOURCE_ENTRY("settings.files.up", "返回上级目录"),
+    RESOURCE_ENTRY("settings.files.empty", "空文件夹"),
+    RESOURCE_ENTRY("settings.files.folder", "文件夹"),
+    RESOURCE_ENTRY("settings.files.delete", "删除"),
+    RESOURCE_ENTRY("settings.files.confirm.delete", "确认删除该项？"),
+    RESOURCE_ENTRY("settings.confirm", "确认"),
+    RESOURCE_ENTRY("settings.cancel", "取消"),
 };
 
 static const pxsys_resource_catalog_t reference_catalog_en = {
@@ -135,6 +194,10 @@ typedef enum {
     REFERENCE_PAGE_SETTINGS,
     REFERENCE_PAGE_STATUS_BAR,
     REFERENCE_PAGE_NAVIGATION_BAR,
+    REFERENCE_PAGE_SOUND_SETTINGS,
+    REFERENCE_PAGE_DEVICE_INFO,
+    REFERENCE_PAGE_APP_MANAGER,
+    REFERENCE_PAGE_FILE_MANAGER,
 } reference_page_t;
 
 typedef enum {
@@ -315,6 +378,32 @@ struct pxsys_reference_lvgl {
     size_t language_count;
     const void* wallpaper_source;
     pxsys_navigation_mode_t navigation_mode;
+    uint8_t back_gesture_enabled;
+    uint8_t back_gesture_override;
+    uint16_t back_gesture_edge_width;
+    void* back_gesture_context;
+    pxsys_reference_lvgl_back_gesture_fn back_gesture;
+    void* device_info_context;
+    pxsys_reference_lvgl_device_info_fn device_info;
+    void* app_manager_context;
+    pxsys_reference_lvgl_app_list_fn app_list;
+    pxsys_reference_lvgl_app_action_fn app_action;
+    void* file_manager_context;
+    pxsys_reference_lvgl_file_list_fn file_list;
+    pxsys_reference_lvgl_file_action_fn file_action;
+    pxsys_reference_managed_app_t managed_apps[PXSYS_REFERENCE_MANAGED_APP_MAX];
+    size_t managed_app_count;
+    pxsys_reference_file_entry_t file_entries[PXSYS_REFERENCE_FILE_ENTRY_MAX];
+    size_t file_entry_count;
+    char file_path[PXSYS_REFERENCE_FILE_PATH_MAX];
+    char pending_identity[PXSYS_REFERENCE_MANAGED_APP_IDENTITY_MAX];
+    char pending_path[PXSYS_REFERENCE_FILE_PATH_MAX];
+    uint8_t pending_action;
+    uint8_t pending_kind;
+    uint8_t managed_apps_loaded;
+    uint8_t file_entries_loaded;
+    lv_obj_t* app_dialog;
+    lv_obj_t* confirm_dialog;
     reference_page_t active_page;
     pxsys_display_profile_t display;
     pxsys_theme_snapshot_t theme;
@@ -517,41 +606,80 @@ static void navigation_back_indicator_reset(pxsys_reference_lvgl_t* ui) {
     ui->navigation_back_indicator = NULL;
 }
 
+/* Left-edge drag pill: grows and rounds as the pointer travels, switching to
+ * the accent color once the release would navigate back. */
 static void navigation_back_indicator_update(pxsys_reference_lvgl_t* ui,
-                                             int32_t press_x, int32_t x,
-                                             int32_t y) {
-    lv_obj_t* label;
+                                             int32_t edge_x, int32_t press_x,
+                                             int32_t x, int32_t y) {
+    static const lv_point_precise_t kChevronPoints[] = {
+        {8, 1}, {1, 9}, {8, 17},
+    };
+    lv_obj_t* indicator;
+    lv_obj_t* chevron;
     int32_t distance = x - press_x;
+    int32_t progress;
+    int32_t width;
+    int32_t height;
+    int32_t radius;
     int32_t indicator_x;
     int32_t indicator_y;
-    if (distance <= 0) return;
+    int ready;
+    if (distance < 4) {
+        navigation_back_indicator_reset(ui);
+        return;
+    }
     if (ui->navigation_back_indicator == NULL) {
         ui->navigation_back_indicator = lv_obj_create(ui->root);
         style_plain(ui->navigation_back_indicator);
-        lv_obj_set_size(ui->navigation_back_indicator, 32, 32);
-        lv_obj_set_style_bg_color(
-            ui->navigation_back_indicator,
-            color_token(ui, PXSYS_COLOR_ACCENT), 0);
-        lv_obj_set_style_bg_opa(ui->navigation_back_indicator, LV_OPA_COVER,
-                                0);
-        lv_obj_set_style_radius(ui->navigation_back_indicator, LV_RADIUS_CIRCLE,
-                                0);
-        label = lv_label_create(ui->navigation_back_indicator);
-        lv_label_set_text(label, "<");
-        lv_obj_set_style_text_font(label, ui->title_font, 0);
-        lv_obj_set_style_text_color(
-            label, color_token(ui, PXSYS_COLOR_ON_ACCENT), 0);
-        lv_obj_center(label);
-        lv_obj_move_foreground(ui->navigation_back_indicator);
+        lv_obj_set_size(ui->navigation_back_indicator, 18, 68);
+        lv_obj_set_style_radius(ui->navigation_back_indicator, 5, 0);
+        lv_obj_set_style_shadow_width(ui->navigation_back_indicator, 6, 0);
+        lv_obj_set_style_shadow_opa(ui->navigation_back_indicator, LV_OPA_30,
+                                    0);
+        chevron = lv_line_create(ui->navigation_back_indicator);
+        lv_line_set_points(chevron, kChevronPoints, 3);
+        lv_obj_set_style_line_width(chevron, 3, 0);
+        lv_obj_set_style_line_rounded(chevron, true, 0);
+        lv_obj_set_size(chevron, 10, 18);
+        lv_obj_align(chevron, LV_ALIGN_CENTER, 0, 0);
     }
-    if (distance > NAVIGATION_GESTURE_COMMIT_DISTANCE)
-        distance = NAVIGATION_GESTURE_COMMIT_DISTANCE;
-    indicator_x = -22 + distance * 22 / NAVIGATION_GESTURE_COMMIT_DISTANCE;
-    indicator_y = y - 16;
+    indicator = ui->navigation_back_indicator;
+    chevron = lv_obj_get_child(indicator, 0);
+    progress = distance > 72 ? 72 : distance;
+    width = 18 + progress * 20 / 72;
+    height = 68 - progress * 16 / 72;
+    radius = 5 + progress * 11 / 72;
+    if (radius > 16) radius = 16;
+    ready = distance >= NAVIGATION_GESTURE_COMMIT_DISTANCE;
+    indicator_x = edge_x + distance - width;
+    if (indicator_x > edge_x + 8) indicator_x = edge_x + 8;
+    if (indicator_x < edge_x - width + 4) indicator_x = edge_x - width + 4;
+    indicator_y = y - height / 2;
     if (indicator_y < 0) indicator_y = 0;
-    if (indicator_y > (int32_t)ui->display.height - 32)
-        indicator_y = (int32_t)ui->display.height - 32;
-    lv_obj_set_pos(ui->navigation_back_indicator, indicator_x, indicator_y);
+    if (indicator_y > (int32_t)ui->display.height - height)
+        indicator_y = (int32_t)ui->display.height - height;
+    lv_obj_set_size(indicator, width, height);
+    lv_obj_set_pos(indicator, indicator_x, indicator_y);
+    lv_obj_set_style_radius(indicator, radius, 0);
+    lv_obj_set_style_bg_color(
+        indicator,
+        color_token(ui, ready ? PXSYS_COLOR_ACCENT : PXSYS_COLOR_SURFACE), 0);
+    lv_obj_set_style_bg_opa(indicator, (lv_opa_t)242, 0);
+    lv_obj_set_style_shadow_color(indicator, color_token(ui, PXSYS_COLOR_SCRIM),
+                                  0);
+    if (chevron != NULL) {
+        if (width < 28)
+            lv_obj_add_flag(chevron, LV_OBJ_FLAG_HIDDEN);
+        else
+            lv_obj_remove_flag(chevron, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_set_style_line_color(
+            chevron,
+            color_token(ui, ready ? PXSYS_COLOR_ON_ACCENT
+                                  : PXSYS_COLOR_TEXT_PRIMARY),
+            0);
+    }
+    lv_obj_remove_flag(indicator, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_move_foreground(indicator);
 }
 
 static void navigation_back(pxsys_reference_lvgl_t* ui) {
@@ -570,17 +698,62 @@ static void navigation_back_gesture_event(lv_event_t* event) {
     lv_event_code_t code;
     int32_t horizontal;
     int32_t vertical;
+    int32_t edge_x;
     if (!ui_valid(ui) || indev == NULL) return;
     lv_indev_get_point(indev, &point);
     code = lv_event_get_code(event);
+    edge_x = (int32_t)ui->display.safe_insets.left;
+    if (ui->back_gesture != NULL) {
+        pxsys_reference_back_gesture_phase_t phase;
+        bool commit = false;
+        switch (code) {
+            case LV_EVENT_PRESSED:
+                phase = PXSYS_REFERENCE_BACK_GESTURE_PRESS;
+                break;
+            case LV_EVENT_PRESSING:
+                phase = PXSYS_REFERENCE_BACK_GESTURE_MOVE;
+                break;
+            case LV_EVENT_RELEASED:
+                phase = PXSYS_REFERENCE_BACK_GESTURE_RELEASE;
+                break;
+            case LV_EVENT_PRESS_LOST:
+                phase = PXSYS_REFERENCE_BACK_GESTURE_CANCEL;
+                break;
+            default:
+                return;
+        }
+        if (!ui->back_gesture_override) {
+            if (phase != PXSYS_REFERENCE_BACK_GESTURE_PRESS) return;
+            if (ui->back_gesture(ui->back_gesture_context, phase, point.x,
+                                 point.y, &commit)) {
+                ui->back_gesture_override = 1;
+            }
+            if (ui->back_gesture_override) return;
+        } else {
+            (void)ui->back_gesture(ui->back_gesture_context, phase, point.x,
+                                   point.y, &commit);
+            if (phase == PXSYS_REFERENCE_BACK_GESTURE_RELEASE) {
+                ui->back_gesture_override = 0;
+                if (commit) navigation_back(ui);
+            } else if (phase == PXSYS_REFERENCE_BACK_GESTURE_CANCEL) {
+                ui->back_gesture_override = 0;
+            }
+            return;
+        }
+    }
+#if !PXSYS_REFERENCE_UI_BACK_GESTURE
+    (void)edge_x;
+    return;
+#endif
     if (code == LV_EVENT_PRESSED) {
         ui->navigation_back_press_x = point.x;
         ui->navigation_back_press_y = point.y;
         return;
     }
     if (code == LV_EVENT_PRESSING) {
-        navigation_back_indicator_update(ui, ui->navigation_back_press_x,
-                                         point.x, point.y);
+        navigation_back_indicator_update(ui, edge_x,
+                                         ui->navigation_back_press_x, point.x,
+                                         point.y);
         return;
     }
     if (code == LV_EVENT_PRESS_LOST) {
@@ -1670,6 +1843,7 @@ static lv_obj_t* make_launcher_tile(pxsys_reference_lvgl_t* ui,
     uint32_t hash = UINT32_C(2166136261);
     size_t index;
     int32_t icon_size = ui->display.width < 360 ? 42 : 50;
+    int32_t label_gap = ui->display.width < 360 ? 5 : 6;
     const char* symbol = LV_SYMBOL_LIST;
     if (item != NULL) {
         for (index = 0; item->app_id[index] != '\0'; ++index) {
@@ -1743,7 +1917,7 @@ static lv_obj_t* make_launcher_tile(pxsys_reference_lvgl_t* ui,
                                 ui, PXSYS_TYPOGRAPHY_CAPTION)->line_height + 2
                           : 16);
     lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_align(label, LV_ALIGN_BOTTOM_MID, 0, 0);
+    lv_obj_align(label, LV_ALIGN_TOP_MID, 0, icon_size + label_gap);
     lv_obj_add_event_cb(tile, launcher_clicked, LV_EVENT_CLICKED, item);
     return tile;
 }
@@ -2462,7 +2636,13 @@ static void notification_shade_progress_set(void* object, int32_t progress) {
                               (int64_t)ui->notification_panel_height *
                                   progress / 256));
     scrim_opa = (lv_opa_t)((uint32_t)LV_OPA_50 * (uint32_t)progress / 256u);
-    lv_obj_set_style_bg_opa(ui->notification_shade, scrim_opa, 0);
+    /* Quantize the dimming. The scrim covers the whole display, so setting a
+     * new opacity on every sampled drag frame would invalidate the entire
+     * screen; 16 levels look identical while letting the drag redraw only the
+     * moving panel. */
+    scrim_opa = (lv_opa_t)((scrim_opa + 16u) & (lv_opa_t)~15u);
+    if (lv_obj_get_style_bg_opa(ui->notification_shade, 0) != scrim_opa)
+        lv_obj_set_style_bg_opa(ui->notification_shade, scrim_opa, 0);
 }
 
 static void close_notification_shade(pxsys_reference_lvgl_t* ui) {
@@ -3506,6 +3686,8 @@ static void build_status_bar(pxsys_reference_lvgl_t* ui,
     lv_obj_t* time_label;
 #if PXSYS_REFERENCE_UI_BATTERY_PERCENT
     lv_obj_t* percent_label;
+    const lv_font_t* percent_font;
+    int32_t percent_width;
 #endif
     char time_text[8];
 #if PXSYS_REFERENCE_UI_BATTERY_PERCENT
@@ -3514,6 +3696,7 @@ static void build_status_bar(pxsys_reference_lvgl_t* ui,
     int32_t safe_right = layout->safe_area.x +
                          (int32_t)layout->safe_area.width;
     int32_t safe_top = layout->safe_area.y;
+    int32_t battery_x = safe_right - (int32_t)layout->outer_padding - 25;
 #if PXSYS_REFERENCE_UI_WIFI || PXSYS_REFERENCE_UI_CELLULAR
     int32_t indicator_x;
 #endif
@@ -3545,9 +3728,29 @@ static void build_status_bar(pxsys_reference_lvgl_t* ui,
     lv_obj_align(time_label, LV_ALIGN_LEFT_MID,
                  layout->safe_area.x + (int32_t)layout->outer_padding,
                  align_y);
+#if PXSYS_REFERENCE_UI_BATTERY_PERCENT
+    snprintf(percent_text, sizeof(percent_text),
+             ui->system_status.battery_valid ? "%u%%" : "--",
+             (unsigned)ui->system_status.battery_percent);
+    percent_font = typography_font(ui, PXSYS_TYPOGRAPHY_CAPTION);
+    percent_label = make_label(status, percent_text, percent_font,
+                               color_token(ui, PXSYS_COLOR_TEXT_SECONDARY));
+    lv_label_set_long_mode(percent_label, LV_LABEL_LONG_MODE_CLIP);
+    lv_obj_set_width(percent_label, LV_SIZE_CONTENT);
+    lv_obj_set_height(percent_label,
+                      percent_font != NULL ? percent_font->line_height
+                                           : LV_SIZE_CONTENT);
+    lv_obj_set_style_text_align(percent_label, LV_TEXT_ALIGN_RIGHT, 0);
+    lv_obj_align(percent_label, LV_ALIGN_RIGHT_MID,
+                 -((int32_t)layout->viewport.width - safe_right) -
+                     (int32_t)layout->outer_padding - 29,
+                 align_y);
+    lv_obj_update_layout(status);
+    percent_width = lv_obj_get_width(percent_label);
+#endif
 #if PXSYS_REFERENCE_UI_WIFI || PXSYS_REFERENCE_UI_CELLULAR
 #if PXSYS_REFERENCE_UI_BATTERY_PERCENT
-    indicator_x = safe_right - (int32_t)layout->outer_padding - 78;
+    indicator_x = battery_x - 4 - percent_width - 8 - 16;
 #else
     indicator_x = safe_right - (int32_t)layout->outer_padding - 45;
 #endif
@@ -3564,22 +3767,7 @@ static void build_status_bar(pxsys_reference_lvgl_t* ui,
         radio_enabled(ui, PXSYS_NETWORK_WIFI))
         make_wifi_icon(ui, status, indicator_x, center_y);
 #endif
-#if PXSYS_REFERENCE_UI_BATTERY_PERCENT
-    snprintf(percent_text, sizeof(percent_text),
-             ui->system_status.battery_valid ? "%u%%" : "--",
-             (unsigned)ui->system_status.battery_percent);
-    percent_label = make_label(status, percent_text, NULL,
-                               color_token(ui, PXSYS_COLOR_TEXT_SECONDARY));
-    lv_obj_set_width(percent_label, 28);
-    lv_obj_set_style_text_align(percent_label, LV_TEXT_ALIGN_RIGHT, 0);
-    lv_obj_align(percent_label, LV_ALIGN_RIGHT_MID,
-                 -((int32_t)layout->viewport.width - safe_right) -
-                     (int32_t)layout->outer_padding - 29,
-                 align_y);
-#endif
-    make_battery_icon(ui, status,
-                      safe_right - (int32_t)layout->outer_padding - 25,
-                      center_y);
+    make_battery_icon(ui, status, battery_x, center_y);
 }
 
 static void toast_apply_theme(pxsys_reference_lvgl_t* ui,
@@ -3688,6 +3876,604 @@ static void toast_posted(void* context, const pxsys_toast_message_t* toast) {
     }
 }
 
+#if PXSYS_REFERENCE_UI_BUILTIN_SETTINGS
+
+static void page_content_init(pxsys_reference_lvgl_t* ui,
+                              const pxsys_reference_layout_t* layout) {
+    lv_obj_set_layout(ui->content, LV_LAYOUT_FLEX);
+    lv_obj_set_flex_flow(ui->content, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_row(
+        ui->content,
+        layout->size_class == PXSYS_UI_SIZE_COMPACT ? 8 : 10, 0);
+    lv_obj_set_style_pad_bottom(ui->content, 8, 0);
+    lv_obj_add_flag(ui->content,
+                    LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_scroll_dir(ui->content, LV_DIR_VER);
+    lv_obj_set_scrollbar_mode(ui->content, LV_SCROLLBAR_MODE_AUTO);
+}
+
+static lv_obj_t* make_page_button(pxsys_reference_lvgl_t* ui, lv_obj_t* parent,
+                                  const char* text,
+                                  pxsys_color_token_t background,
+                                  pxsys_color_token_t foreground,
+                                  lv_event_cb_t clicked, void* user_data) {
+    lv_obj_t* button = lv_button_create(parent);
+    lv_obj_t* label;
+    lv_obj_set_width(button, LV_PCT(100));
+    lv_obj_set_height(button, 42);
+    lv_obj_set_style_radius(button, ui->theme.base_radius_px * 2u, 0);
+    lv_obj_set_style_bg_color(button, color_token(ui, background), 0);
+    lv_obj_set_style_bg_opa(button, LV_OPA_COVER, 0);
+    lv_obj_set_style_shadow_width(button, 0, 0);
+    lv_obj_set_style_border_width(button, 0, 0);
+    label = make_label(button, text, typography_font(ui, PXSYS_TYPOGRAPHY_LABEL),
+                       color_token(ui, foreground));
+    lv_obj_center(label);
+    if (clicked != NULL)
+        lv_obj_add_event_cb(button, clicked, LV_EVENT_CLICKED, user_data);
+    return button;
+}
+
+/* ---------------------------------------------------------------- Sound */
+
+static void make_level_control_block(pxsys_reference_lvgl_t* ui,
+                                     lv_obj_t* section, const char* title,
+                                     pxsys_level_control_t control,
+                                     uint8_t value,
+                                     level_control_t* context) {
+    lv_obj_t* block = lv_obj_create(section);
+    lv_obj_t* label;
+    lv_obj_t* slider;
+    int32_t minimum = control == PXSYS_LEVEL_CONTROL_BRIGHTNESS ? 2 : 0;
+    style_plain(block);
+    lv_obj_set_width(block, LV_PCT(100));
+    lv_obj_set_height(block, LV_SIZE_CONTENT);
+    lv_obj_set_layout(block, LV_LAYOUT_FLEX);
+    lv_obj_set_flex_flow(block, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_all(block, 10, 0);
+    lv_obj_set_style_pad_row(block, 8, 0);
+    lv_obj_add_flag(block, LV_OBJ_FLAG_CLICKABLE);
+    label = make_label(block, title,
+                       typography_font(ui, PXSYS_TYPOGRAPHY_LABEL),
+                       color_token(ui, PXSYS_COLOR_TEXT_PRIMARY));
+    lv_obj_set_width(label, LV_PCT(100));
+    slider = lv_slider_create(block);
+    lv_obj_set_width(slider, LV_PCT(100));
+    lv_slider_set_range(slider, minimum, 100);
+    lv_slider_set_value(slider, value < minimum ? minimum : value,
+                        LV_ANIM_OFF);
+    lv_obj_set_style_bg_color(slider, color_token(ui, PXSYS_COLOR_BORDER),
+                              LV_PART_MAIN);
+    lv_obj_set_style_bg_color(slider, color_token(ui, PXSYS_COLOR_ACCENT),
+                              LV_PART_INDICATOR);
+    lv_obj_set_style_bg_color(slider, color_token(ui, PXSYS_COLOR_ACCENT),
+                              LV_PART_KNOB);
+    context->ui = ui;
+    context->control = control;
+    lv_obj_add_event_cb(slider, control_level_released, LV_EVENT_RELEASED,
+                        context);
+}
+
+static void build_sound_settings(pxsys_reference_lvgl_t* ui,
+                                 const pxsys_reference_layout_t* layout) {
+    page_content_init(ui, layout);
+    if (ui->system_status.volume_supported ||
+        ui->system_status.brightness_supported) {
+        lv_obj_t* section = make_settings_section(
+            ui, translated(ui, "settings.section.device", "Device"));
+        if (ui->system_status.volume_supported) {
+            make_level_control_block(
+                ui, section, translated(ui, "settings.sound.volume", "Volume"),
+                PXSYS_LEVEL_CONTROL_VOLUME, ui->system_status.volume_percent,
+                &ui->level_controls[0]);
+        }
+        if (ui->system_status.brightness_supported) {
+            make_level_control_block(
+                ui, section,
+                translated(ui, "settings.sound.brightness", "Brightness"),
+                PXSYS_LEVEL_CONTROL_BRIGHTNESS,
+                ui->system_status.brightness_percent, &ui->level_controls[1]);
+        }
+    } else {
+        lv_obj_t* label = make_label(
+            ui->content,
+            translated(ui, "settings.sound.unsupported",
+                       "No adjustable levels"),
+            typography_font(ui, PXSYS_TYPOGRAPHY_BODY),
+            color_token(ui, PXSYS_COLOR_TEXT_SECONDARY));
+        lv_obj_set_width(label, LV_PCT(100));
+    }
+}
+
+/* ---------------------------------------------------------------- About */
+
+typedef struct {
+    const char* section_key;
+    const char* section_default;
+    const char* label_key;
+    const char* label_default;
+    const char* symbol;
+    pxsys_reference_device_field_t field;
+} device_info_row_t;
+
+static const device_info_row_t kDeviceInfoRows[] = {
+    {"settings.about.section.system", "System", "settings.about.firmware.name",
+     "Firmware", LV_SYMBOL_SETTINGS, PXSYS_REFERENCE_DEVICE_FIRMWARE_NAME},
+    {"settings.about.section.system", "System",
+     "settings.about.firmware.version", "Firmware version", LV_SYMBOL_UPLOAD,
+     PXSYS_REFERENCE_DEVICE_FIRMWARE_VERSION},
+    {"settings.about.section.system", "System",
+     "settings.about.system.version", "System version", LV_SYMBOL_LIST,
+     PXSYS_REFERENCE_DEVICE_SYSTEM_VERSION},
+    {"settings.about.section.system", "System", "settings.about.display",
+     "Display", LV_SYMBOL_IMAGE, PXSYS_REFERENCE_DEVICE_DISPLAY},
+    {"settings.about.section.memory", "Memory & storage",
+     "settings.about.memory", "Memory", LV_SYMBOL_DRIVE,
+     PXSYS_REFERENCE_DEVICE_MEMORY},
+    {"settings.about.section.memory", "Memory & storage",
+     "settings.about.storage", "Storage", LV_SYMBOL_SD_CARD,
+     PXSYS_REFERENCE_DEVICE_STORAGE},
+};
+
+static void build_device_info_page(pxsys_reference_lvgl_t* ui,
+                                   const pxsys_reference_layout_t* layout) {
+    char values[PXSYS_REFERENCE_DEVICE_FIELD_COUNT]
+               [PXSYS_REFERENCE_DEVICE_VALUE_MAX];
+    const char* section_key = NULL;
+    lv_obj_t* section = NULL;
+    size_t index;
+    page_content_init(ui, layout);
+    if (ui->device_info == NULL) return;
+    memset(values, 0, sizeof(values));
+    ui->device_info(ui->device_info_context, values);
+    for (index = 0; index < sizeof(kDeviceInfoRows) / sizeof(kDeviceInfoRows[0]);
+         ++index) {
+        const device_info_row_t* row = &kDeviceInfoRows[index];
+        if (values[row->field][0] == '\0') continue;
+        if (section_key == NULL || strcmp(section_key, row->section_key) != 0) {
+            section = make_settings_section(
+                ui, translated(ui, row->section_key, row->section_default));
+            section_key = row->section_key;
+        }
+        (void)make_settings_row(
+            ui, layout, section, row->symbol, PXSYS_COLOR_ACCENT,
+            translated(ui, row->label_key, row->label_default),
+            values[row->field], NULL, NULL);
+    }
+}
+
+/* ---------------------------------------------------------- Page dialogs */
+
+static void page_close_dialogs(pxsys_reference_lvgl_t* ui) {
+    if (!ui_valid(ui)) return;
+    if (ui->confirm_dialog != NULL) {
+        lv_obj_delete(ui->confirm_dialog);
+        ui->confirm_dialog = NULL;
+    }
+    if (ui->app_dialog != NULL) {
+        lv_obj_delete(ui->app_dialog);
+        ui->app_dialog = NULL;
+    }
+}
+
+static lv_obj_t* make_page_dialog(pxsys_reference_lvgl_t* ui,
+                                  const pxsys_reference_layout_t* layout,
+                                  lv_obj_t** out_panel) {
+    lv_obj_t* dialog = lv_obj_create(ui->root);
+    lv_obj_t* panel;
+    style_plain(dialog);
+    lv_obj_set_size(dialog, LV_PCT(100), LV_PCT(100));
+    lv_obj_set_style_bg_color(dialog, color_token(ui, PXSYS_COLOR_SCRIM), 0);
+    lv_obj_set_style_bg_opa(dialog, LV_OPA_60, 0);
+    lv_obj_add_flag(dialog, LV_OBJ_FLAG_CLICKABLE);
+    panel = lv_obj_create(dialog);
+    style_plain(panel);
+    lv_obj_set_width(panel, LV_PCT(88));
+    lv_obj_set_height(panel, LV_SIZE_CONTENT);
+    lv_obj_set_style_max_height(panel, (lv_coord_t)layout->content.height, 0);
+    lv_obj_align(panel, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_set_style_bg_color(panel, color_token(ui, PXSYS_COLOR_SURFACE), 0);
+    lv_obj_set_style_bg_opa(panel, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(panel, ui->theme.base_radius_px * 3u, 0);
+    lv_obj_set_style_pad_all(panel, 12, 0);
+    lv_obj_set_style_pad_row(panel, 8, 0);
+    lv_obj_set_layout(panel, LV_LAYOUT_FLEX);
+    lv_obj_set_flex_flow(panel, LV_FLEX_FLOW_COLUMN);
+    lv_obj_add_flag(panel, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_flag(panel,
+                    LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_SCROLL_ELASTIC);
+    lv_obj_set_scroll_dir(panel, LV_DIR_VER);
+    *out_panel = panel;
+    lv_obj_move_foreground(dialog);
+    if (ui->status_bar != NULL) lv_obj_move_foreground(ui->status_bar);
+    if (ui->navigation_bar != NULL) lv_obj_move_foreground(ui->navigation_bar);
+    return dialog;
+}
+
+static void page_dialog_scrim_clicked(lv_event_t* event) {
+    page_close_dialogs(
+        (pxsys_reference_lvgl_t*)lv_event_get_user_data(event));
+    rebuild((pxsys_reference_lvgl_t*)lv_event_get_user_data(event));
+}
+
+static void page_confirm_clicked(lv_event_t* event) {
+    pxsys_reference_lvgl_t* ui =
+        (pxsys_reference_lvgl_t*)lv_event_get_user_data(event);
+    lv_obj_t* button = lv_event_get_current_target(event);
+    if (!ui_valid(ui) || button == NULL) return;
+    if ((uintptr_t)lv_obj_get_user_data(button) != 0) {
+        if (ui->pending_kind == 0 && ui->app_action != NULL) {
+            (void)ui->app_action(
+                ui->app_manager_context, ui->pending_identity,
+                (pxsys_reference_app_action_t)ui->pending_action);
+            ui->managed_apps_loaded = 0;
+        } else if (ui->pending_kind == 1 && ui->file_action != NULL) {
+            (void)ui->file_action(
+                ui->file_manager_context, ui->pending_path,
+                (pxsys_reference_file_action_t)ui->pending_action);
+            ui->file_entries_loaded = 0;
+        }
+    }
+    page_close_dialogs(ui);
+    rebuild(ui);
+}
+
+static void show_page_confirm(pxsys_reference_lvgl_t* ui,
+                              const char* message) {
+    pxsys_reference_layout_t layout;
+    lv_obj_t* panel;
+    lv_obj_t* label;
+    lv_obj_t* row;
+    lv_obj_t* confirm;
+    lv_obj_t* cancel;
+    if (!ui_valid(ui) || ui->confirm_dialog != NULL ||
+        pxsys_reference_layout_compute(&ui->display, &layout) !=
+            PXSYS_STATUS_OK)
+        return;
+    expand_content_into_hidden_gesture_area(ui, &layout);
+    ui->confirm_dialog = make_page_dialog(ui, &layout, &panel);
+    lv_obj_add_event_cb(ui->confirm_dialog, page_dialog_scrim_clicked,
+                        LV_EVENT_CLICKED, ui);
+    label = make_label(panel, message,
+                       typography_font(ui, PXSYS_TYPOGRAPHY_BODY),
+                       color_token(ui, PXSYS_COLOR_TEXT_PRIMARY));
+    lv_obj_set_width(label, LV_PCT(100));
+    row = lv_obj_create(panel);
+    style_plain(row);
+    lv_obj_set_width(row, LV_PCT(100));
+    lv_obj_set_height(row, 42);
+    lv_obj_set_layout(row, LV_LAYOUT_FLEX);
+    lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_style_pad_column(row, 8, 0);
+    confirm = make_page_button(
+        ui, row, translated(ui, "settings.confirm", "Confirm"),
+        PXSYS_COLOR_ERROR, PXSYS_COLOR_ON_ACCENT, page_confirm_clicked, ui);
+    lv_obj_set_width(confirm, 0);
+    lv_obj_set_flex_grow(confirm, 1);
+    lv_obj_set_user_data(confirm, (void*)(uintptr_t)1);
+    cancel = make_page_button(
+        ui, row, translated(ui, "settings.cancel", "Cancel"),
+        PXSYS_COLOR_BORDER, PXSYS_COLOR_TEXT_PRIMARY, page_confirm_clicked, ui);
+    lv_obj_set_width(cancel, 0);
+    lv_obj_set_flex_grow(cancel, 1);
+    lv_obj_set_user_data(cancel, (void*)0);
+}
+
+/* ----------------------------------------------------------- App manager */
+
+static void app_row_clicked(lv_event_t* event);
+
+static void app_action_clicked(lv_event_t* event) {
+    pxsys_reference_lvgl_t* ui =
+        (pxsys_reference_lvgl_t*)lv_event_get_user_data(event);
+    lv_obj_t* button = lv_event_get_current_target(event);
+    uintptr_t action = button == NULL
+                           ? 0
+                           : (uintptr_t)lv_obj_get_user_data(button);
+    if (!ui_valid(ui) || ui->app_action == NULL) return;
+    if (action == PXSYS_REFERENCE_APP_ACTION_CLEAR_DATA) {
+        ui->pending_kind = 0;
+        ui->pending_action = PXSYS_REFERENCE_APP_ACTION_CLEAR_DATA;
+        show_page_confirm(
+            ui, translated(ui, "settings.apps.confirm.clear",
+                           "Clear all app data?"));
+        return;
+    }
+    if (action == PXSYS_REFERENCE_APP_ACTION_UNINSTALL) {
+        ui->pending_kind = 0;
+        ui->pending_action = PXSYS_REFERENCE_APP_ACTION_UNINSTALL;
+        show_page_confirm(
+            ui, translated(ui, "settings.apps.confirm.uninstall",
+                           "Uninstall this app?"));
+        return;
+    }
+    (void)ui->app_action(ui->app_manager_context, ui->pending_identity,
+                         (pxsys_reference_app_action_t)action);
+    ui->managed_apps_loaded = 0;
+    page_close_dialogs(ui);
+    rebuild(ui);
+}
+
+static void show_app_detail(pxsys_reference_lvgl_t* ui,
+                            const pxsys_reference_managed_app_t* app) {
+    pxsys_reference_layout_t layout;
+    lv_obj_t* panel;
+    lv_obj_t* info;
+    lv_obj_t* label;
+    lv_obj_t* button;
+    char buffer[160];
+    if (!ui_valid(ui) || ui->app_dialog != NULL || app == NULL ||
+        pxsys_reference_layout_compute(&ui->display, &layout) !=
+            PXSYS_STATUS_OK)
+        return;
+    expand_content_into_hidden_gesture_area(ui, &layout);
+    snprintf(ui->pending_identity, sizeof(ui->pending_identity), "%s",
+             app->identity);
+    ui->app_dialog = make_page_dialog(ui, &layout, &panel);
+    lv_obj_add_event_cb(ui->app_dialog, page_dialog_scrim_clicked,
+                        LV_EVENT_CLICKED, ui);
+
+    label = make_label(panel, app->name,
+                       typography_font(ui, PXSYS_TYPOGRAPHY_TITLE),
+                       color_token(ui, PXSYS_COLOR_TEXT_PRIMARY));
+    lv_obj_set_width(label, LV_PCT(100));
+
+    info = lv_obj_create(panel);
+    style_plain(info);
+    lv_obj_set_width(info, LV_PCT(100));
+    lv_obj_set_height(info, LV_SIZE_CONTENT);
+    lv_obj_set_layout(info, LV_LAYOUT_FLEX);
+    lv_obj_set_flex_flow(info, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_row(info, 4, 0);
+    snprintf(buffer, sizeof(buffer), "%s: %s",
+             translated(ui, "settings.apps.version", "Version"),
+             app->version);
+    label = make_label(info, buffer,
+                       typography_font(ui, PXSYS_TYPOGRAPHY_CAPTION),
+                       color_token(ui, PXSYS_COLOR_TEXT_SECONDARY));
+    lv_obj_set_width(label, LV_PCT(100));
+    snprintf(buffer, sizeof(buffer), "%s: %s",
+             translated(ui, "settings.apps.identifier", "Identifier"),
+             app->identity);
+    label = make_label(info, buffer,
+                       typography_font(ui, PXSYS_TYPOGRAPHY_CAPTION),
+                       color_token(ui, PXSYS_COLOR_TEXT_SECONDARY));
+    lv_obj_set_width(label, LV_PCT(100));
+    snprintf(buffer, sizeof(buffer), "%s%s",
+             translated(ui,
+                        app->built_in ? "settings.apps.system"
+                                      : "settings.apps.user",
+                        app->built_in ? "System app" : "User app"),
+             app->enabled ? ""
+                          : translated(ui, "settings.apps.disabled",
+                                       "Disabled"));
+    label = make_label(info, buffer,
+                       typography_font(ui, PXSYS_TYPOGRAPHY_CAPTION),
+                       color_token(ui, PXSYS_COLOR_TEXT_SECONDARY));
+    lv_obj_set_width(label, LV_PCT(100));
+
+    button = make_page_button(
+        ui, panel,
+        translated(ui,
+                   app->enabled ? "settings.apps.disable"
+                                : "settings.apps.enable",
+                   app->enabled ? "Disable" : "Enable"),
+        PXSYS_COLOR_ACCENT, PXSYS_COLOR_ON_ACCENT, app_action_clicked, ui);
+    lv_obj_set_user_data(
+        button, (void*)(uintptr_t)(app->enabled
+                                       ? PXSYS_REFERENCE_APP_ACTION_DISABLE
+                                       : PXSYS_REFERENCE_APP_ACTION_ENABLE));
+    if (app->has_private_data) {
+        button = make_page_button(
+            ui, panel, translated(ui, "settings.apps.clear", "Clear data"),
+            PXSYS_COLOR_WARNING, PXSYS_COLOR_ON_ACCENT, app_action_clicked, ui);
+        lv_obj_set_user_data(
+            button, (void*)(uintptr_t)PXSYS_REFERENCE_APP_ACTION_CLEAR_DATA);
+    }
+    if (app->installed && !app->built_in) {
+        button = make_page_button(
+            ui, panel, translated(ui, "settings.apps.uninstall", "Uninstall"),
+            PXSYS_COLOR_ERROR, PXSYS_COLOR_ON_ACCENT, app_action_clicked, ui);
+        lv_obj_set_user_data(
+            button, (void*)(uintptr_t)PXSYS_REFERENCE_APP_ACTION_UNINSTALL);
+    }
+    button = make_page_button(ui, panel,
+                              translated(ui, "settings.apps.close", "Close"),
+                              PXSYS_COLOR_BORDER,
+                              PXSYS_COLOR_TEXT_PRIMARY,
+                              page_dialog_scrim_clicked, ui);
+    (void)button;
+}
+
+static void app_row_clicked(lv_event_t* event) {
+    pxsys_reference_lvgl_t* ui =
+        (pxsys_reference_lvgl_t*)lv_event_get_user_data(event);
+    lv_obj_t* row = lv_event_get_current_target(event);
+    size_t index =
+        row == NULL ? 0 : (size_t)(uintptr_t)lv_obj_get_user_data(row);
+    if (!ui_valid(ui) || index >= ui->managed_app_count) return;
+    show_app_detail(ui, &ui->managed_apps[index]);
+}
+
+static void build_app_manager(pxsys_reference_lvgl_t* ui,
+                              const pxsys_reference_layout_t* layout) {
+    lv_obj_t* section;
+    size_t index;
+    page_content_init(ui, layout);
+    if (!ui->managed_apps_loaded) {
+        ui->managed_apps_loaded = 1;
+        ui->managed_app_count = 0;
+        if (ui->app_list != NULL) {
+            size_t count = ui->app_list(ui->app_manager_context, NULL, 0);
+            if (count > PXSYS_REFERENCE_MANAGED_APP_MAX)
+                count = PXSYS_REFERENCE_MANAGED_APP_MAX;
+            if (count != 0) {
+                ui->managed_app_count = ui->app_list(
+                    ui->app_manager_context, ui->managed_apps, count);
+                if (ui->managed_app_count > count)
+                    ui->managed_app_count = count;
+            }
+        }
+    }
+    if (ui->managed_app_count == 0) {
+        lv_obj_t* label = make_label(
+            ui->content, translated(ui, "settings.apps.empty",
+                                    "No installed apps"),
+            typography_font(ui, PXSYS_TYPOGRAPHY_BODY),
+            color_token(ui, PXSYS_COLOR_TEXT_SECONDARY));
+        lv_obj_set_width(label, LV_PCT(100));
+        return;
+    }
+    section = make_settings_section(
+        ui, translated(ui, "settings.section.system", "System"));
+    for (index = 0; index < ui->managed_app_count; ++index) {
+        pxsys_reference_managed_app_t* app = &ui->managed_apps[index];
+        char subtitle[128];
+        lv_obj_t* row;
+        snprintf(subtitle, sizeof(subtitle), "%s%s%s", app->version,
+                 app->built_in
+                     ? translated(ui, "settings.apps.system", "System app")
+                     : translated(ui, "settings.apps.user", "User app"),
+                 app->enabled
+                     ? ""
+                     : translated(ui, "settings.apps.disabled", "Disabled"));
+        row = make_settings_row(ui, layout, section, LV_SYMBOL_LIST,
+                                PXSYS_COLOR_ACCENT, app->name, subtitle,
+                                app_row_clicked, ui);
+        lv_obj_set_user_data(row, (void*)(uintptr_t)index);
+        add_settings_chevron(ui, row);
+    }
+}
+
+/* ---------------------------------------------------------- File manager */
+
+static int file_entry_compare(const void* left, const void* right) {
+    const pxsys_reference_file_entry_t* a =
+        (const pxsys_reference_file_entry_t*)left;
+    const pxsys_reference_file_entry_t* b =
+        (const pxsys_reference_file_entry_t*)right;
+    if (a->is_directory != b->is_directory)
+        return a->is_directory ? -1 : 1;
+    return strcmp(a->name, b->name);
+}
+
+static void format_file_size(uint64_t size, char* buffer, size_t capacity) {
+    if (size >= UINT64_C(1024) * 1024) {
+        snprintf(buffer, capacity, "%.1f MB",
+                 (double)size / (1024.0 * 1024.0));
+    } else if (size >= UINT64_C(1024)) {
+        snprintf(buffer, capacity, "%.1f KB", (double)size / 1024.0);
+    } else {
+        snprintf(buffer, capacity, "%u B", (unsigned)size);
+    }
+}
+
+static void file_manager_reload(pxsys_reference_lvgl_t* ui) {
+    ui->file_entry_count = 0;
+    if (ui->file_list == NULL) return;
+    ui->file_entry_count = ui->file_list(
+        ui->file_manager_context, ui->file_path, ui->file_entries,
+        PXSYS_REFERENCE_FILE_ENTRY_MAX);
+    if (ui->file_entry_count > PXSYS_REFERENCE_FILE_ENTRY_MAX)
+        ui->file_entry_count = PXSYS_REFERENCE_FILE_ENTRY_MAX;
+    if (ui->file_entry_count > 1) {
+        qsort(ui->file_entries, ui->file_entry_count,
+              sizeof(ui->file_entries[0]), file_entry_compare);
+    }
+}
+
+static void file_entry_clicked(lv_event_t* event) {
+    pxsys_reference_lvgl_t* ui =
+        (pxsys_reference_lvgl_t*)lv_event_get_user_data(event);
+    lv_obj_t* row = lv_event_get_current_target(event);
+    size_t index =
+        row == NULL ? 0 : (size_t)(uintptr_t)lv_obj_get_user_data(row);
+    pxsys_reference_file_entry_t* entry;
+    if (!ui_valid(ui) || index >= ui->file_entry_count) return;
+    entry = &ui->file_entries[index];
+    if (entry->is_directory) {
+        snprintf(ui->file_path, sizeof(ui->file_path), "%s", entry->path);
+        ui->file_entries_loaded = 0;
+        rebuild(ui);
+        return;
+    }
+    snprintf(ui->pending_path, sizeof(ui->pending_path), "%s", entry->path);
+    ui->pending_kind = 1;
+    ui->pending_action = PXSYS_REFERENCE_FILE_ACTION_DELETE;
+    show_page_confirm(
+        ui, translated(ui, "settings.files.confirm.delete",
+                       "Delete this item?"));
+}
+
+static void file_manager_up_clicked(lv_event_t* event) {
+    pxsys_reference_lvgl_t* ui =
+        (pxsys_reference_lvgl_t*)lv_event_get_user_data(event);
+    char* slash;
+    if (!ui_valid(ui)) return;
+    slash = strrchr(ui->file_path, '/');
+    if (slash != NULL) *slash = '\0';
+    ui->file_entries_loaded = 0;
+    rebuild(ui);
+}
+
+static void build_file_manager(pxsys_reference_lvgl_t* ui,
+                               const pxsys_reference_layout_t* layout) {
+    lv_obj_t* section;
+    lv_obj_t* label;
+    size_t index;
+    page_content_init(ui, layout);
+    if (!ui->file_entries_loaded) {
+        ui->file_entries_loaded = 1;
+        file_manager_reload(ui);
+    }
+    if (ui->file_path[0] != '\0') {
+        lv_obj_t* button = make_page_button(
+            ui, ui->content,
+            translated(ui, "settings.files.up", "Up one level"),
+            PXSYS_COLOR_SURFACE, PXSYS_COLOR_TEXT_PRIMARY,
+            file_manager_up_clicked, ui);
+        lv_obj_set_style_border_width(button, 1, 0);
+        lv_obj_set_style_border_color(button, color_token(ui, PXSYS_COLOR_BORDER),
+                                      0);
+        (void)button;
+    }
+    label = make_label(ui->content, ui->file_path[0] == '\0' ? "/" : ui->file_path,
+                       typography_font(ui, PXSYS_TYPOGRAPHY_CAPTION),
+                       color_token(ui, PXSYS_COLOR_TEXT_SECONDARY));
+    lv_obj_set_width(label, LV_PCT(100));
+    if (ui->file_entry_count == 0) {
+        label = make_label(ui->content,
+                           translated(ui, "settings.files.empty",
+                                      "Empty folder"),
+                           typography_font(ui, PXSYS_TYPOGRAPHY_BODY),
+                           color_token(ui, PXSYS_COLOR_TEXT_SECONDARY));
+        lv_obj_set_width(label, LV_PCT(100));
+        return;
+    }
+    section = make_settings_section(
+        ui, translated(ui, "settings.files", "Files & storage"));
+    for (index = 0; index < ui->file_entry_count; ++index) {
+        pxsys_reference_file_entry_t* entry = &ui->file_entries[index];
+        char subtitle[64];
+        lv_obj_t* row;
+        if (entry->is_directory) {
+            snprintf(subtitle, sizeof(subtitle), "%s",
+                     translated(ui, "settings.files.folder", "Folder"));
+        } else {
+            format_file_size(entry->size, subtitle, sizeof(subtitle));
+        }
+        row = make_settings_row(
+            ui, layout, section,
+            entry->is_directory ? LV_SYMBOL_DIRECTORY : LV_SYMBOL_FILE,
+            entry->is_directory ? PXSYS_COLOR_WARNING : PXSYS_COLOR_ACCENT,
+            entry->name, subtitle, file_entry_clicked, ui);
+        lv_obj_set_user_data(row, (void*)(uintptr_t)index);
+        if (entry->is_directory) add_settings_chevron(ui, row);
+    }
+}
+
+#endif /* PXSYS_REFERENCE_UI_BUILTIN_SETTINGS */
+
 static void rebuild(pxsys_reference_lvgl_t* ui) {
     pxsys_reference_layout_t layout;
     lv_obj_t* navigation;
@@ -3735,6 +4521,8 @@ static void rebuild(pxsys_reference_lvgl_t* ui) {
     }
     /* Dialogs are children of root and are deleted by lv_obj_clean(). */
     ui->language_dialog = NULL;
+    ui->app_dialog = NULL;
+    ui->confirm_dialog = NULL;
     lv_obj_clean(ui->root);
     ui->status_bar = NULL;
     ui->navigation_bar = NULL;
@@ -3791,24 +4579,50 @@ static void rebuild(pxsys_reference_lvgl_t* ui) {
              * row would only waste vertical space on small displays. */
             ui->title = NULL;
         } else {
+            const char* title_key = "settings.title";
+            const char* title_default = "Settings";
             const lv_font_t* title_font =
                 typography_font(ui, PXSYS_TYPOGRAPHY_HEADLINE);
             int32_t title_height =
                 title_font != NULL ? (int32_t)title_font->line_height + 6 : 34;
             int32_t minimum_title_height =
                 layout.size_class == PXSYS_UI_SIZE_COMPACT ? 34 : 38;
+            if (ui->active_page == REFERENCE_PAGE_SOUND_SETTINGS) {
+                title_key = "settings.sound";
+                title_default = "Sound & display";
+            } else if (ui->active_page == REFERENCE_PAGE_DEVICE_INFO) {
+                title_key = "settings.about";
+                title_default = "About device";
+            } else if (ui->active_page == REFERENCE_PAGE_APP_MANAGER) {
+                title_key = "settings.apps";
+                title_default = "Apps";
+            } else if (ui->active_page == REFERENCE_PAGE_FILE_MANAGER) {
+                title_key = "settings.files";
+                title_default = "Files & storage";
+            }
             if (title_height < minimum_title_height)
                 title_height = minimum_title_height;
-            ui->title = make_label(
-                ui->content, translated(ui, "settings.title", "Settings"),
-                title_font, color_token(ui, PXSYS_COLOR_TEXT_PRIMARY));
+            ui->title = make_label(ui->content,
+                                   translated(ui, title_key, title_default),
+                                   title_font,
+                                   color_token(ui, PXSYS_COLOR_TEXT_PRIMARY));
             lv_obj_set_width(ui->title, LV_PCT(100));
             lv_obj_set_height(ui->title, title_height);
         }
         if (ui->active_page == REFERENCE_PAGE_HOME)
             build_home(ui, &layout);
-        else
+        else if (ui->active_page == REFERENCE_PAGE_SETTINGS)
             build_settings(ui, &layout);
+#if PXSYS_REFERENCE_UI_BUILTIN_SETTINGS
+        else if (ui->active_page == REFERENCE_PAGE_SOUND_SETTINGS)
+            build_sound_settings(ui, &layout);
+        else if (ui->active_page == REFERENCE_PAGE_DEVICE_INFO)
+            build_device_info_page(ui, &layout);
+        else if (ui->active_page == REFERENCE_PAGE_APP_MANAGER)
+            build_app_manager(ui, &layout);
+        else if (ui->active_page == REFERENCE_PAGE_FILE_MANAGER)
+            build_file_manager(ui, &layout);
+#endif
     }
 
     if ((ui->active_chrome & PXSYS_REFERENCE_UI_NAVIGATION_BAR) &&
@@ -3893,20 +4707,25 @@ static void rebuild(pxsys_reference_lvgl_t* ui) {
         }
     }
     if (ui->navigation_mode == PXSYS_NAVIGATION_GESTURES &&
-        ui->content_active) {
+        ui->content_active && ui->back_gesture_enabled &&
+        (PXSYS_REFERENCE_UI_BACK_GESTURE || ui->back_gesture != NULL)) {
         int32_t top = (int32_t)layout.safe_area.y;
         int32_t bottom = (int32_t)ui->display.height -
                          (int32_t)gesture_strip_height(&layout);
+        int32_t edge_x = (int32_t)layout.safe_area.x;
+        uint32_t edge_width = ui->back_gesture_edge_width != 0
+                                  ? ui->back_gesture_edge_width
+                                  : NAVIGATION_BACK_GESTURE_EDGE_WIDTH;
         if ((ui->active_chrome & PXSYS_REFERENCE_UI_STATUS_BAR) &&
             ui->window.status_bar_mode != PXSYS_WINDOW_BAR_HIDDEN &&
             bar_is_visible(ui, ui->window.status_bar_mode))
             top += (int32_t)layout.status_bar.height;
         if (bottom > top) {
+            ui->back_gesture_override = 0;
             back_gesture = lv_obj_create(ui->root);
             style_plain(back_gesture);
-            lv_obj_set_pos(back_gesture, 0, top);
-            lv_obj_set_size(back_gesture, NAVIGATION_BACK_GESTURE_EDGE_WIDTH,
-                            bottom - top);
+            lv_obj_set_pos(back_gesture, edge_x, top);
+            lv_obj_set_size(back_gesture, edge_width, bottom - top);
             lv_obj_set_style_bg_opa(back_gesture, LV_OPA_TRANSP, 0);
             lv_obj_add_flag(back_gesture,
                             LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_PRESS_LOCK);
@@ -4004,14 +4823,32 @@ static pxsys_status_t app_start(void* context, void* instance,
     return PXSYS_STATUS_OK;
 }
 
+static int page_is_content(reference_page_t page) {
+    if (page == REFERENCE_PAGE_HOME || page == REFERENCE_PAGE_SETTINGS)
+        return 1;
+#if PXSYS_REFERENCE_UI_BUILTIN_SETTINGS
+    if (page == REFERENCE_PAGE_SOUND_SETTINGS ||
+        page == REFERENCE_PAGE_DEVICE_INFO ||
+        page == REFERENCE_PAGE_APP_MANAGER ||
+        page == REFERENCE_PAGE_FILE_MANAGER)
+        return 1;
+#endif
+    return 0;
+}
+
 static pxsys_status_t app_foreground(void* context, void* instance) {
     app_context_t* app = (app_context_t*)instance;
     (void)context;
     if (app == NULL || !ui_valid(app->ui)) return PXSYS_STATUS_BAD_STATE;
-    if (app->page == REFERENCE_PAGE_HOME ||
-        app->page == REFERENCE_PAGE_SETTINGS) {
+    if (page_is_content(app->page)) {
         app->ui->active_page = app->page;
         app->ui->content_active = 1;
+        /* Storage-backed pages re-read their listing whenever they come
+         * forward instead of on every status rebuild. */
+        if (app->page == REFERENCE_PAGE_APP_MANAGER)
+            app->ui->managed_apps_loaded = 0;
+        else if (app->page == REFERENCE_PAGE_FILE_MANAGER)
+            app->ui->file_entries_loaded = 0;
     } else {
         app->ui->active_chrome |= (uint8_t)(1u << app->page);
     }
@@ -4024,8 +4861,7 @@ static pxsys_status_t app_background(void* context, void* instance) {
     app_context_t* app = (app_context_t*)instance;
     (void)context;
     if (app == NULL || !ui_valid(app->ui)) return PXSYS_STATUS_BAD_STATE;
-    if (app->page == REFERENCE_PAGE_HOME ||
-        app->page == REFERENCE_PAGE_SETTINGS)
+    if (page_is_content(app->page))
         app->ui->content_active = 0;
     else
         app->ui->active_chrome &= (uint8_t)~(1u << app->page);
@@ -4056,8 +4892,7 @@ static void app_stop(void* context, void* instance,
     (void)context;
     (void)reason;
     if (app == NULL || !ui_valid(app->ui)) return;
-    if (app->page == REFERENCE_PAGE_HOME ||
-        app->page == REFERENCE_PAGE_SETTINGS) {
+    if (page_is_content(app->page)) {
         if (app->ui->active_page == app->page)
             app->ui->content_active = 0;
     } else {
@@ -4079,26 +4914,70 @@ void pxsys_reference_lvgl_config_init(pxsys_reference_lvgl_config_t* config) {
     config->max_launcher_apps = 24;
     config->navigation_mode = PXSYS_NAVIGATION_BUTTONS;
     config->animations_enabled = PXSYS_REFERENCE_UI_ENABLE_ANIMATIONS ? 1 : 0;
+    config->back_gesture_enabled = 1;
     config->allocator.struct_size = sizeof(config->allocator);
+}
+
+static int page_registration_enabled(const pxsys_reference_lvgl_t* ui,
+                                     size_t index) {
+    static const uint32_t kPageFeatures[REFERENCE_APP_COUNT] = {
+        PXSYS_REFERENCE_UI_HOME,
+        PXSYS_REFERENCE_UI_SETTINGS,
+        PXSYS_REFERENCE_UI_STATUS_BAR,
+        PXSYS_REFERENCE_UI_NAVIGATION_BAR,
+        PXSYS_REFERENCE_UI_SOUND_SETTINGS,
+        PXSYS_REFERENCE_UI_DEVICE_INFO,
+        PXSYS_REFERENCE_UI_APP_MANAGER,
+        PXSYS_REFERENCE_UI_FILE_MANAGER,
+    };
+    if (index >= REFERENCE_APP_COUNT ||
+        !(ui->features & kPageFeatures[index]))
+        return 0;
+#if PXSYS_REFERENCE_UI_BUILTIN_SETTINGS
+    switch ((reference_page_t)index) {
+        case REFERENCE_PAGE_DEVICE_INFO:
+            return ui->device_info != NULL;
+        case REFERENCE_PAGE_APP_MANAGER:
+            return ui->app_list != NULL && ui->app_action != NULL;
+        case REFERENCE_PAGE_FILE_MANAGER:
+            return ui->file_list != NULL;
+        case REFERENCE_PAGE_SOUND_SETTINGS:
+            return 1;
+        default:
+            break;
+    }
+#else
+    if (index >= REFERENCE_PAGE_STATUS_BAR) return 0;
+#endif
+    return 1;
 }
 
 static pxsys_status_t register_apps(pxsys_reference_lvgl_t* ui) {
     static const char* const app_ids[] = {
         "system.home", "system.settings", "system.status-bar",
-        "system.navigation-bar"};
+        "system.navigation-bar", "system.sound-settings",
+        "system.device-info", "system.app-manager", "system.file-manager"};
     static const char* const names[] = {
         "System Home", "System Settings", "System Status Bar",
-        "System Navigation Bar"};
+        "System Navigation Bar", "Sound & display", "About device",
+        "Apps", "Files & storage"};
     static const char* const name_resource_keys[] = {
         "app.system-home.name", "app.system-settings.name",
-        "app.system-status-bar.name", "app.system-navigation-bar.name"};
+        "app.system-status-bar.name", "app.system-navigation-bar.name",
+        "settings.sound", "settings.about", "settings.apps", "settings.files"};
     static const char* const descriptions[] = {
-        "Standard system launcher", "System and device settings", "", ""};
+        "Standard system launcher", "System and device settings", "", "",
+        "Volume and brightness", "Firmware and hardware information",
+        "Installed applications", "Browse device storage"};
     static const char* const description_resource_keys[] = {
-        "app.system-home.description", "app.system-settings.description", "", ""};
+        "app.system-home.description", "app.system-settings.description", "",
+        "", "settings.sound.detail", "settings.about.detail",
+        "settings.apps.detail", "settings.files.detail"};
     static const char* const roles[] = {
         PXSYS_ROLE_HOME, PXSYS_ROLE_SETTINGS, PXSYS_ROLE_STATUS_BAR,
-        PXSYS_ROLE_NAVIGATION_BAR};
+        PXSYS_ROLE_NAVIGATION_BAR, PXSYS_ROLE_SOUND_SETTINGS,
+        PXSYS_ROLE_DEVICE_INFO, PXSYS_ROLE_APP_MANAGER,
+        PXSYS_ROLE_FILE_MANAGER};
     size_t index;
     for (index = 0; index < REFERENCE_APP_COUNT; ++index) {
         pxsys_app_descriptor_t descriptor = {0};
@@ -4111,7 +4990,7 @@ static pxsys_status_t register_apps(pxsys_reference_lvgl_t* ui) {
         ui->identities[index].app_id = pxsys_string_from_cstr(ui->app_ids[index]);
         ui->contexts[index].ui = ui;
         ui->contexts[index].page = (reference_page_t)index;
-        if (!(ui->features & (uint32_t)(1u << index))) continue;
+        if (!page_registration_enabled(ui, index)) continue;
         descriptor.struct_size = sizeof(descriptor);
         descriptor.identity = ui->identities[index];
         descriptor.display_name = pxsys_string_from_cstr(names[index]);
@@ -4233,6 +5112,18 @@ pxsys_status_t pxsys_reference_lvgl_create(
     ui->features = config->features;
     ui->max_launcher_apps = config->max_launcher_apps;
     ui->navigation_mode = config->navigation_mode;
+    ui->back_gesture_enabled = config->back_gesture_enabled ? 1 : 0;
+    ui->back_gesture_edge_width = config->back_gesture_edge_width;
+    ui->back_gesture_context = config->back_gesture_context;
+    ui->back_gesture = config->back_gesture;
+    ui->device_info_context = config->device_info_context;
+    ui->device_info = config->device_info;
+    ui->app_manager_context = config->app_manager_context;
+    ui->app_list = config->app_list;
+    ui->app_action = config->app_action;
+    ui->file_manager_context = config->file_manager_context;
+    ui->file_list = config->file_list;
+    ui->file_action = config->file_action;
     ui->animations_enabled =
         PXSYS_REFERENCE_UI_ENABLE_ANIMATIONS && config->animations_enabled;
     memcpy(ui->publisher_root, config->publisher_root,

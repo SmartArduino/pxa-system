@@ -47,6 +47,10 @@ option(PXSYS_REFERENCE_UI_BATTERY_PERCENT
        "Show numeric battery percentage in the standard system UI" ON)
 option(PXSYS_REFERENCE_UI_GESTURE_HANDLE
        "Show the gesture navigation handle" OFF)
+option(PXSYS_REFERENCE_UI_BACK_GESTURE
+       "Enable the built-in left-edge back gesture" ON)
+option(PXSYS_REFERENCE_UI_BUILTIN_SETTINGS
+       "Enable the built-in Sound, About, Apps and Files settings pages" ON)
 option(PXSYS_REFERENCE_UI_WALLPAPER
        "Compile the standard Home wallpaper" ON)
 set(PXSYS_REFERENCE_UI_TASK_SWITCHER "cards" CACHE STRING

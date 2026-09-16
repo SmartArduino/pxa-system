@@ -17,7 +17,12 @@ extern "C" {
 #define PXSYS_REFERENCE_UI_NAVIGATION_BAR UINT32_C(8)
 #define PXSYS_REFERENCE_UI_NOTIFICATION_SHADE UINT32_C(16)
 #define PXSYS_REFERENCE_UI_WALLPAPER UINT32_C(32)
-#define PXSYS_REFERENCE_UI_ALL UINT32_C(63)
+/* Built-in Settings pages, appended so existing values stay stable. */
+#define PXSYS_REFERENCE_UI_SOUND_SETTINGS UINT32_C(64)
+#define PXSYS_REFERENCE_UI_DEVICE_INFO UINT32_C(128)
+#define PXSYS_REFERENCE_UI_APP_MANAGER UINT32_C(256)
+#define PXSYS_REFERENCE_UI_FILE_MANAGER UINT32_C(512)
+#define PXSYS_REFERENCE_UI_ALL UINT32_C(1023)
 
 typedef enum {
     PXSYS_NAVIGATION_BUTTONS = 0,
@@ -56,6 +61,94 @@ typedef struct {
     pxsys_string_t display_name;
 } pxsys_reference_language_t;
 
+/* Back-gesture phases. Products may replace the built-in left-edge swipe by
+ * installing an override; the reference indicator is then hidden and the
+ * override owns the pointer sequence. */
+typedef enum {
+    PXSYS_REFERENCE_BACK_GESTURE_PRESS = 0,
+    PXSYS_REFERENCE_BACK_GESTURE_MOVE,
+    PXSYS_REFERENCE_BACK_GESTURE_RELEASE,
+    PXSYS_REFERENCE_BACK_GESTURE_CANCEL,
+} pxsys_reference_back_gesture_phase_t;
+
+/* Return non-zero to consume the phase. Returning non-zero on PRESS takes
+ * ownership of the whole sequence. On RELEASE an override may set *commit to
+ * ask the reference UI to run its standard back navigation. */
+typedef bool (*pxsys_reference_lvgl_back_gesture_fn)(
+    void* context, pxsys_reference_back_gesture_phase_t phase, int32_t x,
+    int32_t y, bool* commit);
+
+/* ---- Built-in Settings page providers ---------------------------------- */
+
+/* About device: fixed fields, values supplied by the product. */
+#define PXSYS_REFERENCE_DEVICE_VALUE_MAX 48
+typedef enum {
+    PXSYS_REFERENCE_DEVICE_FIRMWARE_NAME = 0,
+    PXSYS_REFERENCE_DEVICE_FIRMWARE_VERSION,
+    PXSYS_REFERENCE_DEVICE_SYSTEM_VERSION,
+    PXSYS_REFERENCE_DEVICE_DISPLAY,
+    PXSYS_REFERENCE_DEVICE_MEMORY,
+    PXSYS_REFERENCE_DEVICE_STORAGE,
+    PXSYS_REFERENCE_DEVICE_FIELD_COUNT,
+} pxsys_reference_device_field_t;
+
+/* Fill values[field] for every requested field; missing fields stay empty. */
+typedef void (*pxsys_reference_lvgl_device_info_fn)(
+    void* context, char values[PXSYS_REFERENCE_DEVICE_FIELD_COUNT]
+                              [PXSYS_REFERENCE_DEVICE_VALUE_MAX]);
+
+/* App manager. */
+#define PXSYS_REFERENCE_MANAGED_APP_MAX 48
+#define PXSYS_REFERENCE_MANAGED_APP_IDENTITY_MAX 130
+#define PXSYS_REFERENCE_MANAGED_APP_NAME_MAX 64
+#define PXSYS_REFERENCE_MANAGED_APP_VERSION_MAX 32
+
+typedef enum {
+    PXSYS_REFERENCE_APP_ACTION_ENABLE = 0,
+    PXSYS_REFERENCE_APP_ACTION_DISABLE,
+    PXSYS_REFERENCE_APP_ACTION_CLEAR_DATA,
+    PXSYS_REFERENCE_APP_ACTION_UNINSTALL,
+} pxsys_reference_app_action_t;
+
+typedef struct {
+    char identity[PXSYS_REFERENCE_MANAGED_APP_IDENTITY_MAX];
+    char name[PXSYS_REFERENCE_MANAGED_APP_NAME_MAX];
+    char version[PXSYS_REFERENCE_MANAGED_APP_VERSION_MAX];
+    uint8_t built_in;
+    uint8_t installed;
+    uint8_t enabled;
+    uint8_t has_private_data;
+    uint8_t active;
+} pxsys_reference_managed_app_t;
+
+/* Two-phase enumeration: NULL items returns the required count. */
+typedef size_t (*pxsys_reference_lvgl_app_list_fn)(
+    void* context, pxsys_reference_managed_app_t* apps, size_t capacity);
+typedef bool (*pxsys_reference_lvgl_app_action_fn)(
+    void* context, const char* identity, pxsys_reference_app_action_t action);
+
+/* File manager. Paths are '/'-rooted logical paths below the storage root. */
+#define PXSYS_REFERENCE_FILE_ENTRY_MAX 64
+#define PXSYS_REFERENCE_FILE_NAME_MAX 128
+#define PXSYS_REFERENCE_FILE_PATH_MAX 192
+
+typedef enum {
+    PXSYS_REFERENCE_FILE_ACTION_DELETE = 0,
+} pxsys_reference_file_action_t;
+
+typedef struct {
+    char name[PXSYS_REFERENCE_FILE_NAME_MAX];
+    char path[PXSYS_REFERENCE_FILE_PATH_MAX];
+    uint64_t size;
+    uint8_t is_directory;
+} pxsys_reference_file_entry_t;
+
+typedef size_t (*pxsys_reference_lvgl_file_list_fn)(
+    void* context, const char* path, pxsys_reference_file_entry_t* entries,
+    size_t capacity);
+typedef bool (*pxsys_reference_lvgl_file_action_fn)(
+    void* context, const char* path, pxsys_reference_file_action_t action);
+
 #ifndef PXSYS_REFERENCE_UI_ENABLE_ANIMATIONS
 #define PXSYS_REFERENCE_UI_ENABLE_ANIMATIONS 1
 #endif
@@ -82,6 +175,16 @@ typedef struct {
 #endif
 #ifndef PXSYS_REFERENCE_UI_TASK_PREVIEW_COUNT
 #define PXSYS_REFERENCE_UI_TASK_PREVIEW_COUNT 4
+#endif
+/* Built-in left-edge back gesture. Products can disable it and use the
+ * runtime override hook instead. */
+#ifndef PXSYS_REFERENCE_UI_BACK_GESTURE
+#define PXSYS_REFERENCE_UI_BACK_GESTURE 1
+#endif
+/* Built-in Sound, About, Apps and Files settings pages. Providers supplied by
+ * the product fill them; without a provider the page stays unregistered. */
+#ifndef PXSYS_REFERENCE_UI_BUILTIN_SETTINGS
+#define PXSYS_REFERENCE_UI_BUILTIN_SETTINGS 1
 #endif
 
 typedef struct {
@@ -119,6 +222,25 @@ typedef struct {
      * initializers. Catalog-backed metadata remains the normal fallback. */
     void* app_metadata_context;
     pxsys_reference_lvgl_resolve_app_metadata_fn resolve_app_metadata;
+    /* Back gesture, appended to preserve older config initializers. The
+     * built-in edge swipe stays active when back_gesture is NULL. edge_width 0
+     * selects 20 logical pixels measured from the safe-area edge; shaped or
+     * inset panels therefore keep the gesture reachable. */
+    uint8_t back_gesture_enabled;
+    uint16_t back_gesture_edge_width;
+    void* back_gesture_context;
+    pxsys_reference_lvgl_back_gesture_fn back_gesture;
+    /* Built-in Settings page providers, appended to preserve older config
+     * initializers. A NULL provider keeps its page unregistered, so the
+     * matching Settings row stays hidden. */
+    void* device_info_context;
+    pxsys_reference_lvgl_device_info_fn device_info;
+    void* app_manager_context;
+    pxsys_reference_lvgl_app_list_fn app_list;
+    pxsys_reference_lvgl_app_action_fn app_action;
+    void* file_manager_context;
+    pxsys_reference_lvgl_file_list_fn file_list;
+    pxsys_reference_lvgl_file_action_fn file_action;
 } pxsys_reference_lvgl_config_t;
 
 typedef struct pxsys_reference_lvgl pxsys_reference_lvgl_t;

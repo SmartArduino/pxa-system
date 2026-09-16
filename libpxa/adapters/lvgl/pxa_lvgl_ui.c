@@ -1960,6 +1960,20 @@ static void on_canvas_draw(lv_event_t *event) {
     layer->_clip_area = saved_clip;
 }
 
+/* Stable pointer id for multi-touch: the ordinal among pointer input
+ * devices. Boards that register several pointer indevs (one per reported
+ * touch point) automatically produce distinct ids for Guest pointer
+ * events. */
+static uint8_t pointer_id_for_indev(lv_indev_t *input) {
+    lv_indev_t *item = NULL;
+    uint8_t index = 0;
+    while ((item = lv_indev_get_next(item)) != NULL) {
+        if (item == input) break;
+        if (lv_indev_get_type(item) == LV_INDEV_TYPE_POINTER) ++index;
+    }
+    return index;
+}
+
 static void on_canvas_pointer(lv_event_t *event) {
     pxa_lvgl_ui_node_t *node =
         (pxa_lvgl_ui_node_t *)lv_event_get_user_data(event);
@@ -1977,6 +1991,7 @@ static void on_canvas_pointer(lv_event_t *event) {
     else phase = 3;
     lv_indev_get_point(input, &point);
     lv_obj_get_coords(node->object, &area);
+    value[0] = pointer_id_for_indev(input);
     value[1] = phase;
     pxa_write_u32(value + 4, (uint32_t)canvas_logical_pixels(
         node->ui, point.x - area.x1));
