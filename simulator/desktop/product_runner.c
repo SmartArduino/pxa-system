@@ -85,6 +85,7 @@ typedef struct {
     pxa_surface_release_t surface_releases[3];
     pxa_surface_layer_t surface_layer;
     uint8_t *raster_buffers[2];
+    uint16_t *raster_depth_buffers[2];
     uint8_t *raster_draw_lists[2];
     uint32_t raster_draw_sizes[2];
     int8_t raster_current_buffer;
@@ -317,8 +318,12 @@ static pxa_status_t surface_create(void *context, const pxa_surface_desc_t *desc
         if (host->surface_display_buffer == NULL) goto failed;
         for (index = 0; index < 2; ++index) {
             host->raster_buffers[index] = malloc(host->surface_frame_bytes);
+            host->raster_depth_buffers[index] = malloc(
+                (size_t)host->surface_width * host->surface_height *
+                sizeof(*host->raster_depth_buffers[index]));
             host->raster_draw_lists[index] = malloc(PXA_RASTER_MAX_DRAW_BYTES);
             if (host->raster_buffers[index] == NULL ||
+                host->raster_depth_buffers[index] == NULL ||
                 host->raster_draw_lists[index] == NULL) goto failed;
         }
         host->surface_registered = 1;
@@ -344,8 +349,10 @@ static pxa_status_t surface_create(void *context, const pxa_surface_desc_t *desc
 failed:
     for (uint8_t index = 0; index < 2; ++index) {
         free(host->raster_buffers[index]);
+        free(host->raster_depth_buffers[index]);
         free(host->raster_draw_lists[index]);
         host->raster_buffers[index] = NULL;
+        host->raster_depth_buffers[index] = NULL;
         host->raster_draw_lists[index] = NULL;
     }
     if (host->surface_image != NULL) lv_obj_delete(host->surface_image);
@@ -598,7 +605,9 @@ static pxa_status_t surface_raster_submit(void *context, uint64_t surface,
         return PXA_STATUS_BAD_STATE;
     raster_resources(host, &resources);
     target.pixels = (uint16_t *)host->raster_buffers[0];
+    target.depth_pixels = host->raster_depth_buffers[0];
     target.stride_pixels = host->surface_stride_bytes / 2u;
+    target.depth_stride_pixels = host->surface_width;
     target.width = host->surface_width;
     target.height = host->surface_height;
     status = pxa_raster_validate_draw_list(bytes, size, &target, &resources, &list);
@@ -642,8 +651,10 @@ static void surface_close(void *context, uint64_t surface) {
     host->surface_display_buffer = NULL;
     for (uint8_t index = 0; index < 2; ++index) {
         free(host->raster_buffers[index]);
+        free(host->raster_depth_buffers[index]);
         free(host->raster_draw_lists[index]);
         host->raster_buffers[index] = NULL;
+        host->raster_depth_buffers[index] = NULL;
         host->raster_draw_lists[index] = NULL;
     }
     for (uint8_t index = 0; index < PXA_RASTER_MAX_TEXTURES; ++index) {
@@ -693,7 +704,9 @@ static int surface_process_pending(product_host_t *host) {
         buffer_index = host->raster_current_buffer == 0 ? 1 : 0;
         raster_resources(host, &resources);
         target.pixels = (uint16_t *)host->raster_buffers[buffer_index];
+        target.depth_pixels = host->raster_depth_buffers[buffer_index];
         target.stride_pixels = host->surface_stride_bytes / 2u;
+        target.depth_stride_pixels = host->surface_width;
         target.width = host->surface_width;
         target.height = host->surface_height;
         status = pxa_raster_validate_draw_list(host->raster_draw_lists[draw_index],

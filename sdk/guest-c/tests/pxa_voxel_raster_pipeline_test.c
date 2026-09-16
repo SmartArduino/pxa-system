@@ -73,7 +73,9 @@ int main(void) {
     assert(voxel_raster_render(3, 1, &player, QUALITY_BALANCED, &hud) > 0);
     voxel_raster_get_stats(&stats);
     world_candidates = stats.candidate_quads;
-    assert(stats.cached_quads <= 6);
+    /* Host depth testing requires bounded sub-quads rather than one large
+     * greedy face per side; a 16x4 slab produces at most 24 8x8 faces. */
+    assert(stats.cached_quads <= 24);
     assert(stats.candidate_quads != 0 && stats.submitted_quads != 0);
     assert(stats.submitted_quads < CHUNK_SIZE * CHUNK_SIZE);
     assert(submitted_commands > stats.submitted_quads &&
@@ -88,5 +90,15 @@ int main(void) {
     assert(voxel_raster_render(3, 2, &player, QUALITY_BALANCED, &hud) > 0);
     voxel_raster_get_stats(&stats);
     assert(stats.candidate_quads == world_candidates + 1u);
+    memset(g_mobs, 0, sizeof(g_mobs));
+    player.x = 8.0F;
+    player.y = 2.5F;
+    player.z = 8.0F;
+    player.yaw = 0.0F;
+    player.pitch = -0.55F;
+    assert(voxel_raster_render(3, 3, &player, QUALITY_BALANCED, &hud) > 0);
+    voxel_raster_get_stats(&stats);
+    assert(stats.clipped_quads != 0);
+    assert(stats.candidate_quads != 0 && stats.submitted_quads != 0);
     return 0;
 }

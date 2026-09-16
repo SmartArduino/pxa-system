@@ -91,7 +91,10 @@ typedef struct {
     uint8_t solid_hit_percent;
     int32_t pos_x;
     int32_t pos_z;
+    render_layout_t layout;
     uint8_t hotbar_selected;
+    uint8_t hotbar_items[HOTBAR_SLOTS];
+    uint8_t hotbar_counts[HOTBAR_SLOTS];
     uint8_t flying;
     uint8_t move_active;
     int16_t move_origin_x;

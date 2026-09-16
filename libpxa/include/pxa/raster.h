@@ -11,7 +11,7 @@ extern "C" {
 #endif
 
 #define PXA_RASTER_ABI_MAJOR UINT16_C(1)
-#define PXA_RASTER_ABI_MINOR UINT16_C(0)
+#define PXA_RASTER_ABI_MINOR UINT16_C(1)
 #define PXA_RASTER_DRAW_MAGIC UINT32_C(0x4c525850) /* PXRL */
 #define PXA_RASTER_UPLOAD_MAGIC UINT32_C(0x52555850) /* PXUR */
 
@@ -44,6 +44,8 @@ extern "C" {
 #define PXA_RASTER_SPRITE_BYTES UINT16_C(24)
 #define PXA_RASTER_VERTEX_BYTES UINT16_C(12)
 
+#define PXA_RASTER_QUAD_SOLID_COLOR UINT8_C(1)
+
 #define PXA_RASTER_SPRITE_TRANSPARENT_INDEX0 UINT8_C(1)
 #define PXA_RASTER_SPRITE_SOLID_COLOR UINT8_C(2)
 #define PXA_RASTER_SPRITE_ADDITIVE UINT8_C(4)
@@ -71,7 +73,9 @@ typedef struct {
 
 typedef struct {
     uint16_t *pixels;
+    uint16_t *depth_pixels;
     uint32_t stride_pixels;
+    uint32_t depth_stride_pixels;
     uint16_t width;
     uint16_t height;
 } pxa_raster_target_t;
@@ -95,6 +99,7 @@ typedef struct {
 } pxa_raster_telemetry_t;
 
 typedef struct {
+    uint16_t abi_minor;
     uint32_t total_size;
     uint32_t required_capabilities;
     uint32_t command_count;

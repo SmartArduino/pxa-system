@@ -1731,7 +1731,15 @@ static void build_hud(hud_state_t *hud) {
         (uint8_t)((perf.solid_hit_rays * 100u) / perf.rays);
     hud->pos_x = rc_floor_int(g_player.x);
     hud->pos_z = rc_floor_int(g_player.z);
+    hud->layout = g_layout;
     hud->hotbar_selected = g_hotbar_selected;
+    {
+        int slot;
+        for (slot = 0; slot < HOTBAR_SLOTS; ++slot) {
+            hud->hotbar_items[slot] = g_inventory[slot].item;
+            hud->hotbar_counts[slot] = g_inventory[slot].count;
+        }
+    }
     hud->flying = g_player.flying;
     hud->move_active = g_move_finger.active;
     hud->move_origin_x = g_move_finger.origin_x;
@@ -2066,9 +2074,8 @@ int32_t pxa_app_start(const uint8_t *config, uint32_t length) {
     g_surface_retry_ticks = 0;
     g_surface_mode = SURFACE_MODE_MAPPED;
     g_surface_request_mode = SURFACE_MODE_MAPPED;
-    /* Host Raster moves per-pixel fill out of the Guest, keeping native 1X
-     * rendering within the 30 FPS frame budget. Hosts without the complete
-     * capability set transparently fall back to GuestMapped rendering. */
+    /* The host owns the pixel work while the Guest supplies world geometry and
+     * the same UI state used by the mapped renderer. */
     g_raster_supported = VOXEL_HOST_RASTER_DEFAULT;
     g_raster_ready = 0;
     g_surface_capabilities_request = SURFACE_CAPABILITIES_REQUEST_BASE;

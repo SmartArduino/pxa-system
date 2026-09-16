@@ -29,6 +29,12 @@ int main(void) {
     uint8_t upload[532];
     uint8_t draw[128];
     pxa_raster_draw_list_t list;
+    pxa_raster_vertex_t vertices[4] = {
+        {0, 0, 0, 0, 255, 256},
+        {16, 0, 16, 0, 255, 256},
+        {16, 16, 16, 16, 255, 512},
+        {0, 16, 0, 16, 255, 512},
+    };
     unsigned index;
 
     for (index = 0; index < 256; ++index) palette[index] = (uint16_t)index;
@@ -65,7 +71,17 @@ int main(void) {
            (captured[PXA_RASTER_DRAW_HEADER_BYTES + 1] &
             PXA_RASTER_SPRITE_ADDITIVE) != 0);
 
-    pxa_raster_draw_list_begin(&list, draw, PXA_RASTER_DRAW_HEADER_BYTES, 9);
+    pxa_raster_draw_list_begin(&list, draw, sizeof(draw), 9);
+    assert(pxa_raster_solid_depth_quad(&list, vertices, UINT16_C(0xbeef)));
+    assert(pxa_raster_submit(9, &list) == (int32_t)list.length);
+    assert((captured[PXA_RASTER_DRAW_HEADER_BYTES + 1] &
+            PXA_RASTER_QUAD_SOLID_COLOR) != 0);
+    assert(pxa_read_u16(captured + PXA_RASTER_DRAW_HEADER_BYTES + 6) ==
+           UINT16_C(0xbeef));
+    assert(pxa_read_u16(captured + PXA_RASTER_DRAW_HEADER_BYTES + 8 + 10) ==
+           256);
+
+    pxa_raster_draw_list_begin(&list, draw, PXA_RASTER_DRAW_HEADER_BYTES, 10);
     assert(!pxa_raster_clear(&list, 0));
     assert(list.status == PXA_STATUS_LIMIT_EXCEEDED);
     return 0;

@@ -7,7 +7,7 @@
 #include "pxa_surface.h"
 
 #define PXA_RASTER_ABI_MAJOR UINT16_C(1)
-#define PXA_RASTER_ABI_MINOR UINT16_C(0)
+#define PXA_RASTER_ABI_MINOR UINT16_C(1)
 #define PXA_RASTER_DRAW_MAGIC UINT32_C(0x4c525850)
 #define PXA_RASTER_UPLOAD_MAGIC UINT32_C(0x52555850)
 #define PXA_RASTER_MAX_TEXTURES UINT8_C(16)
@@ -30,6 +30,7 @@
 #define PXA_RASTER_TEXTURED_QUAD_BYTES UINT16_C(56)
 #define PXA_RASTER_SPRITE_BYTES UINT16_C(24)
 #define PXA_RASTER_VERTEX_BYTES UINT16_C(12)
+#define PXA_RASTER_QUAD_SOLID_COLOR UINT8_C(1)
 #define PXA_RASTER_SPRITE_TRANSPARENT_INDEX0 UINT8_C(1)
 #define PXA_RASTER_SPRITE_SOLID_COLOR UINT8_C(2)
 #define PXA_RASTER_SPRITE_ADDITIVE UINT8_C(4)
@@ -41,6 +42,7 @@ typedef struct {
     int16_t u_q4;
     int16_t v_q4;
     uint8_t light;
+    uint16_t depth_q8;
 } pxa_raster_vertex_t;
 
 typedef struct {
@@ -210,6 +212,31 @@ static inline int pxa_raster_textured_quad(
         pxa_surface_store_u16(wire + 4, (uint16_t)vertices[index].u_q4);
         pxa_surface_store_u16(wire + 6, (uint16_t)vertices[index].v_q4);
         wire[8] = vertices[index].light;
+        pxa_surface_store_u16(wire + 10, vertices[index].depth_q8);
+    }
+    list->required_capabilities |= PXA_RASTER_CAP_TEXTURED_QUAD;
+    return 1;
+}
+
+static inline int pxa_raster_solid_depth_quad(
+    pxa_raster_draw_list_t *list, const pxa_raster_vertex_t vertices[4],
+    uint16_t color) {
+    uint8_t *record;
+    uint8_t index;
+    if (vertices == NULL) return 0;
+    record = pxa_raster_append(list, PXA_RASTER_RECORD_TEXTURED_QUAD,
+                               PXA_RASTER_TEXTURED_QUAD_BYTES);
+    if (record == NULL) return 0;
+    record[1] = PXA_RASTER_QUAD_SOLID_COLOR;
+    pxa_surface_store_u16(record + 6, color);
+    for (index = 0; index < 4; ++index) {
+        uint8_t *wire = record + 8 + index * PXA_RASTER_VERTEX_BYTES;
+        pxa_surface_store_u16(wire, (uint16_t)vertices[index].x_q4);
+        pxa_surface_store_u16(wire + 2, (uint16_t)vertices[index].y_q4);
+        pxa_surface_store_u16(wire + 4, (uint16_t)vertices[index].u_q4);
+        pxa_surface_store_u16(wire + 6, (uint16_t)vertices[index].v_q4);
+        wire[8] = vertices[index].light;
+        pxa_surface_store_u16(wire + 10, vertices[index].depth_q8);
     }
     list->required_capabilities |= PXA_RASTER_CAP_TEXTURED_QUAD;
     return 1;

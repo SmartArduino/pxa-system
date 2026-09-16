@@ -62,7 +62,7 @@ Guest 只能在 state 中存在相应能力时设置 `required_capabilities` 或
 - `TEXTURE_INDEX8`：row-major INDEX8，宽高和 payload 长度必须完全一致；
 - 第一帧提交前，同一 slot 的成功上传原子替换旧资源；失败时旧资源仍有效。首帧后资源被冻结，避免异步 raster 与资源释放竞态。
 
-ESP backend 把资源和两个 48 KiB DrawList mailbox 放入 PSRAM。DrawList 执行期间不分配内存，关闭 Surface 时统一释放。
+ESP backend 把资源、一个与逻辑 Surface 同尺寸的 16-bit reciprocal-depth scratch buffer 和两个 48 KiB DrawList mailbox 放入 PSRAM。depth scratch 由串行 Raster consumer 复用，不跟随三张颜色 buffer 重复分配。DrawList 执行期间不分配内存，关闭 Surface 时统一释放。
 
 ### DrawList
 
@@ -70,7 +70,7 @@ Header 包含 magic、ABI major/minor、总字节数、required capability、com
 
 - `CLEAR_RGB565`；
 - `FLAT_QUAD`；
-- `TEXTURED_QUAD`，顶点使用 12.4 屏幕坐标、12.4 UV 和 0..255 光照；
+- `TEXTURED_QUAD`，顶点使用 12.4 屏幕坐标、12.4 UV、0..255 光照和 Q8 view depth；ABI 1.1 对 `u/z`、`v/z`、`1/z` 做透视校正。Host 在扫描线覆盖区间内以 8 像素小段计算端点透视坐标并做 Q8 增量，避免 ESP32-S3 上逐像素软件整数除法；同一记录也可通过 solid-color flag 表示带深度的纯色场景面；
 - `SPRITE`，仅在 capability 允许时接受 additive。
 
 校验包括 header/version/长度/record count、已知 flags、required capabilities、slot 是否已上传、顶点与 UV 的数值范围、退化多边形、目标尺寸、frame ID 单调性以及每帧命令/字节上限。协议错误返回 `PROTOCOL_ERROR`，超限返回 `LIMIT_EXCEEDED`，缺能力返回 `UNSUPPORTED`，无空闲 buffer 返回 `WOULD_BLOCK`。
@@ -79,7 +79,7 @@ Header 包含 magic、ABI major/minor、总字节数、required capability、com
 
 每个 16x24x16 chunk 保留 revision。mesh cache 只在 revision 或 chunk 坐标改变时重建。每个轴的每个切片先生成“当前 voxel 非空气且相邻 voxel 不遮挡”的二维 mask，再把相同 block/face 的连续矩形合并成一个 Quad。跨 chunk 边界通过世界读取判断暴露面。当前最小闭环把水、玻璃和叶片也按不透明块处理；透明材质分层尚未完成，不能把它计入首阶段验收。
 
-每帧先对 chunk 包围盒做 fog-distance 和视锥粗裁剪，再对候选 Quad 做背面剔除、near-plane 拒绝和屏幕包围盒裁剪。无 Z-buffer 的首版按 view-space depth 从远到近排序。缓存或 DrawList 达到容量时按质量档位截断，并在 Guest stats 记录 dropped Quad；按屏幕覆盖优先级筛选仍是后续优化。
+每帧先对 chunk 包围盒做 fog-distance 和视锥粗裁剪，再对候选 Quad 做背面剔除。与 near/far/四个视锥侧面相交的 Quad 使用 Sutherland-Hodgman 裁剪；三角形和五边形以上的结果以退化 Quad/triangle fan 发送，不能因为单个顶点越过 near plane 而丢弃整个面。Host 使用 reciprocal depth 做逐像素遮挡；ABI 1.1 的不透明面按近到远提交以尽早拒绝被遮挡像素，无深度 fallback 才保留远到近顺序。High/Balanced/Performance 当前分别保留最多 620/480/320 个候选面；缓存或 DrawList 达到容量时按质量档位截断，并在 Guest stats 记录 clipped/dropped Quad。
 
 ## 分辨率与质量
 
@@ -94,7 +94,7 @@ Raster Surface 的逻辑分辨率独立于 mesh 密度。High/Balanced/Performan
 
 ## 内存预算
 
-以 148x120、3 buffers 为默认：Host RGB565 buffers 约 104 KiB；256 色 palette 512 B；15 个 16x16 INDEX8 tile 3.75 KiB；两个 48 KiB DrawList mailbox；Guest chunk mesh cache 使用固定上限。296x240 High 的三个 Host buffers 约 416 KiB，只在实时 telemetry 证明预算允许时使用。
+以 148x120、3 buffers 为默认：Host RGB565 buffers 约 104 KiB；reciprocal-depth scratch 约 35 KiB；256 色 palette 512 B；15 个 16x16 INDEX8 tile 3.75 KiB；两个 48 KiB DrawList mailbox；Guest chunk mesh cache 使用固定上限。296x240 High 的三个 Host buffers 约 416 KiB，depth scratch 约 139 KiB，只在实时 telemetry 证明预算允许时使用。
 
 旧 GuestMapped fallback 仍保留现有约 450 KiB 的 Guest 静态 framebuffer/depth/预计算表。完成 Raster 稳定性验证后可把这些 fallback buffer 放入单独构建 profile，但首个兼容版本不删除。
 
@@ -106,6 +106,6 @@ Raster 只写 Surface backend 选出的空闲 buffer。presenter 完成消费前
 
 Host 单元测试覆盖完整列表先校验后执行、裁剪、UV、RGB565、能力回退、buffer 替换/释放和 telemetry。Simulator 使用相同 ABI、kernel 和 ownership 语义，仅用于正确性；不能用其 FPS 推断 ESP32-S3。
 
-主要风险是无 Z-buffer 的 painter 排序在相交面上出现错误、透明块暂按不透明处理、mesh rebuild 的瞬时峰值，以及生物/粒子目前使用低成本 billboard，细节不及旧像素路径的 box ray intersection。首版不引入整屏 Z-buffer；真机 profile 后再决定透明分层、实体贴图以及是否需要 tile depth。
+主要风险是透明块仍暂按不透明处理、全屏 reciprocal-depth scratch 的 PSRAM 带宽、mesh rebuild 的瞬时峰值，以及生物/粒子目前使用低成本 billboard，细节不及旧像素路径的 box ray intersection。真机 profile 后再决定透明分层、实体贴图以及是否需要改成 tile depth。
 
-性能数字必须标记来源。当前 6--10 fps 等数据来自旧 Guest DDA 真机日志；Raster 路径在未完成真机编译、烧录和同场景采样前只能给预算和设计假设，不能声明达到 25/30 fps。
+性能数字必须标记来源。2026-09-16 在 ESP32-S3（pai-touch）实测：固定 4x 在连接 `pxadb logcat` 时为 14.2--14.6 fps，Host raster 约 23 ms，DrawList 约 19.5 KiB；固定 1x 在不连接日志时 HUD 约 8 fps。串口日志会与运行时 RPC 争用并显著压低 1x 可见帧率，因此不能把 logcat 期间的 FPS 当作实际交互帧率。

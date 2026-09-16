@@ -12,6 +12,7 @@ typedef struct {
     uint32_t submitted_quads;
     uint32_t backface_culled;
     uint32_t frustum_culled;
+    uint32_t clipped_quads;
     uint32_t dropped_quads;
     uint32_t draw_list_bytes;
     uint32_t covered_pixel_budget;
