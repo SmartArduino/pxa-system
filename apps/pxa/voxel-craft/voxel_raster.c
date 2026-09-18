@@ -19,6 +19,7 @@
 #define VOXEL_RASTER_TAN_HALF 0.70F
 #define VOXEL_RASTER_PARTICLE_LIMIT 32u
 #define VOXEL_RASTER_UNDERWATER_TINT UINT16_C(0x008a)
+#define VOXEL_RASTER_UNDERWATER_CLEAR UINT16_C(0x118d)
 
 #define HUD_PANEL UINT16_C(0x2945)
 #define HUD_PANEL_LIGHT UINT16_C(0x5aeb)
@@ -592,10 +593,11 @@ static uint8_t project_quad(const raster_camera_t *camera,
         (quad->axis == 0 ? camera->x - center[0]
          : quad->axis == 1 ? camera->y - center[1]
                            : camera->z - center[2]);
-    /* Water is two-sided: from inside a body of water every boundary face
-     * points away from the camera, and culling them would make the water
-     * volume invisible (an underwater x-ray). */
-    if (normal_dot <= 0.0F && quad->block != BLOCK_WATER) {
+    /* Water surface caps are two-sided so the lake surface is visible from
+     * below. Vertical water walls stay culled: from inside a lake they would
+     * otherwise turn into a flat blue wall at the far shore. */
+    if (normal_dot <= 0.0F &&
+        !(quad->block == BLOCK_WATER && quad->axis == 1)) {
         ++g_stats.backface_culled;
         return 0;
     }
@@ -1144,9 +1146,97 @@ static void append_hud(pxa_raster_draw_list_t *list, const hud_state_t *hud,
     }
 }
 
+static void append_outline_line(pxa_raster_draw_list_t *list, float x0,
+                                float y0, float x1, float y1) {
+    const float dx = x1 - x0;
+    const float dy = y1 - y0;
+    const float length = rc_sqrt(dx * dx + dy * dy);
+    float nx;
+    float ny;
+    int16_t xy[8];
+    if (length < 0.5F) return;
+    nx = -dy / length * 0.55F;
+    ny = dx / length * 0.55F;
+    xy[0] = (int16_t)((x0 + nx) * 16.0F);
+    xy[1] = (int16_t)((y0 + ny) * 16.0F);
+    xy[2] = (int16_t)((x1 + nx) * 16.0F);
+    xy[3] = (int16_t)((y1 + ny) * 16.0F);
+    xy[4] = (int16_t)((x1 - nx) * 16.0F);
+    xy[5] = (int16_t)((y1 - ny) * 16.0F);
+    xy[6] = (int16_t)((x0 - nx) * 16.0F);
+    xy[7] = (int16_t)((y0 - ny) * 16.0F);
+    (void)pxa_raster_flat_quad(list, xy, UINT16_C(0x0000));
+}
+
+/* The targeted block outline. Host flat quads have no depth, so only the
+ * faces that point at the camera are outlined; that reads as a solid 3D box
+ * instead of a see-through wireframe. */
+static void append_block_outline(pxa_raster_draw_list_t *list,
+                                 const raster_camera_t *camera,
+                                 const ray_hit_t *target) {
+    static const uint8_t kFaceCorners[6][4] = {
+        {0, 2, 6, 4}, {1, 3, 7, 5}, {0, 1, 5, 4},
+        {2, 3, 7, 6}, {0, 1, 3, 2}, {4, 5, 7, 6},
+    };
+    float screen_x[8];
+    float screen_y[8];
+    uint8_t projectable[8];
+    uint8_t index;
+    float bx;
+    float by;
+    float bz;
+    if (target == NULL || !target->hit) return;
+    bx = (float)target->x;
+    by = (float)target->y;
+    bz = (float)target->z;
+    for (index = 0; index < 8; ++index) {
+        const float wx = bx + (float)(index & 1u);
+        const float wy = by + (float)((index >> 1) & 1u);
+        const float wz = bz + (float)((index >> 2) & 1u);
+        const float dx = wx - camera->x;
+        const float dy = wy - camera->y;
+        const float dz = wz - camera->z;
+        const float depth = dx * camera->fx + dy * camera->fy + dz * camera->fz;
+        const float right = dx * camera->rx + dz * camera->rz;
+        const float up = dx * camera->ux + dy * camera->uy + dz * camera->uz;
+        if (depth < VOXEL_RASTER_NEAR) {
+            projectable[index] = 0;
+            continue;
+        }
+        projectable[index] = 1;
+        screen_x[index] = camera->width * 0.5F +
+                          right / depth * (camera->width * 0.5F) /
+                              camera->tan_x;
+        screen_y[index] = camera->height * 0.5F -
+                          up / depth * (camera->height * 0.5F) /
+                              camera->tan_y;
+    }
+    for (index = 0; index < 6; ++index) {
+        uint8_t visible;
+        uint8_t edge;
+        switch (index) {
+        case 0: visible = camera->x < bx; break;
+        case 1: visible = camera->x > bx + 1.0F; break;
+        case 2: visible = camera->y < by; break;
+        case 3: visible = camera->y > by + 1.0F; break;
+        case 4: visible = camera->z < bz; break;
+        default: visible = camera->z > bz + 1.0F; break;
+        }
+        if (!visible) continue;
+        for (edge = 0; edge < 4; ++edge) {
+            const uint8_t a = kFaceCorners[index][edge];
+            const uint8_t b = kFaceCorners[index][(edge + 1u) & 3u];
+            if (!projectable[a] || !projectable[b]) continue;
+            append_outline_line(list, screen_x[a], screen_y[a], screen_x[b],
+                                screen_y[b]);
+        }
+    }
+}
+
 int32_t voxel_raster_render(uint32_t surface_handle, uint64_t frame_id,
                             const player_t *player, uint8_t quality,
-                            const hud_state_t *hud) {
+                            const hud_state_t *hud,
+                            const ray_hit_t *target) {
     raster_camera_t camera;
     pxa_raster_draw_list_t list;
     visible_chunk_t visible_chunks[GRID_COUNT];
@@ -1210,7 +1300,16 @@ int32_t voxel_raster_render(uint32_t surface_handle, uint64_t frame_id,
         candidate_count,
         (g_raster_capabilities & PXA_RASTER_CAP_TEXTURED_QUAD) != 0);
     pxa_raster_draw_list_begin(&list, g_draw_list, sizeof(g_draw_list), frame_id);
-    (void)pxa_raster_clear(&list, UINT16_C(0x9e5f));
+    {
+        /* A submerged camera sees a deep water backdrop instead of sky. */
+        const uint16_t clear =
+            game_block(rc_floor_int(player->x),
+                       rc_floor_int(player->y + EYE_HEIGHT),
+                       rc_floor_int(player->z)) == BLOCK_WATER
+                ? VOXEL_RASTER_UNDERWATER_CLEAR
+                : UINT16_C(0x9e5f);
+        (void)pxa_raster_clear(&list, clear);
+    }
     for (uint32_t order = 0; order < candidate_count; ++order) {
         projected_quad_t *quad = &g_candidates[g_sort_order[order]];
         int added;
@@ -1264,6 +1363,8 @@ int32_t voxel_raster_render(uint32_t surface_handle, uint64_t frame_id,
             g_raster_capabilities, 0, 0, camera.width, camera.height, 0, 0, 1,
             1, VOXEL_RASTER_UNDERWATER_TINT);
     }
+    if ((g_raster_capabilities & PXA_RASTER_CAP_FLAT_QUAD) != 0)
+        append_block_outline(&list, &camera, target);
     append_hud(&list, hud, camera.width, camera.height);
     g_stats.draw_list_bytes = list.length;
     g_stats.covered_pixel_budget = (uint32_t)camera.width * camera.height;

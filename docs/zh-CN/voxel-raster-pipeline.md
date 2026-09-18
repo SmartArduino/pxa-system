@@ -112,6 +112,6 @@ GameRender 只写 backend 选出的空闲 buffer。presenter 完成消费前该 
 
 Host 单元测试覆盖完整列表先校验后执行、裁剪、UV、RGB565、能力回退、buffer 替换/释放和 telemetry。Simulator 使用相同 ABI、kernel 和 ownership 语义，仅用于正确性；不能用其 FPS 推断 ESP32-S3。
 
-主要风险是透明块仍暂按不透明处理、全屏 reciprocal-depth scratch 的 PSRAM 带宽、mesh rebuild 的瞬时峰值，以及生物/粒子目前使用低成本 billboard，细节不及旧像素路径的 box ray intersection。真机 profile 后再决定透明分层、实体贴图以及是否需要改成 tile depth。
+主要风险是透明块仍暂按不透明处理（水面、树叶还没有真正的透明排序；水下用双面水面、缩短雾距、深水清屏色和全屏 additive 蓝色 tint 近似）、全屏 reciprocal-depth scratch 的 PSRAM 带宽、mesh rebuild 的瞬时峰值，以及生物/粒子目前使用低成本 billboard，细节不及旧像素路径的 box ray intersection。真机 profile 后再决定透明分层、实体贴图以及是否需要改成 tile depth。
 
 性能数字必须标记来源。2026-09-16 在 ESP32-S3（pai-touch）实测：固定 4x 在连接 `pxadb logcat` 时为 14.2--14.6 fps，Host raster 约 23 ms，DrawList 约 19.5 KiB；固定 1x 在不连接日志时 HUD 约 8 fps。串口日志会与运行时 RPC 争用并显著压低 1x 可见帧率，因此不能把 logcat 期间的 FPS 当作实际交互帧率。

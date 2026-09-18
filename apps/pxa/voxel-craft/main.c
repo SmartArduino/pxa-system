@@ -1872,7 +1872,7 @@ static int render_frame(void) {
         (void)mark_perf_timing(PERF_CLOCK_RAYCAST_START);
         raster_result = voxel_raster_render(
             g_surface_handle, g_frame_id + 1u, &g_player,
-            (uint8_t)render_quality(), &hud);
+            (uint8_t)render_quality(), &hud, &target);
         (void)mark_perf_timing(PERF_CLOCK_RAYCAST_END);
         if (raster_result > 0) {
             ++g_frame_id;

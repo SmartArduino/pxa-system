@@ -24,7 +24,8 @@ void voxel_raster_set_capabilities(uint32_t capabilities);
 int voxel_raster_upload_assets(uint32_t surface_handle);
 int32_t voxel_raster_render(uint32_t surface_handle, uint64_t frame_id,
                             const player_t *player, uint8_t quality,
-                            const hud_state_t *hud);
+                            const hud_state_t *hud,
+                            const ray_hit_t *target);
 void voxel_raster_get_stats(voxel_raster_stats_t *stats);
 
 #endif
