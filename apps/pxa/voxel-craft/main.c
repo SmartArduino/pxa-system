@@ -149,7 +149,8 @@ static uint32_t g_host_queue_ema_us;
 static uint32_t g_host_present_ema_us;
 static uint64_t g_host_queue_total_us;
 static uint64_t g_host_present_total_us;
-static uint64_t g_host_telemetry_frames;
+static uint64_t g_host_rendered_frames;
+static uint64_t g_host_visible_frames;
 static uint32_t g_snapshot_ticks;
 static uint8_t g_bootstrap_requests_pending;
 static uint8_t g_present_failures;
@@ -318,30 +319,34 @@ static void update_quality(uint64_t duration_us) {
                 update_duration_stats(telemetry.last_host_raster_us,
                                       &g_host_raster_ema_us,
                                       &g_host_raster_max_us);
-            if (telemetry.submitted_frames > g_host_telemetry_frames) {
-                const uint64_t frames = telemetry.submitted_frames -
-                                        g_host_telemetry_frames;
+            if (telemetry.rendered_frames > g_host_rendered_frames) {
+                const uint64_t frames = telemetry.rendered_frames -
+                                        g_host_rendered_frames;
                 const uint64_t queue_delta =
                     telemetry.queue_wait_us >= g_host_queue_total_us
                         ? telemetry.queue_wait_us - g_host_queue_total_us
                         : 0;
-                const uint64_t present_delta =
-                    telemetry.present_us >= g_host_present_total_us
-                        ? telemetry.present_us - g_host_present_total_us
-                        : 0;
                 const uint64_t queue_average = queue_delta / frames;
-                const uint64_t present_average = present_delta / frames;
                 uint32_t queue_sample = queue_average > UINT32_MAX
                                             ? UINT32_MAX
                                             : (uint32_t)queue_average;
-                uint32_t present_sample = present_average > UINT32_MAX
-                                              ? UINT32_MAX
-                                              : (uint32_t)present_average;
                 g_host_queue_ema_us = g_host_queue_ema_us == 0
                                           ? queue_sample
                                           : (g_host_queue_ema_us * 7u +
                                              queue_sample) /
                                                 8u;
+            }
+            if (telemetry.visible_frames > g_host_visible_frames) {
+                const uint64_t frames = telemetry.visible_frames -
+                                        g_host_visible_frames;
+                const uint64_t present_delta =
+                    telemetry.present_us >= g_host_present_total_us
+                        ? telemetry.present_us - g_host_present_total_us
+                        : 0;
+                const uint64_t present_average = present_delta / frames;
+                uint32_t present_sample = present_average > UINT32_MAX
+                                              ? UINT32_MAX
+                                              : (uint32_t)present_average;
                 g_host_present_ema_us = g_host_present_ema_us == 0
                                             ? present_sample
                                             : (g_host_present_ema_us * 7u +
@@ -350,7 +355,8 @@ static void update_quality(uint64_t duration_us) {
             }
             g_host_queue_total_us = telemetry.queue_wait_us;
             g_host_present_total_us = telemetry.present_us;
-            g_host_telemetry_frames = telemetry.submitted_frames;
+            g_host_rendered_frames = telemetry.rendered_frames;
+            g_host_visible_frames = telemetry.visible_frames;
         }
         if (g_host_raster_ema_us > effective_render_us)
             effective_render_us = g_host_raster_ema_us;
@@ -487,8 +493,7 @@ static int initialize_input_surface(void) {
         !pxa_ui_create(&transaction, FRAME_NODE, 1, 0,
                        PXA_UI_NODE_CANVAS) ||
         !pxa_ui_set_event_mask(&transaction, 1,
-                               PXA_UI_EVENT_MASK_CONTROLLER_STATE |
-                                   PXA_UI_EVENT_MASK_KEY) ||
+                               PXA_UI_EVENT_MASK_CONTROLLER_STATE) ||
         !pxa_ui_set_length(&transaction, FRAME_NODE, PXA_UI_PROPERTY_WIDTH,
                            PXA_UI_LENGTH_FILL, 0) ||
         !pxa_ui_set_length(&transaction, FRAME_NODE, PXA_UI_PROPERTY_HEIGHT,
@@ -576,14 +581,29 @@ static void recreate_surface(void) {
     try_finish_surface_recreate();
 }
 
-/* The window snapshot carries the authoritative logical display size. It is
- * used both for the metrics-changed event and as a periodic fallback, so a
- * resize is picked up even if the UI environment event is missed. */
+typedef struct {
+    uint32_t left;
+    uint32_t top;
+    uint32_t right;
+    uint32_t bottom;
+} window_insets_t;
+
+static window_insets_t g_safe_insets;
+static window_insets_t g_system_bar_insets;
+
+/* The window snapshot carries the authoritative logical display size and the
+ * physical safe area plus the system chrome/gesture reserves. Both are used
+ * for the metrics-changed event and as a periodic fallback, so a resize or a
+ * chrome change is picked up even if the UI environment event is missed. */
 static int parse_window_snapshot(const uint8_t *payload, uint32_t length,
-                                 uint32_t *out_width, uint32_t *out_height) {
+                                 uint32_t *out_width, uint32_t *out_height,
+                                 window_insets_t *out_safe,
+                                 window_insets_t *out_bars) {
     uint32_t offset = 0;
     uint32_t width = 0;
     uint32_t height = 0;
+    window_insets_t safe = {0, 0, 0, 0};
+    window_insets_t bars = {0, 0, 0, 0};
     while (offset + 4u <= length) {
         const uint16_t tag = pxa_read_u16(payload + offset);
         const uint16_t size = pxa_read_u16(payload + offset + 2u);
@@ -594,6 +614,16 @@ static int parse_window_snapshot(const uint8_t *payload, uint32_t length,
         if (tag == 2u && size == 8u) {
             width = pxa_read_u32(payload + offset);
             height = pxa_read_u32(payload + offset + 4u);
+        } else if (tag == 5u && size == 16u) {
+            safe.left = pxa_read_u32(payload + offset);
+            safe.top = pxa_read_u32(payload + offset + 4u);
+            safe.right = pxa_read_u32(payload + offset + 8u);
+            safe.bottom = pxa_read_u32(payload + offset + 12u);
+        } else if (tag == 6u && size == 16u) {
+            bars.left = pxa_read_u32(payload + offset);
+            bars.top = pxa_read_u32(payload + offset + 4u);
+            bars.right = pxa_read_u32(payload + offset + 8u);
+            bars.bottom = pxa_read_u32(payload + offset + 12u);
         }
         offset += size;
     }
@@ -602,16 +632,33 @@ static int parse_window_snapshot(const uint8_t *payload, uint32_t length,
     }
     *out_width = width;
     *out_height = height;
+    if (out_safe != NULL) *out_safe = safe;
+    if (out_bars != NULL) *out_bars = bars;
     return 1;
 }
 
+static uint32_t inset_max(uint32_t left, uint32_t right) {
+    return left > right ? left : right;
+}
+
 static void apply_screen_size(int width, int height) {
-    if (width == g_layout.screen_w && height == g_layout.screen_h) {
+    const int size_changed =
+        width != g_layout.screen_w || height != g_layout.screen_h;
+    /* Interactive controls stay inside the union of the physical safe area
+     * and the system chrome/gesture reserves. */
+    const int insets_changed = render_set_safe_insets(
+        (int)inset_max(g_safe_insets.left, g_system_bar_insets.left),
+        (int)inset_max(g_safe_insets.top, g_system_bar_insets.top),
+        (int)inset_max(g_safe_insets.right, g_system_bar_insets.right),
+        (int)inset_max(g_safe_insets.bottom, g_system_bar_insets.bottom));
+    if (!size_changed && !insets_changed) {
         return;
     }
     render_configure(width, height);
     apply_quality();
-    recreate_surface();
+    if (size_changed) {
+        recreate_surface();
+    }
 }
 
 static void request_window_snapshot(void) {
@@ -1379,29 +1426,6 @@ static void on_controller_state(const pxa_ui_controller_data_t *state) {
     g_pad_mine = (state->buttons & PXA_CONTROLLER_B) != 0;
 }
 
-static void on_key_event(const pxa_ui_event_data_t *event) {
-    switch (event->value) {
-        case PXA_UI_KEY_VOLUME_UP:
-            g_pad_pitch = 1.0F;
-            break;
-        case PXA_UI_KEY_VOLUME_DOWN:
-            g_pad_pitch = -1.0F;
-            break;
-        case PXA_UI_KEY_VOLUME_UP_RELEASED:
-            if (g_pad_pitch > 0.0F) {
-                g_pad_pitch = 0.0F;
-            }
-            break;
-        case PXA_UI_KEY_VOLUME_DOWN_RELEASED:
-            if (g_pad_pitch < 0.0F) {
-                g_pad_pitch = 0.0F;
-            }
-            break;
-        default:
-            break;
-    }
-}
-
 static void on_pointer_down(const pxa_ui_pointer_data_t *pointer) {
     const int x = (int)pointer->x;
     const int y = (int)pointer->y;
@@ -2113,7 +2137,8 @@ int32_t pxa_app_start(const uint8_t *config, uint32_t length) {
     g_host_present_ema_us = 0;
     g_host_queue_total_us = 0;
     g_host_present_total_us = 0;
-    g_host_telemetry_frames = 0;
+    g_host_rendered_frames = 0;
+    g_host_visible_frames = 0;
     g_snapshot_ticks = 0;
     g_bootstrap_requests_pending = 1;
     g_present_failures = 0;
@@ -2235,6 +2260,10 @@ int32_t pxa_app_on_event(const uint8_t *event, uint32_t length) {
     {
         pxa_ui_environment_t environment;
         if (pxa_ui_parse_environment_event(&parsed, &environment)) {
+            g_safe_insets.top = environment.safe_insets[0];
+            g_safe_insets.right = environment.safe_insets[1];
+            g_safe_insets.bottom = environment.safe_insets[2];
+            g_safe_insets.left = environment.safe_insets[3];
             if (environment.width > 0 && environment.height > 0) {
                 apply_screen_size((int)environment.width,
                                   (int)environment.height);
@@ -2249,22 +2278,18 @@ int32_t pxa_app_on_event(const uint8_t *event, uint32_t length) {
             return PXA_EVENT_HANDLED;
         }
     }
-    {
-        pxa_ui_event_data_t ui_event;
-        if (pxa_ui_parse_event(&parsed, &ui_event) &&
-            ui_event.kind == PXA_UI_EVENT_KEY_KIND) {
-            on_key_event(&ui_event);
-            return PXA_EVENT_HANDLED;
-        }
-    }
     if (parsed.service == PXA_SERVICE_WINDOW &&
         (parsed.opcode == PXA_WINDOW_METRICS_CHANGED_OP ||
          (parsed.opcode == PXA_WINDOW_GET_SNAPSHOT_OP &&
           parsed.request_id == WINDOW_SNAPSHOT_REQUEST))) {
         uint32_t width;
         uint32_t height;
+        window_insets_t safe;
+        window_insets_t bars;
         if (parse_window_snapshot(parsed.payload, parsed.payload_length,
-                                  &width, &height)) {
+                                  &width, &height, &safe, &bars)) {
+            g_safe_insets = safe;
+            g_system_bar_insets = bars;
             apply_screen_size((int)width, (int)height);
         }
         return PXA_EVENT_HANDLED;

@@ -1,7 +1,9 @@
 #include "voxel_raster.h"
 
 #include <stddef.h>
+#include <stdint.h>
 
+#include "block_textures.h"
 #include "pxa_raster.h"
 #include "rc_math.h"
 
@@ -48,6 +50,7 @@ typedef struct {
     uint16_t color;
     uint8_t texture_slot;
     uint8_t textured;
+    uint8_t affine;
 } projected_quad_t;
 
 typedef struct {
@@ -77,11 +80,12 @@ typedef struct {
 
 static chunk_mesh_t g_meshes[GRID_COUNT];
 static projected_quad_t g_candidates[VOXEL_RASTER_CANDIDATES];
+static uint16_t g_sort_order[VOXEL_RASTER_CANDIDATES];
 static uint8_t g_draw_list[PXA_RASTER_MAX_DRAW_BYTES];
 static uint8_t g_upload[PXA_RASTER_UPLOAD_HEADER_BYTES +
                         VOXEL_RASTER_FONT_WIDTH * 5u];
-static uint16_t g_palette[256];
-static uint8_t g_texture[16 * 16];
+/* Three 16x16 face tiles stacked into one 16x48 atlas: top, side, bottom. */
+static uint8_t g_texture[16 * 48];
 static uint8_t g_font_texture[VOXEL_RASTER_FONT_WIDTH * 5u];
 static voxel_raster_stats_t g_stats;
 static uint32_t g_raster_capabilities;
@@ -116,64 +120,27 @@ void voxel_raster_set_capabilities(uint32_t capabilities) {
     g_raster_capabilities = capabilities;
 }
 
-static uint8_t rgb565_to_rgb332(uint16_t color) {
-    return (uint8_t)((((color >> 11) & 31u) >> 2) << 5 |
-                     (((color >> 5) & 63u) >> 3) << 2 |
-                     ((color & 31u) >> 3));
-}
-
-static uint16_t rgb332_to_rgb565(uint8_t color) {
-    const uint16_t red = (uint16_t)((color >> 5) & 7u);
-    const uint16_t green = (uint16_t)((color >> 2) & 7u);
-    const uint16_t blue = (uint16_t)(color & 3u);
-    return (uint16_t)(((red * 31u / 7u) << 11) |
-                      ((green * 63u / 7u) << 5) |
-                      (blue * 31u / 3u));
-}
-
-static uint16_t vary_rgb565(uint16_t color, int delta) {
-    int red = (int)((color >> 11) & 31u) + delta;
-    int green = (int)((color >> 5) & 63u) + delta * 2;
-    int blue = (int)(color & 31u) + delta;
-    if (red < 0) red = 0;
-    if (red > 31) red = 31;
-    if (green < 0) green = 0;
-    if (green > 63) green = 63;
-    if (blue < 0) blue = 0;
-    if (blue > 31) blue = 31;
-    return (uint16_t)((red << 11) | (green << 5) | blue);
-}
-
 int voxel_raster_upload_assets(uint32_t surface_handle) {
-    uint16_t index;
+    const block_index_set_t *indices = block_texture_indices();
+    const uint16_t *palette = block_texture_palette();
     uint8_t slot;
     int32_t result;
-    for (index = 0; index < 256; ++index)
-        g_palette[index] = rgb332_to_rgb565((uint8_t)index);
     result = pxa_raster_upload_palette_rgb565(
-        surface_handle, g_palette, g_upload, sizeof(g_upload));
+        surface_handle, palette, g_upload, sizeof(g_upload));
     if (result != (int32_t)(PXA_RASTER_UPLOAD_HEADER_BYTES + 512u)) return 0;
     for (slot = 0; slot < VOXEL_RASTER_TEXTURE_SLOTS; ++slot) {
         const int block = slot + 1;
-        const uint16_t base = render_block_color(block);
-        uint16_t pixel;
-        for (pixel = 0; pixel < 256; ++pixel) {
-            const int x = pixel & 15;
-            const int y = pixel >> 4;
-            const int pattern = ((x * 13 + y * 7 + block * 11) & 7) - 3;
-            int delta = pattern / 2;
-            if (block == BLOCK_BRICK && (y % 5 == 0 ||
-                                         (x + ((y / 5) & 1) * 4) % 8 == 0))
-                delta = -4;
-            if (block == BLOCK_WOOD && (x % 5 == 0)) delta = -3;
-            if (block == BLOCK_GLASS && (x == 0 || y == 0 || x == 15 || y == 15))
-                delta = 5;
-            g_texture[pixel] = rgb565_to_rgb332(vary_rgb565(base, delta));
+        uint8_t kind;
+        for (kind = 0; kind < 3; ++kind) {
+            const uint8_t *tile = indices[block][kind];
+            uint16_t pixel;
+            for (pixel = 0; pixel < 256; ++pixel)
+                g_texture[kind * 256u + pixel] = tile[pixel];
         }
         result = pxa_raster_upload_texture_index8(
-            surface_handle, slot, 16, 16, g_texture, g_upload,
+            surface_handle, slot, 16, 48, g_texture, g_upload,
             sizeof(g_upload));
-        if (result != (int32_t)(PXA_RASTER_UPLOAD_HEADER_BYTES + 256u))
+        if (result != (int32_t)(PXA_RASTER_UPLOAD_HEADER_BYTES + 768u))
             return 0;
     }
     pxa_raster_zero_bytes(g_font_texture, sizeof(g_font_texture));
@@ -513,11 +480,28 @@ static void finish_projected_primitive(
     const pxa_raster_vertex_t *vertices, const uint8_t indices[4],
     uint8_t unique_vertices, projected_quad_t *projected) {
     float depth = 0.0F;
+    uint16_t min_depth = UINT16_MAX;
+    uint16_t max_depth = 0;
+    int32_t min_x = INT32_MAX;
+    int32_t max_x = INT32_MIN;
+    int32_t min_y = INT32_MAX;
+    int32_t max_y = INT32_MIN;
     uint8_t light;
     uint8_t index;
-    for (index = 0; index < unique_vertices; ++index)
-        depth += (float)vertices[indices[index]].depth_q8 / 256.0F;
+    for (index = 0; index < unique_vertices; ++index) {
+        const uint16_t vertex_depth = vertices[indices[index]].depth_q8;
+        depth += (float)vertex_depth / 256.0F;
+        if (vertex_depth < min_depth) min_depth = vertex_depth;
+        if (vertex_depth > max_depth) max_depth = vertex_depth;
+    }
     depth /= unique_vertices;
+    for (index = 0; index < 4; ++index) {
+        const pxa_raster_vertex_t *vertex = &vertices[indices[index]];
+        if (vertex->x_q4 < min_x) min_x = vertex->x_q4;
+        if (vertex->x_q4 > max_x) max_x = vertex->x_q4;
+        if (vertex->y_q4 < min_y) min_y = vertex->y_q4;
+        if (vertex->y_q4 > max_y) max_y = vertex->y_q4;
+    }
     light = quad->axis == 1 ? (quad->sign > 0 ? 255u : 116u)
                             : (quad->axis == 0 ? 190u : 160u);
     if (depth > 14.0F) {
@@ -533,6 +517,26 @@ static void finish_projected_primitive(
     projected->textured = quad->block <= VOXEL_RASTER_TEXTURE_SLOTS;
     projected->texture_slot = (uint8_t)(quad->block - 1u);
     projected->color = render_block_color(quad->block);
+    projected->affine = 0;
+    if (projected->textured) {
+        /* Faces below roughly 3x3 screen pixels skip the texture and use the
+         * block colour; the texel detail is invisible at that size. */
+        if (max_x - min_x < 3 * 16 || max_y - min_y < 3 * 16) {
+            projected->textured = 0;
+            return;
+        }
+        /* Affine UV is only worth its warping when the depth range across the
+         * face stays small relative to its merged texel span. The bound keeps
+         * the worst-case affine error near a quarter texel. */
+        {
+            const uint8_t span = quad->u_length > quad->v_length
+                                     ? quad->u_length
+                                     : quad->v_length;
+            if (min_depth != 0 &&
+                (uint32_t)(max_depth - min_depth) * 16u * span <= min_depth)
+                projected->affine = 1;
+        }
+    }
 }
 
 static uint8_t project_quad(const raster_camera_t *camera,
@@ -576,16 +580,35 @@ static uint8_t project_quad(const raster_camera_t *camera,
         input[index].depth =
             dx * camera->fx + dy * camera->fy + dz * camera->fz;
     }
-    if (quad->axis == 0) {
-        input[0].u_q4 = input[1].u_q4 = 0.0F;
-        input[2].u_q4 = input[3].u_q4 = quad->u_length * 256.0F;
-        input[0].v_q4 = input[3].v_q4 = 0.0F;
-        input[1].v_q4 = input[2].v_q4 = quad->v_length * 256.0F;
-    } else {
-        input[0].u_q4 = input[3].u_q4 = 0.0F;
-        input[1].u_q4 = input[2].u_q4 = quad->u_length * 256.0F;
-        input[0].v_q4 = input[1].v_q4 = 0.0F;
-        input[2].v_q4 = input[3].v_q4 = quad->v_length * 256.0F;
+    {
+        /* The 16x48 face atlas stacks top, side and bottom tiles. Y faces
+         * pick the cap that points at the camera; side faces use the middle
+         * band. Texture V grows downwards inside a tile, so V is flipped
+         * against the world axis the face runs along: the highest world
+         * corner samples row 0. This matches the ray caster's
+         * `ty = 15 - frac(v)` and keeps grass fringes and table edges up. */
+        const float v_base_q4 =
+            (quad->axis == 1 ? (quad->sign > 0 ? 0.0F : 32.0F) : 16.0F) *
+            256.0F;
+        if (quad->axis == 0) {
+            input[0].u_q4 = input[1].u_q4 = 0.0F;
+            input[2].u_q4 = input[3].u_q4 = quad->u_length * 256.0F;
+            input[0].v_q4 = input[3].v_q4 =
+                v_base_q4 + quad->v_length * 256.0F;
+            input[1].v_q4 = input[2].v_q4 = v_base_q4;
+        } else if (quad->axis == 1) {
+            input[0].u_q4 = input[3].u_q4 = 0.0F;
+            input[1].u_q4 = input[2].u_q4 = quad->u_length * 256.0F;
+            input[0].v_q4 = input[1].v_q4 =
+                v_base_q4 + quad->v_length * 256.0F;
+            input[2].v_q4 = input[3].v_q4 = v_base_q4;
+        } else {
+            input[0].u_q4 = input[3].u_q4 = 0.0F;
+            input[1].u_q4 = input[2].u_q4 = quad->u_length * 256.0F;
+            input[0].v_q4 = input[1].v_q4 =
+                v_base_q4 + quad->v_length * 256.0F;
+            input[2].v_q4 = input[3].v_q4 = v_base_q4;
+        }
     }
     for (plane = 0; plane < CLIP_PLANE_COUNT; ++plane) {
         clip_vertex_t *swap;
@@ -741,19 +764,24 @@ static void append_entities(const raster_camera_t *camera,
 
 static void sort_candidates(uint32_t count, uint8_t depth_tested) {
     uint32_t gap;
+    uint32_t index;
+    if (count > VOXEL_RASTER_CANDIDATES) count = VOXEL_RASTER_CANDIDATES;
+    for (index = 0; index < count; ++index)
+        g_sort_order[index] = (uint16_t)index;
     for (gap = count / 2u; gap != 0; gap /= 2u) {
-        uint32_t index;
         for (index = gap; index < count; ++index) {
-            projected_quad_t value = g_candidates[index];
+            const uint16_t value = g_sort_order[index];
+            const float depth = g_candidates[value].depth;
             uint32_t cursor = index;
             while (cursor >= gap &&
                    (depth_tested
-                        ? g_candidates[cursor - gap].depth > value.depth
-                        : g_candidates[cursor - gap].depth < value.depth)) {
-                g_candidates[cursor] = g_candidates[cursor - gap];
+                        ? g_candidates[g_sort_order[cursor - gap]].depth > depth
+                        : g_candidates[g_sort_order[cursor - gap]].depth <
+                              depth)) {
+                g_sort_order[cursor] = g_sort_order[cursor - gap];
                 cursor -= gap;
             }
-            g_candidates[cursor] = value;
+            g_sort_order[cursor] = value;
         }
     }
 }
@@ -934,9 +962,10 @@ static void append_ui_item(pxa_raster_draw_list_t *list, const raster_ui_t *ui,
                                            : 1);
     if (item == BLOCK_AIR) return;
     if (item <= VOXEL_RASTER_TEXTURE_SLOTS) {
+        /* Inventory icons show the side band of the 16x48 face atlas. */
         (void)pxa_raster_sprite(list, (uint8_t)(item - 1u), 0,
                                 g_raster_capabilities, (int16_t)mapped_x,
-                                (int16_t)mapped_y, width, height, 0, 0, 16,
+                                (int16_t)mapped_y, width, height, 0, 16, 16,
                                 16, 0);
     } else if (item < BLOCK_TYPE_COUNT) {
         append_ui_rect(list, ui, x, y, size, size, render_block_color(item));
@@ -1158,8 +1187,8 @@ int32_t voxel_raster_render(uint32_t surface_handle, uint64_t frame_id,
         (g_raster_capabilities & PXA_RASTER_CAP_TEXTURED_QUAD) != 0);
     pxa_raster_draw_list_begin(&list, g_draw_list, sizeof(g_draw_list), frame_id);
     (void)pxa_raster_clear(&list, UINT16_C(0x9e5f));
-    for (uint32_t index = 0; index < candidate_count; ++index) {
-        projected_quad_t *quad = &g_candidates[index];
+    for (uint32_t order = 0; order < candidate_count; ++order) {
+        projected_quad_t *quad = &g_candidates[g_sort_order[order]];
         int added;
         if (!projected_quad_has_area(quad)) {
             ++g_stats.dropped_quads;
@@ -1167,8 +1196,15 @@ int32_t voxel_raster_render(uint32_t surface_handle, uint64_t frame_id,
         }
         if (quad->textured &&
             (g_raster_capabilities & PXA_RASTER_CAP_TEXTURED_QUAD) != 0) {
-            added = pxa_raster_textured_quad(&list, quad->vertices,
-                                              quad->texture_slot);
+            if (quad->affine &&
+                (g_raster_capabilities & PXA_RASTER_CAP_AFFINE_UV) != 0) {
+                added = pxa_raster_textured_quad_flags(
+                    &list, quad->vertices, quad->texture_slot,
+                    PXA_RASTER_QUAD_AFFINE_UV);
+            } else {
+                added = pxa_raster_textured_quad(&list, quad->vertices,
+                                                 quad->texture_slot);
+            }
         } else if ((g_raster_capabilities &
                     PXA_RASTER_CAP_TEXTURED_QUAD) != 0) {
             added = pxa_raster_solid_depth_quad(&list, quad->vertices,
@@ -1183,10 +1219,13 @@ int32_t voxel_raster_render(uint32_t surface_handle, uint64_t frame_id,
             added = pxa_raster_flat_quad(&list, xy, quad->color);
         }
         if (!added) {
-            g_stats.dropped_quads += candidate_count - index;
+            g_stats.dropped_quads += candidate_count - order;
             break;
         }
         ++g_stats.submitted_quads;
+        if (quad->textured && quad->affine &&
+            (g_raster_capabilities & PXA_RASTER_CAP_AFFINE_UV) != 0)
+            ++g_stats.affine_quads;
     }
     append_hud(&list, hud, camera.width, camera.height);
     g_stats.draw_list_bytes = list.length;

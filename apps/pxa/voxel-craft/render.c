@@ -4,6 +4,8 @@
 
 #include "rc_math.h"
 
+#include "block_textures.h"
+
 /* Large enough for a native (1X) render of the product's 296x240 view and of
  * a 320x240 view. Larger views fall back to 2X or coarser. */
 #define SCENE_MAX_W RENDER_SCENE_MAX_W
@@ -45,6 +47,13 @@ static float g_fog_inv = 1.0F / 32.0F;
 /* Keep the direct Surface within the Guest's fixed RGB565 frame buffer. */
 static int g_view_pixel_budget = 115000;
 static render_perf_stats_t g_perf_stats;
+/* Physical safe area merged with the Host's system chrome/gesture reserves.
+ * The Host publishes them through the window snapshot; interactive controls
+ * and HUD text stay inside this region. */
+static int g_inset_left;
+static int g_inset_top;
+static int g_inset_right;
+static int g_inset_bottom;
 
 render_layout_t g_layout = {
     SCREEN_W_DEFAULT, SCREEN_H_DEFAULT, 0, 0, SCREEN_W_DEFAULT,
@@ -64,7 +73,8 @@ int render_min_quality(void) {
     while (scale < QUALITY_MAX) {
         const int width = (g_layout.view_w + scale - 1) / scale;
         const int height = (g_layout.view_h + scale - 1) / scale;
-        if (width <= SCENE_MAX_W && height <= SCENE_MAX_H) {
+        if (width <= SCENE_MAX_W && height <= SCENE_MAX_H &&
+            width * height <= g_view_pixel_budget) {
             break;
         }
         ++scale;
@@ -131,6 +141,21 @@ static void render_update_scene(void) {
     }
 }
 
+int render_set_safe_insets(int left, int top, int right, int bottom) {
+    if (left < 0) left = 0;
+    if (top < 0) top = 0;
+    if (right < 0) right = 0;
+    if (bottom < 0) bottom = 0;
+    if (left == g_inset_left && top == g_inset_top &&
+        right == g_inset_right && bottom == g_inset_bottom)
+        return 0;
+    g_inset_left = left;
+    g_inset_top = top;
+    g_inset_right = right;
+    g_inset_bottom = bottom;
+    return 1;
+}
+
 void render_configure(int width, int height) {
     if (width < 120) {
         width = 120;
@@ -142,62 +167,63 @@ void render_configure(int width, int height) {
     g_layout.screen_h = height;
     g_layout.view_w = width < SCREEN_W_MAX ? width : SCREEN_W_MAX;
     g_layout.view_h = height < SCREEN_H_MAX ? height : SCREEN_H_MAX;
-    if (g_layout.view_w * g_layout.view_h > g_view_pixel_budget) {
-        /* Scale both axes by the same factor to keep the aspect ratio. */
-        int scaled_w = g_layout.view_w;
-        int scaled_h = g_layout.view_h;
-        int guard = 0;
-        while (scaled_w * scaled_h > g_view_pixel_budget && guard < 64) {
-            scaled_w = scaled_w * 63 / 64;
-            scaled_h = scaled_h * 63 / 64;
-            if (scaled_w < 160) {
-                scaled_w = 160;
-            }
-            if (scaled_h < 120) {
-                scaled_h = 120;
-            }
-            ++guard;
-        }
-        g_layout.view_w = scaled_w;
-        g_layout.view_h = scaled_h;
-    }
+    /* Keep layout coordinates in the full logical viewport. Render quality
+     * controls the smaller Surface size in render_update_scene(); shrinking
+     * the viewport itself leaves a low-resolution, unscaled image in the
+     * middle of larger displays such as the 412x412 Watcher. */
     g_layout.view_x = (width - g_layout.view_w) / 2;
     g_layout.view_y = (height - g_layout.view_h) / 2;
-    /* The Host reserves system gesture strips at the top, bottom and left
-     * edges (status bar pull-down, home gesture, back gesture). Interactive
-     * controls stay clear of them so touches always reach the app. */
-    g_layout.hotbar_x =
-        g_layout.view_x + (g_layout.view_w - HOTBAR_SLOTS * HOTBAR_SLOT) / 2;
-    g_layout.hotbar_y = g_layout.view_y + g_layout.view_h - 48;
-    g_layout.jump_x = g_layout.view_x + g_layout.view_w - 34;
-    g_layout.jump_y = g_layout.view_y + g_layout.view_h - 42;
-    g_layout.jump_r = 16;
-    g_layout.action_x = g_layout.jump_x;
-    g_layout.action_y = g_layout.jump_y - 38;
-    g_layout.action_r = 16;
-    g_layout.place_x = g_layout.jump_x;
-    g_layout.place_y = g_layout.jump_y - 76;
-    g_layout.place_r = 16;
-    g_layout.down_x = g_layout.jump_x;
-    g_layout.down_y = g_layout.jump_y - 112;
-    g_layout.down_r = 12;
-    g_layout.fly_x = g_layout.view_x + g_layout.view_w - 20;
-    g_layout.fly_y = g_layout.view_y + 28;
-    g_layout.fly_r = 11;
-    g_layout.quality_x = g_layout.view_x + 24;
-    g_layout.quality_y = g_layout.view_y + 24;
-    g_layout.quality_w = 150;
-    g_layout.quality_h = 18;
-    g_layout.bag_x = g_layout.view_x + g_layout.view_w - 48;
-    g_layout.bag_y = g_layout.view_y + 28;
-    g_layout.bag_r = 11;
-    g_layout.menu_x = g_layout.view_x + g_layout.view_w - 76;
-    g_layout.menu_y = g_layout.view_y + 28;
-    g_layout.menu_r = 11;
-    g_inv_layout.panel_x = g_layout.view_x + 6;
-    g_inv_layout.panel_y = g_layout.view_y + 6;
-    g_inv_layout.panel_w = g_layout.view_w - 12;
-    g_inv_layout.panel_h = g_layout.view_h - 12;
+    /* Interactive controls stay clear of the union of the physical safe area
+     * and the Host's system chrome/gesture reserves (status bar pull-down,
+     * Home gesture, Back gesture). The 3D view itself stays edge to edge. */
+    {
+        int hud_x = g_layout.view_x + g_inset_left;
+        int hud_y = g_layout.view_y + g_inset_top;
+        int hud_w = g_layout.view_w - g_inset_left - g_inset_right;
+        int hud_h = g_layout.view_h - g_inset_top - g_inset_bottom;
+        if (hud_w < 96) {
+            hud_x = g_layout.view_x;
+            hud_w = g_layout.view_w;
+        }
+        if (hud_h < 72) {
+            hud_y = g_layout.view_y;
+            hud_h = g_layout.view_h;
+        }
+        g_layout.hotbar_x =
+            hud_x + (hud_w - HOTBAR_SLOTS * HOTBAR_SLOT) / 2;
+        g_layout.hotbar_y = hud_y + hud_h - 48;
+        g_layout.jump_x = hud_x + hud_w - 34;
+        g_layout.jump_y = hud_y + hud_h - 42;
+        g_layout.jump_r = 16;
+        g_layout.action_x = g_layout.jump_x;
+        g_layout.action_y = g_layout.jump_y - 38;
+        g_layout.action_r = 16;
+        g_layout.place_x = g_layout.jump_x;
+        g_layout.place_y = g_layout.jump_y - 76;
+        g_layout.place_r = 16;
+        g_layout.down_x = g_layout.jump_x;
+        g_layout.down_y = g_layout.jump_y - 112;
+        g_layout.down_r = 12;
+        g_layout.fly_x = hud_x + hud_w - 20;
+        g_layout.fly_y = hud_y + 28;
+        g_layout.fly_r = 11;
+        g_layout.quality_x = hud_x + 24;
+        g_layout.quality_y = hud_y + 24;
+        g_layout.quality_w = 150;
+        if (g_layout.quality_w > hud_w - 48) g_layout.quality_w = hud_w - 48;
+        if (g_layout.quality_w < 60) g_layout.quality_w = 60;
+        g_layout.quality_h = 18;
+        g_layout.bag_x = hud_x + hud_w - 48;
+        g_layout.bag_y = hud_y + 28;
+        g_layout.bag_r = 11;
+        g_layout.menu_x = hud_x + hud_w - 76;
+        g_layout.menu_y = hud_y + 28;
+        g_layout.menu_r = 11;
+        g_inv_layout.panel_x = hud_x + 6;
+        g_inv_layout.panel_y = hud_y + 6;
+        g_inv_layout.panel_w = hud_w - 12;
+        g_inv_layout.panel_h = hud_h - 12;
+    }
     g_inv_layout.main_x =
         g_inv_layout.panel_x + (g_inv_layout.panel_w - 9 * HOTBAR_SLOT) / 2;
     g_inv_layout.main_y = g_inv_layout.panel_y + 96;
@@ -377,326 +403,21 @@ static uint16_t sky_pixel(float ndx, float ndy, float ndz) {
 }
 
 /* --- block textures ------------------------------------------------------
- * A 16 x 16 RGB565 texture per block and face kind (top, side, bottom) is
- * generated once. The ray caster samples it per hit pixel, so the world uses
- * real tile textures instead of per-pixel colour noise. */
-
-#define TEX_KIND_TOP 0
-#define TEX_KIND_SIDE 1
-#define TEX_KIND_BOTTOM 2
-
-static uint16_t g_tex[BLOCK_TYPE_COUNT][3][256];
-static uint8_t g_textures_ready;
-
-static inline uint32_t tex_hash(int x, int y, int seed) {
-    uint32_t value = (uint32_t)x * 73856093u ^ (uint32_t)y * 19349663u ^
-                     (uint32_t)seed * 83492791u;
-    value = (value ^ (value >> 13)) * 1274126177u;
-    return value ^ (value >> 16);
-}
-
-static void tex_pixel(int block, int kind, int x, int y, int r, int g, int b) {
-    g_tex[block][kind][(y << 4) | x] = RGB565(r, g, b);
-}
-
-static void tex_fill(int block, int kind, int r, int g, int b, int amount,
-                     int seed) {
-    int x;
-    int y;
-    for (y = 0; y < 16; ++y) {
-        for (x = 0; x < 16; ++x) {
-            const int n =
-                (int)(tex_hash(x, y, seed) % (uint32_t)(2 * amount + 1)) -
-                amount;
-            tex_pixel(block, kind, x, y, r + n, g + n, b + n);
-        }
-    }
-}
-
-static void build_textures(void) {
-    int x;
-    int y;
-    /* Grass: green top, dirt bottom, dirt side with a jagged green fringe. */
-    tex_fill(BLOCK_GRASS, TEX_KIND_TOP, 104, 168, 62, 16, 11);
-    tex_fill(BLOCK_GRASS, TEX_KIND_BOTTOM, 134, 96, 67, 12, 12);
-    tex_fill(BLOCK_GRASS, TEX_KIND_SIDE, 134, 96, 67, 12, 13);
-    for (x = 0; x < 16; ++x) {
-        const int fringe = 2 + (int)(tex_hash(x, 0, 14) % 3u);
-        for (y = 0; y < fringe; ++y) {
-            const int n = (int)(tex_hash(x, y, 15) % 25u) - 12;
-            tex_pixel(BLOCK_GRASS, TEX_KIND_SIDE, x, y, 96 + n, 158 + n,
-                      56 + n);
-        }
-    }
-    /* Dirt: brown noise with darker specks. */
-    tex_fill(BLOCK_DIRT, TEX_KIND_TOP, 134, 96, 67, 13, 21);
-    tex_fill(BLOCK_DIRT, TEX_KIND_SIDE, 134, 96, 67, 13, 21);
-    tex_fill(BLOCK_DIRT, TEX_KIND_BOTTOM, 134, 96, 67, 13, 21);
-    for (y = 0; y < 16; ++y) {
-        for (x = 0; x < 16; ++x) {
-            if ((tex_hash(x, y, 22) & 31u) == 0u) {
-                tex_pixel(BLOCK_DIRT, TEX_KIND_SIDE, x, y, 106, 72, 48);
-            }
-        }
-    }
-    /* Stone: grey noise with a few dark cracks. */
-    tex_fill(BLOCK_STONE, TEX_KIND_TOP, 128, 128, 128, 14, 31);
-    tex_fill(BLOCK_STONE, TEX_KIND_SIDE, 128, 128, 128, 14, 31);
-    tex_fill(BLOCK_STONE, TEX_KIND_BOTTOM, 128, 128, 128, 14, 31);
-    for (y = 0; y < 16; ++y) {
-        for (x = 0; x < 16; ++x) {
-            const uint32_t h = tex_hash(x, y, 32);
-            if ((h & 63u) == 0u) {
-                tex_pixel(BLOCK_STONE, TEX_KIND_SIDE, x, y, 96, 96, 96);
-            } else if ((h & 127u) == 1u) {
-                tex_pixel(BLOCK_STONE, TEX_KIND_SIDE, x, y, 150, 150, 150);
-            }
-        }
-    }
-    /* Sand: pale noise with faint darker grains. */
-    tex_fill(BLOCK_SAND, TEX_KIND_TOP, 218, 207, 160, 10, 41);
-    tex_fill(BLOCK_SAND, TEX_KIND_SIDE, 214, 202, 154, 10, 42);
-    tex_fill(BLOCK_SAND, TEX_KIND_BOTTOM, 210, 198, 150, 10, 43);
-    for (y = 0; y < 16; ++y) {
-        for (x = 0; x < 16; ++x) {
-            if ((tex_hash(x, y, 44) & 15u) == 0u) {
-                tex_pixel(BLOCK_SAND, TEX_KIND_SIDE, x, y, 198, 184, 138);
-            }
-        }
-    }
-    /* Wood: bark stripes on the side, growth rings on the cut faces. */
-    for (y = 0; y < 16; ++y) {
-        for (x = 0; x < 16; ++x) {
-            const int stripe = ((x >> 1) & 1) != 0 ? -14 : 8;
-            const int n = (int)(tex_hash(x, y, 51) % 17u) - 8;
-            const int dx = x - 8;
-            const int dy = y - 8;
-            const int dist = (dx * dx + dy * dy) >> 2;
-            const int ring = ((dist & 7) < 3) ? -16 : 8;
-            const int m = (int)(tex_hash(x, y, 52) % 13u) - 6;
-            tex_pixel(BLOCK_WOOD, TEX_KIND_SIDE, x, y, 108 + stripe + n,
-                      86 + stripe + n, 56 + stripe + n);
-            tex_pixel(BLOCK_WOOD, TEX_KIND_TOP, x, y, 164 + ring + m,
-                      132 + ring + m, 80 + ring + m);
-            tex_pixel(BLOCK_WOOD, TEX_KIND_BOTTOM, x, y, 164 + ring + m,
-                      132 + ring + m, 80 + ring + m);
-        }
-    }
-    /* Leaves: strong green noise with dark holes. */
-    tex_fill(BLOCK_LEAVES, TEX_KIND_TOP, 58, 143, 70, 30, 61);
-    tex_fill(BLOCK_LEAVES, TEX_KIND_SIDE, 54, 136, 66, 30, 62);
-    tex_fill(BLOCK_LEAVES, TEX_KIND_BOTTOM, 50, 128, 62, 30, 63);
-    for (y = 0; y < 16; ++y) {
-        for (x = 0; x < 16; ++x) {
-            if ((tex_hash(x, y, 64) & 7u) == 0u) {
-                tex_pixel(BLOCK_LEAVES, TEX_KIND_SIDE, x, y, 34, 92, 44);
-            }
-        }
-    }
-    /* Water: two overlapping ripple lattices with a few sparkles. The ray
-     * caster blends two scrolled samples of this tile, so the surface
-     * shimmers without an obvious sliding band. */
-    for (y = 0; y < 16; ++y) {
-        for (x = 0; x < 16; ++x) {
-            int wa = (x + (y >> 1)) & 7;
-            int wb = (y - (x >> 1)) & 7;
-            const int n = (int)(tex_hash(x, y, 71) % 9u) - 4;
-            int bright;
-            wa = wa < 4 ? wa : 7 - wa;
-            wb = wb < 4 ? wb : 7 - wb;
-            bright = 4 + (wa + wb) * 5 + n;
-            if ((tex_hash(x, y, 72) & 63u) == 0u) {
-                bright += 24;
-            }
-            tex_pixel(BLOCK_WATER, TEX_KIND_TOP, x, y, 40 + bright / 2,
-                      96 + bright, 200 + bright / 2);
-            tex_pixel(BLOCK_WATER, TEX_KIND_SIDE, x, y, 30 + bright / 3,
-                      80 + bright * 3 / 4, 174 + bright / 2);
-            tex_pixel(BLOCK_WATER, TEX_KIND_BOTTOM, x, y, 22 + n, 60 + n,
-                      148 + n);
-        }
-    }
-    /* Planks: horizontal boards with seams and grain. */
-    for (y = 0; y < 16; ++y) {
-        for (x = 0; x < 16; ++x) {
-            const int seam = (y % 5) == 0 || (x % 8) == 0 ? -26 : 0;
-            const int n = (int)(tex_hash(x, y, 81) % 19u) - 9;
-            tex_pixel(BLOCK_PLANK, TEX_KIND_TOP, x, y, 158 + seam + n,
-                      128 + seam + n, 80 + seam + n);
-            tex_pixel(BLOCK_PLANK, TEX_KIND_SIDE, x, y, 158 + seam + n,
-                      128 + seam + n, 80 + seam + n);
-            tex_pixel(BLOCK_PLANK, TEX_KIND_BOTTOM, x, y, 158 + seam + n,
-                      128 + seam + n, 80 + seam + n);
-        }
-    }
-    /* Brick: offset courses with light mortar. */
-    for (y = 0; y < 16; ++y) {
-        for (x = 0; x < 16; ++x) {
-            const int course = y >> 2;
-            const int shifted = (x + ((course & 1) != 0 ? 4 : 0)) & 15;
-            const int mortar = (y & 3) == 0 || (shifted & 7) == 0;
-            const int n = (int)(tex_hash(x, y, 91) % 17u) - 8;
-            if (mortar) {
-                tex_pixel(BLOCK_BRICK, TEX_KIND_SIDE, x, y, 172 + n,
-                          168 + n, 160 + n);
-            } else {
-                tex_pixel(BLOCK_BRICK, TEX_KIND_SIDE, x, y, 152 + n, 72 + n,
-                          56 + n);
-            }
-        }
-    }
-    tex_fill(BLOCK_BRICK, TEX_KIND_TOP, 152, 72, 56, 14, 92);
-    tex_fill(BLOCK_BRICK, TEX_KIND_BOTTOM, 152, 72, 56, 14, 92);
-    /* Glass: pale pane with a bright frame and a diagonal highlight. */
-    for (y = 0; y < 16; ++y) {
-        for (x = 0; x < 16; ++x) {
-            const int frame = x == 0 || y == 0 || x == 15 || y == 15;
-            const int shine = (x + y) == 6 || (x + y) == 7;
-            if (frame) {
-                tex_pixel(BLOCK_GLASS, TEX_KIND_SIDE, x, y, 236, 248, 255);
-            } else if (shine) {
-                tex_pixel(BLOCK_GLASS, TEX_KIND_SIDE, x, y, 226, 244, 252);
-            } else {
-                tex_pixel(BLOCK_GLASS, TEX_KIND_SIDE, x, y, 176, 214, 230);
-            }
-            tex_pixel(BLOCK_GLASS, TEX_KIND_TOP, x, y, 190, 226, 238);
-            tex_pixel(BLOCK_GLASS, TEX_KIND_BOTTOM, x, y, 170, 206, 222);
-        }
-    }
-    /* Cobblestone: rounded stones over a dark base. */
-    for (y = 0; y < 16; ++y) {
-        for (x = 0; x < 16; ++x) {
-            const int cell = (int)(tex_hash(x >> 2, y >> 2, 101) & 3u);
-            const int base = 96 + cell * 14;
-            const int n = (int)(tex_hash(x, y, 102) % 21u) - 10;
-            const int edge = (x & 3) == 0 || (y & 3) == 0 ? -22 : 0;
-            const int v = base + n + edge;
-            tex_pixel(BLOCK_COBBLE, TEX_KIND_SIDE, x, y, v, v, v);
-            tex_pixel(BLOCK_COBBLE, TEX_KIND_TOP, x, y, base + n, base + n,
-                      base + n);
-            tex_pixel(BLOCK_COBBLE, TEX_KIND_BOTTOM, x, y, base + n,
-                      base + n, base + n);
-        }
-    }
-    /* Crafting table: planks with a 2x2 grid on top and a worn side. */
-    for (y = 0; y < 16; ++y) {
-        for (x = 0; x < 16; ++x) {
-            const int grain = (int)(tex_hash(x, y, 121) % 17u) - 8;
-            const int grid = (x & 7) == 0 || (y & 7) == 0;
-            const int base = grid ? 120 : 168;
-            tex_pixel(BLOCK_TABLE, TEX_KIND_TOP, x, y, base + grain,
-                      (base * 78 / 100) + grain, (base * 48 / 100) + grain);
-            {
-                const int band = y < 3 ? -28 : (y == 10 ? -34 : 0);
-                const int b = 142 + band + grain;
-                tex_pixel(BLOCK_TABLE, TEX_KIND_SIDE, x, y, b,
-                          (b * 78 / 100), (b * 50 / 100));
-            }
-            tex_pixel(BLOCK_TABLE, TEX_KIND_BOTTOM, x, y, 140 + grain,
-                      108 + grain, 68 + grain);
-        }
-    }
-    /* Snow: bright with a faint blue cast. */
-    tex_fill(BLOCK_SNOW, TEX_KIND_TOP, 236, 240, 246, 6, 131);
-    tex_fill(BLOCK_SNOW, TEX_KIND_SIDE, 232, 238, 245, 6, 132);
-    tex_fill(BLOCK_SNOW, TEX_KIND_BOTTOM, 224, 230, 238, 6, 133);
-    /* Gravel: mixed grey pebbles with dark pits. */
-    for (y = 0; y < 16; ++y) {
-        for (x = 0; x < 16; ++x) {
-            const int n = (int)(tex_hash(x, y, 141) % 41u) - 20;
-            const int base = 126 + n;
-            if ((tex_hash(x, y, 142) & 31u) == 0u) {
-                tex_pixel(BLOCK_GRAVEL, TEX_KIND_TOP, x, y, 88, 84, 80);
-            } else {
-                tex_pixel(BLOCK_GRAVEL, TEX_KIND_TOP, x, y, base,
-                          base - 6, base - 14);
-            }
-            tex_pixel(BLOCK_GRAVEL, TEX_KIND_SIDE, x, y, base - 6,
-                      base - 12, base - 20);
-            tex_pixel(BLOCK_GRAVEL, TEX_KIND_BOTTOM, x, y, base - 12,
-                      base - 18, base - 26);
-        }
-    }
-    /* Cactus: green columns with ridges and pale spines. */
-    for (y = 0; y < 16; ++y) {
-        for (x = 0; x < 16; ++x) {
-            const int ridge = (x % 5) == 0 || (x % 5) == 3 ? -18 : 6;
-            const int n = (int)(tex_hash(x, y, 151) % 13u) - 6;
-            int r = 52 + ridge + n;
-            int g = 132 + ridge + n;
-            int b = 56 + ridge + n;
-            if ((tex_hash(x, y, 152) & 63u) == 0u) {
-                r = 214;
-                g = 226;
-                b = 176;
-            }
-            tex_pixel(BLOCK_CACTUS, TEX_KIND_SIDE, x, y, r, g, b);
-            tex_pixel(BLOCK_CACTUS, TEX_KIND_TOP, x, y, 62 + n, 146 + n,
-                      66 + n);
-            tex_pixel(BLOCK_CACTUS, TEX_KIND_BOTTOM, x, y, 46 + n,
-                      116 + n, 50 + n);
-        }
-    }
-    /* Bush: dense dark foliage. */
-    tex_fill(BLOCK_BUSH, TEX_KIND_TOP, 44, 110, 50, 26, 161);
-    tex_fill(BLOCK_BUSH, TEX_KIND_SIDE, 38, 100, 44, 26, 162);
-    tex_fill(BLOCK_BUSH, TEX_KIND_BOTTOM, 32, 90, 38, 26, 163);
-    /* Flower: grass with red and yellow blossoms. */
-    tex_fill(BLOCK_FLOWER, TEX_KIND_TOP, 70, 150, 60, 16, 171);
-    tex_fill(BLOCK_FLOWER, TEX_KIND_SIDE, 66, 142, 58, 16, 172);
-    tex_fill(BLOCK_FLOWER, TEX_KIND_BOTTOM, 60, 130, 54, 16, 173);
-    for (y = 0; y < 16; ++y) {
-        for (x = 0; x < 16; ++x) {
-            const uint32_t h = tex_hash(x, y, 174);
-            if ((h & 15u) == 0u) {
-                const int red = (h & 16u) != 0u;
-                tex_pixel(BLOCK_FLOWER, TEX_KIND_TOP, x, y,
-                          red ? 226 : 240, red ? 66 : 214,
-                          red ? 70 : 70);
-                tex_pixel(BLOCK_FLOWER, TEX_KIND_SIDE, x, y,
-                          red ? 226 : 240, red ? 66 : 214,
-                          red ? 70 : 70);
-            }
-        }
-    }
-    /* Wool: soft off-white weave. */
-    for (y = 0; y < 16; ++y) {
-        for (x = 0; x < 16; ++x) {
-            const int weave = ((x + y) & 3) == 0 ? -10 : 4;
-            const int n = (int)(tex_hash(x, y, 181) % 11u) - 5;
-            tex_pixel(BLOCK_WOOL, TEX_KIND_TOP, x, y, 232 + weave + n,
-                      230 + weave + n, 220 + weave + n);
-            tex_pixel(BLOCK_WOOL, TEX_KIND_SIDE, x, y, 226 + weave + n,
-                      224 + weave + n, 214 + weave + n);
-            tex_pixel(BLOCK_WOOL, TEX_KIND_BOTTOM, x, y, 218 + weave + n,
-                      216 + weave + n, 206 + weave + n);
-        }
-    }
-    /* Bedrock: large dark blotches. */
-    for (y = 0; y < 16; ++y) {
-        for (x = 0; x < 16; ++x) {
-            const int blotch =
-                (int)(tex_hash(x >> 2, y >> 2, 111) % 41u) - 20;
-            const int n = (int)(tex_hash(x, y, 112) % 17u) - 8;
-            const int v = 58 + blotch + n;
-            tex_pixel(BLOCK_BEDROCK, TEX_KIND_TOP, x, y, v, v, v);
-            tex_pixel(BLOCK_BEDROCK, TEX_KIND_SIDE, x, y, v, v, v);
-            tex_pixel(BLOCK_BEDROCK, TEX_KIND_BOTTOM, x, y, v, v, v);
-        }
-    }
-    g_textures_ready = 1;
-}
+ * The 16 x 16 RGB565 tiles are generated and shared with the GameRender
+ * raster path through block_textures.c; the ray caster and HUD item icons
+ * sample the same tiles. */
+static const block_texture_set_t *g_tex;
 
 static void render_ensure_textures(void) {
-    if (!g_textures_ready) {
-        build_textures();
+    if (g_tex == NULL) {
+        g_tex = block_textures();
     }
 }
 
 static uint16_t shade_block(uint8_t block, int face, int sign, float uu,
                             float vv, float distance, uint32_t now_ms) {
-    const int kind = face == 1 ? (sign < 0 ? TEX_KIND_TOP : TEX_KIND_BOTTOM)
-                               : TEX_KIND_SIDE;
+    const int kind = face == 1 ? (sign < 0 ? BLOCK_TEXTURE_TOP : BLOCK_TEXTURE_BOTTOM)
+                               : BLOCK_TEXTURE_SIDE;
     const float frac_u = uu - rc_floor(uu);
     const float frac_v = vv - rc_floor(vv);
     int tx = (int)(frac_u * 16.0F) & 15;
@@ -1880,7 +1601,7 @@ static void draw_item_icon(int x, int y, int size, uint8_t item) {
         return;
     }
     for (iy = 0; iy < size; ++iy) {
-        const int kind = iy < size / 3 ? TEX_KIND_TOP : TEX_KIND_SIDE;
+        const int kind = iy < size / 3 ? BLOCK_TEXTURE_TOP : BLOCK_TEXTURE_SIDE;
         const int sy = iy < size / 3
                            ? iy * 16 / (size / 3)
                            : (iy - size / 3) * 16 / (size - size / 3);
@@ -2119,7 +1840,7 @@ static char *put_i32(char *out, int32_t value) {
 static void draw_compact_performance(const hud_state_t *hud, int fps) {
     char line[20];
     char *out = line;
-    const int x = g_layout.view_x + 8;
+    const int x = g_layout.view_x + g_inset_left + 8;
 
     if (hud->flying) {
         *out++ = 'F';
@@ -2131,7 +1852,7 @@ static void draw_compact_performance(const hud_state_t *hud, int fps) {
     *out++ = 'Q';
     *out++ = (char)('0' + hud->quality);
     *out = '\0';
-    hud_text(x, g_layout.view_y + 4, line, COL_TEXT, 1);
+    hud_text(x, g_layout.view_y + g_inset_top + 4, line, COL_TEXT, 1);
 
     out = line;
     *out++ = 'D';
@@ -2139,7 +1860,7 @@ static void draw_compact_performance(const hud_state_t *hud, int fps) {
     *out++ = '/';
     out = put_i32(out, hud->dda_steps_max);
     *out = '\0';
-    hud_text(x, g_layout.view_y + 28, line, COL_TEXT, 1);
+    hud_text(x, g_layout.view_y + g_inset_top + 28, line, COL_TEXT, 1);
 
     out = line;
     *out++ = 'R';
@@ -2148,7 +1869,7 @@ static void draw_compact_performance(const hud_state_t *hud, int fps) {
     *out++ = 'B';
     out = put_i32(out, hud->buffer_wait_us_div_100 / 10u);
     *out = '\0';
-    hud_text(x, g_layout.view_y + 52, line, COL_TEXT, 1);
+    hud_text(x, g_layout.view_y + g_inset_top + 52, line, COL_TEXT, 1);
 }
 
 static void draw_status(const hud_state_t *hud) {
@@ -2195,8 +1916,8 @@ static void draw_status(const hud_state_t *hud) {
     if (hud->show_performance && g_scale == QUALITY_PERFORMANCE) {
         draw_compact_performance(hud, fps);
     } else if (hud->show_performance) {
-        hud_text_centered(g_layout.view_y + 5, line, COL_SHADOW, 2);
-        hud_text_centered(g_layout.view_y + 4, line, COL_TEXT, 2);
+        hud_text_centered(g_layout.view_y + g_inset_top + 5, line, COL_SHADOW, 2);
+        hud_text_centered(g_layout.view_y + g_inset_top + 4, line, COL_TEXT, 2);
     }
 
     if (hud->show_performance && g_scale != QUALITY_PERFORMANCE) {
@@ -2210,8 +1931,8 @@ static void draw_status(const hud_state_t *hud) {
         *out++ = ' ';
         out = put_i32(out, hud->pos_z);
         *out = '\0';
-        hud_text_centered(g_layout.view_y + 19, position, COL_SHADOW, 1);
-        hud_text_centered(g_layout.view_y + 18, position, COL_TEXT, 1);
+        hud_text_centered(g_layout.view_y + g_inset_top + 19, position, COL_SHADOW, 1);
+        hud_text_centered(g_layout.view_y + g_inset_top + 18, position, COL_TEXT, 1);
         out = position;
         *out++ = 'D';
         *out++ = 'D';
@@ -2229,8 +1950,8 @@ static void draw_status(const hud_state_t *hud) {
         *out++ = 'H';
         out = put_i32(out, hud->solid_hit_percent);
         *out = '\0';
-        hud_text_centered(g_layout.view_y + 31, position, COL_SHADOW, 1);
-        hud_text_centered(g_layout.view_y + 30, position, COL_TEXT, 1);
+        hud_text_centered(g_layout.view_y + g_inset_top + 31, position, COL_SHADOW, 1);
+        hud_text_centered(g_layout.view_y + g_inset_top + 30, position, COL_TEXT, 1);
         out = position;
         *out++ = 'U';
         *out++ = ' ';
@@ -2246,8 +1967,8 @@ static void draw_status(const hud_state_t *hud) {
         *out++ = 'M';
         *out++ = 'S';
         *out = '\0';
-        hud_text_centered(g_layout.view_y + 43, position, COL_SHADOW, 1);
-        hud_text_centered(g_layout.view_y + 42, position, COL_TEXT, 1);
+        hud_text_centered(g_layout.view_y + g_inset_top + 43, position, COL_SHADOW, 1);
+        hud_text_centered(g_layout.view_y + g_inset_top + 42, position, COL_TEXT, 1);
         out = position;
         *out++ = 'T';
         *out++ = ' ';
@@ -2263,8 +1984,8 @@ static void draw_status(const hud_state_t *hud) {
         *out++ = 'M';
         *out++ = 'S';
         *out = '\0';
-        hud_text_centered(g_layout.view_y + 55, position, COL_SHADOW, 1);
-        hud_text_centered(g_layout.view_y + 54, position, COL_TEXT, 1);
+        hud_text_centered(g_layout.view_y + g_inset_top + 55, position, COL_SHADOW, 1);
+        hud_text_centered(g_layout.view_y + g_inset_top + 54, position, COL_TEXT, 1);
     }
 
     if (hud->now_ms < 10000u && !hud->show_performance &&

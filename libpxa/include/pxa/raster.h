@@ -26,10 +26,14 @@ extern "C" {
 #define PXA_RASTER_CAP_ADDITIVE_SPRITE UINT32_C(4)
 #define PXA_RASTER_CAP_SPRITE_BATCH UINT32_C(8)
 #define PXA_RASTER_CAP_TRIANGLE_BATCH UINT32_C(16)
+/* Affine UV keeps the perspective-correct depth interpolant and only replaces
+ * the per-texel perspective divide with a screen-linear UV. It is a bandwidth
+ * optimisation for faces whose depth range is small. */
+#define PXA_RASTER_CAP_AFFINE_UV UINT32_C(32)
 #define PXA_RASTER_CAP_KNOWN_MASK                                      \
     (PXA_RASTER_CAP_FLAT_QUAD | PXA_RASTER_CAP_TEXTURED_QUAD |        \
      PXA_RASTER_CAP_ADDITIVE_SPRITE | PXA_RASTER_CAP_SPRITE_BATCH |   \
-     PXA_RASTER_CAP_TRIANGLE_BATCH)
+     PXA_RASTER_CAP_TRIANGLE_BATCH | PXA_RASTER_CAP_AFFINE_UV)
 
 #define PXA_RASTER_UPLOAD_PALETTE_RGB565 UINT8_C(1)
 #define PXA_RASTER_UPLOAD_TEXTURE_INDEX8 UINT8_C(2)
@@ -53,6 +57,9 @@ extern "C" {
 #define PXA_RASTER_TRIANGLE_BATCH_HEADER_BYTES UINT16_C(12)
 
 #define PXA_RASTER_QUAD_SOLID_COLOR UINT8_C(1)
+/* Textured quads only. Requires PXA_RASTER_CAP_AFFINE_UV. Depth stays
+ * perspective-correct so occlusion is unchanged. */
+#define PXA_RASTER_QUAD_AFFINE_UV UINT8_C(2)
 
 #define PXA_RASTER_SPRITE_TRANSPARENT_INDEX0 UINT8_C(1)
 #define PXA_RASTER_SPRITE_SOLID_COLOR UINT8_C(2)

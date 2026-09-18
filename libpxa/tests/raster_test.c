@@ -342,6 +342,71 @@ static void test_perspective_uv_and_solid_depth(void) {
     assert(depth[1 * 8 + 4] > depth[7 * 8 + 4]);
 }
 
+static void test_affine_uv_flag_and_depth(void) {
+    uint8_t bytes[PXA_RASTER_DRAW_HEADER_BYTES + PXA_RASTER_CLEAR_BYTES +
+                  PXA_RASTER_TEXTURED_QUAD_BYTES];
+    uint8_t texture[4] = {1, 2, 3, 4};
+    uint16_t palette[256] = {0};
+    uint16_t pixels[8 * 8];
+    uint16_t depth[8 * 8];
+    pxa_raster_resources_t resources;
+    pxa_raster_target_t target;
+    pxa_raster_draw_list_view_t list;
+    uint32_t offset;
+    uint8_t *record;
+    uint32_t x;
+    palette[1] = UINT16_C(0x1001);
+    palette[2] = UINT16_C(0x2002);
+    palette[3] = UINT16_C(0x3003);
+    palette[4] = UINT16_C(0x4004);
+    memset(&resources, 0, sizeof(resources));
+    memset(&target, 0, sizeof(target));
+    resources.palette = palette;
+    resources.capabilities = PXA_RASTER_CAP_TEXTURED_QUAD;
+    resources.textures[0].pixels = texture;
+    resources.textures[0].width = 4;
+    resources.textures[0].height = 1;
+    target.pixels = pixels;
+    target.depth_pixels = depth;
+    target.stride_pixels = 8;
+    target.depth_stride_pixels = 8;
+    target.width = 8;
+    target.height = 8;
+    offset = begin_list(bytes, PXA_RASTER_CAP_TEXTURED_QUAD, 2, 11,
+                        sizeof(bytes));
+    record = bytes + offset;
+    record[0] = PXA_RASTER_RECORD_CLEAR_RGB565;
+    put_u16(record + 2, PXA_RASTER_CLEAR_BYTES);
+    offset += PXA_RASTER_CLEAR_BYTES;
+    record = bytes + offset;
+    record[0] = PXA_RASTER_RECORD_TEXTURED_QUAD;
+    record[1] = PXA_RASTER_QUAD_AFFINE_UV;
+    put_u16(record + 2, PXA_RASTER_TEXTURED_QUAD_BYTES);
+    put_vertex_depth(record + 8, 0, 0, 0, 0, 255, 256);
+    put_vertex_depth(record + 20, 128, 0, 64, 0, 255, 1024);
+    put_vertex_depth(record + 32, 128, 128, 64, 0, 255, 1024);
+    put_vertex_depth(record + 44, 0, 128, 0, 0, 255, 256);
+    /* The Host rejects the flag unless it advertised the capability. */
+    assert(pxa_raster_validate_draw_list(bytes, sizeof(bytes), &target,
+                                         &resources, &list) ==
+           PXA_STATUS_UNSUPPORTED);
+    resources.capabilities = PXA_RASTER_CAP_TEXTURED_QUAD |
+                             PXA_RASTER_CAP_AFFINE_UV;
+    assert(pxa_raster_validate_draw_list(bytes, sizeof(bytes), &target,
+                                         &resources, &list) == PXA_STATUS_OK);
+    pxa_raster_execute_draw_list(bytes, &list, &target, &resources, NULL);
+    /* Screen-linear UV: the 4 texel row is stretched to 8 pixels, so the
+     * far end of the depth ramp does not compress the texels. */
+    for (x = 0; x < 8; ++x)
+        assert(pixels[4 * 8 + x] == palette[texture[x / 2u]]);
+    assert(depth[4 * 8] > depth[4 * 8 + 7]);
+    /* A solid depth-only quad still validates and rejects affine. */
+    record[1] = PXA_RASTER_QUAD_SOLID_COLOR | PXA_RASTER_QUAD_AFFINE_UV;
+    assert(pxa_raster_validate_draw_list(bytes, sizeof(bytes), &target,
+                                         &resources, &list) ==
+           PXA_STATUS_PROTOCOL_ERROR);
+}
+
 static void test_sprite_and_triangle_batches(void) {
     enum {
         SPRITE_RECORD_BYTES = PXA_RASTER_SPRITE_BATCH_HEADER_BYTES +
@@ -428,6 +493,7 @@ int main(void) {
     test_sprite_scaling_and_clipping();
     test_sprite_scaling_ratios();
     test_perspective_uv_and_solid_depth();
+    test_affine_uv_flag_and_depth();
     test_sprite_and_triangle_batches();
     return 0;
 }

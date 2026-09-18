@@ -10,7 +10,7 @@
  * environment at runtime; screens larger than these bounds are centred with a
  * letterbox, smaller ones are filled natively. */
 #define SCREEN_W_MAX 512
-#define SCREEN_H_MAX 384
+#define SCREEN_H_MAX 512
 #define SCREEN_W_DEFAULT 296
 #define SCREEN_H_DEFAULT 240
 #define RENDER_SCENE_MAX_W 320
@@ -177,6 +177,11 @@ int render_inventory_slot(int hit);
 
 /* Recomputes the layout, view area and scene grid for a logical screen size. */
 void render_configure(int width, int height);
+
+/* Applies the Host-published safe-area and system chrome insets in logical
+ * pixels. Returns 1 when the stored insets changed; the caller must re-run
+ * render_configure() afterwards. */
+int render_set_safe_insets(int left, int top, int right, int bottom);
 
 /* Dynamic resolution: scale N renders at 1/N of the view area. Higher scales
  * trade sharpness for frame rate. */

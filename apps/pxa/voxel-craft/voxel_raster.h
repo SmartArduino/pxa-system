@@ -14,6 +14,7 @@ typedef struct {
     uint32_t frustum_culled;
     uint32_t clipped_quads;
     uint32_t dropped_quads;
+    uint32_t affine_quads;
     uint32_t draw_list_bytes;
     uint32_t covered_pixel_budget;
 } voxel_raster_stats_t;

@@ -38,10 +38,24 @@ static uint16_t saturating_add_rgb565(uint16_t destination, uint16_t source) {
 }
 
 static uint16_t light_rgb565(uint16_t color, uint8_t light) {
-    uint32_t red = ((color >> 11) * light + 127u) / 255u;
-    uint32_t green = (((color >> 5) & 63u) * light + 127u) / 255u;
-    uint32_t blue = ((color & 31u) * light + 127u) / 255u;
+    /* Exact floor(x / 255) for x < 65536 without a hardware divide. */
+    uint32_t red = (color >> 11) * light + 127u;
+    uint32_t green = ((color >> 5) & 63u) * light + 127u;
+    uint32_t blue = (color & 31u) * light + 127u;
+    red = (red + 1u + ((red + 1u) >> 8)) >> 8;
+    green = (green + 1u + ((green + 1u) >> 8)) >> 8;
+    blue = (blue + 1u + ((blue + 1u) >> 8)) >> 8;
     return (uint16_t)((red << 11) | (green << 5) | blue);
+}
+
+static void fill_rgb565(uint16_t *pixels, uint32_t count, uint16_t color) {
+    const uint32_t pair = (uint32_t)color | ((uint32_t)color << 16);
+    while (count >= 2u) {
+        memcpy(pixels, &pair, sizeof(pair));
+        pixels += 2;
+        count -= 2u;
+    }
+    if (count != 0) *pixels = color;
 }
 
 pxa_status_t pxa_raster_decode_upload(const uint8_t *bytes, size_t size,
@@ -128,9 +142,16 @@ static pxa_status_t validate_quad(const uint8_t *record, uint16_t record_size,
         const uint8_t flags = record[1];
         const uint8_t slot = record[4];
         const uint8_t solid = flags & PXA_RASTER_QUAD_SOLID_COLOR;
-        if ((flags & ~PXA_RASTER_QUAD_SOLID_COLOR) != 0 ||
+        const uint8_t affine = flags & PXA_RASTER_QUAD_AFFINE_UV;
+        if ((flags & ~(PXA_RASTER_QUAD_SOLID_COLOR |
+                       PXA_RASTER_QUAD_AFFINE_UV)) != 0 ||
             (solid != 0 && abi_minor < 1))
             return PXA_STATUS_UNSUPPORTED;
+        if (affine != 0) {
+            if ((resources->capabilities & PXA_RASTER_CAP_AFFINE_UV) == 0)
+                return PXA_STATUS_UNSUPPORTED;
+            if (solid != 0) return PXA_STATUS_PROTOCOL_ERROR;
+        }
         if (record[5] != 0 || (solid == 0 && read_u16(record + 6) != 0))
             return PXA_STATUS_PROTOCOL_ERROR;
         if (solid == 0 &&
@@ -407,6 +428,10 @@ static int64_t reciprocal_depth(uint16_t depth) {
 
 #define RASTER_PERSPECTIVE_BLOCK_PIXELS 8
 #define RASTER_TEXTURE_Q8_FROM_UV_Q4 16
+/* draw_triangle interpolation modes. Untextured triangles ignore
+ * RASTER_MODE_PERSPECTIVE_UV. */
+#define RASTER_MODE_PERSPECTIVE_UV UINT8_C(1)
+#define RASTER_MODE_DEPTH UINT8_C(2)
 
 static int32_t perspective_texture_q8(int64_t numerator, int64_t denominator) {
     if (denominator == 0) return 0;
@@ -422,12 +447,26 @@ static int32_t perspective_texture_q8(int64_t numerator, int64_t denominator) {
                          RASTER_TEXTURE_Q8_FROM_UV_Q4 / denominator);
 }
 
+static inline int32_t wrap_texture_coordinate(int32_t coordinate,
+                                              uint16_t dimension,
+                                              uint8_t power_of_two) {
+    if (power_of_two)
+        return (int32_t)((uint32_t)coordinate & (dimension - 1u));
+    /* Voxel Craft uses a 16x48 three-face atlas. Keeping 48 visible here lets
+     * the compiler replace the modulo with reciprocal multiplication instead
+     * of emitting a variable integer divide in the per-pixel loop. */
+    if (dimension == 48u)
+        coordinate %= 48;
+    else
+        coordinate %= dimension;
+    return coordinate < 0 ? coordinate + dimension : coordinate;
+}
+
 static uint32_t draw_triangle(const raster_vertex_t *a,
                               const raster_vertex_t *b,
                               const raster_vertex_t *c, uint16_t flat_color,
                               const pxa_raster_texture_t *texture,
-                              const uint16_t *palette,
-                              uint8_t perspective,
+                              const uint16_t *palette, uint8_t mode,
                               const pxa_raster_target_t *target) {
     int32_t min_x = a->x;
     int32_t max_x = a->x;
@@ -461,7 +500,19 @@ static uint32_t draw_triangle(const raster_vertex_t *a,
     int64_t v_reciprocal_row = 0;
     int64_t v_reciprocal_dx = 0;
     int64_t v_reciprocal_dy = 0;
-    const uint8_t depth_test = perspective && target->depth_pixels != NULL;
+    int64_t qa = 0;
+    int64_t qb = 0;
+    int64_t qc = 0;
+    const uint8_t depth_test =
+        (mode & RASTER_MODE_DEPTH) != 0 && target->depth_pixels != NULL;
+    const uint8_t perspective_uv =
+        texture != NULL && (mode & RASTER_MODE_PERSPECTIVE_UV) != 0;
+    /* Voxel faces carry one light value for the whole primitive. Detecting it
+     * drops three scale_interpolant setups per triangle plus the per-pixel
+     * light accumulator. */
+    const uint8_t constant_light =
+        texture != NULL && a->light == b->light && b->light == c->light;
+    const uint8_t need_reciprocal = perspective_uv || depth_test;
     const uint8_t width_power_of_two =
         texture != NULL && (texture->width & (texture->width - 1u)) == 0;
     const uint8_t height_power_of_two =
@@ -503,7 +554,7 @@ static uint32_t draw_triangle(const raster_vertex_t *a,
         w0_dy = -INT64_C(16) * (c->x - b->x) * sign;
         w1_dy = -INT64_C(16) * (a->x - c->x) * sign;
         w2_dy = -INT64_C(16) * (b->x - a->x) * sign;
-        if (texture != NULL) {
+        if (texture != NULL && !constant_light) {
             light_row = scale_interpolant(
                 w0_row * a->light + w1_row * b->light + w2_row * c->light,
                 denominator, area_reciprocal, 12);
@@ -513,31 +564,31 @@ static uint32_t draw_triangle(const raster_vertex_t *a,
             light_dy = scale_interpolant(
                 w0_dy * a->light + w1_dy * b->light + w2_dy * c->light,
                 denominator, area_reciprocal, 12);
-            if (!perspective) {
-                u_row = scale_interpolant(
-                    w0_row * a->u + w1_row * b->u + w2_row * c->u,
-                    denominator, area_reciprocal, 12);
-                v_row = scale_interpolant(
-                    w0_row * a->v + w1_row * b->v + w2_row * c->v,
-                    denominator, area_reciprocal, 12);
-                u_dx = scale_interpolant(
-                    w0_dx * a->u + w1_dx * b->u + w2_dx * c->u,
-                    denominator, area_reciprocal, 12);
-                v_dx = scale_interpolant(
-                    w0_dx * a->v + w1_dx * b->v + w2_dx * c->v,
-                    denominator, area_reciprocal, 12);
-                u_dy = scale_interpolant(
-                    w0_dy * a->u + w1_dy * b->u + w2_dy * c->u,
-                    denominator, area_reciprocal, 12);
-                v_dy = scale_interpolant(
-                    w0_dy * a->v + w1_dy * b->v + w2_dy * c->v,
-                    denominator, area_reciprocal, 12);
-            }
         }
-        if (perspective) {
-            const int64_t qa = reciprocal_depth(a->depth);
-            const int64_t qb = reciprocal_depth(b->depth);
-            const int64_t qc = reciprocal_depth(c->depth);
+        if (texture != NULL && !perspective_uv) {
+            u_row = scale_interpolant(
+                w0_row * a->u + w1_row * b->u + w2_row * c->u,
+                denominator, area_reciprocal, 12);
+            v_row = scale_interpolant(
+                w0_row * a->v + w1_row * b->v + w2_row * c->v,
+                denominator, area_reciprocal, 12);
+            u_dx = scale_interpolant(
+                w0_dx * a->u + w1_dx * b->u + w2_dx * c->u,
+                denominator, area_reciprocal, 12);
+            v_dx = scale_interpolant(
+                w0_dx * a->v + w1_dx * b->v + w2_dx * c->v,
+                denominator, area_reciprocal, 12);
+            u_dy = scale_interpolant(
+                w0_dy * a->u + w1_dy * b->u + w2_dy * c->u,
+                denominator, area_reciprocal, 12);
+            v_dy = scale_interpolant(
+                w0_dy * a->v + w1_dy * b->v + w2_dy * c->v,
+                denominator, area_reciprocal, 12);
+        }
+        if (need_reciprocal) {
+            qa = reciprocal_depth(a->depth);
+            qb = reciprocal_depth(b->depth);
+            qc = reciprocal_depth(c->depth);
             reciprocal_row = scale_interpolant(
                 w0_row * qa + w1_row * qb + w2_row * qc, denominator,
                 area_reciprocal, 4);
@@ -547,34 +598,185 @@ static uint32_t draw_triangle(const raster_vertex_t *a,
             reciprocal_dy = scale_interpolant(
                 w0_dy * qa + w1_dy * qb + w2_dy * qc, denominator,
                 area_reciprocal, 4);
-            if (texture != NULL) {
-                const int64_t uqa = (int64_t)a->u * qa;
-                const int64_t uqb = (int64_t)b->u * qb;
-                const int64_t uqc = (int64_t)c->u * qc;
-                const int64_t vqa = (int64_t)a->v * qa;
-                const int64_t vqb = (int64_t)b->v * qb;
-                const int64_t vqc = (int64_t)c->v * qc;
-                u_reciprocal_row = scale_interpolant(
-                    w0_row * uqa + w1_row * uqb + w2_row * uqc, denominator,
-                    area_reciprocal, 4);
-                u_reciprocal_dx = scale_interpolant(
-                    w0_dx * uqa + w1_dx * uqb + w2_dx * uqc, denominator,
-                    area_reciprocal, 4);
-                u_reciprocal_dy = scale_interpolant(
-                    w0_dy * uqa + w1_dy * uqb + w2_dy * uqc, denominator,
-                    area_reciprocal, 4);
-                v_reciprocal_row = scale_interpolant(
-                    w0_row * vqa + w1_row * vqb + w2_row * vqc, denominator,
-                    area_reciprocal, 4);
-                v_reciprocal_dx = scale_interpolant(
-                    w0_dx * vqa + w1_dx * vqb + w2_dx * vqc, denominator,
-                    area_reciprocal, 4);
-                v_reciprocal_dy = scale_interpolant(
-                    w0_dy * vqa + w1_dy * vqb + w2_dy * vqc, denominator,
-                    area_reciprocal, 4);
-            }
+        }
+        if (perspective_uv) {
+            const int64_t uqa = (int64_t)a->u * qa;
+            const int64_t uqb = (int64_t)b->u * qb;
+            const int64_t uqc = (int64_t)c->u * qc;
+            const int64_t vqa = (int64_t)a->v * qa;
+            const int64_t vqb = (int64_t)b->v * qb;
+            const int64_t vqc = (int64_t)c->v * qc;
+            u_reciprocal_row = scale_interpolant(
+                w0_row * uqa + w1_row * uqb + w2_row * uqc, denominator,
+                area_reciprocal, 4);
+            u_reciprocal_dx = scale_interpolant(
+                w0_dx * uqa + w1_dx * uqb + w2_dx * uqc, denominator,
+                area_reciprocal, 4);
+            u_reciprocal_dy = scale_interpolant(
+                w0_dy * uqa + w1_dy * uqb + w2_dy * uqc, denominator,
+                area_reciprocal, 4);
+            v_reciprocal_row = scale_interpolant(
+                w0_row * vqa + w1_row * vqb + w2_row * vqc, denominator,
+                area_reciprocal, 4);
+            v_reciprocal_dx = scale_interpolant(
+                w0_dx * vqa + w1_dx * vqb + w2_dx * vqc, denominator,
+                area_reciprocal, 4);
+            v_reciprocal_dy = scale_interpolant(
+                w0_dy * vqa + w1_dy * vqb + w2_dy * vqc, denominator,
+                area_reciprocal, 4);
         }
     }
+    if (texture == NULL) {
+        /* Flat 2D rectangle or solid depth quad: no UV or light interpolants
+         * at all. */
+        for (y = min_y; y < max_y; ++y) {
+            uint16_t *row = target->pixels + (size_t)y * target->stride_pixels;
+            uint16_t *depth_row_pixels = target->depth_pixels == NULL
+                ? NULL
+                : target->depth_pixels +
+                      (size_t)y * target->depth_stride_pixels;
+            int64_t w0 = w0_row;
+            int64_t w1 = w1_row;
+            int64_t w2 = w2_row;
+            int32_t span_start = min_x;
+            int32_t span_end;
+            while (span_start < max_x && (w0 < 0 || w1 < 0 || w2 < 0)) {
+                w0 += w0_dx;
+                w1 += w1_dx;
+                w2 += w2_dx;
+                ++span_start;
+            }
+            span_end = span_start;
+            while (span_end < max_x && w0 >= 0 && w1 >= 0 && w2 >= 0) {
+                w0 += w0_dx;
+                w1 += w1_dx;
+                w2 += w2_dx;
+                ++span_end;
+            }
+            if (span_start < span_end) {
+                if (depth_test) {
+                    const int32_t offset = span_start - min_x;
+                    int64_t reciprocal =
+                        reciprocal_row + reciprocal_dx * offset;
+                    int32_t x;
+                    for (x = span_start; x < span_end; ++x) {
+                        int64_t inverse_depth =
+                            reciprocal / RASTER_INTERPOLANT_SCALE;
+                        uint16_t pixel_depth;
+                        if (inverse_depth < 0) inverse_depth = 0;
+                        if (inverse_depth > UINT16_MAX)
+                            inverse_depth = UINT16_MAX;
+                        pixel_depth = (uint16_t)inverse_depth;
+                        if (pixel_depth >= depth_row_pixels[x]) {
+                            row[x] = flat_color;
+                            depth_row_pixels[x] = pixel_depth;
+                            ++covered;
+                        }
+                        reciprocal += reciprocal_dx;
+                    }
+                } else {
+                    int32_t x;
+                    for (x = span_start; x < span_end; ++x)
+                        row[x] = flat_color;
+                    covered += (uint32_t)(span_end - span_start);
+                }
+            }
+            w0_row += w0_dy;
+            w1_row += w1_dy;
+            w2_row += w2_dy;
+            reciprocal_row += reciprocal_dy;
+        }
+        return covered;
+    }
+    if (!perspective_uv) {
+        /* Screen-linear UV, optionally with the perspective depth
+         * interpolant kept for occlusion. */
+        for (y = min_y; y < max_y; ++y) {
+            uint16_t *row = target->pixels + (size_t)y * target->stride_pixels;
+            uint16_t *depth_row_pixels = target->depth_pixels == NULL
+                ? NULL
+                : target->depth_pixels +
+                      (size_t)y * target->depth_stride_pixels;
+            int64_t w0 = w0_row;
+            int64_t w1 = w1_row;
+            int64_t w2 = w2_row;
+            int32_t span_start = min_x;
+            int32_t span_end;
+            while (span_start < max_x && (w0 < 0 || w1 < 0 || w2 < 0)) {
+                w0 += w0_dx;
+                w1 += w1_dx;
+                w2 += w2_dx;
+                ++span_start;
+            }
+            span_end = span_start;
+            while (span_end < max_x && w0 >= 0 && w1 >= 0 && w2 >= 0) {
+                w0 += w0_dx;
+                w1 += w1_dx;
+                w2 += w2_dx;
+                ++span_end;
+            }
+            if (span_start < span_end) {
+                const int32_t offset = span_start - min_x;
+                int64_t u = u_row + u_dx * offset;
+                int64_t v = v_row + v_dx * offset;
+                int64_t light = light_row + light_dx * offset;
+                int64_t reciprocal = reciprocal_row + reciprocal_dx * offset;
+                int32_t x;
+                for (x = span_start; x < span_end; ++x) {
+                    uint16_t pixel_depth = 0;
+                    uint8_t visible = 1;
+                    int32_t tx;
+                    int32_t ty;
+                    int32_t intensity;
+                    if (depth_test) {
+                        int64_t inverse_depth =
+                            reciprocal / RASTER_INTERPOLANT_SCALE;
+                        if (inverse_depth < 0) inverse_depth = 0;
+                        if (inverse_depth > UINT16_MAX)
+                            inverse_depth = UINT16_MAX;
+                        pixel_depth = (uint16_t)inverse_depth;
+                        visible = pixel_depth >= depth_row_pixels[x];
+                    }
+                    if (visible) {
+                        tx = (int32_t)(u >> 16);
+                        ty = (int32_t)(v >> 16);
+                        tx = wrap_texture_coordinate(
+                            tx, texture->width, width_power_of_two);
+                        ty = wrap_texture_coordinate(
+                            ty, texture->height, height_power_of_two);
+                        if (constant_light) {
+                            intensity = (int32_t)a->light;
+                        } else {
+                            intensity = (int32_t)(light >> 12);
+                            if (intensity < 0) intensity = 0;
+                            if (intensity > 255) intensity = 255;
+                        }
+                        row[x] = light_rgb565(
+                            palette[texture->pixels[(size_t)ty *
+                                                    texture->width + tx]],
+                            (uint8_t)intensity);
+                        if (depth_test) depth_row_pixels[x] = pixel_depth;
+                        ++covered;
+                    }
+                    u += u_dx;
+                    v += v_dx;
+                    if (depth_test) reciprocal += reciprocal_dx;
+                    if (!constant_light) light += light_dx;
+                }
+            }
+            w0_row += w0_dy;
+            w1_row += w1_dy;
+            w2_row += w2_dy;
+            u_row += u_dy;
+            v_row += v_dy;
+            light_row += light_dy;
+            reciprocal_row += reciprocal_dy;
+        }
+        return covered;
+    }
+    /* Perspective-correct UV and depth. The reciprocal depth interpolant is
+     * divided into short screen-space blocks so the expensive per-texel
+     * perspective divide runs once per block instead of once per pixel. */
     for (y = min_y; y < max_y; ++y) {
         uint16_t *row = target->pixels + (size_t)y * target->stride_pixels;
         uint16_t *depth_row_pixels = target->depth_pixels == NULL
@@ -601,23 +803,17 @@ static uint32_t draw_triangle(const raster_vertex_t *a,
         }
         if (span_start < span_end) {
             const int32_t offset = span_start - min_x;
-            int64_t u = u_row + u_dx * offset;
-            int64_t v = v_row + v_dx * offset;
             int64_t light = light_row + light_dx * offset;
             int64_t reciprocal = reciprocal_row + reciprocal_dx * offset;
             int64_t u_reciprocal =
                 u_reciprocal_row + u_reciprocal_dx * offset;
             int64_t v_reciprocal =
                 v_reciprocal_row + v_reciprocal_dx * offset;
-            int32_t u_texture_q8 = 0;
-            int32_t v_texture_q8 = 0;
+            int32_t u_texture_q8 = perspective_texture_q8(
+                u_reciprocal, reciprocal);
+            int32_t v_texture_q8 = perspective_texture_q8(
+                v_reciprocal, reciprocal);
             int32_t x = span_start;
-            if (perspective && texture != NULL) {
-                u_texture_q8 = perspective_texture_q8(
-                    u_reciprocal, reciprocal);
-                v_texture_q8 = perspective_texture_q8(
-                    v_reciprocal, reciprocal);
-            }
             while (x < span_end) {
                 int32_t u_texture_step_q8 = 0;
                 int32_t v_texture_step_q8 = 0;
@@ -627,7 +823,7 @@ static uint32_t draw_triangle(const raster_vertex_t *a,
                 int32_t block_index;
                 if (block_pixels > RASTER_PERSPECTIVE_BLOCK_PIXELS)
                     block_pixels = RASTER_PERSPECTIVE_BLOCK_PIXELS;
-                if (perspective && texture != NULL) {
+                {
                     const int64_t reciprocal_end =
                         reciprocal + reciprocal_dx * block_pixels;
                     const int64_t u_reciprocal_end =
@@ -645,7 +841,6 @@ static uint32_t draw_triangle(const raster_vertex_t *a,
                 }
                 for (block_index = 0; block_index < block_pixels;
                      ++block_index, ++x) {
-                    uint16_t color;
                     int64_t inverse_depth =
                         reciprocal / RASTER_INTERPOLANT_SCALE;
                     uint16_t pixel_depth;
@@ -654,64 +849,41 @@ static uint32_t draw_triangle(const raster_vertex_t *a,
                         inverse_depth = UINT16_MAX;
                     pixel_depth = (uint16_t)inverse_depth;
                     if (!depth_test || pixel_depth >= depth_row_pixels[x]) {
-                        if (texture == NULL) {
-                            color = flat_color;
+                        int32_t tx = u_texture_q8 >> 8;
+                        int32_t ty = v_texture_q8 >> 8;
+                        int32_t intensity;
+                        tx = wrap_texture_coordinate(
+                            tx, texture->width, width_power_of_two);
+                        ty = wrap_texture_coordinate(
+                            ty, texture->height, height_power_of_two);
+                        if (constant_light) {
+                            intensity = (int32_t)a->light;
                         } else {
-                            int32_t tx;
-                            int32_t ty;
-                            int32_t intensity = (int32_t)(light >> 12);
-                            if (perspective) {
-                                tx = u_texture_q8 >> 8;
-                                ty = v_texture_q8 >> 8;
-                            } else {
-                                tx = (int32_t)(u >> 16);
-                                ty = (int32_t)(v >> 16);
-                            }
-                            if (width_power_of_two) {
-                                tx = (int32_t)((uint32_t)tx &
-                                               (texture->width - 1u));
-                            } else {
-                                tx %= texture->width;
-                                if (tx < 0) tx += texture->width;
-                            }
-                            if (height_power_of_two) {
-                                ty = (int32_t)((uint32_t)ty &
-                                               (texture->height - 1u));
-                            } else {
-                                ty %= texture->height;
-                                if (ty < 0) ty += texture->height;
-                            }
+                            intensity = (int32_t)(light >> 12);
                             if (intensity < 0) intensity = 0;
                             if (intensity > 255) intensity = 255;
-                            color = light_rgb565(
-                                palette[texture->pixels[(size_t)ty *
-                                                        texture->width + tx]],
-                                (uint8_t)intensity);
                         }
-                        row[x] = color;
+                        row[x] = light_rgb565(
+                            palette[texture->pixels[(size_t)ty *
+                                                    texture->width + tx]],
+                            (uint8_t)intensity);
                         if (depth_test) depth_row_pixels[x] = pixel_depth;
                         ++covered;
                     }
-                    u += u_dx;
-                    v += v_dx;
-                    light += light_dx;
+                    if (!constant_light) light += light_dx;
                     reciprocal += reciprocal_dx;
                     u_reciprocal += u_reciprocal_dx;
                     v_reciprocal += v_reciprocal_dx;
                     u_texture_q8 += u_texture_step_q8;
                     v_texture_q8 += v_texture_step_q8;
                 }
-                if (perspective && texture != NULL) {
-                    u_texture_q8 = u_texture_end_q8;
-                    v_texture_q8 = v_texture_end_q8;
-                }
+                u_texture_q8 = u_texture_end_q8;
+                v_texture_q8 = v_texture_end_q8;
             }
         }
         w0_row += w0_dy;
         w1_row += w1_dy;
         w2_row += w2_dy;
-        u_row += u_dy;
-        v_row += v_dy;
         light_row += light_dy;
         reciprocal_row += reciprocal_dy;
         u_reciprocal_row += u_reciprocal_dy;
@@ -729,15 +901,22 @@ static uint32_t draw_quad(const uint8_t *record, uint8_t textured,
     uint16_t color = 0;
     uint32_t offset = 8;
     uint8_t index;
-    const uint8_t perspective = textured && abi_minor >= 1;
+    uint8_t mode = 0;
     if (textured) {
-        if ((record[1] & PXA_RASTER_QUAD_SOLID_COLOR) != 0)
+        const uint8_t flags = record[1];
+        if ((flags & PXA_RASTER_QUAD_SOLID_COLOR) != 0)
             color = read_u16(record + 6);
         else
             texture = &resources->textures[record[4]];
         for (index = 0; index < 4; ++index)
             decode_vertex(record + offset + index * PXA_RASTER_VERTEX_BYTES,
                           &vertices[index]);
+        if (abi_minor >= 1) {
+            mode = RASTER_MODE_DEPTH;
+            if (texture != NULL &&
+                (flags & PXA_RASTER_QUAD_AFFINE_UV) == 0)
+                mode |= RASTER_MODE_PERSPECTIVE_UV;
+        }
     } else {
         color = read_u16(record + 4);
         for (index = 0; index < 4; ++index) {
@@ -746,9 +925,9 @@ static uint32_t draw_quad(const uint8_t *record, uint8_t textured,
         }
     }
     return draw_triangle(&vertices[0], &vertices[1], &vertices[2], color,
-                         texture, resources->palette, perspective, target) +
+                         texture, resources->palette, mode, target) +
            draw_triangle(&vertices[0], &vertices[2], &vertices[3], color,
-                         texture, resources->palette, perspective, target);
+                         texture, resources->palette, mode, target);
 }
 
 static uint32_t draw_sprite_instance(
@@ -872,7 +1051,9 @@ static uint32_t draw_triangle_batch(
                 &vertices[vertex]);
         }
         covered += draw_triangle(&vertices[0], &vertices[1], &vertices[2],
-                                 color, texture, resources->palette, 1,
+                                 color, texture, resources->palette,
+                                 RASTER_MODE_PERSPECTIVE_UV |
+                                     RASTER_MODE_DEPTH,
                                  target);
     }
     return covered;
@@ -893,18 +1074,33 @@ void pxa_raster_execute_draw_list(const uint8_t *bytes,
         const uint16_t size = read_u16(record + 2);
         if (record[0] == PXA_RASTER_RECORD_CLEAR_RGB565) {
             const uint16_t color = read_u16(record + 4);
+            const uint32_t pixel_count =
+                (uint32_t)target->width * target->height;
             uint16_t y;
-            for (y = 0; y < target->height; ++y) {
-                uint16_t *row = target->pixels + (size_t)y * target->stride_pixels;
-                uint16_t *depth = target->depth_pixels == NULL ? NULL :
-                    target->depth_pixels + (size_t)y * target->depth_stride_pixels;
-                uint16_t x;
-                for (x = 0; x < target->width; ++x) {
-                    row[x] = color;
-                    if (depth != NULL) depth[x] = 0;
+            if (target->stride_pixels == target->width) {
+                fill_rgb565(target->pixels, pixel_count, color);
+            } else {
+                for (y = 0; y < target->height; ++y) {
+                    uint16_t *row = target->pixels +
+                                    (size_t)y * target->stride_pixels;
+                    fill_rgb565(row, target->width, color);
                 }
             }
-            covered += (uint32_t)target->width * target->height;
+            if (target->depth_pixels != NULL) {
+                if (target->depth_stride_pixels == target->width) {
+                    memset(target->depth_pixels, 0,
+                           (size_t)pixel_count *
+                               sizeof(*target->depth_pixels));
+                } else {
+                    for (y = 0; y < target->height; ++y) {
+                        uint16_t *depth = target->depth_pixels +
+                            (size_t)y * target->depth_stride_pixels;
+                        memset(depth, 0,
+                               (size_t)target->width * sizeof(*depth));
+                    }
+                }
+            }
+            covered += pixel_count;
             if (telemetry != NULL) ++telemetry->clear_commands;
         } else if (record[0] == PXA_RASTER_RECORD_FLAT_QUAD) {
             covered += draw_quad(record, 0, list->abi_minor, target, resources);

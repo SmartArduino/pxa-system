@@ -19,6 +19,7 @@
 #define PXA_RASTER_CAP_ADDITIVE_SPRITE UINT32_C(4)
 #define PXA_RASTER_CAP_SPRITE_BATCH UINT32_C(8)
 #define PXA_RASTER_CAP_TRIANGLE_BATCH UINT32_C(16)
+#define PXA_RASTER_CAP_AFFINE_UV UINT32_C(32)
 #define PXA_RASTER_UPLOAD_PALETTE_RGB565 UINT8_C(1)
 #define PXA_RASTER_UPLOAD_TEXTURE_INDEX8 UINT8_C(2)
 #define PXA_RASTER_UPLOAD_HEADER_BYTES UINT32_C(20)
@@ -38,6 +39,9 @@
 #define PXA_RASTER_SPRITE_INSTANCE_BYTES UINT16_C(16)
 #define PXA_RASTER_TRIANGLE_BATCH_HEADER_BYTES UINT16_C(12)
 #define PXA_RASTER_QUAD_SOLID_COLOR UINT8_C(1)
+/* Textured quads only. Only emit when the Host advertised
+ * PXA_RASTER_CAP_AFFINE_UV; an older Host rejects unknown flags. */
+#define PXA_RASTER_QUAD_AFFINE_UV UINT8_C(2)
 #define PXA_RASTER_SPRITE_TRANSPARENT_INDEX0 UINT8_C(1)
 #define PXA_RASTER_SPRITE_SOLID_COLOR UINT8_C(2)
 #define PXA_RASTER_SPRITE_ADDITIVE UINT8_C(4)
@@ -215,15 +219,18 @@ static inline int pxa_raster_flat_quad(pxa_raster_draw_list_t *list,
     return 1;
 }
 
-static inline int pxa_raster_textured_quad(
+static inline int pxa_raster_textured_quad_flags(
     pxa_raster_draw_list_t *list, const pxa_raster_vertex_t vertices[4],
-    uint8_t texture_slot) {
+    uint8_t texture_slot, uint8_t flags) {
     uint8_t *record;
     uint8_t index;
-    if (vertices == NULL || texture_slot >= PXA_RASTER_MAX_TEXTURES) return 0;
+    if (vertices == NULL || texture_slot >= PXA_RASTER_MAX_TEXTURES ||
+        (flags & ~PXA_RASTER_QUAD_AFFINE_UV) != 0)
+        return 0;
     record = pxa_raster_append(list, PXA_RASTER_RECORD_TEXTURED_QUAD,
                                PXA_RASTER_TEXTURED_QUAD_BYTES);
     if (record == NULL) return 0;
+    record[1] = flags;
     record[4] = texture_slot;
     for (index = 0; index < 4; ++index) {
         uint8_t *wire = record + 8 + index * PXA_RASTER_VERTEX_BYTES;
@@ -235,7 +242,15 @@ static inline int pxa_raster_textured_quad(
         pxa_game_render_store_u16(wire + 10, vertices[index].depth_q8);
     }
     list->required_capabilities |= PXA_RASTER_CAP_TEXTURED_QUAD;
+    if ((flags & PXA_RASTER_QUAD_AFFINE_UV) != 0)
+        list->required_capabilities |= PXA_RASTER_CAP_AFFINE_UV;
     return 1;
+}
+
+static inline int pxa_raster_textured_quad(
+    pxa_raster_draw_list_t *list, const pxa_raster_vertex_t vertices[4],
+    uint8_t texture_slot) {
+    return pxa_raster_textured_quad_flags(list, vertices, texture_slot, 0);
 }
 
 static inline int pxa_raster_solid_depth_quad(
