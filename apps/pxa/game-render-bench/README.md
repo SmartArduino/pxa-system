@@ -25,6 +25,13 @@ under test, without a live HUD. The app requests 16 ms clock ticks and relies
 on GameRender's latest-wins mailbox when rendering or presentation cannot keep
 up.
 
+By default, scenes keep a 296x240 logical coordinate system but rasterize into
+a 148x120 target. The Watcher presentation path scales that target by exactly
+2x, cutting the color/depth working set and the maximum number of shaded pixels
+to one quarter without complicating scene code. Build with
+`PXA_APP_DEFINES=PXA_GAME_RENDER_SCALE_SHIFT=0` to collect native-resolution
+comparison numbers, or select shifts 1 through 3 for other integer scales.
+
 Each completed group is also written through the PXA log service. Device logs
 include the signed app id, component id, level, ANSI level color, and the same
 `V/R/MS` values shown on screen. Results with average raster time at or above

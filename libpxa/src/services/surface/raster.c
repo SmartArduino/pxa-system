@@ -426,7 +426,9 @@ static int64_t reciprocal_depth(uint16_t depth) {
     return depth == 0 ? 0 : (int64_t)(RASTER_RECIPROCAL_DEPTH_ONE / depth);
 }
 
-#define RASTER_PERSPECTIVE_BLOCK_PIXELS 8
+#define RASTER_PERSPECTIVE_BLOCK_MIN_PIXELS 8
+#define RASTER_PERSPECTIVE_BLOCK_MAX_PIXELS 16
+#define RASTER_PERSPECTIVE_BLOCK_DEPTH_SHIFT 3
 #define RASTER_TEXTURE_Q8_FROM_UV_Q4 16
 /* draw_triangle interpolation modes. Untextured triangles ignore
  * RASTER_MODE_PERSPECTIVE_UV. */
@@ -445,6 +447,27 @@ static int32_t perspective_texture_q8(int64_t numerator, int64_t denominator) {
                          RASTER_TEXTURE_Q8_FROM_UV_Q4 +
                      (numerator % denominator) *
                          RASTER_TEXTURE_Q8_FROM_UV_Q4 / denominator);
+}
+
+static int32_t perspective_block_pixels(int32_t remaining,
+                                        int64_t reciprocal,
+                                        int64_t reciprocal_dx) {
+    int32_t pixels = remaining;
+    uint64_t magnitude;
+    uint64_t delta;
+    if (pixels > RASTER_PERSPECTIVE_BLOCK_MAX_PIXELS)
+        pixels = RASTER_PERSPECTIVE_BLOCK_MAX_PIXELS;
+    if (pixels <= RASTER_PERSPECTIVE_BLOCK_MIN_PIXELS) return pixels;
+    if (reciprocal <= 0) return RASTER_PERSPECTIVE_BLOCK_MIN_PIXELS;
+    magnitude = (uint64_t)reciprocal;
+    delta = reciprocal_dx < 0
+                ? (uint64_t)(-(reciprocal_dx + 1)) + UINT64_C(1)
+                : (uint64_t)reciprocal_dx;
+    if (delta > UINT64_MAX / (uint32_t)pixels ||
+        delta * (uint32_t)pixels >
+            (magnitude >> RASTER_PERSPECTIVE_BLOCK_DEPTH_SHIFT))
+        return RASTER_PERSPECTIVE_BLOCK_MIN_PIXELS;
+    return pixels;
 }
 
 static inline int32_t wrap_texture_coordinate(int32_t coordinate,
@@ -822,10 +845,9 @@ static uint32_t draw_triangle(const raster_vertex_t *a,
                 int32_t v_texture_step_q8 = 0;
                 int32_t u_texture_end_q8 = 0;
                 int32_t v_texture_end_q8 = 0;
-                int32_t block_pixels = span_end - x;
+                int32_t block_pixels = perspective_block_pixels(
+                    span_end - x, reciprocal, reciprocal_dx);
                 int32_t block_index;
-                if (block_pixels > RASTER_PERSPECTIVE_BLOCK_PIXELS)
-                    block_pixels = RASTER_PERSPECTIVE_BLOCK_PIXELS;
                 {
                     const int64_t reciprocal_end =
                         reciprocal + reciprocal_dx * block_pixels;

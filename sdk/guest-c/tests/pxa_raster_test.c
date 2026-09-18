@@ -27,7 +27,7 @@ int32_t pxa_io(uint32_t handle, uint32_t operation, uint8_t *data,
 int main(void) {
     uint16_t palette[256];
     uint8_t upload[532];
-    uint8_t draw[128];
+    uint8_t draw[512];
     pxa_raster_draw_list_t list;
     pxa_raster_vertex_t vertices[4] = {
         {0, 0, 0, 0, 255, 256},
@@ -81,7 +81,51 @@ int main(void) {
     assert(pxa_read_u16(captured + PXA_RASTER_DRAW_HEADER_BYTES + 8 + 10) ==
            256);
 
-    pxa_raster_draw_list_begin(&list, draw, PXA_RASTER_DRAW_HEADER_BYTES, 10);
+    {
+        static const int16_t xy_q4[8] = {
+            -17, 17, 33, 17, 33, 49, -17, 49,
+        };
+        pxa_raster_sprite_instance_t instance = {
+            -3, 3, 5, 7, 9, 11, 13, 15,
+        };
+        uint32_t offset = PXA_RASTER_DRAW_HEADER_BYTES;
+        pxa_raster_draw_list_begin_scaled(&list, draw, sizeof(draw), 10, 1);
+        assert(list.status == PXA_STATUS_OK && list.coordinate_shift == 1);
+        assert(pxa_raster_flat_quad(&list, xy_q4, 0));
+        assert((int16_t)pxa_read_u16(draw + offset + 8) == -9);
+        assert((int16_t)pxa_read_u16(draw + offset + 10) == 8);
+        offset += PXA_RASTER_FLAT_QUAD_BYTES;
+        assert(pxa_raster_textured_quad(&list, vertices, 0));
+        assert(pxa_read_u16(draw + offset + 8 + PXA_RASTER_VERTEX_BYTES) ==
+               8);
+        assert(pxa_read_u16(draw + offset + 8 +
+                            PXA_RASTER_VERTEX_BYTES + 4) == 16);
+        offset += PXA_RASTER_TEXTURED_QUAD_BYTES;
+        assert(pxa_raster_sprite(&list, 0, 0, 0, -3, 3, 5, 7,
+                                 9, 11, 13, 15, 0));
+        assert((int16_t)pxa_read_u16(draw + offset + 8) == -2);
+        assert(pxa_read_u16(draw + offset + 10) == 1);
+        assert(pxa_read_u16(draw + offset + 12) == 3);
+        assert(pxa_read_u16(draw + offset + 14) == 4);
+        assert(pxa_read_u16(draw + offset + 16) == 9);
+        offset += PXA_RASTER_SPRITE_BYTES;
+        assert(pxa_raster_sprite_batch(
+            &list, 0, 0, PXA_RASTER_CAP_SPRITE_BATCH, &instance, 1, 0));
+        assert((int16_t)pxa_read_u16(
+                   draw + offset + PXA_RASTER_SPRITE_BATCH_HEADER_BYTES) ==
+               -2);
+        assert(pxa_read_u16(draw + offset +
+                            PXA_RASTER_SPRITE_BATCH_HEADER_BYTES + 4) == 3);
+        assert(pxa_read_u16(draw + offset +
+                            PXA_RASTER_SPRITE_BATCH_HEADER_BYTES + 8) == 9);
+    }
+
+    pxa_raster_draw_list_begin_scaled(
+        &list, draw, sizeof(draw), 11,
+        (uint8_t)(PXA_RASTER_MAX_COORDINATE_SHIFT + 1u));
+    assert(list.status == PXA_STATUS_INVALID_ARGUMENT);
+
+    pxa_raster_draw_list_begin(&list, draw, PXA_RASTER_DRAW_HEADER_BYTES, 12);
     assert(!pxa_raster_clear(&list, 0));
     assert(list.status == PXA_STATUS_LIMIT_EXCEEDED);
     return 0;

@@ -14,6 +14,7 @@
 #define PXA_RASTER_PALETTE_COLORS UINT16_C(256)
 #define PXA_RASTER_MAX_DRAW_BYTES UINT32_C(49152)
 #define PXA_RASTER_MAX_COMMANDS UINT32_C(768)
+#define PXA_RASTER_MAX_COORDINATE_SHIFT UINT8_C(3)
 #define PXA_RASTER_CAP_FLAT_QUAD UINT32_C(1)
 #define PXA_RASTER_CAP_TEXTURED_QUAD UINT32_C(2)
 #define PXA_RASTER_CAP_ADDITIVE_SPRITE UINT32_C(4)
@@ -78,6 +79,7 @@ typedef struct {
     uint32_t required_capabilities;
     uint64_t frame_id;
     int32_t status;
+    uint8_t coordinate_shift;
 } pxa_raster_draw_list_t;
 
 typedef struct {
@@ -162,20 +164,45 @@ static inline int32_t pxa_raster_upload_texture_index8(
                              scratch, scratch_capacity);
 }
 
-static inline void pxa_raster_draw_list_begin(
+static inline int16_t pxa_raster_scale_coordinate(int16_t coordinate,
+                                                   uint8_t shift) {
+    int32_t value = coordinate;
+    if (shift == 0) return coordinate;
+    if (shift > PXA_RASTER_MAX_COORDINATE_SHIFT) return 0;
+    if (value >= 0) return (int16_t)(value >> shift);
+    return (int16_t)-(((-value) + ((INT32_C(1) << shift) - 1)) >> shift);
+}
+
+static inline uint16_t pxa_raster_scale_extent(uint16_t extent,
+                                               uint8_t shift) {
+    if (shift == 0 || extent == 0) return extent;
+    if (shift > PXA_RASTER_MAX_COORDINATE_SHIFT) return 0;
+    return (uint16_t)(((uint32_t)extent +
+                       ((UINT32_C(1) << shift) - 1u)) >> shift);
+}
+
+static inline void pxa_raster_draw_list_begin_scaled(
     pxa_raster_draw_list_t *list, uint8_t *bytes, uint32_t capacity,
-    uint64_t frame_id) {
+    uint64_t frame_id, uint8_t coordinate_shift) {
     if (list == NULL) return;
     pxa_raster_zero_bytes(list, sizeof(*list));
     list->bytes = bytes;
     list->capacity = capacity;
     list->frame_id = frame_id;
-    if (bytes == NULL || capacity < PXA_RASTER_DRAW_HEADER_BYTES || frame_id == 0) {
+    list->coordinate_shift = coordinate_shift;
+    if (bytes == NULL || capacity < PXA_RASTER_DRAW_HEADER_BYTES ||
+        frame_id == 0 || coordinate_shift > PXA_RASTER_MAX_COORDINATE_SHIFT) {
         list->status = PXA_STATUS_INVALID_ARGUMENT;
         return;
     }
     pxa_raster_zero_bytes(bytes, PXA_RASTER_DRAW_HEADER_BYTES);
     list->length = PXA_RASTER_DRAW_HEADER_BYTES;
+}
+
+static inline void pxa_raster_draw_list_begin(
+    pxa_raster_draw_list_t *list, uint8_t *bytes, uint32_t capacity,
+    uint64_t frame_id) {
+    pxa_raster_draw_list_begin_scaled(list, bytes, capacity, frame_id, 0);
 }
 
 static inline uint8_t *pxa_raster_append(pxa_raster_draw_list_t *list,
@@ -217,7 +244,10 @@ static inline int pxa_raster_flat_quad(pxa_raster_draw_list_t *list,
     if (record == NULL) return 0;
     pxa_game_render_store_u16(record + 4, color);
     for (index = 0; index < 8; ++index)
-        pxa_game_render_store_u16(record + 8 + index * 2u, (uint16_t)xy_q4[index]);
+        pxa_game_render_store_u16(
+            record + 8 + index * 2u,
+            (uint16_t)pxa_raster_scale_coordinate(
+                xy_q4[index], list->coordinate_shift));
     list->required_capabilities |= PXA_RASTER_CAP_FLAT_QUAD;
     return 1;
 }
@@ -237,8 +267,12 @@ static inline int pxa_raster_textured_quad_flags(
     record[4] = texture_slot;
     for (index = 0; index < 4; ++index) {
         uint8_t *wire = record + 8 + index * PXA_RASTER_VERTEX_BYTES;
-        pxa_game_render_store_u16(wire, (uint16_t)vertices[index].x_q4);
-        pxa_game_render_store_u16(wire + 2, (uint16_t)vertices[index].y_q4);
+        pxa_game_render_store_u16(
+            wire, (uint16_t)pxa_raster_scale_coordinate(
+                      vertices[index].x_q4, list->coordinate_shift));
+        pxa_game_render_store_u16(
+            wire + 2, (uint16_t)pxa_raster_scale_coordinate(
+                          vertices[index].y_q4, list->coordinate_shift));
         pxa_game_render_store_u16(wire + 4, (uint16_t)vertices[index].u_q4);
         pxa_game_render_store_u16(wire + 6, (uint16_t)vertices[index].v_q4);
         wire[8] = vertices[index].light;
@@ -269,8 +303,12 @@ static inline int pxa_raster_solid_depth_quad(
     pxa_game_render_store_u16(record + 6, color);
     for (index = 0; index < 4; ++index) {
         uint8_t *wire = record + 8 + index * PXA_RASTER_VERTEX_BYTES;
-        pxa_game_render_store_u16(wire, (uint16_t)vertices[index].x_q4);
-        pxa_game_render_store_u16(wire + 2, (uint16_t)vertices[index].y_q4);
+        pxa_game_render_store_u16(
+            wire, (uint16_t)pxa_raster_scale_coordinate(
+                      vertices[index].x_q4, list->coordinate_shift));
+        pxa_game_render_store_u16(
+            wire + 2, (uint16_t)pxa_raster_scale_coordinate(
+                          vertices[index].y_q4, list->coordinate_shift));
         pxa_game_render_store_u16(wire + 4, (uint16_t)vertices[index].u_q4);
         pxa_game_render_store_u16(wire + 6, (uint16_t)vertices[index].v_q4);
         wire[8] = vertices[index].light;
@@ -304,10 +342,16 @@ static inline int pxa_raster_sprite(
     record[1] = flags;
     record[4] = texture_slot;
     pxa_game_render_store_u16(record + 6, solid_color);
-    pxa_game_render_store_u16(record + 8, (uint16_t)x);
-    pxa_game_render_store_u16(record + 10, (uint16_t)y);
-    pxa_game_render_store_u16(record + 12, width);
-    pxa_game_render_store_u16(record + 14, height);
+    pxa_game_render_store_u16(
+        record + 8,
+        (uint16_t)pxa_raster_scale_coordinate(x, list->coordinate_shift));
+    pxa_game_render_store_u16(
+        record + 10,
+        (uint16_t)pxa_raster_scale_coordinate(y, list->coordinate_shift));
+    pxa_game_render_store_u16(
+        record + 12, pxa_raster_scale_extent(width, list->coordinate_shift));
+    pxa_game_render_store_u16(
+        record + 14, pxa_raster_scale_extent(height, list->coordinate_shift));
     pxa_game_render_store_u16(record + 16, source_x);
     pxa_game_render_store_u16(record + 18, source_y);
     pxa_game_render_store_u16(record + 20, source_width);
@@ -352,10 +396,18 @@ static inline int pxa_raster_sprite_batch(
             list->status = PXA_STATUS_INVALID_ARGUMENT;
             return 0;
         }
-        pxa_game_render_store_u16(wire, (uint16_t)instance->x);
-        pxa_game_render_store_u16(wire + 2, (uint16_t)instance->y);
-        pxa_game_render_store_u16(wire + 4, instance->width);
-        pxa_game_render_store_u16(wire + 6, instance->height);
+        pxa_game_render_store_u16(
+            wire, (uint16_t)pxa_raster_scale_coordinate(
+                      instance->x, list->coordinate_shift));
+        pxa_game_render_store_u16(
+            wire + 2, (uint16_t)pxa_raster_scale_coordinate(
+                          instance->y, list->coordinate_shift));
+        pxa_game_render_store_u16(
+            wire + 4, pxa_raster_scale_extent(instance->width,
+                                               list->coordinate_shift));
+        pxa_game_render_store_u16(
+            wire + 6, pxa_raster_scale_extent(instance->height,
+                                               list->coordinate_shift));
         pxa_game_render_store_u16(wire + 8, instance->source_x);
         pxa_game_render_store_u16(wire + 10, instance->source_y);
         pxa_game_render_store_u16(wire + 12, instance->source_width);
@@ -389,8 +441,12 @@ static inline int pxa_raster_triangle_batch(
     for (index = 0; index < vertex_count; ++index) {
         uint8_t *wire = record + PXA_RASTER_TRIANGLE_BATCH_HEADER_BYTES +
                         index * PXA_RASTER_VERTEX_BYTES;
-        pxa_game_render_store_u16(wire, (uint16_t)vertices[index].x_q4);
-        pxa_game_render_store_u16(wire + 2, (uint16_t)vertices[index].y_q4);
+        pxa_game_render_store_u16(
+            wire, (uint16_t)pxa_raster_scale_coordinate(
+                      vertices[index].x_q4, list->coordinate_shift));
+        pxa_game_render_store_u16(
+            wire + 2, (uint16_t)pxa_raster_scale_coordinate(
+                          vertices[index].y_q4, list->coordinate_shift));
         pxa_game_render_store_u16(wire + 4, (uint16_t)vertices[index].u_q4);
         pxa_game_render_store_u16(wire + 6, (uint16_t)vertices[index].v_q4);
         wire[8] = vertices[index].light;

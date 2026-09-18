@@ -7,6 +7,14 @@
 
 #define WIDTH 296
 #define HEIGHT 240
+#ifndef PXA_GAME_RENDER_SCALE_SHIFT
+#define PXA_GAME_RENDER_SCALE_SHIFT 1
+#endif
+#if PXA_GAME_RENDER_SCALE_SHIFT < 0 || PXA_GAME_RENDER_SCALE_SHIFT > 3
+#error "PXA_GAME_RENDER_SCALE_SHIFT must be between 0 and 3"
+#endif
+#define RENDER_WIDTH (WIDTH >> PXA_GAME_RENDER_SCALE_SHIFT)
+#define RENDER_HEIGHT (HEIGHT >> PXA_GAME_RENDER_SCALE_SHIFT)
 #define CREATE_REQUEST UINT32_C(1)
 #define FRAME_PERIOD_MS 16u
 #define SPRITE_COUNT 192u
@@ -601,7 +609,9 @@ static void append_results(pxa_raster_draw_list_t *list) {
 static int render_frame(void) {
     pxa_raster_draw_list_t list;
     const bench_group_t *group;
-    pxa_raster_draw_list_begin(&list, g_draw, sizeof(g_draw), ++g_frame_id);
+    pxa_raster_draw_list_begin_scaled(
+        &list, g_draw, sizeof(g_draw), ++g_frame_id,
+        PXA_GAME_RENDER_SCALE_SHIFT);
     if (g_finished) {
         (void)pxa_raster_clear(&list, rgb565(8, 12, 20));
         append_results(&list);
@@ -714,12 +724,19 @@ int32_t pxa_app_start(const uint8_t *config, uint32_t length) {
     g_finished = 0;
     g_have_group_baseline = 0;
     pxa_raster_zero_bytes(g_results, sizeof(g_results));
-    if (!pxa_game_render_create(CREATE_REQUEST, WIDTH, HEIGHT, 3, 1,
+    if (!pxa_game_render_create(CREATE_REQUEST, RENDER_WIDTH, RENDER_HEIGHT,
+                                3, 1,
                                 g_packet, sizeof(g_packet))) {
         (void)pxa_log_error("GameRender create request failed");
         return PXA_STATUS_INTERNAL;
     }
-    (void)pxa_log_info("GameRender benchmark start: 11 groups");
+#if PXA_GAME_RENDER_SCALE_SHIFT == 0
+    (void)pxa_log_info("GameRender benchmark start: 11 groups, native");
+#elif PXA_GAME_RENDER_SCALE_SHIFT == 1
+    (void)pxa_log_info("GameRender benchmark start: 11 groups, 2x upscale");
+#else
+    (void)pxa_log_info("GameRender benchmark start: 11 groups, scaled");
+#endif
     return PXA_STATUS_OK;
 }
 
