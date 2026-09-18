@@ -4,6 +4,7 @@
 
 #include "pxa/openssl/pxa_openssl.h"
 #include "pxa/package.h"
+#include "pxa/ui.h"
 #include "pxa/wasi.h"
 
 #define PXA_TEST_PATH_CAPACITY 1024
@@ -74,11 +75,15 @@ int main(int argc, char **argv) {
     pxa_openssl_trust_t trust;
     const pxa_package_component_t *main_component;
     const pxa_package_component_t *responder_component;
+    const pxa_package_service_requirement_t *core_requirement;
+    const pxa_package_service_requirement_t *fs_requirement;
     const pxa_package_service_requirement_t *ui_requirement;
     const pxa_package_service_requirement_t *net_requirement;
     const pxa_package_service_requirement_t *wasi_requirement;
     const pxa_package_artifact_t *artifact = NULL;
     pxa_package_host_profile_t host;
+    pxa_package_activation_profile_t activation;
+    pxa_package_service_capability_t capabilities[PXA_PACKAGE_MAX_SERVICES_PER_COMPONENT];
     pxa_package_metadata_t chinese_metadata;
     void *workspace = NULL;
     uint8_t *manifest_data = NULL;
@@ -176,26 +181,34 @@ int main(int argc, char **argv) {
 
     main_component = find_component(manifest, "main");
     responder_component = find_component(manifest, "responder");
+    core_requirement = main_component == NULL ? NULL : find_service(main_component, 1);
+    fs_requirement = main_component == NULL ? NULL : find_service(main_component, 5);
     ui_requirement = main_component == NULL ? NULL : find_service(main_component, 3);
     net_requirement = main_component == NULL ? NULL : find_service(main_component, 9);
     wasi_requirement = main_component == NULL ? NULL : find_service(main_component, 14);
     if (manifest->format_minor != PXA_PACKAGE_MANIFEST_FORMAT_MINOR ||
         manifest->component_count != 2 || manifest->permission_count != 1 ||
         manifest->ipc_endpoint_count != 1 || main_component == NULL ||
-        responder_component == NULL || ui_requirement == NULL ||
+        responder_component == NULL || core_requirement != NULL || fs_requirement == NULL ||
+        ui_requirement == NULL ||
         net_requirement == NULL || wasi_requirement == NULL ||
         ui_requirement->min_version.major != 0 ||
         ui_requirement->min_version.minor != 3 ||
         ui_requirement->max_version.major != 0 ||
-        ui_requirement->max_version.minor != 3 ||
+        ui_requirement->max_version.minor != UINT16_MAX ||
+        ui_requirement->required_features != PXA_UI_FEATURE_CANVAS ||
+        fs_requirement->min_version.major != 0 ||
+        fs_requirement->min_version.minor != 1 ||
+        fs_requirement->max_version.major != 0 ||
+        fs_requirement->max_version.minor != UINT16_MAX ||
         net_requirement->min_version.major != 0 ||
-        net_requirement->min_version.minor != 2 ||
+        net_requirement->min_version.minor != 1 ||
         net_requirement->max_version.major != 0 ||
-        net_requirement->max_version.minor != 2 ||
+        net_requirement->max_version.minor != 4 ||
         wasi_requirement->min_version.major != 0 ||
         wasi_requirement->min_version.minor != 1 ||
         wasi_requirement->max_version.major != 0 ||
-        wasi_requirement->max_version.minor != 1 ||
+        wasi_requirement->max_version.minor != UINT16_MAX ||
         wasi_requirement->required_features !=
             (PXA_WASI_FEATURE_STDIO | PXA_WASI_FEATURE_MONOTONIC_CLOCK) ||
         main_component->flags != PXA_PACKAGE_COMPONENT_FLAG_PINNED_MEMORY ||
@@ -218,6 +231,21 @@ int main(int argc, char **argv) {
         !bytes_equal_text(chinese_metadata.name, "PXA 游戏厅") ||
         !bytes_equal_text(chinese_metadata.description,
                           "多款轻量街机游戏合集")) {
+        result = 9;
+        goto done;
+    }
+    for (index = 0; index < main_component->service_count; ++index) {
+        capabilities[index] = (pxa_package_service_capability_t){
+            main_component->services[index].service,
+            main_component->services[index].min_version,
+            main_component->services[index].required_features,
+        };
+    }
+    activation = (pxa_package_activation_profile_t){
+        {0, 2}, capabilities, main_component->service_count,
+    };
+    if (pxa_package_requirements_validate(manifest, main_component,
+                                          &activation) != PXA_STATUS_OK) {
         result = 9;
         goto done;
     }

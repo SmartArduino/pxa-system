@@ -38,7 +38,13 @@
       "services": [
         "audio",
         "game-render",
-        "storage"
+        "storage",
+        {
+          "name": "ui",
+          "features": [
+            "canvas"
+          ]
+        }
       ]
     }
   ],

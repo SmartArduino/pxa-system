@@ -75,17 +75,31 @@ The product integration Apps under `apps/pxa` demonstrate Canvas, private FS
 and Permission v1 with the same lifecycle. A standalone consumer can keep Apps
 elsewhere and set `PXA_APP_SOURCE_ROOT`. Their `package.json` files are source metadata, not
 the installed ABI manifest. `permissions` declares signed policy declarations;
-`services` is an optional unique list of additional required service names:
-`core`, `window`, `ui`, `clock`, `fs`, `storage`, `ipc`, `sensor`, `net`,
-`audio`, `permission`, `secrets`, or `device`. The packager maps names to stable ABI IDs;
-Core is included for every Component automatically. Legacy source metadata
-describes one `main` UI Component from `main.c`. A
+`services` is an optional unique list of additional required service names or
+requirement objects. Valid names are `window`, `ui`, `clock`, `fs`, `storage`,
+`ipc`, `sensor`, `net`, `audio`, `permission`, `work`, `device`, `surface`,
+`game-render`, or `log`.
+`core` is intentionally not a Service declaration: Core compatibility comes
+from the SDK fields. A string requires the build SDK's current Service minor
+and permits all later minors in that major. A requirement object can set
+`min_version`, `max_version` and named `features`, for example:
+
+```json
+"services": [{"name": "ui", "min_version": [0, 3],
+              "features": ["canvas", "virtual-list"]}]
+```
+
+UI Components automatically require Window, UI and Clock. An explicit UI
+requirement replaces that automatic default when an App needs a newer minor or
+feature. Legacy source metadata describes one `main` UI Component from `main.c`. A
 
 Compatibility declarations in `package.json` are `min_sdk`, `target_sdk` and
 `compile_sdk`, each encoded as `[major, minor]`. The first two are signed into
 Manifest 0.5; `compile_sdk` is emitted only in the provenance/SBOM sidecar.
 Use `min_sdk` for required Core APIs, `target_sdk` for behavior-policy
-selection, and Service ranges/features for individual capabilities.
+selection, and Service ranges/features for individual capabilities. Do not add
+Core to `services`: doing so creates an unnecessary exact-version gate that
+prevents a newer compatible Core minor from running the App.
 
 `components` array may instead describe multiple Components with stable `id`,
 `kind`, `source`, and optional Component-local `services` fields. UI Components

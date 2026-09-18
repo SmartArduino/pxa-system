@@ -21,6 +21,13 @@ Service ID：1 Core、2 Window、3 UI、4 Clock、5 FS、6 Storage、7 IPC、
 15 Device、16 Surface。Canvas 是 UI node 的定长 display-list 子协议，不是独立
 service；Surface 是 Host-owned bulk-pixel BufferQueue。
 
+兼容性上，Core 只由包的 `min_sdk`（最低 ABI）和 `target_sdk`（行为策略）
+约束；它不是 Component 的普通 service requirement。各 Service 则独立声明固定
+major 内的 minor 范围和必需 feature bits。旧式 `services: ["net"]` 表示构建 SDK
+的当前 minor 为下限、该 major 的开放上限；需要更精确约束时使用带
+`min_version`、`max_version`、`features` 的 service 对象。规范定义见
+`package.md` 的 “Source package compatibility declarations”。
+
 草案数值仍可变化；达到 1.0 后已发布 ID 不得复用。LVGL、WAMR、LittleFS 与
 FreeRTOS 是实现细节，不是协议概念。实现要被视为权威前，必须同时具备 golden
 vectors 和 malformed-input 测试。

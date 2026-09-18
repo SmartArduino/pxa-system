@@ -14,6 +14,7 @@ if str(TOOL_DIR) not in sys.path:
     sys.path.insert(0, str(TOOL_DIR))
 from protocol_metadata import (  # noqa: E402
     DECLARABLE_SERVICE_IDS,
+    SERVICE_FEATURES,
     SERVICE_IDS,
     SERVICE_VERSIONS,
     WASI_FEATURES,
@@ -48,13 +49,11 @@ def records(items):
     return b"".join(record(tag, payload) for tag, payload in items)
 
 
-def service(service_id, features=0):
-    major, min_minor = SERVICE_VERSIONS[service_id]
-    max_minor = min_minor
+def service(service_id, min_version, max_version, features=0):
     return records([
         (1, struct.pack("<H", service_id)),
-        (2, struct.pack("<HH", major, min_minor)),
-        (3, struct.pack("<HH", major, max_minor)),
+        (2, struct.pack("<HH", *min_version)),
+        (3, struct.pack("<HH", *max_version)),
         (4, struct.pack("<Q", features)),
     ])
 
@@ -85,7 +84,8 @@ def component(component_id, kind, flags, aot_targets, engine_abi, services, incl
         [(1, component_id.encode("ascii")), (2, struct.pack("<B", kind)),
          (3, struct.pack("<B", flags))]
         + [(4, value) for _, value in sorted(artifacts)]
-        + [(5, service(service_id, features)) for service_id, features in services]
+        + [(5, service(service_id, min_version, max_version, features))
+           for service_id, min_version, max_version, features in services]
     )
 
 
@@ -294,12 +294,63 @@ def component_artifacts(file_paths, component_id, target, artifact_mode):
     return aot_targets, include_wasm
 
 
-def parse_services(names, label):
-    require(isinstance(names, list), f"{label} must be an array")
-    require(all(isinstance(name, str) and name in DECLARABLE_SERVICE_IDS for name in names),
-            f"invalid {label[:-1]} name")
-    require(len(names) == len(set(names)), f"{label} must be unique")
-    return names
+def parse_version(value, label):
+    require(isinstance(value, list) and len(value) == 2 and
+            all(isinstance(item, int) and not isinstance(item, bool) and
+                0 <= item <= 0xFFFF for item in value),
+            f"{label} must be [major, minor]")
+    return tuple(value)
+
+
+def default_service_requirement(name):
+    service_id = DECLARABLE_SERVICE_IDS[name]
+    major, minor = SERVICE_VERSIONS[service_id]
+    return service_id, (major, minor), (major, 0xFFFF), 0
+
+
+def parse_services(values, label):
+    require(isinstance(values, list), f"{label} must be an array")
+    requirements = []
+    names = set()
+    for value in values:
+        if isinstance(value, str):
+            name = value
+            requirement = default_service_requirement(name) \
+                if name in DECLARABLE_SERVICE_IDS else None
+        elif isinstance(value, dict):
+            require(set(value).issubset(
+                        {"name", "min_version", "max_version", "features"}),
+                    f"invalid {label[:-1]} fields")
+            name = value.get("name")
+            requirement = None
+            if isinstance(name, str) and name in DECLARABLE_SERVICE_IDS:
+                service_id, default_min, default_max, _ = default_service_requirement(name)
+                min_version = parse_version(value.get("min_version", list(default_min)),
+                                            f"{name} min_version")
+                max_version = parse_version(value.get("max_version", list(default_max)),
+                                            f"{name} max_version")
+                features = value.get("features", [])
+                require(isinstance(features, list) and
+                        all(isinstance(feature, str) for feature in features) and
+                        features == sorted(set(features)) and
+                        all(feature in SERVICE_FEATURES[name] for feature in features),
+                        f"invalid {name} service features")
+                require(min_version[0] == max_version[0] == default_min[0] and
+                        min_version <= default_min and min_version <= max_version,
+                        f"{name} service range must use major {default_min[0]}, "
+                        "a published minimum, and min <= max")
+                feature_bits = 0
+                for feature in features:
+                    feature_bits |= SERVICE_FEATURES[name][feature]
+                requirement = service_id, min_version, max_version, feature_bits
+        else:
+            name = None
+            requirement = None
+        require(requirement is not None, f"invalid {label[:-1]} name")
+        require(name not in names, f"{label} must be unique")
+        names.add(name)
+        requirements.append(requirement)
+    return requirements
 
 
 def parse_wasi(value):
@@ -325,12 +376,7 @@ def parse_wasi(value):
 
 
 def parse_sdk(metadata, name, default):
-    value = metadata.get(name, default)
-    require(isinstance(value, list) and len(value) == 2 and
-            all(isinstance(item, int) and not isinstance(item, bool) and
-                0 <= item <= 0xFFFF for item in value),
-            f"{name} must be [major, minor]")
-    return tuple(value)
+    return parse_version(metadata.get(name, default), name)
 
 
 def main(argv):
@@ -483,14 +529,17 @@ def main(argv):
                 "invalid component id")
         require(isinstance(kind_name, str) and kind_name in COMPONENT_KINDS,
                 "invalid component kind")
-        service_names = parse_services(item.get("services", declared_services), "component services")
+        service_requirements = (
+            parse_services(item["services"], "component services")
+            if "services" in item else declared_services
+        )
         wasi_features = parse_wasi(item.get("wasi"))
         artifact_mode = item.get("artifact", "aot" if aot_only else "both")
         require(artifact_mode in ("aot", "wasm", "both"),
                 "component artifact must be aot, wasm, or both")
         flags = COMPONENT_FLAG_PINNED_MEMORY if pinned_memory else 0
         components.append((component_id, COMPONENT_KINDS[kind_name], flags,
-                           service_names, wasi_features, artifact_mode))
+                           service_requirements, wasi_features, artifact_mode))
     require(all(left[0] < right[0] for left, right in zip(components, components[1:])),
             "components must be sorted uniquely")
     require(sum(component_id == "main" and kind == COMPONENT_KINDS["ui"]
@@ -501,22 +550,27 @@ def main(argv):
             "IPC endpoint references an unknown component")
 
     endpoint_components = {component_id for _, component_id, _ in ipc_entries}
-    for component_id, kind, flags, service_names, wasi_features, artifact_mode in components:
-        automatic_services = [1]
+    for component_id, kind, flags, service_requirements, wasi_features, artifact_mode in components:
+        automatic_services = []
         if kind == COMPONENT_KINDS["ui"]:
             automatic_services.extend([2, 3, 4])
         if permission_entries:
             automatic_services.append(11)
         if component_id in endpoint_components:
             automatic_services.append(7)
-        service_features = {
-            service_id: 0
-            for service_id in automatic_services +
-            [SERVICE_IDS[name] for name in service_names]
+        services_by_id = {
+            service_id: (service_id, (major, minor), (major, 0xFFFF), 0)
+            for service_id in automatic_services
+            for major, minor in [SERVICE_VERSIONS[service_id]]
         }
+        services_by_id.update({requirement[0]: requirement
+                               for requirement in service_requirements})
         if wasi_features is not None:
-            service_features[SERVICE_IDS["wasi"]] = wasi_features
-        services = sorted(service_features.items())
+            service_id = SERVICE_IDS["wasi"]
+            major, minor = SERVICE_VERSIONS[service_id]
+            services_by_id[service_id] = (
+                service_id, (major, minor), (major, 0xFFFF), wasi_features)
+        services = [services_by_id[service_id] for service_id in sorted(services_by_id)]
         aot_targets, include_wasm = component_artifacts(
             file_paths, component_id, target, artifact_mode)
         top.append((16, component(component_id, kind, flags, aot_targets, engine_abi,

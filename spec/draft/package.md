@@ -33,6 +33,55 @@ defined by `container.md`. It embeds these same exact logical metadata files,
 adds a signature over the complete delivery representation and decodes to the
 same installed directory. A `.pxa` is never a mounted runtime filesystem.
 
+## Source package compatibility declarations
+
+The source `package.json` is authoring metadata; the packager translates its
+compatibility declarations into the signed binary manifest. Core and Services
+have deliberately separate compatibility rules.
+
+`min_sdk`, `target_sdk` and `compile_sdk` are `[major, minor]` pairs.
+`min_sdk` is the only Core ABI floor. A Host must provide the same Core major
+and a Core minor no lower than `min_sdk`; `target_sdk` selects documented Host
+behavior-compatibility policy and is not a maximum supported Core version.
+`compile_sdk` is build provenance and does not constrain Host activation.
+Core is not a `services` entry and is never emitted as a Component service
+requirement.
+
+`services` may use the legacy list of names, or a list of requirement objects.
+The same form is accepted at the Package level and in a Component:
+
+```json
+{
+  "services": [
+    "net",
+    {
+      "name": "ui",
+      "min_version": [0, 3],
+      "max_version": [0, 65535],
+      "features": ["canvas", "virtual-list"]
+    }
+  ]
+}
+```
+
+A string declaration is shorthand for the version published by the build SDK
+as `min_version`, an open `max_version` of `[major, 65535]`, and no required
+features. A requirement object may contain only `name`, `min_version`,
+`max_version` and `features`. Omitted versions use that same shorthand
+default. Versions must use the service's current major and have
+`min_version <=` the build SDK's published minor and `min_version <= max_version`;
+features are canonical, sorted names from that service's machine-readable
+specification. `core` and `wasi` are not valid
+`services` names: Core uses the SDK fields and WASI is declared through the
+Component `wasi` object.
+
+UI Components automatically require Window, UI and Clock at their build-SDK
+minimum versions with an open same-major upper bound. Permission declarations
+and IPC endpoint providers similarly add their respective Service
+requirements. An explicit Service requirement for an automatically included
+Service replaces that default, allowing an App to require a newer minor or a
+feature bit.
+
 No Artifact is loaded before all these checks succeed.
 
 ## Canonical manifest encoding
@@ -77,7 +126,9 @@ installation ceiling; it selects behavior-compatibility rules as Hosts evolve.
 The packager records `compileSdk` in signed-build provenance/SBOM rather than
 the package manifest. A package must use one Core major and satisfy
 `minSdk <= targetSdk <= compileSdk`. Service requirement ranges and feature
-bits remain the authoritative per-service capability checks.
+bits remain the authoritative per-service capability checks. Core must not
+also appear as a Component Service requirement, because an exact Service range
+would defeat the Core floor's forward-compatibility rule.
 
 ### Manifest 0.6 localized application metadata
 
@@ -155,9 +206,12 @@ inactive until a future lifecycle trigger defines otherwise. Cross-App routing,
 endpoint discovery, streams and ACL policy are separate extensions.
 
 Core and Service ranges have one fixed major version and an inclusive minor
-range. A range cannot cross a major boundary. Component activation validates
-Core, every required Service and its feature subset before selecting or loading
-an Artifact.
+range. A Service range cannot cross a major boundary. A Service minor release
+may add capabilities but must preserve the behavior of the preceding minor;
+a breaking Service change requires a new major. Feature bits represent named,
+independently negotiable extensions and must not redefine existing baseline
+behavior. Component activation validates Core, every required Service and its
+feature subset before selecting or loading an Artifact.
 
 The detached signature header is:
 

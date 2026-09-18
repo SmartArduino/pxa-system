@@ -61,7 +61,7 @@ cp "$pxa_system_dir/apps/pxa/arcade/i18n/messages.yaml" \
    "$work_dir/i18n/"
 
 metadata="$work_dir/package.json"
-sed '/^}/i\\  ,"build": {"system": "direct", "linear_memory": {"maximum_bytes": 65536, "pinned": true}}\n  ,"services": ["fs","net"]\n  ,"components": [{"id": "main", "kind": "ui", "wasi": {"version": "preview1", "libc": "wasi-libc", "features": ["monotonic-clock", "stdio"]}}, {"id": "responder", "kind": "service", "artifact": "wasm", "services": ["ipc"]}]\n  ,"permissions": [{"name": "net.client", "required": false, "scope": "api.example"}]\n  ,"ipc_endpoints": [{"name": "demo.echo", "component": "responder"}]' \
+sed '/^}/i\\  ,"build": {"system": "direct", "linear_memory": {"maximum_bytes": 65536, "pinned": true}}\n  ,"services": ["fs", {"name": "net", "min_version": [0, 1], "max_version": [0, 4]}, {"name": "ui", "features": ["canvas"]}]\n  ,"components": [{"id": "main", "kind": "ui", "wasi": {"version": "preview1", "libc": "wasi-libc", "features": ["monotonic-clock", "stdio"]}}, {"id": "responder", "kind": "service", "artifact": "wasm", "services": ["ipc"]}]\n  ,"permissions": [{"name": "net.client", "required": false, "scope": "api.example"}]\n  ,"ipc_endpoints": [{"name": "demo.echo", "component": "responder"}]' \
   "$pxa_system_dir/apps/pxa/arcade/package.json" > "$metadata"
 
 "${PYTHON:-python3}" "$script_dir/build_package_manifest.py" \
@@ -70,12 +70,23 @@ sed '/^}/i\\  ,"build": {"system": "direct", "linear_memory": {"maximum_bytes": 
   linux-x86_64 "$engine_abi"
 
 invalid_metadata="$work_dir/package-invalid.json"
-sed 's/"services": \["fs","net"\]/"services": [5]/' "$metadata" > "$invalid_metadata"
+sed 's/"services": \["fs", {"name": "net", "min_version": \[0, 1\], "max_version": \[0, 4\]}, {"name": "ui", "features": \["canvas"\]}\]/"services": [5]/' "$metadata" > "$invalid_metadata"
 if "${PYTHON:-python3}" "$script_dir/build_package_manifest.py" \
   "$invalid_metadata" "$package_dir" \
   "$pxa_system_dir/apps/pxa/.dev-signing/publisher-private.pem" \
   linux-x86_64 "$engine_abi" >/dev/null 2>&1; then
   echo "numeric service IDs must be rejected" >&2
+  exit 1
+fi
+
+invalid_core_metadata="$work_dir/package-invalid-core.json"
+sed 's/"services": \["fs", {"name": "net", "min_version": \[0, 1\], "max_version": \[0, 4\]}, {"name": "ui", "features": \["canvas"\]}\]/"services": ["core"]/' \
+  "$metadata" > "$invalid_core_metadata"
+if "${PYTHON:-python3}" "$script_dir/build_package_manifest.py" \
+  "$invalid_core_metadata" "$package_dir" \
+  "$pxa_system_dir/apps/pxa/.dev-signing/publisher-private.pem" \
+  linux-x86_64 "$engine_abi" >/dev/null 2>&1; then
+  echo "Core must be declared through min_sdk, not services" >&2
   exit 1
 fi
 

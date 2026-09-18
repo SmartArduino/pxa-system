@@ -46,24 +46,33 @@ def load_services() -> tuple[dict[str, int], dict[int, tuple[int, int]]]:
     return identifiers, versions
 
 
-def load_wasi_features() -> dict[str, int]:
-    features = read_spec("wasi").get("features")
-    if not isinstance(features, list):
-        raise RuntimeError("pxa-wasi.json has no feature registry")
-    result: dict[str, int] = {}
-    for feature in features:
-        if not isinstance(feature, dict):
-            raise RuntimeError("invalid WASI feature metadata")
-        name = feature.get("name")
-        bit = feature.get("bit")
-        if not isinstance(name, str) or not isinstance(bit, int) or not 0 <= bit < 64:
-            raise RuntimeError("invalid WASI feature metadata")
-        result[name] = 1 << bit
+def load_service_features() -> dict[str, dict[str, int]]:
+    result: dict[str, dict[str, int]] = {}
+    for name in SERVICE_IDS:
+        if name == "core":
+            result[name] = {}
+            continue
+        features = read_spec(name).get("features", [])
+        if not isinstance(features, list):
+            raise RuntimeError(f"pxa-{name}.json has an invalid feature registry")
+        feature_bits: dict[str, int] = {}
+        for feature in features:
+            if not isinstance(feature, dict):
+                raise RuntimeError(f"invalid {name} feature metadata")
+            feature_name = feature.get("name")
+            bit = feature.get("bit")
+            if (not isinstance(feature_name, str) or not isinstance(bit, int) or
+                    not 0 <= bit < 64 or feature_name in feature_bits):
+                raise RuntimeError(f"invalid {name} feature metadata")
+            feature_bits[feature_name] = 1 << bit
+        result[name] = feature_bits
     return result
 
 
 SERVICE_IDS, SERVICE_VERSIONS = load_services()
 DECLARABLE_SERVICE_IDS = {
-    name: value for name, value in SERVICE_IDS.items() if name != "wasi"
+    name: value for name, value in SERVICE_IDS.items()
+    if name not in ("core", "wasi")
 }
-WASI_FEATURES = load_wasi_features()
+SERVICE_FEATURES = load_service_features()
+WASI_FEATURES = SERVICE_FEATURES["wasi"]
