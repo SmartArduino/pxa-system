@@ -72,6 +72,8 @@ typedef struct {
     uint32_t density_numerator;
     uint32_t density_denominator;
     pxa_window_insets_t safe_insets;
+    /* Covered or reserved by status/navigation chrome, including the Home and
+     * Back gesture strips in gesture navigation mode. */
     pxa_window_insets_t system_bar_insets;
     pxa_window_orientation_t orientation;
     uint8_t focused;

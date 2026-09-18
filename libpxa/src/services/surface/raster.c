@@ -467,7 +467,8 @@ static uint32_t draw_triangle(const raster_vertex_t *a,
                               const raster_vertex_t *c, uint16_t flat_color,
                               const pxa_raster_texture_t *texture,
                               const uint16_t *palette, uint8_t mode,
-                              const pxa_raster_target_t *target) {
+                              const pxa_raster_target_t *target,
+                              uint16_t row_begin, uint16_t row_end) {
     int32_t min_x = a->x;
     int32_t max_x = a->x;
     int32_t min_y = a->y;
@@ -535,6 +536,8 @@ static uint32_t draw_triangle(const raster_vertex_t *a,
     if (min_y < 0) min_y = 0;
     if (max_x > target->width) max_x = target->width;
     if (max_y > target->height) max_y = target->height;
+    if (min_y < row_begin) min_y = row_begin;
+    if (max_y > row_end) max_y = row_end;
     if (area == 0 || min_x >= max_x || min_y >= max_y) return 0;
     {
         const int64_t sign = area < 0 ? -1 : 1;
@@ -895,7 +898,8 @@ static uint32_t draw_triangle(const raster_vertex_t *a,
 static uint32_t draw_quad(const uint8_t *record, uint8_t textured,
                           uint16_t abi_minor,
                           const pxa_raster_target_t *target,
-                          const pxa_raster_resources_t *resources) {
+                          const pxa_raster_resources_t *resources,
+                          uint16_t row_begin, uint16_t row_end) {
     raster_vertex_t vertices[4];
     const pxa_raster_texture_t *texture = NULL;
     uint16_t color = 0;
@@ -925,16 +929,19 @@ static uint32_t draw_quad(const uint8_t *record, uint8_t textured,
         }
     }
     return draw_triangle(&vertices[0], &vertices[1], &vertices[2], color,
-                         texture, resources->palette, mode, target) +
+                         texture, resources->palette, mode, target,
+                         row_begin, row_end) +
            draw_triangle(&vertices[0], &vertices[2], &vertices[3], color,
-                         texture, resources->palette, mode, target);
+                         texture, resources->palette, mode, target,
+                         row_begin, row_end);
 }
 
 static uint32_t draw_sprite_instance(
     const uint8_t *instance, const pxa_raster_texture_t *texture,
     uint8_t flags, uint16_t solid_color,
     const pxa_raster_target_t *target,
-    const pxa_raster_resources_t *resources) {
+    const pxa_raster_resources_t *resources, uint16_t row_begin,
+    uint16_t row_end) {
     const int32_t x0 = read_i16(instance);
     const int32_t y0 = read_i16(instance + 2);
     const uint32_t width = read_u16(instance + 4);
@@ -966,6 +973,19 @@ static uint32_t draw_sprite_instance(
         dx_end = (uint32_t)(target->width - x0);
     if ((uint32_t)(target->height - y0) < dy_end)
         dy_end = (uint32_t)(target->height - y0);
+    {
+        const int32_t clipped_begin = (int32_t)row_begin - y0;
+        const int32_t clipped_end = (int32_t)row_end - y0;
+        if (clipped_end <= 0) return 0;
+        if (clipped_begin > 0 && (uint32_t)clipped_begin > dy_begin)
+            dy_begin = (uint32_t)clipped_begin;
+        if ((uint32_t)clipped_end < dy_end)
+            dy_end = (uint32_t)clipped_end;
+        if (dy_begin >= dy_end) return 0;
+        y_numerator = dy_begin * source_height;
+        ty = source_y + y_numerator / height;
+        y_error = y_numerator % height;
+    }
     for (dy = dy_begin; dy < dy_end; ++dy) {
         const int32_t y = y0 + (int32_t)dy;
         uint32_t tx = tx_begin;
@@ -1008,15 +1028,17 @@ static uint32_t draw_sprite_instance(
 
 static uint32_t draw_sprite(const uint8_t *record,
                             const pxa_raster_target_t *target,
-                            const pxa_raster_resources_t *resources) {
+                            const pxa_raster_resources_t *resources,
+                            uint16_t row_begin, uint16_t row_end) {
     return draw_sprite_instance(record + 8, &resources->textures[record[4]],
                                 record[1], read_u16(record + 6), target,
-                                resources);
+                                resources, row_begin, row_end);
 }
 
 static uint32_t draw_sprite_batch(
     const uint8_t *record, const pxa_raster_target_t *target,
-    const pxa_raster_resources_t *resources) {
+    const pxa_raster_resources_t *resources, uint16_t row_begin,
+    uint16_t row_end) {
     const pxa_raster_texture_t *texture = &resources->textures[record[4]];
     const uint16_t count = read_u16(record + 8);
     uint32_t covered = 0;
@@ -1025,14 +1047,16 @@ static uint32_t draw_sprite_batch(
         covered += draw_sprite_instance(
             record + PXA_RASTER_SPRITE_BATCH_HEADER_BYTES +
                 (uint32_t)index * PXA_RASTER_SPRITE_INSTANCE_BYTES,
-            texture, record[1], read_u16(record + 6), target, resources);
+            texture, record[1], read_u16(record + 6), target, resources,
+            row_begin, row_end);
     }
     return covered;
 }
 
 static uint32_t draw_triangle_batch(
     const uint8_t *record, const pxa_raster_target_t *target,
-    const pxa_raster_resources_t *resources) {
+    const pxa_raster_resources_t *resources, uint16_t row_begin,
+    uint16_t row_end) {
     const uint8_t solid = record[1] & PXA_RASTER_QUAD_SOLID_COLOR;
     const pxa_raster_texture_t *texture =
         solid ? NULL : &resources->textures[record[4]];
@@ -1054,20 +1078,21 @@ static uint32_t draw_triangle_batch(
                                  color, texture, resources->palette,
                                  RASTER_MODE_PERSPECTIVE_UV |
                                      RASTER_MODE_DEPTH,
-                                 target);
+                                 target, row_begin, row_end);
     }
     return covered;
 }
 
-void pxa_raster_execute_draw_list(const uint8_t *bytes,
-                                  const pxa_raster_draw_list_view_t *list,
-                                  const pxa_raster_target_t *target,
-                                  const pxa_raster_resources_t *resources,
-                                  pxa_raster_telemetry_t *telemetry) {
+void pxa_raster_execute_draw_list_rows(
+    const uint8_t *bytes, const pxa_raster_draw_list_view_t *list,
+    const pxa_raster_target_t *target,
+    const pxa_raster_resources_t *resources, uint16_t row_begin,
+    uint16_t row_end, pxa_raster_telemetry_t *telemetry) {
     uint32_t offset = PXA_RASTER_DRAW_HEADER_BYTES;
     uint32_t index;
     uint32_t covered = 0;
-    if (bytes == NULL || list == NULL || target == NULL || resources == NULL)
+    if (bytes == NULL || list == NULL || target == NULL || resources == NULL ||
+        row_begin >= row_end || row_end > target->height)
         return;
     for (index = 0; index < list->command_count; ++index) {
         const uint8_t *record = bytes + offset;
@@ -1075,12 +1100,14 @@ void pxa_raster_execute_draw_list(const uint8_t *bytes,
         if (record[0] == PXA_RASTER_RECORD_CLEAR_RGB565) {
             const uint16_t color = read_u16(record + 4);
             const uint32_t pixel_count =
-                (uint32_t)target->width * target->height;
+                (uint32_t)target->width * (row_end - row_begin);
             uint16_t y;
             if (target->stride_pixels == target->width) {
-                fill_rgb565(target->pixels, pixel_count, color);
+                fill_rgb565(target->pixels +
+                                (size_t)row_begin * target->stride_pixels,
+                            pixel_count, color);
             } else {
-                for (y = 0; y < target->height; ++y) {
+                for (y = row_begin; y < row_end; ++y) {
                     uint16_t *row = target->pixels +
                                     (size_t)y * target->stride_pixels;
                     fill_rgb565(row, target->width, color);
@@ -1088,11 +1115,14 @@ void pxa_raster_execute_draw_list(const uint8_t *bytes,
             }
             if (target->depth_pixels != NULL) {
                 if (target->depth_stride_pixels == target->width) {
-                    memset(target->depth_pixels, 0,
+                    memset(target->depth_pixels +
+                               (size_t)row_begin *
+                                   target->depth_stride_pixels,
+                           0,
                            (size_t)pixel_count *
                                sizeof(*target->depth_pixels));
                 } else {
-                    for (y = 0; y < target->height; ++y) {
+                    for (y = row_begin; y < row_end; ++y) {
                         uint16_t *depth = target->depth_pixels +
                             (size_t)y * target->depth_stride_pixels;
                         memset(depth, 0,
@@ -1103,21 +1133,26 @@ void pxa_raster_execute_draw_list(const uint8_t *bytes,
             covered += pixel_count;
             if (telemetry != NULL) ++telemetry->clear_commands;
         } else if (record[0] == PXA_RASTER_RECORD_FLAT_QUAD) {
-            covered += draw_quad(record, 0, list->abi_minor, target, resources);
+            covered += draw_quad(record, 0, list->abi_minor, target, resources,
+                                 row_begin, row_end);
             if (telemetry != NULL) ++telemetry->flat_quad_commands;
         } else if (record[0] == PXA_RASTER_RECORD_TEXTURED_QUAD) {
-            covered += draw_quad(record, 1, list->abi_minor, target, resources);
+            covered += draw_quad(record, 1, list->abi_minor, target, resources,
+                                 row_begin, row_end);
             if (telemetry != NULL) ++telemetry->textured_quad_commands;
         } else if (record[0] == PXA_RASTER_RECORD_SPRITE) {
-            covered += draw_sprite(record, target, resources);
+            covered += draw_sprite(record, target, resources, row_begin,
+                                   row_end);
             if (telemetry != NULL) ++telemetry->sprite_commands;
         } else if (record[0] == PXA_RASTER_RECORD_SPRITE_BATCH) {
             const uint16_t count = read_u16(record + 8);
-            covered += draw_sprite_batch(record, target, resources);
+            covered += draw_sprite_batch(record, target, resources, row_begin,
+                                         row_end);
             if (telemetry != NULL) telemetry->sprite_commands += count;
         } else if (record[0] == PXA_RASTER_RECORD_TRIANGLE_BATCH) {
             const uint16_t count = read_u16(record + 8);
-            covered += draw_triangle_batch(record, target, resources);
+            covered += draw_triangle_batch(record, target, resources,
+                                           row_begin, row_end);
             if (telemetry != NULL) telemetry->textured_quad_commands += count;
         }
         offset += size;
@@ -1128,4 +1163,14 @@ void pxa_raster_execute_draw_list(const uint8_t *bytes,
         telemetry->last_draw_list_bytes = list->total_size;
         telemetry->last_covered_pixels = covered;
     }
+}
+
+void pxa_raster_execute_draw_list(const uint8_t *bytes,
+                                  const pxa_raster_draw_list_view_t *list,
+                                  const pxa_raster_target_t *target,
+                                  const pxa_raster_resources_t *resources,
+                                  pxa_raster_telemetry_t *telemetry) {
+    if (target == NULL) return;
+    pxa_raster_execute_draw_list_rows(bytes, list, target, resources, 0,
+                                      target->height, telemetry);
 }

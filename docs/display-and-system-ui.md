@@ -69,6 +69,13 @@ height and content padding are separate layout values. The compact reference
 layout uses a 20-pixel status row and half-height vertical content padding so
 small displays do not compound all three reservations unnecessarily.
 
+In gesture navigation mode the window snapshot's `system_bar_insets` also cover
+the bottom Home strip and the left-edge Back strip, so guest applications can
+keep interactive controls outside the system gesture zones.
+`pxsys_reference_layout_gesture_strip_height()` and
+`pxsys_reference_layout_back_gesture_width()` are the single source of truth
+for those strips.
+
 The current ESP touch product supplies a rounded `296x240` profile. The SDL
 simulator exposes equivalent CLI fields and updates them on window resize.
 

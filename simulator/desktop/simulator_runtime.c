@@ -1,14 +1,9 @@
 #include "simulator_runtime.h"
+#include "product_runner.h"
 
 #include <stdio.h>
-#include <signal.h>
 #include <string.h>
 #include <sys/stat.h>
-#include <sys/types.h>
-#include <sys/wait.h>
-#include <unistd.h>
-
-#include <SDL2/SDL.h>
 
 #define PXSYS_DESKTOP_RUNTIME_MAGIC UINT32_C(0x50584452)
 #define PXSYS_DESKTOP_RUNTIME_ID "pxa-sim"
@@ -25,7 +20,9 @@ typedef struct simulator_instance {
     pxsys_rect_t content_rect;
     uint32_t display_width;
     uint32_t display_height;
-    pid_t product_process;
+    char product_package_path[1200];
+    uint8_t product_launch_pending;
+    uint8_t product_completed;
 } simulator_instance_t;
 
 struct pxsys_desktop_runtime {
@@ -82,66 +79,26 @@ static void update_locale(simulator_instance_t* instance) {
     lv_label_set_text(instance->status, status);
 }
 
-static void set_desktop_window_visible(simulator_instance_t* instance,
-                                       int visible) {
-    SDL_Window* window;
-    if (instance == NULL) return;
-    window = (SDL_Window*)instance->runtime->fixture.desktop_window;
-    if (window == NULL) return;
-    if (visible) {
-        SDL_ShowWindow(window);
-        SDL_RaiseWindow(window);
-    } else {
-        SDL_HideWindow(window);
-    }
-}
-
-static int launch_installed_application(simulator_instance_t* instance) {
+static int queue_installed_application(simulator_instance_t* instance) {
     const pxsys_desktop_runtime_fixture_t* fixture;
-    char package_path[1200];
-    char width[16];
-    char height[16];
     struct stat metadata;
-    pid_t child;
     if (instance == NULL || instance->app == NULL) return 0;
     fixture = &instance->runtime->fixture;
-    if (fixture->installed_packages_root == NULL || fixture->product_runner == NULL ||
-        fixture->publisher_key == NULL || fixture->state_root == NULL ||
+    if (fixture->installed_packages_root == NULL || fixture->publisher_key == NULL ||
+        fixture->state_root == NULL ||
         instance->app->identity.app_id.size == 0 ||
         instance->app->identity.app_id.size > 120)
         return 0;
-    if (snprintf(package_path, sizeof(package_path), "%s/%.*s",
+    if (snprintf(instance->product_package_path,
+                 sizeof(instance->product_package_path), "%s/%.*s",
                  fixture->installed_packages_root,
                  (int)instance->app->identity.app_id.size,
-                 instance->app->identity.app_id.data) >= (int)sizeof(package_path) ||
-        stat(package_path, &metadata) != 0 || !S_ISDIR(metadata.st_mode))
+                 instance->app->identity.app_id.data) >=
+            (int)sizeof(instance->product_package_path) ||
+        stat(instance->product_package_path, &metadata) != 0 ||
+        !S_ISDIR(metadata.st_mode))
         return 0;
-    if (instance->product_process > 0) return 1;
-    if (snprintf(width, sizeof(width), "%u", instance->display_width) >=
-            (int)sizeof(width) ||
-        snprintf(height, sizeof(height), "%u", instance->display_height) >=
-            (int)sizeof(height))
-        return 0;
-    child = fork();
-    if (child < 0) return 0;
-    if (child == 0) {
-        if (fixture->pxadb_control_socket != NULL) {
-            execl(fixture->product_runner, fixture->product_runner,
-                  "--package", package_path, "--publisher-key",
-                  fixture->publisher_key, "--state-root", fixture->state_root,
-                  "--width", width, "--height", height,
-                  "--pxadb-control-socket", fixture->pxadb_control_socket,
-                  (char*)NULL);
-        } else {
-            execl(fixture->product_runner, fixture->product_runner,
-                  "--package", package_path, "--publisher-key",
-                  fixture->publisher_key, "--state-root", fixture->state_root,
-                  "--width", width, "--height", height, (char*)NULL);
-        }
-        _exit(127);
-    }
-    instance->product_process = child;
-    set_desktop_window_visible(instance, 0);
+    instance->product_launch_pending = 1;
     return 1;
 }
 
@@ -176,6 +133,7 @@ static pxsys_status_t backend_instantiate(
     simulator_instance_t* instance;
     pxsys_display_profile_t display;
     pxsys_surface_config_t config = {0};
+    pxsys_status_t status;
     (void)instance_id;
     if (runtime == NULL || app == NULL || output == NULL)
         return PXSYS_STATUS_INVALID_ARGUMENT;
@@ -187,15 +145,21 @@ static pxsys_status_t backend_instantiate(
     instance->surface.slot = UINT32_MAX;
     instance->runtime = runtime;
     instance->app = app;
-    if (pxsys_display_service_get(pxsys_standard_system_display(runtime->system),
-                                  &display) != PXSYS_STATUS_OK) {
+    display.struct_size = sizeof(display);
+    status = pxsys_display_service_get(
+        pxsys_standard_system_display(runtime->system), &display);
+    if (status != PXSYS_STATUS_OK) {
+        fprintf(stderr, "PXA simulator: cannot read display status=%d\n",
+                (int)status);
         runtime->allocator.release(runtime->allocator.context, instance);
-        return PXSYS_STATUS_BAD_STATE;
+        return status;
     }
-    if (pxsys_display_content_rect(&display, &instance->content_rect) !=
-        PXSYS_STATUS_OK) {
+    status = pxsys_display_content_rect(&display, &instance->content_rect);
+    if (status != PXSYS_STATUS_OK) {
+        fprintf(stderr, "PXA simulator: cannot resolve content rect status=%d\n",
+                (int)status);
         runtime->allocator.release(runtime->allocator.context, instance);
-        return PXSYS_STATUS_BAD_STATE;
+        return status;
     }
     instance->display_width = display.width;
     instance->display_height = display.height;
@@ -203,17 +167,22 @@ static pxsys_status_t backend_instantiate(
     config.width = display.width;
     config.height = display.height;
     config.role = PXSYS_SURFACE_APPLICATION;
-    if (pxsys_renderer_surface_create(
-            pxsys_standard_system_renderer(runtime->system), &config,
-            &instance->surface) != PXSYS_STATUS_OK ||
-        pxsys_lvgl_renderer_surface_root(runtime->renderer, instance->surface,
-                                         &instance->root) != PXSYS_STATUS_OK) {
+    status = pxsys_renderer_surface_create(
+        pxsys_standard_system_renderer(runtime->system), &config,
+        &instance->surface);
+    if (status == PXSYS_STATUS_OK)
+        status = pxsys_lvgl_renderer_surface_root(runtime->renderer,
+                                                  instance->surface,
+                                                  &instance->root);
+    if (status != PXSYS_STATUS_OK) {
+        fprintf(stderr, "PXA simulator: cannot create app surface status=%d\n",
+                (int)status);
         if (instance->surface.slot != UINT32_MAX)
             (void)pxsys_renderer_surface_destroy(
                 pxsys_standard_system_renderer(runtime->system),
                 instance->surface);
         runtime->allocator.release(runtime->allocator.context, instance);
-        return PXSYS_STATUS_INTERNAL;
+        return status;
     }
     instance->next = runtime->instances;
     runtime->instances = instance;
@@ -227,9 +196,11 @@ static pxsys_status_t backend_start(void* context, void* opaque,
     lv_obj_t* content;
     (void)context;
     (void)launch;
-    if (instance == NULL || instance->root == NULL)
+    if (instance == NULL || instance->root == NULL) {
+        fprintf(stderr, "PXA simulator: app instance has no LVGL root\n");
         return PXSYS_STATUS_BAD_STATE;
-    if (launch_installed_application(instance)) return PXSYS_STATUS_OK;
+    }
+    if (queue_installed_application(instance)) return PXSYS_STATUS_OK;
     content = lv_obj_create(instance->root);
     lv_obj_set_size(content,
                     (int32_t)(instance->content_rect.width * 9u / 10u),
@@ -312,15 +283,8 @@ static pxsys_back_result_t backend_back(void* context, void* opaque) {
 
 static void backend_stop(void* context, void* opaque,
                          pxsys_stop_reason_t reason) {
-    simulator_instance_t* instance = (simulator_instance_t*)opaque;
     (void)reason;
-    if (instance != NULL && instance->product_process > 0) {
-        (void)kill(instance->product_process, SIGTERM);
-        (void)waitpid(instance->product_process, NULL, 0);
-        instance->product_process = 0;
-    }
     (void)backend_background(context, opaque);
-    set_desktop_window_visible(instance, 1);
 }
 
 void pxsys_desktop_runtime_poll(pxsys_desktop_runtime_t* runtime) {
@@ -329,28 +293,28 @@ void pxsys_desktop_runtime_poll(pxsys_desktop_runtime_t* runtime) {
         return;
     for (instance = runtime->instances; instance != NULL;
          instance = instance->next) {
-        if (instance->product_process <= 0 ||
-            waitpid(instance->product_process, NULL, WNOHANG) !=
-                instance->product_process)
-            continue;
-        instance->product_process = 0;
+        if (instance->product_launch_pending) {
+            const pxsys_desktop_runtime_fixture_t* fixture =
+                &instance->runtime->fixture;
+            int status;
+            instance->product_launch_pending = 0;
+            status = pxsys_product_simulator_run_embedded(
+                instance->product_package_path, fixture->publisher_key,
+                fixture->state_root, runtime->locale.tag,
+                instance->display_width,
+                instance->display_height, lv_display_get_default(),
+                fixture->pump, fixture->pump_context);
+            if (status != 0)
+                fprintf(stderr, "PXA simulator: product exited status=%d\n",
+                        status);
+            instance->product_completed = 1;
+        }
+        if (!instance->product_completed) continue;
+        instance->product_completed = 0;
         (void)pxsys_task_manager_finish_top(
             pxsys_standard_system_tasks(runtime->system), PXSYS_STOP_NORMAL);
-        set_desktop_window_visible(instance, 1);
         break;
     }
-}
-
-int pxsys_desktop_runtime_has_active_product(
-    const pxsys_desktop_runtime_t* runtime) {
-    const simulator_instance_t* instance;
-    if (runtime == NULL || runtime->magic != PXSYS_DESKTOP_RUNTIME_MAGIC)
-        return 0;
-    for (instance = runtime->instances; instance != NULL;
-         instance = instance->next) {
-        if (instance->product_process > 0) return 1;
-    }
-    return 0;
 }
 
 static void backend_destroy(void* context, void* opaque) {

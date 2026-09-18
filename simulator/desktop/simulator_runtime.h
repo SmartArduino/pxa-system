@@ -11,11 +11,10 @@ typedef struct {
     uint8_t permission_allowed;
     uint32_t storage_bytes;
     const char *installed_packages_root;
-    const char *product_runner;
     const char *publisher_key;
     const char *state_root;
-    const char *pxadb_control_socket;
-    void *desktop_window;
+    void *pump_context;
+    void (*pump)(void *context);
 } pxsys_desktop_runtime_fixture_t;
 
 pxsys_status_t pxsys_desktop_runtime_create(
@@ -25,8 +24,6 @@ pxsys_status_t pxsys_desktop_runtime_create(
 pxsys_status_t pxsys_desktop_runtime_provider(
     pxsys_desktop_runtime_t* runtime, pxsys_runtime_provider_t* output);
 void pxsys_desktop_runtime_poll(pxsys_desktop_runtime_t* runtime);
-int pxsys_desktop_runtime_has_active_product(
-    const pxsys_desktop_runtime_t* runtime);
 pxsys_status_t pxsys_desktop_runtime_destroy(pxsys_desktop_runtime_t* runtime);
 
 #endif

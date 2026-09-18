@@ -28,6 +28,7 @@
 #include "src/drivers/sdl/lv_sdl_keyboard.h"
 #include "src/drivers/sdl/lv_sdl_mouse.h"
 #include "src/drivers/sdl/lv_sdl_window.h"
+#include "src/misc/cache/instance/lv_image_cache.h"
 
 typedef struct {
     size_t allocations;
@@ -62,7 +63,110 @@ typedef struct {
     const char* installed_packages_root;
 } simulator_catalog_t;
 
+typedef struct {
+    uint32_t width;
+    uint32_t height;
+    uint32_t storage_bytes;
+    uint8_t round;
+} simulator_device_info_t;
+
 static simulator_ui_fonts_t simulator_ui_fonts;
+
+typedef struct {
+    pxsys_reference_lvgl_t* ui;
+    lv_obj_t* screen_off_overlay;
+    uint32_t window_id;
+    uint32_t pressed_at_ms;
+    uint8_t screen_off;
+    uint8_t key_down;
+    uint8_t press_woke_screen;
+    uint8_t long_press_handled;
+    uint8_t short_press_pending;
+    uint8_t restart_pending;
+    uint8_t quit_requested;
+} simulator_power_state_t;
+
+static void simulator_screen_off(simulator_power_state_t* state) {
+    if (state == NULL || state->ui == NULL || state->screen_off) return;
+    if (pxsys_reference_lvgl_set_locked(state->ui, true) != PXSYS_STATUS_OK)
+        return;
+    state->screen_off_overlay = lv_obj_create(lv_layer_top());
+    if (state->screen_off_overlay == NULL) return;
+    lv_obj_set_size(state->screen_off_overlay, LV_PCT(100), LV_PCT(100));
+    lv_obj_set_pos(state->screen_off_overlay, 0, 0);
+    lv_obj_set_style_bg_color(state->screen_off_overlay, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(state->screen_off_overlay, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(state->screen_off_overlay, 0, 0);
+    lv_obj_set_style_radius(state->screen_off_overlay, 0, 0);
+    lv_obj_set_style_pad_all(state->screen_off_overlay, 0, 0);
+    lv_obj_add_flag(state->screen_off_overlay, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_remove_flag(state->screen_off_overlay, LV_OBJ_FLAG_SCROLLABLE);
+    state->screen_off = 1;
+}
+
+static void simulator_screen_wake(simulator_power_state_t* state) {
+    if (state == NULL || !state->screen_off) return;
+    if (state->screen_off) {
+        if (state->screen_off_overlay != NULL)
+            lv_obj_delete(state->screen_off_overlay);
+        state->screen_off_overlay = NULL;
+        state->screen_off = 0;
+    }
+}
+
+static int simulator_power_event_watch(void* context, SDL_Event* event) {
+    simulator_power_state_t* state = (simulator_power_state_t*)context;
+    if (state == NULL || event == NULL ||
+        (event->type != SDL_KEYDOWN && event->type != SDL_KEYUP) ||
+        (event->key.keysym.sym != SDLK_p &&
+         event->key.keysym.sym != SDLK_POWER) ||
+        (state->window_id != 0 && event->key.windowID != state->window_id))
+        return 1;
+    if (event->type == SDL_KEYDOWN) {
+        if (event->key.repeat || state->key_down) return 1;
+        state->key_down = 1;
+        state->long_press_handled = 0;
+        state->press_woke_screen = state->screen_off;
+        state->pressed_at_ms = SDL_GetTicks();
+    } else if (state->key_down) {
+        if (!state->long_press_handled && !state->press_woke_screen)
+            state->short_press_pending = 1;
+        state->key_down = 0;
+    }
+    return 1;
+}
+
+static void simulator_power_action(
+    void* context, pxsys_reference_power_action_t action) {
+    simulator_power_state_t* state = (simulator_power_state_t*)context;
+    if (state == NULL) return;
+    if (action == PXSYS_REFERENCE_POWER_ACTION_SHUTDOWN)
+        state->quit_requested = 1;
+    else
+        state->restart_pending = 1;
+}
+
+static void simulator_power_poll(simulator_power_state_t* state) {
+    if (state == NULL || state->ui == NULL) return;
+    if (state->press_woke_screen && state->screen_off)
+        simulator_screen_wake(state);
+    if (state->key_down && !state->press_woke_screen &&
+        !state->long_press_handled &&
+        SDL_GetTicks() - state->pressed_at_ms >= 1500u) {
+        state->long_press_handled = 1;
+        (void)pxsys_reference_lvgl_show_power_menu(state->ui);
+    }
+    if (state->short_press_pending) {
+        state->short_press_pending = 0;
+        simulator_screen_off(state);
+    }
+    if (state->restart_pending) {
+        state->restart_pending = 0;
+        simulator_screen_wake(state);
+        (void)pxsys_reference_lvgl_set_locked(state->ui, false);
+        (void)pxsys_reference_lvgl_home(state->ui);
+    }
+}
 
 static int create_ui_font(lv_font_t** destination, uint32_t size,
                           const lv_font_t* symbol_fallback) {
@@ -135,6 +239,7 @@ typedef struct {
     uint8_t network_signal;
     pxsys_network_type_t network;
     uint8_t permission_allowed;
+    uint8_t locked;
     uint32_t storage_bytes;
     const char* installed_packages_root;
     const char* product_runner;
@@ -195,6 +300,8 @@ static int app_id_is_safe(pxsys_string_t app_id) {
 static void release_launcher_icon(void* context) {
     simulator_icon_t* icon = (simulator_icon_t*)context;
     if (icon == NULL) return;
+    if (icon->descriptor.header.magic == LV_IMAGE_HEADER_MAGIC)
+        lv_image_cache_drop(&icon->descriptor);
     free(icon->bytes);
     free(icon);
 }
@@ -331,12 +438,15 @@ static int manifest_app_id_matches(const pxa_package_manifest_t* manifest,
 }
 
 static pxsys_status_t publish_installed_package(
-    pxsys_app_registry_t* apps, const char* root, const char* app_id) {
+    pxsys_app_registry_t* apps, const char* root, const char* app_id,
+    const pxsys_locale_snapshot_t* locale) {
     char manifest_path[1400];
     uint8_t* encoded = NULL;
     size_t encoded_size = 0;
     pxa_package_limits_t limits;
     pxa_package_manifest_t* manifest = NULL;
+    pxa_package_manifest_t localized_manifest;
+    pxa_package_metadata_t localized_metadata;
     void* workspace = NULL;
     size_t workspace_size;
     pxsys_pxa_catalog_change_t change;
@@ -361,6 +471,17 @@ static pxsys_status_t publish_installed_package(
         result = PXSYS_STATUS_INVALID_ARGUMENT;
         goto done;
     }
+    if (locale != NULL &&
+        pxa_package_metadata_resolve(
+            manifest, (pxa_bytes_t){(const uint8_t*)locale->tag,
+                                     locale->tag_size},
+            &localized_metadata) == PXA_STATUS_OK) {
+        localized_manifest = *manifest;
+        localized_manifest.name = localized_metadata.name;
+        localized_manifest.description = localized_metadata.description;
+        localized_manifest.icon_path = localized_metadata.icon_path;
+        manifest = &localized_manifest;
+    }
     result = pxsys_pxa_catalog_publish(
         apps, manifest, pxsys_string_from_cstr(PXSYS_DESKTOP_RUNTIME_ID),
         PXSYS_APP_FLAG_REMOVABLE | PXSYS_APP_FLAG_ENABLED |
@@ -376,9 +497,13 @@ static pxsys_status_t sync_installed_catalog(simulator_catalog_t* catalog) {
     DIR* directory;
     struct dirent* entry;
     pxsys_app_registry_t* apps;
+    pxsys_locale_snapshot_t locale = {.struct_size = sizeof(locale)};
     if (catalog == NULL || catalog->system == NULL)
         return PXSYS_STATUS_INVALID_ARGUMENT;
     if (catalog->installed_packages_root == NULL) return PXSYS_STATUS_OK;
+    if (pxsys_locale_service_get(pxsys_standard_system_locale(catalog->system),
+                                 &locale) != PXSYS_STATUS_OK)
+        return PXSYS_STATUS_INTERNAL;
     directory = opendir(catalog->installed_packages_root);
     if (directory == NULL)
         return errno == ENOENT ? PXSYS_STATUS_OK : PXSYS_STATUS_UNAVAILABLE;
@@ -400,7 +525,8 @@ static pxsys_status_t sync_installed_catalog(simulator_catalog_t* catalog) {
                      package_root) < (int)sizeof(current_root) &&
             stat(current_root, &metadata) == 0 && S_ISDIR(metadata.st_mode))
             selected_root = current_root;
-        status = publish_installed_package(apps, selected_root, entry->d_name);
+        status = publish_installed_package(apps, selected_root, entry->d_name,
+                                           &locale);
         if (status != PXSYS_STATUS_OK && status != PXSYS_STATUS_ALREADY_EXISTS &&
             status != PXSYS_STATUS_INVALID_ARGUMENT &&
             status != PXSYS_STATUS_NOT_FOUND) {
@@ -412,11 +538,137 @@ static pxsys_status_t sync_installed_catalog(simulator_catalog_t* catalog) {
     return PXSYS_STATUS_OK;
 }
 
+static void catalog_locale_changed(
+    void* context, const pxsys_locale_snapshot_t* locale) {
+    simulator_catalog_t* catalog = (simulator_catalog_t*)context;
+    (void)locale;
+    if (catalog != NULL) (void)sync_installed_catalog(catalog);
+}
+
 static int refresh_installed_catalog(void* context) {
     simulator_catalog_t* catalog = (simulator_catalog_t*)context;
     if (sync_installed_catalog(catalog) != PXSYS_STATUS_OK) return 0;
     if (catalog->ui != NULL) pxsys_reference_lvgl_refresh_apps(catalog->ui);
     return 1;
+}
+
+static void copy_pxsys_string(char* destination, size_t capacity,
+                              pxsys_string_t source) {
+    size_t size;
+    if (destination == NULL || capacity == 0) return;
+    size = source.data == NULL ? 0 : source.size;
+    if (size >= capacity) size = capacity - 1;
+    if (size != 0) memcpy(destination, source.data, size);
+    destination[size] = '\0';
+}
+
+static void simulator_device_info(
+    void* context,
+    char values[PXSYS_REFERENCE_DEVICE_FIELD_COUNT]
+               [PXSYS_REFERENCE_DEVICE_VALUE_MAX]) {
+    const simulator_device_info_t* info =
+        (const simulator_device_info_t*)context;
+    if (info == NULL || values == NULL) return;
+    snprintf(values[PXSYS_REFERENCE_DEVICE_FIRMWARE_NAME],
+             PXSYS_REFERENCE_DEVICE_VALUE_MAX, "PXA Desktop Simulator");
+    snprintf(values[PXSYS_REFERENCE_DEVICE_FIRMWARE_VERSION],
+             PXSYS_REFERENCE_DEVICE_VALUE_MAX, "sensecap-watcher profile");
+    snprintf(values[PXSYS_REFERENCE_DEVICE_SYSTEM_VERSION],
+             PXSYS_REFERENCE_DEVICE_VALUE_MAX, "PXA System 0.1");
+    snprintf(values[PXSYS_REFERENCE_DEVICE_DISPLAY],
+             PXSYS_REFERENCE_DEVICE_VALUE_MAX, "%u x %u%s", info->width,
+             info->height, info->round ? ", round" : "");
+    snprintf(values[PXSYS_REFERENCE_DEVICE_MEMORY],
+             PXSYS_REFERENCE_DEVICE_VALUE_MAX, "Desktop host");
+    snprintf(values[PXSYS_REFERENCE_DEVICE_STORAGE],
+             PXSYS_REFERENCE_DEVICE_VALUE_MAX, "%lu KiB",
+             (unsigned long)(info->storage_bytes / 1024u));
+}
+
+static bool simulator_memory_info(void* context, uint64_t* available_bytes,
+                                  uint64_t* total_bytes) {
+    long available_pages;
+    long total_pages;
+    long page_size;
+    (void)context;
+    if (available_bytes == NULL || total_bytes == NULL) return false;
+    available_pages = sysconf(_SC_AVPHYS_PAGES);
+    total_pages = sysconf(_SC_PHYS_PAGES);
+    page_size = sysconf(_SC_PAGESIZE);
+    if (available_pages < 0 || total_pages <= 0 || page_size <= 0) return false;
+    *available_bytes = (uint64_t)available_pages * (uint64_t)page_size;
+    *total_bytes = (uint64_t)total_pages * (uint64_t)page_size;
+    return true;
+}
+
+static size_t simulator_list_apps(
+    void* context, pxsys_reference_managed_app_t* output, size_t capacity) {
+    const simulator_catalog_t* catalog = (const simulator_catalog_t*)context;
+    pxsys_app_registry_t* apps;
+    size_t count;
+    size_t index;
+    size_t written = 0;
+    if (catalog == NULL || catalog->system == NULL) return 0;
+    apps = pxsys_standard_system_apps(catalog->system);
+    count = pxsys_app_registry_count(apps);
+    if (output == NULL) return count;
+    for (index = 0; index < count && written < capacity; ++index) {
+        const pxsys_app_descriptor_t* app = pxsys_app_registry_at(apps, index);
+        pxsys_reference_managed_app_t* managed;
+        if (app == NULL) continue;
+        managed = &output[written++];
+        memset(managed, 0, sizeof(*managed));
+        copy_pxsys_string(managed->identity, sizeof(managed->identity),
+                          app->identity.app_id);
+        copy_pxsys_string(managed->name, sizeof(managed->name),
+                          app->display_name);
+        if (managed->name[0] == '\0')
+            copy_pxsys_string(managed->name, sizeof(managed->name),
+                              app->identity.app_id);
+        copy_pxsys_string(managed->version, sizeof(managed->version),
+                          app->version);
+        managed->built_in =
+            (app->flags & PXSYS_APP_FLAG_SYSTEM) != 0 ? 1 : 0;
+        managed->enabled =
+            (app->flags & PXSYS_APP_FLAG_ENABLED) != 0 ? 1 : 0;
+        /* Package removal and data deletion need a persistent package-store
+         * transaction, which this desktop registry adapter does not own. */
+        managed->installed = 0;
+        managed->has_private_data = 0;
+    }
+    return written;
+}
+
+static bool simulator_app_action(void* context, const char* identity,
+                                 pxsys_reference_app_action_t action) {
+    const simulator_catalog_t* catalog = (const simulator_catalog_t*)context;
+    pxsys_app_registry_t* apps;
+    size_t index;
+    if (catalog == NULL || catalog->system == NULL || identity == NULL)
+        return false;
+    if (action != PXSYS_REFERENCE_APP_ACTION_ENABLE &&
+        action != PXSYS_REFERENCE_APP_ACTION_DISABLE)
+        return false;
+    apps = pxsys_standard_system_apps(catalog->system);
+    for (index = 0; index < pxsys_app_registry_count(apps); ++index) {
+        const pxsys_app_descriptor_t* app = pxsys_app_registry_at(apps, index);
+        pxsys_app_descriptor_t replacement;
+        if (app == NULL || app->identity.app_id.size != strlen(identity) ||
+            memcmp(app->identity.app_id.data, identity,
+                   app->identity.app_id.size) != 0)
+            continue;
+        replacement = *app;
+        if (action == PXSYS_REFERENCE_APP_ACTION_ENABLE)
+            replacement.flags |= PXSYS_APP_FLAG_ENABLED;
+        else
+            replacement.flags &= ~PXSYS_APP_FLAG_ENABLED;
+        return pxsys_app_registry_update(apps, &replacement) == PXSYS_STATUS_OK;
+    }
+    return false;
+}
+
+static void pump_pxadb_control(void* context) {
+    pxsys_pxadb_control_poll((pxsys_pxadb_control_t*)context);
 }
 
 static void* simulator_allocate(void* context, size_t size) {
@@ -594,7 +846,7 @@ static int parse_options(int argc, char** argv, simulator_options_t* options) {
         PXSYS_NAVIGATION_BUTTONS, "en-US", NULL, NULL,
         PXSYS_DISPLAY_SHAPE_RECTANGLE, 0, SIMULATOR_SHAPE_BACKGROUND_MATTE,
         {0, 0, 0, 0}, 0, 0,
-        9, 41, 82, 4, PXSYS_NETWORK_WIFI, 1, 24u * 1024u,
+        9, 41, 82, 4, PXSYS_NETWORK_WIFI, 1, 0, 24u * 1024u,
         NULL, NULL, NULL, NULL, NULL,
     };
     for (index = 1; index < argc; ++index) {
@@ -732,6 +984,8 @@ static int parse_options(int argc, char** argv, simulator_options_t* options) {
         } else if (strcmp(argv[index], "--duration-ms") == 0 && index + 1 < argc) {
             if (!parse_u32(argv[++index], 1, 3600000, &options->duration_ms))
                 return 0;
+        } else if (strcmp(argv[index], "--locked") == 0) {
+            options->locked = 1;
         } else {
             return 0;
         }
@@ -750,7 +1004,7 @@ static void print_usage(const char* program) {
             "[--permission allow|deny] [--storage-bytes N] "
             "[--installed-packages-root DIR --product-runner PATH "
             "--publisher-key DER --state-root DIR] "
-            "[--launch APP_ID] [--screenshot PNG] [--duration-ms MS] "
+            "[--launch APP_ID] [--locked] [--screenshot PNG] [--duration-ms MS] "
             "[--smoke-test|--self-test]\n",
             program);
 }
@@ -823,19 +1077,40 @@ done:
 }
 
 static pxsys_status_t launch_app(pxsys_standard_system_t* system,
-                                 const uint8_t* publisher_root,
                                  const char* app_id) {
     pxsys_app_identity_t identity = {0};
     pxsys_intent_t intent = {0};
     pxsys_instance_ref_t instance;
-    memcpy(identity.publisher_root, publisher_root, PXSYS_PUBLISHER_ROOT_BYTES);
-    identity.app_id = pxsys_string_from_cstr(app_id);
+    pxsys_app_registry_t* apps;
+    pxsys_status_t status;
+    size_t index;
+    if (system == NULL || app_id == NULL) return PXSYS_STATUS_INVALID_ARGUMENT;
+    apps = pxsys_standard_system_apps(system);
+    for (index = 0; index < pxsys_app_registry_count(apps); ++index) {
+        const pxsys_app_descriptor_t* app = pxsys_app_registry_at(apps, index);
+        if (app != NULL && (app->flags & PXSYS_APP_FLAG_LAUNCHER) != 0 &&
+            app->identity.app_id.size == strlen(app_id) &&
+            memcmp(app->identity.app_id.data, app_id,
+                   app->identity.app_id.size) == 0) {
+            identity = app->identity;
+            break;
+        }
+    }
+    if (identity.app_id.data == NULL) {
+        fprintf(stderr, "PXA simulator: launcher app is not registered: %s\n",
+                app_id);
+        return PXSYS_STATUS_NOT_FOUND;
+    }
     intent.struct_size = sizeof(intent);
     intent.target = &identity;
     intent.action = pxsys_string_from_cstr("system.intent.main");
     intent.flags = PXSYS_INTENT_FLAG_CLEAR_TOP;
-    return pxsys_task_manager_start(pxsys_standard_system_tasks(system),
-                                    &intent, &instance);
+    status = pxsys_task_manager_start(pxsys_standard_system_tasks(system),
+                                      &intent, &instance);
+    if (status != PXSYS_STATUS_OK)
+        fprintf(stderr, "PXA simulator: launch status=%d for %s\n",
+                (int)status, app_id);
+    return status;
 }
 
 static int run_simulator(const simulator_options_t* options) {
@@ -851,15 +1126,19 @@ static int run_simulator(const simulator_options_t* options) {
     pxsys_desktop_runtime_fixture_t runtime_fixture;
     simulator_icon_resolver_t icon_resolver = {0};
     simulator_catalog_t catalog = {0};
+    simulator_device_info_t device_info;
     pxsys_reference_lvgl_config_t ui_config;
     pxsys_reference_lvgl_t* ui = NULL;
     lv_display_t* display = NULL;
     lv_indev_t* mouse = NULL;
     lv_indev_t* keyboard = NULL;
+    simulator_power_state_t power_state = {0};
     pxsys_pxadb_control_t pxadb_control = {.listener = -1};
     uint32_t started;
     uint8_t publisher_root[PXSYS_PUBLISHER_ROOT_BYTES];
     int result = 1;
+    uint8_t catalog_locale_subscribed = 0;
+    uint8_t power_event_watch_added = 0;
 
     memset(publisher_root, 0x52, sizeof(publisher_root));
 
@@ -973,22 +1252,30 @@ static int run_simulator(const simulator_options_t* options) {
     runtime_fixture.permission_allowed = options->permission_allowed;
     runtime_fixture.storage_bytes = options->storage_bytes;
     runtime_fixture.installed_packages_root = options->installed_packages_root;
-    runtime_fixture.product_runner = options->product_runner;
     runtime_fixture.publisher_key = options->publisher_key;
     runtime_fixture.state_root = options->state_root;
-    runtime_fixture.pxadb_control_socket = options->pxadb_control_socket;
-    runtime_fixture.desktop_window = lv_sdl_window_get_window(display);
+    runtime_fixture.pump_context = &pxadb_control;
+    runtime_fixture.pump = pump_pxadb_control;
     icon_resolver.installed_packages_root = options->installed_packages_root;
     catalog.system = system;
     catalog.installed_packages_root = options->installed_packages_root;
+    device_info.width = options->width;
+    device_info.height = options->height;
+    device_info.storage_bytes = options->storage_bytes;
+    device_info.round = options->shape == PXSYS_DISPLAY_SHAPE_CIRCLE ? 1 : 0;
     if (pxsys_desktop_runtime_create(system, renderer, &runtime_fixture, allocator,
                                      &simulator_runtime) != PXSYS_STATUS_OK)
         goto done;
     if (pxsys_desktop_runtime_provider(simulator_runtime,
-                                       &runtime_provider) != PXSYS_STATUS_OK ||
+                                        &runtime_provider) != PXSYS_STATUS_OK ||
         pxsys_runtime_register_provider(pxsys_standard_system_runtime(system),
                                         &runtime_provider) != PXSYS_STATUS_OK)
         goto done;
+    if (pxsys_locale_service_subscribe(pxsys_standard_system_locale(system),
+                                       &catalog, catalog_locale_changed) !=
+        PXSYS_STATUS_OK)
+        goto done;
+    catalog_locale_subscribed = 1;
     if (sync_installed_catalog(&catalog) != PXSYS_STATUS_OK)
         goto done;
 
@@ -1007,15 +1294,36 @@ static int run_simulator(const simulator_options_t* options) {
     ui_config.navigation_mode = options->navigation;
     ui_config.app_icon_context = &icon_resolver;
     ui_config.resolve_app_icon = resolve_launcher_icon;
+    ui_config.device_info_context = &device_info;
+    ui_config.device_info = simulator_device_info;
+    ui_config.memory_info = simulator_memory_info;
+    ui_config.app_manager_context = &catalog;
+    ui_config.app_list = simulator_list_apps;
+    ui_config.app_action = simulator_app_action;
     memcpy(ui_config.publisher_root, publisher_root,
            sizeof(ui_config.publisher_root));
     if (pxsys_reference_lvgl_create(&ui_config, &ui) != PXSYS_STATUS_OK)
         goto done;
     if (pxsys_reference_lvgl_start(ui) != PXSYS_STATUS_OK) goto done;
     catalog.ui = ui;
+    if (options->locked &&
+        pxsys_reference_lvgl_set_locked(ui, true) != PXSYS_STATUS_OK)
+        goto done;
+    power_state.ui = ui;
+    power_state.window_id = SDL_GetWindowID(lv_sdl_window_get_window(display));
+    (void)pxsys_reference_lvgl_set_power_action_callback(
+        ui, &power_state, simulator_power_action);
+    SDL_AddEventWatch(simulator_power_event_watch, &power_state);
+    power_event_watch_added = 1;
+
+    if (options->pxadb_control_socket != NULL &&
+        !pxsys_pxadb_control_start(&pxadb_control,
+                                   options->pxadb_control_socket, display,
+                                   &catalog, refresh_installed_catalog))
+        goto done;
 
     if (options->launch_app != NULL &&
-        launch_app(system, publisher_root, options->launch_app) !=
+        launch_app(system, options->launch_app) !=
             PXSYS_STATUS_OK) {
         fprintf(stderr, "PXA simulator: cannot launch %s\n",
                 options->launch_app);
@@ -1037,20 +1345,15 @@ static int run_simulator(const simulator_options_t* options) {
                                         &locale) != PXSYS_STATUS_OK)
             goto done;
     }
-    if (options->pxadb_control_socket != NULL &&
-        !pxsys_pxadb_control_start(&pxadb_control,
-                                   options->pxadb_control_socket, display,
-                                   &catalog, refresh_installed_catalog))
-        goto done;
-
     started = lv_tick_get();
     while (lv_display_get_default() != NULL &&
+           !power_state.quit_requested &&
            (options->duration_ms == 0 ||
             lv_tick_elaps(started) < options->duration_ms)) {
         pxsys_desktop_runtime_poll(simulator_runtime);
-        if (!pxsys_desktop_runtime_has_active_product(simulator_runtime))
-            pxsys_pxadb_control_poll(&pxadb_control);
+        pxsys_pxadb_control_poll(&pxadb_control);
         uint32_t delay = lv_timer_handler();
+        simulator_power_poll(&power_state);
         if (delay < 1) delay = 1;
         if (delay > 16) delay = 16;
         sleep_ms(delay);
@@ -1070,7 +1373,16 @@ static int run_simulator(const simulator_options_t* options) {
     result = 0;
 
 done:
+    if (power_event_watch_added)
+        SDL_DelEventWatch(simulator_power_event_watch, &power_state);
     pxsys_pxadb_control_stop(&pxadb_control);
+    if (power_state.screen_off_overlay != NULL &&
+        lv_display_get_default() != NULL)
+        lv_obj_delete(power_state.screen_off_overlay);
+    if (catalog_locale_subscribed)
+        (void)pxsys_locale_service_unsubscribe(
+            pxsys_standard_system_locale(system), &catalog,
+            catalog_locale_changed);
     if (system != NULL)
         (void)pxsys_task_manager_finish_all(
             pxsys_standard_system_tasks(system), PXSYS_STOP_SHUTDOWN);

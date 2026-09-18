@@ -2058,6 +2058,8 @@ static pxa_status_t prepare_incoming_container(
     const pxa_container_header_t *header, const uint8_t *manifest_bytes,
     size_t manifest_size, const pxa_posix_slot_ctx_t *ctx) {
     uint8_t package_signature[PXA_POSIX_INSTALLER_SIGNATURE_ENVELOPE_BYTES];
+    uint8_t header_bytes[PXA_CONTAINER_HEADER_BYTES];
+    pxa_container_header_t parsed_header;
     pxa_package_manifest_t *manifest = NULL;
     char relative[PXA_POSIX_INSTALLER_MAX_APP_ID + 16];
     char *packages = NULL;
@@ -2070,12 +2072,26 @@ static pxa_status_t prepare_incoming_container(
     pxa_status_t status;
 
     if (fstat(source_fd, &before) != 0 || !S_ISREG(before.st_mode) ||
-        !stat_single_link(&before) || before.st_size < 0 ||
-        (uint64_t)before.st_size != header->container_size) {
+        !stat_single_link(&before) || before.st_size < 0) {
         PXA_POSIX_INSTALLER_LOG_FAILURE("incoming", "prepare-incoming-stat",
                                         PXA_STATUS_DENIED);
         return PXA_STATUS_DENIED;
     }
+    /* Re-read the header at the point of use. The caller parsed it before the
+     * identity locks and session staging ran; using that copy for the chunk
+     * codec made some builds fail after those operations touched the frame. */
+    status = read_exact_at(source_fd, 0, header_bytes, sizeof(header_bytes));
+    if (status != PXA_STATUS_OK ||
+        pxa_container_header_parse(
+            (pxa_bytes_t){header_bytes, sizeof(header_bytes)},
+            (uint64_t)before.st_size, &parsed_header) != PXA_STATUS_OK ||
+        parsed_header.container_size != (uint64_t)before.st_size) {
+        PXA_POSIX_INSTALLER_LOG_FAILURE("incoming",
+                                        "prepare-incoming-header",
+                                        PXA_STATUS_DENIED);
+        return PXA_STATUS_DENIED;
+    }
+    header = &parsed_header;
     status = ensure_manifest_workspace(
         installer, (pxa_bytes_t){manifest_bytes, manifest_size});
     if (status != PXA_STATUS_OK) {

@@ -53,7 +53,16 @@ static void build_textures(void) {
     int x;
     int y;
     /* Grass: green top, dirt bottom, dirt side with a jagged green fringe. */
-    tex_fill(BLOCK_GRASS, BLOCK_TEXTURE_TOP, 107, 172, 62, 16, 11);
+    for (y = 0; y < 16; ++y) {
+        for (x = 0; x < 16; ++x) {
+            /* Soft 2x2 clumps over fine noise read more like turf than a
+             * single high-frequency speckle. */
+            const int clump = (int)(tex_hash(x >> 1, y >> 1, 16) % 19u) - 9;
+            const int n = (int)(tex_hash(x, y, 17) % 9u) - 4;
+            tex_pixel(BLOCK_GRASS, BLOCK_TEXTURE_TOP, x, y, 118 + clump + n,
+                      178 + clump + n, 66 + clump + n);
+        }
+    }
     tex_fill(BLOCK_GRASS, BLOCK_TEXTURE_BOTTOM, 134, 96, 67, 12, 12);
     tex_fill(BLOCK_GRASS, BLOCK_TEXTURE_SIDE, 134, 96, 67, 12, 13);
     for (x = 0; x < 16; ++x) {
@@ -102,28 +111,29 @@ static void build_textures(void) {
             }
         }
     }
-    /* Wood: oak bark with vertical grain on the sides, concentric growth
-     * rings on the cut faces. */
+    /* Wood: oak bark with faint vertical grain on the sides, concentric
+     * growth rings on the cut faces. */
     for (y = 0; y < 16; ++y) {
         for (x = 0; x < 16; ++x) {
-            /* Side: per-column streaks plus a couple of grooves and a knot,
-             * never hard alternating bars. */
-            const int streak = (int)(tex_hash(x, 0, 53) % 15u) - 7;
-            const int grain = (int)(tex_hash(x >> 1, y >> 2, 51) % 7u) - 3;
-            const int groove = (x % 7) == 3 || (x % 11) == 8 ? -14 : 0;
-            int side = streak + grain + groove;
-            const int kx = x - 5;
-            const int ky = y - 10;
-            if (kx * kx + ky * ky <= 3) side -= 26;
-            tex_pixel(BLOCK_WOOD, BLOCK_TEXTURE_SIDE, x, y, 106 + side,
-                      84 + side, 52 + side);
+            /* Side: vanilla oak bark is a flat base with low-contrast
+             * vertical grain, one soft streak and a small knot. */
+            const int column = (int)(tex_hash(x, 0, 53) % 9u) - 4;
+            const int grain = (int)(tex_hash(x >> 1, y >> 2, 51) % 5u) - 2;
+            const int streak = (x % 8) == 3 ? -9 : 0;
+            int side = column + grain + streak;
+            const int kx = x - 11;
+            const int ky = y - 4;
+            if (kx * kx + ky * ky <= 2) side -= 12;
+            if (x == 0 || x == 15) side -= 5;
+            tex_pixel(BLOCK_WOOD, BLOCK_TEXTURE_SIDE, x, y, 105 + side,
+                      83 + side, 51 + side);
             /* Cut faces: bark rim, thin rings and a darker heart. */
             {
                 const int dx = x - 7;
                 const int dy = y - 7;
                 const int radius =
                     (int)(rc_sqrt((float)(dx * dx + dy * dy)) + 0.5F);
-                const int noise = (int)(tex_hash(x, y, 52) % 9u) - 4;
+                const int noise = (int)(tex_hash(x, y, 52) % 7u) - 3;
                 int r;
                 int g;
                 int b;
@@ -136,10 +146,10 @@ static void build_textures(void) {
                     g = 118 + noise;
                     b = 70 + noise;
                 } else {
-                    const int ring = (radius % 3) == 0 ? -28 : 0;
-                    r = 178 + ring + noise;
-                    g = 140 + ring + noise;
-                    b = 86 + ring + noise;
+                    const int ring = (radius % 3) == 0 ? -26 : 0;
+                    r = 172 + ring + noise;
+                    g = 136 + ring + noise;
+                    b = 84 + ring + noise;
                 }
                 tex_pixel(BLOCK_WOOD, BLOCK_TEXTURE_TOP, x, y, r, g, b);
                 tex_pixel(BLOCK_WOOD, BLOCK_TEXTURE_BOTTOM, x, y, r, g, b);

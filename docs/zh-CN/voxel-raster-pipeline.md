@@ -57,7 +57,7 @@ Guest 只能在创建结果中存在相应能力时设置 `required_capabilities
 
 ### 资源上传
 
-资源通过 GameRender handle 的 `PXA_GAME_RENDER_IO_UPLOAD` 上传并绑定到 context 生命周期。首版固定 16 个 texture slot 和一个 256 色 RGB565 palette：
+资源通过 GameRender handle 的 `PXA_GAME_RENDER_IO_UPLOAD` 上传并绑定到 context 生命周期。首版固定 16 个 texture slot 和一个 256 色 RGB565 palette；`TEXTURE_SLOTS_48` capability 把 slot 上限扩到 `PXA_RASTER_MAX_TEXTURES`（48）。Voxel Craft 的材质由 `block_textures.c` 程序化生成，与旧 DDA 回退路径共用同一套 16x16 顶/侧/底贴图；INDEX8 路径启动时用中位切分把 45 个面片量化到 palette（保留 255 号白色给字体）。Host 支持 `TEXTURE_SLOTS_48` 时每方块上传顶/侧/底三张独立 16x16 贴图（42 张 + 字体占 1 个 slot），旧 Host 回退为每方块一张侧面贴图：
 
 - `PALETTE_RGB565`：正好 256 个 little-endian canonical RGB565；
 - `TEXTURE_INDEX8`：row-major INDEX8，宽高和 payload 长度必须完全一致；
@@ -72,6 +72,7 @@ Header 包含 magic、ABI major/minor、总字节数、required capability、com
 - `CLEAR_RGB565`；
 - `FLAT_QUAD`；
 - `TEXTURED_QUAD`，顶点使用 12.4 屏幕坐标、12.4 UV、0..255 光照和 Q8 view depth；ABI 1.1 对 `u/z`、`v/z`、`1/z` 做透视校正。Host 在扫描线覆盖区间内以 8 像素小段计算端点透视坐标并做 Q8 增量，避免 ESP32-S3 上逐像素软件整数除法；同一记录也可通过 solid-color flag 表示带深度的纯色场景面；
+- `AFFINE_UV` flag（capability `AFFINE_UV`）：Guest 只在 Host 声明该能力时设置。UV 改为屏幕线性插值、`1/z` 仍按透视插值写深度，省掉每块的透视除法和每像素的 `u/z`、`v/z` 累加。Guest 仅对深度跨度小、仿射误差低于约四分之一纹素的面启用，其余面仍走透视路径；
 - `SPRITE`，仅在 capability 允许时接受 additive；
 - `SPRITE_BATCH`，一个状态头后跟多个 16-byte 实例；
 - `TRIANGLE_BATCH`，一个状态头后跟每三点成面的 12-byte 顶点。
@@ -83,6 +84,8 @@ Header 包含 magic、ABI major/minor、总字节数、required capability、com
 每个 16x24x16 chunk 保留 revision。mesh cache 只在 revision 或 chunk 坐标改变时重建。每个轴的每个切片先生成“当前 voxel 非空气且相邻 voxel 不遮挡”的二维 mask，再把相同 block/face 的连续矩形合并成一个 Quad。跨 chunk 边界通过世界读取判断暴露面。当前最小闭环把水、玻璃和叶片也按不透明块处理；透明材质分层尚未完成，不能把它计入首阶段验收。
 
 每帧先对 chunk 包围盒做 fog-distance 和视锥粗裁剪，再对候选 Quad 做背面剔除。与 near/far/四个视锥侧面相交的 Quad 使用 Sutherland-Hodgman 裁剪；三角形和五边形以上的结果以退化 Quad/triangle fan 发送，不能因为单个顶点越过 near plane 而丢弃整个面。Host 使用 reciprocal depth 做逐像素遮挡；ABI 1.1 的不透明面按近到远提交以尽早拒绝被遮挡像素，无深度 fallback 才保留远到近顺序。High/Balanced/Performance 当前分别保留最多 620/480/320 个候选面；缓存或 DrawList 达到容量时按质量档位截断，并在 Guest stats 记录 clipped/dropped Quad。
+
+其余已落地的优化：候选排序改为按深度排序 16-bit 索引，避免在 PSRAM 里搬移整个 Quad 结构；投影后小于约 3x3 像素的贴图面降级成带深度的纯色面；Voxel 面光照本身是每面常量，Host 检测到三个顶点光照一致时跳过光照插值 setup 和逐像素光照累加，`light_rgb565` 改用精确的无除法 `x/255` 实现；Guest stats 新增 `affine_quads` 记录实际走仿射路径的面数。
 
 ## 分辨率与质量
 
@@ -97,7 +100,7 @@ GameRender context 的逻辑分辨率独立于 mesh 密度。High/Balanced/Perfo
 
 ## 内存预算
 
-以 148x120、3 buffers 为默认：Host RGB565 buffers 约 104 KiB；reciprocal-depth scratch 约 35 KiB；256 色 palette 512 B；15 个 16x16 INDEX8 tile 3.75 KiB；两个 48 KiB DrawList mailbox；Guest chunk mesh cache 使用固定上限。296x240 High 的三个 Host buffers 约 416 KiB，depth scratch 约 139 KiB，只在实时 telemetry 证明预算允许时使用。
+以 148x120、3 buffers 为默认：Host RGB565 buffers 约 104 KiB；reciprocal-depth scratch 约 35 KiB；256 色 palette 512 B；每方块顶/侧/底 16x16 INDEX8 贴图共 11.25 KiB；两个 48 KiB DrawList mailbox；Guest chunk mesh cache 使用固定上限。296x240 High 的三个 Host buffers 约 416 KiB，depth scratch 约 139 KiB，只在实时 telemetry 证明预算允许时使用。
 
 旧 GuestMapped fallback 仍保留现有约 450 KiB 的 Guest 静态 framebuffer/depth/预计算表。完成 Raster 稳定性验证后可把这些 fallback buffer 放入单独构建 profile，但首个兼容版本不删除。
 

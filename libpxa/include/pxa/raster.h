@@ -15,7 +15,7 @@ extern "C" {
 #define PXA_RASTER_DRAW_MAGIC UINT32_C(0x4c525850) /* PXRL */
 #define PXA_RASTER_UPLOAD_MAGIC UINT32_C(0x52555850) /* PXUR */
 
-#define PXA_RASTER_MAX_TEXTURES UINT8_C(16)
+#define PXA_RASTER_MAX_TEXTURES UINT8_C(48)
 #define PXA_RASTER_PALETTE_COLORS UINT16_C(256)
 #define PXA_RASTER_MAX_DRAW_BYTES UINT32_C(49152)
 #define PXA_RASTER_MAX_COMMANDS UINT32_C(768)
@@ -30,10 +30,15 @@ extern "C" {
  * the per-texel perspective divide with a screen-linear UV. It is a bandwidth
  * optimisation for faces whose depth range is small. */
 #define PXA_RASTER_CAP_AFFINE_UV UINT32_C(32)
+/* The Host accepts texture slots up to PXA_RASTER_MAX_TEXTURES instead of the
+ * original 16. Guests must only address slots >= 16 when this is advertised
+ * so an older Host keeps working. */
+#define PXA_RASTER_CAP_TEXTURE_SLOTS_48 UINT32_C(64)
 #define PXA_RASTER_CAP_KNOWN_MASK                                      \
     (PXA_RASTER_CAP_FLAT_QUAD | PXA_RASTER_CAP_TEXTURED_QUAD |        \
      PXA_RASTER_CAP_ADDITIVE_SPRITE | PXA_RASTER_CAP_SPRITE_BATCH |   \
-     PXA_RASTER_CAP_TRIANGLE_BATCH | PXA_RASTER_CAP_AFFINE_UV)
+     PXA_RASTER_CAP_TRIANGLE_BATCH | PXA_RASTER_CAP_AFFINE_UV |       \
+     PXA_RASTER_CAP_TEXTURE_SLOTS_48)
 
 #define PXA_RASTER_UPLOAD_PALETTE_RGB565 UINT8_C(1)
 #define PXA_RASTER_UPLOAD_TEXTURE_INDEX8 UINT8_C(2)
@@ -134,6 +139,13 @@ void pxa_raster_execute_draw_list(const uint8_t *bytes,
                                   const pxa_raster_target_t *target,
                                   const pxa_raster_resources_t *resources,
                                   pxa_raster_telemetry_t *telemetry);
+/* Executes only rows [row_begin, row_end). Multiple callers may execute
+ * disjoint row ranges of the same validated list and target concurrently. */
+void pxa_raster_execute_draw_list_rows(
+    const uint8_t *bytes, const pxa_raster_draw_list_view_t *list,
+    const pxa_raster_target_t *target,
+    const pxa_raster_resources_t *resources, uint16_t row_begin,
+    uint16_t row_end, pxa_raster_telemetry_t *telemetry);
 
 #ifdef __cplusplus
 }

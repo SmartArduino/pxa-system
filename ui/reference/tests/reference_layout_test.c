@@ -30,5 +30,12 @@ int main(void) {
     assert(pxsys_reference_layout_compute(&display, &layout) == PXSYS_STATUS_OK);
     assert(layout.size_class == PXSYS_UI_SIZE_EXPANDED);
     assert(layout.grid_columns == 6);
+    assert(pxsys_reference_layout_gesture_strip_height(
+               PXSYS_UI_SIZE_COMPACT) == 20);
+    assert(pxsys_reference_layout_gesture_strip_height(
+               PXSYS_UI_SIZE_REGULAR) == 24);
+    assert(pxsys_reference_layout_gesture_strip_height(
+               PXSYS_UI_SIZE_EXPANDED) == 28);
+    assert(pxsys_reference_layout_back_gesture_width() == 16);
     return 0;
 }

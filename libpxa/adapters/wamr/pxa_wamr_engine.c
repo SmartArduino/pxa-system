@@ -1038,13 +1038,12 @@ static pxa_status_t engine_instantiate(void *context, pxa_bytes_t package_root,
 #endif
         return discard_entry(engine, slot, status);
     }
-    /* XIP modules execute from their input buffer. For regular AOT and fast
-     * interpreter modules, ask WAMR to clone retained metadata and release the
-     * temporary Artifact as soon as WAMR confirms that it is independent. */
+    /* The adapter owns module_bytes and releases it after wasm_runtime_unload().
+     * WAMR's AOT loader retains direct pointers into its input while parsing;
+     * marking the binary freeable afterward makes its teardown pass those
+     * interior pointers to the runtime allocator. */
     load_args.name = "";
-    load_args.wasm_binary_freeable =
-        !wasm_runtime_is_xip_file(slot->module_bytes,
-                                  (uint32_t)slot->module_size);
+    load_args.wasm_binary_freeable = false;
     slot->module = wasm_runtime_load_ex(slot->module_bytes,
                                         (uint32_t)slot->module_size,
                                         &load_args, error, sizeof(error));

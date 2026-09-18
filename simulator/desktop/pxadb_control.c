@@ -127,6 +127,7 @@ done:
 }
 
 static SDL_Keycode keycode_from_name(const char *name) {
+    if (strcmp(name, "POWER") == 0) return SDLK_POWER;
     if (strcmp(name, "BACK") == 0) return SDLK_ESCAPE;
     if (strcmp(name, "HOME") == 0) return SDLK_HOME;
     if (strcmp(name, "VOLUME_UP") == 0) return SDLK_VOLUMEUP;
@@ -169,20 +170,22 @@ static int push_pointer(uint32_t window_id, const char *action, int x, int y) {
     return SDL_PushEvent(&event) == 1;
 }
 
-static int push_key(uint32_t window_id, const char *name) {
+static int push_key_phase(uint32_t window_id, const char *name, int pressed) {
     SDL_Event event;
     const SDL_Keycode keycode = keycode_from_name(name);
     if (keycode == SDLK_UNKNOWN) return 0;
     memset(&event, 0, sizeof(event));
-    event.type = SDL_KEYDOWN;
+    event.type = pressed ? SDL_KEYDOWN : SDL_KEYUP;
     event.key.windowID = window_id;
-    event.key.state = SDL_PRESSED;
+    event.key.state = pressed ? SDL_PRESSED : SDL_RELEASED;
     event.key.keysym.sym = keycode;
     event.key.keysym.scancode = SDL_GetScancodeFromKey(keycode);
-    if (SDL_PushEvent(&event) != 1) return 0;
-    event.type = SDL_KEYUP;
-    event.key.state = SDL_RELEASED;
     return SDL_PushEvent(&event) == 1;
+}
+
+static int push_key(uint32_t window_id, const char *name) {
+    return push_key_phase(window_id, name, 1) &&
+           push_key_phase(window_id, name, 0);
 }
 
 static void handle_client(pxsys_pxadb_control_t *control, int client) {
@@ -221,6 +224,14 @@ static void handle_client(pxsys_pxadb_control_t *control, int client) {
             control->tap_release_at = lv_tick_get() + 16u;
         }
         (void)send_text(client, ok ? "OK\n" : "ERR input_queue_full\n");
+    } else if (sscanf(command, "KEY_DOWN %23s", key) == 1) {
+        (void)send_text(client, push_key_phase(control->window_id, key, 1)
+                                    ? "OK\n"
+                                    : "ERR unsupported_key\n");
+    } else if (sscanf(command, "KEY_UP %23s", key) == 1) {
+        (void)send_text(client, push_key_phase(control->window_id, key, 0)
+                                    ? "OK\n"
+                                    : "ERR unsupported_key\n");
     } else if (sscanf(command, "KEY %23s", key) == 1) {
         (void)send_text(client, push_key(control->window_id, key) ? "OK\n" : "ERR unsupported_key\n");
     } else if (strcmp(command, "SYNC\n") == 0) {

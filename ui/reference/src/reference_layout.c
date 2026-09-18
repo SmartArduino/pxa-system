@@ -100,3 +100,12 @@ pxsys_status_t pxsys_reference_layout_compute(
     output->grid_columns = (uint8_t)columns;
     return PXSYS_STATUS_OK;
 }
+
+uint32_t pxsys_reference_layout_gesture_strip_height(
+    pxsys_ui_size_class_t size_class) {
+    return size_class == PXSYS_UI_SIZE_COMPACT
+               ? 20u
+               : size_class == PXSYS_UI_SIZE_REGULAR ? 24u : 28u;
+}
+
+uint32_t pxsys_reference_layout_back_gesture_width(void) { return 16u; }

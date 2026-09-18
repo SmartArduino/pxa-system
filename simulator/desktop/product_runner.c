@@ -29,20 +29,27 @@
 #include "pxa/wire.h"
 #include "pxa/window.h"
 #include "pxadb_control.h"
+#include "product_runner.h"
 #include "src/drivers/sdl/lv_sdl_keyboard.h"
 
 #define PRODUCT_CLOCK_SERVICE UINT16_C(4)
 #define PRODUCT_CLOCK_TICK UINT16_C(0x8001)
 #define PRODUCT_COMPONENTS UINT16_C(8)
+#define PRODUCT_SYSTEM_CONFIG_ENVIRONMENT UINT16_C(12)
+#define PRODUCT_SYSTEM_CONFIGURATION_LOCALE UINT16_C(1)
+#define PRODUCT_LOCALE_MAX_BYTES 63u
 #define PRODUCT_SYSTEM_GESTURE_EDGE_WIDTH 16
 #define PRODUCT_SYSTEM_GESTURE_HOME_HEIGHT 20
 #define PRODUCT_SYSTEM_GESTURE_COMMIT_DISTANCE 32
 #define PRODUCT_SURFACE_FLAG_GAME_RENDER UINT8_C(8)
+#define PRODUCT_ASSET_MAX_BYTES (4u * 1024u * 1024u)
+#define PRODUCT_ASSET_MAX_DIMENSION 4096u
 
 typedef struct {
     const char *package_path;
     const char *publisher_key;
     const char *state_root;
+    const char *locale;
     const char *pxadb_control_socket;
     uint32_t width;
     uint32_t height;
@@ -106,6 +113,9 @@ typedef struct {
     pxa_activation_coordinator_t *coordinator;
     pxa_component_t active_component;
     char package_root[1024];
+    char locale[PRODUCT_LOCALE_MAX_BYTES + 1u];
+    lv_font_t *body_font;
+    lv_font_t *title_font;
     uint32_t width;
     uint32_t height;
     uint16_t clock_period_ms;
@@ -117,6 +127,77 @@ typedef struct {
     int32_t system_gesture_press_y;
     uint8_t exit_requested;
 } product_host_t;
+
+typedef struct {
+    lv_image_dsc_t descriptor;
+    uint8_t *bytes;
+} product_asset_t;
+
+static uint32_t read_be_u32(const uint8_t *value) {
+    return ((uint32_t)value[0] << 24) | ((uint32_t)value[1] << 16) |
+           ((uint32_t)value[2] << 8) | (uint32_t)value[3];
+}
+
+static lv_font_t *load_product_font(uint32_t size,
+                                    const lv_font_t *symbol_fallback) {
+#ifdef PXSYS_DESKTOP_TEXT_FONT
+    lv_font_t *font = lv_freetype_font_create(
+        PXSYS_DESKTOP_TEXT_FONT, LV_FREETYPE_FONT_RENDER_MODE_BITMAP, size,
+        LV_FREETYPE_FONT_STYLE_NORMAL);
+    if (font != NULL) font->fallback = symbol_fallback;
+    return font;
+#else
+    (void)size;
+    (void)symbol_fallback;
+    return NULL;
+#endif
+}
+
+static pxa_status_t configure_start_locale(product_host_t *host,
+                                           uint64_t instance_id) {
+    uint8_t environment[4u + PRODUCT_LOCALE_MAX_BYTES];
+    uint8_t config[8u + sizeof(environment)];
+    pxa_writer_t environment_writer;
+    pxa_writer_t config_writer;
+    size_t locale_size;
+    pxa_status_t status;
+    if (host == NULL || host->engine == NULL) return PXA_STATUS_INVALID_ARGUMENT;
+    locale_size = strlen(host->locale);
+    if (locale_size < 2u || locale_size > PRODUCT_LOCALE_MAX_BYTES)
+        return PXA_STATUS_INVALID_ARGUMENT;
+    pxa_writer_init(&environment_writer, environment, sizeof(environment));
+    status = pxa_writer_record(&environment_writer,
+                               PRODUCT_SYSTEM_CONFIGURATION_LOCALE,
+                               host->locale, locale_size);
+    if (status != PXA_STATUS_OK) return status;
+    pxa_writer_init(&config_writer, config, sizeof(config));
+    status = pxa_writer_record(&config_writer, PRODUCT_SYSTEM_CONFIG_ENVIRONMENT,
+                               environment_writer.data, environment_writer.size);
+    if (status != PXA_STATUS_OK) return status;
+    return pxa_wamr_engine_set_config(
+        host->engine, instance_id,
+        (pxa_bytes_t){config_writer.data, config_writer.size});
+}
+
+static int asset_path_is_safe(const uint8_t *path, size_t path_size) {
+    size_t index;
+    size_t part_start = 0;
+    if (path == NULL || path_size == 0 || path[0] == '/') return 0;
+    for (index = 0; index <= path_size; ++index) {
+        if (index != path_size && path[index] != '/') {
+            if (path[index] == '\\' || path[index] == '\0' || path[index] < 0x20)
+                return 0;
+            continue;
+        }
+        if (index == part_start ||
+            (index - part_start == 1 && path[part_start] == '.') ||
+            (index - part_start == 2 && path[part_start] == '.' &&
+             path[part_start + 1] == '.'))
+            return 0;
+        part_start = index + 1;
+    }
+    return 1;
+}
 
 static pxa_status_t simulator_log_write(
     void *context, pxa_component_t component, pxa_bytes_t app_id,
@@ -575,7 +656,9 @@ static void raster_resources(const product_host_t *host,
                               PXA_RASTER_CAP_TEXTURED_QUAD |
                               PXA_RASTER_CAP_ADDITIVE_SPRITE |
                               PXA_RASTER_CAP_SPRITE_BATCH |
-                              PXA_RASTER_CAP_TRIANGLE_BATCH;
+                              PXA_RASTER_CAP_TRIANGLE_BATCH |
+                              PXA_RASTER_CAP_AFFINE_UV |
+                              PXA_RASTER_CAP_TEXTURE_SLOTS_48;
     for (uint8_t index = 0; index < PXA_RASTER_MAX_TEXTURES; ++index) {
         resources->textures[index].pixels = host->raster_textures[index];
         resources->textures[index].width = host->raster_texture_width[index];
@@ -731,7 +814,9 @@ static pxa_status_t game_render_create(
                     PXA_RASTER_CAP_TEXTURED_QUAD |
                     PXA_RASTER_CAP_ADDITIVE_SPRITE |
                     PXA_RASTER_CAP_SPRITE_BATCH |
-                    PXA_RASTER_CAP_TRIANGLE_BATCH;
+                    PXA_RASTER_CAP_TRIANGLE_BATCH |
+                    PXA_RASTER_CAP_AFFINE_UV |
+                    PXA_RASTER_CAP_TEXTURE_SLOTS_48;
     return PXA_STATUS_OK;
 }
 
@@ -863,19 +948,65 @@ static pxa_status_t execute_inline(pxa_lvgl_ui_execute_callback_fn callback,
 static const void *resolve_asset(const uint8_t *path, size_t path_size,
                                  void *context) {
     product_host_t *host = context;
-    char *full_path;
-    if (host == NULL || path == NULL || path_size == 0 ||
+    static const uint8_t png_signature[] = {
+        0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+    };
+    char full_path[1536];
+    struct stat metadata;
+    FILE *file = NULL;
+    product_asset_t *asset = NULL;
+    size_t offset = 0;
+    if (host == NULL || !asset_path_is_safe(path, path_size) ||
         path_size > 512 || strlen(host->package_root) + path_size + 2 >= 1024)
         return NULL;
-    full_path = malloc(strlen(host->package_root) + path_size + 2);
-    if (full_path == NULL) return NULL;
-    sprintf(full_path, "%s/%.*s", host->package_root, (int)path_size, path);
-    return full_path;
+    if (snprintf(full_path, sizeof(full_path), "%s/%.*s", host->package_root,
+                 (int)path_size, path) >= (int)sizeof(full_path) ||
+        stat(full_path, &metadata) != 0 || !S_ISREG(metadata.st_mode) ||
+        metadata.st_size < 24 ||
+        (uintmax_t)metadata.st_size > PRODUCT_ASSET_MAX_BYTES)
+        return NULL;
+    asset = calloc(1, sizeof(*asset));
+    if (asset == NULL) return NULL;
+    asset->bytes = malloc((size_t)metadata.st_size);
+    if (asset->bytes == NULL) goto failed;
+    file = fopen(full_path, "rb");
+    if (file == NULL) goto failed;
+    while (offset < (size_t)metadata.st_size) {
+        size_t read = fread(asset->bytes + offset, 1,
+                            (size_t)metadata.st_size - offset, file);
+        if (read == 0) goto failed;
+        offset += read;
+    }
+    fclose(file);
+    file = NULL;
+    if (memcmp(asset->bytes, png_signature, sizeof(png_signature)) != 0 ||
+        memcmp(asset->bytes + 12, "IHDR", 4) != 0 ||
+        read_be_u32(asset->bytes + 16) == 0 ||
+        read_be_u32(asset->bytes + 20) == 0 ||
+        read_be_u32(asset->bytes + 16) > PRODUCT_ASSET_MAX_DIMENSION ||
+        read_be_u32(asset->bytes + 20) > PRODUCT_ASSET_MAX_DIMENSION)
+        goto failed;
+    asset->descriptor.header.magic = LV_IMAGE_HEADER_MAGIC;
+    asset->descriptor.header.cf = LV_COLOR_FORMAT_RAW_ALPHA;
+    asset->descriptor.header.w = read_be_u32(asset->bytes + 16);
+    asset->descriptor.header.h = read_be_u32(asset->bytes + 20);
+    asset->descriptor.data_size = (size_t)metadata.st_size;
+    asset->descriptor.data = asset->bytes;
+    return &asset->descriptor;
+failed:
+    if (file != NULL) fclose(file);
+    free(asset == NULL ? NULL : asset->bytes);
+    free(asset);
+    return NULL;
 }
 
 static void release_asset(const void *asset, void *context) {
     (void)context;
-    free((void *)asset);
+    if (asset != NULL) {
+        product_asset_t *owned = (product_asset_t *)asset;
+        free(owned->bytes);
+        free(owned);
+    }
 }
 
 static void dispatch_component_events(product_host_t *host) {
@@ -991,6 +1122,10 @@ static pxa_status_t prepare_start(void *context, pxa_component_t component,
     snapshot.pixel_height = host->height;
     snapshot.density_numerator = 1;
     snapshot.density_denominator = 1;
+    /* The simulator always installs the Home and Back gesture overlays, so
+     * report their strips to guests through the system bar insets. */
+    snapshot.system_bar_insets.left = PRODUCT_SYSTEM_GESTURE_EDGE_WIDTH;
+    snapshot.system_bar_insets.bottom = PRODUCT_SYSTEM_GESTURE_HOME_HEIGHT;
     snapshot.focused = 1;
     status = pxa_window_update_snapshot(host->window, component, &snapshot);
     if (status != PXA_STATUS_OK) return status;
@@ -1121,8 +1256,9 @@ static pxa_status_t permission_save(void *context, pxa_bytes_t identity,
     return PXA_STATUS_OK;
 }
 
+#ifndef PXSYS_PRODUCT_RUNNER_LIBRARY
 static void print_usage(const char *program) {
-    fprintf(stderr, "Usage: %s --package DIR --publisher-key DER [--state-root DIR] [--pxadb-control-socket PATH] [--width PX --height PX]\n",
+    fprintf(stderr, "Usage: %s --package DIR --publisher-key DER [--state-root DIR] [--locale TAG] [--pxadb-control-socket PATH] [--width PX --height PX]\n",
             program);
 }
 
@@ -1131,6 +1267,7 @@ static int parse_options(int argc, char **argv, options_t *options) {
     memset(options, 0, sizeof(*options));
     options->width = 296;
     options->height = 240;
+    options->locale = "en-US";
     for (index = 1; index < argc; ++index) {
         if (strcmp(argv[index], "--package") == 0 && index + 1 < argc)
             options->package_path = argv[++index];
@@ -1138,6 +1275,8 @@ static int parse_options(int argc, char **argv, options_t *options) {
             options->publisher_key = argv[++index];
         else if (strcmp(argv[index], "--state-root") == 0 && index + 1 < argc)
             options->state_root = argv[++index];
+        else if (strcmp(argv[index], "--locale") == 0 && index + 1 < argc)
+            options->locale = argv[++index];
         else if (strcmp(argv[index], "--pxadb-control-socket") == 0 && index + 1 < argc)
             options->pxadb_control_socket = argv[++index];
         else if (strcmp(argv[index], "--width") == 0 && index + 1 < argc)
@@ -1149,9 +1288,13 @@ static int parse_options(int argc, char **argv, options_t *options) {
     return options->package_path != NULL && options->publisher_key != NULL &&
            options->width > 0 && options->height > 0;
 }
+#endif
 
-int main(int argc, char **argv) {
-    options_t options;
+static int run_product_simulator(const options_t *input,
+                                 lv_display_t *embedded_display,
+                                 pxsys_product_simulator_pump_fn pump,
+                                 void *pump_context) {
+    const options_t options = *input;
     product_host_t host = {0};
     pxa_package_limits_t limits;
     pxa_posix_installer_config_t installer_config = {0};
@@ -1200,12 +1343,13 @@ int main(int argc, char **argv) {
     pxa_component_t component;
     pxa_status_t status;
     const char *stage = "arguments";
+    const int owns_display = embedded_display == NULL;
     int result = 1;
 
     {
         struct stat metadata;
-        if (!parse_options(argc, argv, &options)) {
-            print_usage(argv[0]);
+        if (options.package_path == NULL || options.publisher_key == NULL ||
+            options.width == 0 || options.height == 0) {
             return 2;
         }
         if (stat(options.package_path, &metadata) != 0 ||
@@ -1261,16 +1405,28 @@ int main(int argc, char **argv) {
         goto done;
     stage = "display";
     if (strlen(root) >= sizeof(host.package_root)) goto done;
-    strcpy(host.package_root, root); host.width = options.width; host.height = options.height;
-    lv_init();
-    display = lv_sdl_window_create((int32_t)options.width, (int32_t)options.height);
-    mouse = lv_sdl_mouse_create();
-    keyboard = lv_sdl_keyboard_create();
-    if (display == NULL || mouse == NULL || keyboard == NULL) goto done;
+    if (options.locale == NULL || strlen(options.locale) < 2u ||
+        strlen(options.locale) > PRODUCT_LOCALE_MAX_BYTES)
+        goto done;
+    strcpy(host.package_root, root);
+    strcpy(host.locale, options.locale);
+    host.width = options.width;
+    host.height = options.height;
+    if (owns_display) {
+        lv_init();
+        display = lv_sdl_window_create((int32_t)options.width,
+                                       (int32_t)options.height);
+        mouse = lv_sdl_mouse_create();
+        keyboard = lv_sdl_keyboard_create();
+        if (display == NULL || mouse == NULL || keyboard == NULL) goto done;
+        lv_indev_set_display(mouse, display);
+        lv_indev_set_display(keyboard, display);
+        lv_sdl_window_set_title(display, "PXA Product Simulator");
+    } else {
+        display = embedded_display;
+        if (display == NULL) goto done;
+    }
     host.display = display;
-    lv_indev_set_display(mouse, display);
-    lv_indev_set_display(keyboard, display);
-    lv_sdl_window_set_title(display, "PXA Product Simulator");
     pxa_runtime_limits_init(&runtime_limits); runtime_limits.max_components = PRODUCT_COMPONENTS;
     stage = "runtime";
     runtime_workspace = malloc(pxa_runtime_workspace_size(&runtime_limits));
@@ -1380,8 +1536,17 @@ int main(int argc, char **argv) {
     lvgl_config.primary_environment.density_q16 = UINT32_C(1) << 16;
     lvgl_config.primary_environment.font_scale_q16 = UINT32_C(1) << 16;
     pxa_lvgl_ui_theme_init(&lvgl_config.theme);
-    lvgl_config.theme.body_font = &lv_font_montserrat_14;
-    lvgl_config.theme.title_font = &lv_font_montserrat_20;
+    host.body_font = load_product_font(16, &lv_font_montserrat_16);
+    host.title_font = load_product_font(20, &lv_font_montserrat_20);
+    lvgl_config.theme.caption_font = host.body_font != NULL
+                                        ? host.body_font
+                                        : &lv_font_montserrat_14;
+    lvgl_config.theme.body_font = host.body_font != NULL
+                                      ? host.body_font
+                                      : &lv_font_montserrat_14;
+    lvgl_config.theme.title_font = host.title_font != NULL
+                                       ? host.title_font
+                                       : &lv_font_montserrat_20;
     lvgl_workspace = malloc(pxa_lvgl_ui_workspace_size());
     if (lvgl_workspace == NULL || pxa_lvgl_ui_init(lvgl_workspace,
         pxa_lvgl_ui_workspace_size(), &lvgl_config, &lvgl_ui, &ui_backend) != PXA_STATUS_OK)
@@ -1466,6 +1631,8 @@ int main(int argc, char **argv) {
         pxa_wamr_engine_workspace_size(&engine_config), &engine_config, &host.engine,
         &host.engine_ops) != PXA_STATUS_OK) goto done;
     pxa_wamr_engine_set_runtime(host.engine, host.runtime);
+    stage = "start configuration";
+    if (configure_start_locale(&host, 1) != PXA_STATUS_OK) goto done;
     capabilities[0].service = PXA_SERVICE_CORE; capabilities[0].version.major = 0; capabilities[0].version.minor = 1;
     capabilities[1].service = PXA_WINDOW_SERVICE_ID; capabilities[1].version.major = 0; capabilities[1].version.minor = 1;
     capabilities[2].service = PXA_UI_SERVICE_ID; capabilities[2].version.major = 0; capabilities[2].version.minor = 3;
@@ -1507,13 +1674,14 @@ int main(int argc, char **argv) {
     if (pxa_window_flush_metrics(host.window, component) == PXA_STATUS_OK)
         dispatch_component_events(&host);
     install_system_gestures(&host);
-    if (options.pxadb_control_socket != NULL &&
+    if (owns_display && options.pxadb_control_socket != NULL &&
         !pxsys_pxadb_control_start(&pxadb_control,
                                    options.pxadb_control_socket, display,
                                    NULL, NULL))
         goto done;
     while (lv_display_get_default() != NULL) {
         pxsys_pxadb_control_poll(&pxadb_control);
+        if (pump != NULL) pump(pump_context);
         if (host.exit_requested) break;
         uint32_t delay = lv_timer_handler();
         if (drain_surface_updates(&host) < 0) goto done;
@@ -1535,6 +1703,8 @@ done:
         if (lvgl_ui != NULL) pxa_lvgl_ui_deinit(lvgl_ui);
         if (host.ui != NULL) pxa_ui_service_deinit(host.ui);
     }
+    if (host.title_font != NULL) lv_freetype_font_delete(host.title_font);
+    if (host.body_font != NULL) lv_freetype_font_delete(host.body_font);
     if (host.runtime != NULL) pxa_runtime_deinit(host.runtime);
     if (posix_storage != NULL) pxa_posix_storage_deinit(posix_storage);
     if (installer != NULL) pxa_posix_installer_deinit(installer);
@@ -1543,5 +1713,39 @@ done:
     free(ui_workspace); free(window_workspace); free(permission_workspace); free(runtime_workspace); free(manifest_workspace);
     free(storage_service_workspace); free(storage_workspace); free(storage_path); free(storage_parent);
     free(encoded); free(installer_workspace); free(public_key);
+    if (owns_display && display != NULL && lv_display_get_default() != NULL) {
+        lv_display_delete(display);
+        lv_deinit();
+    }
     return result;
 }
+
+int pxsys_product_simulator_run_embedded(const char *package_path,
+                                         const char *publisher_key,
+                                         const char *state_root,
+                                         const char *locale,
+                                         uint32_t width, uint32_t height,
+                                         lv_display_t *display,
+                                         pxsys_product_simulator_pump_fn pump,
+                                         void *pump_context) {
+    const options_t options = {
+        .package_path = package_path,
+        .publisher_key = publisher_key,
+        .state_root = state_root,
+        .locale = locale,
+        .width = width,
+        .height = height,
+    };
+    return run_product_simulator(&options, display, pump, pump_context);
+}
+
+#ifndef PXSYS_PRODUCT_RUNNER_LIBRARY
+int main(int argc, char **argv) {
+    options_t options;
+    if (!parse_options(argc, argv, &options)) {
+        print_usage(argv[0]);
+        return 2;
+    }
+    return run_product_simulator(&options, NULL, NULL, NULL);
+}
+#endif

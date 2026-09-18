@@ -10,13 +10,15 @@
 #define VOXEL_MESH_QUADS_PER_CHUNK 512u
 #define VOXEL_MESH_MAX_SPAN 16
 #define VOXEL_RASTER_CANDIDATES 640u
-#define VOXEL_RASTER_TEXTURE_SLOTS 15u
+#define VOXEL_RASTER_TEXTURED_BLOCKS 15u
 #define VOXEL_RASTER_FONT_SLOT 15u
+#define VOXEL_RASTER_FONT_SLOT_EXTENDED 45u
 #define VOXEL_RASTER_FONT_GLYPHS 42u
 #define VOXEL_RASTER_FONT_WIDTH (VOXEL_RASTER_FONT_GLYPHS * 4u)
 #define VOXEL_RASTER_NEAR 0.08F
 #define VOXEL_RASTER_TAN_HALF 0.70F
 #define VOXEL_RASTER_PARTICLE_LIMIT 32u
+#define VOXEL_RASTER_UNDERWATER_TINT UINT16_C(0x008a)
 
 #define HUD_PANEL UINT16_C(0x2945)
 #define HUD_PANEL_LIGHT UINT16_C(0x5aeb)
@@ -84,8 +86,6 @@ static uint16_t g_sort_order[VOXEL_RASTER_CANDIDATES];
 static uint8_t g_draw_list[PXA_RASTER_MAX_DRAW_BYTES];
 static uint8_t g_upload[PXA_RASTER_UPLOAD_HEADER_BYTES +
                         VOXEL_RASTER_FONT_WIDTH * 5u];
-/* Three 16x16 face tiles stacked into one 16x48 atlas: top, side, bottom. */
-static uint8_t g_texture[16 * 48];
 static uint8_t g_font_texture[VOXEL_RASTER_FONT_WIDTH * 5u];
 static voxel_raster_stats_t g_stats;
 static uint32_t g_raster_capabilities;
@@ -116,6 +116,20 @@ static uint16_t rgb565(uint8_t red, uint8_t green, uint8_t blue) {
                       ((uint16_t)(green >> 2) << 5) | (blue >> 3));
 }
 
+/* Extended slots give every block its own top/side/bottom 16x16 tile. Older
+ * Hosts only have 16 slots, so they fall back to one side tile per block. */
+static uint8_t texture_slot_for(uint8_t block, uint8_t kind) {
+    if ((g_raster_capabilities & PXA_RASTER_CAP_TEXTURE_SLOTS_48) != 0)
+        return (uint8_t)((block - 1u) * 3u + kind);
+    return (uint8_t)(block - 1u);
+}
+
+static uint8_t font_slot(void) {
+    return (g_raster_capabilities & PXA_RASTER_CAP_TEXTURE_SLOTS_48) != 0
+               ? VOXEL_RASTER_FONT_SLOT_EXTENDED
+               : VOXEL_RASTER_FONT_SLOT;
+}
+
 void voxel_raster_set_capabilities(uint32_t capabilities) {
     g_raster_capabilities = capabilities;
 }
@@ -123,40 +137,42 @@ void voxel_raster_set_capabilities(uint32_t capabilities) {
 int voxel_raster_upload_assets(uint32_t surface_handle) {
     const block_index_set_t *indices = block_texture_indices();
     const uint16_t *palette = block_texture_palette();
-    uint8_t slot;
+    const int extended =
+        (g_raster_capabilities & PXA_RASTER_CAP_TEXTURE_SLOTS_48) != 0;
+    uint8_t block;
     int32_t result;
     result = pxa_raster_upload_palette_rgb565(
         surface_handle, palette, g_upload, sizeof(g_upload));
     if (result != (int32_t)(PXA_RASTER_UPLOAD_HEADER_BYTES + 512u)) return 0;
-    for (slot = 0; slot < VOXEL_RASTER_TEXTURE_SLOTS; ++slot) {
-        const int block = slot + 1;
+    for (block = 0; block < VOXEL_RASTER_TEXTURED_BLOCKS; ++block) {
+        const uint8_t kinds = extended ? 3u : 1u;
         uint8_t kind;
-        for (kind = 0; kind < 3; ++kind) {
-            const uint8_t *tile = indices[block][kind];
-            uint16_t pixel;
-            for (pixel = 0; pixel < 256; ++pixel)
-                g_texture[kind * 256u + pixel] = tile[pixel];
+        for (kind = 0; kind < kinds; ++kind) {
+            const uint8_t texture_kind =
+                extended ? kind : BLOCK_TEXTURE_SIDE;
+            const uint8_t slot =
+                texture_slot_for((uint8_t)(block + 1u), texture_kind);
+            result = pxa_raster_upload_texture_index8(
+                surface_handle, slot, 16, 16, indices[block + 1][texture_kind],
+                g_upload, sizeof(g_upload));
+            if (result != (int32_t)(PXA_RASTER_UPLOAD_HEADER_BYTES + 256u))
+                return 0;
         }
-        result = pxa_raster_upload_texture_index8(
-            surface_handle, slot, 16, 48, g_texture, g_upload,
-            sizeof(g_upload));
-        if (result != (int32_t)(PXA_RASTER_UPLOAD_HEADER_BYTES + 768u))
-            return 0;
     }
     pxa_raster_zero_bytes(g_font_texture, sizeof(g_font_texture));
-    for (slot = 0; slot < VOXEL_RASTER_FONT_GLYPHS; ++slot) {
+    for (block = 0; block < VOXEL_RASTER_FONT_GLYPHS; ++block) {
         uint8_t row;
         for (row = 0; row < 5; ++row) {
             uint8_t column;
             for (column = 0; column < 3; ++column) {
-                if ((kFontRows[slot][row] & (4u >> column)) != 0)
+                if ((kFontRows[block][row] & (4u >> column)) != 0)
                     g_font_texture[(size_t)row * VOXEL_RASTER_FONT_WIDTH +
-                                   (size_t)slot * 4u + column] = 255;
+                                   (size_t)block * 4u + column] = 255;
             }
         }
     }
     result = pxa_raster_upload_texture_index8(
-        surface_handle, VOXEL_RASTER_FONT_SLOT, VOXEL_RASTER_FONT_WIDTH, 5,
+        surface_handle, font_slot(), VOXEL_RASTER_FONT_WIDTH, 5,
         g_font_texture, g_upload, sizeof(g_upload));
     if (result != (int32_t)sizeof(g_upload)) return 0;
     return 1;
@@ -329,6 +345,11 @@ static void build_camera(raster_camera_t *camera, const player_t *player,
     camera->fog_end = quality >= QUALITY_PERFORMANCE ? 30.0F
                       : quality >= QUALITY_BALANCED  ? 38.0F
                                                      : 46.0F;
+    /* Submerged: pull the fog in so terrain fades like murky water. */
+    if (game_block(rc_floor_int(player->x),
+                   rc_floor_int(player->y + EYE_HEIGHT),
+                   rc_floor_int(player->z)) == BLOCK_WATER)
+        camera->fog_end = 14.0F;
 }
 
 static int chunk_visible(const raster_camera_t *camera, const chunk_t *chunk) {
@@ -514,11 +535,16 @@ static void finish_projected_primitive(
         projected->vertices[index].light = light;
     }
     projected->depth = depth;
-    projected->textured = quad->block <= VOXEL_RASTER_TEXTURE_SLOTS;
-    projected->texture_slot = (uint8_t)(quad->block - 1u);
+    projected->textured = quad->block <= VOXEL_RASTER_TEXTURED_BLOCKS;
     projected->color = render_block_color(quad->block);
     projected->affine = 0;
     if (projected->textured) {
+        const uint8_t kind =
+            quad->axis == 1
+                ? (quad->sign > 0 ? BLOCK_TEXTURE_TOP : BLOCK_TEXTURE_BOTTOM)
+                : BLOCK_TEXTURE_SIDE;
+        projected->texture_slot = texture_slot_for(
+            (uint8_t)quad->block, kind);
         /* Faces below roughly 3x3 screen pixels skip the texture and use the
          * block colour; the texel detail is invisible at that size. */
         if (max_x - min_x < 3 * 16 || max_y - min_y < 3 * 16) {
@@ -566,7 +592,10 @@ static uint8_t project_quad(const raster_camera_t *camera,
         (quad->axis == 0 ? camera->x - center[0]
          : quad->axis == 1 ? camera->y - center[1]
                            : camera->z - center[2]);
-    if (normal_dot <= 0.0F) {
+    /* Water is two-sided: from inside a body of water every boundary face
+     * points away from the camera, and culling them would make the water
+     * volume invisible (an underwater x-ray). */
+    if (normal_dot <= 0.0F && quad->block != BLOCK_WATER) {
         ++g_stats.backface_culled;
         return 0;
     }
@@ -581,33 +610,27 @@ static uint8_t project_quad(const raster_camera_t *camera,
             dx * camera->fx + dy * camera->fy + dz * camera->fz;
     }
     {
-        /* The 16x48 face atlas stacks top, side and bottom tiles. Y faces
-         * pick the cap that points at the camera; side faces use the middle
-         * band. Texture V grows downwards inside a tile, so V is flipped
-         * against the world axis the face runs along: the highest world
-         * corner samples row 0. This matches the ray caster's
-         * `ty = 15 - frac(v)` and keeps grass fringes and table edges up. */
-        const float v_base_q4 =
-            (quad->axis == 1 ? (quad->sign > 0 ? 0.0F : 32.0F) : 16.0F) *
-            256.0F;
+        /* Texture V grows downwards inside a tile, so V is flipped against
+         * the world axis the face runs along: the highest world corner
+         * samples row 0. This matches the ray caster's
+         * `ty = 15 - frac(v)` and keeps grass fringes and table edges up.
+         * Extended slots give every face kind its own 16x16 texture, so V
+         * never leaves the tile when a face spans several blocks. */
         if (quad->axis == 0) {
             input[0].u_q4 = input[1].u_q4 = 0.0F;
             input[2].u_q4 = input[3].u_q4 = quad->u_length * 256.0F;
-            input[0].v_q4 = input[3].v_q4 =
-                v_base_q4 + quad->v_length * 256.0F;
-            input[1].v_q4 = input[2].v_q4 = v_base_q4;
+            input[0].v_q4 = input[3].v_q4 = quad->v_length * 256.0F;
+            input[1].v_q4 = input[2].v_q4 = 0.0F;
         } else if (quad->axis == 1) {
             input[0].u_q4 = input[3].u_q4 = 0.0F;
             input[1].u_q4 = input[2].u_q4 = quad->u_length * 256.0F;
-            input[0].v_q4 = input[1].v_q4 =
-                v_base_q4 + quad->v_length * 256.0F;
-            input[2].v_q4 = input[3].v_q4 = v_base_q4;
+            input[0].v_q4 = input[1].v_q4 = quad->v_length * 256.0F;
+            input[2].v_q4 = input[3].v_q4 = 0.0F;
         } else {
             input[0].u_q4 = input[3].u_q4 = 0.0F;
             input[1].u_q4 = input[2].u_q4 = quad->u_length * 256.0F;
-            input[0].v_q4 = input[1].v_q4 =
-                v_base_q4 + quad->v_length * 256.0F;
-            input[2].v_q4 = input[3].v_q4 = v_base_q4;
+            input[0].v_q4 = input[1].v_q4 = quad->v_length * 256.0F;
+            input[2].v_q4 = input[3].v_q4 = 0.0F;
         }
     }
     for (plane = 0; plane < CLIP_PLANE_COUNT; ++plane) {
@@ -895,7 +918,7 @@ static void append_ui_text(pxa_raster_draw_list_t *list, const raster_ui_t *ui,
              * column at 2x dynamic resolution: that turns most letters into
              * dots after the Host scales the scene back up. */
             (void)pxa_raster_sprite(
-                list, VOXEL_RASTER_FONT_SLOT,
+                list, font_slot(),
                 PXA_RASTER_SPRITE_TRANSPARENT_INDEX0 |
                     PXA_RASTER_SPRITE_SOLID_COLOR,
                 g_raster_capabilities, (int16_t)cursor_x, (int16_t)mapped_y,
@@ -961,11 +984,12 @@ static void append_ui_item(pxa_raster_draw_list_t *list, const raster_ui_t *ui,
                                            ? mapped_bottom - mapped_y
                                            : 1);
     if (item == BLOCK_AIR) return;
-    if (item <= VOXEL_RASTER_TEXTURE_SLOTS) {
-        /* Inventory icons show the side band of the 16x48 face atlas. */
-        (void)pxa_raster_sprite(list, (uint8_t)(item - 1u), 0,
+    if (item <= VOXEL_RASTER_TEXTURED_BLOCKS) {
+        /* Inventory icons show the side tile of the item's block. */
+        (void)pxa_raster_sprite(list,
+                                texture_slot_for(item, BLOCK_TEXTURE_SIDE), 0,
                                 g_raster_capabilities, (int16_t)mapped_x,
-                                (int16_t)mapped_y, width, height, 0, 16, 16,
+                                (int16_t)mapped_y, width, height, 0, 0, 16,
                                 16, 0);
     } else if (item < BLOCK_TYPE_COUNT) {
         append_ui_rect(list, ui, x, y, size, size, render_block_color(item));
@@ -1226,6 +1250,19 @@ int32_t voxel_raster_render(uint32_t surface_handle, uint64_t frame_id,
         if (quad->textured && quad->affine &&
             (g_raster_capabilities & PXA_RASTER_CAP_AFFINE_UV) != 0)
             ++g_stats.affine_quads;
+    }
+    /* Underwater: a two-sided water volume alone still looks like clear air.
+     * Add a fullscreen additive blue tint when the eye is inside water so the
+     * submersion reads like the ray caster's water fill. */
+    if ((g_raster_capabilities & PXA_RASTER_CAP_ADDITIVE_SPRITE) != 0 &&
+        game_block(rc_floor_int(player->x),
+                   rc_floor_int(player->y + EYE_HEIGHT),
+                   rc_floor_int(player->z)) == BLOCK_WATER) {
+        (void)pxa_raster_sprite(
+            &list, 0,
+            PXA_RASTER_SPRITE_SOLID_COLOR | PXA_RASTER_SPRITE_ADDITIVE,
+            g_raster_capabilities, 0, 0, camera.width, camera.height, 0, 0, 1,
+            1, VOXEL_RASTER_UNDERWATER_TINT);
     }
     append_hud(&list, hud, camera.width, camera.height);
     g_stats.draw_list_bytes = list.length;

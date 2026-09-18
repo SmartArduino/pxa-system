@@ -28,7 +28,10 @@ fork 应用模型。
 
 硬件 port 在创建系统前提供实际 profile，并从 UI owner thread 发布模式变化。
 板级几何留在产品层。safe inset、系统栏高度和内容 padding 是三个独立概念，
-不能重复预留。
+不能重复预留。手势导航模式下，窗口快照的 `system_bar_insets` 同时包含底部
+Home 手势条和左侧 Back 手势条，Guest 应用据此把可交互控件放在系统手势区之外；
+`pxsys_reference_layout_gesture_strip_height()` 与
+`pxsys_reference_layout_back_gesture_width()` 是唯一的手势条几何来源。
 
 ## System chrome 与导航
 

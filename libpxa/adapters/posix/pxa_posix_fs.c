@@ -885,8 +885,6 @@ void pxa_posix_fs_deinit(pxa_posix_fs_t *fs) {
 
 static pxa_status_t remove_tree_contents(int directory, size_t *entries) {
     DIR *stream;
-    struct dirent *item;
-    pxa_status_t status = PXA_STATUS_OK;
     int duplicate = openat(directory, ".", O_RDONLY | O_DIRECTORY |
                                               O_NOFOLLOW | O_CLOEXEC);
     if (duplicate < 0) return PXA_STATUS_INTERNAL;
@@ -895,45 +893,66 @@ static pxa_status_t remove_tree_contents(int directory, size_t *entries) {
         close(duplicate);
         return PXA_STATUS_INTERNAL;
     }
-    while ((item = readdir(stream)) != NULL) {
+    for (;;) {
         struct stat metadata;
-        if (strcmp(item->d_name, ".") == 0 ||
-            strcmp(item->d_name, "..") == 0) {
-            continue;
+        char name[NAME_MAX + 1] = {0};
+        struct dirent *item;
+        rewinddir(stream);
+        while ((item = readdir(stream)) != NULL) {
+            size_t name_size;
+            if (strcmp(item->d_name, ".") == 0 ||
+                strcmp(item->d_name, "..") == 0) {
+                continue;
+            }
+            name_size = strlen(item->d_name);
+            if (name_size > NAME_MAX) {
+                (void)closedir(stream);
+                return PXA_STATUS_LIMIT_EXCEEDED;
+            }
+            memcpy(name, item->d_name, name_size + 1);
+            break;
         }
+        if (name[0] == '\0') {
+            return closedir(stream) == 0 ? PXA_STATUS_OK
+                                         : PXA_STATUS_INTERNAL;
+        }
+
+        /* LittleFS can invalidate a live directory cursor when an entry is
+         * removed. Rewinding for each child is allocation-free and prevents
+         * skipped entries on embedded VFS implementations. */
         if (++*entries > PXA_POSIX_FS_MAX_TREE_ENTRIES) {
-            status = PXA_STATUS_RESOURCE_LIMIT;
-            break;
+            (void)closedir(stream);
+            return PXA_STATUS_RESOURCE_LIMIT;
         }
-        if (fstatat(directory, item->d_name, &metadata,
+        if (fstatat(directory, name, &metadata,
                     AT_SYMLINK_NOFOLLOW) != 0) {
-            status = PXA_STATUS_INTERNAL;
-            break;
+            (void)closedir(stream);
+            return PXA_STATUS_INTERNAL;
         }
         if (S_ISDIR(metadata.st_mode)) {
-            int child = openat(directory, item->d_name,
+            pxa_status_t status;
+            int child = openat(directory, name,
                                O_RDONLY | O_DIRECTORY | O_NOFOLLOW |
                                    O_CLOEXEC);
             if (child < 0) {
-                status = PXA_STATUS_DENIED;
-                break;
+                (void)closedir(stream);
+                return PXA_STATUS_DENIED;
             }
             status = remove_tree_contents(child, entries);
             close(child);
-            if (status != PXA_STATUS_OK) break;
-            if (unlinkat(directory, item->d_name, AT_REMOVEDIR) != 0) {
-                status = status_from_errno(errno);
-                break;
+            if (status != PXA_STATUS_OK) {
+                (void)closedir(stream);
+                return status;
             }
-        } else if (unlinkat(directory, item->d_name, 0) != 0) {
-            status = status_from_errno(errno);
-            break;
+            if (unlinkat(directory, name, AT_REMOVEDIR) != 0) {
+                (void)closedir(stream);
+                return status_from_errno(errno);
+            }
+        } else if (unlinkat(directory, name, 0) != 0) {
+            (void)closedir(stream);
+            return status_from_errno(errno);
         }
     }
-    if (closedir(stream) != 0 && status == PXA_STATUS_OK) {
-        status = PXA_STATUS_INTERNAL;
-    }
-    return status;
 }
 
 pxa_status_t pxa_posix_fs_remove_tree(const char *root_path) {
@@ -951,6 +970,6 @@ pxa_status_t pxa_posix_fs_remove_tree(const char *root_path) {
     status = remove_tree_contents(directory, &entries);
     close(directory);
     if (status != PXA_STATUS_OK) return status;
-    if (rmdir(root_path) != 0) return status_from_errno(errno);
+    if (rmdir(root_path) != 0 && errno != ENOENT) return status_from_errno(errno);
     return PXA_STATUS_OK;
 }

@@ -421,6 +421,8 @@ static void test_sprite_and_triangle_batches(void) {
     uint16_t palette[256] = {0};
     uint16_t pixels[8 * 8];
     uint16_t depth[8 * 8];
+    uint16_t split_pixels[8 * 8];
+    uint16_t split_depth[8 * 8];
     pxa_raster_resources_t resources;
     pxa_raster_target_t target;
     pxa_raster_draw_list_view_t list;
@@ -484,6 +486,16 @@ static void test_sprite_and_triangle_batches(void) {
            telemetry.textured_quad_commands == 1 &&
            telemetry.last_draw_list_bytes == sizeof(bytes));
     assert(pixels[0] == palette[1] && pixels[3 * 8 + 3] == UINT16_C(0xf800));
+    memset(split_pixels, 0xff, sizeof(split_pixels));
+    memset(split_depth, 0xff, sizeof(split_depth));
+    target.pixels = split_pixels;
+    target.depth_pixels = split_depth;
+    pxa_raster_execute_draw_list_rows(bytes, &list, &target, &resources, 0, 3,
+                                      NULL);
+    pxa_raster_execute_draw_list_rows(bytes, &list, &target, &resources, 3, 8,
+                                      NULL);
+    assert(memcmp(split_pixels, pixels, sizeof(pixels)) == 0);
+    assert(memcmp(split_depth, depth, sizeof(depth)) == 0);
 }
 
 int main(void) {

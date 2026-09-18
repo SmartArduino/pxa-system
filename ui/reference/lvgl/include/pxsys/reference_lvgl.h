@@ -55,6 +55,17 @@ typedef bool (*pxsys_reference_lvgl_resolve_app_metadata_fn)(
 typedef void (*pxsys_reference_lvgl_content_insets_fn)(
     void* context, uint16_t top, uint16_t bottom);
 
+typedef void (*pxsys_reference_lvgl_lock_changed_fn)(void* context,
+                                                     bool locked);
+
+typedef enum {
+    PXSYS_REFERENCE_POWER_ACTION_RESTART = 0,
+    PXSYS_REFERENCE_POWER_ACTION_SHUTDOWN,
+} pxsys_reference_power_action_t;
+
+typedef void (*pxsys_reference_lvgl_power_action_fn)(
+    void* context, pxsys_reference_power_action_t action);
+
 typedef struct {
     pxsys_string_t locale;
     /* Native language name, for example "English" or "简体中文". */
@@ -96,6 +107,10 @@ typedef enum {
 typedef void (*pxsys_reference_lvgl_device_info_fn)(
     void* context, char values[PXSYS_REFERENCE_DEVICE_FIELD_COUNT]
                               [PXSYS_REFERENCE_DEVICE_VALUE_MAX]);
+
+/* Current allocatable memory. Values are sampled whenever Recents opens. */
+typedef bool (*pxsys_reference_lvgl_memory_info_fn)(
+    void* context, uint64_t* available_bytes, uint64_t* total_bytes);
 
 /* App manager. */
 #define PXSYS_REFERENCE_MANAGED_APP_MAX 48
@@ -241,6 +256,9 @@ typedef struct {
     void* file_manager_context;
     pxsys_reference_lvgl_file_list_fn file_list;
     pxsys_reference_lvgl_file_action_fn file_action;
+    /* Optional Recents memory indicator, appended for source compatibility. */
+    void* memory_info_context;
+    pxsys_reference_lvgl_memory_info_fn memory_info;
 } pxsys_reference_lvgl_config_t;
 
 typedef struct pxsys_reference_lvgl pxsys_reference_lvgl_t;
@@ -261,6 +279,23 @@ pxsys_status_t pxsys_reference_lvgl_set_animations_enabled(
 bool pxsys_reference_lvgl_animations_enabled(
     const pxsys_reference_lvgl_t* ui);
 bool pxsys_reference_lvgl_dismiss_overlay(pxsys_reference_lvgl_t* ui);
+pxsys_status_t pxsys_reference_lvgl_set_locked(pxsys_reference_lvgl_t* ui,
+                                               bool locked);
+bool pxsys_reference_lvgl_is_locked(const pxsys_reference_lvgl_t* ui);
+pxsys_status_t pxsys_reference_lvgl_set_lock_changed_callback(
+    pxsys_reference_lvgl_t* ui, void* context,
+    pxsys_reference_lvgl_lock_changed_fn callback);
+pxsys_status_t pxsys_reference_lvgl_set_power_action_callback(
+    pxsys_reference_lvgl_t* ui, void* context,
+    pxsys_reference_lvgl_power_action_fn callback);
+pxsys_status_t pxsys_reference_lvgl_set_power_menu_changed_callback(
+    pxsys_reference_lvgl_t* ui, void* context,
+    pxsys_reference_lvgl_lock_changed_fn callback);
+pxsys_status_t pxsys_reference_lvgl_show_power_menu(
+    pxsys_reference_lvgl_t* ui);
+void pxsys_reference_lvgl_hide_power_menu(pxsys_reference_lvgl_t* ui);
+bool pxsys_reference_lvgl_power_menu_visible(
+    const pxsys_reference_lvgl_t* ui);
 
 #ifdef __cplusplus
 }
