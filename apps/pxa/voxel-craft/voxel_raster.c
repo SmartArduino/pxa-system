@@ -42,8 +42,13 @@ typedef struct {
 typedef struct {
     const chunk_t *chunk;
     uint32_t revision;
+    uint32_t build_revision;
+    int16_t chunk_cx;
+    int16_t chunk_cz;
     uint16_t quad_count;
     uint16_t dropped;
+    uint8_t build_pass;
+    uint8_t building;
     mesh_quad_t quads[VOXEL_MESH_QUADS_PER_CHUNK];
 } chunk_mesh_t;
 
@@ -90,6 +95,7 @@ static uint8_t g_upload[PXA_RASTER_UPLOAD_HEADER_BYTES +
 static uint8_t g_font_texture[VOXEL_RASTER_FONT_WIDTH * 5u];
 static voxel_raster_stats_t g_stats;
 static uint32_t g_raster_capabilities;
+static uint8_t g_mesh_cache_warmed;
 
 static const char kFontCharacters[] =
     "0123456789.:-/+ABCDEFGHIJKLMNOPQRSTUVWXYZ ";
@@ -305,20 +311,56 @@ static void build_axis_faces(chunk_mesh_t *mesh, const chunk_t *chunk,
     }
 }
 
-static void rebuild_mesh(chunk_mesh_t *mesh, const chunk_t *chunk) {
-    int axis;
+static void begin_mesh_rebuild(chunk_mesh_t *mesh, const chunk_t *chunk) {
     pxa_raster_zero_bytes(mesh, sizeof(*mesh));
     mesh->chunk = chunk;
-    mesh->revision = chunk->revision;
-    for (axis = 0; axis < 3; ++axis) {
-        build_axis_faces(mesh, chunk, axis, -1);
-        build_axis_faces(mesh, chunk, axis, 1);
+    mesh->build_revision = chunk->revision;
+    mesh->chunk_cx = chunk->cx;
+    mesh->chunk_cz = chunk->cz;
+    mesh->building = 1;
+}
+
+static int advance_mesh_rebuild(chunk_mesh_t *mesh, const chunk_t *chunk) {
+    int axis;
+    int sign;
+    if (!mesh->building || mesh->chunk != chunk ||
+        mesh->build_revision != chunk->revision ||
+        mesh->chunk_cx != chunk->cx || mesh->chunk_cz != chunk->cz) {
+        begin_mesh_rebuild(mesh, chunk);
     }
+    axis = mesh->build_pass >> 1;
+    sign = (mesh->build_pass & 1u) != 0 ? 1 : -1;
+    build_axis_faces(mesh, chunk, axis, sign);
+    if (++mesh->build_pass < 6u) return 0;
+    mesh->revision = mesh->build_revision;
+    mesh->building = 0;
+    return 1;
+}
+
+static void rebuild_mesh(chunk_mesh_t *mesh, const chunk_t *chunk) {
+    begin_mesh_rebuild(mesh, chunk);
+    while (!advance_mesh_rebuild(mesh, chunk)) {
+    }
+}
+
+static chunk_mesh_t *mesh_for_chunk(const chunk_t *chunk,
+                                    uint8_t preferred_index) {
+    chunk_mesh_t *empty = NULL;
+    uint8_t index;
+    for (index = 0; index < GRID_COUNT; ++index) {
+        if (g_meshes[index].chunk == chunk) return &g_meshes[index];
+        if (empty == NULL && g_meshes[index].chunk == NULL)
+            empty = &g_meshes[index];
+    }
+    /* The pool and cache have the same size, so this is only reachable for
+     * synthetic callers that replace every resident chunk pointer at once. */
+    return empty != NULL ? empty : &g_meshes[preferred_index];
 }
 
 void voxel_raster_reset(void) {
     pxa_raster_zero_bytes(g_meshes, sizeof(g_meshes));
     pxa_raster_zero_bytes(&g_stats, sizeof(g_stats));
+    g_mesh_cache_warmed = 0;
 }
 
 static void build_camera(raster_camera_t *camera, const player_t *player,
@@ -575,7 +617,7 @@ static uint8_t project_quad(const raster_camera_t *camera,
     clip_vertex_t *input = clip_a;
     clip_vertex_t *clipped = clip_b;
     pxa_raster_vertex_t vertices[VOXEL_CLIP_VERTICES];
-    float center[3] = {0};
+    float face_position;
     float normal_dot;
     uint8_t count = 4;
     uint8_t primitive_count;
@@ -583,16 +625,15 @@ static uint8_t project_quad(const raster_camera_t *camera,
     uint8_t plane;
     uint8_t index;
     if (capacity == 0) return 0;
-    quad_corners(chunk, quad, corners);
-    for (index = 0; index < 4; ++index) {
-        center[0] += corners[index][0] * 0.25F;
-        center[1] += corners[index][1] * 0.25F;
-        center[2] += corners[index][2] * 0.25F;
-    }
+    face_position = quad->axis == 0
+                        ? (float)chunk->cx * CHUNK_SIZE + quad->x
+                    : quad->axis == 1
+                        ? quad->y
+                        : (float)chunk->cz * CHUNK_SIZE + quad->z;
     normal_dot = quad->sign *
-        (quad->axis == 0 ? camera->x - center[0]
-         : quad->axis == 1 ? camera->y - center[1]
-                           : camera->z - center[2]);
+        (quad->axis == 0 ? camera->x - face_position
+         : quad->axis == 1 ? camera->y - face_position
+                           : camera->z - face_position);
     /* Water surface caps are two-sided so the lake surface is visible from
      * below. Vertical water walls stay culled: from inside a lake they would
      * otherwise turn into a flat blue wall at the far shore. */
@@ -601,6 +642,7 @@ static uint8_t project_quad(const raster_camera_t *camera,
         ++g_stats.backface_culled;
         return 0;
     }
+    quad_corners(chunk, quad, corners);
     for (index = 0; index < 4; ++index) {
         const float dx = corners[index][0] - camera->x;
         const float dy = corners[index][1] - camera->y;
@@ -636,12 +678,16 @@ static uint8_t project_quad(const raster_camera_t *camera,
         }
     }
     for (plane = 0; plane < CLIP_PLANE_COUNT; ++plane) {
+        uint8_t needs_clip = 0;
         clip_vertex_t *swap;
-        for (index = 0; index < count; ++index)
+        for (index = 0; index < count; ++index) {
             if (clip_distance(camera, &input[index], plane) < 0.0F) {
-                was_clipped = 1;
+                needs_clip = 1;
                 break;
             }
+        }
+        if (!needs_clip) continue;
+        was_clipped = 1;
         count = clip_polygon(camera, input, count, clipped, plane);
         if (count < 3) break;
         swap = input;
@@ -793,16 +839,17 @@ static void sort_candidates(uint32_t count, uint8_t depth_tested) {
     if (count > VOXEL_RASTER_CANDIDATES) count = VOXEL_RASTER_CANDIDATES;
     for (index = 0; index < count; ++index)
         g_sort_order[index] = (uint16_t)index;
+    /* Chunk traversal already emits near chunks first. Native depth testing
+     * makes exact polygon ordering unnecessary, and sorting hundreds of
+     * floating-point keys in the Guest costs more than the ordering saves. */
+    if (depth_tested) return;
     for (gap = count / 2u; gap != 0; gap /= 2u) {
         for (index = gap; index < count; ++index) {
             const uint16_t value = g_sort_order[index];
             const float depth = g_candidates[value].depth;
             uint32_t cursor = index;
             while (cursor >= gap &&
-                   (depth_tested
-                        ? g_candidates[g_sort_order[cursor - gap]].depth > depth
-                        : g_candidates[g_sort_order[cursor - gap]].depth <
-                              depth)) {
+                   g_candidates[g_sort_order[cursor - gap]].depth < depth) {
                 g_sort_order[cursor] = g_sort_order[cursor - gap];
                 cursor -= gap;
             }
@@ -950,26 +997,28 @@ static int ui_text_width(const raster_ui_t *ui, const char *text, int scale) {
 static void append_ui_button(pxa_raster_draw_list_t *list,
                              const raster_ui_t *ui, int cx, int cy,
                              int radius, uint16_t fill, uint8_t active) {
+    const int s = ui->layout->ui_scale;
     const uint16_t inner = active ? HUD_GREEN : fill;
-    append_ui_rect(list, ui, cx - radius + 4, cy - radius, 2 * radius - 7, 1,
-                   HUD_SHADOW);
-    append_ui_rect(list, ui, cx - radius, cy - radius + 4, 2 * radius,
-                   2 * radius - 7, HUD_SHADOW);
-    append_ui_rect(list, ui, cx - radius + 4, cy + radius - 1, 2 * radius - 7,
-                   1, HUD_SHADOW);
-    append_ui_rect(list, ui, cx - radius + 3, cy - radius + 1,
-                   2 * radius - 5, 2 * radius - 3, inner);
-    append_ui_rect(list, ui, cx - radius + 1, cy - radius + 3,
-                   2 * radius - 1, 2 * radius - 5, inner);
+    append_ui_rect(list, ui, cx - radius + 4 * s, cy - radius,
+                   2 * radius - 7 * s, s, HUD_SHADOW);
+    append_ui_rect(list, ui, cx - radius, cy - radius + 4 * s, 2 * radius,
+                   2 * radius - 7 * s, HUD_SHADOW);
+    append_ui_rect(list, ui, cx - radius + 4 * s, cy + radius - s,
+                   2 * radius - 7 * s, s, HUD_SHADOW);
+    append_ui_rect(list, ui, cx - radius + 3 * s, cy - radius + s,
+                   2 * radius - 5 * s, 2 * radius - 3 * s, inner);
+    append_ui_rect(list, ui, cx - radius + s, cy - radius + 3 * s,
+                   2 * radius - s, 2 * radius - 5 * s, inner);
 }
 
 static void append_ui_arrow(pxa_raster_draw_list_t *list, const raster_ui_t *ui,
                             int cx, int cy, int down) {
+    const int s = ui->layout->ui_scale;
     int index;
-    for (index = 0; index < 6; ++index) {
-        const int half = down ? 5 - index : index;
-        append_ui_rect(list, ui, cx - half, cy - 2 + index, half * 2 + 1, 1,
-                       HUD_TEXT);
+    for (index = 0; index < 6 * s; ++index) {
+        const int half = down ? 6 * s - 1 - index : index;
+        append_ui_rect(list, ui, cx - half, cy - 2 * s + index,
+                       half * 2 + 1, s, HUD_TEXT);
     }
 }
 
@@ -1021,11 +1070,13 @@ static void append_hud(pxa_raster_draw_list_t *list, const hud_state_t *hud,
     char *out;
     int slot;
     const render_layout_t *layout;
+    int s;
     int center_x;
     int center_y;
     if (hud == NULL || hud->layout.screen_w <= 0 || hud->layout.screen_h <= 0)
         return;
     layout = &hud->layout;
+    s = layout->ui_scale;
     center_x = layout->view_x + layout->view_w / 2;
     center_y = layout->view_y + layout->view_h / 2;
     ui.width = width;
@@ -1043,68 +1094,74 @@ static void append_hud(pxa_raster_draw_list_t *list, const hud_state_t *hud,
     append_ui_rect(list, &ui, center_x, center_y + 3, 1, 5, HUD_TEXT);
 
     for (slot = 0; slot < HOTBAR_SLOTS; ++slot) {
-        const int x = layout->hotbar_x + slot * HOTBAR_SLOT;
+        const int slot_size = layout->hotbar_slot;
+        const int padding = 2 * layout->ui_scale;
+        const int x = layout->hotbar_x + slot * slot_size;
         const int y = layout->hotbar_y;
-        append_ui_rect(list, &ui, x, y, HOTBAR_SLOT, HOTBAR_SLOT, HUD_PANEL);
-        append_ui_outline(list, &ui, x, y, HOTBAR_SLOT, HOTBAR_SLOT, 1,
-                          HUD_SHADOW);
+        append_ui_rect(list, &ui, x, y, slot_size, slot_size, HUD_PANEL);
+        append_ui_outline(list, &ui, x, y, slot_size, slot_size,
+                          layout->ui_scale, HUD_SHADOW);
         if (slot == hud->hotbar_selected)
-            append_ui_outline(list, &ui, x, y - 2, HOTBAR_SLOT,
-                              HOTBAR_SLOT + 2, 2, HUD_SELECT);
-        append_ui_item(list, &ui, x + 2, y + 2, HOTBAR_SLOT - 4,
+            append_ui_outline(list, &ui, x, y - 2 * layout->ui_scale,
+                              slot_size,
+                              slot_size + 2 * layout->ui_scale,
+                              2 * layout->ui_scale, HUD_SELECT);
+        append_ui_item(list, &ui, x + padding, y + padding,
+                       slot_size - 2 * padding,
                        hud->hotbar_items[slot]);
-        append_ui_count(list, &ui, x + HOTBAR_SLOT - 2, y + HOTBAR_SLOT - 7,
+        append_ui_count(list, &ui, x + slot_size - padding,
+                        y + slot_size - 7 * layout->ui_scale,
                         hud->hotbar_counts[slot]);
     }
 
     append_ui_button(list, &ui, layout->jump_x, layout->jump_y,
                      layout->jump_r, HUD_PANEL_LIGHT, hud->jump_held);
-    append_ui_arrow(list, &ui, layout->jump_x, layout->jump_y - 3, 0);
+    append_ui_arrow(list, &ui, layout->jump_x, layout->jump_y - 3 * s, 0);
     append_ui_button(list, &ui, layout->action_x, layout->action_y,
                      layout->action_r, HUD_PANEL_LIGHT,
                      (uint8_t)(hud->action_held || hud->action_mode != 0));
     if (hud->action_mode == 2) {
-        append_ui_rect(list, &ui, layout->action_x - 7, layout->action_y - 5,
-                       15, 3, HUD_TEXT);
-        append_ui_rect(list, &ui, layout->action_x - 6, layout->action_y - 2,
-                       3, 7, HUD_TEXT);
-        append_ui_rect(list, &ui, layout->action_x + 4, layout->action_y - 2,
-                       3, 7, HUD_TEXT);
+        append_ui_rect(list, &ui, layout->action_x - 7 * s,
+                       layout->action_y - 5 * s, 15 * s, 3 * s, HUD_TEXT);
+        append_ui_rect(list, &ui, layout->action_x - 6 * s,
+                       layout->action_y - 2 * s, 3 * s, 7 * s, HUD_TEXT);
+        append_ui_rect(list, &ui, layout->action_x + 4 * s,
+                       layout->action_y - 2 * s, 3 * s, 7 * s, HUD_TEXT);
     } else {
-        append_ui_rect(list, &ui, layout->action_x - 2, layout->action_y - 6,
-                       3, 14, HUD_TEXT);
-        append_ui_rect(list, &ui, layout->action_x - 8, layout->action_y - 4,
-                       14, 3, HUD_TEXT);
+        append_ui_rect(list, &ui, layout->action_x - 2 * s,
+                       layout->action_y - 6 * s, 3 * s, 14 * s, HUD_TEXT);
+        append_ui_rect(list, &ui, layout->action_x - 8 * s,
+                       layout->action_y - 4 * s, 14 * s, 3 * s, HUD_TEXT);
     }
     append_ui_button(list, &ui, layout->place_x, layout->place_y,
                      layout->place_r, HUD_PANEL_LIGHT, 0);
-    append_ui_rect(list, &ui, layout->place_x - 7, layout->place_y - 1, 15,
-                   3, HUD_TEXT);
-    append_ui_rect(list, &ui, layout->place_x - 1, layout->place_y - 7, 3,
-                   15, HUD_TEXT);
+    append_ui_rect(list, &ui, layout->place_x - 7 * s,
+                   layout->place_y - s, 15 * s, 3 * s, HUD_TEXT);
+    append_ui_rect(list, &ui, layout->place_x - s,
+                   layout->place_y - 7 * s, 3 * s, 15 * s, HUD_TEXT);
     if (hud->flying) {
         append_ui_button(list, &ui, layout->down_x, layout->down_y,
                          layout->down_r, HUD_PANEL_LIGHT, hud->down_held);
-        append_ui_arrow(list, &ui, layout->down_x, layout->down_y - 3, 1);
+        append_ui_arrow(list, &ui, layout->down_x, layout->down_y - 3 * s, 1);
     }
     append_ui_button(list, &ui, layout->fly_x, layout->fly_y, layout->fly_r,
                      HUD_PANEL_LIGHT, hud->flying);
-    append_ui_text(list, &ui, layout->fly_x - 3, layout->fly_y - 3, "F",
-                   HUD_TEXT, 1);
+    append_ui_text(list, &ui, layout->fly_x - 3 * s,
+                   layout->fly_y - 3 * s, "F", HUD_TEXT, s);
     append_ui_button(list, &ui, layout->menu_x, layout->menu_y,
                      layout->menu_r, HUD_PANEL_LIGHT, 0);
-    append_ui_rect(list, &ui, layout->menu_x - 6, layout->menu_y - 5, 13, 2,
-                   HUD_TEXT);
-    append_ui_rect(list, &ui, layout->menu_x - 6, layout->menu_y - 1, 13, 2,
-                   HUD_TEXT);
-    append_ui_rect(list, &ui, layout->menu_x - 6, layout->menu_y + 3, 13, 2,
-                   HUD_TEXT);
+    append_ui_rect(list, &ui, layout->menu_x - 6 * s,
+                   layout->menu_y - 5 * s, 13 * s, 2 * s, HUD_TEXT);
+    append_ui_rect(list, &ui, layout->menu_x - 6 * s,
+                   layout->menu_y - s, 13 * s, 2 * s, HUD_TEXT);
+    append_ui_rect(list, &ui, layout->menu_x - 6 * s,
+                   layout->menu_y + 3 * s, 13 * s, 2 * s, HUD_TEXT);
     append_ui_button(list, &ui, layout->bag_x, layout->bag_y, layout->bag_r,
                      HUD_PANEL_LIGHT, hud->inventory_open);
-    append_ui_outline(list, &ui, layout->bag_x - 6, layout->bag_y - 4, 13, 9,
-                      1, HUD_TEXT);
-    append_ui_rect(list, &ui, layout->bag_x - 3, layout->bag_y - 6, 7, 2,
-                   HUD_TEXT);
+    append_ui_outline(list, &ui, layout->bag_x - 6 * s,
+                      layout->bag_y - 4 * s, 13 * s, 9 * s, s, HUD_TEXT);
+    append_ui_rect(list, &ui, layout->bag_x - 3 * s,
+                   layout->bag_y - 6 * s, 7 * s, 2 * s, HUD_TEXT);
 
     if (hud->show_performance) {
         out = status;
@@ -1245,24 +1302,53 @@ int32_t voxel_raster_render(uint32_t surface_handle, uint64_t frame_id,
                                : quality >= QUALITY_BALANCED  ? 480u
                                                               : 620u;
     uint32_t mesh_limit;
+    uint8_t mesh_build_budget = 1;
     uint8_t visible_count = 0;
     int grid_z;
     if (surface_handle == 0 || frame_id == 0 || player == NULL)
         return PXA_STATUS_INVALID_ARGUMENT;
     pxa_raster_zero_bytes(&g_stats, sizeof(g_stats));
     build_camera(&camera, player, quality);
+    /* A full-resolution frame makes both Guest projection and Host fill cost
+     * substantially more expensive. Keep near terrain responsive instead of
+     * spending the frame budget on distant faces. */
+    if (camera.width >= 240u && candidate_limit > 320u)
+        candidate_limit = 320u;
     for (grid_z = 0; grid_z < GRID_W; ++grid_z) {
         int grid_x;
         for (grid_x = 0; grid_x < GRID_W; ++grid_x) {
             const int mesh_index = grid_z * GRID_W + grid_x;
             const chunk_t *chunk = g_chunk_grid[grid_z][grid_x];
-            chunk_mesh_t *mesh = &g_meshes[mesh_index];
+            chunk_mesh_t *mesh;
             if (chunk == NULL || !chunk->loaded || !chunk_visible(&camera, chunk)) {
                 ++g_stats.frustum_culled;
                 continue;
             }
-            if (mesh->chunk != chunk || mesh->revision != chunk->revision)
-                rebuild_mesh(mesh, chunk);
+            mesh = mesh_for_chunk(chunk, (uint8_t)mesh_index);
+            if (mesh->chunk != chunk || mesh->revision != chunk->revision) {
+                const uint8_t same_location =
+                    mesh->chunk == chunk && mesh->chunk_cx == chunk->cx &&
+                    mesh->chunk_cz == chunk->cz;
+                if (!g_mesh_cache_warmed ||
+                    (same_location && !mesh->building)) {
+                    rebuild_mesh(mesh, chunk);
+                    ++g_stats.rebuilt_chunks;
+                } else {
+                    if (!mesh->building || mesh->chunk != chunk ||
+                        mesh->build_revision != chunk->revision ||
+                        mesh->chunk_cx != chunk->cx ||
+                        mesh->chunk_cz != chunk->cz) {
+                        begin_mesh_rebuild(mesh, chunk);
+                    }
+                    if (mesh_build_budget != 0) {
+                        --mesh_build_budget;
+                        ++g_stats.mesh_build_passes;
+                        if (advance_mesh_rebuild(mesh, chunk))
+                            ++g_stats.rebuilt_chunks;
+                    }
+                    if (mesh->revision != chunk->revision) continue;
+                }
+            }
             g_stats.cached_quads += mesh->quad_count;
             g_stats.dropped_quads += mesh->dropped;
             visible_chunks[visible_count].chunk = chunk;
@@ -1271,6 +1357,7 @@ int32_t voxel_raster_render(uint32_t surface_handle, uint64_t frame_id,
             ++visible_count;
         }
     }
+    g_mesh_cache_warmed = 1;
     sort_visible_chunks(visible_chunks, visible_count);
     /* Keep space for actors and particles. Without this reservation, a dense
      * terrain mesh consumes the whole transport budget before entities run. */

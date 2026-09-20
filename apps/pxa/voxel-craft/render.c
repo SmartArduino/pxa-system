@@ -56,10 +56,12 @@ static int g_inset_right;
 static int g_inset_bottom;
 
 render_layout_t g_layout = {
-    SCREEN_W_DEFAULT, SCREEN_H_DEFAULT, 0, 0, SCREEN_W_DEFAULT,
-    SCREEN_H_DEFAULT, 20, 208, 262, 216, 16, 262, 178, 16,
-    262, 140, 16, 262, 104, 12, 276, 14, 11, 2, 2, 150, 18,
-    248, 14, 11, 220, 14, 11,
+    .screen_w = SCREEN_W_DEFAULT,
+    .screen_h = SCREEN_H_DEFAULT,
+    .view_w = SCREEN_W_DEFAULT,
+    .view_h = SCREEN_H_DEFAULT,
+    .ui_scale = 1,
+    .hotbar_slot = HOTBAR_SLOT,
 };
 
 menu_button_t g_menu_buttons[MENU_BUTTON_MAX];
@@ -69,17 +71,20 @@ inventory_layout_t g_inv_layout;
 static int g_inv_mode = 2;
 
 int render_min_quality(void) {
-    int scale = QUALITY_MIN;
-    while (scale < QUALITY_MAX) {
+    int scale;
+    static const uint8_t scales[] = {
+        QUALITY_MIN, QUALITY_BALANCED, QUALITY_PERFORMANCE};
+    size_t index;
+    for (index = 0; index < sizeof(scales) / sizeof(scales[0]); ++index) {
+        scale = scales[index];
         const int width = (g_layout.view_w + scale - 1) / scale;
         const int height = (g_layout.view_h + scale - 1) / scale;
         if (width <= SCENE_MAX_W && height <= SCENE_MAX_H &&
             width * height <= g_view_pixel_budget) {
-            break;
+            return scale;
         }
-        ++scale;
     }
-    return scale;
+    return QUALITY_PERFORMANCE;
 }
 
 static void render_update_scene(void) {
@@ -157,6 +162,8 @@ int render_set_safe_insets(int left, int top, int right, int bottom) {
 }
 
 void render_configure(int width, int height) {
+    int ui_scale;
+    int slot;
     if (width < 120) {
         width = 120;
     }
@@ -173,6 +180,10 @@ void render_configure(int width, int height) {
      * middle of larger displays such as the 412x412 Watcher. */
     g_layout.view_x = (width - g_layout.view_w) / 2;
     g_layout.view_y = (height - g_layout.view_h) / 2;
+    ui_scale = width >= 640 && height >= 400 ? 2 : 1;
+    slot = width < 280 ? 20 : HOTBAR_SLOT * ui_scale;
+    g_layout.ui_scale = ui_scale;
+    g_layout.hotbar_slot = slot;
     /* Interactive controls stay clear of the union of the physical safe area
      * and the Host's system chrome/gesture reserves (status bar pull-down,
      * Home gesture, Back gesture). The 3D view itself stays edge to edge. */
@@ -189,56 +200,74 @@ void render_configure(int width, int height) {
             hud_y = g_layout.view_y;
             hud_h = g_layout.view_h;
         }
-        g_layout.hotbar_x =
-            hud_x + (hud_w - HOTBAR_SLOTS * HOTBAR_SLOT) / 2;
-        g_layout.hotbar_y = hud_y + hud_h - 48;
-        g_layout.jump_x = hud_x + hud_w - 34;
-        g_layout.jump_y = hud_y + hud_h - 42;
-        g_layout.jump_r = 16;
+        g_layout.hotbar_y = hud_y + hud_h - 48 * ui_scale;
+        g_layout.jump_x = hud_x + hud_w - 34 * ui_scale;
+        g_layout.jump_y = hud_y + hud_h - 42 * ui_scale;
+        g_layout.jump_r = 16 * ui_scale;
+        if (ui_scale == 1) {
+            const int hotbar_right =
+                g_layout.jump_x - g_layout.jump_r - 8;
+            g_layout.hotbar_x =
+                hud_x + (hotbar_right - hud_x - HOTBAR_SLOTS * slot) / 2;
+            if (g_layout.hotbar_x < hud_x + 4)
+                g_layout.hotbar_x = hud_x + 4;
+        } else {
+            g_layout.hotbar_x =
+                hud_x + (hud_w - HOTBAR_SLOTS * slot) / 2;
+        }
         g_layout.action_x = g_layout.jump_x;
-        g_layout.action_y = g_layout.jump_y - 38;
-        g_layout.action_r = 16;
+        g_layout.action_y = g_layout.jump_y - 38 * ui_scale;
+        g_layout.action_r = 16 * ui_scale;
         g_layout.place_x = g_layout.jump_x;
-        g_layout.place_y = g_layout.jump_y - 76;
-        g_layout.place_r = 16;
+        g_layout.place_y = g_layout.jump_y - 76 * ui_scale;
+        g_layout.place_r = 16 * ui_scale;
         g_layout.down_x = g_layout.jump_x;
-        g_layout.down_y = g_layout.jump_y - 112;
-        g_layout.down_r = 12;
-        g_layout.fly_x = hud_x + hud_w - 20;
-        g_layout.fly_y = hud_y + 28;
-        g_layout.fly_r = 11;
-        g_layout.quality_x = hud_x + 24;
-        g_layout.quality_y = hud_y + 24;
-        g_layout.quality_w = 150;
-        if (g_layout.quality_w > hud_w - 48) g_layout.quality_w = hud_w - 48;
-        if (g_layout.quality_w < 60) g_layout.quality_w = 60;
-        g_layout.quality_h = 18;
-        g_layout.bag_x = hud_x + hud_w - 48;
-        g_layout.bag_y = hud_y + 28;
-        g_layout.bag_r = 11;
-        g_layout.menu_x = hud_x + hud_w - 76;
-        g_layout.menu_y = hud_y + 28;
-        g_layout.menu_r = 11;
-        g_inv_layout.panel_x = hud_x + 6;
-        g_inv_layout.panel_y = hud_y + 6;
-        g_inv_layout.panel_w = hud_w - 12;
-        g_inv_layout.panel_h = hud_h - 12;
+        g_layout.down_y = g_layout.jump_y - 112 * ui_scale;
+        g_layout.down_r = 12 * ui_scale;
+        g_layout.fly_x = hud_x + hud_w - 20 * ui_scale;
+        g_layout.fly_y = hud_y + 28 * ui_scale;
+        g_layout.fly_r = 11 * ui_scale;
+        g_layout.quality_x = hud_x + 24 * ui_scale;
+        g_layout.quality_y = hud_y + 24 * ui_scale;
+        g_layout.quality_w = 150 * ui_scale;
+        g_layout.quality_h = 18 * ui_scale;
+        g_layout.bag_x = hud_x + hud_w - 48 * ui_scale;
+        g_layout.bag_y = hud_y + 28 * ui_scale;
+        g_layout.bag_r = 11 * ui_scale;
+        g_layout.menu_x = hud_x + hud_w - 76 * ui_scale;
+        g_layout.menu_y = hud_y + 28 * ui_scale;
+        g_layout.menu_r = 11 * ui_scale;
+        {
+            const int quality_max_w =
+                g_layout.menu_x - g_layout.menu_r - 4 * ui_scale -
+                g_layout.quality_x;
+            if (g_layout.quality_w > quality_max_w)
+                g_layout.quality_w = quality_max_w;
+            if (g_layout.quality_w < 60 * ui_scale)
+                g_layout.quality_w = 60 * ui_scale;
+        }
+        g_inv_layout.panel_x = hud_x + 6 * ui_scale;
+        g_inv_layout.panel_y = hud_y + 6 * ui_scale;
+        g_inv_layout.panel_w = hud_w - 12 * ui_scale;
+        g_inv_layout.panel_h = hud_h - 12 * ui_scale;
     }
     g_inv_layout.main_x =
-        g_inv_layout.panel_x + (g_inv_layout.panel_w - 9 * HOTBAR_SLOT) / 2;
-    g_inv_layout.main_y = g_inv_layout.panel_y + 96;
+        g_inv_layout.panel_x + (g_inv_layout.panel_w - 9 * slot) / 2;
+    g_inv_layout.main_y =
+        g_inv_layout.panel_y + (g_inv_mode == 3 ? 112 : 96) * ui_scale;
     g_inv_layout.inv_hotbar_x = g_inv_layout.main_x;
-    g_inv_layout.inv_hotbar_y = g_inv_layout.panel_y + 176;
-    g_inv_layout.craft_x = g_inv_layout.main_x + 30;
-    g_inv_layout.craft_y = g_inv_layout.panel_y + 34;
+    g_inv_layout.inv_hotbar_y =
+        g_inv_layout.main_y + 3 * slot + 8 * ui_scale;
+    g_inv_layout.craft_x = g_inv_layout.main_x + 30 * ui_scale;
+    g_inv_layout.craft_y = g_inv_layout.panel_y + 34 * ui_scale;
     g_inv_layout.result_x =
-        g_inv_layout.craft_x + g_inv_mode * HOTBAR_SLOT + 16;
+        g_inv_layout.craft_x + g_inv_mode * slot + 16 * ui_scale;
     g_inv_layout.result_y = g_inv_layout.craft_y +
-                            (g_inv_mode * HOTBAR_SLOT) / 2 -
-                            HOTBAR_SLOT / 2;
-    g_inv_layout.close_x = g_inv_layout.panel_x + g_inv_layout.panel_w - 18;
-    g_inv_layout.close_y = g_inv_layout.panel_y + 32;
-    g_inv_layout.close_r = 10;
+                            (g_inv_mode * slot) / 2 - slot / 2;
+    g_inv_layout.close_x =
+        g_inv_layout.panel_x + g_inv_layout.panel_w - 18 * ui_scale;
+    g_inv_layout.close_y = g_inv_layout.panel_y + 32 * ui_scale;
+    g_inv_layout.close_r = 10 * ui_scale;
     if (g_scale < render_min_quality()) {
         g_scale = render_min_quality();
     }
@@ -592,10 +621,12 @@ static void render_scene(const camera_t *cam, uint32_t now_ms) {
                         cache_j = cj;
                         chunk = g_chunk_grid[cj][ci];
                     }
-                    block = chunk->blocks[((map_y << 8) |
-                                           ((map_z & CHUNK_MASK)
-                                            << CHUNK_BITS) |
-                                           (map_x & CHUNK_MASK))];
+                    block = chunk != NULL && chunk->loaded
+                                ? chunk->blocks[((map_y << 8) |
+                                                 ((map_z & CHUNK_MASK)
+                                                  << CHUNK_BITS) |
+                                                 (map_x & CHUNK_MASK))]
+                                : BLOCK_AIR;
                 }
                 if (block != BLOCK_AIR) {
                     break;
@@ -1399,24 +1430,29 @@ static void draw_item_icon(int x, int y, int size, uint8_t item);
 static void draw_count(int x, int y, uint8_t count);
 
 static void draw_hotbar(const hud_state_t *hud) {
-    const int icon = HOTBAR_SLOT - 4;
+    const int slot_size = g_layout.hotbar_slot;
+    const int padding = 2 * g_layout.ui_scale;
+    const int icon = slot_size - 2 * padding;
     int slot;
     for (slot = 0; slot < HOTBAR_SLOTS; ++slot) {
-        const int x = g_layout.hotbar_x + slot * HOTBAR_SLOT;
+        const int x = g_layout.hotbar_x + slot * slot_size;
         const int y = g_layout.hotbar_y;
         const item_stack_t *value = &g_inventory[slot];
-        hud_rect(x, y, HOTBAR_SLOT, HOTBAR_SLOT, COL_PANEL);
+        hud_rect(x, y, slot_size, slot_size, COL_PANEL);
         if (value->item != BLOCK_AIR) {
-            draw_item_icon(x + 2, y + 2, icon, value->item);
-            hud_rect(x + 2, y + 7, icon, 1, COL_SHADOW);
-            draw_count(x + HOTBAR_SLOT - 2, y + HOTBAR_SLOT - 1,
+            draw_item_icon(x + padding, y + padding, icon, value->item);
+            hud_rect(x + padding, y + 7 * g_layout.ui_scale, icon,
+                     g_layout.ui_scale, COL_SHADOW);
+            draw_count(x + slot_size - padding, y + slot_size - 1,
                        value->count);
         }
         if (slot == hud->hotbar_selected) {
-            hud_rect_outline(x, y - 2, HOTBAR_SLOT, HOTBAR_SLOT + 2, 2,
-                             COL_SELECT);
+            hud_rect_outline(x, y - 2 * g_layout.ui_scale, slot_size,
+                             slot_size + 2 * g_layout.ui_scale,
+                             2 * g_layout.ui_scale, COL_SELECT);
         } else {
-            hud_rect_outline(x, y, HOTBAR_SLOT, HOTBAR_SLOT, 1, COL_SHADOW);
+            hud_rect_outline(x, y, slot_size, slot_size, g_layout.ui_scale,
+                             COL_SHADOW);
         }
     }
 }
@@ -1428,37 +1464,43 @@ static void draw_button(int cx, int cy, int radius, uint16_t fill,
 }
 
 static void draw_arrow(int cx, int cy, int direction) {
+    const int scale = g_layout.ui_scale;
     int index;
-    for (index = 0; index < 6; ++index) {
-        const int half = direction > 0 ? index : 5 - index;
-        hud_line(cx - half, cy - 2 + index, cx + half, cy - 2 + index,
-                 COL_WHITE);
+    for (index = 0; index < 6 * scale; ++index) {
+        const int half = direction > 0 ? index : 6 * scale - 1 - index;
+        hud_line(cx - half, cy - 2 * scale + index, cx + half,
+                 cy - 2 * scale + index, COL_WHITE);
     }
 }
 
 static void draw_pickaxe(int cx, int cy) {
-    hud_line(cx - 5, cy + 6, cx + 2, cy - 2, COL_WHITE);
-    hud_line(cx - 8, cy - 3, cx + 6, cy - 3, COL_WHITE);
-    hud_line(cx - 8, cy - 3, cx - 6, cy - 6, COL_WHITE);
-    hud_line(cx + 6, cy - 3, cx + 4, cy - 6, COL_WHITE);
+    const int s = g_layout.ui_scale;
+    hud_line(cx - 5 * s, cy + 6 * s, cx + 2 * s, cy - 2 * s, COL_WHITE);
+    hud_line(cx - 8 * s, cy - 3 * s, cx + 6 * s, cy - 3 * s, COL_WHITE);
+    hud_line(cx - 8 * s, cy - 3 * s, cx - 6 * s, cy - 6 * s, COL_WHITE);
+    hud_line(cx + 6 * s, cy - 3 * s, cx + 4 * s, cy - 6 * s, COL_WHITE);
 }
 
 static void draw_sword(int cx, int cy) {
-    hud_line(cx - 4, cy + 6, cx + 4, cy - 4, COL_WHITE);
-    hud_line(cx - 6, cy + 2, cx - 1, cy + 7, COL_WHITE);
-    hud_pixel(cx + 5, cy - 5, COL_WHITE);
-    hud_pixel(cx + 5, cy - 6, COL_WHITE);
+    const int s = g_layout.ui_scale;
+    hud_line(cx - 4 * s, cy + 6 * s, cx + 4 * s, cy - 4 * s, COL_WHITE);
+    hud_line(cx - 6 * s, cy + 2 * s, cx - s, cy + 7 * s, COL_WHITE);
+    hud_rect(cx + 5 * s, cy - 6 * s, s, 2 * s, COL_WHITE);
 }
 
 /* --- inventory screen --------------------------------------------------- */
 
 void render_inventory_set_mode(int table) {
+    const int slot = g_layout.hotbar_slot;
     g_inv_mode = table ? 3 : 2;
+    g_inv_layout.main_y = g_inv_layout.panel_y +
+                          (g_inv_mode == 3 ? 112 : 96) * g_layout.ui_scale;
+    g_inv_layout.inv_hotbar_y =
+        g_inv_layout.main_y + 3 * slot + 8 * g_layout.ui_scale;
     g_inv_layout.result_x =
-        g_inv_layout.craft_x + g_inv_mode * HOTBAR_SLOT + 16;
+        g_inv_layout.craft_x + g_inv_mode * slot + 16 * g_layout.ui_scale;
     g_inv_layout.result_y = g_inv_layout.craft_y +
-                            (g_inv_mode * HOTBAR_SLOT) / 2 -
-                            HOTBAR_SLOT / 2;
+                            (g_inv_mode * slot) / 2 - slot / 2;
 }
 
 int render_inventory_slot(int hit) {
@@ -1475,6 +1517,7 @@ int render_inventory_slot(int hit) {
 }
 
 int render_inventory_hit(int x, int y) {
+    const int slot = g_layout.hotbar_slot;
     int column;
     int row;
     if (x >= g_inv_layout.close_x - g_inv_layout.close_r &&
@@ -1485,35 +1528,32 @@ int render_inventory_hit(int x, int y) {
     }
     for (row = 0; row < g_inv_mode; ++row) {
         for (column = 0; column < g_inv_mode; ++column) {
-            const int sx = g_inv_layout.craft_x + column * HOTBAR_SLOT;
-            const int sy = g_inv_layout.craft_y + row * HOTBAR_SLOT;
-            if (x >= sx && x < sx + HOTBAR_SLOT && y >= sy &&
-                y < sy + HOTBAR_SLOT) {
+            const int sx = g_inv_layout.craft_x + column * slot;
+            const int sy = g_inv_layout.craft_y + row * slot;
+            if (x >= sx && x < sx + slot && y >= sy && y < sy + slot) {
                 return INV_HIT_CRAFT + row * g_inv_mode + column;
             }
         }
     }
     if (x >= g_inv_layout.result_x &&
-        x < g_inv_layout.result_x + HOTBAR_SLOT &&
+        x < g_inv_layout.result_x + slot &&
         y >= g_inv_layout.result_y &&
-        y < g_inv_layout.result_y + HOTBAR_SLOT) {
+        y < g_inv_layout.result_y + slot) {
         return INV_HIT_RESULT;
     }
     for (row = 0; row < 3; ++row) {
         for (column = 0; column < 9; ++column) {
-            const int sx = g_inv_layout.main_x + column * HOTBAR_SLOT;
-            const int sy = g_inv_layout.main_y + row * HOTBAR_SLOT;
-            if (x >= sx && x < sx + HOTBAR_SLOT && y >= sy &&
-                y < sy + HOTBAR_SLOT) {
+            const int sx = g_inv_layout.main_x + column * slot;
+            const int sy = g_inv_layout.main_y + row * slot;
+            if (x >= sx && x < sx + slot && y >= sy && y < sy + slot) {
                 return INV_HIT_MAIN + row * 9 + column;
             }
         }
     }
     for (column = 0; column < 9; ++column) {
-        const int sx = g_inv_layout.inv_hotbar_x + column * HOTBAR_SLOT;
+        const int sx = g_inv_layout.inv_hotbar_x + column * slot;
         const int sy = g_inv_layout.inv_hotbar_y;
-        if (x >= sx && x < sx + HOTBAR_SLOT && y >= sy &&
-            y < sy + HOTBAR_SLOT) {
+        if (x >= sx && x < sx + slot && y >= sy && y < sy + slot) {
             return INV_HIT_HOTBAR + column;
         }
     }
@@ -1632,16 +1672,22 @@ static void draw_count(int x, int y, uint8_t count) {
 
 static void draw_slot(int x, int y, uint8_t item, uint8_t count,
                       uint8_t selected) {
-    hud_rect(x, y, HOTBAR_SLOT, HOTBAR_SLOT, COL_PANEL);
+    const int slot = g_layout.hotbar_slot;
+    const int padding = 2 * g_layout.ui_scale;
+    hud_rect(x, y, slot, slot, COL_PANEL);
     if (item != BLOCK_AIR) {
-        draw_item_icon(x + 2, y + 2, HOTBAR_SLOT - 4, item);
-        draw_count(x + HOTBAR_SLOT - 2, y + HOTBAR_SLOT - 1, count);
+        draw_item_icon(x + padding, y + padding, slot - 2 * padding, item);
+        draw_count(x + slot - padding, y + slot - 1, count);
     }
-    hud_rect_outline(x, y, HOTBAR_SLOT, HOTBAR_SLOT, selected ? 2 : 1,
+    hud_rect_outline(x, y, slot, slot,
+                     (selected ? 2 : 1) * g_layout.ui_scale,
                      selected ? COL_SELECT : COL_SHADOW);
 }
 
 static void draw_inventory(const hud_state_t *hud) {
+    const int ui_scale = g_layout.ui_scale;
+    const int slot_size = g_layout.hotbar_slot;
+    const int padding = 2 * ui_scale;
     int row;
     int column;
     char *out;
@@ -1651,7 +1697,7 @@ static void draw_inventory(const hud_state_t *hud) {
     hud_rect(g_inv_layout.panel_x, g_inv_layout.panel_y,
              g_inv_layout.panel_w, g_inv_layout.panel_h, COL_PANEL);
     hud_rect_outline(g_inv_layout.panel_x, g_inv_layout.panel_y,
-                     g_inv_layout.panel_w, g_inv_layout.panel_h, 2,
+                     g_inv_layout.panel_w, g_inv_layout.panel_h, 2 * ui_scale,
                      COL_PANEL_LIGHT);
     {
         const char *label = hud->craft_table ? "CRAFTING" : "INVENTORY";
@@ -1661,15 +1707,16 @@ static void draw_inventory(const hud_state_t *hud) {
         }
         *out = '\0';
     }
-    hud_text_centered(g_inv_layout.panel_y + 8, title, COL_TEXT, 2);
-    hud_text_centered(g_inv_layout.panel_y + 22, "TAP MOVE  HOLD SPLIT",
+    hud_text_centered(g_inv_layout.panel_y + 8 * ui_scale, title, COL_TEXT, 2);
+    hud_text_centered(g_inv_layout.panel_y + 22 * ui_scale,
+                      "TAP MOVE  HOLD SPLIT",
                       COL_MUTED, 1);
 
     /* Crafting grid, arrow and result. */
     for (row = 0; row < g_inv_mode; ++row) {
         for (column = 0; column < g_inv_mode; ++column) {
-            const int x = g_inv_layout.craft_x + column * HOTBAR_SLOT;
-            const int y = g_inv_layout.craft_y + row * HOTBAR_SLOT;
+            const int x = g_inv_layout.craft_x + column * slot_size;
+            const int y = g_inv_layout.craft_y + row * slot_size;
             const int index = row * g_inv_mode + column;
             const item_stack_t *slot =
                 hud->craft_table ? &g_table_craft[index] : &g_craft[index];
@@ -1678,15 +1725,18 @@ static void draw_inventory(const hud_state_t *hud) {
     }
     {
         const int arrow_x = g_inv_layout.craft_x +
-                            g_inv_mode * HOTBAR_SLOT + 4;
+                            g_inv_mode * slot_size + 4 * ui_scale;
         const int arrow_y = g_inv_layout.craft_y +
-                            (g_inv_mode * HOTBAR_SLOT) / 2;
+                            (g_inv_mode * slot_size) / 2;
         const item_stack_t *result =
             hud->craft_table ? &g_table_result : &g_craft_result;
-        hud_line(arrow_x, arrow_y, arrow_x + 10, arrow_y, COL_MUTED);
-        hud_line(arrow_x + 6, arrow_y - 4, arrow_x + 10, arrow_y,
+        hud_line(arrow_x, arrow_y, arrow_x + 10 * ui_scale, arrow_y,
                  COL_MUTED);
-        hud_line(arrow_x + 6, arrow_y + 4, arrow_x + 10, arrow_y,
+        hud_line(arrow_x + 6 * ui_scale, arrow_y - 4 * ui_scale,
+                 arrow_x + 10 * ui_scale, arrow_y,
+                 COL_MUTED);
+        hud_line(arrow_x + 6 * ui_scale, arrow_y + 4 * ui_scale,
+                 arrow_x + 10 * ui_scale, arrow_y,
                  COL_MUTED);
         draw_slot(g_inv_layout.result_x, g_inv_layout.result_y,
                   result->item, result->count, result->item != BLOCK_AIR);
@@ -1694,49 +1744,60 @@ static void draw_inventory(const hud_state_t *hud) {
 
     for (row = 0; row < 3; ++row) {
         for (column = 0; column < 9; ++column) {
-            const int x = g_inv_layout.main_x + column * HOTBAR_SLOT;
-            const int y = g_inv_layout.main_y + row * HOTBAR_SLOT;
+            const int x = g_inv_layout.main_x + column * slot_size;
+            const int y = g_inv_layout.main_y + row * slot_size;
             const item_stack_t *slot =
                 &g_inventory[HOTBAR_SLOTS + row * 9 + column];
             draw_slot(x, y, slot->item, slot->count, 0);
         }
     }
     for (column = 0; column < 9; ++column) {
-        const int x = g_inv_layout.inv_hotbar_x + column * HOTBAR_SLOT;
+        const int x = g_inv_layout.inv_hotbar_x + column * slot_size;
         const item_stack_t *slot = &g_inventory[column];
         draw_slot(x, g_inv_layout.inv_hotbar_y, slot->item, slot->count,
                   (uint8_t)(column == hud->hotbar_selected));
     }
-    hud_line(g_inv_layout.close_x - 7, g_inv_layout.close_y - 7,
-             g_inv_layout.close_x + 7, g_inv_layout.close_y + 7, COL_SHADOW);
-    hud_line(g_inv_layout.close_x - 7, g_inv_layout.close_y + 7,
-             g_inv_layout.close_x + 7, g_inv_layout.close_y - 7, COL_SHADOW);
-    hud_line(g_inv_layout.close_x - 6, g_inv_layout.close_y - 6,
-             g_inv_layout.close_x + 6, g_inv_layout.close_y + 6, COL_TEXT);
-    hud_line(g_inv_layout.close_x - 6, g_inv_layout.close_y + 6,
-             g_inv_layout.close_x + 6, g_inv_layout.close_y - 6, COL_TEXT);
+    hud_line(g_inv_layout.close_x - 7 * ui_scale,
+             g_inv_layout.close_y - 7 * ui_scale,
+             g_inv_layout.close_x + 7 * ui_scale,
+             g_inv_layout.close_y + 7 * ui_scale, COL_SHADOW);
+    hud_line(g_inv_layout.close_x - 7 * ui_scale,
+             g_inv_layout.close_y + 7 * ui_scale,
+             g_inv_layout.close_x + 7 * ui_scale,
+             g_inv_layout.close_y - 7 * ui_scale, COL_SHADOW);
+    hud_line(g_inv_layout.close_x - 6 * ui_scale,
+             g_inv_layout.close_y - 6 * ui_scale,
+             g_inv_layout.close_x + 6 * ui_scale,
+             g_inv_layout.close_y + 6 * ui_scale, COL_TEXT);
+    hud_line(g_inv_layout.close_x - 6 * ui_scale,
+             g_inv_layout.close_y + 6 * ui_scale,
+             g_inv_layout.close_x + 6 * ui_scale,
+             g_inv_layout.close_y - 6 * ui_scale, COL_TEXT);
 
     if (hud->cursor_item != BLOCK_AIR && hud->cursor_count != 0) {
-        const int x = hud->pointer_x - HOTBAR_SLOT / 2;
-        const int y = hud->pointer_y - HOTBAR_SLOT - 6;
-        hud_rect(x, y, HOTBAR_SLOT, HOTBAR_SLOT, COL_PANEL);
-        draw_item_icon(x + 2, y + 2, HOTBAR_SLOT - 4, hud->cursor_item);
-        draw_count(x + HOTBAR_SLOT - 2, y + HOTBAR_SLOT - 1,
+        const int x = hud->pointer_x - slot_size / 2;
+        const int y = hud->pointer_y - slot_size - 6 * ui_scale;
+        hud_rect(x, y, slot_size, slot_size, COL_PANEL);
+        draw_item_icon(x + padding, y + padding, slot_size - 2 * padding,
+                       hud->cursor_item);
+        draw_count(x + slot_size - padding, y + slot_size - 1,
                    hud->cursor_count);
     }
 }
 
 static void draw_use_icon(int cx, int cy) {
+    const int s = g_layout.ui_scale;
     /* A small crafting table: top board and two legs. */
-    hud_rect(cx - 7, cy - 5, 15, 3, COL_WHITE);
-    hud_rect(cx - 6, cy - 2, 3, 7, COL_WHITE);
-    hud_rect(cx + 4, cy - 2, 3, 7, COL_WHITE);
+    hud_rect(cx - 7 * s, cy - 5 * s, 15 * s, 3 * s, COL_WHITE);
+    hud_rect(cx - 6 * s, cy - 2 * s, 3 * s, 7 * s, COL_WHITE);
+    hud_rect(cx + 4 * s, cy - 2 * s, 3 * s, 7 * s, COL_WHITE);
 }
 
 static void draw_controls(const hud_state_t *hud) {
+    const int s = g_layout.ui_scale;
     draw_button(g_layout.jump_x, g_layout.jump_y, g_layout.jump_r,
                 COL_PANEL_LIGHT, hud->jump_held);
-    draw_arrow(g_layout.jump_x, g_layout.jump_y - 3, 1);
+    draw_arrow(g_layout.jump_x, g_layout.jump_y - 3 * s, 1);
 
     /* Context action: mine, attack or use. */
     draw_button(g_layout.action_x, g_layout.action_y, g_layout.action_r,
@@ -1753,44 +1814,57 @@ static void draw_controls(const hud_state_t *hud) {
 
     draw_button(g_layout.place_x, g_layout.place_y, g_layout.place_r,
                 COL_PANEL_LIGHT, 0);
-    hud_rect(g_layout.place_x - 7, g_layout.place_y - 1, 15, 3, COL_WHITE);
-    hud_rect(g_layout.place_x - 1, g_layout.place_y - 7, 3, 15, COL_WHITE);
+    hud_rect(g_layout.place_x - 7 * s, g_layout.place_y - s, 15 * s, 3 * s,
+             COL_WHITE);
+    hud_rect(g_layout.place_x - s, g_layout.place_y - 7 * s, 3 * s, 15 * s,
+             COL_WHITE);
 
     if (hud->flying) {
         draw_button(g_layout.down_x, g_layout.down_y, g_layout.down_r,
                     COL_PANEL_LIGHT, hud->down_held);
-        draw_arrow(g_layout.down_x, g_layout.down_y - 3, -1);
+        draw_arrow(g_layout.down_x, g_layout.down_y - 3 * s, -1);
     }
 
     draw_button(g_layout.fly_x, g_layout.fly_y, g_layout.fly_r,
                 COL_PANEL_LIGHT, hud->flying);
-    hud_text(g_layout.fly_x - 5, g_layout.fly_y - 2, "F", COL_WHITE, 1);
+    hud_text(g_layout.fly_x - 5 * s, g_layout.fly_y - 2 * s, "F", COL_WHITE,
+             s);
 
     /* Menu: three bars. */
     draw_button(g_layout.menu_x, g_layout.menu_y, g_layout.menu_r,
                 COL_PANEL_LIGHT, 0);
-    hud_rect(g_layout.menu_x - 6, g_layout.menu_y - 5, 13, 2, COL_TEXT);
-    hud_rect(g_layout.menu_x - 6, g_layout.menu_y - 1, 13, 2, COL_TEXT);
-    hud_rect(g_layout.menu_x - 6, g_layout.menu_y + 3, 13, 2, COL_TEXT);
+    hud_rect(g_layout.menu_x - 6 * s, g_layout.menu_y - 5 * s, 13 * s,
+             2 * s, COL_TEXT);
+    hud_rect(g_layout.menu_x - 6 * s, g_layout.menu_y - s, 13 * s, 2 * s,
+             COL_TEXT);
+    hud_rect(g_layout.menu_x - 6 * s, g_layout.menu_y + 3 * s, 13 * s,
+             2 * s, COL_TEXT);
 
     /* Backpack: a small bag outline. */
     draw_button(g_layout.bag_x, g_layout.bag_y, g_layout.bag_r,
                 COL_PANEL_LIGHT, hud->inventory_open);
-    hud_rect(g_layout.bag_x - 6, g_layout.bag_y - 4, 13, 9, COL_TEXT);
-    hud_rect(g_layout.bag_x - 4, g_layout.bag_y - 2, 9, 5, COL_PANEL);
-    hud_rect(g_layout.bag_x - 3, g_layout.bag_y - 6, 7, 3, COL_TEXT);
+    hud_rect(g_layout.bag_x - 6 * s, g_layout.bag_y - 4 * s, 13 * s,
+             9 * s, COL_TEXT);
+    hud_rect(g_layout.bag_x - 4 * s, g_layout.bag_y - 2 * s, 9 * s,
+             5 * s, COL_PANEL);
+    hud_rect(g_layout.bag_x - 3 * s, g_layout.bag_y - 6 * s, 7 * s,
+             3 * s, COL_TEXT);
 }
 
 static void draw_joystick(const hud_state_t *hud) {
+    const int s = g_layout.ui_scale;
     if (!hud->move_active) {
         return;
     }
-    hud_circle_outline(hud->move_origin_x, hud->move_origin_y, 36, COL_SHADOW);
-    hud_circle_outline(hud->move_origin_x, hud->move_origin_y, 34, COL_MUTED);
+    hud_circle_outline(hud->move_origin_x, hud->move_origin_y, 36 * s,
+                       COL_SHADOW);
+    hud_circle_outline(hud->move_origin_x, hud->move_origin_y, 34 * s,
+                       COL_MUTED);
     hud_circle((int)(hud->move_origin_x + hud->move_dx),
-               (int)(hud->move_origin_y + hud->move_dy), 11, COL_SHADOW);
+               (int)(hud->move_origin_y + hud->move_dy), 11 * s, COL_SHADOW);
     hud_circle((int)(hud->move_origin_x + hud->move_dx),
-               (int)(hud->move_origin_y + hud->move_dy), 9, COL_PANEL_LIGHT);
+               (int)(hud->move_origin_y + hud->move_dy), 9 * s,
+               COL_PANEL_LIGHT);
 }
 
 static void draw_use_hint(const hud_state_t *hud) {
@@ -2024,15 +2098,16 @@ static void hud_text_centered_width(int x, int w, int y, const char *text,
 
 static void menu_draw_button(int index, int y, int height, const char *label,
                              uint8_t enabled) {
-    const int x = g_layout.view_x + (g_layout.view_w - 200) / 2;
-    const int w = 200;
+    const int ui_scale = g_layout.ui_scale;
+    const int w = 200 * ui_scale;
+    const int x = g_layout.view_x + (g_layout.view_w - w) / 2;
     g_menu_buttons[index].x = x;
     g_menu_buttons[index].y = y;
     g_menu_buttons[index].w = w;
     g_menu_buttons[index].h = height;
     g_menu_buttons[index].enabled = enabled;
     hud_rect(x, y, w, height, enabled ? COL_PANEL_LIGHT : COL_PANEL);
-    hud_rect_outline(x, y, w, height, 2,
+    hud_rect_outline(x, y, w, height, 2 * ui_scale,
                      enabled ? COL_SELECT : COL_SHADOW);
     hud_text_centered_width(x, w, y + (height - 14) / 2, label,
                             enabled ? COL_TEXT : COL_MUTED, 2);
@@ -2044,6 +2119,7 @@ void render_menu(const menu_state_t *menu) {
     char *out;
     int row;
     int y;
+    const int ui_scale = g_layout.ui_scale;
     if (menu->overlay) {
         dim_region(g_layout.view_x, g_layout.view_y, g_layout.view_w,
                    g_layout.view_h);
@@ -2059,9 +2135,11 @@ void render_menu(const menu_state_t *menu) {
         }
     }
     if (menu->screen == 2) {
-        hud_text_centered(g_layout.view_y + 30, "PAUSED", COL_SELECT, 3);
+        hud_text_centered(g_layout.view_y + 30 * ui_scale, "PAUSED",
+                          COL_SELECT, 3);
     } else {
-        hud_text_centered(g_layout.view_y + 34, "VOXEL CRAFT", COL_SELECT, 3);
+        hud_text_centered(g_layout.view_y + 34 * ui_scale, "VOXEL CRAFT",
+                          COL_SELECT, 3);
     }
 
     out = seed_text;
@@ -2085,22 +2163,25 @@ void render_menu(const menu_state_t *menu) {
         *p = '\0';
     }
     if (menu->screen == 0) {
-        hud_text_centered(g_layout.view_y + 60, seed_text, COL_MUTED, 2);
+        hud_text_centered(g_layout.view_y + 60 * ui_scale, seed_text,
+                          COL_MUTED, 2);
     }
 
     if (menu->screen == 2) {
         g_menu_button_count = 4;
-        y = g_layout.view_y + 72;
-        menu_draw_button(0, y, 30, "RESUME", 1);
-        menu_draw_button(1, y + 34, 30, "SAVE GAME", menu->has_game);
-        menu_draw_button(2, y + 68, 30, "SETTINGS", 1);
-        menu_draw_button(3, y + 102, 30, "MAIN MENU", 1);
+        y = g_layout.view_y + 72 * ui_scale;
+        menu_draw_button(0, y, 30 * ui_scale, "RESUME", 1);
+        menu_draw_button(1, y + 34 * ui_scale, 30 * ui_scale, "SAVE GAME",
+                         menu->has_game);
+        menu_draw_button(2, y + 68 * ui_scale, 30 * ui_scale, "SETTINGS", 1);
+        menu_draw_button(3, y + 102 * ui_scale, 30 * ui_scale, "MAIN MENU", 1);
     } else if (menu->screen == 0) {
         g_menu_button_count = 3;
-        y = g_layout.view_y + 88;
-        menu_draw_button(0, y, 34, "NEW GAME", 1);
-        menu_draw_button(1, y + 42, 34, "LOAD SAVE", menu->has_save);
-        menu_draw_button(2, y + 84, 34, "SETTINGS", 1);
+        y = g_layout.view_y + 88 * ui_scale;
+        menu_draw_button(0, y, 34 * ui_scale, "NEW GAME", 1);
+        menu_draw_button(1, y + 42 * ui_scale, 34 * ui_scale, "LOAD SAVE",
+                         menu->has_save);
+        menu_draw_button(2, y + 84 * ui_scale, 34 * ui_scale, "SETTINGS", 1);
     } else {
         out = quality_text;
         *out++ = 'Q';
@@ -2123,18 +2204,20 @@ void render_menu(const menu_state_t *menu) {
         }
         *out = '\0';
         g_menu_button_count = 5;
-        y = g_layout.view_y + 68;
-        menu_draw_button(0, y, 28, quality_text, 1);
-        menu_draw_button(1, y + 30, 28,
+        y = g_layout.view_y + 68 * ui_scale;
+        menu_draw_button(0, y, 28 * ui_scale, quality_text, 1);
+        menu_draw_button(1, y + 30 * ui_scale, 28 * ui_scale,
                          g_scale == QUALITY_PERFORMANCE
                              ? (menu->show_performance ? "PERF: ON"
                                                        : "PERF: OFF")
                              : (menu->show_performance ? "PERFORMANCE: ON"
                                                        : "PERFORMANCE: OFF"),
                          1);
-        menu_draw_button(2, y + 60, 28, "SAVE GAME", menu->has_game);
-        menu_draw_button(3, y + 90, 28, "DELETE SAVE", menu->has_save);
-        menu_draw_button(4, y + 120, 28, "BACK", 1);
+        menu_draw_button(2, y + 60 * ui_scale, 28 * ui_scale, "SAVE GAME",
+                         menu->has_game);
+        menu_draw_button(3, y + 90 * ui_scale, 28 * ui_scale, "DELETE SAVE",
+                         menu->has_save);
+        menu_draw_button(4, y + 120 * ui_scale, 28 * ui_scale, "BACK", 1);
     }
     if (menu->toast != NULL && menu->toast[0] != '\0') {
         hud_text_centered(g_layout.view_y + g_layout.view_h - 16,

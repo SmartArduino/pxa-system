@@ -38,6 +38,7 @@
       "services": [
         "audio",
         "game-render",
+        "log",
         "storage",
         {
           "name": "ui",

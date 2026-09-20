@@ -19,6 +19,7 @@ item_stack_t g_table_craft[TABLE_CRAFT_SLOTS];
 item_stack_t g_table_result;
 
 static chunk_t g_chunk_pool[GRID_COUNT];
+static uint8_t g_chunk_pending[GRID_COUNT];
 static uint8_t g_grid_ready;
 static edit_t g_edits[MAX_EDITS];
 static int g_edit_count;
@@ -623,7 +624,7 @@ static void generate_chunk(chunk_t *chunk, int cx, int cz) {
     touch_chunk_revision(chunk);
 }
 
-static void ensure_at(int px, int pz) {
+static void ensure_at(int px, int pz, int generate_now) {
     const int pcx = px >> CHUNK_BITS;
     const int pcz = pz >> CHUNK_BITS;
     const int new_cx = pcx - GRID_W / 2;
@@ -646,8 +647,8 @@ static void ensure_at(int px, int pz) {
             const int cz = new_cz + j;
             chunk_t *found = (chunk_t *)0;
             for (k = 0; k < GRID_COUNT; ++k) {
-                if (g_chunk_pool[k].loaded && g_chunk_pool[k].cx == cx &&
-                    g_chunk_pool[k].cz == cz) {
+                if ((g_chunk_pool[k].loaded || g_chunk_pending[k]) &&
+                    g_chunk_pool[k].cx == cx && g_chunk_pool[k].cz == cz) {
                     found = &g_chunk_pool[k];
                     used[k] = 1;
                     break;
@@ -673,8 +674,13 @@ static void ensure_at(int px, int pz) {
             chunk = &g_chunk_pool[k];
             chunk->cx = (int16_t)cx;
             chunk->cz = (int16_t)cz;
-            chunk->loaded = 1;
-            generate_chunk(chunk, cx, cz);
+            chunk->loaded = 0;
+            g_chunk_pending[k] = 1;
+            if (generate_now) {
+                generate_chunk(chunk, cx, cz);
+                chunk->loaded = 1;
+                g_chunk_pending[k] = 0;
+            }
             new_grid[j][i] = chunk;
         }
     }
@@ -686,6 +692,59 @@ static void ensure_at(int px, int pz) {
     g_chunk_origin_cx = (int16_t)new_cx;
     g_chunk_origin_cz = (int16_t)new_cz;
     g_grid_ready = 1;
+}
+
+int game_pending_chunk_count(void) {
+    int count = 0;
+    int index;
+    for (index = 0; index < GRID_COUNT; ++index) {
+        if (g_chunk_pending[index]) ++count;
+    }
+    return count;
+}
+
+int game_stream_chunks(int limit) {
+    int generated = 0;
+    while (generated < limit) {
+        int best_i = -1;
+        int best_j = -1;
+        int best_distance = 0x7fffffff;
+        int i;
+        int j;
+        for (j = 0; j < GRID_W; ++j) {
+            for (i = 0; i < GRID_W; ++i) {
+                chunk_t *chunk = g_chunk_grid[j][i];
+                int pool_index;
+                int dx;
+                int dz;
+                int distance;
+                if (chunk == NULL) continue;
+                pool_index = (int)(chunk - g_chunk_pool);
+                if ((unsigned)pool_index >= (unsigned)GRID_COUNT ||
+                    !g_chunk_pending[pool_index]) {
+                    continue;
+                }
+                dx = i - GRID_W / 2;
+                dz = j - GRID_W / 2;
+                distance = dx * dx + dz * dz;
+                if (distance < best_distance) {
+                    best_distance = distance;
+                    best_i = i;
+                    best_j = j;
+                }
+            }
+        }
+        if (best_i < 0) break;
+        {
+            chunk_t *chunk = g_chunk_grid[best_j][best_i];
+            const int pool_index = (int)(chunk - g_chunk_pool);
+            generate_chunk(chunk, chunk->cx, chunk->cz);
+            chunk->loaded = 1;
+            g_chunk_pending[pool_index] = 0;
+        }
+        ++generated;
+    }
+    return generated;
 }
 
 static void regenerate_chunks_at(int px, int pz);
@@ -776,7 +835,9 @@ int game_deserialize(const uint8_t *data, int length, player_t *player) {
 }
 
 void game_ensure_chunks(const player_t *player) {
-    ensure_at(rc_floor_int(player->x), rc_floor_int(player->z));
+    ensure_at(rc_floor_int(player->x), rc_floor_int(player->z), 1);
+    while (game_stream_chunks(GRID_COUNT) != 0) {
+    }
 }
 
 /* Drops every resident chunk and regenerates around a position. Used after a
@@ -785,9 +846,10 @@ static void regenerate_chunks_at(int px, int pz) {
     int index;
     for (index = 0; index < GRID_COUNT; ++index) {
         g_chunk_pool[index].loaded = 0;
+        g_chunk_pending[index] = 0;
     }
     g_grid_ready = 0;
-    ensure_at(px, pz);
+    ensure_at(px, pz, 1);
 }
 
 void game_generate(uint32_t seed) {
@@ -797,8 +859,9 @@ void game_generate(uint32_t seed) {
     g_grid_ready = 0;
     for (index = 0; index < GRID_COUNT; ++index) {
         g_chunk_pool[index].loaded = 0;
+        g_chunk_pending[index] = 0;
     }
-    ensure_at(0, 0);
+    ensure_at(0, 0, 1);
 }
 
 void game_spawn(player_t *player) {
@@ -858,7 +921,7 @@ void game_spawn(player_t *player) {
     player->on_ground = 0;
     player->flying = 0;
     player->in_water = 0;
-    ensure_at(best_x, best_z);
+    ensure_at(best_x, best_z, 1);
 }
 
 static int box_blocked_sized(float x, float y, float z, float half,
@@ -988,7 +1051,7 @@ void game_step(player_t *player, float dt, float move_x, float move_z,
     if (player->y < -8.0F) {
         game_spawn(player);
     }
-    ensure_at(rc_floor_int(player->x), rc_floor_int(player->z));
+    ensure_at(rc_floor_int(player->x), rc_floor_int(player->z), 0);
 }
 
 void game_raycast(float origin_x, float origin_y, float origin_z, float dir_x,

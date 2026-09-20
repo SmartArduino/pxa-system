@@ -34,6 +34,12 @@ int32_t pxa_io(uint32_t handle, uint32_t operation, uint8_t *data,
 
 int render_scene_width(void) { return 148; }
 int render_scene_height(void) { return 120; }
+int game_block(int x, int y, int z) {
+    (void)x;
+    (void)y;
+    (void)z;
+    return BLOCK_AIR;
+}
 uint16_t render_block_color(int block) {
     return block == BLOCK_STONE ? UINT16_C(0x8410) : UINT16_C(0xffff);
 }
@@ -69,7 +75,8 @@ int main(void) {
     voxel_raster_set_capabilities(PXA_RASTER_CAP_FLAT_QUAD |
                                   PXA_RASTER_CAP_TEXTURED_QUAD);
     assert(voxel_raster_upload_assets(3));
-    assert(voxel_raster_render(3, 1, &player, QUALITY_BALANCED, &hud) > 0);
+    assert(voxel_raster_render(3, 1, &player, QUALITY_BALANCED, &hud, NULL) >
+           0);
     voxel_raster_get_stats(&stats);
     world_candidates = stats.candidate_quads;
     /* Host depth testing requires bounded sub-quads rather than one large
@@ -86,7 +93,8 @@ int main(void) {
     g_mobs[0].z = 3.0F;
     g_mobs[0].alive = 1;
     g_mobs[0].kind = MOB_SLIME;
-    assert(voxel_raster_render(3, 2, &player, QUALITY_BALANCED, &hud) > 0);
+    assert(voxel_raster_render(3, 2, &player, QUALITY_BALANCED, &hud, NULL) >
+           0);
     voxel_raster_get_stats(&stats);
     assert(stats.candidate_quads == world_candidates + 1u);
     memset(g_mobs, 0, sizeof(g_mobs));
@@ -95,7 +103,8 @@ int main(void) {
     player.z = 8.0F;
     player.yaw = 0.0F;
     player.pitch = -0.55F;
-    assert(voxel_raster_render(3, 3, &player, QUALITY_BALANCED, &hud) > 0);
+    assert(voxel_raster_render(3, 3, &player, QUALITY_BALANCED, &hud, NULL) >
+           0);
     voxel_raster_get_stats(&stats);
     assert(stats.clipped_quads != 0);
     assert(stats.candidate_quads != 0 && stats.submitted_quads != 0);

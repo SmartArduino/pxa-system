@@ -8,6 +8,8 @@
 
 typedef struct {
     uint32_t cached_quads;
+    uint32_t rebuilt_chunks;
+    uint32_t mesh_build_passes;
     uint32_t candidate_quads;
     uint32_t submitted_quads;
     uint32_t backface_culled;

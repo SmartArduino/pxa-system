@@ -12,6 +12,7 @@
  */
 #include "pxa.h"
 #include "pxa_game_render.h"
+#include "pxa_log.h"
 #include "pxa_raster.h"
 #include "pxa_storage.h"
 #include "pxa_surface.h"
@@ -42,6 +43,7 @@
 #define PXA_WINDOW_METRICS_CHANGED_OP 0x8001u
 #define WINDOW_SNAPSHOT_PERIOD_TICKS 250u
 #define QUALITY_SAMPLE_CAP_US UINT64_C(250000)
+#define PERF_LOG_INTERVAL_US UINT64_C(2000000)
 #define TICK_SECONDS 0.033F
 #define LOOK_PER_PIXEL 0.0062F
 #define STICK_RADIUS 40.0F
@@ -106,6 +108,7 @@ static uint8_t g_raster_supported;
 static uint8_t g_raster_ready;
 static voxel_surface_ownership_t g_surface_ownership;
 static uint8_t g_input_initialized;
+static uint8_t g_input_dirty;
 static player_t g_player;
 static voxel_sfx_t g_sfx;
 static uint64_t g_last_tick_us;
@@ -135,6 +138,9 @@ static float g_swing_timer;
 static uint64_t g_last_jump_tap_us;
 static perf_timing_sample_t g_perf_timing;
 static uint8_t g_perf_sample_counter;
+static uint64_t g_perf_log_last_us;
+static voxel_raster_stats_t g_perf_raster_stats;
+static uint8_t g_perf_raster_stats_valid;
 static uint32_t g_update_ema_us;
 static uint32_t g_update_max_us;
 static voxel_quality_controller_t g_quality_controller;
@@ -225,6 +231,11 @@ static char *put_u32_text(char *out, uint32_t value) {
     return out;
 }
 
+static char *put_perf_metric(char *out, const char *label, uint32_t value) {
+    while (*label != '\0') *out++ = *label++;
+    return put_u32_text(out, value);
+}
+
 static void toast_view(void) {
     char text[24];
     char *out = text;
@@ -310,7 +321,6 @@ static void update_quality(uint64_t duration_us) {
     uint64_t effective_render_us = duration_us;
     uint32_t consumer_wait_us = g_buffer_wait_ema_us;
     voxel_quality_action_t action;
-    if (g_quality_manual != 0) return;
     if (g_surface_mode == SURFACE_MODE_RASTER && g_raster_ready) {
         pxa_raster_telemetry_t telemetry;
         if (pxa_raster_query_telemetry(g_surface_handle, &telemetry) ==
@@ -363,6 +373,7 @@ static void update_quality(uint64_t duration_us) {
         if (g_host_queue_ema_us > consumer_wait_us)
             consumer_wait_us = g_host_queue_ema_us;
     }
+    if (g_quality_manual != 0) return;
     action = voxel_quality_observe(
         &g_quality_controller, effective_render_us, consumer_wait_us,
         (uint8_t)quality, (uint8_t)render_min_quality(), QUALITY_MAX);
@@ -416,7 +427,53 @@ static void maybe_begin_perf_timing(void) {
     if (++g_perf_sample_counter < VOXEL_QUALITY_SAMPLE_INTERVAL_FRAMES) return;
     g_perf_sample_counter = 0;
     g_perf_timing = (perf_timing_sample_t){.active = 1};
+    g_perf_raster_stats_valid = 0;
     (void)mark_perf_timing(PERF_CLOCK_FRAME_START);
+}
+
+static void log_perf_sample(uint64_t timestamp_us, uint64_t guest_render_us) {
+    char line[PXA_LOG_MAX_MESSAGE_BYTES + 1u];
+    char *out;
+    if (g_perf_log_last_us != 0 &&
+        timestamp_us - g_perf_log_last_us < PERF_LOG_INTERVAL_US) return;
+    g_perf_log_last_us = timestamp_us;
+
+    out = line;
+    out = put_perf_metric(out, "VOXEL PERF fps10=", g_fps_x10);
+    out = put_perf_metric(out, " mode=", g_surface_mode);
+    out = put_perf_metric(out, " quality=", (uint32_t)render_quality());
+    out = put_perf_metric(out, " width=", g_surface_width);
+    out = put_perf_metric(out, " height=", g_surface_height);
+    out = put_perf_metric(out, " update_ema_us=", g_update_ema_us);
+    out = put_perf_metric(out, " guest_sample_us=",
+                          (uint32_t)guest_render_us);
+    out = put_perf_metric(out, " total_ema_us=", g_render_total_ema_us);
+    out = put_perf_metric(out, " wait_ema_us=", g_buffer_wait_ema_us);
+    *out = '\0';
+    (void)pxa_log_info(line);
+
+    if (g_surface_mode != SURFACE_MODE_RASTER ||
+        !g_perf_raster_stats_valid) return;
+    out = line;
+    out = put_perf_metric(out, "VOXEL RASTER host_ema_us=",
+                          g_host_raster_ema_us);
+    out = put_perf_metric(out, " queue_ema_us=", g_host_queue_ema_us);
+    out = put_perf_metric(out, " present_ema_us=", g_host_present_ema_us);
+    out = put_perf_metric(out, " cached=", g_perf_raster_stats.cached_quads);
+    out = put_perf_metric(out, " rebuilt=", g_perf_raster_stats.rebuilt_chunks);
+    out = put_perf_metric(out, " mesh_passes=",
+                          g_perf_raster_stats.mesh_build_passes);
+    out = put_perf_metric(out, " pending=", game_pending_chunk_count());
+    out = put_perf_metric(out, " candidates=",
+                          g_perf_raster_stats.candidate_quads);
+    out = put_perf_metric(out, " submitted=",
+                          g_perf_raster_stats.submitted_quads);
+    out = put_perf_metric(out, " dropped=",
+                          g_perf_raster_stats.dropped_quads);
+    out = put_perf_metric(out, " list_bytes=",
+                          g_perf_raster_stats.draw_list_bytes);
+    *out = '\0';
+    (void)pxa_log_info(line);
 }
 
 static int handle_perf_clock_event(const pxa_event_t *event) {
@@ -470,6 +527,7 @@ static int handle_perf_clock_event(const pxa_event_t *event) {
                         g_perf_timing.frame_start_us,
                     &g_render_total_ema_us, &g_render_total_max_us);
                 update_quality(raycast_us);
+                log_perf_sample(timestamp_us, raycast_us);
             }
             g_perf_timing.active = 0;
             break;
@@ -1513,10 +1571,12 @@ static void on_pointer_down(const pxa_ui_pointer_data_t *pointer) {
             return;
         }
         if (y >= g_layout.hotbar_y &&
-            y < g_layout.hotbar_y + HOTBAR_SLOT &&
+            y < g_layout.hotbar_y + g_layout.hotbar_slot &&
             x >= g_layout.hotbar_x &&
-            x < g_layout.hotbar_x + HOTBAR_SLOTS * HOTBAR_SLOT) {
-            const int slot = (x - g_layout.hotbar_x) / HOTBAR_SLOT;
+            x < g_layout.hotbar_x +
+                    HOTBAR_SLOTS * g_layout.hotbar_slot) {
+            const int slot =
+                (x - g_layout.hotbar_x) / g_layout.hotbar_slot;
             g_hotbar_selected = (uint8_t)slot;
             set_toast(g_inventory[slot].item == BLOCK_AIR
                           ? "EMPTY"
@@ -1539,6 +1599,7 @@ static int abs_int(int value) { return value < 0 ? -value : value; }
 static void on_pointer_move(const pxa_ui_pointer_data_t *pointer) {
     const int x = (int)pointer->x;
     const int y = (int)pointer->y;
+    const int stick_radius = (int)(STICK_RADIUS * g_layout.ui_scale);
     g_pointer_x = (int16_t)x;
     g_pointer_y = (int16_t)y;
     if (g_screen != SCREEN_PLAY) {
@@ -1566,15 +1627,15 @@ static void on_pointer_move(const pxa_ui_pointer_data_t *pointer) {
         int dy = y - g_move_finger.origin_y;
         g_move_finger.x = (int16_t)x;
         g_move_finger.y = (int16_t)y;
-        if (dx > (int)STICK_RADIUS) {
-            dx = (int)STICK_RADIUS;
-        } else if (dx < -(int)STICK_RADIUS) {
-            dx = -(int)STICK_RADIUS;
+        if (dx > stick_radius) {
+            dx = stick_radius;
+        } else if (dx < -stick_radius) {
+            dx = -stick_radius;
         }
-        if (dy > (int)STICK_RADIUS) {
-            dy = (int)STICK_RADIUS;
-        } else if (dy < -(int)STICK_RADIUS) {
-            dy = -(int)STICK_RADIUS;
+        if (dy > stick_radius) {
+            dy = stick_radius;
+        } else if (dy < -stick_radius) {
+            dy = -stick_radius;
         }
         g_stick_dx = (int16_t)dx;
         g_stick_dy = (int16_t)dy;
@@ -1586,14 +1647,15 @@ static void on_pointer_move(const pxa_ui_pointer_data_t *pointer) {
         g_look_finger.y = (int16_t)y;
         g_look_finger.travel = (int16_t)(g_look_finger.travel + abs_int(dx) +
                                          abs_int(dy));
-        g_player.yaw += (float)dx * LOOK_PER_PIXEL;
+        const float look_per_pixel = LOOK_PER_PIXEL / g_layout.ui_scale;
+        g_player.yaw += (float)dx * look_per_pixel;
         if (g_player.yaw > RC_PI) {
             g_player.yaw -= RC_TWO_PI;
         } else if (g_player.yaw < -RC_PI) {
             g_player.yaw += RC_TWO_PI;
         }
         g_player.pitch = rc_clampf(
-            g_player.pitch - (float)dy * LOOK_PER_PIXEL, -1.55F, 1.55F);
+            g_player.pitch - (float)dy * look_per_pixel, -1.55F, 1.55F);
     } else if (g_button_finger.active &&
                g_button_finger.id == pointer->pointer_id) {
         g_button_finger.travel = (int16_t)(g_button_finger.travel +
@@ -1613,7 +1675,8 @@ static void on_pointer_up(const pxa_ui_pointer_data_t *pointer,
                           int cancelled) {
     if (g_screen != SCREEN_PLAY) {
         if (g_menu_press_active) {
-            if (!cancelled && g_menu_press_travel < 14) {
+            if (!cancelled &&
+                g_menu_press_travel < 14 * g_layout.ui_scale) {
                 on_menu_tap((int)pointer->x, (int)pointer->y);
             }
             g_menu_press_active = 0;
@@ -1649,7 +1712,8 @@ static void on_pointer_up(const pxa_ui_pointer_data_t *pointer,
         }
         if (g_inv_press_active) {
             const uint64_t held = pointer->timestamp_us - g_inv_press_us;
-            if (!cancelled && g_inv_press_travel < 14) {
+            if (!cancelled &&
+                g_inv_press_travel < 14 * g_layout.ui_scale) {
                 if (held < UINT64_C(350000)) {
                     inventory_tap((int)pointer->x, (int)pointer->y);
                 } else {
@@ -1875,6 +1939,10 @@ static int render_frame(void) {
             (uint8_t)render_quality(), &hud, &target);
         (void)mark_perf_timing(PERF_CLOCK_RAYCAST_END);
         if (raster_result > 0) {
+            if (g_perf_timing.active && !g_perf_raster_stats_valid) {
+                voxel_raster_get_stats(&g_perf_raster_stats);
+                g_perf_raster_stats_valid = 1;
+            }
             ++g_frame_id;
             end_buffer_wait();
             update_fps(g_last_tick_us);
@@ -2097,6 +2165,7 @@ int32_t pxa_app_start(const uint8_t *config, uint32_t length) {
     reset_surface_ownership();
     voxel_raster_reset();
     g_input_initialized = 0;
+    g_input_dirty = 0;
     g_last_tick_us = 0;
     g_tick_accumulator_us = 0;
     g_now_ms = 0;
@@ -2123,6 +2192,8 @@ int32_t pxa_app_start(const uint8_t *config, uint32_t length) {
     g_last_jump_tap_us = 0;
     g_perf_timing = (perf_timing_sample_t){0};
     g_perf_sample_counter = 0;
+    g_perf_log_last_us = 0;
+    g_perf_raster_stats_valid = 0;
     g_update_ema_us = 0;
     g_update_max_us = 0;
     voxel_quality_controller_reset(&g_quality_controller);
@@ -2329,8 +2400,9 @@ int32_t pxa_app_on_event(const uint8_t *event, uint32_t length) {
             request_window_snapshot();
         }
         if (g_screen != SCREEN_PLAY) {
-            if (steps != 0) {
+            if (steps != 0 || g_input_dirty) {
                 g_now_ms += (uint32_t)steps * FRAME_PERIOD_MS;
+                g_input_dirty = 0;
                 (void)render_frame();
             }
             return PXA_EVENT_HANDLED;
@@ -2342,10 +2414,15 @@ int32_t pxa_app_on_event(const uint8_t *event, uint32_t length) {
                 g_now_ms += FRAME_PERIOD_MS;
                 continue;
             }
-            move_x = rc_clampf((float)g_stick_dx / STICK_RADIUS, -1.0F, 1.0F);
-            move_z = rc_clampf(-(float)g_stick_dy / STICK_RADIUS +
-                                   g_pad_move_z,
-                               -1.0F, 1.0F);
+            move_x = rc_clampf(
+                (float)g_stick_dx /
+                    (STICK_RADIUS * (float)g_layout.ui_scale),
+                -1.0F, 1.0F);
+            move_z = rc_clampf(
+                -(float)g_stick_dy /
+                        (STICK_RADIUS * (float)g_layout.ui_scale) +
+                    g_pad_move_z,
+                -1.0F, 1.0F);
             g_player.yaw += g_pad_turn * PAD_TURN_RATE * TICK_SECONDS;
             if (g_player.yaw > RC_PI) {
                 g_player.yaw -= RC_TWO_PI;
@@ -2386,7 +2463,9 @@ int32_t pxa_app_on_event(const uint8_t *event, uint32_t length) {
             }
             g_now_ms += FRAME_PERIOD_MS;
         }
-        if (steps != 0) {
+        if (steps != 0 || g_input_dirty) {
+            if (steps != 0) (void)game_stream_chunks(1);
+            g_input_dirty = 0;
             (void)mark_perf_timing(PERF_CLOCK_UPDATE_END);
             if (render_frame()) {
                 g_present_failures = 0;
@@ -2415,6 +2494,7 @@ int32_t pxa_app_on_event(const uint8_t *event, uint32_t length) {
     } else if (pointer.phase == PXA_POINTER_CANCEL) {
         on_pointer_up(&pointer, 1);
     }
+    g_input_dirty = 1;
     return PXA_EVENT_HANDLED;
 }
 

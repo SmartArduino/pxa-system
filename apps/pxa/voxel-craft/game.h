@@ -181,6 +181,7 @@ extern mob_t g_mobs[MAX_MOBS];
 static inline int game_block_fast(int x, int y, int z) {
     int i;
     int j;
+    const chunk_t *chunk;
     if ((unsigned)y >= (unsigned)CHUNK_HEIGHT) {
         return 0;
     }
@@ -189,9 +190,13 @@ static inline int game_block_fast(int x, int y, int z) {
     if ((unsigned)i >= (unsigned)GRID_W || (unsigned)j >= (unsigned)GRID_W) {
         return 0;
     }
-    return g_chunk_grid[j][i]->blocks[((y << 8) |
-                                       ((z & CHUNK_MASK) << CHUNK_BITS) |
-                                       (x & CHUNK_MASK))];
+    chunk = g_chunk_grid[j][i];
+    if (chunk == (const chunk_t *)0 || !chunk->loaded) {
+        return 0;
+    }
+    return chunk->blocks[((y << 8) |
+                          ((z & CHUNK_MASK) << CHUNK_BITS) |
+                          (x & CHUNK_MASK))];
 }
 
 /* Highest visible block in the chunk holding (x, z), or -1 outside. */
@@ -214,6 +219,10 @@ int game_attack_damage(int item);
 
 void game_generate(uint32_t seed);
 uint32_t game_seed(void);
+/* Generates at most `limit` deferred edge chunks. Called once per display
+ * frame so crossing a chunk boundary cannot monopolize one simulation tick. */
+int game_stream_chunks(int limit);
+int game_pending_chunk_count(void);
 /* Serializes the world seed, player pose and the edit log. Returns the byte
  * count, or 0 when the buffer is too small. */
 int game_serialize(const player_t *player, uint8_t *out, int capacity);

@@ -9,7 +9,7 @@
 /* Upper bounds for the static buffers. The actual layout follows the UI
  * environment at runtime; screens larger than these bounds are centred with a
  * letterbox, smaller ones are filled natively. */
-#define SCREEN_W_MAX 512
+#define SCREEN_W_MAX 800
 #define SCREEN_H_MAX 512
 #define SCREEN_W_DEFAULT 296
 #define SCREEN_H_DEFAULT 240
@@ -31,6 +31,8 @@ typedef struct {
     int view_y;
     int view_w;
     int view_h;
+    int ui_scale;
+    int hotbar_slot;
     int hotbar_x;
     int hotbar_y;
     int jump_x;
