@@ -6,8 +6,8 @@
 #include "world.h"
 
 /* Left half: virtual stick. The first finger down defines the centre; forward
- * and strafe come from its displacement. Right half: dragging turns, a short
- * tap fires once, and a finger held still fires repeatedly. */
+ * and strafe come from its displacement. Right half: dragging turns and a
+ * short tap fires once. */
 typedef struct {
     int down;
     uint32_t id;

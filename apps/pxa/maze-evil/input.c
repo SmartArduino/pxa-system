@@ -5,7 +5,6 @@
 #define TURN_PER_PIXEL 0.0075F /* radians */
 #define TAP_TRAVEL 14
 #define TAP_MAX_US UINT64_C(260000)
-#define HOLD_FIRE_US UINT64_C(320000)
 
 static int abs_int(int value) { return value < 0 ? -value : value; }
 
@@ -78,7 +77,7 @@ void touch_on_up(touch_controls_t *controls, uint32_t id, uint64_t now_us) {
 
 controls_t touch_consume(touch_controls_t *controls, uint64_t now_us) {
     controls_t out;
-    int fire;
+    (void)now_us;
     out.forward = 0.0F;
     out.strafe = 0.0F;
     out.turn = controls->turn_accum;
@@ -90,13 +89,10 @@ controls_t touch_consume(touch_controls_t *controls, uint64_t now_us) {
         out.strafe = deflection(controls->stick.x - controls->stick.origin_x);
     }
 
-    fire = 0;
-    if (controls->look.down &&
-        controls->look.travel < TAP_TRAVEL &&
-        now_us - controls->look.down_at_us > HOLD_FIRE_US) {
-        fire = 1;
-    }
-    out.fire = fire || controls->tap_fired;
+    // Firing on a stationary hold makes a two-finger look drag ambiguous:
+    // users commonly touch first and begin dragging a moment later. Fire only
+    // after an unambiguous short tap has been released.
+    out.fire = controls->tap_fired;
     controls->tap_fired = 0;
     return out;
 }
