@@ -112,6 +112,32 @@ typedef void (*pxsys_reference_lvgl_device_info_fn)(
 typedef bool (*pxsys_reference_lvgl_memory_info_fn)(
     void* context, uint64_t* available_bytes, uint64_t* total_bytes);
 
+/* Product-owned diagnostics switches. The reference UI only supplies the
+ * controls; rendering, logging and persistence remain outside LVGL. */
+typedef enum {
+    PXSYS_REFERENCE_PERFORMANCE_OVERLAY = 0,
+    PXSYS_REFERENCE_PERFORMANCE_LOG,
+    PXSYS_REFERENCE_PXADB,
+} pxsys_reference_performance_option_t;
+
+typedef bool (*pxsys_reference_lvgl_performance_get_fn)(
+    void* context, pxsys_reference_performance_option_t option);
+typedef bool (*pxsys_reference_lvgl_performance_set_fn)(
+    void* context, pxsys_reference_performance_option_t option, bool enabled);
+
+#define PXSYS_REFERENCE_WIFI_SSID_MAX 33
+#define PXSYS_REFERENCE_WIFI_NETWORK_MAX 16
+typedef struct {
+    char ssid[PXSYS_REFERENCE_WIFI_SSID_MAX];
+    int8_t rssi;
+    uint8_t secured;
+} pxsys_reference_wifi_network_t;
+
+typedef size_t (*pxsys_reference_lvgl_wifi_scan_fn)(
+    void* context, pxsys_reference_wifi_network_t* networks, size_t capacity);
+typedef bool (*pxsys_reference_lvgl_wifi_connect_fn)(
+    void* context, const char* ssid, const char* password);
+
 /* App manager. */
 #define PXSYS_REFERENCE_MANAGED_APP_MAX 48
 #define PXSYS_REFERENCE_MANAGED_APP_IDENTITY_MAX 130
@@ -259,6 +285,16 @@ typedef struct {
     /* Optional Recents memory indicator, appended for source compatibility. */
     void* memory_info_context;
     pxsys_reference_lvgl_memory_info_fn memory_info;
+    /* Optional product diagnostics controls. A missing getter keeps this
+     * section out of Settings. */
+    void* performance_context;
+    pxsys_reference_lvgl_performance_get_fn performance_get;
+    pxsys_reference_lvgl_performance_set_fn performance_set;
+    /* Optional station-mode Wi-Fi selection. When present, tapping Wi-Fi in
+     * Settings scans access points and opens an on-screen password keyboard. */
+    void* wifi_context;
+    pxsys_reference_lvgl_wifi_scan_fn wifi_scan;
+    pxsys_reference_lvgl_wifi_connect_fn wifi_connect;
 } pxsys_reference_lvgl_config_t;
 
 typedef struct pxsys_reference_lvgl pxsys_reference_lvgl_t;

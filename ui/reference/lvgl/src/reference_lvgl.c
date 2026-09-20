@@ -32,6 +32,7 @@ static const pxsys_resource_entry_t reference_en_resources[] = {
     RESOURCE_ENTRY("settings.section.personalization", "Personalization"),
     RESOURCE_ENTRY("settings.section.device", "Device"),
     RESOURCE_ENTRY("settings.section.system", "System"),
+    RESOURCE_ENTRY("settings.section.developer", "Developer"),
     RESOURCE_ENTRY("settings.bluetooth", "Bluetooth audio"),
     RESOURCE_ENTRY("settings.bluetooth.detail", "Speakers, sources and local music"),
     RESOURCE_ENTRY("settings.sound", "Sound & display"),
@@ -46,6 +47,18 @@ static const pxsys_resource_entry_t reference_en_resources[] = {
     RESOURCE_ENTRY("settings.files.detail", "Browse and organize device files"),
     RESOURCE_ENTRY("settings.about", "About device"),
     RESOURCE_ENTRY("settings.about.detail", "Firmware, storage and hardware information"),
+    RESOURCE_ENTRY("settings.performance.overlay", "Performance overlay"),
+    RESOURCE_ENTRY("settings.performance.overlay.detail", "Show frame and render timing on screen"),
+    RESOURCE_ENTRY("settings.performance.log", "Performance log"),
+    RESOURCE_ENTRY("settings.performance.log.detail", "Write frame and render timing to the log"),
+    RESOURCE_ENTRY("settings.pxadb", "PXADB"),
+    RESOURCE_ENTRY("settings.pxadb.detail", "Allow USB debugging and diagnostics"),
+    RESOURCE_ENTRY("settings.wifi.networks", "Available networks"),
+    RESOURCE_ENTRY("settings.wifi.scan", "Scan again"),
+    RESOURCE_ENTRY("settings.wifi.none", "No networks found"),
+    RESOURCE_ENTRY("settings.wifi.password", "Enter Wi-Fi password"),
+    RESOURCE_ENTRY("settings.wifi.open", "Open network"),
+    RESOURCE_ENTRY("settings.wifi.secured", "Secured"),
     RESOURCE_ENTRY("language.title", "Language"),
     RESOURCE_ENTRY("state.connected", "Connected"),
     RESOURCE_ENTRY("state.on", "On"),
@@ -115,6 +128,7 @@ static const pxsys_resource_entry_t reference_zh_resources[] = {
     RESOURCE_ENTRY("settings.section.personalization", "个性化"),
     RESOURCE_ENTRY("settings.section.device", "设备"),
     RESOURCE_ENTRY("settings.section.system", "系统"),
+    RESOURCE_ENTRY("settings.section.developer", "开发者选项"),
     RESOURCE_ENTRY("settings.bluetooth", "蓝牙音频"),
     RESOURCE_ENTRY("settings.bluetooth.detail", "音响、音源和本地音乐"),
     RESOURCE_ENTRY("settings.sound", "声音与显示"),
@@ -129,6 +143,18 @@ static const pxsys_resource_entry_t reference_zh_resources[] = {
     RESOURCE_ENTRY("settings.files.detail", "浏览和整理设备文件"),
     RESOURCE_ENTRY("settings.about", "关于设备"),
     RESOURCE_ENTRY("settings.about.detail", "固件、存储与硬件信息"),
+    RESOURCE_ENTRY("settings.performance.overlay", "性能浮层"),
+    RESOURCE_ENTRY("settings.performance.overlay.detail", "在屏幕显示帧率和渲染耗时"),
+    RESOURCE_ENTRY("settings.performance.log", "性能日志"),
+    RESOURCE_ENTRY("settings.performance.log.detail", "在日志中输出帧率和渲染耗时"),
+    RESOURCE_ENTRY("settings.pxadb", "PXADB 调试"),
+    RESOURCE_ENTRY("settings.pxadb.detail", "允许 USB 调试和诊断连接"),
+    RESOURCE_ENTRY("settings.wifi.networks", "可用网络"),
+    RESOURCE_ENTRY("settings.wifi.scan", "重新扫描"),
+    RESOURCE_ENTRY("settings.wifi.none", "未发现无线网络"),
+    RESOURCE_ENTRY("settings.wifi.password", "输入无线网络密码"),
+    RESOURCE_ENTRY("settings.wifi.open", "开放网络"),
+    RESOURCE_ENTRY("settings.wifi.secured", "已加密"),
     RESOURCE_ENTRY("language.title", "语言"),
     RESOURCE_ENTRY("state.connected", "已连接"),
     RESOURCE_ENTRY("state.on", "已开启"),
@@ -266,6 +292,16 @@ typedef struct {
 
 typedef struct {
     struct pxsys_reference_lvgl* ui;
+    pxsys_reference_performance_option_t option;
+} performance_control_t;
+
+typedef struct {
+    struct pxsys_reference_lvgl* ui;
+    size_t index;
+} wifi_network_control_t;
+
+typedef struct {
+    struct pxsys_reference_lvgl* ui;
     const char* role;
 } settings_action_t;
 
@@ -399,6 +435,8 @@ struct pxsys_reference_lvgl {
     network_control_t network_controls[2];
     level_control_t level_controls[2];
     toggle_control_t toggle_controls[4];
+    performance_control_t performance_controls[3];
+    wifi_network_control_t wifi_network_controls[PXSYS_REFERENCE_WIFI_NETWORK_MAX];
     settings_action_t settings_actions[REFERENCE_SETTINGS_ACTION_COUNT];
     const pxsys_reference_language_t* languages;
     size_t language_count;
@@ -419,6 +457,16 @@ struct pxsys_reference_lvgl {
     pxsys_reference_lvgl_file_action_fn file_action;
     void* memory_info_context;
     pxsys_reference_lvgl_memory_info_fn memory_info;
+    void* performance_context;
+    pxsys_reference_lvgl_performance_get_fn performance_get;
+    pxsys_reference_lvgl_performance_set_fn performance_set;
+    void* wifi_context;
+    pxsys_reference_lvgl_wifi_scan_fn wifi_scan;
+    pxsys_reference_lvgl_wifi_connect_fn wifi_connect;
+    pxsys_reference_wifi_network_t wifi_networks[PXSYS_REFERENCE_WIFI_NETWORK_MAX];
+    size_t wifi_network_count;
+    char pending_wifi_ssid[PXSYS_REFERENCE_WIFI_SSID_MAX];
+    lv_obj_t* wifi_password_input;
     void* lock_changed_context;
     pxsys_reference_lvgl_lock_changed_fn lock_changed;
     void* power_action_context;
@@ -436,6 +484,9 @@ struct pxsys_reference_lvgl {
     uint8_t pending_kind;
     uint8_t managed_apps_loaded;
     uint8_t file_entries_loaded;
+    uint8_t developer_unlocked;
+    uint8_t system_version_taps;
+    uint32_t system_version_last_tap;
     lv_obj_t* app_dialog;
     lv_obj_t* confirm_dialog;
     reference_page_t active_page;
@@ -2174,11 +2225,61 @@ static int settings_role_available(pxsys_reference_lvgl_t* ui,
                PXSYS_STATUS_OK;
 }
 
+static lv_obj_t* make_settings_row(pxsys_reference_lvgl_t* ui,
+                                   const pxsys_reference_layout_t* layout,
+                                   lv_obj_t* section, const char* symbol,
+                                   pxsys_color_token_t icon_color,
+                                   const char* title, const char* subtitle,
+                                   lv_event_cb_t clicked, void* user_data);
+static void wifi_settings_clicked(lv_event_t* event);
+
 static void settings_action_clicked(lv_event_t* event) {
     settings_action_t* action =
         (settings_action_t*)lv_event_get_user_data(event);
     if (action == NULL || !ui_valid(action->ui) || action->role == NULL) return;
     (void)open_role(action->ui, action->role);
+}
+
+static void performance_switch_changed(lv_event_t* event) {
+    performance_control_t* control =
+        (performance_control_t*)lv_event_get_user_data(event);
+    lv_obj_t* toggle = lv_event_get_current_target(event);
+    const bool enabled = toggle != NULL &&
+        lv_obj_has_state(toggle, LV_STATE_CHECKED);
+    if (control == NULL || !ui_valid(control->ui) ||
+        control->ui->performance_set == NULL ||
+        !control->ui->performance_set(control->ui->performance_context,
+                                      control->option, enabled)) {
+        if (toggle != NULL) {
+            if (enabled) lv_obj_remove_state(toggle, LV_STATE_CHECKED);
+            else lv_obj_add_state(toggle, LV_STATE_CHECKED);
+        }
+    }
+}
+
+static void make_performance_setting(
+    pxsys_reference_lvgl_t* ui, const pxsys_reference_layout_t* layout,
+    lv_obj_t* section, pxsys_reference_performance_option_t option,
+    const char* title, const char* subtitle, performance_control_t* control) {
+    lv_obj_t* row = make_settings_row(ui, layout, section, LV_SYMBOL_SETTINGS,
+                                      PXSYS_COLOR_WARNING, title, subtitle,
+                                      NULL, NULL);
+    lv_obj_t* toggle = lv_switch_create(row);
+    lv_obj_set_size(toggle, 42, 24);
+    lv_obj_align(toggle, LV_ALIGN_RIGHT_MID, -10, 0);
+    lv_obj_set_style_bg_color(toggle, color_token(ui, PXSYS_COLOR_BORDER),
+                              LV_PART_MAIN);
+    lv_obj_set_style_bg_color(toggle, color_token(ui, PXSYS_COLOR_ACCENT),
+                              LV_PART_INDICATOR | LV_STATE_CHECKED);
+    lv_obj_set_style_bg_color(toggle, color_token(ui, PXSYS_COLOR_ON_ACCENT),
+                              LV_PART_KNOB);
+    if (ui->performance_get != NULL &&
+        ui->performance_get(ui->performance_context, option))
+        lv_obj_add_state(toggle, LV_STATE_CHECKED);
+    control->ui = ui;
+    control->option = option;
+    lv_obj_add_event_cb(toggle, performance_switch_changed,
+                        LV_EVENT_VALUE_CHANGED, control);
 }
 
 static lv_obj_t* make_settings_section(pxsys_reference_lvgl_t* ui,
@@ -2382,7 +2483,14 @@ static void make_network_setting(pxsys_reference_lvgl_t* ui,
         ui, layout, section,
         network == PXSYS_NETWORK_WIFI ? LV_SYMBOL_WIFI : NULL,
         PXSYS_COLOR_ACCENT, title, state,
-        details == NULL ? NULL : settings_action_clicked, details);
+        network == PXSYS_NETWORK_WIFI && ui->wifi_scan != NULL &&
+                ui->wifi_connect != NULL
+            ? wifi_settings_clicked
+            : details == NULL ? NULL : settings_action_clicked,
+        network == PXSYS_NETWORK_WIFI && ui->wifi_scan != NULL &&
+                ui->wifi_connect != NULL
+            ? ui
+            : (void*)details);
     toggle = lv_switch_create(row);
     lv_obj_set_size(toggle, 42, 24);
     lv_obj_align(toggle, LV_ALIGN_RIGHT_MID, -10, 0);
@@ -2801,7 +2909,7 @@ static void build_settings(pxsys_reference_lvgl_t* ui,
             LV_SYMBOL_SETTINGS, PXSYS_COLOR_WARNING,
             translated(ui, "settings.about", "About device"),
             translated(ui, "settings.about.detail",
-                       "Firmware, storage and hardware information"));
+                        "Firmware, storage and hardware information"));
     }
     lv_obj_update_layout(ui->content);
     lv_obj_scroll_to_y(ui->content, ui->settings_scroll_y, LV_ANIM_OFF);
@@ -3911,30 +4019,36 @@ static void build_status_bar(pxsys_reference_lvgl_t* ui,
                  layout->safe_area.x + (int32_t)layout->outer_padding,
                  align_y);
 #if PXSYS_REFERENCE_UI_BATTERY_PERCENT
-    snprintf(percent_text, sizeof(percent_text),
-             ui->system_status.battery_valid ? "%u%%" : "--",
-             (unsigned)ui->system_status.battery_percent);
-    percent_font = typography_font(ui, PXSYS_TYPOGRAPHY_CAPTION);
-    percent_label = make_label(status, percent_text, percent_font,
-                               color_token(ui, PXSYS_COLOR_TEXT_SECONDARY));
-    lv_label_set_long_mode(percent_label, LV_LABEL_LONG_MODE_CLIP);
-    lv_obj_set_width(percent_label, LV_SIZE_CONTENT);
-    lv_obj_set_height(percent_label,
-                      percent_font != NULL ? percent_font->line_height
-                                           : LV_SIZE_CONTENT);
-    lv_obj_set_style_text_align(percent_label, LV_TEXT_ALIGN_RIGHT, 0);
-    lv_obj_align(percent_label, LV_ALIGN_RIGHT_MID,
-                 -((int32_t)layout->viewport.width - safe_right) -
-                     (int32_t)layout->outer_padding - 29,
-                 align_y);
-    lv_obj_update_layout(status);
-    percent_width = lv_obj_get_width(percent_label);
+    percent_width = 0;
+    if (ui->system_status.battery_valid) {
+        snprintf(percent_text, sizeof(percent_text), "%u%%",
+                 (unsigned)ui->system_status.battery_percent);
+        percent_font = typography_font(ui, PXSYS_TYPOGRAPHY_CAPTION);
+        percent_label = make_label(status, percent_text, percent_font,
+                                   color_token(ui, PXSYS_COLOR_TEXT_SECONDARY));
+        lv_label_set_long_mode(percent_label, LV_LABEL_LONG_MODE_CLIP);
+        lv_obj_set_width(percent_label, LV_SIZE_CONTENT);
+        lv_obj_set_height(percent_label,
+                          percent_font != NULL ? percent_font->line_height
+                                               : LV_SIZE_CONTENT);
+        lv_obj_set_style_text_align(percent_label, LV_TEXT_ALIGN_RIGHT, 0);
+        lv_obj_align(percent_label, LV_ALIGN_RIGHT_MID,
+                     -((int32_t)layout->viewport.width - safe_right) -
+                         (int32_t)layout->outer_padding - 29,
+                     align_y);
+        lv_obj_update_layout(status);
+        percent_width = lv_obj_get_width(percent_label);
+    }
 #endif
 #if PXSYS_REFERENCE_UI_WIFI || PXSYS_REFERENCE_UI_CELLULAR
 #if PXSYS_REFERENCE_UI_BATTERY_PERCENT
-    indicator_x = battery_x - 4 - percent_width - 8 - 16;
+    indicator_x = ui->system_status.battery_valid
+                      ? battery_x - 4 - percent_width - 8 - 16
+                      : safe_right - (int32_t)layout->outer_padding - 16;
 #else
-    indicator_x = safe_right - (int32_t)layout->outer_padding - 45;
+    indicator_x = ui->system_status.battery_valid
+                      ? safe_right - (int32_t)layout->outer_padding - 45
+                      : safe_right - (int32_t)layout->outer_padding - 16;
 #endif
 #endif
 #if PXSYS_REFERENCE_UI_CELLULAR
@@ -3949,7 +4063,8 @@ static void build_status_bar(pxsys_reference_lvgl_t* ui,
         radio_enabled(ui, PXSYS_NETWORK_WIFI))
         make_wifi_icon(ui, status, indicator_x, center_y);
 #endif
-    make_battery_icon(ui, status, battery_x, center_y);
+    if (ui->system_status.battery_valid)
+        make_battery_icon(ui, status, battery_x, center_y);
 }
 
 static void toast_apply_theme(pxsys_reference_lvgl_t* ui,
@@ -4032,7 +4147,8 @@ static void toast_posted(void* context, const pxsys_toast_message_t* toast) {
         lv_obj_set_style_shadow_offset_y(ui->toast, 4, 0);
         lv_obj_clear_flag(ui->toast, LV_OBJ_FLAG_SCROLLABLE);
         lv_obj_remove_flag(ui->toast, LV_OBJ_FLAG_CLICKABLE);
-        ui->toast_label = make_label(ui->toast, "", ui->text_font,
+        ui->toast_label = make_label(ui->toast, "",
+                                     typography_font(ui, PXSYS_TYPOGRAPHY_BODY),
                                      color_token(ui, PXSYS_COLOR_TEXT_PRIMARY));
         lv_label_set_long_mode(ui->toast_label, LV_LABEL_LONG_MODE_WRAP);
         lv_obj_set_style_text_align(ui->toast_label, LV_TEXT_ALIGN_CENTER, 0);
@@ -4197,6 +4313,20 @@ static const device_info_row_t kDeviceInfoRows[] = {
      PXSYS_REFERENCE_DEVICE_STORAGE},
 };
 
+static void system_version_clicked(lv_event_t* event) {
+    pxsys_reference_lvgl_t* ui =
+        (pxsys_reference_lvgl_t*)lv_event_get_user_data(event);
+    const uint32_t now = lv_tick_get();
+    if (!ui_valid(ui) || ui->developer_unlocked) return;
+    if (ui->system_version_last_tap == 0 ||
+        now - ui->system_version_last_tap > 800)
+        ui->system_version_taps = 0;
+    ui->system_version_last_tap = now;
+    if (++ui->system_version_taps < 7) return;
+    ui->developer_unlocked = 1;
+    rebuild(ui);
+}
+
 static void build_device_info_page(pxsys_reference_lvgl_t* ui,
                                    const pxsys_reference_layout_t* layout) {
     char values[PXSYS_REFERENCE_DEVICE_FIELD_COUNT]
@@ -4220,8 +4350,34 @@ static void build_device_info_page(pxsys_reference_lvgl_t* ui,
         (void)make_settings_row(
             ui, layout, section, row->symbol, PXSYS_COLOR_ACCENT,
             translated(ui, row->label_key, row->label_default),
-            values[row->field], NULL, NULL);
+            values[row->field],
+            row->field == PXSYS_REFERENCE_DEVICE_SYSTEM_VERSION
+                ? system_version_clicked : NULL,
+            row->field == PXSYS_REFERENCE_DEVICE_SYSTEM_VERSION ? ui : NULL);
     }
+    if (!ui->developer_unlocked || ui->performance_get == NULL ||
+        ui->performance_set == NULL)
+        return;
+    section = make_settings_section(
+        ui, translated(ui, "settings.section.developer", "Developer"));
+    make_performance_setting(
+        ui, layout, section, PXSYS_REFERENCE_PERFORMANCE_OVERLAY,
+        translated(ui, "settings.performance.overlay", "Performance overlay"),
+        translated(ui, "settings.performance.overlay.detail",
+                   "Show frame and render timing on screen"),
+        &ui->performance_controls[0]);
+    make_performance_setting(
+        ui, layout, section, PXSYS_REFERENCE_PERFORMANCE_LOG,
+        translated(ui, "settings.performance.log", "Performance log"),
+        translated(ui, "settings.performance.log.detail",
+                   "Write frame and render timing to the log"),
+        &ui->performance_controls[1]);
+    make_performance_setting(
+        ui, layout, section, PXSYS_REFERENCE_PXADB,
+        translated(ui, "settings.pxadb", "PXADB"),
+        translated(ui, "settings.pxadb.detail",
+                   "Allow USB debugging and diagnostics"),
+        &ui->performance_controls[2]);
 }
 
 /* ---------------------------------------------------------- Page dialogs */
@@ -4236,6 +4392,7 @@ static void page_close_dialogs(pxsys_reference_lvgl_t* ui) {
         lv_obj_delete(ui->app_dialog);
         ui->app_dialog = NULL;
     }
+    ui->wifi_password_input = NULL;
 }
 
 static lv_obj_t* make_page_dialog(pxsys_reference_lvgl_t* ui,
@@ -4270,6 +4427,160 @@ static lv_obj_t* make_page_dialog(pxsys_reference_lvgl_t* ui,
     if (ui->status_bar != NULL) lv_obj_move_foreground(ui->status_bar);
     if (ui->navigation_bar != NULL) lv_obj_move_foreground(ui->navigation_bar);
     return dialog;
+}
+
+static void page_dialog_scrim_clicked(lv_event_t* event);
+static void show_wifi_networks(pxsys_reference_lvgl_t* ui);
+
+static void wifi_scan_clicked(lv_event_t* event) {
+    show_wifi_networks((pxsys_reference_lvgl_t*)lv_event_get_user_data(event));
+}
+
+static void wifi_connect_selected(pxsys_reference_lvgl_t* ui,
+                                  const char* password) {
+    if (!ui_valid(ui) || ui->wifi_connect == NULL ||
+        ui->pending_wifi_ssid[0] == '\0')
+        return;
+    (void)ui->wifi_connect(ui->wifi_context, ui->pending_wifi_ssid,
+                           password != NULL ? password : "");
+    page_close_dialogs(ui);
+    rebuild(ui);
+}
+
+static void wifi_keyboard_event(lv_event_t* event) {
+    pxsys_reference_lvgl_t* ui =
+        (pxsys_reference_lvgl_t*)lv_event_get_user_data(event);
+    const lv_event_code_t code = lv_event_get_code(event);
+    if (!ui_valid(ui)) return;
+    if (code == LV_EVENT_READY && ui->wifi_password_input != NULL) {
+        wifi_connect_selected(ui, lv_textarea_get_text(ui->wifi_password_input));
+    } else if (code == LV_EVENT_CANCEL) {
+        page_close_dialogs(ui);
+        rebuild(ui);
+    }
+}
+
+static void show_wifi_password(pxsys_reference_lvgl_t* ui) {
+    pxsys_reference_layout_t layout;
+    lv_obj_t* panel;
+    lv_obj_t* keyboard;
+    lv_obj_t* label;
+    if (!ui_valid(ui) || ui->app_dialog != NULL ||
+        pxsys_reference_layout_compute(&ui->display, &layout) !=
+            PXSYS_STATUS_OK)
+        return;
+    expand_content_into_hidden_gesture_area(ui, &layout);
+    ui->app_dialog = make_page_dialog(ui, &layout, &panel);
+    lv_obj_add_event_cb(ui->app_dialog, page_dialog_scrim_clicked,
+                        LV_EVENT_CLICKED, ui);
+    lv_obj_align(panel, LV_ALIGN_TOP_MID, 0, 8);
+    label = make_label(panel,
+                       translated(ui, "settings.wifi.password",
+                                  "Enter Wi-Fi password"),
+                       typography_font(ui, PXSYS_TYPOGRAPHY_TITLE),
+                       color_token(ui, PXSYS_COLOR_TEXT_PRIMARY));
+    lv_obj_set_width(label, LV_PCT(100));
+    label = make_label(panel, ui->pending_wifi_ssid,
+                       typography_font(ui, PXSYS_TYPOGRAPHY_BODY),
+                       color_token(ui, PXSYS_COLOR_TEXT_SECONDARY));
+    lv_obj_set_width(label, LV_PCT(100));
+    ui->wifi_password_input = lv_textarea_create(panel);
+    lv_obj_set_width(ui->wifi_password_input, LV_PCT(100));
+    lv_textarea_set_one_line(ui->wifi_password_input, true);
+    lv_textarea_set_password_mode(ui->wifi_password_input, true);
+    lv_textarea_set_max_length(ui->wifi_password_input, 64);
+    lv_textarea_set_placeholder_text(ui->wifi_password_input,
+                                     translated(ui, "settings.wifi.password",
+                                                "Enter Wi-Fi password"));
+    lv_obj_set_style_text_font(ui->wifi_password_input,
+                              typography_font(ui, PXSYS_TYPOGRAPHY_BODY), 0);
+    keyboard = lv_keyboard_create(ui->app_dialog);
+    lv_obj_set_size(keyboard, LV_PCT(100), LV_PCT(48));
+    lv_obj_align(keyboard, LV_ALIGN_BOTTOM_MID, 0, 0);
+    lv_obj_set_style_text_font(keyboard,
+                              typography_font(ui, PXSYS_TYPOGRAPHY_BODY), 0);
+    lv_keyboard_set_textarea(keyboard, ui->wifi_password_input);
+    lv_obj_add_event_cb(keyboard, wifi_keyboard_event, LV_EVENT_READY, ui);
+    lv_obj_add_event_cb(keyboard, wifi_keyboard_event, LV_EVENT_CANCEL, ui);
+    lv_obj_move_foreground(keyboard);
+}
+
+static void wifi_network_clicked(lv_event_t* event) {
+    wifi_network_control_t* control =
+        (wifi_network_control_t*)lv_event_get_user_data(event);
+    pxsys_reference_lvgl_t* ui;
+    const pxsys_reference_wifi_network_t* network;
+    if (control == NULL || !ui_valid(control->ui) ||
+        control->index >= control->ui->wifi_network_count)
+        return;
+    ui = control->ui;
+    network = &ui->wifi_networks[control->index];
+    snprintf(ui->pending_wifi_ssid, sizeof(ui->pending_wifi_ssid), "%s",
+             network->ssid);
+    page_close_dialogs(ui);
+    if (network->secured)
+        show_wifi_password(ui);
+    else
+        wifi_connect_selected(ui, "");
+}
+
+static void show_wifi_networks(pxsys_reference_lvgl_t* ui) {
+    pxsys_reference_layout_t layout;
+    lv_obj_t* panel;
+    lv_obj_t* label;
+    lv_obj_t* button;
+    size_t count = 0;
+    if (!ui_valid(ui) || ui->wifi_scan == NULL || ui->wifi_connect == NULL ||
+        pxsys_reference_layout_compute(&ui->display, &layout) !=
+            PXSYS_STATUS_OK)
+        return;
+    page_close_dialogs(ui);
+    count = ui->wifi_scan(ui->wifi_context, ui->wifi_networks,
+                          PXSYS_REFERENCE_WIFI_NETWORK_MAX);
+    if (count > PXSYS_REFERENCE_WIFI_NETWORK_MAX)
+        count = PXSYS_REFERENCE_WIFI_NETWORK_MAX;
+    ui->wifi_network_count = count;
+    expand_content_into_hidden_gesture_area(ui, &layout);
+    ui->app_dialog = make_page_dialog(ui, &layout, &panel);
+    lv_obj_add_event_cb(ui->app_dialog, page_dialog_scrim_clicked,
+                        LV_EVENT_CLICKED, ui);
+    label = make_label(panel,
+                       translated(ui, "settings.wifi.networks",
+                                  "Available networks"),
+                       typography_font(ui, PXSYS_TYPOGRAPHY_TITLE),
+                       color_token(ui, PXSYS_COLOR_TEXT_PRIMARY));
+    lv_obj_set_width(label, LV_PCT(100));
+    button = make_page_button(
+        ui, panel, translated(ui, "settings.wifi.scan", "Scan again"),
+        PXSYS_COLOR_ACCENT, PXSYS_COLOR_ON_ACCENT, wifi_scan_clicked, ui);
+    lv_obj_set_width(button, LV_PCT(100));
+    if (count == 0) {
+        label = make_label(panel,
+                           translated(ui, "settings.wifi.none",
+                                      "No networks found"),
+                           typography_font(ui, PXSYS_TYPOGRAPHY_BODY),
+                           color_token(ui, PXSYS_COLOR_TEXT_SECONDARY));
+        lv_obj_set_width(label, LV_PCT(100));
+    }
+    for (size_t index = 0; index < count; ++index) {
+        char detail[48];
+        const pxsys_reference_wifi_network_t* network =
+            &ui->wifi_networks[index];
+        snprintf(detail, sizeof(detail), "%d dBm  %s", network->rssi,
+                 translated(ui, network->secured ? "settings.wifi.secured"
+                                                 : "settings.wifi.open",
+                            network->secured ? "Secured" : "Open network"));
+        ui->wifi_network_controls[index].ui = ui;
+        ui->wifi_network_controls[index].index = index;
+        (void)make_settings_row(ui, &layout, panel, LV_SYMBOL_WIFI,
+                                PXSYS_COLOR_ACCENT, network->ssid, detail,
+                                wifi_network_clicked,
+                                &ui->wifi_network_controls[index]);
+    }
+}
+
+static void wifi_settings_clicked(lv_event_t* event) {
+    show_wifi_networks((pxsys_reference_lvgl_t*)lv_event_get_user_data(event));
 }
 
 static void page_dialog_scrim_clicked(lv_event_t* event) {
@@ -5590,6 +5901,12 @@ pxsys_status_t pxsys_reference_lvgl_create(
     ui->file_action = config->file_action;
     ui->memory_info_context = config->memory_info_context;
     ui->memory_info = config->memory_info;
+    ui->performance_context = config->performance_context;
+    ui->performance_get = config->performance_get;
+    ui->performance_set = config->performance_set;
+    ui->wifi_context = config->wifi_context;
+    ui->wifi_scan = config->wifi_scan;
+    ui->wifi_connect = config->wifi_connect;
     ui->animations_enabled =
         PXSYS_REFERENCE_UI_ENABLE_ANIMATIONS && config->animations_enabled;
     memcpy(ui->publisher_root, config->publisher_root,
