@@ -413,6 +413,7 @@ struct pxsys_reference_lvgl {
     uint8_t notification_close_armed;
     uint8_t transient_revealed;
     uint8_t navigation_dragging;
+    uint8_t navigation_back_ready;
     uint8_t animations_enabled;
     uint8_t navigation_from_home;
     uint8_t task_switcher_handoff;
@@ -430,7 +431,6 @@ struct pxsys_reference_lvgl {
     int32_t navigation_last_x;
     int32_t navigation_last_y;
     int32_t navigation_back_press_x;
-    int32_t navigation_back_press_y;
     uint32_t navigation_last_motion_tick;
     network_control_t network_controls[2];
     level_control_t level_controls[2];
@@ -503,6 +503,7 @@ struct pxsys_reference_lvgl {
 static void rebuild(pxsys_reference_lvgl_t* ui);
 static void build_task_switcher(pxsys_reference_lvgl_t* ui);
 static void close_task_switcher(pxsys_reference_lvgl_t* ui);
+static int task_switcher_is_open(const pxsys_reference_lvgl_t* ui);
 static void close_language_dialog(pxsys_reference_lvgl_t* ui);
 static void close_notification_shade(pxsys_reference_lvgl_t* ui);
 static void toast_restack(pxsys_reference_lvgl_t* ui);
@@ -695,9 +696,9 @@ static void navigation_back_indicator_reset(pxsys_reference_lvgl_t* ui) {
 
 /* Left-edge drag pill: grows and rounds as the pointer travels, switching to
  * the accent color once the release would navigate back. */
-static void navigation_back_indicator_update(pxsys_reference_lvgl_t* ui,
-                                             int32_t edge_x, int32_t press_x,
-                                             int32_t x, int32_t y) {
+static int navigation_back_indicator_update(pxsys_reference_lvgl_t* ui,
+                                            int32_t edge_x, int32_t press_x,
+                                            int32_t x, int32_t y) {
     static const lv_point_precise_t kChevronPoints[] = {
         {8, 1}, {1, 9}, {8, 17},
     };
@@ -713,7 +714,7 @@ static void navigation_back_indicator_update(pxsys_reference_lvgl_t* ui,
     int ready;
     if (distance < 4) {
         navigation_back_indicator_reset(ui);
-        return;
+        return 0;
     }
     if (ui->navigation_back_indicator == NULL) {
         ui->navigation_back_indicator = lv_obj_create(ui->root);
@@ -767,6 +768,7 @@ static void navigation_back_indicator_update(pxsys_reference_lvgl_t* ui,
     }
     lv_obj_remove_flag(indicator, LV_OBJ_FLAG_HIDDEN);
     lv_obj_move_foreground(indicator);
+    return ready;
 }
 
 static void navigation_back(pxsys_reference_lvgl_t* ui) {
@@ -783,7 +785,7 @@ static void navigation_back(pxsys_reference_lvgl_t* ui) {
         close_language_dialog(ui);
         return;
     }
-    if (ui->task_switcher != NULL) {
+    if (task_switcher_is_open(ui)) {
         close_task_switcher(ui);
         return;
     }
@@ -802,7 +804,6 @@ static void navigation_back_gesture_event(lv_event_t* event) {
     lv_point_t point;
     lv_event_code_t code;
     int32_t horizontal;
-    int32_t vertical;
     int32_t edge_x;
     if (!ui_valid(ui) || indev == NULL) return;
     lv_indev_get_point(indev, &point);
@@ -852,27 +853,29 @@ static void navigation_back_gesture_event(lv_event_t* event) {
 #endif
     if (code == LV_EVENT_PRESSED) {
         ui->navigation_back_press_x = point.x;
-        ui->navigation_back_press_y = point.y;
+        ui->navigation_back_ready = 0;
         return;
     }
     if (code == LV_EVENT_PRESSING) {
-        navigation_back_indicator_update(ui, edge_x,
-                                         ui->navigation_back_press_x, point.x,
-                                         point.y);
+        ui->navigation_back_ready = (uint8_t)navigation_back_indicator_update(
+            ui, edge_x, ui->navigation_back_press_x, point.x, point.y);
         return;
     }
     if (code == LV_EVENT_PRESS_LOST) {
+        ui->navigation_back_ready = 0;
         navigation_back_indicator_reset(ui);
         return;
     }
     if (code != LV_EVENT_RELEASED) return;
+    /* Some touch drivers retain the last valid point on release while others
+     * report a final edge value. Preserve the readiness that was rendered on
+     * the last move, but also accept a valid release point crossing the limit. */
     horizontal = point.x - ui->navigation_back_press_x;
-    vertical = point.y - ui->navigation_back_press_y;
-    if (vertical < 0) vertical = -vertical;
+    if (horizontal >= NAVIGATION_GESTURE_COMMIT_DISTANCE)
+        ui->navigation_back_ready = 1;
     navigation_back_indicator_reset(ui);
-    if (horizontal < NAVIGATION_GESTURE_COMMIT_DISTANCE ||
-        horizontal <= vertical)
-        return;
+    if (!ui->navigation_back_ready) return;
+    ui->navigation_back_ready = 0;
     navigation_back(ui);
 }
 
@@ -1448,6 +1451,11 @@ static void close_task_switcher(pxsys_reference_lvgl_t* ui) {
     if (ui->task_switcher != NULL)
         lv_obj_add_flag(ui->task_switcher, LV_OBJ_FLAG_HIDDEN);
     application_scale_reset(ui);
+}
+
+static int task_switcher_is_open(const pxsys_reference_lvgl_t* ui) {
+    return ui->task_switcher != NULL &&
+           !lv_obj_has_flag(ui->task_switcher, LV_OBJ_FLAG_HIDDEN);
 }
 
 static void recent_clicked(lv_event_t* event) {
@@ -5246,6 +5254,10 @@ static void rebuild(pxsys_reference_lvgl_t* ui) {
     if (lv_obj_get_parent(ui->root) !=
         lv_display_get_layer_top(lv_obj_get_display(ui->root)))
         lv_obj_move_foreground(ui->root);
+    /* Rebuilds can be triggered while an application is being dismissed. The
+     * switcher is a sibling of root, so keep an open switcher above the rebuilt
+     * system chrome until the dismiss interaction explicitly closes it. */
+    if (task_switcher_is_open(ui)) lv_obj_move_foreground(ui->task_switcher);
     toast_reposition(ui);
     if (ui->toast_visible) toast_restack(ui);
     if (ui->notification_shade_open)
@@ -5571,11 +5583,13 @@ static void system_status_changed(
 static void window_changed(void* context,
                            const pxsys_window_snapshot_t* window) {
     pxsys_reference_lvgl_t* ui = (pxsys_reference_lvgl_t*)context;
+    int task_switcher_open;
     if (!ui_valid(ui) || window == NULL) return;
+    task_switcher_open = task_switcher_is_open(ui);
     ui->window = *window;
     ui->transient_revealed = 0;
     if (ui->transient_timer != NULL) lv_timer_pause(ui->transient_timer);
-    close_task_switcher(ui);
+    if (!task_switcher_open) close_task_switcher(ui);
     close_notification_shade(ui);
     rebuild(ui);
 }
@@ -6060,7 +6074,7 @@ bool pxsys_reference_lvgl_dismiss_overlay(pxsys_reference_lvgl_t* ui) {
         close_language_dialog(ui);
         return true;
     }
-    if (ui->task_switcher != NULL) {
+    if (task_switcher_is_open(ui)) {
         close_task_switcher(ui);
         return true;
     }
