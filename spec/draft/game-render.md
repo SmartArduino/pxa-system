@@ -20,6 +20,9 @@ max_textures:u8, reserved:u8`.
 `PREFER_DIRECT_SCANOUT` is advisory. A Host may still compose when trusted UI
 or system overlays are visible. The ESP profile supports one Surface or
 GameRender context at a time because both ultimately target the same panel.
+The service imposes no configured width or height ceiling; non-zero dimensions
+are passed to the backend, which may return a resource error if allocation is
+not possible.
 
 ## Resource and frame IO
 
@@ -31,8 +34,9 @@ PXA_GAME_RENDER_IO_SUBMIT     0x101
 PXA_GAME_RENDER_IO_TELEMETRY  0x102
 ```
 
-Uploads install a 256-entry RGB565 palette or an INDEX8 texture in one of 16
-persistent slots. Resources remain resident across frames. The ESP profile
+Uploads install a 256-entry RGB565 palette, a lit RGB565 palette with up to 256
+rows of 256 entries, or an INDEX8 texture in a persistent slot. Resources
+remain resident across frames. The ESP profile
 freezes resources after the first accepted frame to keep presenter reads free
 of lifetime races.
 
@@ -41,12 +45,18 @@ mailbox. It never waits for rasterization, display rotation, TE, or SPI. The
 presenter rasterizes only the newest pending list and counts replaced lists as
 dropped frames.
 
-Raster ABI 1.2 supports clear, flat quad, textured depth quad, sprite, sprite
+Raster ABI 1.3 supports clear, flat quad, textured depth quad, sprite, sprite
 batch, and triangle batch records. Sprite batches share texture, blend flags,
 and optional solid color across compact 16-byte instances. Triangle batches
 share texture or solid color across screen-space 12-byte vertices; every three
 vertices form one depth-tested triangle. Coordinates and UV values use signed
 12.4 fixed point and depth uses reciprocal-compatible Q8 values.
+
+Hosts advertising `PAINTER_POLYGON` also accept the painter flag on textured
+quad and triangle-batch records. Painter polygons are convex affine scanlines,
+execute in list order without reading or writing depth, and use each vertex's
+light value as a row in the lit palette. Solid painter polygons carry an
+8-bit palette index instead of RGB565. `TRANSPARENT_INDEX0` skips texel zero.
 
 The 88-byte telemetry record reports submitted and dropped frames, draw bytes,
 covered pixels, host raster time, queue/presentation time, command counts,

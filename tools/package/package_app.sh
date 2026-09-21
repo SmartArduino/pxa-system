@@ -2,7 +2,7 @@
 set -euo pipefail
 
 if [[ $# -ne 3 ]]; then
-  echo "Usage: $0 <app-directory> <esp32s3|simulator> <output-dir>" >&2
+  echo "Usage: $0 <app-directory> <esp32s3|esp32s31|simulator> <output-dir>" >&2
   echo "Optional: PXA_APP_DEFINES=NAME=VALUE,NAME2=VALUE2" >&2
   exit 2
 fi
@@ -76,6 +76,16 @@ case "$package_target" in
                       --stack-bounds-checks=0
                       --opt-level=3 --size-level=0
                       --mllvm=-mtext-section-literals)
+    ;;
+  esp32s31)
+    aot_target="riscv32"
+    manifest_target="esp32-s31"
+    # ESP32-S31 is RV32IMAF. Keep the ABI in step with the WAMR runtime's
+    # RISCV32_ILP32F configuration selected by ESP-IDF 6.2.
+    # LLVM's RISC-V backend does not support the large code model selected by
+    # size-level 0, unlike the Xtensa target above.
+    wamrc_extra_args=(--target-abi=ilp32f --cpu=generic-rv32
+                      --cpu-features=+m,+a,+f --opt-level=3 --size-level=3)
     ;;
   simulator)
     aot_target="x86_64"

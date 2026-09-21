@@ -64,6 +64,7 @@ typedef struct {
     int32_t y;
     uint16_t width;
     uint16_t height;
+    uint64_t revision;
 } pxa_lvgl_ui_alpha_plane_t;
 
 void pxa_lvgl_ui_theme_init(pxa_lvgl_ui_theme_t *theme);

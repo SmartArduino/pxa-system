@@ -18,7 +18,7 @@ static pxa_status_t backend_create(
     void *context, const pxa_game_render_desc_t *desc,
     uint64_t *provider_context, uint32_t *capabilities) {
     backend_t *backend = context;
-    assert(desc->width == 148 && desc->height == 120);
+    assert(desc->width == 800 && desc->height == 480);
     assert(desc->buffer_count == 3);
     assert(desc->flags == PXA_GAME_RENDER_FLAG_PREFER_DIRECT_SCANOUT);
     ++backend->creates;
@@ -68,7 +68,7 @@ static void backend_close(void *context, uint64_t provider_context) {
 }
 
 static size_t make_create(uint8_t *packet, size_t capacity) {
-    uint8_t payload[8] = {148, 0, 120, 0, 3,
+    uint8_t payload[8] = {0x20, 0x03, 0xe0, 0x01, 3,
                           PXA_GAME_RENDER_FLAG_PREFER_DIRECT_SCANOUT, 0, 0};
     pxa_writer_t writer;
     pxa_writer_init(&writer, packet, capacity);
@@ -115,8 +115,6 @@ int main(void) {
     config.struct_size = sizeof(config);
     config.max_contexts = 1;
     config.max_contexts_per_component = 1;
-    config.max_width = 296;
-    config.max_height = 240;
     config.min_buffer_count = 2;
     config.max_buffer_count = 3;
     config.backend.struct_size = sizeof(config.backend);

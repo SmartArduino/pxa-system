@@ -331,6 +331,38 @@ static void patch_title(void) {
     transact(2, 2, 0, PXA_UI_PATCH, &stream);
 }
 
+static void patch_canvas_alpha(void) {
+    bytes_t stream = {{0}, 0};
+    const uint8_t composition = PXA_UI_COMPOSITION_ALPHA_OVERLAY;
+    set_property(&stream, 5, PXA_UI_PROPERTY_COMPOSITION,
+                 &composition, sizeof(composition));
+    transact(4, 3, 0, PXA_UI_PATCH, &stream);
+}
+
+static uint64_t alpha_plane_hash(const pxa_lvgl_ui_alpha_plane_t *plane,
+                                 size_t *visible_pixels) {
+    const size_t color_stride = plane->pixel_stride_bytes /
+                                sizeof(*plane->pixels);
+    uint64_t hash = UINT64_C(1469598103934665603);
+    size_t visible = 0;
+    uint16_t y;
+    for (y = 0; y < plane->height; ++y) {
+        uint16_t x;
+        for (x = 0; x < plane->width; ++x) {
+            const uint8_t alpha =
+                plane->alpha[(size_t)y * plane->alpha_stride_bytes + x];
+            if (alpha == 0) continue;
+            hash ^= plane->pixels[(size_t)y * color_stride + x];
+            hash *= UINT64_C(1099511628211);
+            hash ^= alpha;
+            hash *= UINT64_C(1099511628211);
+            ++visible;
+        }
+    }
+    *visible_pixels = visible;
+    return hash;
+}
+
 static void present_canvas(uint32_t generation, uint8_t dirty_count) {
     uint8_t begin_payload[16] = {0};
     uint8_t write_payload[12 + 64] = {0};
@@ -361,7 +393,8 @@ static void present_canvas(uint32_t generation, uint8_t dirty_count) {
     payload.size = 0;
     put_u32(&payload, 2); put_u32(&payload, 2);
     put_u32(&payload, 40); put_u32(&payload, 30);
-    put_u32(&payload, UINT32_C(0x34c785ff));
+    put_u32(&payload, generation == 6 ? UINT32_C(0xe25656ff)
+                                     : UINT32_C(0x34c785ff));
     put_u16(&payload, 4); put_u16(&payload, 1);
     put_u32(&payload, UINT32_C(0xffffffff));
     command(&frame, PXA_UI_CANVAS_RECT, &payload);
@@ -435,7 +468,7 @@ static void replace_content_subtree(void) {
     create_node(&stream, 6, 2, PXA_UI_NODE_TEXT, 0);
     set_property(&stream, 6, PXA_UI_PROPERTY_TEXT,
                  title, sizeof(title) - 1u);
-    transact(3, 3, 2, PXA_UI_REPLACE_SUBTREE, &stream);
+    transact(5, 4, 2, PXA_UI_REPLACE_SUBTREE, &stream);
 }
 
 int main(void) {
@@ -464,6 +497,9 @@ int main(void) {
     size_t size;
     size_t canvas_resident;
     uint32_t flushes;
+    pxa_lvgl_ui_alpha_plane_t alpha_plane;
+    uint64_t alpha_before;
+    size_t alpha_visible;
 
     test_lvgl_init();
     pxa_runtime_limits_init(&runtime_limits);
@@ -620,6 +656,22 @@ int main(void) {
         }
     }
     assert(g_asset_resolves == 1 && g_asset_releases == 0);
+
+    patch_canvas_alpha();
+    assert(pxa_lvgl_ui_alpha_plane(adapter, &alpha_plane));
+    assert(alpha_plane.x >= canvas_area.x1 &&
+           alpha_plane.y >= canvas_area.y1);
+    assert(alpha_plane.width < 80 && alpha_plane.height < 80);
+    assert(alpha_plane.pixel_stride_bytes == 80u * sizeof(uint16_t));
+    assert(alpha_plane.alpha_stride_bytes == 80);
+    assert(alpha_plane.revision != 0);
+    alpha_before = alpha_plane_hash(&alpha_plane, &alpha_visible);
+    assert(alpha_visible != 0);
+    present_canvas(6, 0);
+    assert(pxa_lvgl_ui_alpha_plane(adapter, &alpha_plane));
+    assert(alpha_plane.revision > 1);
+    assert(alpha_plane_hash(&alpha_plane, &alpha_visible) != alpha_before);
+    assert(alpha_visible != 0);
 
     replace_content_subtree();
     assert(lv_obj_get_child(lv_screen_active(), 0) == root);

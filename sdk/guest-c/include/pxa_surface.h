@@ -59,6 +59,28 @@ typedef struct {
     uint64_t frame_id;
 } pxa_surface_released_event_t;
 
+/* Presentation fit: a Host presents a Surface smaller than the display at the
+ * largest exact 1x/2x/4x nearest-neighbour scale that fits and centers it
+ * when the layer sits at (0, 0). Guests use the same factor to map input
+ * coordinates from display pixels back into Surface pixels. Returns 0 when a
+ * size is empty or even 1x does not fit. */
+static inline uint32_t pxa_surface_fit_scale(uint32_t surface_width,
+                                             uint32_t surface_height,
+                                             uint32_t display_width,
+                                             uint32_t display_height) {
+    uint32_t scale;
+    uint32_t best = 0;
+    if (surface_width == 0 || surface_height == 0 || display_width == 0 ||
+        display_height == 0)
+        return 0;
+    for (scale = 1; scale <= 4; scale *= 2) {
+        if (surface_width * scale <= display_width &&
+            surface_height * scale <= display_height)
+            best = scale;
+    }
+    return best;
+}
+
 static inline void pxa_surface_store_u16(uint8_t *out, uint16_t value) {
     out[0] = (uint8_t)value;
     out[1] = (uint8_t)(value >> 8);

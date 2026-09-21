@@ -21,8 +21,6 @@ struct pxa_game_render_service {
     pxa_game_render_resource_t *contexts;
     uint16_t max_contexts;
     uint16_t max_contexts_per_component;
-    uint16_t max_width;
-    uint16_t max_height;
     uint16_t free_head;
     uint16_t active_head;
     uint8_t min_buffer_count;
@@ -45,7 +43,6 @@ static int config_valid(const pxa_game_render_config_t *config) {
            config->max_contexts != 0 &&
            config->max_contexts_per_component != 0 &&
            config->max_contexts_per_component <= config->max_contexts &&
-           config->max_width != 0 && config->max_height != 0 &&
            config->min_buffer_count >= 2 &&
            config->min_buffer_count <= config->max_buffer_count &&
            config->backend.struct_size >= sizeof(config->backend) &&
@@ -99,8 +96,6 @@ pxa_status_t pxa_game_render_service_init(
     service->backend = config->backend;
     service->max_contexts = config->max_contexts;
     service->max_contexts_per_component = config->max_contexts_per_component;
-    service->max_width = config->max_width;
-    service->max_height = config->max_height;
     service->min_buffer_count = config->min_buffer_count;
     service->max_buffer_count = config->max_buffer_count;
     service->free_head = 0;
@@ -248,8 +243,7 @@ static pxa_status_t create_context(pxa_game_render_service_t *service,
     desc.buffer_count = payload.data[4];
     desc.flags = payload.data[5];
     if (payload.data[6] != 0 || payload.data[7] != 0 || desc.width == 0 ||
-        desc.width > service->max_width || desc.height == 0 ||
-        desc.height > service->max_height ||
+        desc.height == 0 ||
         desc.buffer_count < service->min_buffer_count ||
         desc.buffer_count > service->max_buffer_count ||
         (desc.flags & ~PXA_GAME_RENDER_FLAG_KNOWN_MASK) != 0)

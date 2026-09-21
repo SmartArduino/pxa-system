@@ -63,6 +63,8 @@ typedef struct {
     uint32_t struct_size;
     uint16_t max_contexts;
     uint16_t max_contexts_per_component;
+    /* ABI compatibility fields. Context dimensions are no longer capped by
+     * the service; backends reject only dimensions they cannot allocate. */
     uint16_t max_width;
     uint16_t max_height;
     uint8_t min_buffer_count;

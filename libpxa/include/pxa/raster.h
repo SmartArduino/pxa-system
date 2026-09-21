@@ -11,7 +11,7 @@ extern "C" {
 #endif
 
 #define PXA_RASTER_ABI_MAJOR UINT16_C(1)
-#define PXA_RASTER_ABI_MINOR UINT16_C(2)
+#define PXA_RASTER_ABI_MINOR UINT16_C(3)
 #define PXA_RASTER_DRAW_MAGIC UINT32_C(0x4c525850) /* PXRL */
 #define PXA_RASTER_UPLOAD_MAGIC UINT32_C(0x52555850) /* PXUR */
 
@@ -34,14 +34,16 @@ extern "C" {
  * original 16. Guests must only address slots >= 16 when this is advertised
  * so an older Host keeps working. */
 #define PXA_RASTER_CAP_TEXTURE_SLOTS_48 UINT32_C(64)
+#define PXA_RASTER_CAP_PAINTER_POLYGON UINT32_C(128)
 #define PXA_RASTER_CAP_KNOWN_MASK                                      \
     (PXA_RASTER_CAP_FLAT_QUAD | PXA_RASTER_CAP_TEXTURED_QUAD |        \
      PXA_RASTER_CAP_ADDITIVE_SPRITE | PXA_RASTER_CAP_SPRITE_BATCH |   \
      PXA_RASTER_CAP_TRIANGLE_BATCH | PXA_RASTER_CAP_AFFINE_UV |       \
-     PXA_RASTER_CAP_TEXTURE_SLOTS_48)
+     PXA_RASTER_CAP_TEXTURE_SLOTS_48 | PXA_RASTER_CAP_PAINTER_POLYGON)
 
 #define PXA_RASTER_UPLOAD_PALETTE_RGB565 UINT8_C(1)
 #define PXA_RASTER_UPLOAD_TEXTURE_INDEX8 UINT8_C(2)
+#define PXA_RASTER_UPLOAD_LIT_PALETTE_RGB565 UINT8_C(3)
 #define PXA_RASTER_UPLOAD_HEADER_BYTES UINT32_C(20)
 
 #define PXA_RASTER_DRAW_HEADER_BYTES UINT32_C(32)
@@ -65,6 +67,11 @@ extern "C" {
 /* Textured quads only. Requires PXA_RASTER_CAP_AFFINE_UV. Depth stays
  * perspective-correct so occlusion is unchanged. */
 #define PXA_RASTER_QUAD_AFFINE_UV UINT8_C(2)
+/* Convex painter polygon: affine scanlines, no depth test/write, and `light`
+ * selects a row in the uploaded lit palette. For solid records, solid_color's
+ * low byte is a palette index. */
+#define PXA_RASTER_QUAD_PAINTER UINT8_C(4)
+#define PXA_RASTER_QUAD_TRANSPARENT_INDEX0 UINT8_C(8)
 
 #define PXA_RASTER_SPRITE_TRANSPARENT_INDEX0 UINT8_C(1)
 #define PXA_RASTER_SPRITE_SOLID_COLOR UINT8_C(2)
@@ -88,6 +95,7 @@ typedef struct {
 typedef struct {
     pxa_raster_texture_t textures[PXA_RASTER_MAX_TEXTURES];
     const uint16_t *palette;
+    uint16_t palette_light_levels;
     uint32_t capabilities;
 } pxa_raster_resources_t;
 

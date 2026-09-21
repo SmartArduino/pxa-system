@@ -67,8 +67,13 @@ os_mmap(void *hint, size_t size, int prot, int flags, os_file_handle file)
                  (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
         return ibus_code;
 #else
+#if (WASM_MEM_EXEC_IN_PSRAM != 0)
+        uint32_t mem_caps = MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT;
+#else
+        uint32_t mem_caps = MALLOC_CAP_EXEC;
+#endif
         void *buf_origin =
-            heap_caps_malloc(size + 4 + sizeof(uintptr_t), MALLOC_CAP_EXEC);
+            heap_caps_malloc(size + 4 + sizeof(uintptr_t), mem_caps);
         if (!buf_origin) {
             return NULL;
         }
@@ -206,8 +211,12 @@ os_icache_flush(void *start, size_t len)
                                   ESP_CACHE_MSYNC_FLAG_TYPE_INST);
     }
 #else
+#if (WASM_MEM_EXEC_IN_PSRAM != 0)
+    __builtin___clear_cache((char *)start, (char *)start + len);
+#else
     (void)start;
     (void)len;
+#endif
 #endif
 }
 

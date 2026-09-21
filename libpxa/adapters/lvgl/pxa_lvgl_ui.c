@@ -103,8 +103,15 @@ struct pxa_lvgl_ui {
     int32_t alpha_y;
     uint16_t alpha_width;
     uint16_t alpha_height;
+    uint16_t alpha_content_x;
+    uint16_t alpha_content_y;
+    uint16_t alpha_content_width;
+    uint16_t alpha_content_height;
+    uint64_t alpha_revision;
     uint64_t event_timestamp_us;
 };
+
+static uint64_t g_alpha_revision;
 
 static void *ui_allocate(pxa_lvgl_ui_t *ui, size_t size) {
     if (ui == NULL || size == 0 || ui->config.allocate == NULL) return NULL;
@@ -954,6 +961,10 @@ static void clear_alpha_plane(pxa_lvgl_ui_t *ui) {
     ui->alpha_y = 0;
     ui->alpha_width = 0;
     ui->alpha_height = 0;
+    ui->alpha_content_x = 0;
+    ui->alpha_content_y = 0;
+    ui->alpha_content_width = 0;
+    ui->alpha_content_height = 0;
 }
 
 static int prepare_alpha_plane(pxa_lvgl_ui_t *ui, const lv_area_t *area) {
@@ -1023,6 +1034,10 @@ static void alpha_plane_blend_pixel(pxa_lvgl_ui_t *ui, size_t index,
 static int refresh_alpha_plane(pxa_lvgl_ui_t *ui) {
     pxa_lvgl_ui_node_t *node;
     lv_area_t union_area = {0};
+    uint16_t content_min_x = UINT16_MAX;
+    uint16_t content_min_y = UINT16_MAX;
+    uint16_t content_max_x = 0;
+    uint16_t content_max_y = 0;
     int found = 0;
     int result = 1;
     for (node = ui->nodes; node != NULL; node = node->next) {
@@ -1046,6 +1061,10 @@ static int refresh_alpha_plane(pxa_lvgl_ui_t *ui) {
         return 1;
     }
     if (!prepare_alpha_plane(ui, &union_area)) return 0;
+    ui->alpha_content_x = 0;
+    ui->alpha_content_y = 0;
+    ui->alpha_content_width = 0;
+    ui->alpha_content_height = 0;
     set_alpha_overlay_base_visibility(ui, 1);
     for (node = ui->nodes; node != NULL; node = node->next) {
         lv_draw_buf_t *snapshot;
@@ -1072,12 +1091,29 @@ static int refresh_alpha_plane(pxa_lvgl_ui_t *ui) {
                     alpha_plane_blend_pixel(
                         ui, (size_t)plane_y * ui->alpha_width + plane_x,
                         source[x]);
+                    if (source[x].alpha != 0) {
+                        const uint16_t px = (uint16_t)plane_x;
+                        const uint16_t py = (uint16_t)plane_y;
+                        if (px < content_min_x) content_min_x = px;
+                        if (py < content_min_y) content_min_y = py;
+                        if (px > content_max_x) content_max_x = px;
+                        if (py > content_max_y) content_max_y = py;
+                    }
                 }
             }
         }
         lv_draw_buf_destroy(snapshot);
     }
     set_alpha_overlay_base_visibility(ui, 0);
+    if (result && content_min_x != UINT16_MAX) {
+        ui->alpha_content_x = content_min_x;
+        ui->alpha_content_y = content_min_y;
+        ui->alpha_content_width =
+            (uint16_t)(content_max_x - content_min_x + 1u);
+        ui->alpha_content_height =
+            (uint16_t)(content_max_y - content_min_y + 1u);
+        ui->alpha_revision = ++g_alpha_revision;
+    }
     return result;
 }
 
@@ -1522,7 +1558,10 @@ static void execute_canvas_swap(void *data) {
                 lv_obj_invalidate_area(swap->node->object, &area);
         }
     }
-    swap->status = PXA_STATUS_OK;
+    swap->status = node_is_in_alpha_overlay(swap->node->ui, swap->node) &&
+                           !refresh_alpha_plane(swap->node->ui)
+                       ? PXA_STATUS_RESOURCE_LIMIT
+                       : PXA_STATUS_OK;
 }
 
 static pxa_status_t backend_canvas(
@@ -2102,17 +2141,24 @@ bool pxa_lvgl_ui_alpha_plane(const pxa_lvgl_ui_t *ui,
     memset(output, 0, sizeof(*output));
     if (ui == NULL || ui->magic != PXA_LVGL_UI_MAGIC ||
         ui->alpha_pixels == NULL || ui->alpha_values == NULL ||
-        ui->alpha_width == 0 || ui->alpha_height == 0)
+        ui->alpha_width == 0 || ui->alpha_height == 0 ||
+        ui->alpha_content_width == 0 || ui->alpha_content_height == 0)
         return false;
-    output->pixels = ui->alpha_pixels;
-    output->alpha = ui->alpha_values;
+    {
+        const size_t offset =
+            (size_t)ui->alpha_content_y * ui->alpha_width +
+            ui->alpha_content_x;
+        output->pixels = ui->alpha_pixels + offset;
+        output->alpha = ui->alpha_values + offset;
+    }
     output->pixel_stride_bytes = (uint32_t)ui->alpha_width *
                                  sizeof(*ui->alpha_pixels);
     output->alpha_stride_bytes = ui->alpha_width;
-    output->x = ui->alpha_x;
-    output->y = ui->alpha_y;
-    output->width = ui->alpha_width;
-    output->height = ui->alpha_height;
+    output->x = ui->alpha_x + ui->alpha_content_x;
+    output->y = ui->alpha_y + ui->alpha_content_y;
+    output->width = ui->alpha_content_width;
+    output->height = ui->alpha_content_height;
+    output->revision = ui->alpha_revision;
     return true;
 }
 

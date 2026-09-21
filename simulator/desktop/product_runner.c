@@ -53,6 +53,7 @@ typedef struct {
     const char *pxadb_control_socket;
     uint32_t width;
     uint32_t height;
+    uint32_t safe_insets[4];
 } options_t;
 
 typedef struct {
@@ -104,6 +105,7 @@ typedef struct {
     int8_t raster_draw_pending;
     uint64_t raster_last_frame_id;
     uint16_t *raster_palette;
+    uint16_t raster_palette_light_levels;
     uint8_t *raster_textures[PXA_RASTER_MAX_TEXTURES];
     uint16_t raster_texture_width[PXA_RASTER_MAX_TEXTURES];
     uint16_t raster_texture_height[PXA_RASTER_MAX_TEXTURES];
@@ -118,6 +120,7 @@ typedef struct {
     lv_font_t *title_font;
     uint32_t width;
     uint32_t height;
+    uint32_t safe_insets[4];
     uint16_t clock_period_ms;
     uint64_t next_clock_tick_us;
     lv_obj_t *system_back_gesture;
@@ -153,24 +156,53 @@ static lv_font_t *load_product_font(uint32_t size,
 #endif
 }
 
+/* The device port ships the primary UI environment (display size, density,
+ * features) in the start configuration; echo it here so product Guests see the
+ * same environment on the desktop profile instead of falling back to a
+ * hard-coded logical size. */
 static pxa_status_t configure_start_locale(product_host_t *host,
-                                           uint64_t instance_id) {
+                                           uint64_t instance_id,
+                                           const pxa_ui_config_t *ui_config) {
     uint8_t environment[4u + PRODUCT_LOCALE_MAX_BYTES];
-    uint8_t config[8u + sizeof(environment)];
+    uint8_t ui_environment[128];
+    uint8_t config[8u + sizeof(ui_environment) + sizeof(environment)];
+    pxa_ui_environment_t ui_environment_value;
     pxa_writer_t environment_writer;
     pxa_writer_t config_writer;
     size_t locale_size;
+    size_t ui_environment_size = 0;
     pxa_status_t status;
-    if (host == NULL || host->engine == NULL) return PXA_STATUS_INVALID_ARGUMENT;
+    if (host == NULL || host->engine == NULL || ui_config == NULL)
+        return PXA_STATUS_INVALID_ARGUMENT;
     locale_size = strlen(host->locale);
     if (locale_size < 2u || locale_size > PRODUCT_LOCALE_MAX_BYTES)
         return PXA_STATUS_INVALID_ARGUMENT;
+    memset(&ui_environment_value, 0, sizeof(ui_environment_value));
+    ui_environment_value.surface = PXA_UI_PRIMARY_SURFACE;
+    ui_environment_value.width = ui_config->primary_width;
+    ui_environment_value.height = ui_config->primary_height;
+    ui_environment_value.density_q16 = ui_config->density_q16 != 0
+        ? ui_config->density_q16 : (UINT32_C(1) << 16);
+    ui_environment_value.font_scale_q16 = ui_config->font_scale_q16 != 0
+        ? ui_config->font_scale_q16 : (UINT32_C(1) << 16);
+    ui_environment_value.recommended_write_bytes = 1024;
+    ui_environment_value.color_scheme = ui_config->color_scheme;
+    ui_environment_value.features = ui_config->features;
+    for (size_t index = 0; index < 4; ++index)
+        ui_environment_value.safe_insets[index] = host->safe_insets[index];
+    status = pxa_ui_encode_environment(&ui_environment_value, ui_environment,
+                                       sizeof(ui_environment),
+                                       &ui_environment_size);
+    if (status != PXA_STATUS_OK) return status;
     pxa_writer_init(&environment_writer, environment, sizeof(environment));
     status = pxa_writer_record(&environment_writer,
                                PRODUCT_SYSTEM_CONFIGURATION_LOCALE,
                                host->locale, locale_size);
     if (status != PXA_STATUS_OK) return status;
     pxa_writer_init(&config_writer, config, sizeof(config));
+    status = pxa_writer_record(&config_writer, PXA_UI_CONFIG_ENVIRONMENT,
+                               ui_environment, ui_environment_size);
+    if (status != PXA_STATUS_OK) return status;
     status = pxa_writer_record(&config_writer, PRODUCT_SYSTEM_CONFIG_ENVIRONMENT,
                                environment_writer.data, environment_writer.size);
     if (status != PXA_STATUS_OK) return status;
@@ -372,6 +404,26 @@ static void release_memory(void *context, void *memory) {
     free(memory);
 }
 
+/* Mirrors pxa_surface_fit_scale in the device component: the simulator shows
+ * a Surface at the largest exact 1x/2x/4x scale that fits the profile and
+ * centers it, so product behaviour matches the Watcher presenter. */
+static uint8_t product_fit_scale(uint32_t surface_width,
+                                 uint32_t surface_height,
+                                 uint32_t display_width,
+                                 uint32_t display_height) {
+    uint8_t scale;
+    uint8_t best = 0;
+    if (surface_width == 0 || surface_height == 0 || display_width == 0 ||
+        display_height == 0)
+        return 0;
+    for (scale = 1; scale <= 4; scale = (uint8_t)(scale * 2)) {
+        if (surface_width * scale <= display_width &&
+            surface_height * scale <= display_height)
+            best = scale;
+    }
+    return best;
+}
+
 static pxa_status_t surface_create(void *context, const pxa_surface_desc_t *desc,
                                    uint64_t *surface, uint32_t *stride) {
     product_host_t *host = context;
@@ -389,11 +441,11 @@ static pxa_status_t surface_create(void *context, const pxa_surface_desc_t *desc
         desc->buffer_count < 2 || desc->buffer_count > 3 ||
         host->surface_frame_bytes != 0)
         return PXA_STATUS_UNSUPPORTED;
-    if (host->width % desc->width != 0 || host->height % desc->height != 0 ||
-        host->width / desc->width != host->height / desc->height)
+    if (desc->width > host->width || desc->height > host->height)
         return PXA_STATUS_UNSUPPORTED;
-    scale = (uint8_t)(host->width / desc->width);
-    if (scale != 1 && scale != 2 && scale != 4)
+    scale = product_fit_scale(desc->width, desc->height, host->width,
+                              host->height);
+    if (scale == 0)
         return PXA_STATUS_UNSUPPORTED;
     *surface = 1;
     *stride = (uint32_t)desc->width * 2u;
@@ -526,9 +578,7 @@ static pxa_status_t surface_register_buffers(void *context, uint64_t surface,
     lv_obj_clear_flag(host->surface_image, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_set_size(host->surface_image, host->surface_display_width,
                     host->surface_display_height);
-    lv_obj_set_pos(host->surface_image,
-                   host->surface_layer.x * host->surface_scale,
-                   host->surface_layer.y * host->surface_scale);
+    lv_obj_set_pos(host->surface_image, 0, 0);
     lv_obj_move_foreground(host->surface_image);
     return PXA_STATUS_OK;
 }
@@ -615,8 +665,7 @@ static pxa_status_t surface_configure(void *context, uint64_t surface,
         return PXA_STATUS_INVALID_ARGUMENT;
     host->surface_layer = *layer;
     if (host->surface_image != NULL) {
-        lv_obj_set_pos(host->surface_image, layer->x * host->surface_scale,
-                       layer->y * host->surface_scale);
+        lv_obj_set_pos(host->surface_image, 0, 0);
         if (layer->visible)
             lv_obj_remove_flag(host->surface_image, LV_OBJ_FLAG_HIDDEN);
         else
@@ -652,13 +701,15 @@ static void raster_resources(const product_host_t *host,
                              pxa_raster_resources_t *resources) {
     memset(resources, 0, sizeof(*resources));
     resources->palette = host->raster_palette;
+    resources->palette_light_levels = host->raster_palette_light_levels;
     resources->capabilities = PXA_RASTER_CAP_FLAT_QUAD |
                               PXA_RASTER_CAP_TEXTURED_QUAD |
                               PXA_RASTER_CAP_ADDITIVE_SPRITE |
                               PXA_RASTER_CAP_SPRITE_BATCH |
                               PXA_RASTER_CAP_TRIANGLE_BATCH |
                               PXA_RASTER_CAP_AFFINE_UV |
-                              PXA_RASTER_CAP_TEXTURE_SLOTS_48;
+                              PXA_RASTER_CAP_TEXTURE_SLOTS_48 |
+                              PXA_RASTER_CAP_PAINTER_POLYGON;
     for (uint8_t index = 0; index < PXA_RASTER_MAX_TEXTURES; ++index) {
         resources->textures[index].pixels = host->raster_textures[index];
         resources->textures[index].width = host->raster_texture_width[index];
@@ -681,12 +732,15 @@ static pxa_status_t surface_raster_upload(void *context, uint64_t surface,
     if (status != PXA_STATUS_OK) return status;
     replacement = malloc(upload.payload_bytes);
     if (replacement == NULL) return PXA_STATUS_RESOURCE_LIMIT;
-    if (upload.kind == PXA_RASTER_UPLOAD_PALETTE_RGB565) {
-        for (uint16_t index = 0; index < PXA_RASTER_PALETTE_COLORS; ++index)
+    if (upload.kind == PXA_RASTER_UPLOAD_PALETTE_RGB565 ||
+        upload.kind == PXA_RASTER_UPLOAD_LIT_PALETTE_RGB565) {
+        const uint32_t entries = upload.payload_bytes / sizeof(uint16_t);
+        for (uint32_t index = 0; index < entries; ++index)
             ((uint16_t *)replacement)[index] =
                 pxa_read_u16(upload.payload + (size_t)index * 2u);
         previous = (uint8_t *)host->raster_palette;
         host->raster_palette = (uint16_t *)replacement;
+        host->raster_palette_light_levels = upload.height;
     } else {
         memcpy(replacement, upload.payload, upload.payload_bytes);
         previous = host->raster_textures[upload.slot];
@@ -816,7 +870,8 @@ static pxa_status_t game_render_create(
                     PXA_RASTER_CAP_SPRITE_BATCH |
                     PXA_RASTER_CAP_TRIANGLE_BATCH |
                     PXA_RASTER_CAP_AFFINE_UV |
-                    PXA_RASTER_CAP_TEXTURE_SLOTS_48;
+                    PXA_RASTER_CAP_TEXTURE_SLOTS_48 |
+                    PXA_RASTER_CAP_PAINTER_POLYGON;
     return PXA_STATUS_OK;
 }
 
@@ -884,12 +939,41 @@ static int surface_process_pending(product_host_t *host) {
     {
         uint16_t *destination = (uint16_t *)host->surface_display_buffer;
         const uint32_t source_stride = host->surface_stride_bytes / 2u;
-        const uint32_t destination_stride = host->surface_display_stride_bytes / 2u;
-        for (uint16_t y = 0; y < host->surface_display_height; ++y) {
+        const uint32_t destination_stride =
+            host->surface_display_stride_bytes / 2u;
+        const uint32_t display_width = host->surface_display_width;
+        const uint32_t display_height = host->surface_display_height;
+        const uint32_t drawn_width =
+            (uint32_t)host->surface_width * host->surface_scale;
+        const uint32_t drawn_height =
+            (uint32_t)host->surface_height * host->surface_scale;
+        uint32_t origin_x = 0;
+        uint32_t origin_y = 0;
+        uint32_t copy_width = drawn_width;
+        uint32_t copy_height = drawn_height;
+        if (host->surface_layer.x > 0) origin_x = (uint32_t)host->surface_layer.x;
+        if (host->surface_layer.y > 0) origin_y = (uint32_t)host->surface_layer.y;
+        if (origin_x == 0 && origin_y == 0 &&
+            (drawn_width < display_width || drawn_height < display_height)) {
+            origin_x = (display_width - drawn_width) / 2u;
+            origin_y = (display_height - drawn_height) / 2u;
+        }
+        if (origin_x >= display_width || origin_y >= display_height) {
+            copy_width = 0;
+            copy_height = 0;
+        } else {
+            if (copy_width > display_width - origin_x)
+                copy_width = display_width - origin_x;
+            if (copy_height > display_height - origin_y)
+                copy_height = display_height - origin_y;
+        }
+        memset(destination, 0, host->surface_display_frame_bytes);
+        for (uint32_t y = 0; y < copy_height; ++y) {
             const uint16_t *source_row = source +
                 (uint32_t)(y / host->surface_scale) * source_stride;
-            uint16_t *destination_row = destination + (uint32_t)y * destination_stride;
-            for (uint16_t x = 0; x < host->surface_display_width; ++x)
+            uint16_t *destination_row =
+                destination + (origin_y + y) * destination_stride + origin_x;
+            for (uint32_t x = 0; x < copy_width; ++x)
                 destination_row[x] = source_row[x / host->surface_scale];
         }
     }
@@ -1258,7 +1342,7 @@ static pxa_status_t permission_save(void *context, pxa_bytes_t identity,
 
 #ifndef PXSYS_PRODUCT_RUNNER_LIBRARY
 static void print_usage(const char *program) {
-    fprintf(stderr, "Usage: %s --package DIR --publisher-key DER [--state-root DIR] [--locale TAG] [--pxadb-control-socket PATH] [--width PX --height PX]\n",
+    fprintf(stderr, "Usage: %s --package DIR --publisher-key DER [--state-root DIR] [--locale TAG] [--pxadb-control-socket PATH] [--width PX --height PX] [--safe-insets T,R,B,L]\n",
             program);
 }
 
@@ -1283,6 +1367,12 @@ static int parse_options(int argc, char **argv, options_t *options) {
             options->width = (uint32_t)strtoul(argv[++index], NULL, 10);
         else if (strcmp(argv[index], "--height") == 0 && index + 1 < argc)
             options->height = (uint32_t)strtoul(argv[++index], NULL, 10);
+        else if (strcmp(argv[index], "--safe-insets") == 0 && index + 1 < argc) {
+            if (sscanf(argv[++index], "%u,%u,%u,%u", &options->safe_insets[0],
+                       &options->safe_insets[1], &options->safe_insets[2],
+                       &options->safe_insets[3]) != 4)
+                return 0;
+        }
         else return 0;
     }
     return options->package_path != NULL && options->publisher_key != NULL &&
@@ -1412,6 +1502,7 @@ static int run_product_simulator(const options_t *input,
     strcpy(host.locale, options.locale);
     host.width = options.width;
     host.height = options.height;
+    memcpy(host.safe_insets, options.safe_insets, sizeof(host.safe_insets));
     if (owns_display) {
         lv_init();
         display = lv_sdl_window_create((int32_t)options.width,
@@ -1447,6 +1538,8 @@ static int run_product_simulator(const options_t *input,
         PXA_UI_FEATURE_CONTROLLER_INPUT | PXA_UI_FEATURE_MULTIPLE_SURFACES |
         PXA_UI_FEATURE_CANVAS_STREAM_IO;
     ui_config.primary_width = options.width; ui_config.primary_height = options.height;
+    for (size_t index = 0; index < 4; ++index)
+        ui_config.safe_insets[index] = host.safe_insets[index];
     ui_workspace = malloc(pxa_ui_service_workspace_size());
     if (ui_workspace == NULL || pxa_ui_service_init(ui_workspace,
         pxa_ui_service_workspace_size(), host.runtime, &ui_config, &host.ui) != PXA_STATUS_OK ||
@@ -1584,8 +1677,6 @@ static int run_product_simulator(const options_t *input,
     game_render_config.struct_size = sizeof(game_render_config);
     game_render_config.max_contexts = 1;
     game_render_config.max_contexts_per_component = 1;
-    game_render_config.max_width = options.width;
-    game_render_config.max_height = options.height;
     game_render_config.min_buffer_count = 2;
     game_render_config.max_buffer_count = 3;
     game_render_config.backend.struct_size = sizeof(game_render_config.backend);
@@ -1632,10 +1723,12 @@ static int run_product_simulator(const options_t *input,
         &host.engine_ops) != PXA_STATUS_OK) goto done;
     pxa_wamr_engine_set_runtime(host.engine, host.runtime);
     stage = "start configuration";
-    if (configure_start_locale(&host, 1) != PXA_STATUS_OK) goto done;
+    if (configure_start_locale(&host, 1, &ui_config) != PXA_STATUS_OK) goto done;
     capabilities[0].service = PXA_SERVICE_CORE; capabilities[0].version.major = 0; capabilities[0].version.minor = 1;
     capabilities[1].service = PXA_WINDOW_SERVICE_ID; capabilities[1].version.major = 0; capabilities[1].version.minor = 1;
     capabilities[2].service = PXA_UI_SERVICE_ID; capabilities[2].version.major = 0; capabilities[2].version.minor = 3;
+    capabilities[2].features = PXA_UI_FEATURE_CANVAS |
+                              PXA_UI_FEATURE_CANVAS_STREAM_IO;
     capabilities[3].service = PRODUCT_CLOCK_SERVICE; capabilities[3].version.major = 0; capabilities[3].version.minor = 1;
     capabilities[4].service = PXA_AUDIO_SERVICE_ID; capabilities[4].version.major = 0; capabilities[4].version.minor = 5;
     capabilities[5].service = PXA_PERMISSION_SERVICE_ID; capabilities[5].version.major = 0; capabilities[5].version.minor = 1;

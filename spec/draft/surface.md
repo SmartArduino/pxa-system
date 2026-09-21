@@ -48,8 +48,13 @@ is native-endian `0xAARRGGBB` with premultiplied RGB channels and requires
 `flags & 1 = PREMULTIPLIED_ALPHA`. Hosts blend it with the fixed `src-over`
 equation. The legacy composition path requires layer width and height to equal
 Surface width and height. A mapped direct-scanout profile may negotiate an
-exact 2x or 4x nearest-neighbor scale to the full logical display. Coordinates
-are in the primary display's logical orientation and are clipped by the Host.
+exact 2x or 4x nearest-neighbor scale to the full logical display. A Surface
+that is smaller than the display is presented at the largest exact 1x/2x/4x
+nearest-neighbor scale that fits and is centered when the layer origin is
+(0, 0). Coordinates are in the primary display's logical orientation and are
+clipped by the Host. A Guest that relies on the centered fit repeats the same
+computation (`pxa_surface_fit_scale`) to map display input coordinates back
+into Surface pixels.
 
 `PXA_SURFACE_QUEUE_FRAME` is the per-frame fast control path:
 
@@ -172,7 +177,8 @@ until composition becomes necessary. This avoids a full LVGL refresh for an
 App that owns every pixel, but a rotated panel can still require a copy into a
 board-owned DMA buffer.
 
-For an exact 1x, 2x or 4x mapped RGB565 frame, a board presenter may fuse
+For an exact 1x, 2x or 4x mapped RGB565 frame (including the largest fitting
+factor for a smaller centered Surface), a board presenter may fuse
 nearest-neighbor scaling, logical-to-panel rotation, RGB565 byte-order
 conversion and output-buffer writes in that single required pass. The Guest
 must not pre-upscale such a frame.

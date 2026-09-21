@@ -7,7 +7,7 @@
 #include "pxa_game_render.h"
 
 #define PXA_RASTER_ABI_MAJOR UINT16_C(1)
-#define PXA_RASTER_ABI_MINOR UINT16_C(2)
+#define PXA_RASTER_ABI_MINOR UINT16_C(3)
 #define PXA_RASTER_DRAW_MAGIC UINT32_C(0x4c525850)
 #define PXA_RASTER_UPLOAD_MAGIC UINT32_C(0x52555850)
 #define PXA_RASTER_MAX_TEXTURES UINT8_C(48)
@@ -24,8 +24,10 @@
 /* The Host accepts texture slots up to PXA_RASTER_MAX_TEXTURES. Only address
  * slots >= 16 when this is advertised so older Hosts keep working. */
 #define PXA_RASTER_CAP_TEXTURE_SLOTS_48 UINT32_C(64)
+#define PXA_RASTER_CAP_PAINTER_POLYGON UINT32_C(128)
 #define PXA_RASTER_UPLOAD_PALETTE_RGB565 UINT8_C(1)
 #define PXA_RASTER_UPLOAD_TEXTURE_INDEX8 UINT8_C(2)
+#define PXA_RASTER_UPLOAD_LIT_PALETTE_RGB565 UINT8_C(3)
 #define PXA_RASTER_UPLOAD_HEADER_BYTES UINT32_C(20)
 #define PXA_RASTER_DRAW_HEADER_BYTES UINT32_C(32)
 #define PXA_RASTER_RECORD_CLEAR_RGB565 UINT8_C(1)
@@ -46,6 +48,8 @@
 /* Textured quads only. Only emit when the Host advertised
  * PXA_RASTER_CAP_AFFINE_UV; an older Host rejects unknown flags. */
 #define PXA_RASTER_QUAD_AFFINE_UV UINT8_C(2)
+#define PXA_RASTER_QUAD_PAINTER UINT8_C(4)
+#define PXA_RASTER_QUAD_TRANSPARENT_INDEX0 UINT8_C(8)
 #define PXA_RASTER_SPRITE_TRANSPARENT_INDEX0 UINT8_C(1)
 #define PXA_RASTER_SPRITE_SOLID_COLOR UINT8_C(2)
 #define PXA_RASTER_SPRITE_ADDITIVE UINT8_C(4)
@@ -154,6 +158,26 @@ static inline int32_t pxa_raster_upload_palette_rgb565(
         scratch_capacity);
 }
 
+static inline int32_t pxa_raster_upload_lit_palette_rgb565(
+    uint32_t context_handle, uint16_t light_levels, const uint16_t *palette,
+    uint8_t *scratch, uint32_t scratch_capacity) {
+    uint32_t entries = (uint32_t)light_levels * PXA_RASTER_PALETTE_COLORS;
+    uint32_t payload_bytes = entries * 2u;
+    uint32_t index;
+    if (light_levels == 0 || light_levels > 256u || palette == NULL ||
+        scratch == NULL || payload_bytes > UINT32_MAX - PXA_RASTER_UPLOAD_HEADER_BYTES ||
+        scratch_capacity < PXA_RASTER_UPLOAD_HEADER_BYTES + payload_bytes)
+        return PXA_STATUS_INVALID_ARGUMENT;
+    for (index = 0; index < entries; ++index)
+        pxa_game_render_store_u16(scratch + PXA_RASTER_UPLOAD_HEADER_BYTES +
+                                               index * 2u,
+                                  palette[index]);
+    return pxa_raster_upload(
+        context_handle, PXA_RASTER_UPLOAD_LIT_PALETTE_RGB565, 0, 256,
+        light_levels, scratch + PXA_RASTER_UPLOAD_HEADER_BYTES, payload_bytes,
+        scratch, scratch_capacity);
+}
+
 static inline int32_t pxa_raster_upload_texture_index8(
     uint32_t context_handle, uint8_t slot, uint16_t width, uint16_t height,
     const uint8_t *pixels, uint8_t *scratch, uint32_t scratch_capacity) {
@@ -258,7 +282,11 @@ static inline int pxa_raster_textured_quad_flags(
     uint8_t *record;
     uint8_t index;
     if (vertices == NULL || texture_slot >= PXA_RASTER_MAX_TEXTURES ||
-        (flags & ~PXA_RASTER_QUAD_AFFINE_UV) != 0)
+        (flags & ~(PXA_RASTER_QUAD_AFFINE_UV |
+                   PXA_RASTER_QUAD_PAINTER |
+                   PXA_RASTER_QUAD_TRANSPARENT_INDEX0)) != 0 ||
+        ((flags & PXA_RASTER_QUAD_TRANSPARENT_INDEX0) != 0 &&
+         (flags & PXA_RASTER_QUAD_PAINTER) == 0))
         return 0;
     record = pxa_raster_append(list, PXA_RASTER_RECORD_TEXTURED_QUAD,
                                PXA_RASTER_TEXTURED_QUAD_BYTES);
@@ -281,6 +309,8 @@ static inline int pxa_raster_textured_quad_flags(
     list->required_capabilities |= PXA_RASTER_CAP_TEXTURED_QUAD;
     if ((flags & PXA_RASTER_QUAD_AFFINE_UV) != 0)
         list->required_capabilities |= PXA_RASTER_CAP_AFFINE_UV;
+    if ((flags & PXA_RASTER_QUAD_PAINTER) != 0)
+        list->required_capabilities |= PXA_RASTER_CAP_PAINTER_POLYGON;
     return 1;
 }
 
@@ -315,6 +345,35 @@ static inline int pxa_raster_solid_depth_quad(
         pxa_game_render_store_u16(wire + 10, vertices[index].depth_q8);
     }
     list->required_capabilities |= PXA_RASTER_CAP_TEXTURED_QUAD;
+    return 1;
+}
+
+static inline int pxa_raster_solid_painter_quad(
+    pxa_raster_draw_list_t *list, const pxa_raster_vertex_t vertices[4],
+    uint8_t palette_index) {
+    uint8_t *record;
+    uint8_t index;
+    if (vertices == NULL) return 0;
+    record = pxa_raster_append(list, PXA_RASTER_RECORD_TEXTURED_QUAD,
+                               PXA_RASTER_TEXTURED_QUAD_BYTES);
+    if (record == NULL) return 0;
+    record[1] = PXA_RASTER_QUAD_SOLID_COLOR | PXA_RASTER_QUAD_PAINTER;
+    pxa_game_render_store_u16(record + 6, palette_index);
+    for (index = 0; index < 4; ++index) {
+        uint8_t *wire = record + 8 + index * PXA_RASTER_VERTEX_BYTES;
+        pxa_game_render_store_u16(
+            wire, (uint16_t)pxa_raster_scale_coordinate(
+                      vertices[index].x_q4, list->coordinate_shift));
+        pxa_game_render_store_u16(
+            wire + 2, (uint16_t)pxa_raster_scale_coordinate(
+                          vertices[index].y_q4, list->coordinate_shift));
+        pxa_game_render_store_u16(wire + 4, (uint16_t)vertices[index].u_q4);
+        pxa_game_render_store_u16(wire + 6, (uint16_t)vertices[index].v_q4);
+        wire[8] = vertices[index].light;
+        pxa_game_render_store_u16(wire + 10, 0);
+    }
+    list->required_capabilities |= PXA_RASTER_CAP_TEXTURED_QUAD |
+                                   PXA_RASTER_CAP_PAINTER_POLYGON;
     return 1;
 }
 
@@ -419,9 +478,9 @@ static inline int pxa_raster_sprite_batch(
     return 1;
 }
 
-static inline int pxa_raster_triangle_batch(
+static inline int pxa_raster_triangle_batch_flags(
     pxa_raster_draw_list_t *list, const pxa_raster_vertex_t *vertices,
-    uint16_t triangle_count, uint8_t texture_slot, uint8_t solid,
+    uint16_t triangle_count, uint8_t texture_slot, uint8_t flags,
     uint16_t solid_color) {
     uint32_t vertex_count = (uint32_t)triangle_count * 3u;
     uint32_t size = PXA_RASTER_TRIANGLE_BATCH_HEADER_BYTES +
@@ -429,12 +488,18 @@ static inline int pxa_raster_triangle_batch(
     uint8_t *record;
     uint32_t index;
     if (list == NULL || vertices == NULL || triangle_count == 0 ||
-        texture_slot >= PXA_RASTER_MAX_TEXTURES || size > UINT16_MAX)
+        texture_slot >= PXA_RASTER_MAX_TEXTURES || size > UINT16_MAX ||
+        (flags & ~(PXA_RASTER_QUAD_SOLID_COLOR |
+                   PXA_RASTER_QUAD_AFFINE_UV |
+                   PXA_RASTER_QUAD_PAINTER |
+                   PXA_RASTER_QUAD_TRANSPARENT_INDEX0)) != 0 ||
+        ((flags & PXA_RASTER_QUAD_TRANSPARENT_INDEX0) != 0 &&
+         (flags & PXA_RASTER_QUAD_PAINTER) == 0))
         return 0;
     record = pxa_raster_append(list, PXA_RASTER_RECORD_TRIANGLE_BATCH,
                                (uint16_t)size);
     if (record == NULL) return 0;
-    record[1] = solid ? PXA_RASTER_QUAD_SOLID_COLOR : 0;
+    record[1] = flags;
     record[4] = texture_slot;
     pxa_game_render_store_u16(record + 6, solid_color);
     pxa_game_render_store_u16(record + 8, triangle_count);
@@ -453,7 +518,21 @@ static inline int pxa_raster_triangle_batch(
         pxa_game_render_store_u16(wire + 10, vertices[index].depth_q8);
     }
     list->required_capabilities |= PXA_RASTER_CAP_TRIANGLE_BATCH;
+    if ((flags & PXA_RASTER_QUAD_AFFINE_UV) != 0)
+        list->required_capabilities |= PXA_RASTER_CAP_AFFINE_UV;
+    if ((flags & PXA_RASTER_QUAD_PAINTER) != 0)
+        list->required_capabilities |= PXA_RASTER_CAP_PAINTER_POLYGON;
     return 1;
+}
+
+
+static inline int pxa_raster_triangle_batch(
+    pxa_raster_draw_list_t *list, const pxa_raster_vertex_t *vertices,
+    uint16_t triangle_count, uint8_t texture_slot, uint8_t solid,
+    uint16_t solid_color) {
+    return pxa_raster_triangle_batch_flags(
+        list, vertices, triangle_count, texture_slot,
+        solid ? PXA_RASTER_QUAD_SOLID_COLOR : 0, solid_color);
 }
 
 static inline int32_t pxa_raster_submit(uint32_t context_handle,

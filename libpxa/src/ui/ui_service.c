@@ -259,6 +259,9 @@ pxa_status_t pxa_ui_bind(pxa_ui_service_t *service,
     entry->primary.environment.features = service->config.features;
     entry->primary.environment.recommended_write_bytes = 1024;
     entry->primary.environment.color_scheme = service->config.color_scheme;
+    for (uint8_t index = 0; index < 4; ++index)
+        entry->primary.environment.safe_insets[index] =
+            service->config.safe_insets[index];
     entry->surfaces = &entry->primary;
     entry->next_surface = PXA_UI_PRIMARY_SURFACE;
     entry->surface_count = 1;

@@ -269,6 +269,11 @@ typedef struct {
     uint32_t density_q16;
     uint32_t font_scale_q16;
     pxa_ui_color_scheme_t color_scheme;
+    /* Safe-area insets applied to the primary surface environment at bind
+     * time, ordered top, right, bottom, left. Hosts that learn the real
+     * display metrics before a component binds should pass them here so the
+     * Guest start configuration already carries the correct environment. */
+    uint32_t safe_insets[4];
 } pxa_ui_config_t;
 
 typedef struct {

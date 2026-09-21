@@ -70,6 +70,137 @@ static void test_upload_validation(void) {
     upload[10] = 1;
     assert(pxa_raster_decode_upload(upload, sizeof(upload), &view) ==
            PXA_STATUS_PROTOCOL_ERROR);
+    {
+        uint8_t lit[PXA_RASTER_UPLOAD_HEADER_BYTES + 2u * 256u * 2u] = {0};
+        put_u32(lit, PXA_RASTER_UPLOAD_MAGIC);
+        put_u16(lit + 4, PXA_RASTER_ABI_MAJOR);
+        put_u16(lit + 6, PXA_RASTER_ABI_MINOR);
+        lit[8] = PXA_RASTER_UPLOAD_LIT_PALETTE_RGB565;
+        put_u16(lit + 12, 256);
+        put_u16(lit + 14, 2);
+        put_u32(lit + 16, 2u * 256u * 2u);
+        assert(pxa_raster_decode_upload(lit, sizeof(lit), &view) ==
+               PXA_STATUS_OK);
+        assert(view.height == 2 && view.payload_bytes == 1024);
+    }
+}
+
+static void put_painter_quad(uint8_t *record, uint8_t flags,
+                             uint8_t texture_slot, uint8_t palette_index,
+                             uint8_t light) {
+    static const int16_t xy[8] = {0, 0, 128, 0, 128, 128, 0, 128};
+    uint8_t vertex;
+    record[0] = PXA_RASTER_RECORD_TEXTURED_QUAD;
+    record[1] = flags;
+    put_u16(record + 2, PXA_RASTER_TEXTURED_QUAD_BYTES);
+    record[4] = texture_slot;
+    put_u16(record + 6, palette_index);
+    for (vertex = 0; vertex < 4; ++vertex)
+        put_vertex_depth(record + 8 + vertex * PXA_RASTER_VERTEX_BYTES,
+                         xy[vertex * 2], xy[vertex * 2 + 1], 0, 0, light, 0);
+}
+
+static void test_painter_lit_palette_and_transparency(void) {
+    enum {
+        COMMANDS = 3,
+        TOTAL_BYTES = PXA_RASTER_DRAW_HEADER_BYTES +
+                      COMMANDS * PXA_RASTER_TEXTURED_QUAD_BYTES,
+    };
+    uint8_t bytes[TOTAL_BYTES];
+    uint8_t transparent_texel = 0;
+    uint16_t palette[2 * 256] = {0};
+    uint16_t pixels[8 * 8];
+    uint16_t depth[8 * 8];
+    pxa_raster_resources_t resources;
+    pxa_raster_target_t target;
+    pxa_raster_draw_list_view_t list;
+    uint32_t offset;
+    palette[7] = UINT16_C(0xf800);
+    palette[256 + 7] = UINT16_C(0x07e0);
+    memset(pixels, 0, sizeof(pixels));
+    memset(depth, 0x5a, sizeof(depth));
+    memset(&resources, 0, sizeof(resources));
+    memset(&target, 0, sizeof(target));
+    resources.palette = palette;
+    resources.palette_light_levels = 2;
+    resources.capabilities = PXA_RASTER_CAP_TEXTURED_QUAD |
+                             PXA_RASTER_CAP_PAINTER_POLYGON;
+    resources.textures[0].pixels = &transparent_texel;
+    resources.textures[0].width = 1;
+    resources.textures[0].height = 1;
+    target.pixels = pixels;
+    target.depth_pixels = depth;
+    target.stride_pixels = 8;
+    target.depth_stride_pixels = 8;
+    target.width = 8;
+    target.height = 8;
+    offset = begin_list(bytes, resources.capabilities, COMMANDS, 11,
+                        sizeof(bytes));
+    put_painter_quad(bytes + offset,
+                     PXA_RASTER_QUAD_SOLID_COLOR |
+                         PXA_RASTER_QUAD_PAINTER,
+                     0, 7, 1);
+    offset += PXA_RASTER_TEXTURED_QUAD_BYTES;
+    put_painter_quad(bytes + offset,
+                     PXA_RASTER_QUAD_SOLID_COLOR |
+                         PXA_RASTER_QUAD_PAINTER,
+                     0, 7, 0);
+    offset += PXA_RASTER_TEXTURED_QUAD_BYTES;
+    put_painter_quad(bytes + offset,
+                     PXA_RASTER_QUAD_PAINTER |
+                         PXA_RASTER_QUAD_TRANSPARENT_INDEX0,
+                     0, 0, 1);
+    assert(pxa_raster_validate_draw_list(bytes, sizeof(bytes), &target,
+                                         &resources, &list) == PXA_STATUS_OK);
+    pxa_raster_execute_draw_list(bytes, &list, &target, &resources, NULL);
+    for (offset = 0; offset < 8u * 8u; ++offset) {
+        assert(pixels[offset] == UINT16_C(0xf800));
+        assert(depth[offset] == UINT16_C(0x5a5a));
+    }
+}
+
+static void test_painter_triangle(void) {
+    enum {
+        RECORD_BYTES = PXA_RASTER_TRIANGLE_BATCH_HEADER_BYTES +
+                       3 * PXA_RASTER_VERTEX_BYTES,
+        TOTAL_BYTES = PXA_RASTER_DRAW_HEADER_BYTES + RECORD_BYTES,
+    };
+    uint8_t bytes[TOTAL_BYTES];
+    uint16_t palette[256] = {0};
+    uint16_t pixels[8 * 8] = {0};
+    pxa_raster_resources_t resources;
+    pxa_raster_target_t target;
+    pxa_raster_draw_list_view_t list;
+    uint8_t *record;
+    palette[3] = UINT16_C(0x1234);
+    memset(&resources, 0, sizeof(resources));
+    memset(&target, 0, sizeof(target));
+    resources.palette = palette;
+    resources.palette_light_levels = 1;
+    resources.capabilities = PXA_RASTER_CAP_TRIANGLE_BATCH |
+                             PXA_RASTER_CAP_PAINTER_POLYGON;
+    target.pixels = pixels;
+    target.stride_pixels = 8;
+    target.width = 8;
+    target.height = 8;
+    record = bytes + begin_list(bytes, resources.capabilities, 1, 12,
+                                sizeof(bytes));
+    record[0] = PXA_RASTER_RECORD_TRIANGLE_BATCH;
+    record[1] = PXA_RASTER_QUAD_SOLID_COLOR | PXA_RASTER_QUAD_PAINTER;
+    put_u16(record + 2, RECORD_BYTES);
+    put_u16(record + 6, 3);
+    put_u16(record + 8, 1);
+    put_vertex_depth(record + PXA_RASTER_TRIANGLE_BATCH_HEADER_BYTES,
+                     0, 0, 0, 0, 0, 0);
+    put_vertex_depth(record + PXA_RASTER_TRIANGLE_BATCH_HEADER_BYTES + 12,
+                     128, 0, 0, 0, 0, 0);
+    put_vertex_depth(record + PXA_RASTER_TRIANGLE_BATCH_HEADER_BYTES + 24,
+                     0, 128, 0, 0, 0, 0);
+    assert(pxa_raster_validate_draw_list(bytes, sizeof(bytes), &target,
+                                         &resources, &list) == PXA_STATUS_OK);
+    pxa_raster_execute_draw_list(bytes, &list, &target, &resources, NULL);
+    assert(pixels[0] == UINT16_C(0x1234));
+    assert(pixels[7 * 8 + 7] == 0);
 }
 
 static void test_quads_clipping_uv_and_telemetry(void) {
@@ -500,6 +631,8 @@ static void test_sprite_and_triangle_batches(void) {
 
 int main(void) {
     test_upload_validation();
+    test_painter_lit_palette_and_transparency();
+    test_painter_triangle();
     test_quads_clipping_uv_and_telemetry();
     test_additive_capability_fallback();
     test_sprite_scaling_and_clipping();
