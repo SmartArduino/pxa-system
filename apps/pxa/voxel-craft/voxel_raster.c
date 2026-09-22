@@ -35,7 +35,13 @@
  * so distant trees stop bleeding through nearer water, textured faces get
  * perspective-correct UVs, and the Guest no longer pays for adaptive splitting
  * and the exact painter sort. The painter path stays for Hosts without it. */
-#define VOXEL_RASTER_DEPTH_TERRAIN 1u
+/* Depth testing is the more correct path, but the Host's depth + perspective
+ * textured triangle loop costs about five times the painter polygon per pixel
+ * on esp32s31 (167 ms vs 35 ms for the same frame), so the painter path stays
+ * the default. Build with -DVOXEL_RASTER_DEPTH_TERRAIN=1 to compare. */
+#ifndef VOXEL_RASTER_DEPTH_TERRAIN
+#define VOXEL_RASTER_DEPTH_TERRAIN 0u
+#endif
 /* Depth testing needs no order-dependent machinery, so the terrain budget can
  * cover the whole fog range instead of dropping the farthest faces. */
 #define VOXEL_RASTER_DEPTH_CANDIDATES 640u
