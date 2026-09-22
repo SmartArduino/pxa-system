@@ -81,7 +81,34 @@ typedef struct {
     int16_t seed_ox;
 } garden_layout_t;
 
-static garden_layout_t garden_layout;
+static garden_layout_t garden_layout = {
+    .width = 296,
+    .height = 240,
+    .bottom = 240,
+    .board_x = 38,
+    .board_y = 50,
+    .mower_home_x = 8,
+    .list_view_y = 38,
+    .list_view_h = 202,
+    .level_card_x = 10,
+    .level_grid_y = 46,
+    .almanac_card_x = 8,
+    .almanac_grid_y = 44,
+    .seed_y = 8,
+    .seed_view_x = 10,
+    .seed_view_w = 222,
+    .pause_x = 242,
+    .pause_y = 12,
+    .wave_bar_x = 214,
+    .wave_bar_y = 38,
+    .sun_status_x = 70,
+    .sun_status_y = 216,
+    .shovel_x = 230,
+    .shovel_y = 210,
+    .home_x = 38,
+    .home_panel_x = 14,
+    .seed_ox = 0,
+};
 static pxa_game_screen_t game_screen;
 
 #define BOARD_X (garden_layout.board_x)
@@ -151,8 +178,10 @@ static void garden_layout_update(void) {
     garden_layout.seed_view_w = (int16_t)(wide ? (safe_w > 160 ? safe_w - 44 : safe_w) : 222);
     garden_layout.pause_x = (int16_t)(wide ? width - right - 34 : 242);
     garden_layout.pause_y = (int16_t)(wide ? top + 6 : 12);
-    garden_layout.wave_bar_x = (int16_t)(garden_layout.pause_x - 6);
-    garden_layout.wave_bar_y = (int16_t)(garden_layout.pause_y + 34);
+    garden_layout.wave_bar_x =
+        (int16_t)(wide ? garden_layout.pause_x - 6 : 214);
+    garden_layout.wave_bar_y =
+        (int16_t)(wide ? garden_layout.pause_y + 34 : 38);
     garden_layout.sun_status_x = (int16_t)(wide ? (width - SUN_STATUS_W) / 2 : 70);
     garden_layout.sun_status_y = (int16_t)sun_y;
     garden_layout.shovel_x = (int16_t)(wide ? width - right - 34 : 230);
