@@ -55,7 +55,7 @@
 #define VOXEL_RASTER_PAINTER_SPLIT_SCREEN_Q4 (8 * 16)
 #define VOXEL_RASTER_PAINTER_SPLIT_MAX_PARTS 8u
 #define VOXEL_RASTER_PAINTER_SPLIT_FAR_Q8 (12u * 256u)
-#define VOXEL_RASTER_EXACT_CANDIDATES 620u
+#define VOXEL_RASTER_EXACT_CANDIDATES 448u
 #define VOXEL_RASTER_SORT_EDGES 4096u
 #define VOXEL_RASTER_HUD_COMMAND_RESERVE 360u
 #define VOXEL_RASTER_HUD_BYTE_RESERVE 16384u
@@ -676,8 +676,8 @@ static void build_camera(raster_camera_t *camera, const player_t *player,
      * the fog horizon while the depth budget stops dropping faces. */
     camera->fog_end = quality >= QUALITY_PERFORMANCE
                           ? VOXEL_RASTER_PERFORMANCE_FOG
-                      : quality >= QUALITY_BALANCED  ? 30.0F
-                                                     : 32.0F;
+                      : quality >= QUALITY_BALANCED  ? 22.0F
+                                                     : 24.0F;
     /* Submerged: pull the fog in so terrain fades like murky water. */
     if (game_block(rc_floor_int(player->x),
                    rc_floor_int(player->y + EYE_HEIGHT),
