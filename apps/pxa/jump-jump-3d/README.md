@@ -242,12 +242,25 @@ unchanged at 145 us. On esp32s31-korvo-1 (200x120 probe canvas) the same four
 quads cost 2784 us through the general path against 1197 us on the rect fast
 path (2.3x), which matches the painter path's 1260 us.
 
-Two board-level notes that bound this further. First, because a GameRender
-buffer is allocated `MALLOC_CAP_SPIRAM | MALLOC_CAP_DMA` (uncached on both
-boards), every raster pixel costs roughly 150 ns on pai-touch - the presenter's
-cached copy of the same 142 KB takes 2.1 ms, so a cached raster target plus an
-explicit cache writeback before the panel DMA would remove most of the
-remaining App-side cost.
+GameRender targets are now allocated from *cached* PSRAM instead of the
+DMA-mapped pool, with one `esp_cache_msync` (C2M) per frame before the frame is
+handed over so the PPA compose, the panel DMA and the direct scanout paths all
+read coherent data. Cached stores are what the raster wants: on
+esp32s31-korvo-1 a full 800x480 fill through the rect fast path went from
+50 ns/pixel to **13 ns/pixel**, and a painter fill of the same target costs
+29 ns/pixel. The whole frame followed: the raster went 26.8 -> ~23 ms and the
+compose/present path 34.7 -> 23.2 ms, with the display still at ~28 fps and
+zero dropped frames (the panel wait is now the limit). Probed at 1x on the same
+board, four full-screen quads cost 5149 us on the rect fast path against
+31735 us through the general triangle path - 6.2x for identical coverage.
+
+Two board-level notes that bound this further. First, the DMA-mapped PSRAM pool
+that GameRender targets used to come from is several times slower to write than
+cached PSRAM, which is why `fill_rgb565` and the rect fast path were tuned for
+32-bit stores and why the allocation moved to cached memory with a per-frame
+`esp_cache_msync`. The pai-touch firmware needs a flash to pick both up; its
+panel path (software rotation plus SPI flush, 24-27 ms) is then the ceiling
+again.
 
 Second, the Host's banded-background prefill is not worth using as it stands.
 `PXA_ESP_RASTER_BACKGROUND_BANDS` is 16 and `prefill_raster_background` only
