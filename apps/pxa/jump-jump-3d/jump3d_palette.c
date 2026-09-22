@@ -224,4 +224,36 @@ void j3_palette_build(uint16_t *entries) {
                 j3_rgb565(red, green, blue);
         }
     }
+    /* Antialiased text ramps: each block holds its ink blended with the panel
+     * face at 32 coverage levels in the full-light row, which is what
+     * PXA_RASTER_SPRITE_PALETTE_RAMP looks up. */
+    {
+        static const uint8_t ramp_bases[3] = {J3_RAMP_INK_PANEL,
+                                              J3_RAMP_DIM_PANEL,
+                                              J3_RAMP_ACCENT_PANEL};
+        static const uint8_t ramp_inks[3] = {J3_UI_INK, J3_UI_TEXT_DIM,
+                                             J3_UI_ACCENT};
+        const j3_rgb_t background = base_color(J3_UI_PANEL);
+        uint32_t ramp;
+        for (ramp = 0; ramp < 3u; ++ramp) {
+            const j3_rgb_t ink = base_color(ramp_inks[ramp]);
+            for (row = 0; row < J3_RAMP_LEVELS; ++row) {
+                const float t = (float)row / (float)(J3_RAMP_LEVELS - 1u);
+                const uint32_t red = (uint32_t)((float)background.red +
+                                                ((float)ink.red -
+                                                 (float)background.red) * t +
+                                                0.5F);
+                const uint32_t green = (uint32_t)((float)background.green +
+                                                  ((float)ink.green -
+                                                   (float)background.green) * t +
+                                                  0.5F);
+                const uint32_t blue = (uint32_t)((float)background.blue +
+                                                 ((float)ink.blue -
+                                                  (float)background.blue) * t +
+                                                 0.5F);
+                entries[J3_LIGHT_FULL * 256u + ramp_bases[ramp] + row] =
+                    j3_rgb565(red, green, blue);
+            }
+        }
+    }
 }

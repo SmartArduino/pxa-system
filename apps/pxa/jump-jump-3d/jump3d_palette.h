@@ -96,6 +96,16 @@ enum {
 #define J3_SKY_INDEX(scheme) \
     J3_INDEX(J3_HUE_SKY, (uint8_t)((scheme) % J3_BG_SCHEMES))
 
+/* Antialiased text ramps: 32 pre-blended coverage colours per (ink, background)
+ * pair, written into the palette's full-light row. The font atlas stores 8-bit
+ * coverage and PXA_RASTER_SPRITE_PALETTE_RAMP indexes one of these blocks, so
+ * panel text antialiases for the cost of the palette lookup the sprite path
+ * already does. They live above the sky block (indices 144..159). */
+#define J3_RAMP_LEVELS 32u
+#define J3_RAMP_INK_PANEL UINT8_C(160)
+#define J3_RAMP_DIM_PANEL UINT8_C(192)
+#define J3_RAMP_ACCENT_PANEL UINT8_C(224)
+
 /* Builds the J3_LIGHT_LEVELS x 256 RGB565 palette. `entries` must hold
  * J3_PALETTE_ENTRIES values. */
 void j3_palette_build(uint16_t *entries);

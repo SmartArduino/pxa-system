@@ -78,7 +78,9 @@ BOLD_CANDIDATES = [
 ]
 
 SUPERSAMPLE = 6
-COVERAGE = 0.42
+# Coverage below this fraction is dropped: it keeps the crisp cut-out fallback
+# from looking bold while the antialiasing paths still keep 30+ levels.
+AA_FLOOR = 24
 
 
 def pick_font(candidates: list[str], size: int, index: int = 0) -> ImageFont.FreeTypeFont:
@@ -106,6 +108,7 @@ def render_cell(character: str, cell: tuple[int, int],
     draw.text((x, y), character, fill=255, font=font)
     pixels = image.load()
     rows: list[list[int]] = []
+    samples = scale * scale
     for row in range(height):
         bits = []
         for column in range(width):
@@ -114,7 +117,13 @@ def render_cell(character: str, cell: tuple[int, int],
                 for dx in range(scale):
                     if pixels[column * scale + dx, row * scale + dy] > 127:
                         covered += 1
-            bits.append(1 if covered >= COVERAGE * scale * scale else 0)
+            # 8-bit coverage keeps the antialiasing the supersampled render
+            # already carries: PXA_RASTER_SPRITE_TEXEL_ALPHA blends with it and
+            # PXA_RASTER_SPRITE_PALETTE_RAMP quantises it to 32 levels. Levels
+            # below the floor are dropped so a Host without either path still
+            # cuts out a clean glyph.
+            level = (covered * 255 + samples // 2) // samples
+            bits.append(0 if level < AA_FLOOR else level)
         rows.append(bits)
     return rows
 

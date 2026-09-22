@@ -46,9 +46,20 @@ float j3_font_cell_height(uint8_t font);
 /* Pixel width of `text` when drawn at `scale`. */
 int j3_font_width(uint8_t font, int scale, const char *text);
 
-/* Draws `text` with its top-left corner at (x, y). */
+/* How a glyph's coverage reaches the screen. RAMP indexes a palette block of
+ * pre-blended colours (exact over the background it was built for, no per-pixel
+ * arithmetic), ALPHA blends the ink with whatever is already there, and CRISP
+ * is the binary cut-out used when the Host advertises neither path. */
+typedef enum {
+    J3_FONT_CRISP = 0u,
+    J3_FONT_RAMP = 1u,
+    J3_FONT_ALPHA = 2u
+} j3_font_mode_t;
+
+/* Draws `text` with its top-left corner at (x, y). `mode` picks the coverage
+ * path and `ramp_base` names the palette block for J3_FONT_RAMP. */
 void j3_font_draw(pxa_raster_draw_list_t *list, uint32_t capabilities,
                   uint8_t font, int x, int y, int scale, const char *text,
-                  uint16_t color);
+                  uint16_t color, uint8_t mode, uint8_t ramp_base);
 
 #endif

@@ -394,7 +394,9 @@ int main(int argc, char **argv) {
         PXA_RASTER_CAP_TRIANGLE_BATCH | PXA_RASTER_CAP_AFFINE_UV |
         PXA_RASTER_CAP_TEXTURE_SLOTS_48 | PXA_RASTER_CAP_PAINTER_POLYGON |
         PXA_RASTER_CAP_LIT_PALETTE_DEPTH | PXA_RASTER_CAP_DEPTH_CUTOUT |
-        PXA_RASTER_CAP_FIXED_ALPHA_BLEND;
+        PXA_RASTER_CAP_FIXED_ALPHA_BLEND |
+        PXA_RASTER_CAP_SPRITE_PALETTE_RAMP |
+        PXA_RASTER_CAP_SPRITE_TEXEL_ALPHA;
     j3_palette_build(g_palette);
     g_resources.palette = g_palette;
     g_resources.palette_light_levels = J3_LIGHT_LEVELS;

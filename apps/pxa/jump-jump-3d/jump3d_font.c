@@ -134,12 +134,29 @@ int j3_font_width(uint8_t font, int scale, const char *text) {
 
 void j3_font_draw(pxa_raster_draw_list_t *list, uint32_t capabilities,
                   uint8_t font, int x, int y, int scale, const char *text,
-                  uint16_t color) {
+                  uint16_t color, uint8_t mode, uint8_t ramp_base) {
     const j3_font_face_t *face = face_for(font);
     const uint8_t slot =
         (uint8_t)(J3_FONT_SLOT_BASE + j3_font_tier() * J3_FONT_FACES + font);
+    uint8_t flags = PXA_RASTER_SPRITE_TRANSPARENT_INDEX0;
+    uint16_t sprite_color = color;
     int position = 0;
     if (list == NULL || text == NULL || scale <= 0) return;
+    if (mode == J3_FONT_RAMP &&
+        (capabilities & PXA_RASTER_CAP_SPRITE_PALETTE_RAMP) != 0u) {
+        /* The atlas texel is coverage; the palette block holds the ink already
+         * blended with the background, so this is exact and costs no more than
+         * the palette lookup the sprite path already does. */
+        flags |= PXA_RASTER_SPRITE_PALETTE_RAMP;
+        sprite_color = ramp_base;
+    } else if (mode == J3_FONT_ALPHA &&
+               (capabilities & PXA_RASTER_CAP_SPRITE_TEXEL_ALPHA) != 0u) {
+        /* Coverage blended against whatever is behind the glyph. */
+        flags |= PXA_RASTER_SPRITE_SOLID_COLOR |
+                 PXA_RASTER_SPRITE_TEXEL_ALPHA;
+    } else {
+        flags |= PXA_RASTER_SPRITE_SOLID_COLOR;
+    }
     while (text[position] != '\0') {
         const int length = utf8_length(&text[position]);
         int cell;
@@ -151,15 +168,12 @@ void j3_font_draw(pxa_raster_draw_list_t *list, uint32_t capabilities,
             continue;
         }
         (void)pxa_raster_sprite(
-            list, slot,
-            PXA_RASTER_SPRITE_TRANSPARENT_INDEX0 |
-                PXA_RASTER_SPRITE_SOLID_COLOR,
-            capabilities, (int16_t)x, (int16_t)y,
+            list, slot, flags, capabilities, (int16_t)x, (int16_t)y,
             (uint16_t)(face->cell_width * scale),
             (uint16_t)(face->cell_height * scale),
             (uint16_t)((cell % (int)face->columns) * face->cell_width),
             (uint16_t)((cell / (int)face->columns) * face->cell_height),
-            face->cell_width, face->cell_height, color);
+            face->cell_width, face->cell_height, sprite_color);
         x += (int)face->cell_width * scale;
     }
 }

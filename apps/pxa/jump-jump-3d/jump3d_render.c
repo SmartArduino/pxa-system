@@ -1002,7 +1002,7 @@ static void draw_badge(j3_render_t *render, const j3_game_t *game) {
     j3_font_draw(&render->list, render->capabilities, J3_FONT_SMALL,
                  (int)(panel_x + panel_h * 1.05F),
                  (int)(panel_y + (panel_h - (float)j3_font_cell_height(J3_FONT_SMALL)) * 0.5F),
-                 1, text, j3_color_rgb565(J3_UI_INK));
+                 1, text, j3_color_rgb565(J3_UI_INK), J3_FONT_RAMP, J3_RAMP_INK_PANEL);
 }
 
 static void draw_score(j3_render_t *render, const j3_game_t *game) {
@@ -1017,11 +1017,11 @@ static void draw_score(j3_render_t *render, const j3_game_t *game) {
         const int shadow = (int)(render->big_cell_h * 0.12F) + 1;
         j3_font_draw(&render->list, render->capabilities, J3_FONT_BIG,
                      x + shadow, (int)render->score_y + shadow + 1, 1, text,
-                     j3_color_rgb565(J3_INDEX(J3_HUE_UI, 8)));
+                     j3_color_rgb565(J3_INDEX(J3_HUE_UI, 8)), J3_FONT_ALPHA, 0);
     }
     j3_font_draw(&render->list, render->capabilities, J3_FONT_BIG, x,
                  (int)render->score_y, 1, text,
-                 j3_color_rgb565(J3_UI_WHITE));
+                 j3_color_rgb565(J3_UI_WHITE), J3_FONT_ALPHA, 0);
 }
 
 static void draw_popup(j3_render_t *render, const j3_game_t *game) {
@@ -1054,21 +1054,21 @@ static void draw_popup(j3_render_t *render, const j3_game_t *game) {
                                j3_font_width(J3_FONT_BIG, scale, text)) *
                            0.5F);
         j3_font_draw(&render->list, render->capabilities, J3_FONT_BIG, cx,
-                     cy, scale, plus, color);
+                     cy, scale, plus, color, J3_FONT_ALPHA, 0);
         cx += j3_font_width(J3_FONT_BIG, scale, plus);
         j3_font_draw(&render->list, render->capabilities, J3_FONT_BIG, cx,
-                     cy, scale, text, color);
+                     cy, scale, text, color, J3_FONT_ALPHA, 0);
         j3_font_draw(&render->list, render->capabilities, J3_FONT_CJK,
                      (int)(x - (float)j3_font_width(J3_FONT_CJK, 1, label) *
                                      0.5F),
-                     (int)(y + render->big_cell_h * 0.35F), 1, label, color);
+                     (int)(y + render->big_cell_h * 0.35F), 1, label, color, J3_FONT_ALPHA, 0);
     } else {
         const uint16_t color = fade_to_white(J3_UI_WHITE, alpha);
         format_u32(text, game->popup_points, &length);
         j3_font_draw(&render->list, render->capabilities, J3_FONT_BIG,
                      (int)(x - (float)j3_font_width(J3_FONT_BIG, 1, text) *
                                      0.5F),
-                     (int)(y - render->big_cell_h * 0.5F), 1, text, color);
+                     (int)(y - render->big_cell_h * 0.5F), 1, text, color, J3_FONT_ALPHA, 0);
     }
 }
 
@@ -1089,7 +1089,7 @@ static void draw_bonus_popup(j3_render_t *render, const j3_game_t *game) {
                  (int)(anchor.x -
                        (float)j3_font_width(J3_FONT_BIG, 1, text) * 0.5F),
                  (int)(anchor.y - rise * 22.0F), 1, text,
-                 fade_to_white(J3_SOLID_GOLD, alpha));
+                 fade_to_white(J3_SOLID_GOLD, alpha), J3_FONT_ALPHA, 0);
 }
 
 static void draw_result(j3_render_t *render, const j3_game_t *game) {
@@ -1149,22 +1149,22 @@ static void draw_result(j3_render_t *render, const j3_game_t *game) {
                                                  score_label)) *
                                0.5F),
                  (int)(y + panel_h * 0.06F), 1, score_label,
-                 j3_color_rgb565(J3_UI_TEXT_DIM));
+                 j3_color_rgb565(J3_UI_TEXT_DIM), J3_FONT_RAMP, J3_RAMP_DIM_PANEL);
     format_u32(text, game->score, &length);
     width = j3_font_width(J3_FONT_BIG, 1, text);
     j3_font_draw(&render->list, render->capabilities, J3_FONT_BIG,
                  (int)(x + (panel_w - (float)width) * 0.5F),
                  (int)(y + panel_h * 0.20F), 1, text,
-                 j3_color_rgb565(J3_UI_INK));
+                 j3_color_rgb565(J3_UI_INK), J3_FONT_RAMP, J3_RAMP_INK_PANEL);
     j3_font_draw(&render->list, render->capabilities, J3_FONT_CJK,
                  (int)(x + panel_w * 0.09F), (int)(y + panel_h * 0.59F), 1,
-                 best_label, j3_color_rgb565(J3_UI_TEXT_DIM));
+                 best_label, j3_color_rgb565(J3_UI_TEXT_DIM), J3_FONT_RAMP, J3_RAMP_DIM_PANEL);
     format_u32(text, game->best, &length);
     j3_font_draw(&render->list, render->capabilities, J3_FONT_SMALL,
                  (int)(x + panel_w * 0.91F -
                        (float)j3_font_width(J3_FONT_SMALL, 1, text)),
                  (int)(y + panel_h * 0.60F), 1, text,
-                 j3_color_rgb565(J3_UI_INK));
+                 j3_color_rgb565(J3_UI_INK), J3_FONT_RAMP, J3_RAMP_INK_PANEL);
     j3_font_draw(&render->list, render->capabilities, J3_FONT_CJK,
                  (int)(button_x + (button_w -
                                    (float)j3_font_width(J3_FONT_CJK, 1,
@@ -1173,7 +1173,7 @@ static void draw_result(j3_render_t *render, const j3_game_t *game) {
                  (int)(button_y + (button_h -
                                    (float)j3_font_cell_height(J3_FONT_CJK)) *
                                       0.5F), 1, again,
-                 j3_color_rgb565(J3_UI_WHITE));
+                 j3_color_rgb565(J3_UI_WHITE), J3_FONT_ALPHA, 0);
 }
 
 /* -------------------------------------------------------------------- frame */
