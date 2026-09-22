@@ -412,7 +412,11 @@ pxa_status_t pxa_ui_queue_event(pxa_ui_service_t *service,
     if (value_size != 0) memcpy(payload + 24, value, value_size);
     reliable = (flags & PXA_UI_EVENT_FLAG_RELIABLE) != 0;
     key = reliable ? 0 : ((uint64_t)kind << 48) | node;
-    if (!reliable && kind == PXA_UI_EVENT_CONTROLLER_STATE)
+    /* Coalescible events keep one pending instance per source. Pointer events
+     * must key on the pointer id too, otherwise one finger's move overwrites
+     * another finger's move aimed at the same node. */
+    if (!reliable && (kind == PXA_UI_EVENT_CONTROLLER_STATE ||
+                      kind == PXA_UI_EVENT_POINTER))
         key |= (uint64_t)((const uint8_t *)value)[0] << 32;
     status = pxa_event_post_message(
         service->runtime, component, PXA_UI_SERVICE_ID, PXA_UI_EVENT, 0,

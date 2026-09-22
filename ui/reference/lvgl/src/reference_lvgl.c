@@ -2315,7 +2315,9 @@ static lv_obj_t* make_settings_section(pxsys_reference_lvgl_t* ui,
                                   0);
     lv_obj_set_style_border_opa(section, LV_OPA_70, 0);
     lv_obj_set_style_radius(section, 8, 0);
-    lv_obj_set_style_clip_corner(section, true, 0);
+    /* Rows stay inside the section bounds, so clipping every child through a
+     * rounded mask only adds software blending work while the list scrolls. */
+    lv_obj_set_style_clip_corner(section, false, 0);
     lv_obj_set_layout(section, LV_LAYOUT_FLEX);
     lv_obj_set_flex_flow(section, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_style_pad_row(section, 0, 0);
