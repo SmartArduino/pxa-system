@@ -259,6 +259,15 @@ PYTHON
 "$work_dir/pxa_voxel_raster_pipeline_test"
 
 "$cc_bin" "${flags[@]}" \
+  -I"$pxa_system_dir/apps/pxa/voxel-craft" \
+  "$pxa_system_dir/sdk/guest-c/tests/pxa_voxel_ui_overlay_test.c" \
+  "$pxa_system_dir/apps/pxa/voxel-craft/block_textures.c" \
+  "$pxa_system_dir/apps/pxa/voxel-craft/voxel_raster.c" \
+  -lm \
+  -o "$work_dir/pxa_voxel_ui_overlay_test"
+"$work_dir/pxa_voxel_ui_overlay_test"
+
+"$cc_bin" "${flags[@]}" \
   "$pxa_system_dir/sdk/guest-c/tests/pxa_game_sfx_test.c" \
   -o "$work_dir/pxa_game_sfx_test"
 "$work_dir/pxa_game_sfx_test"
