@@ -56,6 +56,8 @@
 #define VOXEL_RASTER_PAINTER_SPLIT_MAX_PARTS 8u
 #define VOXEL_RASTER_PAINTER_SPLIT_FAR_Q8 (12u * 256u)
 #define VOXEL_RASTER_EXACT_CANDIDATES 448u
+#define SORT_BUCKETS 512u
+#define SORT_BUCKET_SHIFT 7u
 /* The exact painter order is an O(n^2) pair sweep. Keep it as a switch so the
  * measurement build can trade it for the cheaper depth-key sort. */
 #ifndef VOXEL_RASTER_EXACT_SORT
@@ -1647,18 +1649,29 @@ static void sort_candidates(uint32_t count, uint8_t back_to_front,
         }
         return;
     }
-    for (gap = count / 2u; gap != 0; gap /= 2u) {
-        for (index = gap; index < count; ++index) {
-            const uint16_t value = g_sort_order[index];
-            const uint16_t depth = g_candidates[value].sort_depth_q8;
-            uint32_t cursor = index;
-            while (cursor >= gap &&
-                   g_candidates[g_sort_order[cursor - gap]].sort_depth_q8 <
-                       depth) {
-                g_sort_order[cursor] = g_sort_order[cursor - gap];
-                cursor -= gap;
-            }
-            g_sort_order[cursor] = value;
+    /* Counting sort on the Q8 depth key: the painter order only needs the
+     * far-to-near sequence, and a bucket pass is O(n) instead of the shell
+     * sort's repeated scans (measured 15 ms of a 35 ms Guest frame). Half a
+     * block of depth resolution keeps co-located faces in input order. */
+    {
+        uint16_t offsets[SORT_BUCKETS];
+        uint16_t bucket;
+        uint16_t offset = 0;
+        pxa_raster_zero_bytes(offsets, sizeof(offsets));
+        for (index = 0; index < count; ++index)
+            ++offsets[g_candidates[index].sort_depth_q8 >> SORT_BUCKET_SHIFT];
+        /* Bucket 0 is the farthest depth (Q8 stores inverse depth), so
+         * ascending buckets assign the far-to-near order the pass loop
+         * consumes. */
+        for (bucket = 1; bucket <= SORT_BUCKETS; ++bucket) {
+            const uint16_t bucket_count = offsets[bucket - 1u];
+            offsets[bucket - 1u] = offset;
+            offset = (uint16_t)(offset + bucket_count);
+        }
+        for (index = 0; index < count; ++index) {
+            const uint16_t key = (uint16_t)(
+                g_candidates[index].sort_depth_q8 >> SORT_BUCKET_SHIFT);
+            g_sort_order[offsets[key]++] = (uint16_t)index;
         }
     }
 }
