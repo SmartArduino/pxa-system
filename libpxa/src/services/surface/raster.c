@@ -50,12 +50,21 @@ static uint16_t light_rgb565(uint16_t color, uint8_t light) {
 
 static void fill_rgb565(uint16_t *pixels, uint32_t count, uint16_t color) {
     const uint32_t pair = (uint32_t)color | ((uint32_t)color << 16);
-    while (count >= 2u) {
-        memcpy(pixels, &pair, sizeof(pair));
-        pixels += 2;
-        count -= 2u;
+    /* Rows are only guaranteed 2-byte aligned, so peel the leading pixel before
+     * switching to 32-bit stores: one PSRAM transaction per two pixels instead
+     * of one per pixel is what the uncached GameRender targets feel most. */
+    if (((uintptr_t)pixels & 3u) != 0u && count != 0u) {
+        *pixels++ = color;
+        --count;
     }
-    if (count != 0) *pixels = color;
+    {
+        uint32_t *wide = (uint32_t *)(void *)pixels;
+        while (count >= 2u) {
+            *wide++ = pair;
+            count -= 2u;
+        }
+        if (count != 0u) *(uint16_t *)(void *)wide = color;
+    }
 }
 
 pxa_status_t pxa_raster_decode_upload(const uint8_t *bytes, size_t size,
@@ -1431,6 +1440,33 @@ static uint32_t draw_quad(const uint8_t *record, uint8_t textured,
             vertices[index].x = read_i16(record + offset + index * 4u);
             vertices[index].y = read_i16(record + offset + index * 4u + 2u);
         }
+        /* Whole-pixel axis-aligned rectangles (backgrounds, bands, panels) are
+         * common and the general triangle path pays per-pixel edge and
+         * attribute work for them. The shape is unambiguous once every edge
+         * lands on a pixel boundary, so fill rows directly and leave every
+         * other quad, including fractional ones, on the general path. */
+        if (vertices[0].x == vertices[3].x && vertices[1].x == vertices[2].x &&
+            vertices[0].y == vertices[1].y && vertices[2].y == vertices[3].y &&
+            (vertices[0].x & 15) == 0 && (vertices[1].x & 15) == 0 &&
+            (vertices[0].y & 15) == 0 && (vertices[2].y & 15) == 0 &&
+            vertices[0].x < vertices[1].x && vertices[0].y < vertices[2].y) {
+            int32_t x0 = vertices[0].x >> 4;
+            int32_t x1 = vertices[1].x >> 4;
+            int32_t y0 = vertices[0].y >> 4;
+            int32_t y1 = vertices[2].y >> 4;
+            int32_t y;
+            if (x0 < 0) x0 = 0;
+            if (x1 > (int32_t)target->width) x1 = (int32_t)target->width;
+            if (y0 < (int32_t)row_begin) y0 = (int32_t)row_begin;
+            if (y1 > (int32_t)row_end) y1 = (int32_t)row_end;
+            if (x0 >= x1 || y0 >= y1) return 0;
+            for (y = y0; y < y1; ++y) {
+                fill_rgb565(target->pixels + (size_t)y * target->stride_pixels +
+                                x0,
+                            (uint32_t)(x1 - x0), color);
+            }
+            return (uint32_t)(x1 - x0) * (uint32_t)(y1 - y0);
+        }
     }
     return draw_triangle(&vertices[0], &vertices[1], &vertices[2], color,
                          texture, resources->palette, mode, target,
@@ -1631,7 +1667,11 @@ void pxa_raster_execute_draw_list_rows(
                     fill_rgb565(row, target->width, color);
                 }
             }
-            if (target->depth_pixels != NULL) {
+            if (target->depth_pixels != NULL &&
+                (list->required_capabilities &
+                 PXA_RASTER_CAP_DEPTH_CUTOUT) != 0 &&
+                (list->required_capabilities &
+                 PXA_RASTER_CAP_COVERAGE_MASK) == 0) {
                 if (target->depth_stride_pixels == target->width) {
                     memset(target->depth_pixels +
                                (size_t)row_begin *
