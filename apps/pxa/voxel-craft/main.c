@@ -39,6 +39,10 @@
 #define PERF_CLOCK_RAYCAST_START UINT32_C(0x72)
 #define PERF_CLOCK_RAYCAST_END UINT32_C(0x73)
 #define PERF_CLOCK_FRAME_END UINT32_C(0x74)
+#define PERF_CLOCK_PROJECT_END UINT32_C(0x75)
+#define PERF_CLOCK_SORT_END UINT32_C(0x76)
+#define PERF_CLOCK_BUILD_END UINT32_C(0x77)
+#define PERF_CLOCK_SUBMIT_END UINT32_C(0x78)
 #define PXA_WINDOW_GET_SNAPSHOT_OP 2u
 #define PXA_WINDOW_METRICS_CHANGED_OP 0x8001u
 #define WINDOW_SNAPSHOT_PERIOD_TICKS 250u
@@ -90,6 +94,10 @@ typedef struct {
     uint64_t update_end_us;
     uint64_t raycast_start_us;
     uint64_t raycast_end_us;
+    uint64_t project_end_us;
+    uint64_t sort_end_us;
+    uint64_t build_end_us;
+    uint64_t submit_end_us;
     uint64_t frame_end_us;
     uint8_t active;
 } perf_timing_sample_t;
@@ -465,6 +473,14 @@ static int mark_perf_timing(uint32_t request_id) {
     return 0;
 }
 
+static void mark_raster_phase(uint8_t phase) {
+    static const uint32_t ids[] = {PERF_CLOCK_PROJECT_END,
+                                   PERF_CLOCK_SORT_END,
+                                   PERF_CLOCK_BUILD_END,
+                                   PERF_CLOCK_SUBMIT_END};
+    if (phase < sizeof(ids) / sizeof(ids[0])) (void)mark_perf_timing(ids[phase]);
+}
+
 static int perf_timing_surface_ready(void) {
     const uint8_t all_buffers = (uint8_t)((1u << SURFACE_BUFFER_COUNT) - 1u);
     return g_surface_handle != 0 && !g_surface_create_pending &&
@@ -500,6 +516,30 @@ static void log_perf_sample(uint64_t timestamp_us, uint64_t guest_render_us) {
     out = put_perf_metric(out, " update_ema_us=", g_update_ema_us);
     out = put_perf_metric(out, " guest_sample_us=",
                           (uint32_t)guest_render_us);
+    out = put_perf_metric(out, " project_us=",
+                          (uint32_t)(g_perf_timing.project_end_us >
+                                             g_perf_timing.raycast_start_us
+                                         ? g_perf_timing.project_end_us -
+                                               g_perf_timing.raycast_start_us
+                                         : 0));
+    out = put_perf_metric(out, " sort_us=",
+                          (uint32_t)(g_perf_timing.sort_end_us >
+                                             g_perf_timing.project_end_us
+                                         ? g_perf_timing.sort_end_us -
+                                               g_perf_timing.project_end_us
+                                         : 0));
+    out = put_perf_metric(out, " build_us=",
+                          (uint32_t)(g_perf_timing.build_end_us >
+                                             g_perf_timing.sort_end_us
+                                         ? g_perf_timing.build_end_us -
+                                               g_perf_timing.sort_end_us
+                                         : 0));
+    out = put_perf_metric(out, " submit_us=",
+                          (uint32_t)(g_perf_timing.submit_end_us >
+                                             g_perf_timing.build_end_us
+                                         ? g_perf_timing.submit_end_us -
+                                               g_perf_timing.build_end_us
+                                         : 0));
     out = put_perf_metric(out, " total_ema_us=", g_render_total_ema_us);
     out = put_perf_metric(out, " wait_ema_us=", g_buffer_wait_ema_us);
     *out = '\0';
@@ -596,7 +636,7 @@ static int handle_perf_clock_event(const pxa_event_t *event) {
     if (event->service != PXA_SERVICE_CLOCK ||
         event->opcode != PXA_CLOCK_NOW_RESULT ||
         event->request_id < PERF_CLOCK_FRAME_START ||
-        event->request_id > PERF_CLOCK_FRAME_END) {
+        event->request_id > PERF_CLOCK_SUBMIT_END) {
         return 0;
     }
     if (!pxa_clock_parse_now(event, &status, &timestamp_us) ||
@@ -618,6 +658,18 @@ static int handle_perf_clock_event(const pxa_event_t *event) {
             break;
         case PERF_CLOCK_RAYCAST_END:
             g_perf_timing.raycast_end_us = timestamp_us;
+            break;
+        case PERF_CLOCK_PROJECT_END:
+            g_perf_timing.project_end_us = timestamp_us;
+            break;
+        case PERF_CLOCK_SORT_END:
+            g_perf_timing.sort_end_us = timestamp_us;
+            break;
+        case PERF_CLOCK_BUILD_END:
+            g_perf_timing.build_end_us = timestamp_us;
+            break;
+        case PERF_CLOCK_SUBMIT_END:
+            g_perf_timing.submit_end_us = timestamp_us;
             break;
         case PERF_CLOCK_FRAME_END:
             g_perf_timing.frame_end_us = timestamp_us;
@@ -967,9 +1019,18 @@ static void reset_runtime_state(void) {
     g_toast_until_ms = 0;
 }
 
+#ifndef VOXEL_FIXED_SEED
+/* Measurement builds pin the world seed so frame timing is comparable between
+ * runs; release builds derive it from the clock. */
+#define VOXEL_FIXED_SEED 0
+#endif
+
 static void start_new_game(void) {
     const uint32_t base = g_clock_seed != 0 ? g_clock_seed : 0x5eed1234u;
-    const uint32_t seed = base + g_seed_counter * 2654435761u;
+    const uint32_t seed = VOXEL_FIXED_SEED != 0
+                              ? (uint32_t)VOXEL_FIXED_SEED +
+                                    g_seed_counter * 2654435761u
+                              : base + g_seed_counter * 2654435761u;
     ++g_seed_counter;
     game_generate(seed);
     game_inventory_init();
@@ -2267,6 +2328,7 @@ static int handle_surface_create(const pxa_event_t *event) {
             return 1;
         }
         g_raster_ready = 1;
+        voxel_raster_set_phase_marker(mark_raster_phase);
         (void)pxa_log_info("voxel: raster surface ready");
         g_surface_retry_ticks = 0;
         rebind_ui_surface();

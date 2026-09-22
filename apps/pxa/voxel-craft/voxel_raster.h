@@ -54,5 +54,8 @@ int32_t voxel_raster_render(uint32_t surface_handle, uint64_t frame_id,
                             const hud_state_t *hud, const menu_state_t *menu,
                             const ray_hit_t *target);
 void voxel_raster_get_stats(voxel_raster_stats_t *stats);
+/* Optional measurement hook: reports phase 0 after terrain projection and
+ * phase 1 after the painter order, so a build can attribute Guest time. */
+void voxel_raster_set_phase_marker(void (*marker)(uint8_t phase));
 
 #endif

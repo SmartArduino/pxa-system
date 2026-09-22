@@ -192,6 +192,7 @@ static uint8_t g_palette_upload[PXA_RASTER_UPLOAD_HEADER_BYTES +
                                 VOXEL_RASTER_LIGHT_LEVELS *
                                     PXA_RASTER_PALETTE_COLORS * 2u];
 static voxel_raster_stats_t g_stats;
+static void (*g_phase_marker)(uint8_t phase);
 static uint32_t g_raster_capabilities;
 static uint8_t g_mesh_cache_warmed;
 static int16_t g_water_uv_offset_q4;
@@ -681,8 +682,8 @@ static void build_camera(raster_camera_t *camera, const player_t *player,
      * the fog horizon while the depth budget stops dropping faces. */
     camera->fog_end = quality >= QUALITY_PERFORMANCE
                           ? VOXEL_RASTER_PERFORMANCE_FOG
-                      : quality >= QUALITY_BALANCED  ? 22.0F
-                                                     : 24.0F;
+                      : quality >= QUALITY_BALANCED  ? 18.0F
+                                                     : 20.0F;
     /* Submerged: pull the fog in so terrain fades like murky water. */
     if (game_block(rc_floor_int(player->x),
                    rc_floor_int(player->y + EYE_HEIGHT),
@@ -2877,6 +2878,7 @@ int32_t voxel_raster_render(uint32_t surface_handle, uint64_t frame_id,
             g_stats.mesh_input_quads - g_stats.mesh_visited_quads;
         g_stats.dropped_quads += g_stats.candidate_budget_omitted;
     }
+    if (g_phase_marker != NULL) g_phase_marker(0u);
     append_entities(&camera, candidate_limit, &candidate_count);
     g_stats.candidate_quads = candidate_count;
     sort_candidates(
@@ -2885,6 +2887,7 @@ int32_t voxel_raster_render(uint32_t surface_handle, uint64_t frame_id,
             (g_raster_capabilities & PXA_RASTER_CAP_FIXED_ALPHA_BLEND) != 0 ||
             (g_raster_capabilities & PXA_RASTER_CAP_TEXTURED_QUAD) == 0,
         (uint8_t)exact_painter);
+    if (g_phase_marker != NULL) g_phase_marker(1u);
     pxa_raster_draw_list_begin(&list, g_draw_list, sizeof(g_draw_list), frame_id);
     /* The clear record also drops the depth buffer, but only when the list
      * declares depth cut-out support. Terrain always depth-tests, so request
@@ -3047,7 +3050,16 @@ int32_t voxel_raster_render(uint32_t surface_handle, uint64_t frame_id,
     g_stats.draw_commands = list.command_count;
     g_stats.draw_list_bytes = list.length;
     g_stats.covered_pixel_budget = (uint32_t)camera.width * camera.height;
-    return submit_list(surface_handle, &list);
+    if (g_phase_marker != NULL) g_phase_marker(2u);
+    {
+        const int32_t result = submit_list(surface_handle, &list);
+        if (g_phase_marker != NULL) g_phase_marker(3u);
+        return result;
+    }
+}
+
+void voxel_raster_set_phase_marker(void (*marker)(uint8_t phase)) {
+    g_phase_marker = marker;
 }
 
 void voxel_raster_get_stats(voxel_raster_stats_t *stats) {
