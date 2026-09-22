@@ -31,6 +31,9 @@
 #include "pxadb_control.h"
 #include "product_runner.h"
 #include "src/drivers/sdl/lv_sdl_keyboard.h"
+#include "desktop_net.h"
+#include "pxa/device.h"
+#include "src/misc/cache/instance/lv_image_cache.h"
 
 #define PRODUCT_CLOCK_SERVICE UINT16_C(4)
 #define PRODUCT_CLOCK_TICK UINT16_C(0x8001)
@@ -66,7 +69,10 @@ typedef struct {
     pxa_permission_service_t *permissions;
     pxa_surface_service_t *surfaces;
     pxa_game_render_service_t *game_render;
+    pxa_device_service_t *device;
+    pxa_net_service_t *net;
     pxa_log_service_t *log;
+    volatile uint8_t net_completion_ready;
     lv_obj_t *surface_image;
     lv_image_dsc_t surface_bitmap;
     uint8_t *surface_buffers;
@@ -761,7 +767,9 @@ static pxa_status_t surface_raster_submit(void *context, uint64_t surface,
                                           const uint8_t *bytes, size_t size) {
     product_host_t *host = context;
     pxa_raster_resources_t resources;
-    pxa_raster_target_t target;
+    /* The reference executor skips prefilled_commands; the desktop backend
+     * materializes every command itself, so the count must be zero. */
+    pxa_raster_target_t target = {0};
     pxa_raster_draw_list_view_t list;
     pxa_status_t status;
     uint8_t mailbox;
@@ -894,7 +902,9 @@ static int surface_process_pending(product_host_t *host) {
         return 0;
     if ((host->surface_flags & PRODUCT_SURFACE_FLAG_GAME_RENDER) != 0) {
         pxa_raster_resources_t resources;
-        pxa_raster_target_t target;
+        /* The desktop backend owns every command; prefilled_commands stays 0
+         * or the reference executor would skip the whole list. */
+        pxa_raster_target_t target = {0};
         pxa_raster_draw_list_view_t list;
         pxa_raster_telemetry_t frame_telemetry = {0};
         uint64_t raster_started_us;
@@ -1331,12 +1341,16 @@ static pxa_status_t audio_flush(void *context, uint64_t session) {
 static pxa_status_t permission_load(void *context, pxa_bytes_t identity,
                                     pxa_bytes_t name, pxa_bytes_t scope,
                                     pxa_permission_decision_t *decision) {
+    /* Desktop development auto-grants declared permissions: the product
+     * simulator has no permission UI and would otherwise deny every optional
+     * request. Products configure permissions through their own store. */
     (void)context;
     (void)identity;
     (void)name;
     (void)scope;
-    (void)decision;
-    return PXA_STATUS_NOT_FOUND;
+    if (decision == NULL) return PXA_STATUS_INVALID_ARGUMENT;
+    *decision = PXA_PERMISSION_ALLOW;
+    return PXA_STATUS_OK;
 }
 
 static pxa_status_t permission_save(void *context, pxa_bytes_t identity,
@@ -1390,6 +1404,46 @@ static int parse_options(int argc, char **argv, options_t *options) {
 }
 #endif
 
+static pxa_status_t desktop_get_mac(void *context, uint16_t kind,
+                                    uint8_t output[6], uint32_t *flags) {
+    /* Locally administered identity so store clients see a stable device. */
+    static const uint8_t hardware_mac[6] = {0x02, 0x50, 0x58, 0x41, 0x00, 0x01};
+    (void)context;
+    if (output == NULL || flags == NULL) return PXA_STATUS_INVALID_ARGUMENT;
+    switch (kind) {
+        case PXA_DEVICE_MAC_KIND_WIFI_STATION_HARDWARE:
+            memcpy(output, hardware_mac, sizeof(hardware_mac));
+            *flags = PXA_DEVICE_MAC_FLAG_HARDWARE |
+                     PXA_DEVICE_MAC_FLAG_LOCALLY_ADMINISTERED;
+            return PXA_STATUS_OK;
+        case PXA_DEVICE_MAC_KIND_WIFI_STATION_CURRENT:
+            memcpy(output, hardware_mac, sizeof(hardware_mac));
+            *flags = PXA_DEVICE_MAC_FLAG_CURRENT |
+                     PXA_DEVICE_MAC_FLAG_LOCALLY_ADMINISTERED;
+            return PXA_STATUS_OK;
+        default:
+            return PXA_STATUS_UNSUPPORTED;
+    }
+}
+
+static void desktop_net_completion_ready(void *context) {
+    product_host_t *host = (product_host_t *)context;
+    if (host != NULL) host->net_completion_ready = 1;
+}
+
+static void drain_net_completions(product_host_t *host) {
+    pxa_component_t affected[4];
+    size_t count = 0;
+    if (host == NULL || host->net == NULL || !host->net_completion_ready)
+        return;
+    host->net_completion_ready = 0;
+    (void)pxa_net_poll(host->net, affected,
+                       sizeof(affected) / sizeof(affected[0]), &count);
+    /* A completion is delivered as an event; wake the waiting Guest so its
+     * response handler runs in this loop turn. */
+    if (count != 0) dispatch_component_events(host);
+}
+
 static int run_product_simulator(const options_t *input,
                                  lv_display_t *embedded_display,
                                  pxsys_product_simulator_pump_fn pump,
@@ -1417,10 +1471,13 @@ static int run_product_simulator(const options_t *input,
     pxa_storage_service_t *storage = NULL;
     pxa_surface_config_t surface_config = {0};
     pxa_game_render_config_t game_render_config = {0};
+    pxa_device_config_t device_config = {0};
+    pxa_net_config_t net_config = {0};
+    pxa_net_backend_t net_backend = {0};
     pxa_log_config_t log_config = {0};
     pxa_service_ops_t clock_service = {0};
     pxa_wamr_engine_config_t engine_config = {0};
-    pxa_package_service_capability_t capabilities[10] = {0};
+    pxa_package_service_capability_t capabilities[12] = {0};
     pxa_package_activation_profile_t activation = {0};
     pxa_package_host_profile_t profile = {0};
     pxa_activation_plan_t *plan = NULL;
@@ -1429,6 +1486,7 @@ static int run_product_simulator(const options_t *input,
     void *permission_workspace = NULL, *audio_workspace = NULL, *storage_workspace = NULL;
     void *storage_service_workspace = NULL, *lvgl_workspace = NULL, *engine_workspace = NULL;
     void *surface_workspace = NULL, *game_render_workspace = NULL;
+    void *device_workspace = NULL, *net_workspace = NULL;
     void *log_workspace = NULL;
     void *plan_workspace = NULL, *coordinator_workspace = NULL;
     uint8_t *encoded = NULL, *public_key = NULL;
@@ -1544,7 +1602,8 @@ static int run_product_simulator(const options_t *input,
     stage = "ui service";
     ui_config.allocate = allocate_memory; ui_config.release = release_memory;
     ui_config.now_us = now_us; ui_config.features = PXA_UI_FEATURE_CANVAS |
-        PXA_UI_FEATURE_VIRTUAL_LIST | PXA_UI_FEATURE_RGB565_BITMAP |
+        PXA_UI_FEATURE_VIRTUAL_LIST | PXA_UI_FEATURE_GRID |
+        PXA_UI_FEATURE_RGB565_BITMAP |
         PXA_UI_FEATURE_CONTROLLER_INPUT | PXA_UI_FEATURE_MULTIPLE_SURFACES |
         PXA_UI_FEATURE_CANVAS_STREAM_IO;
     ui_config.primary_width = options.width; ui_config.primary_height = options.height;
@@ -1719,6 +1778,45 @@ static int run_product_simulator(const options_t *input,
             PXA_STATUS_OK ||
         pxa_log_service_register(host.log) != PXA_STATUS_OK)
         goto done;
+    stage = "device service";
+    device_config.struct_size = sizeof(device_config);
+    device_config.get_mac = desktop_get_mac;
+    device_config.permissions = host.permissions;
+    device_workspace = malloc(pxa_device_service_workspace_size(&device_config));
+    if (device_workspace == NULL ||
+        pxa_device_service_init(device_workspace,
+                                pxa_device_service_workspace_size(
+                                    &device_config),
+                                host.runtime, &device_config, &host.device) !=
+            PXA_STATUS_OK ||
+        pxa_device_service_register(host.device) != PXA_STATUS_OK)
+        goto done;
+    stage = "net service";
+    if (!pxsys_desktop_net_backend(&net_backend,
+                                   desktop_net_completion_ready, &host))
+        goto done;
+    net_config.struct_size = sizeof(net_config);
+    net_config.max_pending_requests = 4;
+    net_config.max_requests_per_component = 2;
+    net_config.max_response_streams = 4;
+    net_config.max_headers = PXA_NET_MAX_HEADERS;
+    net_config.max_response_bytes = 262144;
+    net_config.max_inline_body_bytes = 65536;
+    net_config.max_request_header_bytes = 1024;
+    net_config.max_response_header_bytes = 1024;
+    net_config.min_timeout_ms = 100;
+    net_config.default_timeout_ms = 15000;
+    net_config.max_timeout_ms = 60000;
+    net_config.backend = net_backend;
+    net_config.permissions = host.permissions;
+    net_workspace = malloc(pxa_net_service_workspace_size(&net_config));
+    if (net_workspace == NULL ||
+        pxa_net_service_init(net_workspace,
+                             pxa_net_service_workspace_size(&net_config),
+                             host.runtime, &net_config, &host.net) !=
+            PXA_STATUS_OK ||
+        pxa_net_service_register(host.net) != PXA_STATUS_OK)
+        goto done;
     engine_config.struct_size = sizeof(engine_config); engine_config.host_context = &host;
     stage = "WAMR engine";
     engine_config.read_artifact = read_artifact; engine_config.now_us = now_us;
@@ -1738,7 +1836,8 @@ static int run_product_simulator(const options_t *input,
     capabilities[1].service = PXA_WINDOW_SERVICE_ID; capabilities[1].version.major = 0; capabilities[1].version.minor = 1;
     capabilities[2].service = PXA_UI_SERVICE_ID; capabilities[2].version.major = 0; capabilities[2].version.minor = 3;
     capabilities[2].features = PXA_UI_FEATURE_CANVAS |
-                              PXA_UI_FEATURE_CANVAS_STREAM_IO;
+                              PXA_UI_FEATURE_CANVAS_STREAM_IO |
+                              PXA_UI_FEATURE_GRID;
     capabilities[3].service = PRODUCT_CLOCK_SERVICE; capabilities[3].version.major = 0; capabilities[3].version.minor = 1;
     capabilities[4].service = PXA_AUDIO_SERVICE_ID; capabilities[4].version.major = 0; capabilities[4].version.minor = 5;
     capabilities[5].service = PXA_PERMISSION_SERVICE_ID; capabilities[5].version.major = 0; capabilities[5].version.minor = 1;
@@ -1746,8 +1845,10 @@ static int run_product_simulator(const options_t *input,
     capabilities[7].service = PXA_SURFACE_SERVICE_ID; capabilities[7].version.major = 0; capabilities[7].version.minor = 2;
     capabilities[8].service = PXA_GAME_RENDER_SERVICE_ID; capabilities[8].version.major = PXA_GAME_RENDER_SERVICE_MAJOR; capabilities[8].version.minor = PXA_GAME_RENDER_SERVICE_MINOR;
     capabilities[9].service = PXA_LOG_SERVICE_ID; capabilities[9].version.major = PXA_LOG_SERVICE_MAJOR; capabilities[9].version.minor = PXA_LOG_SERVICE_MINOR;
+    capabilities[10].service = PXA_DEVICE_SERVICE_ID; capabilities[10].version.major = PXA_DEVICE_SERVICE_MAJOR; capabilities[10].version.minor = PXA_DEVICE_SERVICE_MINOR;
+    capabilities[11].service = PXA_NET_SERVICE_ID; capabilities[11].version.major = PXA_NET_SERVICE_MAJOR; capabilities[11].version.minor = PXA_NET_SERVICE_MINOR;
     activation.core_version.major = 0; activation.core_version.minor = 1;
-    activation.services = capabilities; activation.service_count = 10;
+    activation.services = capabilities; activation.service_count = 12;
     profile.target = (pxa_bytes_t){(const uint8_t *)"linux-x86_64", 13};
     profile.engine = (pxa_bytes_t){(const uint8_t *)"wamr", 4};
     profile.engine_abi = (pxa_bytes_t){(const uint8_t *)"wasm32", 6};
@@ -1759,7 +1860,15 @@ static int run_product_simulator(const options_t *input,
             pxa_activation_plan_workspace_size(manifest->component_count), manifest, &activation,
             &profile, (pxa_bytes_t){(const uint8_t *)host.package_root, strlen(host.package_root)}, &plan);
     if (status != PXA_STATUS_OK) {
-        fprintf(stderr, "PXA activation plan status=%d\n", (int)status);
+        /* A stale package built against an older engine/service profile is the
+         * common cause; name it so the fix (rebuild + reinstall) is obvious. */
+        fprintf(stderr,
+                "PXA activation plan status=%d for %.*s %.*s "
+                "(rebuild and reinstall the package if the ABI changed)\n",
+                (int)status, (int)manifest->app_id.size,
+                (const char *)manifest->app_id.data,
+                (int)manifest->version.size,
+                (const char *)manifest->version.data);
         goto done;
     }
     coordinator_workspace = malloc(pxa_activation_coordinator_workspace_size(plan));
@@ -1776,7 +1885,9 @@ static int run_product_simulator(const options_t *input,
     }
     if (pxa_window_flush_metrics(host.window, component) == PXA_STATUS_OK)
         dispatch_component_events(&host);
-    install_system_gestures(&host);
+    /* An embedded system UI owns Home and Back; installing the standalone
+     * strips would shadow its gesture handling. */
+    if (owns_display) install_system_gestures(&host);
     if (owns_display && options.pxadb_control_socket != NULL &&
         !pxsys_pxadb_control_start(&pxadb_control,
                                    options.pxadb_control_socket, display,
@@ -1788,6 +1899,7 @@ static int run_product_simulator(const options_t *input,
         if (host.exit_requested) break;
         uint32_t delay = lv_timer_handler();
         if (drain_surface_updates(&host) < 0) goto done;
+        drain_net_completions(&host);
         dispatch_clock_tick(&host);
         if (drain_surface_updates(&host) < 0) goto done;
         if (delay < 1) delay = 1;
@@ -1813,6 +1925,7 @@ done:
     if (installer != NULL) pxa_posix_installer_deinit(installer);
     free(coordinator_workspace); free(plan_workspace); free(engine_workspace); free(lvgl_workspace);
     free(log_workspace); free(game_render_workspace); free(surface_workspace);
+    free(device_workspace); free(net_workspace);
     free(ui_workspace); free(window_workspace); free(permission_workspace); free(runtime_workspace); free(manifest_workspace);
     free(storage_service_workspace); free(storage_workspace); free(storage_path); free(storage_parent);
     free(encoded); free(installer_workspace); free(public_key);

@@ -8,7 +8,9 @@
 typedef void (*pxsys_product_simulator_pump_fn)(void *context);
 
 /* Runs a package against an already-initialized LVGL display. The call returns
- * when the package exits, leaving the caller's display and input devices live. */
+ * when the package exits, leaving the caller's display and input devices live.
+ * The Guest surface image is created on the active screen; an embedded system
+ * UI keeps its chrome above it by living on the display top layer. */
 int pxsys_product_simulator_run_embedded(const char *package_path,
                                          const char *publisher_key,
                                          const char *state_root,

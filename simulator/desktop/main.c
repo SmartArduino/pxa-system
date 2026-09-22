@@ -667,6 +667,179 @@ static bool simulator_app_action(void* context, const char* identity,
     return false;
 }
 
+/* Permissions. The desktop adapter reads declared permissions from the
+ * installed package manifest and keeps toggle decisions in memory: the UI
+ * simulator does not own a persistent permission store. */
+#define SIMULATOR_PERMISSION_OVERRIDE_MAX 48
+
+typedef struct {
+    char app_id[PXSYS_REFERENCE_MANAGED_APP_IDENTITY_MAX];
+    uint8_t permission_index;
+    uint8_t granted;
+    uint8_t used;
+} simulator_permission_override_t;
+
+static simulator_permission_override_t
+    simulator_permission_overrides[SIMULATOR_PERMISSION_OVERRIDE_MAX];
+
+static void copy_permission_text(char* destination, size_t capacity,
+                                 pxa_bytes_t source) {
+    size_t size = source.data == NULL ? 0 : source.size;
+    if (capacity == 0) return;
+    if (size >= capacity) size = capacity - 1;
+    if (size != 0) memcpy(destination, source.data, size);
+    destination[size] = '\0';
+}
+
+static int simulator_permission_decision(const char* app_id,
+                                         size_t permission_index,
+                                         bool* granted) {
+    size_t index;
+    for (index = 0; index < SIMULATOR_PERMISSION_OVERRIDE_MAX; ++index) {
+        const simulator_permission_override_t* override =
+            &simulator_permission_overrides[index];
+        if (!override->used || override->permission_index != permission_index ||
+            strcmp(override->app_id, app_id) != 0)
+            continue;
+        *granted = override->granted != 0;
+        return 1;
+    }
+    return 0;
+}
+
+/* Parses the installed manifest. Callers release *encoded and *workspace. */
+static int simulator_load_manifest(const simulator_catalog_t* catalog,
+                                   const char* app_id, uint8_t** encoded,
+                                   void** workspace,
+                                   pxa_package_manifest_t** manifest) {
+    char package_root[1400];
+    char current_root[1400];
+    char manifest_path[1400];
+    struct stat metadata;
+    const char* selected_root = package_root;
+    pxa_package_limits_t limits;
+    size_t encoded_size = 0;
+    size_t workspace_size;
+    *encoded = NULL;
+    *workspace = NULL;
+    *manifest = NULL;
+    if (catalog == NULL || catalog->installed_packages_root == NULL ||
+        app_id == NULL ||
+        !app_id_is_safe(pxsys_string_from_cstr(app_id)) ||
+        snprintf(package_root, sizeof(package_root), "%s/%s",
+                 catalog->installed_packages_root, app_id) >=
+            (int)sizeof(package_root) ||
+        stat(package_root, &metadata) != 0 || !S_ISDIR(metadata.st_mode))
+        return 0;
+    if (snprintf(current_root, sizeof(current_root), "%s/current",
+                 package_root) < (int)sizeof(current_root) &&
+        stat(current_root, &metadata) == 0 && S_ISDIR(metadata.st_mode))
+        selected_root = current_root;
+    if (snprintf(manifest_path, sizeof(manifest_path), "%s/manifest.pxm",
+                 selected_root) >= (int)sizeof(manifest_path) ||
+        !read_regular_file(manifest_path, PXSYS_DESKTOP_MANIFEST_MAX_BYTES,
+                           encoded, &encoded_size))
+        return 0;
+    pxa_package_limits_init(&limits);
+    workspace_size = pxa_package_manifest_workspace_size(&limits);
+    *workspace = malloc(workspace_size);
+    if (*workspace == NULL ||
+        pxa_package_manifest_parse(
+            *workspace, workspace_size, (pxa_bytes_t){*encoded, encoded_size},
+            &limits, manifest) != PXA_STATUS_OK ||
+        !manifest_app_id_matches(*manifest, app_id)) {
+        free(*workspace);
+        free(*encoded);
+        *workspace = NULL;
+        *encoded = NULL;
+        *manifest = NULL;
+        return 0;
+    }
+    return 1;
+}
+
+static size_t simulator_list_app_permissions(
+    void* context, const char* identity,
+    pxsys_reference_app_permission_t* output, size_t capacity) {
+    const simulator_catalog_t* catalog = (const simulator_catalog_t*)context;
+    uint8_t* encoded = NULL;
+    void* workspace = NULL;
+    pxa_package_manifest_t* manifest = NULL;
+    size_t count;
+    size_t index;
+    if (!simulator_load_manifest(catalog, identity, &encoded, &workspace,
+                                 &manifest))
+        return 0;
+    count = manifest->permission_count;
+    if (output == NULL) {
+        free(workspace);
+        free(encoded);
+        return count;
+    }
+    if (count > capacity) count = capacity;
+    for (index = 0; index < count; ++index) {
+        const pxa_package_permission_t* permission =
+            &manifest->permissions[index];
+        bool granted = false;
+        memset(&output[index], 0, sizeof(output[index]));
+        copy_permission_text(output[index].name, sizeof(output[index].name),
+                             permission->name);
+        copy_permission_text(output[index].scope, sizeof(output[index].scope),
+                             permission->scope);
+        output[index].required = permission->required != 0 ? 1 : 0;
+        (void)simulator_permission_decision(identity, index, &granted);
+        output[index].granted = granted ? 1 : 0;
+    }
+    free(workspace);
+    free(encoded);
+    return count;
+}
+
+static bool simulator_set_app_permission(void* context, const char* identity,
+                                         size_t permission_index,
+                                         bool granted) {
+    const simulator_catalog_t* catalog = (const simulator_catalog_t*)context;
+    uint8_t* encoded = NULL;
+    void* workspace = NULL;
+    pxa_package_manifest_t* manifest = NULL;
+    size_t index;
+    simulator_permission_override_t* target = NULL;
+    if (identity == NULL ||
+        !simulator_load_manifest(catalog, identity, &encoded, &workspace,
+                                 &manifest) ||
+        permission_index >= manifest->permission_count) {
+        free(workspace);
+        free(encoded);
+        return false;
+    }
+    free(workspace);
+    free(encoded);
+    for (index = 0; index < SIMULATOR_PERMISSION_OVERRIDE_MAX; ++index) {
+        if (simulator_permission_overrides[index].used &&
+            strcmp(simulator_permission_overrides[index].app_id, identity) == 0 &&
+            simulator_permission_overrides[index].permission_index ==
+                permission_index) {
+            target = &simulator_permission_overrides[index];
+            break;
+        }
+    }
+    if (target == NULL) {
+        for (index = 0; index < SIMULATOR_PERMISSION_OVERRIDE_MAX; ++index) {
+            if (!simulator_permission_overrides[index].used) {
+                target = &simulator_permission_overrides[index];
+                break;
+            }
+        }
+    }
+    if (target == NULL) return false;
+    memset(target, 0, sizeof(*target));
+    snprintf(target->app_id, sizeof(target->app_id), "%s", identity);
+    target->permission_index = (uint8_t)permission_index;
+    target->granted = granted ? 1 : 0;
+    target->used = 1;
+    return true;
+}
+
 static void pump_pxadb_control(void* context) {
     pxsys_pxadb_control_poll((pxsys_pxadb_control_t*)context);
 }
@@ -1281,7 +1454,11 @@ static int run_simulator(const simulator_options_t* options) {
 
     pxsys_reference_lvgl_config_init(&ui_config);
     ui_config.system = system;
-    ui_config.parent = lv_screen_active();
+    /* The standard system UI lives on the top layer, matching the product
+     * integration viewport: application surfaces stay below the system chrome
+     * so the status bar, navigation gestures and recents keep working while a
+     * Guest application is foreground. */
+    ui_config.parent = lv_display_get_layer_top(display);
     ui_config.text_font = simulator_ui_fonts.body;
     ui_config.title_font = simulator_ui_fonts.headline;
     ui_config.fonts[PXSYS_TYPOGRAPHY_DISPLAY] = simulator_ui_fonts.display;
@@ -1300,6 +1477,9 @@ static int run_simulator(const simulator_options_t* options) {
     ui_config.app_manager_context = &catalog;
     ui_config.app_list = simulator_list_apps;
     ui_config.app_action = simulator_app_action;
+    ui_config.app_permission_context = &catalog;
+    ui_config.app_permission_list = simulator_list_app_permissions;
+    ui_config.app_permission_set = simulator_set_app_permission;
     memcpy(ui_config.publisher_root, publisher_root,
            sizeof(ui_config.publisher_root));
     if (pxsys_reference_lvgl_create(&ui_config, &ui) != PXSYS_STATUS_OK)
