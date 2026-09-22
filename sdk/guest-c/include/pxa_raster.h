@@ -7,13 +7,13 @@
 #include "pxa_game_render.h"
 
 #define PXA_RASTER_ABI_MAJOR UINT16_C(1)
-#define PXA_RASTER_ABI_MINOR UINT16_C(5)
+#define PXA_RASTER_ABI_MINOR UINT16_C(6)
 #define PXA_RASTER_DRAW_MAGIC UINT32_C(0x4c525850)
 #define PXA_RASTER_UPLOAD_MAGIC UINT32_C(0x52555850)
 #define PXA_RASTER_MAX_TEXTURES UINT8_C(48)
 #define PXA_RASTER_PALETTE_COLORS UINT16_C(256)
 #define PXA_RASTER_MAX_DRAW_BYTES UINT32_C(49152)
-#define PXA_RASTER_MAX_COMMANDS UINT32_C(768)
+#define PXA_RASTER_MAX_COMMANDS UINT32_C(1024)
 #define PXA_RASTER_MAX_COORDINATE_SHIFT UINT8_C(3)
 #define PXA_RASTER_CAP_FLAT_QUAD UINT32_C(1)
 #define PXA_RASTER_CAP_TEXTURED_QUAD UINT32_C(2)
@@ -28,6 +28,12 @@
 #define PXA_RASTER_CAP_LIT_PALETTE_DEPTH UINT32_C(256)
 #define PXA_RASTER_CAP_DEPTH_CUTOUT UINT32_C(512)
 #define PXA_RASTER_CAP_FIXED_ALPHA_BLEND UINT32_C(1024)
+#define PXA_RASTER_CAP_COVERAGE_MASK UINT32_C(2048)
+/* Sprite paths: PALETTE_RAMP indexes the palette's full-light row (pre-blended
+ * antialiasing for a known background) and TEXEL_ALPHA blends by the texel
+ * (antialiasing over any background). */
+#define PXA_RASTER_CAP_SPRITE_PALETTE_RAMP UINT32_C(4096)
+#define PXA_RASTER_CAP_SPRITE_TEXEL_ALPHA UINT32_C(8192)
 #define PXA_RASTER_UPLOAD_PALETTE_RGB565 UINT8_C(1)
 #define PXA_RASTER_UPLOAD_TEXTURE_INDEX8 UINT8_C(2)
 #define PXA_RASTER_UPLOAD_LIT_PALETTE_RGB565 UINT8_C(3)
@@ -55,9 +61,20 @@
 #define PXA_RASTER_QUAD_TRANSPARENT_INDEX0 UINT8_C(8)
 #define PXA_RASTER_QUAD_LIT_PALETTE UINT8_C(16)
 #define PXA_RASTER_QUAD_BLEND_75 UINT8_C(32)
+#define PXA_RASTER_QUAD_COVERAGE_MASK UINT8_C(64)
+#define PXA_RASTER_QUAD_COVERAGE_RESOLVE UINT8_C(128)
 #define PXA_RASTER_SPRITE_TRANSPARENT_INDEX0 UINT8_C(1)
 #define PXA_RASTER_SPRITE_SOLID_COLOR UINT8_C(2)
 #define PXA_RASTER_SPRITE_ADDITIVE UINT8_C(4)
+/* The texel indexes the palette's full-light row offset by `solid_color`; its
+ * top five bits select one of the ramp's 32 pre-blended coverage colours, so a
+ * coverage atlas can antialias against a known background for the cost of the
+ * palette lookup the path already does. */
+#define PXA_RASTER_SPRITE_PALETTE_RAMP UINT8_C(8)
+/* The texel is 0..255 coverage: the source colour (solid_color, or the palette
+ * when SOLID_COLOR is clear) is blended with the destination per pixel, so one
+ * mask antialiases over any background. */
+#define PXA_RASTER_SPRITE_TEXEL_ALPHA UINT8_C(16)
 #define PXA_RASTER_TELEMETRY_BYTES UINT32_C(104)
 
 typedef struct {
@@ -291,7 +308,19 @@ static inline int pxa_raster_textured_quad_flags(
                    PXA_RASTER_QUAD_PAINTER |
                    PXA_RASTER_QUAD_TRANSPARENT_INDEX0 |
                    PXA_RASTER_QUAD_LIT_PALETTE |
-                   PXA_RASTER_QUAD_BLEND_75)) != 0 ||
+                   PXA_RASTER_QUAD_BLEND_75 |
+                   PXA_RASTER_QUAD_COVERAGE_MASK |
+                   PXA_RASTER_QUAD_COVERAGE_RESOLVE)) != 0 ||
+        ((flags & PXA_RASTER_QUAD_COVERAGE_MASK) != 0 &&
+         (flags & (PXA_RASTER_QUAD_PAINTER |
+                   PXA_RASTER_QUAD_AFFINE_UV)) !=
+             (PXA_RASTER_QUAD_PAINTER |
+              PXA_RASTER_QUAD_AFFINE_UV)) ||
+        ((flags & PXA_RASTER_QUAD_COVERAGE_RESOLVE) != 0 &&
+         (flags & (PXA_RASTER_QUAD_COVERAGE_MASK |
+                   PXA_RASTER_QUAD_BLEND_75)) !=
+             (PXA_RASTER_QUAD_COVERAGE_MASK |
+              PXA_RASTER_QUAD_BLEND_75)) ||
         ((flags & PXA_RASTER_QUAD_LIT_PALETTE) != 0 &&
          (flags & (PXA_RASTER_QUAD_PAINTER |
                    PXA_RASTER_QUAD_SOLID_COLOR)) != 0))
@@ -326,6 +355,8 @@ static inline int pxa_raster_textured_quad_flags(
         list->required_capabilities |= PXA_RASTER_CAP_DEPTH_CUTOUT;
     if ((flags & PXA_RASTER_QUAD_BLEND_75) != 0)
         list->required_capabilities |= PXA_RASTER_CAP_FIXED_ALPHA_BLEND;
+    if ((flags & PXA_RASTER_QUAD_COVERAGE_MASK) != 0)
+        list->required_capabilities |= PXA_RASTER_CAP_COVERAGE_MASK;
     return 1;
 }
 
@@ -402,7 +433,9 @@ static inline int pxa_raster_sprite(
     uint16_t source_width, uint16_t source_height, uint16_t solid_color) {
     const uint8_t known = PXA_RASTER_SPRITE_TRANSPARENT_INDEX0 |
                           PXA_RASTER_SPRITE_SOLID_COLOR |
-                          PXA_RASTER_SPRITE_ADDITIVE;
+                          PXA_RASTER_SPRITE_ADDITIVE |
+                          PXA_RASTER_SPRITE_PALETTE_RAMP |
+                          PXA_RASTER_SPRITE_TEXEL_ALPHA;
     uint8_t *record;
     if (list == NULL || texture_slot >= PXA_RASTER_MAX_TEXTURES ||
         (flags & ~known) != 0 || width == 0 || height == 0 ||
@@ -410,6 +443,11 @@ static inline int pxa_raster_sprite(
         return 0;
     if ((available_capabilities & PXA_RASTER_CAP_ADDITIVE_SPRITE) == 0)
         flags &= (uint8_t)~PXA_RASTER_SPRITE_ADDITIVE;
+    /* An older Host rejects unknown flags, so only ask for what it advertised. */
+    if ((available_capabilities & PXA_RASTER_CAP_SPRITE_PALETTE_RAMP) == 0)
+        flags &= (uint8_t)~PXA_RASTER_SPRITE_PALETTE_RAMP;
+    if ((available_capabilities & PXA_RASTER_CAP_SPRITE_TEXEL_ALPHA) == 0)
+        flags &= (uint8_t)~PXA_RASTER_SPRITE_TEXEL_ALPHA;
     record = pxa_raster_append(list, PXA_RASTER_RECORD_SPRITE,
                                PXA_RASTER_SPRITE_BYTES);
     if (record == NULL) return 0;
@@ -432,6 +470,10 @@ static inline int pxa_raster_sprite(
     pxa_game_render_store_u16(record + 22, source_height);
     if ((flags & PXA_RASTER_SPRITE_ADDITIVE) != 0)
         list->required_capabilities |= PXA_RASTER_CAP_ADDITIVE_SPRITE;
+    if ((flags & PXA_RASTER_SPRITE_PALETTE_RAMP) != 0)
+        list->required_capabilities |= PXA_RASTER_CAP_SPRITE_PALETTE_RAMP;
+    if ((flags & PXA_RASTER_SPRITE_TEXEL_ALPHA) != 0)
+        list->required_capabilities |= PXA_RASTER_CAP_SPRITE_TEXEL_ALPHA;
     return 1;
 }
 
@@ -442,7 +484,9 @@ static inline int pxa_raster_sprite_batch(
     uint16_t solid_color) {
     const uint8_t known = PXA_RASTER_SPRITE_TRANSPARENT_INDEX0 |
                           PXA_RASTER_SPRITE_SOLID_COLOR |
-                          PXA_RASTER_SPRITE_ADDITIVE;
+                          PXA_RASTER_SPRITE_ADDITIVE |
+                          PXA_RASTER_SPRITE_PALETTE_RAMP |
+                          PXA_RASTER_SPRITE_TEXEL_ALPHA;
     uint32_t size = PXA_RASTER_SPRITE_BATCH_HEADER_BYTES +
                     (uint32_t)count * PXA_RASTER_SPRITE_INSTANCE_BYTES;
     uint8_t *record;
@@ -454,6 +498,10 @@ static inline int pxa_raster_sprite_batch(
         return 0;
     if ((available_capabilities & PXA_RASTER_CAP_ADDITIVE_SPRITE) == 0)
         flags &= (uint8_t)~PXA_RASTER_SPRITE_ADDITIVE;
+    if ((available_capabilities & PXA_RASTER_CAP_SPRITE_PALETTE_RAMP) == 0)
+        flags &= (uint8_t)~PXA_RASTER_SPRITE_PALETTE_RAMP;
+    if ((available_capabilities & PXA_RASTER_CAP_SPRITE_TEXEL_ALPHA) == 0)
+        flags &= (uint8_t)~PXA_RASTER_SPRITE_TEXEL_ALPHA;
     record = pxa_raster_append(list, PXA_RASTER_RECORD_SPRITE_BATCH,
                                (uint16_t)size);
     if (record == NULL) return 0;
@@ -490,6 +538,10 @@ static inline int pxa_raster_sprite_batch(
     list->required_capabilities |= PXA_RASTER_CAP_SPRITE_BATCH;
     if ((flags & PXA_RASTER_SPRITE_ADDITIVE) != 0)
         list->required_capabilities |= PXA_RASTER_CAP_ADDITIVE_SPRITE;
+    if ((flags & PXA_RASTER_SPRITE_PALETTE_RAMP) != 0)
+        list->required_capabilities |= PXA_RASTER_CAP_SPRITE_PALETTE_RAMP;
+    if ((flags & PXA_RASTER_SPRITE_TEXEL_ALPHA) != 0)
+        list->required_capabilities |= PXA_RASTER_CAP_SPRITE_TEXEL_ALPHA;
     return 1;
 }
 

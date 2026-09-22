@@ -37,6 +37,21 @@ static uint16_t saturating_add_rgb565(uint16_t destination, uint16_t source) {
     return (uint16_t)((red << 11) | (green << 5) | blue);
 }
 
+/* Per-pixel coverage blend for PXA_RASTER_SPRITE_TEXEL_ALPHA: alpha 255 keeps
+ * the source colour, 0 keeps the destination. */
+static uint16_t blend_rgb565_alpha(uint16_t source, uint16_t destination,
+                                   uint8_t alpha) {
+    const uint32_t a = alpha;
+    const uint32_t inverse = 255u - a;
+    const uint32_t red = (((source >> 11) & 31u) * a +
+                          ((destination >> 11) & 31u) * inverse + 127u) / 255u;
+    const uint32_t green = (((source >> 5) & 63u) * a +
+                            ((destination >> 5) & 63u) * inverse + 127u) / 255u;
+    const uint32_t blue = ((source & 31u) * a + (destination & 31u) * inverse +
+                           127u) / 255u;
+    return (uint16_t)((red << 11) | (green << 5) | blue);
+}
+
 static uint16_t light_rgb565(uint16_t color, uint8_t light) {
     /* Exact floor(x / 255) for x < 65536 without a hardware divide. */
     uint32_t red = (color >> 11) * light + 127u;
@@ -240,17 +255,30 @@ static pxa_status_t validate_sprite(const uint8_t *record, uint16_t size,
     const uint8_t slot = record[4];
     const uint8_t known = PXA_RASTER_SPRITE_TRANSPARENT_INDEX0 |
                           PXA_RASTER_SPRITE_SOLID_COLOR |
-                          PXA_RASTER_SPRITE_ADDITIVE;
+                          PXA_RASTER_SPRITE_ADDITIVE |
+                          PXA_RASTER_SPRITE_PALETTE_RAMP |
+                          PXA_RASTER_SPRITE_TEXEL_ALPHA;
     if (size != PXA_RASTER_SPRITE_BYTES) return PXA_STATUS_PROTOCOL_ERROR;
     if ((flags & ~known) != 0) return PXA_STATUS_UNSUPPORTED;
     if ((flags & PXA_RASTER_SPRITE_ADDITIVE) != 0 &&
         (resources->capabilities & PXA_RASTER_CAP_ADDITIVE_SPRITE) == 0)
         return PXA_STATUS_UNSUPPORTED;
+    if ((flags & PXA_RASTER_SPRITE_PALETTE_RAMP) != 0 &&
+        (resources->capabilities & PXA_RASTER_CAP_SPRITE_PALETTE_RAMP) == 0)
+        return PXA_STATUS_UNSUPPORTED;
+    if ((flags & PXA_RASTER_SPRITE_TEXEL_ALPHA) != 0 &&
+        (resources->capabilities & PXA_RASTER_CAP_SPRITE_TEXEL_ALPHA) == 0)
+        return PXA_STATUS_UNSUPPORTED;
+    /* Coverage blending and a fixed additive blend contradict each other. */
+    if ((flags & PXA_RASTER_SPRITE_TEXEL_ALPHA) != 0 &&
+        (flags & PXA_RASTER_SPRITE_ADDITIVE) != 0)
+        return PXA_STATUS_INVALID_ARGUMENT;
     if (slot >= PXA_RASTER_MAX_TEXTURES ||
         resources->textures[slot].pixels == NULL || resources->palette == NULL)
         return PXA_STATUS_BAD_STATE;
     if (record[5] != 0 ||
-        ((flags & PXA_RASTER_SPRITE_SOLID_COLOR) == 0 &&
+        ((flags & (PXA_RASTER_SPRITE_SOLID_COLOR |
+                   PXA_RASTER_SPRITE_PALETTE_RAMP)) == 0 &&
          read_u16(record + 6) != 0) ||
         read_u16(record + 12) == 0 || read_u16(record + 14) == 0 ||
         read_u16(record + 20) == 0 || read_u16(record + 22) == 0)
@@ -270,7 +298,9 @@ static pxa_status_t validate_sprite_batch(
     const uint8_t slot = record[4];
     const uint8_t known = PXA_RASTER_SPRITE_TRANSPARENT_INDEX0 |
                           PXA_RASTER_SPRITE_SOLID_COLOR |
-                          PXA_RASTER_SPRITE_ADDITIVE;
+                          PXA_RASTER_SPRITE_ADDITIVE |
+                          PXA_RASTER_SPRITE_PALETTE_RAMP |
+                          PXA_RASTER_SPRITE_TEXEL_ALPHA;
     const uint16_t count = read_u16(record + 8);
     uint16_t index;
     if (size < PXA_RASTER_SPRITE_BATCH_HEADER_BYTES || count == 0 ||
@@ -281,11 +311,21 @@ static pxa_status_t validate_sprite_batch(
     if ((flags & PXA_RASTER_SPRITE_ADDITIVE) != 0 &&
         (resources->capabilities & PXA_RASTER_CAP_ADDITIVE_SPRITE) == 0)
         return PXA_STATUS_UNSUPPORTED;
+    if ((flags & PXA_RASTER_SPRITE_PALETTE_RAMP) != 0 &&
+        (resources->capabilities & PXA_RASTER_CAP_SPRITE_PALETTE_RAMP) == 0)
+        return PXA_STATUS_UNSUPPORTED;
+    if ((flags & PXA_RASTER_SPRITE_TEXEL_ALPHA) != 0 &&
+        (resources->capabilities & PXA_RASTER_CAP_SPRITE_TEXEL_ALPHA) == 0)
+        return PXA_STATUS_UNSUPPORTED;
+    if ((flags & PXA_RASTER_SPRITE_TEXEL_ALPHA) != 0 &&
+        (flags & PXA_RASTER_SPRITE_ADDITIVE) != 0)
+        return PXA_STATUS_INVALID_ARGUMENT;
     if (slot >= PXA_RASTER_MAX_TEXTURES ||
         resources->textures[slot].pixels == NULL || resources->palette == NULL)
         return PXA_STATUS_BAD_STATE;
     if (record[5] != 0 || read_u16(record + 10) != 0 ||
-        ((flags & PXA_RASTER_SPRITE_SOLID_COLOR) == 0 &&
+        ((flags & (PXA_RASTER_SPRITE_SOLID_COLOR |
+                   PXA_RASTER_SPRITE_PALETTE_RAMP)) == 0 &&
          read_u16(record + 6) != 0))
         return PXA_STATUS_PROTOCOL_ERROR;
     for (index = 0; index < count; ++index) {
@@ -1539,14 +1579,30 @@ static uint32_t draw_sprite_instance(
             uint16_t *destination;
             if ((flags & PXA_RASTER_SPRITE_TRANSPARENT_INDEX0) == 0 ||
                 texel != 0) {
-                color = (flags & PXA_RASTER_SPRITE_SOLID_COLOR) != 0
-                            ? solid_color
-                            : resources->palette[texel];
+                uint16_t color;
+                uint16_t *destination;
+                if ((flags & PXA_RASTER_SPRITE_SOLID_COLOR) != 0) {
+                    color = solid_color;
+                } else if ((flags & PXA_RASTER_SPRITE_PALETTE_RAMP) != 0) {
+                    /* solid_color is the ramp's base index in the palette's
+                     * full-light row; the texel's top five bits pick one of its
+                     * 32 pre-blended coverage colours. */
+                    const uint32_t row =
+                        (uint32_t)(resources->palette_light_levels - 1u) * 256u;
+                    color = resources->palette[
+                        row + ((solid_color + (texel >> 3)) & 0xFFu)];
+                } else {
+                    color = resources->palette[texel];
+                }
                 destination =
                     target->pixels + (size_t)y * target->stride_pixels + x;
-                *destination = (flags & PXA_RASTER_SPRITE_ADDITIVE) != 0
-                                   ? saturating_add_rgb565(*destination, color)
-                                   : color;
+                if ((flags & PXA_RASTER_SPRITE_TEXEL_ALPHA) != 0)
+                    *destination =
+                        blend_rgb565_alpha(color, *destination, texel);
+                else if ((flags & PXA_RASTER_SPRITE_ADDITIVE) != 0)
+                    *destination = saturating_add_rgb565(*destination, color);
+                else
+                    *destination = color;
                 ++covered;
             }
             tx += x_advance;

@@ -11,14 +11,14 @@ extern "C" {
 #endif
 
 #define PXA_RASTER_ABI_MAJOR UINT16_C(1)
-#define PXA_RASTER_ABI_MINOR UINT16_C(5)
+#define PXA_RASTER_ABI_MINOR UINT16_C(6)
 #define PXA_RASTER_DRAW_MAGIC UINT32_C(0x4c525850) /* PXRL */
 #define PXA_RASTER_UPLOAD_MAGIC UINT32_C(0x52555850) /* PXUR */
 
 #define PXA_RASTER_MAX_TEXTURES UINT8_C(48)
 #define PXA_RASTER_PALETTE_COLORS UINT16_C(256)
 #define PXA_RASTER_MAX_DRAW_BYTES UINT32_C(49152)
-#define PXA_RASTER_MAX_COMMANDS UINT32_C(768)
+#define PXA_RASTER_MAX_COMMANDS UINT32_C(1024)
 #define PXA_RASTER_MAX_TEXTURE_DIMENSION UINT16_C(256)
 
 #define PXA_RASTER_CAP_FLAT_QUAD UINT32_C(1)
@@ -38,13 +38,20 @@ extern "C" {
 #define PXA_RASTER_CAP_LIT_PALETTE_DEPTH UINT32_C(256)
 #define PXA_RASTER_CAP_DEPTH_CUTOUT UINT32_C(512)
 #define PXA_RASTER_CAP_FIXED_ALPHA_BLEND UINT32_C(1024)
+#define PXA_RASTER_CAP_COVERAGE_MASK UINT32_C(2048)
+/* Sprite paths: PALETTE_RAMP indexes the palette's full-light row (pre-blended
+ * antialiasing for a known background) and TEXEL_ALPHA blends by the texel
+ * (antialiasing over any background). */
+#define PXA_RASTER_CAP_SPRITE_PALETTE_RAMP UINT32_C(4096)
+#define PXA_RASTER_CAP_SPRITE_TEXEL_ALPHA UINT32_C(8192)
 #define PXA_RASTER_CAP_KNOWN_MASK                                      \
     (PXA_RASTER_CAP_FLAT_QUAD | PXA_RASTER_CAP_TEXTURED_QUAD |        \
      PXA_RASTER_CAP_ADDITIVE_SPRITE | PXA_RASTER_CAP_SPRITE_BATCH |   \
      PXA_RASTER_CAP_TRIANGLE_BATCH | PXA_RASTER_CAP_AFFINE_UV |       \
      PXA_RASTER_CAP_TEXTURE_SLOTS_48 | PXA_RASTER_CAP_PAINTER_POLYGON | \
      PXA_RASTER_CAP_LIT_PALETTE_DEPTH | PXA_RASTER_CAP_DEPTH_CUTOUT | \
-     PXA_RASTER_CAP_FIXED_ALPHA_BLEND)
+     PXA_RASTER_CAP_FIXED_ALPHA_BLEND | PXA_RASTER_CAP_COVERAGE_MASK | \
+     PXA_RASTER_CAP_SPRITE_PALETTE_RAMP | PXA_RASTER_CAP_SPRITE_TEXEL_ALPHA)
 
 #define PXA_RASTER_UPLOAD_PALETTE_RGB565 UINT8_C(1)
 #define PXA_RASTER_UPLOAD_TEXTURE_INDEX8 UINT8_C(2)
@@ -88,10 +95,20 @@ extern "C" {
  * polygons test but do not update depth so back-to-front translucent faces
  * can accumulate without an alpha buffer. */
 #define PXA_RASTER_QUAD_BLEND_75 UINT8_C(32)
+/* Front-to-back painter coverage. Opaque/cutout texels claim one bit per
+ * pixel. Blended quads mark a second bit-plane and are resolved later. */
+#define PXA_RASTER_QUAD_COVERAGE_MASK UINT8_C(64)
+#define PXA_RASTER_QUAD_COVERAGE_RESOLVE UINT8_C(128)
 
 #define PXA_RASTER_SPRITE_TRANSPARENT_INDEX0 UINT8_C(1)
 #define PXA_RASTER_SPRITE_SOLID_COLOR UINT8_C(2)
 #define PXA_RASTER_SPRITE_ADDITIVE UINT8_C(4)
+/* The texel indexes the palette's full-light row offset by `solid_color`, so a
+ * coverage atlas can carry pre-blended ink/background ramps. */
+#define PXA_RASTER_SPRITE_PALETTE_RAMP UINT8_C(8)
+/* The texel is 0..255 coverage and the source colour is blended with the
+ * destination per pixel. */
+#define PXA_RASTER_SPRITE_TEXEL_ALPHA UINT8_C(16)
 
 typedef struct {
     uint8_t kind;
@@ -122,6 +139,8 @@ typedef struct {
     uint32_t depth_stride_pixels;
     uint16_t width;
     uint16_t height;
+    /* Leading commands already materialized by a platform accelerator. */
+    uint32_t prefilled_commands;
 } pxa_raster_target_t;
 
 typedef struct {
