@@ -5,6 +5,12 @@
 #include "jump3d_font_data.h"
 #include "pxa_log.h"
 
+/* Antialiased coverage paths can be compiled out for measurements: 0 forces the
+ * binary cut-out so builds with and without AA can be compared on one Host. */
+#ifndef J3_FONT_AA
+#define J3_FONT_AA 1
+#endif
+
 _Static_assert(J3_FONT_MAX_ATLAS_BYTES_DATA <= J3_FONT_MAX_ATLAS_BYTES,
                "raise J3_FONT_MAX_ATLAS_BYTES: a glyph atlas no longer fits "
                "the renderer's upload scratch");
@@ -142,6 +148,7 @@ void j3_font_draw(pxa_raster_draw_list_t *list, uint32_t capabilities,
     uint16_t sprite_color = color;
     int position = 0;
     if (list == NULL || text == NULL || scale <= 0) return;
+#if J3_FONT_AA
     if (mode == J3_FONT_RAMP &&
         (capabilities & PXA_RASTER_CAP_SPRITE_PALETTE_RAMP) != 0u) {
         /* The atlas texel is coverage; the palette block holds the ink already
@@ -154,7 +161,11 @@ void j3_font_draw(pxa_raster_draw_list_t *list, uint32_t capabilities,
         /* Coverage blended against whatever is behind the glyph. */
         flags |= PXA_RASTER_SPRITE_SOLID_COLOR |
                  PXA_RASTER_SPRITE_TEXEL_ALPHA;
-    } else {
+    } else
+#endif
+    {
+        (void)mode;
+        (void)ramp_base;
         flags |= PXA_RASTER_SPRITE_SOLID_COLOR;
     }
     while (text[position] != '\0') {
