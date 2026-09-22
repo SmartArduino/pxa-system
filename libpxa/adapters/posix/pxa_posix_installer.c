@@ -60,6 +60,9 @@
     (PXA_PACKAGE_DIGEST_BYTES * 2u + 1u + PXA_POSIX_INSTALLER_MAX_APP_ID)
 #define PXA_POSIX_INSTALLER_MAX_PACKAGE_PATH ((size_t)255)
 #define PXA_POSIX_INSTALLER_OWNER_BYTES ((size_t)40)
+#define PXA_POSIX_INSTALLER_SESSION_INCOMING_BYTES \
+    ((sizeof(".session-") - 1u) + PXA_POSIX_INSTALLER_MAX_IDENTITY_NAME + \
+     sizeof("/incoming"))
 
 typedef struct {
     char **items;
@@ -1947,7 +1950,7 @@ static pxa_status_t prepare_incoming(pxa_posix_installer_t *installer,
         goto done;
     }
     {
-        char relative[PXA_POSIX_INSTALLER_MAX_IDENTITY_NAME + 16];
+        char relative[PXA_POSIX_INSTALLER_SESSION_INCOMING_BYTES];
         memcpy(relative, ".session-", 9);
         strcpy(relative + 9, ctx->identity_name);
         memcpy(relative + 9 + strlen(ctx->identity_name), "/incoming", 10);
@@ -2061,7 +2064,7 @@ static pxa_status_t prepare_incoming_container(
     uint8_t header_bytes[PXA_CONTAINER_HEADER_BYTES];
     pxa_container_header_t parsed_header;
     pxa_package_manifest_t *manifest = NULL;
-    char relative[PXA_POSIX_INSTALLER_MAX_APP_ID + 16];
+    char relative[PXA_POSIX_INSTALLER_SESSION_INCOMING_BYTES];
     char *packages = NULL;
     uint64_t payload_position;
     size_t index;
