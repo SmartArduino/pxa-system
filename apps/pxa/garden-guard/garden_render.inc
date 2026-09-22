@@ -167,30 +167,30 @@ static void draw_blast(pxa_canvas_frame_t* frame,const blast_t* blast){
 }
 static void draw_scene_background(pxa_canvas_frame_t* frame){
     if(is_night()){
-        pxa_canvas_rect(frame,0,0,296,240,0x0B1A2E,12);
-        pxa_canvas_circle(frame,248,30,18,0xFFF2A8);
-        pxa_canvas_circle(frame,242,26,4,0xE8E0B0);
-        pxa_canvas_circle(frame,252,34,3,0xE8E0B0);
+        pxa_canvas_rect(frame,0,0,GARDEN_W,GARDEN_H,0x0B1A2E,12);
+        pxa_canvas_circle(frame,GARDEN_W-48,30,18,0xFFF2A8);
+        pxa_canvas_circle(frame,GARDEN_W-54,26,4,0xE8E0B0);
+        pxa_canvas_circle(frame,GARDEN_W-44,34,3,0xE8E0B0);
         for(int i=0;i<20;++i){
-            int16_t sx=(int16_t)( (i*73 + 17)%280 + 8 );
+            int16_t sx=(int16_t)( (i*73 + 17)%(GARDEN_W-16) + 8 );
             int16_t sy=(int16_t)( (i*53)%32 + 8 );
             uint8_t r=(uint8_t)(1+(i%2));
             pxa_canvas_circle(frame,sx,sy,r, i%3==0?0xFFFFFF:0xB9D8FF);
         }
-        pxa_canvas_rect(frame,10,46,276,168,0x1A2F4A,12);
-        pxa_canvas_rect(frame,13,48,270,164,0x243A5A,9);
+        pxa_canvas_rect(frame,BOARD_X-28,BOARD_Y-4,BOARD_COLS*CELL_W+56,BOARD_ROWS*CELL_H+8,0x1A2F4A,12);
+        pxa_canvas_rect(frame,BOARD_X-25,BOARD_Y-2,BOARD_COLS*CELL_W+50,BOARD_ROWS*CELL_H+4,0x243A5A,9);
         pxa_canvas_rect(frame,MOWER_HOME_X,BOARD_Y,BOARD_X-MOWER_HOME_X,BOARD_ROWS*CELL_H,0x2A3F5A,5);
         pxa_canvas_rect(frame,BOARD_X,BOARD_Y,BOARD_COLS*CELL_W,BOARD_ROWS*CELL_H,0x2E4A6A,5);
         for(int row=1;row<BOARD_ROWS;row+=2) pxa_canvas_rect(frame,BOARD_X,cell_y(row),BOARD_COLS*CELL_W,CELL_H,0x2A4260,0);
     } else {
-        pxa_canvas_rect(frame,0,0,296,240,0x87CEEB,12);
-        pxa_canvas_circle(frame,252,30,20,0xFFD76A);
+        pxa_canvas_rect(frame,0,0,GARDEN_W,GARDEN_H,0x87CEEB,12);
+        pxa_canvas_circle(frame,GARDEN_W-44,30,20,0xFFD76A);
         pxa_canvas_circle(frame,40,24,16,0xFFFFFF);
         pxa_canvas_circle(frame,62,20,20,0xFFFFFF);
         pxa_canvas_circle(frame,86,26,14,0xFFFFFF);
-        pxa_canvas_rect(frame,0,44,296,196,0x283E30,0);
-        pxa_canvas_rect(frame,10,46,276,168,0x315D3C,12);
-        pxa_canvas_rect(frame,13,48,270,164,0x4A8348,9);
+        pxa_canvas_rect(frame,0,BOARD_Y-6,GARDEN_W,GARDEN_H-(BOARD_Y-6),0x283E30,0);
+        pxa_canvas_rect(frame,BOARD_X-28,BOARD_Y-4,BOARD_COLS*CELL_W+56,BOARD_ROWS*CELL_H+8,0x315D3C,12);
+        pxa_canvas_rect(frame,BOARD_X-25,BOARD_Y-2,BOARD_COLS*CELL_W+50,BOARD_ROWS*CELL_H+4,0x4A8348,9);
         pxa_canvas_rect(frame,MOWER_HOME_X,BOARD_Y,BOARD_X-MOWER_HOME_X,BOARD_ROWS*CELL_H,0x4F843F,5);
         pxa_canvas_rect(frame,BOARD_X,BOARD_Y,BOARD_COLS*CELL_W,BOARD_ROWS*CELL_H,0x6AAA4D,5);
         for(int row=1;row<BOARD_ROWS;row+=2) pxa_canvas_rect(frame,BOARD_X,cell_y(row),BOARD_COLS*CELL_W,CELL_H,0x62A047,0);
@@ -201,39 +201,39 @@ static void draw_scene_background(pxa_canvas_frame_t* frame){
 
 static void draw_pause_menu(pxa_canvas_frame_t* frame){
     // 半透明遮罩
-    pxa_canvas_rect_rgba(frame,0,0,296,240,0x00000080,12,0,0);
-    pxa_canvas_rect(frame,48,42,200,176,0x1E3A4A,12);
-    pxa_canvas_rect_rgba(frame,48,42,200,176,0x1E3A4A,12,2,0x4A6A8A);
-    pxa_canvas_rect(frame,48,42,200,26,0x2A4A6A,12);
+    pxa_canvas_rect_rgba(frame,0,0,GARDEN_W,GARDEN_H,0x00000080,12,0,0);
+    pxa_canvas_rect(frame,PAUSE_MENU_X,PAUSE_MENU_Y,200,176,0x1E3A4A,12);
+    pxa_canvas_rect_rgba(frame,PAUSE_MENU_X,PAUSE_MENU_Y,200,176,0x1E3A4A,12,2,0x4A6A8A);
+    pxa_canvas_rect(frame,PAUSE_MENU_X,PAUSE_MENU_Y,200,26,0x2A4A6A,12);
     const char* pause_title=garden_message(PXA_MSG_PAUSE_TITLE);
-    draw_body_button_text(frame,48,42,200,26,0xFFFFFF,pause_title,garden_text_len(pause_title));
+    draw_body_button_text(frame,PAUSE_MENU_X,PAUSE_MENU_Y,200,26,0xFFFFFF,pause_title,garden_text_len(pause_title));
     // 标题、关卡名和昼夜标识分别占行，避免使用同一基线。
     {
         const level_def_t* lvl = current_level_def();
         const char* scene = garden_message(is_night()?PXA_MSG_SCENE_NIGHT:PXA_MSG_SCENE_DAY);
         const char* level_name=garden_message(lvl->name);
-        pxa_canvas_text(frame,62,74,128,0xB0D0E8,PXA_CANVAS_ALIGN_CENTER,level_name,garden_text_len(level_name));
-        pxa_canvas_rect(frame,196,70,40,26,is_night()?0x5A4FC0:0xE6BA49,5);
-        draw_body_button_text(frame,196,70,40,26,0xFFFFFF,scene,garden_text_len(scene));
+        pxa_canvas_text(frame,PAUSE_MENU_X+14,PAUSE_MENU_Y+32,128,0xB0D0E8,PXA_CANVAS_ALIGN_CENTER,level_name,garden_text_len(level_name));
+        pxa_canvas_rect(frame,PAUSE_MENU_X+148,PAUSE_MENU_Y+28,40,26,is_night()?0x5A4FC0:0xE6BA49,5);
+        draw_body_button_text(frame,PAUSE_MENU_X+148,PAUSE_MENU_Y+28,40,26,0xFFFFFF,scene,garden_text_len(scene));
     }
     // 继续
-    pxa_canvas_rect(frame,68,100,160,24,0xA6D66D,7);
+    pxa_canvas_rect(frame,PAUSE_MENU_X+20,PAUSE_MENU_Y+58,160,24,0xA6D66D,7);
     const char* resume_txt=garden_message(PXA_MSG_ACTION_RESUME);
-    draw_body_button_text(frame,68,100,160,24,0x1D3528,resume_txt,garden_text_len(resume_txt));
+    draw_body_button_text(frame,PAUSE_MENU_X+20,PAUSE_MENU_Y+58,160,24,0x1D3528,resume_txt,garden_text_len(resume_txt));
     // 重新开始
-    pxa_canvas_rect(frame,68,130,160,24,0x4A8AC0,7);
+    pxa_canvas_rect(frame,PAUSE_MENU_X+20,PAUSE_MENU_Y+88,160,24,0x4A8AC0,7);
     const char* restart_txt=garden_message(PXA_MSG_ACTION_RESTART);
-    draw_body_button_text(frame,68,130,160,24,0xFFFFFF,restart_txt,garden_text_len(restart_txt));
+    draw_body_button_text(frame,PAUSE_MENU_X+20,PAUSE_MENU_Y+88,160,24,0xFFFFFF,restart_txt,garden_text_len(restart_txt));
     // 返回主菜单
-    pxa_canvas_rect(frame,68,160,160,24,0x5A3FA0,7);
+    pxa_canvas_rect(frame,PAUSE_MENU_X+20,PAUSE_MENU_Y+118,160,24,0x5A3FA0,7);
     const char* home_txt=garden_message(PXA_MSG_ACTION_MAIN_MENU);
-    draw_body_button_text(frame,68,160,160,24,0xFFFFFF,home_txt,garden_text_len(home_txt));
+    draw_body_button_text(frame,PAUSE_MENU_X+20,PAUSE_MENU_Y+118,160,24,0xFFFFFF,home_txt,garden_text_len(home_txt));
     // 声音
     uint32_t sound_bg=sound_enabled?0xE6BA49:0x4A5A5A;
     uint32_t sound_fg=sound_enabled?0x1D3528:0xB0B0B0;
-    pxa_canvas_rect(frame,68,190,160,24,sound_bg,6);
+    pxa_canvas_rect(frame,PAUSE_MENU_X+20,PAUSE_MENU_Y+148,160,24,sound_bg,6);
     const char* sound_txt=garden_message(sound_enabled?PXA_MSG_SOUND_ON:PXA_MSG_SOUND_OFF);
-    draw_body_button_text(frame,68,190,160,24,sound_fg,sound_txt,garden_text_len(sound_txt));
+    draw_body_button_text(frame,PAUSE_MENU_X+20,PAUSE_MENU_Y+148,160,24,sound_fg,sound_txt,garden_text_len(sound_txt));
 }
 static int render_game(pxa_canvas_frame_t* frame){
     char sun_text[10]; size_t sun_length=pxa_canvas_u32_text(sun_text,sun_count);
@@ -275,50 +275,50 @@ static int render_game(pxa_canvas_frame_t* frame){
     // 底部状态栏：阳光居中（适应长数字，避开圆角），进度细条置于屏幕最底下
     {
         // 阳光居中，宽度 88 可容纳 5 位数字，位于 216 高度避开圆角
-        pxa_canvas_rect(frame,104,216,88,22,0x1D3528,7);
-        draw_sun(frame,116,227,SUN_IMAGE_SIZE);
-        pxa_canvas_text_role(frame,142,214,44,pxa_canvas_rgba(0xFFFFFF),PXA_CANVAS_FONT_CAPTION,PXA_CANVAS_ALIGN_CENTER,sun_text,sun_length);
+        pxa_canvas_rect(frame,(GARDEN_W-88)/2,SUN_STATUS_Y,88,22,0x1D3528,7);
+        draw_sun(frame,(GARDEN_W-88)/2+12,SUN_STATUS_Y+11,SUN_IMAGE_SIZE);
+        pxa_canvas_text_role(frame,(GARDEN_W-88)/2+38,SUN_STATUS_Y-2,44,pxa_canvas_rgba(0xFFFFFF),PXA_CANVAS_FONT_CAPTION,PXA_CANVAS_ALIGN_CENTER,sun_text,sun_length);
         // 进度细条无文字，置于屏幕最底下居中，避开铲子与阳光
-        pxa_canvas_rect(frame,48,238,200,3,0x1A2F1A,1);
-        if(defeated!=0) pxa_canvas_rect(frame,48,238,(uint16_t)(defeated*200u/lvl->wave_goal),3,0xE6B43A,1);
+        pxa_canvas_rect(frame,(GARDEN_W-200)/2,GARDEN_BOTTOM-4,200,3,0x1A2F1A,1);
+        if(defeated!=0) pxa_canvas_rect(frame,(GARDEN_W-200)/2,GARDEN_BOTTOM-4,(uint16_t)(defeated*200u/lvl->wave_goal),3,0xE6B43A,1);
     }
     if(state==STATE_READY){
         const char* ready=garden_message(PXA_MSG_GAME_READY);
-        pxa_canvas_rect(frame,78,106,140,72,0x12281C,8);
-        pxa_canvas_rect(frame,80,102,136,70,0x2F5A3A,8);
-        pxa_canvas_rect(frame,86,106,124,2,0xA9D271,1);
-        pxa_canvas_text(frame,80,114,136,0xFFFFFF,PXA_CANVAS_ALIGN_CENTER,ready,garden_text_len(ready));
+        pxa_canvas_rect(frame,(GARDEN_W-140)/2,(GARDEN_H-72)/2,140,72,0x12281C,8);
+        pxa_canvas_rect(frame,(GARDEN_W-136)/2,(GARDEN_H-70)/2,136,70,0x2F5A3A,8);
+        pxa_canvas_rect(frame,(GARDEN_W-124)/2,(GARDEN_H-70)/2+4,124,2,0xA9D271,1);
+        pxa_canvas_text(frame,(GARDEN_W-136)/2,(GARDEN_H-70)/2+12,136,0xFFFFFF,PXA_CANVAS_ALIGN_CENTER,ready,garden_text_len(ready));
         const char* hint=garden_message(PXA_MSG_GAME_PLANT_HINT);
-        pxa_canvas_text(frame,80,144,136,0xC8E6A0,PXA_CANVAS_ALIGN_CENTER,hint,garden_text_len(hint));
+        pxa_canvas_text(frame,(GARDEN_W-136)/2,(GARDEN_H-70)/2+42,136,0xC8E6A0,PXA_CANVAS_ALIGN_CENTER,hint,garden_text_len(hint));
     } else if(state==STATE_WIN){
         const char* won=garden_message(PXA_MSG_GAME_WON);
-        pxa_canvas_rect(frame,66,88,164,104,0x16352A,10);
-        pxa_canvas_rect(frame,70,86,156,100,0x286A4B,10);
-        pxa_canvas_text(frame,70,96,156,0xFFFFFF,PXA_CANVAS_ALIGN_CENTER,won,garden_text_len(won));
+        pxa_canvas_rect(frame,(GARDEN_W-164)/2,(GARDEN_H-104)/2,164,104,0x16352A,10);
+        pxa_canvas_rect(frame,(GARDEN_W-156)/2,(GARDEN_H-100)/2,156,100,0x286A4B,10);
+        pxa_canvas_text(frame,(GARDEN_W-156)/2,(GARDEN_H-100)/2+10,156,0xFFFFFF,PXA_CANVAS_ALIGN_CENTER,won,garden_text_len(won));
         char star_txt[10]; size_t sl=pxa_canvas_u32_text(star_txt,level_stars[current_level]);
         static const char star_lbl[]="*";
-        pxa_canvas_rect(frame,88,120,120,20,0x1D4A33,5);
-        pxa_canvas_text(frame,108,123,40,0xFFE27A,PXA_CANVAS_ALIGN_CENTER,star_txt,sl);
-        pxa_canvas_text(frame,148,123,30,0xFFE27A,PXA_CANVAS_ALIGN_LEFT,star_lbl,sizeof(star_lbl)-1);
+        pxa_canvas_rect(frame,(GARDEN_W-120)/2,(GARDEN_H-100)/2+34,120,20,0x1D4A33,5);
+        pxa_canvas_text(frame,(GARDEN_W-120)/2+20,(GARDEN_H-100)/2+37,40,0xFFE27A,PXA_CANVAS_ALIGN_CENTER,star_txt,sl);
+        pxa_canvas_text(frame,(GARDEN_W-120)/2+60,(GARDEN_H-100)/2+37,30,0xFFE27A,PXA_CANVAS_ALIGN_LEFT,star_lbl,sizeof(star_lbl)-1);
         if(win_reward_plant!=0){
             const char* pn=plant_name(win_reward_plant);
             pxa_i18n_argument_t argument={"plant",5u,PXA_I18N_ARGUMENT_STRING,
                 {.string={pn,plant_name_len(win_reward_plant)}}};
             char reward[48];
             size_t rl=pxa_i18n_format(&i18n,PXA_MSG_GAME_REWARD,&argument,1u,reward,sizeof(reward));
-            pxa_canvas_text_role(frame,70,146,156,pxa_canvas_rgba(0xFFE27A),PXA_CANVAS_FONT_CAPTION,PXA_CANVAS_ALIGN_CENTER,reward,rl);
+            pxa_canvas_text_role(frame,(GARDEN_W-156)/2,(GARDEN_H-100)/2+60,156,pxa_canvas_rgba(0xFFE27A),PXA_CANVAS_FONT_CAPTION,PXA_CANVAS_ALIGN_CENTER,reward,rl);
         }
         const char* cont=garden_message(PXA_MSG_ACTION_CONTINUE);
-        pxa_canvas_rect(frame,93,162,110,20,0xF6BE32,6);
-        draw_body_button_text(frame,93,162,110,20,0x1D3528,cont,garden_text_len(cont));
+        pxa_canvas_rect(frame,(GARDEN_W-110)/2,(GARDEN_H-100)/2+76,110,20,0xF6BE32,6);
+        draw_body_button_text(frame,(GARDEN_W-110)/2,(GARDEN_H-100)/2+76,110,20,0x1D3528,cont,garden_text_len(cont));
     } else if(state==STATE_LOSS){
         const char* lost=garden_message(PXA_MSG_GAME_LOST);
-        pxa_canvas_rect(frame,68,94,160,92,0x3A1E20,10);
-        pxa_canvas_rect(frame,70,92,156,88,0x70393C,10);
-        pxa_canvas_text(frame,70,102,156,0xFFFFFF,PXA_CANVAS_ALIGN_CENTER,lost,garden_text_len(lost));
+        pxa_canvas_rect(frame,(GARDEN_W-160)/2,(GARDEN_H-92)/2,160,92,0x3A1E20,10);
+        pxa_canvas_rect(frame,(GARDEN_W-156)/2,(GARDEN_H-88)/2,156,88,0x70393C,10);
+        pxa_canvas_text(frame,(GARDEN_W-156)/2,(GARDEN_H-88)/2+10,156,0xFFFFFF,PXA_CANVAS_ALIGN_CENTER,lost,garden_text_len(lost));
         const char* retry=garden_message(PXA_MSG_ACTION_RETRY);
-        pxa_canvas_rect(frame,93,156,110,20,0xE65C51,6);
-        draw_body_button_text(frame,93,156,110,20,0xFFFFFF,retry,garden_text_len(retry));
+        pxa_canvas_rect(frame,(GARDEN_W-110)/2,(GARDEN_H-88)/2+64,110,20,0xE65C51,6);
+        draw_body_button_text(frame,(GARDEN_W-110)/2,(GARDEN_H-88)/2+64,110,20,0xFFFFFF,retry,garden_text_len(retry));
     }
     if(state==STATE_PAUSED){
         draw_pause_menu(frame);
@@ -326,18 +326,18 @@ static int render_game(pxa_canvas_frame_t* frame){
     return 1;
 }
 static void draw_home(pxa_canvas_frame_t* frame){
-    pxa_canvas_rect(frame,0,0,296,240,0x1B4D3E,12);
-    pxa_canvas_rect(frame,0,0,296,70,0x2E7D5A,12);
+    pxa_canvas_rect(frame,0,0,GARDEN_W,GARDEN_H,0x1B4D3E,12);
+    pxa_canvas_rect(frame,0,0,GARDEN_W,70,0x2E7D5A,12);
     pxa_canvas_circle(frame,250,22,20,0xFFD93D);
     pxa_canvas_circle(frame,30,18,12,0xFFFFFF);
     pxa_canvas_circle(frame,52,14,16,0xFFFFFF);
     pxa_canvas_circle(frame,74,20,10,0xFFFFFF);
     const char* title=garden_message(PXA_MSG_SCREEN_TITLE);
-    pxa_canvas_text_role(frame,0,14,296,pxa_canvas_rgba(0xFFFFFF),PXA_CANVAS_FONT_TITLE,PXA_CANVAS_ALIGN_CENTER,title,garden_text_len(title));
+    pxa_canvas_text_role(frame,0,14,GARDEN_W,pxa_canvas_rgba(0xFFFFFF),PXA_CANVAS_FONT_TITLE,PXA_CANVAS_ALIGN_CENTER,title,garden_text_len(title));
     const char* subtitle=garden_message(PXA_MSG_SCREEN_SUBTITLE);
-    pxa_canvas_text_role(frame,0,36,296,pxa_canvas_rgba(0xE8F5D0),PXA_CANVAS_FONT_CAPTION,PXA_CANVAS_ALIGN_CENTER,subtitle,garden_text_len(subtitle));
+    pxa_canvas_text_role(frame,0,36,GARDEN_W,pxa_canvas_rgba(0xE8F5D0),PXA_CANVAS_FONT_CAPTION,PXA_CANVAS_ALIGN_CENTER,subtitle,garden_text_len(subtitle));
     // 已移除“白天收集阳光 夜晚蘑菇觉醒”提示行，进度与按钮上移并垂直居中
-    pxa_canvas_rect(frame,14,84,268,32,0x4A8348,8);
+    pxa_canvas_rect(frame,HOME_PANEL_X,84,268,32,0x4A8348,8);
     char prog[48];
     uint8_t total_stars=0; for(uint8_t i=0;i<LEVELS_COUNT;++i) total_stars+=level_stars[i];
     pxa_i18n_argument_t progress_arguments[]={
@@ -346,20 +346,20 @@ static void draw_home(pxa_canvas_frame_t* frame){
         {"stars",5u,PXA_I18N_ARGUMENT_U32,{.u32=total_stars}}};
     size_t pl=pxa_i18n_format(&i18n,PXA_MSG_HOME_PROGRESS,
                               progress_arguments,3u,prog,sizeof(prog));
-    pxa_canvas_text_box_role(frame,14,84,268,32,pxa_canvas_rgba(0xFFE27A),
+    pxa_canvas_text_box_role(frame,HOME_PANEL_X,84,268,32,pxa_canvas_rgba(0xFFE27A),
                              PXA_CANVAS_FONT_TITLE, PXA_CANVAS_ALIGN_CENTER,
                              PXA_CANVAS_TEXT_ALIGN_MIDDLE, prog, pl);
-    pxa_canvas_rect(frame,38,122,220,34,0xF6BE32,8);
+    pxa_canvas_rect(frame,HOME_X,122,220,34,0xF6BE32,8);
     const char* btn1=garden_message(PXA_MSG_ACTION_START_ADVENTURE);
-    draw_title_button_text(frame,38,122,220,34,0x1D3528,btn1,garden_text_len(btn1));
-    pxa_canvas_rect(frame,38,166,106,30,0x456B4B,7);
+    draw_title_button_text(frame,HOME_X,122,220,34,0x1D3528,btn1,garden_text_len(btn1));
+    pxa_canvas_rect(frame,HOME_X,166,106,30,0x456B4B,7);
     const char* btn2=garden_message(PXA_MSG_ACTION_SELECT_LEVEL);
-    draw_body_button_text(frame,38,166,106,30,0xFFFFFF,btn2,garden_text_len(btn2));
-    pxa_canvas_rect(frame,152,166,106,30,0x5A3FA0,7);
+    draw_body_button_text(frame,HOME_X,166,106,30,0xFFFFFF,btn2,garden_text_len(btn2));
+    pxa_canvas_rect(frame,HOME_X+114,166,106,30,0x5A3FA0,7);
     const char* btn3=garden_message(PXA_MSG_ACTION_OPEN_ALMANAC);
-    draw_body_button_text(frame,152,166,106,30,0xFFFFFF,btn3,garden_text_len(btn3));
+    draw_body_button_text(frame,HOME_X+114,166,106,30,0xFFFFFF,btn3,garden_text_len(btn3));
     const char* ver=garden_message(PXA_MSG_SCREEN_VERSION);
-    pxa_canvas_text_role(frame,0,217,296,pxa_canvas_rgba(0x9FBFA4),PXA_CANVAS_FONT_CAPTION,PXA_CANVAS_ALIGN_CENTER,ver,garden_text_len(ver));
+    pxa_canvas_text_role(frame,0,GARDEN_H-23,GARDEN_W,pxa_canvas_rgba(0x9FBFA4),PXA_CANVAS_FONT_CAPTION,PXA_CANVAS_ALIGN_CENTER,ver,garden_text_len(ver));
 }
 
 static void draw_back_button(pxa_canvas_frame_t* frame){
@@ -408,12 +408,12 @@ static void draw_list_scrollbar(pxa_canvas_frame_t* frame,uint16_t scroll){
 }
 
 static void draw_levels(pxa_canvas_frame_t* frame){
-    pxa_canvas_rect(frame,0,0,296,240,0x162A40,12);
-    pxa_canvas_rect(frame,0,0,296,LIST_HEADER_H,0x1C3A5A,12);
+    pxa_canvas_rect(frame,0,0,GARDEN_W,GARDEN_H,0x162A40,12);
+    pxa_canvas_rect(frame,0,0,GARDEN_W,LIST_HEADER_H,0x1C3A5A,12);
     const char* title=garden_message(PXA_MSG_LEVEL_SCREEN_TITLE);
-    pxa_canvas_text(frame,0,9,296,0xFFFFFF,PXA_CANVAS_ALIGN_CENTER,title,garden_text_len(title));
+    pxa_canvas_text(frame,0,9,GARDEN_W,0xFFFFFF,PXA_CANVAS_ALIGN_CENTER,title,garden_text_len(title));
     draw_back_button(frame);
-    pxa_canvas_clip_push(frame,0,LIST_VIEW_Y,296,LIST_VIEW_H);
+    pxa_canvas_clip_push(frame,0,LIST_VIEW_Y,GARDEN_W,LIST_VIEW_H);
     for(uint8_t i=0;i<LEVELS_COUNT;++i){
         uint8_t col=i%2;
         uint8_t row=i/2;
@@ -454,18 +454,18 @@ static void draw_levels(pxa_canvas_frame_t* frame){
 }
 static void draw_seed_select(pxa_canvas_frame_t* frame){
     const level_def_t* lvl=current_level_def();
-    pxa_canvas_rect(frame,0,0,296,240, is_night()?0x0B1A2E:0x1B4D3E,12);
-    pxa_canvas_rect(frame,0,0,296,36, is_night()?0x1C2E4A:0x2E5A3A,12);
+    pxa_canvas_rect(frame,0,0,GARDEN_W,GARDEN_H, is_night()?0x0B1A2E:0x1B4D3E,12);
+    pxa_canvas_rect(frame,0,0,GARDEN_W,36, is_night()?0x1C2E4A:0x2E5A3A,12);
     draw_back_button(frame);
     const char* scene_txt=garden_message(is_night()?PXA_MSG_SCENE_NIGHT:PXA_MSG_SCENE_DAY);
     const char* level_name=garden_message(lvl->name);
-    pxa_canvas_text(frame,60,9,148,0xFFFFFF,PXA_CANVAS_ALIGN_CENTER,level_name,garden_text_len(level_name));
-    pxa_canvas_rect(frame,220,6,56,26, is_night()?0x5A4FC0:0xE6BA49,5);
-    draw_body_button_text(frame,220,6,56,26,0xFFFFFF,scene_txt,garden_text_len(scene_txt));
-    pxa_canvas_rect(frame,8,42,280,46,0x1D3528,6);
-    pxa_canvas_rect(frame,10,44,276,42,0x2A4A3A,5);
+    pxa_canvas_text(frame,SEED_OX+60,9,148,0xFFFFFF,PXA_CANVAS_ALIGN_CENTER,level_name,garden_text_len(level_name));
+    pxa_canvas_rect(frame,SEED_OX+220,6,56,26, is_night()?0x5A4FC0:0xE6BA49,5);
+    draw_body_button_text(frame,SEED_OX+220,6,56,26,0xFFFFFF,scene_txt,garden_text_len(scene_txt));
+    pxa_canvas_rect(frame,SEED_OX+8,42,280,46,0x1D3528,6);
+    pxa_canvas_rect(frame,SEED_OX+10,44,276,42,0x2A4A3A,5);
     for(uint8_t i=0;i<lvl->slots;++i){
-        int16_t x=(int16_t)(16+i*38);
+        int16_t x=(int16_t)(SEED_OX+16+i*38);
         int16_t y=48;
         if(i<chosen_count){
             uint8_t pt=chosen_plants[i];
@@ -487,54 +487,54 @@ static void draw_seed_select(pxa_canvas_frame_t* frame){
         const char* detail=plant_description(focused_plant,&detail_length);
         const char* detail_name=plant_name(focused_plant);
         uint8_t detail_name_length=plant_name_len(focused_plant);
-        pxa_canvas_rect(frame,8,94,280,106,0x243A5A,6);
-        pxa_canvas_rect(frame,10,96,276,102,0x1E344E,5);
-        pxa_canvas_rect(frame,20,122,48,48,0xCFEFBB,4);
-        draw_actor(frame,29,131,30,30,plant_actor_x(focused_plant),plant_actor_y(focused_plant),255);
-        pxa_canvas_text(frame,80,104,110,0xFFE27A,PXA_CANVAS_ALIGN_LEFT,detail_name,detail_name_length);
+        pxa_canvas_rect(frame,SEED_OX+8,94,280,106,0x243A5A,6);
+        pxa_canvas_rect(frame,SEED_OX+10,96,276,102,0x1E344E,5);
+        pxa_canvas_rect(frame,SEED_OX+20,122,48,48,0xCFEFBB,4);
+        draw_actor(frame,SEED_OX+29,131,30,30,plant_actor_x(focused_plant),plant_actor_y(focused_plant),255);
+        pxa_canvas_text(frame,SEED_OX+80,104,110,0xFFE27A,PXA_CANVAS_ALIGN_LEFT,detail_name,detail_name_length);
         char cost_text[24];
         pxa_i18n_argument_t cost_argument={"cost",4u,PXA_I18N_ARGUMENT_U32,
                                            {.u32=plant_cost(focused_plant)}};
         size_t cost_length=pxa_i18n_format(&i18n,PXA_MSG_SEED_SUN_COST,
                                            &cost_argument,1u,cost_text,sizeof(cost_text));
-        pxa_canvas_text(frame,80,132,110,0xFFE27A,PXA_CANVAS_ALIGN_LEFT,cost_text,cost_length);
-        pxa_canvas_text(frame,20,174,164,0xC8E6A0,PXA_CANVAS_ALIGN_CENTER,detail,detail_length);
-        pxa_canvas_rect(frame,196,112,80,36,0xA6D66D,7);
+        pxa_canvas_text(frame,SEED_OX+80,132,110,0xFFE27A,PXA_CANVAS_ALIGN_LEFT,cost_text,cost_length);
+        pxa_canvas_text(frame,SEED_OX+20,174,164,0xC8E6A0,PXA_CANVAS_ALIGN_CENTER,detail,detail_length);
+        pxa_canvas_rect(frame,SEED_OX+196,112,80,36,0xA6D66D,7);
         const char* choose=garden_message(PXA_MSG_ACTION_CHOOSE);
-        draw_body_button_text(frame,196,112,80,36,0x1D3528,choose,garden_text_len(choose));
-        pxa_canvas_rect(frame,196,160,80,30,0x4A6A8A,7);
+        draw_body_button_text(frame,SEED_OX+196,112,80,36,0x1D3528,choose,garden_text_len(choose));
+        pxa_canvas_rect(frame,SEED_OX+196,160,80,30,0x4A6A8A,7);
         const char* cancel=garden_message(PXA_MSG_ACTION_CANCEL);
-        draw_body_button_text(frame,196,160,80,30,0xFFFFFF,cancel,garden_text_len(cancel));
+        draw_body_button_text(frame,SEED_OX+196,160,80,30,0xFFFFFF,cancel,garden_text_len(cancel));
     } else {
-        pxa_canvas_rect(frame,8,94,280,106,0x243A5A,6);
-        pxa_canvas_rect(frame,10,96,276,102,0x1E344E,5);
+        pxa_canvas_rect(frame,SEED_OX+8,94,280,106,0x243A5A,6);
+        pxa_canvas_rect(frame,SEED_OX+10,96,276,102,0x1E344E,5);
         for(uint8_t i=0;i<avail_count;++i){
             uint8_t pt=avail_list[i];
             uint8_t col=i%7;
             uint8_t row=i/7;
-            int16_t x=(int16_t)(12+col*40);
+            int16_t x=(int16_t)(SEED_OX+12+col*40);
             int16_t y=(int16_t)(102+row*46);
             pxa_canvas_rect(frame,x,y,36,40,0xCFEFBB,4);
             draw_actor(frame,x+3,y+5,30,30,plant_actor_x(pt),plant_actor_y(pt),255);
         }
         if(avail_count==0){
             const char* empty=garden_message(PXA_MSG_SEED_EMPTY);
-            pxa_canvas_text(frame,14,140,268,0x8CA8C8,PXA_CANVAS_ALIGN_CENTER,empty,garden_text_len(empty));
+            pxa_canvas_text(frame,SEED_OX+14,140,268,0x8CA8C8,PXA_CANVAS_ALIGN_CENTER,empty,garden_text_len(empty));
         }
     }
     uint32_t start_bg=chosen_count>0?0xA6D66D:0x4A5A4A;
     uint32_t start_fg=chosen_count>0?0x1D3528:0x8CA0B8;
-    pxa_canvas_rect(frame,58,202,180,30,start_bg,7);
+    pxa_canvas_rect(frame,SEED_OX+58,202,180,30,start_bg,7);
     const char* start_txt=garden_message(PXA_MSG_ACTION_START_BATTLE);
-    draw_body_button_text(frame,58,202,180,30,start_fg,start_txt,garden_text_len(start_txt));
+    draw_body_button_text(frame,SEED_OX+58,202,180,30,start_fg,start_txt,garden_text_len(start_txt));
 }
 static void draw_almanac(pxa_canvas_frame_t* frame){
-    pxa_canvas_rect(frame,0,0,296,240,0x1C2E2E,12);
-    pxa_canvas_rect(frame,0,0,296,LIST_HEADER_H,0x2A4A3A,12);
+    pxa_canvas_rect(frame,0,0,GARDEN_W,GARDEN_H,0x1C2E2E,12);
+    pxa_canvas_rect(frame,0,0,GARDEN_W,LIST_HEADER_H,0x2A4A3A,12);
     draw_back_button(frame);
     const char* title=garden_message(PXA_MSG_ALMANAC_TITLE);
-    pxa_canvas_text(frame,0,9,296,0xFFFFFF,PXA_CANVAS_ALIGN_CENTER,title,garden_text_len(title));
-    pxa_canvas_clip_push(frame,0,LIST_VIEW_Y,296,LIST_VIEW_H);
+    pxa_canvas_text(frame,0,9,GARDEN_W,0xFFFFFF,PXA_CANVAS_ALIGN_CENTER,title,garden_text_len(title));
+    pxa_canvas_clip_push(frame,0,LIST_VIEW_Y,GARDEN_W,LIST_VIEW_H);
     for(uint8_t pt=PLANT_SHOOTER;pt<PLANT_TYPE_COUNT;++pt){
         int16_t y=(int16_t)(ALMANAC_GRID_Y+(pt-PLANT_SHOOTER)*ALMANAC_CARD_STRIDE_Y-almanac_scroll);
         uint8_t unlocked=is_plant_unlocked(pt);

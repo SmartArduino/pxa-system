@@ -1,5 +1,6 @@
 #include "pxa_canvas.h"
 #include "pxa_app_messages.h"
+#include "pxa_game_screen.h"
 #include "pxa_game_sfx.h"
 #include "pxa_i18n.h"
 #include "pxa_storage.h"
@@ -18,58 +19,161 @@
 #define GAME_MAX_CATCHUP_STEPS 2u
 #define AUDIO_TICK_MS 20u
 #define RENDER_EVERY_TICKS 2u
-#define BOARD_X 38
-#define BOARD_Y 50
-#define CELL_W 30
-#define CELL_H 32
-#define MOWER_HOME_X 8
 #define MAX_PROJECTILES 16
 #define MAX_ZOMBIES 6
 #define MAX_SUNS 6
 #define MAX_BLASTS 4
 #define DOUBLE_TAP_WINDOW_US UINT64_C(450000)
 
+/* The lawn, HUD and list screens reflow inside the real safe area; the macros
+ * below keep every existing draw and hit-test expression working while their
+ * values come from garden_layout_update(). */
+#define CELL_W 30
+#define CELL_H 32
 #define LIST_HEADER_H 38
-#define LIST_VIEW_Y LIST_HEADER_H
-#define LIST_VIEW_H (240 - LIST_VIEW_Y)
 #define LIST_DRAG_THRESHOLD 6
-#define LEVEL_CARD_X 10
 #define LEVEL_CARD_W 132
 #define LEVEL_CARD_H 86
 #define LEVEL_CARD_STRIDE_X 144
 #define LEVEL_CARD_STRIDE_Y 94
-#define LEVEL_GRID_Y 46
-#define ALMANAC_CARD_X 8
 #define ALMANAC_CARD_W 280
 #define ALMANAC_CARD_H 86
 #define ALMANAC_CARD_STRIDE_Y 94
-#define ALMANAC_GRID_Y 44
-
-#define SEED_Y 8
-#define SEED_VIEW_X 10
-#define SEED_VIEW_W 222
-#define SEED_X SEED_VIEW_X
 #define SEED_CARD_W 44
 #define SEED_STRIDE 48
 #define SEED_DRAG_THRESHOLD 6
-#define PAUSE_X 242
-#define PAUSE_Y 12
 #define PAUSE_W 28
 #define PAUSE_H 28
-#define WAVE_BAR_X 214
-#define WAVE_BAR_Y 38
 #define WAVE_BAR_W 28
-
 #define SUN_IMAGE_SIZE 22
-#define SUN_STATUS_X 70
-#define SUN_STATUS_Y 216
 #define SUN_STATUS_W 156
 #define SUN_STATUS_H 20
-#define SHOVEL_X 230
-#define SHOVEL_Y 210
 #define SHOVEL_W 28
 #define SHOVEL_H 26
 #define SHOVEL_IMAGE_SIZE 24
+
+typedef struct {
+    int16_t width;
+    int16_t height;
+    int16_t bottom;
+    int16_t board_x;
+    int16_t board_y;
+    int16_t mower_home_x;
+    int16_t list_view_y;
+    int16_t list_view_h;
+    int16_t level_card_x;
+    int16_t level_grid_y;
+    int16_t almanac_card_x;
+    int16_t almanac_grid_y;
+    int16_t seed_y;
+    int16_t seed_view_x;
+    int16_t seed_view_w;
+    int16_t pause_x;
+    int16_t pause_y;
+    int16_t wave_bar_x;
+    int16_t wave_bar_y;
+    int16_t sun_status_x;
+    int16_t sun_status_y;
+    int16_t shovel_x;
+    int16_t shovel_y;
+    int16_t home_x;
+    int16_t home_panel_x;
+    int16_t seed_ox;
+} garden_layout_t;
+
+static garden_layout_t garden_layout;
+static pxa_game_screen_t game_screen;
+
+#define BOARD_X (garden_layout.board_x)
+#define BOARD_Y (garden_layout.board_y)
+#define MOWER_HOME_X (garden_layout.mower_home_x)
+#define LIST_VIEW_Y (garden_layout.list_view_y)
+#define LIST_VIEW_H (garden_layout.list_view_h)
+#define LEVEL_CARD_X (garden_layout.level_card_x)
+#define LEVEL_GRID_Y (garden_layout.level_grid_y)
+#define ALMANAC_CARD_X (garden_layout.almanac_card_x)
+#define ALMANAC_GRID_Y (garden_layout.almanac_grid_y)
+#define SEED_Y (garden_layout.seed_y)
+#define SEED_VIEW_X (garden_layout.seed_view_x)
+#define SEED_VIEW_W (garden_layout.seed_view_w)
+#define SEED_X SEED_VIEW_X
+#define PAUSE_X (garden_layout.pause_x)
+#define PAUSE_Y (garden_layout.pause_y)
+#define WAVE_BAR_X (garden_layout.wave_bar_x)
+#define WAVE_BAR_Y (garden_layout.wave_bar_y)
+#define SUN_STATUS_X (garden_layout.sun_status_x)
+#define SUN_STATUS_Y (garden_layout.sun_status_y)
+#define SHOVEL_X (garden_layout.shovel_x)
+#define SHOVEL_Y (garden_layout.shovel_y)
+#define GARDEN_W (garden_layout.width)
+#define GARDEN_H (garden_layout.height)
+#define GARDEN_BOTTOM (garden_layout.bottom)
+#define PAUSE_MENU_X ((GARDEN_W-200)/2)
+#define PAUSE_MENU_Y ((GARDEN_H-176)/2)
+#define HOME_X (garden_layout.home_x)
+#define HOME_PANEL_X (garden_layout.home_panel_x)
+#define SEED_OX (garden_layout.seed_ox)
+
+static void garden_layout_update(void) {
+    const int left = (int)game_screen.safe_left;
+    const int top = (int)game_screen.safe_top;
+    const int right = (int)game_screen.safe_right;
+    const int bottom = (int)game_screen.safe_bottom;
+    const int width = (int)game_screen.width;
+    const int height = (int)game_screen.height;
+    const int safe_w = width - left - right;
+    const int board_w = BOARD_COLS * CELL_W;
+    const int board_h = BOARD_ROWS * CELL_H;
+    /* Small panels keep the tuned 296x240 layout byte-for-byte; larger
+     * displays reflow the lawn, HUD and lists inside the safe area. */
+    const int wide = width > 320;
+    int board_x = 38;
+    int board_y = 50;
+    int seed_y = 8;
+    int sun_y = 216;
+    if (wide) {
+        seed_y = top + 4;
+        sun_y = height - bottom - 30;
+        board_y = seed_y + 52;
+        board_x = left + (safe_w - board_w) / 2;
+        if (board_y + board_h > sun_y - 6) board_y = sun_y - 6 - board_h;
+        if (board_y < seed_y + 46) board_y = seed_y + 46;
+        if (board_x < 0) board_x = 0;
+    }
+    garden_layout.width = (int16_t)width;
+    garden_layout.height = (int16_t)height;
+    garden_layout.bottom = (int16_t)(wide ? height - bottom : 240);
+    garden_layout.board_x = (int16_t)board_x;
+    garden_layout.board_y = (int16_t)board_y;
+    garden_layout.mower_home_x = (int16_t)(board_x - CELL_W);
+    garden_layout.seed_y = (int16_t)seed_y;
+    garden_layout.seed_view_x = (int16_t)(wide ? left + 4 : 10);
+    garden_layout.seed_view_w = (int16_t)(wide ? (safe_w > 160 ? safe_w - 44 : safe_w) : 222);
+    garden_layout.pause_x = (int16_t)(wide ? width - right - 34 : 242);
+    garden_layout.pause_y = (int16_t)(wide ? top + 6 : 12);
+    garden_layout.wave_bar_x = (int16_t)(garden_layout.pause_x - 6);
+    garden_layout.wave_bar_y = (int16_t)(garden_layout.pause_y + 34);
+    garden_layout.sun_status_x = (int16_t)(wide ? (width - SUN_STATUS_W) / 2 : 70);
+    garden_layout.sun_status_y = (int16_t)sun_y;
+    garden_layout.shovel_x = (int16_t)(wide ? width - right - 34 : 230);
+    garden_layout.shovel_y = (int16_t)(wide ? sun_y - 6 : 210);
+    garden_layout.list_view_y = (int16_t)(wide ? top + LIST_HEADER_H : LIST_HEADER_H);
+    garden_layout.list_view_h = (int16_t)(wide ? height - bottom - garden_layout.list_view_y : 240 - LIST_HEADER_H);
+    garden_layout.level_card_x = (int16_t)(wide ? left + (safe_w - (LEVEL_CARD_W * 2 + 12)) / 2 : 10);
+    if (garden_layout.level_card_x < (wide ? left : 0))
+        garden_layout.level_card_x = (int16_t)(wide ? left : 0);
+    garden_layout.level_grid_y = (int16_t)(wide ? garden_layout.list_view_y + 8 : 46);
+    garden_layout.almanac_card_x = (int16_t)(wide ? left + (safe_w - ALMANAC_CARD_W) / 2 : 8);
+    if (garden_layout.almanac_card_x < (wide ? left : 0))
+        garden_layout.almanac_card_x = (int16_t)(wide ? left : 0);
+    garden_layout.almanac_grid_y = (int16_t)(wide ? garden_layout.list_view_y + 6 : 44);
+    garden_layout.home_panel_x = (int16_t)(wide ? (width - 268) / 2 : 14);
+    if (garden_layout.home_panel_x < 0) garden_layout.home_panel_x = 0;
+    garden_layout.home_x = (int16_t)(wide ? (width - 220) / 2 : 38);
+    if (garden_layout.home_x < 0) garden_layout.home_x = 0;
+    garden_layout.seed_ox = (int16_t)(wide ? left + (safe_w - 280) / 2 : 0);
+    if (garden_layout.seed_ox < 0) garden_layout.seed_ox = 0;
+}
 
 #define ACTOR_ATLAS_W 352
 #define ACTOR_ATLAS_H 112
@@ -455,6 +559,8 @@ static void garden_save(void);
 int32_t pxa_app_start(const uint8_t* config,uint32_t config_length){
     (void)pxa_i18n_init_from_start_config(
         &i18n,&pxa_app_i18n_bundle,config,config_length);
+    pxa_game_screen_from_start(&game_screen,config,config_length);
+    garden_layout_update();
     if(!pxa_window_fullscreen()) return PXA_STATUS_INTERNAL;
     init_unlocks();
     state=STATE_HOME;
@@ -477,6 +583,10 @@ int32_t pxa_app_on_event(const uint8_t* event,uint32_t length){
         int locale_result=pxa_i18n_handle_event(&i18n,&parsed);
         if(locale_result!=0)
             return locale_result==1 && !render()?PXA_STATUS_INTERNAL:PXA_EVENT_HANDLED;
+    }
+    if(pxa_game_screen_handle_event(&game_screen,&parsed)){
+        garden_layout_update();
+        return render()?PXA_EVENT_HANDLED:PXA_STATUS_INTERNAL;
     }
     if(parsed.service==PXA_SERVICE_WINDOW && parsed.opcode==PXA_WINDOW_BACK_REQUESTED){
         if(!navigate_back()) return PXA_EVENT_UNHANDLED;
@@ -583,7 +693,7 @@ int32_t pxa_app_on_event(const uint8_t* event,uint32_t length){
                 almanac_scroll=0;
                 state=STATE_ALMANAC;
                 play_sfx(PXA_GAME_SFX_TAP);
-            } else if(hit_home_start(x,y) || (y>=90 && y<240)){
+            } else if(hit_home_start(x,y) || (y>=90 && y<GARDEN_H)){
                 // 扩大判定，任意点击下半屏都进入选卡，避免因圆角或文字偏移导致假死
                 current_level = max_unlocked>0 ? max_unlocked-1 : 0;
                 choose_default_plants();
@@ -635,16 +745,16 @@ int32_t pxa_app_on_event(const uint8_t* event,uint32_t length){
             else (void)begin_list_gesture(y);
         } else {
             if(state==STATE_PAUSED){
-                if(x>=68 && x<228 && y>=100 && y<124){
+                if(x>=PAUSE_MENU_X+20 && x<PAUSE_MENU_X+180 && y>=PAUSE_MENU_Y+58 && y<PAUSE_MENU_Y+82){
                     state=STATE_PLAYING;
                     play_sfx(PXA_GAME_SFX_TAP);
-                } else if(x>=68 && x<228 && y>=130 && y<154){
+                } else if(x>=PAUSE_MENU_X+20 && x<PAUSE_MENU_X+180 && y>=PAUSE_MENU_Y+88 && y<PAUSE_MENU_Y+112){
                     reset_game_for_level(current_level);
                     play_sfx(PXA_GAME_SFX_ACTION);
-                } else if(x>=68 && x<228 && y>=160 && y<184){
+                } else if(x>=PAUSE_MENU_X+20 && x<PAUSE_MENU_X+180 && y>=PAUSE_MENU_Y+118 && y<PAUSE_MENU_Y+142){
                     state=STATE_HOME;
                     play_sfx(PXA_GAME_SFX_TAP);
-                } else if(x>=68 && x<228 && y>=190 && y<214){
+                } else if(x>=PAUSE_MENU_X+20 && x<PAUSE_MENU_X+180 && y>=PAUSE_MENU_Y+148 && y<PAUSE_MENU_Y+172){
                     sound_enabled = !sound_enabled;
                     play_sfx(PXA_GAME_SFX_TAP);
                 } else if(hit_pause_button(x,y)){

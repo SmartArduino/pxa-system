@@ -1,5 +1,6 @@
 #include "pxa_canvas.h"
 #include "pxa_app_messages.h"
+#include "pxa_game_screen.h"
 #include "pxa_game_sfx.h"
 #include "pxa_i18n.h"
 #include "pxa_storage.h"
@@ -10,6 +11,7 @@ void pxa_plane_game_stop(uint32_t reason);
 void pxa_plane_game_configure(uint8_t weapon_level, uint8_t hull_level,
                               uint8_t ship_model, uint8_t mission,
                               uint8_t module);
+void pxa_plane_game_set_screen(const pxa_game_screen_t *screen);
 int pxa_plane_game_take_exit_request(void);
 int pxa_plane_game_take_result(uint32_t *final_score, uint8_t *stars,
                                uint16_t *reward);
@@ -72,6 +74,69 @@ static int16_t pointer_last_y;
 static uint8_t scroll_pointer_active;
 static uint8_t scroll_pointer_moved;
 static pxa_i18n_t i18n;
+
+/* The shell keeps its 296x240 design coordinates and hit zones; on a larger
+ * panel the canvas node is pinned to a centered design-size region after the
+ * first present, so input stays in design pixels without a second transform.
+ * The battle module reflows its own field to the real screen. */
+typedef struct {
+    int16_t node_x;
+    int16_t node_y;
+    int16_t node_w;
+    int16_t node_h;
+} shell_layout_t;
+
+static shell_layout_t shell_layout;
+static pxa_game_screen_t game_screen;
+static uint8_t shell_geometry_ready;
+
+static void shell_layout_update(void) {
+    const int safe_w = (int)game_screen.width - (int)game_screen.safe_left -
+                       (int)game_screen.safe_right;
+    const int safe_h = (int)game_screen.height - (int)game_screen.safe_top -
+                       (int)game_screen.safe_bottom;
+    int width = SCREEN_W;
+    int height = SCREEN_H;
+    if (width > (int)game_screen.width) width = (int)game_screen.width;
+    if (height > (int)game_screen.height) height = (int)game_screen.height;
+    shell_layout.node_w = (int16_t)width;
+    shell_layout.node_h = (int16_t)height;
+    shell_layout.node_x = (int16_t)((int)game_screen.safe_left +
+                                    (safe_w - width) / 2);
+    shell_layout.node_y = (int16_t)((int)game_screen.safe_top +
+                                    (safe_h - height) / 2);
+    if (shell_layout.node_x < 0) shell_layout.node_x = 0;
+    if (shell_layout.node_y < 0) shell_layout.node_y = 0;
+}
+
+/* PATCH the auto-created canvas node to the centered design region. The
+ * transaction consumes the next surface generation; later canvas frames
+ * continue from there. */
+static void apply_shell_geometry(void) {
+    pxa_ui_transaction_t transaction = {0};
+    uint32_t generation;
+    if (shell_geometry_ready || pxa_arcade_ui_generation == 0) return;
+    generation = pxa_arcade_ui_generation + 1u;
+    if (generation == 0) return;
+    if (pxa_ui_transaction_begin(&transaction, generation,
+                                 PXA_UI_TRANSACTION_PATCH, packet,
+                                 sizeof(packet)) &&
+        pxa_ui_set_u8(&transaction, SHELL_NODE, PXA_UI_PROPERTY_POSITION, 1) &&
+        pxa_ui_set_length(&transaction, SHELL_NODE, PXA_UI_PROPERTY_X,
+                          PXA_UI_LENGTH_LOGICAL_PX, shell_layout.node_x) &&
+        pxa_ui_set_length(&transaction, SHELL_NODE, PXA_UI_PROPERTY_Y,
+                          PXA_UI_LENGTH_LOGICAL_PX, shell_layout.node_y) &&
+        pxa_ui_set_length(&transaction, SHELL_NODE, PXA_UI_PROPERTY_WIDTH,
+                          PXA_UI_LENGTH_LOGICAL_PX, shell_layout.node_w) &&
+        pxa_ui_set_length(&transaction, SHELL_NODE, PXA_UI_PROPERTY_HEIGHT,
+                          PXA_UI_LENGTH_LOGICAL_PX, shell_layout.node_h) &&
+        pxa_ui_transaction_commit(&transaction)) {
+        pxa_arcade_ui_generation = generation;
+        shell_geometry_ready = 1;
+        return;
+    }
+    if (transaction.active) (void)pxa_ui_transaction_cancel(&transaction);
+}
 
 static const char hero_asset[] = "assets/ui/home-hero.png";
 static const char mission_icon[] = "assets/ui/icon-mission.png";
@@ -588,9 +653,12 @@ static int render_shell(void) {
             text_length(messages[notice]));
     }
     if (page != PAGE_RESULTS) draw_nav(&frame);
-    return pxa_canvas_present(SHELL_NODE, &frame, &pxa_arcade_ui_generation,
-                              &shell_initialized, ui_commands,
-                              sizeof(ui_commands), packet, sizeof(packet));
+    if (!pxa_canvas_present(SHELL_NODE, &frame, &pxa_arcade_ui_generation,
+                            &shell_initialized, ui_commands,
+                            sizeof(ui_commands), packet, sizeof(packet)))
+        return 0;
+    apply_shell_geometry();
+    return 1;
 }
 
 static void save_progress(void) {
@@ -608,6 +676,7 @@ static void save_progress(void) {
 static int start_battle(void) {
     story_seen = 1;
     notice = 0;
+    pxa_plane_game_set_screen(&game_screen);
     pxa_plane_game_configure(weapon_level, hull_level, ship_model,
                              selected_mission, equipped_module);
     if (pxa_plane_game_start(NULL, 0) != PXA_STATUS_OK) return 0;
@@ -738,6 +807,9 @@ int32_t pxa_app_start(const uint8_t *config, uint32_t config_length) {
     static const char key[] = "plane.progress";
     (void)pxa_i18n_init_from_start_config(
         &i18n, &pxa_app_i18n_bundle, config, config_length);
+    pxa_game_screen_from_start(&game_screen, config, config_length);
+    shell_layout_update();
+    shell_geometry_ready = 0;
     credits = 240u;
     weapon_level = 0u;
     hull_level = 0u;
@@ -779,6 +851,13 @@ int32_t pxa_app_on_event(const uint8_t *event, uint32_t length) {
                        ? PXA_STATUS_INTERNAL
                        : PXA_EVENT_HANDLED;
         }
+    }
+    if (pxa_game_screen_handle_event(&game_screen, &parsed)) {
+        shell_layout_update();
+        shell_geometry_ready = 0;
+        if (page == PAGE_BATTLE)
+            return pxa_plane_game_on_event(event, length);
+        return render_shell() ? PXA_EVENT_HANDLED : PXA_STATUS_INTERNAL;
     }
     if (page == PAGE_BATTLE) {
         if (parsed.service == PXA_SERVICE_WINDOW &&

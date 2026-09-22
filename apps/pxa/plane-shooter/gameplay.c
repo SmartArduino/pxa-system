@@ -5,17 +5,12 @@
 #include "pxa_arcade_module.h"
 
 #include "pxa_canvas.h"
+#include "pxa_game_screen.h"
 #include "pxa_game_sfx.h"
 
 #define GAME_ROOT_NODE 1u
 #define GAME_NODE 2u
-#define GAME_WIDTH 296
-#define GAME_HEIGHT 240
-#define PLAY_TOP 39
 #define LEFT_GESTURE_GUARD 40
-#define PLAYER_LANE_X 224
-#define PLAYER_MIN_Y 42
-#define PLAYER_MAX_Y 204
 #define PLAYER_PLANE_W 38
 #define PLAYER_PLANE_H 28
 #define ENEMY_PLANE_W 28
@@ -37,6 +32,90 @@
 #define WAVE_SCORE_STEP 15u
 #define OVERDRIVE_TICKS 120u
 #define SHIELD_TICKS 90u
+
+/* Design-space metrics of the original 296x240 build. The battle reflows the
+ * HUD band and play field inside the real safe area, so the same constants
+ * become margins and reserves instead of absolute positions. */
+#define HUD_PANEL_W 232
+#define HUD_PANEL_H 27
+#define HUD_BAND_H 39
+#define LANE_RIGHT_MARGIN 72
+#define FIELD_BOTTOM_RESERVE 24
+#define PLAYER_BOTTOM_RESERVE 36
+#define DIALOG_W 220
+#define DIALOG_H 157
+#define PAUSE_DIALOG_W 200
+#define PAUSE_DIALOG_H 151
+#define BOSS_STOP_LEFT 22
+
+typedef struct {
+    int16_t width;
+    int16_t height;
+    int16_t field_left;
+    int16_t field_top;
+    int16_t field_right;
+    int16_t field_bottom;
+    int16_t lane_x;
+    int16_t player_min_y;
+    int16_t player_max_y;
+    int16_t hud_x;
+    int16_t hud_y;
+    int16_t hud_w;
+    int16_t pause_x;
+    int16_t pause_y;
+    int16_t dialog_x;
+    int16_t dialog_y;
+    int16_t pause_dialog_x;
+    int16_t pause_dialog_y;
+} battle_layout_t;
+
+static battle_layout_t layout;
+static pxa_game_screen_t game_screen;
+
+static void layout_update(void) {
+    const int width = (int)game_screen.width;
+    const int height = (int)game_screen.height;
+    const int left = (int)game_screen.safe_left;
+    const int top = (int)game_screen.safe_top;
+    const int right = (int)game_screen.safe_right;
+    const int bottom = (int)game_screen.safe_bottom;
+    int hud_w = HUD_PANEL_W;
+    const int max_hud_w = width - 2 * (left + 6);
+    if (hud_w > max_hud_w) hud_w = max_hud_w > 0 ? max_hud_w : width;
+    layout.width = (int16_t)width;
+    layout.height = (int16_t)height;
+    layout.hud_w = (int16_t)hud_w;
+    layout.hud_x = (int16_t)((width - hud_w) / 2);
+    layout.hud_y = (int16_t)(top + 5);
+    layout.field_left = (int16_t)left;
+    layout.field_top = (int16_t)(top + HUD_BAND_H);
+    layout.field_right = (int16_t)(width - right);
+    layout.field_bottom = (int16_t)(height - bottom - FIELD_BOTTOM_RESERVE);
+    if (layout.field_bottom < layout.field_top + 60)
+        layout.field_bottom = (int16_t)(height - bottom);
+    layout.lane_x = (int16_t)(layout.field_right - LANE_RIGHT_MARGIN);
+    layout.player_min_y = (int16_t)(layout.field_top + 3);
+    layout.player_max_y = (int16_t)(height - bottom - PLAYER_BOTTOM_RESERVE);
+    if (layout.player_max_y < layout.player_min_y)
+        layout.player_max_y = layout.player_min_y;
+    layout.pause_x = (int16_t)(layout.field_right - 16);
+    layout.pause_y = (int16_t)(top + 16);
+    layout.dialog_x = (int16_t)((width - DIALOG_W) / 2);
+    layout.dialog_y = (int16_t)((height - DIALOG_H) / 2);
+    layout.pause_dialog_x = (int16_t)((width - PAUSE_DIALOG_W) / 2);
+    layout.pause_dialog_y = (int16_t)((height - PAUSE_DIALOG_H) / 2);
+}
+
+/* HUD columns keep their design offsets from the panel's left edge, scaled if
+ * the panel had to shrink. */
+static int16_t hud_px(int offset) {
+    return (int16_t)(layout.hud_x +
+                     offset * (int)layout.hud_w / HUD_PANEL_W);
+}
+
+static int16_t hud_pw(int width) {
+    return (int16_t)(width * (int)layout.hud_w / HUD_PANEL_W);
+}
 
 enum {
     ENEMY_SCOUT = 0,
@@ -332,8 +411,8 @@ static void reset_game(void) {
     result_stars = 0;
     result_reward = 0;
     last_tick_us = 0;
-    player_x = (int16_t)(PLAYER_LANE_X - configured_ship_model * 8u);
-    player_y = 132;
+    player_x = (int16_t)(layout.lane_x - configured_ship_model * 8u);
+    player_y = (int16_t)((layout.player_min_y + layout.player_max_y) / 2);
     clear_shots(player_bullets, PLAYER_BULLET_COUNT);
     clear_shots(enemy_bullets, ENEMY_BULLET_COUNT);
     clear_enemies();
@@ -461,7 +540,12 @@ static void spawn_enemy(void) {
         enemy->active = 1;
         enemy->kind = kind;
         enemy->x = (int16_t)(-(ENEMY_PLANE_W + 10 + (int16_t)(random_next() % 44u)));
-        enemy->y = (int16_t)(PLAY_TOP + 8 + random_next() % 151u);
+        {
+            const int span = (int)layout.field_bottom - (int)layout.field_top -
+                             ENEMY_PLANE_H - 8;
+            enemy->y = (int16_t)(layout.field_top + 8 +
+                                 (int)(random_next() % (span > 1 ? span : 1)));
+        }
         enemy->vy = (int8_t)((random_next() & 1u) == 0 ? 1 : -1);
         enemy->health = enemy_health(kind);
         enemy->fire_delay = (uint8_t)(18u + random_next() % 30u);
@@ -473,7 +557,10 @@ static void start_boss(uint8_t wave) {
     clear_enemies();
     boss.active = 1;
     boss.x = -BOSS_WIDTH;
-    boss.y = 95;
+    boss.y = (int16_t)(layout.field_top +
+                       ((int)layout.field_bottom - (int)layout.field_top -
+                        BOSS_HEIGHT) /
+                           2);
     boss.vy = 1;
     boss.max_health = (uint8_t)(32u + wave * 7u + configured_mission * 14u);
     boss.health = boss.max_health;
@@ -616,10 +703,14 @@ static int overlaps(int16_t ax, int16_t ay, int16_t aw, int16_t ah,
 static void draw_starfield(pxa_canvas_frame_t* frame) {
     static const uint32_t planet_outer[] = {0x0B2741, 0x42152E, 0x173C3E};
     static const uint32_t planet_inner[] = {0x123856, 0x6B2446, 0x246864};
+    const int field_h = (int)layout.field_bottom - (int)layout.field_top;
     for (uint8_t index = 0; index < 3; ++index) {
-        const uint16_t phase = (uint16_t)((star_scroll / (index + 3u) + index * 103u) % 330u);
+        const uint16_t range = (uint16_t)(layout.width + 44);
+        const uint16_t phase =
+            (uint16_t)((star_scroll / (index + 3u) + index * 103u) % range);
         const int16_t x = (int16_t)(phase - 22);
-        const int16_t y = (int16_t)(64 + index * 58);
+        const int16_t y =
+            (int16_t)(layout.field_top + field_h * (index + 1) / 4);
         const uint32_t color = index == 1 ? planet_outer[configured_mission]
                                            : 0x102540;
         pxa_canvas_circle(frame, x, y, (uint16_t)(30 - index * 5u), color);
@@ -629,16 +720,18 @@ static void draw_starfield(pxa_canvas_frame_t* frame) {
     }
     for (uint8_t index = 0; index < 34; ++index) {
         const uint8_t layer = (uint8_t)(index % 3u);
-        const uint16_t range = (uint16_t)(GAME_WIDTH + 24);
+        const uint16_t range = (uint16_t)(layout.width + 24);
         const uint16_t phase = (uint16_t)((index * 67u + star_scroll * (layer + 1u)) % range);
         const int16_t x = (int16_t)(phase - 12);
-        const int16_t y = (int16_t)(PLAY_TOP + 4 + (index * 41u) % 188u);
+        const int16_t y = (int16_t)(layout.field_top + 4 +
+                                    (int)((index * 41u) % (uint16_t)(field_h > 8 ? field_h - 8 : 1)));
         const uint32_t color = layer == 0 ? 0x5E88AD : layer == 1 ? 0x96CBF2 : 0xE5F4FF;
         pxa_canvas_circle(frame, x, y, (uint16_t)(layer == 2 ? 2 : 1), color);
     }
     for (uint8_t index = 0; index < 4; ++index) {
-        const int16_t x = (int16_t)(32 + (index * 79 + star_scroll / 3u) % 280u);
-        const int16_t y = (int16_t)(57 + index * 39);
+        const int width = layout.width > 32 ? layout.width - 32 : 1;
+        const int16_t x = (int16_t)(16 + (int)((index * 79 + star_scroll / 3u) % (uint16_t)width));
+        const int16_t y = (int16_t)(layout.field_top + 18 + index * field_h / 6);
         pxa_canvas_circle(frame, x, y, (uint16_t)(10 - index),
                           index & 1u ? 0x0B2944 : 0x102E4A);
         pxa_canvas_circle(frame, (int16_t)(x - 3), (int16_t)(y - 2),
@@ -788,16 +881,26 @@ static int render(void) {
 
     pxa_canvas_begin(&frame, draw_data, sizeof(draw_data));
     static const uint32_t scene_colors[] = {0x061321, 0x190C1B, 0x071A1C};
-    pxa_canvas_rect(&frame, 0, 0, GAME_WIDTH, GAME_HEIGHT,
+    pxa_canvas_rect(&frame, 0, 0, layout.width, layout.height,
                     scene_colors[configured_mission], 0);
     draw_starfield(&frame);
-    for (uint8_t index = 0; index < 5; ++index)
-        pxa_canvas_line(&frame, 0, (int16_t)(PLAY_TOP + 30 + index * 34), GAME_WIDTH,
-                        (int16_t)(PLAY_TOP + 30 + index * 34), 0x0A2338, 1);
-    for (uint8_t index = 0; index < 5; ++index) {
-        const int16_t y = (int16_t)(PLAY_TOP + 30 + index * 34);
-        const int16_t x = (int16_t)((star_scroll * 3u + index * 57u) % GAME_WIDTH);
-        pxa_canvas_line(&frame, x, y, (int16_t)(x + 28), y, 0x1A526D, 1);
+    {
+        const int field_h = (int)layout.field_bottom - (int)layout.field_top;
+        const int field_w = (int)layout.field_right - (int)layout.field_left;
+        for (uint8_t index = 0; index < 5; ++index) {
+            const int16_t y =
+                (int16_t)(layout.field_top + field_h * (index + 1) / 6);
+            pxa_canvas_line(&frame, layout.field_left, y, layout.field_right, y,
+                            0x0A2338, 1);
+        }
+        for (uint8_t index = 0; index < 5; ++index) {
+            const int16_t y =
+                (int16_t)(layout.field_top + field_h * (index + 1) / 6);
+            const int16_t x = (int16_t)(layout.field_left +
+                (int)((star_scroll * 3u + index * 57u) %
+                      (uint16_t)(field_w > 1 ? field_w : 1)));
+            pxa_canvas_line(&frame, x, y, (int16_t)(x + 28), y, 0x1A526D, 1);
+        }
     }
 
     for (uint8_t index = 0; index < PLAYER_BULLET_COUNT; ++index)
@@ -829,85 +932,115 @@ static int render(void) {
     draw_engine_particles(&frame);
     draw_player(&frame);
 
-    pxa_canvas_image(&frame, 32, 5, 232, 27, 255, PXA_UI_IMAGE_FIT_STRETCH,
-                     hud_panel_asset, sizeof(hud_panel_asset) - 1);
+    pxa_canvas_image(&frame, layout.hud_x, layout.hud_y, layout.hud_w,
+                     HUD_PANEL_H, 255, PXA_UI_IMAGE_FIT_STRETCH, hud_panel_asset,
+                     sizeof(hud_panel_asset) - 1);
     const char *score_label = PXA_PLANE_MSG(PXA_MSG_BATTLE_SCORE);
     const char *wave_label = PXA_PLANE_MSG(PXA_MSG_BATTLE_WAVE);
     const char *chain_label = PXA_PLANE_MSG(PXA_MSG_BATTLE_CHAIN);
-    pxa_canvas_text_box(&frame, 43, 6, 42, 24, 0x95C5E8, PXA_CANVAS_ALIGN_CENTER,
-                        PXA_CANVAS_TEXT_ALIGN_MIDDLE, score_label,
-                        pxa_plane_text_size(score_label));
-    pxa_canvas_text_box(&frame, 82, 6, 45, 24, 0xFFFFFF, PXA_CANVAS_ALIGN_CENTER,
-                        PXA_CANVAS_TEXT_ALIGN_MIDDLE, score_text, score_length);
-    pxa_canvas_text_box(&frame, 129, 6, 22, 24, 0x95C5E8, PXA_CANVAS_ALIGN_RIGHT,
-                        PXA_CANVAS_TEXT_ALIGN_MIDDLE, wave_label,
-                        pxa_plane_text_size(wave_label));
-    pxa_canvas_text_box(&frame, 151, 6, 24, 24, 0xFFFFFF, PXA_CANVAS_ALIGN_LEFT,
-                        PXA_CANVAS_TEXT_ALIGN_MIDDLE, wave_text, wave_length);
-    pxa_canvas_text_box(&frame, 177, 6, 22, 24, 0x95C5E8, PXA_CANVAS_ALIGN_RIGHT,
-                        PXA_CANVAS_TEXT_ALIGN_MIDDLE, chain_label,
-                        pxa_plane_text_size(chain_label));
-    pxa_canvas_text_box(&frame, 199, 6, 30, 24, combo > 1 ? 0xFFE36A : 0xFFFFFF,
+    const int16_t hud_text_y = (int16_t)(layout.hud_y + 1);
+    pxa_canvas_text_box(&frame, hud_px(11), hud_text_y, hud_pw(42), 24, 0x95C5E8,
+                        PXA_CANVAS_ALIGN_CENTER, PXA_CANVAS_TEXT_ALIGN_MIDDLE,
+                        score_label, pxa_plane_text_size(score_label));
+    pxa_canvas_text_box(&frame, hud_px(50), hud_text_y, hud_pw(45), 24, 0xFFFFFF,
+                        PXA_CANVAS_ALIGN_CENTER, PXA_CANVAS_TEXT_ALIGN_MIDDLE,
+                        score_text, score_length);
+    pxa_canvas_text_box(&frame, hud_px(97), hud_text_y, hud_pw(22), 24, 0x95C5E8,
+                        PXA_CANVAS_ALIGN_RIGHT, PXA_CANVAS_TEXT_ALIGN_MIDDLE,
+                        wave_label, pxa_plane_text_size(wave_label));
+    pxa_canvas_text_box(&frame, hud_px(119), hud_text_y, hud_pw(24), 24, 0xFFFFFF,
                         PXA_CANVAS_ALIGN_LEFT, PXA_CANVAS_TEXT_ALIGN_MIDDLE,
-                        combo_text, combo_length);
+                        wave_text, wave_length);
+    pxa_canvas_text_box(&frame, hud_px(145), hud_text_y, hud_pw(22), 24, 0x95C5E8,
+                        PXA_CANVAS_ALIGN_RIGHT, PXA_CANVAS_TEXT_ALIGN_MIDDLE,
+                        chain_label, pxa_plane_text_size(chain_label));
+    pxa_canvas_text_box(&frame, hud_px(167), hud_text_y, hud_pw(30), 24,
+                        combo > 1 ? 0xFFE36A : 0xFFFFFF, PXA_CANVAS_ALIGN_LEFT,
+                        PXA_CANVAS_TEXT_ALIGN_MIDDLE, combo_text, combo_length);
     for (uint8_t index = 0; index < lives; ++index) {
-        pxa_canvas_circle(&frame, (int16_t)(250 - index * 12), 18, 4, 0x68E5AD);
-        pxa_canvas_circle(&frame, (int16_t)(249 - index * 12), 17, 1, 0xD4FFEB);
+        pxa_canvas_circle(&frame, (int16_t)(hud_px(218) - index * 12),
+                          (int16_t)(layout.hud_y + 13), 4, 0x68E5AD);
+        pxa_canvas_circle(&frame, (int16_t)(hud_px(217) - index * 12),
+                          (int16_t)(layout.hud_y + 12), 1, 0xD4FFEB);
     }
-    pxa_canvas_rect(&frame, 82, 34, 132, 3, 0x17344B, 1);
-    pxa_canvas_rect(&frame, 82, 34, (uint16_t)(132u * energy / 100u), 3,
+    pxa_canvas_rect(&frame, hud_px(50), (int16_t)(layout.hud_y + 29), hud_pw(132),
+                    3, 0x17344B, 1);
+    pxa_canvas_rect(&frame, hud_px(50), (int16_t)(layout.hud_y + 29),
+                    (uint16_t)(hud_pw(132) * energy / 100u), 3,
                     overdrive_ticks != 0 ? 0x58F4D6 : 0xF6C85F, 1);
-    pxa_canvas_rect(&frame, 34, 216, 92, 3, 0x17344B, 1);
-    pxa_canvas_rect(&frame, 34, 216,
-                    (uint16_t)(92u * displayed_threat / threat_target), 3,
-                    0x55D7C1, 1);
     {
+        const int16_t threat_y =
+            (int16_t)(layout.height - (int)game_screen.safe_bottom - 28);
+        const int16_t threat_x = (int16_t)(layout.field_left + 2);
+        pxa_canvas_rect(&frame, threat_x, threat_y, 92, 3, 0x17344B, 1);
+        pxa_canvas_rect(&frame, threat_x, threat_y,
+                        (uint16_t)(92u * displayed_threat / threat_target), 3,
+                        0x55D7C1, 1);
         const char *threat_label = PXA_PLANE_MSG(PXA_MSG_BATTLE_THREAT);
-        pxa_canvas_text_box(&frame, 130, 208, 34, 16, 0x9CCDE3,
-                        PXA_CANVAS_ALIGN_LEFT, PXA_CANVAS_TEXT_ALIGN_MIDDLE,
-                        threat_label, pxa_plane_text_size(threat_label));
+        pxa_canvas_text_box(&frame, (int16_t)(threat_x + 96),
+                            (int16_t)(threat_y - 8), 34, 16, 0x9CCDE3,
+                            PXA_CANVAS_ALIGN_LEFT, PXA_CANVAS_TEXT_ALIGN_MIDDLE,
+                            threat_label, pxa_plane_text_size(threat_label));
+        pxa_canvas_text_box(&frame, (int16_t)(threat_x + 132),
+                            (int16_t)(threat_y - 8), 64, 16, 0x9CCDE3,
+                            PXA_CANVAS_ALIGN_LEFT, PXA_CANVAS_TEXT_ALIGN_MIDDLE,
+                            threat_text, threat_length);
     }
-    pxa_canvas_text_box(&frame, 166, 208, 64, 16, 0x9CCDE3,
-                        PXA_CANVAS_ALIGN_LEFT, PXA_CANVAS_TEXT_ALIGN_MIDDLE,
-                        threat_text, threat_length);
     if (boss.active) {
         const char *boss_labels[] = {
             PXA_PLANE_MSG(PXA_MSG_MISSION_ONE_BOSS),
             PXA_PLANE_MSG(PXA_MSG_MISSION_TWO_BOSS),
             PXA_PLANE_MSG(PXA_MSG_MISSION_THREE_BOSS)};
+        const int16_t boss_bar_x = (int16_t)((layout.width - 132) / 2);
+        const int16_t boss_bar_y = (int16_t)(layout.hud_y + 40);
         pxa_canvas_text_box_role(
-            &frame, 34, 40, 60, 16, pxa_canvas_rgba(0xFF9FB0),
-            PXA_CANVAS_FONT_CAPTION, PXA_CANVAS_ALIGN_CENTER,
-            PXA_CANVAS_TEXT_ALIGN_MIDDLE, boss_labels[boss.kind],
-            pxa_plane_text_size(boss_labels[boss.kind]));
-        pxa_canvas_rect(&frame, 96, 45, 132, 5, 0x3A1A30, 2);
-        pxa_canvas_rect(&frame, 96, 45,
-                        (uint16_t)(132u * boss.health / boss.max_health), 5, 0xFF4D6D, 2);
+            &frame, (int16_t)(boss_bar_x - 62), (int16_t)(boss_bar_y - 5), 60,
+            16, pxa_canvas_rgba(0xFF9FB0), PXA_CANVAS_FONT_CAPTION,
+            PXA_CANVAS_ALIGN_CENTER, PXA_CANVAS_TEXT_ALIGN_MIDDLE,
+            boss_labels[boss.kind], pxa_plane_text_size(boss_labels[boss.kind]));
+        pxa_canvas_rect(&frame, boss_bar_x, boss_bar_y, 132, 5, 0x3A1A30, 2);
+        pxa_canvas_rect(&frame, boss_bar_x, boss_bar_y,
+                        (uint16_t)(132u * boss.health / boss.max_health), 5,
+                        0xFF4D6D, 2);
     }
     if (overdrive_ticks != 0) {
         static const char boost[] = "OVERDRIVE";
-        pxa_canvas_text_box(&frame, 103, 42, 90, 18, 0x83FFF0, PXA_CANVAS_ALIGN_CENTER,
-                            PXA_CANVAS_TEXT_ALIGN_MIDDLE, boost, sizeof(boost) - 1);
+        pxa_canvas_text_box(&frame, (int16_t)((layout.width - 90) / 2),
+                            (int16_t)(layout.hud_y + 37), 90, 18, 0x83FFF0,
+                            PXA_CANVAS_ALIGN_CENTER,
+                            PXA_CANVAS_TEXT_ALIGN_MIDDLE, boost,
+                            sizeof(boost) - 1);
     } else if (wave_notice_ticks != 0) {
         const char *wave_notice = PXA_PLANE_MSG(PXA_MSG_BATTLE_INCOMING);
-        pxa_canvas_text_box(&frame, 108, 44, 26, 20, 0xFFE36A, PXA_CANVAS_ALIGN_CENTER,
-                            PXA_CANVAS_TEXT_ALIGN_MIDDLE, wave_text, wave_length);
-        pxa_canvas_text_box(&frame, 134, 44, 56, 20, 0xD9F2FF, PXA_CANVAS_ALIGN_LEFT,
-                            PXA_CANVAS_TEXT_ALIGN_MIDDLE, wave_notice,
-                            pxa_plane_text_size(wave_notice));
+        const int16_t notice_x = (int16_t)((layout.width - 82) / 2);
+        pxa_canvas_text_box(&frame, notice_x, (int16_t)(layout.hud_y + 39), 26,
+                            20, 0xFFE36A, PXA_CANVAS_ALIGN_CENTER,
+                            PXA_CANVAS_TEXT_ALIGN_MIDDLE, wave_text,
+                            wave_length);
+        pxa_canvas_text_box(&frame, (int16_t)(notice_x + 26),
+                            (int16_t)(layout.hud_y + 39), 56, 20, 0xD9F2FF,
+                            PXA_CANVAS_ALIGN_LEFT, PXA_CANVAS_TEXT_ALIGN_MIDDLE,
+                            wave_notice, pxa_plane_text_size(wave_notice));
     }
     if (score == 0 && !game_over && wave_notice_ticks == 0) {
         const char *hint = PXA_PLANE_MSG(PXA_MSG_BATTLE_HINT);
-        pxa_canvas_text_box(&frame, 90, 220, 130, 18, 0x8EB6D4, PXA_CANVAS_ALIGN_CENTER,
-                            PXA_CANVAS_TEXT_ALIGN_MIDDLE, hint,
-                            pxa_plane_text_size(hint));
+        pxa_canvas_text_box(
+            &frame, (int16_t)((layout.width - 130) / 2),
+            (int16_t)(layout.height - (int)game_screen.safe_bottom - 20), 130,
+            18, 0x8EB6D4, PXA_CANVAS_ALIGN_CENTER,
+            PXA_CANVAS_TEXT_ALIGN_MIDDLE, hint, pxa_plane_text_size(hint));
     }
     if (game_over) {
         const char *over = PXA_PLANE_MSG(PXA_MSG_BATTLE_LOST);
-        pxa_canvas_image(&frame, 38, 88, 220, 52, 255, PXA_UI_IMAGE_FIT_STRETCH,
-                         dialog_panel_asset, sizeof(dialog_panel_asset) - 1);
-        pxa_canvas_text(&frame, 50, 105, 196, 0xFFFFFF, PXA_CANVAS_ALIGN_CENTER,
-                        over, pxa_plane_text_size(over));
+        const int16_t panel_x = (int16_t)((layout.width - 220) / 2);
+        const int16_t panel_y = (int16_t)((layout.height - 52) / 2);
+        pxa_canvas_image(&frame, panel_x, panel_y, 220, 52, 255,
+                         PXA_UI_IMAGE_FIT_STRETCH, dialog_panel_asset,
+                         sizeof(dialog_panel_asset) - 1);
+        pxa_canvas_text(&frame, (int16_t)(panel_x + 12),
+                        (int16_t)(panel_y + 17), 196, 0xFFFFFF,
+                        PXA_CANVAS_ALIGN_CENTER, over,
+                        pxa_plane_text_size(over));
     }
     if (mission_complete) {
         const char *complete = PXA_PLANE_MSG(PXA_MSG_BATTLE_COMPLETE);
@@ -920,76 +1053,106 @@ static int render(void) {
             pxa_canvas_u32_text(result_score_text, score);
         const size_t reward_length =
             pxa_canvas_u32_text(reward_text, result_reward);
-        pxa_canvas_rect_rgba(&frame, 0, 0, GAME_WIDTH, GAME_HEIGHT,
+        pxa_canvas_rect_rgba(&frame, 0, 0, layout.width, layout.height,
                              UINT32_C(0x020812e6), 0, 0, 0);
-        pxa_canvas_rect(&frame, 38, 48, 220, 157, 0x10283E, 8);
-        pxa_canvas_line(&frame, 58, 80, 238, 80, 0x55D7C1, 1);
+        pxa_canvas_rect(&frame, layout.dialog_x, layout.dialog_y, DIALOG_W,
+                        DIALOG_H, 0x10283E, 8);
+        pxa_canvas_line(&frame, (int16_t)(layout.dialog_x + 20),
+                        (int16_t)(layout.dialog_y + 32),
+                        (int16_t)(layout.dialog_x + 200),
+                        (int16_t)(layout.dialog_y + 32), 0x55D7C1, 1);
         pxa_canvas_text_box_role(
-            &frame, 68, 53, 160, 26, pxa_canvas_rgba(0xE7F8FF),
+            &frame, (int16_t)(layout.dialog_x + 30),
+            (int16_t)(layout.dialog_y + 5), 160, 26, pxa_canvas_rgba(0xE7F8FF),
             PXA_CANVAS_FONT_TITLE, PXA_CANVAS_ALIGN_CENTER,
             PXA_CANVAS_TEXT_ALIGN_MIDDLE, complete,
             pxa_plane_text_size(complete));
         for (uint8_t index = 0; index < 3u; ++index) {
-            const int16_t x = (int16_t)(124 + index * 24);
+            const int16_t x = (int16_t)(layout.dialog_x + 86 + index * 24);
+            const int16_t star_y = (int16_t)(layout.dialog_y + 49);
             const uint32_t color = index < result_stars ? 0xFFE36A : 0x29445A;
-            pxa_canvas_circle(&frame, x, 97, 8, color);
+            pxa_canvas_circle(&frame, x, star_y, 8, color);
             if (index < result_stars)
-                pxa_canvas_circle(&frame, (int16_t)(x - 2), 95, 2, 0xFFF8C7);
+                pxa_canvas_circle(&frame, (int16_t)(x - 2),
+                                  (int16_t)(star_y - 2), 2, 0xFFF8C7);
         }
-        pxa_canvas_text_box(&frame, 67, 111, 54, 22, 0x8EB6D4,
+        pxa_canvas_text_box(&frame, (int16_t)(layout.dialog_x + 29),
+                            (int16_t)(layout.dialog_y + 63), 54, 22, 0x8EB6D4,
                             PXA_CANVAS_ALIGN_RIGHT,
                             PXA_CANVAS_TEXT_ALIGN_MIDDLE, score_label,
                             pxa_plane_text_size(score_label));
-        pxa_canvas_text_box(&frame, 127, 111, 70, 22, 0xFFFFFF,
+        pxa_canvas_text_box(&frame, (int16_t)(layout.dialog_x + 89),
+                            (int16_t)(layout.dialog_y + 63), 70, 22, 0xFFFFFF,
                             PXA_CANVAS_ALIGN_LEFT,
                             PXA_CANVAS_TEXT_ALIGN_MIDDLE, result_score_text,
                             result_score_length);
-        pxa_canvas_text_box(&frame, 67, 132, 54, 22, 0x8EB6D4,
+        pxa_canvas_text_box(&frame, (int16_t)(layout.dialog_x + 29),
+                            (int16_t)(layout.dialog_y + 84), 54, 22, 0x8EB6D4,
                             PXA_CANVAS_ALIGN_RIGHT,
                             PXA_CANVAS_TEXT_ALIGN_MIDDLE, reward_label,
                             pxa_plane_text_size(reward_label));
-        pxa_canvas_text_box(&frame, 127, 132, 70, 22, 0xFFE36A,
+        pxa_canvas_text_box(&frame, (int16_t)(layout.dialog_x + 89),
+                            (int16_t)(layout.dialog_y + 84), 70, 22, 0xFFE36A,
                             PXA_CANVAS_ALIGN_LEFT,
                             PXA_CANVAS_TEXT_ALIGN_MIDDLE, reward_text,
                             reward_length);
-        pxa_canvas_rect(&frame, 69, 164, 158, 29, 0x137EAA, 6);
-        pxa_canvas_text_box(&frame, 77, 165, 142, 27, 0xFFFFFF,
+        pxa_canvas_rect(&frame, (int16_t)(layout.dialog_x + 31),
+                        (int16_t)(layout.dialog_y + 116), 158, 29, 0x137EAA, 6);
+        pxa_canvas_text_box(&frame, (int16_t)(layout.dialog_x + 39),
+                            (int16_t)(layout.dialog_y + 117), 142, 27, 0xFFFFFF,
                             PXA_CANVAS_ALIGN_CENTER,
                             PXA_CANVAS_TEXT_ALIGN_MIDDLE, report,
                             pxa_plane_text_size(report));
     }
     if (!mission_complete) {
-        pxa_canvas_circle(&frame, 276, 51, 12, paused ? 0x6750A5 : 0x123F5B);
-        pxa_canvas_rect(&frame, 271, 45, 3, 12, 0xEAF9FF, 1);
-        pxa_canvas_rect(&frame, 278, 45, 3, 12, 0xEAF9FF, 1);
+        pxa_canvas_circle(&frame, layout.pause_x, layout.pause_y, 12,
+                          paused ? 0x6750A5 : 0x123F5B);
+        pxa_canvas_rect(&frame, (int16_t)(layout.pause_x - 5),
+                        (int16_t)(layout.pause_y - 6), 3, 12, 0xEAF9FF, 1);
+        pxa_canvas_rect(&frame, (int16_t)(layout.pause_x + 2),
+                        (int16_t)(layout.pause_y - 6), 3, 12, 0xEAF9FF, 1);
     }
     if (paused) {
         const char *pause_title = PXA_PLANE_MSG(PXA_MSG_PAUSE_TITLE);
         const char *resume = PXA_PLANE_MSG(PXA_MSG_PAUSE_RESUME);
         const char *restart = PXA_PLANE_MSG(PXA_MSG_PAUSE_RESTART);
         const char *exit = PXA_PLANE_MSG(PXA_MSG_PAUSE_EXIT);
-        pxa_canvas_rect_rgba(&frame, 0, 0, GAME_WIDTH, GAME_HEIGHT,
+        pxa_canvas_rect_rgba(&frame, 0, 0, layout.width, layout.height,
                              UINT32_C(0x020812e6), 0, 0, 0);
-        pxa_canvas_rect(&frame, 48, 45, 200, 151, 0x10283E, 8);
-        pxa_canvas_line(&frame, 65, 78, 231, 78, 0x3DAED1, 1);
+        pxa_canvas_rect(&frame, layout.pause_dialog_x, layout.pause_dialog_y,
+                        PAUSE_DIALOG_W, PAUSE_DIALOG_H, 0x10283E, 8);
+        pxa_canvas_line(&frame, (int16_t)(layout.pause_dialog_x + 17),
+                        (int16_t)(layout.pause_dialog_y + 33),
+                        (int16_t)(layout.pause_dialog_x + 183),
+                        (int16_t)(layout.pause_dialog_y + 33), 0x3DAED1, 1);
         pxa_canvas_text_box_role(
-            &frame, 70, 51, 156, 25, pxa_canvas_rgba(0xE7F8FF),
-            PXA_CANVAS_FONT_TITLE, PXA_CANVAS_ALIGN_CENTER,
-            PXA_CANVAS_TEXT_ALIGN_MIDDLE, pause_title,
+            &frame, (int16_t)(layout.pause_dialog_x + 22),
+            (int16_t)(layout.pause_dialog_y + 6), 156, 25,
+            pxa_canvas_rgba(0xE7F8FF), PXA_CANVAS_FONT_TITLE,
+            PXA_CANVAS_ALIGN_CENTER, PXA_CANVAS_TEXT_ALIGN_MIDDLE, pause_title,
             pxa_plane_text_size(pause_title));
-        pxa_canvas_rect(&frame, 69, 86, 158, 29, 0x137EAA, 6);
-        pxa_canvas_text_box(&frame, 77, 87, 142, 27, 0xFFFFFF,
-                            PXA_CANVAS_ALIGN_CENTER,
+        pxa_canvas_rect(&frame, (int16_t)(layout.pause_dialog_x + 21),
+                        (int16_t)(layout.pause_dialog_y + 41), 158, 29,
+                        0x137EAA, 6);
+        pxa_canvas_text_box(&frame, (int16_t)(layout.pause_dialog_x + 29),
+                            (int16_t)(layout.pause_dialog_y + 42), 142, 27,
+                            0xFFFFFF, PXA_CANVAS_ALIGN_CENTER,
                             PXA_CANVAS_TEXT_ALIGN_MIDDLE, resume,
                             pxa_plane_text_size(resume));
-        pxa_canvas_rect(&frame, 69, 124, 158, 29, 0x175A7C, 6);
-        pxa_canvas_text_box(&frame, 77, 125, 142, 27, 0xFFFFFF,
-                            PXA_CANVAS_ALIGN_CENTER,
+        pxa_canvas_rect(&frame, (int16_t)(layout.pause_dialog_x + 21),
+                        (int16_t)(layout.pause_dialog_y + 79), 158, 29,
+                        0x175A7C, 6);
+        pxa_canvas_text_box(&frame, (int16_t)(layout.pause_dialog_x + 29),
+                            (int16_t)(layout.pause_dialog_y + 80), 142, 27,
+                            0xFFFFFF, PXA_CANVAS_ALIGN_CENTER,
                             PXA_CANVAS_TEXT_ALIGN_MIDDLE, restart,
                             pxa_plane_text_size(restart));
-        pxa_canvas_rect(&frame, 69, 162, 158, 29, 0x5B334B, 6);
-        pxa_canvas_text_box(&frame, 77, 163, 142, 27, 0xFFDCE5,
-                            PXA_CANVAS_ALIGN_CENTER,
+        pxa_canvas_rect(&frame, (int16_t)(layout.pause_dialog_x + 21),
+                        (int16_t)(layout.pause_dialog_y + 117), 158, 29,
+                        0x5B334B, 6);
+        pxa_canvas_text_box(&frame, (int16_t)(layout.pause_dialog_x + 29),
+                            (int16_t)(layout.pause_dialog_y + 118), 142, 27,
+                            0xFFDCE5, PXA_CANVAS_ALIGN_CENTER,
                             PXA_CANVAS_TEXT_ALIGN_MIDDLE, exit,
                             pxa_plane_text_size(exit));
     }
@@ -1100,7 +1263,8 @@ static void update_enemy_bullets(void) {
             continue;
         bullet->x = (int16_t)(bullet->x + bullet->vx);
         bullet->y = (int16_t)(bullet->y + bullet->vy);
-        if (bullet->x > GAME_WIDTH + 8 || bullet->y < PLAY_TOP || bullet->y > GAME_HEIGHT)
+        if (bullet->x > layout.field_right + 8 || bullet->y < layout.field_top ||
+            bullet->y > layout.field_bottom)
             bullet->active = 0;
         else if (overlaps(bullet->x - 2, bullet->y - 2, 4, 4,
                           player_x + 5, player_y + 4, 28, 20)) {
@@ -1118,9 +1282,10 @@ static void update_pickups(void) {
         pickup->x = (int16_t)(pickup->x + 2);
         pickup->y = (int16_t)(pickup->y + pickup->vy);
         ++pickup->pulse;
-        if (pickup->y < PLAY_TOP + 5 || pickup->y > GAME_HEIGHT - PICKUP_SIZE - 4)
+        if (pickup->y < layout.field_top + 5 ||
+            pickup->y > layout.field_bottom - PICKUP_SIZE - 4)
             pickup->vy = (int8_t)-pickup->vy;
-        if (pickup->x > GAME_WIDTH + PICKUP_SIZE) {
+        if (pickup->x > layout.field_right + PICKUP_SIZE) {
             pickup->active = 0;
             continue;
         }
@@ -1159,11 +1324,12 @@ static void update_boss(void) {
     const uint8_t enraged = (uint16_t)boss.health * 2u <= boss.max_health;
     if (!boss.active)
         return;
-    if (boss.x < 22)
+    if (boss.x < layout.field_left + BOSS_STOP_LEFT)
         boss.x = (int16_t)(boss.x + 2);
     else {
         boss.y = (int16_t)(boss.y + boss.vy * (enraged ? 2 : 1));
-        if (boss.y < PLAY_TOP + 16 || boss.y > GAME_HEIGHT - BOSS_HEIGHT - 8)
+        if (boss.y < layout.field_top + 16 ||
+            boss.y > layout.field_bottom - BOSS_HEIGHT - 8)
             boss.vy = (int8_t)-boss.vy;
         if (boss.fire_delay != 0)
             --boss.fire_delay;
@@ -1212,16 +1378,17 @@ static void update_enemies(void) {
             continue;
         enemy->x = (int16_t)(enemy->x + enemy_speed(enemy->kind, wave));
         enemy->y = (int16_t)(enemy->y + enemy->vy);
-        if (enemy->y < PLAY_TOP + 4 || enemy->y > GAME_HEIGHT - ENEMY_PLANE_H - 4)
+        if (enemy->y < layout.field_top + 4 ||
+            enemy->y > layout.field_bottom - ENEMY_PLANE_H - 4)
             enemy->vy = (int8_t)-enemy->vy;
-        if (enemy->x > GAME_WIDTH) {
+        if (enemy->x > layout.field_right) {
             enemy->active = 0;
             take_hit(0);
             continue;
         }
-        if (enemy->x > 48 && enemy->fire_delay != 0)
+        if (enemy->x > layout.field_left + 48 && enemy->fire_delay != 0)
             --enemy->fire_delay;
-        else if (enemy->x > 48) {
+        else if (enemy->x > layout.field_left + 48) {
             spawn_enemy_bullet(enemy);
             enemy->fire_delay = (uint8_t)(enemy->kind == ENEMY_GUNSHIP ? 20u :
                                            enemy->kind == ENEMY_CRUISER ? 24u : 38u);
@@ -1320,10 +1487,10 @@ static int tick(uint8_t steps) {
 
 static int move_player_by(int16_t delta_y) {
     int16_t next_y = (int16_t)(player_y + delta_y);
-    if (next_y < PLAYER_MIN_Y)
-        next_y = PLAYER_MIN_Y;
-    if (next_y > PLAYER_MAX_Y)
-        next_y = PLAYER_MAX_Y;
+    if (next_y < layout.player_min_y)
+        next_y = layout.player_min_y;
+    if (next_y > layout.player_max_y)
+        next_y = layout.player_max_y;
     if (next_y == player_y)
         return 0;
     player_y = next_y;
@@ -1343,6 +1510,12 @@ static int update_player_motion(void) {
         player_velocity_y = 0;
     }
     return player_velocity_y != 0 && move_player_by(player_velocity_y);
+}
+
+void pxa_plane_game_set_screen(const pxa_game_screen_t *screen) {
+    if (screen == NULL) return;
+    game_screen = *screen;
+    layout_update();
 }
 
 void pxa_plane_game_configure(uint8_t weapon_level, uint8_t hull_level,
@@ -1374,8 +1547,12 @@ int pxa_plane_game_take_result(uint32_t *final_score, uint8_t *stars,
 
 
 int32_t pxa_app_start(const uint8_t* config, uint32_t config_length) {
-    (void)config;
-    (void)config_length;
+    /* The shell forwards the real screen metrics through
+     * pxa_plane_game_set_screen(); only fall back to the start environment
+     * when the module is launched standalone. */
+    if (config != NULL && config_length != 0)
+        pxa_game_screen_from_start(&game_screen, config, config_length);
+    layout_update();
     initialized = 0;
     reset_game();
     if (!render() || !pxa_clock_set_period(GAME_TICK_MS))
@@ -1392,6 +1569,13 @@ int32_t pxa_app_on_event(const uint8_t* event, uint32_t length) {
     pxa_ui_pointer_data_t pointer;
     if (!pxa_canvas_parse_event(event, length, &parsed))
         return PXA_EVENT_UNHANDLED;
+    if (pxa_game_screen_handle_event(&game_screen, &parsed)) {
+        layout_update();
+        if (player_y > layout.player_max_y) player_y = layout.player_max_y;
+        if (player_y < layout.player_min_y) player_y = layout.player_min_y;
+        player_x = (int16_t)(layout.lane_x - configured_ship_model * 8u);
+        return render() ? PXA_EVENT_HANDLED : PXA_STATUS_INTERNAL;
+    }
     if (parsed.service == PXA_SERVICE_SYSTEM &&
         parsed.opcode == PXA_SYSTEM_CONFIGURATION_EVENT)
         return render() ? PXA_EVENT_HANDLED : PXA_STATUS_INTERNAL;
@@ -1454,14 +1638,17 @@ int32_t pxa_app_on_event(const uint8_t* event, uint32_t length) {
     const int16_t x = (int16_t)pointer.x;
     const int16_t y = (int16_t)pointer.y;
     if (mission_complete) {
-        if (pointer.phase == PXA_POINTER_DOWN && x >= 69 && x < 227 &&
-            y >= 160 && y < 198) {
+        if (pointer.phase == PXA_POINTER_DOWN &&
+            x >= layout.dialog_x + 31 && x < layout.dialog_x + 31 + 158 &&
+            y >= layout.dialog_y + 116 && y < layout.dialog_y + 116 + 29) {
             exit_requested = 1;
             pxa_game_sfx_play(&sfx, PXA_GAME_SFX_ACTION);
         }
         return PXA_EVENT_HANDLED;
     }
-    if (pointer.phase == PXA_POINTER_DOWN && x >= 260 && y >= 36 && y < 69) {
+    if (pointer.phase == PXA_POINTER_DOWN && x >= layout.pause_x - 16 &&
+        x < layout.pause_x + 16 && y >= layout.pause_y - 15 &&
+        y < layout.pause_y + 15) {
         paused = 1;
         control_active = 0;
         volume_input_direction = 0;
@@ -1472,25 +1659,35 @@ int32_t pxa_app_on_event(const uint8_t* event, uint32_t length) {
     if (paused) {
         if (x < LEFT_GESTURE_GUARD) return PXA_EVENT_UNHANDLED;
         if (pointer.phase != PXA_POINTER_DOWN) return PXA_EVENT_HANDLED;
-        if (x >= 69 && x < 227 && y >= 86 && y < 116) {
+        if (x >= layout.pause_dialog_x + 21 &&
+            x < layout.pause_dialog_x + 21 + 158 &&
+            y >= layout.pause_dialog_y + 41 &&
+            y < layout.pause_dialog_y + 41 + 30) {
             paused = 0;
             last_tick_us = 0;
             pxa_game_sfx_play(&sfx, PXA_GAME_SFX_ACTION);
             return render() ? PXA_EVENT_HANDLED : PXA_STATUS_INTERNAL;
         }
-        if (x >= 69 && x < 227 && y >= 124 && y < 154) {
+        if (x >= layout.pause_dialog_x + 21 &&
+            x < layout.pause_dialog_x + 21 + 158 &&
+            y >= layout.pause_dialog_y + 79 &&
+            y < layout.pause_dialog_y + 79 + 30) {
             reset_game();
             pxa_game_sfx_play(&sfx, PXA_GAME_SFX_ACTION);
             return render() ? PXA_EVENT_HANDLED : PXA_STATUS_INTERNAL;
         }
-        if (x >= 69 && x < 227 && y >= 162 && y < 192) {
+        if (x >= layout.pause_dialog_x + 21 &&
+            x < layout.pause_dialog_x + 21 + 158 &&
+            y >= layout.pause_dialog_y + 117 &&
+            y < layout.pause_dialog_y + 117 + 30) {
             exit_requested = 1;
             return PXA_EVENT_HANDLED;
         }
         return PXA_EVENT_HANDLED;
     }
     if (game_over) {
-        if (pointer.phase == PXA_POINTER_DOWN && x >= LEFT_GESTURE_GUARD && y >= PLAY_TOP) {
+        if (pointer.phase == PXA_POINTER_DOWN && x >= LEFT_GESTURE_GUARD &&
+            y >= layout.field_top) {
             reset_game();
             pxa_game_sfx_play(&sfx, PXA_GAME_SFX_ACTION);
             return render() ? PXA_EVENT_HANDLED : PXA_STATUS_INTERNAL;
@@ -1498,7 +1695,7 @@ int32_t pxa_app_on_event(const uint8_t* event, uint32_t length) {
         return PXA_EVENT_UNHANDLED;
     }
     if (pointer.phase == PXA_POINTER_DOWN) {
-        if (x < LEFT_GESTURE_GUARD || y < PLAY_TOP)
+        if (x < LEFT_GESTURE_GUARD || y < layout.field_top)
             return PXA_EVENT_UNHANDLED;
         volume_input_direction = 0;
         player_velocity_y = 0;

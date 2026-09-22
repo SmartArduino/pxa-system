@@ -174,7 +174,7 @@ static int render(void) {
                         PXA_CANVAS_ALIGN_CENTER, win,
                         pxa_arcade_text_size(win));
     }
-    return pxa_canvas_present(GAME_NODE, &frame, &pxa_arcade_ui_generation, &initialized, ui_commands,
+    return pxa_arcade_present(GAME_NODE, &frame, &pxa_arcade_ui_generation, &initialized, ui_commands,
                             sizeof(ui_commands), packet, sizeof(packet));
 }
 

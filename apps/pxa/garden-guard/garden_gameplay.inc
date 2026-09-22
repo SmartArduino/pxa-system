@@ -364,7 +364,7 @@ static void spawn_zombie(void){
         if(wave>=22 && roll%7u==0) type=ZOMBIE_GARG;
         zombies[i].active=1;
         zombies[i].row=(uint8_t)(random_next()%BOARD_ROWS);
-        zombies[i].x=296;
+        zombies[i].x=GARDEN_W;
         zombies[i].type=type;
         zombies[i].health=zombie_health(type);
         if(current_level>=6) {

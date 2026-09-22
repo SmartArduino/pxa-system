@@ -168,9 +168,9 @@ static int tick(uint8_t steps){
     }
     return !needs_render || render();
 }
-static int hit_home_start(int16_t x,int16_t y){ return x>=38 && x<258 && y>=122 && y<156; }
-static int hit_home_levels(int16_t x,int16_t y){ return x>=38 && x<144 && y>=166 && y<196; }
-static int hit_home_almanac(int16_t x,int16_t y){ return x>=152 && x<258 && y>=166 && y<196; }
+static int hit_home_start(int16_t x,int16_t y){ return x>=HOME_X && x<HOME_X+220 && y>=122 && y<156; }
+static int hit_home_levels(int16_t x,int16_t y){ return x>=HOME_X && x<HOME_X+106 && y>=166 && y<196; }
+static int hit_home_almanac(int16_t x,int16_t y){ return x>=HOME_X+114 && x<HOME_X+220 && y>=166 && y<196; }
 static int hit_back(int16_t x,int16_t y){ return x>=16 && x<56 && y>=4 && y<38; }
 static int hit_level_button(int16_t x,int16_t y,int* idx){
     for(uint8_t i=0;i<LEVELS_COUNT;++i){
@@ -183,7 +183,7 @@ static int hit_level_button(int16_t x,int16_t y,int* idx){
 static int hit_seed_chosen(int16_t x,int16_t y,int* slot){
     const level_def_t* lvl=current_level_def();
     for(uint8_t i=0;i<lvl->slots;++i){
-        int16_t bx=(int16_t)(16+i*38);
+        int16_t bx=(int16_t)(SEED_OX+16+i*38);
         int16_t by=48;
         if(x>=bx && x<bx+34 && y>=by && y<by+34){ *slot=i; return 1; }
     }
@@ -198,19 +198,19 @@ static int hit_seed_avail(int16_t x,int16_t y,uint8_t* plant_out){
     }
     for(uint8_t i=0;i<cnt;++i){
         uint8_t col=i%7; uint8_t row=i/7;
-        int16_t bx=(int16_t)(12+col*40);
+        int16_t bx=(int16_t)(SEED_OX+12+col*40);
         int16_t by=(int16_t)(102+row*46);
         if(x>=bx && x<bx+36 && y>=by && y<by+40){ *plant_out=avail[i]; return 1; }
     }
     return 0;
 }
 static int hit_seed_select_button(int16_t x,int16_t y){
-    return plant_is_selectable(focused_plant) && x>=196 && x<276 && y>=112 && y<148;
+    return plant_is_selectable(focused_plant) && x>=SEED_OX+196 && x<SEED_OX+276 && y>=112 && y<148;
 }
 static int hit_seed_cancel_button(int16_t x,int16_t y){
-    return plant_is_selectable(focused_plant) && x>=196 && x<276 && y>=160 && y<190;
+    return plant_is_selectable(focused_plant) && x>=SEED_OX+196 && x<SEED_OX+276 && y>=160 && y<190;
 }
-static int hit_seed_start(int16_t x,int16_t y){ return x>=58 && x<238 && y>=202 && y<232; }
+static int hit_seed_start(int16_t x,int16_t y){ return x>=SEED_OX+58 && x<SEED_OX+238 && y>=202 && y<232; }
 
 static int begin_list_gesture(int16_t y){
     uint16_t* scroll=list_scroll_value();

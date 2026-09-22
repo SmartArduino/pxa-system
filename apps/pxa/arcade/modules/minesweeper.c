@@ -290,8 +290,8 @@ static int render(void) {
                              PXA_CANVAS_FONT_CAPTION, PXA_CANVAS_ALIGN_CENTER,
                              tap_restart, pxa_arcade_text_size(tap_restart));
     }
-    return pxa_canvas_present(GAME_NODE, &frame, &pxa_arcade_ui_generation, &initialized,
-                              ui_commands, sizeof(ui_commands), packet, sizeof(packet));
+    return pxa_arcade_present(GAME_NODE, &frame, &pxa_arcade_ui_generation, &initialized,
+                            ui_commands, sizeof(ui_commands), packet, sizeof(packet));
 }
 
 static int handle_board_tap(int row, int col) {

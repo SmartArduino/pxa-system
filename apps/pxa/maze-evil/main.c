@@ -57,6 +57,11 @@ static uint16_t g_surface_width;
 static uint16_t g_surface_height;
 static uint8_t g_surface_mapped;
 static uint8_t g_request_mapped;
+static int g_display_width = DISPLAY_WIDTH;
+static int g_display_height = DISPLAY_HEIGHT;
+static int g_present_scale = VIEW_SCALE;
+static int g_present_x;
+static int g_present_y;
 static uint8_t g_rendered_this_call;
 static pxa_mapped_surface_t g_surface_ownership;
 static uint64_t g_frame_id;
@@ -119,6 +124,46 @@ static int present_mapped_frame(void) {
 
 static int render_and_submit_frame(void);
 
+/* The Host presents the Surface at the largest exact 1x/2x/4x scale that fits
+ * the display (pxa_surface_fit_scale) and centers it because the layer stays at
+ * (0, 0). Input arrives in display pixels, so map it back into Surface pixels
+ * before drawing the touch controls. */
+static void update_present_geometry(void) {
+    const int width = g_surface_width != 0
+                          ? (int)g_surface_width
+                          : (g_request_mapped ? VIEW_WIDTH : DISPLAY_WIDTH);
+    const int height = g_surface_height != 0
+                           ? (int)g_surface_height
+                           : (g_request_mapped ? VIEW_HEIGHT : DISPLAY_HEIGHT);
+    const uint32_t scale =
+        pxa_surface_fit_scale((uint32_t)width, (uint32_t)height,
+                              (uint32_t)g_display_width,
+                              (uint32_t)g_display_height);
+    g_present_scale = scale != 0 ? (int)scale : 1;
+    g_present_x = (g_display_width - width * g_present_scale) / 2;
+    g_present_y = (g_display_height - height * g_present_scale) / 2;
+    if (g_present_x < 0) g_present_x = 0;
+    if (g_present_y < 0) g_present_y = 0;
+}
+
+static void apply_display_size(uint32_t width, uint32_t height) {
+    if (width == 0 || height == 0) return;
+    g_display_width = (int)width;
+    g_display_height = (int)height;
+    g_touch.half_width = g_display_width / 2;
+    update_present_geometry();
+}
+
+static int surface_from_display_x(int value) {
+    const int mapped = (value - g_present_x) / g_present_scale;
+    return mapped < 0 ? 0 : mapped;
+}
+
+static int surface_from_display_y(int value) {
+    const int mapped = (value - g_present_y) / g_present_scale;
+    return mapped < 0 ? 0 : mapped;
+}
+
 static int request_surface(void) {
     if (g_request_mapped) {
         return pxa_surface_create_rgb565_mapped(
@@ -152,15 +197,12 @@ static void render_frame(void) {
     if (g_started) {
         renderer_render(&g_renderer, &g_world, &g_hud, &g_target);
         if (g_touch.stick.down) {
-            renderer_draw_stick(&g_renderer, &g_target, 1,
-                                g_touch.stick.origin_x /
-                                    (g_surface_mapped ? VIEW_SCALE : 1),
-                                g_touch.stick.origin_y /
-                                    (g_surface_mapped ? VIEW_SCALE : 1),
-                                g_touch.stick.x /
-                                    (g_surface_mapped ? VIEW_SCALE : 1),
-                                g_touch.stick.y /
-                                    (g_surface_mapped ? VIEW_SCALE : 1));
+            renderer_draw_stick(
+                &g_renderer, &g_target, 1,
+                surface_from_display_x(g_touch.stick.origin_x),
+                surface_from_display_y(g_touch.stick.origin_y),
+                surface_from_display_x(g_touch.stick.x),
+                surface_from_display_y(g_touch.stick.y));
         }
     } else {
         hud_stats_t hidden = g_hud;
@@ -271,8 +313,9 @@ static int setup_pointer_node(void) {
 }
 
 int32_t pxa_app_start(const uint8_t *config, uint32_t length) {
-    (void)config;
-    (void)length;
+    pxa_ui_environment_t environment;
+    if (pxa_ui_parse_start_environment(config, length, &environment))
+        apply_display_size(environment.width, environment.height);
     g_surface_handle = 0;
     g_frame_id = 0;
     g_request_mapped = 1;
@@ -287,7 +330,7 @@ int32_t pxa_app_start(const uint8_t *config, uint32_t length) {
     font_build_atlas();
     world_reset(&g_world);
     renderer_init(&g_renderer, VIEW_WIDTH, VIEW_HEIGHT, 1);
-    touch_init(&g_touch, DISPLAY_WIDTH);
+    touch_init(&g_touch, g_display_width);
     audio_init(&g_audio);
     g_hud.visible = 1;
     g_hud.show_perf = 1;
@@ -326,6 +369,7 @@ int32_t pxa_app_on_event(const uint8_t *event, uint32_t length) {
         }
         g_surface_width = g_request_mapped ? VIEW_WIDTH : DISPLAY_WIDTH;
         g_surface_height = g_request_mapped ? VIEW_HEIGHT : DISPLAY_HEIGHT;
+        update_present_geometry();
         g_surface_frame_bytes = g_request_mapped ? VIEW_FRAME_BYTES
                                                  : FALLBACK_FRAME_BYTES;
         if (result.status != PXA_STATUS_OK ||
@@ -361,6 +405,14 @@ int32_t pxa_app_on_event(const uint8_t *event, uint32_t length) {
         }
         return pxa_clock_set_period(FRAME_PERIOD_MS) ? PXA_EVENT_HANDLED
                                                      : PXA_STATUS_INTERNAL;
+    }
+    if (parsed.service == PXA_SERVICE_UI &&
+        parsed.opcode == PXA_UI_ENVIRONMENT_CHANGED) {
+        pxa_ui_environment_t environment;
+        if (pxa_ui_parse_environment_event(&parsed, &environment)) {
+            apply_display_size(environment.width, environment.height);
+            return PXA_EVENT_HANDLED;
+        }
     }
     if (parsed.service == PXA_SERVICE_UI && parsed.opcode == PXA_UI_EVENT) {
         pxa_ui_pointer_data_t pointer;
@@ -477,7 +529,7 @@ int32_t pxa_app_on_event(const uint8_t *event, uint32_t length) {
                 /* Win and death retries return to the start screen. */
                 g_started = 0;
                 g_start_touch_down = 0;
-                touch_init(&g_touch, DISPLAY_WIDTH);
+                touch_init(&g_touch, g_display_width);
             }
             pump_sounds();
         }
