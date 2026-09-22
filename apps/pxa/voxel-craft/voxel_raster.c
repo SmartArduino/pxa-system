@@ -56,6 +56,11 @@
 #define VOXEL_RASTER_PAINTER_SPLIT_MAX_PARTS 8u
 #define VOXEL_RASTER_PAINTER_SPLIT_FAR_Q8 (12u * 256u)
 #define VOXEL_RASTER_EXACT_CANDIDATES 448u
+/* The exact painter order is an O(n^2) pair sweep. Keep it as a switch so the
+ * measurement build can trade it for the cheaper depth-key sort. */
+#ifndef VOXEL_RASTER_EXACT_SORT
+#define VOXEL_RASTER_EXACT_SORT 1
+#endif
 #define VOXEL_RASTER_SORT_EDGES 4096u
 #define VOXEL_RASTER_HUD_COMMAND_RESERVE 360u
 #define VOXEL_RASTER_HUD_BYTE_RESERVE 16384u
@@ -2745,7 +2750,8 @@ int32_t voxel_raster_render(uint32_t surface_handle, uint64_t frame_id,
     hybrid_painter =
         !depth_terrain && !coverage_mask && lit_palette_depth &&
         (g_raster_capabilities & PXA_RASTER_CAP_PAINTER_POLYGON) != 0;
-    exact_painter = hybrid_painter && VOXEL_RASTER_HYBRID_DEPTH_Q8 == 0u;
+    exact_painter = hybrid_painter && VOXEL_RASTER_HYBRID_DEPTH_Q8 == 0u &&
+                    VOXEL_RASTER_EXACT_SORT != 0;
     /* A full-resolution frame makes both Guest projection and Host fill cost
      * substantially more expensive. Keep near terrain responsive instead of
      * spending the frame budget on distant faces. */
