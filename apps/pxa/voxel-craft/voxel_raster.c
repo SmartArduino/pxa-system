@@ -4,31 +4,55 @@
 #include <stdint.h>
 
 #include "block_textures.h"
+#include "pxa_log.h"
 #include "pxa_raster.h"
 #include "rc_math.h"
+#include "voxel_font_data.h"
 #include "voxel_sky.h"
 
-#define VOXEL_MESH_QUADS_PER_CHUNK 512u
+#define VOXEL_MESH_QUADS_PER_CHUNK 640u
 #define VOXEL_MESH_MAX_SPAN 16
 #define VOXEL_MESH_SLICES_PER_STEP 4u
-#define VOXEL_RASTER_CANDIDATES 640u
+#define VOXEL_RASTER_CANDIDATES 1024u
 #define VOXEL_RASTER_TEXTURED_BLOCKS 15u
 #define VOXEL_RASTER_FONT_SLOT 15u
 #define VOXEL_RASTER_FONT_SLOT_EXTENDED 45u
+#define VOXEL_RASTER_FONT_SLOT_AA0 45u
+#define VOXEL_RASTER_FONT_SLOT_AA1 46u
+#define VOXEL_RASTER_FONT_SLOT_AA2 47u
 #define VOXEL_RASTER_FONT_GLYPHS 42u
 #define VOXEL_RASTER_FONT_WIDTH (VOXEL_RASTER_FONT_GLYPHS * 4u)
+/* Set to 0 to force the legacy cut-out font: the antialiased tiers need
+ * PXA_RASTER_CAP_SPRITE_TEXEL_ALPHA and three free texture slots. */
+#ifndef VOXEL_FONT_AA
+#define VOXEL_FONT_AA 1
+#endif
 #define VOXEL_RASTER_NEAR 0.08F
 #define VOXEL_RASTER_TAN_HALF 0.70F
 #define VOXEL_RASTER_PARTICLE_LIMIT 32u
+/* Terrain prefers the Host depth buffer over painter polygons when the Host
+ * supports depth-tested textured quads. Depth resolves face order in hardware,
+ * so distant trees stop bleeding through nearer water, textured faces get
+ * perspective-correct UVs, and the Guest no longer pays for adaptive splitting
+ * and the exact painter sort. The painter path stays for Hosts without it. */
+#define VOXEL_RASTER_DEPTH_TERRAIN 1u
+/* Depth testing needs no order-dependent machinery, so the terrain budget can
+ * cover the whole fog range instead of dropping the farthest faces. */
+#define VOXEL_RASTER_DEPTH_CANDIDATES 640u
 /* Enough headroom that the visible set rarely hits the terrain candidate
  * limit: a saturated limit drops the farthest faces, which pop in and out as
  * the camera turns. */
-#define VOXEL_RASTER_PERFORMANCE_CANDIDATES 320u
+#define VOXEL_RASTER_PERFORMANCE_CANDIDATES 224u
 #define VOXEL_RASTER_PERFORMANCE_FOG 26.0F
-#define VOXEL_RASTER_HYBRID_DEPTH_Q8 (8u * 256u)
-#define VOXEL_RASTER_PAINTER_SPLIT_DEPTH_Q8 (2u * 256u)
+#define VOXEL_RASTER_HYBRID_DEPTH_Q8 0u
+#define VOXEL_RASTER_PAINTER_SPLIT_DEPTH_Q8 (1u * 256u)
 #define VOXEL_RASTER_PAINTER_SPLIT_SCREEN_Q4 (8 * 16)
-#define VOXEL_RASTER_PAINTER_SPLIT_MAX_PARTS 4u
+#define VOXEL_RASTER_PAINTER_SPLIT_MAX_PARTS 8u
+#define VOXEL_RASTER_PAINTER_SPLIT_FAR_Q8 (12u * 256u)
+#define VOXEL_RASTER_EXACT_CANDIDATES 620u
+#define VOXEL_RASTER_SORT_EDGES 4096u
+#define VOXEL_RASTER_HUD_COMMAND_RESERVE 360u
+#define VOXEL_RASTER_HUD_BYTE_RESERVE 16384u
 #define VOXEL_RASTER_UNDERWATER_TINT UINT16_C(0x008a)
 #define VOXEL_RASTER_UNDERWATER_CLEAR UINT16_C(0x118d)
 
@@ -81,6 +105,13 @@ typedef struct {
     uint16_t nearest_depth_q8;
     uint16_t farthest_depth_q8;
     uint16_t sort_depth_q8;
+    int16_t min_x_q4;
+    int16_t min_y_q4;
+    int16_t max_x_q4;
+    int16_t max_y_q4;
+    float inverse_a;
+    float inverse_b;
+    float inverse_c;
     uint16_t color;
     uint8_t texture_slot;
     uint8_t textured;
@@ -88,6 +119,11 @@ typedef struct {
     uint8_t transparent_index0;
     uint8_t blend_75;
 } projected_quad_t;
+
+typedef struct {
+    uint16_t ahead;
+    uint16_t next;
+} painter_sort_edge_t;
 
 typedef struct {
     float fx;
@@ -119,10 +155,24 @@ static chunk_mesh_t *g_building_mesh;
 static mesh_quad_t g_mesh_build_quads[VOXEL_MESH_QUADS_PER_CHUNK];
 static projected_quad_t g_candidates[VOXEL_RASTER_CANDIDATES];
 static uint16_t g_sort_order[VOXEL_RASTER_CANDIDATES];
-static uint8_t g_draw_list[PXA_RASTER_MAX_DRAW_BYTES];
-static uint8_t g_upload[PXA_RASTER_UPLOAD_HEADER_BYTES +
-                        VOXEL_RASTER_FONT_WIDTH * 5u];
+static uint16_t g_sort_indegree[VOXEL_RASTER_EXACT_CANDIDATES];
+static uint16_t g_sort_edge_heads[VOXEL_RASTER_EXACT_CANDIDATES];
+static uint16_t g_sort_heap[VOXEL_RASTER_EXACT_CANDIDATES];
+static uint16_t g_sort_sweep[VOXEL_RASTER_EXACT_CANDIDATES];
+static uint8_t g_sort_emitted[VOXEL_RASTER_EXACT_CANDIDATES];
+_Alignas(uint32_t) static uint8_t g_draw_list[PXA_RASTER_MAX_DRAW_BYTES];
+#define VOXEL_RASTER_UPLOAD_SCRATCH \
+    (PXA_RASTER_UPLOAD_HEADER_BYTES + 256u * 66u)
+static uint8_t g_upload[VOXEL_RASTER_UPLOAD_SCRATCH];
 static uint8_t g_font_texture[VOXEL_RASTER_FONT_WIDTH * 5u];
+/* Antialiased glyph tiers, selected when the Host blends per-texel coverage.
+ * Without it the legacy 3x5 cut-out font keeps every panel working. */
+static uint8_t g_font_aa;
+static const uint8_t *g_font_aa_pixels[VOXEL_FONT_TIERS];
+static uint8_t g_font_aa_slot[VOXEL_FONT_TIERS];
+static uint8_t g_font_aa_width[VOXEL_FONT_TIERS];
+static uint8_t g_font_aa_height[VOXEL_FONT_TIERS];
+static uint8_t g_font_aa_columns[VOXEL_FONT_TIERS];
 /* Painter polygons select one pre-lit palette row per pixel. */
 #define VOXEL_RASTER_LIGHT_LEVELS 16u
 static uint16_t
@@ -152,6 +202,30 @@ static const uint8_t kFontRows[VOXEL_RASTER_FONT_GLYPHS][5] = {
     {7, 4, 7, 1, 7}, {7, 2, 2, 2, 2}, {5, 5, 5, 5, 7},
     {5, 5, 5, 5, 2}, {5, 5, 7, 7, 5}, {5, 5, 2, 5, 5},
     {5, 5, 2, 2, 2}, {7, 1, 2, 4, 7}, {0, 0, 0, 0, 0},
+};
+
+typedef struct {
+    uint8_t slot;
+    uint8_t width;
+    uint8_t height;
+    uint8_t columns;
+    uint8_t rows;
+    const uint8_t *pixels;
+} font_tier_t;
+
+/* Antialiased HUD tiers, drawn at their native texel size so no atlas is ever
+ * upscaled. Selected by ui_text/font_logical_tier once the Host advertises the
+ * per-texel blend; otherwise the legacy 3x5 cut-out font is used. */
+static const font_tier_t kFontTiers[VOXEL_FONT_TIERS] = {
+    {VOXEL_RASTER_FONT_SLOT_AA0, VOXEL_FONT_SMALL_WIDTH,
+     VOXEL_FONT_SMALL_HEIGHT, VOXEL_FONT_SMALL_COLUMNS, VOXEL_FONT_SMALL_ROWS,
+     voxel_font_small_pixels},
+    {VOXEL_RASTER_FONT_SLOT_AA1, VOXEL_FONT_MEDIUM_WIDTH,
+     VOXEL_FONT_MEDIUM_HEIGHT, VOXEL_FONT_MEDIUM_COLUMNS,
+     VOXEL_FONT_MEDIUM_ROWS, voxel_font_medium_pixels},
+    {VOXEL_RASTER_FONT_SLOT_AA2, VOXEL_FONT_LARGE_WIDTH,
+     VOXEL_FONT_LARGE_HEIGHT, VOXEL_FONT_LARGE_COLUMNS, VOXEL_FONT_LARGE_ROWS,
+     voxel_font_large_pixels},
 };
 
 static int block_uses_cutout(int block) {
@@ -254,13 +328,17 @@ int voxel_raster_upload_assets(uint32_t surface_handle) {
         if (result !=
             (int32_t)(PXA_RASTER_UPLOAD_HEADER_BYTES +
                       VOXEL_RASTER_LIGHT_LEVELS *
-                          PXA_RASTER_PALETTE_COLORS * 2u))
+                          PXA_RASTER_PALETTE_COLORS * 2u)) {
+            (void)pxa_log_error("voxel: lit palette upload failed");
             return 0;
+        }
     } else {
         result = pxa_raster_upload_palette_rgb565(
             surface_handle, palette, g_upload, sizeof(g_upload));
-        if (result != (int32_t)(PXA_RASTER_UPLOAD_HEADER_BYTES + 512u))
+        if (result != (int32_t)(PXA_RASTER_UPLOAD_HEADER_BYTES + 512u)) {
+            (void)pxa_log_error("voxel: palette upload failed");
             return 0;
+        }
     }
     for (block = 0; block < VOXEL_RASTER_TEXTURED_BLOCKS; ++block) {
         const uint8_t kinds = extended ? 3u : 1u;
@@ -273,8 +351,10 @@ int voxel_raster_upload_assets(uint32_t surface_handle) {
             result = pxa_raster_upload_texture_index8(
                 surface_handle, slot, 16, 16, indices[block + 1][texture_kind],
                 g_upload, sizeof(g_upload));
-            if (result != (int32_t)(PXA_RASTER_UPLOAD_HEADER_BYTES + 256u))
+            if (result != (int32_t)(PXA_RASTER_UPLOAD_HEADER_BYTES + 256u)) {
+                (void)pxa_log_error("voxel: block texture upload failed");
                 return 0;
+            }
         }
     }
     pxa_raster_zero_bytes(g_font_texture, sizeof(g_font_texture));
@@ -292,7 +372,36 @@ int voxel_raster_upload_assets(uint32_t surface_handle) {
     result = pxa_raster_upload_texture_index8(
         surface_handle, font_slot(), VOXEL_RASTER_FONT_WIDTH, 5,
         g_font_texture, g_upload, sizeof(g_upload));
-    if (result != (int32_t)sizeof(g_upload)) return 0;
+    if (result != (int32_t)(PXA_RASTER_UPLOAD_HEADER_BYTES +
+                            VOXEL_RASTER_FONT_WIDTH * 5u)) {
+        (void)pxa_log_error("voxel: font texture upload failed");
+        return 0;
+    }
+    g_font_aa = (g_raster_capabilities &
+                 PXA_RASTER_CAP_SPRITE_TEXEL_ALPHA) != 0 &&
+                (g_raster_capabilities & PXA_RASTER_CAP_TEXTURE_SLOTS_48) != 0;
+    if (g_font_aa) {
+        uint8_t tier;
+        for (tier = 0; tier < VOXEL_FONT_TIERS; ++tier) {
+            const font_tier_t *const face = &kFontTiers[tier];
+            const uint16_t texture_width =
+                (uint16_t)(face->width * face->columns);
+            const uint16_t texture_height =
+                (uint16_t)(face->height * face->rows);
+            const uint32_t bytes =
+                (uint32_t)texture_width * texture_height;
+            result = pxa_raster_upload_texture_index8(
+                surface_handle, face->slot, texture_width, texture_height,
+                face->pixels, g_upload, sizeof(g_upload));
+            if (result != (int32_t)(PXA_RASTER_UPLOAD_HEADER_BYTES + bytes)) {
+                /* Missing glyph tiers are a cosmetic loss: keep the legacy
+                 * cut-out font instead of failing the whole Surface. */
+                (void)pxa_log_error("voxel: font tier upload failed");
+                g_font_aa = 0;
+                break;
+            }
+        }
+    }
     return 1;
 }
 
@@ -467,8 +576,38 @@ static int advance_mesh_rebuild(chunk_mesh_t *mesh, const chunk_t *chunk) {
     mesh->chunk_cz = mesh->build_chunk_cz;
     mesh->quad_count = mesh->build_quad_count;
     mesh->dropped = mesh->build_dropped;
-    for (uint16_t index = 0; index < mesh->quad_count; ++index)
-        mesh->quads[index] = g_mesh_build_quads[index];
+    {
+        uint16_t group_count[6] = {0};
+        uint16_t group_start[6];
+        uint16_t output = 0;
+        uint16_t max_group = 0;
+        uint16_t index;
+        for (index = 0; index < mesh->quad_count; ++index) {
+            const mesh_quad_t *quad = &g_mesh_build_quads[index];
+            const uint8_t group =
+                (uint8_t)(quad->axis * 2u + (quad->sign > 0));
+            ++group_count[group];
+        }
+        group_start[0] = 0;
+        for (uint8_t group = 0; group < 6u; ++group) {
+            if (group != 0)
+                group_start[group] =
+                    (uint16_t)(group_start[group - 1u] +
+                               group_count[group - 1u]);
+            if (group_count[group] > max_group)
+                max_group = group_count[group];
+        }
+        /* Mesh construction emits six contiguous face-direction groups.
+         * Interleave them so a per-chunk candidate quota cannot accidentally
+         * retain only one side of a distant chunk. */
+        for (uint16_t row = 0; row < max_group; ++row) {
+            for (uint8_t group = 0; group < 6u; ++group) {
+                if (row < group_count[group])
+                    mesh->quads[output++] =
+                        g_mesh_build_quads[group_start[group] + row];
+            }
+        }
+    }
     mesh->building = 0;
     g_building_mesh = NULL;
     return 1;
@@ -526,10 +665,13 @@ static void build_camera(raster_camera_t *camera, const player_t *player,
     camera->tan_y = VOXEL_RASTER_TAN_HALF;
     camera->tan_x = VOXEL_RASTER_TAN_HALF *
                     (float)camera->width / camera->height;
+    /* The full-detail view distance is the main geometry lever: every extra
+     * chunk in range costs projection work and Host fill time. 32 blocks keeps
+     * the fog horizon while the depth budget stops dropping faces. */
     camera->fog_end = quality >= QUALITY_PERFORMANCE
                           ? VOXEL_RASTER_PERFORMANCE_FOG
-                      : quality >= QUALITY_BALANCED  ? 38.0F
-                                                     : 46.0F;
+                      : quality >= QUALITY_BALANCED  ? 30.0F
+                                                     : 32.0F;
     /* Submerged: pull the fog in so terrain fades like murky water. */
     if (game_block(rc_floor_int(player->x),
                    rc_floor_int(player->y + EYE_HEIGHT),
@@ -575,6 +717,34 @@ static void sort_visible_chunks(visible_chunk_t *chunks, uint8_t count) {
             --cursor;
         }
         chunks[cursor] = value;
+    }
+}
+
+static uint8_t project_quad(const raster_camera_t *camera,
+                            const chunk_t *chunk, const mesh_quad_t *quad,
+                            projected_quad_t *output, uint16_t capacity,
+                            uint8_t adaptive_painter);
+
+static void append_chunk_candidates(const raster_camera_t *camera,
+                                    const visible_chunk_t *visible,
+                                    uint16_t *quad_cursor,
+                                    uint32_t stop_count,
+                                    uint32_t mesh_limit,
+                                    uint8_t adaptive_painter,
+                                    uint32_t *candidate_count) {
+    while (*quad_cursor < visible->mesh->quad_count &&
+           *candidate_count < stop_count && *candidate_count < mesh_limit) {
+        /* The per-chunk quota decides whether to begin another source quad.
+         * Once begun, let clipping/splitting keep the whole face as long as
+         * the global terrain budget has room. Otherwise a quota boundary can
+         * leave a clipped polygon with one of its triangles missing. */
+        const uint32_t remaining = mesh_limit - *candidate_count;
+        ++g_stats.mesh_visited_quads;
+        *candidate_count += project_quad(
+            camera, visible->chunk,
+            &visible->mesh->quads[(*quad_cursor)++],
+            &g_candidates[*candidate_count], (uint16_t)remaining,
+            adaptive_painter);
     }
 }
 
@@ -695,6 +865,46 @@ static uint8_t clip_polygon(const raster_camera_t *camera,
     return output_count;
 }
 
+static void prepare_projected_order(projected_quad_t *quad) {
+    const pxa_raster_vertex_t *v0 = &quad->vertices[0];
+    const pxa_raster_vertex_t *v1 = &quad->vertices[1];
+    const pxa_raster_vertex_t *v2 = &quad->vertices[2];
+    const float x10 = (float)(v1->x_q4 - v0->x_q4);
+    const float y10 = (float)(v1->y_q4 - v0->y_q4);
+    const float x20 = (float)(v2->x_q4 - v0->x_q4);
+    const float y20 = (float)(v2->y_q4 - v0->y_q4);
+    const float denominator = x10 * y20 - x20 * y10;
+    const float q0 = v0->depth_q8 != 0 ? 1.0F / v0->depth_q8 : 0.0F;
+    const float q1 = v1->depth_q8 != 0 ? 1.0F / v1->depth_q8 : q0;
+    const float q2 = v2->depth_q8 != 0 ? 1.0F / v2->depth_q8 : q0;
+    uint8_t index;
+    quad->min_x_q4 = quad->max_x_q4 = v0->x_q4;
+    quad->min_y_q4 = quad->max_y_q4 = v0->y_q4;
+    for (index = 1; index < 4; ++index) {
+        const pxa_raster_vertex_t *vertex = &quad->vertices[index];
+        if (vertex->x_q4 < quad->min_x_q4)
+            quad->min_x_q4 = vertex->x_q4;
+        if (vertex->x_q4 > quad->max_x_q4)
+            quad->max_x_q4 = vertex->x_q4;
+        if (vertex->y_q4 < quad->min_y_q4)
+            quad->min_y_q4 = vertex->y_q4;
+        if (vertex->y_q4 > quad->max_y_q4)
+            quad->max_y_q4 = vertex->y_q4;
+    }
+    if (denominator == 0.0F) {
+        quad->inverse_a = 0.0F;
+        quad->inverse_b = 0.0F;
+        quad->inverse_c = q0;
+        return;
+    }
+    quad->inverse_a =
+        ((q1 - q0) * y20 - (q2 - q0) * y10) / denominator;
+    quad->inverse_b =
+        (x10 * (q2 - q0) - x20 * (q1 - q0)) / denominator;
+    quad->inverse_c = q0 - quad->inverse_a * v0->x_q4 -
+                      quad->inverse_b * v0->y_q4;
+}
+
 static void finish_projected_primitive(
     const raster_camera_t *camera, const mesh_quad_t *quad,
     const pxa_raster_vertex_t *vertices, const uint8_t indices[4],
@@ -750,6 +960,7 @@ static void finish_projected_primitive(
     projected->blend_75 = block_is_translucent(quad->block);
     projected->color = render_block_color(quad->block);
     projected->affine = 0;
+    prepare_projected_order(projected);
     if (projected->textured) {
         const uint8_t kind =
             quad->axis == 1
@@ -759,7 +970,8 @@ static void finish_projected_primitive(
             (uint8_t)quad->block, kind);
         /* Faces below roughly 4x4 screen pixels skip the texture and use the
          * block colour; the texel detail is invisible at that size. */
-        if (!projected->transparent_index0 && !projected->blend_75 &&
+        if ((g_raster_capabilities & PXA_RASTER_CAP_COVERAGE_MASK) == 0 &&
+            !projected->transparent_index0 && !projected->blend_75 &&
             (max_x - min_x < 4 * 16 || max_y - min_y < 4 * 16)) {
             projected->textured = 0;
             return;
@@ -908,6 +1120,7 @@ static uint8_t project_quad_raw(const raster_camera_t *camera,
     primitive_count = count <= 4 ? 1u : (uint8_t)(count - 2u);
     if (primitive_count > capacity) {
         g_stats.dropped_quads += primitive_count - capacity;
+        g_stats.projection_budget_dropped += primitive_count - capacity;
         primitive_count = capacity;
     }
     if (count <= 4) {
@@ -933,8 +1146,16 @@ static int projected_quad_needs_split(const projected_quad_t *quad) {
     int32_t min_y = INT32_MAX;
     int32_t max_y = INT32_MIN;
     uint8_t index;
-    if (quad->nearest_depth_q8 < VOXEL_RASTER_HYBRID_DEPTH_Q8 ||
-        (uint32_t)quad->farthest_depth_q8 - quad->nearest_depth_q8 <=
+#if VOXEL_RASTER_HYBRID_DEPTH_Q8 != 0
+    if (quad->nearest_depth_q8 < VOXEL_RASTER_HYBRID_DEPTH_Q8)
+        return 0;
+#endif
+    /* Splitting exists to bound the visible affine-UV error. Beyond this
+     * distance the face is already small on screen, while splitting it can
+     * consume most of the candidate budget and omit complete far chunks. */
+    if (quad->nearest_depth_q8 >= VOXEL_RASTER_PAINTER_SPLIT_FAR_Q8)
+        return 0;
+    if ((uint32_t)quad->farthest_depth_q8 - quad->nearest_depth_q8 <=
             VOXEL_RASTER_PAINTER_SPLIT_DEPTH_Q8)
         return 0;
     for (index = 0; index < 4; ++index) {
@@ -1131,6 +1352,7 @@ static int project_billboard(const raster_camera_t *camera, float x, float y,
     projected->affine = 0;
     projected->transparent_index0 = 0;
     projected->blend_75 = 0;
+    prepare_projected_order(projected);
     return 1;
 }
 
@@ -1172,7 +1394,153 @@ static void append_entities(const raster_camera_t *camera,
     }
 }
 
-static void sort_candidates(uint32_t count, uint8_t back_to_front) {
+static int point_inside_projected(const projected_quad_t *quad,
+                                  int32_t x, int32_t y) {
+    int sign = 0;
+    uint8_t edge_index;
+    for (edge_index = 0; edge_index < 4; ++edge_index) {
+        const pxa_raster_vertex_t *a = &quad->vertices[edge_index];
+        const pxa_raster_vertex_t *b =
+            &quad->vertices[(edge_index + 1u) & 3u];
+        const int32_t dx = b->x_q4 - a->x_q4;
+        const int32_t dy = b->y_q4 - a->y_q4;
+        const int64_t side =
+            (int64_t)dx * (y - a->y_q4) - (int64_t)dy * (x - a->x_q4);
+        if (dx == 0 && dy == 0) continue;
+        if (side == 0) return 0;
+        if (sign == 0)
+            sign = side > 0 ? 1 : -1;
+        else if ((side > 0) != (sign > 0))
+            return 0;
+    }
+    return sign != 0;
+}
+
+static int proper_edge_intersection(const pxa_raster_vertex_t *a,
+                                    const pxa_raster_vertex_t *b,
+                                    const pxa_raster_vertex_t *c,
+                                    const pxa_raster_vertex_t *d,
+                                    float *x, float *y) {
+    const int32_t rx = b->x_q4 - a->x_q4;
+    const int32_t ry = b->y_q4 - a->y_q4;
+    const int32_t sx = d->x_q4 - c->x_q4;
+    const int32_t sy = d->y_q4 - c->y_q4;
+    const int64_t denominator = (int64_t)rx * sy - (int64_t)ry * sx;
+    const int32_t qx = c->x_q4 - a->x_q4;
+    const int32_t qy = c->y_q4 - a->y_q4;
+    const int64_t t_numerator = (int64_t)qx * sy - (int64_t)qy * sx;
+    const int64_t u_numerator = (int64_t)qx * ry - (int64_t)qy * rx;
+    float t;
+    if (denominator == 0) return 0;
+    if (denominator > 0) {
+        if (t_numerator <= 0 || t_numerator >= denominator ||
+            u_numerator <= 0 || u_numerator >= denominator)
+            return 0;
+    } else if (t_numerator >= 0 || t_numerator <= denominator ||
+               u_numerator >= 0 || u_numerator <= denominator) {
+        return 0;
+    }
+    t = (float)t_numerator / (float)denominator;
+    *x = a->x_q4 + (float)rx * t;
+    *y = a->y_q4 + (float)ry * t;
+    return 1;
+}
+
+static int projected_overlap_sample(const projected_quad_t *a,
+                                    const projected_quad_t *b,
+                                    float *x, float *y) {
+    uint8_t index;
+    if (a->max_x_q4 <= b->min_x_q4 || b->max_x_q4 <= a->min_x_q4 ||
+        a->max_y_q4 <= b->min_y_q4 || b->max_y_q4 <= a->min_y_q4)
+        return 0;
+    for (index = 0; index < 4; ++index) {
+        const pxa_raster_vertex_t *vertex = &a->vertices[index];
+        if (point_inside_projected(b, vertex->x_q4, vertex->y_q4)) {
+            *x = vertex->x_q4;
+            *y = vertex->y_q4;
+            return 1;
+        }
+    }
+    for (index = 0; index < 4; ++index) {
+        const pxa_raster_vertex_t *vertex = &b->vertices[index];
+        if (point_inside_projected(a, vertex->x_q4, vertex->y_q4)) {
+            *x = vertex->x_q4;
+            *y = vertex->y_q4;
+            return 1;
+        }
+    }
+    for (uint8_t edge_a = 0; edge_a < 4; ++edge_a) {
+        for (uint8_t edge_b = 0; edge_b < 4; ++edge_b) {
+            if (proper_edge_intersection(
+                    &a->vertices[edge_a],
+                    &a->vertices[(edge_a + 1u) & 3u],
+                    &b->vertices[edge_b],
+                    &b->vertices[(edge_b + 1u) & 3u], x, y))
+                return 1;
+        }
+    }
+    return 0;
+}
+
+/* Returns -1 when a is behind b, +1 when b is behind a. */
+static int projected_painter_relation(const projected_quad_t *a,
+                                      const projected_quad_t *b) {
+    float x;
+    float y;
+    float inverse_a;
+    float inverse_b;
+    if (a->max_x_q4 <= b->min_x_q4 || b->max_x_q4 <= a->min_x_q4 ||
+        a->max_y_q4 <= b->min_y_q4 || b->max_y_q4 <= a->min_y_q4)
+        return 0;
+    /* Adaptive splitting bounds most faces to a narrow depth interval. When
+     * two intervals do not overlap their order is exact everywhere, so avoid
+     * polygon containment, edge intersection and reciprocal-plane math. */
+    if (a->nearest_depth_q8 >= b->farthest_depth_q8) return -1;
+    if (b->nearest_depth_q8 >= a->farthest_depth_q8) return 1;
+    if (!projected_overlap_sample(a, b, &x, &y)) return 0;
+    inverse_a = a->inverse_a * x + a->inverse_b * y + a->inverse_c;
+    inverse_b = b->inverse_a * x + b->inverse_b * y + b->inverse_c;
+    if (inverse_a + 1.0e-7F < inverse_b) return -1;
+    if (inverse_b + 1.0e-7F < inverse_a) return 1;
+    return 0;
+}
+
+static int sort_farther(uint16_t a, uint16_t b) {
+    const uint16_t depth_a = g_candidates[a].sort_depth_q8;
+    const uint16_t depth_b = g_candidates[b].sort_depth_q8;
+    return depth_a > depth_b || (depth_a == depth_b && a < b);
+}
+
+static void sort_heap_push(uint32_t *count, uint16_t value) {
+    uint32_t cursor = (*count)++;
+    while (cursor != 0) {
+        const uint32_t parent = (cursor - 1u) / 2u;
+        if (sort_farther(g_sort_heap[parent], value)) break;
+        g_sort_heap[cursor] = g_sort_heap[parent];
+        cursor = parent;
+    }
+    g_sort_heap[cursor] = value;
+}
+
+static uint16_t sort_heap_pop(uint32_t *count) {
+    const uint16_t result = g_sort_heap[0];
+    const uint16_t tail = g_sort_heap[--*count];
+    uint32_t cursor = 0;
+    while (cursor * 2u + 1u < *count) {
+        uint32_t child = cursor * 2u + 1u;
+        if (child + 1u < *count &&
+            sort_farther(g_sort_heap[child + 1u], g_sort_heap[child]))
+            ++child;
+        if (sort_farther(tail, g_sort_heap[child])) break;
+        g_sort_heap[cursor] = g_sort_heap[child];
+        cursor = child;
+    }
+    if (*count != 0) g_sort_heap[cursor] = tail;
+    return result;
+}
+
+static void sort_candidates(uint32_t count, uint8_t back_to_front,
+                            uint8_t exact_painter) {
     uint32_t gap;
     uint32_t index;
     if (count > VOXEL_RASTER_CANDIDATES) count = VOXEL_RASTER_CANDIDATES;
@@ -1182,6 +1550,91 @@ static void sort_candidates(uint32_t count, uint8_t back_to_front) {
      * makes exact polygon ordering unnecessary. Painter fallback uses Q8
      * integer keys so sorting does not add floating-point comparisons. */
     if (!back_to_front) return;
+    if (exact_painter && count <= VOXEL_RASTER_EXACT_CANDIDATES) {
+        painter_sort_edge_t *const sort_edges =
+            (painter_sort_edge_t *)g_draw_list;
+        uint32_t edge_count = 0;
+        uint32_t heap_count = 0;
+        pxa_raster_zero_bytes(
+            g_sort_indegree, (size_t)count * sizeof(g_sort_indegree[0]));
+        pxa_raster_zero_bytes(
+            g_sort_emitted, (size_t)count * sizeof(g_sort_emitted[0]));
+        for (index = 0; index < count; ++index)
+            g_sort_edge_heads[index] = UINT16_MAX;
+        for (index = 0; index < count; ++index)
+            g_sort_sweep[index] = (uint16_t)index;
+        for (gap = count / 2u; gap != 0; gap /= 2u) {
+            for (index = gap; index < count; ++index) {
+                const uint16_t value = g_sort_sweep[index];
+                uint32_t cursor = index;
+                while (cursor >= gap &&
+                       g_candidates[g_sort_sweep[cursor - gap]].min_x_q4 >
+                           g_candidates[value].min_x_q4) {
+                    g_sort_sweep[cursor] = g_sort_sweep[cursor - gap];
+                    cursor -= gap;
+                }
+                g_sort_sweep[cursor] = value;
+            }
+        }
+        for (uint32_t sweep_a = 0; sweep_a < count; ++sweep_a) {
+            const uint32_t a = g_sort_sweep[sweep_a];
+            for (uint32_t sweep_b = sweep_a + 1u; sweep_b < count;
+                 ++sweep_b) {
+                const uint32_t b = g_sort_sweep[sweep_b];
+                int relation;
+                uint32_t behind;
+                uint32_t ahead;
+                if (g_candidates[b].min_x_q4 >=
+                    g_candidates[a].max_x_q4)
+                    break;
+                relation = projected_painter_relation(
+                    &g_candidates[a], &g_candidates[b]);
+                if (relation == 0) continue;
+                behind = relation < 0 ? a : b;
+                ahead = relation < 0 ? b : a;
+                if (edge_count >= VOXEL_RASTER_SORT_EDGES) {
+                    ++g_stats.sort_edge_overflow;
+                    continue;
+                }
+                sort_edges[edge_count].ahead = (uint16_t)ahead;
+                sort_edges[edge_count].next = g_sort_edge_heads[behind];
+                g_sort_edge_heads[behind] = (uint16_t)edge_count++;
+                ++g_sort_indegree[ahead];
+            }
+        }
+        g_stats.sort_edges = edge_count;
+        for (index = 0; index < count; ++index)
+            if (g_sort_indegree[index] == 0)
+                sort_heap_push(&heap_count, (uint16_t)index);
+        for (uint32_t output = 0; output < count; ++output) {
+            uint32_t selected = heap_count != 0
+                                    ? sort_heap_pop(&heap_count)
+                                    : UINT32_MAX;
+            /* A painter cycle is possible when three large faces mutually
+             * overlap. Adaptive splitting makes this rare; break it with the
+             * stable farthest-depth key instead of adding a pixel z-buffer. */
+            if (selected == UINT32_MAX) {
+                ++g_stats.sort_cycles;
+                for (index = 0; index < count; ++index) {
+                    if (!g_sort_emitted[index] &&
+                        (selected == UINT32_MAX ||
+                         g_candidates[index].sort_depth_q8 >
+                             g_candidates[selected].sort_depth_q8))
+                        selected = index;
+                }
+            }
+            g_sort_order[output] = (uint16_t)selected;
+            g_sort_emitted[selected] = 1;
+            for (uint16_t edge = g_sort_edge_heads[selected];
+                 edge != UINT16_MAX; edge = sort_edges[edge].next) {
+                const uint16_t ahead = sort_edges[edge].ahead;
+                if (!g_sort_emitted[ahead] && g_sort_indegree[ahead] != 0 &&
+                    --g_sort_indegree[ahead] == 0)
+                    sort_heap_push(&heap_count, ahead);
+            }
+        }
+        return;
+    }
     for (gap = count / 2u; gap != 0; gap /= 2u) {
         for (index = gap; index < count; ++index) {
             const uint16_t value = g_sort_order[index];
@@ -1214,7 +1667,8 @@ static int projected_quad_has_area(const projected_quad_t *quad) {
 static int append_projected_quad(pxa_raster_draw_list_t *list,
                                  const projected_quad_t *quad,
                                  uint8_t painter,
-                                 uint8_t lit_palette_depth) {
+                                 uint8_t lit_palette_depth,
+                                 uint8_t coverage_mode) {
     if (quad->textured &&
         (g_raster_capabilities & PXA_RASTER_CAP_TEXTURED_QUAD) != 0) {
         pxa_raster_vertex_t vertices[4];
@@ -1225,6 +1679,12 @@ static int append_projected_quad(pxa_raster_draw_list_t *list,
         if (painter) {
             const uint8_t row = light_row(vertices[0].light);
             flags = PXA_RASTER_QUAD_PAINTER;
+            if (coverage_mode != 0) {
+                flags |= PXA_RASTER_QUAD_AFFINE_UV |
+                         PXA_RASTER_QUAD_COVERAGE_MASK;
+                if (coverage_mode == 2u)
+                    flags |= PXA_RASTER_QUAD_COVERAGE_RESOLVE;
+            }
             if (quad->transparent_index0)
                 flags |= PXA_RASTER_QUAD_TRANSPARENT_INDEX0;
             if (quad->blend_75 &&
@@ -1270,18 +1730,34 @@ static int append_projected_quad(pxa_raster_draw_list_t *list,
     }
 }
 
-static int font_character_index(char character) {
-    uint8_t index;
-    for (index = 0; index < VOXEL_RASTER_FONT_GLYPHS; ++index)
-        if (kFontCharacters[index] == character) return index;
-    return VOXEL_RASTER_FONT_GLYPHS - 1u;
+static int scene_command_fits(const pxa_raster_draw_list_t *list) {
+    const uint32_t largest_scene_command = PXA_RASTER_TEXTURED_QUAD_BYTES;
+    return list != NULL &&
+           list->command_count + VOXEL_RASTER_HUD_COMMAND_RESERVE <
+               PXA_RASTER_MAX_COMMANDS &&
+           list->length + largest_scene_command +
+                   VOXEL_RASTER_HUD_BYTE_RESERVE <=
+               PXA_RASTER_MAX_DRAW_BYTES;
 }
 
-static int raster_text_width(const char *text, int scale) {
-    int length = 0;
-    while (text != NULL && text[length] != '\0') ++length;
-    return length * 4 * scale;
+static uint8_t projected_quad_is_painter(const projected_quad_t *quad) {
+#if VOXEL_RASTER_HYBRID_DEPTH_Q8 == 0
+    (void)quad;
+    return 1;
+#else
+    return quad->nearest_depth_q8 >= VOXEL_RASTER_HYBRID_DEPTH_Q8;
+#endif
 }
+
+static int font_character_index(char character) {
+    uint8_t index;
+    for (index = 0; index < VOXEL_FONT_GLYPH_COUNT; ++index)
+        if (VOXEL_FONT_GLYPHS[index] == character) return index;
+    return (int)VOXEL_FONT_GLYPH_COUNT - 1;
+}
+
+_Static_assert(VOXEL_FONT_GLYPH_COUNT == VOXEL_RASTER_FONT_GLYPHS,
+               "legacy and antialiased font tables must list the same glyphs");
 
 static char *append_u32_text(char *output, uint32_t value) {
     char reverse[10];
@@ -1437,23 +1913,83 @@ static void append_ui_outline(pxa_raster_draw_list_t *list,
                    rect_height, color);
 }
 
+/* The cut-out font is five logical units tall per scale step; the nearest
+ * antialiased tier is picked from that height in surface pixels so the new
+ * glyphs occupy the space the layout reserved for the old ones. */
+static int font_tier_for(const raster_ui_t *ui, int scale) {
+    const int screen_h = ui->layout->screen_h > 0 ? ui->layout->screen_h : 1;
+    const int logical = 5 * (scale > 0 ? scale : 1);
+    const int surface = logical * (int)ui->height / screen_h;
+    if (surface <= 8) return 0;
+    if (surface <= 16) return 1;
+    return 2;
+}
+
+static int ui_measure_logical(const raster_ui_t *ui, int surface) {
+    if (ui->width == 0) return surface;
+    return (surface * ui->layout->screen_w + (int)ui->width - 1) /
+           (int)ui->width;
+}
+
+static int font_logical_advance(const raster_ui_t *ui, int scale) {
+    if (!g_font_aa) return 4 * (scale > 0 ? scale : 1);
+    return ui_measure_logical(
+        ui, (int)kFontTiers[font_tier_for(ui, scale)].width + 1);
+}
+
+static int font_logical_height(const raster_ui_t *ui, int scale) {
+    if (!g_font_aa) return 5 * (scale > 0 ? scale : 1);
+    return ui_measure_logical(
+        ui, kFontTiers[font_tier_for(ui, scale)].height);
+}
+
 static void append_ui_text(pxa_raster_draw_list_t *list, const raster_ui_t *ui,
                            int x, int y, const char *text, uint16_t color,
                            int scale) {
+    const int advance = font_logical_advance(ui, scale);
+    const int mapped_y = ui_y(ui, y);
     int cursor_x = ui_x(ui, x);
+    if (g_font_aa) {
+        const font_tier_t *const face =
+            &kFontTiers[font_tier_for(ui, scale)];
+        while (text != NULL && *text != '\0') {
+            const int glyph = font_character_index(*text++);
+            const int next_x = ui_x(ui, x + advance);
+            if (glyph != (int)VOXEL_FONT_GLYPH_COUNT - 1) {
+                const uint16_t source_x =
+                    (uint16_t)((glyph % face->columns) * face->width);
+                const uint16_t source_y =
+                    (uint16_t)((glyph / face->columns) * face->height);
+                (void)pxa_raster_sprite(
+                    list, face->slot,
+                    PXA_RASTER_SPRITE_TRANSPARENT_INDEX0 |
+                        PXA_RASTER_SPRITE_SOLID_COLOR |
+                        PXA_RASTER_SPRITE_TEXEL_ALPHA,
+                    g_raster_capabilities, (int16_t)cursor_x,
+                    (int16_t)mapped_y, face->width, face->height, source_x,
+                    source_y, face->width, face->height, color);
+            }
+            {
+                const int step = next_x - cursor_x;
+                cursor_x = next_x > cursor_x ? next_x
+                                             : cursor_x + (step < 1 ? 1 : 0);
+            }
+            x += advance;
+        }
+        return;
+    }
     while (text != NULL && *text != '\0') {
         const int glyph = font_character_index(*text++);
         const int mapped_x = ui_x(ui, x);
         const int next_x = ui_x(ui, x + 3 * scale);
         const int next_y = ui_y(ui, y + 5 * scale);
-        const int mapped_y = ui_y(ui, y);
         const uint16_t glyph_width = (uint16_t)(next_x - mapped_x >= 2
                                                      ? next_x - mapped_x
                                                      : 2);
         const uint16_t glyph_height = (uint16_t)(next_y - mapped_y >= 3
                                                       ? next_y - mapped_y
                                                       : 3);
-        if (glyph != VOXEL_RASTER_FONT_GLYPHS - 1u) {
+        if (glyph != (int)VOXEL_FONT_GLYPH_COUNT - 1) {
             /* A 3x5 source glyph must not be reduced to a single sampled
              * column at 2x dynamic resolution: that turns most letters into
              * dots after the Host scales the scene back up. */
@@ -1467,8 +2003,9 @@ static void append_ui_text(pxa_raster_draw_list_t *list, const raster_ui_t *ui,
         }
         {
             const int next_cursor = ui_x(ui, x + 4 * scale);
-            const int advance = next_cursor - mapped_x;
-            cursor_x += advance >= (int)glyph_width ? advance : glyph_width;
+            const int mapped = ui_x(ui, x);
+            const int step = next_cursor - mapped;
+            cursor_x += step >= (int)glyph_width ? step : glyph_width;
         }
         x += 4 * scale;
     }
@@ -1476,12 +2013,8 @@ static void append_ui_text(pxa_raster_draw_list_t *list, const raster_ui_t *ui,
 
 static int ui_text_width(const raster_ui_t *ui, const char *text, int scale) {
     int width = 0;
-    while (text != NULL && *text++ != '\0') {
-        const int x0 = ui_x(ui, 0);
-        const int x1 = ui_x(ui, 4 * scale);
-        const int advance = x1 - x0;
-        width += advance >= 2 ? advance : 2;
-    }
+    const int advance = font_logical_advance(ui, scale);
+    while (text != NULL && *text++ != '\0') width += advance;
     return width;
 }
 
@@ -1587,8 +2120,10 @@ static void append_ui_count(pxa_raster_draw_list_t *list, const raster_ui_t *ui,
     if (count == 0) return;
     out = append_u32_text(out, count);
     *out = '\0';
+    /* `y` is the bottom of the number, `x` its right edge. */
     append_ui_text(list, ui, x - ui_text_width(ui, number, scale),
-                   y - (scale > 1 ? 2 * scale : 0), number, HUD_TEXT, scale);
+                   y - font_logical_height(ui, scale), number, HUD_TEXT,
+                   scale);
 }
 
 static void append_hud(pxa_raster_draw_list_t *list, const hud_state_t *hud,
@@ -1638,7 +2173,7 @@ static void append_hud(pxa_raster_draw_list_t *list, const hud_state_t *hud,
                        slot_size - 2 * padding,
                        hud->hotbar_items[slot]);
         append_ui_count(list, &ui, x + slot_size - padding,
-                        y + slot_size - 7 * layout->ui_scale,
+                        y + slot_size - padding,
                         hud->hotbar_counts[slot], layout->ui_scale);
     }
 
@@ -1674,8 +2209,10 @@ static void append_hud(pxa_raster_draw_list_t *list, const hud_state_t *hud,
     }
     append_ui_button(list, &ui, layout->fly_x, layout->fly_y, layout->fly_r,
                      HUD_BTN_FACE, hud->flying);
-    append_ui_text(list, &ui, layout->fly_x - 3 * s,
-                   layout->fly_y - 3 * s, "F", HUD_TEXT, s);
+    append_ui_text(list, &ui,
+                   layout->fly_x - ui_text_width(&ui, "F", s) / 2,
+                   layout->fly_y - font_logical_height(&ui, s) / 2, "F",
+                   HUD_TEXT, s);
     append_ui_button(list, &ui, layout->menu_x, layout->menu_y,
                      layout->menu_r, HUD_BTN_FACE, 0);
     append_ui_rect(list, &ui, layout->menu_x - 6 * s,
@@ -1725,10 +2262,8 @@ static void append_hud(pxa_raster_draw_list_t *list, const hud_state_t *hud,
         *out++ = (char)('0' + hud->quality);
         *out++ = 'X';
         *out = '\0';
-        append_ui_text(list, &ui,
-                       ((int)ui.width - ui_text_width(&ui, status, 1)) / 2 *
-                           layout->screen_w / ui.width,
-                       layout->view_y + 4, status, HUD_TEXT, 1);
+        append_ui_text(list, &ui, center_x - ui_text_width(&ui, status, s) / 2,
+                       layout->view_y + 4 * s, status, HUD_TEXT, s);
     }
     if (hud->mine_progress > 0.01F) {
         int progress = (int)(44.0F * hud->mine_progress);
@@ -1739,12 +2274,13 @@ static void append_hud(pxa_raster_draw_list_t *list, const hud_state_t *hud,
                        HUD_SELECT);
     }
     if (hud->toast != NULL && hud->toast[0] != '\0') {
-        const int text_width = raster_text_width(hud->toast, 1);
+        const int text_width = ui_text_width(&ui, hud->toast, s);
+        const int text_height = font_logical_height(&ui, s);
         const int x = center_x - text_width / 2;
-        const int y = layout->hotbar_y - 14;
-        append_ui_rect(list, &ui, x - 4, y - 3, text_width + 8, 11,
-                       HUD_SHADOW);
-        append_ui_text(list, &ui, x, y, hud->toast, HUD_TEXT, 1);
+        const int y = layout->hotbar_y - text_height - 6;
+        append_ui_rect(list, &ui, x - 4, y - 3, text_width + 8,
+                       text_height + 6, HUD_SHADOW);
+        append_ui_text(list, &ui, x, y, hud->toast, HUD_TEXT, s);
     }
 }
 
@@ -1822,7 +2358,8 @@ static void append_menu(pxa_raster_draw_list_t *list, const menu_state_t *menu,
         const int title_y = layout->view_y + 18 * s;
         if (menu->overlay) {
             append_ui_rect(list, &ui, title_x - 8 * s, title_y - 4 * s,
-                           title_width + 16 * s, 5 * title_scale + 8 * s,
+                           title_width + 16 * s,
+                           font_logical_height(&ui, title_scale) + 8 * s,
                            HUD_SHADOW);
         }
         append_ui_text(list, &ui, title_x, title_y, title, HUD_SELECT,
@@ -1860,7 +2397,10 @@ static void append_menu(pxa_raster_draw_list_t *list, const menu_state_t *menu,
                           button->enabled ? HUD_SELECT : HUD_SHADOW);
         append_ui_text(list, &ui,
                        button->x + (button->w - text_width) / 2,
-                       button->y + (button->h - 5 * body_scale) / 2, text,
+                       button->y + (button->h -
+                                    font_logical_height(&ui, body_scale)) /
+                                       2,
+                       text,
                        ink, body_scale);
     }
     if (menu->screen == 0) {
@@ -1875,7 +2415,8 @@ static void append_menu(pxa_raster_draw_list_t *list, const menu_state_t *menu,
         const int x = center_x - text_width / 2;
         const int y = layout->view_y + layout->view_h - 28 * s;
         append_ui_rect(list, &ui, x - 4 * s, y - 3 * s, text_width + 8 * s,
-                       5 * body_scale + 6 * s, HUD_SHADOW);
+                       font_logical_height(&ui, body_scale) + 6 * s,
+                       HUD_SHADOW);
         append_ui_text(list, &ui, x, y, menu->toast, HUD_TEXT, body_scale);
     }
 }
@@ -2093,6 +2634,31 @@ static void append_inventory(pxa_raster_draw_list_t *list,
     }
 }
 
+/* One-shot diagnostics: a rejected draw list is otherwise invisible from the
+ * App side, and a silent submit failure looks like a frozen frame. */
+static uint8_t g_submit_error_logged;
+static uint32_t g_submit_frames;
+
+static int32_t submit_list(uint32_t surface_handle,
+                           pxa_raster_draw_list_t *list) {
+    const int32_t result = pxa_raster_submit(surface_handle, list);
+    ++g_submit_frames;
+    if (result != PXA_STATUS_OK && !g_submit_error_logged) {
+        char message[48];
+        char *out = message;
+        static const char prefix[] = "voxel: raster submit failed rc=";
+        size_t index;
+        g_submit_error_logged = 1;
+        for (index = 0; index < sizeof(prefix) - 1u; ++index)
+            *out++ = prefix[index];
+        out = append_u32_text(out, (uint32_t)(result < 0 ? -result : result));
+        *out++ = result < 0 ? '-' : '+';
+        *out = '\0';
+        (void)pxa_log_error(message);
+    }
+    return result;
+}
+
 int32_t voxel_raster_render(uint32_t surface_handle, uint64_t frame_id,
                             const player_t *player, uint8_t quality,
                             const hud_state_t *hud, const menu_state_t *menu,
@@ -2100,11 +2666,9 @@ int32_t voxel_raster_render(uint32_t surface_handle, uint64_t frame_id,
     raster_camera_t camera;
     pxa_raster_draw_list_t list;
     visible_chunk_t visible_chunks[GRID_COUNT];
+    uint16_t visible_chunk_cursors[GRID_COUNT] = {0};
     uint32_t candidate_count = 0;
-    uint32_t candidate_limit = quality >= QUALITY_PERFORMANCE
-                                   ? VOXEL_RASTER_PERFORMANCE_CANDIDATES
-                               : quality >= QUALITY_BALANCED  ? 480u
-                                                              : 620u;
+    uint32_t candidate_limit;
     uint32_t mesh_limit;
     uint8_t mesh_build_budget = 1;
     /* World edits invalidate the previous mesh; rebuild those synchronously so
@@ -2112,8 +2676,11 @@ int32_t voxel_raster_render(uint32_t surface_handle, uint64_t frame_id,
      * incremental streaming budget finishes the whole chunk. */
     uint8_t edit_build_budget = 3;
     uint8_t visible_count = 0;
+    int depth_terrain;
     int lit_palette_depth;
+    int coverage_mask;
     int hybrid_painter;
+    int exact_painter;
     int grid_z;
     if (surface_handle == 0 || frame_id == 0 || player == NULL)
         return PXA_STATUS_INVALID_ARGUMENT;
@@ -2129,7 +2696,7 @@ int32_t voxel_raster_render(uint32_t surface_handle, uint64_t frame_id,
         append_menu(&list, menu, width, height);
         g_stats.draw_list_bytes = list.length;
         g_stats.covered_pixel_budget = (uint32_t)width * height;
-        return pxa_raster_submit(surface_handle, &list);
+        return submit_list(surface_handle, &list);
     }
     if (hud != NULL && hud->inventory_open) {
         /* The inventory is a full-screen panel; drawing it without the 3D
@@ -2142,19 +2709,49 @@ int32_t voxel_raster_render(uint32_t surface_handle, uint64_t frame_id,
         append_inventory(&list, hud, width, height);
         g_stats.draw_list_bytes = list.length;
         g_stats.covered_pixel_budget = (uint32_t)width * height;
-        return pxa_raster_submit(surface_handle, &list);
+        return submit_list(surface_handle, &list);
     }
     build_camera(&camera, player, quality);
+    g_stats.fog_end_q8 = (uint32_t)(camera.fog_end * 256.0F + 0.5F);
     lit_palette_depth =
         (g_raster_capabilities & PXA_RASTER_CAP_LIT_PALETTE_DEPTH) != 0;
+    coverage_mask =
+        (g_raster_capabilities & PXA_RASTER_CAP_COVERAGE_MASK) != 0 &&
+        (g_raster_capabilities & PXA_RASTER_CAP_AFFINE_UV) != 0 &&
+        (g_raster_capabilities & PXA_RASTER_CAP_PAINTER_POLYGON) != 0 &&
+        (g_raster_capabilities & PXA_RASTER_CAP_FIXED_ALPHA_BLEND) != 0;
+    depth_terrain =
+        VOXEL_RASTER_DEPTH_TERRAIN != 0 && !coverage_mask &&
+        (g_raster_capabilities & PXA_RASTER_CAP_TEXTURED_QUAD) != 0 &&
+        (g_raster_capabilities & PXA_RASTER_CAP_DEPTH_CUTOUT) != 0 &&
+        (g_raster_capabilities & PXA_RASTER_CAP_LIT_PALETTE_DEPTH) != 0;
+    if (depth_terrain) {
+        candidate_limit = quality >= QUALITY_PERFORMANCE
+                              ? VOXEL_RASTER_PERFORMANCE_CANDIDATES
+                          : quality >= QUALITY_BALANCED ? 768u
+                                                        : 1024u;
+    } else {
+        candidate_limit = quality >= QUALITY_PERFORMANCE
+                              ? VOXEL_RASTER_PERFORMANCE_CANDIDATES
+                          : quality >= QUALITY_BALANCED ? 480u
+                                                        : 620u;
+    }
     hybrid_painter =
-        lit_palette_depth &&
+        !depth_terrain && !coverage_mask && lit_palette_depth &&
         (g_raster_capabilities & PXA_RASTER_CAP_PAINTER_POLYGON) != 0;
+    exact_painter = hybrid_painter && VOXEL_RASTER_HYBRID_DEPTH_Q8 == 0u;
     /* A full-resolution frame makes both Guest projection and Host fill cost
      * substantially more expensive. Keep near terrain responsive instead of
      * spending the frame budget on distant faces. */
-    if (camera.width >= 240u && candidate_limit > 320u)
-        candidate_limit = 320u;
+    if (camera.width >= 240u) {
+        const uint32_t full_resolution_limit =
+            depth_terrain
+                ? VOXEL_RASTER_DEPTH_CANDIDATES
+                : (exact_painter ? VOXEL_RASTER_EXACT_CANDIDATES : 320u);
+        if (candidate_limit > full_resolution_limit)
+            candidate_limit = full_resolution_limit;
+    }
+    g_stats.candidate_limit = candidate_limit;
     if (g_mesh_cache_warmed && g_building_mesh != NULL) {
         const chunk_t *building_chunk = g_building_mesh->build_chunk;
         if (building_chunk == NULL || !building_chunk->loaded ||
@@ -2176,7 +2773,11 @@ int32_t voxel_raster_render(uint32_t surface_handle, uint64_t frame_id,
             const int mesh_index = grid_z * GRID_W + grid_x;
             const chunk_t *chunk = g_chunk_grid[grid_z][grid_x];
             chunk_mesh_t *mesh;
-            if (chunk == NULL || !chunk->loaded || !chunk_visible(&camera, chunk)) {
+            if (chunk == NULL || !chunk->loaded) {
+                ++g_stats.unloaded_chunks;
+                continue;
+            }
+            if (!chunk_visible(&camera, chunk)) {
                 ++g_stats.frustum_culled;
                 continue;
             }
@@ -2212,50 +2813,72 @@ int32_t voxel_raster_render(uint32_t surface_handle, uint64_t frame_id,
                 /* A revision rebuild keeps the previous mesh visible. A cache
                  * slot reassigned to another chunk has no valid fallback. */
                 if (mesh->chunk != chunk || mesh->chunk_cx != chunk->cx ||
-                    mesh->chunk_cz != chunk->cz)
+                    mesh->chunk_cz != chunk->cz) {
+                    ++g_stats.pending_mesh_chunks;
                     continue;
+                }
             }
             g_stats.cached_quads += mesh->quad_count;
             g_stats.dropped_quads += mesh->dropped;
+            g_stats.mesh_overflow_quads += mesh->dropped;
+            g_stats.mesh_input_quads += mesh->quad_count;
             visible_chunks[visible_count].chunk = chunk;
             visible_chunks[visible_count].mesh = mesh;
             visible_chunks[visible_count].depth = chunk_depth(&camera, chunk);
             ++visible_count;
         }
     }
+    g_stats.visible_chunks = visible_count;
     g_mesh_cache_warmed = 1;
     sort_visible_chunks(visible_chunks, visible_count);
     /* Keep space for actors and particles. Without this reservation, a dense
      * terrain mesh consumes the whole transport budget before entities run. */
     mesh_limit = candidate_limit > 20u ? candidate_limit - 20u : candidate_limit;
-    for (uint8_t chunk_index = 0;
-         chunk_index < visible_count && candidate_count < mesh_limit;
-         ++chunk_index) {
-        const visible_chunk_t *visible = &visible_chunks[chunk_index];
-        uint16_t quad_index;
-        for (quad_index = 0; quad_index < visible->mesh->quad_count;
-             ++quad_index) {
-            if (candidate_count >= mesh_limit ||
-                candidate_count >= VOXEL_RASTER_CANDIDATES) {
-                ++g_stats.dropped_quads;
-                break;
-            }
-            candidate_count += project_quad(
-                &camera, visible->chunk,
-                &visible->mesh->quads[quad_index],
-                &g_candidates[candidate_count],
-                (uint16_t)(mesh_limit - candidate_count),
-                (uint8_t)hybrid_painter);
+    if (visible_count != 0) {
+        const uint32_t fair_budget = mesh_limit * 2u / 3u;
+        uint32_t base_quota = fair_budget / visible_count;
+        if (base_quota == 0) base_quota = 1;
+        g_stats.chunk_base_quota = base_quota;
+        /* First retain a representative set from every visible chunk. */
+        for (uint8_t chunk_index = 0;
+             chunk_index < visible_count && candidate_count < mesh_limit;
+             ++chunk_index) {
+            uint32_t stop_count = candidate_count + base_quota;
+            if (stop_count > mesh_limit) stop_count = mesh_limit;
+            append_chunk_candidates(
+                &camera, &visible_chunks[chunk_index],
+                &visible_chunk_cursors[chunk_index], stop_count, mesh_limit,
+                (uint8_t)(hybrid_painter || coverage_mask), &candidate_count);
         }
+        /* Spend the remaining third near-to-far for close silhouettes. */
+        for (uint8_t chunk_index = 0;
+             chunk_index < visible_count && candidate_count < mesh_limit;
+             ++chunk_index) {
+            append_chunk_candidates(
+                &camera, &visible_chunks[chunk_index],
+                &visible_chunk_cursors[chunk_index], mesh_limit, mesh_limit,
+                (uint8_t)(hybrid_painter || coverage_mask), &candidate_count);
+        }
+    }
+    if (g_stats.mesh_visited_quads < g_stats.mesh_input_quads) {
+        g_stats.candidate_budget_omitted =
+            g_stats.mesh_input_quads - g_stats.mesh_visited_quads;
+        g_stats.dropped_quads += g_stats.candidate_budget_omitted;
     }
     append_entities(&camera, candidate_limit, &candidate_count);
     g_stats.candidate_quads = candidate_count;
     sort_candidates(
         candidate_count,
-        hybrid_painter ||
+        depth_terrain || coverage_mask || hybrid_painter ||
             (g_raster_capabilities & PXA_RASTER_CAP_FIXED_ALPHA_BLEND) != 0 ||
-            (g_raster_capabilities & PXA_RASTER_CAP_TEXTURED_QUAD) == 0);
+            (g_raster_capabilities & PXA_RASTER_CAP_TEXTURED_QUAD) == 0,
+        (uint8_t)exact_painter);
     pxa_raster_draw_list_begin(&list, g_draw_list, sizeof(g_draw_list), frame_id);
+    /* The clear record also drops the depth buffer, but only when the list
+     * declares depth cut-out support. Terrain always depth-tests, so request
+     * the reset even on frames without any cut-out face. */
+    if (depth_terrain)
+        list.required_capabilities |= PXA_RASTER_CAP_DEPTH_CUTOUT;
     {
         /* A submerged camera sees a deep water backdrop instead of sky. */
         const int submerged =
@@ -2264,7 +2887,10 @@ int32_t voxel_raster_render(uint32_t surface_handle, uint64_t frame_id,
                        rc_floor_int(player->z)) == BLOCK_WATER;
         const uint16_t clear = submerged ? VOXEL_RASTER_UNDERWATER_CLEAR
                                          : UINT16_C(0x9e5f);
-        (void)pxa_raster_clear(&list, clear);
+        /* At balanced/full detail the sky bands cover every pixel before any
+         * world geometry. Avoid writing the complete PSRAM framebuffer twice. */
+        if (submerged || quality >= QUALITY_PERFORMANCE)
+            (void)pxa_raster_clear(&list, clear);
         if (!submerged &&
             (g_raster_capabilities & PXA_RASTER_CAP_FLAT_QUAD) != 0)
             append_sky(&list, &camera, quality < QUALITY_PERFORMANCE);
@@ -2273,20 +2899,76 @@ int32_t voxel_raster_render(uint32_t surface_handle, uint64_t frame_id,
         uint8_t list_full = 0;
         const uint8_t fixed_blend =
             (g_raster_capabilities & PXA_RASTER_CAP_FIXED_ALPHA_BLEND) != 0;
+        if (coverage_mask) {
+            /* Opaque/cutout faces claim a one-bit front-to-back coverage
+             * mask. Water first marks pixels that had no nearer opaque face;
+             * a second near-to-far pass blends exactly the nearest marked
+             * surface after the terrain behind it has been drawn. */
+            for (uint8_t pass = 0; pass < 3u && !list_full; ++pass) {
+                for (uint32_t order = 0; order < candidate_count; ++order) {
+                    const uint32_t draw_order = pass < 2u
+                        ? candidate_count - 1u - order
+                        : order;
+                    projected_quad_t *quad =
+                        &g_candidates[g_sort_order[draw_order]];
+                    const uint8_t textured = quad->textured;
+                    const uint8_t target_pass = textured
+                        ? (pass == 1u && quad->blend_75 ? 1u : 0u)
+                        : 2u;
+                    const uint8_t coverage_mode = pass == 1u ? 2u : 1u;
+                    int added;
+                    if (pass != target_pass ||
+                        (pass == 1u && !quad->blend_75))
+                        continue;
+                    if (!projected_quad_has_area(quad)) {
+                        if (pass != 1u) {
+                            ++g_stats.dropped_quads;
+                            ++g_stats.degenerate_dropped;
+                        }
+                        continue;
+                    }
+                    if (!scene_command_fits(&list)) {
+                        const uint32_t omitted = candidate_count - order;
+                        g_stats.dropped_quads += omitted;
+                        g_stats.command_budget_dropped += omitted;
+                        list_full = 1;
+                        break;
+                    }
+                    added = append_projected_quad(
+                        &list, quad, 1, (uint8_t)lit_palette_depth,
+                        textured ? coverage_mode : 0u);
+                    if (!added) {
+                        ++g_stats.dropped_quads;
+                        ++g_stats.append_failures;
+                        list_full = 1;
+                        break;
+                    }
+                    if (pass == 1u) continue;
+                    ++g_stats.submitted_quads;
+                    ++g_stats.painter_quads;
+                    if (textured) ++g_stats.affine_quads;
+                }
+            }
+        } else {
         const uint8_t passes =
-            hybrid_painter ? (fixed_blend ? 3u : 2u)
+            exact_painter ? 1u
+            : hybrid_painter ? (fixed_blend ? 3u : 2u)
                            : (fixed_blend ? 2u : 1u);
-        /* Keep far geometry in one painter-sorted pass. Near geometry uses
-         * depth, but translucent water must follow every opaque/cutout face:
-         * blended fragments test depth without writing it, so a later opaque
-         * face would otherwise punch an untinted polygon through the water. */
+        /* Exact painter mode interleaves water and opaque faces in dependency
+         * order. The legacy hybrid path keeps water after depth-tested opaque
+         * faces because blended fragments do not write depth. */
         for (uint8_t pass = 0; pass < passes && !list_full; ++pass) {
-            for (uint32_t order = 0; order < candidate_count; ++order) {
+            /* The order list runs far to near: the blend pass needs that
+             * order, while the opaque pass draws near to far so depth
+             * rejection discards hidden fragments early. */
+            const uint8_t near_to_far = depth_terrain && pass == 0u;
+            for (uint32_t step = 0; step < candidate_count; ++step) {
+                const uint32_t order =
+                    near_to_far ? candidate_count - 1u - step : step;
                 projected_quad_t *quad =
                     &g_candidates[g_sort_order[order]];
                 const uint8_t painter =
-                    hybrid_painter &&
-                    quad->nearest_depth_q8 >= VOXEL_RASTER_HYBRID_DEPTH_Q8;
+                    hybrid_painter && projected_quad_is_painter(quad);
                 uint8_t target_pass;
                 int added;
                 if (painter)
@@ -2298,12 +2980,22 @@ int32_t voxel_raster_render(uint32_t surface_handle, uint64_t frame_id,
                 if (pass != target_pass) continue;
                 if (!projected_quad_has_area(quad)) {
                     ++g_stats.dropped_quads;
+                    ++g_stats.degenerate_dropped;
                     continue;
                 }
+                if (!scene_command_fits(&list)) {
+                    const uint32_t omitted = candidate_count - order;
+                    g_stats.dropped_quads += omitted;
+                    g_stats.command_budget_dropped += omitted;
+                    list_full = 1;
+                    break;
+                }
                 added = append_projected_quad(
-                    &list, quad, painter, (uint8_t)lit_palette_depth);
+                    &list, quad, painter, (uint8_t)lit_palette_depth,
+                    0);
                 if (!added) {
                     ++g_stats.dropped_quads;
+                    ++g_stats.append_failures;
                     list_full = 1;
                     break;
                 }
@@ -2317,6 +3009,7 @@ int32_t voxel_raster_render(uint32_t surface_handle, uint64_t frame_id,
                     (g_raster_capabilities & PXA_RASTER_CAP_AFFINE_UV) != 0)
                     ++g_stats.affine_quads;
             }
+        }
         }
     }
     /* Underwater: a two-sided water volume alone still looks like clear air.
@@ -2339,9 +3032,10 @@ int32_t voxel_raster_render(uint32_t surface_handle, uint64_t frame_id,
         append_menu(&list, menu, camera.width, camera.height);
     else
         append_hud(&list, hud, camera.width, camera.height);
+    g_stats.draw_commands = list.command_count;
     g_stats.draw_list_bytes = list.length;
     g_stats.covered_pixel_budget = (uint32_t)camera.width * camera.height;
-    return pxa_raster_submit(surface_handle, &list);
+    return submit_list(surface_handle, &list);
 }
 
 void voxel_raster_get_stats(voxel_raster_stats_t *stats) {

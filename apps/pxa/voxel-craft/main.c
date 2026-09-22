@@ -164,8 +164,12 @@ static uint32_t g_snapshot_ticks;
 static uint8_t g_bootstrap_requests_pending;
 static uint8_t g_present_failures;
 static uint8_t g_quality_manual;
-static uint8_t g_game_quality = QUALITY_BALANCED;
+static uint8_t g_game_quality = QUALITY_MIN;
 static uint8_t g_screen = SCREEN_MENU;
+#if VOXEL_AUTOPLAY
+/* Debug/measurement builds start a game once the Surface exists. */
+static uint8_t g_autoplay_pending;
+#endif
 static uint8_t g_settings_return = SCREEN_MENU;
 static uint8_t g_inventory_open;
 static uint8_t g_craft_table;
@@ -527,6 +531,61 @@ static void log_perf_sample(uint64_t timestamp_us, uint64_t guest_render_us) {
                           g_perf_raster_stats.dropped_quads);
     out = put_perf_metric(out, " list_bytes=",
                           g_perf_raster_stats.draw_list_bytes);
+    *out = '\0';
+    (void)pxa_log_info(line);
+
+    out = line;
+    out = put_perf_metric(out, "VOXEL RANGE fog_q8=",
+                          g_perf_raster_stats.fog_end_q8);
+    out = put_perf_metric(out, " grid=", GRID_COUNT);
+    out = put_perf_metric(out, " visible=",
+                          g_perf_raster_stats.visible_chunks);
+    out = put_perf_metric(out, " unloaded=",
+                          g_perf_raster_stats.unloaded_chunks);
+    out = put_perf_metric(out, " mesh_pending=",
+                          g_perf_raster_stats.pending_mesh_chunks);
+    out = put_perf_metric(out, " mesh_input=",
+                          g_perf_raster_stats.mesh_input_quads);
+    out = put_perf_metric(out, " mesh_visited=",
+                          g_perf_raster_stats.mesh_visited_quads);
+    out = put_perf_metric(out, " candidate_limit=",
+                          g_perf_raster_stats.candidate_limit);
+    out = put_perf_metric(out, " chunk_quota=",
+                          g_perf_raster_stats.chunk_base_quota);
+    out = put_perf_metric(out, " commands=",
+                          g_perf_raster_stats.draw_commands);
+    *out = '\0';
+    (void)pxa_log_info(line);
+
+    out = line;
+    out = put_perf_metric(out, "VOXEL DROP mesh_overflow=",
+                          g_perf_raster_stats.mesh_overflow_quads);
+    out = put_perf_metric(out, " candidate_budget=",
+                          g_perf_raster_stats.candidate_budget_omitted);
+    out = put_perf_metric(out, " projection_budget=",
+                          g_perf_raster_stats.projection_budget_dropped);
+    out = put_perf_metric(out, " command_budget=",
+                          g_perf_raster_stats.command_budget_dropped);
+    out = put_perf_metric(out, " degenerate=",
+                          g_perf_raster_stats.degenerate_dropped);
+    out = put_perf_metric(out, " append_fail=",
+                          g_perf_raster_stats.append_failures);
+    *out = '\0';
+    (void)pxa_log_info(line);
+
+    out = line;
+    out = put_perf_metric(out, "VOXEL CULL backface=",
+                          g_perf_raster_stats.backface_culled);
+    out = put_perf_metric(out, " frustum=",
+                          g_perf_raster_stats.frustum_culled);
+    out = put_perf_metric(out, " clipped=",
+                          g_perf_raster_stats.clipped_quads);
+    out = put_perf_metric(out, " sort_edges=",
+                          g_perf_raster_stats.sort_edges);
+    out = put_perf_metric(out, " edge_overflow=",
+                          g_perf_raster_stats.sort_edge_overflow);
+    out = put_perf_metric(out, " sort_cycles=",
+                          g_perf_raster_stats.sort_cycles);
     *out = '\0';
     (void)pxa_log_info(line);
 }
@@ -2030,7 +2089,7 @@ static int render_frame(void) {
                 &menu, NULL);
             (void)mark_perf_timing(PERF_CLOCK_RAYCAST_END);
         }
-        if (raster_result > 0) {
+        if (raster_result >= PXA_STATUS_OK) {
             if (g_perf_timing.active && !g_perf_raster_stats_valid) {
                 voxel_raster_get_stats(&g_perf_raster_stats);
                 g_perf_raster_stats_valid = 1;
@@ -2044,8 +2103,28 @@ static int render_frame(void) {
             begin_buffer_wait();
             return 1;
         }
-        g_raster_supported = 0;
-        recreate_surface();
+        if (raster_result == PXA_STATUS_INVALID_ARGUMENT)
+            (void)pxa_log_error("voxel raster submit: invalid argument");
+        else if (raster_result == PXA_STATUS_BAD_STATE)
+            (void)pxa_log_error("voxel raster submit: bad state");
+        else if (raster_result == PXA_STATUS_UNSUPPORTED)
+            (void)pxa_log_error("voxel raster submit: unsupported");
+        else if (raster_result == PXA_STATUS_RESOURCE_LIMIT)
+            (void)pxa_log_error("voxel raster submit: resource limit");
+        else if (raster_result == PXA_STATUS_PROTOCOL_ERROR)
+            (void)pxa_log_error("voxel raster submit: protocol error");
+        else if (raster_result == PXA_STATUS_LIMIT_EXCEEDED)
+            (void)pxa_log_error("voxel raster submit: limit exceeded");
+        else
+            (void)pxa_log_error("voxel raster submit: other failure");
+        /* A malformed or oversized frame must not permanently demote the app
+         * to the low-resolution mapped renderer. Keep the last valid frame;
+         * only recreate the same GameRender context when its state is gone. */
+        if (raster_result == PXA_STATUS_BAD_STATE ||
+            raster_result == PXA_STATUS_CANCELLED ||
+            raster_result == PXA_STATUS_NOT_FOUND) {
+            recreate_surface();
+        }
         return 0;
     }
     if (g_surface_ownership.writing_buffer != VOXEL_SURFACE_BUFFER_NONE) {
@@ -2188,6 +2267,7 @@ static int handle_surface_create(const pxa_event_t *event) {
             return 1;
         }
         g_raster_ready = 1;
+        (void)pxa_log_info("voxel: raster surface ready");
         g_surface_retry_ticks = 0;
         rebind_ui_surface();
         (void)render_frame();
@@ -2261,7 +2341,7 @@ static void update_fps(uint64_t timestamp_us) {
 int32_t pxa_app_start(const uint8_t *config, uint32_t length) {
     pxa_ui_environment_t environment;
     g_screen = SCREEN_MENU;
-    g_game_quality = QUALITY_BALANCED;
+    g_game_quality = QUALITY_MIN;
     update_scene_limits();
     if (pxa_ui_parse_start_environment(config, length, &environment) &&
         environment.width > 0 && environment.height > 0) {
@@ -2269,9 +2349,10 @@ int32_t pxa_app_start(const uint8_t *config, uint32_t length) {
     } else {
         render_configure(SCREEN_W_DEFAULT, SCREEN_H_DEFAULT);
     }
-    /* Establish a responsive baseline before timing feedback is available.
-     * Faster hosts recover detail only after sustained headroom. */
-    render_set_quality(QUALITY_BALANCED);
+    /* Start at native resolution. Automatic scaling remains available from
+     * Settings, but must be selected explicitly so it cannot silently reduce
+     * display resolution on first launch. */
+    render_set_quality(QUALITY_MIN);
     g_surface_handle = 0;
     g_surface_width = 0;
     g_surface_height = 0;
@@ -2338,7 +2419,7 @@ int32_t pxa_app_start(const uint8_t *config, uint32_t length) {
     g_snapshot_ticks = 0;
     g_bootstrap_requests_pending = 1;
     g_present_failures = 0;
-    g_quality_manual = 0;
+    g_quality_manual = QUALITY_MIN;
     g_inventory_open = 0;
     g_craft_table = 0;
     g_cursor.item = BLOCK_AIR;
@@ -2377,12 +2458,15 @@ int32_t pxa_app_start(const uint8_t *config, uint32_t length) {
     g_menu_press_us = 0;
     game_inventory_init();
     if (!pxa_window_fullscreen()) {
+        (void)pxa_log_error("voxel: fullscreen request failed");
         return PXA_STATUS_INTERNAL;
     }
     if (!initialize_input_surface()) {
+        (void)pxa_log_error("voxel: input surface setup failed");
         return PXA_STATUS_INTERNAL;
     }
     if (!request_surface_create()) {
+        (void)pxa_log_error("voxel: surface create request failed");
         return PXA_STATUS_INTERNAL;
     }
     /* Audio is optional and may open a runtime modal. The Host modal barrier
@@ -2396,6 +2480,12 @@ int32_t pxa_app_start(const uint8_t *config, uint32_t length) {
                           STORAGE_META_KEY_LEN, g_storage_payload,
                           sizeof(g_storage_payload), g_packet,
                           sizeof(g_packet));
+#ifndef VOXEL_AUTOPLAY
+#define VOXEL_AUTOPLAY 0
+#endif
+#if VOXEL_AUTOPLAY
+    g_autoplay_pending = 1;
+#endif
     return pxa_clock_set_period(CLOCK_POLL_PERIOD_MS) ? PXA_STATUS_OK
                                                  : PXA_STATUS_INTERNAL;
 }
@@ -2537,7 +2627,17 @@ int32_t pxa_app_on_event(const uint8_t *event, uint32_t length) {
             }
             return PXA_EVENT_HANDLED;
         }
-        if (steps != 0) maybe_begin_perf_timing();
+        if (steps != 0) {
+#if VOXEL_AUTOPLAY
+            /* Debug/measurement build: start a game once the Surface exists,
+             * so screenshots and frame timing need no input injection. */
+            if (g_autoplay_pending && g_surface_handle != 0) {
+                g_autoplay_pending = 0;
+                start_new_game();
+            }
+#endif
+            maybe_begin_perf_timing();
+        }
         for (index = 0; index < steps; ++index) {
             const uint8_t was_ground = g_player.on_ground;
             if (g_inventory_open) {
