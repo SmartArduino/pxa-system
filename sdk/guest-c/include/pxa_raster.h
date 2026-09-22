@@ -7,7 +7,7 @@
 #include "pxa_game_render.h"
 
 #define PXA_RASTER_ABI_MAJOR UINT16_C(1)
-#define PXA_RASTER_ABI_MINOR UINT16_C(3)
+#define PXA_RASTER_ABI_MINOR UINT16_C(5)
 #define PXA_RASTER_DRAW_MAGIC UINT32_C(0x4c525850)
 #define PXA_RASTER_UPLOAD_MAGIC UINT32_C(0x52555850)
 #define PXA_RASTER_MAX_TEXTURES UINT8_C(48)
@@ -25,6 +25,9 @@
  * slots >= 16 when this is advertised so older Hosts keep working. */
 #define PXA_RASTER_CAP_TEXTURE_SLOTS_48 UINT32_C(64)
 #define PXA_RASTER_CAP_PAINTER_POLYGON UINT32_C(128)
+#define PXA_RASTER_CAP_LIT_PALETTE_DEPTH UINT32_C(256)
+#define PXA_RASTER_CAP_DEPTH_CUTOUT UINT32_C(512)
+#define PXA_RASTER_CAP_FIXED_ALPHA_BLEND UINT32_C(1024)
 #define PXA_RASTER_UPLOAD_PALETTE_RGB565 UINT8_C(1)
 #define PXA_RASTER_UPLOAD_TEXTURE_INDEX8 UINT8_C(2)
 #define PXA_RASTER_UPLOAD_LIT_PALETTE_RGB565 UINT8_C(3)
@@ -50,6 +53,8 @@
 #define PXA_RASTER_QUAD_AFFINE_UV UINT8_C(2)
 #define PXA_RASTER_QUAD_PAINTER UINT8_C(4)
 #define PXA_RASTER_QUAD_TRANSPARENT_INDEX0 UINT8_C(8)
+#define PXA_RASTER_QUAD_LIT_PALETTE UINT8_C(16)
+#define PXA_RASTER_QUAD_BLEND_75 UINT8_C(32)
 #define PXA_RASTER_SPRITE_TRANSPARENT_INDEX0 UINT8_C(1)
 #define PXA_RASTER_SPRITE_SOLID_COLOR UINT8_C(2)
 #define PXA_RASTER_SPRITE_ADDITIVE UINT8_C(4)
@@ -284,9 +289,12 @@ static inline int pxa_raster_textured_quad_flags(
     if (vertices == NULL || texture_slot >= PXA_RASTER_MAX_TEXTURES ||
         (flags & ~(PXA_RASTER_QUAD_AFFINE_UV |
                    PXA_RASTER_QUAD_PAINTER |
-                   PXA_RASTER_QUAD_TRANSPARENT_INDEX0)) != 0 ||
-        ((flags & PXA_RASTER_QUAD_TRANSPARENT_INDEX0) != 0 &&
-         (flags & PXA_RASTER_QUAD_PAINTER) == 0))
+                   PXA_RASTER_QUAD_TRANSPARENT_INDEX0 |
+                   PXA_RASTER_QUAD_LIT_PALETTE |
+                   PXA_RASTER_QUAD_BLEND_75)) != 0 ||
+        ((flags & PXA_RASTER_QUAD_LIT_PALETTE) != 0 &&
+         (flags & (PXA_RASTER_QUAD_PAINTER |
+                   PXA_RASTER_QUAD_SOLID_COLOR)) != 0))
         return 0;
     record = pxa_raster_append(list, PXA_RASTER_RECORD_TEXTURED_QUAD,
                                PXA_RASTER_TEXTURED_QUAD_BYTES);
@@ -311,6 +319,13 @@ static inline int pxa_raster_textured_quad_flags(
         list->required_capabilities |= PXA_RASTER_CAP_AFFINE_UV;
     if ((flags & PXA_RASTER_QUAD_PAINTER) != 0)
         list->required_capabilities |= PXA_RASTER_CAP_PAINTER_POLYGON;
+    if ((flags & PXA_RASTER_QUAD_LIT_PALETTE) != 0)
+        list->required_capabilities |= PXA_RASTER_CAP_LIT_PALETTE_DEPTH;
+    if ((flags & PXA_RASTER_QUAD_TRANSPARENT_INDEX0) != 0 &&
+        (flags & PXA_RASTER_QUAD_PAINTER) == 0)
+        list->required_capabilities |= PXA_RASTER_CAP_DEPTH_CUTOUT;
+    if ((flags & PXA_RASTER_QUAD_BLEND_75) != 0)
+        list->required_capabilities |= PXA_RASTER_CAP_FIXED_ALPHA_BLEND;
     return 1;
 }
 
@@ -492,9 +507,16 @@ static inline int pxa_raster_triangle_batch_flags(
         (flags & ~(PXA_RASTER_QUAD_SOLID_COLOR |
                    PXA_RASTER_QUAD_AFFINE_UV |
                    PXA_RASTER_QUAD_PAINTER |
-                   PXA_RASTER_QUAD_TRANSPARENT_INDEX0)) != 0 ||
+                   PXA_RASTER_QUAD_TRANSPARENT_INDEX0 |
+                   PXA_RASTER_QUAD_LIT_PALETTE |
+                   PXA_RASTER_QUAD_BLEND_75)) != 0 ||
         ((flags & PXA_RASTER_QUAD_TRANSPARENT_INDEX0) != 0 &&
-         (flags & PXA_RASTER_QUAD_PAINTER) == 0))
+         (flags & PXA_RASTER_QUAD_SOLID_COLOR) != 0) ||
+        ((flags & PXA_RASTER_QUAD_BLEND_75) != 0 &&
+         (flags & PXA_RASTER_QUAD_SOLID_COLOR) != 0) ||
+        ((flags & PXA_RASTER_QUAD_LIT_PALETTE) != 0 &&
+         (flags & (PXA_RASTER_QUAD_PAINTER |
+                   PXA_RASTER_QUAD_SOLID_COLOR)) != 0))
         return 0;
     record = pxa_raster_append(list, PXA_RASTER_RECORD_TRIANGLE_BATCH,
                                (uint16_t)size);
@@ -522,6 +544,13 @@ static inline int pxa_raster_triangle_batch_flags(
         list->required_capabilities |= PXA_RASTER_CAP_AFFINE_UV;
     if ((flags & PXA_RASTER_QUAD_PAINTER) != 0)
         list->required_capabilities |= PXA_RASTER_CAP_PAINTER_POLYGON;
+    if ((flags & PXA_RASTER_QUAD_LIT_PALETTE) != 0)
+        list->required_capabilities |= PXA_RASTER_CAP_LIT_PALETTE_DEPTH;
+    if ((flags & PXA_RASTER_QUAD_TRANSPARENT_INDEX0) != 0 &&
+        (flags & PXA_RASTER_QUAD_PAINTER) == 0)
+        list->required_capabilities |= PXA_RASTER_CAP_DEPTH_CUTOUT;
+    if ((flags & PXA_RASTER_QUAD_BLEND_75) != 0)
+        list->required_capabilities |= PXA_RASTER_CAP_FIXED_ALPHA_BLEND;
     return 1;
 }
 

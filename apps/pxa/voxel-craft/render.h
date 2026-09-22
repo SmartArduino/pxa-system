@@ -167,6 +167,7 @@ extern int g_menu_button_count;
 /* Points the HUD row table at a view-sized pixel buffer. render_3d does this
  * itself; the menu path must call it before render_menu. */
 void render_target(uint16_t *pixels, uint32_t stride_pixels);
+void render_menu_layout(const menu_state_t *menu);
 void render_menu(const menu_state_t *menu);
 
 /* 0 selects the inventory's 2x2 grid, 1 the crafting table's 3x3 grid. */
@@ -179,6 +180,12 @@ int render_inventory_slot(int hit);
 
 /* Recomputes the layout, view area and scene grid for a logical screen size. */
 void render_configure(int width, int height);
+
+/* Sets the scene size limits for the active surface path. The Host raster path
+ * passes the real view size so quality 1x renders at the display resolution;
+ * the Guest CPU path passes RENDER_SCENE_MAX_* and a pixel budget. A
+ * pixel_budget of 0 means unlimited. */
+void render_set_scene_limits(int max_width, int max_height, int pixel_budget);
 
 /* Applies the Host-published safe-area and system chrome insets in logical
  * pixels. Returns 1 when the stored insets changed; the caller must re-run

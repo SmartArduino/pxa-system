@@ -3,6 +3,7 @@
 #include <stddef.h>
 
 #include "rc_math.h"
+#include "voxel_sky.h"
 
 #include "block_textures.h"
 
@@ -46,6 +47,10 @@ static float g_fog_end = 46.0F;
 static float g_fog_inv = 1.0F / 32.0F;
 /* Keep the direct Surface within the Guest's fixed RGB565 frame buffer. */
 static int g_view_pixel_budget = 115000;
+/* Dynamic scene limits. The raster path can render at the real display
+ * resolution, while the Guest CPU path stays inside its static tables. */
+static int g_scene_limit_w = RENDER_SCENE_MAX_W;
+static int g_scene_limit_h = RENDER_SCENE_MAX_H;
 static render_perf_stats_t g_perf_stats;
 /* Physical safe area merged with the Host's system chrome/gesture reserves.
  * The Host publishes them through the window snapshot; interactive controls
@@ -79,8 +84,9 @@ int render_min_quality(void) {
         scale = scales[index];
         const int width = (g_layout.view_w + scale - 1) / scale;
         const int height = (g_layout.view_h + scale - 1) / scale;
-        if (width <= SCENE_MAX_W && height <= SCENE_MAX_H &&
-            width * height <= g_view_pixel_budget) {
+        if (width <= g_scene_limit_w && height <= g_scene_limit_h &&
+            (g_view_pixel_budget <= 0 ||
+             width * height <= g_view_pixel_budget)) {
             return scale;
         }
     }
@@ -93,14 +99,16 @@ static void render_update_scene(void) {
     int width = (view_w + g_scale - 1) / g_scale;
     int height = (view_h + g_scale - 1) / g_scale;
     /* Clamp the scene proportionally so a very wide or tall view keeps its
-     * aspect instead of stretching. */
-    if (width > SCENE_MAX_W) {
-        height = height * SCENE_MAX_W / width;
-        width = SCENE_MAX_W;
+     * aspect instead of stretching. The limits follow the active surface
+     * path: the raster path may use the real display resolution, while the
+     * Guest CPU renderer must stay inside its static tables. */
+    if (width > g_scene_limit_w) {
+        height = height * g_scene_limit_w / width;
+        width = g_scene_limit_w;
     }
-    if (height > SCENE_MAX_H) {
-        width = width * SCENE_MAX_H / height;
-        height = SCENE_MAX_H;
+    if (height > g_scene_limit_h) {
+        width = width * g_scene_limit_h / height;
+        height = g_scene_limit_h;
     }
     if (width < 32) {
         width = 32;
@@ -123,7 +131,9 @@ static void render_update_scene(void) {
         g_fog_end = 46.0F;
     }
     g_fog_inv = 1.0F / (g_fog_end - FOG_START);
-    {
+    /* The NDC and ray-length tables belong to the Guest CPU renderer; the Host
+     * raster path does not use them, so oversized scenes skip the fill. */
+    if (g_scene_w <= SCENE_MAX_W && g_scene_h <= SCENE_MAX_H) {
         const float inv_w = 1.0F / (float)g_scene_w;
         const float inv_h = 1.0F / (float)g_scene_h;
         const float tan_x = TAN_HALF * ((float)g_scene_w / (float)g_scene_h);
@@ -287,9 +297,31 @@ void render_set_quality(int scale) {
     render_update_scene();
 }
 
+void render_set_scene_limits(int max_width, int max_height,
+                             int pixel_budget) {
+    if (max_width < 32) max_width = 32;
+    if (max_height < 24) max_height = 24;
+    if (max_width > SCREEN_W_MAX) max_width = SCREEN_W_MAX;
+    if (max_height > SCREEN_H_MAX) max_height = SCREEN_H_MAX;
+    if (pixel_budget < 0) pixel_budget = 0;
+    if (max_width == g_scene_limit_w && max_height == g_scene_limit_h &&
+        pixel_budget == g_view_pixel_budget) {
+        return;
+    }
+    g_scene_limit_w = max_width;
+    g_scene_limit_h = max_height;
+    g_view_pixel_budget = pixel_budget;
+    render_configure(g_layout.screen_w, g_layout.screen_h);
+}
+
 void render_shrink_view(void) {
-    if (g_view_pixel_budget > 40000) {
-        g_view_pixel_budget = g_view_pixel_budget * 3 / 4;
+    int budget = g_view_pixel_budget;
+    if (budget == 0) budget = g_scene_w * g_scene_h;
+    if (budget > 40000) {
+        budget = budget * 3 / 4;
+    }
+    if (budget != g_view_pixel_budget) {
+        g_view_pixel_budget = budget;
     }
     render_configure(g_layout.screen_w, g_layout.screen_h);
 }
@@ -408,13 +440,31 @@ static uint16_t sky_pixel(float ndx, float ndy, float ndz) {
         g = 200 - (int)(below * 25.0F);
         b = 240 - (int)(below * 30.0F);
     }
-    sun = ndx * 0.35F + ndy * 0.55F + ndz * (-0.75F);
-    if (sun > 0.988F) {
+    for (int index = 0; index < VOXEL_SKY_CLOUD_COUNT; ++index) {
+        const float cx = kVoxelSkyCloudDirections[index][0];
+        const float cz = kVoxelSkyCloudDirections[index][1];
+        const float horizontal = ndx * cz - ndz * cx;
+        const float elevation = index & 1 ? 0.30F : 0.39F;
+        const float vertical = ndy - elevation;
+        if (ndx * cx + ndz * cz > 0.65F &&
+            rc_fabs(horizontal) < 0.15F &&
+            ((rc_fabs(vertical) < 0.038F) ||
+             (vertical >= 0.015F && vertical < 0.085F &&
+              rc_fabs(horizontal) < 0.075F))) {
+            r = vertical < -0.012F ? 220 : 247;
+            g = vertical < -0.012F ? 233 : 249;
+            b = vertical < -0.012F ? 239 : 250;
+            break;
+        }
+    }
+    sun = ndx * VOXEL_SKY_SUN_X + ndy * VOXEL_SKY_SUN_Y +
+          ndz * VOXEL_SKY_SUN_Z;
+    if (sun > 0.992F) {
         r = 255;
         g = 252;
         b = 235;
-    } else if (sun > 0.962F) {
-        const int glow = (int)((sun - 0.962F) * 1538.0F);
+    } else if (sun > 0.975F) {
+        const int glow = (int)((sun - 0.975F) * 1600.0F);
         r += glow;
         g += glow;
         b += glow >> 1;
@@ -1140,7 +1190,8 @@ int render_3d(uint16_t *pixels, uint32_t stride_pixels,
               const player_t *player, uint32_t now_ms,
               const ray_hit_t *target, float mine_progress) {
     camera_t cam;
-    if (pixels == NULL || stride_pixels < (uint32_t)g_scene_w) {
+    if (pixels == NULL || stride_pixels < (uint32_t)g_scene_w ||
+        g_scene_w > SCENE_MAX_W || g_scene_h > SCENE_MAX_H) {
         return 0;
     }
     render_ensure_textures();
@@ -2113,6 +2164,50 @@ static void menu_draw_button(int index, int y, int height, const char *label,
                             enabled ? COL_TEXT : COL_MUTED, 2);
 }
 
+void render_menu_layout(const menu_state_t *menu) {
+    const int ui_scale = g_layout.ui_scale;
+    const int w = 200 * ui_scale;
+    const int x = g_layout.view_x + (g_layout.view_w - w) / 2;
+    int heights[MENU_BUTTON_MAX];
+    int enabled[MENU_BUTTON_MAX];
+    int y;
+    int spacing;
+    int index;
+    if (menu->screen == 2) {
+        g_menu_button_count = 4;
+        y = g_layout.view_y + 72 * ui_scale;
+        spacing = 34 * ui_scale;
+        for (index = 0; index < g_menu_button_count; ++index) {
+            heights[index] = 30 * ui_scale;
+            enabled[index] = index != 1 || menu->has_game;
+        }
+    } else if (menu->screen == 0) {
+        g_menu_button_count = 3;
+        y = g_layout.view_y + 88 * ui_scale;
+        spacing = 42 * ui_scale;
+        for (index = 0; index < g_menu_button_count; ++index) {
+            heights[index] = 34 * ui_scale;
+            enabled[index] = index != 1 || menu->has_save;
+        }
+    } else {
+        g_menu_button_count = 5;
+        y = g_layout.view_y + 68 * ui_scale;
+        spacing = 30 * ui_scale;
+        for (index = 0; index < g_menu_button_count; ++index) {
+            heights[index] = 28 * ui_scale;
+            enabled[index] = index != 2 || menu->has_game;
+            if (index == 3) enabled[index] = menu->has_save;
+        }
+    }
+    for (index = 0; index < g_menu_button_count; ++index) {
+        g_menu_buttons[index].x = x;
+        g_menu_buttons[index].y = y + index * spacing;
+        g_menu_buttons[index].w = w;
+        g_menu_buttons[index].h = heights[index];
+        g_menu_buttons[index].enabled = (uint8_t)enabled[index];
+    }
+}
+
 void render_menu(const menu_state_t *menu) {
     char seed_text[28];
     char quality_text[28];
@@ -2120,6 +2215,7 @@ void render_menu(const menu_state_t *menu) {
     int row;
     int y;
     const int ui_scale = g_layout.ui_scale;
+    render_menu_layout(menu);
     if (menu->overlay) {
         dim_region(g_layout.view_x, g_layout.view_y, g_layout.view_w,
                    g_layout.view_h);

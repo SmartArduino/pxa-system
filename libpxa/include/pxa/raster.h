@@ -11,7 +11,7 @@ extern "C" {
 #endif
 
 #define PXA_RASTER_ABI_MAJOR UINT16_C(1)
-#define PXA_RASTER_ABI_MINOR UINT16_C(3)
+#define PXA_RASTER_ABI_MINOR UINT16_C(5)
 #define PXA_RASTER_DRAW_MAGIC UINT32_C(0x4c525850) /* PXRL */
 #define PXA_RASTER_UPLOAD_MAGIC UINT32_C(0x52555850) /* PXUR */
 
@@ -35,11 +35,16 @@ extern "C" {
  * so an older Host keeps working. */
 #define PXA_RASTER_CAP_TEXTURE_SLOTS_48 UINT32_C(64)
 #define PXA_RASTER_CAP_PAINTER_POLYGON UINT32_C(128)
+#define PXA_RASTER_CAP_LIT_PALETTE_DEPTH UINT32_C(256)
+#define PXA_RASTER_CAP_DEPTH_CUTOUT UINT32_C(512)
+#define PXA_RASTER_CAP_FIXED_ALPHA_BLEND UINT32_C(1024)
 #define PXA_RASTER_CAP_KNOWN_MASK                                      \
     (PXA_RASTER_CAP_FLAT_QUAD | PXA_RASTER_CAP_TEXTURED_QUAD |        \
      PXA_RASTER_CAP_ADDITIVE_SPRITE | PXA_RASTER_CAP_SPRITE_BATCH |   \
      PXA_RASTER_CAP_TRIANGLE_BATCH | PXA_RASTER_CAP_AFFINE_UV |       \
-     PXA_RASTER_CAP_TEXTURE_SLOTS_48 | PXA_RASTER_CAP_PAINTER_POLYGON)
+     PXA_RASTER_CAP_TEXTURE_SLOTS_48 | PXA_RASTER_CAP_PAINTER_POLYGON | \
+     PXA_RASTER_CAP_LIT_PALETTE_DEPTH | PXA_RASTER_CAP_DEPTH_CUTOUT | \
+     PXA_RASTER_CAP_FIXED_ALPHA_BLEND)
 
 #define PXA_RASTER_UPLOAD_PALETTE_RGB565 UINT8_C(1)
 #define PXA_RASTER_UPLOAD_TEXTURE_INDEX8 UINT8_C(2)
@@ -71,7 +76,18 @@ extern "C" {
  * selects a row in the uploaded lit palette. For solid records, solid_color's
  * low byte is a palette index. */
 #define PXA_RASTER_QUAD_PAINTER UINT8_C(4)
+/* Textured polygons skip texel index 0. Painter polygons have always
+ * supported this; depth-tested polygons require PXA_RASTER_CAP_DEPTH_CUTOUT
+ * and skip both the color and depth writes. */
 #define PXA_RASTER_QUAD_TRANSPARENT_INDEX0 UINT8_C(8)
+/* Depth-tested textured polygon whose light value selects a row in the
+ * uploaded lit palette. This removes the per-pixel RGB565 multiply while
+ * retaining normal depth and perspective/affine UV behaviour. */
+#define PXA_RASTER_QUAD_LIT_PALETTE UINT8_C(16)
+/* Fixed 75% RGB565 source-over blend. Textured polygons only; depth-tested
+ * polygons test but do not update depth so back-to-front translucent faces
+ * can accumulate without an alpha buffer. */
+#define PXA_RASTER_QUAD_BLEND_75 UINT8_C(32)
 
 #define PXA_RASTER_SPRITE_TRANSPARENT_INDEX0 UINT8_C(1)
 #define PXA_RASTER_SPRITE_SOLID_COLOR UINT8_C(2)

@@ -12,6 +12,7 @@
 #define TEXTURE_SAMPLE_COUNT \
     ((TEXTURE_BLOCK_LAST - TEXTURE_BLOCK_FIRST + 1) * 3 * 256)
 #define TEXTURE_PALETTE_COLORS 256
+#define TEXTURE_PALETTE_TRANSPARENT 0
 #define TEXTURE_PALETTE_RESERVED_WHITE (TEXTURE_PALETTE_COLORS - 1)
 
 static uint16_t g_texture[BLOCK_TYPE_COUNT][3][256];
@@ -485,7 +486,8 @@ static void build_palette(void) {
     boxes[0].begin = 0;
     boxes[0].end = TEXTURE_SAMPLE_COUNT;
     box_measure(&boxes[0]);
-    while (box_count < TEXTURE_PALETTE_RESERVED_WHITE) {
+    /* Index 0 is reserved for cutout texels and index 255 for the HUD font. */
+    while (box_count < TEXTURE_PALETTE_RESERVED_WHITE - 1u) {
         int best = -1;
         int best_range = 0;
         texture_box_t *box;
@@ -519,7 +521,8 @@ static void build_palette(void) {
             green += (uint32_t)((color >> 5) & 63u);
             blue += (uint32_t)(color & 31u);
         }
-        g_palette[index] = RGB565(
+        const uint16_t palette_index = (uint16_t)(index + 1u);
+        g_palette[palette_index] = RGB565(
             (uint8_t)(red * 255u / (31u * count)),
             (uint8_t)(green * 255u / (63u * count)),
             (uint8_t)(blue * 255u / (31u * count)));
@@ -528,21 +531,41 @@ static void build_palette(void) {
             const uint16_t id = g_samples[sample].id;
             const int block = (int)(id / 768u) + TEXTURE_BLOCK_FIRST;
             const int kind = (int)((id / 256u) % 3u);
-            g_index[block][kind][id & 255u] = (uint8_t)index;
+            g_index[block][kind][id & 255u] = (uint8_t)palette_index;
         }
     }
-    while (index < TEXTURE_PALETTE_RESERVED_WHITE) {
-        g_palette[index] = g_palette[box_count - 1];
+    while (index < TEXTURE_PALETTE_RESERVED_WHITE - 1u) {
+        g_palette[index + 1u] = g_palette[box_count];
         ++index;
     }
+    g_palette[TEXTURE_PALETTE_TRANSPARENT] = 0;
     /* The HUD font texture uses index 255 and expects white. */
     g_palette[TEXTURE_PALETTE_RESERVED_WHITE] = UINT16_C(0xffff);
+}
+
+static void apply_cutout_masks(void) {
+    int kind;
+    int x;
+    int y;
+    for (kind = 0; kind < 3; ++kind) {
+        for (y = 0; y < 16; ++y) {
+            for (x = 0; x < 16; ++x) {
+                const int offset = (y << 4) | x;
+                /* Sparse, stable holes preserve the leafy silhouette without
+                 * alpha blending or a second transparent pass. */
+                if ((tex_hash(x, y, 200 + kind) & 3u) == 0u)
+                    g_index[BLOCK_LEAVES][kind][offset] =
+                        TEXTURE_PALETTE_TRANSPARENT;
+            }
+        }
+    }
 }
 
 static void build_once(void) {
     if (g_ready) return;
     build_textures();
     build_palette();
+    apply_cutout_masks();
     g_ready = 1;
 }
 

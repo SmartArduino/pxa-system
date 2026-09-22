@@ -141,6 +141,7 @@ static pxa_status_t validate_quad(const uint8_t *record, uint16_t record_size,
     raster_vertex_t vertices[4];
     uint8_t index;
     uint8_t painter = 0;
+    uint8_t lit_palette = 0;
     uint32_t offset;
     if ((!textured && record_size != PXA_RASTER_FLAT_QUAD_BYTES) ||
         (textured && record_size != PXA_RASTER_TEXTURED_QUAD_BYTES))
@@ -150,17 +151,39 @@ static pxa_status_t validate_quad(const uint8_t *record, uint16_t record_size,
         const uint8_t slot = record[4];
         const uint8_t solid = flags & PXA_RASTER_QUAD_SOLID_COLOR;
         const uint8_t affine = flags & PXA_RASTER_QUAD_AFFINE_UV;
+        const uint8_t transparent =
+            flags & PXA_RASTER_QUAD_TRANSPARENT_INDEX0;
+        const uint8_t blend = flags & PXA_RASTER_QUAD_BLEND_75;
+        lit_palette = flags & PXA_RASTER_QUAD_LIT_PALETTE;
         painter = flags & PXA_RASTER_QUAD_PAINTER;
         if ((flags & ~(PXA_RASTER_QUAD_SOLID_COLOR |
                        PXA_RASTER_QUAD_AFFINE_UV |
                        PXA_RASTER_QUAD_PAINTER |
-                       PXA_RASTER_QUAD_TRANSPARENT_INDEX0)) != 0 ||
+                       PXA_RASTER_QUAD_TRANSPARENT_INDEX0 |
+                       PXA_RASTER_QUAD_LIT_PALETTE |
+                       PXA_RASTER_QUAD_BLEND_75)) != 0 ||
             (solid != 0 && abi_minor < 1))
             return PXA_STATUS_UNSUPPORTED;
         if (painter != 0 &&
             (abi_minor < 3 ||
              (resources->capabilities & PXA_RASTER_CAP_PAINTER_POLYGON) == 0 ||
              resources->palette == NULL || resources->palette_light_levels == 0))
+            return PXA_STATUS_UNSUPPORTED;
+        if (lit_palette != 0 &&
+            (abi_minor < 4 || painter != 0 || solid != 0 ||
+             (resources->capabilities &
+              PXA_RASTER_CAP_LIT_PALETTE_DEPTH) == 0 ||
+             resources->palette == NULL ||
+             resources->palette_light_levels == 0))
+            return PXA_STATUS_UNSUPPORTED;
+        if (transparent != 0 && painter == 0 &&
+            (abi_minor < 5 ||
+             (resources->capabilities & PXA_RASTER_CAP_DEPTH_CUTOUT) == 0))
+            return PXA_STATUS_UNSUPPORTED;
+        if (blend != 0 &&
+            (abi_minor < 5 ||
+             (resources->capabilities &
+              PXA_RASTER_CAP_FIXED_ALPHA_BLEND) == 0))
             return PXA_STATUS_UNSUPPORTED;
         if (affine != 0) {
             if ((resources->capabilities & PXA_RASTER_CAP_AFFINE_UV) == 0)
@@ -169,10 +192,9 @@ static pxa_status_t validate_quad(const uint8_t *record, uint16_t record_size,
         }
         if (record[5] != 0 || (solid == 0 && read_u16(record + 6) != 0) ||
             (solid != 0 && painter != 0 && read_u16(record + 6) > 255u) ||
-            ((flags & PXA_RASTER_QUAD_TRANSPARENT_INDEX0) != 0 &&
-             painter == 0) ||
             (solid != 0 &&
-             (flags & PXA_RASTER_QUAD_TRANSPARENT_INDEX0) != 0))
+             (flags & (PXA_RASTER_QUAD_TRANSPARENT_INDEX0 |
+                       PXA_RASTER_QUAD_BLEND_75)) != 0))
             return PXA_STATUS_PROTOCOL_ERROR;
         if (solid == 0 &&
             (slot >= PXA_RASTER_MAX_TEXTURES || resources->palette == NULL ||
@@ -189,7 +211,7 @@ static pxa_status_t validate_quad(const uint8_t *record, uint16_t record_size,
             decode_vertex(record + offset + index * PXA_RASTER_VERTEX_BYTES,
                           &vertices[index]);
             if (record[offset + index * PXA_RASTER_VERTEX_BYTES + 9] != 0 ||
-                (painter != 0 &&
+                ((painter != 0 || lit_palette != 0) &&
                  vertices[index].light >= resources->palette_light_levels) ||
                 (painter == 0 && abi_minor == 0 && vertices[index].depth != 0) ||
                 (painter == 0 && abi_minor >= 1 && vertices[index].depth == 0))
@@ -275,12 +297,17 @@ static pxa_status_t validate_sprite_batch(
 }
 
 static pxa_status_t validate_triangle_batch(
-    const uint8_t *record, uint16_t size,
+    const uint8_t *record, uint16_t size, uint16_t abi_minor,
     const pxa_raster_resources_t *resources) {
     const uint8_t flags = record[1];
     const uint8_t slot = record[4];
     const uint16_t count = read_u16(record + 8);
     const uint8_t solid = flags & PXA_RASTER_QUAD_SOLID_COLOR;
+    const uint8_t painter = flags & PXA_RASTER_QUAD_PAINTER;
+    const uint8_t lit_palette = flags & PXA_RASTER_QUAD_LIT_PALETTE;
+    const uint8_t transparent =
+        flags & PXA_RASTER_QUAD_TRANSPARENT_INDEX0;
+    const uint8_t blend = flags & PXA_RASTER_QUAD_BLEND_75;
     uint16_t triangle;
     if (size < PXA_RASTER_TRIANGLE_BATCH_HEADER_BYTES || count == 0 ||
         size != PXA_RASTER_TRIANGLE_BATCH_HEADER_BYTES +
@@ -289,20 +316,34 @@ static pxa_status_t validate_triangle_batch(
     if ((flags & ~(PXA_RASTER_QUAD_SOLID_COLOR |
                    PXA_RASTER_QUAD_AFFINE_UV |
                    PXA_RASTER_QUAD_PAINTER |
-                   PXA_RASTER_QUAD_TRANSPARENT_INDEX0)) != 0 ||
+                   PXA_RASTER_QUAD_TRANSPARENT_INDEX0 |
+                   PXA_RASTER_QUAD_LIT_PALETTE |
+                   PXA_RASTER_QUAD_BLEND_75)) != 0 ||
         record[5] != 0 ||
         read_u16(record + 10) != 0 ||
         (solid == 0 && read_u16(record + 6) != 0) ||
         (solid != 0 && (flags & PXA_RASTER_QUAD_PAINTER) != 0 &&
          read_u16(record + 6) > 255u) ||
-        ((flags & PXA_RASTER_QUAD_TRANSPARENT_INDEX0) != 0 &&
-         (flags & PXA_RASTER_QUAD_PAINTER) == 0) ||
         (solid != 0 &&
-         (flags & PXA_RASTER_QUAD_TRANSPARENT_INDEX0) != 0))
+         (flags & (PXA_RASTER_QUAD_TRANSPARENT_INDEX0 |
+                   PXA_RASTER_QUAD_BLEND_75)) != 0))
         return PXA_STATUS_PROTOCOL_ERROR;
-    if ((flags & PXA_RASTER_QUAD_PAINTER) != 0 &&
+    if (painter != 0 &&
         ((resources->capabilities & PXA_RASTER_CAP_PAINTER_POLYGON) == 0 ||
          resources->palette == NULL || resources->palette_light_levels == 0))
+        return PXA_STATUS_UNSUPPORTED;
+    if (lit_palette != 0 &&
+        (abi_minor < 4 || painter != 0 || solid != 0 ||
+         (resources->capabilities & PXA_RASTER_CAP_LIT_PALETTE_DEPTH) == 0 ||
+         resources->palette == NULL || resources->palette_light_levels == 0))
+        return PXA_STATUS_UNSUPPORTED;
+    if (transparent != 0 && painter == 0 &&
+        (abi_minor < 5 ||
+         (resources->capabilities & PXA_RASTER_CAP_DEPTH_CUTOUT) == 0))
+        return PXA_STATUS_UNSUPPORTED;
+    if (blend != 0 &&
+        (abi_minor < 5 ||
+         (resources->capabilities & PXA_RASTER_CAP_FIXED_ALPHA_BLEND) == 0))
         return PXA_STATUS_UNSUPPORTED;
     if (solid == 0 &&
         (slot >= PXA_RASTER_MAX_TEXTURES || resources->palette == NULL ||
@@ -318,9 +359,10 @@ static pxa_status_t validate_triangle_batch(
                 ((uint32_t)triangle * 3u + vertex) * PXA_RASTER_VERTEX_BYTES;
             decode_vertex(wire, &vertices[vertex]);
             if (wire[9] != 0 ||
-                ((flags & PXA_RASTER_QUAD_PAINTER) != 0
-                     ? vertices[vertex].light >= resources->palette_light_levels
-                     : vertices[vertex].depth == 0))
+                ((painter != 0 || lit_palette != 0) &&
+                 vertices[vertex].light >= resources->palette_light_levels) ||
+                (painter != 0 ? vertices[vertex].depth != 0
+                              : vertices[vertex].depth == 0))
                 return PXA_STATUS_PROTOCOL_ERROR;
         }
         area = (int64_t)(vertices[1].x - vertices[0].x) *
@@ -408,7 +450,7 @@ pxa_status_t pxa_raster_validate_draw_list(
                 status = PXA_STATUS_PROTOCOL_ERROR;
             else
                 status = validate_triangle_batch(bytes + offset, record_size,
-                                                 resources);
+                                                 abi_minor, resources);
         } else {
             return PXA_STATUS_UNSUPPORTED;
         }
@@ -428,6 +470,13 @@ static int64_t edge(const raster_vertex_t *a, const raster_vertex_t *b,
                     int32_t x, int32_t y) {
     return (int64_t)(x - a->x) * (b->y - a->y) -
            (int64_t)(y - a->y) * (b->x - a->x);
+}
+
+static int edge_is_inclusive(const raster_vertex_t *a,
+                             const raster_vertex_t *b, int64_t sign) {
+    const int32_t dx = (b->x - a->x) * (int32_t)sign;
+    const int32_t dy = (b->y - a->y) * (int32_t)sign;
+    return dy < 0 || (dy == 0 && dx > 0);
 }
 
 #define RASTER_RECIPROCAL_DEPTH_ONE UINT32_C(524288)
@@ -473,6 +522,16 @@ static int64_t reciprocal_depth(uint16_t depth) {
  * RASTER_MODE_PERSPECTIVE_UV. */
 #define RASTER_MODE_PERSPECTIVE_UV UINT8_C(1)
 #define RASTER_MODE_DEPTH UINT8_C(2)
+#define RASTER_MODE_LIT_PALETTE UINT8_C(4)
+#define RASTER_MODE_TRANSPARENT_INDEX0 UINT8_C(8)
+#define RASTER_MODE_BLEND_75 UINT8_C(16)
+
+static inline uint16_t blend_rgb565_75(uint16_t destination,
+                                       uint16_t source) {
+    return (uint16_t)(((destination & UINT16_C(0xe79c)) >> 2) +
+                      ((source & UINT16_C(0xf7de)) >> 1) +
+                      ((source & UINT16_C(0xe79c)) >> 2));
+}
 
 static int32_t perspective_texture_q8(int64_t numerator, int64_t denominator) {
     if (denominator == 0) return 0;
@@ -570,6 +629,12 @@ static uint32_t draw_triangle(const raster_vertex_t *a,
         (mode & RASTER_MODE_DEPTH) != 0 && target->depth_pixels != NULL;
     const uint8_t perspective_uv =
         texture != NULL && (mode & RASTER_MODE_PERSPECTIVE_UV) != 0;
+    const uint8_t lit_palette =
+        texture != NULL && (mode & RASTER_MODE_LIT_PALETTE) != 0;
+    const uint8_t transparent_index0 =
+        texture != NULL && (mode & RASTER_MODE_TRANSPARENT_INDEX0) != 0;
+    const uint8_t blend_75 =
+        texture != NULL && (mode & RASTER_MODE_BLEND_75) != 0;
     /* Voxel faces carry one light value for the whole primitive. Detecting it
      * drops three scale_interpolant setups per triangle plus the per-pixel
      * light accumulator. */
@@ -690,6 +755,15 @@ static uint32_t draw_triangle(const raster_vertex_t *a,
                 w0_dy * vqa + w1_dy * vqb + w2_dy * vqc, denominator,
                 area_reciprocal, 4);
         }
+        /* Blended adjacent triangles must own their shared edge exactly once;
+         * otherwise the diagonal is averaged twice and appears darker. The
+         * bias only affects coverage, after interpolants use the exact edge
+         * values. */
+        if (blend_75) {
+            if (!edge_is_inclusive(b, c, sign)) --w0_row;
+            if (!edge_is_inclusive(c, a, sign)) --w1_row;
+            if (!edge_is_inclusive(a, b, sign)) --w2_row;
+        }
     }
     if (texture == NULL) {
         /* Flat 2D rectangle or solid depth quad: no UV or light interpolants
@@ -698,8 +772,7 @@ static uint32_t draw_triangle(const raster_vertex_t *a,
             uint16_t *row = target->pixels + (size_t)y * target->stride_pixels;
             uint16_t *depth_row_pixels = target->depth_pixels == NULL
                 ? NULL
-                : target->depth_pixels +
-                      (size_t)y * target->depth_stride_pixels;
+                : target->depth_pixels + (size_t)y * target->depth_stride_pixels;
             int64_t w0 = w0_row;
             int64_t w1 = w1_row;
             int64_t w2 = w2_row;
@@ -760,8 +833,7 @@ static uint32_t draw_triangle(const raster_vertex_t *a,
             uint16_t *row = target->pixels + (size_t)y * target->stride_pixels;
             uint16_t *depth_row_pixels = target->depth_pixels == NULL
                 ? NULL
-                : target->depth_pixels +
-                      (size_t)y * target->depth_stride_pixels;
+                : target->depth_pixels + (size_t)y * target->depth_stride_pixels;
             int64_t w0 = w0_row;
             int64_t w1 = w1_row;
             int64_t w2 = w2_row;
@@ -816,12 +888,26 @@ static uint32_t draw_triangle(const raster_vertex_t *a,
                             if (intensity < 0) intensity = 0;
                             if (intensity > 255) intensity = 255;
                         }
-                        row[x] = light_rgb565(
-                            palette[texture->pixels[(size_t)ty *
-                                                    texture->width + tx]],
-                            (uint8_t)intensity);
-                        if (depth_test) depth_row_pixels[x] = pixel_depth;
-                        ++covered;
+                        {
+                            const uint8_t texel = texture->pixels[
+                                (size_t)ty * texture->width + tx];
+                            if (!transparent_index0 || texel != 0) {
+                                const uint16_t source =
+                                    lit_palette
+                                        ? palette[((uint32_t)(uint8_t)intensity
+                                                   << 8) |
+                                                  texel]
+                                        : light_rgb565(
+                                              palette[texel],
+                                              (uint8_t)intensity);
+                                row[x] = blend_75
+                                             ? blend_rgb565_75(row[x], source)
+                                             : source;
+                                if (depth_test && !blend_75)
+                                    depth_row_pixels[x] = pixel_depth;
+                                ++covered;
+                            }
+                        }
                     }
                     u += u_dx;
                     v += v_dx;
@@ -846,8 +932,7 @@ static uint32_t draw_triangle(const raster_vertex_t *a,
         uint16_t *row = target->pixels + (size_t)y * target->stride_pixels;
         uint16_t *depth_row_pixels = target->depth_pixels == NULL
             ? NULL
-            : target->depth_pixels +
-                  (size_t)y * target->depth_stride_pixels;
+            : target->depth_pixels + (size_t)y * target->depth_stride_pixels;
         int64_t w0 = w0_row;
         int64_t w1 = w1_row;
         int64_t w2 = w2_row;
@@ -927,12 +1012,26 @@ static uint32_t draw_triangle(const raster_vertex_t *a,
                             if (intensity < 0) intensity = 0;
                             if (intensity > 255) intensity = 255;
                         }
-                        row[x] = light_rgb565(
-                            palette[texture->pixels[(size_t)ty *
-                                                    texture->width + tx]],
-                            (uint8_t)intensity);
-                        if (depth_test) depth_row_pixels[x] = pixel_depth;
-                        ++covered;
+                        {
+                            const uint8_t texel = texture->pixels[
+                                (size_t)ty * texture->width + tx];
+                            if (!transparent_index0 || texel != 0) {
+                                const uint16_t source =
+                                    lit_palette
+                                        ? palette[((uint32_t)(uint8_t)intensity
+                                                   << 8) |
+                                                  texel]
+                                        : light_rgb565(
+                                              palette[texel],
+                                              (uint8_t)intensity);
+                                row[x] = blend_75
+                                             ? blend_rgb565_75(row[x], source)
+                                             : source;
+                                if (depth_test && !blend_75)
+                                    depth_row_pixels[x] = pixel_depth;
+                                ++covered;
+                            }
+                        }
                     }
                     if (!constant_light) light += light_dx;
                     reciprocal += reciprocal_dx;
@@ -1080,6 +1179,7 @@ static uint32_t draw_painter_polygon(
     const int flat = (flags & PXA_RASTER_QUAD_SOLID_COLOR) != 0;
     const int transparent =
         (flags & PXA_RASTER_QUAD_TRANSPARENT_INDEX0) != 0;
+    const int blend_75 = (flags & PXA_RASTER_QUAD_BLEND_75) != 0;
     const uint8_t texture_log2_width =
         flat ? UINT8_MAX : painter_texture_log2(texture->width);
     const uint8_t texture_log2_height =
@@ -1173,7 +1273,7 @@ static uint32_t draw_painter_polygon(
             } else if ((light >> 16) == (light_end >> 16)) {
                 const uint16_t *lit =
                     palette + ((uint32_t)light >> 16) * 256u;
-                if (texture_power_of_two && !transparent) {
+                if (texture_power_of_two && !transparent && !blend_75) {
                     uint32_t remaining = (uint32_t)(x1 - x0);
                     while (remaining >= 4u) {
                         const uint32_t u_step = (uint32_t)du;
@@ -1230,7 +1330,12 @@ static uint32_t draw_painter_polygon(
                             texel = texture->pixels[
                                 (size_t)ty * texture->width + tx];
                         }
-                        if (!transparent || texel != 0) *out = lit[texel];
+                        if (!transparent || texel != 0) {
+                            const uint16_t source = lit[texel];
+                            *out = blend_75
+                                       ? blend_rgb565_75(*out, source)
+                                       : source;
+                        }
                         ++out;
                         u += (uint32_t)du;
                         v += (uint32_t)dv;
@@ -1255,8 +1360,12 @@ static uint32_t draw_painter_polygon(
                                 (size_t)ty * texture->width + tx];
                         }
                     }
-                    if (!transparent || texel != 0)
-                        *out = palette[(level << 8) | texel];
+                    if (!transparent || texel != 0) {
+                        const uint16_t source =
+                            palette[(level << 8) | texel];
+                        *out = blend_75 ? blend_rgb565_75(*out, source)
+                                        : source;
+                    }
                     ++out;
                     u += (uint32_t)du;
                     v += (uint32_t)dv;
@@ -1306,6 +1415,12 @@ static uint32_t draw_quad(const uint8_t *record, uint8_t textured,
                 resources->palette, target, row_begin, row_end);
         if (abi_minor >= 1) {
             mode = RASTER_MODE_DEPTH;
+            if ((flags & PXA_RASTER_QUAD_LIT_PALETTE) != 0)
+                mode |= RASTER_MODE_LIT_PALETTE;
+            if ((flags & PXA_RASTER_QUAD_TRANSPARENT_INDEX0) != 0)
+                mode |= RASTER_MODE_TRANSPARENT_INDEX0;
+            if ((flags & PXA_RASTER_QUAD_BLEND_75) != 0)
+                mode |= RASTER_MODE_BLEND_75;
             if (texture != NULL &&
                 (flags & PXA_RASTER_QUAD_AFFINE_UV) == 0)
                 mode |= RASTER_MODE_PERSPECTIVE_UV;
@@ -1469,6 +1584,12 @@ static uint32_t draw_triangle_batch(
                 resources->palette, target, row_begin, row_end);
         } else {
             uint8_t mode = RASTER_MODE_DEPTH;
+            if ((record[1] & PXA_RASTER_QUAD_LIT_PALETTE) != 0)
+                mode |= RASTER_MODE_LIT_PALETTE;
+            if ((record[1] & PXA_RASTER_QUAD_TRANSPARENT_INDEX0) != 0)
+                mode |= RASTER_MODE_TRANSPARENT_INDEX0;
+            if ((record[1] & PXA_RASTER_QUAD_BLEND_75) != 0)
+                mode |= RASTER_MODE_BLEND_75;
             if (texture != NULL &&
                 (record[1] & PXA_RASTER_QUAD_AFFINE_UV) == 0)
                 mode |= RASTER_MODE_PERSPECTIVE_UV;

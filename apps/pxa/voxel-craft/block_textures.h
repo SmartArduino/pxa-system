@@ -17,8 +17,8 @@ typedef block_index_tile_t block_index_set_t[3];
 /* Shared procedurally generated block textures, built on first use.
  * block_textures() returns RGB565 tiles indexed by block, kind and pixel.
  * block_texture_indices() returns the same tiles quantised into the
- * block_texture_palette() 256-colour palette; palette index 255 is reserved
- * for the HUD font. */
+ * block_texture_palette() 256-colour palette; palette index 0 is transparent
+ * for cutout materials and index 255 is reserved for the HUD font. */
 const block_texture_set_t *block_textures(void);
 const uint16_t *block_texture_palette(void);
 const block_index_set_t *block_texture_indices(void);

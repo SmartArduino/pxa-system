@@ -630,6 +630,7 @@ static void ensure_at(int px, int pz, int generate_now) {
     const int new_cx = pcx - GRID_W / 2;
     const int new_cz = pcz - GRID_W / 2;
     chunk_t *new_grid[GRID_W][GRID_W];
+    uint8_t changed[GRID_W][GRID_W];
     uint8_t used[GRID_COUNT];
     int i;
     int j;
@@ -655,6 +656,7 @@ static void ensure_at(int px, int pz, int generate_now) {
                 }
             }
             new_grid[j][i] = found;
+            changed[j][i] = 0;
         }
     }
     for (j = 0; j < GRID_W; ++j) {
@@ -682,6 +684,7 @@ static void ensure_at(int px, int pz, int generate_now) {
                 g_chunk_pending[k] = 0;
             }
             new_grid[j][i] = chunk;
+            changed[j][i] = 1;
         }
     }
     for (j = 0; j < GRID_W; ++j) {
@@ -692,6 +695,27 @@ static void ensure_at(int px, int pz, int generate_now) {
     g_chunk_origin_cx = (int16_t)new_cx;
     g_chunk_origin_cz = (int16_t)new_cz;
     g_grid_ready = 1;
+    /* Rebuild old border meshes when a newly assigned neighbor appears. A
+     * pending chunk first exposes their border; loading it invalidates them
+     * again so hidden and transparent-material faces are updated. */
+    for (j = 0; j < GRID_W; ++j) {
+        for (i = 0; i < GRID_W; ++i) {
+            static const int8_t dx[4] = {-1, 1, 0, 0};
+            static const int8_t dz[4] = {0, 0, -1, 1};
+            int direction;
+            if (!changed[j][i]) continue;
+            for (direction = 0; direction < 4; ++direction) {
+                const int nx = i + dx[direction];
+                const int nz = j + dz[direction];
+                chunk_t *neighbor;
+                if ((unsigned)nx >= GRID_W || (unsigned)nz >= GRID_W)
+                    continue;
+                neighbor = g_chunk_grid[nz][nx];
+                if (neighbor != NULL && neighbor->loaded)
+                    touch_chunk_revision(neighbor);
+            }
+        }
+    }
 }
 
 int game_pending_chunk_count(void) {
@@ -741,6 +765,21 @@ int game_stream_chunks(int limit) {
             generate_chunk(chunk, chunk->cx, chunk->cz);
             chunk->loaded = 1;
             g_chunk_pending[pool_index] = 0;
+            {
+                static const int8_t dx[4] = {-1, 1, 0, 0};
+                static const int8_t dz[4] = {0, 0, -1, 1};
+                int direction;
+                for (direction = 0; direction < 4; ++direction) {
+                    const int nx = best_i + dx[direction];
+                    const int nz = best_j + dz[direction];
+                    chunk_t *neighbor;
+                    if ((unsigned)nx >= GRID_W || (unsigned)nz >= GRID_W)
+                        continue;
+                    neighbor = g_chunk_grid[nz][nx];
+                    if (neighbor != NULL && neighbor->loaded)
+                        touch_chunk_revision(neighbor);
+                }
+            }
         }
         ++generated;
     }

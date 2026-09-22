@@ -125,7 +125,18 @@ int main(void) {
         (uint8_t)(PXA_RASTER_MAX_COORDINATE_SHIFT + 1u));
     assert(list.status == PXA_STATUS_INVALID_ARGUMENT);
 
-    pxa_raster_draw_list_begin(&list, draw, PXA_RASTER_DRAW_HEADER_BYTES, 12);
+    pxa_raster_draw_list_begin(&list, draw, sizeof(draw), 12);
+    assert(pxa_raster_textured_quad_flags(
+        &list, vertices, 0, PXA_RASTER_QUAD_TRANSPARENT_INDEX0));
+    assert((list.required_capabilities & PXA_RASTER_CAP_DEPTH_CUTOUT) != 0);
+
+    pxa_raster_draw_list_begin(&list, draw, sizeof(draw), 13);
+    assert(pxa_raster_textured_quad_flags(
+        &list, vertices, 0, PXA_RASTER_QUAD_BLEND_75));
+    assert((list.required_capabilities &
+            PXA_RASTER_CAP_FIXED_ALPHA_BLEND) != 0);
+
+    pxa_raster_draw_list_begin(&list, draw, PXA_RASTER_DRAW_HEADER_BYTES, 14);
     assert(!pxa_raster_clear(&list, 0));
     assert(list.status == PXA_STATUS_LIMIT_EXCEEDED);
     return 0;

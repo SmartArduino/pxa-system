@@ -61,7 +61,9 @@
 #define UI_RENDER_QUALITY QUALITY_BALANCED
 #define SURFACE_MODE_MAPPED 0u
 #define SURFACE_MODE_RASTER 1u
-
+/* The Guest CPU renderer draws into the fixed RGB565 frame buffer; the Host
+ * raster path can render at the real display resolution instead. */
+#define VOXEL_MAPPED_PIXEL_BUDGET 115000
 enum {
     BTN_NONE = 0,
     BTN_JUMP,
@@ -95,6 +97,7 @@ typedef struct {
 static uint16_t g_surface_buffers[SURFACE_BUFFER_COUNT * FRAME_PIXELS_MAX]
     __attribute__((aligned(PXA_SURFACE_BUFFER_ALIGNMENT)));
 static uint8_t g_packet[128];
+static uint32_t g_ui_generation;
 static uint32_t g_surface_handle;
 static uint16_t g_surface_width;
 static uint16_t g_surface_height;
@@ -185,6 +188,7 @@ static float g_pad_pitch;
 static uint64_t g_pad_last_a_us;
 
 static void recreate_surface(void);
+static void save_preferences(void);
 static void try_finish_surface_recreate(void);
 static void update_fps(uint64_t timestamp_us);
 static void update_duration_stats(uint64_t duration_us, uint32_t *ema_us,
@@ -272,12 +276,48 @@ static void toast_quality_mode(void) {
     set_toast(text);
 }
 
+/* The next Surface uses the Host raster path for gameplay, menus, the
+ * settings screens and the inventory; the Guest CPU renderer remains only for
+ * Hosts without GameRender support. */
+static uint8_t desired_surface_mode(void) {
+    return g_raster_supported ? SURFACE_MODE_RASTER : SURFACE_MODE_MAPPED;
+}
+
+/* Menus, settings and the inventory render at the real display resolution
+ * (1x); gameplay uses the selected or automatic detail level; the CPU path
+ * keeps its fixed 320x240 budget. */
+static int desired_render_quality(void) {
+    if (desired_surface_mode() == SURFACE_MODE_RASTER) {
+        return (g_screen == SCREEN_PLAY && !g_inventory_open)
+                   ? (int)g_game_quality
+                   : (int)QUALITY_MIN;
+    }
+    /* CPU fallback: gameplay keeps the selected detail, menus use the UI
+     * detail (both are clamped by the mapped limits). */
+    if (g_screen == SCREEN_PLAY && !g_inventory_open) {
+        return (int)g_game_quality;
+    }
+    return UI_RENDER_QUALITY;
+}
+
+/* The scene size limit follows the surface path that the next frame uses.
+ * The Host raster path renders at the real display resolution, so quality 1x
+ * means one scene pixel per panel pixel; the Guest CPU renderer keeps its
+ * static 320x240 tables and the fixed RGB565 frame buffer. */
+static void update_scene_limits(void) {
+    if (desired_surface_mode() == SURFACE_MODE_RASTER) {
+        render_set_scene_limits(g_layout.view_w, g_layout.view_h, 0);
+    } else {
+        render_set_scene_limits(RENDER_SCENE_MAX_W, RENDER_SCENE_MAX_H,
+                                VOXEL_MAPPED_PIXEL_BUDGET);
+    }
+}
+
 static void apply_quality(void) {
     if (g_quality_manual != 0) {
         g_game_quality = g_quality_manual;
     }
-    render_set_quality(g_screen == SCREEN_PLAY ? g_game_quality
-                                               : UI_RENDER_QUALITY);
+    render_set_quality(desired_render_quality());
 }
 
 static void cycle_quality(void) {
@@ -299,6 +339,7 @@ static void cycle_quality(void) {
         render_set_quality(g_game_quality);
         recreate_surface();
     }
+    save_preferences();
     toast_quality_mode();
 }
 
@@ -374,20 +415,28 @@ static void update_quality(uint64_t duration_us) {
             consumer_wait_us = g_host_queue_ema_us;
     }
     if (g_quality_manual != 0) return;
+    /* Only gameplay feeds the automatic controller: menu frames render at a
+     * different resolution and would otherwise skew the sampled cost. */
+    if (g_screen != SCREEN_PLAY || g_inventory_open) return;
     action = voxel_quality_observe(
         &g_quality_controller, effective_render_us, consumer_wait_us,
         (uint8_t)quality, (uint8_t)render_min_quality(), QUALITY_MAX);
     if (action == VOXEL_QUALITY_ACTION_LOWER_DETAIL) {
         g_game_quality = (uint8_t)next_higher_quality(quality);
-        render_set_quality(g_game_quality);
-        recreate_surface();
-        toast_quality();
     } else if (action == VOXEL_QUALITY_ACTION_HIGHER_DETAIL) {
         g_game_quality = (uint8_t)next_lower_quality(quality);
-        render_set_quality(g_game_quality);
-        recreate_surface();
-        toast_quality();
+    } else {
+        return;
     }
+    if (g_surface_mode == SURFACE_MODE_RASTER) {
+        /* Recreating the Surface mid-play flashes the display. Record the
+         * target detail and let the next Surface create (pause, inventory or
+         * a resize) apply it. */
+        return;
+    }
+    render_set_quality(g_game_quality);
+    recreate_surface();
+    toast_quality();
 }
 
 static void update_duration_stats(uint64_t duration_us, uint32_t *ema_us,
@@ -468,6 +517,12 @@ static void log_perf_sample(uint64_t timestamp_us, uint64_t guest_render_us) {
                           g_perf_raster_stats.candidate_quads);
     out = put_perf_metric(out, " submitted=",
                           g_perf_raster_stats.submitted_quads);
+    out = put_perf_metric(out, " painter=",
+                          g_perf_raster_stats.painter_quads);
+    out = put_perf_metric(out, " depth=",
+                          g_perf_raster_stats.depth_quads);
+    out = put_perf_metric(out, " split=",
+                          g_perf_raster_stats.painter_splits);
     out = put_perf_metric(out, " dropped=",
                           g_perf_raster_stats.dropped_quads);
     out = put_perf_metric(out, " list_bytes=",
@@ -541,10 +596,11 @@ static int render_frame(void);
 
 static int initialize_input_surface(void) {
     pxa_ui_transaction_t transaction = {0};
+    const uint32_t generation = g_ui_generation + 1u;
     if (g_input_initialized) {
         return 1;
     }
-    if (!pxa_ui_transaction_begin(&transaction, 1,
+    if (!pxa_ui_transaction_begin(&transaction, generation,
                                   PXA_UI_TRANSACTION_REPLACE_SURFACE,
                                   g_packet, sizeof(g_packet)) ||
         !pxa_ui_create(&transaction, 1, 0, 0, PXA_UI_NODE_ROOT) ||
@@ -565,7 +621,18 @@ static int initialize_input_surface(void) {
         return 0;
     }
     g_input_initialized = 1;
+    g_ui_generation = generation;
     return 1;
+}
+
+/* The UI node tree binds to the component's primary Surface. Recreating that
+ * Surface invalidates the node tree, so rebuild it before the next frame;
+ * the tree only carries the pointer event mask and presents no content. */
+static void rebind_ui_surface(void) {
+    g_input_initialized = 0;
+    if (!initialize_input_surface()) {
+        (void)pxa_log_error("UI surface rebind failed");
+    }
 }
 
 static int request_surface_create(void) {
@@ -575,12 +642,13 @@ static int request_surface_create(void) {
         g_layout.view_w <= 0 || g_layout.view_h <= 0) {
         return 0;
     }
+    g_surface_request_mode = desired_surface_mode();
+    update_scene_limits();
+    /* Re-apply the quality for the new path: the mapped limits can clamp a
+     * high raster quality while the inventory is open. */
+    render_set_quality(desired_render_quality());
     g_surface_width = (uint16_t)render_scene_width();
     g_surface_height = (uint16_t)render_scene_height();
-    g_surface_request_mode =
-        g_screen == SCREEN_PLAY && !g_inventory_open && g_raster_supported
-            ? SURFACE_MODE_RASTER
-            : SURFACE_MODE_MAPPED;
     if (!(g_surface_request_mode == SURFACE_MODE_RASTER
               ? pxa_game_render_create(
                     SURFACE_CREATE_REQUEST, g_surface_width,
@@ -713,6 +781,7 @@ static void apply_screen_size(int width, int height) {
         return;
     }
     render_configure(width, height);
+    update_scene_limits();
     apply_quality();
     if (size_changed) {
         recreate_surface();
@@ -769,27 +838,24 @@ static int16_t g_menu_press_travel;
 static uint64_t g_menu_press_us;
 
 static void set_screen(uint8_t screen) {
-    int target_quality = UI_RENDER_QUALITY;
-    const uint8_t old_screen = g_screen;
     if (g_screen == SCREEN_PLAY) {
         g_game_quality = (uint8_t)render_quality();
     }
     g_screen = screen;
-    if (screen == SCREEN_PLAY) {
-        target_quality = g_game_quality;
-    }
-    if (target_quality != render_quality()) {
-        render_set_quality(target_quality);
-        recreate_surface();
-    } else if ((old_screen == SCREEN_PLAY) != (screen == SCREEN_PLAY)) {
+    /* Menu screens render at 1x, gameplay at the selected detail, so pause
+     * and resume rebuild the Surface; moving between menus does not. */
+    if (desired_render_quality() != render_quality() ||
+        (g_surface_handle != 0 && g_surface_mode != desired_surface_mode())) {
         recreate_surface();
     }
 }
 
+/* Settings auto-save: byte 0 is the performance overlay, byte 1 the manual
+ * detail level (0 = AUTO). */
 static void save_preferences(void) {
-    const uint8_t value = g_show_performance ? 1u : 0u;
+    const uint8_t value[2] = {g_show_performance ? 1u : 0u, g_quality_manual};
     (void)pxa_storage_set(STORAGE_PREFS_SET_REQUEST, STORAGE_PREFS_KEY,
-                          STORAGE_PREFS_KEY_LEN, &value, 1,
+                          STORAGE_PREFS_KEY_LEN, value, sizeof(value),
                           g_storage_payload, sizeof(g_storage_payload),
                           g_packet, sizeof(g_packet));
 }
@@ -1132,6 +1198,10 @@ static void handle_storage_event(const pxa_event_t *event) {
         if (pxa_storage_parse_get(event, &result) &&
             result.status == PXA_STATUS_OK && result.value_length >= 1) {
             g_show_performance = result.value[0] & 1u;
+            if (result.value_length >= 2) {
+                g_quality_manual = result.value[1];
+                apply_quality();
+            }
             (void)render_frame();
         }
     }
@@ -1518,13 +1588,9 @@ static void on_pointer_down(const pxa_ui_pointer_data_t *pointer) {
             open_inventory();
             return;
         }
-        if (x >= g_layout.quality_x &&
-            x < g_layout.quality_x + g_layout.quality_w &&
-            y >= g_layout.quality_y &&
-            y < g_layout.quality_y + g_layout.quality_h) {
-            cycle_quality();
-            return;
-        }
+        /* The quality box has no visible target in any renderer, so tapping
+         * the top-left by accident used to change the detail level. Quality is
+         * changed in the settings screen instead. */
         if (hit_circle(x, y, g_layout.fly_x, g_layout.fly_y, g_layout.fly_r)) {
             toggle_fly();
             begin_button(pointer, BTN_FLY);
@@ -1899,6 +1965,22 @@ static int present_writing_buffer(void) {
     return -1;
 }
 
+/* Fills the state both the raster and the CPU menu renderers draw. */
+static void build_menu_state(menu_state_t *menu) {
+    const uint32_t base = g_clock_seed != 0 ? g_clock_seed : 0x5eed1234u;
+    menu->overlay = (uint8_t)(g_screen == SCREEN_PAUSE ? 1 : 0);
+    menu->screen = (uint8_t)(g_screen == SCREEN_SETTINGS
+                                 ? 1
+                                 : (g_screen == SCREEN_PAUSE ? 2 : 0));
+    menu->has_save = g_has_save;
+    menu->has_game = g_game_started;
+    menu->quality_manual = g_quality_manual;
+    menu->quality = g_game_quality;
+    menu->show_performance = g_show_performance;
+    menu->seed = base + g_seed_counter * 2654435761u;
+    menu->toast = g_menu_toast_until > g_now_ms ? g_menu_toast : NULL;
+}
+
 static int render_frame(void) {
     hud_state_t hud;
     ray_hit_t target;
@@ -1911,33 +1993,43 @@ static int render_frame(void) {
         try_finish_surface_recreate();
         return 1;
     }
-    if (g_surface_handle == 0 || pixels > FRAME_PIXELS_MAX ||
+    if (g_surface_handle == 0 ||
+        (g_surface_mode == SURFACE_MODE_MAPPED && pixels > FRAME_PIXELS_MAX) ||
         g_surface_width != (uint16_t)render_scene_width() ||
         g_surface_height != (uint16_t)render_scene_height()) {
         return 0;
     }
     if (g_surface_mode == SURFACE_MODE_RASTER) {
         int32_t raster_result;
+        const uint8_t quality = (uint8_t)render_quality();
         if (!g_raster_ready) return 1;
-        if (g_screen != SCREEN_PLAY) {
-            recreate_surface();
-            return 1;
+        if (g_screen == SCREEN_PLAY) {
+            game_target_block(&g_player, &target);
+            build_hud(&hud);
+            hud.target_table = (target.hit &&
+                                game_block(target.x, target.y, target.z) ==
+                                    BLOCK_TABLE)
+                                   ? 1
+                                   : 0;
+            hud.action_mode = hud.target_table ? 2
+                              : game_attack_target(&g_player) ? 1
+                                                             : 0;
+            (void)mark_perf_timing(PERF_CLOCK_RAYCAST_START);
+            raster_result = voxel_raster_render(
+                g_surface_handle, g_frame_id + 1u, &g_player, quality, &hud,
+                NULL, &target);
+            (void)mark_perf_timing(PERF_CLOCK_RAYCAST_END);
+        } else {
+            /* Menus are drawn into the raster list at the real resolution;
+             * the pause screen keeps the frozen 3D frame behind them. */
+            menu_state_t menu;
+            build_menu_state(&menu);
+            (void)mark_perf_timing(PERF_CLOCK_RAYCAST_START);
+            raster_result = voxel_raster_render(
+                g_surface_handle, g_frame_id + 1u, &g_player, quality, NULL,
+                &menu, NULL);
+            (void)mark_perf_timing(PERF_CLOCK_RAYCAST_END);
         }
-        game_target_block(&g_player, &target);
-        build_hud(&hud);
-        hud.target_table = (target.hit &&
-                            game_block(target.x, target.y, target.z) ==
-                                BLOCK_TABLE)
-                               ? 1
-                               : 0;
-        hud.action_mode = hud.target_table ? 2
-                          : game_attack_target(&g_player) ? 1
-                                                         : 0;
-        (void)mark_perf_timing(PERF_CLOCK_RAYCAST_START);
-        raster_result = voxel_raster_render(
-            g_surface_handle, g_frame_id + 1u, &g_player,
-            (uint8_t)render_quality(), &hud, &target);
-        (void)mark_perf_timing(PERF_CLOCK_RAYCAST_END);
         if (raster_result > 0) {
             if (g_perf_timing.active && !g_perf_raster_stats_valid) {
                 voxel_raster_get_stats(&g_perf_raster_stats);
@@ -2005,25 +2097,39 @@ static int render_frame(void) {
     }
     if (g_screen != SCREEN_PLAY) {
         menu_state_t menu;
-        const uint32_t base =
-            g_clock_seed != 0 ? g_clock_seed : 0x5eed1234u;
         render_target(frame, g_surface_width);
-        menu.overlay = (uint8_t)(g_screen == SCREEN_PAUSE ? 1 : 0);
-        menu.screen = (uint8_t)(g_screen == SCREEN_SETTINGS
-                                    ? 1
-                                    : (g_screen == SCREEN_PAUSE ? 2 : 0));
-        menu.has_save = g_has_save;
-        menu.has_game = g_game_started;
-        menu.quality_manual = g_quality_manual;
-        menu.quality = g_game_quality;
-        menu.show_performance = g_show_performance;
-        menu.seed = base + g_seed_counter * 2654435761u;
-        menu.toast = g_menu_toast_until > g_now_ms ? g_menu_toast : NULL;
+        build_menu_state(&menu);
         render_menu(&menu);
     }
     present_result = present_writing_buffer();
     if (present_result < 0) recreate_surface();
     return present_result >= 0;
+}
+
+/* A detail level the Host rejected is stepped down and persisted, with a
+ * visible note, so it does not silently flip on every launch. */
+static void notify_quality_fallback(int requested, int fallback) {
+    char text[32];
+    char *out = text;
+    *out++ = 'R';
+    *out++ = 'E';
+    *out++ = 'S';
+    *out++ = ' ';
+    out = put_u32_text(out, (uint32_t)requested);
+    *out++ = 'X';
+    *out++ = ' ';
+    *out++ = '-';
+    *out++ = '>';
+    *out++ = ' ';
+    out = put_u32_text(out, (uint32_t)fallback);
+    *out++ = 'X';
+    *out = '\0';
+    if (g_screen == SCREEN_PLAY) {
+        set_toast(text);
+    } else {
+        menu_toast(text);
+    }
+    (void)pxa_log_warn(text);
 }
 
 static int handle_surface_create(const pxa_event_t *event) {
@@ -2039,6 +2145,21 @@ static int handle_surface_create(const pxa_event_t *event) {
         if (!pxa_game_render_parse_create(event, &renderer)) return 0;
         g_surface_create_pending = 0;
         if (renderer.status == PXA_STATUS_UNSUPPORTED) {
+            /* A Host with a smaller GameRender limit rejects this context
+             * size. Step down one detail level, tell the user and persist the
+             * new setting; only give up on raster when even 4x fails. */
+            const int requested = render_quality();
+            if (requested < QUALITY_PERFORMANCE) {
+                const int fallback = next_higher_quality(requested);
+                if (g_quality_manual != 0)
+                    g_quality_manual = (uint8_t)fallback;
+                g_game_quality = (uint8_t)fallback;
+                render_set_quality(fallback);
+                save_preferences();
+                notify_quality_fallback(requested, fallback);
+                schedule_surface_retry();
+                return 1;
+            }
             g_raster_supported = 0;
             schedule_surface_retry();
             return 1;
@@ -2068,6 +2189,7 @@ static int handle_surface_create(const pxa_event_t *event) {
         }
         g_raster_ready = 1;
         g_surface_retry_ticks = 0;
+        rebind_ui_surface();
         (void)render_frame();
         return 1;
     }
@@ -2111,6 +2233,7 @@ static int handle_surface_create(const pxa_event_t *event) {
     }
     g_surface_retry_ticks = 0;
     voxel_raster_reset();
+    rebind_ui_surface();
     (void)render_frame();
     return 1;
 }
@@ -2139,6 +2262,7 @@ int32_t pxa_app_start(const uint8_t *config, uint32_t length) {
     pxa_ui_environment_t environment;
     g_screen = SCREEN_MENU;
     g_game_quality = QUALITY_BALANCED;
+    update_scene_limits();
     if (pxa_ui_parse_start_environment(config, length, &environment) &&
         environment.width > 0 && environment.height > 0) {
         render_configure((int)environment.width, (int)environment.height);
@@ -2165,6 +2289,7 @@ int32_t pxa_app_start(const uint8_t *config, uint32_t length) {
     reset_surface_ownership();
     voxel_raster_reset();
     g_input_initialized = 0;
+    g_ui_generation = 0;
     g_input_dirty = 0;
     g_last_tick_us = 0;
     g_tick_accumulator_us = 0;
@@ -2326,6 +2451,7 @@ int32_t pxa_app_on_event(const uint8_t *event, uint32_t length) {
     }
     if (parsed.service == PXA_SERVICE_STORAGE) {
         handle_storage_event(&parsed);
+        g_input_dirty = 1;
         return PXA_EVENT_HANDLED;
     }
     {
@@ -2374,6 +2500,7 @@ int32_t pxa_app_on_event(const uint8_t *event, uint32_t length) {
             status == PXA_STATUS_OK) {
             g_clock_seed =
                 (uint32_t)seed_us ^ (uint32_t)(seed_us >> 32);
+            g_input_dirty = 1;
         }
         return PXA_EVENT_HANDLED;
     }
@@ -2400,8 +2527,11 @@ int32_t pxa_app_on_event(const uint8_t *event, uint32_t length) {
             request_window_snapshot();
         }
         if (g_screen != SCREEN_PLAY) {
-            if (steps != 0 || g_input_dirty) {
-                g_now_ms += (uint32_t)steps * FRAME_PERIOD_MS;
+            const uint8_t toast_was_visible =
+                g_menu_toast_until > g_now_ms;
+            g_now_ms += (uint32_t)steps * FRAME_PERIOD_MS;
+            if (g_input_dirty ||
+                toast_was_visible != (g_menu_toast_until > g_now_ms)) {
                 g_input_dirty = 0;
                 (void)render_frame();
             }

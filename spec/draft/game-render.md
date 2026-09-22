@@ -45,7 +45,7 @@ mailbox. It never waits for rasterization, display rotation, TE, or SPI. The
 presenter rasterizes only the newest pending list and counts replaced lists as
 dropped frames.
 
-Raster ABI 1.3 supports clear, flat quad, textured depth quad, sprite, sprite
+Raster ABI 1.5 supports clear, flat quad, textured depth quad, sprite, sprite
 batch, and triangle batch records. Sprite batches share texture, blend flags,
 and optional solid color across compact 16-byte instances. Triangle batches
 share texture or solid color across screen-space 12-byte vertices; every three
@@ -57,6 +57,22 @@ quad and triangle-batch records. Painter polygons are convex affine scanlines,
 execute in list order without reading or writing depth, and use each vertex's
 light value as a row in the lit palette. Solid painter polygons carry an
 8-bit palette index instead of RGB565. `TRANSPARENT_INDEX0` skips texel zero.
+
+Hosts advertising `LIT_PALETTE_DEPTH` also accept the `LIT_PALETTE` flag on
+depth-tested textured quad and triangle-batch records. The light value selects
+a row in the uploaded lit palette, avoiding per-pixel RGB565 multiplication
+without changing depth testing or affine/perspective UV selection.
+
+Hosts advertising `DEPTH_CUTOUT` accept `TRANSPARENT_INDEX0` on depth-tested
+textured quad and triangle-batch records. Texel index zero skips both color and
+depth writes, providing low-cost cutout or ordered-dither transparency without
+an alpha buffer, blending pass, or additional full-frame storage.
+
+Hosts advertising `FIXED_ALPHA_BLEND` accept `BLEND_75` on textured painter or
+depth-tested polygons. Each covered pixel combines three parts source and one
+part destination RGB565 using shifts and masks. The depth-tested form reads depth but
+does not write it, allowing back-to-front translucent surfaces without an
+alpha buffer or another full-frame allocation.
 
 The 88-byte telemetry record reports submitted and dropped frames, draw bytes,
 covered pixels, host raster time, queue/presentation time, command counts,

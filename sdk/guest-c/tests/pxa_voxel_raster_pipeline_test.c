@@ -3,6 +3,7 @@
 #include <assert.h>
 #include <string.h>
 
+#include "block_textures.h"
 #include "pxa_raster.h"
 
 chunk_t *g_chunk_grid[GRID_W][GRID_W];
@@ -11,9 +12,30 @@ int16_t g_chunk_origin_cz;
 uint32_t g_world_seed;
 particle_t g_particles[MAX_PARTICLES];
 mob_t g_mobs[MAX_MOBS];
+item_stack_t g_inventory[INV_SLOTS];
+item_stack_t g_craft[CRAFT_SLOTS];
+item_stack_t g_craft_result;
+item_stack_t g_table_craft[TABLE_CRAFT_SLOTS];
+item_stack_t g_table_result;
+render_layout_t g_layout;
+inventory_layout_t g_inv_layout;
+menu_button_t g_menu_buttons[MENU_BUTTON_MAX];
+int g_menu_button_count;
 static chunk_t chunks[GRID_COUNT];
 static uint32_t submitted_bytes;
 static uint32_t submitted_commands;
+static uint32_t sky_band_count;
+static uint32_t sun_count;
+static uint32_t cloud_count;
+static uint32_t painter_command_count;
+static uint32_t depth_command_count;
+static uint32_t depth_cutout_command_count;
+static uint32_t depth_blend_command_count;
+static uint8_t painter_after_depth;
+static uint8_t depth_blend_seen;
+static uint8_t opaque_after_depth_blend;
+static uint16_t first_sky_color;
+static uint8_t sky_colors_differ;
 
 int32_t pxa_control(const uint8_t *data, uint32_t length) {
     (void)data;
@@ -25,9 +47,53 @@ int32_t pxa_io(uint32_t handle, uint32_t operation, uint8_t *data,
                uint32_t length) {
     assert(handle == 3 && data != NULL);
     if (operation == PXA_GAME_RENDER_IO_SUBMIT) {
+        uint32_t offset = PXA_RASTER_DRAW_HEADER_BYTES;
         assert(pxa_read_u32(data) == PXA_RASTER_DRAW_MAGIC);
         submitted_bytes = length;
         submitted_commands = pxa_read_u32(data + 16);
+        sky_band_count = 0;
+        sun_count = 0;
+        cloud_count = 0;
+        painter_command_count = 0;
+        depth_command_count = 0;
+        depth_cutout_command_count = 0;
+        depth_blend_command_count = 0;
+        painter_after_depth = 0;
+        depth_blend_seen = 0;
+        opaque_after_depth_blend = 0;
+        sky_colors_differ = 0;
+        for (uint32_t index = 0; index < submitted_commands; ++index) {
+            const uint16_t size = pxa_read_u16(data + offset + 2);
+            assert(size >= 4u &&
+                   offset + size <= length);
+            if (data[offset] == PXA_RASTER_RECORD_FLAT_QUAD) {
+                const uint16_t color = pxa_read_u16(data + offset + 4);
+                if (sky_band_count == 0) first_sky_color = color;
+                else if (color != first_sky_color) sky_colors_differ = 1;
+                ++sky_band_count;
+                if (color == UINT16_C(0xffff)) ++sun_count;
+                if (color == UINT16_C(0xf7de)) ++cloud_count;
+            } else if (data[offset] == PXA_RASTER_RECORD_TEXTURED_QUAD) {
+                if ((data[offset + 1] & PXA_RASTER_QUAD_PAINTER) != 0) {
+                    if (depth_command_count != 0) painter_after_depth = 1;
+                    ++painter_command_count;
+                } else {
+                    ++depth_command_count;
+                    if ((data[offset + 1] &
+                         PXA_RASTER_QUAD_TRANSPARENT_INDEX0) != 0)
+                        ++depth_cutout_command_count;
+                    if ((data[offset + 1] &
+                         PXA_RASTER_QUAD_BLEND_75) != 0) {
+                        ++depth_blend_command_count;
+                        depth_blend_seen = 1;
+                    } else if (depth_blend_seen) {
+                        opaque_after_depth_blend = 1;
+                    }
+                }
+            }
+            offset += size;
+        }
+        assert(offset == length);
     }
     return (int32_t)length;
 }
@@ -43,6 +109,7 @@ int game_block(int x, int y, int z) {
 uint16_t render_block_color(int block) {
     return block == BLOCK_STONE ? UINT16_C(0x8410) : UINT16_C(0xffff);
 }
+void render_menu_layout(const menu_state_t *menu) { (void)menu; }
 
 int main(void) {
     player_t player = {8.0F, 6.0F, -2.0F, 0, 0, 0, 0, 0, 0, 0, 0};
@@ -50,6 +117,22 @@ int main(void) {
     voxel_raster_stats_t stats;
     uint32_t world_candidates;
     int grid_z;
+    {
+        const block_index_set_t *indices = block_texture_indices();
+        uint32_t leaf_holes = 0;
+        uint32_t water_holes = 0;
+        uint32_t stone_holes = 0;
+        for (int kind = 0; kind < 3; ++kind) {
+            for (int pixel = 0; pixel < 256; ++pixel) {
+                leaf_holes += indices[BLOCK_LEAVES][kind][pixel] == 0;
+                water_holes += indices[BLOCK_WATER][kind][pixel] == 0;
+                stone_holes += indices[BLOCK_STONE][kind][pixel] == 0;
+            }
+        }
+        assert(leaf_holes != 0 && water_holes == 0);
+        assert(stone_holes == 0);
+        assert(block_texture_palette()[0] == 0);
+    }
     memset(chunks, 0, sizeof(chunks));
     memset(&hud, 0, sizeof(hud));
     g_chunk_origin_cx = -3;
@@ -73,9 +156,15 @@ int main(void) {
 
     voxel_raster_reset();
     voxel_raster_set_capabilities(PXA_RASTER_CAP_FLAT_QUAD |
-                                  PXA_RASTER_CAP_TEXTURED_QUAD);
+                                  PXA_RASTER_CAP_TEXTURED_QUAD |
+                                  PXA_RASTER_CAP_AFFINE_UV |
+                                  PXA_RASTER_CAP_PAINTER_POLYGON |
+                                  PXA_RASTER_CAP_LIT_PALETTE_DEPTH |
+                                  PXA_RASTER_CAP_DEPTH_CUTOUT |
+                                  PXA_RASTER_CAP_FIXED_ALPHA_BLEND);
     assert(voxel_raster_upload_assets(3));
-    assert(voxel_raster_render(3, 1, &player, QUALITY_BALANCED, &hud, NULL) >
+    assert(voxel_raster_render(3, 1, &player, QUALITY_BALANCED, &hud, NULL,
+                               NULL) >
            0);
     voxel_raster_get_stats(&stats);
     world_candidates = stats.candidate_quads;
@@ -83,9 +172,14 @@ int main(void) {
      * greedy face per side; a 16x4 slab produces at most 24 8x8 faces. */
     assert(stats.cached_quads <= 24);
     assert(stats.candidate_quads != 0 && stats.submitted_quads != 0);
+    assert(stats.painter_quads != 0 && stats.depth_quads != 0);
+    assert(painter_command_count != 0 && depth_command_count != 0);
+    assert(!painter_after_depth);
     assert(stats.submitted_quads < CHUNK_SIZE * CHUNK_SIZE);
     assert(submitted_commands > stats.submitted_quads &&
-           submitted_commands <= stats.submitted_quads + 32);
+           submitted_commands <= stats.submitted_quads + 64);
+    assert(sky_band_count >= 10 && sky_colors_differ);
+    assert(sun_count != 0 && cloud_count != 0);
     assert(submitted_bytes == stats.draw_list_bytes &&
            submitted_bytes < 4096);
     g_mobs[0].x = 8.0F;
@@ -93,7 +187,8 @@ int main(void) {
     g_mobs[0].z = 3.0F;
     g_mobs[0].alive = 1;
     g_mobs[0].kind = MOB_SLIME;
-    assert(voxel_raster_render(3, 2, &player, QUALITY_BALANCED, &hud, NULL) >
+    assert(voxel_raster_render(3, 2, &player, QUALITY_BALANCED, &hud, NULL,
+                               NULL) >
            0);
     voxel_raster_get_stats(&stats);
     assert(stats.candidate_quads == world_candidates + 1u);
@@ -103,10 +198,44 @@ int main(void) {
     player.z = 8.0F;
     player.yaw = 0.0F;
     player.pitch = -0.55F;
-    assert(voxel_raster_render(3, 3, &player, QUALITY_BALANCED, &hud, NULL) >
+    assert(voxel_raster_render(3, 3, &player, QUALITY_BALANCED, &hud, NULL,
+                               NULL) >
            0);
     voxel_raster_get_stats(&stats);
     assert(stats.clipped_quads != 0);
     assert(stats.candidate_quads != 0 && stats.submitted_quads != 0);
+
+    /* A large greedy surface wholly beyond the hybrid cutoff is subdivided
+     * only for painter ordering. The fixed cap bounds projection and command
+     * growth while reducing the depth interval represented by one sort key. */
+    player.x = 8.0F;
+    player.y = 6.0F;
+    player.z = -10.0F;
+    player.yaw = 0.0F;
+    player.pitch = -0.35F;
+    assert(voxel_raster_render(3, 4, &player, QUALITY_BALANCED, &hud, NULL,
+                               NULL) >
+           0);
+    voxel_raster_get_stats(&stats);
+    assert(stats.painter_splits != 0);
+    assert(stats.painter_splits <= stats.cached_quads * 3u);
+
+    chunks[3 * GRID_W + 3]
+        .blocks[(4 << 8) | (4 << CHUNK_BITS) | 8] = BLOCK_LEAVES;
+    ++chunks[3 * GRID_W + 3].revision;
+    player.x = 8.0F;
+    player.y = 4.0F;
+    player.z = 0.0F;
+    player.pitch = -0.2F;
+    assert(voxel_raster_render(3, 5, &player, QUALITY_BALANCED, &hud, NULL,
+                               NULL) > 0);
+    assert(depth_cutout_command_count != 0);
+    chunks[3 * GRID_W + 3]
+        .blocks[(4 << 8) | (5 << CHUNK_BITS) | 8] = BLOCK_WATER;
+    ++chunks[3 * GRID_W + 3].revision;
+    assert(voxel_raster_render(3, 6, &player, QUALITY_BALANCED, &hud, NULL,
+                               NULL) > 0);
+    assert(depth_blend_command_count != 0);
+    assert(!opaque_after_depth_blend);
     return 0;
 }
