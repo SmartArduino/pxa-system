@@ -104,11 +104,19 @@ enum {
 #define J3_RAMP_LEVELS 32u
 #define J3_RAMP_INK_PANEL UINT8_C(160)
 #define J3_RAMP_DIM_PANEL UINT8_C(192)
-#define J3_RAMP_ACCENT_PANEL UINT8_C(224)
+/* White ink over the current background scheme's sky. Rebuilt and re-uploaded
+ * whenever the background changes, so text over the sky antialiases with the
+ * same zero-arithmetic palette lookup as the panel text. */
+#define J3_RAMP_SKY UINT8_C(224)
 
 /* Builds the J3_LIGHT_LEVELS x 256 RGB565 palette. `entries` must hold
  * J3_PALETTE_ENTRIES values. */
 void j3_palette_build(uint16_t *entries);
+
+/* Rewrites the sky text ramp (J3_RAMP_SKY .. +J3_RAMP_LEVELS-1) for `scheme`,
+ * blending white ink with that scheme's sky. The caller re-uploads the palette
+ * so text over the sky antialiases without per-pixel arithmetic. */
+void j3_palette_build_sky_ramp(uint16_t *entries, uint8_t scheme);
 
 /* Canonical RGB565 helper shared by the palette and the flat background. */
 static inline uint16_t j3_rgb565(uint32_t red, uint32_t green, uint32_t blue) {

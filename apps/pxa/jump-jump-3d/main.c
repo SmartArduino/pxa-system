@@ -113,6 +113,7 @@ static uint32_t g_quality_raster_us;
 /* What the ladder learned about each scale: the raster cost measured there.
  * Used to reject an upgrade into a scale that already blew the budget. */
 static uint32_t g_scale_raster_us[MAX_SCALE_SHIFT + 1u];
+static uint8_t g_palette_scheme;
 static uint8_t g_request_scale_change;
 static uint8_t g_storage_payload[32];
 static uint8_t g_storage_ready;
@@ -511,6 +512,19 @@ static void update_quality(void) {
     g_quality_raster_us = 0;
 }
 
+/* The sky text ramp is baked against the current background scheme, so the
+ * palette is rebuilt and re-uploaded when the scheme changes (every 15 jumps).
+ * The upload is a couple of milliseconds and lands exactly on the background
+ * transition, which hides it. */
+static void update_sky_ramp(void) {
+    const uint8_t scheme = (uint8_t)((g_game.jump_count / 15u) % J3_BG_SCHEMES);
+    if (scheme == g_palette_scheme || g_context == 0) return;
+    g_palette_scheme = scheme;
+    j3_palette_build_sky_ramp(g_palette, scheme);
+    (void)pxa_raster_upload_lit_palette_rgb565(
+        g_context, J3_LIGHT_LEVELS, g_palette, g_upload, sizeof(g_upload));
+}
+
 /* Persists the best score, debounced so a long run does not stream writes. */
 static void update_storage(float dt) {
     uint8_t value[4];
@@ -621,6 +635,7 @@ int32_t pxa_app_on_event(const uint8_t *event, uint32_t length) {
                 j3_game_tick(&g_game, (float)TICK_MS * 0.001F);
             play_state_sounds();
             if (g_storage_ready) update_storage((float)steps * 0.02F);
+            update_sky_ramp();
             (void)render_frame();
 #if J3_PERF_LOG
             g_perf_ticks += steps;

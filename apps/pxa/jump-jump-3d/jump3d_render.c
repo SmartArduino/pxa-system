@@ -1017,11 +1017,11 @@ static void draw_score(j3_render_t *render, const j3_game_t *game) {
         const int shadow = (int)(render->big_cell_h * 0.12F) + 1;
         j3_font_draw(&render->list, render->capabilities, J3_FONT_BIG,
                      x + shadow, (int)render->score_y + shadow + 1, 1, text,
-                     j3_color_rgb565(J3_INDEX(J3_HUE_UI, 8)), J3_FONT_ALPHA, 0);
+                     j3_color_rgb565(J3_INDEX(J3_HUE_UI, 8)), J3_FONT_CRISP, 0);
     }
     j3_font_draw(&render->list, render->capabilities, J3_FONT_BIG, x,
                  (int)render->score_y, 1, text,
-                 j3_color_rgb565(J3_UI_WHITE), J3_FONT_ALPHA, 0);
+                 j3_color_rgb565(J3_UI_WHITE), J3_FONT_RAMP, J3_RAMP_SKY);
 }
 
 static void draw_popup(j3_render_t *render, const j3_game_t *game) {
@@ -1054,21 +1054,21 @@ static void draw_popup(j3_render_t *render, const j3_game_t *game) {
                                j3_font_width(J3_FONT_BIG, scale, text)) *
                            0.5F);
         j3_font_draw(&render->list, render->capabilities, J3_FONT_BIG, cx,
-                     cy, scale, plus, color, J3_FONT_ALPHA, 0);
+                     cy, scale, plus, color, J3_FONT_RAMP, J3_RAMP_SKY);
         cx += j3_font_width(J3_FONT_BIG, scale, plus);
         j3_font_draw(&render->list, render->capabilities, J3_FONT_BIG, cx,
-                     cy, scale, text, color, J3_FONT_ALPHA, 0);
+                     cy, scale, text, color, J3_FONT_RAMP, J3_RAMP_SKY);
         j3_font_draw(&render->list, render->capabilities, J3_FONT_CJK,
                      (int)(x - (float)j3_font_width(J3_FONT_CJK, 1, label) *
                                      0.5F),
-                     (int)(y + render->big_cell_h * 0.35F), 1, label, color, J3_FONT_ALPHA, 0);
+                     (int)(y + render->big_cell_h * 0.35F), 1, label, color, J3_FONT_RAMP, J3_RAMP_SKY);
     } else {
         const uint16_t color = fade_to_white(J3_UI_WHITE, alpha);
         format_u32(text, game->popup_points, &length);
         j3_font_draw(&render->list, render->capabilities, J3_FONT_BIG,
                      (int)(x - (float)j3_font_width(J3_FONT_BIG, 1, text) *
                                      0.5F),
-                     (int)(y - render->big_cell_h * 0.5F), 1, text, color, J3_FONT_ALPHA, 0);
+                     (int)(y - render->big_cell_h * 0.5F), 1, text, color, J3_FONT_RAMP, J3_RAMP_SKY);
     }
 }
 
