@@ -11,8 +11,8 @@ from pathlib import Path
 SEMANTIC_APPS = ("arcade", "lab", "wasi-lab", "weather")
 CANVAS_APPS = ("garden-guard", "plane-shooter")
 RASTER_SURFACE_APPS = ("maze-evil", "maze-spike")
-GAME_RENDER_APPS = ("game-render-bench", "plane-shooter-raster", "tomb-explorer",
-                    "voxel-craft")
+GAME_RENDER_APPS = ("game-render-bench", "jump-jump-3d",
+                    "plane-shooter-raster", "tomb-explorer", "voxel-craft")
 REQUIRED_THEME_TOKENS = (
     "PXA_UI_THEME_BACKGROUND",
     "PXA_UI_THEME_TEXT",

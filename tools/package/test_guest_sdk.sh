@@ -259,6 +259,23 @@ PYTHON
 "$work_dir/pxa_voxel_raster_pipeline_test"
 
 "$cc_bin" "${flags[@]}" \
+  -I"$pxa_system_dir/apps/pxa/jump-jump-3d" \
+  "$pxa_system_dir/sdk/guest-c/tests/pxa_jump3d_audio_test.c" \
+  "$pxa_system_dir/apps/pxa/jump-jump-3d/jump3d_audio.c" \
+  -lm \
+  -o "$work_dir/pxa_jump3d_audio_test"
+"$work_dir/pxa_jump3d_audio_test"
+
+"$cc_bin" "${flags[@]}" \
+  -I"$pxa_system_dir/apps/pxa/jump-jump-3d" \
+  "$pxa_system_dir/sdk/guest-c/tests/pxa_jump3d_game_test.c" \
+  "$pxa_system_dir/apps/pxa/jump-jump-3d/jump3d_game.c" \
+  "$pxa_system_dir/apps/pxa/jump-jump-3d/jump3d_palette.c" \
+  -lm \
+  -o "$work_dir/pxa_jump3d_game_test"
+"$work_dir/pxa_jump3d_game_test"
+
+"$cc_bin" "${flags[@]}" \
   -I"$pxa_system_dir/apps/pxa/voxel-craft" \
   "$pxa_system_dir/sdk/guest-c/tests/pxa_voxel_ui_overlay_test.c" \
   "$pxa_system_dir/apps/pxa/voxel-craft/block_textures.c" \
