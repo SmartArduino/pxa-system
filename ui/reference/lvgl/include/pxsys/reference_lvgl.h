@@ -168,6 +168,27 @@ typedef size_t (*pxsys_reference_lvgl_app_list_fn)(
 typedef bool (*pxsys_reference_lvgl_app_action_fn)(
     void* context, const char* identity, pxsys_reference_app_action_t action);
 
+/* Declared app permissions. Entries keep manifest order, so permission_index
+ * stays stable while the app remains installed. A NULL list provider keeps the
+ * detail dialog read-only; a zero count hides the permission section. Text
+ * buffers include the NUL terminator. */
+#define PXSYS_REFERENCE_APP_PERMISSION_MAX 16
+#define PXSYS_REFERENCE_APP_PERMISSION_TEXT_MAX 97
+
+typedef struct {
+    char name[PXSYS_REFERENCE_APP_PERMISSION_TEXT_MAX];
+    char scope[PXSYS_REFERENCE_APP_PERMISSION_TEXT_MAX];
+    uint8_t required;
+    uint8_t granted;
+} pxsys_reference_app_permission_t;
+
+typedef size_t (*pxsys_reference_lvgl_app_permission_list_fn)(
+    void* context, const char* identity,
+    pxsys_reference_app_permission_t* permissions, size_t capacity);
+typedef bool (*pxsys_reference_lvgl_app_permission_set_fn)(
+    void* context, const char* identity, size_t permission_index,
+    bool granted);
+
 /* File manager. Paths are '/'-rooted logical paths below the storage root. */
 #define PXSYS_REFERENCE_FILE_ENTRY_MAX 64
 #define PXSYS_REFERENCE_FILE_NAME_MAX 128
@@ -295,6 +316,12 @@ typedef struct {
     void* wifi_context;
     pxsys_reference_lvgl_wifi_scan_fn wifi_scan;
     pxsys_reference_lvgl_wifi_connect_fn wifi_connect;
+    /* Optional app permission provider, appended for source compatibility.
+     * The Apps detail dialog lists declared permissions and writes toggles
+     * back through app_permission_set. */
+    void* app_permission_context;
+    pxsys_reference_lvgl_app_permission_list_fn app_permission_list;
+    pxsys_reference_lvgl_app_permission_set_fn app_permission_set;
 } pxsys_reference_lvgl_config_t;
 
 typedef struct pxsys_reference_lvgl pxsys_reference_lvgl_t;

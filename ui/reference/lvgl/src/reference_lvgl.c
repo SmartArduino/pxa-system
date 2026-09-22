@@ -100,6 +100,10 @@ static const pxsys_resource_entry_t reference_en_resources[] = {
     RESOURCE_ENTRY("settings.apps.close", "Close"),
     RESOURCE_ENTRY("settings.apps.confirm.clear", "Clear all app data?"),
     RESOURCE_ENTRY("settings.apps.confirm.uninstall", "Uninstall this app?"),
+    RESOURCE_ENTRY("settings.apps.permissions", "Permissions"),
+    RESOURCE_ENTRY("settings.apps.permissions.empty", "No declared permissions"),
+    RESOURCE_ENTRY("settings.apps.permissions.required", "Required"),
+    RESOURCE_ENTRY("settings.apps.permissions.optional", "Optional"),
     RESOURCE_ENTRY("settings.files.up", "Up one level"),
     RESOURCE_ENTRY("settings.files.empty", "Empty folder"),
     RESOURCE_ENTRY("settings.files.folder", "Folder"),
@@ -196,6 +200,10 @@ static const pxsys_resource_entry_t reference_zh_resources[] = {
     RESOURCE_ENTRY("settings.apps.close", "关闭"),
     RESOURCE_ENTRY("settings.apps.confirm.clear", "确认清除应用数据？"),
     RESOURCE_ENTRY("settings.apps.confirm.uninstall", "确认卸载该应用？"),
+    RESOURCE_ENTRY("settings.apps.permissions", "权限"),
+    RESOURCE_ENTRY("settings.apps.permissions.empty", "未声明权限"),
+    RESOURCE_ENTRY("settings.apps.permissions.required", "必要"),
+    RESOURCE_ENTRY("settings.apps.permissions.optional", "可选"),
     RESOURCE_ENTRY("settings.files.up", "返回上级目录"),
     RESOURCE_ENTRY("settings.files.empty", "空文件夹"),
     RESOURCE_ENTRY("settings.files.folder", "文件夹"),
@@ -299,6 +307,11 @@ typedef struct {
     struct pxsys_reference_lvgl* ui;
     size_t index;
 } wifi_network_control_t;
+
+typedef struct {
+    struct pxsys_reference_lvgl* ui;
+    size_t index;
+} app_permission_control_t;
 
 typedef struct {
     struct pxsys_reference_lvgl* ui;
@@ -463,7 +476,15 @@ struct pxsys_reference_lvgl {
     void* wifi_context;
     pxsys_reference_lvgl_wifi_scan_fn wifi_scan;
     pxsys_reference_lvgl_wifi_connect_fn wifi_connect;
+    void* app_permission_context;
+    pxsys_reference_lvgl_app_permission_list_fn app_permission_list;
+    pxsys_reference_lvgl_app_permission_set_fn app_permission_set;
     pxsys_reference_wifi_network_t wifi_networks[PXSYS_REFERENCE_WIFI_NETWORK_MAX];
+    app_permission_control_t
+        app_permission_controls[PXSYS_REFERENCE_APP_PERMISSION_MAX];
+    pxsys_reference_app_permission_t
+        app_permissions[PXSYS_REFERENCE_APP_PERMISSION_MAX];
+    size_t app_permission_count;
     size_t wifi_network_count;
     char pending_wifi_ssid[PXSYS_REFERENCE_WIFI_SSID_MAX];
     lv_obj_t* wifi_password_input;
@@ -4697,6 +4718,98 @@ static void app_action_clicked(lv_event_t* event) {
     rebuild(ui);
 }
 
+static void app_permission_changed(lv_event_t* event) {
+    app_permission_control_t* control =
+        (app_permission_control_t*)lv_event_get_user_data(event);
+    lv_obj_t* toggle = lv_event_get_current_target(event);
+    bool granted;
+    if (control == NULL || !ui_valid(control->ui) || toggle == NULL) return;
+    granted = lv_obj_has_state(toggle, LV_STATE_CHECKED);
+    if (control->ui->app_permission_set == NULL ||
+        !control->ui->app_permission_set(control->ui->app_permission_context,
+                                         control->ui->pending_identity,
+                                         control->index, granted)) {
+        if (granted) lv_obj_remove_state(toggle, LV_STATE_CHECKED);
+        else lv_obj_add_state(toggle, LV_STATE_CHECKED);
+        return;
+    }
+    if (control->index < control->ui->app_permission_count)
+        control->ui->app_permissions[control->index].granted = granted ? 1 : 0;
+}
+
+/* Permission rows reuse the settings row idiom, so the dialog keeps the
+ * reference spacing, typography and switch styling. */
+static void add_app_permissions(pxsys_reference_lvgl_t* ui,
+                                const pxsys_reference_layout_t* layout,
+                                lv_obj_t* panel,
+                                const pxsys_reference_managed_app_t* app) {
+    lv_obj_t* label;
+    size_t count;
+    size_t index;
+    if (ui->app_permission_list == NULL) return;
+    count = ui->app_permission_list(ui->app_permission_context, app->identity,
+                                    NULL, 0);
+    if (count > PXSYS_REFERENCE_APP_PERMISSION_MAX)
+        count = PXSYS_REFERENCE_APP_PERMISSION_MAX;
+    ui->app_permission_count = 0;
+    if (count != 0) {
+        count = ui->app_permission_list(ui->app_permission_context,
+                                        app->identity, ui->app_permissions,
+                                        count);
+        if (count > PXSYS_REFERENCE_APP_PERMISSION_MAX)
+            count = PXSYS_REFERENCE_APP_PERMISSION_MAX;
+        ui->app_permission_count = count;
+    }
+    label = make_label(panel,
+                       translated(ui, "settings.apps.permissions",
+                                  "Permissions"),
+                       typography_font(ui, PXSYS_TYPOGRAPHY_CAPTION),
+                       color_token(ui, PXSYS_COLOR_TEXT_SECONDARY));
+    lv_obj_set_width(label, LV_PCT(100));
+    lv_obj_set_style_pad_left(label, 8, 0);
+    if (count == 0) {
+        label = make_label(panel,
+                           translated(ui, "settings.apps.permissions.empty",
+                                      "No declared permissions"),
+                           typography_font(ui, PXSYS_TYPOGRAPHY_CAPTION),
+                           color_token(ui, PXSYS_COLOR_TEXT_SECONDARY));
+        lv_obj_set_width(label, LV_PCT(100));
+        lv_obj_set_style_pad_left(label, 8, 0);
+        return;
+    }
+    for (index = 0; index < count; ++index) {
+        pxsys_reference_app_permission_t* permission =
+            &ui->app_permissions[index];
+        char subtitle[PXSYS_REFERENCE_APP_PERMISSION_TEXT_MAX * 2u + 8u];
+        lv_obj_t* row;
+        lv_obj_t* toggle;
+        snprintf(subtitle, sizeof(subtitle), "%s  %s", permission->scope,
+                 translated(ui,
+                            permission->required
+                                ? "settings.apps.permissions.required"
+                                : "settings.apps.permissions.optional",
+                            permission->required ? "Required" : "Optional"));
+        row = make_settings_row(ui, layout, panel, LV_SYMBOL_EYE_OPEN,
+                                PXSYS_COLOR_ACCENT, permission->name, subtitle,
+                                NULL, NULL);
+        toggle = lv_switch_create(row);
+        lv_obj_set_size(toggle, 42, 24);
+        lv_obj_set_style_bg_color(toggle, color_token(ui, PXSYS_COLOR_BORDER),
+                                  LV_PART_MAIN);
+        lv_obj_set_style_bg_color(toggle, color_token(ui, PXSYS_COLOR_ACCENT),
+                                  LV_PART_INDICATOR | LV_STATE_CHECKED);
+        lv_obj_set_style_bg_color(toggle,
+                                  color_token(ui, PXSYS_COLOR_ON_ACCENT),
+                                  LV_PART_KNOB);
+        if (permission->granted) lv_obj_add_state(toggle, LV_STATE_CHECKED);
+        ui->app_permission_controls[index].ui = ui;
+        ui->app_permission_controls[index].index = index;
+        lv_obj_add_event_cb(toggle, app_permission_changed,
+                            LV_EVENT_VALUE_CHANGED,
+                            &ui->app_permission_controls[index]);
+    }
+}
+
 static void show_app_detail(pxsys_reference_lvgl_t* ui,
                             const pxsys_reference_managed_app_t* app) {
     pxsys_reference_layout_t layout;
@@ -4754,6 +4867,8 @@ static void show_app_detail(pxsys_reference_lvgl_t* ui,
                        typography_font(ui, PXSYS_TYPOGRAPHY_CAPTION),
                        color_token(ui, PXSYS_COLOR_TEXT_SECONDARY));
     lv_obj_set_width(label, LV_PCT(100));
+
+    add_app_permissions(ui, &layout, panel, app);
 
     button = make_page_button(
         ui, panel,
@@ -5923,6 +6038,9 @@ pxsys_status_t pxsys_reference_lvgl_create(
     ui->wifi_context = config->wifi_context;
     ui->wifi_scan = config->wifi_scan;
     ui->wifi_connect = config->wifi_connect;
+    ui->app_permission_context = config->app_permission_context;
+    ui->app_permission_list = config->app_permission_list;
+    ui->app_permission_set = config->app_permission_set;
     ui->animations_enabled =
         PXSYS_REFERENCE_UI_ENABLE_ANIMATIONS && config->animations_enabled;
     memcpy(ui->publisher_root, config->publisher_root,
