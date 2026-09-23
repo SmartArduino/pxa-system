@@ -98,6 +98,16 @@ typedef uint16_t pxa_ui_property_t;
 #define PXA_UI_PROPERTY_POSITION ((pxa_ui_property_t)271)
 #define PXA_UI_PROPERTY_X ((pxa_ui_property_t)272)
 #define PXA_UI_PROPERTY_Y ((pxa_ui_property_t)273)
+/* Grid tracks: an 8-byte record per track (kind:u8 | reserved:u8[3] |
+ * value:u32). Kind 0 is content sized, 1 is a fraction whose weight is the
+ * value and 2 is a fixed size in 1/64 dp. A grid cell is u16[4]: column, row,
+ * column-span and row-span; the node's align property aligns the cell. */
+#define PXA_UI_GRID_CONTENT 0u
+#define PXA_UI_GRID_FRACTION 1u
+#define PXA_UI_GRID_FIXED 2u
+#define PXA_UI_GRID_TRACK_BYTES 8u
+#define PXA_UI_GRID_CELL_BYTES 8u
+#define PXA_UI_GRID_MAX_TRACKS 64u
 #define PXA_UI_PROPERTY_GRID_COLUMNS ((pxa_ui_property_t)274)
 #define PXA_UI_PROPERTY_GRID_ROWS ((pxa_ui_property_t)275)
 #define PXA_UI_PROPERTY_GRID_CELL ((pxa_ui_property_t)276)
@@ -190,8 +200,16 @@ typedef uint16_t pxa_ui_event_kind_t;
 #define PXA_UI_EVENT_FLAG_RELIABLE UINT16_C(1)
 #define PXA_UI_EVENT_FLAG_COALESCIBLE UINT16_C(2)
 
+#define PXA_UI_EVENT_MASK_ACTION (UINT64_C(1) << 0)
+#define PXA_UI_EVENT_MASK_VALUE_CHANGED (UINT64_C(1) << 1)
 #define PXA_UI_EVENT_MASK_KEY (UINT64_C(1) << 4)
+#define PXA_UI_EVENT_MASK_TEXT (UINT64_C(1) << 5)
 #define PXA_UI_EVENT_MASK_CONTROLLER_STATE (UINT64_C(1) << 9)
+
+/* A text event payload is the current UTF-8 text of a text input, without a
+ * terminator. Hosts and Guests agree on this bound so both sides can use fixed
+ * buffers. */
+#define PXA_UI_EVENT_TEXT_MAX_BYTES 64u
 
 #define PXA_UI_KEY_VOLUME_UP UINT32_C(1)
 #define PXA_UI_KEY_VOLUME_DOWN UINT32_C(2)

@@ -48,7 +48,8 @@ set(PXSYS_REFERENCE_LAYOUT_SOURCES
     "${PXSYS_ROOT}/ui/reference/src/reference_layout.c")
 
 set(PXSYS_REFERENCE_LVGL_SOURCES
-    "${PXSYS_ROOT}/ui/reference/lvgl/src/reference_lvgl.c")
+    "${PXSYS_ROOT}/ui/reference/lvgl/src/reference_lvgl.c"
+    "${PXSYS_ROOT}/ui/reference/lvgl/src/reference_ime.c")
 
 set(PXSYS_PUBLIC_INCLUDE_DIRS
     "${PXSYS_ROOT}/system/core/include"

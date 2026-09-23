@@ -378,6 +378,9 @@ pxa_status_t pxa_ui_queue_event(pxa_ui_service_t *service,
         (value == NULL && value_size != 0) ||
         value_size > PXA_MAX_CONTROL_MESSAGE - PXA_ENVELOPE_SIZE - 24u)
         return PXA_STATUS_INVALID_ARGUMENT;
+    if (kind == PXA_UI_EVENT_TEXT &&
+        (value_size == 0 || value_size > PXA_UI_EVENT_TEXT_MAX_BYTES))
+        return PXA_STATUS_INVALID_ARGUMENT;
     if (kind == PXA_UI_EVENT_CONTROLLER_STATE &&
         ((service->config.features & PXA_UI_FEATURE_CONTROLLER_INPUT) == 0 ||
          value_size != 8 || ((const uint8_t *)value)[1] > 1 ||

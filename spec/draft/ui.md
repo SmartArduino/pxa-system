@@ -100,10 +100,50 @@ command buffer are optional and must not be used unless their feature bit is
 present. The current ESP and simulator Hosts advertise Canvas and VirtualList;
 their absence on a smaller Host does not change the baseline ABI.
 
+## Grid layout
+
+`grid-columns` (274) and `grid-rows` (275) describe one axis of a grid. Their
+value is a `track-list`: one 8-byte record per track, in track order.
+
+```text
+kind:u8 | reserved:u8[3] | value:u32
+```
+
+```text
+kind 0  content    the track sizes to its content; value is ignored
+kind 1  fraction   value is the fractional weight, as in `1fr`
+kind 2  fixed      value is the logical pixel size, /64 dp
+```
+
+Reserved bytes must be zero and at most 64 tracks are accepted. A node uses
+grid layout once both templates are present; a later property replaces the
+whole template for that axis.
+
+`grid-cell` (276) places a child inside the parent grid as `u16[4]`:
+
+```text
+column | row | column-span | row-span
+```
+
+Span must not be zero. The cell's column and row alignment are the node's
+`align` property, so `stretch` (3) fills the cell and `start` (0) sizes the
+child to its content.
+
+A Host advertises grid support with the `grid` feature bit. Hosts without it
+reject a transaction that carries these properties.
+
 ## Events and stale input
 
 Events include Surface, node and committed generation. Guests discard events
 whose generation no longer matches their view. The common event envelope
 supports actions, value changes, scrolling, focus, keyboard, text, pointer and
-accessibility operations. Resource pressure is semantic (`normal`,
+accessibility operations.
+
+A text event (`kind` 6) carries the current UTF-8 text of a text input as its
+payload, with no terminator and at most `PXA_UI_EVENT_TEXT_MAX_BYTES` (64)
+bytes. It is reliable, so a Host never coalesces two edits, and it is emitted
+whenever the text changes - including when a Guest writes the text itself. A
+Host that presents a system input method delivers its result through these
+events, so a Guest that wants the system keyboard only has to render a text
+input, subscribe to the text mask and follow the text events. Resource pressure is semantic (`normal`,
 `constrained`, `critical`); raw free-memory values are not application ABI.

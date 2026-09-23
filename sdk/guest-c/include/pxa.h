@@ -50,7 +50,11 @@
 #define PXA_CORE_CLOSE_HANDLE 2u
 
 #define PXA_WINDOW_CONFIGURE 1u
+#define PXA_WINDOW_GET_SNAPSHOT 2u
+#define PXA_WINDOW_METRICS_CHANGED 0x8001u
 #define PXA_WINDOW_BACK_REQUESTED 0x8002u
+#define PXA_WINDOW_SNAPSHOT_SAFE_INSETS 5u
+#define PXA_WINDOW_SNAPSHOT_BAR_INSETS 6u
 #define PXA_WINDOW_EDGE_TO_EDGE 1u
 #define PXA_WINDOW_STATUS_BAR_MODE 2u
 #define PXA_WINDOW_NAVIGATION_BAR_MODE 3u
@@ -191,6 +195,54 @@ static inline int pxa_send(uint16_t service, uint16_t opcode,
     return pxa_message(&message, service, opcode, request_id, payload,
                        payload_length) &&
            pxa_control(message.data, (uint32_t)message.length) == PXA_STATUS_OK;
+}
+
+/* Window 0.1 snapshot: the Host reports the panel safe area and the status and
+ * navigation bar insets, ordered top, right, bottom, left. A Guest keeps its
+ * interactive content inside the larger value of both. */
+typedef struct {
+    uint32_t safe_insets[4];
+    uint32_t bar_insets[4];
+    uint8_t has_safe_insets;
+    uint8_t has_bar_insets;
+} pxa_window_insets_view_t;
+
+/* Decodes one snapshot record list. with_status skips the i32 status that
+ * prefixes a completed request; metrics-changed events carry no status. */
+static inline int pxa_window_parse_snapshot(const uint8_t* data, size_t size,
+                                            int with_status,
+                                            pxa_window_insets_view_t* output) {
+    size_t offset = with_status ? 4u : 0u;
+    if (data == NULL || output == NULL || size < offset) return 0;
+    if (with_status && pxa_read_u32(data) != (uint32_t)PXA_STATUS_OK) return 0;
+    output->has_safe_insets = 0;
+    output->has_bar_insets = 0;
+    while (offset + 4u <= size) {
+        uint16_t tag = pxa_read_u16(data + offset);
+        uint16_t length = pxa_read_u16(data + offset + 2u);
+        const uint8_t* record;
+        uint32_t* target;
+        offset += 4u;
+        if (length > size - offset) return 0;
+        record = data + offset;
+        offset += length;
+        if (tag == PXA_WINDOW_SNAPSHOT_SAFE_INSETS) {
+            target = output->safe_insets;
+            output->has_safe_insets = 1;
+        } else if (tag == PXA_WINDOW_SNAPSHOT_BAR_INSETS) {
+            target = output->bar_insets;
+            output->has_bar_insets = 1;
+        } else {
+            continue;
+        }
+        if (length != 16u) return 0;
+        /* Record order is left, top, right, bottom. */
+        target[3] = pxa_read_u32(record);
+        target[0] = pxa_read_u32(record + 4);
+        target[1] = pxa_read_u32(record + 8);
+        target[2] = pxa_read_u32(record + 12);
+    }
+    return output->has_safe_insets || output->has_bar_insets;
 }
 
 static inline int pxa_window_fullscreen(void) {

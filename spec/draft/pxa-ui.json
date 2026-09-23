@@ -574,7 +574,8 @@
   "value_types": {
     "length": "unit:u8|reserved:u8[3]|value:i32; units:auto=0,logical-px=1,percent-q16=2,content=3,fill=4,viewport-width-q16=5,viewport-height-q16=6",
     "color": "kind:u8|token:u8|reserved:u16|rgba8888:u32; kinds=token:0,rgba:1",
-    "logical_pixel": "1/64 dp encoded as i32"
+    "logical_pixel": "1/64 dp encoded as i32",
+    "track_list": "kind:u8|reserved:u8[3]|value:u32; kinds=content:0,fraction:1,fixed:2; value is the fraction weight or the /64 dp size"
   },
   "canvas_display_list": {
     "record_header": "primitive:u8|flags:u8|payload-len:u16",
@@ -711,5 +712,15 @@
     }
   ],
   "resource_policy": "Hosts enforce private byte budgets and queue policy. Node, canvas, property, and text counts are not ABI limits and are never advertised as fixed quotas.",
-  "protocol_version": "0.3.0"
+  "protocol_version": "0.3.0",
+  "events": [
+    {
+      "name": "text",
+      "kind": 6,
+      "feature": null,
+      "payload": "utf8 bytes, no terminator, 1..64 bytes",
+      "flags": "reliable",
+      "note": "Current text of a text input after any change, including a change made by the Guest itself."
+    }
+  ]
 }

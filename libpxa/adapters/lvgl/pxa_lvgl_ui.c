@@ -73,6 +73,15 @@ struct pxa_lvgl_ui_node {
     int32_t maximum;
     int32_t item_extent;
     int32_t scroll_position;
+    /* Owned grid track descriptors; LVGL keeps the pointer until the object or
+     * the template is replaced. */
+    lv_coord_t *grid_columns;
+    lv_coord_t *grid_rows;
+    uint8_t has_grid_columns;
+    uint8_t has_grid_rows;
+    /* Set while the Guest writes a property, so a text input does not echo the
+     * Guest's own write back as a text event. */
+    uint8_t suppress_events;
 };
 
 struct pxa_lvgl_ui_command {
@@ -276,7 +285,8 @@ static void emit_event(pxa_lvgl_ui_node_t *node, lv_indev_t *input,
                        pxa_ui_event_kind_t kind, uint16_t flags,
                        const void *value, size_t value_size) {
     uint64_t previous_timestamp_us;
-    if (node->ui->config.event_callback == NULL ||
+    if (node->suppress_events ||
+        node->ui->config.event_callback == NULL ||
         (node->event_mask & (UINT64_C(1) << (kind - 1u))) == 0)
         return;
     previous_timestamp_us = node->ui->event_timestamp_us;
@@ -293,9 +303,16 @@ static void on_widget_event(lv_event_t *event) {
     lv_event_code_t code = lv_event_get_code(event);
     int32_t value;
     if (node == NULL) return;
-    if (node->owner_command != NULL)
-        node->owner_command->created = NULL;
+    /* The created handle stays valid until the transaction commits: the commit
+     * reveals every created node once its properties are applied, and a node
+     * that reports an event while they are applied (a text input that receives
+     * its text, for example) must not be left hidden. */
     if (code == LV_EVENT_CLICKED) {
+        /* A tap on a text input starts editing; the action arrives when the
+         * input is submitted (LV_EVENT_READY). */
+        if (node->type == PXA_UI_NODE_CONTROL &&
+            node->subtype == PXA_UI_CONTROL_TEXT_INPUT)
+            return;
         emit_event(node, lv_event_get_indev(event), PXA_UI_EVENT_ACTION,
                    PXA_UI_EVENT_FLAG_RELIABLE, NULL, 0);
     } else if (code == LV_EVENT_VALUE_CHANGED) {
@@ -304,11 +321,22 @@ static void on_widget_event(lv_event_t *event) {
             value = lv_obj_has_state(node->object, LV_STATE_CHECKED) ? 1 : 0;
         else if (node->subtype == PXA_UI_CONTROL_SLIDER)
             value = lv_slider_get_value(node->object);
-        else
+        else if (node->subtype == PXA_UI_CONTROL_TEXT_INPUT) {
+            const char *text = lv_textarea_get_text(node->object);
+            size_t length = text == NULL ? 0u : strlen(text);
+            if (length > PXA_UI_EVENT_TEXT_MAX_BYTES)
+                length = PXA_UI_EVENT_TEXT_MAX_BYTES;
+            emit_event(node, lv_event_get_indev(event), PXA_UI_EVENT_TEXT,
+                       PXA_UI_EVENT_FLAG_RELIABLE, text, length);
+            return;
+        } else
             return;
         emit_event(node, lv_event_get_indev(event),
                    PXA_UI_EVENT_VALUE_CHANGED, 0,
                    &value, sizeof(value));
+    } else if (code == LV_EVENT_READY) {
+        emit_event(node, lv_event_get_indev(event), PXA_UI_EVENT_ACTION,
+                   PXA_UI_EVENT_FLAG_RELIABLE, NULL, 0);
     } else if (code == LV_EVENT_SCROLL) {
         int32_t scroll_y = lv_obj_get_scroll_y(node->object);
         value = canvas_logical_pixels(node->ui, scroll_y);
@@ -406,6 +434,10 @@ static void on_node_delete(lv_event_t *event) {
         ui_release(node->ui, node->canvas);
         node->canvas = NULL;
     }
+    ui_release(node->ui, node->grid_columns);
+    ui_release(node->ui, node->grid_rows);
+    node->grid_columns = NULL;
+    node->grid_rows = NULL;
     unlink_node(node);
     ui_release(node->ui, node);
 }
@@ -454,6 +486,9 @@ static lv_obj_t *create_object(pxa_lvgl_ui_node_t *node,
     lv_obj_add_event_cb(object, on_widget_event, LV_EVENT_CLICKED, node);
     lv_obj_add_event_cb(object, on_widget_event, LV_EVENT_VALUE_CHANGED, node);
     lv_obj_add_event_cb(object, on_widget_event, LV_EVENT_SCROLL, node);
+    if (node->type == PXA_UI_NODE_CONTROL &&
+        node->subtype == PXA_UI_CONTROL_TEXT_INPUT)
+        lv_obj_add_event_cb(object, on_widget_event, LV_EVENT_READY, node);
     lv_obj_add_event_cb(object, on_alpha_overlay_state_changed,
                         LV_EVENT_STATE_CHANGED, node);
     if (node->type == PXA_UI_NODE_CANVAS) {
@@ -464,6 +499,10 @@ static lv_obj_t *create_object(pxa_lvgl_ui_node_t *node,
         lv_obj_add_event_cb(object, on_canvas_pointer, LV_EVENT_PRESS_LOST, node);
     }
     lv_obj_add_flag(object, LV_OBJ_FLAG_HIDDEN);
+    /* A node only takes pointer input when the Guest subscribes to events, so
+     * a tap on a label, an icon or any other child falls through to the
+     * ancestor that does. LVGL enables CLICKABLE on every object by default. */
+    lv_obj_remove_flag(object, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_set_style_border_width(object, 0, 0);
     lv_obj_set_style_pad_all(object, 0, 0);
     lv_obj_set_style_radius(object, 0, 0);
@@ -480,12 +519,25 @@ static lv_obj_t *create_object(pxa_lvgl_ui_node_t *node,
     } else {
         lv_obj_set_size(object, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
     }
+    /* Only scroll containers and text inputs own scrolling. Every other node
+     * chains a drag to its nearest scrollable ancestor instead of rubber
+     * banding its own content, which made list cards feel draggable. */
+    if (node->type != PXA_UI_NODE_SCROLL &&
+        node->type != PXA_UI_NODE_VIRTUAL_LIST &&
+        !(node->type == PXA_UI_NODE_CONTROL &&
+          node->subtype == PXA_UI_CONTROL_TEXT_INPUT)) {
+        lv_obj_remove_flag(object, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_remove_flag(object, LV_OBJ_FLAG_SCROLL_ELASTIC);
+        lv_obj_remove_flag(object, LV_OBJ_FLAG_SCROLL_MOMENTUM);
+    }
     if (node->type == PXA_UI_NODE_VIRTUAL_LIST) {
         lv_obj_set_scroll_dir(object, LV_DIR_VER);
         lv_obj_set_scrollbar_mode(object, LV_SCROLLBAR_MODE_AUTO);
         node->content = lv_obj_create(object);
         if (node->content == NULL) return NULL;
         lv_obj_remove_flag(node->content, LV_OBJ_FLAG_CLICKABLE);
+        /* The list scrolls; its content carrier only carries the extent. */
+        lv_obj_remove_flag(node->content, LV_OBJ_FLAG_SCROLLABLE);
         lv_obj_set_style_border_width(node->content, 0, 0);
         lv_obj_set_style_pad_all(node->content, 0, 0);
         lv_obj_set_style_bg_opa(node->content, LV_OPA_TRANSP, 0);
@@ -510,6 +562,64 @@ static lv_obj_t *create_object(pxa_lvgl_ui_node_t *node,
     node->maximum = 100;
     apply_node_colors(node);
     return object;
+}
+
+/* Grid layout: one 8-byte record per track (kind:u8 | reserved:u8[3] |
+ * value:u32) and a u16[4] cell (column, row, column-span, row-span). Cell
+ * alignment follows the node's align property. */
+static void set_grid_tracks(pxa_lvgl_ui_node_t *node, pxa_bytes_t value,
+                            int rows) {
+    lv_coord_t **slot = rows ? &node->grid_rows : &node->grid_columns;
+    uint8_t *flag = rows ? &node->has_grid_rows : &node->has_grid_columns;
+    lv_coord_t *tracks;
+    uint16_t count;
+    uint16_t index;
+    if (node == NULL || node->object == NULL || value.size < 8u ||
+        value.size % 8u != 0)
+        return;
+    count = (uint16_t)(value.size / 8u);
+    if (count > 64u) return;
+    tracks = (lv_coord_t *)ui_allocate(
+        node->ui, ((size_t)count + 1u) * sizeof(lv_coord_t));
+    if (tracks == NULL) return;
+    for (index = 0; index < count; ++index) {
+        const uint8_t *record = value.data + (size_t)index * 8u;
+        uint32_t amount = pxa_read_u32(record + 4);
+        if (record[0] == 1u)
+            tracks[index] = LV_GRID_FR((int32_t)amount);
+        else if (record[0] == 2u)
+            tracks[index] = (lv_coord_t)amount;
+        else
+            tracks[index] = LV_GRID_CONTENT;
+    }
+    tracks[count] = LV_GRID_TEMPLATE_LAST;
+    ui_release(node->ui, *slot);
+    *slot = tracks;
+    *flag = 1;
+    if (node->has_grid_columns && node->has_grid_rows)
+        lv_obj_set_grid_dsc_array(node->object, node->grid_columns,
+                                  node->grid_rows);
+}
+
+static void set_grid_cell(pxa_lvgl_ui_node_t *node, pxa_bytes_t value) {
+    static const lv_grid_align_t aligns[4] = {
+        LV_GRID_ALIGN_START, LV_GRID_ALIGN_CENTER, LV_GRID_ALIGN_END,
+        LV_GRID_ALIGN_STRETCH};
+    uint16_t column;
+    uint16_t row;
+    uint16_t column_span;
+    uint16_t row_span;
+    lv_grid_align_t align;
+    if (node == NULL || node->object == NULL || value.size != 8u) return;
+    column = pxa_read_u16(value.data);
+    row = pxa_read_u16(value.data + 2);
+    column_span = pxa_read_u16(value.data + 4);
+    row_span = pxa_read_u16(value.data + 6);
+    if (column_span == 0) column_span = 1;
+    if (row_span == 0) row_span = 1;
+    align = aligns[node->align <= 3u ? node->align : 3u];
+    lv_obj_set_grid_cell(node->object, align, column, column_span, align, row,
+                         row_span);
 }
 
 static void apply_node_colors(pxa_lvgl_ui_node_t *node) {
@@ -569,6 +679,15 @@ static void apply_color_value(pxa_lvgl_ui_node_t *node,
     apply_node_colors(node);
 }
 
+/* The Guest owns the text it writes; only edits made through the Host input
+ * path are reported as text events. */
+static int property_is_guest_text_write(const pxa_lvgl_ui_node_t *node,
+                                        uint16_t property) {
+    return node->type == PXA_UI_NODE_CONTROL &&
+           node->subtype == PXA_UI_CONTROL_TEXT_INPUT &&
+           property == PXA_UI_PROPERTY_TEXT;
+}
+
 static void apply_property(pxa_lvgl_ui_node_t *node,
                            pxa_ui_property_t property,
                            pxa_bytes_t value) {
@@ -576,6 +695,8 @@ static void apply_property(pxa_lvgl_ui_node_t *node,
     const uint8_t *data = value.data;
     int32_t scalar;
     if (object == NULL) return;
+    if (property_is_guest_text_write(node, property))
+        node->suppress_events = 1;
     switch (property) {
         case PXA_UI_PROPERTY_VISIBLE:
             node->visible = data[0];
@@ -792,6 +913,15 @@ static void apply_property(pxa_lvgl_ui_node_t *node,
                 : data[0] == 1 ? LV_SCROLLBAR_MODE_AUTO
                                : LV_SCROLLBAR_MODE_ACTIVE);
             break;
+        case PXA_UI_PROPERTY_GRID_COLUMNS:
+            set_grid_tracks(node, value, 0);
+            break;
+        case PXA_UI_PROPERTY_GRID_ROWS:
+            set_grid_tracks(node, value, 1);
+            break;
+        case PXA_UI_PROPERTY_GRID_CELL:
+            set_grid_cell(node, value);
+            break;
         case PXA_UI_PROPERTY_SCROLL_POSITION:
             node->scroll_position = (int32_t)pxa_read_u32(data);
             node->has_scroll_position = 1;
@@ -820,6 +950,7 @@ static void apply_property(pxa_lvgl_ui_node_t *node,
         default:
             break;
     }
+    node->suppress_events = 0;
 }
 
 static void clear_property(pxa_lvgl_ui_node_t *node,
@@ -1282,10 +1413,6 @@ static pxa_status_t backend_apply(
     if (ui == NULL || transaction == NULL || transaction->ui != ui ||
         view == NULL || view->value.size > SIZE_MAX - sizeof(*command))
         return PXA_STATUS_INVALID_ARGUMENT;
-    if (view->property == PXA_UI_PROPERTY_GRID_COLUMNS ||
-        view->property == PXA_UI_PROPERTY_GRID_ROWS ||
-        view->property == PXA_UI_PROPERTY_GRID_CELL)
-        return PXA_STATUS_UNSUPPORTED;
     if (view->value.size == SIZE_MAX - sizeof(*command))
         return PXA_STATUS_RESOURCE_LIMIT;
     size = sizeof(*command) + view->value.size + 1u;

@@ -117,6 +117,17 @@
 #define PXA_UI_PROPERTY_ITEM_EXTENT 779u
 #define PXA_UI_PROPERTY_SCROLL_POSITION 780u
 
+/* Grid layout: a node becomes a grid once it has both a column and a row
+ * template. Track kinds describe one track; alignments reuse PXA_UI_ALIGN_*. */
+#define PXA_UI_GRID_CONTENT 0u
+#define PXA_UI_GRID_FRACTION 1u
+#define PXA_UI_GRID_FIXED 2u
+
+typedef struct {
+    uint8_t kind;    /* PXA_UI_GRID_CONTENT, FRACTION or FIXED */
+    uint32_t value;  /* fraction weight, or 1/64 dp size when fixed */
+} pxa_ui_grid_track_t;
+
 #define PXA_UI_IMAGE_FIT_CONTAIN 0u
 #define PXA_UI_IMAGE_FIT_STRETCH 1u
 #define PXA_UI_IMAGE_FIT_COVER 2u
@@ -173,6 +184,8 @@
 #define PXA_UI_EVENT_MASK_LONG_PRESS PXA_UI_EVENT_MASK_CLICK
 #define PXA_UI_EVENT_MASK_SCROLL (UINT64_C(1) << 2)
 #define PXA_UI_EVENT_MASK_KEY (UINT64_C(1) << 4)
+#define PXA_UI_EVENT_MASK_TEXT (UINT64_C(1) << 5)
+#define PXA_UI_EVENT_TEXT_MAX_BYTES 64u
 #define PXA_UI_EVENT_MASK_POINTER (UINT64_C(1) << 6)
 #define PXA_UI_EVENT_MASK_VISIBLE_RANGE (UINT64_C(1) << 8)
 #define PXA_UI_EVENT_MASK_CONTROLLER_STATE (UINT64_C(1) << 9)
@@ -505,6 +518,66 @@ static inline int pxa_ui_set_u32(pxa_ui_transaction_t* transaction,
     return pxa_ui_set_property(transaction, node, property, encoded, 4);
 }
 
+#define PXA_UI_GRID_MAX_TRACKS 16u
+
+/* One grid track: kind is content, fraction or fixed; value is the fraction
+ * weight or the logical pixel size. */
+static inline int pxa_ui_set_grid_tracks(pxa_ui_transaction_t* transaction,
+                                         uint32_t node, uint16_t property,
+                                         const pxa_ui_grid_track_t* tracks,
+                                         uint16_t count) {
+    uint8_t encoded[8u * PXA_UI_GRID_MAX_TRACKS];
+    size_t offset = 0;
+    uint16_t index;
+    if (transaction == NULL || node == 0 ||
+        (property != PXA_UI_PROPERTY_GRID_COLUMNS &&
+         property != PXA_UI_PROPERTY_GRID_ROWS) ||
+        tracks == NULL || count == 0 || count > PXA_UI_GRID_MAX_TRACKS)
+        return 0;
+    for (index = 0; index < count; ++index) {
+        if (tracks[index].kind > PXA_UI_GRID_FIXED) return 0;
+        encoded[offset++] = tracks[index].kind;
+        encoded[offset++] = 0;
+        encoded[offset++] = 0;
+        encoded[offset++] = 0;
+        pxa_ui_write_u32(encoded + offset, tracks[index].value);
+        offset += 4u;
+    }
+    return pxa_ui_set_property(transaction, node, property, encoded, offset);
+}
+
+static inline int pxa_ui_set_grid_columns(pxa_ui_transaction_t* transaction,
+                                          uint32_t node,
+                                          const pxa_ui_grid_track_t* tracks,
+                                          uint16_t count) {
+    return pxa_ui_set_grid_tracks(transaction, node,
+                                  PXA_UI_PROPERTY_GRID_COLUMNS, tracks, count);
+}
+
+static inline int pxa_ui_set_grid_rows(pxa_ui_transaction_t* transaction,
+                                       uint32_t node,
+                                       const pxa_ui_grid_track_t* tracks,
+                                       uint16_t count) {
+    return pxa_ui_set_grid_tracks(transaction, node, PXA_UI_PROPERTY_GRID_ROWS,
+                                  tracks, count);
+}
+
+/* Places one grid child. The node's align property aligns the cell. */
+static inline int pxa_ui_set_grid_cell(pxa_ui_transaction_t* transaction,
+                                       uint32_t node, uint16_t column,
+                                       uint16_t row, uint16_t column_span,
+                                       uint16_t row_span) {
+    uint8_t encoded[8];
+    if (transaction == NULL || node == 0 || column_span == 0 || row_span == 0)
+        return 0;
+    pxa_ui_write_u16(encoded, column);
+    pxa_ui_write_u16(encoded + 2, row);
+    pxa_ui_write_u16(encoded + 4, column_span);
+    pxa_ui_write_u16(encoded + 6, row_span);
+    return pxa_ui_set_property(transaction, node, PXA_UI_PROPERTY_GRID_CELL,
+                               encoded, sizeof(encoded));
+}
+
 static inline int pxa_ui_set_u64(pxa_ui_transaction_t* transaction,
                                  uint32_t node, uint16_t property,
                                  uint64_t value) {
@@ -650,6 +723,31 @@ static inline int pxa_ui_parse_event(const pxa_event_t* event,
     output->value = output->data_size >= 4
                         ? (int32_t)pxa_read_u32(output->data) : 0;
     return 1;
+}
+
+/* Text events carry the current UTF-8 text of a text input without a
+ * terminator and never longer than PXA_UI_EVENT_TEXT_MAX_BYTES. The copy is
+ * always terminated; the text is truncated when `capacity` is too small. */
+static inline int pxa_ui_event_text(const pxa_ui_event_data_t* event,
+                                    char* output, size_t capacity) {
+    size_t copy;
+    if (event == NULL || output == NULL || capacity == 0 ||
+        event->kind != PXA_UI_EVENT_TEXT_KIND || event->data == NULL ||
+        event->data_size == 0 ||
+        event->data_size > PXA_UI_EVENT_TEXT_MAX_BYTES)
+        return 0;
+    copy = event->data_size < capacity - 1u ? event->data_size : capacity - 1u;
+    for (size_t index = 0; index < copy; ++index)
+        output[index] = (char)event->data[index];
+    output[copy] = '\0';
+    return 1;
+}
+
+static inline int pxa_ui_parse_text(const pxa_event_t* event, char* output,
+                                    size_t capacity) {
+    pxa_ui_event_data_t parsed;
+    return pxa_ui_parse_event(event, &parsed) &&
+           pxa_ui_event_text(&parsed, output, capacity);
 }
 
 static inline int pxa_ui_parse_pointer(const pxa_event_t* event,

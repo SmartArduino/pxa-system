@@ -1,4 +1,11 @@
 #include "pxsys/reference_lvgl.h"
+#include "pxsys/reference_ime.h"
+
+/* Temporary bring-up switch: open the input method for the first application
+ * text input even before it is focused. */
+#ifndef PXSYS_REFERENCE_UI_DEBUG_INPUT_METHOD
+#define PXSYS_REFERENCE_UI_DEBUG_INPUT_METHOD 0
+#endif
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -372,6 +379,14 @@ struct pxsys_reference_lvgl {
     lv_obj_t* navigation_back_indicator;
     int32_t navigation_handle_width;
     lv_timer_t* toast_timer;
+    /* System input method for application text inputs. */
+    lv_obj_t* app_ime;
+    lv_obj_t* app_ime_keyboard;
+    lv_obj_t* app_ime_target;
+    lv_timer_t* app_ime_timer;
+    pxsys_reference_ime_t* app_ime_keypad;
+    lv_obj_t* app_ime_pinyin;
+    uint8_t app_ime_close_requested;
     lv_timer_t* transient_timer;
     const lv_font_t* text_font;
     const lv_font_t* title_font;
@@ -4536,6 +4551,194 @@ static void show_wifi_password(pxsys_reference_lvgl_t* ui) {
     lv_obj_move_foreground(keyboard);
 }
 
+/* --- system input method for application text inputs ------------------- */
+
+/* The keyboard the Guest draws for itself is not shown here; a Host input
+ * method lets the same text input be edited with the system keyboard, and the
+ * edits reach the Guest as text events. */
+
+static int object_is_within(const lv_obj_t* object, const lv_obj_t* ancestor) {
+    while (object != NULL) {
+        if (object == ancestor) return 1;
+        object = lv_obj_get_parent(object);
+    }
+    return 0;
+}
+
+static lv_obj_t* find_any_textarea(lv_obj_t* object) {
+    uint32_t count;
+    uint32_t index;
+    if (object == NULL) return NULL;
+    if (lv_obj_check_type(object, &lv_textarea_class) &&
+        !lv_obj_has_state(object, LV_STATE_DISABLED))
+        return object;
+    count = lv_obj_get_child_count(object);
+    for (index = 0; index < count; ++index) {
+        lv_obj_t* found = find_any_textarea(lv_obj_get_child(object, index));
+        if (found != NULL) return found;
+    }
+    return NULL;
+}
+
+static lv_obj_t* find_focused_textarea(lv_obj_t* object) {
+    uint32_t count;
+    uint32_t index;
+    if (object == NULL) return NULL;
+    if (lv_obj_check_type(object, &lv_textarea_class) &&
+        lv_obj_has_state(object, LV_STATE_FOCUSED))
+        return object;
+    count = lv_obj_get_child_count(object);
+    for (index = 0; index < count; ++index) {
+        lv_obj_t* found = find_focused_textarea(lv_obj_get_child(object, index));
+        if (found != NULL) return found;
+    }
+    return NULL;
+}
+
+static void app_input_method_target_deleted(lv_event_t* event);
+
+static void app_input_method_close(pxsys_reference_lvgl_t* ui) {
+    if (ui->app_ime_keypad != NULL) {
+        pxsys_reference_ime_destroy(ui->app_ime_keypad);
+        ui->app_ime_keypad = NULL;
+        ui->app_ime = NULL;
+        ui->app_ime_keyboard = NULL;
+        ui->app_ime_target = NULL;
+        return;
+    }
+    ui->app_ime_pinyin = NULL;
+    if (ui->app_ime_keyboard != NULL && ui->app_ime_target != NULL) {
+        /* The delete notification clears the target, so it is alive here. */
+        lv_obj_t* target = ui->app_ime_target;
+        ui->app_ime_target = NULL;
+        lv_obj_remove_event_cb_with_user_data(
+            target, app_input_method_target_deleted, ui);
+        if (lv_obj_has_state(target, LV_STATE_FOCUSED))
+            lv_obj_remove_state(target, LV_STATE_FOCUSED);
+    }
+    if (ui->app_ime != NULL) {
+        lv_obj_delete(ui->app_ime);
+        ui->app_ime = NULL;
+        ui->app_ime_keyboard = NULL;
+    }
+    ui->app_ime_target = NULL;
+}
+
+static void app_input_method_event(lv_event_t* event) {
+    pxsys_reference_lvgl_t* ui =
+        (pxsys_reference_lvgl_t*)lv_event_get_user_data(event);
+    if (ui_valid(ui)) app_input_method_close(ui);
+}
+
+static void app_input_method_closed(void* context) {
+    pxsys_reference_lvgl_t* ui = (pxsys_reference_lvgl_t*)context;
+    if (ui_valid(ui)) ui->app_ime_close_requested = 1;
+}
+
+/* The Guest deletes its input when it replaces the surface; the delete
+ * notification keeps the pointer from going stale. */
+static void app_input_method_target_deleted(lv_event_t* event) {
+    pxsys_reference_lvgl_t* ui =
+        (pxsys_reference_lvgl_t*)lv_event_get_user_data(event);
+    if (!ui_valid(ui)) return;
+    ui->app_ime_target = NULL;
+    ui->app_ime_close_requested = 1;
+}
+
+static void app_input_method_open(pxsys_reference_lvgl_t* ui,
+                                  lv_obj_t* target) {
+    lv_obj_t* panel;
+    if (!ui_valid(ui) || ui->parent == NULL || target == NULL) return;
+    app_input_method_close(ui);
+#if LV_USE_IME_PINYIN && LV_IME_PINYIN_USE_K9_MODE
+    /* Narrow panels get the nine key pad: bigger targets, pinyin candidates
+     * and symbol pages. */
+    if (ui->display.width < 480u) {
+        ui->app_ime_keypad = pxsys_reference_ime_create(ui->parent, target);
+        if (ui->app_ime_keypad == NULL) return;
+        pxsys_reference_ime_set_font(
+            ui->app_ime_keypad, typography_font(ui, PXSYS_TYPOGRAPHY_BODY));
+        pxsys_reference_ime_set_icon_font(
+            ui->app_ime_keypad, typography_font(ui, PXSYS_TYPOGRAPHY_TITLE));
+        pxsys_reference_ime_set_close_callback(ui->app_ime_keypad,
+                                              app_input_method_closed, ui);
+        lv_obj_add_event_cb(target, app_input_method_target_deleted,
+                            LV_EVENT_DELETE, ui);
+        ui->app_ime = pxsys_reference_ime_get_root(ui->app_ime_keypad);
+        ui->app_ime_keyboard = NULL;
+        ui->app_ime_target = target;
+        return;
+    }
+#endif
+    panel = lv_obj_create(ui->parent);
+    if (panel == NULL) return;
+    lv_obj_remove_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_remove_flag(panel, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_style_bg_opa(panel, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(panel, 0, 0);
+    lv_obj_set_style_pad_all(panel, 0, 0);
+    lv_obj_set_size(panel, LV_PCT(100), LV_PCT(100));
+    lv_obj_set_pos(panel, 0, 0);
+    ui->app_ime = panel;
+    ui->app_ime_keyboard = lv_keyboard_create(panel);
+    if (ui->app_ime_keyboard == NULL) {
+        lv_obj_delete(panel);
+        ui->app_ime = NULL;
+        return;
+    }
+    lv_obj_set_size(ui->app_ime_keyboard, LV_PCT(100), LV_PCT(46));
+    lv_obj_align(ui->app_ime_keyboard, LV_ALIGN_BOTTOM_MID, 0, 0);
+    lv_obj_set_style_text_font(ui->app_ime_keyboard,
+                              typography_font(ui, PXSYS_TYPOGRAPHY_BODY), 0);
+    lv_obj_add_event_cb(target, app_input_method_target_deleted,
+                        LV_EVENT_DELETE, ui);
+    lv_keyboard_set_textarea(ui->app_ime_keyboard, target);
+#if LV_USE_IME_PINYIN
+    ui->app_ime_pinyin = lv_ime_pinyin_create(panel);
+    if (ui->app_ime_pinyin != NULL) {
+        lv_ime_pinyin_set_keyboard(ui->app_ime_pinyin, ui->app_ime_keyboard);
+        lv_ime_pinyin_set_mode(ui->app_ime_pinyin, LV_IME_PINYIN_MODE_K26);
+        lv_obj_set_style_text_font(
+            lv_ime_pinyin_get_cand_panel(ui->app_ime_pinyin),
+            typography_font(ui, PXSYS_TYPOGRAPHY_BODY), 0);
+    }
+#endif
+    lv_obj_add_event_cb(ui->app_ime_keyboard, app_input_method_event,
+                        LV_EVENT_READY, ui);
+    lv_obj_add_event_cb(ui->app_ime_keyboard, app_input_method_event,
+                        LV_EVENT_CANCEL, ui);
+    lv_obj_move_foreground(panel);
+    ui->app_ime_target = target;
+}
+
+/* A text input keeps the keyboard until the input is submitted, cancelled or
+ * the Guest deletes it. */
+static void app_input_method_poll(lv_timer_t* timer) {
+    pxsys_reference_lvgl_t* ui =
+        (pxsys_reference_lvgl_t*)lv_timer_get_user_data(timer);
+    lv_obj_t* target;
+    if (!ui_valid(ui) || ui->parent == NULL) return;
+    if (ui->app_ime_close_requested) {
+        ui->app_ime_close_requested = 0;
+        app_input_method_close(ui);
+        return;
+    }
+    /* The Wi-Fi page owns its dialog and keyboard. */
+    if (ui->app_dialog != NULL || ui->confirm_dialog != NULL) {
+        if (ui->app_ime != NULL) app_input_method_close(ui);
+        return;
+    }
+    target = find_focused_textarea(lv_screen_active());
+#if PXSYS_REFERENCE_UI_DEBUG_INPUT_METHOD
+    if (target == NULL) target = find_any_textarea(lv_screen_active());
+#endif
+    if (target == NULL || target == ui->app_ime_target) return;
+    if (ui->app_ime != NULL && object_is_within(target, ui->app_ime)) return;
+    if (ui->app_ime_target != NULL &&
+        object_is_within(target, ui->app_ime_target)) return;
+    app_input_method_open(ui, target);
+}
+
 static void wifi_network_clicked(lv_event_t* event) {
     wifi_network_control_t* control =
         (wifi_network_control_t*)lv_event_get_user_data(event);
@@ -6048,6 +6251,7 @@ pxsys_status_t pxsys_reference_lvgl_create(
     ui->magic = REFERENCE_MAGIC;
     ui->root = lv_obj_create(ui->parent);
     style_plain(ui->root);
+    ui->app_ime_timer = lv_timer_create(app_input_method_poll, 200, ui);
     /* The transparent system-chrome root sits above application surfaces.
      * Only its concrete bars and overlays may participate in hit testing. */
     lv_obj_remove_flag(ui->root, LV_OBJ_FLAG_CLICKABLE);
@@ -6330,6 +6534,9 @@ pxsys_status_t pxsys_reference_lvgl_destroy(pxsys_reference_lvgl_t* ui) {
         (void)pxsys_resource_catalog_unregister(
             pxsys_standard_system_resources(ui->system),
             &reference_catalog_en);
+    if (ui->app_ime_keypad != NULL) pxsys_reference_ime_destroy(ui->app_ime_keypad);
+    if (ui->app_ime != NULL) lv_obj_delete(ui->app_ime);
+    if (ui->app_ime_timer != NULL) lv_timer_delete(ui->app_ime_timer);
     if (ui->toast_timer != NULL) lv_timer_delete(ui->toast_timer);
     if (ui->transient_timer != NULL) lv_timer_delete(ui->transient_timer);
     pxsys_reference_lvgl_hide_power_menu(ui);

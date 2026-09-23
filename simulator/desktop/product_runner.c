@@ -720,7 +720,8 @@ static void raster_resources(const product_host_t *host,
                               PXA_RASTER_CAP_DEPTH_CUTOUT |
                               PXA_RASTER_CAP_FIXED_ALPHA_BLEND |
                               PXA_RASTER_CAP_SPRITE_PALETTE_RAMP |
-                              PXA_RASTER_CAP_SPRITE_TEXEL_ALPHA;
+                              PXA_RASTER_CAP_SPRITE_TEXEL_ALPHA |
+                              PXA_RASTER_CAP_PAINTER_PERSPECTIVE;
     for (uint8_t index = 0; index < PXA_RASTER_MAX_TEXTURES; ++index) {
         resources->textures[index].pixels = host->raster_textures[index];
         resources->textures[index].width = host->raster_texture_width[index];
@@ -889,7 +890,8 @@ static pxa_status_t game_render_create(
                     PXA_RASTER_CAP_DEPTH_CUTOUT |
                     PXA_RASTER_CAP_FIXED_ALPHA_BLEND |
                               PXA_RASTER_CAP_SPRITE_PALETTE_RAMP |
-                              PXA_RASTER_CAP_SPRITE_TEXEL_ALPHA;
+                              PXA_RASTER_CAP_SPRITE_TEXEL_ALPHA |
+                              PXA_RASTER_CAP_PAINTER_PERSPECTIVE;
     return PXA_STATUS_OK;
 }
 

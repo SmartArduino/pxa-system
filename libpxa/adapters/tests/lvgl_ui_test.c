@@ -3,6 +3,7 @@
 #include <assert.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <stdio.h>
 #include <string.h>
 
 #include "lvgl.h"
@@ -47,6 +48,8 @@ static int g_missing_asset;
 static uint32_t g_event_surface;
 static uint32_t g_event_node;
 static pxa_ui_event_kind_t g_event_kind;
+static uint8_t g_event_value[64];
+static size_t g_event_value_size;
 static uint32_t g_visible_first;
 static uint32_t g_visible_count;
 
@@ -106,6 +109,11 @@ static void on_event(uint32_t surface, uint32_t node,
     g_event_surface = surface;
     g_event_node = node;
     g_event_kind = kind;
+    g_event_value_size = value_size;
+    if (value_size != 0 && value != NULL) {
+        assert(value_size <= sizeof(g_event_value));
+        memcpy(g_event_value, value, value_size);
+    }
     if (kind == PXA_UI_EVENT_VISIBLE_RANGE) {
         assert(value != NULL && value_size == 8);
         g_visible_first = pxa_read_u32((const uint8_t *)value);
@@ -229,6 +237,113 @@ static void transact(uint32_t transaction, uint32_t generation,
     pxa_write_u32(commit_payload, transaction);
     assert(control(PXA_UI_TX_COMMIT, commit_payload,
                    sizeof(commit_payload)) == PXA_STATUS_OK);
+}
+
+/* Writes one 8-byte grid track: kind:u8 | reserved:u8[3] | value:u32. */
+static void put_grid_track(bytes_t *bytes, uint8_t kind, uint32_t value) {
+    put_u8(bytes, kind);
+    put_u8(bytes, 0);
+    put_u8(bytes, 0);
+    put_u8(bytes, 0);
+    put_u32(bytes, value);
+}
+
+/* Writes one u16[4] grid cell: column | row | column-span | row-span. */
+static void put_grid_cell(bytes_t *bytes, uint16_t column, uint16_t row,
+                          uint16_t column_span, uint16_t row_span) {
+    put_u16(bytes, column);
+    put_u16(bytes, row);
+    put_u16(bytes, column_span);
+    put_u16(bytes, row_span);
+}
+
+static void build_text_surface(void) {
+    bytes_t stream = {{0}, 0};
+    uint8_t size[8] = {PXA_UI_LENGTH_LOGICAL_PX, 0, 0, 0, 0, 0, 0, 0};
+    uint8_t mask[8];
+    pxa_write_u64(mask, PXA_UI_EVENT_MASK_TEXT | PXA_UI_EVENT_MASK_ACTION);
+    create_node(&stream, 1, 0, PXA_UI_NODE_ROOT, 0);
+    create_node(&stream, 2, 1, PXA_UI_NODE_CONTROL, PXA_UI_CONTROL_TEXT_INPUT);
+    pxa_write_u32(size + 4, 152u * 64u);
+    set_property(&stream, 2, PXA_UI_PROPERTY_WIDTH, size, sizeof(size));
+    pxa_write_u32(size + 4, 36u * 64u);
+    set_property(&stream, 2, PXA_UI_PROPERTY_HEIGHT, size, sizeof(size));
+    set_property(&stream, 2, PXA_UI_PROPERTY_EVENT_MASK, mask, sizeof(mask));
+    {
+        uint8_t padding[16];
+        uint8_t radius[4];
+        pxa_write_u32(padding, 14u * 64u);
+        pxa_write_u32(padding + 4, 6u * 64u);
+        pxa_write_u32(padding + 8, 14u * 64u);
+        pxa_write_u32(padding + 12, 6u * 64u);
+        set_property(&stream, 2, PXA_UI_PROPERTY_PADDING, padding,
+                     sizeof(padding));
+        pxa_write_u32(radius, 12u * 64u);
+        set_property(&stream, 2, PXA_UI_PROPERTY_RADIUS, radius,
+                     sizeof(radius));
+    }
+    {
+        /* The store search field: fill width, fixed height, padding, radius,
+         * border and a theme token background. */
+        uint8_t fill[8] = {PXA_UI_LENGTH_FILL, 0, 0, 0, 0, 0, 0, 0};
+        uint8_t token[8] = {0, 1, 0, 0, 0, 0, 0, 0};
+        uint8_t border[4];
+        uint8_t mask2[8];
+        pxa_write_u64(mask2, PXA_UI_EVENT_MASK_TEXT | PXA_UI_EVENT_MASK_ACTION);
+        set_property(&stream, 2, PXA_UI_PROPERTY_WIDTH, fill, sizeof(fill));
+        pxa_write_u32(size + 4, 32u * 64u);
+        set_property(&stream, 2, PXA_UI_PROPERTY_HEIGHT, size, sizeof(size));
+        set_property(&stream, 2, PXA_UI_PROPERTY_BACKGROUND, token,
+                     sizeof(token));
+        pxa_write_u32(border, 1u * 64u);
+        set_property(&stream, 2, PXA_UI_PROPERTY_BORDER_WIDTH, border,
+                     sizeof(border));
+        set_property(&stream, 2, PXA_UI_PROPERTY_BORDER_COLOR, token,
+                     sizeof(token));
+        set_property(&stream, 2, PXA_UI_PROPERTY_EVENT_MASK, mask2,
+                     sizeof(mask2));
+        /* the store writes the current draft, empty at first */
+        set_property(&stream, 2, PXA_UI_PROPERTY_TEXT, "x", 1);
+    }
+    create_node(&stream, 3, 2, PXA_UI_NODE_TEXT, 0);
+    set_property(&stream, 3, PXA_UI_PROPERTY_TEXT, "hint", 4);
+    transact(11, 11, 0, PXA_UI_REPLACE_SURFACE, &stream);
+}
+
+static void build_grid_surface(void) {
+    bytes_t stream = {{0}, 0};
+    bytes_t columns = {{0}, 0};
+    bytes_t rows = {{0}, 0};
+    bytes_t first_cell = {{0}, 0};
+    bytes_t second_cell = {{0}, 0};
+    /* LOGICAL_PX values are 1/64 dp multiples. */
+    uint8_t size[8] = {PXA_UI_LENGTH_LOGICAL_PX, 0, 0, 0, 0, 0, 0, 0};
+    pxa_write_u32(size + 4, 180u * 64u);
+    create_node(&stream, 1, 0, PXA_UI_NODE_ROOT, 0);
+    create_node(&stream, 2, 1, PXA_UI_NODE_BOX, 0);
+    create_node(&stream, 3, 2, PXA_UI_NODE_BOX, 0);
+    create_node(&stream, 4, 2, PXA_UI_NODE_BOX, 0);
+    put_grid_track(&columns, PXA_UI_GRID_FRACTION, 1);
+    put_grid_track(&columns, PXA_UI_GRID_FRACTION, 2);
+    put_grid_track(&rows, PXA_UI_GRID_CONTENT, 0);
+    put_grid_cell(&first_cell, 0, 0, 1, 1);
+    put_grid_cell(&second_cell, 1, 0, 1, 1);
+    set_property(&stream, 2, PXA_UI_PROPERTY_WIDTH, size, sizeof(size));
+    pxa_write_u32(size + 4, 60u * 64u);
+    set_property(&stream, 2, PXA_UI_PROPERTY_HEIGHT, size, sizeof(size));
+    set_property(&stream, 2, PXA_UI_PROPERTY_GRID_COLUMNS, columns.data,
+                 columns.size);
+    set_property(&stream, 2, PXA_UI_PROPERTY_GRID_ROWS, rows.data, rows.size);
+    {
+        uint8_t stretch = 3;
+        set_property(&stream, 3, PXA_UI_PROPERTY_ALIGN, &stretch, 1);
+        set_property(&stream, 4, PXA_UI_PROPERTY_ALIGN, &stretch, 1);
+    }
+    set_property(&stream, 3, PXA_UI_PROPERTY_GRID_CELL, first_cell.data,
+                 first_cell.size);
+    set_property(&stream, 4, PXA_UI_PROPERTY_GRID_CELL, second_cell.data,
+                 second_cell.size);
+    transact(10, 10, 0, PXA_UI_REPLACE_SURFACE, &stream);
 }
 
 static lv_obj_t *find_type(lv_obj_t *object, const lv_obj_class_t *class_p) {
@@ -511,7 +626,7 @@ int main(void) {
                             &g_runtime) == PXA_STATUS_OK);
 
     pxa_ui_config_init(&service_config);
-    service_config.features = PXA_UI_FEATURE_CANVAS |
+    service_config.features = PXA_UI_FEATURE_CANVAS | PXA_UI_FEATURE_GRID |
                               PXA_UI_FEATURE_RGB565_BITMAP |
                               PXA_UI_FEATURE_VIRTUAL_LIST;
     service_config.allocator_context = &allocator;
@@ -566,6 +681,13 @@ int main(void) {
     button = find_type(root, &lv_button_class);
     assert(button != NULL);
     assert(lv_obj_has_flag(button, LV_OBJ_FLAG_CLICKABLE));
+    /* A label inside an interactive node must not swallow the tap: only nodes
+     * the Guest subscribes to take pointer input. */
+    {
+        lv_obj_t *button_label = find_label(button, "Apply");
+        assert(button_label != NULL);
+        assert(!lv_obj_has_flag(button_label, LV_OBJ_FLAG_CLICKABLE));
+    }
     assert(lv_obj_get_child_count(button) == 1);
     assert(find_label(button, "Apply") != NULL);
     direct_button = lv_obj_get_child(box, 4);
@@ -685,6 +807,55 @@ int main(void) {
                                &snapshot) == PXA_STATUS_OK);
     assert(allocator.current < canvas_resident);
     assert(g_asset_resolves == 1 && g_asset_releases == 1);
+
+    /* Grid layout: two fractional columns with stretched cells. */
+    build_grid_surface();
+    {
+        lv_obj_t *grid_root = lv_obj_get_child(lv_screen_active(), 0);
+        lv_obj_t *grid = lv_obj_get_child(grid_root, 0);
+        lv_obj_t *first;
+        lv_obj_t *second;
+        assert(grid != NULL && lv_obj_get_child_count(grid) == 2);
+        assert(lv_obj_get_style_layout(grid, 0) == LV_LAYOUT_GRID);
+        first = lv_obj_get_child(grid, 0);
+        second = lv_obj_get_child(grid, 1);
+        assert(first != NULL && second != NULL);
+        assert(lv_obj_get_style_grid_cell_column_pos(first, 0) == 0);
+        assert(lv_obj_get_style_grid_cell_column_pos(second, 0) == 1);
+        assert(lv_obj_get_style_grid_cell_column_span(second, 0) == 1);
+        lv_obj_update_layout(lv_screen_active());
+        assert(lv_obj_get_x(second) > lv_obj_get_x(first));
+    }
+
+    /* Text input: editing reports the text and tapping does not act. */
+    build_text_surface();
+    {
+        lv_obj_t *text_root = lv_obj_get_child(lv_screen_active(), 0);
+        lv_obj_t *input = lv_obj_get_child(text_root, 0);
+        assert(input != NULL);
+        /* A text input that receives its text while the transaction applies
+         * must still be revealed by the commit. */
+        assert(!lv_obj_has_flag(input, LV_OBJ_FLAG_HIDDEN));
+        assert(lv_obj_get_width(input) == lv_obj_get_width(text_root));
+        assert(lv_obj_get_height(input) == 32);
+        assert(lv_obj_get_style_bg_opa(input, 0) == LV_OPA_COVER);
+        assert(lv_obj_get_style_border_width(input, 0) == 1);
+        g_events = 0;
+        g_event_value_size = 0;
+        lv_textarea_set_text(input, "hello");
+        assert(g_events == 1);
+        assert(g_event_kind == PXA_UI_EVENT_TEXT);
+        assert(g_event_node == 2);
+        assert(g_event_value_size == 5);
+        assert(memcmp(g_event_value, "hello", 5) == 0);
+        g_events = 0;
+        lv_obj_send_event(input, LV_EVENT_CLICKED, NULL);
+        assert(g_events == 0);
+        g_events = 0;
+        lv_obj_send_event(input, LV_EVENT_READY, NULL);
+        assert(g_events == 1 && g_event_kind == PXA_UI_EVENT_ACTION);
+        g_events = 0;
+    }
 
     assert(pxa_component_finish_start(g_runtime, g_component,
                                       PXA_STATUS_OK) == PXA_STATUS_OK);

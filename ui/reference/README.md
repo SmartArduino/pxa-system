@@ -41,3 +41,24 @@ space without learning reference-UI geometry or linking its layout module.
 Reference applications use ordinary canonical application identities and the
 same Intent/RPC/event protocol as third-party native and PXA applications.
 Nothing in the core gives a reference application a private navigation path.
+
+## System input method
+
+`reference_ime` is the nine key input method used on narrow panels. It binds to
+any focused text input the system UI can see, including the text inputs a PXA
+Guest creates through the UI service, and reports every edit through the
+ordinary LVGL textarea, so the Guest receives them as `PXA_UI_EVENT_TEXT`
+events.
+
+* narrow panels (less than 480 logical pixels) use the keypad: pinyin with
+  candidates, English multi tap with candidates and case switching, a number
+  page and Chinese/English symbol pages, plus the `中`/`EN`/`#+`/`收起` keys;
+* wide panels use the full keyboard with the pinyin input method behind it;
+* closing the keypad submits the text (`LV_EVENT_READY`), so a Guest that waits
+  for the submitted event applies the query the user typed;
+* the Wi-Fi dialog keeps its own keyboard, and the input method never opens for
+  an input the user has not focused.
+
+Enabling it needs LVGL's pinyin input method: `LV_USE_IME_PINYIN` with
+`LV_IME_PINYIN_USE_K9_MODE` (Kconfig `CONFIG_LV_USE_IME_PINYIN` and
+`CONFIG_LV_IME_PINYIN_USE_K9_MODE` in an ESP-IDF build).
