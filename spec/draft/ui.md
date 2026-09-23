@@ -139,6 +139,13 @@ whose generation no longer matches their view. The common event envelope
 supports actions, value changes, scrolling, focus, keyboard, text, pointer and
 accessibility operations.
 
+A node positioned absolutely floats above its in-flow siblings, so a Host
+may use one as an overlay that content scrolls under.
+
+Events bubble to the ancestors of the node that produced them: a container
+that subscribes to scrolling or pointer input also observes a gesture that
+starts on one of its children, and the event carries the subscribing node.
+
 A text event (`kind` 6) carries the current UTF-8 text of a text input as its
 payload, with no terminator and at most `PXA_UI_EVENT_TEXT_MAX_BYTES` (64)
 bytes. It is reliable, so a Host never coalesces two edits, and it is emitted

@@ -179,6 +179,9 @@ typedef struct {
     int32_t last_scroll;
     uint8_t chrome_hidden;
     uint8_t auto_load_mark;
+    /* Item count of the last viewport fill request, so a server that stops
+     * producing items cannot spin. */
+    uint8_t fill_count;
     uint8_t snapshot_received;
     uint8_t snapshot_attempts;
     store_taxonomy_t taxonomy;
@@ -1203,6 +1206,7 @@ static int render_catalog(void) {
          * asked for so loading a page does not pop the bars back. */
         uint8_t chrome_was_hidden = app.chrome_hidden;
         app.chrome_hidden = 0;
+        store_trace("render hidden was", chrome_was_hidden);
         if (chrome_was_hidden) (void)set_chrome_visible(0);
     }
     return 1;
@@ -2184,6 +2188,24 @@ static int restart_catalog(const char *query) {
 
 static int continue_body(void);
 
+/* A page that does not fill the list leaves it barely scrollable, which would
+ * stall the incremental loading that the scroll offset drives. Keep fetching
+ * while the content is shorter than the viewport plus one card. */
+static int catalog_needs_fill(void) {
+    const store_metrics_t *m = metrics();
+    int32_t view;
+    int32_t content;
+    if (!app.catalog.has_more) return 0;
+    if (app.catalog.count == app.fill_count) return 0;
+    view = (int32_t)app.height -
+           (int32_t)(m->header_height + m->chips_row_height) -
+           (int32_t)(m->tab_height + m->card_gap);
+    if (view < 0) view = 0;
+    content = (int32_t)app.catalog.count *
+              (int32_t)(m->card_height + m->list_gap);
+    return content < view + (int32_t)m->card_height;
+}
+
 static int finish_catalog_body(void) {
     uint8_t before = app.catalog.count;
     (void)pxa_clock_set_period(0);
@@ -2235,6 +2257,12 @@ static int finish_catalog_body(void) {
     ensure_window_snapshot();
     if (!render()) return 0;
     (void)restore_scroll(NODE_LIST, app.list_scroll);
+    if (catalog_needs_fill()) {
+        app.fill_count = app.catalog.count;
+        app.request_cursor = app.catalog.next_cursor;
+        app.chain = 0;
+        if (!start_catalog_fetch()) return fail_request(STORE_ERROR_UNSUPPORTED);
+    }
     return 1;
 }
 
@@ -2601,11 +2629,16 @@ int32_t pxa_app_on_event(const uint8_t *event, uint32_t length) {
                 app.pointer_y = pointer.y;
             } else if (pointer.phase == PXA_POINTER_MOVE) {
                 int32_t dy = pointer.y - app.pointer_y;
+                /* The drag direction decides, like a phone: dragging the
+                 * content down brings the bars back, dragging it up hides
+                 * them. Scroll offsets alone cannot be trusted because every
+                 * page load re-bases them. */
                 if (dy >= STORE_CHROME_DRAG_DELTA) {
                     app.pointer_y = pointer.y;
-                    if (app.chrome_hidden) (void)set_chrome_visible(1);
+                    (void)set_chrome_visible(1);
                 } else if (dy <= -STORE_CHROME_DRAG_DELTA) {
                     app.pointer_y = pointer.y;
+                    (void)set_chrome_visible(0);
                 }
             }
         }
@@ -2620,14 +2653,16 @@ int32_t pxa_app_on_event(const uint8_t *event, uint32_t length) {
             int32_t offset = raw > 0 ? raw : 0;
             int32_t last = app.last_scroll;
             app.list_scroll = offset;
-            if (!app.chrome_hidden &&
-                offset > last + STORE_CHROME_HIDE_DELTA) {
-                (void)set_chrome_visible(0);
-            } else if (app.chrome_hidden &&
-                       (raw < 0 || offset < last - STORE_CHROME_SHOW_DELTA ||
-                        offset <= STORE_CHROME_TOP_MARGIN)) {
+            if (offset <= STORE_CHROME_TOP_MARGIN)
+                store_trace("scroll top", (uint32_t)offset);
+            /* Never hide near the top: the elastic bounce that follows a
+             * pull-down reports a positive delta and used to hide the bars
+             * right after they came back. */
+            /* The drag drives the bars; the offset only guarantees that they
+             * are there at the top, where a phone always shows them. */
+            (void)last;
+            if (offset <= STORE_CHROME_TOP_MARGIN || raw < 0)
                 (void)set_chrome_visible(1);
-            }
             app.last_scroll = offset;
             /* Incremental loading: no explicit load-more button, the next page
              * is requested once the user scrolls past the previous mark. */

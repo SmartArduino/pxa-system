@@ -420,6 +420,8 @@ static void build_initial_surface(void) {
     set_property(&stream, 9, PXA_UI_PROPERTY_ICON, icon, sizeof(icon));
     set_property(&stream, 4, PXA_UI_PROPERTY_EVENT_MASK,
                  event_mask, sizeof(event_mask));
+    set_property(&stream, 2, PXA_UI_PROPERTY_EVENT_MASK,
+                 pointer_mask, sizeof(pointer_mask));
     set_property(&stream, 5, PXA_UI_PROPERTY_WIDTH,
                  canvas_size, sizeof(canvas_size));
     set_property(&stream, 5, PXA_UI_PROPERTY_HEIGHT,
@@ -705,6 +707,38 @@ int main(void) {
            g_event_node == 4 && g_event_kind == PXA_UI_EVENT_ACTION &&
            g_event_timestamp_us == g_now_us);
     assert(pxa_lvgl_ui_event_timestamp_us(adapter) == 0);
+    /* A gesture that starts on a child bubbles to the ancestor that
+     * subscribes, so a container observes a drag over its content. */
+    {
+        lv_indev_t *press_input = lv_indev_create();
+        pointer_input_t press_state = {{0, 0}, 0, 0};
+        lv_area_t button_area;
+        unsigned events_before;
+        assert(press_input != NULL);
+        lv_indev_set_type(press_input, LV_INDEV_TYPE_POINTER);
+        lv_indev_set_display(press_input, g_test_display);
+        lv_indev_set_user_data(press_input, &press_state);
+        lv_indev_set_read_cb(press_input, read_pointer);
+        lv_obj_update_layout(root);
+        lv_obj_get_coords(button, &button_area);
+        press_state.point.x = button_area.x1 + 4;
+        press_state.point.y = button_area.y1 + 4;
+        press_state.pressed = 1;
+        g_now_us = UINT64_C(124000000);
+        press_state.timestamp_ms = (uint32_t)(g_now_us / 1000u) - 2u;
+        g_event_kind = (pxa_ui_event_kind_t)0;
+        g_event_node = 0;
+        events_before = g_events;
+        lv_indev_read(press_input);
+        assert(g_event_kind == PXA_UI_EVENT_POINTER && g_event_node == 2);
+        press_state.pressed = 0;
+        press_state.timestamp_ms = (uint32_t)(g_now_us / 1000u);
+        lv_indev_read(press_input);
+        /* The container saw the gesture, the child emitted nothing. */
+        assert(g_events > events_before);
+        g_events = events_before;
+        lv_indev_delete(press_input);
+    }
     list = lv_obj_get_child(lv_obj_get_child(root, 0), 3);
     assert(list != NULL);
     lv_obj_scroll_to_y(list, 100, LV_ANIM_OFF);

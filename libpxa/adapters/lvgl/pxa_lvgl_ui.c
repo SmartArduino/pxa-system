@@ -503,6 +503,10 @@ static lv_obj_t *create_object(pxa_lvgl_ui_node_t *node,
      * a tap on a label, an icon or any other child falls through to the
      * ancestor that does. LVGL enables CLICKABLE on every object by default. */
     lv_obj_remove_flag(object, LV_OBJ_FLAG_CLICKABLE);
+    /* Events bubble to the ancestors, so a container that subscribes to
+     * scrolling or pointer input also observes a gesture that starts on one
+     * of its children. The event carries the ancestor's node. */
+    lv_obj_add_flag(object, LV_OBJ_FLAG_EVENT_BUBBLE);
     lv_obj_set_style_border_width(object, 0, 0);
     lv_obj_set_style_pad_all(object, 0, 0);
     lv_obj_set_style_radius(object, 0, 0);
@@ -536,6 +540,8 @@ static lv_obj_t *create_object(pxa_lvgl_ui_node_t *node,
         node->content = lv_obj_create(object);
         if (node->content == NULL) return NULL;
         lv_obj_remove_flag(node->content, LV_OBJ_FLAG_CLICKABLE);
+        /* An item's events reach the list through this carrier. */
+        lv_obj_add_flag(node->content, LV_OBJ_FLAG_EVENT_BUBBLE);
         /* The list scrolls; its content carrier only carries the extent. */
         lv_obj_remove_flag(node->content, LV_OBJ_FLAG_SCROLLABLE);
         lv_obj_set_style_border_width(node->content, 0, 0);
@@ -792,8 +798,14 @@ static void apply_property(pxa_lvgl_ui_node_t *node,
         case PXA_UI_PROPERTY_SHRINK:
             break;
         case PXA_UI_PROPERTY_POSITION:
-            if (data[0]) lv_obj_add_flag(object, LV_OBJ_FLAG_FLOATING);
-            else lv_obj_remove_flag(object, LV_OBJ_FLAG_FLOATING);
+            if (data[0]) {
+                /* An absolutely positioned node is an overlay: it paints above
+                 * its in-flow siblings, whatever order they were created in. */
+                lv_obj_add_flag(object, LV_OBJ_FLAG_FLOATING);
+                lv_obj_move_foreground(object);
+            } else {
+                lv_obj_remove_flag(object, LV_OBJ_FLAG_FLOATING);
+            }
             break;
         case PXA_UI_PROPERTY_X:
             lv_obj_set_x(object, length_value(node->ui, data));
