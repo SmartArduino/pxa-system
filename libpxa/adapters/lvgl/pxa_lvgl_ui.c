@@ -710,6 +710,22 @@ static void apply_property(pxa_lvgl_ui_node_t *node,
             node->event_mask = pxa_read_u64(data);
             if (node->event_mask != 0) lv_obj_add_flag(object, LV_OBJ_FLAG_CLICKABLE);
             else lv_obj_remove_flag(object, LV_OBJ_FLAG_CLICKABLE);
+            /* A node that subscribes to pointer events receives the same
+             * samples a Canvas does: press, move, release and press-lost with
+             * the position relative to the node. */
+            if (node->type != PXA_UI_NODE_CANVAS &&
+                (node->event_mask & PXA_UI_EVENT_MASK_POINTER) != 0) {
+                lv_obj_remove_event_cb_with_user_data(object, on_canvas_pointer,
+                                                      node);
+                lv_obj_add_event_cb(object, on_canvas_pointer, LV_EVENT_PRESSED,
+                                    node);
+                lv_obj_add_event_cb(object, on_canvas_pointer, LV_EVENT_PRESSING,
+                                    node);
+                lv_obj_add_event_cb(object, on_canvas_pointer, LV_EVENT_RELEASED,
+                                    node);
+                lv_obj_add_event_cb(object, on_canvas_pointer,
+                                    LV_EVENT_PRESS_LOST, node);
+            }
             break;
         case PXA_UI_PROPERTY_WIDTH:
             lv_obj_set_width(object, length_value(node->ui, data));

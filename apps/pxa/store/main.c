@@ -164,6 +164,9 @@ typedef struct {
     /* A restart (chip, tab, refresh or search) requested while a catalog
      * request is in flight is replayed when that request completes. */
     uint8_t pending_restart;
+    /* Last pointer sample on the list, to read the drag direction even when
+     * the content has no room left to scroll. */
+    int32_t pointer_y;
     uint8_t detail_target;
     uint8_t has_environment;
     uint8_t kind_index;
@@ -238,6 +241,8 @@ static const store_metrics_t metrics_regular = {
 static const store_metrics_t metrics_large = {
     74, 22, 104, 22, 8, 38, 16, 38, 18, 10, 52, 14, 10, 16, 60, 22, 12, 52,
     72, 50, 34, 5, PXA_UI_FONT_ROLE_HEADLINE};
+
+static int set_chrome_visible(uint8_t visible);
 
 static const store_metrics_t *metrics(void) {
     if (app.width < 340u) return &metrics_compact;
@@ -624,8 +629,12 @@ static int create_action_button(pxa_ui_transaction_t *transaction, uint32_t node
 
 /* Flat title row on the page background, like the system application pages.
  * The catalog adds the request state as a second line. */
+/* A floating header/chip row/tab bar keeps the catalog in place when the
+ * chrome hides: the content keeps its position and stops jumping, which is
+ * what makes the hide feel like a phone instead of a relayout. */
 static int create_header(pxa_ui_transaction_t *transaction, uint8_t mode,
-                         const char *title, size_t title_size) {
+                         const char *title, size_t title_size,
+                         uint8_t floating) {
     const store_metrics_t *m = metrics();
     uint8_t back = (uint8_t)(mode == STORE_SCREEN_DETAIL);
     int ok = pxa_ui_create(transaction, NODE_ROOT, 0, 0, PXA_UI_NODE_ROOT) &&
@@ -641,6 +650,12 @@ static int create_header(pxa_ui_transaction_t *transaction, uint8_t mode,
                                 inset_padding(2, 6)) &&
              pxa_ui_create(transaction, NODE_HEADER, NODE_ROOT, 0,
                            PXA_UI_NODE_BOX) &&
+             pxa_ui_set_u8(transaction, NODE_HEADER, PXA_UI_PROPERTY_POSITION,
+                           floating) &&
+             pxa_ui_set_length(transaction, NODE_HEADER, PXA_UI_PROPERTY_X,
+                               PXA_UI_LENGTH_PX, 0) &&
+             pxa_ui_set_length(transaction, NODE_HEADER, PXA_UI_PROPERTY_Y,
+                               PXA_UI_LENGTH_PX, 0) &&
              pxa_ui_set_length(transaction, NODE_HEADER, PXA_UI_PROPERTY_WIDTH,
                                PXA_UI_LENGTH_FILL, 0) &&
              pxa_ui_set_length(transaction, NODE_HEADER, PXA_UI_PROPERTY_HEIGHT,
@@ -768,11 +783,18 @@ static int create_chip(pxa_ui_transaction_t *transaction, uint32_t chip,
                                          : PXA_UI_THEME_TEXT);
 }
 
-static int create_filters(pxa_ui_transaction_t *transaction) {
+static int create_filters(pxa_ui_transaction_t *transaction,
+                          uint8_t floating) {
     const store_metrics_t *m = metrics();
     uint8_t index;
     if (!pxa_ui_create(transaction, NODE_FILTERS, NODE_ROOT, 0,
                        PXA_UI_NODE_SCROLL) ||
+        !pxa_ui_set_u8(transaction, NODE_FILTERS, PXA_UI_PROPERTY_POSITION,
+                       floating) ||
+        !pxa_ui_set_length(transaction, NODE_FILTERS, PXA_UI_PROPERTY_X,
+                           PXA_UI_LENGTH_PX, 0) ||
+        !pxa_ui_set_length(transaction, NODE_FILTERS, PXA_UI_PROPERTY_Y,
+                           PXA_UI_LENGTH_PX, m->header_height) ||
         !pxa_ui_set_length(transaction, NODE_FILTERS, PXA_UI_PROPERTY_WIDTH,
                            PXA_UI_LENGTH_FILL, 0) ||
         !pxa_ui_set_length(transaction, NODE_FILTERS, PXA_UI_PROPERTY_HEIGHT,
@@ -980,8 +1002,10 @@ static int create_catalog_list(pxa_ui_transaction_t *transaction) {
                                    PXA_UI_EVENT_MASK_SCROLL |
                                        PXA_UI_EVENT_MASK_POINTER) &&
              pxa_ui_set_padding(transaction, NODE_LIST, m->list_pad_h,
-                                m->card_gap, m->list_pad_h,
-                                (uint16_t)(m->card_gap + 2)) &&
+                                (uint16_t)(m->header_height +
+                                           m->chips_row_height),
+                                m->list_pad_h,
+                                (uint16_t)(m->tab_height + m->card_gap)) &&
              pxa_ui_set_dp(transaction, NODE_LIST, PXA_UI_PROPERTY_GAP, m->list_gap);
     if (!ok) return 0;
     {
@@ -1119,10 +1143,26 @@ static int create_tabbar(pxa_ui_transaction_t *transaction, uint8_t mode) {
     uint8_t games_active =
         (uint8_t)(app.kind_index == games_entry ||
                   (app.kind_index == 0 && text_equal(PXA_STORE_DEFAULT_KIND, "game")));
+    uint16_t tab_y = 0;
     if (mode == STORE_SCREEN_DETAIL || app.screen != STORE_SCREEN_CATALOG)
         return 1;
+    /* The bar sits on the bottom edge of the padded content area. */
+    {
+        int32_t content_height = (int32_t)app.height -
+                                 (int32_t)inset_padding(0, m->header_pad_v) -
+                                 (int32_t)inset_padding(2, 6);
+        int32_t bar_y = content_height - (int32_t)m->tab_height;
+        if (bar_y < 0) bar_y = 0;
+        tab_y = (uint16_t)bar_y;
+    }
     return pxa_ui_create(transaction, NODE_TABBAR, NODE_ROOT, 0,
                          PXA_UI_NODE_BOX) &&
+           pxa_ui_set_u8(transaction, NODE_TABBAR, PXA_UI_PROPERTY_POSITION,
+                         1) &&
+           pxa_ui_set_length(transaction, NODE_TABBAR, PXA_UI_PROPERTY_X,
+                             PXA_UI_LENGTH_PX, 0) &&
+           pxa_ui_set_length(transaction, NODE_TABBAR, PXA_UI_PROPERTY_Y,
+                             PXA_UI_LENGTH_PX, tab_y) &&
            pxa_ui_set_length(transaction, NODE_TABBAR, PXA_UI_PROPERTY_WIDTH,
                              PXA_UI_LENGTH_FILL, 0) &&
            pxa_ui_set_length(transaction, NODE_TABBAR, PXA_UI_PROPERTY_HEIGHT,
@@ -1149,8 +1189,8 @@ static int render_catalog(void) {
         return 0;
     ok = create_header(&transaction, STORE_SCREEN_CATALOG,
                        message(PXA_MSG_SCREEN_TITLE),
-                       pxa_i18n_size(&app.i18n, PXA_MSG_SCREEN_TITLE)) &&
-         create_filters(&transaction) && create_catalog_list(&transaction) &&
+                       pxa_i18n_size(&app.i18n, PXA_MSG_SCREEN_TITLE), 1) &&
+         create_filters(&transaction, 1) && create_catalog_list(&transaction) &&
          create_footer(&transaction) &&
          create_tabbar(&transaction, STORE_SCREEN_CATALOG);
     if (!ok || !pxa_ui_transaction_commit(&transaction)) {
@@ -1158,7 +1198,13 @@ static int render_catalog(void) {
         return 0;
     }
     app.generation = next;
-    app.chrome_hidden = 0;
+    {
+        /* A render recreates the chrome visible: keep the state the scroll
+         * asked for so loading a page does not pop the bars back. */
+        uint8_t chrome_was_hidden = app.chrome_hidden;
+        app.chrome_hidden = 0;
+        if (chrome_was_hidden) (void)set_chrome_visible(0);
+    }
     return 1;
 }
 
@@ -1340,7 +1386,7 @@ static int render_detail(void) {
                                   app.packet, sizeof(app.packet)))
         return 0;
     ok = create_header(&transaction, STORE_SCREEN_DETAIL, item->name,
-                       string_length(item->name)) &&
+                       string_length(item->name), 0) &&
          pxa_ui_create(&transaction, NODE_DETAIL_SCROLL, NODE_ROOT, 0,
                        PXA_UI_NODE_SCROLL) &&
          pxa_ui_set_length(&transaction, NODE_DETAIL_SCROLL,
@@ -1895,8 +1941,12 @@ static int render(void) {
 
 /* Chrome visibility is a small patch transaction: scrolling down hides the
  * header, the filter row and the tab bar, scrolling up brings them back. */
-#define STORE_CHROME_HIDE_DELTA 20
-#define STORE_CHROME_SHOW_DELTA 8
+#define STORE_CHROME_HIDE_DELTA 12
+/* A drag this far in one direction reads as "scroll up" / "scroll down". */
+#define STORE_CHROME_DRAG_DELTA 6
+/* Near the top the bars always come back, the way a phone behaves. */
+#define STORE_CHROME_TOP_MARGIN 8
+#define STORE_CHROME_SHOW_DELTA 4
 
 static int set_chrome_visible(uint8_t visible) {
     pxa_ui_transaction_t transaction = {0};
@@ -2542,25 +2592,40 @@ int32_t pxa_app_on_event(const uint8_t *event, uint32_t length) {
     }
     if (!pxa_ui_parse_event(&parsed, &ui_event)) return PXA_EVENT_UNHANDLED;
     if (ui_event.kind == PXA_UI_EVENT_POINTER_KIND) {
-        /* A drag on the list brings the chrome back even when the content no
-         * longer scrolls after it expanded. */
+        /* The list owns scrolling, and the chrome follows its offset. While
+         * the content cannot scroll any further there are no scroll events
+         * left, so the drag direction brings the bars back. */
         pxa_ui_pointer_data_t pointer;
-        if (app.chrome_hidden && ui_event.node == NODE_LIST &&
-            pxa_ui_parse_pointer(&parsed, &pointer) &&
-            pointer.phase != PXA_POINTER_UP)
-            (void)set_chrome_visible(1);
+        if (ui_event.node == NODE_LIST && pxa_ui_parse_pointer(&parsed, &pointer)) {
+            if (pointer.phase == PXA_POINTER_DOWN) {
+                app.pointer_y = pointer.y;
+            } else if (pointer.phase == PXA_POINTER_MOVE) {
+                int32_t dy = pointer.y - app.pointer_y;
+                if (dy >= STORE_CHROME_DRAG_DELTA) {
+                    app.pointer_y = pointer.y;
+                    if (app.chrome_hidden) (void)set_chrome_visible(1);
+                } else if (dy <= -STORE_CHROME_DRAG_DELTA) {
+                    app.pointer_y = pointer.y;
+                }
+            }
+        }
         return PXA_EVENT_HANDLED;
     }
     if (ui_event.kind == PXA_UI_EVENT_SCROLL_KIND) {
         if (ui_event.node == NODE_LIST) {
-            int32_t offset = ui_event.value > 0 ? ui_event.value : 0;
+            /* The raw value goes negative while the content is pulled down
+             * past its top, which is the phone gesture that brings the chrome
+             * back. */
+            int32_t raw = ui_event.value;
+            int32_t offset = raw > 0 ? raw : 0;
             int32_t last = app.last_scroll;
             app.list_scroll = offset;
             if (!app.chrome_hidden &&
                 offset > last + STORE_CHROME_HIDE_DELTA) {
                 (void)set_chrome_visible(0);
             } else if (app.chrome_hidden &&
-                       offset < last - STORE_CHROME_SHOW_DELTA) {
+                       (raw < 0 || offset < last - STORE_CHROME_SHOW_DELTA ||
+                        offset <= STORE_CHROME_TOP_MARGIN)) {
                 (void)set_chrome_visible(1);
             }
             app.last_scroll = offset;

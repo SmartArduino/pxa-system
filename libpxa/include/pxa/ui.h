@@ -204,6 +204,7 @@ typedef uint16_t pxa_ui_event_kind_t;
 #define PXA_UI_EVENT_MASK_VALUE_CHANGED (UINT64_C(1) << 1)
 #define PXA_UI_EVENT_MASK_KEY (UINT64_C(1) << 4)
 #define PXA_UI_EVENT_MASK_TEXT (UINT64_C(1) << 5)
+#define PXA_UI_EVENT_MASK_POINTER (UINT64_C(1) << 6)
 #define PXA_UI_EVENT_MASK_CONTROLLER_STATE (UINT64_C(1) << 9)
 
 /* A text event payload is the current UTF-8 text of a text input, without a
