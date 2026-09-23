@@ -972,6 +972,15 @@ static void finish_projected_primitive(
     projected->textured = quad->block <= VOXEL_RASTER_TEXTURED_BLOCKS;
     projected->transparent_index0 = block_uses_cutout(quad->block);
     projected->blend_75 = block_is_translucent(quad->block);
+#ifndef VOXEL_OPAQUE_TEST
+#define VOXEL_OPAQUE_TEST 0
+#endif
+#if VOXEL_OPAQUE_TEST
+    /* Measurement build: render cut-out and blended faces as opaque so the
+     * Host raster cost of the slow painter branches can be compared. */
+    projected->transparent_index0 = 0;
+    projected->blend_75 = 0;
+#endif
     projected->color = render_block_color(quad->block);
     projected->affine = 0;
     prepare_projected_order(projected);
@@ -2919,7 +2928,10 @@ int32_t voxel_raster_render(uint32_t surface_handle, uint64_t frame_id,
          * world geometry. Avoid writing the complete PSRAM framebuffer twice. */
         if (submerged || quality >= QUALITY_PERFORMANCE)
             (void)pxa_raster_clear(&list, clear);
-        if (!submerged &&
+#ifndef VOXEL_SKIP_SKY
+#define VOXEL_SKIP_SKY 0
+#endif
+        if (!submerged && VOXEL_SKIP_SKY == 0 &&
             (g_raster_capabilities & PXA_RASTER_CAP_FLAT_QUAD) != 0)
             append_sky(&list, &camera, quality < QUALITY_PERFORMANCE);
     }
