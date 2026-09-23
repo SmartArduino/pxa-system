@@ -164,6 +164,10 @@ typedef struct {
     /* A restart (chip, tab, refresh or search) requested while a catalog
      * request is in flight is replayed when that request completes. */
     uint8_t pending_restart;
+    /* Node the current drag started on, so its samples share one origin. */
+    uint32_t pointer_node;
+    /* Set while a gesture is a drag; a drag must never count as a click. */
+    uint8_t drag_active;
     /* Last pointer sample on the list, to read the drag direction even when
      * the content has no room left to scroll. */
     int32_t pointer_y;
@@ -1947,7 +1951,7 @@ static int render(void) {
  * header, the filter row and the tab bar, scrolling up brings them back. */
 #define STORE_CHROME_HIDE_DELTA 12
 /* A drag this far in one direction reads as "scroll up" / "scroll down". */
-#define STORE_CHROME_DRAG_DELTA 6
+#define STORE_CHROME_DRAG_DELTA 4
 /* Near the top the bars always come back, the way a phone behaves. */
 #define STORE_CHROME_TOP_MARGIN 8
 #define STORE_CHROME_SHOW_DELTA 4
@@ -2624,9 +2628,13 @@ int32_t pxa_app_on_event(const uint8_t *event, uint32_t length) {
          * the content cannot scroll any further there are no scroll events
          * left, so the drag direction brings the bars back. */
         pxa_ui_pointer_data_t pointer;
-        if (ui_event.node == NODE_LIST && pxa_ui_parse_pointer(&parsed, &pointer)) {
-            if (pointer.phase == PXA_POINTER_DOWN) {
+        if ((ui_event.node == NODE_LIST || ui_event.node == NODE_FILTERS) &&
+            pxa_ui_parse_pointer(&parsed, &pointer)) {
+            if (pointer.phase == PXA_POINTER_DOWN ||
+                app.pointer_node != ui_event.node) {
+                app.pointer_node = ui_event.node;
                 app.pointer_y = pointer.y;
+                app.drag_active = 0;
             } else if (pointer.phase == PXA_POINTER_MOVE) {
                 int32_t dy = pointer.y - app.pointer_y;
                 /* The drag direction decides, like a phone: dragging the
@@ -2635,9 +2643,11 @@ int32_t pxa_app_on_event(const uint8_t *event, uint32_t length) {
                  * page load re-bases them. */
                 if (dy >= STORE_CHROME_DRAG_DELTA) {
                     app.pointer_y = pointer.y;
+                    app.drag_active = 1;
                     (void)set_chrome_visible(1);
                 } else if (dy <= -STORE_CHROME_DRAG_DELTA) {
                     app.pointer_y = pointer.y;
+                    app.drag_active = 1;
                     (void)set_chrome_visible(0);
                 }
             }
@@ -2653,6 +2663,7 @@ int32_t pxa_app_on_event(const uint8_t *event, uint32_t length) {
             int32_t offset = raw > 0 ? raw : 0;
             int32_t last = app.last_scroll;
             app.list_scroll = offset;
+            app.drag_active = 1;
             if (offset <= STORE_CHROME_TOP_MARGIN)
                 store_trace("scroll top", (uint32_t)offset);
             /* Never hide near the top: the elastic bounce that follows a
@@ -2696,6 +2707,10 @@ int32_t pxa_app_on_event(const uint8_t *event, uint32_t length) {
     }
 #endif
     if (ui_event.kind != PXA_UI_EVENT_CLICK_KIND) return PXA_EVENT_UNHANDLED;
+    /* A drag is not a click. When the list cannot scroll - a short page, or
+     * content already at its end - the release still arrives as a click on
+     * the card under the finger, which opened a detail instead of scrolling. */
+    if (app.drag_active) return PXA_EVENT_HANDLED;
     if (ui_event.node == NODE_SEARCH_BUTTON &&
         app.screen == STORE_SCREEN_CATALOG) {
         if (!open_search()) return PXA_EVENT_HANDLED;
