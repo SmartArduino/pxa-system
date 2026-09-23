@@ -684,8 +684,8 @@ static void build_camera(raster_camera_t *camera, const player_t *player,
      * the fog horizon while the depth budget stops dropping faces. */
     camera->fog_end = quality >= QUALITY_PERFORMANCE
                           ? VOXEL_RASTER_PERFORMANCE_FOG
-                      : quality >= QUALITY_BALANCED  ? 18.0F
-                                                     : 20.0F;
+                      : quality >= QUALITY_BALANCED  ? 15.0F
+                                                     : 16.0F;
     /* Submerged: pull the fog in so terrain fades like murky water. */
     if (game_block(rc_floor_int(player->x),
                    rc_floor_int(player->y + EYE_HEIGHT),
