@@ -448,12 +448,19 @@ static void patch_title(void) {
     transact(2, 2, 0, PXA_UI_PATCH, &stream);
 }
 
+static void patch_visibility(uint32_t transaction, uint32_t generation,
+                             uint8_t visible) {
+    bytes_t stream = {{0}, 0};
+    set_property(&stream, 3, PXA_UI_PROPERTY_VISIBLE, &visible, sizeof(visible));
+    transact(transaction, generation, 0, PXA_UI_PATCH, &stream);
+}
+
 static void patch_canvas_alpha(void) {
     bytes_t stream = {{0}, 0};
     const uint8_t composition = PXA_UI_COMPOSITION_ALPHA_OVERLAY;
     set_property(&stream, 5, PXA_UI_PROPERTY_COMPOSITION,
                  &composition, sizeof(composition));
-    transact(4, 3, 0, PXA_UI_PATCH, &stream);
+    transact(5, 5, 0, PXA_UI_PATCH, &stream);
 }
 
 static uint64_t alpha_plane_hash(const pxa_lvgl_ui_alpha_plane_t *plane,
@@ -585,7 +592,7 @@ static void replace_content_subtree(void) {
     create_node(&stream, 6, 2, PXA_UI_NODE_TEXT, 0);
     set_property(&stream, 6, PXA_UI_PROPERTY_TEXT,
                  title, sizeof(title) - 1u);
-    transact(5, 4, 2, PXA_UI_REPLACE_SUBTREE, &stream);
+    transact(6, 6, 2, PXA_UI_REPLACE_SUBTREE, &stream);
 }
 
 int main(void) {
@@ -754,6 +761,16 @@ int main(void) {
     assert(lv_obj_get_child(lv_screen_active(), 0) == root);
     assert(find_label(root, "Patched without rebuilding") != NULL);
 
+    /* A node hidden by a patch must be able to come back: the hidden flag is
+     * removed when the node is shown again. */
+    {
+        lv_obj_t *title = find_label(root, "Patched without rebuilding");
+        assert(title != NULL);
+        patch_visibility(3, 3, 0);
+        assert(lv_obj_has_flag(title, LV_OBJ_FLAG_HIDDEN));
+        patch_visibility(4, 4, 1);
+        assert(!lv_obj_has_flag(title, LV_OBJ_FLAG_HIDDEN));
+    }
     lv_display_set_render_mode(g_test_display, LV_DISPLAY_RENDER_MODE_PARTIAL);
     present_canvas(1, 0);
     assert(g_asset_resolves == 1 && g_asset_releases == 0);

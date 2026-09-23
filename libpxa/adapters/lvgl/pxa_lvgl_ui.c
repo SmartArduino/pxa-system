@@ -707,6 +707,7 @@ static void apply_property(pxa_lvgl_ui_node_t *node,
         case PXA_UI_PROPERTY_VISIBLE:
             node->visible = data[0];
             if (!node->visible) lv_obj_add_flag(object, LV_OBJ_FLAG_HIDDEN);
+            else lv_obj_remove_flag(object, LV_OBJ_FLAG_HIDDEN);
             break;
         case PXA_UI_PROPERTY_ENABLED:
             if (data[0]) lv_obj_remove_state(object, LV_STATE_DISABLED);

@@ -814,6 +814,9 @@ static int create_filters(pxa_ui_transaction_t *transaction,
                        1) ||
         !pxa_ui_set_u8(transaction, NODE_FILTERS, PXA_UI_PROPERTY_SCROLLBAR,
                        0) ||
+        /* Dragging the chip row is a scroll gesture, not a chip tap. */
+        !pxa_ui_set_event_mask(transaction, NODE_FILTERS,
+                               PXA_UI_EVENT_MASK_POINTER) ||
         !pxa_ui_set_padding(transaction, NODE_FILTERS, m->list_pad_h,
                             (uint16_t)((m->chips_row_height -
                                         m->chip_height) / 2),
@@ -1950,8 +1953,11 @@ static int render(void) {
 /* Chrome visibility is a small patch transaction: scrolling down hides the
  * header, the filter row and the tab bar, scrolling up brings them back. */
 #define STORE_CHROME_HIDE_DELTA 12
-/* A drag this far in one direction reads as "scroll up" / "scroll down". */
-#define STORE_CHROME_DRAG_DELTA 4
+/* A drag this far in one direction reads as "scroll up" / "scroll down".
+ * Showing is cheap and hiding is not, so the way back is eager and a finger
+ * that wobbles at the end of a drag cannot hide the bars again. */
+#define STORE_CHROME_DRAG_DELTA 3
+#define STORE_CHROME_HIDE_DRAG_DELTA 14
 /* Near the top the bars always come back, the way a phone behaves. */
 #define STORE_CHROME_TOP_MARGIN 8
 #define STORE_CHROME_SHOW_DELTA 4
@@ -2645,7 +2651,7 @@ int32_t pxa_app_on_event(const uint8_t *event, uint32_t length) {
                     app.pointer_y = pointer.y;
                     app.drag_active = 1;
                     (void)set_chrome_visible(1);
-                } else if (dy <= -STORE_CHROME_DRAG_DELTA) {
+                } else if (dy <= -STORE_CHROME_HIDE_DRAG_DELTA) {
                     app.pointer_y = pointer.y;
                     app.drag_active = 1;
                     (void)set_chrome_visible(0);
@@ -2669,10 +2675,11 @@ int32_t pxa_app_on_event(const uint8_t *event, uint32_t length) {
             /* Never hide near the top: the elastic bounce that follows a
              * pull-down reports a positive delta and used to hide the bars
              * right after they came back. */
-            /* The drag drives the bars; the offset only guarantees that they
-             * are there at the top, where a phone always shows them. */
-            (void)last;
-            if (offset <= STORE_CHROME_TOP_MARGIN || raw < 0)
+            /* Any scroll back towards the top shows the bars: a decreasing
+             * offset is the one signal that survives a page load re-basing
+             * them, and showing when it was not needed costs nothing. */
+            if (offset <= STORE_CHROME_TOP_MARGIN || raw < 0 ||
+                offset < last - STORE_CHROME_SHOW_DELTA)
                 (void)set_chrome_visible(1);
             app.last_scroll = offset;
             /* Incremental loading: no explicit load-more button, the next page
