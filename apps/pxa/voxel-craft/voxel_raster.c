@@ -2931,9 +2931,18 @@ int32_t voxel_raster_render(uint32_t surface_handle, uint64_t frame_id,
 #ifndef VOXEL_SKIP_SKY
 #define VOXEL_SKIP_SKY 0
 #endif
-        if (!submerged && VOXEL_SKIP_SKY == 0 &&
+#if VOXEL_SKIP_SKY == 2
+        /* Measurement: one full-screen flat quad instead of the sky bands, to
+         * price the Host's axis-aligned fill path on this target. */
+        if (!submerged &&
+            (g_raster_capabilities & PXA_RASTER_CAP_FLAT_QUAD) != 0)
+            append_sky_rect(&list, &camera, 0, 0, camera.width,
+                            camera.height, UINT16_C(0x9e5f));
+#elif VOXEL_SKIP_SKY == 0
+        if (!submerged &&
             (g_raster_capabilities & PXA_RASTER_CAP_FLAT_QUAD) != 0)
             append_sky(&list, &camera, quality < QUALITY_PERFORMANCE);
+#endif
     }
     {
         uint8_t list_full = 0;

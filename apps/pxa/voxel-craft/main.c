@@ -2701,6 +2701,22 @@ int32_t pxa_app_on_event(const uint8_t *event, uint32_t length) {
             }
             return PXA_EVENT_HANDLED;
         }
+#ifndef VOXEL_FIXED_VIEW
+/* Measurement builds pin the camera so run-to-run raster timings compare the
+ * same view instead of wherever the player happened to fall. */
+#define VOXEL_FIXED_VIEW 0
+#endif
+#if VOXEL_FIXED_VIEW
+        g_player.x = 8.5F;
+        g_player.y = 22.0F;
+        g_player.z = 8.5F;
+        g_player.vx = 0.0F;
+        g_player.vy = 0.0F;
+        g_player.vz = 0.0F;
+        g_player.yaw = 0.9F;
+        g_player.pitch = -0.28F;
+        g_player.flying = 1;
+#endif
         if (steps != 0) {
 #if VOXEL_AUTOPLAY
             /* Debug/measurement build: start a game once the Surface exists,
