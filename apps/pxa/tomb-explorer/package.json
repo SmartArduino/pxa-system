@@ -1,10 +1,19 @@
 {
   "format": "pxa-package-source-0.1",
-  "min_sdk": [0, 1],
-  "target_sdk": [0, 1],
-  "compile_sdk": [0, 1],
+  "min_sdk": [
+    0,
+    1
+  ],
+  "target_sdk": [
+    0,
+    1
+  ],
+  "compile_sdk": [
+    0,
+    1
+  ],
   "id": "pxa-tomb-explorer",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "name": "Tomb Explorer",
   "description": "Third-person room-and-portal explorer with host-raster textured polygons",
   "build": {
@@ -29,7 +38,11 @@
         "textures.c",
         "level_data.c"
       ],
-      "services": ["game-render", "log"]
+      "services": [
+        "game-render",
+        "log"
+      ]
     }
-  ]
+  ],
+  "release_sequence": 2
 }

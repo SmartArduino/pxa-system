@@ -5,6 +5,8 @@
 `apps/pxa/` contains the reference PXA application set shipped with this
 repository. These applications exercise the public Guest SDK, package metadata,
 localization, semantic themes, services, Canvas, and multi-Component runtime.
+`store/` is a network-backed client of the signed device catalog; it documents
+the Guest-side installation limits in its own `README.md`.
 
 Application chrome, forms, status text and ordinary controls use semantic UI
 theme tokens. Canvas and raw surfaces are reserved for games, visualization and

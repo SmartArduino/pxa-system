@@ -1,0 +1,210 @@
+namespace: app.pxa-store
+default_locale: en-US
+messages:
+  screen.title:
+    source: App Store
+    context: Store screen title
+    max_bytes: 32
+  action.refresh:
+    source: Refresh
+    context: Reload the first catalog page
+    max_bytes: 24
+  action.load_more:
+    source: Load more
+    context: Append the next catalog page
+    max_bytes: 24
+  action.back:
+    source: Back
+    context: Return to the catalog list
+    max_bytes: 24
+  action.install:
+    source: Install
+    context: Start installing the selected application
+    max_bytes: 24
+  kind.apps:
+    source: Apps
+    context: Bottom tab for ordinary applications
+    max_bytes: 24
+  kind.games:
+    source: Games
+    context: Bottom tab for games
+    max_bytes: 24
+  filter.all:
+    source: All
+    context: Catalog filter that clears the search query
+    max_bytes: 24
+  search.title:
+    source: Search
+    context: Search screen title
+    max_bytes: 24
+  search.placeholder:
+    source: App name or keyword
+    context: Empty search field hint
+    max_bytes: 48
+  action.search:
+    source: Search
+    context: Apply the typed search text
+    max_bytes: 24
+  action.clear:
+    source: Clear
+    context: Clear the typed search text
+    max_bytes: 24
+  key.delete:
+    source: Del
+    context: On-screen keyboard backspace key
+    max_bytes: 16
+  list.loading:
+    source: Loading catalog
+    context: Catalog request in progress
+    max_bytes: 48
+  list.empty:
+    source: No published application matches this device
+    context: Empty catalog result
+    max_bytes: 96
+  list.loaded:
+    source: Loaded {count}
+    context: Number of catalog entries held in memory
+    max_bytes: 64
+    placeholders:
+      count: string
+  detail.summary:
+    source: Summary
+    context: Section title for the application summary
+    max_bytes: 24
+  detail.changelog:
+    source: What is new
+    context: Section title for the release changelog
+    max_bytes: 32
+  detail.permissions:
+    source: Permissions
+    context: Section title for declared permissions
+    max_bytes: 32
+  detail.services:
+    source: Required services
+    context: Section title for service requirements
+    max_bytes: 32
+  detail.version:
+    source: Version
+    context: Row label for the release version
+    max_bytes: 24
+  detail.size:
+    source: Package size
+    context: Row label for the artifact size
+    max_bytes: 32
+  detail.channel:
+    source: Channel
+    context: Row label for the release channel
+    max_bytes: 24
+  detail.sequence:
+    source: Release sequence
+    context: Row label for the signed release sequence
+    max_bytes: 32
+  detail.publisher:
+    source: Publisher
+    context: Row label for the publisher key identifier
+    max_bytes: 24
+  detail.digest:
+    source: SHA-256
+    context: Row label for the artifact digest
+    max_bytes: 24
+  detail.profile:
+    source: Device profile
+    context: Row label for the target device profile
+    max_bytes: 32
+  detail.sdk:
+    source: SDK
+    context: Row label for the required and target SDK versions
+    max_bytes: 24
+  detail.platforms:
+    source: Platforms
+    context: Row label for the packaged target platforms
+    max_bytes: 24
+  detail.none:
+    source: None
+    context: Empty section placeholder
+    max_bytes: 16
+  detail.required:
+    source: required
+    context: Permission that the application requires
+    max_bytes: 24
+  detail.optional:
+    source: optional
+    context: Permission that the application may request
+    max_bytes: 24
+  install.title:
+    source: Installation
+    context: Section title for the installation status
+    max_bytes: 32
+  install.blocked_abi:
+    source: This firmware has no package installer service; use App Manager or the inbox
+    context: Installation requires a Guest installer ABI that this Host does not provide
+    max_bytes: 160
+  install.blocked_size:
+    source: The {size} package exceeds the {limit} network response limit
+    context: Artifact is larger than the bounded network response
+    max_bytes: 112
+    placeholders:
+      size: string
+      limit: string
+  install.ready:
+    source: The package fits the network limit, but the installer service is still missing
+    context: Artifact is small enough to download but still cannot be installed
+    max_bytes: 128
+  status.waiting:
+    source: Waiting for the catalog
+    context: Idle status before the first request
+    max_bytes: 48
+  status.loading:
+    source: Loading
+    context: Catalog request in progress
+    max_bytes: 32
+  status.ready:
+    source: Catalog updated
+    context: Successful catalog synchronization
+    max_bytes: 32
+  status.permission:
+    source: Network permission is required
+    context: Permission was not granted
+    max_bytes: 48
+  status.denied:
+    source: Network permission denied
+    context: Permission request was denied
+    max_bytes: 48
+  status.unsupported:
+    source: This firmware has no network service
+    context: Net service is not available on this Host
+    max_bytes: 48
+  status.unavailable:
+    source: Store is unreachable
+    context: Transport is unavailable
+    max_bytes: 48
+  status.timeout:
+    source: Store request timed out
+    context: Request exceeded its timeout
+    max_bytes: 48
+  status.limit:
+    source: Catalog response exceeds the network limit
+    context: Response was larger than the bounded network buffer
+    max_bytes: 64
+  status.protocol:
+    source: Unexpected catalog response
+    context: Response could not be decoded
+    max_bytes: 48
+  status.not_found:
+    source: Application not found
+    context: HTTP 404 from the store
+    max_bytes: 48
+  status.http:
+    source: Store error {code}
+    context: Other HTTP error status
+    max_bytes: 48
+    placeholders:
+      code: string
+  status.failed:
+    source: Catalog request failed
+    context: Generic catalog failure
+    max_bytes: 48
+  status.install_blocked:
+    source: Installation is not available on this firmware
+    context: Feedback after pressing the install button
+    max_bytes: 64

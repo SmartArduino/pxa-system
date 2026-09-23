@@ -1,10 +1,19 @@
 {
   "format": "pxa-package-source-0.1",
-  "min_sdk": [0, 1],
-  "target_sdk": [0, 1],
-  "compile_sdk": [0, 1],
+  "min_sdk": [
+    0,
+    1
+  ],
+  "target_sdk": [
+    0,
+    1
+  ],
+  "compile_sdk": [
+    0,
+    1
+  ],
   "id": "pxa-maze-evil",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "name": "Maze Evil",
   "description": "Raycasting shooter with mapped RGB565 rendering, touch controls and Host-driven SFX",
   "build": {
@@ -31,10 +40,18 @@
         "input.c",
         "audio.c"
       ],
-      "services": ["surface", "audio"]
+      "services": [
+        "surface",
+        "audio"
+      ]
     }
   ],
   "permissions": [
-    {"name": "audio.playback", "required": false, "scope": "media"}
-  ]
+    {
+      "name": "audio.playback",
+      "required": false,
+      "scope": "media"
+    }
+  ],
+  "release_sequence": 2
 }
