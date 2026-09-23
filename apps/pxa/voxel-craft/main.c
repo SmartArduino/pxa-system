@@ -167,6 +167,10 @@ static uint32_t g_host_present_ema_us;
 static uint64_t g_host_queue_total_us;
 static uint64_t g_host_present_total_us;
 static uint64_t g_host_rendered_frames;
+static uint32_t g_host_flat_commands;
+static uint32_t g_host_textured_commands;
+static uint32_t g_host_sprite_commands;
+static uint32_t g_host_covered_pixels;
 static uint64_t g_host_visible_frames;
 static uint32_t g_snapshot_ticks;
 static uint8_t g_bootstrap_requests_pending;
@@ -378,6 +382,10 @@ static void update_quality(uint64_t duration_us) {
         pxa_raster_telemetry_t telemetry;
         if (pxa_raster_query_telemetry(g_surface_handle, &telemetry) ==
             (int32_t)PXA_RASTER_TELEMETRY_BYTES) {
+            g_host_covered_pixels = telemetry.last_covered_pixels;
+            g_host_flat_commands = telemetry.flat_quad_commands;
+            g_host_textured_commands = telemetry.textured_quad_commands;
+            g_host_sprite_commands = telemetry.sprite_commands;
             if (telemetry.last_host_raster_us != 0)
                 update_duration_stats(telemetry.last_host_raster_us,
                                       &g_host_raster_ema_us,
@@ -571,6 +579,10 @@ static void log_perf_sample(uint64_t timestamp_us, uint64_t guest_render_us) {
                           g_perf_raster_stats.dropped_quads);
     out = put_perf_metric(out, " list_bytes=",
                           g_perf_raster_stats.draw_list_bytes);
+    out = put_perf_metric(out, " covered=", g_host_covered_pixels);
+    out = put_perf_metric(out, " flat_cmds=", g_host_flat_commands);
+    out = put_perf_metric(out, " tex_cmds=", g_host_textured_commands);
+    out = put_perf_metric(out, " sprite_cmds=", g_host_sprite_commands);
     *out = '\0';
     (void)pxa_log_info(line);
 

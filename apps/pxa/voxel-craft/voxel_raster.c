@@ -61,7 +61,7 @@
 /* The exact painter order is an O(n^2) pair sweep. Keep it as a switch so the
  * measurement build can trade it for the cheaper depth-key sort. */
 #ifndef VOXEL_RASTER_EXACT_SORT
-#define VOXEL_RASTER_EXACT_SORT 1
+#define VOXEL_RASTER_EXACT_SORT 0
 #endif
 #define VOXEL_RASTER_SORT_EDGES 4096u
 #define VOXEL_RASTER_HUD_COMMAND_RESERVE 360u
