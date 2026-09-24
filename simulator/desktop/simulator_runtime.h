@@ -13,6 +13,7 @@ typedef struct {
     const char *installed_packages_root;
     const char *publisher_key;
     const char *state_root;
+    uint8_t navigation_gestures;
     void *pump_context;
     void (*pump)(void *context);
 } pxsys_desktop_runtime_fixture_t;

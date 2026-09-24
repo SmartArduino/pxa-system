@@ -113,7 +113,7 @@ pxsys_apply_wamr_metadata(pxsys_product_simulator)
 target_compile_definitions(pxsys_product_simulator PRIVATE
     PXSYS_DESKTOP_TEXT_FONT="${PXSYS_DESKTOP_TEXT_FONT}")
 target_link_libraries(pxsys_product_simulator PRIVATE
-    pxa::pxa pxa_adapters_openssl pxa_adapters_posix pxa_adapters_lvgl
+    pxsys::core pxa::pxa pxa_adapters_openssl pxa_adapters_posix pxa_adapters_lvgl
     pxa_adapters_wamr lvgl SDL2::SDL2 PNG::PNG CURL::libcurl Threads::Threads
     PkgConfig::VORBISFILE m)
 if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")

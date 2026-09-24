@@ -1502,6 +1502,8 @@ static int run_simulator(const simulator_options_t* options) {
     runtime_fixture.installed_packages_root = options->installed_packages_root;
     runtime_fixture.publisher_key = options->publisher_key;
     runtime_fixture.state_root = options->state_root;
+    runtime_fixture.navigation_gestures =
+        options->navigation == PXSYS_NAVIGATION_GESTURES;
     runtime_fixture.pump_context = &pxadb_control;
     runtime_fixture.pump = pump_pxadb_control;
     icon_resolver.installed_packages_root = options->installed_packages_root;

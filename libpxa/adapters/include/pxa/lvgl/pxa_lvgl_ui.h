@@ -54,6 +54,7 @@ typedef struct {
     pxa_lvgl_ui_now_us_fn now_us;
     void *callback_user_data;
     pxa_ui_environment_t primary_environment;
+    void *parent_object;
 } pxa_lvgl_ui_config_t;
 
 typedef struct pxa_lvgl_ui pxa_lvgl_ui_t;

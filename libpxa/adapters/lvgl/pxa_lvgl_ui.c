@@ -1340,7 +1340,11 @@ static void execute_transaction(void *data) {
         if (command->view.command != PXA_UI_COMMAND_CREATE) continue;
         node = command->created;
         parent = (pxa_lvgl_ui_node_t *)command->view.parent_handle;
-        parent_object = parent == NULL ? lv_screen_active() : parent->object;
+        parent_object = parent == NULL
+                            ? (transaction->ui->config.parent_object != NULL
+                                   ? transaction->ui->config.parent_object
+                                   : lv_screen_active())
+                            : parent->object;
         if (parent_object == NULL || create_object(node, parent_object) == NULL) {
             transaction->status = PXA_STATUS_RESOURCE_LIMIT;
             discard_created(transaction);

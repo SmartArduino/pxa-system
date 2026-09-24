@@ -1,5 +1,6 @@
 #include "simulator_runtime.h"
 #include "product_runner.h"
+#include "pxsys/reference_layout.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -21,6 +22,14 @@ typedef struct simulator_instance {
     uint32_t display_width;
     uint32_t display_height;
     char product_package_path[1200];
+    pxa_window_configuration_t window_configuration;
+    void (*set_product_focus)(void* runner, bool focused);
+    void (*request_product_exit)(void* runner);
+    void* product_runner;
+    pxsys_instance_ref_t reference;
+    pxsys_stop_reason_t stop_reason;
+    uint8_t window_configuration_set;
+    uint8_t foreground;
     uint8_t product_launch_pending;
     uint8_t product_completed;
 } simulator_instance_t;
@@ -39,6 +48,47 @@ struct pxsys_desktop_runtime {
 
 static lv_color_t color(uint32_t argb) {
     return lv_color_hex(argb & UINT32_C(0x00ffffff));
+}
+
+static void publish_window(simulator_instance_t* instance) {
+    pxsys_window_snapshot_t snapshot;
+    const pxa_window_configuration_t* config = &instance->window_configuration;
+    pxsys_window_snapshot_init(&snapshot);
+    if (instance->foreground && instance->window_configuration_set) {
+        snapshot.edge_to_edge = config->edge_to_edge;
+        snapshot.status_bar_mode =
+            (pxsys_window_bar_mode_t)config->status_bar_mode;
+        snapshot.navigation_bar_mode =
+            (pxsys_window_bar_mode_t)config->navigation_bar_mode;
+        snapshot.status_bar_icons =
+            (pxsys_window_icon_style_t)config->status_bar_icons;
+        snapshot.navigation_bar_icons =
+            (pxsys_window_icon_style_t)config->navigation_bar_icons;
+        snapshot.status_bar_color = config->status_bar_color;
+        snapshot.navigation_bar_color = config->navigation_bar_color;
+    }
+    (void)pxsys_window_service_update(
+        pxsys_standard_system_window(instance->runtime->system), &snapshot);
+}
+
+static void product_window_changed(
+    void* context, const pxa_window_configuration_t* configuration) {
+    simulator_instance_t* instance = context;
+    if (instance == NULL || configuration == NULL) return;
+    instance->window_configuration = *configuration;
+    instance->window_configuration_set = 1;
+    if (instance->foreground) publish_window(instance);
+}
+
+static void product_control_bind(
+    void* context, void (*set_focus)(void* runner, bool focused),
+    void (*request_exit)(void* runner), void* runner) {
+    simulator_instance_t* instance = context;
+    if (instance == NULL) return;
+    instance->set_product_focus = set_focus;
+    instance->request_product_exit = request_exit;
+    instance->product_runner = runner;
+    if (set_focus != NULL) set_focus(runner, instance->foreground != 0);
 }
 
 static void style_instance(simulator_instance_t* instance) {
@@ -143,6 +193,7 @@ static pxsys_status_t backend_instantiate(
     if (instance == NULL) return PXSYS_STATUS_NO_MEMORY;
     memset(instance, 0, sizeof(*instance));
     instance->surface.slot = UINT32_MAX;
+    instance->reference = pxsys_instance_ref_invalid();
     instance->runtime = runtime;
     instance->app = app;
     display.struct_size = sizeof(display);
@@ -188,6 +239,13 @@ static pxsys_status_t backend_instantiate(
     runtime->instances = instance;
     *output = instance;
     return PXSYS_STATUS_OK;
+}
+
+static void backend_bound(void* context, void* opaque,
+                          pxsys_instance_ref_t reference) {
+    simulator_instance_t* instance = opaque;
+    (void)context;
+    if (instance != NULL) instance->reference = reference;
 }
 
 static pxsys_status_t backend_start(void* context, void* opaque,
@@ -250,22 +308,36 @@ static pxsys_status_t backend_start(void* context, void* opaque,
 
 static pxsys_status_t backend_foreground(void* context, void* opaque) {
     simulator_instance_t* instance = (simulator_instance_t*)opaque;
+    pxsys_status_t status;
     (void)context;
-    return instance == NULL ? PXSYS_STATUS_BAD_STATE
-                            : pxsys_renderer_surface_set_visible(
-                                  pxsys_standard_system_renderer(
-                                      instance->runtime->system),
-                                  instance->surface, 1);
+    if (instance == NULL) return PXSYS_STATUS_BAD_STATE;
+    status = pxsys_renderer_surface_set_visible(
+        pxsys_standard_system_renderer(instance->runtime->system),
+        instance->surface, 1);
+    if (status == PXSYS_STATUS_OK) {
+        instance->foreground = 1;
+        if (instance->set_product_focus != NULL)
+            instance->set_product_focus(instance->product_runner, true);
+        publish_window(instance);
+    }
+    return status;
 }
 
 static pxsys_status_t backend_background(void* context, void* opaque) {
     simulator_instance_t* instance = (simulator_instance_t*)opaque;
+    pxsys_status_t status;
     (void)context;
-    return instance == NULL ? PXSYS_STATUS_BAD_STATE
-                            : pxsys_renderer_surface_set_visible(
-                                  pxsys_standard_system_renderer(
-                                      instance->runtime->system),
-                                  instance->surface, 0);
+    if (instance == NULL) return PXSYS_STATUS_BAD_STATE;
+    status = pxsys_renderer_surface_set_visible(
+        pxsys_standard_system_renderer(instance->runtime->system),
+        instance->surface, 0);
+    if (instance->foreground) {
+        instance->foreground = 0;
+        if (instance->set_product_focus != NULL)
+            instance->set_product_focus(instance->product_runner, false);
+        publish_window(instance);
+    }
+    return status;
 }
 
 static pxsys_status_t backend_deliver(void* context, void* opaque,
@@ -287,6 +359,20 @@ static void backend_stop(void* context, void* opaque,
     (void)backend_background(context, opaque);
 }
 
+static pxsys_status_t backend_request_stop(
+    void* context, void* opaque, pxsys_stop_reason_t reason) {
+    simulator_instance_t* instance = opaque;
+    (void)context;
+    if (instance == NULL) return PXSYS_STATUS_BAD_STATE;
+    if (instance->request_product_exit == NULL) {
+        backend_stop(context, opaque, reason);
+        return PXSYS_STATUS_OK;
+    }
+    instance->stop_reason = reason;
+    instance->request_product_exit(instance->product_runner);
+    return PXSYS_STATUS_PENDING;
+}
+
 void pxsys_desktop_runtime_poll(pxsys_desktop_runtime_t* runtime) {
     simulator_instance_t* instance;
     if (runtime == NULL || runtime->magic != PXSYS_DESKTOP_RUNTIME_MAGIC)
@@ -296,14 +382,40 @@ void pxsys_desktop_runtime_poll(pxsys_desktop_runtime_t* runtime) {
         if (instance->product_launch_pending) {
             const pxsys_desktop_runtime_fixture_t* fixture =
                 &instance->runtime->fixture;
+            pxsys_display_profile_t display = {0};
+            pxsys_reference_layout_t layout;
+            pxsys_insets_t bars = {0};
             int status;
             instance->product_launch_pending = 0;
+            display.struct_size = sizeof(display);
+            if (pxsys_display_service_get(
+                    pxsys_standard_system_display(runtime->system),
+                    &display) != PXSYS_STATUS_OK) {
+                instance->product_completed = 1;
+                continue;
+            }
+            if (pxsys_reference_layout_compute(&display, &layout) ==
+                PXSYS_STATUS_OK) {
+                bars.top = (uint16_t)layout.status_bar.height;
+                if (fixture->navigation_gestures) {
+                    bars.left = (uint16_t)
+                        pxsys_reference_layout_back_gesture_width();
+                    bars.bottom = (uint16_t)
+                        pxsys_reference_layout_gesture_strip_height(
+                            layout.size_class);
+                } else {
+                    bars.bottom = (uint16_t)
+                        (display.height - layout.navigation_bar.y);
+                }
+            }
             status = pxsys_product_simulator_run_embedded(
                 instance->product_package_path, fixture->publisher_key,
                 fixture->state_root, runtime->locale.tag,
                 instance->display_width,
-                instance->display_height, lv_display_get_default(),
-                fixture->pump, fixture->pump_context);
+                instance->display_height, lv_display_get_default(), instance->root,
+                fixture->pump, fixture->pump_context,
+                product_window_changed, instance, product_control_bind,
+                &display, &bars, &runtime->theme);
             if (status != 0)
                 fprintf(stderr, "PXA simulator: product exited status=%d\n",
                         status);
@@ -311,8 +423,9 @@ void pxsys_desktop_runtime_poll(pxsys_desktop_runtime_t* runtime) {
         }
         if (!instance->product_completed) continue;
         instance->product_completed = 0;
-        (void)pxsys_task_manager_finish_top(
-            pxsys_standard_system_tasks(runtime->system), PXSYS_STOP_NORMAL);
+        (void)pxsys_task_manager_report_stopped(
+            pxsys_standard_system_tasks(runtime->system), instance->reference,
+            instance->stop_reason);
         break;
     }
 }
@@ -322,6 +435,10 @@ static void backend_destroy(void* context, void* opaque) {
     simulator_instance_t* instance = (simulator_instance_t*)opaque;
     simulator_instance_t** cursor;
     if (runtime == NULL || instance == NULL) return;
+    if (instance->foreground) {
+        instance->foreground = 0;
+        publish_window(instance);
+    }
     cursor = &runtime->instances;
     while (*cursor != NULL && *cursor != instance) cursor = &(*cursor)->next;
     if (*cursor == instance) *cursor = instance->next;
@@ -358,12 +475,14 @@ pxsys_status_t pxsys_desktop_runtime_create(
     config.backend.struct_size = sizeof(config.backend);
     config.backend.context = runtime;
     config.backend.instantiate = backend_instantiate;
+    config.backend.bound = backend_bound;
     config.backend.start = backend_start;
     config.backend.foreground = backend_foreground;
     config.backend.background = backend_background;
     config.backend.deliver = backend_deliver;
     config.backend.back = backend_back;
     config.backend.stop = backend_stop;
+    config.backend.request_stop = backend_request_stop;
     config.backend.destroy = backend_destroy;
     if (pxsys_pxa_runtime_create(&config, &runtime->pxa) != PXSYS_STATUS_OK) {
         allocator.release(allocator.context, runtime);

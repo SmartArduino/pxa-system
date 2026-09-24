@@ -42,6 +42,8 @@
 
 #define PRODUCT_CLOCK_SERVICE UINT16_C(4)
 #define PRODUCT_CLOCK_TICK UINT16_C(0x8001)
+#define PRODUCT_LIFECYCLE_SERVICE UINT16_C(17)
+#define PRODUCT_LIFECYCLE_EVENT UINT16_C(0x8005)
 #define PRODUCT_COMPONENTS UINT16_C(8)
 #define PRODUCT_SYSTEM_CONFIG_ENVIRONMENT UINT16_C(12)
 #define PRODUCT_SYSTEM_CONFIGURATION_LOCALE UINT16_C(1)
@@ -175,12 +177,20 @@ typedef struct {
 
 typedef struct {
     lv_display_t *display;
+    lv_obj_t *content_parent;
     pxa_runtime_t *runtime;
     pxa_window_service_t *window;
+    pxsys_product_simulator_window_fn window_changed;
+    void *window_context;
+    const pxsys_theme_snapshot_t *host_theme;
+    uint64_t theme_generation;
+    pxsys_insets_t host_bar_insets;
     pxa_ui_service_t *ui;
     pxa_ui_backend_t ui_backend;
     pxa_audio_service_t *audio;
     SDL_AudioDeviceID audio_device;
+    uint8_t focused;
+    uint8_t pending_lifecycle;
     int16_t audio_queue[PRODUCT_AUDIO_QUEUE_SAMPLES];
     uint32_t audio_read;
     uint32_t audio_count;
@@ -264,6 +274,7 @@ typedef struct {
     uint32_t safe_insets[4];
     uint32_t display_shape;
     uint32_t corner_radius;
+    uint32_t corner_radii[4];
     uint16_t clock_period_ms;
     uint64_t next_clock_tick_us;
     lv_obj_t *system_back_gesture;
@@ -302,6 +313,33 @@ static lv_font_t *load_product_font(uint32_t size,
 #endif
 }
 
+static void map_host_theme(const pxsys_theme_snapshot_t *source,
+                           uint32_t rgba[PXA_UI_THEME_ROLE_COUNT]) {
+    static const pxsys_color_token_t tokens[PXA_UI_THEME_ROLE_COUNT] = {
+        PXSYS_COLOR_BACKGROUND, PXSYS_COLOR_SURFACE,
+        PXSYS_COLOR_ACCENT, PXSYS_COLOR_ON_ACCENT,
+        PXSYS_COLOR_TEXT_PRIMARY, PXSYS_COLOR_TEXT_SECONDARY,
+        PXSYS_COLOR_BORDER, PXSYS_COLOR_SUCCESS,
+        PXSYS_COLOR_WARNING, PXSYS_COLOR_ERROR,
+        PXSYS_COLOR_SURFACE_CONTAINER_LOW, PXSYS_COLOR_SURFACE_CONTAINER,
+        PXSYS_COLOR_SURFACE_CONTAINER_HIGH,
+        PXSYS_COLOR_SURFACE_CONTAINER_HIGHEST,
+        PXSYS_COLOR_SURFACE_VARIANT, PXSYS_COLOR_ON_SURFACE_VARIANT,
+        PXSYS_COLOR_PRIMARY_CONTAINER, PXSYS_COLOR_ON_PRIMARY_CONTAINER,
+        PXSYS_COLOR_SECONDARY, PXSYS_COLOR_ON_SECONDARY,
+        PXSYS_COLOR_SECONDARY_CONTAINER, PXSYS_COLOR_ON_SECONDARY_CONTAINER,
+        PXSYS_COLOR_TERTIARY, PXSYS_COLOR_ON_TERTIARY,
+        PXSYS_COLOR_TERTIARY_CONTAINER, PXSYS_COLOR_ON_TERTIARY_CONTAINER,
+        PXSYS_COLOR_OUTLINE_VARIANT, PXSYS_COLOR_ERROR_CONTAINER,
+        PXSYS_COLOR_ON_ERROR_CONTAINER, PXSYS_COLOR_INVERSE_SURFACE,
+        PXSYS_COLOR_INVERSE_ON_SURFACE, PXSYS_COLOR_INVERSE_PRIMARY,
+    };
+    for (size_t index = 0; index < PXA_UI_THEME_ROLE_COUNT; ++index) {
+        uint32_t argb = source->colors[tokens[index]];
+        rgba[index] = (argb << 8u) | (argb >> 24u);
+    }
+}
+
 /* The device port ships the primary UI environment (display size, density,
  * features) in the start configuration; echo it here so product Guests see the
  * same environment on the desktop profile instead of falling back to a
@@ -338,7 +376,7 @@ static pxa_status_t configure_start_locale(product_host_t *host,
         ui_environment_value.safe_insets[index] = host->safe_insets[index];
     ui_environment_value.display_shape = host->display_shape;
     for (size_t index = 0; index < 4; ++index)
-        ui_environment_value.corner_radii[index] = host->corner_radius;
+        ui_environment_value.corner_radii[index] = host->corner_radii[index];
     status = pxa_ui_encode_environment(&ui_environment_value, ui_environment,
                                        sizeof(ui_environment),
                                        &ui_environment_size);
@@ -706,7 +744,7 @@ static pxa_status_t surface_create(void *context, const pxa_surface_desc_t *desc
         host->surface_bitmap.header.stride = host->surface_display_stride_bytes;
         host->surface_bitmap.data_size = host->surface_display_frame_bytes;
         host->surface_bitmap.data = host->surface_display_buffer;
-        host->surface_image = lv_image_create(lv_screen_active());
+        host->surface_image = lv_image_create(host->content_parent);
         if (host->surface_image == NULL) goto failed;
         lv_image_set_src(host->surface_image, &host->surface_bitmap);
         lv_image_set_inner_align(host->surface_image, LV_IMAGE_ALIGN_TOP_LEFT);
@@ -777,7 +815,7 @@ static pxa_status_t surface_register_buffers(void *context, uint64_t surface,
     host->surface_bitmap.header.stride = host->surface_display_stride_bytes;
     host->surface_bitmap.data_size = host->surface_display_frame_bytes;
     host->surface_bitmap.data = host->surface_display_buffer;
-    host->surface_image = lv_image_create(lv_screen_active());
+    host->surface_image = lv_image_create(host->content_parent);
     if (host->surface_image == NULL) {
         free(host->surface_display_buffer);
         host->surface_display_buffer = NULL;
@@ -1337,6 +1375,67 @@ static void dispatch_component_events(product_host_t *host) {
     }
 }
 
+static void sync_host_theme(product_host_t *host, pxa_lvgl_ui_t *adapter,
+                            pxa_lvgl_ui_theme_t *adapter_theme) {
+    pxa_ui_theme_snapshot_t theme;
+    pxa_ui_environment_t environment;
+    uint8_t scheme;
+    if (host->host_theme == NULL ||
+        host->theme_generation == host->host_theme->generation ||
+        pxa_ui_get_theme(host->ui, &theme) != PXA_STATUS_OK)
+        return;
+    scheme = host->host_theme->effective_scheme == PXSYS_COLOR_SCHEME_DARK
+                 ? PXA_UI_COLOR_SCHEME_DARK : PXA_UI_COLOR_SCHEME_LIGHT;
+    map_host_theme(host->host_theme, adapter_theme->rgba);
+    if (adapter != NULL)
+        (void)pxa_lvgl_ui_set_theme(adapter, adapter_theme);
+    memcpy(theme.rgba, adapter_theme->rgba, sizeof(theme.rgba));
+    theme.color_scheme = scheme;
+    theme.generation++;
+    if (theme.generation == 0) theme.generation = 1;
+    if (pxa_ui_update_theme(host->ui, &theme) != PXA_STATUS_OK) return;
+    if (host->active_component != PXA_COMPONENT_INVALID &&
+        pxa_ui_get_environment(host->ui, host->active_component,
+                               PXA_UI_PRIMARY_SURFACE,
+                               &environment) == PXA_STATUS_OK &&
+        environment.color_scheme != scheme) {
+        environment.color_scheme = scheme;
+        (void)pxa_ui_update_environment(host->ui, host->active_component,
+                                        &environment);
+    }
+    host->theme_generation = host->host_theme->generation;
+    dispatch_component_events(host);
+}
+
+static void product_focus_changed(void *context, bool focused) {
+    product_host_t *host = context;
+    if (host == NULL || host->focused == (uint8_t)focused) return;
+    host->focused = focused ? 1u : 0u;
+    host->pending_lifecycle = host->focused;
+    if (host->audio_device != 0)
+        SDL_PauseAudioDevice(host->audio_device, !focused);
+}
+
+static void product_request_exit(void *context) {
+    product_host_t *host = context;
+    if (host != NULL) host->exit_requested = 1;
+}
+
+static void dispatch_lifecycle(product_host_t *host) {
+    uint8_t state;
+    if (host == NULL || host->pending_lifecycle > 1u ||
+        host->active_component == PXA_COMPONENT_INVALID) return;
+    state = host->pending_lifecycle;
+    if (pxa_event_post_message(host->runtime, host->active_component,
+                               PRODUCT_LIFECYCLE_SERVICE,
+                               PRODUCT_LIFECYCLE_EVENT, 0,
+                               (pxa_bytes_t){&state, sizeof(state)}, 0,
+                               UINT64_C(0x001100008005)) == PXA_STATUS_OK) {
+        host->pending_lifecycle = 2u;
+        dispatch_component_events(host);
+    }
+}
+
 /* Consume a short event/presentation chain in one UI turn. This avoids adding
  * a full simulator-loop delay between a Guest frame submission and scanout. */
 static int drain_surface_updates(product_host_t *host) {
@@ -1413,8 +1512,24 @@ static void ui_event(uint32_t surface, uint32_t node, pxa_ui_event_kind_t kind,
 
 static pxa_status_t window_apply(void *context,
                                  const pxa_window_configuration_t *config) {
-    (void)context;
-    (void)config;
+    product_host_t *host = context;
+    if (host == NULL || config == NULL) return PXA_STATUS_INVALID_ARGUMENT;
+    if (host->active_component != PXA_COMPONENT_INVALID) {
+        pxa_window_snapshot_t snapshot;
+        if (pxa_window_get_snapshot(host->window, host->active_component,
+                                    &snapshot) == PXA_STATUS_OK) {
+            snapshot.system_bar_insets.top =
+                config->status_bar_mode == PXA_WINDOW_BAR_HIDDEN
+                    ? 0u : host->host_bar_insets.top;
+            snapshot.system_bar_insets.bottom =
+                config->navigation_bar_mode == PXA_WINDOW_BAR_HIDDEN
+                    ? 0u : host->host_bar_insets.bottom;
+            (void)pxa_window_update_snapshot(host->window,
+                                              host->active_component, &snapshot);
+        }
+    }
+    if (host->window_changed != NULL)
+        host->window_changed(host->window_context, config);
     return PXA_STATUS_OK;
 }
 
@@ -1440,11 +1555,15 @@ static pxa_status_t prepare_start(void *context, pxa_component_t component,
     snapshot.pixel_height = host->height;
     snapshot.density_numerator = 1;
     snapshot.density_denominator = 1;
-    snapshot.system_bar_insets.left = host->navigation_mode == 2u ? 0u :
-                                         PRODUCT_SYSTEM_GESTURE_EDGE_WIDTH;
-    snapshot.system_bar_insets.bottom = host->navigation_mode == 1u ? 0u :
-        host->navigation_mode == 2u ? 36u : PRODUCT_SYSTEM_GESTURE_HOME_HEIGHT;
-    snapshot.focused = 1;
+    snapshot.safe_insets.left = host->safe_insets[3];
+    snapshot.safe_insets.top = host->safe_insets[0];
+    snapshot.safe_insets.right = host->safe_insets[1];
+    snapshot.safe_insets.bottom = host->safe_insets[2];
+    snapshot.system_bar_insets.left = host->host_bar_insets.left;
+    snapshot.system_bar_insets.top = host->host_bar_insets.top;
+    snapshot.system_bar_insets.right = host->host_bar_insets.right;
+    snapshot.system_bar_insets.bottom = host->host_bar_insets.bottom;
+    snapshot.focused = host->focused;
     status = pxa_window_update_snapshot(host->window, component, &snapshot);
     if (status != PXA_STATUS_OK) return status;
     host->active_component = component;
@@ -1589,7 +1708,7 @@ static pxa_status_t audio_open(void *context, uint16_t usage,
             fprintf(stderr, "PXA audio output unavailable: %s\n", SDL_GetError());
             return PXA_STATUS_INTERNAL;
         }
-        SDL_PauseAudioDevice(host->audio_device, 0);
+        SDL_PauseAudioDevice(host->audio_device, !host->focused);
     }
     format->sample_rate = 16000;
     format->channels = 1;
@@ -1994,8 +2113,15 @@ static void drain_net_completions(product_host_t *host) {
 
 static int run_product_simulator(const options_t *input,
                                  lv_display_t *embedded_display,
+                                 lv_obj_t *parent,
                                  pxsys_product_simulator_pump_fn pump,
-                                 void *pump_context) {
+                                 void *pump_context,
+                                 pxsys_product_simulator_window_fn window_changed,
+                                 void *window_context,
+                                 pxsys_product_simulator_control_bind_fn control_bind,
+                                 const pxsys_display_profile_t *host_display,
+                                 const pxsys_insets_t *host_bar_insets,
+                                 const pxsys_theme_snapshot_t *host_theme) {
     const options_t options = *input;
     product_host_t host = {0};
     pxa_package_limits_t limits;
@@ -2051,6 +2177,12 @@ static int run_product_simulator(const options_t *input,
     const char *stage = "arguments";
     const int owns_display = embedded_display == NULL;
     int result = 1;
+
+    host.window_changed = window_changed;
+    host.window_context = window_context;
+    host.host_theme = host_theme;
+    host.focused = owns_display ? 1u : 0u;
+    host.pending_lifecycle = 2u;
 
     {
         struct stat metadata;
@@ -2128,6 +2260,28 @@ static int run_product_simulator(const options_t *input,
     host.corner_radius = options.display_shape == 2u
         ? (options.width < options.height ? options.width : options.height) / 2u
         : options.corner_radius;
+    for (size_t index = 0; index < 4; ++index)
+        host.corner_radii[index] = host.corner_radius;
+    host.host_bar_insets.left = host.navigation_mode == 2u ? 0u :
+                                PRODUCT_SYSTEM_GESTURE_EDGE_WIDTH;
+    host.host_bar_insets.bottom = host.navigation_mode == 1u ? 0u :
+        host.navigation_mode == 2u ? 36u : PRODUCT_SYSTEM_GESTURE_HOME_HEIGHT;
+    if (host_display != NULL) {
+        pxsys_insets_t safe;
+        if (pxsys_display_effective_insets(host_display, &safe) ==
+            PXSYS_STATUS_OK) {
+            host.safe_insets[0] = safe.top;
+            host.safe_insets[1] = safe.right;
+            host.safe_insets[2] = safe.bottom;
+            host.safe_insets[3] = safe.left;
+        }
+        host.display_shape = host_display->shape;
+        host.corner_radii[0] = host_display->corner_radii.top_left;
+        host.corner_radii[1] = host_display->corner_radii.top_right;
+        host.corner_radii[2] = host_display->corner_radii.bottom_right;
+        host.corner_radii[3] = host_display->corner_radii.bottom_left;
+    }
+    if (host_bar_insets != NULL) host.host_bar_insets = *host_bar_insets;
     if (owns_display) {
         lv_init();
         display = lv_sdl_window_create((int32_t)options.width,
@@ -2143,6 +2297,10 @@ static int run_product_simulator(const options_t *input,
         if (display == NULL) goto done;
     }
     host.display = display;
+    host.content_parent = parent != NULL ? parent : lv_screen_active();
+    if (control_bind != NULL)
+        control_bind(window_context, product_focus_changed,
+                     product_request_exit, &host);
     pxa_runtime_limits_init(&runtime_limits); runtime_limits.max_components = PRODUCT_COMPONENTS;
     stage = "runtime";
     runtime_workspace = malloc(pxa_runtime_workspace_size(&runtime_limits));
@@ -2157,6 +2315,10 @@ static int run_product_simulator(const options_t *input,
         pxa_window_service_register(host.window) != PXA_STATUS_OK) goto done;
     pxa_ui_config_init(&ui_config);
     stage = "ui service";
+    if (host_theme != NULL)
+        ui_config.color_scheme =
+            host_theme->effective_scheme == PXSYS_COLOR_SCHEME_DARK
+                ? PXA_UI_COLOR_SCHEME_DARK : PXA_UI_COLOR_SCHEME_LIGHT;
     ui_config.allocate = allocate_memory; ui_config.release = release_memory;
     ui_config.now_us = now_us; ui_config.features = PXA_UI_FEATURE_CANVAS |
         PXA_UI_FEATURE_VIRTUAL_LIST | PXA_UI_FEATURE_GRID |
@@ -2168,7 +2330,7 @@ static int run_product_simulator(const options_t *input,
         ui_config.safe_insets[index] = host.safe_insets[index];
     ui_config.display_shape = host.display_shape;
     for (size_t index = 0; index < 4; ++index)
-        ui_config.corner_radii[index] = host.corner_radius;
+        ui_config.corner_radii[index] = host.corner_radii[index];
     ui_workspace = malloc(pxa_ui_service_workspace_size());
     if (ui_workspace == NULL || pxa_ui_service_init(ui_workspace,
         pxa_ui_service_workspace_size(), host.runtime, &ui_config, &host.ui) != PXA_STATUS_OK ||
@@ -2256,14 +2418,17 @@ static int run_product_simulator(const options_t *input,
     lvgl_config.now_us = now_us; lvgl_config.callback_user_data = &host;
     lvgl_config.asset_user_data = &host;
     lvgl_config.primary_environment.surface = PXA_UI_PRIMARY_SURFACE;
+    lvgl_config.parent_object = host.content_parent;
     lvgl_config.primary_environment.width = options.width;
     lvgl_config.primary_environment.height = options.height;
     lvgl_config.primary_environment.density_q16 = UINT32_C(1) << 16;
     lvgl_config.primary_environment.font_scale_q16 = UINT32_C(1) << 16;
     lvgl_config.primary_environment.display_shape = host.display_shape;
     for (size_t index = 0; index < 4; ++index)
-        lvgl_config.primary_environment.corner_radii[index] = host.corner_radius;
+        lvgl_config.primary_environment.corner_radii[index] = host.corner_radii[index];
     pxa_lvgl_ui_theme_init(&lvgl_config.theme);
+    if (host_theme != NULL)
+        map_host_theme(host_theme, lvgl_config.theme.rgba);
     host.caption_font = load_product_font(12, &lv_font_montserrat_14);
     host.label_font = load_product_font(14, &lv_font_montserrat_14);
     host.body_font = load_product_font(16, &lv_font_montserrat_16);
@@ -2294,6 +2459,7 @@ static int run_product_simulator(const options_t *input,
         goto done;
     /* The UI backend is bound during prepare_start. */
     host.ui_backend = ui_backend;
+    sync_host_theme(&host, lvgl_ui, &lvgl_config.theme);
     stage = "surface service";
     surface_config.struct_size = sizeof(surface_config);
     surface_config.max_surfaces = 1;
@@ -2483,6 +2649,8 @@ static int run_product_simulator(const options_t *input,
         pxsys_pxadb_control_poll(&pxadb_control);
         if (pump != NULL) pump(pump_context);
         if (host.exit_requested) break;
+        sync_host_theme(&host, lvgl_ui, &lvgl_config.theme);
+        dispatch_lifecycle(&host);
         uint32_t delay = lv_timer_handler();
         if (drain_surface_updates(&host) < 0) goto done;
         drain_net_completions(&host);
@@ -2495,6 +2663,7 @@ static int run_product_simulator(const options_t *input,
     }
     result = 0;
 done:
+    if (control_bind != NULL) control_bind(window_context, NULL, NULL, NULL);
     pxsys_pxadb_control_stop(&pxadb_control);
     if (result != 0) fprintf(stderr, "PXA product simulator failed at %s\n", stage);
     if (host.coordinator != NULL && lv_display_get_default() != NULL)
@@ -2534,9 +2703,15 @@ int pxsys_product_simulator_run_embedded(const char *package_path,
                                          const char *state_root,
                                          const char *locale,
                                          uint32_t width, uint32_t height,
-                                         lv_display_t *display,
+                                         lv_display_t *display, lv_obj_t *parent,
                                          pxsys_product_simulator_pump_fn pump,
-                                         void *pump_context) {
+                                         void *pump_context,
+                                         pxsys_product_simulator_window_fn window_changed,
+                                         void *window_context,
+                                         pxsys_product_simulator_control_bind_fn control_bind,
+                                         const pxsys_display_profile_t *host_display,
+                                         const pxsys_insets_t *host_bar_insets,
+                                         const pxsys_theme_snapshot_t *host_theme) {
     const options_t options = {
         .package_path = package_path,
         .publisher_key = publisher_key,
@@ -2545,7 +2720,9 @@ int pxsys_product_simulator_run_embedded(const char *package_path,
         .width = width,
         .height = height,
     };
-    return run_product_simulator(&options, display, pump, pump_context);
+    return run_product_simulator(&options, display, parent, pump, pump_context,
+                                 window_changed, window_context, control_bind,
+                                 host_display, host_bar_insets, host_theme);
 }
 
 #ifndef PXSYS_PRODUCT_RUNNER_LIBRARY
@@ -2555,6 +2732,7 @@ int main(int argc, char **argv) {
         print_usage(argv[0]);
         return 2;
     }
-    return run_product_simulator(&options, NULL, NULL, NULL);
+    return run_product_simulator(&options, NULL, NULL, NULL, NULL, NULL, NULL,
+                                 NULL, NULL, NULL, NULL);
 }
 #endif
