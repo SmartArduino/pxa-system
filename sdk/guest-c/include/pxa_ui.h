@@ -13,16 +13,25 @@
 #define PXA_UI_CANVAS_WRITE 8u
 #define PXA_UI_CANVAS_PRESENT 9u
 #define PXA_UI_CANVAS_STREAM_OPEN 10u
+#define PXA_UI_THEME_GET 11u
 #define PXA_UI_EVENT 0x8001u
 #define PXA_UI_ENVIRONMENT_CHANGED 0x8002u
 #define PXA_UI_RESOURCE_PRESSURE 0x8003u
 #define PXA_UI_SURFACE_READY 0x8004u
 #define PXA_UI_CANVAS_STREAM_READY 0x8005u
+#define PXA_UI_THEME_CHANGED 0x8006u
+#define PXA_UI_THEME_COLOR_COUNT 10u
+#define PXA_UI_THEME_FONT_COUNT 6u
+#define PXA_UI_THEME_WIRE_BYTES 60u
 #define PXA_UI_CONFIG_ENVIRONMENT 8u
 
 #define PXA_UI_PRIMARY_SURFACE 1u
 #define PXA_UI_COLOR_SCHEME_LIGHT 0u
 #define PXA_UI_COLOR_SCHEME_DARK 1u
+#define PXA_UI_DISPLAY_SHAPE_RECTANGLE 0u
+#define PXA_UI_DISPLAY_SHAPE_ROUNDED_RECTANGLE 1u
+#define PXA_UI_DISPLAY_SHAPE_CIRCLE 2u
+#define PXA_UI_DISPLAY_SHAPE_CUSTOM 3u
 #define PXA_UI_TRANSACTION_PATCH 1u
 #define PXA_UI_TRANSACTION_REPLACE_SUBTREE 2u
 #define PXA_UI_TRANSACTION_REPLACE_SURFACE 3u
@@ -165,6 +174,52 @@ typedef struct {
 #define PXA_UI_THEME_WARNING 8u
 #define PXA_UI_THEME_DANGER 9u
 
+typedef struct {
+    uint32_t generation;
+    uint8_t color_scheme;
+    uint32_t rgba[PXA_UI_THEME_COLOR_COUNT];
+    uint16_t typography_px[PXA_UI_THEME_FONT_COUNT];
+} pxa_ui_theme_t;
+
+static inline int pxa_ui_theme_get(uint32_t request) {
+    return request != 0 && pxa_send(PXA_SERVICE_UI, PXA_UI_THEME_GET,
+                                     request, NULL, 0);
+}
+
+static inline int pxa_ui_parse_theme_payload(const uint8_t* payload,
+                                              size_t size,
+                                              pxa_ui_theme_t* output) {
+    if (payload == NULL || output == NULL || size != PXA_UI_THEME_WIRE_BYTES ||
+        (payload[4] != PXA_UI_COLOR_SCHEME_LIGHT &&
+         payload[4] != PXA_UI_COLOR_SCHEME_DARK) ||
+        payload[5] != 0 || payload[6] != 0 || payload[7] != 0)
+        return 0;
+    output->generation = pxa_read_u32(payload);
+    output->color_scheme = payload[4];
+    if (output->generation == 0) return 0;
+    for (size_t index = 0; index < PXA_UI_THEME_COLOR_COUNT; ++index)
+        output->rgba[index] = pxa_read_u32(payload + 8u + 4u * index);
+    for (size_t index = 0; index < PXA_UI_THEME_FONT_COUNT; ++index) {
+        output->typography_px[index] = pxa_read_u16(payload + 48u + 2u * index);
+        if (output->typography_px[index] == 0) return 0;
+    }
+    return 1;
+}
+
+static inline int pxa_ui_parse_theme_event(const pxa_event_t* event,
+                                            pxa_ui_theme_t* output) {
+    if (event == NULL || event->service != PXA_SERVICE_UI) return 0;
+    if (event->opcode == PXA_UI_THEME_CHANGED && event->request_id == 0)
+        return pxa_ui_parse_theme_payload(event->payload,
+                                          event->payload_length, output);
+    if (event->opcode != PXA_UI_THEME_GET || event->request_id == 0 ||
+        event->payload == NULL || event->payload_length != 4u + PXA_UI_THEME_WIRE_BYTES ||
+        (int32_t)pxa_read_u32(event->payload) != PXA_STATUS_OK)
+        return 0;
+    return pxa_ui_parse_theme_payload(event->payload + 4u,
+                                      event->payload_length - 4u, output);
+}
+
 #define PXA_UI_EVENT_ACTION_KIND 1u
 #define PXA_UI_EVENT_VALUE_CHANGED_KIND 2u
 #define PXA_UI_EVENT_SCROLL_KIND 3u
@@ -282,6 +337,10 @@ typedef struct {
     uint32_t recommended_write_bytes;
     uint8_t color_scheme;
     uint8_t direction;
+    /* Optional display geometry record (tag 12); older Hosts default to a
+     * rectangular screen. Radii are TL, TR, BR, BL in logical pixels. */
+    uint32_t display_shape;
+    uint32_t corner_radii[4];
 } pxa_ui_environment_t;
 
 static inline void pxa_ui_write_u16(uint8_t* output, uint16_t value) {
@@ -857,6 +916,13 @@ static inline int pxa_ui_parse_environment_records(
                 if (length != 4) return 0;
                 value.recommended_write_bytes = pxa_read_u32(record);
                 break;
+            case 12:
+                if (length != 20 || (seen & UINT16_C(0x0800)) != 0) return 0;
+                value.display_shape = pxa_read_u32(record);
+                for (uint8_t index = 0; index < 4; ++index)
+                    value.corner_radii[index] = pxa_read_u32(record + 4 + index * 4);
+                seen = (uint16_t)(seen | UINT16_C(0x0800));
+                break;
             default:
                 offset += length;
                 continue;
@@ -868,7 +934,7 @@ static inline int pxa_ui_parse_environment_records(
         }
         offset += length;
     }
-    if (seen != UINT16_C(0x07ff) || value.surface == 0 ||
+    if ((seen & UINT16_C(0x07ff)) != UINT16_C(0x07ff) || value.surface == 0 ||
         value.density_q16 == 0 || value.font_scale_q16 == 0)
         return 0;
     *output = value;

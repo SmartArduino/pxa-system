@@ -5,7 +5,9 @@ if(NOT TARGET pxsys::reference_layout)
     add_subdirectory("${CMAKE_CURRENT_LIST_DIR}/.." pxa_reference_layout)
 endif()
 
-add_library(pxa_system_reference_lvgl src/reference_lvgl.c)
+add_library(pxa_system_reference_lvgl
+    src/reference_lvgl.c
+    src/reference_ime.c)
 add_library(pxsys::reference_lvgl ALIAS pxa_system_reference_lvgl)
 set_target_properties(pxa_system_reference_lvgl PROPERTIES EXPORT_NAME reference_lvgl)
 target_compile_features(pxa_system_reference_lvgl PUBLIC c_std_99)

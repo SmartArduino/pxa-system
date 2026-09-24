@@ -67,7 +67,7 @@ not the same as publishing that service ABI.
 | ID | Service | Responsibility |
 | ---: | --- | --- |
 | 1 | `core` | Lifecycle support, handles, cancellation, leases and readiness |
-| 2 | `window` | Window 0.1.0: metrics, insets, system UI and navigation |
+| 2 | `window` | Window 0.2.0: metrics, insets, system UI, navigation and toasts |
 | 3 | `ui` | Declarative UI tree, Canvas node and input events |
 | 4 | `clock` | Monotonic time, timers and animation-frame requests |
 | 5 | `fs` | Package, private, cache, temporary and granted files |
@@ -83,6 +83,7 @@ not the same as publishing that service ABI.
 | 15 | `device` | Permission-bound physical interface identifiers |
 | 16 | `surface` | Host-owned bulk-pixel BufferQueue and composition |
 | 18 | `game-render` | Persistent 2D/software-3D resources and asynchronous draw lists |
+| 20 | `store-installer` | Host-owned signed package download, confirmation and installation |
 
 Canvas is not a top-level service. It is a UI node plus a length-delimited
 display-list subprotocol, so a UI transaction can atomically create and update

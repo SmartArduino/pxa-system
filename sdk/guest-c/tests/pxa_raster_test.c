@@ -81,6 +81,19 @@ int main(void) {
     assert(pxa_read_u16(captured + PXA_RASTER_DRAW_HEADER_BYTES + 8 + 10) ==
            256);
 
+    pxa_raster_draw_list_begin(&list, draw, sizeof(draw), 10);
+    assert(pxa_raster_solid_coverage_quad(&list, vertices,
+                                          UINT16_C(0xf800)));
+    assert(pxa_raster_textured_quad_flags(
+        &list, vertices, 0, PXA_RASTER_QUAD_PAINTER |
+                              PXA_RASTER_QUAD_COVERAGE_MASK));
+    assert(pxa_raster_submit(9, &list) == (int32_t)list.length);
+    assert((pxa_read_u32(captured + 12) &
+            (PXA_RASTER_CAP_COVERAGE_MASK |
+             PXA_RASTER_CAP_PAINTER_PERSPECTIVE)) ==
+           (PXA_RASTER_CAP_COVERAGE_MASK |
+            PXA_RASTER_CAP_PAINTER_PERSPECTIVE));
+
     {
         static const int16_t xy_q4[8] = {
             -17, 17, 33, 17, 33, 49, -17, 49,

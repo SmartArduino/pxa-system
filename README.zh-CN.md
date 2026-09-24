@@ -11,7 +11,7 @@ PXA System 是面向嵌入式产品的可移植应用系统。它统一原生应
 
 ```text
 pxa-system/
-  apps/pxa/                   参考 PXA 应用与共享应用资源
+  apps/pxa/                   最小 Guest 测试应用及开发签名夹具
   cmake/                      源文件清单和 CMake 包配置
   config/                     WAMR 等集中版本元数据
   libpxa/                     平台无关的 PXA Host C99 库

@@ -5,6 +5,7 @@
 int main(void) {
     pxsys_display_profile_t display;
     pxsys_reference_layout_t layout;
+    pxsys_rect_t status_content;
 
     pxsys_display_profile_init(&display, 296, 240);
     display.shape = PXSYS_DISPLAY_SHAPE_ROUNDED_RECTANGLE;
@@ -19,11 +20,39 @@ int main(void) {
                (int32_t)display.height);
     assert(layout.content.y == 32 && layout.content.height == 166);
     assert(layout.grid_columns >= 2);
+    assert(pxsys_reference_layout_status_content_rect(
+               &display, &layout, 16, &status_content) == PXSYS_STATUS_OK);
+    assert(status_content.x == layout.safe_area.x &&
+           status_content.width == layout.safe_area.width);
+
+    display.corner_radii = (pxsys_corner_radii_t){100, 80, 0, 0};
+    assert(pxsys_reference_layout_compute(&display, &layout) == PXSYS_STATUS_OK);
+    assert(pxsys_reference_layout_status_content_rect(
+               &display, &layout, 16, &status_content) == PXSYS_STATUS_OK);
+    assert(layout.status_bar.x == 0 && layout.status_bar.width == display.width);
+    assert(status_content.x > layout.safe_area.x &&
+           status_content.x + (int32_t)status_content.width <
+               layout.safe_area.x + (int32_t)layout.safe_area.width);
+    for (int32_t row = status_content.y;
+         row < status_content.y + (int32_t)status_content.height; ++row) {
+        assert(pxsys_display_contains_point(&display, status_content.x, row));
+        assert(pxsys_display_contains_point(
+            &display, status_content.x + (int32_t)status_content.width - 1, row));
+    }
+    assert(pxsys_reference_layout_status_content_rect(
+               &display, &layout, 0, &status_content) ==
+           PXSYS_STATUS_INVALID_ARGUMENT);
 
     pxsys_display_profile_init(&display, 454, 454);
     display.shape = PXSYS_DISPLAY_SHAPE_CIRCLE;
     assert(pxsys_reference_layout_compute(&display, &layout) == PXSYS_STATUS_OK);
     assert(layout.safe_area.width < display.width);
+    assert(layout.status_bar.width == display.width);
+    assert(pxsys_reference_layout_status_content_rect(
+               &display, &layout, 16, &status_content) == PXSYS_STATUS_OK);
+    assert(status_content.x >= layout.safe_area.x &&
+           status_content.x + (int32_t)status_content.width <=
+               layout.safe_area.x + (int32_t)layout.safe_area.width);
     assert(layout.grid_columns <= 2);
 
     pxsys_display_profile_init(&display, 1280, 720);

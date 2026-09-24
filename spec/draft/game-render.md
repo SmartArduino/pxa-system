@@ -1,4 +1,4 @@
-# PXA GameRender Service 0.1.0
+# PXA GameRender Service 0.3.0
 
 GameRender is the low-overhead 2D and software-3D path. It owns persistent
 palettes and textures, validates compact draw lists, and rasterizes into
@@ -12,10 +12,21 @@ its visible layer.
 
 ## Context creation
 
-The eight-byte request is `width:u16, height:u16, buffer_count:u8, flags:u8,
+`CREATE_CONTEXT` keeps the explicit eight-byte request: `width:u16, height:u16, buffer_count:u8, flags:u8,
 reserved:u16`. The successful result after status is `handle:u32,
 capabilities:u32, max_draw_bytes:u32, max_texture_dimension:u16,
 max_textures:u8, reserved:u8`.
+
+`CREATE_AUTO_CONTEXT` uses `width` and `height` set to zero and replaces the
+first reserved byte with `requested_scale:u8`; zero asks the target board for
+its default. A nonzero request must be one of the board-declared scales.
+The board owns the supported integer scale set and its default; the generic
+service only validates the request and resolves the target. Its successful
+result extends the legacy fields with
+`display_width:u16, display_height:u16, render_width:u16, render_height:u16,
+render_scale:u8, supported_scale_mask:u8, reserved:[2]`. Guests use display
+coordinates for input and UI, and convert them to render-buffer coordinates
+through the SDK helper.
 
 `PREFER_DIRECT_SCANOUT` is advisory. A Host may still compose when trusted UI
 or system overlays are visible. The ESP profile supports one Surface or
@@ -45,7 +56,7 @@ mailbox. It never waits for rasterization, display rotation, TE, or SPI. The
 presenter rasterizes only the newest pending list and counts replaced lists as
 dropped frames.
 
-Raster ABI 1.5 supports clear, flat quad, textured depth quad, sprite, sprite
+Raster ABI 1.7 supports clear, flat quad, textured depth quad, sprite, sprite
 batch, and triangle batch records. Sprite batches share texture, blend flags,
 and optional solid color across compact 16-byte instances. Triangle batches
 share texture or solid color across screen-space 12-byte vertices; every three
@@ -73,6 +84,14 @@ depth-tested polygons. Each covered pixel combines three parts source and one
 part destination RGB565 using shifts and masks. The depth-tested form reads depth but
 does not write it, allowing back-to-front translucent surfaces without an
 alpha buffer or another full-frame allocation.
+
+Hosts advertising `COVERAGE_MASK` reuse the depth scratch as two one-bit planes
+for near-to-far opaque coverage and deferred translucent coverage. Textured
+painter quads may carry perspective UVs when `PAINTER_PERSPECTIVE` is also
+advertised; `AFFINE_UV` remains an explicit cheaper option. Starting with ABI
+1.7, `SOLID_COLOR | PAINTER | AFFINE_UV | COVERAGE_MASK` carries direct RGB565
+(rather than a palette index) so opaque billboards participate in the same
+coverage test as textured terrain.
 
 The 88-byte telemetry record reports submitted and dropped frames, draw bytes,
 covered pixels, host raster time, queue/presentation time, command counts,

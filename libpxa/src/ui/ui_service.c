@@ -4,6 +4,51 @@
 #include <limits.h>
 #include <string.h>
 
+#include "pxa/wire.h"
+
+static int service_valid(const pxa_ui_service_t *service);
+
+static void encode_theme(uint8_t payload[PXA_UI_THEME_WIRE_BYTES],
+                         const pxa_ui_theme_snapshot_t *theme) {
+    pxa_write_u32(payload, theme->generation);
+    payload[4] = theme->color_scheme;
+    memset(payload + 5, 0, 3);
+    for (size_t index = 0; index < PXA_UI_THEME_COLOR_COUNT; ++index)
+        pxa_write_u32(payload + 8u + 4u * index, theme->rgba[index]);
+    for (size_t index = 0; index < PXA_UI_THEME_FONT_COUNT; ++index)
+        pxa_write_u16(payload + 48u + 2u * index, theme->typography_px[index]);
+}
+
+pxa_status_t pxa_ui_get_theme(const pxa_ui_service_t *service,
+                              pxa_ui_theme_snapshot_t *output) {
+    if (!service_valid(service) || output == NULL)
+        return PXA_STATUS_INVALID_ARGUMENT;
+    *output = service->theme;
+    return PXA_STATUS_OK;
+}
+
+pxa_status_t pxa_ui_update_theme(pxa_ui_service_t *service,
+                                 const pxa_ui_theme_snapshot_t *theme) {
+    pxa_ui_entry_t *entry;
+    uint8_t payload[PXA_UI_THEME_WIRE_BYTES];
+    if (!service_valid(service) || theme == NULL || theme->generation == 0u ||
+        theme->color_scheme > PXA_UI_COLOR_SCHEME_DARK)
+        return PXA_STATUS_INVALID_ARGUMENT;
+    for (size_t index = 0; index < PXA_UI_THEME_FONT_COUNT; ++index)
+        if (theme->typography_px[index] == 0u)
+            return PXA_STATUS_INVALID_ARGUMENT;
+    service->theme = *theme;
+    encode_theme(payload, theme);
+    for (entry = service->entries; entry != NULL; entry = entry->next) {
+        pxa_status_t status = pxa_event_post_message(
+            service->runtime, entry->component, PXA_UI_SERVICE_ID,
+            PXA_UI_THEME_CHANGED, 0,
+            (pxa_bytes_t){payload, sizeof(payload)}, 1, 0);
+        if (status != PXA_STATUS_OK) return status;
+    }
+    return PXA_STATUS_OK;
+}
+
 static int service_valid(const pxa_ui_service_t *service) {
     return service != NULL && service->magic == PXA_UI_MAGIC;
 }
@@ -46,6 +91,22 @@ pxa_status_t pxa_ui_service_init(void *workspace, size_t workspace_size,
     memset(service, 0, sizeof(*service));
     service->runtime = runtime;
     service->config = *config;
+    service->theme.generation = 1u;
+    service->theme.color_scheme = config->color_scheme;
+    {
+        static const uint32_t colors[PXA_UI_THEME_COLOR_COUNT] = {
+            UINT32_C(0x0b1018ff), UINT32_C(0x17212cff),
+            UINT32_C(0x23a7d9ff), UINT32_C(0xffffffff),
+            UINT32_C(0xf1f5f9ff), UINT32_C(0x91a4b7ff),
+            UINT32_C(0x34475aff), UINT32_C(0x34c785ff),
+            UINT32_C(0xf5bd4fff), UINT32_C(0xef5d67ff)
+        };
+        static const uint16_t sizes[PXA_UI_THEME_FONT_COUNT] = {
+            12u, 14u, 16u, 20u, 24u, 28u
+        };
+        memcpy(service->theme.rgba, colors, sizeof(colors));
+        memcpy(service->theme.typography_px, sizes, sizeof(sizes));
+    }
     service->magic = PXA_UI_MAGIC;
     *output = service;
     return PXA_STATUS_OK;
@@ -200,6 +261,18 @@ static pxa_status_t ui_control(void *context, pxa_runtime_t *runtime,
             return pxa_ui_surface_open(service, entry, message);
         case PXA_UI_SURFACE_CLOSE:
             return pxa_ui_surface_close(service, entry, message);
+        case PXA_UI_THEME_GET: {
+            uint8_t payload[PXA_UI_THEME_WIRE_BYTES];
+            pxa_status_t status;
+            if (message->request_id == 0 || message->payload.size != 0)
+                return PXA_STATUS_INVALID_ARGUMENT;
+            encode_theme(payload, &service->theme);
+            status = pxa_request_begin(runtime, component, message->request_id,
+                                       PXA_UI_SERVICE_ID, PXA_UI_THEME_GET, 0);
+            if (status != PXA_STATUS_OK) return status;
+            return pxa_request_complete(runtime, component, message->request_id,
+                                        PXA_STATUS_OK, payload, sizeof(payload));
+        }
         default:
             return PXA_STATUS_UNSUPPORTED;
     }
@@ -262,6 +335,10 @@ pxa_status_t pxa_ui_bind(pxa_ui_service_t *service,
     for (uint8_t index = 0; index < 4; ++index)
         entry->primary.environment.safe_insets[index] =
             service->config.safe_insets[index];
+    entry->primary.environment.display_shape = service->config.display_shape;
+    for (uint8_t index = 0; index < 4; ++index)
+        entry->primary.environment.corner_radii[index] =
+            service->config.corner_radii[index];
     entry->surfaces = &entry->primary;
     entry->next_surface = PXA_UI_PRIMARY_SURFACE;
     entry->surface_count = 1;

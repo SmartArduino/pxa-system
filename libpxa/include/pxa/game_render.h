@@ -13,10 +13,30 @@ extern "C" {
 
 #define PXA_GAME_RENDER_SERVICE_ID UINT16_C(18)
 #define PXA_GAME_RENDER_SERVICE_MAJOR UINT16_C(0)
-#define PXA_GAME_RENDER_SERVICE_MINOR UINT16_C(2)
+#define PXA_GAME_RENDER_SERVICE_MINOR UINT16_C(3)
 #define PXA_GAME_RENDER_SERVICE_PATCH UINT16_C(0)
 
 #define PXA_GAME_RENDER_CREATE_CONTEXT UINT16_C(1)
+#define PXA_GAME_RENDER_CREATE_AUTO_CONTEXT UINT16_C(2)
+
+#define PXA_GAME_RENDER_MAX_SCALE UINT8_C(4)
+#define PXA_GAME_RENDER_SCALE_1X UINT8_C(1)
+#define PXA_GAME_RENDER_SCALE_2X UINT8_C(2)
+#define PXA_GAME_RENDER_SCALE_3X UINT8_C(3)
+#define PXA_GAME_RENDER_SCALE_4X UINT8_C(4)
+#define PXA_GAME_RENDER_SCALE_MASK(scale) \
+    ((uint8_t)(UINT8_C(1) << ((uint8_t)(scale) - UINT8_C(1))))
+#define PXA_GAME_RENDER_SCALE_MASK_1X \
+    PXA_GAME_RENDER_SCALE_MASK(PXA_GAME_RENDER_SCALE_1X)
+#define PXA_GAME_RENDER_SCALE_MASK_2X \
+    PXA_GAME_RENDER_SCALE_MASK(PXA_GAME_RENDER_SCALE_2X)
+#define PXA_GAME_RENDER_SCALE_MASK_3X \
+    PXA_GAME_RENDER_SCALE_MASK(PXA_GAME_RENDER_SCALE_3X)
+#define PXA_GAME_RENDER_SCALE_MASK_4X \
+    PXA_GAME_RENDER_SCALE_MASK(PXA_GAME_RENDER_SCALE_4X)
+#define PXA_GAME_RENDER_KNOWN_SCALE_MASK \
+    (PXA_GAME_RENDER_SCALE_MASK_1X | PXA_GAME_RENDER_SCALE_MASK_2X | \
+     PXA_GAME_RENDER_SCALE_MASK_3X | PXA_GAME_RENDER_SCALE_MASK_4X)
 
 #define PXA_GAME_RENDER_FLAG_PREFER_DIRECT_SCANOUT UINT8_C(1)
 #define PXA_GAME_RENDER_FLAG_KNOWN_MASK \
@@ -33,6 +53,27 @@ typedef struct {
     uint8_t buffer_count;
     uint8_t flags;
 } pxa_game_render_desc_t;
+
+/* A target profile is supplied by the target board. The service uses it only
+ * to negotiate and validate an integer render scale for the current display. */
+typedef struct {
+    uint16_t display_width;
+    uint16_t display_height;
+    uint8_t supported_scale_mask;
+    uint8_t default_scale;
+} pxa_game_render_target_profile_t;
+
+/* A resolved target keeps panel dimensions, render resolution and input
+ * coordinates in one contract. `render_scale` is an integer enlargement from
+ * the render buffer to the display. */
+typedef struct {
+    uint16_t display_width;
+    uint16_t display_height;
+    uint16_t render_width;
+    uint16_t render_height;
+    uint8_t render_scale;
+    uint8_t supported_scale_mask;
+} pxa_game_render_target_t;
 
 typedef pxa_status_t (*pxa_game_render_create_fn)(
     void *context, const pxa_game_render_desc_t *desc,
@@ -70,6 +111,9 @@ typedef struct {
     uint8_t min_buffer_count;
     uint8_t max_buffer_count;
     uint8_t reserved[2];
+    /* Optional board-owned profile for CREATE_AUTO_CONTEXT. A zero display
+     * dimension disables the optional opcode without affecting legacy create. */
+    pxa_game_render_target_profile_t auto_target_profile;
     pxa_game_render_backend_t backend;
 } pxa_game_render_config_t;
 

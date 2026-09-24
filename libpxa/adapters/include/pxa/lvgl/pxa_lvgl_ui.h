@@ -28,8 +28,11 @@ typedef uint64_t (*pxa_lvgl_ui_now_us_fn)(void *user_data);
 typedef struct {
     uint32_t rgba[32];
     const void *caption_font;
+    const void *label_font;
     const void *body_font;
     const void *title_font;
+    const void *headline_font;
+    const void *display_font;
     const void *icon_font;
 } pxa_lvgl_ui_theme_t;
 

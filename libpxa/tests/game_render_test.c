@@ -12,16 +12,22 @@ typedef struct {
     unsigned submits;
     unsigned queries;
     unsigned closes;
+    uint16_t last_width;
+    uint16_t last_height;
 } backend_t;
 
 static pxa_status_t backend_create(
     void *context, const pxa_game_render_desc_t *desc,
     uint64_t *provider_context, uint32_t *capabilities) {
     backend_t *backend = context;
-    assert(desc->width == 800 && desc->height == 480);
+    assert((desc->width == 800 && desc->height == 480) ||
+           (desc->width == 800 && desc->height == 600) ||
+           (desc->width == 400 && desc->height == 300));
     assert(desc->buffer_count == 3);
     assert(desc->flags == PXA_GAME_RENDER_FLAG_PREFER_DIRECT_SCANOUT);
     ++backend->creates;
+    backend->last_width = desc->width;
+    backend->last_height = desc->height;
     *provider_context = UINT64_C(0x1234);
     *capabilities = PXA_RASTER_CAP_TEXTURED_QUAD |
                     PXA_RASTER_CAP_SPRITE_BATCH |
@@ -78,6 +84,19 @@ static size_t make_create(uint8_t *packet, size_t capacity) {
     return writer.size;
 }
 
+static size_t make_auto_create(uint8_t *packet, size_t capacity,
+                               uint8_t requested_scale) {
+    uint8_t payload[8] = {0, 0, 0, 0, 3,
+                          PXA_GAME_RENDER_FLAG_PREFER_DIRECT_SCANOUT, 0, 0};
+    pxa_writer_t writer;
+    payload[6] = requested_scale;
+    pxa_writer_init(&writer, packet, capacity);
+    assert(pxa_writer_message(&writer, PXA_GAME_RENDER_SERVICE_ID,
+                              PXA_GAME_RENDER_CREATE_AUTO_CONTEXT, 8, payload,
+                              sizeof(payload)) == PXA_STATUS_OK);
+    return writer.size;
+}
+
 int main(void) {
     pxa_runtime_limits_t limits;
     pxa_runtime_t *runtime = NULL;
@@ -117,6 +136,11 @@ int main(void) {
     config.max_contexts_per_component = 1;
     config.min_buffer_count = 2;
     config.max_buffer_count = 3;
+    config.auto_target_profile.display_width = 800;
+    config.auto_target_profile.display_height = 600;
+    config.auto_target_profile.supported_scale_mask =
+        PXA_GAME_RENDER_SCALE_MASK_1X | PXA_GAME_RENDER_SCALE_MASK_2X;
+    config.auto_target_profile.default_scale = 2;
     config.backend.struct_size = sizeof(config.backend);
     config.backend.context = &backend;
     config.backend.create = backend_create;
@@ -167,8 +191,68 @@ int main(void) {
            pxa_read_u64(io + 96) == 9);
     assert(pxa_handle_close(runtime, component, handle) == PXA_STATUS_OK);
     assert(pxa_component_finish_event(runtime, component, 1) == PXA_STATUS_OK);
-    assert(backend.creates == 1 && backend.uploads == 1 &&
-           backend.submits == 1 && backend.queries == 1 && backend.closes == 1);
+
+    assert(pxa_component_begin_event(runtime, component) == PXA_STATUS_OK);
+    assert(pxa_runtime_control(runtime, component, packet,
+                               make_auto_create(packet, sizeof(packet), 0)) ==
+           PXA_STATUS_OK);
+    assert(pxa_component_finish_event(runtime, component, 1) == PXA_STATUS_OK);
+    assert(pxa_event_peek(runtime, component, &view) == PXA_STATUS_OK);
+    assert(pxa_event_read(runtime, view.token, 0, event_bytes,
+                          sizeof(event_bytes), &event_size) == PXA_STATUS_OK);
+    assert(pxa_message_decode(event_bytes, event_size, PXA_MAX_CONTROL_MESSAGE,
+                              &event) == PXA_STATUS_OK);
+    assert(event.opcode == PXA_GAME_RENDER_CREATE_AUTO_CONTEXT);
+    assert((int32_t)pxa_read_u32(event.payload.data) == PXA_STATUS_OK);
+    assert(event.payload.size == 32 && pxa_read_u16(event.payload.data + 20) == 800 &&
+           pxa_read_u16(event.payload.data + 22) == 600 &&
+           pxa_read_u16(event.payload.data + 24) == 400 &&
+           pxa_read_u16(event.payload.data + 26) == 300 &&
+           event.payload.data[28] == 2 &&
+           event.payload.data[29] ==
+               (PXA_GAME_RENDER_SCALE_MASK_1X |
+                PXA_GAME_RENDER_SCALE_MASK_2X));
+    handle = pxa_read_u32(event.payload.data + 4);
+    assert(backend.last_width == 400 && backend.last_height == 300);
+    assert(pxa_event_consume(runtime, component, view.token) == PXA_STATUS_OK);
+    assert(pxa_component_begin_event(runtime, component) == PXA_STATUS_OK);
+    assert(pxa_handle_close(runtime, component, handle) == PXA_STATUS_OK);
+    assert(pxa_component_finish_event(runtime, component, 1) == PXA_STATUS_OK);
+
+    assert(pxa_component_begin_event(runtime, component) == PXA_STATUS_OK);
+    assert(pxa_runtime_control(runtime, component, packet,
+                               make_auto_create(packet, sizeof(packet), 1)) ==
+           PXA_STATUS_OK);
+    assert(pxa_component_finish_event(runtime, component, 1) == PXA_STATUS_OK);
+    assert(pxa_event_peek(runtime, component, &view) == PXA_STATUS_OK);
+    assert(pxa_event_read(runtime, view.token, 0, event_bytes,
+                          sizeof(event_bytes), &event_size) == PXA_STATUS_OK);
+    assert(pxa_message_decode(event_bytes, event_size, PXA_MAX_CONTROL_MESSAGE,
+                              &event) == PXA_STATUS_OK);
+    assert((int32_t)pxa_read_u32(event.payload.data) == PXA_STATUS_OK);
+    assert(pxa_read_u16(event.payload.data + 24) == 800 &&
+           pxa_read_u16(event.payload.data + 26) == 600 &&
+           event.payload.data[28] == 1);
+    assert(backend.last_width == 800 && backend.last_height == 600);
+    handle = pxa_read_u32(event.payload.data + 4);
+    assert(pxa_handle_close(runtime, component, handle) == PXA_STATUS_OK);
+    assert(pxa_event_consume(runtime, component, view.token) == PXA_STATUS_OK);
+
+    assert(pxa_component_begin_event(runtime, component) == PXA_STATUS_OK);
+    assert(pxa_runtime_control(runtime, component, packet,
+                               make_auto_create(packet, sizeof(packet), 3)) ==
+           PXA_STATUS_OK);
+    assert(pxa_component_finish_event(runtime, component, 1) == PXA_STATUS_OK);
+    assert(pxa_event_peek(runtime, component, &view) == PXA_STATUS_OK);
+    assert(pxa_event_read(runtime, view.token, 0, event_bytes,
+                          sizeof(event_bytes), &event_size) == PXA_STATUS_OK);
+    assert(pxa_message_decode(event_bytes, event_size, PXA_MAX_CONTROL_MESSAGE,
+                              &event) == PXA_STATUS_OK);
+    assert((int32_t)pxa_read_u32(event.payload.data) ==
+           PXA_STATUS_UNSUPPORTED);
+    assert(pxa_event_consume(runtime, component, view.token) == PXA_STATUS_OK);
+    assert(backend.creates == 3 && backend.uploads == 1 &&
+           backend.submits == 1 && backend.queries == 1 && backend.closes == 3);
 
     pxa_runtime_deinit(runtime);
     free(service_workspace);

@@ -1,0 +1,11 @@
+{
+  "format": "pxa-package-source-0.1",
+  "min_sdk": [0, 1],
+  "target_sdk": [0, 1],
+  "compile_sdk": [0, 1],
+  "id": "pxa-hello",
+  "version": "0.1.0",
+  "name": "Hello PXA",
+  "description": "Minimal localized Guest UI smoke-test application",
+  "services": ["ui"]
+}

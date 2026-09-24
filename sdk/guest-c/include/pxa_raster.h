@@ -7,7 +7,7 @@
 #include "pxa_game_render.h"
 
 #define PXA_RASTER_ABI_MAJOR UINT16_C(1)
-#define PXA_RASTER_ABI_MINOR UINT16_C(6)
+#define PXA_RASTER_ABI_MINOR UINT16_C(7)
 #define PXA_RASTER_DRAW_MAGIC UINT32_C(0x4c525850)
 #define PXA_RASTER_UPLOAD_MAGIC UINT32_C(0x52555850)
 #define PXA_RASTER_MAX_TEXTURES UINT8_C(48)
@@ -34,6 +34,10 @@
  * (antialiasing over any background). */
 #define PXA_RASTER_CAP_SPRITE_PALETTE_RAMP UINT32_C(4096)
 #define PXA_RASTER_CAP_SPRITE_TEXEL_ALPHA UINT32_C(8192)
+/* The Host interpolates painter polygon UV perspective-correctly from the
+ * per-vertex depth, so faces need no subdivision to stay undistorted. */
+#define PXA_RASTER_CAP_PAINTER_PERSPECTIVE UINT32_C(16384)
+#define PXA_RASTER_CAP_PAINTER_DEPTH UINT32_C(32768)
 #define PXA_RASTER_UPLOAD_PALETTE_RGB565 UINT8_C(1)
 #define PXA_RASTER_UPLOAD_TEXTURE_INDEX8 UINT8_C(2)
 #define PXA_RASTER_UPLOAD_LIT_PALETTE_RGB565 UINT8_C(3)
@@ -312,18 +316,15 @@ static inline int pxa_raster_textured_quad_flags(
                    PXA_RASTER_QUAD_COVERAGE_MASK |
                    PXA_RASTER_QUAD_COVERAGE_RESOLVE)) != 0 ||
         ((flags & PXA_RASTER_QUAD_COVERAGE_MASK) != 0 &&
-         (flags & (PXA_RASTER_QUAD_PAINTER |
-                   PXA_RASTER_QUAD_AFFINE_UV)) !=
-             (PXA_RASTER_QUAD_PAINTER |
-              PXA_RASTER_QUAD_AFFINE_UV)) ||
+         (flags & PXA_RASTER_QUAD_PAINTER) == 0) ||
         ((flags & PXA_RASTER_QUAD_COVERAGE_RESOLVE) != 0 &&
          (flags & (PXA_RASTER_QUAD_COVERAGE_MASK |
                    PXA_RASTER_QUAD_BLEND_75)) !=
              (PXA_RASTER_QUAD_COVERAGE_MASK |
               PXA_RASTER_QUAD_BLEND_75)) ||
         ((flags & PXA_RASTER_QUAD_LIT_PALETTE) != 0 &&
-         (flags & (PXA_RASTER_QUAD_PAINTER |
-                   PXA_RASTER_QUAD_SOLID_COLOR)) != 0))
+         (flags & PXA_RASTER_QUAD_SOLID_COLOR) != 0 &&
+         (flags & PXA_RASTER_QUAD_PAINTER) == 0))
         return 0;
     record = pxa_raster_append(list, PXA_RASTER_RECORD_TEXTURED_QUAD,
                                PXA_RASTER_TEXTURED_QUAD_BYTES);
@@ -350,6 +351,10 @@ static inline int pxa_raster_textured_quad_flags(
         list->required_capabilities |= PXA_RASTER_CAP_PAINTER_POLYGON;
     if ((flags & PXA_RASTER_QUAD_LIT_PALETTE) != 0)
         list->required_capabilities |= PXA_RASTER_CAP_LIT_PALETTE_DEPTH;
+    if ((flags & (PXA_RASTER_QUAD_LIT_PALETTE |
+                  PXA_RASTER_QUAD_PAINTER)) ==
+        (PXA_RASTER_QUAD_LIT_PALETTE | PXA_RASTER_QUAD_PAINTER))
+        list->required_capabilities |= PXA_RASTER_CAP_PAINTER_DEPTH;
     if ((flags & PXA_RASTER_QUAD_TRANSPARENT_INDEX0) != 0 &&
         (flags & PXA_RASTER_QUAD_PAINTER) == 0)
         list->required_capabilities |= PXA_RASTER_CAP_DEPTH_CUTOUT;
@@ -357,6 +362,10 @@ static inline int pxa_raster_textured_quad_flags(
         list->required_capabilities |= PXA_RASTER_CAP_FIXED_ALPHA_BLEND;
     if ((flags & PXA_RASTER_QUAD_COVERAGE_MASK) != 0)
         list->required_capabilities |= PXA_RASTER_CAP_COVERAGE_MASK;
+    if ((flags & (PXA_RASTER_QUAD_COVERAGE_MASK |
+                  PXA_RASTER_QUAD_AFFINE_UV)) ==
+        PXA_RASTER_QUAD_COVERAGE_MASK)
+        list->required_capabilities |= PXA_RASTER_CAP_PAINTER_PERSPECTIVE;
     return 1;
 }
 
@@ -391,6 +400,31 @@ static inline int pxa_raster_solid_depth_quad(
         pxa_game_render_store_u16(wire + 10, vertices[index].depth_q8);
     }
     list->required_capabilities |= PXA_RASTER_CAP_TEXTURED_QUAD;
+    return 1;
+}
+
+static inline int pxa_raster_solid_coverage_quad(
+    pxa_raster_draw_list_t *list, const pxa_raster_vertex_t vertices[4],
+    uint16_t color) {
+    if (!pxa_raster_solid_depth_quad(list, vertices, color)) return 0;
+    list->bytes[list->length - PXA_RASTER_TEXTURED_QUAD_BYTES + 1] |=
+        PXA_RASTER_QUAD_PAINTER | PXA_RASTER_QUAD_AFFINE_UV |
+        PXA_RASTER_QUAD_COVERAGE_MASK;
+    list->required_capabilities |= PXA_RASTER_CAP_PAINTER_POLYGON |
+                                   PXA_RASTER_CAP_AFFINE_UV |
+                                   PXA_RASTER_CAP_COVERAGE_MASK;
+    return 1;
+}
+
+static inline int pxa_raster_solid_painter_depth_quad(
+    pxa_raster_draw_list_t *list, const pxa_raster_vertex_t vertices[4],
+    uint16_t color) {
+    if (!pxa_raster_solid_depth_quad(list, vertices, color)) return 0;
+    list->bytes[list->length - PXA_RASTER_TEXTURED_QUAD_BYTES + 1] |=
+        PXA_RASTER_QUAD_PAINTER | PXA_RASTER_QUAD_LIT_PALETTE;
+    list->required_capabilities |= PXA_RASTER_CAP_PAINTER_POLYGON |
+                                   PXA_RASTER_CAP_LIT_PALETTE_DEPTH |
+                                   PXA_RASTER_CAP_PAINTER_DEPTH;
     return 1;
 }
 

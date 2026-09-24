@@ -13,7 +13,7 @@ extern "C" {
 
 #define PXA_UI_SERVICE_ID UINT16_C(3)
 #define PXA_UI_SERVICE_MAJOR UINT16_C(0)
-#define PXA_UI_SERVICE_MINOR UINT16_C(3)
+#define PXA_UI_SERVICE_MINOR UINT16_C(4)
 #define PXA_UI_SERVICE_PATCH UINT16_C(0)
 
 #define PXA_UI_TX_BEGIN UINT16_C(1)
@@ -26,16 +26,37 @@ extern "C" {
 #define PXA_UI_CANVAS_WRITE UINT16_C(8)
 #define PXA_UI_CANVAS_PRESENT UINT16_C(9)
 #define PXA_UI_CANVAS_STREAM_OPEN UINT16_C(10)
+#define PXA_UI_THEME_GET UINT16_C(11)
 #define PXA_UI_EVENT UINT16_C(0x8001)
 #define PXA_UI_ENVIRONMENT_CHANGED UINT16_C(0x8002)
 #define PXA_UI_RESOURCE_PRESSURE UINT16_C(0x8003)
 #define PXA_UI_SURFACE_READY UINT16_C(0x8004)
 #define PXA_UI_CANVAS_STREAM_READY UINT16_C(0x8005)
+#define PXA_UI_THEME_CHANGED UINT16_C(0x8006)
+
+#define PXA_UI_THEME_COLOR_COUNT 10u
+#define PXA_UI_THEME_FONT_COUNT 6u
+#define PXA_UI_THEME_WIRE_BYTES 60u
+
+#define PXA_UI_THEME_BACKGROUND 0u
+#define PXA_UI_THEME_SURFACE 1u
+#define PXA_UI_THEME_PRIMARY 2u
+#define PXA_UI_THEME_ON_PRIMARY 3u
+#define PXA_UI_THEME_TEXT 4u
+#define PXA_UI_THEME_MUTED 5u
+#define PXA_UI_THEME_BORDER 6u
+#define PXA_UI_THEME_SUCCESS 7u
+#define PXA_UI_THEME_WARNING 8u
+#define PXA_UI_THEME_DANGER 9u
 
 /* Core startup-configuration record containing UI environment records. */
 #define PXA_UI_CONFIG_ENVIRONMENT UINT16_C(8)
 
 #define PXA_UI_PRIMARY_SURFACE UINT32_C(1)
+#define PXA_UI_DISPLAY_SHAPE_RECTANGLE UINT32_C(0)
+#define PXA_UI_DISPLAY_SHAPE_ROUNDED_RECTANGLE UINT32_C(1)
+#define PXA_UI_DISPLAY_SHAPE_CIRCLE UINT32_C(2)
+#define PXA_UI_DISPLAY_SHAPE_CUSTOM UINT32_C(3)
 
 typedef uint8_t pxa_ui_color_scheme_t;
 #define PXA_UI_COLOR_SCHEME_LIGHT ((pxa_ui_color_scheme_t)0)
@@ -266,7 +287,18 @@ typedef struct {
     uint32_t recommended_write_bytes;
     uint8_t color_scheme;
     uint8_t direction;
+    /* Physical display shape: rectangle=0, rounded rectangle=1, circle=2,
+     * custom=3. Corner radii are logical pixels, TL, TR, BR, BL. */
+    uint32_t display_shape;
+    uint32_t corner_radii[4];
 } pxa_ui_environment_t;
+
+typedef struct {
+    uint32_t generation;
+    uint8_t color_scheme;
+    uint32_t rgba[PXA_UI_THEME_COLOR_COUNT];
+    uint16_t typography_px[PXA_UI_THEME_FONT_COUNT];
+} pxa_ui_theme_snapshot_t;
 
 typedef void *(*pxa_ui_allocate_fn)(void *context, size_t size);
 typedef void (*pxa_ui_release_fn)(void *context, void *memory);
@@ -293,6 +325,8 @@ typedef struct {
      * display metrics before a component binds should pass them here so the
      * Guest start configuration already carries the correct environment. */
     uint32_t safe_insets[4];
+    uint32_t display_shape;
+    uint32_t corner_radii[4];
 } pxa_ui_config_t;
 
 typedef struct {
@@ -423,6 +457,10 @@ pxa_status_t pxa_ui_get_environment(
 pxa_status_t pxa_ui_update_environment(
     pxa_ui_service_t *service, pxa_component_t component,
     const pxa_ui_environment_t *environment);
+pxa_status_t pxa_ui_get_theme(const pxa_ui_service_t *service,
+                              pxa_ui_theme_snapshot_t *output);
+pxa_status_t pxa_ui_update_theme(pxa_ui_service_t *service,
+                                 const pxa_ui_theme_snapshot_t *theme);
 pxa_status_t pxa_ui_encode_environment(
     const pxa_ui_environment_t *environment, void *buffer, size_t capacity,
     size_t *encoded_size);

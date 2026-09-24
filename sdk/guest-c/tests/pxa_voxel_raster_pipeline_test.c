@@ -28,14 +28,23 @@ static uint32_t sky_band_count;
 static uint32_t sun_count;
 static uint32_t cloud_count;
 static uint32_t painter_command_count;
+static uint32_t painter_cutout_command_count;
+static uint32_t painter_blend_command_count;
 static uint32_t depth_command_count;
 static uint32_t depth_cutout_command_count;
 static uint32_t depth_blend_command_count;
+static uint32_t coverage_command_count;
+static uint32_t coverage_resolve_command_count;
+static uint32_t coverage_solid_command_count;
+static uint32_t coverage_perspective_command_count;
+static uint32_t painter_depth_command_count;
 static uint8_t painter_after_depth;
 static uint8_t depth_blend_seen;
 static uint8_t opaque_after_depth_blend;
 static uint16_t first_sky_color;
 static uint8_t sky_colors_differ;
+static uint32_t outline_commands;
+static uint8_t outline_out_of_bounds;
 
 int32_t pxa_control(const uint8_t *data, uint32_t length) {
     (void)data;
@@ -55,9 +64,16 @@ int32_t pxa_io(uint32_t handle, uint32_t operation, uint8_t *data,
         sun_count = 0;
         cloud_count = 0;
         painter_command_count = 0;
+        painter_cutout_command_count = 0;
+        painter_blend_command_count = 0;
         depth_command_count = 0;
         depth_cutout_command_count = 0;
         depth_blend_command_count = 0;
+        coverage_command_count = 0;
+        coverage_resolve_command_count = 0;
+        coverage_solid_command_count = 0;
+        coverage_perspective_command_count = 0;
+        painter_depth_command_count = 0;
         painter_after_depth = 0;
         depth_blend_seen = 0;
         opaque_after_depth_blend = 0;
@@ -68,6 +84,18 @@ int32_t pxa_io(uint32_t handle, uint32_t operation, uint8_t *data,
                    offset + size <= length);
             if (data[offset] == PXA_RASTER_RECORD_FLAT_QUAD) {
                 const uint16_t color = pxa_read_u16(data + offset + 4);
+                if (color == 0) {
+                    ++outline_commands;
+                    for (uint8_t corner = 0; corner < 4; ++corner) {
+                        const int16_t vertex_x = (int16_t)pxa_read_u16(
+                            data + offset + 8 + corner * 4u);
+                        const int16_t vertex_y = (int16_t)pxa_read_u16(
+                            data + offset + 10 + corner * 4u);
+                        if (vertex_x < -16 || vertex_x > 149 * 16 ||
+                            vertex_y < -16 || vertex_y > 121 * 16)
+                            outline_out_of_bounds = 1;
+                    }
+                }
                 if (sky_band_count == 0) first_sky_color = color;
                 else if (color != first_sky_color) sky_colors_differ = 1;
                 ++sky_band_count;
@@ -75,8 +103,29 @@ int32_t pxa_io(uint32_t handle, uint32_t operation, uint8_t *data,
                 if (color == UINT16_C(0xf7de)) ++cloud_count;
             } else if (data[offset] == PXA_RASTER_RECORD_TEXTURED_QUAD) {
                 if ((data[offset + 1] & PXA_RASTER_QUAD_PAINTER) != 0) {
+                    if ((data[offset + 1] &
+                         PXA_RASTER_QUAD_LIT_PALETTE) != 0)
+                        ++painter_depth_command_count;
                     if (depth_command_count != 0) painter_after_depth = 1;
                     ++painter_command_count;
+                    if ((data[offset + 1] &
+                         PXA_RASTER_QUAD_TRANSPARENT_INDEX0) != 0)
+                        ++painter_cutout_command_count;
+                    if ((data[offset + 1] & PXA_RASTER_QUAD_BLEND_75) != 0)
+                        ++painter_blend_command_count;
+                    if ((data[offset + 1] &
+                         PXA_RASTER_QUAD_COVERAGE_MASK) != 0) {
+                        ++coverage_command_count;
+                        if ((data[offset + 1] &
+                             PXA_RASTER_QUAD_SOLID_COLOR) != 0)
+                            ++coverage_solid_command_count;
+                        if ((data[offset + 1] &
+                             PXA_RASTER_QUAD_AFFINE_UV) == 0)
+                            ++coverage_perspective_command_count;
+                    }
+                    if ((data[offset + 1] &
+                         PXA_RASTER_QUAD_COVERAGE_RESOLVE) != 0)
+                        ++coverage_resolve_command_count;
                 } else {
                     ++depth_command_count;
                     if ((data[offset + 1] &
@@ -172,8 +221,8 @@ int main(void) {
      * greedy face per side; a 16x4 slab produces at most 24 8x8 faces. */
     assert(stats.cached_quads <= 24);
     assert(stats.candidate_quads != 0 && stats.submitted_quads != 0);
-    assert(stats.painter_quads != 0 && stats.depth_quads != 0);
-    assert(painter_command_count != 0 && depth_command_count != 0);
+    assert(stats.painter_quads != 0 && stats.depth_quads == 0);
+    assert(painter_command_count != 0 && depth_command_count == 0);
     assert(!painter_after_depth);
     assert(stats.submitted_quads < CHUNK_SIZE * CHUNK_SIZE);
     assert(submitted_commands > stats.submitted_quads &&
@@ -205,9 +254,9 @@ int main(void) {
     assert(stats.clipped_quads != 0);
     assert(stats.candidate_quads != 0 && stats.submitted_quads != 0);
 
-    /* A large greedy surface wholly beyond the hybrid cutoff is subdivided
-     * only for painter ordering. The fixed cap bounds projection and command
-     * growth while reducing the depth interval represented by one sort key. */
+    /* Large greedy surfaces are subdivided for painter ordering. The fixed
+     * cap bounds projection and command growth while reducing the depth
+     * interval represented by one sort key. */
     player.x = 8.0F;
     player.y = 6.0F;
     player.z = -10.0F;
@@ -229,13 +278,106 @@ int main(void) {
     player.pitch = -0.2F;
     assert(voxel_raster_render(3, 5, &player, QUALITY_BALANCED, &hud, NULL,
                                NULL) > 0);
-    assert(depth_cutout_command_count != 0);
+    assert(painter_cutout_command_count != 0);
+    assert(depth_cutout_command_count == 0);
     chunks[3 * GRID_W + 3]
         .blocks[(4 << 8) | (5 << CHUNK_BITS) | 8] = BLOCK_WATER;
     ++chunks[3 * GRID_W + 3].revision;
     assert(voxel_raster_render(3, 6, &player, QUALITY_BALANCED, &hud, NULL,
                                NULL) > 0);
-    assert(depth_blend_command_count != 0);
+    assert(painter_blend_command_count != 0);
+    assert(depth_blend_command_count == 0);
     assert(!opaque_after_depth_blend);
+    voxel_raster_set_capabilities(PXA_RASTER_CAP_FLAT_QUAD |
+                                  PXA_RASTER_CAP_TEXTURED_QUAD |
+                                  PXA_RASTER_CAP_AFFINE_UV |
+                                  PXA_RASTER_CAP_PAINTER_POLYGON |
+                                  PXA_RASTER_CAP_LIT_PALETTE_DEPTH |
+                                  PXA_RASTER_CAP_DEPTH_CUTOUT |
+                                  PXA_RASTER_CAP_FIXED_ALPHA_BLEND |
+                                  PXA_RASTER_CAP_COVERAGE_MASK |
+                                  PXA_RASTER_CAP_PAINTER_PERSPECTIVE);
+    g_mobs[0].x = 8.0F;
+    g_mobs[0].y = 5.0F;
+    g_mobs[0].z = 8.0F;
+    g_mobs[0].alive = 1;
+    assert(voxel_raster_render(3, 7, &player, QUALITY_BALANCED, &hud, NULL,
+                               NULL) > 0);
+    assert(coverage_command_count != 0);
+    assert(coverage_resolve_command_count != 0);
+    assert(coverage_solid_command_count != 0);
+    assert(coverage_perspective_command_count != 0);
+    assert(depth_command_count == 0);
+    voxel_raster_get_stats(&stats);
+    assert(stats.candidate_quads <= 192u && stats.sort_edges != 0);
+    {
+        ray_hit_t target = {0};
+        target.hit = 1;
+        target.x = 8;
+        target.y = 6;
+        target.z = 8;
+        chunks[3 * GRID_W + 3]
+            .blocks[(6 << 8) | (8 << CHUNK_BITS) | 8] = BLOCK_STONE;
+        ++chunks[3 * GRID_W + 3].revision;
+        player.x = 8.5F;
+        player.y = 5.0F;
+        player.z = 6.0F;
+        player.yaw = 0.0F;
+        player.pitch = 0.0F;
+        outline_commands = 0;
+        outline_out_of_bounds = 0;
+        assert(voxel_raster_render(3, 8, &player, QUALITY_BALANCED, &hud,
+                                   NULL, &target) > 0);
+        assert(outline_commands != 0 && !outline_out_of_bounds);
+        chunks[3 * GRID_W + 3]
+            .blocks[(6 << 8) | (7 << CHUNK_BITS) | 8] = BLOCK_STONE;
+        ++chunks[3 * GRID_W + 3].revision;
+        outline_commands = 0;
+        assert(voxel_raster_render(3, 9, &player, QUALITY_BALANCED, &hud,
+                                   NULL, &target) > 0);
+        assert(outline_commands == 0);
+        chunks[3 * GRID_W + 3]
+            .blocks[(6 << 8) | (7 << CHUNK_BITS) | 8] = BLOCK_AIR;
+        ++chunks[3 * GRID_W + 3].revision;
+        player.z = 7.2F;
+        outline_commands = 0;
+        outline_out_of_bounds = 0;
+        assert(voxel_raster_render(3, 10, &player, QUALITY_BALANCED, &hud,
+                                   NULL, &target) > 0);
+        assert(outline_commands != 0 && !outline_out_of_bounds);
+    }
+    for (int z = 0; z < CHUNK_SIZE; ++z) {
+        for (int x = 0; x < CHUNK_SIZE; ++x) {
+            if (((x + z) & 1) != 0)
+                chunks[3 * GRID_W + 3]
+                    .blocks[(4 << 8) | (z << CHUNK_BITS) | x] = BLOCK_STONE;
+        }
+    }
+    ++chunks[3 * GRID_W + 3].revision;
+    player.x = 8.0F;
+    player.y = 6.0F;
+    player.z = -4.0F;
+    player.pitch = -0.35F;
+    assert(voxel_raster_render(3, 11, &player, QUALITY_BALANCED, &hud, NULL,
+                               NULL) > 0);
+    voxel_raster_get_stats(&stats);
+    assert(stats.candidate_quads > 192u);
+    assert(stats.sort_edges != 0);
+    assert(stats.sort_cycles == 0);
+    voxel_raster_set_capabilities(PXA_RASTER_CAP_FLAT_QUAD |
+                                  PXA_RASTER_CAP_TEXTURED_QUAD |
+                                  PXA_RASTER_CAP_AFFINE_UV |
+                                  PXA_RASTER_CAP_PAINTER_POLYGON |
+                                  PXA_RASTER_CAP_LIT_PALETTE_DEPTH |
+                                  PXA_RASTER_CAP_DEPTH_CUTOUT |
+                                  PXA_RASTER_CAP_FIXED_ALPHA_BLEND |
+                                  PXA_RASTER_CAP_PAINTER_PERSPECTIVE |
+                                  PXA_RASTER_CAP_PAINTER_DEPTH);
+    assert(voxel_raster_render(3, 12, &player, QUALITY_BALANCED, &hud, NULL,
+                               NULL) > 0);
+    voxel_raster_get_stats(&stats);
+    assert(painter_depth_command_count != 0);
+    assert(coverage_command_count == 0);
+    assert(stats.depth_quads != 0 && stats.sort_edges == 0);
     return 0;
 }

@@ -1,9 +1,19 @@
-# PXA Device Draft 0.1
+# PXA Device Draft 0.2
 
 Device v1 is service 15. It exposes selected physical interface identifiers
 through explicit, exact-scope `device.identity` Permission Handles. It does
 not define a universal device MAC: every request names one interface and one
 identity form.
+
+## GET_RUNTIME_INFO
+
+Opcode 2 takes an empty payload and needs no identity permission. The result
+contains five mandatory ascending records: target (tag 1), architecture
+(tag 2), engine (tag 3), engine ABI (tag 4), and supported package formats as
+`u32` (tag 5; bit 0 is portable Wasm and bit 1 is AOT). Text fields are
+nonempty UTF-8 bytes without NUL terminators. The target and engine ABI match
+the Host's package activation profile; catalog-specific profile IDs are not
+part of this ABI. Older Hosts return unsupported for this opcode.
 
 ## GET_MAC
 

@@ -12,6 +12,11 @@ struct pxa_device_service {
     pxa_permission_service_t *permissions;
     void *provider_context;
     pxa_device_get_mac_fn get_mac;
+    const char *target;
+    const char *architecture;
+    const char *engine;
+    const char *engine_abi;
+    uint32_t formats;
     uint8_t registered;
 };
 
@@ -84,6 +89,11 @@ pxa_status_t pxa_device_service_init(
     service->permissions = config->permissions;
     service->provider_context = config->provider_context;
     service->get_mac = config->get_mac;
+    service->target = config->target;
+    service->architecture = config->architecture;
+    service->engine = config->engine;
+    service->engine_abi = config->engine_abi;
+    service->formats = config->formats;
     service->magic = PXA_DEVICE_MAGIC;
     *output = service;
     return PXA_STATUS_OK;
@@ -168,7 +178,7 @@ static pxa_status_t device_control(void *context, pxa_runtime_t *runtime,
                                    pxa_component_t component,
                                    const pxa_message_view_t *message) {
     pxa_device_service_t *service = (pxa_device_service_t *)context;
-    uint8_t result[24];
+    uint8_t result[256];
     size_t result_size = 0;
     pxa_status_t status;
     pxa_status_t complete;
@@ -176,11 +186,39 @@ static pxa_status_t device_control(void *context, pxa_runtime_t *runtime,
     if (!service_valid(service) || message == NULL || message->request_id == 0) {
         return PXA_STATUS_INVALID_ARGUMENT;
     }
-    if (message->opcode != PXA_DEVICE_GET_MAC) return PXA_STATUS_UNSUPPORTED;
+    if (message->opcode != PXA_DEVICE_GET_MAC &&
+        message->opcode != PXA_DEVICE_GET_RUNTIME_INFO)
+        return PXA_STATUS_UNSUPPORTED;
     status = pxa_request_begin(service->runtime, component, message->request_id,
                                PXA_DEVICE_SERVICE_ID, message->opcode, 0);
     if (status != PXA_STATUS_OK) return status;
-    status = get_mac(service, component, message, result, &result_size);
+    if (message->opcode == PXA_DEVICE_GET_MAC) {
+        status = get_mac(service, component, message, result, &result_size);
+    } else {
+        pxa_writer_t writer;
+        uint8_t formats[4];
+        const char *values[] = {service->target, service->architecture,
+                                service->engine, service->engine_abi};
+        size_t index;
+        status = message->payload.size == 0 ? PXA_STATUS_OK
+                                            : PXA_STATUS_INVALID_ARGUMENT;
+        for (index = 0; status == PXA_STATUS_OK && index < 4; ++index) {
+            if (values[index] == NULL || values[index][0] == '\0')
+                status = PXA_STATUS_UNSUPPORTED;
+        }
+        if (status == PXA_STATUS_OK) {
+            pxa_writer_init(&writer, result, sizeof(result));
+            for (index = 0; status == PXA_STATUS_OK && index < 4; ++index)
+                status = pxa_writer_record(&writer, (uint16_t)(index + 1u),
+                                            (const uint8_t *)values[index],
+                                            strlen(values[index]));
+            pxa_write_u32(formats, service->formats);
+            if (status == PXA_STATUS_OK)
+                status = pxa_writer_record(&writer, PXA_DEVICE_TAG_FORMATS,
+                                            formats, sizeof(formats));
+            if (status == PXA_STATUS_OK) result_size = writer.size;
+        }
+    }
     complete = pxa_request_complete(service->runtime, component,
                                     message->request_id, status,
                                     status == PXA_STATUS_OK ? result : NULL,

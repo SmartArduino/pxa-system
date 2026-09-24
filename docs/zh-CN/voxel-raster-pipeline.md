@@ -85,6 +85,8 @@ Header 包含 magic、ABI major/minor、总字节数、required capability、com
 
 每帧先对 chunk 包围盒做 fog-distance 和视锥粗裁剪，再对候选 Quad 做背面剔除。与 near/far/四个视锥侧面相交的 Quad 使用 Sutherland-Hodgman 裁剪；三角形和五边形以上的结果以退化 Quad/triangle fan 发送，不能因为单个顶点越过 near plane 而丢弃整个面。Host 使用 reciprocal depth 做逐像素遮挡；ABI 1.1 的不透明面按近到远提交以尽早拒绝被遮挡像素，无深度 fallback 才保留远到近顺序。High/Balanced/Performance 当前分别保留最多 620/480/320 个候选面；缓存或 DrawList 达到容量时按质量档位截断，并在 Guest stats 记录 clipped/dropped Quad。
 
+支持 `PAINTER_DEPTH` 的 Host 改走扫描线透视贴图 + 逐像素 reciprocal-depth 测试：不透明面近到远、水面远到近且只读深度。该路径复用现有 16-bit depth scratch，避免覆盖位图对交叉面片的顺序依赖以及三角形光栅的逐像素透视除法；不支持新能力的 Host 仍使用原有回退。远景雾化不再大幅压低纹理亮度。模拟器截图只能校验画面，1x 的帧率必须以 ESP32 真机的 Host/Guest 遥测为准。
+
 其余已落地的优化：候选排序改为按深度排序 16-bit 索引，避免在 PSRAM 里搬移整个 Quad 结构；投影后小于约 3x3 像素的贴图面降级成带深度的纯色面；Voxel 面光照本身是每面常量，Host 检测到三个顶点光照一致时跳过光照插值 setup 和逐像素光照累加，`light_rgb565` 改用精确的无除法 `x/255` 实现；Guest stats 新增 `affine_quads` 记录实际走仿射路径的面数。
 
 ## 分辨率与质量
@@ -115,3 +117,5 @@ Host 单元测试覆盖完整列表先校验后执行、裁剪、UV、RGB565、�
 主要风险是透明块仍暂按不透明处理（水面、树叶还没有真正的透明排序；水下用双面水面、缩短雾距、深水清屏色和全屏 additive 蓝色 tint 近似）、全屏 reciprocal-depth scratch 的 PSRAM 带宽、mesh rebuild 的瞬时峰值，以及生物/粒子目前使用低成本 billboard，细节不及旧像素路径的 box ray intersection。真机 profile 后再决定透明分层、实体贴图以及是否需要改成 tile depth。
 
 性能数字必须标记来源。2026-09-16 在 ESP32-S3（pai-touch）实测：固定 4x 在连接 `pxadb logcat` 时为 14.2--14.6 fps，Host raster 约 23 ms，DrawList 约 19.5 KiB；固定 1x 在不连接日志时 HUD 约 8 fps。串口日志会与运行时 RPC 争用并显著压低 1x 可见帧率，因此不能把 logcat 期间的 FPS 当作实际交互帧率。
+
+覆盖层现使用透视正确的纹理采样（深度变化小的面仍使用仿射），并让纯色实体参与同一遮挡掩码；连续空白覆盖字节最多按 24 像素合并贴图采样。覆盖模式先按近端深度排序，再对最近的至多 448 个候选面检查屏幕重叠及倒数深度的遮挡关系（包括完全重合的投影）；超过这个窗口的远处面仍是近端深度近似，遮挡关系成环时也只能回退深度键，不能等同于逐像素深度测试。方块选中框先裁剪到屏幕，再按体素可见性分段绘制，避免轮廓穿过前景方块。2026-09-23 在 esp32s31-korvo-1 的 800×480、1x 游戏场景中，连接 `pxadb logcat` 时观测到稳定窗口约 16–20 fps；更密集的场景及 pai-touch 仍需分别实测，不能由该数据保证全场景达标。

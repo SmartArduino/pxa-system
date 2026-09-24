@@ -1,0 +1,11 @@
+namespace: app.pxa-hello
+default_locale: en-US
+messages:
+  title:
+    source: Hello PXA
+    context: Example app title
+    max_bytes: 32
+  body:
+    source: Guest UI is running
+    context: Example app status
+    max_bytes: 48

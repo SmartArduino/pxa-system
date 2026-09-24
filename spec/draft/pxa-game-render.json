@@ -1,11 +1,11 @@
 {
-  "schema": "pxa-game-render-spec-0.2",
+  "schema": "pxa-game-render-spec-0.3",
   "status": "draft",
   "service": {
     "name": "game-render",
     "id": 18,
     "major": 0,
-    "minor": 2,
+    "minor": 3,
     "patch": 0
   },
   "opcodes": [
@@ -16,6 +16,14 @@
       "request_id": "nonzero",
       "payload": "width:u16|height:u16|buffer-count:u8|flags:u8|reserved:u16",
       "result": "handle:u32|capabilities:u32|max-draw-bytes:u32|max-texture-dimension:u16|max-textures:u8|reserved:u8"
+    },
+    {
+      "name": "create-auto-context",
+      "id": 2,
+      "direction": "bidirectional-result",
+      "request_id": "nonzero",
+      "payload": "width:0|height:0|buffer-count:u8|flags:u8|requested-scale:u8|reserved:u8",
+      "result": "handle:u32|capabilities:u32|max-draw-bytes:u32|max-texture-dimension:u16|max-textures:u8|reserved:u8|display-width:u16|display-height:u16|render-width:u16|render-height:u16|render-scale:u8|supported-scale-mask:u8|reserved:[2]"
     }
   ],
   "io_operations": [
@@ -40,5 +48,5 @@
     "texture_dimension": 256,
     "palette_colors": 256
   },
-  "protocol_version": "0.2.0"
+  "protocol_version": "0.3.0"
 }

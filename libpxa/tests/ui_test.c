@@ -775,6 +775,8 @@ static void test_surfaces(pxa_runtime_t *runtime, pxa_component_t component,
                sizeof(encoded_environment) - 1u, &encoded_size) ==
            PXA_STATUS_RESOURCE_LIMIT);
     environment.width = 640;
+    environment.display_shape = PXA_UI_DISPLAY_SHAPE_CIRCLE;
+    environment.corner_radii[1] = 120;
     assert(pxa_ui_update_environment(service, component, &environment) ==
            PXA_STATUS_OK);
     assert(backend->environment_changes == 1);
@@ -784,6 +786,11 @@ static void test_surfaces(pxa_runtime_t *runtime, pxa_component_t component,
                PXA_STATUS_OK &&
            decoded.opcode == PXA_UI_ENVIRONMENT_CHANGED &&
            decoded.payload.size == PXA_UI_ENVIRONMENT_WIRE_BYTES);
+    assert(pxa_read_u16(decoded.payload.data +
+                            PXA_UI_ENVIRONMENT_WIRE_BYTES - 24u) == 12u);
+    assert(pxa_read_u32(decoded.payload.data +
+                            PXA_UI_ENVIRONMENT_WIRE_BYTES - 20u) ==
+           PXA_UI_DISPLAY_SHAPE_CIRCLE);
     pxa_write_u32(close_payload, surface);
     assert(pxa_component_begin_event(runtime, component) == PXA_STATUS_OK);
     assert(control(runtime, component, PXA_UI_SURFACE_CLOSE,
@@ -853,6 +860,11 @@ int main(void) {
     config.safe_insets[1] = 10;
     config.safe_insets[2] = 8;
     config.safe_insets[3] = 10;
+    config.display_shape = 1;
+    config.corner_radii[0] = 48;
+    config.corner_radii[1] = 48;
+    config.corner_radii[2] = 48;
+    config.corner_radii[3] = 48;
     service_workspace = malloc(pxa_ui_service_workspace_size());
     assert(service_workspace != NULL);
     assert(pxa_ui_service_init(service_workspace,
@@ -883,6 +895,8 @@ int main(void) {
            primary_environment.safe_insets[1] == 10 &&
            primary_environment.safe_insets[2] == 8 &&
            primary_environment.safe_insets[3] == 10);
+    assert(primary_environment.display_shape == 1 &&
+           primary_environment.corner_radii[1] == 48);
     assert(pxa_component_begin_start(runtime, component) == PXA_STATUS_OK);
     test_initial_tree(runtime, component, service, &backend_state);
     test_registry_reserve_rollback(service, component, &allocator);
@@ -892,6 +906,46 @@ int main(void) {
     test_canvas(runtime, component, service, &backend_state);
     assert(pxa_component_finish_start(runtime, component, PXA_STATUS_OK) ==
            PXA_STATUS_OK);
+    {
+        pxa_ui_theme_snapshot_t theme;
+        pxa_message_view_t decoded;
+        uint8_t event[128];
+        size_t event_size = 0;
+        assert(pxa_ui_get_theme(service, &theme) == PXA_STATUS_OK);
+        assert(theme.generation == 1 && theme.color_scheme == PXA_UI_COLOR_SCHEME_DARK);
+        assert(theme.typography_px[0] == 12 && theme.typography_px[5] == 28);
+        theme.generation = 2;
+        theme.rgba[PXA_UI_THEME_PRIMARY] = UINT32_C(0x69d8c4ff);
+        assert(pxa_ui_update_theme(service, &theme) == PXA_STATUS_OK);
+        assert(pxa_event_pop(runtime, component, event, sizeof(event), &event_size) ==
+               PXA_STATUS_OK);
+        assert(pxa_message_decode(event, event_size, sizeof(event), &decoded) ==
+               PXA_STATUS_OK);
+        assert(decoded.service == PXA_UI_SERVICE_ID &&
+               decoded.opcode == PXA_UI_THEME_CHANGED && decoded.payload.size == 60);
+        assert(pxa_read_u32(decoded.payload.data) == 2);
+        assert(pxa_read_u32(decoded.payload.data + 8 +
+                            4u * PXA_UI_THEME_PRIMARY) == UINT32_C(0x69d8c4ff));
+        {
+            uint8_t request[32];
+            pxa_writer_t writer;
+            pxa_writer_init(&writer, request, sizeof(request));
+            assert(pxa_writer_message(&writer, PXA_UI_SERVICE_ID,
+                                      PXA_UI_THEME_GET, 71, NULL, 0) == PXA_STATUS_OK);
+            assert(pxa_component_begin_event(runtime, component) == PXA_STATUS_OK);
+            assert(pxa_runtime_control(runtime, component, request, writer.size) ==
+                   PXA_STATUS_OK);
+            assert(pxa_component_finish_event(runtime, component, 1) == PXA_STATUS_OK);
+            assert(pxa_event_pop(runtime, component, event, sizeof(event), &event_size) ==
+                   PXA_STATUS_OK);
+            assert(pxa_message_decode(event, event_size, sizeof(event), &decoded) ==
+                   PXA_STATUS_OK);
+            assert(decoded.request_id == 71 && decoded.opcode == PXA_UI_THEME_GET &&
+                   decoded.payload.size == 4u + PXA_UI_THEME_WIRE_BYTES &&
+                   (int32_t)pxa_read_u32(decoded.payload.data) == PXA_STATUS_OK &&
+                   pxa_read_u32(decoded.payload.data + 4) == 2);
+        }
+    }
     test_canvas_stream(runtime, component, &backend_state);
     test_events(runtime, component, service);
     test_surfaces(runtime, component, service, &backend_state);

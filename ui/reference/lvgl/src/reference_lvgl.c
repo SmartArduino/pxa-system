@@ -34,6 +34,7 @@ static const pxsys_resource_entry_t reference_en_resources[] = {
     RESOURCE_ENTRY("settings.wifi", "Wi-Fi"),
     RESOURCE_ENTRY("settings.mobile", "Mobile network"),
     RESOURCE_ENTRY("settings.appearance", "Appearance"),
+    RESOURCE_ENTRY("settings.accent", "Accent color"),
     RESOURCE_ENTRY("settings.display", "Display"),
     RESOURCE_ENTRY("settings.section.connections", "Connections"),
     RESOURCE_ENTRY("settings.section.personalization", "Personalization"),
@@ -61,8 +62,10 @@ static const pxsys_resource_entry_t reference_en_resources[] = {
     RESOURCE_ENTRY("settings.pxadb", "PXADB"),
     RESOURCE_ENTRY("settings.pxadb.detail", "Allow USB debugging and diagnostics"),
     RESOURCE_ENTRY("settings.wifi.networks", "Available networks"),
-    RESOURCE_ENTRY("settings.wifi.scan", "Scan again"),
+    RESOURCE_ENTRY("settings.wifi.scan", "Refresh"),
+    RESOURCE_ENTRY("settings.wifi.searching", "Searching…"),
     RESOURCE_ENTRY("settings.wifi.none", "No networks found"),
+    RESOURCE_ENTRY("settings.wifi.failed", "Scan failed. Try again"),
     RESOURCE_ENTRY("settings.wifi.password", "Enter Wi-Fi password"),
     RESOURCE_ENTRY("settings.wifi.open", "Open network"),
     RESOURCE_ENTRY("settings.wifi.secured", "Secured"),
@@ -72,6 +75,10 @@ static const pxsys_resource_entry_t reference_en_resources[] = {
     RESOURCE_ENTRY("state.off", "Off"),
     RESOURCE_ENTRY("theme.light", "Light"),
     RESOURCE_ENTRY("theme.dark", "Dark"),
+    RESOURCE_ENTRY("theme.blue", "Blue"),
+    RESOURCE_ENTRY("theme.teal", "Teal"),
+    RESOURCE_ENTRY("theme.violet", "Violet"),
+    RESOURCE_ENTRY("theme.amber", "Amber"),
     RESOURCE_ENTRY("control.mobile", "Mobile"),
     RESOURCE_ENTRY("control.volume", "Volume"),
     RESOURCE_ENTRY("control.brightness", "Brightness"),
@@ -134,6 +141,7 @@ static const pxsys_resource_entry_t reference_zh_resources[] = {
     RESOURCE_ENTRY("settings.wifi", "无线网络"),
     RESOURCE_ENTRY("settings.mobile", "移动网络"),
     RESOURCE_ENTRY("settings.appearance", "外观"),
+    RESOURCE_ENTRY("settings.accent", "主题色"),
     RESOURCE_ENTRY("settings.display", "显示"),
     RESOURCE_ENTRY("settings.section.connections", "连接"),
     RESOURCE_ENTRY("settings.section.personalization", "个性化"),
@@ -161,8 +169,10 @@ static const pxsys_resource_entry_t reference_zh_resources[] = {
     RESOURCE_ENTRY("settings.pxadb", "PXADB 调试"),
     RESOURCE_ENTRY("settings.pxadb.detail", "允许 USB 调试和诊断连接"),
     RESOURCE_ENTRY("settings.wifi.networks", "可用网络"),
-    RESOURCE_ENTRY("settings.wifi.scan", "重新扫描"),
+    RESOURCE_ENTRY("settings.wifi.scan", "刷新"),
+    RESOURCE_ENTRY("settings.wifi.searching", "搜索中…"),
     RESOURCE_ENTRY("settings.wifi.none", "未发现无线网络"),
+    RESOURCE_ENTRY("settings.wifi.failed", "扫描失败，请重试"),
     RESOURCE_ENTRY("settings.wifi.password", "输入无线网络密码"),
     RESOURCE_ENTRY("settings.wifi.open", "开放网络"),
     RESOURCE_ENTRY("settings.wifi.secured", "已加密"),
@@ -172,6 +182,10 @@ static const pxsys_resource_entry_t reference_zh_resources[] = {
     RESOURCE_ENTRY("state.off", "已关闭"),
     RESOURCE_ENTRY("theme.light", "浅色"),
     RESOURCE_ENTRY("theme.dark", "深色"),
+    RESOURCE_ENTRY("theme.blue", "蓝色"),
+    RESOURCE_ENTRY("theme.teal", "青绿"),
+    RESOURCE_ENTRY("theme.violet", "紫色"),
+    RESOURCE_ENTRY("theme.amber", "琥珀色"),
     RESOURCE_ENTRY("control.mobile", "移动网络"),
     RESOURCE_ENTRY("control.volume", "音量"),
     RESOURCE_ENTRY("control.brightness", "亮度"),
@@ -384,8 +398,11 @@ struct pxsys_reference_lvgl {
     lv_obj_t* app_ime_keyboard;
     lv_obj_t* app_ime_target;
     lv_timer_t* app_ime_timer;
+    lv_timer_t* wifi_scan_timer;
     pxsys_reference_ime_t* app_ime_keypad;
     lv_obj_t* app_ime_pinyin;
+    lv_obj_t* wifi_password_pinyin;
+    struct { lv_obj_t* keyboard; lv_obj_t* pinyin; uint8_t chinese; } app_wide_ime, wifi_wide_ime;
     uint8_t app_ime_close_requested;
     lv_timer_t* transient_timer;
     const lv_font_t* text_font;
@@ -496,6 +513,7 @@ struct pxsys_reference_lvgl {
     void* wifi_context;
     pxsys_reference_lvgl_wifi_scan_fn wifi_scan;
     pxsys_reference_lvgl_wifi_connect_fn wifi_connect;
+    pxsys_reference_lvgl_wifi_scan_start_fn wifi_scan_start;
     void* app_permission_context;
     pxsys_reference_lvgl_app_permission_list_fn app_permission_list;
     pxsys_reference_lvgl_app_permission_set_fn app_permission_set;
@@ -508,6 +526,7 @@ struct pxsys_reference_lvgl {
     size_t wifi_network_count;
     char pending_wifi_ssid[PXSYS_REFERENCE_WIFI_SSID_MAX];
     lv_obj_t* wifi_password_input;
+    lv_obj_t* wifi_network_list;
     void* lock_changed_context;
     pxsys_reference_lvgl_lock_changed_fn lock_changed;
     void* power_action_context;
@@ -560,6 +579,16 @@ static void rebuild_async(void* context) {
 
 static int ui_valid(const pxsys_reference_lvgl_t* ui) {
     return ui != NULL && ui->magic == REFERENCE_MAGIC;
+}
+
+static pxsys_window_bar_mode_t status_bar_mode(const pxsys_reference_lvgl_t* ui) {
+    return ui->content_active ? PXSYS_WINDOW_BAR_VISIBLE
+                              : ui->window.status_bar_mode;
+}
+
+static pxsys_window_bar_mode_t navigation_bar_mode(const pxsys_reference_lvgl_t* ui) {
+    return ui->content_active ? PXSYS_WINDOW_BAR_VISIBLE
+                              : ui->window.navigation_bar_mode;
 }
 
 static void update_system_overlay(pxsys_reference_lvgl_t* ui) {
@@ -689,7 +718,7 @@ static uint32_t gesture_strip_height(const pxsys_reference_layout_t* layout) {
 static void expand_content_into_hidden_gesture_area(
     const pxsys_reference_lvgl_t* ui, pxsys_reference_layout_t* layout) {
     if (ui->navigation_mode == PXSYS_NAVIGATION_GESTURES &&
-        ui->window.navigation_bar_mode != PXSYS_WINDOW_BAR_HIDDEN) {
+        navigation_bar_mode(ui) != PXSYS_WINDOW_BAR_HIDDEN) {
         int32_t content_bottom = layout->content.y +
                                  (int32_t)layout->content.height;
         int32_t safe_bottom = layout->safe_area.y +
@@ -938,6 +967,39 @@ static void navigation_back_gesture_event(lv_event_t* event) {
     navigation_back(ui);
 }
 
+static const char* accent_name(const pxsys_theme_snapshot_t* theme) {
+    if (theme->theme_id_size == 4 && memcmp(theme->theme_id, "teal", 4) == 0)
+        return "teal";
+    if (theme->theme_id_size == 6 && memcmp(theme->theme_id, "violet", 6) == 0)
+        return "violet";
+    if (theme->theme_id_size == 5 && memcmp(theme->theme_id, "amber", 5) == 0)
+        return "amber";
+    return "blue";
+}
+
+static void theme_apply_accent(pxsys_theme_snapshot_t* theme, const char* name) {
+    pxsys_color_scheme_t scheme = theme->effective_scheme;
+    if (strcmp(name, "blue") == 0) return;
+    static const uint32_t light[][2] = {
+        {UINT32_C(0xff007f75), UINT32_C(0xffffffff)},
+        {UINT32_C(0xff7145b4), UINT32_C(0xffffffff)},
+        {UINT32_C(0xff985b00), UINT32_C(0xffffffff)},
+    };
+    static const uint32_t dark[][2] = {
+        {UINT32_C(0xff69d8c4), UINT32_C(0xff07372f)},
+        {UINT32_C(0xffc6a7ff), UINT32_C(0xff30164e)},
+        {UINT32_C(0xffffc16b), UINT32_C(0xff493000)},
+    };
+    size_t index = strcmp(name, "teal") == 0 ? 0u :
+                   strcmp(name, "violet") == 0 ? 1u : 2u;
+    const uint32_t (*palette)[2] = scheme == PXSYS_COLOR_SCHEME_DARK ? dark : light;
+    theme->colors[PXSYS_COLOR_ACCENT] = palette[index][0];
+    theme->colors[PXSYS_COLOR_ON_ACCENT] = palette[index][1];
+    theme->configured_mode = PXSYS_THEME_MODE_CUSTOM;
+    theme->theme_id_size = (uint16_t)strlen(name);
+    memcpy(theme->theme_id, name, theme->theme_id_size + 1u);
+}
+
 static void theme_clicked(lv_event_t* event) {
     pxsys_reference_lvgl_t* ui =
         (pxsys_reference_lvgl_t*)lv_event_get_user_data(event);
@@ -945,10 +1007,28 @@ static void theme_clicked(lv_event_t* event) {
     pxsys_color_scheme_t scheme =
         ui->theme.effective_scheme == PXSYS_COLOR_SCHEME_DARK
             ? PXSYS_COLOR_SCHEME_LIGHT : PXSYS_COLOR_SCHEME_DARK;
+    const char* accent = accent_name(&ui->theme);
     pxsys_theme_snapshot_init(&next, scheme);
     next.configured_mode = scheme == PXSYS_COLOR_SCHEME_DARK
                                ? PXSYS_THEME_MODE_DARK
                                : PXSYS_THEME_MODE_LIGHT;
+    theme_apply_accent(&next, accent);
+    (void)pxsys_theme_service_update(pxsys_standard_system_theme(ui->system),
+                                     &next);
+}
+
+static void accent_clicked(lv_event_t* event) {
+    pxsys_reference_lvgl_t* ui =
+        (pxsys_reference_lvgl_t*)lv_event_get_user_data(event);
+    const char* current = accent_name(&ui->theme);
+    const char* next_name = strcmp(current, "blue") == 0 ? "teal" :
+                            strcmp(current, "teal") == 0 ? "violet" :
+                            strcmp(current, "violet") == 0 ? "amber" : "blue";
+    pxsys_theme_snapshot_t next;
+    pxsys_theme_snapshot_init(&next, ui->theme.effective_scheme);
+    next.configured_mode = next.effective_scheme == PXSYS_COLOR_SCHEME_DARK
+                               ? PXSYS_THEME_MODE_DARK : PXSYS_THEME_MODE_LIGHT;
+    theme_apply_accent(&next, next_name);
     (void)pxsys_theme_service_update(pxsys_standard_system_theme(ui->system),
                                      &next);
 }
@@ -2947,11 +3027,7 @@ static void build_settings(pxsys_reference_lvgl_t* ui,
         ui, translated(ui, "settings.section.personalization",
                        "Personalization"));
     appearance_detail =
-        ui->theme.configured_mode == PXSYS_THEME_MODE_CUSTOM
-            ? borrowed_text(ui,
-                            pxsys_string(ui->theme.theme_id,
-                                         ui->theme.theme_id_size))
-            : ui->theme.effective_scheme == PXSYS_COLOR_SCHEME_DARK
+        ui->theme.effective_scheme == PXSYS_COLOR_SCHEME_DARK
                   ? translated(ui, "theme.dark", "Dark")
                   : translated(ui, "theme.light", "Light");
     row = make_settings_row(
@@ -2959,6 +3035,17 @@ static void build_settings(pxsys_reference_lvgl_t* ui,
         translated(ui, "settings.appearance", "Appearance"), appearance_detail,
         theme_clicked, ui);
     add_settings_chevron(ui, row);
+    {
+        const char* accent = accent_name(&ui->theme);
+        const char* key = strcmp(accent, "teal") == 0 ? "theme.teal" :
+                          strcmp(accent, "violet") == 0 ? "theme.violet" :
+                          strcmp(accent, "amber") == 0 ? "theme.amber" : "theme.blue";
+        row = make_settings_row(
+            ui, layout, section, LV_SYMBOL_TINT, PXSYS_COLOR_ACCENT,
+            translated(ui, "settings.accent", "Accent color"),
+            translated(ui, key, accent), accent_clicked, ui);
+        add_settings_chevron(ui, row);
+    }
     selected_language = current_language(ui);
     language_detail = selected_language == NULL
                           ? borrowed_text(ui, pxsys_string(
@@ -3083,8 +3170,8 @@ static void settle_notification_shade(pxsys_reference_lvgl_t* ui,
 }
 
 static int has_transient_chrome(const pxsys_reference_lvgl_t* ui) {
-    return ui->window.status_bar_mode == PXSYS_WINDOW_BAR_TRANSIENT ||
-           ui->window.navigation_bar_mode == PXSYS_WINDOW_BAR_TRANSIENT;
+    return status_bar_mode(ui) == PXSYS_WINDOW_BAR_TRANSIENT ||
+           navigation_bar_mode(ui) == PXSYS_WINDOW_BAR_TRANSIENT;
 }
 
 static int bar_is_visible(const pxsys_reference_lvgl_t* ui,
@@ -3513,7 +3600,7 @@ static void build_notification_shade(pxsys_reference_lvgl_t* ui,
     panel_height = ui->display.height;
     if (ui->navigation_mode == PXSYS_NAVIGATION_BUTTONS &&
         ui->navigation_bar != NULL &&
-        bar_is_visible(ui, ui->window.navigation_bar_mode))
+        bar_is_visible(ui, navigation_bar_mode(ui)))
         panel_height = (uint32_t)layout.navigation_bar.y;
     ui->notification_panel_height = (int32_t)panel_height;
     ui->notification_panel = lv_obj_create(ui->notification_shade);
@@ -3801,7 +3888,7 @@ static void status_bar_event(lv_event_t* event) {
     } else if (lv_event_get_code(event) == LV_EVENT_PRESSING) {
         int32_t distance = point.y - ui->status_press_y;
         int32_t progress;
-        if (!bar_is_visible(ui, ui->window.status_bar_mode) || distance <= 0)
+        if (!bar_is_visible(ui, status_bar_mode(ui)) || distance <= 0)
             return;
         if (distance >= 6) ui->notification_drag_moved = 1;
         if (ui->notification_shade == NULL ||
@@ -3824,7 +3911,7 @@ static void status_bar_event(lv_event_t* event) {
             ui->notification_dragging = 0;
             settle_notification_shade(ui, open ? 256 : 0);
         } else if (point.y >= ui->status_press_y &&
-                   bar_is_visible(ui, ui->window.status_bar_mode)) {
+                   bar_is_visible(ui, status_bar_mode(ui))) {
             build_notification_shade(ui, 0);
             settle_notification_shade(ui, 256);
         }
@@ -4074,6 +4161,9 @@ static void build_status_bar(pxsys_reference_lvgl_t* ui,
                              const pxsys_reference_layout_t* layout) {
     lv_obj_t* status = lv_obj_create(ui->root);
     lv_obj_t* time_label;
+    pxsys_rect_t content_area = layout->safe_area;
+    uint32_t content_height = ui->text_font != NULL
+                                  ? ui->text_font->line_height : 16u;
 #if PXSYS_REFERENCE_UI_BATTERY_PERCENT
     lv_obj_t* percent_label;
     const lv_font_t* percent_font;
@@ -4083,16 +4173,21 @@ static void build_status_bar(pxsys_reference_lvgl_t* ui,
 #if PXSYS_REFERENCE_UI_BATTERY_PERCENT
     char percent_text[8];
 #endif
-    int32_t safe_right = layout->safe_area.x +
-                         (int32_t)layout->safe_area.width;
+    int32_t safe_right;
     int32_t safe_top = layout->safe_area.y;
-    int32_t battery_x = safe_right - (int32_t)layout->outer_padding - 25;
+    int32_t battery_x;
 #if PXSYS_REFERENCE_UI_WIFI || PXSYS_REFERENCE_UI_CELLULAR
     int32_t indicator_x;
 #endif
     int32_t center_y = safe_top +
         ((int32_t)layout->status_bar.height - safe_top) / 2;
     int32_t align_y = center_y - (int32_t)layout->status_bar.height / 2;
+    if (content_height < 16u) content_height = 16u;
+    if (content_height <= layout->status_bar.height)
+        (void)pxsys_reference_layout_status_content_rect(
+            &ui->display, layout, content_height, &content_area);
+    safe_right = content_area.x + (int32_t)content_area.width;
+    battery_x = safe_right - (int32_t)layout->outer_padding - 25;
     ui->status_bar = status;
     style_plain(status);
     lv_obj_set_pos(status, layout->status_bar.x, layout->status_bar.y);
@@ -4100,7 +4195,7 @@ static void build_status_bar(pxsys_reference_lvgl_t* ui,
                     (lv_coord_t)layout->status_bar.height);
     lv_obj_set_style_bg_color(status,
                               color_token(ui, PXSYS_COLOR_BACKGROUND), 0);
-    if (ui->window.status_bar_mode == PXSYS_WINDOW_BAR_TRANSIENT)
+    if (status_bar_mode(ui) == PXSYS_WINDOW_BAR_TRANSIENT)
         lv_obj_set_style_bg_opa(status, (lv_opa_t)224, 0);
     if (ui->features & PXSYS_REFERENCE_UI_NOTIFICATION_SHADE) {
         lv_obj_add_flag(status, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_PRESS_LOCK);
@@ -4116,7 +4211,7 @@ static void build_status_bar(pxsys_reference_lvgl_t* ui,
     time_label = make_label(status, time_text, ui->text_font,
                             color_token(ui, PXSYS_COLOR_TEXT_PRIMARY));
     lv_obj_align(time_label, LV_ALIGN_LEFT_MID,
-                 layout->safe_area.x + (int32_t)layout->outer_padding,
+                 content_area.x + (int32_t)layout->outer_padding,
                  align_y);
 #if PXSYS_REFERENCE_UI_BATTERY_PERCENT
     percent_width = 0;
@@ -4197,7 +4292,7 @@ static void toast_reposition(pxsys_reference_lvgl_t* ui) {
     lv_obj_set_style_max_width(ui->toast, max_width, 0);
     lv_obj_set_style_max_width(ui->toast_label, max_width - 24, 0);
     if (!(ui->active_chrome & PXSYS_REFERENCE_UI_NAVIGATION_BAR) ||
-        !bar_is_visible(ui, ui->window.navigation_bar_mode)) {
+        !bar_is_visible(ui, navigation_bar_mode(ui))) {
         bottom_offset = 16;
     } else if (ui->navigation_mode == PXSYS_NAVIGATION_GESTURES) {
         bottom_offset = layout.size_class == PXSYS_UI_SIZE_COMPACT ? 26 : 34;
@@ -4486,6 +4581,8 @@ static void build_device_info_page(pxsys_reference_lvgl_t* ui,
 
 static void page_close_dialogs(pxsys_reference_lvgl_t* ui) {
     if (!ui_valid(ui)) return;
+    ui->wifi_network_list = NULL;
+    if (ui->wifi_scan_timer != NULL) lv_timer_pause(ui->wifi_scan_timer);
     if (ui->confirm_dialog != NULL) {
         lv_obj_delete(ui->confirm_dialog);
         ui->confirm_dialog = NULL;
@@ -4495,6 +4592,9 @@ static void page_close_dialogs(pxsys_reference_lvgl_t* ui) {
         ui->app_dialog = NULL;
     }
     ui->wifi_password_input = NULL;
+    ui->wifi_password_pinyin = NULL;
+    ui->wifi_wide_ime.keyboard = NULL;
+    ui->wifi_wide_ime.pinyin = NULL;
 }
 
 static lv_obj_t* make_page_dialog(pxsys_reference_lvgl_t* ui,
@@ -4533,9 +4633,18 @@ static lv_obj_t* make_page_dialog(pxsys_reference_lvgl_t* ui,
 
 static void page_dialog_scrim_clicked(lv_event_t* event);
 static void show_wifi_networks(pxsys_reference_lvgl_t* ui);
+static void wifi_render_networks(pxsys_reference_lvgl_t* ui, size_t count);
 
 static void wifi_scan_clicked(lv_event_t* event) {
-    show_wifi_networks((pxsys_reference_lvgl_t*)lv_event_get_user_data(event));
+    pxsys_reference_lvgl_t* ui = (pxsys_reference_lvgl_t*)lv_event_get_user_data(event);
+    if (!ui_valid(ui) || ui->wifi_network_list == NULL) return;
+    if (ui->wifi_scan_start != NULL) {
+        ui->wifi_scan_start(ui->wifi_context);
+        wifi_render_networks(ui, PXSYS_REFERENCE_WIFI_SCANNING);
+        lv_timer_resume(ui->wifi_scan_timer);
+    } else {
+        show_wifi_networks(ui);
+    }
 }
 
 static void wifi_connect_selected(pxsys_reference_lvgl_t* ui,
@@ -4560,6 +4669,74 @@ static void wifi_keyboard_event(lv_event_t* event) {
         page_close_dialogs(ui);
         rebuild(ui);
     }
+}
+
+static int object_is_within(const lv_obj_t* object, const lv_obj_t* ancestor);
+
+static void wide_ime_mode_clicked(lv_event_t* event) {
+    pxsys_reference_lvgl_t* ui = (pxsys_reference_lvgl_t*)lv_event_get_user_data(event);
+    lv_obj_t* button = lv_event_get_current_target(event);
+    const char* mode = (const char*)lv_obj_get_user_data(button);
+    if (!ui_valid(ui) || mode == NULL) return;
+    const int app = ui->app_ime != NULL && object_is_within(button, ui->app_ime);
+    lv_obj_t* keyboard = app ? ui->app_wide_ime.keyboard : ui->wifi_wide_ime.keyboard;
+    lv_obj_t* pinyin = app ? ui->app_wide_ime.pinyin : ui->wifi_wide_ime.pinyin;
+    const int chinese = strcmp(mode, "CN") == 0;
+    if (keyboard == NULL) return;
+    if (app) ui->app_wide_ime.chinese = chinese;
+    else ui->wifi_wide_ime.chinese = chinese;
+#if LV_USE_IME_PINYIN && LV_IME_PINYIN_USE_K9_MODE
+    if (pinyin != NULL) {
+        lv_ime_pinyin_set_mode(pinyin, chinese ? LV_IME_PINYIN_MODE_K26 :
+                                                 LV_IME_PINYIN_MODE_K9_NUMBER);
+        lv_obj_add_flag(lv_ime_pinyin_get_cand_panel(pinyin), LV_OBJ_FLAG_HIDDEN);
+    }
+#else
+    (void)pinyin;
+#endif
+    lv_keyboard_set_mode(keyboard,
+        strcmp(mode, "123") == 0 ? LV_KEYBOARD_MODE_NUMBER :
+        strcmp(mode, "#+") == 0 ? LV_KEYBOARD_MODE_SPECIAL : LV_KEYBOARD_MODE_TEXT_LOWER);
+}
+
+static void wide_ime_add_modes(pxsys_reference_lvgl_t* ui, lv_obj_t* parent,
+                               lv_obj_t* keyboard, lv_obj_t* pinyin, int wifi) {
+    lv_obj_t* bar = lv_obj_create(parent);
+    static const char* const modes[] = {"CN", "EN", "123", "#+"};
+    static const char* const labels[] = {"中", "EN", "123", "#+"};
+    style_plain(bar);
+    lv_obj_set_size(bar, LV_PCT(100), 38);
+    lv_obj_align(bar, LV_ALIGN_BOTTOM_MID, 0,
+                 -(lv_coord_t)(ui->display.height * (wifi ? 42 : 40) / 100));
+    lv_obj_set_layout(bar, LV_LAYOUT_FLEX);
+    lv_obj_set_flex_flow(bar, LV_FLEX_FLOW_ROW);
+    for (size_t index = 0; index < 4; ++index) {
+        lv_obj_t* button = lv_button_create(bar);
+        lv_obj_t* text = lv_label_create(button);
+        lv_label_set_text(text, labels[index]);
+        lv_obj_set_style_text_font(text, typography_font(ui, PXSYS_TYPOGRAPHY_BODY), 0);
+        lv_obj_center(text);
+        lv_obj_set_flex_grow(button, 1);
+        lv_obj_set_height(button, 36);
+        lv_obj_set_user_data(button, (void*)modes[index]);
+        lv_obj_add_event_cb(button, wide_ime_mode_clicked, LV_EVENT_CLICKED, ui);
+    }
+    if (wifi) {
+        ui->wifi_wide_ime.keyboard = keyboard;
+        ui->wifi_wide_ime.pinyin = pinyin;
+        ui->wifi_wide_ime.chinese = 0;
+    } else {
+        ui->app_wide_ime.keyboard = keyboard;
+        ui->app_wide_ime.pinyin = pinyin;
+        ui->app_wide_ime.chinese = 1;
+    }
+#if LV_USE_IME_PINYIN && LV_IME_PINYIN_USE_K9_MODE
+    if (pinyin != NULL) {
+        if (wifi) lv_ime_pinyin_set_mode(pinyin, LV_IME_PINYIN_MODE_K9_NUMBER);
+        lv_obj_align_to(lv_ime_pinyin_get_cand_panel(pinyin), bar,
+                        LV_ALIGN_OUT_TOP_MID, 0, 0);
+    }
+#endif
 }
 
 static void show_wifi_password(pxsys_reference_lvgl_t* ui) {
@@ -4597,11 +4774,24 @@ static void show_wifi_password(pxsys_reference_lvgl_t* ui) {
     lv_obj_set_style_text_font(ui->wifi_password_input,
                               typography_font(ui, PXSYS_TYPOGRAPHY_BODY), 0);
     keyboard = lv_keyboard_create(ui->app_dialog);
-    lv_obj_set_size(keyboard, LV_PCT(100), LV_PCT(48));
+    lv_obj_set_size(keyboard, LV_PCT(100), LV_PCT(42));
     lv_obj_align(keyboard, LV_ALIGN_BOTTOM_MID, 0, 0);
     lv_obj_set_style_text_font(keyboard,
                               typography_font(ui, PXSYS_TYPOGRAPHY_BODY), 0);
     lv_keyboard_set_textarea(keyboard, ui->wifi_password_input);
+#if LV_USE_IME_PINYIN
+    if (ui->display.width >= 480u) {
+        ui->wifi_password_pinyin = lv_ime_pinyin_create(ui->app_dialog);
+        if (ui->wifi_password_pinyin != NULL) {
+            lv_ime_pinyin_set_keyboard(ui->wifi_password_pinyin, keyboard);
+            lv_obj_set_style_text_font(
+                lv_ime_pinyin_get_cand_panel(ui->wifi_password_pinyin),
+                typography_font(ui, PXSYS_TYPOGRAPHY_BODY), 0);
+        }
+    }
+#endif
+    if (ui->display.width >= 480u)
+        wide_ime_add_modes(ui, ui->app_dialog, keyboard, ui->wifi_password_pinyin, 1);
     lv_obj_add_event_cb(keyboard, wifi_keyboard_event, LV_EVENT_READY, ui);
     lv_obj_add_event_cb(keyboard, wifi_keyboard_event, LV_EVENT_CANCEL, ui);
     lv_obj_move_foreground(keyboard);
@@ -4654,6 +4844,8 @@ static lv_obj_t* find_focused_textarea(lv_obj_t* object) {
 static void app_input_method_target_deleted(lv_event_t* event);
 
 static void app_input_method_close(pxsys_reference_lvgl_t* ui) {
+    ui->app_wide_ime.keyboard = NULL;
+    ui->app_wide_ime.pinyin = NULL;
     if (ui->app_ime_keypad != NULL) {
         pxsys_reference_ime_destroy(ui->app_ime_keypad);
         ui->app_ime_keypad = NULL;
@@ -4745,7 +4937,7 @@ static void app_input_method_open(pxsys_reference_lvgl_t* ui,
         ui->app_ime = NULL;
         return;
     }
-    lv_obj_set_size(ui->app_ime_keyboard, LV_PCT(100), LV_PCT(46));
+    lv_obj_set_size(ui->app_ime_keyboard, LV_PCT(100), LV_PCT(40));
     lv_obj_align(ui->app_ime_keyboard, LV_ALIGN_BOTTOM_MID, 0, 0);
     lv_obj_set_style_text_font(ui->app_ime_keyboard,
                               typography_font(ui, PXSYS_TYPOGRAPHY_BODY), 0);
@@ -4762,6 +4954,7 @@ static void app_input_method_open(pxsys_reference_lvgl_t* ui,
             typography_font(ui, PXSYS_TYPOGRAPHY_BODY), 0);
     }
 #endif
+    wide_ime_add_modes(ui, panel, ui->app_ime_keyboard, ui->app_ime_pinyin, 0);
     lv_obj_add_event_cb(ui->app_ime_keyboard, app_input_method_event,
                         LV_EVENT_READY, ui);
     lv_obj_add_event_cb(ui->app_ime_keyboard, app_input_method_event,
@@ -4818,22 +5011,62 @@ static void wifi_network_clicked(lv_event_t* event) {
         wifi_connect_selected(ui, "");
 }
 
+static void wifi_render_networks(pxsys_reference_lvgl_t* ui, size_t count) {
+    lv_obj_t* label;
+    pxsys_reference_layout_t layout;
+    int scan_failed = count == PXSYS_REFERENCE_WIFI_SCAN_FAILED;
+    int scanning = count == PXSYS_REFERENCE_WIFI_SCANNING;
+    if (ui->wifi_network_list == NULL ||
+        pxsys_reference_layout_compute(&ui->display, &layout) != PXSYS_STATUS_OK) return;
+    lv_obj_clean(ui->wifi_network_list);
+    if (scan_failed || scanning) count = 0;
+    if (count > PXSYS_REFERENCE_WIFI_NETWORK_MAX) count = PXSYS_REFERENCE_WIFI_NETWORK_MAX;
+    ui->wifi_network_count = count;
+    if (count == 0) {
+        const char* key = scanning ? "settings.wifi.searching" :
+                          scan_failed ? "settings.wifi.failed" : "settings.wifi.none";
+        const char* fallback = scanning ? "Searching…" :
+                               scan_failed ? "Scan failed. Try again" : "No networks found";
+        label = make_label(ui->wifi_network_list, translated(ui, key, fallback),
+                           typography_font(ui, PXSYS_TYPOGRAPHY_BODY),
+                           color_token(ui, PXSYS_COLOR_TEXT_SECONDARY));
+        lv_obj_set_width(label, LV_PCT(100));
+    }
+    for (size_t index = 0; index < count; ++index) {
+        char detail[48];
+        const pxsys_reference_wifi_network_t* network = &ui->wifi_networks[index];
+        snprintf(detail, sizeof(detail), "%d dBm  %s", network->rssi,
+                 translated(ui, network->secured ? "settings.wifi.secured" : "settings.wifi.open",
+                            network->secured ? "Secured" : "Open network"));
+        ui->wifi_network_controls[index].ui = ui;
+        ui->wifi_network_controls[index].index = index;
+        (void)make_settings_row(ui, &layout, ui->wifi_network_list, LV_SYMBOL_WIFI,
+                                PXSYS_COLOR_ACCENT, network->ssid, detail,
+                                wifi_network_clicked, &ui->wifi_network_controls[index]);
+    }
+}
+
+static void wifi_scan_poll(lv_timer_t* timer) {
+    pxsys_reference_lvgl_t* ui = (pxsys_reference_lvgl_t*)lv_timer_get_user_data(timer);
+    size_t count;
+    if (!ui_valid(ui) || ui->wifi_network_list == NULL || ui->wifi_scan == NULL) return;
+    count = ui->wifi_scan(ui->wifi_context, ui->wifi_networks, PXSYS_REFERENCE_WIFI_NETWORK_MAX);
+    if (count != PXSYS_REFERENCE_WIFI_SCANNING) {
+        wifi_render_networks(ui, count);
+        lv_timer_pause(timer);
+    }
+}
+
 static void show_wifi_networks(pxsys_reference_lvgl_t* ui) {
     pxsys_reference_layout_t layout;
     lv_obj_t* panel;
     lv_obj_t* label;
     lv_obj_t* button;
-    size_t count = 0;
     if (!ui_valid(ui) || ui->wifi_scan == NULL || ui->wifi_connect == NULL ||
         pxsys_reference_layout_compute(&ui->display, &layout) !=
             PXSYS_STATUS_OK)
         return;
     page_close_dialogs(ui);
-    count = ui->wifi_scan(ui->wifi_context, ui->wifi_networks,
-                          PXSYS_REFERENCE_WIFI_NETWORK_MAX);
-    if (count > PXSYS_REFERENCE_WIFI_NETWORK_MAX)
-        count = PXSYS_REFERENCE_WIFI_NETWORK_MAX;
-    ui->wifi_network_count = count;
     expand_content_into_hidden_gesture_area(ui, &layout);
     ui->app_dialog = make_page_dialog(ui, &layout, &panel);
     lv_obj_add_event_cb(ui->app_dialog, page_dialog_scrim_clicked,
@@ -4845,31 +5078,23 @@ static void show_wifi_networks(pxsys_reference_lvgl_t* ui) {
                        color_token(ui, PXSYS_COLOR_TEXT_PRIMARY));
     lv_obj_set_width(label, LV_PCT(100));
     button = make_page_button(
-        ui, panel, translated(ui, "settings.wifi.scan", "Scan again"),
+        ui, panel, translated(ui, "settings.wifi.scan", "Refresh"),
         PXSYS_COLOR_ACCENT, PXSYS_COLOR_ON_ACCENT, wifi_scan_clicked, ui);
     lv_obj_set_width(button, LV_PCT(100));
-    if (count == 0) {
-        label = make_label(panel,
-                           translated(ui, "settings.wifi.none",
-                                      "No networks found"),
-                           typography_font(ui, PXSYS_TYPOGRAPHY_BODY),
-                           color_token(ui, PXSYS_COLOR_TEXT_SECONDARY));
-        lv_obj_set_width(label, LV_PCT(100));
-    }
-    for (size_t index = 0; index < count; ++index) {
-        char detail[48];
-        const pxsys_reference_wifi_network_t* network =
-            &ui->wifi_networks[index];
-        snprintf(detail, sizeof(detail), "%d dBm  %s", network->rssi,
-                 translated(ui, network->secured ? "settings.wifi.secured"
-                                                 : "settings.wifi.open",
-                            network->secured ? "Secured" : "Open network"));
-        ui->wifi_network_controls[index].ui = ui;
-        ui->wifi_network_controls[index].index = index;
-        (void)make_settings_row(ui, &layout, panel, LV_SYMBOL_WIFI,
-                                PXSYS_COLOR_ACCENT, network->ssid, detail,
-                                wifi_network_clicked,
-                                &ui->wifi_network_controls[index]);
+    ui->wifi_network_list = lv_obj_create(panel);
+    style_plain(ui->wifi_network_list);
+    lv_obj_set_width(ui->wifi_network_list, LV_PCT(100));
+    lv_obj_set_height(ui->wifi_network_list, LV_SIZE_CONTENT);
+    lv_obj_set_layout(ui->wifi_network_list, LV_LAYOUT_FLEX);
+    lv_obj_set_flex_flow(ui->wifi_network_list, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_row(ui->wifi_network_list, 8, 0);
+    if (ui->wifi_scan_start != NULL) {
+        wifi_render_networks(ui, PXSYS_REFERENCE_WIFI_SCANNING);
+        ui->wifi_scan_start(ui->wifi_context);
+        lv_timer_resume(ui->wifi_scan_timer);
+    } else {
+        wifi_render_networks(ui, ui->wifi_scan(ui->wifi_context, ui->wifi_networks,
+                                               PXSYS_REFERENCE_WIFI_NETWORK_MAX));
     }
 }
 
@@ -5370,13 +5595,13 @@ static void rebuild(pxsys_reference_lvgl_t* ui) {
         uint16_t top = 0;
         uint16_t bottom = 0;
         if ((ui->active_chrome & PXSYS_REFERENCE_UI_STATUS_BAR) &&
-            ui->window.status_bar_mode != PXSYS_WINDOW_BAR_HIDDEN &&
-            bar_is_visible(ui, ui->window.status_bar_mode))
+            status_bar_mode(ui) != PXSYS_WINDOW_BAR_HIDDEN &&
+            bar_is_visible(ui, status_bar_mode(ui)))
             top = (uint16_t)layout.status_bar.height;
         if ((ui->active_chrome & PXSYS_REFERENCE_UI_NAVIGATION_BAR) &&
             ui->navigation_mode == PXSYS_NAVIGATION_BUTTONS &&
-            ui->window.navigation_bar_mode != PXSYS_WINDOW_BAR_HIDDEN &&
-            bar_is_visible(ui, ui->window.navigation_bar_mode))
+            navigation_bar_mode(ui) != PXSYS_WINDOW_BAR_HIDDEN &&
+            bar_is_visible(ui, navigation_bar_mode(ui)))
             bottom = (uint16_t)layout.navigation_bar.height;
         if (top != ui->content_inset_top ||
             bottom != ui->content_inset_bottom) {
@@ -5423,8 +5648,8 @@ static void rebuild(pxsys_reference_lvgl_t* ui) {
 #endif
 
     if ((ui->active_chrome & PXSYS_REFERENCE_UI_STATUS_BAR) &&
-        ui->window.status_bar_mode != PXSYS_WINDOW_BAR_HIDDEN) {
-        if (bar_is_visible(ui, ui->window.status_bar_mode)) {
+        status_bar_mode(ui) != PXSYS_WINDOW_BAR_HIDDEN) {
+        if (bar_is_visible(ui, status_bar_mode(ui))) {
             build_status_bar(ui, &layout);
         } else {
             lv_obj_t* catcher = lv_obj_create(ui->root);
@@ -5507,8 +5732,8 @@ static void rebuild(pxsys_reference_lvgl_t* ui) {
     }
 
     if ((ui->active_chrome & PXSYS_REFERENCE_UI_NAVIGATION_BAR) &&
-        ui->window.navigation_bar_mode != PXSYS_WINDOW_BAR_HIDDEN) {
-        int visible = bar_is_visible(ui, ui->window.navigation_bar_mode);
+        navigation_bar_mode(ui) != PXSYS_WINDOW_BAR_HIDDEN) {
+        int visible = bar_is_visible(ui, navigation_bar_mode(ui));
         int gesture_height = (int)gesture_strip_height(&layout);
         navigation = lv_obj_create(ui->root);
         ui->navigation_bar = navigation;
@@ -5568,7 +5793,7 @@ static void rebuild(pxsys_reference_lvgl_t* ui) {
                             (lv_coord_t)layout.navigation_bar.height);
             lv_obj_set_style_bg_color(navigation,
                                       color_token(ui, PXSYS_COLOR_SURFACE), 0);
-            if (ui->window.navigation_bar_mode == PXSYS_WINDOW_BAR_TRANSIENT)
+            if (navigation_bar_mode(ui) == PXSYS_WINDOW_BAR_TRANSIENT)
                 lv_obj_set_style_bg_opa(navigation, (lv_opa_t)224, 0);
             action_width = (int32_t)layout.navigation_bar.width / 3;
             action_height = layout.navigation_bar.height > 8
@@ -5598,8 +5823,8 @@ static void rebuild(pxsys_reference_lvgl_t* ui) {
                                   ? ui->back_gesture_edge_width
                                   : pxsys_reference_layout_back_gesture_width();
         if ((ui->active_chrome & PXSYS_REFERENCE_UI_STATUS_BAR) &&
-            ui->window.status_bar_mode != PXSYS_WINDOW_BAR_HIDDEN &&
-            bar_is_visible(ui, ui->window.status_bar_mode))
+            status_bar_mode(ui) != PXSYS_WINDOW_BAR_HIDDEN &&
+            bar_is_visible(ui, status_bar_mode(ui)))
             top += (int32_t)layout.status_bar.height;
         if (bottom > top) {
             ui->back_gesture_override = 0;
@@ -6305,6 +6530,7 @@ pxsys_status_t pxsys_reference_lvgl_create(
     ui->performance_set = config->performance_set;
     ui->wifi_context = config->wifi_context;
     ui->wifi_scan = config->wifi_scan;
+    ui->wifi_scan_start = config->wifi_scan_start;
     ui->wifi_connect = config->wifi_connect;
     ui->app_permission_context = config->app_permission_context;
     ui->app_permission_list = config->app_permission_list;
@@ -6317,6 +6543,8 @@ pxsys_status_t pxsys_reference_lvgl_create(
     ui->root = lv_obj_create(ui->parent);
     style_plain(ui->root);
     ui->app_ime_timer = lv_timer_create(app_input_method_poll, 200, ui);
+    ui->wifi_scan_timer = lv_timer_create(wifi_scan_poll, 250, ui);
+    if (ui->wifi_scan_timer != NULL) lv_timer_pause(ui->wifi_scan_timer);
     /* The transparent system-chrome root sits above application surfaces.
      * Only its concrete bars and overlays may participate in hit testing. */
     lv_obj_remove_flag(ui->root, LV_OBJ_FLAG_CLICKABLE);
@@ -6604,6 +6832,7 @@ pxsys_status_t pxsys_reference_lvgl_destroy(pxsys_reference_lvgl_t* ui) {
     if (ui->app_ime_keypad != NULL) pxsys_reference_ime_destroy(ui->app_ime_keypad);
     if (ui->app_ime != NULL) lv_obj_delete(ui->app_ime);
     if (ui->app_ime_timer != NULL) lv_timer_delete(ui->app_ime_timer);
+    if (ui->wifi_scan_timer != NULL) lv_timer_delete(ui->wifi_scan_timer);
     if (ui->toast_timer != NULL) lv_timer_delete(ui->toast_timer);
     if (ui->transient_timer != NULL) lv_timer_delete(ui->transient_timer);
     pxsys_reference_lvgl_hide_power_menu(ui);

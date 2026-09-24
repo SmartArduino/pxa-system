@@ -1,0 +1,92 @@
+{
+  "schema": "pxa-store-installer-spec-0.5",
+  "status": "draft",
+  "service": {
+    "name": "store-installer",
+    "id": 20,
+    "major": 0,
+    "minor": 5,
+    "patch": 0
+  },
+  "opcodes": [
+    {
+      "name": "install",
+      "id": 1,
+      "direction": "bidirectional-result",
+      "request_id": "nonzero",
+      "payload": "app_id_length:u8|ticket_length:u16|container_size:u64|container_sha256:bytes[32]|app_id:bytes[app_id_length]|ticket:bytes[ticket_length]",
+      "result": "status:i32"
+    },
+    {
+      "name": "download",
+      "id": 2,
+      "direction": "bidirectional-result",
+      "request_id": "nonzero",
+      "payload": "app_id_length:u8|ticket_length:u16|container_size:u64|container_sha256:bytes[32]|app_id:bytes[app_id_length]|ticket:bytes[ticket_length]",
+      "result": "status:i32|staging_name:bytes[19] (success only)"
+    },
+    {
+      "name": "install-file",
+      "id": 3,
+      "direction": "bidirectional-result",
+      "request_id": "nonzero",
+      "payload": "staging_name:bytes[19]",
+      "result": "status:i32"
+    },
+    {
+      "name": "installed-list",
+      "id": 4,
+      "direction": "bidirectional-result",
+      "request_id": "nonzero",
+      "payload": "",
+      "result": "status:i32|count:u8|(app_id_len:u8|version_len:u8|identity_len:u8|release_sequence:u64|flags:u8|app_id|version|identity)* (flags bit 0: uninstallable)"
+    },
+    {
+      "name": "download-list",
+      "id": 5,
+      "direction": "bidirectional-result",
+      "request_id": "nonzero",
+      "payload": "",
+      "result": "status:i32|count:u8|(app_id_len:u8|staging_name:bytes[19]|app_id)*"
+    },
+    {
+      "name": "delete",
+      "id": 6,
+      "direction": "bidirectional-result",
+      "request_id": "nonzero",
+      "payload": "staging_name:bytes[19]",
+      "result": "status:i32"
+    },
+    {
+      "name": "launch",
+      "id": 7,
+      "direction": "bidirectional-result",
+      "request_id": "nonzero",
+      "payload": "app_id:bytes[1..64]",
+      "result": "status:i32"
+    },
+    {
+      "name": "uninstall",
+      "id": 8,
+      "direction": "bidirectional-result",
+      "request_id": "nonzero",
+      "payload": "app_id:bytes[1..64]",
+      "result": "status:i32"
+    },
+    {
+      "name": "download-progress",
+      "id": 32769,
+      "direction": "host-to-guest-event",
+      "request_id": "zero",
+      "payload": "download_request_id:u32|received_bytes:u64|total_bytes:u64 (little-endian; best-effort/coalescible; completion remains opcode 2 result)"
+    }
+  ],
+  "limits": {
+    "app_id_bytes": 64,
+    "ticket_bytes": 255,
+    "package_bytes": 4194304,
+    "download_slots": 8,
+    "installed_list_entries": 12
+  },
+  "protocol_version": "0.5.0"
+}

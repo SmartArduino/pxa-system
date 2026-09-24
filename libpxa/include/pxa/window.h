@@ -11,11 +11,13 @@ extern "C" {
 #endif
 #define PXA_WINDOW_SERVICE_ID UINT16_C(2)
 #define PXA_WINDOW_SERVICE_MAJOR UINT16_C(0)
-#define PXA_WINDOW_SERVICE_MINOR UINT16_C(1)
+#define PXA_WINDOW_SERVICE_MINOR UINT16_C(2)
 #define PXA_WINDOW_SERVICE_PATCH UINT16_C(0)
 
 #define PXA_WINDOW_CONFIGURE UINT16_C(1)
 #define PXA_WINDOW_GET_SNAPSHOT UINT16_C(2)
+#define PXA_WINDOW_SHOW_TOAST UINT16_C(3)
+#define PXA_WINDOW_TOAST_MAX_BYTES 240u
 #define PXA_WINDOW_METRICS_CHANGED UINT16_C(0x8001)
 #define PXA_WINDOW_BACK_REQUESTED UINT16_C(0x8002)
 
@@ -81,11 +83,14 @@ typedef struct {
 
 typedef pxa_status_t (*pxa_window_apply_fn)(
     void *context, const pxa_window_configuration_t *configuration);
+typedef pxa_status_t (*pxa_window_toast_fn)(void *context, const char *text,
+                                            uint32_t duration_ms);
 
 typedef struct {
     uint32_t struct_size;
     void *context;
     pxa_window_apply_fn apply;
+    pxa_window_toast_fn show_toast;
 } pxa_window_backend_t;
 
 typedef struct pxa_window_service pxa_window_service_t;

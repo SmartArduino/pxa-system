@@ -1,4 +1,4 @@
-#include "../../../apps/pxa/arcade/modules/jump_jump.c"
+#include "arcade/modules/jump_jump.c"
 
 #include <assert.h>
 

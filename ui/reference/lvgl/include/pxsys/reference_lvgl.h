@@ -132,6 +132,8 @@ typedef bool (*pxsys_reference_lvgl_performance_set_fn)(
 
 #define PXSYS_REFERENCE_WIFI_SSID_MAX 33
 #define PXSYS_REFERENCE_WIFI_NETWORK_MAX 16
+#define PXSYS_REFERENCE_WIFI_SCAN_FAILED ((size_t)-1)
+#define PXSYS_REFERENCE_WIFI_SCANNING ((size_t)-2)
 typedef struct {
     char ssid[PXSYS_REFERENCE_WIFI_SSID_MAX];
     int8_t rssi;
@@ -140,6 +142,7 @@ typedef struct {
 
 typedef size_t (*pxsys_reference_lvgl_wifi_scan_fn)(
     void* context, pxsys_reference_wifi_network_t* networks, size_t capacity);
+typedef void (*pxsys_reference_lvgl_wifi_scan_start_fn)(void* context);
 typedef bool (*pxsys_reference_lvgl_wifi_connect_fn)(
     void* context, const char* ssid, const char* password);
 
@@ -320,8 +323,8 @@ typedef struct {
     void* performance_context;
     pxsys_reference_lvgl_performance_get_fn performance_get;
     pxsys_reference_lvgl_performance_set_fn performance_set;
-    /* Optional station-mode Wi-Fi selection. When present, tapping Wi-Fi in
-     * Settings scans access points and opens an on-screen password keyboard. */
+    /* Optional station-mode Wi-Fi selection. A scan_start callback lets
+     * Settings open immediately and poll the scan result in the background. */
     void* wifi_context;
     pxsys_reference_lvgl_wifi_scan_fn wifi_scan;
     pxsys_reference_lvgl_wifi_connect_fn wifi_connect;
@@ -331,6 +334,8 @@ typedef struct {
     void* app_permission_context;
     pxsys_reference_lvgl_app_permission_list_fn app_permission_list;
     pxsys_reference_lvgl_app_permission_set_fn app_permission_set;
+    /* Starts a background scan; wifi_scan polls without blocking when set. */
+    pxsys_reference_lvgl_wifi_scan_start_fn wifi_scan_start;
 } pxsys_reference_lvgl_config_t;
 
 typedef struct pxsys_reference_lvgl pxsys_reference_lvgl_t;

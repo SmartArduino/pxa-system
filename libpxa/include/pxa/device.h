@@ -12,10 +12,18 @@ extern "C" {
 
 #define PXA_DEVICE_SERVICE_ID UINT16_C(15)
 #define PXA_DEVICE_SERVICE_MAJOR UINT16_C(0)
-#define PXA_DEVICE_SERVICE_MINOR UINT16_C(1)
+#define PXA_DEVICE_SERVICE_MINOR UINT16_C(2)
 #define PXA_DEVICE_SERVICE_PATCH UINT16_C(0)
 
 #define PXA_DEVICE_GET_MAC UINT16_C(1)
+#define PXA_DEVICE_GET_RUNTIME_INFO UINT16_C(2)
+#define PXA_DEVICE_FORMAT_WASM UINT32_C(1)
+#define PXA_DEVICE_FORMAT_AOT UINT32_C(2)
+#define PXA_DEVICE_TAG_TARGET UINT16_C(1)
+#define PXA_DEVICE_TAG_ARCHITECTURE UINT16_C(2)
+#define PXA_DEVICE_TAG_ENGINE UINT16_C(3)
+#define PXA_DEVICE_TAG_ENGINE_ABI UINT16_C(4)
+#define PXA_DEVICE_TAG_FORMATS UINT16_C(5)
 
 #define PXA_DEVICE_MAC_KIND_WIFI_STATION_HARDWARE UINT16_C(1)
 #define PXA_DEVICE_MAC_KIND_WIFI_SOFTAP_HARDWARE UINT16_C(2)
@@ -40,6 +48,11 @@ typedef struct {
     void *provider_context;
     pxa_device_get_mac_fn get_mac;
     pxa_permission_service_t *permissions;
+    const char *target;
+    const char *architecture;
+    const char *engine;
+    const char *engine_abi;
+    uint32_t formats;
 } pxa_device_config_t;
 
 typedef struct pxa_device_service pxa_device_service_t;

@@ -64,5 +64,37 @@ int main(void) {
     assert(pxa_device_format_mac_colon(decoded.mac, formatted,
                                        sizeof(formatted)) &&
            strcmp(formatted, "24:6F:28:70:14:01") == 0);
+    {
+        pxa_device_runtime_info_t runtime_info;
+        uint8_t runtime_payload[128];
+        uint8_t runtime_packet[160];
+        pxa_writer_t runtime_result;
+        pxa_writer_t runtime_message;
+        assert(pxa_device_get_runtime_info(18, packet, sizeof(packet)));
+        assert(pxa_read_u16(captured + 2) == PXA_DEVICE_GET_RUNTIME_INFO &&
+               pxa_read_u32(captured + 4) == 18);
+        pxa_writer_init(&runtime_result, runtime_payload,
+                        sizeof(runtime_payload));
+        assert(pxa_put_u32(&runtime_result, PXA_STATUS_OK));
+        assert(pxa_record(&runtime_result, 1, (const uint8_t *)"esp32-s31", 9));
+        assert(pxa_record(&runtime_result, 2, (const uint8_t *)"riscv32", 7));
+        assert(pxa_record(&runtime_result, 3, (const uint8_t *)"wamr", 4));
+        assert(pxa_record(&runtime_result, 4, (const uint8_t *)"aot-v6", 6));
+        assert(pxa_record(&runtime_result, 5,
+                          (const uint8_t[]){3, 0, 0, 0}, 4));
+        pxa_writer_init(&runtime_message, runtime_packet,
+                        sizeof(runtime_packet));
+        assert(pxa_message(&runtime_message, PXA_SERVICE_DEVICE,
+                           PXA_DEVICE_GET_RUNTIME_INFO, 18,
+                           runtime_result.data, runtime_result.length));
+        assert(pxa_parse_event(runtime_packet, (uint32_t)runtime_message.length,
+                               &event));
+        assert(pxa_device_parse_runtime_info(&event, &runtime_info));
+        assert(runtime_info.status == PXA_STATUS_OK &&
+               strcmp(runtime_info.target, "esp32-s31") == 0 &&
+               strcmp(runtime_info.architecture, "riscv32") == 0 &&
+               strcmp(runtime_info.engine_abi, "aot-v6") == 0 &&
+               runtime_info.formats == 3);
+    }
     return 0;
 }

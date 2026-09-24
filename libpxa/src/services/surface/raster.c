@@ -166,6 +166,7 @@ static pxa_status_t validate_quad(const uint8_t *record, uint16_t record_size,
     uint8_t index;
     uint8_t painter = 0;
     uint8_t lit_palette = 0;
+    uint8_t painter_depth = 0;
     uint32_t offset;
     if ((!textured && record_size != PXA_RASTER_FLAT_QUAD_BYTES) ||
         (textured && record_size != PXA_RASTER_TEXTURED_QUAD_BYTES))
@@ -178,14 +179,20 @@ static pxa_status_t validate_quad(const uint8_t *record, uint16_t record_size,
         const uint8_t transparent =
             flags & PXA_RASTER_QUAD_TRANSPARENT_INDEX0;
         const uint8_t blend = flags & PXA_RASTER_QUAD_BLEND_75;
+        const uint8_t coverage = flags & PXA_RASTER_QUAD_COVERAGE_MASK;
+        const uint8_t coverage_resolve =
+            flags & PXA_RASTER_QUAD_COVERAGE_RESOLVE;
         lit_palette = flags & PXA_RASTER_QUAD_LIT_PALETTE;
         painter = flags & PXA_RASTER_QUAD_PAINTER;
+        painter_depth = (uint8_t)(painter != 0 && lit_palette != 0);
         if ((flags & ~(PXA_RASTER_QUAD_SOLID_COLOR |
                        PXA_RASTER_QUAD_AFFINE_UV |
                        PXA_RASTER_QUAD_PAINTER |
                        PXA_RASTER_QUAD_TRANSPARENT_INDEX0 |
                        PXA_RASTER_QUAD_LIT_PALETTE |
-                       PXA_RASTER_QUAD_BLEND_75)) != 0 ||
+                       PXA_RASTER_QUAD_BLEND_75 |
+                       PXA_RASTER_QUAD_COVERAGE_MASK |
+                       PXA_RASTER_QUAD_COVERAGE_RESOLVE)) != 0 ||
             (solid != 0 && abi_minor < 1))
             return PXA_STATUS_UNSUPPORTED;
         if (painter != 0 &&
@@ -194,7 +201,11 @@ static pxa_status_t validate_quad(const uint8_t *record, uint16_t record_size,
              resources->palette == NULL || resources->palette_light_levels == 0))
             return PXA_STATUS_UNSUPPORTED;
         if (lit_palette != 0 &&
-            (abi_minor < 4 || painter != 0 || solid != 0 ||
+            (abi_minor < 4 ||
+             (painter != 0 &&
+              ((resources->capabilities &
+                PXA_RASTER_CAP_PAINTER_DEPTH) == 0 || coverage != 0)) ||
+             (painter == 0 && solid != 0) ||
              (resources->capabilities &
               PXA_RASTER_CAP_LIT_PALETTE_DEPTH) == 0 ||
              resources->palette == NULL ||
@@ -209,13 +220,27 @@ static pxa_status_t validate_quad(const uint8_t *record, uint16_t record_size,
              (resources->capabilities &
               PXA_RASTER_CAP_FIXED_ALPHA_BLEND) == 0))
             return PXA_STATUS_UNSUPPORTED;
+        if (coverage != 0 &&
+            (abi_minor < 6 || painter == 0 ||
+             (resources->capabilities & PXA_RASTER_CAP_COVERAGE_MASK) == 0))
+            return PXA_STATUS_UNSUPPORTED;
+        if (coverage != 0 && affine == 0 &&
+            (resources->capabilities & PXA_RASTER_CAP_PAINTER_PERSPECTIVE) == 0)
+            return PXA_STATUS_UNSUPPORTED;
+        if (coverage != 0 && solid != 0 && abi_minor < 7)
+            return PXA_STATUS_UNSUPPORTED;
+        if (coverage_resolve != 0 &&
+            (coverage == 0 || blend == 0))
+            return PXA_STATUS_UNSUPPORTED;
         if (affine != 0) {
             if ((resources->capabilities & PXA_RASTER_CAP_AFFINE_UV) == 0)
                 return PXA_STATUS_UNSUPPORTED;
             if (solid != 0 && painter == 0) return PXA_STATUS_PROTOCOL_ERROR;
         }
         if (record[5] != 0 || (solid == 0 && read_u16(record + 6) != 0) ||
-            (solid != 0 && painter != 0 && read_u16(record + 6) > 255u) ||
+            (solid != 0 && painter != 0 && coverage == 0 &&
+             painter_depth == 0 &&
+             read_u16(record + 6) > 255u) ||
             (solid != 0 &&
              (flags & (PXA_RASTER_QUAD_TRANSPARENT_INDEX0 |
                        PXA_RASTER_QUAD_BLEND_75)) != 0))
@@ -235,10 +260,17 @@ static pxa_status_t validate_quad(const uint8_t *record, uint16_t record_size,
             decode_vertex(record + offset + index * PXA_RASTER_VERTEX_BYTES,
                           &vertices[index]);
             if (record[offset + index * PXA_RASTER_VERTEX_BYTES + 9] != 0 ||
-                ((painter != 0 || lit_palette != 0) &&
+                (((painter != 0 && painter_depth == 0 &&
+                   (record[1] & (PXA_RASTER_QUAD_SOLID_COLOR |
+                                 PXA_RASTER_QUAD_COVERAGE_MASK)) !=
+                       (PXA_RASTER_QUAD_SOLID_COLOR |
+                        PXA_RASTER_QUAD_COVERAGE_MASK)) ||
+                  (lit_palette != 0 &&
+                   (record[1] & PXA_RASTER_QUAD_SOLID_COLOR) == 0)) &&
                  vertices[index].light >= resources->palette_light_levels) ||
                 (painter == 0 && abi_minor == 0 && vertices[index].depth != 0) ||
-                (painter == 0 && abi_minor >= 1 && vertices[index].depth == 0))
+                ((painter == 0 || painter_depth != 0) &&
+                 abi_minor >= 1 && vertices[index].depth == 0))
                 return PXA_STATUS_PROTOCOL_ERROR;
         } else {
             vertices[index].x = read_i16(record + offset + index * 4u);
@@ -457,6 +489,10 @@ pxa_status_t pxa_raster_validate_draw_list(
     if ((required & ~PXA_RASTER_CAP_KNOWN_MASK) != 0 ||
         (required & ~resources->capabilities) != 0)
         return PXA_STATUS_UNSUPPORTED;
+    if ((required & (PXA_RASTER_CAP_COVERAGE_MASK |
+                     PXA_RASTER_CAP_PAINTER_DEPTH)) != 0 &&
+        target->depth_pixels == NULL)
+        return PXA_STATUS_BAD_STATE;
     if (read_u64(bytes + 20) == 0) return PXA_STATUS_INVALID_ARGUMENT;
     offset = PXA_RASTER_DRAW_HEADER_BYTES;
     for (index = 0; index < command_count; ++index) {
@@ -564,7 +600,7 @@ static int64_t reciprocal_depth(uint16_t depth) {
 }
 
 #define RASTER_PERSPECTIVE_BLOCK_MIN_PIXELS 8
-#define RASTER_PERSPECTIVE_BLOCK_MAX_PIXELS 16
+#define RASTER_PERSPECTIVE_BLOCK_MAX_PIXELS 24
 #define RASTER_PERSPECTIVE_BLOCK_DEPTH_SHIFT 3
 #define RASTER_TEXTURE_Q8_FROM_UV_Q4 16
 /* draw_triangle interpolation modes. Untextured triangles ignore
@@ -596,25 +632,67 @@ static int32_t perspective_texture_q8(int64_t numerator, int64_t denominator) {
                          RASTER_TEXTURE_Q8_FROM_UV_Q4 / denominator);
 }
 
-static int32_t perspective_block_pixels(int32_t remaining,
-                                        int64_t reciprocal,
-                                        int64_t reciprocal_dx) {
-    int32_t pixels = remaining;
-    uint64_t magnitude;
-    uint64_t delta;
-    if (pixels > RASTER_PERSPECTIVE_BLOCK_MAX_PIXELS)
-        pixels = RASTER_PERSPECTIVE_BLOCK_MAX_PIXELS;
-    if (pixels <= RASTER_PERSPECTIVE_BLOCK_MIN_PIXELS) return pixels;
+
+/* u/z and 1/z stay 32-bit on purpose. Converting a 64-bit value to or from
+ * float is a software call on RISC-V32 and Xtensa, and paying six of them per
+ * span measured 2100 cycles of pure setup on esp32s31. */
+#define RASTER_PERSPECTIVE_UV_LIMIT \
+    (INT32_MAX / RASTER_TEXTURE_Q8_FROM_UV_Q4)
+
+static int32_t painter_clamp32(int64_t value) {
+    if (value > INT32_MAX) return INT32_MAX;
+    if (value < INT32_MIN) return INT32_MIN;
+    return (int32_t)value;
+}
+
+/* Texel coordinate in Q8 from the screen-linear u/z and 1/z interpolants.
+ * draw_painter_polygon only enables the perspective path when every u/z it
+ * can produce fits the 32-bit multiply below. */
+static int32_t painter_texture_q8(int32_t reciprocal_uv, int32_t reciprocal) {
+    if (reciprocal == 0) return 0;
+    if (reciprocal_uv > RASTER_PERSPECTIVE_UV_LIMIT)
+        reciprocal_uv = RASTER_PERSPECTIVE_UV_LIMIT;
+    if (reciprocal_uv < -RASTER_PERSPECTIVE_UV_LIMIT)
+        reciprocal_uv = -RASTER_PERSPECTIVE_UV_LIMIT;
+    return reciprocal_uv * RASTER_TEXTURE_Q8_FROM_UV_Q4 / reciprocal;
+}
+
+/* Longest run of pixels over which the reciprocal depth moves by less than
+ * 1/8, capped by what is left of the span. Flat-depth spans collapse to one
+ * block, so the perspective divide costs nothing where it would change
+ * nothing. Every operand stays 32-bit: a 64-bit divide is a software call on
+ * both RISC-V32 and Xtensa and measured 6x the whole painter fill. */
+static int32_t painter_perspective_block(int32_t remaining, int64_t reciprocal,
+                                         int64_t reciprocal_dx) {
+    uint32_t magnitude;
+    uint32_t delta;
+    uint32_t limit;
+    int64_t magnitude_dx;
+    if (remaining <= RASTER_PERSPECTIVE_BLOCK_MIN_PIXELS) return remaining;
     if (reciprocal <= 0) return RASTER_PERSPECTIVE_BLOCK_MIN_PIXELS;
-    magnitude = (uint64_t)reciprocal;
-    delta = reciprocal_dx < 0
-                ? (uint64_t)(-(reciprocal_dx + 1)) + UINT64_C(1)
-                : (uint64_t)reciprocal_dx;
-    if (delta > UINT64_MAX / (uint32_t)pixels ||
-        delta * (uint32_t)pixels >
-            (magnitude >> RASTER_PERSPECTIVE_BLOCK_DEPTH_SHIFT))
+    magnitude_dx = reciprocal_dx < 0 ? -reciprocal_dx : reciprocal_dx;
+    if (magnitude_dx == 0)
+        return remaining < RASTER_PERSPECTIVE_BLOCK_MAX_PIXELS
+                   ? remaining : RASTER_PERSPECTIVE_BLOCK_MAX_PIXELS;
+    magnitude = reciprocal > (int64_t)UINT32_MAX ? UINT32_MAX
+                                                 : (uint32_t)reciprocal;
+    delta = magnitude_dx > (int64_t)UINT32_MAX ? UINT32_MAX
+                                               : (uint32_t)magnitude_dx;
+    limit = (magnitude >> RASTER_PERSPECTIVE_BLOCK_DEPTH_SHIFT) / delta;
+    if (limit <= (uint32_t)RASTER_PERSPECTIVE_BLOCK_MIN_PIXELS)
         return RASTER_PERSPECTIVE_BLOCK_MIN_PIXELS;
-    return pixels;
+    if (limit > RASTER_PERSPECTIVE_BLOCK_MAX_PIXELS)
+        limit = RASTER_PERSPECTIVE_BLOCK_MAX_PIXELS;
+    return limit >= (uint32_t)remaining ? remaining : (int32_t)limit;
+}
+
+/* Per-pixel Q16 texel step across one block. The clamp keeps the shift inside
+ * int32 for the near-degenerate spans a clipped polygon can still produce. */
+static int32_t painter_block_step(int32_t delta_q8, int32_t block) {
+    const int32_t limit = INT32_C(1) << 22;
+    if (delta_q8 > limit) delta_q8 = limit;
+    if (delta_q8 < -limit) delta_q8 = -limit;
+    return (delta_q8 << 8) / block;
 }
 
 static inline int32_t wrap_texture_coordinate(int32_t coordinate,
@@ -1018,8 +1096,9 @@ static uint32_t draw_triangle(const raster_vertex_t *a,
                 int32_t v_texture_step_q8 = 0;
                 int32_t u_texture_end_q8 = 0;
                 int32_t v_texture_end_q8 = 0;
-                int32_t block_pixels = perspective_block_pixels(
-                    span_end - x, reciprocal, reciprocal_dx);
+                int32_t block_pixels = painter_perspective_block(
+                    span_end - x, painter_clamp32(reciprocal),
+                    painter_clamp32(reciprocal_dx));
                 int32_t block_index;
                 {
                     const int64_t reciprocal_end =
@@ -1110,6 +1189,13 @@ static uint32_t draw_triangle(const raster_vertex_t *a,
 typedef struct {
     int32_t x, u, v, light;
     int32_t dx, du, dv, dlight;
+    /* Perspective interpolants. On a planar face u/z, v/z and 1/z are linear
+     * in screen space, so stepping them per row and per column and dividing
+     * once per short block keeps the texture straight without a per-texel
+     * divide. `w` is zero when the Guest sent no depth, which selects the
+     * screen-linear mapping. */
+    int32_t uw, vw, w;
+    int32_t duw, dvw, dw;
     int32_t end_row;
 } raster_painter_edge_t;
 
@@ -1119,6 +1205,7 @@ typedef struct {
     uint8_t index;
     uint8_t remaining;
     uint8_t forward;
+    uint8_t perspective;
     raster_painter_edge_t edge;
 } raster_painter_chain_t;
 
@@ -1130,8 +1217,22 @@ static int32_t painter_column_ceil(int32_t x_q16) {
     return (x_q16 + 0x7fff) >> RASTER_PAINTER_FIXED_SHIFT;
 }
 
+static inline int painter_span_covered(const uint8_t *mask, int32_t first,
+                                       int32_t end) {
+    while (first < end) {
+        const uint32_t bit = (uint32_t)first & 7u;
+        const uint32_t remaining = (uint32_t)(end - first);
+        const uint32_t count = remaining < 8u - bit ? remaining : 8u - bit;
+        const uint8_t bits = (uint8_t)(((1u << count) - 1u) << bit);
+        if ((mask[(uint32_t)first >> 3] & bits) != bits) return 0;
+        first += (int32_t)count;
+    }
+    return 1;
+}
+
 static int painter_setup_edge(const raster_vertex_t *a,
                               const raster_vertex_t *b, int32_t start_row,
+                              uint8_t perspective,
                               raster_painter_edge_t *edge) {
     const int32_t dy = (int32_t)b->y - a->y;
     int32_t first_row;
@@ -1161,6 +1262,27 @@ static int painter_setup_edge(const raster_vertex_t *a,
     edge->u = PXA_PAINTER_EDGE_AT(u0, edge->du);
     edge->v = PXA_PAINTER_EDGE_AT(v0, edge->dv);
     edge->light = PXA_PAINTER_EDGE_AT(light0, edge->dlight);
+    if (perspective) {
+        const int32_t wa = (int32_t)reciprocal_depth(a->depth);
+        const int32_t wb = (int32_t)reciprocal_depth(b->depth);
+        const int32_t uwa = (int32_t)a->u * wa;
+        const int32_t uwb = (int32_t)b->u * wb;
+        const int32_t vwa = (int32_t)a->v * wa;
+        const int32_t vwb = (int32_t)b->v * wb;
+        edge->dw = (int32_t)((float)(wb - wa) * per_row);
+        edge->duw = (int32_t)((float)(uwb - uwa) * per_row);
+        edge->dvw = (int32_t)((float)(vwb - vwa) * per_row);
+        edge->w = painter_clamp32(wa + (((int64_t)edge->dw * rows16) >> 4));
+        edge->uw = painter_clamp32(uwa + (((int64_t)edge->duw * rows16) >> 4));
+        edge->vw = painter_clamp32(vwa + (((int64_t)edge->dvw * rows16) >> 4));
+    } else {
+        edge->w = 0;
+        edge->uw = 0;
+        edge->vw = 0;
+        edge->dw = 0;
+        edge->duw = 0;
+        edge->dvw = 0;
+    }
 #undef PXA_PAINTER_EDGE_AT
     return 1;
 }
@@ -1176,7 +1298,8 @@ static int painter_advance_chain(raster_painter_chain_t *chain, int32_t row) {
             next = chain->index == 0 ? chain->count - 1u
                                      : chain->index - 1u;
         if (painter_setup_edge(&chain->vertices[chain->index],
-                               &chain->vertices[next], row, &chain->edge)) {
+                               &chain->vertices[next], row, chain->perspective,
+                               &chain->edge)) {
             chain->index = next;
             return 1;
         }
@@ -1190,6 +1313,9 @@ static void painter_step_edge(raster_painter_edge_t *edge) {
     edge->u += edge->du;
     edge->v += edge->dv;
     edge->light += edge->dlight;
+    edge->uw += edge->duw;
+    edge->vw += edge->dvw;
+    edge->w += edge->dw;
 }
 
 static uint8_t painter_texture_log2(uint16_t dimension) {
@@ -1208,11 +1334,97 @@ static inline size_t painter_texture_index_pow2(
            ((u >> RASTER_PAINTER_FIXED_SHIFT) & mask_u);
 }
 
+/* The constant-light, power-of-two texture span. Keeping it out of line
+ * matters on RISC-V32 and Xtensa: the perspective block state around the call
+ * site is 64-bit and would otherwise spill the inner loop's registers. */
+static RASTER_NOINLINE void painter_span_textured(
+    uint16_t *out, uint32_t count, uint32_t u, uint32_t v, int32_t du,
+    int32_t dv, const uint8_t *texels, const uint16_t *lit,
+    uint32_t texture_mask_u, uint32_t texture_mask_v,
+    uint8_t texture_log2_width, int transparent, int blend_75) {
+    const uint32_t u_step = (uint32_t)du;
+    const uint32_t v_step = (uint32_t)dv;
+    if (!transparent && !blend_75) {
+        /* Opaque spans write the framebuffer in 32-bit pairs. The target is
+         * PSRAM behind a cache that the raster then flushes in one burst, and
+         * halving the store count measured about a sixth of the fill. Rows are
+         * only 2-byte aligned, so peel one pixel when the span starts odd. */
+        if (((uintptr_t)out & 3u) != 0u && count != 0u) {
+            *out++ = lit[texels[painter_texture_index_pow2(
+                u, v, texture_mask_u, texture_mask_v, texture_log2_width)]];
+            u += u_step;
+            v += v_step;
+            --count;
+        }
+        while (count >= 4u) {
+            const uint8_t t0 = texels[painter_texture_index_pow2(
+                u, v, texture_mask_u, texture_mask_v, texture_log2_width)];
+            const uint8_t t1 = texels[painter_texture_index_pow2(
+                u + u_step, v + v_step, texture_mask_u, texture_mask_v,
+                texture_log2_width)];
+            const uint8_t t2 = texels[painter_texture_index_pow2(
+                u + 2u * u_step, v + 2u * v_step, texture_mask_u,
+                texture_mask_v, texture_log2_width)];
+            const uint8_t t3 = texels[painter_texture_index_pow2(
+                u + 3u * u_step, v + 3u * v_step, texture_mask_u,
+                texture_mask_v, texture_log2_width)];
+            uint32_t *const wide = (uint32_t *)(void *)out;
+            wide[0] = (uint32_t)lit[t0] | ((uint32_t)lit[t1] << 16);
+            wide[1] = (uint32_t)lit[t2] | ((uint32_t)lit[t3] << 16);
+            out += 4;
+            u += 4u * u_step;
+            v += 4u * v_step;
+            count -= 4u;
+        }
+        while (count-- != 0) {
+            *out++ = lit[texels[painter_texture_index_pow2(
+                u, v, texture_mask_u, texture_mask_v, texture_log2_width)]];
+            u += u_step;
+            v += v_step;
+        }
+        return;
+    }
+    while (count >= 4u) {
+        const uint8_t t0 = texels[painter_texture_index_pow2(
+            u, v, texture_mask_u, texture_mask_v, texture_log2_width)];
+        const uint8_t t1 = texels[painter_texture_index_pow2(
+            u + u_step, v + v_step, texture_mask_u, texture_mask_v,
+            texture_log2_width)];
+        const uint8_t t2 = texels[painter_texture_index_pow2(
+            u + 2u * u_step, v + 2u * v_step, texture_mask_u, texture_mask_v,
+            texture_log2_width)];
+        const uint8_t t3 = texels[painter_texture_index_pow2(
+            u + 3u * u_step, v + 3u * v_step, texture_mask_u, texture_mask_v,
+            texture_log2_width)];
+        if (!transparent || t0 != 0)
+            out[0] = blend_75 ? blend_rgb565_75(out[0], lit[t0]) : lit[t0];
+        if (!transparent || t1 != 0)
+            out[1] = blend_75 ? blend_rgb565_75(out[1], lit[t1]) : lit[t1];
+        if (!transparent || t2 != 0)
+            out[2] = blend_75 ? blend_rgb565_75(out[2], lit[t2]) : lit[t2];
+        if (!transparent || t3 != 0)
+            out[3] = blend_75 ? blend_rgb565_75(out[3], lit[t3]) : lit[t3];
+        out += 4;
+        u += 4u * u_step;
+        v += 4u * v_step;
+        count -= 4u;
+    }
+    while (count-- != 0) {
+        const uint8_t texel = texels[painter_texture_index_pow2(
+            u, v, texture_mask_u, texture_mask_v, texture_log2_width)];
+        if (!transparent || texel != 0)
+            *out = blend_75 ? blend_rgb565_75(*out, lit[texel]) : lit[texel];
+        ++out;
+        u += u_step;
+        v += v_step;
+    }
+}
+
 static uint32_t draw_painter_polygon(
     const raster_vertex_t *vertices, uint8_t count, uint8_t flags,
-    uint8_t color_index, const pxa_raster_texture_t *texture,
+    uint16_t color_index, const pxa_raster_texture_t *texture,
     const uint16_t *palette, const pxa_raster_target_t *target,
-    uint16_t row_begin, uint16_t row_end) {
+    uint16_t row_begin, uint16_t row_end, uint8_t coverage_mode) {
     int64_t area = 0;
     uint8_t top = 0;
     int32_t min_y = vertices[0].y;
@@ -1225,10 +1437,20 @@ static uint32_t draw_painter_polygon(
     raster_painter_chain_t right;
     uint32_t covered = 0;
     uint8_t i;
+    uint8_t has_depth = 1;
+    uint8_t perspective;
     const int flat = (flags & PXA_RASTER_QUAD_SOLID_COLOR) != 0;
     const int transparent =
         (flags & PXA_RASTER_QUAD_TRANSPARENT_INDEX0) != 0;
     const int blend_75 = (flags & PXA_RASTER_QUAD_BLEND_75) != 0;
+    const size_t coverage_stride = ((size_t)target->width + 7u) >> 3;
+    uint8_t *const opaque_coverage =
+        (coverage_mode == 1 || coverage_mode == 2)
+        ? (uint8_t *)target->depth_pixels
+        : NULL;
+    uint8_t *const water_coverage = opaque_coverage != NULL
+        ? opaque_coverage + coverage_stride * target->height
+        : NULL;
     const uint8_t texture_log2_width =
         flat ? UINT8_MAX : painter_texture_log2(texture->width);
     const uint8_t texture_log2_height =
@@ -1251,9 +1473,36 @@ static uint32_t draw_painter_polygon(
         if (a->y > max_y) max_y = a->y;
         if (a->light < min_light) min_light = a->light;
         if (a->light > max_light) max_light = a->light;
+        if (a->depth == 0) has_depth = 0;
     }
     if (area == 0 || (!flat && (texture == NULL || texture->pixels == NULL)))
         return 0;
+    /* A Guest that wants the screen-linear mapping says so with AFFINE_UV;
+     * one that predates the perspective painter path sends no depth at all. */
+    perspective = (uint8_t)(has_depth &&
+                            (coverage_mode == 3 ||
+                             (!flat &&
+                              (flags & PXA_RASTER_QUAD_AFFINE_UV) == 0)));
+    if (perspective && !flat) {
+        /* u/z and 1/z are held in 32 bits so the whole span setup stays on
+         * hardware instructions. A face that would overflow that window keeps
+         * the screen-linear mapping instead. */
+        int32_t uv_limit = 0;
+        int32_t depth_limit = 0;
+        for (i = 0; i < count; ++i) {
+            const int32_t u_abs =
+                vertices[i].u < 0 ? -(int32_t)vertices[i].u : vertices[i].u;
+            const int32_t v_abs =
+                vertices[i].v < 0 ? -(int32_t)vertices[i].v : vertices[i].v;
+            const int32_t reciprocal =
+                (int32_t)reciprocal_depth(vertices[i].depth);
+            if (u_abs > uv_limit) uv_limit = u_abs;
+            if (v_abs > uv_limit) uv_limit = v_abs;
+            if (reciprocal > depth_limit) depth_limit = reciprocal;
+        }
+        if ((int64_t)uv_limit * depth_limit > RASTER_PERSPECTIVE_UV_LIMIT)
+            perspective = 0;
+    }
     row = painter_row_ceil(min_y);
     if (row < row_begin) row = row_begin;
     end = painter_row_ceil(max_y);
@@ -1267,6 +1516,8 @@ static uint32_t draw_painter_polygon(
     left.remaining = right.remaining = count - 1u;
     left.forward = area < 0;
     right.forward = area > 0;
+    left.perspective = perspective;
+    right.perspective = perspective;
     if (!painter_advance_chain(&left, row) ||
         !painter_advance_chain(&right, row))
         return 0;
@@ -1286,10 +1537,14 @@ static uint32_t draw_painter_polygon(
         x1 = painter_column_ceil(r->x);
         if (x0 < 0) x0 = 0;
         if (x1 > target->width) x1 = target->width;
-        if (width > 0 && x1 > x0) {
+        if (width > 0 && x1 > x0 &&
+            (coverage_mode != 1 ||
+             !painter_span_covered(
+                 opaque_coverage + (size_t)row * coverage_stride,
+                 x0, x1))) {
             const float per_pixel = 65536.0f / (float)width;
-            const int32_t du = (int32_t)((float)(r->u - l->u) * per_pixel);
-            const int32_t dv = (int32_t)((float)(r->v - l->v) * per_pixel);
+            int32_t du = (int32_t)((float)(r->u - l->u) * per_pixel);
+            int32_t dv = (int32_t)((float)(r->v - l->v) * per_pixel);
             int32_t dlight =
                 (int32_t)((float)(r->light - l->light) * per_pixel);
             const int64_t prestep = ((int64_t)x0 << 16) + 0x8000 - l->x;
@@ -1304,6 +1559,20 @@ static uint32_t draw_painter_polygon(
             int32_t light_end;
             uint16_t *out = target->pixels +
                             (size_t)row * target->stride_pixels + x0;
+            uint8_t *opaque_mask = opaque_coverage != NULL
+                ? opaque_coverage + (size_t)row * coverage_stride +
+                      ((uint32_t)x0 >> 3)
+                : NULL;
+            uint8_t *water_mask = water_coverage != NULL
+                ? water_coverage + (size_t)row * coverage_stride +
+                      ((uint32_t)x0 >> 3)
+                : NULL;
+            uint8_t coverage_bit =
+                (uint8_t)(UINT8_C(1) << ((uint32_t)x0 & 7u));
+            uint16_t *depth_out = coverage_mode == 3
+                ? target->depth_pixels +
+                      (size_t)row * target->depth_stride_pixels + x0
+                : NULL;
             int32_t x;
             if (light < light_low) light = light_low;
             if (light > light_high) light = light_high;
@@ -1315,113 +1584,340 @@ static uint32_t draw_painter_polygon(
                              ? (light_end - light) / (x1 - x0 - 1)
                              : 0;
             }
-            if (flat && (light >> 16) == (light_end >> 16)) {
-                fill_rgb565(out, (uint32_t)(x1 - x0),
-                            palette[((uint32_t)light >> 16) * 256u +
-                                    color_index]);
-            } else if ((light >> 16) == (light_end >> 16)) {
-                const uint16_t *lit =
-                    palette + ((uint32_t)light >> 16) * 256u;
-                if (texture_power_of_two && !transparent && !blend_75) {
-                    uint32_t remaining = (uint32_t)(x1 - x0);
-                    while (remaining >= 4u) {
-                        const uint32_t u_step = (uint32_t)du;
-                        const uint32_t v_step = (uint32_t)dv;
-                        const uint8_t t0 = texture->pixels[
-                            painter_texture_index_pow2(
-                                u, v, texture_mask_u, texture_mask_v,
-                                texture_log2_width)];
-                        const uint8_t t1 = texture->pixels[
-                            painter_texture_index_pow2(
-                                u + u_step, v + v_step, texture_mask_u,
-                                texture_mask_v, texture_log2_width)];
-                        const uint8_t t2 = texture->pixels[
-                            painter_texture_index_pow2(
-                                u + 2u * u_step, v + 2u * v_step,
-                                texture_mask_u, texture_mask_v,
-                                texture_log2_width)];
-                        const uint8_t t3 = texture->pixels[
-                            painter_texture_index_pow2(
-                                u + 3u * u_step, v + 3u * v_step,
-                                texture_mask_u, texture_mask_v,
-                                texture_log2_width)];
-                        out[0] = lit[t0];
-                        out[1] = lit[t1];
-                        out[2] = lit[t2];
-                        out[3] = lit[t3];
-                        out += 4;
-                        u += 4u * u_step;
-                        v += 4u * v_step;
-                        remaining -= 4u;
-                    }
-                    while (remaining-- != 0) {
-                        const uint8_t texel = texture->pixels[
-                            painter_texture_index_pow2(
-                                u, v, texture_mask_u, texture_mask_v,
-                                texture_log2_width)];
-                        *out++ = lit[texel];
-                        u += (uint32_t)du;
-                        v += (uint32_t)dv;
-                    }
-                } else {
-                    for (x = x0; x < x1; ++x) {
-                        uint8_t texel;
-                        if (texture_power_of_two) {
-                            texel = texture->pixels[
-                                painter_texture_index_pow2(
-                                    u, v, texture_mask_u, texture_mask_v,
-                                    texture_log2_width)];
-                        } else {
-                            const int32_t tx = wrap_texture_coordinate(
-                                (int32_t)(u >> 16), texture->width, 0);
-                            const int32_t ty = wrap_texture_coordinate(
-                                (int32_t)(v >> 16), texture->height, 0);
-                            texel = texture->pixels[
-                                (size_t)ty * texture->width + tx];
+            /* Perspective interpolants for this span. They are exact for a
+             * planar face, so the only approximation left is the linear UV
+             * step inside one short block. */
+            const int perspective_span =
+                perspective && l->w > 0 && r->w > 0;
+            int32_t uw = 0;
+            int32_t vw = 0;
+            int32_t w = 0;
+            int32_t duw = 0;
+            int32_t dvw = 0;
+            int32_t dw = 0;
+            int32_t u_texture_q8 = 0;
+            int32_t v_texture_q8 = 0;
+            int32_t bx0 = x0;
+            if (perspective_span) {
+                duw = (int32_t)((float)(r->uw - l->uw) * per_pixel);
+                dvw = (int32_t)((float)(r->vw - l->vw) * per_pixel);
+                dw = (int32_t)((float)(r->w - l->w) * per_pixel);
+                uw = painter_clamp32(l->uw + (((int64_t)duw * prestep) >> 16));
+                vw = painter_clamp32(l->vw + (((int64_t)dvw * prestep) >> 16));
+                w = painter_clamp32(l->w + (((int64_t)dw * prestep) >> 16));
+                if (w <= 0) {
+                    w = l->w > r->w ? r->w : l->w;
+                    dw = 0;
+                }
+                u_texture_q8 = painter_texture_q8(uw, w);
+                v_texture_q8 = painter_texture_q8(vw, w);
+            }
+            while (bx0 < x1) {
+                int32_t bx1 = x1;
+                int32_t depth_w = w;
+                if (perspective_span) {
+                    const int32_t block =
+                        painter_perspective_block(x1 - bx0, w, dw);
+                    int32_t w_end =
+                        painter_clamp32(w + (int64_t)dw * block);
+                    const int32_t uw_end =
+                        painter_clamp32(uw + (int64_t)duw * block);
+                    const int32_t vw_end =
+                        painter_clamp32(vw + (int64_t)dvw * block);
+                    int32_t u_end_q8;
+                    int32_t v_end_q8;
+                    if (w_end <= 0) w_end = w;
+                    u_end_q8 = painter_texture_q8(uw_end, w_end);
+                    v_end_q8 = painter_texture_q8(vw_end, w_end);
+                    u = (uint32_t)u_texture_q8 << 8;
+                    v = (uint32_t)v_texture_q8 << 8;
+                    du = painter_block_step(u_end_q8 - u_texture_q8, block);
+                    dv = painter_block_step(v_end_q8 - v_texture_q8, block);
+                    bx1 = bx0 + block;
+                    uw = uw_end;
+                    vw = vw_end;
+                    w = w_end;
+                    u_texture_q8 = u_end_q8;
+                    v_texture_q8 = v_end_q8;
+                }
+                if (coverage_mode == 3) {
+                    const uint16_t *constant_palette =
+                        !flat && min_light == max_light
+                            ? palette + (size_t)min_light * 256u : NULL;
+                    if (constant_palette != NULL && texture_power_of_two &&
+                        !transparent && !blend_75) {
+                        const uint8_t *texels = texture->pixels;
+                        for (x = bx0; x < bx1; ++x) {
+                            const int32_t inverse = depth_w > UINT16_MAX
+                                ? UINT16_MAX : depth_w;
+                            if (inverse > 0 && inverse > *depth_out) {
+                                const uint8_t texel = texels[
+                                    painter_texture_index_pow2(
+                                        u, v, texture_mask_u, texture_mask_v,
+                                        texture_log2_width)];
+                                *out = constant_palette[texel];
+                                *depth_out = (uint16_t)inverse;
+                                ++covered;
+                            }
+                            ++out;
+                            ++depth_out;
+                            u += (uint32_t)du;
+                            v += (uint32_t)dv;
+                            depth_w += dw;
                         }
-                        if (!transparent || texel != 0) {
-                            const uint16_t source = lit[texel];
-                            *out = blend_75
-                                       ? blend_rgb565_75(*out, source)
-                                       : source;
+                    } else if (flat && !blend_75) {
+                        for (x = bx0; x < bx1; ++x) {
+                            const int32_t inverse = depth_w > UINT16_MAX
+                                ? UINT16_MAX : depth_w;
+                            if (inverse > 0 && inverse > *depth_out) {
+                                *out = color_index;
+                                *depth_out = (uint16_t)inverse;
+                                ++covered;
+                            }
+                            ++out;
+                            ++depth_out;
+                            depth_w += dw;
+                        }
+                    } else {
+                        for (x = bx0; x < bx1; ++x) {
+                            const int32_t inverse = depth_w > UINT16_MAX
+                                ? UINT16_MAX : depth_w;
+                            if (inverse > 0 && inverse > *depth_out) {
+                                uint8_t texel = 0;
+                                if (!flat && texture_power_of_two)
+                                    texel = texture->pixels[
+                                        painter_texture_index_pow2(
+                                            u, v, texture_mask_u, texture_mask_v,
+                                            texture_log2_width)];
+                                else if (!flat) {
+                                    const int32_t tx = wrap_texture_coordinate(
+                                        (int32_t)(u >> 16), texture->width, 0);
+                                    const int32_t ty = wrap_texture_coordinate(
+                                        (int32_t)(v >> 16), texture->height, 0);
+                                    texel = texture->pixels[
+                                        (size_t)ty * texture->width + tx];
+                                }
+                                if (flat || !transparent || texel != 0) {
+                                    const uint16_t source = flat ? color_index
+                                        : palette[((uint32_t)light >> 16) * 256u +
+                                                  texel];
+                                    *out = blend_75
+                                        ? blend_rgb565_75(*out, source) : source;
+                                    if (!blend_75) *depth_out = (uint16_t)inverse;
+                                    ++covered;
+                                }
+                            }
+                            ++out;
+                            ++depth_out;
+                            u += (uint32_t)du;
+                            v += (uint32_t)dv;
+                            light += dlight;
+                            depth_w += dw;
+                        }
+                    }
+                } else if (flat && coverage_mode == 1) {
+                    for (x = bx0; x < bx1; ++x) {
+                        if ((*opaque_mask & coverage_bit) == 0) {
+                            *out = color_index;
+                            *opaque_mask |= coverage_bit;
+                            ++covered;
                         }
                         ++out;
-                        u += (uint32_t)du;
-                        v += (uint32_t)dv;
-                    }
-                }
-            } else {
-                for (x = x0; x < x1; ++x) {
-                    const uint32_t level = (uint32_t)light >> 16;
-                    uint8_t texel = color_index;
-                    if (!flat) {
-                        if (texture_power_of_two) {
-                            texel = texture->pixels[
-                                painter_texture_index_pow2(
-                                    u, v, texture_mask_u, texture_mask_v,
-                                    texture_log2_width)];
-                        } else {
-                            const int32_t tx = wrap_texture_coordinate(
-                                (int32_t)(u >> 16), texture->width, 0);
-                            const int32_t ty = wrap_texture_coordinate(
-                                (int32_t)(v >> 16), texture->height, 0);
-                            texel = texture->pixels[
-                                (size_t)ty * texture->width + tx];
+                        if ((coverage_bit = (uint8_t)(coverage_bit << 1)) == 0) {
+                            coverage_bit = 1;
+                            ++opaque_mask;
+                            ++water_mask;
                         }
                     }
-                    if (!transparent || texel != 0) {
-                        const uint16_t source =
-                            palette[(level << 8) | texel];
-                        *out = blend_75 ? blend_rgb565_75(*out, source)
-                                        : source;
+                } else if (flat && (light >> 16) == (light_end >> 16)) {
+                    fill_rgb565(out, (uint32_t)(bx1 - bx0),
+                                palette[((uint32_t)light >> 16) * 256u +
+                                        color_index]);
+                } else if ((light >> 16) == (light_end >> 16)) {
+                    const uint16_t *lit =
+                        palette + ((uint32_t)light >> 16) * 256u;
+                    if (texture_power_of_two && coverage_mode == 0) {
+                        /* Cut-out (leaves) and blended (water) faces share the
+                         * unrolled stride; the per-pixel test lives inside it
+                         * instead of falling back to the scalar loop. */
+                        painter_span_textured(
+                            out, (uint32_t)(bx1 - bx0), u, v, du, dv,
+                            texture->pixels, lit, texture_mask_u,
+                            texture_mask_v, texture_log2_width, transparent,
+                            blend_75);
+                        out += bx1 - bx0;
+                        u += (uint32_t)du * (uint32_t)(bx1 - bx0);
+                        v += (uint32_t)dv * (uint32_t)(bx1 - bx0);
+                    } else if (texture_power_of_two && coverage_mode == 1 &&
+                               !transparent && !blend_75) {
+                        for (x = bx0; x < bx1;) {
+                            if (coverage_bit == 1u && bx1 - x >= 8 &&
+                                *opaque_mask == 0) {
+                                uint32_t run = 8;
+                                if (bx1 - x >= 16 && opaque_mask[1] == 0) {
+                                    run = 16;
+                                    if (bx1 - x >= 24 && opaque_mask[2] == 0)
+                                        run = 24;
+                                }
+                                painter_span_textured(
+                                    out, run, u, v, du, dv, texture->pixels,
+                                    lit, texture_mask_u, texture_mask_v,
+                                    texture_log2_width, 0, 0);
+                                opaque_mask[0] = UINT8_MAX;
+                                if (run >= 16) opaque_mask[1] = UINT8_MAX;
+                                if (run == 24) opaque_mask[2] = UINT8_MAX;
+                                opaque_mask += run >> 3;
+                                water_mask += run >> 3;
+                                out += run;
+                                u += (uint32_t)du * run;
+                                v += (uint32_t)dv * run;
+                                covered += run;
+                                x += run;
+                            } else {
+                                if ((*opaque_mask & coverage_bit) == 0) {
+                                    *out = lit[texture->pixels[
+                                        painter_texture_index_pow2(
+                                            u, v, texture_mask_u,
+                                            texture_mask_v,
+                                            texture_log2_width)]];
+                                    *opaque_mask |= coverage_bit;
+                                    ++covered;
+                                }
+                                ++out;
+                                u += (uint32_t)du;
+                                v += (uint32_t)dv;
+                                ++x;
+                                if ((coverage_bit =
+                                         (uint8_t)(coverage_bit << 1)) == 0) {
+                                    coverage_bit = 1;
+                                    ++opaque_mask;
+                                    ++water_mask;
+                                }
+                            }
+                        }
+                    } else {
+                        for (x = bx0; x < bx1; ++x) {
+                            int visible = 1;
+                            uint8_t texel;
+                            if (coverage_mode == 1) {
+                                visible = (*opaque_mask & coverage_bit) == 0 &&
+                                    (!blend_75 ||
+                                     (*water_mask & coverage_bit) == 0);
+                            } else if (coverage_mode == 2) {
+                                visible = (*water_mask & coverage_bit) != 0;
+                            }
+                            if (!visible) {
+                                ++out;
+                                u += (uint32_t)du;
+                                v += (uint32_t)dv;
+                            } else {
+                                if (texture_power_of_two) {
+                                    texel = texture->pixels[
+                                        painter_texture_index_pow2(
+                                            u, v, texture_mask_u, texture_mask_v,
+                                            texture_log2_width)];
+                                } else {
+                                    const int32_t tx = wrap_texture_coordinate(
+                                        (int32_t)(u >> 16), texture->width, 0);
+                                    const int32_t ty = wrap_texture_coordinate(
+                                        (int32_t)(v >> 16), texture->height, 0);
+                                    texel = texture->pixels[
+                                        (size_t)ty * texture->width + tx];
+                                }
+                                if (!transparent || texel != 0) {
+                                    if (coverage_mode == 1 && blend_75) {
+                                        *water_mask |= coverage_bit;
+                                    } else {
+                                        const uint16_t source = lit[texel];
+                                        *out = blend_75
+                                                   ? blend_rgb565_75(*out, source)
+                                                   : source;
+                                        if (coverage_mode == 1)
+                                            *opaque_mask |= coverage_bit;
+                                        else if (coverage_mode == 2)
+                                            *water_mask &=
+                                                (uint8_t)~coverage_bit;
+                                        if (coverage_mode != 0) ++covered;
+                                    }
+                                }
+                                ++out;
+                                u += (uint32_t)du;
+                                v += (uint32_t)dv;
+                            }
+                            if (coverage_mode != 0 &&
+                                (coverage_bit = (uint8_t)(coverage_bit << 1)) ==
+                                    0) {
+                                coverage_bit = 1;
+                                ++opaque_mask;
+                                ++water_mask;
+                            }
+                        }
                     }
-                    ++out;
-                    u += (uint32_t)du;
-                    v += (uint32_t)dv;
-                    light += dlight;
+                } else {
+                    for (x = bx0; x < bx1; ++x) {
+                        const uint32_t level = (uint32_t)light >> 16;
+                        uint8_t texel = color_index;
+                        int visible = 1;
+                        if (coverage_mode == 1) {
+                            visible = (*opaque_mask & coverage_bit) == 0 &&
+                                (!blend_75 ||
+                                 (*water_mask & coverage_bit) == 0);
+                        } else if (coverage_mode == 2) {
+                            visible = (*water_mask & coverage_bit) != 0;
+                        }
+                        if (!visible) {
+                            ++out;
+                            u += (uint32_t)du;
+                            v += (uint32_t)dv;
+                            light += dlight;
+                        } else {
+                            if (!flat) {
+                                if (texture_power_of_two) {
+                                    texel = texture->pixels[
+                                        painter_texture_index_pow2(
+                                            u, v, texture_mask_u, texture_mask_v,
+                                            texture_log2_width)];
+                                } else {
+                                    const int32_t tx = wrap_texture_coordinate(
+                                        (int32_t)(u >> 16), texture->width, 0);
+                                    const int32_t ty = wrap_texture_coordinate(
+                                        (int32_t)(v >> 16), texture->height, 0);
+                                    texel = texture->pixels[
+                                        (size_t)ty * texture->width + tx];
+                                }
+                            }
+                            if (!transparent || texel != 0) {
+                                if (coverage_mode == 1 && blend_75) {
+                                    *water_mask |= coverage_bit;
+                                } else {
+                                    const uint16_t source =
+                                        palette[(level << 8) | texel];
+                                    *out = blend_75
+                                               ? blend_rgb565_75(*out, source)
+                                               : source;
+                                    if (coverage_mode == 1)
+                                        *opaque_mask |= coverage_bit;
+                                    else if (coverage_mode == 2)
+                                        *water_mask &= (uint8_t)~coverage_bit;
+                                    if (coverage_mode != 0) ++covered;
+                                }
+                            }
+                            ++out;
+                            u += (uint32_t)du;
+                            v += (uint32_t)dv;
+                            light += dlight;
+                        }
+                        if (coverage_mode != 0 &&
+                            (coverage_bit = (uint8_t)(coverage_bit << 1)) == 0) {
+                            coverage_bit = 1;
+                            ++opaque_mask;
+                            ++water_mask;
+                        }
+                    }
                 }
+                bx0 = bx1;
             }
-            covered += (uint32_t)(x1 - x0);
+            if (coverage_mode == 0) covered += (uint32_t)(x1 - x0);
         }
         if (++row >= end) break;
         if (row == left.edge.end_row) {
@@ -1460,8 +1956,13 @@ static uint32_t draw_quad(const uint8_t *record, uint8_t textured,
                           &vertices[index]);
         if ((flags & PXA_RASTER_QUAD_PAINTER) != 0)
             return draw_painter_polygon(
-                vertices, 4, flags, (uint8_t)read_u16(record + 6), texture,
-                resources->palette, target, row_begin, row_end);
+                vertices, 4, flags, read_u16(record + 6), texture,
+                resources->palette, target, row_begin, row_end,
+                (flags & PXA_RASTER_QUAD_LIT_PALETTE) != 0
+                    ? 3
+                : (flags & PXA_RASTER_QUAD_COVERAGE_RESOLVE) != 0
+                    ? 2
+                    : ((flags & PXA_RASTER_QUAD_COVERAGE_MASK) != 0));
         if (abi_minor >= 1) {
             mode = RASTER_MODE_DEPTH;
             if ((flags & PXA_RASTER_QUAD_LIT_PALETTE) != 0)
@@ -1575,8 +2076,6 @@ static uint32_t draw_sprite_instance(
             const int32_t x = x0 + (int32_t)dx;
             const uint8_t texel =
                 texture->pixels[(size_t)ty * texture->width + tx];
-            uint16_t color;
-            uint16_t *destination;
             if ((flags & PXA_RASTER_SPRITE_TRANSPARENT_INDEX0) == 0 ||
                 texel != 0) {
                 uint16_t color;
@@ -1673,7 +2172,7 @@ static uint32_t draw_triangle_batch(
         if ((record[1] & PXA_RASTER_QUAD_PAINTER) != 0) {
             covered += draw_painter_polygon(
                 vertices, 3, record[1], (uint8_t)color, texture,
-                resources->palette, target, row_begin, row_end);
+                resources->palette, target, row_begin, row_end, 0);
         } else {
             uint8_t mode = RASTER_MODE_DEPTH;
             if ((record[1] & PXA_RASTER_QUAD_LIT_PALETTE) != 0)
@@ -1704,9 +2203,27 @@ void pxa_raster_execute_draw_list_rows(
     if (bytes == NULL || list == NULL || target == NULL || resources == NULL ||
         row_begin >= row_end || row_end > target->height)
         return;
+    if ((list->required_capabilities & PXA_RASTER_CAP_PAINTER_DEPTH) != 0) {
+        for (uint16_t row = row_begin; row < row_end; ++row)
+            memset(target->depth_pixels +
+                       (size_t)row * target->depth_stride_pixels,
+                   0, (size_t)target->width * sizeof(uint16_t));
+    } else if ((list->required_capabilities & PXA_RASTER_CAP_COVERAGE_MASK) != 0) {
+        const size_t mask_stride = ((size_t)target->width + 7u) >> 3;
+        uint8_t *const masks = (uint8_t *)target->depth_pixels;
+        const size_t row_offset = (size_t)row_begin * mask_stride;
+        const size_t row_bytes = (size_t)(row_end - row_begin) * mask_stride;
+        memset(masks + row_offset, 0, row_bytes);
+        memset(masks + mask_stride * target->height + row_offset, 0,
+               row_bytes);
+    }
     for (index = 0; index < list->command_count; ++index) {
         const uint8_t *record = bytes + offset;
         const uint16_t size = read_u16(record + 2);
+        if (index < target->prefilled_commands) {
+            offset += size;
+            continue;
+        }
         if (record[0] == PXA_RASTER_RECORD_CLEAR_RGB565) {
             const uint16_t color = read_u16(record + 4);
             const uint32_t pixel_count =

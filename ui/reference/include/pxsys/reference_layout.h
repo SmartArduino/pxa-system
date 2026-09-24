@@ -34,6 +34,11 @@ pxsys_status_t pxsys_reference_layout_compute(
     const pxsys_display_profile_t* display,
     pxsys_reference_layout_t* output);
 
+pxsys_status_t pxsys_reference_layout_status_content_rect(
+    const pxsys_display_profile_t* display,
+    const pxsys_reference_layout_t* layout, uint32_t content_height,
+    pxsys_rect_t* output);
+
 /* System gesture strips reserved by gesture navigation: the bottom Home strip
  * and the left-edge Back strip. Products report them to applications through
  * the window snapshot's system bar insets. */

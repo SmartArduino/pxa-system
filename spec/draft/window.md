@@ -1,6 +1,6 @@
-# PXA Window Service Draft 0.1
+# PXA Window Service Draft 0.2
 
-Window service ID is `2`; service version is `0.1.0`. Numeric assignments in this
+Window service ID is `2`; service version is `0.2.0`. Numeric assignments in this
 document are explanatory. `pxa-window.json` is authoritative.
 
 ## Ownership boundary
@@ -38,6 +38,17 @@ bar behavior.
 
 `get-snapshot` (`opcode=2`) is asynchronous and requires a nonzero request ID.
 Its success data is the snapshot record list described below.
+
+`show-toast` (`opcode=3`, since 0.2) is fire-and-forget (`request_id=0`). Its
+payload is `duration-ms:u16-le | text:utf8[1..240]`. Duration must be between
+500 and 5000 ms. The Host validates UTF-8, copies the message synchronously,
+and shows a non-modal short notification above system navigation. This is a
+best-effort hint, not a durable error report; Guests should retain actionable
+errors in their own UI. An unsupported backend rejects the command.
+
+The bottom system-bar inset reserves the visible button bar or gesture handle,
+not a hidden gesture hit target. Without a gesture handle, the bottom bar inset
+is zero unless a physical display safe inset independently requires space.
 
 ## Snapshot and events
 

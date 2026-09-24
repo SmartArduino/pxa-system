@@ -1,11 +1,11 @@
 {
-  "schema": "pxa-ui-spec-0.3",
+  "schema": "pxa-ui-spec-0.4",
   "status": "draft",
   "service": {
     "name": "ui",
     "id": 3,
     "major": 0,
-    "minor": 3,
+    "minor": 4,
     "patch": 0
   },
   "byte_order": "little-endian",
@@ -126,6 +126,12 @@
       "payload": "request:u32|surface:u32|node:u32"
     },
     {
+      "name": "theme-get",
+      "id": 11,
+      "direction": "guest-to-host",
+      "payload": "empty; nonzero envelope request-id; reply status:i32 followed by theme-snapshot"
+    },
+    {
       "name": "event",
       "id": 32769,
       "direction": "host-to-guest",
@@ -154,8 +160,21 @@
       "id": 32773,
       "direction": "host-to-guest",
       "payload": "request:u32|handle:u32|status:i32"
+    },
+    {
+      "name": "theme-changed",
+      "id": 32774,
+      "direction": "host-to-guest",
+      "payload": "theme-snapshot; unsolicited request-id zero"
     }
   ],
+  "theme_snapshot": {
+    "size": 60,
+    "payload": "generation:u32|color-scheme:u8 (0 light, 1 dark)|reserved:u8[3]|rgba:u32[10]|typography-px:u16[6]",
+    "rgba_encoding": "0xRRGGBBAA; background,surface,primary,on-primary,text,muted,border,success,warning,danger",
+    "typography_order": "caption,label,body,title,headline,display",
+    "rule": "Host increments generation on scheme or palette changes; bound UI guests receive theme-changed and should repaint theme-token content"
+  },
   "transactions": {
     "primary_surface": 1,
     "kinds": [
@@ -712,7 +731,7 @@
     }
   ],
   "resource_policy": "Hosts enforce private byte budgets and queue policy. Node, canvas, property, and text counts are not ABI limits and are never advertised as fixed quotas.",
-  "protocol_version": "0.3.0",
+  "protocol_version": "0.4.0",
   "events": [
     {
       "name": "text",

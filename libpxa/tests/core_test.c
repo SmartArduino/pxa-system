@@ -37,8 +37,11 @@ typedef struct {
 
 typedef struct {
     unsigned apply_count;
+    unsigned toast_count;
     pxa_status_t next_status;
     pxa_window_configuration_t last;
+    char last_toast[PXA_WINDOW_TOAST_MAX_BYTES + 1u];
+    uint32_t last_duration;
 } test_window_backend_t;
 
 typedef struct {
@@ -425,6 +428,15 @@ static pxa_status_t window_apply(
     test_window_backend_t *backend = (test_window_backend_t *)context;
     backend->apply_count++;
     backend->last = *configuration;
+    return backend->next_status;
+}
+
+static pxa_status_t window_toast(void *context, const char *text,
+                                 uint32_t duration_ms) {
+    test_window_backend_t *backend = (test_window_backend_t *)context;
+    backend->toast_count++;
+    backend->last_duration = duration_ms;
+    strcpy(backend->last_toast, text);
     return backend->next_status;
 }
 
@@ -2006,9 +2018,11 @@ static void test_window_service(void) {
     assert(pxa_window_service_register(window) == PXA_STATUS_OK);
     memset(&backend_state, 0, sizeof(backend_state));
     backend_state.next_status = PXA_STATUS_OK;
+    memset(&backend, 0, sizeof(backend));
     backend.struct_size = sizeof(backend);
     backend.context = &backend_state;
     backend.apply = window_apply;
+    backend.show_toast = window_toast;
     assert(pxa_window_bind(window, component, &backend) == PXA_STATUS_OK);
     assert(pxa_window_bind(window, component, &backend) ==
            PXA_STATUS_BAD_STATE);
@@ -2020,8 +2034,8 @@ static void test_window_service(void) {
 
     assert(pxa_window_negotiate_version((pxa_version_range_t){0, 1, 0, 9},
                                         &selected) == PXA_STATUS_OK);
-    assert(selected.major == 0 && selected.minor == 1);
-    assert(pxa_window_negotiate_version((pxa_version_range_t){0, 2, 1, 0},
+    assert(selected.major == 0 && selected.minor == 2);
+    assert(pxa_window_negotiate_version((pxa_version_range_t){0, 3, 1, 0},
                                         &selected) == PXA_STATUS_UNSUPPORTED);
     assert(pxa_window_negotiate_version((pxa_version_range_t){1, 0, 1, 9},
                                         &selected) == PXA_STATUS_UNSUPPORTED);
@@ -2115,6 +2129,27 @@ static void test_window_service(void) {
            PXA_STATUS_OK);
     assert(pxa_window_get_configuration(window, component, &configuration) ==
            PXA_STATUS_OK && configuration.edge_to_edge);
+
+    {
+        const uint8_t toast_payload[] = {0xd0, 0x07, 'F', 'a', 'i', 'l'};
+        backend_state.next_status = PXA_STATUS_OK;
+        pxa_writer_init(&message_writer, message, sizeof(message));
+        assert(pxa_writer_message(&message_writer, PXA_WINDOW_SERVICE_ID,
+                                  PXA_WINDOW_SHOW_TOAST, 0, toast_payload,
+                                  sizeof(toast_payload)) == PXA_STATUS_OK);
+        assert(pxa_component_begin_event(test.runtime, component) == PXA_STATUS_OK);
+        assert(pxa_runtime_control(test.runtime, component, message,
+                                   message_writer.size) == PXA_STATUS_OK);
+        assert(pxa_component_finish_event(test.runtime, component, 0) == PXA_STATUS_OK);
+        assert(backend_state.toast_count == 1 && backend_state.last_duration == 2000u);
+        assert(strcmp(backend_state.last_toast, "Fail") == 0);
+        message[16] = 0;
+        assert(pxa_component_begin_event(test.runtime, component) == PXA_STATUS_OK);
+        assert(pxa_runtime_control(test.runtime, component, message,
+                                   message_writer.size) == PXA_STATUS_INVALID_ARGUMENT);
+        assert(pxa_component_finish_event(test.runtime, component, 0) == PXA_STATUS_OK);
+        assert(backend_state.toast_count == 1);
+    }
 
     pxa_writer_init(&message_writer, message, sizeof(message));
     assert(pxa_writer_message(&message_writer, PXA_WINDOW_SERVICE_ID,
@@ -3489,12 +3524,44 @@ static void test_device_service(void) {
     device_config.provider_context = &provider;
     device_config.get_mac = device_get_mac;
     device_config.permissions = permission;
+    device_config.target = "esp32-s31";
+    device_config.architecture = "riscv32";
+    device_config.engine = "wamr";
+    device_config.engine_abi = "wamr-pxa-aot-v6-core-1";
+    device_config.formats = PXA_DEVICE_FORMAT_WASM | PXA_DEVICE_FORMAT_AOT;
     device_size = pxa_device_service_workspace_size(&device_config);
     device_workspace = malloc(device_size);
     assert(device_workspace != NULL);
     assert(pxa_device_service_init(device_workspace, device_size, test.runtime,
                                    &device_config, &device) == PXA_STATUS_OK);
     assert(pxa_device_service_register(device) == PXA_STATUS_OK);
+
+    command_size = make_message(command, sizeof(command),
+                                PXA_DEVICE_SERVICE_ID,
+                                PXA_DEVICE_GET_RUNTIME_INFO, 40, 0);
+    (void)dispatch_control_completion(test.runtime, component, command,
+                                      command_size, event_bytes,
+                                      sizeof(event_bytes), &event);
+    assert((int32_t)pxa_read_u32(event.payload.data) == PXA_STATUS_OK);
+    pxa_record_iterator_init(
+        &iterator,
+        (pxa_bytes_t){event.payload.data + 4, event.payload.size - 4});
+    assert(pxa_record_next(&iterator, &record) == PXA_STATUS_OK &&
+           record.tag == PXA_DEVICE_TAG_TARGET && record.payload.size == 9 &&
+           memcmp(record.payload.data, "esp32-s31", 9) == 0);
+    assert(pxa_record_next(&iterator, &record) == PXA_STATUS_OK &&
+           record.tag == PXA_DEVICE_TAG_ARCHITECTURE &&
+           record.payload.size == 7 &&
+           memcmp(record.payload.data, "riscv32", 7) == 0);
+    assert(pxa_record_next(&iterator, &record) == PXA_STATUS_OK &&
+           record.tag == PXA_DEVICE_TAG_ENGINE && record.payload.size == 4);
+    assert(pxa_record_next(&iterator, &record) == PXA_STATUS_OK &&
+           record.tag == PXA_DEVICE_TAG_ENGINE_ABI &&
+           record.payload.size == sizeof("wamr-pxa-aot-v6-core-1") - 1u);
+    assert(pxa_record_next(&iterator, &record) == PXA_STATUS_OK &&
+           record.tag == PXA_DEVICE_TAG_FORMATS && record.payload.size == 4 &&
+           pxa_read_u32(record.payload.data) == 3);
+    assert(pxa_record_next(&iterator, &record) == PXA_STATUS_WOULD_BLOCK);
 
     command_size = make_permission_request(
         command, sizeof(command), PXA_PERMISSION_ACQUIRE, 41, permission_name,

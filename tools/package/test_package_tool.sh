@@ -3,6 +3,11 @@ set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 pxa_system_dir="$(cd "$script_dir/../.." && pwd)"
+app_source_root="$(realpath -m -- "${PXA_APP_SOURCE_ROOT:-$pxa_system_dir/../../local/pxa-apps}")"
+if [[ ! -f "$app_source_root/arcade/package.json" ]]; then
+  echo "PXA_APP_SOURCE_ROOT must point to the separate pxa-apps checkout" >&2
+  exit 2
+fi
 work_dir="$(mktemp -d "${TMPDIR:-/tmp}/pxa-package-tool-test.XXXXXX")"
 trap 'rm -rf "$work_dir"' EXIT
 "${PYTHON:-python3}" "$script_dir/test_verify_wasm_memory.py"
@@ -13,35 +18,35 @@ mkdir -p "$package_dir/artifacts" "$package_dir/assets/flappy-bird" \
   "$work_dir/generated/weather"
 
 "${PYTHON:-python3}" "$pxa_system_dir/tools/i18n/compile_catalog.py" \
-  "$pxa_system_dir/apps/pxa/arcade/i18n/messages.yaml" \
-  "$pxa_system_dir/apps/pxa/arcade/i18n/zh-CN.yaml" \
+  "$app_source_root/arcade/i18n/messages.yaml" \
+  "$app_source_root/arcade/i18n/zh-CN.yaml" \
   --output "$work_dir/generated/arcade/pxa_app_messages.h"
 "${PYTHON:-python3}" "$pxa_system_dir/tools/i18n/compile_catalog.py" \
-  "$pxa_system_dir/apps/pxa/weather/i18n/messages.yaml" \
-  "$pxa_system_dir/apps/pxa/weather/i18n/zh-CN.yaml" \
+  "$app_source_root/weather/i18n/messages.yaml" \
+  "$app_source_root/weather/i18n/zh-CN.yaml" \
   --output "$work_dir/generated/weather/pxa_app_messages.h"
 
 clang --target=wasm32-unknown-unknown -O2 -fno-builtin -nostdlib \
   -I"$pxa_system_dir/sdk/guest-c/include" \
-  -I"$pxa_system_dir/apps/pxa/common" \
+  -I"$app_source_root/common" \
   -I"$work_dir/generated/arcade" \
   -Wl,--no-entry \
   -Wl,--allow-undefined-file="$pxa_system_dir/sdk/guest-c/pxa-imports.txt" \
   -Wl,--export=pxa_app_on_event -Wl,--export=pxa_app_stop \
   -DPXA_ARCADE_STANDALONE_TEST \
-  "$pxa_system_dir/apps/pxa/arcade/modules/tetris.c" \
+  "$app_source_root/arcade/modules/tetris.c" \
   -o "$package_dir/artifacts/main.wasm"
 
 # Clang recognizes Weather's bounded string loop as strlen at -O2. The direct
 # builder must keep it self-contained instead of creating an ambient env import.
 clang --target=wasm32-unknown-unknown -O2 -fno-builtin -nostdlib \
   -I"$pxa_system_dir/sdk/guest-c/include" \
-  -I"$pxa_system_dir/apps/pxa/common" \
+  -I"$app_source_root/common" \
   -I"$work_dir/generated/weather" \
   -Wl,--no-entry \
   -Wl,--allow-undefined-file="$pxa_system_dir/sdk/guest-c/pxa-imports.txt" \
   -Wl,--export=pxa_app_on_event -Wl,--export=pxa_app_stop \
-  "$pxa_system_dir/apps/pxa/weather/main.c" \
+  "$app_source_root/weather/main.c" \
   -o "$work_dir/weather-import-regression.wasm"
 
 # The manifest layer inventories opaque Artifact bytes. WAMR format validation
@@ -52,17 +57,17 @@ cp "$package_dir/artifacts/main.wasm" \
    "$package_dir/artifacts/main.esp32-s3.aot"
 cp "$package_dir/artifacts/main.wasm" \
    "$package_dir/artifacts/responder.wasm"
-cp "$pxa_system_dir/apps/pxa/arcade/assets/flappy-bird/icon.png" \
+cp "$app_source_root/arcade/assets/flappy-bird/icon.png" \
    "$package_dir/assets/flappy-bird/icon.png"
-cp "$pxa_system_dir/apps/pxa/garden-guard/assets/SOURCES.md" \
+cp "$app_source_root/garden-guard/assets/SOURCES.md" \
    "$package_dir/assets/SOURCES.md"
-cp "$pxa_system_dir/apps/pxa/arcade/i18n/messages.yaml" \
-   "$pxa_system_dir/apps/pxa/arcade/i18n/zh-CN.yaml" \
+cp "$app_source_root/arcade/i18n/messages.yaml" \
+   "$app_source_root/arcade/i18n/zh-CN.yaml" \
    "$work_dir/i18n/"
 
 metadata="$work_dir/package.json"
 sed '/^}/i\\  ,"build": {"system": "direct", "linear_memory": {"maximum_bytes": 65536, "pinned": true}}\n  ,"services": ["fs", {"name": "net", "min_version": [0, 1], "max_version": [0, 4]}, {"name": "ui", "features": ["canvas"]}]\n  ,"components": [{"id": "main", "kind": "ui", "wasi": {"version": "preview1", "libc": "wasi-libc", "features": ["monotonic-clock", "stdio"]}}, {"id": "responder", "kind": "service", "artifact": "wasm", "services": ["ipc"]}]\n  ,"permissions": [{"name": "net.client", "required": false, "scope": "api.example"}]\n  ,"ipc_endpoints": [{"name": "demo.echo", "component": "responder"}]' \
-  "$pxa_system_dir/apps/pxa/arcade/package.json" > "$metadata"
+  "$app_source_root/arcade/package.json" > "$metadata"
 
 "${PYTHON:-python3}" "$script_dir/build_package_manifest.py" \
   "$metadata" "$package_dir" \

@@ -14,6 +14,9 @@ find_package(Freetype REQUIRED)
 find_package(CURL REQUIRED)
 find_package(Threads REQUIRED)
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(VORBISFILE REQUIRED IMPORTED_TARGET vorbisfile)
+include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/PxaWamrMetadata.cmake")
 
 set(PXSYS_DESKTOP_TEXT_FONT
     "${CMAKE_CURRENT_LIST_DIR}/../../../../factory/base/system/fonts/noto_sans_cjk_common.ttf"
@@ -90,6 +93,7 @@ add_executable(pxsys_desktop_simulator
     main.c builtin_catalog.c simulator_runtime.c product_runner.c desktop_net.c
     pxadb_control.c "${PXSYS_DESKTOP_CATALOG_DATA}")
 target_compile_features(pxsys_desktop_simulator PRIVATE c_std_99)
+pxsys_apply_wamr_metadata(pxsys_desktop_simulator)
 target_include_directories(pxsys_desktop_simulator PRIVATE
     "${CMAKE_CURRENT_BINARY_DIR}/generated")
 target_compile_definitions(pxsys_desktop_simulator PRIVATE
@@ -99,16 +103,19 @@ target_compile_definitions(pxsys_desktop_simulator PRIVATE
 target_link_libraries(pxsys_desktop_simulator PRIVATE
     pxsys::standard pxsys::pxa pxsys::renderer_lvgl pxsys::reference_lvgl
     pxa_adapters_openssl pxa_adapters_posix pxa_adapters_lvgl
-    pxa_adapters_wamr lvgl SDL2::SDL2 PNG::PNG CURL::libcurl Threads::Threads m)
+    pxa_adapters_wamr lvgl SDL2::SDL2 PNG::PNG CURL::libcurl Threads::Threads
+    PkgConfig::VORBISFILE m)
 
 add_executable(pxsys_product_simulator product_runner.c desktop_net.c
     pxadb_control.c)
 target_compile_features(pxsys_product_simulator PRIVATE c_std_99)
+pxsys_apply_wamr_metadata(pxsys_product_simulator)
 target_compile_definitions(pxsys_product_simulator PRIVATE
     PXSYS_DESKTOP_TEXT_FONT="${PXSYS_DESKTOP_TEXT_FONT}")
 target_link_libraries(pxsys_product_simulator PRIVATE
     pxa::pxa pxa_adapters_openssl pxa_adapters_posix pxa_adapters_lvgl
-    pxa_adapters_wamr lvgl SDL2::SDL2 PNG::PNG CURL::libcurl Threads::Threads m)
+    pxa_adapters_wamr lvgl SDL2::SDL2 PNG::PNG CURL::libcurl Threads::Threads
+    PkgConfig::VORBISFILE m)
 if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(pxsys_product_simulator PRIVATE
         -Wall -Wextra -Wpedantic)

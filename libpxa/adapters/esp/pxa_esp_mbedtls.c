@@ -10,8 +10,10 @@
 #include <string.h>
 
 #include "esp_log.h"
+#include "mbedtls/ecp.h"
 #include "mbedtls/md.h"
 #include "mbedtls/pk.h"
+#include "mbedtls/version.h"
 #include "psa/crypto.h"
 
 #define PXA_ESP_MBEDTLS_TAG "PxaSignature"
@@ -159,8 +161,12 @@ static pxa_status_t verify_key(const uint8_t *spki, size_t spki_size,
         return PXA_STATUS_DENIED;
     }
     if (mbedtls_pk_get_bitlen(&key) != 256 ||
+#if MBEDTLS_VERSION_NUMBER >= 0x04000000
         !mbedtls_pk_can_do_psa(&key, PSA_ALG_ECDSA(PSA_ALG_SHA_256),
                                PSA_KEY_USAGE_VERIFY_HASH)) {
+#else
+        !mbedtls_pk_can_do(&key, MBEDTLS_PK_ECDSA)) {
+#endif
         ESP_LOGW(PXA_ESP_MBEDTLS_TAG, "Publisher public key is not ECDSA");
         mbedtls_pk_free(&key);
         return PXA_STATUS_DENIED;
@@ -187,8 +193,15 @@ static pxa_status_t verify_key(const uint8_t *spki, size_t spki_size,
     failure_stage = "low-S policy validation";
     result = signature_is_low_s(signature) ? 0 : -1;
     if (result == 0 &&
+#if MBEDTLS_VERSION_NUMBER >= 0x04000000
         mbedtls_pk_write_pubkey_psa(&key, public_key, sizeof(public_key),
                                     &public_key_size) != 0) {
+#else
+        mbedtls_ecp_point_write_binary(&mbedtls_pk_ec(key)->MBEDTLS_PRIVATE(grp),
+            &mbedtls_pk_ec(key)->MBEDTLS_PRIVATE(Q),
+            MBEDTLS_ECP_PF_UNCOMPRESSED, &public_key_size,
+            public_key, sizeof(public_key)) != 0) {
+#endif
         failure_stage = "P-256 public key export";
         result = -1;
     }

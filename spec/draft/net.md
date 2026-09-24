@@ -60,7 +60,7 @@ The request records are in ascending tag order:
 | 1 | URL | exactly one HTTP(S) URL |
 | 2 | method | exactly one u16: GET=1, HEAD=2, POST=3, PUT=4, PATCH=5, DELETE=6 |
 | 3 | Permission Handle | exactly one nonzero u32 |
-| 4 | maximum response bytes | exactly one nonzero u32, at most 4096 |
+| 4 | maximum response bytes | exactly one nonzero u32, at most 262144 |
 | 8 | timeout milliseconds | exactly one u32 in 100..60000 |
 | 9 | request header | zero to 8 unique nested name/value records |
 | 10 | inline request body | zero or one, at most 2048 bytes |
@@ -103,7 +103,7 @@ Component stop, permission revocation or failed result delivery.
 
 The portable profile allows at most two pending requests per Component, eight
 request or selected response headers, 2048 encoded header bytes, a 2048-byte
-inline request body and a 4096-byte response. Hosts may configure smaller
+inline request body and a 262144-byte response. Hosts may configure smaller
 limits and report `resource-limit`, `invalid-argument` or `limit-exceeded` as
 appropriate. Core uses fixed Host-provided workspaces and bounded slot tables;
 the ABI does not require allocation on the request path.

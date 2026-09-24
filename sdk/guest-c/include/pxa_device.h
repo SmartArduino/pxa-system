@@ -5,6 +5,70 @@
 
 #define PXA_SERVICE_DEVICE 15u
 #define PXA_DEVICE_GET_MAC 1u
+#define PXA_DEVICE_GET_RUNTIME_INFO 2u
+#define PXA_DEVICE_FORMAT_WASM 1u
+#define PXA_DEVICE_FORMAT_AOT 2u
+
+typedef struct {
+    int32_t status;
+    char target[32];
+    char architecture[24];
+    char engine[24];
+    char engine_abi[80];
+    uint32_t formats;
+} pxa_device_runtime_info_t;
+
+static inline int pxa_device_get_runtime_info(uint32_t request_id,
+                                              uint8_t *packet,
+                                              size_t packet_capacity) {
+    pxa_writer_t message;
+    if (request_id == 0 || packet == NULL) return 0;
+    pxa_writer_init(&message, packet, packet_capacity);
+    return pxa_message(&message, PXA_SERVICE_DEVICE,
+                       PXA_DEVICE_GET_RUNTIME_INFO, request_id, NULL, 0) &&
+           pxa_control(message.data, (uint32_t)message.length) == PXA_STATUS_OK;
+}
+
+static inline int pxa_device_parse_runtime_info(
+    const pxa_event_t *event, pxa_device_runtime_info_t *output) {
+    size_t offset = 4;
+    uint8_t seen = 0;
+    if (event == NULL || output == NULL || event->service != PXA_SERVICE_DEVICE ||
+        event->opcode != PXA_DEVICE_GET_RUNTIME_INFO || event->request_id == 0 ||
+        event->payload_length < 4) return 0;
+    output->status = (int32_t)pxa_read_u32(event->payload);
+    if (output->status != PXA_STATUS_OK) return event->payload_length == 4;
+    while (offset < event->payload_length) {
+        uint16_t tag;
+        uint16_t length;
+        char *destination = NULL;
+        size_t capacity = 0;
+        if (event->payload_length - offset < 4) return 0;
+        tag = pxa_read_u16(event->payload + offset);
+        length = pxa_read_u16(event->payload + offset + 2);
+        offset += 4;
+        if (tag < 1 || tag > 5 || tag != (uint16_t)(seen + 1u) ||
+            length > event->payload_length - offset) return 0;
+        if (tag == 1) { destination = output->target; capacity = sizeof(output->target); }
+        if (tag == 2) { destination = output->architecture; capacity = sizeof(output->architecture); }
+        if (tag == 3) { destination = output->engine; capacity = sizeof(output->engine); }
+        if (tag == 4) { destination = output->engine_abi; capacity = sizeof(output->engine_abi); }
+        if (tag == 5) {
+            if (length != 4) return 0;
+            output->formats = pxa_read_u32(event->payload + offset);
+        } else {
+            if (length == 0 || length >= capacity) return 0;
+            for (size_t index = 0; index < length; ++index) {
+                if (event->payload[offset + index] == 0) return 0;
+                destination[index] = (char)event->payload[offset + index];
+            }
+            destination[length] = '\0';
+        }
+        seen = (uint8_t)tag;
+        offset += length;
+    }
+    return seen == 5;
+}
 
 #define PXA_DEVICE_MAC_KIND_WIFI_STATION_HARDWARE 1u
 #define PXA_DEVICE_MAC_KIND_WIFI_SOFTAP_HARDWARE 2u

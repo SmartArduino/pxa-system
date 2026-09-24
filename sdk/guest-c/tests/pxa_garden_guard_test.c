@@ -1,4 +1,4 @@
-#include "../../../apps/pxa/garden-guard/main.c"
+#include "garden-guard/main.c"
 
 #include <assert.h>
 

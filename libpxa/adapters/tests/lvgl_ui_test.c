@@ -310,6 +310,29 @@ static void build_text_surface(void) {
     transact(11, 11, 0, PXA_UI_REPLACE_SURFACE, &stream);
 }
 
+static void build_font_surface(void) {
+    static const char *const names[] = {
+        "caption", "label", "body", "title", "headline", "display"
+    };
+    static const uint16_t roles[] = {
+        PXA_UI_FONT_ROLE_CAPTION, PXA_UI_FONT_ROLE_LABEL,
+        PXA_UI_FONT_ROLE_BODY, PXA_UI_FONT_ROLE_TITLE,
+        PXA_UI_FONT_ROLE_HEADLINE, PXA_UI_FONT_ROLE_DISPLAY
+    };
+    bytes_t stream = {{0}, 0};
+    uint8_t role[2];
+    create_node(&stream, 1, 0, PXA_UI_NODE_ROOT, 0);
+    for (size_t index = 0; index < 6u; ++index) {
+        create_node(&stream, (uint32_t)index + 2u, 1, PXA_UI_NODE_TEXT, 0);
+        set_property(&stream, (uint32_t)index + 2u, PXA_UI_PROPERTY_TEXT,
+                     names[index], strlen(names[index]));
+        pxa_write_u16(role, roles[index]);
+        set_property(&stream, (uint32_t)index + 2u,
+                     PXA_UI_PROPERTY_FONT_ROLE, role, sizeof(role));
+    }
+    transact(12, 12, 0, PXA_UI_REPLACE_SURFACE, &stream);
+}
+
 static void build_grid_surface(void) {
     bytes_t stream = {{0}, 0};
     bytes_t columns = {{0}, 0};
@@ -665,7 +688,12 @@ int main(void) {
     adapter_config.primary_environment.density_q16 = UINT32_C(1) << 16;
     adapter_config.primary_environment.font_scale_q16 = UINT32_C(1) << 16;
     pxa_lvgl_ui_theme_init(&adapter_config.theme);
+    adapter_config.theme.caption_font = &lv_font_montserrat_14;
+    adapter_config.theme.label_font = &lv_font_montserrat_20;
     adapter_config.theme.body_font = &lv_font_montserrat_14;
+    adapter_config.theme.title_font = &lv_font_montserrat_20;
+    adapter_config.theme.headline_font = &lv_font_montserrat_14;
+    adapter_config.theme.display_font = &lv_font_montserrat_20;
     adapter_config.theme.icon_font = &lv_font_montserrat_20;
     adapter_workspace = malloc(pxa_lvgl_ui_workspace_size());
     assert(adapter_workspace != NULL);
@@ -906,6 +934,24 @@ int main(void) {
         lv_obj_send_event(input, LV_EVENT_READY, NULL);
         assert(g_events == 1 && g_event_kind == PXA_UI_EVENT_ACTION);
         g_events = 0;
+    }
+
+    build_font_surface();
+    {
+        static const char *const names[] = {
+            "caption", "label", "body", "title", "headline", "display"
+        };
+        const lv_font_t *expected[] = {
+            &lv_font_montserrat_14, &lv_font_montserrat_20,
+            &lv_font_montserrat_14, &lv_font_montserrat_20,
+            &lv_font_montserrat_14, &lv_font_montserrat_20
+        };
+        lv_obj_t *font_root = lv_obj_get_child(lv_screen_active(), 0);
+        for (size_t index = 0; index < 6u; ++index) {
+            lv_obj_t *label = find_label(font_root, names[index]);
+            assert(label != NULL);
+            assert(lv_obj_get_style_text_font(label, LV_PART_MAIN) == expected[index]);
+        }
     }
 
     assert(pxa_component_finish_start(g_runtime, g_component,

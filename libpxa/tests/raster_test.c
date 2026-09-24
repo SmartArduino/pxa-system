@@ -452,6 +452,11 @@ static void test_perspective_uv_and_solid_depth(void) {
     target.depth_stride_pixels = 8;
     target.width = 8;
     target.height = 8;
+    /* This list declares no depth cut-out, so the clear record leaves the
+     * depth buffer alone and the depth test would otherwise run against
+     * whatever the stack happened to hold. */
+    memset(pixels, 0, sizeof(pixels));
+    memset(depth, 0, sizeof(depth));
     offset = begin_list(bytes, PXA_RASTER_CAP_TEXTURED_QUAD, 3, 9,
                         sizeof(bytes));
     record = bytes + offset;
@@ -513,6 +518,10 @@ static void test_affine_uv_flag_and_depth(void) {
     target.depth_stride_pixels = 8;
     target.width = 8;
     target.height = 8;
+    /* The depth buffer is only reset by a clear record when the list
+     * declares depth cut-out, so start it from a known state instead
+     * of whatever the stack held. */
+    memset(depth, 0, sizeof(depth));
     offset = begin_list(bytes, PXA_RASTER_CAP_TEXTURED_QUAD, 2, 11,
                         sizeof(bytes));
     record = bytes + offset;
@@ -584,6 +593,10 @@ static void test_lit_palette_depth(void) {
     target.depth_stride_pixels = 8;
     target.width = 8;
     target.height = 8;
+    /* The depth buffer is only reset by a clear record when the list
+     * declares depth cut-out, so start it from a known state instead
+     * of whatever the stack held. */
+    memset(depth, 0, sizeof(depth));
     offset = begin_list(bytes, resources.capabilities, COMMANDS, 13,
                         sizeof(bytes));
     record = bytes + offset;
@@ -614,6 +627,264 @@ static void test_lit_palette_depth(void) {
     assert(pxa_raster_validate_draw_list(bytes, sizeof(bytes), &target,
                                          &resources, &list) ==
            PXA_STATUS_UNSUPPORTED);
+}
+
+static void test_painter_depth(void) {
+    enum {
+        COMMANDS = 4,
+        TOTAL_BYTES = PXA_RASTER_DRAW_HEADER_BYTES + PXA_RASTER_CLEAR_BYTES +
+                      3 * PXA_RASTER_TEXTURED_QUAD_BYTES,
+    };
+    static const int16_t xy[8] = {0, 0, 128, 0, 128, 128, 0, 128};
+    uint8_t bytes[TOTAL_BYTES];
+    uint8_t green = 1;
+    uint8_t red = 2;
+    uint16_t palette[256] = {0};
+    uint16_t pixels[64];
+    uint16_t depth[64];
+    pxa_raster_resources_t resources = {0};
+    pxa_raster_target_t target = {0};
+    pxa_raster_draw_list_view_t list;
+    uint32_t offset;
+    palette[1] = UINT16_C(0x07e0);
+    palette[2] = UINT16_C(0xf800);
+    resources.palette = palette;
+    resources.palette_light_levels = 1;
+    resources.capabilities = PXA_RASTER_CAP_TEXTURED_QUAD |
+                             PXA_RASTER_CAP_PAINTER_POLYGON |
+                             PXA_RASTER_CAP_LIT_PALETTE_DEPTH |
+                             PXA_RASTER_CAP_PAINTER_DEPTH;
+    resources.textures[0].pixels = &green;
+    resources.textures[1].pixels = &red;
+    resources.textures[0].width = resources.textures[1].width = 1;
+    resources.textures[0].height = resources.textures[1].height = 1;
+    target.pixels = pixels;
+    target.depth_pixels = depth;
+    target.width = target.height = 8;
+    target.stride_pixels = target.depth_stride_pixels = 8;
+    offset = begin_list(bytes, resources.capabilities, COMMANDS, 29,
+                        sizeof(bytes));
+    bytes[offset] = PXA_RASTER_RECORD_CLEAR_RGB565;
+    put_u16(bytes + offset + 2, PXA_RASTER_CLEAR_BYTES);
+    offset += PXA_RASTER_CLEAR_BYTES;
+    for (uint8_t quad = 0; quad < 3; ++quad) {
+        uint8_t *record = bytes + offset;
+        record[0] = PXA_RASTER_RECORD_TEXTURED_QUAD;
+        record[1] = PXA_RASTER_QUAD_PAINTER |
+                    PXA_RASTER_QUAD_LIT_PALETTE;
+        if (quad == 2) record[1] |= PXA_RASTER_QUAD_SOLID_COLOR;
+        record[4] = quad == 0 ? 0 : 1;
+        put_u16(record + 2, PXA_RASTER_TEXTURED_QUAD_BYTES);
+        if (quad == 2) put_u16(record + 6, UINT16_C(0x001f));
+        for (uint8_t vertex = 0; vertex < 4; ++vertex)
+            put_vertex_depth(record + 8 + vertex * PXA_RASTER_VERTEX_BYTES,
+                             xy[vertex * 2], xy[vertex * 2 + 1], 0, 0,
+                             quad == 2 ? 255 : 0,
+                             quad == 0 ? 256 : quad == 1 ? 512 : 1024);
+        offset += PXA_RASTER_TEXTURED_QUAD_BYTES;
+    }
+    resources.capabilities &= ~PXA_RASTER_CAP_PAINTER_DEPTH;
+    assert(pxa_raster_validate_draw_list(bytes, sizeof(bytes), &target,
+                                         &resources, &list) ==
+           PXA_STATUS_UNSUPPORTED);
+    resources.capabilities |= PXA_RASTER_CAP_PAINTER_DEPTH;
+    assert(pxa_raster_validate_draw_list(bytes, sizeof(bytes), &target,
+                                         &resources, &list) == PXA_STATUS_OK);
+    memset(depth, 0xff, sizeof(depth));
+    pxa_raster_execute_draw_list(bytes, &list, &target, &resources, NULL);
+    for (uint32_t pixel = 0; pixel < 64; ++pixel) {
+        assert(pixels[pixel] == UINT16_C(0x07e0));
+        assert(depth[pixel] == 2048u);
+    }
+    {
+        uint8_t *record = bytes + PXA_RASTER_DRAW_HEADER_BYTES +
+            PXA_RASTER_CLEAR_BYTES + 2 * PXA_RASTER_TEXTURED_QUAD_BYTES;
+        for (uint8_t vertex = 0; vertex < 4; ++vertex)
+            put_vertex_depth(record + 8 + vertex * PXA_RASTER_VERTEX_BYTES,
+                             xy[vertex * 2], xy[vertex * 2 + 1], 0, 0, 0,
+                             128);
+    }
+    pxa_raster_execute_draw_list(bytes, &list, &target, &resources, NULL);
+    for (uint32_t pixel = 0; pixel < 64; ++pixel) {
+        assert(pixels[pixel] == UINT16_C(0x001f));
+        assert(depth[pixel] > 2048u);
+    }
+    for (uint8_t quad = 0; quad < 3; ++quad) {
+        uint8_t *record = bytes + PXA_RASTER_DRAW_HEADER_BYTES +
+            PXA_RASTER_CLEAR_BYTES +
+            quad * PXA_RASTER_TEXTURED_QUAD_BYTES;
+        for (uint8_t vertex = 0; vertex < 4; ++vertex)
+            put_u16(record + 8 + vertex * PXA_RASTER_VERTEX_BYTES + 10,
+                    quad == 0 ? (vertex == 0 || vertex == 3 ? 256 : 1024)
+                    : quad == 1 ? 512 : 2048);
+    }
+    pxa_raster_execute_draw_list(bytes, &list, &target, &resources, NULL);
+    assert(pixels[3 * 8 + 1] == UINT16_C(0x07e0));
+    assert(pixels[3 * 8 + 6] == UINT16_C(0xf800));
+}
+
+static void test_coverage_mask(void) {
+    enum {
+        COMMANDS = 4,
+        TOTAL_BYTES = PXA_RASTER_DRAW_HEADER_BYTES + PXA_RASTER_CLEAR_BYTES +
+                      3 * PXA_RASTER_TEXTURED_QUAD_BYTES,
+    };
+    static const int16_t xy[8] = {0, 0, 128, 0, 128, 128, 0, 128};
+    uint8_t bytes[TOTAL_BYTES];
+    uint8_t texture = 7;
+    uint16_t palette[2 * 256] = {0};
+    uint16_t pixels[8 * 8];
+    uint16_t depth[8 * 8];
+    pxa_raster_resources_t resources;
+    pxa_raster_target_t target;
+    pxa_raster_draw_list_view_t list;
+    uint32_t offset;
+    uint8_t *record;
+    palette[7] = UINT16_C(0xf800);
+    palette[256 + 7] = UINT16_C(0x07e0);
+    memset(&resources, 0, sizeof(resources));
+    memset(&target, 0, sizeof(target));
+    resources.palette = palette;
+    resources.palette_light_levels = 2;
+    resources.capabilities = PXA_RASTER_CAP_TEXTURED_QUAD |
+                             PXA_RASTER_CAP_AFFINE_UV |
+                             PXA_RASTER_CAP_LIT_PALETTE_DEPTH;
+    resources.textures[0].pixels = &texture;
+    resources.textures[0].width = 1;
+    resources.textures[0].height = 1;
+    target.pixels = pixels;
+    target.depth_pixels = depth;
+    target.stride_pixels = 8;
+    target.depth_stride_pixels = 8;
+    target.width = 8;
+    target.height = 8;
+    /* The depth buffer is only reset by a clear record when the list
+     * declares depth cut-out, so start it from a known state instead
+     * of whatever the stack held. */
+    memset(depth, 0, sizeof(depth));
+    offset = begin_list(bytes,
+                        resources.capabilities |
+                            PXA_RASTER_CAP_PAINTER_POLYGON |
+                            PXA_RASTER_CAP_FIXED_ALPHA_BLEND |
+                            PXA_RASTER_CAP_COVERAGE_MASK,
+                        COMMANDS, 16, sizeof(bytes));
+    record = bytes + offset;
+    record[0] = PXA_RASTER_RECORD_CLEAR_RGB565;
+    put_u16(record + 2, PXA_RASTER_CLEAR_BYTES);
+    offset += PXA_RASTER_CLEAR_BYTES;
+    for (uint8_t quad = 0; quad < 3; ++quad) {
+        record = bytes + offset;
+        record[0] = PXA_RASTER_RECORD_TEXTURED_QUAD;
+        record[1] = PXA_RASTER_QUAD_AFFINE_UV |
+                    PXA_RASTER_QUAD_PAINTER |
+                    PXA_RASTER_QUAD_COVERAGE_MASK;
+        if (quad != 1) record[1] |= PXA_RASTER_QUAD_BLEND_75;
+        if (quad == 2) record[1] |= PXA_RASTER_QUAD_COVERAGE_RESOLVE;
+        put_u16(record + 2, PXA_RASTER_TEXTURED_QUAD_BYTES);
+        for (uint8_t vertex = 0; vertex < 4; ++vertex)
+            put_vertex_depth(record + 8 + vertex * PXA_RASTER_VERTEX_BYTES,
+                             xy[vertex * 2], xy[vertex * 2 + 1], 0, 0,
+                             quad == 1 ? 0 : 1, 0);
+        offset += PXA_RASTER_TEXTURED_QUAD_BYTES;
+    }
+    assert(pxa_raster_validate_draw_list(bytes, sizeof(bytes), &target,
+                                         &resources, &list) ==
+           PXA_STATUS_UNSUPPORTED);
+    resources.capabilities |= PXA_RASTER_CAP_PAINTER_POLYGON |
+                              PXA_RASTER_CAP_FIXED_ALPHA_BLEND |
+                              PXA_RASTER_CAP_COVERAGE_MASK;
+    assert(pxa_raster_validate_draw_list(bytes, sizeof(bytes), &target,
+                                         &resources, &list) == PXA_STATUS_OK);
+    pxa_raster_execute_draw_list(bytes, &list, &target, &resources, NULL);
+    for (offset = 0; offset < 8u * 8u; ++offset) {
+        const uint16_t expected =
+            (uint16_t)(((UINT16_C(0xf800) & UINT16_C(0xe79c)) >> 2) +
+                       ((UINT16_C(0x07e0) & UINT16_C(0xf7de)) >> 1) +
+                       ((UINT16_C(0x07e0) & UINT16_C(0xe79c)) >> 2));
+        assert(pixels[offset] == expected);
+    }
+}
+
+static void test_solid_coverage_occlusion(void) {
+    enum {
+        WIDTH = 8,
+        HEIGHT = 8,
+        TOTAL_BYTES = PXA_RASTER_DRAW_HEADER_BYTES +
+                      2 * PXA_RASTER_TEXTURED_QUAD_BYTES,
+    };
+    uint8_t bytes[TOTAL_BYTES];
+    uint8_t texture = 1;
+    uint16_t palette[256] = {0};
+    uint16_t pixels[WIDTH * HEIGHT] = {0};
+    uint16_t masks[WIDTH * HEIGHT] = {0};
+    pxa_raster_resources_t resources = {0};
+    pxa_raster_target_t target = {0};
+    pxa_raster_draw_list_view_t list;
+    uint8_t *record;
+    uint8_t vertex;
+    resources.capabilities = PXA_RASTER_CAP_TEXTURED_QUAD |
+                             PXA_RASTER_CAP_PAINTER_POLYGON |
+                             PXA_RASTER_CAP_AFFINE_UV |
+                             PXA_RASTER_CAP_COVERAGE_MASK;
+    resources.palette = palette;
+    resources.palette_light_levels = 1;
+    resources.textures[0].pixels = &texture;
+    resources.textures[0].width = 1;
+    resources.textures[0].height = 1;
+    palette[1] = UINT16_C(0x07e0);
+    target.width = WIDTH;
+    target.height = HEIGHT;
+    target.stride_pixels = WIDTH;
+    target.depth_stride_pixels = WIDTH;
+    target.pixels = pixels;
+    target.depth_pixels = masks;
+    record = bytes + begin_list(bytes, resources.capabilities, 2, 27,
+                                sizeof(bytes));
+    record[0] = PXA_RASTER_RECORD_TEXTURED_QUAD;
+    record[1] = PXA_RASTER_QUAD_SOLID_COLOR | PXA_RASTER_QUAD_PAINTER |
+                PXA_RASTER_QUAD_AFFINE_UV | PXA_RASTER_QUAD_COVERAGE_MASK;
+    put_u16(record + 2, PXA_RASTER_TEXTURED_QUAD_BYTES);
+    put_u16(record + 6, UINT16_C(0xf800));
+    for (vertex = 0; vertex < 4; ++vertex)
+        put_vertex_depth(record + 8 + vertex * PXA_RASTER_VERTEX_BYTES,
+                         (vertex == 1 || vertex == 2) ? 4 * 16 : 0,
+                         vertex >= 2 ? HEIGHT * 16 : 0, 0, 0, 255, 256);
+    record += PXA_RASTER_TEXTURED_QUAD_BYTES;
+    record[0] = PXA_RASTER_RECORD_TEXTURED_QUAD;
+    record[1] = PXA_RASTER_QUAD_PAINTER | PXA_RASTER_QUAD_AFFINE_UV |
+                PXA_RASTER_QUAD_COVERAGE_MASK;
+    put_u16(record + 2, PXA_RASTER_TEXTURED_QUAD_BYTES);
+    for (vertex = 0; vertex < 4; ++vertex)
+        put_vertex_depth(record + 8 + vertex * PXA_RASTER_VERTEX_BYTES,
+                         (vertex == 1 || vertex == 2) ? WIDTH * 16 : 0,
+                         vertex >= 2 ? HEIGHT * 16 : 0, 0, 0, 0, 256);
+    assert(pxa_raster_validate_draw_list(bytes, sizeof(bytes), &target,
+                                         &resources, &list) == PXA_STATUS_OK);
+    put_u16(bytes + 6, 6);
+    assert(pxa_raster_validate_draw_list(bytes, sizeof(bytes), &target,
+                                         &resources, &list) ==
+           PXA_STATUS_UNSUPPORTED);
+    put_u16(bytes + 6, PXA_RASTER_ABI_MINOR);
+    assert(pxa_raster_validate_draw_list(bytes, sizeof(bytes), &target,
+                                         &resources, &list) == PXA_STATUS_OK);
+    pxa_raster_execute_draw_list(bytes, &list, &target, &resources, NULL);
+    for (uint32_t index = 0; index < WIDTH * HEIGHT; ++index)
+        assert(pixels[index] == (index % WIDTH < 4u
+                                    ? UINT16_C(0xf800) : UINT16_C(0x07e0)));
+    {
+        uint8_t first[PXA_RASTER_TEXTURED_QUAD_BYTES];
+        uint8_t *quads = bytes + PXA_RASTER_DRAW_HEADER_BYTES;
+        memcpy(first, quads, sizeof(first));
+        memcpy(quads, quads + sizeof(first), sizeof(first));
+        memcpy(quads + sizeof(first), first, sizeof(first));
+        memset(pixels, 0, sizeof(pixels));
+        assert(pxa_raster_validate_draw_list(bytes, sizeof(bytes), &target,
+                                             &resources, &list) ==
+               PXA_STATUS_OK);
+        pxa_raster_execute_draw_list(bytes, &list, &target, &resources, NULL);
+        for (uint32_t index = 0; index < WIDTH * HEIGHT; ++index)
+            assert(pixels[index] == UINT16_C(0x07e0));
+    }
 }
 
 static void test_depth_cutout(void) {
@@ -647,6 +918,10 @@ static void test_depth_cutout(void) {
     target.depth_stride_pixels = 8;
     target.width = 8;
     target.height = 8;
+    /* The depth buffer is only reset by a clear record when the list
+     * declares depth cut-out, so start it from a known state instead
+     * of whatever the stack held. */
+    memset(depth, 0, sizeof(depth));
     offset = begin_list(bytes,
                         PXA_RASTER_CAP_TEXTURED_QUAD |
                             PXA_RASTER_CAP_DEPTH_CUTOUT,
@@ -711,6 +986,10 @@ static void test_fixed_alpha_blend(void) {
     target.depth_stride_pixels = 8;
     target.width = 8;
     target.height = 8;
+    /* The depth buffer is only reset by a clear record when the list
+     * declares depth cut-out, so start it from a known state instead
+     * of whatever the stack held. */
+    memset(depth, 0, sizeof(depth));
     offset = begin_list(bytes,
                         PXA_RASTER_CAP_TEXTURED_QUAD |
                             PXA_RASTER_CAP_FIXED_ALPHA_BLEND,
@@ -739,6 +1018,116 @@ static void test_fixed_alpha_blend(void) {
         assert(pixels[offset] == UINT16_C(0x3816));
         assert(depth[offset] == 0);
     }
+}
+
+static void test_painter_perspective_uv(void) {
+    enum {
+        WIDTH = 96,
+        HEIGHT = 8,
+        TOTAL_BYTES = PXA_RASTER_DRAW_HEADER_BYTES +
+                      PXA_RASTER_TEXTURED_QUAD_BYTES,
+    };
+    uint8_t bytes[TOTAL_BYTES];
+    uint8_t texture[16];
+    uint16_t palette[256] = {0};
+    uint16_t pixels[WIDTH * HEIGHT];
+    uint16_t affine_pixels[WIDTH * HEIGHT];
+    uint16_t coverage[WIDTH * HEIGHT];
+    pxa_raster_resources_t resources;
+    pxa_raster_target_t target;
+    pxa_raster_draw_list_view_t list;
+    uint8_t *record;
+    uint32_t index;
+    for (index = 0; index < 16u; ++index) {
+        texture[index] = (uint8_t)index;
+        palette[index] = (uint16_t)(0x100u + index);
+    }
+    memset(&resources, 0, sizeof(resources));
+    memset(&target, 0, sizeof(target));
+    resources.palette = palette;
+    resources.palette_light_levels = 1;
+    resources.capabilities = PXA_RASTER_CAP_TEXTURED_QUAD |
+                             PXA_RASTER_CAP_PAINTER_POLYGON |
+                             PXA_RASTER_CAP_AFFINE_UV |
+                             PXA_RASTER_CAP_PAINTER_PERSPECTIVE;
+    resources.textures[0].pixels = texture;
+    resources.textures[0].width = 16;
+    resources.textures[0].height = 1;
+    target.pixels = pixels;
+    target.stride_pixels = WIDTH;
+    target.width = WIDTH;
+    target.height = HEIGHT;
+    /* A floor-like face: the left edge is one unit away and the right edge
+     * eight, with the texture running across it. Perspective-correct UV has
+     * to compress the far half towards the horizon; screen-linear UV spreads
+     * the texels evenly instead. */
+    record = bytes + begin_list(bytes, resources.capabilities, 1, 21,
+                                sizeof(bytes));
+    record[0] = PXA_RASTER_RECORD_TEXTURED_QUAD;
+    record[1] = PXA_RASTER_QUAD_PAINTER;
+    put_u16(record + 2, PXA_RASTER_TEXTURED_QUAD_BYTES);
+    record[4] = 0;
+    put_vertex_depth(record + 8, 0, 0, 0, 0, 0, 256);
+    put_vertex_depth(record + 20, WIDTH * 16, 0, 16 * 16, 0, 0, 2048);
+    put_vertex_depth(record + 32, WIDTH * 16, HEIGHT * 16, 16 * 16, 0, 0,
+                     2048);
+    put_vertex_depth(record + 44, 0, HEIGHT * 16, 0, 0, 0, 256);
+    memset(pixels, 0, sizeof(pixels));
+    assert(pxa_raster_validate_draw_list(bytes, sizeof(bytes), &target,
+                                         &resources, &list) == PXA_STATUS_OK);
+    pxa_raster_execute_draw_list(bytes, &list, &target, &resources, NULL);
+    memcpy(affine_pixels, pixels, sizeof(pixels));
+    /* Halfway across the face the two mappings must disagree: 1/z averages to
+     * 0.5625, so the perspective sample sits below texel 2 while the linear
+     * one is already at texel 8. */
+    assert(pixels[WIDTH / 2u] == palette[1]);
+    record[1] = PXA_RASTER_QUAD_PAINTER | PXA_RASTER_QUAD_AFFINE_UV;
+    memset(pixels, 0, sizeof(pixels));
+    assert(pxa_raster_validate_draw_list(bytes, sizeof(bytes), &target,
+                                         &resources, &list) == PXA_STATUS_OK);
+    pxa_raster_execute_draw_list(bytes, &list, &target, &resources, NULL);
+    assert(pixels[WIDTH / 2u] == palette[8]);
+    assert(memcmp(affine_pixels, pixels, sizeof(pixels)) != 0);
+    /* A face whose vertices all share one depth maps the same either way. */
+    put_vertex_depth(record + 20, WIDTH * 16, 0, 16 * 16, 0, 0, 256);
+    put_vertex_depth(record + 32, WIDTH * 16, HEIGHT * 16, 16 * 16, 0, 0, 256);
+    memset(pixels, 0, sizeof(pixels));
+    assert(pxa_raster_validate_draw_list(bytes, sizeof(bytes), &target,
+                                         &resources, &list) == PXA_STATUS_OK);
+    pxa_raster_execute_draw_list(bytes, &list, &target, &resources, NULL);
+    memcpy(affine_pixels, pixels, sizeof(pixels));
+    record[1] = PXA_RASTER_QUAD_PAINTER;
+    memset(pixels, 0, sizeof(pixels));
+    assert(pxa_raster_validate_draw_list(bytes, sizeof(bytes), &target,
+                                         &resources, &list) == PXA_STATUS_OK);
+    pxa_raster_execute_draw_list(bytes, &list, &target, &resources, NULL);
+    assert(memcmp(affine_pixels, pixels, sizeof(pixels)) == 0);
+    put_vertex_depth(record + 20, WIDTH * 16, 0, 16 * 16, 0, 0, 2048);
+    put_vertex_depth(record + 32, WIDTH * 16, HEIGHT * 16, 16 * 16, 0, 0,
+                     2048);
+    target.depth_pixels = coverage;
+    target.depth_stride_pixels = WIDTH;
+    resources.capabilities |= PXA_RASTER_CAP_COVERAGE_MASK;
+    put_u32(bytes + 12, resources.capabilities);
+    record[1] = PXA_RASTER_QUAD_PAINTER | PXA_RASTER_QUAD_COVERAGE_MASK;
+    memset(coverage, 0, sizeof(coverage));
+    memset(pixels, 0, sizeof(pixels));
+    assert(pxa_raster_validate_draw_list(bytes, sizeof(bytes), &target,
+                                         &resources, &list) == PXA_STATUS_OK);
+    pxa_raster_execute_draw_list(bytes, &list, &target, &resources, NULL);
+    assert(pixels[WIDTH / 2u] == palette[1]);
+    record[1] |= PXA_RASTER_QUAD_AFFINE_UV;
+    memset(coverage, 0, sizeof(coverage));
+    memset(pixels, 0, sizeof(pixels));
+    assert(pxa_raster_validate_draw_list(bytes, sizeof(bytes), &target,
+                                         &resources, &list) == PXA_STATUS_OK);
+    pxa_raster_execute_draw_list(bytes, &list, &target, &resources, NULL);
+    assert(pixels[WIDTH / 2u] == palette[8]);
+    record[1] &= (uint8_t)~PXA_RASTER_QUAD_AFFINE_UV;
+    resources.capabilities &= ~PXA_RASTER_CAP_PAINTER_PERSPECTIVE;
+    assert(pxa_raster_validate_draw_list(bytes, sizeof(bytes), &target,
+                                         &resources, &list) ==
+           PXA_STATUS_UNSUPPORTED);
 }
 
 static void test_sprite_and_triangle_batches(void) {
@@ -779,6 +1168,10 @@ static void test_sprite_and_triangle_batches(void) {
     target.depth_stride_pixels = 8;
     target.width = 8;
     target.height = 8;
+    /* This list carries no depth-cut-out capability, so the clear record
+     * leaves the depth buffer alone. Both renders have to start from the same
+     * depth state for the split comparison below to mean anything. */
+    memset(depth, 0, sizeof(depth));
     offset = begin_list(bytes, resources.capabilities, 3, 10, sizeof(bytes));
     record = bytes + offset;
     record[0] = PXA_RASTER_RECORD_CLEAR_RGB565;
@@ -821,7 +1214,7 @@ static void test_sprite_and_triangle_batches(void) {
            telemetry.last_draw_list_bytes == sizeof(bytes));
     assert(pixels[0] == palette[1] && pixels[3 * 8 + 3] == UINT16_C(0xf800));
     memset(split_pixels, 0xff, sizeof(split_pixels));
-    memset(split_depth, 0xff, sizeof(split_depth));
+    memset(split_depth, 0, sizeof(split_depth));
     target.pixels = split_pixels;
     target.depth_pixels = split_depth;
     pxa_raster_execute_draw_list_rows(bytes, &list, &target, &resources, 0, 3,
@@ -843,8 +1236,12 @@ int main(void) {
     test_perspective_uv_and_solid_depth();
     test_affine_uv_flag_and_depth();
     test_lit_palette_depth();
+    test_painter_depth();
+    test_coverage_mask();
+    test_solid_coverage_occlusion();
     test_depth_cutout();
     test_fixed_alpha_blend();
+    test_painter_perspective_uv();
     test_sprite_and_triangle_batches();
     return 0;
 }

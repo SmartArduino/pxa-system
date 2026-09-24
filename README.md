@@ -16,7 +16,7 @@ not a dependency of the system core.
 ```text
 pxa-system/
   CMakeLists.txt              standalone CMake and ESP component entry
-  apps/pxa/                   reference PXA Apps and shared App assets
+  apps/pxa/                   minimal Hello Guest smoke test and signing fixture
   cmake/                      shared source manifests and package helpers
   wamr/                        upstream WAMR runtime submodule
   libpxa/                     platform-neutral PXA Host library

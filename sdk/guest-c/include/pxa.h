@@ -54,6 +54,8 @@
 
 #define PXA_WINDOW_CONFIGURE 1u
 #define PXA_WINDOW_GET_SNAPSHOT 2u
+#define PXA_WINDOW_SHOW_TOAST 3u
+#define PXA_WINDOW_TOAST_MAX_BYTES 240u
 #define PXA_WINDOW_METRICS_CHANGED 0x8001u
 #define PXA_WINDOW_BACK_REQUESTED 0x8002u
 #define PXA_WINDOW_SNAPSHOT_SAFE_INSETS 5u
@@ -64,6 +66,7 @@
 #define PXA_WINDOW_BAR_VISIBLE 0u
 #define PXA_WINDOW_BAR_HIDDEN 1u
 #define PXA_WINDOW_BAR_TRANSIENT 2u
+
 
 #define PXA_POINTER_DOWN 0u
 #define PXA_POINTER_MOVE 1u
@@ -198,6 +201,23 @@ static inline int pxa_send(uint16_t service, uint16_t opcode,
     return pxa_message(&message, service, opcode, request_id, payload,
                        payload_length) &&
            pxa_control(message.data, (uint32_t)message.length) == PXA_STATUS_OK;
+}
+
+static inline int pxa_window_show_toast(const char* text, size_t length,
+                                        uint16_t duration_ms) {
+    uint8_t payload[PXA_WINDOW_TOAST_MAX_BYTES + 2u];
+    uint8_t packet[sizeof(payload) + 12u];
+    pxa_writer_t writer;
+    if (text == NULL || length == 0 || length > PXA_WINDOW_TOAST_MAX_BYTES ||
+        duration_ms < 500u || duration_ms > 5000u) return 0;
+    payload[0] = (uint8_t)duration_ms;
+    payload[1] = (uint8_t)(duration_ms >> 8);
+    for (size_t index = 0; index < length; ++index)
+        payload[index + 2u] = (uint8_t)text[index];
+    pxa_writer_init(&writer, packet, sizeof(packet));
+    return pxa_message(&writer, PXA_SERVICE_WINDOW, PXA_WINDOW_SHOW_TOAST,
+                       0, payload, length + 2u) &&
+           pxa_control(writer.data, (uint32_t)writer.length) == PXA_STATUS_OK;
 }
 
 /* Window 0.1 snapshot: the Host reports the panel safe area and the status and

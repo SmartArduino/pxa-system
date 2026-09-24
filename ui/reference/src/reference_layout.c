@@ -101,6 +101,45 @@ pxsys_status_t pxsys_reference_layout_compute(
     return PXSYS_STATUS_OK;
 }
 
+pxsys_status_t pxsys_reference_layout_status_content_rect(
+    const pxsys_display_profile_t* display,
+    const pxsys_reference_layout_t* layout, uint32_t content_height,
+    pxsys_rect_t* output) {
+    int32_t center_y;
+    int32_t top;
+    int32_t bottom;
+    int32_t left;
+    int32_t right;
+    if (display == NULL || layout == NULL || output == NULL ||
+        content_height == 0 || content_height > layout->status_bar.height ||
+        pxsys_display_profile_validate(display) != PXSYS_STATUS_OK ||
+        layout->viewport.width != display->width ||
+        layout->viewport.height != display->height)
+        return PXSYS_STATUS_INVALID_ARGUMENT;
+    center_y = layout->safe_area.y +
+               ((int32_t)layout->status_bar.height - layout->safe_area.y) / 2;
+    top = center_y - (int32_t)content_height / 2;
+    bottom = top + (int32_t)content_height - 1;
+    left = layout->safe_area.x;
+    right = left + (int32_t)layout->safe_area.width;
+    if (top < 0 || bottom >= (int32_t)display->height)
+        return PXSYS_STATUS_INVALID_ARGUMENT;
+    while (left < right &&
+           (!pxsys_display_contains_point(display, left, top) ||
+            !pxsys_display_contains_point(display, left, bottom)))
+        ++left;
+    while (right > left &&
+           (!pxsys_display_contains_point(display, right - 1, top) ||
+            !pxsys_display_contains_point(display, right - 1, bottom)))
+        --right;
+    if (left == right) return PXSYS_STATUS_NOT_FOUND;
+    output->x = left;
+    output->y = top;
+    output->width = (uint32_t)(right - left);
+    output->height = content_height;
+    return PXSYS_STATUS_OK;
+}
+
 uint32_t pxsys_reference_layout_gesture_strip_height(
     pxsys_ui_size_class_t size_class) {
     return size_class == PXSYS_UI_SIZE_COMPACT

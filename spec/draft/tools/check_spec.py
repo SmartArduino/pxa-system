@@ -144,14 +144,14 @@ def validate_package_golden(document: dict[str, object], package: dict[str, obje
 
 def validate_specs() -> tuple[int, int]:
     paths = sorted(ROOT.glob("pxa-*.json"))
-    require(len(paths) == 18, "the consolidated draft must contain 18 machine specifications")
+    require(len(paths) == 20, "the consolidated draft must contain 20 machine specifications")
     require(not list(ROOT.glob("pxa-*.yaml")),
             "machine specifications must use the .json extension")
     specs = {path.stem.removeprefix("pxa-"): load_json(path) for path in paths}
     require(set(specs) == {
         "audio", "clock", "container", "core", "device", "fs", "ipc",
-        "game-render", "net", "package", "permission", "sensor", "storage", "surface", "ui",
-        "wasi", "window", "work",
+        "game-render", "log", "net", "package", "permission", "sensor", "storage", "surface", "ui",
+        "wasi", "window", "work", "store-installer",
     }, "machine specification inventory mismatch")
 
     core = specs["core"]
@@ -173,14 +173,15 @@ def validate_specs() -> tuple[int, int]:
     validate_named_registries(core, "Core")
 
     expected_services = {
-        "window": (2, "0.1.0"), "ui": (3, "0.3.0"),
+        "window": (2, "0.2.0"), "ui": (3, "0.4.0"),
         "clock": (4, "0.1.0"), "fs": (5, "0.1.0"),
         "storage": (6, "0.1.0"), "ipc": (7, "0.1.0"),
         "sensor": (8, "0.1.0"), "net": (9, "0.2.0"),
         "audio": (10, "0.5.0"), "permission": (11, "0.1.0"),
         "work": (13, "0.1.0"), "wasi": (14, "0.1.0"),
-        "device": (15, "0.1.0"), "surface": (16, "0.2.0"),
-        "game-render": (18, "0.2.0"),
+        "device": (15, "0.2.0"), "surface": (16, "0.2.0"),
+        "game-render": (18, "0.3.0"), "log": (19, "0.1.0"),
+        "store-installer": (20, "0.5.0"),
     }
     core_services = {item["name"]: item for item in core["services"]}
     for name, (service_id, version) in expected_services.items():
@@ -217,7 +218,7 @@ def validate_specs() -> tuple[int, int]:
     validate_named_registries(container, "Container")
 
     ui = specs["ui"]
-    require(len(ui["opcodes"]) == 15, "UI opcode inventory mismatch")
+    require(len(ui["opcodes"]) == 17, "UI opcode inventory mismatch")
     require(len(ui["commands"]) == 5, "UI command inventory mismatch")
     require({feature["name"] for feature in ui["features"]} >=
             {"canvas", "virtual-list", "controller-input", "canvas-stream-io"},

@@ -8,6 +8,14 @@
 safe insets、外形、圆角和 cutout。平台适配把窗口、折叠或硬件模式变化转换成
 display service 更新；核心不包含 LVGL 对象或 SDL handle。
 
+PXA Guest 可从 UI 环境读取 `display_shape`（0 矩形、1 圆角矩形、2 圆形、3 自定义）
+和 `corner_radii[4]`（左上、右上、右下、左下，逻辑像素）。这组字段通过可选的
+环境 TLV 记录传递，旧 Host 未提供时默认为矩形；`safe_insets` 只规定边缘的
+静态留白，顶角附近的按钮还需按圆角半径与自身纵坐标向内避让。
+Host 在显示 profile 变化时推送 UI 环境更新；圆形显示的交互 UI 应优先排进内接
+安全矩形。产品模拟器按 profile 的 `corner_radius` / `round` 绘制不透明遮罩，
+遮罩外显示灰色幕布并屏蔽点击，便于通过 PXADB 截图检查真实裁切。
+
 ## 参考 UI 分层
 
 - `ui/reference` 用 C99 计算响应式区域与 launcher grid。

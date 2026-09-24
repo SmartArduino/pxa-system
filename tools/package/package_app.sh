@@ -325,8 +325,12 @@ for component_id in "${component_ids[@]}"; do
   fi
 done
 
-if [[ -d "$app_dir/assets" ]]; then
-  cp -R "$app_dir/assets" "$package_dir/assets"
+asset_dir="$app_dir/assets-$package_target"
+if [[ ! -d "$asset_dir" ]]; then
+  asset_dir="$app_dir/assets"
+fi
+if [[ -d "$asset_dir" ]]; then
+  cp -R "$asset_dir" "$package_dir/assets"
 fi
 "${PYTHON:-python3}" "$script_dir/build_package_manifest.py" \
   "$app_dir/package.json" "$package_dir" "$private_key" \

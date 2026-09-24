@@ -49,7 +49,7 @@ int main(void) {
     uint8_t scratch[64];
     uint8_t environment_records[128];
     uint8_t config[160];
-    uint8_t encoded[16] = {0};
+    uint8_t encoded[20] = {0};
     uint32_t ancestors[4];
     uint32_t generation = 0;
     uint32_t routes[3];
@@ -97,6 +97,17 @@ int main(void) {
     assert(environment.safe_insets[3] == 4);
     assert(environment.features ==
            (PXA_UI_FEATURE_CANVAS | (UINT64_C(1) << 40)));
+    assert(environment.display_shape == 0 && environment.corner_radii[1] == 0);
+    pxa_ui_write_u32(encoded, 1);
+    for (uint32_t corner = 0; corner < 4; ++corner)
+        pxa_ui_write_u32(encoded + 4 + corner * 4, 48);
+    assert(pxa_record(&environment_writer, 12, encoded, 20));
+    pxa_writer_init(&config_writer, config, sizeof(config));
+    assert(pxa_record(&config_writer, PXA_UI_CONFIG_ENVIRONMENT,
+                      environment_writer.data, environment_writer.length));
+    assert(pxa_ui_parse_start_environment(config_writer.data,
+                                          config_writer.length, &environment));
+    assert(environment.display_shape == 1 && environment.corner_radii[1] == 48);
 
     {
         pxa_ui_transaction_t transaction = {0};
@@ -150,5 +161,32 @@ int main(void) {
     assert(pxa_ui_nav_current(&navigation) == 20);
     assert(pxa_ui_nav_pop(&navigation));
     assert(!pxa_ui_nav_pop(&navigation));
+    {
+        uint8_t payload[4u + PXA_UI_THEME_WIRE_BYTES] = {0};
+        pxa_ui_theme_t theme;
+        pxa_event_t event = {PXA_SERVICE_UI, PXA_UI_THEME_CHANGED, 0,
+                             payload + 4, PXA_UI_THEME_WIRE_BYTES};
+        pxa_ui_write_u32(payload + 4, 9);
+        payload[8] = PXA_UI_COLOR_SCHEME_DARK;
+        pxa_ui_write_u32(payload + 12 + 4u * PXA_UI_THEME_PRIMARY,
+                         UINT32_C(0x69d8c4ff));
+        for (index = 0; index < PXA_UI_THEME_FONT_COUNT; ++index)
+            pxa_ui_write_u16(payload + 52 + index * 2u,
+                             (uint16_t)(12u + index * 2u));
+        assert(pxa_ui_parse_theme_event(&event, &theme));
+        assert(theme.generation == 9 && theme.color_scheme == PXA_UI_COLOR_SCHEME_DARK);
+        assert(theme.rgba[PXA_UI_THEME_PRIMARY] == UINT32_C(0x69d8c4ff));
+        assert(theme.typography_px[0] == 12 && theme.typography_px[5] == 22);
+        event.opcode = PXA_UI_THEME_GET;
+        event.request_id = 77;
+        event.payload = payload;
+        event.payload_length = sizeof(payload);
+        assert(pxa_ui_parse_theme_event(&event, &theme));
+        event.request_id = 0;
+        assert(!pxa_ui_parse_theme_event(&event, &theme));
+        event.request_id = 77;
+        payload[8] = 2;
+        assert(!pxa_ui_parse_theme_event(&event, &theme));
+    }
     return 0;
 }

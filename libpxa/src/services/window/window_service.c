@@ -1,5 +1,6 @@
 #include "pxa/window.h"
 #include "common/checked_math.h"
+#include "common/bytes_internal.h"
 
 #include <limits.h>
 #include <stdint.h>
@@ -253,6 +254,25 @@ static pxa_status_t window_control(void *context, pxa_runtime_t *runtime,
         case PXA_WINDOW_CONFIGURE:
             if (message->request_id != 0) return PXA_STATUS_INVALID_ARGUMENT;
             return configure(entry, message->payload);
+        case PXA_WINDOW_SHOW_TOAST: {
+            char text[PXA_WINDOW_TOAST_MAX_BYTES + 1u];
+            uint16_t duration;
+            size_t length = message->payload.size;
+            if (message->request_id != 0 || length < 3u ||
+                length > PXA_WINDOW_TOAST_MAX_BYTES + 2u ||
+                !pxa_utf8_validate(message->payload.data + 2u, length - 2u, 0))
+                return PXA_STATUS_INVALID_ARGUMENT;
+            for (size_t index = 2u; index < length; ++index)
+                if (message->payload.data[index] == 0)
+                    return PXA_STATUS_INVALID_ARGUMENT;
+            duration = pxa_read_u16(message->payload.data);
+            if (duration < 500u || duration > 5000u)
+                return PXA_STATUS_INVALID_ARGUMENT;
+            if (entry->backend.show_toast == NULL) return PXA_STATUS_UNSUPPORTED;
+            memcpy(text, message->payload.data + 2u, length - 2u);
+            text[length - 2u] = '\0';
+            return entry->backend.show_toast(entry->backend.context, text, duration);
+        }
         case PXA_WINDOW_GET_SNAPSHOT:
             if (message->request_id == 0 || message->payload.size != 0) {
                 return PXA_STATUS_INVALID_ARGUMENT;
@@ -318,7 +338,8 @@ pxa_status_t pxa_window_bind(pxa_window_service_t *service,
     pxa_component_snapshot_t snapshot;
     pxa_window_entry_t *entry;
     if (!service_valid(service) || backend == NULL ||
-        backend->struct_size < sizeof(*backend) || backend->apply == NULL ||
+        backend->struct_size < offsetof(pxa_window_backend_t, show_toast) ||
+        backend->apply == NULL ||
         component == PXA_COMPONENT_INVALID) {
         return PXA_STATUS_INVALID_ARGUMENT;
     }
@@ -335,7 +356,9 @@ pxa_status_t pxa_window_bind(pxa_window_service_t *service,
     entry->next = service->active_head;
     service->active_head = index;
     entry->component = component;
-    entry->backend = *backend;
+    memcpy(&entry->backend, backend,
+           backend->struct_size < sizeof(entry->backend) ?
+               backend->struct_size : sizeof(entry->backend));
     entry->configuration.status_bar_color = UINT32_C(0x000000ff);
     entry->configuration.navigation_bar_color = UINT32_C(0x000000ff);
     return PXA_STATUS_OK;

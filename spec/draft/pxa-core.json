@@ -211,7 +211,7 @@
       "id": 2,
       "state": "defined",
       "major": 0,
-      "minor": 1,
+      "minor": 2,
       "patch": 0
     },
     {
@@ -219,7 +219,7 @@
       "id": 3,
       "state": "defined",
       "major": 0,
-      "minor": 3,
+      "minor": 4,
       "patch": 0
     },
     {
@@ -312,7 +312,7 @@
       "id": 15,
       "state": "defined",
       "major": 0,
-      "minor": 1,
+      "minor": 2,
       "patch": 0
     },
     {
@@ -328,7 +328,7 @@
       "id": 18,
       "state": "defined",
       "major": 0,
-      "minor": 2,
+      "minor": 3,
       "patch": 0
     },
     {
@@ -337,6 +337,14 @@
       "state": "defined",
       "major": 0,
       "minor": 1,
+      "patch": 0
+    },
+    {
+      "name": "store-installer",
+      "id": 20,
+      "state": "defined",
+      "major": 0,
+      "minor": 5,
       "patch": 0
     }
   ],

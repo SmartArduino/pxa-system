@@ -1,11 +1,11 @@
 {
-  "schema": "pxa-device-spec-0.1",
+  "schema": "pxa-device-spec-0.2",
   "status": "draft",
   "service": {
     "name": "device",
     "id": 15,
     "major": 0,
-    "minor": 1,
+    "minor": 2,
     "patch": 0
   },
   "opcodes": [
@@ -16,6 +16,14 @@
       "request_id": "nonzero",
       "payload": "kind|permission-handle",
       "result": "kind|mac|flags"
+    },
+    {
+      "name": "get-runtime-info",
+      "id": 2,
+      "direction": "bidirectional-result",
+      "request_id": "nonzero",
+      "payload": "empty",
+      "result": "target|architecture|engine|engine-abi|formats"
     }
   ],
   "record_tags": [
@@ -37,6 +45,13 @@
       "payload": "u32",
       "cardinality": "result-one"
     }
+  ],
+  "runtime_info_record_tags": [
+    {"name": "target", "id": 1, "payload": "utf8"},
+    {"name": "architecture", "id": 2, "payload": "utf8"},
+    {"name": "engine", "id": 3, "payload": "utf8"},
+    {"name": "engine-abi", "id": 4, "payload": "utf8"},
+    {"name": "formats", "id": 5, "payload": "u32"}
   ],
   "mac_kinds": [
     {
@@ -74,5 +89,5 @@
       "value": 4
     }
   ],
-  "protocol_version": "0.1.0"
+  "protocol_version": "0.2.0"
 }

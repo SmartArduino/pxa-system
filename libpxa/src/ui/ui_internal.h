@@ -13,7 +13,8 @@
      (PXA_RECORD_HEADER_SIZE + 16u) +                                     \
      2u * (PXA_RECORD_HEADER_SIZE + 1u) +                                 \
      2u * (PXA_RECORD_HEADER_SIZE + 8u) +                                 \
-     (PXA_RECORD_HEADER_SIZE + 4u))
+     (PXA_RECORD_HEADER_SIZE + 4u) +                                     \
+     (PXA_RECORD_HEADER_SIZE + 20u))
 #define PXA_UI_SURFACE_READY_PREFIX_BYTES 12u
 #define PXA_UI_SURFACE_READY_PAYLOAD_BYTES                                \
     (PXA_UI_SURFACE_READY_PREFIX_BYTES + PXA_UI_ENVIRONMENT_WIRE_BYTES)
@@ -119,6 +120,7 @@ struct pxa_ui_service {
     uint32_t magic;
     pxa_runtime_t *runtime;
     pxa_ui_config_t config;
+    pxa_ui_theme_snapshot_t theme;
     pxa_ui_entry_t *entries;
     uint64_t next_canvas_identity;
     size_t current_bytes;

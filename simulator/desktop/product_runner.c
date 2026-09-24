@@ -1,3 +1,4 @@
+#define _XOPEN_SOURCE 700
 #define _POSIX_C_SOURCE 200809L
 
 #include <errno.h>
@@ -6,8 +7,11 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <time.h>
+#include <limits.h>
+#include <math.h>
 
 #include <SDL2/SDL.h>
+#include <vorbis/vorbisfile.h>
 
 #include "lvgl.h"
 #include "pxa/activation.h"
@@ -30,6 +34,7 @@
 #include "pxa/window.h"
 #include "pxadb_control.h"
 #include "product_runner.h"
+#include "src/core/lv_obj_event_private.h"
 #include "src/drivers/sdl/lv_sdl_keyboard.h"
 #include "desktop_net.h"
 #include "pxa/device.h"
@@ -47,6 +52,10 @@
 #define PRODUCT_SURFACE_FLAG_GAME_RENDER UINT8_C(8)
 #define PRODUCT_ASSET_MAX_BYTES (4u * 1024u * 1024u)
 #define PRODUCT_ASSET_MAX_DIMENSION 4096u
+#define PRODUCT_AUDIO_QUEUE_SAMPLES 16000u
+#define PRODUCT_AUDIO_ASSET_MAX_SAMPLES (16000u * 180u)
+#define PRODUCT_AUDIO_SOUND_CACHE 24u
+#define PRODUCT_AUDIO_SOUND_VOICES 6u
 
 typedef struct {
     const char *package_path;
@@ -57,7 +66,112 @@ typedef struct {
     uint32_t width;
     uint32_t height;
     uint32_t safe_insets[4];
+    uint32_t display_shape;
+    uint32_t corner_radius;
+    uint8_t shape_background_matte;
 } options_t;
+
+static options_t s_shape_profile;
+
+static int shape_contains(int32_t x, int32_t y) {
+    const int32_t width = (int32_t)s_shape_profile.width;
+    const int32_t height = (int32_t)s_shape_profile.height;
+    const int32_t radius = (int32_t)s_shape_profile.corner_radius;
+    if (x < 0 || y < 0 || x >= width || y >= height) return 0;
+    if (s_shape_profile.display_shape == 2u) {
+        const int32_t diameter = width < height ? width : height;
+        const int64_t dx = 2 * (int64_t)x + 1 - width;
+        const int64_t dy = 2 * (int64_t)y + 1 - height;
+        return dx * dx + dy * dy <= (int64_t)diameter * diameter;
+    }
+    if (s_shape_profile.display_shape == 1u && radius > 0) {
+        const int32_t center_x = x < radius ? radius :
+                                 x >= width - radius ? width - radius - 1 : -1;
+        const int32_t center_y = y < radius ? radius :
+                                 y >= height - radius ? height - radius - 1 : -1;
+        if (center_x >= 0 && center_y >= 0) {
+            const int64_t dx = x - center_x;
+            const int64_t dy = y - center_y;
+            return dx * dx + dy * dy <= (int64_t)radius * radius;
+        }
+    }
+    return 1;
+}
+
+static void shape_mask_rect(lv_layer_t *layer,
+                            const lv_draw_rect_dsc_t *descriptor,
+                            int32_t x1, int32_t y, int32_t x2) {
+    lv_area_t area;
+    if (x1 > x2) return;
+    area.x1 = x1;
+    area.y1 = y;
+    area.x2 = x2;
+    area.y2 = y;
+    lv_draw_rect(layer, descriptor, &area);
+}
+
+static void shape_mask_draw(lv_event_t *event) {
+    lv_layer_t *layer = lv_event_get_layer(event);
+    lv_draw_rect_dsc_t descriptor;
+    const int32_t width = (int32_t)s_shape_profile.width;
+    const int32_t height = (int32_t)s_shape_profile.height;
+    if (layer == NULL || width <= 0 || height <= 0) return;
+    lv_draw_rect_dsc_init(&descriptor);
+    descriptor.bg_color = s_shape_profile.shape_background_matte
+                              ? lv_color_hex(UINT32_C(0x7a8494))
+                              : lv_color_black();
+    descriptor.bg_opa = LV_OPA_COVER;
+    for (int32_t y = 0; y < height; ++y) {
+        int32_t left = 0;
+        while (left < width && !shape_contains(left, y)) ++left;
+        if (left == width) {
+            shape_mask_rect(layer, &descriptor, 0, y, width - 1);
+        } else {
+            int32_t right = width - 1;
+            while (right > left && !shape_contains(right, y)) --right;
+            shape_mask_rect(layer, &descriptor, 0, y, left - 1);
+            shape_mask_rect(layer, &descriptor, right + 1, y, width - 1);
+        }
+    }
+}
+
+static void shape_mask_hit_test(lv_event_t *event) {
+    lv_hit_test_info_t *hit_test = lv_event_get_hit_test_info(event);
+    if (hit_test == NULL || hit_test->point == NULL) return;
+    hit_test->res = !shape_contains(hit_test->point->x, hit_test->point->y);
+}
+
+static void install_shape_mask(lv_display_t *display,
+                                const options_t *options) {
+    lv_obj_t *overlay;
+    if (display == NULL || options == NULL || options->display_shape == 0u)
+        return;
+    s_shape_profile = *options;
+    overlay = lv_obj_create(lv_display_get_layer_sys(display));
+    if (overlay == NULL) return;
+    lv_obj_set_size(overlay, LV_PCT(100), LV_PCT(100));
+    lv_obj_set_style_bg_opa(overlay, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(overlay, 0, 0);
+    lv_obj_set_style_pad_all(overlay, 0, 0);
+    lv_obj_clear_flag(overlay, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(overlay, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_ADV_HITTEST);
+    lv_obj_add_event_cb(overlay, shape_mask_hit_test, LV_EVENT_HIT_TEST, NULL);
+    lv_obj_add_event_cb(overlay, shape_mask_draw, LV_EVENT_DRAW_MAIN, NULL);
+    lv_obj_move_foreground(overlay);
+}
+
+typedef struct {
+    char *path;
+    uint8_t *pcm;
+    uint32_t samples;
+} product_sound_asset_t;
+
+typedef struct {
+    const uint8_t *pcm;
+    uint32_t samples;
+    uint32_t position;
+    int32_t gain_q15;
+} product_sound_voice_t;
 
 typedef struct {
     lv_display_t *display;
@@ -66,6 +180,23 @@ typedef struct {
     pxa_ui_service_t *ui;
     pxa_ui_backend_t ui_backend;
     pxa_audio_service_t *audio;
+    SDL_AudioDeviceID audio_device;
+    int16_t audio_queue[PRODUCT_AUDIO_QUEUE_SAMPLES];
+    uint32_t audio_read;
+    uint32_t audio_count;
+    int16_t *music_samples;
+    uint32_t music_length;
+    uint32_t music_position;
+    int16_t music_gain_db_q8;
+    int32_t music_gain_q15;
+    int32_t music_output_gain_q15;
+    int32_t music_source_gain_q15;
+    int16_t music_last_sample;
+    uint8_t music_loop;
+    uint8_t music_paused;
+    product_sound_asset_t sound_cache[PRODUCT_AUDIO_SOUND_CACHE];
+    uint32_t sound_cache_count;
+    product_sound_voice_t sound_voices[PRODUCT_AUDIO_SOUND_VOICES];
     pxa_permission_service_t *permissions;
     pxa_surface_service_t *surfaces;
     pxa_game_render_service_t *game_render;
@@ -124,14 +255,23 @@ typedef struct {
     char locale[PRODUCT_LOCALE_MAX_BYTES + 1u];
     lv_font_t *body_font;
     lv_font_t *title_font;
+    lv_font_t *caption_font;
+    lv_font_t *label_font;
+    lv_font_t *headline_font;
+    lv_font_t *display_font;
     uint32_t width;
     uint32_t height;
     uint32_t safe_insets[4];
+    uint32_t display_shape;
+    uint32_t corner_radius;
     uint16_t clock_period_ms;
     uint64_t next_clock_tick_us;
     lv_obj_t *system_back_gesture;
     lv_obj_t *system_home_gesture;
     lv_obj_t *system_back_indicator;
+    lv_obj_t *toast;
+    lv_timer_t *toast_timer;
+    uint8_t navigation_mode;
     int32_t system_gesture_press_x;
     int32_t system_gesture_press_y;
     uint8_t exit_requested;
@@ -196,6 +336,9 @@ static pxa_status_t configure_start_locale(product_host_t *host,
     ui_environment_value.features = ui_config->features;
     for (size_t index = 0; index < 4; ++index)
         ui_environment_value.safe_insets[index] = host->safe_insets[index];
+    ui_environment_value.display_shape = host->display_shape;
+    for (size_t index = 0; index < 4; ++index)
+        ui_environment_value.corner_radii[index] = host->corner_radius;
     status = pxa_ui_encode_environment(&ui_environment_value, ui_environment,
                                        sizeof(ui_environment),
                                        &ui_environment_size);
@@ -358,15 +501,40 @@ static void system_home_gesture_event(lv_event_t *event) {
         host->exit_requested = 1;
 }
 
+static void system_button_bar_event(lv_event_t *event) {
+    product_host_t *host = (product_host_t *)lv_event_get_user_data(event);
+    if (host != NULL && lv_event_get_code(event) == LV_EVENT_CLICKED)
+        host->exit_requested = 1;
+}
+
 static void install_system_gestures(product_host_t *host) {
     lv_obj_t *layer;
+    int32_t home_height;
     if (host == NULL || host->display == NULL) return;
     layer = lv_display_get_layer_top(host->display);
+    home_height = host->navigation_mode == 1u ? 2 :
+                  host->navigation_mode == 2u ? 36 : PRODUCT_SYSTEM_GESTURE_HOME_HEIGHT;
+    if (host->navigation_mode == 2u) {
+        lv_obj_t *button_bar = lv_obj_create(layer);
+        lv_obj_t *label;
+        lv_obj_set_pos(button_bar, 0, (int32_t)host->height - home_height);
+        lv_obj_set_size(button_bar, (int32_t)host->width, home_height);
+        lv_obj_set_style_radius(button_bar, 0, 0);
+        lv_obj_set_style_border_width(button_bar, 0, 0);
+        lv_obj_set_style_pad_all(button_bar, 0, 0);
+        lv_obj_set_style_bg_color(button_bar, lv_color_hex(0x1d2126), 0);
+        label = lv_label_create(button_bar);
+        lv_label_set_text(label, "<      O      []");
+        lv_obj_center(label);
+        lv_obj_add_event_cb(button_bar, system_button_bar_event,
+                            LV_EVENT_CLICKED, host);
+        return;
+    }
     host->system_back_gesture = lv_obj_create(layer);
     lv_obj_set_pos(host->system_back_gesture, 0, 0);
     lv_obj_set_size(host->system_back_gesture,
                     PRODUCT_SYSTEM_GESTURE_EDGE_WIDTH,
-                    (int32_t)host->height - PRODUCT_SYSTEM_GESTURE_HOME_HEIGHT);
+                    (int32_t)host->height - home_height);
     lv_obj_set_style_bg_opa(host->system_back_gesture, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(host->system_back_gesture, 0, 0);
     lv_obj_set_style_pad_all(host->system_back_gesture, 0, 0);
@@ -383,9 +551,9 @@ static void install_system_gestures(product_host_t *host) {
                         LV_EVENT_PRESS_LOST, host);
     host->system_home_gesture = lv_obj_create(layer);
     lv_obj_set_pos(host->system_home_gesture, 0,
-                   (int32_t)host->height - PRODUCT_SYSTEM_GESTURE_HOME_HEIGHT);
+                   (int32_t)host->height - home_height);
     lv_obj_set_size(host->system_home_gesture, (int32_t)host->width,
-                    PRODUCT_SYSTEM_GESTURE_HOME_HEIGHT);
+                    home_height);
     lv_obj_set_style_bg_opa(host->system_home_gesture, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(host->system_home_gesture, 0, 0);
     lv_obj_set_style_pad_all(host->system_home_gesture, 0, 0);
@@ -398,6 +566,45 @@ static void install_system_gestures(product_host_t *host) {
                         LV_EVENT_RELEASED, host);
     lv_obj_add_event_cb(host->system_home_gesture, system_home_gesture_event,
                         LV_EVENT_PRESS_LOST, host);
+    if (host->navigation_mode == 0u) {
+        lv_obj_t *handle = lv_obj_create(layer);
+        lv_obj_set_size(handle, 56, 4);
+        lv_obj_set_style_radius(handle, LV_RADIUS_CIRCLE, 0);
+        lv_obj_set_style_border_width(handle, 0, 0);
+        lv_obj_set_style_pad_all(handle, 0, 0);
+        lv_obj_set_style_bg_color(handle, lv_color_hex(0xb1b6c0), 0);
+        lv_obj_align(handle, LV_ALIGN_BOTTOM_MID, 0, -5);
+        lv_obj_clear_flag(handle, LV_OBJ_FLAG_CLICKABLE);
+    }
+}
+
+static void product_toast_hide(lv_timer_t *timer) {
+    product_host_t *host = (product_host_t *)lv_timer_get_user_data(timer);
+    if (host->toast != NULL) lv_obj_delete(host->toast);
+    host->toast = NULL;
+    host->toast_timer = NULL;
+}
+
+static pxa_status_t window_toast(void *context, const char *text,
+                                 uint32_t duration_ms) {
+    product_host_t *host = (product_host_t *)context;
+    if (host == NULL || host->display == NULL) return PXA_STATUS_UNAVAILABLE;
+    if (host->toast_timer != NULL) lv_timer_delete(host->toast_timer);
+    if (host->toast != NULL) lv_obj_delete(host->toast);
+    host->toast = lv_label_create(lv_display_get_layer_top(host->display));
+    lv_label_set_text(host->toast, text);
+    lv_label_set_long_mode(host->toast, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(host->toast, LV_PCT(75));
+    lv_obj_set_style_bg_color(host->toast, lv_color_hex(0x303134), 0);
+    lv_obj_set_style_bg_opa(host->toast, LV_OPA_COVER, 0);
+    lv_obj_set_style_text_color(host->toast, lv_color_hex(0xffffff), 0);
+    lv_obj_set_style_pad_all(host->toast, 9, 0);
+    lv_obj_set_style_radius(host->toast, 14, 0);
+    lv_obj_align(host->toast, LV_ALIGN_BOTTOM_MID, 0,
+                 -(host->navigation_mode == 2u ? 48 : 36));
+    host->toast_timer = lv_timer_create(product_toast_hide, duration_ms, host);
+    if (host->toast_timer != NULL) lv_timer_set_repeat_count(host->toast_timer, 1);
+    return PXA_STATUS_OK;
 }
 
 static void *allocate_memory(void *context, size_t size) {
@@ -719,9 +926,11 @@ static void raster_resources(const product_host_t *host,
                               PXA_RASTER_CAP_LIT_PALETTE_DEPTH |
                               PXA_RASTER_CAP_DEPTH_CUTOUT |
                               PXA_RASTER_CAP_FIXED_ALPHA_BLEND |
+                              PXA_RASTER_CAP_COVERAGE_MASK |
                               PXA_RASTER_CAP_SPRITE_PALETTE_RAMP |
                               PXA_RASTER_CAP_SPRITE_TEXEL_ALPHA |
-                              PXA_RASTER_CAP_PAINTER_PERSPECTIVE;
+                              PXA_RASTER_CAP_PAINTER_PERSPECTIVE |
+                              PXA_RASTER_CAP_PAINTER_DEPTH;
     for (uint8_t index = 0; index < PXA_RASTER_MAX_TEXTURES; ++index) {
         resources->textures[index].pixels = host->raster_textures[index];
         resources->textures[index].width = host->raster_texture_width[index];
@@ -889,9 +1098,11 @@ static pxa_status_t game_render_create(
                     PXA_RASTER_CAP_LIT_PALETTE_DEPTH |
                     PXA_RASTER_CAP_DEPTH_CUTOUT |
                     PXA_RASTER_CAP_FIXED_ALPHA_BLEND |
+                    PXA_RASTER_CAP_COVERAGE_MASK |
                               PXA_RASTER_CAP_SPRITE_PALETTE_RAMP |
                               PXA_RASTER_CAP_SPRITE_TEXEL_ALPHA |
-                              PXA_RASTER_CAP_PAINTER_PERSPECTIVE;
+                              PXA_RASTER_CAP_PAINTER_PERSPECTIVE |
+                              PXA_RASTER_CAP_PAINTER_DEPTH;
     return PXA_STATUS_OK;
 }
 
@@ -1218,6 +1429,7 @@ static pxa_status_t prepare_start(void *context, pxa_component_t component,
     window_backend.struct_size = sizeof(window_backend);
     window_backend.context = host;
     window_backend.apply = window_apply;
+    window_backend.show_toast = window_toast;
     status = pxa_window_bind(host->window, component, &window_backend);
     if (status != PXA_STATUS_OK) return status;
     status = pxa_ui_bind(host->ui, component, &host->ui_backend);
@@ -1228,10 +1440,10 @@ static pxa_status_t prepare_start(void *context, pxa_component_t component,
     snapshot.pixel_height = host->height;
     snapshot.density_numerator = 1;
     snapshot.density_denominator = 1;
-    /* The simulator always installs the Home and Back gesture overlays, so
-     * report their strips to guests through the system bar insets. */
-    snapshot.system_bar_insets.left = PRODUCT_SYSTEM_GESTURE_EDGE_WIDTH;
-    snapshot.system_bar_insets.bottom = PRODUCT_SYSTEM_GESTURE_HOME_HEIGHT;
+    snapshot.system_bar_insets.left = host->navigation_mode == 2u ? 0u :
+                                         PRODUCT_SYSTEM_GESTURE_EDGE_WIDTH;
+    snapshot.system_bar_insets.bottom = host->navigation_mode == 1u ? 0u :
+        host->navigation_mode == 2u ? 36u : PRODUCT_SYSTEM_GESTURE_HOME_HEIGHT;
     snapshot.focused = 1;
     status = pxa_window_update_snapshot(host->window, component, &snapshot);
     if (status != PXA_STATUS_OK) return status;
@@ -1294,11 +1506,91 @@ static pxa_status_t clock_control(void *context, pxa_runtime_t *runtime,
     return PXA_STATUS_OK;
 }
 
+static void audio_callback(void *context, uint8_t *stream, int bytes) {
+    product_host_t *host = context;
+    int16_t *output = (int16_t *)stream;
+    int samples = bytes / (int)sizeof(*output);
+    for (int index = 0; index < samples; ++index) {
+        int32_t mixed = 0;
+        int32_t target_gain = 0;
+        int32_t source_target = 0;
+        if (host->audio_count != 0) {
+            mixed = host->audio_queue[host->audio_read];
+            host->audio_read = (host->audio_read + 1u) % PRODUCT_AUDIO_QUEUE_SAMPLES;
+            --host->audio_count;
+        }
+        if (host->music_samples != NULL && !host->music_paused) {
+            if (host->music_position == host->music_length) {
+                if (host->music_loop) host->music_position = 0;
+            }
+            if (host->music_position < host->music_length) {
+                host->music_last_sample =
+                    host->music_samples[host->music_position++];
+                source_target = 32768;
+                target_gain = host->music_gain_q15;
+            }
+        }
+        if (host->music_output_gain_q15 < target_gain) {
+            host->music_output_gain_q15 += 256;
+            if (host->music_output_gain_q15 > target_gain)
+                host->music_output_gain_q15 = target_gain;
+        } else if (host->music_output_gain_q15 > target_gain) {
+            host->music_output_gain_q15 -= 256;
+            if (host->music_output_gain_q15 < target_gain)
+                host->music_output_gain_q15 = target_gain;
+        }
+        if (host->music_source_gain_q15 < source_target) {
+            host->music_source_gain_q15 += 512;
+            if (host->music_source_gain_q15 > source_target)
+                host->music_source_gain_q15 = source_target;
+        } else if (host->music_source_gain_q15 > source_target) {
+            host->music_source_gain_q15 -= 512;
+            if (host->music_source_gain_q15 < source_target)
+                host->music_source_gain_q15 = source_target;
+        }
+        mixed += (((int32_t)host->music_last_sample *
+                   host->music_source_gain_q15) >> 15) *
+                 host->music_output_gain_q15 >> 15;
+        for (size_t voice = 0; voice < PRODUCT_AUDIO_SOUND_VOICES; ++voice) {
+            product_sound_voice_t *sound = &host->sound_voices[voice];
+            if (sound->position >= sound->samples) continue;
+            uint32_t remaining = sound->samples - sound->position;
+            uint32_t attack = sound->position + 1u;
+            uint32_t envelope = remaining < attack ? remaining : attack;
+            if (envelope > 64u) envelope = 64u;
+            int32_t sample = ((int32_t)sound->pcm[sound->position++] - 128)
+                             * 256;
+            mixed += ((sample * sound->gain_q15) >> 15) *
+                     (int32_t)envelope / 64;
+        }
+        if (mixed > INT16_MAX) mixed = INT16_MAX;
+        if (mixed < INT16_MIN) mixed = INT16_MIN;
+        output[index] = (int16_t)mixed;
+    }
+}
+
 static pxa_status_t audio_open(void *context, uint16_t usage,
                                pxa_audio_format_t *format, uint64_t *session) {
-    (void)context;
+    product_host_t *host = context;
+    SDL_AudioSpec desired = {0};
     if (usage != PXA_AUDIO_USAGE_MEDIA || format == NULL || session == NULL)
         return PXA_STATUS_INVALID_ARGUMENT;
+    if (host->audio_device == 0 && SDL_InitSubSystem(SDL_INIT_AUDIO) != 0)
+        return PXA_STATUS_INTERNAL;
+    if (host->audio_device == 0) {
+        desired.freq = 16000;
+        desired.format = AUDIO_S16SYS;
+        desired.channels = 1;
+        desired.samples = 512;
+        desired.callback = audio_callback;
+        desired.userdata = host;
+        host->audio_device = SDL_OpenAudioDevice(NULL, 0, &desired, NULL, 0);
+        if (host->audio_device == 0) {
+            fprintf(stderr, "PXA audio output unavailable: %s\n", SDL_GetError());
+            return PXA_STATUS_INTERNAL;
+        }
+        SDL_PauseAudioDevice(host->audio_device, 0);
+    }
     format->sample_rate = 16000;
     format->channels = 1;
     format->frame_ms = 20;
@@ -1315,29 +1607,258 @@ static pxa_status_t audio_commit(void *context, uint64_t session,
 
 static pxa_status_t audio_submit(void *context, uint64_t session,
                                  const uint8_t *pcm, size_t size) {
-    (void)context;
-    (void)pcm;
-    (void)size;
-    return session == 1 ? PXA_STATUS_OK : PXA_STATUS_NOT_FOUND;
+    product_host_t *host = context;
+    if (session != 1 || host->audio_device == 0) return PXA_STATUS_NOT_FOUND;
+    if (pcm == NULL || size % 2u != 0 || size > PRODUCT_AUDIO_QUEUE_SAMPLES * 2u)
+        return PXA_STATUS_INVALID_ARGUMENT;
+    SDL_LockAudioDevice(host->audio_device);
+    if (host->audio_count + size / 2u > PRODUCT_AUDIO_QUEUE_SAMPLES) {
+        host->audio_count = 0;
+        host->audio_read = 0;
+    }
+    for (size_t index = 0; index < size / 2u; ++index) {
+        uint32_t write = (host->audio_read + host->audio_count) %
+                         PRODUCT_AUDIO_QUEUE_SAMPLES;
+        memcpy(&host->audio_queue[write], pcm + index * 2u, 2);
+        ++host->audio_count;
+    }
+    SDL_UnlockAudioDevice(host->audio_device);
+    return PXA_STATUS_OK;
+}
+
+static int audio_drain_stream(SDL_AudioStream *stream, int16_t **samples,
+                              uint32_t *length, uint32_t *capacity) {
+    int available = SDL_AudioStreamAvailable(stream);
+    if (available < 0) return 0;
+    if ((uint32_t)available / 2u > PRODUCT_AUDIO_ASSET_MAX_SAMPLES - *length)
+        return 0;
+    if (*length + (uint32_t)available / 2u > *capacity) {
+        uint32_t next = *capacity ? *capacity : 16000u;
+        while (next < *length + (uint32_t)available / 2u)
+            next *= 2u;
+        if (next > PRODUCT_AUDIO_ASSET_MAX_SAMPLES)
+            next = PRODUCT_AUDIO_ASSET_MAX_SAMPLES;
+        int16_t *grown = realloc(*samples, (size_t)next * sizeof(**samples));
+        if (grown == NULL) return 0;
+        *samples = grown;
+        *capacity = next;
+    }
+    if (available != 0 && SDL_AudioStreamGet(stream, *samples + *length,
+                                             available) != available)
+        return 0;
+    *length += (uint32_t)available / 2u;
+    return 1;
+}
+
+static pxa_status_t audio_play_pcm_asset(product_host_t *host,
+                                         const char *resolved,
+                                         int16_t gain_db_q8) {
+    product_sound_asset_t *asset = NULL;
+    uint8_t *loaded = NULL;
+    for (uint32_t index = 0; index < host->sound_cache_count; ++index) {
+        if (strcmp(host->sound_cache[index].path, resolved) == 0) {
+            asset = &host->sound_cache[index];
+            break;
+        }
+    }
+    if (asset == NULL) {
+        if (host->sound_cache_count == PRODUCT_AUDIO_SOUND_CACHE)
+            return PXA_STATUS_RESOURCE_LIMIT;
+        FILE *file = fopen(resolved, "rb");
+        if (file == NULL) return PXA_STATUS_NOT_FOUND;
+        int valid = fseek(file, 0, SEEK_END) == 0;
+        long length = valid ? ftell(file) : -1;
+        if (length <= 0 || length > 16000 || fseek(file, 0, SEEK_SET) != 0) {
+            fclose(file);
+            return PXA_STATUS_INVALID_ARGUMENT;
+        }
+        loaded = malloc((size_t)length);
+        if (loaded == NULL) {
+            fclose(file);
+            return PXA_STATUS_RESOURCE_LIMIT;
+        }
+        valid = fread(loaded, 1, (size_t)length, file) == (size_t)length;
+        fclose(file);
+        if (!valid) {
+            free(loaded);
+            return PXA_STATUS_IO_ERROR;
+        }
+        asset = &host->sound_cache[host->sound_cache_count];
+        asset->path = strdup(resolved);
+        if (asset->path == NULL) {
+            free(loaded);
+            return PXA_STATUS_RESOURCE_LIMIT;
+        }
+        asset->pcm = loaded;
+        asset->samples = (uint32_t)length;
+        ++host->sound_cache_count;
+    }
+    pxa_status_t status = PXA_STATUS_WOULD_BLOCK;
+    SDL_LockAudioDevice(host->audio_device);
+    for (size_t index = 0; index < PRODUCT_AUDIO_SOUND_VOICES; ++index) {
+        product_sound_voice_t *voice = &host->sound_voices[index];
+        if (voice->position < voice->samples) continue;
+        voice->pcm = asset->pcm;
+        voice->samples = asset->samples;
+        voice->position = 0;
+        voice->gain_q15 = (int32_t)(32768.0 *
+            pow(10.0, gain_db_q8 / (20.0 * 256.0)));
+        status = PXA_STATUS_OK;
+        break;
+    }
+    SDL_UnlockAudioDevice(host->audio_device);
+    return status;
+}
+
+static void audio_clear_sound_cache(product_host_t *host) {
+    for (uint32_t index = 0; index < host->sound_cache_count; ++index) {
+        free(host->sound_cache[index].path);
+        free(host->sound_cache[index].pcm);
+    }
+    host->sound_cache_count = 0;
+    memset(host->sound_voices, 0, sizeof(host->sound_voices));
+}
+
+static pxa_status_t audio_play_asset(void *context, uint64_t session,
+                                     const pxa_audio_asset_t *asset) {
+    product_host_t *host = context;
+    char path[1536], resolved[PATH_MAX], root[PATH_MAX];
+    OggVorbis_File file;
+    SDL_AudioStream *converter;
+    vorbis_info *info;
+    int16_t *decoded = NULL;
+    uint32_t length = 0, capacity = 0;
+    int result = 0, bitstream = 0;
+    char input[8192];
+    int pcm_asset;
+    if (session != 1 || host->audio_device == 0) return PXA_STATUS_NOT_FOUND;
+    if (asset == NULL || asset->path_size < 12 || asset->path_size > 512 ||
+        memcmp(asset->path, "assets/", 7) != 0 ||
+        !asset_path_is_safe(asset->path, asset->path_size) ||
+        snprintf(path, sizeof(path), "%s/%.*s", host->package_root,
+                 (int)asset->path_size, asset->path) >= (int)sizeof(path))
+        return PXA_STATUS_INVALID_ARGUMENT;
+    if (realpath(host->package_root, root) == NULL ||
+        realpath(path, resolved) == NULL) return PXA_STATUS_NOT_FOUND;
+    size_t root_length = strlen(root);
+    if (strncmp(root, resolved, root_length) != 0 ||
+        strncmp(resolved + root_length, "/assets/", 8) != 0)
+        return PXA_STATUS_INVALID_ARGUMENT;
+    pcm_asset = memcmp(asset->path + asset->path_size - 4, ".pcm", 4) == 0;
+    if (pcm_asset) {
+        if ((asset->flags & PXA_AUDIO_ASSET_LOOP) != 0 ||
+            strncmp(resolved + root_length, "/assets/sfx/", 12) != 0)
+            return PXA_STATUS_INVALID_ARGUMENT;
+        return audio_play_pcm_asset(host, resolved, asset->gain_db_q8);
+    }
+    if (memcmp(asset->path + asset->path_size - 4, ".ogg", 4) != 0)
+        return PXA_STATUS_INVALID_ARGUMENT;
+    if (ov_fopen(resolved, &file) != 0) return PXA_STATUS_INVALID_ARGUMENT;
+    info = ov_info(&file, -1);
+    if (info == NULL || info->channels < 1 || info->channels > 2 ||
+        info->rate < 8000 || info->rate > 192000) {
+        ov_clear(&file);
+        return PXA_STATUS_UNSUPPORTED;
+    }
+    converter = SDL_NewAudioStream(AUDIO_S16SYS, (uint8_t)info->channels,
+                                   (int)info->rate, AUDIO_S16SYS, 1, 16000);
+    if (converter == NULL) {
+        ov_clear(&file);
+        return PXA_STATUS_INTERNAL;
+    }
+    for (;;) {
+        long read = ov_read(&file, input, sizeof(input),
+                            SDL_BYTEORDER == SDL_BIG_ENDIAN, 2, 1, &bitstream);
+        if (read <= 0) {
+            result = read == 0;
+            break;
+        }
+        if (SDL_AudioStreamPut(converter, input, (int)read) != 0 ||
+            !audio_drain_stream(converter, &decoded, &length, &capacity))
+            break;
+    }
+    if (result && (SDL_AudioStreamFlush(converter) != 0 ||
+                   !audio_drain_stream(converter, &decoded, &length, &capacity)))
+        result = 0;
+    SDL_FreeAudioStream(converter);
+    ov_clear(&file);
+    if (!result || length == 0) {
+        free(decoded);
+        return PXA_STATUS_INTERNAL;
+    }
+    SDL_LockAudioDevice(host->audio_device);
+    free(host->music_samples);
+    host->music_samples = decoded;
+    host->music_length = length;
+    host->music_position = 0;
+    host->music_loop = (asset->flags & PXA_AUDIO_ASSET_LOOP) != 0;
+    host->music_paused = 0;
+    host->music_gain_db_q8 = asset->gain_db_q8;
+    host->music_gain_q15 = (int32_t)(32768.0 *
+        pow(10.0, asset->gain_db_q8 / (20.0 * 256.0)));
+    SDL_UnlockAudioDevice(host->audio_device);
+    return PXA_STATUS_OK;
+}
+
+static pxa_status_t audio_control_asset(void *context, uint64_t session,
+                                        const pxa_audio_asset_control_t *control) {
+    product_host_t *host = context;
+    if (session != 1 || host->audio_device == 0) return PXA_STATUS_NOT_FOUND;
+    if (control == NULL) return PXA_STATUS_INVALID_ARGUMENT;
+    SDL_LockAudioDevice(host->audio_device);
+    switch (control->action) {
+        case PXA_AUDIO_ASSET_STOP:
+            free(host->music_samples);
+            host->music_samples = NULL;
+            host->music_length = host->music_position = 0;
+            break;
+        case PXA_AUDIO_ASSET_PAUSE: host->music_paused = 1; break;
+        case PXA_AUDIO_ASSET_RESUME: host->music_paused = 0; break;
+        case PXA_AUDIO_ASSET_SET_GAIN:
+            host->music_gain_db_q8 = control->gain_db_q8;
+            host->music_gain_q15 = (int32_t)(32768.0 *
+                pow(10.0, control->gain_db_q8 / (20.0 * 256.0)));
+            break;
+        default:
+            SDL_UnlockAudioDevice(host->audio_device);
+            return PXA_STATUS_INVALID_ARGUMENT;
+    }
+    SDL_UnlockAudioDevice(host->audio_device);
+    return PXA_STATUS_OK;
 }
 
 static void audio_close(void *context, uint64_t session) {
-    (void)context;
-    (void)session;
+    product_host_t *host = context;
+    if (session == 1 && host->audio_device != 0) {
+        SDL_CloseAudioDevice(host->audio_device);
+        host->audio_device = 0;
+        free(host->music_samples);
+        host->music_samples = NULL;
+        audio_clear_sound_cache(host);
+        host->audio_read = host->audio_count = 0;
+    }
 }
 
 static pxa_status_t audio_query(void *context, uint64_t session,
                                 pxa_audio_state_t *state) {
-    (void)context;
-    if (session != 1 || state == NULL) return PXA_STATUS_NOT_FOUND;
+    product_host_t *host = context;
+    if (session != 1 || host->audio_device == 0 || state == NULL)
+        return PXA_STATUS_NOT_FOUND;
     memset(state, 0, sizeof(*state));
     state->flags = PXA_AUDIO_STATE_ACCEPTED_IS_SINK_SUBMITTED;
+    SDL_LockAudioDevice(host->audio_device);
+    state->queued_samples = host->audio_count;
+    SDL_UnlockAudioDevice(host->audio_device);
     return PXA_STATUS_OK;
 }
 
 static pxa_status_t audio_flush(void *context, uint64_t session) {
-    (void)context;
-    return session == 1 ? PXA_STATUS_OK : PXA_STATUS_NOT_FOUND;
+    product_host_t *host = context;
+    if (session != 1 || host->audio_device == 0) return PXA_STATUS_NOT_FOUND;
+    SDL_LockAudioDevice(host->audio_device);
+    host->audio_read = host->audio_count = 0;
+    SDL_UnlockAudioDevice(host->audio_device);
+    return PXA_STATUS_OK;
 }
 
 static pxa_status_t permission_load(void *context, pxa_bytes_t identity,
@@ -1368,7 +1889,7 @@ static pxa_status_t permission_save(void *context, pxa_bytes_t identity,
 
 #ifndef PXSYS_PRODUCT_RUNNER_LIBRARY
 static void print_usage(const char *program) {
-    fprintf(stderr, "Usage: %s --package DIR --publisher-key DER [--state-root DIR] [--locale TAG] [--pxadb-control-socket PATH] [--width PX --height PX] [--safe-insets T,R,B,L]\n",
+    fprintf(stderr, "Usage: %s --package DIR --publisher-key DER [--state-root DIR] [--locale TAG] [--pxadb-control-socket PATH] [--width PX --height PX] [--safe-insets T,R,B,L] [--corner-radius PX|--round] [--shape-background matte|black]\n",
             program);
 }
 
@@ -1378,6 +1899,7 @@ static int parse_options(int argc, char **argv, options_t *options) {
     options->width = 296;
     options->height = 240;
     options->locale = "en-US";
+    options->shape_background_matte = 1;
     for (index = 1; index < argc; ++index) {
         if (strcmp(argv[index], "--package") == 0 && index + 1 < argc)
             options->package_path = argv[++index];
@@ -1399,10 +1921,34 @@ static int parse_options(int argc, char **argv, options_t *options) {
                        &options->safe_insets[3]) != 4)
                 return 0;
         }
+        else if (strcmp(argv[index], "--corner-radius") == 0 && index + 1 < argc) {
+            char *end = NULL;
+            const char *value = argv[++index];
+            unsigned long radius;
+            if (value[0] == '-' || value[0] == '\0') return 0;
+            radius = strtoul(value, &end, 10);
+            if (*end != '\0' || radius > UINT32_MAX) return 0;
+            options->corner_radius = (uint32_t)radius;
+            options->display_shape = options->corner_radius ? 1u : 0u;
+        }
+        else if (strcmp(argv[index], "--round") == 0) {
+            options->display_shape = 2u;
+        }
+        else if (strcmp(argv[index], "--shape-background") == 0 && index + 1 < argc) {
+            const char *background = argv[++index];
+            if (strcmp(background, "matte") == 0)
+                options->shape_background_matte = 1;
+            else if (strcmp(background, "black") == 0)
+                options->shape_background_matte = 0;
+            else return 0;
+        }
         else return 0;
     }
     return options->package_path != NULL && options->publisher_key != NULL &&
-           options->width > 0 && options->height > 0;
+           options->width > 0 && options->height > 0 &&
+           (options->display_shape != 1u ||
+            options->corner_radius <= (options->width < options->height
+                                           ? options->width : options->height) / 2u);
 }
 #endif
 
@@ -1572,7 +2118,16 @@ static int run_product_simulator(const options_t *input,
     strcpy(host.locale, options.locale);
     host.width = options.width;
     host.height = options.height;
+    {
+        const char *mode = getenv("PXA_SIM_NAV_MODE");
+        host.navigation_mode = mode != NULL && strcmp(mode, "gesture-no-bar") == 0 ? 1u :
+                               mode != NULL && strcmp(mode, "buttons") == 0 ? 2u : 0u;
+    }
     memcpy(host.safe_insets, options.safe_insets, sizeof(host.safe_insets));
+    host.display_shape = options.display_shape;
+    host.corner_radius = options.display_shape == 2u
+        ? (options.width < options.height ? options.width : options.height) / 2u
+        : options.corner_radius;
     if (owns_display) {
         lv_init();
         display = lv_sdl_window_create((int32_t)options.width,
@@ -1611,6 +2166,9 @@ static int run_product_simulator(const options_t *input,
     ui_config.primary_width = options.width; ui_config.primary_height = options.height;
     for (size_t index = 0; index < 4; ++index)
         ui_config.safe_insets[index] = host.safe_insets[index];
+    ui_config.display_shape = host.display_shape;
+    for (size_t index = 0; index < 4; ++index)
+        ui_config.corner_radii[index] = host.corner_radius;
     ui_workspace = malloc(pxa_ui_service_workspace_size());
     if (ui_workspace == NULL || pxa_ui_service_init(ui_workspace,
         pxa_ui_service_workspace_size(), host.runtime, &ui_config, &host.ui) != PXA_STATUS_OK ||
@@ -1667,10 +2225,13 @@ static int run_product_simulator(const options_t *input,
             &storage_config, &storage) != PXA_STATUS_OK ||
         pxa_storage_service_register(storage) != PXA_STATUS_OK) goto done;
     audio_backend.struct_size = sizeof(audio_backend);
+    audio_backend.context = &host;
     stage = "audio service";
     audio_backend.open = audio_open; audio_backend.commit = audio_commit;
     audio_backend.submit = audio_submit; audio_backend.close = audio_close;
     audio_backend.query = audio_query; audio_backend.flush = audio_flush;
+    audio_backend.play_asset = audio_play_asset;
+    audio_backend.control_asset = audio_control_asset;
     audio_config.struct_size = sizeof(audio_config);
     audio_config.max_sessions = 2; audio_config.max_sessions_per_component = 2;
     audio_config.max_eq_bands = PXA_AUDIO_MAX_EQ_BANDS;
@@ -1699,18 +2260,34 @@ static int run_product_simulator(const options_t *input,
     lvgl_config.primary_environment.height = options.height;
     lvgl_config.primary_environment.density_q16 = UINT32_C(1) << 16;
     lvgl_config.primary_environment.font_scale_q16 = UINT32_C(1) << 16;
+    lvgl_config.primary_environment.display_shape = host.display_shape;
+    for (size_t index = 0; index < 4; ++index)
+        lvgl_config.primary_environment.corner_radii[index] = host.corner_radius;
     pxa_lvgl_ui_theme_init(&lvgl_config.theme);
+    host.caption_font = load_product_font(12, &lv_font_montserrat_14);
+    host.label_font = load_product_font(14, &lv_font_montserrat_14);
     host.body_font = load_product_font(16, &lv_font_montserrat_16);
     host.title_font = load_product_font(20, &lv_font_montserrat_20);
-    lvgl_config.theme.caption_font = host.body_font != NULL
-                                        ? host.body_font
+    host.headline_font = load_product_font(24, &lv_font_montserrat_20);
+    host.display_font = load_product_font(28, &lv_font_montserrat_20);
+    lvgl_config.theme.caption_font = host.caption_font != NULL
+                                        ? host.caption_font
                                         : &lv_font_montserrat_14;
+    lvgl_config.theme.label_font = host.label_font != NULL
+                                      ? host.label_font
+                                      : lvgl_config.theme.caption_font;
     lvgl_config.theme.body_font = host.body_font != NULL
                                       ? host.body_font
                                       : &lv_font_montserrat_14;
     lvgl_config.theme.title_font = host.title_font != NULL
                                        ? host.title_font
                                        : &lv_font_montserrat_20;
+    lvgl_config.theme.headline_font = host.headline_font != NULL
+                                          ? host.headline_font
+                                          : lvgl_config.theme.title_font;
+    lvgl_config.theme.display_font = host.display_font != NULL
+                                         ? host.display_font
+                                         : lvgl_config.theme.title_font;
     lvgl_workspace = malloc(pxa_lvgl_ui_workspace_size());
     if (lvgl_workspace == NULL || pxa_lvgl_ui_init(lvgl_workspace,
         pxa_lvgl_ui_workspace_size(), &lvgl_config, &lvgl_ui, &ui_backend) != PXA_STATUS_OK)
@@ -1784,6 +2361,11 @@ static int run_product_simulator(const options_t *input,
     device_config.struct_size = sizeof(device_config);
     device_config.get_mac = desktop_get_mac;
     device_config.permissions = host.permissions;
+    device_config.target = "linux-x86_64";
+    device_config.architecture = "x86_64";
+    device_config.engine = "wamr";
+    device_config.engine_abi = PXSYS_WAMR_ENGINE_ABI;
+    device_config.formats = PXA_DEVICE_FORMAT_WASM | PXA_DEVICE_FORMAT_AOT;
     device_workspace = malloc(pxa_device_service_workspace_size(&device_config));
     if (device_workspace == NULL ||
         pxa_device_service_init(device_workspace,
@@ -1835,8 +2417,8 @@ static int run_product_simulator(const options_t *input,
     stage = "start configuration";
     if (configure_start_locale(&host, 1, &ui_config) != PXA_STATUS_OK) goto done;
     capabilities[0].service = PXA_SERVICE_CORE; capabilities[0].version.major = 0; capabilities[0].version.minor = 1;
-    capabilities[1].service = PXA_WINDOW_SERVICE_ID; capabilities[1].version.major = 0; capabilities[1].version.minor = 1;
-    capabilities[2].service = PXA_UI_SERVICE_ID; capabilities[2].version.major = 0; capabilities[2].version.minor = 3;
+    capabilities[1].service = PXA_WINDOW_SERVICE_ID; capabilities[1].version.major = PXA_WINDOW_SERVICE_MAJOR; capabilities[1].version.minor = PXA_WINDOW_SERVICE_MINOR;
+    capabilities[2].service = PXA_UI_SERVICE_ID; capabilities[2].version.major = PXA_UI_SERVICE_MAJOR; capabilities[2].version.minor = PXA_UI_SERVICE_MINOR;
     capabilities[2].features = PXA_UI_FEATURE_CANVAS |
                               PXA_UI_FEATURE_CANVAS_STREAM_IO |
                               PXA_UI_FEATURE_GRID;
@@ -1851,9 +2433,10 @@ static int run_product_simulator(const options_t *input,
     capabilities[11].service = PXA_NET_SERVICE_ID; capabilities[11].version.major = PXA_NET_SERVICE_MAJOR; capabilities[11].version.minor = PXA_NET_SERVICE_MINOR;
     activation.core_version.major = 0; activation.core_version.minor = 1;
     activation.services = capabilities; activation.service_count = 12;
-    profile.target = (pxa_bytes_t){(const uint8_t *)"linux-x86_64", 13};
+    profile.target = (pxa_bytes_t){(const uint8_t *)"linux-x86_64", sizeof("linux-x86_64") - 1u};
     profile.engine = (pxa_bytes_t){(const uint8_t *)"wamr", 4};
-    profile.engine_abi = (pxa_bytes_t){(const uint8_t *)"wasm32", 6};
+    profile.engine_abi = (pxa_bytes_t){(const uint8_t *)PXSYS_WAMR_ENGINE_ABI,
+                                       sizeof(PXSYS_WAMR_ENGINE_ABI) - 1u};
     profile.memory_model = PXA_MEMORY_WASM32;
     plan_workspace = malloc(pxa_activation_plan_workspace_size(manifest->component_count));
     stage = "activation plan";
@@ -1890,6 +2473,7 @@ static int run_product_simulator(const options_t *input,
     /* An embedded system UI owns Home and Back; installing the standalone
      * strips would shadow its gesture handling. */
     if (owns_display) install_system_gestures(&host);
+    if (owns_display) install_shape_mask(display, &options);
     if (owns_display && options.pxadb_control_socket != NULL &&
         !pxsys_pxadb_control_start(&pxadb_control,
                                    options.pxadb_control_socket, display,
@@ -1915,13 +2499,20 @@ done:
     if (result != 0) fprintf(stderr, "PXA product simulator failed at %s\n", stage);
     if (host.coordinator != NULL && lv_display_get_default() != NULL)
         pxa_activation_deactivate_all(host.coordinator, PXA_STOP_SHUTDOWN);
+    if (host.audio_device != 0) SDL_CloseAudioDevice(host.audio_device);
+    free(host.music_samples);
+    audio_clear_sound_cache(&host);
     if (host.engine != NULL) pxa_wamr_engine_deinit(host.engine);
     if (lv_display_get_default() != NULL) {
         if (lvgl_ui != NULL) pxa_lvgl_ui_deinit(lvgl_ui);
         if (host.ui != NULL) pxa_ui_service_deinit(host.ui);
     }
+    if (host.display_font != NULL) lv_freetype_font_delete(host.display_font);
+    if (host.headline_font != NULL) lv_freetype_font_delete(host.headline_font);
     if (host.title_font != NULL) lv_freetype_font_delete(host.title_font);
     if (host.body_font != NULL) lv_freetype_font_delete(host.body_font);
+    if (host.label_font != NULL) lv_freetype_font_delete(host.label_font);
+    if (host.caption_font != NULL) lv_freetype_font_delete(host.caption_font);
     if (host.runtime != NULL) pxa_runtime_deinit(host.runtime);
     if (posix_storage != NULL) pxa_posix_storage_deinit(posix_storage);
     if (installer != NULL) pxa_posix_installer_deinit(installer);

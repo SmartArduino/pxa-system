@@ -7,6 +7,7 @@ static pxa_status_t encode_environment(pxa_writer_t *writer,
     uint8_t u32[4];
     uint8_t u64[8];
     uint8_t insets[16];
+    uint8_t geometry[20];
     uint8_t index;
 #define RECORD_U32(tag, field)                                                 \
     do {                                                                       \
@@ -33,6 +34,12 @@ static pxa_status_t encode_environment(pxa_writer_t *writer,
     if (pxa_writer_record(writer, 10, u64, sizeof(u64)) != PXA_STATUS_OK)
         return writer->status;
     RECORD_U32(11, recommended_write_bytes);
+    pxa_write_u32(geometry, value->display_shape);
+    for (index = 0; index < 4; ++index)
+        pxa_write_u32(geometry + 4u + (size_t)index * 4u,
+                      value->corner_radii[index]);
+    if (pxa_writer_record(writer, 12, geometry, sizeof(geometry)) != PXA_STATUS_OK)
+        return writer->status;
 #undef RECORD_U32
     return PXA_STATUS_OK;
 }
