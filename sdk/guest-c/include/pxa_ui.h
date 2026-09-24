@@ -173,6 +173,29 @@ typedef struct {
 #define PXA_UI_THEME_SUCCESS 7u
 #define PXA_UI_THEME_WARNING 8u
 #define PXA_UI_THEME_DANGER 9u
+#define PXA_UI_THEME_ROLE_COUNT 32u
+#define PXA_UI_THEME_SURFACE_CONTAINER_LOW 10u
+#define PXA_UI_THEME_SURFACE_CONTAINER 11u
+#define PXA_UI_THEME_SURFACE_CONTAINER_HIGH 12u
+#define PXA_UI_THEME_SURFACE_CONTAINER_HIGHEST 13u
+#define PXA_UI_THEME_SURFACE_VARIANT 14u
+#define PXA_UI_THEME_ON_SURFACE_VARIANT 15u
+#define PXA_UI_THEME_PRIMARY_CONTAINER 16u
+#define PXA_UI_THEME_ON_PRIMARY_CONTAINER 17u
+#define PXA_UI_THEME_SECONDARY 18u
+#define PXA_UI_THEME_ON_SECONDARY 19u
+#define PXA_UI_THEME_SECONDARY_CONTAINER 20u
+#define PXA_UI_THEME_ON_SECONDARY_CONTAINER 21u
+#define PXA_UI_THEME_TERTIARY 22u
+#define PXA_UI_THEME_ON_TERTIARY 23u
+#define PXA_UI_THEME_TERTIARY_CONTAINER 24u
+#define PXA_UI_THEME_ON_TERTIARY_CONTAINER 25u
+#define PXA_UI_THEME_OUTLINE_VARIANT 26u
+#define PXA_UI_THEME_ERROR_CONTAINER 27u
+#define PXA_UI_THEME_ON_ERROR_CONTAINER 28u
+#define PXA_UI_THEME_INVERSE_SURFACE 29u
+#define PXA_UI_THEME_INVERSE_ON_SURFACE 30u
+#define PXA_UI_THEME_INVERSE_PRIMARY 31u
 
 typedef struct {
     uint32_t generation;
@@ -702,7 +725,7 @@ static inline int pxa_ui_set_theme_color(pxa_ui_transaction_t* transaction,
                                          uint32_t node, uint16_t property,
                                          uint8_t token) {
     uint8_t encoded[8] = {0};
-    if (token >= 32) return 0;
+    if (token >= PXA_UI_THEME_ROLE_COUNT) return 0;
     encoded[1] = token;
     return pxa_ui_set_property(transaction, node, property,
                                encoded, sizeof(encoded));

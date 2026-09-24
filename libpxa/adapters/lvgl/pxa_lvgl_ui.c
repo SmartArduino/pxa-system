@@ -168,7 +168,31 @@ static lv_opa_t rgba_opa(uint32_t rgba) {
 
 static uint32_t resolved_color(const pxa_lvgl_ui_t *ui, uint8_t kind,
                                uint8_t token, uint32_t rgba) {
-    return kind == 0 && token < 32 ? ui->theme.rgba[token] : rgba;
+    if (kind != 0 || token >= PXA_UI_THEME_ROLE_COUNT) return rgba;
+    if (ui->theme.rgba[token] != 0u) return ui->theme.rgba[token];
+    if (token < PXA_UI_THEME_COLOR_COUNT) return rgba;
+    if (token == PXA_UI_THEME_PRIMARY_CONTAINER ||
+        token == PXA_UI_THEME_SECONDARY ||
+        token == PXA_UI_THEME_SECONDARY_CONTAINER ||
+        token == PXA_UI_THEME_TERTIARY ||
+        token == PXA_UI_THEME_TERTIARY_CONTAINER ||
+        token == PXA_UI_THEME_INVERSE_PRIMARY)
+        return ui->theme.rgba[PXA_UI_THEME_PRIMARY];
+    if (token == PXA_UI_THEME_ON_PRIMARY_CONTAINER ||
+        token == PXA_UI_THEME_ON_SECONDARY ||
+        token == PXA_UI_THEME_ON_SECONDARY_CONTAINER ||
+        token == PXA_UI_THEME_ON_TERTIARY ||
+        token == PXA_UI_THEME_ON_TERTIARY_CONTAINER ||
+        token == PXA_UI_THEME_ON_ERROR_CONTAINER ||
+        token == PXA_UI_THEME_INVERSE_ON_SURFACE)
+        return ui->theme.rgba[PXA_UI_THEME_ON_PRIMARY];
+    if (token == PXA_UI_THEME_ON_SURFACE_VARIANT)
+        return ui->theme.rgba[PXA_UI_THEME_MUTED];
+    if (token == PXA_UI_THEME_OUTLINE_VARIANT)
+        return ui->theme.rgba[PXA_UI_THEME_BORDER];
+    if (token == PXA_UI_THEME_ERROR_CONTAINER)
+        return ui->theme.rgba[PXA_UI_THEME_DANGER];
+    return ui->theme.rgba[PXA_UI_THEME_SURFACE];
 }
 
 static int32_t logical_pixels(const pxa_lvgl_ui_t *ui, int32_t value) {
@@ -2205,12 +2229,23 @@ static void on_canvas_pointer(lv_event_t *event) {
 }
 
 void pxa_lvgl_ui_theme_init(pxa_lvgl_ui_theme_t *theme) {
-    static const uint32_t colors[10] = {
+    static const uint32_t colors[PXA_UI_THEME_ROLE_COUNT] = {
         UINT32_C(0x0b1018ff), UINT32_C(0x17212cff),
         UINT32_C(0x23a7d9ff), UINT32_C(0xffffffff),
         UINT32_C(0xf1f5f9ff), UINT32_C(0x91a4b7ff),
         UINT32_C(0x34475aff), UINT32_C(0x34c785ff),
-        UINT32_C(0xf5bd4fff), UINT32_C(0xef5d67ff)};
+        UINT32_C(0xf5bd4fff), UINT32_C(0xef5d67ff),
+        UINT32_C(0x151e29ff), UINT32_C(0x1c2734ff),
+        UINT32_C(0x243342ff), UINT32_C(0x2d3e50ff),
+        UINT32_C(0x34475aff), UINT32_C(0xc8d5e2ff),
+        UINT32_C(0x164762ff), UINT32_C(0xc5ecfaff),
+        UINT32_C(0x98c7dbff), UINT32_C(0x0f2d3aff),
+        UINT32_C(0x254655ff), UINT32_C(0xcbe9f4ff),
+        UINT32_C(0xc6badfff), UINT32_C(0x33294fff),
+        UINT32_C(0x463c5bff), UINT32_C(0xe6dcffff),
+        UINT32_C(0x44576aff), UINT32_C(0x6b2630ff),
+        UINT32_C(0xffd9dfff), UINT32_C(0xe1e8efff),
+        UINT32_C(0x263440ff), UINT32_C(0x0b6d95ff)};
     if (theme == NULL) return;
     memset(theme, 0, sizeof(*theme));
     memcpy(theme->rgba, colors, sizeof(colors));

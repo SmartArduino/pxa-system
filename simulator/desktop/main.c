@@ -707,6 +707,40 @@ static bool simulator_app_action(void* context, const char* identity,
     return false;
 }
 
+static bool simulator_launcher_load(void* context, char* order,
+                                    size_t capacity) {
+    char path[512];
+    const char* root = context != NULL ? (const char*)context : getenv("HOME");
+    FILE* file;
+    size_t count;
+    if (root == NULL || order == NULL || capacity < 2u ||
+        snprintf(path, sizeof(path), "%s/%s", root,
+                 context != NULL ? "launcher-order" :
+                                   ".pxa-simulator-launcher-order") >=
+            (int)sizeof(path)) return false;
+    file = fopen(path, "rb");
+    if (file == NULL) return false;
+    count = fread(order, 1, capacity - 1u, file);
+    fclose(file);
+    order[count] = '\0';
+    return true;
+}
+
+static void simulator_launcher_save(void* context, const char* order) {
+    char path[512];
+    const char* root = context != NULL ? (const char*)context : getenv("HOME");
+    FILE* file;
+    if (root == NULL || order == NULL ||
+        snprintf(path, sizeof(path), "%s/%s", root,
+                 context != NULL ? "launcher-order" :
+                                   ".pxa-simulator-launcher-order") >=
+            (int)sizeof(path)) return;
+    file = fopen(path, "wb");
+    if (file == NULL) return;
+    (void)fwrite(order, 1, strlen(order), file);
+    fclose(file);
+}
+
 /* Permissions. The desktop adapter reads declared permissions from the
  * installed package manifest and keeps toggle decisions in memory: the UI
  * simulator does not own a persistent permission store. */
@@ -1524,6 +1558,9 @@ static int run_simulator(const simulator_options_t* options) {
     ui_config.app_manager_context = &catalog;
     ui_config.app_list = simulator_list_apps;
     ui_config.app_action = simulator_app_action;
+    ui_config.launcher_order_context = (void*)options->state_root;
+    ui_config.launcher_order_load = simulator_launcher_load;
+    ui_config.launcher_order_save = simulator_launcher_save;
     ui_config.app_permission_context = &catalog;
     ui_config.app_permission_list = simulator_list_app_permissions;
     ui_config.app_permission_set = simulator_set_app_permission;

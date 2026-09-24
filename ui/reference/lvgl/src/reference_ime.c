@@ -669,6 +669,48 @@ void pxsys_reference_ime_destroy(pxsys_reference_ime_t *input_method) {
     free(input_method);
 }
 
+void pxsys_reference_ime_set_theme(pxsys_reference_ime_t *input_method,
+                                    const pxsys_theme_snapshot_t *theme) {
+    lv_obj_t *surfaces[3];
+    size_t index;
+    if (input_method == NULL || theme == NULL) return;
+    surfaces[0] = input_method->keyboard;
+#if LV_USE_IME_PINYIN && LV_IME_PINYIN_USE_K9_MODE
+    surfaces[1] = input_method->candidates;
+#else
+    surfaces[1] = NULL;
+#endif
+    surfaces[2] = input_method->symbol_panel;
+    for (index = 0; index < 3; ++index) {
+        lv_obj_t *surface = surfaces[index];
+        if (surface == NULL) continue;
+        lv_obj_set_style_bg_color(surface,
+            lv_color_hex(theme->colors[PXSYS_COLOR_SURFACE_CONTAINER]), 0);
+        lv_obj_set_style_border_color(surface,
+            lv_color_hex(theme->colors[PXSYS_COLOR_OUTLINE_VARIANT]), 0);
+        lv_obj_set_style_text_color(surface,
+            lv_color_hex(theme->colors[PXSYS_COLOR_ON_SURFACE]), 0);
+        lv_obj_set_style_bg_color(surface,
+            lv_color_hex(theme->colors[PXSYS_COLOR_SURFACE_CONTAINER_HIGHEST]),
+            LV_PART_ITEMS);
+        lv_obj_set_style_text_color(surface,
+            lv_color_hex(theme->colors[PXSYS_COLOR_ON_SURFACE]), LV_PART_ITEMS);
+        lv_obj_set_style_bg_color(surface,
+            lv_color_hex(theme->colors[PXSYS_COLOR_PRIMARY_CONTAINER]),
+            LV_PART_ITEMS | LV_STATE_PRESSED);
+    }
+    if (input_method->symbol_grid != NULL) {
+        for (index = 0; index < lv_obj_get_child_count(input_method->symbol_grid);
+             ++index) {
+            lv_obj_t *button = lv_obj_get_child(input_method->symbol_grid, index);
+            lv_obj_set_style_bg_color(button,
+                lv_color_hex(theme->colors[PXSYS_COLOR_SURFACE_CONTAINER_HIGHEST]), 0);
+            lv_obj_set_style_text_color(button,
+                lv_color_hex(theme->colors[PXSYS_COLOR_ON_SURFACE]), 0);
+        }
+    }
+}
+
 void pxsys_reference_ime_set_text_area(pxsys_reference_ime_t *input_method,
                                     lv_obj_t *text_area) {
     /* A deleted input cleared the pointer already, so anything still here is
@@ -729,6 +771,15 @@ void pxsys_reference_ime_set_layout(pxsys_reference_ime_t *input_method,
     lv_obj_align_to(input_method->candidates, input_method->keyboard,
                     LV_ALIGN_OUT_TOP_MID, 0, -6);
 #endif
+}
+
+lv_coord_t pxsys_reference_ime_keyboard_top(
+    const pxsys_reference_ime_t *input_method) {
+    lv_area_t area;
+    if (input_method == NULL || input_method->keyboard == NULL) return -1;
+    lv_obj_update_layout(input_method->root);
+    lv_obj_get_coords(input_method->keyboard, &area);
+    return area.y1;
 }
 
 void pxsys_reference_ime_set_mode(pxsys_reference_ime_t *input_method,

@@ -4,6 +4,7 @@
 #include <stdbool.h>
 
 #include "lvgl.h"
+#include "pxsys/theme.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -33,6 +34,8 @@ void pxsys_reference_ime_set_font(pxsys_reference_ime_t* input_method,
                                   const lv_font_t* font);
 void pxsys_reference_ime_set_icon_font(pxsys_reference_ime_t* input_method,
                                        const lv_font_t* font);
+void pxsys_reference_ime_set_theme(pxsys_reference_ime_t* input_method,
+                                   const pxsys_theme_snapshot_t* theme);
 void pxsys_reference_ime_set_layout(pxsys_reference_ime_t* input_method,
                                     lv_coord_t width, lv_coord_t height,
                                     lv_align_t align, lv_coord_t offset_x,
@@ -52,6 +55,8 @@ void pxsys_reference_ime_hide(pxsys_reference_ime_t* input_method);
 bool pxsys_reference_ime_is_visible(
     const pxsys_reference_ime_t* input_method);
 lv_obj_t* pxsys_reference_ime_get_root(
+    const pxsys_reference_ime_t* input_method);
+lv_coord_t pxsys_reference_ime_keyboard_top(
     const pxsys_reference_ime_t* input_method);
 
 #ifdef __cplusplus

@@ -26,7 +26,7 @@ typedef void (*pxa_lvgl_ui_event_fn)(
 typedef uint64_t (*pxa_lvgl_ui_now_us_fn)(void *user_data);
 
 typedef struct {
-    uint32_t rgba[32];
+    uint32_t rgba[PXA_UI_THEME_ROLE_COUNT];
     const void *caption_font;
     const void *label_font;
     const void *body_font;

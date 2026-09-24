@@ -311,6 +311,11 @@ typedef struct {
     char app_id[65];
     char runtime_name[12];
     pxsys_reference_lvgl_app_icon_t icon;
+    lv_obj_t* tile;
+    lv_obj_t* remove_button;
+    uint8_t uninstallable;
+    int32_t drag_start_x;
+    int32_t drag_start_y;
 } launcher_item_t;
 
 typedef struct {
@@ -447,6 +452,11 @@ struct pxsys_reference_lvgl {
     size_t max_launcher_apps;
     size_t launcher_count;
     launcher_item_t* launcher_items;
+    char launcher_order[4096];
+    void* launcher_order_context;
+    pxsys_reference_lvgl_launcher_save_fn launcher_order_save;
+    uint8_t launcher_editing;
+    uint8_t launcher_long_pressed;
     recent_item_t recent_items[12];
     recent_app_t recent_history[REFERENCE_RECENT_HISTORY];
     size_t recent_history_count;
@@ -556,6 +566,8 @@ struct pxsys_reference_lvgl {
     char wifi_input_draft[65];
     uint8_t wifi_input_stage;
     lv_obj_t* wifi_password_input;
+    lv_obj_t* wifi_input_prompt;
+    lv_obj_t* wifi_input_ssid;
     lv_obj_t* wifi_input_error;
     lv_obj_t* wifi_network_list;
     void* lock_changed_context;
@@ -593,6 +605,8 @@ struct pxsys_reference_lvgl {
 };
 
 static void rebuild(pxsys_reference_lvgl_t* ui);
+static void show_page_confirm(pxsys_reference_lvgl_t* ui,
+                              const char* message);
 static void navigation_back(pxsys_reference_lvgl_t* ui);
 static void build_task_switcher(pxsys_reference_lvgl_t* ui);
 static void close_task_switcher(pxsys_reference_lvgl_t* ui);
@@ -1048,12 +1062,176 @@ static void launcher_clicked(lv_event_t* event) {
     pxsys_intent_t intent = {0};
     pxsys_instance_ref_t instance;
     if (item == NULL || !ui_valid(item->ui)) return;
+    if (item->ui->launcher_long_pressed) {
+        item->ui->launcher_long_pressed = 0;
+        return;
+    }
+    if (item->ui->launcher_editing) {
+        item->ui->launcher_editing = 0;
+        rebuild(item->ui);
+        return;
+    }
     intent.struct_size = sizeof(intent);
     intent.target = &item->identity;
     intent.action = pxsys_string_from_cstr("system.intent.main");
     intent.flags = PXSYS_INTENT_FLAG_CLEAR_TOP;
     (void)pxsys_task_manager_start(pxsys_standard_system_tasks(item->ui->system),
                                    &intent, &instance);
+}
+
+static void launcher_save_order(pxsys_reference_lvgl_t* ui) {
+    size_t position = 0;
+    size_t index;
+    ui->launcher_order[0] = '\0';
+    for (index = 0; index < ui->launcher_count; ++index) {
+        lv_obj_t* tile = lv_obj_get_child(ui->content, (int32_t)index);
+        size_t item_index;
+        for (item_index = 0; item_index < ui->launcher_count; ++item_index) {
+            const launcher_item_t* item = &ui->launcher_items[item_index];
+            size_t length = strlen(item->app_id) +
+                            PXSYS_PUBLISHER_ROOT_BYTES * 2u + 1u;
+            static const char digits[] = "0123456789abcdef";
+            size_t root_index;
+            if (item->tile != tile) continue;
+            if (position + length + 2u > sizeof(ui->launcher_order)) break;
+            for (root_index = 0; root_index < PXSYS_PUBLISHER_ROOT_BYTES;
+                 ++root_index) {
+                ui->launcher_order[position + root_index * 2u] =
+                    digits[item->identity.publisher_root[root_index] >> 4];
+                ui->launcher_order[position + root_index * 2u + 1u] =
+                    digits[item->identity.publisher_root[root_index] & 15u];
+            }
+            ui->launcher_order[position + PXSYS_PUBLISHER_ROOT_BYTES * 2u] = ':';
+            memcpy(ui->launcher_order + position +
+                       PXSYS_PUBLISHER_ROOT_BYTES * 2u + 1u,
+                   item->app_id, strlen(item->app_id));
+            position += length;
+            ui->launcher_order[position++] = '\n';
+            ui->launcher_order[position] = '\0';
+            break;
+        }
+    }
+    if (ui->launcher_order_save != NULL)
+        ui->launcher_order_save(ui->launcher_order_context, ui->launcher_order);
+}
+
+static int launcher_identity_matches(const launcher_item_t* item,
+                                     const char* identity, size_t size) {
+    static const char digits[] = "0123456789abcdef";
+    size_t app_id_size = strlen(item->app_id);
+    size_t index;
+    if (size == app_id_size && memcmp(identity, item->app_id, size) == 0)
+        return 1;
+    if (size != PXSYS_PUBLISHER_ROOT_BYTES * 2u + 1u + app_id_size ||
+        identity[PXSYS_PUBLISHER_ROOT_BYTES * 2u] != ':' ||
+        memcmp(identity + PXSYS_PUBLISHER_ROOT_BYTES * 2u + 1u,
+               item->app_id, app_id_size) != 0)
+        return 0;
+    for (index = 0; index < PXSYS_PUBLISHER_ROOT_BYTES; ++index) {
+        if (identity[index * 2u] !=
+                digits[item->identity.publisher_root[index] >> 4] ||
+            identity[index * 2u + 1u] !=
+                digits[item->identity.publisher_root[index] & 15u])
+            return 0;
+    }
+    return 1;
+}
+
+static void launcher_remove_clicked(lv_event_t* event) {
+    launcher_item_t* item = lv_event_get_user_data(event);
+    pxsys_reference_lvgl_t* ui;
+    static const char digits[] = "0123456789abcdef";
+    size_t index;
+    if (item == NULL || !ui_valid(item->ui) || !item->uninstallable) return;
+    ui = item->ui;
+    for (index = 0; index < PXSYS_PUBLISHER_ROOT_BYTES; ++index) {
+        ui->pending_identity[index * 2u] = digits[item->identity.publisher_root[index] >> 4];
+        ui->pending_identity[index * 2u + 1u] =
+            digits[item->identity.publisher_root[index] & 15u];
+    }
+    ui->pending_identity[PXSYS_PUBLISHER_ROOT_BYTES * 2u] = ':';
+    snprintf(ui->pending_identity + PXSYS_PUBLISHER_ROOT_BYTES * 2u + 1u,
+             sizeof(ui->pending_identity) - PXSYS_PUBLISHER_ROOT_BYTES * 2u - 1u,
+             "%s", item->app_id);
+    ui->pending_kind = 0;
+    ui->pending_action = PXSYS_REFERENCE_APP_ACTION_UNINSTALL;
+    show_page_confirm(ui, translated(ui, "settings.apps.confirm.uninstall",
+                                     "Uninstall this app?"));
+}
+
+static void launcher_gesture(lv_event_t* event) {
+    launcher_item_t* item = lv_event_get_user_data(event);
+    pxsys_reference_lvgl_t* ui;
+    lv_event_code_t code;
+    size_t index;
+    lv_point_t point;
+    lv_indev_t* indev;
+    if (item == NULL || !ui_valid(item->ui)) return;
+    ui = item->ui;
+    code = lv_event_get_code(event);
+    if (code == LV_EVENT_PRESSED) {
+        ui->launcher_long_pressed = 0;
+        return;
+    }
+    if (code == LV_EVENT_LONG_PRESSED) {
+        indev = lv_event_get_indev(event);
+        if (indev == NULL) return;
+        lv_indev_get_point(indev, &point);
+        item->drag_start_x = point.x;
+        item->drag_start_y = point.y;
+        ui->launcher_editing = 1;
+        ui->launcher_long_pressed = 1;
+        for (index = 0; index < ui->launcher_count; ++index) {
+            launcher_item_t* other = &ui->launcher_items[index];
+            lv_obj_set_style_border_width(other->tile, 1, 0);
+            lv_obj_set_style_border_color(other->tile,
+                color_token(ui, PXSYS_COLOR_OUTLINE_VARIANT), 0);
+            lv_obj_set_style_bg_color(other->tile,
+                color_token(ui, PXSYS_COLOR_SURFACE_CONTAINER_LOW), 0);
+            lv_obj_set_style_bg_opa(other->tile, LV_OPA_20, 0);
+            if (other->remove_button != NULL)
+                lv_obj_remove_flag(other->remove_button, LV_OBJ_FLAG_HIDDEN);
+        }
+        return;
+    }
+    if (code == LV_EVENT_PRESSING && ui->launcher_editing &&
+        ui->launcher_long_pressed) {
+        indev = lv_event_get_indev(event);
+        if (indev == NULL) return;
+        lv_indev_get_point(indev, &point);
+        lv_obj_set_style_translate_x(item->tile,
+                                      point.x - item->drag_start_x, 0);
+        lv_obj_set_style_translate_y(item->tile,
+                                      point.y - item->drag_start_y, 0);
+        return;
+    }
+    if (code != LV_EVENT_RELEASED || !ui->launcher_editing) return;
+    indev = lv_event_get_indev(event);
+    if (indev == NULL) return;
+    lv_indev_get_point(indev, &point);
+    lv_obj_set_style_translate_x(item->tile, 0, 0);
+    lv_obj_set_style_translate_y(item->tile, 0, 0);
+    for (index = 0; index < ui->launcher_count; ++index) {
+        lv_area_t area;
+        launcher_item_t* target = &ui->launcher_items[index];
+        if (target == item || target->tile == NULL) continue;
+        lv_obj_get_coords(target->tile, &area);
+        if (point.x < area.x1 || point.x > area.x2 ||
+            point.y < area.y1 || point.y > area.y2) continue;
+        lv_obj_move_to_index(item->tile, lv_obj_get_index(target->tile));
+        launcher_save_order(ui);
+        ui->launcher_long_pressed = 1;
+        return;
+    }
+}
+
+static void launcher_background_clicked(lv_event_t* event) {
+    pxsys_reference_lvgl_t* ui = lv_event_get_user_data(event);
+    if (!ui_valid(ui) || !ui->launcher_editing ||
+        lv_event_get_target(event) != ui->content) return;
+    ui->launcher_editing = 0;
+    ui->launcher_long_pressed = 0;
+    rebuild(ui);
 }
 
 static lv_obj_t* make_label(lv_obj_t* parent, const char* text,
@@ -2294,8 +2472,17 @@ static lv_obj_t* make_launcher_tile(pxsys_reference_lvgl_t* ui,
     lv_obj_set_style_bg_opa(tile, LV_OPA_40, LV_STATE_PRESSED);
     lv_obj_set_style_shadow_width(tile, 0, 0);
     lv_obj_set_style_border_width(tile, 0, 0);
+    if (ui->launcher_editing) {
+        lv_obj_set_style_border_width(tile, 1, 0);
+        lv_obj_set_style_border_color(tile,
+            color_token(ui, PXSYS_COLOR_OUTLINE_VARIANT), 0);
+        lv_obj_set_style_bg_color(tile,
+            color_token(ui, PXSYS_COLOR_SURFACE_CONTAINER_LOW), 0);
+        lv_obj_set_style_bg_opa(tile, LV_OPA_20, 0);
+    }
     lv_obj_set_style_pad_all(tile, 3, 0);
     lv_obj_clear_flag(tile, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(tile, LV_OBJ_FLAG_PRESS_LOCK);
     lv_obj_remove_flag(tile, LV_OBJ_FLAG_SCROLL_ON_FOCUS);
     marker = lv_obj_create(tile);
     style_plain(marker);
@@ -2340,6 +2527,30 @@ static lv_obj_t* make_launcher_tile(pxsys_reference_lvgl_t* ui,
                           : 16);
     lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_align(label, LV_ALIGN_TOP_MID, 0, icon_size + label_gap);
+    item->tile = tile;
+    if (item->uninstallable) {
+        lv_obj_t* remove_button = lv_button_create(tile);
+        lv_obj_set_size(remove_button, 25, 25);
+        lv_obj_align(remove_button, LV_ALIGN_TOP_RIGHT, 0, -1);
+        lv_obj_set_style_radius(remove_button, LV_RADIUS_CIRCLE, 0);
+        lv_obj_set_style_bg_color(remove_button,
+                                  color_token(ui, PXSYS_COLOR_ERROR_CONTAINER), 0);
+        lv_obj_set_style_shadow_width(remove_button, 0, 0);
+        lv_obj_set_style_pad_all(remove_button, 0, 0);
+        lv_obj_t* remove_icon = make_label(remove_button, LV_SYMBOL_CLOSE,
+            typography_font(ui, PXSYS_TYPOGRAPHY_LABEL),
+            color_token(ui, PXSYS_COLOR_ON_ERROR_CONTAINER));
+        lv_obj_center(remove_icon);
+        lv_obj_add_event_cb(remove_button, launcher_remove_clicked,
+                            LV_EVENT_CLICKED, item);
+        if (!ui->launcher_editing)
+            lv_obj_add_flag(remove_button, LV_OBJ_FLAG_HIDDEN);
+        item->remove_button = remove_button;
+    }
+    lv_obj_add_event_cb(tile, launcher_gesture, LV_EVENT_PRESSED, item);
+    lv_obj_add_event_cb(tile, launcher_gesture, LV_EVENT_LONG_PRESSED, item);
+    lv_obj_add_event_cb(tile, launcher_gesture, LV_EVENT_PRESSING, item);
+    lv_obj_add_event_cb(tile, launcher_gesture, LV_EVENT_RELEASED, item);
     lv_obj_add_event_cb(tile, launcher_clicked, LV_EVENT_CLICKED, item);
     return tile;
 }
@@ -2902,11 +3113,20 @@ static void build_home(pxsys_reference_lvgl_t* ui,
                        const pxsys_reference_layout_t* layout) {
     pxsys_app_registry_t* registry = pxsys_standard_system_apps(ui->system);
     size_t index;
+    size_t managed_count = 0;
     uint32_t row_height;
     uint32_t columns;
     uint32_t column_width;
     uint32_t gap = layout->size_class == PXSYS_UI_SIZE_COMPACT ? 4u : 8u;
     release_launcher_icons(ui);
+    if (ui->app_action != NULL && ui->app_list != NULL) {
+        managed_count = ui->app_list(ui->app_manager_context,
+                                     ui->managed_apps,
+                                     PXSYS_REFERENCE_MANAGED_APP_MAX);
+        if (managed_count > PXSYS_REFERENCE_MANAGED_APP_MAX)
+            managed_count = PXSYS_REFERENCE_MANAGED_APP_MAX;
+        ui->managed_apps_loaded = 0;
+    }
     lv_obj_set_layout(ui->content, LV_LAYOUT_FLEX);
     lv_obj_set_flex_flow(ui->content, LV_FLEX_FLOW_ROW_WRAP);
     lv_obj_set_flex_align(ui->content, LV_FLEX_ALIGN_START,
@@ -2923,6 +3143,8 @@ static void build_home(pxsys_reference_lvgl_t* ui,
                     LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
     lv_obj_set_scroll_dir(ui->content, LV_DIR_VER);
     lv_obj_set_scrollbar_mode(ui->content, LV_SCROLLBAR_MODE_AUTO);
+    lv_obj_add_event_cb(ui->content, launcher_background_clicked,
+                        LV_EVENT_CLICKED, ui);
 
     for (index = 0; index < pxsys_app_registry_count(registry) &&
                     ui->launcher_count < ui->max_launcher_apps; ++index) {
@@ -2944,6 +3166,20 @@ static void build_home(pxsys_reference_lvgl_t* ui,
         memcpy(item->app_id, app->identity.app_id.data, app->identity.app_id.size);
         item->app_id[app->identity.app_id.size] = '\0';
         item->identity.app_id = pxsys_string_from_cstr(item->app_id);
+        if (!(app->flags & PXSYS_APP_FLAG_SYSTEM)) {
+            size_t managed_index;
+            for (managed_index = 0; managed_index < managed_count;
+                 ++managed_index) {
+                const pxsys_reference_managed_app_t* managed =
+                    &ui->managed_apps[managed_index];
+                if (managed->installed && !managed->built_in &&
+                    launcher_identity_matches(item, managed->identity,
+                                               strlen(managed->identity))) {
+                    item->uninstallable = 1;
+                    break;
+                }
+            }
+        }
         snprintf(item->runtime_name, sizeof(item->runtime_name), "%s",
                  app->runtime_id.size == strlen(PXSYS_NATIVE_RUNTIME_ID) &&
                          memcmp(app->runtime_id.data, PXSYS_NATIVE_RUNTIME_ID,
@@ -2960,6 +3196,23 @@ static void build_home(pxsys_reference_lvgl_t* ui,
         tile = make_launcher_tile(ui, name, item);
         lv_obj_set_size(tile, (lv_coord_t)column_width, (lv_coord_t)row_height);
         ui->launcher_count++;
+    }
+    if (ui->launcher_order[0] != '\0') {
+        const char* cursor = ui->launcher_order;
+        int32_t ordered = 0;
+        while (*cursor != '\0') {
+            const char* end = strchr(cursor, '\n');
+            size_t length = end != NULL ? (size_t)(end - cursor) : strlen(cursor);
+            for (index = 0; index < ui->launcher_count; ++index) {
+                launcher_item_t* item = &ui->launcher_items[index];
+                if (launcher_identity_matches(item, cursor, length)) {
+                    lv_obj_move_to_index(item->tile, ordered++);
+                    break;
+                }
+            }
+            if (end == NULL) break;
+            cursor = end + 1;
+        }
     }
     if (ui->launcher_count == 0) {
         lv_obj_t* empty = make_label(
@@ -4986,15 +5239,73 @@ static lv_obj_t* find_focused_textarea(lv_obj_t* object) {
 
 static void app_input_method_target_deleted(lv_event_t* event);
 
+static void wifi_input_fit_above_keyboard(pxsys_reference_lvgl_t* ui,
+                                          lv_coord_t keyboard_top) {
+    lv_area_t area;
+    lv_area_t input_area;
+    int32_t visible_height;
+    if (ui->active_page != REFERENCE_PAGE_WIFI || ui->content == NULL ||
+        ui->wifi_password_input == NULL || keyboard_top < 0)
+        return;
+    lv_obj_update_layout(ui->content);
+    lv_obj_get_coords(ui->content, &area);
+    visible_height = (int32_t)keyboard_top - area.y1 - 4;
+    if (visible_height <= 0 || visible_height >= lv_obj_get_height(ui->content))
+        return;
+    lv_obj_get_coords(ui->wifi_password_input, &input_area);
+    if (input_area.y2 > keyboard_top - 4) {
+        if (ui->wifi_input_prompt != NULL)
+            lv_obj_add_flag(ui->wifi_input_prompt, LV_OBJ_FLAG_HIDDEN);
+        if (ui->wifi_input_ssid != NULL) {
+            lv_obj_add_flag(ui->wifi_input_ssid, LV_OBJ_FLAG_HIDDEN);
+            if (ui->title != NULL)
+                lv_label_set_text(ui->title, ui->pending_wifi_ssid);
+        }
+    }
+    lv_obj_set_height(ui->content, visible_height);
+    lv_obj_update_layout(ui->content);
+    lv_obj_scroll_to_view(ui->wifi_password_input, LV_ANIM_OFF);
+}
+
+static void wifi_input_restore_viewport(pxsys_reference_lvgl_t* ui) {
+    pxsys_reference_layout_t layout;
+    if (ui->active_page != REFERENCE_PAGE_WIFI || ui->content == NULL ||
+        ui->wifi_password_input == NULL)
+        return;
+    if (ui->wifi_input_prompt != NULL)
+        lv_obj_remove_flag(ui->wifi_input_prompt, LV_OBJ_FLAG_HIDDEN);
+    if (ui->wifi_input_ssid != NULL) {
+        lv_obj_remove_flag(ui->wifi_input_ssid, LV_OBJ_FLAG_HIDDEN);
+        if (ui->title != NULL)
+            lv_label_set_text(ui->title,
+                              translated(ui, "settings.wifi", "Wi-Fi"));
+    }
+    if (pxsys_reference_layout_compute(&ui->display, &layout) != PXSYS_STATUS_OK)
+        return;
+    expand_content_into_hidden_gesture_area(ui, &layout);
+    lv_obj_set_height(ui->content, (lv_coord_t)layout.content.height);
+    lv_obj_update_layout(ui->content);
+    lv_obj_scroll_to_y(ui->content, 0, LV_ANIM_OFF);
+}
+
 static void app_input_method_close(pxsys_reference_lvgl_t* ui) {
+    const int wifi_input_active = ui->app_ime_target == ui->wifi_password_input &&
+                                  ui->wifi_password_input != NULL;
     ui->app_wide_ime.keyboard = NULL;
     ui->app_wide_ime.pinyin = NULL;
     if (ui->app_ime_keypad != NULL) {
+        if (ui->app_ime_target != NULL) {
+            lv_obj_remove_event_cb_with_user_data(
+                ui->app_ime_target, app_input_method_target_deleted, ui);
+            if (wifi_input_active)
+                lv_obj_remove_state(ui->app_ime_target, LV_STATE_FOCUSED);
+        }
         pxsys_reference_ime_destroy(ui->app_ime_keypad);
         ui->app_ime_keypad = NULL;
         ui->app_ime = NULL;
         ui->app_ime_keyboard = NULL;
         ui->app_ime_target = NULL;
+        if (wifi_input_active) wifi_input_restore_viewport(ui);
         update_system_overlay(ui);
         return;
     }
@@ -5014,6 +5325,7 @@ static void app_input_method_close(pxsys_reference_lvgl_t* ui) {
         ui->app_ime_keyboard = NULL;
     }
     ui->app_ime_target = NULL;
+    if (wifi_input_active) wifi_input_restore_viewport(ui);
     update_system_overlay(ui);
 }
 
@@ -5053,6 +5365,7 @@ static void app_input_method_open(pxsys_reference_lvgl_t* ui,
             ui->app_ime_keypad, typography_font(ui, PXSYS_TYPOGRAPHY_BODY));
         pxsys_reference_ime_set_icon_font(
             ui->app_ime_keypad, typography_font(ui, PXSYS_TYPOGRAPHY_TITLE));
+        pxsys_reference_ime_set_theme(ui->app_ime_keypad, &ui->theme);
         if (target == ui->wifi_password_input)
             pxsys_reference_ime_set_mode(ui->app_ime_keypad,
                                          PXSYS_REFERENCE_IME_MODE_ENGLISH);
@@ -5064,6 +5377,9 @@ static void app_input_method_open(pxsys_reference_lvgl_t* ui,
         ui->app_ime_keyboard = NULL;
         ui->app_ime_target = target;
         update_system_overlay(ui);
+        if (target == ui->wifi_password_input)
+            wifi_input_fit_above_keyboard(
+                ui, pxsys_reference_ime_keyboard_top(ui->app_ime_keypad));
         return;
     }
 #endif
@@ -5084,6 +5400,17 @@ static void app_input_method_open(pxsys_reference_lvgl_t* ui,
         return;
     }
     lv_obj_set_size(ui->app_ime_keyboard, LV_PCT(100), LV_PCT(40));
+    lv_obj_set_style_bg_color(ui->app_ime_keyboard,
+        color_token(ui, PXSYS_COLOR_SURFACE_CONTAINER), 0);
+    lv_obj_set_style_border_color(ui->app_ime_keyboard,
+        color_token(ui, PXSYS_COLOR_OUTLINE_VARIANT), 0);
+    lv_obj_set_style_bg_color(ui->app_ime_keyboard,
+        color_token(ui, PXSYS_COLOR_SURFACE_CONTAINER_HIGHEST), LV_PART_ITEMS);
+    lv_obj_set_style_text_color(ui->app_ime_keyboard,
+        color_token(ui, PXSYS_COLOR_ON_SURFACE), LV_PART_ITEMS);
+    lv_obj_set_style_bg_color(ui->app_ime_keyboard,
+        color_token(ui, PXSYS_COLOR_PRIMARY_CONTAINER),
+        LV_PART_ITEMS | LV_STATE_PRESSED);
     lv_obj_align(ui->app_ime_keyboard, LV_ALIGN_BOTTOM_MID, 0, 0);
     lv_obj_set_style_text_font(ui->app_ime_keyboard,
                               typography_font(ui, PXSYS_TYPOGRAPHY_BODY), 0);
@@ -5108,6 +5435,12 @@ static void app_input_method_open(pxsys_reference_lvgl_t* ui,
     lv_obj_move_foreground(panel);
     ui->app_ime_target = target;
     update_system_overlay(ui);
+    if (target == ui->wifi_password_input) {
+        lv_area_t keyboard_area;
+        lv_obj_update_layout(ui->app_ime_keyboard);
+        lv_obj_get_coords(ui->app_ime_keyboard, &keyboard_area);
+        wifi_input_fit_above_keyboard(ui, keyboard_area.y1 - 38);
+    }
 }
 
 /* A text input keeps the keyboard until the input is submitted, cancelled or
@@ -5251,11 +5584,13 @@ static void build_wifi_page(pxsys_reference_lvgl_t* ui,
                                                       "Enter Wi-Fi password"),
                            typography_font(ui, PXSYS_TYPOGRAPHY_TITLE),
                            color_token(ui, PXSYS_COLOR_TEXT_PRIMARY));
+        ui->wifi_input_prompt = label;
         lv_obj_set_width(label, LV_PCT(100));
         if (!entering_ssid) {
             label = make_label(ui->content, ui->pending_wifi_ssid,
                                typography_font(ui, PXSYS_TYPOGRAPHY_BODY),
                                color_token(ui, PXSYS_COLOR_TEXT_SECONDARY));
+            ui->wifi_input_ssid = label;
             lv_obj_set_width(label, LV_PCT(100));
         }
         ui->wifi_password_input = lv_textarea_create(ui->content);
@@ -5343,12 +5678,15 @@ static void page_confirm_clicked(lv_event_t* event) {
     pxsys_reference_lvgl_t* ui =
         (pxsys_reference_lvgl_t*)lv_event_get_user_data(event);
     lv_obj_t* button = lv_event_get_current_target(event);
+    int uninstalled = 0;
     if (!ui_valid(ui) || button == NULL) return;
     if ((uintptr_t)lv_obj_get_user_data(button) != 0) {
         if (ui->pending_kind == 0 && ui->app_action != NULL) {
-            (void)ui->app_action(
+            int success = ui->app_action(
                 ui->app_manager_context, ui->pending_identity,
                 (pxsys_reference_app_action_t)ui->pending_action);
+            uninstalled = success &&
+                          ui->pending_action == PXSYS_REFERENCE_APP_ACTION_UNINSTALL;
             ui->managed_apps_loaded = 0;
         } else if (ui->pending_kind == 1 && ui->file_action != NULL) {
             (void)ui->file_action(
@@ -5359,6 +5697,8 @@ static void page_confirm_clicked(lv_event_t* event) {
     }
     page_close_dialogs(ui);
     rebuild(ui);
+    if (uninstalled && ui->active_page == REFERENCE_PAGE_HOME)
+        launcher_save_order(ui);
 }
 
 static void show_page_confirm(pxsys_reference_lvgl_t* ui,
@@ -5857,6 +6197,8 @@ static void rebuild(pxsys_reference_lvgl_t* ui) {
     }
     if (ui->wifi_scan_timer != NULL) lv_timer_pause(ui->wifi_scan_timer);
     ui->wifi_password_input = NULL;
+    ui->wifi_input_prompt = NULL;
+    ui->wifi_input_ssid = NULL;
     ui->wifi_input_error = NULL;
     ui->wifi_network_list = NULL;
     /* The shade shares the chrome root so the real navigation bar can remain
@@ -6799,6 +7141,14 @@ pxsys_status_t pxsys_reference_lvgl_create(
     ui->app_manager_context = config->app_manager_context;
     ui->app_list = config->app_list;
     ui->app_action = config->app_action;
+    ui->launcher_order_context = config->launcher_order_context;
+    ui->launcher_order_save = config->launcher_order_save;
+    if (config->launcher_order_load != NULL &&
+        !config->launcher_order_load(config->launcher_order_context,
+                                     ui->launcher_order,
+                                     sizeof(ui->launcher_order)))
+        ui->launcher_order[0] = '\0';
+    ui->launcher_order[sizeof(ui->launcher_order) - 1u] = '\0';
     ui->file_manager_context = config->file_manager_context;
     ui->file_list = config->file_list;
     ui->file_action = config->file_action;
@@ -6929,6 +7279,8 @@ pxsys_status_t pxsys_reference_lvgl_home(pxsys_reference_lvgl_t* ui) {
     if (ui->locked) return PXSYS_STATUS_DENIED;
     if (!(ui->features & PXSYS_REFERENCE_UI_HOME))
         return PXSYS_STATUS_NOT_FOUND;
+    ui->launcher_editing = 0;
+    ui->launcher_long_pressed = 0;
     return open_role(ui, PXSYS_ROLE_HOME);
 }
 

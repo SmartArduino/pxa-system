@@ -177,6 +177,10 @@ typedef size_t (*pxsys_reference_lvgl_app_list_fn)(
     void* context, pxsys_reference_managed_app_t* apps, size_t capacity);
 typedef bool (*pxsys_reference_lvgl_app_action_fn)(
     void* context, const char* identity, pxsys_reference_app_action_t action);
+typedef bool (*pxsys_reference_lvgl_launcher_load_fn)(
+    void* context, char* order, size_t capacity);
+typedef void (*pxsys_reference_lvgl_launcher_save_fn)(
+    void* context, const char* order);
 
 /* Declared app permissions. Entries keep manifest order, so permission_index
  * stays stable while the app remains installed. A NULL list provider keeps the
@@ -340,6 +344,9 @@ typedef struct {
     pxsys_reference_lvgl_wifi_scan_start_fn wifi_scan_start;
     /* Reads the currently connected station SSID; false means disconnected. */
     pxsys_reference_lvgl_wifi_current_fn wifi_current;
+    void* launcher_order_context;
+    pxsys_reference_lvgl_launcher_load_fn launcher_order_load;
+    pxsys_reference_lvgl_launcher_save_fn launcher_order_save;
 } pxsys_reference_lvgl_config_t;
 
 typedef struct pxsys_reference_lvgl pxsys_reference_lvgl_t;
