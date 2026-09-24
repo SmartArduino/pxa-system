@@ -381,9 +381,14 @@ def parse_sdk(metadata, name, default):
 
 def main(argv):
     aot_only = False
+    forced_mode = None
     if len(argv) == 6 and argv[-1] == "--aot-only":
         aot_only = True
         argv = argv[:-1]
+    elif len(argv) == 7 and argv[-2] == "--artifact-mode":
+        forced_mode = argv[-1]
+        require(forced_mode in ("aot", "wasm"), "artifact mode must be aot or wasm")
+        argv = argv[:-2]
     require(len(argv) == 5,
             "usage: build_package_manifest.py <package.json> <package-dir> "
             "<private-key.pem> <target> <engine-abi> [--aot-only]")
@@ -534,7 +539,10 @@ def main(argv):
             if "services" in item else declared_services
         )
         wasi_features = parse_wasi(item.get("wasi"))
-        artifact_mode = item.get("artifact", "aot" if aot_only else "both")
+        artifact_mode = (
+            "wasm" if forced_mode == "wasm" else
+            item.get("artifact", "aot" if aot_only or forced_mode == "aot" else "both")
+        )
         require(artifact_mode in ("aot", "wasm", "both"),
                 "component artifact must be aot, wasm, or both")
         flags = COMPONENT_FLAG_PINNED_MEMORY if pinned_memory else 0

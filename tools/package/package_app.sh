@@ -135,8 +135,14 @@ fi
 
 component_rows="$work_dir/components.tsv"
 build_settings="$work_dir/build.tsv"
+package_artifact_mode="${PXA_PACKAGE_ARTIFACT_MODE:-}"
+if [[ -n "$package_artifact_mode" && "$package_artifact_mode" != "aot" && "$package_artifact_mode" != "wasm" ]]; then
+  echo "PXA_PACKAGE_ARTIFACT_MODE must be aot or wasm" >&2
+  exit 2
+fi
 "${PYTHON:-python3}" - "$app_dir/package.json" "$build_settings" > "$component_rows" <<'PYTHON'
 import json
+import os
 import sys
 
 metadata = json.load(open(sys.argv[1], encoding="utf-8"))
@@ -180,7 +186,8 @@ for component in components:
     component_id = component.get("id")
     if not isinstance(component_id, str):
         raise SystemExit("component id is required")
-    artifact = component.get("artifact", "both")
+    mode = os.environ.get("PXA_PACKAGE_ARTIFACT_MODE", "")
+    artifact = "wasm" if mode == "wasm" else component.get("artifact", "aot" if mode == "aot" else "both")
     if artifact not in ("aot", "wasm", "both"):
         raise SystemExit("component artifact must be aot, wasm, or both")
     if build_system == "cmake":
@@ -332,9 +339,13 @@ fi
 if [[ -d "$asset_dir" ]]; then
   cp -R "$asset_dir" "$package_dir/assets"
 fi
+manifest_mode_args=()
+if [[ -n "$package_artifact_mode" ]]; then
+  manifest_mode_args=(--artifact-mode "$package_artifact_mode")
+fi
 "${PYTHON:-python3}" "$script_dir/build_package_manifest.py" \
   "$app_dir/package.json" "$package_dir" "$private_key" \
-  "$manifest_target" "$engine_abi"
+  "$manifest_target" "$engine_abi" "${manifest_mode_args[@]}"
 
 mkdir -p "$output_dir"
 find "$output_dir" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
