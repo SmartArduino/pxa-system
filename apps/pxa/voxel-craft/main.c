@@ -120,6 +120,7 @@ static uint8_t g_raster_ready;
 static voxel_surface_ownership_t g_surface_ownership;
 static uint8_t g_input_initialized;
 static uint8_t g_input_dirty;
+static uint8_t g_backgrounded;
 static player_t g_player;
 static voxel_sfx_t g_sfx;
 static uint64_t g_last_tick_us;
@@ -2446,6 +2447,7 @@ int32_t pxa_app_start(const uint8_t *config, uint32_t length) {
     g_input_initialized = 0;
     g_ui_generation = 0;
     g_input_dirty = 0;
+    g_backgrounded = 0;
     g_last_tick_us = 0;
     g_tick_accumulator_us = 0;
     g_now_ms = 0;
@@ -2592,6 +2594,24 @@ int32_t pxa_app_on_event(const uint8_t *event, uint32_t length) {
     if (!pxa_parse_event(event, length, &parsed)) {
         return PXA_EVENT_UNHANDLED;
     }
+    if (parsed.service == PXA_SERVICE_SYSTEM &&
+        parsed.opcode == PXA_SYSTEM_LIFECYCLE_EVENT &&
+        parsed.payload_length == 1) {
+        g_backgrounded = parsed.payload[0] == PXA_SYSTEM_LIFECYCLE_BACKGROUND;
+        g_last_tick_us = 0;
+        g_tick_accumulator_us = 0;
+        release_finger(&g_move_finger);
+        release_finger(&g_look_finger);
+        release_finger(&g_button_finger);
+        g_button_kind = BTN_NONE;
+        g_action_held = 0;
+        g_jump_held = 0;
+        g_down_held = 0;
+        g_pad_move_z = 0.0F;
+        g_pad_turn = 0.0F;
+        g_pad_pitch = 0.0F;
+        return PXA_EVENT_HANDLED;
+    }
     if (voxel_sfx_handle_event(&g_sfx, &parsed, g_packet, sizeof(g_packet))) {
         return PXA_EVENT_HANDLED;
     }
@@ -2635,6 +2655,7 @@ int32_t pxa_app_on_event(const uint8_t *event, uint32_t length) {
     {
         pxa_ui_controller_data_t state;
         if (pxa_ui_parse_controller(&parsed, &state)) {
+            if (g_backgrounded) return PXA_EVENT_HANDLED;
             on_controller_state(&state);
             return PXA_EVENT_HANDLED;
         }
@@ -2672,6 +2693,11 @@ int32_t pxa_app_on_event(const uint8_t *event, uint32_t length) {
         return PXA_EVENT_HANDLED;
     }
     if (pxa_clock_tick_timestamp_us(&parsed, &timestamp_us)) {
+        if (g_backgrounded) {
+            g_last_tick_us = timestamp_us;
+            g_tick_accumulator_us = 0;
+            return PXA_EVENT_HANDLED;
+        }
         const uint8_t steps = consume_simulation_steps(timestamp_us);
         uint8_t index;
         float move_x;
@@ -2805,6 +2831,7 @@ int32_t pxa_app_on_event(const uint8_t *event, uint32_t length) {
     if (!pxa_ui_parse_pointer(&parsed, &pointer) || pointer.node != FRAME_NODE) {
         return PXA_EVENT_UNHANDLED;
     }
+    if (g_backgrounded) return PXA_EVENT_HANDLED;
     if (pointer.phase == PXA_POINTER_DOWN) {
         on_pointer_down(&pointer);
     } else if (pointer.phase == PXA_POINTER_MOVE) {

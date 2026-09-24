@@ -485,6 +485,11 @@ struct pxsys_reference_lvgl {
     pxsys_reference_lvgl_file_action_fn file_action;
     void* memory_info_context;
     pxsys_reference_lvgl_memory_info_fn memory_info;
+    void* preview_overlay_context;
+    pxsys_reference_lvgl_preview_overlay_fn preview_overlay;
+    void* system_overlay_context;
+    pxsys_reference_lvgl_lock_changed_fn system_overlay_changed;
+    uint8_t system_overlay_visible;
     void* performance_context;
     pxsys_reference_lvgl_performance_get_fn performance_get;
     pxsys_reference_lvgl_performance_set_fn performance_set;
@@ -555,6 +560,22 @@ static void rebuild_async(void* context) {
 
 static int ui_valid(const pxsys_reference_lvgl_t* ui) {
     return ui != NULL && ui->magic == REFERENCE_MAGIC;
+}
+
+static void update_system_overlay(pxsys_reference_lvgl_t* ui) {
+    int visible;
+    if (!ui_valid(ui) || ui->system_overlay_changed == NULL) return;
+    visible = ui->status_bar != NULL || ui->navigation_handle != NULL ||
+              (ui->navigation_mode == PXSYS_NAVIGATION_BUTTONS &&
+               ui->navigation_bar != NULL) ||
+              ui->navigation_back_indicator != NULL || ui->toast_visible ||
+              (ui->app_ime != NULL &&
+               !lv_obj_has_flag(ui->app_ime, LV_OBJ_FLAG_HIDDEN)) ||
+              (ui->notification_shade != NULL &&
+               !lv_obj_has_flag(ui->notification_shade, LV_OBJ_FLAG_HIDDEN));
+    if (ui->system_overlay_visible == (uint8_t)visible) return;
+    ui->system_overlay_visible = (uint8_t)visible;
+    ui->system_overlay_changed(ui->system_overlay_context, visible != 0);
 }
 
 static int languages_valid(const pxsys_reference_language_t* languages,
@@ -728,6 +749,7 @@ static void navigation_back_indicator_reset(pxsys_reference_lvgl_t* ui) {
     if (ui->navigation_back_indicator == NULL) return;
     lv_obj_delete(ui->navigation_back_indicator);
     ui->navigation_back_indicator = NULL;
+    update_system_overlay(ui);
 }
 
 /* Left-edge drag pill: grows and rounds as the pointer travels, switching to
@@ -804,6 +826,7 @@ static int navigation_back_indicator_update(pxsys_reference_lvgl_t* ui,
     }
     lv_obj_remove_flag(indicator, LV_OBJ_FLAG_HIDDEN);
     lv_obj_move_foreground(indicator);
+    update_system_overlay(ui);
     return ready;
 }
 
@@ -1202,12 +1225,32 @@ static task_preview_t* find_task_preview(pxsys_reference_lvgl_t* ui,
     return NULL;
 }
 
+static int preview_memory_available(pxsys_reference_lvgl_t* ui) {
+    uint64_t available = 0;
+    uint64_t total = 0;
+    uint64_t needed = (uint64_t)ui->display.width *
+                      ui->display.height * 6u + 262144u;
+    size_t index;
+    if (ui->memory_info == NULL || ui->task_transition_image != NULL ||
+        !ui->memory_info(ui->memory_info_context, &available, &total) ||
+        available >= needed)
+        return 1;
+    for (index = 0; index < PXSYS_REFERENCE_UI_TASK_PREVIEW_COUNT; ++index) {
+        if (ui->task_previews[index].image != NULL)
+            lv_draw_buf_destroy(ui->task_previews[index].image);
+        ui->task_previews[index].image = NULL;
+    }
+    return ui->memory_info(ui->memory_info_context, &available, &total) &&
+           available >= needed;
+}
+
 static lv_draw_buf_t* capture_transformed_application(
     pxsys_reference_lvgl_t* ui, pxsys_rect_t* capture_bounds) {
     lv_obj_t* app = application_root(ui);
     lv_area_t transformed;
     lv_area_t display_area;
     lv_area_t clipped;
+    lv_area_t untransformed;
     lv_draw_buf_t* source;
     lv_draw_buf_t* result;
     int32_t scale;
@@ -1251,11 +1294,18 @@ static lv_draw_buf_t* capture_transformed_application(
      * draw and restoring before returning means the live display never sees
      * an untransformed frame. */
     application_motion_set(ui, 256, 0, 0, 0);
+    lv_obj_get_coords(app, &untransformed);
     source = lv_snapshot_take(app, LV_COLOR_FORMAT_RGB565);
     application_motion_set(ui, scale, translate_x, translate_y, radius);
     if (source == NULL || source_width <= 0 || source_height <= 0) return NULL;
     ext = ((int32_t)source->header.w - source_width) / 2;
     if (ext < 0) ext = 0;
+    if (ui->preview_overlay != NULL)
+        ui->preview_overlay(ui->preview_overlay_context, source,
+                            untransformed.x1, untransformed.y1,
+                            (uint32_t)source_width, (uint32_t)source_height,
+                            (uint32_t)ext, ui->display.width,
+                            ui->display.height);
 
     transformed_width = lv_area_get_width(&transformed);
     transformed_height = lv_area_get_height(&transformed);
@@ -1367,6 +1417,7 @@ static void capture_current_task(pxsys_reference_lvgl_t* ui,
         for (index = 0; index < PXSYS_REFERENCE_UI_TASK_PREVIEW_COUNT;
              ++index)
             ui->task_previews[index].transition_pending = 0;
+        if (!preview_memory_available(ui)) return;
         if (preview == NULL) {
             for (index = 0; index < PXSYS_REFERENCE_UI_TASK_PREVIEW_COUNT;
                  ++index) {
@@ -1852,6 +1903,7 @@ static void build_task_switcher(pxsys_reference_lvgl_t* ui) {
 #if PXSYS_REFERENCE_UI_TASK_SWITCHER == PXSYS_TASK_SWITCHER_CARDS && \
     LV_USE_SNAPSHOT
     clear_task_transition(ui);
+    (void)preview_memory_available(ui);
     retained = ui->task_switcher != NULL;
 #else
     if (ui->task_switcher != NULL) {
@@ -2990,6 +3042,7 @@ static void close_notification_shade(pxsys_reference_lvgl_t* ui) {
     ui->notification_progress = 0;
     ui->notification_scroll_y = 0;
     lv_obj_add_flag(ui->notification_shade, LV_OBJ_FLAG_HIDDEN);
+    update_system_overlay(ui);
 }
 
 #if PXSYS_REFERENCE_UI_ENABLE_ANIMATIONS
@@ -3729,6 +3782,7 @@ static void build_notification_shade(pxsys_reference_lvgl_t* ui,
         ui->navigation_bar != NULL)
         lv_obj_move_foreground(ui->navigation_bar);
     ui->notification_shade_open = 1;
+    update_system_overlay(ui);
     notification_shade_progress_set(ui, initial_progress);
     if (ui->toast_visible && ui->toast != NULL) toast_restack(ui);
 }
@@ -4172,7 +4226,8 @@ static void toast_hide(lv_timer_t* timer) {
         (pxsys_reference_lvgl_t*)lv_timer_get_user_data(timer);
     if (!ui_valid(ui) || ui->toast == NULL || !ui->toast_visible) return;
     ui->toast_visible = 0;
-    lv_obj_fade_out(ui->toast, 160, 0);
+    lv_obj_add_flag(ui->toast, LV_OBJ_FLAG_HIDDEN);
+    update_system_overlay(ui);
 }
 
 static void toast_posted(void* context, const pxsys_toast_message_t* toast) {
@@ -4208,6 +4263,7 @@ static void toast_posted(void* context, const pxsys_toast_message_t* toast) {
     lv_obj_remove_flag(ui->toast, LV_OBJ_FLAG_HIDDEN);
     toast_restack(ui);
     ui->toast_visible = 1;
+    update_system_overlay(ui);
     lv_anim_delete(ui->toast, NULL);
     lv_obj_set_style_opa(ui->toast, LV_OPA_TRANSP, 0);
     lv_obj_fade_in(ui->toast, 140, 0);
@@ -4604,6 +4660,7 @@ static void app_input_method_close(pxsys_reference_lvgl_t* ui) {
         ui->app_ime = NULL;
         ui->app_ime_keyboard = NULL;
         ui->app_ime_target = NULL;
+        update_system_overlay(ui);
         return;
     }
     ui->app_ime_pinyin = NULL;
@@ -4622,6 +4679,7 @@ static void app_input_method_close(pxsys_reference_lvgl_t* ui) {
         ui->app_ime_keyboard = NULL;
     }
     ui->app_ime_target = NULL;
+    update_system_overlay(ui);
 }
 
 static void app_input_method_event(lv_event_t* event) {
@@ -4667,6 +4725,7 @@ static void app_input_method_open(pxsys_reference_lvgl_t* ui,
         ui->app_ime = pxsys_reference_ime_get_root(ui->app_ime_keypad);
         ui->app_ime_keyboard = NULL;
         ui->app_ime_target = target;
+        update_system_overlay(ui);
         return;
     }
 #endif
@@ -4709,6 +4768,7 @@ static void app_input_method_open(pxsys_reference_lvgl_t* ui,
                         LV_EVENT_CANCEL, ui);
     lv_obj_move_foreground(panel);
     ui->app_ime_target = target;
+    update_system_overlay(ui);
 }
 
 /* A text input keeps the keyboard until the input is submitted, cancelled or
@@ -5528,7 +5588,7 @@ static void rebuild(pxsys_reference_lvgl_t* ui) {
         }
     }
     if (ui->navigation_mode == PXSYS_NAVIGATION_GESTURES &&
-        ui->content_active && ui->back_gesture_enabled &&
+        ui->back_gesture_enabled &&
         (PXSYS_REFERENCE_UI_BACK_GESTURE || ui->back_gesture != NULL)) {
         int32_t top = (int32_t)layout.safe_area.y;
         int32_t bottom = (int32_t)ui->display.height -
@@ -5584,6 +5644,7 @@ static void rebuild(pxsys_reference_lvgl_t* ui) {
         build_notification_shade(ui, ui->notification_dragging
                                          ? ui->notification_progress : 256);
     lock_screen_refresh(ui);
+    update_system_overlay(ui);
 }
 
 static void lock_screen_refresh(pxsys_reference_lvgl_t* ui) {
@@ -6235,6 +6296,10 @@ pxsys_status_t pxsys_reference_lvgl_create(
     ui->file_action = config->file_action;
     ui->memory_info_context = config->memory_info_context;
     ui->memory_info = config->memory_info;
+    ui->preview_overlay_context = config->preview_overlay_context;
+    ui->preview_overlay = config->preview_overlay;
+    ui->system_overlay_context = config->system_overlay_context;
+    ui->system_overlay_changed = config->system_overlay_changed;
     ui->performance_context = config->performance_context;
     ui->performance_get = config->performance_get;
     ui->performance_set = config->performance_set;
@@ -6492,6 +6557,8 @@ pxsys_status_t pxsys_reference_lvgl_destroy(pxsys_reference_lvgl_t* ui) {
     size_t preview_index;
 #endif
     if (!ui_valid(ui)) return PXSYS_STATUS_INVALID_ARGUMENT;
+    if (ui->system_overlay_visible && ui->system_overlay_changed != NULL)
+        ui->system_overlay_changed(ui->system_overlay_context, false);
     if (ui->content_insets_changed != NULL)
         ui->content_insets_changed(ui->content_insets_context, 0, 0);
     (void)lv_async_call_cancel(rebuild_async, ui);

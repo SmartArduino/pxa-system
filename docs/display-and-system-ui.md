@@ -130,3 +130,20 @@ Recent tasks use either bounded preview cards or a
 low-memory list. Tapping background outside the actual preview closes the
 switcher, and upward card swipes or list close controls stop a task through the
 same task manager.
+
+On PXA foreground/background transitions the Host posts service 17 event
+`PXA_SYSTEM_LIFECYCLE_EVENT` (`0x8005`) with a one-byte payload: `0` for
+background and `1` for foreground. Games should stop simulation and sound on
+background, clear held input, and reset their tick baseline before resuming;
+the Guest may still receive completion and system events while backgrounded.
+The Surface presenter stops direct scanout as soon as the task loses visibility
+and only resumes on a fresh complete frame after it returns to the foreground.
+
+Trusted chrome (visible status/navigation bars, gesture feedback, control
+center and toasts) and permission/power dialogs temporarily use LVGL
+composition over direct Surfaces. Direct scanout resumes after the final
+overlay closes and a new frame is submitted. Recent-task previews overlay the
+last presented Surface on the application snapshot; GuestMapped frames that
+cannot be borrowed use an optional board capture of the displayed frame.
+Previews are bounded and evicted when free memory is insufficient for another
+capture. On products with tighter memory budgets, choose the list switcher.

@@ -112,6 +112,11 @@ typedef void (*pxsys_reference_lvgl_device_info_fn)(
 typedef bool (*pxsys_reference_lvgl_memory_info_fn)(
     void* context, uint64_t* available_bytes, uint64_t* total_bytes);
 
+typedef void (*pxsys_reference_lvgl_preview_overlay_fn)(
+    void* context, lv_draw_buf_t* image, int32_t screen_x, int32_t screen_y,
+    uint32_t content_width, uint32_t content_height, uint32_t padding,
+    uint16_t display_width, uint16_t display_height);
+
 /* Product-owned diagnostics switches. The reference UI only supplies the
  * controls; rendering, logging and persistence remain outside LVGL. */
 typedef enum {
@@ -306,6 +311,10 @@ typedef struct {
     /* Optional Recents memory indicator, appended for source compatibility. */
     void* memory_info_context;
     pxsys_reference_lvgl_memory_info_fn memory_info;
+    void* preview_overlay_context;
+    pxsys_reference_lvgl_preview_overlay_fn preview_overlay;
+    void* system_overlay_context;
+    pxsys_reference_lvgl_lock_changed_fn system_overlay_changed;
     /* Optional product diagnostics controls. A missing getter keeps this
      * section out of Settings. */
     void* performance_context;

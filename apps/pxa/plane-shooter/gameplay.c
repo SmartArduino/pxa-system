@@ -221,6 +221,7 @@ static uint8_t initialized;
 static uint8_t game_over;
 static uint8_t mission_complete;
 static uint8_t paused;
+static uint8_t backgrounded;
 static uint8_t exit_requested;
 static uint8_t result_available;
 static uint8_t result_stars;
@@ -1554,6 +1555,7 @@ int32_t pxa_app_start(const uint8_t* config, uint32_t config_length) {
         pxa_game_screen_from_start(&game_screen, config, config_length);
     layout_update();
     initialized = 0;
+    backgrounded = 0;
     reset_game();
     if (!render() || !pxa_clock_set_period(GAME_TICK_MS))
         return PXA_STATUS_INTERNAL;
@@ -1569,6 +1571,16 @@ int32_t pxa_app_on_event(const uint8_t* event, uint32_t length) {
     pxa_ui_pointer_data_t pointer;
     if (!pxa_canvas_parse_event(event, length, &parsed))
         return PXA_EVENT_UNHANDLED;
+    if (parsed.service == PXA_SERVICE_SYSTEM &&
+        parsed.opcode == PXA_SYSTEM_LIFECYCLE_EVENT &&
+        parsed.payload_length == 1) {
+        backgrounded = parsed.payload[0] == PXA_SYSTEM_LIFECYCLE_BACKGROUND;
+        control_active = 0;
+        player_velocity_y = 0;
+        volume_input_direction = 0;
+        last_tick_us = 0;
+        return PXA_EVENT_HANDLED;
+    }
     if (pxa_game_screen_handle_event(&game_screen, &parsed)) {
         layout_update();
         if (player_y > layout.player_max_y) player_y = layout.player_max_y;
@@ -1585,14 +1597,14 @@ int32_t pxa_app_on_event(const uint8_t* event, uint32_t length) {
         parsed.payload_length == 8) {
         const uint8_t steps = pxa_clock_tick_steps(
             &last_tick_us, &parsed, GAME_TICK_MS, GAME_MAX_CATCHUP_STEPS);
-        if (!paused) {
+        if (!paused && !backgrounded) {
             pxa_game_sfx_tick(&sfx, &parsed);
         } else {
             sfx.music_tick_us = pxa_read_u64(parsed.payload);
             sfx.music_remainder_us = 0;
         }
         random_state ^= (uint32_t)pxa_read_u64(parsed.payload);
-        if (!paused && !tick(steps))
+        if (!paused && !backgrounded && !tick(steps))
             return PXA_STATUS_INTERNAL;
         return PXA_EVENT_HANDLED;
     }
@@ -1600,7 +1612,7 @@ int32_t pxa_app_on_event(const uint8_t* event, uint32_t length) {
         ui_event.node == GAME_ROOT_NODE &&
         ui_event.kind == PXA_UI_EVENT_KEY_KIND && ui_event.data_size == 4) {
         int8_t direction = 0;
-        if (paused || mission_complete) {
+        if (paused || backgrounded || mission_complete) {
             volume_input_direction = 0;
             player_velocity_y = 0;
             return PXA_EVENT_HANDLED;
