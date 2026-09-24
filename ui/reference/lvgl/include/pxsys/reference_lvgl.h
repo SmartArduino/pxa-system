@@ -145,6 +145,8 @@ typedef size_t (*pxsys_reference_lvgl_wifi_scan_fn)(
 typedef void (*pxsys_reference_lvgl_wifi_scan_start_fn)(void* context);
 typedef bool (*pxsys_reference_lvgl_wifi_connect_fn)(
     void* context, const char* ssid, const char* password);
+typedef bool (*pxsys_reference_lvgl_wifi_current_fn)(
+    void* context, char* ssid, size_t capacity);
 
 /* App manager. */
 #define PXSYS_REFERENCE_MANAGED_APP_MAX 48
@@ -336,6 +338,8 @@ typedef struct {
     pxsys_reference_lvgl_app_permission_set_fn app_permission_set;
     /* Starts a background scan; wifi_scan polls without blocking when set. */
     pxsys_reference_lvgl_wifi_scan_start_fn wifi_scan_start;
+    /* Reads the currently connected station SSID; false means disconnected. */
+    pxsys_reference_lvgl_wifi_current_fn wifi_current;
 } pxsys_reference_lvgl_config_t;
 
 typedef struct pxsys_reference_lvgl pxsys_reference_lvgl_t;

@@ -42,8 +42,51 @@ typedef enum {
     PXSYS_COLOR_WARNING,
     PXSYS_COLOR_SUCCESS,
     PXSYS_COLOR_SCRIM,
+    PXSYS_COLOR_ON_BACKGROUND,
+    PXSYS_COLOR_SURFACE_VARIANT,
+    PXSYS_COLOR_ON_SURFACE_VARIANT,
+    PXSYS_COLOR_SURFACE_CONTAINER_LOWEST,
+    PXSYS_COLOR_SURFACE_CONTAINER_LOW,
+    PXSYS_COLOR_SURFACE_CONTAINER,
+    PXSYS_COLOR_SURFACE_CONTAINER_HIGH,
+    PXSYS_COLOR_SURFACE_CONTAINER_HIGHEST,
+    PXSYS_COLOR_OUTLINE_VARIANT,
+    PXSYS_COLOR_PRIMARY_CONTAINER,
+    PXSYS_COLOR_ON_PRIMARY_CONTAINER,
+    PXSYS_COLOR_SECONDARY,
+    PXSYS_COLOR_ON_SECONDARY,
+    PXSYS_COLOR_SECONDARY_CONTAINER,
+    PXSYS_COLOR_ON_SECONDARY_CONTAINER,
+    PXSYS_COLOR_TERTIARY,
+    PXSYS_COLOR_ON_TERTIARY,
+    PXSYS_COLOR_TERTIARY_CONTAINER,
+    PXSYS_COLOR_ON_TERTIARY_CONTAINER,
+    PXSYS_COLOR_ON_ERROR,
+    PXSYS_COLOR_ERROR_CONTAINER,
+    PXSYS_COLOR_ON_ERROR_CONTAINER,
+    PXSYS_COLOR_INVERSE_SURFACE,
+    PXSYS_COLOR_INVERSE_ON_SURFACE,
+    PXSYS_COLOR_INVERSE_PRIMARY,
+    PXSYS_COLOR_SURFACE_TINT,
     PXSYS_COLOR_TOKEN_COUNT,
 } pxsys_color_token_t;
+
+#define PXSYS_COLOR_PRIMARY PXSYS_COLOR_ACCENT
+#define PXSYS_COLOR_ON_PRIMARY PXSYS_COLOR_ON_ACCENT
+#define PXSYS_COLOR_ON_SURFACE PXSYS_COLOR_TEXT_PRIMARY
+#define PXSYS_COLOR_OUTLINE PXSYS_COLOR_BORDER
+
+typedef enum {
+    PXSYS_THEME_PALETTE_BLUE = 0,
+    PXSYS_THEME_PALETTE_TEAL,
+    PXSYS_THEME_PALETTE_VIOLET,
+    PXSYS_THEME_PALETTE_AMBER,
+    PXSYS_THEME_PALETTE_CORAL,
+    PXSYS_THEME_PALETTE_SAGE,
+    PXSYS_THEME_PALETTE_ROSE,
+    PXSYS_THEME_PALETTE_GRAPHITE,
+    PXSYS_THEME_PALETTE_COUNT,
+} pxsys_theme_palette_t;
 
 /* Semantic text roles are backend-neutral. A renderer or product font
  * provider maps these requested pixel sizes to concrete font faces. */
@@ -87,6 +130,9 @@ typedef struct {
 typedef struct pxsys_theme_service pxsys_theme_service_t;
 
 void pxsys_theme_snapshot_init(pxsys_theme_snapshot_t* snapshot, pxsys_color_scheme_t scheme);
+const char* pxsys_theme_palette_name(pxsys_theme_palette_t palette);
+pxsys_status_t pxsys_theme_snapshot_apply_palette(pxsys_theme_snapshot_t* snapshot,
+                                                  pxsys_theme_palette_t palette);
 pxsys_status_t pxsys_theme_snapshot_init_custom(pxsys_theme_snapshot_t* snapshot,
                                                 pxsys_string_t theme_id,
                                                 pxsys_color_scheme_t base_scheme);

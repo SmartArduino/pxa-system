@@ -34,7 +34,8 @@ static const pxsys_resource_entry_t reference_en_resources[] = {
     RESOURCE_ENTRY("settings.wifi", "Wi-Fi"),
     RESOURCE_ENTRY("settings.mobile", "Mobile network"),
     RESOURCE_ENTRY("settings.appearance", "Appearance"),
-    RESOURCE_ENTRY("settings.accent", "Accent color"),
+    RESOURCE_ENTRY("settings.appearance.mode", "Display mode"),
+    RESOURCE_ENTRY("settings.appearance.colors", "Color palette"),
     RESOURCE_ENTRY("settings.display", "Display"),
     RESOURCE_ENTRY("settings.section.connections", "Connections"),
     RESOURCE_ENTRY("settings.section.personalization", "Personalization"),
@@ -67,6 +68,13 @@ static const pxsys_resource_entry_t reference_en_resources[] = {
     RESOURCE_ENTRY("settings.wifi.none", "No networks found"),
     RESOURCE_ENTRY("settings.wifi.failed", "Scan failed. Try again"),
     RESOURCE_ENTRY("settings.wifi.password", "Enter Wi-Fi password"),
+    RESOURCE_ENTRY("settings.wifi.add", "Add network manually"),
+    RESOURCE_ENTRY("settings.wifi.ssid", "Network name (SSID)"),
+    RESOURCE_ENTRY("settings.wifi.next", "Next"),
+    RESOURCE_ENTRY("settings.wifi.connect", "Connect"),
+    RESOURCE_ENTRY("settings.wifi.connected", "Connected network"),
+    RESOURCE_ENTRY("settings.wifi.invalid_ssid", "Enter an SSID of 1–32 bytes"),
+    RESOURCE_ENTRY("settings.wifi.connect_failed", "Could not start connection"),
     RESOURCE_ENTRY("settings.wifi.open", "Open network"),
     RESOURCE_ENTRY("settings.wifi.secured", "Secured"),
     RESOURCE_ENTRY("language.title", "Language"),
@@ -79,6 +87,10 @@ static const pxsys_resource_entry_t reference_en_resources[] = {
     RESOURCE_ENTRY("theme.teal", "Teal"),
     RESOURCE_ENTRY("theme.violet", "Violet"),
     RESOURCE_ENTRY("theme.amber", "Amber"),
+    RESOURCE_ENTRY("theme.coral", "Coral"),
+    RESOURCE_ENTRY("theme.sage", "Sage"),
+    RESOURCE_ENTRY("theme.rose", "Rose"),
+    RESOURCE_ENTRY("theme.graphite", "Graphite"),
     RESOURCE_ENTRY("control.mobile", "Mobile"),
     RESOURCE_ENTRY("control.volume", "Volume"),
     RESOURCE_ENTRY("control.brightness", "Brightness"),
@@ -141,7 +153,8 @@ static const pxsys_resource_entry_t reference_zh_resources[] = {
     RESOURCE_ENTRY("settings.wifi", "无线网络"),
     RESOURCE_ENTRY("settings.mobile", "移动网络"),
     RESOURCE_ENTRY("settings.appearance", "外观"),
-    RESOURCE_ENTRY("settings.accent", "主题色"),
+    RESOURCE_ENTRY("settings.appearance.mode", "显示模式"),
+    RESOURCE_ENTRY("settings.appearance.colors", "主题配色"),
     RESOURCE_ENTRY("settings.display", "显示"),
     RESOURCE_ENTRY("settings.section.connections", "连接"),
     RESOURCE_ENTRY("settings.section.personalization", "个性化"),
@@ -174,6 +187,13 @@ static const pxsys_resource_entry_t reference_zh_resources[] = {
     RESOURCE_ENTRY("settings.wifi.none", "未发现无线网络"),
     RESOURCE_ENTRY("settings.wifi.failed", "扫描失败，请重试"),
     RESOURCE_ENTRY("settings.wifi.password", "输入无线网络密码"),
+    RESOURCE_ENTRY("settings.wifi.add", "手动添加网络"),
+    RESOURCE_ENTRY("settings.wifi.ssid", "网络名称（SSID）"),
+    RESOURCE_ENTRY("settings.wifi.next", "下一步"),
+    RESOURCE_ENTRY("settings.wifi.connect", "连接"),
+    RESOURCE_ENTRY("settings.wifi.connected", "当前已连接"),
+    RESOURCE_ENTRY("settings.wifi.invalid_ssid", "请输入 1–32 字节的网络名称"),
+    RESOURCE_ENTRY("settings.wifi.connect_failed", "无法发起连接"),
     RESOURCE_ENTRY("settings.wifi.open", "开放网络"),
     RESOURCE_ENTRY("settings.wifi.secured", "已加密"),
     RESOURCE_ENTRY("language.title", "语言"),
@@ -186,6 +206,10 @@ static const pxsys_resource_entry_t reference_zh_resources[] = {
     RESOURCE_ENTRY("theme.teal", "青绿"),
     RESOURCE_ENTRY("theme.violet", "紫色"),
     RESOURCE_ENTRY("theme.amber", "琥珀色"),
+    RESOURCE_ENTRY("theme.coral", "珊瑚"),
+    RESOURCE_ENTRY("theme.sage", "鼠尾草"),
+    RESOURCE_ENTRY("theme.rose", "玫瑰"),
+    RESOURCE_ENTRY("theme.graphite", "石墨"),
     RESOURCE_ENTRY("control.mobile", "移动网络"),
     RESOURCE_ENTRY("control.volume", "音量"),
     RESOURCE_ENTRY("control.brightness", "亮度"),
@@ -266,6 +290,8 @@ typedef enum {
     REFERENCE_PAGE_DEVICE_INFO,
     REFERENCE_PAGE_APP_MANAGER,
     REFERENCE_PAGE_FILE_MANAGER,
+    REFERENCE_PAGE_WIFI,
+    REFERENCE_PAGE_APPEARANCE,
 } reference_page_t;
 
 typedef enum {
@@ -401,8 +427,7 @@ struct pxsys_reference_lvgl {
     lv_timer_t* wifi_scan_timer;
     pxsys_reference_ime_t* app_ime_keypad;
     lv_obj_t* app_ime_pinyin;
-    lv_obj_t* wifi_password_pinyin;
-    struct { lv_obj_t* keyboard; lv_obj_t* pinyin; uint8_t chinese; } app_wide_ime, wifi_wide_ime;
+    struct { lv_obj_t* keyboard; lv_obj_t* pinyin; uint8_t chinese; } app_wide_ime;
     uint8_t app_ime_close_requested;
     lv_timer_t* transient_timer;
     const lv_font_t* text_font;
@@ -471,6 +496,7 @@ struct pxsys_reference_lvgl {
     int32_t notification_progress;
     int32_t notification_scroll_y;
     int32_t settings_scroll_y;
+    int32_t appearance_scroll_y;
     int32_t navigation_press_x;
     int32_t navigation_press_y;
     int32_t navigation_last_x;
@@ -514,6 +540,7 @@ struct pxsys_reference_lvgl {
     pxsys_reference_lvgl_wifi_scan_fn wifi_scan;
     pxsys_reference_lvgl_wifi_connect_fn wifi_connect;
     pxsys_reference_lvgl_wifi_scan_start_fn wifi_scan_start;
+    pxsys_reference_lvgl_wifi_current_fn wifi_current;
     void* app_permission_context;
     pxsys_reference_lvgl_app_permission_list_fn app_permission_list;
     pxsys_reference_lvgl_app_permission_set_fn app_permission_set;
@@ -524,8 +551,12 @@ struct pxsys_reference_lvgl {
         app_permissions[PXSYS_REFERENCE_APP_PERMISSION_MAX];
     size_t app_permission_count;
     size_t wifi_network_count;
+    size_t wifi_scan_state;
     char pending_wifi_ssid[PXSYS_REFERENCE_WIFI_SSID_MAX];
+    char wifi_input_draft[65];
+    uint8_t wifi_input_stage;
     lv_obj_t* wifi_password_input;
+    lv_obj_t* wifi_input_error;
     lv_obj_t* wifi_network_list;
     void* lock_changed_context;
     pxsys_reference_lvgl_lock_changed_fn lock_changed;
@@ -550,6 +581,7 @@ struct pxsys_reference_lvgl {
     lv_obj_t* app_dialog;
     lv_obj_t* confirm_dialog;
     reference_page_t active_page;
+    reference_page_t rendered_page;
     pxsys_display_profile_t display;
     pxsys_theme_snapshot_t theme;
     pxsys_system_status_snapshot_t system_status;
@@ -561,6 +593,7 @@ struct pxsys_reference_lvgl {
 };
 
 static void rebuild(pxsys_reference_lvgl_t* ui);
+static void navigation_back(pxsys_reference_lvgl_t* ui);
 static void build_task_switcher(pxsys_reference_lvgl_t* ui);
 static void close_task_switcher(pxsys_reference_lvgl_t* ui);
 static int task_switcher_is_open(const pxsys_reference_lvgl_t* ui);
@@ -767,11 +800,7 @@ static void back_clicked(lv_event_t* event) {
         (pxsys_reference_lvgl_t*)lv_event_get_user_data(event);
     if (!ui_valid(ui)) return;
     if (pxsys_reference_lvgl_dismiss_overlay(ui)) return;
-    {
-        pxsys_back_result_t result;
-        (void)pxsys_task_manager_back(pxsys_standard_system_tasks(ui->system),
-                                      &result);
-    }
+    navigation_back(ui);
 }
 
 static void navigation_back_indicator_reset(pxsys_reference_lvgl_t* ui) {
@@ -881,6 +910,21 @@ static void navigation_back(pxsys_reference_lvgl_t* ui) {
         close_notification_shade(ui);
         return;
     }
+    if (ui->active_page == REFERENCE_PAGE_WIFI) {
+        if (ui->wifi_input_stage != 0) {
+            ui->wifi_input_stage = 0;
+            ui->wifi_input_draft[0] = '\0';
+        } else {
+            ui->active_page = REFERENCE_PAGE_SETTINGS;
+        }
+        rebuild(ui);
+        return;
+    }
+    if (ui->active_page == REFERENCE_PAGE_APPEARANCE) {
+        ui->active_page = REFERENCE_PAGE_SETTINGS;
+        rebuild(ui);
+        return;
+    }
     (void)pxsys_task_manager_back(pxsys_standard_system_tasks(ui->system),
                                   &result);
 }
@@ -968,69 +1012,35 @@ static void navigation_back_gesture_event(lv_event_t* event) {
 }
 
 static const char* accent_name(const pxsys_theme_snapshot_t* theme) {
-    if (theme->theme_id_size == 4 && memcmp(theme->theme_id, "teal", 4) == 0)
-        return "teal";
-    if (theme->theme_id_size == 6 && memcmp(theme->theme_id, "violet", 6) == 0)
-        return "violet";
-    if (theme->theme_id_size == 5 && memcmp(theme->theme_id, "amber", 5) == 0)
-        return "amber";
-    return "blue";
+    for (int palette = PXSYS_THEME_PALETTE_TEAL;
+         palette < PXSYS_THEME_PALETTE_COUNT; ++palette) {
+        const char* name = pxsys_theme_palette_name((pxsys_theme_palette_t)palette);
+        if (theme->theme_id_size == strlen(name) &&
+            memcmp(theme->theme_id, name, theme->theme_id_size) == 0)
+            return name;
+    }
+    return pxsys_theme_palette_name(PXSYS_THEME_PALETTE_BLUE);
 }
 
 static void theme_apply_accent(pxsys_theme_snapshot_t* theme, const char* name) {
-    pxsys_color_scheme_t scheme = theme->effective_scheme;
-    if (strcmp(name, "blue") == 0) return;
-    static const uint32_t light[][2] = {
-        {UINT32_C(0xff007f75), UINT32_C(0xffffffff)},
-        {UINT32_C(0xff7145b4), UINT32_C(0xffffffff)},
-        {UINT32_C(0xff985b00), UINT32_C(0xffffffff)},
-    };
-    static const uint32_t dark[][2] = {
-        {UINT32_C(0xff69d8c4), UINT32_C(0xff07372f)},
-        {UINT32_C(0xffc6a7ff), UINT32_C(0xff30164e)},
-        {UINT32_C(0xffffc16b), UINT32_C(0xff493000)},
-    };
-    size_t index = strcmp(name, "teal") == 0 ? 0u :
-                   strcmp(name, "violet") == 0 ? 1u : 2u;
-    const uint32_t (*palette)[2] = scheme == PXSYS_COLOR_SCHEME_DARK ? dark : light;
-    theme->colors[PXSYS_COLOR_ACCENT] = palette[index][0];
-    theme->colors[PXSYS_COLOR_ON_ACCENT] = palette[index][1];
-    theme->configured_mode = PXSYS_THEME_MODE_CUSTOM;
-    theme->theme_id_size = (uint16_t)strlen(name);
-    memcpy(theme->theme_id, name, theme->theme_id_size + 1u);
+    pxsys_theme_palette_t palette = PXSYS_THEME_PALETTE_BLUE;
+    for (int index = PXSYS_THEME_PALETTE_TEAL;
+         index < PXSYS_THEME_PALETTE_COUNT; ++index) {
+        if (strcmp(name, pxsys_theme_palette_name((pxsys_theme_palette_t)index)) == 0) {
+            palette = (pxsys_theme_palette_t)index;
+            break;
+        }
+    }
+    (void)pxsys_theme_snapshot_apply_palette(theme, palette);
 }
 
 static void theme_clicked(lv_event_t* event) {
     pxsys_reference_lvgl_t* ui =
         (pxsys_reference_lvgl_t*)lv_event_get_user_data(event);
-    pxsys_theme_snapshot_t next = ui->theme;
-    pxsys_color_scheme_t scheme =
-        ui->theme.effective_scheme == PXSYS_COLOR_SCHEME_DARK
-            ? PXSYS_COLOR_SCHEME_LIGHT : PXSYS_COLOR_SCHEME_DARK;
-    const char* accent = accent_name(&ui->theme);
-    pxsys_theme_snapshot_init(&next, scheme);
-    next.configured_mode = scheme == PXSYS_COLOR_SCHEME_DARK
-                               ? PXSYS_THEME_MODE_DARK
-                               : PXSYS_THEME_MODE_LIGHT;
-    theme_apply_accent(&next, accent);
-    (void)pxsys_theme_service_update(pxsys_standard_system_theme(ui->system),
-                                     &next);
-}
-
-static void accent_clicked(lv_event_t* event) {
-    pxsys_reference_lvgl_t* ui =
-        (pxsys_reference_lvgl_t*)lv_event_get_user_data(event);
-    const char* current = accent_name(&ui->theme);
-    const char* next_name = strcmp(current, "blue") == 0 ? "teal" :
-                            strcmp(current, "teal") == 0 ? "violet" :
-                            strcmp(current, "violet") == 0 ? "amber" : "blue";
-    pxsys_theme_snapshot_t next;
-    pxsys_theme_snapshot_init(&next, ui->theme.effective_scheme);
-    next.configured_mode = next.effective_scheme == PXSYS_COLOR_SCHEME_DARK
-                               ? PXSYS_THEME_MODE_DARK : PXSYS_THEME_MODE_LIGHT;
-    theme_apply_accent(&next, next_name);
-    (void)pxsys_theme_service_update(pxsys_standard_system_theme(ui->system),
-                                     &next);
+    if (!ui_valid(ui)) return;
+    ui->appearance_scroll_y = 0;
+    ui->active_page = REFERENCE_PAGE_APPEARANCE;
+    rebuild(ui);
 }
 
 static void launcher_clicked(lv_event_t* event) {
@@ -2476,7 +2486,7 @@ static lv_obj_t* make_settings_section(pxsys_reference_lvgl_t* ui,
     style_plain(section);
     lv_obj_set_width(section, LV_PCT(100));
     lv_obj_set_height(section, LV_SIZE_CONTENT);
-    lv_obj_set_style_bg_color(section, color_token(ui, PXSYS_COLOR_SURFACE), 0);
+    lv_obj_set_style_bg_color(section, color_token(ui, PXSYS_COLOR_SURFACE_CONTAINER_LOW), 0);
     lv_obj_set_style_bg_opa(section, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(section, 1, 0);
     lv_obj_set_style_border_color(section, color_token(ui, PXSYS_COLOR_BORDER),
@@ -3035,17 +3045,6 @@ static void build_settings(pxsys_reference_lvgl_t* ui,
         translated(ui, "settings.appearance", "Appearance"), appearance_detail,
         theme_clicked, ui);
     add_settings_chevron(ui, row);
-    {
-        const char* accent = accent_name(&ui->theme);
-        const char* key = strcmp(accent, "teal") == 0 ? "theme.teal" :
-                          strcmp(accent, "violet") == 0 ? "theme.violet" :
-                          strcmp(accent, "amber") == 0 ? "theme.amber" : "theme.blue";
-        row = make_settings_row(
-            ui, layout, section, LV_SYMBOL_TINT, PXSYS_COLOR_ACCENT,
-            translated(ui, "settings.accent", "Accent color"),
-            translated(ui, key, accent), accent_clicked, ui);
-        add_settings_chevron(ui, row);
-    }
     selected_language = current_language(ui);
     language_detail = selected_language == NULL
                           ? borrowed_text(ui, pxsys_string(
@@ -3098,6 +3097,173 @@ static void build_settings(pxsys_reference_lvgl_t* ui,
     }
     lv_obj_update_layout(ui->content);
     lv_obj_scroll_to_y(ui->content, ui->settings_scroll_y, LV_ANIM_OFF);
+}
+
+static void appearance_apply(pxsys_reference_lvgl_t* ui,
+                             pxsys_color_scheme_t scheme, const char* accent) {
+    pxsys_theme_snapshot_t next;
+    pxsys_theme_snapshot_init(&next, scheme);
+    next.configured_mode = scheme == PXSYS_COLOR_SCHEME_DARK
+                               ? PXSYS_THEME_MODE_DARK : PXSYS_THEME_MODE_LIGHT;
+    theme_apply_accent(&next, accent);
+    (void)pxsys_theme_service_update(pxsys_standard_system_theme(ui->system),
+                                     &next);
+}
+
+static void appearance_scheme_selected(lv_event_t* event) {
+    pxsys_reference_lvgl_t* ui = lv_event_get_user_data(event);
+    lv_obj_t* row = lv_event_get_current_target(event);
+    if (!ui_valid(ui) || row == NULL) return;
+    appearance_apply(ui, (pxsys_color_scheme_t)(uintptr_t)lv_obj_get_user_data(row),
+                     accent_name(&ui->theme));
+}
+
+static void appearance_accent_selected(lv_event_t* event) {
+    pxsys_reference_lvgl_t* ui = lv_event_get_user_data(event);
+    lv_obj_t* card = lv_event_get_current_target(event);
+    if (!ui_valid(ui) || card == NULL) return;
+    appearance_apply(ui, ui->theme.effective_scheme,
+                     (const char*)lv_obj_get_user_data(card));
+}
+
+static void build_appearance_page(pxsys_reference_lvgl_t* ui,
+                                  const pxsys_reference_layout_t* layout) {
+    static const struct {
+        pxsys_theme_palette_t palette;
+        const char* label;
+        const char* fallback;
+    } options[] = {
+        {PXSYS_THEME_PALETTE_BLUE, "theme.blue", "Blue"},
+        {PXSYS_THEME_PALETTE_TEAL, "theme.teal", "Teal"},
+        {PXSYS_THEME_PALETTE_VIOLET, "theme.violet", "Violet"},
+        {PXSYS_THEME_PALETTE_AMBER, "theme.amber", "Amber"},
+        {PXSYS_THEME_PALETTE_CORAL, "theme.coral", "Coral"},
+        {PXSYS_THEME_PALETTE_SAGE, "theme.sage", "Sage"},
+        {PXSYS_THEME_PALETTE_ROSE, "theme.rose", "Rose"},
+        {PXSYS_THEME_PALETTE_GRAPHITE, "theme.graphite", "Graphite"},
+    };
+    static const pxsys_color_token_t preview_tokens[] = {
+        PXSYS_COLOR_PRIMARY, PXSYS_COLOR_SECONDARY,
+        PXSYS_COLOR_TERTIARY, PXSYS_COLOR_SURFACE_CONTAINER_HIGH,
+    };
+    lv_obj_t* section;
+    lv_obj_t* row;
+    lv_obj_t* cards;
+    const char* selected = accent_name(&ui->theme);
+    const size_t dark = ui->theme.effective_scheme == PXSYS_COLOR_SCHEME_DARK;
+    lv_obj_set_layout(ui->content, LV_LAYOUT_FLEX);
+    lv_obj_set_flex_flow(ui->content, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_row(ui->content, 10, 0);
+    lv_obj_set_scroll_dir(ui->content, LV_DIR_VER);
+    lv_obj_add_flag(ui->content, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+    section = make_settings_section(
+        ui, translated(ui, "settings.appearance.mode", "Display mode"));
+    for (size_t index = 0; index < 2; ++index) {
+        row = make_settings_row(
+            ui, layout, section, index ? LV_SYMBOL_EYE_OPEN : LV_SYMBOL_TINT,
+            PXSYS_COLOR_ACCENT,
+            translated(ui, index ? "theme.dark" : "theme.light",
+                       index ? "Dark" : "Light"),
+            NULL,
+            appearance_scheme_selected, ui);
+        lv_obj_set_user_data(row, (void*)(uintptr_t)
+                             (index ? PXSYS_COLOR_SCHEME_DARK :
+                                      PXSYS_COLOR_SCHEME_LIGHT));
+        if (dark == index) {
+            lv_obj_t* check = make_label(
+                row, LV_SYMBOL_OK, typography_font(ui, PXSYS_TYPOGRAPHY_LABEL),
+                color_token(ui, PXSYS_COLOR_ACCENT));
+            lv_obj_set_style_min_width(check, 16, 0);
+        }
+    }
+    lv_obj_t* heading = make_label(
+        ui->content, translated(ui, "settings.appearance.colors", "Color palette"),
+        typography_font(ui, PXSYS_TYPOGRAPHY_CAPTION),
+        color_token(ui, PXSYS_COLOR_TEXT_SECONDARY));
+    lv_obj_set_width(heading, LV_PCT(100));
+    lv_obj_set_style_pad_left(heading, 8, 0);
+    cards = lv_obj_create(ui->content);
+    style_plain(cards);
+    lv_obj_set_width(cards, LV_PCT(100));
+    lv_obj_set_height(cards, LV_SIZE_CONTENT);
+    lv_obj_set_layout(cards, LV_LAYOUT_FLEX);
+    lv_obj_set_flex_flow(cards, LV_FLEX_FLOW_ROW_WRAP);
+    lv_obj_set_style_pad_row(cards, 8, 0);
+    lv_obj_set_style_pad_column(cards, 8, 0);
+    for (size_t index = 0; index < sizeof(options) / sizeof(options[0]); ++index) {
+        lv_obj_t* card = lv_button_create(cards);
+        lv_obj_t* preview = lv_obj_create(card);
+        lv_obj_t* caption;
+        pxsys_theme_snapshot_t palette;
+        const char* name = pxsys_theme_palette_name(options[index].palette);
+        const int selected_card = strcmp(selected, name) == 0;
+        lv_coord_t card_width = (lv_coord_t)((layout->content.width - 12) / 2);
+        if (card_width > 160) card_width = 160;
+        pxsys_theme_snapshot_init(&palette, ui->theme.effective_scheme);
+        (void)pxsys_theme_snapshot_apply_palette(&palette, options[index].palette);
+        lv_obj_set_size(card, card_width, 78);
+        lv_obj_set_style_pad_all(card, 0, 0);
+        lv_obj_set_style_bg_color(card, color_token(ui, PXSYS_COLOR_SURFACE_CONTAINER_LOW), 0);
+        lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
+        lv_obj_set_style_radius(card, ui->theme.base_radius_px * 2u, 0);
+        lv_obj_set_style_shadow_width(card, 0, 0);
+        lv_obj_set_style_border_width(card, selected_card ? 2 : 1, 0);
+        lv_obj_set_style_border_color(
+            card, selected_card ? color_token(ui, PXSYS_COLOR_ACCENT) :
+                                   color_token(ui, PXSYS_COLOR_BORDER), 0);
+        lv_obj_set_user_data(card, (void*)name);
+        lv_obj_add_event_cb(card, appearance_accent_selected, LV_EVENT_CLICKED, ui);
+        style_plain(preview);
+        lv_coord_t preview_width = card_width - 16;
+        lv_coord_t swatch_width = (preview_width - 9) / 4;
+        lv_obj_set_size(preview, preview_width, 34);
+        lv_obj_align(preview, LV_ALIGN_TOP_MID, 0, 9);
+        lv_obj_set_layout(preview, LV_LAYOUT_FLEX);
+        lv_obj_set_flex_flow(preview, LV_FLEX_FLOW_ROW);
+        lv_obj_set_style_pad_column(preview, 3, 0);
+        for (size_t color_index = 0; color_index < 4; ++color_index) {
+            lv_obj_t* swatch = lv_obj_create(preview);
+            style_plain(swatch);
+            lv_obj_set_size(swatch,
+                            color_index == 0 ? preview_width - 9 - 3 * swatch_width :
+                                               swatch_width, 34);
+            lv_obj_set_style_radius(swatch, 5, 0);
+            lv_obj_set_style_bg_color(
+                swatch, lv_color_hex(palette.colors[preview_tokens[color_index]] &
+                                     0xffffffu), 0);
+            lv_obj_set_style_bg_opa(swatch, LV_OPA_COVER, 0);
+            lv_obj_set_style_border_width(swatch, 1, 0);
+            lv_obj_set_style_border_color(
+                swatch, lv_color_hex(palette.colors[PXSYS_COLOR_BORDER] &
+                                     0xffffffu), 0);
+            if (color_index == 0) {
+                lv_obj_t* on_accent = lv_obj_create(swatch);
+                style_plain(on_accent);
+                lv_obj_set_size(on_accent, 11, 11);
+                lv_obj_set_style_radius(on_accent, LV_RADIUS_CIRCLE, 0);
+                lv_obj_set_style_bg_color(
+                    on_accent, lv_color_hex(palette.colors[PXSYS_COLOR_ON_ACCENT] &
+                                            0xffffffu), 0);
+                lv_obj_set_style_bg_opa(on_accent, LV_OPA_COVER, 0);
+                lv_obj_center(on_accent);
+            }
+        }
+        caption = make_label(card, translated(ui, options[index].label,
+                                               options[index].fallback),
+                             typography_font(ui, PXSYS_TYPOGRAPHY_LABEL),
+                             color_token(ui, PXSYS_COLOR_TEXT_PRIMARY));
+        lv_obj_set_width(caption, LV_PCT(100));
+        lv_obj_set_style_text_align(caption, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_align(caption, LV_ALIGN_BOTTOM_MID, 0, -7);
+        if (selected_card) {
+            lv_obj_t* check = make_label(card, LV_SYMBOL_OK,
+                                         typography_font(ui, PXSYS_TYPOGRAPHY_LABEL),
+                                         color_token(ui, PXSYS_COLOR_ACCENT));
+            lv_obj_align(check, LV_ALIGN_BOTTOM_RIGHT, -9, -8);
+        }
+    }
+    lv_obj_update_layout(ui->content);
+    lv_obj_scroll_to_y(ui->content, ui->appearance_scroll_y, LV_ANIM_OFF);
 }
 
 static void notification_shade_progress_set(void* object, int32_t progress) {
@@ -4581,8 +4747,6 @@ static void build_device_info_page(pxsys_reference_lvgl_t* ui,
 
 static void page_close_dialogs(pxsys_reference_lvgl_t* ui) {
     if (!ui_valid(ui)) return;
-    ui->wifi_network_list = NULL;
-    if (ui->wifi_scan_timer != NULL) lv_timer_pause(ui->wifi_scan_timer);
     if (ui->confirm_dialog != NULL) {
         lv_obj_delete(ui->confirm_dialog);
         ui->confirm_dialog = NULL;
@@ -4591,10 +4755,6 @@ static void page_close_dialogs(pxsys_reference_lvgl_t* ui) {
         lv_obj_delete(ui->app_dialog);
         ui->app_dialog = NULL;
     }
-    ui->wifi_password_input = NULL;
-    ui->wifi_password_pinyin = NULL;
-    ui->wifi_wide_ime.keyboard = NULL;
-    ui->wifi_wide_ime.pinyin = NULL;
 }
 
 static lv_obj_t* make_page_dialog(pxsys_reference_lvgl_t* ui,
@@ -4634,16 +4794,20 @@ static lv_obj_t* make_page_dialog(pxsys_reference_lvgl_t* ui,
 static void page_dialog_scrim_clicked(lv_event_t* event);
 static void show_wifi_networks(pxsys_reference_lvgl_t* ui);
 static void wifi_render_networks(pxsys_reference_lvgl_t* ui, size_t count);
+static void app_input_method_close(pxsys_reference_lvgl_t* ui);
 
 static void wifi_scan_clicked(lv_event_t* event) {
     pxsys_reference_lvgl_t* ui = (pxsys_reference_lvgl_t*)lv_event_get_user_data(event);
     if (!ui_valid(ui) || ui->wifi_network_list == NULL) return;
     if (ui->wifi_scan_start != NULL) {
+        ui->wifi_scan_state = PXSYS_REFERENCE_WIFI_SCANNING;
         ui->wifi_scan_start(ui->wifi_context);
-        wifi_render_networks(ui, PXSYS_REFERENCE_WIFI_SCANNING);
-        lv_timer_resume(ui->wifi_scan_timer);
+        wifi_render_networks(ui, ui->wifi_scan_state);
+        if (ui->wifi_scan_timer != NULL) lv_timer_resume(ui->wifi_scan_timer);
     } else {
-        show_wifi_networks(ui);
+        ui->wifi_scan_state = ui->wifi_scan(ui->wifi_context, ui->wifi_networks,
+                                            PXSYS_REFERENCE_WIFI_NETWORK_MAX);
+        wifi_render_networks(ui, ui->wifi_scan_state);
     }
 }
 
@@ -4652,23 +4816,60 @@ static void wifi_connect_selected(pxsys_reference_lvgl_t* ui,
     if (!ui_valid(ui) || ui->wifi_connect == NULL ||
         ui->pending_wifi_ssid[0] == '\0')
         return;
-    (void)ui->wifi_connect(ui->wifi_context, ui->pending_wifi_ssid,
-                           password != NULL ? password : "");
-    page_close_dialogs(ui);
+    if (!ui->wifi_connect(ui->wifi_context, ui->pending_wifi_ssid,
+                          password != NULL ? password : "")) {
+        if (ui->wifi_input_error != NULL) {
+            lv_label_set_text(ui->wifi_input_error,
+                              translated(ui, "settings.wifi.connect_failed",
+                                         "Could not start connection"));
+            lv_obj_remove_flag(ui->wifi_input_error, LV_OBJ_FLAG_HIDDEN);
+        }
+        return;
+    }
+    ui->wifi_input_stage = 0;
+    ui->wifi_input_draft[0] = '\0';
+    ui->wifi_scan_state = PXSYS_REFERENCE_WIFI_SCANNING;
+    if (ui->wifi_scan_start != NULL) ui->wifi_scan_start(ui->wifi_context);
+    else ui->wifi_scan_state = ui->wifi_scan(ui->wifi_context, ui->wifi_networks,
+                                             PXSYS_REFERENCE_WIFI_NETWORK_MAX);
+    rebuild(ui);
+}
+
+static void wifi_submit_input(void* context) {
+    pxsys_reference_lvgl_t* ui = (pxsys_reference_lvgl_t*)context;
+    const char* text;
+    size_t length;
+    if (!ui_valid(ui) || ui->wifi_password_input == NULL) return;
+    text = lv_textarea_get_text(ui->wifi_password_input);
+    if (ui->wifi_input_stage == 2) {
+        wifi_connect_selected(ui, text);
+        return;
+    }
+    if (ui->wifi_input_stage != 1) return;
+    length = strlen(text);
+    if (length == 0 || length > PXSYS_REFERENCE_WIFI_SSID_MAX - 1u) {
+        if (ui->wifi_input_error != NULL)
+            lv_obj_remove_flag(ui->wifi_input_error, LV_OBJ_FLAG_HIDDEN);
+        return;
+    }
+    snprintf(ui->pending_wifi_ssid, sizeof(ui->pending_wifi_ssid), "%s", text);
+    ui->wifi_input_stage = 2;
+    ui->wifi_input_draft[0] = '\0';
     rebuild(ui);
 }
 
 static void wifi_keyboard_event(lv_event_t* event) {
     pxsys_reference_lvgl_t* ui =
         (pxsys_reference_lvgl_t*)lv_event_get_user_data(event);
-    const lv_event_code_t code = lv_event_get_code(event);
     if (!ui_valid(ui)) return;
-    if (code == LV_EVENT_READY && ui->wifi_password_input != NULL) {
-        wifi_connect_selected(ui, lv_textarea_get_text(ui->wifi_password_input));
-    } else if (code == LV_EVENT_CANCEL) {
-        page_close_dialogs(ui);
-        rebuild(ui);
-    }
+    if (lv_event_get_code(event) == LV_EVENT_READY && ui->wifi_password_input != NULL)
+        (void)lv_async_call(wifi_submit_input, ui);
+}
+
+static void wifi_confirm_clicked(lv_event_t* event) {
+    pxsys_reference_lvgl_t* ui =
+        (pxsys_reference_lvgl_t*)lv_event_get_user_data(event);
+    if (ui_valid(ui)) (void)lv_async_call(wifi_submit_input, ui);
 }
 
 static int object_is_within(const lv_obj_t* object, const lv_obj_t* ancestor);
@@ -4678,13 +4879,11 @@ static void wide_ime_mode_clicked(lv_event_t* event) {
     lv_obj_t* button = lv_event_get_current_target(event);
     const char* mode = (const char*)lv_obj_get_user_data(button);
     if (!ui_valid(ui) || mode == NULL) return;
-    const int app = ui->app_ime != NULL && object_is_within(button, ui->app_ime);
-    lv_obj_t* keyboard = app ? ui->app_wide_ime.keyboard : ui->wifi_wide_ime.keyboard;
-    lv_obj_t* pinyin = app ? ui->app_wide_ime.pinyin : ui->wifi_wide_ime.pinyin;
+    lv_obj_t* keyboard = ui->app_wide_ime.keyboard;
+    lv_obj_t* pinyin = ui->app_wide_ime.pinyin;
     const int chinese = strcmp(mode, "CN") == 0;
     if (keyboard == NULL) return;
-    if (app) ui->app_wide_ime.chinese = chinese;
-    else ui->wifi_wide_ime.chinese = chinese;
+    ui->app_wide_ime.chinese = chinese;
 #if LV_USE_IME_PINYIN && LV_IME_PINYIN_USE_K9_MODE
     if (pinyin != NULL) {
         lv_ime_pinyin_set_mode(pinyin, chinese ? LV_IME_PINYIN_MODE_K26 :
@@ -4700,14 +4899,14 @@ static void wide_ime_mode_clicked(lv_event_t* event) {
 }
 
 static void wide_ime_add_modes(pxsys_reference_lvgl_t* ui, lv_obj_t* parent,
-                               lv_obj_t* keyboard, lv_obj_t* pinyin, int wifi) {
+                               lv_obj_t* keyboard, lv_obj_t* pinyin) {
     lv_obj_t* bar = lv_obj_create(parent);
     static const char* const modes[] = {"CN", "EN", "123", "#+"};
     static const char* const labels[] = {"中", "EN", "123", "#+"};
     style_plain(bar);
     lv_obj_set_size(bar, LV_PCT(100), 38);
     lv_obj_align(bar, LV_ALIGN_BOTTOM_MID, 0,
-                 -(lv_coord_t)(ui->display.height * (wifi ? 42 : 40) / 100));
+                 -(lv_coord_t)(ui->display.height * 40 / 100));
     lv_obj_set_layout(bar, LV_LAYOUT_FLEX);
     lv_obj_set_flex_flow(bar, LV_FLEX_FLOW_ROW);
     for (size_t index = 0; index < 4; ++index) {
@@ -4721,80 +4920,24 @@ static void wide_ime_add_modes(pxsys_reference_lvgl_t* ui, lv_obj_t* parent,
         lv_obj_set_user_data(button, (void*)modes[index]);
         lv_obj_add_event_cb(button, wide_ime_mode_clicked, LV_EVENT_CLICKED, ui);
     }
-    if (wifi) {
-        ui->wifi_wide_ime.keyboard = keyboard;
-        ui->wifi_wide_ime.pinyin = pinyin;
-        ui->wifi_wide_ime.chinese = 0;
-    } else {
-        ui->app_wide_ime.keyboard = keyboard;
-        ui->app_wide_ime.pinyin = pinyin;
-        ui->app_wide_ime.chinese = 1;
-    }
+    ui->app_wide_ime.keyboard = keyboard;
+    ui->app_wide_ime.pinyin = pinyin;
+    ui->app_wide_ime.chinese = 1;
 #if LV_USE_IME_PINYIN && LV_IME_PINYIN_USE_K9_MODE
     if (pinyin != NULL) {
-        if (wifi) lv_ime_pinyin_set_mode(pinyin, LV_IME_PINYIN_MODE_K9_NUMBER);
         lv_obj_align_to(lv_ime_pinyin_get_cand_panel(pinyin), bar,
                         LV_ALIGN_OUT_TOP_MID, 0, 0);
     }
 #endif
 }
 
-static void show_wifi_password(pxsys_reference_lvgl_t* ui) {
-    pxsys_reference_layout_t layout;
-    lv_obj_t* panel;
-    lv_obj_t* keyboard;
-    lv_obj_t* label;
-    if (!ui_valid(ui) || ui->app_dialog != NULL ||
-        pxsys_reference_layout_compute(&ui->display, &layout) !=
-            PXSYS_STATUS_OK)
-        return;
-    expand_content_into_hidden_gesture_area(ui, &layout);
-    ui->app_dialog = make_page_dialog(ui, &layout, &panel);
-    lv_obj_add_event_cb(ui->app_dialog, page_dialog_scrim_clicked,
-                        LV_EVENT_CLICKED, ui);
-    lv_obj_align(panel, LV_ALIGN_TOP_MID, 0, 8);
-    label = make_label(panel,
-                       translated(ui, "settings.wifi.password",
-                                  "Enter Wi-Fi password"),
-                       typography_font(ui, PXSYS_TYPOGRAPHY_TITLE),
-                       color_token(ui, PXSYS_COLOR_TEXT_PRIMARY));
-    lv_obj_set_width(label, LV_PCT(100));
-    label = make_label(panel, ui->pending_wifi_ssid,
-                       typography_font(ui, PXSYS_TYPOGRAPHY_BODY),
-                       color_token(ui, PXSYS_COLOR_TEXT_SECONDARY));
-    lv_obj_set_width(label, LV_PCT(100));
-    ui->wifi_password_input = lv_textarea_create(panel);
-    lv_obj_set_width(ui->wifi_password_input, LV_PCT(100));
-    lv_textarea_set_one_line(ui->wifi_password_input, true);
-    lv_textarea_set_password_mode(ui->wifi_password_input, true);
-    lv_textarea_set_max_length(ui->wifi_password_input, 64);
-    lv_textarea_set_placeholder_text(ui->wifi_password_input,
-                                     translated(ui, "settings.wifi.password",
-                                                "Enter Wi-Fi password"));
-    lv_obj_set_style_text_font(ui->wifi_password_input,
-                              typography_font(ui, PXSYS_TYPOGRAPHY_BODY), 0);
-    keyboard = lv_keyboard_create(ui->app_dialog);
-    lv_obj_set_size(keyboard, LV_PCT(100), LV_PCT(42));
-    lv_obj_align(keyboard, LV_ALIGN_BOTTOM_MID, 0, 0);
-    lv_obj_set_style_text_font(keyboard,
-                              typography_font(ui, PXSYS_TYPOGRAPHY_BODY), 0);
-    lv_keyboard_set_textarea(keyboard, ui->wifi_password_input);
-#if LV_USE_IME_PINYIN
-    if (ui->display.width >= 480u) {
-        ui->wifi_password_pinyin = lv_ime_pinyin_create(ui->app_dialog);
-        if (ui->wifi_password_pinyin != NULL) {
-            lv_ime_pinyin_set_keyboard(ui->wifi_password_pinyin, keyboard);
-            lv_obj_set_style_text_font(
-                lv_ime_pinyin_get_cand_panel(ui->wifi_password_pinyin),
-                typography_font(ui, PXSYS_TYPOGRAPHY_BODY), 0);
-        }
-    }
-#endif
-    if (ui->display.width >= 480u)
-        wide_ime_add_modes(ui, ui->app_dialog, keyboard, ui->wifi_password_pinyin, 1);
-    lv_obj_add_event_cb(keyboard, wifi_keyboard_event, LV_EVENT_READY, ui);
-    lv_obj_add_event_cb(keyboard, wifi_keyboard_event, LV_EVENT_CANCEL, ui);
-    lv_obj_move_foreground(keyboard);
+static void wifi_add_clicked(lv_event_t* event) {
+    pxsys_reference_lvgl_t* ui =
+        (pxsys_reference_lvgl_t*)lv_event_get_user_data(event);
+    if (!ui_valid(ui)) return;
+    ui->wifi_input_stage = 1;
+    ui->wifi_input_draft[0] = '\0';
+    rebuild(ui);
 }
 
 /* --- system input method for application text inputs ------------------- */
@@ -4910,6 +5053,9 @@ static void app_input_method_open(pxsys_reference_lvgl_t* ui,
             ui->app_ime_keypad, typography_font(ui, PXSYS_TYPOGRAPHY_BODY));
         pxsys_reference_ime_set_icon_font(
             ui->app_ime_keypad, typography_font(ui, PXSYS_TYPOGRAPHY_TITLE));
+        if (target == ui->wifi_password_input)
+            pxsys_reference_ime_set_mode(ui->app_ime_keypad,
+                                         PXSYS_REFERENCE_IME_MODE_ENGLISH);
         pxsys_reference_ime_set_close_callback(ui->app_ime_keypad,
                                               app_input_method_closed, ui);
         lv_obj_add_event_cb(target, app_input_method_target_deleted,
@@ -4954,7 +5100,7 @@ static void app_input_method_open(pxsys_reference_lvgl_t* ui,
             typography_font(ui, PXSYS_TYPOGRAPHY_BODY), 0);
     }
 #endif
-    wide_ime_add_modes(ui, panel, ui->app_ime_keyboard, ui->app_ime_pinyin, 0);
+    wide_ime_add_modes(ui, panel, ui->app_ime_keyboard, ui->app_ime_pinyin);
     lv_obj_add_event_cb(ui->app_ime_keyboard, app_input_method_event,
                         LV_EVENT_READY, ui);
     lv_obj_add_event_cb(ui->app_ime_keyboard, app_input_method_event,
@@ -4976,12 +5122,15 @@ static void app_input_method_poll(lv_timer_t* timer) {
         app_input_method_close(ui);
         return;
     }
-    /* The Wi-Fi page owns its dialog and keyboard. */
     if (ui->app_dialog != NULL || ui->confirm_dialog != NULL) {
         if (ui->app_ime != NULL) app_input_method_close(ui);
         return;
     }
-    target = find_focused_textarea(lv_screen_active());
+    target = ui->active_page == REFERENCE_PAGE_WIFI &&
+                     ui->wifi_password_input != NULL &&
+                     lv_obj_has_state(ui->wifi_password_input, LV_STATE_FOCUSED)
+                 ? ui->wifi_password_input
+                 : find_focused_textarea(lv_screen_active());
 #if PXSYS_REFERENCE_UI_DEBUG_INPUT_METHOD
     if (target == NULL) target = find_any_textarea(lv_screen_active());
 #endif
@@ -5004,20 +5153,26 @@ static void wifi_network_clicked(lv_event_t* event) {
     network = &ui->wifi_networks[control->index];
     snprintf(ui->pending_wifi_ssid, sizeof(ui->pending_wifi_ssid), "%s",
              network->ssid);
-    page_close_dialogs(ui);
-    if (network->secured)
-        show_wifi_password(ui);
-    else
+    if (network->secured) {
+        ui->wifi_input_stage = 2;
+        ui->wifi_input_draft[0] = '\0';
+        rebuild(ui);
+    } else {
         wifi_connect_selected(ui, "");
+    }
 }
 
 static void wifi_render_networks(pxsys_reference_lvgl_t* ui, size_t count) {
     lv_obj_t* label;
     pxsys_reference_layout_t layout;
+    char connected_ssid[PXSYS_REFERENCE_WIFI_SSID_MAX] = {0};
     int scan_failed = count == PXSYS_REFERENCE_WIFI_SCAN_FAILED;
     int scanning = count == PXSYS_REFERENCE_WIFI_SCANNING;
     if (ui->wifi_network_list == NULL ||
         pxsys_reference_layout_compute(&ui->display, &layout) != PXSYS_STATUS_OK) return;
+    if (ui->wifi_current != NULL)
+        (void)ui->wifi_current(ui->wifi_context, connected_ssid,
+                               sizeof(connected_ssid));
     lv_obj_clean(ui->wifi_network_list);
     if (scan_failed || scanning) count = 0;
     if (count > PXSYS_REFERENCE_WIFI_NETWORK_MAX) count = PXSYS_REFERENCE_WIFI_NETWORK_MAX;
@@ -5035,9 +5190,15 @@ static void wifi_render_networks(pxsys_reference_lvgl_t* ui, size_t count) {
     for (size_t index = 0; index < count; ++index) {
         char detail[48];
         const pxsys_reference_wifi_network_t* network = &ui->wifi_networks[index];
-        snprintf(detail, sizeof(detail), "%d dBm  %s", network->rssi,
-                 translated(ui, network->secured ? "settings.wifi.secured" : "settings.wifi.open",
-                            network->secured ? "Secured" : "Open network"));
+        if (connected_ssid[0] != '\0' &&
+            strcmp(network->ssid, connected_ssid) == 0)
+            snprintf(detail, sizeof(detail), "%s",
+                     translated(ui, "state.connected", "Connected"));
+        else
+            snprintf(detail, sizeof(detail), "%d dBm  %s", network->rssi,
+                     translated(ui, network->secured ? "settings.wifi.secured" :
+                                                "settings.wifi.open",
+                                network->secured ? "Secured" : "Open network"));
         ui->wifi_network_controls[index].ui = ui;
         ui->wifi_network_controls[index].index = index;
         (void)make_settings_row(ui, &layout, ui->wifi_network_list, LV_SYMBOL_WIFI,
@@ -5049,8 +5210,11 @@ static void wifi_render_networks(pxsys_reference_lvgl_t* ui, size_t count) {
 static void wifi_scan_poll(lv_timer_t* timer) {
     pxsys_reference_lvgl_t* ui = (pxsys_reference_lvgl_t*)lv_timer_get_user_data(timer);
     size_t count;
-    if (!ui_valid(ui) || ui->wifi_network_list == NULL || ui->wifi_scan == NULL) return;
+    if (!ui_valid(ui) || ui->active_page != REFERENCE_PAGE_WIFI ||
+        ui->wifi_input_stage != 0 || ui->wifi_network_list == NULL ||
+        ui->wifi_scan == NULL) return;
     count = ui->wifi_scan(ui->wifi_context, ui->wifi_networks, PXSYS_REFERENCE_WIFI_NETWORK_MAX);
+    ui->wifi_scan_state = count;
     if (count != PXSYS_REFERENCE_WIFI_SCANNING) {
         wifi_render_networks(ui, count);
         lv_timer_pause(timer);
@@ -5058,44 +5222,111 @@ static void wifi_scan_poll(lv_timer_t* timer) {
 }
 
 static void show_wifi_networks(pxsys_reference_lvgl_t* ui) {
-    pxsys_reference_layout_t layout;
-    lv_obj_t* panel;
+    if (!ui_valid(ui) || ui->wifi_scan == NULL || ui->wifi_connect == NULL) return;
+    ui->active_page = REFERENCE_PAGE_WIFI;
+    ui->wifi_input_stage = 0;
+    ui->wifi_scan_state = PXSYS_REFERENCE_WIFI_SCANNING;
+    if (ui->wifi_scan_start != NULL) ui->wifi_scan_start(ui->wifi_context);
+    else ui->wifi_scan_state = ui->wifi_scan(ui->wifi_context, ui->wifi_networks,
+                                             PXSYS_REFERENCE_WIFI_NETWORK_MAX);
+    rebuild(ui);
+}
+
+static void build_wifi_page(pxsys_reference_lvgl_t* ui,
+                            const pxsys_reference_layout_t* layout) {
     lv_obj_t* label;
     lv_obj_t* button;
-    if (!ui_valid(ui) || ui->wifi_scan == NULL || ui->wifi_connect == NULL ||
-        pxsys_reference_layout_compute(&ui->display, &layout) !=
-            PXSYS_STATUS_OK)
+    char connected_ssid[PXSYS_REFERENCE_WIFI_SSID_MAX] = {0};
+    lv_obj_set_layout(ui->content, LV_LAYOUT_FLEX);
+    lv_obj_set_flex_flow(ui->content, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_row(ui->content, 10, 0);
+    lv_obj_set_scroll_dir(ui->content, LV_DIR_VER);
+    lv_obj_add_flag(ui->content, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+    if (ui->wifi_input_stage != 0) {
+        const int entering_ssid = ui->wifi_input_stage == 1;
+        label = make_label(ui->content,
+                           translated(ui, entering_ssid ? "settings.wifi.ssid" :
+                                              "settings.wifi.password",
+                                      entering_ssid ? "Network name (SSID)" :
+                                                      "Enter Wi-Fi password"),
+                           typography_font(ui, PXSYS_TYPOGRAPHY_TITLE),
+                           color_token(ui, PXSYS_COLOR_TEXT_PRIMARY));
+        lv_obj_set_width(label, LV_PCT(100));
+        if (!entering_ssid) {
+            label = make_label(ui->content, ui->pending_wifi_ssid,
+                               typography_font(ui, PXSYS_TYPOGRAPHY_BODY),
+                               color_token(ui, PXSYS_COLOR_TEXT_SECONDARY));
+            lv_obj_set_width(label, LV_PCT(100));
+        }
+        ui->wifi_password_input = lv_textarea_create(ui->content);
+        lv_obj_set_width(ui->wifi_password_input, LV_PCT(100));
+        lv_textarea_set_one_line(ui->wifi_password_input, true);
+        lv_textarea_set_password_mode(ui->wifi_password_input, !entering_ssid);
+        lv_textarea_set_max_length(ui->wifi_password_input, entering_ssid ? 32 : 64);
+        lv_textarea_set_placeholder_text(
+            ui->wifi_password_input,
+            translated(ui, entering_ssid ? "settings.wifi.ssid" :
+                                          "settings.wifi.password",
+                       entering_ssid ? "Network name (SSID)" : "Enter Wi-Fi password"));
+        lv_textarea_set_text(ui->wifi_password_input, ui->wifi_input_draft);
+        lv_obj_set_style_text_font(ui->wifi_password_input,
+                                   typography_font(ui, PXSYS_TYPOGRAPHY_BODY), 0);
+        lv_obj_add_event_cb(ui->wifi_password_input, wifi_keyboard_event,
+                            LV_EVENT_READY, ui);
+        ui->wifi_input_error = make_label(
+            ui->content, translated(ui, "settings.wifi.invalid_ssid",
+                                    "Enter an SSID of 1–32 bytes"),
+            typography_font(ui, PXSYS_TYPOGRAPHY_CAPTION),
+            color_token(ui, PXSYS_COLOR_ERROR));
+        lv_obj_add_flag(ui->wifi_input_error, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_set_width(ui->wifi_input_error, LV_PCT(100));
+        button = make_page_button(
+            ui, ui->content,
+            translated(ui, entering_ssid ? "settings.wifi.next" :
+                                           "settings.wifi.connect",
+                       entering_ssid ? "Next" : "Connect"),
+            PXSYS_COLOR_ACCENT, PXSYS_COLOR_ON_ACCENT, wifi_confirm_clicked, ui);
+        lv_obj_set_width(button, LV_PCT(100));
+        lv_obj_add_state(ui->wifi_password_input, LV_STATE_FOCUSED);
         return;
-    page_close_dialogs(ui);
-    expand_content_into_hidden_gesture_area(ui, &layout);
-    ui->app_dialog = make_page_dialog(ui, &layout, &panel);
-    lv_obj_add_event_cb(ui->app_dialog, page_dialog_scrim_clicked,
-                        LV_EVENT_CLICKED, ui);
-    label = make_label(panel,
-                       translated(ui, "settings.wifi.networks",
-                                  "Available networks"),
+    }
+    if (ui->wifi_current != NULL &&
+        ui->wifi_current(ui->wifi_context, connected_ssid,
+                         sizeof(connected_ssid)) && connected_ssid[0] != '\0') {
+        label = make_label(ui->content,
+                           translated(ui, "settings.wifi.connected", "Connected network"),
+                           typography_font(ui, PXSYS_TYPOGRAPHY_TITLE),
+                           color_token(ui, PXSYS_COLOR_TEXT_PRIMARY));
+        lv_obj_set_width(label, LV_PCT(100));
+        (void)make_settings_row(ui, layout, ui->content, LV_SYMBOL_WIFI,
+                                PXSYS_COLOR_SUCCESS, connected_ssid,
+                                translated(ui, "state.connected", "Connected"),
+                                NULL, NULL);
+    }
+    label = make_label(ui->content,
+                       translated(ui, "settings.wifi.networks", "Available networks"),
                        typography_font(ui, PXSYS_TYPOGRAPHY_TITLE),
                        color_token(ui, PXSYS_COLOR_TEXT_PRIMARY));
     lv_obj_set_width(label, LV_PCT(100));
     button = make_page_button(
-        ui, panel, translated(ui, "settings.wifi.scan", "Refresh"),
+        ui, ui->content, translated(ui, "settings.wifi.scan", "Refresh"),
         PXSYS_COLOR_ACCENT, PXSYS_COLOR_ON_ACCENT, wifi_scan_clicked, ui);
     lv_obj_set_width(button, LV_PCT(100));
-    ui->wifi_network_list = lv_obj_create(panel);
+    button = make_page_button(
+        ui, ui->content, translated(ui, "settings.wifi.add", "Add network manually"),
+        PXSYS_COLOR_ACCENT, PXSYS_COLOR_ON_ACCENT, wifi_add_clicked, ui);
+    lv_obj_set_width(button, LV_PCT(100));
+    ui->wifi_network_list = lv_obj_create(ui->content);
     style_plain(ui->wifi_network_list);
     lv_obj_set_width(ui->wifi_network_list, LV_PCT(100));
     lv_obj_set_height(ui->wifi_network_list, LV_SIZE_CONTENT);
     lv_obj_set_layout(ui->wifi_network_list, LV_LAYOUT_FLEX);
     lv_obj_set_flex_flow(ui->wifi_network_list, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_style_pad_row(ui->wifi_network_list, 8, 0);
-    if (ui->wifi_scan_start != NULL) {
-        wifi_render_networks(ui, PXSYS_REFERENCE_WIFI_SCANNING);
-        ui->wifi_scan_start(ui->wifi_context);
+    wifi_render_networks(ui, ui->wifi_scan_state);
+    if (ui->wifi_scan_state == PXSYS_REFERENCE_WIFI_SCANNING &&
+        ui->wifi_scan_timer != NULL)
         lv_timer_resume(ui->wifi_scan_timer);
-    } else {
-        wifi_render_networks(ui, ui->wifi_scan(ui->wifi_context, ui->wifi_networks,
-                                               PXSYS_REFERENCE_WIFI_NETWORK_MAX));
-    }
 }
 
 static void wifi_settings_clicked(lv_event_t* event) {
@@ -5611,9 +5842,23 @@ static void rebuild(pxsys_reference_lvgl_t* ui) {
         }
     }
     application_backdrop_apply(ui);
-    if (ui->content_active && ui->active_page == REFERENCE_PAGE_SETTINGS &&
+    if (ui->content_active && ui->rendered_page == REFERENCE_PAGE_SETTINGS &&
         ui->content != NULL)
         ui->settings_scroll_y = lv_obj_get_scroll_y(ui->content);
+    if (ui->content_active && ui->rendered_page == REFERENCE_PAGE_APPEARANCE &&
+        ui->content != NULL)
+        ui->appearance_scroll_y = lv_obj_get_scroll_y(ui->content);
+    if (ui->wifi_password_input != NULL) {
+        if (ui->wifi_input_stage != 0)
+            snprintf(ui->wifi_input_draft, sizeof(ui->wifi_input_draft), "%s",
+                     lv_textarea_get_text(ui->wifi_password_input));
+        if (ui->app_ime_target == ui->wifi_password_input)
+            app_input_method_close(ui);
+    }
+    if (ui->wifi_scan_timer != NULL) lv_timer_pause(ui->wifi_scan_timer);
+    ui->wifi_password_input = NULL;
+    ui->wifi_input_error = NULL;
+    ui->wifi_network_list = NULL;
     /* The shade shares the chrome root so the real navigation bar can remain
      * above it. lv_obj_clean deletes it; clear cached child pointers first. */
     if (ui->notification_shade != NULL &&
@@ -5705,20 +5950,57 @@ static void rebuild(pxsys_reference_lvgl_t* ui) {
             } else if (ui->active_page == REFERENCE_PAGE_FILE_MANAGER) {
                 title_key = "settings.files";
                 title_default = "Files & storage";
+            } else if (ui->active_page == REFERENCE_PAGE_WIFI) {
+                title_key = "settings.wifi";
+                title_default = "Wi-Fi";
+            } else if (ui->active_page == REFERENCE_PAGE_APPEARANCE) {
+                title_key = "settings.appearance";
+                title_default = "Appearance";
             }
             if (title_height < minimum_title_height)
                 title_height = minimum_title_height;
-            ui->title = make_label(ui->content,
+            lv_obj_t* title_parent = ui->content;
+            if (ui->active_page == REFERENCE_PAGE_WIFI ||
+                ui->active_page == REFERENCE_PAGE_APPEARANCE) {
+                lv_obj_t* header = lv_obj_create(ui->content);
+                lv_obj_t* back = lv_button_create(header);
+                style_plain(header);
+                lv_obj_set_size(header, LV_PCT(100), title_height + 4);
+                lv_obj_set_layout(header, LV_LAYOUT_FLEX);
+                lv_obj_set_flex_flow(header, LV_FLEX_FLOW_ROW);
+                lv_obj_set_flex_align(header, LV_FLEX_ALIGN_START,
+                                      LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+                lv_obj_set_style_pad_column(header, 6, 0);
+                lv_obj_set_size(back, 38, 38);
+                lv_obj_set_style_bg_opa(back, LV_OPA_TRANSP, 0);
+                lv_obj_set_style_border_width(back, 0, 0);
+                lv_obj_set_style_shadow_width(back, 0, 0);
+                lv_obj_set_style_pad_all(back, 0, 0);
+                lv_obj_t* arrow = make_label(back, LV_SYMBOL_LEFT,
+                                             typography_font(ui, PXSYS_TYPOGRAPHY_TITLE),
+                                             color_token(ui, PXSYS_COLOR_TEXT_PRIMARY));
+                lv_obj_align(arrow, LV_ALIGN_LEFT_MID, 5, -3);
+                lv_obj_add_event_cb(back, back_clicked, LV_EVENT_CLICKED, ui);
+                title_parent = header;
+            }
+            ui->title = make_label(title_parent,
                                    translated(ui, title_key, title_default),
                                    title_font,
                                    color_token(ui, PXSYS_COLOR_TEXT_PRIMARY));
-            lv_obj_set_width(ui->title, LV_PCT(100));
+            if (title_parent == ui->content)
+                lv_obj_set_width(ui->title, LV_PCT(100));
+            else
+                lv_obj_set_flex_grow(ui->title, 1);
             lv_obj_set_height(ui->title, title_height);
         }
         if (ui->active_page == REFERENCE_PAGE_HOME)
             build_home(ui, &layout);
         else if (ui->active_page == REFERENCE_PAGE_SETTINGS)
             build_settings(ui, &layout);
+        else if (ui->active_page == REFERENCE_PAGE_WIFI)
+            build_wifi_page(ui, &layout);
+        else if (ui->active_page == REFERENCE_PAGE_APPEARANCE)
+            build_appearance_page(ui, &layout);
 #if PXSYS_REFERENCE_UI_BUILTIN_SETTINGS
         else if (ui->active_page == REFERENCE_PAGE_SOUND_SETTINGS)
             build_sound_settings(ui, &layout);
@@ -5729,6 +6011,7 @@ static void rebuild(pxsys_reference_lvgl_t* ui) {
         else if (ui->active_page == REFERENCE_PAGE_FILE_MANAGER)
             build_file_manager(ui, &layout);
 #endif
+        ui->rendered_page = ui->active_page;
     }
 
     if ((ui->active_chrome & PXSYS_REFERENCE_UI_NAVIGATION_BAR) &&
@@ -6532,6 +6815,7 @@ pxsys_status_t pxsys_reference_lvgl_create(
     ui->wifi_scan = config->wifi_scan;
     ui->wifi_scan_start = config->wifi_scan_start;
     ui->wifi_connect = config->wifi_connect;
+    ui->wifi_current = config->wifi_current;
     ui->app_permission_context = config->app_permission_context;
     ui->app_permission_list = config->app_permission_list;
     ui->app_permission_set = config->app_permission_set;

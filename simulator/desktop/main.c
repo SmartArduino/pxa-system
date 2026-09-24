@@ -70,6 +70,11 @@ typedef struct {
     uint8_t round;
 } simulator_device_info_t;
 
+typedef struct {
+    char ssid[PXSYS_REFERENCE_WIFI_SSID_MAX];
+    bool connected;
+} simulator_wifi_t;
+
 static simulator_ui_fonts_t simulator_ui_fonts;
 
 typedef struct {
@@ -598,6 +603,41 @@ static bool simulator_memory_info(void* context, uint64_t* available_bytes,
     if (available_pages < 0 || total_pages <= 0 || page_size <= 0) return false;
     *available_bytes = (uint64_t)available_pages * (uint64_t)page_size;
     *total_bytes = (uint64_t)total_pages * (uint64_t)page_size;
+    return true;
+}
+
+static size_t simulator_wifi_scan(void* context,
+                                  pxsys_reference_wifi_network_t* networks,
+                                  size_t capacity) {
+    static const pxsys_reference_wifi_network_t available[] = {
+        {.ssid = "PXA Simulator", .rssi = -46, .secured = 1},
+        {.ssid = "PXA Guest", .rssi = -68, .secured = 0},
+    };
+    size_t count = sizeof(available) / sizeof(available[0]);
+    (void)context;
+    if (count > capacity) count = capacity;
+    if (count != 0 && networks != NULL)
+        memcpy(networks, available, count * sizeof(*networks));
+    return count;
+}
+
+static bool simulator_wifi_connect(void* context, const char* ssid,
+                                   const char* password) {
+    simulator_wifi_t* wifi = (simulator_wifi_t*)context;
+    if (wifi == NULL || ssid == NULL || strlen(ssid) == 0 ||
+        strlen(ssid) >= sizeof(wifi->ssid))
+        return false;
+    (void)password;
+    snprintf(wifi->ssid, sizeof(wifi->ssid), "%s", ssid);
+    wifi->connected = true;
+    return true;
+}
+
+static bool simulator_wifi_current(void* context, char* ssid, size_t capacity) {
+    const simulator_wifi_t* wifi = (const simulator_wifi_t*)context;
+    if (wifi == NULL || ssid == NULL || capacity == 0 || !wifi->connected)
+        return false;
+    snprintf(ssid, capacity, "%s", wifi->ssid);
     return true;
 }
 
@@ -1300,6 +1340,7 @@ static int run_simulator(const simulator_options_t* options) {
     simulator_icon_resolver_t icon_resolver = {0};
     simulator_catalog_t catalog = {0};
     simulator_device_info_t device_info;
+    simulator_wifi_t simulated_wifi = {0};
     pxsys_reference_lvgl_config_t ui_config;
     pxsys_reference_lvgl_t* ui = NULL;
     lv_display_t* display = NULL;
@@ -1454,6 +1495,12 @@ static int run_simulator(const simulator_options_t* options) {
 
     pxsys_reference_lvgl_config_init(&ui_config);
     ui_config.system = system;
+    simulated_wifi.connected = options->network == PXSYS_NETWORK_WIFI;
+    snprintf(simulated_wifi.ssid, sizeof(simulated_wifi.ssid), "PXA Simulator");
+    ui_config.wifi_context = &simulated_wifi;
+    ui_config.wifi_scan = simulator_wifi_scan;
+    ui_config.wifi_connect = simulator_wifi_connect;
+    ui_config.wifi_current = simulator_wifi_current;
     /* The standard system UI lives on the top layer, matching the product
      * integration viewport: application surfaces stay below the system chrome
      * so the status bar, navigation gestures and recents keep working while a
