@@ -553,15 +553,15 @@ def main(argv):
     for component_id, kind, flags, service_requirements, wasi_features, artifact_mode in components:
         automatic_services = []
         if kind == COMPONENT_KINDS["ui"]:
-            automatic_services.extend([2, 3, 4])
+            automatic_services.extend(["window", "ui", "clock"])
         if permission_entries:
-            automatic_services.append(11)
+            automatic_services.append("permission")
         if component_id in endpoint_components:
-            automatic_services.append(7)
+            automatic_services.append("ipc")
         services_by_id = {
-            service_id: (service_id, (major, minor), (major, 0xFFFF), 0)
-            for service_id in automatic_services
-            for major, minor in [SERVICE_VERSIONS[service_id]]
+            requirement[0]: requirement
+            for name in automatic_services
+            for requirement in [default_service_requirement(name)]
         }
         services_by_id.update({requirement[0]: requirement
                                for requirement in service_requirements})

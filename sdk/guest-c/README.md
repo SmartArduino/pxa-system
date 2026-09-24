@@ -80,8 +80,9 @@ requirement objects. Valid names are `window`, `ui`, `clock`, `fs`, `storage`,
 `ipc`, `sensor`, `net`, `audio`, `permission`, `work`, `device`, `surface`,
 `game-render`, or `log`.
 `core` is intentionally not a Service declaration: Core compatibility comes
-from the SDK fields. A string requires the build SDK's current Service minor
-and permits all later minors in that major. A requirement object can set
+from the SDK fields. A string or a requirement object without a version
+requires the build SDK's current Service minor and permits all later minors
+in that major. A requirement object can set
 `min_version`, `max_version` and named `features`, for example:
 
 ```json
@@ -89,7 +90,8 @@ and permits all later minors in that major. A requirement object can set
               "features": ["canvas", "virtual-list"]}]
 ```
 
-UI Components automatically require Window, UI and Clock. An explicit UI
+UI Components automatically require the build SDK's current Window, UI and
+Clock versions. An explicit UI
 requirement replaces that automatic default when an App needs a newer minor or
 feature. Legacy source metadata describes one `main` UI Component from `main.c`. A
 

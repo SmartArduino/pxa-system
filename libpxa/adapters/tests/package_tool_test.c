@@ -3,6 +3,7 @@
 #include <string.h>
 
 #include "pxa/openssl/pxa_openssl.h"
+#include "pxa/fs.h"
 #include "pxa/package.h"
 #include "pxa/ui.h"
 #include "pxa/wasi.h"
@@ -193,12 +194,12 @@ int main(int argc, char **argv) {
         ui_requirement == NULL ||
         net_requirement == NULL || wasi_requirement == NULL ||
         ui_requirement->min_version.major != 0 ||
-        ui_requirement->min_version.minor != 3 ||
+        ui_requirement->min_version.minor != PXA_UI_SERVICE_MINOR ||
         ui_requirement->max_version.major != 0 ||
         ui_requirement->max_version.minor != UINT16_MAX ||
         ui_requirement->required_features != PXA_UI_FEATURE_CANVAS ||
         fs_requirement->min_version.major != 0 ||
-        fs_requirement->min_version.minor != 1 ||
+        fs_requirement->min_version.minor != PXA_FS_SERVICE_MINOR ||
         fs_requirement->max_version.major != 0 ||
         fs_requirement->max_version.minor != UINT16_MAX ||
         net_requirement->min_version.major != 0 ||
@@ -206,7 +207,7 @@ int main(int argc, char **argv) {
         net_requirement->max_version.major != 0 ||
         net_requirement->max_version.minor != 4 ||
         wasi_requirement->min_version.major != 0 ||
-        wasi_requirement->min_version.minor != 1 ||
+        wasi_requirement->min_version.minor != PXA_WASI_SERVICE_MINOR ||
         wasi_requirement->max_version.major != 0 ||
         wasi_requirement->max_version.minor != UINT16_MAX ||
         wasi_requirement->required_features !=

@@ -47,6 +47,7 @@ clang --target=wasm32-unknown-unknown -O2 -fno-builtin -nostdlib \
   -Wl,--allow-undefined-file="$pxa_system_dir/sdk/guest-c/pxa-imports.txt" \
   -Wl,--export=pxa_app_on_event -Wl,--export=pxa_app_stop \
   "$app_source_root/weather/main.c" \
+  "$app_source_root/weather/weather_providers.c" \
   -o "$work_dir/weather-import-regression.wasm"
 
 # The manifest layer inventories opaque Artifact bytes. WAMR format validation
@@ -73,6 +74,8 @@ sed '/^}/i\\  ,"build": {"system": "direct", "linear_memory": {"maximum_bytes": 
   "$metadata" "$package_dir" \
   "$pxa_system_dir/apps/pxa/.dev-signing/publisher-private.pem" \
   linux-x86_64 "$engine_abi"
+"${PYTHON:-python3}" "$script_dir/test_service_versions.py" \
+  "$package_dir/manifest.pxm"
 
 invalid_metadata="$work_dir/package-invalid.json"
 sed 's/"services": \["fs", {"name": "net", "min_version": \[0, 1\], "max_version": \[0, 4\]}, {"name": "ui", "features": \["canvas"\]}\]/"services": [5]/' "$metadata" > "$invalid_metadata"
