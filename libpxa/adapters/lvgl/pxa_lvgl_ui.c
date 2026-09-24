@@ -316,8 +316,10 @@ static void on_widget_event(lv_event_t *event) {
         /* A tap on a text input starts editing; the action arrives when the
          * input is submitted (LV_EVENT_READY). */
         if (node->type == PXA_UI_NODE_CONTROL &&
-            node->subtype == PXA_UI_CONTROL_TEXT_INPUT)
+            node->subtype == PXA_UI_CONTROL_TEXT_INPUT) {
+            lv_obj_add_state(node->object, LV_STATE_FOCUSED);
             return;
+        }
         emit_event(node, lv_event_get_indev(event), PXA_UI_EVENT_ACTION,
                    PXA_UI_EVENT_FLAG_RELIABLE, NULL, 0);
     } else if (code == LV_EVENT_VALUE_CHANGED) {

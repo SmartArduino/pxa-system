@@ -930,6 +930,28 @@ int main(void) {
         g_events = 0;
         lv_obj_send_event(input, LV_EVENT_CLICKED, NULL);
         assert(g_events == 0);
+        assert(lv_obj_has_state(input, LV_STATE_FOCUSED));
+        lv_obj_remove_state(input, LV_STATE_FOCUSED);
+        {
+            lv_indev_t *press_input = lv_indev_create();
+            pointer_input_t press_state = {{0, 0}, 0, 0};
+            lv_area_t input_area;
+            assert(press_input != NULL);
+            lv_indev_set_type(press_input, LV_INDEV_TYPE_POINTER);
+            lv_indev_set_display(press_input, g_test_display);
+            lv_indev_set_user_data(press_input, &press_state);
+            lv_indev_set_read_cb(press_input, read_pointer);
+            lv_obj_update_layout(text_root);
+            lv_obj_get_coords(input, &input_area);
+            press_state.point.x = input_area.x1 + 20;
+            press_state.point.y = input_area.y1 + 15;
+            press_state.pressed = 1;
+            lv_indev_read(press_input);
+            press_state.pressed = 0;
+            lv_indev_read(press_input);
+            assert(lv_obj_has_state(input, LV_STATE_FOCUSED));
+            lv_indev_delete(press_input);
+        }
         g_events = 0;
         lv_obj_send_event(input, LV_EVENT_READY, NULL);
         assert(g_events == 1 && g_event_kind == PXA_UI_EVENT_ACTION);
