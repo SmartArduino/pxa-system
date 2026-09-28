@@ -49,7 +49,8 @@ set(PXSYS_REFERENCE_LAYOUT_SOURCES
 
 set(PXSYS_REFERENCE_LVGL_SOURCES
     "${PXSYS_ROOT}/ui/reference/lvgl/src/reference_lvgl.c"
-    "${PXSYS_ROOT}/ui/reference/lvgl/src/reference_ime.c")
+    "${PXSYS_ROOT}/ui/reference/lvgl/src/reference_ime.c"
+    "${PXSYS_ROOT}/ui/reference/lvgl/src/reference_lock_digits_72.c")
 
 set(PXSYS_PUBLIC_INCLUDE_DIRS
     "${PXSYS_ROOT}/system/core/include"

@@ -16,6 +16,8 @@
 
 #define REFERENCE_MAGIC UINT32_C(0x50585255)
 #define REFERENCE_APP_COUNT 8u
+extern const lv_font_t pxsys_reference_lock_digits_72;
+
 #define TRANSIENT_BAR_TIMEOUT_MS 2500u
 #define NAVIGATION_GESTURE_COMMIT_DISTANCE 32
 #define NAVIGATION_GESTURE_HOLD_MS 180u
@@ -6654,8 +6656,8 @@ static void lock_screen_refresh(pxsys_reference_lvgl_t* ui) {
     lv_obj_set_style_text_color(ui->lock_time,
                                 color_token(ui, PXSYS_COLOR_TEXT_PRIMARY), 0);
     lv_obj_set_style_text_font(
-        ui->lock_time, typography_font(ui, PXSYS_TYPOGRAPHY_DISPLAY), 0);
-    lv_obj_align(ui->lock_time, LV_ALIGN_CENTER, 0, -24);
+        ui->lock_time, &pxsys_reference_lock_digits_72, 0);
+    lv_obj_align(ui->lock_time, LV_ALIGN_CENTER, 0, -30);
 
     lv_label_set_text(ui->lock_date, date_text);
     lv_obj_set_width(ui->lock_date, text_width);
@@ -6664,7 +6666,7 @@ static void lock_screen_refresh(pxsys_reference_lvgl_t* ui) {
                                 color_token(ui, PXSYS_COLOR_TEXT_SECONDARY), 0);
     lv_obj_set_style_text_font(
         ui->lock_date, typography_font(ui, PXSYS_TYPOGRAPHY_BODY), 0);
-    lv_obj_align(ui->lock_date, LV_ALIGN_CENTER, 0, 20);
+    lv_obj_align(ui->lock_date, LV_ALIGN_CENTER, 0, 27);
 
     lv_label_set_text(ui->lock_hint,
                       translated(ui, "lock.swipe", "Swipe up to unlock"));
