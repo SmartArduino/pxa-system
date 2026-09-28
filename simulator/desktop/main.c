@@ -75,10 +75,132 @@ typedef struct {
     bool connected;
 } simulator_wifi_t;
 
+typedef struct {
+    pxsys_standard_system_t* system;
+    char path[512];
+    uint8_t loaded;
+    uint8_t theme_seen;
+    uint8_t status_seen;
+    uint8_t scheme;
+    uint8_t palette;
+    uint8_t volume;
+    uint8_t brightness;
+} simulator_preferences_t;
+
+static void simulator_preferences_init(simulator_preferences_t* prefs,
+                                       const char* state_root) {
+    const char* root = state_root != NULL ? state_root : getenv("HOME");
+    unsigned version, scheme, palette, volume, brightness;
+    FILE* file;
+    if (root == NULL || snprintf(prefs->path, sizeof(prefs->path), "%s/%s",
+                                 root, state_root != NULL ? "user-preferences" :
+                                 ".pxa-simulator-user-preferences") >=
+                            (int)sizeof(prefs->path))
+        return;
+    file = fopen(prefs->path, "rb");
+    if (file == NULL) return;
+    if (fscanf(file, "%u %u %u %u %u", &version, &scheme, &palette,
+               &volume, &brightness) == 5 && version == 1 &&
+        scheme <= PXSYS_COLOR_SCHEME_DARK &&
+        palette < PXSYS_THEME_PALETTE_COUNT &&
+        volume <= 100 && brightness >= 2 && brightness <= 100) {
+        prefs->loaded = 1;
+        prefs->scheme = (uint8_t)scheme;
+        prefs->palette = (uint8_t)palette;
+        prefs->volume = (uint8_t)volume;
+        prefs->brightness = (uint8_t)brightness;
+    }
+    fclose(file);
+}
+
+static void simulator_preferences_save(simulator_preferences_t* prefs) {
+    char temp[sizeof(prefs->path) + 5];
+    FILE* file;
+    if (prefs->path[0] == '\0' ||
+        snprintf(temp, sizeof(temp), "%s.tmp", prefs->path) >=
+            (int)sizeof(temp))
+        return;
+    file = fopen(temp, "wb");
+    if (file == NULL) return;
+    int ok = fprintf(file, "1 %u %u %u %u\n", prefs->scheme, prefs->palette,
+                     prefs->volume, prefs->brightness) > 0;
+    if (fclose(file) != 0) ok = 0;
+    if (!ok || rename(temp, prefs->path) != 0) (void)unlink(temp);
+}
+
+static void simulator_preferences_theme_changed(
+    void* context, const pxsys_theme_snapshot_t* theme) {
+    simulator_preferences_t* prefs = context;
+    if (!prefs->theme_seen) {
+        prefs->theme_seen = 1;
+        return;
+    }
+    uint8_t palette = PXSYS_THEME_PALETTE_BLUE;
+    if (theme->theme_id_size != 0) {
+        int found = 0;
+        for (uint8_t index = PXSYS_THEME_PALETTE_TEAL;
+             index < PXSYS_THEME_PALETTE_COUNT; ++index) {
+            const char* name = pxsys_theme_palette_name(
+                (pxsys_theme_palette_t)index);
+            if (theme->theme_id_size == strlen(name) &&
+                memcmp(theme->theme_id, name, theme->theme_id_size) == 0) {
+                palette = index;
+                found = 1;
+                break;
+            }
+        }
+        if (!found) return;
+    }
+    if (prefs->scheme == (uint8_t)theme->effective_scheme &&
+        prefs->palette == palette) return;
+    prefs->scheme = (uint8_t)theme->effective_scheme;
+    prefs->palette = palette;
+    simulator_preferences_save(prefs);
+}
+
+static void simulator_preferences_status_changed(
+    void* context, const pxsys_system_status_snapshot_t* status) {
+    simulator_preferences_t* prefs = context;
+    if (!prefs->status_seen) {
+        prefs->status_seen = 1;
+        return;
+    }
+    const uint8_t volume = status->volume_supported
+                               ? status->volume_percent : prefs->volume;
+    const uint8_t brightness =
+        status->brightness_supported && status->brightness_percent >= 2
+            ? status->brightness_percent : prefs->brightness;
+    if (volume == prefs->volume && brightness == prefs->brightness) return;
+    prefs->volume = volume;
+    prefs->brightness = brightness;
+    simulator_preferences_save(prefs);
+}
+
+static pxsys_status_t simulator_set_level(void* context,
+                                           pxsys_level_control_t control,
+                                           uint8_t percent) {
+    simulator_preferences_t* prefs = context;
+    pxsys_system_status_snapshot_t status = {.struct_size = sizeof(status)};
+    if (prefs->system == NULL ||
+        pxsys_system_status_service_get(
+            pxsys_standard_system_status(prefs->system), &status) != PXSYS_STATUS_OK)
+        return PXSYS_STATUS_INVALID_ARGUMENT;
+    if (control == PXSYS_LEVEL_CONTROL_VOLUME)
+        status.volume_percent = percent;
+    else if (control == PXSYS_LEVEL_CONTROL_BRIGHTNESS)
+        status.brightness_percent = percent;
+    else
+        return PXSYS_STATUS_UNSUPPORTED;
+    return pxsys_system_status_service_update(
+        pxsys_standard_system_status(prefs->system), &status);
+}
+
 static simulator_ui_fonts_t simulator_ui_fonts;
 
 typedef struct {
     pxsys_reference_lvgl_t* ui;
+    simulator_preferences_t* prefs;
+    SDL_atomic_t volume_steps;
     lv_obj_t* screen_off_overlay;
     uint32_t window_id;
     uint32_t pressed_at_ms;
@@ -121,6 +243,14 @@ static void simulator_screen_wake(simulator_power_state_t* state) {
 
 static int simulator_power_event_watch(void* context, SDL_Event* event) {
     simulator_power_state_t* state = (simulator_power_state_t*)context;
+    if (state != NULL && event != NULL && event->type == SDL_KEYDOWN &&
+        !event->key.repeat && state->prefs != NULL &&
+        (state->window_id == 0 || event->key.windowID == state->window_id)) {
+        if (event->key.keysym.sym == SDLK_VOLUMEUP)
+            SDL_AtomicAdd(&state->volume_steps, 1);
+        else if (event->key.keysym.sym == SDLK_VOLUMEDOWN)
+            SDL_AtomicAdd(&state->volume_steps, -1);
+    }
     if (state == NULL || event == NULL ||
         (event->type != SDL_KEYDOWN && event->type != SDL_KEYUP) ||
         (event->key.keysym.sym != SDLK_p &&
@@ -1375,6 +1505,7 @@ static int run_simulator(const simulator_options_t* options) {
     simulator_catalog_t catalog = {0};
     simulator_device_info_t device_info;
     simulator_wifi_t simulated_wifi = {0};
+    simulator_preferences_t preferences = {0};
     pxsys_reference_lvgl_config_t ui_config;
     pxsys_reference_lvgl_t* ui = NULL;
     lv_display_t* display = NULL;
@@ -1386,9 +1517,14 @@ static int run_simulator(const simulator_options_t* options) {
     uint8_t publisher_root[PXSYS_PUBLISHER_ROOT_BYTES];
     int result = 1;
     uint8_t catalog_locale_subscribed = 0;
+    uint8_t preferences_theme_subscribed = 0;
+    uint8_t preferences_status_subscribed = 0;
     uint8_t power_event_watch_added = 0;
 
     memset(publisher_root, 0x52, sizeof(publisher_root));
+    preferences.volume = 64;
+    preferences.brightness = 72;
+    simulator_preferences_init(&preferences, options->state_root);
 
     lv_init();
     if (!create_ui_fonts()) goto done;
@@ -1459,7 +1595,18 @@ static int run_simulator(const simulator_options_t* options) {
             UINT32_C(0xffffffff);
     } else {
         pxsys_theme_snapshot_init(&system_config.initial_theme,
-                                  options->scheme);
+                                  preferences.loaded
+                                      ? (pxsys_color_scheme_t)preferences.scheme
+                                      : options->scheme);
+        if (preferences.loaded)
+            (void)pxsys_theme_snapshot_apply_palette(
+                &system_config.initial_theme,
+                (pxsys_theme_palette_t)preferences.palette);
+    }
+    if (!preferences.loaded) {
+        preferences.scheme =
+            (uint8_t)system_config.initial_theme.effective_scheme;
+        preferences.palette = PXSYS_THEME_PALETTE_BLUE;
     }
     if (pxsys_locale_snapshot_init(
             &system_config.initial_locale,
@@ -1490,12 +1637,15 @@ static int run_simulator(const simulator_options_t* options) {
     system_config.initial_system_status.cellular_signal_level =
         options->network == PXSYS_NETWORK_CELLULAR ? options->network_signal : 0;
     system_config.initial_system_status.volume_supported = 1;
-    system_config.initial_system_status.volume_percent = 64;
+    system_config.initial_system_status.volume_percent = preferences.volume;
     system_config.initial_system_status.brightness_supported = 1;
-    system_config.initial_system_status.brightness_percent = 72;
+    system_config.initial_system_status.brightness_percent = preferences.brightness;
     system_config.initial_system_status.bluetooth_supported = 1;
+    system_config.control_context = &preferences;
+    system_config.set_level = simulator_set_level;
     if (pxsys_standard_system_create(&system_config, &system) !=
         PXSYS_STATUS_OK) goto done;
+    preferences.system = system;
 
     runtime_fixture.permission_allowed = options->permission_allowed;
     runtime_fixture.storage_bytes = options->storage_bytes;
@@ -1571,11 +1721,22 @@ static int run_simulator(const simulator_options_t* options) {
     if (pxsys_reference_lvgl_create(&ui_config, &ui) != PXSYS_STATUS_OK)
         goto done;
     if (pxsys_reference_lvgl_start(ui) != PXSYS_STATUS_OK) goto done;
+    if (pxsys_theme_service_subscribe(
+            pxsys_standard_system_theme(system), &preferences,
+            simulator_preferences_theme_changed) != PXSYS_STATUS_OK)
+        goto done;
+    preferences_theme_subscribed = 1;
+    if (pxsys_system_status_service_subscribe(
+            pxsys_standard_system_status(system), &preferences,
+            simulator_preferences_status_changed) != PXSYS_STATUS_OK)
+        goto done;
+    preferences_status_subscribed = 1;
     catalog.ui = ui;
     if (options->locked &&
         pxsys_reference_lvgl_set_locked(ui, true) != PXSYS_STATUS_OK)
         goto done;
     power_state.ui = ui;
+    power_state.prefs = &preferences;
     power_state.window_id = SDL_GetWindowID(lv_sdl_window_get_window(display));
     (void)pxsys_reference_lvgl_set_power_action_callback(
         ui, &power_state, simulator_power_action);
@@ -1619,6 +1780,18 @@ static int run_simulator(const simulator_options_t* options) {
         pxsys_desktop_runtime_poll(simulator_runtime);
         pxsys_pxadb_control_poll(&pxadb_control);
         uint32_t delay = lv_timer_handler();
+        int steps = SDL_AtomicSet(&power_state.volume_steps, 0);
+        if (steps != 0) {
+            pxsys_system_status_snapshot_t status = {.struct_size = sizeof(status)};
+            if (pxsys_system_status_service_get(
+                    pxsys_standard_system_status(system), &status) == PXSYS_STATUS_OK) {
+                int next = (int)status.volume_percent + steps * 10;
+                if (next < 0) next = 0;
+                if (next > 100) next = 100;
+                (void)simulator_set_level(&preferences, PXSYS_LEVEL_CONTROL_VOLUME,
+                                          (uint8_t)next);
+            }
+        }
         simulator_power_poll(&power_state);
         if (delay < 1) delay = 1;
         if (delay > 16) delay = 16;
@@ -1641,6 +1814,14 @@ static int run_simulator(const simulator_options_t* options) {
 done:
     if (power_event_watch_added)
         SDL_DelEventWatch(simulator_power_event_watch, &power_state);
+    if (preferences_status_subscribed)
+        (void)pxsys_system_status_service_unsubscribe(
+            pxsys_standard_system_status(system), &preferences,
+            simulator_preferences_status_changed);
+    if (preferences_theme_subscribed)
+        (void)pxsys_theme_service_unsubscribe(
+            pxsys_standard_system_theme(system), &preferences,
+            simulator_preferences_theme_changed);
     pxsys_pxadb_control_stop(&pxadb_control);
     if (power_state.screen_off_overlay != NULL &&
         lv_display_get_default() != NULL)

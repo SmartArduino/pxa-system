@@ -405,6 +405,10 @@ struct pxsys_reference_lvgl {
     lv_obj_t* navigation_bar;
     lv_obj_t* toast;
     lv_obj_t* toast_label;
+    lv_obj_t* volume_osd;
+    lv_obj_t* volume_osd_icon;
+    lv_obj_t* volume_osd_bar;
+    lv_obj_t* volume_osd_value;
     lv_obj_t* notification_shade;
     lv_obj_t* notification_panel;
     lv_obj_t* notification_content;
@@ -424,6 +428,7 @@ struct pxsys_reference_lvgl {
     lv_obj_t* navigation_back_indicator;
     int32_t navigation_handle_width;
     lv_timer_t* toast_timer;
+    lv_timer_t* volume_osd_timer;
     /* System input method for application text inputs. */
     lv_obj_t* app_ime;
     lv_obj_t* app_ime_keyboard;
@@ -484,6 +489,7 @@ struct pxsys_reference_lvgl {
     uint8_t resource_catalog_en_registered;
     uint8_t resource_catalog_zh_registered;
     uint8_t toast_visible;
+    uint8_t volume_osd_visible;
     pxsys_toast_tone_t toast_tone;
     uint8_t active_chrome;
     uint8_t content_active;
@@ -614,6 +620,7 @@ static int task_switcher_is_open(const pxsys_reference_lvgl_t* ui);
 static void close_language_dialog(pxsys_reference_lvgl_t* ui);
 static void close_notification_shade(pxsys_reference_lvgl_t* ui);
 static void toast_restack(pxsys_reference_lvgl_t* ui);
+static void volume_osd_restack(pxsys_reference_lvgl_t* ui);
 static void capture_current_task(pxsys_reference_lvgl_t* ui,
                                  int transition_pending);
 static void dismiss_recent_item(pxsys_reference_lvgl_t* ui,
@@ -645,6 +652,7 @@ static void update_system_overlay(pxsys_reference_lvgl_t* ui) {
               (ui->navigation_mode == PXSYS_NAVIGATION_BUTTONS &&
                ui->navigation_bar != NULL) ||
               ui->navigation_back_indicator != NULL || ui->toast_visible ||
+              ui->volume_osd_visible ||
               (ui->app_ime != NULL &&
                !lv_obj_has_flag(ui->app_ime, LV_OBJ_FLAG_HIDDEN)) ||
               (ui->notification_shade != NULL &&
@@ -3363,6 +3371,15 @@ static void appearance_apply(pxsys_reference_lvgl_t* ui,
                                      &next);
 }
 
+static void quick_theme_clicked(lv_event_t* event) {
+    pxsys_reference_lvgl_t* ui = lv_event_get_user_data(event);
+    if (!ui_valid(ui)) return;
+    appearance_apply(ui,
+                     ui->theme.effective_scheme == PXSYS_COLOR_SCHEME_DARK
+                         ? PXSYS_COLOR_SCHEME_LIGHT : PXSYS_COLOR_SCHEME_DARK,
+                     accent_name(&ui->theme));
+}
+
 static void appearance_scheme_selected(lv_event_t* event) {
     pxsys_reference_lvgl_t* ui = lv_event_get_user_data(event);
     lv_obj_t* row = lv_event_get_current_target(event);
@@ -4242,7 +4259,7 @@ static void build_notification_shade(pxsys_reference_lvgl_t* ui,
         LV_SYMBOL_TINT,
         translated(ui, "control.theme", "Theme"),
         ui->theme.effective_scheme == PXSYS_COLOR_SCHEME_DARK,
-        theme_clicked, ui);
+        quick_theme_clicked, ui);
     quick_index++;
     {
         lv_obj_t* scroll_extent = lv_obj_create(body);
@@ -4733,6 +4750,107 @@ static void toast_restack(pxsys_reference_lvgl_t* ui) {
     root_index = lv_obj_get_index(ui->root);
     if (root_index >= 0)
         lv_obj_move_to_index(ui->toast, root_index + 1);
+}
+
+static void volume_osd_restack(pxsys_reference_lvgl_t* ui) {
+    if (ui->volume_osd == NULL || ui->root == NULL) return;
+    if (ui->parent == lv_display_get_layer_top(lv_obj_get_display(ui->root))) {
+        int32_t root_index = lv_obj_get_index(ui->root);
+        if (root_index >= 0)
+            lv_obj_move_to_index(ui->volume_osd, root_index + 1);
+    } else {
+        lv_obj_move_foreground(ui->volume_osd);
+    }
+}
+
+static void volume_osd_apply_theme(pxsys_reference_lvgl_t* ui) {
+    if (ui->volume_osd == NULL) return;
+    lv_obj_set_style_bg_color(ui->volume_osd,
+                              color_token(ui, PXSYS_COLOR_SURFACE_CONTAINER_HIGH), 0);
+    lv_obj_set_style_border_color(ui->volume_osd,
+                                  color_token(ui, PXSYS_COLOR_BORDER), 0);
+    lv_obj_set_style_shadow_color(ui->volume_osd,
+                                  color_token(ui, PXSYS_COLOR_SCRIM), 0);
+    lv_obj_set_style_text_color(ui->volume_osd_icon,
+                                color_token(ui, PXSYS_COLOR_TEXT_PRIMARY), 0);
+    lv_obj_set_style_text_color(ui->volume_osd_value,
+                                color_token(ui, PXSYS_COLOR_TEXT_PRIMARY), 0);
+    lv_obj_set_style_bg_color(ui->volume_osd_bar,
+                              color_token(ui, PXSYS_COLOR_BORDER), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(ui->volume_osd_bar,
+                              color_token(ui, PXSYS_COLOR_ACCENT),
+                              LV_PART_INDICATOR);
+}
+
+static void volume_osd_hide(lv_timer_t* timer) {
+    pxsys_reference_lvgl_t* ui = lv_timer_get_user_data(timer);
+    if (!ui_valid(ui) || ui->volume_osd == NULL) return;
+    ui->volume_osd_visible = 0;
+    lv_obj_add_flag(ui->volume_osd, LV_OBJ_FLAG_HIDDEN);
+    lv_timer_pause(timer);
+    update_system_overlay(ui);
+}
+
+static void volume_osd_show(pxsys_reference_lvgl_t* ui, uint8_t percent) {
+    pxsys_reference_layout_t layout;
+    int32_t width;
+    int32_t top;
+    if (!ui_valid(ui) || ui->parent == NULL ||
+        pxsys_reference_layout_compute(&ui->display, &layout) != PXSYS_STATUS_OK)
+        return;
+    width = (int32_t)layout.safe_area.width - 12;
+    if (width > 240) width = 240;
+    if (width < 160) width = 160;
+    top = (int32_t)layout.safe_area.y + 8;
+    if (ui->volume_osd == NULL) {
+        ui->volume_osd = lv_obj_create(ui->parent);
+        style_plain(ui->volume_osd);
+        lv_obj_set_style_bg_opa(ui->volume_osd, LV_OPA_COVER, 0);
+        lv_obj_set_style_radius(ui->volume_osd, 12, 0);
+        lv_obj_set_style_border_width(ui->volume_osd, 1, 0);
+        lv_obj_set_style_shadow_width(ui->volume_osd, 12, 0);
+        lv_obj_set_style_shadow_opa(ui->volume_osd, LV_OPA_30, 0);
+        lv_obj_set_style_pad_all(ui->volume_osd, 0, 0);
+        lv_obj_clear_flag(ui->volume_osd, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_remove_flag(ui->volume_osd, LV_OBJ_FLAG_CLICKABLE);
+        ui->volume_osd_icon = make_label(ui->volume_osd, LV_SYMBOL_VOLUME_MAX,
+                                          NULL, color_token(ui, PXSYS_COLOR_TEXT_PRIMARY));
+        lv_obj_set_pos(ui->volume_osd_icon, 12, 13);
+        ui->volume_osd_bar = lv_bar_create(ui->volume_osd);
+        lv_obj_set_pos(ui->volume_osd_bar, 40, 20);
+        lv_obj_set_height(ui->volume_osd_bar, 8);
+        lv_bar_set_range(ui->volume_osd_bar, 0, 100);
+        lv_obj_set_style_radius(ui->volume_osd_bar, LV_RADIUS_CIRCLE,
+                                 LV_PART_MAIN);
+        lv_obj_set_style_radius(ui->volume_osd_bar, LV_RADIUS_CIRCLE,
+                                 LV_PART_INDICATOR);
+        ui->volume_osd_value = make_label(
+            ui->volume_osd, "", typography_font(ui, PXSYS_TYPOGRAPHY_LABEL),
+            color_token(ui, PXSYS_COLOR_TEXT_PRIMARY));
+        lv_obj_set_pos(ui->volume_osd_value, width - 48, 12);
+        lv_obj_set_width(ui->volume_osd_value, 40);
+        lv_obj_set_style_text_align(ui->volume_osd_value, LV_TEXT_ALIGN_RIGHT, 0);
+    }
+    lv_obj_set_size(ui->volume_osd, width, 48);
+    lv_obj_align(ui->volume_osd, LV_ALIGN_TOP_MID, 0, top);
+    lv_obj_set_width(ui->volume_osd_bar, width - 98);
+    lv_obj_set_x(ui->volume_osd_value, width - 48);
+    lv_label_set_text(ui->volume_osd_icon,
+                      percent == 0 ? LV_SYMBOL_MUTE : LV_SYMBOL_VOLUME_MAX);
+    lv_bar_set_value(ui->volume_osd_bar, percent, LV_ANIM_OFF);
+    lv_label_set_text_fmt(ui->volume_osd_value, "%u%%", (unsigned)percent);
+    volume_osd_apply_theme(ui);
+    lv_obj_remove_flag(ui->volume_osd, LV_OBJ_FLAG_HIDDEN);
+    volume_osd_restack(ui);
+    ui->volume_osd_visible = 1;
+    update_system_overlay(ui);
+    if (ui->volume_osd_timer == NULL)
+        ui->volume_osd_timer = lv_timer_create(volume_osd_hide, 1800, ui);
+    else {
+        lv_timer_set_period(ui->volume_osd_timer, 1800);
+        lv_timer_reset(ui->volume_osd_timer);
+        lv_timer_resume(ui->volume_osd_timer);
+    }
 }
 
 static void toast_hide(lv_timer_t* timer) {
@@ -6490,6 +6608,7 @@ static void rebuild(pxsys_reference_lvgl_t* ui) {
     if (task_switcher_is_open(ui)) lv_obj_move_foreground(ui->task_switcher);
     toast_reposition(ui);
     if (ui->toast_visible) toast_restack(ui);
+    if (ui->volume_osd_visible) volume_osd_restack(ui);
     if (ui->notification_shade_open)
         build_notification_shade(ui, ui->notification_dragging
                                          ? ui->notification_progress : 256);
@@ -6793,6 +6912,7 @@ static void theme_changed(void* context,
     ui->theme = *theme;
     rebuild(ui);
     toast_apply_theme(ui, ui->toast_tone);
+    volume_osd_apply_theme(ui);
 }
 
 static void locale_changed(void* context,
@@ -6807,8 +6927,12 @@ static void system_status_changed(
     void* context, const pxsys_system_status_snapshot_t* status) {
     pxsys_reference_lvgl_t* ui = (pxsys_reference_lvgl_t*)context;
     if (!ui_valid(ui) || status == NULL) return;
+    const int volume_changed =
+        ui->system_status.volume_supported && status->volume_supported &&
+        ui->system_status.volume_percent != status->volume_percent;
     ui->system_status = *status;
     rebuild(ui);
+    if (volume_changed) volume_osd_show(ui, status->volume_percent);
 }
 
 static void window_changed(void* context,
@@ -7470,10 +7594,12 @@ pxsys_status_t pxsys_reference_lvgl_destroy(pxsys_reference_lvgl_t* ui) {
     if (ui->app_ime_timer != NULL) lv_timer_delete(ui->app_ime_timer);
     if (ui->wifi_scan_timer != NULL) lv_timer_delete(ui->wifi_scan_timer);
     if (ui->toast_timer != NULL) lv_timer_delete(ui->toast_timer);
+    if (ui->volume_osd_timer != NULL) lv_timer_delete(ui->volume_osd_timer);
     if (ui->transient_timer != NULL) lv_timer_delete(ui->transient_timer);
     pxsys_reference_lvgl_hide_power_menu(ui);
     lock_screen_destroy(ui);
     if (ui->toast != NULL) lv_obj_delete(ui->toast);
+    if (ui->volume_osd != NULL) lv_obj_delete(ui->volume_osd);
     if (ui->notification_shade != NULL) lv_obj_delete(ui->notification_shade);
     if (ui->task_switcher != NULL) lv_obj_delete(ui->task_switcher);
     if (ui->root != NULL) lv_obj_delete(ui->root);

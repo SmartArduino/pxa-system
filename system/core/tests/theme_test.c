@@ -42,6 +42,14 @@ static pxsys_theme_snapshot_t theme(pxsys_color_scheme_t scheme) {
 }
 
 static void test_palettes(void) {
+    static const uint32_t generated_primary[2][PXSYS_THEME_PALETTE_CORAL] = {
+        {0xff465d91, 0xff006a62, 0xff6a548d, 0xff845316},
+        {0xffafc6ff, 0xff81d5ca, 0xffd5bbfc, 0xfffbba73},
+    };
+    static const uint32_t generated_background[2][PXSYS_THEME_PALETTE_CORAL] = {
+        {0xfffaf9ff, 0xfff4fbf8, 0xfffef7ff, 0xfffff8f4},
+        {0xff121318, 0xff0e1514, 0xff151218, 0xff19120c},
+    };
     pxsys_theme_snapshot_t snapshot;
     uint32_t coral_primary;
     uint32_t coral_tertiary;
@@ -65,6 +73,12 @@ static void test_palettes(void) {
             assert(snapshot.colors[PXSYS_COLOR_ON_PRIMARY_CONTAINER] != 0);
             assert(snapshot.colors[PXSYS_COLOR_SURFACE_CONTAINER_HIGH] !=
                    snapshot.colors[PXSYS_COLOR_SURFACE_CONTAINER_LOW]);
+            if (palette < PXSYS_THEME_PALETTE_CORAL) {
+                assert(snapshot.colors[PXSYS_COLOR_PRIMARY] ==
+                       generated_primary[scheme][palette]);
+                assert(snapshot.colors[PXSYS_COLOR_BACKGROUND] ==
+                       generated_background[scheme][palette]);
+            }
             if (palette >= PXSYS_THEME_PALETTE_CORAL)
                 assert(snapshot.colors[PXSYS_COLOR_BACKGROUND] !=
                        (scheme == PXSYS_COLOR_SCHEME_DARK ? UINT32_C(0xff111214)
@@ -104,8 +118,8 @@ static void test_palettes(void) {
            PXSYS_STATUS_OK);
     assert(snapshot.configured_mode == PXSYS_THEME_MODE_DARK &&
            snapshot.theme_id_size == 0 && snapshot.theme_id[0] == '\0');
-    assert(snapshot.colors[PXSYS_COLOR_BACKGROUND] == UINT32_C(0xff111214) &&
-           snapshot.colors[PXSYS_COLOR_SURFACE_CONTAINER_HIGH] == UINT32_C(0xff2b2c30));
+    assert(snapshot.colors[PXSYS_COLOR_BACKGROUND] == UINT32_C(0xff121318) &&
+           snapshot.colors[PXSYS_COLOR_SURFACE_CONTAINER_HIGH] == UINT32_C(0xff282a2f));
 }
 
 int main(void) {
