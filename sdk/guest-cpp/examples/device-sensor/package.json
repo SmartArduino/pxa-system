@@ -1,0 +1,19 @@
+{
+  "format": "pxa-package-source-0.1",
+  "min_sdk": [1, 0],
+  "target_sdk": [1, 0],
+  "compile_sdk": [1, 0],
+  "id": "pxa-cpp-device-sensor",
+  "version": "1.0.0",
+  "name": "C++ Device and Sensor",
+  "description": "Owned runtime information and bounded sensor subscriptions",
+  "build": {"system": "cmake", "source_dir": "."},
+  "permissions": [{"name": "sensor.read", "scope": "ambient.temperature", "required": false}],
+  "components": [{
+    "id": "main",
+    "kind": "ui",
+    "services": ["ui", "device", "sensor", "permission"],
+    "cmake_target": "pxa_main",
+    "wasi": {"version": "preview1", "libc": "wasi-libc", "features": ["monotonic-clock", "wall-clock"]}
+  }]
+}

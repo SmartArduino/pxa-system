@@ -1,8 +1,30 @@
 #pragma once
 
 #include "core.hpp"
+#include <string_view>
 
 namespace pxa::wire {
+
+bool valid_utf8(std::span<const std::byte> bytes) noexcept;
+
+template<std::size_t Capacity> class OwnedText {
+public:
+    Result<void> assign(std::span<const std::byte> bytes) noexcept {
+        if (bytes.empty() || bytes.size() > Capacity || !valid_utf8(bytes))
+            return std::unexpected(Error::protocol_error);
+        for (std::size_t i = 0; i < bytes.size(); ++i)
+            bytes_[i] = static_cast<char>(std::to_integer<unsigned char>(bytes[i]));
+        size_ = static_cast<std::uint16_t>(bytes.size());
+        bytes_[size_] = '\0';
+        return {};
+    }
+    std::string_view view() const noexcept { return {bytes_.data(), size_}; }
+    const char* c_str() const noexcept { return bytes_.data(); }
+private:
+    static_assert(Capacity <= UINT16_MAX);
+    std::array<char, Capacity + 1> bytes_{};
+    std::uint16_t size_ = 0;
+};
 
 template<std::size_t Capacity> struct RequestPacket {
     std::array<std::byte, header_bytes + Capacity> bytes{};
@@ -37,6 +59,11 @@ inline bool record(Writer& writer, std::uint16_t tag,
 class Records {
 public:
     explicit Records(std::span<const std::byte> bytes) noexcept : bytes_(bytes) {}
+    Result<std::span<const std::byte>> take(std::uint16_t tag) noexcept {
+        if (bytes_.size() < 4)
+            return std::unexpected(Error::protocol_error);
+        return take(tag, get16(bytes_.data() + 2));
+    }
     Result<std::span<const std::byte>> take(std::uint16_t tag,
                                            std::size_t size) noexcept {
         if (bytes_.size() < 4 || get16(bytes_.data()) != tag ||

@@ -348,26 +348,91 @@ def render_header(*, guest: bool = False) -> str:
     return "\n".join(lines)
 
 
+def render_cpp_device_header() -> str:
+    fields = device_fields()
+    lines = [
+        "// Generated from spec/draft/pxa-device.json. Do not edit by hand.",
+        "#pragma once",
+        '#include "service_wire.hpp"',
+        "",
+        "namespace pxa {",
+        "struct DeviceRuntimeInfo {",
+        *(f"    wire::OwnedText<{field['max_bytes']}> "
+          f"{field['name'].replace('-', '_')};" for field in fields[:4]),
+        "    std::uint32_t formats = 0;",
+        "};",
+        "",
+        "inline Result<DeviceRuntimeInfo> decode_device_runtime_info(",
+        "    std::span<const std::byte> payload) noexcept {",
+        "    auto body = wire::result_body(payload);",
+        "    if (!body) return std::unexpected(body.error());",
+        "    wire::Records records(*body);",
+        "    DeviceRuntimeInfo output;",
+    ]
+    for field in fields[:4]:
+        name = field['name'].replace('-', '_')
+        lines += [
+            f"    auto {name} = records.take({field['id']});",
+            f"    if (!{name} || !output.{name}.assign(*{name}))",
+            "        return std::unexpected(Error::protocol_error);",
+        ]
+    lines += [
+        f"    auto formats = records.take({fields[4]['id']}, 4);",
+        "    if (!formats || !records.empty())",
+        "        return std::unexpected(Error::protocol_error);",
+        "    output.formats = wire::get32(formats->data());",
+        "    return output;",
+        "}",
+        "} // namespace pxa",
+        "",
+    ]
+    return "\n".join(lines)
+
+
+def render_cpp_device_golden() -> str:
+    document = json.loads((SPEC / "golden/device-runtime-info.json").read_text(encoding="utf-8"))
+    data = bytes.fromhex(document["result_hex"])
+    return "\n".join([
+        "// Generated from spec/draft/golden/device-runtime-info.json.",
+        "#pragma once",
+        "#include <array>",
+        "#include <cstddef>",
+        f"inline constexpr std::array<std::byte, {len(data)}> device_info_golden{{",
+        *("    " + ", ".join(f"std::byte{{0x{byte:02x}}}" for byte in data[i:i + 8]) + ","
+          for i in range(0, len(data), 8)),
+        "};",
+        "",
+    ])
+
+
 RENDERERS = (
     (OUTPUTS[0], render_header),
     (OUTPUTS[1], lambda: render_header(guest=True)),
     (WINDOW_OUTPUTS[0], render_window_header),
     (WINDOW_OUTPUTS[1], lambda: render_window_header(guest=True)),
+    (SYSTEM / "sdk/guest-cpp/include/pxa/device_runtime_info_generated.hpp",
+     render_cpp_device_header),
+    (SYSTEM / "sdk/guest-cpp/tests/device_runtime_info_golden.hpp",
+     render_cpp_device_golden),
 )
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--check", action="store_true")
+    parser.add_argument("--language", choices=("all", "c", "cpp"), default="all")
     args = parser.parse_args()
-    stale = [path for path, renderer in RENDERERS
+    renderers = tuple((path, renderer) for path, renderer in RENDERERS
+                      if args.language == "all" or
+                      (path.suffix == ".hpp") == (args.language == "cpp"))
+    stale = [path for path, renderer in renderers
              if not path.is_file()
              or path.read_text(encoding="utf-8") != renderer()]
     if args.check:
         for path in stale:
             print(f"stale Service codec: {path}")
         return 1 if stale else 0
-    for path, renderer in RENDERERS:
+    for path, renderer in renderers:
         path.write_text(renderer(), encoding="utf-8")
     return 0
 

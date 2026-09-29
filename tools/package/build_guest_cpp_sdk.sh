@@ -25,7 +25,8 @@ fi
 
 mkdir -p "$output_dir/sdk" "$output_dir/tools/package" \
   "$output_dir/tools/wamr" "$output_dir/tools/i18n" \
-  "$output_dir/spec/draft" "$output_dir/config" "$output_dir/bin"
+  "$output_dir/spec/draft/tools" "$output_dir/spec/draft/golden" \
+  "$output_dir/config" "$output_dir/bin"
 cp -R "$pxa_system_dir/sdk/guest-cpp" "$output_dir/sdk/"
 cp -R "$pxa_system_dir/sdk/cmake" "$output_dir/sdk/"
 for tool in package_app.sh resolve_wasi_sdk.sh \
@@ -37,6 +38,10 @@ done
 cp "$pxa_system_dir/tools/wamr/metadata.py" "$output_dir/tools/wamr/"
 cp "$pxa_system_dir/tools/i18n/compile_catalog.py" "$output_dir/tools/i18n/"
 cp "$pxa_system_dir"/spec/draft/pxa-*.json "$output_dir/spec/draft/"
+cp "$pxa_system_dir/spec/draft/tools/generate_service_codecs.py" \
+  "$output_dir/spec/draft/tools/"
+cp "$pxa_system_dir/spec/draft/golden/device-runtime-info.json" \
+  "$output_dir/spec/draft/golden/"
 cp "$pxa_system_dir/config/wamr.json" "$output_dir/config/"
 cp "$wamrc_bin" "$output_dir/bin/wamrc"
 cp "$pxa_system_dir/VERSION" "$output_dir/VERSION"

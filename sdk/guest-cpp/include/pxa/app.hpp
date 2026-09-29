@@ -12,6 +12,8 @@
 #include "audio.hpp"
 #include "clock.hpp"
 #include "log.hpp"
+#include "device.hpp"
+#include "sensor.hpp"
 
 #include <memory>
 #include <new>
@@ -41,6 +43,8 @@ public:
     AudioService audio() noexcept { return {transport_, requests_}; }
     ClockService clock() noexcept { return {transport_, requests_}; }
     LogService log() noexcept { return LogService(transport_); }
+    DeviceService device() noexcept { return {transport_, requests_}; }
+    SensorService sensors() noexcept { return {transport_, requests_}; }
     bool foreground() const noexcept { return foreground_; }
 
 private:

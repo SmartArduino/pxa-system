@@ -151,8 +151,54 @@ Clock/Window/Game/Audio/Storage/Permission 的协程按值保存小型服务入�
 其他异步接口的 `string_view`、`span`、权限及音频等资源对象仍按其接口约定借用，
 调用方必须保持它们有效。默认封包与协程帧均有界。
 
+Device 使用 `ctx.device().runtime_info()` 获取目标、架构、引擎、引擎 ABI 与
+格式位（Wasm=1、AOT=2）。返回值拥有有界字符串存储，`.target.view()` 等
+视图跟随返回对象有效，不引用事件缓冲区。编解码由同一 Device schema 生成，
+保持字段顺序、UTF-8 和长度校验。`mac(MacKind, permission)` 返回六字节地址
+及 flags，需要 `device.identity` 和对应的精确 scope，例如
+`mac.wifi.station.hardware`；Host 可对不支持的 MAC 类别返回 `unsupported`。
+
+Sensor 使用调用方拥有的有界目录缓冲区，不在协程帧中预留完整的 32 项目录：
+
+```cpp
+std::array<pxa::SensorDescriptor, 4> sensors;
+auto count = co_await ctx.sensors().list(sensors);
+if (!count) co_return std::unexpected(count.error());
+if (*count == 0) co_return pxa::Result<void>{};
+auto permission = co_await ctx.permissions().acquire(
+    "sensor.read", sensors[0].semantic.view());
+if (!permission) co_return std::unexpected(permission.error());
+auto subscription = co_await ctx.sensors().subscribe(
+    sensors[0], sensors[0].min_period_ms, *permission);
+// 将权限与订阅移动到应用模型，持续接收 on_event；不能在这里就销毁它们。
+```
+
+目录字符串拥有存储；解析先验证完整目录及重复 ID/semantic，再修改缓冲区。
+容量不足返回 `resource_limit`，输出保持原样。目录 span 必须活到任务完成或取消，
+设备不提供物理传感器时，空目录是正常结果。ID 只在本次激活期间有效。
+`subscribe` 和 Device `mac` 在调用时保存标量/权限身份，不保存对传入对象的引用；
+权限仍需保持有效，Host 会在实际提交和资源使用时验证授权。
+
+`SensorSubscription` 不可复制、可以移动，关闭停止采样；
+`subscription.sample(event)` 检查完整 64 位句柄与维数，旧订阅事件返回
+`not_found`。当前 Host 每个事件发送一个样本，最多三个维度，值为拥有存储的
+`int32_t` 数组；时间戳为单调微秒。按 descriptor 的 unit 解释值，未知 unit
+不能猜测缩放。订阅任务取消后，晚到成功句柄自动关闭；stop 阶段不调用 Host。
+
+完整示例见 `examples/device-sensor`。它声明精确的 `ambient.temperature` scope，
+只监测目录第一项；适配其他传感器需修改权限声明和选择逻辑。后台关闭订阅，
+前台恢复后重新申请；权限撤销取消待处理任务并停止采样。模拟器默认返回空目录；
+显式设置 `PXA_SIM_SENSOR_TEMPERATURE_MILLI_CELSIUS=25000` 可提供固定的
+25 摄氏度模拟源，它不代表硬件实测。
+
+独立开发包包含 Device schema、生成工具和黄金向量。检查 C++ 生成物：
+
+```sh
+python3 spec/draft/tools/generate_service_codecs.py --language cpp --check
+```
+
 当前实现包括 Core 消息编解码、资源句柄、应用入口、有界协程和请求表、
-声明式布局/常用控件、状态绑定与导航，Storage/Permission/Audio/FS，
+声明式布局/常用控件、状态绑定与导航，Storage/Permission/Audio/FS/Device/Sensor，
 以及 GameRender 的上下文创建、清屏、矩形和精灵批次 DrawList。
 动态 keyed list 与 VirtualList 已有实现和模拟器验证；条件分支、Ref、
 其余服务接口和完整性能验收尚未完成。独立开发包已可构建和打包示例，

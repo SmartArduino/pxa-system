@@ -23,7 +23,7 @@
       "direction": "bidirectional-result",
       "request_id": "nonzero",
       "payload": "sensor-id|period|permission-handle",
-      "result": "sensor-handle:u32"
+      "result": "sensor-handle:u64"
     },
     {
       "name": "sample",
@@ -49,14 +49,14 @@
     {
       "name": "unit-or-permission-handle-or-sample-count",
       "id": 3,
-      "payload": "u16|u32|u16",
+      "payload": "u16|u64|u16",
       "cardinality": "descriptor-one|subscribe-one|sample-one"
     },
     {
       "name": "dimensions-or-subscription-handle-or-values",
       "id": 4,
-      "payload": "u8|u32|i32-le[]",
-      "cardinality": "descriptor-one|result-one|sample-one"
+      "payload": "u8|u64|i32-le[]",
+      "cardinality": "descriptor-one|sample-two"
     },
     {
       "name": "minimum-period-ms",
@@ -93,7 +93,7 @@
     "max_semantic_bytes": 64,
     "max_dimensions": 3,
     "max_subscriptions_per_component": 2,
-    "max_samples_per_event": 8
+    "max_samples_per_event": 1
   },
   "protocol_version": "0.1.0"
 }

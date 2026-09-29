@@ -36,7 +36,7 @@
     {
       "name": "permission-handle-or-mac",
       "id": 2,
-      "payload": "u32|bytes[6]",
+      "payload": "u64|bytes[6]",
       "cardinality": "request-one|result-one"
     },
     {

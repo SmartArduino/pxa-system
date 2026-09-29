@@ -7,7 +7,7 @@ cpp_sdk_dir="$pxa_system_dir/sdk/guest-cpp"
 work_dir="$(mktemp -d "${TMPDIR:-/tmp}/pxa-guest-cpp-test.XXXXXX")"
 trap 'rm -rf "$work_dir"' EXIT
 
-for test_name in features core_app ui_wire ui_page ui_controls counter_app navigation list task assets storage fs permission audio game game_service game_loop; do
+for test_name in features core_app ui_wire ui_page ui_controls counter_app navigation list task assets storage fs permission audio device sensor game game_service game_loop; do
   "${CXX:-clang++}" -std=c++2c -O2 -fno-exceptions -fno-rtti \
     -Wall -Wextra -Werror -Wno-attributes \
     -I"$cpp_sdk_dir/include" \

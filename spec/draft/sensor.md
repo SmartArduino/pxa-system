@@ -17,9 +17,9 @@ exact declaration `sensor.read` scoped to the descriptor semantic ID. The Host
 binds the resulting Sensor Handle to the same Core authority, so permission
 revocation atomically closes the subscription and prevents later samples.
 
-The request has `sensor-id:u16`, `period-ms:u32` and `permission-handle:u32`
-records in ascending tag order. Its successful result appends one Sensor
-Handle. Closing that Handle stops delivery. The requested period must be within
+The request has `sensor-id:u16`, `period-ms:u32` and `permission-handle:u64`
+records in ascending tag order. Its successful result appends one raw `u64`
+Sensor Handle after the status, without a record header. Closing that Handle stops delivery. The requested period must be within
 the descriptor range; a missing descriptor returns `not-found`.
 
 ## Samples and backpressure
@@ -45,5 +45,9 @@ Handle. The remaining descriptor and sample fields retain their widths.
 The Host rejects four-byte Permission Handles for v1 Components and validates
 the full generation when closing a subscription. Sample coalescing uses the
 full-width Handle, so reusing a low slot index does not merge two generations.
+The descriptor nesting uses tags 1 through 6. Sample records are tag 4
+(subscription Handle), tag 2 (timestamp), tag 3 (count = 1), then tag 4
+(one to three signed values). The current Host emits one sample per event,
+not eight; a Guest must not assume batching is implemented.
 The Guest uses `pxa_sensor.h` to build requests and parse borrowed
 descriptor views and typed sample values.

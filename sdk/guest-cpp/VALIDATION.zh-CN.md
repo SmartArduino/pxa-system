@@ -5,9 +5,9 @@
 
 ## 已执行
 
-- `bash tools/package/test_guest_cpp.sh`：17 组 C++26 主机测试通过，覆盖特性、Core、
+- `bash tools/package/test_guest_cpp.sh`：19 组 C++26 主机测试通过，覆盖特性、Core、
   UI 编码/控件/状态/导航、生命周期、有界任务、Assets、Storage、FS、Permission、
-  Audio、GameRender 创建/绘制/帧调度。
+  Audio、Device、Sensor、GameRender 创建/绘制/帧调度。
 - 当前工具链 CMake 真实编译探测确认 C++26 模式、显式对象参数、包索引、
   expected/span/协程头文件可用；WASI libc++ 的 inplace_vector/function_ref
   编译探测失败，它们为可选能力，Guest 不依赖。主机为 Clang 22.1.8/
@@ -65,6 +65,35 @@
   SDK 实现与 CMake 均来自该包；只有锁定编译器和签名密钥由外部路径提供。
   这同时验证 CPP 对象模块的 include、C++26 和异常/RTTI 配置传播，以及固定
   文字描述在真实 WASI 编译中的使用。新异步入口的 audio 示例也完成 S31 AOT。
+- Device 使用共享 schema 生成 C++ 有界拥有存储的运行信息与黄金向量，
+  测试覆盖完整字段、截断、UTF-8、NUL、字段长度、临时服务入口、MAC 身份与
+  flags、立即失败和 stop 阶段禁止导入；黄金数据来自现有协议文件。
+- Sensor 测试覆盖完整目录后才发布结果、容量不足不修改输出、重复 ID/semantic、
+  非法维数和语义、临时服务入口、调用时保存订阅参数、负值及 int32 边界、
+  旧句柄/错误维数/不支持的样本数、移动关闭、取消晚到回收和 stop 后无导入。
+  测试使用默认 1024 字节协程槽，全过程 new 计数为 0；这不代表 Host 零分配。
+  Device/Sensor 另行使用 ASan/UBSan、use-after-scope 和
+  detect_stack_use_after_return=1 运行通过。Sensor 增加 new 计数后也通过完整主机套件。
+- 新独立包 `/tmp/pxa-cpp26-sdk-device-release-20260930` 含 schema、C++ 生成器
+  与 Device 黄金向量；`--language cpp --check` 通过。在 `/tmp` 工作目录使用
+  包内源码、CMake、打包工具构建 device-sensor 的 Linux/S3/S31 Wasm/AOT，
+  分别输出到 `/tmp/pxa-cpp26-device-external-{linux,s3,s31}`。
+- 产品模拟器增加 Sensor 服务：默认空目录，显式环境变量
+  `PXA_SIM_SENSOR_TEMPERATURE_MILLI_CELSIUS=25000` 提供固定模拟源。
+  已用独立包的 Linux AOT 验证 Device 信息、目录、精确 scope 权限、订阅、
+  25000 毫摄氏度样本、Stop 和再次订阅；截图为
+  `/tmp/pxa-cpp-device-sim-{sampling,stopped,resubscribed}.png`。
+  模拟器退出 code=0。初次拒绝因模拟源语义长度少一字节，已改为 sizeof 推导，
+  未放宽权限匹配或绕过授权。移除环境变量后再次运行，空目录显示 `No sensors`，
+  截图为 `/tmp/pxa-cpp-device-sim-empty.png`，正常退出。
+- `pxa_sensor_engine_test` 与 `pxa_lvgl_ui_test` 重新构建并通过，现有 C Guest
+  的真实 WAMR Sensor 集成与 LVGL 回归保持可用。协议 schema 修正为当前
+  Core v1 的 64 位句柄、原始订阅结果和单样本事件，没有修改 Host wire ABI。
+- 新服务加入前后的 modules 应用，Wasm CODE 均 39733 字节、DATA 均 4442
+  字节、初始内存均 2 页；移除调试节后均 54918 字节，Linux AOT 均 86276
+  字节。符号表没有 Device/Sensor/FramePool 实现。原始 Wasm 增加 888 字节
+  来自调试节，函数编号与重定位顺序有变化，文件不逐字节相同；此记录只证明
+  本例未引入额外模块代码/数据体积，不能替代完整内存与性能报告。
 
 ## 实机
 
@@ -78,10 +107,18 @@
   继续点击显示 2，截图为 `/tmp/pxa-cpp26-counter-s31-final.png`。
   验证后已停止示例。这验证该次产物的 ABI/运行与 UI 恢复，不代表完整服务或
   当前所有模块的实机验收。
+- S31 实际安装独立开发包生成的 device-sensor RISC-V AOT，解锁后显示
+  `esp32-s31`、`wamr-pxa-aot-v6-core-1` 和 `No sensors`，截图为
+  `/tmp/pxa-cpp-device-s31-info.png`，验证后已停止示例。该固件没有配置物理
+  传感器，不能把空目录验收称为真实传感器采样验收。
 - pai-touch `/dev/ttyACM0`：设备报告 `esp32s3`、固件 `202d179-dirty`。
   storage 上传成功但安装失败，日志为 LittleFS `No more free space` 和
   prepare-incoming status=-11。已删除本次上传的 inbox 包；未删除已有应用
   或数据。该设备的 C++ 应用启动验收仍未完成。
+- 本轮 pai-touch 的 device-sensor 上传完成，但安装仍返回
+  `package_deploy_failed;stage=install;status=-11`。本次失败的日志导出只返回
+  旧 storage 空间不足记录，尚无新的原因证明；已删除本次 inbox 文件，未动
+  既有应用和数据。该设备的 Device/Sensor 执行验证仍未完成。
 
 ## 阶段体积
 
@@ -102,7 +139,7 @@ files 的初次三目标构建原始大小：Wasm 225337、Linux AOT 110728、S3
 
 - UI 条件分支、Ref、嵌套动态模块、显式常驻页面选项；完整容量配置及
   动态 UI 实机、更多事务失败路径验收。
-- Net、IPC、Work、Sensor、Device、Surface 服务封装；IPC 契约生成器
+- Net、IPC、Work、Surface 服务封装；Device/Sensor 更多设备及撤销集成验证，IPC 契约生成器
   和独立 service/job Component 示例。
 - Assets 的其余能力、图片/音效/音乐资源示例及真实资源撤销和取消竞态验证。
 - GameRender triangle batch、资源批次、可选 3D 辅助模块、HUD、前后台及
