@@ -160,6 +160,7 @@ class RequestTable {
         std::uint16_t service = 0;
         std::uint16_t opcode = 0;
         bool close_late_handle = false;
+        std::uint16_t late_handle_offset = 4;
     };
 public:
     Result<void> add(std::uint64_t token, void* context,
@@ -182,7 +183,8 @@ public:
     }
     void abandon(std::uint64_t token, Transport& transport,
                  std::uint16_t service, std::uint16_t opcode,
-                 bool close_late_handle) noexcept {
+                 bool close_late_handle,
+                 std::uint16_t late_handle_offset = 4) noexcept {
         for (auto& entry : entries_) {
             if (entry.token != token) continue;
             entry.context = nullptr;
@@ -191,6 +193,7 @@ public:
             entry.service = service;
             entry.opcode = opcode;
             entry.close_late_handle = close_late_handle;
+            entry.late_handle_offset = late_handle_offset;
             return;
         }
     }
@@ -205,9 +208,11 @@ public:
             } else if (selected.close_late_handle &&
                        event.service == selected.service &&
                        event.opcode == selected.opcode &&
-                       event.payload.size() >= 12 &&
+                       event.payload.size() >=
+                           static_cast<std::size_t>(selected.late_handle_offset) + 8 &&
                        wire::get32(event.payload.data()) == 0) {
-                auto handle = wire::get64(event.payload.data() + 4);
+                auto handle = wire::get64(event.payload.data() +
+                                           selected.late_handle_offset);
                 if (handle) (void)selected.transport->close(handle);
             }
             return true;
@@ -230,15 +235,20 @@ public:
     Response(Transport& transport, RequestTable& requests,
              std::uint16_t service, std::uint16_t opcode,
              std::span<const std::byte> payload,
-             bool close_late_handle = false) noexcept
+             bool close_late_handle = false,
+             std::uint16_t late_handle_offset = 4) noexcept
         : transport_(transport), requests_(requests), service_(service),
           opcode_(opcode), payload_(payload),
-          close_late_handle_(close_late_handle) {}
+          close_late_handle_(close_late_handle),
+          late_handle_offset_(late_handle_offset) {}
     Response(Transport& transport, RequestTable& requests,
              std::uint16_t service, std::uint16_t opcode,
-             PrebuiltPacket packet) noexcept
+             PrebuiltPacket packet, bool close_late_handle = false,
+             std::uint16_t late_handle_offset = 4) noexcept
         : transport_(transport), requests_(requests), service_(service),
-          opcode_(opcode), packet_(packet.bytes) {}
+          opcode_(opcode), packet_(packet.bytes),
+          close_late_handle_(close_late_handle),
+          late_handle_offset_(late_handle_offset) {}
     Response(const Response&) = delete;
     Response& operator=(const Response&) = delete;
     ~Response() {
@@ -248,7 +258,7 @@ public:
             return;
         }
         requests_.abandon(token_, transport_, service_, opcode_,
-                          close_late_handle_);
+                          close_late_handle_, late_handle_offset_);
         std::array<std::byte, 8> payload{};
         wire::put64(payload.data(), token_);
         (void)transport_.send(1, 1, 0, payload);
@@ -300,6 +310,7 @@ private:
     std::optional<Error> error_;
     bool registered_ = false;
     bool close_late_handle_ = false;
+    std::uint16_t late_handle_offset_ = 4;
 };
 
 class TaskScope {

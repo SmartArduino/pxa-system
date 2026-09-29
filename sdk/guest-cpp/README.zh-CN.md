@@ -41,6 +41,20 @@ PXA_APPLICATION(Counter)
 2140 字节的复用缓冲区，SDK 直接在其中生成最终协议包，不额外复制大值。协议允许最大
 2048 字节，但设备 Host 可以配置更低的单值上限，超过时由 Host 返回错误。
 
+`examples/audio` 展示申请 `audio.playback`、scope 为 `media` 的权限，再通过
+`ctx.audio().open(permission)` 创建会话。清单和申请的 scope 必须完全一致。
+权限和音频会话都是不可复制的资源对象。
+open 成功后还需等待 `session.graph(gain_db_q8)` 成功，之后才能播放。
+会话支持 tone、S16LE PCM 写入、Assets 预加载音效、流式音乐、gain/EQ、
+查询和 flush。`music(path)` 返回已接受的播放实例号；这不表示解码器就绪，
+应在 `on_event` 中用 `decode_playback(event)` 匹配会话与实例，分别处理
+ready、ended、stopped、replaced、error。PCM 可以短写，`would_block` 交给
+后续事件重试，不在回调内忙等。权限撤销后 Host 会关闭绑定资源，后续操作
+返回错误；`decode_permission_revoked` 的字符串和字节视图仅在当前事件有效。
+
+异步函数参数中的 `string_view`、`span` 和服务资源属于借用。直到任务完成或
+取消，调用方必须保持它们及服务资源有效；默认封包缓冲区来自有界协程池。
+
 当前实现包括 Core 消息编解码、资源句柄、应用入口、有界协程和请求表、
 基础声明式 Row/Column/Text/Button、整数状态绑定，以及 GameRender 的
 上下文创建、清屏、矩形和精灵批次 DrawList。计划中的完整服务接口、
