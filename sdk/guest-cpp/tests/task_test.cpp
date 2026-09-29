@@ -60,6 +60,16 @@ struct TestApp {
 PXA_APPLICATION(TestApp)
 
 int main() {
+    pxa::RequestTable table;
+    int mismatched_completion = 0;
+    assert(table.add(900, &mismatched_completion,
+        [](void* pointer, const pxa::Event& event) {
+            assert(event.service == 43 && event.opcode == 1);
+            ++*static_cast<int*>(pointer);
+        }, 42, 1));
+    assert(table.dispatch({43, 1, 900, {}}));
+    assert(mismatched_completion == 1);
+
     pxa::TaskScope scope;
     scope.on_error(nullptr, [](void*, pxa::Error error) noexcept {
         assert(error == pxa::Error::denied);

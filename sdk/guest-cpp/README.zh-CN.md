@@ -219,6 +219,18 @@ HTTP 404 等状态码是有效的 `NetResponse`，不是 PXA 错误。没有响�
 `body_length_known()` 为假时不能用 `body_length` 判断结束，`read` 返回 0 才是 EOF。
 请求取消后晚到的响应体句柄由请求表关闭；stop 阶段不调用 Host。
 
+IPC 当前提供有界的原始消息接口，范围是同一 App 的 Component 通信。
+`ctx.ipc().call(endpoint, payload, packet, output)` 在调用时把 endpoint 和
+payload 编码进调用方控制包；包与 output 必须活到任务完成或取消。
+调用先等待 Core 接受，再用独立的 IPC call ID 等待最终结果；call ID 与 Core
+请求 token 即使数值相同也不会混淆。成功返回的 `IpcCallResult` 含 call ID 和
+实际回复字节数，回复内容写入 output；容量不足返回 `resource_limit`。
+提供方在 `on_event` 中用 `decode_ipc_request(event)` 取得仅在当前事件有效的
+endpoint/payload 视图，然后调用 `ctx.ipc().reply(call_id, status, payload, packet)`。
+若要在事件返回后才回复，必须先复制请求数据。取消等待中的调用不会撤销已被
+Broker 接受的工作；后续结果会被忽略，提供方仍应回复或由 Host 停止流程清理。
+类型化契约生成器和独立 service Component 示例尚未完成。
+
 独立开发包包含 Device schema、生成工具和黄金向量。检查 C++ 生成物：
 
 ```sh
@@ -226,7 +238,7 @@ python3 spec/draft/tools/generate_service_codecs.py --language cpp --check
 ```
 
 当前实现包括 Core 消息编解码、资源句柄、应用入口、有界协程和请求表、
-声明式布局/常用控件、状态绑定与导航，Storage/Permission/Audio/FS/Device/Sensor/Net，
+声明式布局/常用控件、状态绑定与导航，Storage/Permission/Audio/FS/Device/Sensor/Net/IPC，
 以及 GameRender 的上下文创建、清屏、矩形和精灵批次 DrawList。
 动态 keyed list 与 VirtualList 已有实现和模拟器验证；条件分支、Ref、
 其余服务接口和完整性能验收尚未完成。独立开发包已可构建和打包示例，

@@ -5,9 +5,9 @@
 
 ## 已执行
 
-- `bash tools/package/test_guest_cpp.sh`：20 组 C++26 主机测试通过，覆盖特性、Core、
+- `bash tools/package/test_guest_cpp.sh`：21 组 C++26 主机测试通过，覆盖特性、Core、
   UI 编码/控件/状态/导航、生命周期、有界任务、Assets、Storage、FS、Permission、
-  Audio、Device、Sensor、Net、GameRender 创建/绘制/帧调度。公共运行时目标文件
+  Audio、Device、Sensor、Net、IPC、GameRender 创建/绘制/帧调度。公共运行时目标文件
   各编译一次后供测试链接，不改变测试的源代码编译选项。
 - 当前工具链 CMake 真实编译探测确认 C++26 模式、显式对象参数、包索引、
   expected/span/协程头文件可用；WASI libc++ 的 inplace_vector/function_ref
@@ -103,6 +103,15 @@
   WASI SDK 34 在仓库内重新编译包含 `net.cpp` 的静态库和 counter Wasm；
   `/tmp/pxa-cpp26-sdk-net-release-20260930` 独立包在 `/tmp/pxa-cpp26-net-external-build`
   从包内源码、CMake 和示例构建 Wasm。尚未做 Net 实际 HTTP 后端及三目标 AOT 验证。
+- IPC 原始接口测试覆盖 Core 接受后的 call ID、最终结果事件、提供方请求视图及
+  `reply` 完成、临时 endpoint/payload 生命周期、容量错误、已知字段误标 optional、
+  前台任务取消和晚到结果。独立的 IPC call ID 与普通 Core token 数值相同时，
+  请求表按 service/opcode 分派，不会将 IPC 通知误投递给其他请求；类型错误的
+  普通 Core 完成仍会交给原请求报协议错误。IPC 定向测试通过 ASan/UBSan 和
+  use-after-scope 检测；WASI SDK 34 已编译 `ipc.cpp` 并链接 counter Wasm。
+  更新后的独立包 `/tmp/pxa-cpp26-sdk-ipc-release-20260930` 在
+  `/tmp/pxa-cpp26-ipc-external-build` 用包内源码与 CMake 构建 counter Wasm。
+  类型化契约、独立多 Component 示例和真实 Broker 集成仍待验证。
 
 ## 实机
 
@@ -148,7 +157,7 @@ files 的初次三目标构建原始大小：Wasm 225337、Linux AOT 110728、S3
 
 - UI 条件分支、Ref、嵌套动态模块、显式常驻页面选项；完整容量配置及
   动态 UI 实机、更多事务失败路径验收。
-- IPC、Work、Surface 服务封装；Net 实际后端与设备验证、Device/Sensor 更多设备及撤销集成验证，IPC 契约生成器
+- Work、Surface 服务封装；Net 实际后端与设备验证、Device/Sensor 更多设备及撤销集成验证，IPC 契约生成器
   和独立 service/job Component 示例。
 - Assets 的其余能力、图片/音效/音乐资源示例及真实资源撤销和取消竞态验证。
 - GameRender triangle batch、资源批次、可选 3D 辅助模块、HUD、前后台及

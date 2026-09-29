@@ -167,22 +167,27 @@ class RequestTable {
     };
 public:
     Result<void> add(std::uint64_t token, void* context,
-                     void (*complete)(void*, const Event&)) noexcept {
+                     void (*complete)(void*, const Event&),
+                     std::uint16_t service = 0,
+                     std::uint16_t opcode = 0) noexcept {
         if (!token || !context || !complete)
             return std::unexpected(Error::invalid_argument);
         Entry* free = nullptr;
         for (auto& entry : entries_) {
-            if (entry.token == token)
+            if (entry.token == token && entry.service == service &&
+                entry.opcode == opcode)
                 return std::unexpected(Error::bad_state);
             if (!entry.token && !free) free = &entry;
         }
         if (!free) return std::unexpected(Error::resource_limit);
-        *free = {token, context, complete};
+        *free = {token, context, complete, nullptr, service, opcode};
         return {};
     }
-    void remove(std::uint64_t token) noexcept {
+    void remove(std::uint64_t token, std::uint16_t service = 0,
+                std::uint16_t opcode = 0) noexcept {
         for (auto& entry : entries_)
-            if (entry.token == token) { entry = {}; return; }
+            if (entry.token == token && entry.service == service &&
+                entry.opcode == opcode) { entry = {}; return; }
     }
     void abandon(std::uint64_t token, Transport& transport,
                  std::uint16_t service, std::uint16_t opcode,
@@ -190,7 +195,9 @@ public:
                  std::uint16_t late_handle_offset = 4,
                  std::uint64_t (*late_handle)(std::span<const std::byte>) noexcept = nullptr) noexcept {
         for (auto& entry : entries_) {
-            if (entry.token != token) continue;
+            if (entry.token != token ||
+                ((entry.service != service || entry.opcode != opcode) &&
+                 (entry.service || entry.opcode))) continue;
             entry.context = nullptr;
             entry.complete = nullptr;
             entry.transport = &transport;
@@ -204,29 +211,39 @@ public:
     }
     bool dispatch(const Event& event) noexcept {
         if (!event.token) return false;
+        Entry* exact = nullptr;
+        Entry* core_fallback = nullptr;
         for (auto& entry : entries_) {
             if (entry.token != event.token) continue;
-            auto selected = entry;
-            entry = {};
-            if (selected.complete) {
-                selected.complete(selected.context, event);
-            } else if (selected.close_late_handle &&
-                       event.service == selected.service &&
-                       event.opcode == selected.opcode &&
-                       event.payload.size() >= 4 &&
-                       wire::get32(event.payload.data()) == 0) {
-                auto handle = selected.late_handle
-                    ? selected.late_handle(event.payload)
-                    : event.payload.size() >=
-                          static_cast<std::size_t>(selected.late_handle_offset) + 8
-                          ? wire::get64(event.payload.data() +
-                                        selected.late_handle_offset)
-                          : 0;
-                if (handle) (void)selected.transport->close(handle);
+            if ((!entry.service || entry.service == event.service) &&
+                (!entry.opcode || entry.opcode == event.opcode)) {
+                exact = &entry;
+                break;
             }
-            return true;
+            if (event.opcode < 0x8000 && entry.opcode < 0x8000 &&
+                !core_fallback) core_fallback = &entry;
         }
-        return false;
+        Entry* matched = exact ? exact : core_fallback;
+        if (!matched) return false;
+        auto selected = *matched;
+        *matched = {};
+        if (selected.complete) {
+            selected.complete(selected.context, event);
+        } else if (selected.close_late_handle &&
+                   event.service == selected.service &&
+                   event.opcode == selected.opcode &&
+                   event.payload.size() >= 4 &&
+                   wire::get32(event.payload.data()) == 0) {
+            auto handle = selected.late_handle
+                ? selected.late_handle(event.payload)
+                : event.payload.size() >=
+                      static_cast<std::size_t>(selected.late_handle_offset) + 8
+                      ? wire::get64(event.payload.data() +
+                                    selected.late_handle_offset)
+                      : 0;
+            if (handle) (void)selected.transport->close(handle);
+        }
+        return true;
     }
     void clear() noexcept { entries_ = {}; }
 private:
@@ -265,7 +282,7 @@ public:
     ~Response() {
         if (!registered_) return;
         if (transport_.phase() == Phase::stopped) {
-            requests_.remove(token_);
+            requests_.remove(token_, service_, opcode_);
             return;
         }
         requests_.abandon(token_, transport_, service_, opcode_,
@@ -281,7 +298,7 @@ public:
         auto added = requests_.add(token_, this, [](void* pointer,
                                                    const Event& event) {
             static_cast<Response*>(pointer)->complete(event);
-        });
+        }, service_, opcode_);
         if (!added) { error_ = added.error(); return false; }
         registered_ = true;
         auto sent = packet_.empty()
@@ -289,7 +306,7 @@ public:
             : transport_.send_prebuilt(service_, opcode_, token_, packet_);
         if (!sent) {
             error_ = sent.error();
-            requests_.remove(token_);
+            requests_.remove(token_, service_, opcode_);
             registered_ = false;
             return false;
         }

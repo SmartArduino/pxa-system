@@ -7,7 +7,8 @@ if(DEFINED PXA_CPP_SDK_DIR AND IS_DIRECTORY "${PXA_CPP_SDK_DIR}/include"
     pxa_check_cpp_features()
     add_library(pxa_guest_cpp STATIC
         "${PXA_CPP_SDK_DIR}/src/runtime.cpp"
-        "${PXA_CPP_SDK_DIR}/src/net.cpp")
+        "${PXA_CPP_SDK_DIR}/src/net.cpp"
+        "${PXA_CPP_SDK_DIR}/src/ipc.cpp")
     add_library(Pxa::Cpp ALIAS pxa_guest_cpp)
     target_include_directories(pxa_guest_cpp PUBLIC
         "${PXA_CPP_SDK_DIR}/include")
