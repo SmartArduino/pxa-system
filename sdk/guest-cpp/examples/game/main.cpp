@@ -1,5 +1,6 @@
 #include <pxa/app.hpp>
 
+#include <algorithm>
 #include <optional>
 #include <charconv>
 
@@ -8,18 +9,26 @@ struct Game {
     std::optional<pxa::game::Renderer> renderer;
     std::int16_t x = 0;
     std::uint32_t frames = 0;
+    bool initializing = false;
 
     pxa::Task<void> initialize(pxa::Context& context) {
         (void)context.log().write(pxa::LogLevel::info, "Game create request");
         auto window = co_await context.window().snapshot();
-        if (!window) co_return std::unexpected(window.error());
+        if (!window) {
+            initializing = false;
+            co_return std::unexpected(window.error());
+        }
         if (window->pixel_width < 80 || window->pixel_height < 80 ||
             window->pixel_width / 2 > UINT16_MAX ||
-            window->pixel_height / 2 > UINT16_MAX)
+            window->pixel_height / 2 > UINT16_MAX) {
+            initializing = false;
             co_return std::unexpected(pxa::Error::unsupported);
+        }
         pxa::game::RenderOptions options;
-        options.width = static_cast<std::uint16_t>(window->pixel_width / 2);
-        options.height = static_cast<std::uint16_t>(window->pixel_height / 2);
+        options.width = static_cast<std::uint16_t>(
+            std::min(window->pixel_width / 2, 320u));
+        options.height = static_cast<std::uint16_t>(
+            std::min(window->pixel_height / 2, 240u));
         auto created = co_await context.game().create(options);
         if (!created) {
             char message[48] = "Game create failed: ";
@@ -30,21 +39,25 @@ struct Game {
                 (void)context.log().write(
                     pxa::LogLevel::error,
                     {message, static_cast<std::size_t>(end - message)});
+            initializing = false;
             co_return std::unexpected(created.error());
         }
         (void)context.log().write(pxa::LogLevel::info,
                                   "Game context ready");
         renderer.emplace(std::move(*created));
+        initializing = false;
         co_return pxa::Result<void>{};
     }
 
-    pxa::Result<void> on_start(pxa::Context& context) {
-        (void)context.log().write(pxa::LogLevel::info, "Game start");
+    void on_foreground(pxa::Context& context) {
+        if (renderer || initializing) return;
+        initializing = true;
         auto started = context.tasks().start(initialize(context));
-        if (!started)
+        if (!started) {
+            initializing = false;
             (void)context.log().write(pxa::LogLevel::error,
                                       "Game task start failed");
-        return started;
+        }
     }
 
     void on_update(pxa::Context&, std::uint32_t) {

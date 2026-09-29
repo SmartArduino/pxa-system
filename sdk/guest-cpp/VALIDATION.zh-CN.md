@@ -5,7 +5,7 @@
 
 ## 已执行
 
-- `bash tools/package/test_guest_cpp.sh`：22 组 C++26 主机测试通过，覆盖特性、Core、
+- `bash tools/package/test_guest_cpp.sh`：23 组 C++26 主机测试通过，覆盖特性、Core、
   UI 编码/控件/状态/导航、生命周期、有界任务、Assets、Storage、FS、Permission、
   Audio、Device、Sensor、Net、IPC、Work、GameRender 创建/绘制/帧调度。公共运行时目标文件
   各编译一次后供测试链接，不改变测试的源代码编译选项。
@@ -127,6 +127,21 @@
   `pxa_scheduler_engine_test` 和 `pxa_package_test` 均通过。模拟器 Work 队列
   只保存在进程内，重启后不恢复待执行项；ESP Host 尚未注册 Work，实机运行
   验收仍待完成。
+- Surface 定向主机测试覆盖映射缓冲区对齐、移动 Surface 时帧租约保持有效、
+  acquire 的 `would_block`、present、丢弃帧后关闭、状态查询、释放事件解码、
+  预算不足及坏成功响应的句柄关闭；ASan/UBSan 通过。
+  `examples/surface` 通过 WASI SDK 34 的 CMake 构建为 Wasm/Linux AOT，
+  打包器验证内存最大值为 32 页，并把 pinned-memory 声明写入签名 manifest。
+  产品模拟器 pai-touch profile 显示持续移动的 RGB565 条纹，两次截图
+  `/tmp/pxa-cpp-surface-screen-{pinned,next}.png` 哈希不同。该证据仅证明
+  模拟器的映射缓冲区、acquire/present 与显示路径，尚非设备或帧延迟验收。
+- 最终 `examples/surface` 使用锁定的 WASI SDK 34 生成 Linux x86_64、ESP32-S3、
+  ESP32-S31 的 Wasm/AOT 包；三次真实 CMake 构建均验证内存上限 32 页，
+  生成签名 pinned-memory manifest。`test_package_tool.sh` 回归通过。
+- 产品模拟器独立模式原先将初始状态设为前台却不发送首次前台事件，导致新版示例
+  没有启动初始化。修复后最终 Linux AOT 在 pai-touch profile 显示条纹，截图
+  `/tmp/pxa-cpp-surface-final-sim-fixed.png`；相关 ABI v1 pressure、IPC 与桌面
+  smoke 三项 CTest 均通过。
 
 ## 实机
 
@@ -144,6 +159,19 @@
   `esp32-s31`、`wamr-pxa-aot-v6-core-1` 和 `No sensors`，截图为
   `/tmp/pxa-cpp-device-s31-info.png`，验证后已停止示例。该固件没有配置物理
   传感器，不能把空目录验收称为真实传感器采样验收。
+- S31 安装并运行 C++ Surface RISC-V AOT。首次在 `on_start` 查询 Window 快照
+  返回 `bad_state`：该设备在 Guest start 后才发布快照。示例改为首次
+  `on_foreground` 初始化；解锁后日志确认创建 320×240、双缓冲 Guest-mapped
+  Surface，注册 307200 字节像素并提交首帧。设备截图
+  `/tmp/pxa-cpp-surface-s31-{first,second}.png` 显示 RGB565 条纹；画面区域
+  两次截图有差异，Presenter 日志连续报告约 47 次/秒合成。截图元数据的
+  `frame_id=0` 是 panel-framebuffer 截图路径，不能用作 Surface 帧计数。
+  验证后已停止应用。尚未验证资源撤销、Guest/Host 峰值及长时间运行稳定性。
+- S31 安装并运行更新后的 C++ GameRender 示例：在首次前台查询 Window 快照并
+  创建 320×240 上下文，`/tmp/pxa-cpp-game-s31.png` 显示绿色方块。设备日志的
+  一次采样为提交 160、渲染 120、可见 119、丢弃 40 帧；该数据提示默认
+  16 ms 提交周期高于当时显示吞吐量，尚未完成游戏帧率与内存对照。
+  验证后已停止应用。
 - pai-touch `/dev/ttyACM0`：设备报告 `esp32s3`、固件 `202d179-dirty`。
   storage 上传成功但安装失败，日志为 LittleFS `No more free space` 和
   prepare-incoming status=-11。已删除本次上传的 inbox 包；未删除已有应用
@@ -172,11 +200,11 @@ files 的初次三目标构建原始大小：Wasm 225337、Linux AOT 110728、S3
 
 - UI 条件分支、Ref、嵌套动态模块、显式常驻页面选项；完整容量配置及
   动态 UI 实机、更多事务失败路径验收。
-- Work 的 ESP Host 接入、持久化队列与设备运行验收、Surface 服务封装；Net 实际后端与设备验证、Device/Sensor 更多设备及撤销集成验证，IPC 契约生成器
+- Work 的 ESP Host 接入、持久化队列与设备运行验收；Surface 在 pai-touch 的实机、释放竞态与资源撤销验收；Net 实际后端与设备验证、Device/Sensor 更多设备及撤销集成验证，IPC 契约生成器
   和独立 service/job Component 示例。
 - Assets 的其余能力、图片/音效/音乐资源示例及真实资源撤销和取消竞态验证。
 - GameRender triangle batch、资源批次、可选 3D 辅助模块、HUD、前后台及
-  锁屏恢复；Surface 映射帧所有权验证。
+  锁屏恢复；Surface 映射帧的真实资源撤销与内存峰值验证。
 - 更新后的独立 SDK 开发包消费、版本发布说明、完整 CMake/WASI/Host 回归。
 - 相同功能 C/C++ 的体积、分配、内存峰值、提交次数与延迟测量；不能以
   构建成功或当前截图替代性能证明。

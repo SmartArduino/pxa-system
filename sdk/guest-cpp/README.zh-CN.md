@@ -243,6 +243,25 @@ job 已启动；`cancel(id)` 与 job 内的 `complete(id, WorkResult::success/re
 可运行这个双 Component 示例；模拟器当前使用进程内有界队列，重启后不恢复
 待执行项。ESP 产品 Host 尚未接入 Work，不能把模拟器结果视为实机验收。
 
+Surface 的 RGB565 映射模式使用 `ctx.surface().create_mapped(options)` 创建。
+SDK 按 Host 返回的 stride 和 frame bytes 一次分配 64 字节对齐的 Guest 缓冲区，
+注册后由 `Surface` 持有；移动 Surface 不会改变缓冲区地址。`acquire()` 返回不可
+复制的 `SurfaceFrame`，`pixels()` 是当前帧的可写视图，`present(frame_id)` 将帧
+交给 Host。没有空闲缓冲区时返回 `would_block`，应等后续帧事件再试。
+丢弃尚未 present 的帧会关闭 Surface，防止缓冲区永久被占用。Surface 关闭后
+仍存活的帧租约不再暴露像素；所有租约销毁后才释放 Guest 缓冲区。
+`decode_surface_release(event)` 解码 Host 的释放通知，`query_state()` 返回实际
+提交、显示、丢弃和空闲缓冲区计数。映射避免每帧通过 ABI 复制像素，不保证
+Host 合成和显示链路零拷贝。
+
+映射需要签名的 pinned-memory 声明。CMake 应用在 `package.json` 的 `build`
+中声明 `linear_memory.maximum_bytes`（64 KiB 整页）和 `pinned: true`；打包工具
+将上限传给 Wasm 链接器，验证生成的内存最大值，并写入签名 manifest。该上限
+约束整个 Component 的线性内存，应计入双/三帧缓冲、协程池和应用数据。
+完整示例见 `examples/surface`；未支持固定内存地址的 Host 会拒绝缓冲区注册。
+Window 快照可能在 Guest `on_start` 之后才由 Host 发布；需要屏幕尺寸的游戏或
+Surface 应在首次 `on_foreground` 中启动初始化任务，后台恢复时避免重复创建。
+
 独立开发包包含 Device schema、生成工具和黄金向量。检查 C++ 生成物：
 
 ```sh
@@ -250,10 +269,10 @@ python3 spec/draft/tools/generate_service_codecs.py --language cpp --check
 ```
 
 当前实现包括 Core 消息编解码、资源句柄、应用入口、有界协程和请求表、
-声明式布局/常用控件、状态绑定与导航，Storage/Permission/Audio/FS/Device/Sensor/Net/IPC/Work，
+声明式布局/常用控件、状态绑定与导航，Storage/Permission/Audio/FS/Device/Sensor/Net/IPC/Work/Surface，
 以及 GameRender 的上下文创建、清屏、矩形和精灵批次 DrawList。
 动态 keyed list 与 VirtualList 已有实现和模拟器验证；条件分支、Ref、
-其余服务接口和完整性能验收尚未完成。独立开发包已可构建和打包示例，
+其余服务能力和完整性能验收尚未完成。独立开发包已可构建和打包示例，
 但目前不能作为完整发布版 SDK。
 
 构建应用时，CMake 中使用 `pxa_add_app`，并提供

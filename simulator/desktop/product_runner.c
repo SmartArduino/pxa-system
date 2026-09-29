@@ -3056,7 +3056,7 @@ static int run_product_simulator(const options_t *input,
     host.window_context = window_context;
     host.host_theme = host_theme;
     host.focused = owns_display ? 1u : 0u;
-    host.pending_lifecycle = 2u;
+    host.pending_lifecycle = owns_display ? 1u : 2u;
     host.next_instance_id = 1;
     host.running_work_component = PXA_COMPONENT_INVALID;
 
