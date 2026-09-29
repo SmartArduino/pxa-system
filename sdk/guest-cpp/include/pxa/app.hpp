@@ -14,6 +14,7 @@
 #include "log.hpp"
 #include "device.hpp"
 #include "sensor.hpp"
+#include "net.hpp"
 
 #include <memory>
 #include <new>
@@ -45,6 +46,7 @@ public:
     LogService log() noexcept { return LogService(transport_); }
     DeviceService device() noexcept { return {transport_, requests_}; }
     SensorService sensors() noexcept { return {transport_, requests_}; }
+    NetService net() noexcept { return {transport_, requests_}; }
     bool foreground() const noexcept { return foreground_; }
 
 private:

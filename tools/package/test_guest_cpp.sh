@@ -7,12 +7,16 @@ cpp_sdk_dir="$pxa_system_dir/sdk/guest-cpp"
 work_dir="$(mktemp -d "${TMPDIR:-/tmp}/pxa-guest-cpp-test.XXXXXX")"
 trap 'rm -rf "$work_dir"' EXIT
 
-for test_name in features core_app ui_wire ui_page ui_controls counter_app navigation list task assets storage fs permission audio device sensor game game_service game_loop; do
-  "${CXX:-clang++}" -std=c++2c -O2 -fno-exceptions -fno-rtti \
-    -Wall -Wextra -Werror -Wno-attributes \
-    -I"$cpp_sdk_dir/include" \
+cxx="${CXX:-clang++}"
+flags=(-std=c++2c -O2 -fno-exceptions -fno-rtti
+       -Wall -Wextra -Werror -Wno-attributes -I"$cpp_sdk_dir/include")
+"$cxx" "${flags[@]}" -c "$cpp_sdk_dir/src/runtime.cpp" -o "$work_dir/runtime.o"
+"$cxx" "${flags[@]}" -c "$cpp_sdk_dir/src/net.cpp" -o "$work_dir/net.o"
+
+for test_name in features core_app ui_wire ui_page ui_controls counter_app navigation list task assets storage fs permission audio device sensor net game game_service game_loop; do
+  "$cxx" "${flags[@]}" \
     "$cpp_sdk_dir/tests/${test_name}_test.cpp" \
-    "$cpp_sdk_dir/src/runtime.cpp" \
+    "$work_dir/runtime.o" "$work_dir/net.o" \
     -o "$work_dir/$test_name"
   "$work_dir/$test_name"
 done

@@ -5,9 +5,10 @@
 
 ## 已执行
 
-- `bash tools/package/test_guest_cpp.sh`：19 组 C++26 主机测试通过，覆盖特性、Core、
+- `bash tools/package/test_guest_cpp.sh`：20 组 C++26 主机测试通过，覆盖特性、Core、
   UI 编码/控件/状态/导航、生命周期、有界任务、Assets、Storage、FS、Permission、
-  Audio、Device、Sensor、GameRender 创建/绘制/帧调度。
+  Audio、Device、Sensor、Net、GameRender 创建/绘制/帧调度。公共运行时目标文件
+  各编译一次后供测试链接，不改变测试的源代码编译选项。
 - 当前工具链 CMake 真实编译探测确认 C++26 模式、显式对象参数、包索引、
   expected/span/协程头文件可用；WASI libc++ 的 inplace_vector/function_ref
   编译探测失败，它们为可选能力，Guest 不依赖。主机为 Clang 22.1.8/
@@ -94,6 +95,14 @@
   字节。符号表没有 Device/Sensor/FramePool 实现。原始 Wasm 增加 888 字节
   来自调试节，函数编号与重定位顺序有变化，文件不逐字节相同；此记录只证明
   本例未引入额外模块代码/数据体积，不能替代完整内存与性能报告。
+- Net 主机测试覆盖直接编码到调用方包、临时 URL 生命周期、请求字段和所选头、
+  404 作为有效响应、响应头拥有存储、流短读/EOF、无响应体的 204、容量不足、
+  坏响应关闭流，以及前台取消后晚到流句柄回收。默认 1024 字节协程槽下通过，
+  Net 定向测试也通过 ASan/UBSan 和 use-after-scope 检测。
+  Core v1 的 64 位权限与流句柄同步修正至 Net 草案 JSON，Host ABI 未变。
+  WASI SDK 34 在仓库内重新编译包含 `net.cpp` 的静态库和 counter Wasm；
+  `/tmp/pxa-cpp26-sdk-net-release-20260930` 独立包在 `/tmp/pxa-cpp26-net-external-build`
+  从包内源码、CMake 和示例构建 Wasm。尚未做 Net 实际 HTTP 后端及三目标 AOT 验证。
 
 ## 实机
 
@@ -139,7 +148,7 @@ files 的初次三目标构建原始大小：Wasm 225337、Linux AOT 110728、S3
 
 - UI 条件分支、Ref、嵌套动态模块、显式常驻页面选项；完整容量配置及
   动态 UI 实机、更多事务失败路径验收。
-- Net、IPC、Work、Surface 服务封装；Device/Sensor 更多设备及撤销集成验证，IPC 契约生成器
+- IPC、Work、Surface 服务封装；Net 实际后端与设备验证、Device/Sensor 更多设备及撤销集成验证，IPC 契约生成器
   和独立 service/job Component 示例。
 - Assets 的其余能力、图片/音效/音乐资源示例及真实资源撤销和取消竞态验证。
 - GameRender triangle batch、资源批次、可选 3D 辅助模块、HUD、前后台及

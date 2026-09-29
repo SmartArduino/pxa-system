@@ -191,6 +191,34 @@ auto subscription = co_await ctx.sensors().subscribe(
 显式设置 `PXA_SIM_SENSOR_TEMPERATURE_MILLI_CELSIUS=25000` 可提供固定的
 25 摄氏度模拟源，它不代表硬件实测。
 
+Net 通过 `ctx.net().request(request, permission, packet, headers)` 发起 HTTP 请求。
+先用 `ctx.permissions().acquire("net.client", origin)` 获取与 URL origin 完全一致的
+权限，例如 `https://example.test`。请求在调用 `request()` 时立即编码，URL、
+请求头和小型请求体只需活到该调用返回；控制包与响应头数组由调用方持有，
+必须活到异步任务完成或取消。控制包上限 4096 字节，不放进默认 1024 字节
+协程槽。响应头数组只需容纳实际返回的所选头；不足时返回 `resource_limit`，
+已交付的响应流也会关闭。响应中的头字段是拥有存储的副本。
+
+```cpp
+std::array<std::byte, 4096> packet;
+std::array<pxa::NetHeader, 2> headers;
+constexpr std::array<std::string_view, 2> wanted{"etag", "content-length"};
+pxa::NetRequest request{.url = "https://example.test/data",
+                        .wanted_headers = wanted};
+auto reply = co_await ctx.net().request(request, permission, packet, headers);
+if (!reply) co_return std::unexpected(reply.error());
+if (reply->body) {
+    std::array<std::byte, 512> chunk;
+    auto count = reply->body.read(chunk);
+    // 短读与 would_block 由调用方在后续事件继续处理。
+}
+```
+
+HTTP 404 等状态码是有效的 `NetResponse`，不是 PXA 错误。没有响应体时 `body`
+为空；有响应体时 `NetBody` 不可复制、可以移动，离开作用域自动关闭。
+`body_length_known()` 为假时不能用 `body_length` 判断结束，`read` 返回 0 才是 EOF。
+请求取消后晚到的响应体句柄由请求表关闭；stop 阶段不调用 Host。
+
 独立开发包包含 Device schema、生成工具和黄金向量。检查 C++ 生成物：
 
 ```sh
@@ -198,7 +226,7 @@ python3 spec/draft/tools/generate_service_codecs.py --language cpp --check
 ```
 
 当前实现包括 Core 消息编解码、资源句柄、应用入口、有界协程和请求表、
-声明式布局/常用控件、状态绑定与导航，Storage/Permission/Audio/FS/Device/Sensor，
+声明式布局/常用控件、状态绑定与导航，Storage/Permission/Audio/FS/Device/Sensor/Net，
 以及 GameRender 的上下文创建、清屏、矩形和精灵批次 DrawList。
 动态 keyed list 与 VirtualList 已有实现和模拟器验证；条件分支、Ref、
 其余服务接口和完整性能验收尚未完成。独立开发包已可构建和打包示例，
