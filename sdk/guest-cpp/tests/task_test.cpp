@@ -7,6 +7,7 @@ static std::uint64_t request_token;
 static int result_value;
 static int accepted_requests;
 static int failed_tasks;
+static bool foreground_mode;
 
 extern "C" std::int32_t pxa_submit(const std::uint8_t* data,
                                       std::uint32_t length) {
@@ -45,7 +46,14 @@ pxa::Task<void> fail() {
 
 struct TestApp {
     pxa::Result<void> on_start(pxa::Context& context) {
-        return context.tasks().start(root(context));
+        return foreground_mode ? context.foreground_tasks().start(root(context))
+                               : context.tasks().start(root(context));
+    }
+    pxa::Result<bool> on_event(pxa::Context& context, const pxa::Event& event) {
+        if (event.service != 42 || event.opcode != 2) return false;
+        auto started = context.foreground_tasks().start(root(context));
+        if (!started) return std::unexpected(started.error());
+        return true;
     }
 };
 
@@ -82,4 +90,23 @@ int main() {
                reinterpret_cast<const std::uint8_t*>(packet.data()),
                packet.size()) == static_cast<int>(pxa::Error::bad_state));
     assert(result_value == 0 && abandoned_token != 0);
+
+    foreground_mode = true;
+    assert(pxa_app_start(nullptr, 0) == 0);
+    for (unsigned i = 0; i < 16; ++i) {
+        pxa::wire::put64(packet.data() + 4, request_token);
+        pxa::wire::put32(packet.data() + 20, i);
+        assert(pxa_app_on_event(
+                   reinterpret_cast<const std::uint8_t*>(packet.data()),
+                   packet.size()) == 1);
+        assert(result_value == static_cast<int>(i));
+        if (i == 15) break;
+        std::array<std::byte, 20> launch{};
+        pxa::wire::put16(launch.data(), 42);
+        pxa::wire::put16(launch.data() + 2, 2);
+        assert(pxa_app_on_event(
+                   reinterpret_cast<const std::uint8_t*>(launch.data()),
+                   launch.size()) == 1);
+    }
+    pxa_app_stop(0);
 }

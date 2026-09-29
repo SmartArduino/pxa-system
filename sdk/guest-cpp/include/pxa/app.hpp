@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ui.hpp"
+#include "navigation.hpp"
 #include "task.hpp"
 #include "game_service.hpp"
 #include "window.hpp"
@@ -49,7 +50,8 @@ private:
     bool foreground_ = true;
 };
 
-template<class App, bool HasView = requires(App& app) { app.view(); }>
+template<class App, bool HasView = requires(App& app) { app.view(); },
+         bool HasNavigation = requires(App& app) { app.navigation(); }>
 class UiSlot {
 public:
     Result<void> mount(App&, Transport&) noexcept { return {}; }
@@ -59,7 +61,7 @@ public:
 };
 
 template<class App>
-class UiSlot<App, true> {
+class UiSlot<App, true, false> {
     using View = decltype(std::declval<App&>().view());
 public:
     Result<void> mount(App& app, Transport& transport) {
@@ -77,6 +79,28 @@ public:
     void reset() noexcept { page_.reset(); }
 private:
     std::optional<ui::Page<View>> page_;
+};
+
+template<class App, bool HasView>
+class UiSlot<App, HasView, true> {
+    using Navigation = std::remove_reference_t<decltype(std::declval<App&>().navigation())>;
+public:
+    Result<void> mount(App& app, Transport& transport) noexcept {
+        navigation_ = &app.navigation();
+        return navigation_->attach(transport);
+    }
+    bool handle(const Event& event) noexcept {
+        return navigation_ && navigation_->handle(event);
+    }
+    Result<void> flush() noexcept {
+        return navigation_ ? navigation_->flush() : Result<void>{};
+    }
+    void reset() noexcept {
+        if (navigation_) navigation_->reset();
+        navigation_ = nullptr;
+    }
+private:
+    Navigation* navigation_ = nullptr;
 };
 
 template<class App>
@@ -209,7 +233,7 @@ public:
                                   app.on_background(ctx);
                               }) app_->on_background(context_);
             }
-            auto flushed = ui_.flush();
+            auto flushed = flush_ui();
             context_.transport_.phase(Phase::inactive);
             return flushed ? 1 : static_cast<std::int32_t>(flushed.error());
         }
@@ -241,7 +265,7 @@ public:
                                               steps.count});
                 }
             }
-            auto flushed = ui_.flush();
+            auto flushed = flush_ui();
             context_.transport_.phase(Phase::inactive);
             return flushed ? 1 : static_cast<std::int32_t>(flushed.error());
         }
@@ -256,7 +280,7 @@ public:
             if constexpr (requires(App& app, const WindowMetrics& value) {
                               app.on_window_changed(value);
                           }) app_->on_window_changed(*metrics);
-            auto flushed = ui_.flush();
+            auto flushed = flush_ui();
             context_.transport_.phase(Phase::inactive);
             return flushed ? 1 : static_cast<std::int32_t>(flushed.error());
         }
@@ -270,13 +294,14 @@ public:
             if constexpr (requires(App& app) {
                               { app.on_back() } -> std::same_as<BackAction>;
                           }) action = app_->on_back();
-            auto flushed = ui_.flush();
+            auto flushed = flush_ui();
             context_.transport_.phase(Phase::inactive);
             return flushed ? static_cast<std::int32_t>(action)
                            : static_cast<std::int32_t>(flushed.error());
         }
         std::int32_t result = context_.requests_.dispatch(*parsed) ? 1 : 0;
         context_.tasks_.reap();
+        context_.foreground_tasks_.reap();
         if (result == 0 && ui_.handle(*parsed)) result = 1;
         if constexpr (requires(App& app, Context& ctx, const Event& value) {
                           { app.on_event(ctx, value) } ->
@@ -288,7 +313,7 @@ public:
                                  : static_cast<std::int32_t>(handled.error());
             }
         }
-        auto flushed = ui_.flush();
+        auto flushed = flush_ui();
         if (!flushed && result >= 0)
             result = static_cast<std::int32_t>(flushed.error());
         context_.transport_.phase(Phase::inactive);
@@ -311,6 +336,17 @@ public:
     }
 
 private:
+    static Result<void> flush_ui() noexcept {
+        auto result = ui_.flush();
+        if (result || result.error() == Error::protocol_error) return result;
+        if constexpr (requires(App& app, Context& ctx, Error error) {
+                          app.on_error(ctx, error);
+                      }) app_->on_error(context_, result.error());
+        else std::fprintf(stderr, "PXA UI update failed: %d\n",
+                          static_cast<int>(result.error()));
+        return {};
+    }
+
     inline static Context context_{};
     inline static UiSlot<App> ui_{};
     inline static FixedStepper stepper_{};

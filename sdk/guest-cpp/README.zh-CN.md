@@ -35,6 +35,34 @@ PXA_APPLICATION(Counter)
 `State<int>` 变化后，框架在当前事件结束前合并并提交一次 PATCH。
 控件节点 ID 和 UI 事务由 SDK 管理。
 
+导航应用提供 `navigation()`，返回其持有的 `ui::Navigator<>`，不再提供单一
+`view()`。在 `on_start` 中排入首页：
+
+```cpp
+Result<void> on_start(Context&) {
+    return routes.push<Home>(std::ref(model));
+}
+ui::Navigator<>& navigation() { return routes; }
+```
+
+每个页面类型提供 `view()`；`push<Screen>(args...)`、`replace<Screen>(args...)`
+与 `pop()` 排入切换，框架在当前事件结束时提交。参数使用普通小值或
+`std::ref(model)`，导航历史不保存隐藏页面的视图；返回会重新构造页面。
+需要保留的状态放在应用模型。构建或提交失败会保留原页面；切换成功才
+销毁原页面及其任务。页面可实现 `on_mount(TaskScope&)` 启动页面任务，
+只有挂载提交成功后才调用这个方法。页面持有的局部 State 无需可移动。
+
+默认 `Navigator<8, 4096, 96>` 为 8 层历史、每页 4096 字节、每组路由参数
+96 字节。页面总存储为两个固定槽，共 8 KiB；切换时候选页和旧页短暂共存，
+成功后旧页销毁。静态页面应用不启用这块存储。超预算页面有编译诊断，
+历史满返回 `resource_limit`，同一事件重复排入切换返回 `busy`。
+完整示例见 `examples/navigation`。
+
+运行中的 UI 提交失败会保留页面，并调用可选的
+`void on_error(Context&, Error)`；没有钩子时输出错误日志。容量不足等
+可恢复错误不会使 Host 停止应用，可以在后续事件重试；协议错误仍返回
+失败。首次挂载失败仍属于启动失败，应用不会以空页面继续运行。
+
 `examples/storage` 演示异步读取和持久化。`ctx.storage().get(key, buffer)`
 把值复制到调用方缓冲区并返回实际字节数；`set(key, value)` 使用默认 512 字节
 封包缓冲区。较大的值可调用 `set(key, value, packet)`；最大 key/value 组合需
@@ -58,7 +86,7 @@ ready、ended、stopped、replaced、error。PCM 可以短写，`would_block` �
 当前实现包括 Core 消息编解码、资源句柄、应用入口、有界协程和请求表、
 基础声明式 Row/Column/Text/Button、整数状态绑定，以及 GameRender 的
 上下文创建、清屏、矩形和精灵批次 DrawList。计划中的完整服务接口、
-动态 UI/导航/虚拟列表尚未完成；独立开发包已可构建和打包示例，
+动态 UI/虚拟列表尚未完成；独立开发包已可构建和打包示例，
 但目前不能作为完整发布版 SDK。
 
 构建应用时，CMake 中使用 `pxa_add_app`，并提供

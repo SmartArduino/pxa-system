@@ -448,9 +448,10 @@ public:
 
     Result<void> mount() noexcept {
         if (mounted_) return std::unexpected(Error::bad_state);
-        if (generation_ == UINT32_MAX)
+        const auto generation = transport_.next_ui_generation();
+        if (!generation)
             return std::unexpected(Error::limit_exceeded);
-        Transaction tx(transport_, generation_ + 1, 1,
+        Transaction tx(transport_, generation, 1,
                        protocol::replace_surface);
         if (!tx.valid()) return std::unexpected(tx.error());
         current_ = &tx;
@@ -468,7 +469,7 @@ public:
                 mount_error_.value_or(tx.error()));
         auto result = tx.commit();
         if (!result) return result;
-        ++generation_;
+        generation_ = generation;
         mounted_ = true;
         for (std::size_t i = 0; i < binding_count_; ++i)
             bindings_[i].subscribe(bindings_[i].state,
@@ -478,9 +479,11 @@ public:
 
     Result<void> flush() noexcept {
         if (!dirty_) return {};
-        if (!mounted_ || generation_ == UINT32_MAX)
+        if (!mounted_)
             return std::unexpected(Error::bad_state);
-        Transaction tx(transport_, generation_ + 1, 1, protocol::patch);
+        const auto generation = transport_.next_ui_generation();
+        if (!generation) return std::unexpected(Error::limit_exceeded);
+        Transaction tx(transport_, generation, 1, protocol::patch);
         if (!tx.valid()) return std::unexpected(tx.error());
         for (std::size_t i = 0; i < binding_count_; ++i) {
             auto& binding = bindings_[i];
@@ -490,7 +493,7 @@ public:
         }
         auto result = tx.commit();
         if (!result) return result;
-        ++generation_;
+        generation_ = generation;
         dirty_ = false;
         for (std::size_t i = 0; i < binding_count_; ++i)
             bindings_[i].subscription.pending = false;

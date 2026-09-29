@@ -122,6 +122,10 @@ public:
 
     std::uint64_t next_token() noexcept;
 
+    std::uint32_t next_ui_generation() noexcept {
+        return ui_generation_ == UINT32_MAX ? 0 : ++ui_generation_;
+    }
+
     Result<void> send(std::uint16_t service, std::uint16_t opcode,
                       std::uint64_t token,
                       std::span<const std::byte> payload = {}) noexcept;
@@ -139,6 +143,7 @@ private:
     std::array<std::byte, 512> local_packet_{};
     std::span<std::byte> packet_ = local_packet_;
     std::uint64_t token_ = 0;
+    std::uint32_t ui_generation_ = 0;
     Phase phase_ = Phase::inactive;
 };
 
