@@ -1,5 +1,6 @@
 #include "pxsys/reference_lvgl.h"
 #include "pxsys/reference_ime.h"
+#include "pxsys/lvgl_flags.h"
 
 /* Temporary bring-up switch: open the input method for the first application
  * text input even before it is focused. */
@@ -10,14 +11,15 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include "pxsys/app_metadata.h"
 #include "pxsys/reference_layout.h"
 
-#define REFERENCE_MAGIC UINT32_C(0x50585255)
-#define REFERENCE_APP_COUNT 8u
 extern const lv_font_t pxsys_reference_lock_digits_72;
 
+#define REFERENCE_MAGIC UINT32_C(0x50585255)
+#define REFERENCE_APP_COUNT 8u
 #define TRANSIENT_BAR_TIMEOUT_MS 2500u
 #define NAVIGATION_GESTURE_COMMIT_DISTANCE 32
 #define NAVIGATION_GESTURE_HOLD_MS 180u
@@ -25,6 +27,17 @@ extern const lv_font_t pxsys_reference_lock_digits_72;
 #define REFERENCE_RESOURCE_NAMESPACE "system.ui"
 #define REFERENCE_TRANSLATION_SCRATCH_COUNT 12u
 #define REFERENCE_TRANSLATION_SCRATCH_BYTES 96u
+
+#ifndef PXSYS_REFERENCE_UI_LAUNCHER_COLUMNS
+#define PXSYS_REFERENCE_UI_LAUNCHER_COLUMNS 4
+#endif
+#ifndef PXSYS_REFERENCE_UI_LAUNCHER_ROWS
+#define PXSYS_REFERENCE_UI_LAUNCHER_ROWS 2
+#endif
+#if PXSYS_REFERENCE_UI_LAUNCHER_COLUMNS < 1 || \
+    PXSYS_REFERENCE_UI_LAUNCHER_ROWS < 1
+#error "Launcher columns and rows must be positive"
+#endif
 
 #define RESOURCE_ENTRY(key_value, text_value)                              \
     {{key_value, sizeof(key_value) - 1u}, {text_value, sizeof(text_value) - 1u}}
@@ -48,6 +61,13 @@ static const pxsys_resource_entry_t reference_en_resources[] = {
     RESOURCE_ENTRY("settings.bluetooth.detail", "Speakers, sources and local music"),
     RESOURCE_ENTRY("settings.sound", "Sound & display"),
     RESOURCE_ENTRY("settings.sound.detail", "Volume, brightness and screen timeout"),
+    RESOURCE_ENTRY("settings.sound.idle", "Display timeout"),
+    RESOURCE_ENTRY("settings.sound.dim_after", "Dim after"),
+    RESOURCE_ENTRY("settings.sound.dim_brightness", "Dim brightness"),
+    RESOURCE_ENTRY("settings.sound.lock_after", "Lock after"),
+    RESOURCE_ENTRY("settings.sound.seconds", "seconds"),
+    RESOURCE_ENTRY("settings.sound.minute", "minute"),
+    RESOURCE_ENTRY("settings.sound.minutes", "minutes"),
     RESOURCE_ENTRY("settings.alarm", "Alarms"),
     RESOURCE_ENTRY("settings.alarm.detail", "Create and manage alarms"),
     RESOURCE_ENTRY("settings.language", "Language"),
@@ -56,6 +76,25 @@ static const pxsys_resource_entry_t reference_en_resources[] = {
     RESOURCE_ENTRY("settings.apps.detail", "Disable, uninstall and clear data"),
     RESOURCE_ENTRY("settings.files", "Files & storage"),
     RESOURCE_ENTRY("settings.files.detail", "Browse and organize device files"),
+    RESOURCE_ENTRY("files.new_folder", "New folder"),
+    RESOURCE_ENTRY("files.folder", "Folder"),
+    RESOURCE_ENTRY("files.file", "File"),
+    RESOURCE_ENTRY("files.size", "Size"),
+    RESOURCE_ENTRY("files.calculating", "Calculating…"),
+    RESOURCE_ENTRY("files.size_failed", "Could not calculate size"),
+    RESOURCE_ENTRY("files.path", "Path"),
+    RESOURCE_ENTRY("files.modified", "Modified"),
+    RESOURCE_ENTRY("files.rename", "Rename"),
+    RESOURCE_ENTRY("files.copy", "Copy"),
+    RESOURCE_ENTRY("files.move", "Move"),
+    RESOURCE_ENTRY("files.paste", "Paste here"),
+    RESOURCE_ENTRY("files.delete", "Delete"),
+    RESOURCE_ENTRY("files.install", "Install app"),
+    RESOURCE_ENTRY("files.install.confirm", "Install this app?"),
+    RESOURCE_ENTRY("files.unsupported", "No app can open this file"),
+    RESOURCE_ENTRY("files.name", "Name"),
+    RESOURCE_ENTRY("files.invalid_name", "Enter a valid name without /"),
+    RESOURCE_ENTRY("files.failed", "File operation failed"),
     RESOURCE_ENTRY("settings.about", "About device"),
     RESOURCE_ENTRY("settings.about.detail", "Firmware, storage and hardware information"),
     RESOURCE_ENTRY("settings.performance.overlay", "Performance overlay"),
@@ -75,6 +114,12 @@ static const pxsys_resource_entry_t reference_en_resources[] = {
     RESOURCE_ENTRY("settings.wifi.next", "Next"),
     RESOURCE_ENTRY("settings.wifi.connect", "Connect"),
     RESOURCE_ENTRY("settings.wifi.connected", "Connected network"),
+    RESOURCE_ENTRY("settings.wifi.saved", "Saved networks"),
+    RESOURCE_ENTRY("settings.wifi.saved.none", "No saved networks"),
+    RESOURCE_ENTRY("settings.wifi.saved.detail", "Tap to forget"),
+    RESOURCE_ENTRY("settings.wifi.saved.connected_detail", "Connected · tap to forget"),
+    RESOURCE_ENTRY("settings.wifi.forget.confirm", "Forget this network?"),
+    RESOURCE_ENTRY("settings.wifi.forget.failed", "Could not forget network"),
     RESOURCE_ENTRY("settings.wifi.invalid_ssid", "Enter an SSID of 1–32 bytes"),
     RESOURCE_ENTRY("settings.wifi.connect_failed", "Could not start connection"),
     RESOURCE_ENTRY("settings.wifi.open", "Open network"),
@@ -167,6 +212,13 @@ static const pxsys_resource_entry_t reference_zh_resources[] = {
     RESOURCE_ENTRY("settings.bluetooth.detail", "音响、音源和本地音乐"),
     RESOURCE_ENTRY("settings.sound", "声音与显示"),
     RESOURCE_ENTRY("settings.sound.detail", "音量、亮度和自动熄屏"),
+    RESOURCE_ENTRY("settings.sound.idle", "自动暗屏与锁屏"),
+    RESOURCE_ENTRY("settings.sound.dim_after", "自动暗屏时间"),
+    RESOURCE_ENTRY("settings.sound.dim_brightness", "暗屏亮度"),
+    RESOURCE_ENTRY("settings.sound.lock_after", "自动锁屏时间"),
+    RESOURCE_ENTRY("settings.sound.seconds", "秒"),
+    RESOURCE_ENTRY("settings.sound.minute", "分钟"),
+    RESOURCE_ENTRY("settings.sound.minutes", "分钟"),
     RESOURCE_ENTRY("settings.alarm", "闹钟"),
     RESOURCE_ENTRY("settings.alarm.detail", "添加和管理闹钟"),
     RESOURCE_ENTRY("settings.language", "语言"),
@@ -175,6 +227,25 @@ static const pxsys_resource_entry_t reference_zh_resources[] = {
     RESOURCE_ENTRY("settings.apps.detail", "停用、卸载与清除应用数据"),
     RESOURCE_ENTRY("settings.files", "文件与存储"),
     RESOURCE_ENTRY("settings.files.detail", "浏览和整理设备文件"),
+    RESOURCE_ENTRY("files.new_folder", "新建文件夹"),
+    RESOURCE_ENTRY("files.folder", "文件夹"),
+    RESOURCE_ENTRY("files.file", "文件"),
+    RESOURCE_ENTRY("files.size", "大小"),
+    RESOURCE_ENTRY("files.calculating", "正在计算…"),
+    RESOURCE_ENTRY("files.size_failed", "无法计算大小"),
+    RESOURCE_ENTRY("files.path", "路径"),
+    RESOURCE_ENTRY("files.modified", "修改时间"),
+    RESOURCE_ENTRY("files.rename", "重命名"),
+    RESOURCE_ENTRY("files.copy", "复制"),
+    RESOURCE_ENTRY("files.move", "移动"),
+    RESOURCE_ENTRY("files.paste", "粘贴到此处"),
+    RESOURCE_ENTRY("files.delete", "删除"),
+    RESOURCE_ENTRY("files.install", "安装应用"),
+    RESOURCE_ENTRY("files.install.confirm", "安装此应用？"),
+    RESOURCE_ENTRY("files.unsupported", "没有应用可以打开此文件"),
+    RESOURCE_ENTRY("files.name", "名称"),
+    RESOURCE_ENTRY("files.invalid_name", "请输入不含 / 的有效名称"),
+    RESOURCE_ENTRY("files.failed", "文件操作失败"),
     RESOURCE_ENTRY("settings.about", "关于设备"),
     RESOURCE_ENTRY("settings.about.detail", "固件、存储与硬件信息"),
     RESOURCE_ENTRY("settings.performance.overlay", "性能浮层"),
@@ -194,6 +265,12 @@ static const pxsys_resource_entry_t reference_zh_resources[] = {
     RESOURCE_ENTRY("settings.wifi.next", "下一步"),
     RESOURCE_ENTRY("settings.wifi.connect", "连接"),
     RESOURCE_ENTRY("settings.wifi.connected", "当前已连接"),
+    RESOURCE_ENTRY("settings.wifi.saved", "已保存的网络"),
+    RESOURCE_ENTRY("settings.wifi.saved.none", "没有已保存的网络"),
+    RESOURCE_ENTRY("settings.wifi.saved.detail", "点击以删除保存信息"),
+    RESOURCE_ENTRY("settings.wifi.saved.connected_detail", "已连接 · 点击删除"),
+    RESOURCE_ENTRY("settings.wifi.forget.confirm", "删除此网络的保存信息？"),
+    RESOURCE_ENTRY("settings.wifi.forget.failed", "无法删除保存的网络"),
     RESOURCE_ENTRY("settings.wifi.invalid_ssid", "请输入 1–32 字节的网络名称"),
     RESOURCE_ENTRY("settings.wifi.connect_failed", "无法发起连接"),
     RESOURCE_ENTRY("settings.wifi.open", "开放网络"),
@@ -459,6 +536,8 @@ struct pxsys_reference_lvgl {
     size_t max_launcher_apps;
     size_t launcher_count;
     launcher_item_t* launcher_items;
+    uint16_t launcher_page;
+    uint8_t launcher_gap;
     char launcher_order[4096];
     void* launcher_order_context;
     pxsys_reference_lvgl_launcher_save_fn launcher_order_save;
@@ -526,6 +605,7 @@ struct pxsys_reference_lvgl {
     toggle_control_t toggle_controls[4];
     performance_control_t performance_controls[3];
     wifi_network_control_t wifi_network_controls[PXSYS_REFERENCE_WIFI_NETWORK_MAX];
+    wifi_network_control_t wifi_saved_controls[PXSYS_REFERENCE_WIFI_NETWORK_MAX];
     settings_action_t settings_actions[REFERENCE_SETTINGS_ACTION_COUNT];
     const pxsys_reference_language_t* languages;
     size_t language_count;
@@ -544,6 +624,16 @@ struct pxsys_reference_lvgl {
     void* file_manager_context;
     pxsys_reference_lvgl_file_list_fn file_list;
     pxsys_reference_lvgl_file_action_fn file_action;
+    pxsys_reference_lvgl_file_size_fn file_size;
+    pxsys_reference_idle_policy_t idle_policy;
+    void* idle_context;
+    pxsys_reference_lvgl_idle_save_fn idle_save;
+    pxsys_reference_lvgl_idle_dim_fn idle_dim;
+    pxsys_reference_lvgl_idle_lock_fn idle_lock;
+    lv_timer_t* idle_timer;
+    uint8_t idle_dimmed;
+    uint8_t idle_lock_triggered;
+    lv_obj_t* idle_brightness_value;
     void* memory_info_context;
     pxsys_reference_lvgl_memory_info_fn memory_info;
     void* preview_overlay_context;
@@ -559,20 +649,25 @@ struct pxsys_reference_lvgl {
     pxsys_reference_lvgl_wifi_connect_fn wifi_connect;
     pxsys_reference_lvgl_wifi_scan_start_fn wifi_scan_start;
     pxsys_reference_lvgl_wifi_current_fn wifi_current;
+    pxsys_reference_lvgl_wifi_saved_list_fn wifi_saved_list;
+    pxsys_reference_lvgl_wifi_forget_fn wifi_forget;
     void* app_permission_context;
     pxsys_reference_lvgl_app_permission_list_fn app_permission_list;
     pxsys_reference_lvgl_app_permission_set_fn app_permission_set;
     pxsys_reference_wifi_network_t wifi_networks[PXSYS_REFERENCE_WIFI_NETWORK_MAX];
+    pxsys_reference_wifi_saved_t wifi_saved[PXSYS_REFERENCE_WIFI_NETWORK_MAX];
     app_permission_control_t
         app_permission_controls[PXSYS_REFERENCE_APP_PERMISSION_MAX];
     pxsys_reference_app_permission_t
         app_permissions[PXSYS_REFERENCE_APP_PERMISSION_MAX];
     size_t app_permission_count;
     size_t wifi_network_count;
+    size_t wifi_saved_count;
     size_t wifi_scan_state;
     char pending_wifi_ssid[PXSYS_REFERENCE_WIFI_SSID_MAX];
     char wifi_input_draft[65];
     uint8_t wifi_input_stage;
+    uint8_t wifi_forget_failed;
     lv_obj_t* wifi_password_input;
     lv_obj_t* wifi_input_prompt;
     lv_obj_t* wifi_input_ssid;
@@ -587,8 +682,17 @@ struct pxsys_reference_lvgl {
     pxsys_reference_managed_app_t managed_apps[PXSYS_REFERENCE_MANAGED_APP_MAX];
     size_t managed_app_count;
     pxsys_reference_file_entry_t file_entries[PXSYS_REFERENCE_FILE_ENTRY_MAX];
+    pxsys_reference_file_entry_t file_selected;
     size_t file_entry_count;
     char file_path[PXSYS_REFERENCE_FILE_PATH_MAX];
+    char file_clipboard[PXSYS_REFERENCE_FILE_PATH_MAX];
+    char file_edit_draft[PXSYS_REFERENCE_FILE_NAME_MAX];
+    lv_obj_t* file_edit_input;
+    lv_obj_t* file_edit_error;
+    lv_obj_t* file_size_label;
+    lv_timer_t* file_size_timer;
+    uint8_t file_clipboard_action;
+    uint8_t file_edit_mode;
     char pending_identity[PXSYS_REFERENCE_MANAGED_APP_IDENTITY_MAX];
     char pending_path[PXSYS_REFERENCE_FILE_PATH_MAX];
     uint8_t pending_action;
@@ -613,6 +717,7 @@ struct pxsys_reference_lvgl {
 };
 
 static void rebuild(pxsys_reference_lvgl_t* ui);
+static int idle_policy_valid(const pxsys_reference_idle_policy_t* policy);
 static void show_page_confirm(pxsys_reference_lvgl_t* ui,
                               const char* message);
 static void navigation_back(pxsys_reference_lvgl_t* ui);
@@ -656,9 +761,9 @@ static void update_system_overlay(pxsys_reference_lvgl_t* ui) {
               ui->navigation_back_indicator != NULL || ui->toast_visible ||
               ui->volume_osd_visible ||
               (ui->app_ime != NULL &&
-               !lv_obj_has_flag(ui->app_ime, LV_OBJ_FLAG_HIDDEN)) ||
+               !lv_obj_is_hidden(ui->app_ime)) ||
               (ui->notification_shade != NULL &&
-               !lv_obj_has_flag(ui->notification_shade, LV_OBJ_FLAG_HIDDEN));
+               !lv_obj_is_hidden(ui->notification_shade));
     if (ui->system_overlay_visible == (uint8_t)visible) return;
     ui->system_overlay_visible = (uint8_t)visible;
     ui->system_overlay_changed(ui->system_overlay_context, visible != 0);
@@ -801,7 +906,7 @@ static void style_plain(lv_obj_t* object) {
     lv_obj_set_style_border_width(object, 0, 0);
     lv_obj_set_style_pad_all(object, 0, 0);
     lv_obj_set_style_radius(object, 0, 0);
-    lv_obj_remove_flag(object,
+    pxsys_lvgl_remove_flags(object,
                        LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
 }
 
@@ -897,16 +1002,16 @@ static int navigation_back_indicator_update(pxsys_reference_lvgl_t* ui,
                                   0);
     if (chevron != NULL) {
         if (width < 28)
-            lv_obj_add_flag(chevron, LV_OBJ_FLAG_HIDDEN);
+            pxsys_lvgl_add_flags(chevron, LV_OBJ_FLAG_HIDDEN);
         else
-            lv_obj_remove_flag(chevron, LV_OBJ_FLAG_HIDDEN);
+            pxsys_lvgl_remove_flags(chevron, LV_OBJ_FLAG_HIDDEN);
         lv_obj_set_style_line_color(
             chevron,
             color_token(ui, ready ? PXSYS_COLOR_ON_ACCENT
                                   : PXSYS_COLOR_TEXT_PRIMARY),
             0);
     }
-    lv_obj_remove_flag(indicator, LV_OBJ_FLAG_HIDDEN);
+    pxsys_lvgl_remove_flags(indicator, LV_OBJ_FLAG_HIDDEN);
     lv_obj_move_foreground(indicator);
     update_system_overlay(ui);
     return ready;
@@ -1089,6 +1194,32 @@ static void launcher_clicked(lv_event_t* event) {
                                    &intent, &instance);
 }
 
+static void launcher_position_tiles(pxsys_reference_lvgl_t* ui) {
+    if (ui->content == NULL) return;
+    const uint32_t columns = PXSYS_REFERENCE_UI_LAUNCHER_COLUMNS;
+    const uint32_t rows = PXSYS_REFERENCE_UI_LAUNCHER_ROWS;
+    const uint32_t per_page = columns * rows;
+    const uint32_t gap = ui->launcher_gap;
+    const uint32_t width = (uint32_t)lv_obj_get_width(ui->content);
+    const uint32_t height = (uint32_t)lv_obj_get_height(ui->content);
+    if (width == 0 || height == 0) return;
+    const uint32_t tile_width = width > (columns - 1u) * gap
+        ? (width - (columns - 1u) * gap) / columns : 1u;
+    const uint32_t tile_height = height > (rows - 1u) * gap
+        ? (height - (rows - 1u) * gap) / rows : 1u;
+    for (size_t index = 0; index < ui->launcher_count; ++index) {
+        lv_obj_t* tile = lv_obj_get_child(ui->content, (int32_t)index);
+        if (tile == NULL) break;
+        const uint32_t slot = (uint32_t)index % per_page;
+        const uint32_t page = (uint32_t)index / per_page;
+        lv_obj_set_pos(tile,
+            (int32_t)(page * width + (slot % columns) * (tile_width + gap)),
+            (int32_t)((slot / columns) * (tile_height + gap)));
+        lv_obj_set_size(tile, (lv_coord_t)tile_width,
+                        (lv_coord_t)tile_height);
+    }
+}
+
 static void launcher_save_order(pxsys_reference_lvgl_t* ui) {
     size_t position = 0;
     size_t index;
@@ -1200,7 +1331,7 @@ static void launcher_gesture(lv_event_t* event) {
                 color_token(ui, PXSYS_COLOR_SURFACE_CONTAINER_LOW), 0);
             lv_obj_set_style_bg_opa(other->tile, LV_OPA_20, 0);
             if (other->remove_button != NULL)
-                lv_obj_remove_flag(other->remove_button, LV_OBJ_FLAG_HIDDEN);
+                pxsys_lvgl_remove_flags(other->remove_button, LV_OBJ_FLAG_HIDDEN);
         }
         return;
     }
@@ -1229,6 +1360,7 @@ static void launcher_gesture(lv_event_t* event) {
         if (point.x < area.x1 || point.x > area.x2 ||
             point.y < area.y1 || point.y > area.y2) continue;
         lv_obj_move_to_index(item->tile, lv_obj_get_index(target->tile));
+        launcher_position_tiles(ui);
         launcher_save_order(ui);
         ui->launcher_long_pressed = 1;
         return;
@@ -1242,6 +1374,26 @@ static void launcher_background_clicked(lv_event_t* event) {
     ui->launcher_editing = 0;
     ui->launcher_long_pressed = 0;
     rebuild(ui);
+}
+
+static void launcher_scroll_ended(lv_event_t* event) {
+    pxsys_reference_lvgl_t* ui = lv_event_get_user_data(event);
+    if (!ui_valid(ui) || ui->content == NULL ||
+        lv_event_get_current_target(event) != ui->content ||
+        ui->launcher_count == 0) return;
+    const int32_t width = lv_obj_get_width(ui->content);
+    if (width <= 0) return;
+    const size_t per_page = PXSYS_REFERENCE_UI_LAUNCHER_COLUMNS *
+                            PXSYS_REFERENCE_UI_LAUNCHER_ROWS;
+    const size_t last_page = (ui->launcher_count - 1u) / per_page;
+    const int32_t scroll_x = lv_obj_get_scroll_x(ui->content);
+    size_t page = scroll_x > 0
+        ? (size_t)(scroll_x + width / 2) / (size_t)width : 0u;
+    if (page > last_page) page = last_page;
+    ui->launcher_page = (uint16_t)page;
+    const int32_t target_x = (int32_t)page * width;
+    if (scroll_x != target_x)
+        lv_obj_scroll_to_x(ui->content, target_x, LV_ANIM_OFF);
 }
 
 static lv_obj_t* make_label(lv_obj_t* parent, const char* text,
@@ -1267,7 +1419,7 @@ static lv_obj_t* make_button(pxsys_reference_lvgl_t* ui, lv_obj_t* parent,
     lv_obj_set_style_border_width(button, 1, 0);
     lv_obj_set_style_border_color(button, color_token(ui, PXSYS_COLOR_BORDER), 0);
     lv_obj_set_style_pad_all(button, 8, 0);
-    lv_obj_clear_flag(button, LV_OBJ_FLAG_SCROLLABLE);
+    pxsys_lvgl_remove_flags(button, LV_OBJ_FLAG_SCROLLABLE);
     make_label(button, text, ui->text_font,
                color_token(ui, PXSYS_COLOR_TEXT_PRIMARY));
     lv_obj_set_width(lv_obj_get_child(button, 0), LV_PCT(100));
@@ -1295,7 +1447,7 @@ static lv_obj_t* make_navigation_action(pxsys_reference_lvgl_t* ui,
     lv_obj_set_style_shadow_width(button, 0, 0);
     lv_obj_set_style_radius(button, ui->theme.base_radius_px, 0);
     lv_obj_set_style_pad_all(button, 0, 0);
-    lv_obj_clear_flag(button, LV_OBJ_FLAG_SCROLLABLE);
+    pxsys_lvgl_remove_flags(button, LV_OBJ_FLAG_SCROLLABLE);
     if (icon == NAVIGATION_ICON_BACK) {
         glyph = lv_line_create(button);
         lv_line_set_points(glyph, back_points,
@@ -1741,7 +1893,7 @@ static void task_transition_completed(lv_anim_t* animation) {
         (pxsys_reference_lvgl_t*)lv_anim_get_user_data(animation);
     if (!ui_valid(ui)) return;
     if (ui->task_transition_target != NULL)
-        lv_obj_remove_flag(ui->task_transition_target, LV_OBJ_FLAG_HIDDEN);
+        pxsys_lvgl_remove_flags(ui->task_transition_target, LV_OBJ_FLAG_HIDDEN);
     if (ui->task_transition_image != NULL)
         lv_obj_delete(ui->task_transition_image);
     clear_task_transition(ui);
@@ -1798,7 +1950,7 @@ static int start_task_transition(pxsys_reference_lvgl_t* ui) {
     (void)image;
     (void)target_scale;
 #endif
-    lv_obj_remove_flag(target, LV_OBJ_FLAG_HIDDEN);
+    pxsys_lvgl_remove_flags(target, LV_OBJ_FLAG_HIDDEN);
     clear_task_transition(ui);
     return 0;
 }
@@ -1814,13 +1966,13 @@ static void close_task_switcher(pxsys_reference_lvgl_t* ui) {
      * making lv_event_mark_deleted() spin until the task watchdog fires.
      * Keep the bounded switcher tree and reuse it on its next invocation. */
     if (ui->task_switcher != NULL)
-        lv_obj_add_flag(ui->task_switcher, LV_OBJ_FLAG_HIDDEN);
+        pxsys_lvgl_add_flags(ui->task_switcher, LV_OBJ_FLAG_HIDDEN);
     application_scale_reset(ui);
 }
 
 static int task_switcher_is_open(const pxsys_reference_lvgl_t* ui) {
     return ui->task_switcher != NULL &&
-           !lv_obj_has_flag(ui->task_switcher, LV_OBJ_FLAG_HIDDEN);
+           !lv_obj_is_hidden(ui->task_switcher);
 }
 
 static void recent_clicked(lv_event_t* event) {
@@ -2034,7 +2186,7 @@ static void update_recent_card(pxsys_reference_lvgl_t* ui, lv_obj_t* card,
                                ? (int32_t)ui->text_font->line_height + 6
                                : 22;
     int32_t preview_height = card_height - label_height - (int32_t)padding;
-    lv_obj_remove_flag(card, LV_OBJ_FLAG_HIDDEN);
+    pxsys_lvgl_remove_flags(card, LV_OBJ_FLAG_HIDDEN);
     lv_obj_set_style_translate_y(card, 0, 0);
     lv_obj_set_size(card, card_width, card_height);
     lv_obj_set_size(preview_area, card_width, preview_height);
@@ -2061,7 +2213,7 @@ static void update_recent_card(pxsys_reference_lvgl_t* ui, lv_obj_t* card,
         lv_image_set_src(image, preview->image);
         lv_image_set_scale(image, scale);
         lv_obj_center(image);
-        lv_obj_remove_flag(image, LV_OBJ_FLAG_HIDDEN);
+        pxsys_lvgl_remove_flags(image, LV_OBJ_FLAG_HIDDEN);
         item->preview_hit_x = (card_width - rendered_width) / 2;
         item->preview_hit_y = (preview_height - rendered_height) / 2;
         item->preview_hit_width = rendered_width;
@@ -2072,10 +2224,10 @@ static void update_recent_card(pxsys_reference_lvgl_t* ui, lv_obj_t* card,
         if (preview->transition_pending) {
             ui->task_transition_target = image;
             ui->task_transition_preview = preview;
-            lv_obj_add_flag(image, LV_OBJ_FLAG_HIDDEN);
+            pxsys_lvgl_add_flags(image, LV_OBJ_FLAG_HIDDEN);
         }
     } else {
-        lv_obj_add_flag(image, LV_OBJ_FLAG_HIDDEN);
+        pxsys_lvgl_add_flags(image, LV_OBJ_FLAG_HIDDEN);
     }
 }
 
@@ -2098,8 +2250,8 @@ static lv_obj_t* make_recent_card(pxsys_reference_lvgl_t* ui,
     lv_obj_set_style_border_width(card, 0, 0);
     lv_obj_set_style_shadow_width(card, 0, 0);
     lv_obj_set_style_pad_all(card, 0, 0);
-    lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_add_flag(card, LV_OBJ_FLAG_SNAPPABLE);
+    pxsys_lvgl_remove_flags(card, LV_OBJ_FLAG_SCROLLABLE);
+    pxsys_lvgl_add_flags(card, LV_OBJ_FLAG_SNAPPABLE);
 
     preview_area = lv_obj_create(card);
     style_plain(preview_area);
@@ -2110,7 +2262,7 @@ static lv_obj_t* make_recent_card(pxsys_reference_lvgl_t* ui,
                               color_token(ui, PXSYS_COLOR_SURFACE), 0);
     lv_obj_set_style_clip_corner(preview_area, true, 0);
     image = lv_image_create(preview_area);
-    lv_obj_add_flag(image, LV_OBJ_FLAG_HIDDEN);
+    pxsys_lvgl_add_flags(image, LV_OBJ_FLAG_HIDDEN);
 
     label = make_label(card, item->label, ui->text_font,
                        color_token(ui, PXSYS_COLOR_TEXT_PRIMARY));
@@ -2204,19 +2356,19 @@ static void build_task_switcher(pxsys_reference_lvgl_t* ui) {
         lv_obj_set_style_bg_color(ui->task_switcher,
                                   color_token(ui, PXSYS_COLOR_BACKGROUND), 0);
         lv_obj_set_style_bg_opa(ui->task_switcher, LV_OPA_COVER, 0);
-        lv_obj_add_flag(ui->task_switcher, LV_OBJ_FLAG_CLICKABLE);
+        pxsys_lvgl_add_flags(ui->task_switcher, LV_OBJ_FLAG_CLICKABLE);
         lv_obj_add_event_cb(ui->task_switcher,
                             task_switcher_background_clicked,
                             LV_EVENT_CLICKED, ui);
         panel = lv_obj_create(ui->task_switcher);
         style_plain(panel);
         lv_obj_set_style_bg_opa(panel, LV_OPA_TRANSP, 0);
-        lv_obj_add_flag(panel, LV_OBJ_FLAG_CLICKABLE);
+        pxsys_lvgl_add_flags(panel, LV_OBJ_FLAG_CLICKABLE);
         lv_obj_add_event_cb(panel, task_switcher_background_clicked,
                             LV_EVENT_CLICKED, ui);
     } else {
         panel = lv_obj_get_child(ui->task_switcher, 0);
-        lv_obj_remove_flag(ui->task_switcher, LV_OBJ_FLAG_HIDDEN);
+        pxsys_lvgl_remove_flags(ui->task_switcher, LV_OBJ_FLAG_HIDDEN);
     }
     lv_obj_set_size(ui->task_switcher, (lv_coord_t)ui->display.width,
                     (lv_coord_t)ui->display.height);
@@ -2235,7 +2387,7 @@ static void build_task_switcher(pxsys_reference_lvgl_t* ui) {
                 color_token(ui, PXSYS_COLOR_TEXT_SECONDARY));
         } else {
             lv_label_set_text(ui->task_switcher_memory, memory_text);
-            lv_obj_remove_flag(ui->task_switcher_memory, LV_OBJ_FLAG_HIDDEN);
+            pxsys_lvgl_remove_flags(ui->task_switcher_memory, LV_OBJ_FLAG_HIDDEN);
         }
         if (ui->task_switcher_memory != NULL) {
             lv_obj_set_pos(ui->task_switcher_memory, panel_x, panel_y);
@@ -2245,7 +2397,7 @@ static void build_task_switcher(pxsys_reference_lvgl_t* ui) {
                                         LV_TEXT_ALIGN_RIGHT, 0);
         }
     } else if (ui->task_switcher_memory != NULL) {
-        lv_obj_add_flag(ui->task_switcher_memory, LV_OBJ_FLAG_HIDDEN);
+        pxsys_lvgl_add_flags(ui->task_switcher_memory, LV_OBJ_FLAG_HIDDEN);
     }
     lv_obj_set_pos(panel, panel_x, panel_y + header_height);
     lv_obj_set_size(panel, panel_width, panel_height - header_height);
@@ -2274,7 +2426,7 @@ static void build_task_switcher(pxsys_reference_lvgl_t* ui) {
             lv_obj_set_flex_flow(strip, LV_FLEX_FLOW_ROW);
             lv_obj_set_scroll_dir(strip, LV_DIR_HOR);
             lv_obj_set_scroll_snap_x(strip, LV_SCROLL_SNAP_CENTER);
-            lv_obj_add_flag(strip,
+            pxsys_lvgl_add_flags(strip,
                             LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE |
                                 LV_OBJ_FLAG_SCROLL_ONE);
             lv_obj_add_event_cb(strip, task_switcher_background_clicked,
@@ -2394,7 +2546,7 @@ static void build_task_switcher(pxsys_reference_lvgl_t* ui) {
 #if PXSYS_REFERENCE_UI_TASK_SWITCHER == PXSYS_TASK_SWITCHER_CARDS && LV_USE_SNAPSHOT
         for (index = added; index < lv_obj_get_child_count(strip); ++index) {
             lv_obj_t* card = lv_obj_get_child(strip, (int32_t)index);
-            if (card != NULL) lv_obj_add_flag(card, LV_OBJ_FLAG_HIDDEN);
+            if (card != NULL) pxsys_lvgl_add_flags(card, LV_OBJ_FLAG_HIDDEN);
         }
         if (added == 0) {
             if (ui->task_switcher_empty == NULL) {
@@ -2407,11 +2559,11 @@ static void build_task_switcher(pxsys_reference_lvgl_t* ui) {
                 lv_label_set_text(
                     ui->task_switcher_empty,
                     translated(ui, "recents.empty", "No recent apps"));
-                lv_obj_remove_flag(ui->task_switcher_empty,
+                pxsys_lvgl_remove_flags(ui->task_switcher_empty,
                                    LV_OBJ_FLAG_HIDDEN);
             }
         } else if (ui->task_switcher_empty != NULL) {
-            lv_obj_add_flag(ui->task_switcher_empty, LV_OBJ_FLAG_HIDDEN);
+            pxsys_lvgl_add_flags(ui->task_switcher_empty, LV_OBJ_FLAG_HIDDEN);
         }
 #else
         if (added == 0) {
@@ -2491,9 +2643,9 @@ static lv_obj_t* make_launcher_tile(pxsys_reference_lvgl_t* ui,
         lv_obj_set_style_bg_opa(tile, LV_OPA_20, 0);
     }
     lv_obj_set_style_pad_all(tile, 3, 0);
-    lv_obj_clear_flag(tile, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_add_flag(tile, LV_OBJ_FLAG_PRESS_LOCK);
-    lv_obj_remove_flag(tile, LV_OBJ_FLAG_SCROLL_ON_FOCUS);
+    pxsys_lvgl_remove_flags(tile, LV_OBJ_FLAG_SCROLLABLE);
+    pxsys_lvgl_add_flags(tile, LV_OBJ_FLAG_PRESS_LOCK);
+    pxsys_lvgl_remove_flags(tile, LV_OBJ_FLAG_SCROLL_ON_FOCUS);
     marker = lv_obj_create(tile);
     style_plain(marker);
     lv_obj_set_size(marker, icon_size, icon_size);
@@ -2554,7 +2706,7 @@ static lv_obj_t* make_launcher_tile(pxsys_reference_lvgl_t* ui,
         lv_obj_add_event_cb(remove_button, launcher_remove_clicked,
                             LV_EVENT_CLICKED, item);
         if (!ui->launcher_editing)
-            lv_obj_add_flag(remove_button, LV_OBJ_FLAG_HIDDEN);
+            pxsys_lvgl_add_flags(remove_button, LV_OBJ_FLAG_HIDDEN);
         item->remove_button = remove_button;
     }
     lv_obj_add_event_cb(tile, launcher_gesture, LV_EVENT_PRESSED, item);
@@ -2782,7 +2934,7 @@ static lv_obj_t* make_settings_row(pxsys_reference_lvgl_t* ui,
     lv_obj_set_style_pad_hor(row, 10, 0);
     lv_obj_set_style_pad_column(row, 10, 0);
     if (clicked != NULL) {
-        lv_obj_add_flag(row, LV_OBJ_FLAG_CLICKABLE);
+        pxsys_lvgl_add_flags(row, LV_OBJ_FLAG_CLICKABLE);
         lv_obj_add_event_cb(row, clicked, LV_EVENT_CLICKED, user_data);
     }
     icon_background = lv_obj_create(row);
@@ -2983,7 +3135,7 @@ static void language_clicked(lv_event_t* event) {
     lv_obj_set_style_bg_color(ui->language_dialog,
                               color_token(ui, PXSYS_COLOR_SCRIM), 0);
     lv_obj_set_style_bg_opa(ui->language_dialog, LV_OPA_60, 0);
-    lv_obj_add_flag(ui->language_dialog, LV_OBJ_FLAG_CLICKABLE);
+    pxsys_lvgl_add_flags(ui->language_dialog, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(ui->language_dialog, language_dialog_close_clicked,
                         LV_EVENT_CLICKED, ui);
 
@@ -2996,7 +3148,7 @@ static void language_clicked(lv_event_t* event) {
     lv_obj_set_style_bg_opa(panel, LV_OPA_COVER, 0);
     lv_obj_set_style_radius(panel, ui->theme.base_radius_px * 3u, 0);
     lv_obj_set_style_clip_corner(panel, true, 0);
-    lv_obj_add_flag(panel, LV_OBJ_FLAG_CLICKABLE);
+    pxsys_lvgl_add_flags(panel, LV_OBJ_FLAG_CLICKABLE);
 
     header = lv_obj_create(panel);
     style_plain(header);
@@ -3034,7 +3186,7 @@ static void language_clicked(lv_event_t* event) {
     lv_obj_set_style_pad_row(list, 6, 0);
     lv_obj_set_layout(list, LV_LAYOUT_FLEX);
     lv_obj_set_flex_flow(list, LV_FLEX_FLOW_COLUMN);
-    lv_obj_add_flag(list, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+    pxsys_lvgl_add_flags(list, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
     lv_obj_set_scroll_dir(list, LV_DIR_VER);
     lv_obj_set_scrollbar_mode(list, LV_SCROLLBAR_MODE_AUTO);
     for (index = 0; index < ui->language_count; ++index) {
@@ -3095,7 +3247,7 @@ static void build_home_wallpaper(pxsys_reference_lvgl_t* ui) {
         lv_obj_set_size(image, LV_PCT(100), LV_PCT(100));
         lv_image_set_src(image, ui->wallpaper_source);
         lv_image_set_inner_align(image, LV_IMAGE_ALIGN_COVER);
-        lv_obj_remove_flag(image,
+        pxsys_lvgl_remove_flags(image,
                            LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
         return;
     }
@@ -3126,7 +3278,9 @@ static void build_home(pxsys_reference_lvgl_t* ui,
     size_t managed_count = 0;
     uint32_t row_height;
     uint32_t columns;
+    uint32_t rows;
     uint32_t column_width;
+    size_t page_count;
     uint32_t gap = layout->size_class == PXSYS_UI_SIZE_COMPACT ? 4u : 8u;
     release_launcher_icons(ui);
     if (ui->app_action != NULL && ui->app_list != NULL) {
@@ -3137,24 +3291,22 @@ static void build_home(pxsys_reference_lvgl_t* ui,
             managed_count = PXSYS_REFERENCE_MANAGED_APP_MAX;
         ui->managed_apps_loaded = 0;
     }
-    lv_obj_set_layout(ui->content, LV_LAYOUT_FLEX);
-    lv_obj_set_flex_flow(ui->content, LV_FLEX_FLOW_ROW_WRAP);
-    lv_obj_set_flex_align(ui->content, LV_FLEX_ALIGN_START,
-                          LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
-    columns = layout->content.width < 180u
-                  ? 3u
-                  : layout->content.width < 500u ? 4u : 5u;
-    lv_obj_set_style_pad_column(ui->content, gap, 0);
-    lv_obj_set_style_pad_row(ui->content, gap, 0);
-    column_width = (layout->content.width -
-                    (columns - 1u) * gap) / columns;
-    row_height = layout->size_class == PXSYS_UI_SIZE_COMPACT ? 64u : 76u;
-    lv_obj_add_flag(ui->content,
+    lv_obj_set_layout(ui->content, LV_LAYOUT_NONE);
+    columns = PXSYS_REFERENCE_UI_LAUNCHER_COLUMNS;
+    rows = PXSYS_REFERENCE_UI_LAUNCHER_ROWS;
+    ui->launcher_gap = (uint8_t)gap;
+    column_width = layout->content.width > (columns - 1u) * gap
+        ? (layout->content.width - (columns - 1u) * gap) / columns : 1u;
+    row_height = layout->content.height > (rows - 1u) * gap
+        ? (layout->content.height - (rows - 1u) * gap) / rows : 1u;
+    pxsys_lvgl_add_flags(ui->content,
                     LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_set_scroll_dir(ui->content, LV_DIR_VER);
-    lv_obj_set_scrollbar_mode(ui->content, LV_SCROLLBAR_MODE_AUTO);
+    lv_obj_set_scroll_dir(ui->content, LV_DIR_HOR);
+    lv_obj_set_scrollbar_mode(ui->content, LV_SCROLLBAR_MODE_OFF);
     lv_obj_add_event_cb(ui->content, launcher_background_clicked,
                         LV_EVENT_CLICKED, ui);
+    lv_obj_add_event_cb(ui->content, launcher_scroll_ended,
+                        LV_EVENT_SCROLL_END, ui);
 
     for (index = 0; index < pxsys_app_registry_count(registry) &&
                     ui->launcher_count < ui->max_launcher_apps; ++index) {
@@ -3224,6 +3376,16 @@ static void build_home(pxsys_reference_lvgl_t* ui,
             cursor = end + 1;
         }
     }
+    launcher_position_tiles(ui);
+    page_count = ui->launcher_count == 0 ? 1u :
+        (ui->launcher_count + columns * rows - 1u) / (columns * rows);
+    if (page_count > 1u) {
+        /* Keep the last page scrollable even when it has only one icon. */
+        lv_obj_t* end = lv_obj_create(ui->content);
+        style_plain(end);
+        lv_obj_set_pos(end, (int32_t)(page_count * layout->content.width - 1u), 0);
+        lv_obj_set_size(end, 1, 1);
+    }
     if (ui->launcher_count == 0) {
         lv_obj_t* empty = make_label(
             ui->content, translated(ui, "apps.empty", "No apps installed"),
@@ -3231,8 +3393,12 @@ static void build_home(pxsys_reference_lvgl_t* ui,
                                     color_token(ui, PXSYS_COLOR_TEXT_SECONDARY));
         lv_obj_center(empty);
     }
+    if (ui->launcher_page >= page_count)
+        ui->launcher_page = (uint16_t)(page_count - 1u);
     lv_obj_update_layout(ui->content);
-    lv_obj_scroll_to_y(ui->content, 0, LV_ANIM_OFF);
+    lv_obj_scroll_to_x(ui->content,
+        (int32_t)ui->launcher_page * (int32_t)layout->content.width,
+        LV_ANIM_OFF);
 }
 
 static void build_settings(pxsys_reference_lvgl_t* ui,
@@ -3260,7 +3426,7 @@ static void build_settings(pxsys_reference_lvgl_t* ui,
     /* Keep the scroll container itself hit-testable. Non-interactive rows and
      * gaps otherwise fall through to the root, so scrolling only starts when
      * the pointer happens to land on a button or switch. */
-    lv_obj_add_flag(ui->content,
+    pxsys_lvgl_add_flags(ui->content,
                     LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
     lv_obj_set_scroll_dir(ui->content, LV_DIR_VER);
 #if PXSYS_REFERENCE_UI_WIFI
@@ -3427,7 +3593,7 @@ static void build_appearance_page(pxsys_reference_lvgl_t* ui,
     lv_obj_set_flex_flow(ui->content, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_style_pad_row(ui->content, 10, 0);
     lv_obj_set_scroll_dir(ui->content, LV_DIR_VER);
-    lv_obj_add_flag(ui->content, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+    pxsys_lvgl_add_flags(ui->content, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
     section = make_settings_section(
         ui, translated(ui, "settings.appearance.mode", "Display mode"));
     for (size_t index = 0; index < 2; ++index) {
@@ -3566,7 +3732,7 @@ static void close_notification_shade(pxsys_reference_lvgl_t* ui) {
     ui->notification_close_armed = 0;
     ui->notification_progress = 0;
     ui->notification_scroll_y = 0;
-    lv_obj_add_flag(ui->notification_shade, LV_OBJ_FLAG_HIDDEN);
+    pxsys_lvgl_add_flags(ui->notification_shade, LV_OBJ_FLAG_HIDDEN);
     update_system_overlay(ui);
 }
 
@@ -3740,7 +3906,7 @@ static void shade_enable_pointer_bubble(lv_obj_t* parent) {
     uint32_t count = lv_obj_get_child_count(parent);
     for (index = 0; index < count; ++index) {
         lv_obj_t* child = lv_obj_get_child(parent, (int32_t)index);
-        lv_obj_add_flag(child, LV_OBJ_FLAG_EVENT_BUBBLE);
+        pxsys_lvgl_add_flags(child, LV_OBJ_FLAG_EVENT_BUBBLE);
         shade_enable_pointer_bubble(child);
     }
 }
@@ -3859,7 +4025,7 @@ static lv_obj_t* make_control_tile(pxsys_reference_lvgl_t* ui,
     lv_obj_set_style_radius(tile, 8, 0);
     lv_obj_set_style_pad_all(tile, 0, 0);
     lv_obj_set_style_opa(tile, LV_OPA_80, LV_STATE_PRESSED);
-    lv_obj_clear_flag(tile, LV_OBJ_FLAG_SCROLLABLE);
+    pxsys_lvgl_remove_flags(tile, LV_OBJ_FLAG_SCROLLABLE);
     icon_background = lv_obj_create(tile);
     style_plain(icon_background);
     lv_obj_set_pos(icon_background, 10, (height - 30) / 2);
@@ -4031,7 +4197,7 @@ static void build_notification_shade(pxsys_reference_lvgl_t* ui,
     lv_obj_set_size(ui->notification_shade, (lv_coord_t)ui->display.width,
                     (lv_coord_t)ui->display.height);
     /* Intentionally transparent: no dimming scrim over the content behind. */
-    lv_obj_add_flag(ui->notification_shade, LV_OBJ_FLAG_CLICKABLE);
+    pxsys_lvgl_add_flags(ui->notification_shade, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(ui->notification_shade, shade_close_clicked,
                         LV_EVENT_CLICKED, ui);
 
@@ -4057,8 +4223,8 @@ static void build_notification_shade(pxsys_reference_lvgl_t* ui,
      * rendering and the panel is screen sized, so its corners are at the
      * display corners where no child sits. */
     lv_obj_set_style_clip_corner(ui->notification_panel, false, 0);
-    lv_obj_clear_flag(ui->notification_panel, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_add_flag(ui->notification_panel,
+    pxsys_lvgl_remove_flags(ui->notification_panel, LV_OBJ_FLAG_SCROLLABLE);
+    pxsys_lvgl_add_flags(ui->notification_panel,
                     LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_PRESS_LOCK);
     lv_obj_add_event_cb(ui->notification_panel, shade_panel_event,
                         LV_EVENT_PRESSED, ui);
@@ -4114,7 +4280,7 @@ static void build_notification_shade(pxsys_reference_lvgl_t* ui,
     lv_obj_set_style_border_width(settings, 0, 0);
     lv_obj_set_style_radius(settings, LV_RADIUS_CIRCLE, 0);
     lv_obj_set_style_pad_all(settings, 0, 0);
-    lv_obj_clear_flag(settings, LV_OBJ_FLAG_SCROLLABLE);
+    pxsys_lvgl_remove_flags(settings, LV_OBJ_FLAG_SCROLLABLE);
     label = make_label(settings, LV_SYMBOL_SETTINGS, NULL,
                        color_token(ui, PXSYS_COLOR_TEXT_PRIMARY));
     lv_obj_center(label);
@@ -4130,7 +4296,7 @@ static void build_notification_shade(pxsys_reference_lvgl_t* ui,
     lv_obj_set_size(body, (lv_coord_t)ui->display.width,
                     body_bottom - body_y);
     lv_obj_set_style_bg_opa(body, LV_OPA_TRANSP, 0);
-    lv_obj_add_flag(body, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+    pxsys_lvgl_add_flags(body, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
     lv_obj_set_scroll_dir(body, LV_DIR_VER);
     lv_obj_set_scrollbar_mode(body, LV_SCROLLBAR_MODE_AUTO);
     lv_obj_set_style_width(body, 3, LV_PART_SCROLLBAR);
@@ -4290,7 +4456,7 @@ static void build_notification_shade(pxsys_reference_lvgl_t* ui,
         lv_obj_set_size(home_catcher, (lv_coord_t)ui->display.width,
                         (lv_coord_t)gesture_strip_height(&layout));
         lv_obj_set_style_bg_opa(home_catcher, LV_OPA_TRANSP, 0);
-        lv_obj_add_flag(home_catcher,
+        pxsys_lvgl_add_flags(home_catcher,
                         LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_PRESS_LOCK);
         lv_obj_add_event_cb(home_catcher, shade_home_gesture_event,
                             LV_EVENT_PRESSED, ui);
@@ -4301,7 +4467,7 @@ static void build_notification_shade(pxsys_reference_lvgl_t* ui,
         lv_obj_add_event_cb(home_catcher, shade_home_gesture_event,
                             LV_EVENT_PRESS_LOST, ui);
     }
-    lv_obj_remove_flag(ui->notification_shade, LV_OBJ_FLAG_HIDDEN);
+    pxsys_lvgl_remove_flags(ui->notification_shade, LV_OBJ_FLAG_HIDDEN);
     lv_obj_move_foreground(ui->notification_shade);
     if (ui->navigation_mode == PXSYS_NAVIGATION_BUTTONS &&
         ui->navigation_bar != NULL)
@@ -4597,11 +4763,15 @@ static void make_battery_icon(pxsys_reference_lvgl_t* ui, lv_obj_t* parent,
 
 static void build_status_bar(pxsys_reference_lvgl_t* ui,
                              const pxsys_reference_layout_t* layout) {
-    lv_obj_t* status = lv_obj_create(ui->root);
+    lv_obj_t* status = ui->status_bar;
+    int reuse = status != NULL;
+    if (reuse) lv_obj_clean(status);
+    else status = lv_obj_create(ui->root);
     lv_obj_t* time_label;
     pxsys_rect_t content_area = layout->safe_area;
-    uint32_t content_height = ui->text_font != NULL
-                                  ? ui->text_font->line_height : 16u;
+    uint32_t content_height =
+        ui->text_font != NULL && ui->text_font->line_height > 0
+            ? (uint32_t)ui->text_font->line_height : 16u;
 #if PXSYS_REFERENCE_UI_BATTERY_PERCENT
     lv_obj_t* percent_label;
     const lv_font_t* percent_font;
@@ -4636,11 +4806,13 @@ static void build_status_bar(pxsys_reference_lvgl_t* ui,
     if (status_bar_mode(ui) == PXSYS_WINDOW_BAR_TRANSIENT)
         lv_obj_set_style_bg_opa(status, (lv_opa_t)224, 0);
     if (ui->features & PXSYS_REFERENCE_UI_NOTIFICATION_SHADE) {
-        lv_obj_add_flag(status, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_PRESS_LOCK);
-        lv_obj_add_event_cb(status, status_bar_event, LV_EVENT_PRESSED, ui);
-        lv_obj_add_event_cb(status, status_bar_event, LV_EVENT_PRESSING, ui);
-        lv_obj_add_event_cb(status, status_bar_event, LV_EVENT_RELEASED, ui);
-        lv_obj_add_event_cb(status, status_bar_event, LV_EVENT_PRESS_LOST, ui);
+        pxsys_lvgl_add_flags(status, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_PRESS_LOCK);
+        if (!reuse) {
+            lv_obj_add_event_cb(status, status_bar_event, LV_EVENT_PRESSED, ui);
+            lv_obj_add_event_cb(status, status_bar_event, LV_EVENT_PRESSING, ui);
+            lv_obj_add_event_cb(status, status_bar_event, LV_EVENT_RELEASED, ui);
+            lv_obj_add_event_cb(status, status_bar_event, LV_EVENT_PRESS_LOST, ui);
+        }
     }
     snprintf(time_text, sizeof(time_text),
              ui->system_status.time_valid ? "%02u:%02u" : "--:--",
@@ -4788,7 +4960,7 @@ static void volume_osd_hide(lv_timer_t* timer) {
     pxsys_reference_lvgl_t* ui = lv_timer_get_user_data(timer);
     if (!ui_valid(ui) || ui->volume_osd == NULL) return;
     ui->volume_osd_visible = 0;
-    lv_obj_add_flag(ui->volume_osd, LV_OBJ_FLAG_HIDDEN);
+    pxsys_lvgl_add_flags(ui->volume_osd, LV_OBJ_FLAG_HIDDEN);
     lv_timer_pause(timer);
     update_system_overlay(ui);
 }
@@ -4813,8 +4985,8 @@ static void volume_osd_show(pxsys_reference_lvgl_t* ui, uint8_t percent) {
         lv_obj_set_style_shadow_width(ui->volume_osd, 12, 0);
         lv_obj_set_style_shadow_opa(ui->volume_osd, LV_OPA_30, 0);
         lv_obj_set_style_pad_all(ui->volume_osd, 0, 0);
-        lv_obj_clear_flag(ui->volume_osd, LV_OBJ_FLAG_SCROLLABLE);
-        lv_obj_remove_flag(ui->volume_osd, LV_OBJ_FLAG_CLICKABLE);
+        pxsys_lvgl_remove_flags(ui->volume_osd, LV_OBJ_FLAG_SCROLLABLE);
+        pxsys_lvgl_remove_flags(ui->volume_osd, LV_OBJ_FLAG_CLICKABLE);
         ui->volume_osd_icon = make_label(ui->volume_osd, LV_SYMBOL_VOLUME_MAX,
                                           NULL, color_token(ui, PXSYS_COLOR_TEXT_PRIMARY));
         lv_obj_set_pos(ui->volume_osd_icon, 12, 13);
@@ -4842,7 +5014,7 @@ static void volume_osd_show(pxsys_reference_lvgl_t* ui, uint8_t percent) {
     lv_bar_set_value(ui->volume_osd_bar, percent, LV_ANIM_OFF);
     lv_label_set_text_fmt(ui->volume_osd_value, "%u%%", (unsigned)percent);
     volume_osd_apply_theme(ui);
-    lv_obj_remove_flag(ui->volume_osd, LV_OBJ_FLAG_HIDDEN);
+    pxsys_lvgl_remove_flags(ui->volume_osd, LV_OBJ_FLAG_HIDDEN);
     volume_osd_restack(ui);
     ui->volume_osd_visible = 1;
     update_system_overlay(ui);
@@ -4860,7 +5032,7 @@ static void toast_hide(lv_timer_t* timer) {
         (pxsys_reference_lvgl_t*)lv_timer_get_user_data(timer);
     if (!ui_valid(ui) || ui->toast == NULL || !ui->toast_visible) return;
     ui->toast_visible = 0;
-    lv_obj_add_flag(ui->toast, LV_OBJ_FLAG_HIDDEN);
+    pxsys_lvgl_add_flags(ui->toast, LV_OBJ_FLAG_HIDDEN);
     update_system_overlay(ui);
 }
 
@@ -4880,8 +5052,8 @@ static void toast_posted(void* context, const pxsys_toast_message_t* toast) {
         lv_obj_set_style_shadow_width(ui->toast, 14, 0);
         lv_obj_set_style_shadow_opa(ui->toast, LV_OPA_30, 0);
         lv_obj_set_style_shadow_offset_y(ui->toast, 4, 0);
-        lv_obj_clear_flag(ui->toast, LV_OBJ_FLAG_SCROLLABLE);
-        lv_obj_remove_flag(ui->toast, LV_OBJ_FLAG_CLICKABLE);
+        pxsys_lvgl_remove_flags(ui->toast, LV_OBJ_FLAG_SCROLLABLE);
+        pxsys_lvgl_remove_flags(ui->toast, LV_OBJ_FLAG_CLICKABLE);
         ui->toast_label = make_label(ui->toast, "",
                                      typography_font(ui, PXSYS_TYPOGRAPHY_BODY),
                                      color_token(ui, PXSYS_COLOR_TEXT_PRIMARY));
@@ -4894,7 +5066,7 @@ static void toast_posted(void* context, const pxsys_toast_message_t* toast) {
     toast_apply_theme(ui, toast->tone);
     ui->toast_tone = toast->tone;
     toast_reposition(ui);
-    lv_obj_remove_flag(ui->toast, LV_OBJ_FLAG_HIDDEN);
+    pxsys_lvgl_remove_flags(ui->toast, LV_OBJ_FLAG_HIDDEN);
     toast_restack(ui);
     ui->toast_visible = 1;
     update_system_overlay(ui);
@@ -4920,7 +5092,7 @@ static void page_content_init(pxsys_reference_lvgl_t* ui,
         ui->content,
         layout->size_class == PXSYS_UI_SIZE_COMPACT ? 8 : 10, 0);
     lv_obj_set_style_pad_bottom(ui->content, 8, 0);
-    lv_obj_add_flag(ui->content,
+    pxsys_lvgl_add_flags(ui->content,
                     LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
     lv_obj_set_scroll_dir(ui->content, LV_DIR_VER);
     lv_obj_set_scrollbar_mode(ui->content, LV_SCROLLBAR_MODE_AUTO);
@@ -4966,7 +5138,7 @@ static void make_level_control_block(pxsys_reference_lvgl_t* ui,
     lv_obj_set_flex_flow(block, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_style_pad_all(block, 10, 0);
     lv_obj_set_style_pad_row(block, 8, 0);
-    lv_obj_add_flag(block, LV_OBJ_FLAG_CLICKABLE);
+    pxsys_lvgl_add_flags(block, LV_OBJ_FLAG_CLICKABLE);
     label = make_label(block, title,
                        typography_font(ui, PXSYS_TYPOGRAPHY_LABEL),
                        color_token(ui, PXSYS_COLOR_TEXT_PRIMARY));
@@ -4986,6 +5158,60 @@ static void make_level_control_block(pxsys_reference_lvgl_t* ui,
     context->control = control;
     lv_obj_add_event_cb(slider, control_level_released, LV_EVENT_RELEASED,
                         context);
+}
+
+static const uint16_t kDimTimeouts[] = {15, 30, 60, 120, 300, 600};
+static const uint16_t kLockTimeouts[] = {30, 60, 120, 300, 600, 900};
+
+static void show_idle_timeout_choices(pxsys_reference_lvgl_t* ui,
+                                      int lock_timeout);
+
+static int save_idle_policy(pxsys_reference_lvgl_t* ui,
+                            const pxsys_reference_idle_policy_t* policy) {
+    if (!idle_policy_valid(policy) || ui->idle_save == NULL ||
+        !ui->idle_save(ui->idle_context, policy)) return 0;
+    ui->idle_policy = *policy;
+    return 1;
+}
+
+static void idle_timeout_clicked(lv_event_t* event) {
+    pxsys_reference_lvgl_t* ui = lv_event_get_user_data(event);
+    lv_obj_t* row = lv_event_get_current_target(event);
+    if (!ui_valid(ui) || row == NULL) return;
+    show_idle_timeout_choices(ui,
+        (uintptr_t)lv_obj_get_user_data(row) != 0);
+}
+
+static void idle_brightness_released(lv_event_t* event) {
+    pxsys_reference_lvgl_t* ui = lv_event_get_user_data(event);
+    lv_obj_t* slider = lv_event_get_current_target(event);
+    if (!ui_valid(ui) || slider == NULL) return;
+    pxsys_reference_idle_policy_t next = ui->idle_policy;
+    next.dim_percent = (uint8_t)lv_slider_get_value(slider);
+    if (!save_idle_policy(ui, &next))
+        lv_slider_set_value(slider, ui->idle_policy.dim_percent, LV_ANIM_OFF);
+    else {
+        if (ui->idle_brightness_value != NULL)
+            lv_label_set_text_fmt(
+                ui->idle_brightness_value, "%s: %u%%",
+                translated(ui, "settings.sound.dim_brightness", "Dim brightness"),
+                (unsigned)next.dim_percent);
+        if (ui->idle_dimmed && ui->idle_dim != NULL)
+            ui->idle_dim(ui->idle_context, true, next.dim_percent);
+    }
+}
+
+static void idle_timeout_text(pxsys_reference_lvgl_t* ui, uint16_t seconds,
+                              char* text, size_t capacity) {
+    if (seconds >= 60 && seconds % 60 == 0)
+        snprintf(text, capacity, "%u %s", (unsigned)(seconds / 60),
+                 translated(ui,
+                            seconds == 60 ? "settings.sound.minute"
+                                          : "settings.sound.minutes",
+                            seconds == 60 ? "minute" : "minutes"));
+    else
+        snprintf(text, capacity, "%u %s", (unsigned)seconds,
+                 translated(ui, "settings.sound.seconds", "seconds"));
 }
 
 static void build_sound_settings(pxsys_reference_lvgl_t* ui,
@@ -5016,6 +5242,61 @@ static void build_sound_settings(pxsys_reference_lvgl_t* ui,
             typography_font(ui, PXSYS_TYPOGRAPHY_BODY),
             color_token(ui, PXSYS_COLOR_TEXT_SECONDARY));
         lv_obj_set_width(label, LV_PCT(100));
+    }
+    if (idle_policy_valid(&ui->idle_policy) && ui->idle_save != NULL) {
+        lv_obj_t* section = make_settings_section(
+            ui, translated(ui, "settings.sound.idle", "Display timeout"));
+        char subtitle[48];
+        lv_obj_t* row;
+        if (ui->idle_dim != NULL && ui->system_status.brightness_supported) {
+            idle_timeout_text(ui, ui->idle_policy.dim_after_seconds,
+                              subtitle, sizeof(subtitle));
+            row = make_settings_row(
+                ui, layout, section, LV_SYMBOL_EYE_CLOSE, PXSYS_COLOR_ACCENT,
+                translated(ui, "settings.sound.dim_after", "Dim after"),
+                subtitle, idle_timeout_clicked, ui);
+            lv_obj_set_user_data(row, (void*)(uintptr_t)0);
+            add_settings_chevron(ui, row);
+            lv_obj_t* block = lv_obj_create(section);
+            style_plain(block);
+            lv_obj_set_width(block, LV_PCT(100));
+            lv_obj_set_height(block, LV_SIZE_CONTENT);
+            lv_obj_set_layout(block, LV_LAYOUT_FLEX);
+            lv_obj_set_flex_flow(block, LV_FLEX_FLOW_COLUMN);
+            lv_obj_set_style_pad_all(block, 10, 0);
+            lv_obj_set_style_pad_row(block, 8, 0);
+            char dim_label[96];
+            snprintf(dim_label, sizeof(dim_label), "%s: %u%%",
+                     translated(ui, "settings.sound.dim_brightness",
+                                "Dim brightness"),
+                     (unsigned)ui->idle_policy.dim_percent);
+            lv_obj_t* label = make_label(
+                block, dim_label,
+                typography_font(ui, PXSYS_TYPOGRAPHY_LABEL),
+                color_token(ui, PXSYS_COLOR_TEXT_PRIMARY));
+            ui->idle_brightness_value = label;
+            lv_obj_set_width(label, LV_PCT(100));
+            lv_obj_t* slider = lv_slider_create(block);
+            lv_obj_set_width(slider, LV_PCT(100));
+            lv_slider_set_range(slider, 2, 100);
+            lv_slider_set_value(slider, ui->idle_policy.dim_percent, LV_ANIM_OFF);
+            lv_obj_set_style_bg_color(slider,
+                color_token(ui, PXSYS_COLOR_BORDER), LV_PART_MAIN);
+            lv_obj_set_style_bg_color(slider,
+                color_token(ui, PXSYS_COLOR_ACCENT), LV_PART_INDICATOR);
+            lv_obj_set_style_bg_color(slider,
+                color_token(ui, PXSYS_COLOR_ACCENT), LV_PART_KNOB);
+            lv_obj_add_event_cb(slider, idle_brightness_released,
+                                LV_EVENT_RELEASED, ui);
+        }
+        idle_timeout_text(ui, ui->idle_policy.lock_after_seconds,
+                          subtitle, sizeof(subtitle));
+        row = make_settings_row(
+            ui, layout, section, LV_SYMBOL_POWER, PXSYS_COLOR_ACCENT,
+            translated(ui, "settings.sound.lock_after", "Lock after"),
+            subtitle, idle_timeout_clicked, ui);
+        lv_obj_set_user_data(row, (void*)(uintptr_t)1);
+        add_settings_chevron(ui, row);
     }
 }
 
@@ -5120,6 +5401,10 @@ static void build_device_info_page(pxsys_reference_lvgl_t* ui,
 
 static void page_close_dialogs(pxsys_reference_lvgl_t* ui) {
     if (!ui_valid(ui)) return;
+    if (ui->file_size_timer != NULL) lv_timer_pause(ui->file_size_timer);
+    if (ui->file_size != NULL)
+        (void)ui->file_size(ui->file_manager_context, NULL, NULL, NULL);
+    ui->file_size_label = NULL;
     if (ui->confirm_dialog != NULL) {
         lv_obj_delete(ui->confirm_dialog);
         ui->confirm_dialog = NULL;
@@ -5139,7 +5424,7 @@ static lv_obj_t* make_page_dialog(pxsys_reference_lvgl_t* ui,
     lv_obj_set_size(dialog, LV_PCT(100), LV_PCT(100));
     lv_obj_set_style_bg_color(dialog, color_token(ui, PXSYS_COLOR_SCRIM), 0);
     lv_obj_set_style_bg_opa(dialog, LV_OPA_60, 0);
-    lv_obj_add_flag(dialog, LV_OBJ_FLAG_CLICKABLE);
+    pxsys_lvgl_add_flags(dialog, LV_OBJ_FLAG_CLICKABLE);
     panel = lv_obj_create(dialog);
     style_plain(panel);
     lv_obj_set_width(panel, LV_PCT(88));
@@ -5153,8 +5438,8 @@ static lv_obj_t* make_page_dialog(pxsys_reference_lvgl_t* ui,
     lv_obj_set_style_pad_row(panel, 8, 0);
     lv_obj_set_layout(panel, LV_LAYOUT_FLEX);
     lv_obj_set_flex_flow(panel, LV_FLEX_FLOW_COLUMN);
-    lv_obj_add_flag(panel, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_add_flag(panel,
+    pxsys_lvgl_add_flags(panel, LV_OBJ_FLAG_CLICKABLE);
+    pxsys_lvgl_add_flags(panel,
                     LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_SCROLL_ELASTIC);
     lv_obj_set_scroll_dir(panel, LV_DIR_VER);
     *out_panel = panel;
@@ -5168,6 +5453,99 @@ static void page_dialog_scrim_clicked(lv_event_t* event);
 static void show_wifi_networks(pxsys_reference_lvgl_t* ui);
 static void wifi_render_networks(pxsys_reference_lvgl_t* ui, size_t count);
 static void app_input_method_close(pxsys_reference_lvgl_t* ui);
+
+static void idle_timeout_selected(lv_event_t* event) {
+    pxsys_reference_lvgl_t* ui = lv_event_get_user_data(event);
+    lv_obj_t* row = lv_event_get_current_target(event);
+    if (!ui_valid(ui) || row == NULL) return;
+    const uintptr_t selection = (uintptr_t)lv_obj_get_user_data(row);
+    const uint16_t seconds = (uint16_t)selection;
+    pxsys_reference_idle_policy_t next = ui->idle_policy;
+    if ((selection & (uintptr_t)0x10000u) == 0) {
+        next.dim_after_seconds = seconds;
+        if (next.lock_after_seconds <= seconds) {
+            for (size_t index = 0;
+                 index < sizeof(kLockTimeouts) / sizeof(kLockTimeouts[0]);
+                 ++index) {
+                if (kLockTimeouts[index] > seconds) {
+                    next.lock_after_seconds = kLockTimeouts[index];
+                    break;
+                }
+            }
+        }
+    } else {
+        next.lock_after_seconds = seconds;
+        if (next.dim_after_seconds >= seconds) {
+            for (size_t index = 0;
+                 index < sizeof(kDimTimeouts) / sizeof(kDimTimeouts[0]);
+                 ++index) {
+                if (kDimTimeouts[index] >= seconds) break;
+                next.dim_after_seconds = kDimTimeouts[index];
+            }
+        }
+    }
+    if (save_idle_policy(ui, &next)) {
+        page_close_dialogs(ui);
+        rebuild(ui);
+    }
+}
+
+static void show_idle_timeout_choices(pxsys_reference_lvgl_t* ui,
+                                      int lock_timeout) {
+    pxsys_reference_layout_t layout;
+    lv_obj_t* panel;
+    if (!ui_valid(ui) || ui->app_dialog != NULL ||
+        pxsys_reference_layout_compute(&ui->display, &layout) !=
+            PXSYS_STATUS_OK) return;
+    expand_content_into_hidden_gesture_area(ui, &layout);
+    ui->app_dialog = make_page_dialog(ui, &layout, &panel);
+    lv_obj_add_event_cb(ui->app_dialog, page_dialog_scrim_clicked,
+                        LV_EVENT_CLICKED, ui);
+    lv_obj_t* title = make_label(
+        panel,
+        translated(ui, lock_timeout ? "settings.sound.lock_after"
+                                    : "settings.sound.dim_after",
+                   lock_timeout ? "Lock after" : "Dim after"),
+        typography_font(ui, PXSYS_TYPOGRAPHY_TITLE),
+        color_token(ui, PXSYS_COLOR_TEXT_PRIMARY));
+    lv_obj_set_width(title, LV_PCT(100));
+    const uint16_t* options = lock_timeout ? kLockTimeouts : kDimTimeouts;
+    const size_t count = lock_timeout
+        ? sizeof(kLockTimeouts) / sizeof(kLockTimeouts[0])
+        : sizeof(kDimTimeouts) / sizeof(kDimTimeouts[0]);
+    const uint16_t current = lock_timeout
+        ? ui->idle_policy.lock_after_seconds
+        : ui->idle_policy.dim_after_seconds;
+    for (size_t index = 0; index < count; ++index) {
+        lv_obj_t* row = lv_obj_create(panel);
+        style_plain(row);
+        lv_obj_set_width(row, LV_PCT(100));
+        lv_obj_set_height(row, 44);
+        lv_obj_set_style_bg_color(
+            row, color_token(ui, options[index] == current
+                                     ? PXSYS_COLOR_SURFACE_CONTAINER_HIGH
+                                     : PXSYS_COLOR_SURFACE), 0);
+        lv_obj_set_style_bg_opa(row, LV_OPA_COVER, 0);
+        lv_obj_set_style_radius(row, ui->theme.base_radius_px, 0);
+        pxsys_lvgl_add_flags(row, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_set_user_data(row, (void*)(uintptr_t)(
+            options[index] | (lock_timeout ? 0x10000u : 0u)));
+        lv_obj_add_event_cb(row, idle_timeout_selected, LV_EVENT_CLICKED, ui);
+        char option_text[48];
+        idle_timeout_text(ui, options[index], option_text,
+                          sizeof(option_text));
+        lv_obj_t* label = make_label(
+            row, option_text, typography_font(ui, PXSYS_TYPOGRAPHY_BODY),
+            color_token(ui, PXSYS_COLOR_TEXT_PRIMARY));
+        lv_obj_align(label, LV_ALIGN_LEFT_MID, 12, 0);
+        if (options[index] == current) {
+            lv_obj_t* check = make_label(
+                row, LV_SYMBOL_OK, NULL,
+                color_token(ui, PXSYS_COLOR_ACCENT));
+            lv_obj_align(check, LV_ALIGN_RIGHT_MID, -12, 0);
+        }
+    }
+}
 
 static void wifi_scan_clicked(lv_event_t* event) {
     pxsys_reference_lvgl_t* ui = (pxsys_reference_lvgl_t*)lv_event_get_user_data(event);
@@ -5195,7 +5573,7 @@ static void wifi_connect_selected(pxsys_reference_lvgl_t* ui,
             lv_label_set_text(ui->wifi_input_error,
                               translated(ui, "settings.wifi.connect_failed",
                                          "Could not start connection"));
-            lv_obj_remove_flag(ui->wifi_input_error, LV_OBJ_FLAG_HIDDEN);
+            pxsys_lvgl_remove_flags(ui->wifi_input_error, LV_OBJ_FLAG_HIDDEN);
         }
         return;
     }
@@ -5222,7 +5600,7 @@ static void wifi_submit_input(void* context) {
     length = strlen(text);
     if (length == 0 || length > PXSYS_REFERENCE_WIFI_SSID_MAX - 1u) {
         if (ui->wifi_input_error != NULL)
-            lv_obj_remove_flag(ui->wifi_input_error, LV_OBJ_FLAG_HIDDEN);
+            pxsys_lvgl_remove_flags(ui->wifi_input_error, LV_OBJ_FLAG_HIDDEN);
         return;
     }
     snprintf(ui->pending_wifi_ssid, sizeof(ui->pending_wifi_ssid), "%s", text);
@@ -5261,7 +5639,7 @@ static void wide_ime_mode_clicked(lv_event_t* event) {
     if (pinyin != NULL) {
         lv_ime_pinyin_set_mode(pinyin, chinese ? LV_IME_PINYIN_MODE_K26 :
                                                  LV_IME_PINYIN_MODE_K9_NUMBER);
-        lv_obj_add_flag(lv_ime_pinyin_get_cand_panel(pinyin), LV_OBJ_FLAG_HIDDEN);
+        pxsys_lvgl_add_flags(lv_ime_pinyin_get_cand_panel(pinyin), LV_OBJ_FLAG_HIDDEN);
     }
 #else
     (void)pinyin;
@@ -5327,6 +5705,7 @@ static int object_is_within(const lv_obj_t* object, const lv_obj_t* ancestor) {
     return 0;
 }
 
+#if PXSYS_REFERENCE_UI_DEBUG_INPUT_METHOD
 static lv_obj_t* find_any_textarea(lv_obj_t* object) {
     uint32_t count;
     uint32_t index;
@@ -5341,6 +5720,7 @@ static lv_obj_t* find_any_textarea(lv_obj_t* object) {
     }
     return NULL;
 }
+#endif
 
 static lv_obj_t* find_focused_textarea(lv_obj_t* object) {
     uint32_t count;
@@ -5375,9 +5755,9 @@ static void wifi_input_fit_above_keyboard(pxsys_reference_lvgl_t* ui,
     lv_obj_get_coords(ui->wifi_password_input, &input_area);
     if (input_area.y2 > keyboard_top - 4) {
         if (ui->wifi_input_prompt != NULL)
-            lv_obj_add_flag(ui->wifi_input_prompt, LV_OBJ_FLAG_HIDDEN);
+            pxsys_lvgl_add_flags(ui->wifi_input_prompt, LV_OBJ_FLAG_HIDDEN);
         if (ui->wifi_input_ssid != NULL) {
-            lv_obj_add_flag(ui->wifi_input_ssid, LV_OBJ_FLAG_HIDDEN);
+            pxsys_lvgl_add_flags(ui->wifi_input_ssid, LV_OBJ_FLAG_HIDDEN);
             if (ui->title != NULL)
                 lv_label_set_text(ui->title, ui->pending_wifi_ssid);
         }
@@ -5393,9 +5773,9 @@ static void wifi_input_restore_viewport(pxsys_reference_lvgl_t* ui) {
         ui->wifi_password_input == NULL)
         return;
     if (ui->wifi_input_prompt != NULL)
-        lv_obj_remove_flag(ui->wifi_input_prompt, LV_OBJ_FLAG_HIDDEN);
+        pxsys_lvgl_remove_flags(ui->wifi_input_prompt, LV_OBJ_FLAG_HIDDEN);
     if (ui->wifi_input_ssid != NULL) {
-        lv_obj_remove_flag(ui->wifi_input_ssid, LV_OBJ_FLAG_HIDDEN);
+        pxsys_lvgl_remove_flags(ui->wifi_input_ssid, LV_OBJ_FLAG_HIDDEN);
         if (ui->title != NULL)
             lv_label_set_text(ui->title,
                               translated(ui, "settings.wifi", "Wi-Fi"));
@@ -5505,8 +5885,8 @@ static void app_input_method_open(pxsys_reference_lvgl_t* ui,
 #endif
     panel = lv_obj_create(ui->parent);
     if (panel == NULL) return;
-    lv_obj_remove_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_remove_flag(panel, LV_OBJ_FLAG_CLICKABLE);
+    pxsys_lvgl_remove_flags(panel, LV_OBJ_FLAG_SCROLLABLE);
+    pxsys_lvgl_remove_flags(panel, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_set_style_bg_opa(panel, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(panel, 0, 0);
     lv_obj_set_style_pad_all(panel, 0, 0);
@@ -5579,7 +5959,11 @@ static void app_input_method_poll(lv_timer_t* timer) {
         if (ui->app_ime != NULL) app_input_method_close(ui);
         return;
     }
-    target = ui->active_page == REFERENCE_PAGE_WIFI &&
+    target = ui->active_page == REFERENCE_PAGE_FILE_MANAGER &&
+                     ui->file_edit_input != NULL &&
+                     lv_obj_has_state(ui->file_edit_input, LV_STATE_FOCUSED)
+                 ? ui->file_edit_input
+                 : ui->active_page == REFERENCE_PAGE_WIFI &&
                      ui->wifi_password_input != NULL &&
                      lv_obj_has_state(ui->wifi_password_input, LV_STATE_FOCUSED)
                  ? ui->wifi_password_input
@@ -5613,6 +5997,23 @@ static void wifi_network_clicked(lv_event_t* event) {
     } else {
         wifi_connect_selected(ui, "");
     }
+}
+
+static void wifi_saved_clicked(lv_event_t* event) {
+    wifi_network_control_t* control =
+        (wifi_network_control_t*)lv_event_get_user_data(event);
+    pxsys_reference_lvgl_t* ui;
+    char message[128];
+    if (control == NULL || !ui_valid(control->ui) ||
+        control->index >= control->ui->wifi_saved_count) return;
+    ui = control->ui;
+    snprintf(ui->pending_wifi_ssid, sizeof(ui->pending_wifi_ssid), "%s",
+             ui->wifi_saved[control->index].ssid);
+    ui->pending_kind = 2;
+    snprintf(message, sizeof(message), "%s\n%s",
+             translated(ui, "settings.wifi.forget.confirm", "Forget this network?"),
+             ui->pending_wifi_ssid);
+    show_page_confirm(ui, message);
 }
 
 static void wifi_render_networks(pxsys_reference_lvgl_t* ui, size_t count) {
@@ -5678,6 +6079,7 @@ static void show_wifi_networks(pxsys_reference_lvgl_t* ui) {
     if (!ui_valid(ui) || ui->wifi_scan == NULL || ui->wifi_connect == NULL) return;
     ui->active_page = REFERENCE_PAGE_WIFI;
     ui->wifi_input_stage = 0;
+    ui->wifi_forget_failed = 0;
     ui->wifi_scan_state = PXSYS_REFERENCE_WIFI_SCANNING;
     if (ui->wifi_scan_start != NULL) ui->wifi_scan_start(ui->wifi_context);
     else ui->wifi_scan_state = ui->wifi_scan(ui->wifi_context, ui->wifi_networks,
@@ -5694,7 +6096,7 @@ static void build_wifi_page(pxsys_reference_lvgl_t* ui,
     lv_obj_set_flex_flow(ui->content, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_style_pad_row(ui->content, 10, 0);
     lv_obj_set_scroll_dir(ui->content, LV_DIR_VER);
-    lv_obj_add_flag(ui->content, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+    pxsys_lvgl_add_flags(ui->content, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
     if (ui->wifi_input_stage != 0) {
         const int entering_ssid = ui->wifi_input_stage == 1;
         label = make_label(ui->content,
@@ -5733,7 +6135,7 @@ static void build_wifi_page(pxsys_reference_lvgl_t* ui,
                                     "Enter an SSID of 1–32 bytes"),
             typography_font(ui, PXSYS_TYPOGRAPHY_CAPTION),
             color_token(ui, PXSYS_COLOR_ERROR));
-        lv_obj_add_flag(ui->wifi_input_error, LV_OBJ_FLAG_HIDDEN);
+        pxsys_lvgl_add_flags(ui->wifi_input_error, LV_OBJ_FLAG_HIDDEN);
         lv_obj_set_width(ui->wifi_input_error, LV_PCT(100));
         button = make_page_button(
             ui, ui->content,
@@ -5757,6 +6159,46 @@ static void build_wifi_page(pxsys_reference_lvgl_t* ui,
                                 PXSYS_COLOR_SUCCESS, connected_ssid,
                                 translated(ui, "state.connected", "Connected"),
                                 NULL, NULL);
+    }
+    if (ui->wifi_saved_list != NULL && ui->wifi_forget != NULL) {
+        ui->wifi_saved_count = ui->wifi_saved_list(
+            ui->wifi_context, ui->wifi_saved, PXSYS_REFERENCE_WIFI_NETWORK_MAX);
+        if (ui->wifi_saved_count > PXSYS_REFERENCE_WIFI_NETWORK_MAX)
+            ui->wifi_saved_count = PXSYS_REFERENCE_WIFI_NETWORK_MAX;
+        label = make_label(ui->content,
+                           translated(ui, "settings.wifi.saved", "Saved networks"),
+                           typography_font(ui, PXSYS_TYPOGRAPHY_TITLE),
+                           color_token(ui, PXSYS_COLOR_TEXT_PRIMARY));
+        lv_obj_set_width(label, LV_PCT(100));
+        if (ui->wifi_forget_failed) {
+            label = make_label(ui->content,
+                               translated(ui, "settings.wifi.forget.failed",
+                                          "Could not forget network"),
+                               typography_font(ui, PXSYS_TYPOGRAPHY_BODY),
+                               color_token(ui, PXSYS_COLOR_ERROR));
+            lv_obj_set_width(label, LV_PCT(100));
+        }
+        if (ui->wifi_saved_count == 0) {
+            label = make_label(ui->content,
+                               translated(ui, "settings.wifi.saved.none",
+                                          "No saved networks"),
+                               typography_font(ui, PXSYS_TYPOGRAPHY_BODY),
+                               color_token(ui, PXSYS_COLOR_TEXT_SECONDARY));
+            lv_obj_set_width(label, LV_PCT(100));
+        }
+        for (size_t index = 0; index < ui->wifi_saved_count; ++index) {
+            ui->wifi_saved_controls[index].ui = ui;
+            ui->wifi_saved_controls[index].index = index;
+            (void)make_settings_row(
+                ui, layout, ui->content, LV_SYMBOL_WIFI, PXSYS_COLOR_ACCENT,
+                ui->wifi_saved[index].ssid,
+                connected_ssid[0] != '\0' &&
+                        strcmp(ui->wifi_saved[index].ssid, connected_ssid) == 0
+                    ? translated(ui, "settings.wifi.saved.connected_detail",
+                                 "Connected · tap to forget")
+                    : translated(ui, "settings.wifi.saved.detail", "Tap to forget"),
+                wifi_saved_clicked, &ui->wifi_saved_controls[index]);
+        }
     }
     label = make_label(ui->content,
                        translated(ui, "settings.wifi.networks", "Available networks"),
@@ -5794,6 +6236,15 @@ static void page_dialog_scrim_clicked(lv_event_t* event) {
     rebuild((pxsys_reference_lvgl_t*)lv_event_get_user_data(event));
 }
 
+static void file_message(pxsys_reference_lvgl_t* ui, const char* message,
+                         pxsys_toast_tone_t tone) {
+    pxsys_toast_message_t toast;
+    pxsys_toast_message_init(&toast, pxsys_string_from_cstr(message));
+    toast.tone = tone;
+    (void)pxsys_toast_service_post(pxsys_standard_system_toasts(ui->system),
+                                   &toast);
+}
+
 static void page_confirm_clicked(lv_event_t* event) {
     pxsys_reference_lvgl_t* ui =
         (pxsys_reference_lvgl_t*)lv_event_get_user_data(event);
@@ -5809,10 +6260,15 @@ static void page_confirm_clicked(lv_event_t* event) {
                           ui->pending_action == PXSYS_REFERENCE_APP_ACTION_UNINSTALL;
             ui->managed_apps_loaded = 0;
         } else if (ui->pending_kind == 1 && ui->file_action != NULL) {
-            (void)ui->file_action(
-                ui->file_manager_context, ui->pending_path,
-                (pxsys_reference_file_action_t)ui->pending_action);
+            if (!ui->file_action(
+                    ui->file_manager_context, ui->pending_path, NULL,
+                    (pxsys_reference_file_action_t)ui->pending_action))
+                file_message(ui, translated(ui, "files.failed", "File operation failed"),
+                             PXSYS_TOAST_ERROR);
             ui->file_entries_loaded = 0;
+        } else if (ui->pending_kind == 2 && ui->wifi_forget != NULL) {
+            ui->wifi_forget_failed = !ui->wifi_forget(
+                ui->wifi_context, ui->pending_wifi_ssid);
         }
     }
     page_close_dialogs(ui);
@@ -6179,6 +6635,164 @@ static void file_manager_reload(pxsys_reference_lvgl_t* ui) {
     }
 }
 
+static void file_size_poll(lv_timer_t* timer) {
+    pxsys_reference_lvgl_t* ui = lv_timer_get_user_data(timer);
+    uint64_t size = 0;
+    bool done = false;
+    char text[96];
+    char formatted[32];
+    if (!ui_valid(ui) || ui->file_size_label == NULL || ui->file_size == NULL) {
+        lv_timer_pause(timer);
+        return;
+    }
+    if (!ui->file_size(ui->file_manager_context, NULL, &size, &done)) {
+        lv_label_set_text(ui->file_size_label,
+                          translated(ui, "files.size_failed",
+                                     "Could not calculate size"));
+        lv_timer_pause(timer);
+        return;
+    }
+    if (!done) return;
+    format_file_size(size, formatted, sizeof(formatted));
+    snprintf(text, sizeof(text), "%s: %s",
+             translated(ui, "files.size", "Size"), formatted);
+    lv_label_set_text(ui->file_size_label, text);
+    lv_timer_pause(timer);
+}
+
+static void file_property_action(lv_event_t* event) {
+    pxsys_reference_lvgl_t* ui = lv_event_get_user_data(event);
+    lv_obj_t* button = lv_event_get_current_target(event);
+    uintptr_t action = (uintptr_t)lv_obj_get_user_data(button);
+    if (!ui_valid(ui)) return;
+    if (action == PXSYS_REFERENCE_FILE_ACTION_DELETE) {
+        snprintf(ui->pending_path, sizeof(ui->pending_path), "%s",
+                 ui->file_selected.path);
+        ui->pending_kind = 1;
+        ui->pending_action = PXSYS_REFERENCE_FILE_ACTION_DELETE;
+        page_close_dialogs(ui);
+        show_page_confirm(ui, translated(ui, "settings.files.confirm.delete",
+                                         "Delete this item?"));
+    } else if (action == PXSYS_REFERENCE_FILE_ACTION_RENAME) {
+        ui->file_edit_mode = PXSYS_REFERENCE_FILE_ACTION_RENAME;
+        snprintf(ui->file_edit_draft, sizeof(ui->file_edit_draft), "%s",
+                 ui->file_selected.name);
+        page_close_dialogs(ui);
+        rebuild(ui);
+    } else if (action == PXSYS_REFERENCE_FILE_ACTION_MOVE ||
+               action == PXSYS_REFERENCE_FILE_ACTION_COPY) {
+        snprintf(ui->file_clipboard, sizeof(ui->file_clipboard), "%s",
+                 ui->file_selected.path);
+        ui->file_clipboard_action = (uint8_t)action;
+        page_close_dialogs(ui);
+        rebuild(ui);
+    }
+}
+
+static void show_file_properties(pxsys_reference_lvgl_t* ui,
+                                 const pxsys_reference_file_entry_t* entry) {
+    pxsys_reference_layout_t layout;
+    lv_obj_t* panel;
+    lv_obj_t* label;
+    char text[PXSYS_REFERENCE_FILE_PATH_MAX + 40];
+    char size[32];
+    if (ui->app_dialog != NULL ||
+        pxsys_reference_layout_compute(&ui->display, &layout) != PXSYS_STATUS_OK)
+        return;
+    ui->file_selected = *entry;
+    ui->app_dialog = make_page_dialog(ui, &layout, &panel);
+    lv_obj_add_event_cb(ui->app_dialog, page_dialog_scrim_clicked,
+                        LV_EVENT_CLICKED, ui);
+    label = make_label(panel, entry->name,
+                       typography_font(ui, PXSYS_TYPOGRAPHY_TITLE),
+                       color_token(ui, PXSYS_COLOR_TEXT_PRIMARY));
+    lv_obj_set_width(label, LV_PCT(100));
+    snprintf(text, sizeof(text), "%s",
+             translated(ui, entry->is_directory ? "files.folder" : "files.file",
+                        entry->is_directory ? "Folder" : "File"));
+    label = make_label(panel, text,
+                       typography_font(ui, PXSYS_TYPOGRAPHY_CAPTION),
+                       color_token(ui, PXSYS_COLOR_TEXT_SECONDARY));
+    lv_obj_set_width(label, LV_PCT(100));
+    snprintf(text, sizeof(text), "%s: %s",
+             translated(ui, "files.path", "Path"), entry->path);
+    label = make_label(panel, text,
+                       typography_font(ui, PXSYS_TYPOGRAPHY_CAPTION),
+                       color_token(ui, PXSYS_COLOR_TEXT_SECONDARY));
+    lv_obj_set_width(label, LV_PCT(100));
+    lv_label_set_long_mode(label, LV_LABEL_LONG_MODE_WRAP);
+    if (entry->is_directory && ui->file_size != NULL) {
+        bool done = false;
+        uint64_t bytes = 0;
+        const bool started = ui->file_size(ui->file_manager_context,
+                                           entry->path, &bytes, &done);
+        snprintf(text, sizeof(text), "%s: %s",
+                 translated(ui, "files.size", "Size"),
+                 translated(ui,
+                            started ? "files.calculating" : "files.size_failed",
+                            started ? "Calculating…" : "Could not calculate size"));
+        ui->file_size_label = make_label(
+            panel, text, typography_font(ui, PXSYS_TYPOGRAPHY_BODY),
+            color_token(ui, PXSYS_COLOR_TEXT_PRIMARY));
+        if (started) {
+            if (ui->file_size_timer == NULL)
+                ui->file_size_timer = lv_timer_create(file_size_poll, 30, ui);
+            else {
+                lv_timer_reset(ui->file_size_timer);
+                lv_timer_resume(ui->file_size_timer);
+            }
+        }
+    } else {
+        format_file_size(entry->size, size, sizeof(size));
+        snprintf(text, sizeof(text), "%s: %s",
+                 translated(ui, "files.size", "Size"), size);
+        label = make_label(panel, text,
+                           typography_font(ui, PXSYS_TYPOGRAPHY_BODY),
+                           color_token(ui, PXSYS_COLOR_TEXT_PRIMARY));
+        lv_obj_set_width(label, LV_PCT(100));
+    }
+    if (entry->modified_unix_seconds != 0) {
+        time_t timestamp = (time_t)entry->modified_unix_seconds;
+        struct tm* calendar = localtime(&timestamp);
+        if (calendar != NULL) {
+            char date[32];
+            strftime(date, sizeof(date), "%Y-%m-%d %H:%M", calendar);
+            snprintf(text, sizeof(text), "%s: %s",
+                     translated(ui, "files.modified", "Modified"), date);
+            label = make_label(panel, text,
+                               typography_font(ui, PXSYS_TYPOGRAPHY_CAPTION),
+                               color_token(ui, PXSYS_COLOR_TEXT_SECONDARY));
+            lv_obj_set_width(label, LV_PCT(100));
+        }
+    }
+    if (ui->file_action != NULL) {
+        static const struct { pxsys_reference_file_action_t action; const char* key;
+                              const char* fallback; } actions[] = {
+            {PXSYS_REFERENCE_FILE_ACTION_RENAME, "files.rename", "Rename"},
+            {PXSYS_REFERENCE_FILE_ACTION_COPY, "files.copy", "Copy"},
+            {PXSYS_REFERENCE_FILE_ACTION_MOVE, "files.move", "Move"},
+            {PXSYS_REFERENCE_FILE_ACTION_DELETE, "files.delete", "Delete"},
+        };
+        for (size_t index = 0; index < sizeof(actions) / sizeof(actions[0]); ++index) {
+            lv_obj_t* button = make_page_button(
+                ui, panel, translated(ui, actions[index].key, actions[index].fallback),
+                actions[index].action == PXSYS_REFERENCE_FILE_ACTION_DELETE
+                    ? PXSYS_COLOR_ERROR : PXSYS_COLOR_ACCENT,
+                PXSYS_COLOR_ON_ACCENT, file_property_action, ui);
+            lv_obj_set_width(button, LV_PCT(100));
+            lv_obj_set_user_data(button, (void*)(uintptr_t)actions[index].action);
+        }
+    }
+}
+
+static void file_entry_long_pressed(lv_event_t* event) {
+    pxsys_reference_lvgl_t* ui = lv_event_get_user_data(event);
+    lv_obj_t* row = lv_event_get_current_target(event);
+    size_t index = row == NULL ? 0 : (size_t)(uintptr_t)lv_obj_get_user_data(row);
+    if (!ui_valid(ui) || index >= ui->file_entry_count) return;
+    show_file_properties(ui, &ui->file_entries[index]);
+}
+
 static void file_entry_clicked(lv_event_t* event) {
     pxsys_reference_lvgl_t* ui =
         (pxsys_reference_lvgl_t*)lv_event_get_user_data(event);
@@ -6196,10 +6810,96 @@ static void file_entry_clicked(lv_event_t* event) {
     }
     snprintf(ui->pending_path, sizeof(ui->pending_path), "%s", entry->path);
     ui->pending_kind = 1;
-    ui->pending_action = PXSYS_REFERENCE_FILE_ACTION_DELETE;
-    show_page_confirm(
-        ui, translated(ui, "settings.files.confirm.delete",
-                       "Delete this item?"));
+    const char* extension = strrchr(entry->name, '.');
+    if (extension != NULL && strcmp(extension, ".pxa") == 0 &&
+        ui->file_action != NULL) {
+        char prompt[PXSYS_REFERENCE_FILE_NAME_MAX + 80];
+        ui->pending_action = PXSYS_REFERENCE_FILE_ACTION_INSTALL;
+        snprintf(prompt, sizeof(prompt), "%s\n%s",
+                 translated(ui, "files.install.confirm", "Install this app?"),
+                 entry->name);
+        show_page_confirm(ui, prompt);
+    } else {
+        file_message(ui, translated(ui, "files.unsupported",
+                                    "No app can open this file"),
+                     PXSYS_TOAST_WARNING);
+    }
+}
+
+static void file_edit_cancel(lv_event_t* event) {
+    pxsys_reference_lvgl_t* ui = lv_event_get_user_data(event);
+    if (!ui_valid(ui)) return;
+    ui->file_edit_mode = 0;
+    ui->file_edit_draft[0] = '\0';
+    rebuild(ui);
+}
+
+static void file_edit_save(lv_event_t* event) {
+    pxsys_reference_lvgl_t* ui = lv_event_get_user_data(event);
+    const char* name;
+    char destination[PXSYS_REFERENCE_FILE_PATH_MAX];
+    int written;
+    if (!ui_valid(ui) || ui->file_edit_input == NULL || ui->file_action == NULL)
+        return;
+    name = lv_textarea_get_text(ui->file_edit_input);
+    if (name[0] == '\0' || strcmp(name, ".") == 0 ||
+        strcmp(name, "..") == 0 || strchr(name, '/') != NULL) {
+        lv_label_set_text(ui->file_edit_error,
+                          translated(ui, "files.invalid_name",
+                                     "Enter a valid name without /"));
+        pxsys_lvgl_remove_flags(ui->file_edit_error, LV_OBJ_FLAG_HIDDEN);
+        return;
+    }
+    written = snprintf(destination, sizeof(destination), "%s/%s",
+                       ui->file_path, name);
+    if (written < 0 || (size_t)written >= sizeof(destination) ||
+        !ui->file_action(ui->file_manager_context,
+                         ui->file_edit_mode == PXSYS_REFERENCE_FILE_ACTION_MKDIR
+                             ? NULL : ui->file_selected.path,
+                         destination,
+                         (pxsys_reference_file_action_t)ui->file_edit_mode)) {
+        lv_label_set_text(ui->file_edit_error,
+                          translated(ui, "files.failed", "File operation failed"));
+        pxsys_lvgl_remove_flags(ui->file_edit_error, LV_OBJ_FLAG_HIDDEN);
+        return;
+    }
+    ui->file_edit_mode = 0;
+    ui->file_edit_draft[0] = '\0';
+    ui->file_entries_loaded = 0;
+    rebuild(ui);
+}
+
+static void file_new_folder_clicked(lv_event_t* event) {
+    pxsys_reference_lvgl_t* ui = lv_event_get_user_data(event);
+    if (!ui_valid(ui)) return;
+    ui->file_edit_mode = PXSYS_REFERENCE_FILE_ACTION_MKDIR;
+    ui->file_edit_draft[0] = '\0';
+    rebuild(ui);
+}
+
+static void file_paste_clicked(lv_event_t* event) {
+    pxsys_reference_lvgl_t* ui = lv_event_get_user_data(event);
+    const char* name;
+    char destination[PXSYS_REFERENCE_FILE_PATH_MAX];
+    int written;
+    if (!ui_valid(ui) || ui->file_action == NULL || ui->file_clipboard[0] == '\0')
+        return;
+    name = strrchr(ui->file_clipboard, '/');
+    if (name == NULL) return;
+    written = snprintf(destination, sizeof(destination), "%s/%s",
+                       ui->file_path, name + 1);
+    if (written < 0 || (size_t)written >= sizeof(destination) ||
+        !ui->file_action(ui->file_manager_context, ui->file_clipboard,
+                         destination,
+                         (pxsys_reference_file_action_t)ui->file_clipboard_action)) {
+        file_message(ui, translated(ui, "files.failed", "File operation failed"),
+                     PXSYS_TOAST_ERROR);
+        return;
+    }
+    if (ui->file_clipboard_action == PXSYS_REFERENCE_FILE_ACTION_MOVE)
+        ui->file_clipboard[0] = '\0';
+    ui->file_entries_loaded = 0;
+    rebuild(ui);
 }
 
 static void file_manager_up_clicked(lv_event_t* event) {
@@ -6207,6 +6907,8 @@ static void file_manager_up_clicked(lv_event_t* event) {
         (pxsys_reference_lvgl_t*)lv_event_get_user_data(event);
     char* slash;
     if (!ui_valid(ui)) return;
+    ui->file_edit_mode = 0;
+    ui->file_edit_draft[0] = '\0';
     slash = strrchr(ui->file_path, '/');
     if (slash != NULL) *slash = '\0';
     ui->file_entries_loaded = 0;
@@ -6238,6 +6940,47 @@ static void build_file_manager(pxsys_reference_lvgl_t* ui,
                        typography_font(ui, PXSYS_TYPOGRAPHY_CAPTION),
                        color_token(ui, PXSYS_COLOR_TEXT_SECONDARY));
     lv_obj_set_width(label, LV_PCT(100));
+    if (ui->file_action != NULL) {
+        lv_obj_t* button;
+        if (ui->file_clipboard[0] != '\0') {
+            button = make_page_button(
+                ui, ui->content, translated(ui, "files.paste", "Paste here"),
+                PXSYS_COLOR_SURFACE, PXSYS_COLOR_TEXT_PRIMARY,
+                file_paste_clicked, ui);
+            lv_obj_set_width(button, LV_PCT(100));
+        }
+    }
+    if (ui->file_edit_mode != 0) {
+        lv_obj_t* button;
+        label = make_label(ui->content,
+                           translated(ui, "files.name", "Name"),
+                           typography_font(ui, PXSYS_TYPOGRAPHY_BODY),
+                           color_token(ui, PXSYS_COLOR_TEXT_PRIMARY));
+        lv_obj_set_width(label, LV_PCT(100));
+        ui->file_edit_input = lv_textarea_create(ui->content);
+        lv_obj_set_width(ui->file_edit_input, LV_PCT(100));
+        lv_textarea_set_one_line(ui->file_edit_input, true);
+        lv_textarea_set_max_length(ui->file_edit_input,
+                                   PXSYS_REFERENCE_FILE_NAME_MAX - 1);
+        lv_textarea_set_text(ui->file_edit_input, ui->file_edit_draft);
+        lv_obj_add_event_cb(ui->file_edit_input, file_edit_save,
+                            LV_EVENT_READY, ui);
+        lv_obj_add_state(ui->file_edit_input, LV_STATE_FOCUSED);
+        ui->file_edit_error = make_label(ui->content, "",
+                                         typography_font(ui, PXSYS_TYPOGRAPHY_CAPTION),
+                                         color_token(ui, PXSYS_COLOR_ERROR));
+        pxsys_lvgl_add_flags(ui->file_edit_error, LV_OBJ_FLAG_HIDDEN);
+        button = make_page_button(
+            ui, ui->content, translated(ui, "settings.confirm", "Confirm"),
+            PXSYS_COLOR_ACCENT, PXSYS_COLOR_ON_ACCENT, file_edit_save, ui);
+        lv_obj_set_width(button, LV_PCT(100));
+        button = make_page_button(
+            ui, ui->content, translated(ui, "settings.cancel", "Cancel"),
+            PXSYS_COLOR_SURFACE, PXSYS_COLOR_TEXT_PRIMARY,
+            file_edit_cancel, ui);
+        lv_obj_set_width(button, LV_PCT(100));
+        return;
+    }
     if (ui->file_entry_count == 0) {
         label = make_label(ui->content,
                            translated(ui, "settings.files.empty",
@@ -6265,6 +7008,11 @@ static void build_file_manager(pxsys_reference_lvgl_t* ui,
             entry->is_directory ? PXSYS_COLOR_WARNING : PXSYS_COLOR_ACCENT,
             entry->name, subtitle, file_entry_clicked, ui);
         lv_obj_set_user_data(row, (void*)(uintptr_t)index);
+        lv_obj_remove_event_cb_with_user_data(row, file_entry_clicked, ui);
+        lv_obj_add_event_cb(row, file_entry_clicked,
+                            LV_EVENT_SHORT_CLICKED, ui);
+        lv_obj_add_event_cb(row, file_entry_long_pressed,
+                            LV_EVENT_LONG_PRESSED, ui);
         if (entry->is_directory) add_settings_chevron(ui, row);
     }
 }
@@ -6308,6 +7056,14 @@ static void rebuild(pxsys_reference_lvgl_t* ui) {
     if (ui->content_active && ui->rendered_page == REFERENCE_PAGE_APPEARANCE &&
         ui->content != NULL)
         ui->appearance_scroll_y = lv_obj_get_scroll_y(ui->content);
+    if (ui->file_edit_input != NULL) {
+        snprintf(ui->file_edit_draft, sizeof(ui->file_edit_draft), "%s",
+                 lv_textarea_get_text(ui->file_edit_input));
+        if (ui->app_ime_target == ui->file_edit_input)
+            app_input_method_close(ui);
+    }
+    ui->file_edit_input = NULL;
+    ui->file_edit_error = NULL;
     if (ui->wifi_password_input != NULL) {
         if (ui->wifi_input_stage != 0)
             snprintf(ui->wifi_input_draft, sizeof(ui->wifi_input_draft), "%s",
@@ -6336,6 +7092,11 @@ static void rebuild(pxsys_reference_lvgl_t* ui) {
     ui->language_dialog = NULL;
     ui->app_dialog = NULL;
     ui->confirm_dialog = NULL;
+    ui->file_size_label = NULL;
+    ui->idle_brightness_value = NULL;
+    if (ui->file_size_timer != NULL) lv_timer_pause(ui->file_size_timer);
+    if (ui->file_size != NULL)
+        (void)ui->file_size(ui->file_manager_context, NULL, NULL, NULL);
     lv_obj_clean(ui->root);
     ui->status_bar = NULL;
     ui->navigation_bar = NULL;
@@ -6367,7 +7128,7 @@ static void rebuild(pxsys_reference_lvgl_t* ui) {
             lv_obj_set_pos(catcher, 0, 0);
             lv_obj_set_size(catcher, (lv_coord_t)ui->display.width, height);
             lv_obj_set_style_bg_opa(catcher, LV_OPA_TRANSP, 0);
-            lv_obj_add_flag(catcher,
+            pxsys_lvgl_add_flags(catcher,
                             LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_PRESS_LOCK);
             lv_obj_add_event_cb(catcher, status_bar_event, LV_EVENT_PRESSED, ui);
             lv_obj_add_event_cb(catcher, status_bar_event, LV_EVENT_PRESSING, ui);
@@ -6423,9 +7184,9 @@ static void rebuild(pxsys_reference_lvgl_t* ui) {
                 title_height = minimum_title_height;
             lv_obj_t* title_parent = ui->content;
             if (ui->active_page == REFERENCE_PAGE_WIFI ||
-                ui->active_page == REFERENCE_PAGE_APPEARANCE) {
+                ui->active_page == REFERENCE_PAGE_APPEARANCE ||
+                ui->active_page == REFERENCE_PAGE_FILE_MANAGER) {
                 lv_obj_t* header = lv_obj_create(ui->content);
-                lv_obj_t* back = lv_button_create(header);
                 style_plain(header);
                 lv_obj_set_size(header, LV_PCT(100), title_height + 4);
                 lv_obj_set_layout(header, LV_LAYOUT_FLEX);
@@ -6433,16 +7194,21 @@ static void rebuild(pxsys_reference_lvgl_t* ui) {
                 lv_obj_set_flex_align(header, LV_FLEX_ALIGN_START,
                                       LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
                 lv_obj_set_style_pad_column(header, 6, 0);
-                lv_obj_set_size(back, 38, 38);
-                lv_obj_set_style_bg_opa(back, LV_OPA_TRANSP, 0);
-                lv_obj_set_style_border_width(back, 0, 0);
-                lv_obj_set_style_shadow_width(back, 0, 0);
-                lv_obj_set_style_pad_all(back, 0, 0);
-                lv_obj_t* arrow = make_label(back, LV_SYMBOL_LEFT,
-                                             typography_font(ui, PXSYS_TYPOGRAPHY_TITLE),
-                                             color_token(ui, PXSYS_COLOR_TEXT_PRIMARY));
-                lv_obj_align(arrow, LV_ALIGN_LEFT_MID, 5, -3);
-                lv_obj_add_event_cb(back, back_clicked, LV_EVENT_CLICKED, ui);
+                if (ui->active_page != REFERENCE_PAGE_FILE_MANAGER) {
+                    lv_obj_t* back = lv_button_create(header);
+                    lv_obj_set_size(back, 38, 38);
+                    lv_obj_set_style_bg_opa(back, LV_OPA_TRANSP, 0);
+                    lv_obj_set_style_border_width(back, 0, 0);
+                    lv_obj_set_style_shadow_width(back, 0, 0);
+                    lv_obj_set_style_pad_all(back, 0, 0);
+                    lv_obj_t* arrow = make_label(
+                        back, LV_SYMBOL_LEFT,
+                        typography_font(ui, PXSYS_TYPOGRAPHY_TITLE),
+                        color_token(ui, PXSYS_COLOR_TEXT_PRIMARY));
+                    lv_obj_align(arrow, LV_ALIGN_LEFT_MID, 5, -3);
+                    lv_obj_add_event_cb(back, back_clicked,
+                                        LV_EVENT_CLICKED, ui);
+                }
                 title_parent = header;
             }
             ui->title = make_label(title_parent,
@@ -6454,6 +7220,24 @@ static void rebuild(pxsys_reference_lvgl_t* ui) {
             else
                 lv_obj_set_flex_grow(ui->title, 1);
             lv_obj_set_height(ui->title, title_height);
+#if PXSYS_REFERENCE_UI_BUILTIN_SETTINGS
+            if (ui->active_page == REFERENCE_PAGE_FILE_MANAGER &&
+                ui->file_action != NULL && ui->file_edit_mode == 0) {
+                lv_obj_t* button = lv_button_create(title_parent);
+                lv_obj_set_size(button, 38, 38);
+                lv_obj_set_style_radius(button, LV_RADIUS_CIRCLE, 0);
+                lv_obj_set_style_bg_color(button,
+                    color_token(ui, PXSYS_COLOR_SURFACE_CONTAINER_HIGH), 0);
+                lv_obj_set_style_shadow_width(button, 0, 0);
+                lv_obj_set_style_border_width(button, 0, 0);
+                lv_obj_t* plus = make_label(
+                    button, LV_SYMBOL_PLUS, NULL,
+                    color_token(ui, PXSYS_COLOR_ACCENT));
+                lv_obj_center(plus);
+                lv_obj_add_event_cb(button, file_new_folder_clicked,
+                                    LV_EVENT_CLICKED, ui);
+            }
+#endif
         }
         if (ui->active_page == REFERENCE_PAGE_HOME)
             build_home(ui, &layout);
@@ -6505,7 +7289,7 @@ static void rebuild(pxsys_reference_lvgl_t* ui) {
                     layout.size_class == PXSYS_UI_SIZE_COMPACT ? 56 : 84;
             }
 #endif
-            lv_obj_add_flag(navigation,
+            pxsys_lvgl_add_flags(navigation,
                             LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_PRESS_LOCK);
             lv_obj_add_event_cb(navigation, navigation_gesture_event,
                                 LV_EVENT_PRESSED, ui);
@@ -6521,7 +7305,7 @@ static void rebuild(pxsys_reference_lvgl_t* ui) {
             lv_obj_set_size(navigation, (lv_coord_t)ui->display.width,
                             gesture_height);
             lv_obj_set_style_bg_opa(navigation, LV_OPA_TRANSP, 0);
-            lv_obj_add_flag(navigation,
+            pxsys_lvgl_add_flags(navigation,
                             LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_PRESS_LOCK);
             lv_obj_add_event_cb(navigation, transient_navigation_reveal_event,
                                 LV_EVENT_PRESSED, ui);
@@ -6578,7 +7362,7 @@ static void rebuild(pxsys_reference_lvgl_t* ui) {
             lv_obj_set_pos(back_gesture, edge_x, top);
             lv_obj_set_size(back_gesture, edge_width, bottom - top);
             lv_obj_set_style_bg_opa(back_gesture, LV_OPA_TRANSP, 0);
-            lv_obj_add_flag(back_gesture,
+            pxsys_lvgl_add_flags(back_gesture,
                             LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_PRESS_LOCK);
             lv_obj_add_event_cb(back_gesture, navigation_back_gesture_event,
                                 LV_EVENT_PRESSED, ui);
@@ -6729,7 +7513,7 @@ static int lock_screen_create(pxsys_reference_lvgl_t* ui) {
     style_plain(ui->lock_screen);
     lv_obj_set_pos(ui->lock_screen, 0, 0);
     lv_obj_set_style_bg_opa(ui->lock_screen, LV_OPA_COVER, 0);
-    lv_obj_add_flag(ui->lock_screen,
+    pxsys_lvgl_add_flags(ui->lock_screen,
                     LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_PRESS_LOCK);
     lv_obj_add_event_cb(ui->lock_screen, lock_screen_event, LV_EVENT_PRESSED, ui);
     lv_obj_add_event_cb(ui->lock_screen, lock_screen_event, LV_EVENT_PRESSING, ui);
@@ -6832,7 +7616,7 @@ static int power_menu_create(pxsys_reference_lvgl_t* ui) {
     lv_obj_set_style_bg_color(ui->power_menu,
                               color_token(ui, PXSYS_COLOR_SCRIM), 0);
     lv_obj_set_style_bg_opa(ui->power_menu, LV_OPA_60, 0);
-    lv_obj_add_flag(ui->power_menu, LV_OBJ_FLAG_CLICKABLE);
+    pxsys_lvgl_add_flags(ui->power_menu, LV_OBJ_FLAG_CLICKABLE);
 
     panel_width = (int32_t)ui->display.width -
                   (int32_t)ui->display.safe_insets.left -
@@ -6857,7 +7641,7 @@ static int power_menu_create(pxsys_reference_lvgl_t* ui) {
     lv_obj_set_flex_flow(panel, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_flex_align(panel, LV_FLEX_ALIGN_START,
                           LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    lv_obj_clear_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
+    pxsys_lvgl_remove_flags(panel, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_center(panel);
 
     title = make_label(panel, translated(ui, "power.title", "Power menu"),
@@ -6932,9 +7716,76 @@ static void system_status_changed(
     const int volume_changed =
         ui->system_status.volume_supported && status->volume_supported &&
         ui->system_status.volume_percent != status->volume_percent;
+    const int levels_page_visible =
+        ui->content_active && ui->active_page == REFERENCE_PAGE_SOUND_SETTINGS;
+    /* Battery, clock and signal samples must not destroy the settings page,
+     * its scroll position or an open permission dialog. Rebuild content only
+     * when the controls represented on it actually change. */
+    const pxsys_system_status_snapshot_t* old = &ui->system_status;
+#define CONTROL_CHANGED(field) (old->field != status->field)
+    int controls_changed =
+        CONTROL_CHANGED(network_type) || CONTROL_CHANGED(network_connected) ||
+        CONTROL_CHANGED(wifi_supported) || CONTROL_CHANGED(wifi_enabled) ||
+        CONTROL_CHANGED(wifi_connected) || CONTROL_CHANGED(cellular_supported) ||
+        CONTROL_CHANGED(cellular_enabled) || CONTROL_CHANGED(cellular_connected) ||
+        CONTROL_CHANGED(volume_supported) || CONTROL_CHANGED(brightness_supported) ||
+        (levels_page_visible &&
+         (CONTROL_CHANGED(volume_percent) || CONTROL_CHANGED(brightness_percent))) ||
+        CONTROL_CHANGED(bluetooth_supported) || CONTROL_CHANGED(bluetooth_enabled) ||
+        CONTROL_CHANGED(do_not_disturb_supported) || CONTROL_CHANGED(do_not_disturb_enabled) ||
+        CONTROL_CHANGED(flashlight_supported) || CONTROL_CHANGED(flashlight_enabled) ||
+        CONTROL_CHANGED(airplane_mode_supported) || CONTROL_CHANGED(airplane_mode_enabled);
+#undef CONTROL_CHANGED
     ui->system_status = *status;
-    rebuild(ui);
+    if (controls_changed || ui->notification_shade_open) {
+        rebuild(ui);
+    } else {
+        pxsys_reference_layout_t layout;
+        if (ui->status_bar != NULL &&
+            status_bar_mode(ui) != PXSYS_WINDOW_BAR_HIDDEN &&
+            bar_is_visible(ui, status_bar_mode(ui)) &&
+            pxsys_reference_layout_compute(&ui->display, &layout) == PXSYS_STATUS_OK)
+            build_status_bar(ui, &layout);
+        lock_screen_refresh(ui);
+    }
     if (volume_changed) volume_osd_show(ui, status->volume_percent);
+}
+
+static int idle_policy_valid(const pxsys_reference_idle_policy_t* policy) {
+    return policy->dim_after_seconds != 0 &&
+           policy->lock_after_seconds > policy->dim_after_seconds &&
+           policy->dim_percent >= 2 && policy->dim_percent <= 100;
+}
+
+static void idle_policy_poll(lv_timer_t* timer) {
+    pxsys_reference_lvgl_t* ui = lv_timer_get_user_data(timer);
+    if (!ui_valid(ui) || ui->root == NULL ||
+        !idle_policy_valid(&ui->idle_policy)) return;
+    const uint32_t inactive = lv_display_get_inactive_time(
+        lv_obj_get_display(ui->root));
+    const uint32_t dim_at = (uint32_t)ui->idle_policy.dim_after_seconds * 1000u;
+    const uint32_t lock_at = (uint32_t)ui->idle_policy.lock_after_seconds * 1000u;
+    if (inactive < dim_at) {
+        ui->idle_lock_triggered = 0;
+        if (ui->idle_dimmed) {
+            ui->idle_dimmed = 0;
+            if (ui->idle_dim != NULL)
+                ui->idle_dim(ui->idle_context, false,
+                             ui->idle_policy.dim_percent);
+        }
+        return;
+    }
+    if (!ui->idle_dimmed) {
+        ui->idle_dimmed = 1;
+        if (ui->idle_dim != NULL)
+            ui->idle_dim(ui->idle_context, true,
+                         ui->idle_policy.dim_percent);
+    }
+    if (inactive >= lock_at && !ui->idle_lock_triggered) {
+        ui->idle_lock_triggered = 1;
+        (void)pxsys_reference_lvgl_set_locked(ui, true);
+        if (ui->idle_lock != NULL) ui->idle_lock(ui->idle_context);
+    }
 }
 
 static void window_changed(void* context,
@@ -6998,7 +7849,7 @@ static pxsys_status_t app_foreground(void* context, void* instance) {
     } else {
         app->ui->active_chrome |= (uint8_t)(1u << app->page);
     }
-    lv_obj_remove_flag(app->ui->root, LV_OBJ_FLAG_HIDDEN);
+    pxsys_lvgl_remove_flags(app->ui->root, LV_OBJ_FLAG_HIDDEN);
     rebuild(app->ui);
     return PXSYS_STATUS_OK;
 }
@@ -7027,8 +7878,14 @@ static pxsys_back_result_t app_back(void* context, void* instance) {
     app_context_t* app = (app_context_t*)instance;
     (void)context;
     /* Back on the launcher page must not pop it and surface an older task. */
-    if (app != NULL && app->page == REFERENCE_PAGE_HOME)
+    if (app != NULL && app->page == REFERENCE_PAGE_HOME) {
+        if (ui_valid(app->ui) && app->ui->launcher_editing) {
+            app->ui->launcher_editing = 0;
+            app->ui->launcher_long_pressed = 0;
+            rebuild(app->ui);
+        }
         return PXSYS_BACK_HANDLED;
+    }
     return PXSYS_BACK_UNHANDLED;
 }
 
@@ -7278,6 +8135,12 @@ pxsys_status_t pxsys_reference_lvgl_create(
     ui->file_manager_context = config->file_manager_context;
     ui->file_list = config->file_list;
     ui->file_action = config->file_action;
+    ui->file_size = config->file_size;
+    ui->idle_policy = config->idle_policy;
+    ui->idle_context = config->idle_context;
+    ui->idle_save = config->idle_save;
+    ui->idle_dim = config->idle_dim;
+    ui->idle_lock = config->idle_lock;
     ui->memory_info_context = config->memory_info_context;
     ui->memory_info = config->memory_info;
     ui->preview_overlay_context = config->preview_overlay_context;
@@ -7292,6 +8155,8 @@ pxsys_status_t pxsys_reference_lvgl_create(
     ui->wifi_scan_start = config->wifi_scan_start;
     ui->wifi_connect = config->wifi_connect;
     ui->wifi_current = config->wifi_current;
+    ui->wifi_saved_list = config->wifi_saved_list;
+    ui->wifi_forget = config->wifi_forget;
     ui->app_permission_context = config->app_permission_context;
     ui->app_permission_list = config->app_permission_list;
     ui->app_permission_set = config->app_permission_set;
@@ -7303,12 +8168,14 @@ pxsys_status_t pxsys_reference_lvgl_create(
     ui->root = lv_obj_create(ui->parent);
     style_plain(ui->root);
     ui->app_ime_timer = lv_timer_create(app_input_method_poll, 200, ui);
+    if (idle_policy_valid(&ui->idle_policy))
+        ui->idle_timer = lv_timer_create(idle_policy_poll, 500, ui);
     ui->wifi_scan_timer = lv_timer_create(wifi_scan_poll, 250, ui);
     if (ui->wifi_scan_timer != NULL) lv_timer_pause(ui->wifi_scan_timer);
     /* The transparent system-chrome root sits above application surfaces.
      * Only its concrete bars and overlays may participate in hit testing. */
-    lv_obj_remove_flag(ui->root, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_add_flag(ui->root, LV_OBJ_FLAG_HIDDEN);
+    pxsys_lvgl_remove_flags(ui->root, LV_OBJ_FLAG_CLICKABLE);
+    pxsys_lvgl_add_flags(ui->root, LV_OBJ_FLAG_HIDDEN);
     ui->display.struct_size = sizeof(ui->display);
     status = pxsys_display_service_get(
         pxsys_standard_system_display(ui->system), &ui->display);
@@ -7547,6 +8414,11 @@ pxsys_status_t pxsys_reference_lvgl_destroy(pxsys_reference_lvgl_t* ui) {
     size_t preview_index;
 #endif
     if (!ui_valid(ui)) return PXSYS_STATUS_INVALID_ARGUMENT;
+    if (ui->idle_timer != NULL) lv_timer_delete(ui->idle_timer);
+    if (ui->idle_dimmed && ui->idle_dim != NULL)
+        ui->idle_dim(ui->idle_context, false, ui->idle_policy.dim_percent);
+    if (ui->file_size != NULL)
+        (void)ui->file_size(ui->file_manager_context, NULL, NULL, NULL);
     if (ui->system_overlay_visible && ui->system_overlay_changed != NULL)
         ui->system_overlay_changed(ui->system_overlay_context, false);
     if (ui->content_insets_changed != NULL)
@@ -7595,6 +8467,7 @@ pxsys_status_t pxsys_reference_lvgl_destroy(pxsys_reference_lvgl_t* ui) {
     if (ui->app_ime != NULL) lv_obj_delete(ui->app_ime);
     if (ui->app_ime_timer != NULL) lv_timer_delete(ui->app_ime_timer);
     if (ui->wifi_scan_timer != NULL) lv_timer_delete(ui->wifi_scan_timer);
+    if (ui->file_size_timer != NULL) lv_timer_delete(ui->file_size_timer);
     if (ui->toast_timer != NULL) lv_timer_delete(ui->toast_timer);
     if (ui->volume_osd_timer != NULL) lv_timer_delete(ui->volume_osd_timer);
     if (ui->transient_timer != NULL) lv_timer_delete(ui->transient_timer);

@@ -15,7 +15,7 @@
 
 #include <SDL2/SDL.h>
 
-#include "src/drivers/sdl/lv_sdl_window.h"
+#include "include/lvgl/drivers/sdl/lv_sdl_window.h"
 
 static int set_nonblocking(int descriptor) {
     const int flags = fcntl(descriptor, F_GETFL, 0);

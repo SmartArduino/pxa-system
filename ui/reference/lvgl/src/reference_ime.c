@@ -1,4 +1,5 @@
 #include "pxsys/reference_ime.h"
+#include "pxsys/lvgl_flags.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -65,9 +66,13 @@ static const char *const s_english_uppercase_keyboard_map[] = {
     "?", "PQRS", "TUV", "WXYZ", LV_SYMBOL_DOWN, "\n",
     LV_SYMBOL_LEFT, " ", " ", " ", LV_SYMBOL_RIGHT, "",
 };
+#define PXA_IME_KEY_CTRL \
+    (LV_BUTTONMATRIX_CTRL_NO_REPEAT | LV_BUTTONMATRIX_CTRL_CLICK_TRIG | 1)
+#define PXA_IME_KEY_CTRL_4 \
+    PXA_IME_KEY_CTRL, PXA_IME_KEY_CTRL, PXA_IME_KEY_CTRL, PXA_IME_KEY_CTRL
 static const lv_buttonmatrix_ctrl_t s_english_keyboard_ctrl[20] = {
-    [0 ... 19] = LV_BUTTONMATRIX_CTRL_NO_REPEAT |
-                  LV_BUTTONMATRIX_CTRL_CLICK_TRIG | 1,
+    PXA_IME_KEY_CTRL_4, PXA_IME_KEY_CTRL_4, PXA_IME_KEY_CTRL_4,
+    PXA_IME_KEY_CTRL_4, PXA_IME_KEY_CTRL_4,
 };
 
 static const char *const s_number_keyboard_map[] = {
@@ -77,9 +82,11 @@ static const char *const s_number_keyboard_map[] = {
     "0", ".", "-", "_", LV_SYMBOL_BACKSPACE, LV_SYMBOL_DOWN, "",
 };
 static const lv_buttonmatrix_ctrl_t s_number_keyboard_ctrl[18] = {
-    [0 ... 17] = LV_BUTTONMATRIX_CTRL_NO_REPEAT |
-                  LV_BUTTONMATRIX_CTRL_CLICK_TRIG | 1,
+    PXA_IME_KEY_CTRL_4, PXA_IME_KEY_CTRL_4, PXA_IME_KEY_CTRL_4,
+    PXA_IME_KEY_CTRL_4, PXA_IME_KEY_CTRL, PXA_IME_KEY_CTRL,
 };
+#undef PXA_IME_KEY_CTRL_4
+#undef PXA_IME_KEY_CTRL
 #endif
 
 static const char *const s_chinese_symbols[] = {
@@ -128,7 +135,7 @@ static lv_obj_t *ime_text_area(const pxsys_reference_ime_t *input_method) {
 static void input_method_hide_pinyin_candidates(pxsys_reference_ime_t *input_method) {
 #if LV_USE_IME_PINYIN && LV_IME_PINYIN_USE_K9_MODE
     if (input_method->candidates != NULL)
-        lv_obj_add_flag(input_method->candidates, LV_OBJ_FLAG_HIDDEN);
+        pxsys_lvgl_add_flags(input_method->candidates, LV_OBJ_FLAG_HIDDEN);
 #else
     (void)input_method;
 #endif
@@ -137,7 +144,7 @@ static void input_method_hide_pinyin_candidates(pxsys_reference_ime_t *input_met
 static void apply_icon_font_recursively(pxsys_reference_ime_t *input_method,
                                         lv_obj_t *object) {
     if (object == NULL) return;
-    if (lv_obj_has_flag(object, LV_OBJ_FLAG_USER_1) &&
+    if (lv_obj_get_user_flag(object, 0) &&
         input_method->icon_font != NULL) {
         lv_obj_set_style_text_font(object, input_method->icon_font, 0);
     }
@@ -364,7 +371,7 @@ static lv_obj_t *add_symbol_button(lv_obj_t *parent, const char *text,
     lv_obj_t *label = lv_label_create(button);
     lv_label_set_text(label, text);
     if (icon) {
-        lv_obj_add_flag(label, LV_OBJ_FLAG_USER_1);
+        pxsys_lvgl_add_flags(label, LV_OBJ_FLAG_USER_1);
         if (input_method->icon_font != NULL)
             lv_obj_set_style_text_font(label, input_method->icon_font, 0);
     }
@@ -375,7 +382,7 @@ static lv_obj_t *add_symbol_button(lv_obj_t *parent, const char *text,
 static void create_symbol_panel(pxsys_reference_ime_t *input_method) {
     input_method->symbol_panel = lv_obj_create(input_method->root);
     style_keypad(input_method->symbol_panel);
-    lv_obj_clear_flag(input_method->symbol_panel, LV_OBJ_FLAG_SCROLLABLE);
+    pxsys_lvgl_remove_flags(input_method->symbol_panel, LV_OBJ_FLAG_SCROLLABLE);
 
     input_method->symbol_toolbar = lv_obj_create(input_method->symbol_panel);
     lv_obj_set_size(input_method->symbol_toolbar, LV_PCT(100), 26);
@@ -385,7 +392,7 @@ static void create_symbol_panel(pxsys_reference_ime_t *input_method) {
     lv_obj_set_style_pad_all(input_method->symbol_toolbar, 0, 0);
     lv_obj_set_style_pad_column(input_method->symbol_toolbar, 4, 0);
     lv_obj_set_flex_flow(input_method->symbol_toolbar, LV_FLEX_FLOW_ROW);
-    lv_obj_clear_flag(input_method->symbol_toolbar, LV_OBJ_FLAG_SCROLLABLE);
+    pxsys_lvgl_remove_flags(input_method->symbol_toolbar, LV_OBJ_FLAG_SCROLLABLE);
 
     add_symbol_button(input_method->symbol_toolbar, "中", symbol_toolbar_clicked,
                       input_method, false);
@@ -609,7 +616,7 @@ pxsys_reference_ime_t *pxsys_reference_ime_create(lv_obj_t *parent,
     lv_obj_set_style_bg_opa(input_method->root, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(input_method->root, 0, 0);
     lv_obj_set_style_pad_all(input_method->root, 0, 0);
-    lv_obj_remove_flag(input_method->root,
+    pxsys_lvgl_remove_flags(input_method->root,
                        LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
 
     input_method->keyboard = lv_keyboard_create(input_method->root);
@@ -795,14 +802,14 @@ void pxsys_reference_ime_set_mode(pxsys_reference_ime_t *input_method,
         lv_obj_send_event(lv_obj_get_child(input_method->symbol_toolbar, symbol_tab),
                           LV_EVENT_CLICKED, NULL);
         input_method_hide_pinyin_candidates(input_method);
-        lv_obj_add_flag(input_method->keyboard, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_remove_flag(input_method->symbol_panel, LV_OBJ_FLAG_HIDDEN);
+        pxsys_lvgl_add_flags(input_method->keyboard, LV_OBJ_FLAG_HIDDEN);
+        pxsys_lvgl_remove_flags(input_method->symbol_panel, LV_OBJ_FLAG_HIDDEN);
         return;
     }
 
     input_method->last_keyboard_mode = mode;
-    lv_obj_add_flag(input_method->symbol_panel, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_remove_flag(input_method->keyboard, LV_OBJ_FLAG_HIDDEN);
+    pxsys_lvgl_add_flags(input_method->symbol_panel, LV_OBJ_FLAG_HIDDEN);
+    pxsys_lvgl_remove_flags(input_method->keyboard, LV_OBJ_FLAG_HIDDEN);
 
 #if LV_USE_IME_PINYIN && LV_IME_PINYIN_USE_K9_MODE
     if (mode == PXSYS_REFERENCE_IME_MODE_CHINESE) {
@@ -838,14 +845,14 @@ pxsys_reference_ime_mode_t pxsys_reference_ime_get_mode(
 
 void pxsys_reference_ime_show(pxsys_reference_ime_t *input_method) {
     if (input_method == NULL || input_method->root == NULL) return;
-    lv_obj_remove_flag(input_method->root, LV_OBJ_FLAG_HIDDEN);
+    pxsys_lvgl_remove_flags(input_method->root, LV_OBJ_FLAG_HIDDEN);
     if (input_method->mode == PXSYS_REFERENCE_IME_MODE_SYMBOLS) {
-        lv_obj_remove_flag(input_method->symbol_panel, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_add_flag(input_method->keyboard, LV_OBJ_FLAG_HIDDEN);
+        pxsys_lvgl_remove_flags(input_method->symbol_panel, LV_OBJ_FLAG_HIDDEN);
+        pxsys_lvgl_add_flags(input_method->keyboard, LV_OBJ_FLAG_HIDDEN);
         input_method_hide_pinyin_candidates(input_method);
     } else {
-        lv_obj_remove_flag(input_method->keyboard, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_add_flag(input_method->symbol_panel, LV_OBJ_FLAG_HIDDEN);
+        pxsys_lvgl_remove_flags(input_method->keyboard, LV_OBJ_FLAG_HIDDEN);
+        pxsys_lvgl_add_flags(input_method->symbol_panel, LV_OBJ_FLAG_HIDDEN);
         if (input_method->mode != PXSYS_REFERENCE_IME_MODE_CHINESE)
             input_method_hide_pinyin_candidates(input_method);
     }
@@ -854,10 +861,10 @@ void pxsys_reference_ime_show(pxsys_reference_ime_t *input_method) {
 void pxsys_reference_ime_hide(pxsys_reference_ime_t *input_method) {
     const bool was_visible =
         input_method != NULL && input_method->root != NULL &&
-        !lv_obj_has_flag(input_method->root, LV_OBJ_FLAG_HIDDEN);
+        !lv_obj_is_hidden(input_method->root);
     if (input_method == NULL || input_method->root == NULL) return;
     input_method_hide_pinyin_candidates(input_method);
-    lv_obj_add_flag(input_method->root, LV_OBJ_FLAG_HIDDEN);
+    pxsys_lvgl_add_flags(input_method->root, LV_OBJ_FLAG_HIDDEN);
     if (was_visible && input_method->close_callback != NULL)
         input_method->close_callback(input_method->close_context);
 }
@@ -872,7 +879,7 @@ void pxsys_reference_ime_set_close_callback(pxsys_reference_ime_t *input_method,
 
 bool pxsys_reference_ime_is_visible(const pxsys_reference_ime_t *input_method) {
     return input_method != NULL && input_method->root != NULL &&
-           !lv_obj_has_flag(input_method->root, LV_OBJ_FLAG_HIDDEN);
+           !lv_obj_is_hidden(input_method->root);
 }
 
 lv_obj_t *pxsys_reference_ime_get_root(const pxsys_reference_ime_t *input_method) {

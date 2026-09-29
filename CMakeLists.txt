@@ -70,6 +70,13 @@ option(PXSYS_BUILD_DESKTOP_SIMULATOR "Build the SDL2/LVGL standard UI simulator"
 option(PXSYS_ENABLE_INSTALL "Generate install and CMake package rules"
        ${PXSYS_TOP_LEVEL})
 
+if(PXSYS_BUILD_LIBPXA AND PXSYS_BUILD_SIMULATOR AND
+   PXSYS_BUILD_DESKTOP_SIMULATOR)
+    include("${PXSYS_ROOT}/cmake/PxaDesktopLvgl.cmake")
+    pxsys_prepare_desktop_lvgl("${PXSYS_ROOT}/simulator/desktop")
+    set(PXA_LVGL_TARGET lvgl CACHE STRING "" FORCE)
+endif()
+
 if(PXSYS_BUILD_TESTS)
     include(CTest)
     find_package(Python3 COMPONENTS Interpreter REQUIRED)

@@ -16,6 +16,7 @@ find_package(Threads REQUIRED)
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(VORBISFILE REQUIRED IMPORTED_TARGET vorbisfile)
+pkg_check_modules(OPUSFILE REQUIRED IMPORTED_TARGET opusfile)
 include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/PxaWamrMetadata.cmake")
 
 set(PXSYS_DESKTOP_TEXT_FONT
@@ -25,30 +26,8 @@ if(NOT EXISTS "${PXSYS_DESKTOP_TEXT_FONT}")
     message(FATAL_ERROR "Desktop simulator text font is missing: ${PXSYS_DESKTOP_TEXT_FONT}")
 endif()
 
-if(NOT TARGET lvgl)
-    set(PXSYS_LVGL_SOURCE_DIR "" CACHE PATH
-        "Existing LVGL 9.5 source tree; empty downloads the pinned release")
-    set(CONFIG_LV_BUILD_DEMOS OFF CACHE BOOL "" FORCE)
-    set(CONFIG_LV_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
-    set(CONFIG_LV_USE_THORVG_INTERNAL OFF CACHE BOOL "" FORCE)
-    set(LV_BUILD_CONF_PATH "${CMAKE_CURRENT_LIST_DIR}/lv_conf.h"
-        CACHE PATH "" FORCE)
-    if(PXSYS_LVGL_SOURCE_DIR)
-        add_subdirectory("${PXSYS_LVGL_SOURCE_DIR}"
-                         "${CMAKE_CURRENT_BINARY_DIR}/lvgl" EXCLUDE_FROM_ALL)
-    else()
-        include(FetchContent)
-        FetchContent_Declare(lvgl_source
-            GIT_REPOSITORY https://github.com/lvgl/lvgl.git
-            GIT_TAG v9.5.0
-            GIT_SHALLOW TRUE)
-        FetchContent_MakeAvailable(lvgl_source)
-        # LVGL is a private simulator dependency. Keep its install rules out
-        # of a top-level PXA System SDK install.
-        set_property(DIRECTORY "${lvgl_source_SOURCE_DIR}"
-                     PROPERTY EXCLUDE_FROM_ALL TRUE)
-    endif()
-endif()
+include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/PxaDesktopLvgl.cmake")
+pxsys_prepare_desktop_lvgl("${CMAKE_CURRENT_LIST_DIR}")
 
 target_include_directories(lvgl PUBLIC "${CMAKE_CURRENT_LIST_DIR}")
 target_link_libraries(lvgl PUBLIC SDL2::SDL2 Freetype::Freetype)
@@ -104,7 +83,7 @@ target_link_libraries(pxsys_desktop_simulator PRIVATE
     pxsys::standard pxsys::pxa pxsys::renderer_lvgl pxsys::reference_lvgl
     pxa_adapters_openssl pxa_adapters_posix pxa_adapters_lvgl
     pxa_adapters_wamr lvgl SDL2::SDL2 PNG::PNG CURL::libcurl Threads::Threads
-    PkgConfig::VORBISFILE m)
+    PkgConfig::VORBISFILE PkgConfig::OPUSFILE m)
 
 add_executable(pxsys_product_simulator product_runner.c desktop_net.c
     pxadb_control.c)
@@ -115,7 +94,7 @@ target_compile_definitions(pxsys_product_simulator PRIVATE
 target_link_libraries(pxsys_product_simulator PRIVATE
     pxsys::core pxa::pxa pxa_adapters_openssl pxa_adapters_posix pxa_adapters_lvgl
     pxa_adapters_wamr lvgl SDL2::SDL2 PNG::PNG CURL::libcurl Threads::Threads
-    PkgConfig::VORBISFILE m)
+    PkgConfig::VORBISFILE PkgConfig::OPUSFILE m)
 if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(pxsys_product_simulator PRIVATE
         -Wall -Wextra -Wpedantic)
@@ -138,6 +117,28 @@ if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
 endif()
 
 if(PXSYS_BUILD_TESTS OR BUILD_TESTING)
+    find_program(PXSYS_GUEST_CLANG clang)
+    find_program(PXSYS_TEST_TIMEOUT timeout)
+    set(PXSYS_V1_SMOKE_APP_ROOT
+        "${CMAKE_CURRENT_LIST_DIR}/../../../../local/pxa-apps")
+    if(PXSYS_GUEST_CLANG AND PXSYS_TEST_TIMEOUT AND
+       EXISTS "${PXSYS_V1_SMOKE_APP_ROOT}/abi-v1-smoke/package.json" AND
+       EXISTS "${PXSYS_V1_SMOKE_APP_ROOT}/.dev-signing/publisher-public.der")
+        add_test(NAME pxsys_product_abi_v1_pressure
+            COMMAND bash
+                "${CMAKE_CURRENT_LIST_DIR}/../../tools/package/test_abi_v1_smoke.sh"
+                $<TARGET_FILE:pxsys_product_simulator>)
+        set_tests_properties(pxsys_product_abi_v1_pressure PROPERTIES
+            TIMEOUT 45)
+        if(EXISTS "${PXSYS_V1_SMOKE_APP_ROOT}/abi-v1-ipc-smoke/package.json")
+            add_test(NAME pxsys_product_abi_v1_ipc
+                COMMAND bash
+                    "${CMAKE_CURRENT_LIST_DIR}/../../tools/package/test_abi_v1_ipc_smoke.sh"
+                    $<TARGET_FILE:pxsys_product_simulator>)
+            set_tests_properties(pxsys_product_abi_v1_ipc PROPERTIES
+                TIMEOUT 45)
+        endif()
+    endif()
     add_test(NAME pxsys_desktop_simulator_smoke
              COMMAND pxsys_desktop_simulator --smoke-test)
     set_tests_properties(pxsys_desktop_simulator_smoke PROPERTIES
@@ -169,3 +170,81 @@ if(PXSYS_BUILD_TESTS OR BUILD_TESTING)
     pxsys_add_desktop_visual_test(round_custom_zh 454 454
         --profile round --custom-theme --locale zh-CN)
 endif()
+
+# These targets exercise the actual product backend, including in normal
+# simulator build trees. Keep dependency configuration identical to the runner.
+foreach(_test audio audio_app raster resources voxel_resources resource_budget ui_images store_images weather_images)
+    if(_test STREQUAL "audio")
+        set(_source tests/audio_backend_test.c)
+    elseif(_test STREQUAL "audio_app")
+        set(_source tests/audio_app_test.c)
+    elseif(_test STREQUAL "resource_budget")
+        set(_source tests/resource_budget_test.c)
+    elseif(_test STREQUAL "resources")
+        set(_source tests/resource_app_test.c)
+    elseif(_test STREQUAL "voxel_resources")
+        set(_source tests/voxel_resource_test.c)
+    elseif(_test STREQUAL "store_images")
+        set(_source tests/store_image_capture_test.c)
+    elseif(_test STREQUAL "weather_images")
+        set(_source tests/weather_image_capture_test.c)
+    elseif(_test STREQUAL "ui_images")
+        set(_source tests/ui_image_capture_test.c)
+    else()
+        set(_source tests/raster_backend_test.c)
+    endif()
+    add_executable(pxsys_${_test}_test ${_source} desktop_net.c pxadb_control.c)
+    if(NOT PXSYS_BUILD_TESTS AND NOT BUILD_TESTING)
+        set_target_properties(pxsys_${_test}_test PROPERTIES EXCLUDE_FROM_ALL TRUE)
+    endif()
+    pxsys_apply_wamr_metadata(pxsys_${_test}_test)
+    target_compile_definitions(pxsys_${_test}_test PRIVATE
+        PXSYS_DESKTOP_TEXT_FONT="${PXSYS_DESKTOP_TEXT_FONT}")
+    target_link_libraries(pxsys_${_test}_test PRIVATE
+        pxsys::core pxa::pxa pxa_adapters_openssl pxa_adapters_posix pxa_adapters_lvgl
+        pxa_adapters_wamr lvgl SDL2::SDL2 PNG::PNG CURL::libcurl Threads::Threads
+        PkgConfig::VORBISFILE PkgConfig::OPUSFILE m)
+    if(PXSYS_BUILD_TESTS OR BUILD_TESTING)
+        if(_test STREQUAL "audio")
+            add_test(NAME pxsys_audio_test COMMAND ${Python3_EXECUTABLE}
+                "${CMAKE_CURRENT_LIST_DIR}/../../tools/package/test_audio_backend.py"
+                $<TARGET_FILE:pxsys_audio_test>
+                "${CMAKE_CURRENT_LIST_DIR}/tests/audio-assets")
+        elseif(_test STREQUAL "resource_budget")
+            add_test(NAME pxsys_resource_budget_test COMMAND pxsys_resource_budget_test)
+        elseif(_test STREQUAL "raster")
+            add_test(NAME pxsys_raster_test COMMAND pxsys_raster_test)
+        endif()
+    endif()
+endforeach()
+
+set(PXSYS_RASTER_BASELINE_SOURCE "" CACHE FILEPATH
+    "Saved product_runner.c used for the pre-refactor raster benchmark")
+set(PXSYS_RASTER_BASELINE_KERNEL "" CACHE FILEPATH
+    "Saved raster.c including the pre-refactor validator, for baseline timing")
+foreach(_bench current baseline)
+    if(_bench STREQUAL "baseline" AND NOT PXSYS_RASTER_BASELINE_SOURCE)
+        continue()
+    endif()
+    add_executable(pxsys_raster_bench_${_bench} EXCLUDE_FROM_ALL
+        tests/raster_benchmark.c desktop_net.c pxadb_control.c)
+    pxsys_apply_wamr_metadata(pxsys_raster_bench_${_bench})
+    target_include_directories(pxsys_raster_bench_${_bench} PRIVATE
+        "${CMAKE_CURRENT_LIST_DIR}")
+    target_compile_definitions(pxsys_raster_bench_${_bench} PRIVATE
+        PXSYS_DESKTOP_TEXT_FONT="${PXSYS_DESKTOP_TEXT_FONT}")
+    if(_bench STREQUAL "baseline")
+        target_compile_definitions(pxsys_raster_bench_${_bench} PRIVATE
+            PXA_BENCH_RUNNER="${PXSYS_RASTER_BASELINE_SOURCE}")
+        if(PXSYS_RASTER_BASELINE_KERNEL)
+            # Override the archive's raster object so dependency collection
+            # and other validator changes are measured only in the new path.
+            target_sources(pxsys_raster_bench_${_bench} PRIVATE
+                "${PXSYS_RASTER_BASELINE_KERNEL}")
+        endif()
+    endif()
+    target_link_libraries(pxsys_raster_bench_${_bench} PRIVATE
+        pxsys::core pxa::pxa pxa_adapters_openssl pxa_adapters_posix pxa_adapters_lvgl
+        pxa_adapters_wamr lvgl SDL2::SDL2 PNG::PNG CURL::libcurl Threads::Threads
+        PkgConfig::VORBISFILE PkgConfig::OPUSFILE m)
+endforeach()

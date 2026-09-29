@@ -12,11 +12,21 @@
 
 #include <SDL2/SDL.h>
 #include <vorbis/vorbisfile.h>
+#include <opus/opusfile.h>
 
 #include "lvgl.h"
 #include "pxa/activation.h"
 #include "pxa/audio.h"
+#include "pxa/audio_mixer.h"
+#include "pxa/clock.h"
 #include "pxa/game_render.h"
+#include "pxa/assets.h"
+#include "pxa/asset_stream.h"
+#include "pxa/posix/pxa_posix_asset.h"
+#include "pxa/posix/pxa_posix_asset_worker.h"
+#include "pxa/raster_assets.h"
+#include "pxa/resource_budget.h"
+#include "pxa/audio_buffer.h"
 #include "pxa/log.h"
 #include "pxa/lvgl/pxa_lvgl_ui.h"
 #include "pxa/openssl/pxa_openssl.h"
@@ -24,24 +34,30 @@
 #include "pxa/permission.h"
 #include "pxa/posix/pxa_posix_installer.h"
 #include "pxa/posix/pxa_posix_storage.h"
+#include "pxa/posix/pxa_posix_fs.h"
+#include "pxa/fs.h"
+#include "pxa/ipc.h"
 #include "pxa/runtime.h"
 #include "pxa/service.h"
 #include "pxa/storage.h"
 #include "pxa/surface.h"
 #include "pxa/ui.h"
+#include "pxa/wasi.h"
 #include "pxa/wamr/pxa_wamr_engine.h"
 #include "pxa/wire.h"
 #include "pxa/window.h"
 #include "pxadb_control.h"
 #include "product_runner.h"
 #include "src/core/lv_obj_event_private.h"
-#include "src/drivers/sdl/lv_sdl_keyboard.h"
+#include "include/lvgl/drivers/sdl/lv_sdl_keyboard.h"
 #include "desktop_net.h"
 #include "pxa/device.h"
 #include "src/misc/cache/instance/lv_image_cache.h"
 
-#define PRODUCT_CLOCK_SERVICE UINT16_C(4)
-#define PRODUCT_CLOCK_TICK UINT16_C(0x8001)
+#define PRODUCT_CLOCK_SERVICE PXA_CLOCK_SERVICE_ID
+#define PRODUCT_CLOCK_NOW PXA_CLOCK_NOW
+#define PRODUCT_CLOCK_TICK PXA_CLOCK_TICK
+#define PRODUCT_CLOCK_NOW_RESULT PXA_CLOCK_NOW_RESULT
 #define PRODUCT_LIFECYCLE_SERVICE UINT16_C(17)
 #define PRODUCT_LIFECYCLE_EVENT UINT16_C(0x8005)
 #define PRODUCT_COMPONENTS UINT16_C(8)
@@ -52,11 +68,11 @@
 #define PRODUCT_SYSTEM_GESTURE_HOME_HEIGHT 20
 #define PRODUCT_SYSTEM_GESTURE_COMMIT_DISTANCE 32
 #define PRODUCT_SURFACE_FLAG_GAME_RENDER UINT8_C(8)
+#define PRODUCT_SURFACE_FLAG_RASTER_NO_SCRATCH UINT8_C(16)
+#define PRODUCT_SURFACE_FLAG_RASTER_COVERAGE UINT8_C(32)
 #define PRODUCT_ASSET_MAX_BYTES (4u * 1024u * 1024u)
 #define PRODUCT_ASSET_MAX_DIMENSION 4096u
-#define PRODUCT_AUDIO_QUEUE_SAMPLES 16000u
-#define PRODUCT_AUDIO_ASSET_MAX_SAMPLES (16000u * 180u)
-#define PRODUCT_AUDIO_SOUND_CACHE 24u
+#define PRODUCT_AUDIO_SOUND_CACHE 8u
 #define PRODUCT_AUDIO_SOUND_VOICES 6u
 
 typedef struct {
@@ -74,6 +90,11 @@ typedef struct {
 } options_t;
 
 static options_t s_shape_profile;
+
+typedef struct {
+    lv_image_dsc_t descriptor;
+    lv_color32_t *pixels;
+} shape_mask_image_t;
 
 static int shape_contains(int32_t x, int32_t y) {
     const int32_t width = (int32_t)s_shape_profile.width;
@@ -100,85 +121,87 @@ static int shape_contains(int32_t x, int32_t y) {
     return 1;
 }
 
-static void shape_mask_rect(lv_layer_t *layer,
-                            const lv_draw_rect_dsc_t *descriptor,
-                            int32_t x1, int32_t y, int32_t x2) {
-    lv_area_t area;
-    if (x1 > x2) return;
-    area.x1 = x1;
-    area.y1 = y;
-    area.x2 = x2;
-    area.y2 = y;
-    lv_draw_rect(layer, descriptor, &area);
-}
-
-static void shape_mask_draw(lv_event_t *event) {
-    lv_layer_t *layer = lv_event_get_layer(event);
-    lv_draw_rect_dsc_t descriptor;
-    const int32_t width = (int32_t)s_shape_profile.width;
-    const int32_t height = (int32_t)s_shape_profile.height;
-    if (layer == NULL || width <= 0 || height <= 0) return;
-    lv_draw_rect_dsc_init(&descriptor);
-    descriptor.bg_color = s_shape_profile.shape_background_matte
-                              ? lv_color_hex(UINT32_C(0x7a8494))
-                              : lv_color_black();
-    descriptor.bg_opa = LV_OPA_COVER;
-    for (int32_t y = 0; y < height; ++y) {
-        int32_t left = 0;
-        while (left < width && !shape_contains(left, y)) ++left;
-        if (left == width) {
-            shape_mask_rect(layer, &descriptor, 0, y, width - 1);
-        } else {
-            int32_t right = width - 1;
-            while (right > left && !shape_contains(right, y)) --right;
-            shape_mask_rect(layer, &descriptor, 0, y, left - 1);
-            shape_mask_rect(layer, &descriptor, right + 1, y, width - 1);
-        }
-    }
-}
-
 static void shape_mask_hit_test(lv_event_t *event) {
     lv_hit_test_info_t *hit_test = lv_event_get_hit_test_info(event);
     if (hit_test == NULL || hit_test->point == NULL) return;
     hit_test->res = !shape_contains(hit_test->point->x, hit_test->point->y);
 }
 
-static void install_shape_mask(lv_display_t *display,
-                                const options_t *options) {
+static int install_shape_mask(lv_display_t *display,
+                              const options_t *options,
+                              shape_mask_image_t *mask) {
+    lv_obj_t *image;
     lv_obj_t *overlay;
-    if (display == NULL || options == NULL || options->display_shape == 0u)
-        return;
+    size_t pixel_count;
+    if (display == NULL || options == NULL || mask == NULL) return 0;
+    if (options->display_shape == 0u) return 1;
+    if (options->width == 0 || options->height == 0 ||
+        (size_t)options->width > SIZE_MAX / options->height)
+        return 0;
+    pixel_count = (size_t)options->width * options->height;
+    if (pixel_count > SIZE_MAX / sizeof(lv_color32_t) ||
+        pixel_count > UINT32_MAX / sizeof(lv_color32_t))
+        return 0;
     s_shape_profile = *options;
+    mask->pixels = malloc(pixel_count * sizeof(lv_color32_t));
+    if (mask->pixels == NULL) return 0;
+    for (uint32_t y = 0; y < options->height; ++y) {
+        for (uint32_t x = 0; x < options->width; ++x) {
+            const uint8_t alpha = shape_contains((int32_t)x, (int32_t)y)
+                                      ? 0 : 255;
+            mask->pixels[(size_t)y * options->width + x] =
+                options->shape_background_matte
+                    ? lv_color32_make(0x7a, 0x84, 0x94, alpha)
+                    : lv_color32_make(0, 0, 0, alpha);
+        }
+    }
+    mask->descriptor.header.magic = LV_IMAGE_HEADER_MAGIC;
+    mask->descriptor.header.cf = LV_COLOR_FORMAT_ARGB8888;
+    mask->descriptor.header.w = options->width;
+    mask->descriptor.header.h = options->height;
+    mask->descriptor.header.stride = options->width * sizeof(lv_color32_t);
+    mask->descriptor.data_size = pixel_count * sizeof(lv_color32_t);
+    mask->descriptor.data = (const uint8_t *)mask->pixels;
+    image = lv_image_create(lv_display_get_layer_sys(display));
+    if (image == NULL) return 0;
+    lv_image_set_src(image, &mask->descriptor);
+    lv_obj_set_clickable(image, false);
     overlay = lv_obj_create(lv_display_get_layer_sys(display));
-    if (overlay == NULL) return;
+    if (overlay == NULL) return 0;
     lv_obj_set_size(overlay, LV_PCT(100), LV_PCT(100));
     lv_obj_set_style_bg_opa(overlay, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(overlay, 0, 0);
     lv_obj_set_style_pad_all(overlay, 0, 0);
-    lv_obj_clear_flag(overlay, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_add_flag(overlay, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_ADV_HITTEST);
+    lv_obj_set_scrollable(overlay, false);
+    lv_obj_set_clickable(overlay, true);
+    lv_obj_set_adv_hittest(overlay, true);
     lv_obj_add_event_cb(overlay, shape_mask_hit_test, LV_EVENT_HIT_TEST, NULL);
-    lv_obj_add_event_cb(overlay, shape_mask_draw, LV_EVENT_DRAW_MAIN, NULL);
     lv_obj_move_foreground(overlay);
+    return 1;
 }
 
 typedef struct {
-    char *path;
-    uint8_t *pcm;
-    uint32_t samples;
-} product_sound_asset_t;
-
-typedef struct {
+    pxa_asset_object_t *asset;
     const uint8_t *pcm;
     uint32_t samples;
     uint32_t position;
     int32_t gain_q15;
+    uint64_t session;
+    uint8_t paused;
 } product_sound_voice_t;
 
 typedef struct {
     lv_display_t *display;
     lv_obj_t *content_parent;
     pxa_runtime_t *runtime;
+    pxa_assets_service_t *assets;
+    pxa_posix_asset_worker_t *asset_worker;
+    pxa_posix_storage_gate_t *storage_gate;
+    SDL_atomic_t asset_ready;
+    pxa_memory_budget_t resource_budget;
+    pxa_memory_owner_t resource_owner;
+    pxa_memory_allocator_t resource_allocators[PXA_MEMORY_CLASSES][PXA_MEMORY_KINDS];
+    SDL_mutex *resource_mutex;
     pxa_window_service_t *window;
     pxsys_product_simulator_window_fn window_changed;
     void *window_context;
@@ -191,12 +214,22 @@ typedef struct {
     SDL_AudioDeviceID audio_device;
     uint8_t focused;
     uint8_t pending_lifecycle;
-    int16_t audio_queue[PRODUCT_AUDIO_QUEUE_SAMPLES];
-    uint32_t audio_read;
-    uint32_t audio_count;
-    int16_t *music_samples;
-    uint32_t music_length;
-    uint32_t music_position;
+    pxa_audio_mixer_t audio_mixer;
+    uint64_t audio_sessions[PXA_AUDIO_MIXER_VOICES];
+    uint64_t audio_next_session;
+    uint64_t music_session;
+    int16_t music_ring[8192];
+    uint32_t music_read, music_count;
+    pxa_audio_buffer_t music_buffer;
+    uint64_t music_accepted_us, music_ready_max_us, music_decode_us, music_decode_calls, music_decode_max_us;
+    uint64_t music_token;
+    pxa_audio_playback_queue_t music_events;
+    pxa_status_t music_error;
+    uint8_t music_pending, music_finished;
+    pxa_asset_block_map_t music_map;
+    uint64_t music_read_bytes, music_read_calls;
+    SDL_Thread *music_thread;
+    SDL_atomic_t music_stop;
     int16_t music_gain_db_q8;
     int32_t music_gain_q15;
     int32_t music_output_gain_q15;
@@ -204,8 +237,6 @@ typedef struct {
     int16_t music_last_sample;
     uint8_t music_loop;
     uint8_t music_paused;
-    product_sound_asset_t sound_cache[PRODUCT_AUDIO_SOUND_CACHE];
-    uint32_t sound_cache_count;
     product_sound_voice_t sound_voices[PRODUCT_AUDIO_SOUND_VOICES];
     pxa_permission_service_t *permissions;
     pxa_surface_service_t *surfaces;
@@ -229,6 +260,8 @@ typedef struct {
     uint8_t surface_buffer_count;
     uint8_t surface_scale;
     uint8_t surface_flags;
+    uint8_t raster_scratch_mode;
+    uint32_t raster_max_draw_bytes;
     uint8_t surface_registered;
     int8_t surface_writing_buffer;
     int8_t surface_pending_buffer;
@@ -245,22 +278,25 @@ typedef struct {
     pxa_surface_release_t surface_releases[3];
     pxa_surface_layer_t surface_layer;
     uint8_t *raster_buffers[2];
-    uint16_t *raster_depth_buffers[2];
+    uint16_t *raster_depth_buffer;
     uint8_t *raster_draw_lists[2];
     uint32_t raster_draw_sizes[2];
     int8_t raster_current_buffer;
     int8_t raster_draw_pending;
     uint64_t raster_last_frame_id;
-    uint16_t *raster_palette;
-    uint16_t raster_palette_light_levels;
-    uint8_t *raster_textures[PXA_RASTER_MAX_TEXTURES];
-    uint16_t raster_texture_width[PXA_RASTER_MAX_TEXTURES];
-    uint16_t raster_texture_height[PXA_RASTER_MAX_TEXTURES];
+    pxa_raster_bindings_t raster_bindings;
+    pxa_raster_bindings_t raster_frame_bindings[2];
+    pxa_raster_draw_list_view_t raster_draw_views[2];
     pxa_raster_telemetry_t raster_telemetry;
     pxa_wamr_engine_t *engine;
     pxa_component_engine_t engine_ops;
     pxa_activation_coordinator_t *coordinator;
+    const pxa_package_manifest_t *manifest;
+    pxa_ipc_broker_t *ipc;
     pxa_component_t active_component;
+    pxa_component_t service_components[PRODUCT_COMPONENTS];
+    uint16_t service_component_count;
+    uint64_t next_instance_id;
     char package_root[1024];
     char locale[PRODUCT_LOCALE_MAX_BYTES + 1u];
     lv_font_t *body_font;
@@ -287,6 +323,67 @@ typedef struct {
     int32_t system_gesture_press_y;
     uint8_t exit_requested;
 } product_host_t;
+
+/* The allocator descriptors outlive every asset and are immutable after init.
+ * File assets and dynamic uploads use the same class/category; no fallback to
+ * uncharged malloc is permitted. Decoder/library internals are tracked
+ * separately until those libraries expose bounded allocation hooks. */
+#define PRODUCT_RESOURCE_BUDGET 1
+static void resource_lock(void *context) { SDL_LockMutex(context); }
+static void resource_unlock(void *context) { SDL_UnlockMutex(context); }
+static void *resource_raw_allocate(void *context, size_t bytes) {
+    (void)context;
+    return malloc(bytes);
+}
+static void resource_raw_release(void *context, void *memory) {
+    (void)context;
+    free(memory);
+}
+static void resource_reclaim(void *context, pxa_memory_owner_t owner, uint8_t cls, size_t needed) {
+    product_host_t *host = context;
+    (void)owner;
+    (void)pxa_posix_asset_worker_trim(host->asset_worker, cls, needed);
+}
+static pxa_status_t resource_memory_init(product_host_t *host,
+    size_t internal, size_t external, size_t temporary_internal, size_t temporary_external) {
+    pxa_memory_budget_config_t config = {
+        .limit = {internal, external}, .lock = resource_lock, .unlock = resource_unlock,
+        .reclaim_context = host, .reclaim = resource_reclaim,
+        .temporary_limit = {temporary_internal, temporary_external}
+    };
+    host->resource_mutex = SDL_CreateMutex();
+    if (!host->resource_mutex) return PXA_STATUS_RESOURCE_LIMIT;
+    config.lock_context = host->resource_mutex;
+    pxa_status_t status = pxa_memory_budget_init(&host->resource_budget, &config);
+    if (status == PXA_STATUS_OK)
+        status = pxa_memory_owner_open(&host->resource_budget, config.limit,
+                                       &host->resource_owner);
+    if (status != PXA_STATUS_OK) {
+        SDL_DestroyMutex(host->resource_mutex);
+        host->resource_mutex = NULL;
+        return status;
+    }
+    for (unsigned c = 0; c < PXA_MEMORY_CLASSES; ++c)
+        for (unsigned k = 0; k < PXA_MEMORY_KINDS; ++k)
+            host->resource_allocators[c][k] = (pxa_memory_allocator_t){
+                &host->resource_budget, host->resource_owner, (uint8_t)c,
+                (uint8_t)k, NULL, resource_raw_allocate, resource_raw_release};
+    return PXA_STATUS_OK;
+}
+static pxa_status_t resource_memory_end(product_host_t *host) {
+    if (!host->resource_mutex) return PXA_STATUS_OK;
+    pxa_status_t status = pxa_memory_owner_close(&host->resource_budget,
+                                               host->resource_owner);
+    if (status != PXA_STATUS_OK) return status;
+    host->resource_owner = 0;
+    SDL_DestroyMutex(host->resource_mutex);
+    host->resource_mutex = NULL;
+    return PXA_STATUS_OK;
+}
+static void *resource_allocate(product_host_t *host, unsigned cls,
+                                unsigned kind, size_t bytes) {
+    return pxa_memory_allocate(&host->resource_allocators[cls][kind], bytes);
+}
 
 typedef struct {
     lv_image_dsc_t descriptor;
@@ -429,6 +526,9 @@ static pxa_status_t simulator_log_write(
     };
     (void)context;
     if (level > PXA_LOG_LEVEL_ERROR) return PXA_STATUS_INVALID_ARGUMENT;
+#ifdef PXSYS_PRODUCT_LOG_OBSERVER
+    PXSYS_PRODUCT_LOG_OBSERVER(component, level, message.data, message.size);
+#endif
     fprintf(stderr,
             "%s[PXA app=%.*s component=%u level=%s] %.*s\033[0m\n",
             colors[level], (int)app_id.size, (const char *)app_id.data,
@@ -576,9 +676,9 @@ static void install_system_gestures(product_host_t *host) {
     lv_obj_set_style_bg_opa(host->system_back_gesture, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(host->system_back_gesture, 0, 0);
     lv_obj_set_style_pad_all(host->system_back_gesture, 0, 0);
-    lv_obj_clear_flag(host->system_back_gesture, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_add_flag(host->system_back_gesture,
-                    LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_PRESS_LOCK);
+    lv_obj_set_scrollable(host->system_back_gesture, false);
+    lv_obj_set_clickable(host->system_back_gesture, true);
+    lv_obj_set_press_lock(host->system_back_gesture, true);
     lv_obj_add_event_cb(host->system_back_gesture, system_back_gesture_event,
                         LV_EVENT_PRESSED, host);
     lv_obj_add_event_cb(host->system_back_gesture, system_back_gesture_event,
@@ -595,9 +695,9 @@ static void install_system_gestures(product_host_t *host) {
     lv_obj_set_style_bg_opa(host->system_home_gesture, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(host->system_home_gesture, 0, 0);
     lv_obj_set_style_pad_all(host->system_home_gesture, 0, 0);
-    lv_obj_clear_flag(host->system_home_gesture, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_add_flag(host->system_home_gesture,
-                    LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_PRESS_LOCK);
+    lv_obj_set_scrollable(host->system_home_gesture, false);
+    lv_obj_set_clickable(host->system_home_gesture, true);
+    lv_obj_set_press_lock(host->system_home_gesture, true);
     lv_obj_add_event_cb(host->system_home_gesture, system_home_gesture_event,
                         LV_EVENT_PRESSED, host);
     lv_obj_add_event_cb(host->system_home_gesture, system_home_gesture_event,
@@ -612,7 +712,7 @@ static void install_system_gestures(product_host_t *host) {
         lv_obj_set_style_pad_all(handle, 0, 0);
         lv_obj_set_style_bg_color(handle, lv_color_hex(0xb1b6c0), 0);
         lv_obj_align(handle, LV_ALIGN_BOTTOM_MID, 0, -5);
-        lv_obj_clear_flag(handle, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_set_clickable(handle, false);
     }
 }
 
@@ -675,8 +775,9 @@ static uint8_t product_fit_scale(uint32_t surface_width,
     return best;
 }
 
-static pxa_status_t surface_create(void *context, const pxa_surface_desc_t *desc,
-                                   uint64_t *surface, uint32_t *stride) {
+static pxa_status_t surface_create_with_raster_capacity(
+    void *context, const pxa_surface_desc_t *desc, uint64_t *surface,
+    uint32_t *stride, uint32_t raster_draw_capacity) {
     product_host_t *host = context;
     uint8_t scale;
     const int mapped = desc != NULL &&
@@ -686,11 +787,24 @@ static pxa_status_t surface_create(void *context, const pxa_surface_desc_t *desc
     if (host == NULL || desc == NULL || surface == NULL || stride == NULL ||
         desc->format != PXA_SURFACE_FORMAT_RGB565 ||
         (desc->flags & ~(PXA_SURFACE_FLAG_KNOWN_MASK |
-                         PRODUCT_SURFACE_FLAG_GAME_RENDER)) != 0 ||
+                         PRODUCT_SURFACE_FLAG_GAME_RENDER |
+                         PRODUCT_SURFACE_FLAG_RASTER_NO_SCRATCH |
+                         PRODUCT_SURFACE_FLAG_RASTER_COVERAGE)) != 0 ||
+        ((desc->flags & (PRODUCT_SURFACE_FLAG_RASTER_NO_SCRATCH |
+                         PRODUCT_SURFACE_FLAG_RASTER_COVERAGE)) ==
+         (PRODUCT_SURFACE_FLAG_RASTER_NO_SCRATCH |
+          PRODUCT_SURFACE_FLAG_RASTER_COVERAGE)) ||
+        (!raster &&
+         (desc->flags & (PRODUCT_SURFACE_FLAG_RASTER_NO_SCRATCH |
+                         PRODUCT_SURFACE_FLAG_RASTER_COVERAGE)) != 0) ||
         mapped == raster ||
         desc->width == 0 || desc->height == 0 ||
         desc->buffer_count < 2 || desc->buffer_count > 3 ||
         host->surface_frame_bytes != 0)
+        return PXA_STATUS_UNSUPPORTED;
+    if (raster_draw_capacity != 0 &&
+        (!raster || raster_draw_capacity < PXA_RASTER_DRAW_HEADER_BYTES ||
+         raster_draw_capacity > PXA_RASTER_MAX_DRAW_BYTES))
         return PXA_STATUS_UNSUPPORTED;
     if (desc->width > host->width || desc->height > host->height)
         return PXA_STATUS_UNSUPPORTED;
@@ -712,6 +826,15 @@ static pxa_status_t surface_create(void *context, const pxa_surface_desc_t *desc
     host->surface_buffer_count = desc->buffer_count;
     host->surface_scale = scale;
     host->surface_flags = desc->flags;
+    host->raster_max_draw_bytes = raster_draw_capacity != 0
+                                      ? raster_draw_capacity
+                                      : PXA_RASTER_MAX_DRAW_BYTES;
+    host->raster_scratch_mode =
+        (desc->flags & PRODUCT_SURFACE_FLAG_RASTER_NO_SCRATCH) != 0
+            ? PXA_RASTER_SCRATCH_NONE
+            : (desc->flags & PRODUCT_SURFACE_FLAG_RASTER_COVERAGE) != 0
+                  ? PXA_RASTER_SCRATCH_COVERAGE_2BIT
+                  : PXA_RASTER_SCRATCH_DEPTH16;
     host->surface_writing_buffer = -1;
     host->surface_pending_buffer = -1;
     host->surface_layer.x = 0;
@@ -723,16 +846,24 @@ static pxa_status_t surface_create(void *context, const pxa_surface_desc_t *desc
     host->raster_draw_pending = -1;
     if (raster) {
         uint8_t index;
+        size_t scratch_bytes = 0;
+        if (host->raster_scratch_mode == PXA_RASTER_SCRATCH_DEPTH16)
+            scratch_bytes = (size_t)host->surface_width *
+                            host->surface_height * sizeof(uint16_t);
+        else if (host->raster_scratch_mode ==
+                 PXA_RASTER_SCRATCH_COVERAGE_2BIT)
+            scratch_bytes = (((size_t)host->surface_width + 7u) >> 3) *
+                            host->surface_height * 2u;
         host->surface_display_buffer = malloc(host->surface_display_frame_bytes);
         if (host->surface_display_buffer == NULL) goto failed;
+        if (scratch_bytes != 0) {
+            host->raster_depth_buffer = malloc(scratch_bytes);
+            if (host->raster_depth_buffer == NULL) goto failed;
+        }
         for (index = 0; index < 2; ++index) {
             host->raster_buffers[index] = malloc(host->surface_frame_bytes);
-            host->raster_depth_buffers[index] = malloc(
-                (size_t)host->surface_width * host->surface_height *
-                sizeof(*host->raster_depth_buffers[index]));
-            host->raster_draw_lists[index] = malloc(PXA_RASTER_MAX_DRAW_BYTES);
+            host->raster_draw_lists[index] = malloc(host->raster_max_draw_bytes);
             if (host->raster_buffers[index] == NULL ||
-                host->raster_depth_buffers[index] == NULL ||
                 host->raster_draw_lists[index] == NULL) goto failed;
         }
         host->surface_registered = 1;
@@ -748,8 +879,8 @@ static pxa_status_t surface_create(void *context, const pxa_surface_desc_t *desc
         if (host->surface_image == NULL) goto failed;
         lv_image_set_src(host->surface_image, &host->surface_bitmap);
         lv_image_set_inner_align(host->surface_image, LV_IMAGE_ALIGN_TOP_LEFT);
-        lv_obj_clear_flag(host->surface_image, LV_OBJ_FLAG_SCROLLABLE);
-        lv_obj_clear_flag(host->surface_image, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_set_scrollable(host->surface_image, false);
+        lv_obj_set_clickable(host->surface_image, false);
         lv_obj_set_size(host->surface_image, host->surface_display_width,
                         host->surface_display_height);
         lv_obj_move_foreground(host->surface_image);
@@ -758,12 +889,13 @@ static pxa_status_t surface_create(void *context, const pxa_surface_desc_t *desc
 failed:
     for (uint8_t index = 0; index < 2; ++index) {
         free(host->raster_buffers[index]);
-        free(host->raster_depth_buffers[index]);
         free(host->raster_draw_lists[index]);
+        pxa_raster_bindings_release(&host->raster_frame_bindings[index]);
         host->raster_buffers[index] = NULL;
-        host->raster_depth_buffers[index] = NULL;
         host->raster_draw_lists[index] = NULL;
     }
+    free(host->raster_depth_buffer);
+    host->raster_depth_buffer = NULL;
     if (host->surface_image != NULL) lv_obj_delete(host->surface_image);
     host->surface_image = NULL;
     free(host->surface_display_buffer);
@@ -783,6 +915,12 @@ failed:
     host->raster_current_buffer = -1;
     host->raster_draw_pending = -1;
     return PXA_STATUS_RESOURCE_LIMIT;
+}
+
+static pxa_status_t surface_create(void *context, const pxa_surface_desc_t *desc,
+                                   uint64_t *surface, uint32_t *stride) {
+    return surface_create_with_raster_capacity(
+        context, desc, surface, stride, 0);
 }
 
 static pxa_status_t surface_write(void *context, uint64_t surface,
@@ -825,8 +963,8 @@ static pxa_status_t surface_register_buffers(void *context, uint64_t surface,
     }
     lv_image_set_src(host->surface_image, &host->surface_bitmap);
     lv_image_set_inner_align(host->surface_image, LV_IMAGE_ALIGN_TOP_LEFT);
-    lv_obj_clear_flag(host->surface_image, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_clear_flag(host->surface_image, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_scrollable(host->surface_image, false);
+    lv_obj_set_clickable(host->surface_image, false);
     lv_obj_set_size(host->surface_image, host->surface_display_width,
                     host->surface_display_height);
     lv_obj_set_pos(host->surface_image, 0, 0);
@@ -917,10 +1055,7 @@ static pxa_status_t surface_configure(void *context, uint64_t surface,
     host->surface_layer = *layer;
     if (host->surface_image != NULL) {
         lv_obj_set_pos(host->surface_image, 0, 0);
-        if (layer->visible)
-            lv_obj_remove_flag(host->surface_image, LV_OBJ_FLAG_HIDDEN);
-        else
-            lv_obj_add_flag(host->surface_image, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_set_hidden(host->surface_image, !layer->visible);
         lv_obj_move_foreground(host->surface_image);
         lv_obj_invalidate(host->surface_image);
     }
@@ -948,66 +1083,45 @@ static pxa_status_t surface_query(void *context, uint64_t surface,
     return PXA_STATUS_OK;
 }
 
-static void raster_resources(const product_host_t *host,
-                             pxa_raster_resources_t *resources) {
-    memset(resources, 0, sizeof(*resources));
-    resources->palette = host->raster_palette;
-    resources->palette_light_levels = host->raster_palette_light_levels;
-    resources->capabilities = PXA_RASTER_CAP_FLAT_QUAD |
-                              PXA_RASTER_CAP_TEXTURED_QUAD |
-                              PXA_RASTER_CAP_ADDITIVE_SPRITE |
-                              PXA_RASTER_CAP_SPRITE_BATCH |
-                              PXA_RASTER_CAP_TRIANGLE_BATCH |
-                              PXA_RASTER_CAP_AFFINE_UV |
-                              PXA_RASTER_CAP_TEXTURE_SLOTS_48 |
-                              PXA_RASTER_CAP_PAINTER_POLYGON |
-                              PXA_RASTER_CAP_LIT_PALETTE_DEPTH |
-                              PXA_RASTER_CAP_DEPTH_CUTOUT |
-                              PXA_RASTER_CAP_FIXED_ALPHA_BLEND |
-                              PXA_RASTER_CAP_COVERAGE_MASK |
-                              PXA_RASTER_CAP_SPRITE_PALETTE_RAMP |
-                              PXA_RASTER_CAP_SPRITE_TEXEL_ALPHA |
-                              PXA_RASTER_CAP_PAINTER_PERSPECTIVE |
-                              PXA_RASTER_CAP_PAINTER_DEPTH;
-    for (uint8_t index = 0; index < PXA_RASTER_MAX_TEXTURES; ++index) {
-        resources->textures[index].pixels = host->raster_textures[index];
-        resources->textures[index].width = host->raster_texture_width[index];
-        resources->textures[index].height = host->raster_texture_height[index];
-    }
+static void *raster_asset_allocate(void *context, size_t bytes) {
+    return pxa_memory_allocate(context, bytes);
+}
+
+static void raster_asset_free(void *context, void *memory) {
+    (void)context;
+    pxa_memory_release(memory);
 }
 
 static pxa_status_t surface_raster_upload(void *context, uint64_t surface,
                                           const uint8_t *bytes, size_t size) {
     product_host_t *host = context;
-    pxa_raster_upload_view_t upload;
-    uint8_t *replacement;
-    uint8_t *previous;
+    pxa_raster_asset_t *asset;
     pxa_status_t status;
     if (host == NULL || surface != 1 || bytes == NULL ||
-        (host->surface_flags & PRODUCT_SURFACE_FLAG_GAME_RENDER) == 0 ||
-        host->raster_last_frame_id != 0 || host->raster_draw_pending >= 0)
+        (host->surface_flags & PRODUCT_SURFACE_FLAG_GAME_RENDER) == 0)
         return PXA_STATUS_BAD_STATE;
+    pxa_raster_upload_view_t upload;
     status = pxa_raster_decode_upload(bytes, size, &upload);
     if (status != PXA_STATUS_OK) return status;
-    replacement = malloc(upload.payload_bytes);
-    if (replacement == NULL) return PXA_STATUS_RESOURCE_LIMIT;
-    if (upload.kind == PXA_RASTER_UPLOAD_PALETTE_RGB565 ||
-        upload.kind == PXA_RASTER_UPLOAD_LIT_PALETTE_RGB565) {
-        const uint32_t entries = upload.payload_bytes / sizeof(uint16_t);
-        for (uint32_t index = 0; index < entries; ++index)
-            ((uint16_t *)replacement)[index] =
-                pxa_read_u16(upload.payload + (size_t)index * 2u);
-        previous = (uint8_t *)host->raster_palette;
-        host->raster_palette = (uint16_t *)replacement;
-        host->raster_palette_light_levels = upload.height;
-    } else {
-        memcpy(replacement, upload.payload, upload.payload_bytes);
-        previous = host->raster_textures[upload.slot];
-        host->raster_textures[upload.slot] = replacement;
-        host->raster_texture_width[upload.slot] = upload.width;
-        host->raster_texture_height[upload.slot] = upload.height;
-    }
-    free(previous);
+    unsigned cls = upload.kind == PXA_RASTER_UPLOAD_TEXTURE_INDEX8
+                     ? PXA_MEMORY_EXTERNAL : PXA_MEMORY_INTERNAL;
+    status = pxa_raster_asset_from_upload(bytes, size, raster_asset_allocate,
+        raster_asset_free, &host->resource_allocators[cls][PXA_MEMORY_RASTER], &asset);
+    if (status != PXA_STATUS_OK) return status;
+    pxa_raster_asset_release(pxa_raster_bindings_replace(
+        &host->raster_bindings, bytes[9], asset));
+    pxa_raster_asset_release(asset);
+    return PXA_STATUS_OK;
+}
+
+static pxa_status_t surface_raster_bind_assets(void *context, uint64_t surface,
+    const pxa_raster_bindings_t *replacement, uint64_t texture_mask, uint8_t update_palette) {
+    product_host_t *host = context;
+    pxa_raster_bindings_t retired = {0};
+    if (!host || surface != 1 || !(host->surface_flags & PRODUCT_SURFACE_FLAG_GAME_RENDER))
+        return PXA_STATUS_BAD_STATE;
+    pxa_raster_bindings_update(&host->raster_bindings, replacement, texture_mask, update_palette, &retired);
+    pxa_raster_bindings_release(&retired);
     return PXA_STATUS_OK;
 }
 
@@ -1022,12 +1136,15 @@ static pxa_status_t surface_raster_submit(void *context, uint64_t surface,
     pxa_status_t status;
     uint8_t mailbox;
     if (host == NULL || surface != 1 || bytes == NULL ||
-        host->raster_palette == NULL ||
         (host->surface_flags & PRODUCT_SURFACE_FLAG_GAME_RENDER) == 0)
         return PXA_STATUS_BAD_STATE;
-    raster_resources(host, &resources);
+    if (size > host->raster_max_draw_bytes)
+        return PXA_STATUS_LIMIT_EXCEEDED;
+    pxa_raster_bindings_view(&host->raster_bindings,
+                              PXA_RASTER_CAP_KNOWN_MASK, &resources);
     target.pixels = (uint16_t *)host->raster_buffers[0];
-    target.depth_pixels = host->raster_depth_buffers[0];
+    target.depth_pixels = host->raster_depth_buffer;
+    target.scratch_mode = host->raster_scratch_mode;
     target.stride_pixels = host->surface_stride_bytes / 2u;
     target.depth_stride_pixels = host->surface_width;
     target.width = host->surface_width;
@@ -1044,6 +1161,10 @@ static pxa_status_t surface_raster_submit(void *context, uint64_t surface,
         ++host->surface_replaced_frames;
         ++host->raster_telemetry.dropped_frames;
     }
+    pxa_raster_bindings_release(&host->raster_frame_bindings[mailbox]);
+    pxa_raster_bindings_snapshot_for_draw(&host->raster_frame_bindings[mailbox],
+                                          &host->raster_bindings, &list);
+    host->raster_draw_views[mailbox] = list;
     memcpy(host->raster_draw_lists[mailbox], bytes, size);
     host->raster_draw_sizes[mailbox] = (uint32_t)size;
     host->raster_draw_pending = (int8_t)mailbox;
@@ -1073,18 +1194,14 @@ static void surface_close(void *context, uint64_t surface) {
     host->surface_display_buffer = NULL;
     for (uint8_t index = 0; index < 2; ++index) {
         free(host->raster_buffers[index]);
-        free(host->raster_depth_buffers[index]);
         free(host->raster_draw_lists[index]);
+        pxa_raster_bindings_release(&host->raster_frame_bindings[index]);
         host->raster_buffers[index] = NULL;
-        host->raster_depth_buffers[index] = NULL;
         host->raster_draw_lists[index] = NULL;
     }
-    for (uint8_t index = 0; index < PXA_RASTER_MAX_TEXTURES; ++index) {
-        free(host->raster_textures[index]);
-        host->raster_textures[index] = NULL;
-    }
-    free(host->raster_palette);
-    host->raster_palette = NULL;
+    free(host->raster_depth_buffer);
+    host->raster_depth_buffer = NULL;
+    pxa_raster_bindings_release(&host->raster_bindings);
     host->surface_frame_bytes = 0;
     host->surface_stride_bytes = 0;
     host->surface_display_frame_bytes = 0;
@@ -1121,9 +1238,17 @@ static pxa_status_t game_render_create(
     surface_desc.format = PXA_SURFACE_FORMAT_RGB565;
     surface_desc.buffer_count = desc->buffer_count;
     surface_desc.flags = PRODUCT_SURFACE_FLAG_GAME_RENDER;
+    if (desc->scratch_mode == PXA_GAME_RENDER_SCRATCH_NONE)
+        surface_desc.flags |= PRODUCT_SURFACE_FLAG_RASTER_NO_SCRATCH;
+    else if (desc->scratch_mode == PXA_GAME_RENDER_SCRATCH_COVERAGE_2BIT)
+        surface_desc.flags |= PRODUCT_SURFACE_FLAG_RASTER_COVERAGE;
+    else if (desc->scratch_mode != PXA_GAME_RENDER_SCRATCH_DEPTH16)
+        return PXA_STATUS_UNSUPPORTED;
     if ((desc->flags & PXA_GAME_RENDER_FLAG_PREFER_DIRECT_SCANOUT) != 0)
         surface_desc.flags |= PXA_SURFACE_FLAG_PREFER_DIRECT_SCANOUT;
-    status = surface_create(context, &surface_desc, provider_context, &stride);
+    status = surface_create_with_raster_capacity(
+        context, &surface_desc, provider_context, &stride,
+        desc->max_draw_bytes);
     if (status != PXA_STATUS_OK) return status;
     *capabilities = PXA_RASTER_CAP_FLAT_QUAD |
                     PXA_RASTER_CAP_TEXTURED_QUAD |
@@ -1146,7 +1271,7 @@ static pxa_status_t game_render_create(
 
 static int surface_process_pending(product_host_t *host) {
     uint8_t buffer_index = 0;
-    uint64_t frame_id;
+    uint64_t frame_id = 0;
     const uint16_t *source;
     if (host == NULL || !host->surface_registered ||
         host->surface_image == NULL)
@@ -1160,29 +1285,25 @@ static int surface_process_pending(product_host_t *host) {
         pxa_raster_telemetry_t frame_telemetry = {0};
         uint64_t raster_started_us;
         uint64_t raster_finished_us;
-        pxa_status_t status;
         const uint8_t draw_index = (uint8_t)host->raster_draw_pending;
         if (host->raster_draw_pending < 0) return 0;
         buffer_index = host->raster_current_buffer == 0 ? 1 : 0;
-        raster_resources(host, &resources);
+        pxa_raster_bindings_view(&host->raster_frame_bindings[draw_index],
+                                  PXA_RASTER_CAP_KNOWN_MASK, &resources);
         target.pixels = (uint16_t *)host->raster_buffers[buffer_index];
-        target.depth_pixels = host->raster_depth_buffers[buffer_index];
+        target.depth_pixels = host->raster_depth_buffer;
+        target.scratch_mode = host->raster_scratch_mode;
         target.stride_pixels = host->surface_stride_bytes / 2u;
         target.depth_stride_pixels = host->surface_width;
         target.width = host->surface_width;
         target.height = host->surface_height;
-        status = pxa_raster_validate_draw_list(host->raster_draw_lists[draw_index],
-                                               host->raster_draw_sizes[draw_index],
-                                               &target, &resources, &list);
+        list = host->raster_draw_views[draw_index];
         host->raster_draw_pending = -1;
-        if (status != PXA_STATUS_OK) {
-            ++host->raster_telemetry.rejected_lists;
-            return 0;
-        }
         raster_started_us = now_us(NULL);
         pxa_raster_execute_draw_list(host->raster_draw_lists[draw_index], &list,
                                      &target, &resources, &frame_telemetry);
         raster_finished_us = now_us(NULL);
+        pxa_raster_bindings_release(&host->raster_frame_bindings[draw_index]);
         ++host->raster_telemetry.rendered_frames;
         host->raster_telemetry.host_raster_us +=
             raster_finished_us - raster_started_us;
@@ -1238,14 +1359,28 @@ static int surface_process_pending(product_host_t *host) {
             if (copy_height > display_height - origin_y)
                 copy_height = display_height - origin_y;
         }
-        memset(destination, 0, host->surface_display_frame_bytes);
-        for (uint32_t y = 0; y < copy_height; ++y) {
-            const uint16_t *source_row = source +
-                (uint32_t)(y / host->surface_scale) * source_stride;
-            uint16_t *destination_row =
-                destination + (origin_y + y) * destination_stride + origin_x;
-            for (uint32_t x = 0; x < copy_width; ++x)
-                destination_row[x] = source_row[x / host->surface_scale];
+        if (origin_x != 0 || origin_y != 0 || copy_width != display_width ||
+            copy_height != display_height)
+            memset(destination, 0, host->surface_display_frame_bytes);
+        if (host->surface_scale == 1 && origin_x == 0 && origin_y == 0 &&
+            copy_width == display_width && copy_height == display_height &&
+            source_stride == destination_stride) {
+            memcpy(destination, source, host->surface_display_frame_bytes);
+        } else {
+            for (uint32_t y = 0; y < copy_height; ++y) {
+                const uint16_t *source_row = source +
+                    (uint32_t)(y / host->surface_scale) * source_stride;
+                uint16_t *destination_row =
+                    destination + (origin_y + y) * destination_stride + origin_x;
+                if (host->surface_scale == 1) {
+                    memcpy(destination_row, source_row,
+                           (size_t)copy_width * sizeof(*destination_row));
+                } else {
+                    for (uint32_t x = 0; x < copy_width; ++x)
+                        destination_row[x] =
+                            source_row[x / host->surface_scale];
+                }
+            }
         }
     }
     if ((host->surface_flags & PXA_SURFACE_FLAG_GUEST_MAPPED) != 0) {
@@ -1300,8 +1435,16 @@ static pxa_status_t execute_inline(pxa_lvgl_ui_execute_callback_fn callback,
     return PXA_STATUS_OK;
 }
 
+static pxa_status_t acquire_ui_image(pxa_component_t component, pxa_handle64_t handle, pxa_asset_object_t **output, void *context) {
+    product_host_t *host=context;
+    return pxa_assets_acquire_handle(host->runtime,component,handle,PXA_ASSET_IMAGE,output);
+}
+
 static const void *resolve_asset(const uint8_t *path, size_t path_size,
                                  void *context) {
+#ifdef PXSYS_PRODUCT_ASSET_LOOKUP_OBSERVER
+    PXSYS_PRODUCT_ASSET_LOOKUP_OBSERVER(path, path_size);
+#endif
     product_host_t *host = context;
     static const uint8_t png_signature[] = {
         0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
@@ -1320,9 +1463,11 @@ static const void *resolve_asset(const uint8_t *path, size_t path_size,
         metadata.st_size < 24 ||
         (uintmax_t)metadata.st_size > PRODUCT_ASSET_MAX_BYTES)
         return NULL;
-    asset = calloc(1, sizeof(*asset));
+    asset = resource_allocate(host, PXA_MEMORY_INTERNAL, PXA_MEMORY_METADATA, sizeof(*asset));
     if (asset == NULL) return NULL;
-    asset->bytes = malloc((size_t)metadata.st_size);
+    memset(asset, 0, sizeof(*asset));
+    asset->bytes = resource_allocate(host, PXA_MEMORY_EXTERNAL, PXA_MEMORY_IMAGE,
+                                      (size_t)metadata.st_size);
     if (asset->bytes == NULL) goto failed;
     file = fopen(full_path, "rb");
     if (file == NULL) goto failed;
@@ -1350,8 +1495,8 @@ static const void *resolve_asset(const uint8_t *path, size_t path_size,
     return &asset->descriptor;
 failed:
     if (file != NULL) fclose(file);
-    free(asset == NULL ? NULL : asset->bytes);
-    free(asset);
+    pxa_memory_release(asset == NULL ? NULL : asset->bytes);
+    pxa_memory_release(asset);
     return NULL;
 }
 
@@ -1359,9 +1504,95 @@ static void release_asset(const void *asset, void *context) {
     (void)context;
     if (asset != NULL) {
         product_asset_t *owned = (product_asset_t *)asset;
-        free(owned->bytes);
-        free(owned);
+        lv_image_cache_drop(&owned->descriptor);
+        pxa_memory_release(owned->bytes);
+        pxa_memory_release(owned);
     }
+}
+
+static pxa_status_t asset_find(void *context, pxa_component_t component,
+    pxa_bytes_t path, pxa_asset_info_t *info) {
+    product_host_t *host = context;
+    (void)component; /* All components belong to this authenticated package. */
+    return host->asset_worker ? pxa_posix_asset_worker_find(host->asset_worker, path, info) : PXA_STATUS_NOT_FOUND;
+}
+static pxa_status_t asset_request(void *context, pxa_component_t component,
+    pxa_bytes_t path, uint8_t cls, pxa_asset_ticket_t *ticket) {
+    product_host_t *host = context;
+    return host->asset_worker ? pxa_posix_asset_worker_request(host->asset_worker, component, path, cls, ticket) : PXA_STATUS_NOT_FOUND;
+}
+static pxa_status_t asset_prefetch(void *context, pxa_component_t component,
+    pxa_bytes_t path, uint8_t cls, pxa_asset_ticket_t *ticket) {
+    product_host_t *host = context;
+    return host->asset_worker ? pxa_posix_asset_worker_prefetch(host->asset_worker, component, path, cls, ticket) : PXA_STATUS_NOT_FOUND;
+}
+static pxa_status_t asset_inspect(void *context, pxa_component_t component,
+    pxa_bytes_t path, pxa_asset_request_state_t *state) {
+    product_host_t *host = context;
+    return host->asset_worker ? pxa_posix_asset_worker_inspect(host->asset_worker, component, path, state) : PXA_STATUS_NOT_FOUND;
+}
+static pxa_status_t asset_query(void *context, pxa_component_t component,
+    pxa_asset_ticket_t ticket, pxa_asset_request_state_t *state) {
+    product_host_t *host = context;
+    return pxa_posix_asset_worker_query(host->asset_worker, component, ticket, state);
+}
+static pxa_status_t asset_acquire(void *context, pxa_component_t component,
+    pxa_asset_ticket_t ticket, pxa_raster_asset_t **asset) {
+    product_host_t *host = context;
+    return pxa_posix_asset_worker_acquire(host->asset_worker, component, ticket, asset);
+}
+static void asset_release(void *context, pxa_component_t component, pxa_asset_ticket_t ticket) {
+    product_host_t *host = context;
+    (void)pxa_posix_asset_worker_release(host->asset_worker, component, ticket);
+}
+static pxa_status_t asset_read(void *context, pxa_component_t component, pxa_bytes_t path,
+    uint32_t offset, uint32_t bytes, uint64_t *ticket) {
+    product_host_t *host = context;
+    return host->asset_worker ? pxa_posix_asset_worker_read(host->asset_worker,component,path,offset,bytes,ticket) : PXA_STATUS_NOT_FOUND;
+}
+static pxa_status_t asset_read_result(void *context, pxa_component_t component, uint64_t ticket, pxa_bytes_t *result) {
+    product_host_t *host = context;
+    return pxa_posix_asset_worker_read_result(host->asset_worker,component,ticket,result);
+}
+static void asset_read_release(void *context, pxa_component_t component, uint64_t ticket) {
+    product_host_t *host = context;
+    (void)pxa_posix_asset_worker_read_release(host->asset_worker,component,ticket);
+}
+static void *asset_allocate(void *context, size_t bytes, uint8_t cls, uint8_t kind) {
+    return resource_allocate(context, cls, kind == PXA_ASSET_AUDIO ? PXA_MEMORY_AUDIO :
+        kind == PXA_ASSET_IMAGE ? PXA_MEMORY_IMAGE : PXA_MEMORY_RASTER, bytes);
+}
+static void asset_notify(void *context) {
+    product_host_t *host = context;
+    SDL_AtomicSet(&host->asset_ready, 1);
+}
+static int manifest_uses_service(const pxa_package_manifest_t *manifest,uint16_t service) {
+    for (uint16_t c = 0; c < manifest->component_count; ++c)
+        for (uint16_t s = 0; s < manifest->components[c].service_count; ++s)
+            if (manifest->components[c].services[s].service == service)
+                return 1;
+    return 0;
+}
+static int manifest_has_music(const pxa_package_manifest_t *manifest) {
+    for (uint32_t i=0;i<manifest->file_count;++i) {
+        pxa_bytes_t path=manifest->files[i].path;
+        if (path.size<4) continue;
+        const uint8_t *suffix=path.data+path.size-4;
+        if (suffix[0]=='.' && (suffix[1]=='o'||suffix[1]=='O') &&
+            (suffix[2]=='g'||suffix[2]=='G') && (suffix[3]=='g'||suffix[3]=='G')) return 1;
+    }
+    return 0;
+}
+
+static size_t asset_setting(const char *name, size_t fallback, size_t maximum) {
+    const char *value = getenv(name);
+    char *end;
+    unsigned long long parsed;
+    if (!value || !*value) return fallback;
+    errno = 0;
+    parsed = strtoull(value, &end, 10);
+    if (errno || *end || parsed > maximum) return fallback;
+    return (size_t)parsed;
 }
 
 static void dispatch_component_events(product_host_t *host) {
@@ -1369,10 +1600,66 @@ static void dispatch_component_events(product_host_t *host) {
     if (host == NULL || host->engine == NULL || host->runtime == NULL ||
         host->active_component == PXA_COMPONENT_INVALID)
         return;
-    while (pxa_wamr_engine_deliver_event_result(host->engine, host->runtime,
-                                                 host->active_component,
-                                                 &result) == PXA_STATUS_OK) {
+    for (unsigned round = 0; round < 64; ++round) {
+        int delivered = 0;
+        if (host->assets != NULL) pxa_assets_service_poll(host->assets);
+        if (host->audio != NULL) pxa_audio_service_poll(host->audio);
+        SDL_AtomicSet(&host->asset_ready, 0);
+        if (host->ipc != NULL) (void)pxa_ipc_flush(host->ipc);
+        for (uint16_t index = 0; index < host->service_component_count;
+             ++index) {
+            if (pxa_wamr_engine_deliver_event_result(
+                    host->engine, host->runtime,
+                    host->service_components[index], &result) ==
+                PXA_STATUS_OK) delivered = 1;
+        }
+        if (pxa_wamr_engine_deliver_event_result(
+                host->engine, host->runtime, host->active_component,
+                &result) == PXA_STATUS_OK) delivered = 1;
+        if (!delivered) break;
     }
+}
+
+static void *ipc_allocate(void *context, size_t size) {
+    (void)context;
+    return malloc(size);
+}
+
+static void ipc_release(void *context, void *memory) {
+    (void)context;
+    free(memory);
+}
+
+static pxa_status_t resolve_ipc_endpoint(
+    void *context, pxa_bytes_t name, pxa_component_t *provider) {
+    product_host_t *host = context;
+    if (host == NULL || host->manifest == NULL || host->coordinator == NULL ||
+        provider == NULL) return PXA_STATUS_BAD_STATE;
+    *provider = PXA_COMPONENT_INVALID;
+    for (uint16_t index = 0; index < host->manifest->ipc_endpoint_count;
+         ++index) {
+        const pxa_package_ipc_endpoint_t *endpoint =
+            &host->manifest->ipc_endpoints[index];
+        uint64_t instance_id = 0;
+        pxa_status_t status;
+        if (endpoint->name.size != name.size ||
+            memcmp(endpoint->name.data, name.data, name.size) != 0) continue;
+        status = pxa_activation_find(host->coordinator,
+                                     endpoint->component_id,
+                                     &instance_id, provider);
+        if (status == PXA_STATUS_OK) return status;
+        if (status != PXA_STATUS_NOT_FOUND) return status;
+        if (host->service_component_count >= PRODUCT_COMPONENTS - 1u)
+            return PXA_STATUS_RESOURCE_LIMIT;
+        status = pxa_activation_activate(host->coordinator,
+                                         endpoint->component_id,
+                                         ++host->next_instance_id, provider);
+        if (status == PXA_STATUS_OK)
+            host->service_components[host->service_component_count++] =
+                *provider;
+        return status;
+    }
+    return PXA_STATUS_NOT_FOUND;
 }
 
 static void sync_host_theme(product_host_t *host, pxa_lvgl_ui_t *adapter,
@@ -1412,6 +1699,9 @@ static void product_focus_changed(void *context, bool focused) {
     if (host == NULL || host->focused == (uint8_t)focused) return;
     host->focused = focused ? 1u : 0u;
     host->pending_lifecycle = host->focused;
+    if (host->clock_period_ms != 0)
+        host->next_clock_tick_us =
+            now_us(NULL) + (uint64_t)host->clock_period_ms * UINT64_C(1000);
     if (host->audio_device != 0)
         SDL_PauseAudioDevice(host->audio_device, !focused);
 }
@@ -1461,7 +1751,7 @@ static void dispatch_clock_tick(product_host_t *host) {
     pxa_status_t status;
     if (host == NULL || host->runtime == NULL ||
         host->active_component == PXA_COMPONENT_INVALID ||
-        host->clock_period_ms == 0)
+        host->clock_period_ms == 0 || !host->focused)
         return;
     now = now_us(NULL);
     if (now < host->next_clock_tick_us) return;
@@ -1484,7 +1774,7 @@ static uint32_t limit_delay_to_clock_deadline(const product_host_t *host,
                                               uint32_t delay_ms) {
     uint64_t remaining_us;
     uint32_t clock_delay_ms;
-    if (host == NULL || host->clock_period_ms == 0 ||
+    if (host == NULL || !host->focused || host->clock_period_ms == 0 ||
         host->next_clock_tick_us == 0)
         return delay_ms;
     {
@@ -1540,7 +1830,9 @@ static pxa_status_t prepare_start(void *context, pxa_component_t component,
     pxa_window_snapshot_t snapshot = {0};
     pxa_status_t status;
     (void)instance_id;
-    if (host == NULL || kind != PXA_COMPONENT_KIND_UI) return PXA_STATUS_UNSUPPORTED;
+    if (host == NULL) return PXA_STATUS_INVALID_ARGUMENT;
+    if (kind == PXA_COMPONENT_KIND_SERVICE) return PXA_STATUS_OK;
+    if (kind != PXA_COMPONENT_KIND_UI) return PXA_STATUS_UNSUPPORTED;
     window_backend.struct_size = sizeof(window_backend);
     window_backend.context = host;
     window_backend.apply = window_apply;
@@ -1605,13 +1897,52 @@ static pxa_status_t read_artifact(void *context, pxa_bytes_t path,
     return PXA_STATUS_OK;
 }
 
+/* Visual integration tests can fix Clock NOW without changing frame pacing. */
+#ifndef PXSYS_CLOCK_NOW_US
+#define PXSYS_CLOCK_NOW_US() now_us(NULL)
+#endif
+
 static pxa_status_t clock_control(void *context, pxa_runtime_t *runtime,
                                   pxa_component_t component,
                                   const pxa_message_view_t *message) {
     product_host_t *host = context;
-    (void)runtime;
+    uint16_t core_major = 0;
     if (host == NULL || message == NULL || component != host->active_component)
         return PXA_STATUS_BAD_STATE;
+    if (message->opcode == PRODUCT_CLOCK_NOW) {
+        uint8_t result[8];
+        pxa_status_t status;
+        if (message->request_id == 0 || message->payload.size != 0)
+            return PXA_STATUS_INVALID_ARGUMENT;
+        status = pxa_component_core_major(runtime, component, &core_major);
+        if (status != PXA_STATUS_OK) return status;
+        if (core_major == 1) {
+            status = pxa_request_begin_reserved(
+                runtime, component, message->request_id,
+                PRODUCT_CLOCK_SERVICE, PRODUCT_CLOCK_NOW, 0,
+                sizeof(result));
+            if (status != PXA_STATUS_OK) return status;
+            status = pxa_request_commit(runtime, component,
+                                        message->request_id);
+            if (status == PXA_STATUS_OK) {
+                pxa_write_u64(result, PXSYS_CLOCK_NOW_US());
+                status = pxa_request_complete(runtime, component,
+                                              message->request_id,
+                                              PXA_STATUS_OK, result,
+                                              sizeof(result));
+            }
+            return status;
+        }
+        {
+            uint8_t payload[12];
+            pxa_write_u32(payload, PXA_STATUS_OK);
+            pxa_write_u64(payload + 4, PXSYS_CLOCK_NOW_US());
+            return pxa_event_post_message(
+                runtime, component, PRODUCT_CLOCK_SERVICE,
+                PRODUCT_CLOCK_NOW_RESULT, message->request_id,
+                (pxa_bytes_t){payload, sizeof(payload)}, 1, 0);
+        }
+    }
     if (message->opcode != 1 || message->request_id != 0 ||
         message->payload.size != 2)
         return PXA_STATUS_UNSUPPORTED;
@@ -1625,28 +1956,64 @@ static pxa_status_t clock_control(void *context, pxa_runtime_t *runtime,
     return PXA_STATUS_OK;
 }
 
+/* The desktop Host can browse Store without an ESP package store. Lists are
+ * empty; install, launch and removal complete as unsupported so the Guest
+ * receives a real Core v1 completion instead of waiting indefinitely. */
+static pxa_status_t store_installer_sim_control(
+    void *context, pxa_runtime_t *runtime, pxa_component_t component,
+    const pxa_message_view_t *message) {
+    pxa_status_t status;
+    uint8_t empty_count = 0;
+    const int list = message != NULL &&
+        (message->opcode == 4u || message->opcode == 5u);
+    (void)context;
+    if (message == NULL || message->request_id == 0 ||
+        message->opcode < 1u || message->opcode > 8u ||
+        (list && message->payload.size != 0))
+        return PXA_STATUS_INVALID_ARGUMENT;
+    status = pxa_request_begin_reserved(runtime, component, message->request_id,
+                                        PXA_STORE_INSTALLER_SERVICE_ID,
+                                        message->opcode, 0, list ? 1u : 0u);
+    if (status != PXA_STATUS_OK) return status;
+    status = pxa_request_commit(runtime, component, message->request_id);
+    if (status != PXA_STATUS_OK) return status;
+    return pxa_request_complete(runtime, component, message->request_id,
+                                list ? PXA_STATUS_OK : PXA_STATUS_UNSUPPORTED,
+                                list ? &empty_count : NULL, list ? 1u : 0u);
+}
+
+static void audio_release_sound(product_sound_voice_t *sound);
+/* Called only while SDL serializes the callback and control/decoder updates. */
+static void audio_finish_music_locked(product_host_t *host,pxa_status_t status) {
+    if (!host->music_session) return;
+    pxa_audio_playback_finish(&host->music_events,host->music_token,
+        status ? PXA_AUDIO_PLAYBACK_ERROR : PXA_AUDIO_PLAYBACK_ENDED,status);
+    host->music_session=0;
+    if (status) host->music_count=0;
+    SDL_AtomicSet(&host->asset_ready,1);
+}
 static void audio_callback(void *context, uint8_t *stream, int bytes) {
     product_host_t *host = context;
     int16_t *output = (int16_t *)stream;
     int samples = bytes / (int)sizeof(*output);
+    pxa_audio_mixer_render(&host->audio_mixer, output, (size_t)samples);
+    uint32_t music_available=0;
+    if (host->music_session && !host->music_paused)
+        music_available=pxa_audio_buffer_take(&host->music_buffer,host->music_count,(uint32_t)samples,host->music_finished);
     for (int index = 0; index < samples; ++index) {
         int32_t mixed = 0;
         int32_t target_gain = 0;
         int32_t source_target = 0;
-        if (host->audio_count != 0) {
-            mixed = host->audio_queue[host->audio_read];
-            host->audio_read = (host->audio_read + 1u) % PRODUCT_AUDIO_QUEUE_SAMPLES;
-            --host->audio_count;
-        }
-        if (host->music_samples != NULL && !host->music_paused) {
-            if (host->music_position == host->music_length) {
-                if (host->music_loop) host->music_position = 0;
-            }
-            if (host->music_position < host->music_length) {
-                host->music_last_sample =
-                    host->music_samples[host->music_position++];
+        mixed = output[index];
+        if (host->music_session && !host->music_paused) {
+            if ((uint32_t)index < music_available) {
+                host->music_last_sample = host->music_ring[host->music_read];
+                host->music_read = (host->music_read + 1u) % 8192u;
+                --host->music_count;
                 source_target = 32768;
                 target_gain = host->music_gain_q15;
+            } else if (host->music_finished && !host->music_count) {
+                audio_finish_music_locked(host,host->music_error);
             }
         }
         if (host->music_output_gain_q15 < target_gain) {
@@ -1672,7 +2039,7 @@ static void audio_callback(void *context, uint8_t *stream, int bytes) {
                  host->music_output_gain_q15 >> 15;
         for (size_t voice = 0; voice < PRODUCT_AUDIO_SOUND_VOICES; ++voice) {
             product_sound_voice_t *sound = &host->sound_voices[voice];
-            if (sound->position >= sound->samples) continue;
+            if (sound->paused || sound->position >= sound->samples) continue;
             uint32_t remaining = sound->samples - sound->position;
             uint32_t attack = sound->position + 1u;
             uint32_t envelope = remaining < attack ? remaining : attack;
@@ -1681,11 +2048,19 @@ static void audio_callback(void *context, uint8_t *stream, int bytes) {
                              * 256;
             mixed += ((sample * sound->gain_q15) >> 15) *
                      (int32_t)envelope / 64;
+            if (sound->position == sound->samples) audio_release_sound(sound);
         }
         if (mixed > INT16_MAX) mixed = INT16_MAX;
         if (mixed < INT16_MIN) mixed = INT16_MIN;
         output[index] = (int16_t)mixed;
     }
+}
+
+static int audio_voice(product_host_t *host, uint64_t session) {
+    if (!session) return -1;
+    for (unsigned i = 0; i < PXA_AUDIO_MIXER_VOICES; ++i)
+        if (host->audio_sessions[i] == session) return (int)i;
+    return -1;
 }
 
 static pxa_status_t audio_open(void *context, uint16_t usage,
@@ -1713,203 +2088,380 @@ static pxa_status_t audio_open(void *context, uint16_t usage,
     format->sample_rate = 16000;
     format->channels = 1;
     format->frame_ms = 20;
-    *session = 1;
+    SDL_LockAudioDevice(host->audio_device);
+    for (unsigned i = 0; i < PXA_AUDIO_MIXER_VOICES; ++i) {
+        if (host->audio_sessions[i]) continue;
+        if (++host->audio_next_session == 0) ++host->audio_next_session;
+        host->audio_sessions[i] = *session = host->audio_next_session;
+        pxa_audio_mixer_reset(&host->audio_mixer.voices[i]);
+        SDL_UnlockAudioDevice(host->audio_device);
+        return PXA_STATUS_OK;
+    }
+    SDL_UnlockAudioDevice(host->audio_device);
+    return PXA_STATUS_RESOURCE_LIMIT;
     return PXA_STATUS_OK;
 }
 
 static pxa_status_t audio_commit(void *context, uint64_t session,
-                                 const pxa_audio_graph_t *graph) {
-    (void)context;
-    (void)graph;
-    return session == 1 ? PXA_STATUS_OK : PXA_STATUS_NOT_FOUND;
-}
-
-static pxa_status_t audio_submit(void *context, uint64_t session,
-                                 const uint8_t *pcm, size_t size) {
+                                  const pxa_audio_graph_t *graph) {
     product_host_t *host = context;
-    if (session != 1 || host->audio_device == 0) return PXA_STATUS_NOT_FOUND;
-    if (pcm == NULL || size % 2u != 0 || size > PRODUCT_AUDIO_QUEUE_SAMPLES * 2u)
-        return PXA_STATUS_INVALID_ARGUMENT;
+    int voice = audio_voice(host, session);
+    if (voice < 0) return PXA_STATUS_NOT_FOUND;
     SDL_LockAudioDevice(host->audio_device);
-    if (host->audio_count + size / 2u > PRODUCT_AUDIO_QUEUE_SAMPLES) {
-        host->audio_count = 0;
-        host->audio_read = 0;
-    }
-    for (size_t index = 0; index < size / 2u; ++index) {
-        uint32_t write = (host->audio_read + host->audio_count) %
-                         PRODUCT_AUDIO_QUEUE_SAMPLES;
-        memcpy(&host->audio_queue[write], pcm + index * 2u, 2);
-        ++host->audio_count;
-    }
+    pxa_status_t status = pxa_audio_mixer_commit(&host->audio_mixer.voices[voice], graph);
     SDL_UnlockAudioDevice(host->audio_device);
-    return PXA_STATUS_OK;
+    return status;
 }
-
-static int audio_drain_stream(SDL_AudioStream *stream, int16_t **samples,
-                              uint32_t *length, uint32_t *capacity) {
-    int available = SDL_AudioStreamAvailable(stream);
-    if (available < 0) return 0;
-    if ((uint32_t)available / 2u > PRODUCT_AUDIO_ASSET_MAX_SAMPLES - *length)
-        return 0;
-    if (*length + (uint32_t)available / 2u > *capacity) {
-        uint32_t next = *capacity ? *capacity : 16000u;
-        while (next < *length + (uint32_t)available / 2u)
-            next *= 2u;
-        if (next > PRODUCT_AUDIO_ASSET_MAX_SAMPLES)
-            next = PRODUCT_AUDIO_ASSET_MAX_SAMPLES;
-        int16_t *grown = realloc(*samples, (size_t)next * sizeof(**samples));
-        if (grown == NULL) return 0;
-        *samples = grown;
-        *capacity = next;
-    }
-    if (available != 0 && SDL_AudioStreamGet(stream, *samples + *length,
-                                             available) != available)
-        return 0;
-    *length += (uint32_t)available / 2u;
-    return 1;
-}
-
-static pxa_status_t audio_play_pcm_asset(product_host_t *host,
-                                         const char *resolved,
-                                         int16_t gain_db_q8) {
-    product_sound_asset_t *asset = NULL;
-    uint8_t *loaded = NULL;
-    for (uint32_t index = 0; index < host->sound_cache_count; ++index) {
-        if (strcmp(host->sound_cache[index].path, resolved) == 0) {
-            asset = &host->sound_cache[index];
-            break;
-        }
-    }
-    if (asset == NULL) {
-        if (host->sound_cache_count == PRODUCT_AUDIO_SOUND_CACHE)
-            return PXA_STATUS_RESOURCE_LIMIT;
-        FILE *file = fopen(resolved, "rb");
-        if (file == NULL) return PXA_STATUS_NOT_FOUND;
-        int valid = fseek(file, 0, SEEK_END) == 0;
-        long length = valid ? ftell(file) : -1;
-        if (length <= 0 || length > 16000 || fseek(file, 0, SEEK_SET) != 0) {
-            fclose(file);
-            return PXA_STATUS_INVALID_ARGUMENT;
-        }
-        loaded = malloc((size_t)length);
-        if (loaded == NULL) {
-            fclose(file);
-            return PXA_STATUS_RESOURCE_LIMIT;
-        }
-        valid = fread(loaded, 1, (size_t)length, file) == (size_t)length;
-        fclose(file);
-        if (!valid) {
-            free(loaded);
-            return PXA_STATUS_IO_ERROR;
-        }
-        asset = &host->sound_cache[host->sound_cache_count];
-        asset->path = strdup(resolved);
-        if (asset->path == NULL) {
-            free(loaded);
-            return PXA_STATUS_RESOURCE_LIMIT;
-        }
-        asset->pcm = loaded;
-        asset->samples = (uint32_t)length;
-        ++host->sound_cache_count;
-    }
-    pxa_status_t status = PXA_STATUS_WOULD_BLOCK;
+static pxa_status_t audio_submit(void *context, uint64_t session,
+                                  const uint8_t *pcm, size_t size) {
+    product_host_t *host = context;
+    int voice = audio_voice(host, session);
+    if (voice < 0) return PXA_STATUS_NOT_FOUND;
     SDL_LockAudioDevice(host->audio_device);
-    for (size_t index = 0; index < PRODUCT_AUDIO_SOUND_VOICES; ++index) {
-        product_sound_voice_t *voice = &host->sound_voices[index];
-        if (voice->position < voice->samples) continue;
-        voice->pcm = asset->pcm;
-        voice->samples = asset->samples;
-        voice->position = 0;
-        voice->gain_q15 = (int32_t)(32768.0 *
-            pow(10.0, gain_db_q8 / (20.0 * 256.0)));
-        status = PXA_STATUS_OK;
-        break;
-    }
+    pxa_status_t status = pxa_audio_mixer_write(&host->audio_mixer.voices[voice], pcm, size);
+    SDL_UnlockAudioDevice(host->audio_device);
+    return status;
+}
+static pxa_status_t audio_play_tone(void *context, uint64_t session,
+                                     const pxa_audio_tone_t *tone) {
+    product_host_t *host = context;
+    int voice = audio_voice(host, session);
+    if (voice < 0) return PXA_STATUS_NOT_FOUND;
+    SDL_LockAudioDevice(host->audio_device);
+    pxa_status_t status = pxa_audio_mixer_tone(&host->audio_mixer.voices[voice], tone);
     SDL_UnlockAudioDevice(host->audio_device);
     return status;
 }
 
-static void audio_clear_sound_cache(product_host_t *host) {
-    for (uint32_t index = 0; index < host->sound_cache_count; ++index) {
-        free(host->sound_cache[index].path);
-        free(host->sound_cache[index].pcm);
+typedef struct {
+    product_host_t *host;
+    uint64_t token;
+    pxa_asset_stream_t stream;
+    pxa_posix_asset_input_t file;
+    pxa_asset_input_t raw;
+    uint64_t io_us; /* Worker-only: subtract callback I/O from codec wall time. */
+} product_music_input_t;
+
+static int music_input_cancelled(void *context) {
+    product_music_input_t *input=context;
+    if (SDL_AtomicGet(&input->host->music_stop)) return 1;
+    SDL_LockAudioDevice(input->host->audio_device);
+    int cancelled=input->token!=input->host->music_token;
+    SDL_UnlockAudioDevice(input->host->audio_device);
+    return cancelled;
+}
+static pxa_status_t music_input_load(void *context,const pxa_asset_block_t *block,
+    uint8_t *buffer,size_t capacity) {
+    product_music_input_t *input=context;
+    uint64_t started=now_us(NULL);
+    pxa_status_t status=pxa_posix_asset_select_range(&input->file,block->offset,block->bytes);
+    if (!status) status=pxa_asset_load_block(block,&input->raw,buffer,capacity);
+    input->io_us+=now_us(NULL)-started;
+    return status;
+}
+static void music_input_close(product_music_input_t *input) {
+    pxa_posix_asset_close(&input->file);
+    if (input->host) {
+        SDL_LockAudioDevice(input->host->audio_device);
+        input->host->music_read_bytes+=input->stream.read_bytes;
+        input->host->music_read_calls+=input->stream.read_calls;
+        SDL_UnlockAudioDevice(input->host->audio_device);
     }
-    host->sound_cache_count = 0;
-    memset(host->sound_voices, 0, sizeof(host->sound_voices));
+    memset(&input->stream,0,sizeof(input->stream));
+}
+static pxa_status_t music_input_open(product_music_input_t *input,product_host_t *host,
+    uint64_t token,const pxa_asset_block_map_t *map) {
+    input->host=host; input->token=token;
+    pxa_status_t status=pxa_posix_asset_open(&input->file,host->package_root,
+        map->info.path,map->info.stored_bytes,&input->raw);
+    input->file.gate=host->storage_gate; input->file.storage_lane=PXA_STORAGE_MUSIC;
+    input->file.cancel_context=input; input->file.cancelled=music_input_cancelled;
+    if (!status) status=pxa_asset_stream_init(&input->stream,map,
+        input,music_input_load,music_input_cancelled);
+    return status;
+}
+static size_t music_vorbis_read(void *output,size_t size,size_t count,void *context) {
+    product_music_input_t *input=context;
+    if (!size || count>SIZE_MAX/size) return 0;
+    size_t total=0, wanted=size*count;
+    while (total<wanted) {
+        size_t bytes=0;
+        if (pxa_asset_stream_read(&input->stream,(uint8_t*)output+total,wanted-total,&bytes) || !bytes) break;
+        total+=bytes;
+    }
+    return total/size;
+}
+static int music_input_seek(void *context,int64_t offset,int whence) {
+    product_music_input_t *input=context;
+    uint32_t base;
+    if (whence==SEEK_SET) base=0;
+    else if (whence==SEEK_CUR) base=input->stream.position;
+    else if (whence==SEEK_END) base=input->stream.map.info.stored_bytes;
+    else return -1;
+    if (offset<-(int64_t)base || offset>(int64_t)input->stream.map.info.stored_bytes-base) return -1;
+    return pxa_asset_stream_seek(&input->stream,(uint32_t)((int64_t)base+offset)) ? -1 : 0;
+}
+static int music_vorbis_seek(void *context,ogg_int64_t offset,int whence) {
+    return music_input_seek(context,offset,whence);
+}
+static long music_vorbis_tell(void *context) {
+    product_music_input_t *input=context;
+#if LONG_MAX < UINT32_MAX
+    if (input->stream.position>LONG_MAX) return -1;
+#endif
+    return (long)input->stream.position;
+}
+static int music_opus_read(void *context,unsigned char *output,int capacity) {
+    product_music_input_t *input=context; size_t count=0;
+    if (capacity<0 || pxa_asset_stream_read(&input->stream,output,(size_t)capacity,&count)) return -1;
+    return (int)count;
+}
+static int music_opus_seek(void *context,opus_int64 offset,int whence) {
+    return music_input_seek(context,offset,whence);
+}
+static opus_int64 music_opus_tell(void *context) {
+    return ((product_music_input_t*)context)->stream.position;
 }
 
-static pxa_status_t audio_play_asset(void *context, uint64_t session,
-                                     const pxa_audio_asset_t *asset) {
+/* All decoder/file I/O runs on this worker. SDL's callback only consumes a
+ * bounded ring; a long music file does not increase resident PCM memory. */
+static void audio_music_publish_locked(product_host_t *host,uint64_t token) {
+    if (pxa_audio_buffer_publish(&host->music_buffer,host->music_count,host->music_finished)) {
+        pxa_audio_playback_ready(&host->music_events,token);
+        uint64_t elapsed=now_us(NULL)-host->music_accepted_us;
+        if (elapsed>host->music_ready_max_us) host->music_ready_max_us=elapsed;
+        SDL_AtomicSet(&host->asset_ready,1);
+    }
+}
+static int audio_music_worker(void *context) {
     product_host_t *host = context;
-    char path[1536], resolved[PATH_MAX], root[PATH_MAX];
     OggVorbis_File file;
-    SDL_AudioStream *converter;
-    vorbis_info *info;
-    int16_t *decoded = NULL;
-    uint32_t length = 0, capacity = 0;
-    int result = 0, bitstream = 0;
-    char input[8192];
-    int pcm_asset;
-    if (session != 1 || host->audio_device == 0) return PXA_STATUS_NOT_FOUND;
-    if (asset == NULL || asset->path_size < 12 || asset->path_size > 512 ||
-        memcmp(asset->path, "assets/", 7) != 0 ||
-        !asset_path_is_safe(asset->path, asset->path_size) ||
-        snprintf(path, sizeof(path), "%s/%.*s", host->package_root,
-                 (int)asset->path_size, asset->path) >= (int)sizeof(path))
-        return PXA_STATUS_INVALID_ARGUMENT;
-    if (realpath(host->package_root, root) == NULL ||
-        realpath(path, resolved) == NULL) return PXA_STATUS_NOT_FOUND;
-    size_t root_length = strlen(root);
-    if (strncmp(root, resolved, root_length) != 0 ||
-        strncmp(resolved + root_length, "/assets/", 8) != 0)
-        return PXA_STATUS_INVALID_ARGUMENT;
-    pcm_asset = memcmp(asset->path + asset->path_size - 4, ".pcm", 4) == 0;
-    if (pcm_asset) {
-        if ((asset->flags & PXA_AUDIO_ASSET_LOOP) != 0 ||
-            strncmp(resolved + root_length, "/assets/sfx/", 12) != 0)
-            return PXA_STATUS_INVALID_ARGUMENT;
-        return audio_play_pcm_asset(host, resolved, asset->gain_db_q8);
-    }
-    if (memcmp(asset->path + asset->path_size - 4, ".ogg", 4) != 0)
-        return PXA_STATUS_INVALID_ARGUMENT;
-    if (ov_fopen(resolved, &file) != 0) return PXA_STATUS_INVALID_ARGUMENT;
-    info = ov_info(&file, -1);
-    if (info == NULL || info->channels < 1 || info->channels > 2 ||
-        info->rate < 8000 || info->rate > 192000) {
-        ov_clear(&file);
-        return PXA_STATUS_UNSUPPORTED;
-    }
-    converter = SDL_NewAudioStream(AUDIO_S16SYS, (uint8_t)info->channels,
-                                   (int)info->rate, AUDIO_S16SYS, 1, 16000);
-    if (converter == NULL) {
-        ov_clear(&file);
-        return PXA_STATUS_INTERNAL;
-    }
-    for (;;) {
-        long read = ov_read(&file, input, sizeof(input),
-                            SDL_BYTEORDER == SDL_BIG_ENDIAN, 2, 1, &bitstream);
-        if (read <= 0) {
-            result = read == 0;
-            break;
+    OggOpusFile *opus = NULL;
+    SDL_AudioStream *converter = NULL;
+    product_music_input_t source={0}; source.file.fd=-1;
+    uint64_t token = 0;
+    int opened = 0, eof = 0, loop = 0;
+    int16_t input[2048];
+    int16_t output[2048];
+    while (!SDL_AtomicGet(&host->music_stop)) {
+        pxa_asset_block_map_t map;
+        int pending, paused;
+        uint64_t requested;
+        uint32_t room;
+        SDL_LockAudioDevice(host->audio_device);
+        requested = host->music_token;
+        pending = host->music_pending;
+        paused = host->music_paused;
+        room = 8192u - host->music_count;
+        if (pending) {
+            map=host->music_map;
+            loop = host->music_loop;
+            host->music_pending = 0;
         }
-        if (SDL_AudioStreamPut(converter, input, (int)read) != 0 ||
-            !audio_drain_stream(converter, &decoded, &length, &capacity))
-            break;
+        SDL_UnlockAudioDevice(host->audio_device);
+        if (requested != token || pending) {
+            if (opened) ov_clear(&file);
+            if (opus) { op_free(opus); opus = NULL; }
+            if (converter) SDL_FreeAudioStream(converter);
+            music_input_close(&source);
+            opened = 0; converter = NULL; eof = 0; token = requested;
+        }
+        if (pending) {
+            pxa_status_t status=music_input_open(&source,host,token,&map);
+            const ov_callbacks vorbis_callbacks={music_vorbis_read,music_vorbis_seek,NULL,music_vorbis_tell};
+            const OpusFileCallbacks opus_callbacks={music_opus_read,music_opus_seek,music_opus_tell,NULL};
+            if (!status && map.info.encoding==PXA_ASSET_ENCODING_OGG_VORBIS &&
+                ov_open_callbacks(&source,&file,NULL,0,vorbis_callbacks)==0) {
+                opened = 1;
+                vorbis_info *info = ov_info(&file, -1);
+                if (info && info->channels >= 1 && info->channels <= 2 &&
+                    info->rate >= 8000 && info->rate <= 96000) {
+                    converter = SDL_NewAudioStream(AUDIO_S16SYS, (uint8_t)info->channels,
+                        (int)info->rate, AUDIO_S16SYS, 1, 16000);
+                    if (!converter) status=PXA_STATUS_RESOURCE_LIMIT;
+                } else status=PXA_STATUS_UNSUPPORTED;
+            }
+            if (!status && map.info.encoding==PXA_ASSET_ENCODING_OGG_OPUS) {
+                int error = 0;
+                opus = op_open_callbacks(&source,&opus_callbacks,NULL,0,&error);
+                if (opus && op_channel_count(opus,-1)>=1 && op_channel_count(opus, -1) <= 2) {
+                    converter = SDL_NewAudioStream(AUDIO_S16SYS, 2, 48000,
+                                                   AUDIO_S16SYS, 1, 16000);
+                    if (!converter) status=PXA_STATUS_RESOURCE_LIMIT;
+                } else if (opus) status=PXA_STATUS_UNSUPPORTED;
+            }
+            if (!converter) {
+                if (opened) { ov_clear(&file); opened = 0; }
+                if (opus) { op_free(opus); opus = NULL; }
+                if (!status) status=source.stream.status ? source.stream.status : PXA_STATUS_PROTOCOL_ERROR;
+                music_input_close(&source);
+                fprintf(stderr, "PXA audio: Ogg input/decode failed status=%d\n",(int)status);
+                SDL_LockAudioDevice(host->audio_device);
+                if (host->music_token == token) {
+                    host->music_error=status;
+                    host->music_finished = 1;
+                    audio_finish_music_locked(host,host->music_error);
+                }
+                SDL_UnlockAudioDevice(host->audio_device);
+            }
+        }
+        if (!converter || paused || room < 2048) { SDL_Delay(5); continue; }
+        int available = SDL_AudioStreamAvailable(converter);
+        if (available == 0 && !eof) {
+            int bitstream = 0;
+            long count;
+            uint64_t decode_started=now_us(NULL), io_before=source.io_us;
+            if (opus) {
+                int frames = op_read_stereo(opus, (opus_int16 *)input,
+                                             sizeof(input) / sizeof(opus_int16));
+                count = frames > 0 ? frames * 4 : frames;
+            } else {
+                count = ov_read(&file, (char *)input, sizeof(input),
+                    SDL_BYTEORDER == SDL_BIG_ENDIAN, 2, 1, &bitstream);
+            }
+            uint64_t decode_elapsed=now_us(NULL)-decode_started-(source.io_us-io_before);
+            SDL_LockAudioDevice(host->audio_device);
+            ++host->music_decode_calls; host->music_decode_us+=decode_elapsed;
+            if (decode_elapsed>host->music_decode_max_us) host->music_decode_max_us=decode_elapsed;
+            SDL_UnlockAudioDevice(host->audio_device);
+            if (source.stream.status) count=-1;
+            if (count==0 && loop && (opus ? op_pcm_total(opus,-1)>0 : ov_pcm_total(&file,-1)>0)) {
+                if ((opus ? op_pcm_seek(opus,0) : ov_pcm_seek(&file,0))==0) continue;
+                count=-1; /* A failed loop rewind is not natural completion. */
+            }
+            if (count > 0) {
+                if (SDL_AudioStreamPut(converter, input, (int)count) != 0) {
+                    SDL_LockAudioDevice(host->audio_device);
+                    if (host->music_token==token) host->music_error=PXA_STATUS_RESOURCE_LIMIT;
+                    SDL_UnlockAudioDevice(host->audio_device);
+                    eof = 1;
+                }
+            } else {
+                if (count < 0 || source.stream.status) {
+                    SDL_LockAudioDevice(host->audio_device);
+                    if (host->music_token==token) host->music_error=source.stream.status ? source.stream.status : PXA_STATUS_PROTOCOL_ERROR;
+                    SDL_UnlockAudioDevice(host->audio_device);
+                }
+                SDL_AudioStreamFlush(converter);
+                eof = 1;
+            }
+            available = SDL_AudioStreamAvailable(converter);
+        }
+        int count = SDL_AudioStreamGet(converter, output, sizeof(output));
+        if (count > 0) {
+            SDL_LockAudioDevice(host->audio_device);
+            if (host->music_token == token) {
+                for (int i = 0; i < count / 2; ++i) {
+                    host->music_ring[(host->music_read + host->music_count) % 8192u] = output[i];
+                    ++host->music_count;
+                }
+                audio_music_publish_locked(host,token);
+            }
+            SDL_UnlockAudioDevice(host->audio_device);
+        } else if (eof || available < 0 || count < 0) {
+            SDL_LockAudioDevice(host->audio_device);
+            if (host->music_token == token) {
+                if (available < 0 || count < 0) host->music_error=PXA_STATUS_IO_ERROR;
+                host->music_finished = 1;
+                audio_music_publish_locked(host,token);
+                if (!host->music_count || host->music_error)
+                    audio_finish_music_locked(host,host->music_error);
+            }
+            SDL_UnlockAudioDevice(host->audio_device);
+            SDL_FreeAudioStream(converter); converter = NULL;
+            if (opened) ov_clear(&file);
+            if (opus) { op_free(opus); opus = NULL; }
+            music_input_close(&source);
+            opened = 0;
+        }
     }
-    if (result && (SDL_AudioStreamFlush(converter) != 0 ||
-                   !audio_drain_stream(converter, &decoded, &length, &capacity)))
-        result = 0;
-    SDL_FreeAudioStream(converter);
-    ov_clear(&file);
-    if (!result || length == 0) {
-        free(decoded);
-        return PXA_STATUS_INTERNAL;
+    if (converter) SDL_FreeAudioStream(converter);
+    if (opened) ov_clear(&file);
+    if (opus) op_free(opus);
+    music_input_close(&source);
+    return 0;
+}
+
+static void audio_stop_worker(product_host_t *host) {
+    if (host->music_thread) {
+        SDL_AtomicSet(&host->music_stop, 1);
+        SDL_WaitThread(host->music_thread, NULL);
+        host->music_thread = NULL;
+    }
+}
+
+static pxa_status_t audio_play_sound(void *context,uint64_t session,pxa_asset_object_t *asset,int16_t gain) {
+    product_host_t *host = context;
+    int voice = audio_voice(host,session);
+    if (voice < 0 || !host->audio_device) return PXA_STATUS_NOT_FOUND;
+    if (!host->audio_mixer.voices[voice].committed) return PXA_STATUS_BAD_STATE;
+    pxa_asset_object_view_t view; pxa_asset_object_view(asset,&view);
+    if (view.kind != PXA_ASSET_AUDIO || !view.bytes || view.bytes > 16000 || gain > 0 || gain < -60*256)
+        return PXA_STATUS_INVALID_ARGUMENT;
+    int32_t gain_q15 = (int32_t)(32768.0 * pow(10.0,gain/5120.0));
+    pxa_status_t status = PXA_STATUS_WOULD_BLOCK;
+    SDL_LockAudioDevice(host->audio_device);
+    for (unsigned i=0;i<PRODUCT_AUDIO_SOUND_VOICES;++i) if (!host->sound_voices[i].asset) {
+        pxa_asset_object_retain(asset);
+        host->sound_voices[i] = (product_sound_voice_t){asset,view.data,view.bytes,0,gain_q15,session,0};
+        status = PXA_STATUS_OK; break;
+    }
+    SDL_UnlockAudioDevice(host->audio_device);
+    return status;
+}
+static void audio_release_sound(product_sound_voice_t *sound) {
+    pxa_asset_object_release_pinned(sound->asset);
+    memset(sound,0,sizeof(*sound));
+}
+static void audio_release_all_sounds(product_host_t *host) {
+    for (unsigned i=0;i<PRODUCT_AUDIO_SOUND_VOICES;++i) audio_release_sound(&host->sound_voices[i]);
+}
+
+static pxa_status_t audio_play_music(void *context, uint64_t session,
+                                     const pxa_audio_asset_t *asset, uint64_t *instance) {
+    product_host_t *host = context;
+    if (!instance) return PXA_STATUS_INVALID_ARGUMENT;
+    *instance=0;
+    pxa_asset_block_map_t map;
+    if (audio_voice(host, session) < 0 || host->audio_device == 0) return PXA_STATUS_NOT_FOUND;
+    if (!host->audio_mixer.voices[audio_voice(host, session)].committed)
+        return PXA_STATUS_BAD_STATE;
+    if (asset == NULL || asset->path == NULL || asset->path_size < 12 ||
+        !pxa_asset_path_valid((pxa_bytes_t){asset->path,asset->path_size}) ||
+        asset->gain_db_q8>0 || asset->gain_db_q8 < -60*256 ||
+        (asset->flags & ~PXA_AUDIO_ASSET_LOOP))
+        return PXA_STATUS_INVALID_ARGUMENT;
+    if (!host->asset_worker) return PXA_STATUS_UNSUPPORTED;
+    pxa_status_t found=pxa_posix_asset_worker_block_map(host->asset_worker,
+        (pxa_bytes_t){asset->path,asset->path_size},&map);
+    if (found) return found;
+    if (map.info.kind!=PXA_ASSET_AUDIO ||
+        (map.info.encoding!=PXA_ASSET_ENCODING_OGG_VORBIS && map.info.encoding!=PXA_ASSET_ENCODING_OGG_OPUS))
+        return PXA_STATUS_UNSUPPORTED;
+    SDL_LockAudioDevice(host->audio_device);
+    int busy = host->music_session && host->music_session != session;
+    SDL_UnlockAudioDevice(host->audio_device);
+    if (busy) return PXA_STATUS_WOULD_BLOCK;
+    if (!host->music_thread) {
+        SDL_AtomicSet(&host->music_stop, 0);
+        host->music_thread = SDL_CreateThread(audio_music_worker, "pxa_music", host);
+        if (!host->music_thread) return PXA_STATUS_RESOURCE_LIMIT;
     }
     SDL_LockAudioDevice(host->audio_device);
-    free(host->music_samples);
-    host->music_samples = decoded;
-    host->music_length = length;
-    host->music_position = 0;
+    pxa_status_t admission=pxa_audio_playback_begin(&host->music_events,session,instance);
+    if (admission!=PXA_STATUS_OK) { SDL_UnlockAudioDevice(host->audio_device); return admission; }
+    pxa_audio_playback_finish(&host->music_events,host->music_token,PXA_AUDIO_PLAYBACK_REPLACED,PXA_STATUS_OK);
+    host->music_map=map;
+    host->music_token=*instance;
+    host->music_pending = 1;
+    host->music_finished = 0;
+    host->music_error=PXA_STATUS_OK;
+    host->music_read = host->music_count = 0;
+    pxa_audio_buffer_start(&host->music_buffer,4096);
+    host->music_accepted_us=now_us(NULL);
+    host->music_output_gain_q15 = host->music_source_gain_q15 = 0;
+    host->music_last_sample = 0;
+    host->music_session = session;
     host->music_loop = (asset->flags & PXA_AUDIO_ASSET_LOOP) != 0;
     host->music_paused = 0;
     host->music_gain_db_q8 = asset->gain_db_q8;
@@ -1919,17 +2471,61 @@ static pxa_status_t audio_play_asset(void *context, uint64_t session,
     return PXA_STATUS_OK;
 }
 
+static pxa_status_t audio_play_asset(void *context, uint64_t session, const pxa_audio_asset_t *asset) {
+    uint64_t instance;
+    return audio_play_music(context,session,asset,&instance);
+}
+static pxa_status_t audio_playback_peek(void *context, pxa_audio_playback_event_t *event) {
+    product_host_t *host=context;
+    if (!host->audio_device) return PXA_STATUS_NOT_FOUND;
+    SDL_LockAudioDevice(host->audio_device);
+    pxa_status_t status=pxa_audio_playback_peek(&host->music_events,event);
+    SDL_UnlockAudioDevice(host->audio_device);
+    return status;
+}
+static pxa_status_t audio_playback_consume(void *context, const pxa_audio_playback_event_t *event) {
+    product_host_t *host=context;
+    if (!host->audio_device) return PXA_STATUS_NOT_FOUND;
+    SDL_LockAudioDevice(host->audio_device);
+    pxa_status_t status=pxa_audio_playback_consume(&host->music_events,event);
+    SDL_UnlockAudioDevice(host->audio_device);
+    return status;
+}
+
 static pxa_status_t audio_control_asset(void *context, uint64_t session,
                                         const pxa_audio_asset_control_t *control) {
     product_host_t *host = context;
-    if (session != 1 || host->audio_device == 0) return PXA_STATUS_NOT_FOUND;
+    if (audio_voice(host, session) < 0 || host->audio_device == 0) return PXA_STATUS_NOT_FOUND;
     if (control == NULL) return PXA_STATUS_INVALID_ARGUMENT;
     SDL_LockAudioDevice(host->audio_device);
+    if (control->action < PXA_AUDIO_ASSET_PAUSE || control->action > PXA_AUDIO_ASSET_SET_GAIN) {
+        SDL_UnlockAudioDevice(host->audio_device);
+        return PXA_STATUS_INVALID_ARGUMENT;
+    }
+    for (size_t i = 0; i < PRODUCT_AUDIO_SOUND_VOICES; ++i) {
+        product_sound_voice_t *v = &host->sound_voices[i];
+        if (v->session != session) continue;
+        switch (control->action) {
+            case PXA_AUDIO_ASSET_STOP: audio_release_sound(v); break;
+            case PXA_AUDIO_ASSET_PAUSE: v->paused = 1; break;
+            case PXA_AUDIO_ASSET_RESUME: v->paused = 0; break;
+            case PXA_AUDIO_ASSET_SET_GAIN:
+                v->gain_q15 = (int32_t)(32768.0 * pow(10.0, control->gain_db_q8 / 5120.0)); break;
+        }
+    }
+    if (host->music_session != session) {
+        SDL_UnlockAudioDevice(host->audio_device);
+        return PXA_STATUS_OK;
+    }
     switch (control->action) {
         case PXA_AUDIO_ASSET_STOP:
-            free(host->music_samples);
-            host->music_samples = NULL;
-            host->music_length = host->music_position = 0;
+            pxa_audio_playback_finish(&host->music_events,host->music_token,PXA_AUDIO_PLAYBACK_STOPPED,PXA_STATUS_OK);
+            host->music_token=0;
+            host->music_pending = 0;
+            host->music_read = host->music_count = 0;
+            host->music_session = 0;
+            host->music_output_gain_q15 = host->music_source_gain_q15 = 0;
+            host->music_last_sample = 0;
             break;
         case PXA_AUDIO_ASSET_PAUSE: host->music_paused = 1; break;
         case PXA_AUDIO_ASSET_RESUME: host->music_paused = 0; break;
@@ -1946,36 +2542,45 @@ static pxa_status_t audio_control_asset(void *context, uint64_t session,
     return PXA_STATUS_OK;
 }
 
-static void audio_close(void *context, uint64_t session) {
+static pxa_status_t audio_flush(void *context, uint64_t session) {
     product_host_t *host = context;
-    if (session == 1 && host->audio_device != 0) {
-        SDL_CloseAudioDevice(host->audio_device);
-        host->audio_device = 0;
-        free(host->music_samples);
-        host->music_samples = NULL;
-        audio_clear_sound_cache(host);
-        host->audio_read = host->audio_count = 0;
-    }
-}
-
-static pxa_status_t audio_query(void *context, uint64_t session,
-                                pxa_audio_state_t *state) {
-    product_host_t *host = context;
-    if (session != 1 || host->audio_device == 0 || state == NULL)
-        return PXA_STATUS_NOT_FOUND;
-    memset(state, 0, sizeof(*state));
-    state->flags = PXA_AUDIO_STATE_ACCEPTED_IS_SINK_SUBMITTED;
+    int voice = audio_voice(host, session);
+    if (voice < 0) return PXA_STATUS_NOT_FOUND;
+    pxa_audio_asset_control_t stop = {0, PXA_AUDIO_ASSET_STOP};
+    (void)audio_control_asset(context, session, &stop);
     SDL_LockAudioDevice(host->audio_device);
-    state->queued_samples = host->audio_count;
+    pxa_audio_mixer_flush(&host->audio_mixer.voices[voice]);
     SDL_UnlockAudioDevice(host->audio_device);
     return PXA_STATUS_OK;
 }
-
-static pxa_status_t audio_flush(void *context, uint64_t session) {
+static void audio_close(void *context, uint64_t session) {
     product_host_t *host = context;
-    if (session != 1 || host->audio_device == 0) return PXA_STATUS_NOT_FOUND;
+    int voice = audio_voice(host, session);
+    if (voice < 0) return;
+    audio_flush(context, session);
     SDL_LockAudioDevice(host->audio_device);
-    host->audio_read = host->audio_count = 0;
+    pxa_audio_mixer_reset(&host->audio_mixer.voices[voice]);
+    host->audio_sessions[voice] = 0;
+    pxa_audio_playback_close(&host->music_events,session);
+    unsigned active = 0;
+    for (unsigned i = 0; i < PXA_AUDIO_MIXER_VOICES; ++i)
+        active += host->audio_sessions[i] != 0;
+    SDL_UnlockAudioDevice(host->audio_device);
+    if (!active) {
+        audio_stop_worker(host);
+        SDL_CloseAudioDevice(host->audio_device);
+        host->audio_device = 0;
+        audio_release_all_sounds(host);
+    }
+}
+static pxa_status_t audio_query(void *context, uint64_t session,
+                                 pxa_audio_state_t *state) {
+    product_host_t *host = context;
+    int voice = audio_voice(host, session);
+    if (!state) return PXA_STATUS_INVALID_ARGUMENT;
+    if (voice < 0) return PXA_STATUS_NOT_FOUND;
+    SDL_LockAudioDevice(host->audio_device);
+    *state = host->audio_mixer.voices[voice].state;
     SDL_UnlockAudioDevice(host->audio_device);
     return PXA_STATUS_OK;
 }
@@ -2143,15 +2748,23 @@ static int run_product_simulator(const options_t *input,
     pxa_storage_backend_t storage_backend = {0};
     pxa_posix_storage_t *posix_storage = NULL;
     pxa_storage_service_t *storage = NULL;
+    pxa_posix_fs_config_t posix_fs_config = {0};
+    pxa_fs_config_t fs_config = {0};
+    pxa_fs_backend_t fs_backend = {0};
+    pxa_posix_fs_t *posix_fs = NULL;
+    pxa_fs_service_t *fs = NULL;
+    pxa_ipc_limits_t ipc_limits;
     pxa_surface_config_t surface_config = {0};
     pxa_game_render_config_t game_render_config = {0};
+    pxa_assets_config_t assets_config = {0};
     pxa_device_config_t device_config = {0};
     pxa_net_config_t net_config = {0};
     pxa_net_backend_t net_backend = {0};
     pxa_log_config_t log_config = {0};
     pxa_service_ops_t clock_service = {0};
+    pxa_service_ops_t store_installer_service = {0};
     pxa_wamr_engine_config_t engine_config = {0};
-    pxa_package_service_capability_t capabilities[12] = {0};
+    pxa_package_service_capability_t capabilities[17] = {0};
     pxa_package_activation_profile_t activation = {0};
     pxa_package_host_profile_t profile = {0};
     pxa_activation_plan_t *plan = NULL;
@@ -2159,23 +2772,46 @@ static int run_product_simulator(const options_t *input,
     void *runtime_workspace = NULL, *window_workspace = NULL, *ui_workspace = NULL;
     void *permission_workspace = NULL, *audio_workspace = NULL, *storage_workspace = NULL;
     void *storage_service_workspace = NULL, *lvgl_workspace = NULL, *engine_workspace = NULL;
+    void *fs_backend_workspace = NULL, *fs_service_workspace = NULL;
+    void *ipc_workspace = NULL;
     void *surface_workspace = NULL, *game_render_workspace = NULL;
     void *device_workspace = NULL, *net_workspace = NULL;
-    void *log_workspace = NULL;
+    void *log_workspace = NULL, *assets_workspace = NULL;
     void *plan_workspace = NULL, *coordinator_workspace = NULL;
     uint8_t *encoded = NULL, *public_key = NULL;
     size_t manifest_size = 0, public_key_size = 0;
     char root[1024] = {0};
+    char *default_state_root = NULL;
     char *storage_parent = NULL;
     char *storage_path = NULL;
+    char *fs_parent = NULL;
+    char *fs_path = NULL;
+    char publisher_hex[2u * PXA_PACKAGE_DIGEST_BYTES + 1u] = {0};
     lv_display_t *display = NULL;
     lv_indev_t *mouse = NULL;
     lv_indev_t *keyboard = NULL;
     pxsys_pxadb_control_t pxadb_control = {.listener = -1};
+    shape_mask_image_t shape_mask = {0};
     pxa_component_t component;
     pxa_status_t status;
     const char *stage = "arguments";
     const int owns_display = embedded_display == NULL;
+    const char *loop_perf_env = getenv("PXA_SIMULATOR_PERF");
+    const int trace_loop = owns_display && loop_perf_env != NULL &&
+                           strcmp(loop_perf_env, "1") == 0;
+    uint64_t perf_window_start_us = 0, previous_loop_start_us = 0;
+    uint64_t loop_gap_total_us = 0, loop_gap_max_us = 0;
+    uint64_t pre_total_us = 0, pre_max_us = 0;
+    uint64_t lvgl_total_us = 0, lvgl_max_us = 0;
+    uint64_t post_total_us = 0, post_max_us = 0;
+    uint64_t sleep_total_us = 0, sleep_max_us = 0;
+    uint32_t perf_loops = 0;
+#ifdef PXSYS_PRODUCT_FRAME_OBSERVER
+    /* Test-only CPU path: Guest tick + Surface execution, then the next
+     * LVGL timer pass. Deliberately excludes sleep and device presentation. */
+    uint64_t pending_frame_id = 0;
+    uint64_t pending_tick_cpu_us = 0;
+#endif
     int result = 1;
 
     host.window_changed = window_changed;
@@ -2183,6 +2819,7 @@ static int run_product_simulator(const options_t *input,
     host.host_theme = host_theme;
     host.focused = owns_display ? 1u : 0u;
     host.pending_lifecycle = 2u;
+    host.next_instance_id = 1;
 
     {
         struct stat metadata;
@@ -2197,6 +2834,13 @@ static int run_product_simulator(const options_t *input,
             return 2;
         }
     }
+    stage = "resource budget";
+    if (resource_memory_init(&host,
+        asset_setting("PXA_RESOURCE_INTERNAL_BYTES", 128u * 1024u, 1024u * 1024u),
+        asset_setting("PXA_RESOURCE_EXTERNAL_BYTES", 2u * 1024u * 1024u, 16u * 1024u * 1024u),
+        asset_setting("PXA_RESOURCE_TEMPORARY_INTERNAL_BYTES", 16u * 1024u, 1024u * 1024u),
+        asset_setting("PXA_RESOURCE_TEMPORARY_EXTERNAL_BYTES", 512u * 1024u, 16u * 1024u * 1024u)) != PXA_STATUS_OK)
+        goto done;
     stage = "publisher key";
     {
         FILE *file = fopen(options.publisher_key, "rb");
@@ -2237,8 +2881,8 @@ static int run_product_simulator(const options_t *input,
     package_result.encoded = encoded; package_result.encoded_capacity = manifest_size;
     package_result.manifest = &manifest; package_result.root = root;
     package_result.root_capacity = sizeof(root);
-    stage = "package verification";
-    if (pxa_posix_installer_verify_source(installer, options.package_path,
+    stage = "installed package manifest";
+    if (pxa_posix_installer_load_directory(installer, options.package_path,
                                           &package_result) != PXA_STATUS_OK)
         goto done;
     stage = "display";
@@ -2320,6 +2964,7 @@ static int run_product_simulator(const options_t *input,
             host_theme->effective_scheme == PXSYS_COLOR_SCHEME_DARK
                 ? PXA_UI_COLOR_SCHEME_DARK : PXA_UI_COLOR_SCHEME_LIGHT;
     ui_config.allocate = allocate_memory; ui_config.release = release_memory;
+    ui_config.resize = reallocate_memory;
     ui_config.now_us = now_us; ui_config.features = PXA_UI_FEATURE_CANVAS |
         PXA_UI_FEATURE_VIRTUAL_LIST | PXA_UI_FEATURE_GRID |
         PXA_UI_FEATURE_RGB565_BITMAP |
@@ -2354,17 +2999,40 @@ static int run_product_simulator(const options_t *input,
         pxa_permission_service_register(host.permissions) != PXA_STATUS_OK) goto done;
     stage = "storage service";
     {
-        const char *state_root = options.state_root != NULL ? options.state_root : options.package_path;
+        static const char hex[] = "0123456789abcdef";
+        const char *state_root = options.state_root;
+        if (manifest->publisher_key_id == NULL) goto done;
+        for (size_t index = 0; index < PXA_PACKAGE_DIGEST_BYTES; ++index) {
+            publisher_hex[2u * index] =
+                hex[manifest->publisher_key_id[index] >> 4];
+            publisher_hex[2u * index + 1u] =
+                hex[manifest->publisher_key_id[index] & 15u];
+        }
+        if (state_root == NULL) {
+            const size_t package_path_size = strlen(options.package_path);
+            default_state_root = malloc(package_path_size + sizeof(".state"));
+            if (default_state_root == NULL) goto done;
+            snprintf(default_state_root, package_path_size + sizeof(".state"),
+                     "%s.state", options.package_path);
+            if (mkdir(default_state_root, 0700) != 0 && errno != EEXIST)
+                goto done;
+            state_root = default_state_root;
+        }
         size_t state_root_size = strlen(state_root);
         storage_parent = malloc(state_root_size + sizeof("/app-data"));
         if (storage_parent == NULL) goto done;
         snprintf(storage_parent, state_root_size + sizeof("/app-data"),
                  "%s/app-data", state_root);
         if (mkdir(storage_parent, 0700) != 0 && errno != EEXIST) goto done;
-        storage_path = malloc(strlen(storage_parent) + 1 + manifest->app_id.size + 1);
+        storage_path = malloc(strlen(storage_parent) + 1u +
+                              sizeof(publisher_hex) - 1u + 1u +
+                              manifest->app_id.size + 1u);
         if (storage_path == NULL) goto done;
-        snprintf(storage_path, strlen(storage_parent) + 1 + manifest->app_id.size + 1,
-                 "%s/%.*s", storage_parent, (int)manifest->app_id.size,
+        snprintf(storage_path, strlen(storage_parent) + 1u +
+                               sizeof(publisher_hex) - 1u + 1u +
+                               manifest->app_id.size + 1u,
+                 "%s/%s-%.*s", storage_parent, publisher_hex,
+                 (int)manifest->app_id.size,
                  (const char *)manifest->app_id.data);
     }
     posix_storage_config.struct_size = sizeof(posix_storage_config);
@@ -2386,16 +3054,75 @@ static int run_product_simulator(const options_t *input,
             pxa_storage_service_workspace_size(&storage_config), host.runtime,
             &storage_config, &storage) != PXA_STATUS_OK ||
         pxa_storage_service_register(storage) != PXA_STATUS_OK) goto done;
+    stage = "private FS service";
+    {
+        const char *state_root = options.state_root != NULL
+                                     ? options.state_root : default_state_root;
+        size_t parent_size;
+        if (state_root == NULL) goto done;
+        fs_parent = malloc(strlen(state_root) + sizeof("/private-files"));
+        if (fs_parent == NULL) goto done;
+        snprintf(fs_parent, strlen(state_root) + sizeof("/private-files"),
+                 "%s/private-files", state_root);
+        if (mkdir(fs_parent, 0700) != 0 && errno != EEXIST) goto done;
+        parent_size = strlen(fs_parent);
+        fs_path = malloc(parent_size + 1u + sizeof(publisher_hex) - 1u + 1u +
+                         manifest->app_id.size + 1u);
+        if (fs_path == NULL) goto done;
+        snprintf(fs_path, parent_size + 1u + sizeof(publisher_hex) - 1u + 1u +
+                          manifest->app_id.size + 1u,
+                 "%s/%s-%.*s", fs_parent, publisher_hex,
+                 (int)manifest->app_id.size,
+                 (const char *)manifest->app_id.data);
+    }
+    posix_fs_config.struct_size = sizeof(posix_fs_config);
+    posix_fs_config.root_path = fs_path;
+    posix_fs_config.quota_bytes = 256u * 1024u;
+    posix_fs_config.max_open_resources = 16;
+    fs_backend_workspace = malloc(pxa_posix_fs_workspace_size(&posix_fs_config));
+    if (fs_backend_workspace == NULL ||
+        pxa_posix_fs_init(fs_backend_workspace,
+                          pxa_posix_fs_workspace_size(&posix_fs_config),
+                          &posix_fs_config, &posix_fs,
+                          &fs_backend) != PXA_STATUS_OK) goto done;
+    fs_config.struct_size = sizeof(fs_config);
+    fs_config.max_open_resources = 16;
+    fs_config.backend = fs_backend;
+    fs_service_workspace = malloc(pxa_fs_service_workspace_size(&fs_config));
+    if (fs_service_workspace == NULL ||
+        pxa_fs_service_init(fs_service_workspace,
+                            pxa_fs_service_workspace_size(&fs_config),
+                            host.runtime, &fs_config, &fs) != PXA_STATUS_OK ||
+        pxa_fs_service_register(fs) != PXA_STATUS_OK) goto done;
+    stage = "IPC broker";
+    pxa_ipc_limits_init(&ipc_limits);
+    ipc_limits.max_endpoints = manifest->ipc_endpoint_count == 0
+                                   ? 1 : manifest->ipc_endpoint_count;
+    ipc_limits.max_pending_calls = 16;
+    ipc_workspace = malloc(pxa_ipc_broker_workspace_size(&ipc_limits));
+    if (ipc_workspace == NULL ||
+        pxa_ipc_broker_init(ipc_workspace,
+                            pxa_ipc_broker_workspace_size(&ipc_limits),
+                            host.runtime, &ipc_limits, &host.ipc) !=
+            PXA_STATUS_OK ||
+        pxa_ipc_broker_register(host.ipc) != PXA_STATUS_OK ||
+        pxa_ipc_broker_set_allocator(host.ipc, NULL, ipc_allocate,
+                                      ipc_release) != PXA_STATUS_OK) goto done;
     audio_backend.struct_size = sizeof(audio_backend);
     audio_backend.context = &host;
     stage = "audio service";
     audio_backend.open = audio_open; audio_backend.commit = audio_commit;
     audio_backend.submit = audio_submit; audio_backend.close = audio_close;
     audio_backend.query = audio_query; audio_backend.flush = audio_flush;
+    audio_backend.play_tone = audio_play_tone;
     audio_backend.play_asset = audio_play_asset;
+    audio_backend.play_sound = audio_play_sound;
+    audio_backend.play_music = audio_play_music;
+    audio_backend.playback_peek = audio_playback_peek;
+    audio_backend.playback_consume = audio_playback_consume;
     audio_backend.control_asset = audio_control_asset;
     audio_config.struct_size = sizeof(audio_config);
-    audio_config.max_sessions = 2; audio_config.max_sessions_per_component = 2;
+    audio_config.max_sessions = 3; audio_config.max_sessions_per_component = 3;
     audio_config.max_eq_bands = PXA_AUDIO_MAX_EQ_BANDS;
     audio_config.backend = audio_backend;
     audio_config.permissions = host.permissions;
@@ -2410,10 +3137,18 @@ static int run_product_simulator(const options_t *input,
     clock_service.context = &host;
     clock_service.control = clock_control;
     if (pxa_service_register(host.runtime, &clock_service) != PXA_STATUS_OK) goto done;
+    store_installer_service.struct_size = sizeof(store_installer_service);
+    store_installer_service.service_id = PXA_STORE_INSTALLER_SERVICE_ID;
+    store_installer_service.major = 0;
+    store_installer_service.minor = 5;
+    store_installer_service.control = store_installer_sim_control;
+    if (pxa_service_register(host.runtime, &store_installer_service) !=
+        PXA_STATUS_OK) goto done;
     lvgl_config.struct_size = sizeof(lvgl_config);
     stage = "LVGL adapter";
     lvgl_config.allocate = allocate_memory; lvgl_config.release = release_memory;
     lvgl_config.execute = execute_inline; lvgl_config.resolve_asset = resolve_asset;
+    lvgl_config.acquire_image = acquire_ui_image;
     lvgl_config.release_asset = release_asset; lvgl_config.event_callback = ui_event;
     lvgl_config.now_us = now_us; lvgl_config.callback_user_data = &host;
     lvgl_config.asset_user_data = &host;
@@ -2500,6 +3235,7 @@ static int run_product_simulator(const options_t *input,
     game_render_config.backend.submit = surface_raster_submit;
     game_render_config.backend.query = surface_raster_query;
     game_render_config.backend.close = surface_close;
+    game_render_config.backend.bind_assets = surface_raster_bind_assets;
     game_render_workspace = malloc(
         pxa_game_render_service_workspace_size(&game_render_config));
     if (game_render_workspace == NULL ||
@@ -2510,6 +3246,62 @@ static int run_product_simulator(const options_t *input,
             PXA_STATUS_OK ||
         pxa_game_render_service_register(host.game_render) != PXA_STATUS_OK)
         goto done;
+    stage = "asset worker";
+    if (manifest_uses_service(manifest,PXA_ASSETS_SERVICE_ID) ||
+        (manifest_uses_service(manifest,PXA_AUDIO_SERVICE_ID) && manifest_has_music(manifest))) {
+        if (pxa_package_file_find(manifest, (pxa_bytes_t){(const uint8_t *)PXA_ASSET_INDEX_PATH, sizeof(PXA_ASSET_INDEX_PATH) - 1})) {
+            pxa_posix_asset_worker_config_t wc = {0};
+            wc.package_root = host.package_root;
+            wc.manifest = manifest;
+            wc.cache.max_entries = 64;
+            wc.cache.max_requests = 48;
+            wc.cache.max_requests_per_owner = 32;
+            wc.cache.max_pending = 16;
+            if (!manifest_uses_service(manifest,PXA_ASSETS_SERVICE_ID)) {
+                // Music borrows catalog metadata and uses its decoder task;
+                // no Guest Assets requests can consume a resident cache here.
+                wc.cache.max_entries=wc.cache.max_requests=wc.cache.max_requests_per_owner=wc.cache.max_pending=1;
+            }
+            wc.cache.resident_limit[0] = asset_setting("PXA_ASSET_INTERNAL_BYTES", 64u * 1024u, 1024u * 1024u);
+            wc.cache.resident_limit[1] = asset_setting("PXA_ASSET_EXTERNAL_BYTES", 512u * 1024u, 16u * 1024u * 1024u);
+            wc.cache.owner_limit[0] = wc.cache.resident_limit[0];
+            wc.cache.owner_limit[1] = wc.cache.resident_limit[1];
+            wc.max_catalog_bytes = 64u * 1024u;
+            wc.metadata_allocator = &host.resource_allocators[PXA_MEMORY_EXTERNAL][PXA_MEMORY_METADATA];
+            wc.temporary_allocator = &host.resource_allocators[PXA_MEMORY_EXTERNAL][PXA_MEMORY_TEMPORARY];
+            wc.allocator_context = &host;
+            wc.allocate = asset_allocate;
+            wc.release = raster_asset_free;
+            wc.notify_context = &host;
+            wc.notify = asset_notify;
+            wc.read_delay_us = (uint32_t)asset_setting("PXA_ASSET_READ_DELAY_US", 0, 1000000);
+            pxa_posix_storage_gate_config_t io_config={
+                asset_setting("PXA_STORAGE_BYTES_PER_SECOND",0,1000000000),
+                (uint32_t)asset_setting("PXA_STORAGE_LATENCY_US",0,1000000)};
+            fprintf(stderr,"PXA STORAGE CONFIG bytes_per_second=%llu latency_us=%u max_read=4096\n",
+                (unsigned long long)io_config.bytes_per_second,io_config.latency_us);
+            status=pxa_posix_storage_gate_create(&io_config,wc.metadata_allocator,&host.storage_gate);
+            if(status) goto done;
+            wc.storage_gate=host.storage_gate;
+            status = pxa_posix_asset_worker_create(&wc, &host.asset_worker);
+            if (status != PXA_STATUS_OK) {
+                fprintf(stderr, "PXA asset worker status=%d\n", (int)status);
+                goto done;
+            }
+        }
+    }
+    if (manifest_uses_service(manifest,PXA_ASSETS_SERVICE_ID)) {
+        stage = "assets service";
+        assets_config.struct_size = sizeof(assets_config);
+        assets_config.max_pending = assets_config.max_pending_per_component = 16;
+        assets_config.max_resources = assets_config.max_resources_per_component = 32;
+        assets_config.backend = (pxa_assets_backend_t){&host, asset_find, asset_request, asset_query, asset_acquire, asset_release, asset_prefetch, asset_inspect,
+            asset_read,asset_read_result,asset_read_release};
+        assets_workspace = malloc(pxa_assets_service_workspace_size(&assets_config));
+        if (!assets_workspace || pxa_assets_service_init(assets_workspace,
+            pxa_assets_service_workspace_size(&assets_config), host.runtime, &assets_config, &host.assets) != PXA_STATUS_OK ||
+            pxa_assets_service_register(host.assets) != PXA_STATUS_OK) goto done;
+    }
     stage = "log service";
     log_config.struct_size = sizeof(log_config);
     log_config.write = simulator_log_write;
@@ -2589,7 +3381,7 @@ static int run_product_simulator(const options_t *input,
                               PXA_UI_FEATURE_CANVAS_STREAM_IO |
                               PXA_UI_FEATURE_GRID;
     capabilities[3].service = PRODUCT_CLOCK_SERVICE; capabilities[3].version.major = 0; capabilities[3].version.minor = 1;
-    capabilities[4].service = PXA_AUDIO_SERVICE_ID; capabilities[4].version.major = 0; capabilities[4].version.minor = 5;
+    capabilities[4].service = PXA_AUDIO_SERVICE_ID; capabilities[4].version.major = PXA_AUDIO_SERVICE_MAJOR; capabilities[4].version.minor = PXA_AUDIO_SERVICE_MINOR;
     capabilities[5].service = PXA_PERMISSION_SERVICE_ID; capabilities[5].version.major = 0; capabilities[5].version.minor = 1;
     capabilities[6].service = PXA_STORAGE_SERVICE_ID; capabilities[6].version.major = 0; capabilities[6].version.minor = 1;
     capabilities[7].service = PXA_SURFACE_SERVICE_ID; capabilities[7].version.major = 0; capabilities[7].version.minor = 2;
@@ -2597,8 +3389,20 @@ static int run_product_simulator(const options_t *input,
     capabilities[9].service = PXA_LOG_SERVICE_ID; capabilities[9].version.major = PXA_LOG_SERVICE_MAJOR; capabilities[9].version.minor = PXA_LOG_SERVICE_MINOR;
     capabilities[10].service = PXA_DEVICE_SERVICE_ID; capabilities[10].version.major = PXA_DEVICE_SERVICE_MAJOR; capabilities[10].version.minor = PXA_DEVICE_SERVICE_MINOR;
     capabilities[11].service = PXA_NET_SERVICE_ID; capabilities[11].version.major = PXA_NET_SERVICE_MAJOR; capabilities[11].version.minor = PXA_NET_SERVICE_MINOR;
-    activation.core_version.major = 0; activation.core_version.minor = 1;
-    activation.services = capabilities; activation.service_count = 12;
+    capabilities[12].service = PXA_FS_SERVICE_ID; capabilities[12].version.major = PXA_FS_SERVICE_MAJOR; capabilities[12].version.minor = PXA_FS_SERVICE_MINOR;
+    capabilities[13].service = PXA_IPC_SERVICE_ID; capabilities[13].version.major = PXA_IPC_SERVICE_MAJOR; capabilities[13].version.minor = PXA_IPC_SERVICE_MINOR;
+    capabilities[14].service = PXA_WASI_SERVICE_ID; capabilities[14].version.major = PXA_WASI_SERVICE_MAJOR; capabilities[14].version.minor = PXA_WASI_SERVICE_MINOR;
+    capabilities[14].features = PXA_WASI_FEATURE_CLOCKS | PXA_WASI_FEATURE_RANDOM;
+    capabilities[15].service = PXA_STORE_INSTALLER_SERVICE_ID;
+    capabilities[15].version.major = 0;
+    capabilities[15].version.minor = 5;
+    activation.core_version.major = PXA_CORE_VERSION_MAJOR;
+    activation.core_version.minor = PXA_CORE_VERSION_MINOR;
+    capabilities[8].features |= PXA_GAME_RENDER_FEATURE_ASSET_BINDINGS;
+    capabilities[16].service = PXA_ASSETS_SERVICE_ID;
+    capabilities[16].version.major = PXA_ASSETS_SERVICE_MAJOR;
+    capabilities[16].version.minor = PXA_ASSETS_SERVICE_MINOR;
+    activation.services = capabilities; activation.service_count = 17;
     profile.target = (pxa_bytes_t){(const uint8_t *)"linux-x86_64", sizeof("linux-x86_64") - 1u};
     profile.engine = (pxa_bytes_t){(const uint8_t *)"wamr", 4};
     profile.engine_abi = (pxa_bytes_t){(const uint8_t *)PXSYS_WAMR_ENGINE_ABI,
@@ -2627,6 +3431,14 @@ static int run_product_simulator(const options_t *input,
     if (coordinator_workspace == NULL || pxa_activation_coordinator_init(coordinator_workspace,
         pxa_activation_coordinator_workspace_size(plan), host.runtime, plan, &host.engine_ops,
         &host.coordinator) != PXA_STATUS_OK) goto done;
+    host.manifest = manifest;
+    if (pxa_ipc_broker_set_endpoint_resolver(host.ipc, &host,
+                                              resolve_ipc_endpoint) !=
+        PXA_STATUS_OK) goto done;
+    for (uint16_t index = 0; index < manifest->ipc_endpoint_count; ++index)
+        if (pxa_ipc_endpoint_declare(
+                host.ipc, manifest->ipc_endpoints[index].name) !=
+            PXA_STATUS_OK) goto done;
     stage = "main component start";
     status = pxa_activation_activate(host.coordinator,
         (pxa_bytes_t){(const uint8_t *)"main", 4}, 1, &component);
@@ -2634,32 +3446,121 @@ static int run_product_simulator(const options_t *input,
         fprintf(stderr, "PXA main component start status=%d\n", (int)status);
         goto done;
     }
-    if (pxa_window_flush_metrics(host.window, component) == PXA_STATUS_OK)
+    /* Guest startup may fill the mailbox before initial window metrics fit.
+     * Drain completions regardless of the metrics result, then retry. */
+    status = pxa_window_flush_metrics(host.window, component);
+    dispatch_component_events(&host);
+    if (status == PXA_STATUS_RESOURCE_LIMIT) {
+        (void)pxa_window_flush_metrics(host.window, component);
         dispatch_component_events(&host);
+    }
     /* An embedded system UI owns Home and Back; installing the standalone
      * strips would shadow its gesture handling. */
     if (owns_display) install_system_gestures(&host);
-    if (owns_display) install_shape_mask(display, &options);
+    stage = "shape mask";
+    if (owns_display && !install_shape_mask(display, &options, &shape_mask))
+        goto done;
+    stage = "event loop";
     if (owns_display && options.pxadb_control_socket != NULL &&
         !pxsys_pxadb_control_start(&pxadb_control,
                                    options.pxadb_control_socket, display,
                                    NULL, NULL))
         goto done;
     while (lv_display_get_default() != NULL) {
+        const uint64_t loop_start_us = trace_loop ? now_us(NULL) : 0;
+        uint64_t pre_end_us = 0, lvgl_end_us = 0, post_end_us = 0;
+        if (trace_loop) {
+            if (perf_window_start_us == 0) perf_window_start_us = loop_start_us;
+            if (previous_loop_start_us != 0) {
+                const uint64_t gap = loop_start_us - previous_loop_start_us;
+                loop_gap_total_us += gap;
+                if (gap > loop_gap_max_us) loop_gap_max_us = gap;
+            }
+            previous_loop_start_us = loop_start_us;
+        }
         pxsys_pxadb_control_poll(&pxadb_control);
         if (pump != NULL) pump(pump_context);
         if (host.exit_requested) break;
         sync_host_theme(&host, lvgl_ui, &lvgl_config.theme);
         dispatch_lifecycle(&host);
+        /* Services can complete without producing a UI or clock event. */
+        dispatch_component_events(&host);
+        if (trace_loop) pre_end_us = now_us(NULL);
+#ifdef PXSYS_PRODUCT_FRAME_OBSERVER
+        const uint64_t lvgl_start_us = now_us(NULL);
+#endif
         uint32_t delay = lv_timer_handler();
+#ifdef PXSYS_PRODUCT_FRAME_OBSERVER
+        if (pending_frame_id != 0) {
+            PXSYS_PRODUCT_FRAME_OBSERVER(pump_context, &host,
+                pending_frame_id, pending_tick_cpu_us +
+                now_us(NULL) - lvgl_start_us);
+            pending_frame_id = 0;
+        }
+#endif
+        if (trace_loop) lvgl_end_us = now_us(NULL);
         if (drain_surface_updates(&host) < 0) goto done;
+#ifdef PXSYS_PRODUCT_FRAME_OBSERVER
+        const uint64_t rendered_before_tick = host.raster_telemetry.rendered_frames;
+        const uint64_t tick_start_us = now_us(NULL);
+#endif
         drain_net_completions(&host);
         dispatch_clock_tick(&host);
         if (drain_surface_updates(&host) < 0) goto done;
+#ifdef PXSYS_PRODUCT_FRAME_OBSERVER
+        if (host.raster_telemetry.rendered_frames > rendered_before_tick) {
+            pending_frame_id = host.raster_telemetry.rendered_frames;
+            pending_tick_cpu_us = now_us(NULL) - tick_start_us;
+        }
+#endif
+        if (trace_loop) post_end_us = now_us(NULL);
         if (delay < 1) delay = 1;
         if (delay > 16) delay = 16;
         delay = limit_delay_to_clock_deadline(&host, delay);
+        if (SDL_AtomicGet(&host.asset_ready)) delay = 1;
         SDL_Delay(delay);
+        if (trace_loop) {
+            const uint64_t sleep_end_us = now_us(NULL);
+            const uint64_t pre_us = pre_end_us - loop_start_us;
+            const uint64_t lvgl_us = lvgl_end_us - pre_end_us;
+            const uint64_t post_us = post_end_us - lvgl_end_us;
+            const uint64_t sleep_us = sleep_end_us - post_end_us;
+            pre_total_us += pre_us;
+            lvgl_total_us += lvgl_us;
+            post_total_us += post_us;
+            sleep_total_us += sleep_us;
+            if (pre_us > pre_max_us) pre_max_us = pre_us;
+            if (lvgl_us > lvgl_max_us) lvgl_max_us = lvgl_us;
+            if (post_us > post_max_us) post_max_us = post_us;
+            if (sleep_us > sleep_max_us) sleep_max_us = sleep_us;
+            ++perf_loops;
+            if (sleep_end_us - perf_window_start_us >= UINT64_C(2000000)) {
+                fprintf(stderr,
+                        "PXA SIM LOOP samples=%u gap_avg_us=%llu gap_max_us=%llu "
+                        "pre_avg_us=%llu pre_max_us=%llu "
+                        "lvgl_avg_us=%llu lvgl_max_us=%llu "
+                        "post_avg_us=%llu post_max_us=%llu "
+                        "sleep_avg_us=%llu sleep_max_us=%llu\n",
+                        perf_loops,
+                        (unsigned long long)(loop_gap_total_us / perf_loops),
+                        (unsigned long long)loop_gap_max_us,
+                        (unsigned long long)(pre_total_us / perf_loops),
+                        (unsigned long long)pre_max_us,
+                        (unsigned long long)(lvgl_total_us / perf_loops),
+                        (unsigned long long)lvgl_max_us,
+                        (unsigned long long)(post_total_us / perf_loops),
+                        (unsigned long long)post_max_us,
+                        (unsigned long long)(sleep_total_us / perf_loops),
+                        (unsigned long long)sleep_max_us);
+                perf_window_start_us = sleep_end_us;
+                loop_gap_total_us = loop_gap_max_us = 0;
+                pre_total_us = pre_max_us = 0;
+                lvgl_total_us = lvgl_max_us = 0;
+                post_total_us = post_max_us = 0;
+                sleep_total_us = sleep_max_us = 0;
+                perf_loops = 0;
+            }
+        }
     }
     result = 0;
 done:
@@ -2668,9 +3569,12 @@ done:
     if (result != 0) fprintf(stderr, "PXA product simulator failed at %s\n", stage);
     if (host.coordinator != NULL && lv_display_get_default() != NULL)
         pxa_activation_deactivate_all(host.coordinator, PXA_STOP_SHUTDOWN);
+    audio_stop_worker(&host);
+    fprintf(stderr,"PXA MUSIC INPUT read_bytes=%llu read_calls=%llu\n",
+        (unsigned long long)host.music_read_bytes,
+        (unsigned long long)host.music_read_calls);
     if (host.audio_device != 0) SDL_CloseAudioDevice(host.audio_device);
-    free(host.music_samples);
-    audio_clear_sound_cache(&host);
+    audio_release_all_sounds(&host);
     if (host.engine != NULL) pxa_wamr_engine_deinit(host.engine);
     if (lv_display_get_default() != NULL) {
         if (lvgl_ui != NULL) pxa_lvgl_ui_deinit(lvgl_ui);
@@ -2683,18 +3587,69 @@ done:
     if (host.label_font != NULL) lv_freetype_font_delete(host.label_font);
     if (host.caption_font != NULL) lv_freetype_font_delete(host.caption_font);
     if (host.runtime != NULL) pxa_runtime_deinit(host.runtime);
+    if (host.asset_worker != NULL) {
+        pxa_asset_cache_stats_t stats;
+        size_t metadata;
+        pxa_posix_asset_worker_stats(host.asset_worker, &stats, &metadata);
+        fprintf(stderr, "PXA ASSETS peak_internal=%zu peak_external=%zu metadata=%zu native_stack=%zu hits=%llu evictions=%llu failures=%llu pressure_retries=%llu prefetch_requests=%llu prefetch_failures=%llu\n",
+            stats.peak_charged[0], stats.peak_charged[1], metadata,
+            pxa_posix_asset_worker_stack_bytes(host.asset_worker),
+            (unsigned long long)stats.cache_hits, (unsigned long long)stats.evictions,
+            (unsigned long long)stats.load_failures, (unsigned long long)stats.pressure_retries,
+            (unsigned long long)stats.prefetch_requests, (unsigned long long)stats.prefetch_failures);
+        while (pxa_posix_asset_worker_destroy(host.asset_worker) == PXA_STATUS_WOULD_BLOCK) SDL_Delay(1);
+        host.asset_worker = NULL;
+    }
+    pxa_posix_storage_stats_t io_stats;
+    pxa_posix_storage_gate_stats(host.storage_gate,&io_stats);
+    for (unsigned lane=0;lane<2;++lane) {
+        pxa_posix_storage_lane_t *s=&io_stats.lanes[lane];
+        fprintf(stderr,"PXA STORAGE lane=%u reads=%llu bytes=%llu wait_us=%llu max_wait_us=%llu service_us=%llu max_service_us=%llu max_read=%u errors=%llu elapsed_us=%llu stalls=%llu stall_us=%llu\n",
+            lane,(unsigned long long)s->reads,(unsigned long long)s->bytes,(unsigned long long)s->wait_us,
+            (unsigned long long)s->max_wait_us,(unsigned long long)s->service_us,(unsigned long long)s->max_service_us,
+            s->max_read_bytes,(unsigned long long)s->errors,(unsigned long long)io_stats.elapsed_us,
+            (unsigned long long)io_stats.stalls,(unsigned long long)io_stats.stall_requested_us);
+    }
+    fprintf(stderr,"PXA MUSIC BUFFER underruns=%llu recoveries=%llu missing_samples=%llu consumed=%llu high_water=%u low_water=%u low_water_valid=%u ready_max_us=%llu\n",
+        (unsigned long long)host.music_buffer.underruns,(unsigned long long)host.music_buffer.recoveries,
+        (unsigned long long)host.music_buffer.missing_samples,(unsigned long long)host.music_buffer.consumed_samples,
+        host.music_buffer.high_water,host.music_buffer.low_water,host.music_buffer.low_water_valid,
+        (unsigned long long)host.music_ready_max_us);
+    fprintf(stderr,"PXA MUSIC DECODE calls=%llu total_us=%llu max_us=%llu excludes_input_io=1\n",
+        (unsigned long long)host.music_decode_calls,(unsigned long long)host.music_decode_us,
+        (unsigned long long)host.music_decode_max_us);
+    pxa_posix_storage_gate_destroy(host.storage_gate); host.storage_gate=NULL;
+    if (host.resource_mutex) {
+        pxa_memory_stats_t stats;
+        pxa_memory_budget_stats(&host.resource_budget, 0, &stats);
+        fprintf(stderr, "PXA RESOURCE BUDGET peak_internal=%zu peak_external=%zu remaining_internal=%zu remaining_external=%zu denied=%llu counter_storage=%zu allocator_storage=%zu\n",
+            stats.peak[0], stats.peak[1], stats.charged[0], stats.charged[1],
+            (unsigned long long)stats.denied, sizeof(host.resource_budget), sizeof(host.resource_allocators));
+        fprintf(stderr, "PXA TEMPORARY BUDGET peak_internal=%zu peak_external=%zu limit_internal=%zu limit_external=%zu\n",
+            stats.temporary_peak[0], stats.temporary_peak[1],
+            host.resource_budget.config.temporary_limit[0], host.resource_budget.config.temporary_limit[1]);
+        if (resource_memory_end(&host) != PXA_STATUS_OK) {
+            fprintf(stderr, "PXA resource allocations remain at shutdown\n");
+            result = 1;
+        }
+    }
+    free(assets_workspace);
+    if (posix_fs != NULL) pxa_posix_fs_deinit(posix_fs);
     if (posix_storage != NULL) pxa_posix_storage_deinit(posix_storage);
     if (installer != NULL) pxa_posix_installer_deinit(installer);
     free(coordinator_workspace); free(plan_workspace); free(engine_workspace); free(lvgl_workspace);
     free(log_workspace); free(game_render_workspace); free(surface_workspace);
     free(device_workspace); free(net_workspace);
     free(ui_workspace); free(window_workspace); free(permission_workspace); free(runtime_workspace); free(manifest_workspace);
-    free(storage_service_workspace); free(storage_workspace); free(storage_path); free(storage_parent);
+    free(fs_service_workspace); free(fs_backend_workspace); free(fs_path); free(fs_parent);
+    free(ipc_workspace);
+    free(storage_service_workspace); free(storage_workspace); free(storage_path); free(storage_parent); free(default_state_root);
     free(encoded); free(installer_workspace); free(public_key);
     if (owns_display && display != NULL && lv_display_get_default() != NULL) {
         lv_display_delete(display);
         lv_deinit();
     }
+    free(shape_mask.pixels);
     return result;
 }
 

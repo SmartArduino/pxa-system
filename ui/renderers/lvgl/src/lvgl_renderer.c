@@ -121,7 +121,7 @@ pxsys_status_t pxsys_lvgl_renderer_create(const pxsys_lvgl_renderer_config_t* co
         /* Application surfaces fill their screen exactly. A scrollable screen
          * only adds scrollbars around the app frame when a gesture reaches
          * it, so keep the screen fixed. */
-        lv_obj_remove_flag(renderer->parent, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_set_scrollable(renderer->parent, false);
         lv_obj_set_scrollbar_mode(renderer->parent, LV_SCROLLBAR_MODE_OFF);
     }
     renderer->transaction_context = config->transaction_context;
@@ -186,9 +186,9 @@ static pxsys_status_t surface_create(void* context,
     /* A surface container owns composition and visibility, not input. Its
      * interactive descendants receive events; an empty container must not
      * cover a runtime-owned UI tree rendered on the same LVGL screen. */
-    lv_obj_remove_flag(entry->root,
-                       LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_add_flag(entry->root, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_scrollable(entry->root, false);
+    lv_obj_set_clickable(entry->root, false);
+    lv_obj_set_hidden(entry->root, true);
     apply_surface_theme(renderer, entry);
     renderer->count++;
     surface->slot = (uint32_t)slot;
@@ -216,10 +216,10 @@ static pxsys_status_t surface_set_visible(void* context,
     if (entry == NULL)
         return PXSYS_STATUS_NOT_FOUND;
     if (visible) {
-        lv_obj_remove_flag(entry->root, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_set_hidden(entry->root, false);
         lv_obj_move_foreground(entry->root);
     } else {
-        lv_obj_add_flag(entry->root, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_set_hidden(entry->root, true);
     }
     entry->visible = visible != 0;
     return PXSYS_STATUS_OK;

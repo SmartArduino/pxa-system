@@ -20,14 +20,15 @@
 #include "pxsys/lvgl_renderer.h"
 #include "pxsys/pxa_catalog.h"
 #include "pxsys/reference_lvgl.h"
+#include "pxsys/lvgl_flags.h"
 #include "pxsys/standard_system.h"
 #include "pxadb_control.h"
 #include "simulator_runtime.h"
 #include "src/core/lv_obj_event_private.h"
 #include "src/drivers/sdl/lv_sdl_private.h"
-#include "src/drivers/sdl/lv_sdl_keyboard.h"
-#include "src/drivers/sdl/lv_sdl_mouse.h"
-#include "src/drivers/sdl/lv_sdl_window.h"
+#include "include/lvgl/drivers/sdl/lv_sdl_keyboard.h"
+#include "include/lvgl/drivers/sdl/lv_sdl_mouse.h"
+#include "include/lvgl/drivers/sdl/lv_sdl_window.h"
 #include "src/misc/cache/instance/lv_image_cache.h"
 
 typedef struct {
@@ -72,6 +73,8 @@ typedef struct {
 
 typedef struct {
     char ssid[PXSYS_REFERENCE_WIFI_SSID_MAX];
+    pxsys_reference_wifi_saved_t saved[PXSYS_REFERENCE_WIFI_NETWORK_MAX];
+    size_t saved_count;
     bool connected;
 } simulator_wifi_t;
 
@@ -226,8 +229,8 @@ static void simulator_screen_off(simulator_power_state_t* state) {
     lv_obj_set_style_border_width(state->screen_off_overlay, 0, 0);
     lv_obj_set_style_radius(state->screen_off_overlay, 0, 0);
     lv_obj_set_style_pad_all(state->screen_off_overlay, 0, 0);
-    lv_obj_add_flag(state->screen_off_overlay, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_remove_flag(state->screen_off_overlay, LV_OBJ_FLAG_SCROLLABLE);
+    pxsys_lvgl_add_flags(state->screen_off_overlay, LV_OBJ_FLAG_CLICKABLE);
+    pxsys_lvgl_remove_flags(state->screen_off_overlay, LV_OBJ_FLAG_SCROLLABLE);
     state->screen_off = 1;
 }
 
@@ -754,10 +757,19 @@ static size_t simulator_wifi_scan(void* context,
 static bool simulator_wifi_connect(void* context, const char* ssid,
                                    const char* password) {
     simulator_wifi_t* wifi = (simulator_wifi_t*)context;
+    size_t index;
     if (wifi == NULL || ssid == NULL || strlen(ssid) == 0 ||
         strlen(ssid) >= sizeof(wifi->ssid))
         return false;
     (void)password;
+    for (index = 0; index < wifi->saved_count; ++index)
+        if (strcmp(wifi->saved[index].ssid, ssid) == 0) break;
+    if (index == wifi->saved_count &&
+        wifi->saved_count < PXSYS_REFERENCE_WIFI_NETWORK_MAX) {
+        snprintf(wifi->saved[wifi->saved_count].ssid,
+                 sizeof(wifi->saved[wifi->saved_count].ssid), "%s", ssid);
+        wifi->saved_count++;
+    }
     snprintf(wifi->ssid, sizeof(wifi->ssid), "%s", ssid);
     wifi->connected = true;
     return true;
@@ -768,6 +780,32 @@ static bool simulator_wifi_current(void* context, char* ssid, size_t capacity) {
     if (wifi == NULL || ssid == NULL || capacity == 0 || !wifi->connected)
         return false;
     snprintf(ssid, capacity, "%s", wifi->ssid);
+    return true;
+}
+
+static size_t simulator_wifi_saved_list(
+    void* context, pxsys_reference_wifi_saved_t* networks, size_t capacity) {
+    const simulator_wifi_t* wifi = (const simulator_wifi_t*)context;
+    size_t count;
+    if (wifi == NULL) return 0;
+    count = wifi->saved_count < capacity ? wifi->saved_count : capacity;
+    if (networks != NULL && count != 0)
+        memcpy(networks, wifi->saved, count * sizeof(*networks));
+    return count;
+}
+
+static bool simulator_wifi_forget(void* context, const char* ssid) {
+    simulator_wifi_t* wifi = (simulator_wifi_t*)context;
+    size_t index;
+    if (wifi == NULL || ssid == NULL) return false;
+    for (index = 0; index < wifi->saved_count; ++index)
+        if (strcmp(wifi->saved[index].ssid, ssid) == 0) break;
+    if (index == wifi->saved_count) return false;
+    if (wifi->connected && strcmp(wifi->ssid, ssid) == 0)
+        wifi->connected = false;
+    memmove(&wifi->saved[index], &wifi->saved[index + 1u],
+            (wifi->saved_count - index - 1u) * sizeof(*wifi->saved));
+    wifi->saved_count--;
     return true;
 }
 
@@ -1206,8 +1244,8 @@ static void apply_display_shape_mask(
     lv_obj_set_style_bg_opa(overlay, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(overlay, 0, 0);
     lv_obj_set_style_pad_all(overlay, 0, 0);
-    lv_obj_clear_flag(overlay, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_add_flag(overlay,
+    pxsys_lvgl_remove_flags(overlay, LV_OBJ_FLAG_SCROLLABLE);
+    pxsys_lvgl_add_flags(overlay,
                     LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_ADV_HITTEST);
     lv_obj_add_event_cb(overlay, display_shape_input_filter,
                         LV_EVENT_HIT_TEST, NULL);
@@ -1683,10 +1721,15 @@ static int run_simulator(const simulator_options_t* options) {
     ui_config.system = system;
     simulated_wifi.connected = options->network == PXSYS_NETWORK_WIFI;
     snprintf(simulated_wifi.ssid, sizeof(simulated_wifi.ssid), "PXA Simulator");
+    snprintf(simulated_wifi.saved[0].ssid,
+             sizeof(simulated_wifi.saved[0].ssid), "PXA Simulator");
+    simulated_wifi.saved_count = 1;
     ui_config.wifi_context = &simulated_wifi;
     ui_config.wifi_scan = simulator_wifi_scan;
     ui_config.wifi_connect = simulator_wifi_connect;
     ui_config.wifi_current = simulator_wifi_current;
+    ui_config.wifi_saved_list = simulator_wifi_saved_list;
+    ui_config.wifi_forget = simulator_wifi_forget;
     /* The standard system UI lives on the top layer, matching the product
      * integration viewport: application surfaces stay below the system chrome
      * so the status bar, navigation gestures and recents keep working while a

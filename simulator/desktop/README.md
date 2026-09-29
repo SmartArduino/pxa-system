@@ -80,3 +80,23 @@ application tree. The source root must contain one `package.json` per app.
 
 可通过 `PXSYS_DESKTOP_APP_SOURCE_ROOT` 从其他 PXA 应用树生成目录；每个应用
 目录必须包含一个 `package.json`。
+
+## Shared resource and temporary limits
+
+The product runner's `PXA_RESOURCE_INTERNAL_BYTES` and
+`PXA_RESOURCE_EXTERNAL_BYTES` limit allocations through the shared resource
+allocator (defaults 128 KiB / 2 MiB). The additional
+`PXA_RESOURCE_TEMPORARY_INTERNAL_BYTES` and
+`PXA_RESOURCE_TEMPORARY_EXTERNAL_BYTES` ceilings default to 16 KiB / 512 KiB.
+Zero disables allocations in that category/class; a smaller total limit still
+wins. Temporary capacity is shared by concurrent and retiring owners, counts
+prefixes and old+new resize blocks, and does not reserve memory ahead of time.
+The shutdown report includes temporary peaks and the configured ceilings.
+
+These settings apply only to allocations routed through the budget. Desktop
+codec-private allocations, LVGL decoded images and other platform memory still
+need coverage or separate reporting. A zero temporary peak for file textures
+means their loader writes directly to the final raster allocation, not that
+OpenSSL, stacks or the whole resource subsystem consume no temporary memory.
+The [resource protocol](../../spec/draft/assets.md) defines accounting and
+ownership. Simulator limits do not emulate ESP CPU speed or memory bandwidth.

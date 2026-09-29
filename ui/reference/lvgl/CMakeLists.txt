@@ -16,6 +16,12 @@ target_include_directories(pxa_system_reference_lvgl PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_LIST_DIR}/include>)
 target_link_libraries(pxa_system_reference_lvgl PUBLIC
     pxsys::standard pxsys::reference_layout lvgl)
+if(DEFINED PXSYS_REFERENCE_UI_LAUNCHER_COLUMNS AND
+   DEFINED PXSYS_REFERENCE_UI_LAUNCHER_ROWS)
+    target_compile_definitions(pxa_system_reference_lvgl PRIVATE
+        PXSYS_REFERENCE_UI_LAUNCHER_COLUMNS=${PXSYS_REFERENCE_UI_LAUNCHER_COLUMNS}
+        PXSYS_REFERENCE_UI_LAUNCHER_ROWS=${PXSYS_REFERENCE_UI_LAUNCHER_ROWS})
+endif()
 if(DEFINED PXSYS_REFERENCE_UI_ANIMATIONS AND NOT PXSYS_REFERENCE_UI_ANIMATIONS)
     target_compile_definitions(pxa_system_reference_lvgl PRIVATE
         PXSYS_REFERENCE_UI_ENABLE_ANIMATIONS=0)

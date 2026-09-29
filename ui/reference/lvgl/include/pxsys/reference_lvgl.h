@@ -147,6 +147,13 @@ typedef bool (*pxsys_reference_lvgl_wifi_connect_fn)(
     void* context, const char* ssid, const char* password);
 typedef bool (*pxsys_reference_lvgl_wifi_current_fn)(
     void* context, char* ssid, size_t capacity);
+typedef struct {
+    char ssid[PXSYS_REFERENCE_WIFI_SSID_MAX];
+} pxsys_reference_wifi_saved_t;
+typedef size_t (*pxsys_reference_lvgl_wifi_saved_list_fn)(
+    void* context, pxsys_reference_wifi_saved_t* networks, size_t capacity);
+typedef bool (*pxsys_reference_lvgl_wifi_forget_fn)(
+    void* context, const char* ssid);
 
 /* App manager. */
 #define PXSYS_REFERENCE_MANAGED_APP_MAX 48
@@ -205,17 +212,23 @@ typedef bool (*pxsys_reference_lvgl_app_permission_set_fn)(
 
 /* File manager. Paths are '/'-rooted logical paths below the storage root. */
 #define PXSYS_REFERENCE_FILE_ENTRY_MAX 64
-#define PXSYS_REFERENCE_FILE_NAME_MAX 128
-#define PXSYS_REFERENCE_FILE_PATH_MAX 192
+#define PXSYS_REFERENCE_FILE_NAME_MAX 193
+#define PXSYS_REFERENCE_FILE_PATH_MAX 512
 
 typedef enum {
     PXSYS_REFERENCE_FILE_ACTION_DELETE = 0,
+    PXSYS_REFERENCE_FILE_ACTION_INSTALL,
+    PXSYS_REFERENCE_FILE_ACTION_RENAME,
+    PXSYS_REFERENCE_FILE_ACTION_MOVE,
+    PXSYS_REFERENCE_FILE_ACTION_COPY,
+    PXSYS_REFERENCE_FILE_ACTION_MKDIR,
 } pxsys_reference_file_action_t;
 
 typedef struct {
     char name[PXSYS_REFERENCE_FILE_NAME_MAX];
     char path[PXSYS_REFERENCE_FILE_PATH_MAX];
     uint64_t size;
+    uint64_t modified_unix_seconds;
     uint8_t is_directory;
 } pxsys_reference_file_entry_t;
 
@@ -223,7 +236,23 @@ typedef size_t (*pxsys_reference_lvgl_file_list_fn)(
     void* context, const char* path, pxsys_reference_file_entry_t* entries,
     size_t capacity);
 typedef bool (*pxsys_reference_lvgl_file_action_fn)(
-    void* context, const char* path, pxsys_reference_file_action_t action);
+    void* context, const char* path, const char* destination,
+    pxsys_reference_file_action_t action);
+/* Pass a path to start a scan, then NULL to advance it in bounded steps.
+ * A completed scan reports done=true and its recursive byte count. */
+typedef bool (*pxsys_reference_lvgl_file_size_fn)(
+    void* context, const char* path, uint64_t* size, bool* done);
+
+typedef struct {
+    uint16_t dim_after_seconds;
+    uint16_t lock_after_seconds;
+    uint8_t dim_percent;
+} pxsys_reference_idle_policy_t;
+typedef bool (*pxsys_reference_lvgl_idle_save_fn)(
+    void* context, const pxsys_reference_idle_policy_t* policy);
+typedef void (*pxsys_reference_lvgl_idle_dim_fn)(
+    void* context, bool enabled, uint8_t percent);
+typedef void (*pxsys_reference_lvgl_idle_lock_fn)(void* context);
 
 #ifndef PXSYS_REFERENCE_UI_ENABLE_ANIMATIONS
 #define PXSYS_REFERENCE_UI_ENABLE_ANIMATIONS 1
@@ -317,6 +346,7 @@ typedef struct {
     void* file_manager_context;
     pxsys_reference_lvgl_file_list_fn file_list;
     pxsys_reference_lvgl_file_action_fn file_action;
+    pxsys_reference_lvgl_file_size_fn file_size;
     /* Optional Recents memory indicator, appended for source compatibility. */
     void* memory_info_context;
     pxsys_reference_lvgl_memory_info_fn memory_info;
@@ -347,6 +377,15 @@ typedef struct {
     void* launcher_order_context;
     pxsys_reference_lvgl_launcher_load_fn launcher_order_load;
     pxsys_reference_lvgl_launcher_save_fn launcher_order_save;
+    pxsys_reference_lvgl_wifi_saved_list_fn wifi_saved_list;
+    pxsys_reference_lvgl_wifi_forget_fn wifi_forget;
+    /* A zero dim timeout disables the idle policy. The display backend must
+     * apply dimming without changing the saved user brightness. */
+    pxsys_reference_idle_policy_t idle_policy;
+    void* idle_context;
+    pxsys_reference_lvgl_idle_save_fn idle_save;
+    pxsys_reference_lvgl_idle_dim_fn idle_dim;
+    pxsys_reference_lvgl_idle_lock_fn idle_lock;
 } pxsys_reference_lvgl_config_t;
 
 typedef struct pxsys_reference_lvgl pxsys_reference_lvgl_t;
