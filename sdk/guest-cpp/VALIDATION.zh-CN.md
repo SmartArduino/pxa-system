@@ -5,9 +5,9 @@
 
 ## 已执行
 
-- `bash tools/package/test_guest_cpp.sh`：21 组 C++26 主机测试通过，覆盖特性、Core、
+- `bash tools/package/test_guest_cpp.sh`：22 组 C++26 主机测试通过，覆盖特性、Core、
   UI 编码/控件/状态/导航、生命周期、有界任务、Assets、Storage、FS、Permission、
-  Audio、Device、Sensor、Net、IPC、GameRender 创建/绘制/帧调度。公共运行时目标文件
+  Audio、Device、Sensor、Net、IPC、Work、GameRender 创建/绘制/帧调度。公共运行时目标文件
   各编译一次后供测试链接，不改变测试的源代码编译选项。
 - 当前工具链 CMake 真实编译探测确认 C++26 模式、显式对象参数、包索引、
   expected/span/协程头文件可用；WASI libc++ 的 inplace_vector/function_ref
@@ -112,6 +112,14 @@
   更新后的独立包 `/tmp/pxa-cpp26-sdk-ipc-release-20260930` 在
   `/tmp/pxa-cpp26-ipc-external-build` 用包内源码与 CMake 构建 counter Wasm。
   类型化契约、独立多 Component 示例和真实 Broker 集成仍待验证。
+- Work 定向测试覆盖 enqueue 的有界包与临时参数、取消、retry 完成、启动配置
+  拥有存储、stop-requested 事件，以及 worker/延时/容量校验；ASan/UBSan 与
+  use-after-scope 通过。`examples/work` 的 UI 与 job 两个 Component 使用
+  WASI SDK 34 编译成 Wasm，并经 `package_app.sh` 生成 Linux AOT 与签名包
+  `/tmp/pxa-cpp-work-pkg-v2/pxa-work.pxa`。`pxa_scheduler_engine_test` 通过。
+  产品模拟器尝试激活该包时返回 `activation plan status=-3`：当前产品 Host 的
+  service capabilities 不含 Work，运行时没有注册 Scheduler。故 Work 的产品
+  模拟器/ESP 运行验收未完成；后续需 Host 接入后重测，不能将交叉构建算作运行成功。
 
 ## 实机
 
@@ -157,7 +165,7 @@ files 的初次三目标构建原始大小：Wasm 225337、Linux AOT 110728、S3
 
 - UI 条件分支、Ref、嵌套动态模块、显式常驻页面选项；完整容量配置及
   动态 UI 实机、更多事务失败路径验收。
-- Work、Surface 服务封装；Net 实际后端与设备验证、Device/Sensor 更多设备及撤销集成验证，IPC 契约生成器
+- Work 的产品 Host/设备接入与运行验收、Surface 服务封装；Net 实际后端与设备验证、Device/Sensor 更多设备及撤销集成验证，IPC 契约生成器
   和独立 service/job Component 示例。
 - Assets 的其余能力、图片/音效/音乐资源示例及真实资源撤销和取消竞态验证。
 - GameRender triangle batch、资源批次、可选 3D 辅助模块、HUD、前后台及

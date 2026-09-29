@@ -16,6 +16,7 @@
 #include "sensor.hpp"
 #include "net.hpp"
 #include "ipc.hpp"
+#include "work.hpp"
 
 #include <memory>
 #include <new>
@@ -49,6 +50,7 @@ public:
     SensorService sensors() noexcept { return {transport_, requests_}; }
     NetService net() noexcept { return {transport_, requests_}; }
     IpcService ipc() noexcept { return {transport_, requests_}; }
+    WorkService work() noexcept { return {transport_, requests_}; }
     bool foreground() const noexcept { return foreground_; }
 
 private:

@@ -231,6 +231,18 @@ endpoint/payload 视图，然后调用 `ctx.ipc().reply(call_id, status, payload
 Broker 接受的工作；后续结果会被忽略，提供方仍应回复或由 Host 停止流程清理。
 类型化契约生成器和独立 service Component 示例尚未完成。
 
+Work 通过 `ctx.work().enqueue({.worker = "sync.job", ...})` 交给单独声明的
+`job` Component。`enqueue` 返回 Work ID 与 Host 授予的执行窗口，不表示
+job 已启动；`cancel(id)` 与 job 内的 `complete(id, WorkResult::success/retry/failure)`
+分别返回操作完成状态。请求在创建任务时编码进有界协程帧，短期 worker 字符串
+和最多 24 字节 input 可立即销毁。job 的 `on_start(Context&, config)` 使用
+`decode_work_start(config)` 获取拥有存储的 ID、attempt、deadline 和 input；
+`on_event` 可用 `decode_work_stop_requested(event)` 响应停止请求。
+`examples/work` 是 UI 与 job 两个独立 Component 的打包示例，使用业务键保存
+幂等标记，并按重试上限返回 retry/failure。当前产品模拟器和 ESP 产品 Host
+尚未把 Scheduler 注册为 Work 服务，因此这个示例目前可编译、可打包，但不能
+完成产品运行验收；底层 Scheduler/WAMR 集成已有单独测试。
+
 独立开发包包含 Device schema、生成工具和黄金向量。检查 C++ 生成物：
 
 ```sh
@@ -238,7 +250,7 @@ python3 spec/draft/tools/generate_service_codecs.py --language cpp --check
 ```
 
 当前实现包括 Core 消息编解码、资源句柄、应用入口、有界协程和请求表、
-声明式布局/常用控件、状态绑定与导航，Storage/Permission/Audio/FS/Device/Sensor/Net/IPC，
+声明式布局/常用控件、状态绑定与导航，Storage/Permission/Audio/FS/Device/Sensor/Net/IPC/Work，
 以及 GameRender 的上下文创建、清屏、矩形和精灵批次 DrawList。
 动态 keyed list 与 VirtualList 已有实现和模拟器验证；条件分支、Ref、
 其余服务接口和完整性能验收尚未完成。独立开发包已可构建和打包示例，

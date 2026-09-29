@@ -1,0 +1,27 @@
+{
+  "format": "pxa-package-source-0.1",
+  "min_sdk": [1, 0],
+  "target_sdk": [1, 0],
+  "compile_sdk": [1, 0],
+  "id": "pxa-cpp-work",
+  "version": "1.0.0",
+  "name": "C++ Work",
+  "description": "Deferred job with bounded retry and idempotent storage marker",
+  "build": {"system": "cmake", "source_dir": "."},
+  "components": [
+    {
+      "id": "main",
+      "kind": "ui",
+      "services": ["ui", "work"],
+      "cmake_target": "pxa_main",
+      "wasi": {"version": "preview1", "libc": "wasi-libc", "features": ["monotonic-clock", "wall-clock"]}
+    },
+    {
+      "id": "sync.job",
+      "kind": "job",
+      "services": ["storage", "work"],
+      "cmake_target": "pxa_job",
+      "wasi": {"version": "preview1", "libc": "wasi-libc", "features": ["monotonic-clock", "wall-clock"]}
+    }
+  ]
+}
