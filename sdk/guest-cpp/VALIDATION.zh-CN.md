@@ -117,9 +117,16 @@
   use-after-scope 通过。`examples/work` 的 UI 与 job 两个 Component 使用
   WASI SDK 34 编译成 Wasm，并经 `package_app.sh` 生成 Linux AOT 与签名包
   `/tmp/pxa-cpp-work-pkg-v2/pxa-work.pxa`。`pxa_scheduler_engine_test` 通过。
-  产品模拟器尝试激活该包时返回 `activation plan status=-3`：当前产品 Host 的
-  service capabilities 不含 Work，运行时没有注册 Scheduler。故 Work 的产品
-  模拟器/ESP 运行验收未完成；后续需 Host 接入后重测，不能将交叉构建算作运行成功。
+  产品模拟器现已注册 Work capability 和 Scheduler，支持独立 job Component
+  的激活、到期调度、完成、重试、取消和超时停止。用
+  `build/simulator/pai-touch/pxsys_product_simulator --package
+  /tmp/pxa-cpp-work-pkg-v2/pxa-work --publisher-key
+  deps/pxa-system/apps/pxa/.dev-signing/publisher-public.der` 在 dummy SDL 下
+  启动，控制套接字点击 Queue 后，UI 显示 Queued；状态存储生成
+  `sync.completed.1` 值为 1，证明 job 实际执行。相同构建的
+  `pxa_scheduler_engine_test` 和 `pxa_package_test` 均通过。模拟器 Work 队列
+  只保存在进程内，重启后不恢复待执行项；ESP Host 尚未注册 Work，实机运行
+  验收仍待完成。
 
 ## 实机
 
@@ -165,7 +172,7 @@ files 的初次三目标构建原始大小：Wasm 225337、Linux AOT 110728、S3
 
 - UI 条件分支、Ref、嵌套动态模块、显式常驻页面选项；完整容量配置及
   动态 UI 实机、更多事务失败路径验收。
-- Work 的产品 Host/设备接入与运行验收、Surface 服务封装；Net 实际后端与设备验证、Device/Sensor 更多设备及撤销集成验证，IPC 契约生成器
+- Work 的 ESP Host 接入、持久化队列与设备运行验收、Surface 服务封装；Net 实际后端与设备验证、Device/Sensor 更多设备及撤销集成验证，IPC 契约生成器
   和独立 service/job Component 示例。
 - Assets 的其余能力、图片/音效/音乐资源示例及真实资源撤销和取消竞态验证。
 - GameRender triangle batch、资源批次、可选 3D 辅助模块、HUD、前后台及

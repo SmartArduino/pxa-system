@@ -239,9 +239,9 @@ job 已启动；`cancel(id)` 与 job 内的 `complete(id, WorkResult::success/re
 `decode_work_start(config)` 获取拥有存储的 ID、attempt、deadline 和 input；
 `on_event` 可用 `decode_work_stop_requested(event)` 响应停止请求。
 `examples/work` 是 UI 与 job 两个独立 Component 的打包示例，使用业务键保存
-幂等标记，并按重试上限返回 retry/failure。当前产品模拟器和 ESP 产品 Host
-尚未把 Scheduler 注册为 Work 服务，因此这个示例目前可编译、可打包，但不能
-完成产品运行验收；底层 Scheduler/WAMR 集成已有单独测试。
+幂等标记，并按重试上限返回 retry/failure。产品模拟器已注册 Work 服务，
+可运行这个双 Component 示例；模拟器当前使用进程内有界队列，重启后不恢复
+待执行项。ESP 产品 Host 尚未接入 Work，不能把模拟器结果视为实机验收。
 
 独立开发包包含 Device schema、生成工具和黄金向量。检查 C++ 生成物：
 

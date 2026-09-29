@@ -38,6 +38,7 @@
 #include "pxa/fs.h"
 #include "pxa/ipc.h"
 #include "pxa/runtime.h"
+#include "pxa/scheduler.h"
 #include "pxa/service.h"
 #include "pxa/storage.h"
 #include "pxa/surface.h"
@@ -296,6 +297,18 @@ typedef struct {
     pxa_activation_coordinator_t *coordinator;
     const pxa_package_manifest_t *manifest;
     pxa_ipc_broker_t *ipc;
+    pxa_scheduler_service_t *scheduler;
+    pxa_scheduler_entry_t queued_work[8];
+    size_t queued_work_count;
+    pxa_scheduler_entry_t running_work;
+    pxa_component_t running_work_component;
+    uint64_t running_work_deadline_ms;
+    uint64_t running_work_grace_ms;
+    uint64_t running_work_finish_at_ms;
+    uint8_t running_work_starting;
+    uint8_t running_work_stop_posted;
+    uint8_t running_work_finished;
+    uint8_t running_work_cancelled;
     pxa_component_t active_component;
     pxa_component_t service_components[PRODUCT_COMPONENTS];
     uint16_t service_component_count;
@@ -549,6 +562,157 @@ static uint64_t now_us(void *context) {
     clock_gettime(CLOCK_MONOTONIC, &now);
     return (uint64_t)now.tv_sec * UINT64_C(1000000) +
            (uint64_t)now.tv_nsec / UINT64_C(1000);
+}
+
+static uint64_t work_now_ms(void *context) {
+    return now_us(context) / UINT64_C(1000);
+}
+
+static pxa_status_t work_store_load(void *context,
+                                    pxa_scheduler_entry_t *entries,
+                                    size_t capacity, size_t *count) {
+    product_host_t *host = context;
+    if (host->queued_work_count > capacity) return PXA_STATUS_RESOURCE_LIMIT;
+    memcpy(entries, host->queued_work,
+           host->queued_work_count * sizeof(*entries));
+    *count = host->queued_work_count;
+    return PXA_STATUS_OK;
+}
+
+static pxa_status_t work_store_save(void *context,
+                                    const pxa_scheduler_entry_t *entries,
+                                    size_t count) {
+    product_host_t *host = context;
+    if (count > 8) return PXA_STATUS_RESOURCE_LIMIT;
+    memcpy(host->queued_work, entries, count * sizeof(*entries));
+    host->queued_work_count = count;
+    return PXA_STATUS_OK;
+}
+
+static pxa_status_t work_complete(void *context, pxa_component_t component,
+                                   uint32_t id, pxa_work_result_t result) {
+    product_host_t *host = context;
+    pxa_status_t status = PXA_STATUS_OK;
+    if ((!host->running_work_starting &&
+         host->running_work_component != component) ||
+        host->running_work.id != id || host->running_work_finished ||
+        host->running_work_cancelled) return PXA_STATUS_NOT_FOUND;
+    if (result == PXA_WORK_RESULT_RETRY &&
+        host->running_work.attempt < host->running_work.max_attempts)
+        status = pxa_scheduler_retry(host->scheduler, &host->running_work);
+    if (status == PXA_STATUS_OK) {
+        host->running_work_finished = 1;
+        host->running_work_finish_at_ms = work_now_ms(NULL) + 1;
+    }
+    return status;
+}
+
+static pxa_status_t work_cancel(void *context, uint32_t id) {
+    product_host_t *host = context;
+    if ((!host->running_work_starting &&
+         host->running_work_component == PXA_COMPONENT_INVALID) ||
+        host->running_work.id != id || host->running_work_finished)
+        return PXA_STATUS_NOT_FOUND;
+    host->running_work_cancelled = 1;
+    return PXA_STATUS_OK;
+}
+
+static pxa_status_t pump_work(product_host_t *host) {
+    const uint64_t now = work_now_ms(NULL);
+    pxa_status_t status;
+    if (host->scheduler == NULL || host->coordinator == NULL)
+        return PXA_STATUS_OK;
+    if (host->running_work_component != PXA_COMPONENT_INVALID) {
+        pxa_component_snapshot_t snapshot;
+        const int stopped = pxa_component_snapshot(
+            host->runtime, host->running_work_component, &snapshot) !=
+                PXA_STATUS_OK || snapshot.state != PXA_COMPONENT_RUNNING;
+        if (!stopped && !host->running_work_finished &&
+            !host->running_work_cancelled &&
+            now >= host->running_work_deadline_ms &&
+            !host->running_work_stop_posted) {
+            status = pxa_scheduler_post_work_stop(host->scheduler,
+                host->running_work_component, host->running_work.id,
+                host->running_work_deadline_ms);
+            if (status == PXA_STATUS_OK) {
+                host->running_work_stop_posted = 1;
+                host->running_work_grace_ms = now + 500;
+            } else if (status != PXA_STATUS_WOULD_BLOCK) {
+                host->running_work_grace_ms = now;
+            }
+        }
+        if (!stopped && !host->running_work_finished &&
+            !host->running_work_cancelled &&
+            (!host->running_work_grace_ms ||
+             now < host->running_work_grace_ms)) return PXA_STATUS_OK;
+        if (!stopped && host->running_work_finished &&
+            now < host->running_work_finish_at_ms) return PXA_STATUS_OK;
+        if (!host->running_work_finished && !host->running_work_cancelled &&
+            host->running_work.attempt < host->running_work.max_attempts) {
+            status = pxa_scheduler_retry(host->scheduler, &host->running_work);
+            if (status != PXA_STATUS_OK) return status;
+        }
+        {
+            const pxa_bytes_t id = {
+                host->running_work.component_id,
+                host->running_work.component_id_size};
+            status = pxa_activation_deactivate(host->coordinator, id,
+                host->running_work_cancelled ? PXA_STOP_POLICY :
+                host->running_work_finished ? PXA_STOP_NORMAL : PXA_STOP_FAULT);
+            if (status != PXA_STATUS_OK && status != PXA_STATUS_NOT_FOUND)
+                return status;
+        }
+        host->running_work_component = PXA_COMPONENT_INVALID;
+        memset(&host->running_work, 0, sizeof(host->running_work));
+        host->running_work_finished = 0;
+        host->running_work_cancelled = 0;
+        host->running_work_stop_posted = 0;
+        host->running_work_grace_ms = 0;
+        host->running_work_finish_at_ms = 0;
+    }
+    {
+        pxa_scheduler_entry_t due[8];
+        size_t count = 0;
+        status = pxa_scheduler_take_due(host->scheduler, due, 8, &count);
+        if (status != PXA_STATUS_OK || count == 0) return status;
+        for (size_t i = 1; i < count; ++i) {
+            status = pxa_scheduler_defer(host->scheduler, &due[i], 1000);
+            if (status != PXA_STATUS_OK) return status;
+        }
+        const uint64_t deadline = now + due[0].max_execution_ms;
+        uint8_t config[64];
+        size_t config_size = 0;
+        const uint64_t instance = ++host->next_instance_id;
+        status = pxa_scheduler_encode_start_config(
+            &due[0], deadline, config, sizeof(config), &config_size);
+        if (status == PXA_STATUS_OK)
+            status = pxa_wamr_engine_set_config(host->engine, instance,
+                (pxa_bytes_t){config, config_size});
+        if (status == PXA_STATUS_OK) {
+            host->running_work = due[0];
+            host->running_work_deadline_ms = deadline;
+            host->running_work_starting = 1;
+            status = pxa_activation_activate(host->coordinator,
+                (pxa_bytes_t){due[0].component_id, due[0].component_id_size},
+                instance, &host->running_work_component);
+            host->running_work_starting = 0;
+        }
+        if (status != PXA_STATUS_OK) {
+            host->running_work_component = PXA_COMPONENT_INVALID;
+            if (!host->running_work_finished &&
+                due[0].attempt < due[0].max_attempts) {
+                pxa_status_t retry_status = pxa_scheduler_retry(
+                    host->scheduler, &due[0]);
+                if (retry_status != PXA_STATUS_OK) return retry_status;
+            }
+            memset(&host->running_work, 0, sizeof(host->running_work));
+            host->running_work_finished = 0;
+            host->running_work_cancelled = 0;
+            host->running_work_finish_at_ms = 0;
+            return PXA_STATUS_OK;
+        }
+    }
+    return PXA_STATUS_OK;
 }
 
 static void system_back_indicator_reset(product_host_t *host) {
@@ -1645,6 +1809,10 @@ static void dispatch_component_events(product_host_t *host) {
                     host->service_components[index], &result) ==
                 PXA_STATUS_OK) delivered = 1;
         }
+        if (host->running_work_component != PXA_COMPONENT_INVALID &&
+            pxa_wamr_engine_deliver_event_result(
+                host->engine, host->runtime, host->running_work_component,
+                &result) == PXA_STATUS_OK) delivered = 1;
         if (pxa_wamr_engine_deliver_event_result(
                 host->engine, host->runtime, host->active_component,
                 &result) == PXA_STATUS_OK) {
@@ -1870,7 +2038,8 @@ static pxa_status_t prepare_start(void *context, pxa_component_t component,
     pxa_status_t status;
     (void)instance_id;
     if (host == NULL) return PXA_STATUS_INVALID_ARGUMENT;
-    if (kind == PXA_COMPONENT_KIND_SERVICE) return PXA_STATUS_OK;
+    if (kind == PXA_COMPONENT_KIND_SERVICE ||
+        kind == PXA_COMPONENT_KIND_JOB) return PXA_STATUS_OK;
     if (kind != PXA_COMPONENT_KIND_UI) return PXA_STATUS_UNSUPPORTED;
     window_backend.struct_size = sizeof(window_backend);
     window_backend.context = host;
@@ -2823,11 +2992,14 @@ static int run_product_simulator(const options_t *input,
     pxa_sensor_descriptor_t sensor_descriptor = {0};
     pxa_net_config_t net_config = {0};
     pxa_net_backend_t net_backend = {0};
+    pxa_scheduler_config_t scheduler_config;
+    pxa_bytes_t job_components[PRODUCT_COMPONENTS];
+    uint16_t job_component_count = 0;
     pxa_log_config_t log_config = {0};
     pxa_service_ops_t clock_service = {0};
     pxa_service_ops_t store_installer_service = {0};
     pxa_wamr_engine_config_t engine_config = {0};
-    pxa_package_service_capability_t capabilities[18] = {0};
+    pxa_package_service_capability_t capabilities[19] = {0};
     pxa_package_activation_profile_t activation = {0};
     pxa_package_host_profile_t profile = {0};
     pxa_activation_plan_t *plan = NULL;
@@ -2837,6 +3009,7 @@ static int run_product_simulator(const options_t *input,
     void *storage_service_workspace = NULL, *lvgl_workspace = NULL, *engine_workspace = NULL;
     void *fs_backend_workspace = NULL, *fs_service_workspace = NULL;
     void *ipc_workspace = NULL;
+    void *scheduler_workspace = NULL;
     void *surface_workspace = NULL, *game_render_workspace = NULL;
     void *device_workspace = NULL, *net_workspace = NULL;
     void *sensor_workspace = NULL;
@@ -2885,6 +3058,7 @@ static int run_product_simulator(const options_t *input,
     host.focused = owns_display ? 1u : 0u;
     host.pending_lifecycle = 2u;
     host.next_instance_id = 1;
+    host.running_work_component = PXA_COMPONENT_INVALID;
 
     {
         struct stat metadata;
@@ -3463,6 +3637,32 @@ static int run_product_simulator(const options_t *input,
             PXA_STATUS_OK ||
         pxa_net_service_register(host.net) != PXA_STATUS_OK)
         goto done;
+    stage = "work service";
+    for (uint16_t index = 0; index < manifest->component_count; ++index) {
+        if (manifest->components[index].kind != PXA_COMPONENT_KIND_JOB)
+            continue;
+        if (job_component_count == PRODUCT_COMPONENTS) goto done;
+        job_components[job_component_count++] = manifest->components[index].id;
+    }
+    pxa_scheduler_config_init(&scheduler_config);
+    scheduler_config.job_components = job_components;
+    scheduler_config.job_component_count = job_component_count;
+    scheduler_config.clock = work_now_ms;
+    scheduler_config.store.context = &host;
+    scheduler_config.store.load = work_store_load;
+    scheduler_config.store.save = work_store_save;
+    scheduler_config.work_context = &host;
+    scheduler_config.complete_work = work_complete;
+    scheduler_config.cancel_work = work_cancel;
+    scheduler_workspace = malloc(
+        pxa_scheduler_service_workspace_size(&scheduler_config));
+    if (scheduler_workspace == NULL ||
+        pxa_scheduler_service_init(scheduler_workspace,
+            pxa_scheduler_service_workspace_size(&scheduler_config),
+            host.runtime, &scheduler_config, &host.scheduler) != PXA_STATUS_OK ||
+        pxa_scheduler_load(host.scheduler) != PXA_STATUS_OK ||
+        pxa_scheduler_service_register(host.scheduler) != PXA_STATUS_OK)
+        goto done;
     engine_config.struct_size = sizeof(engine_config); engine_config.host_context = &host;
     stage = "WAMR engine";
     engine_config.read_artifact = read_artifact; engine_config.now_us = now_us;
@@ -3509,7 +3709,10 @@ static int run_product_simulator(const options_t *input,
     capabilities[17].service = PXA_SENSOR_SERVICE_ID;
     capabilities[17].version.major = PXA_SENSOR_SERVICE_MAJOR;
     capabilities[17].version.minor = PXA_SENSOR_SERVICE_MINOR;
-    activation.services = capabilities; activation.service_count = 18;
+    capabilities[18].service = PXA_WORK_SERVICE_ID;
+    capabilities[18].version.major = PXA_WORK_SERVICE_MAJOR;
+    capabilities[18].version.minor = PXA_WORK_SERVICE_MINOR;
+    activation.services = capabilities; activation.service_count = 19;
     profile.target = (pxa_bytes_t){(const uint8_t *)"linux-x86_64", sizeof("linux-x86_64") - 1u};
     profile.engine = (pxa_bytes_t){(const uint8_t *)"wamr", 4};
     profile.engine_abi = (pxa_bytes_t){(const uint8_t *)PXSYS_WAMR_ENGINE_ABI,
@@ -3601,6 +3804,10 @@ static int run_product_simulator(const options_t *input,
         dispatch_lifecycle(&host);
         /* Services can complete without producing a UI or clock event. */
         dispatch_component_events(&host);
+        if (pump_work(&host) != PXA_STATUS_OK) {
+            stage = "work dispatch";
+            goto done;
+        }
         if (trace_loop) pre_end_us = now_us(NULL);
 #ifdef PXSYS_PRODUCT_FRAME_OBSERVER
         const uint64_t lvgl_start_us = now_us(NULL);
@@ -3762,6 +3969,7 @@ done:
     free(ui_workspace); free(window_workspace); free(permission_workspace); free(runtime_workspace); free(manifest_workspace);
     free(fs_service_workspace); free(fs_backend_workspace); free(fs_path); free(fs_parent);
     free(ipc_workspace);
+    free(scheduler_workspace);
     free(storage_service_workspace); free(storage_workspace); free(storage_path); free(storage_parent); free(default_state_root);
     free(encoded); free(installer_workspace); free(public_key);
     if (owns_display && display != NULL && lv_display_get_default() != NULL) {
