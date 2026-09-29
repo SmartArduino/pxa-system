@@ -20,7 +20,8 @@ public:
     Service(Transport& transport, RequestTable& requests) noexcept
         : transport_(transport), requests_(requests) {}
 
-    Task<Renderer> create(RenderOptions options = {}) {
+    Task<Renderer> create(this Service self, RenderOptions options = {}) {
+        auto& [transport_, requests_] = self;
         const bool automatic = options.width == 0 && options.height == 0;
         if ((!automatic && (!options.width || !options.height ||
                             options.scale != 0)) ||

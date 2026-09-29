@@ -99,7 +99,8 @@ public:
         return transport_.send(2, 1, 0, payload);
     }
 
-    Task<WindowMetrics> snapshot() {
+    Task<WindowMetrics> snapshot(this WindowService self) {
+        auto& [transport_, requests_] = self;
         auto response = co_await Response(transport_, requests_, 2, 2, {});
         if (!response) co_return std::unexpected(response.error());
         if (response->payload.size() < 4)

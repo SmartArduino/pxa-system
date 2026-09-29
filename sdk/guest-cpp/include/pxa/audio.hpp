@@ -242,7 +242,8 @@ public:
     AudioService(Transport& transport, RequestTable& requests) noexcept
         : transport_(transport), requests_(requests) {}
 
-    Task<AudioSession> open(const Permission& permission) {
+    Task<AudioSession> open(this AudioService self, const Permission& permission) {
+        auto& [transport_, requests_] = self;
         if (!(permission.handle() >> 32))
             co_return std::unexpected(Error::invalid_argument);
         std::array<std::byte, 18> payload{};

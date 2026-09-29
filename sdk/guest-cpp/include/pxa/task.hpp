@@ -118,6 +118,8 @@ public:
     }
     ~Task() { if (handle_) handle_.destroy(); }
 
+    static Task failed(Error error) noexcept { return Task(std::unexpected(error)); }
+
     bool valid() const noexcept { return static_cast<bool>(handle_); }
     Error failure() const noexcept { return failed_; }
     handle_type release() noexcept { return std::exchange(handle_, {}); }

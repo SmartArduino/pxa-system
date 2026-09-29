@@ -4,6 +4,17 @@
 
 namespace pxa::wire {
 
+template<std::size_t Capacity> struct RequestPacket {
+    std::array<std::byte, header_bytes + Capacity> bytes{};
+    std::size_t size = 0;
+    std::span<const std::byte> view() const noexcept {
+        return {bytes.data() + header_bytes, size};
+    }
+    std::span<std::byte> packet() noexcept {
+        return {bytes.data(), header_bytes + size};
+    }
+};
+
 inline Result<std::span<const std::byte>> result_body(
     std::span<const std::byte> payload) noexcept {
     if (payload.size() < 4) return std::unexpected(Error::protocol_error);

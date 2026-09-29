@@ -1,6 +1,7 @@
 #pragma once
 
 #include "task.hpp"
+#include "service_wire.hpp"
 
 #include <array>
 #include <string_view>
@@ -49,22 +50,51 @@ struct AssetRead {
 };
 
 class AssetService {
+    using Packet = wire::RequestPacket<267>;
 public:
     AssetService(Transport& transport, RequestTable& requests) noexcept
         : transport_(transport), requests_(requests) {}
 
     Task<Asset> load(AssetKind kind, std::string_view path) {
         if (!valid_path(path) || !valid_kind(kind))
-            co_return std::unexpected(Error::invalid_argument);
-        std::array<std::byte, 259> payload{};
-        wire::put16(payload.data(),
-                    static_cast<std::uint16_t>(path.size()));
-        payload[2] = std::byte(static_cast<std::uint8_t>(kind));
-        for (std::size_t i = 0; i < path.size(); ++i)
-            payload[4 + i] = std::byte(path[i]);
+            return Task<Asset>::failed(Error::invalid_argument);
+        auto packet = path_packet(path, 4);
+        packet.bytes[wire::header_bytes + 2] = std::byte(kind);
+        return load_impl(transport_, requests_, kind, std::move(packet));
+    }
+
+    Task<AssetDescriptor> query(std::string_view path) {
+        if (!valid_path(path))
+            return Task<AssetDescriptor>::failed(Error::invalid_argument);
+        return query_impl(transport_, requests_, path_packet(path, 4));
+    }
+
+    Task<AssetRead> read(std::string_view path, std::uint32_t offset,
+                         std::span<std::byte> output) {
+        if (!valid_path(path) || output.empty() || output.size() > 4064)
+            return Task<AssetRead>::failed(Error::invalid_argument);
+        auto packet = path_packet(path, 12);
+        auto* payload = packet.bytes.data() + wire::header_bytes;
+        wire::put32(payload + 4, offset);
+        wire::put32(payload + 8, static_cast<std::uint32_t>(output.size()));
+        return read_impl(transport_, requests_, std::move(packet), offset, output);
+    }
+
+private:
+    static Packet path_packet(std::string_view path, std::size_t prefix) noexcept {
+        Packet packet;
+        auto* payload = packet.bytes.data() + wire::header_bytes;
+        wire::put16(payload, static_cast<std::uint16_t>(path.size()));
+        for (std::size_t i = 0; i < path.size(); ++i) payload[prefix + i] = std::byte(path[i]);
+        packet.size = prefix + path.size();
+        return packet;
+    }
+
+    static Task<Asset> load_impl(Transport& transport, RequestTable& requests,
+                                 AssetKind kind, Packet packet) {
         auto event = co_await Response(
-            transport_, requests_, 21, 2,
-            {payload.data(), path.size() + 4}, true);
+            transport, requests, 21, 2,
+            Response::PrebuiltPacket{packet.packet()}, true);
         if (!event) co_return std::unexpected(event.error());
         auto status = parse_status(event->payload);
         if (!status) co_return std::unexpected(status.error());
@@ -77,24 +107,17 @@ public:
             co_return std::unexpected(Error::protocol_error);
         auto handle = wire::get64(event->payload.data() + 4);
         if (!handle) co_return std::unexpected(Error::protocol_error);
-        Resource<AssetTag> pending(transport_, handle);
+        Resource<AssetTag> pending(transport, handle);
         auto descriptor = decode_descriptor(event->payload.subspan(12));
         if (!descriptor || descriptor->kind != kind)
             co_return std::unexpected(Error::protocol_error);
-        co_return Asset(transport_, pending.release(), *descriptor);
+        co_return Asset(transport, pending.release(), *descriptor);
     }
 
-    Task<AssetDescriptor> query(std::string_view path) {
-        if (!valid_path(path))
-            co_return std::unexpected(Error::invalid_argument);
-        std::array<std::byte, 259> payload{};
-        wire::put16(payload.data(),
-                    static_cast<std::uint16_t>(path.size()));
-        for (std::size_t i = 0; i < path.size(); ++i)
-            payload[4 + i] = std::byte(path[i]);
+    static Task<AssetDescriptor> query_impl(Transport& transport,
+                                            RequestTable& requests, Packet packet) {
         auto event = co_await Response(
-            transport_, requests_, 21, 1,
-            {payload.data(), path.size() + 4});
+            transport, requests, 21, 1, Response::PrebuiltPacket{packet.packet()});
         if (!event) co_return std::unexpected(event.error());
         auto status = parse_status(event->payload);
         if (!status) co_return std::unexpected(status.error());
@@ -108,21 +131,11 @@ public:
         co_return decode_descriptor(event->payload.subspan(4));
     }
 
-    Task<AssetRead> read(std::string_view path, std::uint32_t offset,
-                         std::span<std::byte> output) {
-        if (!valid_path(path) || output.empty() || output.size() > 4064)
-            co_return std::unexpected(Error::invalid_argument);
-        std::array<std::byte, 267> payload{};
-        wire::put16(payload.data(),
-                    static_cast<std::uint16_t>(path.size()));
-        wire::put32(payload.data() + 4, offset);
-        wire::put32(payload.data() + 8,
-                    static_cast<std::uint32_t>(output.size()));
-        for (std::size_t i = 0; i < path.size(); ++i)
-            payload[12 + i] = std::byte(path[i]);
+    static Task<AssetRead> read_impl(Transport& transport, RequestTable& requests,
+                                     Packet packet, std::uint32_t offset,
+                                     std::span<std::byte> output) {
         auto event = co_await Response(
-            transport_, requests_, 21, 5,
-            {payload.data(), path.size() + 12});
+            transport, requests, 21, 5, Response::PrebuiltPacket{packet.packet()});
         if (!event) co_return std::unexpected(event.error());
         auto status = parse_status(event->payload);
         if (!status) co_return std::unexpected(status.error());

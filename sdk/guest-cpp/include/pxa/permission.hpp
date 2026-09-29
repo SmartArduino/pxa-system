@@ -40,8 +40,10 @@ public:
     PermissionService(Transport& transport, RequestTable& requests) noexcept
         : transport_(transport), requests_(requests) {}
 
-    Task<bool> check(std::string_view name, std::span<const std::byte> scope,
+    Task<bool> check(this PermissionService self, std::string_view name,
+                     std::span<const std::byte> scope,
                      std::span<std::byte> packet) {
+        auto& [transport_, requests_] = self;
         auto size = encode(name, scope, packet);
         if (!size) co_return std::unexpected(size.error());
         auto event = co_await Response(transport_, requests_, 11, 1,
@@ -54,19 +56,20 @@ public:
         co_return (*body)[0] == std::byte{1};
     }
 
-    Task<bool> check(std::string_view name,
+    Task<bool> check(this PermissionService self, std::string_view name,
                      std::span<const std::byte> scope = {}) {
         std::array<std::byte, 512> packet{};
-        co_return co_await check(name, scope, packet);
+        co_return co_await self.check(name, scope, packet);
     }
 
     Task<bool> check(std::string_view name, std::string_view scope) {
         return check(name, std::as_bytes(std::span{scope.data(), scope.size()}));
     }
 
-    Task<Permission> acquire(std::string_view name,
+    Task<Permission> acquire(this PermissionService self, std::string_view name,
                              std::span<const std::byte> scope,
                              std::span<std::byte> packet) {
+        auto& [transport_, requests_] = self;
         auto size = encode(name, scope, packet);
         if (!size) co_return std::unexpected(size.error());
         auto event = co_await Response(transport_, requests_, 11, 2,
@@ -79,10 +82,10 @@ public:
         co_return Permission(transport_, wire::get64(body->data()));
     }
 
-    Task<Permission> acquire(std::string_view name,
+    Task<Permission> acquire(this PermissionService self, std::string_view name,
                              std::span<const std::byte> scope = {}) {
         std::array<std::byte, 512> packet{};
-        co_return co_await acquire(name, scope, packet);
+        co_return co_await self.acquire(name, scope, packet);
     }
 
     Task<Permission> acquire(std::string_view name, std::string_view scope) {

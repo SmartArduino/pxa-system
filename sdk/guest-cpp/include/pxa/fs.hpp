@@ -72,16 +72,7 @@ inline bool valid_mode(OpenMode mode) noexcept {
 template<class T> Task<T> failure(Error error) {
     co_return std::unexpected(error);
 }
-template<std::size_t Capacity> struct Payload {
-    std::array<std::byte, wire::header_bytes + Capacity> bytes{};
-    std::size_t size = 0;
-    std::span<const std::byte> view() const noexcept {
-        return {bytes.data() + wire::header_bytes, size};
-    }
-    std::span<std::byte> packet() noexcept {
-        return {bytes.data(), wire::header_bytes + size};
-    }
-};
+template<std::size_t Capacity> using Payload = wire::RequestPacket<Capacity>;
 template<std::size_t N>
 inline void path_record(Payload<N>& payload, std::uint16_t tag,
                          std::string_view path) noexcept {

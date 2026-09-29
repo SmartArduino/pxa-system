@@ -18,7 +18,9 @@ public:
     StorageService(Transport& transport, RequestTable& requests) noexcept
         : transport_(transport), requests_(requests) {}
 
-    Task<std::size_t> get(std::string_view key, std::span<std::byte> output) {
+    Task<std::size_t> get(this StorageService self, std::string_view key,
+                          std::span<std::byte> output) {
+        auto& [transport_, requests_] = self;
         if (!valid_key(key))
             co_return std::unexpected(Error::invalid_argument);
         std::array<std::byte, 68> payload{};
@@ -45,8 +47,10 @@ public:
         co_return size;
     }
 
-    Task<void> set(std::string_view key, std::span<const std::byte> value,
+    Task<void> set(this StorageService self, std::string_view key,
+                   std::span<const std::byte> value,
                    std::span<std::byte> packet) {
+        auto& [transport_, requests_] = self;
         if (!valid_key(key) || value.size() > 2048)
             co_return std::unexpected(Error::invalid_argument);
         const auto size = wire::header_bytes + 8 + key.size() + value.size();
@@ -75,12 +79,14 @@ public:
         co_return Result<void>{};
     }
 
-    Task<void> set(std::string_view key, std::span<const std::byte> value) {
+    Task<void> set(this StorageService self, std::string_view key,
+                   std::span<const std::byte> value) {
         std::array<std::byte, 512> packet{};
-        co_return co_await set(key, value, packet);
+        co_return co_await self.set(key, value, packet);
     }
 
-    Task<void> remove(std::string_view key) {
+    Task<void> remove(this StorageService self, std::string_view key) {
+        auto& [transport_, requests_] = self;
         if (!valid_key(key))
             co_return std::unexpected(Error::invalid_argument);
         std::array<std::byte, 68> payload{};
@@ -99,8 +105,9 @@ public:
         co_return Result<void>{};
     }
 
-    Task<std::size_t> list(std::string_view after,
+    Task<std::size_t> list(this StorageService self, std::string_view after,
                            std::span<StorageKey> output) {
+        auto& [transport_, requests_] = self;
         if (!after.empty() && !valid_key(after))
             co_return std::unexpected(Error::invalid_argument);
         std::array<std::byte, 68> payload{};

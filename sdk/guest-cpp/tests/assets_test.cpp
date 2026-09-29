@@ -1,6 +1,7 @@
 #include <pxa/app.hpp>
 
 #include <array>
+#include <algorithm>
 #include <cassert>
 
 static std::uint64_t token;
@@ -21,7 +22,12 @@ extern "C" std::int32_t pxa_submit(const std::uint8_t* data,
         token = pxa::wire::get64(bytes + 4);
         opcode = pxa::wire::get16(bytes + 2);
         assert(token != 0);
-        assert(opcode == (requests == 2 ? 5 : 2));
+        assert(opcode == (requests == 2 ? 5 : requests == 3 ? 1 : 2));
+        const auto prefix = opcode == 5 ? 12u : 4u;
+        const auto expected = opcode == 2 ? "textures/a.pxa" : "blob.dat";
+        const auto path_size = pxa::wire::get16(bytes + 20);
+        assert(std::string_view(reinterpret_cast<const char*>(bytes + 20 + prefix),
+                                path_size) == expected);
     } else {
         assert(service == 1);
         if (pxa::wire::get16(bytes + 2) == 1) {
@@ -45,18 +51,30 @@ struct AssetApp {
     std::array<std::byte, 4> content{};
 
     pxa::Task<void> run(pxa::Context& context) {
-        auto asset = co_await context.assets().load(
-            pxa::AssetKind::texture, "textures/a.pxa");
+        auto pending = [&] {
+            std::string path = "textures/a.pxa";
+            return context.assets().load(pxa::AssetKind::texture, path);
+        }();
+        auto asset = co_await std::move(pending);
         if (!asset) co_return std::unexpected(asset.error());
         assert(asset->handle() == 77);
         assert(asset->descriptor().kind == pxa::AssetKind::texture);
-        auto chunk = co_await context.assets().read(
-            "blob.dat", 0, content);
+        auto pending_read = [&] {
+            std::string path = "blob.dat";
+            return context.assets().read(path, 0, content);
+        }();
+        auto chunk = co_await std::move(pending_read);
         if (!chunk) co_return std::unexpected(chunk.error());
         assert(chunk->bytes == 3 && chunk->eof());
         assert(content[0] == std::byte{'a'} &&
                content[1] == std::byte{'b'} &&
                content[2] == std::byte{'c'});
+        auto pending_query = [&] {
+            std::string path = "blob.dat";
+            return context.assets().query(path);
+        }();
+        auto descriptor = co_await std::move(pending_query);
+        assert(descriptor && descriptor->resident_bytes == 200);
         finished = true;
         co_return pxa::Result<void>{};
     }
@@ -101,13 +119,17 @@ int main() {
     read[13] = std::byte{'b'};
     read[14] = std::byte{'c'};
     deliver(read);
+    assert(requests == 3 && opcode == 1);
+    std::array<std::byte, 24> descriptor{};
+    std::copy(loaded.begin() + 12, loaded.end(), descriptor.begin() + 4);
+    deliver(descriptor);
     assert(finished && closes == 1);
     pxa_app_stop(0);
     assert(closes == 1);
 
     cancellation_mode = true;
     assert(pxa_app_start(nullptr, 0) == 0);
-    assert(requests == 3);
+    assert(requests == 4);
     std::array<std::byte, 21> background{};
     pxa::wire::put16(background.data(), 17);
     pxa::wire::put16(background.data() + 2, 0x8005);

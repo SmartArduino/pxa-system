@@ -19,7 +19,8 @@ public:
         return transport_.send(4, 1, 0, payload);
     }
 
-    Task<std::uint64_t> now() {
+    Task<std::uint64_t> now(this ClockService self) {
+        auto& [transport_, requests_] = self;
         auto event = co_await Response(transport_, requests_, 4, 2, {});
         if (!event) co_return std::unexpected(event.error());
         if (event->payload.size() < 4)
