@@ -465,9 +465,12 @@ pxa_status_t pxa_raster_validate_draw_list(
     uint32_t offset;
     uint32_t index;
     uint16_t abi_minor;
+    uint64_t texture_mask = 0;
+    uint8_t uses_palette = 0;
     if (bytes == NULL || target == NULL || resources == NULL || output == NULL ||
         target->pixels == NULL || target->width == 0 || target->height == 0 ||
         target->stride_pixels < target->width ||
+        target->scratch_mode > PXA_RASTER_SCRATCH_COVERAGE_2BIT ||
         (target->depth_pixels != NULL &&
          target->depth_stride_pixels < target->width))
         return PXA_STATUS_INVALID_ARGUMENT;
@@ -489,9 +492,21 @@ pxa_status_t pxa_raster_validate_draw_list(
     if ((required & ~PXA_RASTER_CAP_KNOWN_MASK) != 0 ||
         (required & ~resources->capabilities) != 0)
         return PXA_STATUS_UNSUPPORTED;
+    if ((required & PXA_RASTER_CAP_COVERAGE_MASK) != 0 &&
+        (required & (PXA_RASTER_CAP_PAINTER_DEPTH |
+                     PXA_RASTER_CAP_DEPTH_CUTOUT)) != 0)
+        return PXA_STATUS_UNSUPPORTED;
     if ((required & (PXA_RASTER_CAP_COVERAGE_MASK |
-                     PXA_RASTER_CAP_PAINTER_DEPTH)) != 0 &&
+                     PXA_RASTER_CAP_PAINTER_DEPTH |
+                     PXA_RASTER_CAP_DEPTH_CUTOUT)) != 0 &&
         target->depth_pixels == NULL)
+        return PXA_STATUS_BAD_STATE;
+    if ((required & (PXA_RASTER_CAP_PAINTER_DEPTH |
+                     PXA_RASTER_CAP_DEPTH_CUTOUT)) != 0 &&
+        target->scratch_mode != PXA_RASTER_SCRATCH_DEPTH16)
+        return PXA_STATUS_BAD_STATE;
+    if ((required & PXA_RASTER_CAP_COVERAGE_MASK) != 0 &&
+        target->scratch_mode == PXA_RASTER_SCRATCH_NONE)
         return PXA_STATUS_BAD_STATE;
     if (read_u64(bytes + 20) == 0) return PXA_STATUS_INVALID_ARGUMENT;
     offset = PXA_RASTER_DRAW_HEADER_BYTES;
@@ -540,6 +555,37 @@ pxa_status_t pxa_raster_validate_draw_list(
             return PXA_STATUS_UNSUPPORTED;
         }
         if (status != PXA_STATUS_OK) return status;
+        if ((type == PXA_RASTER_RECORD_TEXTURED_QUAD ||
+             type == PXA_RASTER_RECORD_TRIANGLE_BATCH) &&
+            (((bytes[offset + 1] & PXA_RASTER_QUAD_PAINTER) == 0 &&
+              (type == PXA_RASTER_RECORD_TRIANGLE_BATCH || abi_minor >= 1)) ||
+             ((bytes[offset + 1] &
+               (PXA_RASTER_QUAD_PAINTER | PXA_RASTER_QUAD_LIT_PALETTE)) ==
+              (PXA_RASTER_QUAD_PAINTER | PXA_RASTER_QUAD_LIT_PALETTE))) &&
+            target->scratch_mode != PXA_RASTER_SCRATCH_DEPTH16)
+            return PXA_STATUS_BAD_STATE;
+        /* Record only execution dependencies, after slot/flag validation.
+         * Solid sprites still sample the texture as a coverage mask. Solid
+         * painter polygons use a palette index except the quad kernels whose
+         * coverage/depth mode carries a literal RGB565 color. */
+        if (type == PXA_RASTER_RECORD_SPRITE ||
+            type == PXA_RASTER_RECORD_SPRITE_BATCH) {
+            texture_mask |= UINT64_C(1) << bytes[offset + 4];
+            if (!(bytes[offset + 1] & PXA_RASTER_SPRITE_SOLID_COLOR))
+                uses_palette = 1;
+        } else if (type == PXA_RASTER_RECORD_TEXTURED_QUAD ||
+                   type == PXA_RASTER_RECORD_TRIANGLE_BATCH) {
+            uint8_t flags = bytes[offset + 1];
+            if (!(flags & PXA_RASTER_QUAD_SOLID_COLOR)) {
+                texture_mask |= UINT64_C(1) << bytes[offset + 4];
+                uses_palette = 1;
+            } else if ((flags & PXA_RASTER_QUAD_PAINTER) &&
+                       (type == PXA_RASTER_RECORD_TRIANGLE_BATCH ||
+                        !(flags & (PXA_RASTER_QUAD_COVERAGE_MASK |
+                                   PXA_RASTER_QUAD_LIT_PALETTE)))) {
+                uses_palette = 1;
+            }
+        }
         offset += record_size;
     }
     if (offset != size) return PXA_STATUS_PROTOCOL_ERROR;
@@ -548,6 +594,8 @@ pxa_status_t pxa_raster_validate_draw_list(
     output->required_capabilities = required;
     output->command_count = command_count;
     output->frame_id = read_u64(bytes + 20);
+    output->texture_mask = texture_mask;
+    output->uses_palette = uses_palette;
     return PXA_STATUS_OK;
 }
 

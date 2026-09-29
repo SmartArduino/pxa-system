@@ -14,12 +14,16 @@ extern "C" {
 typedef struct pxa_runtime pxa_runtime_t;
 typedef uint32_t pxa_component_t;
 typedef uint32_t pxa_handle_t;
-typedef uint32_t pxa_event_token_t;
+/* Native Core v1 Handle: high 32 bits generation, low 32 bits one-based slot. */
+typedef uint64_t pxa_handle64_t;
+/* Host-side mailbox lease token; never serialized in the Guest wire ABI. */
+typedef uint64_t pxa_event_token_t;
 typedef uint64_t pxa_authority_t;
 
 #define PXA_COMPONENT_INVALID UINT32_C(0)
 #define PXA_HANDLE_INVALID UINT32_C(0)
-#define PXA_EVENT_TOKEN_INVALID UINT32_C(0)
+#define PXA_HANDLE64_INVALID UINT64_C(0)
+#define PXA_EVENT_TOKEN_INVALID UINT64_C(0)
 
 typedef uint8_t pxa_component_state_t;
 #define PXA_COMPONENT_CREATED ((pxa_component_state_t)0)
@@ -59,6 +63,7 @@ typedef uint16_t pxa_resource_type_t;
 #define PXA_RESOURCE_PERMISSION ((pxa_resource_type_t)11)
 #define PXA_RESOURCE_SURFACE ((pxa_resource_type_t)12)
 #define PXA_RESOURCE_GAME_RENDER_CONTEXT ((pxa_resource_type_t)13)
+#define PXA_RESOURCE_ASSET ((pxa_resource_type_t)14)
 
 /* Operations shared by byte-oriented resource streams. */
 #define PXA_IO_READ UINT32_C(1)
@@ -135,6 +140,14 @@ pxa_status_t pxa_runtime_usage_snapshot(const pxa_runtime_t *runtime,
 
 pxa_status_t pxa_component_create(pxa_runtime_t *runtime, uint64_t instance_id,
                                   pxa_component_t *output);
+/* Set by the package engine after validating the signed Core requirement and
+ * module imports, before invoking Guest code. Defaults to major 0. */
+pxa_status_t pxa_component_set_core_major(pxa_runtime_t *runtime,
+                                          pxa_component_t component,
+                                          uint16_t core_major);
+pxa_status_t pxa_component_core_major(const pxa_runtime_t *runtime,
+                                      pxa_component_t component,
+                                      uint16_t *output);
 pxa_status_t pxa_component_remove(pxa_runtime_t *runtime,
                                   pxa_component_t component);
 pxa_status_t pxa_component_begin_start(pxa_runtime_t *runtime,
@@ -166,14 +179,29 @@ pxa_status_t pxa_component_snapshot(const pxa_runtime_t *runtime,
 pxa_status_t pxa_runtime_control(pxa_runtime_t *runtime,
                                  pxa_component_t component,
                                  const void *message, size_t message_size);
+/* Trusted adapters may dispatch an already-decoded control message. The
+ * payload must be Host-owned and remain valid until this call returns. */
+pxa_status_t pxa_runtime_control_view(pxa_runtime_t *runtime,
+                                      pxa_component_t component,
+                                      const pxa_message_view_t *message);
 int32_t pxa_runtime_io(pxa_runtime_t *runtime, pxa_component_t component,
                        pxa_handle_t handle, uint32_t operation,
                        uint8_t *data, size_t size);
+int32_t pxa_runtime_io64(pxa_runtime_t *runtime, pxa_component_t component,
+                         pxa_handle64_t handle, uint32_t operation,
+                         uint8_t *data, size_t size);
 
 pxa_status_t pxa_request_begin(pxa_runtime_t *runtime,
                                pxa_component_t component, uint32_t request_id,
                                uint16_t service, uint16_t opcode,
                                pxa_authority_t authority);
+/* Accepts a request only if its completion storage can be reserved. A failed
+ * reservation releases the request slot and ID before returning. Synchronous
+ * services that can mutate state must reserve before calling their backend. */
+pxa_status_t pxa_request_begin_reserved(
+    pxa_runtime_t *runtime, pxa_component_t component, uint32_t request_id,
+    uint16_t service, uint16_t opcode, pxa_authority_t authority,
+    size_t payload_capacity);
 pxa_status_t pxa_request_commit(pxa_runtime_t *runtime,
                                 pxa_component_t component,
                                 uint32_t request_id);
@@ -186,6 +214,12 @@ pxa_status_t pxa_request_cancel(pxa_runtime_t *runtime,
                                 uint32_t request_id);
 int pxa_request_is_active(const pxa_runtime_t *runtime,
                           pxa_component_t component, uint32_t request_id);
+/* Host-only identity of the currently active request, or zero. Unlike the
+ * reusable request_id, this identity never repeats within a runtime lifetime.
+ * Async services save it after begin and compare before publishing a result.
+ * Runtime calls remain serialized by the Host; this is not a thread API. */
+uint64_t pxa_request_identity(const pxa_runtime_t *runtime,
+                              pxa_component_t component, uint32_t request_id);
 
 pxa_status_t pxa_handle_open(pxa_runtime_t *runtime,
                              pxa_component_t component,
@@ -200,6 +234,26 @@ pxa_status_t pxa_handle_get(const pxa_runtime_t *runtime,
 pxa_status_t pxa_handle_close(pxa_runtime_t *runtime,
                               pxa_component_t component,
                               pxa_handle_t handle);
+pxa_status_t pxa_handle_open64(pxa_runtime_t *runtime,
+                               pxa_component_t component,
+                               pxa_resource_type_t type,
+                               pxa_authority_t authority,
+                               const pxa_resource_t *resource,
+                               pxa_handle64_t *output);
+pxa_status_t pxa_handle_get64(const pxa_runtime_t *runtime,
+                              pxa_component_t component,
+                              pxa_handle64_t handle,
+                              pxa_resource_type_t expected_type,
+                              pxa_resource_t *output);
+pxa_status_t pxa_handle_close64(pxa_runtime_t *runtime,
+                                pxa_component_t component,
+                                pxa_handle64_t handle);
+/* Transitional bridge for a v0 Service result. Validates ownership and the
+ * full current generation before exposing the native v1 token. */
+pxa_status_t pxa_handle_widen(const pxa_runtime_t *runtime,
+                              pxa_component_t component,
+                              pxa_handle_t legacy_handle,
+                              pxa_handle64_t *output);
 pxa_status_t pxa_authority_revoke(pxa_runtime_t *runtime,
                                   pxa_component_t component,
                                   pxa_authority_t authority);

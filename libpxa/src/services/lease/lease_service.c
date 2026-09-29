@@ -16,7 +16,7 @@ typedef uint8_t pxa_lease_state_t;
 typedef struct {
     struct pxa_lease_service *service;
     pxa_component_t component;
-    pxa_handle_t handle;
+    pxa_handle64_t handle;
     uint64_t expires_at_ms;
     pxa_status_t revoke_reason;
     uint16_t next;
@@ -223,16 +223,22 @@ static pxa_status_t lease_control(void *context, pxa_runtime_t *runtime,
     uint32_t duration;
     uint8_t has_duration;
     uint64_t now;
-    pxa_handle_t handle = PXA_HANDLE_INVALID;
+    pxa_handle64_t handle = PXA_HANDLE_INVALID;
+    uint16_t core_major = 0;
     pxa_resource_t resource;
-    uint8_t result_record[8];
+    uint8_t result_record[12];
     (void)runtime;
     if (message->opcode != PXA_LEASE_ACQUIRE || message->request_id == 0) {
         return PXA_STATUS_INVALID_ARGUMENT;
     }
-    result = pxa_request_begin(service->runtime, component,
-                               message->request_id, PXA_SERVICE_CORE,
-                               PXA_LEASE_ACQUIRE, 0);
+    result = pxa_component_core_major(service->runtime, component,
+                                      &core_major);
+    if (result != PXA_STATUS_OK) return result;
+    result = pxa_request_begin_reserved(service->runtime, component,
+                                        message->request_id,
+                                        PXA_SERVICE_CORE,
+                                        PXA_LEASE_ACQUIRE, 0,
+                                        core_major == 1 ? 12u : 8u);
     if (result != PXA_STATUS_OK) return result;
     result = parse_request(message->payload, &kind, &requested_duration,
                            &has_duration);
@@ -254,6 +260,9 @@ static pxa_status_t lease_control(void *context, pxa_runtime_t *runtime,
     if (result == PXA_STATUS_OK && now > UINT64_MAX - duration) {
         result = PXA_STATUS_RESOURCE_LIMIT;
     }
+    if (result == PXA_STATUS_OK)
+        result = pxa_request_commit(service->runtime, component,
+                                    message->request_id);
     if (result == PXA_STATUS_OK) {
         entry = allocate_entry(service);
         if (entry == NULL) result = PXA_STATUS_RESOURCE_LIMIT;
@@ -264,13 +273,23 @@ static pxa_status_t lease_control(void *context, pxa_runtime_t *runtime,
         resource.close = lease_closed;
         entry->component = component;
         entry->expires_at_ms = now + duration;
-        result = pxa_handle_open(service->runtime, component,
-                                 PXA_RESOURCE_LEASE, 0, &resource, &handle);
+        if (core_major == 1)
+            result = pxa_handle_open64(service->runtime, component,
+                                        PXA_RESOURCE_LEASE, 0, &resource,
+                                        &handle);
+        else {
+            pxa_handle_t handle32 = PXA_HANDLE_INVALID;
+            result = pxa_handle_open(service->runtime, component,
+                                     PXA_RESOURCE_LEASE, 0, &resource,
+                                     &handle32);
+            handle = handle32;
+        }
         if (result == PXA_STATUS_OK) {
             entry->handle = handle;
             pxa_write_u16(result_record, 4);
-            pxa_write_u16(result_record + 2, 4);
-            pxa_write_u32(result_record + 4, handle);
+            pxa_write_u16(result_record + 2, core_major == 1 ? 8 : 4);
+            if (core_major == 1) pxa_write_u64(result_record + 4, handle);
+            else pxa_write_u32(result_record + 4, (pxa_handle_t)handle);
         } else {
             release_entry(service, entry);
         }
@@ -278,10 +297,14 @@ static pxa_status_t lease_control(void *context, pxa_runtime_t *runtime,
     complete = pxa_request_complete(
         service->runtime, component, message->request_id, result,
         result == PXA_STATUS_OK ? result_record : NULL,
-        result == PXA_STATUS_OK ? sizeof(result_record) : 0);
+        result == PXA_STATUS_OK ? (core_major == 1 ? 12u : 8u) : 0);
     if (complete != PXA_STATUS_OK) {
         if (handle != PXA_HANDLE_INVALID) {
-            (void)pxa_handle_close(service->runtime, component, handle);
+            if (core_major == 1)
+                (void)pxa_handle_close64(service->runtime, component, handle);
+            else
+                (void)pxa_handle_close(service->runtime, component,
+                                       (pxa_handle_t)handle);
         }
         (void)pxa_request_cancel(service->runtime, component,
                                  message->request_id);
@@ -327,13 +350,18 @@ pxa_status_t pxa_lease_service_register(pxa_lease_service_t *service) {
 
 static pxa_status_t post_revoked(pxa_lease_service_t *service,
                                  pxa_lease_entry_t *entry) {
-    uint8_t payload[8];
+    uint8_t payload[12];
     pxa_status_t status;
-    pxa_write_u32(payload, entry->handle);
-    pxa_write_u32(payload + 4, (uint32_t)entry->revoke_reason);
+    size_t payload_size = (entry->handle >> 32) != 0 ? 12u : 8u;
+    if (payload_size == 12)
+        pxa_write_u64(payload, entry->handle);
+    else
+        pxa_write_u32(payload, (pxa_handle_t)entry->handle);
+    pxa_write_u32(payload + payload_size - 4,
+                  (uint32_t)entry->revoke_reason);
     status = pxa_event_post_message(
         service->runtime, entry->component, PXA_SERVICE_CORE,
-        PXA_LEASE_REVOKED, 0, (pxa_bytes_t){payload, sizeof(payload)}, 1, 0);
+        PXA_LEASE_REVOKED, 0, (pxa_bytes_t){payload, payload_size}, 1, 0);
     return status;
 }
 
@@ -373,7 +401,12 @@ static pxa_status_t revoke_matching(pxa_lease_service_t *service,
             pxa_component_t component = entry->component;
             entry->revoke_reason = reason;
             entry->state = PXA_LEASE_REVOKING;
-            (void)pxa_handle_close(service->runtime, component, entry->handle);
+            if ((entry->handle >> 32) != 0)
+                (void)pxa_handle_close64(service->runtime, component,
+                                         entry->handle);
+            else
+                (void)pxa_handle_close(service->runtime, component,
+                                       (pxa_handle_t)entry->handle);
             append_affected(component, affected, capacity, count);
         }
         if (entry->state == PXA_LEASE_PENDING_EVENT) {

@@ -206,15 +206,26 @@ static pxa_status_t storage_control(void *context, pxa_runtime_t *runtime,
         message->opcode > PXA_STORAGE_LIST) {
         return PXA_STATUS_UNSUPPORTED;
     }
-    result = pxa_request_begin(service->runtime, component,
-                               message->request_id,
-                               PXA_STORAGE_SERVICE_ID,
-                               message->opcode, 0);
+    {
+        const size_t result_capacity =
+            message->opcode == PXA_STORAGE_GET
+                ? service->max_value_bytes + PXA_RECORD_HEADER_SIZE
+                : message->opcode == PXA_STORAGE_LIST
+                      ? PXA_STORAGE_LIST_RESULT_BYTES
+                      : 0;
+        result = pxa_request_begin_reserved(
+            service->runtime, component, message->request_id,
+            PXA_STORAGE_SERVICE_ID, message->opcode, 0, result_capacity);
+    }
     if (result != PXA_STATUS_OK) return result;
     result = parse_request(message->payload,
                            message->opcode != PXA_STORAGE_LIST,
                            message->opcode == PXA_STORAGE_SET,
                            service->max_value_bytes, &request);
+    if (result == PXA_STATUS_OK) {
+        result = pxa_request_commit(service->runtime, component,
+                                    message->request_id);
+    }
     pxa_writer_init(&result_writer, service->result_scratch,
                     service->result_capacity);
     if (result == PXA_STATUS_OK && message->opcode == PXA_STORAGE_GET) {

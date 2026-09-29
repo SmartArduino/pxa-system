@@ -694,15 +694,19 @@ static pxa_status_t scheduler_control(
         message->opcode != PXA_WORK_COMPLETE) {
         return PXA_STATUS_UNSUPPORTED;
     }
-    status = pxa_request_begin(service->runtime, component,
-                               message->request_id,
-                               PXA_WORK_SERVICE_ID, message->opcode, 0);
+    status = pxa_request_begin_reserved(
+        service->runtime, component, message->request_id,
+        PXA_WORK_SERVICE_ID, message->opcode, 0,
+        message->opcode == PXA_WORK_ENQUEUE ? sizeof(result) : 0u);
     if (status != PXA_STATUS_OK) return status;
-    if (message->opcode == PXA_WORK_ENQUEUE) {
+    status = pxa_request_commit(service->runtime, component,
+                                message->request_id);
+    if (status == PXA_STATUS_OK && message->opcode == PXA_WORK_ENQUEUE) {
         status = schedule_entry(service, message, result, &result_size);
-    } else if (message->opcode == PXA_WORK_COMPLETE) {
+    } else if (status == PXA_STATUS_OK &&
+               message->opcode == PXA_WORK_COMPLETE) {
         status = complete_work(service, component, message);
-    } else {
+    } else if (status == PXA_STATUS_OK) {
         status = cancel_entry(service, message);
     }
     complete = pxa_request_complete(

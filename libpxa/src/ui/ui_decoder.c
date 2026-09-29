@@ -103,6 +103,7 @@ static int property_allowed(pxa_ui_property_t property,
                    (type == PXA_UI_NODE_CONTROL &&
                     subtype == PXA_UI_CONTROL_BUTTON);
         case PXA_UI_PROPERTY_ASSET:
+        case PXA_UI_PROPERTY_IMAGE_HANDLE:
         case PXA_UI_PROPERTY_IMAGE_FIT:
             return type == PXA_UI_NODE_IMAGE;
         case PXA_UI_PROPERTY_VALUE:
@@ -180,6 +181,7 @@ pxa_status_t pxa_ui_validate_clear_property(
         case PXA_UI_PROPERTY_TEXT:
         case PXA_UI_PROPERTY_ICON:
         case PXA_UI_PROPERTY_ASSET:
+        case PXA_UI_PROPERTY_IMAGE_HANDLE:
         case PXA_UI_PROPERTY_IMAGE_FIT:
         case PXA_UI_PROPERTY_VALUE:
         case PXA_UI_PROPERTY_MIN_VALUE:
@@ -194,6 +196,24 @@ pxa_status_t pxa_ui_validate_clear_property(
         default:
             return PXA_STATUS_UNSUPPORTED;
     }
+}
+
+pxa_status_t pxa_ui_validate_grid_tracks(pxa_bytes_t value) {
+    if (!value.data) return PXA_STATUS_INVALID_ARGUMENT;
+    if (value.size < PXA_UI_GRID_TRACK_BYTES ||
+        value.size % PXA_UI_GRID_TRACK_BYTES ||
+        value.size / PXA_UI_GRID_TRACK_BYTES > PXA_UI_GRID_MAX_TRACKS)
+        return PXA_STATUS_INVALID_ARGUMENT;
+    for (size_t offset = 0; offset < value.size; offset += PXA_UI_GRID_TRACK_BYTES) {
+        const uint8_t *track = value.data + offset;
+        uint32_t amount = pxa_read_u32(track + 4);
+        if (track[0] > PXA_UI_GRID_FIXED || track[1] || track[2] || track[3] ||
+            (track[0] == PXA_UI_GRID_FRACTION &&
+             (amount == 0 || amount > PXA_UI_GRID_MAX_WEIGHT)) ||
+            (track[0] == PXA_UI_GRID_FIXED && amount > INT32_MAX))
+            return PXA_STATUS_INVALID_ARGUMENT;
+    }
+    return PXA_STATUS_OK;
 }
 
 pxa_status_t pxa_ui_validate_property(
@@ -269,11 +289,11 @@ pxa_status_t pxa_ui_validate_property(
             return PXA_STATUS_OK;
         case PXA_UI_PROPERTY_GRID_COLUMNS:
         case PXA_UI_PROPERTY_GRID_ROWS:
-            return value.size >= 8 && value.size % 8u == 0
-                       ? PXA_STATUS_OK : PXA_STATUS_INVALID_ARGUMENT;
+            return pxa_ui_validate_grid_tracks(value);
         case PXA_UI_PROPERTY_GRID_CELL:
-            return value.size == 8 ? PXA_STATUS_OK
-                                   : PXA_STATUS_INVALID_ARGUMENT;
+            return value.size == PXA_UI_GRID_CELL_BYTES &&
+                       pxa_read_u16(value.data + 4) && pxa_read_u16(value.data + 6)
+                       ? PXA_STATUS_OK : PXA_STATUS_INVALID_ARGUMENT;
         case PXA_UI_PROPERTY_FOREGROUND:
         case PXA_UI_PROPERTY_BACKGROUND:
         case PXA_UI_PROPERTY_BORDER_COLOR:
@@ -303,6 +323,9 @@ pxa_status_t pxa_ui_validate_property(
         case PXA_UI_PROPERTY_ITEM_COUNT:
             return value.size == 4 ? PXA_STATUS_OK
                                    : PXA_STATUS_INVALID_ARGUMENT;
+        case PXA_UI_PROPERTY_IMAGE_HANDLE:
+            return value.size == 8 && pxa_read_u64(value.data) != 0
+                       ? PXA_STATUS_OK : PXA_STATUS_INVALID_ARGUMENT;
         case PXA_UI_PROPERTY_ASSET:
             return package_path_valid(value.data, value.size)
                        ? PXA_STATUS_OK : PXA_STATUS_INVALID_ARGUMENT;
@@ -363,6 +386,12 @@ pxa_status_t pxa_ui_validate_canvas(pxa_ui_features_t features,
                     value[21] > 2 ||
                     value[22] > PXA_UI_CANVAS_TEXT_ALIGN_BOTTOM ||
                     value[23] != 0 || !utf8_valid(value + 24, length - 24u))
+                    return PXA_STATUS_INVALID_ARGUMENT;
+                break;
+            case PXA_UI_CANVAS_IMAGE_HANDLE:
+                if (length != 26 || pxa_read_u32(value + 8) == 0 ||
+                    pxa_read_u32(value + 12) == 0 || value[17] > 2 ||
+                    pxa_read_u64(value + 18) == 0)
                     return PXA_STATUS_INVALID_ARGUMENT;
                 break;
             case PXA_UI_CANVAS_IMAGE:

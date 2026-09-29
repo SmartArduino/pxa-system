@@ -6,14 +6,29 @@
 
 #include "lvgl.h"
 #include "src/indev/lv_indev_private.h"
+#include "src/core/lv_obj_draw_private.h"
+#include "src/misc/cache/instance/lv_image_cache.h"
+#if __has_include("src/image/lv_image_decoder_private.h")
+#include "src/image/lv_image_decoder_private.h"
+#else
+#include "src/draw/lv_image_decoder_private.h"
+#endif
 
 #define PXA_LVGL_UI_MAGIC UINT32_C(0x504c5632)
 #define PXA_LVGL_UI_ALIGNMENT ((size_t)16)
 
 typedef struct pxa_lvgl_ui_node pxa_lvgl_ui_node_t;
 typedef struct pxa_lvgl_ui_command pxa_lvgl_ui_command_t;
+typedef struct pxa_lvgl_ui_property_undo pxa_lvgl_ui_property_undo_t;
 typedef struct pxa_lvgl_ui_transaction pxa_lvgl_ui_transaction_t;
 typedef struct pxa_lvgl_ui_canvas_asset pxa_lvgl_ui_canvas_asset_t;
+typedef struct pxa_lvgl_ui_image pxa_lvgl_ui_image_t;
+typedef struct {
+    pxa_handle64_t handle;
+    pxa_lvgl_ui_image_t *image;
+    /* 0: duplicate, 1: owned, 2: pooled, 3: borrowed until commit. */
+    uint8_t owned;
+} pxa_lvgl_ui_canvas_image_t;
 
 struct pxa_lvgl_ui_canvas_asset {
     pxa_lvgl_ui_canvas_asset_t *next;
@@ -32,9 +47,25 @@ typedef struct {
     size_t bitmap_count;
     size_t bitmap_capacity;
     pxa_lvgl_ui_canvas_asset_t *assets;
+    pxa_lvgl_ui_canvas_image_t *images;
+    size_t image_count;
+    size_t image_capacity;
+    pxa_lvgl_ui_canvas_image_t *spare_images;
+    size_t spare_image_capacity;
+    pxa_lvgl_ui_image_t *free_images;
     pxa_ui_release_fn release;
     void *release_context;
 } pxa_lvgl_ui_canvas_t;
+
+struct pxa_lvgl_ui_image {
+    lv_image_dsc_t descriptor;
+    pxa_asset_object_t *pixels;
+    union {
+        pxa_lvgl_ui_t *owner; /* Active descriptor. */
+        pxa_lvgl_ui_image_t *next_free; /* Empty, unregistered pool entry. */
+    } state;
+    lv_draw_buf_t draw;
+};
 
 struct pxa_lvgl_ui_node {
     pxa_lvgl_ui_node_t *next;
@@ -44,6 +75,7 @@ struct pxa_lvgl_ui_node {
     lv_obj_t *content;
     pxa_lvgl_ui_canvas_t *canvas;
     const void *asset_source;
+    pxa_lvgl_ui_image_t *image;
     pxa_lvgl_ui_command_t *owner_command;
     uint32_t surface;
     uint32_t id;
@@ -57,6 +89,7 @@ struct pxa_lvgl_ui_node {
     pxa_ui_node_type_t type;
     pxa_ui_control_type_t subtype;
     uint8_t foreground_kind;
+    uint8_t image_tint;
     uint8_t background_kind;
     uint8_t border_kind;
     uint8_t foreground_token;
@@ -82,12 +115,38 @@ struct pxa_lvgl_ui_node {
     /* Set while the Guest writes a property, so a text input does not echo the
      * Guest's own write back as a text event. */
     uint8_t suppress_events;
+    /* Tentative removal: bit 0 active, bit 1 visible, bit 2 hidden. */
+    uint8_t removal_state;
+    /* Visual suppression must follow a node across MOVE and rollback. */
+    uint8_t alpha_hidden;
 };
 
 struct pxa_lvgl_ui_command {
     pxa_lvgl_ui_command_t *next;
     pxa_ui_command_view_t view;
-    pxa_lvgl_ui_node_t *created;
+    /* Command kinds have disjoint preparation and undo ownership. */
+    union {
+        pxa_lvgl_ui_node_t *created;
+        pxa_lvgl_ui_property_undo_t *property;
+        struct {
+            /* Before apply: prepared source. After apply: previous source.
+             * A second swap restores it without re-resolving Guest handles. */
+            pxa_lvgl_ui_image_t *image;
+            const void *asset;
+            uint8_t applied;
+        } source;
+        struct {
+            lv_coord_t *tracks;
+            uint32_t layout;
+            uint8_t has_tracks;
+            uint8_t applied;
+        } grid;
+        struct {
+            lv_obj_t *parent;
+            int32_t index;
+            uint8_t applied;
+        } move;
+    } owned;
     uint8_t value[];
 };
 
@@ -99,24 +158,33 @@ struct pxa_lvgl_ui_transaction {
     pxa_status_t status;
 };
 
+typedef struct {
+    uint16_t *pixels;
+    uint8_t *values;
+    int32_t x;
+    int32_t y;
+    uint16_t width;
+    uint16_t height;
+    uint16_t content_x;
+    uint16_t content_y;
+    uint16_t content_width;
+    uint16_t content_height;
+    uint64_t revision;
+} pxa_lvgl_ui_alpha_t;
+
 struct pxa_lvgl_ui {
     uint32_t magic;
+    uint8_t transaction_active;
     pxa_lvgl_ui_config_t config;
+    lv_image_decoder_t *image_decoder;
     pxa_lvgl_ui_theme_t theme;
     pxa_ui_environment_t primary_environment;
     pxa_lvgl_ui_node_t *nodes;
     pxa_lvgl_ui_node_t *primary_root;
-    uint16_t *alpha_pixels;
-    uint8_t *alpha_values;
-    int32_t alpha_x;
-    int32_t alpha_y;
-    uint16_t alpha_width;
-    uint16_t alpha_height;
-    uint16_t alpha_content_x;
-    uint16_t alpha_content_y;
-    uint16_t alpha_content_width;
-    uint16_t alpha_content_height;
-    uint64_t alpha_revision;
+    pxa_lvgl_ui_alpha_t alpha;
+    pxa_lvgl_ui_alpha_t spare_alpha;
+    void *snapshot_memory;
+    size_t snapshot_capacity;
     uint64_t event_timestamp_us;
 };
 
@@ -130,6 +198,142 @@ static void *ui_allocate(pxa_lvgl_ui_t *ui, size_t size) {
 static void ui_release(pxa_lvgl_ui_t *ui, void *memory) {
     if (ui != NULL && memory != NULL && ui->config.release != NULL)
         ui->config.release(ui->config.allocator_context, memory);
+}
+
+/* This flag is private to descriptors allocated by this adapter. Guest bytes
+ * can never supply native descriptors. Each decoder accepts only its owner. */
+#define PXA_LVGL_PREPARED_IMAGE LV_IMAGE_FLAGS_USER8
+static lv_result_t prepared_image_info(lv_image_decoder_t *decoder,
+    lv_image_decoder_dsc_t *dsc,lv_image_header_t *header) {
+    if (dsc->src_type!=LV_IMAGE_SRC_VARIABLE) return LV_RESULT_INVALID;
+    const lv_image_dsc_t *source=dsc->src;
+    if (!(source->header.flags & PXA_LVGL_PREPARED_IMAGE)) return LV_RESULT_INVALID;
+    const pxa_lvgl_ui_image_t *image=dsc->src;
+    if (image->state.owner!=decoder->user_data) return LV_RESULT_INVALID;
+    *header=source->header; return LV_RESULT_OK;
+}
+static lv_result_t prepared_image_open(lv_image_decoder_t *decoder,lv_image_decoder_dsc_t *dsc) {
+    (void)decoder;
+    const pxa_lvgl_ui_image_t *image=dsc->src;
+    /* Software UI drawing consumes straight alpha. Do not silently allocate
+     * a converted pixel copy for a consumer requiring premultiplied alpha. */
+    if (dsc->args.premultiply && image->descriptor.header.cf==LV_COLOR_FORMAT_ARGB8888)
+        return LV_RESULT_INVALID;
+    dsc->decoded=&image->draw;
+    return LV_RESULT_OK;
+}
+static int ensure_image_decoder(pxa_lvgl_ui_t *ui) {
+    lv_lock();
+    if (!ui->image_decoder) {
+        ui->image_decoder=lv_image_decoder_create();
+        if (ui->image_decoder) {
+            ui->image_decoder->user_data=ui;
+            ui->image_decoder->name="pxa-prepared";
+            lv_image_decoder_set_info_cb(ui->image_decoder,prepared_image_info);
+            lv_image_decoder_set_open_cb(ui->image_decoder,prepared_image_open);
+        }
+    }
+    int ready=ui->image_decoder!=NULL;
+    lv_unlock(); return ready;
+}
+
+static void release_image(pxa_lvgl_ui_t *ui, pxa_lvgl_ui_image_t *image) {
+    if (!image) return;
+    lv_lock(); lv_image_cache_drop(&image->descriptor); lv_unlock();
+    pxa_asset_object_release(image->pixels);
+    ui_release(ui,image);
+}
+
+static void release_canvas_images(pxa_lvgl_ui_t *ui,
+    pxa_lvgl_ui_canvas_image_t *images, size_t count) {
+    for (size_t i = 0; i < count; ++i)
+        if (images[i].owned) release_image(ui, images[i].image);
+    ui_release(ui, images);
+}
+
+/* Recycled wrappers never retain pixels or a decoder cache entry. Capacity
+ * follows the maximum overlap of two submitted frames, not the frame count. */
+static void recycle_image(pxa_lvgl_ui_canvas_t *canvas, pxa_lvgl_ui_image_t *image) {
+    lv_lock();
+    lv_image_cache_drop(&image->descriptor);
+    lv_unlock();
+    pxa_asset_object_release(image->pixels);
+    memset(image, 0, sizeof(*image));
+    image->state.next_free = canvas->free_images;
+    canvas->free_images = image;
+}
+
+static void release_image_pool(pxa_lvgl_ui_t *ui, pxa_lvgl_ui_canvas_t *canvas) {
+    while (canvas->free_images) {
+        pxa_lvgl_ui_image_t *image = canvas->free_images;
+        canvas->free_images = image->state.next_free;
+        ui_release(ui, image);
+    }
+}
+
+/* Caller owns both storage and the acquired pixel reference, including on
+ * failure. This permits Canvas to reuse metadata without copying pixels. */
+static pxa_status_t initialize_image(pxa_lvgl_ui_t *ui, pxa_asset_object_t *pixels,
+                                     pxa_lvgl_ui_image_t *image) {
+    pxa_asset_object_view_t view;
+    pxa_asset_object_view(pixels, &view);
+    if (view.kind != PXA_ASSET_IMAGE || (view.encoding != PXA_ASSET_ENCODING_RGB565 &&
+                                         view.encoding != PXA_ASSET_ENCODING_BGRA8888 &&
+                                         view.encoding != PXA_ASSET_ENCODING_BGRA8888_PREMULTIPLIED))
+        return PXA_STATUS_INVALID_ARGUMENT;
+    memset(image, 0, sizeof(*image));
+    image->pixels = pixels;
+    image->state.owner = ui;
+    image->descriptor.header.magic = LV_IMAGE_HEADER_MAGIC;
+    image->descriptor.header.cf = view.encoding == PXA_ASSET_ENCODING_RGB565
+                                      ? LV_COLOR_FORMAT_RGB565
+                                      : view.encoding == PXA_ASSET_ENCODING_BGRA8888_PREMULTIPLIED
+                                            ? LV_COLOR_FORMAT_ARGB8888_PREMULTIPLIED
+                                            : LV_COLOR_FORMAT_ARGB8888;
+    image->descriptor.header.w = view.width;
+    image->descriptor.header.h = view.height;
+    image->descriptor.header.stride =
+        view.width * (view.encoding == PXA_ASSET_ENCODING_RGB565 ? 2u : 4u);
+    image->descriptor.data = view.data;
+    image->descriptor.data_size = view.bytes;
+    image->descriptor.header.flags = PXA_LVGL_PREPARED_IMAGE;
+    if (image->descriptor.header.stride !=
+            lv_draw_buf_width_to_stride(view.width, image->descriptor.header.cf) ||
+        (uintptr_t)view.data % LV_DRAW_BUF_ALIGN ||
+        lv_draw_buf_init(&image->draw, view.width, view.height,
+                         image->descriptor.header.cf, image->descriptor.header.stride,
+                         (void *)view.data, view.bytes) != LV_RESULT_OK) {
+        return PXA_STATUS_UNSUPPORTED;
+    }
+    if (!ensure_image_decoder(ui)) {
+        return PXA_STATUS_RESOURCE_LIMIT;
+    }
+    return PXA_STATUS_OK;
+}
+
+static pxa_status_t prepare_image(pxa_lvgl_ui_t *ui, pxa_component_t component,
+                                  pxa_handle64_t handle, pxa_lvgl_ui_image_t **output) {
+    *output = NULL;
+    if (!ui->config.acquire_image)
+        return PXA_STATUS_UNSUPPORTED;
+    pxa_asset_object_t *pixels = NULL;
+    pxa_status_t status = ui->config.acquire_image(component, handle, &pixels,
+                                                   ui->config.asset_user_data);
+    if (status)
+        return status;
+    pxa_lvgl_ui_image_t *image = ui_allocate(ui, sizeof(*image));
+    if (!image) {
+        pxa_asset_object_release(pixels);
+        return PXA_STATUS_RESOURCE_LIMIT;
+    }
+    status = initialize_image(ui, pixels, image);
+    if (status) {
+        pxa_asset_object_release(pixels);
+        ui_release(ui, image);
+        return status;
+    }
+    *output = image;
+    return PXA_STATUS_OK;
 }
 
 static void release_asset_source(pxa_lvgl_ui_t *ui, const void *source) {
@@ -416,7 +620,7 @@ static int refresh_alpha_plane(pxa_lvgl_ui_t *ui);
 static void on_alpha_overlay_state_changed(lv_event_t *event) {
     pxa_lvgl_ui_node_t *node =
         (pxa_lvgl_ui_node_t *)lv_event_get_user_data(event);
-    if (node == NULL || node->object == NULL ||
+    if (node == NULL || node->object == NULL || node->ui->transaction_active ||
         !node_is_in_alpha_overlay(node->ui, node))
         return;
     (void)refresh_alpha_plane(node->ui);
@@ -452,9 +656,13 @@ static void on_node_delete(lv_event_t *event) {
     pxa_lvgl_ui_node_t *node =
         (pxa_lvgl_ui_node_t *)lv_event_get_user_data(event);
     if (node == NULL) return;
+    /* Deleting a parent recursively destroys children whose CREATE commands
+     * have not yet been visited by cancellation or transaction cleanup. */
+    if (node->owner_command != NULL) node->owner_command->owned.created = NULL;
     node->object = NULL;
     release_asset_source(node->ui, node->asset_source);
     node->asset_source = NULL;
+    release_image(node->ui,node->image); node->image=NULL;
     if (node->canvas != NULL) {
         if (node->canvas->release != NULL && node->canvas->bytes != NULL)
             node->canvas->release(node->canvas->release_context,
@@ -462,6 +670,9 @@ static void on_node_delete(lv_event_t *event) {
         ui_release(node->ui, node->canvas->clip_stack);
         ui_release(node->ui, node->canvas->bitmap_images);
         release_canvas_assets(node->ui, node->canvas->assets);
+        release_canvas_images(node->ui, node->canvas->images, node->canvas->image_count);
+        ui_release(node->ui,node->canvas->spare_images);
+        release_image_pool(node->ui,node->canvas);
         ui_release(node->ui, node->canvas);
         node->canvas = NULL;
     }
@@ -529,15 +740,15 @@ static lv_obj_t *create_object(pxa_lvgl_ui_node_t *node,
         lv_obj_add_event_cb(object, on_canvas_pointer, LV_EVENT_RELEASED, node);
         lv_obj_add_event_cb(object, on_canvas_pointer, LV_EVENT_PRESS_LOST, node);
     }
-    lv_obj_add_flag(object, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_hidden(object, true);
     /* A node only takes pointer input when the Guest subscribes to events, so
      * a tap on a label, an icon or any other child falls through to the
      * ancestor that does. LVGL enables CLICKABLE on every object by default. */
-    lv_obj_remove_flag(object, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_clickable(object, false);
     /* Events bubble to the ancestors, so a container that subscribes to
      * scrolling or pointer input also observes a gesture that starts on one
      * of its children. The event carries the ancestor's node. */
-    lv_obj_add_flag(object, LV_OBJ_FLAG_EVENT_BUBBLE);
+    lv_obj_set_event_bubble(object, true);
     lv_obj_set_style_border_width(object, 0, 0);
     lv_obj_set_style_pad_all(object, 0, 0);
     lv_obj_set_style_radius(object, 0, 0);
@@ -546,8 +757,8 @@ static lv_obj_t *create_object(pxa_lvgl_ui_node_t *node,
     if (node->type == PXA_UI_NODE_ROOT) {
         node->background_kind = 0;
         node->background_token = 0;
-        lv_obj_remove_flag(object, LV_OBJ_FLAG_SCROLLABLE);
-        lv_obj_add_flag(object, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_set_scrollable(object, false);
+        lv_obj_set_clickable(object, true);
         lv_obj_set_size(object, LV_PCT(100), LV_PCT(100));
         lv_obj_set_style_bg_opa(object, LV_OPA_COVER, 0);
         lv_obj_set_flex_flow(object, LV_FLEX_FLOW_COLUMN);
@@ -561,20 +772,20 @@ static lv_obj_t *create_object(pxa_lvgl_ui_node_t *node,
         node->type != PXA_UI_NODE_VIRTUAL_LIST &&
         !(node->type == PXA_UI_NODE_CONTROL &&
           node->subtype == PXA_UI_CONTROL_TEXT_INPUT)) {
-        lv_obj_remove_flag(object, LV_OBJ_FLAG_SCROLLABLE);
-        lv_obj_remove_flag(object, LV_OBJ_FLAG_SCROLL_ELASTIC);
-        lv_obj_remove_flag(object, LV_OBJ_FLAG_SCROLL_MOMENTUM);
+        lv_obj_set_scrollable(object, false);
+        lv_obj_set_scroll_elastic(object, false);
+        lv_obj_set_scroll_momentum(object, false);
     }
     if (node->type == PXA_UI_NODE_VIRTUAL_LIST) {
         lv_obj_set_scroll_dir(object, LV_DIR_VER);
         lv_obj_set_scrollbar_mode(object, LV_SCROLLBAR_MODE_AUTO);
         node->content = lv_obj_create(object);
         if (node->content == NULL) return NULL;
-        lv_obj_remove_flag(node->content, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_set_clickable(node->content, false);
         /* An item's events reach the list through this carrier. */
-        lv_obj_add_flag(node->content, LV_OBJ_FLAG_EVENT_BUBBLE);
+        lv_obj_set_event_bubble(node->content, true);
         /* The list scrolls; its content carrier only carries the extent. */
-        lv_obj_remove_flag(node->content, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_set_scrollable(node->content, false);
         lv_obj_set_style_border_width(node->content, 0, 0);
         lv_obj_set_style_pad_all(node->content, 0, 0);
         lv_obj_set_style_bg_opa(node->content, LV_OPA_TRANSP, 0);
@@ -604,38 +815,61 @@ static lv_obj_t *create_object(pxa_lvgl_ui_node_t *node,
 /* Grid layout: one 8-byte record per track (kind:u8 | reserved:u8[3] |
  * value:u32) and a u16[4] cell (column, row, column-span, row-span). Cell
  * alignment follows the node's align property. */
-static void set_grid_tracks(pxa_lvgl_ui_node_t *node, pxa_bytes_t value,
-                            int rows) {
-    lv_coord_t **slot = rows ? &node->grid_rows : &node->grid_columns;
-    uint8_t *flag = rows ? &node->has_grid_rows : &node->has_grid_columns;
-    lv_coord_t *tracks;
-    uint16_t count;
-    uint16_t index;
-    if (node == NULL || node->object == NULL || value.size < 8u ||
-        value.size % 8u != 0)
-        return;
-    count = (uint16_t)(value.size / 8u);
-    if (count > 64u) return;
-    tracks = (lv_coord_t *)ui_allocate(
-        node->ui, ((size_t)count + 1u) * sizeof(lv_coord_t));
-    if (tracks == NULL) return;
-    for (index = 0; index < count; ++index) {
-        const uint8_t *record = value.data + (size_t)index * 8u;
+static int is_grid_command(const pxa_ui_command_view_t *view) {
+    return (view->command == PXA_UI_COMMAND_SET_PROPERTY ||
+            view->command == PXA_UI_COMMAND_CLEAR_PROPERTY) &&
+           (view->property == PXA_UI_PROPERTY_GRID_COLUMNS ||
+            view->property == PXA_UI_PROPERTY_GRID_ROWS);
+}
+
+/* Prepare outside execute: allocation failure must reject the whole commit,
+ * not silently omit a property after the live tree has started changing. */
+static pxa_status_t prepare_grid_tracks(pxa_lvgl_ui_t *ui,
+                                        pxa_lvgl_ui_command_t *command) {
+    pxa_bytes_t value = command->view.value;
+    if (command->view.command == PXA_UI_COMMAND_CLEAR_PROPERTY)
+        return PXA_STATUS_OK;
+    pxa_status_t status = pxa_ui_validate_grid_tracks(value);
+    if (status != PXA_STATUS_OK) return status;
+    size_t count = value.size / 8u;
+    lv_coord_t *tracks = ui_allocate(ui, (count + 1u) * sizeof(*tracks));
+    if (!tracks) return PXA_STATUS_RESOURCE_LIMIT;
+    for (size_t index = 0; index < count; ++index) {
+        const uint8_t *record = value.data + index * 8u;
         uint32_t amount = pxa_read_u32(record + 4);
-        if (record[0] == 1u)
-            tracks[index] = LV_GRID_FR((int32_t)amount);
-        else if (record[0] == 2u)
-            tracks[index] = (lv_coord_t)amount;
-        else
-            tracks[index] = LV_GRID_CONTENT;
+        tracks[index] = record[0] == 1u ? LV_GRID_FR((int32_t)amount)
+                      : record[0] == 2u ? logical_pixels(ui, (int32_t)amount) : LV_GRID_CONTENT;
+        /* Fixed sizes must not alias LVGL's content/fraction/end sentinels. */
+        if (record[0] == PXA_UI_GRID_FIXED && tracks[index] >= LV_GRID_CONTENT) {
+            ui_release(ui, tracks);
+            return PXA_STATUS_INVALID_ARGUMENT;
+        }
     }
     tracks[count] = LV_GRID_TEMPLATE_LAST;
-    ui_release(node->ui, *slot);
-    *slot = tracks;
-    *flag = 1;
-    if (node->has_grid_columns && node->has_grid_rows)
-        lv_obj_set_grid_dsc_array(node->object, node->grid_columns,
-                                  node->grid_rows);
+    command->owned.grid.tracks = tracks;
+    command->owned.grid.has_tracks = 1;
+    return PXA_STATUS_OK;
+}
+
+/* Retain the old descriptors until commit; LVGL borrows these pointers. A
+ * failed transaction transfers the exact old allocation back to the node. */
+static void swap_grid_tracks(pxa_lvgl_ui_command_t *command, int undo) {
+    pxa_lvgl_ui_node_t *node = command->view.node_handle;
+    int rows = command->view.property == PXA_UI_PROPERTY_GRID_ROWS;
+    lv_coord_t **slot = rows ? &node->grid_rows : &node->grid_columns;
+    uint8_t *flag = rows ? &node->has_grid_rows : &node->has_grid_columns;
+    lv_coord_t *previous = *slot;
+    uint8_t previous_flag = *flag;
+    uint32_t previous_layout = lv_obj_get_style_layout(node->object, 0);
+    *slot = command->owned.grid.tracks;
+    *flag = command->owned.grid.has_tracks;
+    command->owned.grid.tracks = previous;
+    command->owned.grid.has_tracks = previous_flag;
+    lv_obj_set_style_grid_column_dsc_array(node->object, node->grid_columns, 0);
+    lv_obj_set_style_grid_row_dsc_array(node->object, node->grid_rows, 0);
+    lv_obj_set_layout(node->object, undo ? command->owned.grid.layout :
+        node->has_grid_columns && node->has_grid_rows ? LV_LAYOUT_GRID : LV_LAYOUT_NONE);
+    command->owned.grid.layout = previous_layout;
 }
 
 static void set_grid_cell(pxa_lvgl_ui_node_t *node, pxa_bytes_t value) {
@@ -668,6 +902,11 @@ static void apply_node_colors(pxa_lvgl_ui_node_t *node) {
                                      node->border_token, node->border);
     lv_obj_set_style_text_color(node->object, rgba_color(fg), 0);
     lv_obj_set_style_text_opa(node->object, rgba_opa(fg), 0);
+    if (node->type == PXA_UI_NODE_IMAGE) {
+        lv_obj_set_style_image_recolor(node->object, rgba_color(fg), 0);
+        lv_obj_set_style_image_recolor_opa(
+            node->object, node->image_tint ? rgba_opa(fg) : LV_OPA_TRANSP, 0);
+    }
     lv_obj_set_style_bg_color(node->object, rgba_color(bg), 0);
     lv_obj_set_style_bg_opa(node->object, rgba_opa(bg), 0);
     lv_obj_set_style_border_color(node->object, rgba_color(border), 0);
@@ -704,6 +943,7 @@ static void apply_color_value(pxa_lvgl_ui_node_t *node,
         node->foreground_kind = kind;
         node->foreground_token = token;
         node->foreground = rgba;
+        node->image_tint = 1;
     } else if (property == PXA_UI_PROPERTY_BACKGROUND) {
         node->background_kind = kind;
         node->background_token = token;
@@ -737,8 +977,7 @@ static void apply_property(pxa_lvgl_ui_node_t *node,
     switch (property) {
         case PXA_UI_PROPERTY_VISIBLE:
             node->visible = data[0];
-            if (!node->visible) lv_obj_add_flag(object, LV_OBJ_FLAG_HIDDEN);
-            else lv_obj_remove_flag(object, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_set_hidden(object, !node->visible);
             break;
         case PXA_UI_PROPERTY_ENABLED:
             if (data[0]) lv_obj_remove_state(object, LV_STATE_DISABLED);
@@ -746,15 +985,14 @@ static void apply_property(pxa_lvgl_ui_node_t *node,
             break;
         case PXA_UI_PROPERTY_EVENT_MASK:
             node->event_mask = pxa_read_u64(data);
-            if (node->event_mask != 0) lv_obj_add_flag(object, LV_OBJ_FLAG_CLICKABLE);
-            else lv_obj_remove_flag(object, LV_OBJ_FLAG_CLICKABLE);
+            lv_obj_set_clickable(object, node->event_mask != 0);
             /* A node that subscribes to pointer events receives the same
              * samples a Canvas does: press, move, release and press-lost with
              * the position relative to the node. */
+            if (node->type != PXA_UI_NODE_CANVAS)
+                lv_obj_remove_event_cb_with_user_data(object, on_canvas_pointer, node);
             if (node->type != PXA_UI_NODE_CANVAS &&
                 (node->event_mask & PXA_UI_EVENT_MASK_POINTER) != 0) {
-                lv_obj_remove_event_cb_with_user_data(object, on_canvas_pointer,
-                                                      node);
                 lv_obj_add_event_cb(object, on_canvas_pointer, LV_EVENT_PRESSED,
                                     node);
                 lv_obj_add_event_cb(object, on_canvas_pointer, LV_EVENT_PRESSING,
@@ -833,10 +1071,10 @@ static void apply_property(pxa_lvgl_ui_node_t *node,
             if (data[0]) {
                 /* An absolutely positioned node is an overlay: it paints above
                  * its in-flow siblings, whatever order they were created in. */
-                lv_obj_add_flag(object, LV_OBJ_FLAG_FLOATING);
+                lv_obj_set_floating(object, true);
                 lv_obj_move_foreground(object);
             } else {
-                lv_obj_remove_flag(object, LV_OBJ_FLAG_FLOATING);
+                lv_obj_set_floating(object, false);
             }
             break;
         case PXA_UI_PROPERTY_X:
@@ -918,18 +1156,6 @@ static void apply_property(pxa_lvgl_ui_node_t *node,
                 }
             }
             break;
-        case PXA_UI_PROPERTY_ASSET:
-            if (node->ui->config.resolve_asset != NULL) {
-                const void *source = node->ui->config.resolve_asset(
-                    data, value.size, node->ui->config.asset_user_data);
-                if (source != NULL) {
-                    const void *previous = node->asset_source;
-                    lv_image_set_src(object, source);
-                    node->asset_source = source;
-                    release_asset_source(node->ui, previous);
-                }
-            }
-            break;
         case PXA_UI_PROPERTY_IMAGE_FIT:
             lv_image_set_inner_align(object,
                 data[0] == PXA_UI_IMAGE_FIT_STRETCH ? LV_IMAGE_ALIGN_STRETCH
@@ -973,12 +1199,6 @@ static void apply_property(pxa_lvgl_ui_node_t *node,
                 : data[0] == 1 ? LV_SCROLLBAR_MODE_AUTO
                                : LV_SCROLLBAR_MODE_ACTIVE);
             break;
-        case PXA_UI_PROPERTY_GRID_COLUMNS:
-            set_grid_tracks(node, value, 0);
-            break;
-        case PXA_UI_PROPERTY_GRID_ROWS:
-            set_grid_tracks(node, value, 1);
-            break;
         case PXA_UI_PROPERTY_GRID_CELL:
             set_grid_cell(node, value);
             break;
@@ -1017,11 +1237,6 @@ static void clear_property(pxa_lvgl_ui_node_t *node,
                            pxa_ui_property_t property) {
     uint8_t value[16] = {0};
     switch (property) {
-        case PXA_UI_PROPERTY_ASSET:
-            if (node->object != NULL) lv_image_set_src(node->object, NULL);
-            release_asset_source(node->ui, node->asset_source);
-            node->asset_source = NULL;
-            break;
         case PXA_UI_PROPERTY_VISIBLE:
         case PXA_UI_PROPERTY_ENABLED:
             value[0] = 1;
@@ -1046,6 +1261,8 @@ static void clear_property(pxa_lvgl_ui_node_t *node,
         case PXA_UI_PROPERTY_FOREGROUND:
             value[1] = 4;
             apply_property(node, property, (pxa_bytes_t){value, 8});
+            node->image_tint = 0;
+            apply_node_colors(node);
             break;
         case PXA_UI_PROPERTY_BACKGROUND:
         case PXA_UI_PROPERTY_BORDER_COLOR:
@@ -1069,6 +1286,238 @@ static void clear_property(pxa_lvgl_ui_node_t *node,
             apply_property(node, property, (pxa_bytes_t){value, 4});
             break;
     }
+}
+
+/* Property undo is transient and only needed for nodes that predate this
+ * transaction. Local-style presence matters: inherited values are not local
+ * overrides and must remain inherited after a failed commit. */
+/* This range contains scalar model state only. Ownership fields (image,
+ * canvas, grid descriptors and transaction links) are deliberately excluded. */
+#define NODE_STATE_OFFSET offsetof(pxa_lvgl_ui_node_t, event_mask)
+#define NODE_STATE_BYTES (offsetof(pxa_lvgl_ui_node_t, grid_columns) - NODE_STATE_OFFSET)
+
+typedef struct {
+    lv_obj_t *object;
+    lv_style_value_t value;
+    lv_style_selector_t selector;
+    lv_style_prop_t property;
+    uint8_t content;
+    uint8_t present;
+} property_style_t;
+
+struct pxa_lvgl_ui_property_undo {
+    uint8_t state[NODE_STATE_BYTES];
+    char *text;
+    lv_obj_t *content;
+    lv_state_t object_state;
+    lv_obj_flag_t flags;
+    int32_t index;
+    int32_t scroll_x, scroll_y;
+    int32_t value, start_value;
+    uint32_t cursor;
+    uint32_t selection_start, selection_end;
+    uint16_t selected;
+    lv_dir_t scroll_dir;
+    lv_scrollbar_mode_t scrollbar;
+    lv_image_align_t image_align;
+    uint8_t applied;
+    uint8_t style_count;
+    property_style_t styles[];
+};
+
+/* Entries cover side effects of the setters, not just the named property. */
+static unsigned property_styles(uint16_t property, property_style_t *styles) {
+    unsigned count = 0;
+#define STYLE(prop, child, state) do { \
+    styles[count++] = (property_style_t){.property=(prop), .content=(child), .selector=(state)}; \
+} while (0)
+#define MAIN(prop) STYLE(prop, 0, 0)
+    switch (property) {
+        case PXA_UI_PROPERTY_WIDTH: case PXA_UI_PROPERTY_ALIGN_SELF: MAIN(LV_STYLE_WIDTH); break;
+        case PXA_UI_PROPERTY_HEIGHT: MAIN(LV_STYLE_HEIGHT); break;
+        case PXA_UI_PROPERTY_MIN_WIDTH: MAIN(LV_STYLE_MIN_WIDTH); break;
+        case PXA_UI_PROPERTY_MAX_WIDTH: MAIN(LV_STYLE_MAX_WIDTH); break;
+        case PXA_UI_PROPERTY_MIN_HEIGHT: MAIN(LV_STYLE_MIN_HEIGHT); break;
+        case PXA_UI_PROPERTY_MAX_HEIGHT: MAIN(LV_STYLE_MAX_HEIGHT); break;
+        case PXA_UI_PROPERTY_X: MAIN(LV_STYLE_X); break;
+        case PXA_UI_PROPERTY_Y: MAIN(LV_STYLE_Y); break;
+        case PXA_UI_PROPERTY_LAYOUT: MAIN(LV_STYLE_LAYOUT); MAIN(LV_STYLE_FLEX_FLOW); break;
+        case PXA_UI_PROPERTY_ALIGN: case PXA_UI_PROPERTY_JUSTIFY:
+            MAIN(LV_STYLE_FLEX_MAIN_PLACE); MAIN(LV_STYLE_FLEX_CROSS_PLACE); MAIN(LV_STYLE_FLEX_TRACK_PLACE); break;
+        case PXA_UI_PROPERTY_GAP: MAIN(LV_STYLE_PAD_ROW); MAIN(LV_STYLE_PAD_COLUMN); break;
+        case PXA_UI_PROPERTY_PADDING:
+            MAIN(LV_STYLE_PAD_LEFT); MAIN(LV_STYLE_PAD_TOP); MAIN(LV_STYLE_PAD_RIGHT); MAIN(LV_STYLE_PAD_BOTTOM); break;
+        case PXA_UI_PROPERTY_GROW: MAIN(LV_STYLE_FLEX_GROW); break;
+        case PXA_UI_PROPERTY_FOREGROUND: case PXA_UI_PROPERTY_BACKGROUND: case PXA_UI_PROPERTY_BORDER_COLOR:
+            MAIN(LV_STYLE_TEXT_COLOR); MAIN(LV_STYLE_TEXT_OPA);
+            MAIN(LV_STYLE_IMAGE_RECOLOR); MAIN(LV_STYLE_IMAGE_RECOLOR_OPA);
+            MAIN(LV_STYLE_BG_COLOR); MAIN(LV_STYLE_BG_OPA);
+            MAIN(LV_STYLE_BORDER_COLOR); MAIN(LV_STYLE_BORDER_OPA);
+            STYLE(LV_STYLE_BG_COLOR, 0, LV_STATE_PRESSED);
+            STYLE(LV_STYLE_TEXT_COLOR, 1, 0); STYLE(LV_STYLE_TEXT_OPA, 1, 0); break;
+        case PXA_UI_PROPERTY_OPACITY: case PXA_UI_PROPERTY_COMPOSITION: MAIN(LV_STYLE_OPA); break;
+        case PXA_UI_PROPERTY_RADIUS: MAIN(LV_STYLE_RADIUS); break;
+        case PXA_UI_PROPERTY_BORDER_WIDTH: MAIN(LV_STYLE_BORDER_WIDTH); break;
+        case PXA_UI_PROPERTY_FONT_ROLE: case PXA_UI_PROPERTY_ICON:
+            MAIN(LV_STYLE_TEXT_FONT); STYLE(LV_STYLE_TEXT_FONT, 1, 0); break;
+        case PXA_UI_PROPERTY_TEXT_ALIGN: MAIN(LV_STYLE_TEXT_ALIGN); break;
+        case PXA_UI_PROPERTY_GRID_CELL:
+            MAIN(LV_STYLE_GRID_CELL_COLUMN_POS); MAIN(LV_STYLE_GRID_CELL_COLUMN_SPAN);
+            MAIN(LV_STYLE_GRID_CELL_ROW_POS); MAIN(LV_STYLE_GRID_CELL_ROW_SPAN);
+            MAIN(LV_STYLE_GRID_CELL_X_ALIGN); MAIN(LV_STYLE_GRID_CELL_Y_ALIGN); break;
+        case PXA_UI_PROPERTY_ITEM_COUNT: case PXA_UI_PROPERTY_ITEM_EXTENT:
+            STYLE(LV_STYLE_HEIGHT, 1, 0); break;
+        default: break;
+    }
+#undef MAIN
+#undef STYLE
+    return count;
+}
+
+static int is_plain_property(const pxa_ui_command_view_t *view) {
+    return (view->command == PXA_UI_COMMAND_SET_PROPERTY ||
+            view->command == PXA_UI_COMMAND_CLEAR_PROPERTY) &&
+           view->property != PXA_UI_PROPERTY_IMAGE_HANDLE &&
+           view->property != PXA_UI_PROPERTY_ASSET && !is_grid_command(view);
+}
+
+static pxa_status_t prepare_property_undo(pxa_lvgl_ui_t *ui, pxa_lvgl_ui_command_t *command) {
+    pxa_lvgl_ui_node_t *node = command->view.node_handle;
+    if (!node || node->owner_command) return PXA_STATUS_OK;
+    property_style_t styles[11];
+    unsigned count = property_styles(command->view.property, styles);
+    if (!count) {
+        switch (command->view.property) {
+            case PXA_UI_PROPERTY_VISIBLE: case PXA_UI_PROPERTY_ENABLED:
+            case PXA_UI_PROPERTY_EVENT_MASK: case PXA_UI_PROPERTY_POSITION:
+            case PXA_UI_PROPERTY_TEXT: case PXA_UI_PROPERTY_IMAGE_FIT:
+            case PXA_UI_PROPERTY_VALUE: case PXA_UI_PROPERTY_MIN_VALUE: case PXA_UI_PROPERTY_MAX_VALUE:
+            case PXA_UI_PROPERTY_SCROLL_AXIS: case PXA_UI_PROPERTY_SCROLLBAR:
+            case PXA_UI_PROPERTY_SCROLL_POSITION: break;
+            default: return PXA_STATUS_OK;
+        }
+    }
+    pxa_lvgl_ui_property_undo_t *undo = ui_allocate(ui, sizeof(*undo) + count * sizeof(*styles));
+    if (!undo) return PXA_STATUS_RESOURCE_LIMIT;
+    memset(undo, 0, sizeof(*undo));
+    undo->style_count = count;
+    memcpy(undo->styles, styles, count * sizeof(*styles));
+    command->owned.property = undo;
+    return PXA_STATUS_OK;
+}
+
+static pxa_status_t capture_property_undo(pxa_lvgl_ui_command_t *command) {
+    pxa_lvgl_ui_property_undo_t *undo = command->owned.property;
+    if (!undo) return PXA_STATUS_OK;
+    pxa_lvgl_ui_node_t *node = command->view.node_handle;
+    lv_obj_t *object = node->object;
+    memcpy(undo->state, (uint8_t *)node + NODE_STATE_OFFSET, NODE_STATE_BYTES);
+    undo->content = node->content;
+    undo->object_state = lv_obj_get_state(object);
+    undo->flags = (lv_obj_is_hidden(object) ? LV_OBJ_FLAG_HIDDEN : 0) |
+                  (lv_obj_is_floating(object) ? LV_OBJ_FLAG_FLOATING : 0) |
+                  (lv_obj_is_clickable(object) ? LV_OBJ_FLAG_CLICKABLE : 0);
+    undo->index = lv_obj_get_index(object);
+    undo->scroll_x = lv_obj_get_scroll_x(object);
+    undo->scroll_y = lv_obj_get_scroll_y(object);
+    undo->scroll_dir = lv_obj_get_scroll_dir(object);
+    undo->scrollbar = lv_obj_get_scrollbar_mode(object);
+    for (unsigned i = 0; i < undo->style_count; ++i) {
+        property_style_t *style = &undo->styles[i];
+        style->object = style->content ? node->content : object;
+        style->present = style->object && lv_obj_get_local_style_prop(
+            style->object, style->property, &style->value, style->selector) == LV_STYLE_RES_FOUND;
+    }
+    uint16_t property = command->view.property;
+    if (property == PXA_UI_PROPERTY_TEXT || property == PXA_UI_PROPERTY_ICON) {
+        const char *text = NULL;
+        if (node->type == PXA_UI_NODE_TEXT) text = lv_label_get_text(object);
+        else if (node->subtype == PXA_UI_CONTROL_BUTTON && node->content)
+            text = lv_label_get_text(node->content);
+        else if (node->subtype == PXA_UI_CONTROL_TEXT_INPUT) {
+            text = lv_textarea_get_text(object);
+            undo->cursor = lv_textarea_get_cursor_pos(object);
+            lv_obj_t *label = lv_textarea_get_label(object);
+            undo->selection_start = lv_label_get_text_selection_start(label);
+            undo->selection_end = lv_label_get_text_selection_end(label);
+        } else if (node->subtype == PXA_UI_CONTROL_SELECTION) {
+            text = lv_dropdown_get_options(object);
+            undo->selected = lv_dropdown_get_selected(object);
+        }
+        if (text) {
+            size_t size = strlen(text) + 1;
+            undo->text = ui_allocate(node->ui, size);
+            if (!undo->text) return PXA_STATUS_RESOURCE_LIMIT;
+            memcpy(undo->text, text, size);
+        }
+    }
+    if (property == PXA_UI_PROPERTY_VALUE || property == PXA_UI_PROPERTY_MIN_VALUE || property == PXA_UI_PROPERTY_MAX_VALUE) {
+        if (node->type == PXA_UI_NODE_PROGRESS || node->subtype == PXA_UI_CONTROL_SLIDER) {
+            undo->value = lv_bar_get_value(object);
+            undo->start_value = lv_bar_get_start_value(object);
+        }
+    }
+    if (property == PXA_UI_PROPERTY_IMAGE_FIT) undo->image_align = lv_image_get_inner_align(object);
+    undo->applied = 1;
+    return PXA_STATUS_OK;
+}
+
+static void rollback_property(pxa_lvgl_ui_command_t *command) {
+    pxa_lvgl_ui_property_undo_t *undo = command->owned.property;
+    if (!undo || !undo->applied) return;
+    pxa_lvgl_ui_node_t *node = command->view.node_handle;
+    lv_obj_t *object = node->object;
+    uint16_t property = command->view.property;
+    memcpy((uint8_t *)node + NODE_STATE_OFFSET, undo->state, NODE_STATE_BYTES);
+    if (property == PXA_UI_PROPERTY_TEXT || property == PXA_UI_PROPERTY_ICON) {
+        if (undo->text) apply_property(node, PXA_UI_PROPERTY_TEXT,
+            (pxa_bytes_t){(uint8_t *)undo->text, strlen(undo->text)});
+        if (!undo->content && node->content && node->subtype == PXA_UI_CONTROL_BUTTON) {
+            lv_obj_delete(node->content);
+            node->content = NULL;
+        }
+        if (node->subtype == PXA_UI_CONTROL_TEXT_INPUT) {
+            lv_textarea_set_cursor_pos(object, undo->cursor);
+            lv_obj_t *label = lv_textarea_get_label(object);
+            lv_label_set_text_selection_start(label, undo->selection_start);
+            lv_label_set_text_selection_end(label, undo->selection_end);
+        }
+        if (node->subtype == PXA_UI_CONTROL_SELECTION) lv_dropdown_set_selected(object, undo->selected);
+    }
+    if (property == PXA_UI_PROPERTY_EVENT_MASK) {
+        uint8_t value[8]; pxa_write_u64(value, node->event_mask);
+        apply_property(node, PXA_UI_PROPERTY_EVENT_MASK, (pxa_bytes_t){value, 8});
+    }
+    if (property == PXA_UI_PROPERTY_VALUE || property == PXA_UI_PROPERTY_MIN_VALUE || property == PXA_UI_PROPERTY_MAX_VALUE) {
+        if (node->type == PXA_UI_NODE_PROGRESS || node->subtype == PXA_UI_CONTROL_SLIDER) {
+            lv_bar_set_range(object, node->minimum, node->maximum);
+            lv_bar_set_value(object, undo->value, LV_ANIM_OFF);
+            lv_bar_set_start_value(object, undo->start_value, LV_ANIM_OFF);
+        }
+    }
+    for (unsigned i = 0; i < undo->style_count; ++i) {
+        property_style_t *style = &undo->styles[i];
+        if (!style->object) continue;
+        if (style->present) lv_obj_set_local_style_prop(style->object, style->property, style->value, style->selector);
+        else lv_obj_remove_local_style_prop(style->object, style->property, style->selector);
+    }
+    if (property == PXA_UI_PROPERTY_IMAGE_FIT) lv_image_set_inner_align(object, undo->image_align);
+    lv_obj_set_hidden(object, (undo->flags & LV_OBJ_FLAG_HIDDEN) != 0);
+    lv_obj_set_floating(object, (undo->flags & LV_OBJ_FLAG_FLOATING) != 0);
+    lv_obj_set_clickable(object, (undo->flags & LV_OBJ_FLAG_CLICKABLE) != 0);
+    lv_obj_remove_state(object, lv_obj_get_state(object) & ~undo->object_state);
+    lv_obj_add_state(object, undo->object_state);
+    if (property == PXA_UI_PROPERTY_POSITION) lv_obj_move_to_index(object, undo->index);
+    lv_obj_set_scroll_dir(object, undo->scroll_dir);
+    lv_obj_set_scrollbar_mode(object, undo->scrollbar);
+    lv_obj_scroll_to(object, undo->scroll_x, undo->scroll_y, LV_ANIM_OFF);
+    undo->applied = 0;
+}
+
+static void free_property_undo(pxa_lvgl_ui_t *ui, pxa_lvgl_ui_property_undo_t *undo) {
+    if (!undo) return;
+    ui_release(ui, undo->text);
+    ui_release(ui, undo);
 }
 
 static void link_node(pxa_lvgl_ui_t *ui, pxa_lvgl_ui_node_t *node) {
@@ -1117,10 +1566,11 @@ static void set_alpha_overlay_base_visibility(pxa_lvgl_ui_t *ui,
                                               int snapshot_visible) {
     pxa_lvgl_ui_node_t *node;
     for (node = ui->nodes; node != NULL; node = node->next) {
-        if (node->object == NULL ||
-            !node_is_in_alpha_overlay(ui, node))
-            continue;
-        if (snapshot_visible) {
+        if (node->object == NULL) continue;
+        int in_overlay = node_is_in_alpha_overlay(ui, node);
+        if (!in_overlay && !node->alpha_hidden) continue;
+        if (snapshot_visible || !in_overlay) {
+            node->alpha_hidden = 0;
             lv_obj_set_style_opa(node->object, node->opacity, 0);
             lv_obj_remove_local_style_prop(node->object,
                                            LV_STYLE_OUTLINE_OPA, 0);
@@ -1131,6 +1581,7 @@ static void set_alpha_overlay_base_visibility(pxa_lvgl_ui_t *ui,
             apply_node_colors(node);
             continue;
         }
+        node->alpha_hidden = 1;
         lv_obj_set_style_opa(node->object, LV_OPA_TRANSP, 0);
         lv_obj_set_style_bg_opa(node->object, LV_OPA_TRANSP, 0);
         lv_obj_set_style_border_opa(node->object, LV_OPA_TRANSP, 0);
@@ -1143,38 +1594,74 @@ static void set_alpha_overlay_base_visibility(pxa_lvgl_ui_t *ui,
     }
 }
 
-static void clear_alpha_plane(pxa_lvgl_ui_t *ui) {
-    ui_release(ui, ui->alpha_pixels);
-    ui_release(ui, ui->alpha_values);
-    ui->alpha_pixels = NULL;
-    ui->alpha_values = NULL;
-    ui->alpha_x = 0;
-    ui->alpha_y = 0;
-    ui->alpha_width = 0;
-    ui->alpha_height = 0;
-    ui->alpha_content_x = 0;
-    ui->alpha_content_y = 0;
-    ui->alpha_content_width = 0;
-    ui->alpha_content_height = 0;
+static void clear_alpha_plane(pxa_lvgl_ui_t *ui, pxa_lvgl_ui_alpha_t *alpha) {
+    ui_release(ui, alpha->pixels);
+    ui_release(ui, alpha->values);
+    memset(alpha, 0, sizeof(*alpha));
 }
 
-static int prepare_alpha_plane(pxa_lvgl_ui_t *ui, const lv_area_t *area) {
+static void clear_snapshot(pxa_lvgl_ui_t *ui) {
+    ui_release(ui, ui->snapshot_memory);
+    ui->snapshot_memory = NULL;
+    ui->snapshot_capacity = 0;
+}
+
+static size_t display_buffer_limit(const pxa_lvgl_ui_t *ui, int snapshot) {
+    if (snapshot && ui->config.snapshot_limit_bytes) return ui->config.snapshot_limit_bytes;
+    if (!snapshot && ui->config.alpha_limit_bytes) return ui->config.alpha_limit_bytes;
+    uint32_t w = ui->primary_environment.width, h = ui->primary_environment.height;
+    if (!w || !h || w > UINT16_MAX || h > UINT16_MAX) return 0;
+    uint64_t bytes = snapshot ?
+        (uint64_t)lv_draw_buf_width_to_stride(w, LV_COLOR_FORMAT_ARGB8888) * h + LV_DRAW_BUF_ALIGN - 1u :
+        (uint64_t)w * h * 3u;
+    return bytes > SIZE_MAX ? SIZE_MAX : (size_t)bytes;
+}
+
+static size_t snapshot_bytes(lv_obj_t *object) {
+    int64_t ext = lv_obj_get_ext_draw_size(object);
+    int64_t width = (int64_t)lv_obj_get_width(object) + 2 * ext;
+    int64_t height = (int64_t)lv_obj_get_height(object) + 2 * ext;
+    if (width <= 0 || height <= 0 || width > UINT16_MAX || height > UINT16_MAX) return 0;
+    uint64_t bytes = (uint64_t)lv_draw_buf_width_to_stride((uint32_t)width, LV_COLOR_FORMAT_ARGB8888) * height;
+    return bytes > UINT32_MAX || bytes > SIZE_MAX ? 0 : (size_t)bytes;
+}
+
+/* The draw buffer descriptor lives on the stack. Snapshot drawing completes
+ * synchronously; it never owns or frees the tracked, aligned pixel storage. */
+static lv_draw_buf_t *take_snapshot(lv_obj_t *object, void *memory, size_t capacity,
+                                    lv_draw_buf_t *draw) {
+    uintptr_t aligned = ((uintptr_t)memory + LV_DRAW_BUF_ALIGN - 1u) /
+                         LV_DRAW_BUF_ALIGN * LV_DRAW_BUF_ALIGN;
+    if (lv_draw_buf_init(draw, 1, 1, LV_COLOR_FORMAT_ARGB8888, 0,
+                        (void *)aligned, (uint32_t)capacity) != LV_RESULT_OK ||
+        lv_snapshot_take_to_draw_buf(object, LV_COLOR_FORMAT_ARGB8888, draw) != LV_RESULT_OK)
+        return NULL;
+    return draw;
+}
+
+/* Return 1 for reused storage, 2 for newly allocated storage, 0 on failure. */
+static int prepare_alpha_plane(pxa_lvgl_ui_t *ui, const lv_area_t *area, int staging) {
     const int32_t width = lv_area_get_width(area);
     const int32_t height = lv_area_get_height(area);
     const size_t pixels = (size_t)width * height;
     uint16_t *colors;
     uint8_t *alpha;
     if (width <= 0 || height <= 0 || width > UINT16_MAX ||
-        height > UINT16_MAX || pixels > SIZE_MAX / sizeof(*colors))
+        height > UINT16_MAX || pixels > SIZE_MAX / sizeof(*colors) ||
+        pixels > display_buffer_limit(ui, 0) / 3u)
         return 0;
-    if (ui->alpha_pixels != NULL && ui->alpha_values != NULL &&
-        ui->alpha_x == area->x1 && ui->alpha_y == area->y1 &&
-        ui->alpha_width == (uint16_t)width &&
-        ui->alpha_height == (uint16_t)height) {
-        memset(ui->alpha_pixels, 0, pixels * sizeof(*colors));
-        memset(ui->alpha_values, 0, pixels);
+    if (ui->alpha.pixels != NULL && ui->alpha.values != NULL &&
+        ui->alpha.width == (uint16_t)width &&
+        ui->alpha.height == (uint16_t)height) {
+        ui->alpha.x = area->x1;
+        ui->alpha.y = area->y1;
+        memset(ui->alpha.pixels, 0, pixels * sizeof(*colors));
+        memset(ui->alpha.values, 0, pixels);
         return 1;
     }
+    /* Only staging is disposable before replacement succeeds. Release it
+     * here, using the final computed geometry, to avoid a third live plane. */
+    if (staging) clear_alpha_plane(ui, &ui->alpha);
     colors = ui_allocate(ui, pixels * sizeof(*colors));
     alpha = ui_allocate(ui, pixels);
     if (colors == NULL || alpha == NULL) {
@@ -1182,23 +1669,23 @@ static int prepare_alpha_plane(pxa_lvgl_ui_t *ui, const lv_area_t *area) {
         ui_release(ui, alpha);
         return 0;
     }
-    clear_alpha_plane(ui);
-    ui->alpha_pixels = colors;
-    ui->alpha_values = alpha;
-    ui->alpha_x = area->x1;
-    ui->alpha_y = area->y1;
-    ui->alpha_width = (uint16_t)width;
-    ui->alpha_height = (uint16_t)height;
+    clear_alpha_plane(ui, &ui->alpha);
+    ui->alpha.pixels = colors;
+    ui->alpha.values = alpha;
+    ui->alpha.x = area->x1;
+    ui->alpha.y = area->y1;
+    ui->alpha.width = (uint16_t)width;
+    ui->alpha.height = (uint16_t)height;
     memset(colors, 0, pixels * sizeof(*colors));
     memset(alpha, 0, pixels);
-    return 1;
+    return 2;
 }
 
 static void alpha_plane_blend_pixel(pxa_lvgl_ui_t *ui, size_t index,
                                     lv_color32_t source) {
     const uint8_t source_alpha = source.alpha;
-    const uint8_t destination_alpha = ui->alpha_values[index];
-    const uint16_t destination = ui->alpha_pixels[index];
+    const uint8_t destination_alpha = ui->alpha.values[index];
+    const uint16_t destination = ui->alpha.pixels[index];
     const uint16_t inverse = (uint16_t)(255u - source_alpha);
     const uint16_t output_alpha = (uint16_t)(source_alpha +
         (destination_alpha * inverse + 127u) / 255u);
@@ -1216,27 +1703,43 @@ static void alpha_plane_blend_pixel(pxa_lvgl_ui_t *ui, size_t index,
     blue = (uint32_t)source.blue * source_alpha +
            ((uint32_t)expand5(destination & 0x1fu) * destination_alpha *
             inverse + 127u) / 255u;
-    ui->alpha_pixels[index] = pack565((uint8_t)(red / output_alpha),
+    ui->alpha.pixels[index] = pack565((uint8_t)(red / output_alpha),
                                       (uint8_t)(green / output_alpha),
                                       (uint8_t)(blue / output_alpha));
-    ui->alpha_values[index] = (uint8_t)output_alpha;
+    ui->alpha.values[index] = (uint8_t)output_alpha;
 }
 
-static int refresh_alpha_plane(pxa_lvgl_ui_t *ui) {
+static int render_alpha_plane(pxa_lvgl_ui_t *ui, int staging, int *created_plane) {
     pxa_lvgl_ui_node_t *node;
     lv_area_t union_area = {0};
     uint16_t content_min_x = UINT16_MAX;
     uint16_t content_min_y = UINT16_MAX;
     uint16_t content_max_x = 0;
     uint16_t content_max_y = 0;
-    int found = 0;
+    unsigned found = 0;
+    pxa_lvgl_ui_node_t *only_node = NULL;
+    lv_draw_buf_t draw;
+    lv_draw_buf_t *prepared_snapshot = NULL;
+    void *candidate = NULL;
+    void *memory = ui->snapshot_memory;
+    size_t capacity = ui->snapshot_capacity;
+    size_t required = 0;
+    size_t limit = display_buffer_limit(ui, 1);
     int result = 1;
+    if (created_plane) *created_plane = 0;
+    set_alpha_overlay_base_visibility(ui, 1);
     for (node = ui->nodes; node != NULL; node = node->next) {
         lv_area_t area;
         if (node->object == NULL || !node->visible ||
             node->composition != PXA_UI_COMPOSITION_ALPHA_OVERLAY ||
             overlay_has_overlay_parent(ui, node))
             continue;
+        size_t bytes = snapshot_bytes(node->object);
+        if (!bytes || limit < LV_DRAW_BUF_ALIGN - 1u || bytes > limit - (LV_DRAW_BUF_ALIGN - 1u)) {
+            result = 0;
+            goto finish_snapshot;
+        }
+        if (bytes > required) required = bytes;
         lv_obj_get_coords(node->object, &area);
         if (!found) union_area = area;
         else {
@@ -1245,17 +1748,36 @@ static int refresh_alpha_plane(pxa_lvgl_ui_t *ui) {
             if (area.x2 > union_area.x2) union_area.x2 = area.x2;
             if (area.y2 > union_area.y2) union_area.y2 = area.y2;
         }
-        found = 1;
+        ++found;
+        only_node = node;
     }
     if (!found) {
-        clear_alpha_plane(ui);
-        return 1;
+        clear_alpha_plane(ui, &ui->alpha);
+        clear_snapshot(ui);
+        goto finish_snapshot;
     }
-    if (!prepare_alpha_plane(ui, &union_area)) return 0;
-    ui->alpha_content_x = 0;
-    ui->alpha_content_y = 0;
-    ui->alpha_content_width = 0;
-    ui->alpha_content_height = 0;
+    if (capacity < required || capacity > limit - (LV_DRAW_BUF_ALIGN - 1u)) {
+        candidate = ui_allocate(ui, required + LV_DRAW_BUF_ALIGN - 1u);
+        if (!candidate) { result = 0; goto finish_snapshot; }
+        memory = candidate;
+        capacity = required;
+    }
+    /* Common case: take the only fallible snapshot before touching the old
+     * plane. Same-size updates can then reuse its pixels without a second plane. */
+    if (found == 1) {
+        prepared_snapshot = take_snapshot(only_node->object, memory, capacity, &draw);
+        if (!prepared_snapshot) { result = 0; goto finish_snapshot; }
+    }
+    int prepared = prepare_alpha_plane(ui, &union_area, staging);
+    if (created_plane) *created_plane = prepared == 2;
+    if (!prepared) {
+        result = 0;
+        goto finish_snapshot;
+    }
+    ui->alpha.content_x = 0;
+    ui->alpha.content_y = 0;
+    ui->alpha.content_width = 0;
+    ui->alpha.content_height = 0;
     set_alpha_overlay_base_visibility(ui, 1);
     for (node = ui->nodes; node != NULL; node = node->next) {
         lv_draw_buf_t *snapshot;
@@ -1264,7 +1786,9 @@ static int refresh_alpha_plane(pxa_lvgl_ui_t *ui) {
             node->composition != PXA_UI_COMPOSITION_ALPHA_OVERLAY ||
             overlay_has_overlay_parent(ui, node))
             continue;
-        snapshot = lv_snapshot_take(node->object, LV_COLOR_FORMAT_ARGB8888);
+        snapshot = prepared_snapshot ? prepared_snapshot :
+            take_snapshot(node->object, memory, capacity, &draw);
+        prepared_snapshot = NULL;
         if (snapshot == NULL) {
             result = 0;
             break;
@@ -1275,12 +1799,12 @@ static int refresh_alpha_plane(pxa_lvgl_ui_t *ui) {
                 (const uint8_t *)snapshot->data +
                 (size_t)y * snapshot->header.stride);
             for (uint32_t x = 0; x < snapshot->header.w; ++x) {
-                const int32_t plane_x = area.x1 + (int32_t)x - ui->alpha_x;
-                const int32_t plane_y = area.y1 + (int32_t)y - ui->alpha_y;
+                const int32_t plane_x = area.x1 + (int32_t)x - ui->alpha.x;
+                const int32_t plane_y = area.y1 + (int32_t)y - ui->alpha.y;
                 if (plane_x >= 0 && plane_y >= 0 &&
-                    plane_x < ui->alpha_width && plane_y < ui->alpha_height) {
+                    plane_x < ui->alpha.width && plane_y < ui->alpha.height) {
                     alpha_plane_blend_pixel(
-                        ui, (size_t)plane_y * ui->alpha_width + plane_x,
+                        ui, (size_t)plane_y * ui->alpha.width + plane_x,
                         source[x]);
                     if (source[x].alpha != 0) {
                         const uint16_t px = (uint16_t)plane_x;
@@ -1293,32 +1817,156 @@ static int refresh_alpha_plane(pxa_lvgl_ui_t *ui) {
                 }
             }
         }
-        lv_draw_buf_destroy(snapshot);
     }
-    set_alpha_overlay_base_visibility(ui, 0);
     if (result && content_min_x != UINT16_MAX) {
-        ui->alpha_content_x = content_min_x;
-        ui->alpha_content_y = content_min_y;
-        ui->alpha_content_width =
+        ui->alpha.content_x = content_min_x;
+        ui->alpha.content_y = content_min_y;
+        ui->alpha.content_width =
             (uint16_t)(content_max_x - content_min_x + 1u);
-        ui->alpha_content_height =
+        ui->alpha.content_height =
             (uint16_t)(content_max_y - content_min_y + 1u);
-        ui->alpha_revision = ++g_alpha_revision;
+        ui->alpha.revision = ++g_alpha_revision;
+    }
+finish_snapshot:
+    set_alpha_overlay_base_visibility(ui, 0);
+    if (candidate) {
+        if (result) {
+            clear_snapshot(ui);
+            ui->snapshot_memory = candidate;
+            ui->snapshot_capacity = capacity;
+        } else ui_release(ui, candidate);
     }
     return result;
+}
+
+/* Keep the committed plane immutable until every overlay has rendered.
+ * Two same-size planes alternate on warm multi-overlay refreshes. Geometry
+ * changes discard only unused staging storage before allocating its replacement,
+ * so no third plane is retained. Failed preparation may trim this private cache
+ * but cannot publish pixels or a revision. Native LVGL draw allocations remain
+ * separate from these tracked pixel buffers. */
+static int refresh_alpha_plane(pxa_lvgl_ui_t *ui) {
+    unsigned overlays = 0;
+    for (pxa_lvgl_ui_node_t *node = ui->nodes; node; node = node->next) {
+        if (node->object && node->visible &&
+            node->composition == PXA_UI_COMPOSITION_ALPHA_OVERLAY &&
+            !overlay_has_overlay_parent(ui, node)) ++overlays;
+    }
+    if (overlays <= 1) {
+        clear_alpha_plane(ui, &ui->spare_alpha);
+        return render_alpha_plane(ui, 0, NULL);
+    }
+    pxa_lvgl_ui_alpha_t previous = ui->alpha;
+    ui->alpha = ui->spare_alpha;
+    memset(&ui->spare_alpha, 0, sizeof(ui->spare_alpha));
+    int created_plane = 0;
+    int result = render_alpha_plane(ui, 1, &created_plane);
+    if (!result) {
+        /* Retain only an already admitted warm buffer after a failed attempt.
+         * A newly allocated plane from that attempt must be returned. */
+        if (created_plane) clear_alpha_plane(ui, &ui->alpha);
+        ui->spare_alpha = ui->alpha;
+        ui->alpha = previous;
+        return 0;
+    }
+    ui->spare_alpha = previous;
+    return 1;
 }
 
 static void discard_created(pxa_lvgl_ui_transaction_t *transaction) {
     pxa_lvgl_ui_command_t *command;
     for (command = transaction->commands; command != NULL;
          command = command->next) {
-        pxa_lvgl_ui_node_t *node = command->created;
+        if (command->view.command != PXA_UI_COMMAND_CREATE) continue;
+        pxa_lvgl_ui_node_t *node = command->owned.created;
         if (node == NULL) continue;
-        command->created = NULL;
+        command->owned.created = NULL;
         if (node->object != NULL)
             lv_obj_delete(node->object);
         else
             ui_release(transaction->ui, node);
+    }
+}
+
+/* Exclude retiring nodes from layout and alpha preparation without freeing
+ * handles. Their original visibility is restored if preparation fails. */
+static void stage_removal(pxa_lvgl_ui_t *ui, pxa_lvgl_ui_node_t *root) {
+    if (root == NULL || root->object == NULL) return;
+    for (pxa_lvgl_ui_node_t *node = ui->nodes; node; node = node->next) {
+        if (node->removal_state || node->object == NULL) continue;
+        lv_obj_t *ancestor = node->object;
+        while (ancestor && ancestor != root->object)
+            ancestor = lv_obj_get_parent(ancestor);
+        if (ancestor == NULL) continue;
+        node->removal_state = 1u | (node->visible ? 2u : 0u) |
+            (lv_obj_is_hidden(node->object) ? 4u : 0u);
+        node->visible = 0;
+        lv_obj_set_hidden(node->object, true);
+    }
+}
+
+static void restore_removals(pxa_lvgl_ui_t *ui) {
+    for (pxa_lvgl_ui_node_t *node = ui->nodes; node; node = node->next) {
+        if (!node->removal_state) continue;
+        node->visible = (node->removal_state & 2u) != 0;
+        if (!(node->removal_state & 4u))
+            lv_obj_set_hidden(node->object, false);
+        node->removal_state = 0;
+    }
+}
+
+static int is_image_source_command(const pxa_ui_command_view_t *view) {
+    return (view->command == PXA_UI_COMMAND_SET_PROPERTY ||
+            view->command == PXA_UI_COMMAND_CLEAR_PROPERTY) &&
+           (view->property == PXA_UI_PROPERTY_IMAGE_HANDLE ||
+            view->property == PXA_UI_PROPERTY_ASSET);
+}
+
+static void swap_image_source(pxa_lvgl_ui_command_t *command) {
+    pxa_lvgl_ui_node_t *node = command->view.node_handle;
+    pxa_lvgl_ui_image_t *previous_image = node->image;
+    const void *previous_asset = node->asset_source;
+    lv_image_set_src(node->object, command->owned.source.image
+        ? &command->owned.source.image->descriptor : command->owned.source.asset);
+    node->image = command->owned.source.image;
+    node->asset_source = command->owned.source.asset;
+    command->owned.source.image = previous_image;
+    command->owned.source.asset = previous_asset;
+}
+
+static void rollback_commands(pxa_lvgl_ui_transaction_t *transaction) {
+    /* A node can be set/cleared several times. Undo in reverse command order.
+     * This failed transaction will only be cancelled and freed afterwards. */
+    pxa_lvgl_ui_command_t *command = transaction->commands;
+    pxa_lvgl_ui_command_t *reversed = NULL;
+    transaction->tail = command;
+    while (command) {
+        pxa_lvgl_ui_command_t *next = command->next;
+        command->next = reversed;
+        reversed = command;
+        command = next;
+    }
+    transaction->commands = reversed;
+    /* MOVE executes after properties, irrespective of stream order. Restore
+     * parents before deleting new subtrees that may contain existing nodes. */
+    for (command = reversed; command; command = command->next) {
+        if (command->view.command != PXA_UI_COMMAND_MOVE || !command->owned.move.applied)
+            continue;
+        pxa_lvgl_ui_node_t *node = command->view.node_handle;
+        lv_obj_set_parent(node->object, command->owned.move.parent);
+        lv_obj_move_to_index(node->object, command->owned.move.index);
+        command->owned.move.applied = 0;
+    }
+    for (command = reversed; command; command = command->next) {
+        if (is_image_source_command(&command->view) && command->owned.source.applied) {
+            swap_image_source(command);
+            command->owned.source.applied = 0;
+        } else if (is_grid_command(&command->view) && command->owned.grid.applied) {
+            swap_grid_tracks(command, 1);
+            command->owned.grid.applied = 0;
+        } else if (is_plain_property(&command->view)) {
+            rollback_property(command);
+        }
     }
 }
 
@@ -1330,6 +1978,7 @@ static void execute_transaction(void *data) {
     pxa_lvgl_ui_node_t *old_root =
         (pxa_lvgl_ui_node_t *)transaction->info.target_handle;
     int32_t old_index = -1;
+    transaction->ui->transaction_active = 1;
     if (old_root != NULL && old_root->object != NULL)
         old_index = lv_obj_get_index(old_root->object);
     for (command = transaction->commands; command != NULL;
@@ -1338,19 +1987,23 @@ static void execute_transaction(void *data) {
         pxa_lvgl_ui_node_t *parent;
         lv_obj_t *parent_object;
         if (command->view.command != PXA_UI_COMMAND_CREATE) continue;
-        node = command->created;
+        node = command->owned.created;
         parent = (pxa_lvgl_ui_node_t *)command->view.parent_handle;
         parent_object = parent == NULL
                             ? (transaction->ui->config.parent_object != NULL
                                    ? transaction->ui->config.parent_object
                                    : lv_screen_active())
                             : parent->object;
+        /* DELETE callbacks must only see nodes already linked into the UI,
+         * including objects whose widget-specific initialization fails. */
+        link_node(transaction->ui, node);
         if (parent_object == NULL || create_object(node, parent_object) == NULL) {
+            if (node->object == NULL) unlink_node(node);
             transaction->status = PXA_STATUS_RESOURCE_LIMIT;
             discard_created(transaction);
+            transaction->ui->transaction_active = 0;
             return;
         }
-        link_node(transaction->ui, node);
         if ((transaction->info.kind == PXA_UI_REPLACE_SURFACE &&
              node->type == PXA_UI_NODE_ROOT) ||
             (transaction->info.kind == PXA_UI_REPLACE_SUBTREE &&
@@ -1361,13 +2014,22 @@ static void execute_transaction(void *data) {
          command = command->next) {
         pxa_lvgl_ui_node_t *node =
             command->view.command == PXA_UI_COMMAND_CREATE
-                ? command->created
+                ? command->owned.created
                 : (pxa_lvgl_ui_node_t *)command->view.node_handle;
         if (node == NULL) continue;
-        if (command->view.command == PXA_UI_COMMAND_SET_PROPERTY)
-            apply_property(node, command->view.property, command->view.value);
-        else if (command->view.command == PXA_UI_COMMAND_CLEAR_PROPERTY)
-            clear_property(node, command->view.property);
+        if (is_image_source_command(&command->view)) {
+            swap_image_source(command);
+            command->owned.source.applied = 1;
+        } else if (is_grid_command(&command->view)) {
+            swap_grid_tracks(command, 0);
+            command->owned.grid.applied = 1;
+        } else if (is_plain_property(&command->view)) {
+            transaction->status = capture_property_undo(command);
+            if (transaction->status != PXA_STATUS_OK) goto failed;
+            if (command->view.command == PXA_UI_COMMAND_SET_PROPERTY)
+                apply_property(node, command->view.property, command->view.value);
+            else clear_property(node, command->view.property);
+        }
     }
     for (command = transaction->commands; command != NULL;
          command = command->next) {
@@ -1380,18 +2042,23 @@ static void execute_transaction(void *data) {
                 (pxa_lvgl_ui_node_t *)command->view.before_handle;
             if (node != NULL && node->object != NULL && parent != NULL &&
                 parent->object != NULL) {
+                command->owned.move.parent = lv_obj_get_parent(node->object);
+                command->owned.move.index = lv_obj_get_index(node->object);
+                command->owned.move.applied = 1;
                 lv_obj_set_parent(node->object, parent->object);
-                if (before != NULL && before->object != NULL)
-                    lv_obj_move_to_index(node->object,
-                                         lv_obj_get_index(before->object));
-                else
+                if (before != NULL && before->object != NULL) {
+                    int32_t index = lv_obj_get_index(before->object);
+                    /* Removing an earlier sibling shifts the target left. */
+                    if (lv_obj_get_index(node->object) < index) --index;
+                    lv_obj_move_to_index(node->object, index);
+                } else {
                     lv_obj_move_to_index(node->object, -1);
+                }
             }
         }
     }
     if (transaction->info.kind != PXA_UI_PATCH) {
-        if (old_root != NULL && old_root->object != NULL)
-            lv_obj_delete(old_root->object);
+        stage_removal(transaction->ui, old_root);
         if (new_root != NULL && new_root->object != NULL && old_index >= 0)
             lv_obj_move_to_index(new_root->object, old_index);
     } else {
@@ -1400,25 +2067,22 @@ static void execute_transaction(void *data) {
             if (command->view.command == PXA_UI_COMMAND_REMOVE) {
                 pxa_lvgl_ui_node_t *node =
                     (pxa_lvgl_ui_node_t *)command->view.node_handle;
-                if (node != NULL && node->object != NULL)
-                    lv_obj_delete(node->object);
+                stage_removal(transaction->ui, node);
             }
         }
     }
     for (command = transaction->commands; command != NULL;
          command = command->next) {
-        pxa_lvgl_ui_node_t *node = command->created;
+        if (command->view.command != PXA_UI_COMMAND_CREATE) continue;
+        pxa_lvgl_ui_node_t *node = command->owned.created;
         if (node != NULL && node->object != NULL && node->visible)
-            lv_obj_remove_flag(node->object, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_set_hidden(node->object, false);
     }
-    if (transaction->info.kind == PXA_UI_REPLACE_SURFACE &&
-        transaction->info.surface == PXA_UI_PRIMARY_SURFACE)
-        transaction->ui->primary_root = new_root;
     lv_obj_update_layout(lv_screen_active());
     for (command = transaction->commands; command != NULL;
          command = command->next) {
         pxa_lvgl_ui_node_t *node = command->view.command == PXA_UI_COMMAND_CREATE
-                                       ? command->created
+                                       ? command->owned.created
                                        : (pxa_lvgl_ui_node_t *)command->view.node_handle;
         if (node == NULL || node->object == NULL || !node->has_scroll_position)
             continue;
@@ -1429,6 +2093,33 @@ static void execute_transaction(void *data) {
     }
     transaction->status = refresh_alpha_plane(transaction->ui)
                               ? PXA_STATUS_OK : PXA_STATUS_RESOURCE_LIMIT;
+    if (transaction->status != PXA_STATUS_OK) {
+failed:
+        restore_removals(transaction->ui);
+        rollback_commands(transaction);
+        discard_created(transaction);
+        set_alpha_overlay_base_visibility(transaction->ui, 0);
+        lv_obj_update_layout(lv_screen_active());
+        transaction->ui->transaction_active = 0;
+        return;
+    }
+    /* No fallible preparation or command-handle access follows destruction. */
+    if (transaction->info.kind != PXA_UI_PATCH) {
+        if (old_root != NULL && old_root->object != NULL)
+            lv_obj_delete(old_root->object);
+    } else {
+        for (command = transaction->commands; command; command = command->next) {
+            if (command->view.command == PXA_UI_COMMAND_REMOVE) {
+                pxa_lvgl_ui_node_t *node = command->view.node_handle;
+                if (node != NULL && node->object != NULL)
+                    lv_obj_delete(node->object);
+            }
+        }
+    }
+    if (transaction->info.kind == PXA_UI_REPLACE_SURFACE &&
+        transaction->info.surface == PXA_UI_PRIMARY_SURFACE)
+        transaction->ui->primary_root = new_root;
+    transaction->ui->transaction_active = 0;
 }
 
 static void free_transaction(pxa_lvgl_ui_transaction_t *transaction,
@@ -1438,9 +2129,18 @@ static void free_transaction(pxa_lvgl_ui_transaction_t *transaction,
     if (!keep_created) discard_created(transaction);
     for (command = transaction->commands; command != NULL; command = next) {
         next = command->next;
-        if (keep_created && command->created != NULL) {
-            command->created->owner_command = NULL;
-            command->created = NULL;
+        if (command->view.command == PXA_UI_COMMAND_CREATE) {
+            if (keep_created && command->owned.created != NULL) {
+                command->owned.created->owner_command = NULL;
+                command->owned.created = NULL;
+            }
+        } else if (is_image_source_command(&command->view)) {
+            release_image(transaction->ui, command->owned.source.image);
+            release_asset_source(transaction->ui, command->owned.source.asset);
+        } else if (is_grid_command(&command->view)) {
+            ui_release(transaction->ui, command->owned.grid.tracks);
+        } else if (is_plain_property(&command->view)) {
+            free_property_undo(transaction->ui, command->owned.property);
         }
         ui_release(transaction->ui, command);
     }
@@ -1489,22 +2189,44 @@ static pxa_status_t backend_apply(
         command->view.value.data = command->value;
     }
     command->value[view->value.size] = 0;
-    if (view->command == PXA_UI_COMMAND_CREATE) {
-        command->created = (pxa_lvgl_ui_node_t *)ui_allocate(
-            ui, sizeof(*command->created));
-        if (command->created == NULL) {
+    if (view->command==PXA_UI_COMMAND_SET_PROPERTY && view->property==PXA_UI_PROPERTY_IMAGE_HANDLE) {
+        pxa_status_t status=view->value.size==8 && pxa_read_u64(view->value.data) ?
+            prepare_image(ui,transaction->info.component,pxa_read_u64(view->value.data),&command->owned.source.image) : PXA_STATUS_INVALID_ARGUMENT;
+        if (status) { ui_release(ui,command); return status; }
+    }
+    if (view->command == PXA_UI_COMMAND_SET_PROPERTY && view->property == PXA_UI_PROPERTY_ASSET) {
+        if (ui->config.resolve_asset)
+            command->owned.source.asset = ui->config.resolve_asset(command->value,
+                view->value.size, ui->config.asset_user_data);
+        if (!command->owned.source.asset) {
             ui_release(ui, command);
             return PXA_STATUS_RESOURCE_LIMIT;
         }
-        memset(command->created, 0, sizeof(*command->created));
-        command->created->ui = ui;
-        command->created->surface = transaction->info.surface;
-        command->created->id = view->node;
-        command->created->type = view->type;
-        command->created->subtype = view->subtype;
-        command->created->visible = 1;
-        command->created->owner_command = command;
-        if (created_handle != NULL) *created_handle = command->created;
+    }
+    if (is_grid_command(view)) {
+        pxa_status_t status = prepare_grid_tracks(ui, command);
+        if (status != PXA_STATUS_OK) { ui_release(ui, command); return status; }
+    }
+    if (is_plain_property(view)) {
+        pxa_status_t status = prepare_property_undo(ui, command);
+        if (status != PXA_STATUS_OK) { ui_release(ui, command); return status; }
+    }
+    if (view->command == PXA_UI_COMMAND_CREATE) {
+        command->owned.created = (pxa_lvgl_ui_node_t *)ui_allocate(
+            ui, sizeof(*command->owned.created));
+        if (command->owned.created == NULL) {
+            ui_release(ui, command);
+            return PXA_STATUS_RESOURCE_LIMIT;
+        }
+        memset(command->owned.created, 0, sizeof(*command->owned.created));
+        command->owned.created->ui = ui;
+        command->owned.created->surface = transaction->info.surface;
+        command->owned.created->id = view->node;
+        command->owned.created->type = view->type;
+        command->owned.created->subtype = view->subtype;
+        command->owned.created->visible = 1;
+        command->owned.created->owner_command = command;
+        if (created_handle != NULL) *created_handle = command->owned.created;
     }
     if (transaction->tail == NULL)
         transaction->commands = command;
@@ -1549,6 +2271,11 @@ typedef struct {
     lv_image_dsc_t *grown_bitmap_images;
     size_t bitmap_count;
     uint8_t reuse_assets;
+    pxa_lvgl_ui_canvas_image_t *images;
+    size_t image_count;
+    size_t image_capacity;
+    uint8_t reuse_image_storage;
+    uint8_t reuse_image_bindings;
 } canvas_swap_t;
 
 static size_t canvas_clip_depth(const uint8_t *data, size_t size) {
@@ -1687,6 +2414,197 @@ static int canvas_assets_match(pxa_lvgl_ui_canvas_asset_t *assets,
     return offset == size;
 }
 
+/* Ordered bindings match IMAGE_HANDLE commands, including clipped commands.
+ * Duplicate handles share a single retained descriptor within this frame.
+ * Resolve every new frame through Core: a closed handle cannot be resurrected
+ * by finding it in the previous display list. No lookup occurs while drawing. */
+static pxa_status_t prepare_canvas_images(canvas_swap_t *swap) {
+    pxa_lvgl_ui_t *ui = swap->node->ui;
+    pxa_lvgl_ui_canvas_t *canvas = swap->node->canvas;
+    const uint8_t *data = swap->view.display_list.data;
+    size_t size = swap->view.display_list.size;
+    size_t total = 0, offset = 0;
+    int same_bindings = canvas != NULL;
+    while (offset < size) {
+        if (size - offset < 4)
+            return PXA_STATUS_INVALID_ARGUMENT;
+        uint8_t type = data[offset];
+        uint16_t length = pxa_read_u16(data + offset + 2);
+        offset += 4;
+        if (length > size - offset)
+            return PXA_STATUS_INVALID_ARGUMENT;
+        if (type == PXA_UI_CANVAS_IMAGE_HANDLE) {
+            if (length != 26)
+                return PXA_STATUS_INVALID_ARGUMENT;
+            if (same_bindings && (total >= canvas->image_count ||
+                canvas->images[total].handle != pxa_read_u64(data + offset + 18)))
+                same_bindings = 0;
+            ++total;
+        }
+        offset += length;
+    }
+    if (!total)
+        return PXA_STATUS_OK;
+    if (!ui->config.acquire_image)
+        return PXA_STATUS_UNSUPPORTED;
+    /* Positions, opacity and clipping live in the new command bytes. An
+     * unchanged handle sequence can keep its immutable binding array too. */
+    if (same_bindings && total == canvas->image_count) {
+        for (size_t i = 0; i < total; ++i) {
+            if (!canvas->images[i].owned) continue;
+            pxa_asset_object_t *pixels = NULL;
+            pxa_status_t status = ui->config.acquire_image(swap->view.component,
+                canvas->images[i].handle, &pixels, ui->config.asset_user_data);
+            if (status) return status;
+            int matches = pixels == canvas->images[i].image->pixels;
+            pxa_asset_object_release(pixels);
+            if (!matches) { same_bindings = 0; break; }
+        }
+        if (same_bindings) {
+            swap->images = canvas->images;
+            swap->image_count = total;
+            swap->image_capacity = canvas->image_capacity;
+            swap->reuse_image_bindings = 1;
+            return PXA_STATUS_OK;
+        }
+    }
+    if (total > SIZE_MAX / sizeof(*swap->images))
+        return PXA_STATUS_RESOURCE_LIMIT;
+    if (canvas && total <= canvas->spare_image_capacity) {
+        swap->images = canvas->spare_images;
+        swap->image_capacity = canvas->spare_image_capacity;
+        swap->reuse_image_storage = 1;
+    } else {
+        swap->images = ui_allocate(ui, total * sizeof(*swap->images));
+        swap->image_capacity = total;
+    }
+    pxa_lvgl_ui_canvas_image_t *images = swap->images;
+    if (!images)
+        return PXA_STATUS_RESOURCE_LIMIT;
+    memset(images, 0, total * sizeof(*images));
+    size_t index = 0;
+    offset = 0;
+    while (offset < size) {
+        uint8_t type = data[offset];
+        uint16_t length = pxa_read_u16(data + offset + 2);
+        const uint8_t *value = data + offset + 4;
+        offset += 4 + length;
+        if (type != PXA_UI_CANVAS_IMAGE_HANDLE)
+            continue;
+        images[index].handle = pxa_read_u64(value + 18);
+        for (size_t i = 0; i < index; ++i) {
+            if (images[i].handle == images[index].handle) {
+                images[index].image = images[i].image;
+                break;
+            }
+        }
+        if (!images[index].image) {
+            pxa_asset_object_t *pixels = NULL;
+            pxa_status_t status =
+                ui->config.acquire_image(swap->view.component, images[index].handle,
+                                         &pixels, ui->config.asset_user_data);
+            if (status)
+                return status;
+            /* Borrow a previous descriptor only after fresh authentication
+             * and object identity verification. Ownership moves at commit. */
+            for (size_t i = 0; canvas && i < canvas->image_count; ++i) {
+                if (canvas->images[i].owned &&
+                    canvas->images[i].handle == images[index].handle &&
+                    canvas->images[i].image->pixels == pixels) {
+                    images[index].image = canvas->images[i].image;
+                    images[index].owned = 3;
+                    break;
+                }
+            }
+            if (images[index].image) {
+                pxa_asset_object_release(pixels);
+            } else {
+                pxa_lvgl_ui_image_t *image;
+                if (canvas && canvas->free_images) {
+                    image = canvas->free_images;
+                    canvas->free_images = image->state.next_free;
+                    images[index].owned = 2; /* Return storage to pool on rollback. */
+                } else {
+                    image = ui_allocate(ui, sizeof(*image));
+                    images[index].owned = 1;
+                }
+                if (!image) {
+                    pxa_asset_object_release(pixels);
+                    return PXA_STATUS_RESOURCE_LIMIT;
+                }
+                status = initialize_image(ui, pixels, image);
+                if (status) {
+                    pxa_asset_object_release(pixels);
+                    if (images[index].owned == 2) {
+                        memset(image, 0, sizeof(*image));
+                        image->state.next_free = canvas->free_images;
+                        canvas->free_images = image;
+                    } else
+                        ui_release(ui, image);
+                    return status;
+                }
+                images[index].image = image;
+            }
+        }
+        ++index;
+        swap->image_count = index;
+    }
+    return PXA_STATUS_OK;
+}
+
+static void discard_canvas_images(canvas_swap_t *swap) {
+    if (swap->reuse_image_bindings) return;
+    pxa_lvgl_ui_t *ui = swap->node->ui;
+    for (size_t i = 0; i < swap->image_count; ++i) {
+        if (swap->images[i].owned == 1)
+            release_image(ui, swap->images[i].image);
+        else if (swap->images[i].owned == 2)
+            recycle_image(swap->node->canvas, swap->images[i].image);
+    }
+    if (!swap->reuse_image_storage)
+        ui_release(ui, swap->images);
+}
+
+static void commit_canvas_images(canvas_swap_t *swap, pxa_lvgl_ui_canvas_t *previous) {
+    pxa_lvgl_ui_t *ui = swap->node->ui;
+    pxa_lvgl_ui_canvas_t *canvas = swap->node->canvas;
+    if (swap->reuse_image_bindings) {
+        swap->images = NULL; swap->image_count = 0;
+        return;
+    }
+    if (!swap->image_count) {
+        release_canvas_images(ui, previous->images, previous->image_count);
+        ui_release(ui, previous->spare_images);
+        release_image_pool(ui, canvas);
+        canvas->spare_images = NULL;
+        canvas->spare_image_capacity = 0;
+    } else {
+        for (size_t i = 0; i < swap->image_count; ++i) {
+            pxa_lvgl_ui_canvas_image_t *image = &swap->images[i];
+            if (image->owned == 3)
+                for (size_t j = 0; j < previous->image_count; ++j) {
+                    if (previous->images[j].owned &&
+                        previous->images[j].image == image->image) {
+                        previous->images[j].owned = 0;
+                        image->owned = 1;
+                        break;
+                    }
+                }
+            else if (image->owned)
+                image->owned = 1;
+        }
+        for (size_t i = 0; i < previous->image_count; ++i)
+            if (previous->images[i].owned)
+                recycle_image(canvas, previous->images[i].image);
+        if (!swap->reuse_image_storage)
+            ui_release(ui, previous->spare_images);
+        canvas->spare_images = previous->images;
+        canvas->spare_image_capacity = previous->image_capacity;
+    }
+    swap->images = NULL;
+    swap->image_count = 0;
+}
+
 static void execute_canvas_swap(void *data) {
     canvas_swap_t *swap = (canvas_swap_t *)data;
     pxa_lvgl_ui_canvas_t *canvas = swap->node->canvas;
@@ -1700,25 +2618,19 @@ static void execute_canvas_swap(void *data) {
         }
         memset(canvas, 0, sizeof(*canvas));
     }
-    if (canvas->release != NULL && canvas->bytes != NULL)
-        canvas->release(canvas->release_context, (void *)canvas->bytes);
-    if (!swap->reuse_assets) {
-        release_canvas_assets(swap->node->ui, canvas->assets);
-        canvas->assets = swap->assets;
-        swap->assets = NULL;
-    }
+    pxa_lvgl_ui_canvas_t previous = *canvas;
+    if (!swap->reuse_assets) canvas->assets = swap->assets;
     if (swap->grown_clips != NULL) {
-        ui_release(swap->node->ui, canvas->clip_stack);
         canvas->clip_stack = swap->grown_clips;
         canvas->clip_capacity = swap->clip_capacity;
-        swap->grown_clips = NULL;
     }
     if (swap->grown_bitmap_images != NULL) {
-        ui_release(swap->node->ui, canvas->bitmap_images);
         canvas->bitmap_images = swap->grown_bitmap_images;
         canvas->bitmap_capacity = swap->bitmap_count;
-        swap->grown_bitmap_images = NULL;
     }
+    canvas->images = swap->images;
+    canvas->image_count = swap->image_count;
+    canvas->image_capacity = swap->image_capacity;
     canvas->bytes = swap->view.display_list.data;
     canvas->size = swap->view.display_list.size;
     canvas->bitmap_count = swap->bitmap_count;
@@ -1726,6 +2638,33 @@ static void execute_canvas_swap(void *data) {
     canvas->release = swap->release;
     canvas->release_context = swap->release_context;
     swap->node->canvas = canvas;
+    if (node_is_in_alpha_overlay(swap->node->ui, swap->node) &&
+        !refresh_alpha_plane(swap->node->ui)) {
+        *canvas = previous;
+        /* The bitmap descriptor array may have been reused while previewing. */
+        populate_canvas_bitmaps(canvas);
+        if (first_frame) {
+            swap->node->canvas = NULL;
+            ui_release(swap->node->ui, canvas);
+        }
+        swap->status = PXA_STATUS_RESOURCE_LIMIT;
+        return;
+    }
+    if (previous.release && previous.bytes)
+        previous.release(previous.release_context, (void *)previous.bytes);
+    if (!swap->reuse_assets) {
+        release_canvas_assets(swap->node->ui, previous.assets);
+        swap->assets = NULL;
+    }
+    if (swap->grown_clips) {
+        ui_release(swap->node->ui, previous.clip_stack);
+        swap->grown_clips = NULL;
+    }
+    if (swap->grown_bitmap_images) {
+        ui_release(swap->node->ui, previous.bitmap_images);
+        swap->grown_bitmap_images = NULL;
+    }
+    commit_canvas_images(swap,&previous);
     if (first_frame || swap->view.dirty_count == 0) {
         lv_obj_invalidate(swap->node->object);
     } else {
@@ -1749,10 +2688,7 @@ static void execute_canvas_swap(void *data) {
                 lv_obj_invalidate_area(swap->node->object, &area);
         }
     }
-    swap->status = node_is_in_alpha_overlay(swap->node->ui, swap->node) &&
-                           !refresh_alpha_plane(swap->node->ui)
-                       ? PXA_STATUS_RESOURCE_LIMIT
-                       : PXA_STATUS_OK;
+    swap->status = PXA_STATUS_OK;
 }
 
 static pxa_status_t backend_canvas(
@@ -1775,7 +2711,7 @@ static pxa_status_t backend_canvas(
     swap.release = release;
     swap.release_context = release_context;
     swap.status = PXA_STATUS_INTERNAL;
-    /* Resource I/O and list preparation do not need the LVGL execution lock. */
+    /* Resolve prepared handles and prepare lists before taking the execution lock. */
     swap.reuse_assets = node->canvas != NULL && canvas_assets_match(
         node->canvas->assets, canvas->display_list.data, canvas->display_list.size);
     if (!swap.reuse_assets) {
@@ -1818,8 +2754,11 @@ static pxa_status_t backend_canvas(
             }
         }
     }
-    status = ui->config.execute(execute_canvas_swap, &swap,
-                                ui->config.execute_user_data);
+    status = prepare_canvas_images(&swap);
+    if (status == PXA_STATUS_OK)
+        status = ui->config.execute(execute_canvas_swap, &swap,
+                                    ui->config.execute_user_data);
+    discard_canvas_images(&swap);
     release_canvas_assets(ui, swap.assets);
     ui_release(ui, swap.grown_clips);
     ui_release(ui, swap.grown_bitmap_images);
@@ -1837,7 +2776,9 @@ static void execute_reset(void *data) {
             ui_release(ui, node);
         }
     }
-    clear_alpha_plane(ui);
+    clear_alpha_plane(ui, &ui->alpha);
+    clear_alpha_plane(ui, &ui->spare_alpha);
+    clear_snapshot(ui);
     ui->primary_root = NULL;
 }
 
@@ -1891,6 +2832,7 @@ static void on_canvas_draw(lv_event_t *event) {
     size_t offset = 0;
     size_t clip_depth = 0;
     size_t bitmap_index = 0;
+    size_t image_index = 0;
     if (node == NULL || node->canvas == NULL) return;
     data = node->canvas->bytes;
     size = node->canvas->size;
@@ -1909,9 +2851,14 @@ static void on_canvas_draw(lv_event_t *event) {
         if (type == PXA_UI_CANVAS_BITMAP_RGB565 && length > 20u &&
             bitmap_index < node->canvas->bitmap_count)
             bitmap_image = &node->canvas->bitmap_images[bitmap_index++];
+        pxa_lvgl_ui_image_t *prepared_image = NULL;
+        if (type == PXA_UI_CANVAS_IMAGE_HANDLE && length == 26 &&
+            image_index < node->canvas->image_count)
+            prepared_image = node->canvas->images[image_index++].image;
         if ((type == PXA_UI_CANVAS_RECT && length == 28) ||
             (type == PXA_UI_CANVAS_ELLIPSE && length == 26) ||
             (type == PXA_UI_CANVAS_IMAGE && length > 18) ||
+            (type == PXA_UI_CANVAS_IMAGE_HANDLE && length == 26) ||
             (type == PXA_UI_CANVAS_BITMAP_RGB565 && length > 20)) {
             int32_t x = origin.x1 + canvas_pixels(node->ui,
                 (int32_t)pxa_read_u32(value));
@@ -2099,10 +3046,14 @@ static void on_canvas_draw(lv_event_t *event) {
             intersect_clip(&layer->_clip_area, &target_area);
             lv_draw_image(layer, &descriptor, &image_area);
             layer->_clip_area = saved_image_clip;
-        } else if (type == PXA_UI_CANVAS_IMAGE && length > 18) {
-            pxa_lvgl_ui_canvas_asset_t *asset = find_canvas_asset(
-                node->canvas->assets, value + 18, length - 18u);
-            const void *source = asset == NULL ? NULL : asset->source;
+        } else if ((type == PXA_UI_CANVAS_IMAGE && length > 18) ||
+                   (type == PXA_UI_CANVAS_IMAGE_HANDLE && length == 26)) {
+            const void *source = prepared_image ? &prepared_image->descriptor : NULL;
+            if (type == PXA_UI_CANVAS_IMAGE) {
+                pxa_lvgl_ui_canvas_asset_t *asset = find_canvas_asset(
+                    node->canvas->assets, value + 18, length - 18u);
+                source = asset ? asset->source : NULL;
+            }
             if (source != NULL) {
                 lv_area_t area;
                 lv_area_t image_area;
@@ -2130,8 +3081,10 @@ static void on_canvas_draw(lv_event_t *event) {
                 descriptor.opa = value[16];
                 target_width = lv_area_get_width(&area);
                 target_height = lv_area_get_height(&area);
-                if (lv_image_decoder_get_info(source, &header) == LV_RESULT_OK &&
-                    header.w != 0 && header.h != 0) {
+                lv_result_t info_status = LV_RESULT_OK;
+                if (prepared_image) header = prepared_image->descriptor.header;
+                else info_status = lv_image_decoder_get_info(source, &header);
+                if (info_status == LV_RESULT_OK && header.w != 0 && header.h != 0) {
                     raw_scale_x = (int64_t)target_width * LV_SCALE_NONE /
                                   header.w;
                     raw_scale_y = (int64_t)target_height * LV_SCALE_NONE /
@@ -2342,25 +3295,25 @@ bool pxa_lvgl_ui_alpha_plane(const pxa_lvgl_ui_t *ui,
     if (output == NULL) return false;
     memset(output, 0, sizeof(*output));
     if (ui == NULL || ui->magic != PXA_LVGL_UI_MAGIC ||
-        ui->alpha_pixels == NULL || ui->alpha_values == NULL ||
-        ui->alpha_width == 0 || ui->alpha_height == 0 ||
-        ui->alpha_content_width == 0 || ui->alpha_content_height == 0)
+        ui->alpha.pixels == NULL || ui->alpha.values == NULL ||
+        ui->alpha.width == 0 || ui->alpha.height == 0 ||
+        ui->alpha.content_width == 0 || ui->alpha.content_height == 0)
         return false;
     {
         const size_t offset =
-            (size_t)ui->alpha_content_y * ui->alpha_width +
-            ui->alpha_content_x;
-        output->pixels = ui->alpha_pixels + offset;
-        output->alpha = ui->alpha_values + offset;
+            (size_t)ui->alpha.content_y * ui->alpha.width +
+            ui->alpha.content_x;
+        output->pixels = ui->alpha.pixels + offset;
+        output->alpha = ui->alpha.values + offset;
     }
-    output->pixel_stride_bytes = (uint32_t)ui->alpha_width *
-                                 sizeof(*ui->alpha_pixels);
-    output->alpha_stride_bytes = ui->alpha_width;
-    output->x = ui->alpha_x + ui->alpha_content_x;
-    output->y = ui->alpha_y + ui->alpha_content_y;
-    output->width = ui->alpha_content_width;
-    output->height = ui->alpha_content_height;
-    output->revision = ui->alpha_revision;
+    output->pixel_stride_bytes = (uint32_t)ui->alpha.width *
+                                 sizeof(*ui->alpha.pixels);
+    output->alpha_stride_bytes = ui->alpha.width;
+    output->x = ui->alpha.x + ui->alpha.content_x;
+    output->y = ui->alpha.y + ui->alpha.content_y;
+    output->width = ui->alpha.content_width;
+    output->height = ui->alpha.content_height;
+    output->revision = ui->alpha.revision;
     return true;
 }
 
@@ -2373,5 +3326,9 @@ uint64_t pxa_lvgl_ui_event_timestamp_us(const pxa_lvgl_ui_t *ui) {
 void pxa_lvgl_ui_deinit(pxa_lvgl_ui_t *ui) {
     if (ui == NULL || ui->magic != PXA_LVGL_UI_MAGIC) return;
     backend_reset(ui);
+    lv_lock();
+    if (ui->image_decoder) lv_image_decoder_delete(ui->image_decoder);
+    ui->image_decoder=NULL;
+    lv_unlock();
     ui->magic = 0;
 }

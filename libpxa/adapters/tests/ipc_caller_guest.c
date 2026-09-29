@@ -1,89 +1,55 @@
-/* Freestanding PXA IPC caller guest: calls the provider endpoint at start,
- * verifies the reply content, then records the result through Storage so the
- * host can observe it. No libc dependency. */
+#include <stdint.h>
 
-#include "pxa.h"
 #include "pxa_ipc.h"
+#include "pxa_storage.h"
 
-#define PXA_STORAGE_SET 2u
+static uint32_t s_call_id;
 
-static uint8_t s_verified;
-
-static uint32_t pxa_length(const uint8_t *value) {
-    uint32_t length = 0;
-    while (value[length] != 0) ++length;
-    return length;
-}
-
-static int32_t storage_set(const char *key, const char *value) {
-    uint8_t payload[80];
-    uint8_t packet[96];
-    pxa_writer_t writer;
-    pxa_writer_t message;
-    pxa_writer_init(&writer, payload, sizeof(payload));
-    if (!pxa_record(&writer, 1, (const uint8_t *)key,
-                    (uint32_t)pxa_length((const uint8_t *)key)) ||
-        !pxa_record(&writer, 2, (const uint8_t *)value,
-                    (uint32_t)pxa_length((const uint8_t *)value))) {
-        return PXA_STATUS_INTERNAL;
-    }
-    pxa_writer_init(&message, packet, sizeof(packet));
-    if (!pxa_message(&message, PXA_SERVICE_STORAGE, PXA_STORAGE_SET, 9,
-                     writer.data, (uint32_t)writer.length)) {
-        return PXA_STATUS_INTERNAL;
-    }
-    return pxa_control(message.data, (uint32_t)message.length);
-}
-
-static int payload_is_ok_echo(const uint8_t *payload, uint32_t length) {
-    static const uint8_t expected[] = {'o', 'k', ':', 'h', 'i'};
-    uint32_t index;
-    if (length != sizeof(expected)) return 0;
-    for (index = 0; index < sizeof(expected); ++index) {
-        if (payload[index] != expected[index]) return 0;
-    }
-    return 1;
-}
-
-
-int32_t pxa_app_start(const uint8_t *config, uint32_t config_length) {
-    uint8_t payload[128];
-    uint8_t packet[256];
-    pxa_writer_t payload_writer;
-    pxa_writer_t packet_writer;
+int32_t pxa_app_start(const uint8_t *config, uint32_t size) {
+    uint8_t packet[80];
     (void)config;
-    (void)config_length;
-    pxa_writer_init(&payload_writer, payload, sizeof(payload));
-    if (!pxa_record(&payload_writer, 1, (const uint8_t *)"com.example.echo",
-                    sizeof("com.example.echo") - 1) ||
-        !pxa_record(&payload_writer, 2, (const uint8_t *)"hi", 2)) {
-        return PXA_STATUS_INTERNAL;
-    }
-    pxa_writer_init(&packet_writer, packet, sizeof(packet));
-    if (!pxa_message(&packet_writer, PXA_SERVICE_IPC, PXA_IPC_CALL, 1,
-                     payload_writer.data, (uint32_t)payload_writer.length)) {
-        return PXA_STATUS_INTERNAL;
-    }
-    return pxa_control(packet_writer.data, (uint32_t)packet_writer.length);
+    (void)size;
+    return pxa_ipc_request_call(
+        packet, sizeof(packet), UINT64_C(0x1234567800000001),
+        "com.example.echo", sizeof("com.example.echo") - 1u,
+        (const uint8_t *)"hi", 2);
 }
 
-int32_t pxa_app_on_event(const uint8_t *event, uint32_t length) {
-    pxa_event_t parsed;
-    pxa_ipc_result_t result;
-    if (!pxa_parse_event(event, length, &parsed) ||
-        parsed.service != PXA_SERVICE_IPC ||
-        parsed.opcode != PXA_IPC_RESULT ||
-        !pxa_ipc_parse_result(&parsed, &result) ||
-        result.status != PXA_STATUS_OK) {
-        return PXA_EVENT_UNHANDLED;
+int32_t pxa_app_on_event(const uint8_t *bytes, uint32_t size) {
+    pxa_event_t event;
+    if (!pxa_parse_event(bytes, size, &event)) return -1;
+    if (event.service == PXA_IPC_SERVICE &&
+        event.opcode == PXA_IPC_CALL) {
+        pxa_ipc_call_result_t call;
+        if (!pxa_ipc_parse_call_result(
+                &event, UINT64_C(0x1234567800000001), &call) ||
+            call.status != 0 || call.call_id == 0) return -1;
+        s_call_id = call.call_id;
+        return 1;
     }
-    if (payload_is_ok_echo(result.payload, result.payload_length)) {
-        s_verified = 1;
-        return storage_set("ipc_verified", "1") == PXA_STATUS_OK
-                   ? PXA_EVENT_HANDLED
-                   : PXA_EVENT_UNHANDLED;
+    if (event.service == PXA_IPC_SERVICE &&
+        event.opcode == PXA_IPC_RESULT_EVENT) {
+        pxa_ipc_result_t result;
+        uint8_t packet[80];
+        static const uint8_t expected[] = {'o', 'k', ':', 'h', 'i'};
+        if (!pxa_ipc_parse_result(&event, &result) ||
+            result.call_id != s_call_id || result.status != 0 ||
+            result.payload.size != sizeof(expected)) return -1;
+        for (uint32_t i = 0; i < sizeof(expected); ++i)
+            if (result.payload.data[i] != expected[i]) return -1;
+        return pxa_storage_request_set(
+                   packet, sizeof(packet), UINT64_C(0x1234567800000003),
+                   "ipc_verified", sizeof("ipc_verified") - 1u,
+                   (const uint8_t *)"1", 1) == 0 ? 1 : -1;
     }
-    return PXA_EVENT_UNHANDLED;
+    if (event.service == PXA_STORAGE_SERVICE &&
+        event.opcode == PXA_STORAGE_SET) {
+        int32_t status;
+        return pxa_storage_parse_status(
+                   &event, UINT64_C(0x1234567800000003),
+                   PXA_STORAGE_SET, &status) && status == 0 ? 1 : -1;
+    }
+    return 0;
 }
 
 void pxa_app_stop(uint32_t reason) { (void)reason; }

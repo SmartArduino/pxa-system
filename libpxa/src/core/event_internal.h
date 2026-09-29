@@ -12,7 +12,7 @@ typedef struct {
     uint32_t next_queue;
     uint32_t first_block;
     uint32_t size;
-    uint16_t generation;
+    uint32_t generation;
     uint16_t owner_index;
     uint8_t occupied;
     uint8_t reliable;

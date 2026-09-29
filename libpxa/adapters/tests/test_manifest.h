@@ -103,11 +103,11 @@ typedef struct {
     const uint8_t *sha256;
 } pxa_test_file_t;
 
-static inline size_t pxa_test_encode_manifest_multi(
+static inline size_t pxa_test_encode_manifest_multi_core(
     uint8_t *output, size_t capacity, const uint8_t publisher_key_id[32],
     const char *app_id, const char *version,
     const pxa_test_component_t *components, size_t component_count,
-    const pxa_test_file_t *files, size_t file_count) {
+    const pxa_test_file_t *files, size_t file_count, uint16_t core_major) {
     pxa_writer_t writer;
     uint8_t version_bytes[4];
     uint8_t u64_bytes[8];
@@ -122,8 +122,9 @@ static inline size_t pxa_test_encode_manifest_multi(
     pxa_writer_record(&writer, 2, app_id, strlen(app_id));
     pxa_writer_record(&writer, 3, version, strlen(version));
     pxa_writer_record(&writer, 4, "Test App", 8);
-    pxa_write_u16(version_bytes, PXA_CORE_VERSION_MAJOR);
-    pxa_write_u16(version_bytes + 2, PXA_CORE_VERSION_MINOR);
+    pxa_write_u16(version_bytes, core_major);
+    pxa_write_u16(version_bytes + 2,
+                  core_major == 1 ? 0 : PXA_CORE_VERSION_MINOR);
     pxa_writer_record(&writer, 7, version_bytes, 4);
     pxa_writer_record(&writer, 8, version_bytes, 4);
     for (index = 0; index < component_count; ++index) {
@@ -181,4 +182,15 @@ static inline size_t pxa_test_encode_manifest_multi(
         pxa_write_u32(output + 8, (uint32_t)body_size);
         return 12 + body_size;
     }
+}
+
+static inline size_t pxa_test_encode_manifest_multi(
+    uint8_t *output, size_t capacity, const uint8_t publisher_key_id[32],
+    const char *app_id, const char *version,
+    const pxa_test_component_t *components, size_t component_count,
+    const pxa_test_file_t *files, size_t file_count) {
+    return pxa_test_encode_manifest_multi_core(
+        output, capacity, publisher_key_id, app_id, version,
+        components, component_count, files, file_count,
+        PXA_CORE_VERSION_MAJOR);
 }

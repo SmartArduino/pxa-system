@@ -1,4 +1,5 @@
 #include "pxa/sensor.h"
+#include "pxa/wire_v1.h"
 #include "common/bytes_internal.h"
 #include "common/checked_math.h"
 #include "common/status_internal.h"
@@ -38,7 +39,7 @@ struct pxa_sensor_subscription {
     const pxa_sensor_descriptor_t *descriptor;
     void *provider_subscription;
     pxa_component_t component;
-    pxa_handle_t handle;
+    pxa_handle64_t handle;
     uint64_t next_due_us;
     uint32_t period_ms;
     uint16_t next;
@@ -48,7 +49,7 @@ struct pxa_sensor_subscription {
 typedef struct {
     uint16_t sensor_id;
     uint32_t period_ms;
-    pxa_handle_t permission_handle;
+    pxa_handle64_t permission_handle;
     uint8_t seen;
 } pxa_sensor_subscribe_request_t;
 
@@ -113,7 +114,7 @@ static int config_valid(const pxa_sensor_config_t *config,
         list_total += 41u + descriptor->semantic.size;
     }
     if (list_total >
-        PXA_MAX_CONTROL_MESSAGE - PXA_ENVELOPE_SIZE - sizeof(uint32_t)) {
+        PXA_MAX_CONTROL_MESSAGE - PXA_V1_ENVELOPE_SIZE - sizeof(uint32_t)) {
         return 0;
     }
     *semantic_bytes = semantic_total;
@@ -291,7 +292,8 @@ static pxa_status_t encode_list(pxa_sensor_service_t *service,
 }
 
 static pxa_status_t parse_subscribe(
-    pxa_bytes_t payload, pxa_sensor_subscribe_request_t *output) {
+    pxa_bytes_t payload, uint16_t core_major,
+    pxa_sensor_subscribe_request_t *output) {
     pxa_record_iterator_t iterator;
     pxa_record_view_t record;
     uint16_t previous = 0;
@@ -314,8 +316,13 @@ static pxa_status_t parse_subscribe(
             output->period_ms = pxa_read_u32(record.payload.data);
             output->seen |= 2u;
         } else if (record.tag == 3 && (output->seen & 4u) == 0 &&
-                   record.payload.size == 4) {
-            output->permission_handle = pxa_read_u32(record.payload.data);
+                   record.payload.size == (core_major == 1 ? 8u : 4u)) {
+            output->permission_handle = core_major == 1
+                ? pxa_read_u64(record.payload.data)
+                : pxa_read_u32(record.payload.data);
+            if (core_major == 1 &&
+                (output->permission_handle >> 32) == 0)
+                return PXA_STATUS_INVALID_ARGUMENT;
             output->seen |= 4u;
         } else {
             return PXA_STATUS_INVALID_ARGUMENT;
@@ -410,15 +417,16 @@ static uint16_t component_subscription_count(
 
 static pxa_status_t subscribe_component(
     pxa_sensor_service_t *service, pxa_component_t component,
-    const pxa_message_view_t *message, uint8_t result[4],
-    pxa_handle_t *opened_handle) {
+    const pxa_message_view_t *message, uint16_t core_major,
+    uint8_t result[8], pxa_handle64_t *opened_handle) {
     static const uint8_t permission_name[] = "sensor.read";
     pxa_sensor_subscribe_request_t request;
     const pxa_sensor_descriptor_t *descriptor;
     pxa_sensor_subscription_t *subscription;
     pxa_authority_t authority = 0;
     pxa_resource_t resource;
-    pxa_status_t status = parse_subscribe(message->payload, &request);
+    pxa_status_t status = parse_subscribe(message->payload, core_major,
+                                          &request);
     if (status != PXA_STATUS_OK) return status;
     descriptor = find_descriptor(service, request.sensor_id);
     if (descriptor == NULL) return PXA_STATUS_NOT_FOUND;
@@ -426,10 +434,16 @@ static pxa_status_t subscribe_component(
         request.period_ms > descriptor->max_period_ms) {
         return PXA_STATUS_INVALID_ARGUMENT;
     }
-    status = pxa_permission_resolve(
-        service->permissions, component, request.permission_handle,
-        (pxa_bytes_t){permission_name, sizeof(permission_name) - 1},
-        descriptor->semantic, &authority);
+    status = core_major == 1
+        ? pxa_permission_resolve64(
+            service->permissions, component, request.permission_handle,
+            (pxa_bytes_t){permission_name, sizeof(permission_name) - 1},
+            descriptor->semantic, &authority)
+        : pxa_permission_resolve(
+            service->permissions, component,
+            (pxa_handle_t)request.permission_handle,
+            (pxa_bytes_t){permission_name, sizeof(permission_name) - 1},
+            descriptor->semantic, &authority);
     if (status != PXA_STATUS_OK) return status;
     if (component_subscription_count(service, component) >=
         service->max_subscriptions_per_component) {
@@ -454,14 +468,24 @@ static pxa_status_t subscribe_component(
     resource.context = subscription;
     resource.operations = &k_sensor_resource_ops;
     resource.close = close_subscription;
-    status = pxa_handle_open(service->runtime, component, PXA_RESOURCE_SENSOR,
-                             authority, &resource, opened_handle);
+    if (core_major == 1)
+        status = pxa_handle_open64(service->runtime, component,
+                                   PXA_RESOURCE_SENSOR, authority,
+                                   &resource, opened_handle);
+    else {
+        pxa_handle_t handle32 = PXA_HANDLE_INVALID;
+        status = pxa_handle_open(service->runtime, component,
+                                 PXA_RESOURCE_SENSOR, authority,
+                                 &resource, &handle32);
+        *opened_handle = handle32;
+    }
     if (status != PXA_STATUS_OK) {
         close_subscription(subscription);
         return status;
     }
     subscription->handle = *opened_handle;
-    pxa_write_u32(result, *opened_handle);
+    if (core_major == 1) pxa_write_u64(result, *opened_handle);
+    else pxa_write_u32(result, (pxa_handle_t)*opened_handle);
     return PXA_STATUS_OK;
 }
 
@@ -469,10 +493,11 @@ static pxa_status_t sensor_control(void *context, pxa_runtime_t *runtime,
                                    pxa_component_t component,
                                    const pxa_message_view_t *message) {
     pxa_sensor_service_t *service = (pxa_sensor_service_t *)context;
-    uint8_t handle_result[4];
+    uint8_t handle_result[8];
     const void *result = NULL;
     size_t result_size = 0;
-    pxa_handle_t opened_handle = PXA_HANDLE_INVALID;
+    pxa_handle64_t opened_handle = PXA_HANDLE_INVALID;
+    uint16_t core_major = 0;
     pxa_status_t status;
     pxa_status_t complete;
     (void)runtime;
@@ -483,20 +508,27 @@ static pxa_status_t sensor_control(void *context, pxa_runtime_t *runtime,
         message->opcode != PXA_SENSOR_SUBSCRIBE) {
         return PXA_STATUS_UNSUPPORTED;
     }
-    status = pxa_request_begin(service->runtime, component,
-                               message->request_id, PXA_SENSOR_SERVICE_ID,
-                               message->opcode, 0);
+    status = pxa_component_core_major(service->runtime, component,
+                                      &core_major);
     if (status != PXA_STATUS_OK) return status;
-    if (message->opcode == PXA_SENSOR_LIST) {
+    status = pxa_request_begin_reserved(
+        service->runtime, component, message->request_id,
+        PXA_SENSOR_SERVICE_ID, message->opcode, 0,
+        message->opcode == PXA_SENSOR_LIST ? service->list_capacity
+                                            : (core_major == 1 ? 8u : 4u));
+    if (status != PXA_STATUS_OK) return status;
+    status = pxa_request_commit(service->runtime, component,
+                                message->request_id);
+    if (status == PXA_STATUS_OK && message->opcode == PXA_SENSOR_LIST) {
         status = message->payload.size == 0
                      ? encode_list(service, &result_size)
                      : PXA_STATUS_INVALID_ARGUMENT;
         result = service->list_scratch;
-    } else {
-        status = subscribe_component(service, component, message,
+    } else if (status == PXA_STATUS_OK) {
+        status = subscribe_component(service, component, message, core_major,
                                      handle_result, &opened_handle);
         result = handle_result;
-        result_size = 4;
+        result_size = core_major == 1 ? 8 : 4;
     }
     complete = pxa_request_complete(
         service->runtime, component, message->request_id, status,
@@ -504,7 +536,12 @@ static pxa_status_t sensor_control(void *context, pxa_runtime_t *runtime,
         status == PXA_STATUS_OK ? result_size : 0);
     if (complete != PXA_STATUS_OK) {
         if (opened_handle != PXA_HANDLE_INVALID) {
-            (void)pxa_handle_close(service->runtime, component, opened_handle);
+            if (core_major == 1)
+                (void)pxa_handle_close64(service->runtime, component,
+                                         opened_handle);
+            else
+                (void)pxa_handle_close(service->runtime, component,
+                                       (pxa_handle_t)opened_handle);
         }
         (void)pxa_request_cancel(service->runtime, component,
                                  message->request_id);
@@ -561,7 +598,7 @@ pxa_status_t pxa_sensor_poll(
         uint16_t next = subscription->next;
         uint64_t period_us;
         int32_t values[PXA_SENSOR_MAX_DIMENSIONS] = {0, 0, 0};
-        uint8_t payload_bytes[42];
+        uint8_t payload_bytes[46];
         uint8_t encoded[12];
         pxa_writer_t payload;
         pxa_status_t status;
@@ -585,8 +622,12 @@ pxa_status_t pxa_sensor_poll(
             continue;
         }
         pxa_writer_init(&payload, payload_bytes, sizeof(payload_bytes));
-        pxa_write_u32(encoded, subscription->handle);
-        status = pxa_writer_record(&payload, 4, encoded, 4);
+        if ((subscription->handle >> 32) != 0)
+            pxa_write_u64(encoded, subscription->handle);
+        else
+            pxa_write_u32(encoded, (pxa_handle_t)subscription->handle);
+        status = pxa_writer_record(&payload, 4, encoded,
+                                    (subscription->handle >> 32) != 0 ? 8 : 4);
         if (status == PXA_STATUS_OK) {
             pxa_write_u64(encoded, timestamp_us);
             status = pxa_writer_record(&payload, 2, encoded, 8);
@@ -609,9 +650,12 @@ pxa_status_t pxa_sensor_poll(
                 (size_t)subscription->descriptor->dimensions * 4u);
         }
         if (status == PXA_STATUS_OK) {
-            uint64_t coalesce_key =
-                ((uint64_t)PXA_SENSOR_SERVICE_ID << 48) |
-                ((uint64_t)PXA_SENSOR_SAMPLE << 32) | subscription->handle;
+            uint64_t coalesce_key = (subscription->handle >> 32) != 0
+                ? subscription->handle ^
+                    ((uint64_t)PXA_SENSOR_SERVICE_ID << 56)
+                : ((uint64_t)PXA_SENSOR_SERVICE_ID << 48) |
+                    ((uint64_t)PXA_SENSOR_SAMPLE << 32) |
+                    subscription->handle;
             status = pxa_event_post_message(
                 service->runtime, subscription->component,
                 PXA_SENSOR_SERVICE_ID, PXA_SENSOR_SAMPLE, 0,

@@ -267,8 +267,12 @@ static pxa_status_t ui_control(void *context, pxa_runtime_t *runtime,
             if (message->request_id == 0 || message->payload.size != 0)
                 return PXA_STATUS_INVALID_ARGUMENT;
             encode_theme(payload, &service->theme);
-            status = pxa_request_begin(runtime, component, message->request_id,
-                                       PXA_UI_SERVICE_ID, PXA_UI_THEME_GET, 0);
+            status = pxa_request_begin_reserved(
+                runtime, component, message->request_id, PXA_UI_SERVICE_ID,
+                PXA_UI_THEME_GET, 0, sizeof(payload));
+            if (status != PXA_STATUS_OK) return status;
+            status = pxa_request_commit(runtime, component,
+                                        message->request_id);
             if (status != PXA_STATUS_OK) return status;
             return pxa_request_complete(runtime, component, message->request_id,
                                         PXA_STATUS_OK, payload, sizeof(payload));

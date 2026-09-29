@@ -1,4 +1,5 @@
 #include "pxa/device.h"
+#include "pxa/device_runtime_info_generated.h"
 
 #include "common/checked_math.h"
 
@@ -22,7 +23,7 @@ struct pxa_device_service {
 
 typedef struct {
     uint16_t kind;
-    pxa_handle_t permission_handle;
+    pxa_handle64_t permission_handle;
     uint8_t seen;
 } pxa_device_get_mac_request_t;
 
@@ -103,7 +104,7 @@ static int service_valid(const pxa_device_service_t *service) {
     return service != NULL && service->magic == PXA_DEVICE_MAGIC;
 }
 
-static pxa_status_t parse_get_mac(pxa_bytes_t payload,
+static pxa_status_t parse_get_mac(pxa_bytes_t payload, uint16_t core_major,
                                   pxa_device_get_mac_request_t *output) {
     pxa_record_iterator_t iterator;
     pxa_record_view_t record;
@@ -124,15 +125,19 @@ static pxa_status_t parse_get_mac(pxa_bytes_t payload,
             output->kind = pxa_read_u16(record.payload.data);
             output->seen |= 1u;
         } else if (record.tag == PXA_DEVICE_TAG_PERMISSION_HANDLE &&
-                   (output->seen & 2u) == 0 && record.payload.size == 4) {
-            output->permission_handle = pxa_read_u32(record.payload.data);
+                   (output->seen & 2u) == 0 &&
+                   record.payload.size == (core_major == 1 ? 8u : 4u)) {
+            output->permission_handle = core_major == 1
+                                            ? pxa_read_u64(record.payload.data)
+                                            : pxa_read_u32(record.payload.data);
             output->seen |= 2u;
         } else {
             return PXA_STATUS_INVALID_ARGUMENT;
         }
     }
     return output->seen == 3u && kind_valid(output->kind) &&
-                   output->permission_handle != PXA_HANDLE_INVALID
+                   output->permission_handle != PXA_HANDLE64_INVALID &&
+                   (core_major != 1 || (output->permission_handle >> 32) != 0)
                ? PXA_STATUS_OK
                : PXA_STATUS_INVALID_ARGUMENT;
 }
@@ -149,12 +154,23 @@ static pxa_status_t get_mac(pxa_device_service_t *service,
     uint8_t mac[6];
     uint8_t value[4];
     uint32_t flags = 0;
-    status = parse_get_mac(message->payload, &request);
+    uint16_t core_major = 0;
+    status = pxa_component_core_major(service->runtime, component,
+                                      &core_major);
     if (status != PXA_STATUS_OK) return status;
-    status = pxa_permission_resolve(
-        service->permissions, component, request.permission_handle,
-        (pxa_bytes_t){permission_name, sizeof(permission_name) - 1u},
-        scope_for_kind(request.kind), &authority);
+    status = parse_get_mac(message->payload, core_major, &request);
+    if (status != PXA_STATUS_OK) return status;
+    if (core_major == 1)
+        status = pxa_permission_resolve64(
+            service->permissions, component, request.permission_handle,
+            (pxa_bytes_t){permission_name, sizeof(permission_name) - 1u},
+            scope_for_kind(request.kind), &authority);
+    else
+        status = pxa_permission_resolve(
+            service->permissions, component,
+            (pxa_handle_t)request.permission_handle,
+            (pxa_bytes_t){permission_name, sizeof(permission_name) - 1u},
+            scope_for_kind(request.kind), &authority);
     if (status != PXA_STATUS_OK) return status;
     status = service->get_mac(service->provider_context, request.kind, mac,
                               &flags);
@@ -178,7 +194,7 @@ static pxa_status_t device_control(void *context, pxa_runtime_t *runtime,
                                    pxa_component_t component,
                                    const pxa_message_view_t *message) {
     pxa_device_service_t *service = (pxa_device_service_t *)context;
-    uint8_t result[256];
+    uint8_t result[PXA_DEVICE_RUNTIME_INFO_MAX_RECORD_BYTES];
     size_t result_size = 0;
     pxa_status_t status;
     pxa_status_t complete;
@@ -189,35 +205,21 @@ static pxa_status_t device_control(void *context, pxa_runtime_t *runtime,
     if (message->opcode != PXA_DEVICE_GET_MAC &&
         message->opcode != PXA_DEVICE_GET_RUNTIME_INFO)
         return PXA_STATUS_UNSUPPORTED;
-    status = pxa_request_begin(service->runtime, component, message->request_id,
-                               PXA_DEVICE_SERVICE_ID, message->opcode, 0);
+    status = pxa_request_begin_reserved(
+        service->runtime, component, message->request_id,
+        PXA_DEVICE_SERVICE_ID, message->opcode, 0,
+        message->opcode == PXA_DEVICE_GET_MAC ? 24u : sizeof(result));
     if (status != PXA_STATUS_OK) return status;
     if (message->opcode == PXA_DEVICE_GET_MAC) {
         status = get_mac(service, component, message, result, &result_size);
     } else {
-        pxa_writer_t writer;
-        uint8_t formats[4];
-        const char *values[] = {service->target, service->architecture,
-                                service->engine, service->engine_abi};
-        size_t index;
         status = message->payload.size == 0 ? PXA_STATUS_OK
                                             : PXA_STATUS_INVALID_ARGUMENT;
-        for (index = 0; status == PXA_STATUS_OK && index < 4; ++index) {
-            if (values[index] == NULL || values[index][0] == '\0')
-                status = PXA_STATUS_UNSUPPORTED;
-        }
-        if (status == PXA_STATUS_OK) {
-            pxa_writer_init(&writer, result, sizeof(result));
-            for (index = 0; status == PXA_STATUS_OK && index < 4; ++index)
-                status = pxa_writer_record(&writer, (uint16_t)(index + 1u),
-                                            (const uint8_t *)values[index],
-                                            strlen(values[index]));
-            pxa_write_u32(formats, service->formats);
-            if (status == PXA_STATUS_OK)
-                status = pxa_writer_record(&writer, PXA_DEVICE_TAG_FORMATS,
-                                            formats, sizeof(formats));
-            if (status == PXA_STATUS_OK) result_size = writer.size;
-        }
+        if (status == PXA_STATUS_OK && !pxa_device_runtime_info_encode(
+                result, sizeof(result), service->target,
+                service->architecture, service->engine, service->engine_abi,
+                service->formats, &result_size))
+            status = PXA_STATUS_UNSUPPORTED;
     }
     complete = pxa_request_complete(service->runtime, component,
                                     message->request_id, status,

@@ -1,4 +1,22 @@
 #include "pxa/package.h"
+#include "pxa/log.h"
+#include "pxa/device.h"
+#include "pxa/window.h"
+#include "pxa/permission.h"
+#include "pxa/storage.h"
+#include "pxa/fs.h"
+#include "pxa/ipc.h"
+#include "pxa/net.h"
+#include "pxa/audio.h"
+#include "pxa/sensor.h"
+#include "pxa/scheduler.h"
+#include "pxa/surface.h"
+#include "pxa/clock.h"
+#include "pxa/ui.h"
+#include "pxa/wasi.h"
+#include "pxa/game_render.h"
+#include "pxa/assets.h"
+#include "pxa/service.h"
 
 #include "common/bytes_internal.h"
 #include "package/package_internal.h"
@@ -53,9 +71,52 @@ pxa_status_t pxa_package_requirements_validate(
         (host->services == NULL && host->service_count != 0)) {
         return PXA_STATUS_INVALID_ARGUMENT;
     }
-    if (host->core_version.major != manifest->min_sdk.major ||
+    if (manifest->min_sdk.major != 1) return PXA_STATUS_UNSUPPORTED;
+    if (host->core_version.major != 1 ||
         host->core_version.minor < manifest->min_sdk.minor) {
         return PXA_STATUS_UNSUPPORTED;
+    }
+    /* Admit only services with a current Core request path. */
+    for (requirement_index = 0;
+         requirement_index < component->service_count;
+         ++requirement_index) {
+        if (component->services[requirement_index].service !=
+                    PXA_LOG_SERVICE_ID &&
+                component->services[requirement_index].service !=
+                    PXA_DEVICE_SERVICE_ID &&
+                component->services[requirement_index].service !=
+                    PXA_WINDOW_SERVICE_ID &&
+                component->services[requirement_index].service !=
+                    PXA_PERMISSION_SERVICE_ID &&
+                component->services[requirement_index].service !=
+                    PXA_STORAGE_SERVICE_ID &&
+                component->services[requirement_index].service !=
+                    PXA_FS_SERVICE_ID &&
+                component->services[requirement_index].service !=
+                    PXA_IPC_SERVICE_ID &&
+                component->services[requirement_index].service !=
+                    PXA_NET_SERVICE_ID &&
+                component->services[requirement_index].service !=
+                    PXA_AUDIO_SERVICE_ID &&
+                component->services[requirement_index].service !=
+                    PXA_SENSOR_SERVICE_ID &&
+                component->services[requirement_index].service !=
+                    PXA_WORK_SERVICE_ID &&
+                component->services[requirement_index].service !=
+                    PXA_SURFACE_SERVICE_ID &&
+                component->services[requirement_index].service !=
+                    PXA_CLOCK_SERVICE_ID &&
+                component->services[requirement_index].service !=
+                    PXA_WASI_SERVICE_ID &&
+                component->services[requirement_index].service !=
+                    PXA_UI_SERVICE_ID &&
+                component->services[requirement_index].service !=
+                    PXA_GAME_RENDER_SERVICE_ID &&
+                component->services[requirement_index].service !=
+                    PXA_ASSETS_SERVICE_ID &&
+                component->services[requirement_index].service !=
+                    PXA_STORE_INSTALLER_SERVICE_ID)
+            return PXA_STATUS_UNSUPPORTED;
     }
     for (capability_index = 0; capability_index < host->service_count;
          ++capability_index) {

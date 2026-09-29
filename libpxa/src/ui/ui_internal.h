@@ -7,7 +7,6 @@
 #define PXA_UI_NODE_CHUNK_COUNT 32u
 #define PXA_UI_INITIAL_BUCKETS 16u
 #define PXA_UI_NODES_PER_BUCKET 2u
-#define PXA_UI_MAX_DIRTY_RECTS 4u
 #define PXA_UI_ENVIRONMENT_WIRE_BYTES                                      \
     (5u * (PXA_RECORD_HEADER_SIZE + 4u) +                                 \
      (PXA_RECORD_HEADER_SIZE + 16u) +                                     \

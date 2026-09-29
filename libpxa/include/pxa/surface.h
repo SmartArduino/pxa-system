@@ -52,6 +52,7 @@ extern "C" {
 #define PXA_SURFACE_ACQUIRE_RECORD_BYTES ((size_t)4)
 #define PXA_SURFACE_PRESENT_RECORD_BYTES ((size_t)16)
 #define PXA_SURFACE_RELEASED_PAYLOAD_BYTES ((size_t)16)
+#define PXA_SURFACE_RELEASED_V1_PAYLOAD_BYTES ((size_t)20)
 
 typedef struct {
     uint16_t width;

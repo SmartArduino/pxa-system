@@ -101,6 +101,7 @@ pxa_status_t pxa_activation_plan_prepare(
         if (status != PXA_STATUS_OK) return status;
         entries[index].component = &manifest->components[index];
         entries[index].artifact = artifact;
+        entries[index].core_major = manifest->min_sdk.major;
     }
     *output = &storage->plan;
     return PXA_STATUS_OK;

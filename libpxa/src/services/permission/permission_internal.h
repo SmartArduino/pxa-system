@@ -22,7 +22,7 @@ typedef struct {
     struct pxa_permission_service *service;
     pxa_component_t component;
     pxa_authority_t authority;
-    pxa_handle_t permission_handle;
+    pxa_handle64_t permission_handle;
     union {
         uint16_t declaration_index;
         uint16_t next_free;

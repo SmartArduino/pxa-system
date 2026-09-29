@@ -15,8 +15,7 @@ extern "C" {
  * (`pxa_component_engine_t`). Mirrors the legacy C++ WAMR host semantics:
  *  - loads one Artifact (portable Wasm or AOT) per Component from the package
  *    root through the `read_artifact` callback;
- *  - binds the two `pxa.core.v0` natives `pxa_control` and `pxa_io`, which
- *    dispatch through pxa_runtime_control / pxa_runtime_io;
+ *  - binds the `pxa.core.v1` natives;
  *  - calls the guest exports pxa_app_start / pxa_app_on_event / pxa_app_stop;
  *  - optional guest-call deadline: poll pxa_wamr_engine_poll_deadlines from a
  *    host timer to abort overdue calls with wasm_runtime_terminate. Hosts that
@@ -117,6 +116,19 @@ typedef struct {
     uint32_t total_bytes;
     uint32_t current_bytes;
     uint32_t peak_bytes;
+    /* Live default linear-memory address ranges, sampled after instantiate
+     * and every Guest callback. Includes Guest stack/data/heap, not just live
+     * malloc bytes; free() does not reduce these ranges. Platform mmap/reserve
+     * paths can bypass the WAMR allocator, while embedded heap paths overlap
+     * current_bytes. Do not blindly sum the two counters as physical RAM. */
+    uint64_t linear_current_bytes;
+    uint64_t linear_peak_bytes;
+    /* Artifact buffer capacity still retained by the adapter, separate from
+     * WAMR allocator accounting. Fixed buffers are part of engine workspace. */
+    uint64_t artifact_buffer_bytes;
+    /* Retained Guest event-buffer capacities, included in linear memory and
+     * possibly WAMR allocator bytes above; not additional physical memory. */
+    uint64_t event_buffer_bytes;
 } pxa_wamr_memory_snapshot_t;
 
 size_t pxa_wamr_engine_workspace_size(const pxa_wamr_engine_config_t *config);
@@ -128,7 +140,7 @@ void pxa_wamr_engine_deinit(pxa_wamr_engine_t *engine);
 pxa_status_t pxa_wamr_engine_memory_snapshot(
     const pxa_wamr_engine_t *engine, pxa_wamr_memory_snapshot_t *output);
 
-/* Bind the runtime the pxa.core.v0 natives dispatch into. */
+/* Bind the runtime the pxa.core.v1 natives dispatch into. */
 void pxa_wamr_engine_set_runtime(pxa_wamr_engine_t *engine,
                                  pxa_runtime_t *runtime);
 

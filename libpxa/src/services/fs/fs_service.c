@@ -336,9 +336,10 @@ static pxa_status_t authorize_request(pxa_fs_service_t *service,
 static pxa_status_t handle_open(pxa_fs_service_t *service,
                                 pxa_component_t component,
                                 pxa_authority_t authority,
+                                uint16_t core_major,
                                 const pxa_message_view_t *message,
                                 uint8_t *result, size_t *result_size,
-                                pxa_handle_t *opened_handle) {
+                                pxa_handle64_t *opened_handle) {
     pxa_fs_paths_t paths;
     pxa_fs_resource_slot_t *slot;
     pxa_resource_t resource;
@@ -368,17 +369,32 @@ static pxa_status_t handle_open(pxa_fs_service_t *service,
                               ? (const void *)&k_file_resource_ops
                               : (const void *)&k_directory_resource_ops;
     resource.close = close_resource;
-    status = pxa_handle_open(service->runtime, component,
-                             slot->kind == PXA_FS_KIND_REGULAR
-                                 ? PXA_RESOURCE_FILE
-                                 : PXA_RESOURCE_DIRECTORY,
-                             authority, &resource, opened_handle);
+    if (core_major == 1) {
+        status = pxa_handle_open64(service->runtime, component,
+                                   slot->kind == PXA_FS_KIND_REGULAR
+                                       ? PXA_RESOURCE_FILE
+                                       : PXA_RESOURCE_DIRECTORY,
+                                   authority, &resource, opened_handle);
+    } else {
+        pxa_handle_t legacy_handle = PXA_HANDLE_INVALID;
+        status = pxa_handle_open(service->runtime, component,
+                                 slot->kind == PXA_FS_KIND_REGULAR
+                                     ? PXA_RESOURCE_FILE
+                                     : PXA_RESOURCE_DIRECTORY,
+                                 authority, &resource, &legacy_handle);
+        *opened_handle = legacy_handle;
+    }
     if (status != PXA_STATUS_OK) {
         close_resource(slot);
         return status;
     }
-    pxa_write_u32(result, *opened_handle);
-    *result_size = 4;
+    if (core_major == 1) {
+        pxa_write_u64(result, *opened_handle);
+        *result_size = 8;
+    } else {
+        pxa_write_u32(result, (uint32_t)*opened_handle);
+        *result_size = 4;
+    }
     return PXA_STATUS_OK;
 }
 
@@ -422,31 +438,41 @@ static pxa_status_t handle_path_operation(
 
 static pxa_status_t handle_seek(pxa_fs_service_t *service,
                                 pxa_component_t component,
+                                uint16_t core_major,
                                 const pxa_message_view_t *message,
                                 uint8_t *result, size_t *result_size) {
     pxa_resource_t resource;
     pxa_fs_resource_slot_t *slot;
-    pxa_handle_t handle;
+    pxa_handle64_t handle;
+    size_t handle_bytes = core_major == 1 ? 8u : 4u;
     uint64_t offset_bits;
     int64_t offset;
     uint64_t position = 0;
     uint8_t origin;
     pxa_status_t status;
-    if (message->payload.size != 13) return PXA_STATUS_INVALID_ARGUMENT;
-    handle = pxa_read_u32(message->payload.data);
-    origin = message->payload.data[12];
-    if (handle == PXA_HANDLE_INVALID || origin > PXA_FS_SEEK_END) {
+    if (message->payload.size != handle_bytes + 9u)
+        return PXA_STATUS_INVALID_ARGUMENT;
+    handle = core_major == 1 ? pxa_read_u64(message->payload.data)
+                             : pxa_read_u32(message->payload.data);
+    origin = message->payload.data[handle_bytes + 8u];
+    if (handle == PXA_HANDLE64_INVALID ||
+        (core_major == 1 && (handle >> 32) == 0) ||
+        origin > PXA_FS_SEEK_END) {
         return PXA_STATUS_INVALID_ARGUMENT;
     }
-    status = pxa_handle_get(service->runtime, component, handle,
-                            PXA_RESOURCE_FILE, &resource);
+    status = core_major == 1
+                 ? pxa_handle_get64(service->runtime, component, handle,
+                                     PXA_RESOURCE_FILE, &resource)
+                 : pxa_handle_get(service->runtime, component,
+                                   (pxa_handle_t)handle,
+                                   PXA_RESOURCE_FILE, &resource);
     if (status != PXA_STATUS_OK) return status;
     slot = (pxa_fs_resource_slot_t *)resource.context;
     if (slot == NULL || slot->magic != PXA_FS_SLOT_MAGIC || !slot->occupied ||
         slot->service != service || slot->kind != PXA_FS_KIND_REGULAR) {
         return PXA_STATUS_INTERNAL;
     }
-    offset_bits = pxa_read_u64(message->payload.data + 4);
+    offset_bits = pxa_read_u64(message->payload.data + handle_bytes);
     memcpy(&offset, &offset_bits, sizeof(offset));
     status = pxa_status_normalize(service->backend.seek(
         service->backend.context, slot->backend_resource, offset, origin,
@@ -459,21 +485,31 @@ static pxa_status_t handle_seek(pxa_fs_service_t *service,
 
 static pxa_status_t handle_read_directory(
     pxa_fs_service_t *service, pxa_component_t component,
+    uint16_t core_major,
     const pxa_message_view_t *message, uint8_t *result, size_t capacity,
     size_t *result_size) {
     pxa_resource_t resource;
     pxa_fs_resource_slot_t *slot;
     pxa_fs_entry_t entry;
     pxa_writer_t writer;
-    pxa_handle_t handle;
+    pxa_handle64_t handle;
+    size_t handle_bytes = core_major == 1 ? 8u : 4u;
     pxa_status_t status;
     uint8_t end = 0;
     uint8_t size_bytes[8];
-    if (message->payload.size != 4) return PXA_STATUS_INVALID_ARGUMENT;
-    handle = pxa_read_u32(message->payload.data);
-    if (handle == PXA_HANDLE_INVALID) return PXA_STATUS_INVALID_ARGUMENT;
-    status = pxa_handle_get(service->runtime, component, handle,
-                            PXA_RESOURCE_DIRECTORY, &resource);
+    if (message->payload.size != handle_bytes)
+        return PXA_STATUS_INVALID_ARGUMENT;
+    handle = core_major == 1 ? pxa_read_u64(message->payload.data)
+                             : pxa_read_u32(message->payload.data);
+    if (handle == PXA_HANDLE64_INVALID ||
+        (core_major == 1 && (handle >> 32) == 0))
+        return PXA_STATUS_INVALID_ARGUMENT;
+    status = core_major == 1
+                 ? pxa_handle_get64(service->runtime, component, handle,
+                                     PXA_RESOURCE_DIRECTORY, &resource)
+                 : pxa_handle_get(service->runtime, component,
+                                   (pxa_handle_t)handle,
+                                   PXA_RESOURCE_DIRECTORY, &resource);
     if (status != PXA_STATUS_OK) return status;
     slot = (pxa_fs_resource_slot_t *)resource.context;
     if (slot == NULL || slot->magic != PXA_FS_SLOT_MAGIC || !slot->occupied ||
@@ -516,7 +552,8 @@ static pxa_status_t fs_control(void *context, pxa_runtime_t *runtime,
     uint8_t result[96];
     size_t result_size = 0;
     pxa_authority_t authority = 0;
-    pxa_handle_t opened_handle = PXA_HANDLE_INVALID;
+    pxa_handle64_t opened_handle = PXA_HANDLE64_INVALID;
+    uint16_t core_major = 0;
     pxa_status_t status;
     pxa_status_t complete;
     (void)runtime;
@@ -527,23 +564,44 @@ static pxa_status_t fs_control(void *context, pxa_runtime_t *runtime,
         message->opcode > PXA_FS_READ_DIRECTORY) {
         return PXA_STATUS_UNSUPPORTED;
     }
+    status = pxa_component_core_major(service->runtime, component,
+                                      &core_major);
+    if (status != PXA_STATUS_OK) return status;
     status = authorize_request(service, component, &authority);
-    complete = pxa_request_begin(service->runtime, component,
-                                 message->request_id, PXA_FS_SERVICE_ID,
-                                 message->opcode,
-                                 status == PXA_STATUS_OK ? authority : 0);
+    {
+        size_t result_capacity = 0;
+        if (message->opcode == PXA_FS_OPEN)
+            result_capacity = core_major == 1 ? 8u : 4u;
+        else if (message->opcode == PXA_FS_STAT)
+            result_capacity = 9;
+        else if (message->opcode == PXA_FS_SEEK)
+            result_capacity = 8;
+        else if (message->opcode == PXA_FS_READ_DIRECTORY)
+            result_capacity = sizeof(result);
+        complete = pxa_request_begin_reserved(
+            service->runtime, component, message->request_id,
+            PXA_FS_SERVICE_ID, message->opcode,
+            status == PXA_STATUS_OK ? authority : 0, result_capacity);
+    }
     if (complete != PXA_STATUS_OK) return complete;
+    if (status == PXA_STATUS_OK) {
+        status = pxa_request_commit(service->runtime, component,
+                                    message->request_id);
+    }
     if (status == PXA_STATUS_OK && message->opcode == PXA_FS_OPEN) {
-        status = handle_open(service, component, authority, message, result,
+        status = handle_open(service, component, authority, core_major,
+                             message, result,
                              &result_size, &opened_handle);
     } else if (status == PXA_STATUS_OK &&
                message->opcode >= PXA_FS_MAKE_DIRECTORY &&
                message->opcode <= PXA_FS_STAT) {
         status = handle_path_operation(service, message, result, &result_size);
     } else if (status == PXA_STATUS_OK && message->opcode == PXA_FS_SEEK) {
-        status = handle_seek(service, component, message, result, &result_size);
+        status = handle_seek(service, component, core_major, message,
+                             result, &result_size);
     } else if (status == PXA_STATUS_OK) {
-        status = handle_read_directory(service, component, message, result,
+        status = handle_read_directory(service, component, core_major, message,
+                                       result,
                                        sizeof(result), &result_size);
     }
     complete = pxa_request_complete(
@@ -551,8 +609,13 @@ static pxa_status_t fs_control(void *context, pxa_runtime_t *runtime,
         status == PXA_STATUS_OK ? result : NULL,
         status == PXA_STATUS_OK ? result_size : 0);
     if (complete != PXA_STATUS_OK) {
-        if (opened_handle != PXA_HANDLE_INVALID) {
-            (void)pxa_handle_close(service->runtime, component, opened_handle);
+        if (opened_handle != PXA_HANDLE64_INVALID) {
+            if (core_major == 1)
+                (void)pxa_handle_close64(service->runtime, component,
+                                         opened_handle);
+            else
+                (void)pxa_handle_close(service->runtime, component,
+                                       (pxa_handle_t)opened_handle);
         }
         (void)pxa_request_cancel(service->runtime, component,
                                  message->request_id);

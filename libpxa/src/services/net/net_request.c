@@ -59,14 +59,16 @@ static int header_duplicate(const pxa_net_header_t *headers, uint16_t count,
 }
 
 pxa_status_t pxa_net_request_parse(
-    const pxa_net_request_limits_t *limits, uint16_t opcode,
+    const pxa_net_request_limits_t *limits, uint16_t core_major,
+    uint16_t opcode,
     pxa_bytes_t payload, pxa_net_parsed_request_t *output) {
     pxa_record_iterator_t iterator;
     pxa_record_view_t record;
     uint16_t previous = 0;
     uint16_t required_seen;
     pxa_status_t status;
-    if (limits == NULL || output == NULL) return PXA_STATUS_INVALID_ARGUMENT;
+    if (limits == NULL || output == NULL || core_major > 1)
+        return PXA_STATUS_INVALID_ARGUMENT;
     memset(output, 0, sizeof(*output));
     output->request.struct_size = sizeof(output->request);
     pxa_record_iterator_init(&iterator, payload);
@@ -93,8 +95,13 @@ pxa_status_t pxa_net_request_parse(
                 return PXA_STATUS_UNSUPPORTED;
             }
         } else if (record.tag == 3 && (output->seen & 4u) == 0 &&
-                   record.payload.size == 4) {
-            output->permission_handle = pxa_read_u32(record.payload.data);
+                   record.payload.size == (core_major == 1 ? 8u : 4u)) {
+            output->permission_handle = core_major == 1
+                ? pxa_read_u64(record.payload.data)
+                : pxa_read_u32(record.payload.data);
+            if (core_major == 1 &&
+                (output->permission_handle >> 32) == 0)
+                return PXA_STATUS_INVALID_ARGUMENT;
             output->seen |= 4u;
         } else if (record.tag == 4 && (output->seen & 8u) == 0 &&
                    record.payload.size == 4) {

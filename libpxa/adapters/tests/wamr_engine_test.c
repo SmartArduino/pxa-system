@@ -12,14 +12,24 @@
 
 #include "pxa/activation.h"
 #include "pxa/fs.h"
+#include "pxa/net.h"
+#include "pxa/audio.h"
+#include "pxa/sensor.h"
+#include "pxa/lease.h"
+#include "pxa/scheduler.h"
+#include "pxa/surface.h"
+#include "pxa/clock.h"
+#include "pxa/ui.h"
 #include "pxa/openssl/pxa_openssl.h"
 #include "pxa/package.h"
 #include "pxa/posix/pxa_posix_fs.h"
 #include "pxa/posix/pxa_posix_storage.h"
 #include "pxa/runtime.h"
+#include "pxa/service.h"
 #include "pxa/storage.h"
 #include "pxa/wamr/pxa_wamr_engine.h"
 #include "pxa/wasi.h"
+#include "pxa/wire_v1.h"
 
 #include "test_manifest.h"
 
@@ -64,6 +74,164 @@ static void check_status(const char *label, pxa_status_t actual,
                 (int)expected);
         ++failures;
     }
+}
+
+static pxa_status_t deferred_v1_device(void *context, pxa_runtime_t *runtime,
+                                       pxa_component_t component,
+                                       const pxa_message_view_t *message) {
+    unsigned *calls = (unsigned *)context;
+    if (calls == NULL || message == NULL || message->opcode != 2 ||
+        message->request_id == 0 || message->payload.size != 0)
+        return PXA_STATUS_INVALID_ARGUMENT;
+    if (++*calls <= 2) return PXA_STATUS_UNSUPPORTED;
+    return pxa_request_begin_reserved(runtime, component, message->request_id,
+                                      15, 2, 0, 0);
+}
+
+static pxa_status_t rejected_v1_net(void *context, pxa_runtime_t *runtime,
+                                    pxa_component_t component,
+                                    const pxa_message_view_t *message) {
+    unsigned *calls = (unsigned *)context;
+    pxa_record_iterator_t iterator;
+    pxa_record_view_t record;
+    (void)runtime;
+    (void)component;
+    if (calls == NULL || message == NULL ||
+        message->opcode != PXA_NET_FETCH || message->request_id == 0)
+        return PXA_STATUS_INVALID_ARGUMENT;
+    pxa_record_iterator_init(&iterator, message->payload);
+    if (pxa_record_next(&iterator, &record) != PXA_STATUS_OK ||
+        record.tag != 1 ||
+        pxa_record_next(&iterator, &record) != PXA_STATUS_OK ||
+        record.tag != 2 ||
+        pxa_record_next(&iterator, &record) != PXA_STATUS_OK ||
+        record.tag != 3 || record.payload.size != 8 ||
+        pxa_read_u64(record.payload.data) != UINT64_C(0x1234567800000001))
+        return PXA_STATUS_INVALID_ARGUMENT;
+    ++*calls;
+    return PXA_STATUS_UNSUPPORTED;
+}
+
+static pxa_status_t rejected_v1_audio(void *context, pxa_runtime_t *runtime,
+                                      pxa_component_t component,
+                                      const pxa_message_view_t *message) {
+    unsigned *calls = (unsigned *)context;
+    pxa_record_iterator_t iterator;
+    pxa_record_view_t record;
+    (void)runtime;
+    (void)component;
+    if (calls == NULL || message == NULL ||
+        message->opcode != PXA_AUDIO_OPEN_SESSION || message->request_id == 0)
+        return PXA_STATUS_INVALID_ARGUMENT;
+    pxa_record_iterator_init(&iterator, message->payload);
+    if (pxa_record_next(&iterator, &record) != PXA_STATUS_OK ||
+        record.tag != 1 || record.payload.size != 8 ||
+        pxa_read_u64(record.payload.data) != UINT64_C(0x1234567800000001))
+        return PXA_STATUS_INVALID_ARGUMENT;
+    ++*calls;
+    return PXA_STATUS_UNSUPPORTED;
+}
+
+static pxa_status_t rejected_v1_sensor(void *context, pxa_runtime_t *runtime,
+                                       pxa_component_t component,
+                                       const pxa_message_view_t *message) {
+    unsigned *calls = (unsigned *)context;
+    (void)runtime;
+    (void)component;
+    if (calls == NULL || message == NULL ||
+        message->opcode != PXA_SENSOR_LIST || message->request_id == 0 ||
+        message->payload.size != 0) return PXA_STATUS_INVALID_ARGUMENT;
+    ++*calls;
+    return PXA_STATUS_UNSUPPORTED;
+}
+
+static pxa_status_t rejected_v1_lease(void *context, pxa_runtime_t *runtime,
+                                      pxa_component_t component,
+                                      const pxa_message_view_t *message) {
+    unsigned *calls = (unsigned *)context;
+    (void)runtime;
+    (void)component;
+    if (calls == NULL || message == NULL ||
+        message->opcode != PXA_LEASE_ACQUIRE || message->request_id == 0 ||
+        message->payload.size != 14) return PXA_STATUS_INVALID_ARGUMENT;
+    ++*calls;
+    return PXA_STATUS_UNSUPPORTED;
+}
+
+static pxa_status_t rejected_v1_work(void *context, pxa_runtime_t *runtime,
+                                     pxa_component_t component,
+                                     const pxa_message_view_t *message) {
+    unsigned *calls = (unsigned *)context;
+    pxa_record_iterator_t iterator;
+    pxa_record_view_t record;
+    (void)runtime;
+    (void)component;
+    if (calls == NULL || message == NULL ||
+        message->opcode != PXA_WORK_CANCEL || message->request_id == 0)
+        return PXA_STATUS_INVALID_ARGUMENT;
+    pxa_record_iterator_init(&iterator, message->payload);
+    if (pxa_record_next(&iterator, &record) != PXA_STATUS_OK ||
+        record.tag != 4 || record.payload.size != 4 ||
+        pxa_read_u32(record.payload.data) != 4)
+        return PXA_STATUS_INVALID_ARGUMENT;
+    ++*calls;
+    return PXA_STATUS_UNSUPPORTED;
+}
+
+static pxa_status_t rejected_v1_surface(void *context, pxa_runtime_t *runtime,
+                                        pxa_component_t component,
+                                        const pxa_message_view_t *message) {
+    unsigned *calls = (unsigned *)context;
+    (void)runtime;
+    (void)component;
+    if (calls == NULL || message == NULL ||
+        message->opcode != PXA_SURFACE_QUERY_STATE ||
+        message->request_id == 0 || message->payload.size != 8 ||
+        pxa_read_u64(message->payload.data) !=
+            UINT64_C(0x1234567800000001))
+        return PXA_STATUS_INVALID_ARGUMENT;
+    ++*calls;
+    return PXA_STATUS_UNSUPPORTED;
+}
+
+static pxa_status_t pending_v1_store_download(
+    void *context, pxa_runtime_t *runtime, pxa_component_t component,
+    const pxa_message_view_t *message) {
+    uint32_t *host_id = context;
+    if (host_id == NULL || message == NULL ||
+        message->opcode != 2u || message->request_id == 0 ||
+        message->payload.size != 0)
+        return PXA_STATUS_INVALID_ARGUMENT;
+    *host_id = message->request_id;
+    return pxa_request_begin_reserved(runtime, component, message->request_id,
+                                      PXA_STORE_INSTALLER_SERVICE_ID, 2u, 0,
+                                      0);
+}
+
+static pxa_status_t rejected_v1_clock(void *context, pxa_runtime_t *runtime,
+                                      pxa_component_t component,
+                                      const pxa_message_view_t *message) {
+    unsigned *calls = (unsigned *)context;
+    (void)runtime;
+    (void)component;
+    if (calls == NULL || message == NULL ||
+        message->opcode != PXA_CLOCK_NOW || message->request_id == 0 ||
+        message->payload.size != 0) return PXA_STATUS_INVALID_ARGUMENT;
+    ++*calls;
+    return PXA_STATUS_UNSUPPORTED;
+}
+
+static pxa_status_t rejected_v1_ui(void *context, pxa_runtime_t *runtime,
+                                   pxa_component_t component,
+                                   const pxa_message_view_t *message) {
+    unsigned *calls = (unsigned *)context;
+    (void)runtime;
+    (void)component;
+    if (calls == NULL || message == NULL ||
+        message->opcode != PXA_UI_THEME_GET || message->request_id == 0 ||
+        message->payload.size != 0) return PXA_STATUS_INVALID_ARGUMENT;
+    ++*calls;
+    return PXA_STATUS_UNSUPPORTED;
 }
 
 static void enter_critical(void *context) {
@@ -248,6 +416,7 @@ check_rejected_import(const char *label, const char *guest_path,
     package_component.service_count = requirement_count;
     activation_entry.component = &package_component;
     activation_entry.artifact = &artifact;
+    activation_entry.core_major = 1;
     check_status(
         label,
         engine_ops->instantiate(
@@ -259,8 +428,9 @@ check_rejected_import(const char *label, const char *guest_path,
 
 static void check_wasi_guest(const char *label, const char *guest_path,
                              const char *artifact_name,
-                             pxa_component_t component, uint64_t features,
+                             uint64_t instance_id, uint64_t features,
                              const char *package_dir,
+                             pxa_runtime_t *runtime,
                              pxa_component_engine_t *engine_ops,
                              artifact_allocation_probe_t *artifact_probe) {
     char destination[512];
@@ -269,6 +439,7 @@ static void check_wasi_guest(const char *label, const char *guest_path,
     pxa_package_service_requirement_t requirement;
     pxa_package_component_t package_component;
     pxa_activation_entry_t activation_entry;
+    pxa_component_t component = PXA_COMPONENT_INVALID;
     const size_t current_bytes = artifact_probe->current_bytes;
     const unsigned allocate_count = artifact_probe->allocate_count;
     const unsigned release_count = artifact_probe->release_count;
@@ -296,20 +467,37 @@ static void check_wasi_guest(const char *label, const char *guest_path,
     package_component.service_count = 1;
     activation_entry.component = &package_component;
     activation_entry.artifact = &artifact;
+    activation_entry.core_major = 1;
+    check_status(label, pxa_component_create(runtime, instance_id, &component),
+                 PXA_STATUS_OK);
+    check_status(label, pxa_component_begin_start(runtime, component),
+                 PXA_STATUS_OK);
     check_status(
         label,
         engine_ops->instantiate(
             engine_ops->context,
             (pxa_bytes_t){(const uint8_t *)package_dir, strlen(package_dir)},
-            &activation_entry, component, UINT64_C(98)),
+            &activation_entry, component, instance_id),
         PXA_STATUS_OK);
-    CHECK(artifact_probe->current_bytes == current_bytes);
+    /* WAMR may retain the source binary until unload. Both ownership modes
+     * are valid; the allocation must be returned after destroy. */
+    CHECK(artifact_probe->current_bytes >= current_bytes);
     CHECK(artifact_probe->allocate_count == allocate_count + 1);
-    CHECK(artifact_probe->release_count == release_count + 1);
+    CHECK(artifact_probe->release_count == release_count ||
+          artifact_probe->release_count == release_count + 1);
     check_status(label, engine_ops->start(engine_ops->context, component),
+                 PXA_STATUS_OK);
+    check_status(label, pxa_component_finish_start(runtime, component,
+                                                   PXA_STATUS_OK),
                  PXA_STATUS_OK);
     engine_ops->stop(engine_ops->context, component, PXA_STOP_NORMAL);
     engine_ops->destroy(engine_ops->context, component);
+    check_status(label, pxa_component_abort(runtime, component, PXA_STOP_NORMAL),
+                 PXA_STATUS_OK);
+    check_status(label, pxa_component_remove(runtime, component),
+                 PXA_STATUS_OK);
+    CHECK(artifact_probe->current_bytes == current_bytes);
+    CHECK(artifact_probe->release_count == release_count + 1);
 }
 
 static pxa_status_t read_artifact(void *context, pxa_bytes_t path,
@@ -565,6 +753,8 @@ int main(void) {
         CHECK(usage.total_bytes == 0);
         CHECK(usage.current_bytes != 0);
         CHECK(usage.peak_bytes >= usage.current_bytes);
+        CHECK(usage.linear_current_bytes == 0 && usage.linear_peak_bytes == 0);
+        CHECK(usage.artifact_buffer_bytes == 0);
         CHECK(runtime_probe.allocate_count != 0);
     }
     pxa_wamr_engine_set_runtime(engine, runtime);
@@ -663,8 +853,15 @@ int main(void) {
                  PXA_STATUS_OK);
     CHECK(component != PXA_COMPONENT_INVALID);
     CHECK(artifact_probe.allocate_count == 1);
-    CHECK(artifact_probe.release_count == 1);
-    CHECK(artifact_probe.current_bytes == 0);
+    CHECK(artifact_probe.release_count <= 1);
+    CHECK(artifact_probe.current_bytes <= wasm_size);
+    {
+        pxa_wamr_memory_snapshot_t usage;
+        CHECK(pxa_wamr_engine_memory_snapshot(engine, &usage) == PXA_STATUS_OK);
+        CHECK(usage.linear_current_bytes > 0);
+        CHECK(usage.linear_peak_bytes >= usage.linear_current_bytes);
+        CHECK(usage.artifact_buffer_bytes == artifact_probe.current_bytes);
+    }
     CHECK(pxa_wamr_engine_busy(engine) == 0);
     CHECK(synchronization_probe.depth == 0);
     CHECK(synchronization_probe.enter_count != 0);
@@ -690,7 +887,7 @@ int main(void) {
     CHECK(synchronization_probe.enter_count ==
           synchronization_probe.leave_count);
     {
-        uint8_t payload[PXA_MAX_CONTROL_MESSAGE - PXA_ENVELOPE_SIZE];
+        uint8_t payload[PXA_MAX_CONTROL_MESSAGE - PXA_V1_ENVELOPE_SIZE];
         pxa_wamr_event_result_t event_result;
         memset(payload, 0x5a, sizeof(payload));
         check_status(
@@ -710,6 +907,8 @@ int main(void) {
     {
         uint8_t payload[4];
         pxa_wamr_event_result_t result;
+        pxa_wamr_memory_snapshot_t before, after;
+        CHECK(pxa_wamr_engine_memory_snapshot(engine, &before) == PXA_STATUS_OK);
         pxa_write_u32(payload, UINT32_C(0x12345678));
         for (unsigned index = 0; index < 32; ++index) {
             check_status("post event buffer reuse probe",
@@ -721,6 +920,9 @@ int main(void) {
                     &result), PXA_STATUS_OK);
             CHECK(result.event_consumed && result.guest_result == 1);
         }
+        CHECK(pxa_wamr_engine_memory_snapshot(engine, &after) == PXA_STATUS_OK);
+        CHECK(after.linear_current_bytes > before.linear_current_bytes);
+        CHECK(after.linear_peak_bytes >= after.linear_current_bytes);
     }
 
     /* 7. Verify observable state. */
@@ -782,22 +984,298 @@ int main(void) {
                          PXA_WAMR_TEST_WASI_SYSTEM_PATH, "wasi-system.wasm",
                          UINT32_C(0x7ffffffb),
                          PXA_WASI_FEATURE_CLOCKS | PXA_WASI_FEATURE_RANDOM,
-                         package_dir, &engine_ops, &artifact_probe);
+                         package_dir, runtime, &engine_ops, &artifact_probe);
 #ifdef PXA_WAMR_TEST_WASI_LIBC_PATH
         check_wasi_guest("wasi-libc Wasm", PXA_WAMR_TEST_WASI_LIBC_PATH,
                          "wasi-libc.wasm", UINT32_C(0x7ffffffd), 0, package_dir,
-                         &engine_ops, &artifact_probe);
+                         runtime, &engine_ops, &artifact_probe);
 #ifdef PXA_WAMR_TEST_WASI_LIBC_AOT_PATH
         check_wasi_guest("wasi-libc AOT", PXA_WAMR_TEST_WASI_LIBC_AOT_PATH,
                          "wasi-libc.aot", UINT32_C(0x7ffffffc), 0, package_dir,
-                         &engine_ops, &artifact_probe);
+                         runtime, &engine_ops, &artifact_probe);
 #endif
 #endif
+    }
+
+    /* Core v1 notifications must reach the Guest with the 20-byte envelope. */
+    {
+        char destination[512];
+        static const uint8_t payload = 0x5a;
+        unsigned device_calls = 0;
+        unsigned net_calls = 0;
+        unsigned audio_calls = 0;
+        unsigned sensor_calls = 0;
+        unsigned lease_calls = 0;
+        unsigned work_calls = 0;
+        unsigned surface_calls = 0;
+        unsigned clock_calls = 0;
+        unsigned ui_calls = 0;
+        uint32_t store_host_id = 0;
+        pxa_service_ops_t device_service = {0};
+        pxa_service_ops_t net_service = {0};
+        pxa_service_ops_t audio_service = {0};
+        pxa_service_ops_t sensor_service = {0};
+        pxa_service_ops_t lease_service = {0};
+        pxa_service_ops_t work_service = {0};
+        pxa_service_ops_t surface_service = {0};
+        pxa_service_ops_t clock_service = {0};
+        pxa_service_ops_t ui_service = {0};
+        pxa_service_ops_t store_service = {0};
+        pxa_package_artifact_t artifact = {0};
+        pxa_package_component_t package_component = {0};
+        pxa_activation_entry_t activation_entry = {0};
+        pxa_wamr_event_result_t event_result;
+        pxa_component_t v1_component = PXA_COMPONENT_INVALID;
+        device_service.struct_size = sizeof(device_service);
+        device_service.service_id = 15;
+        device_service.major = 0;
+        device_service.minor = 2;
+        device_service.context = &device_calls;
+        device_service.control = deferred_v1_device;
+        check_status("v1 deferred Device register",
+                     pxa_service_register(runtime, &device_service),
+                     PXA_STATUS_OK);
+        net_service.struct_size = sizeof(net_service);
+        net_service.service_id = 9;
+        net_service.major = 0;
+        net_service.minor = 2;
+        net_service.context = &net_calls;
+        net_service.control = rejected_v1_net;
+        check_status("v1 Net bridge register",
+                     pxa_service_register(runtime, &net_service),
+                     PXA_STATUS_OK);
+        audio_service.struct_size = sizeof(audio_service);
+        audio_service.service_id = PXA_AUDIO_SERVICE_ID;
+        audio_service.major = PXA_AUDIO_SERVICE_MAJOR;
+        audio_service.minor = PXA_AUDIO_SERVICE_MINOR;
+        audio_service.context = &audio_calls;
+        audio_service.control = rejected_v1_audio;
+        check_status("v1 Audio bridge register",
+                     pxa_service_register(runtime, &audio_service),
+                     PXA_STATUS_OK);
+        sensor_service.struct_size = sizeof(sensor_service);
+        sensor_service.service_id = PXA_SENSOR_SERVICE_ID;
+        sensor_service.major = PXA_SENSOR_SERVICE_MAJOR;
+        sensor_service.minor = PXA_SENSOR_SERVICE_MINOR;
+        sensor_service.context = &sensor_calls;
+        sensor_service.control = rejected_v1_sensor;
+        check_status("v1 Sensor bridge register",
+                     pxa_service_register(runtime, &sensor_service),
+                     PXA_STATUS_OK);
+        lease_service.struct_size = sizeof(lease_service);
+        lease_service.service_id = PXA_SERVICE_CORE;
+        lease_service.major = PXA_CORE_SERVICE_MAJOR;
+        lease_service.minor = PXA_CORE_SERVICE_MINOR;
+        lease_service.context = &lease_calls;
+        lease_service.control = rejected_v1_lease;
+        check_status("v1 Lease bridge register",
+                     pxa_service_register(runtime, &lease_service),
+                     PXA_STATUS_OK);
+        work_service.struct_size = sizeof(work_service);
+        work_service.service_id = PXA_WORK_SERVICE_ID;
+        work_service.major = PXA_WORK_SERVICE_MAJOR;
+        work_service.minor = PXA_WORK_SERVICE_MINOR;
+        work_service.context = &work_calls;
+        work_service.control = rejected_v1_work;
+        check_status("v1 Work bridge register",
+                     pxa_service_register(runtime, &work_service),
+                     PXA_STATUS_OK);
+        surface_service.struct_size = sizeof(surface_service);
+        surface_service.service_id = PXA_SURFACE_SERVICE_ID;
+        surface_service.major = PXA_SURFACE_SERVICE_MAJOR;
+        surface_service.minor = PXA_SURFACE_SERVICE_MINOR;
+        surface_service.context = &surface_calls;
+        surface_service.control = rejected_v1_surface;
+        check_status("v1 Surface bridge register",
+                     pxa_service_register(runtime, &surface_service),
+                     PXA_STATUS_OK);
+        clock_service.struct_size = sizeof(clock_service);
+        clock_service.service_id = PXA_CLOCK_SERVICE_ID;
+        clock_service.major = PXA_CLOCK_SERVICE_MAJOR;
+        clock_service.minor = PXA_CLOCK_SERVICE_MINOR;
+        clock_service.context = &clock_calls;
+        clock_service.control = rejected_v1_clock;
+        check_status("v1 Clock bridge register",
+                     pxa_service_register(runtime, &clock_service),
+                     PXA_STATUS_OK);
+        ui_service.struct_size = sizeof(ui_service);
+        ui_service.service_id = PXA_UI_SERVICE_ID;
+        ui_service.major = PXA_UI_SERVICE_MAJOR;
+        ui_service.minor = PXA_UI_SERVICE_MINOR;
+        ui_service.context = &ui_calls;
+        ui_service.control = rejected_v1_ui;
+        check_status("v1 UI bridge register",
+                     pxa_service_register(runtime, &ui_service),
+                     PXA_STATUS_OK);
+        store_service.struct_size = sizeof(store_service);
+        store_service.service_id = PXA_STORE_INSTALLER_SERVICE_ID;
+        store_service.major = 0;
+        store_service.minor = 5;
+        store_service.context = &store_host_id;
+        store_service.control = pending_v1_store_download;
+        check_status("v1 Store bridge register",
+                     pxa_service_register(runtime, &store_service),
+                     PXA_STATUS_OK);
+        snprintf(destination, sizeof(destination), "%s/artifacts/v1.wasm",
+                 package_dir);
+        copy_file(PXA_WAMR_TEST_V1_PATH, destination);
+        artifact.kind = PXA_ARTIFACT_WASM;
+        artifact.path = (pxa_bytes_t){
+            (const uint8_t *)"artifacts/v1.wasm", 17};
+        package_component.id = (pxa_bytes_t){(const uint8_t *)"v1", 2};
+        package_component.kind = PXA_COMPONENT_KIND_SERVICE;
+        package_component.artifacts = &artifact;
+        package_component.artifact_count = 1;
+        activation_entry.component = &package_component;
+        activation_entry.artifact = &artifact;
+        activation_entry.core_major = 1;
+        check_status("v1 component create",
+                     pxa_component_create(runtime, UINT64_C(200),
+                                          &v1_component), PXA_STATUS_OK);
+        check_status("v1 begin start",
+                     pxa_component_begin_start(runtime, v1_component),
+                     PXA_STATUS_OK);
+        check_status("v1 instantiate",
+                     engine_ops.instantiate(
+                         engine_ops.context,
+                         (pxa_bytes_t){(const uint8_t *)package_dir,
+                                       strlen(package_dir)},
+                         &activation_entry, v1_component, UINT64_C(200)),
+                     PXA_STATUS_OK);
+        check_status("v1 start",
+                     engine_ops.start(engine_ops.context, v1_component),
+                     PXA_STATUS_OK);
+        check_status("v1 finish start",
+                     pxa_component_finish_start(runtime, v1_component,
+                                                PXA_STATUS_OK),
+                     PXA_STATUS_OK);
+        CHECK(device_calls == 3);
+        CHECK(net_calls == 1);
+        CHECK(audio_calls == 1);
+        CHECK(sensor_calls == 1);
+        CHECK(lease_calls == 1);
+        CHECK(work_calls == 1);
+        CHECK(surface_calls == 1);
+        CHECK(clock_calls == 1);
+        CHECK(ui_calls == 1);
+        CHECK(store_host_id != 0);
+        check_status("v1 cancellation delivery",
+                     pxa_wamr_engine_deliver_event_result(
+                         engine, runtime, v1_component, &event_result),
+                     PXA_STATUS_OK);
+        CHECK(event_result.event_consumed == 1);
+        CHECK(event_result.guest_result == 0);
+        check_status("v1 event post",
+                     pxa_event_post_message(
+                         runtime, v1_component, 19, 2, 0,
+                         (pxa_bytes_t){&payload, 1}, 1, 0),
+                     PXA_STATUS_OK);
+        check_status("v1 event delivery",
+                     pxa_wamr_engine_deliver_event_result(
+                         engine, runtime, v1_component, &event_result),
+                     PXA_STATUS_OK);
+        CHECK(event_result.event_consumed == 1);
+        CHECK(event_result.guest_result == 1);
+        {
+            uint8_t sample_payload[38];
+            uint8_t value[8];
+            pxa_writer_t writer;
+            pxa_writer_init(&writer, sample_payload,
+                            sizeof(sample_payload));
+            pxa_write_u64(value, UINT64_C(0x1234567800000001));
+            CHECK(pxa_writer_record(&writer, 4, value, 8) == PXA_STATUS_OK);
+            pxa_write_u64(value, 1000);
+            CHECK(pxa_writer_record(&writer, 2, value, 8) == PXA_STATUS_OK);
+            pxa_write_u16(value, 1);
+            CHECK(pxa_writer_record(&writer, 3, value, 2) == PXA_STATUS_OK);
+            pxa_write_u32(value, 42);
+            CHECK(pxa_writer_record(&writer, 4, value, 4) == PXA_STATUS_OK);
+            CHECK(writer.size == sizeof(sample_payload));
+            check_status("v1 Sensor sample post",
+                         pxa_event_post_message(
+                             runtime, v1_component, PXA_SENSOR_SERVICE_ID,
+                             PXA_SENSOR_SAMPLE, 0,
+                             (pxa_bytes_t){sample_payload, writer.size},
+                             1, 0), PXA_STATUS_OK);
+            check_status("v1 Sensor sample delivery",
+                         pxa_wamr_engine_deliver_event_result(
+                             engine, runtime, v1_component, &event_result),
+                         PXA_STATUS_OK);
+            CHECK(event_result.event_consumed == 1);
+            CHECK(event_result.guest_result == 1);
+        }
+        {
+            uint8_t released[20] = {0};
+            pxa_write_u64(released, UINT64_C(0x1234567800000001));
+            released[8] = 2;
+            pxa_write_u64(released + 12, 77);
+            check_status("v1 Surface release post",
+                         pxa_event_post_message(
+                             runtime, v1_component, PXA_SURFACE_SERVICE_ID,
+                             PXA_SURFACE_RELEASED, 0,
+                             (pxa_bytes_t){released, sizeof(released)},
+                             1, 0), PXA_STATUS_OK);
+            check_status("v1 Surface release delivery",
+                         pxa_wamr_engine_deliver_event_result(
+                             engine, runtime, v1_component, &event_result),
+                         PXA_STATUS_OK);
+            CHECK(event_result.event_consumed == 1);
+            CHECK(event_result.guest_result == 1);
+        }
+        {
+            uint8_t ready[16] = {0};
+            pxa_write_u32(ready, 19);
+            pxa_write_u64(ready + 4, UINT64_C(0x1234567800000001));
+            check_status("v1 UI stream post",
+                         pxa_event_post_message(
+                             runtime, v1_component, PXA_UI_SERVICE_ID,
+                             PXA_UI_CANVAS_STREAM_READY, 0,
+                             (pxa_bytes_t){ready, sizeof(ready)}, 1, 0),
+                         PXA_STATUS_OK);
+            check_status("v1 UI stream delivery",
+                         pxa_wamr_engine_deliver_event_result(
+                             engine, runtime, v1_component, &event_result),
+                         PXA_STATUS_OK);
+            CHECK(event_result.event_consumed == 1);
+            CHECK(event_result.guest_result == 1);
+        }
+        {
+            uint8_t progress[20] = {0};
+            pxa_write_u32(progress, store_host_id);
+            pxa_write_u64(progress + 4, 123);
+            pxa_write_u64(progress + 12, 456);
+            check_status("v1 Store progress post",
+                         pxa_event_post_message(
+                             runtime, v1_component,
+                             PXA_STORE_INSTALLER_SERVICE_ID,
+                             PXA_STORE_INSTALLER_DOWNLOAD_PROGRESS, 0,
+                             (pxa_bytes_t){progress, sizeof(progress)}, 1, 0),
+                         PXA_STATUS_OK);
+            check_status("v1 Store progress delivery",
+                         pxa_wamr_engine_deliver_event_result(
+                             engine, runtime, v1_component, &event_result),
+                         PXA_STATUS_OK);
+            CHECK(event_result.event_consumed == 1);
+            CHECK(event_result.guest_result == 1);
+        }
+        engine_ops.destroy(engine_ops.context, v1_component);
+        check_status("v1 component abort",
+                     pxa_component_abort(runtime, v1_component,
+                                         PXA_STOP_NORMAL), PXA_STATUS_OK);
+        check_status("v1 component remove",
+                     pxa_component_remove(runtime, v1_component),
+                     PXA_STATUS_OK);
     }
 
     /* 9. Pending startup configs reserve distinct instance slots. */
     pxa_activation_deactivate_all(coordinator, PXA_STOP_NORMAL);
     CHECK(artifact_probe.current_bytes == 0);
+    {
+        pxa_wamr_memory_snapshot_t usage;
+        CHECK(pxa_wamr_engine_memory_snapshot(engine, &usage) == PXA_STATUS_OK);
+        CHECK(usage.linear_current_bytes == 0 && usage.linear_peak_bytes > 0);
+        CHECK(usage.artifact_buffer_bytes == 0);
+    }
     {
         static const uint8_t failed_config[] = {0x01};
         static const uint8_t first_config[] = {0x11};
@@ -805,7 +1283,7 @@ int main(void) {
         static const uint8_t second_config[] = {0x21};
         static const uint8_t third_config[] = {0x31};
         static const uint8_t missing_path[] = "artifacts/missing.wasm";
-        const pxa_component_t second_component = UINT32_C(0x7ffffffa);
+        pxa_component_t second_component = PXA_COMPONENT_INVALID;
         pxa_package_artifact_t missing_artifact;
         pxa_activation_entry_t missing_entry;
 
@@ -815,6 +1293,7 @@ int main(void) {
                                               sizeof(missing_path) - 1u};
         missing_entry.component = plan->entries[0].component;
         missing_entry.artifact = &missing_artifact;
+        missing_entry.core_major = plan->entries[0].core_major;
         check_status(
             "reserve failed instance config",
             pxa_wamr_engine_set_config(
@@ -850,6 +1329,12 @@ int main(void) {
                          engine, UINT64_C(103),
                          (pxa_bytes_t){third_config, sizeof(third_config)}),
                      PXA_STATUS_RESOURCE_LIMIT);
+        check_status("create second reserved component",
+                     pxa_component_create(runtime, UINT64_C(102),
+                                          &second_component), PXA_STATUS_OK);
+        check_status("begin second reserved component",
+                     pxa_component_begin_start(runtime, second_component),
+                     PXA_STATUS_OK);
         check_status("instantiate second reserved instance",
                      engine_ops.instantiate(
                          engine_ops.context,
@@ -857,13 +1342,19 @@ int main(void) {
                                        strlen(package_dir)},
                          &plan->entries[0], second_component, UINT64_C(102)),
                      PXA_STATUS_OK);
-        CHECK(artifact_probe.current_bytes == 0);
+        CHECK(artifact_probe.current_bytes <= wasm_size);
         check_status("occupied plus pending capacity",
                      pxa_wamr_engine_set_config(
                          engine, UINT64_C(103),
                          (pxa_bytes_t){third_config, sizeof(third_config)}),
                      PXA_STATUS_RESOURCE_LIMIT);
         engine_ops.destroy(engine_ops.context, second_component);
+        check_status("abort second reserved component",
+                     pxa_component_abort(runtime, second_component,
+                                         PXA_STOP_NORMAL), PXA_STATUS_OK);
+        check_status("remove second reserved component",
+                     pxa_component_remove(runtime, second_component),
+                     PXA_STATUS_OK);
         CHECK(artifact_probe.current_bytes == 0);
         check_status("reuse released instance slot",
                      pxa_wamr_engine_set_config(

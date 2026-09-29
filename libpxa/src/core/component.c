@@ -85,6 +85,7 @@ pxa_status_t pxa_component_create(pxa_runtime_t *runtime, uint64_t instance_id,
     runtime->component_free_head = component->next_free;
     component->instance_id = instance_id;
     component->occupied = 1;
+    component->core_major = 0;
     component->state = PXA_COMPONENT_CREATED;
     component->callback = PXA_GUEST_CALLBACK_NONE;
     component->stop_reason = PXA_STOP_NORMAL;
@@ -96,6 +97,34 @@ pxa_status_t pxa_component_create(pxa_runtime_t *runtime, uint64_t instance_id,
     if (runtime->component_count > runtime->component_peak)
         runtime->component_peak = runtime->component_count;
     *output = pxa_internal_slot_token_encode(index, component->generation);
+    return PXA_STATUS_OK;
+}
+
+pxa_status_t pxa_component_set_core_major(pxa_runtime_t *runtime,
+                                          pxa_component_t component_ref,
+                                          uint16_t core_major) {
+    pxa_component_slot_t *component =
+        pxa_runtime_find_component(runtime, component_ref, NULL);
+    if (component == NULL) return PXA_STATUS_NOT_FOUND;
+    if (core_major > 1) return PXA_STATUS_UNSUPPORTED;
+    if (component->state != PXA_COMPONENT_CREATED &&
+        component->state != PXA_COMPONENT_STARTING)
+        return PXA_STATUS_BAD_STATE;
+    if (component->resources.count != 0 || component->requests.count != 0)
+        return PXA_STATUS_BAD_STATE;
+    component->core_major = core_major;
+    return PXA_STATUS_OK;
+}
+
+pxa_status_t pxa_component_core_major(const pxa_runtime_t *runtime,
+                                      pxa_component_t component_ref,
+                                      uint16_t *output) {
+    const pxa_component_slot_t *component;
+    if (output == NULL) return PXA_STATUS_INVALID_ARGUMENT;
+    *output = 0;
+    component = pxa_runtime_find_component_const(runtime, component_ref, NULL);
+    if (component == NULL) return PXA_STATUS_NOT_FOUND;
+    *output = component->core_major;
     return PXA_STATUS_OK;
 }
 

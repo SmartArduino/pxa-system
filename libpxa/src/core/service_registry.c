@@ -107,35 +107,54 @@ pxa_status_t pxa_service_register(pxa_runtime_t *runtime,
     return pxa_service_registry_register(&runtime->services, service);
 }
 
+static pxa_status_t dispatch_control(pxa_runtime_t *runtime,
+                                     pxa_component_t component_ref,
+                                     const pxa_message_view_t *message) {
+    const pxa_service_ops_t *service;
+    if (message->service == PXA_SERVICE_CORE) {
+        if (message->opcode == PXA_CORE_CANCEL_REQUEST) {
+            if (message->request_id != 0 || message->payload.size != 4) {
+                return PXA_STATUS_INVALID_ARGUMENT;
+            }
+            return pxa_request_cancel(runtime, component_ref,
+                                      pxa_read_u32(message->payload.data));
+        }
+        if (message->opcode == PXA_CORE_CLOSE_HANDLE) {
+            if (message->request_id != 0 || message->payload.size != 4) {
+                return PXA_STATUS_INVALID_ARGUMENT;
+            }
+            return pxa_handle_close(runtime, component_ref,
+                                    pxa_read_u32(message->payload.data));
+        }
+    }
+    service = pxa_service_registry_find(&runtime->services, message->service);
+    if (service == NULL) return PXA_STATUS_UNSUPPORTED;
+    return service->control(service->context, runtime, component_ref, message);
+}
+
 pxa_status_t pxa_runtime_control(pxa_runtime_t *runtime,
                                  pxa_component_t component_ref,
                                  const void *message_bytes,
                                  size_t message_size) {
     pxa_message_view_t message;
-    const pxa_service_ops_t *service;
     pxa_status_t status;
     status = pxa_component_validate_import(runtime, component_ref);
     if (status != PXA_STATUS_OK) return status;
     status = pxa_message_decode((const uint8_t *)message_bytes, message_size,
                                 PXA_MAX_CONTROL_MESSAGE, &message);
     if (status != PXA_STATUS_OK) return status;
-    if (message.service == PXA_SERVICE_CORE) {
-        if (message.opcode == PXA_CORE_CANCEL_REQUEST) {
-            if (message.request_id != 0 || message.payload.size != 4) {
-                return PXA_STATUS_INVALID_ARGUMENT;
-            }
-            return pxa_request_cancel(runtime, component_ref,
-                                      pxa_read_u32(message.payload.data));
-        }
-        if (message.opcode == PXA_CORE_CLOSE_HANDLE) {
-            if (message.request_id != 0 || message.payload.size != 4) {
-                return PXA_STATUS_INVALID_ARGUMENT;
-            }
-            return pxa_handle_close(runtime, component_ref,
-                                    pxa_read_u32(message.payload.data));
-        }
-    }
-    service = pxa_service_registry_find(&runtime->services, message.service);
-    if (service == NULL) return PXA_STATUS_UNSUPPORTED;
-    return service->control(service->context, runtime, component_ref, &message);
+    return dispatch_control(runtime, component_ref, &message);
+}
+
+pxa_status_t pxa_runtime_control_view(pxa_runtime_t *runtime,
+                                      pxa_component_t component_ref,
+                                      const pxa_message_view_t *message) {
+    pxa_status_t status;
+    if (message == NULL ||
+        (message->payload.data == NULL && message->payload.size != 0) ||
+        message->payload.size > PXA_MAX_CONTROL_MESSAGE - PXA_ENVELOPE_SIZE)
+        return PXA_STATUS_INVALID_ARGUMENT;
+    status = pxa_component_validate_import(runtime, component_ref);
+    if (status != PXA_STATUS_OK) return status;
+    return dispatch_control(runtime, component_ref, message);
 }

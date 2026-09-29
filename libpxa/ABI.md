@@ -9,8 +9,14 @@ All PXA-owned public versions use `0.minor.patch` until their contracts are
 stable. During this period an incompatible contract change increments
 `minor`, while compatible fixes increment `patch`. Wire capability ranges
 carry only `major` and `minor`; patch is a source and release identifier and
-does not affect negotiation. The Wasm import namespace follows the ABI major
-and is therefore `pxa.core.v0` throughout the 0.x series.
+does not affect negotiation. The Wasm import namespace carries the Core wire
+generation: application artifacts import `pxa.core.v1`. Core v0 packages are
+rejected at activation. A package declares exactly one required Core major
+through `min_sdk`.
+
+The Guest SDK ships a single API surface and its header, function and macro
+names carry no version suffix; only the wire ABI above is versioned. The Host
+C API in `libpxa/include/pxa` is a separate namespace and keeps its own names.
 
 Manifest 0.5 records a deliberately small Android-style model: signed
 `minSdk` is the Core runtime floor, and signed `targetSdk` is the behavior

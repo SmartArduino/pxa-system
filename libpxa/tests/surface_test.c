@@ -260,6 +260,7 @@ int main(void) {
     pxa_runtime_limits_t limits;
     pxa_runtime_t *runtime = NULL;
     pxa_component_t component = PXA_COMPONENT_INVALID;
+    pxa_component_t v1_component = PXA_COMPONENT_INVALID;
     pxa_surface_config_t config;
     pxa_surface_service_t *surface = NULL;
     backend_t backend = {0};
@@ -285,10 +286,11 @@ int main(void) {
     uint8_t present_record[16] = {0};
     pxa_message_view_t event;
     pxa_handle_t handle;
+    pxa_handle64_t v1_handle;
     size_t size;
 
     pxa_runtime_limits_init(&limits);
-    limits.max_components = 1;
+    limits.max_components = 2;
     limits.max_requests = 4;
     limits.max_requests_per_component = 4;
     limits.max_handles = 4;
@@ -492,6 +494,85 @@ int main(void) {
     assert(pxa_surface_service_flush_releases(surface) == 0);
     assert(pxa_handle_close(runtime, component, handle) == PXA_STATUS_OK);
     assert(backend.closes == 3 && !pxa_surface_has_active_surfaces(surface));
+
+    assert(pxa_component_create(runtime, 2, &v1_component) == PXA_STATUS_OK);
+    assert(pxa_component_begin_start(runtime, v1_component) == PXA_STATUS_OK);
+    assert(pxa_component_set_core_major(runtime, v1_component, 1) ==
+           PXA_STATUS_OK);
+    assert(pxa_component_validate_import(runtime, v1_component) ==
+           PXA_STATUS_OK);
+    assert(pxa_component_finish_start(runtime, v1_component, PXA_STATUS_OK) ==
+           PXA_STATUS_OK);
+    size = message(packet, sizeof(packet), PXA_SURFACE_CREATE, 21,
+                   create_mapped, sizeof(create_mapped));
+    assert(dispatch(runtime, v1_component, packet, size) == PXA_STATUS_OK);
+    completion(runtime, v1_component, event_bytes, sizeof(event_bytes),
+               &event);
+    assert(event.payload.size == 24 &&
+           (int32_t)pxa_read_u32(event.payload.data) == PXA_STATUS_OK);
+    v1_handle = pxa_read_u64(event.payload.data + 4);
+    assert(v1_handle > UINT32_MAX &&
+           pxa_read_u32(event.payload.data + 12) == 8 &&
+           pxa_read_u32(event.payload.data + 16) == 32 &&
+           event.payload.data[20] == 3);
+
+    {
+        uint8_t short_query[4];
+        uint8_t wide_query[8];
+        pxa_write_u32(short_query, (uint32_t)v1_handle);
+        size = message(packet, sizeof(packet), PXA_SURFACE_QUERY_STATE, 22,
+                       short_query, sizeof(short_query));
+        assert(dispatch(runtime, v1_component, packet, size) == PXA_STATUS_OK);
+        completion(runtime, v1_component, event_bytes,
+                   sizeof(event_bytes), &event);
+        assert(event.payload.size == 4 &&
+               (int32_t)pxa_read_u32(event.payload.data) ==
+                   PXA_STATUS_INVALID_ARGUMENT);
+        pxa_write_u64(wide_query, v1_handle);
+        size = message(packet, sizeof(packet), PXA_SURFACE_QUERY_STATE, 23,
+                       wide_query, sizeof(wide_query));
+        assert(dispatch(runtime, v1_component, packet, size) == PXA_STATUS_OK);
+        completion(runtime, v1_component, event_bytes,
+                   sizeof(event_bytes), &event);
+        assert(event.payload.size == 52 &&
+               (int32_t)pxa_read_u32(event.payload.data) == PXA_STATUS_OK);
+    }
+    assert(pxa_component_begin_event(runtime, v1_component) == PXA_STATUS_OK);
+    assert(pxa_runtime_io64(runtime, v1_component, v1_handle,
+                            PXA_SURFACE_IO_REGISTER_BUFFERS,
+                            mapped_pixels, sizeof(mapped_pixels)) ==
+           (int32_t)sizeof(mapped_pixels));
+    assert(pxa_component_finish_event(runtime, v1_component, 1) ==
+           PXA_STATUS_OK);
+    for (uint8_t index = 0; index < 2; ++index) {
+        memset(acquire_record, 0, sizeof(acquire_record));
+        memset(present_record, 0, sizeof(present_record));
+        assert(pxa_component_begin_event(runtime, v1_component) ==
+               PXA_STATUS_OK);
+        assert(pxa_runtime_io64(runtime, v1_component, v1_handle,
+                                PXA_SURFACE_IO_ACQUIRE, acquire_record,
+                                sizeof(acquire_record)) ==
+               (int32_t)sizeof(acquire_record));
+        present_record[0] = acquire_record[0];
+        pxa_write_u64(present_record + 8, (uint64_t)index + 31u);
+        assert(pxa_runtime_io64(runtime, v1_component, v1_handle,
+                                PXA_SURFACE_IO_PRESENT, present_record,
+                                sizeof(present_record)) ==
+               (int32_t)sizeof(present_record));
+        assert(pxa_component_finish_event(runtime, v1_component, 1) ==
+               PXA_STATUS_OK);
+    }
+    assert(pxa_surface_service_flush_releases(surface) == 1);
+    completion(runtime, v1_component, event_bytes, sizeof(event_bytes),
+               &event);
+    assert(event.opcode == PXA_SURFACE_RELEASED &&
+           event.payload.size == 20 &&
+           pxa_read_u64(event.payload.data) == v1_handle &&
+           event.payload.data[8] == 0 &&
+           pxa_read_u64(event.payload.data + 12) == 31);
+    assert(pxa_handle_close64(runtime, v1_component, v1_handle) ==
+           PXA_STATUS_OK);
+    assert(backend.closes == 4 && !pxa_surface_has_active_surfaces(surface));
 
     pxa_runtime_deinit(runtime);
     free(surface_workspace);

@@ -463,15 +463,25 @@ static pxa_status_t validate_replacement(const pxa_ui_entry_t *entry) {
     return roots == 1 ? PXA_STATUS_OK : PXA_STATUS_INVALID_ARGUMENT;
 }
 
+/* Validation uses the final virtual tree, which intentionally hides removed
+ * nodes. Replay must still resolve handles created earlier in the command
+ * stream, even when their subtree is removed before commit. */
+static void *replay_handle(pxa_ui_entry_t *entry, uint32_t id) {
+    if (!id) return NULL;
+    pxa_ui_change_t *change = find_change(&entry->transaction, id);
+    if (change && (change->flags & PXA_UI_CHANGE_CREATED))
+        return change->backend_handle;
+    const pxa_ui_node_t *active = pxa_ui_registry_find_const(
+        entry, entry->transaction.surface, id);
+    return active ? active->backend_handle : NULL;
+}
+
 static pxa_status_t backend_command(pxa_ui_service_t *service,
                                     pxa_ui_entry_t *entry,
                                     uint8_t opcode, uint8_t flags,
                                     const uint8_t *payload, size_t size,
                                     void *context) {
     pxa_ui_command_view_t command;
-    virtual_node_t node;
-    virtual_node_t parent;
-    virtual_node_t before;
     void *created = NULL;
     pxa_status_t status;
     (void)service;
@@ -494,35 +504,10 @@ static pxa_status_t backend_command(pxa_ui_service_t *service,
         command.parent = pxa_read_u32(payload + 4);
         command.before = pxa_read_u32(payload + 8);
     }
-    if (opcode != PXA_UI_COMMAND_CREATE) {
-        pxa_ui_change_t *change = find_change(&entry->transaction,
-                                                 command.node);
-        const pxa_ui_node_t *active = pxa_ui_registry_find_const(
-            entry, entry->transaction.surface, command.node);
-        if (change != NULL &&
-            (change->flags & PXA_UI_CHANGE_CREATED) != 0)
-            command.node_handle = change->backend_handle;
-        else if (active != NULL)
-            command.node_handle = active->backend_handle;
-        else if (virtual_find(entry, &entry->transaction, command.node, &node))
-            command.node_handle = node.backend_handle;
-    }
-    if (command.parent != 0 &&
-        virtual_find(entry, &entry->transaction, command.parent, &parent))
-        command.parent_handle = parent.backend_handle;
-    else if (command.parent != 0) {
-        const pxa_ui_node_t *active = pxa_ui_registry_find_const(
-            entry, entry->transaction.surface, command.parent);
-        if (active != NULL) command.parent_handle = active->backend_handle;
-    }
-    if (command.before != 0 &&
-        virtual_find(entry, &entry->transaction, command.before, &before))
-        command.before_handle = before.backend_handle;
-    else if (command.before != 0) {
-        const pxa_ui_node_t *active = pxa_ui_registry_find_const(
-            entry, entry->transaction.surface, command.before);
-        if (active != NULL) command.before_handle = active->backend_handle;
-    }
+    if (opcode != PXA_UI_COMMAND_CREATE)
+        command.node_handle = replay_handle(entry, command.node);
+    command.parent_handle = replay_handle(entry, command.parent);
+    command.before_handle = replay_handle(entry, command.before);
     status = entry->backend.apply(entry->backend.context, context, &command,
                                   &created);
     if (status == PXA_STATUS_OK && opcode == PXA_UI_COMMAND_CREATE) {
@@ -669,6 +654,7 @@ pxa_status_t pxa_ui_transaction_commit(
     if (status != PXA_STATUS_OK)
         return finish_commit(service, entry, started_us, status);
     memset(&info, 0, sizeof(info));
+    info.component = entry->component;
     info.surface = transaction->surface;
     info.transaction = transaction->id;
     info.generation = transaction->generation;

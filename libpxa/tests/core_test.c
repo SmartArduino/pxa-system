@@ -16,6 +16,7 @@
 #include "pxa/sensor.h"
 #include "pxa/storage.h"
 #include "pxa/window.h"
+#include "pxa/wire_v1.h"
 
 typedef struct {
     void *workspace;
@@ -329,11 +330,16 @@ static void test_runtime_usage(void) {
            usage.peak_requests == 1 && usage.peak_handles == 1 &&
            usage.peak_events == 2 && usage.peak_event_blocks == 2);
 
+    assert(pxa_request_begin_reserved(test.runtime, component, 2, 2, 1, 0,
+                                      8) == PXA_STATUS_OK);
+    assert(pxa_runtime_usage_snapshot(test.runtime, &usage) == PXA_STATUS_OK &&
+           usage.current_requests == 1 && usage.current_events == 1);
     assert(pxa_component_abort(test.runtime, component, PXA_STOP_NORMAL) ==
            PXA_STATUS_OK);
     assert(pxa_component_remove(test.runtime, component) == PXA_STATUS_OK);
     assert(pxa_runtime_usage_snapshot(test.runtime, &usage) == PXA_STATUS_OK);
-    assert(usage.current_components == 0 && usage.peak_components == 1);
+    assert(usage.current_components == 0 && usage.peak_components == 1 &&
+           usage.current_requests == 0 && usage.current_events == 0);
     destroy_runtime(&test);
 }
 
@@ -374,6 +380,18 @@ static int32_t dispatch_io(pxa_runtime_t *runtime, pxa_component_t component,
     int32_t result;
     assert(pxa_component_begin_event(runtime, component) == PXA_STATUS_OK);
     result = pxa_runtime_io(runtime, component, handle, operation, data, size);
+    assert(pxa_component_finish_event(runtime, component, 1) ==
+           PXA_STATUS_OK);
+    return result;
+}
+
+static int32_t dispatch_io64(pxa_runtime_t *runtime, pxa_component_t component,
+                             pxa_handle64_t handle, uint32_t operation,
+                             uint8_t *data, size_t size) {
+    int32_t result;
+    assert(pxa_component_begin_event(runtime, component) == PXA_STATUS_OK);
+    result = pxa_runtime_io64(runtime, component, handle, operation,
+                              data, size);
     assert(pxa_component_finish_event(runtime, component, 1) ==
            PXA_STATUS_OK);
     return result;
@@ -1306,6 +1324,27 @@ static size_t make_sensor_subscribe(uint8_t *output, size_t capacity,
     return message.size;
 }
 
+static size_t make_sensor_subscribe_v1(uint8_t *output, size_t capacity,
+                                       uint32_t request_id,
+                                       pxa_handle64_t permission_handle) {
+    uint8_t payload[32];
+    uint8_t value[8];
+    pxa_writer_t records;
+    pxa_writer_t message;
+    pxa_writer_init(&records, payload, sizeof(payload));
+    pxa_write_u16(value, 1);
+    assert(pxa_writer_record(&records, 1, value, 2) == PXA_STATUS_OK);
+    pxa_write_u32(value, 100);
+    assert(pxa_writer_record(&records, 2, value, 4) == PXA_STATUS_OK);
+    pxa_write_u64(value, permission_handle);
+    assert(pxa_writer_record(&records, 3, value, 8) == PXA_STATUS_OK);
+    pxa_writer_init(&message, output, capacity);
+    assert(pxa_writer_message(&message, PXA_SENSOR_SERVICE_ID,
+                              PXA_SENSOR_SUBSCRIBE, request_id, payload,
+                              records.size) == PXA_STATUS_OK);
+    return message.size;
+}
+
 static size_t make_work_cancel(uint8_t *output, size_t capacity,
                                uint32_t request_id, uint32_t id) {
     uint8_t payload[8];
@@ -1436,6 +1475,56 @@ static size_t make_net_http_request(uint8_t *output, size_t capacity,
     return message.size;
 }
 
+static size_t make_net_request_v1(uint8_t *output, size_t capacity,
+                                   uint16_t opcode, uint32_t request_id,
+                                   pxa_handle64_t permission_handle) {
+    static const uint8_t get_url[] = "https://example.test/hello";
+    static const uint8_t post_url[] = "https://example.test?mode=post";
+    static const uint8_t header_name[] = "content-type";
+    static const uint8_t header_value[] = "application/json";
+    static const uint8_t wanted_header[] = "etag";
+    static const uint8_t request_body[] = "{}";
+    uint8_t payload[192];
+    uint8_t nested[64];
+    uint8_t value[8];
+    pxa_writer_t records;
+    pxa_writer_t header;
+    pxa_writer_t message;
+    pxa_writer_init(&records, payload, sizeof(payload));
+    assert(pxa_writer_record(&records, 1,
+                             opcode == PXA_NET_FETCH ? get_url : post_url,
+                             opcode == PXA_NET_FETCH ? sizeof(get_url) - 1
+                                                     : sizeof(post_url) - 1) ==
+           PXA_STATUS_OK);
+    pxa_write_u16(value, opcode == PXA_NET_FETCH ? PXA_NET_METHOD_GET
+                                                  : PXA_NET_METHOD_POST);
+    assert(pxa_writer_record(&records, 2, value, 2) == PXA_STATUS_OK);
+    pxa_write_u64(value, permission_handle);
+    assert(pxa_writer_record(&records, 3, value, 8) == PXA_STATUS_OK);
+    pxa_write_u32(value, opcode == PXA_NET_FETCH ? 2 : 8);
+    assert(pxa_writer_record(&records, 4, value, 4) == PXA_STATUS_OK);
+    if (opcode == PXA_NET_HTTP_REQUEST) {
+        pxa_write_u32(value, 2500);
+        assert(pxa_writer_record(&records, 8, value, 4) == PXA_STATUS_OK);
+        pxa_writer_init(&header, nested, sizeof(nested));
+        assert(pxa_writer_record(&header, 1, header_name,
+                                 sizeof(header_name) - 1) == PXA_STATUS_OK);
+        assert(pxa_writer_record(&header, 2, header_value,
+                                 sizeof(header_value) - 1) == PXA_STATUS_OK);
+        assert(pxa_writer_record(&records, 9, nested, header.size) ==
+               PXA_STATUS_OK);
+        assert(pxa_writer_record(&records, 10, request_body,
+                                 sizeof(request_body) - 1) == PXA_STATUS_OK);
+        assert(pxa_writer_record(&records, 11, wanted_header,
+                                 sizeof(wanted_header) - 1) == PXA_STATUS_OK);
+    }
+    pxa_writer_init(&message, output, capacity);
+    assert(pxa_writer_message(&message, PXA_NET_SERVICE_ID, opcode,
+                              request_id, payload, records.size) ==
+           PXA_STATUS_OK);
+    return message.size;
+}
+
 static size_t make_audio_open(uint8_t *output, size_t capacity,
                               uint32_t request_id,
                               pxa_handle_t permission_handle) {
@@ -1498,6 +1587,36 @@ static size_t make_audio_session_command(uint8_t *output, size_t capacity,
     return message.size;
 }
 
+static size_t make_audio_v1_command(uint8_t *output, size_t capacity,
+                                    uint16_t opcode, uint32_t request_id,
+                                    pxa_handle64_t handle) {
+    uint8_t payload[64];
+    uint8_t value[8];
+    pxa_writer_t records;
+    pxa_writer_t message;
+    pxa_writer_init(&records, payload, sizeof(payload));
+    pxa_write_u64(value, handle);
+    assert(pxa_writer_record(&records, 1, value, 8) == PXA_STATUS_OK);
+    if (opcode == PXA_AUDIO_OPEN_SESSION) {
+        pxa_write_u16(value, PXA_AUDIO_USAGE_MEDIA);
+        assert(pxa_writer_record(&records, 2, value, 2) == PXA_STATUS_OK);
+    } else if (opcode == PXA_AUDIO_COMMIT_GRAPH) {
+        pxa_write_u16(value, UINT16_C(0xff00));
+        assert(pxa_writer_record(&records, 2, value, 2) == PXA_STATUS_OK);
+        pxa_write_u16(value, 1500);
+        pxa_write_u16(value + 2, 256);
+        pxa_write_u16(value + 4, 256);
+        assert(pxa_writer_record(&records, 3, value, 6) == PXA_STATUS_OK);
+        pxa_write_u16(value, PXA_AUDIO_ROUTE_SPEAKER);
+        assert(pxa_writer_record(&records, 4, value, 2) == PXA_STATUS_OK);
+    }
+    pxa_writer_init(&message, output, capacity);
+    assert(pxa_writer_message(&message, PXA_AUDIO_SERVICE_ID, opcode,
+                              request_id, payload, records.size) ==
+           PXA_STATUS_OK);
+    return message.size;
+}
+
 static void test_wire(void) {
     pxa_message_view_t message;
     pxa_record_iterator_t iterator;
@@ -1540,6 +1659,56 @@ static void test_wire(void) {
            PXA_STATUS_OK);
     assert(writer.size == 8 &&
            pxa_read_u64(encoded) == UINT64_C(0x0102030405060708));
+}
+
+static void test_wire_v1_codec(void) {
+    static const uint8_t golden[] = {
+        7, 0, 2, 0, 0x88, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11,
+        3, 0, 0, 0, 0, 0, 0, 0, 1, 2, 3
+    };
+    uint8_t encoded[sizeof(golden)];
+    uint8_t malformed[sizeof(golden)];
+    pxa_writer_t writer;
+    pxa_v1_message_view_t decoded;
+    pxa_writer_init(&writer, encoded, sizeof(encoded));
+    assert(pxa_v1_writer_message(&writer, 7, 2,
+                                 UINT64_C(0x1122334455667788),
+                                 golden + PXA_V1_ENVELOPE_SIZE, 3) ==
+           PXA_STATUS_OK);
+    assert(writer.size == sizeof(golden) &&
+           memcmp(encoded, golden, sizeof(golden)) == 0);
+    assert(pxa_v1_message_decode(encoded, sizeof(encoded),
+                                 PXA_MAX_CONTROL_MESSAGE, &decoded) ==
+           PXA_STATUS_OK);
+    assert(decoded.service == 7 && decoded.opcode == 2 &&
+           decoded.request_token == UINT64_C(0x1122334455667788) &&
+           decoded.payload.size == 3 && decoded.payload.data[2] == 3);
+    for (size_t length = 0; length < sizeof(golden); ++length)
+        assert(pxa_v1_message_decode(golden, length,
+                                     PXA_MAX_CONTROL_MESSAGE, &decoded) ==
+               PXA_STATUS_INVALID_ARGUMENT);
+    memcpy(malformed, golden, sizeof(golden));
+    malformed[16] = 1;
+    assert(pxa_v1_message_decode(malformed, sizeof(malformed),
+                                 PXA_MAX_CONTROL_MESSAGE, &decoded) ==
+           PXA_STATUS_INVALID_ARGUMENT);
+    malformed[16] = 0;
+    malformed[12] = 4;
+    assert(pxa_v1_message_decode(malformed, sizeof(malformed),
+                                 PXA_MAX_CONTROL_MESSAGE, &decoded) ==
+           PXA_STATUS_INVALID_ARGUMENT);
+    memcpy(malformed, golden, sizeof(golden));
+    malformed[0] = 0;
+    assert(pxa_v1_message_decode(malformed, sizeof(malformed),
+                                 PXA_MAX_CONTROL_MESSAGE, &decoded) ==
+           PXA_STATUS_INVALID_ARGUMENT);
+    pxa_writer_init(&writer, encoded, PXA_V1_ENVELOPE_SIZE);
+    assert(pxa_v1_writer_message(&writer, 7, 2, 1, golden + 20, 3) ==
+           PXA_STATUS_RESOURCE_LIMIT);
+    assert(writer.size == 0);
+    pxa_writer_init(&writer, encoded, sizeof(encoded));
+    assert(pxa_v1_writer_message(&writer, 0, 2, 1, NULL, 0) ==
+           PXA_STATUS_INVALID_ARGUMENT && writer.size == 0);
 }
 
 static void test_lifecycle(void) {
@@ -1683,6 +1852,56 @@ static void test_request_table_collision_and_completion_order(void) {
     destroy_runtime(&test);
 }
 
+static void test_reserved_completion_backpressure(void) {
+    test_runtime_t test = make_runtime(1, 2, 2, 1, 3, 1, 1);
+    pxa_component_t component = create_started(test.runtime, 1);
+    uint8_t event[64];
+    uint8_t payload[4] = {1, 2, 3, 4};
+    size_t event_size = make_message(event, sizeof(event), 2, 1, 0, 0);
+    pxa_event_view_t view;
+    pxa_message_view_t completion;
+
+    assert(pxa_request_begin_reserved(test.runtime, component, 33, 9, 2,
+                                      0, sizeof(payload)) == PXA_STATUS_OK);
+    assert(pxa_event_post(test.runtime, component, event, event_size, 1, 0) ==
+           PXA_STATUS_OK);
+    assert(pxa_request_complete(test.runtime, component, 33, PXA_STATUS_OK,
+                                payload, sizeof(payload)) == PXA_STATUS_OK);
+    assert(!pxa_request_is_active(test.runtime, component, 33));
+    event_size = read_head_event(test.runtime, component, event,
+                                 sizeof(event), &view);
+    assert(pxa_message_decode(event, event_size, PXA_MAX_CONTROL_MESSAGE,
+                              &completion) == PXA_STATUS_OK &&
+           completion.request_id == 0);
+    assert(pxa_event_consume(test.runtime, component, view.token) ==
+           PXA_STATUS_OK);
+    event_size = read_head_event(test.runtime, component, event,
+                                 sizeof(event), &view);
+    assert(pxa_message_decode(event, event_size, PXA_MAX_CONTROL_MESSAGE,
+                              &completion) == PXA_STATUS_OK &&
+           completion.request_id == 33 && completion.opcode == 2 &&
+           completion.payload.size == 8 &&
+           (int32_t)pxa_read_u32(completion.payload.data) == PXA_STATUS_OK &&
+           memcmp(completion.payload.data + 4, payload,
+                  sizeof(payload)) == 0);
+    assert(pxa_event_consume(test.runtime, component, view.token) ==
+           PXA_STATUS_OK);
+    assert(pxa_request_begin_reserved(test.runtime, component, 34, 9, 2,
+                                      0, 0) == PXA_STATUS_OK);
+    assert(pxa_request_complete(test.runtime, component, 34, PXA_STATUS_OK,
+                                payload, sizeof(payload)) == PXA_STATUS_OK);
+    event_size = read_head_event(test.runtime, component, event,
+                                 sizeof(event), &view);
+    assert(pxa_message_decode(event, event_size, PXA_MAX_CONTROL_MESSAGE,
+                              &completion) == PXA_STATUS_OK &&
+           completion.request_id == 34 && completion.payload.size == 4 &&
+           (int32_t)pxa_read_u32(completion.payload.data) ==
+               PXA_STATUS_LIMIT_EXCEEDED);
+    assert(pxa_event_consume(test.runtime, component, view.token) ==
+           PXA_STATUS_OK);
+    destroy_runtime(&test);
+}
+
 static void test_coalescing_and_reserve(void) {
     test_runtime_t test = make_runtime(1, 1, 1, 1, 8, 3, 1);
     pxa_component_t component = create_started(test.runtime, 1);
@@ -1791,19 +2010,30 @@ static void test_event_generation_exhaustion(void) {
     pxa_event_token_t previous = 0;
     uint32_t generation;
 
-    for (generation = 1; generation <= UINT16_MAX; ++generation) {
+    for (generation = 1; generation <= (uint32_t)UINT16_MAX + 1u;
+         ++generation) {
         pxa_event_view_t view;
         assert(pxa_event_post(test.runtime, component, message, message_size,
                               1, 0) == PXA_STATUS_OK);
         assert(pxa_event_peek(test.runtime, component, &view) == PXA_STATUS_OK);
         assert(view.token != previous &&
-               (uint16_t)(view.token >> 16) == generation);
+               (uint32_t)(view.token >> 32) == generation);
         assert(pxa_event_consume(test.runtime, component, view.token) ==
                PXA_STATUS_OK);
         previous = view.token;
     }
     assert(pxa_event_post(test.runtime, component, message, message_size, 1,
-                          0) == PXA_STATUS_RESOURCE_LIMIT);
+                          0) == PXA_STATUS_OK);
+    {
+        pxa_event_view_t view;
+        size_t read_size;
+        assert(pxa_event_peek(test.runtime, component, &view) == PXA_STATUS_OK);
+        assert((uint32_t)(view.token >> 32) ==
+               (uint32_t)UINT16_MAX + 2u);
+        assert(pxa_event_read(test.runtime, previous, 0, message,
+                              sizeof(message), &read_size) ==
+               PXA_STATUS_NOT_FOUND);
+    }
     destroy_runtime(&test);
 }
 
@@ -1876,6 +2106,94 @@ static void test_handle_generation_exhaustion(void) {
     assert(pxa_handle_open(test.runtime, component, PXA_RESOURCE_FILE, 0,
                            &resource, &previous) == PXA_STATUS_RESOURCE_LIMIT);
     assert(previous == PXA_HANDLE_INVALID);
+    destroy_runtime(&test);
+}
+
+static void test_native_handle64_authority_and_io(void) {
+    test_runtime_t test = make_runtime(2, 1, 1, 2, 2, 1, 1);
+    pxa_component_t first = create_started(test.runtime, 1);
+    pxa_component_t second = create_started(test.runtime, 2);
+    pxa_resource_ops_t io_ops = {sizeof(io_ops), resource_io};
+    unsigned io_calls = 0;
+    pxa_resource_t resource = {&io_calls, &io_ops, NULL};
+    pxa_resource_t output;
+    pxa_handle64_t handle = PXA_HANDLE64_INVALID;
+    pxa_handle64_t widened = PXA_HANDLE64_INVALID;
+    pxa_handle_t legacy = PXA_HANDLE_INVALID;
+    uint8_t byte = 0;
+
+    assert(pxa_handle_open64(test.runtime, first, PXA_RESOURCE_STREAM, 77,
+                             &resource, &handle) == PXA_STATUS_OK);
+    assert((uint32_t)handle != 0 && (uint32_t)(handle >> 32) == 1);
+    assert(pxa_handle_get64(test.runtime, first, handle,
+                            PXA_RESOURCE_STREAM, &output) == PXA_STATUS_OK &&
+           output.context == &io_calls);
+    assert(pxa_handle_get64(test.runtime, first, handle,
+                            PXA_RESOURCE_FILE, &output) ==
+           PXA_STATUS_NOT_FOUND);
+    assert(pxa_handle_get64(test.runtime, second, handle,
+                            PXA_RESOURCE_STREAM, &output) ==
+           PXA_STATUS_NOT_FOUND);
+    assert(pxa_handle_get64(test.runtime, first, 0,
+                            PXA_RESOURCE_STREAM, &output) ==
+           PXA_STATUS_INVALID_ARGUMENT);
+    assert(pxa_component_begin_event(test.runtime, first) == PXA_STATUS_OK);
+    assert(pxa_runtime_io64(test.runtime, first, handle, 9, &byte, 1) == 1 &&
+           byte == 0x5a && io_calls == 1);
+    assert(pxa_runtime_io64(test.runtime, first,
+                            handle + (UINT64_C(1) << 32), 9,
+                            &byte, 1) == PXA_STATUS_NOT_FOUND);
+    assert(pxa_component_finish_event(test.runtime, first, 0) ==
+           PXA_STATUS_OK);
+    assert(pxa_component_begin_event(test.runtime, second) == PXA_STATUS_OK);
+    assert(pxa_runtime_io64(test.runtime, second, handle, 9, &byte, 1) ==
+           PXA_STATUS_NOT_FOUND);
+    assert(pxa_component_finish_event(test.runtime, second, 0) ==
+           PXA_STATUS_OK);
+    assert(pxa_authority_revoke(test.runtime, first, 77) == PXA_STATUS_OK);
+    assert(pxa_handle_get64(test.runtime, first, handle,
+                            PXA_RESOURCE_STREAM, &output) ==
+           PXA_STATUS_NOT_FOUND);
+    assert(pxa_handle_open64(test.runtime, first, PXA_RESOURCE_STREAM, 77,
+                             &resource, &handle) == PXA_STATUS_DENIED &&
+           handle == PXA_HANDLE64_INVALID);
+
+    assert(pxa_handle_open(test.runtime, first, PXA_RESOURCE_STREAM, 0,
+                           &resource, &legacy) == PXA_STATUS_OK);
+    assert(pxa_handle_widen(test.runtime, second, legacy, &widened) ==
+           PXA_STATUS_NOT_FOUND && widened == PXA_HANDLE64_INVALID);
+    assert(pxa_handle_widen(test.runtime, first, legacy, &widened) ==
+           PXA_STATUS_OK);
+    assert((uint32_t)widened == (uint16_t)legacy &&
+           (uint32_t)(widened >> 32) == (uint16_t)(legacy >> 16));
+    assert(pxa_handle_close64(test.runtime, first, widened) == PXA_STATUS_OK);
+    assert(pxa_handle_get(test.runtime, first, legacy,
+                          PXA_RESOURCE_STREAM, &output) ==
+           PXA_STATUS_NOT_FOUND);
+    assert(pxa_handle_close64(test.runtime, first, widened) ==
+           PXA_STATUS_NOT_FOUND);
+    destroy_runtime(&test);
+}
+
+static void test_handle_slots_rotate(void) {
+    test_runtime_t test = make_runtime(1, 1, 1, 2, 2, 1, 1);
+    pxa_component_t component = create_started(test.runtime, 1);
+    pxa_resource_t resource = {NULL, NULL, NULL};
+    pxa_handle_t handles[4];
+    const uint16_t expected_slot[4] = {1, 2, 1, 2};
+    const uint16_t expected_generation[4] = {1, 1, 2, 2};
+    for (size_t index = 0; index < 4; ++index) {
+        assert(pxa_handle_open(test.runtime, component, PXA_RESOURCE_FILE, 0,
+                               &resource, &handles[index]) == PXA_STATUS_OK);
+        assert((uint16_t)handles[index] == expected_slot[index] &&
+               (uint16_t)(handles[index] >> 16) ==
+                   expected_generation[index]);
+        assert(pxa_handle_close(test.runtime, component, handles[index]) ==
+               PXA_STATUS_OK);
+    }
+    assert(pxa_handle_get(test.runtime, component, handles[0],
+                          PXA_RESOURCE_FILE, &resource) ==
+           PXA_STATUS_NOT_FOUND);
     destroy_runtime(&test);
 }
 
@@ -2202,9 +2520,10 @@ static void test_window_service(void) {
 }
 
 static void test_lease_service(void) {
-    test_runtime_t test = make_runtime(2, 8, 4, 8, 10, 3, 1);
+    test_runtime_t test = make_runtime(3, 8, 4, 8, 10, 3, 1);
     pxa_component_t component = create_started(test.runtime, 7);
     pxa_component_t other = create_started(test.runtime, 8);
+    pxa_component_t v1_component = PXA_COMPONENT_INVALID;
     pxa_lease_limits_t limits;
     pxa_lease_service_t *lease = NULL;
     void *lease_workspace;
@@ -2221,6 +2540,17 @@ static void test_lease_service(void) {
     pxa_resource_t resource;
     pxa_component_t affected[2];
     size_t affected_count;
+
+    assert(pxa_component_create(test.runtime, 9, &v1_component) ==
+           PXA_STATUS_OK);
+    assert(pxa_component_begin_start(test.runtime, v1_component) ==
+           PXA_STATUS_OK);
+    assert(pxa_component_set_core_major(test.runtime, v1_component, 1) ==
+           PXA_STATUS_OK);
+    assert(pxa_component_validate_import(test.runtime, v1_component) ==
+           PXA_STATUS_OK);
+    assert(pxa_component_finish_start(test.runtime, v1_component,
+                                      PXA_STATUS_OK) == PXA_STATUS_OK);
 
     pxa_lease_limits_init(&limits);
     limits.allowed_kinds = 1;
@@ -2370,6 +2700,39 @@ static void test_lease_service(void) {
            (int32_t)pxa_read_u32(event.payload.data + 4) == PXA_STATUS_DENIED);
     assert(pxa_event_consume(test.runtime, other, view.token) ==
            PXA_STATUS_OK);
+
+    {
+        pxa_handle64_t lease64;
+        command_size = make_lease_acquire(command, sizeof(command),
+                                          81, 1, 10);
+        (void)dispatch_control_completion(
+            test.runtime, v1_component, command, command_size,
+            event_bytes, sizeof(event_bytes), &event);
+        assert(event.payload.size == 16 &&
+               (int32_t)pxa_read_u32(event.payload.data) == PXA_STATUS_OK &&
+               pxa_read_u16(event.payload.data + 4) == 4 &&
+               pxa_read_u16(event.payload.data + 6) == 8);
+        lease64 = pxa_read_u64(event.payload.data + 8);
+        assert((lease64 >> 32) != 0);
+        now_ms += 10;
+        assert(pxa_lease_revoke_expired(lease, affected, 2,
+                                        &affected_count) == PXA_STATUS_OK &&
+               affected_count == 1 && affected[0] == v1_component);
+        event_size = read_head_event(test.runtime, v1_component,
+                                     event_bytes, sizeof(event_bytes), &view);
+        assert(pxa_message_decode(event_bytes, event_size,
+                                  PXA_MAX_CONTROL_MESSAGE, &event) ==
+               PXA_STATUS_OK && event.opcode == PXA_LEASE_REVOKED &&
+               event.payload.size == 12 &&
+               pxa_read_u64(event.payload.data) == lease64 &&
+               (int32_t)pxa_read_u32(event.payload.data + 8) ==
+                   PXA_STATUS_CANCELLED);
+        assert(pxa_event_consume(test.runtime, v1_component, view.token) ==
+               PXA_STATUS_OK);
+        assert(pxa_handle_get64(test.runtime, v1_component, lease64,
+                                PXA_RESOURCE_LEASE, &resource) ==
+               PXA_STATUS_NOT_FOUND);
+    }
 
     destroy_runtime(&test);
     free(lease_workspace);
@@ -2660,6 +3023,135 @@ static void test_permission_service(void) {
     free(permission_workspace);
 }
 
+static void test_permission_v1_handle(void) {
+    static const uint8_t identity[] = "42.v1";
+    static const uint8_t name[] = "fs.private";
+    pxa_permission_declaration_t declaration = {0};
+    pxa_permission_config_t config = {0};
+    test_permission_store_t store = {0};
+    test_runtime_t test = make_runtime(1, 8, 8, 8, 12, 6, 2);
+    pxa_component_t component = PXA_COMPONENT_INVALID;
+    pxa_permission_service_t *permission = NULL;
+    void *workspace;
+    size_t workspace_size;
+    uint8_t command[192];
+    uint8_t event_bytes[192];
+    size_t command_size;
+    size_t event_size;
+    pxa_event_view_t view;
+    pxa_message_view_t event;
+    pxa_handle64_t handle;
+    pxa_authority_t authority = 0;
+    const pxa_bytes_t permission_name = {name, sizeof(name) - 1};
+    const pxa_bytes_t empty_scope = {NULL, 0};
+
+    assert(pxa_component_create(test.runtime, 77, &component) ==
+           PXA_STATUS_OK);
+    assert(pxa_component_begin_start(test.runtime, component) == PXA_STATUS_OK);
+    assert(pxa_component_set_core_major(test.runtime, component, 1) ==
+           PXA_STATUS_OK);
+    assert(pxa_component_validate_import(test.runtime, component) ==
+           PXA_STATUS_OK);
+    assert(pxa_component_finish_start(test.runtime, component,
+                                      PXA_STATUS_OK) == PXA_STATUS_OK);
+    declaration.name = permission_name;
+    declaration.scope = empty_scope;
+    declaration.required = 1;
+    config.struct_size = sizeof(config);
+    config.app_identity = (pxa_bytes_t){identity, sizeof(identity) - 1};
+    config.declarations = &declaration;
+    config.declaration_count = 1;
+    config.max_authorities = 2;
+    config.store.struct_size = sizeof(config.store);
+    config.store.context = &store;
+    config.store.load = permission_load;
+    config.store.save = permission_save;
+    workspace_size = pxa_permission_service_workspace_size(&config);
+    assert(workspace_size != 0);
+    workspace = malloc(workspace_size);
+    assert(workspace != NULL);
+    assert(pxa_permission_service_init(workspace, workspace_size,
+                                       test.runtime, &config,
+                                       &permission) == PXA_STATUS_OK);
+    assert(pxa_permission_policy_load(permission) == PXA_STATUS_OK);
+    assert(pxa_permission_set(permission, permission_name, empty_scope,
+                              PXA_PERMISSION_ALLOW) == PXA_STATUS_OK);
+    assert(pxa_permission_service_register(permission) == PXA_STATUS_OK);
+    command_size = make_permission_request(
+        command, sizeof(command), PXA_PERMISSION_ACQUIRE, 71,
+        name, sizeof(name) - 1, NULL, 0);
+    assert(pxa_component_begin_event(test.runtime, component) ==
+           PXA_STATUS_OK);
+    assert(pxa_runtime_control(test.runtime, component, command,
+                               command_size) == PXA_STATUS_OK);
+    assert(pxa_component_finish_event(test.runtime, component, 0) ==
+           PXA_STATUS_OK);
+    event_size = read_head_event(test.runtime, component, event_bytes,
+                                 sizeof(event_bytes), &view);
+    assert(pxa_message_decode(event_bytes, event_size, PXA_MAX_CONTROL_MESSAGE,
+                              &event) == PXA_STATUS_OK);
+    assert(event.service == PXA_PERMISSION_SERVICE_ID &&
+           event.opcode == PXA_PERMISSION_ACQUIRE &&
+           event.payload.size == 12 &&
+           (int32_t)pxa_read_u32(event.payload.data) == PXA_STATUS_OK);
+    handle = pxa_read_u64(event.payload.data + 4);
+    assert((handle >> 32) != 0);
+    assert(pxa_event_consume(test.runtime, component, view.token) ==
+           PXA_STATUS_OK);
+    assert(pxa_permission_resolve64(permission, component, handle,
+                                    permission_name, empty_scope,
+                                    &authority) == PXA_STATUS_OK);
+    assert(authority != 0);
+    assert(pxa_permission_resolve64(permission, component,
+                                    handle + (UINT64_C(1) << 32),
+                                    permission_name, empty_scope,
+                                    &authority) != PXA_STATUS_OK);
+    assert(pxa_permission_resolve(permission, component, (uint32_t)handle,
+                                  permission_name, empty_scope,
+                                  &authority) != PXA_STATUS_OK);
+    assert(pxa_handle_close64(test.runtime, component, handle) ==
+           PXA_STATUS_OK);
+    assert(pxa_permission_resolve64(permission, component, handle,
+                                    permission_name, empty_scope,
+                                    &authority) != PXA_STATUS_OK);
+    assert(pxa_component_begin_event(test.runtime, component) ==
+           PXA_STATUS_OK);
+    assert(pxa_runtime_control(test.runtime, component, command,
+                               command_size) == PXA_STATUS_OK);
+    assert(pxa_component_finish_event(test.runtime, component, 0) ==
+           PXA_STATUS_OK);
+    event_size = read_head_event(test.runtime, component, event_bytes,
+                                 sizeof(event_bytes), &view);
+    assert(pxa_message_decode(event_bytes, event_size, PXA_MAX_CONTROL_MESSAGE,
+                              &event) == PXA_STATUS_OK);
+    assert(event.payload.size == 12 &&
+           (int32_t)pxa_read_u32(event.payload.data) == PXA_STATUS_OK);
+    handle = pxa_read_u64(event.payload.data + 4);
+    assert(pxa_event_consume(test.runtime, component, view.token) ==
+           PXA_STATUS_OK);
+    {
+        pxa_component_t affected[1];
+        size_t affected_count = 0;
+        assert(pxa_permission_revoke(permission, permission_name, empty_scope,
+                                     affected, 1, &affected_count) ==
+               PXA_STATUS_OK);
+        assert(affected_count == 1 && affected[0] == component);
+    }
+    assert(pxa_permission_resolve64(permission, component, handle,
+                                    permission_name, empty_scope,
+                                    &authority) != PXA_STATUS_OK);
+    event_size = read_head_event(test.runtime, component, event_bytes,
+                                 sizeof(event_bytes), &view);
+    assert(pxa_message_decode(event_bytes, event_size, PXA_MAX_CONTROL_MESSAGE,
+                              &event) == PXA_STATUS_OK);
+    assert(event.service == PXA_PERMISSION_SERVICE_ID &&
+           event.opcode == PXA_PERMISSION_REVOKED && event.request_id == 0);
+    assert(pxa_event_consume(test.runtime, component, view.token) ==
+           PXA_STATUS_OK);
+    destroy_runtime(&test);
+    free(workspace);
+}
+
 static void test_ipc_service(void) {
     static const uint8_t endpoint_name[] = "example.echo";
     static const uint8_t lazy_endpoint_name[] = "example.lazy";
@@ -2673,6 +3165,7 @@ static void test_ipc_service(void) {
     pxa_ipc_broker_t *ipc = NULL;
     uint8_t command[1200];
     uint8_t event_bytes[1200];
+    uint8_t ipc_flood_event[2048];
     size_t command_size;
     size_t event_size;
     pxa_event_view_t view;
@@ -2729,6 +3222,34 @@ static void test_ipc_service(void) {
                ipc, (pxa_bytes_t){endpoint_name, sizeof(endpoint_name) - 1},
                stranger) == PXA_STATUS_BUSY);
 
+    {
+        uint8_t filler[2036] = {0};
+        pxa_writer_t writer;
+        pxa_writer_init(&writer, ipc_flood_event,
+                        sizeof(ipc_flood_event));
+        assert(pxa_writer_message(&writer, PXA_SERVICE_CORE, 1, 0,
+                                  filler, sizeof(filler)) == PXA_STATUS_OK &&
+               writer.size == sizeof(ipc_flood_event));
+        assert(pxa_event_post(test.runtime, caller, ipc_flood_event,
+                              writer.size, 1, 0) == PXA_STATUS_OK);
+        command_size = make_ipc_call(command, sizeof(command), 17,
+                                     "example.echo", "x");
+        assert(pxa_component_begin_event(test.runtime, caller) ==
+               PXA_STATUS_OK);
+        assert(pxa_runtime_control(test.runtime, caller, command,
+                                   command_size) == PXA_STATUS_RESOURCE_LIMIT);
+        assert(pxa_component_finish_event(test.runtime, caller, 1) ==
+               PXA_STATUS_OK);
+        assert(pxa_event_peek(test.runtime, provider, &view) ==
+               PXA_STATUS_WOULD_BLOCK);
+        assert(pxa_event_pop(test.runtime, caller, ipc_flood_event,
+                             sizeof(ipc_flood_event), &event_size) ==
+               PXA_STATUS_OK);
+        assert(pxa_event_pop(test.runtime, caller, event_bytes,
+                             sizeof(event_bytes), &event_size) ==
+               PXA_STATUS_WOULD_BLOCK);
+    }
+
     command_size = make_ipc_call(command, sizeof(command), 10,
                                  "example.lazy", "x");
     assert(pxa_component_begin_event(test.runtime, caller) == PXA_STATUS_OK);
@@ -2753,6 +3274,27 @@ static void test_ipc_service(void) {
     assert(pxa_component_snapshot(test.runtime, caller, &caller_snapshot) ==
            PXA_STATUS_OK);
     assert(caller_snapshot.state == PXA_COMPONENT_RUNNING);
+
+    resolver.status = PXA_STATUS_WOULD_BLOCK;
+    command_size = make_ipc_call(command, sizeof(command), 16,
+                                 "example.lazy", "cancelled");
+    assert(pxa_component_begin_event(test.runtime, caller) == PXA_STATUS_OK);
+    assert(pxa_runtime_control(test.runtime, caller, command, command_size) ==
+           PXA_STATUS_OK);
+    assert(pxa_component_finish_event(test.runtime, caller, 1) ==
+           PXA_STATUS_OK);
+    assert(allocator.allocations == 2 && allocator.releases == 1);
+    assert(pxa_request_cancel(test.runtime, caller, 16) == PXA_STATUS_OK);
+    event_size = read_head_event(test.runtime, caller, event_bytes,
+                                 sizeof(event_bytes), &view);
+    assert(pxa_message_decode(event_bytes, event_size, PXA_MAX_CONTROL_MESSAGE,
+                              &event) == PXA_STATUS_OK &&
+           event.request_id == 16 &&
+           (int32_t)pxa_read_u32(event.payload.data) == PXA_STATUS_CANCELLED);
+    assert(pxa_event_consume(test.runtime, caller, view.token) ==
+           PXA_STATUS_OK);
+    assert(pxa_ipc_flush(ipc) == PXA_STATUS_OK && resolver.calls == 1 &&
+           allocator.releases == 2);
 
     command_size = make_ipc_call(command, sizeof(command), 11,
                                  "example.echo", "hello");
@@ -3219,6 +3761,189 @@ static void test_fs_service(void) {
     free(fs_workspace);
 }
 
+static void test_fs_v1_native_handles(void) {
+    test_runtime_t test = make_runtime(1, 10, 10, 4, 16, 8, 2);
+    pxa_component_t component = PXA_COMPONENT_INVALID;
+    test_fs_backend_t backend = {0};
+    pxa_fs_config_t config = {0};
+    pxa_fs_service_t *fs = NULL;
+    size_t fs_size;
+    void *fs_workspace;
+    uint8_t command[320];
+    uint8_t event_bytes[128];
+    uint8_t io[8];
+    uint8_t seek_payload[17];
+    pxa_writer_t writer;
+    pxa_message_view_t event;
+    pxa_handle64_t handle;
+    pxa_handle64_t second_handle;
+    pxa_resource_t resource;
+    size_t command_size;
+
+    assert(pxa_component_create(test.runtime, 42, &component) ==
+           PXA_STATUS_OK);
+    assert(pxa_component_begin_start(test.runtime, component) ==
+           PXA_STATUS_OK);
+    assert(pxa_component_set_core_major(test.runtime, component, 1) ==
+           PXA_STATUS_OK);
+    assert(pxa_component_validate_import(test.runtime, component) ==
+           PXA_STATUS_OK);
+    assert(pxa_component_finish_start(test.runtime, component,
+                                      PXA_STATUS_OK) == PXA_STATUS_OK);
+
+    config.struct_size = sizeof(config);
+    config.max_open_resources = 1;
+    config.backend.struct_size = sizeof(config.backend);
+    config.backend.context = &backend;
+    config.backend.open = fs_open;
+    config.backend.make_directory = fs_mutation;
+    config.backend.remove = fs_mutation;
+    config.backend.rename = fs_rename;
+    config.backend.stat = fs_stat;
+    config.backend.read = fs_read;
+    config.backend.write = fs_write;
+    config.backend.seek = fs_seek;
+    config.backend.read_directory = fs_read_directory;
+    config.backend.close = fs_close;
+    fs_size = pxa_fs_service_workspace_size(&config);
+    assert(fs_size != 0);
+    fs_workspace = malloc(fs_size);
+    assert(fs_workspace != NULL);
+    assert(pxa_fs_service_init(fs_workspace, fs_size, test.runtime,
+                               &config, &fs) == PXA_STATUS_OK);
+    assert(pxa_fs_service_register(fs) == PXA_STATUS_OK);
+
+    command_size = make_fs_open(command, sizeof(command), 1,
+                                "notes/today.txt",
+                                PXA_FS_OPEN_READ | PXA_FS_OPEN_WRITE |
+                                    PXA_FS_OPEN_CREATE);
+    (void)dispatch_control_completion(test.runtime, component, command,
+                                      command_size, event_bytes,
+                                      sizeof(event_bytes), &event);
+    assert(event.payload.size == 12 &&
+           (int32_t)pxa_read_u32(event.payload.data) == PXA_STATUS_OK);
+    handle = pxa_read_u64(event.payload.data + 4);
+    assert((handle >> 32) != 0);
+    assert(pxa_handle_get64(test.runtime, component, handle,
+                            PXA_RESOURCE_FILE, &resource) == PXA_STATUS_OK);
+    assert(pxa_handle_get(test.runtime, component, (pxa_handle_t)handle,
+                          PXA_RESOURCE_FILE, &resource) != PXA_STATUS_OK);
+
+    memcpy(io, "native", 6);
+    assert(dispatch_io64(test.runtime, component, handle,
+                         PXA_FS_IO_WRITE, io, 6) == 6);
+    command_size = make_fs_seek(command, sizeof(command), 2,
+                                (pxa_handle_t)handle, 0, PXA_FS_SEEK_START);
+    (void)dispatch_control_completion(test.runtime, component, command,
+                                      command_size, event_bytes,
+                                      sizeof(event_bytes), &event);
+    assert(event.payload.size == 4 &&
+           (int32_t)pxa_read_u32(event.payload.data) ==
+               PXA_STATUS_INVALID_ARGUMENT);
+    pxa_write_u64(seek_payload, handle);
+    pxa_write_u64(seek_payload + 8, 0);
+    seek_payload[16] = PXA_FS_SEEK_START;
+    pxa_writer_init(&writer, command, sizeof(command));
+    assert(pxa_writer_message(&writer, PXA_FS_SERVICE_ID, PXA_FS_SEEK,
+                              3, seek_payload, sizeof(seek_payload)) ==
+           PXA_STATUS_OK);
+    (void)dispatch_control_completion(test.runtime, component, command,
+                                      writer.size, event_bytes,
+                                      sizeof(event_bytes), &event);
+    assert(event.payload.size == 12 &&
+           (int32_t)pxa_read_u32(event.payload.data) == PXA_STATUS_OK &&
+           pxa_read_u64(event.payload.data + 4) == 0);
+    memset(io, 0, sizeof(io));
+    assert(dispatch_io64(test.runtime, component, handle,
+                         PXA_FS_IO_READ, io, 6) == 6 &&
+           memcmp(io, "native", 6) == 0);
+    assert(pxa_handle_close64(test.runtime, component, handle) ==
+           PXA_STATUS_OK);
+    assert(dispatch_io64(test.runtime, component, handle,
+                         PXA_FS_IO_READ, io, 1) == PXA_STATUS_NOT_FOUND);
+    command_size = make_fs_open(command, sizeof(command), 4,
+                                "notes/today.txt", PXA_FS_OPEN_READ);
+    (void)dispatch_control_completion(test.runtime, component, command,
+                                      command_size, event_bytes,
+                                      sizeof(event_bytes), &event);
+    assert(event.payload.size == 12 &&
+           (int32_t)pxa_read_u32(event.payload.data) == PXA_STATUS_OK);
+    second_handle = pxa_read_u64(event.payload.data + 4);
+    assert(second_handle != handle &&
+           pxa_handle_get64(test.runtime, component, handle,
+                            PXA_RESOURCE_FILE, &resource) ==
+               PXA_STATUS_NOT_FOUND);
+    assert(pxa_handle_close64(test.runtime, component, second_handle) ==
+           PXA_STATUS_OK && backend.closes == 2);
+    destroy_runtime(&test);
+    free(fs_workspace);
+}
+
+static void test_fs_completion_reservation(void) {
+    test_runtime_t test = make_runtime(1, 4, 4, 4, 1, 1, 1);
+    pxa_component_t component = create_started(test.runtime, 11);
+    test_fs_backend_t backend;
+    pxa_fs_config_t config;
+    pxa_fs_service_t *fs = NULL;
+    void *fs_workspace;
+    uint8_t command[640];
+    uint8_t event_bytes[256];
+    size_t command_size;
+    size_t event_size;
+    pxa_message_view_t event;
+
+    memset(&backend, 0, sizeof(backend));
+    memset(&config, 0, sizeof(config));
+    config.struct_size = sizeof(config);
+    config.max_open_resources = 1;
+    config.backend.struct_size = sizeof(config.backend);
+    config.backend.context = &backend;
+    config.backend.open = fs_open;
+    config.backend.make_directory = fs_mutation;
+    config.backend.remove = fs_mutation;
+    config.backend.rename = fs_rename;
+    config.backend.stat = fs_stat;
+    config.backend.read = fs_read;
+    config.backend.write = fs_write;
+    config.backend.seek = fs_seek;
+    config.backend.read_directory = fs_read_directory;
+    config.backend.close = fs_close;
+    fs_workspace = malloc(pxa_fs_service_workspace_size(&config));
+    assert(fs_workspace != NULL);
+    assert(pxa_fs_service_init(fs_workspace,
+                               pxa_fs_service_workspace_size(&config),
+                               test.runtime, &config, &fs) == PXA_STATUS_OK);
+    assert(pxa_fs_service_register(fs) == PXA_STATUS_OK);
+
+    event_size = make_message(event_bytes, sizeof(event_bytes), 1, 1, 0, 0);
+    assert(pxa_event_post(test.runtime, component, event_bytes, event_size,
+                          1, 0) == PXA_STATUS_OK);
+    command_size = make_fs_path_request(command, sizeof(command),
+                                        PXA_FS_RENAME, 29, "notes", "other");
+    assert(pxa_component_begin_event(test.runtime, component) ==
+           PXA_STATUS_OK);
+    assert(pxa_runtime_control(test.runtime, component, command,
+                               command_size) == PXA_STATUS_RESOURCE_LIMIT);
+    assert(pxa_component_finish_event(test.runtime, component, 1) ==
+           PXA_STATUS_OK);
+    assert(backend.mutations == 0);
+    assert(pxa_event_pop(test.runtime, component, event_bytes,
+                         sizeof(event_bytes), &event_size) == PXA_STATUS_OK);
+    assert(pxa_event_pop(test.runtime, component, event_bytes,
+                         sizeof(event_bytes), &event_size) ==
+           PXA_STATUS_WOULD_BLOCK);
+
+    /* Reservation failure must also release the request ID and table slot. */
+    (void)dispatch_control_completion(test.runtime, component, command,
+                                      command_size, event_bytes,
+                                      sizeof(event_bytes), &event);
+    assert(event.request_id == 29 &&
+           (int32_t)pxa_read_u32(event.payload.data) == PXA_STATUS_OK &&
+           backend.mutations == 1);
+    destroy_runtime(&test);
+    free(fs_workspace);
+}
+
 static void test_sensor_service(void) {
     static const uint8_t identity[] = "sensor.app";
     static const uint8_t permission_name[] = "sensor.read";
@@ -3229,8 +3954,9 @@ static void test_sensor_service(void) {
     pxa_sensor_config_t sensor_config;
     test_sensor_provider_t provider;
     unsigned permission_loads = 0;
-    test_runtime_t test = make_runtime(1, 10, 10, 6, 12, 8, 2);
+    test_runtime_t test = make_runtime(2, 10, 10, 6, 12, 8, 2);
     pxa_component_t component = create_started(test.runtime, 12);
+    pxa_component_t v1_component = PXA_COMPONENT_INVALID;
     size_t permission_size;
     size_t sensor_size;
     void *permission_workspace;
@@ -3252,6 +3978,17 @@ static void test_sensor_service(void) {
     pxa_authority_t authority;
     pxa_component_t affected[1];
     size_t affected_count;
+
+    assert(pxa_component_create(test.runtime, 13, &v1_component) ==
+           PXA_STATUS_OK);
+    assert(pxa_component_begin_start(test.runtime, v1_component) ==
+           PXA_STATUS_OK);
+    assert(pxa_component_set_core_major(test.runtime, v1_component, 1) ==
+           PXA_STATUS_OK);
+    assert(pxa_component_validate_import(test.runtime, v1_component) ==
+           PXA_STATUS_OK);
+    assert(pxa_component_finish_start(test.runtime, v1_component,
+                                      PXA_STATUS_OK) == PXA_STATUS_OK);
 
     memset(&permission_config, 0, sizeof(permission_config));
     declaration.name =
@@ -3463,6 +4200,69 @@ static void test_sensor_service(void) {
                PXA_STATUS_OK &&
            affected_count == 0);
 
+    {
+        pxa_handle64_t permission64;
+        pxa_handle64_t sensor64;
+        command_size = make_message(command, sizeof(command),
+                                    PXA_SENSOR_SERVICE_ID, PXA_SENSOR_LIST,
+                                    81, 0);
+        (void)dispatch_control_completion(
+            test.runtime, v1_component, command, command_size,
+            event_bytes, sizeof(event_bytes), &event);
+        assert(event.payload.size > 4 &&
+               (int32_t)pxa_read_u32(event.payload.data) == PXA_STATUS_OK);
+        command_size = make_permission_request(
+            command, sizeof(command), PXA_PERMISSION_ACQUIRE, 82,
+            permission_name, sizeof(permission_name) - 1,
+            semantic, sizeof(semantic) - 1);
+        (void)dispatch_control_completion(
+            test.runtime, v1_component, command, command_size,
+            event_bytes, sizeof(event_bytes), &event);
+        assert(event.payload.size == 12 &&
+               (int32_t)pxa_read_u32(event.payload.data) == PXA_STATUS_OK);
+        permission64 = pxa_read_u64(event.payload.data + 4);
+        assert((permission64 >> 32) != 0);
+
+        command_size = make_sensor_subscribe(command, sizeof(command),
+                                             83, 1, 100,
+                                             (pxa_handle_t)permission64);
+        (void)dispatch_control_completion(
+            test.runtime, v1_component, command, command_size,
+            event_bytes, sizeof(event_bytes), &event);
+        assert((int32_t)pxa_read_u32(event.payload.data) ==
+               PXA_STATUS_INVALID_ARGUMENT && provider.subscribes == 3);
+
+        command_size = make_sensor_subscribe_v1(command, sizeof(command),
+                                                84, permission64);
+        (void)dispatch_control_completion(
+            test.runtime, v1_component, command, command_size,
+            event_bytes, sizeof(event_bytes), &event);
+        assert(event.payload.size == 12 &&
+               (int32_t)pxa_read_u32(event.payload.data) == PXA_STATUS_OK &&
+               provider.subscribes == 4);
+        sensor64 = pxa_read_u64(event.payload.data + 4);
+        assert((sensor64 >> 32) != 0);
+        assert(pxa_sensor_poll(sensor, 301000, affected, 1,
+                               &affected_count) == PXA_STATUS_OK &&
+               affected_count == 1 && affected[0] == v1_component);
+        event_size = read_head_event(test.runtime, v1_component,
+                                     event_bytes, sizeof(event_bytes), &view);
+        assert(pxa_message_decode(event_bytes, event_size,
+                                  PXA_MAX_CONTROL_MESSAGE, &event) ==
+               PXA_STATUS_OK && event.opcode == PXA_SENSOR_SAMPLE &&
+               event.request_id == 0);
+        pxa_record_iterator_init(&iterator, event.payload);
+        assert(pxa_record_next(&iterator, &record) == PXA_STATUS_OK &&
+               record.tag == 4 && record.payload.size == 8 &&
+               pxa_read_u64(record.payload.data) == sensor64);
+        assert(pxa_event_consume(test.runtime, v1_component, view.token) ==
+               PXA_STATUS_OK);
+        assert(pxa_handle_close64(test.runtime, v1_component, sensor64) ==
+               PXA_STATUS_OK && provider.unsubscribes == 4);
+        assert(pxa_handle_close64(test.runtime, v1_component, permission64) ==
+               PXA_STATUS_OK);
+    }
+
     destroy_runtime(&test);
     free(sensor_workspace);
     free(permission_workspace);
@@ -3620,8 +4420,9 @@ static void test_scheduler_service(void) {
     test_scheduler_store_t store;
     test_work_completion_t completion;
     uint64_t now_ms = 1000;
-    test_runtime_t test = make_runtime(1, 10, 10, 2, 12, 8, 2);
+    test_runtime_t test = make_runtime(2, 10, 10, 2, 12, 8, 2);
     pxa_component_t component = create_started(test.runtime, 13);
+    pxa_component_t v1_component = PXA_COMPONENT_INVALID;
     size_t scheduler_size;
     void *scheduler_storage;
     void *scheduler_workspace;
@@ -3665,6 +4466,72 @@ static void test_scheduler_service(void) {
     assert(pxa_scheduler_service_register(scheduler) == PXA_STATUS_BAD_STATE);
     assert(pxa_scheduler_load(scheduler) == PXA_STATUS_OK && store.loads == 1);
     assert(pxa_scheduler_service_register(scheduler) == PXA_STATUS_OK);
+
+    assert(pxa_component_create(test.runtime, 14, &v1_component) ==
+           PXA_STATUS_OK);
+    assert(pxa_component_begin_start(test.runtime, v1_component) ==
+           PXA_STATUS_OK);
+    assert(pxa_component_set_core_major(test.runtime, v1_component, 1) ==
+           PXA_STATUS_OK);
+    assert(pxa_component_validate_import(test.runtime, v1_component) ==
+           PXA_STATUS_OK);
+    assert(pxa_component_finish_start(test.runtime, v1_component,
+                                      PXA_STATUS_OK) == PXA_STATUS_OK);
+    {
+        pxa_message_view_t request;
+        pxa_message_view_t completion_v1;
+        pxa_event_view_t view;
+        size_t event_size;
+        uint32_t v1_work_id;
+        command_size = make_work_enqueue(command, sizeof(command), 60,
+                                         "sync.job", 1000, 5000);
+        assert(pxa_message_decode(command, command_size,
+                                  PXA_MAX_CONTROL_MESSAGE, &request) ==
+               PXA_STATUS_OK);
+        assert(pxa_component_begin_event(test.runtime, v1_component) ==
+               PXA_STATUS_OK);
+        assert(pxa_runtime_control_view(test.runtime, v1_component,
+                                        &request) == PXA_STATUS_OK);
+        assert(pxa_component_finish_event(test.runtime, v1_component, 1) ==
+               PXA_STATUS_OK);
+        event_size = read_head_event(test.runtime, v1_component, event_bytes,
+                                     sizeof(event_bytes), &view);
+        assert(pxa_message_decode(event_bytes, event_size,
+                                  PXA_MAX_CONTROL_MESSAGE,
+                                  &completion_v1) == PXA_STATUS_OK);
+        assert(completion_v1.service == PXA_WORK_SERVICE_ID &&
+               completion_v1.opcode == PXA_WORK_ENQUEUE &&
+               completion_v1.request_id == 60 &&
+               completion_v1.payload.size == 20 &&
+               (int32_t)pxa_read_u32(completion_v1.payload.data) ==
+                   PXA_STATUS_OK);
+        v1_work_id = pxa_read_u32(completion_v1.payload.data + 8);
+        assert(v1_work_id != 0 && store.count == 1);
+        assert(pxa_event_consume(test.runtime, v1_component, view.token) ==
+               PXA_STATUS_OK);
+        command_size = make_work_cancel(command, sizeof(command), 61,
+                                        v1_work_id);
+        assert(pxa_message_decode(command, command_size,
+                                  PXA_MAX_CONTROL_MESSAGE, &request) ==
+               PXA_STATUS_OK);
+        assert(pxa_component_begin_event(test.runtime, v1_component) ==
+               PXA_STATUS_OK);
+        assert(pxa_runtime_control_view(test.runtime, v1_component,
+                                        &request) == PXA_STATUS_OK);
+        assert(pxa_component_finish_event(test.runtime, v1_component, 1) ==
+               PXA_STATUS_OK);
+        event_size = read_head_event(test.runtime, v1_component, event_bytes,
+                                     sizeof(event_bytes), &view);
+        assert(pxa_message_decode(event_bytes, event_size,
+                                  PXA_MAX_CONTROL_MESSAGE,
+                                  &completion_v1) == PXA_STATUS_OK &&
+               completion_v1.request_id == 61 &&
+               completion_v1.payload.size == 4 &&
+               (int32_t)pxa_read_u32(completion_v1.payload.data) ==
+                   PXA_STATUS_OK && store.count == 0);
+        assert(pxa_event_consume(test.runtime, v1_component, view.token) ==
+               PXA_STATUS_OK);
+    }
 
     command_size = make_work_enqueue(
         command, sizeof(command), 41, "sync.job", 1000, 5000);
@@ -3951,8 +4818,9 @@ static void test_net_service(void) {
     pxa_net_config_t net_config;
     test_net_backend_t backend;
     unsigned permission_loads = 0;
-    test_runtime_t test = make_runtime(1, 10, 10, 6, 12, 8, 2);
+    test_runtime_t test = make_runtime(2, 10, 10, 6, 12, 8, 2);
     pxa_component_t component = create_started(test.runtime, 14);
+    pxa_component_t v1_component = PXA_COMPONENT_INVALID;
     size_t permission_size;
     size_t net_size;
     void *permission_workspace;
@@ -3961,6 +4829,7 @@ static void test_net_service(void) {
     pxa_net_service_t *net = NULL;
     uint8_t command[192];
     uint8_t event_bytes[192];
+    uint8_t flood_event[1050] = {0};
     uint8_t body[8];
     size_t command_size;
     size_t event_size;
@@ -3974,6 +4843,17 @@ static void test_net_service(void) {
     pxa_component_t affected[1];
     size_t affected_count;
     pxa_bytes_t parsed_origin;
+
+    assert(pxa_component_create(test.runtime, 15, &v1_component) ==
+           PXA_STATUS_OK);
+    assert(pxa_component_begin_start(test.runtime, v1_component) ==
+           PXA_STATUS_OK);
+    assert(pxa_component_set_core_major(test.runtime, v1_component, 1) ==
+           PXA_STATUS_OK);
+    assert(pxa_component_validate_import(test.runtime, v1_component) ==
+           PXA_STATUS_OK);
+    assert(pxa_component_finish_start(test.runtime, v1_component,
+                                      PXA_STATUS_OK) == PXA_STATUS_OK);
 
     assert(pxa_net_parse_https_url(
         (pxa_bytes_t){valid_url, sizeof(valid_url) - 1}, &parsed_origin));
@@ -4049,7 +4929,7 @@ static void test_net_service(void) {
     net_config.max_headers = 8;
     net_config.max_inline_body_bytes = 2048;
     net_config.max_request_header_bytes = 2048;
-    net_config.max_response_header_bytes = 2048;
+    net_config.max_response_header_bytes = 1024;
     net_config.min_timeout_ms = 100;
     net_config.default_timeout_ms = 15000;
     net_config.max_timeout_ms = 60000;
@@ -4083,6 +4963,33 @@ static void test_net_service(void) {
                (pxa_bytes_t){permission_name, sizeof(permission_name) - 1},
                (pxa_bytes_t){origin, sizeof(origin) - 1},
                &authority) == PXA_STATUS_OK);
+
+    {
+        uint8_t flood_payload[1024] = {0};
+        pxa_writer_t flood_writer;
+        pxa_writer_init(&flood_writer, flood_event, sizeof(flood_event));
+        assert(pxa_writer_message(&flood_writer, PXA_SERVICE_CORE, 1, 0,
+                                  flood_payload, sizeof(flood_payload)) ==
+               PXA_STATUS_OK);
+        assert(pxa_event_post(test.runtime, component, flood_event,
+                              flood_writer.size, 1, 0) == PXA_STATUS_OK);
+        command_size = make_net_http_request(command, sizeof(command), 60,
+                                             permission_handle);
+        assert(pxa_component_begin_event(test.runtime, component) ==
+               PXA_STATUS_OK);
+        assert(pxa_runtime_control(test.runtime, component, command,
+                                   command_size) == PXA_STATUS_RESOURCE_LIMIT);
+        assert(pxa_component_finish_event(test.runtime, component, 1) ==
+               PXA_STATUS_OK);
+        assert(backend.starts == 0 &&
+               !pxa_request_is_active(test.runtime, component, 60));
+        assert(pxa_event_pop(test.runtime, component, flood_event,
+                             sizeof(flood_event), &event_size) ==
+               PXA_STATUS_OK);
+        assert(pxa_event_pop(test.runtime, component, event_bytes,
+                             sizeof(event_bytes), &event_size) ==
+               PXA_STATUS_WOULD_BLOCK);
+    }
 
     command_size = make_net_fetch(command, sizeof(command), 52,
                                   permission_handle);
@@ -4203,8 +5110,138 @@ static void test_net_service(void) {
                           PXA_RESOURCE_STREAM,
                           &(pxa_resource_t){0}) == PXA_STATUS_NOT_FOUND);
 
+    /* Core v1 keeps the asynchronous backend but uses native 64-bit
+     * Permission and response Stream Handles throughout. */
+    {
+        pxa_handle64_t permission64;
+        pxa_handle64_t stream64;
+        uint32_t starts = backend.starts;
+        command_size = make_permission_request(
+            command, sizeof(command), PXA_PERMISSION_ACQUIRE, 81,
+            permission_name, sizeof(permission_name) - 1,
+            origin, sizeof(origin) - 1);
+        (void)dispatch_control_completion(
+            test.runtime, v1_component, command, command_size,
+            event_bytes, sizeof(event_bytes), &event);
+        assert(event.payload.size == 12 &&
+               (int32_t)pxa_read_u32(event.payload.data) == PXA_STATUS_OK);
+        permission64 = pxa_read_u64(event.payload.data + 4);
+        assert((permission64 >> 32) != 0);
+
+        command_size = make_net_fetch(command, sizeof(command), 82,
+                                      (pxa_handle_t)permission64);
+        (void)dispatch_control_completion(
+            test.runtime, v1_component, command, command_size,
+            event_bytes, sizeof(event_bytes), &event);
+        assert((int32_t)pxa_read_u32(event.payload.data) ==
+               PXA_STATUS_INVALID_ARGUMENT && backend.starts == starts);
+
+        command_size = make_net_request_v1(command, sizeof(command),
+                                           PXA_NET_FETCH, 83, permission64);
+        assert(pxa_component_begin_event(test.runtime, v1_component) ==
+               PXA_STATUS_OK);
+        assert(pxa_runtime_control(test.runtime, v1_component, command,
+                                   command_size) == PXA_STATUS_OK);
+        assert(pxa_component_finish_event(test.runtime, v1_component, 1) ==
+               PXA_STATUS_OK);
+        assert(backend.starts == starts + 1);
+        assert(pxa_net_poll(net, affected, 1, &affected_count) ==
+               PXA_STATUS_OK && affected_count == 0);
+        assert(pxa_net_poll(net, affected, 1, &affected_count) ==
+               PXA_STATUS_OK && affected_count == 1);
+        event_size = read_head_event(test.runtime, v1_component,
+                                     event_bytes, sizeof(event_bytes), &view);
+        assert(pxa_message_decode(event_bytes, event_size,
+                                  PXA_MAX_CONTROL_MESSAGE, &event) ==
+               PXA_STATUS_OK && event.request_id == 83 &&
+               (int32_t)pxa_read_u32(event.payload.data) == PXA_STATUS_OK);
+        pxa_record_iterator_init(
+            &iterator,
+            (pxa_bytes_t){event.payload.data + 4, event.payload.size - 4});
+        assert(pxa_record_next(&iterator, &record) == PXA_STATUS_OK &&
+               record.tag == 5);
+        assert(pxa_record_next(&iterator, &record) == PXA_STATUS_OK &&
+               record.tag == 6);
+        assert(pxa_record_next(&iterator, &record) == PXA_STATUS_OK &&
+               record.tag == 7 && record.payload.size == 8);
+        stream64 = pxa_read_u64(record.payload.data);
+        assert((stream64 >> 32) != 0);
+        assert(pxa_event_consume(test.runtime, v1_component, view.token) ==
+               PXA_STATUS_OK);
+        memset(body, 0, sizeof(body));
+        assert(dispatch_io64(test.runtime, v1_component, stream64,
+                             PXA_NET_IO_READ, body, sizeof(body)) == 2 &&
+               memcmp(body, "ok", 2) == 0);
+        assert(pxa_handle_close64(test.runtime, v1_component, stream64) ==
+               PXA_STATUS_OK);
+
+        backend.expected_method = PXA_NET_METHOD_POST;
+        command_size = make_net_request_v1(command, sizeof(command),
+                                           PXA_NET_HTTP_REQUEST, 84,
+                                           permission64);
+        assert(pxa_component_begin_event(test.runtime, v1_component) ==
+               PXA_STATUS_OK);
+        assert(pxa_runtime_control(test.runtime, v1_component, command,
+                                   command_size) == PXA_STATUS_OK);
+        assert(pxa_component_finish_event(test.runtime, v1_component, 1) ==
+               PXA_STATUS_OK);
+        assert(pxa_net_poll(net, affected, 1, &affected_count) ==
+               PXA_STATUS_OK && affected_count == 0);
+        assert(pxa_net_poll(net, affected, 1, &affected_count) ==
+               PXA_STATUS_OK && affected_count == 1);
+        event_size = read_head_event(test.runtime, v1_component,
+                                     event_bytes, sizeof(event_bytes), &view);
+        assert(pxa_message_decode(event_bytes, event_size,
+                                  PXA_MAX_CONTROL_MESSAGE, &event) ==
+               PXA_STATUS_OK && event.request_id == 84);
+        pxa_record_iterator_init(
+            &iterator,
+            (pxa_bytes_t){event.payload.data + 4, event.payload.size - 4});
+        assert(pxa_record_next(&iterator, &record) == PXA_STATUS_OK &&
+               record.tag == 5);
+        assert(pxa_record_next(&iterator, &record) == PXA_STATUS_OK &&
+               record.tag == 6);
+        assert(pxa_record_next(&iterator, &record) == PXA_STATUS_OK &&
+               record.tag == 7 && record.payload.size == 8);
+        stream64 = pxa_read_u64(record.payload.data);
+        assert(pxa_event_consume(test.runtime, v1_component, view.token) ==
+               PXA_STATUS_OK);
+        memset(body, 0, sizeof(body));
+        assert(dispatch_io64(test.runtime, v1_component, stream64,
+                             PXA_NET_IO_READ, body, sizeof(body)) == 4 &&
+               memcmp(body, "okay", 4) == 0);
+        assert(pxa_handle_close64(test.runtime, v1_component, stream64) ==
+               PXA_STATUS_OK);
+
+        backend.expected_method = PXA_NET_METHOD_GET;
+        command_size = make_net_request_v1(command, sizeof(command),
+                                           PXA_NET_FETCH, 85, permission64);
+        assert(pxa_component_begin_event(test.runtime, v1_component) ==
+               PXA_STATUS_OK);
+        assert(pxa_runtime_control(test.runtime, v1_component, command,
+                                   command_size) == PXA_STATUS_OK);
+        assert(pxa_component_finish_event(test.runtime, v1_component, 1) ==
+               PXA_STATUS_OK);
+        assert(pxa_request_cancel(test.runtime, v1_component, 85) ==
+               PXA_STATUS_OK);
+        assert(pxa_net_poll(net, affected, 1, &affected_count) ==
+               PXA_STATUS_OK && affected_count == 1 &&
+               !pxa_net_has_pending_requests(net));
+        event_size = read_head_event(test.runtime, v1_component,
+                                     event_bytes, sizeof(event_bytes), &view);
+        assert(pxa_message_decode(event_bytes, event_size,
+                                  PXA_MAX_CONTROL_MESSAGE, &event) ==
+               PXA_STATUS_OK && event.request_id == 85 &&
+               (int32_t)pxa_read_u32(event.payload.data) ==
+                   PXA_STATUS_CANCELLED);
+        assert(pxa_event_consume(test.runtime, v1_component, view.token) ==
+               PXA_STATUS_OK);
+        assert(pxa_handle_close64(test.runtime, v1_component, permission64) ==
+               PXA_STATUS_OK);
+    }
+
     destroy_runtime(&test);
-    assert(backend.closes == 2);
+    assert(backend.closes == 4);
     free(net_workspace);
     free(permission_workspace);
 }
@@ -4218,8 +5255,9 @@ static void test_audio_service(void) {
     pxa_audio_config_t audio_config;
     test_audio_backend_t backend;
     unsigned permission_loads = 0;
-    test_runtime_t test = make_runtime(1, 10, 10, 5, 12, 8, 2);
+    test_runtime_t test = make_runtime(2, 10, 10, 5, 12, 8, 2);
     pxa_component_t component = create_started(test.runtime, 15);
+    pxa_component_t v1_component = PXA_COMPONENT_INVALID;
     size_t permission_size;
     size_t audio_size;
     void *permission_workspace;
@@ -4237,6 +5275,17 @@ static void test_audio_service(void) {
     pxa_handle_t second_session_handle = PXA_HANDLE_INVALID;
     pxa_handle_t reused_session_handle = PXA_HANDLE_INVALID;
     pxa_authority_t authority;
+
+    assert(pxa_component_create(test.runtime, 16, &v1_component) ==
+           PXA_STATUS_OK);
+    assert(pxa_component_begin_start(test.runtime, v1_component) ==
+           PXA_STATUS_OK);
+    assert(pxa_component_set_core_major(test.runtime, v1_component, 1) ==
+           PXA_STATUS_OK);
+    assert(pxa_component_validate_import(test.runtime, v1_component) ==
+           PXA_STATUS_OK);
+    assert(pxa_component_finish_start(test.runtime, v1_component,
+                                      PXA_STATUS_OK) == PXA_STATUS_OK);
 
     memset(&permission_config, 0, sizeof(permission_config));
     declaration.name =
@@ -4490,8 +5539,91 @@ static void test_audio_service(void) {
                           PXA_RESOURCE_AUDIO_GRAPH,
                           &(pxa_resource_t){0}) == PXA_STATUS_NOT_FOUND);
 
+    {
+        pxa_handle64_t permission64;
+        pxa_handle64_t session64;
+        uint8_t pcm[] = {0, 0, 1, 0};
+        uint8_t tone[] = {0xb8, 0x01, 80, 0, 0, 0xfa,
+                          PXA_AUDIO_TONE_TRIANGLE, 0,
+                          5, 0, 30, 0, 40, 0};
+        command_size = make_permission_request(
+            command, sizeof(command), PXA_PERMISSION_ACQUIRE, 81,
+            permission_name, sizeof(permission_name) - 1,
+            scope, sizeof(scope) - 1);
+        (void)dispatch_control_completion(
+            test.runtime, v1_component, command, command_size,
+            event_bytes, sizeof(event_bytes), &event);
+        assert(event.payload.size == 12 &&
+               (int32_t)pxa_read_u32(event.payload.data) == PXA_STATUS_OK);
+        permission64 = pxa_read_u64(event.payload.data + 4);
+        assert((permission64 >> 32) != 0);
+
+        command_size = make_audio_open(command, sizeof(command), 82,
+                                       (pxa_handle_t)permission64);
+        (void)dispatch_control_completion(
+            test.runtime, v1_component, command, command_size,
+            event_bytes, sizeof(event_bytes), &event);
+        assert((int32_t)pxa_read_u32(event.payload.data) ==
+               PXA_STATUS_INVALID_ARGUMENT && backend.opens == 3);
+
+        command_size = make_audio_v1_command(
+            command, sizeof(command), PXA_AUDIO_OPEN_SESSION, 83,
+            permission64);
+        (void)dispatch_control_completion(
+            test.runtime, v1_component, command, command_size,
+            event_bytes, sizeof(event_bytes), &event);
+        assert(event.payload.size == 35 &&
+               (int32_t)pxa_read_u32(event.payload.data) == PXA_STATUS_OK &&
+               backend.opens == 4);
+        pxa_record_iterator_init(
+            &iterator,
+            (pxa_bytes_t){event.payload.data + 4, event.payload.size - 4});
+        assert(pxa_record_next(&iterator, &record) == PXA_STATUS_OK &&
+               record.tag == 3 && record.payload.size == 8);
+        session64 = pxa_read_u64(record.payload.data);
+        assert((session64 >> 32) != 0);
+
+        command_size = make_audio_v1_command(
+            command, sizeof(command), PXA_AUDIO_COMMIT_GRAPH, 84,
+            session64);
+        (void)dispatch_control_completion(
+            test.runtime, v1_component, command, command_size,
+            event_bytes, sizeof(event_bytes), &event);
+        assert((int32_t)pxa_read_u32(event.payload.data) == PXA_STATUS_OK &&
+               backend.commits == 2);
+        assert(dispatch_io64(test.runtime, v1_component, session64,
+                             PXA_IO_WRITE, pcm, sizeof(pcm)) ==
+               (int32_t)sizeof(pcm) && backend.submits == 2);
+        assert(dispatch_io64(test.runtime, v1_component, session64,
+                             PXA_AUDIO_IO_PLAY_TONE, tone, sizeof(tone)) ==
+               (int32_t)sizeof(tone) && backend.tones == 3);
+
+        command_size = make_audio_v1_command(
+            command, sizeof(command), PXA_AUDIO_QUERY_STATE, 85,
+            session64);
+        (void)dispatch_control_completion(
+            test.runtime, v1_component, command, command_size,
+            event_bytes, sizeof(event_bytes), &event);
+        assert(event.payload.size == 44 &&
+               (int32_t)pxa_read_u32(event.payload.data) == PXA_STATUS_OK &&
+               backend.queries == 2);
+        command_size = make_audio_v1_command(
+            command, sizeof(command), PXA_AUDIO_FLUSH, 86,
+            session64);
+        (void)dispatch_control_completion(
+            test.runtime, v1_component, command, command_size,
+            event_bytes, sizeof(event_bytes), &event);
+        assert(event.payload.size == 4 &&
+               (int32_t)pxa_read_u32(event.payload.data) == PXA_STATUS_OK &&
+               backend.flushes == 2);
+        assert(pxa_handle_close64(test.runtime, v1_component, session64) ==
+               PXA_STATUS_OK && backend.closes == 4);
+        assert(pxa_handle_close64(test.runtime, v1_component, permission64) ==
+               PXA_STATUS_OK);
+    }
+
     destroy_runtime(&test);
-    assert(backend.closes == 3);
+    assert(backend.closes == 4);
     free(audio_workspace);
     free(permission_workspace);
 }
@@ -4500,22 +5632,29 @@ int main(void) {
     test_runtime_workspace_contract();
     test_runtime_usage();
     test_wire();
+    test_wire_v1_codec();
     test_lifecycle();
     test_requests_and_mailbox();
     test_request_table_collision_and_completion_order();
+    test_reserved_completion_backpressure();
     test_coalescing_and_reserve();
     test_event_block_boundaries_and_stale_tokens();
     test_event_generation_exhaustion();
     test_handles_authority_and_cleanup();
     test_handle_generation_exhaustion();
+    test_native_handle64_authority_and_io();
+    test_handle_slots_rotate();
     test_service_dispatch_and_io();
     test_service_registry_collision_and_capacity();
     test_window_service();
     test_lease_service();
     test_permission_service();
+    test_permission_v1_handle();
     test_ipc_service();
     test_storage_service();
     test_fs_service();
+    test_fs_v1_native_handles();
+    test_fs_completion_reservation();
     test_sensor_service();
     test_device_service();
     test_scheduler_service();

@@ -5,6 +5,8 @@
 #include <stdint.h>
 
 #include "pxa/permission.h"
+#include "pxa/asset_object.h"
+#include "pxa/audio_playback.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -12,7 +14,7 @@ extern "C" {
 
 #define PXA_AUDIO_SERVICE_ID UINT16_C(10)
 #define PXA_AUDIO_SERVICE_MAJOR UINT16_C(0)
-#define PXA_AUDIO_SERVICE_MINOR UINT16_C(5)
+#define PXA_AUDIO_SERVICE_MINOR UINT16_C(7)
 #define PXA_AUDIO_SERVICE_PATCH UINT16_C(0)
 #define PXA_AUDIO_OPEN_SESSION UINT16_C(1)
 #define PXA_AUDIO_COMMIT_GRAPH UINT16_C(2)
@@ -24,6 +26,9 @@ extern "C" {
 #define PXA_AUDIO_IO_PLAY_TONE UINT32_C(0x100)
 #define PXA_AUDIO_IO_PLAY_ASSET UINT32_C(0x101)
 #define PXA_AUDIO_IO_CONTROL_ASSET UINT32_C(0x102)
+#define PXA_AUDIO_IO_PLAY_SOUND UINT32_C(0x103)
+#define PXA_AUDIO_IO_PLAY_MUSIC UINT32_C(0x104)
+#define PXA_AUDIO_PLAYBACK_EVENT UINT16_C(0x8001)
 #define PXA_AUDIO_TONE_SINE UINT8_C(0)
 #define PXA_AUDIO_TONE_SQUARE UINT8_C(1)
 #define PXA_AUDIO_TONE_TRIANGLE UINT8_C(2)
@@ -121,6 +126,14 @@ typedef struct {
     pxa_audio_play_tone_fn play_tone;
     pxa_audio_play_asset_fn play_asset;
     pxa_audio_control_asset_fn control_asset;
+    /* Borrowed prepared PCM, backed by the resource cache. Backend retains
+     * before accepting and drops its pin at end/stop; it must perform no I/O. */
+    pxa_status_t (*play_sound)(void *, uint64_t provider_session,
+        pxa_asset_object_t *, int16_t gain_db_q8);
+    pxa_status_t (*play_music)(void *, uint64_t provider_session,
+        const pxa_audio_asset_t *, uint64_t *instance);
+    pxa_status_t (*playback_peek)(void *, pxa_audio_playback_event_t *);
+    pxa_status_t (*playback_consume)(void *, const pxa_audio_playback_event_t *);
 } pxa_audio_backend_t;
 
 typedef struct {
@@ -141,6 +154,9 @@ pxa_status_t pxa_audio_service_init(
     const pxa_audio_config_t *config, pxa_audio_service_t **output);
 pxa_status_t pxa_audio_service_register(pxa_audio_service_t *service);
 int pxa_audio_has_active_sessions(const pxa_audio_service_t *service);
+/* Runtime thread only; backend retains notifications until successfully queued.
+ * Workers may only wake the runtime, never call this or enter a Guest. */
+void pxa_audio_service_poll(pxa_audio_service_t *service);
 
 #ifdef __cplusplus
 }

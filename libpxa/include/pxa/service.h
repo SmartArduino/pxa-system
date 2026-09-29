@@ -15,6 +15,8 @@ extern "C" {
 #define PXA_CORE_SERVICE_PATCH UINT16_C(0)
 #define PXA_CORE_CANCEL_REQUEST UINT16_C(1)
 #define PXA_CORE_CLOSE_HANDLE UINT16_C(2)
+#define PXA_STORE_INSTALLER_SERVICE_ID UINT16_C(20)
+#define PXA_STORE_INSTALLER_DOWNLOAD_PROGRESS UINT16_C(0x8001)
 
 typedef pxa_status_t (*pxa_service_control_fn)(
     void *context, pxa_runtime_t *runtime, pxa_component_t component,

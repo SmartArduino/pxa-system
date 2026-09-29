@@ -98,6 +98,10 @@ pxa_status_t pxa_permission_resolve(
     const pxa_permission_service_t *service, pxa_component_t component,
     pxa_handle_t permission_handle, pxa_bytes_t expected_name,
     pxa_bytes_t expected_scope, pxa_authority_t *authority);
+pxa_status_t pxa_permission_resolve64(
+    const pxa_permission_service_t *service, pxa_component_t component,
+    pxa_handle64_t permission_handle, pxa_bytes_t expected_name,
+    pxa_bytes_t expected_scope, pxa_authority_t *authority);
 
 #ifdef __cplusplus
 }

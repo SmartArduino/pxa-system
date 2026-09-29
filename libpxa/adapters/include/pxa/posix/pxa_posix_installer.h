@@ -124,9 +124,15 @@ pxa_status_t pxa_posix_installer_install_for_identity(
 pxa_status_t pxa_posix_installer_verify_source(
     pxa_posix_installer_t *installer, const char *source_path,
     pxa_posix_installer_result_t *result);
+/* Parse an already installed/prepared directory. No signature or file SHA
+ * verification. Caller owns its trust decision; raw incoming packages must
+ * first use install/verify_source. Used by the simulator's prepared app path. */
+pxa_status_t pxa_posix_installer_load_directory(pxa_posix_installer_t *,
+    const char *directory, pxa_posix_installer_result_t *);
 pxa_status_t pxa_posix_installer_recover(
     pxa_posix_installer_t *installer,
     const pxa_posix_installer_identity_t *identity);
+/* Read the committed manifest without revalidating installed contents. */
 pxa_status_t pxa_posix_installer_load_current(
     pxa_posix_installer_t *installer,
     const pxa_posix_installer_identity_t *identity,

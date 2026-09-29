@@ -6,6 +6,7 @@
 #include <stdint.h>
 
 #include "pxa/ui.h"
+#include "pxa/asset_object.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -18,6 +19,10 @@ typedef pxa_status_t (*pxa_lvgl_ui_execute_fn)(
 
 typedef const void *(*pxa_lvgl_ui_resolve_asset_fn)(
     const uint8_t *path, size_t path_size, void *user_data);
+/* Runtime-thread lookup only; success returns one retained IMAGE reference.
+ * No file I/O, loading, decode or waiting is allowed in this callback. */
+typedef pxa_status_t (*pxa_lvgl_ui_acquire_image_fn)(
+    pxa_component_t component, pxa_handle64_t handle, pxa_asset_object_t **output, void *user_data);
 typedef void (*pxa_lvgl_ui_release_asset_fn)(
     const void *source, void *user_data);
 typedef void (*pxa_lvgl_ui_event_fn)(
@@ -48,6 +53,7 @@ typedef struct {
      * calls resolve outside execute; providers synchronize shared cache state.
      * Release can run inside execute when objects or frames are replaced. */
     pxa_lvgl_ui_resolve_asset_fn resolve_asset;
+    pxa_lvgl_ui_acquire_image_fn acquire_image;
     pxa_lvgl_ui_release_asset_fn release_asset;
     void *asset_user_data;
     pxa_lvgl_ui_event_fn event_callback;
@@ -55,6 +61,14 @@ typedef struct {
     void *callback_user_data;
     pxa_ui_environment_t primary_environment;
     void *parent_object;
+    /* Per-adapter bounds. Zero derives a full-display bound from the primary
+     * environment. Snapshot limit includes alignment padding; alpha limit is
+     * for one RGB565+A8 plane. Multiple overlays retain two planes for
+     * transactional reuse, releasing the spare when returning to one/none.
+     * Snapshot growth can hold old and candidate storage; these per-buffer
+     * limits are not a global native-heap cap. */
+    size_t snapshot_limit_bytes;
+    size_t alpha_limit_bytes;
 } pxa_lvgl_ui_config_t;
 
 typedef struct pxa_lvgl_ui pxa_lvgl_ui_t;

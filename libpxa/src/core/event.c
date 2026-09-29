@@ -11,11 +11,11 @@ static const pxa_event_slot_t *find_event(const pxa_event_pool_t *pool,
                                           pxa_event_token_t token,
                                           uint32_t *index_out) {
     uint32_t index;
-    uint16_t generation;
+    uint32_t generation;
     const pxa_event_slot_t *event;
     if (pool == NULL || pool->slots == NULL ||
-        !pxa_internal_slot_token_decode(token, pool->event_capacity, &index,
-                                        &generation)) {
+        !pxa_internal_event_token_decode(token, pool->event_capacity, &index,
+                                         &generation)) {
         return NULL;
     }
     event = &pool->slots[index];
@@ -171,7 +171,7 @@ void pxa_event_pool_release(pxa_event_pool_t *pool, uint32_t event_index) {
     event->owner_index = 0;
     event->reliable = 0;
     if (pool->event_count != 0) --pool->event_count;
-    if (event->generation == UINT16_MAX) {
+    if (event->generation == UINT32_MAX) {
         event->next_free = PXA_EVENT_INDEX_NONE;
     } else {
         event->generation++;
@@ -351,8 +351,8 @@ pxa_status_t pxa_event_mailbox_peek(const pxa_event_pool_t *pool,
     }
     if (mailbox->head == PXA_EVENT_INDEX_NONE) return PXA_STATUS_WOULD_BLOCK;
     event = &pool->slots[mailbox->head];
-    output->token = pxa_internal_slot_token_encode(mailbox->head,
-                                                   event->generation);
+    output->token = pxa_internal_event_token_encode(mailbox->head,
+                                                    event->generation);
     output->size = event->size;
     output->coalesce_key = event->coalesce_key;
     output->reliable = event->reliable;

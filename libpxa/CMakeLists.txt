@@ -47,6 +47,9 @@ include(cmake/pxaSources.cmake)
 pxa_collect_sources(PXA_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}")
 add_library(pxa ${PXA_SOURCES})
 add_library(pxa::pxa ALIAS pxa)
+if(UNIX)
+    target_link_libraries(pxa PUBLIC m)
+endif()
 set_target_properties(pxa PROPERTIES
     VERSION ${PROJECT_VERSION}
     SOVERSION ${PROJECT_VERSION_MAJOR}
@@ -69,6 +72,7 @@ endif()
 
 if(PXA_BUILD_ADAPTERS)
     find_package(OpenSSL REQUIRED)
+    find_package(Threads REQUIRED)
 
     set(_pxa_lz4_sources)
     set(_pxa_lz4_libraries)
@@ -107,6 +111,9 @@ if(PXA_BUILD_ADAPTERS)
     target_link_libraries(pxa_adapters_openssl PUBLIC pxa OpenSSL::Crypto)
 
     add_library(pxa_adapters_posix
+        adapters/posix/pxa_posix_storage_gate.c
+        adapters/posix/pxa_posix_asset.c
+        adapters/posix/pxa_posix_asset_worker.c
         adapters/posix/pxa_posix_fs.c
         adapters/posix/pxa_posix_scheduler_store.c
         adapters/posix/pxa_posix_storage.c
@@ -123,7 +130,7 @@ if(PXA_BUILD_ADAPTERS)
         $<INSTALL_INTERFACE:include/pxa-adapters>)
     target_include_directories(pxa_adapters_posix PRIVATE
         ${_pxa_lz4_include_dir})
-    target_link_libraries(pxa_adapters_posix PUBLIC pxa_adapters_openssl
+    target_link_libraries(pxa_adapters_posix PUBLIC pxa_adapters_openssl Threads::Threads
         PRIVATE ${_pxa_lz4_libraries})
 
     if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
@@ -136,6 +143,31 @@ if(PXA_BUILD_ADAPTERS)
     endif()
 
     if(PXA_BUILD_TESTS)
+        if(Python3_Interpreter_FOUND AND PXA_PACKAGE_TOOLS_DIR)
+            add_executable(pxa_asset_worker_test adapters/tests/asset_worker_test.c)
+            target_link_libraries(pxa_asset_worker_test PRIVATE pxa_adapters_posix)
+            add_test(NAME pxa_asset_worker_test COMMAND ${Python3_EXECUTABLE}
+                "${PXA_PACKAGE_TOOLS_DIR}/test_resource_worker.py"
+                $<TARGET_FILE:pxa_asset_worker_test>)
+            add_executable(pxa_asset_input_test adapters/tests/asset_input_test.c)
+            target_link_libraries(pxa_asset_input_test PRIVATE pxa_adapters_posix)
+            add_test(NAME pxa_asset_input_test COMMAND ${Python3_EXECUTABLE}
+                "${PXA_PACKAGE_TOOLS_DIR}/test_resource_pipeline.py"
+                $<TARGET_FILE:pxa_asset_input_test>)
+            add_executable(pxa_asset_blob_test adapters/tests/asset_blob_test.c)
+            add_executable(pxa_storage_gate_test adapters/tests/storage_gate_test.c)
+            target_link_libraries(pxa_storage_gate_test PRIVATE pxa_adapters_posix)
+            add_test(NAME pxa_storage_gate_test COMMAND pxa_storage_gate_test)
+            add_executable(pxa_asset_stream_test adapters/tests/asset_stream_test.c)
+            target_link_libraries(pxa_asset_stream_test PRIVATE pxa_adapters_posix)
+            add_test(NAME pxa_asset_stream_test COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/../tools/package/test_resource_stream.py
+                $<TARGET_FILE:pxa_asset_stream_test>)
+            target_link_libraries(pxa_asset_blob_test PRIVATE pxa_adapters_posix)
+            add_test(NAME pxa_asset_blob_test COMMAND ${Python3_EXECUTABLE}
+                "${PXA_PACKAGE_TOOLS_DIR}/test_resource_blob.py"
+                $<TARGET_FILE:pxa_asset_blob_test>)
+        endif()
         add_executable(pxa_adapters_test adapters/tests/adapters_test.c)
         target_include_directories(pxa_adapters_test PRIVATE
             ${_pxa_lz4_include_dir})
@@ -225,6 +257,11 @@ if(PXA_BUILD_ADAPTERS AND (PXA_LVGL_TARGET OR PXA_LVGL_SOURCE_DIR))
                 target_compile_options(pxa_lvgl_ui_test PRIVATE -Werror)
             endif()
         endif()
+        if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+            target_link_options(pxa_lvgl_ui_test PRIVATE "-Wl,--wrap=lv_snapshot_take"
+                "-Wl,--wrap=lv_snapshot_take_to_draw_buf")
+            target_compile_definitions(pxa_lvgl_ui_test PRIVATE PXA_TEST_WRAP_SNAPSHOT=1)
+        endif()
         add_test(NAME pxa_lvgl_ui_test
                  COMMAND pxa_lvgl_ui_test)
 
@@ -307,12 +344,17 @@ if(PXA_BUILD_ADAPTERS AND PXA_WAMR_SOURCE_DIR)
                             "${PXA_GUEST_SDK_INCLUDE}/pxa_audio.h"
                             "${PXA_GUEST_SDK_INCLUDE}/pxa_canvas.h"
                             "${PXA_GUEST_SDK_INCLUDE}/pxa_net.h"
+                            "${PXA_GUEST_SDK_INCLUDE}/pxa_core.h"
+                            "${PXA_GUEST_SDK_INCLUDE}/pxa_ipc.h"
+                            "${PXA_GUEST_SDK_INCLUDE}/pxa_storage.h"
                     COMMENT "Compiling PXA test guest ${name} (wasm32)")
                 add_custom_target(${name} DEPENDS ${output})
                 set(${name}_WASM "${output}" PARENT_SCOPE)
             endfunction()
             pxa_build_guest(wamr_guest
                 ${CMAKE_CURRENT_SOURCE_DIR}/adapters/tests/wamr_guest.c)
+            pxa_build_guest(wamr_v1_guest
+                ${CMAKE_CURRENT_SOURCE_DIR}/adapters/tests/wamr_v1_guest.c)
             pxa_build_guest(wamr_wasi_import_guest
                 ${CMAKE_CURRENT_SOURCE_DIR}/adapters/tests/wamr_wasi_import_guest.c)
             pxa_build_guest(wamr_wasi_system_guest
@@ -364,10 +406,11 @@ if(PXA_BUILD_ADAPTERS AND PXA_WAMR_SOURCE_DIR)
                 pxa_adapters_posix pxa_adapters_wamr)
             target_compile_definitions(pxa_wamr_engine_test PRIVATE
                 PXA_WAMR_TEST_GUEST_PATH="${wamr_guest_WASM}"
+                PXA_WAMR_TEST_V1_PATH="${wamr_v1_guest_WASM}"
                 PXA_WAMR_TEST_WASI_IMPORT_PATH="${wamr_wasi_import_guest_WASM}"
                 PXA_WAMR_TEST_WASI_SYSTEM_PATH="${wamr_wasi_system_guest_WASM}"
                 PXA_WAMR_TEST_ENV_IMPORT_PATH="${wamr_env_import_guest_WASM}")
-            add_dependencies(pxa_wamr_engine_test wamr_guest
+            add_dependencies(pxa_wamr_engine_test wamr_guest wamr_v1_guest
                 wamr_wasi_import_guest wamr_wasi_system_guest
                 wamr_env_import_guest)
             if(TARGET wamr_wasi_libc_guest)
@@ -422,6 +465,9 @@ if(PXA_BUILD_ADAPTERS AND PXA_WAMR_SOURCE_DIR AND
                             "${PXA_GUEST_SDK_INCLUDE}/pxa.h"
                             "${PXA_GUEST_SDK_INCLUDE}/pxa_canvas.h"
                             "${PXA_GUEST_SDK_INCLUDE}/pxa_net.h"
+                            "${PXA_GUEST_SDK_INCLUDE}/pxa_core.h"
+                            "${PXA_GUEST_SDK_INCLUDE}/pxa_ipc.h"
+                            "${PXA_GUEST_SDK_INCLUDE}/pxa_storage.h"
                     COMMENT "Compiling PXA test guest ${name} (wasm32)")
                 add_custom_target(${name} DEPENDS ${output})
                 set(${name}_WASM "${output}" PARENT_SCOPE)
@@ -512,6 +558,65 @@ endif()
 
 if(PXA_BUILD_TESTS)
     enable_testing()
+    add_executable(pxa_asset_read_test tests/asset_read_test.c)
+    target_link_libraries(pxa_asset_read_test PRIVATE pxa)
+    add_test(NAME pxa_asset_read_test COMMAND pxa_asset_read_test)
+
+    add_executable(pxa_guest_image_set_test tests/guest_image_set_test.c)
+    target_include_directories(pxa_guest_image_set_test PRIVATE ../sdk/guest-c/include)
+    if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(pxa_guest_image_set_test PRIVATE -Wno-attributes -Wall -Wextra -Werror)
+    endif()
+    add_test(NAME pxa_guest_image_set_test COMMAND pxa_guest_image_set_test)
+    add_executable(pxa_assets_service_test tests/assets_service_test.c)
+    target_include_directories(pxa_assets_service_test PRIVATE ../sdk/guest-c/include)
+    if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(pxa_assets_service_test PRIVATE -Wno-attributes)
+    endif()
+    target_link_libraries(pxa_assets_service_test PRIVATE pxa)
+    add_test(NAME pxa_assets_service_test COMMAND pxa_assets_service_test)
+
+    add_executable(pxa_asset_scene_test tests/asset_scene_test.c)
+    target_include_directories(pxa_asset_scene_test PRIVATE ../sdk/guest-c/include)
+    if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(pxa_asset_scene_test PRIVATE -Wno-attributes)
+    endif()
+    add_test(NAME pxa_asset_scene_test COMMAND pxa_asset_scene_test)
+
+    add_executable(pxa_asset_cache_test tests/asset_cache_test.c)
+    if(UNIX)
+        find_package(Threads REQUIRED)
+        add_executable(pxa_resource_budget_test tests/resource_budget_test.c)
+        target_compile_features(pxa_resource_budget_test PRIVATE c_std_11)
+        target_link_libraries(pxa_resource_budget_test PRIVATE pxa Threads::Threads)
+        add_test(NAME pxa_resource_budget_test COMMAND pxa_resource_budget_test)
+    endif()
+    target_link_libraries(pxa_asset_cache_test PRIVATE pxa)
+    add_test(NAME pxa_asset_cache_test COMMAND pxa_asset_cache_test)
+    add_executable(pxa_asset_catalog_test tests/asset_catalog_test.c)
+    target_link_libraries(pxa_asset_catalog_test PRIVATE pxa)
+    add_test(NAME pxa_asset_catalog_test COMMAND pxa_asset_catalog_test)
+    if(Python3_Interpreter_FOUND AND PXA_PACKAGE_TOOLS_DIR)
+        add_test(NAME pxa_resource_compiler_test COMMAND ${Python3_EXECUTABLE}
+            "${PXA_PACKAGE_TOOLS_DIR}/test_compile_resources.py")
+    endif()
+    add_executable(pxa_raster_assets_test tests/raster_assets_test.c)
+    target_link_libraries(pxa_raster_assets_test PRIVATE pxa)
+    add_test(NAME pxa_raster_assets_test COMMAND pxa_raster_assets_test)
+    add_executable(pxa_audio_mixer_test tests/audio_mixer_test.c)
+    target_link_libraries(pxa_audio_mixer_test PRIVATE pxa)
+    add_test(NAME pxa_audio_mixer_test COMMAND pxa_audio_mixer_test)
+    add_executable(pxa_audio_buffer_test tests/audio_buffer_test.c)
+    target_link_libraries(pxa_audio_buffer_test PRIVATE pxa)
+    add_test(NAME pxa_audio_buffer_test COMMAND pxa_audio_buffer_test)
+
+    add_executable(pxa_audio_playback_test tests/audio_playback_test.c)
+    target_link_libraries(pxa_audio_playback_test PRIVATE pxa)
+    add_test(NAME pxa_audio_playback_test COMMAND pxa_audio_playback_test)
+    add_executable(pxa_audio_notification_test tests/audio_notification_test.c)
+    target_include_directories(pxa_audio_notification_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    target_link_libraries(pxa_audio_notification_test PRIVATE pxa)
+    add_test(NAME pxa_audio_notification_test COMMAND pxa_audio_notification_test)
     add_executable(pxa_api_compile_test tests/api_compile_test.c)
     target_link_libraries(pxa_api_compile_test PRIVATE pxa)
     add_test(NAME pxa_api_compile_test COMMAND pxa_api_compile_test)
@@ -527,6 +632,12 @@ if(PXA_BUILD_TESTS)
     endif()
     add_test(NAME pxa_core_test COMMAND pxa_core_test)
 
+    add_executable(pxa_handle64_test tests/handle64_test.c)
+    target_include_directories(pxa_handle64_test PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    target_link_libraries(pxa_handle64_test PRIVATE pxa)
+    add_test(NAME pxa_handle64_test COMMAND pxa_handle64_test)
+
     add_executable(pxa_surface_test tests/surface_test.c)
     target_link_libraries(pxa_surface_test PRIVATE pxa)
     if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
@@ -539,6 +650,8 @@ if(PXA_BUILD_TESTS)
     add_test(NAME pxa_surface_test COMMAND pxa_surface_test)
 
     add_executable(pxa_game_render_test tests/game_render_test.c)
+    target_include_directories(pxa_game_render_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_link_libraries(pxa_game_render_test PRIVATE pxa)
     if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
         target_compile_options(pxa_game_render_test PRIVATE
@@ -599,6 +712,13 @@ if(PXA_BUILD_TESTS)
     add_test(NAME pxa_package_test COMMAND pxa_package_test)
 
     if(Python3_Interpreter_FOUND)
+        if(NOT CMAKE_CROSSCOMPILING)
+            add_test(
+                NAME pxa_generated_wire_vectors_test
+                COMMAND ${Python3_EXECUTABLE}
+                        ${CMAKE_CURRENT_SOURCE_DIR}/../spec/draft/tools/test_wire_codecs.py
+                        ${CMAKE_C_COMPILER})
+        endif()
         add_test(
             NAME pxa_ui_vectors_test
             COMMAND ${Python3_EXECUTABLE}

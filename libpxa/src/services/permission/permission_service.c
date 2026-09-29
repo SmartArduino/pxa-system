@@ -86,11 +86,12 @@ static pxa_permission_pending_prompt_t *find_pending_prompt(
 static pxa_status_t authorize(pxa_permission_service_t *service,
                               pxa_component_t component,
                               uint16_t declaration_index,
-                              pxa_handle_t *handle_out) {
+                              pxa_handle64_t *handle_out) {
     pxa_permission_authority_t *issued;
     pxa_component_snapshot_t snapshot;
     pxa_resource_t resource;
     pxa_status_t status;
+    uint16_t core_major = 0;
     if (service->declarations[declaration_index].decision !=
         PXA_PERMISSION_ALLOW) {
         return PXA_STATUS_DENIED;
@@ -107,6 +108,9 @@ static pxa_status_t authorize(pxa_permission_service_t *service,
         snapshot.state != PXA_COMPONENT_RUNNING) {
         return PXA_STATUS_BAD_STATE;
     }
+    status = pxa_component_core_major(service->runtime, component,
+                                      &core_major);
+    if (status != PXA_STATUS_OK) return status;
     issued = allocate_authority(service);
     if (issued == NULL) return PXA_STATUS_RESOURCE_LIMIT;
     issued->service = service;
@@ -116,9 +120,18 @@ static pxa_status_t authorize(pxa_permission_service_t *service,
     memset(&resource, 0, sizeof(resource));
     resource.context = issued;
     resource.close = permission_authority_closed;
-    status = pxa_handle_open(service->runtime, component,
-                             PXA_RESOURCE_PERMISSION, issued->authority,
-                             &resource, handle_out);
+    if (core_major == 1) {
+        status = pxa_handle_open64(service->runtime, component,
+                                   PXA_RESOURCE_PERMISSION,
+                                   issued->authority, &resource, handle_out);
+    } else {
+        pxa_handle_t legacy_handle = PXA_HANDLE_INVALID;
+        status = pxa_handle_open(service->runtime, component,
+                                 PXA_RESOURCE_PERMISSION,
+                                 issued->authority, &resource,
+                                 &legacy_handle);
+        *handle_out = legacy_handle;
+    }
     if (status != PXA_STATUS_OK) {
         release_authority(issued);
         return status;
@@ -129,21 +142,37 @@ static pxa_status_t authorize(pxa_permission_service_t *service,
 
 static void discard_authority(pxa_permission_service_t *service,
                               pxa_component_t component,
-                              pxa_handle_t handle) {
-    if (handle == PXA_HANDLE_INVALID) return;
-    (void)pxa_handle_close(service->runtime, component, handle);
+                              pxa_handle64_t handle) {
+    if (handle == PXA_HANDLE64_INVALID) return;
+    if ((handle >> 32) != 0)
+        (void)pxa_handle_close64(service->runtime, component, handle);
+    else
+        (void)pxa_handle_close(service->runtime, component,
+                               (pxa_handle_t)handle);
 }
 
 static pxa_status_t complete_permission_request(
     pxa_permission_service_t *service, pxa_component_t component,
     uint32_t request_id, uint16_t opcode, pxa_status_t result,
-    pxa_handle_t handle) {
-    uint8_t result_data[4];
+    pxa_handle64_t handle) {
+    uint8_t result_data[8];
     size_t result_size = 0;
     pxa_status_t complete;
+    uint16_t core_major = 0;
+    pxa_status_t status = pxa_component_core_major(service->runtime,
+                                                   component, &core_major);
+    if (status != PXA_STATUS_OK) {
+        discard_authority(service, component, handle);
+        return status;
+    }
     if (result == PXA_STATUS_OK && opcode == PXA_PERMISSION_ACQUIRE) {
-        pxa_write_u32(result_data, handle);
-        result_size = sizeof(result_data);
+        if (core_major == 1) {
+            pxa_write_u64(result_data, handle);
+            result_size = 8;
+        } else {
+            pxa_write_u32(result_data, (uint32_t)handle);
+            result_size = 4;
+        }
     }
     complete = pxa_request_complete(service->runtime, component, request_id,
                                     result,
@@ -197,7 +226,7 @@ pxa_status_t pxa_permission_resolve(
     issued = (pxa_permission_authority_t *)resource.context;
     if (issued == NULL || !issued->active || issued->service != service ||
         issued->component != component ||
-        issued->permission_handle != permission_handle ||
+        issued->permission_handle != (pxa_handle64_t)permission_handle ||
         issued->slot.declaration_index >= service->declaration_count) {
         return PXA_STATUS_DENIED;
     }
@@ -208,6 +237,37 @@ pxa_status_t pxa_permission_resolve(
                                              expected_scope)) {
         return PXA_STATUS_DENIED;
     }
+    *authority = issued->authority;
+    return PXA_STATUS_OK;
+}
+
+pxa_status_t pxa_permission_resolve64(
+    const pxa_permission_service_t *service, pxa_component_t component,
+    pxa_handle64_t permission_handle, pxa_bytes_t expected_name,
+    pxa_bytes_t expected_scope, pxa_authority_t *authority) {
+    pxa_resource_t resource;
+    pxa_permission_authority_t *issued;
+    const pxa_permission_entry_t *declaration;
+    pxa_status_t status;
+    if (authority == NULL ||
+        !pxa_permission_service_valid_internal(service))
+        return PXA_STATUS_INVALID_ARGUMENT;
+    *authority = 0;
+    status = pxa_handle_get64(service->runtime, component, permission_handle,
+                              PXA_RESOURCE_PERMISSION, &resource);
+    if (status != PXA_STATUS_OK) return status;
+    issued = (pxa_permission_authority_t *)resource.context;
+    if (issued == NULL || !issued->active || issued->service != service ||
+        issued->component != component ||
+        issued->permission_handle != permission_handle ||
+        issued->slot.declaration_index >= service->declaration_count)
+        return PXA_STATUS_DENIED;
+    declaration = &service->declarations[issued->slot.declaration_index];
+    if (!pxa_permission_bytes_equal_internal(declaration->name,
+                                             expected_name) ||
+        !pxa_permission_bytes_equal_internal(declaration->scope,
+                                             expected_scope))
+        return PXA_STATUS_DENIED;
     *authority = issued->authority;
     return PXA_STATUS_OK;
 }
@@ -255,19 +315,24 @@ static pxa_status_t permission_control(void *context, pxa_runtime_t *runtime,
     pxa_bytes_t scope;
     pxa_status_t result;
     uint16_t declaration_index = 0;
-    uint8_t result_data[4];
+    uint8_t result_data[8];
     size_t result_size = 0;
-    pxa_handle_t handle = PXA_HANDLE_INVALID;
+    pxa_handle64_t handle = PXA_HANDLE64_INVALID;
+    uint16_t core_major = 0;
     (void)runtime;
     if (message->request_id == 0) return PXA_STATUS_INVALID_ARGUMENT;
     if (message->opcode != PXA_PERMISSION_CHECK &&
         message->opcode != PXA_PERMISSION_ACQUIRE) {
         return PXA_STATUS_UNSUPPORTED;
     }
-    result = pxa_request_begin(service->runtime, component,
-                               message->request_id,
-                               PXA_PERMISSION_SERVICE_ID,
-                               message->opcode, 0);
+    result = pxa_component_core_major(service->runtime, component,
+                                       &core_major);
+    if (result != PXA_STATUS_OK) return result;
+    result = pxa_request_begin_reserved(
+        service->runtime, component, message->request_id,
+        PXA_PERMISSION_SERVICE_ID, message->opcode, 0,
+        message->opcode == PXA_PERMISSION_ACQUIRE
+            ? (core_major == 1 ? 8u : 4u) : 1u);
     if (result != PXA_STATUS_OK) return result;
     result = parse_request(message->payload, &name, &scope);
     if (result == PXA_STATUS_OK &&
@@ -294,8 +359,13 @@ static pxa_status_t permission_control(void *context, pxa_runtime_t *runtime,
             result = authorize(service, component, declaration_index, &handle);
         }
         if (result == PXA_STATUS_OK) {
-            pxa_write_u32(result_data, handle);
-            result_size = 4;
+            if (core_major == 1) {
+                pxa_write_u64(result_data, handle);
+                result_size = 8;
+            } else {
+                pxa_write_u32(result_data, (uint32_t)handle);
+                result_size = 4;
+            }
         }
     }
     {
@@ -360,7 +430,7 @@ pxa_status_t pxa_permission_prompt_complete(
     pxa_permission_pending_prompt_t *pending;
     pxa_status_t result;
     pxa_status_t complete;
-    pxa_handle_t handle = PXA_HANDLE_INVALID;
+    pxa_handle64_t handle = PXA_HANDLE64_INVALID;
     if (!pxa_permission_service_valid_internal(service) ||
         !service->initialized ||
         (decision != PXA_PERMISSION_DENY && decision != PXA_PERMISSION_ALLOW)) {
@@ -433,7 +503,7 @@ pxa_status_t pxa_permission_revoke(
         result = complete_permission_request(
             service, pending_component, pending_request_id,
             PXA_PERMISSION_ACQUIRE, PXA_STATUS_DENIED,
-            PXA_HANDLE_INVALID);
+            PXA_HANDLE64_INVALID);
         if (result != PXA_STATUS_OK && result != PXA_STATUS_NOT_FOUND &&
             result != PXA_STATUS_BAD_STATE) {
             return result;

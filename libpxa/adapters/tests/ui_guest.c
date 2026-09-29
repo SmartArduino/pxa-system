@@ -4,6 +4,7 @@
 
 #include "pxa.h"
 #include "pxa_canvas.h"
+#include "pxa_window.h"
 
 #define PXA_STORAGE_GET 1u
 #define PXA_STORAGE_SET 2u
@@ -70,7 +71,7 @@ static int present_canvas(void) {
 int32_t pxa_app_start(const uint8_t *config, uint32_t config_length) {
     (void)config;
     (void)config_length;
-    if (!pxa_window_fullscreen()) return PXA_STATUS_INTERNAL;
+    if (pxa_window_fullscreen() != PXA_STATUS_OK) return PXA_STATUS_INTERNAL;
     if (present_canvas() != PXA_STATUS_OK) return PXA_STATUS_INTERNAL;
     return storage_set("hits", "1");
 }

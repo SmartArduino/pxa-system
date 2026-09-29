@@ -3020,6 +3020,17 @@ pxa_status_t pxa_posix_installer_verify_source(
     return status;
 }
 
+pxa_status_t pxa_posix_installer_load_directory(pxa_posix_installer_t *installer,
+    const char *directory, pxa_posix_installer_result_t *result) {
+    if (!installer || installer->magic != PXA_POSIX_INSTALLER_MAGIC || !directory)
+        return PXA_STATUS_INVALID_ARGUMENT;
+    int fd = open(directory,O_RDONLY|O_DIRECTORY|O_CLOEXEC|O_NOFOLLOW);
+    if (fd < 0) return errno == ENOENT ? PXA_STATUS_NOT_FOUND : PXA_STATUS_IO_ERROR;
+    pxa_status_t status = fill_result(installer,fd,directory,result);
+    close(fd);
+    return status;
+}
+
 pxa_status_t pxa_posix_installer_recover(
     pxa_posix_installer_t *installer,
     const pxa_posix_installer_identity_t *identity) {
@@ -3048,9 +3059,6 @@ pxa_status_t pxa_posix_installer_load_current(
     const pxa_posix_installer_identity_t *identity,
     pxa_posix_installer_result_t *result) {
     pxa_posix_slot_ctx_t ctx;
-    uint8_t parsed_key_id[PXA_PACKAGE_DIGEST_BYTES];
-    char parsed_app_id[PXA_POSIX_INSTALLER_MAX_APP_ID + 1];
-    size_t parsed_app_id_size = 0;
     int lock_fd = -1;
     int root_fd = -1;
     pxa_status_t status;
@@ -3069,18 +3077,15 @@ pxa_status_t pxa_posix_installer_load_current(
         status = PXA_STATUS_NOT_FOUND;
         goto done;
     }
-    status = verify_opened_directory(
-        installer, root_fd, 1, parsed_key_id, parsed_app_id,
-        &parsed_app_id_size);
-    if (status != PXA_STATUS_OK) goto done;
-    if (memcmp(parsed_key_id, ctx.publisher_key_id,
-               PXA_PACKAGE_DIGEST_BYTES) != 0 ||
-        parsed_app_id_size != ctx.app_id_size ||
-        memcmp(parsed_app_id, ctx.app_id, ctx.app_id_size) != 0) {
-        status = PXA_STATUS_DENIED;
-        goto done;
-    }
+    /* The committed installation is the trust boundary. Do not reread or
+     * rehash its assets at activation. Keep only the requested identity check. */
     status = fill_result(installer, root_fd, ctx.root, result);
+    if (status == PXA_STATUS_OK &&
+        ((*result->manifest)->app_id.size != ctx.app_id_size ||
+         memcmp((*result->manifest)->app_id.data,ctx.app_id,ctx.app_id_size))) {
+        *result->manifest = NULL;
+        status = PXA_STATUS_DENIED;
+    }
 done:
     if (root_fd >= 0) close(root_fd);
     if (lock_fd >= 0) close(lock_fd);

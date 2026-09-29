@@ -70,6 +70,24 @@ static void test_release(void *context, void *memory) {
     free(header);
 }
 
+static void *test_resize(void *context, void *memory, size_t size) {
+    allocator_state_t *state = (allocator_state_t *)context;
+    allocation_header_t *old_header =
+        (allocation_header_t *)memory - 1;
+    allocation_header_t *replacement;
+    size_t old_size = old_header->size;
+    if (state->fail_at != 0 && state->allocations + 1u == state->fail_at)
+        return NULL;
+    replacement = (allocation_header_t *)realloc(
+        old_header, sizeof(*replacement) + size);
+    if (replacement == NULL) return NULL;
+    replacement->size = size;
+    ++state->allocations;
+    state->current = state->current - old_size + size;
+    if (state->current > state->peak) state->peak = state->current;
+    return replacement + 1;
+}
+
 static pxa_status_t backend_begin(
     void *context, const pxa_ui_transaction_info_t *info,
     void **backend_transaction) {
@@ -383,6 +401,22 @@ static void test_invalid_utf8(pxa_runtime_t *runtime,
     free(stream.data);
 }
 
+static void test_canvas_image_validation(void) {
+    uint8_t image[30] = {PXA_UI_CANVAS_IMAGE_HANDLE};
+    pxa_write_u16(image + 2, 26);
+    pxa_write_u32(image + 12, 2);
+    pxa_write_u32(image + 16, 2);
+    pxa_write_u64(image + 22, UINT64_C(0x1234567800000042));
+    assert(!pxa_ui_validate_canvas(PXA_UI_FEATURE_CANVAS, image, sizeof(image)));
+    assert(pxa_ui_validate_canvas(0,image,sizeof(image)) == PXA_STATUS_UNSUPPORTED);
+    assert(pxa_ui_validate_canvas(PXA_UI_FEATURE_CANVAS,image,sizeof(image)-1) == PXA_STATUS_INVALID_ARGUMENT);
+    image[21] = 3;
+    assert(pxa_ui_validate_canvas(PXA_UI_FEATURE_CANVAS,image,sizeof(image)) == PXA_STATUS_INVALID_ARGUMENT);
+    image[21] = 0;
+    pxa_write_u64(image + 22,0);
+    assert(pxa_ui_validate_canvas(PXA_UI_FEATURE_CANVAS,image,sizeof(image)) == PXA_STATUS_INVALID_ARGUMENT);
+}
+
 static void test_canvas_bitmap_validation(void) {
     uint8_t bitmap[4 + 20 + 8] = {0};
     bitmap[0] = PXA_UI_CANVAS_BITMAP_RGB565;
@@ -537,6 +571,7 @@ static void test_buffer_growth(pxa_ui_service_t *service,
                                 allocator_state_t *allocator) {
     size_t capacity = 0;
     size_t baseline = allocator->current;
+    size_t previous_limit = service->config.max_dynamic_bytes;
     uint8_t *memory = pxa_ui_grow(service, NULL, 0, &capacity, 65, 65);
     assert(memory != NULL && capacity == 65);
     memset(memory, 0xa5, 65);
@@ -544,10 +579,26 @@ static void test_buffer_growth(pxa_ui_service_t *service,
     assert(pxa_ui_grow(service, memory, 65, &capacity, 4096, 4096) == NULL);
     assert(capacity == 65 && memory[64] == 0xa5);
     allocator->fail_at = 0;
+    /* A final-size fit succeeds even when old+new cannot both fit the quota. */
+    service->config.max_dynamic_bytes =
+        baseline + sizeof(pxa_ui_alloc_header_t) + 4096u;
     memory = pxa_ui_grow(service, memory, 65, &capacity, 4096, 4096);
     assert(memory != NULL && capacity == 4096);
+    assert(service->current_bytes == service->config.max_dynamic_bytes);
     for (size_t index = 0; index < 65; ++index) assert(memory[index] == 0xa5);
     pxa_ui_free(service, memory);
+    service->config.max_dynamic_bytes = previous_limit;
+    assert(allocator->current == baseline);
+    service->config.resize = NULL;
+    capacity = 0;
+    memory = pxa_ui_grow(service, NULL, 0, &capacity, 32, 128);
+    assert(memory != NULL);
+    memset(memory, 0x5a, 32);
+    memory = pxa_ui_grow(service, memory, 32, &capacity, 128, 128);
+    assert(memory != NULL && capacity == 128);
+    for (size_t index = 0; index < 32; ++index) assert(memory[index] == 0x5a);
+    pxa_ui_free(service, memory);
+    service->config.resize = test_resize;
     assert(allocator->current == baseline);
 }
 
@@ -818,7 +869,47 @@ static void test_surfaces(pxa_runtime_t *runtime, pxa_component_t component,
            memory.surface_count == 2);
 }
 
+static void test_grid_validation(void) {
+    uint8_t tracks[65 * PXA_UI_GRID_TRACK_BYTES] = {0};
+    for (uint16_t property = PXA_UI_PROPERTY_GRID_COLUMNS;
+         property <= PXA_UI_PROPERTY_GRID_ROWS; ++property) {
+        pxa_bytes_t value = {tracks, 64 * PXA_UI_GRID_TRACK_BYTES};
+        assert(!pxa_ui_validate_property(PXA_UI_FEATURE_GRID, property, PXA_UI_NODE_BOX, 0, value));
+        value.size = sizeof(tracks);
+        assert(pxa_ui_validate_property(PXA_UI_FEATURE_GRID, property, PXA_UI_NODE_BOX, 0, value) == PXA_STATUS_INVALID_ARGUMENT);
+        value.size = 8;
+        const uint32_t weights[] = {0, 1, 99, 100, UINT32_MAX};
+        tracks[0] = PXA_UI_GRID_FRACTION;
+        for (unsigned i = 0; i < sizeof(weights) / sizeof(weights[0]); ++i) {
+            pxa_write_u32(tracks + 4, weights[i]);
+            pxa_status_t expected = weights[i] >= 1 && weights[i] <= 99 ? PXA_STATUS_OK : PXA_STATUS_INVALID_ARGUMENT;
+            assert(pxa_ui_validate_property(PXA_UI_FEATURE_GRID, property, PXA_UI_NODE_BOX, 0, value) == expected);
+        }
+        tracks[0] = PXA_UI_GRID_FIXED;
+        pxa_write_u32(tracks + 4, INT32_MAX);
+        assert(!pxa_ui_validate_property(PXA_UI_FEATURE_GRID, property, PXA_UI_NODE_BOX, 0, value));
+        pxa_write_u32(tracks + 4, UINT32_MAX);
+        assert(pxa_ui_validate_property(PXA_UI_FEATURE_GRID, property, PXA_UI_NODE_BOX, 0, value) == PXA_STATUS_INVALID_ARGUMENT);
+        memset(tracks, 0, sizeof(tracks));
+        for (unsigned reserved = 1; reserved <= 3; ++reserved) {
+            tracks[reserved] = 1;
+            assert(pxa_ui_validate_property(PXA_UI_FEATURE_GRID, property, PXA_UI_NODE_BOX, 0, value) == PXA_STATUS_INVALID_ARGUMENT);
+            tracks[reserved] = 0;
+        }
+        tracks[0] = 3;
+        assert(pxa_ui_validate_property(PXA_UI_FEATURE_GRID, property, PXA_UI_NODE_BOX, 0, value) == PXA_STATUS_INVALID_ARGUMENT);
+        memset(tracks, 0, sizeof(tracks));
+    }
+    pxa_bytes_t cell = {tracks, 8};
+    assert(pxa_ui_validate_property(PXA_UI_FEATURE_GRID, PXA_UI_PROPERTY_GRID_CELL, PXA_UI_NODE_BOX, 0, cell) == PXA_STATUS_INVALID_ARGUMENT);
+    pxa_write_u16(tracks + 4, 1); pxa_write_u16(tracks + 6, 1);
+    assert(!pxa_ui_validate_property(PXA_UI_FEATURE_GRID, PXA_UI_PROPERTY_GRID_CELL, PXA_UI_NODE_BOX, 0, cell));
+    pxa_write_u16(tracks + 6, 0);
+    assert(pxa_ui_validate_property(PXA_UI_FEATURE_GRID, PXA_UI_PROPERTY_GRID_CELL, PXA_UI_NODE_BOX, 0, cell) == PXA_STATUS_INVALID_ARGUMENT);
+}
+
 int main(void) {
+    test_grid_validation();
     pxa_runtime_limits_t runtime_limits;
     pxa_runtime_t *runtime = NULL;
     pxa_component_t component = PXA_COMPONENT_INVALID;
@@ -851,6 +942,7 @@ int main(void) {
     config.allocator_context = &allocator;
     config.allocate = test_allocate;
     config.release = test_release;
+    config.resize = test_resize;
     config.clock_context = &clock_us;
     config.now_us = test_now_us;
     config.color_scheme = PXA_UI_COLOR_SCHEME_DARK;
@@ -902,6 +994,7 @@ int main(void) {
     test_registry_reserve_rollback(service, component, &allocator);
     test_atomic_patch(runtime, component, service, &backend_state);
     test_invalid_utf8(runtime, component, &backend_state);
+    test_canvas_image_validation();
     test_canvas_bitmap_validation();
     test_canvas(runtime, component, service, &backend_state);
     assert(pxa_component_finish_start(runtime, component, PXA_STATUS_OK) ==
@@ -969,6 +1062,101 @@ int main(void) {
     assert(backend_state.resets == 1);
     assert(backend_state.surface_closes == 2);
     assert(allocator.current == 0);
+    {
+        pxa_component_t v1_component = PXA_COMPONENT_INVALID;
+        uint8_t event[128];
+        uint8_t request[32];
+        uint8_t open_payload[12];
+        uint8_t frame_payload[16] = {0};
+        uint8_t draw_list[32] = {0};
+        size_t event_size = 0;
+        pxa_message_view_t decoded;
+        pxa_writer_t writer;
+        pxa_handle64_t stream_handle;
+        memset(&backend_state, 0, sizeof(backend_state));
+        assert(pxa_component_create(runtime, 2, &v1_component) ==
+               PXA_STATUS_OK);
+        assert(pxa_ui_bind(service, v1_component, &backend) == PXA_STATUS_OK);
+        assert(pxa_component_begin_start(runtime, v1_component) ==
+               PXA_STATUS_OK);
+        assert(pxa_component_set_core_major(runtime, v1_component, 1) ==
+               PXA_STATUS_OK);
+        assert(pxa_component_validate_import(runtime, v1_component) ==
+               PXA_STATUS_OK);
+        test_initial_tree(runtime, v1_component, service, &backend_state);
+        assert(pxa_component_finish_start(runtime, v1_component,
+                                           PXA_STATUS_OK) == PXA_STATUS_OK);
+        pxa_writer_init(&writer, request, sizeof(request));
+        assert(pxa_writer_message(&writer, PXA_UI_SERVICE_ID,
+                                  PXA_UI_THEME_GET, 81, NULL, 0) ==
+               PXA_STATUS_OK);
+        assert(pxa_component_begin_event(runtime, v1_component) ==
+               PXA_STATUS_OK);
+        assert(pxa_runtime_control(runtime, v1_component,
+                                   request, writer.size) == PXA_STATUS_OK);
+        assert(pxa_component_finish_event(runtime, v1_component, 1) ==
+               PXA_STATUS_OK);
+        assert(pxa_event_pop(runtime, v1_component, event, sizeof(event),
+                             &event_size) == PXA_STATUS_OK);
+        assert(pxa_message_decode(event, event_size, sizeof(event),
+                                  &decoded) == PXA_STATUS_OK &&
+               decoded.opcode == PXA_UI_THEME_GET &&
+               decoded.request_id == 81 && decoded.payload.size == 64);
+
+        pxa_write_u32(frame_payload, PXA_UI_PRIMARY_SURFACE);
+        pxa_write_u32(frame_payload + 4, 3);
+        pxa_write_u32(frame_payload + 8, 10);
+        assert(pxa_component_begin_event(runtime, v1_component) ==
+               PXA_STATUS_OK);
+        assert(control(runtime, v1_component, PXA_UI_CANVAS_BEGIN,
+                       frame_payload, sizeof(frame_payload)) == PXA_STATUS_OK);
+        assert(pxa_component_finish_event(runtime, v1_component, 1) ==
+               PXA_STATUS_OK);
+        pxa_write_u32(open_payload, 82);
+        pxa_write_u32(open_payload + 4, PXA_UI_PRIMARY_SURFACE);
+        pxa_write_u32(open_payload + 8, 3);
+        assert(pxa_component_begin_event(runtime, v1_component) ==
+               PXA_STATUS_OK);
+        assert(control(runtime, v1_component, PXA_UI_CANVAS_STREAM_OPEN,
+                       open_payload, sizeof(open_payload)) == PXA_STATUS_OK);
+        assert(pxa_component_finish_event(runtime, v1_component, 1) ==
+               PXA_STATUS_OK);
+        assert(pxa_event_pop(runtime, v1_component, event, sizeof(event),
+                             &event_size) == PXA_STATUS_OK);
+        assert(pxa_message_decode(event, event_size, sizeof(event),
+                                  &decoded) == PXA_STATUS_OK &&
+               decoded.opcode == PXA_UI_CANVAS_STREAM_READY &&
+               decoded.payload.size == 16 &&
+               pxa_read_u32(decoded.payload.data) == 82 &&
+               (int32_t)pxa_read_u32(decoded.payload.data + 12) ==
+                   PXA_STATUS_OK);
+        stream_handle = pxa_read_u64(decoded.payload.data + 4);
+        assert(stream_handle > UINT32_MAX);
+        draw_list[0] = PXA_UI_CANVAS_RECT;
+        pxa_write_u16(draw_list + 2, 28);
+        pxa_write_u32(draw_list + 12, 10);
+        pxa_write_u32(draw_list + 16, 10);
+        assert(pxa_component_begin_event(runtime, v1_component) ==
+               PXA_STATUS_OK);
+        assert(pxa_runtime_io64(runtime, v1_component, stream_handle,
+                                PXA_IO_WRITE, draw_list,
+                                sizeof(draw_list)) ==
+               (int32_t)sizeof(draw_list));
+        assert(pxa_handle_close64(runtime, v1_component, stream_handle) ==
+               PXA_STATUS_OK);
+        assert(pxa_runtime_io64(runtime, v1_component, stream_handle,
+                                PXA_IO_WRITE, draw_list, 1) ==
+               PXA_STATUS_NOT_FOUND);
+        assert(pxa_component_finish_event(runtime, v1_component, 1) ==
+               PXA_STATUS_OK);
+        assert(pxa_component_request_stop(runtime, v1_component,
+                                           PXA_STOP_NORMAL) == PXA_STATUS_OK);
+        assert(pxa_component_begin_stop(runtime, v1_component) ==
+               PXA_STATUS_OK);
+        assert(pxa_component_finish_stop(runtime, v1_component) ==
+               PXA_STATUS_OK);
+        assert(allocator.current == 0);
+    }
     pxa_ui_service_deinit(service);
     pxa_runtime_deinit(runtime);
     free(service_workspace);

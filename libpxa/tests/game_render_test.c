@@ -5,6 +5,7 @@
 
 #include "pxa/game_render.h"
 #include "pxa/service.h"
+#include "core/runtime_internal.h"
 
 typedef struct {
     unsigned creates;
@@ -25,6 +26,10 @@ static pxa_status_t backend_create(
            (desc->width == 400 && desc->height == 300));
     assert(desc->buffer_count == 3);
     assert(desc->flags == PXA_GAME_RENDER_FLAG_PREFER_DIRECT_SCANOUT);
+    assert(desc->scratch_mode == (backend->creates == 0
+               ? PXA_GAME_RENDER_SCRATCH_NONE
+               : PXA_GAME_RENDER_SCRATCH_DEPTH16));
+    assert(desc->max_draw_bytes == (backend->creates == 0 ? 8192u : 0u));
     ++backend->creates;
     backend->last_width = desc->width;
     backend->last_height = desc->height;
@@ -74,9 +79,12 @@ static void backend_close(void *context, uint64_t provider_context) {
 }
 
 static size_t make_create(uint8_t *packet, size_t capacity) {
-    uint8_t payload[8] = {0x20, 0x03, 0xe0, 0x01, 3,
-                          PXA_GAME_RENDER_FLAG_PREFER_DIRECT_SCANOUT, 0, 0};
+    uint8_t payload[12] = {
+        0x20, 0x03, 0xe0, 0x01, 3,
+        PXA_GAME_RENDER_FLAG_PREFER_DIRECT_SCANOUT, 0,
+        PXA_GAME_RENDER_SCRATCH_NONE, 0, 0, 0, 0};
     pxa_writer_t writer;
+    pxa_write_u32(payload + 8, 8192u);
     pxa_writer_init(&writer, packet, capacity);
     assert(pxa_writer_message(&writer, PXA_GAME_RENDER_SERVICE_ID,
                               PXA_GAME_RENDER_CREATE_CONTEXT, 7, payload,
@@ -175,7 +183,7 @@ int main(void) {
     assert(pxa_read_u32(event.payload.data + 8) ==
            (PXA_RASTER_CAP_TEXTURED_QUAD | PXA_RASTER_CAP_SPRITE_BATCH |
             PXA_RASTER_CAP_TRIANGLE_BATCH));
-    assert(pxa_read_u32(event.payload.data + 12) == PXA_RASTER_MAX_DRAW_BYTES);
+    assert(pxa_read_u32(event.payload.data + 12) == 8192u);
     assert(pxa_event_consume(runtime, component, view.token) == PXA_STATUS_OK);
 
     assert(pxa_component_begin_event(runtime, component) == PXA_STATUS_OK);
@@ -253,6 +261,49 @@ int main(void) {
     assert(pxa_event_consume(runtime, component, view.token) == PXA_STATUS_OK);
     assert(backend.creates == 3 && backend.uploads == 1 &&
            backend.submits == 1 && backend.queries == 1 && backend.closes == 3);
+
+    /* Core v1 creates the native resource directly, even after every free
+     * slot has passed the legacy 16-bit generation range. */
+    assert(pxa_component_abort(runtime, component, PXA_STOP_NORMAL) ==
+           PXA_STATUS_OK);
+    assert(pxa_component_remove(runtime, component) == PXA_STATUS_OK);
+    assert(pxa_component_create(runtime, 2, &component) == PXA_STATUS_OK);
+    assert(pxa_component_set_core_major(runtime, component, 1) ==
+           PXA_STATUS_OK);
+    assert(pxa_component_begin_start(runtime, component) == PXA_STATUS_OK);
+    assert(pxa_component_finish_start(runtime, component, PXA_STATUS_OK) ==
+           PXA_STATUS_OK);
+    for (uint16_t i = 0; i < limits.max_handles; ++i)
+        runtime->resources.slots[i].generation = UINT16_MAX + UINT32_C(1);
+    assert(pxa_component_begin_event(runtime, component) == PXA_STATUS_OK);
+    assert(pxa_runtime_control(runtime, component, packet,
+                               make_auto_create(packet, sizeof(packet), 0)) ==
+           PXA_STATUS_OK);
+    assert(pxa_component_finish_event(runtime, component, 1) == PXA_STATUS_OK);
+    assert(pxa_event_peek(runtime, component, &view) == PXA_STATUS_OK);
+    assert(pxa_event_read(runtime, view.token, 0, event_bytes,
+                          sizeof(event_bytes), &event_size) == PXA_STATUS_OK);
+    assert(pxa_message_decode(event_bytes, event_size, PXA_MAX_CONTROL_MESSAGE,
+                              &event) == PXA_STATUS_OK);
+    assert(event.payload.size == 36);
+    assert((int32_t)pxa_read_u32(event.payload.data) == PXA_STATUS_OK);
+    {
+        pxa_handle64_t wide = pxa_read_u64(event.payload.data + 4);
+        assert((uint32_t)(wide >> 32) == UINT16_MAX + UINT32_C(1));
+        assert(pxa_read_u16(event.payload.data + 28) == 400);
+        assert(pxa_event_consume(runtime, component, view.token) ==
+               PXA_STATUS_OK);
+        assert(pxa_component_begin_event(runtime, component) == PXA_STATUS_OK);
+        assert(pxa_runtime_io64(runtime, component, wide,
+                                PXA_GAME_RENDER_IO_TELEMETRY, io,
+                                sizeof(io)) == (int32_t)sizeof(io));
+        assert(pxa_handle_close64(runtime, component, wide) == PXA_STATUS_OK);
+        assert(pxa_runtime_io64(runtime, component, wide,
+                                PXA_GAME_RENDER_IO_TELEMETRY, io,
+                                sizeof(io)) == PXA_STATUS_NOT_FOUND);
+        assert(pxa_component_finish_event(runtime, component, 1) ==
+               PXA_STATUS_OK);
+    }
 
     pxa_runtime_deinit(runtime);
     free(service_workspace);

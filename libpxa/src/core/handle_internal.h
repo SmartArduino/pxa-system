@@ -10,7 +10,7 @@ typedef struct {
     pxa_resource_t resource;
     pxa_authority_t authority;
     uint32_t next_free;
-    uint16_t generation;
+    uint32_t generation;
     uint16_t owner_index;
     pxa_resource_type_t type;
     uint8_t occupied;
@@ -25,6 +25,7 @@ typedef struct {
 typedef struct {
     pxa_resource_slot_t *slots;
     uint32_t free_head;
+    uint32_t free_tail;
     uint16_t capacity;
     uint16_t count;
     uint16_t peak;
@@ -41,18 +42,40 @@ pxa_status_t pxa_resource_table_open(
     uint32_t owner_index, pxa_resource_type_t type,
     pxa_authority_t authority, const pxa_resource_t *resource,
     pxa_handle_t *output);
+pxa_status_t pxa_resource_table_open64(
+    pxa_resource_table_t *table, pxa_resource_owner_t *owner,
+    uint32_t owner_index, pxa_resource_type_t type,
+    pxa_authority_t authority, const pxa_resource_t *resource,
+    pxa_handle64_t *output);
 pxa_status_t pxa_resource_table_get(const pxa_resource_table_t *table,
                                     uint32_t owner_index,
                                     pxa_handle_t handle,
                                     pxa_resource_type_t expected_type,
                                     pxa_resource_t *output);
+pxa_status_t pxa_resource_table_get64(const pxa_resource_table_t *table,
+                                      uint32_t owner_index,
+                                      pxa_handle64_t handle,
+                                      pxa_resource_type_t expected_type,
+                                      pxa_resource_t *output);
 int32_t pxa_resource_table_io(pxa_resource_table_t *table,
                               uint32_t owner_index, pxa_handle_t handle,
                               uint32_t operation, uint8_t *data, size_t size);
+int32_t pxa_resource_table_io64(pxa_resource_table_t *table,
+                                uint32_t owner_index, pxa_handle64_t handle,
+                                uint32_t operation, uint8_t *data,
+                                size_t size);
 pxa_status_t pxa_resource_table_close(pxa_resource_table_t *table,
                                       pxa_resource_owner_t *owner,
                                       uint32_t owner_index,
                                       pxa_handle_t handle);
+pxa_status_t pxa_resource_table_close64(pxa_resource_table_t *table,
+                                        pxa_resource_owner_t *owner,
+                                        uint32_t owner_index,
+                                        pxa_handle64_t handle);
+pxa_status_t pxa_resource_table_widen(const pxa_resource_table_t *table,
+                                      uint32_t owner_index,
+                                      pxa_handle_t legacy_handle,
+                                      pxa_handle64_t *output);
 
 void pxa_resource_table_detach_owner(pxa_resource_table_t *table,
                                      pxa_resource_owner_t *owner,

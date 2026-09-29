@@ -8,12 +8,14 @@
 
 typedef struct {
     pxa_authority_t authority;
+    uint64_t identity;
     uint32_t request_id;
     uint32_t next_free;
     uint32_t owner_next;
     uint32_t hash_next;
     uint32_t completion_next;
     uint32_t completion_event;
+    uint32_t completion_payload_capacity;
     uint16_t owner_index;
     uint16_t service;
     uint16_t opcode;
@@ -21,6 +23,7 @@ typedef struct {
     uint8_t committed;
     uint8_t cancelling;
     uint8_t completion_queued;
+    uint8_t completion_reserved;
 } pxa_request_slot_t;
 
 typedef struct {
@@ -32,6 +35,7 @@ typedef struct {
 
 typedef struct {
     pxa_request_slot_t *slots;
+    uint64_t next_identity;
     uint32_t *buckets;
     uint32_t free_head;
     uint32_t buckets_per_owner;
@@ -53,6 +57,10 @@ pxa_status_t pxa_request_table_begin(
     pxa_request_table_t *table, pxa_request_owner_t *owner,
     uint32_t owner_index, uint16_t per_owner_capacity, uint32_t request_id,
     uint16_t service, uint16_t opcode, pxa_authority_t authority);
+pxa_status_t pxa_request_table_reserve_completion(
+    pxa_request_table_t *table, pxa_request_owner_t *owner,
+    uint32_t owner_index, pxa_event_pool_t *event_pool,
+    uint32_t request_id, size_t payload_capacity);
 pxa_status_t pxa_request_table_commit(pxa_request_table_t *table,
                                       uint32_t owner_index,
                                       uint32_t request_id);

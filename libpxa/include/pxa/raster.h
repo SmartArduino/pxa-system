@@ -21,6 +21,10 @@ extern "C" {
 #define PXA_RASTER_MAX_COMMANDS UINT32_C(1024)
 #define PXA_RASTER_MAX_TEXTURE_DIMENSION UINT16_C(256)
 
+#define PXA_RASTER_SCRATCH_DEPTH16 UINT8_C(0)
+#define PXA_RASTER_SCRATCH_NONE UINT8_C(1)
+#define PXA_RASTER_SCRATCH_COVERAGE_2BIT UINT8_C(2)
+
 #define PXA_RASTER_CAP_FLAT_QUAD UINT32_C(1)
 #define PXA_RASTER_CAP_TEXTURED_QUAD UINT32_C(2)
 #define PXA_RASTER_CAP_ADDITIVE_SPRITE UINT32_C(4)
@@ -148,6 +152,8 @@ typedef struct {
     uint16_t height;
     /* Leading commands already materialized by a platform accelerator. */
     uint32_t prefilled_commands;
+    /* Defaults to DEPTH16 for zero-initialized legacy targets. */
+    uint8_t scratch_mode;
 } pxa_raster_target_t;
 
 typedef struct {
@@ -176,6 +182,10 @@ typedef struct {
     uint32_t required_capabilities;
     uint32_t command_count;
     uint64_t frame_id;
+    /* Host-only execution dependencies, collected during validation. Unused
+     * bindings need not stay alive after validation. Not part of wire ABI. */
+    uint64_t texture_mask;
+    uint8_t uses_palette;
 } pxa_raster_draw_list_view_t;
 
 pxa_status_t pxa_raster_decode_upload(const uint8_t *bytes, size_t size,

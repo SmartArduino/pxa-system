@@ -9,7 +9,7 @@
 #include "pxa/wasi.h"
 
 #define PXA_TEST_PATH_CAPACITY 1024
-#define PXA_PACKAGE_TOOL_INVENTORY_COUNT 6u
+#define PXA_PACKAGE_TOOL_INVENTORY_COUNT 7u
 
 static int bytes_equal_text(pxa_bytes_t value, const char *text) {
     size_t size = strlen(text);
@@ -66,6 +66,7 @@ int main(int argc, char **argv) {
         "artifacts/responder.wasm",
         "assets/SOURCES.md",
         "assets/flappy-bird/icon.png",
+        "assets/resources.pxi",
     };
     pxa_package_limits_t limits;
     pxa_package_manifest_t *manifest = NULL;
@@ -243,7 +244,7 @@ int main(int argc, char **argv) {
         };
     }
     activation = (pxa_package_activation_profile_t){
-        {0, 2}, capabilities, main_component->service_count,
+        {1, 0}, capabilities, main_component->service_count, 0,
     };
     if (pxa_package_requirements_validate(manifest, main_component,
                                           &activation) != PXA_STATUS_OK) {

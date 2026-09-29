@@ -55,7 +55,9 @@ void *pxa_ui_grow(pxa_ui_service_t *service, void *memory,
     size_t next;
     void *replacement;
     if (service == NULL || capacity == NULL || used > *capacity ||
-        required > maximum || required < used)
+        required > maximum || required < used ||
+        (memory == NULL && *capacity != 0) ||
+        (memory != NULL && *capacity == 0))
         return NULL;
     if (required <= *capacity) return memory;
     next = *capacity == 0 ? (maximum < 256u ? maximum : 256u) : *capacity;
@@ -64,6 +66,30 @@ void *pxa_ui_grow(pxa_ui_service_t *service, void *memory,
         doubled = doubled > maximum ? maximum : doubled;
         if (doubled <= next) return NULL;
         next = doubled;
+    }
+    if (memory != NULL && service->config.resize != NULL) {
+        pxa_ui_alloc_header_t *header =
+            (pxa_ui_alloc_header_t *)memory - 1;
+        size_t old_total = header->size;
+        size_t new_total;
+        size_t retained;
+        if (next > SIZE_MAX - sizeof(*header) ||
+            old_total > service->current_bytes)
+            return NULL;
+        new_total = sizeof(*header) + next;
+        retained = service->current_bytes - old_total;
+        if (retained > service->config.max_dynamic_bytes ||
+            new_total > service->config.max_dynamic_bytes - retained)
+            return NULL;
+        header = (pxa_ui_alloc_header_t *)service->config.resize(
+            service->config.allocator_context, header, new_total);
+        if (header == NULL) return NULL;
+        header->size = new_total;
+        service->current_bytes = retained + new_total;
+        if (service->current_bytes > service->peak_bytes)
+            service->peak_bytes = service->current_bytes;
+        *capacity = next;
+        return header + 1;
     }
     replacement = pxa_ui_alloc(service, next);
     if (replacement == NULL) return NULL;

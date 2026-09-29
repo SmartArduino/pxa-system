@@ -7,6 +7,22 @@
 
 #include "pxa/activation.h"
 #include "pxa/package.h"
+#include "pxa/log.h"
+#include "pxa/device.h"
+#include "pxa/game_render.h"
+#include "pxa/window.h"
+#include "pxa/permission.h"
+#include "pxa/storage.h"
+#include "pxa/fs.h"
+#include "pxa/ipc.h"
+#include "pxa/net.h"
+#include "pxa/audio.h"
+#include "pxa/sensor.h"
+#include "pxa/scheduler.h"
+#include "pxa/surface.h"
+#include "pxa/clock.h"
+#include "pxa/ui.h"
+#include "pxa/wasi.h"
 #include "pxa/runtime.h"
 #include "pxa/slot_transaction.h"
 
@@ -518,12 +534,15 @@ static void test_package_golden(void) {
     capabilities[2] = (pxa_package_service_capability_t){
         7, {0, 1}, 0,
     };
-    activation.core_version = (pxa_package_version_t){0, 1};
+    memset(&activation, 0, sizeof(activation));
+    activation.core_version = (pxa_package_version_t){1, 0};
     activation.services = capabilities;
     activation.service_count = 3;
+    /* Historical golden package remains parseable for signature/inventory
+     * tests, but its Core v0 requirement is no longer activatable. */
     assert(pxa_package_requirements_validate(
                manifest, &manifest->components[0], &activation) ==
-           PXA_STATUS_OK);
+           PXA_STATUS_UNSUPPORTED);
     host.target = (pxa_bytes_t){(const uint8_t *)"esp32-s3", 8};
     host.engine = (pxa_bytes_t){(const uint8_t *)"wamr", 4};
     host.engine_abi =
@@ -535,7 +554,12 @@ static void test_package_golden(void) {
     assert(artifact != NULL &&
            bytes_are(artifact->path, "artifacts/main.esp32s3.aot"));
     assert(pxa_package_same_identity(manifest, manifest));
-    test_activation(manifest, &activation, &host);
+    {
+        pxa_package_manifest_t current_manifest = *manifest;
+        current_manifest.min_sdk = (pxa_package_version_t){1, 0};
+        activation.core_version = (pxa_package_version_t){1, 0};
+        test_activation(&current_manifest, &activation, &host);
+    }
 
     mutated = (uint8_t *)malloc(manifest_size);
     assert(mutated != NULL);
@@ -666,7 +690,130 @@ static void test_localized_metadata(void) {
                &metadata) == PXA_STATUS_INVALID_ARGUMENT);
 }
 
+static void test_core_v1_gate(void) {
+    pxa_package_manifest_t manifest = {0};
+    pxa_package_service_requirement_t requirement = {0};
+    pxa_package_component_t component = {0};
+    pxa_package_service_capability_t service = {0};
+    pxa_package_activation_profile_t host = {0};
+    manifest.min_sdk = (pxa_package_version_t){1, 0};
+    requirement.service = PXA_LOG_SERVICE_ID;
+    requirement.min_version = (pxa_package_version_t){0, 1};
+    requirement.max_version = (pxa_package_version_t){0, 1};
+    component.services = &requirement;
+    component.service_count = 1;
+    service.service = PXA_LOG_SERVICE_ID;
+    service.version = (pxa_package_version_t){0, 1};
+    host.core_version = (pxa_package_version_t){0, 1};
+    host.services = &service;
+    host.service_count = 1;
+    assert(pxa_package_requirements_validate(&manifest, &component, &host) ==
+           PXA_STATUS_UNSUPPORTED);
+    host.core_version = (pxa_package_version_t){1, 0};
+    assert(pxa_package_requirements_validate(&manifest, &component, &host) ==
+           PXA_STATUS_OK);
+    requirement.service = PXA_DEVICE_SERVICE_ID;
+    service.service = PXA_DEVICE_SERVICE_ID;
+    assert(pxa_package_requirements_validate(&manifest, &component, &host) ==
+           PXA_STATUS_OK);
+    requirement.service = PXA_GAME_RENDER_SERVICE_ID;
+    service.service = PXA_GAME_RENDER_SERVICE_ID;
+    assert(pxa_package_requirements_validate(&manifest, &component, &host) ==
+           PXA_STATUS_OK);
+    requirement.service = PXA_WINDOW_SERVICE_ID;
+    service.service = PXA_WINDOW_SERVICE_ID;
+    assert(pxa_package_requirements_validate(&manifest, &component, &host) ==
+           PXA_STATUS_OK);
+    requirement.service = PXA_PERMISSION_SERVICE_ID;
+    service.service = PXA_PERMISSION_SERVICE_ID;
+    assert(pxa_package_requirements_validate(&manifest, &component, &host) ==
+           PXA_STATUS_OK);
+    requirement.service = PXA_STORAGE_SERVICE_ID;
+    service.service = PXA_STORAGE_SERVICE_ID;
+    assert(pxa_package_requirements_validate(&manifest, &component, &host) ==
+           PXA_STATUS_OK);
+    requirement.service = PXA_FS_SERVICE_ID;
+    service.service = PXA_FS_SERVICE_ID;
+    assert(pxa_package_requirements_validate(&manifest, &component, &host) ==
+           PXA_STATUS_OK);
+    requirement.service = PXA_IPC_SERVICE_ID;
+    service.service = PXA_IPC_SERVICE_ID;
+    assert(pxa_package_requirements_validate(&manifest, &component, &host) ==
+           PXA_STATUS_OK);
+    requirement.service = PXA_NET_SERVICE_ID;
+    service.service = PXA_NET_SERVICE_ID;
+    requirement.min_version = (pxa_package_version_t){0, 2};
+    requirement.max_version = (pxa_package_version_t){0, 2};
+    service.version = (pxa_package_version_t){0, 2};
+    assert(pxa_package_requirements_validate(&manifest, &component, &host) ==
+           PXA_STATUS_OK);
+    requirement.service = PXA_AUDIO_SERVICE_ID;
+    service.service = PXA_AUDIO_SERVICE_ID;
+    requirement.min_version = (pxa_package_version_t){0, 5};
+    requirement.max_version = (pxa_package_version_t){0, 5};
+    service.version = (pxa_package_version_t){0, 5};
+    assert(pxa_package_requirements_validate(&manifest, &component, &host) ==
+           PXA_STATUS_OK);
+    requirement.service = PXA_SENSOR_SERVICE_ID;
+    service.service = PXA_SENSOR_SERVICE_ID;
+    requirement.min_version = (pxa_package_version_t){0, 1};
+    requirement.max_version = (pxa_package_version_t){0, 1};
+    service.version = (pxa_package_version_t){0, 1};
+    assert(pxa_package_requirements_validate(&manifest, &component, &host) ==
+           PXA_STATUS_OK);
+    requirement.service = PXA_WORK_SERVICE_ID;
+    service.service = PXA_WORK_SERVICE_ID;
+    requirement.min_version = (pxa_package_version_t){0, 1};
+    requirement.max_version = (pxa_package_version_t){0, 1};
+    service.version = (pxa_package_version_t){0, 1};
+    assert(pxa_package_requirements_validate(&manifest, &component, &host) ==
+           PXA_STATUS_OK);
+    requirement.service = PXA_SURFACE_SERVICE_ID;
+    service.service = PXA_SURFACE_SERVICE_ID;
+    requirement.min_version = (pxa_package_version_t){0, 2};
+    requirement.max_version = (pxa_package_version_t){0, 2};
+    service.version = (pxa_package_version_t){0, 2};
+    assert(pxa_package_requirements_validate(&manifest, &component, &host) ==
+           PXA_STATUS_OK);
+    requirement.service = PXA_CLOCK_SERVICE_ID;
+    service.service = PXA_CLOCK_SERVICE_ID;
+    requirement.min_version = (pxa_package_version_t){0, 1};
+    requirement.max_version = (pxa_package_version_t){0, 1};
+    service.version = (pxa_package_version_t){0, 1};
+    assert(pxa_package_requirements_validate(&manifest, &component, &host) ==
+           PXA_STATUS_OK);
+    requirement.service = PXA_UI_SERVICE_ID;
+    service.service = PXA_UI_SERVICE_ID;
+    requirement.min_version = (pxa_package_version_t){0, 4};
+    requirement.max_version = (pxa_package_version_t){0, 4};
+    service.version = (pxa_package_version_t){0, 4};
+    assert(pxa_package_requirements_validate(&manifest, &component, &host) ==
+           PXA_STATUS_OK);
+    requirement.service = PXA_WASI_SERVICE_ID;
+    requirement.min_version = (pxa_package_version_t){0, 1};
+    requirement.max_version = (pxa_package_version_t){0, 1};
+    requirement.required_features = PXA_WASI_FEATURE_CLOCKS |
+                                    PXA_WASI_FEATURE_RANDOM;
+    service.service = PXA_WASI_SERVICE_ID;
+    service.version = (pxa_package_version_t){0, 1};
+    service.features = PXA_WASI_FEATURE_CLOCKS | PXA_WASI_FEATURE_RANDOM;
+    assert(pxa_package_requirements_validate(&manifest, &component, &host) ==
+           PXA_STATUS_OK);
+    service.features = PXA_WASI_FEATURE_CLOCKS;
+    assert(pxa_package_requirements_validate(&manifest, &component, &host) ==
+           PXA_STATUS_UNSUPPORTED);
+    requirement.required_features = 0;
+    requirement.service = 255;
+    assert(pxa_package_requirements_validate(&manifest, &component, &host) ==
+           PXA_STATUS_UNSUPPORTED);
+    requirement.service = PXA_LOG_SERVICE_ID;
+    manifest.min_sdk.minor = 1;
+    assert(pxa_package_requirements_validate(&manifest, &component, &host) ==
+           PXA_STATUS_UNSUPPORTED);
+}
+
 int main(void) {
+    test_core_v1_gate();
     test_recovery_states();
     test_commit_and_recovery();
     test_package_golden();

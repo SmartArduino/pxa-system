@@ -39,12 +39,13 @@ struct pxa_net_service {
 
 struct pxa_net_pending {
     pxa_component_t component;
-    pxa_handle_t permission_handle;
+    pxa_handle64_t permission_handle;
     pxa_authority_t authority;
     uint64_t operation;
     uint32_t request_id;
     uint32_t max_response_bytes;
     uint16_t opcode;
+    uint16_t core_major;
     uint16_t next;
     uint16_t previous_active;
 };
@@ -335,6 +336,7 @@ static pxa_status_t net_control(void *context, pxa_runtime_t *runtime,
     pxa_net_pending_t *pending = NULL;
     pxa_authority_t authority = 0;
     uint64_t operation = 0;
+    uint16_t core_major = 0;
     pxa_status_t status;
     pxa_status_t begin;
     (void)runtime;
@@ -345,18 +347,32 @@ static pxa_status_t net_control(void *context, pxa_runtime_t *runtime,
         message->opcode != PXA_NET_HTTP_REQUEST) {
         return PXA_STATUS_UNSUPPORTED;
     }
-    status = pxa_net_request_parse(&service->request_limits, message->opcode,
-                                   message->payload, &parsed);
+    status = pxa_component_core_major(service->runtime, component,
+                                      &core_major);
+    if (status == PXA_STATUS_OK)
+        status = pxa_net_request_parse(&service->request_limits, core_major,
+                                       message->opcode, message->payload,
+                                       &parsed);
     if (status == PXA_STATUS_OK) {
-        status = pxa_permission_resolve(
-            service->permissions, component, parsed.permission_handle,
-            (pxa_bytes_t){permission_name, sizeof(permission_name) - 1},
-            parsed.request.origin, &authority);
+        if (core_major == 1)
+            status = pxa_permission_resolve64(
+                service->permissions, component, parsed.permission_handle,
+                (pxa_bytes_t){permission_name, sizeof(permission_name) - 1},
+                parsed.request.origin, &authority);
+        else
+            status = pxa_permission_resolve(
+                service->permissions, component,
+                (pxa_handle_t)parsed.permission_handle,
+                (pxa_bytes_t){permission_name, sizeof(permission_name) - 1},
+                parsed.request.origin, &authority);
     }
-    begin = pxa_request_begin(service->runtime, component,
-                              message->request_id, PXA_NET_SERVICE_ID,
-                              message->opcode,
-                              status == PXA_STATUS_OK ? authority : 0);
+    begin = pxa_request_begin_reserved(
+        service->runtime, component, message->request_id,
+        PXA_NET_SERVICE_ID, message->opcode,
+        status == PXA_STATUS_OK ? authority : 0,
+        message->opcode == PXA_NET_FETCH
+            ? PXA_NET_RESULT_OVERHEAD
+            : service->result_capacity);
     if (begin != PXA_STATUS_OK) return begin;
     if (status == PXA_STATUS_OK &&
         parsed.request.max_response_bytes > service->max_response_bytes) {
@@ -398,6 +414,7 @@ static pxa_status_t net_control(void *context, pxa_runtime_t *runtime,
     pending->request_id = message->request_id;
     pending->max_response_bytes = parsed.request.max_response_bytes;
     pending->opcode = message->opcode;
+    pending->core_major = core_major;
     return PXA_STATUS_OK;
 }
 
@@ -470,16 +487,21 @@ pxa_status_t pxa_net_poll(
         pxa_resource_t permission_resource;
         pxa_net_stream_t *stream = NULL;
         pxa_resource_t resource;
-        pxa_handle_t handle = PXA_HANDLE_INVALID;
+        pxa_handle64_t handle = PXA_HANDLE_INVALID;
         size_t result_size = 0;
         pxa_status_t status;
         pxa_status_t complete;
         if (!pxa_request_is_active(service->runtime, pending->component,
                                    pending->request_id) ||
-            pxa_handle_get(service->runtime, pending->component,
-                           pending->permission_handle,
-                           PXA_RESOURCE_PERMISSION,
-                           &permission_resource) != PXA_STATUS_OK) {
+            (pending->core_major == 1
+                ? pxa_handle_get64(service->runtime, pending->component,
+                                   pending->permission_handle,
+                                   PXA_RESOURCE_PERMISSION,
+                                   &permission_resource)
+                : pxa_handle_get(service->runtime, pending->component,
+                                 (pxa_handle_t)pending->permission_handle,
+                                 PXA_RESOURCE_PERMISSION,
+                                 &permission_resource)) != PXA_STATUS_OK) {
             pxa_component_t component = pending->component;
             cancel_pending(service, pending);
             append_affected(component, affected, capacity, count);
@@ -526,16 +548,27 @@ pxa_status_t pxa_net_poll(
                 resource.context = stream;
                 resource.operations = &k_stream_resource_ops;
                 resource.close = close_stream;
-                status = pxa_handle_open(
-                    service->runtime, pending->component, PXA_RESOURCE_STREAM,
-                    pending->authority, &resource, &handle);
+                if (pending->core_major == 1)
+                    status = pxa_handle_open64(
+                        service->runtime, pending->component,
+                        PXA_RESOURCE_STREAM, pending->authority,
+                        &resource, &handle);
+                else {
+                    pxa_handle_t handle32 = PXA_HANDLE_INVALID;
+                    status = pxa_handle_open(
+                        service->runtime, pending->component,
+                        PXA_RESOURCE_STREAM, pending->authority,
+                        &resource, &handle32);
+                    handle = handle32;
+                }
                 if (status != PXA_STATUS_OK) close_stream(stream);
             }
         }
         if (status == PXA_STATUS_OK) {
             status = pxa_net_response_encode(
                 service->result_buffer, service->result_capacity,
-                pending->opcode, &response, handle, &result_size);
+                pending->core_major, pending->opcode, &response,
+                handle, &result_size);
         }
         if (pending->opcode == PXA_NET_HTTP_REQUEST &&
             (response.flags & PXA_NET_RESPONSE_BODY_PRESENT) == 0 &&
@@ -550,8 +583,13 @@ pxa_status_t pxa_net_poll(
             status == PXA_STATUS_OK ? result_size : 0);
         if (complete != PXA_STATUS_OK) {
             if (handle != PXA_HANDLE_INVALID) {
-                (void)pxa_handle_close(service->runtime, pending->component,
-                                       handle);
+                if (pending->core_major == 1)
+                    (void)pxa_handle_close64(service->runtime,
+                                             pending->component, handle);
+                else
+                    (void)pxa_handle_close(service->runtime,
+                                           pending->component,
+                                           (pxa_handle_t)handle);
             }
             (void)pxa_request_cancel(service->runtime, pending->component,
                                      pending->request_id);

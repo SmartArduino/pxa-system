@@ -24,9 +24,21 @@ function(pxa_collect_sources output root)
         src/services/net/net_response.c
         src/services/net/net_validate.c
         src/services/audio/audio_service.c
+        src/services/audio/audio_mixer.c
+        src/services/audio/audio_buffer.c
+        src/services/audio/audio_playback.c
         src/services/game_render/game_render_service.c
         src/services/log/log_service.c
         src/services/surface/raster.c
+        src/services/surface/raster_assets.c
+        src/services/assets/asset_catalog.c
+        src/services/assets/asset_loader.c
+        src/services/assets/asset_stream.c
+        src/services/assets/asset_object.c
+        src/services/assets/asset_read.c
+        src/services/assets/asset_cache.c
+        src/services/assets/resource_budget.c
+        src/services/assets/assets_service.c
         src/services/surface/surface_service.c
         src/ui/ui_service.c
         src/ui/ui_memory.c

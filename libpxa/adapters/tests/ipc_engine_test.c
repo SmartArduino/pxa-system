@@ -194,6 +194,7 @@ static pxa_status_t resolve_echo_endpoint(void *context, pxa_bytes_t endpoint,
 }
 
 int main(void) {
+    const uint16_t fixture_core_major = PXA_CORE_VERSION_MAJOR;
     char *package_dir = make_temp_dir("pxa-ipc-package");
     char *storage_root = make_temp_dir("pxa-ipc-storage");
     pxa_runtime_limits_t limits;
@@ -385,9 +386,10 @@ int main(void) {
         files[1].path = "artifacts/provider.wasm";
         files[1].size = (uint64_t)provider_wasm_size;
         files[1].sha256 = provider_sha;
-        encoded_size = pxa_test_encode_manifest_multi(
+        encoded_size = pxa_test_encode_manifest_multi_core(
             manifest_bytes, sizeof(manifest_bytes), provider_sha,
-            "com.example.ipctest", "0.1.0", components, 2, files, 2);
+            "com.example.ipctest", "0.1.0", components, 2, files, 2,
+            fixture_core_major);
         CHECK(encoded_size != 0);
         snprintf(path, sizeof(path), "%s/manifest.pxm", package_dir);
         write_file(path, manifest_bytes, encoded_size);
@@ -527,6 +529,6 @@ int main(void) {
         fprintf(stderr, "%d failure(s)\n", failures);
         return 1;
     }
-    printf("test_ipc_engine OK\n");
+    printf("test_ipc_engine core %u OK\n", fixture_core_major);
     return 0;
 }

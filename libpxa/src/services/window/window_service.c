@@ -1,4 +1,5 @@
 #include "pxa/window.h"
+#include "pxa/window_snapshot_generated.h"
 #include "common/checked_math.h"
 #include "common/bytes_internal.h"
 
@@ -130,51 +131,36 @@ pxa_status_t pxa_window_service_init(void *workspace, size_t workspace_size,
 static pxa_status_t encode_snapshot(const pxa_window_entry_t *entry,
                                     uint8_t *output, size_t capacity,
                                     size_t *output_size) {
-    uint8_t value8[16];
-    pxa_writer_t writer;
+    pxa_window_snapshot_wire_t wire = {0};
     const pxa_window_snapshot_t *snapshot;
     if (entry == NULL || output == NULL || output_size == NULL ||
         !entry->has_snapshot) {
         return PXA_STATUS_BAD_STATE;
     }
     snapshot = &entry->snapshot;
-    if (snapshot->revision == 0 || snapshot->logical_width == 0 ||
-        snapshot->logical_height == 0 || snapshot->pixel_width == 0 ||
-        snapshot->pixel_height == 0 || snapshot->density_numerator == 0 ||
-        snapshot->density_denominator == 0 || snapshot->orientation > 2) {
-        return PXA_STATUS_BAD_STATE;
-    }
-    pxa_writer_init(&writer, output, capacity);
-    pxa_write_u64(value8, snapshot->revision);
-    if (pxa_writer_record(&writer, 1, value8, 8) != PXA_STATUS_OK) goto fail;
-    pxa_write_u32(value8, snapshot->logical_width);
-    pxa_write_u32(value8 + 4, snapshot->logical_height);
-    if (pxa_writer_record(&writer, 2, value8, 8) != PXA_STATUS_OK) goto fail;
-    pxa_write_u32(value8, snapshot->pixel_width);
-    pxa_write_u32(value8 + 4, snapshot->pixel_height);
-    if (pxa_writer_record(&writer, 3, value8, 8) != PXA_STATUS_OK) goto fail;
-    pxa_write_u32(value8, snapshot->density_numerator);
-    pxa_write_u32(value8 + 4, snapshot->density_denominator);
-    if (pxa_writer_record(&writer, 4, value8, 8) != PXA_STATUS_OK) goto fail;
-    pxa_write_u32(value8, snapshot->safe_insets.left);
-    pxa_write_u32(value8 + 4, snapshot->safe_insets.top);
-    pxa_write_u32(value8 + 8, snapshot->safe_insets.right);
-    pxa_write_u32(value8 + 12, snapshot->safe_insets.bottom);
-    if (pxa_writer_record(&writer, 5, value8, 16) != PXA_STATUS_OK) goto fail;
-    pxa_write_u32(value8, snapshot->system_bar_insets.left);
-    pxa_write_u32(value8 + 4, snapshot->system_bar_insets.top);
-    pxa_write_u32(value8 + 8, snapshot->system_bar_insets.right);
-    pxa_write_u32(value8 + 12, snapshot->system_bar_insets.bottom);
-    if (pxa_writer_record(&writer, 6, value8, 16) != PXA_STATUS_OK) goto fail;
-    value8[0] = snapshot->orientation;
-    if (pxa_writer_record(&writer, 7, value8, 1) != PXA_STATUS_OK) goto fail;
-    value8[0] = snapshot->focused != 0;
-    if (pxa_writer_record(&writer, 8, value8, 1) != PXA_STATUS_OK) goto fail;
-    *output_size = writer.size;
-    return PXA_STATUS_OK;
-
-fail:
-    return writer.status;
+    wire.revision = snapshot->revision;
+    wire.logical_width = snapshot->logical_width;
+    wire.logical_height = snapshot->logical_height;
+    wire.pixel_width = snapshot->pixel_width;
+    wire.pixel_height = snapshot->pixel_height;
+    wire.density_numerator = snapshot->density_numerator;
+    wire.density_denominator = snapshot->density_denominator;
+    wire.safe_insets.left = snapshot->safe_insets.left;
+    wire.safe_insets.top = snapshot->safe_insets.top;
+    wire.safe_insets.right = snapshot->safe_insets.right;
+    wire.safe_insets.bottom = snapshot->safe_insets.bottom;
+    wire.system_bar_insets.left = snapshot->system_bar_insets.left;
+    wire.system_bar_insets.top = snapshot->system_bar_insets.top;
+    wire.system_bar_insets.right = snapshot->system_bar_insets.right;
+    wire.system_bar_insets.bottom = snapshot->system_bar_insets.bottom;
+    wire.orientation = snapshot->orientation;
+    wire.focused = snapshot->focused != 0;
+    if (!pxa_window_snapshot_wire_valid(&wire)) return PXA_STATUS_BAD_STATE;
+    if (capacity < PXA_WINDOW_SNAPSHOT_RECORD_BYTES)
+        return PXA_STATUS_LIMIT_EXCEEDED;
+    return pxa_window_snapshot_records_encode(output, capacity, &wire,
+                                              output_size)
+               ? PXA_STATUS_OK : PXA_STATUS_INTERNAL;
 }
 
 static pxa_status_t configure(pxa_window_entry_t *entry,
@@ -245,7 +231,7 @@ static pxa_status_t window_control(void *context, pxa_runtime_t *runtime,
                                    const pxa_message_view_t *message) {
     pxa_window_service_t *service = (pxa_window_service_t *)context;
     pxa_window_entry_t *entry = find_entry(service, component);
-    uint8_t payload[128];
+    uint8_t payload[PXA_WINDOW_SNAPSHOT_RECORD_BYTES];
     size_t payload_size = 0;
     pxa_status_t status;
     (void)runtime;
@@ -280,10 +266,11 @@ static pxa_status_t window_control(void *context, pxa_runtime_t *runtime,
             status = encode_snapshot(entry, payload, sizeof(payload),
                                      &payload_size);
             if (status != PXA_STATUS_OK) return status;
-            status = pxa_request_begin(service->runtime, component,
-                                       message->request_id,
-                                       PXA_WINDOW_SERVICE_ID,
-                                       PXA_WINDOW_GET_SNAPSHOT, 0);
+            status = pxa_request_begin_reserved(service->runtime, component,
+                                                message->request_id,
+                                                PXA_WINDOW_SERVICE_ID,
+                                                PXA_WINDOW_GET_SNAPSHOT, 0,
+                                                payload_size);
             if (status != PXA_STATUS_OK) return status;
             return pxa_request_complete(service->runtime, component,
                                         message->request_id, PXA_STATUS_OK,
@@ -419,7 +406,7 @@ static int snapshot_same(const pxa_window_snapshot_t *left,
 static pxa_status_t flush_metrics_entry(pxa_window_service_t *service,
                                         pxa_component_t component,
                                         pxa_window_entry_t *entry) {
-    uint8_t payload[128];
+    uint8_t payload[PXA_WINDOW_SNAPSHOT_RECORD_BYTES];
     size_t payload_size = 0;
     pxa_status_t status;
     if (!entry->metrics_dirty) return PXA_STATUS_OK;

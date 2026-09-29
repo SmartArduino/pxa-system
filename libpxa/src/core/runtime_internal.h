@@ -20,6 +20,7 @@ typedef struct {
     pxa_resource_owner_t resources;
     pxa_event_mailbox_t mailbox;
     uint16_t generation;
+    uint16_t core_major;
     uint16_t revoked_count;
     uint8_t occupied;
     uint8_t retired;

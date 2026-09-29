@@ -5,6 +5,32 @@
 #include <stdint.h>
 #include <string.h>
 
+/* Every existing pixel regression runs with only the dependencies advertised
+ * by validation. Missing a dependency must fail here, including solid sprite,
+ * lit painter, coverage, depth, and batched command paths. */
+static void execute_used_rows(const uint8_t *bytes,
+    const pxa_raster_draw_list_view_t *list, const pxa_raster_target_t *target,
+    const pxa_raster_resources_t *resources, uint16_t begin, uint16_t end,
+    pxa_raster_telemetry_t *telemetry) {
+    pxa_raster_resources_t used = *resources;
+    for (unsigned i = 0; i < PXA_RASTER_MAX_TEXTURES; ++i)
+        if (!(list->texture_mask & (UINT64_C(1) << i)))
+            memset(&used.textures[i], 0, sizeof(used.textures[i]));
+    if (!list->uses_palette) {
+        used.palette = NULL;
+        used.palette_light_levels = 0;
+    }
+    pxa_raster_execute_draw_list_rows(bytes, list, target, &used,
+                                     begin, end, telemetry);
+}
+static void execute_used(const uint8_t *bytes,
+    const pxa_raster_draw_list_view_t *list, const pxa_raster_target_t *target,
+    const pxa_raster_resources_t *resources, pxa_raster_telemetry_t *telemetry) {
+    execute_used_rows(bytes, list, target, resources, 0, target->height, telemetry);
+}
+#define pxa_raster_execute_draw_list execute_used
+#define pxa_raster_execute_draw_list_rows execute_used_rows
+
 static void put_u16(uint8_t *bytes, uint16_t value) {
     bytes[0] = (uint8_t)value;
     bytes[1] = (uint8_t)(value >> 8);
@@ -113,7 +139,7 @@ static void test_painter_lit_palette_and_transparency(void) {
     uint16_t pixels[8 * 8];
     uint16_t depth[8 * 8];
     pxa_raster_resources_t resources;
-    pxa_raster_target_t target;
+    pxa_raster_target_t target = {0};
     pxa_raster_draw_list_view_t list;
     uint32_t offset;
     palette[7] = UINT16_C(0xf800);
@@ -179,7 +205,7 @@ static void test_painter_triangle(void) {
     uint16_t palette[256] = {0};
     uint16_t pixels[8 * 8] = {0};
     pxa_raster_resources_t resources;
-    pxa_raster_target_t target;
+    pxa_raster_target_t target = {0};
     pxa_raster_draw_list_view_t list;
     uint8_t *record;
     palette[3] = UINT16_C(0x1234);
@@ -221,7 +247,7 @@ static void test_quads_clipping_uv_and_telemetry(void) {
     uint16_t palette[256] = {0};
     uint16_t pixels[8 * 8];
     pxa_raster_resources_t resources;
-    pxa_raster_target_t target;
+    pxa_raster_target_t target = {0};
     pxa_raster_draw_list_view_t list;
     pxa_raster_telemetry_t telemetry;
     uint32_t offset;
@@ -295,7 +321,7 @@ static void test_additive_capability_fallback(void) {
     uint16_t palette[256] = {0};
     uint16_t pixel = UINT16_C(0x7bef);
     pxa_raster_resources_t resources;
-    pxa_raster_target_t target;
+    pxa_raster_target_t target = {0};
     pxa_raster_draw_list_view_t list;
     uint8_t *record;
     palette[1] = UINT16_C(0x8410);
@@ -337,7 +363,7 @@ static void test_sprite_scaling_and_clipping(void) {
     uint16_t palette[256] = {0};
     uint16_t pixels[5 * 4] = {0};
     pxa_raster_resources_t resources;
-    pxa_raster_target_t target;
+    pxa_raster_target_t target = {0};
     pxa_raster_draw_list_view_t list;
     uint8_t *record;
     uint32_t x;
@@ -382,7 +408,7 @@ static void test_sprite_scaling_ratios(void) {
     uint16_t palette[256] = {0};
     uint16_t pixels[31];
     pxa_raster_resources_t resources;
-    pxa_raster_target_t target;
+    pxa_raster_target_t target = {0};
     pxa_raster_draw_list_view_t list;
     uint8_t *record;
     uint32_t output_width;
@@ -431,7 +457,7 @@ static void test_perspective_uv_and_solid_depth(void) {
     uint16_t pixels[8 * 8];
     uint16_t depth[8 * 8];
     pxa_raster_resources_t resources;
-    pxa_raster_target_t target;
+    pxa_raster_target_t target = {0};
     pxa_raster_draw_list_view_t list;
     uint32_t offset;
     uint8_t *record;
@@ -496,7 +522,7 @@ static void test_affine_uv_flag_and_depth(void) {
     uint16_t pixels[8 * 8];
     uint16_t depth[8 * 8];
     pxa_raster_resources_t resources;
-    pxa_raster_target_t target;
+    pxa_raster_target_t target = {0};
     pxa_raster_draw_list_view_t list;
     uint32_t offset;
     uint8_t *record;
@@ -570,7 +596,7 @@ static void test_lit_palette_depth(void) {
     uint16_t pixels[8 * 8];
     uint16_t depth[8 * 8];
     pxa_raster_resources_t resources;
-    pxa_raster_target_t target;
+    pxa_raster_target_t target = {0};
     pxa_raster_draw_list_view_t list;
     uint32_t offset;
     uint8_t *record;
@@ -736,7 +762,7 @@ static void test_coverage_mask(void) {
     uint16_t pixels[8 * 8];
     uint16_t depth[8 * 8];
     pxa_raster_resources_t resources;
-    pxa_raster_target_t target;
+    pxa_raster_target_t target = {0};
     pxa_raster_draw_list_view_t list;
     uint32_t offset;
     uint8_t *record;
@@ -898,7 +924,7 @@ static void test_depth_cutout(void) {
     uint16_t pixels[8 * 8];
     uint16_t depth[8 * 8];
     pxa_raster_resources_t resources;
-    pxa_raster_target_t target;
+    pxa_raster_target_t target = {0};
     pxa_raster_draw_list_view_t list;
     uint32_t offset;
     uint8_t *record;
@@ -968,7 +994,7 @@ static void test_fixed_alpha_blend(void) {
     uint16_t pixels[8 * 8];
     uint16_t depth[8 * 8];
     pxa_raster_resources_t resources;
-    pxa_raster_target_t target;
+    pxa_raster_target_t target = {0};
     pxa_raster_draw_list_view_t list;
     uint32_t offset;
     uint8_t *record;
@@ -1034,7 +1060,7 @@ static void test_painter_perspective_uv(void) {
     uint16_t affine_pixels[WIDTH * HEIGHT];
     uint16_t coverage[WIDTH * HEIGHT];
     pxa_raster_resources_t resources;
-    pxa_raster_target_t target;
+    pxa_raster_target_t target = {0};
     pxa_raster_draw_list_view_t list;
     uint8_t *record;
     uint32_t index;
@@ -1147,7 +1173,7 @@ static void test_sprite_and_triangle_batches(void) {
     uint16_t split_pixels[8 * 8];
     uint16_t split_depth[8 * 8];
     pxa_raster_resources_t resources;
-    pxa_raster_target_t target;
+    pxa_raster_target_t target = {0};
     pxa_raster_draw_list_view_t list;
     pxa_raster_telemetry_t telemetry = {0};
     uint32_t offset;

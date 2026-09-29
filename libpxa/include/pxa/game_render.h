@@ -5,6 +5,7 @@
 #include <stdint.h>
 
 #include "pxa/raster.h"
+#include "pxa/raster_assets.h"
 #include "pxa/runtime.h"
 
 #ifdef __cplusplus
@@ -13,7 +14,7 @@ extern "C" {
 
 #define PXA_GAME_RENDER_SERVICE_ID UINT16_C(18)
 #define PXA_GAME_RENDER_SERVICE_MAJOR UINT16_C(0)
-#define PXA_GAME_RENDER_SERVICE_MINOR UINT16_C(3)
+#define PXA_GAME_RENDER_SERVICE_MINOR UINT16_C(5)
 #define PXA_GAME_RENDER_SERVICE_PATCH UINT16_C(0)
 
 #define PXA_GAME_RENDER_CREATE_CONTEXT UINT16_C(1)
@@ -42,9 +43,18 @@ extern "C" {
 #define PXA_GAME_RENDER_FLAG_KNOWN_MASK \
     PXA_GAME_RENDER_FLAG_PREFER_DIRECT_SCANOUT
 
+/* The scratch mode is fixed for the context lifetime. DEPTH16 preserves the
+ * original contract; NONE and COVERAGE_2BIT use no depth test. */
+#define PXA_GAME_RENDER_SCRATCH_DEPTH16 PXA_RASTER_SCRATCH_DEPTH16
+#define PXA_GAME_RENDER_SCRATCH_NONE PXA_RASTER_SCRATCH_NONE
+#define PXA_GAME_RENDER_SCRATCH_COVERAGE_2BIT \
+    PXA_RASTER_SCRATCH_COVERAGE_2BIT
+
 #define PXA_GAME_RENDER_IO_UPLOAD UINT32_C(0x100)
 #define PXA_GAME_RENDER_IO_SUBMIT UINT32_C(0x101)
 #define PXA_GAME_RENDER_IO_TELEMETRY UINT32_C(0x102)
+#define PXA_GAME_RENDER_IO_BIND_ASSETS UINT32_C(0x103)
+#define PXA_GAME_RENDER_FEATURE_ASSET_BINDINGS UINT64_C(1)
 #define PXA_GAME_RENDER_TELEMETRY_BYTES ((size_t)104)
 
 typedef struct {
@@ -52,6 +62,9 @@ typedef struct {
     uint16_t height;
     uint8_t buffer_count;
     uint8_t flags;
+    uint8_t scratch_mode;
+    /* Zero keeps the service limit. A nonzero budget is reserved at create. */
+    uint32_t max_draw_bytes;
 } pxa_game_render_desc_t;
 
 /* A target profile is supplied by the target board. The service uses it only
@@ -89,6 +102,12 @@ typedef pxa_status_t (*pxa_game_render_query_fn)(
     pxa_raster_telemetry_t *telemetry);
 typedef void (*pxa_game_render_close_fn)(void *context,
                                          uint64_t provider_context);
+/* Validated batch, including explicit unbinds (NULL with a set mask bit).
+ * Borrowed references; retain new bindings and release retired ones outside
+ * critical sections. Failure leaves all previous bindings intact. */
+typedef pxa_status_t (*pxa_game_render_bind_fn)(void *context,
+    uint64_t provider_context, const pxa_raster_bindings_t *replacement,
+    uint64_t texture_mask, uint8_t update_palette);
 
 typedef struct {
     uint32_t struct_size;
@@ -98,6 +117,7 @@ typedef struct {
     pxa_game_render_submit_fn submit;
     pxa_game_render_query_fn query;
     pxa_game_render_close_fn close;
+    pxa_game_render_bind_fn bind_assets;
 } pxa_game_render_backend_t;
 
 typedef struct {

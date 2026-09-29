@@ -1,4 +1,5 @@
 #include "pxa/game_render.h"
+#include "pxa/assets.h"
 #include "pxa/service.h"
 
 #include "common/checked_math.h"
@@ -33,7 +34,6 @@ struct pxa_game_render_resource {
     uint32_t magic;
     pxa_game_render_service_t *service;
     pxa_component_t component;
-    pxa_handle_t handle;
     uint64_t provider_context;
     uint16_t next;
     uint16_t previous;
@@ -198,7 +198,6 @@ static void release_context(pxa_game_render_resource_t *resource) {
     if (resource->next != PXA_GAME_RENDER_SLOT_NONE)
         service->contexts[resource->next].previous = resource->previous;
     resource->component = PXA_COMPONENT_INVALID;
-    resource->handle = PXA_HANDLE_INVALID;
     resource->provider_context = 0;
     resource->previous = PXA_GAME_RENDER_SLOT_NONE;
     resource->next = service->free_head;
@@ -220,13 +219,55 @@ static void close_context(void *context) {
     release_context(resource);
 }
 
+static pxa_status_t bind_assets(pxa_game_render_resource_t *r,
+                                const uint8_t *data, size_t size) {
+    pxa_raster_bindings_t replacement = {0};
+    uint64_t mask = 0;
+    uint8_t palette = 0;
+    pxa_status_t status = PXA_STATUS_INVALID_ARGUMENT;
+    uint16_t major = 0, count;
+    if (!r->service->backend.bind_assets) return PXA_STATUS_UNSUPPORTED;
+    if (pxa_component_core_major(r->service->runtime, r->component, &major) != PXA_STATUS_OK || major != 1)
+        return PXA_STATUS_UNSUPPORTED;
+    if (size < 4 || pxa_read_u16(data + 2)) return status;
+    count = pxa_read_u16(data);
+    if (!count || count > PXA_RASTER_MAX_TEXTURES + 1 || size != 4u + (size_t)count * 12u)
+        return status;
+    for (uint16_t i = 0; i < count; ++i) {
+        const uint8_t *entry = data + 4u + (size_t)i * 12u;
+        pxa_raster_asset_t **target;
+        uint64_t handle = pxa_read_u64(entry + 4);
+        status = PXA_STATUS_INVALID_ARGUMENT;
+        if (pxa_read_u16(entry + 2)) goto done;
+        if (entry[0] == PXA_ASSET_TEXTURE) {
+            if (entry[1] >= PXA_RASTER_MAX_TEXTURES || (mask & (UINT64_C(1) << entry[1]))) goto done;
+            mask |= UINT64_C(1) << entry[1];
+            target = &replacement.textures[entry[1]];
+        } else if (entry[0] == PXA_ASSET_PALETTE && !entry[1] && !palette) {
+            palette = 1;
+            target = &replacement.palette;
+        } else goto done;
+        if (handle) {
+            status = pxa_assets_acquire_handle(r->service->runtime, r->component, handle, entry[0], target);
+            if (status != PXA_STATUS_OK) goto done;
+        }
+    }
+    status = pxa_status_normalize(r->service->backend.bind_assets(r->service->backend.context,
+        r->provider_context, &replacement, mask, palette));
+done:
+    pxa_raster_bindings_release(&replacement);
+    return status;
+}
+
 static int32_t context_io(void *context, uint32_t operation, uint8_t *data,
                           size_t size) {
     pxa_game_render_resource_t *resource = context;
     pxa_status_t status;
     if (!context_valid(resource)) return PXA_STATUS_BAD_STATE;
     if (data == NULL) return PXA_STATUS_INVALID_ARGUMENT;
-    if (operation == PXA_GAME_RENDER_IO_UPLOAD) {
+    if (operation == PXA_GAME_RENDER_IO_BIND_ASSETS) {
+        status = bind_assets(resource, data, size);
+    } else if (operation == PXA_GAME_RENDER_IO_UPLOAD) {
         status = pxa_status_normalize(resource->service->backend.upload(
             resource->service->backend.context, resource->provider_context,
             data, size));
@@ -275,21 +316,31 @@ static const pxa_resource_ops_t k_resource_ops = {
 static pxa_status_t create_context(pxa_game_render_service_t *service,
                                    pxa_component_t component,
                                    pxa_bytes_t payload, int auto_target,
-                                   uint8_t result[28], size_t *result_size,
-                                   pxa_handle_t *opened_handle) {
+                                   uint16_t core_major, uint8_t result[32],
+                                   size_t *result_size,
+                                   pxa_handle64_t *opened_handle) {
     pxa_game_render_desc_t desc;
     pxa_game_render_resource_t *context;
     pxa_resource_t handle_resource;
     uint64_t provider_context = 0;
     uint32_t capabilities = 0;
+    size_t offset = core_major == 1 ? 8u : 4u;
     pxa_status_t status;
     pxa_game_render_target_t target = {0};
-    if (payload.size != 8) return PXA_STATUS_INVALID_ARGUMENT;
+    if (payload.size != 8 && payload.size != 12)
+        return PXA_STATUS_INVALID_ARGUMENT;
     desc.width = pxa_read_u16(payload.data);
     desc.height = pxa_read_u16(payload.data + 2);
     desc.buffer_count = payload.data[4];
     desc.flags = payload.data[5];
-    if (payload.data[7] != 0 ||
+    desc.scratch_mode = payload.data[7];
+    desc.max_draw_bytes = payload.size == 12
+                              ? pxa_read_u32(payload.data + 8)
+                              : 0;
+    if (desc.scratch_mode > PXA_GAME_RENDER_SCRATCH_COVERAGE_2BIT ||
+        (payload.size == 12 &&
+         (desc.max_draw_bytes < PXA_RASTER_DRAW_HEADER_BYTES ||
+          desc.max_draw_bytes > PXA_RASTER_MAX_DRAW_BYTES)) ||
         desc.buffer_count < service->min_buffer_count ||
         desc.buffer_count > service->max_buffer_count ||
         (desc.flags & ~PXA_GAME_RENDER_FLAG_KNOWN_MASK) != 0)
@@ -324,31 +375,43 @@ static pxa_status_t create_context(pxa_game_render_service_t *service,
     handle_resource.context = context;
     handle_resource.operations = &k_resource_ops;
     handle_resource.close = close_context;
-    status = pxa_handle_open(service->runtime, component,
-                             PXA_RESOURCE_GAME_RENDER_CONTEXT, 0,
-                             &handle_resource, opened_handle);
+    if (core_major == 1) {
+        status = pxa_handle_open64(service->runtime, component,
+                                   PXA_RESOURCE_GAME_RENDER_CONTEXT, 0,
+                                   &handle_resource, opened_handle);
+    } else {
+        pxa_handle_t legacy_handle = PXA_HANDLE_INVALID;
+        status = pxa_handle_open(service->runtime, component,
+                                 PXA_RESOURCE_GAME_RENDER_CONTEXT, 0,
+                                 &handle_resource, &legacy_handle);
+        *opened_handle = legacy_handle;
+    }
     if (status != PXA_STATUS_OK) {
         close_context(context);
         return status;
     }
-    context->handle = *opened_handle;
-    pxa_write_u32(result, *opened_handle);
-    pxa_write_u32(result + 4, capabilities);
-    pxa_write_u32(result + 8, PXA_RASTER_MAX_DRAW_BYTES);
-    pxa_write_u16(result + 12, PXA_RASTER_MAX_TEXTURE_DIMENSION);
-    result[14] = PXA_RASTER_MAX_TEXTURES;
-    result[15] = 0;
+    if (core_major == 1)
+        pxa_write_u64(result, *opened_handle);
+    else
+        pxa_write_u32(result, (pxa_handle_t)*opened_handle);
+    pxa_write_u32(result + offset, capabilities);
+    pxa_write_u32(result + offset + 4,
+                  desc.max_draw_bytes != 0 ? desc.max_draw_bytes
+                                           : PXA_RASTER_MAX_DRAW_BYTES);
+    pxa_write_u16(result + offset + 8, PXA_RASTER_MAX_TEXTURE_DIMENSION);
+    result[offset + 10] = PXA_RASTER_MAX_TEXTURES;
+    result[offset + 11] = 0;
     if (auto_target) {
-        pxa_write_u16(result + 16, target.display_width);
-        pxa_write_u16(result + 18, target.display_height);
-        pxa_write_u16(result + 20, target.render_width);
-        pxa_write_u16(result + 22, target.render_height);
-        result[24] = target.render_scale;
-        result[25] = target.supported_scale_mask;
-        result[26] = result[27] = 0;
-        *result_size = 28;
+        pxa_write_u16(result + offset + 12, target.display_width);
+        pxa_write_u16(result + offset + 14, target.display_height);
+        pxa_write_u16(result + offset + 16, target.render_width);
+        pxa_write_u16(result + offset + 18, target.render_height);
+        result[offset + 20] = target.render_scale;
+        result[offset + 21] = target.supported_scale_mask;
+        result[offset + 22] = result[offset + 23] = 0;
+        *result_size = offset + 24;
     } else {
-        *result_size = 16;
+        *result_size = offset + 12;
     }
     return PXA_STATUS_OK;
 }
@@ -357,31 +420,47 @@ static pxa_status_t game_render_control(
     void *context, pxa_runtime_t *runtime, pxa_component_t component,
     const pxa_message_view_t *message) {
     pxa_game_render_service_t *service = context;
-    uint8_t result[28] = {0};
+    uint8_t result[32] = {0};
     size_t result_size = 0;
-    pxa_handle_t opened_handle = PXA_HANDLE_INVALID;
+    pxa_handle64_t opened_handle = PXA_HANDLE64_INVALID;
+    uint16_t core_major = 0;
     pxa_status_t status;
     pxa_status_t complete;
     (void)runtime;
     if (!service_valid(service)) return PXA_STATUS_INVALID_ARGUMENT;
+    status = pxa_component_core_major(service->runtime, component,
+                                      &core_major);
+    if (status != PXA_STATUS_OK) return status;
     if (message->request_id == 0) return PXA_STATUS_INVALID_ARGUMENT;
     if (message->opcode != PXA_GAME_RENDER_CREATE_CONTEXT &&
         message->opcode != PXA_GAME_RENDER_CREATE_AUTO_CONTEXT)
         return PXA_STATUS_UNSUPPORTED;
-    status = pxa_request_begin(service->runtime, component,
-                               message->request_id,
-                               PXA_GAME_RENDER_SERVICE_ID, message->opcode, 0);
+    status = pxa_request_begin_reserved(
+        service->runtime, component, message->request_id,
+        PXA_GAME_RENDER_SERVICE_ID, message->opcode, 0,
+        (message->opcode == PXA_GAME_RENDER_CREATE_AUTO_CONTEXT ? 28u : 16u) +
+            (core_major == 1 ? 4u : 0u));
     if (status != PXA_STATUS_OK) return status;
-    status = create_context(service, component, message->payload,
-                            message->opcode == PXA_GAME_RENDER_CREATE_AUTO_CONTEXT,
-                            result, &result_size, &opened_handle);
+    status = pxa_request_commit(service->runtime, component,
+                                message->request_id);
+    if (status == PXA_STATUS_OK)
+        status = create_context(
+            service, component, message->payload,
+            message->opcode == PXA_GAME_RENDER_CREATE_AUTO_CONTEXT,
+            core_major, result, &result_size, &opened_handle);
     complete = pxa_request_complete(
         service->runtime, component, message->request_id, status,
         status == PXA_STATUS_OK ? result : NULL,
         status == PXA_STATUS_OK ? result_size : 0);
     if (complete != PXA_STATUS_OK) {
-        if (opened_handle != PXA_HANDLE_INVALID)
-            (void)pxa_handle_close(service->runtime, component, opened_handle);
+        if (opened_handle != PXA_HANDLE64_INVALID) {
+            if (core_major == 1)
+                (void)pxa_handle_close64(service->runtime, component,
+                                          opened_handle);
+            else
+                (void)pxa_handle_close(service->runtime, component,
+                                        (pxa_handle_t)opened_handle);
+        }
         (void)pxa_request_cancel(service->runtime, component,
                                  message->request_id);
     }
@@ -399,6 +478,7 @@ pxa_status_t pxa_game_render_service_register(
     operations.service_id = PXA_GAME_RENDER_SERVICE_ID;
     operations.major = PXA_GAME_RENDER_SERVICE_MAJOR;
     operations.minor = PXA_GAME_RENDER_SERVICE_MINOR;
+    if (service->backend.bind_assets) operations.features = PXA_GAME_RENDER_FEATURE_ASSET_BINDINGS;
     operations.context = service;
     operations.control = game_render_control;
     status = pxa_service_register(service->runtime, &operations);

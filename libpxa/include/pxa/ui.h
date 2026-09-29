@@ -13,7 +13,7 @@ extern "C" {
 
 #define PXA_UI_SERVICE_ID UINT16_C(3)
 #define PXA_UI_SERVICE_MAJOR UINT16_C(0)
-#define PXA_UI_SERVICE_MINOR UINT16_C(4)
+#define PXA_UI_SERVICE_MINOR UINT16_C(6)
 #define PXA_UI_SERVICE_PATCH UINT16_C(0)
 
 #define PXA_UI_TX_BEGIN UINT16_C(1)
@@ -32,6 +32,7 @@ extern "C" {
 #define PXA_UI_RESOURCE_PRESSURE UINT16_C(0x8003)
 #define PXA_UI_SURFACE_READY UINT16_C(0x8004)
 #define PXA_UI_CANVAS_STREAM_READY UINT16_C(0x8005)
+#define PXA_UI_MAX_DIRTY_RECTS 4u
 #define PXA_UI_THEME_CHANGED UINT16_C(0x8006)
 
 #define PXA_UI_THEME_COLOR_COUNT 10u
@@ -149,6 +150,9 @@ typedef uint16_t pxa_ui_property_t;
 #define PXA_UI_GRID_CONTENT 0u
 #define PXA_UI_GRID_FRACTION 1u
 #define PXA_UI_GRID_FIXED 2u
+#define PXA_UI_GRID_MAX_WEIGHT 99u
+/* Shared wire validation for Core and prepared-grid adapters. */
+pxa_status_t pxa_ui_validate_grid_tracks(pxa_bytes_t value);
 #define PXA_UI_GRID_TRACK_BYTES 8u
 #define PXA_UI_GRID_CELL_BYTES 8u
 #define PXA_UI_GRID_MAX_TRACKS 64u
@@ -197,6 +201,8 @@ typedef uint16_t pxa_ui_property_t;
 #define PXA_UI_PROPERTY_ITEM_COUNT ((pxa_ui_property_t)778)
 #define PXA_UI_PROPERTY_ITEM_EXTENT ((pxa_ui_property_t)779)
 #define PXA_UI_PROPERTY_SCROLL_POSITION ((pxa_ui_property_t)780)
+/* Assets IMAGE handle, u64. Binding retains prepared pixels independently. */
+#define PXA_UI_PROPERTY_IMAGE_HANDLE ((pxa_ui_property_t)781)
 
 #define PXA_UI_IMAGE_FIT_CONTAIN UINT8_C(0)
 #define PXA_UI_IMAGE_FIT_STRETCH UINT8_C(1)
@@ -225,6 +231,7 @@ typedef uint16_t pxa_ui_property_t;
 #define PXA_UI_CANVAS_CLIP_POP UINT8_C(8)
 #define PXA_UI_CANVAS_TEXT_BOX UINT8_C(9)
 #define PXA_UI_CANVAS_BITMAP_RGB565 UINT8_C(10)
+#define PXA_UI_CANVAS_IMAGE_HANDLE UINT8_C(11)
 
 #define PXA_UI_CANVAS_TEXT_ALIGN_TOP UINT8_C(0)
 #define PXA_UI_CANVAS_TEXT_ALIGN_MIDDLE UINT8_C(1)
@@ -325,6 +332,8 @@ typedef struct {
 
 typedef void *(*pxa_ui_allocate_fn)(void *context, size_t size);
 typedef void (*pxa_ui_release_fn)(void *context, void *memory);
+/* On failure, the original allocation must remain valid. */
+typedef void *(*pxa_ui_resize_fn)(void *context, void *memory, size_t size);
 typedef uint64_t (*pxa_ui_clock_fn)(void *context);
 
 typedef struct {
@@ -350,6 +359,9 @@ typedef struct {
     uint32_t safe_insets[4];
     uint32_t display_shape;
     uint32_t corner_radii[4];
+    /* Optional; avoids a second live UI buffer during growth when the
+     * allocator can resize in place. Uses allocator_context. */
+    pxa_ui_resize_fn resize;
 } pxa_ui_config_t;
 
 typedef struct {
@@ -360,6 +372,8 @@ typedef struct {
     pxa_ui_transaction_kind_t kind;
     uint8_t flags;
     void *target_handle;
+    /* Authenticated caller, supplied by Core; never derived from foreground UI. */
+    pxa_component_t component;
 } pxa_ui_transaction_info_t;
 
 typedef struct {
@@ -385,6 +399,8 @@ typedef struct {
     int32_t dirty_rects[4][4];
     pxa_bytes_t display_list;
     void *node_handle;
+    /* Authenticated submitting component, supplied by Core. */
+    pxa_component_t component;
 } pxa_ui_canvas_view_t;
 
 typedef pxa_status_t (*pxa_ui_backend_begin_fn)(

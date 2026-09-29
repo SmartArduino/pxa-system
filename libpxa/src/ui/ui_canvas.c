@@ -66,8 +66,9 @@ pxa_status_t pxa_ui_canvas_open_stream(
     };
     pxa_ui_canvas_stream_t *stream;
     pxa_resource_t resource;
-    pxa_handle_t handle = PXA_HANDLE_INVALID;
-    uint8_t payload[12];
+    pxa_handle64_t handle = PXA_HANDLE64_INVALID;
+    uint8_t payload[16];
+    uint16_t core_major = 0;
     uint32_t request;
     uint32_t surface;
     uint32_t node;
@@ -81,6 +82,9 @@ pxa_status_t pxa_ui_canvas_open_stream(
     node = pxa_read_u32(message->payload.data + 8);
     if (request == 0 || find_canvas(entry, surface, node) == NULL)
         return PXA_STATUS_INVALID_ARGUMENT;
+    status = pxa_component_core_major(service->runtime, entry->component,
+                                      &core_major);
+    if (status != PXA_STATUS_OK) return status;
     stream = (pxa_ui_canvas_stream_t *)pxa_ui_alloc(service, sizeof(*stream));
     if (stream == NULL) return PXA_STATUS_RESOURCE_LIMIT;
     stream->service = service;
@@ -92,21 +96,41 @@ pxa_status_t pxa_ui_canvas_open_stream(
     resource.context = stream;
     resource.operations = &operations;
     resource.close = close_canvas_stream;
-    status = pxa_handle_open(service->runtime, entry->component,
-                             PXA_RESOURCE_STREAM, 0, &resource, &handle);
+    if (core_major == 1) {
+        status = pxa_handle_open64(service->runtime, entry->component,
+                                   PXA_RESOURCE_STREAM, 0, &resource,
+                                   &handle);
+    } else {
+        pxa_handle_t legacy_handle = PXA_HANDLE_INVALID;
+        status = pxa_handle_open(service->runtime, entry->component,
+                                 PXA_RESOURCE_STREAM, 0, &resource,
+                                 &legacy_handle);
+        handle = legacy_handle;
+    }
     if (status != PXA_STATUS_OK) {
         pxa_ui_free(service, stream);
         return status;
     }
     pxa_write_u32(payload, request);
-    pxa_write_u32(payload + 4, handle);
-    pxa_write_u32(payload + 8, PXA_STATUS_OK);
+    if (core_major == 1) {
+        pxa_write_u64(payload + 4, handle);
+        pxa_write_u32(payload + 12, PXA_STATUS_OK);
+    } else {
+        pxa_write_u32(payload + 4, (pxa_handle_t)handle);
+        pxa_write_u32(payload + 8, PXA_STATUS_OK);
+    }
     status = pxa_event_post_message(
         service->runtime, entry->component, PXA_UI_SERVICE_ID,
         PXA_UI_CANVAS_STREAM_READY, 0,
-        (pxa_bytes_t){payload, sizeof(payload)}, 1, 0);
-    if (status != PXA_STATUS_OK)
-        (void)pxa_handle_close(service->runtime, entry->component, handle);
+        (pxa_bytes_t){payload, core_major == 1 ? 16u : 12u}, 1, 0);
+    if (status != PXA_STATUS_OK) {
+        if (core_major == 1)
+            (void)pxa_handle_close64(service->runtime, entry->component,
+                                      handle);
+        else
+            (void)pxa_handle_close(service->runtime, entry->component,
+                                    (pxa_handle_t)handle);
+    }
     return status;
 }
 
@@ -211,6 +235,7 @@ pxa_status_t pxa_ui_canvas_present_frame(
     if (message->request_id != 0 || message->payload.size < 13)
         return PXA_STATUS_INVALID_ARGUMENT;
     memset(&view, 0, sizeof(view));
+    view.component = entry->component;
     view.surface = pxa_read_u32(message->payload.data);
     view.node = pxa_read_u32(message->payload.data + 4);
     view.frame = pxa_read_u32(message->payload.data + 8);
