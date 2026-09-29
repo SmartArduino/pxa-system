@@ -1,0 +1,19 @@
+{
+  "format": "pxa-package-source-0.1",
+  "min_sdk": [1, 0],
+  "target_sdk": [1, 0],
+  "compile_sdk": [1, 0],
+  "id": "pxa-cpp-surface",
+  "version": "1.0.0",
+  "name": "C++ Surface",
+  "description": "Guest-mapped RGB565 frame example",
+  "build": {"system": "cmake", "source_dir": ".",
+            "linear_memory": {"maximum_bytes": 2097152, "pinned": true}},
+  "components": [{
+    "id": "main",
+    "kind": "ui",
+    "services": ["clock", "surface", "window", "log"],
+    "cmake_target": "pxa_main",
+    "wasi": {"version": "preview1", "libc": "wasi-libc", "features": ["monotonic-clock", "wall-clock"]}
+  }]
+}

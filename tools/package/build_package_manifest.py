@@ -510,8 +510,6 @@ def main(argv):
     linear_memory = build.get("linear_memory")
     pinned_memory = False
     if linear_memory is not None:
-        require(build_system == "direct",
-                "build linear_memory is only supported by direct builds")
         require(isinstance(linear_memory, dict) and
                 set(linear_memory) == {"maximum_bytes", "pinned"} and
                 isinstance(linear_memory["maximum_bytes"], int) and

@@ -17,6 +17,7 @@
 #include "net.hpp"
 #include "ipc.hpp"
 #include "work.hpp"
+#include "surface.hpp"
 
 #include <memory>
 #include <new>
@@ -51,6 +52,7 @@ public:
     NetService net() noexcept { return {transport_, requests_}; }
     IpcService ipc() noexcept { return {transport_, requests_}; }
     WorkService work() noexcept { return {transport_, requests_}; }
+    SurfaceService surface() noexcept { return {transport_, requests_}; }
     bool foreground() const noexcept { return foreground_; }
 
 private:

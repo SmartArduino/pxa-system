@@ -9,7 +9,8 @@ if(DEFINED PXA_CPP_SDK_DIR AND IS_DIRECTORY "${PXA_CPP_SDK_DIR}/include"
         "${PXA_CPP_SDK_DIR}/src/runtime.cpp"
         "${PXA_CPP_SDK_DIR}/src/net.cpp"
         "${PXA_CPP_SDK_DIR}/src/ipc.cpp"
-        "${PXA_CPP_SDK_DIR}/src/work.cpp")
+        "${PXA_CPP_SDK_DIR}/src/work.cpp"
+        "${PXA_CPP_SDK_DIR}/src/surface.cpp")
     add_library(Pxa::Cpp ALIAS pxa_guest_cpp)
     target_include_directories(pxa_guest_cpp PUBLIC
         "${PXA_CPP_SDK_DIR}/include")
@@ -134,6 +135,11 @@ function(pxa_add_component target)
         -Wl,--export=pxa_app_stop
         -Wl,--export=__heap_base
         -Wl,--export=__data_end)
+    if(DEFINED PXA_LINEAR_MEMORY_MAXIMUM AND
+       NOT PXA_LINEAR_MEMORY_MAXIMUM STREQUAL "0")
+        target_link_options(${target} PRIVATE
+            "-Wl,--max-memory=${PXA_LINEAR_MEMORY_MAXIMUM}")
+    endif()
     set_target_properties(${target} PROPERTIES
         OUTPUT_NAME "${PXA_COMPONENT_ID}"
         PREFIX ""

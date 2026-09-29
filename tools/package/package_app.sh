@@ -166,8 +166,6 @@ if not isinstance(source_dir, str) or not source_dir:
 linear_memory = build.get("linear_memory")
 linear_memory_maximum = 0
 if linear_memory is not None:
-    if build_system != "direct":
-        raise SystemExit("build linear_memory is only supported by direct builds")
     if (not isinstance(linear_memory, dict) or
             set(linear_memory) != {"maximum_bytes", "pinned"}):
         raise SystemExit(
@@ -296,6 +294,7 @@ if [[ "$build_system" == "cmake" ]]; then
     -DPXA_CPP_SDK_DIR="$pxa_system_dir/sdk/guest-cpp" \
     -DPXA_GENERATED_INCLUDE_DIR="$generated_include_dir" \
     -DPXA_ARTIFACT_DIR="$package_dir/artifacts" \
+    -DPXA_LINEAR_MEMORY_MAXIMUM="$linear_memory_maximum" \
     -DPXA_APP_DEFINITIONS="$joined_definitions" \
     -DPXA_CMAKE_MODULE_DIR="$pxa_system_dir/sdk/cmake"
   cmake_targets=()
@@ -322,11 +321,6 @@ else
       -Wl,--export=__heap_base -Wl,--export=__data_end \
       "${linear_memory_link_args[@]}" \
       "${component_sources[@]}" -o "$package_dir/artifacts/$component_id.wasm"
-    if [[ "$linear_memory_maximum" -ne 0 ]]; then
-      "${PYTHON:-python3}" "$script_dir/verify_wasm_memory.py" \
-        "$package_dir/artifacts/$component_id.wasm" \
-        --maximum-bytes "$linear_memory_maximum"
-    fi
   done
 fi
 
@@ -334,6 +328,11 @@ for component_id in "${component_ids[@]}"; do
   if [[ ! -f "$package_dir/artifacts/$component_id.wasm" ]]; then
     echo "PXA build did not produce artifacts/$component_id.wasm" >&2
     exit 1
+  fi
+  if [[ "$linear_memory_maximum" -ne 0 ]]; then
+    "${PYTHON:-python3}" "$script_dir/verify_wasm_memory.py" \
+      "$package_dir/artifacts/$component_id.wasm" \
+      --maximum-bytes "$linear_memory_maximum"
   fi
   "${PYTHON:-python3}" "$script_dir/verify_wasm_core_imports.py" \
     "$package_dir/artifacts/$component_id.wasm" \

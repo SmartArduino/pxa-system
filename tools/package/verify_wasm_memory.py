@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify the declared maximum of a direct-build WebAssembly memory."""
+"""Verify the declared maximum of a WebAssembly component memory."""
 
 import argparse
 from pathlib import Path
@@ -44,7 +44,7 @@ def defined_memory_limits(data: bytes) -> tuple[int, int | None]:
             continue
         count, cursor = read_u32_leb(data, offset)
         if count != 1:
-            raise WasmMemoryError("direct PXA components must define one memory")
+            raise WasmMemoryError("PXA components must define one memory")
         flags, cursor = read_u32_leb(data, cursor)
         if flags & ~0x07:
             raise WasmMemoryError("unsupported WebAssembly memory flags")
