@@ -1,11 +1,11 @@
 {
-  "schema": "pxa-game-render-spec-0.3",
+  "schema": "pxa-game-render-spec-0.5",
   "status": "draft",
   "service": {
     "name": "game-render",
     "id": 18,
     "major": 0,
-    "minor": 3,
+    "minor": 5,
     "patch": 0
   },
   "opcodes": [
@@ -14,7 +14,7 @@
       "id": 1,
       "direction": "bidirectional-result",
       "request_id": "nonzero",
-      "payload": "width:u16|height:u16|buffer-count:u8|flags:u8|reserved:u16",
+      "payload": "width:u16|height:u16|buffer-count:u8|flags:u8|reserved:u8|scratch-mode:u8[|max-draw-bytes:u32]",
       "result": "handle:u32|capabilities:u32|max-draw-bytes:u32|max-texture-dimension:u16|max-textures:u8|reserved:u8"
     },
     {
@@ -22,17 +22,24 @@
       "id": 2,
       "direction": "bidirectional-result",
       "request_id": "nonzero",
-      "payload": "width:0|height:0|buffer-count:u8|flags:u8|requested-scale:u8|reserved:u8",
+      "payload": "width:0|height:0|buffer-count:u8|flags:u8|requested-scale:u8|scratch-mode:u8[|max-draw-bytes:u32]",
       "result": "handle:u32|capabilities:u32|max-draw-bytes:u32|max-texture-dimension:u16|max-textures:u8|reserved:u8|display-width:u16|display-height:u16|render-width:u16|render-height:u16|render-scale:u8|supported-scale-mask:u8|reserved:[2]"
     }
   ],
   "io_operations": [
     {"name": "upload", "id": 256, "payload": "resource-record", "result": "accepted-bytes"},
     {"name": "submit", "id": 257, "payload": "draw-list", "result": "accepted-bytes"},
-    {"name": "telemetry", "id": 258, "payload": "zeroed-telemetry-buffer", "result": "telemetry-record"}
+    {"name": "telemetry", "id": 258, "payload": "zeroed-telemetry-buffer", "result": "telemetry-record"},
+    {"name": "bind-assets", "id": 259, "core_major": 1, "payload": "count:u16|reserved:u16|entries[count]:(kind:u8|slot:u8|reserved:u16|handle:u64)", "result": "accepted-bytes", "atomic": true}
   ],
+  "features": [{"name": "asset-bindings", "bit": 0}],
   "create_flags": [
     {"name": "prefer-direct-scanout", "bit": 0}
+  ],
+  "scratch_modes": [
+    {"name": "depth16", "value": 0},
+    {"name": "none", "value": 1},
+    {"name": "coverage-2bit", "value": 2}
   ],
   "capabilities": [
     {"name": "flat-quad", "bit": 0},
@@ -48,5 +55,5 @@
     "texture_dimension": 256,
     "palette_colors": 256
   },
-  "protocol_version": "0.3.0"
+  "protocol_version": "0.5.0"
 }

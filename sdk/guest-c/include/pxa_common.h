@@ -1,0 +1,65 @@
+#ifndef PXA_GUEST_COMMON_H
+#define PXA_GUEST_COMMON_H
+
+/* A translation unit may include both the Guest SDK and the Host C API. The
+ * Host owns these identifiers once its headers are in play; the values match,
+ * so keep the first definition. */
+#ifndef PXA_STATUS_OK
+#define PXA_STATUS_OK 0
+#define PXA_STATUS_INVALID_ARGUMENT (-1)
+#define PXA_STATUS_BAD_STATE (-2)
+#define PXA_STATUS_UNSUPPORTED (-3)
+#define PXA_STATUS_DENIED (-4)
+#define PXA_STATUS_NOT_FOUND (-5)
+#define PXA_STATUS_BUSY (-6)
+#define PXA_STATUS_WOULD_BLOCK (-7)
+#define PXA_STATUS_QUOTA_EXCEEDED (-8)
+#define PXA_STATUS_RESOURCE_LIMIT (-9)
+#define PXA_STATUS_CANCELLED (-10)
+#define PXA_STATUS_INTERNAL (-11)
+#define PXA_STATUS_TIMED_OUT (-12)
+#define PXA_STATUS_UNAVAILABLE (-13)
+#define PXA_STATUS_IO_ERROR (-14)
+#define PXA_STATUS_PROTOCOL_ERROR (-15)
+#define PXA_STATUS_LIMIT_EXCEEDED (-16)
+#endif
+
+#define PXA_EVENT_UNHANDLED 0
+#define PXA_EVENT_HANDLED 1
+
+#ifndef PXA_SERVICE_CORE
+#define PXA_SERVICE_CORE 1u
+#endif
+#define PXA_SERVICE_WINDOW 2u
+#define PXA_SERVICE_UI 3u
+#define PXA_SERVICE_CLOCK 4u
+#define PXA_SERVICE_FS 5u
+#define PXA_SERVICE_STORAGE 6u
+#define PXA_SERVICE_IPC 7u
+#define PXA_SERVICE_SENSOR 8u
+#define PXA_SERVICE_DEVICE 15u
+#define PXA_SERVICE_SURFACE 16u
+#define PXA_SERVICE_SYSTEM 17u
+#define PXA_SERVICE_GAME_RENDER 18u
+#define PXA_SERVICE_LOG 19u
+
+#define PXA_CLOCK_SET_PERIOD 1u
+#define PXA_CLOCK_NOW 2u
+#define PXA_CLOCK_TICK 0x8001u
+#define PXA_CLOCK_NOW_RESULT 0x8002u
+
+#define PXA_SYSTEM_LIFECYCLE_EVENT 0x8005u
+#define PXA_SYSTEM_LIFECYCLE_BACKGROUND 0u
+#define PXA_SYSTEM_LIFECYCLE_FOREGROUND 1u
+
+#define PXA_POINTER_DOWN 0u
+#define PXA_POINTER_MOVE 1u
+#define PXA_POINTER_UP 2u
+#define PXA_POINTER_CANCEL 3u
+
+#define PXA_WINDOW_TOAST_MAX_BYTES 240u
+#define PXA_WINDOW_BAR_VISIBLE 0u
+#define PXA_WINDOW_BAR_HIDDEN 1u
+#define PXA_WINDOW_BAR_TRANSIENT 2u
+
+#endif

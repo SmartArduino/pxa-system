@@ -1,11 +1,11 @@
 {
-  "schema": "pxa-ui-spec-0.4",
+  "schema": "pxa-ui-spec-0.6",
   "status": "draft",
   "service": {
     "name": "ui",
     "id": 3,
     "major": 0,
-    "minor": 4,
+    "minor": 6,
     "patch": 0
   },
   "byte_order": "little-endian",
@@ -588,13 +588,19 @@
       "name": "scroll-position",
       "id": 780,
       "type": "i32-logical-px"
+    },
+    {
+      "name": "image-handle",
+      "id": 781,
+      "type": "u64",
+      "ownership": "Prepared Assets IMAGE; transaction preparation retains pixels, failure releases them, committed node owns until replacement/removal. Closing Guest handle after commit does not remove image."
     }
   ],
   "value_types": {
     "length": "unit:u8|reserved:u8[3]|value:i32; units:auto=0,logical-px=1,percent-q16=2,content=3,fill=4,viewport-width-q16=5,viewport-height-q16=6",
     "color": "kind:u8|token:u8|reserved:u16|rgba8888:u32; kinds=token:0,rgba:1",
     "logical_pixel": "1/64 dp encoded as i32",
-    "track_list": "kind:u8|reserved:u8[3]|value:u32; kinds=content:0,fraction:1,fixed:2; value is the fraction weight or the /64 dp size"
+    "track_list": "kind:u8|reserved:u8[3]|value:u32; kinds=content:0,fraction:1,fixed:2; reserved bytes must be zero; 1..64 tracks; fraction weight=1..99; fixed /64 dp size=0..INT32_MAX"
   },
   "canvas_display_list": {
     "record_header": "primitive:u8|flags:u8|payload-len:u16",
@@ -654,6 +660,13 @@
         "payload": "x:i32|y:i32|width:u32|height:u32|stride:u32|pixels:bytes",
         "since": "0.2",
         "rules": "width and height fit u16; stride fits u16 and is at least width*2; pixels length equals stride*height; pixels are little-endian RGB565; large frames are split into horizontal strips"
+      },
+      {
+        "name": "image-handle",
+        "id": 11,
+        "since": "0.6",
+        "payload": "x:i32|y:i32|width:u32|height:u32|opacity:u8|fit:u8|image-handle:u64",
+        "rules": "nonzero dimensions and handle; fit 0..2; handle must be an IMAGE owned by the submitting component and remain open until PRESENT succeeds; each accepted frame retains its prepared pixels; handle lookup occurs only during preparation, never drawing; failed preparation preserves the previous frame"
       }
     ],
     "nesting": "clip records must balance; depth is governed by the Host byte budget, not a protocol count limit",
@@ -731,7 +744,7 @@
     }
   ],
   "resource_policy": "Hosts enforce private byte budgets and queue policy. Node, canvas, property, and text counts are not ABI limits and are never advertised as fixed quotas.",
-  "protocol_version": "0.4.0",
+  "protocol_version": "0.6.0",
   "events": [
     {
       "name": "text",

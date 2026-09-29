@@ -11,6 +11,7 @@ fi
 work_dir="$(mktemp -d "${TMPDIR:-/tmp}/pxa-package-tool-test.XXXXXX")"
 trap 'rm -rf "$work_dir"' EXIT
 "${PYTHON:-python3}" "$script_dir/test_verify_wasm_memory.py"
+"${PYTHON:-python3}" "$script_dir/test_verify_wasm_core_imports.py"
 engine_abi="$("${PYTHON:-python3}" "$pxa_system_dir/tools/wamr/metadata.py" engine_abi)"
 package_dir="$work_dir/package"
 mkdir -p "$package_dir/artifacts" "$package_dir/assets/flappy-bird" \
@@ -48,6 +49,7 @@ clang --target=wasm32-unknown-unknown -O2 -fno-builtin -nostdlib \
   -Wl,--export=pxa_app_on_event -Wl,--export=pxa_app_stop \
   "$app_source_root/weather/main.c" \
   "$app_source_root/weather/weather_providers.c" \
+  "$app_source_root/weather/images.c" \
   -o "$work_dir/weather-import-regression.wasm"
 
 # The manifest layer inventories opaque Artifact bytes. WAMR format validation
@@ -67,8 +69,10 @@ cp "$app_source_root/arcade/i18n/messages.yaml" \
    "$work_dir/i18n/"
 
 metadata="$work_dir/package.json"
-sed '/^}/i\\  ,"build": {"system": "direct", "linear_memory": {"maximum_bytes": 65536, "pinned": true}}\n  ,"services": ["fs", {"name": "net", "min_version": [0, 1], "max_version": [0, 4]}, {"name": "ui", "features": ["canvas"]}]\n  ,"components": [{"id": "main", "kind": "ui", "wasi": {"version": "preview1", "libc": "wasi-libc", "features": ["monotonic-clock", "stdio"]}}, {"id": "responder", "kind": "service", "artifact": "wasm", "services": ["ipc"]}]\n  ,"permissions": [{"name": "net.client", "required": false, "scope": "api.example"}]\n  ,"ipc_endpoints": [{"name": "demo.echo", "component": "responder"}]' \
+sed '/^}/i\\  ,"build": {"system": "direct", "linear_memory": {"maximum_bytes": 65536, "pinned": true}}\n  ,"services": ["fs", {"name": "net", "min_version": [0, 1], "max_version": [0, 4]}, {"name": "ui", "features": ["canvas"]}]\n  ,"components": [{"id": "main", "kind": "ui", "services": ["window", {"name": "ui", "features": ["canvas"]}, "clock", "fs", "permission", {"name": "net", "min_version": [0, 1], "max_version": [0, 4]}], "wasi": {"version": "preview1", "libc": "wasi-libc", "features": ["monotonic-clock", "stdio"]}}, {"id": "responder", "kind": "service", "artifact": "wasm", "services": ["ipc", "permission"]}]\n  ,"permissions": [{"name": "net.client", "required": false, "scope": "api.example"}]\n  ,"ipc_endpoints": [{"name": "demo.echo", "component": "responder"}]' \
   "$app_source_root/arcade/package.json" > "$metadata"
+
+"${PYTHON:-python3}" "$script_dir/compile_resources.py" "$work_dir" "$package_dir"
 
 "${PYTHON:-python3}" "$script_dir/build_package_manifest.py" \
   "$metadata" "$package_dir" \
@@ -76,6 +80,25 @@ sed '/^}/i\\  ,"build": {"system": "direct", "linear_memory": {"maximum_bytes": 
   linux-x86_64 "$engine_abi"
 "${PYTHON:-python3}" "$script_dir/test_service_versions.py" \
   "$package_dir/manifest.pxm"
+
+legacy_metadata="$work_dir/package-v0.json"
+"${PYTHON:-python3}" - "$metadata" "$legacy_metadata" <<'PYTHON'
+import json
+import sys
+with open(sys.argv[1], encoding="utf-8") as source:
+    metadata = json.load(source)
+for field in ("min_sdk", "target_sdk", "compile_sdk"):
+    metadata[field] = [0, 1]
+with open(sys.argv[2], "w", encoding="utf-8") as output:
+    json.dump(metadata, output)
+PYTHON
+if "${PYTHON:-python3}" "$script_dir/build_package_manifest.py" \
+  "$legacy_metadata" "$package_dir" \
+  "$pxa_system_dir/apps/pxa/.dev-signing/publisher-private.pem" \
+  linux-x86_64 "$engine_abi" >/dev/null 2>&1; then
+  echo "Core v0 packages must be rejected" >&2
+  exit 1
+fi
 
 invalid_metadata="$work_dir/package-invalid.json"
 sed 's/"services": \["fs", {"name": "net", "min_version": \[0, 1\], "max_version": \[0, 4\]}, {"name": "ui", "features": \["canvas"\]}\]/"services": [5]/' "$metadata" > "$invalid_metadata"

@@ -8,14 +8,14 @@ void pxa_app_stop(uint32_t reason);
 
 static uint32_t control_count;
 
-int32_t pxa_control(const uint8_t *data, uint32_t length) {
+int32_t pxa_submit(const uint8_t *data, uint32_t length) {
     assert(data != NULL);
-    assert(length >= 12);
+    assert(length >= PXA_HEADER_BYTES);
     ++control_count;
     return PXA_STATUS_OK;
 }
 
-int32_t pxa_io(uint32_t handle, uint32_t operation, uint8_t *data,
+int32_t pxa_io(uint64_t handle, uint32_t operation, uint8_t *data,
                uint32_t length) {
     (void)handle;
     (void)operation;
@@ -26,12 +26,12 @@ int32_t pxa_io(uint32_t handle, uint32_t operation, uint8_t *data,
 
 static void deliver(uint16_t service, uint16_t opcode, const uint8_t *payload,
                     size_t payload_length) {
-    uint8_t event[48];
-    pxa_writer_t writer;
+    uint8_t event[64];
+    uint32_t size = 0;
 
-    pxa_writer_init(&writer, event, sizeof(event));
-    assert(pxa_message(&writer, service, opcode, 0, payload, payload_length));
-    assert(pxa_app_on_event(event, (uint32_t)writer.length) >= 0);
+    assert(pxa_build_message(event, sizeof(event), service, opcode, 0,
+                                 payload, payload_length, &size));
+    assert(pxa_app_on_event(event, size) >= 0);
 }
 
 static void deliver_pointer(uint8_t phase, uint16_t x, uint16_t y) {

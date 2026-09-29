@@ -39,9 +39,10 @@ def main() -> int:
             if not (app_dir / "i18n" / catalog).is_file():
                 raise SystemExit(f"{app_dir}: missing i18n/{catalog}")
         source = (app_dir / "main.c").read_text(encoding="utf-8")
-        for marker in ("pxa_i18n_init_from_start_config", "pxa_i18n_handle_event"):
-            if marker not in source:
-                raise SystemExit(f"{app_dir}: missing locale lifecycle marker {marker}")
+        if "pxa_i18n_init_from_start_config" not in source or not any(
+            marker in source for marker in ("pxa_i18n_handle_event",)
+        ):
+            raise SystemExit(f"{app_dir}: missing locale lifecycle handling")
 
     for app_name in SEMANTIC_APPS:
         if not (apps / app_name).is_dir():
@@ -62,14 +63,14 @@ def main() -> int:
         if not (apps / app_name).is_dir():
             continue
         source = (apps / app_name / "main.c").read_text(encoding="utf-8")
-        if "pxa_surface_" not in source:
+        if not any(name in source for name in ("pxa_surface_",)):
             raise SystemExit(f"{app_name}: expected an app-owned raster Surface")
 
     for app_name in GAME_RENDER_APPS:
         if not (apps / app_name).is_dir():
             continue
         source = (apps / app_name / "main.c").read_text(encoding="utf-8")
-        if "pxa_game_render_" not in source:
+        if not any(name in source for name in ("pxa_game_render_",)):
             raise SystemExit(f"{app_name}: expected an app-owned GameRender context")
 
     print("PXA reference UI theme and locale boundaries OK")

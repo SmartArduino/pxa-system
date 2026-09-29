@@ -35,3 +35,15 @@ value with unit `milli-celsius`, for example, is signed degrees Celsius times
 1000; an illuminance value with unit `milli-lux` is lux times 1000. Sample loss
 by coalescing is permitted. Results, revocations and all
 permission state remain reliable under the Core mailbox rules.
+
+## Core 1.0 binding
+
+Under `pxa.core.v1`, Subscribe request tag 3 holds a native 64-bit Permission
+Handle and its successful completion carries a native 64-bit Sensor Handle.
+The coalescible Sample event's first record carries that same 64-bit Sensor
+Handle. The remaining descriptor and sample fields retain their widths.
+The Host rejects four-byte Permission Handles for v1 Components and validates
+the full generation when closing a subscription. Sample coalescing uses the
+full-width Handle, so reusing a low slot index does not merge two generations.
+The Guest uses `pxa_sensor.h` to build requests and parse borrowed
+descriptor views and typed sample values.

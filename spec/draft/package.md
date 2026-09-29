@@ -170,7 +170,9 @@ component tag 3 | length 1 | flags:u8
 Bit 0 is `pinned_memory`. The package tool sets it only when a direct-build
 source package declares a page-aligned `build.linear_memory.maximum_bytes` and
 `build.linear_memory.pinned: true`; it applies to every Component produced by
-that direct build. The record is signed with the rest of the manifest. A Host
+that direct build. `pinned: false` still bounds the WebAssembly memory maximum
+but leaves bit 0 clear and does not grant retained Guest pointers. The record
+is signed with the rest of the manifest. A Host
 that does not recognize this required record rejects the package instead of
 silently permitting retained Guest pointers.
 

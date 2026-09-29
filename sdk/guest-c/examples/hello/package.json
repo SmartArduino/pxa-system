@@ -1,0 +1,9 @@
+{
+  "format": "pxa-package-source-0.1",
+  "id": "hello",
+  "version": "1.0.0",
+  "name": "Hello",
+  "description": "Minimal Guest SDK example",
+  "build": {"system": "direct", "linear_memory": {"maximum_bytes": 131072, "pinned": false}},
+  "components": [{"id": "main", "kind": "ui", "source": "main.c", "services": ["log", "clock"]}]
+}

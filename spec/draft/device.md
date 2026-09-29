@@ -18,7 +18,10 @@ part of this ABI. Older Hosts return unsupported for this opcode.
 ## GET_MAC
 
 `get-mac` has a nonzero request ID. Its request records, in ascending tag
-order, are `mac-kind:u16` (tag 1) and `permission-handle:u32` (tag 2). The
+order, are `mac-kind:u16` (tag 1) and `permission-handle` (tag 2). The Handle
+field is `u32` on Core v0 and native `u64` on Core v1. A Core v1 Guest must
+acquire the Handle through Permission v1; the Host checks its full generation
+and Component ownership before reading an identifier. The
 permission scope must exactly match the requested kind:
 
 | Kind | Scope |

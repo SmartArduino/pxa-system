@@ -17,6 +17,11 @@ flags=(-std=c11 -O2 -Wall -Wextra -Werror -Wno-attributes
        -I"$app_source_root"
        -I"$app_source_root/common")
 
+"$cc_bin" "${flags[@]}" \
+  "$pxa_system_dir/sdk/guest-c/tests/pxa_headers_test.c" \
+  -o "$work_dir/pxa_headers_test"
+"$work_dir/pxa_headers_test"
+
 generate_catalog() {
   local app_id="$1"
   local catalog_dir="$app_source_root/$app_id/i18n"
@@ -49,11 +54,6 @@ done
   "$pxa_system_dir/sdk/guest-c/tests/pxa_net_test.c" \
   -o "$work_dir/pxa_net_test"
 "$work_dir/pxa_net_test"
-
-"$cc_bin" "${flags[@]}" \
-  "$pxa_system_dir/sdk/guest-c/tests/pxa_device_test.c" \
-  -o "$work_dir/pxa_device_test"
-"$work_dir/pxa_device_test"
 
 "$cc_bin" "${flags[@]}" \
   "$pxa_system_dir/sdk/guest-c/tests/pxa_store_installer_test.c" \
@@ -164,16 +164,6 @@ PYTHON
 "$work_dir/pxa_fs_test"
 
 "$cc_bin" "${flags[@]}" \
-  "$pxa_system_dir/sdk/guest-c/tests/pxa_storage_test.c" \
-  -o "$work_dir/pxa_storage_test"
-"$work_dir/pxa_storage_test"
-
-"$cc_bin" "${flags[@]}" \
-  "$pxa_system_dir/sdk/guest-c/tests/pxa_ipc_test.c" \
-  -o "$work_dir/pxa_ipc_test"
-"$work_dir/pxa_ipc_test"
-
-"$cc_bin" "${flags[@]}" \
   "$pxa_system_dir/sdk/guest-c/tests/pxa_lease_test.c" \
   -o "$work_dir/pxa_lease_test"
 "$work_dir/pxa_lease_test"
@@ -182,11 +172,6 @@ PYTHON
   "$pxa_system_dir/sdk/guest-c/tests/pxa_sensor_test.c" \
   -o "$work_dir/pxa_sensor_test"
 "$work_dir/pxa_sensor_test"
-
-"$cc_bin" "${flags[@]}" \
-  "$pxa_system_dir/sdk/guest-c/tests/pxa_permission_test.c" \
-  -o "$work_dir/pxa_permission_test"
-"$work_dir/pxa_permission_test"
 
 "$cc_bin" "${flags[@]}" \
   "$pxa_system_dir/sdk/guest-c/tests/pxa_work_test.c" \
@@ -236,14 +221,37 @@ PYTHON
 "$work_dir/pxa_raster_test"
 
 "$cc_bin" "${flags[@]}" \
-  "$pxa_system_dir/sdk/guest-c/tests/pxa_game_render_test.c" \
-  -o "$work_dir/pxa_game_render_test"
-"$work_dir/pxa_game_render_test"
-
-"$cc_bin" "${flags[@]}" \
   "$pxa_system_dir/sdk/guest-c/tests/pxa_log_test.c" \
   -o "$work_dir/pxa_log_test"
 "$work_dir/pxa_log_test"
+
+"$cc_bin" "${flags[@]}" \
+  "$pxa_system_dir/sdk/guest-c/tests/pxa_core_test.c" \
+  -o "$work_dir/pxa_core_test"
+"$work_dir/pxa_core_test"
+"$cc_bin" "${flags[@]}" \
+  "$pxa_system_dir/sdk/guest-c/tests/pxa_clock_test.c" \
+  -o "$work_dir/pxa_clock_test"
+"$work_dir/pxa_clock_test"
+"$cc_bin" "${flags[@]}" \
+  "$pxa_system_dir/sdk/guest-c/tests/pxa_ui_test.c" \
+  -o "$work_dir/pxa_ui_test"
+"$work_dir/pxa_ui_test"
+"$cc_bin" "${flags[@]}" \
+  "$pxa_system_dir/sdk/guest-c/tests/pxa_ui_wire_transport_test.c" \
+  -o "$work_dir/pxa_ui_wire_transport_test"
+"$work_dir/pxa_ui_wire_transport_test"
+"$cc_bin" "${flags[@]}" \
+  "$pxa_system_dir/sdk/guest-c/tests/pxa_i18n_test.c" \
+  -o "$work_dir/pxa_i18n_test"
+"$work_dir/pxa_i18n_test"
+"${CXX:-c++}" -std=c++17 -Wall -Wextra -Werror -Wno-attributes \
+  -I"$pxa_system_dir/sdk/guest-c/include" -c \
+  "$pxa_system_dir/sdk/guest-c/tests/pxa_cpp_test.cpp" \
+  -o "$work_dir/pxa_cpp_test.o"
+"$cc_bin" "${flags[@]}" -c \
+  "$app_source_root/abi-v1-smoke/main.c" \
+  -o "$work_dir/abi_v1_smoke.o"
 
 "$cc_bin" "${flags[@]}" -c \
   "$app_source_root/game-render-bench/main.c" \
@@ -303,7 +311,6 @@ PYTHON
 
 for app_source in \
   arcade/modules/flappy_bird.c \
-  garden-guard/main.c \
   arcade/modules/jumping.c \
   arcade/modules/jump_jump.c \
   arcade/modules/plane_shooter.c \
@@ -320,6 +327,13 @@ for app_source in \
     -o "$work_dir/pxa_canvas_smoke_test"
   "$work_dir/pxa_canvas_smoke_test"
 done
+
+"$cc_bin" "${flags[@]}" \
+  -I"$work_dir/generated/garden-guard" \
+  "$pxa_system_dir/sdk/guest-c/tests/pxa_canvas_smoke_test.c" \
+  "$app_source_root/garden-guard/main.c" \
+  -o "$work_dir/pxa_garden_canvas_smoke_test"
+"$work_dir/pxa_garden_canvas_smoke_test"
 
 for app_source in \
   arcade/modules/jumping.c \
@@ -345,14 +359,6 @@ for app_id in arcade weather lab wasi-lab plane-shooter; do
   "$cc_bin" "${flags[@]}" -I"$work_dir/generated/$app_id" -fsyntax-only \
     "$app_source_root/$app_id/main.c"
 done
-for lab_module in "$app_source_root"/lab/modules/*.c; do
-  "$cc_bin" "${flags[@]}" -I"$work_dir/generated/lab" -fsyntax-only "$lab_module"
-done
-"$cc_bin" "${flags[@]}" -I"$work_dir/generated/lab" -fsyntax-only \
-  "$app_source_root/lab/responder.c"
-"$cc_bin" "${flags[@]}" -I"$work_dir/generated/lab" -fsyntax-only \
-  "$app_source_root/lab/worker.c"
-
 for app_id in maze-spike maze-evil; do
   for app_source in "$app_source_root"/"$app_id"/*.c; do
     "$cc_bin" "${flags[@]}" -I"$app_source_root/$app_id" \

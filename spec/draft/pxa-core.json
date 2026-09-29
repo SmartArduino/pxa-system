@@ -74,8 +74,8 @@
   },
   "imports": [
     {
-      "module": "pxa.core.v0",
-      "name": "pxa_control",
+      "module": "pxa.core.v1",
+      "name": "pxa_submit",
       "parameters": [
         "guest-read-buffer"
       ],
@@ -83,10 +83,10 @@
       "blocking": false
     },
     {
-      "module": "pxa.core.v0",
+      "module": "pxa.core.v1",
       "name": "pxa_io",
       "parameters": [
-        "handle-u32",
+        "handle-u64",
         "operation-u32",
         "guest-read-write-buffer"
       ],
@@ -219,7 +219,7 @@
       "id": 3,
       "state": "defined",
       "major": 0,
-      "minor": 4,
+      "minor": 6,
       "patch": 0
     },
     {
@@ -275,7 +275,7 @@
       "id": 10,
       "state": "defined",
       "major": 0,
-      "minor": 5,
+      "minor": 7,
       "patch": 0
     },
     {
@@ -328,7 +328,7 @@
       "id": 18,
       "state": "defined",
       "major": 0,
-      "minor": 3,
+      "minor": 5,
       "patch": 0
     },
     {
@@ -345,6 +345,14 @@
       "state": "defined",
       "major": 0,
       "minor": 5,
+      "patch": 0
+    },
+    {
+      "name": "assets",
+      "id": 21,
+      "state": "defined",
+      "major": 2,
+      "minor": 1,
       "patch": 0
     }
   ],

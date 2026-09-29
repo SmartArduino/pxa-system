@@ -5,11 +5,12 @@ machine-readable source of truth.
 
 ## ABI surface
 
-The Guest imports `pxa_control` and `pxa_io` from `pxa.core.v0`. The Guest
-exports its API version, start, event and stop callbacks as listed in the
+The Guest imports `pxa_submit` and `pxa_io` from `pxa.core.v1`. The Host
+rejects earlier Core majors during package activation and does not bind their
+imports. The Guest exports start, event and stop callbacks as listed in the
 machine-readable specification.
 
-`pxa_control` receives a read-only Guest-memory range containing exactly one
+`pxa_submit` receives a read-only Guest-memory range containing exactly one
 message. Its return value is an immediate status: `ok` means that the command
 was applied synchronously or an asynchronous request was accepted. It does not
 mean that asynchronous work completed.
@@ -31,7 +32,8 @@ reported as `would-block`.
 
 ## Message envelope
 
-Every control request, result and event uses a 12-byte header:
+The Host's internal service mailbox uses a 12-byte header. The Guest-facing
+Core v1 envelope is defined separately in `abi-1.0-envelope.json`:
 
 ```text
 offset  size  field
@@ -86,7 +88,8 @@ Rules:
 
 ## Handle lifecycle
 
-Handles are opaque nonzero `u32` values. A Host uses a slot generation or an
+Guest Handles are opaque nonzero `u64` values. The Host's internal mailbox can
+carry narrower request IDs; this is not a Guest ABI. A Host uses a slot generation or an
 equivalent mechanism so a stale value cannot refer to a later resource. Every
 Handle has an owning Component, type, permission scope and lifetime.
 
@@ -121,6 +124,13 @@ the service definition as either reliable or coalescible:
 - An asynchronous request remains pending until its final reliable result has
   been admitted to the mailbox. Mailbox pressure therefore cannot turn an
   accepted request into a lost completion.
+- Before accepting an asynchronous request, Core reserves a result event slot
+  and enough event blocks for that operation's maximum completion payload.
+  Resource exhaustion rejects the request immediately, before backend work or
+  an externally visible effect. A completed result may wait behind a full
+  mailbox while retaining its reserved storage. If a backend exceeds its
+  declared result bound, Core delivers a `limit-exceeded` completion using
+  that reservation instead of leaving the accepted request pending.
 
 The exact capacity and reliable reserve are runtime limits reported in startup
 configuration. They are not ABI constants.
@@ -161,6 +171,12 @@ notifications ignore a positive handled result.
 result contains a lease Handle. Closing the Handle releases the lease. The Host
 can revoke a lease and emits `lease-revoked` before or while invalidating the
 Handle, subject to event delivery capacity.
+
+For `pxa.core.v1`, acquire uses the v1 64-bit request token. The success
+result's tag 4 contains a native 64-bit Lease Handle. The token-zero
+`lease-revoked` notification contains that Handle followed by `reason:i32`,
+for a 12-byte payload. Close and expiry validate the full Handle generation.
+`pxa_lease.h` builds the bounded request and parses both responses.
 
 A lease permits continued scheduling; it does not itself grant access to audio,
 network or sensors. Those remain separately permissioned service resources.

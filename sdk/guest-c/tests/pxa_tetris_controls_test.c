@@ -8,16 +8,16 @@ void pxa_app_stop(uint32_t reason);
 
 static uint32_t canvas_presents;
 
-int32_t pxa_control(const uint8_t* data, uint32_t length) {
+int32_t pxa_submit(const uint8_t* data, uint32_t length) {
     assert(data != NULL);
-    assert(length >= 12);
+    assert(length >= PXA_HEADER_BYTES);
     if (pxa_read_u16(data) == PXA_SERVICE_UI &&
         pxa_read_u16(data + 2) == PXA_UI_CANVAS_PRESENT)
         ++canvas_presents;
     return PXA_STATUS_OK;
 }
 
-int32_t pxa_io(uint32_t handle, uint32_t operation, uint8_t* data,
+int32_t pxa_io(uint64_t handle, uint32_t operation, uint8_t* data,
                uint32_t length) {
     (void)handle;
     (void)operation;
@@ -28,9 +28,8 @@ int32_t pxa_io(uint32_t handle, uint32_t operation, uint8_t* data,
 
 static void deliver_pointer(uint16_t x, uint16_t y, uint8_t phase) {
     uint8_t pointer[36];
-    uint8_t event[52];
+    uint8_t event[64];
     pxa_writer_t payload;
-    pxa_writer_t message;
     pxa_writer_init(&payload, pointer, sizeof(pointer));
     assert(pxa_put_u32(&payload, PXA_UI_PRIMARY_SURFACE));
     assert(pxa_put_u32(&payload, 2));
@@ -44,10 +43,10 @@ static void deliver_pointer(uint16_t x, uint16_t y, uint8_t phase) {
     assert(pxa_put_u16(&payload, phase == PXA_POINTER_UP ? 0 : 1));
     assert(pxa_put_u32(&payload, x));
     assert(pxa_put_u32(&payload, y));
-    pxa_writer_init(&message, event, sizeof(event));
-    assert(pxa_message(&message, PXA_SERVICE_UI, PXA_UI_EVENT, 0,
-                       pointer, payload.length));
-    assert(pxa_app_on_event(event, (uint32_t)message.length) == PXA_EVENT_HANDLED);
+    uint32_t size = 0;
+    assert(pxa_build_message(event, sizeof(event), PXA_SERVICE_UI, PXA_UI_EVENT,
+                             0, pointer, payload.length, &size));
+    assert(pxa_app_on_event(event, size) == PXA_EVENT_HANDLED);
 }
 
 static void expect_single_button_refresh(uint16_t x, uint16_t y) {

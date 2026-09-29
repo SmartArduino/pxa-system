@@ -1,447 +1,309 @@
-#ifndef PXA_NET_H
-#define PXA_NET_H
+#ifndef PXA_GUEST_NET_H
+#define PXA_GUEST_NET_H
 
-#include "pxa.h"
+#include "pxa_core.h"
 
-#define PXA_SERVICE_NET 9u
+#define PXA_NET_SERVICE 9u
 #define PXA_NET_FETCH 1u
 #define PXA_NET_HTTP_REQUEST 2u
-#define PXA_NET_METHOD_GET 1u
-#define PXA_NET_METHOD_HEAD 2u
-#define PXA_NET_METHOD_POST 3u
-#define PXA_NET_METHOD_PUT 4u
-#define PXA_NET_METHOD_PATCH 5u
-#define PXA_NET_METHOD_DELETE 6u
-#define PXA_NET_URL 1u
-#define PXA_NET_METHOD 2u
-#define PXA_NET_PERMISSION_HANDLE 3u
-#define PXA_NET_MAX_RESPONSE_BYTES 4u
-#define PXA_NET_STATUS_CODE 5u
-#define PXA_NET_CONTENT_TYPE 6u
-#define PXA_NET_BODY_HANDLE 7u
-#define PXA_NET_TIMEOUT_MS 8u
-#define PXA_NET_HEADER 9u
-#define PXA_NET_BODY 10u
-#define PXA_NET_WANTED_RESPONSE_HEADER 11u
-#define PXA_NET_BODY_LENGTH 12u
-#define PXA_NET_RESPONSE_FLAGS 13u
-#define PXA_NET_RESPONSE_BODY_PRESENT 1u
-#define PXA_NET_RESPONSE_BODY_LENGTH_KNOWN 2u
+#define PXA_NET_GET 1u
+#define PXA_NET_HEAD 2u
+#define PXA_NET_POST 3u
+#define PXA_NET_PUT 4u
+#define PXA_NET_PATCH 5u
+#define PXA_NET_DELETE 6u
+#define PXA_NET_IO_READ 1u
+#define PXA_NET_BODY_PRESENT 1u
+#define PXA_NET_BODY_LENGTH_KNOWN 2u
 #define PXA_NET_MAX_HEADERS 8u
-#define PXA_NET_MAX_HEADER_NAME_BYTES 64u
-#define PXA_NET_MAX_HEADER_VALUE_BYTES 256u
-#define PXA_NET_MAX_HEADER_BLOCK_BYTES 2048u
-#define PXA_NET_MAX_INLINE_BODY_BYTES 2048u
+#define PXA_NET_MAX_URL 512u
+#define PXA_NET_MAX_BODY 2048u
 #define PXA_NET_MAX_RESPONSE_BODY_BYTES 262144u
-#define PXA_NET_MIN_TIMEOUT_MS 100u
-#define PXA_NET_DEFAULT_TIMEOUT_MS 15000u
-#define PXA_NET_MAX_TIMEOUT_MS 60000u
+#define PXA_NET_MAX_HEADER_BLOCK 2048u
 
 typedef struct {
     const char *name;
-    uint16_t name_length;
+    uint16_t name_size;
     const uint8_t *value;
-    uint16_t value_length;
+    uint16_t value_size;
 } pxa_net_header_t;
 
 typedef struct {
-    uint16_t method;
     const char *url;
-    uint16_t url_length;
-    uint32_t permission_handle;
+    uint16_t url_size;
+    uint16_t method;
+    uint64_t permission_handle;
     uint32_t max_response_bytes;
     uint32_t timeout_ms;
     const pxa_net_header_t *headers;
     uint16_t header_count;
     const uint8_t *body;
-    uint16_t body_length;
-    const char *const *wanted_response_headers;
-    const uint16_t *wanted_response_header_lengths;
-    uint16_t wanted_response_header_count;
-} pxa_net_http_request_t;
+    uint16_t body_size;
+    const char *const *wanted_headers;
+    const uint16_t *wanted_header_sizes;
+    uint16_t wanted_header_count;
+} pxa_net_request_t;
 
-typedef struct {
-    const uint8_t *name;
-    uint16_t name_length;
-    const uint8_t *value;
-    uint16_t value_length;
-} pxa_net_header_view_t;
-
+/* All views borrow the callback event and expire when the callback returns. */
 typedef struct {
     int32_t status;
     uint16_t status_code;
     const uint8_t *content_type;
-    uint16_t content_type_length;
-    uint32_t body_handle;
-} pxa_net_fetch_result_t;
-
-typedef struct {
-    int32_t status;
-    uint16_t status_code;
-    const uint8_t *content_type;
-    uint16_t content_type_length;
-    uint32_t body_handle;
+    uint16_t content_type_size;
+    uint64_t body_handle;
     uint64_t body_length;
     uint32_t flags;
     uint16_t header_count;
-    pxa_net_header_view_t headers[PXA_NET_MAX_HEADERS];
-} pxa_net_http_result_t;
+    pxa_net_header_t headers[PXA_NET_MAX_HEADERS];
+} pxa_net_result_t;
 
-static inline int pxa_net_header_name_valid(const char *name, size_t length) {
-    size_t index;
-    if (name == NULL || length == 0 || length > PXA_NET_MAX_HEADER_NAME_BYTES)
-        return 0;
-    for (index = 0; index < length; ++index) {
-        const uint8_t value = (uint8_t)name[index];
-        if (!((value >= 'a' && value <= 'z') ||
-              (value >= '0' && value <= '9') || value == '!' || value == '#' ||
-              value == '$' || value == '%' || value == '&' || value == '\'' ||
-              value == '*' || value == '+' || value == '-' || value == '.' ||
-              value == '^' || value == '_' || value == '`' || value == '|' ||
-              value == '~')) return 0;
-    }
+static inline int pxa_net_equal(const char *a, const char *b, size_t size) {
+    if (a == NULL || b == NULL) return 0;
+    for (size_t i = 0; i < size; ++i) if (a[i] != b[i]) return 0;
     return 1;
 }
 
-static inline int pxa_net_name_equal(const char *name, size_t length,
-                                     const char *literal) {
-    size_t index = 0;
-    if (name == NULL || literal == NULL) return 0;
-    while (literal[index] != '\0') {
-        if (index >= length || name[index] != literal[index]) return 0;
-        ++index;
+static inline int pxa_net_header_name_valid(const char *name,
+                                                size_t size) {
+    if (name == NULL || size == 0 || size > 64) return 0;
+    for (size_t i = 0; i < size; ++i) {
+        const uint8_t c = (uint8_t)name[i];
+        if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') ||
+              c == '!' || c == '#' || c == '$' || c == '%' || c == '&' ||
+              c == '\'' || c == '*' || c == '+' || c == '-' || c == '.' ||
+              c == '^' || c == '_' || c == '`' || c == '|' || c == '~'))
+            return 0;
     }
-    return index == length;
-}
-
-static inline int pxa_net_request_header_name_valid(const char *name,
-                                                    size_t length) {
-    return pxa_net_header_name_valid(name, length) &&
-           !pxa_net_name_equal(name, length, "connection") &&
-           !pxa_net_name_equal(name, length, "content-length") &&
-           !pxa_net_name_equal(name, length, "host") &&
-           !pxa_net_name_equal(name, length, "proxy-connection") &&
-           !pxa_net_name_equal(name, length, "te") &&
-           !pxa_net_name_equal(name, length, "trailer") &&
-           !pxa_net_name_equal(name, length, "transfer-encoding") &&
-           !pxa_net_name_equal(name, length, "upgrade");
+    return 1;
 }
 
 static inline int pxa_net_header_value_valid(const uint8_t *value,
-                                              size_t length) {
-    size_t index;
-    if ((value == NULL && length != 0) || length > PXA_NET_MAX_HEADER_VALUE_BYTES)
-        return 0;
-    for (index = 0; index < length; ++index) {
-        if (value[index] != '\t' &&
-            (value[index] < 0x20u || value[index] > 0x7eu)) return 0;
-    }
-    return 1;
-}
-
-static inline int pxa_net_content_type_valid(const uint8_t *value,
-                                             size_t length) {
-    size_t index;
-    if ((value == NULL && length != 0) || length > 96u) return 0;
-    for (index = 0; index < length; ++index) {
-        if (value[index] < 0x20u || value[index] > 0x7eu) return 0;
-    }
-    return 1;
-}
-
-static inline int pxa_net_http_request(uint32_t request_id,
-                                       const pxa_net_http_request_t *options,
-                                       uint8_t *payload,
-                                       size_t payload_capacity,
-                                       uint8_t *packet,
-                                       size_t packet_capacity) {
-    pxa_writer_t request;
-    pxa_writer_t message;
-    uint8_t value[4];
-    uint16_t index;
-    size_t header_bytes = 0;
-    if (request_id == 0 || options == NULL || options->url == NULL ||
-        options->url_length == 0 || options->url_length > 512 ||
-        options->method < PXA_NET_METHOD_GET ||
-        options->method > PXA_NET_METHOD_DELETE ||
-        options->permission_handle == 0 || options->max_response_bytes == 0 ||
-        options->max_response_bytes > PXA_NET_MAX_RESPONSE_BODY_BYTES ||
-        options->timeout_ms < PXA_NET_MIN_TIMEOUT_MS ||
-        options->timeout_ms > PXA_NET_MAX_TIMEOUT_MS ||
-        options->header_count > PXA_NET_MAX_HEADERS ||
-        options->wanted_response_header_count > PXA_NET_MAX_HEADERS ||
-        options->body_length > PXA_NET_MAX_INLINE_BODY_BYTES ||
-        (options->headers == NULL && options->header_count != 0) ||
-        (options->body == NULL && options->body_length != 0) ||
-        (options->wanted_response_headers == NULL &&
-         options->wanted_response_header_count != 0) ||
-        (options->wanted_response_header_lengths == NULL &&
-         options->wanted_response_header_count != 0) || payload == NULL ||
-        packet == NULL || packet_capacity < 12) return 0;
-    if ((options->method == PXA_NET_METHOD_GET ||
-         options->method == PXA_NET_METHOD_HEAD) && options->body_length != 0)
-        return 0;
-    pxa_writer_init(&request, payload, payload_capacity);
-    if (!pxa_record(&request, PXA_NET_URL, (const uint8_t *)options->url,
-                    options->url_length)) return 0;
-    value[0] = (uint8_t)options->method;
-    value[1] = (uint8_t)(options->method >> 8);
-    if (!pxa_record(&request, PXA_NET_METHOD, value, 2)) return 0;
-    value[0] = (uint8_t)options->permission_handle;
-    value[1] = (uint8_t)(options->permission_handle >> 8);
-    value[2] = (uint8_t)(options->permission_handle >> 16);
-    value[3] = (uint8_t)(options->permission_handle >> 24);
-    if (!pxa_record(&request, PXA_NET_PERMISSION_HANDLE, value, 4)) return 0;
-    value[0] = (uint8_t)options->max_response_bytes;
-    value[1] = (uint8_t)(options->max_response_bytes >> 8);
-    value[2] = (uint8_t)(options->max_response_bytes >> 16);
-    value[3] = (uint8_t)(options->max_response_bytes >> 24);
-    if (!pxa_record(&request, PXA_NET_MAX_RESPONSE_BYTES, value, 4)) return 0;
-    value[0] = (uint8_t)options->timeout_ms;
-    value[1] = (uint8_t)(options->timeout_ms >> 8);
-    value[2] = (uint8_t)(options->timeout_ms >> 16);
-    value[3] = (uint8_t)(options->timeout_ms >> 24);
-    if (!pxa_record(&request, PXA_NET_TIMEOUT_MS, value, 4)) return 0;
-    for (index = 0; index < options->header_count; ++index) {
-        uint8_t encoded[8 + PXA_NET_MAX_HEADER_NAME_BYTES +
-                        PXA_NET_MAX_HEADER_VALUE_BYTES];
-        pxa_writer_t header;
-        const pxa_net_header_t *item = &options->headers[index];
-        uint16_t previous_index;
-        if (!pxa_net_request_header_name_valid(item->name, item->name_length) ||
-            !pxa_net_header_value_valid(item->value, item->value_length)) return 0;
-        for (previous_index = 0; previous_index < index; ++previous_index) {
-            const pxa_net_header_t *previous =
-                &options->headers[previous_index];
-            size_t byte_index;
-            if (previous->name_length != item->name_length) continue;
-            for (byte_index = 0; byte_index < item->name_length; ++byte_index) {
-                if (previous->name[byte_index] != item->name[byte_index]) break;
-            }
-            if (byte_index == item->name_length) return 0;
-        }
-        pxa_writer_init(&header, encoded, sizeof(encoded));
-        if (!pxa_record(&header, 1, (const uint8_t *)item->name,
-                        item->name_length) ||
-            !pxa_record(&header, 2, item->value, item->value_length) ||
-            header.length + 4u > PXA_NET_MAX_HEADER_BLOCK_BYTES -
-                                     header_bytes ||
-            !pxa_record(&request, PXA_NET_HEADER, encoded, header.length)) return 0;
-        header_bytes += header.length + 4u;
-    }
-    if (options->body_length != 0 &&
-        !pxa_record(&request, PXA_NET_BODY, options->body,
-                    options->body_length)) return 0;
-    for (index = 0; index < options->wanted_response_header_count; ++index) {
-        const char *name = options->wanted_response_headers[index];
-        const uint16_t length = options->wanted_response_header_lengths[index];
-        uint16_t previous_index;
-        if (!pxa_net_header_name_valid(name, length) ||
-            !pxa_record(&request, PXA_NET_WANTED_RESPONSE_HEADER,
-                        (const uint8_t *)name, length)) return 0;
-        for (previous_index = 0; previous_index < index; ++previous_index) {
-            const char *previous = options->wanted_response_headers[previous_index];
-            const uint16_t previous_length =
-                options->wanted_response_header_lengths[previous_index];
-            size_t byte_index;
-            if (previous_length != length) continue;
-            for (byte_index = 0; byte_index < length; ++byte_index) {
-                if (previous[byte_index] != name[byte_index]) break;
-            }
-            if (byte_index == length) return 0;
-        }
-    }
-    pxa_writer_init(&message, packet, packet_capacity);
-    return pxa_message(&message, PXA_SERVICE_NET, PXA_NET_HTTP_REQUEST,
-                       request_id, request.data, request.length) &&
-           pxa_control(message.data, (uint32_t)message.length) == PXA_STATUS_OK;
-}
-
-static inline int pxa_net_fetch_get(uint32_t request_id, const char *url,
-                                    size_t url_length, uint32_t permission_handle,
-                                    uint32_t max_response_bytes, uint8_t *payload,
-                                    size_t payload_capacity, uint8_t *packet,
-                                    size_t packet_capacity) {
-    pxa_writer_t request;
-    pxa_writer_t message;
-    uint8_t method[2] = {PXA_NET_METHOD_GET, 0};
-    uint8_t permission[4];
-    uint8_t limit[4];
-    if (request_id == 0 || url == NULL || url_length == 0 || url_length > 512 ||
-        permission_handle == 0 || max_response_bytes == 0 || payload == NULL ||
-        packet == NULL || packet_capacity < 12) return 0;
-    permission[0] = (uint8_t)permission_handle;
-    permission[1] = (uint8_t)(permission_handle >> 8);
-    permission[2] = (uint8_t)(permission_handle >> 16);
-    permission[3] = (uint8_t)(permission_handle >> 24);
-    limit[0] = (uint8_t)max_response_bytes;
-    limit[1] = (uint8_t)(max_response_bytes >> 8);
-    limit[2] = (uint8_t)(max_response_bytes >> 16);
-    limit[3] = (uint8_t)(max_response_bytes >> 24);
-    pxa_writer_init(&request, payload, payload_capacity);
-    if (!pxa_record(&request, PXA_NET_URL, (const uint8_t *)url, url_length) ||
-        !pxa_record(&request, PXA_NET_METHOD, method, sizeof(method)) ||
-        !pxa_record(&request, PXA_NET_PERMISSION_HANDLE, permission, sizeof(permission)) ||
-        !pxa_record(&request, PXA_NET_MAX_RESPONSE_BYTES, limit, sizeof(limit))) return 0;
-    pxa_writer_init(&message, packet, packet_capacity);
-    return pxa_message(&message, PXA_SERVICE_NET, PXA_NET_FETCH, request_id,
-                       request.data, request.length) &&
-           pxa_control(message.data, (uint32_t)message.length) == PXA_STATUS_OK;
-}
-
-static inline int pxa_net_parse_fetch(const pxa_event_t *event,
-                                      pxa_net_fetch_result_t *output) {
-    const uint8_t *value;
-    if (event == NULL || output == NULL || event->service != PXA_SERVICE_NET ||
-        event->opcode != PXA_NET_FETCH || event->request_id == 0 ||
-        event->payload_length < 4) return 0;
-    value = event->payload;
-    output->status = (int32_t)pxa_read_u32(value);
-    if (output->status != PXA_STATUS_OK) return event->payload_length == 4;
-    if (event->payload_length < 22 || pxa_read_u16(value + 4) != PXA_NET_STATUS_CODE ||
-        pxa_read_u16(value + 6) != 2 || pxa_read_u16(value + 10) != PXA_NET_CONTENT_TYPE)
-        return 0;
-    output->status_code = pxa_read_u16(value + 8);
-    output->content_type_length = pxa_read_u16(value + 12);
-    if (output->content_type_length > event->payload_length - 14 ||
-        14u + output->content_type_length + 8u != event->payload_length) return 0;
-    output->content_type = value + 14;
-    value += 14 + output->content_type_length;
-    if (pxa_read_u16(value) != PXA_NET_BODY_HANDLE || pxa_read_u16(value + 2) != 4) return 0;
-    output->body_handle = pxa_read_u32(value + 4);
-    return output->status_code >= 100 && output->status_code <= 599 && output->body_handle != 0;
-}
-
-static inline int pxa_net_parse_header_view(const uint8_t *data, size_t length,
-                                            pxa_net_header_view_t *output) {
-    size_t offset = 0;
-    uint8_t seen = 0;
-    uint16_t previous = 0;
-    output->name = NULL;
-    output->name_length = 0;
-    output->value = NULL;
-    output->value_length = 0;
-    while (offset < length) {
-        uint16_t tag;
-        uint16_t size;
-        if (length - offset < 4) return 0;
-        tag = pxa_read_u16(data + offset);
-        size = pxa_read_u16(data + offset + 2);
-        offset += 4;
-        if (tag < previous || size > length - offset) return 0;
-        previous = tag;
-        if (tag == 1 && (seen & 1u) == 0 && size != 0 &&
-            size <= PXA_NET_MAX_HEADER_NAME_BYTES) {
-            output->name = data + offset;
-            output->name_length = size;
-            seen |= 1u;
-        } else if (tag == 2 && (seen & 2u) == 0 &&
-                   size <= PXA_NET_MAX_HEADER_VALUE_BYTES) {
-            output->value = data + offset;
-            output->value_length = size;
-            seen |= 2u;
-        } else if ((tag & 0x8000u) == 0) {
+                                                 size_t size) {
+    if ((value == NULL && size != 0) || size > 256) return 0;
+    for (size_t i = 0; i < size; ++i)
+        if (value[i] != '\t' && (value[i] < 0x20u || value[i] > 0x7eu))
             return 0;
-        }
-        offset += size;
-    }
-    return seen == 3u &&
-           pxa_net_header_name_valid((const char *)output->name,
-                                     output->name_length) &&
-           pxa_net_header_value_valid(output->value, output->value_length);
+    return 1;
 }
 
-static inline int pxa_net_parse_http_result(const pxa_event_t *event,
-                                            pxa_net_http_result_t *output) {
+static inline int pxa_net_append(uint8_t *packet, size_t capacity,
+                                     size_t *offset, uint16_t tag,
+                                     const uint8_t *data, size_t size) {
+    size_t written = 0;
+    if (*offset > capacity ||
+        !pxa_wire_record_encode(packet + *offset, capacity - *offset,
+                                tag, data, size, &written)) return 0;
+    *offset += written;
+    return 1;
+}
+
+/* One caller-owned packet; no second payload buffer or heap allocation. */
+static inline int pxa_net_build(
+    uint8_t *packet, size_t capacity, uint16_t opcode, uint64_t token,
+    const pxa_net_request_t *request, uint32_t *written) {
+    uint8_t scalar[8];
+    size_t offset = PXA_HEADER_BYTES;
+    size_t header_bytes = 0;
+    if (written != NULL) *written = 0;
+    if (packet == NULL || written == NULL || request == NULL || token == 0 ||
+        (opcode != PXA_NET_FETCH && opcode != PXA_NET_HTTP_REQUEST) ||
+        capacity < PXA_HEADER_BYTES ||
+        request->url == NULL || request->url_size == 0 ||
+        request->url_size > PXA_NET_MAX_URL ||
+        (request->permission_handle >> 32) == 0 ||
+        request->max_response_bytes == 0 ||
+        request->max_response_bytes > 262144u ||
+        request->method < PXA_NET_GET ||
+        request->method > PXA_NET_DELETE ||
+        (opcode == PXA_NET_FETCH && request->method != PXA_NET_GET) ||
+        request->header_count > PXA_NET_MAX_HEADERS ||
+        request->wanted_header_count > PXA_NET_MAX_HEADERS ||
+        request->body_size > PXA_NET_MAX_BODY ||
+        (request->headers == NULL && request->header_count != 0) ||
+        (request->body == NULL && request->body_size != 0) ||
+        (request->wanted_headers == NULL && request->wanted_header_count != 0) ||
+        (request->wanted_header_sizes == NULL &&
+         request->wanted_header_count != 0) ||
+        ((request->method == PXA_NET_GET ||
+          request->method == PXA_NET_HEAD) && request->body_size != 0) ||
+        (opcode == PXA_NET_HTTP_REQUEST &&
+         (request->timeout_ms < 100u || request->timeout_ms > 60000u)))
+        return 0;
+    if (capacity > PXA_MAX_CONTROL_BYTES)
+        capacity = PXA_MAX_CONTROL_BYTES;
+    if (!pxa_net_append(packet, capacity, &offset, 1,
+                           (const uint8_t *)request->url,
+                           request->url_size)) return 0;
+    pxa_store_u16(scalar, request->method);
+    if (!pxa_net_append(packet, capacity, &offset, 2, scalar, 2)) return 0;
+    pxa_store_u64(scalar, request->permission_handle);
+    if (!pxa_net_append(packet, capacity, &offset, 3, scalar, 8)) return 0;
+    pxa_store_u32(scalar, request->max_response_bytes);
+    if (!pxa_net_append(packet, capacity, &offset, 4, scalar, 4)) return 0;
+    if (opcode == PXA_NET_HTTP_REQUEST) {
+        pxa_store_u32(scalar, request->timeout_ms);
+        if (!pxa_net_append(packet, capacity, &offset, 8, scalar, 4)) return 0;
+        for (uint16_t i = 0; i < request->header_count; ++i) {
+            const pxa_net_header_t *h = &request->headers[i];
+            size_t nested_size = 8u + h->name_size + h->value_size;
+            if (!pxa_net_header_name_valid(h->name, h->name_size) ||
+                !pxa_net_header_value_valid(h->value, h->value_size) ||
+                nested_size + 4u > PXA_NET_MAX_HEADER_BLOCK - header_bytes ||
+                offset > capacity || capacity - offset < nested_size + 4u)
+                return 0;
+            static const char *const forbidden[] = {
+                "connection", "content-length", "host", "proxy-connection",
+                "te", "trailer", "transfer-encoding", "upgrade"};
+            for (size_t j = 0; j < sizeof(forbidden) / sizeof(forbidden[0]); ++j) {
+                size_t name_size = 0;
+                while (forbidden[j][name_size] != '\0') ++name_size;
+                if (h->name_size == name_size &&
+                    pxa_net_equal(h->name, forbidden[j], name_size)) return 0;
+            }
+            for (uint16_t j = 0; j < i; ++j)
+                if (request->headers[j].name_size == h->name_size &&
+                    pxa_net_equal(request->headers[j].name, h->name,
+                                     h->name_size)) return 0;
+            pxa_store_u16(packet + offset, 9);
+            pxa_store_u16(packet + offset + 2, (uint16_t)nested_size);
+            offset += 4;
+            if (!pxa_net_append(packet, capacity, &offset, 1,
+                                   (const uint8_t *)h->name, h->name_size) ||
+                !pxa_net_append(packet, capacity, &offset, 2,
+                                   h->value, h->value_size)) return 0;
+            header_bytes += nested_size + 4u;
+        }
+        if (request->body_size != 0 &&
+            !pxa_net_append(packet, capacity, &offset, 10,
+                               request->body, request->body_size)) return 0;
+        for (uint16_t i = 0; i < request->wanted_header_count; ++i) {
+            const char *name = request->wanted_headers[i];
+            const uint16_t size = request->wanted_header_sizes[i];
+            if (!pxa_net_header_name_valid(name, size)) return 0;
+            for (uint16_t j = 0; j < i; ++j)
+                if (request->wanted_header_sizes[j] == size &&
+                    pxa_net_equal(request->wanted_headers[j], name, size))
+                    return 0;
+            if (!pxa_net_append(packet, capacity, &offset, 11,
+                                   (const uint8_t *)name, size)) return 0;
+        }
+    }
+    return pxa_finish_message_in_place(packet, capacity,
+                                          PXA_NET_SERVICE, opcode,
+                                          token, offset, written);
+}
+
+static inline int32_t pxa_net_submit(
+    uint8_t *packet, size_t capacity, uint16_t opcode, uint64_t token,
+    const pxa_net_request_t *request) {
+    uint32_t written = 0;
+    if (!pxa_net_build(packet, capacity, opcode, token, request,
+                          &written)) return -1;
+    return pxa_submit(packet, written);
+}
+
+static inline int pxa_net_parse_header(const uint8_t *data, size_t size,
+                                           pxa_net_header_t *out) {
+    pxa_wire_record_view_t record;
+    size_t consumed = 0;
+    if (!pxa_wire_record_decode(data, size, &record, &consumed) ||
+        record.raw_tag != 1 ||
+        !pxa_net_header_name_valid((const char *)record.payload,
+                                       record.payload_size)) return 0;
+    out->name = (const char *)record.payload;
+    out->name_size = record.payload_size;
+    data += consumed;
+    size -= consumed;
+    if (!pxa_wire_record_decode(data, size, &record, &consumed) ||
+        record.raw_tag != 2 || consumed != size ||
+        !pxa_net_header_value_valid(record.payload,
+                                        record.payload_size)) return 0;
+    out->value = record.payload;
+    out->value_size = record.payload_size;
+    return 1;
+}
+
+static inline int pxa_net_parse_result(
+    const pxa_event_t *event, uint64_t token, uint16_t opcode,
+    pxa_net_result_t *out) {
     size_t offset = 4;
-    uint16_t previous = 0;
-    uint8_t seen_status = 0;
-    uint8_t seen_content_type = 0;
-    uint8_t seen_handle = 0;
-    uint8_t seen_length = 0;
-    uint8_t seen_flags = 0;
     size_t header_bytes = 0;
-    if (event == NULL || output == NULL || event->service != PXA_SERVICE_NET ||
-        event->opcode != PXA_NET_HTTP_REQUEST || event->request_id == 0 ||
-        event->payload_length < 4) return 0;
-    output->status = (int32_t)pxa_read_u32(event->payload);
-    output->status_code = 0;
-    output->content_type = NULL;
-    output->content_type_length = 0;
-    output->body_handle = 0;
-    output->body_length = 0;
-    output->flags = 0;
-    output->header_count = 0;
-    if (output->status != PXA_STATUS_OK) return event->payload_length == 4;
-    while (offset < event->payload_length) {
-        uint16_t tag;
-        uint16_t size;
-        const uint8_t *value;
-        if (event->payload_length - offset < 4) return 0;
-        tag = pxa_read_u16(event->payload + offset);
-        size = pxa_read_u16(event->payload + offset + 2);
-        offset += 4;
-        if (tag < previous || size > event->payload_length - offset) return 0;
-        previous = tag;
-        value = event->payload + offset;
-        if (tag == PXA_NET_STATUS_CODE && !seen_status && size == 2) {
-            output->status_code = pxa_read_u16(value);
-            seen_status = 1;
-        } else if (tag == PXA_NET_CONTENT_TYPE && !seen_content_type &&
-                   pxa_net_content_type_valid(value, size)) {
-            output->content_type = value;
-            output->content_type_length = size;
-            seen_content_type = 1;
-        } else if (tag == PXA_NET_BODY_HANDLE && !seen_handle && size == 4) {
-            output->body_handle = pxa_read_u32(value);
-            seen_handle = 1;
-        } else if (tag == PXA_NET_HEADER &&
-                   output->header_count < PXA_NET_MAX_HEADERS &&
-                   size + 4u <= PXA_NET_MAX_HEADER_BLOCK_BYTES - header_bytes &&
-                   pxa_net_parse_header_view(
-                       value, size, &output->headers[output->header_count])) {
-            uint16_t previous_index;
-            for (previous_index = 0;
-                 previous_index < output->header_count; ++previous_index) {
-                const pxa_net_header_view_t *previous =
-                    &output->headers[previous_index];
-                size_t byte_index;
-                if (previous->name_length !=
-                    output->headers[output->header_count].name_length) continue;
-                for (byte_index = 0; byte_index < previous->name_length;
-                     ++byte_index) {
-                    if (previous->name[byte_index] !=
-                        output->headers[output->header_count].name[byte_index]) {
-                        break;
-                    }
-                }
-                if (byte_index == previous->name_length) return 0;
-            }
-            header_bytes += size + 4u;
-            output->header_count++;
-        } else if (tag == PXA_NET_BODY_LENGTH && !seen_length && size == 8) {
-            output->body_length = pxa_read_u64(value);
-            seen_length = 1;
-        } else if (tag == PXA_NET_RESPONSE_FLAGS && !seen_flags && size == 4) {
-            output->flags = pxa_read_u32(value);
-            seen_flags = 1;
-        } else if ((tag & 0x8000u) == 0) {
-            return 0;
+    uint16_t previous = 0;
+    unsigned seen = 0;
+    pxa_wire_record_view_t record;
+    size_t consumed = 0;
+    if (out == NULL) return 0;
+    pxa_zero(out, sizeof(*out));
+    if (event == NULL || token == 0 || event->token != token ||
+        event->service != PXA_NET_SERVICE || event->opcode != opcode ||
+        (opcode != PXA_NET_FETCH && opcode != PXA_NET_HTTP_REQUEST) ||
+        event->payload == NULL || event->payload_size < 4) return 0;
+    out->status = (int32_t)pxa_load_u32(event->payload);
+    if (out->status != 0) return event->payload_size == 4;
+    while (offset < event->payload_size) {
+        if (!pxa_wire_record_decode(event->payload + offset,
+                                    event->payload_size - offset,
+                                    &record, &consumed) ||
+            record.raw_tag < previous) return 0;
+        previous = record.raw_tag;
+        if (record.optional) {
+            offset += consumed;
+            continue;
         }
-        offset += size;
+        if (record.tag == 5 && !(seen & 1u) && record.payload_size == 2) {
+            out->status_code = pxa_load_u16(record.payload);
+            seen |= 1u;
+        } else if (record.tag == 6 && !(seen & 2u) &&
+                   record.payload_size <= 96u) {
+            for (size_t i = 0; i < record.payload_size; ++i)
+                if (record.payload[i] < 0x20u ||
+                    record.payload[i] > 0x7eu) return 0;
+            out->content_type = record.payload;
+            out->content_type_size = record.payload_size;
+            seen |= 2u;
+        } else if (record.tag == 7 && !(seen & 4u) &&
+                   record.payload_size == 8) {
+            out->body_handle = pxa_load_u64(record.payload);
+            if ((out->body_handle >> 32) == 0) return 0;
+            seen |= 4u;
+        } else if (opcode == PXA_NET_HTTP_REQUEST && record.tag == 9 &&
+                   out->header_count < PXA_NET_MAX_HEADERS &&
+                   record.payload_size + 4u <=
+                       PXA_NET_MAX_HEADER_BLOCK - header_bytes &&
+                   pxa_net_parse_header(record.payload,
+                                            record.payload_size,
+                                            &out->headers[out->header_count])) {
+            const pxa_net_header_t *h = &out->headers[out->header_count];
+            for (uint16_t i = 0; i < out->header_count; ++i)
+                if (out->headers[i].name_size == h->name_size &&
+                    pxa_net_equal(out->headers[i].name, h->name,
+                                     h->name_size)) return 0;
+            header_bytes += record.payload_size + 4u;
+            ++out->header_count;
+        } else if (opcode == PXA_NET_HTTP_REQUEST && record.tag == 12 &&
+                   !(seen & 8u) && record.payload_size == 8) {
+            out->body_length = pxa_load_u64(record.payload);
+            seen |= 8u;
+        } else if (opcode == PXA_NET_HTTP_REQUEST && record.tag == 13 &&
+                   !(seen & 16u) && record.payload_size == 4) {
+            out->flags = pxa_load_u32(record.payload);
+            seen |= 16u;
+        } else return 0;
+        offset += consumed;
     }
-    if (!seen_status || !seen_content_type || !seen_flags ||
-        output->status_code < 100 || output->status_code > 599 ||
-        (seen_handle && output->body_handle == 0) ||
-        (output->flags & ~(PXA_NET_RESPONSE_BODY_PRESENT |
-                           PXA_NET_RESPONSE_BODY_LENGTH_KNOWN)) != 0 ||
-        (((output->flags & PXA_NET_RESPONSE_BODY_PRESENT) != 0) !=
-         (seen_handle && output->body_handle != 0)) ||
-        (((output->flags & PXA_NET_RESPONSE_BODY_LENGTH_KNOWN) != 0) !=
-         (seen_length != 0)) ||
-        ((output->flags & PXA_NET_RESPONSE_BODY_PRESENT) == 0 &&
-         output->body_length != 0)) return 0;
-    return 1;
+    if ((seen & 3u) != 3u || out->status_code < 100 ||
+        out->status_code > 599) return 0;
+    if (opcode == PXA_NET_FETCH)
+        return seen == 7u;
+    return (seen & 16u) != 0 &&
+           (out->flags & ~(PXA_NET_BODY_PRESENT |
+                           PXA_NET_BODY_LENGTH_KNOWN)) == 0 &&
+           (((out->flags & PXA_NET_BODY_PRESENT) != 0) ==
+            ((seen & 4u) != 0)) &&
+           (((out->flags & PXA_NET_BODY_LENGTH_KNOWN) != 0) ==
+            ((seen & 8u) != 0)) &&
+           (((out->flags & PXA_NET_BODY_PRESENT) != 0) ||
+            out->body_length == 0);
 }
 
 #endif

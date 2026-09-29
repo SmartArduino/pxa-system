@@ -1,5 +1,5 @@
-#ifndef PXA_I18N_H
-#define PXA_I18N_H
+#ifndef PXA_GUEST_I18N_H
+#define PXA_GUEST_I18N_H
 
 #include <stddef.h>
 #include <stdint.h>

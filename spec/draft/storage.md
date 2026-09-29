@@ -3,6 +3,8 @@
 Storage v1 is service 6: a small persistent key/value store scoped to the
 signed App identity. Every Component in one App sees the same store; another
 App, even with the same textual App ID but a different publisher, does not.
+The desktop product simulator keys its persistent Storage directory by both
+the verified publisher key ID and App ID.
 Storage is private data, so the App Manager's clear-data action removes it
 along with private files. It is not a directory, cache, database query engine
 or Secrets facility.
@@ -13,10 +15,10 @@ A key is 1 to 64 ASCII bytes. Its first byte is an ASCII letter; later bytes
 may be ASCII letters, digits, `.`, `_` or `-`. Comparison and list order are
 raw unsigned-byte lexicographic order. A value is an opaque byte string and
 may be empty. Hosts must bound one value and the total value bytes for an App;
-the wire format permits up to 2048 value bytes, while this reference Host uses
-960 to fit every permitted Core control-message configuration. It accepts at
-most 32 entries and reports `quota-exceeded` when an update would exceed its
-configured value-byte quota.
+the wire format permits up to 2048 value bytes. The desktop simulator uses the
+full 2048-byte limit, while ESP firmware currently configures 960 bytes. Hosts
+reject values above their configured per-value bound and report
+`quota-exceeded` when an update exceeds the configured App total.
 
 The Host persists a whole replacement snapshot before reporting successful
 `set` or `remove`. It keeps recovery data outside the Guest FS namespace and

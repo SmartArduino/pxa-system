@@ -3,6 +3,7 @@
 #include <string.h>
 
 #include "pxa_canvas.h"
+#include "pxa_window.h"
 
 #define LAB_NODE UINT32_C(2)
 
@@ -45,8 +46,9 @@ int32_t pxa_app_start(const uint8_t* config, uint32_t config_length) {
     result = libc_lab_run();
     if (!libc_lab_format(summary, sizeof(summary), &result))
         return PXA_STATUS_INTERNAL;
-    return pxa_window_fullscreen() && render(&result, summary) ? PXA_STATUS_OK
-                                                               : PXA_STATUS_INTERNAL;
+    return pxa_window_fullscreen() == PXA_STATUS_OK && render(&result, summary)
+               ? PXA_STATUS_OK
+               : PXA_STATUS_INTERNAL;
 }
 
 int32_t pxa_app_on_event(const uint8_t* event, uint32_t length) {

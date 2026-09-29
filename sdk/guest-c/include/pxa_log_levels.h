@@ -1,0 +1,10 @@
+#ifndef PXA_GUEST_LOG_LEVELS_H
+#define PXA_GUEST_LOG_LEVELS_H
+
+#define PXA_LOG_LEVEL_TRACE 0u
+#define PXA_LOG_LEVEL_DEBUG 1u
+#define PXA_LOG_LEVEL_INFO 2u
+#define PXA_LOG_LEVEL_WARN 3u
+#define PXA_LOG_LEVEL_ERROR 4u
+
+#endif

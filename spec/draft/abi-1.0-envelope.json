@@ -1,0 +1,21 @@
+{
+  "schema": "pxa-abi-envelope-proposal-1.0",
+  "status": "proposal",
+  "byte_order": "little-endian",
+  "size": 20,
+  "max_control_message": 4096,
+  "fields": [
+    {"name": "service", "type": "u16", "offset": 0, "required_nonzero": true},
+    {"name": "opcode", "type": "u16", "offset": 2, "required_nonzero": true},
+    {"name": "request_token", "type": "u64", "offset": 4},
+    {"name": "payload_len", "type": "u32", "offset": 12},
+    {"name": "flags", "type": "u32", "offset": 16, "required_value": 0}
+  ],
+  "golden": {
+    "service": 7,
+    "opcode": 2,
+    "request_token": 1234605616436508552,
+    "payload_hex": "010203",
+    "wire_hex": "0700020088776655443322110300000000000000010203"
+  }
+}

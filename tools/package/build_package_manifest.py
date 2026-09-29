@@ -410,9 +410,10 @@ def main(argv):
     require(isinstance(release_sequence, int) and not isinstance(release_sequence, bool)
             and 0 < release_sequence <= 0xFFFFFFFFFFFFFFFF,
             "release_sequence must be a positive u64")
-    min_sdk = parse_sdk(metadata, "min_sdk", [0, 1])
+    min_sdk = parse_sdk(metadata, "min_sdk", [1, 0])
     target_sdk = parse_sdk(metadata, "target_sdk", list(min_sdk))
     compile_sdk = parse_sdk(metadata, "compile_sdk", list(target_sdk))
+    require(min_sdk[0] == 1, "Core v1 is required for new packages")
     require(min_sdk[0] == target_sdk[0] == compile_sdk[0] and
             min_sdk <= target_sdk <= compile_sdk,
             "SDK versions must use one major and min <= target <= compile")
@@ -517,9 +518,9 @@ def main(argv):
                 not isinstance(linear_memory["maximum_bytes"], bool) and
                 65536 <= linear_memory["maximum_bytes"] <= 4294967296 and
                 linear_memory["maximum_bytes"] % 65536 == 0 and
-                linear_memory["pinned"] is True,
-                "build linear_memory must declare a page-aligned maximum_bytes and pinned=true")
-        pinned_memory = True
+                isinstance(linear_memory["pinned"], bool),
+                "build linear_memory must declare a page-aligned maximum_bytes and boolean pinned")
+        pinned_memory = linear_memory["pinned"]
 
     declared_services = parse_services(metadata.get("services", []), "services")
     raw_components = metadata.get("components", [{"id": "main", "kind": "ui"}])
@@ -560,7 +561,7 @@ def main(argv):
     endpoint_components = {component_id for _, component_id, _ in ipc_entries}
     for component_id, kind, flags, service_requirements, wasi_features, artifact_mode in components:
         automatic_services = []
-        if kind == COMPONENT_KINDS["ui"]:
+        if kind == COMPONENT_KINDS["ui"] and min_sdk[0] == 0:
             automatic_services.extend(["window", "ui", "clock"])
         if permission_entries:
             automatic_services.append("permission")

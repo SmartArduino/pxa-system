@@ -19,10 +19,12 @@ its descendants. `REPLACE_SURFACE` replaces the Surface root and requires a
 single Root command. Node IDs are scoped to one Surface and remain stable until
 their nodes are removed. Removing a node removes its complete subtree.
 
-No protocol field limits node count, tree depth, canvas count, text bytes or
-property bytes. Hosts use iterative validation and enforce private byte budgets
-to protect the system. Resource exhaustion is reported, never handled by
-silently truncating a tree.
+Node count, tree depth and canvas count have no fixed ABI-wide limit. Each
+command payload has a `u16` length, and Hosts use iterative validation plus
+private byte budgets for the full transaction, each Canvas and all retained UI
+state. Resource exhaustion is reported, never handled by silently truncating
+a tree. A Host allocator may resize a growing transaction or Canvas buffer in
+place; a failed resize leaves the previous bytes intact.
 
 ## Rendering and adaptation
 
@@ -117,7 +119,13 @@ kind 2  fixed      value is the logical pixel size, /64 dp
 
 Reserved bytes must be zero and at most 64 tracks are accepted. A node uses
 grid layout once both templates are present; a later property replaces the
-whole template for that axis.
+whole template for that axis. Fraction weights are integers from 1 through 99;
+fixed sizes range from 0 through `INT32_MAX` in 1/64 dp and are converted using
+the Surface density. Values that cannot be represented by the Host layout
+engine are rejected rather than interpreted as internal layout markers.
+Clearing either template removes that axis and disables grid layout until both
+templates are present again. Preparation failure rejects the transaction and
+retains the previously committed templates and node order.
 
 `grid-cell` (276) places a child inside the parent grid as `u16[4]`:
 
@@ -154,3 +162,18 @@ Host that presents a system input method delivers its result through these
 events, so a Guest that wants the system keyboard only has to render a text
 input, subscribe to the text mask and follow the text events. Resource pressure is semantic (`normal`,
 `constrained`, `critical`); raw free-memory values are not application ABI.
+
+## Core 1 preview binding
+
+The `pxa.core.v1` binding keeps transaction, Canvas, Surface and event record
+payloads unchanged. UI Surface and node IDs remain `u32` logical identifiers;
+they are not Core resource Handles. Transaction and Canvas commands use a
+zero envelope token. Theme get uses a nonzero 64-bit request token and a
+reserved completion with status and the existing 60-byte theme record.
+
+Canvas stream open uses its existing `request:u32` correlation field in the
+payload and posts a token-zero `CANVAS_STREAM_READY` event with
+`request:u32, handle:u64, status:i32`. The stream uses native 64-bit typed I/O
+and Core close. `pxa_ui_wire.h` exposes allocation-free packet builders and
+event views. Its transaction record builder keeps each small command in one
+`TX_WRITE` packet; callers with larger records can send bounded fragments.

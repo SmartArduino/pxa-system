@@ -1,6 +1,7 @@
 #include <stdint.h>
 
 #include "pxa_canvas.h"
+#include "pxa_window.h"
 
 #define LAB_NODE UINT32_C(2)
 #define WASI_CLOCK_REALTIME UINT32_C(0)
@@ -78,7 +79,7 @@ int32_t pxa_app_start(const uint8_t *config, uint32_t config_length) {
     (void)config;
     (void)config_length;
     passed = run_checks();
-    return pxa_window_fullscreen() && render(passed) && passed == 4
+    return pxa_window_fullscreen() == PXA_STATUS_OK && render(passed) && passed == 4
                ? PXA_STATUS_OK
                : PXA_STATUS_INTERNAL;
 }

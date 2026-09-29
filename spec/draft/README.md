@@ -17,6 +17,10 @@ Status: **design draft; no compatibility guarantee**.
 - [architecture.md](architecture.md) defines ownership and execution rules.
 - [core-wire.md](core-wire.md) defines the Core message, request, handle and IO
   semantics.
+- [abi-1.0-migration.md](abi-1.0-migration.md) proposes the breaking Core v1
+  envelope, token layout, Guest SDK and rollout sequence.
+- [abi-1.0-envelope.json](abi-1.0-envelope.json) fixes the proposed v1
+  envelope layout and its checked golden bytes.
 - [lifecycle.md](lifecycle.md) defines Component callbacks, stop and
   cancellation commit points.
 - [window.md](window.md) defines the first independently versioned service.
@@ -57,7 +61,14 @@ Status: **design draft; no compatibility guarantee**.
   defines the game-oriented persistent-resource renderer.
 - `golden/` contains reproducible Core, Package and UI 0.3 wire examples.
 - `tools/check_spec.py` validates the specification and golden vectors without
-  third-party dependencies.
+  third-party dependencies. After changing a Core envelope or record schema, run
+  `python3 tools/generate_wire_codecs.py` from this directory to refresh the
+  identical Host and freestanding Guest codecs. The spec checker rejects stale
+  generated headers; `tools/test_wire_codecs.py` compiles both copies and
+  compares Core message and record golden vectors byte for byte. After changing
+  the Device runtime-info or Window snapshot result schema, run
+  `python3 tools/generate_service_codecs.py`; the same checker validates the
+  Host and Guest Service headers and their golden result bytes.
 
 ## Service namespace
 

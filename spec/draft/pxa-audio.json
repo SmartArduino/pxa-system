@@ -1,11 +1,11 @@
 {
-  "schema": "pxa-audio-spec-0.5",
+  "schema": "pxa-audio-spec-0.7",
   "status": "draft",
   "service": {
     "name": "audio",
     "id": 10,
     "major": 0,
-    "minor": 5,
+    "minor": 7,
     "patch": 0
   },
   "opcodes": [
@@ -66,6 +66,20 @@
       "payload": "action:u8|reserved:u8|gain-db-q8:i16",
       "result": "payload-size-or-status",
       "since": "0.4"
+    },
+    {
+      "name": "play-sound",
+      "id": 259,
+      "payload": "asset-handle:u64|gain-db-q8:i16|reserved:2*u8",
+      "result": "payload-size-or-status",
+      "since": "0.6"
+    },
+    {
+      "name": "play-music",
+      "id": 260,
+      "payload": "instance-out:u64|path-size:u16|gain-db-q8:i16|flags:u8|reserved:3*u8|package-path:bytes",
+      "result": "payload-size-or-status; accepted command writes nonzero instance",
+      "since": "0.7"
     }
   ],
   "record_tags": [
@@ -181,5 +195,19 @@
     "min_frame_ms": 5,
     "max_frame_ms": 120
   },
-  "protocol_version": "0.5.0"
+  "protocol_version": "0.7.0",
+  "playback_event": {
+    "id": 32769,
+    "since": "0.7",
+    "request_id": "zero",
+    "payload": "session-handle:u64|instance:u64|state:u8|reserved:3*u8|status:i32",
+    "states": {
+      "ready": 1,
+      "ended": 2,
+      "stopped": 3,
+      "replaced": 4,
+      "error": 5
+    },
+    "delivery": "reliable; retain until queued; bounded admission"
+  }
 }

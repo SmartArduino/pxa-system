@@ -1,9 +1,11 @@
 #include <string.h>
 
 #include "pxa_ipc.h"
+#include "pxa_clock.h"
+#include "pxa_window.h"
 #include "view.h"
 
-#define CALL_REQUEST UINT32_C(1)
+#define CALL_REQUEST UINT64_C(1)
 
 static uint8_t ipc_payload[128];
 static uint8_t packet[192];
@@ -12,16 +14,17 @@ static uint8_t call_started;
 static int call_responder(void) {
     static const char endpoint[] = "cmake.echo";
     static const uint8_t ping[] = {'p', 'i', 'n', 'g'};
-    return pxa_ipc_call(CALL_REQUEST, endpoint, sizeof(endpoint) - 1u, ping, sizeof(ping),
-                        ipc_payload, sizeof(ipc_payload), packet, sizeof(packet));
+    return pxa_ipc_request_call(packet, sizeof(packet), CALL_REQUEST,
+                                endpoint, sizeof(endpoint) - 1u, ping,
+                                sizeof(ping)) == PXA_STATUS_OK;
 }
 
 
 int32_t pxa_app_start(const uint8_t* config, uint32_t config_length) {
     (void)config;
     (void)config_length;
-    return pxa_window_fullscreen() && component_view_render("waiting", 0) &&
-                   pxa_clock_set_period(100)
+    return pxa_window_fullscreen() == PXA_STATUS_OK && component_view_render("waiting", 0) &&
+                   pxa_clock_set_period(100) == PXA_STATUS_OK
                ? PXA_STATUS_OK
                : PXA_STATUS_INTERNAL;
 }
@@ -43,14 +46,14 @@ int32_t pxa_app_on_event(const uint8_t* event, uint32_t length) {
     }
     if (parsed.service != PXA_SERVICE_IPC)
         return PXA_EVENT_UNHANDLED;
-    if (parsed.opcode == PXA_IPC_RESULT && pxa_ipc_parse_result(&parsed, &result)) {
-        passed = result.status == PXA_STATUS_OK && result.payload_length == 4 &&
-                 memcmp(result.payload, "pong", 4) == 0;
+    if (parsed.opcode == PXA_IPC_RESULT_EVENT && pxa_ipc_parse_result(&parsed, &result)) {
+        passed = result.status == PXA_STATUS_OK && result.payload.size == 4 &&
+                 memcmp(result.payload.data, "pong", 4) == 0;
         return component_view_render(passed ? "passed" : "failed", passed) ? PXA_EVENT_HANDLED
                                                                            : PXA_STATUS_INTERNAL;
     }
     if (parsed.opcode == PXA_IPC_CALL || parsed.opcode == PXA_IPC_REPLY ||
-        parsed.opcode == PXA_IPC_REQUEST) {
+        parsed.opcode == PXA_IPC_REQUEST_EVENT) {
         return PXA_EVENT_HANDLED;
     }
     return PXA_EVENT_UNHANDLED;

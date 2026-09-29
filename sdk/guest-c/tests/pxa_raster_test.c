@@ -4,17 +4,17 @@
 #include <string.h>
 
 static uint8_t captured[1024];
-static uint32_t captured_handle;
+static uint64_t captured_handle;
 static uint32_t captured_operation;
 static uint32_t captured_length;
 
-int32_t pxa_control(const uint8_t *data, uint32_t length) {
+int32_t pxa_submit(const uint8_t *data, uint32_t length) {
     (void)data;
     (void)length;
     return PXA_STATUS_OK;
 }
 
-int32_t pxa_io(uint32_t handle, uint32_t operation, uint8_t *data,
+int32_t pxa_io(uint64_t handle, uint32_t operation, uint8_t *data,
                uint32_t length) {
     assert(data != NULL && length <= sizeof(captured));
     memcpy(captured, data, length);

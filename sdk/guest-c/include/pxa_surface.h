@@ -1,42 +1,45 @@
-#ifndef PXA_SURFACE_GUEST_H
-#define PXA_SURFACE_GUEST_H
+#ifndef PXA_GUEST_SURFACE_H
+#define PXA_GUEST_SURFACE_H
 
-#include "pxa.h"
+#include "pxa_core.h"
+#include "pxa_surface_geometry.h"
 
+#define PXA_SURFACE_SERVICE 16u
 #define PXA_SURFACE_CREATE 1u
 #define PXA_SURFACE_CONFIGURE_LAYER 2u
 #define PXA_SURFACE_QUEUE_FRAME 3u
 #define PXA_SURFACE_QUERY_STATE 4u
 #define PXA_SURFACE_CONFIGURE_OPAQUE_UI_REGIONS 5u
 #define PXA_SURFACE_RELEASED 0x8001u
-#define PXA_SURFACE_FORMAT_RGB565 1u
-#define PXA_SURFACE_FORMAT_ARGB8888_PREMULTIPLIED 2u
-#define PXA_SURFACE_FLAG_PREMULTIPLIED_ALPHA 1u
-#define PXA_SURFACE_FLAG_PREFER_DIRECT_SCANOUT 2u
-#define PXA_SURFACE_FLAG_GUEST_MAPPED 4u
-#define PXA_SURFACE_MAX_DAMAGE_RECTS 8u
-#define PXA_SURFACE_MAX_OPAQUE_UI_REGIONS 8u
-#define PXA_SURFACE_STATE_FLAG_SUPPORTS_OPAQUE_UI_REGIONS UINT32_C(1)
-#define PXA_SURFACE_STATE_FLAG_SUPPORTS_ALPHA_COMPOSITING UINT32_C(2)
-#define PXA_SURFACE_STATE_FLAG_UI_ALPHA_PLANE_ACTIVE UINT32_C(4)
-#define PXA_SURFACE_STATE_FLAG_SUPPORTS_GUEST_MAPPED UINT32_C(8)
-#define PXA_SURFACE_IO_REGISTER_BUFFERS UINT32_C(0x100)
-#define PXA_SURFACE_IO_ACQUIRE UINT32_C(0x101)
-#define PXA_SURFACE_IO_PRESENT UINT32_C(0x102)
-#define PXA_SURFACE_BUFFER_ALIGNMENT UINT32_C(64)
-#define PXA_SURFACE_ACQUIRE_RECORD_BYTES ((size_t)4)
-#define PXA_SURFACE_PRESENT_RECORD_BYTES ((size_t)16)
+#define PXA_SURFACE_RGB565 1u
+#define PXA_SURFACE_ARGB8888_PREMULTIPLIED 2u
+#define PXA_SURFACE_PREMULTIPLIED_ALPHA 1u
+#define PXA_SURFACE_PREFER_DIRECT_SCANOUT 2u
+#define PXA_SURFACE_GUEST_MAPPED 4u
+#define PXA_SURFACE_MAX_RECTS 8u
+#define PXA_SURFACE_IO_REGISTER_BUFFERS 0x100u
+#define PXA_SURFACE_IO_ACQUIRE 0x101u
+#define PXA_SURFACE_IO_PRESENT 0x102u
+#define PXA_SURFACE_BUFFER_ALIGNMENT 64u
+
+typedef struct {
+    uint16_t width;
+    uint16_t height;
+    uint16_t format;
+    uint8_t buffer_count;
+    uint8_t flags;
+} pxa_surface_desc_t;
 
 typedef struct {
     uint16_t x;
     uint16_t y;
     uint16_t width;
     uint16_t height;
-} pxa_surface_damage_rect_t;
+} pxa_surface_rect_t;
 
 typedef struct {
     int32_t status;
-    uint32_t surface_handle;
+    uint64_t handle;
     uint32_t stride_bytes;
     uint32_t frame_bytes;
     uint8_t buffer_count;
@@ -51,319 +54,255 @@ typedef struct {
     uint64_t released_frames;
     uint32_t free_buffers;
     uint32_t flags;
-} pxa_surface_state_result_t;
+} pxa_surface_state_t;
 
 typedef struct {
-    uint32_t surface_handle;
+    uint64_t handle;
     uint8_t buffer_index;
     uint64_t frame_id;
-} pxa_surface_released_event_t;
+} pxa_surface_released_t;
 
-/* Presentation fit: a Host presents a Surface smaller than the display at the
- * largest exact 1x/2x/4x nearest-neighbour scale that fits and centers it
- * when the layer sits at (0, 0). Guests use the same factor to map input
- * coordinates from display pixels back into Surface pixels. Returns 0 when a
- * size is empty or even 1x does not fit. */
-static inline uint32_t pxa_surface_fit_scale(uint32_t surface_width,
-                                             uint32_t surface_height,
-                                             uint32_t display_width,
-                                             uint32_t display_height) {
-    uint32_t scale;
-    uint32_t best = 0;
-    if (surface_width == 0 || surface_height == 0 || display_width == 0 ||
-        display_height == 0)
-        return 0;
-    for (scale = 1; scale <= 4; scale *= 2) {
-        if (surface_width * scale <= display_width &&
-            surface_height * scale <= display_height)
-            best = scale;
+static inline int pxa_surface_finish(uint8_t *packet, size_t capacity,
+                                        uint16_t opcode, uint64_t token,
+                                        size_t payload_size,
+                                        uint32_t *written) {
+    if (packet == NULL || capacity < PXA_HEADER_BYTES ||
+        payload_size > capacity - PXA_HEADER_BYTES) return 0;
+    return pxa_finish_message_in_place(
+        packet, capacity, PXA_SURFACE_SERVICE, opcode, token,
+        PXA_HEADER_BYTES + payload_size, written);
+}
+
+static inline int pxa_surface_build_create(
+    uint8_t *packet, size_t capacity, uint64_t token,
+    pxa_surface_desc_t desc, uint32_t *written) {
+    uint8_t *out;
+    if (written != NULL) *written = 0;
+    if (packet == NULL || written == NULL || token == 0 ||
+        capacity < PXA_HEADER_BYTES + 8u || desc.width == 0 ||
+        desc.height == 0 || desc.buffer_count < 2 ||
+        (desc.format == PXA_SURFACE_RGB565 &&
+         (desc.flags & ~(PXA_SURFACE_PREFER_DIRECT_SCANOUT |
+                         PXA_SURFACE_GUEST_MAPPED)) != 0) ||
+        (desc.format == PXA_SURFACE_ARGB8888_PREMULTIPLIED &&
+         desc.flags != PXA_SURFACE_PREMULTIPLIED_ALPHA) ||
+        (desc.format != PXA_SURFACE_RGB565 &&
+         desc.format != PXA_SURFACE_ARGB8888_PREMULTIPLIED)) return 0;
+    out = packet + PXA_HEADER_BYTES;
+    pxa_store_u16(out, desc.width);
+    pxa_store_u16(out + 2, desc.height);
+    pxa_store_u16(out + 4, desc.format);
+    out[6] = desc.buffer_count;
+    out[7] = desc.flags;
+    return pxa_surface_finish(packet, capacity, PXA_SURFACE_CREATE,
+                                  token, 8, written);
+}
+
+static inline int pxa_surface_build_configure_layer(
+    uint8_t *packet, size_t capacity, uint64_t token, uint64_t handle,
+    int32_t x, int32_t y, uint16_t width, uint16_t height, int16_t z,
+    uint8_t visible, uint32_t *written) {
+    uint8_t *out;
+    if (written != NULL) *written = 0;
+    if (packet == NULL || written == NULL || token == 0 || handle == 0 ||
+        width == 0 || height == 0 || visible > 1 ||
+        capacity < PXA_HEADER_BYTES + 24u) return 0;
+    out = packet + PXA_HEADER_BYTES;
+    pxa_store_u64(out, handle);
+    pxa_store_u32(out + 8, (uint32_t)x);
+    pxa_store_u32(out + 12, (uint32_t)y);
+    pxa_store_u16(out + 16, width);
+    pxa_store_u16(out + 18, height);
+    pxa_store_u16(out + 20, (uint16_t)z);
+    out[22] = visible;
+    out[23] = 0;
+    return pxa_surface_finish(packet, capacity,
+                                  PXA_SURFACE_CONFIGURE_LAYER,
+                                  token, 24, written);
+}
+
+static inline int pxa_surface_rects(
+    uint8_t *out, uint64_t handle, const pxa_surface_rect_t *rects,
+    uint8_t count, size_t rect_offset) {
+    if (handle == 0 || count > PXA_SURFACE_MAX_RECTS ||
+        (count != 0 && rects == NULL)) return 0;
+    pxa_store_u64(out, handle);
+    for (uint8_t i = 0; i < count; ++i) {
+        uint8_t *record = out + rect_offset + (size_t)i * 8u;
+        if (rects[i].width == 0 || rects[i].height == 0) return 0;
+        pxa_store_u16(record, rects[i].x);
+        pxa_store_u16(record + 2, rects[i].y);
+        pxa_store_u16(record + 4, rects[i].width);
+        pxa_store_u16(record + 6, rects[i].height);
     }
-    return best;
+    return 1;
 }
 
-static inline void pxa_surface_store_u16(uint8_t *out, uint16_t value) {
-    out[0] = (uint8_t)value;
-    out[1] = (uint8_t)(value >> 8);
+static inline int pxa_surface_build_queue_frame(
+    uint8_t *packet, size_t capacity, uint64_t handle, uint64_t frame_id,
+    const pxa_surface_rect_t *damage, uint8_t count,
+    uint32_t *written) {
+    uint8_t *out;
+    size_t payload_size = 20u + (size_t)count * 8u;
+    if (written != NULL) *written = 0;
+    if (packet == NULL || written == NULL || frame_id == 0 ||
+        count > PXA_SURFACE_MAX_RECTS ||
+        capacity < PXA_HEADER_BYTES + payload_size) return 0;
+    out = packet + PXA_HEADER_BYTES;
+    if (!pxa_surface_rects(out, handle, damage, count, 20u)) return 0;
+    pxa_store_u64(out + 8, frame_id);
+    out[16] = count;
+    out[17] = out[18] = out[19] = 0;
+    /* The queue command is one-way, so its envelope token is zero. */
+    return pxa_surface_finish(packet, capacity,
+                                  PXA_SURFACE_QUEUE_FRAME, 0,
+                                  payload_size, written);
 }
 
-static inline void pxa_surface_store_u32(uint8_t *out, uint32_t value) {
-    for (uint8_t index = 0; index < 4; ++index)
-        out[index] = (uint8_t)(value >> (index * 8u));
+static inline int pxa_surface_build_opaque_ui_regions(
+    uint8_t *packet, size_t capacity, uint64_t token, uint64_t handle,
+    const pxa_surface_rect_t *regions, uint8_t count,
+    uint32_t *written) {
+    uint8_t *out;
+    size_t payload_size = 12u + (size_t)count * 8u;
+    if (written != NULL) *written = 0;
+    if (packet == NULL || written == NULL || token == 0 ||
+        count > PXA_SURFACE_MAX_RECTS ||
+        capacity < PXA_HEADER_BYTES + payload_size) return 0;
+    out = packet + PXA_HEADER_BYTES;
+    if (!pxa_surface_rects(out, handle, regions, count, 12u)) return 0;
+    out[8] = count;
+    out[9] = out[10] = out[11] = 0;
+    return pxa_surface_finish(packet, capacity,
+                                  PXA_SURFACE_CONFIGURE_OPAQUE_UI_REGIONS,
+                                  token, payload_size, written);
 }
 
-static inline void pxa_surface_store_u64(uint8_t *out, uint64_t value) {
-    for (uint8_t index = 0; index < 8; ++index)
-        out[index] = (uint8_t)(value >> (index * 8u));
+static inline int pxa_surface_build_query_state(
+    uint8_t *packet, size_t capacity, uint64_t token, uint64_t handle,
+    uint32_t *written) {
+    if (written != NULL) *written = 0;
+    if (packet == NULL || written == NULL || token == 0 || handle == 0 ||
+        capacity < PXA_HEADER_BYTES + 8u) return 0;
+    pxa_store_u64(packet + PXA_HEADER_BYTES, handle);
+    return pxa_surface_finish(packet, capacity,
+                                  PXA_SURFACE_QUERY_STATE,
+                                  token, 8, written);
 }
 
-static inline int pxa_surface_create(
-    uint32_t request_id, uint16_t width, uint16_t height, uint16_t format,
-    uint8_t flags, uint8_t buffer_count, uint8_t *packet,
-    size_t packet_capacity) {
-    uint8_t payload[8];
-    pxa_writer_t writer;
-    if (request_id == 0 || width == 0 || height == 0 || buffer_count < 2 ||
-        packet == NULL ||
-        (format != PXA_SURFACE_FORMAT_RGB565 &&
-         format != PXA_SURFACE_FORMAT_ARGB8888_PREMULTIPLIED) ||
-        (format == PXA_SURFACE_FORMAT_RGB565 &&
-         (flags & ~(PXA_SURFACE_FLAG_PREFER_DIRECT_SCANOUT |
-                    PXA_SURFACE_FLAG_GUEST_MAPPED)) != 0) ||
-        (format == PXA_SURFACE_FORMAT_ARGB8888_PREMULTIPLIED &&
-         flags != PXA_SURFACE_FLAG_PREMULTIPLIED_ALPHA))
-        return 0;
-    pxa_surface_store_u16(payload, width);
-    pxa_surface_store_u16(payload + 2, height);
-    pxa_surface_store_u16(payload + 4, format);
-    payload[6] = buffer_count;
-    payload[7] = flags;
-    pxa_writer_init(&writer, packet, packet_capacity);
-    return pxa_message(&writer, PXA_SERVICE_SURFACE,
-                       PXA_SURFACE_CREATE, request_id, payload,
-                       sizeof(payload)) &&
-           pxa_control(writer.data, (uint32_t)writer.length) == PXA_STATUS_OK;
-}
-
-static inline int pxa_surface_create_rgb565_mapped(
-    uint32_t request_id, uint16_t width, uint16_t height,
-    uint8_t buffer_count, uint8_t prefer_direct, uint8_t *packet,
-    size_t packet_capacity) {
-    uint8_t flags = PXA_SURFACE_FLAG_GUEST_MAPPED;
-    if (prefer_direct) flags |= PXA_SURFACE_FLAG_PREFER_DIRECT_SCANOUT;
-    return pxa_surface_create(
-        request_id, width, height, PXA_SURFACE_FORMAT_RGB565, flags,
-        buffer_count, packet, packet_capacity);
-}
-
-static inline int pxa_surface_create_rgb565(
-    uint32_t request_id, uint16_t width, uint16_t height,
-    uint8_t buffer_count, uint8_t *packet, size_t packet_capacity) {
-    return pxa_surface_create(
-        request_id, width, height, PXA_SURFACE_FORMAT_RGB565, 0,
-        buffer_count, packet, packet_capacity);
-}
-
-static inline int pxa_surface_create_rgb565_direct(
-    uint32_t request_id, uint16_t width, uint16_t height,
-    uint8_t buffer_count, uint8_t *packet, size_t packet_capacity) {
-    return pxa_surface_create(
-        request_id, width, height, PXA_SURFACE_FORMAT_RGB565,
-        PXA_SURFACE_FLAG_PREFER_DIRECT_SCANOUT, buffer_count, packet,
-        packet_capacity);
-}
-
-/* Pixels are native-endian 0xAARRGGBB words whose RGB channels have already
- * been multiplied by alpha. This avoids divisions in the Host compositor. */
-static inline int pxa_surface_create_argb8888_premultiplied(
-    uint32_t request_id, uint16_t width, uint16_t height,
-    uint8_t buffer_count, uint8_t *packet, size_t packet_capacity) {
-    return pxa_surface_create(
-        request_id, width, height, PXA_SURFACE_FORMAT_ARGB8888_PREMULTIPLIED,
-        PXA_SURFACE_FLAG_PREMULTIPLIED_ALPHA, buffer_count, packet,
-        packet_capacity);
-}
-
-static inline int pxa_surface_configure_layer(
-    uint32_t request_id, uint32_t surface_handle, int32_t x, int32_t y,
-    uint16_t width, uint16_t height, int16_t z, uint8_t visible,
-    uint8_t *packet, size_t packet_capacity) {
-    uint8_t payload[20];
-    pxa_writer_t writer;
-    if (request_id == 0 || surface_handle == 0 || width == 0 || height == 0 ||
-        visible > 1 || packet == NULL)
-        return 0;
-    pxa_surface_store_u32(payload, surface_handle);
-    pxa_surface_store_u32(payload + 4, (uint32_t)x);
-    pxa_surface_store_u32(payload + 8, (uint32_t)y);
-    pxa_surface_store_u16(payload + 12, width);
-    pxa_surface_store_u16(payload + 14, height);
-    pxa_surface_store_u16(payload + 16, (uint16_t)z);
-    payload[18] = visible;
-    payload[19] = 0;
-    pxa_writer_init(&writer, packet, packet_capacity);
-    return pxa_message(&writer, PXA_SERVICE_SURFACE,
-                       PXA_SURFACE_CONFIGURE_LAYER, request_id, payload,
-                       sizeof(payload)) &&
-           pxa_control(writer.data, (uint32_t)writer.length) == PXA_STATUS_OK;
-}
-
-/* Regions are relative to the Surface and must be fully covered by opaque
- * LVGL content. They are intentionally configured out of the frame loop. */
-static inline int pxa_surface_configure_opaque_ui_regions(
-    uint32_t request_id, uint32_t surface_handle,
-    const pxa_surface_damage_rect_t *regions, uint8_t region_count,
-    uint8_t *packet, size_t packet_capacity) {
-    uint8_t payload[8 + PXA_SURFACE_MAX_OPAQUE_UI_REGIONS * 8];
-    pxa_writer_t writer;
-    if (request_id == 0 || surface_handle == 0 ||
-        region_count > PXA_SURFACE_MAX_OPAQUE_UI_REGIONS ||
-        (region_count != 0 && regions == NULL) || packet == NULL)
-        return 0;
-    pxa_surface_store_u32(payload, surface_handle);
-    payload[4] = region_count;
-    payload[5] = payload[6] = payload[7] = 0;
-    for (uint8_t index = 0; index < region_count; ++index) {
-        uint8_t *record = payload + 8u + (size_t)index * 8u;
-        if (regions[index].width == 0 || regions[index].height == 0) return 0;
-        pxa_surface_store_u16(record, regions[index].x);
-        pxa_surface_store_u16(record + 2, regions[index].y);
-        pxa_surface_store_u16(record + 4, regions[index].width);
-        pxa_surface_store_u16(record + 6, regions[index].height);
-    }
-    pxa_writer_init(&writer, packet, packet_capacity);
-    return pxa_message(&writer, PXA_SERVICE_SURFACE,
-                       PXA_SURFACE_CONFIGURE_OPAQUE_UI_REGIONS, request_id, payload,
-                       8u + (size_t)region_count * 8u) &&
-           pxa_control(writer.data, (uint32_t)writer.length) == PXA_STATUS_OK;
-}
-
-static inline int32_t pxa_surface_write_frame(uint32_t surface_handle,
-                                                uint8_t *pixels,
-                                                uint32_t frame_bytes) {
-    if (surface_handle == 0 || pixels == NULL || frame_bytes == 0)
-        return PXA_STATUS_INVALID_ARGUMENT;
-    return pxa_io(surface_handle, PXA_IO_WRITE, pixels, frame_bytes);
+static inline int32_t pxa_surface_write_frame(
+    uint64_t handle, uint8_t *pixels, uint32_t frame_bytes) {
+    if (handle == 0 || pixels == NULL || frame_bytes == 0) return -1;
+    return pxa_io(handle, 2u, pixels, frame_bytes);
 }
 
 static inline int32_t pxa_surface_register_buffers(
-    uint32_t surface_handle, void *buffers, uint32_t frame_bytes,
+    uint64_t handle, void *buffers, uint32_t frame_bytes,
     uint8_t buffer_count) {
-    uint64_t total = (uint64_t)frame_bytes * buffer_count;
-    if (surface_handle == 0 || buffers == NULL || frame_bytes == 0 ||
+    const uint64_t total = (uint64_t)frame_bytes * buffer_count;
+    if (handle == 0 || buffers == NULL || frame_bytes == 0 ||
         buffer_count < 2 || total > UINT32_MAX ||
         ((uintptr_t)buffers & (PXA_SURFACE_BUFFER_ALIGNMENT - 1u)) != 0)
-        return PXA_STATUS_INVALID_ARGUMENT;
-    return pxa_io(surface_handle, PXA_SURFACE_IO_REGISTER_BUFFERS,
-                  (uint8_t *)buffers, (uint32_t)total);
+        return -1;
+    return pxa_io(handle, PXA_SURFACE_IO_REGISTER_BUFFERS,
+                     (uint8_t *)buffers, (uint32_t)total);
 }
 
 static inline int32_t pxa_surface_acquire_buffer(
-    uint32_t surface_handle, uint8_t *buffer_index) {
+    uint64_t handle, uint8_t *buffer_index) {
     uint8_t record[4] = {0};
     int32_t result;
-    if (surface_handle == 0 || buffer_index == NULL)
-        return PXA_STATUS_INVALID_ARGUMENT;
-    result = pxa_io(surface_handle, PXA_SURFACE_IO_ACQUIRE, record,
-                    (uint32_t)sizeof(record));
+    if (handle == 0 || buffer_index == NULL) return -1;
+    result = pxa_io(handle, PXA_SURFACE_IO_ACQUIRE,
+                       record, (uint32_t)sizeof(record));
     if (result == (int32_t)sizeof(record)) *buffer_index = record[0];
     return result;
 }
 
 static inline int32_t pxa_surface_present_buffer(
-    uint32_t surface_handle, uint8_t buffer_index, uint64_t frame_id) {
+    uint64_t handle, uint8_t buffer_index, uint64_t frame_id) {
     uint8_t record[16] = {0};
-    if (surface_handle == 0 || frame_id == 0)
-        return PXA_STATUS_INVALID_ARGUMENT;
+    if (handle == 0 || frame_id == 0) return -1;
     record[0] = buffer_index;
-    pxa_surface_store_u64(record + 8, frame_id);
-    return pxa_io(surface_handle, PXA_SURFACE_IO_PRESENT, record,
-                  (uint32_t)sizeof(record));
+    pxa_store_u64(record + 8, frame_id);
+    return pxa_io(handle, PXA_SURFACE_IO_PRESENT,
+                     record, (uint32_t)sizeof(record));
 }
 
-static inline int32_t pxa_surface_queue_frame(
-    uint32_t surface_handle, uint64_t frame_id,
-    const pxa_surface_damage_rect_t *damage, uint8_t damage_count,
-    uint8_t *packet, size_t packet_capacity) {
-    uint8_t payload[16 + PXA_SURFACE_MAX_DAMAGE_RECTS * 8];
-    pxa_writer_t writer;
-    if (surface_handle == 0 || frame_id == 0 ||
-        damage_count > PXA_SURFACE_MAX_DAMAGE_RECTS ||
-        (damage_count != 0 && damage == NULL) || packet == NULL)
-        return PXA_STATUS_INVALID_ARGUMENT;
-    pxa_surface_store_u32(payload, surface_handle);
-    pxa_surface_store_u64(payload + 4, frame_id);
-    payload[12] = damage_count;
-    payload[13] = payload[14] = payload[15] = 0;
-    for (uint8_t index = 0; index < damage_count; ++index) {
-        uint8_t *rect = payload + 16 + (size_t)index * 8u;
-        if (damage[index].width == 0 || damage[index].height == 0)
-            return PXA_STATUS_INVALID_ARGUMENT;
-        pxa_surface_store_u16(rect, damage[index].x);
-        pxa_surface_store_u16(rect + 2, damage[index].y);
-        pxa_surface_store_u16(rect + 4, damage[index].width);
-        pxa_surface_store_u16(rect + 6, damage[index].height);
-    }
-    pxa_writer_init(&writer, packet, packet_capacity);
-    if (!pxa_message(&writer, PXA_SERVICE_SURFACE,
-                     PXA_SURFACE_QUEUE_FRAME, 0, payload,
-                     16u + (size_t)damage_count * 8u))
-        return PXA_STATUS_LIMIT_EXCEEDED;
-    return pxa_control(writer.data, (uint32_t)writer.length);
-}
-
-static inline int pxa_surface_query_state(uint32_t request_id,
-                                            uint32_t surface_handle,
-                                            uint8_t *packet,
-                                            size_t packet_capacity) {
-    uint8_t payload[4];
-    pxa_writer_t writer;
-    if (request_id == 0 || surface_handle == 0 || packet == NULL) return 0;
-    pxa_surface_store_u32(payload, surface_handle);
-    pxa_writer_init(&writer, packet, packet_capacity);
-    return pxa_message(&writer, PXA_SERVICE_SURFACE,
-                       PXA_SURFACE_QUERY_STATE, request_id, payload,
-                       sizeof(payload)) &&
-           pxa_control(writer.data, (uint32_t)writer.length) == PXA_STATUS_OK;
+static inline int pxa_surface_parse_status(
+    const pxa_event_t *event, uint64_t token, uint16_t opcode,
+    int32_t *status) {
+    if (event == NULL || status == NULL || token == 0 ||
+        event->service != PXA_SURFACE_SERVICE || event->opcode != opcode ||
+        event->token != token || event->payload == NULL ||
+        event->payload_size != 4 ||
+        (opcode != PXA_SURFACE_CONFIGURE_LAYER &&
+         opcode != PXA_SURFACE_CONFIGURE_OPAQUE_UI_REGIONS)) return 0;
+    *status = (int32_t)pxa_load_u32(event->payload);
+    return 1;
 }
 
 static inline int pxa_surface_parse_create(
-    const pxa_event_t *event, pxa_surface_create_result_t *output) {
-    if (event == NULL || output == NULL ||
-        event->service != PXA_SERVICE_SURFACE ||
-        event->opcode != PXA_SURFACE_CREATE ||
-        event->request_id == 0 || event->payload_length < 4)
-        return 0;
-    output->status = (int32_t)pxa_read_u32(event->payload);
-    if (output->status != PXA_STATUS_OK) return event->payload_length == 4;
-    if (event->payload_length != 20) return 0;
-    output->surface_handle = pxa_read_u32(event->payload + 4);
-    output->stride_bytes = pxa_read_u32(event->payload + 8);
-    output->frame_bytes = pxa_read_u32(event->payload + 12);
-    output->buffer_count = event->payload[16];
-    return output->surface_handle != 0 && output->stride_bytes != 0 &&
-           output->frame_bytes != 0 && output->buffer_count >= 2;
+    const pxa_event_t *event, uint64_t token,
+    pxa_surface_create_result_t *out) {
+    const uint8_t *bytes;
+    if (out == NULL) return 0;
+    pxa_zero(out, sizeof(*out));
+    if (event == NULL || event->service != PXA_SURFACE_SERVICE ||
+        event->opcode != PXA_SURFACE_CREATE || token == 0 ||
+        event->token != token || event->payload == NULL ||
+        event->payload_size < 4) return 0;
+    bytes = event->payload;
+    out->status = (int32_t)pxa_load_u32(bytes);
+    if (out->status != 0) return event->payload_size == 4;
+    if (event->payload_size != 24 || bytes[21] != 0 ||
+        bytes[22] != 0 || bytes[23] != 0) return 0;
+    out->handle = pxa_load_u64(bytes + 4);
+    out->stride_bytes = pxa_load_u32(bytes + 12);
+    out->frame_bytes = pxa_load_u32(bytes + 16);
+    out->buffer_count = bytes[20];
+    return out->handle != 0 && out->stride_bytes != 0 &&
+           out->frame_bytes != 0 && out->buffer_count != 0;
 }
 
 static inline int pxa_surface_parse_state(
-    const pxa_event_t *event, pxa_surface_state_result_t *output) {
-    if (event == NULL || output == NULL ||
-        event->service != PXA_SERVICE_SURFACE ||
-        event->opcode != PXA_SURFACE_QUERY_STATE ||
-        event->request_id == 0 || event->payload_length < 4)
-        return 0;
-    output->status = (int32_t)pxa_read_u32(event->payload);
-    if (output->status != PXA_STATUS_OK) return event->payload_length == 4;
-    if (event->payload_length != 36 && event->payload_length != 52) return 0;
-    output->submitted_frames = pxa_read_u64(event->payload + 4);
-    output->presented_frames = pxa_read_u64(event->payload + 12);
-    output->dropped_frames = pxa_read_u64(event->payload + 20);
-    if (event->payload_length == 52) {
-        output->replaced_frames = pxa_read_u64(event->payload + 28);
-        output->released_frames = pxa_read_u64(event->payload + 36);
-        output->free_buffers = pxa_read_u32(event->payload + 44);
-        output->flags = pxa_read_u32(event->payload + 48);
-    } else {
-        output->replaced_frames = 0;
-        output->released_frames = 0;
-        output->free_buffers = pxa_read_u32(event->payload + 28);
-        output->flags = pxa_read_u32(event->payload + 32);
-    }
+    const pxa_event_t *event, uint64_t token,
+    pxa_surface_state_t *out) {
+    const uint8_t *bytes;
+    if (out == NULL) return 0;
+    pxa_zero(out, sizeof(*out));
+    if (event == NULL || event->service != PXA_SURFACE_SERVICE ||
+        event->opcode != PXA_SURFACE_QUERY_STATE || token == 0 ||
+        event->token != token || event->payload == NULL ||
+        event->payload_size < 4) return 0;
+    bytes = event->payload;
+    out->status = (int32_t)pxa_load_u32(bytes);
+    if (out->status != 0) return event->payload_size == 4;
+    if (event->payload_size != 52) return 0;
+    out->submitted_frames = pxa_load_u64(bytes + 4);
+    out->presented_frames = pxa_load_u64(bytes + 12);
+    out->dropped_frames = pxa_load_u64(bytes + 20);
+    out->replaced_frames = pxa_load_u64(bytes + 28);
+    out->released_frames = pxa_load_u64(bytes + 36);
+    out->free_buffers = pxa_load_u32(bytes + 44);
+    out->flags = pxa_load_u32(bytes + 48);
     return 1;
 }
 
 static inline int pxa_surface_parse_released(
-    const pxa_event_t *event, pxa_surface_released_event_t *output) {
-    if (event == NULL || output == NULL ||
-        event->service != PXA_SERVICE_SURFACE ||
-        event->opcode != PXA_SURFACE_RELEASED || event->request_id != 0 ||
-        event->payload == NULL || event->payload_length != 16 ||
-        event->payload[5] != 0 || event->payload[6] != 0 ||
-        event->payload[7] != 0)
-        return 0;
-    output->surface_handle = pxa_read_u32(event->payload);
-    output->buffer_index = event->payload[4];
-    output->frame_id = pxa_read_u64(event->payload + 8);
-    return output->surface_handle != 0 && output->frame_id != 0;
+    const pxa_event_t *event, pxa_surface_released_t *out) {
+    const uint8_t *bytes;
+    if (out == NULL) return 0;
+    pxa_zero(out, sizeof(*out));
+    if (event == NULL || event->service != PXA_SURFACE_SERVICE ||
+        event->opcode != PXA_SURFACE_RELEASED || event->token != 0 ||
+        event->payload == NULL || event->payload_size != 20) return 0;
+    bytes = event->payload;
+    if (bytes[9] != 0 || bytes[10] != 0 || bytes[11] != 0) return 0;
+    out->handle = pxa_load_u64(bytes);
+    out->buffer_index = bytes[8];
+    out->frame_id = pxa_load_u64(bytes + 12);
+    return out->handle != 0 && out->frame_id != 0;
 }
 
 #endif

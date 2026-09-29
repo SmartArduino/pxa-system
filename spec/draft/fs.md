@@ -38,6 +38,10 @@ final entry.
 `stat` and `seek` are ordinary asynchronous Core requests. Their result begins
 with the common `status:i32`; a successful `open` adds `handle:u32`, and a
 successful `stat` adds `kind:u8|size:u64`.
+The Core v1 preview returns a native `handle:u64` instead. `seek` and
+`read-directory` accept that same 64-bit Handle in their request payloads;
+typed `pxa_io` and Core close validate its full generation. The v0 layouts
+remain available only to Core v0 Components.
 
 An open result is a Component-owned `file` Handle. It is not transferable,
 including to another Component of the same App. The Component uses `pxa_io`
@@ -46,6 +50,8 @@ shared file position. Files do not block: a normal regular-file read returns
 zero only at end of file. Closing the Core Handle closes the file exactly once.
 Component stop, fault and authority revocation close all of its files through
 the existing Core Handle rules.
+The desktop product simulator binds its POSIX private-file root to the signed
+publisher key ID and App ID, separate from Storage recovery data.
 
 `open-flags` has read, write, create, exclusive, truncate, append and
 directory bits. The directory bit opens an existing directory Handle and may

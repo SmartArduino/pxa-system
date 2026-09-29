@@ -35,6 +35,10 @@ validates and queues work: DNS, TLS and network I/O must not execute in the
 Guest import callback. The Host backend starts work asynchronously and
 `pxa_net_poll()` completes it later. Component stop, request cancellation,
 permission revocation and timeout all cancel the backend operation.
+The Host reserves enough Core event storage for the bounded response before
+starting the backend. If the reservation cannot be made, the control import
+returns `resource-limit` and no network operation starts. Once accepted, the
+completion remains reliable even when the Guest mailbox is temporarily full.
 
 A successful network operation reports an HTTP status from 100 through 599;
 HTTP error statuses such as 404 or 500 are still ABI success. Transport and
@@ -98,6 +102,25 @@ reads it with `pxa_io(handle, read, ...)`; each call is capped by the request's
 maximum remaining bytes. Providers may return `would-block` while streaming.
 The Guest closes the Handle when finished. Host cleanup also closes it on
 Component stop, permission revocation or failed result delivery.
+
+## Core 1.0 binding
+
+The Net service opcodes and record tags remain the same under `pxa.core.v1`.
+The v1 envelope carries a nonzero 64-bit request token. Request tag 3 is a
+native 64-bit Permission Handle, and response tag 7 is a native 64-bit Stream
+Handle. Both have a nonzero high 32-bit generation; the Host rejects the old
+four-byte tag in a Core v1 Component. All other fields retain their widths.
+Both FETCH and HTTP_REQUEST complete asynchronously, and the Stream is read
+with the v1 `pxa_io(handle:u64, ...)` import and closed with Core v1
+`close-handle`. Cancelling the request token before completion cancels the
+backend operation. The Host validates the live full-width Permission Handle
+again when polling and revokes dependent streams with its authority.
+
+`pxa_net.h` builds either request directly in one caller-owned packet and
+parses completion records into borrowed views. The packet can be up to the
+Core 4096-byte control limit; the Host adapter copies at most 4076 payload
+bytes into one engine-owned scratch buffer before service dispatch. The
+Net backend must snapshot all request fields it needs after `start()` returns.
 
 ## Resource limits
 

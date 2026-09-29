@@ -36,7 +36,7 @@ def assert_default(requirements, name):
     assert requirements[service_id] == ((major, minor), (major, 0xFFFF)), name
 
 
-for service_name in ("window", "ui", "clock", "fs", "net"):
+for service_name in ("window", "ui", "clock", "fs", "net", "assets"):
     for declaration in (service_name, {"name": service_name}):
         service_id = SERVICE_IDS[service_name]
         parsed = parse_services([declaration], "services")

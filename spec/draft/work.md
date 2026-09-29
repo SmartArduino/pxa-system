@@ -56,3 +56,18 @@ they must not reinterpret a deadline from an older monotonic epoch.
 Calendar schedules, periodic Work, network or charging constraints, progress
 observation, notifications, and concurrent background execution from multiple
 Packages are outside version 0.1.
+
+## Core 1 preview binding
+
+The `pxa.core.v1` binding uses the 20-byte envelope and a Guest-selected
+64-bit request token for `enqueue`, `cancel`, and `complete`. The record payloads
+and result fields above retain their widths. In particular, a Work ID is a
+Host-managed `u32` job identifier, not a Core resource Handle or request token.
+The worker start records are part of its immutable startup configuration, not
+an envelope. A `stop-requested` event has envelope token zero and carries the
+Work ID and `u64` monotonic deadline in its payload.
+
+`pxa_work.h` builds each request in one caller-owned packet and parses the
+enqueue result, start configuration, and stop event without allocation. A
+Component declaring Work 0.1 can use either Core major; the signed Package
+chooses exactly one Core major for each Component.

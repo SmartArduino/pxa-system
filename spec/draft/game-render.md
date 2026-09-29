@@ -1,4 +1,4 @@
-# PXA GameRender Service 0.3.0
+# PXA GameRender Service 0.5.0
 
 GameRender is the low-overhead 2D and software-3D path. It owns persistent
 palettes and textures, validates compact draw lists, and rasterizes into
@@ -12,14 +12,26 @@ its visible layer.
 
 ## Context creation
 
-`CREATE_CONTEXT` keeps the explicit eight-byte request: `width:u16, height:u16, buffer_count:u8, flags:u8,
-reserved:u16`. The successful result after status is `handle:u32,
+`CREATE_CONTEXT` accepts an eight-byte request: `width:u16, height:u16,
+buffer_count:u8, flags:u8, reserved:u8, scratch_mode:u8`. A zero
+`scratch_mode` preserves the depth buffer used by earlier clients. The
+optional twelve-byte form appends `max_draw_bytes:u32`; this must be between
+32 and 49152 bytes. The successful result after status is `handle:u32,
 capabilities:u32, max_draw_bytes:u32, max_texture_dimension:u16,
 max_textures:u8, reserved:u8`.
 
+The signed Core v1 preview keeps the same creation request but returns a native
+Host `handle:u64` in the successful result. The remaining fields keep their
+order and width. The result after `status:i32` is 20 bytes for
+`CREATE_CONTEXT` and 32 bytes for `CREATE_AUTO_CONTEXT`; the complete success
+payloads are 24 and 36 bytes. The 64-bit Handle has a one-based 32-bit slot
+index and a 32-bit generation, and is used unchanged by typed I/O and close.
+Core v0 still receives the 32-bit result described above.
+
 `CREATE_AUTO_CONTEXT` uses `width` and `height` set to zero and replaces the
-first reserved byte with `requested_scale:u8`; zero asks the target board for
+reserved byte with `requested_scale:u8`; zero asks the target board for
 its default. A nonzero request must be one of the board-declared scales.
+It accepts the same scratch mode and optional DrawList limit.
 The board owns the supported integer scale set and its default; the generic
 service only validates the request and resolves the target. Its successful
 result extends the legacy fields with
@@ -35,21 +47,57 @@ The service imposes no configured width or height ceiling; non-zero dimensions
 are passed to the backend, which may return a resource error if allocation is
 not possible.
 
+The scratch mode is fixed for the context lifetime:
+
+| Mode | Scratch bytes per render buffer | Use |
+| --- | ---: | --- |
+| `DEPTH16` (0) | `2 × width × height` | Depth-tested polygons, painter depth, and legacy coverage lists |
+| `NONE` (1) | 0 | Clear, flat quads, sprites, and painter polygons without coverage |
+| `COVERAGE_2BIT` (2) | `2 × ceil(width / 8) × height` | Two one-bit coverage planes |
+
+Hosts reject a DrawList that requires a scratch mode unavailable in the
+context. Requesting a nonzero `max_draw_bytes` reserves bounded mailbox
+storage during context creation, removing DrawList growth allocations from
+frame submission. The returned `max_draw_bytes` is the accepted limit. The
+ESP backend keeps three DrawList slots, so a bounded context reserves three
+times that limit; choose the smallest limit that accommodates the largest
+frame. An absent limit keeps the legacy grow-on-demand behavior.
+
 ## Resource and frame IO
 
-The context handle accepts three operations:
+The context handle accepts the following operations; `BIND_ASSETS` requires
+Core v1 and service feature bit 0 (`asset-bindings`):
 
 ```text
 PXA_GAME_RENDER_IO_UPLOAD     0x100
 PXA_GAME_RENDER_IO_SUBMIT     0x101
 PXA_GAME_RENDER_IO_TELEMETRY  0x102
+PXA_GAME_RENDER_IO_BIND_ASSETS 0x103
 ```
+
+`BIND_ASSETS` accepts an atomic batch of texture/palette resource handles,
+with handle zero meaning explicit unbind. The exact layout and ownership
+rules are in [Assets](assets.md#async-service-and-ownership). Every handle is
+validated before any binding changes. The backend retains new references;
+the caller may close its Guest handles after a successful bind. Old frames
+continue using their captured objects. This performs no file I/O, decoding,
+or pixel copying, and does not change the DrawList wire format.
 
 Uploads install a 256-entry RGB565 palette, a lit RGB565 palette with up to 256
 rows of 256 entries, or an INDEX8 texture in a persistent slot. Resources
-remain resident across frames. The ESP profile
-freezes resources after the first accepted frame to keep presenter reads free
-of lifetime races.
+remain resident across frames. An upload atomically replaces a binding for
+subsequent submissions. Every accepted frame retains an immutable snapshot of
+its bindings, including its palette, until rasterization finishes or the frame
+is dropped. Uploading after the first frame is supported on ESP and desktop;
+replacing a binding cannot change a previously submitted frame. Pixel data is
+shared by reference rather than copied per frame. Closing the context cancels
+queued frames and defers destruction of resources used by an executing frame.
+CPU-rasterized source textures are released after rasterization, independently
+of the displayed framebuffer's lifetime. Allocations and last-reference frees
+run outside the surface critical section.
+Clear and RGB565 flat-quad lists do not require a palette upload; commands
+that read palette entries are rejected when the corresponding resource is
+missing.
 
 Submit validates and copies a complete, bounded DrawList into a latest-wins
 mailbox. It never waits for rasterization, display rotation, TE, or SPI. The
@@ -85,7 +133,7 @@ part destination RGB565 using shifts and masks. The depth-tested form reads dept
 does not write it, allowing back-to-front translucent surfaces without an
 alpha buffer or another full-frame allocation.
 
-Hosts advertising `COVERAGE_MASK` reuse the depth scratch as two one-bit planes
+Hosts advertising `COVERAGE_MASK` use two one-bit planes
 for near-to-far opaque coverage and deferred translucent coverage. Textured
 painter quads may carry perspective UVs when `PAINTER_PERSPECTIVE` is also
 advertised; `AFFINE_UV` remains an explicit cheaper option. Starting with ABI
@@ -93,6 +141,6 @@ advertised; `AFFINE_UV` remains an explicit cheaper option. Starting with ABI
 (rather than a palette index) so opaque billboards participate in the same
 coverage test as textured terrain.
 
-The 88-byte telemetry record reports submitted and dropped frames, draw bytes,
+The 104-byte telemetry record reports submitted and dropped frames, draw bytes,
 covered pixels, host raster time, queue/presentation time, command counts,
 rejected lists, and last-frame values.

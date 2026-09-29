@@ -117,8 +117,9 @@ After the Host no longer reads a submitted buffer it posts reliable
 `PXA_SURFACE_RELEASED` (0x8001):
 
 ```text
+handle:u32
 buffer_index:u8
-reserved[7]
+reserved[3]
 frame_id:u64
 ```
 
@@ -218,3 +219,20 @@ UI alpha plane.
 Multiple Surface layers and additional formats remain future extensions.
 Game-oriented draw commands and persistent textures belong to the separate
 GameRender service.
+
+## Core 1 preview binding
+
+Under `pxa.core.v1`, create returns a native 64-bit Surface Handle. The
+successful result after Core status is `handle:u64, stride:u32,
+frame_bytes:u32, buffer_count:u8, reserved[3]`. Configure-layer, queue-frame,
+query-state and opaque-region requests replace each `handle:u32` with
+`handle:u64`; all following fields keep their widths and order. The queue
+command remains one-way with envelope token zero. The reliable `RELEASED`
+event has token zero and payload `handle:u64, buffer_index:u8,
+reserved[3], frame_id:u64`. Query-state result and typed I/O records are
+unchanged. The v1 `pxa_io` import and Core close use the full 64-bit Handle.
+
+`pxa_surface.h` builds these messages in one caller-owned packet and parses
+create, query-state and release events. GuestMapped registration still
+requires a signed pinned-memory declaration; the v1 WAMR adapter verifies it
+for Surface Handles before accepting the retained Guest pointer.

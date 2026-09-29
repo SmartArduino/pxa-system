@@ -1,7 +1,8 @@
-#ifndef PXA_CANVAS_H
-#define PXA_CANVAS_H
+#ifndef PXA_GUEST_CANVAS_H
+#define PXA_GUEST_CANVAS_H
 
 #include "pxa_ui.h"
+typedef uint64_t pxa_canvas_handle_t;
 
 #define PXA_CANVAS_DRAW_RECT 1u
 #define PXA_CANVAS_DRAW_ELLIPSE 2u
@@ -13,6 +14,7 @@
 #define PXA_CANVAS_CLIP_POP 8u
 #define PXA_CANVAS_DRAW_TEXT_BOX 9u
 #define PXA_CANVAS_DRAW_BITMAP_RGB565 10u
+#define PXA_CANVAS_DRAW_IMAGE_HANDLE 11u
 
 /* Use the full control-message budget when streaming large display lists.
  * Smaller buffers remain valid but require more WASM-to-Host calls. */
@@ -41,7 +43,9 @@ typedef pxa_event_t pxa_canvas_event_t;
  * Canvas is no longer used. A removed and recreated node needs a new stream. */
 static inline int pxa_canvas_stream_open(uint32_t request, uint32_t node) {
     uint8_t payload[12];
-    uint8_t packet[24];
+    uint8_t packet[
+        32
+    ];
     if (request == 0 || node == 0) return 0;
     pxa_ui_write_u32(payload, request);
     pxa_ui_write_u32(payload + 4, PXA_UI_PRIMARY_SURFACE);
@@ -52,18 +56,16 @@ static inline int pxa_canvas_stream_open(uint32_t request, uint32_t node) {
 }
 
 static inline int pxa_canvas_parse_stream_ready(
-    const pxa_event_t* event, uint32_t* request, uint32_t* handle,
+    const pxa_canvas_event_t* event, uint32_t* request,
+    pxa_canvas_handle_t* handle,
     int32_t* status) {
-    if (event == NULL || request == NULL || handle == NULL || status == NULL ||
-        event->service != PXA_SERVICE_UI ||
-        event->opcode != PXA_UI_CANVAS_STREAM_READY ||
-        event->payload == NULL || event->payload_length != 12)
-        return 0;
-    *request = pxa_read_u32(event->payload);
-    *handle = pxa_read_u32(event->payload + 4);
-    *status = (int32_t)pxa_read_u32(event->payload + 8);
-    return (*status == PXA_STATUS_OK && *handle != 0) ||
-           (*status != PXA_STATUS_OK && *handle == 0);
+    pxa_ui_wire_canvas_stream_t ready;
+    if (request == NULL || handle == NULL || status == NULL ||
+        !pxa_ui_wire_parse_canvas_stream_ready(event, &ready)) return 0;
+    *request = ready.request;
+    *handle = ready.handle;
+    *status = ready.status;
+    return 1;
 }
 
 static inline uint32_t pxa_canvas_rgba(uint32_t color) {
@@ -237,6 +239,22 @@ static inline int pxa_canvas_text_box(
         PXA_CANVAS_FONT_BODY, align, vertical_align, text, text_length);
 }
 
+/* Requires UI 0.6 and an Assets IMAGE handle. Keep the handle open until
+ * PRESENT succeeds; the retained frame then owns its own reference. */
+static inline int pxa_canvas_image_handle(
+    pxa_canvas_frame_t* frame, int32_t x, int32_t y, uint32_t width,
+    uint32_t height, uint8_t opacity, uint8_t fit, uint64_t handle) {
+    if (width == 0 || height == 0 || fit > 2 || handle == 0 ||
+        !pxa_canvas_primitive(frame, PXA_CANVAS_DRAW_IMAGE_HANDLE, 26)) return 0;
+    int ok = pxa_put_u32(frame, (uint32_t)x) &&
+        pxa_put_u32(frame, (uint32_t)y) && pxa_put_u32(frame, width) &&
+        pxa_put_u32(frame, height) && pxa_put_u8(frame, opacity) &&
+        pxa_put_u8(frame, fit) && pxa_put_u32(frame, (uint32_t)handle) &&
+        pxa_put_u32(frame, (uint32_t)(handle >> 32));
+    if (ok) ++frame->records;
+    return ok;
+}
+
 static inline int pxa_canvas_image(
     pxa_canvas_frame_t* frame, int32_t x, int32_t y, uint32_t width,
     uint32_t height, uint8_t opacity, uint8_t fit, const char* path,
@@ -341,7 +359,7 @@ static inline int pxa_canvas_parse_event(const uint8_t* event,
     return pxa_parse_event(event, length, output);
 }
 
-static inline int pxa_canvas_parse_pointer(const pxa_event_t* event,
+static inline int pxa_canvas_parse_pointer(const pxa_canvas_event_t* event,
                                            uint32_t node,
                                            pxa_ui_pointer_data_t* output) {
     return pxa_ui_parse_pointer(event, output) && output->node == node;
@@ -370,7 +388,7 @@ static inline int pxa_canvas_present_regions_via(
     uint8_t* initialized, uint64_t root_event_mask, uint8_t* commands,
     size_t commands_capacity, uint8_t* packet, size_t packet_capacity,
     const pxa_canvas_dirty_rect_t* dirty_rects, uint8_t dirty_count,
-    uint32_t stream_handle) {
+    pxa_canvas_handle_t stream_handle) {
     uint32_t next_generation;
     size_t offset = 0;
     uint8_t begin_payload[16] = {0};
@@ -381,9 +399,11 @@ static inline int pxa_canvas_present_regions_via(
     (void)commands_capacity;
     if (node_id == 0 || canvas == NULL || canvas->failed ||
         canvas->data == NULL || generation == NULL || initialized == NULL ||
-        packet == NULL || packet_capacity < 32 || dirty_count > 4 ||
-        (dirty_count != 0 && dirty_rects == NULL) ||
-        packet_capacity < 25u + (size_t)dirty_count * 16u)
+        packet == NULL ||
+        packet_capacity < 40 ||
+        packet_capacity < 33u + (size_t)dirty_count * 16u ||
+        dirty_count > 4 ||
+        (dirty_count != 0 && dirty_rects == NULL))
         return 0;
     for (index = 0; index < dirty_count; ++index)
         if (dirty_rects[index].width <= 0 || dirty_rects[index].height <= 0)
@@ -392,7 +412,7 @@ static inline int pxa_canvas_present_regions_via(
     if (next_generation == 0) return 0;
     if (!*initialized) {
         dirty_count = 0;
-        pxa_ui_transaction_t transaction = {0};
+        pxa_ui_transaction_t transaction = {0, 0, 0, NULL, 0, 0, 0};
         if (!pxa_ui_transaction_begin(&transaction, next_generation,
                                       PXA_UI_TRANSACTION_REPLACE_SURFACE, packet,
                                       packet_capacity) ||
@@ -422,27 +442,31 @@ static inline int pxa_canvas_present_regions_via(
                          begin_payload, sizeof(begin_payload))) return 0;
     if (stream_handle != 0) {
         if (canvas->length > UINT32_MAX ||
-            pxa_io(stream_handle, PXA_IO_WRITE, canvas->data,
-                   (uint32_t)canvas->length) != (int32_t)canvas->length)
+            pxa_ui_wire_canvas_stream_write(stream_handle, canvas->data,
+                                          (uint32_t)canvas->length) !=
+                (int32_t)canvas->length)
             return 0;
         offset = canvas->length;
     }
     while (offset < canvas->length) {
         pxa_writer_t append;
         size_t chunk = canvas->length - offset;
-        if (packet_capacity <= 24u) return 0;
-        if (chunk > packet_capacity - 24u) chunk = packet_capacity - 24u;
+        uint32_t encoded_size = 0;
+        if (packet_capacity <=
+                32u) return 0;
+        if (chunk > packet_capacity - 32u) chunk = packet_capacity - 32u;
         pxa_writer_init(&append, packet, packet_capacity);
-        if (!pxa_put_u16(&append, PXA_SERVICE_UI) ||
-            !pxa_put_u16(&append, PXA_UI_CANVAS_WRITE) ||
-            !pxa_put_u32(&append, 0) ||
-            !pxa_put_u32(&append, (uint32_t)(12u + chunk)) ||
-            !pxa_put_u32(&append, PXA_UI_PRIMARY_SURFACE) ||
+        append.length = PXA_HEADER_BYTES;
+        if (!pxa_put_u32(&append, PXA_UI_PRIMARY_SURFACE) ||
             !pxa_put_u32(&append, node_id) ||
             !pxa_put_u32(&append, next_generation) ||
             !pxa_put_bytes(&append, canvas->data + offset, chunk) ||
-            pxa_control(append.data, (uint32_t)append.length) != PXA_STATUS_OK)
-            return 0;
+            !pxa_finish_message_in_place(
+                append.data, append.capacity, PXA_UI_SERVICE,
+                PXA_UI_CANVAS_WRITE, 0, append.length,
+                &encoded_size) ||
+            pxa_submit(append.data, encoded_size) !=
+                PXA_STATUS_OK) return 0;
         offset += chunk;
     }
     pxa_writer_init(&value, present_payload, sizeof(present_payload));
@@ -474,7 +498,7 @@ static inline int pxa_canvas_present_regions(
 }
 
 static inline int pxa_canvas_present_stream(
-    uint32_t stream_handle, uint32_t node_id,
+    pxa_canvas_handle_t stream_handle, uint32_t node_id,
     const pxa_canvas_frame_t* canvas, uint32_t* generation,
     uint8_t* initialized, uint8_t* commands, size_t commands_capacity,
     uint8_t* packet, size_t packet_capacity) {
@@ -485,7 +509,7 @@ static inline int pxa_canvas_present_stream(
 }
 
 static inline int pxa_canvas_present_stream_regions(
-    uint32_t stream_handle, uint32_t node_id,
+    pxa_canvas_handle_t stream_handle, uint32_t node_id,
     const pxa_canvas_frame_t* canvas, uint32_t* generation,
     uint8_t* initialized, uint8_t* commands, size_t commands_capacity,
     uint8_t* packet, size_t packet_capacity,

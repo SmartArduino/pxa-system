@@ -173,10 +173,11 @@ if linear_memory is not None:
             linear_memory_maximum % 65536 != 0):
         raise SystemExit(
             "build linear_memory maximum_bytes must be a WebAssembly page multiple")
-    if linear_memory["pinned"] is not True:
-        raise SystemExit("build linear_memory pinned must be true")
+    if not isinstance(linear_memory["pinned"], bool):
+        raise SystemExit("build linear_memory pinned must be a boolean")
 open(sys.argv[2], "w", encoding="utf-8").write(
-    f"{build_system}\t{source_dir}\t{linear_memory_maximum}\n")
+    f"{build_system}\t{source_dir}\t{linear_memory_maximum}\t"
+    f"{metadata.get('min_sdk', [1, 0])[0]}\n")
 components = metadata.get("components", [{"id": "main", "source": "main.c"}])
 if not isinstance(components, list) or not components:
     raise SystemExit("components must be a non-empty array")
@@ -210,8 +211,12 @@ for component in components:
         print(f"{component_id}\t{artifact}\t{source}")
 PYTHON
 
-IFS=$'\t' read -r build_system build_source_dir linear_memory_maximum \
+IFS=$'\t' read -r build_system build_source_dir linear_memory_maximum core_major \
   < "$build_settings"
+if [[ "$core_major" != "1" ]]; then
+  echo "Core v1 is required for new packages" >&2
+  exit 2
+fi
 component_ids=()
 declare -A component_seen=()
 declare -A component_value_map=()
@@ -322,6 +327,11 @@ for component_id in "${component_ids[@]}"; do
     echo "PXA build did not produce artifacts/$component_id.wasm" >&2
     exit 1
   fi
+  "${PYTHON:-python3}" "$script_dir/verify_wasm_core_imports.py" \
+    "$package_dir/artifacts/$component_id.wasm" \
+    --core-major "$core_major" \
+    --manifest-source "$app_dir/package.json" \
+    --component-id "$component_id"
   if [[ "${component_artifact_map[$component_id]}" != "wasm" ]]; then
     "$wamrc_bin" --target="$aot_target" "${wamrc_extra_args[@]}" \
       -o "$package_dir/artifacts/$component_id.$manifest_target.aot" \
@@ -339,6 +349,7 @@ fi
 if [[ -d "$asset_dir" ]]; then
   cp -R "$asset_dir" "$package_dir/assets"
 fi
+"${PYTHON:-python3}" "$script_dir/compile_resources.py" "$app_dir" "$package_dir"
 manifest_mode_args=()
 if [[ -n "$package_artifact_mode" ]]; then
   manifest_mode_args=(--artifact-mode "$package_artifact_mode")

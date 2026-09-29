@@ -47,10 +47,10 @@
     }
   ],
   "runtime_info_record_tags": [
-    {"name": "target", "id": 1, "payload": "utf8"},
-    {"name": "architecture", "id": 2, "payload": "utf8"},
-    {"name": "engine", "id": 3, "payload": "utf8"},
-    {"name": "engine-abi", "id": 4, "payload": "utf8"},
+    {"name": "target", "id": 1, "payload": "utf8", "max_bytes": 31},
+    {"name": "architecture", "id": 2, "payload": "utf8", "max_bytes": 23},
+    {"name": "engine", "id": 3, "payload": "utf8", "max_bytes": 23},
+    {"name": "engine-abi", "id": 4, "payload": "utf8", "max_bytes": 79},
     {"name": "formats", "id": 5, "payload": "u32"}
   ],
   "mac_kinds": [

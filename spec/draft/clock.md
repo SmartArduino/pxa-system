@@ -17,3 +17,17 @@ The timer is a Component-owned resource. The Host revokes it automatically
 before `pxa_app_stop`, because Core imports are forbidden during that
 callback. Background scheduling and durable alarms belong to a separate
 service and are not implied by this API.
+
+## Core 1 preview binding
+
+The `pxa.core.v1` binding keeps `set-period` as a one-way command with envelope
+token zero and the same two-byte payload. `now` uses a nonzero 64-bit request
+token and returns a reserved completion with opcode `now` and payload
+`status:i32` followed by `timestamp_us:u64` on success. A failed completion
+contains only status. Tick events retain opcode `0x8001`, envelope token zero
+and their eight-byte timestamp. The v0 `now-result` opcode remains specific to
+Core 0; it is not a second completion path in Core 1.
+
+`pxa_clock.h` provides no-allocation builders and typed completion/tick
+parsers. The Host reserves completion capacity before reading the clock so a
+successful `now` request cannot lose its result under mailbox pressure.

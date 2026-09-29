@@ -20,13 +20,13 @@ typedef struct {
     uint8_t buffered_press;
 } game_snapshot_t;
 
-int32_t pxa_control(const uint8_t* data, uint32_t length) {
+int32_t pxa_submit(const uint8_t* data, uint32_t length) {
     assert(data != NULL);
-    assert(length >= 12 && length <= 4096);
+    assert(length >= PXA_HEADER_BYTES && length <= 4096);
     return PXA_STATUS_OK;
 }
 
-int32_t pxa_io(uint32_t handle, uint32_t operation, uint8_t* data,
+int32_t pxa_io(uint64_t handle, uint32_t operation, uint8_t* data,
                uint32_t length) {
     (void)handle;
     (void)operation;

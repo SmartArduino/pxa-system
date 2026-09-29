@@ -1,0 +1,9 @@
+{
+  "schema": "pxa-device-runtime-info-golden-0.2",
+  "target": "linux",
+  "architecture": "x86_64",
+  "engine": "wamr",
+  "engine_abi": "abi",
+  "formats": 3,
+  "result_hex": "00000000010005006c696e7578020006007838365f36340300040077616d72040003006162690500040003000000"
+}

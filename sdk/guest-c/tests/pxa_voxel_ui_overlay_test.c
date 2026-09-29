@@ -26,15 +26,15 @@ static int g_height;
 static uint32_t g_submit_count;
 static uint32_t g_last_command_count;
 
-int32_t pxa_control(const uint8_t *data, uint32_t length) {
+int32_t pxa_submit(const uint8_t *data, uint32_t length) {
     (void)data;
     (void)length;
     return PXA_STATUS_OK;
 }
 
-int32_t pxa_io(uint32_t handle, uint32_t operation, uint8_t *data,
+int32_t pxa_io(uint64_t handle, uint32_t operation, uint8_t *data,
                uint32_t length) {
-    assert(handle == 3 && data != NULL);
+    assert(handle == UINT64_C(0x100000003) && data != NULL);
     if (operation == PXA_GAME_RENDER_IO_SUBMIT) {
         assert(pxa_read_u32(data) == PXA_RASTER_DRAW_MAGIC);
         g_last_command_count = pxa_read_u32(data + 16);
@@ -114,7 +114,7 @@ static void configure_layout(int width, int height) {
 static void assert_draws(const hud_state_t *hud, const menu_state_t *menu) {
     const player_t player = {0};
     const uint32_t previous_submits = g_submit_count;
-    assert(voxel_raster_render(3, g_submit_count + 1u, &player,
+    assert(voxel_raster_render(UINT64_C(0x100000003), g_submit_count + 1u, &player,
                                QUALITY_BALANCED, hud, menu, NULL) > 0);
     assert(g_submit_count == previous_submits + 1u);
     assert(g_last_command_count != 0);

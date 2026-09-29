@@ -46,15 +46,15 @@ static uint8_t sky_colors_differ;
 static uint32_t outline_commands;
 static uint8_t outline_out_of_bounds;
 
-int32_t pxa_control(const uint8_t *data, uint32_t length) {
+int32_t pxa_submit(const uint8_t *data, uint32_t length) {
     (void)data;
     (void)length;
     return PXA_STATUS_OK;
 }
 
-int32_t pxa_io(uint32_t handle, uint32_t operation, uint8_t *data,
+int32_t pxa_io(uint64_t handle, uint32_t operation, uint8_t *data,
                uint32_t length) {
-    assert(handle == 3 && data != NULL);
+    assert(handle == UINT64_C(0x100000003) && data != NULL);
     if (operation == PXA_GAME_RENDER_IO_SUBMIT) {
         uint32_t offset = PXA_RASTER_DRAW_HEADER_BYTES;
         assert(pxa_read_u32(data) == PXA_RASTER_DRAW_MAGIC);
@@ -211,8 +211,10 @@ int main(void) {
                                   PXA_RASTER_CAP_LIT_PALETTE_DEPTH |
                                   PXA_RASTER_CAP_DEPTH_CUTOUT |
                                   PXA_RASTER_CAP_FIXED_ALPHA_BLEND);
-    assert(voxel_raster_upload_assets(3));
-    assert(voxel_raster_render(3, 1, &player, QUALITY_BALANCED, &hud, NULL,
+    /* Resource preparation is now asynchronous voxel_assets_begin/on_event.
+     * This transport mock checks command generation; the signed-AOT resource
+     * integration test verifies real file loading, bindings and output pixels. */
+    assert(voxel_raster_render(UINT64_C(0x100000003), 1, &player, QUALITY_BALANCED, &hud, NULL,
                                NULL) >
            0);
     voxel_raster_get_stats(&stats);
@@ -236,7 +238,7 @@ int main(void) {
     g_mobs[0].z = 3.0F;
     g_mobs[0].alive = 1;
     g_mobs[0].kind = MOB_SLIME;
-    assert(voxel_raster_render(3, 2, &player, QUALITY_BALANCED, &hud, NULL,
+    assert(voxel_raster_render(UINT64_C(0x100000003), 2, &player, QUALITY_BALANCED, &hud, NULL,
                                NULL) >
            0);
     voxel_raster_get_stats(&stats);
@@ -247,7 +249,7 @@ int main(void) {
     player.z = 8.0F;
     player.yaw = 0.0F;
     player.pitch = -0.55F;
-    assert(voxel_raster_render(3, 3, &player, QUALITY_BALANCED, &hud, NULL,
+    assert(voxel_raster_render(UINT64_C(0x100000003), 3, &player, QUALITY_BALANCED, &hud, NULL,
                                NULL) >
            0);
     voxel_raster_get_stats(&stats);
@@ -262,7 +264,7 @@ int main(void) {
     player.z = -10.0F;
     player.yaw = 0.0F;
     player.pitch = -0.35F;
-    assert(voxel_raster_render(3, 4, &player, QUALITY_BALANCED, &hud, NULL,
+    assert(voxel_raster_render(UINT64_C(0x100000003), 4, &player, QUALITY_BALANCED, &hud, NULL,
                                NULL) >
            0);
     voxel_raster_get_stats(&stats);
@@ -276,14 +278,14 @@ int main(void) {
     player.y = 4.0F;
     player.z = 0.0F;
     player.pitch = -0.2F;
-    assert(voxel_raster_render(3, 5, &player, QUALITY_BALANCED, &hud, NULL,
+    assert(voxel_raster_render(UINT64_C(0x100000003), 5, &player, QUALITY_BALANCED, &hud, NULL,
                                NULL) > 0);
     assert(painter_cutout_command_count != 0);
     assert(depth_cutout_command_count == 0);
     chunks[3 * GRID_W + 3]
         .blocks[(4 << 8) | (5 << CHUNK_BITS) | 8] = BLOCK_WATER;
     ++chunks[3 * GRID_W + 3].revision;
-    assert(voxel_raster_render(3, 6, &player, QUALITY_BALANCED, &hud, NULL,
+    assert(voxel_raster_render(UINT64_C(0x100000003), 6, &player, QUALITY_BALANCED, &hud, NULL,
                                NULL) > 0);
     assert(painter_blend_command_count != 0);
     assert(depth_blend_command_count == 0);
@@ -301,7 +303,7 @@ int main(void) {
     g_mobs[0].y = 5.0F;
     g_mobs[0].z = 8.0F;
     g_mobs[0].alive = 1;
-    assert(voxel_raster_render(3, 7, &player, QUALITY_BALANCED, &hud, NULL,
+    assert(voxel_raster_render(UINT64_C(0x100000003), 7, &player, QUALITY_BALANCED, &hud, NULL,
                                NULL) > 0);
     assert(coverage_command_count != 0);
     assert(coverage_resolve_command_count != 0);
@@ -326,14 +328,14 @@ int main(void) {
         player.pitch = 0.0F;
         outline_commands = 0;
         outline_out_of_bounds = 0;
-        assert(voxel_raster_render(3, 8, &player, QUALITY_BALANCED, &hud,
+        assert(voxel_raster_render(UINT64_C(0x100000003), 8, &player, QUALITY_BALANCED, &hud,
                                    NULL, &target) > 0);
         assert(outline_commands != 0 && !outline_out_of_bounds);
         chunks[3 * GRID_W + 3]
             .blocks[(6 << 8) | (7 << CHUNK_BITS) | 8] = BLOCK_STONE;
         ++chunks[3 * GRID_W + 3].revision;
         outline_commands = 0;
-        assert(voxel_raster_render(3, 9, &player, QUALITY_BALANCED, &hud,
+        assert(voxel_raster_render(UINT64_C(0x100000003), 9, &player, QUALITY_BALANCED, &hud,
                                    NULL, &target) > 0);
         assert(outline_commands == 0);
         chunks[3 * GRID_W + 3]
@@ -342,7 +344,7 @@ int main(void) {
         player.z = 7.2F;
         outline_commands = 0;
         outline_out_of_bounds = 0;
-        assert(voxel_raster_render(3, 10, &player, QUALITY_BALANCED, &hud,
+        assert(voxel_raster_render(UINT64_C(0x100000003), 10, &player, QUALITY_BALANCED, &hud,
                                    NULL, &target) > 0);
         assert(outline_commands != 0 && !outline_out_of_bounds);
     }
@@ -358,7 +360,7 @@ int main(void) {
     player.y = 6.0F;
     player.z = -4.0F;
     player.pitch = -0.35F;
-    assert(voxel_raster_render(3, 11, &player, QUALITY_BALANCED, &hud, NULL,
+    assert(voxel_raster_render(UINT64_C(0x100000003), 11, &player, QUALITY_BALANCED, &hud, NULL,
                                NULL) > 0);
     voxel_raster_get_stats(&stats);
     assert(stats.candidate_quads > 192u);
@@ -373,7 +375,7 @@ int main(void) {
                                   PXA_RASTER_CAP_FIXED_ALPHA_BLEND |
                                   PXA_RASTER_CAP_PAINTER_PERSPECTIVE |
                                   PXA_RASTER_CAP_PAINTER_DEPTH);
-    assert(voxel_raster_render(3, 12, &player, QUALITY_BALANCED, &hud, NULL,
+    assert(voxel_raster_render(UINT64_C(0x100000003), 12, &player, QUALITY_BALANCED, &hud, NULL,
                                NULL) > 0);
     voxel_raster_get_stats(&stats);
     assert(painter_depth_command_count != 0);

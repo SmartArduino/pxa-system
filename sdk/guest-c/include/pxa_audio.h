@@ -1,16 +1,28 @@
-#ifndef PXA_AUDIO_H
-#define PXA_AUDIO_H
+#ifndef PXA_GUEST_AUDIO_H
+#define PXA_GUEST_AUDIO_H
 
-#include "pxa.h"
+#include "pxa_core.h"
 
-#define PXA_SERVICE_AUDIO 10u
+#define PXA_AUDIO_SERVICE 10u
 #define PXA_AUDIO_OPEN_SESSION 1u
 #define PXA_AUDIO_COMMIT_GRAPH 2u
 #define PXA_AUDIO_QUERY_STATE 3u
 #define PXA_AUDIO_FLUSH 4u
+#define PXA_AUDIO_USAGE_MEDIA 1u
+#define PXA_AUDIO_ROUTE_SPEAKER 1u
+#define PXA_AUDIO_IO_WRITE 2u
 #define PXA_AUDIO_IO_PLAY_TONE 0x100u
 #define PXA_AUDIO_IO_PLAY_ASSET 0x101u
 #define PXA_AUDIO_IO_CONTROL_ASSET 0x102u
+#define PXA_AUDIO_IO_PLAY_SOUND 0x103u
+#define PXA_AUDIO_IO_PLAY_MUSIC 0x104u
+#define PXA_AUDIO_PLAYBACK_EVENT 0x8001u
+#define PXA_AUDIO_PLAYBACK_READY 1u
+#define PXA_AUDIO_PLAYBACK_ENDED 2u
+#define PXA_AUDIO_PLAYBACK_STOPPED 3u
+#define PXA_AUDIO_PLAYBACK_REPLACED 4u
+#define PXA_AUDIO_PLAYBACK_ERROR 5u
+#define PXA_AUDIO_MAX_EQ_BANDS 5u
 #define PXA_AUDIO_TONE_SINE 0u
 #define PXA_AUDIO_TONE_SQUARE 1u
 #define PXA_AUDIO_TONE_TRIANGLE 2u
@@ -21,30 +33,21 @@
 #define PXA_AUDIO_ASSET_STOP 3u
 #define PXA_AUDIO_ASSET_SET_GAIN 4u
 
-#define PXA_AUDIO_PERMISSION_HANDLE 1u
-#define PXA_AUDIO_USAGE 2u
-#define PXA_AUDIO_SESSION_HANDLE 3u
-#define PXA_AUDIO_SAMPLE_RATE 4u
-#define PXA_AUDIO_CHANNELS 5u
-#define PXA_AUDIO_FRAME_MS 6u
+typedef struct {
+    uint16_t frequency_hz;
+    int16_t gain_db_q8;
+    uint16_t q_q8;
+} pxa_audio_eq_band_t;
 
-#define PXA_AUDIO_STATE_SUBMITTED_SAMPLES 2u
-#define PXA_AUDIO_STATE_ACCEPTED_SAMPLES 3u
-#define PXA_AUDIO_STATE_QUEUED_SAMPLES 4u
-#define PXA_AUDIO_STATE_FLAGS 5u
-#define PXA_AUDIO_STATE_ACCEPTED_IS_SINK_SUBMITTED UINT32_C(1)
-
-#define PXA_AUDIO_GRAPH_SESSION_HANDLE 1u
-#define PXA_AUDIO_GAIN_DB_Q8 2u
-#define PXA_AUDIO_EQ_BAND 3u
-#define PXA_AUDIO_ROUTE 4u
-
-#define PXA_AUDIO_USAGE_MEDIA 1u
-#define PXA_AUDIO_ROUTE_SPEAKER 1u
+typedef struct {
+    int16_t gain_db_q8;
+    const pxa_audio_eq_band_t *eq_bands;
+    uint8_t eq_band_count;
+} pxa_audio_graph_t;
 
 typedef struct {
     int32_t status;
-    uint32_t session_handle;
+    uint64_t handle;
     uint32_t sample_rate;
     uint8_t channels;
     uint16_t frame_ms;
@@ -58,269 +61,356 @@ typedef struct {
     uint32_t flags;
 } pxa_audio_state_result_t;
 
-static inline int pxa_audio_session_request(uint16_t opcode,
-                                            uint32_t request_id,
-                                            uint32_t session_handle,
-                                            uint8_t *packet,
-                                            size_t packet_capacity) {
-    uint8_t payload[8];
-    uint8_t handle[4];
-    pxa_writer_t records;
-    pxa_writer_t message;
-    if (request_id == 0 || session_handle == 0 || packet == NULL) return 0;
-    handle[0] = (uint8_t)session_handle;
-    handle[1] = (uint8_t)(session_handle >> 8);
-    handle[2] = (uint8_t)(session_handle >> 16);
-    handle[3] = (uint8_t)(session_handle >> 24);
-    pxa_writer_init(&records, payload, sizeof(payload));
-    if (!pxa_record(&records, 1, handle, sizeof(handle))) return 0;
-    pxa_writer_init(&message, packet, packet_capacity);
-    return pxa_message(&message, PXA_SERVICE_AUDIO, opcode, request_id,
-                       records.data, records.length) &&
-           pxa_control(message.data, (uint32_t)message.length) == PXA_STATUS_OK;
+typedef struct {
+    uint64_t session, instance;
+    int32_t status;
+    uint8_t state;
+} pxa_audio_playback_event_t;
+
+static inline int pxa_audio_parse_playback(const pxa_event_t *event,
+    pxa_audio_playback_event_t *out) {
+    if (!event || !out || event->service!=PXA_AUDIO_SERVICE ||
+        event->opcode!=PXA_AUDIO_PLAYBACK_EVENT || event->token ||
+        event->payload_size!=24 || !event->payload) return 0;
+    const uint8_t *p=event->payload;
+    out->session=pxa_load_u64(p); out->instance=pxa_load_u64(p+8);
+    out->state=p[16]; out->status=(int32_t)pxa_load_u32(p+20);
+    return (out->session>>32)!=0 && out->instance && !p[17] && !p[18] && !p[19] &&
+        out->state>=PXA_AUDIO_PLAYBACK_READY && out->state<=PXA_AUDIO_PLAYBACK_ERROR &&
+        (out->state==PXA_AUDIO_PLAYBACK_ERROR ? out->status<0 && out->status>=-16 : out->status==0);
 }
 
-static inline int pxa_audio_query_state(uint32_t request_id,
-                                        uint32_t session_handle,
-                                        uint8_t *packet,
-                                        size_t packet_capacity) {
-    return pxa_audio_session_request(PXA_AUDIO_QUERY_STATE, request_id,
-                                     session_handle, packet, packet_capacity);
-}
-
-static inline int pxa_audio_flush(uint32_t request_id, uint32_t session_handle,
-                                  uint8_t *packet,
-                                  size_t packet_capacity) {
-    return pxa_audio_session_request(PXA_AUDIO_FLUSH, request_id,
-                                     session_handle, packet, packet_capacity);
-}
-
-static inline int pxa_audio_open_media(uint32_t request_id, uint32_t permission_handle,
-                                       uint8_t *payload, size_t payload_capacity,
-                                       uint8_t *packet, size_t packet_capacity) {
-    pxa_writer_t request;
-    pxa_writer_t message;
-    uint8_t permission[4];
-    const uint8_t usage[2] = {PXA_AUDIO_USAGE_MEDIA, 0};
-    if (request_id == 0 || permission_handle == 0 || payload == NULL || packet == NULL)
-        return 0;
-    permission[0] = (uint8_t)permission_handle;
-    permission[1] = (uint8_t)(permission_handle >> 8);
-    permission[2] = (uint8_t)(permission_handle >> 16);
-    permission[3] = (uint8_t)(permission_handle >> 24);
-    pxa_writer_init(&request, payload, payload_capacity);
-    if (!pxa_record(&request, PXA_AUDIO_PERMISSION_HANDLE, permission, sizeof(permission)) ||
-        !pxa_record(&request, PXA_AUDIO_USAGE, usage, sizeof(usage))) return 0;
-    pxa_writer_init(&message, packet, packet_capacity);
-    return pxa_message(&message, PXA_SERVICE_AUDIO, PXA_AUDIO_OPEN_SESSION, request_id,
-                       request.data, request.length) &&
-           pxa_control(message.data, (uint32_t)message.length) == PXA_STATUS_OK;
-}
-
-static inline int pxa_audio_commit_speaker_graph(uint32_t request_id, uint32_t session_handle,
-                                                 int16_t gain_db_q8, uint16_t frequency_hz,
-                                                 int16_t eq_gain_db_q8, uint16_t q_q8,
-                                                 uint8_t *payload, size_t payload_capacity,
-                                                 uint8_t *packet, size_t packet_capacity) {
-    pxa_writer_t request;
-    pxa_writer_t message;
-    uint8_t session[4];
-    uint8_t gain[2];
-    uint8_t band[6];
-    const uint8_t route[2] = {PXA_AUDIO_ROUTE_SPEAKER, 0};
-    if (request_id == 0 || session_handle == 0 || frequency_hz < 20 || frequency_hz > 20000 ||
-        q_q8 < 64 || q_q8 > 4096 || payload == NULL || packet == NULL) return 0;
-    session[0] = (uint8_t)session_handle;
-    session[1] = (uint8_t)(session_handle >> 8);
-    session[2] = (uint8_t)(session_handle >> 16);
-    session[3] = (uint8_t)(session_handle >> 24);
-    gain[0] = (uint8_t)gain_db_q8;
-    gain[1] = (uint8_t)((uint16_t)gain_db_q8 >> 8);
-    band[0] = (uint8_t)frequency_hz;
-    band[1] = (uint8_t)(frequency_hz >> 8);
-    band[2] = (uint8_t)eq_gain_db_q8;
-    band[3] = (uint8_t)((uint16_t)eq_gain_db_q8 >> 8);
-    band[4] = (uint8_t)q_q8;
-    band[5] = (uint8_t)(q_q8 >> 8);
-    pxa_writer_init(&request, payload, payload_capacity);
-    if (!pxa_record(&request, PXA_AUDIO_GRAPH_SESSION_HANDLE, session, sizeof(session)) ||
-        !pxa_record(&request, PXA_AUDIO_GAIN_DB_Q8, gain, sizeof(gain)) ||
-        !pxa_record(&request, PXA_AUDIO_EQ_BAND, band, sizeof(band)) ||
-        !pxa_record(&request, PXA_AUDIO_ROUTE, route, sizeof(route))) return 0;
-    pxa_writer_init(&message, packet, packet_capacity);
-    return pxa_message(&message, PXA_SERVICE_AUDIO, PXA_AUDIO_COMMIT_GRAPH, request_id,
-                       request.data, request.length) &&
-           pxa_control(message.data, (uint32_t)message.length) == PXA_STATUS_OK;
-}
-
-/* Writes one or fewer negotiated PCM frames to an audio session. The PCM
- * format is signed 16-bit little-endian, interleaved by channel. A short
- * queue is reported as PXA_STATUS_WOULD_BLOCK; callers should retry on a
- * later clock event instead of spinning in the current guest callback. */
-static inline int32_t pxa_audio_write_pcm(uint32_t session_handle,
-                                          uint8_t *pcm, uint32_t length) {
-    if (session_handle == 0 || (pcm == NULL && length != 0)) {
-        return PXA_STATUS_INVALID_ARGUMENT;
-    }
-    return pxa_io(session_handle, PXA_IO_WRITE, pcm, length);
-}
-
-static inline int32_t pxa_audio_play_tone(uint32_t session_handle,
-                                          uint8_t waveform,
-                                          uint16_t frequency_hz,
-                                          uint16_t duration_ms,
-                                          int16_t gain_db_q8) {
-    uint8_t command[8];
-    if (session_handle == 0 || waveform > PXA_AUDIO_TONE_NOISE ||
-        frequency_hz < 40 || frequency_hz > 8000 || duration_ms < 10 ||
-        duration_ms > 1000 || gain_db_q8 > 0 || gain_db_q8 < -60 * 256) {
-        return PXA_STATUS_INVALID_ARGUMENT;
-    }
-    command[0] = (uint8_t)frequency_hz;
-    command[1] = (uint8_t)(frequency_hz >> 8);
-    command[2] = (uint8_t)duration_ms;
-    command[3] = (uint8_t)(duration_ms >> 8);
-    command[4] = (uint8_t)gain_db_q8;
-    command[5] = (uint8_t)((uint16_t)gain_db_q8 >> 8);
-    command[6] = waveform;
-    command[7] = 0;
-    return pxa_io(session_handle, PXA_AUDIO_IO_PLAY_TONE, command,
-                  sizeof(command));
-}
-
-static inline int32_t pxa_audio_play_tone_enveloped(
-    uint32_t session_handle, uint8_t waveform, uint16_t frequency_hz,
-    uint16_t duration_ms, int16_t gain_db_q8, uint16_t attack_ms,
-    uint16_t release_ms, uint16_t delay_ms) {
-    uint8_t command[14];
-    if (session_handle == 0 || waveform > PXA_AUDIO_TONE_NOISE ||
-        frequency_hz < 40 || frequency_hz > 8000 || duration_ms < 10 ||
-        duration_ms > 1000 || gain_db_q8 > 0 || gain_db_q8 < -60 * 256 ||
-        attack_ms > duration_ms || release_ms > duration_ms ||
-        delay_ms > 1000) {
-        return PXA_STATUS_INVALID_ARGUMENT;
-    }
-    command[0] = (uint8_t)frequency_hz;
-    command[1] = (uint8_t)(frequency_hz >> 8);
-    command[2] = (uint8_t)duration_ms;
-    command[3] = (uint8_t)(duration_ms >> 8);
-    command[4] = (uint8_t)gain_db_q8;
-    command[5] = (uint8_t)((uint16_t)gain_db_q8 >> 8);
-    command[6] = waveform;
-    command[7] = 0;
-    command[8] = (uint8_t)attack_ms;
-    command[9] = (uint8_t)(attack_ms >> 8);
-    command[10] = (uint8_t)release_ms;
-    command[11] = (uint8_t)(release_ms >> 8);
-    command[12] = (uint8_t)delay_ms;
-    command[13] = (uint8_t)(delay_ms >> 8);
-    return pxa_io(session_handle, PXA_AUDIO_IO_PLAY_TONE, command,
-                  sizeof(command));
-}
-
-static inline int32_t pxa_audio_play_asset(uint32_t session_handle,
-                                           const char *path,
-                                           uint16_t path_size, int loop,
-                                           int16_t gain_db_q8,
-                                           uint8_t *command,
-                                           size_t command_capacity) {
-    size_t size = (size_t)path_size + 8u;
-    uint16_t index;
-    if (session_handle == 0 || path == NULL || path_size == 0 ||
-        command == NULL || command_capacity < size ||
-        gain_db_q8 > 0 || gain_db_q8 < -60 * 256) {
-        return PXA_STATUS_INVALID_ARGUMENT;
-    }
-    command[0] = (uint8_t)path_size;
-    command[1] = (uint8_t)(path_size >> 8);
-    command[2] = (uint8_t)gain_db_q8;
-    command[3] = (uint8_t)((uint16_t)gain_db_q8 >> 8);
-    command[4] = loop ? PXA_AUDIO_ASSET_LOOP : 0;
-    command[5] = 0;
-    command[6] = 0;
-    command[7] = 0;
-    for (index = 0; index < path_size; ++index)
-        command[8u + index] = (uint8_t)path[index];
-    return pxa_io(session_handle, PXA_AUDIO_IO_PLAY_ASSET, command,
-                  (uint32_t)size);
-}
-
-static inline int32_t pxa_audio_control_asset(uint32_t session_handle,
-                                              uint8_t action,
-                                              int16_t gain_db_q8) {
-    uint8_t command[4];
-    if (session_handle == 0 || action < PXA_AUDIO_ASSET_PAUSE ||
-        action > PXA_AUDIO_ASSET_SET_GAIN ||
-        (action == PXA_AUDIO_ASSET_SET_GAIN &&
-         (gain_db_q8 > 0 || gain_db_q8 < -60 * 256)) ||
-        (action != PXA_AUDIO_ASSET_SET_GAIN && gain_db_q8 != 0)) {
-        return PXA_STATUS_INVALID_ARGUMENT;
-    }
-    command[0] = action;
-    command[1] = 0;
-    command[2] = (uint8_t)gain_db_q8;
-    command[3] = (uint8_t)((uint16_t)gain_db_q8 >> 8);
-    return pxa_io(session_handle, PXA_AUDIO_IO_CONTROL_ASSET, command,
-                  sizeof(command));
-}
-
-static inline int pxa_audio_parse_open(const pxa_event_t *event,
-                                       pxa_audio_open_result_t *output) {
-    const uint8_t *value;
-    if (event == NULL || output == NULL || event->service != PXA_SERVICE_AUDIO ||
-        event->opcode != PXA_AUDIO_OPEN_SESSION || event->request_id == 0 ||
-        event->payload_length < 4) return 0;
-    value = event->payload;
-    output->status = (int32_t)pxa_read_u32(value);
-    if (output->status != PXA_STATUS_OK) return event->payload_length == 4;
-    if (event->payload_length != 31 || pxa_read_u16(value + 4) != PXA_AUDIO_SESSION_HANDLE ||
-        pxa_read_u16(value + 6) != 4 || pxa_read_u16(value + 12) != PXA_AUDIO_SAMPLE_RATE ||
-        pxa_read_u16(value + 14) != 4 || pxa_read_u16(value + 20) != PXA_AUDIO_CHANNELS ||
-        pxa_read_u16(value + 22) != 1 || pxa_read_u16(value + 25) != PXA_AUDIO_FRAME_MS ||
-        pxa_read_u16(value + 27) != 2) return 0;
-    output->session_handle = pxa_read_u32(value + 8);
-    output->sample_rate = pxa_read_u32(value + 16);
-    output->channels = value[24];
-    output->frame_ms = pxa_read_u16(value + 29);
-    return output->session_handle != 0 && output->sample_rate >= 8000 &&
-           (output->channels == 1 || output->channels == 2) && output->frame_ms >= 5;
-}
-
-static inline int pxa_audio_parse_status(const pxa_event_t *event, uint16_t opcode,
-                                         int32_t *status) {
-    if (event == NULL || status == NULL || event->service != PXA_SERVICE_AUDIO ||
-        event->opcode != opcode || event->request_id == 0 || event->payload_length != 4) return 0;
-    *status = (int32_t)pxa_read_u32(event->payload);
+static inline int pxa_audio_append(uint8_t *packet, size_t capacity,
+                                       size_t *offset, uint16_t tag,
+                                       const uint8_t *value, size_t size) {
+    size_t written = 0;
+    if (*offset > capacity ||
+        !pxa_wire_record_encode(packet + *offset, capacity - *offset,
+                                tag, value, size, &written)) return 0;
+    *offset += written;
     return 1;
 }
 
-static inline int pxa_audio_parse_state(const pxa_event_t *event,
-                                        pxa_audio_state_result_t *output) {
-    const uint8_t *value;
-    if (event == NULL || output == NULL ||
-        event->service != PXA_SERVICE_AUDIO ||
-        event->opcode != PXA_AUDIO_QUERY_STATE || event->request_id == 0 ||
-        event->payload_length < 4)
+static inline int pxa_audio_build_open(uint8_t *packet, size_t capacity,
+                                            uint64_t token,
+                                            uint64_t permission_handle,
+                                            uint32_t *written) {
+    uint8_t value[8];
+    size_t offset = PXA_HEADER_BYTES;
+    if (written != NULL) *written = 0;
+    if (packet == NULL || written == NULL || token == 0 ||
+        (permission_handle >> 32) == 0 ||
+        capacity < PXA_HEADER_BYTES) return 0;
+    pxa_store_u64(value, permission_handle);
+    if (!pxa_audio_append(packet, capacity, &offset, 1, value, 8)) return 0;
+    pxa_store_u16(value, PXA_AUDIO_USAGE_MEDIA);
+    if (!pxa_audio_append(packet, capacity, &offset, 2, value, 2)) return 0;
+    return pxa_finish_message_in_place(
+        packet, capacity, PXA_AUDIO_SERVICE,
+        PXA_AUDIO_OPEN_SESSION, token, offset, written);
+}
+
+static inline int32_t pxa_audio_open_media(uint64_t token,
+                                               uint64_t permission_handle) {
+    uint8_t packet[PXA_HEADER_BYTES + 18u];
+    uint32_t size = 0;
+    if (!pxa_audio_build_open(packet, sizeof(packet), token,
+                                 permission_handle, &size)) return -1;
+    return pxa_submit(packet, size);
+}
+
+static inline int pxa_audio_build_graph(
+    uint8_t *packet, size_t capacity, uint64_t token, uint64_t session,
+    const pxa_audio_graph_t *graph, uint32_t *written) {
+    uint8_t value[8];
+    size_t offset = PXA_HEADER_BYTES;
+    if (written != NULL) *written = 0;
+    if (packet == NULL || written == NULL || token == 0 ||
+        (session >> 32) == 0 || graph == NULL ||
+        graph->gain_db_q8 < -48 * 256 || graph->gain_db_q8 > 12 * 256 ||
+        graph->eq_band_count > PXA_AUDIO_MAX_EQ_BANDS ||
+        (graph->eq_bands == NULL && graph->eq_band_count != 0) ||
+        capacity < PXA_HEADER_BYTES) return 0;
+    pxa_store_u64(value, session);
+    if (!pxa_audio_append(packet, capacity, &offset, 1, value, 8)) return 0;
+    pxa_store_u16(value, (uint16_t)graph->gain_db_q8);
+    if (!pxa_audio_append(packet, capacity, &offset, 2, value, 2)) return 0;
+    for (uint8_t i = 0; i < graph->eq_band_count; ++i) {
+        const pxa_audio_eq_band_t *band = &graph->eq_bands[i];
+        if (band->frequency_hz < 20 || band->frequency_hz > 20000 ||
+            band->gain_db_q8 < -12 * 256 || band->gain_db_q8 > 12 * 256 ||
+            band->q_q8 < 64 || band->q_q8 > 4096) return 0;
+        pxa_store_u16(value, band->frequency_hz);
+        pxa_store_u16(value + 2, (uint16_t)band->gain_db_q8);
+        pxa_store_u16(value + 4, band->q_q8);
+        if (!pxa_audio_append(packet, capacity, &offset, 3, value, 6))
+            return 0;
+    }
+    pxa_store_u16(value, PXA_AUDIO_ROUTE_SPEAKER);
+    if (!pxa_audio_append(packet, capacity, &offset, 4, value, 2)) return 0;
+    return pxa_finish_message_in_place(
+        packet, capacity, PXA_AUDIO_SERVICE,
+        PXA_AUDIO_COMMIT_GRAPH, token, offset, written);
+}
+
+static inline int32_t pxa_audio_commit_graph(
+    uint64_t token, uint64_t session, const pxa_audio_graph_t *graph) {
+    uint8_t packet[PXA_HEADER_BYTES + 74u];
+    uint32_t size = 0;
+    if (!pxa_audio_build_graph(packet, sizeof(packet), token,
+                                  session, graph, &size)) return -1;
+    return pxa_submit(packet, size);
+}
+
+static inline int pxa_audio_build_session_request(
+    uint8_t *packet, size_t capacity, uint16_t opcode, uint64_t token,
+    uint64_t session, uint32_t *written) {
+    uint8_t value[8];
+    size_t offset = PXA_HEADER_BYTES;
+    if (written != NULL) *written = 0;
+    if (packet == NULL || written == NULL || token == 0 ||
+        (session >> 32) == 0 || capacity < PXA_HEADER_BYTES ||
+        (opcode != PXA_AUDIO_QUERY_STATE &&
+         opcode != PXA_AUDIO_FLUSH)) return 0;
+    pxa_store_u64(value, session);
+    if (!pxa_audio_append(packet, capacity, &offset, 1, value, 8)) return 0;
+    return pxa_finish_message_in_place(packet, capacity,
+                                          PXA_AUDIO_SERVICE, opcode,
+                                          token, offset, written);
+}
+
+static inline int32_t pxa_audio_session_request(uint16_t opcode,
+                                                     uint64_t token,
+                                                     uint64_t session) {
+    uint8_t packet[PXA_HEADER_BYTES + 12u];
+    uint32_t size = 0;
+    if (!pxa_audio_build_session_request(packet, sizeof(packet), opcode,
+                                             token, session, &size)) return -1;
+    return pxa_submit(packet, size);
+}
+
+static inline int pxa_audio_parse_status(const pxa_event_t *event,
+                                             uint64_t token, uint16_t opcode,
+                                             int32_t *status) {
+    if (event == NULL || status == NULL || token == 0 ||
+        event->service != PXA_AUDIO_SERVICE || event->opcode != opcode ||
+        event->token != token || event->payload == NULL ||
+        event->payload_size != 4) return 0;
+    *status = (int32_t)pxa_load_u32(event->payload);
+    return 1;
+}
+
+static inline int pxa_audio_parse_open(const pxa_event_t *event,
+                                           uint64_t token,
+                                           pxa_audio_open_result_t *out) {
+    pxa_wire_record_view_t record;
+    size_t consumed = 0;
+    size_t offset = 4;
+    if (out == NULL) return 0;
+    pxa_zero(out, sizeof(*out));
+    if (event == NULL || event->service != PXA_AUDIO_SERVICE ||
+        event->opcode != PXA_AUDIO_OPEN_SESSION || token == 0 ||
+        event->token != token || event->payload == NULL ||
+        event->payload_size < 4) return 0;
+    out->status = (int32_t)pxa_load_u32(event->payload);
+    if (out->status != 0) return event->payload_size == 4;
+    if (event->payload_size != 35 ||
+        !pxa_wire_record_decode(event->payload + offset,
+                                event->payload_size - offset,
+                                &record, &consumed) || record.raw_tag != 3 ||
+        record.payload_size != 8) return 0;
+    out->handle = pxa_load_u64(record.payload);
+    offset += consumed;
+    if (!pxa_wire_record_decode(event->payload + offset,
+                                event->payload_size - offset,
+                                &record, &consumed) || record.raw_tag != 4 ||
+        record.payload_size != 4) return 0;
+    out->sample_rate = pxa_load_u32(record.payload);
+    offset += consumed;
+    if (!pxa_wire_record_decode(event->payload + offset,
+                                event->payload_size - offset,
+                                &record, &consumed) || record.raw_tag != 5 ||
+        record.payload_size != 1) return 0;
+    out->channels = record.payload[0];
+    offset += consumed;
+    if (!pxa_wire_record_decode(event->payload + offset,
+                                event->payload_size - offset,
+                                &record, &consumed) || record.raw_tag != 6 ||
+        record.payload_size != 2 || offset + consumed != event->payload_size)
         return 0;
-    value = event->payload;
-    output->status = (int32_t)pxa_read_u32(value);
-    if (output->status != PXA_STATUS_OK) return event->payload_length == 4;
-    if (event->payload_length != 44 ||
-        pxa_read_u16(value + 4) != PXA_AUDIO_STATE_SUBMITTED_SAMPLES ||
-        pxa_read_u16(value + 6) != 8 ||
-        pxa_read_u16(value + 16) != PXA_AUDIO_STATE_ACCEPTED_SAMPLES ||
-        pxa_read_u16(value + 18) != 8 ||
-        pxa_read_u16(value + 28) != PXA_AUDIO_STATE_QUEUED_SAMPLES ||
-        pxa_read_u16(value + 30) != 4 ||
-        pxa_read_u16(value + 36) != PXA_AUDIO_STATE_FLAGS ||
-        pxa_read_u16(value + 38) != 4)
+    out->frame_ms = pxa_load_u16(record.payload);
+    return (out->handle >> 32) != 0 &&
+           out->sample_rate >= 8000 && out->sample_rate <= 48000 &&
+           (out->channels == 1 || out->channels == 2) &&
+           out->frame_ms >= 5 && out->frame_ms <= 120;
+}
+
+static inline int pxa_audio_parse_state(
+    const pxa_event_t *event, uint64_t token,
+    pxa_audio_state_result_t *out) {
+    pxa_wire_record_view_t record;
+    size_t offset = 4;
+    size_t consumed = 0;
+    if (out == NULL) return 0;
+    pxa_zero(out, sizeof(*out));
+    if (event == NULL || event->service != PXA_AUDIO_SERVICE ||
+        event->opcode != PXA_AUDIO_QUERY_STATE || token == 0 ||
+        event->token != token || event->payload == NULL ||
+        event->payload_size < 4) return 0;
+    out->status = (int32_t)pxa_load_u32(event->payload);
+    if (out->status != 0) return event->payload_size == 4;
+    if (event->payload_size != 44 ||
+        !pxa_wire_record_decode(event->payload + offset,
+                                event->payload_size - offset,
+                                &record, &consumed) || record.raw_tag != 2 ||
+        record.payload_size != 8) return 0;
+    out->submitted_samples = pxa_load_u64(record.payload);
+    offset += consumed;
+    if (!pxa_wire_record_decode(event->payload + offset,
+                                event->payload_size - offset,
+                                &record, &consumed) || record.raw_tag != 3 ||
+        record.payload_size != 8) return 0;
+    out->accepted_samples = pxa_load_u64(record.payload);
+    offset += consumed;
+    if (!pxa_wire_record_decode(event->payload + offset,
+                                event->payload_size - offset,
+                                &record, &consumed) || record.raw_tag != 4 ||
+        record.payload_size != 4) return 0;
+    out->queued_samples = pxa_load_u32(record.payload);
+    offset += consumed;
+    if (!pxa_wire_record_decode(event->payload + offset,
+                                event->payload_size - offset,
+                                &record, &consumed) || record.raw_tag != 5 ||
+        record.payload_size != 4 || offset + consumed != event->payload_size)
         return 0;
-    output->submitted_samples = pxa_read_u64(value + 8);
-    output->accepted_samples = pxa_read_u64(value + 20);
-    output->queued_samples = pxa_read_u32(value + 32);
-    output->flags = pxa_read_u32(value + 40);
-    return output->accepted_samples <= output->submitted_samples &&
-           output->queued_samples <= output->submitted_samples;
+    out->flags = pxa_load_u32(record.payload);
+    return out->accepted_samples <= out->submitted_samples &&
+           out->queued_samples <= out->submitted_samples &&
+           (out->flags & ~UINT32_C(1)) == 0;
+}
+
+static inline int32_t pxa_audio_write_pcm(uint64_t session,
+                                              uint8_t *pcm, uint32_t size) {
+    if ((session >> 32) == 0 || (pcm == NULL && size != 0)) return -1;
+    return pxa_io(session, PXA_AUDIO_IO_WRITE, pcm, size);
+}
+
+static inline int32_t pxa_audio_play_tone(
+    uint64_t session, uint8_t waveform, uint16_t frequency_hz,
+    uint16_t duration_ms, int16_t gain_db_q8,
+    uint16_t attack_ms, uint16_t release_ms, uint16_t delay_ms) {
+    uint8_t command[14];
+    if ((session >> 32) == 0 || waveform > PXA_AUDIO_TONE_NOISE ||
+        frequency_hz < 40 || frequency_hz > 8000 || duration_ms < 10 ||
+        duration_ms > 1000 || gain_db_q8 < -60 * 256 || gain_db_q8 > 0 ||
+        attack_ms > duration_ms || release_ms > duration_ms ||
+        delay_ms > 1000) return -1;
+    pxa_store_u16(command, frequency_hz);
+    pxa_store_u16(command + 2, duration_ms);
+    pxa_store_u16(command + 4, (uint16_t)gain_db_q8);
+    command[6] = waveform;
+    command[7] = 0;
+    pxa_store_u16(command + 8, attack_ms);
+    pxa_store_u16(command + 10, release_ms);
+    pxa_store_u16(command + 12, delay_ms);
+    return pxa_io(session, PXA_AUDIO_IO_PLAY_TONE,
+                     command, sizeof(command));
+}
+
+static inline int32_t pxa_audio_play_asset(
+    uint64_t session, const char *path, size_t path_size, int loop,
+    int16_t gain_db_q8, uint8_t *command, size_t capacity) {
+    if ((session >> 32) == 0 || path == NULL || path_size == 0 ||
+        path_size > UINT16_MAX - 8u || command == NULL ||
+        capacity < path_size + 8u || gain_db_q8 < -60 * 256 ||
+        gain_db_q8 > 0) return -1;
+    pxa_store_u16(command, (uint16_t)path_size);
+    pxa_store_u16(command + 2, (uint16_t)gain_db_q8);
+    command[4] = loop ? PXA_AUDIO_ASSET_LOOP : 0;
+    command[5] = command[6] = command[7] = 0;
+    for (size_t i = 0; i < path_size; ++i)
+        command[8 + i] = (uint8_t)path[i];
+    return pxa_io(session, PXA_AUDIO_IO_PLAY_ASSET,
+                     command, (uint32_t)(path_size + 8u));
+}
+
+static inline int32_t pxa_audio_control_asset(uint64_t session,
+                                                   uint8_t action,
+                                                   int16_t gain_db_q8) {
+    uint8_t command[4];
+    if ((session >> 32) == 0 || action < PXA_AUDIO_ASSET_PAUSE ||
+        action > PXA_AUDIO_ASSET_SET_GAIN ||
+        (action == PXA_AUDIO_ASSET_SET_GAIN
+            ? (gain_db_q8 < -60 * 256 || gain_db_q8 > 0)
+            : gain_db_q8 != 0)) return -1;
+    command[0] = action;
+    command[1] = 0;
+    pxa_store_u16(command + 2, (uint16_t)gain_db_q8);
+    return pxa_io(session, PXA_AUDIO_IO_CONTROL_ASSET,
+                     command, sizeof(command));
+}
+
+/* Convenience helpers preserve the asynchronous request contract. Wait for
+ * the matching result token after open/commit/query/flush before depending on it. */
+static inline int32_t pxa_audio_commit_gain(uint64_t token,
+                                               uint64_t session,
+                                               int16_t gain_db_q8) {
+    const pxa_audio_graph_t graph = {gain_db_q8, NULL, 0};
+    return pxa_audio_commit_graph(token, session, &graph);
+}
+static inline int32_t pxa_audio_query(uint64_t token, uint64_t session) {
+    return pxa_audio_session_request(PXA_AUDIO_QUERY_STATE, token, session);
+}
+static inline int32_t pxa_audio_flush(uint64_t token, uint64_t session) {
+    return pxa_audio_session_request(PXA_AUDIO_FLUSH, token, session);
+}
+/* A short notification with click-reducing attack/release defaults. */
+static inline int32_t pxa_audio_beep(uint64_t session, uint16_t frequency_hz,
+                                       uint16_t duration_ms, int16_t gain_db_q8) {
+    return pxa_audio_play_tone(session, PXA_AUDIO_TONE_SINE,
+        frequency_hz, duration_ms, gain_db_q8, 3, 5, 0);
+}
+/* Audio 0.6: play an Assets 1.3 prepared PCM handle. The accepted voice keeps
+ * an independent reference, so the caller can close its Guest handle. */
+static inline int32_t pxa_audio_play_sound(uint64_t session,uint64_t sound,int16_t gain_db_q8) {
+    if (!(session >> 32) || !(sound >> 32) || gain_db_q8 > 0 || gain_db_q8 < -60*256) return -1;
+    uint8_t command[12] = {0};
+    pxa_store_u64(command,sound); pxa_store_u16(command+8,(uint16_t)gain_db_q8);
+    return pxa_io(session,PXA_AUDIO_IO_PLAY_SOUND,command,sizeof(command));
+}
+/* Audio 0.7: success returns accepted bytes and a nonzero playback instance.
+ * It does not imply decoder readiness. Match later events by session+instance.
+ * On rejection, instance is zero and existing music is unchanged. */
+static inline int32_t pxa_audio_play_music(uint64_t session,const char *path,
+    int loop,int16_t gain_db_q8,uint64_t *instance) {
+    uint8_t command[528]={0};
+    if (!instance) return -1;
+    *instance=0;
+    if (!(session>>32) || !path || gain_db_q8>0 || gain_db_q8 < -60*256) return -1;
+    uint32_t length=0;
+    while (length<512 && path[length]) ++length;
+    if (!length || length==512) return -1;
+    pxa_store_u16(command+8,(uint16_t)length);
+    pxa_store_u16(command+10,(uint16_t)gain_db_q8);
+    command[12]=loop ? PXA_AUDIO_ASSET_LOOP : 0;
+    for (uint32_t i=0;i<length;++i) command[16+i]=(uint8_t)path[i];
+    int32_t status=pxa_io(session,PXA_AUDIO_IO_PLAY_MUSIC,command,length+16);
+    if (status==(int32_t)(length+16)) {
+        *instance=pxa_load_u64(command);
+        if (!*instance) return -11;
+    }
+    return status;
+}
+/* Bounded stack scratch; use play_asset directly to reuse a caller buffer. */
+static inline int32_t pxa_audio_play_file(uint64_t session, const char *path,
+                                            int loop, int16_t gain_db_q8) {
+    uint8_t command[520];
+    size_t size = 0;
+    if (path == NULL) return -1;
+    while (size < 512 && path[size]) ++size;
+    if (size == 512) return -1;
+    return pxa_audio_play_asset(session, path, size, loop, gain_db_q8,
+                                    command, sizeof(command));
 }
 
 #endif

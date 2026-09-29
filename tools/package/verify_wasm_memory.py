@@ -83,7 +83,7 @@ def main() -> int:
         minimum, maximum = verify_maximum(args.wasm, args.maximum_bytes)
     except (OSError, WasmMemoryError) as error:
         parser.error(str(error))
-    print(f"Verified pinned linear memory: min={minimum} max={maximum} pages")
+    print(f"Verified bounded linear memory: min={minimum} max={maximum} pages")
     return 0
 
 

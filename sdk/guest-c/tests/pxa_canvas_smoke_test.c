@@ -30,16 +30,18 @@ static void validate_display_list(const uint8_t* data, size_t size) {
     if (primitives > max_primitives) max_primitives = primitives;
 }
 
-int32_t pxa_control(const uint8_t* data, uint32_t length) {
+static int32_t smoke_control(const uint8_t* data, uint32_t length,
+                             uint32_t header_bytes) {
     assert(data != NULL);
-    assert(length >= 12 && length <= 4096);
-    assert(pxa_read_u32(data + 8) == length - 12);
+    assert(length >= header_bytes && length <= 4096);
+    assert(pxa_read_u32(data + (header_bytes == 20 ? 12 : 8)) ==
+           length - header_bytes);
     ++control_count;
     if (pxa_read_u16(data) != PXA_SERVICE_UI) return PXA_STATUS_OK;
     {
         const uint16_t opcode = pxa_read_u16(data + 2);
-        const uint8_t* payload = data + 12;
-        const size_t payload_size = length - 12;
+        const uint8_t* payload = data + header_bytes;
+        const size_t payload_size = length - header_bytes;
         if (opcode == PXA_UI_CANVAS_BEGIN) {
             assert(payload_size == 16);
             display_list_size = 0;
@@ -57,7 +59,11 @@ int32_t pxa_control(const uint8_t* data, uint32_t length) {
     return PXA_STATUS_OK;
 }
 
-int32_t pxa_io(uint32_t handle, uint32_t operation, uint8_t* data,
+int32_t pxa_submit(const uint8_t* data, uint32_t length) {
+    return smoke_control(data, length, PXA_HEADER_BYTES);
+}
+
+int32_t pxa_io(uint64_t handle, uint32_t operation, uint8_t* data,
                uint32_t length) {
     (void)handle;
     (void)operation;
@@ -68,11 +74,11 @@ int32_t pxa_io(uint32_t handle, uint32_t operation, uint8_t* data,
 
 static void deliver(uint16_t service, uint16_t opcode,
                     const uint8_t* payload, size_t payload_length) {
-    uint8_t event[48];
-    pxa_writer_t writer;
-    pxa_writer_init(&writer, event, sizeof(event));
-    assert(pxa_message(&writer, service, opcode, 0, payload, payload_length));
-    assert(pxa_app_on_event(event, (uint32_t)writer.length) >= 0);
+    uint8_t event[64];
+    uint32_t size = 0;
+    assert(pxa_build_message(event, sizeof(event), service, opcode, 0,
+                                 payload, payload_length, &size));
+    assert(pxa_app_on_event(event, size) >= 0);
 }
 
 static void deliver_pointer(uint32_t step, uint8_t phase) {

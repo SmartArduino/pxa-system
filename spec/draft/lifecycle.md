@@ -22,8 +22,9 @@ abort directly to `stopped` without calling `pxa_app_stop`.
 
 ## Import legality
 
-`pxa_control` and `pxa_io` are legal only while `pxa_app_start` or
-`pxa_app_on_event` is active. They are illegal from `pxa_app_stop`, because
+Core v1 `pxa_submit`/`pxa_io` are legal
+only while `pxa_app_start` or `pxa_app_on_event` is active. They are illegal
+from `pxa_app_stop`, because
 stop is a bounded notification rather than a cleanup phase in which new work
 can be acquired. The Host owns resource cleanup regardless of whether the stop
 callback returns normally.
@@ -46,6 +47,11 @@ The commit point is where externally durable or irreversible effects become
 observable, such as a filesystem rename, transmitted packet, IPC acceptance or
 permission prompt decision. A service must call the Core commit primitive at
 that boundary; it must not infer commit from queueing work.
+
+Core reserves the final completion event before a service accepts a request.
+If that reservation fails, the service rejects the request without starting
+backend work. A committed operation retains its reserved result even when the
+Component mailbox is full.
 
 Core retains a completed result until it can enter the reliable mailbox. The
 service transfers result ownership once completion returns `ok` and must never

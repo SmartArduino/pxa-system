@@ -36,6 +36,10 @@ The backend applies either the full candidate configuration or none of it.
 temporarily; it is the platform-neutral equivalent of Android immersive system
 bar behavior.
 
+The Core v1 preview accepts `configure` with a zero 64-bit request token and
+at most 41 payload bytes. Its Guest SDK builder emits all seven records in
+ascending order from a typed configuration, using exactly 41 bytes.
+
 `get-snapshot` (`opcode=2`) is asynchronous and requires a nonzero request ID.
 Its success data is the snapshot record list described below.
 
@@ -45,6 +49,8 @@ payload is `duration-ms:u16-le | text:utf8[1..240]`. Duration must be between
 and shows a non-modal short notification above system navigation. This is a
 best-effort hint, not a durable error report; Guests should retain actionable
 errors in their own UI. An unsupported backend rejects the command.
+The Core v1 preview also accepts `show-toast` with a zero request token and
+the same bounded payload.
 
 The bottom system-bar inset reserves the visible button bar or gesture handle,
 not a hidden gesture hit target. Without a gesture handle, the bottom bar inset

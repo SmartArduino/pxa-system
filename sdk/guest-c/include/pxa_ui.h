@@ -1,7 +1,11 @@
-#ifndef PXA_UI_H
-#define PXA_UI_H
+#ifndef PXA_GUEST_UI_H
+#define PXA_GUEST_UI_H
 
-#include "pxa.h"
+#include "pxa_common.h"
+#include "pxa_writer.h"
+#include "pxa_ui_wire.h"
+typedef pxa_event_t pxa_ui_wire_event_t;
+typedef uint64_t pxa_ui_token_t;
 
 #define PXA_UI_TX_BEGIN 1u
 #define PXA_UI_TX_WRITE 2u
@@ -125,12 +129,14 @@
 #define PXA_UI_PROPERTY_ITEM_COUNT 778u
 #define PXA_UI_PROPERTY_ITEM_EXTENT 779u
 #define PXA_UI_PROPERTY_SCROLL_POSITION 780u
+#define PXA_UI_PROPERTY_IMAGE_HANDLE 781u
 
 /* Grid layout: a node becomes a grid once it has both a column and a row
  * template. Track kinds describe one track; alignments reuse PXA_UI_ALIGN_*. */
 #define PXA_UI_GRID_CONTENT 0u
 #define PXA_UI_GRID_FRACTION 1u
 #define PXA_UI_GRID_FIXED 2u
+#define PXA_UI_GRID_MAX_WEIGHT 99u
 
 typedef struct {
     uint8_t kind;    /* PXA_UI_GRID_CONTENT, FRACTION or FIXED */
@@ -204,9 +210,11 @@ typedef struct {
     uint16_t typography_px[PXA_UI_THEME_FONT_COUNT];
 } pxa_ui_theme_t;
 
-static inline int pxa_ui_theme_get(uint32_t request) {
-    return request != 0 && pxa_send(PXA_SERVICE_UI, PXA_UI_THEME_GET,
-                                     request, NULL, 0);
+static inline int pxa_ui_theme_get(pxa_ui_token_t request) {
+    uint8_t packet[PXA_HEADER_BYTES];
+    uint32_t size = 0;
+    return pxa_ui_wire_build_theme_get(packet, sizeof(packet), request,
+                                      &size) && pxa_submit(packet, size) == 0;
 }
 
 static inline int pxa_ui_parse_theme_payload(const uint8_t* payload,
@@ -229,18 +237,18 @@ static inline int pxa_ui_parse_theme_payload(const uint8_t* payload,
     return 1;
 }
 
-static inline int pxa_ui_parse_theme_event(const pxa_event_t* event,
+static inline int pxa_ui_parse_theme_event(const pxa_ui_wire_event_t* event,
                                             pxa_ui_theme_t* output) {
     if (event == NULL || event->service != PXA_SERVICE_UI) return 0;
-    if (event->opcode == PXA_UI_THEME_CHANGED && event->request_id == 0)
+    if (event->opcode == PXA_UI_THEME_CHANGED && event->token == 0)
         return pxa_ui_parse_theme_payload(event->payload,
-                                          event->payload_length, output);
-    if (event->opcode != PXA_UI_THEME_GET || event->request_id == 0 ||
-        event->payload == NULL || event->payload_length != 4u + PXA_UI_THEME_WIRE_BYTES ||
-        (int32_t)pxa_read_u32(event->payload) != PXA_STATUS_OK)
+                                          event->payload_size, output);
+    if (event->opcode != PXA_UI_THEME_GET || event->token == 0 ||
+        event->payload == NULL || event->payload_size != 4u + PXA_UI_THEME_WIRE_BYTES ||
+        (int32_t)pxa_load_u32(event->payload) != PXA_STATUS_OK)
         return 0;
     return pxa_ui_parse_theme_payload(event->payload + 4u,
-                                      event->payload_length - 4u, output);
+                                      event->payload_size - 4u, output);
 }
 
 #define PXA_UI_EVENT_ACTION_KIND 1u
@@ -384,43 +392,82 @@ static inline void pxa_ui_write_u64(uint8_t* output, uint64_t value) {
 static inline int pxa_ui_send_packet(uint8_t* scratch, size_t capacity,
                                      uint16_t opcode, const uint8_t* payload,
                                      size_t payload_size) {
-    pxa_writer_t packet;
-    if (scratch == NULL || capacity < 12 || payload_size > capacity - 12)
-        return 0;
-    pxa_writer_init(&packet, scratch, capacity);
-    return pxa_message(&packet, PXA_SERVICE_UI, opcode, 0, payload,
-                       payload_size) &&
-           pxa_control(packet.data, (uint32_t)packet.length) == PXA_STATUS_OK;
+    uint32_t size = 0;
+    if (!pxa_ui_wire_build_command(scratch, capacity, opcode,
+                               payload, payload_size, &size)) return 0;
+    int32_t status = pxa_submit(scratch, size);
+    /* Optional application diagnostics; successful commands add no logging. */
+#ifdef PXA_UI_COMMAND_FAILED
+    if (status != 0) PXA_UI_COMMAND_FAILED(opcode, status);
+#endif
+    return status == 0;
 }
 
 static inline int pxa_ui_write_stream(pxa_ui_transaction_t* transaction,
                                       const uint8_t* data, size_t size) {
     size_t offset = 0;
     if (transaction == NULL || !transaction->active || transaction->failed ||
-        (data == NULL && size != 0) || transaction->scratch_capacity < 17u) {
+        (data == NULL && size != 0) ||
+        transaction->scratch == NULL ||
+        transaction->scratch_capacity <= PXA_HEADER_BYTES + 4u) {
         if (transaction != NULL) transaction->failed = 1;
         return 0;
     }
     while (offset < size) {
-        pxa_writer_t packet;
         size_t chunk = size - offset;
-        size_t maximum = transaction->scratch_capacity - 16u;
+        uint32_t packet_size = 0;
+        uint8_t *packet = transaction->scratch;
+        size_t maximum = transaction->scratch_capacity -
+                         PXA_HEADER_BYTES - 4u;
+        if (maximum > PXA_MAX_CONTROL_BYTES -
+                      PXA_HEADER_BYTES - 4u)
+            maximum = PXA_MAX_CONTROL_BYTES -
+                      PXA_HEADER_BYTES - 4u;
         if (chunk > maximum) chunk = maximum;
-        pxa_writer_init(&packet, transaction->scratch,
-                        transaction->scratch_capacity);
-        if (!pxa_put_u16(&packet, PXA_SERVICE_UI) ||
-            !pxa_put_u16(&packet, PXA_UI_TX_WRITE) ||
-            !pxa_put_u32(&packet, 0) ||
-            !pxa_put_u32(&packet, (uint32_t)(chunk + 4u)) ||
-            !pxa_put_u32(&packet, transaction->transaction) ||
-            !pxa_put_bytes(&packet, data + offset, chunk) ||
-            pxa_control(packet.data, (uint32_t)packet.length) != PXA_STATUS_OK) {
+        pxa_store_u32(packet + PXA_HEADER_BYTES,
+                         transaction->transaction);
+        for (size_t i = 0; i < chunk; ++i)
+            packet[PXA_HEADER_BYTES + 4u + i] = data[offset + i];
+        if (!pxa_finish_message_in_place(
+                packet, transaction->scratch_capacity, PXA_UI_SERVICE,
+                PXA_UI_TX_WRITE, 0,
+                PXA_HEADER_BYTES + 4u + chunk, &packet_size) ||
+            pxa_submit(packet, packet_size) != 0) {
             transaction->failed = 1;
             return 0;
         }
         offset += chunk;
     }
     return 1;
+}
+
+/* Keep the command header, fixed fields and value in one TX_WRITE packet when
+ * they fit. The packet is capped at the Core's 4096-byte control limit. */
+static inline int pxa_ui_write_record(
+    pxa_ui_transaction_t* transaction, uint8_t command, uint8_t flags,
+    const uint8_t* prefix, size_t prefix_size, const uint8_t* data,
+    size_t data_size) {
+    pxa_ui_wire_record_stream_t stream;
+    if (transaction == NULL || !transaction->active || transaction->failed ||
+        transaction->scratch == NULL ||
+        !pxa_ui_wire_record_stream_init(&stream, transaction->transaction,
+                                      command, flags, prefix, prefix_size,
+                                      data, data_size)) {
+        if (transaction != NULL) transaction->failed = 1;
+        return 0;
+    }
+    for (;;) {
+        uint32_t packet_size = 0;
+        int next = pxa_ui_wire_record_stream_next(
+            &stream, transaction->scratch,
+            transaction->scratch_capacity, &packet_size);
+        if (next == 0) return 1;
+        if (next < 0 ||
+            pxa_submit(transaction->scratch, packet_size) != 0) {
+            transaction->failed = 1;
+            return 0;
+        }
+    }
 }
 
 static inline int pxa_ui_transaction_begin_target(
@@ -432,7 +479,7 @@ static inline int pxa_ui_transaction_begin_target(
     if (transaction == NULL || transaction_id == 0 || generation == 0 ||
         surface == 0 || kind < PXA_UI_TRANSACTION_PATCH ||
         kind > PXA_UI_TRANSACTION_REPLACE_SURFACE || scratch == NULL ||
-        scratch_capacity < 32)
+        scratch_capacity < PXA_HEADER_BYTES + 20u)
         return 0;
     pxa_writer_init(&value, payload, sizeof(payload));
     if (!pxa_put_u32(&value, surface) ||
@@ -466,24 +513,8 @@ static inline int pxa_ui_transaction_begin(pxa_ui_transaction_t* transaction,
 static inline int pxa_ui_emit(pxa_ui_transaction_t* transaction,
                               uint8_t command, uint8_t flags,
                               const uint8_t* payload, size_t payload_size) {
-    uint8_t header[4];
-    pxa_writer_t value;
-    if (transaction == NULL || !transaction->active || transaction->failed ||
-        command == 0 || payload_size > UINT16_MAX ||
-        (payload == NULL && payload_size != 0)) {
-        if (transaction != NULL) transaction->failed = 1;
-        return 0;
-    }
-    pxa_writer_init(&value, header, sizeof(header));
-    if (!pxa_put_u8(&value, command) || !pxa_put_u8(&value, flags) ||
-        !pxa_put_u16(&value, (uint16_t)payload_size) ||
-        !pxa_ui_write_stream(transaction, header, sizeof(header)) ||
-        (payload_size != 0 &&
-         !pxa_ui_write_stream(transaction, payload, payload_size))) {
-        transaction->failed = 1;
-        return 0;
-    }
-    return 1;
+    return pxa_ui_write_record(transaction, command, flags, payload,
+                               payload_size, NULL, 0);
 }
 
 static inline int pxa_ui_create_typed(pxa_ui_transaction_t* transaction,
@@ -545,29 +576,15 @@ static inline int pxa_ui_clear_property(pxa_ui_transaction_t* transaction,
 static inline int pxa_ui_set_property(pxa_ui_transaction_t* transaction,
                                       uint32_t node, uint16_t property,
                                       const void* data, size_t size) {
-    uint8_t header[4];
     uint8_t prefix[6];
-    pxa_writer_t writer;
-    size_t payload_size;
     if (transaction == NULL || node == 0 || property == 0 ||
         (data == NULL && size != 0) || size > UINT16_MAX - sizeof(prefix))
         return 0;
-    payload_size = sizeof(prefix) + size;
-    pxa_writer_init(&writer, header, sizeof(header));
-    if (!pxa_put_u8(&writer, PXA_UI_COMMAND_SET_PROPERTY) ||
-        !pxa_put_u8(&writer, 0) ||
-        !pxa_put_u16(&writer, (uint16_t)payload_size))
-        return 0;
-    pxa_writer_init(&writer, prefix, sizeof(prefix));
-    if (!pxa_put_u32(&writer, node) || !pxa_put_u16(&writer, property) ||
-        !pxa_ui_write_stream(transaction, header, sizeof(header)) ||
-        !pxa_ui_write_stream(transaction, prefix, sizeof(prefix)) ||
-        (size != 0 && !pxa_ui_write_stream(
-                          transaction, (const uint8_t*)data, size))) {
-        transaction->failed = 1;
-        return 0;
-    }
-    return 1;
+    pxa_ui_write_u32(prefix, node);
+    pxa_ui_write_u16(prefix + 4, property);
+    return pxa_ui_write_record(
+        transaction, PXA_UI_COMMAND_SET_PROPERTY, 0, prefix,
+        sizeof(prefix), (const uint8_t*)data, size);
 }
 
 static inline int pxa_ui_set_u8(pxa_ui_transaction_t* transaction,
@@ -617,7 +634,11 @@ static inline int pxa_ui_set_grid_tracks(pxa_ui_transaction_t* transaction,
         tracks == NULL || count == 0 || count > PXA_UI_GRID_MAX_TRACKS)
         return 0;
     for (index = 0; index < count; ++index) {
-        if (tracks[index].kind > PXA_UI_GRID_FIXED) return 0;
+        if (tracks[index].kind > PXA_UI_GRID_FIXED ||
+            (tracks[index].kind == PXA_UI_GRID_FRACTION &&
+             (tracks[index].value == 0 || tracks[index].value > PXA_UI_GRID_MAX_WEIGHT)) ||
+            (tracks[index].kind == PXA_UI_GRID_FIXED && tracks[index].value > INT32_MAX))
+            return 0;
         encoded[offset++] = tracks[index].kind;
         encoded[offset++] = 0;
         encoded[offset++] = 0;
@@ -667,6 +688,14 @@ static inline int pxa_ui_set_u64(pxa_ui_transaction_t* transaction,
     pxa_ui_write_u64(encoded, value);
     return pxa_ui_set_property(transaction, node, property, encoded, 8);
 }
+
+/* UI 0.5: the handle comes from Assets 2.1 load_image. Commit retains the
+ * prepared pixels, so the Guest may close the handle after commit succeeds. */
+static inline int pxa_ui_set_image(pxa_ui_transaction_t *transaction,
+                                  uint32_t node, uint64_t handle) {
+    return handle && pxa_ui_set_u64(transaction,node,PXA_UI_PROPERTY_IMAGE_HANDLE,handle);
+}
+
 
 static inline int pxa_ui_set_dp(pxa_ui_transaction_t* transaction,
                                 uint32_t node, uint16_t property,
@@ -788,22 +817,21 @@ static inline int pxa_ui_transaction_cancel(
     return result;
 }
 
-static inline int pxa_ui_parse_event(const pxa_event_t* event,
+static inline int pxa_ui_parse_event(const pxa_ui_wire_event_t* event,
                                      pxa_ui_event_data_t* output) {
-    if (event == NULL || output == NULL || event->service != PXA_SERVICE_UI ||
-        event->opcode != PXA_UI_EVENT || event->payload == NULL ||
-        event->payload_length < 24)
+    pxa_ui_wire_input_event_t input;
+    if (output == NULL || !pxa_ui_wire_parse_input_event(event, &input))
         return 0;
-    output->surface = pxa_read_u32(event->payload);
-    output->node = pxa_read_u32(event->payload + 4);
-    output->generation = pxa_read_u32(event->payload + 8);
-    output->kind = pxa_read_u16(event->payload + 12);
-    output->flags = pxa_read_u16(event->payload + 14);
-    output->timestamp_us = pxa_read_u64(event->payload + 16);
-    output->data = event->payload + 24;
-    output->data_size = event->payload_length - 24u;
-    output->value = output->data_size >= 4
-                        ? (int32_t)pxa_read_u32(output->data) : 0;
+    output->surface = input.surface;
+    output->node = input.node;
+    output->generation = input.generation;
+    output->kind = input.kind;
+    output->flags = input.flags;
+    output->timestamp_us = input.timestamp_us;
+    output->data = input.value;
+    output->data_size = input.value_size;
+    output->value = input.value_size >= 4
+                        ? (int32_t)pxa_load_u32(input.value) : 0;
     return 1;
 }
 
@@ -825,14 +853,14 @@ static inline int pxa_ui_event_text(const pxa_ui_event_data_t* event,
     return 1;
 }
 
-static inline int pxa_ui_parse_text(const pxa_event_t* event, char* output,
+static inline int pxa_ui_parse_text(const pxa_ui_wire_event_t* event, char* output,
                                     size_t capacity) {
     pxa_ui_event_data_t parsed;
     return pxa_ui_parse_event(event, &parsed) &&
            pxa_ui_event_text(&parsed, output, capacity);
 }
 
-static inline int pxa_ui_parse_pointer(const pxa_event_t* event,
+static inline int pxa_ui_parse_pointer(const pxa_ui_wire_event_t* event,
                                        pxa_ui_pointer_data_t* output) {
     pxa_ui_event_data_t parsed;
     if (output == NULL || !pxa_ui_parse_event(event, &parsed) ||
@@ -850,7 +878,7 @@ static inline int pxa_ui_parse_pointer(const pxa_event_t* event,
     return 1;
 }
 
-static inline int pxa_ui_parse_controller(const pxa_event_t* event,
+static inline int pxa_ui_parse_controller(const pxa_ui_wire_event_t* event,
                                           pxa_ui_controller_data_t* output) {
     pxa_ui_event_data_t parsed;
     if (output == NULL || !pxa_ui_parse_event(event, &parsed) ||
@@ -877,10 +905,12 @@ static inline int pxa_ui_event_is_current(const pxa_ui_event_data_t* event,
 
 static inline int pxa_ui_parse_environment_records(
     const uint8_t* data, size_t size, pxa_ui_environment_t* output) {
-    pxa_ui_environment_t value = {0};
+    pxa_ui_environment_t value;
     uint16_t seen = 0;
     size_t offset = 0;
     if (output == NULL || (data == NULL && size != 0)) return 0;
+    for (size_t index = 0; index < sizeof(value); ++index)
+        ((uint8_t*)&value)[index] = 0;
     while (offset < size) {
         const uint8_t* record;
         uint16_t tag;
@@ -989,19 +1019,20 @@ static inline int pxa_ui_parse_start_environment(
 }
 
 static inline int pxa_ui_parse_environment_event(
-    const pxa_event_t* event, pxa_ui_environment_t* output) {
+    const pxa_ui_wire_event_t* event, pxa_ui_environment_t* output) {
     return event != NULL && event->service == PXA_SERVICE_UI &&
-           event->opcode == PXA_UI_ENVIRONMENT_CHANGED &&
+           event->opcode == PXA_UI_ENVIRONMENT_CHANGED && event->token == 0 &&
            pxa_ui_parse_environment_records(event->payload,
-                                            event->payload_length, output);
+                                            event->payload_size, output);
 }
 
-static inline int pxa_ui_parse_resource_pressure(const pxa_event_t* event,
+static inline int pxa_ui_parse_resource_pressure(const pxa_ui_wire_event_t* event,
                                                  uint8_t* pressure) {
     if (event == NULL || pressure == NULL ||
         event->service != PXA_SERVICE_UI ||
         event->opcode != PXA_UI_RESOURCE_PRESSURE ||
-        event->payload == NULL || event->payload_length != 4 ||
+        event->token != 0 || event->payload == NULL ||
+        event->payload_size != 4 ||
         event->payload[0] > PXA_UI_PRESSURE_CRITICAL ||
         event->payload[1] != 0 || event->payload[2] != 0 ||
         event->payload[3] != 0)
@@ -1012,43 +1043,39 @@ static inline int pxa_ui_parse_resource_pressure(const pxa_event_t* event,
 
 static inline int pxa_ui_surface_open(uint32_t request, uint8_t role) {
     uint8_t payload[8] = {0};
+    uint8_t packet[32];
     if (request == 0 || role < PXA_UI_SURFACE_APPLICATION ||
         role > PXA_UI_SURFACE_EXTERNAL)
         return 0;
     pxa_ui_write_u32(payload, request);
     payload[4] = role;
-    return pxa_send(PXA_SERVICE_UI, PXA_UI_SURFACE_OPEN, 0, payload,
-                    sizeof(payload));
+    return pxa_ui_send_packet(packet, sizeof(packet), PXA_UI_SURFACE_OPEN,
+                              payload, sizeof(payload));
 }
 
 static inline int pxa_ui_surface_close(uint32_t surface) {
     uint8_t payload[4];
+    uint8_t packet[32];
     if (surface == 0 || surface == PXA_UI_PRIMARY_SURFACE) return 0;
     pxa_ui_write_u32(payload, surface);
-    return pxa_send(PXA_SERVICE_UI, PXA_UI_SURFACE_CLOSE, 0, payload,
-                    sizeof(payload));
+    return pxa_ui_send_packet(packet, sizeof(packet), PXA_UI_SURFACE_CLOSE,
+                              payload, sizeof(payload));
 }
 
 static inline int pxa_ui_parse_surface_ready(
-    const pxa_event_t* event, uint32_t* request, int32_t* status,
+    const pxa_ui_wire_event_t* event, uint32_t* request, int32_t* status,
     pxa_ui_environment_t* environment) {
-    uint32_t surface;
-    if (event == NULL || request == NULL || status == NULL ||
-        environment == NULL || event->service != PXA_SERVICE_UI ||
-        event->opcode != PXA_UI_SURFACE_READY || event->payload == NULL ||
-        event->payload_length < 12)
-        return 0;
-    *request = pxa_read_u32(event->payload);
-    surface = pxa_read_u32(event->payload + 4);
-    *status = (int32_t)pxa_read_u32(event->payload + 8);
+    pxa_ui_wire_surface_ready_t ready;
+    if (request == NULL || status == NULL || environment == NULL ||
+        !pxa_ui_wire_parse_surface_ready(event, &ready)) return 0;
+    *request = ready.request;
+    *status = ready.status;
     if (*status != PXA_STATUS_OK)
-        return surface == 0 && event->payload_length == 12;
-    if (!pxa_ui_parse_environment_records(event->payload + 12,
-                                          event->payload_length - 12,
-                                          environment) ||
-        environment->surface != surface)
-        return 0;
-    return 1;
+        return ready.environment_size == 0;
+    return pxa_ui_parse_environment_records(ready.environment_records,
+                                            ready.environment_size,
+                                            environment) &&
+           environment->surface == ready.surface;
 }
 
 #endif

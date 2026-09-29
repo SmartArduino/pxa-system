@@ -1,10 +1,14 @@
-#ifndef PXA_RASTER_GUEST_H
-#define PXA_RASTER_GUEST_H
+#ifndef PXA_GUEST_RASTER_H
+#define PXA_GUEST_RASTER_H
 
 #include <stddef.h>
 #include <stdint.h>
 
+#include "pxa_common.h"
+#include "pxa_writer.h"
+#include "pxa_game_render_wire.h"
 #include "pxa_game_render.h"
+typedef uint64_t pxa_raster_handle_t;
 
 #define PXA_RASTER_ABI_MAJOR UINT16_C(1)
 #define PXA_RASTER_ABI_MINOR UINT16_C(7)
@@ -146,7 +150,7 @@ static inline void pxa_raster_copy_bytes(uint8_t *destination,
 }
 
 static inline int32_t pxa_raster_upload(
-    uint32_t context_handle, uint8_t kind, uint8_t slot, uint16_t width,
+    pxa_raster_handle_t context_handle, uint8_t kind, uint8_t slot, uint16_t width,
     uint16_t height, const uint8_t *payload, uint32_t payload_bytes,
     uint8_t *scratch, uint32_t scratch_capacity) {
     uint32_t total = PXA_RASTER_UPLOAD_HEADER_BYTES + payload_bytes;
@@ -165,11 +169,11 @@ static inline int32_t pxa_raster_upload(
     if (payload != scratch + PXA_RASTER_UPLOAD_HEADER_BYTES)
         pxa_raster_copy_bytes(scratch + PXA_RASTER_UPLOAD_HEADER_BYTES,
                               payload, payload_bytes);
-    return pxa_io(context_handle, PXA_GAME_RENDER_IO_UPLOAD, scratch, total);
+    return pxa_game_render_upload(context_handle, scratch, total);
 }
 
 static inline int32_t pxa_raster_upload_palette_rgb565(
-    uint32_t context_handle, const uint16_t palette[256], uint8_t *scratch,
+    pxa_raster_handle_t context_handle, const uint16_t palette[256], uint8_t *scratch,
     uint32_t scratch_capacity) {
     uint32_t index;
     if (palette == NULL || scratch == NULL || scratch_capacity < 532u)
@@ -185,7 +189,7 @@ static inline int32_t pxa_raster_upload_palette_rgb565(
 }
 
 static inline int32_t pxa_raster_upload_lit_palette_rgb565(
-    uint32_t context_handle, uint16_t light_levels, const uint16_t *palette,
+    pxa_raster_handle_t context_handle, uint16_t light_levels, const uint16_t *palette,
     uint8_t *scratch, uint32_t scratch_capacity) {
     uint32_t entries = (uint32_t)light_levels * PXA_RASTER_PALETTE_COLORS;
     uint32_t payload_bytes = entries * 2u;
@@ -205,7 +209,7 @@ static inline int32_t pxa_raster_upload_lit_palette_rgb565(
 }
 
 static inline int32_t pxa_raster_upload_texture_index8(
-    uint32_t context_handle, uint8_t slot, uint16_t width, uint16_t height,
+    pxa_raster_handle_t context_handle, uint8_t slot, uint16_t width, uint16_t height,
     const uint8_t *pixels, uint8_t *scratch, uint32_t scratch_capacity) {
     uint64_t bytes = (uint64_t)width * height;
     if (bytes == 0 || bytes > UINT32_MAX) return PXA_STATUS_INVALID_ARGUMENT;
@@ -650,7 +654,7 @@ static inline int pxa_raster_triangle_batch(
         solid ? PXA_RASTER_QUAD_SOLID_COLOR : 0, solid_color);
 }
 
-static inline int32_t pxa_raster_submit(uint32_t context_handle,
+static inline int32_t pxa_raster_submit(pxa_raster_handle_t context_handle,
                                         pxa_raster_draw_list_t *list) {
     if (context_handle == 0 || list == NULL || list->status != PXA_STATUS_OK ||
         list->command_count == 0)
@@ -665,18 +669,17 @@ static inline int32_t pxa_raster_submit(uint32_t context_handle,
     pxa_game_render_store_u32(list->bytes + 16, list->command_count);
     pxa_game_render_store_u64(list->bytes + 20, list->frame_id);
     pxa_game_render_store_u32(list->bytes + 28, 0);
-    return pxa_io(context_handle, PXA_GAME_RENDER_IO_SUBMIT, list->bytes,
-                  list->length);
+    return pxa_game_render_submit(context_handle, list->bytes, list->length);
 }
 
 static inline int32_t pxa_raster_query_telemetry(
-    uint32_t context_handle, pxa_raster_telemetry_t *telemetry) {
+    pxa_raster_handle_t context_handle, pxa_raster_telemetry_t *telemetry) {
     uint8_t bytes[PXA_RASTER_TELEMETRY_BYTES];
     int32_t result;
     if (context_handle == 0 || telemetry == NULL)
         return PXA_STATUS_INVALID_ARGUMENT;
-    result = pxa_io(context_handle, PXA_GAME_RENDER_IO_TELEMETRY, bytes,
-                    sizeof(bytes));
+    result = pxa_io(context_handle, PXA_GAME_RENDER_IO_TELEMETRY,
+                       bytes, sizeof(bytes));
     if (result != (int32_t)sizeof(bytes)) return result;
     telemetry->submitted_frames = pxa_read_u64(bytes);
     telemetry->draw_list_bytes = pxa_read_u64(bytes + 8);

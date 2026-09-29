@@ -1,5 +1,5 @@
-#ifndef PXA_UI_COMPONENTS_H
-#define PXA_UI_COMPONENTS_H
+#ifndef PXA_GUEST_UI_COMPONENTS_H
+#define PXA_GUEST_UI_COMPONENTS_H
 
 #include "pxa_ui_builder.h"
 
@@ -15,12 +15,16 @@ static inline int pxa_ui_component_text(pxa_ui_builder_t* builder,
                                         uint16_t font_role,
                                         uint8_t color_token) {
     pxa_ui_transaction_t* transaction = pxa_ui_builder_transaction(builder);
-    return text != NULL &&
-           pxa_ui_builder_node(builder, node, 0, PXA_UI_NODE_TEXT) &&
-           pxa_ui_set_text(transaction, node, text, pxa_ui_text_size(text)) &&
-           pxa_ui_set_font_role(transaction, node, font_role) &&
-           pxa_ui_set_theme_color(transaction, node,
-                                  PXA_UI_PROPERTY_FOREGROUND, color_token);
+    if (text == NULL ||
+        !pxa_ui_builder_node(builder, node, 0, PXA_UI_NODE_TEXT) ||
+        !pxa_ui_set_text(transaction, node, text, pxa_ui_text_size(text)) ||
+        !pxa_ui_set_font_role(transaction, node, font_role) ||
+        !pxa_ui_set_theme_color(transaction, node,
+                                PXA_UI_PROPERTY_FOREGROUND, color_token)) {
+        if (builder != NULL) builder->failed = 1;
+        return 0;
+    }
+    return 1;
 }
 
 static inline int pxa_ui_component_button(
@@ -52,14 +56,18 @@ static inline int pxa_ui_component_virtual_list(
     pxa_ui_builder_t* builder, uint32_t node, uint32_t item_count,
     int32_t item_extent_dp) {
     pxa_ui_transaction_t* transaction = pxa_ui_builder_transaction(builder);
-    return transaction != NULL &&
-           pxa_ui_builder_node(builder, node, 0, PXA_UI_NODE_VIRTUAL_LIST) &&
-           pxa_ui_set_u32(transaction, node, PXA_UI_PROPERTY_ITEM_COUNT,
-                          item_count) &&
-           pxa_ui_set_dp(transaction, node, PXA_UI_PROPERTY_ITEM_EXTENT,
-                         item_extent_dp) &&
-           pxa_ui_set_event_mask(transaction, node,
-                                 PXA_UI_EVENT_MASK_VISIBLE_RANGE);
+    if (transaction == NULL ||
+        !pxa_ui_builder_node(builder, node, 0, PXA_UI_NODE_VIRTUAL_LIST) ||
+        !pxa_ui_set_u32(transaction, node, PXA_UI_PROPERTY_ITEM_COUNT,
+                        item_count) ||
+        !pxa_ui_set_dp(transaction, node, PXA_UI_PROPERTY_ITEM_EXTENT,
+                       item_extent_dp) ||
+        !pxa_ui_set_event_mask(transaction, node,
+                               PXA_UI_EVENT_MASK_VISIBLE_RANGE)) {
+        if (builder != NULL) builder->failed = 1;
+        return 0;
+    }
+    return 1;
 }
 
 static inline int pxa_ui_environment_has(const pxa_ui_environment_t* value,

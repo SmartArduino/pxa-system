@@ -1,2 +1,2 @@
-pxa_control
 pxa_io
+pxa_submit

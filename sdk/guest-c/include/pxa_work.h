@@ -1,44 +1,27 @@
-#ifndef PXA_WORK_H
-#define PXA_WORK_H
+#ifndef PXA_GUEST_WORK_H
+#define PXA_GUEST_WORK_H
 
-#include "pxa.h"
+#include "pxa_core.h"
 
-#define PXA_SERVICE_WORK 13u
-
+#define PXA_WORK_SERVICE 13u
 #define PXA_WORK_ENQUEUE 1u
+#define PXA_WORK_CANCEL 2u
 #define PXA_WORK_COMPLETE 3u
 #define PXA_WORK_STOP_REQUESTED 0x8001u
-#define PXA_WORK_CANCEL 2u
-
-#define PXA_WORK_WORKER 1u
-#define PXA_WORK_INITIAL_DELAY_MS 2u
-#define PXA_WORK_EXECUTION_HINT_MS 3u
-#define PXA_WORK_ID 4u
-#define PXA_WORK_INPUT 5u
-#define PXA_WORK_RETRY_DELAY_MS 6u
-#define PXA_WORK_MAX_ATTEMPTS_TAG 7u
-#define PXA_WORK_GRANTED_EXECUTION_MS 8u
-#define PXA_WORK_RESULT 9u
-
-#define PXA_CONFIG_WORK_ID 7u
-#define PXA_CONFIG_WORK_ATTEMPT 9u
-#define PXA_CONFIG_WORK_DEADLINE_MS 10u
-#define PXA_CONFIG_WORK_INPUT 11u
-
-#define PXA_WORK_MAX_INPUT_BYTES 24u
-#define PXA_WORK_MAX_ATTEMPTS 5u
-
 #define PXA_WORK_SUCCESS 1u
 #define PXA_WORK_RETRY 2u
 #define PXA_WORK_FAILURE 3u
+#define PXA_WORK_MAX_WORKER 64u
+#define PXA_WORK_MAX_INPUT 24u
+#define PXA_WORK_MAX_ATTEMPTS 5u
 
 typedef struct {
     const char *worker;
-    size_t worker_length;
+    uint16_t worker_size;
     uint32_t initial_delay_ms;
     uint32_t execution_hint_ms;
     const uint8_t *input;
-    size_t input_length;
+    uint8_t input_size;
     uint32_t retry_delay_ms;
     uint8_t max_attempts;
 } pxa_work_request_t;
@@ -49,12 +32,13 @@ typedef struct {
     uint32_t granted_execution_ms;
 } pxa_work_enqueue_result_t;
 
+/* input borrows the start-config bytes for the callback lifetime. */
 typedef struct {
     uint32_t id;
     uint8_t attempt;
     uint64_t deadline_ms;
     const uint8_t *input;
-    uint32_t input_length;
+    uint8_t input_size;
 } pxa_work_context_t;
 
 typedef struct {
@@ -62,173 +46,208 @@ typedef struct {
     uint64_t deadline_ms;
 } pxa_work_stop_t;
 
-static inline int pxa_work_enqueue(uint32_t request_id,
-                                   const pxa_work_request_t *work,
-                                   uint8_t *payload, size_t payload_capacity,
-                                   uint8_t *packet, size_t packet_capacity) {
-    pxa_writer_t request;
-    pxa_writer_t message;
-    uint8_t value[4];
-    if (request_id == 0 || work == NULL || work->worker == NULL ||
-        work->worker_length == 0 || work->worker_length > 64 ||
-        work->initial_delay_ms > 604800000u ||
-        work->input_length > PXA_WORK_MAX_INPUT_BYTES ||
-        (work->input_length != 0 && work->input == NULL) ||
-        work->max_attempts == 0 ||
-        work->max_attempts > PXA_WORK_MAX_ATTEMPTS ||
-        (work->max_attempts > 1 && work->retry_delay_ms < 1000u) ||
-        work->retry_delay_ms > 604800000u || payload == NULL ||
-        packet == NULL || packet_capacity < 12) {
-        return 0;
+static inline int pxa_work_worker_valid(const char *worker,
+                                            size_t size) {
+    if (worker == NULL || size == 0 || size > PXA_WORK_MAX_WORKER ||
+        worker[0] < 'a' || worker[0] > 'z') return 0;
+    for (size_t i = 1; i < size; ++i) {
+        const char c = worker[i];
+        if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') ||
+              c == '.' || c == '_' || c == '-')) return 0;
     }
-    pxa_writer_init(&request, payload, payload_capacity);
-    if (!pxa_record(&request, PXA_WORK_WORKER,
-                    (const uint8_t *)work->worker, work->worker_length)) return 0;
-    value[0] = (uint8_t)work->initial_delay_ms;
-    value[1] = (uint8_t)(work->initial_delay_ms >> 8);
-    value[2] = (uint8_t)(work->initial_delay_ms >> 16);
-    value[3] = (uint8_t)(work->initial_delay_ms >> 24);
-    if (!pxa_record(&request, PXA_WORK_INITIAL_DELAY_MS, value, sizeof(value))) return 0;
-    value[0] = (uint8_t)work->execution_hint_ms;
-    value[1] = (uint8_t)(work->execution_hint_ms >> 8);
-    value[2] = (uint8_t)(work->execution_hint_ms >> 16);
-    value[3] = (uint8_t)(work->execution_hint_ms >> 24);
-    if (!pxa_record(&request, PXA_WORK_EXECUTION_HINT_MS, value, sizeof(value))) return 0;
-    if (work->input_length != 0 &&
-        !pxa_record(&request, PXA_WORK_INPUT, work->input,
-                    work->input_length)) return 0;
-    value[0] = (uint8_t)work->retry_delay_ms;
-    value[1] = (uint8_t)(work->retry_delay_ms >> 8);
-    value[2] = (uint8_t)(work->retry_delay_ms >> 16);
-    value[3] = (uint8_t)(work->retry_delay_ms >> 24);
-    if (!pxa_record(&request, PXA_WORK_RETRY_DELAY_MS, value, sizeof(value)) ||
-        !pxa_record(&request, PXA_WORK_MAX_ATTEMPTS_TAG,
-                    &work->max_attempts, 1)) return 0;
-    pxa_writer_init(&message, packet, packet_capacity);
-    return pxa_message(&message, PXA_SERVICE_WORK, PXA_WORK_ENQUEUE,
-                       request_id, request.data, request.length) &&
-           pxa_control(message.data, (uint32_t)message.length) == PXA_STATUS_OK;
-}
-
-static inline int pxa_work_parse_enqueue(
-    const pxa_event_t *event, pxa_work_enqueue_result_t *output) {
-    if (event == NULL || output == NULL || event->service != PXA_SERVICE_WORK ||
-        event->opcode != PXA_WORK_ENQUEUE || event->request_id == 0 ||
-        event->payload_length < 4) return 0;
-    output->status = (int32_t)pxa_read_u32(event->payload);
-    output->id = 0;
-    output->granted_execution_ms = 0;
-    if (output->status != PXA_STATUS_OK) return event->payload_length == 4;
-    if (event->payload_length != 20 ||
-        pxa_read_u16(event->payload + 4) != PXA_WORK_ID ||
-        pxa_read_u16(event->payload + 6) != 4 ||
-        pxa_read_u16(event->payload + 12) != PXA_WORK_GRANTED_EXECUTION_MS ||
-        pxa_read_u16(event->payload + 14) != 4) return 0;
-    output->id = pxa_read_u32(event->payload + 8);
-    output->granted_execution_ms = pxa_read_u32(event->payload + 16);
-    return output->id != 0 && output->granted_execution_ms != 0;
-}
-
-static inline int pxa_work_complete(uint32_t request_id, uint32_t work_id,
-                                    uint8_t result, uint8_t *payload,
-                                    size_t payload_capacity, uint8_t *packet,
-                                    size_t packet_capacity) {
-    pxa_writer_t request;
-    pxa_writer_t message;
-    uint8_t id[4];
-    if (request_id == 0 || work_id == 0 || result < PXA_WORK_SUCCESS ||
-        result > PXA_WORK_FAILURE || payload == NULL || packet == NULL ||
-        packet_capacity < 12) return 0;
-    id[0] = (uint8_t)work_id;
-    id[1] = (uint8_t)(work_id >> 8);
-    id[2] = (uint8_t)(work_id >> 16);
-    id[3] = (uint8_t)(work_id >> 24);
-    pxa_writer_init(&request, payload, payload_capacity);
-    if (!pxa_record(&request, PXA_WORK_ID, id, sizeof(id)) ||
-        !pxa_record(&request, PXA_WORK_RESULT, &result, 1)) return 0;
-    pxa_writer_init(&message, packet, packet_capacity);
-    return pxa_message(&message, PXA_SERVICE_WORK, PXA_WORK_COMPLETE,
-                       request_id, request.data, request.length) &&
-           pxa_control(message.data, (uint32_t)message.length) == PXA_STATUS_OK;
-}
-
-static inline int pxa_work_cancel(uint32_t request_id, uint32_t work_id,
-                                  uint8_t *payload,
-                                  size_t payload_capacity, uint8_t *packet,
-                                  size_t packet_capacity) {
-    pxa_writer_t request;
-    pxa_writer_t message;
-    uint8_t id[4];
-    if (request_id == 0 || work_id == 0 || payload == NULL || packet == NULL ||
-        packet_capacity < 12) return 0;
-    id[0] = (uint8_t)work_id;
-    id[1] = (uint8_t)(work_id >> 8);
-    id[2] = (uint8_t)(work_id >> 16);
-    id[3] = (uint8_t)(work_id >> 24);
-    pxa_writer_init(&request, payload, payload_capacity);
-    if (!pxa_record(&request, PXA_WORK_ID, id, sizeof(id))) return 0;
-    pxa_writer_init(&message, packet, packet_capacity);
-    return pxa_message(&message, PXA_SERVICE_WORK, PXA_WORK_CANCEL,
-                       request_id, request.data, request.length) &&
-           pxa_control(message.data, (uint32_t)message.length) == PXA_STATUS_OK;
-}
-
-static inline int pxa_work_parse_status(const pxa_event_t *event,
-                                        uint16_t opcode, int32_t *status) {
-    if (event == NULL || status == NULL || event->service != PXA_SERVICE_WORK ||
-        event->opcode != opcode || event->request_id == 0 ||
-        event->payload_length != 4) return 0;
-    *status = (int32_t)pxa_read_u32(event->payload);
     return 1;
 }
 
-static inline int pxa_work_parse_context(const uint8_t *config,
-                                         uint32_t config_length,
-                                         pxa_work_context_t *output) {
-    uint32_t offset = 0;
-    uint8_t seen = 0;
-    if (config == NULL || output == NULL) return 0;
-    output->id = 0;
-    output->attempt = 0;
-    output->deadline_ms = 0;
-    output->input = NULL;
-    output->input_length = 0;
-    while (offset + 4u <= config_length) {
-        uint16_t tag = pxa_read_u16(config + offset);
-        uint16_t size = pxa_read_u16(config + offset + 2u);
-        offset += 4u;
-        if ((uint32_t)size > config_length - offset) return 0;
-        if (tag == PXA_CONFIG_WORK_ID && size == 4 && !(seen & 1u)) {
-            output->id = pxa_read_u32(config + offset);
-            seen |= 1u;
-        } else if (tag == PXA_CONFIG_WORK_ATTEMPT && size == 1 && !(seen & 2u)) {
-            output->attempt = config[offset];
-            seen |= 2u;
-        } else if (tag == PXA_CONFIG_WORK_DEADLINE_MS && size == 8 && !(seen & 4u)) {
-            output->deadline_ms = pxa_read_u64(config + offset);
-            seen |= 4u;
-        } else if (tag == PXA_CONFIG_WORK_INPUT && size <= PXA_WORK_MAX_INPUT_BYTES &&
-                   !(seen & 8u)) {
-            output->input = config + offset;
-            output->input_length = size;
-            seen |= 8u;
-        } else {
-            return 0;
-        }
-        offset += size;
-    }
-    return offset == config_length && (seen & 7u) == 7u && output->id != 0 &&
-           output->attempt != 0 && output->deadline_ms != 0;
+static inline int pxa_work_append(uint8_t *packet, size_t capacity,
+                                      size_t *offset, uint16_t tag,
+                                      const uint8_t *value, size_t size) {
+    size_t written = 0;
+    if (*offset > capacity ||
+        !pxa_wire_record_encode(packet + *offset, capacity - *offset,
+                                tag, value, size, &written)) return 0;
+    *offset += written;
+    return 1;
 }
 
-static inline int pxa_work_parse_stop(const pxa_event_t *event,
-                                      pxa_work_stop_t *output) {
-    if (event == NULL || output == NULL || event->service != PXA_SERVICE_WORK ||
-        event->opcode != PXA_WORK_STOP_REQUESTED || event->request_id != 0 ||
-        event->payload_length != 12) return 0;
-    output->id = pxa_read_u32(event->payload);
-    output->deadline_ms = pxa_read_u64(event->payload + 4);
-    return output->id != 0;
+static inline int pxa_work_build_enqueue(
+    uint8_t *packet, size_t capacity, uint64_t token,
+    const pxa_work_request_t *request, uint32_t *written) {
+    uint8_t value[4];
+    size_t offset = PXA_HEADER_BYTES;
+    if (written != NULL) *written = 0;
+    if (packet == NULL || written == NULL || request == NULL || token == 0 ||
+        capacity < PXA_HEADER_BYTES ||
+        !pxa_work_worker_valid(request->worker, request->worker_size) ||
+        request->initial_delay_ms > 604800000u ||
+        request->input_size > PXA_WORK_MAX_INPUT ||
+        (request->input == NULL && request->input_size != 0) ||
+        request->retry_delay_ms > 604800000u ||
+        request->max_attempts == 0 ||
+        request->max_attempts > PXA_WORK_MAX_ATTEMPTS ||
+        (request->max_attempts > 1 && request->retry_delay_ms < 1000u))
+        return 0;
+    if (!pxa_work_append(packet, capacity, &offset, 1,
+                            (const uint8_t *)request->worker,
+                            request->worker_size)) return 0;
+    pxa_store_u32(value, request->initial_delay_ms);
+    if (!pxa_work_append(packet, capacity, &offset, 2, value, 4)) return 0;
+    pxa_store_u32(value, request->execution_hint_ms);
+    if (!pxa_work_append(packet, capacity, &offset, 3, value, 4)) return 0;
+    if (request->input_size != 0 &&
+        !pxa_work_append(packet, capacity, &offset, 5,
+                            request->input, request->input_size)) return 0;
+    pxa_store_u32(value, request->retry_delay_ms);
+    if (!pxa_work_append(packet, capacity, &offset, 6, value, 4) ||
+        !pxa_work_append(packet, capacity, &offset, 7,
+                            &request->max_attempts, 1)) return 0;
+    return pxa_finish_message_in_place(packet, capacity,
+                                          PXA_WORK_SERVICE,
+                                          PXA_WORK_ENQUEUE,
+                                          token, offset, written);
+}
+
+static inline int32_t pxa_work_enqueue(
+    uint64_t token, const pxa_work_request_t *request) {
+    uint8_t packet[PXA_HEADER_BYTES + 125u];
+    uint32_t size = 0;
+    if (!pxa_work_build_enqueue(packet, sizeof(packet), token,
+                                    request, &size)) return -1;
+    return pxa_submit(packet, size);
+}
+
+static inline int pxa_work_build_id_request(
+    uint8_t *packet, size_t capacity, uint16_t opcode, uint64_t token,
+    uint32_t id, uint8_t result, uint32_t *written) {
+    uint8_t value[4];
+    size_t offset = PXA_HEADER_BYTES;
+    if (written != NULL) *written = 0;
+    if (packet == NULL || written == NULL || token == 0 || id == 0 ||
+        capacity < PXA_HEADER_BYTES ||
+        (opcode != PXA_WORK_CANCEL && opcode != PXA_WORK_COMPLETE) ||
+        (opcode == PXA_WORK_COMPLETE &&
+         (result < PXA_WORK_SUCCESS || result > PXA_WORK_FAILURE)))
+        return 0;
+    pxa_store_u32(value, id);
+    if (!pxa_work_append(packet, capacity, &offset, 4, value, 4)) return 0;
+    if (opcode == PXA_WORK_COMPLETE &&
+        !pxa_work_append(packet, capacity, &offset, 9, &result, 1))
+        return 0;
+    return pxa_finish_message_in_place(packet, capacity,
+                                          PXA_WORK_SERVICE, opcode,
+                                          token, offset, written);
+}
+
+static inline int32_t pxa_work_cancel(uint64_t token, uint32_t id) {
+    uint8_t packet[PXA_HEADER_BYTES + 8u];
+    uint32_t size = 0;
+    if (!pxa_work_build_id_request(packet, sizeof(packet),
+                                      PXA_WORK_CANCEL, token, id, 0,
+                                      &size)) return -1;
+    return pxa_submit(packet, size);
+}
+
+static inline int32_t pxa_work_complete(uint64_t token, uint32_t id,
+                                             uint8_t result) {
+    uint8_t packet[PXA_HEADER_BYTES + 13u];
+    uint32_t size = 0;
+    if (!pxa_work_build_id_request(packet, sizeof(packet),
+                                      PXA_WORK_COMPLETE, token, id,
+                                      result, &size)) return -1;
+    return pxa_submit(packet, size);
+}
+
+static inline int pxa_work_parse_enqueue(
+    const pxa_event_t *event, uint64_t token,
+    pxa_work_enqueue_result_t *out) {
+    pxa_wire_record_view_t record;
+    size_t consumed = 0;
+    size_t offset = 4;
+    if (out == NULL) return 0;
+    pxa_zero(out, sizeof(*out));
+    if (event == NULL || event->service != PXA_WORK_SERVICE ||
+        event->opcode != PXA_WORK_ENQUEUE || token == 0 ||
+        event->token != token || event->payload == NULL ||
+        event->payload_size < 4) return 0;
+    out->status = (int32_t)pxa_load_u32(event->payload);
+    if (out->status != 0) return event->payload_size == 4;
+    if (event->payload_size != 20 ||
+        !pxa_wire_record_decode(event->payload + offset,
+                                event->payload_size - offset,
+                                &record, &consumed) || record.raw_tag != 4 ||
+        record.payload_size != 4) return 0;
+    out->id = pxa_load_u32(record.payload);
+    offset += consumed;
+    if (!pxa_wire_record_decode(event->payload + offset,
+                                event->payload_size - offset,
+                                &record, &consumed) || record.raw_tag != 8 ||
+        record.payload_size != 4 ||
+        offset + consumed != event->payload_size) return 0;
+    out->granted_execution_ms = pxa_load_u32(record.payload);
+    return out->id != 0 && out->granted_execution_ms != 0;
+}
+
+static inline int pxa_work_parse_status(
+    const pxa_event_t *event, uint64_t token, uint16_t opcode,
+    int32_t *status) {
+    if (event == NULL || status == NULL || token == 0 ||
+        event->service != PXA_WORK_SERVICE || event->opcode != opcode ||
+        event->token != token || event->payload == NULL ||
+        event->payload_size != 4 ||
+        (opcode != PXA_WORK_CANCEL && opcode != PXA_WORK_COMPLETE))
+        return 0;
+    *status = (int32_t)pxa_load_u32(event->payload);
+    return 1;
+}
+
+static inline int pxa_work_parse_context(
+    const uint8_t *config, size_t size, pxa_work_context_t *out) {
+    pxa_wire_record_view_t record;
+    size_t offset = 0;
+    size_t consumed = 0;
+    unsigned seen = 0;
+    uint16_t previous = 0;
+    if (out == NULL) return 0;
+    pxa_zero(out, sizeof(*out));
+    if (config == NULL) return 0;
+    while (offset < size) {
+        if (!pxa_wire_record_decode(config + offset, size - offset,
+                                    &record, &consumed) ||
+            record.raw_tag < previous) return 0;
+        previous = record.raw_tag;
+        if (record.raw_tag == 7 && !(seen & 1u) &&
+            record.payload_size == 4) {
+            out->id = pxa_load_u32(record.payload);
+            seen |= 1u;
+        } else if (record.raw_tag == 9 && !(seen & 2u) &&
+                   record.payload_size == 1) {
+            out->attempt = record.payload[0];
+            seen |= 2u;
+        } else if (record.raw_tag == 10 && !(seen & 4u) &&
+                   record.payload_size == 8) {
+            out->deadline_ms = pxa_load_u64(record.payload);
+            seen |= 4u;
+        } else if (record.raw_tag == 11 && !(seen & 8u) &&
+                   record.payload_size <= PXA_WORK_MAX_INPUT) {
+            out->input = record.payload;
+            out->input_size = (uint8_t)record.payload_size;
+            seen |= 8u;
+        } else if (!record.optional) return 0;
+        offset += consumed;
+    }
+    return (seen & 7u) == 7u && out->id != 0 && out->attempt != 0 &&
+           out->deadline_ms != 0;
+}
+
+static inline int pxa_work_parse_stop(
+    const pxa_event_t *event, pxa_work_stop_t *out) {
+    if (out == NULL) return 0;
+    pxa_zero(out, sizeof(*out));
+    if (event == NULL || event->service != PXA_WORK_SERVICE ||
+        event->opcode != PXA_WORK_STOP_REQUESTED || event->token != 0 ||
+        event->payload == NULL || event->payload_size != 12) return 0;
+    out->id = pxa_load_u32(event->payload);
+    out->deadline_ms = pxa_load_u64(event->payload + 4);
+    return out->id != 0 && out->deadline_ms != 0;
 }
 
 #endif

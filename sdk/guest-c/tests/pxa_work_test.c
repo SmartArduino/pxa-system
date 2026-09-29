@@ -1,90 +1,96 @@
+#include <assert.h>
+
 #include "pxa_work.h"
 
-#include <assert.h>
-#include <string.h>
-
-static uint8_t captured[256];
-static uint32_t captured_length;
-
-int32_t pxa_control(const uint8_t *data, uint32_t length) {
-    assert(length <= sizeof(captured));
-    memcpy(captured, data, length);
-    captured_length = length;
-    return PXA_STATUS_OK;
+int32_t pxa_submit(const uint8_t *data, uint32_t size) {
+    (void)data;
+    (void)size;
+    return 0;
 }
 
-int32_t pxa_io(uint32_t handle, uint32_t operation, uint8_t *data,
-               uint32_t length) {
+int32_t pxa_io(uint64_t handle, uint32_t operation, uint8_t *data,
+                  uint32_t size) {
     (void)handle;
     (void)operation;
     (void)data;
-    (void)length;
-    return PXA_STATUS_UNSUPPORTED;
-}
-
-static void test_enqueue_and_complete(void) {
-    static const uint8_t input[] = {1, 2, 3};
-    pxa_work_request_t work = {
-        "sync.worker", 11, 2000, 5000, input, sizeof(input), 3000, 3};
-    uint8_t payload[96];
-    uint8_t packet[128];
-    assert(pxa_work_enqueue(7, &work, payload, sizeof(payload), packet,
-                            sizeof(packet)));
-    assert(pxa_read_u16(captured) == PXA_SERVICE_WORK);
-    assert(pxa_read_u16(captured + 2) == PXA_WORK_ENQUEUE);
-    assert(pxa_read_u32(captured + 4) == 7);
-    assert(pxa_read_u16(captured + 12) == PXA_WORK_WORKER);
-    assert(pxa_work_complete(8, 42, PXA_WORK_RETRY, payload,
-                             sizeof(payload), packet, sizeof(packet)));
-    assert(pxa_read_u16(captured + 2) == PXA_WORK_COMPLETE);
-    assert(pxa_read_u16(captured + 12) == PXA_WORK_ID);
-    assert(pxa_read_u32(captured + 16) == 42);
-    assert(pxa_work_cancel(9, 42, payload, sizeof(payload), packet,
-                           sizeof(packet)));
-    assert(pxa_read_u16(captured + 2) == PXA_WORK_CANCEL);
-}
-
-static void test_results(void) {
-    const uint8_t completed[] = {
-        13, 0, 1, 0, 7, 0, 0, 0, 20, 0, 0, 0,
-        0, 0, 0, 0,
-        4, 0, 4, 0, 42, 0, 0, 0,
-        8, 0, 4, 0, 0x88, 0x13, 0, 0,
-    };
-    pxa_event_t event;
-    pxa_work_enqueue_result_t result;
-    assert(pxa_parse_event(completed, sizeof(completed), &event));
-    assert(pxa_work_parse_enqueue(&event, &result));
-    assert(result.status == PXA_STATUS_OK && result.id == 42 &&
-           result.granted_execution_ms == 5000);
-}
-
-static void test_context_and_stop(void) {
-    const uint8_t config[] = {
-        7, 0, 4, 0, 42, 0, 0, 0,
-        9, 0, 1, 0, 2,
-        10, 0, 8, 0, 0x88, 0x13, 0, 0, 0, 0, 0, 0,
-        11, 0, 3, 0, 'a', 'b', 'c',
-    };
-    const uint8_t stop[] = {
-        13, 0, 1, 0x80, 0, 0, 0, 0, 12, 0, 0, 0,
-        42, 0, 0, 0, 0x88, 0x13, 0, 0, 0, 0, 0, 0,
-    };
-    pxa_work_context_t context;
-    pxa_work_stop_t stopping;
-    pxa_event_t event;
-    assert(pxa_work_parse_context(config, sizeof(config), &context));
-    assert(context.id == 42 && context.attempt == 2 &&
-           context.deadline_ms == 5000 && context.input_length == 3 &&
-           memcmp(context.input, "abc", 3) == 0);
-    assert(pxa_parse_event(stop, sizeof(stop), &event));
-    assert(pxa_work_parse_stop(&event, &stopping));
-    assert(stopping.id == 42 && stopping.deadline_ms == 5000);
+    (void)size;
+    return -3;
 }
 
 int main(void) {
-    test_enqueue_and_complete();
-    test_results();
-    test_context_and_stop();
+    uint8_t packet[160];
+    uint8_t payload[64] = {0};
+    uint8_t value[8];
+    uint32_t written = 0;
+    size_t offset = 0;
+    size_t size = 0;
+    pxa_event_t event;
+    pxa_work_enqueue_result_t queued;
+    pxa_work_context_t context;
+    pxa_work_stop_t stop;
+    pxa_work_request_t request = {0};
+    request.worker = "sync.worker";
+    request.worker_size = 11;
+    request.initial_delay_ms = 1000;
+    request.execution_hint_ms = 10000;
+    request.retry_delay_ms = 1000;
+    request.max_attempts = 2;
+    assert(pxa_work_build_enqueue(packet, sizeof(packet), 77,
+                                     &request, &written));
+    assert(pxa_parse_event(packet, written, &event) &&
+           event.service == PXA_WORK_SERVICE &&
+           event.opcode == PXA_WORK_ENQUEUE && event.token == 77);
+    request.worker = "Sync.worker";
+    assert(!pxa_work_build_enqueue(packet, sizeof(packet), 77,
+                                      &request, &written));
+    assert(pxa_work_build_id_request(packet, sizeof(packet),
+                                        PXA_WORK_CANCEL, 78, 4, 0,
+                                        &written) && written == 28);
+    assert(pxa_work_build_id_request(packet, sizeof(packet),
+                                        PXA_WORK_COMPLETE, 79, 4,
+                                        PXA_WORK_SUCCESS,
+                                        &written) && written == 33);
+
+    pxa_store_u32(payload, 0);
+    pxa_store_u32(value, 4);
+    assert(pxa_wire_record_encode(payload + 4, sizeof(payload) - 4,
+                                  4, value, 4, &size));
+    pxa_store_u32(value, 10000);
+    assert(pxa_wire_record_encode(payload + 4 + size,
+                                  sizeof(payload) - 4 - size,
+                                  8, value, 4, &offset));
+    event.service = PXA_WORK_SERVICE;
+    event.opcode = PXA_WORK_ENQUEUE;
+    event.token = 77;
+    event.payload = payload;
+    event.payload_size = (uint32_t)(4 + size + offset);
+    assert(pxa_work_parse_enqueue(&event, 77, &queued) &&
+           queued.id == 4 && queued.granted_execution_ms == 10000);
+    payload[6] = 8;
+    assert(!pxa_work_parse_enqueue(&event, 77, &queued));
+
+    offset = 0;
+    pxa_store_u32(value, 4);
+    assert(pxa_wire_record_encode(payload + offset, sizeof(payload) - offset,
+                                  7, value, 4, &size));
+    offset += size;
+    value[0] = 1;
+    assert(pxa_wire_record_encode(payload + offset, sizeof(payload) - offset,
+                                  9, value, 1, &size));
+    offset += size;
+    pxa_store_u64(value, 1234);
+    assert(pxa_wire_record_encode(payload + offset, sizeof(payload) - offset,
+                                  10, value, 8, &size));
+    offset += size;
+    assert(pxa_work_parse_context(payload, offset, &context) &&
+           context.id == 4 && context.attempt == 1 &&
+           context.deadline_ms == 1234);
+    pxa_store_u32(payload, 4);
+    pxa_store_u64(payload + 4, 5678);
+    event.opcode = PXA_WORK_STOP_REQUESTED;
+    event.token = 0;
+    event.payload_size = 12;
+    assert(pxa_work_parse_stop(&event, &stop) &&
+           stop.id == 4 && stop.deadline_ms == 5678);
     return 0;
 }

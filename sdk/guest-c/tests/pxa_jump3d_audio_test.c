@@ -19,17 +19,17 @@ static uint32_t g_captured_samples;
 static uint32_t g_submit_calls;
 static uint32_t g_running_peak; /* peak of everything written since the reset */
 
-int32_t pxa_control(const uint8_t *data, uint32_t length) {
+int32_t pxa_submit(const uint8_t *data, uint32_t length) {
     (void)data;
     (void)length;
     return PXA_STATUS_OK;
 }
 
 /* Captures the PCM the mixer writes through the audio session. */
-int32_t pxa_io(uint32_t handle, uint32_t operation, uint8_t *data,
-               uint32_t length) {
-    assert(handle != 0);
-    if (operation == PXA_IO_WRITE) {
+int32_t pxa_io(uint64_t handle, uint32_t operation, uint8_t *data,
+                  uint32_t length) {
+    assert((handle >> 32) != 0);
+    if (operation == PXA_AUDIO_IO_WRITE) {
         assert(length == J3_AUDIO_FRAME_SAMPLES * 2u);
         {
             uint32_t index;
@@ -64,7 +64,7 @@ static void clear_capture(void) {
 static void arm(j3_audio_t *audio) {
     memset(audio, 0, sizeof(*audio));
     audio->state = J3_AUDIO_READY;
-    audio->session_handle = 7u;
+    audio->session_handle = UINT64_C(0x100000007);
 }
 
 static uint32_t peak(const int16_t *samples, uint32_t count) {
@@ -81,27 +81,10 @@ static uint32_t peak(const int16_t *samples, uint32_t count) {
 /* Drives `frames` 20 ms mixer frames through the clock path. The clock keeps
  * advancing between calls, like the Host's periodic tick. */
 static void pump(j3_audio_t *audio, uint32_t frames) {
-    static uint8_t payload[8];
     static uint64_t now_us = 1000000u;
-    pxa_event_t event;
     uint32_t index;
-    memset(&event, 0, sizeof(event));
-    event.service = PXA_SERVICE_CLOCK;
-    event.opcode = PXA_CLOCK_TICK;
-    event.payload = payload;
-    event.payload_length = 8u;
     for (index = 0; index < frames; ++index) {
-        const uint32_t low = (uint32_t)now_us;
-        const uint32_t high = (uint32_t)(now_us >> 32);
-        payload[0] = (uint8_t)low;
-        payload[1] = (uint8_t)(low >> 8);
-        payload[2] = (uint8_t)(low >> 16);
-        payload[3] = (uint8_t)(low >> 24);
-        payload[4] = (uint8_t)high;
-        payload[5] = (uint8_t)(high >> 8);
-        payload[6] = (uint8_t)(high >> 16);
-        payload[7] = (uint8_t)(high >> 24);
-        j3_audio_tick(audio, &event);
+        j3_audio_tick(audio, now_us);
         now_us += J3_AUDIO_FRAME_US;
     }
 }
@@ -313,7 +296,7 @@ static void test_clip_levels_are_even(void) {
 static void test_silent_before_ready(void) {
     j3_audio_t audio;
     memset(&audio, 0, sizeof(audio));
-    audio.session_handle = 7u;
+    audio.session_handle = UINT64_C(0x100000007);
     j3_audio_play(&audio, J3_CHANNEL_LAND, J3_CLIP_SUCCESS, J3_GAIN_FULL, 0);
     clear_capture();
     pump(&audio, 4);

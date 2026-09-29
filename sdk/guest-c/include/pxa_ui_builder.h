@@ -1,5 +1,5 @@
-#ifndef PXA_UI_BUILDER_H
-#define PXA_UI_BUILDER_H
+#ifndef PXA_GUEST_UI_BUILDER_H
+#define PXA_GUEST_UI_BUILDER_H
 
 #include "pxa_ui.h"
 

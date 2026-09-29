@@ -88,5 +88,10 @@
     "download_slots": 8,
     "installed_list_entries": 12
   },
+  "core_v1_transport": {
+    "request_token": "u64 in the Core v1 envelope; nonzero for opcodes 1..8",
+    "download_progress_payload": "download_request_token:u64|received_bytes:u64|total_bytes:u64 (little-endian; event envelope token is zero)",
+    "authorization": "Host grants this service only to the installed, enabled, built-in pxa-store package"
+  },
   "protocol_version": "0.5.0"
 }
