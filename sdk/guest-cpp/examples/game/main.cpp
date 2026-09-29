@@ -1,0 +1,77 @@
+#include <pxa/app.hpp>
+
+#include <optional>
+#include <charconv>
+
+struct Game {
+    pxa::game::DrawBuffer<4096> commands;
+    std::optional<pxa::game::Renderer> renderer;
+    std::int16_t x = 0;
+    std::uint32_t frames = 0;
+
+    pxa::Task<void> initialize(pxa::Context& context) {
+        (void)context.log().write(pxa::LogLevel::info, "Game create request");
+        auto window = co_await context.window().snapshot();
+        if (!window) co_return std::unexpected(window.error());
+        if (window->pixel_width < 80 || window->pixel_height < 80 ||
+            window->pixel_width / 2 > UINT16_MAX ||
+            window->pixel_height / 2 > UINT16_MAX)
+            co_return std::unexpected(pxa::Error::unsupported);
+        pxa::game::RenderOptions options;
+        options.width = static_cast<std::uint16_t>(window->pixel_width / 2);
+        options.height = static_cast<std::uint16_t>(window->pixel_height / 2);
+        auto created = co_await context.game().create(options);
+        if (!created) {
+            char message[48] = "Game create failed: ";
+            auto [end, error] = std::to_chars(
+                message + 20, message + sizeof(message),
+                static_cast<int>(created.error()));
+            if (error == std::errc{})
+                (void)context.log().write(
+                    pxa::LogLevel::error,
+                    {message, static_cast<std::size_t>(end - message)});
+            co_return std::unexpected(created.error());
+        }
+        (void)context.log().write(pxa::LogLevel::info,
+                                  "Game context ready");
+        renderer.emplace(std::move(*created));
+        co_return pxa::Result<void>{};
+    }
+
+    pxa::Result<void> on_start(pxa::Context& context) {
+        (void)context.log().write(pxa::LogLevel::info, "Game start");
+        auto started = context.tasks().start(initialize(context));
+        if (!started)
+            (void)context.log().write(pxa::LogLevel::error,
+                                      "Game task start failed");
+        return started;
+    }
+
+    void on_update(pxa::Context&, std::uint32_t) {
+        if (!renderer) return;
+        auto width = renderer->info().render_width;
+        x = static_cast<std::int16_t>((x + 2) % (width > 32 ? width - 32 : 1));
+    }
+
+    void on_frame(pxa::Context& context, pxa::game::FrameTick) {
+        if (!renderer) return;
+        const auto width = renderer->info().render_width;
+        const auto height = renderer->info().render_height;
+        if (width < 40 || height < 40) return;
+        auto frame = renderer->frame(commands);
+        frame.clear({0x0841});
+        const auto left = static_cast<std::int16_t>(x * 16);
+        const auto right = static_cast<std::int16_t>((x + 32) * 16);
+        const auto top = static_cast<std::int16_t>((height / 2 - 16) * 16);
+        const auto bottom = static_cast<std::int16_t>((height / 2 + 16) * 16);
+        frame.quad({left, top, right, top, right, bottom, left, bottom},
+                   {0x07e0});
+        auto submitted = frame.submit();
+        if (submitted) ++frames;
+        else if (!frames)
+            (void)context.log().write(pxa::LogLevel::error,
+                                      "Game frame submit failed");
+    }
+};
+
+PXA_GAME(Game)

@@ -1,0 +1,18 @@
+{
+  "format": "pxa-package-source-0.1",
+  "min_sdk": [1, 0],
+  "target_sdk": [1, 0],
+  "compile_sdk": [1, 0],
+  "id": "pxa-cpp-settings",
+  "version": "1.0.0",
+  "name": "C++ Settings",
+  "description": "Declarative settings and lifecycle example",
+  "build": {"system": "cmake", "source_dir": "."},
+  "components": [{
+    "id": "main",
+    "kind": "ui",
+    "services": ["ui"],
+    "cmake_target": "pxa_main",
+    "wasi": {"version": "preview1", "libc": "wasi-libc", "features": ["monotonic-clock", "wall-clock"]}
+  }]
+}
