@@ -119,6 +119,7 @@ struct pxa_lvgl_ui_node {
     uint8_t removal_state;
     /* Visual suppression must follow a node across MOVE and rollback. */
     uint8_t alpha_hidden;
+    uint8_t range_scheduled;
 };
 
 struct pxa_lvgl_ui_command {
@@ -530,12 +531,57 @@ static void emit_event(pxa_lvgl_ui_node_t *node, lv_indev_t *input,
     node->ui->event_timestamp_us = previous_timestamp_us;
 }
 
+static void report_visible_range(void *context);
+
+static void schedule_visible_range(pxa_lvgl_ui_node_t *node) {
+    if (node->type == PXA_UI_NODE_VIRTUAL_LIST && !node->range_scheduled &&
+        lv_async_call(report_visible_range, node) == LV_RESULT_OK)
+        node->range_scheduled = 1;
+}
+
+static void report_visible_range(void *context) {
+    pxa_lvgl_ui_node_t *node = context;
+    int32_t scroll_y;
+    int32_t viewport;
+    uint32_t first, visible, overscan, count;
+    uint64_t end;
+    uint8_t range[8];
+    node->range_scheduled = 0;
+    if (node->ui->transaction_active) {
+        schedule_visible_range(node);
+        return;
+    }
+    if (node->object == NULL || !node->visible || node->item_extent <= 0) return;
+    scroll_y = lv_obj_get_scroll_y(node->object);
+    viewport = lv_obj_get_content_height(node->object);
+    if (scroll_y < 0) scroll_y = 0;
+    first = (uint32_t)scroll_y / (uint32_t)node->item_extent;
+    visible = viewport <= 0 ? 1u :
+        (uint32_t)(viewport + node->item_extent - 1) / (uint32_t)node->item_extent;
+    overscan = visible / 2u + 1u;
+    first = first > overscan ? first - overscan : 0;
+    if (first > node->item_count) first = node->item_count;
+    end = (uint64_t)first + visible + (uint64_t)overscan * 2u;
+    if (end > node->item_count) end = node->item_count;
+    count = end > first ? (uint32_t)(end - first) : 0;
+    if (first == node->visible_first && count == node->visible_count) return;
+    node->visible_first = first;
+    node->visible_count = count;
+    pxa_write_u32(range, first);
+    pxa_write_u32(range + 4, count);
+    emit_event(node, NULL, PXA_UI_EVENT_VISIBLE_RANGE, 0, range, sizeof(range));
+}
+
 static void on_widget_event(lv_event_t *event) {
     pxa_lvgl_ui_node_t *node =
         (pxa_lvgl_ui_node_t *)lv_event_get_user_data(event);
     lv_event_code_t code = lv_event_get_code(event);
     int32_t value;
     if (node == NULL) return;
+    if (code == LV_EVENT_SIZE_CHANGED) {
+        schedule_visible_range(node);
+        return;
+    }
     /* The created handle stays valid until the transaction commits: the commit
      * reveals every created node once its properties are applied, and a node
      * that reports an event while they are applied (a text input that receives
@@ -577,36 +623,7 @@ static void on_widget_event(lv_event_t *event) {
         value = canvas_logical_pixels(node->ui, scroll_y);
         emit_event(node, lv_event_get_indev(event), PXA_UI_EVENT_SCROLL, 0,
                    &value, sizeof(value));
-        if (node->type == PXA_UI_NODE_VIRTUAL_LIST &&
-            node->item_extent > 0 && node->item_count != 0) {
-            uint8_t range[8];
-            uint32_t first;
-            uint32_t count;
-            uint32_t visible;
-            uint32_t overscan;
-            int32_t viewport = lv_obj_get_content_height(node->object);
-            uint64_t end;
-            if (scroll_y < 0) scroll_y = 0;
-            first = (uint32_t)scroll_y / (uint32_t)node->item_extent;
-            visible = viewport <= 0
-                          ? 1u
-                          : (uint32_t)(viewport + node->item_extent - 1) /
-                                (uint32_t)node->item_extent;
-            overscan = visible / 2u + 1u;
-            first = first > overscan ? first - overscan : 0;
-            end = (uint64_t)first + visible + (uint64_t)overscan * 2u;
-            if (end > node->item_count) end = node->item_count;
-            count = end > first ? (uint32_t)(end - first) : 0;
-            if (first != node->visible_first || count != node->visible_count) {
-                node->visible_first = first;
-                node->visible_count = count;
-                pxa_write_u32(range, first);
-                pxa_write_u32(range + 4, count);
-                emit_event(node, lv_event_get_indev(event),
-                           PXA_UI_EVENT_VISIBLE_RANGE, 0, range,
-                           sizeof(range));
-            }
-        }
+        schedule_visible_range(node);
     }
 }
 
@@ -656,6 +673,7 @@ static void on_node_delete(lv_event_t *event) {
     pxa_lvgl_ui_node_t *node =
         (pxa_lvgl_ui_node_t *)lv_event_get_user_data(event);
     if (node == NULL) return;
+    if (node->range_scheduled) lv_async_call_cancel(report_visible_range, node);
     /* Deleting a parent recursively destroys children whose CREATE commands
      * have not yet been visited by cancellation or transaction cleanup. */
     if (node->owner_command != NULL) node->owner_command->owned.created = NULL;
@@ -777,6 +795,7 @@ static lv_obj_t *create_object(pxa_lvgl_ui_node_t *node,
         lv_obj_set_scroll_momentum(object, false);
     }
     if (node->type == PXA_UI_NODE_VIRTUAL_LIST) {
+        lv_obj_add_event_cb(object, on_widget_event, LV_EVENT_SIZE_CHANGED, node);
         lv_obj_set_scroll_dir(object, LV_DIR_VER);
         lv_obj_set_scrollbar_mode(object, LV_SCROLLBAR_MODE_AUTO);
         node->content = lv_obj_create(object);
@@ -1069,12 +1088,12 @@ static void apply_property(pxa_lvgl_ui_node_t *node,
             break;
         case PXA_UI_PROPERTY_POSITION:
             if (data[0]) {
-                /* An absolutely positioned node is an overlay: it paints above
-                 * its in-flow siblings, whatever order they were created in. */
-                lv_obj_set_floating(object, true);
+                /* Absolute children leave layout, but still scroll with their
+                 * parent. FLOATING would pin virtual rows to the viewport. */
+                lv_obj_set_ignore_layout(object, true);
                 lv_obj_move_foreground(object);
             } else {
-                lv_obj_set_floating(object, false);
+                lv_obj_set_ignore_layout(object, false);
             }
             break;
         case PXA_UI_PROPERTY_X:
@@ -1214,6 +1233,7 @@ static void apply_property(pxa_lvgl_ui_node_t *node,
                 if (total < 1) total = 1;
                 if (total > LV_COORD_MAX) total = LV_COORD_MAX;
                 lv_obj_set_height(node->content, (int32_t)total);
+                schedule_visible_range(node);
             }
             break;
         case PXA_UI_PROPERTY_ITEM_EXTENT:
@@ -1225,6 +1245,7 @@ static void apply_property(pxa_lvgl_ui_node_t *node,
                 if (total < 1) total = 1;
                 if (total > LV_COORD_MAX) total = LV_COORD_MAX;
                 lv_obj_set_height(node->content, (int32_t)total);
+                schedule_visible_range(node);
             }
             break;
         default:
@@ -1416,6 +1437,7 @@ static pxa_status_t capture_property_undo(pxa_lvgl_ui_command_t *command) {
     undo->object_state = lv_obj_get_state(object);
     undo->flags = (lv_obj_is_hidden(object) ? LV_OBJ_FLAG_HIDDEN : 0) |
                   (lv_obj_is_floating(object) ? LV_OBJ_FLAG_FLOATING : 0) |
+                  (lv_obj_is_ignore_layout(object) ? LV_OBJ_FLAG_IGNORE_LAYOUT : 0) |
                   (lv_obj_is_clickable(object) ? LV_OBJ_FLAG_CLICKABLE : 0);
     undo->index = lv_obj_get_index(object);
     undo->scroll_x = lv_obj_get_scroll_x(object);
@@ -1504,6 +1526,7 @@ static void rollback_property(pxa_lvgl_ui_command_t *command) {
     if (property == PXA_UI_PROPERTY_IMAGE_FIT) lv_image_set_inner_align(object, undo->image_align);
     lv_obj_set_hidden(object, (undo->flags & LV_OBJ_FLAG_HIDDEN) != 0);
     lv_obj_set_floating(object, (undo->flags & LV_OBJ_FLAG_FLOATING) != 0);
+    lv_obj_set_ignore_layout(object, (undo->flags & LV_OBJ_FLAG_IGNORE_LAYOUT) != 0);
     lv_obj_set_clickable(object, (undo->flags & LV_OBJ_FLAG_CLICKABLE) != 0);
     lv_obj_remove_state(object, lv_obj_get_state(object) & ~undo->object_state);
     lv_obj_add_state(object, undo->object_state);

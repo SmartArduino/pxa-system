@@ -914,6 +914,16 @@ int main(void) {
     assert(pxa_component_begin_start(g_runtime, g_component) == PXA_STATUS_OK);
 
     build_initial_surface();
+    {
+        unsigned before = g_events;
+        lv_timer_handler();
+        assert(g_events == before + 1 && g_event_node == 6 &&
+               g_event_kind == PXA_UI_EVENT_VISIBLE_RANGE && g_visible_count > 0);
+        before = g_events;
+        lv_timer_handler();
+        assert(g_events == before);
+        g_events = 0;
+    }
     assert(lv_obj_get_child_count(lv_screen_active()) == 1);
     root = lv_obj_get_child(lv_screen_active(), 0);
     assert(root != NULL && find_label(root, "UI ABI 0.3") != NULL);
@@ -984,6 +994,7 @@ int main(void) {
     assert(list != NULL);
     lv_obj_scroll_to_y(list, 100, LV_ANIM_OFF);
     lv_obj_send_event(list, LV_EVENT_SCROLL, NULL);
+    lv_timer_handler();
     assert(g_events == 2 && g_event_node == 6 &&
            g_event_kind == PXA_UI_EVENT_VISIBLE_RANGE &&
            g_visible_count != 0 && g_visible_first < 100);
@@ -2099,10 +2110,27 @@ int main(void) {
         set_property(&commands,3,PXA_UI_PROPERTY_ITEM_EXTENT,value,4);
         pxa_write_u32(value,60*64);
         set_property(&commands,3,PXA_UI_PROPERTY_SCROLL_POSITION,value,4);
+        create_node(&commands,4,3,PXA_UI_NODE_BOX,0);
+        value[0]=1;
+        set_property(&commands,4,PXA_UI_PROPERTY_POSITION,value,1);
+        memset(value,0,sizeof(value));
+        value[0]=PXA_UI_LENGTH_LOGICAL_PX;
+        pxa_write_u32(value+4,70*64);
+        set_property(&commands,4,PXA_UI_PROPERTY_Y,value,8);
+        pxa_write_u32(value+4,60*64);
+        set_property(&commands,4,PXA_UI_PROPERTY_WIDTH,value,8);
+        pxa_write_u32(value+4,10*64);
+        set_property(&commands,4,PXA_UI_PROPERTY_HEIGHT,value,8);
         transact(59,59,0,PXA_UI_REPLACE_SURFACE,&commands);
         root=lv_obj_get_child(lv_screen_active(),0);
         lv_obj_t *list=lv_obj_get_child(root,1);
         assert(lv_obj_get_scroll_y(list)==60);
+        lv_obj_t *row=lv_obj_get_child(list,1);
+        lv_area_t row_coords, list_coords;
+        lv_obj_get_coords(row,&row_coords);
+        lv_obj_get_coords(list,&list_coords);
+        assert(lv_obj_is_ignore_layout(row) && !lv_obj_is_floating(row));
+        assert(lv_obj_get_y(row)==70 && row_coords.y1==list_coords.y1+10);
         uint64_t hash=snapshot_hash(root);
         size_t resident=allocator.current;
         commands.size=0;
@@ -2118,6 +2146,9 @@ int main(void) {
         allocator.fail_during_execute=0;
         assert(lv_obj_get_scroll_y(list)==60);
         assert(lv_obj_get_height(lv_obj_get_child(list,0))==1000);
+        assert(lv_obj_is_ignore_layout(row) && !lv_obj_is_floating(row));
+        lv_obj_get_coords(row,&row_coords);
+        assert(row_coords.y1==list_coords.y1+10);
         assert(snapshot_hash(root)==hash && allocator.current==resident);
     }
 
@@ -2128,6 +2159,11 @@ int main(void) {
     assert(pxa_component_begin_stop(g_runtime, g_component) == PXA_STATUS_OK);
     assert(pxa_component_finish_stop(g_runtime, g_component) == PXA_STATUS_OK);
     assert(lv_obj_get_child_count(lv_screen_active()) == 0);
+    {
+        unsigned before = g_events;
+        lv_timer_handler();
+        assert(g_events == before);
+    }
     assert(allocator.current == 0);
     assert(g_image_frees==6);
     assert(g_asset_resolves == g_asset_releases);
