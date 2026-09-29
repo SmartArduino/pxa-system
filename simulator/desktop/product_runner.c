@@ -322,6 +322,9 @@ typedef struct {
     int32_t system_gesture_press_x;
     int32_t system_gesture_press_y;
     uint8_t exit_requested;
+    SDL_atomic_t back_requested;
+    SDL_atomic_t home_requested;
+    uint32_t input_window_id;
 } product_host_t;
 
 /* The allocator descriptors outlive every asset and are immutable after init.
@@ -585,6 +588,18 @@ static void system_back_indicator_update(product_host_t *host, int32_t x,
     lv_obj_set_pos(host->system_back_indicator, indicator_x, indicator_y);
 }
 
+static int SDLCALL product_key_event_watch(void *context, SDL_Event *event) {
+    product_host_t *host = context;
+    if (event->type == SDL_KEYUP &&
+        event->key.windowID == host->input_window_id) {
+        if (event->key.keysym.sym == SDLK_ESCAPE)
+            SDL_AtomicSet(&host->back_requested, 1);
+        else if (event->key.keysym.sym == SDLK_HOME)
+            SDL_AtomicSet(&host->home_requested, 1);
+    }
+    return 0;
+}
+
 static void system_back_gesture_event(lv_event_t *event) {
     product_host_t *host = (product_host_t *)lv_event_get_user_data(event);
     lv_indev_t *indev = lv_event_get_indev(event);
@@ -613,7 +628,7 @@ static void system_back_gesture_event(lv_event_t *event) {
     system_back_indicator_reset(host);
     if (horizontal >= PRODUCT_SYSTEM_GESTURE_COMMIT_DISTANCE &&
         horizontal > vertical)
-        host->exit_requested = 1;
+        SDL_AtomicSet(&host->back_requested, 1);
 }
 
 static void system_home_gesture_event(lv_event_t *event) {
@@ -641,7 +656,15 @@ static void system_home_gesture_event(lv_event_t *event) {
 
 static void system_button_bar_event(lv_event_t *event) {
     product_host_t *host = (product_host_t *)lv_event_get_user_data(event);
-    if (host != NULL && lv_event_get_code(event) == LV_EVENT_CLICKED)
+    lv_indev_t *indev;
+    lv_point_t point;
+    if (host == NULL || lv_event_get_code(event) != LV_EVENT_CLICKED) return;
+    indev = lv_event_get_indev(event);
+    if (indev == NULL) return;
+    lv_indev_get_point(indev, &point);
+    if (point.x < (int32_t)host->width / 3)
+        SDL_AtomicSet(&host->back_requested, 1);
+    else
         host->exit_requested = 1;
 }
 
@@ -1615,7 +1638,14 @@ static void dispatch_component_events(product_host_t *host) {
         }
         if (pxa_wamr_engine_deliver_event_result(
                 host->engine, host->runtime, host->active_component,
-                &result) == PXA_STATUS_OK) delivered = 1;
+                &result) == PXA_STATUS_OK) {
+            delivered = 1;
+            if (result.service == PXA_WINDOW_SERVICE_ID &&
+                result.opcode == PXA_WINDOW_BACK_REQUESTED &&
+                result.request_id == 0 && result.payload_size == 0 &&
+                result.guest_result == 0)
+                host->exit_requested = 1;
+        }
         if (!delivered) break;
     }
 }
@@ -2796,6 +2826,7 @@ static int run_product_simulator(const options_t *input,
     pxa_status_t status;
     const char *stage = "arguments";
     const int owns_display = embedded_display == NULL;
+    int key_event_watch_added = 0;
     const char *loop_perf_env = getenv("PXA_SIMULATOR_PERF");
     const int trace_loop = owns_display && loop_perf_env != NULL &&
                            strcmp(loop_perf_env, "1") == 0;
@@ -3456,7 +3487,12 @@ static int run_product_simulator(const options_t *input,
     }
     /* An embedded system UI owns Home and Back; installing the standalone
      * strips would shadow its gesture handling. */
-    if (owns_display) install_system_gestures(&host);
+    if (owns_display) {
+        install_system_gestures(&host);
+        host.input_window_id = SDL_GetWindowID(lv_sdl_window_get_window(display));
+        SDL_AddEventWatch(product_key_event_watch, &host);
+        key_event_watch_added = 1;
+    }
     stage = "shape mask";
     if (owns_display && !install_shape_mask(display, &options, &shape_mask))
         goto done;
@@ -3480,7 +3516,11 @@ static int run_product_simulator(const options_t *input,
         }
         pxsys_pxadb_control_poll(&pxadb_control);
         if (pump != NULL) pump(pump_context);
+        if (SDL_AtomicGet(&host.home_requested)) host.exit_requested = 1;
         if (host.exit_requested) break;
+        if (SDL_AtomicGet(&host.back_requested) &&
+            pxa_window_queue_back(host.window, host.active_component) == PXA_STATUS_OK)
+            SDL_AtomicSet(&host.back_requested, 0);
         sync_host_theme(&host, lvgl_ui, &lvgl_config.theme);
         dispatch_lifecycle(&host);
         /* Services can complete without producing a UI or clock event. */
@@ -3565,6 +3605,7 @@ static int run_product_simulator(const options_t *input,
     }
     result = 0;
 done:
+    if (key_event_watch_added) SDL_DelEventWatch(product_key_event_watch, &host);
     if (control_bind != NULL) control_bind(window_context, NULL, NULL, NULL);
     pxsys_pxadb_control_stop(&pxadb_control);
     if (result != 0) fprintf(stderr, "PXA product simulator failed at %s\n", stage);
