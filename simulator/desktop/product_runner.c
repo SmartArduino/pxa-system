@@ -3490,6 +3490,7 @@ static int run_product_simulator(const options_t *input,
         const uint64_t lvgl_start_us = now_us(NULL);
 #endif
         uint32_t delay = lv_timer_handler();
+        if (lv_display_get_default() == NULL) break;
 #ifdef PXSYS_PRODUCT_FRAME_OBSERVER
         if (pending_frame_id != 0) {
             PXSYS_PRODUCT_FRAME_OBSERVER(pump_context, &host,
