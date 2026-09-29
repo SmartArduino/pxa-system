@@ -1,16 +1,32 @@
 include_guard(GLOBAL)
 include(CMakeParseArguments)
 
-if(NOT DEFINED PXA_GUEST_SDK_DIR OR NOT IS_DIRECTORY "${PXA_GUEST_SDK_DIR}/include")
-    message(FATAL_ERROR "PXA_GUEST_SDK_DIR must point to the PXA Guest C SDK")
+if(DEFINED PXA_CPP_SDK_DIR AND IS_DIRECTORY "${PXA_CPP_SDK_DIR}/include"
+   AND CMAKE_CXX_COMPILER_LOADED)
+    add_library(pxa_guest_cpp STATIC "${PXA_CPP_SDK_DIR}/src/runtime.cpp")
+    add_library(Pxa::Cpp ALIAS pxa_guest_cpp)
+    target_include_directories(pxa_guest_cpp PUBLIC
+        "${PXA_CPP_SDK_DIR}/include")
+    target_compile_features(pxa_guest_cpp PUBLIC cxx_std_23)
+    target_compile_options(pxa_guest_cpp PUBLIC -fno-exceptions -fno-rtti)
+    target_compile_options(pxa_guest_cpp PRIVATE
+        -O3 -ffunction-sections -fdata-sections)
+endif()
+
+if((NOT DEFINED PXA_GUEST_SDK_DIR OR
+    NOT IS_DIRECTORY "${PXA_GUEST_SDK_DIR}/include") AND
+   (NOT DEFINED PXA_CPP_SDK_DIR OR
+    NOT IS_DIRECTORY "${PXA_CPP_SDK_DIR}/include"))
+    message(FATAL_ERROR "Set PXA_GUEST_SDK_DIR or PXA_CPP_SDK_DIR")
 endif()
 if(NOT DEFINED PXA_ARTIFACT_DIR OR PXA_ARTIFACT_DIR STREQUAL "")
     message(FATAL_ERROR "PXA_ARTIFACT_DIR is required")
 endif()
 
 function(_pxa_guest_target_defaults target)
-    target_compile_features(${target} PRIVATE c_std_11)
-    target_include_directories(${target} PUBLIC "${PXA_GUEST_SDK_DIR}/include")
+    if(DEFINED PXA_GUEST_SDK_DIR AND IS_DIRECTORY "${PXA_GUEST_SDK_DIR}/include")
+        target_include_directories(${target} PUBLIC "${PXA_GUEST_SDK_DIR}/include")
+    endif()
     target_compile_options(${target} PRIVATE
         -O3 -fno-builtin -ffunction-sections -fdata-sections)
     if(PXA_APP_DEFINITIONS)
@@ -29,9 +45,10 @@ function(_pxa_collect_c_sources output)
             message(FATAL_ERROR "PXA source directory does not exist: ${_pxa_source_dir}")
         endif()
         file(GLOB _pxa_directory_sources CONFIGURE_DEPENDS
-            LIST_DIRECTORIES false "${_pxa_source_dir}/*.c")
+            LIST_DIRECTORIES false "${_pxa_source_dir}/*.c"
+            "${_pxa_source_dir}/*.cpp")
         if(NOT _pxa_directory_sources)
-            message(FATAL_ERROR "PXA source directory has no .c files: ${_pxa_source_dir}")
+            message(FATAL_ERROR "PXA source directory has no .c or .cpp files: ${_pxa_source_dir}")
         endif()
         list(APPEND _pxa_sources ${_pxa_directory_sources})
     endforeach()
@@ -52,12 +69,13 @@ function(pxa_add_module target)
     endif()
     add_library(${target} OBJECT ${_pxa_sources})
     _pxa_guest_target_defaults(${target})
+    target_compile_features(${target} PRIVATE c_std_11)
     target_include_directories(${target} PUBLIC ${PXA_INCLUDE_DIRS})
     target_compile_definitions(${target} PRIVATE ${PXA_DEFINITIONS})
 endfunction()
 
 function(pxa_add_component target)
-    cmake_parse_arguments(PXA "" "COMPONENT_ID"
+    cmake_parse_arguments(PXA "CPP" "COMPONENT_ID"
         "SOURCES;SOURCE_DIRS;MODULES;LIBRARIES;INCLUDE_DIRS;DEFINITIONS" ${ARGN})
     string(LENGTH "${PXA_COMPONENT_ID}" _pxa_component_id_length)
     if(_pxa_component_id_length LESS 1 OR _pxa_component_id_length GREATER 64 OR
@@ -72,13 +90,27 @@ function(pxa_add_component target)
     endif()
     add_executable(${target} ${_pxa_sources})
     _pxa_guest_target_defaults(${target})
+    if(PXA_CPP)
+        if(NOT TARGET Pxa::Cpp)
+            message(FATAL_ERROR "PXA_CPP_SDK_DIR must point to the PXA C++ SDK")
+        endif()
+        target_link_libraries(${target} PRIVATE Pxa::Cpp)
+        set(_pxa_imports_file "${PXA_CPP_SDK_DIR}/pxa-imports.txt")
+    else()
+        if(NOT DEFINED PXA_GUEST_SDK_DIR OR
+           NOT EXISTS "${PXA_GUEST_SDK_DIR}/pxa-imports.txt")
+            message(FATAL_ERROR "PXA_GUEST_SDK_DIR must point to the PXA Guest C SDK")
+        endif()
+        target_compile_features(${target} PRIVATE c_std_11)
+        set(_pxa_imports_file "${PXA_GUEST_SDK_DIR}/pxa-imports.txt")
+    endif()
     target_include_directories(${target} PRIVATE ${PXA_INCLUDE_DIRS})
     target_compile_definitions(${target} PRIVATE ${PXA_DEFINITIONS})
     target_link_libraries(${target} PRIVATE ${PXA_MODULES} ${PXA_LIBRARIES})
     target_link_options(${target} PRIVATE
         -mexec-model=reactor
         -Wl,--gc-sections
-        "-Wl,--allow-undefined-file=${PXA_GUEST_SDK_DIR}/pxa-imports.txt"
+        "-Wl,--allow-undefined-file=${_pxa_imports_file}"
         -Wl,--export=pxa_app_start
         -Wl,--export=pxa_app_on_event
         -Wl,--export=pxa_app_stop
@@ -89,4 +121,8 @@ function(pxa_add_component target)
         PREFIX ""
         SUFFIX ".wasm"
         RUNTIME_OUTPUT_DIRECTORY "${PXA_ARTIFACT_DIR}")
+endfunction()
+
+function(pxa_add_app target)
+    pxa_add_component(${target} CPP ${ARGN})
 endfunction()

@@ -5,7 +5,7 @@ set -euo pipefail
 # machine-global toolchain. The pinned release stays outside version control.
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 pxa_system_dir="$(cd "$script_dir/../.." && pwd)"
-wasi_version="29.0"
+wasi_version="34.0"
 cache_dir="${PXA_WASI_SDK_CACHE_DIR:-$pxa_system_dir/.pxa}"
 auto_download="${PXA_WASI_SDK_AUTO_DOWNLOAD:-1}"
 
@@ -50,11 +50,11 @@ esac
 case "$(uname -m)" in
     x86_64|amd64)
         host_arch="x86_64"
-        archive_sha256="87d1d1a2879d139cdc624b968efad3d4a97b8078cdff95e63ac88ecafd1a0171"
+        archive_sha256="b761e3a0721dbae9c09a0059e5fdb2bf917d1b4a8a7b430fb3b5aafb0984b2c4"
         ;;
     aarch64|arm64)
         host_arch="arm64"
-        archive_sha256="052ad773397dc9e5aa99fb4cfef694175e6b1e81bb2ad1d3c8e7b3fc81441b7c"
+        archive_sha256="f7e243dff54d60bcc576e94d6166b69f410f2500ae4a9ceef34315be10e77971"
         ;;
     *) fail "Automatic WASI SDK download supports x86_64 and arm64 hosts; set WASI_SDK_DIR" ;;
 esac
@@ -82,7 +82,7 @@ mkdir -p "$cache_dir"
 temporary_dir="$(mktemp -d "$cache_dir/.wasi-sdk-download.XXXXXX")"
 trap 'rm -rf "$temporary_dir"' EXIT
 archive="$temporary_dir/$sdk_name.tar.gz"
-url="https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-29/$sdk_name.tar.gz"
+url="https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-34/$sdk_name.tar.gz"
 
 printf 'Downloading %s into %s\n' "$sdk_name" "$cache_dir" >&2
 curl --fail --location --retry 3 --output "$archive" "$url"

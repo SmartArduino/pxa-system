@@ -107,7 +107,14 @@ if [[ ! -f "$private_key" ]]; then
   exit 1
 fi
 if [[ -z "$wamrc_bin" ]]; then
-  wamrc_bin="$($script_dir/build_wamrc.sh)"
+  if [[ -x "$pxa_system_dir/bin/wamrc" ]]; then
+    wamrc_bin="$pxa_system_dir/bin/wamrc"
+  elif [[ -f "$script_dir/build_wamrc.sh" ]]; then
+    wamrc_bin="$($script_dir/build_wamrc.sh)"
+  else
+    echo "Set WAMRC to the PXA AOT compiler, or install bin/wamrc in the SDK" >&2
+    exit 1
+  fi
 fi
 if [[ ! -x "$wamrc_bin" ]]; then
   echo "wamrc is not executable: $wamrc_bin" >&2
@@ -286,6 +293,7 @@ if [[ "$build_system" == "cmake" ]]; then
     -DCMAKE_TOOLCHAIN_FILE="$pxa_system_dir/sdk/cmake/pxa-wasi-toolchain.cmake" \
     -DWASI_SDK_DIR="$wasi_sdk_dir" \
     -DPXA_GUEST_SDK_DIR="$pxa_system_dir/sdk/guest-c" \
+    -DPXA_CPP_SDK_DIR="$pxa_system_dir/sdk/guest-cpp" \
     -DPXA_GENERATED_INCLUDE_DIR="$generated_include_dir" \
     -DPXA_ARTIFACT_DIR="$package_dir/artifacts" \
     -DPXA_APP_DEFINITIONS="$joined_definitions" \
