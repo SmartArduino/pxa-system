@@ -35,6 +35,10 @@ PXA_APPLICATION(Counter)
 `State<int>` 变化后，框架在当前事件结束前合并并提交一次 PATCH。
 控件节点 ID 和 UI 事务由 SDK 管理。
 
+状态订阅使用脏绑定位图；默认 32 个绑定只需一个 64 位字。
+属性更新直接枚举置位项，不扫描所有绑定。同周期对同一状态多次赋值只
+编码最终值；提交失败保留位图以便重试。未变化的 UI 不提交事务。
+
 导航应用提供 `navigation()`，返回其持有的 `ui::Navigator<>`，不再提供单一
 `view()`。在 `on_start` 中排入首页：
 
@@ -69,6 +73,29 @@ ui::Navigator<>& navigation() { return routes; }
 2140 字节的复用缓冲区，SDK 直接在其中生成最终协议包，不额外复制大值。协议允许最大
 2048 字节，但设备 Host 可以配置更低的单值上限，超过时由 Host 返回错误。
 
+`ctx.fs()` 操作应用私有文件。`open(path, mode)` 返回不可复制、可移动的
+`File`；提供 `read`、`write`、`seek` 和显式 `close`，离开作用域也会关闭。
+`make_directory`、`remove`、`rename`、`stat` 是异步控制操作。
+目录使用 `directory(path)` 打开，再通过 `next()` 获取
+`Result<std::optional<DirectoryEntry>>`：空 optional 表示目录结束，错误与
+结束分开。目录项拥有最多 64 字节的名称存储，不借用事件内存。
+
+```cpp
+auto file = co_await ctx.fs().open("save.bin",
+    pxa::OpenMode::write | pxa::OpenMode::create | pxa::OpenMode::truncate);
+if (!file) co_return std::unexpected(file.error());
+auto written = file->write(bytes);
+if (!written) co_return std::unexpected(written.error());
+```
+
+FS 的路径在创建任务时校验并编码到有界协程帧，创建任务后原字符串可销毁，
+服务入口也可使用 `ctx.fs()` 临时对象。最大路径 rename 直接提交协程内的
+538 字节最终包，不要求调整 Context 的默认 scratch。File 必须活到其
+异步操作完成或取消；不能对临时 File 启动操作后销毁它。
+读写同步返回实际传输字节数，可能短读、短写或 `would_block`；调用方处理
+剩余数据并在后续事件重试。示例的四字节保存遇到短写会明确显示失败，
+不将已接受的部分写入当作完整保存。完整示例见 `examples/files`。
+
 `examples/audio` 展示申请 `audio.playback`、scope 为 `media` 的权限，再通过
 `ctx.audio().open(permission)` 创建会话。清单和申请的 scope 必须完全一致。
 权限和音频会话都是不可复制的资源对象。
@@ -84,8 +111,9 @@ ready、ended、stopped、replaced、error。PCM 可以短写，`would_block` �
 取消，调用方必须保持它们及服务资源有效；默认封包缓冲区来自有界协程池。
 
 当前实现包括 Core 消息编解码、资源句柄、应用入口、有界协程和请求表、
-基础声明式 Row/Column/Text/Button、整数状态绑定，以及 GameRender 的
-上下文创建、清屏、矩形和精灵批次 DrawList。计划中的完整服务接口、
+声明式布局/常用控件、状态绑定与导航，Storage/Permission/Audio/FS，
+以及 GameRender 的上下文创建、清屏、矩形和精灵批次 DrawList。
+计划中的其余服务接口、
 动态 UI/虚拟列表尚未完成；独立开发包已可构建和打包示例，
 但目前不能作为完整发布版 SDK。
 

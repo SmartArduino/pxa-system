@@ -2,6 +2,7 @@
 
 #include "ui_wire.hpp"
 
+#include <bit>
 #include <charconv>
 #include <concepts>
 #include <string>
@@ -13,8 +14,8 @@ namespace pxa::ui {
 
 struct Subscription {
     Subscription* next = nullptr;
-    bool* dirty = nullptr;
-    bool pending = false;
+    std::uint64_t* dirty_word = nullptr;
+    std::uint64_t mask = 0;
 };
 
 template<class T>
@@ -33,8 +34,7 @@ public:
         }
         value_ = std::move(value);
         for (auto* item = subscribers_; item; item = item->next) {
-            item->pending = true;
-            *item->dirty = true;
+            *item->dirty_word |= item->mask;
         }
     }
 
@@ -51,7 +51,8 @@ public:
         while (*cursor && *cursor != &item) cursor = &(*cursor)->next;
         if (*cursor) *cursor = item.next;
         item.next = nullptr;
-        item.dirty = nullptr;
+        if (item.dirty_word) *item.dirty_word &= ~item.mask;
+        item.dirty_word = nullptr;
     }
 private:
     T value_;
@@ -459,6 +460,7 @@ public:
         next_id_ = 1;
         binding_count_ = 0;
         handler_count_ = 0;
+        dirty_words_.fill(0);
         auto root = create(0, protocol::root);
         const bool rendered = root &&
             tx.u8(root, protocol::layout, protocol::column) &&
@@ -478,25 +480,27 @@ public:
     }
 
     Result<void> flush() noexcept {
-        if (!dirty_) return {};
+        if (!dirty()) return {};
         if (!mounted_)
             return std::unexpected(Error::bad_state);
         const auto generation = transport_.next_ui_generation();
         if (!generation) return std::unexpected(Error::limit_exceeded);
         Transaction tx(transport_, generation, 1, protocol::patch);
         if (!tx.valid()) return std::unexpected(tx.error());
-        for (std::size_t i = 0; i < binding_count_; ++i) {
-            auto& binding = bindings_[i];
-            if (!binding.subscription.pending) continue;
-            if (!binding.write(tx, binding.node, binding.state))
-                return std::unexpected(tx.error());
+        for (std::size_t word = 0; word < dirty_words_.size(); ++word) {
+            auto bits = dirty_words_[word];
+            while (bits) {
+                const auto index = word * 64 + std::countr_zero(bits);
+                auto& binding = bindings_[index];
+                if (!binding.write(tx, binding.node, binding.state))
+                    return std::unexpected(tx.error());
+                bits &= bits - 1;
+            }
         }
         auto result = tx.commit();
         if (!result) return result;
         generation_ = generation;
-        dirty_ = false;
-        for (std::size_t i = 0; i < binding_count_; ++i)
-            bindings_[i].subscription.pending = false;
+        dirty_words_.fill(0);
         return {};
     }
 
@@ -520,7 +524,10 @@ public:
     }
 
     std::uint32_t generation() const noexcept { return generation_; }
-    bool dirty() const noexcept { return dirty_; }
+    bool dirty() const noexcept {
+        for (auto word : dirty_words_) if (word) return true;
+        return false;
+    }
     bool fail(Error error) noexcept {
         mount_error_ = error;
         return false;
@@ -541,10 +548,12 @@ public:
             mount_error_ = Error::resource_limit;
             return false;
         }
-        auto& binding = bindings_[binding_count_++];
+        const auto index = binding_count_++;
+        auto& binding = bindings_[index];
         binding.state = &state;
         binding.node = node;
-        binding.subscription.dirty = &dirty_;
+        binding.subscription.dirty_word = &dirty_words_[index / 64];
+        binding.subscription.mask = std::uint64_t{1} << (index % 64);
         binding.subscribe = [](void* pointer, Subscription& subscription) {
             static_cast<State<T>*>(pointer)->subscribe(subscription);
         };
@@ -651,13 +660,13 @@ private:
     View view_;
     std::array<Binding, MaxBindings> bindings_{};
     std::array<Handler, MaxHandlers> handlers_{};
+    std::array<std::uint64_t, (MaxBindings + 63) / 64> dirty_words_{};
     Transaction<>* current_ = nullptr;
     std::uint32_t generation_ = 0;
     std::uint32_t next_id_ = 1;
     std::size_t binding_count_ = 0;
     std::size_t handler_count_ = 0;
     bool mounted_ = false;
-    bool dirty_ = false;
     std::optional<Error> mount_error_;
 };
 
