@@ -18,12 +18,15 @@ constexpr std::uint8_t patch = 1;
 constexpr std::uint8_t replace_surface = 3;
 constexpr std::uint8_t create = 1;
 constexpr std::uint8_t set_property = 2;
+constexpr std::uint8_t move = 4;
+constexpr std::uint8_t remove = 5;
 constexpr std::uint8_t root = 1;
 constexpr std::uint8_t box = 2;
 constexpr std::uint8_t text = 4;
 constexpr std::uint8_t image = 5;
 constexpr std::uint8_t control = 6;
 constexpr std::uint8_t progress = 7;
+constexpr std::uint8_t virtual_list = 9;
 constexpr std::uint8_t button = 1;
 constexpr std::uint8_t toggle = 2;
 constexpr std::uint8_t slider = 3;
@@ -34,6 +37,10 @@ constexpr std::uint16_t height = 257;
 constexpr std::uint16_t justify = 264;
 constexpr std::uint16_t align = 265;
 constexpr std::uint16_t gap = 267;
+constexpr std::uint16_t grow = 269;
+constexpr std::uint16_t position = 271;
+constexpr std::uint16_t x = 272;
+constexpr std::uint16_t y = 273;
 constexpr std::uint16_t foreground = 513;
 constexpr std::uint16_t background = 514;
 constexpr std::uint16_t font_role = 519;
@@ -46,6 +53,8 @@ constexpr std::uint16_t max_value = 774;
 constexpr std::uint16_t step = 775;
 constexpr std::uint16_t scroll_axis = 776;
 constexpr std::uint16_t scrollbar = 777;
+constexpr std::uint16_t item_count = 778;
+constexpr std::uint16_t item_extent = 779;
 constexpr std::uint16_t event_mask = 3;
 constexpr std::uint8_t row = 1;
 constexpr std::uint8_t column = 2;
@@ -113,6 +122,23 @@ public:
         return record(protocol::set_property, prefix, value);
     }
 
+    bool remove(std::uint32_t id) noexcept {
+        if (!id) { error_ = Error::invalid_argument; return false; }
+        std::array<std::byte, 4> data{};
+        wire::put32(data.data(), id);
+        return record(protocol::remove, {}, data);
+    }
+
+    bool move(std::uint32_t id, std::uint32_t parent,
+              std::uint32_t before = 0) noexcept {
+        if (!id || !parent) { error_ = Error::invalid_argument; return false; }
+        std::array<std::byte, 12> data{};
+        wire::put32(data.data(), id);
+        wire::put32(data.data() + 4, parent);
+        wire::put32(data.data() + 8, before);
+        return record(protocol::move, {}, data);
+    }
+
     bool text(std::uint32_t id, std::string_view value) noexcept {
         return property(id, protocol::text_value,
                         {reinterpret_cast<const std::byte*>(value.data()),
@@ -162,7 +188,8 @@ public:
 
     bool logical_px(std::uint32_t id, std::uint16_t key,
                     std::int32_t value) noexcept {
-        if ((key != protocol::width && key != protocol::height) ||
+        if ((key != protocol::width && key != protocol::height &&
+             key != protocol::x && key != protocol::y) ||
             value < 0 || value > INT32_MAX / 64) {
             error_ = Error::invalid_argument;
             return false;

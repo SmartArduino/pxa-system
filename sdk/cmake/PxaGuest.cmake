@@ -3,11 +3,18 @@ include(CMakeParseArguments)
 
 if(DEFINED PXA_CPP_SDK_DIR AND IS_DIRECTORY "${PXA_CPP_SDK_DIR}/include"
    AND CMAKE_CXX_COMPILER_LOADED)
+    include("${CMAKE_CURRENT_LIST_DIR}/PxaCppFeatures.cmake")
+    pxa_check_cpp_features()
     add_library(pxa_guest_cpp STATIC "${PXA_CPP_SDK_DIR}/src/runtime.cpp")
     add_library(Pxa::Cpp ALIAS pxa_guest_cpp)
     target_include_directories(pxa_guest_cpp PUBLIC
         "${PXA_CPP_SDK_DIR}/include")
-    target_compile_features(pxa_guest_cpp PUBLIC cxx_std_23)
+    if("cxx_std_26" IN_LIST CMAKE_CXX_COMPILE_FEATURES)
+        target_compile_features(pxa_guest_cpp PUBLIC cxx_std_26)
+    else()
+        target_compile_options(pxa_guest_cpp PUBLIC
+            "$<$<COMPILE_LANGUAGE:CXX>:-std=c++2c>")
+    endif()
     target_compile_options(pxa_guest_cpp PUBLIC -fno-exceptions -fno-rtti)
     target_compile_options(pxa_guest_cpp PRIVATE
         -O3 -ffunction-sections -fdata-sections)

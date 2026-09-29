@@ -3,10 +3,10 @@
   "min_sdk": [1, 0],
   "target_sdk": [1, 0],
   "compile_sdk": [1, 0],
-  "id": "pxa-cpp-counter",
+  "id": "pxa-cpp-virtual-list",
   "version": "1.0.0",
-  "name": "C++ Counter",
-  "description": "Declarative C++26 UI example",
+  "name": "C++ List",
+  "description": "Bounded virtual list example",
   "build": {"system": "cmake", "source_dir": "."},
   "components": [{
     "id": "main",

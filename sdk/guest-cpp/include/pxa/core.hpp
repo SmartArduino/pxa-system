@@ -1,5 +1,7 @@
 #pragma once
 
+#include "features.hpp"
+
 #include <array>
 #include <cstddef>
 #include <cstdint>

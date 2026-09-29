@@ -1,8 +1,10 @@
-# PXA C++23 Guest SDK（开发中）
+# PXA C++26 Guest SDK（开发中）
 
-此 SDK 是独立的 C++23 Guest 实现。它直接导入 `pxa_submit` 和 `pxa_io`，
+此 SDK 是独立的 C++26 Guest 实现。它直接导入 `pxa_submit` 和 `pxa_io`，
 不包含或调用 Guest C SDK。构建目标为 `wasm32-wasip1`，需要 WASI SDK 的
 libc++。推荐使用仓库锁定的 WASI SDK 34；异常和 RTTI 默认关闭。
+语言模式与必需特性在配置和公共头文件中检查，不静默回退。
+实际支持范围见 `FEATURES.zh-CN.md`；反射和 `template for` 不作为依赖。
 
 当前已实现的最小应用见 `examples/counter`：
 
@@ -35,9 +37,20 @@ PXA_APPLICATION(Counter)
 `State<int>` 变化后，框架在当前事件结束前合并并提交一次 PATCH。
 控件节点 ID 和 UI 事务由 SDK 管理。
 
-状态订阅使用脏绑定位图；默认 32 个绑定只需一个 64 位字。
+内置视图在编译期推导绑定、回调和动态模块容量，布局汇总子视图预算；
+没有动态模块的页面不会预留其槽。`Text(state)` 预留一个绑定，字符数组与
+固定描述不预留绑定。动态 `std::string` 文字目前也保留一个绑定上限。
+自定义视图可声明 `static constexpr ui::Capacity capacity`；
+未声明时沿用 32 绑定、32 回调、4 动态模块的有界预算，也可显式配置 `Page`。
+状态订阅使用脏绑定位图；最多 64 个绑定只需一个 64 位字。
 属性更新直接枚举置位项，不扫描所有绑定。同周期对同一状态多次赋值只
 编码最终值；提交失败保留位图以便重试。未变化的 UI 不提交事务。
+
+`Text("Title")` 拥有字符数组的副本，不构造 `std::string`，也不会借用局部数组。
+固定标题可写为 `Text<"Title">()`：文字由该类型的共享只读描述持有，页面仅保存
+字体与颜色属性。静态布局支持 `constexpr`；状态引用和捕获闭包仍由实际页面持有。
+动态字符串使用 `Text(std::string)`，状态文字使用 `Text(state)`，异步借用规则
+不因固定描述而改变。
 
 导航应用提供 `navigation()`，返回其持有的 `ui::Navigator<>`，不再提供单一
 `view()`。在 `on_start` 中排入首页：
@@ -61,6 +74,30 @@ ui::Navigator<>& navigation() { return routes; }
 成功后旧页销毁。静态页面应用不启用这块存储。超预算页面有编译诊断，
 历史满返回 `resource_limit`，同一事件重复排入切换返回 `busy`。
 完整示例见 `examples/navigation`。
+
+动态列表位于 `<pxa/list.hpp>`，模型持有 `ui::ListState`，行使用业务 key：
+
+```cpp
+ui::ListState items{10000};
+auto list = ui::VirtualList<32>(items, ui::Dp{48},
+    [](std::uint32_t index) { return index + 1; },
+    [this](std::uint32_t key) {
+        return ui::Button("Select").on_click([this, key] { select(key); });
+    }).grow();
+```
+
+`KeyedList<MaxRows>` 用于完整的小列表，`VirtualList<MaxRows>` 只挂载 Host
+报告的可见及预取范围。MaxRows 包括预取行；行绑定/回调容量默认从行类型推导，
+也可用后两个模板参数指定。更改条数使用 `set_count`，重排或更改 key 映射后调用
+`invalidate`。key 必须是可比较、可默认构造、可平凡复制且不超过 16 字节的小值，
+数据源应保证全局唯一；SDK 拒绝当前挂载范围内的重复 key，不扫描万条数据。
+
+同一个 key 的行只构造一次，保留行状态与回调；普通内容更新使用行内 State。
+回调捕获 key 的值，不引用临时索引。结构提交失败保留旧行和回调，新候选行销毁；
+重试成功后才解除离开行的状态订阅。行池为两个 MaxRows 的固定槽，允许当前和
+候选行短暂共存，容量与总条数无关。当前行片段不支持嵌套动态模块，返回明确错误；
+完整示例见 `examples/virtual-list`。`.grow()` 让列表占据纵向布局剩余高度，
+外层布局使用 `.fill().fill_height()`。
 
 运行中的 UI 提交失败会保留页面，并调用可选的
 `void on_error(Context&, Error)`；没有钩子时输出错误日志。容量不足等
@@ -113,8 +150,8 @@ ready、ended、stopped、replaced、error。PCM 可以短写，`would_block` �
 当前实现包括 Core 消息编解码、资源句柄、应用入口、有界协程和请求表、
 声明式布局/常用控件、状态绑定与导航，Storage/Permission/Audio/FS，
 以及 GameRender 的上下文创建、清屏、矩形和精灵批次 DrawList。
-计划中的其余服务接口、
-动态 UI/虚拟列表尚未完成；独立开发包已可构建和打包示例，
+动态 keyed list 与 VirtualList 已有实现和模拟器验证；条件分支、Ref、
+其余服务接口和完整性能验收尚未完成。独立开发包已可构建和打包示例，
 但目前不能作为完整发布版 SDK。
 
 构建应用时，CMake 中使用 `pxa_add_app`，并提供

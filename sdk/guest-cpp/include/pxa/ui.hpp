@@ -12,6 +12,30 @@
 
 namespace pxa::ui {
 
+struct Capacity {
+    std::size_t nodes = 0, bindings = 0, handlers = 0, dynamic = 0;
+    constexpr Capacity& operator+=(Capacity value) noexcept {
+        nodes += value.nodes;
+        bindings += value.bindings;
+        handlers += value.handlers;
+        dynamic += value.dynamic;
+        return *this;
+    }
+};
+
+template<class View> inline constexpr Capacity capacity_of = [] {
+    if constexpr (requires { View::capacity; }) return View::capacity;
+    else return Capacity{0, 32, 32, 4};
+}();
+
+template<class... Views> consteval Capacity container_capacity() {
+    return []<std::size_t... I>(std::index_sequence<I...>) {
+        Capacity result{1};
+        ((result += capacity_of<pxa::detail::PackElement<I, Views...>>), ...);
+        return result;
+    }(std::index_sequence_for<Views...>{});
+}
+
 struct Subscription {
     Subscription* next = nullptr;
     std::uint64_t* dirty_word = nullptr;
@@ -99,28 +123,35 @@ constexpr Dp operator""_dp(unsigned long long value) noexcept {
 }
 } // namespace literals
 
-class TextView {
+class TextAppearance {
 public:
+    template<class Self> constexpr decltype(auto) font(this Self&& self,
+                                                       Font value) noexcept {
+        self.font_ = value;
+        return std::forward<Self>(self);
+    }
+    template<class Self> constexpr decltype(auto) color(this Self&& self,
+                                                        Color value) noexcept {
+        self.color_ = value;
+        return std::forward<Self>(self);
+    }
+protected:
+    template<class Page> bool appearance(Page& page, std::uint32_t node) const {
+        return page.transaction().u16(node, protocol::font_role,
+                                       static_cast<std::uint16_t>(font_)) &&
+               page.theme(node, protocol::foreground, color_);
+    }
+private:
+    Font font_ = Font::body;
+    Color color_ = Color::text;
+};
+
+class TextView : public TextAppearance {
+public:
+    static constexpr Capacity capacity{1, 1};
     explicit TextView(std::string text) : text_(std::move(text)) {}
     explicit TextView(State<int>& state) : state_(&state) {}
     explicit TextView(State<std::string>& state) : string_state_(&state) {}
-
-    TextView& font(Font value) & noexcept {
-        font_ = value;
-        return *this;
-    }
-    TextView&& font(Font value) && noexcept {
-        font_ = value;
-        return std::move(*this);
-    }
-    TextView& color(Color value) & noexcept {
-        color_ = value;
-        return *this;
-    }
-    TextView&& color(Color value) && noexcept {
-        color_ = value;
-        return std::move(*this);
-    }
 
     template<class Page>
     bool render(Page& page, std::uint32_t parent) {
@@ -138,26 +169,61 @@ public:
         } else if (!page.transaction().text(node, text_)) {
             return false;
         }
-        return page.transaction().u16(node, protocol::font_role,
-                                       static_cast<std::uint16_t>(font_)) &&
-               page.theme(node, protocol::foreground, color_);
+        return appearance(page, node);
     }
 private:
     std::string text_;
     State<int>* state_ = nullptr;
     State<std::string>* string_state_ = nullptr;
-    Font font_ = Font::body;
-    Color color_ = Color::text;
+};
+
+template<std::size_t N> struct FixedText {
+    char bytes[N];
+    constexpr FixedText(const char (&value)[N]) {
+        for (std::size_t i = 0; i < N; ++i) bytes[i] = value[i];
+    }
+};
+
+template<FixedText Value> class StaticTextView : public TextAppearance {
+public:
+    static constexpr Capacity capacity{1};
+    static constexpr auto descriptor = Value;
+    template<class Page> bool render(Page& page, std::uint32_t parent) {
+        const auto node = page.create(parent, protocol::text);
+        return node && page.transaction().text(node,
+            {descriptor.bytes, sizeof(descriptor.bytes) - 1}) && appearance(page, node);
+    }
+};
+
+template<std::size_t N> class InlineTextView : public TextAppearance {
+public:
+    static constexpr Capacity capacity{1};
+    explicit constexpr InlineTextView(const char (&value)[N]) {
+        for (std::size_t i = 0; i < N; ++i) text_[i] = value[i];
+        while (size_ < N && text_[size_]) ++size_;
+    }
+    template<class Page> bool render(Page& page, std::uint32_t parent) {
+        const auto node = page.create(parent, protocol::text);
+        return node && page.transaction().text(node, {text_.data(), size_}) &&
+               appearance(page, node);
+    }
+private:
+    std::array<char, N> text_{};
+    std::size_t size_ = 0;
 };
 
 inline TextView Text(std::string value) { return TextView(std::move(value)); }
-inline TextView Text(const char* value) { return TextView(std::string(value)); }
+template<std::size_t N> constexpr auto Text(const char (&value)[N]) {
+    return InlineTextView<N>(value);
+}
+template<FixedText Value> constexpr auto Text() { return StaticTextView<Value>{}; }
 inline TextView Text(State<int>& state) { return TextView(state); }
 inline TextView Text(State<std::string>& state) { return TextView(state); }
 
 template<class F>
 class ButtonView {
 public:
+    static constexpr Capacity capacity{2, 0, 1};
     ButtonView(std::string label, F callback)
         : label_(std::move(label)), callback_(std::move(callback)) {}
 
@@ -197,6 +263,7 @@ inline ButtonBuilder Button(std::string label) {
 
 class ToggleView {
 public:
+    static constexpr Capacity capacity{3, 1, 1};
     ToggleView(std::string label, State<bool>& value)
         : label_(std::move(label)), value_(value) {}
 
@@ -228,6 +295,7 @@ inline ToggleView Toggle(std::string label, State<bool>& value) {
 
 class SliderView {
 public:
+    static constexpr Capacity capacity{1, 1, 1};
     SliderView(State<int>& value, int minimum, int maximum, int step)
         : value_(value), minimum_(minimum), maximum_(maximum), step_(step) {}
 
@@ -261,6 +329,7 @@ inline SliderView Slider(State<int>& value, int minimum,
 
 class ProgressView {
 public:
+    static constexpr Capacity capacity{1, 1};
     ProgressView(State<int>& value, int minimum, int maximum)
         : value_(value), minimum_(minimum), maximum_(maximum) {}
 
@@ -291,6 +360,7 @@ inline ProgressView Progress(State<int>& value, int minimum = 0,
 
 class TextInputView {
 public:
+    static constexpr Capacity capacity{1, 1, 1};
     explicit TextInputView(State<std::string>& value) : value_(value) {}
 
     template<class Page> bool render(Page& page, std::uint32_t parent) {
@@ -316,11 +386,11 @@ enum class ImageFit : std::uint8_t { contain, stretch, cover };
 
 class ImageView {
 public:
+    static constexpr Capacity capacity{1};
     explicit ImageView(std::string asset) : asset_(std::move(asset)) {}
-    ImageView& fit(ImageFit value) & noexcept { fit_ = value; return *this; }
-    ImageView&& fit(ImageFit value) && noexcept {
-        fit_ = value;
-        return std::move(*this);
+    template<class Self> decltype(auto) fit(this Self&& self, ImageFit value) noexcept {
+        self.fit_ = value;
+        return std::forward<Self>(self);
     }
 
     template<class Page> bool render(Page& page, std::uint32_t parent) {
@@ -345,26 +415,25 @@ inline ImageView Image(std::string asset) {
 template<class... Children>
 class BoxView {
 public:
-    BoxView(std::uint8_t layout, Children... children)
+    static constexpr Capacity capacity = container_capacity<Children...>();
+    constexpr BoxView(std::uint8_t layout, Children... children)
         : layout_(layout), children_(std::move(children)...) {}
 
-    BoxView& gap(Dp value) & noexcept { gap_ = value.value; return *this; }
-    BoxView&& gap(Dp value) && noexcept {
-        gap_ = value.value;
-        return std::move(*this);
+    template<class Self> constexpr decltype(auto) gap(this Self&& self, Dp value) noexcept {
+        self.gap_ = value.value;
+        return std::forward<Self>(self);
     }
-    BoxView& padding(Dp value) & noexcept {
-        padding_ = value.value;
-        return *this;
+    template<class Self> constexpr decltype(auto) padding(this Self&& self, Dp value) noexcept {
+        self.padding_ = value.value;
+        return std::forward<Self>(self);
     }
-    BoxView&& padding(Dp value) && noexcept {
-        padding_ = value.value;
-        return std::move(*this);
+    template<class Self> constexpr decltype(auto) fill(this Self&& self) noexcept {
+        self.fill_ = true;
+        return std::forward<Self>(self);
     }
-    BoxView& fill() & noexcept { fill_ = true; return *this; }
-    BoxView&& fill() && noexcept {
-        fill_ = true;
-        return std::move(*this);
+    template<class Self> constexpr decltype(auto) fill_height(this Self&& self) noexcept {
+        self.fill_height_ = true;
+        return std::forward<Self>(self);
     }
 
     template<class Page>
@@ -373,6 +442,8 @@ public:
         if (!node || !page.transaction().u8(node, protocol::layout, layout_))
             return false;
         if (fill_ && !page.transaction().fill(node, protocol::width))
+            return false;
+        if (fill_height_ && !page.transaction().fill(node, protocol::height))
             return false;
         if (gap_ && !page.transaction().dp(node, protocol::gap, gap_))
             return false;
@@ -387,22 +458,23 @@ private:
     std::int32_t gap_ = 0;
     std::int32_t padding_ = 0;
     bool fill_ = false;
+    bool fill_height_ = false;
 };
 
 template<class... Children>
-auto Column(Children&&... children) {
+constexpr auto Column(Children&&... children) {
     return BoxView<std::decay_t<Children>...>(
         protocol::column, std::forward<Children>(children)...);
 }
 
 template<class... Children>
-auto Row(Children&&... children) {
+constexpr auto Row(Children&&... children) {
     return BoxView<std::decay_t<Children>...>(
         protocol::row, std::forward<Children>(children)...);
 }
 
 template<class... Children>
-auto Stack(Children&&... children) {
+constexpr auto Stack(Children&&... children) {
     return BoxView<std::decay_t<Children>...>(
         protocol::stack, std::forward<Children>(children)...);
 }
@@ -410,6 +482,7 @@ auto Stack(Children&&... children) {
 template<class... Children>
 class ScrollView {
 public:
+    static constexpr Capacity capacity = container_capacity<Children...>();
     explicit ScrollView(Children... children)
         : children_(std::move(children)...) {}
     template<class Page> bool render(Page& page, std::uint32_t parent) {
@@ -433,15 +506,28 @@ auto Scroll(Children&&... children) {
         std::forward<Children>(children)...);
 }
 
-template<class View, std::size_t MaxBindings = 32,
-         std::size_t MaxHandlers = 32>
+template<class View, std::size_t MaxBindings = capacity_of<View>.bindings,
+         std::size_t MaxHandlers = capacity_of<View>.handlers,
+         std::size_t MaxDynamic = capacity_of<View>.dynamic>
 class Page {
+    struct Dynamic {
+        void* object;
+        bool (*dirty)(void*) noexcept;
+        Result<void> (*prepare)(void*, Transaction<>&, std::uint32_t&, Transport&);
+        void (*commit)(void*, std::uint32_t) noexcept;
+        void (*rollback)(void*) noexcept;
+        bool (*handle)(void*, const Event&) noexcept;
+    };
 public:
+    static constexpr std::size_t binding_capacity = MaxBindings;
+    static constexpr std::size_t handler_capacity = MaxHandlers;
+    static constexpr std::size_t dynamic_capacity = MaxDynamic;
     Page(Transport& transport, View view)
         : transport_(transport), view_(std::move(view)) {}
     Page(const Page&) = delete;
     Page& operator=(const Page&) = delete;
     ~Page() {
+        rollback_dynamic();
         for (std::size_t i = 0; i < binding_count_; ++i)
             bindings_[i].unsubscribe(bindings_[i].state,
                                      bindings_[i].subscription);
@@ -460,22 +546,30 @@ public:
         next_id_ = 1;
         binding_count_ = 0;
         handler_count_ = 0;
+        dynamic_count_ = 0;
         dirty_words_.fill(0);
         auto root = create(0, protocol::root);
-        const bool rendered = root &&
+        bool rendered = root &&
             tx.u8(root, protocol::layout, protocol::column) &&
             view_.render(*this, root);
+        if (rendered) {
+            auto prepared = prepare_dynamic(tx);
+            if (!prepared) { mount_error_ = prepared.error(); rendered = false; }
+        }
         current_ = nullptr;
-        if (!rendered)
+        if (!rendered) {
+            rollback_dynamic();
             return std::unexpected(
                 mount_error_.value_or(tx.error()));
+        }
         auto result = tx.commit();
-        if (!result) return result;
+        if (!result) { rollback_dynamic(); return result; }
         generation_ = generation;
         mounted_ = true;
         for (std::size_t i = 0; i < binding_count_; ++i)
             bindings_[i].subscribe(bindings_[i].state,
                                    bindings_[i].subscription);
+        commit_dynamic(generation);
         return {};
     }
 
@@ -487,20 +581,18 @@ public:
         if (!generation) return std::unexpected(Error::limit_exceeded);
         Transaction tx(transport_, generation, 1, protocol::patch);
         if (!tx.valid()) return std::unexpected(tx.error());
-        for (std::size_t word = 0; word < dirty_words_.size(); ++word) {
-            auto bits = dirty_words_[word];
-            while (bits) {
-                const auto index = word * 64 + std::countr_zero(bits);
-                auto& binding = bindings_[index];
-                if (!binding.write(tx, binding.node, binding.state))
-                    return std::unexpected(tx.error());
-                bits &= bits - 1;
-            }
+        auto prepared = prepare_dynamic(tx);
+        if (!prepared) { rollback_dynamic(); return prepared; }
+        auto written = write_fragment(tx);
+        if (!written) {
+            rollback_dynamic();
+            return written;
         }
         auto result = tx.commit();
-        if (!result) return result;
+        if (!result) { rollback_dynamic(); return result; }
         generation_ = generation;
         dirty_words_.fill(0);
+        commit_dynamic(generation);
         return {};
     }
 
@@ -512,6 +604,11 @@ public:
             wire::get32(event.payload.data() + 8) != generation_ ||
             wire::get16(event.payload.data() + 12) == 0)
             return false;
+        return handle_fragment(event);
+    }
+
+    bool handle_fragment(const Event& event) noexcept {
+        if (event.payload.size() < 24) return false;
         auto node = wire::get32(event.payload.data() + 4);
         auto kind = wire::get16(event.payload.data() + 12);
         for (std::size_t i = 0; i < handler_count_; ++i) {
@@ -520,12 +617,16 @@ public:
                 return handler.call(handler.callback,
                                     event.payload.subspan(24));
         }
+        for (std::size_t i = 0; i < dynamic_count_; ++i)
+            if (dynamic_[i].handle(dynamic_[i].object, event)) return true;
         return false;
     }
 
     std::uint32_t generation() const noexcept { return generation_; }
     bool dirty() const noexcept {
         for (auto word : dirty_words_) if (word) return true;
+        for (std::size_t i = 0; i < dynamic_count_; ++i)
+            if (dynamic_[i].dirty(dynamic_[i].object)) return true;
         return false;
     }
     bool fail(Error error) noexcept {
@@ -534,10 +635,65 @@ public:
     }
     Transaction<>& transaction() noexcept { return *current_; }
 
+    template<class Module> bool dynamic(Module& module) noexcept {
+        if (dynamic_count_ == MaxDynamic) return fail(Error::resource_limit);
+        dynamic_[dynamic_count_++] = {
+            &module,
+            [](void* p) noexcept { return static_cast<Module*>(p)->dirty(); },
+            [](void* p, Transaction<>& tx, std::uint32_t& ids, Transport& transport) {
+                return static_cast<Module*>(p)->prepare(tx, ids, transport);
+            },
+            [](void* p, std::uint32_t generation) noexcept {
+                static_cast<Module*>(p)->commit(generation);
+            },
+            [](void* p) noexcept { static_cast<Module*>(p)->rollback(); },
+            [](void* p, const Event& event) noexcept {
+                return static_cast<Module*>(p)->handle(event);
+            }
+        };
+        return true;
+    }
+
+    Result<void> build_fragment(Transaction<>& tx, std::uint32_t parent,
+                                 std::uint32_t& ids) noexcept {
+        if (mounted_) return std::unexpected(Error::bad_state);
+        current_ = &tx;
+        external_ids_ = &ids;
+        const auto rendered = view_.render(*this, parent);
+        current_ = nullptr;
+        external_ids_ = nullptr;
+        if (!rendered) return std::unexpected(mount_error_.value_or(tx.error()));
+        return {};
+    }
+
+    void activate_fragment(std::uint32_t generation) noexcept {
+        if (!mounted_) {
+            mounted_ = true;
+            for (std::size_t i = 0; i < binding_count_; ++i)
+                bindings_[i].subscribe(bindings_[i].state, bindings_[i].subscription);
+        }
+        generation_ = generation;
+        dirty_words_.fill(0);
+    }
+
+    Result<void> write_fragment(Transaction<>& tx) noexcept {
+        for (std::size_t word = 0; word < dirty_words_.size(); ++word) {
+            auto bits = dirty_words_[word];
+            while (bits) {
+                auto& binding = bindings_[word * 64 + std::countr_zero(bits)];
+                if (!binding.write(tx, binding.node, binding.state))
+                    return std::unexpected(tx.error());
+                bits &= bits - 1;
+            }
+        }
+        return {};
+    }
+
     std::uint32_t create(std::uint32_t parent, std::uint8_t type,
                          std::uint8_t subtype = 0) noexcept {
-        if (!current_ || next_id_ == 0) return 0;
-        const auto id = next_id_++;
+        auto& ids = external_ids_ ? *external_ids_ : next_id_;
+        if (!current_ || ids == 0) return 0;
+        const auto id = ids++;
         return current_->create(id, parent, type, subtype) ? id : 0;
     }
 
@@ -641,6 +797,22 @@ public:
     }
 
 private:
+    Result<void> prepare_dynamic(Transaction<>& tx) noexcept {
+        for (std::size_t i = 0; i < dynamic_count_; ++i) {
+            auto result = dynamic_[i].prepare(dynamic_[i].object, tx, next_id_, transport_);
+            if (!result) return result;
+        }
+        return {};
+    }
+    void rollback_dynamic() noexcept {
+        for (std::size_t i = 0; i < dynamic_count_; ++i)
+            dynamic_[i].rollback(dynamic_[i].object);
+    }
+    void commit_dynamic(std::uint32_t generation) noexcept {
+        for (std::size_t i = 0; i < dynamic_count_; ++i)
+            dynamic_[i].commit(dynamic_[i].object, generation);
+    }
+
     struct Binding {
         void* state = nullptr;
         std::uint32_t node = 0;
@@ -660,12 +832,15 @@ private:
     View view_;
     std::array<Binding, MaxBindings> bindings_{};
     std::array<Handler, MaxHandlers> handlers_{};
+    std::array<Dynamic, MaxDynamic> dynamic_{};
     std::array<std::uint64_t, (MaxBindings + 63) / 64> dirty_words_{};
     Transaction<>* current_ = nullptr;
+    std::uint32_t* external_ids_ = nullptr;
     std::uint32_t generation_ = 0;
     std::uint32_t next_id_ = 1;
     std::size_t binding_count_ = 0;
     std::size_t handler_count_ = 0;
+    std::size_t dynamic_count_ = 0;
     bool mounted_ = false;
     std::optional<Error> mount_error_;
 };

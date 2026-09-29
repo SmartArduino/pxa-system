@@ -1,6 +1,7 @@
 #include <pxa/ui.hpp>
 
 #include <cassert>
+#include <cstdio>
 #include <vector>
 
 static std::vector<std::vector<std::byte>> packets;
@@ -51,6 +52,24 @@ int main() {
         Text("Counter").font(Font::title), Text(count),
         Button("Increment").on_click([&] { count.set(1); count.set(2); })
     ).gap(8_dp).padding(16_dp));
+    using Inferred = decltype(page);
+    using View = decltype(Column(Text("Counter"), Text(count),
+        Button("Increment").on_click([] {})));
+    static_assert(Inferred::binding_capacity == 1);
+    static_assert(Inferred::handler_capacity == 1);
+    static_assert(Inferred::dynamic_capacity == 0);
+    static_assert(capacity_of<View>.nodes == 5);
+    static_assert(sizeof(Page<View>) < sizeof(Page<View, 32, 32, 4>));
+    std::printf("UI page storage: inferred=%zu fixed32=%zu\n",
+                sizeof(Page<View>), sizeof(Page<View, 32, 32, 4>));
+    auto box = Column();
+    static_assert(std::same_as<decltype(box.gap(8_dp)), decltype(box)&>);
+    static_assert(std::same_as<decltype(Column().gap(8_dp)), decltype(box)&&>);
+    static_assert(std::same_as<decltype(Text("x").font(Font::body)), InlineTextView<2>&&>);
+    constexpr auto description = Column(Text<"Static title">().font(Font::title),
+                                       Text("Inline text")).gap(8_dp);
+    static_assert(capacity_of<decltype(description)>.bindings == 0);
+    static_assert(sizeof(StaticTextView<"A long shared readonly text descriptor">) < 8);
 
     assert(page.mount());
     assert(page.generation() == 1);
