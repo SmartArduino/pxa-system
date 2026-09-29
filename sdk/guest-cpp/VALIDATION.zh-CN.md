@@ -1,7 +1,7 @@
 # C++ Guest SDK 验证记录
 
 状态：开发中，尚未达到 `local/PLAN.md` 的完整交付条件。
-以下为 2026-09-29 本地执行得到的阶段证据，不代表完整 SDK 验收。
+以下为 2026-09-29 至 2026-09-30 本地执行得到的阶段证据，不代表完整 SDK 验收。
 
 ## 已执行
 
@@ -27,6 +27,11 @@
 - FS 测试覆盖非法路径/flags、路径存储与临时服务对象、移动与关闭、短读
   短写、定位、stat、目录项拥有存储、目录结束/畸形结果、最大 538 字节
   rename、取消以及晚到成功句柄回收。测试使用默认 1024 字节协程槽。
+- Assets 测试先销毁路径字符串及临时服务入口，再启动 load/read/query，
+  确认最终协议包路径和返回数据正确；资源取消及晚到回收仍通过。
+  额外使用 Clang 的 AddressSanitizer/UndefinedBehaviorSanitizer、
+  use-after-scope 和 detect_stack_use_after_return=1 运行，未报告生命周期错误。
+  其余小型异步服务入口由协程按值持有，资源和大缓冲区按文档保持借用。
 - `bash tools/package/test_guest_sdk.sh`：现有 C SDK 与应用回归通过。
 - WASI SDK 34 x86_64 Linux 包已按锁定 SHA256 验证；旧工具链缓存保留。
 - C++26 virtual-list 生成 Linux x86_64、ESP32-S3、ESP32-S31 Wasm/AOT；
@@ -55,6 +60,11 @@
 - C++26 开发包 `/tmp/pxa-cpp26-sdk-20260929` 的头文件、实现、CMake、
   特性探测与工具在包内完成 counter Wasm/Linux AOT 编译和签名打包；
   输出在 `/tmp/pxa-cpp26-external-output`，不使用 C Guest SDK。
+- 更新的独立包 `/tmp/pxa-cpp26-sdk-modules-release-20260930` 在 `/tmp` 工作
+  目录构建 modules 的 Linux/S3/S31 Wasm/AOT 并签名打包。应用、模型对象模块、
+  SDK 实现与 CMake 均来自该包；只有锁定编译器和签名密钥由外部路径提供。
+  这同时验证 CPP 对象模块的 include、C++26 和异常/RTTI 配置传播，以及固定
+  文字描述在真实 WASI 编译中的使用。新异步入口的 audio 示例也完成 S31 AOT。
 
 ## 实机
 
@@ -64,6 +74,10 @@
 - S31 的 files RISC-V AOT 安装并启动；解锁后保存显示 1/Saved，停止后
   再运行并解锁显示 1/Loaded。截图为 `/tmp/pxa-cpp-files-s31-saved.png`
   与 `/tmp/pxa-cpp-files-s31-loaded.png`；验证后已停止应用。
+- S31 实际安装运行 C++26 counter，初次截图显示 0；自动锁屏后恢复，
+  继续点击显示 2，截图为 `/tmp/pxa-cpp26-counter-s31-final.png`。
+  验证后已停止示例。这验证该次产物的 ABI/运行与 UI 恢复，不代表完整服务或
+  当前所有模块的实机验收。
 - pai-touch `/dev/ttyACM0`：设备报告 `esp32s3`、固件 `202d179-dirty`。
   storage 上传成功但安装失败，日志为 LittleFS `No more free space` 和
   prepare-incoming status=-11。已删除本次上传的 inbox 包；未删除已有应用

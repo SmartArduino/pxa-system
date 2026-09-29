@@ -15,7 +15,8 @@ if(DEFINED PXA_CPP_SDK_DIR AND IS_DIRECTORY "${PXA_CPP_SDK_DIR}/include"
         target_compile_options(pxa_guest_cpp PUBLIC
             "$<$<COMPILE_LANGUAGE:CXX>:-std=c++2c>")
     endif()
-    target_compile_options(pxa_guest_cpp PUBLIC -fno-exceptions -fno-rtti)
+    target_compile_options(pxa_guest_cpp PUBLIC
+        "$<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions;-fno-rtti>")
     target_compile_options(pxa_guest_cpp PRIVATE
         -O3 -ffunction-sections -fdata-sections)
 endif()
@@ -66,7 +67,7 @@ endfunction()
 # A module is an object library so several source folders can be composed into
 # one Component without creating an additional Wasm module or ambient imports.
 function(pxa_add_module target)
-    cmake_parse_arguments(PXA "" ""
+    cmake_parse_arguments(PXA "CPP" ""
         "SOURCES;SOURCE_DIRS;INCLUDE_DIRS;DEFINITIONS" ${ARGN})
     _pxa_collect_c_sources(_pxa_sources SOURCES ${PXA_SOURCES}
         SOURCE_DIRS ${PXA_SOURCE_DIRS})
@@ -77,6 +78,12 @@ function(pxa_add_module target)
     add_library(${target} OBJECT ${_pxa_sources})
     _pxa_guest_target_defaults(${target})
     target_compile_features(${target} PRIVATE c_std_11)
+    if(PXA_CPP)
+        if(NOT TARGET Pxa::Cpp)
+            message(FATAL_ERROR "PXA_CPP_SDK_DIR must point to the PXA C++ SDK")
+        endif()
+        target_link_libraries(${target} PUBLIC Pxa::Cpp)
+    endif()
     target_include_directories(${target} PUBLIC ${PXA_INCLUDE_DIRS})
     target_compile_definitions(${target} PRIVATE ${PXA_DEFINITIONS})
 endfunction()

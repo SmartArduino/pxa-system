@@ -1,0 +1,5 @@
+cmake_minimum_required(VERSION 3.20)
+project(pxa_cpp_modules LANGUAGES CXX)
+include("${PXA_CMAKE_MODULE_DIR}/PxaGuest.cmake")
+pxa_add_module(model CPP SOURCE_DIRS model INCLUDE_DIRS model)
+pxa_add_app(pxa_main CPP COMPONENT_ID main SOURCES main.cpp MODULES model)

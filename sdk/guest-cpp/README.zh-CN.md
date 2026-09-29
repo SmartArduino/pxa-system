@@ -144,8 +144,12 @@ ready、ended、stopped、replaced、error。PCM 可以短写，`would_block` �
 后续事件重试，不在回调内忙等。权限撤销后 Host 会关闭绑定资源，后续操作
 返回错误；`decode_permission_revoked` 的字符串和字节视图仅在当前事件有效。
 
-异步函数参数中的 `string_view`、`span` 和服务资源属于借用。直到任务完成或
-取消，调用方必须保持它们及服务资源有效；默认封包缓冲区来自有界协程池。
+Assets 的 load/query/read 和 FS 路径在任务创建时复制到有界存储，源字符串
+可以立即销毁；Assets 直接提交协程内的最终包。读取的输出缓冲区仍为借用。
+Clock/Window/Game/Audio/Storage/Permission 的协程按值保存小型服务入口，
+`ctx.service()` 临时对象可以立即销毁；Context 必须活到任务完成或取消。
+其他异步接口的 `string_view`、`span`、权限及音频等资源对象仍按其接口约定借用，
+调用方必须保持它们有效。默认封包与协程帧均有界。
 
 当前实现包括 Core 消息编解码、资源句柄、应用入口、有界协程和请求表、
 声明式布局/常用控件、状态绑定与导航，Storage/Permission/Audio/FS，
@@ -157,6 +161,10 @@ ready、ended、stopped、replaced、error。PCM 可以短写，`would_block` �
 构建应用时，CMake 中使用 `pxa_add_app`，并提供
 `PXA_CPP_SDK_DIR`、`PXA_ARTIFACT_DIR` 和 `PXA_CMAKE_MODULE_DIR`。
 `Pxa::Cpp` 包含运行时静态库，头文件中的模板只负责类型化 UI 与任务。
+多文件模块使用 `pxa_add_module(model CPP SOURCE_DIRS model INCLUDE_DIRS model)`，
+再通过 `pxa_add_app(... CPP MODULES model)` 组合。CPP 选项让模块同时获得
+SDK include、C++26 模式和异常/RTTI 配置，不依赖最终可执行文件反向传播编译选项。
+完整示例见 `examples/modules`。
 使用仓库中的 `tools/package/build_guest_cpp_sdk.sh <输出目录>` 生成可搬移的
 开发包，其中有 CMake、打包工具、锁定的工具链信息、示例及 `VERSION`。
 开发包没有 C Guest SDK 依赖；用户可在源码仓库之外编译和打包：
