@@ -126,6 +126,10 @@ public:
                       std::uint64_t token,
                       std::span<const std::byte> payload = {}) noexcept;
 
+    Result<void> send_prebuilt(std::uint16_t service, std::uint16_t opcode,
+                               std::uint64_t token,
+                               std::span<std::byte> packet) noexcept;
+
     Result<std::uint32_t> io(std::uint64_t handle, std::uint32_t operation,
                              std::span<std::byte> buffer) noexcept;
 

@@ -5,6 +5,7 @@
 #include "game_service.hpp"
 #include "window.hpp"
 #include "assets.hpp"
+#include "storage.hpp"
 #include "clock.hpp"
 #include "log.hpp"
 
@@ -30,6 +31,7 @@ public:
     game::Service game() noexcept { return {transport_, requests_}; }
     WindowService window() noexcept { return {transport_, requests_}; }
     AssetService assets() noexcept { return {transport_, requests_}; }
+    StorageService storage() noexcept { return {transport_, requests_}; }
     ClockService clock() noexcept { return {transport_, requests_}; }
     LogService log() noexcept { return LogService(transport_); }
     bool foreground() const noexcept { return foreground_; }

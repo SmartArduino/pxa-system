@@ -35,6 +35,12 @@ PXA_APPLICATION(Counter)
 `State<int>` 变化后，框架在当前事件结束前合并并提交一次 PATCH。
 控件节点 ID 和 UI 事务由 SDK 管理。
 
+`examples/storage` 演示异步读取和持久化。`ctx.storage().get(key, buffer)`
+把值复制到调用方缓冲区并返回实际字节数；`set(key, value)` 使用默认 512 字节
+封包缓冲区。较大的值可调用 `set(key, value, packet)`；最大 key/value 组合需
+2140 字节的复用缓冲区，SDK 直接在其中生成最终协议包，不额外复制大值。协议允许最大
+2048 字节，但设备 Host 可以配置更低的单值上限，超过时由 Host 返回错误。
+
 当前实现包括 Core 消息编解码、资源句柄、应用入口、有界协程和请求表、
 基础声明式 Row/Column/Text/Button、整数状态绑定，以及 GameRender 的
 上下文创建、清屏、矩形和精灵批次 DrawList。计划中的完整服务接口、

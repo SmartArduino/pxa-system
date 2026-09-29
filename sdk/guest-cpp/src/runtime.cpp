@@ -50,6 +50,27 @@ Result<void> Transport::send(std::uint16_t service, std::uint16_t opcode,
     return {};
 }
 
+Result<void> Transport::send_prebuilt(
+    std::uint16_t service, std::uint16_t opcode, std::uint64_t token,
+    std::span<std::byte> packet) noexcept {
+    if (phase_ != Phase::start && phase_ != Phase::event)
+        return std::unexpected(Error::bad_state);
+    if (!service || !opcode || packet.size() < wire::header_bytes ||
+        packet.size() > wire::max_control_bytes)
+        return std::unexpected(Error::invalid_argument);
+    wire::put16(packet.data(), service);
+    wire::put16(packet.data() + 2, opcode);
+    wire::put64(packet.data() + 4, token);
+    wire::put32(packet.data() + 12,
+                static_cast<std::uint32_t>(packet.size() - wire::header_bytes));
+    wire::put32(packet.data() + 16, 0);
+    const auto result = pxa_submit(
+        reinterpret_cast<const std::uint8_t*>(packet.data()),
+        static_cast<std::uint32_t>(packet.size()));
+    if (result != 0) return std::unexpected(static_cast<Error>(result));
+    return {};
+}
+
 Result<std::uint32_t> Transport::io(std::uint64_t handle,
                                      std::uint32_t operation,
                                      std::span<std::byte> buffer) noexcept {

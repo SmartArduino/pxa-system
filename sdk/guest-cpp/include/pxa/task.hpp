@@ -221,6 +221,12 @@ private:
 
 class Response {
 public:
+    struct PrebuiltPacket {
+        explicit PrebuiltPacket(std::span<std::byte> packet) noexcept
+            : bytes(packet) {}
+        std::span<std::byte> bytes;
+    };
+
     Response(Transport& transport, RequestTable& requests,
              std::uint16_t service, std::uint16_t opcode,
              std::span<const std::byte> payload,
@@ -228,6 +234,11 @@ public:
         : transport_(transport), requests_(requests), service_(service),
           opcode_(opcode), payload_(payload),
           close_late_handle_(close_late_handle) {}
+    Response(Transport& transport, RequestTable& requests,
+             std::uint16_t service, std::uint16_t opcode,
+             PrebuiltPacket packet) noexcept
+        : transport_(transport), requests_(requests), service_(service),
+          opcode_(opcode), packet_(packet.bytes) {}
     Response(const Response&) = delete;
     Response& operator=(const Response&) = delete;
     ~Response() {
@@ -252,7 +263,9 @@ public:
         });
         if (!added) { error_ = added.error(); return false; }
         registered_ = true;
-        auto sent = transport_.send(service_, opcode_, token_, payload_);
+        auto sent = packet_.empty()
+            ? transport_.send(service_, opcode_, token_, payload_)
+            : transport_.send_prebuilt(service_, opcode_, token_, packet_);
         if (!sent) {
             error_ = sent.error();
             requests_.remove(token_);
@@ -280,6 +293,7 @@ private:
     std::uint16_t service_;
     std::uint16_t opcode_;
     std::span<const std::byte> payload_;
+    std::span<std::byte> packet_;
     std::coroutine_handle<> suspended_{};
     std::uint64_t token_ = 0;
     std::optional<Event> event_;
