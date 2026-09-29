@@ -52,6 +52,7 @@
 #include "include/lvgl/drivers/sdl/lv_sdl_keyboard.h"
 #include "desktop_net.h"
 #include "pxa/device.h"
+#include "pxa/sensor.h"
 #include "src/misc/cache/instance/lv_image_cache.h"
 
 #define PRODUCT_CLOCK_SERVICE PXA_CLOCK_SERVICE_ID
@@ -242,6 +243,8 @@ typedef struct {
     pxa_surface_service_t *surfaces;
     pxa_game_render_service_t *game_render;
     pxa_device_service_t *device;
+    pxa_sensor_service_t *sensor;
+    int32_t sensor_temperature_milli_celsius;
     pxa_net_service_t *net;
     pxa_log_service_t *log;
     volatile uint8_t net_completion_ready;
@@ -1627,6 +1630,12 @@ static void dispatch_component_events(product_host_t *host) {
         int delivered = 0;
         if (host->assets != NULL) pxa_assets_service_poll(host->assets);
         if (host->audio != NULL) pxa_audio_service_poll(host->audio);
+        if (host->sensor != NULL && pxa_sensor_has_active_subscriptions(host->sensor)) {
+            pxa_component_t affected[PRODUCT_COMPONENTS];
+            size_t count = 0;
+            (void)pxa_sensor_poll(host->sensor, now_us(NULL), affected,
+                                  PRODUCT_COMPONENTS, &count);
+        }
         SDL_AtomicSet(&host->asset_ready, 0);
         if (host->ipc != NULL) (void)pxa_ipc_flush(host->ipc);
         for (uint16_t index = 0; index < host->service_component_count;
@@ -2733,6 +2742,28 @@ static void desktop_net_completion_ready(void *context) {
     if (host != NULL) host->net_completion_ready = 1;
 }
 
+static pxa_status_t desktop_sensor_subscribe(void *context, uint16_t id,
+                                            uint32_t period_ms, void **subscription) {
+    (void)period_ms;
+    if (context == NULL || subscription == NULL || id != 1)
+        return PXA_STATUS_NOT_FOUND;
+    *subscription = context;
+    return PXA_STATUS_OK;
+}
+
+static pxa_status_t desktop_sensor_read(void *context, void *subscription,
+    uint16_t id, int32_t values[PXA_SENSOR_MAX_DIMENSIONS]) {
+    product_host_t *host = context;
+    if (host == NULL || subscription != context || id != 1)
+        return PXA_STATUS_NOT_FOUND;
+    values[0] = host->sensor_temperature_milli_celsius;
+    return PXA_STATUS_OK;
+}
+
+static void desktop_sensor_unsubscribe(void *context, void *subscription, uint16_t id) {
+    (void)context; (void)subscription; (void)id;
+}
+
 static void drain_net_completions(product_host_t *host) {
     pxa_component_t affected[4];
     size_t count = 0;
@@ -2788,13 +2819,15 @@ static int run_product_simulator(const options_t *input,
     pxa_game_render_config_t game_render_config = {0};
     pxa_assets_config_t assets_config = {0};
     pxa_device_config_t device_config = {0};
+    pxa_sensor_config_t sensor_config = {0};
+    pxa_sensor_descriptor_t sensor_descriptor = {0};
     pxa_net_config_t net_config = {0};
     pxa_net_backend_t net_backend = {0};
     pxa_log_config_t log_config = {0};
     pxa_service_ops_t clock_service = {0};
     pxa_service_ops_t store_installer_service = {0};
     pxa_wamr_engine_config_t engine_config = {0};
-    pxa_package_service_capability_t capabilities[17] = {0};
+    pxa_package_service_capability_t capabilities[18] = {0};
     pxa_package_activation_profile_t activation = {0};
     pxa_package_host_profile_t profile = {0};
     pxa_activation_plan_t *plan = NULL;
@@ -2806,6 +2839,7 @@ static int run_product_simulator(const options_t *input,
     void *ipc_workspace = NULL;
     void *surface_workspace = NULL, *game_render_workspace = NULL;
     void *device_workspace = NULL, *net_workspace = NULL;
+    void *sensor_workspace = NULL;
     void *log_workspace = NULL, *assets_workspace = NULL;
     void *plan_workspace = NULL, *coordinator_workspace = NULL;
     uint8_t *encoded = NULL, *public_key = NULL;
@@ -3364,6 +3398,45 @@ static int run_product_simulator(const options_t *input,
             PXA_STATUS_OK ||
         pxa_device_service_register(host.device) != PXA_STATUS_OK)
         goto done;
+    if (manifest_uses_service(manifest, PXA_SENSOR_SERVICE_ID)) {
+        stage = "sensor service";
+        const char *temperature = getenv("PXA_SIM_SENSOR_TEMPERATURE_MILLI_CELSIUS");
+        if (temperature != NULL) {
+            char *end;
+            errno = 0;
+            long value = strtol(temperature, &end, 10);
+            if (errno || end == temperature || *end || value < INT32_MIN || value > INT32_MAX) {
+                fprintf(stderr, "Invalid PXA_SIM_SENSOR_TEMPERATURE_MILLI_CELSIUS\n");
+                goto done;
+            }
+            host.sensor_temperature_milli_celsius = (int32_t)value;
+            sensor_descriptor.id = 1;
+            static const uint8_t temperature_semantic[] = "ambient.temperature";
+            sensor_descriptor.semantic = (pxa_bytes_t){temperature_semantic,
+                sizeof(temperature_semantic) - 1};
+            sensor_descriptor.unit = PXA_SENSOR_UNIT_MILLI_CELSIUS;
+            sensor_descriptor.dimensions = 1;
+            sensor_descriptor.min_period_ms = 100;
+            sensor_descriptor.max_period_ms = 60000;
+            sensor_config.descriptors = &sensor_descriptor;
+            sensor_config.descriptor_count = 1;
+            fprintf(stderr, "PXA SIM SENSOR ambient.temperature=%ld milli-celsius\n", value);
+        }
+        sensor_config.struct_size = sizeof(sensor_config);
+        sensor_config.max_subscriptions = PRODUCT_COMPONENTS * 2;
+        sensor_config.max_subscriptions_per_component = 2;
+        sensor_config.provider_context = &host;
+        sensor_config.subscribe = desktop_sensor_subscribe;
+        sensor_config.read = desktop_sensor_read;
+        sensor_config.unsubscribe = desktop_sensor_unsubscribe;
+        sensor_config.permissions = host.permissions;
+        size_t workspace_size = pxa_sensor_service_workspace_size(&sensor_config);
+        sensor_workspace = malloc(workspace_size);
+        if (sensor_workspace == NULL || !workspace_size ||
+            pxa_sensor_service_init(sensor_workspace, workspace_size, host.runtime,
+                                    &sensor_config, &host.sensor) != PXA_STATUS_OK ||
+            pxa_sensor_service_register(host.sensor) != PXA_STATUS_OK) goto done;
+    }
     stage = "net service";
     if (!pxsys_desktop_net_backend(&net_backend,
                                    desktop_net_completion_ready, &host))
@@ -3433,7 +3506,10 @@ static int run_product_simulator(const options_t *input,
     capabilities[16].service = PXA_ASSETS_SERVICE_ID;
     capabilities[16].version.major = PXA_ASSETS_SERVICE_MAJOR;
     capabilities[16].version.minor = PXA_ASSETS_SERVICE_MINOR;
-    activation.services = capabilities; activation.service_count = 17;
+    capabilities[17].service = PXA_SENSOR_SERVICE_ID;
+    capabilities[17].version.major = PXA_SENSOR_SERVICE_MAJOR;
+    capabilities[17].version.minor = PXA_SENSOR_SERVICE_MINOR;
+    activation.services = capabilities; activation.service_count = 18;
     profile.target = (pxa_bytes_t){(const uint8_t *)"linux-x86_64", sizeof("linux-x86_64") - 1u};
     profile.engine = (pxa_bytes_t){(const uint8_t *)"wamr", 4};
     profile.engine_abi = (pxa_bytes_t){(const uint8_t *)PXSYS_WAMR_ENGINE_ABI,
@@ -3682,6 +3758,7 @@ done:
     free(coordinator_workspace); free(plan_workspace); free(engine_workspace); free(lvgl_workspace);
     free(log_workspace); free(game_render_workspace); free(surface_workspace);
     free(device_workspace); free(net_workspace);
+    free(sensor_workspace);
     free(ui_workspace); free(window_workspace); free(permission_workspace); free(runtime_workspace); free(manifest_workspace);
     free(fs_service_workspace); free(fs_backend_workspace); free(fs_path); free(fs_parent);
     free(ipc_workspace);
