@@ -1,0 +1,10 @@
+{
+  "format": "pxa-package-source-0.1",
+  "id": "pxa-direct-parallel",
+  "version": "0.1.0",
+  "name": "Direct Parallel Test",
+  "description": "Multi-source direct C build regression",
+  "components": [
+    {"id": "main", "kind": "ui", "sources": ["main.c", "helper.c"]}
+  ]
+}

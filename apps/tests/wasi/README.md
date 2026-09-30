@@ -11,6 +11,8 @@
 
 All C/WASI examples use the pinned WASI SDK 34. Its libc imports
 `clock_time_get` here, so the source manifests declare both clock features.
+The same regression script also compares serial and parallel direct C builds
+of `../direct-parallel` byte for byte.
 
 These Apps are intentionally outside `apps/pxa`; they are not included in
 factory assets. See `../../README.md` for the package layout.

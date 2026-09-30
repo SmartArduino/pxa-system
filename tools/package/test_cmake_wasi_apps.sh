@@ -4,6 +4,7 @@ set -euo pipefail
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 pxa_system_dir="$(cd "$script_dir/../.." && pwd)"
 test_apps_root="$pxa_system_dir/apps/tests/wasi"
+direct_apps_root="$pxa_system_dir/apps/tests"
 wasi_sdk_dir="$("$script_dir/resolve_wasi_sdk.sh")"
 wamrc_bin="${WAMRC:-}"
 
@@ -70,5 +71,30 @@ fi
 grep -q "random_get requires features: random" \
     "$work_dir/undeclared-random.log"
 ! test -e "$work_dir/pxa-wasi-undeclared-random.pxa"
+
+for jobs in 1 4; do
+  PXA_APP_SOURCE_ROOT="$direct_apps_root" \
+  PXA_PACKAGE_OUTPUT_ROOT="$work_dir/jobs-$jobs" \
+  PXA_SIGNING_KEY="$pxa_system_dir/apps/pxa/.dev-signing/publisher-private.pem" \
+  PXA_BUILD_JOBS="$jobs" WASI_SDK_DIR="$wasi_sdk_dir" WAMRC="$wamrc_bin" \
+    "$script_dir/package_app.sh" direct-parallel simulator \
+      "$work_dir/jobs-$jobs/pxa-direct-parallel"
+done
+cmp "$work_dir/jobs-1/pxa-direct-parallel/artifacts/main.wasm" \
+    "$work_dir/jobs-4/pxa-direct-parallel/artifacts/main.wasm"
+cmp "$work_dir/jobs-1/pxa-direct-parallel/artifacts/main.linux-x86_64.aot" \
+    "$work_dir/jobs-4/pxa-direct-parallel/artifacts/main.linux-x86_64.aot"
+if PXA_APP_SOURCE_ROOT="$direct_apps_root" \
+   PXA_PACKAGE_OUTPUT_ROOT="$work_dir/aot-failure" \
+   PXA_SIGNING_KEY="$pxa_system_dir/apps/pxa/.dev-signing/publisher-private.pem" \
+   PXA_BUILD_JOBS=4 WASI_SDK_DIR="$wasi_sdk_dir" WAMRC=/bin/false \
+   "$script_dir/package_app.sh" direct-parallel simulator \
+     "$work_dir/aot-failure/pxa-direct-parallel" \
+     >"$work_dir/aot-failure.log" 2>&1; then
+  echo "Failed AoT job unexpectedly produced a package" >&2
+  exit 1
+fi
+grep -q "PXA build failed: AOT main" "$work_dir/aot-failure.log"
+! test -e "$work_dir/aot-failure/pxa-direct-parallel.pxa"
 
 echo "PXA CMake/WASI test Apps OK"

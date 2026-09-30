@@ -362,6 +362,11 @@ bash /path/to/pxa-cpp-sdk/tools/package/package_app.sh \
     my-app simulator /path/to/output/pxa-my-app
 ```
 
+打包器默认最多使用 8 个主机编译任务；设置 `PXA_BUILD_JOBS=4` 可按机器内存
+调整，`PXA_BUILD_JOBS=1` 可复现串行构建。CMake 项目有 Ninja 时默认使用
+Ninja，也可用 `CMAKE_GENERATOR='Unix Makefiles'` 指定生成器。独立 Component
+的 AOT 编译按同一任务上限并发。这些设置只影响主机打包过程，不启用 Guest 线程。
+
 开发包自带构建时所用的 `wamrc`，因此当前预编译包仅适用于相同的 Linux
 主机架构；其他主机可以通过 `WAMRC` 指定匹配的编译器。WASI SDK 34 可由
 打包脚本按锁定摘要下载，也可显式设置 `WASI_SDK_DIR`。发布时先更新 PXA

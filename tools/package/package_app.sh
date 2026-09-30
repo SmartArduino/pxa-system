@@ -23,7 +23,6 @@ if [[ "$app_dir" != "$app_source_root/$app_name" ]]; then
   echo "PXA App source must remain below its source root: $app_name" >&2
   exit 2
 fi
-clang_bin="${CLANG:-clang}"
 cmake_bin="${CMAKE:-cmake}"
 wamrc_bin="${WAMRC:-}"
 private_key="${PXA_SIGNING_KEY:-$app_source_root/.dev-signing/publisher-private.pem}"
@@ -106,6 +105,8 @@ if [[ ! -f "$private_key" ]]; then
   echo "PXA signing key is missing: $private_key" >&2
   exit 1
 fi
+wasi_sdk_dir="$("$script_dir/resolve_wasi_sdk.sh")"
+clang_bin="$wasi_sdk_dir/bin/clang"
 if [[ -z "$wamrc_bin" ]]; then
   if [[ -x "$pxa_system_dir/bin/wamrc" ]]; then
     wamrc_bin="$pxa_system_dir/bin/wamrc"
@@ -121,10 +122,45 @@ if [[ ! -x "$wamrc_bin" ]]; then
   exit 1
 fi
 
+build_jobs="${PXA_BUILD_JOBS:-${CMAKE_BUILD_PARALLEL_LEVEL:-}}"
+if [[ -z "$build_jobs" ]]; then
+  build_jobs=4
+  if command -v nproc >/dev/null 2>&1; then
+    build_jobs="$(nproc)"
+    if (( build_jobs > 8 )); then build_jobs=8; fi
+  fi
+fi
+if [[ ! "$build_jobs" =~ ^[1-9][0-9]?$ ]] || (( build_jobs > 64 )); then
+  echo "PXA_BUILD_JOBS must be an integer from 1 to 64" >&2
+  exit 2
+fi
+
 work_dir="$(mktemp -d "${TMPDIR:-/tmp}/pxa-$app_name-$package_target.XXXXXX")"
 trap 'rm -rf "$work_dir"' EXIT
 package_dir="$work_dir/package"
 mkdir -p "$package_dir/artifacts"
+
+job_pids=()
+job_names=()
+job_logs=()
+job_failed=0
+wait_build_batch() {
+  local index
+  for ((index = 0; index < ${#job_pids[@]}; ++index)); do
+    if ! wait "${job_pids[index]}"; then
+      echo "PXA build failed: ${job_names[index]}" >&2
+      job_failed=1
+    fi
+  done
+  for ((index = 0; index < ${#job_logs[@]}; ++index)); do
+    if [[ -s "${job_logs[index]}" ]]; then
+      cat "${job_logs[index]}"
+    fi
+  done
+  job_pids=()
+  job_names=()
+  job_logs=()
+}
 
 generated_include_dir="$work_dir/generated/include"
 generated_include_args=()
@@ -279,15 +315,19 @@ if [[ -n "${PXA_EXTRA_AOT_DIR:-}" ]]; then
 fi
 
 if [[ "$build_system" == "cmake" ]]; then
-  wasi_sdk_dir="$("$script_dir/resolve_wasi_sdk.sh")"
   cmake_source_dir="$(realpath -m -- "$app_dir/$build_source_dir")"
   if [[ "$cmake_source_dir" != "$app_dir" && "$cmake_source_dir" != "$app_dir/"* ]] ||
      [[ ! -f "$cmake_source_dir/CMakeLists.txt" ]]; then
     echo "Invalid PXA CMake source directory: $build_source_dir" >&2
     exit 1
   fi
+  cmake_generator_args=()
+  if [[ -z "${CMAKE_GENERATOR:-}" ]] && command -v ninja >/dev/null 2>&1; then
+    cmake_generator_args=(-G Ninja)
+  fi
   joined_definitions="$(IFS=';'; printf '%s' "${app_definitions[*]}")"
-  "$cmake_bin" -S "$cmake_source_dir" -B "$work_dir/cmake-build" \
+  "$cmake_bin" "${cmake_generator_args[@]}" -S "$cmake_source_dir" \
+    -B "$work_dir/cmake-build" \
     -DCMAKE_TOOLCHAIN_FILE="$pxa_system_dir/sdk/cmake/pxa-wasi-toolchain.cmake" \
     -DWASI_SDK_DIR="$wasi_sdk_dir" \
     -DPXA_GUEST_SDK_DIR="$pxa_system_dir/sdk/guest-c" \
@@ -301,7 +341,8 @@ if [[ "$build_system" == "cmake" ]]; then
   for component_id in "${component_ids[@]}"; do
     cmake_targets+=("${component_value_map[$component_id]}")
   done
-  "$cmake_bin" --build "$work_dir/cmake-build" --target "${cmake_targets[@]}"
+  "$cmake_bin" --build "$work_dir/cmake-build" --parallel "$build_jobs" \
+    --target "${cmake_targets[@]}"
 else
   linear_memory_link_args=()
   if [[ "$linear_memory_maximum" -ne 0 ]]; then
@@ -309,18 +350,36 @@ else
   fi
   for component_id in "${component_ids[@]}"; do
     readarray -t component_sources <<< "${component_value_map[$component_id]}"
-    "$clang_bin" --target=wasm32-unknown-unknown -O3 -fno-builtin -nostdlib \
-      -I"$pxa_system_dir/sdk/guest-c/include" \
-      -I"${PXA_APP_COMMON_DIR:-$app_source_root/common}" \
-      "${generated_include_args[@]}" \
-      "${app_define_args[@]}" \
+    object_dir="$work_dir/objects/$component_id"
+    mkdir -p "$object_dir"
+    component_objects=()
+    job_failed=0
+    for ((source_index = 0; source_index < ${#component_sources[@]}; ++source_index)); do
+      object_path="$object_dir/$source_index.o"
+      component_objects+=("$object_path")
+      compile_log="$object_dir/$source_index.log"
+      "$clang_bin" --target=wasm32-unknown-unknown -O3 -fno-builtin -nostdlib \
+        -I"$pxa_system_dir/sdk/guest-c/include" \
+        -I"${PXA_APP_COMMON_DIR:-$app_source_root/common}" \
+        "${generated_include_args[@]}" \
+        "${app_define_args[@]}" \
+        -c "${component_sources[source_index]}" -o "$object_path" \
+        >"$compile_log" 2>&1 &
+      job_pids+=("$!")
+      job_names+=("${component_sources[source_index]}")
+      job_logs+=("$compile_log")
+      if (( ${#job_pids[@]} >= build_jobs )); then wait_build_batch; fi
+    done
+    if (( ${#job_pids[@]} )); then wait_build_batch; fi
+    if (( job_failed )); then exit 1; fi
+    "$clang_bin" --target=wasm32-unknown-unknown -nostdlib \
       -Wl,--no-entry \
       -Wl,--allow-undefined-file="$pxa_system_dir/sdk/guest-c/pxa-imports.txt" \
       -Wl,--export=pxa_app_start \
       -Wl,--export=pxa_app_on_event -Wl,--export=pxa_app_stop \
       -Wl,--export=__heap_base -Wl,--export=__data_end \
       "${linear_memory_link_args[@]}" \
-      "${component_sources[@]}" -o "$package_dir/artifacts/$component_id.wasm"
+      "${component_objects[@]}" -o "$package_dir/artifacts/$component_id.wasm"
   done
 fi
 
@@ -339,11 +398,23 @@ for component_id in "${component_ids[@]}"; do
     --core-major "$core_major" \
     --manifest-source "$app_dir/package.json" \
     --component-id "$component_id"
-  if [[ "${component_artifact_map[$component_id]}" != "wasm" ]]; then
-    "$wamrc_bin" --target="$aot_target" "${wamrc_extra_args[@]}" \
-      -o "$package_dir/artifacts/$component_id.$manifest_target.aot" \
-      "$package_dir/artifacts/$component_id.wasm"
-  fi
+done
+
+job_failed=0
+for component_id in "${component_ids[@]}"; do
+  if [[ "${component_artifact_map[$component_id]}" == "wasm" ]]; then continue; fi
+  aot_log="$work_dir/aot-$component_id.log"
+  "$wamrc_bin" --target="$aot_target" "${wamrc_extra_args[@]}" \
+    -o "$package_dir/artifacts/$component_id.$manifest_target.aot" \
+    "$package_dir/artifacts/$component_id.wasm" >"$aot_log" 2>&1 &
+  job_pids+=("$!")
+  job_names+=("AOT $component_id")
+  job_logs+=("$aot_log")
+  if (( ${#job_pids[@]} >= build_jobs )); then wait_build_batch; fi
+done
+if (( ${#job_pids[@]} )); then wait_build_batch; fi
+if (( job_failed )); then exit 1; fi
+for component_id in "${component_ids[@]}"; do
   if [[ "${component_artifact_map[$component_id]}" == "aot" ]]; then
     rm "$package_dir/artifacts/$component_id.wasm"
   fi

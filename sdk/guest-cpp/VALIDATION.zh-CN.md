@@ -161,6 +161,12 @@
   ESP32-S31 AOT 包，分别位于 `/tmp/pxa-c-sdk34-{smoke,esp32s3,esp32s31}`。
   签名包经产品模拟器 `test_abi_v1_smoke.sh` 运行通过；C Guest 主机与 App
   测试、CMake/WASI 正例和未声明 random 的负例回归均通过。
+- 打包器的 C 直编路径现使用锁定 WASI SDK 34 的 `clang`。同一工具链下，
+  `arcade` 以 1 和默认 8 个编译任务冷打包分别用时 18.55、11.60 秒；Wasm 与
+  Linux AOT 哈希分别一致。该应用也完成 ESP32-S3、ESP32-S31 AOT 构建，
+  ABI v1 smoke 在模拟器再次通过。`ipc-stats` 的 Make/Ninja 构建及三目标
+  AOT、CMake/WASI 回归通过；本机 C++ 总耗时波动较大，尚不能据单次结果给出
+  稳定加速比。`direct-parallel` 回归比较 1 与 4 任务的 Wasm/AOT 逐字节一致。
 - Work 定向测试覆盖 enqueue 的有界包与临时参数、取消、retry 完成、启动配置
   拥有存储、stop-requested 事件，以及 worker/延时/容量校验；ASan/UBSan 与
   use-after-scope 通过。`examples/work` 的 UI 与 job 两个 Component 使用
