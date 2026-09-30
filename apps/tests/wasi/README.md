@@ -9,11 +9,14 @@
 - `wasi-undeclared-random`: negative App. Packaging rejects `random_get`
   because the source manifest omits the required `random` feature.
 
+All C/WASI examples use the pinned WASI SDK 34. Its libc imports
+`clock_time_get` here, so the source manifests declare both clock features.
+
 These Apps are intentionally outside `apps/pxa`; they are not included in
 factory assets. See `../../README.md` for the package layout.
 Run all packaging checks with:
 
 ```sh
-WASI_SDK_DIR=/opt/wasi-sdk-29.0 WAMRC=/path/to/wamrc \
+WASI_SDK_DIR=/opt/wasi-sdk-34.0 WAMRC=/path/to/wamrc \
   tools/package/test_cmake_wasi_apps.sh
 ```

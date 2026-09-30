@@ -4,12 +4,12 @@ set -euo pipefail
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 pxa_system_dir="$(cd "$script_dir/../.." && pwd)"
 test_apps_root="$pxa_system_dir/apps/tests/wasi"
-wasi_sdk_dir="${WASI_SDK_DIR:-}"
+wasi_sdk_dir="$("$script_dir/resolve_wasi_sdk.sh")"
 wamrc_bin="${WAMRC:-}"
 
 if [[ ! -x "$wasi_sdk_dir/bin/clang" ||
       ! -x "$wasi_sdk_dir/bin/llvm-nm" ]]; then
-  echo "WASI_SDK_DIR must point to a complete WASI SDK" >&2
+  echo "WASI SDK 34 must include clang and llvm-nm" >&2
   exit 2
 fi
 if [[ -z "$wamrc_bin" ]]; then

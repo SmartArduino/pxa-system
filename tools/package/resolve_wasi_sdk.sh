@@ -20,7 +20,9 @@ is_complete_sdk() {
         [[ -x "$candidate/bin/clang++" ]] &&
         [[ -x "$candidate/bin/llvm-ar" ]] &&
         [[ -x "$candidate/bin/llvm-ranlib" ]] &&
-        [[ -d "$candidate/share/wasi-sysroot" ]]
+        [[ -d "$candidate/share/wasi-sysroot" ]] &&
+        [[ -f "$candidate/VERSION" ]] &&
+        [[ "$(head -n 1 "$candidate/VERSION")" == "$wasi_version" ]]
 }
 
 emit_sdk() {
@@ -34,7 +36,7 @@ for variable_name in PXA_WASI_SDK_DIR WASI_SDK_DIR WASI_SDK_PATH; do
     if is_complete_sdk "$candidate"; then
         emit_sdk "$candidate"
     fi
-    fail "$variable_name is not a complete WASI SDK: $candidate"
+    fail "$variable_name must point to complete WASI SDK $wasi_version: $candidate"
 done
 
 for candidate in /opt/wasi-sdk "/opt/wasi-sdk-$wasi_version"; do

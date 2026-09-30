@@ -142,26 +142,25 @@
   use-after-scope 检测；WASI SDK 34 已编译 `ipc.cpp` 并链接 counter Wasm。
   更新后的独立包 `/tmp/pxa-cpp26-sdk-ipc-release-20260930` 在
   `/tmp/pxa-cpp26-ipc-external-build` 用包内源码与 CMake 构建 counter Wasm。
-- 类型化 IPC 生成器使用 JSON 固定字段编号与有界类型，`--check` 与四项输入校验
-  测试通过。`ipc_contract_test` 对照原始 IPC 封包的字段字节，覆盖整数、布尔、
-  有界 UTF-8、无效值与容量错误；定向 ASan/UBSan、use-after-scope 通过。
-  `examples/ipc-stats` 的 UI 与独立 service Component 经 CMake 生成契约，
-  Linux x86_64、ESP32-S3、ESP32-S31 均构建双模块 Wasm/AOT 并签名打包，产物在
-  `/tmp/pxa-cpp-ipc-stats-{generated,esp32s3,esp32s31}/pxa-ipc-stats.pxa`。
-  产品模拟器连续两次点击 Request 后分别显示 1、2 和 `From service`，截图
-  `/tmp/pxa-cpp-ipc-stats-{before,after,twice}.png`；这验证真实 Broker 路由、
-  Core 接受、独立 call ID、回复和重复调用。新独立开发包
-  `/tmp/pxa-cpp-ipc-sdk-20260930` 在仓库外 `/tmp` 生成双模块 Linux AOT 包
-  `/tmp/pxa-cpp-ipc-external/pxa-ipc-stats.pxa`，内外构建的两个 Wasm 模块哈希
-  分别一致。尚未验证设备执行、可选字段与并发服务请求。
-  类型化缓冲对象现由生成契约的编译期最大长度定容，不再手写示例数组大小；
-  最终三目标包为 `/tmp/pxa-cpp-ipc-final-{simulator,esp32s3,esp32s31}/pxa-ipc-stats.pxa`。
-  24 组 C++26 主机测试、定向 ASan/UBSan、四项生成器测试与独立 SDK 构建通过；
-  仓库外最终包为 `/tmp/pxa-cpp-ipc-final-external/pxa-ipc-stats.pxa`，两个 Wasm
-  模块与仓库内构建逐字节一致。最终模拟器点击截图为
-  `/tmp/pxa-cpp-ipc-final-{after,twice}.png`，分别显示 1、2 和 `From service`。
-  既有 C/WASI 应用回归使用原锁定 WASI SDK 29 通过；其中未声明 random 能力的
-  反例现按打包失败验收，不影响本 C++ SDK 使用 WASI SDK 34。
+- 类型化 IPC 生成器使用 JSON 固定字段编号、有界类型及编译期缓冲容量。
+  支持尾部可选字段和更高编号的未知可选字段，设置 ABI tag 最高位并拒绝未知
+  必需字段；`ipc_contract_test` 对照原始 IPC 封包字节，覆盖缺失字段、显式
+  false、可选文本、未来字段、重复编号、截断、
+  无效 UTF-8 与容量错误。五项生成器测试、24 组 C++26 主机测试及定向
+  ASan/UBSan、use-after-scope 均通过。`ipc-stats` 的 UI 和 service Component
+  在 Linux x86_64、ESP32-S3、ESP32-S31 构建双模块 Wasm/AOT 签名包：
+  `/tmp/pxa-cpp-ipc-abi-final-{simulator,esp32s3,esp32s31}/pxa-ipc-stats.pxa`。
+  产品模拟器两次点击依次显示 1、2 和 `From service`，截图为
+  `/tmp/pxa-cpp-ipc-abi-final-{after,twice}.png`。独立 SDK 包
+  `/tmp/pxa-cpp-ipc-abi-final-sdk-20260930` 在仓库外构建产物
+  `/tmp/pxa-cpp-ipc-abi-final-external/pxa-ipc-stats.pxa`；两个 Wasm 模块
+  与仓库内构建哈希一致。IPC 并发与设备执行尚未验证。
+- C/WASI 应用回归已统一使用锁定 WASI SDK 34 通过；未声明 random 能力的
+  反例按打包失败验收，工具链解析器拒绝显式传入 SDK 29。
+- C Guest ABI v1 smoke 在 WASI SDK 34 下生成 Linux x86_64、ESP32-S3、
+  ESP32-S31 AOT 包，分别位于 `/tmp/pxa-c-sdk34-{smoke,esp32s3,esp32s31}`。
+  签名包经产品模拟器 `test_abi_v1_smoke.sh` 运行通过；C Guest 主机与 App
+  测试、CMake/WASI 正例和未声明 random 的负例回归均通过。
 - Work 定向测试覆盖 enqueue 的有界包与临时参数、取消、retry 完成、启动配置
   拥有存储、stop-requested 事件，以及 worker/延时/容量校验；ASan/UBSan 与
   use-after-scope 通过。`examples/work` 的 UI 与 job 两个 Component 使用
@@ -253,7 +252,7 @@ files 的初次三目标构建原始大小：Wasm 225337、Linux AOT 110728、S3
 
 - 其他需要命令式访问的控件、显式常驻页面选项；完整容量配置及
   动态 UI 实机、更多事务失败路径验收。
-- Work 的 ESP Host 接入、持久化队列与设备运行验收；Surface 在 pai-touch 的实机、释放竞态与资源撤销验收；Net 实际后端与设备验证、Device/Sensor 更多设备及撤销集成验证，IPC 可选字段、并发与设备验收。
+- Work 的 ESP Host 接入、持久化队列与设备运行验收；Surface 在 pai-touch 的实机、释放竞态与资源撤销验收；Net 实际后端与设备验证、Device/Sensor 更多设备及撤销集成验证，IPC 并发与设备验收。
 - Assets 的其余能力、图片/音效/音乐资源示例及真实资源撤销和取消竞态验证。
 - GameRender triangle batch、资源批次、可选 3D 辅助模块、HUD、前后台及
   锁屏恢复；Surface 映射帧的真实资源撤销与内存峰值验证。

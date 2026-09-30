@@ -13,7 +13,7 @@
       "wasi": {
         "version": "preview1",
         "libc": "wasi-libc",
-        "features": []
+        "features": ["monotonic-clock", "wall-clock"]
       }
     }
   ]
