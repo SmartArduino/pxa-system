@@ -22,6 +22,10 @@ flags=(-std=c11 -O2 -Wall -Wextra -Werror -Wno-attributes
   -o "$work_dir/pxa_headers_test"
 "$work_dir/pxa_headers_test"
 
+"$cc_bin" "${flags[@]}" -c \
+  "$pxa_system_dir/sdk/guest-c/examples/ui-button/main.c" \
+  -o "$work_dir/ui_button_example.o"
+
 generate_catalog() {
   local app_id="$1"
   local catalog_dir="$app_source_root/$app_id/i18n"

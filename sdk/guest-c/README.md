@@ -236,7 +236,47 @@ build provenance sidecar.
 atomic UI tree transactions.
 `pxa_ui_builder.h` is a streaming tree builder that retains only the current
 ancestor path, and `pxa_ui_components.h` supplies semantic compositions such
-as buttons and VirtualList. The opinionated page template used by the lab applications is
+as buttons and VirtualList. The builder can assign node IDs automatically:
+
+```c
+#include "pxa_ui_components.h"
+
+static pxa_ui_builder_t ui; /* zero-initialize once; retain across patches */
+static uint32_t generation;
+static uint8_t scratch[128];
+static uint32_t ancestors[8];
+static uint32_t ok_button;
+
+static int build_ui(void) {
+    if (!pxa_ui_builder_begin(&ui, &generation, PXA_UI_PRIMARY_SURFACE, 0,
+                              PXA_UI_TRANSACTION_REPLACE_SURFACE,
+                              scratch, sizeof(scratch), ancestors, 8))
+        return 0;
+    if (!pxa_ui_builder_auto_enter(&ui, PXA_UI_NODE_ROOT) ||
+        !pxa_ui_text(&ui, "Welcome", 2, PXA_UI_THEME_TEXT) ||
+        !(ok_button = pxa_ui_button(&ui, "OK", PXA_UI_THEME_PRIMARY,
+                                    PXA_UI_THEME_ON_PRIMARY)) ||
+        !pxa_ui_builder_leave(&ui)) {
+        (void)pxa_ui_builder_abort(&ui);
+        return 0;
+    }
+    return pxa_ui_builder_end(&ui);
+}
+```
+
+The returned IDs identify interactive nodes in input events. Check the event's
+surface and generation with `pxa_ui_event_is_current()` before comparing its
+node with `ok_button`. `REPLACE_SURFACE` restarts automatic IDs at 1, while
+`PATCH` continues from the last committed ID; keep the same builder for both.
+Use a separate builder for each surface.
+For a patch that adds a child to an existing node, use
+`pxa_ui_builder_enter_existing()` and `pxa_ui_builder_leave()`. Failed or
+cancelled transactions restore the ID cursor. Explicit IDs remain available
+through `pxa_ui_builder_node()` and `pxa_ui_component_*()`; when mixed with
+automatic IDs, explicitly created nodes advance the cursor.
+See `examples/ui-button` for a complete app with click-event handling.
+
+The opinionated page template used by the lab applications is
 in `apps/pxa/common/pxa_ui_demo_page.h`, rather than the SDK. `pxa_canvas.h`
 adds the general Canvas display-list node with
 rectangles, circles, lines and UTF-8 text. Canvas is a UI node, not a game ABI.

@@ -13,6 +13,8 @@ typedef struct {
     size_t ancestor_capacity;
     size_t depth;
     uint32_t current;
+    uint64_t next_node_id;
+    uint64_t saved_next_node_id;
     uint8_t active;
     uint8_t failed;
 } pxa_ui_builder_t;
@@ -36,6 +38,10 @@ static inline int pxa_ui_builder_begin(
     builder->ancestor_capacity = ancestor_capacity;
     builder->depth = 0;
     builder->current = 0;
+    builder->saved_next_node_id = builder->next_node_id;
+    if (kind == PXA_UI_TRANSACTION_REPLACE_SURFACE ||
+        builder->next_node_id == 0)
+        builder->next_node_id = 1;
     builder->active = 1;
     builder->failed = 0;
     return 1;
@@ -59,7 +65,35 @@ static inline int pxa_ui_builder_node_typed(
         return 0;
     }
     builder->current = node;
+    if (builder->next_node_id <= node)
+        builder->next_node_id = (uint64_t)node + 1u;
     return 1;
+}
+
+/* Auto IDs are scoped to this builder. Keep it across PATCH transactions;
+ * REPLACE_SURFACE starts numbering from 1 after discarding the old tree. */
+static inline uint32_t pxa_ui_builder_alloc_id(pxa_ui_builder_t* builder) {
+    uint32_t id;
+    if (builder == NULL || !builder->active || builder->failed ||
+        builder->next_node_id > UINT32_MAX) {
+        if (builder != NULL) builder->failed = 1;
+        return 0;
+    }
+    id = (uint32_t)builder->next_node_id++;
+    return id;
+}
+
+static inline uint32_t pxa_ui_builder_auto_node_typed(
+    pxa_ui_builder_t* builder, uint8_t type, uint8_t subtype) {
+    uint32_t node = pxa_ui_builder_alloc_id(builder);
+    return node != 0 && pxa_ui_builder_node_typed(builder, node, 0, type,
+                                                   subtype)
+               ? node : 0;
+}
+
+static inline uint32_t pxa_ui_builder_auto_node(pxa_ui_builder_t* builder,
+                                                 uint8_t type) {
+    return pxa_ui_builder_auto_node_typed(builder, type, PXA_UI_CONTROL_NONE);
 }
 
 static inline int pxa_ui_builder_node(pxa_ui_builder_t* builder,
@@ -88,6 +122,32 @@ static inline int pxa_ui_builder_enter(pxa_ui_builder_t* builder,
                                       PXA_UI_CONTROL_NONE);
 }
 
+static inline uint32_t pxa_ui_builder_auto_enter_typed(
+    pxa_ui_builder_t* builder, uint8_t type, uint8_t subtype) {
+    uint32_t node = pxa_ui_builder_alloc_id(builder);
+    return node != 0 && pxa_ui_builder_enter_typed(builder, node, 0, type,
+                                                    subtype)
+               ? node : 0;
+}
+
+static inline uint32_t pxa_ui_builder_auto_enter(pxa_ui_builder_t* builder,
+                                                  uint8_t type) {
+    return pxa_ui_builder_auto_enter_typed(builder, type, PXA_UI_CONTROL_NONE);
+}
+
+/* Select an already committed parent when adding children in a PATCH. */
+static inline int pxa_ui_builder_enter_existing(pxa_ui_builder_t* builder,
+                                                 uint32_t node) {
+    if (builder == NULL || !builder->active || builder->failed || node == 0 ||
+        builder->depth >= builder->ancestor_capacity) {
+        if (builder != NULL) builder->failed = 1;
+        return 0;
+    }
+    builder->ancestors[builder->depth++] = node;
+    builder->current = node;
+    return 1;
+}
+
 static inline int pxa_ui_builder_leave(pxa_ui_builder_t* builder) {
     if (builder == NULL || !builder->active || builder->depth == 0) return 0;
     --builder->depth;
@@ -111,6 +171,7 @@ static inline int pxa_ui_builder_abort(pxa_ui_builder_t* builder) {
     result = pxa_ui_transaction_cancel(&builder->transaction);
     builder->active = 0;
     builder->failed = 1;
+    builder->next_node_id = builder->saved_next_node_id;
     return result;
 }
 
@@ -124,7 +185,10 @@ static inline int pxa_ui_builder_end(pxa_ui_builder_t* builder) {
     result = pxa_ui_transaction_commit(&builder->transaction);
     builder->active = 0;
     builder->failed = (uint8_t)!result;
-    if (!result) return 0;
+    if (!result) {
+        builder->next_node_id = builder->saved_next_node_id;
+        return 0;
+    }
     *builder->generation = builder->next_generation;
     return 1;
 }

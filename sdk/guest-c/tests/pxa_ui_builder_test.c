@@ -203,6 +203,87 @@ int main(void) {
     assert(generation == 2);
     assert(opcode_counts[PXA_UI_TX_CANCEL] == 1);
 
+    fail_commit = 0;
+    assert(pxa_ui_builder_begin(
+        &builder, &generation, PXA_UI_PRIMARY_SURFACE, 0,
+        PXA_UI_TRANSACTION_PATCH, scratch, sizeof(scratch), ancestors, 4));
+    assert(pxa_ui_builder_enter_existing(&builder, 1));
+    assert(pxa_ui_text(&builder, "new", 1, PXA_UI_THEME_TEXT) == 5002);
+    assert(pxa_ui_builder_leave(&builder));
+    assert(pxa_ui_builder_end(&builder));
+    assert(generation == 3);
+
+    /* Full rebuilds have small, deterministic IDs, including the button's
+     * private label. A later patch keeps allocating from the same builder. */
+    assert(pxa_ui_builder_begin(
+        &builder, &generation, PXA_UI_PRIMARY_SURFACE, 0,
+        PXA_UI_TRANSACTION_REPLACE_SURFACE, scratch, sizeof(scratch),
+        ancestors, 4));
+    assert(pxa_ui_builder_auto_enter(&builder, PXA_UI_NODE_ROOT) == 1);
+    assert(pxa_ui_builder_auto_enter(&builder, PXA_UI_NODE_BOX) == 2);
+    assert(pxa_ui_text(&builder, "hello", 2, PXA_UI_THEME_TEXT) == 3);
+    assert(pxa_ui_builder_leave(&builder));
+    assert(pxa_ui_button(&builder, "OK", PXA_UI_THEME_PRIMARY,
+                         PXA_UI_THEME_ON_PRIMARY) == 4);
+    assert(pxa_ui_virtual_list(&builder, 8, 24 * 64) == 6);
+    assert(pxa_ui_builder_leave(&builder));
+    assert(pxa_ui_builder_end(&builder));
+    assert(generation == 4);
+
+    assert(pxa_ui_builder_begin(
+        &builder, &generation, PXA_UI_PRIMARY_SURFACE, 0,
+        PXA_UI_TRANSACTION_PATCH, scratch, sizeof(scratch), ancestors, 4));
+    assert(pxa_ui_builder_enter_existing(&builder, 1));
+    assert(pxa_ui_text(&builder, "later", 1, PXA_UI_THEME_TEXT) == 7);
+    assert(pxa_ui_builder_leave(&builder));
+    assert(pxa_ui_builder_end(&builder));
+    assert(generation == 5);
+
+    fail_commit = 1;
+    assert(pxa_ui_builder_begin(
+        &builder, &generation, PXA_UI_PRIMARY_SURFACE, 0,
+        PXA_UI_TRANSACTION_REPLACE_SURFACE, scratch, sizeof(scratch),
+        ancestors, 4));
+    assert(pxa_ui_builder_auto_enter(&builder, PXA_UI_NODE_ROOT) == 1);
+    assert(pxa_ui_builder_leave(&builder));
+    assert(!pxa_ui_builder_end(&builder));
+    assert(generation == 5);
+    fail_commit = 0;
+    assert(pxa_ui_builder_begin(
+        &builder, &generation, PXA_UI_PRIMARY_SURFACE, 0,
+        PXA_UI_TRANSACTION_PATCH, scratch, sizeof(scratch), ancestors, 4));
+    assert(pxa_ui_builder_enter_existing(&builder, 1));
+    assert(pxa_ui_text(&builder, "after failure", 1, PXA_UI_THEME_TEXT) == 8);
+    assert(pxa_ui_builder_leave(&builder));
+    assert(pxa_ui_builder_end(&builder));
+    assert(generation == 6);
+
+    assert(pxa_ui_builder_begin(
+        &builder, &generation, PXA_UI_PRIMARY_SURFACE, 0,
+        PXA_UI_TRANSACTION_REPLACE_SURFACE, scratch, sizeof(scratch),
+        ancestors, 4));
+    assert(pxa_ui_builder_enter(&builder, 100, 0, PXA_UI_NODE_ROOT));
+    assert(pxa_ui_text(&builder, "mixed", 1, PXA_UI_THEME_TEXT) == 101);
+    assert(pxa_ui_builder_leave(&builder));
+    assert(pxa_ui_builder_end(&builder));
+    assert(generation == 7);
+
+    assert(pxa_ui_builder_begin(
+        &builder, &generation, PXA_UI_PRIMARY_SURFACE, 0,
+        PXA_UI_TRANSACTION_PATCH, scratch, sizeof(scratch), ancestors, 4));
+    assert(pxa_ui_builder_enter_existing(&builder, 100));
+    assert(pxa_ui_text(&builder, "cancelled", 1, PXA_UI_THEME_TEXT) == 102);
+    assert(pxa_ui_builder_abort(&builder));
+    assert(generation == 7);
+    assert(pxa_ui_builder_begin(
+        &builder, &generation, PXA_UI_PRIMARY_SURFACE, 0,
+        PXA_UI_TRANSACTION_PATCH, scratch, sizeof(scratch), ancestors, 4));
+    assert(pxa_ui_builder_enter_existing(&builder, 100));
+    assert(pxa_ui_text(&builder, "committed", 1, PXA_UI_THEME_TEXT) == 102);
+    assert(pxa_ui_builder_leave(&builder));
+    assert(pxa_ui_builder_end(&builder));
+    assert(generation == 8);
+
     assert(pxa_ui_nav_init(&navigation, routes, 3, 10));
     assert(pxa_ui_nav_current(&navigation) == 10);
     assert(pxa_ui_nav_push(&navigation, 20));

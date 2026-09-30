@@ -1,0 +1,9 @@
+{
+  "format": "pxa-package-source-0.1",
+  "id": "ui-button",
+  "version": "1.0.0",
+  "name": "UI Button",
+  "description": "Guest SDK UI builder with automatic node IDs",
+  "build": {"system": "direct", "linear_memory": {"maximum_bytes": 131072, "pinned": false}},
+  "components": [{"id": "main", "kind": "ui", "source": "main.c", "services": ["log"]}]
+}

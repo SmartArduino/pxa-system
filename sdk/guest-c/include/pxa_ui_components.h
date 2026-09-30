@@ -27,6 +27,17 @@ static inline int pxa_ui_component_text(pxa_ui_builder_t* builder,
     return 1;
 }
 
+/* High-level components allocate their own node IDs and return the IDs that
+ * callers may retain for events or later property updates. Zero means error. */
+static inline uint32_t pxa_ui_text(pxa_ui_builder_t* builder,
+                                   const char* text, uint16_t font_role,
+                                   uint8_t color_token) {
+    uint32_t node = pxa_ui_builder_alloc_id(builder);
+    return node != 0 && pxa_ui_component_text(builder, node, text, font_role,
+                                              color_token)
+               ? node : 0;
+}
+
 static inline int pxa_ui_component_button(
     pxa_ui_builder_t* builder, uint32_t node, uint32_t label_node,
     const char* label, uint8_t background_token, uint8_t foreground_token) {
@@ -52,6 +63,18 @@ static inline int pxa_ui_component_button(
     return 1;
 }
 
+static inline uint32_t pxa_ui_button(pxa_ui_builder_t* builder,
+                                     const char* label,
+                                     uint8_t background_token,
+                                     uint8_t foreground_token) {
+    uint32_t node = pxa_ui_builder_alloc_id(builder);
+    uint32_t label_node = pxa_ui_builder_alloc_id(builder);
+    return node != 0 && label_node != 0 &&
+                   pxa_ui_component_button(builder, node, label_node, label,
+                                           background_token, foreground_token)
+               ? node : 0;
+}
+
 static inline int pxa_ui_component_virtual_list(
     pxa_ui_builder_t* builder, uint32_t node, uint32_t item_count,
     int32_t item_extent_dp) {
@@ -68,6 +91,15 @@ static inline int pxa_ui_component_virtual_list(
         return 0;
     }
     return 1;
+}
+
+static inline uint32_t pxa_ui_virtual_list(pxa_ui_builder_t* builder,
+                                            uint32_t item_count,
+                                            int32_t item_extent_dp) {
+    uint32_t node = pxa_ui_builder_alloc_id(builder);
+    return node != 0 && pxa_ui_component_virtual_list(
+                            builder, node, item_count, item_extent_dp)
+               ? node : 0;
 }
 
 static inline int pxa_ui_environment_has(const pxa_ui_environment_t* value,
