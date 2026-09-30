@@ -275,9 +275,13 @@ auto result = co_await ctx.ipc().call<stats::Get>(request, buffers);
 
 提供方在 `on_event` 中调用 `decode_ipc_request<stats::Get>(event)`，取得有界拥有存储
 的请求，再用 `ctx.ipc().reply<stats::Get>(call_id, response, reply_buffer)` 回复。
-当前生成器支持必需的 `u32`、`i32`、`bool`、有界 UTF-8 `text` 字段，按字段编号
-逐条编码，不序列化 C++ 对象布局；未知必需字段、重复字段、无效文字和超预算
-消息均拒绝。可选字段和跨 App 路由尚未支持，破坏性契约变更应更换 endpoint 版本。
+当前生成器支持 `u32`、`i32`、`bool`、有界 UTF-8 `text` 字段。可选字段写
+`"optional": true`，只允许追加在必需字段后，生成 `std::optional<T>`；未赋值
+时不编码，编码时按 ABI 设置字段号最高位。解码器接受缺失的可选字段及更高
+编号的未知可选尾部字段，拒绝未知必需字段、乱序、重复、截断、无效文字和超
+预算消息。字段按编号逐条编码，不序列化 C++ 对象
+布局。兼容性追加可提升 minor，改变既有字段或语义须更换 endpoint 的 major
+版本。跨 App 路由尚未支持。
 类型化接口直接写入调用方包缓冲区，不复制整份 payload。生成类型公开请求、
 回复与结果的最大字节数；`IpcCallBuffers` 和 `IpcReplyBuffer` 按此预留固定容量，
 必须活到任务完成或取消。回复的文本值复制进生成类型的固定容量存储。

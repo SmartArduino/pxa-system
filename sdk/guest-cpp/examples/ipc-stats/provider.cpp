@@ -21,6 +21,9 @@ struct StatsProvider {
         stats::Get::Response reply{};
         reply.next = request->value.seed + 1;
         reply.valid = true;
+        reply.cached = false;
+        if (!reply.note.emplace().set("remote"))
+            return std::unexpected(pxa::Error::invalid_argument);
         if (!reply.label.set(request->value.label.view()))
             return std::unexpected(pxa::Error::invalid_argument);
         auto started = ctx.tasks().start(respond(ctx, request->call_id,

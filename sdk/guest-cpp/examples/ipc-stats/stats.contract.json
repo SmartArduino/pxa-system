@@ -3,7 +3,7 @@
   "namespace": "stats",
   "name": "Get",
   "endpoint": "stats.get.v1",
-  "version": {"major": 1, "minor": 0},
+  "version": {"major": 1, "minor": 1},
   "request": [
     {"id": 1, "name": "seed", "type": "u32"},
     {"id": 2, "name": "label", "type": "text", "max_bytes": 16}
@@ -11,6 +11,8 @@
   "response": [
     {"id": 1, "name": "next", "type": "u32"},
     {"id": 2, "name": "valid", "type": "bool"},
-    {"id": 3, "name": "label", "type": "text", "max_bytes": 16}
+    {"id": 3, "name": "label", "type": "text", "max_bytes": 16},
+    {"id": 4, "name": "cached", "type": "bool", "optional": true},
+    {"id": 5, "name": "note", "type": "text", "max_bytes": 12, "optional": true}
   ]
 }

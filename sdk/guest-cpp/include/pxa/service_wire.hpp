@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core.hpp"
+#include <optional>
 #include <string_view>
 
 namespace pxa::wire {
@@ -77,6 +78,33 @@ public:
         auto value = bytes_.subspan(4, size);
         bytes_ = bytes_.subspan(4 + size);
         return value;
+    }
+    Result<std::optional<std::span<const std::byte>>> take_optional(
+        std::uint16_t tag) noexcept {
+        if (bytes_.empty()) return std::nullopt;
+        if (bytes_.size() < 4) return std::unexpected(Error::protocol_error);
+        const auto next = get16(bytes_.data());
+        const auto field = static_cast<std::uint16_t>(next & 0x7fff);
+        if (!field || field < tag) return std::unexpected(Error::protocol_error);
+        if (field > tag) return std::nullopt;
+        if (!(next & 0x8000)) return std::unexpected(Error::protocol_error);
+        auto value = take(next);
+        if (!value) return std::unexpected(value.error());
+        return *value;
+    }
+    Result<void> finish(std::uint16_t last_tag) noexcept {
+        while (!bytes_.empty()) {
+            if (bytes_.size() < 4) return std::unexpected(Error::protocol_error);
+            const auto tag = get16(bytes_.data());
+            const auto field = static_cast<std::uint16_t>(tag & 0x7fff);
+            const auto size = get16(bytes_.data() + 2);
+            if (!(tag & 0x8000) || !field || field <= last_tag ||
+                bytes_.size() - 4 < size)
+                return std::unexpected(Error::protocol_error);
+            bytes_ = bytes_.subspan(4 + size);
+            last_tag = field;
+        }
+        return {};
     }
     bool empty() const noexcept { return bytes_.empty(); }
 private:

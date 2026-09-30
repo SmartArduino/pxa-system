@@ -36,6 +36,7 @@ def fields(document: dict, section: str) -> list[dict]:
         raise ValueError(f"{section} must contain at most 32 fields")
     previous = 0
     budget = 0
+    seen_optional = False
     for field in values:
         if not isinstance(field, dict) or not {"id", "name", "type"} <= field.keys():
             raise ValueError(f"{section} has an incomplete field")
@@ -46,15 +47,25 @@ def fields(document: dict, section: str) -> list[dict]:
             raise ValueError(f"{section} has an invalid field name")
         if not isinstance(kind, str) or kind not in TYPES:
             raise ValueError(f"{section} has an unsupported type")
+        optional = field.get("optional", False)
+        if optional is not False and optional is not True:
+            raise ValueError(f"{section} optional must be true")
+        if optional:
+            seen_optional = True
+        elif seen_optional:
+            raise ValueError(f"{section} optional fields must follow required fields")
+        properties = {"id", "name", "type"}
+        if optional:
+            properties.add("optional")
         if kind == "text":
-            if set(field) != {"id", "name", "type", "max_bytes"}:
+            if set(field) != properties | {"max_bytes"}:
                 raise ValueError(f"{section} text field has unknown properties")
             limit = field.get("max_bytes")
             if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= 512:
                 raise ValueError(f"{section} text requires max_bytes in 1..512")
             width = limit
         else:
-            if set(field) != {"id", "name", "type"}:
+            if set(field) != properties:
                 raise ValueError(f"{section} scalar field has unknown properties")
             width = 1 if kind == "bool" else 4
         budget += 4 + width
@@ -112,26 +123,34 @@ def codec(lines: list[str], title: str, spec: list[dict]) -> None:
     for field in spec:
         tag, name, kind = field["id"], field["name"], field["type"]
         lines.append("        {")
+        if field.get("optional"):
+            lines.append(f"            if (value.{name}) {{")
+            source = f"(*value.{name})"
+            indent = "                "
+        else:
+            source = f"value.{name}"
+            indent = "            "
         if kind == "text":
             lines.extend([
-                f"            const auto text = value.{name}.view();",
-                "            const auto bytes = std::as_bytes(",
-                "                std::span{text.data(), text.size()});",
-                "            if (bytes.empty() || !pxa::wire::valid_utf8(bytes))",
-                "                return std::unexpected(pxa::Error::invalid_argument);",
+                f"{indent}const auto text = {source}.view();",
+                f"{indent}const auto bytes = std::as_bytes(",
+                f"{indent}    std::span{{text.data(), text.size()}});",
+                f"{indent}if (bytes.empty() || !pxa::wire::valid_utf8(bytes))",
+                f"{indent}    return std::unexpected(pxa::Error::invalid_argument);",
             ])
         elif kind == "bool":
-            lines.append(f"            const std::array<std::byte, 1> bytes{{std::byte(value.{name} ? 1 : 0)}};")
+            lines.append(f"{indent}const std::array<std::byte, 1> bytes{{std::byte({source} ? 1 : 0)}};")
         else:
             lines.extend([
-                "            std::array<std::byte, 4> bytes{};",
-                f"            pxa::wire::put32(bytes.data(), static_cast<std::uint32_t>(value.{name}));",
+                f"{indent}std::array<std::byte, 4> bytes{{}};",
+                f"{indent}pxa::wire::put32(bytes.data(), static_cast<std::uint32_t>({source}));",
             ])
-        lines.extend([
-            f"            if (!pxa::wire::record(writer, {tag}, bytes))",
-            "                return std::unexpected(pxa::Error::resource_limit);",
+        lines.extend(line for line in [
+            f"{indent}if (!pxa::wire::record(writer, {tag | 0x8000 if field.get('optional') else tag}, bytes))",
+            f"{indent}    return std::unexpected(pxa::Error::resource_limit);",
+            "            }" if field.get("optional") else "",
             "        }",
-        ])
+        ] if line)
     lines.extend(["        return writer.size();", "    }", ""])
     lines.extend([
         f"    static pxa::Result<{title.capitalize()}> decode_{title}(",
@@ -144,28 +163,42 @@ def codec(lines: list[str], title: str, spec: list[dict]) -> None:
         length = 1 if kind == "bool" else 4
         lines.extend([
             "        {",
-            (f"            auto bytes = records.take({tag});" if kind == "text" else
+            (f"            auto bytes = records.take_optional({tag});" if field.get("optional") else
+             f"            auto bytes = records.take({tag});" if kind == "text" else
              f"            auto bytes = records.take({tag}, {length});"),
             "            if (!bytes) return std::unexpected(bytes.error());",
         ])
+        if field.get("optional"):
+            lines.extend(line for line in [
+                "            if (*bytes) {",
+                f"                if ((**bytes).size() != {length})" if kind != "text" else "",
+                "                    return std::unexpected(pxa::Error::protocol_error);" if kind != "text" else "",
+            ] if line)
+            source = "(**bytes)"
+            indent = "                "
+        else:
+            source = "(*bytes)"
+            indent = "            "
         if kind == "text":
             lines.extend([
-                f"            auto assigned = output.{name}.assign(*bytes);",
-                "            if (!assigned) return std::unexpected(assigned.error());",
+                f"{indent}auto assigned = output.{name}{'.emplace()' if field.get('optional') else ''}.assign({source});",
+                f"{indent}if (!assigned) return std::unexpected(assigned.error());",
             ])
         elif kind == "bool":
             lines.extend([
-                "            if ((*bytes)[0] != std::byte{0} && (*bytes)[0] != std::byte{1})",
-                "                return std::unexpected(pxa::Error::protocol_error);",
-                f"            output.{name} = (*bytes)[0] == std::byte{{1}};",
+                f"{indent}if ({source}[0] != std::byte{{0}} && {source}[0] != std::byte{{1}})",
+                f"{indent}    return std::unexpected(pxa::Error::protocol_error);",
+                f"{indent}output.{name} = {source}[0] == std::byte{{1}};",
             ])
         else:
             cast = "static_cast<std::int32_t>" if kind == "i32" else "static_cast<std::uint32_t>"
-            lines.append(f"            output.{name} = {cast}(pxa::wire::get32(bytes->data()));")
+            lines.append(f"{indent}output.{name} = {cast}(pxa::wire::get32({source}.data()));")
+        if field.get("optional"):
+            lines.append("            }")
         lines.append("        }")
     lines.extend([
-        "        if (!records.empty())",
-        "            return std::unexpected(pxa::Error::protocol_error);",
+        f"        auto finished = records.finish({spec[-1]['id'] if spec else 0});",
+        "        if (!finished) return std::unexpected(finished.error());",
         "        return output;",
         "    }",
         "",
@@ -192,7 +225,7 @@ def render(document: dict) -> str:
     ]
     for title, spec in (("Request", request), ("Response", response)):
         lines.extend([f"    struct {title} {{"])
-        lines.extend(f"        {field_type(field)} {field['name']}{{}};" for field in spec)
+        lines.extend(f"        {'std::optional<' + field_type(field) + '>' if field.get('optional') else field_type(field)} {field['name']}{{}};" for field in spec)
         lines.extend(["    };", ""])
     codec(lines, "request", request)
     codec(lines, "response", response)

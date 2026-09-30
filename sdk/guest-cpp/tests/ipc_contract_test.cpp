@@ -12,9 +12,9 @@ extern "C" std::int32_t pxa_io(std::uint64_t, std::uint32_t,
 
 int main() {
     static_assert(stats::Get::request_bytes == 28);
-    static_assert(stats::Get::response_bytes == 33);
+    static_assert(stats::Get::response_bytes == 54);
     static_assert(stats::Get::call_packet_bytes == 68);
-    static_assert(stats::Get::reply_packet_bytes == 73);
+    static_assert(stats::Get::reply_packet_bytes == 94);
     stats::Get::Request request{};
     request.seed = 41;
     assert(request.label.set("test"));
@@ -56,6 +56,44 @@ int main() {
         std::span<const std::byte>(packet).subspan(reply_offset, *response_size));
     assert(decoded && decoded->next == 42 && decoded->valid);
     assert(decoded->label.view() == "ready");
+    assert(!decoded->cached);
+    assert(!decoded->note);
+
+    response.cached = false;
+    auto extended_size = stats::Get::encode_response(
+        response, std::span(packet).subspan(reply_offset));
+    assert(extended_size && *extended_size == *response_size + 5);
+    assert(pxa::wire::get16(packet.data() + reply_offset + *response_size) ==
+           0x8004);
+    auto extended = stats::Get::decode_response(
+        std::span<const std::byte>(packet).subspan(reply_offset, *extended_size));
+    assert(extended && extended->cached && !*extended->cached);
+    assert(!extended->note);
+
+    assert(response.note.emplace().set("remote"));
+    auto text_size = stats::Get::encode_response(
+        response, std::span(packet).subspan(reply_offset));
+    assert(text_size && *text_size == *extended_size + 10);
+    auto with_text = stats::Get::decode_response(
+        std::span<const std::byte>(packet).subspan(reply_offset, *text_size));
+    assert(with_text && with_text->note && with_text->note->view() == "remote");
+
+    // A newer minor revision may append records unknown to this decoder.
+    auto* future = packet.data() + reply_offset + *text_size;
+    pxa::wire::put16(future, 0x8006);
+    pxa::wire::put16(future + 2, 1);
+    future[4] = std::byte{9};
+    assert(stats::Get::decode_response(
+        std::span<const std::byte>(packet).subspan(reply_offset, *text_size + 5)));
+    pxa::wire::put16(future, 0x8005);
+    assert(!stats::Get::decode_response(
+        std::span<const std::byte>(packet).subspan(reply_offset, *text_size + 5)));
+    pxa::wire::put16(future, 0x8006);
+    assert(!stats::Get::decode_response(
+        std::span<const std::byte>(packet).subspan(reply_offset, *text_size + 4)));
+    pxa::wire::put16(future, 6);
+    assert(!stats::Get::decode_response(
+        std::span<const std::byte>(packet).subspan(reply_offset, *text_size + 5)));
 
     auto bad = packet;
     bad[reply_offset + 12] = std::byte{2};

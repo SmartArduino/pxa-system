@@ -57,6 +57,13 @@ class ContractGenerationTest(unittest.TestCase):
         invalid_type = copy.deepcopy(self.document)
         invalid_type["request"][0]["type"] = []
         variants.append(invalid_type)
+        required_after_optional = copy.deepcopy(self.document)
+        required_after_optional["response"].append(
+            {"id": 6, "name": "late", "type": "u32"})
+        variants.append(required_after_optional)
+        bad_optional = copy.deepcopy(self.document)
+        bad_optional["response"][-1]["optional"] = "yes"
+        variants.append(bad_optional)
         for document in variants:
             with self.subTest(document=document):
                 with self.assertRaises(ValueError):
@@ -67,9 +74,21 @@ class ContractGenerationTest(unittest.TestCase):
         document["response"].insert(1, {"id": 2, "name": "delta", "type": "i32"})
         document["response"][2]["id"] = 3
         document["response"][3]["id"] = 4
+        document["response"][4]["id"] = 5
+        document["response"][5]["id"] = 6
         output = generator.render(document)
         self.assertIn("std::int32_t delta{};", output)
         self.assertIn("static_cast<std::int32_t>(pxa::wire::get32", output)
+
+    def test_optional_field_is_bounded_and_omittable(self) -> None:
+        output = generator.render(self.document)
+        self.assertIn("std::optional<bool> cached{};", output)
+        self.assertIn("std::optional<pxa::wire::OwnedText<12>> note{};", output)
+        self.assertIn("if (value.cached)", output)
+        self.assertIn("pxa::wire::record(writer, 32772, bytes)", output)
+        self.assertIn("(*value.note).view()", output)
+        self.assertIn("records.take_optional(4)", output)
+        self.assertIn("records.finish(5)", output)
 
 
 if __name__ == "__main__":
