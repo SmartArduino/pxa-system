@@ -5,8 +5,8 @@ using namespace pxa::ui::literals;
 
 struct Settings {
     State<std::string> status{std::string("Active")};
-    State<std::string> name{std::string("Player")};
-    State<bool> sound{true};
+    Ref<std::string> name{std::string("Player")};
+    Ref<bool> sound{true};
     State<int> brightness{60};
 
     auto view() {

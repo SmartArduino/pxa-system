@@ -5,7 +5,7 @@ using namespace pxa::ui::literals;
 
 struct ConditionalDemo {
     State<bool> expanded{false};
-    State<int> count{0};
+    Ref<int> count{0};
 
     auto view() {
         return Column(
@@ -16,7 +16,7 @@ struct ConditionalDemo {
                     return Column(
                         Text(count).font(Font::headline),
                         Button("Add one").on_click([this] {
-                            count.update([](int value) { return value + 1; });
+                            (void)count.update([](int value) { return value + 1; });
                         })
                     ).gap(8_dp);
                 },

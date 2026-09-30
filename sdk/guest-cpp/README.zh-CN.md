@@ -119,6 +119,21 @@ auto view() {
 有效，下次事件可重试。`When` 可放在列表行中，分支内也可包含列表。切换成功
 后旧分支销毁，旧事件随页面 generation 失效；要保留业务状态应放在分支外。
 
+需要命令式更新某个已挂载控件时，可使用 `Ref<bool>`、`Ref<int>` 或
+`Ref<std::string>`。目前支持 Text、Toggle、Slider、Progress 和 TextInput：
+
+```cpp
+Ref<int> score{0};
+auto view() { return Text(score); }
+// 仅在节点成功挂载期间调用：
+auto updated = score.update([](int value) { return value + 1; });
+```
+
+`Ref` 不要求用户分配节点号；页面负责绑定和解除绑定。`set`/`update` 在未挂载时
+返回 `bad_state`，提交失败时仍指向旧节点，成功移除节点后立即失效。
+同一视图片段不能把一个 `Ref` 挂载到两个节点。`Ref` 必须比引用它的页面存活更久；
+要在隐藏页面期间修改共享数据，应使用 `State<T>` 作为应用模型。
+
 运行中的 UI 提交失败会保留页面，并调用可选的
 `void on_error(Context&, Error)`；没有钩子时输出错误日志。容量不足等
 可恢复错误不会使 Host 停止应用，可以在后续事件重试；协议错误仍返回
@@ -291,7 +306,7 @@ python3 spec/draft/tools/generate_service_codecs.py --language cpp --check
 当前实现包括 Core 消息编解码、资源句柄、应用入口、有界协程和请求表、
 声明式布局/常用控件、状态绑定与导航，Storage/Permission/Audio/FS/Device/Sensor/Net/IPC/Work/Surface，
 以及 GameRender 的上下文创建、清屏、矩形和精灵批次 DrawList。
-动态 keyed list、VirtualList 与条件分支已有实现；Ref、
+动态 keyed list、VirtualList、条件分支与常用控件 Ref 已有实现；
 其余服务能力和完整性能验收尚未完成。独立开发包已可构建和打包示例，
 但目前不能作为完整发布版 SDK。
 

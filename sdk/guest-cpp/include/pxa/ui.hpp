@@ -15,12 +15,13 @@
 namespace pxa::ui {
 
 struct Capacity {
-    std::size_t nodes = 0, bindings = 0, handlers = 0, dynamic = 0;
+    std::size_t nodes = 0, bindings = 0, handlers = 0, dynamic = 0, refs = 0;
     constexpr Capacity& operator+=(Capacity value) noexcept {
         nodes += value.nodes;
         bindings += value.bindings;
         handlers += value.handlers;
         dynamic += value.dynamic;
+        refs += value.refs;
         return *this;
     }
 };
@@ -84,6 +85,38 @@ private:
     T value_;
     Subscription* subscribers_ = nullptr;
 };
+
+template<class T>
+class Ref {
+    template<class, std::size_t, std::size_t, std::size_t, std::size_t>
+    friend class Page;
+public:
+    explicit Ref(T initial) : state_(std::move(initial)) {}
+    Ref(const Ref&) = delete;
+    Ref& operator=(const Ref&) = delete;
+    const T& get() const noexcept { return state_.get(); }
+    bool mounted() const noexcept { return owner_ != nullptr; }
+    Result<void> set(T value) {
+        if (!mounted()) return std::unexpected(Error::bad_state);
+        state_.set(std::move(value));
+        return {};
+    }
+    template<class F> Result<void> update(F&& operation) {
+        if (!mounted()) return std::unexpected(Error::bad_state);
+        state_.update(std::forward<F>(operation));
+        return {};
+    }
+private:
+    void attach(void* owner) noexcept { owner_ = owner; }
+    void detach(void* owner) noexcept {
+        if (owner_ == owner) owner_ = nullptr;
+    }
+    State<T> state_;
+    void* owner_ = nullptr;
+};
+
+template<class T> inline constexpr bool is_ref_v = false;
+template<class T> inline constexpr bool is_ref_v<Ref<T>> = true;
 
 enum class Font : std::uint16_t {
     caption = 0, body = 1, title = 2, icon = 3,
@@ -222,6 +255,36 @@ template<FixedText Value> constexpr auto Text() { return StaticTextView<Value>{}
 inline TextView Text(State<int>& state) { return TextView(state); }
 inline TextView Text(State<std::string>& state) { return TextView(state); }
 
+template<class T> requires (std::same_as<T, int> || std::same_as<T, std::string>)
+class RefTextView : public TextAppearance {
+public:
+    static constexpr Capacity capacity{1, 1, 0, 0, 1};
+    explicit RefTextView(Ref<T>& ref) : ref_(ref) {}
+    template<class Page> bool render(Page& page, std::uint32_t parent) {
+        const auto node = page.create(parent, protocol::text);
+        if (!node) return false;
+        bool written;
+        if constexpr (std::same_as<T, int>)
+            written = write_int_text(page.transaction(), node, ref_.get());
+        else
+            written = write_string_text(page.transaction(), node, ref_.get());
+        if (!written) return false;
+        bool bound;
+        if constexpr (std::same_as<T, int>)
+            bound = page.template attach_ref<T, write_int_text>(ref_, node);
+        else
+            bound = page.template attach_ref<T, write_string_text>(ref_, node);
+        return bound && this->appearance(page, node);
+    }
+private:
+    Ref<T>& ref_;
+};
+
+inline RefTextView<int> Text(Ref<int>& ref) { return RefTextView<int>(ref); }
+inline RefTextView<std::string> Text(Ref<std::string>& ref) {
+    return RefTextView<std::string>(ref);
+}
+
 template<class F>
 class ButtonView {
 public:
@@ -263,10 +326,11 @@ inline ButtonBuilder Button(std::string label) {
     return ButtonBuilder(std::move(label));
 }
 
+template<class Source>
 class ToggleView {
 public:
-    static constexpr Capacity capacity{3, 1, 1};
-    ToggleView(std::string label, State<bool>& value)
+    static constexpr Capacity capacity{3, 1, 1, 0, is_ref_v<Source> ? 1u : 0u};
+    ToggleView(std::string label, Source& value)
         : label_(std::move(label)), value_(value) {}
 
     template<class Page> bool render(Page& page, std::uint32_t parent) {
@@ -283,22 +347,25 @@ public:
             page.transaction().logical_px(node, protocol::height, 20) &&
             write_bool_value(page.transaction(), node, value_.get()) &&
             page.transaction().u64(node, protocol::event_mask, 2) &&
-            page.template bind<bool, write_bool_value>(value_, node) &&
+            page.template bind_source<bool, write_bool_value>(value_, node) &&
             page.on_value(node, value_);
     }
 private:
     std::string label_;
-    State<bool>& value_;
+    Source& value_;
 };
 
-inline ToggleView Toggle(std::string label, State<bool>& value) {
+template<class Source> requires
+    (std::same_as<Source, State<bool>> || std::same_as<Source, Ref<bool>>)
+ToggleView<Source> Toggle(std::string label, Source& value) {
     return {std::move(label), value};
 }
 
+template<class Source>
 class SliderView {
 public:
-    static constexpr Capacity capacity{1, 1, 1};
-    SliderView(State<int>& value, int minimum, int maximum, int step)
+    static constexpr Capacity capacity{1, 1, 1, 0, is_ref_v<Source> ? 1u : 0u};
+    SliderView(Source& value, int minimum, int maximum, int step)
         : value_(value), minimum_(minimum), maximum_(maximum), step_(step) {}
 
     template<class Page> bool render(Page& page, std::uint32_t parent) {
@@ -314,25 +381,28 @@ public:
                page.transaction().i32(node, protocol::step, step_) &&
                write_int_value(page.transaction(), node, value_.get()) &&
                page.transaction().u64(node, protocol::event_mask, 2) &&
-               page.template bind<int, write_int_value>(value_, node) &&
+               page.template bind_source<int, write_int_value>(value_, node) &&
                page.on_value(node, value_);
     }
 private:
-    State<int>& value_;
+    Source& value_;
     int minimum_;
     int maximum_;
     int step_;
 };
 
-inline SliderView Slider(State<int>& value, int minimum,
-                         int maximum, int step = 1) {
+template<class Source> requires
+    (std::same_as<Source, State<int>> || std::same_as<Source, Ref<int>>)
+SliderView<Source> Slider(Source& value, int minimum,
+                          int maximum, int step = 1) {
     return {value, minimum, maximum, step};
 }
 
+template<class Source>
 class ProgressView {
 public:
-    static constexpr Capacity capacity{1, 1};
-    ProgressView(State<int>& value, int minimum, int maximum)
+    static constexpr Capacity capacity{1, 1, 0, 0, is_ref_v<Source> ? 1u : 0u};
+    ProgressView(Source& value, int minimum, int maximum)
         : value_(value), minimum_(minimum), maximum_(maximum) {}
 
     template<class Page> bool render(Page& page, std::uint32_t parent) {
@@ -347,23 +417,26 @@ public:
                page.transaction().i32(node, protocol::min_value, minimum_) &&
                page.transaction().i32(node, protocol::max_value, maximum_) &&
                write_int_value(page.transaction(), node, value_.get()) &&
-               page.template bind<int, write_int_value>(value_, node);
+               page.template bind_source<int, write_int_value>(value_, node);
     }
 private:
-    State<int>& value_;
+    Source& value_;
     int minimum_;
     int maximum_;
 };
 
-inline ProgressView Progress(State<int>& value, int minimum = 0,
-                             int maximum = 100) {
+template<class Source> requires
+    (std::same_as<Source, State<int>> || std::same_as<Source, Ref<int>>)
+ProgressView<Source> Progress(Source& value, int minimum = 0,
+                              int maximum = 100) {
     return {value, minimum, maximum};
 }
 
+template<class Source>
 class TextInputView {
 public:
-    static constexpr Capacity capacity{1, 1, 1};
-    explicit TextInputView(State<std::string>& value) : value_(value) {}
+    static constexpr Capacity capacity{1, 1, 1, 0, is_ref_v<Source> ? 1u : 0u};
+    explicit TextInputView(Source& value) : value_(value) {}
 
     template<class Page> bool render(Page& page, std::uint32_t parent) {
         auto node = page.create(parent, protocol::control,
@@ -373,15 +446,18 @@ public:
                page.transaction().logical_px(node, protocol::height, 32) &&
                write_string_text(page.transaction(), node, value_.get()) &&
                page.transaction().u64(node, protocol::event_mask, 1u << 5) &&
-               page.template bind<std::string, write_string_text>(value_, node) &&
+               page.template bind_source<std::string, write_string_text>(value_, node) &&
                page.on_text(node, value_);
     }
 private:
-    State<std::string>& value_;
+    Source& value_;
 };
 
-inline TextInputView TextInput(State<std::string>& value) {
-    return TextInputView(value);
+template<class Source> requires
+    (std::same_as<Source, State<std::string>> ||
+     std::same_as<Source, Ref<std::string>>)
+TextInputView<Source> TextInput(Source& value) {
+    return TextInputView<Source>(value);
 }
 
 enum class ImageFit : std::uint8_t { contain, stretch, cover };
@@ -508,9 +584,24 @@ auto Scroll(Children&&... children) {
         std::forward<Children>(children)...);
 }
 
+namespace detail {
+struct RefBinding {
+    void* object = nullptr;
+    void (*attach)(void*, void*) noexcept = nullptr;
+    void (*detach)(void*, void*) noexcept = nullptr;
+};
+
+template<std::size_t Count> struct RefStorage {
+    std::array<RefBinding, Count> entries{};
+    std::size_t size = 0;
+};
+template<> struct RefStorage<0> {};
+} // namespace detail
+
 template<class View, std::size_t MaxBindings = capacity_of<View>.bindings,
          std::size_t MaxHandlers = capacity_of<View>.handlers,
-         std::size_t MaxDynamic = capacity_of<View>.dynamic>
+         std::size_t MaxDynamic = capacity_of<View>.dynamic,
+         std::size_t MaxRefs = capacity_of<View>.refs>
 class Page {
     struct Dynamic {
         void* object;
@@ -524,12 +615,14 @@ public:
     static constexpr std::size_t binding_capacity = MaxBindings;
     static constexpr std::size_t handler_capacity = MaxHandlers;
     static constexpr std::size_t dynamic_capacity = MaxDynamic;
+    static constexpr std::size_t ref_capacity = MaxRefs;
     Page(Transport& transport, View view)
         : transport_(transport), view_(std::move(view)) {}
     Page(const Page&) = delete;
     Page& operator=(const Page&) = delete;
     ~Page() {
         rollback_dynamic();
+        detach_refs();
         for (std::size_t i = 0; i < binding_count_; ++i)
             bindings_[i].unsubscribe(bindings_[i].state,
                                      bindings_[i].subscription);
@@ -549,6 +642,7 @@ public:
         binding_count_ = 0;
         handler_count_ = 0;
         dynamic_count_ = 0;
+        if constexpr (MaxRefs > 0) refs_.size = 0;
         dirty_words_.fill(0);
         auto root = create(0, protocol::root);
         bool rendered = root &&
@@ -572,6 +666,7 @@ public:
             bindings_[i].subscribe(bindings_[i].state,
                                    bindings_[i].subscription);
         commit_dynamic(generation);
+        attach_refs();
         return {};
     }
 
@@ -593,6 +688,7 @@ public:
         generation_ = generation;
         dirty_words_.fill(0);
         commit_dynamic(generation);
+        attach_refs();
         return {};
     }
 
@@ -679,6 +775,7 @@ public:
         generation_ = generation;
         dirty_words_.fill(0);
         commit_dynamic(generation);
+        attach_refs();
     }
 
     Result<void> write_fragment(Transaction<>& tx, std::uint32_t& ids) noexcept {
@@ -732,6 +829,40 @@ public:
         return true;
     }
 
+    template<class T,
+             bool (*Write)(Transaction<>&, std::uint32_t, const T&)>
+    bool bind_source(State<T>& state, std::uint32_t node) noexcept {
+        return bind<T, Write>(state, node);
+    }
+
+    template<class T,
+             bool (*Write)(Transaction<>&, std::uint32_t, const T&)>
+    bool bind_source(Ref<T>& ref, std::uint32_t node) noexcept {
+        return attach_ref<T, Write>(ref, node);
+    }
+
+    template<class T,
+             bool (*Write)(Transaction<>&, std::uint32_t, const T&)>
+    bool attach_ref(Ref<T>& ref, std::uint32_t node) noexcept {
+        if constexpr (MaxRefs == 0) {
+            return fail(Error::resource_limit);
+        } else {
+            if (refs_.size == MaxRefs) return fail(Error::resource_limit);
+            for (std::size_t i = 0; i < refs_.size; ++i)
+                if (refs_.entries[i].object == &ref) return fail(Error::bad_state);
+            if (!bind<T, Write>(ref.state_, node)) return false;
+            refs_.entries[refs_.size++] = {
+                &ref,
+                [](void* object, void* owner) noexcept {
+                    static_cast<Ref<T>*>(object)->attach(owner);
+                },
+                [](void* object, void* owner) noexcept {
+                    static_cast<Ref<T>*>(object)->detach(owner);
+                }};
+            return true;
+        }
+    }
+
     template<class F> bool on_click(std::uint32_t node, F& callback) noexcept {
         if (handler_count_ == MaxHandlers) {
             mount_error_ = Error::resource_limit;
@@ -770,6 +901,10 @@ public:
         return true;
     }
 
+    template<class T> bool on_value(std::uint32_t node, Ref<T>& ref) noexcept {
+        return on_value(node, ref.state_);
+    }
+
     bool on_text(std::uint32_t node, State<std::string>& state) noexcept {
         if (handler_count_ == MaxHandlers) {
             mount_error_ = Error::resource_limit;
@@ -789,6 +924,10 @@ public:
         return true;
     }
 
+    bool on_text(std::uint32_t node, Ref<std::string>& ref) noexcept {
+        return on_text(node, ref.state_);
+    }
+
     bool theme(std::uint32_t node, std::uint16_t property,
                Color value) noexcept {
         std::array<std::byte, 8> bytes{};
@@ -806,6 +945,16 @@ public:
     }
 
 private:
+    void attach_refs() noexcept {
+        if constexpr (MaxRefs > 0)
+            for (std::size_t i = 0; i < refs_.size; ++i)
+                refs_.entries[i].attach(refs_.entries[i].object, this);
+    }
+    void detach_refs() noexcept {
+        if constexpr (MaxRefs > 0)
+            for (std::size_t i = 0; i < refs_.size; ++i)
+                refs_.entries[i].detach(refs_.entries[i].object, this);
+    }
     Result<void> prepare_dynamic(Transaction<>& tx, std::uint32_t& ids) noexcept {
         for (std::size_t i = 0; i < dynamic_count_; ++i) {
             auto result = dynamic_[i].prepare(dynamic_[i].object, tx, ids, transport_);
@@ -836,12 +985,12 @@ private:
         void* callback = nullptr;
         bool (*call)(void*, std::span<const std::byte>) = nullptr;
     };
-
     Transport& transport_;
     View view_;
     std::array<Binding, MaxBindings> bindings_{};
     std::array<Handler, MaxHandlers> handlers_{};
     std::array<Dynamic, MaxDynamic> dynamic_{};
+    [[no_unique_address]] detail::RefStorage<MaxRefs> refs_{};
     std::array<std::uint64_t, (MaxBindings + 63) / 64> dirty_words_{};
     Transaction<>* current_ = nullptr;
     std::uint32_t* external_ids_ = nullptr;

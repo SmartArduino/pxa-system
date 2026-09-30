@@ -193,6 +193,27 @@ int main() {
     choose.set(true);
     assert(allocations == baseline);
 
+    Ref<int> conditional_ref{12};
+    State<bool> show_ref{true};
+    {
+        auto page = Page(transport, When(show_ref,
+            [&] { return Text(conditional_ref); },
+            [] { return Text("Hidden"); }));
+        assert(page.mount() && conditional_ref.mounted());
+        assert(conditional_ref.set(13) && page.dirty() && page.flush());
+        show_ref.set(false);
+        reject_commit = true;
+        assert(!page.flush() && conditional_ref.mounted());
+        reject_commit = false;
+        assert(page.flush() && !conditional_ref.mounted());
+        assert(!conditional_ref.set(14));
+        show_ref.set(true);
+        assert(page.flush() && conditional_ref.mounted());
+        assert(conditional_ref.get() == 13);
+    }
+    assert(!conditional_ref.mounted() && !conditional_ref.set(15));
+    assert(allocations == baseline);
+
     ListState nested_source{1};
     State<bool> nested_choice{true};
     {

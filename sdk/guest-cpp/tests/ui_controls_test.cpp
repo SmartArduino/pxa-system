@@ -74,4 +74,29 @@ int main() {
     auto rejected = Page(transport, Slider(invalid, 0, 10));
     auto result = rejected.mount();
     assert(!result && result.error() == pxa::Error::invalid_argument);
+
+    Ref<bool> toggle_ref{false};
+    Ref<int> slider_ref{2};
+    Ref<int> progress_ref{4};
+    Ref<std::string> input_ref{std::string("Ready")};
+    {
+        auto refs = Page(transport, Column(
+            Toggle("Toggle", toggle_ref), Slider(slider_ref, 0, 10),
+            Progress(progress_ref), TextInput(input_ref)));
+        static_assert(decltype(refs)::ref_capacity == 4);
+        assert(refs.mount());
+        assert(toggle_ref.mounted() && slider_ref.mounted() &&
+               progress_ref.mounted() && input_ref.mounted());
+        assert(toggle_ref.set(true) && progress_ref.set(6));
+        assert(refs.flush());
+        pxa::wire::put32(value.data(), 8);
+        assert(refs.handle(event(6, refs.generation(), 2, value)));
+        assert(slider_ref.get() == 8 && refs.flush());
+        assert(refs.handle(event(8, refs.generation(), 6, text)));
+        assert(input_ref.get() == "Bob" && refs.flush());
+    }
+    assert(!toggle_ref.mounted() && !slider_ref.mounted() &&
+           !progress_ref.mounted() && !input_ref.mounted());
+    assert(!toggle_ref.set(false) && !slider_ref.set(1) &&
+           !progress_ref.set(1) && !input_ref.set("Gone"));
 }

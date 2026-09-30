@@ -117,4 +117,33 @@ int main() {
     first.set(4);
     last.set(5);
     assert(packets.size() == before_unmounted);
+
+    Ref<int> number{7};
+    Ref<std::string> label{std::string("Ready")};
+    assert(!number.mounted() && !label.mounted());
+    assert(!number.set(8) && number.get() == 7);
+    {
+        auto refs = Page(transport, Column(Text(number), Text(label)));
+        static_assert(decltype(refs)::binding_capacity == 2);
+        static_assert(decltype(refs)::ref_capacity == 2);
+        assert(refs.mount() && number.mounted() && label.mounted());
+        assert(number.set(8) && label.set("Running") && refs.dirty());
+        reject_commit = true;
+        assert(!refs.flush() && refs.dirty());
+        assert(number.mounted() && label.mounted());
+        reject_commit = false;
+        assert(refs.flush() && !refs.dirty());
+    }
+    assert(!number.mounted() && !label.mounted());
+    assert(!number.set(9) && !label.set("Stopped"));
+
+    Ref<int> duplicate{1};
+    auto invalid = Page(transport, Column(Text(duplicate), Text(duplicate)));
+    assert(!invalid.mount() && !duplicate.mounted());
+
+    Page<decltype(Text(number)), 1, 0, 0, 0> no_ref_slots(
+        transport, Text(number));
+    auto exhausted = no_ref_slots.mount();
+    assert(!exhausted && exhausted.error() == pxa::Error::resource_limit);
+    assert(!number.mounted());
 }

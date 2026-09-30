@@ -65,6 +65,7 @@ struct Model {
     Navigation& navigation;
     pxa::Transport& transport;
     pxa::RequestTable& requests;
+    pxa::ui::Ref<int> shared{5};
 };
 
 struct Details {
@@ -75,7 +76,7 @@ struct Details {
         using namespace pxa::ui;
         return Column(Text(local), Button("Back").on_click([this] {
             assert(model.navigation.pop());
-        }));
+        }), Text(model.shared));
     }
 };
 
@@ -86,7 +87,7 @@ struct Home {
         using namespace pxa::ui;
         return Column(Text(model.count), Button("Details").on_click([this] {
             assert(model.navigation.push<Details>(std::ref(model)));
-        }));
+        }), Text(model.shared));
     }
     void on_mount(pxa::TaskScope& tasks) {
         assert(tasks.start(wait(model.transport, model.requests)));
@@ -146,7 +147,7 @@ int main() {
     Model model{pxa::ui::State<int>{0}, navigation, transport, requests};
     assert(navigation.push<Home>(std::ref(model)));
     assert(navigation.attach(transport));
-    assert(navigation.depth() == 1 && started == 1);
+    assert(navigation.depth() == 1 && started == 1 && model.shared.mounted());
     const auto home_generation = navigation.generation();
     const auto home_task_token = token;
     std::array<std::byte, 24> payload{};
@@ -161,6 +162,7 @@ int main() {
     assert(!failed && failed.error() == pxa::Error::resource_limit);
     assert(navigation.depth() == 1 && destroyed == 0 && cancelled == 0);
     assert(navigation.generation() == home_generation);
+    assert(model.shared.mounted());
 
     fail_commit = false;
     model.count.set(3);
@@ -171,6 +173,8 @@ int main() {
     assert(navigation.handle(click(updated_generation, payload)));
     assert(navigation.flush());
     assert(navigation.depth() == 2 && destroyed == 1 && cancelled == 1);
+    assert(model.shared.mounted() && model.shared.set(6));
+    assert(navigation.flush());
     const auto details_generation = navigation.generation();
     assert(!navigation.handle(click(updated_generation, payload)));
     std::array<std::byte, 12> late{};
@@ -179,12 +183,13 @@ int main() {
 
     assert(navigation.handle(click(details_generation, payload)));
     assert(navigation.flush());
-    assert(navigation.depth() == 1 && started == 2);
+    assert(navigation.depth() == 1 && started == 2 && model.shared.mounted());
     assert(navigation.generation() > details_generation);
     assert(!navigation.pop());
     assert(allocations == baseline);
     navigation.reset();
     assert(destroyed == 2 && cancelled == 2);
+    assert(!model.shared.mounted() && !model.shared.set(7));
 
     host_generation = 0;
     assert(pxa::AppRuntime<RuntimeApp>::start(nullptr, 0) == 0);

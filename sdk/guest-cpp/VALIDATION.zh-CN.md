@@ -20,6 +20,27 @@
   状态恢复不提交、`When` 嵌套在 keyed list 行内及分支内嵌 keyed list。
   新行的嵌套模块只准备一次；定向测试的 ASan/UBSan、use-after-scope 和
   detect_stack_use_after_return=1 通过，挂载、切换和回滚期间无 Guest 堆分配。
+- `Ref<bool>`/`Ref<int>`/`Ref<std::string>` 的页面容量推导、挂载后更新、提交失败保留
+  原引用、成功隐藏后失效、重挂载保留值，以及同页重复引用拒绝已通过定向测试。
+  完整 23 组主机测试再次通过；页面和动态分支定向测试的 ASan/UBSan、
+  use-after-scope、detect_stack_use_after_return=1 通过。使用锁定 WASI SDK 34
+  构建 `conditional` 的 Linux x86_64、ESP32-S3、ESP32-S31 Wasm/AOT 包，产物分别
+  在 `/tmp/pxa-cpp-ref-pkgs{,-esp32s3,-esp32s31}/pxa-conditional.pxa`。
+  导航测试还覆盖新旧页面间共享 Ref 的所有权转移，失败时仍保留旧页。
+  Toggle、Slider、Progress、TextInput 使用同一绑定实现，控件定向测试覆盖
+  程序更新、输入事件与页面卸载。产品模拟器实测隐藏、显示 0、点击显示 1、隐藏后重显 1；截图为
+  `/tmp/pxa-cpp-ref-{initial,shown,updated,hidden,restored}.png`。新 SDK 包
+  `/tmp/pxa-cpp-ref-sdk-20260930` 在仓库外 `/tmp` 使用包内源码、CMake 和工具
+  构建并打包相同示例，输出 `/tmp/pxa-cpp-ref-external/pxa-conditional.pxa`。
+  最终 `RefStorage<0>` 使用空存储，未使用 Ref 的页面对象维持 312 字节，
+  显式设为零容量时返回 `resource_limit`；主机套件及定向 ASan 再次通过。
+  `settings` 将 Toggle、TextInput 切到 Ref 后，使用最终源码生成 Linux x86_64、
+  ESP32-S3、ESP32-S31 Wasm/AOT 包，位于
+  `/tmp/pxa-cpp-ref-final-settings-{simulator,esp32s3,esp32s31}/pxa-settings.pxa`。
+  产品模拟器实际点击 Sound 开关，截图
+  `/tmp/pxa-cpp-ref-settings-{before,after}.png` 显示由开转关，正常退出。
+  最终独立包 `/tmp/pxa-cpp-ref-final-sdk-20260930` 在仓库外再次构建 settings，
+  输出 `/tmp/pxa-cpp-ref-final-external/pxa-settings.pxa`。
 - `examples/conditional` 用 WASI SDK 34 生成 Linux x86_64、ESP32-S3、ESP32-S31
   的 Wasm/AOT。产品模拟器交互依次显示隐藏态、计数器 0、点击后 1、再次隐藏、
   再次显示 1；截图为 `/tmp/pxa-cpp-conditional-{initial,shown,incremented,hidden,restored}.png`。
@@ -211,7 +232,7 @@ files 的初次三目标构建原始大小：Wasm 225337、Linux AOT 110728、S3
 
 ## 尚需完成
 
-- UI Ref、显式常驻页面选项；完整容量配置及
+- 其他需要命令式访问的控件、显式常驻页面选项；完整容量配置及
   动态 UI 实机、更多事务失败路径验收。
 - Work 的 ESP Host 接入、持久化队列与设备运行验收；Surface 在 pai-touch 的实机、释放竞态与资源撤销验收；Net 实际后端与设备验证、Device/Sensor 更多设备及撤销集成验证，IPC 契约生成器
   和独立 service/job Component 示例。

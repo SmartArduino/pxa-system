@@ -35,7 +35,7 @@ class ListView {
     using RowPage = Page<Row,
         RowBindings == std::dynamic_extent ? capacity_of<Row>.bindings : RowBindings,
         RowHandlers == std::dynamic_extent ? capacity_of<Row>.handlers : RowHandlers,
-        capacity_of<Row>.dynamic>;
+        capacity_of<Row>.dynamic, capacity_of<Row>.refs>;
     static_assert(MaxRows > 0 && std::is_trivially_copyable_v<Key> && sizeof(Key) <= 16,
                   "List keys must be small values; row capacity must be nonzero");
     struct Slot {
