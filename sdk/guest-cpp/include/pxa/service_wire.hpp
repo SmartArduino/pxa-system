@@ -18,6 +18,11 @@ public:
         bytes_[size_] = '\0';
         return {};
     }
+    Result<void> set(std::string_view text) noexcept {
+        auto result = assign(std::as_bytes(std::span{text.data(), text.size()}));
+        if (!result) return std::unexpected(Error::invalid_argument);
+        return {};
+    }
     std::string_view view() const noexcept { return {bytes_.data(), size_}; }
     const char* c_str() const noexcept { return bytes_.data(); }
 private:

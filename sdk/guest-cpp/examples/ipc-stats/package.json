@@ -1,0 +1,30 @@
+{
+  "format": "pxa-package-source-0.1",
+  "min_sdk": [1, 0],
+  "target_sdk": [1, 0],
+  "compile_sdk": [1, 0],
+  "id": "pxa-cpp-ipc-stats",
+  "version": "1.0.0",
+  "name": "C++ IPC Stats",
+  "description": "Typed IPC between UI and service Components",
+  "build": {"system": "cmake", "source_dir": "."},
+  "components": [
+    {
+      "id": "main",
+      "kind": "ui",
+      "services": ["ui", "ipc"],
+      "cmake_target": "pxa_main",
+      "wasi": {"version": "preview1", "libc": "wasi-libc", "features": ["monotonic-clock", "wall-clock"]}
+    },
+    {
+      "id": "stats.provider",
+      "kind": "service",
+      "services": ["ipc"],
+      "cmake_target": "pxa_provider",
+      "wasi": {"version": "preview1", "libc": "wasi-libc", "features": ["monotonic-clock", "wall-clock"]}
+    }
+  ],
+  "ipc_endpoints": [
+    {"name": "stats.get.v1", "component": "stats.provider"}
+  ]
+}

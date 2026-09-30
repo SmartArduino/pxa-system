@@ -94,6 +94,25 @@ Result<std::size_t> encode_ipc_call(std::string_view endpoint,
     return size;
 }
 
+Result<std::size_t> encode_ipc_call_in_place(std::string_view endpoint,
+    std::size_t payload_size, std::span<std::byte> packet) noexcept {
+    if (!valid_ipc_endpoint(endpoint) || payload_size > 1024)
+        return std::unexpected(Error::invalid_argument);
+    const auto size = wire::header_bytes + 4 + endpoint.size() +
+                      (payload_size ? 4 + payload_size : 0);
+    if (packet.size() < size) return std::unexpected(Error::resource_limit);
+    auto* records = packet.data() + wire::header_bytes;
+    wire::put16(records, 1);
+    wire::put16(records + 2, static_cast<std::uint16_t>(endpoint.size()));
+    std::copy(bytes(endpoint).begin(), bytes(endpoint).end(), records + 4);
+    if (payload_size) {
+        auto* payload = records + 4 + endpoint.size();
+        wire::put16(payload, 2);
+        wire::put16(payload + 2, static_cast<std::uint16_t>(payload_size));
+    }
+    return size;
+}
+
 Result<std::size_t> encode_ipc_reply(std::uint32_t call_id,
     std::int32_t status, std::span<const std::byte> payload,
     std::span<std::byte> packet) noexcept {
@@ -112,6 +131,28 @@ Result<std::size_t> encode_ipc_reply(std::uint32_t call_id,
     if (!wire::record(writer, 2, scalar) ||
         (!payload.empty() && !wire::record(writer, 3, payload)))
         return std::unexpected(Error::resource_limit);
+    return size;
+}
+
+Result<std::size_t> encode_ipc_reply_in_place(std::uint32_t call_id,
+    std::size_t payload_size, std::span<std::byte> packet) noexcept {
+    if (!call_id || payload_size > 1024)
+        return std::unexpected(Error::invalid_argument);
+    const auto size = wire::header_bytes + 16 +
+                      (payload_size ? 4 + payload_size : 0);
+    if (packet.size() < size) return std::unexpected(Error::resource_limit);
+    auto* records = packet.data() + wire::header_bytes;
+    wire::put16(records, 1);
+    wire::put16(records + 2, 4);
+    wire::put32(records + 4, call_id);
+    wire::put16(records + 8, 2);
+    wire::put16(records + 10, 4);
+    wire::put32(records + 12, 0);
+    if (payload_size) {
+        wire::put16(records + 16, 3);
+        wire::put16(records + 18,
+                    static_cast<std::uint16_t>(payload_size));
+    }
     return size;
 }
 

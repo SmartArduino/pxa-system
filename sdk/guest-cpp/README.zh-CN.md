@@ -254,7 +254,35 @@ HTTP 404 等状态码是有效的 `NetResponse`，不是 PXA 错误。没有响�
 `body_length_known()` 为假时不能用 `body_length` 判断结束，`read` 返回 0 才是 EOF。
 请求取消后晚到的响应体句柄由请求表关闭；stop 阶段不调用 Host。
 
-IPC 当前提供有界的原始消息接口，范围是同一 App 的 Component 通信。
+IPC 范围是同一 App 的 Component 通信。`examples/ipc-stats` 展示类型化契约：
+`stats.contract.json` 声明 endpoint、版本、严格递增的字段编号与字段类型；
+`pxa_add_ipc_contract` 在构建时生成双方共用的 C++ 编解码头文件：
+
+```cmake
+pxa_add_ipc_contract(stats_contract CONTRACT stats.contract.json
+                     OUTPUT stats_generated.hpp)
+pxa_add_app(pxa_main COMPONENT_ID main SOURCES main.cpp
+            LIBRARIES stats_contract)
+```
+
+```cpp
+stats::Get::Request request{};
+request.seed = 41;
+request.label.set("test");
+pxa::IpcCallBuffers<stats::Get> buffers;
+auto result = co_await ctx.ipc().call<stats::Get>(request, buffers);
+```
+
+提供方在 `on_event` 中调用 `decode_ipc_request<stats::Get>(event)`，取得有界拥有存储
+的请求，再用 `ctx.ipc().reply<stats::Get>(call_id, response, reply_buffer)` 回复。
+当前生成器支持必需的 `u32`、`i32`、`bool`、有界 UTF-8 `text` 字段，按字段编号
+逐条编码，不序列化 C++ 对象布局；未知必需字段、重复字段、无效文字和超预算
+消息均拒绝。可选字段和跨 App 路由尚未支持，破坏性契约变更应更换 endpoint 版本。
+类型化接口直接写入调用方包缓冲区，不复制整份 payload。生成类型公开请求、
+回复与结果的最大字节数；`IpcCallBuffers` 和 `IpcReplyBuffer` 按此预留固定容量，
+必须活到任务完成或取消。回复的文本值复制进生成类型的固定容量存储。
+
+仍可使用有界的原始消息接口。
 `ctx.ipc().call(endpoint, payload, packet, output)` 在调用时把 endpoint 和
 payload 编码进调用方控制包；包与 output 必须活到任务完成或取消。
 调用先等待 Core 接受，再用独立的 IPC call ID 等待最终结果；call ID 与 Core
@@ -264,7 +292,7 @@ payload 编码进调用方控制包；包与 output 必须活到任务完成或�
 endpoint/payload 视图，然后调用 `ctx.ipc().reply(call_id, status, payload, packet)`。
 若要在事件返回后才回复，必须先复制请求数据。取消等待中的调用不会撤销已被
 Broker 接受的工作；后续结果会被忽略，提供方仍应回复或由 Host 停止流程清理。
-类型化契约生成器和独立 service Component 示例尚未完成。
+独立 service Component 的完整示例见 `examples/ipc-stats`。
 
 Work 通过 `ctx.work().enqueue({.worker = "sync.job", ...})` 交给单独声明的
 `job` Component。`enqueue` 返回 Work ID 与 Host 授予的执行窗口，不表示

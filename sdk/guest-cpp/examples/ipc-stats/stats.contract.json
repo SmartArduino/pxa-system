@@ -1,0 +1,16 @@
+{
+  "schema": "pxa-ipc-contract-1",
+  "namespace": "stats",
+  "name": "Get",
+  "endpoint": "stats.get.v1",
+  "version": {"major": 1, "minor": 0},
+  "request": [
+    {"id": 1, "name": "seed", "type": "u32"},
+    {"id": 2, "name": "label", "type": "text", "max_bytes": 16}
+  ],
+  "response": [
+    {"id": 1, "name": "next", "type": "u32"},
+    {"id": 2, "name": "valid", "type": "bool"},
+    {"id": 3, "name": "label", "type": "text", "max_bytes": 16}
+  ]
+}

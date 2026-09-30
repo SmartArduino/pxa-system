@@ -69,6 +69,34 @@ function(_pxa_collect_c_sources output)
     set(${output} "${_pxa_sources}" PARENT_SCOPE)
 endfunction()
 
+function(pxa_add_ipc_contract target)
+    cmake_parse_arguments(PXA "" "CONTRACT;OUTPUT" "" ${ARGN})
+    if(NOT TARGET Pxa::Cpp OR NOT PXA_CONTRACT OR NOT PXA_OUTPUT OR
+       NOT PXA_OUTPUT MATCHES "^[A-Za-z_][A-Za-z0-9_]*\\.hpp$")
+        message(FATAL_ERROR
+            "pxa_add_ipc_contract(${target}) requires Pxa::Cpp, CONTRACT and OUTPUT name.hpp")
+    endif()
+    get_filename_component(_pxa_contract "${PXA_CONTRACT}" ABSOLUTE
+                           BASE_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
+    if(NOT EXISTS "${_pxa_contract}")
+        message(FATAL_ERROR "IPC contract does not exist: ${_pxa_contract}")
+    endif()
+    find_package(Python3 REQUIRED COMPONENTS Interpreter)
+    set(_pxa_generator "${PXA_CPP_SDK_DIR}/tools/generate_ipc_contract.py")
+    set(_pxa_output_dir "${CMAKE_CURRENT_BINARY_DIR}/pxa-ipc/${target}")
+    set(_pxa_header "${_pxa_output_dir}/${PXA_OUTPUT}")
+    add_custom_command(OUTPUT "${_pxa_header}"
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${_pxa_output_dir}"
+        COMMAND "${Python3_EXECUTABLE}" "${_pxa_generator}"
+                "${_pxa_contract}" "${_pxa_header}"
+        DEPENDS "${_pxa_contract}" "${_pxa_generator}"
+        VERBATIM)
+    add_custom_target(${target}_generated DEPENDS "${_pxa_header}")
+    add_library(${target} INTERFACE)
+    add_dependencies(${target} ${target}_generated)
+    target_include_directories(${target} INTERFACE "${_pxa_output_dir}")
+endfunction()
+
 # A module is an object library so several source folders can be composed into
 # one Component without creating an additional Wasm module or ambient imports.
 function(pxa_add_module target)
