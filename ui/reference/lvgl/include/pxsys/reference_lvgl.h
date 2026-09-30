@@ -2,6 +2,7 @@
 #define PXSYS_REFERENCE_LVGL_H
 
 #include <stdint.h>
+#include <stddef.h>
 
 #include "lvgl.h"
 #include "pxsys/app_metadata.h"
@@ -32,6 +33,9 @@ typedef enum {
 typedef const lv_font_t* (*pxsys_reference_lvgl_resolve_font_fn)(
     void* context, pxsys_typography_role_t role, uint16_t requested_px,
     const pxsys_locale_snapshot_t* locale);
+
+typedef void (*pxsys_reference_lvgl_overlay_objects_fn)(
+    void* context, lv_obj_t* const* objects, size_t count);
 
 typedef void (*pxsys_reference_lvgl_release_icon_fn)(void* context);
 
@@ -386,6 +390,8 @@ typedef struct {
     pxsys_reference_lvgl_idle_save_fn idle_save;
     pxsys_reference_lvgl_idle_dim_fn idle_dim;
     pxsys_reference_lvgl_idle_lock_fn idle_lock;
+    void* system_overlay_objects_context;
+    pxsys_reference_lvgl_overlay_objects_fn system_overlay_objects_changed;
 } pxsys_reference_lvgl_config_t;
 
 typedef struct pxsys_reference_lvgl pxsys_reference_lvgl_t;

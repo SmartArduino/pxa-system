@@ -640,6 +640,8 @@ struct pxsys_reference_lvgl {
     pxsys_reference_lvgl_preview_overlay_fn preview_overlay;
     void* system_overlay_context;
     pxsys_reference_lvgl_lock_changed_fn system_overlay_changed;
+    void* system_overlay_objects_context;
+    pxsys_reference_lvgl_overlay_objects_fn system_overlay_objects_changed;
     uint8_t system_overlay_visible;
     void* performance_context;
     pxsys_reference_lvgl_performance_get_fn performance_get;
@@ -733,6 +735,8 @@ static void capture_current_task(pxsys_reference_lvgl_t* ui,
 static void dismiss_recent_item(pxsys_reference_lvgl_t* ui,
                                 recent_item_t* item);
 static void lock_screen_refresh(pxsys_reference_lvgl_t* ui);
+static int bar_is_visible(const pxsys_reference_lvgl_t* ui,
+                          pxsys_window_bar_mode_t mode);
 
 static void rebuild_async(void* context) {
     rebuild((pxsys_reference_lvgl_t*)context);
@@ -754,7 +758,35 @@ static pxsys_window_bar_mode_t navigation_bar_mode(const pxsys_reference_lvgl_t*
 
 static void update_system_overlay(pxsys_reference_lvgl_t* ui) {
     int visible;
-    if (!ui_valid(ui) || ui->system_overlay_changed == NULL) return;
+    if (!ui_valid(ui)) return;
+    if (ui->system_overlay_objects_changed != NULL) {
+        lv_obj_t* objects[8];
+        size_t count = 0;
+        if (ui->status_bar != NULL &&
+            bar_is_visible(ui, status_bar_mode(ui)) &&
+            !lv_obj_is_hidden(ui->status_bar))
+            objects[count++] = ui->status_bar;
+        if (ui->navigation_bar != NULL &&
+            bar_is_visible(ui, navigation_bar_mode(ui)) &&
+            !lv_obj_is_hidden(ui->navigation_bar))
+            objects[count++] = ui->navigation_bar;
+        if (ui->volume_osd != NULL && !lv_obj_is_hidden(ui->volume_osd))
+            objects[count++] = ui->volume_osd;
+        if (ui->toast_visible && ui->toast != NULL &&
+            !lv_obj_is_hidden(ui->toast))
+            objects[count++] = ui->toast;
+        if (ui->app_ime != NULL && !lv_obj_is_hidden(ui->app_ime))
+            objects[count++] = ui->app_ime;
+        if (ui->notification_shade != NULL &&
+            !lv_obj_is_hidden(ui->notification_shade))
+            objects[count++] = ui->notification_shade;
+        if (ui->navigation_back_indicator != NULL &&
+            !lv_obj_is_hidden(ui->navigation_back_indicator))
+            objects[count++] = ui->navigation_back_indicator;
+        ui->system_overlay_objects_changed(
+            ui->system_overlay_objects_context, objects, count);
+    }
+    if (ui->system_overlay_changed == NULL) return;
     visible = ui->status_bar != NULL || ui->navigation_handle != NULL ||
               (ui->navigation_mode == PXSYS_NAVIGATION_BUTTONS &&
                ui->navigation_bar != NULL) ||
@@ -1387,13 +1419,14 @@ static void launcher_scroll_ended(lv_event_t* event) {
                             PXSYS_REFERENCE_UI_LAUNCHER_ROWS;
     const size_t last_page = (ui->launcher_count - 1u) / per_page;
     const int32_t scroll_x = lv_obj_get_scroll_x(ui->content);
-    size_t page = scroll_x > 0
-        ? (size_t)(scroll_x + width / 2) / (size_t)width : 0u;
-    if (page > last_page) page = last_page;
+    const int32_t offset = scroll_x - (int32_t)ui->launcher_page * width;
+    size_t page = ui->launcher_page;
+    if (offset > width / 4 && page < last_page) page++;
+    else if (offset < -width / 4 && page > 0) page--;
     ui->launcher_page = (uint16_t)page;
     const int32_t target_x = (int32_t)page * width;
     if (scroll_x != target_x)
-        lv_obj_scroll_to_x(ui->content, target_x, LV_ANIM_OFF);
+        lv_obj_scroll_to_x(ui->content, target_x, LV_ANIM_ON);
 }
 
 static lv_obj_t* make_label(lv_obj_t* parent, const char* text,
@@ -3302,6 +3335,8 @@ static void build_home(pxsys_reference_lvgl_t* ui,
     pxsys_lvgl_add_flags(ui->content,
                     LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
     lv_obj_set_scroll_dir(ui->content, LV_DIR_HOR);
+    lv_obj_set_scroll_momentum(ui->content, false);
+    lv_obj_set_scroll_elastic(ui->content, false);
     lv_obj_set_scrollbar_mode(ui->content, LV_SCROLLBAR_MODE_OFF);
     lv_obj_add_event_cb(ui->content, launcher_background_clicked,
                         LV_EVENT_CLICKED, ui);
@@ -3376,6 +3411,7 @@ static void build_home(pxsys_reference_lvgl_t* ui,
             cursor = end + 1;
         }
     }
+    lv_obj_update_layout(ui->content);
     launcher_position_tiles(ui);
     page_count = ui->launcher_count == 0 ? 1u :
         (ui->launcher_count + columns * rows - 1u) / (columns * rows);
@@ -3706,11 +3742,13 @@ static void build_appearance_page(pxsys_reference_lvgl_t* ui,
 
 static void notification_shade_progress_set(void* object, int32_t progress) {
     pxsys_reference_lvgl_t* ui = (pxsys_reference_lvgl_t*)object;
+    int32_t previous_progress;
     if (!ui_valid(ui) || ui->notification_shade == NULL ||
         ui->notification_panel == NULL || ui->notification_panel_height <= 0)
         return;
     if (progress < 0) progress = 0;
     if (progress > 256) progress = 256;
+    previous_progress = ui->notification_progress;
     ui->notification_progress = progress;
     lv_obj_set_y(ui->notification_panel,
                  (lv_coord_t)(-ui->notification_panel_height +
@@ -3719,6 +3757,7 @@ static void notification_shade_progress_set(void* object, int32_t progress) {
     /* No dimming scrim: a translucent full-screen overlay made every drag
      * frame repaint the whole display underneath it. Without it the drag
      * only repaints the moving panel. */
+    if (previous_progress != progress) update_system_overlay(ui);
 }
 
 static void close_notification_shade(pxsys_reference_lvgl_t* ui) {
@@ -3791,7 +3830,8 @@ static void transient_timeout(lv_timer_t* timer) {
     /* Keep the gesture target alive until the held pointer is released.
      * Rebuilding the transient navigation bar here would emit PRESS_LOST and
      * discard the pending Home/Recents action. */
-    if (ui->navigation_dragging || ui->notification_dragging) {
+    if (ui->navigation_dragging || ui->notification_dragging ||
+        ui->notification_shade_open) {
         lv_timer_reset(timer);
         return;
     }
@@ -3860,7 +3900,12 @@ static void shade_body_event(lv_event_t* event) {
     lv_indev_t* indev = lv_event_get_indev(event);
     lv_point_t point;
     lv_event_code_t code = lv_event_get_code(event);
-    if (!ui_valid(ui) || body == NULL || indev == NULL) return;
+    if (!ui_valid(ui) || body == NULL) return;
+    if (code == LV_EVENT_SCROLL) {
+        update_system_overlay(ui);
+        return;
+    }
+    if (indev == NULL) return;
     lv_indev_get_point(indev, &point);
     if (code == LV_EVENT_PRESSED) {
         ui->notification_close_armed =
@@ -4307,6 +4352,7 @@ static void build_notification_shade(pxsys_reference_lvgl_t* ui,
     lv_obj_add_event_cb(body, shade_body_event, LV_EVENT_PRESSING, ui);
     lv_obj_add_event_cb(body, shade_body_event, LV_EVENT_RELEASED, ui);
     lv_obj_add_event_cb(body, shade_body_event, LV_EVENT_PRESS_LOST, ui);
+    lv_obj_add_event_cb(body, shade_body_event, LV_EVENT_SCROLL, ui);
 
     tile_y = 6;
     tile_gap = (int32_t)layout.item_gap;
@@ -4473,8 +4519,8 @@ static void build_notification_shade(pxsys_reference_lvgl_t* ui,
         ui->navigation_bar != NULL)
         lv_obj_move_foreground(ui->navigation_bar);
     ui->notification_shade_open = 1;
-    update_system_overlay(ui);
     notification_shade_progress_set(ui, initial_progress);
+    update_system_overlay(ui);
     if (ui->toast_visible && ui->toast != NULL) toast_restack(ui);
 }
 
@@ -4521,9 +4567,12 @@ static void status_bar_event(lv_event_t* event) {
         }
         ui->notification_dragging = 0;
     } else if (lv_event_get_code(event) == LV_EVENT_PRESS_LOST) {
+        int32_t target = ui->notification_drag_moved ||
+                                 ui->notification_progress >= 64
+                             ? 256 : 0;
         ui->notification_dragging = 0;
-        if (ui->notification_shade_open && ui->notification_progress < 256)
-            settle_notification_shade(ui, 0);
+        if (ui->notification_shade_open)
+            settle_notification_shade(ui, target);
     }
 }
 
@@ -5971,7 +6020,11 @@ static void app_input_method_poll(lv_timer_t* timer) {
 #if PXSYS_REFERENCE_UI_DEBUG_INPUT_METHOD
     if (target == NULL) target = find_any_textarea(lv_screen_active());
 #endif
-    if (target == NULL || target == ui->app_ime_target) return;
+    if (target == ui->app_ime_target && ui->app_ime != NULL) {
+        update_system_overlay(ui);
+        return;
+    }
+    if (target == NULL) return;
     if (ui->app_ime != NULL && object_is_within(target, ui->app_ime)) return;
     if (ui->app_ime_target != NULL &&
         object_is_within(target, ui->app_ime_target)) return;
@@ -7744,8 +7797,10 @@ static void system_status_changed(
         if (ui->status_bar != NULL &&
             status_bar_mode(ui) != PXSYS_WINDOW_BAR_HIDDEN &&
             bar_is_visible(ui, status_bar_mode(ui)) &&
-            pxsys_reference_layout_compute(&ui->display, &layout) == PXSYS_STATUS_OK)
+            pxsys_reference_layout_compute(&ui->display, &layout) == PXSYS_STATUS_OK) {
             build_status_bar(ui, &layout);
+            update_system_overlay(ui);
+        }
         lock_screen_refresh(ui);
     }
     if (volume_changed) volume_osd_show(ui, status->volume_percent);
@@ -8147,6 +8202,8 @@ pxsys_status_t pxsys_reference_lvgl_create(
     ui->preview_overlay = config->preview_overlay;
     ui->system_overlay_context = config->system_overlay_context;
     ui->system_overlay_changed = config->system_overlay_changed;
+    ui->system_overlay_objects_context = config->system_overlay_objects_context;
+    ui->system_overlay_objects_changed = config->system_overlay_objects_changed;
     ui->performance_context = config->performance_context;
     ui->performance_get = config->performance_get;
     ui->performance_set = config->performance_set;
@@ -8421,6 +8478,9 @@ pxsys_status_t pxsys_reference_lvgl_destroy(pxsys_reference_lvgl_t* ui) {
         (void)ui->file_size(ui->file_manager_context, NULL, NULL, NULL);
     if (ui->system_overlay_visible && ui->system_overlay_changed != NULL)
         ui->system_overlay_changed(ui->system_overlay_context, false);
+    if (ui->system_overlay_objects_changed != NULL)
+        ui->system_overlay_objects_changed(
+            ui->system_overlay_objects_context, NULL, 0);
     if (ui->content_insets_changed != NULL)
         ui->content_insets_changed(ui->content_insets_context, 0, 0);
     (void)lv_async_call_cancel(rebuild_async, ui);
