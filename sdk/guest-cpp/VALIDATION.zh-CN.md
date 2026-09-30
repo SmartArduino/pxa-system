@@ -9,6 +9,21 @@
   UI 编码/控件/状态/导航、生命周期、有界任务、Assets、Storage、FS、Permission、
   Audio、Device、Sensor、Net、IPC、Work、GameRender 创建/绘制/帧调度。公共运行时目标文件
   各编译一次后供测试链接，不改变测试的源代码编译选项。
+- GameRender 扩展后 25 组 C++ 主机测试通过；新增 `game_host_test` 将 C++
+  `textured_quad` 与 `solid_triangles` 编成 DrawList，由 Host 的
+  `pxa_raster_validate_draw_list` 校验并执行，确认有可见像素。绘制缓冲预填
+  `0xaa` 后仍通过，覆盖保留字节写入；单元测试覆盖记录布局、能力缺失、
+  无效选项和容量溢出。复用 DrawBuffer 连续提交 16 个含精灵和三角形的稳定帧，
+  Guest 全局 `new` 计数不增加；这不代表 Host 零分配。`game_test` 在
+  ASan/UBSan 及 `detect_stack_use_after_return=1` 下通过。
+  `examples/game` 用 WASI SDK 34 生成 Linux x86_64、ESP32-S3、
+  ESP32-S31 Wasm/AOT 签名包，输出
+  `/tmp/pxa-cpp-game-geometry-out/pxa-game.pxa`。产品模拟器显示绿色方块中的红色
+  三角形，最终产物的两次截图 `/tmp/pxa-cpp-game-geometry-final{,-next}.png`
+  有不同像素，模拟器正常退出。独立开发包
+  `/tmp/pxa-cpp-game-geometry-sdk-final` 在仓库外
+  `/tmp/pxa-cpp-game-geometry-external-final` 重新构建同一示例，Wasm 和 Linux AOT
+  与仓库内产物 SHA256 一致。仍未验证真实纹理资源加载、设备帧率和内存峰值。
 - 当前工具链 CMake 真实编译探测确认 C++26 模式、显式对象参数、包索引、
   expected/span/协程头文件可用；WASI libc++ 的 inplace_vector/function_ref
   编译探测失败，它们为可选能力，Guest 不依赖。主机为 Clang 22.1.8/
@@ -227,6 +242,16 @@
   一次采样为提交 160、渲染 120、可见 119、丢弃 40 帧；该数据提示默认
   16 ms 提交周期高于当时显示吞吐量，尚未完成游戏帧率与内存对照。
   验证后已停止应用。
+- pai-touch 上首次运行三角形示例时，未初始化的 PSRAM depth scratch 使红色
+  三角形只出现零散像素。Host 校验现在记录每帧是否实际使用深度，分行 raster
+  在执行相应行前清零 depth；首条 clear 命令负责同一清零时不重复写整屏。
+  Debug raster 回归和 C++→Host 联测都从 `0xffff` 深度初值开始并通过。
+  仅刷写新固件的 `0x10000` 应用分区后，设备截图
+  `/tmp/pxa-cpp-game-pai-touch-depth-fixed{,-next}.png` 显示绿色方块内完整填充且
+  连续移动的红色三角形。一次设备日志采样为 submitted=3469、rendered=1680、
+  visible=1679、dropped=1789、DrawList=112 B、raster=2439 us；示例按 16 ms
+  产生帧，明显快于面板消费，故大量待处理帧被有界邮箱替换。测试后已停止应用，
+  原有应用与数据分区未改动。
 - S31 的 `conditional` 包上传完成，安装两次均在 prepare-incoming 阶段因
   LittleFS `No more free space` 返回 -11。两次失败上传留下的该包临时文件均已
   清理，没有删除其他应用或数据；这次 UI 示例的 S31 实机交互尚未验收。
@@ -260,7 +285,7 @@ files 的初次三目标构建原始大小：Wasm 225337、Linux AOT 110728、S3
   动态 UI 实机、更多事务失败路径验收。
 - Work 的 ESP Host 接入、持久化队列与设备运行验收；Surface 在 pai-touch 的实机、释放竞态与资源撤销验收；Net 实际后端与设备验证、Device/Sensor 更多设备及撤销集成验证，IPC 并发与设备验收。
 - Assets 的其余能力、图片/音效/音乐资源示例及真实资源撤销和取消竞态验证。
-- GameRender triangle batch、资源批次、可选 3D 辅助模块、HUD、前后台及
+- GameRender 真实纹理资源批次、可选 3D 辅助模块、HUD、前后台及
   锁屏恢复；Surface 映射帧的真实资源撤销与内存峰值验证。
 - 更新后的独立 SDK 开发包消费、版本发布说明、完整 CMake/WASI/Host 回归。
 - 相同功能 C/C++ 的体积、分配、内存峰值、提交次数与延迟测量；不能以

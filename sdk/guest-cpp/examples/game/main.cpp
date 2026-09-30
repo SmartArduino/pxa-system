@@ -29,6 +29,7 @@ struct Game {
             std::min(window->pixel_width / 2, 320u));
         options.height = static_cast<std::uint16_t>(
             std::min(window->pixel_height / 2, 240u));
+        options.scratch = pxa::game::Scratch::depth16;
         auto created = co_await context.game().create(options);
         if (!created) {
             char message[48] = "Game create failed: ";
@@ -79,6 +80,16 @@ struct Game {
         const auto bottom = static_cast<std::int16_t>((height / 2 + 16) * 16);
         frame.quad({left, top, right, top, right, bottom, left, bottom},
                    {0x07e0});
+        if (renderer->supports(pxa::game::RenderCapability::triangle_batch)) {
+            const std::array<pxa::game::Vertex, 3> face{{
+                {.x_q4 = static_cast<std::int16_t>(left + 8 * 16),
+                 .y_q4 = static_cast<std::int16_t>(top + 6 * 16)},
+                {.x_q4 = static_cast<std::int16_t>(right - 8 * 16),
+                 .y_q4 = static_cast<std::int16_t>(top + 6 * 16)},
+                {.x_q4 = static_cast<std::int16_t>((left + right) / 2),
+                 .y_q4 = static_cast<std::int16_t>(bottom - 6 * 16)}}};
+            frame.solid_triangles(face, {0xf800});
+        }
         auto submitted = frame.submit();
         if (submitted) ++frames;
         else if (!frames)

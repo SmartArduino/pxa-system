@@ -10,6 +10,7 @@ if(DEFINED PXA_CPP_SDK_DIR AND IS_DIRECTORY "${PXA_CPP_SDK_DIR}/include"
         "${PXA_CPP_SDK_DIR}/src/net.cpp"
         "${PXA_CPP_SDK_DIR}/src/ipc.cpp"
         "${PXA_CPP_SDK_DIR}/src/work.cpp"
+        "${PXA_CPP_SDK_DIR}/src/game.cpp"
         "${PXA_CPP_SDK_DIR}/src/surface.cpp")
     add_library(Pxa::Cpp ALIAS pxa_guest_cpp)
     target_include_directories(pxa_guest_cpp PUBLIC

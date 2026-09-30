@@ -28,6 +28,57 @@ struct AtlasBinding {
     std::uint8_t slot = 0;
 };
 
+enum class RenderCapability : std::uint32_t {
+    flat_quad = 1,
+    textured_quad = 2,
+    additive_sprite = 4,
+    sprite_batch = 8,
+    triangle_batch = 16,
+    affine_uv = 32,
+    texture_slots_48 = 64,
+    painter_polygon = 128,
+    lit_palette_depth = 256,
+    depth_cutout = 512,
+    blend_75 = 1024,
+    coverage_mask = 2048,
+    sprite_palette_ramp = 4096,
+    sprite_texel_alpha = 8192,
+    painter_perspective = 16384,
+    painter_depth = 32768,
+};
+
+constexpr std::uint32_t capability_bit(RenderCapability capability) noexcept {
+    return static_cast<std::uint32_t>(capability);
+}
+
+struct SpriteOptions {
+    bool transparent_index0 = true;
+    bool solid_color = false;
+    bool additive = false;
+    bool palette_ramp = false;
+    bool texel_alpha = false;
+    Color565 color = Color565::black();
+};
+
+struct Vertex {
+    std::int16_t x_q4 = 0;
+    std::int16_t y_q4 = 0;
+    std::int16_t u_q4 = 0;
+    std::int16_t v_q4 = 0;
+    std::uint8_t light = 255;
+    std::uint16_t depth_q8 = 256;
+};
+
+struct PolygonOptions {
+    bool affine_uv = false;
+    bool painter = false;
+    bool transparent_index0 = false;
+    bool lit_palette = false;
+    bool blend_75 = false;
+    bool coverage_mask = false;
+    bool coverage_resolve = false;
+};
+
 enum class Scratch : std::uint8_t { depth16, none, coverage_2bit };
 
 struct FrameTick {
@@ -97,34 +148,50 @@ public:
 
     Frame& quad(const std::array<std::int16_t, 8>& xy_q4,
                 Color565 color) noexcept {
-        if (!supports(1)) return *this;
+        if (!supports(capability_bit(RenderCapability::flat_quad))) return *this;
         auto record = append(2, 24);
         if (record.empty()) return *this;
         wire::put16(record.data() + 4, color.value);
         for (std::size_t i = 0; i < xy_q4.size(); ++i)
             wire::put16(record.data() + 8 + 2 * i,
                         static_cast<std::uint16_t>(xy_q4[i]));
-        required_ |= 1;
+        required_ |= capability_bit(RenderCapability::flat_quad);
         return *this;
     }
 
     Frame& sprites(AtlasBinding binding, std::span<const Sprite> items,
-                   std::uint8_t flags = 1,
-                   Color565 color = Color565::black()) noexcept {
-        constexpr std::uint32_t batch_capability = 8;
+                   SpriteOptions options = {}) noexcept {
+        constexpr auto batch_capability =
+            capability_bit(RenderCapability::sprite_batch);
+        const auto flags = static_cast<std::uint8_t>(
+            (options.transparent_index0 ? 1 : 0) |
+            (options.solid_color ? 2 : 0) |
+            (options.additive ? 4 : 0) |
+            (options.palette_ramp ? 8 : 0) |
+            (options.texel_alpha ? 16 : 0));
         if (items.empty()) return *this;
-        if (!supports(batch_capability) || binding.slot >= 48 ||
-            items.size() > (UINT16_MAX - 12) / 16 ||
-            (flags & ~std::uint8_t{0x1f}) != 0) {
+        if (items.size() > (UINT16_MAX - 12) / 16 ||
+            (options.texel_alpha && options.additive) ||
+            ((!options.solid_color && !options.palette_ramp) &&
+             options.color.value != 0)) {
             error_ = Error::invalid_argument;
             return *this;
         }
+        if (!valid_texture_slot(binding) || !supports(batch_capability))
+            return *this;
+        if ((options.additive &&
+             !supports(capability_bit(RenderCapability::additive_sprite))) ||
+            (options.palette_ramp &&
+             !supports(capability_bit(RenderCapability::sprite_palette_ramp))) ||
+            (options.texel_alpha &&
+             !supports(capability_bit(RenderCapability::sprite_texel_alpha))))
+            return *this;
         const auto size = static_cast<std::uint16_t>(12 + 16 * items.size());
         auto record = append(5, size);
         if (record.empty()) return *this;
         record[1] = std::byte(flags);
         record[4] = std::byte(binding.slot);
-        wire::put16(record.data() + 6, color.value);
+        wire::put16(record.data() + 6, options.color.value);
         wire::put16(record.data() + 8,
                     static_cast<std::uint16_t>(items.size()));
         for (std::size_t i = 0; i < items.size(); ++i) {
@@ -145,14 +212,32 @@ public:
             wire::put16(out + 14, sprite.source_height);
         }
         required_ |= batch_capability;
+        if (options.additive)
+            required_ |= capability_bit(RenderCapability::additive_sprite);
+        if (options.palette_ramp)
+            required_ |= capability_bit(RenderCapability::sprite_palette_ramp);
+        if (options.texel_alpha)
+            required_ |= capability_bit(RenderCapability::sprite_texel_alpha);
         return *this;
     }
+
+    Frame& textured_quad(AtlasBinding binding,
+                         const std::array<Vertex, 4>& vertices,
+                         PolygonOptions options = {}) noexcept;
+    Frame& triangles(AtlasBinding binding, std::span<const Vertex> vertices,
+                     PolygonOptions options = {}) noexcept;
+    Frame& solid_triangles(std::span<const Vertex> vertices,
+                           Color565 color) noexcept;
 
     Result<void> submit() noexcept;
     std::size_t bytes_used() const noexcept { return used_; }
 
 private:
     bool supports(std::uint32_t capability) noexcept;
+    bool valid_texture_slot(AtlasBinding binding) noexcept;
+    Frame& append_triangles(std::span<const Vertex> vertices,
+                            AtlasBinding binding, std::uint8_t flags,
+                            Color565 color, std::uint32_t capabilities) noexcept;
     std::span<std::byte> append(std::uint8_t type,
                                 std::uint16_t size) noexcept {
         if (error_) return {};
@@ -161,7 +246,9 @@ private:
             return {};
         }
         auto record = bytes_.subspan(used_, size);
-        for (auto& byte : record) byte = std::byte{};
+        // Encoders overwrite every payload byte; reserved bytes live in the header.
+        for (std::size_t i = 0; i < size && i < 12; ++i)
+            record[i] = std::byte{};
         record[0] = std::byte(type);
         wire::put16(record.data() + 2, size);
         used_ += size;
@@ -194,6 +281,9 @@ public:
     }
 
     std::uint32_t capabilities() const noexcept { return info_.capabilities; }
+    bool supports(RenderCapability capability) const noexcept {
+        return (info_.capabilities & capability_bit(capability)) != 0;
+    }
     const RenderInfo& info() const noexcept { return info_; }
     Transport& transport() noexcept { return transport_; }
     std::uint64_t handle() const noexcept { return handle_.handle(); }
@@ -202,6 +292,10 @@ public:
                              std::uint64_t palette = 0) noexcept {
         if (textures.size() > 48 || (!palette && textures.empty()))
             return std::unexpected(Error::invalid_argument);
+        if ((info_.max_textures && textures.size() > info_.max_textures) ||
+            (textures.size() > 16 &&
+             !supports(RenderCapability::texture_slots_48)))
+            return std::unexpected(Error::unsupported);
         std::array<std::byte, 4 + 49 * 12> bytes{};
         const auto count = textures.size() + (palette ? 1 : 0);
         wire::put16(bytes.data(), static_cast<std::uint16_t>(count));

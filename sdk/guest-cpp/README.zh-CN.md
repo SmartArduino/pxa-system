@@ -337,10 +337,37 @@ python3 spec/draft/tools/generate_service_codecs.py --language cpp --check
 
 当前实现包括 Core 消息编解码、资源句柄、应用入口、有界协程和请求表、
 声明式布局/常用控件、状态绑定与导航，Storage/Permission/Audio/FS/Device/Sensor/Net/IPC/Work/Surface，
-以及 GameRender 的上下文创建、清屏、矩形和精灵批次 DrawList。
+以及 GameRender 的上下文创建、清屏、矩形、精灵批次、纹理四边形和三角形批次 DrawList。
 动态 keyed list、VirtualList、条件分支与常用控件 Ref 已有实现；
 其余服务能力和完整性能验收尚未完成。独立开发包已可构建和打包示例，
 但目前不能作为完整发布版 SDK。
+
+GameRender 帧使用调用方拥有的 `DrawBuffer<N>`，在每次 `frame(buffer)` 后按
+绘制顺序编码，`submit()` 一次调用提交；超出容量或缺少能力会返回错误，不
+分配备用堆缓冲。`SpriteOptions` 和 `PolygonOptions` 使用具名字段，
+`Renderer::supports(RenderCapability::triangle_batch)` 可在绘制前检查能力。
+`Vertex` 的屏幕坐标与 UV 为 Q4，默认 `light=255` 表示纹理全亮、
+`depth_q8=256` 表示深度 1。lit palette 与 painter 使用者应明确设置光照行；
+普通图元的深度必须非零，painter triangle 的深度必须为零。
+三角形顶点按每组三个连续排列。
+
+```cpp
+auto frame = renderer.frame(commands);
+frame.clear({0x0000});
+frame.sprites({0}, sprites, {.transparent_index0 = true});
+frame.textured_quad({0}, quad_vertices, {.affine_uv = true});
+frame.solid_triangles(triangle_vertices, {0xf800});
+auto result = frame.submit();
+```
+
+`textured_quad` 和普通 triangle batch 使用深度缓冲，创建上下文时应设置
+`RenderOptions::scratch = Scratch::depth16`；其额外存储约为渲染宽×高×2 字节，
+不应为只有 sprite 的游戏默认启用。`AtlasBinding` 是纹理槽号，不拥有资源。
+用 `ctx.assets().load(AssetKind::texture/palette, path)` 按需获取资源，在场景切换时
+用 `renderer.bind_assets(...)` 绑定，保持 `Asset` 存活到不再使用该槽；帧循环
+不读取或解码文件。透明图元仍按调用顺序编码，SDK 不跨透明边界重排批次。
+`examples/game` 使用深度 scratch 绘制运动的矩形和三角形；其他纹理选项需按
+Host 返回的能力和所选 scratch 模式使用。
 
 构建应用时，CMake 中使用 `pxa_add_app`，并提供
 `PXA_CPP_SDK_DIR`、`PXA_ARTIFACT_DIR` 和 `PXA_CMAKE_MODULE_DIR`。
