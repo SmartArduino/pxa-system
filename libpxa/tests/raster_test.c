@@ -246,6 +246,7 @@ static void test_quads_clipping_uv_and_telemetry(void) {
     uint8_t texture[4] = {1, 2, 3, 4};
     uint16_t palette[256] = {0};
     uint16_t pixels[8 * 8];
+    uint16_t depth[8 * 8];
     pxa_raster_resources_t resources;
     pxa_raster_target_t target = {0};
     pxa_raster_draw_list_view_t list;
@@ -265,9 +266,12 @@ static void test_quads_clipping_uv_and_telemetry(void) {
     resources.textures[0].width = 2;
     resources.textures[0].height = 2;
     target.pixels = pixels;
+    target.depth_pixels = depth;
     target.stride_pixels = 8;
+    target.depth_stride_pixels = 8;
     target.width = 8;
     target.height = 8;
+    target.scratch_mode = PXA_RASTER_SCRATCH_DEPTH16;
     offset = begin_list(bytes,
                         PXA_RASTER_CAP_FLAT_QUAD |
                             PXA_RASTER_CAP_TEXTURED_QUAD,
@@ -1194,10 +1198,8 @@ static void test_sprite_and_triangle_batches(void) {
     target.depth_stride_pixels = 8;
     target.width = 8;
     target.height = 8;
-    /* This list carries no depth-cut-out capability, so the clear record
-     * leaves the depth buffer alone. Both renders have to start from the same
-     * depth state for the split comparison below to mean anything. */
-    memset(depth, 0, sizeof(depth));
+    /* An ordinary triangle must reset stale depth even without cut-out. */
+    memset(depth, 0xff, sizeof(depth));
     offset = begin_list(bytes, resources.capabilities, 3, 10, sizeof(bytes));
     record = bytes + offset;
     record[0] = PXA_RASTER_RECORD_CLEAR_RGB565;
@@ -1240,7 +1242,7 @@ static void test_sprite_and_triangle_batches(void) {
            telemetry.last_draw_list_bytes == sizeof(bytes));
     assert(pixels[0] == palette[1] && pixels[3 * 8 + 3] == UINT16_C(0xf800));
     memset(split_pixels, 0xff, sizeof(split_pixels));
-    memset(split_depth, 0, sizeof(split_depth));
+    memset(split_depth, 0xff, sizeof(split_depth));
     target.pixels = split_pixels;
     target.depth_pixels = split_depth;
     pxa_raster_execute_draw_list_rows(bytes, &list, &target, &resources, 0, 3,

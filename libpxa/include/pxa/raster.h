@@ -186,6 +186,7 @@ typedef struct {
      * bindings need not stay alive after validation. Not part of wire ABI. */
     uint64_t texture_mask;
     uint8_t uses_palette;
+    uint8_t uses_depth;
 } pxa_raster_draw_list_view_t;
 
 pxa_status_t pxa_raster_decode_upload(const uint8_t *bytes, size_t size,

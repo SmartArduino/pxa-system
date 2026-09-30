@@ -467,6 +467,7 @@ pxa_status_t pxa_raster_validate_draw_list(
     uint16_t abi_minor;
     uint64_t texture_mask = 0;
     uint8_t uses_palette = 0;
+    uint8_t uses_depth = 0;
     if (bytes == NULL || target == NULL || resources == NULL || output == NULL ||
         target->pixels == NULL || target->width == 0 || target->height == 0 ||
         target->stride_pixels < target->width ||
@@ -484,6 +485,8 @@ pxa_status_t pxa_raster_validate_draw_list(
         return PXA_STATUS_UNSUPPORTED;
     total_size = read_u32(bytes + 8);
     required = read_u32(bytes + 12);
+    uses_depth = (required & (PXA_RASTER_CAP_PAINTER_DEPTH |
+                              PXA_RASTER_CAP_DEPTH_CUTOUT)) != 0;
     command_count = read_u32(bytes + 16);
     if (total_size != size || read_u32(bytes + 28) != 0)
         return PXA_STATUS_PROTOCOL_ERROR;
@@ -555,6 +558,11 @@ pxa_status_t pxa_raster_validate_draw_list(
             return PXA_STATUS_UNSUPPORTED;
         }
         if (status != PXA_STATUS_OK) return status;
+        if ((type == PXA_RASTER_RECORD_TEXTURED_QUAD && abi_minor >= 1 &&
+             (bytes[offset + 1] & PXA_RASTER_QUAD_PAINTER) == 0) ||
+            (type == PXA_RASTER_RECORD_TRIANGLE_BATCH &&
+             (bytes[offset + 1] & PXA_RASTER_QUAD_PAINTER) == 0))
+            uses_depth = 1;
         if ((type == PXA_RASTER_RECORD_TEXTURED_QUAD ||
              type == PXA_RASTER_RECORD_TRIANGLE_BATCH) &&
             (((bytes[offset + 1] & PXA_RASTER_QUAD_PAINTER) == 0 &&
@@ -589,6 +597,10 @@ pxa_status_t pxa_raster_validate_draw_list(
         offset += record_size;
     }
     if (offset != size) return PXA_STATUS_PROTOCOL_ERROR;
+    if (uses_depth && target->depth_pixels == NULL)
+        return PXA_STATUS_BAD_STATE;
+    if (uses_depth && (required & PXA_RASTER_CAP_COVERAGE_MASK) != 0)
+        return PXA_STATUS_UNSUPPORTED;
     output->abi_minor = abi_minor;
     output->total_size = total_size;
     output->required_capabilities = required;
@@ -596,6 +608,7 @@ pxa_status_t pxa_raster_validate_draw_list(
     output->frame_id = read_u64(bytes + 20);
     output->texture_mask = texture_mask;
     output->uses_palette = uses_palette;
+    output->uses_depth = uses_depth;
     return PXA_STATUS_OK;
 }
 
@@ -2251,7 +2264,9 @@ void pxa_raster_execute_draw_list_rows(
     if (bytes == NULL || list == NULL || target == NULL || resources == NULL ||
         row_begin >= row_end || row_end > target->height)
         return;
-    if ((list->required_capabilities & PXA_RASTER_CAP_PAINTER_DEPTH) != 0) {
+    if (list->uses_depth &&
+        (target->prefilled_commands != 0 ||
+         bytes[PXA_RASTER_DRAW_HEADER_BYTES] != PXA_RASTER_RECORD_CLEAR_RGB565)) {
         for (uint16_t row = row_begin; row < row_end; ++row)
             memset(target->depth_pixels +
                        (size_t)row * target->depth_stride_pixels,
@@ -2288,9 +2303,7 @@ void pxa_raster_execute_draw_list_rows(
                     fill_rgb565(row, target->width, color);
                 }
             }
-            if (target->depth_pixels != NULL &&
-                (list->required_capabilities &
-                 PXA_RASTER_CAP_DEPTH_CUTOUT) != 0 &&
+            if (list->uses_depth &&
                 (list->required_capabilities &
                  PXA_RASTER_CAP_COVERAGE_MASK) == 0) {
                 if (target->depth_stride_pixels == target->width) {
