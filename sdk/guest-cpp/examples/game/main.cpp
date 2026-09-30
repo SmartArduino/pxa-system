@@ -13,7 +13,17 @@ struct Game {
     std::optional<pxa::Asset> palette;
     std::int16_t x = 0;
     std::uint32_t frames = 0;
+    std::uint32_t updates = 0;
+    pxa::ui::State<int> score{0};
     bool initializing = false;
+
+    auto view() {
+        using namespace pxa::ui;
+        using namespace pxa::ui::literals;
+        return Overlay(Column(Text("Score").font(Font::caption).rgba(0xffffffff),
+                              Text(score).font(Font::title).rgba(0xffffffff))
+                           .padding(24_dp));
+    }
 
     pxa::Task<void> initialize(pxa::Context& context) {
         (void)context.log().write(pxa::LogLevel::info, "Game create request");
@@ -98,6 +108,7 @@ struct Game {
         if (!renderer) return;
         auto width = renderer->info().render_width;
         x = static_cast<std::int16_t>((x + 2) % (width > 32 ? width - 32 : 1));
+        if (++updates % 60 == 0) score.set(score.get() + 1);
     }
 
     void on_frame(pxa::Context& context, pxa::game::FrameTick) {

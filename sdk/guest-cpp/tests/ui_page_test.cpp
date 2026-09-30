@@ -69,7 +69,7 @@ int main() {
     constexpr auto description = Column(Text<"Static title">().font(Font::title),
                                        Text("Inline text")).gap(8_dp);
     static_assert(capacity_of<decltype(description)>.bindings == 0);
-    static_assert(sizeof(StaticTextView<"A long shared readonly text descriptor">) < 8);
+    static_assert(sizeof(StaticTextView<"A long shared readonly text descriptor">) <= 12);
 
     assert(page.mount());
     assert(page.generation() == 1);
@@ -136,6 +136,46 @@ int main() {
     }
     assert(!number.mounted() && !label.mounted());
     assert(!number.set(9) && !label.set("Stopped"));
+
+    const auto overlay_begin = packets.size();
+    auto overlay = Page(transport, Overlay(Column(Text("Score").rgba(0xffffffff))));
+    static_assert(decltype(overlay)::binding_capacity == 0);
+    assert(overlay.mount());
+    bool transparent_root = false;
+    bool inert_root = false;
+    bool composed_child = false;
+    bool white_text = false;
+    for (std::size_t index = overlay_begin; index < packets.size(); ++index) {
+        const auto& packet = packets[index];
+        if (pxa::wire::get16(packet.data() + 2) != protocol::write) continue;
+        for (std::size_t offset = 24; offset + 4 <= packet.size();) {
+            const auto size = pxa::wire::get16(packet.data() + offset + 2);
+            if (offset + 4 + size > packet.size()) break;
+            if (packet[offset] == std::byte{protocol::set_property} &&
+                pxa::wire::get32(packet.data() + offset + 4) == 1) {
+                const auto key = pxa::wire::get16(packet.data() + offset + 8);
+                if (key == protocol::background && size == 14)
+                    transparent_root = packet[offset + 10] == std::byte{1} &&
+                                       pxa::wire::get32(packet.data() + offset + 14) == 0;
+                if (key == protocol::event_mask && size == 14)
+                    inert_root = pxa::wire::get64(packet.data() + offset + 10) == 0;
+            }
+            if (packet[offset] == std::byte{protocol::set_property} &&
+                pxa::wire::get32(packet.data() + offset + 4) != 1 &&
+                pxa::wire::get16(packet.data() + offset + 8) ==
+                    protocol::composition && size == 7)
+                composed_child = packet[offset + 10] ==
+                    std::byte{protocol::alpha_overlay};
+            if (packet[offset] == std::byte{protocol::set_property} &&
+                pxa::wire::get16(packet.data() + offset + 8) ==
+                    protocol::foreground && size == 14)
+                white_text = packet[offset + 10] == std::byte{1} &&
+                             pxa::wire::get32(packet.data() + offset + 14) ==
+                                 0xffffffff;
+            offset += 4 + size;
+        }
+    }
+    assert(transparent_root && inert_root && composed_child && white_text);
 
     Ref<int> duplicate{1};
     auto invalid = Page(transport, Column(Text(duplicate), Text(duplicate)));

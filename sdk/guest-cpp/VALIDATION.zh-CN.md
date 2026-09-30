@@ -40,7 +40,23 @@
   对比此前不含 3D 投影的同一示例，Wasm 为 189177→218210 B，S3 AOT 为
   169896→207724 B，S31 AOT 为 210868→260896 B；该增量包含示例的旋转、
   投影、裁剪与数学库，不能归因于单一函数。可选头文件未被使用的应用不承担该
-  运行时代码成本。这仍不是设备帧率与内存峰值对照，HUD 和锁屏恢复也未验收。
+  运行时代码成本。这仍不是设备帧率与内存峰值对照，锁屏恢复也未验收。
+- `ui::Overlay` 的主机测试确认透明根背景、零事件掩码、子节点 alpha 合成
+  标记和 RGBA 颜色编码。产品模拟器按 LVGL alpha 平面边界合成 Surface，截图
+  `/tmp/pxa-cpp-game-overlay-white-sim.png` 同时显示白色 Score/数字、运动纹理
+  和 3D 三角形；无 HUD 的 C++ Surface 回归截图
+  `/tmp/pxa-cpp-surface-layer.png` 仍显示 RGB565 条纹。`--target all` 的 Wasm、
+  Linux x86_64、ESP32-S3 与 ESP32-S31 AOT 构建及 C++ 主机测试通过。
+  pai-touch `/dev/ttyACM0` 安装并运行白色 HUD 包，截图
+  `/tmp/pxa-cpp-game-overlay-white-pai-touch.png` 验证真机混合。
+  最终 SDK 包 `/tmp/pxa-cpp-game-overlay-sdk` 在仓库外使用 WASI SDK 34
+  重建 game，Wasm 与 Linux AOT 哈希分别与仓库内构建一致。
+  同机、同一示例未启用 alpha 标记时截图为 30.4 fps，PSRAM 剩余
+  6,187,072 B；启用小范围 HUD 后为 30.5 fps、6,124,968 B，差 62,104 B。
+  两次截图均为 `source=composed`，该对照不能代表原本处于直接扫描的游戏；
+  驱动在 alpha 平面存在时会退出直接扫描。宿主系统 toast、授权框等目前只触发
+  合成回退，尚未进入 alpha 平面，不能据此宣称可与 Surface 正确混合；音量条
+  和软键盘也未完成此场景验收。锁屏恢复与长时间帧率稳定性未验收。
 - 当前工具链 CMake 真实编译探测确认 C++26 模式、显式对象参数、包索引、
   expected/span/协程头文件可用；WASI libc++ 的 inplace_vector/function_ref
   编译探测失败，它们为可选能力，Guest 不依赖。主机为 Clang 22.1.8/

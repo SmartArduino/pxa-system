@@ -379,6 +379,20 @@ auto result = frame.submit();
 `Frame::solid_triangles()` 或 `Frame::triangles()`；屏幕覆盖的 UI/HUD 仍使用
 普通 UI 组件，不应混入深度批次。
 
+游戏若需要 HUD，可让 `view()` 返回 `ui::Overlay(Column(...))`。它保持根节点
+透明且不拦截空白处的触摸，将内容标记为独立的 LVGL alpha 层；文字、按钮等
+子节点继续由 UI 服务管理。黑色游戏背景上可用 `Text(...).rgba(0xffffffff)`
+指定白色文字，参数格式为 `0xRRGGBBAA`。HUD 状态
+通过 `State<T>` 更新即可，只有值变化时才提交 UI 补丁。不要在每帧写入不变
+的 HUD 文本。`examples/game` 每 60 次固定更新改变一次计分，移动纹理与 3D
+三角形仍独立提交到 GameRender。
+
+alpha 层按内容边界缓存，只在 UI 属性变化时重新生成；设备仍需在每个可见帧
+合成该区域，并从 Surface 直接扫描切换到 LVGL 合成路径。对于持续高帧率的
+游戏，应把常驻计分、准星等优先画进 GameRender；仅在需要原生控件或系统
+交互时启用 LVGL 弹层。当前系统 toast、授权框等宿主弹层尚未纳入这个 alpha
+平面，不能假定它们会正确叠加在游戏 Surface 上。
+
 构建应用时，CMake 中使用 `pxa_add_app`，并提供
 `PXA_CPP_SDK_DIR`、`PXA_ARTIFACT_DIR` 和 `PXA_CMAKE_MODULE_DIR`。
 `Pxa::Cpp` 包含运行时静态库，头文件中的模板只负责类型化 UI 与任务。

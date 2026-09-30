@@ -168,17 +168,27 @@ public:
     template<class Self> constexpr decltype(auto) color(this Self&& self,
                                                         Color value) noexcept {
         self.color_ = value;
+        self.literal_color_ = false;
+        return std::forward<Self>(self);
+    }
+    template<class Self> constexpr decltype(auto) rgba(this Self&& self,
+                                                       std::uint32_t value) noexcept {
+        self.rgba_ = value;
+        self.literal_color_ = true;
         return std::forward<Self>(self);
     }
 protected:
     template<class Page> bool appearance(Page& page, std::uint32_t node) const {
         return page.transaction().u16(node, protocol::font_role,
                                        static_cast<std::uint16_t>(font_)) &&
-               page.theme(node, protocol::foreground, color_);
+               (literal_color_ ? page.rgba(node, protocol::foreground, rgba_)
+                               : page.theme(node, protocol::foreground, color_));
     }
 private:
     Font font_ = Font::body;
     Color color_ = Color::text;
+    std::uint32_t rgba_ = 0;
+    bool literal_color_ = false;
 };
 
 class TextView : public TextAppearance {
@@ -545,6 +555,33 @@ constexpr auto Column(Children&&... children) {
         protocol::column, std::forward<Children>(children)...);
 }
 
+template<class View>
+class OverlayView {
+public:
+    static constexpr Capacity capacity = [] {
+        auto value = capacity_of<View>;
+        ++value.nodes;
+        return value;
+    }();
+    static constexpr bool overlay = true;
+    explicit constexpr OverlayView(View view) : view_(std::move(view)) {}
+    template<class Page> bool render(Page& page, std::uint32_t parent) {
+        const auto node = page.create(parent, protocol::box);
+        return node &&
+               page.transaction().u8(node, protocol::layout, protocol::column) &&
+               page.transaction().u8(node, protocol::composition,
+                                     protocol::alpha_overlay) &&
+               view_.render(page, node);
+    }
+private:
+    View view_;
+};
+
+template<class View>
+constexpr auto Overlay(View&& view) {
+    return OverlayView<std::decay_t<View>>(std::forward<View>(view));
+}
+
 template<class... Children>
 constexpr auto Row(Children&&... children) {
     return BoxView<std::decay_t<Children>...>(
@@ -646,8 +683,17 @@ public:
         dirty_words_.fill(0);
         auto root = create(0, protocol::root);
         bool rendered = root &&
-            tx.u8(root, protocol::layout, protocol::column) &&
-            view_.render(*this, root);
+            tx.u8(root, protocol::layout, protocol::column);
+        if constexpr (requires { View::overlay; }) {
+            if constexpr (View::overlay) {
+                std::array<std::byte, 8> transparent{};
+                transparent[0] = std::byte{1};
+                rendered = rendered &&
+                    tx.property(root, protocol::background, transparent) &&
+                    tx.u64(root, protocol::event_mask, 0);
+            }
+        }
+        rendered = rendered && view_.render(*this, root);
         if (rendered) {
             auto prepared = prepare_dynamic(tx, next_id_);
             if (!prepared) { mount_error_ = prepared.error(); rendered = false; }
@@ -932,6 +978,14 @@ public:
                Color value) noexcept {
         std::array<std::byte, 8> bytes{};
         bytes[1] = std::byte(static_cast<std::uint8_t>(value));
+        return current_->property(node, property, bytes);
+    }
+
+    bool rgba(std::uint32_t node, std::uint16_t property,
+              std::uint32_t value) noexcept {
+        std::array<std::byte, 8> bytes{};
+        bytes[0] = std::byte{1};
+        wire::put32(bytes.data() + 4, value);
         return current_->property(node, property, bytes);
     }
 

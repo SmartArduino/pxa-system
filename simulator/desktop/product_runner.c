@@ -212,6 +212,7 @@ typedef struct {
     pxsys_insets_t host_bar_insets;
     pxa_ui_service_t *ui;
     pxa_ui_backend_t ui_backend;
+    pxa_lvgl_ui_t *ui_adapter;
     pxa_audio_service_t *audio;
     SDL_AudioDeviceID audio_device;
     uint8_t focused;
@@ -1073,7 +1074,7 @@ static pxa_status_t surface_create_with_raster_capacity(
         lv_obj_set_clickable(host->surface_image, false);
         lv_obj_set_size(host->surface_image, host->surface_display_width,
                         host->surface_display_height);
-        lv_obj_move_foreground(host->surface_image);
+        lv_obj_move_background(host->surface_image);
     }
     return PXA_STATUS_OK;
 failed:
@@ -1158,7 +1159,7 @@ static pxa_status_t surface_register_buffers(void *context, uint64_t surface,
     lv_obj_set_size(host->surface_image, host->surface_display_width,
                     host->surface_display_height);
     lv_obj_set_pos(host->surface_image, 0, 0);
-    lv_obj_move_foreground(host->surface_image);
+    lv_obj_move_background(host->surface_image);
     return PXA_STATUS_OK;
 }
 
@@ -1246,7 +1247,7 @@ static pxa_status_t surface_configure(void *context, uint64_t surface,
     if (host->surface_image != NULL) {
         lv_obj_set_pos(host->surface_image, 0, 0);
         lv_obj_set_hidden(host->surface_image, !layer->visible);
-        lv_obj_move_foreground(host->surface_image);
+        lv_obj_move_background(host->surface_image);
         lv_obj_invalidate(host->surface_image);
     }
     return PXA_STATUS_OK;
@@ -1459,6 +1460,50 @@ static pxa_status_t game_render_create(
     return PXA_STATUS_OK;
 }
 
+static uint16_t surface_blend_alpha(uint16_t base, uint16_t color,
+                                    uint8_t alpha) {
+    if (alpha == 0) return base;
+    if (alpha == 255) return color;
+    const uint16_t inverse = (uint16_t)(255u - alpha);
+    const uint16_t red = (uint16_t)(
+        (((color >> 11) * alpha + (base >> 11) * inverse + 128u) >> 8));
+    const uint16_t green = (uint16_t)(
+        (((((color >> 5) & 0x3fu) * alpha +
+           ((base >> 5) & 0x3fu) * inverse + 128u) >> 8)));
+    const uint16_t blue = (uint16_t)(
+        (((color & 0x1fu) * alpha + (base & 0x1fu) * inverse + 128u) >> 8));
+    return (uint16_t)((red << 11) | (green << 5) | blue);
+}
+
+static void surface_composite_ui(product_host_t *host) {
+    pxa_lvgl_ui_alpha_plane_t plane;
+    if (host->ui_adapter == NULL ||
+        !pxa_lvgl_ui_alpha_plane(host->ui_adapter, &plane)) return;
+    const int32_t first_x = plane.x < 0 ? 0 : plane.x;
+    const int32_t first_y = plane.y < 0 ? 0 : plane.y;
+    const int32_t last_x = plane.x + plane.width < host->surface_display_width
+                               ? plane.x + plane.width
+                               : host->surface_display_width;
+    const int32_t last_y = plane.y + plane.height < host->surface_display_height
+                               ? plane.y + plane.height
+                               : host->surface_display_height;
+    if (first_x >= last_x || first_y >= last_y) return;
+    for (int32_t y = first_y; y < last_y; ++y) {
+        const uint32_t row = (uint32_t)(y - plane.y);
+        const uint16_t *colors = (const uint16_t *)(
+            (const uint8_t *)plane.pixels + row * plane.pixel_stride_bytes) +
+            (first_x - plane.x);
+        const uint8_t *alpha = plane.alpha + row * plane.alpha_stride_bytes +
+                               (first_x - plane.x);
+        uint16_t *destination = (uint16_t *)(host->surface_display_buffer +
+            (uint32_t)y * host->surface_display_stride_bytes) + first_x;
+        for (int32_t x = first_x; x < last_x; ++x) {
+            *destination = surface_blend_alpha(*destination, *colors++, *alpha++);
+            ++destination;
+        }
+    }
+}
+
 static int surface_process_pending(product_host_t *host) {
     uint8_t buffer_index = 0;
     uint64_t frame_id = 0;
@@ -1573,6 +1618,7 @@ static int surface_process_pending(product_host_t *host) {
             }
         }
     }
+    surface_composite_ui(host);
     if ((host->surface_flags & PXA_SURFACE_FLAG_GUEST_MAPPED) != 0) {
         host->surface_pending_buffer = -1;
         host->surface_pending_frame_id = 0;
@@ -1583,7 +1629,7 @@ static int surface_process_pending(product_host_t *host) {
     if ((host->surface_flags & PXA_SURFACE_FLAG_GUEST_MAPPED) != 0 &&
         !surface_enqueue_release(host, buffer_index, frame_id)) return 0;
     lv_image_set_src(host->surface_image, &host->surface_bitmap);
-    lv_obj_move_foreground(host->surface_image);
+    lv_obj_move_background(host->surface_image);
     lv_obj_invalidate(host->surface_image);
     return 1;
 }
@@ -3433,6 +3479,7 @@ static int run_product_simulator(const options_t *input,
         goto done;
     /* The UI backend is bound during prepare_start. */
     host.ui_backend = ui_backend;
+    host.ui_adapter = lvgl_ui;
     sync_host_theme(&host, lvgl_ui, &lvgl_config.theme);
     stage = "surface service";
     surface_config.struct_size = sizeof(surface_config);
