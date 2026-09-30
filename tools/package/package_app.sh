@@ -325,15 +325,43 @@ if [[ "$build_system" == "cmake" ]]; then
   if [[ -z "${CMAKE_GENERATOR:-}" ]] && command -v ninja >/dev/null 2>&1; then
     cmake_generator_args=(-G Ninja)
   fi
+  cmake_build_dir="$work_dir/cmake-build"
+  cmake_artifact_dir="$package_dir/artifacts"
+  if [[ -n "${PXA_BUILD_CACHE_DIR:-}" ]]; then
+    cache_root="$(realpath -m -- "$PXA_BUILD_CACHE_DIR")"
+    if [[ "$cache_root" == "$output_dir" || "$cache_root" == "$output_dir/"* ]]; then
+      echo "PXA_BUILD_CACHE_DIR must be outside the Package output directory" >&2
+      exit 2
+    fi
+    cache_key="$(printf '%s\0' "$app_dir" "$pxa_system_dir" "$wasi_sdk_dir" \
+      "$package_target" "${CMAKE_GENERATOR:-${cmake_generator_args[*]}}" |
+      sha256sum | cut -c 1-16)"
+    cache_dir="$cache_root/$app_name-$package_target-$cache_key"
+    mkdir -p "$cache_dir"
+    exec 9>"$cache_dir/.lock"
+    flock 9
+    cmake_build_dir="$cache_dir/cmake-build"
+    cmake_artifact_dir="$cache_dir/artifacts"
+    mkdir -p "$cmake_artifact_dir" "$cache_dir/generated/include"
+    if [[ -f "$generated_include_dir/pxa_app_messages.h" ]]; then
+      cached_header="$cache_dir/generated/include/pxa_app_messages.h"
+      if ! cmp -s "$generated_include_dir/pxa_app_messages.h" "$cached_header"; then
+        cp "$generated_include_dir/pxa_app_messages.h" "$cached_header"
+      fi
+    else
+      rm -f "$cache_dir/generated/include/pxa_app_messages.h"
+    fi
+    generated_include_dir="$cache_dir/generated/include"
+  fi
   joined_definitions="$(IFS=';'; printf '%s' "${app_definitions[*]}")"
   "$cmake_bin" "${cmake_generator_args[@]}" -S "$cmake_source_dir" \
-    -B "$work_dir/cmake-build" \
+    -B "$cmake_build_dir" \
     -DCMAKE_TOOLCHAIN_FILE="$pxa_system_dir/sdk/cmake/pxa-wasi-toolchain.cmake" \
     -DWASI_SDK_DIR="$wasi_sdk_dir" \
     -DPXA_GUEST_SDK_DIR="$pxa_system_dir/sdk/guest-c" \
     -DPXA_CPP_SDK_DIR="$pxa_system_dir/sdk/guest-cpp" \
     -DPXA_GENERATED_INCLUDE_DIR="$generated_include_dir" \
-    -DPXA_ARTIFACT_DIR="$package_dir/artifacts" \
+    -DPXA_ARTIFACT_DIR="$cmake_artifact_dir" \
     -DPXA_LINEAR_MEMORY_MAXIMUM="$linear_memory_maximum" \
     -DPXA_APP_DEFINITIONS="$joined_definitions" \
     -DPXA_CMAKE_MODULE_DIR="$pxa_system_dir/sdk/cmake"
@@ -341,8 +369,15 @@ if [[ "$build_system" == "cmake" ]]; then
   for component_id in "${component_ids[@]}"; do
     cmake_targets+=("${component_value_map[$component_id]}")
   done
-  "$cmake_bin" --build "$work_dir/cmake-build" --parallel "$build_jobs" \
+  "$cmake_bin" --build "$cmake_build_dir" --parallel "$build_jobs" \
     --target "${cmake_targets[@]}"
+  if [[ -n "${PXA_BUILD_CACHE_DIR:-}" ]]; then
+    for component_id in "${component_ids[@]}"; do
+      cp "$cmake_artifact_dir/$component_id.wasm" "$package_dir/artifacts/"
+    done
+    flock -u 9
+    exec 9>&-
+  fi
 else
   linear_memory_link_args=()
   if [[ "$linear_memory_maximum" -ne 0 ]]; then

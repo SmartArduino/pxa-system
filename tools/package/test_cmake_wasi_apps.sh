@@ -41,6 +41,7 @@ for app in "${apps[@]}"; do
   PXA_PACKAGE_OUTPUT_ROOT="$work_dir" \
   PXA_CONTAINER_OUTPUT="$work_dir/pxa-$app.pxa" \
   PXA_SIGNING_KEY="$pxa_system_dir/apps/pxa/.dev-signing/publisher-private.pem" \
+  PXA_BUILD_CACHE_DIR="$work_dir/build-cache" \
   WASI_SDK_DIR="$wasi_sdk_dir" \
   WAMRC="$wamrc_bin" \
     "$script_dir/package_app.sh" "$app" simulator "$work_dir/pxa-$app"
@@ -48,6 +49,39 @@ for app in "${apps[@]}"; do
   test -s "$work_dir/pxa-$app/signature.pxs"
   test -s "$work_dir/pxa-$app.pxa"
 done
+
+find "$work_dir/build-cache" -name '*.obj' -printf '%p %T@\n' | LC_ALL=C sort \
+  > "$work_dir/objects-before.txt"
+test -s "$work_dir/objects-before.txt"
+cp "$work_dir/pxa-cmake-components-lab/artifacts/main.linux-x86_64.aot" \
+  "$work_dir/main-before.aot"
+PXA_APP_SOURCE_ROOT="$test_apps_root" \
+PXA_PACKAGE_OUTPUT_ROOT="$work_dir" \
+PXA_BUILD_CACHE_DIR="$work_dir/build-cache" \
+PXA_SIGNING_KEY="$pxa_system_dir/apps/pxa/.dev-signing/publisher-private.pem" \
+WASI_SDK_DIR="$wasi_sdk_dir" WAMRC="$wamrc_bin" \
+  "$script_dir/package_app.sh" cmake-components-lab simulator \
+    "$work_dir/pxa-cmake-components-lab"
+find "$work_dir/build-cache" -name '*.obj' -printf '%p %T@\n' | LC_ALL=C sort \
+  > "$work_dir/objects-after.txt"
+cmp "$work_dir/objects-before.txt" "$work_dir/objects-after.txt"
+cmp "$work_dir/main-before.aot" \
+  "$work_dir/pxa-cmake-components-lab/artifacts/main.linux-x86_64.aot"
+
+PXA_APP_SOURCE_ROOT="$test_apps_root" \
+PXA_PACKAGE_OUTPUT_ROOT="$work_dir" \
+PXA_BUILD_CACHE_DIR="$work_dir/build-cache" \
+PXA_APP_DEFINES=PXA_TEST_CACHE_CHANGE=1 \
+PXA_SIGNING_KEY="$pxa_system_dir/apps/pxa/.dev-signing/publisher-private.pem" \
+WASI_SDK_DIR="$wasi_sdk_dir" WAMRC="$wamrc_bin" \
+  "$script_dir/package_app.sh" cmake-components-lab simulator \
+    "$work_dir/pxa-cmake-components-lab"
+find "$work_dir/build-cache" -name '*.obj' -printf '%p %T@\n' | LC_ALL=C sort \
+  > "$work_dir/objects-changed.txt"
+if cmp -s "$work_dir/objects-after.txt" "$work_dir/objects-changed.txt"; then
+  echo "Changing PXA_APP_DEFINES did not rebuild cached objects" >&2
+  exit 1
+fi
 
 test -s "$work_dir/pxa-wasi-libc-lab/artifacts/main.linux-x86_64.aot"
 test -s "$work_dir/pxa-wasi-system-lab/artifacts/main.linux-x86_64.aot"

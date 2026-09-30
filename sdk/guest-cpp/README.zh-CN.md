@@ -367,6 +367,10 @@ bash /path/to/pxa-cpp-sdk/tools/package/package_app.sh \
 Ninja，也可用 `CMAKE_GENERATOR='Unix Makefiles'` 指定生成器。独立 Component
 的 AOT 编译按同一任务上限并发。这些设置只影响主机打包过程，不启用 Guest 线程。
 
+主仓库的 `tools/app.sh build` 默认将 CMake 中间文件缓存于
+`local/app-build-cache`，重复构建仅重新编译变化的源码。独立打包器可设置
+`PXA_BUILD_CACHE_DIR` 指定持久缓存目录；不设置时使用临时构建目录。
+
 开发包自带构建时所用的 `wamrc`，因此当前预编译包仅适用于相同的 Linux
 主机架构；其他主机可以通过 `WAMRC` 指定匹配的编译器。WASI SDK 34 可由
 打包脚本按锁定摘要下载，也可显式设置 `WASI_SDK_DIR`。发布时先更新 PXA
