@@ -7,6 +7,8 @@
 struct Game {
     pxa::game::DrawBuffer<4096> commands;
     std::optional<pxa::game::Renderer> renderer;
+    std::optional<pxa::Asset> texture;
+    std::optional<pxa::Asset> palette;
     std::int16_t x = 0;
     std::uint32_t frames = 0;
     bool initializing = false;
@@ -42,6 +44,28 @@ struct Game {
                     {message, static_cast<std::size_t>(end - message)});
             initializing = false;
             co_return std::unexpected(created.error());
+        }
+        auto loaded_texture = co_await context.assets().load(
+            pxa::AssetKind::texture, "assets/checker.pxr");
+        if (!loaded_texture) {
+            initializing = false;
+            co_return std::unexpected(loaded_texture.error());
+        }
+        auto loaded_palette = co_await context.assets().load(
+            pxa::AssetKind::palette, "assets/palette.pxr");
+        if (!loaded_palette) {
+            initializing = false;
+            co_return std::unexpected(loaded_palette.error());
+        }
+        texture.emplace(std::move(*loaded_texture));
+        palette.emplace(std::move(*loaded_palette));
+        const std::array texture_handles{texture->handle()};
+        auto bound = created->bind_assets(texture_handles, palette->handle());
+        if (!bound) {
+            texture.reset();
+            palette.reset();
+            initializing = false;
+            co_return std::unexpected(bound.error());
         }
         (void)context.log().write(pxa::LogLevel::info,
                                   "Game context ready");
@@ -80,14 +104,26 @@ struct Game {
         const auto bottom = static_cast<std::int16_t>((height / 2 + 16) * 16);
         frame.quad({left, top, right, top, right, bottom, left, bottom},
                    {0x07e0});
+        if (renderer->supports(pxa::game::RenderCapability::textured_quad)) {
+            const std::array<pxa::game::Vertex, 4> panel{{
+                {.x_q4 = left, .y_q4 = top},
+                {.x_q4 = right, .y_q4 = top, .u_q4 = 8 * 16},
+                {.x_q4 = right, .y_q4 = bottom,
+                 .u_q4 = 8 * 16, .v_q4 = 8 * 16},
+                {.x_q4 = left, .y_q4 = bottom, .v_q4 = 8 * 16}}};
+            frame.textured_quad({0}, panel, {.affine_uv = true});
+        }
         if (renderer->supports(pxa::game::RenderCapability::triangle_batch)) {
             const std::array<pxa::game::Vertex, 3> face{{
                 {.x_q4 = static_cast<std::int16_t>(left + 8 * 16),
-                 .y_q4 = static_cast<std::int16_t>(top + 6 * 16)},
+                 .y_q4 = static_cast<std::int16_t>(top + 6 * 16),
+                 .depth_q8 = 128},
                 {.x_q4 = static_cast<std::int16_t>(right - 8 * 16),
-                 .y_q4 = static_cast<std::int16_t>(top + 6 * 16)},
+                 .y_q4 = static_cast<std::int16_t>(top + 6 * 16),
+                 .depth_q8 = 128},
                 {.x_q4 = static_cast<std::int16_t>((left + right) / 2),
-                 .y_q4 = static_cast<std::int16_t>(bottom - 6 * 16)}}};
+                 .y_q4 = static_cast<std::int16_t>(bottom - 6 * 16),
+                 .depth_q8 = 128}}};
             frame.solid_triangles(face, {0xf800});
         }
         auto submitted = frame.submit();

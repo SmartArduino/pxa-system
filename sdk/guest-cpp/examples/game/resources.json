@@ -1,0 +1,15 @@
+{
+  "assets": [
+    {
+      "kind": "texture",
+      "source": "resources/checker.png",
+      "path": "assets/checker.pxr",
+      "palette": "resources/palette.json"
+    },
+    {
+      "kind": "palette",
+      "source": "resources/palette.json",
+      "path": "assets/palette.pxr"
+    }
+  ]
+}

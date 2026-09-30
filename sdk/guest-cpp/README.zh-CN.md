@@ -366,8 +366,10 @@ auto result = frame.submit();
 用 `ctx.assets().load(AssetKind::texture/palette, path)` 按需获取资源，在场景切换时
 用 `renderer.bind_assets(...)` 绑定，保持 `Asset` 存活到不再使用该槽；帧循环
 不读取或解码文件。透明图元仍按调用顺序编码，SDK 不跨透明边界重排批次。
-`examples/game` 使用深度 scratch 绘制运动的矩形和三角形；其他纹理选项需按
-Host 返回的能力和所选 scratch 模式使用。
+`examples/game` 从 PNG 与共享调色板编译包内 PXR，首次进入前台时加载并绑定，
+随后使用深度 scratch 绘制运动的纹理四边形和三角形。加载失败会终止本次初始化；
+资产句柄由 `Game` 保存，帧循环不访问文件。其他纹理选项需按 Host 返回的能力和
+所选 scratch 模式使用。
 
 构建应用时，CMake 中使用 `pxa_add_app`，并提供
 `PXA_CPP_SDK_DIR`、`PXA_ARTIFACT_DIR` 和 `PXA_CMAKE_MODULE_DIR`。

@@ -23,7 +23,15 @@
   有不同像素，模拟器正常退出。独立开发包
   `/tmp/pxa-cpp-game-geometry-sdk-final` 在仓库外
   `/tmp/pxa-cpp-game-geometry-external-final` 重新构建同一示例，Wasm 和 Linux AOT
-  与仓库内产物 SHA256 一致。仍未验证真实纹理资源加载、设备帧率和内存峰值。
+  与仓库内产物 SHA256 一致。设备帧率和内存峰值仍未完成对照。
+- `examples/game` 加入包内 PNG 编译的 INDEX8 纹理及共享 RGB565 调色板。
+  初始化阶段经 Assets 加载并绑定，稳态帧只提交 DrawList。`--target all` 生成
+  Wasm、Linux x86_64、ESP32-S3 与 ESP32-S31 AOT 包；独立 SDK 包在仓库外构建
+  相同源码，Wasm、Linux AOT 与纹理资源 SHA256 一致。pai-touch 产品模拟器
+  以真实 Host 加载后显示运动的 8×8 棋盘纹理与覆盖其上的红色三角形，截图
+  `/tmp/pxa-cpp-game-assets-png.png`。退出时 Assets 峰值为内部 544 B、外部
+  96 B；这只是模拟器资产缓存统计，不是整机或 Guest 内存峰值。资源版尚未在
+  实机执行，实机峰值、资源撤销和长时间稳定性未验证。
 - 当前工具链 CMake 真实编译探测确认 C++26 模式、显式对象参数、包索引、
   expected/span/协程头文件可用；WASI libc++ 的 inplace_vector/function_ref
   编译探测失败，它们为可选能力，Guest 不依赖。主机为 Clang 22.1.8/

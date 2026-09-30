@@ -11,7 +11,7 @@
   "components": [{
     "id": "main",
     "kind": "ui",
-    "services": ["clock", "game-render", "log", "window"],
+    "services": ["assets", "clock", "game-render", "log", "window"],
     "cmake_target": "pxa_main",
     "wasi": {"version": "preview1", "libc": "wasi-libc", "features": ["monotonic-clock", "wall-clock"]}
   }]
