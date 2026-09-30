@@ -5,6 +5,8 @@
 #include <bit>
 #include <charconv>
 #include <concepts>
+#include <cstdlib>
+#include <functional>
 #include <string>
 #include <tuple>
 #include <type_traits>
@@ -553,7 +555,7 @@ public:
             tx.u8(root, protocol::layout, protocol::column) &&
             view_.render(*this, root);
         if (rendered) {
-            auto prepared = prepare_dynamic(tx);
+            auto prepared = prepare_dynamic(tx, next_id_);
             if (!prepared) { mount_error_ = prepared.error(); rendered = false; }
         }
         current_ = nullptr;
@@ -581,9 +583,7 @@ public:
         if (!generation) return std::unexpected(Error::limit_exceeded);
         Transaction tx(transport_, generation, 1, protocol::patch);
         if (!tx.valid()) return std::unexpected(tx.error());
-        auto prepared = prepare_dynamic(tx);
-        if (!prepared) { rollback_dynamic(); return prepared; }
-        auto written = write_fragment(tx);
+        auto written = write_fragment(tx, next_id_);
         if (!written) {
             rollback_dynamic();
             return written;
@@ -659,7 +659,11 @@ public:
         if (mounted_) return std::unexpected(Error::bad_state);
         current_ = &tx;
         external_ids_ = &ids;
-        const auto rendered = view_.render(*this, parent);
+        bool rendered = view_.render(*this, parent);
+        if (rendered) {
+            auto prepared = prepare_dynamic(tx, ids);
+            if (!prepared) { mount_error_ = prepared.error(); rendered = false; }
+        }
         current_ = nullptr;
         external_ids_ = nullptr;
         if (!rendered) return std::unexpected(mount_error_.value_or(tx.error()));
@@ -674,9 +678,12 @@ public:
         }
         generation_ = generation;
         dirty_words_.fill(0);
+        commit_dynamic(generation);
     }
 
-    Result<void> write_fragment(Transaction<>& tx) noexcept {
+    Result<void> write_fragment(Transaction<>& tx, std::uint32_t& ids) noexcept {
+        auto prepared = prepare_dynamic(tx, ids);
+        if (!prepared) return prepared;
         for (std::size_t word = 0; word < dirty_words_.size(); ++word) {
             auto bits = dirty_words_[word];
             while (bits) {
@@ -688,6 +695,8 @@ public:
         }
         return {};
     }
+
+    void rollback_fragment() noexcept { rollback_dynamic(); }
 
     std::uint32_t create(std::uint32_t parent, std::uint8_t type,
                          std::uint8_t subtype = 0) noexcept {
@@ -797,9 +806,9 @@ public:
     }
 
 private:
-    Result<void> prepare_dynamic(Transaction<>& tx) noexcept {
+    Result<void> prepare_dynamic(Transaction<>& tx, std::uint32_t& ids) noexcept {
         for (std::size_t i = 0; i < dynamic_count_; ++i) {
-            auto result = dynamic_[i].prepare(dynamic_[i].object, tx, next_id_, transport_);
+            auto result = dynamic_[i].prepare(dynamic_[i].object, tx, ids, transport_);
             if (!result) return result;
         }
         return {};
@@ -847,5 +856,140 @@ private:
 
 template<class View>
 Page(Transport&, View) -> Page<View>;
+
+template<class ThenFactory, class ElseFactory>
+class WhenView {
+    using ThenView = std::invoke_result_t<ThenFactory&>;
+    using ElseView = std::invoke_result_t<ElseFactory&>;
+    using ThenPage = Page<ThenView>;
+    using ElsePage = Page<ElseView>;
+public:
+    static constexpr Capacity capacity{
+        3 + capacity_of<ThenView>.nodes + capacity_of<ElseView>.nodes,
+        0, 0, 1};
+
+    WhenView(State<bool>& condition, ThenFactory then_factory,
+             ElseFactory else_factory)
+        : condition_(condition), then_factory_(std::move(then_factory)),
+          else_factory_(std::move(else_factory)) {}
+    WhenView(const WhenView&) = delete;
+    WhenView& operator=(const WhenView&) = delete;
+    WhenView(WhenView&& other) noexcept
+        : condition_(other.condition_),
+          then_factory_(std::move(other.then_factory_)),
+          else_factory_(std::move(other.else_factory_)) {
+        if (other.anchor_ || other.attached_) std::abort();
+    }
+    ~WhenView() {
+        if (attached_) condition_.unsubscribe(subscription_);
+    }
+
+    template<class Owner> bool render(Owner& owner, std::uint32_t parent) {
+        if (anchor_) return owner.fail(Error::bad_state);
+        anchor_ = owner.create(parent, protocol::box);
+        return anchor_ && owner.dynamic(*this) &&
+               owner.transaction().u8(anchor_, protocol::layout,
+                                      protocol::column) &&
+               owner.transaction().fill(anchor_, protocol::width);
+    }
+
+    bool dirty() const noexcept {
+        if (active_ != selected()) return true;
+        if (active_ == 1) return then_page_->dirty();
+        if (active_ == 2) return else_page_->dirty();
+        return false;
+    }
+
+    Result<void> prepare(Transaction<>& tx, std::uint32_t& ids,
+                         Transport& transport) {
+        if (!dirty()) return {};
+        pending_ = selected();
+        switching_ = pending_ != active_;
+        prepared_ = true;
+        if (!switching_) {
+            return active_ == 1 ? then_page_->write_fragment(tx, ids)
+                                : else_page_->write_fragment(tx, ids);
+        }
+        if (!ids) return std::unexpected(Error::limit_exceeded);
+        candidate_root_ = ids++;
+        if (!tx.create(candidate_root_, anchor_, protocol::box) ||
+            !tx.u8(candidate_root_, protocol::layout, protocol::column))
+            return std::unexpected(tx.error());
+        Result<void> built;
+        if (pending_ == 1) {
+            then_page_.emplace(transport, std::invoke(then_factory_));
+            built = then_page_->build_fragment(tx, candidate_root_, ids);
+        } else {
+            else_page_.emplace(transport, std::invoke(else_factory_));
+            built = else_page_->build_fragment(tx, candidate_root_, ids);
+        }
+        if (!built) return built;
+        if (active_ && !tx.remove(root_))
+            return std::unexpected(tx.error());
+        return {};
+    }
+
+    void commit(std::uint32_t generation) noexcept {
+        if (!prepared_) return;
+        if (switching_) {
+            if (active_ == 1) then_page_.reset();
+            else if (active_ == 2) else_page_.reset();
+            active_ = pending_;
+            root_ = candidate_root_;
+        }
+        if (active_ == 1) then_page_->activate_fragment(generation);
+        else else_page_->activate_fragment(generation);
+        if (!attached_) {
+            subscription_.dirty_word = &dirty_word_;
+            subscription_.mask = 1;
+            condition_.subscribe(subscription_);
+            attached_ = true;
+        }
+        dirty_word_ = selected() == active_ ? 0 : 1;
+        prepared_ = false;
+    }
+
+    void rollback() noexcept {
+        if (!prepared_) return;
+        if (switching_) {
+            if (pending_ == 1) then_page_.reset();
+            else else_page_.reset();
+        } else if (active_ == 1) then_page_->rollback_fragment();
+        else else_page_->rollback_fragment();
+        prepared_ = false;
+    }
+
+    bool handle(const Event& event) noexcept {
+        if (active_ == 1) return then_page_->handle_fragment(event);
+        if (active_ == 2) return else_page_->handle_fragment(event);
+        return false;
+    }
+private:
+    std::uint8_t selected() const noexcept { return condition_.get() ? 1 : 2; }
+
+    State<bool>& condition_;
+    [[no_unique_address]] ThenFactory then_factory_;
+    [[no_unique_address]] ElseFactory else_factory_;
+    std::optional<ThenPage> then_page_;
+    std::optional<ElsePage> else_page_;
+    Subscription subscription_;
+    std::uint64_t dirty_word_ = 0;
+    std::uint32_t anchor_ = 0;
+    std::uint32_t root_ = 0;
+    std::uint32_t candidate_root_ = 0;
+    std::uint8_t active_ = 0;
+    std::uint8_t pending_ = 0;
+    bool attached_ = false;
+    bool prepared_ = false;
+    bool switching_ = false;
+};
+
+template<class ThenFactory, class ElseFactory>
+auto When(State<bool>& condition, ThenFactory&& then_factory,
+          ElseFactory&& else_factory) {
+    return WhenView<std::decay_t<ThenFactory>, std::decay_t<ElseFactory>>(
+        condition, std::forward<ThenFactory>(then_factory),
+        std::forward<ElseFactory>(else_factory));
+}
 
 } // namespace pxa::ui

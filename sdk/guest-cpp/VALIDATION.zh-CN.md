@@ -16,6 +16,16 @@
 - 动态列表测试覆盖稳定 key 重排复用、重复 key、结构提交失败保留回调、
   大范围跳转、旧事件拒绝、容量耗尽、行 State 的失败重试及离开行解除订阅；
   这些路径不触发 Guest 堆分配。局部字符数组副本和长只读文字描述挂载也零分配。
+- 条件分支定向测试覆盖事务失败后旧回调仍可用、成功后旧事件拒绝、同周期
+  状态恢复不提交、`When` 嵌套在 keyed list 行内及分支内嵌 keyed list。
+  新行的嵌套模块只准备一次；定向测试的 ASan/UBSan、use-after-scope 和
+  detect_stack_use_after_return=1 通过，挂载、切换和回滚期间无 Guest 堆分配。
+- `examples/conditional` 用 WASI SDK 34 生成 Linux x86_64、ESP32-S3、ESP32-S31
+  的 Wasm/AOT。产品模拟器交互依次显示隐藏态、计数器 0、点击后 1、再次隐藏、
+  再次显示 1；截图为 `/tmp/pxa-cpp-conditional-{initial,shown,incremented,hidden,restored}.png`。
+  当前 SDK 包 `/tmp/pxa-cpp-sdk-conditional-20260930` 在仓库外 `/tmp` 工作目录
+  用包内源码、CMake 和打包工具再次构建 Linux AOT，输出为
+  `/tmp/pxa-cpp-conditional-external/pxa-conditional.pxa`。
 - 容量推导与链式属性左右值类型测试通过，静态布局可以 constexpr 构造。
   当前原生计数器式页面对象为 312 字节，相同视图固定预留 32/32/4 槽为
   3224 字节；这是对象预留存储，不能代替 Guest/Host 的完整峰值内存测量。
@@ -172,6 +182,9 @@
   一次采样为提交 160、渲染 120、可见 119、丢弃 40 帧；该数据提示默认
   16 ms 提交周期高于当时显示吞吐量，尚未完成游戏帧率与内存对照。
   验证后已停止应用。
+- S31 的 `conditional` 包上传完成，安装两次均在 prepare-incoming 阶段因
+  LittleFS `No more free space` 返回 -11。两次失败上传留下的该包临时文件均已
+  清理，没有删除其他应用或数据；这次 UI 示例的 S31 实机交互尚未验收。
 - pai-touch `/dev/ttyACM0`：设备报告 `esp32s3`、固件 `202d179-dirty`。
   storage 上传成功但安装失败，日志为 LittleFS `No more free space` 和
   prepare-incoming status=-11。已删除本次上传的 inbox 包；未删除已有应用
@@ -198,7 +211,7 @@ files 的初次三目标构建原始大小：Wasm 225337、Linux AOT 110728、S3
 
 ## 尚需完成
 
-- UI 条件分支、Ref、嵌套动态模块、显式常驻页面选项；完整容量配置及
+- UI Ref、显式常驻页面选项；完整容量配置及
   动态 UI 实机、更多事务失败路径验收。
 - Work 的 ESP Host 接入、持久化队列与设备运行验收；Surface 在 pai-touch 的实机、释放竞态与资源撤销验收；Net 实际后端与设备验证、Device/Sensor 更多设备及撤销集成验证，IPC 契约生成器
   和独立 service/job Component 示例。

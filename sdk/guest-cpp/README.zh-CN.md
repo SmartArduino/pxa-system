@@ -95,9 +95,29 @@ auto list = ui::VirtualList<32>(items, ui::Dp{48},
 同一个 key 的行只构造一次，保留行状态与回调；普通内容更新使用行内 State。
 回调捕获 key 的值，不引用临时索引。结构提交失败保留旧行和回调，新候选行销毁；
 重试成功后才解除离开行的状态订阅。行池为两个 MaxRows 的固定槽，允许当前和
-候选行短暂共存，容量与总条数无关。当前行片段不支持嵌套动态模块，返回明确错误；
+候选行短暂共存，容量与总条数无关。行片段可以包含嵌套动态模块；模块与列表行
+共享同一事务和节点 ID 分配器，失败时逐层回滚，离开行时解除订阅。
 完整示例见 `examples/virtual-list`。`.grow()` 让列表占据纵向布局剩余高度，
 外层布局使用 `.fill().fill_height()`。
+
+条件内容用 `When(condition, then_factory, else_factory)`，两个工厂返回不同类型
+的声明式视图，只有当前分支会被构造和挂载：
+
+```cpp
+State<bool> expanded{false};
+auto view() {
+    return Column(
+        Toggle("Details", expanded),
+        When(expanded,
+             [] { return Text("Visible details"); },
+             [] { return Text("Collapsed"); })
+    );
+}
+```
+
+同一事件内状态多次变化只按最终分支提交；若事务失败，原分支、回调与订阅保持
+有效，下次事件可重试。`When` 可放在列表行中，分支内也可包含列表。切换成功
+后旧分支销毁，旧事件随页面 generation 失效；要保留业务状态应放在分支外。
 
 运行中的 UI 提交失败会保留页面，并调用可选的
 `void on_error(Context&, Error)`；没有钩子时输出错误日志。容量不足等
@@ -271,7 +291,7 @@ python3 spec/draft/tools/generate_service_codecs.py --language cpp --check
 当前实现包括 Core 消息编解码、资源句柄、应用入口、有界协程和请求表、
 声明式布局/常用控件、状态绑定与导航，Storage/Permission/Audio/FS/Device/Sensor/Net/IPC/Work/Surface，
 以及 GameRender 的上下文创建、清屏、矩形和精灵批次 DrawList。
-动态 keyed list 与 VirtualList 已有实现和模拟器验证；条件分支、Ref、
+动态 keyed list、VirtualList 与条件分支已有实现；Ref、
 其余服务能力和完整性能验收尚未完成。独立开发包已可构建和打包示例，
 但目前不能作为完整发布版 SDK。
 

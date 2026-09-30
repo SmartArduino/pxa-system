@@ -22,6 +22,8 @@ struct Node {
     std::uint32_t order = 0;
     std::uint32_t count = 0;
     bool present = false;
+    std::uint8_t type = 0;
+    std::uint8_t subtype = 0;
 };
 static std::array<Node, 1024> nodes, candidate;
 static std::array<std::byte, 16384> stream;
@@ -42,7 +44,9 @@ static void apply() {
             assert(size == 16 && !candidate[id].present);
             const auto parent = wire::get32(data + 4);
             assert(!parent || candidate[parent].present);
-            candidate[id] = {parent, ++ordering, 0, true};
+            candidate[id] = {parent, ++ordering, 0, true,
+                             std::to_integer<std::uint8_t>(data[12]),
+                             std::to_integer<std::uint8_t>(data[13])};
         } else if (command == protocol::set_property) {
             assert(candidate[id].present && size >= 6);
             if (wire::get16(data + 4) == protocol::item_count)
@@ -101,6 +105,12 @@ static unsigned node_count() {
     for (auto& node : nodes) if (node.present) ++count;
     return count;
 }
+static std::uint32_t button_node() {
+    for (std::uint32_t id = 1; id < nodes.size(); ++id)
+        if (nodes[id].present && nodes[id].type == protocol::control &&
+            nodes[id].subtype == protocol::button) return id;
+    return 0;
+}
 
 int main() {
     Transport transport;
@@ -149,6 +159,92 @@ int main() {
         assert(page.flush() && submissions == idle);
     }
     source.invalidate();
+    assert(allocations == baseline);
+
+    State<bool> choose{true};
+    selected = 0;
+    {
+        auto page = Page(transport, When(choose,
+            [&] { return Button("Yes").on_click([&] { selected = 1; }); },
+            [&] { return Button("No").on_click([&] { selected = 2; }); }));
+        static_assert(decltype(page)::dynamic_capacity == 1);
+        assert(page.mount() && node_count() == 5);
+        const auto old_node = button_node();
+        assert(page.handle(event(old_node, page.generation(), 1, click)) &&
+               selected == 1);
+        choose.set(false);
+        reject_commit = true;
+        const auto old_generation = page.generation();
+        assert(!page.flush() && page.dirty() && nodes[old_node].present);
+        assert(page.handle(event(old_node, old_generation, 1, click)) &&
+               selected == 1);
+        reject_commit = false;
+        assert(page.flush() && node_count() == 5 && !nodes[old_node].present);
+        const auto new_node = button_node();
+        assert(new_node != old_node);
+        assert(page.handle(event(new_node, page.generation(), 1, click)) &&
+               selected == 2);
+        assert(!page.handle(event(old_node, old_generation, 1, click)));
+        choose.set(true);
+        choose.set(false);
+        const auto idle = submissions;
+        assert(!page.dirty() && page.flush() && submissions == idle);
+    }
+    choose.set(true);
+    assert(allocations == baseline);
+
+    ListState nested_source{1};
+    State<bool> nested_choice{true};
+    {
+        auto page = Page(transport, KeyedList<1>(nested_source,
+            [](std::uint32_t) { return 7u; },
+            [&](unsigned) {
+                return When(nested_choice,
+                    [&] { return Button("On").on_click([&] { selected = 3; }); },
+                    [&] { return Button("Off").on_click([&] { selected = 4; }); });
+            }));
+        assert(page.mount() && node_count() == 7);
+        const auto first_button = button_node();
+        nested_choice.set(false);
+        assert(page.flush() && !nodes[first_button].present);
+        const auto second_button = button_node();
+        assert(second_button != first_button);
+        assert(page.handle(event(second_button, page.generation(), 1, click)) &&
+               selected == 4);
+        nested_choice.set(true);
+        reject_commit = true;
+        assert(!page.flush() && nodes[second_button].present);
+        reject_commit = false;
+        assert(page.flush() && !nodes[second_button].present);
+        assert(page.handle(event(button_node(), page.generation(), 1, click)) &&
+               selected == 3);
+    }
+    nested_source.invalidate();
+    nested_choice.set(false);
+    assert(allocations == baseline);
+
+    ListState branch_source{1};
+    State<bool> show_list{true};
+    {
+        auto page = Page(transport, When(show_list,
+            [&] { return KeyedList<1>(branch_source,
+                [](std::uint32_t) { return 9u; },
+                [&](unsigned) {
+                    return Button("Item").on_click([&] { selected = 5; });
+                }); },
+            [] { return Text("Empty"); }));
+        assert(page.mount() && button_node());
+        assert(page.handle(event(button_node(), page.generation(), 1, click)) &&
+               selected == 5);
+        show_list.set(false);
+        assert(page.flush() && !button_node());
+        show_list.set(true);
+        assert(page.flush() && button_node());
+        branch_source.set_count(0);
+        assert(page.dirty() && page.flush() && !button_node());
+    }
+    branch_source.invalidate();
+    show_list.set(false);
     assert(allocations == baseline);
 
     ListState virtual_source{10000};

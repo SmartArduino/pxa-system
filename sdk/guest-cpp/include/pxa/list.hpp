@@ -34,14 +34,14 @@ class ListView {
     using Row = std::invoke_result_t<RowFunction&, Key>;
     using RowPage = Page<Row,
         RowBindings == std::dynamic_extent ? capacity_of<Row>.bindings : RowBindings,
-        RowHandlers == std::dynamic_extent ? capacity_of<Row>.handlers : RowHandlers, 0>;
+        RowHandlers == std::dynamic_extent ? capacity_of<Row>.handlers : RowHandlers,
+        capacity_of<Row>.dynamic>;
     static_assert(MaxRows > 0 && std::is_trivially_copyable_v<Key> && sizeof(Key) <= 16,
                   "List keys must be small values; row capacity must be nonzero");
     struct Slot {
         alignas(RowPage) std::byte storage[sizeof(RowPage)];
         Key key{};
         std::uint32_t root = 0;
-        std::uint32_t end = 0;
         std::uint32_t index = 0;
         bool used = false;
         bool committed = false;
@@ -149,7 +149,6 @@ public:
                         return std::unexpected(tx.error());
                     auto built = row->page().build_fragment(tx, row->root, ids);
                     if (!built) return built;
-                    row->end = ids - 1;
                 }
                 pending_[i] = row;
                 pending_indices_[i] = first + static_cast<std::uint32_t>(i);
@@ -175,7 +174,8 @@ public:
             }
         }
         for (std::size_t i = 0; i < pending_count_; ++i) {
-            auto result = pending_[i]->page().write_fragment(tx);
+            if (!pending_[i]->committed) continue;
+            auto result = pending_[i]->page().write_fragment(tx, ids);
             if (!result) return result;
         }
         return {};
@@ -204,6 +204,8 @@ public:
     }
 
     void rollback() noexcept {
+        for (std::size_t i = 0; i < active_count_; ++i)
+            active_[i]->page().rollback_fragment();
         for (auto& slot : slots_)
             if (slot.used && !slot.committed) slot.clear();
         prepared_ = false;
@@ -229,8 +231,7 @@ public:
         }
         for (std::size_t i = 0; i < active_count_; ++i) {
             auto& row = *active_[i];
-            if (node >= row.root && node <= row.end)
-                return row.page().handle_fragment(event);
+            if (row.page().handle_fragment(event)) return true;
         }
         return false;
     }
