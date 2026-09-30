@@ -104,6 +104,10 @@ int pxa_scheduler_has_pending(const pxa_scheduler_service_t *service);
 pxa_status_t pxa_scheduler_take_due(
     pxa_scheduler_service_t *service, pxa_scheduler_entry_t *output,
     size_t capacity, size_t *count);
+/* A claimed entry remains durable until finish/retry/defer succeeds. A claim
+ * uses a bounded lease so interrupted work becomes eligible after restart. */
+pxa_status_t pxa_scheduler_finish(
+    pxa_scheduler_service_t *service, uint32_t work_id);
 pxa_status_t pxa_scheduler_retry(
     pxa_scheduler_service_t *service, const pxa_scheduler_entry_t *entry);
 /* Requeue work without consuming an attempt. Hosts use this when a due worker

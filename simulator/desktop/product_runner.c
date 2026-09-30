@@ -34,6 +34,7 @@
 #include "pxa/permission.h"
 #include "pxa/posix/pxa_posix_installer.h"
 #include "pxa/posix/pxa_posix_storage.h"
+#include "pxa/posix/pxa_posix_scheduler_store.h"
 #include "pxa/posix/pxa_posix_fs.h"
 #include "pxa/fs.h"
 #include "pxa/ipc.h"
@@ -299,8 +300,6 @@ typedef struct {
     const pxa_package_manifest_t *manifest;
     pxa_ipc_broker_t *ipc;
     pxa_scheduler_service_t *scheduler;
-    pxa_scheduler_entry_t queued_work[8];
-    size_t queued_work_count;
     pxa_scheduler_entry_t running_work;
     pxa_component_t running_work_component;
     uint64_t running_work_deadline_ms;
@@ -569,27 +568,6 @@ static uint64_t work_now_ms(void *context) {
     return now_us(context) / UINT64_C(1000);
 }
 
-static pxa_status_t work_store_load(void *context,
-                                    pxa_scheduler_entry_t *entries,
-                                    size_t capacity, size_t *count) {
-    product_host_t *host = context;
-    if (host->queued_work_count > capacity) return PXA_STATUS_RESOURCE_LIMIT;
-    memcpy(entries, host->queued_work,
-           host->queued_work_count * sizeof(*entries));
-    *count = host->queued_work_count;
-    return PXA_STATUS_OK;
-}
-
-static pxa_status_t work_store_save(void *context,
-                                    const pxa_scheduler_entry_t *entries,
-                                    size_t count) {
-    product_host_t *host = context;
-    if (count > 8) return PXA_STATUS_RESOURCE_LIMIT;
-    memcpy(host->queued_work, entries, count * sizeof(*entries));
-    host->queued_work_count = count;
-    return PXA_STATUS_OK;
-}
-
 static pxa_status_t work_complete(void *context, pxa_component_t component,
                                    uint32_t id, pxa_work_result_t result) {
     product_host_t *host = context;
@@ -601,6 +579,8 @@ static pxa_status_t work_complete(void *context, pxa_component_t component,
     if (result == PXA_WORK_RESULT_RETRY &&
         host->running_work.attempt < host->running_work.max_attempts)
         status = pxa_scheduler_retry(host->scheduler, &host->running_work);
+    else
+        status = pxa_scheduler_finish(host->scheduler, id);
     if (status == PXA_STATUS_OK) {
         host->running_work_finished = 1;
         host->running_work_finish_at_ms = work_now_ms(NULL) + 1;
@@ -652,6 +632,11 @@ static pxa_status_t pump_work(product_host_t *host) {
             host->running_work.attempt < host->running_work.max_attempts) {
             status = pxa_scheduler_retry(host->scheduler, &host->running_work);
             if (status != PXA_STATUS_OK) return status;
+        } else if (!host->running_work_finished) {
+            status = pxa_scheduler_finish(host->scheduler,
+                                          host->running_work.id);
+            if (status != PXA_STATUS_OK && status != PXA_STATUS_NOT_FOUND)
+                return status;
         }
         {
             const pxa_bytes_t id = {
@@ -705,6 +690,10 @@ static pxa_status_t pump_work(product_host_t *host) {
                 pxa_status_t retry_status = pxa_scheduler_retry(
                     host->scheduler, &due[0]);
                 if (retry_status != PXA_STATUS_OK) return retry_status;
+            } else if (!host->running_work_finished) {
+                pxa_status_t finish_status = pxa_scheduler_finish(
+                    host->scheduler, due[0].id);
+                if (finish_status != PXA_STATUS_OK) return finish_status;
             }
             memset(&host->running_work, 0, sizeof(host->running_work));
             host->running_work_finished = 0;
@@ -3039,6 +3028,9 @@ static int run_product_simulator(const options_t *input,
     pxa_net_config_t net_config = {0};
     pxa_net_backend_t net_backend = {0};
     pxa_scheduler_config_t scheduler_config;
+    pxa_posix_scheduler_store_config_t scheduler_store_config = {0};
+    pxa_posix_scheduler_store_t *scheduler_store = NULL;
+    pxa_scheduler_store_t scheduler_storage = {0};
     pxa_bytes_t job_components[PRODUCT_COMPONENTS];
     uint16_t job_component_count = 0;
     pxa_log_config_t log_config = {0};
@@ -3056,6 +3048,7 @@ static int run_product_simulator(const options_t *input,
     void *fs_backend_workspace = NULL, *fs_service_workspace = NULL;
     void *ipc_workspace = NULL;
     void *scheduler_workspace = NULL;
+    void *scheduler_store_workspace = NULL;
     void *surface_workspace = NULL, *game_render_workspace = NULL;
     void *device_workspace = NULL, *net_workspace = NULL;
     void *sensor_workspace = NULL;
@@ -3695,9 +3688,23 @@ static int run_product_simulator(const options_t *input,
     scheduler_config.job_components = job_components;
     scheduler_config.job_component_count = job_component_count;
     scheduler_config.clock = work_now_ms;
-    scheduler_config.store.context = &host;
-    scheduler_config.store.load = work_store_load;
-    scheduler_config.store.save = work_store_save;
+    scheduler_store_config.struct_size = sizeof(scheduler_store_config);
+    scheduler_store_config.backend = storage_backend;
+    scheduler_store_config.key = (pxa_bytes_t){
+        (const uint8_t *)"work.v1", sizeof("work.v1") - 1u};
+    scheduler_store_config.max_entries = scheduler_config.max_entries;
+    scheduler_store_config.epoch = now_us(NULL) ^
+        ((uint64_t)getpid() << 32);
+    if (scheduler_store_config.epoch == 0) scheduler_store_config.epoch = 1;
+    scheduler_store_workspace = malloc(
+        pxa_posix_scheduler_store_workspace_size(&scheduler_store_config));
+    if (scheduler_store_workspace == NULL ||
+        pxa_posix_scheduler_store_init(
+            scheduler_store_workspace,
+            pxa_posix_scheduler_store_workspace_size(&scheduler_store_config),
+            &scheduler_store_config, &scheduler_store,
+            &scheduler_storage) != PXA_STATUS_OK) goto done;
+    scheduler_config.store = scheduler_storage;
     scheduler_config.work_context = &host;
     scheduler_config.complete_work = work_complete;
     scheduler_config.cancel_work = work_cancel;
@@ -4007,6 +4014,7 @@ done:
     }
     free(assets_workspace);
     if (posix_fs != NULL) pxa_posix_fs_deinit(posix_fs);
+    if (scheduler_store != NULL) pxa_posix_scheduler_store_deinit(scheduler_store);
     if (posix_storage != NULL) pxa_posix_storage_deinit(posix_storage);
     if (installer != NULL) pxa_posix_installer_deinit(installer);
     free(coordinator_workspace); free(plan_workspace); free(engine_workspace); free(lvgl_workspace);
@@ -4017,6 +4025,7 @@ done:
     free(fs_service_workspace); free(fs_backend_workspace); free(fs_path); free(fs_parent);
     free(ipc_workspace);
     free(scheduler_workspace);
+    free(scheduler_store_workspace);
     free(storage_service_workspace); free(storage_workspace); free(storage_path); free(storage_parent); free(default_state_root);
     free(encoded); free(installer_workspace); free(public_key);
     if (owns_display && display != NULL && lv_display_get_default() != NULL) {

@@ -62,6 +62,7 @@ static pxa_status_t store_load(void *context, pxa_scheduler_entry_t *entries,
     uint16_t stored_count;
     uint16_t version;
     uint16_t index;
+    int rebooted;
     pxa_status_t status;
     if (count == NULL || !store_valid(store) ||
         (entries == NULL && capacity != 0)) {
@@ -83,9 +84,7 @@ static pxa_status_t store_load(void *context, pxa_scheduler_entry_t *entries,
         return PXA_STATUS_DENIED;
     }
     stored_count = pxa_read_u16(store->buffer + 6);
-    if (pxa_read_u64(store->buffer + 8) != store->epoch) {
-        return PXA_STATUS_OK;
-    }
+    rebooted = pxa_read_u64(store->buffer + 8) != store->epoch;
     if (stored_count > store->max_entries) return PXA_STATUS_DENIED;
     expected_size = PXA_POSIX_SCHEDULER_STORE_HEADER_BYTES +
                     (size_t)stored_count * PXA_POSIX_SCHEDULER_STORE_ENTRY_BYTES;
@@ -103,7 +102,9 @@ static pxa_status_t store_load(void *context, pxa_scheduler_entry_t *entries,
         }
         memset(&entries[index], 0, sizeof(entries[index]));
         entries[index].id = pxa_read_u32(input);
-        entries[index].due_at_ms = pxa_read_u64(input + 4);
+        /* Monotonic timestamps cannot be compared across boots. Recover the
+         * durable job promptly; the job itself must be idempotent. */
+        entries[index].due_at_ms = rebooted ? 0 : pxa_read_u64(input + 4);
         entries[index].max_execution_ms = pxa_read_u32(input + 12);
         if (input_size > PXA_WORK_MAX_INPUT_BYTES) {
             return PXA_STATUS_DENIED;

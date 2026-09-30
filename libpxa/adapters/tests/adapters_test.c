@@ -666,6 +666,20 @@ static void test_scheduler_store(void) {
           memcmp(loaded[1].input, saved[1].input,
                  saved[1].input_size) == 0);
 
+    pxa_posix_scheduler_store_deinit(store);
+    config.epoch++;
+    check_status("scheduler store new boot",
+                 pxa_posix_scheduler_store_init(
+                     scheduler_workspace, scheduler_workspace_size, &config,
+                     &store, &scheduler_store),
+                 PXA_STATUS_OK);
+    check_status("scheduler store recover after reboot",
+                 scheduler_store.load(scheduler_store.context, loaded, 2,
+                                      &count),
+                 PXA_STATUS_OK);
+    CHECK(count == 2 && loaded[0].id == 7 && loaded[1].id == 9 &&
+          loaded[0].due_at_ms == 0 && loaded[1].due_at_ms == 0);
+
     check_status("scheduler store clears",
                  scheduler_store.save(scheduler_store.context, NULL, 0),
                  PXA_STATUS_OK);

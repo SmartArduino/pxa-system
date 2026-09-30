@@ -4577,7 +4577,10 @@ static void test_scheduler_service(void) {
                PXA_STATUS_OK &&
            due_count == 1 && due[0].id == work_id &&
            due[0].attempt == 1 && due[0].max_attempts == 2 &&
-           due[0].input_size == 3 && store.count == 0);
+           due[0].input_size == 3 && store.count == 1 &&
+           store.entries[0].due_at_ms == 62000);
+    assert(pxa_scheduler_take_due(scheduler, due + 1, 1, &due_count) ==
+           PXA_STATUS_OK && due_count == 0);
     {
         uint8_t start_config[160];
         size_t start_config_size = 0;
@@ -4634,12 +4637,19 @@ static void test_scheduler_service(void) {
     store.save_status = PXA_STATUS_OK;
     assert(pxa_scheduler_take_due(scheduler, due, 2, &due_count) ==
                PXA_STATUS_OK &&
-           due_count == 1 && due[0].id == second_id && store.count == 1);
+           due_count == 1 && due[0].id == second_id && store.count == 2);
     now_ms = 3000;
     assert(pxa_scheduler_take_due(scheduler, due, 2, &due_count) ==
                PXA_STATUS_OK &&
-           due_count == 1 && due[0].id == third_id && store.count == 0 &&
-           !pxa_scheduler_has_pending(scheduler));
+           due_count == 1 && due[0].id == third_id && store.count == 2 &&
+           pxa_scheduler_has_pending(scheduler));
+    assert(pxa_scheduler_finish(scheduler, second_id) == PXA_STATUS_OK);
+    store.save_status = PXA_STATUS_INTERNAL;
+    assert(pxa_scheduler_finish(scheduler, third_id) == PXA_STATUS_INTERNAL &&
+           store.count == 1 && pxa_scheduler_has_pending(scheduler));
+    store.save_status = PXA_STATUS_OK;
+    assert(pxa_scheduler_finish(scheduler, third_id) == PXA_STATUS_OK &&
+           store.count == 0 && !pxa_scheduler_has_pending(scheduler));
 
     command_size = make_work_enqueue(
         command, sizeof(command), 46, "missing.job", 1000, 5000);
@@ -4794,8 +4804,13 @@ static void test_scheduler_sorted_load(void) {
     assert(pxa_scheduler_take_due(scheduler, due, 4, &due_count) ==
                PXA_STATUS_OK &&
            due_count == 4 && due[0].id == 1 && due[1].id == 2 &&
-           due[2].id == 7 && due[3].id == UINT32_MAX && store.count == 0 &&
-           !pxa_scheduler_has_pending(scheduler));
+           due[2].id == 7 && due[3].id == UINT32_MAX && store.count == 4 &&
+           pxa_scheduler_has_pending(scheduler));
+    assert(pxa_scheduler_finish(scheduler, 1) == PXA_STATUS_OK);
+    assert(pxa_scheduler_finish(scheduler, 2) == PXA_STATUS_OK);
+    assert(pxa_scheduler_finish(scheduler, 7) == PXA_STATUS_OK);
+    assert(pxa_scheduler_finish(scheduler, UINT32_MAX) == PXA_STATUS_OK &&
+           store.count == 0 && !pxa_scheduler_has_pending(scheduler));
 
     destroy_runtime(&test);
     free(scheduler_workspace);

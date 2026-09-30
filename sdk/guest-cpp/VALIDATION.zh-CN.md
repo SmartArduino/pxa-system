@@ -228,8 +228,27 @@
   启动，控制套接字点击 Queue 后，UI 显示 Queued；状态存储生成
   `sync.completed.1` 值为 1，证明 job 实际执行。相同构建的
   `pxa_scheduler_engine_test` 和 `pxa_package_test` 均通过。模拟器 Work 队列
-  只保存在进程内，重启后不恢复待执行项；ESP Host 尚未注册 Work，实机运行
-  验收仍待完成。
+  只保存在进程内、重启后不恢复待执行项是该轮实现的限制；后续持久化验证见下文。
+- Work 持久化改为领取时保留 KV 条目并写入执行租约，完成后确认删除，重试
+  和推迟执行原地更新条目；存储失败会保留旧条目供重试。跨启动 epoch 的单调
+  时间戳会重新设为立即到期，要求 job 按幂等方式处理可能重复执行的任务。
+  `pxa_core_test`、`pxa_adapters_test`、`pxa_scheduler_engine_test` 及
+  `firmware/components/pxa/tests/test_host.sh` 通过。产品模拟器改用同一 POSIX
+  KV Scheduler store。以 `examples/work` 的 Later 按钮入队 15 秒任务，首次
+  退出时状态文件仅含 `work.v1` 和 `sync.job`；用同一 `--state-root` 重启后，
+  状态文件出现 `sync.completed.1` 且最新 `work.v1` 记录计数为零。测试产物
+  为 `/tmp/pxa-cpp-durable-out/pxa-work`，状态目录为
+  `/tmp/pxa-cpp-durable-restart`。ESP Host 已接入 Scheduler 和 KV 后端；
+  `tools/firmware.sh pai-touch build` 与
+  `tools/firmware.sh esp32s31-korvo-1 build` 均通过，Work 示例的 S3/S31
+  Wasm+AOT 签名包分别位于 `/tmp/pxa-cpp-durable-{s3,s31}/pxa-work.pxa`。
+  示例随后修正为按 Work ID 生成幂等键，UI 在 `sync.latest` 保存最近任务 ID，
+  启动后可读取其完成状态；旧示例的固定 `sync.completed.1` 会错误地把不同任务
+  当成同一个任务。最终源码再次生成 Linux、S3、S31 Wasm/AOT 签名包。
+  在新状态目录 `/tmp/pxa-cpp-durable-v2` 中点击 Later 后，退出前 KV 含
+  `sync.latest`、`work.v1` 和 `sync.job`；重启产品模拟器后，UI 显示
+  `Completed`，截图 `/tmp/pxa-work-v2-recovered.png`。最终产物仍位于上述
+  三个 `/tmp/pxa-cpp-durable-*` 目录。设备恢复结果见下方实机记录。
 - Surface 定向主机测试覆盖映射缓冲区对齐、移动 Surface 时帧租约保持有效、
   acquire 的 `would_block`、present、丢弃帧后关闭、状态查询、释放事件解码、
   预算不足及坏成功响应的句柄关闭；ASan/UBSan 通过。
@@ -247,6 +266,23 @@
   smoke 三项 CTest 均通过。
 
 ## 实机
+
+- 本轮 Work 持久化验证（2026-09-30）：`pai-touch /dev/ttyACM0` 和
+  `esp32s31-korvo-1 /dev/ttyUSB0` 均只刷写 `0x10000` 应用固件分区，esptool
+  写入后哈希校验通过；PXADB 均报告 `21af704-dirty` 且 `pxa=ready`，没有擦除
+  用户数据分区。两板固件完整构建均通过。
+- S31 成功安装旧版 Work 示例并显示 `Queued`。随后成功用按 ID 记录的新示例
+  原位替换，运行后截图 `/tmp/pxa-work-s31-v2-initial.jpg` 显示
+  `No tracked job`，说明新示例尚未有可查询的任务。已点击 Later 并立即发出
+  PXADB reboot；重启后再次运行该包并解锁，截图
+  `/tmp/pxa-work-s31-v2-recovered-unlocked.jpg` 显示 `Completed`，证明此轮
+  设备重启后任务执行并写入按 ID 区分的完成标记。验证后已停止示例。
+  这次是受控软件重启，不覆盖突然断电、取消或超时竞态。没有清除既有应用数据。
+- pai-touch 成功安装、启动旧版 Work 示例，截图
+  `/tmp/pxa-work-pai-initial.jpg` 显示 Queue/Later/Cancel；点击 Later 后发出
+  reboot。按 ID 记录的新包上传成功，但同版本替换在 install 阶段返回
+  `status=-11`（空间不足）；本次上传的 inbox 文件已删除，`staged=0`，旧包仍
+  安装且可用。未删除其他应用或数据。新示例在 pai-touch 的执行与恢复待验收。
 
 - S31 `/dev/ttyUSB0`、2000000：设备报告 `esp32s31`、固件 `520b46b`。
   storage 的 RISC-V AOT 包安装并启动；解锁后点击保存显示 1/Saved，停止
@@ -316,7 +352,7 @@ files 的初次三目标构建原始大小：Wasm 225337、Linux AOT 110728、S3
 
 - 其他需要命令式访问的控件、显式常驻页面选项；完整容量配置及
   动态 UI 实机、更多事务失败路径验收。
-- Work 的 ESP Host 接入、持久化队列与设备运行验收；Surface 在 pai-touch 的实机、释放竞态与资源撤销验收；Net 实际后端与设备验证、Device/Sensor 更多设备及撤销集成验证，IPC 并发与设备验收。
+- Work 的 pai-touch 最终示例验收及两板取消/超时/突然断电竞态；Surface 在 pai-touch 的实机、释放竞态与资源撤销验收；Net 实际后端与设备验证、Device/Sensor 更多设备及撤销集成验证，IPC 并发与设备验收。
 - Assets 的其余能力、图片/音效/音乐资源示例及真实资源撤销和取消竞态验证。
 - GameRender 真实纹理资源批次、可选 3D 辅助模块、HUD、前后台及
   锁屏恢复；Surface 映射帧的真实资源撤销与内存峰值验证。

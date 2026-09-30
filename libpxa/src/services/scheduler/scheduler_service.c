@@ -672,6 +672,10 @@ static pxa_status_t cancel_entry(pxa_scheduler_service_t *service,
                     sizeof(service->entries[0]));
         service->entries[index] = removed;
         service->entry_count++;
+    } else if (service->cancel_work != NULL) {
+        /* The entry may be running under a lease. Cancelling the durable
+         * record first prevents a restart from reviving it. */
+        (void)service->cancel_work(service->work_context, id);
     }
     return status;
 }
@@ -749,7 +753,6 @@ pxa_status_t pxa_scheduler_take_due(
     size_t capacity, size_t *count) {
     uint64_t now;
     uint16_t index;
-    uint16_t remaining = 0;
     size_t due_count = 0;
     pxa_status_t status;
     if (count == NULL || !service_valid(service) || !service->initialized ||
@@ -763,23 +766,30 @@ pxa_status_t pxa_scheduler_take_due(
     *count = due_count;
     if (due_count > capacity) return PXA_STATUS_RESOURCE_LIMIT;
     if (due_count == 0) return PXA_STATUS_OK;
+    memcpy(service->scratch, service->entries,
+           (size_t)service->entry_count * sizeof(service->entries[0]));
     due_count = 0;
     for (index = 0; index < service->entry_count; ++index) {
         if (service->entries[index].due_at_ms <= now) {
+            uint64_t lease_ms =
+                (uint64_t)service->entries[index].max_execution_ms +
+                service->min_delay_ms;
+            if (now > UINT64_MAX - lease_ms) {
+                *count = 0;
+                return PXA_STATUS_INVALID_ARGUMENT;
+            }
             output[due_count++] = service->entries[index];
-        } else {
-            service->scratch[remaining++] = service->entries[index];
+            service->scratch[index].due_at_ms = now + lease_ms;
         }
     }
     status = pxa_status_normalize(service->store.save(
-        service->store.context, service->scratch, remaining));
+        service->store.context, service->scratch, service->entry_count));
     if (status != PXA_STATUS_OK) {
         *count = 0;
         return status;
     }
     memcpy(service->entries, service->scratch,
-           (size_t)remaining * sizeof(service->entries[0]));
-    service->entry_count = remaining;
+           (size_t)service->entry_count * sizeof(service->entries[0]));
     *count = due_count;
     return PXA_STATUS_OK;
 }
@@ -788,6 +798,7 @@ static pxa_status_t requeue_entry(
     pxa_scheduler_service_t *service, const pxa_scheduler_entry_t *entry,
     uint32_t delay_ms, int consume_attempt) {
     pxa_scheduler_entry_t queued;
+    pxa_scheduler_entry_t previous;
     uint16_t index;
     uint64_t now;
     pxa_status_t status;
@@ -795,32 +806,53 @@ static pxa_status_t requeue_entry(
         entry->attempt == 0 || delay_ms < service->min_delay_ms ||
         delay_ms > service->max_delay_ms ||
         (consume_attempt && entry->attempt >= entry->max_attempts) ||
-        service->entry_count >= service->max_entries ||
-        id_in_use(service, entry->id)) {
+        entry->id == 0) {
         return PXA_STATUS_INVALID_ARGUMENT;
+    }
+    index = entry_lower_bound(service, entry->id);
+    if (index == service->entry_count ||
+        service->entries[index].id != entry->id ||
+        service->entries[index].attempt != entry->attempt) {
+        return PXA_STATUS_NOT_FOUND;
     }
     now = service->clock(service->clock_context);
     if (now > UINT64_MAX - delay_ms) {
         return PXA_STATUS_INVALID_ARGUMENT;
     }
-    queued = *entry;
+    queued = service->entries[index];
     if (consume_attempt) queued.attempt++;
     queued.due_at_ms = now + delay_ms;
-    index = entry_lower_bound(service, queued.id);
-    memmove(&service->entries[index + 1u], &service->entries[index],
-            (size_t)(service->entry_count - index) *
-                sizeof(service->entries[0]));
+    previous = service->entries[index];
     service->entries[index] = queued;
-    service->entry_count++;
+    status = pxa_status_normalize(service->store.save(
+        service->store.context, service->entries, service->entry_count));
+    if (status != PXA_STATUS_OK) service->entries[index] = previous;
+    return status;
+}
+
+pxa_status_t pxa_scheduler_finish(
+    pxa_scheduler_service_t *service, uint32_t work_id) {
+    pxa_scheduler_entry_t removed;
+    uint16_t index;
+    pxa_status_t status;
+    if (!service_valid(service) || !service->initialized || work_id == 0)
+        return PXA_STATUS_INVALID_ARGUMENT;
+    index = entry_lower_bound(service, work_id);
+    if (index == service->entry_count || service->entries[index].id != work_id)
+        return PXA_STATUS_NOT_FOUND;
+    removed = service->entries[index];
+    memmove(&service->entries[index], &service->entries[index + 1u],
+            (size_t)(service->entry_count - index - 1u) *
+                sizeof(service->entries[0]));
+    service->entry_count--;
     status = pxa_status_normalize(service->store.save(
         service->store.context, service->entries, service->entry_count));
     if (status != PXA_STATUS_OK) {
-        memmove(&service->entries[index], &service->entries[index + 1u],
-                (size_t)(service->entry_count - index - 1u) *
+        memmove(&service->entries[index + 1u], &service->entries[index],
+                (size_t)(service->entry_count - index) *
                     sizeof(service->entries[0]));
-        service->entry_count--;
-        memset(&service->entries[service->entry_count], 0,
-               sizeof(service->entries[0]));
+        service->entries[index] = removed;
+        service->entry_count++;
     }
     return status;
 }

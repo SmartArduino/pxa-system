@@ -2,6 +2,8 @@
 
 #include <array>
 
+#include "work_key.hpp"
+
 struct SyncJob {
     pxa::Context* context = nullptr;
     pxa::WorkStart start;
@@ -14,7 +16,10 @@ struct SyncJob {
                 start.id, pxa::WorkResult::failure);
             co_return rejected;
         }
-        constexpr std::string_view key = "sync.completed.1";
+        std::array<char, 32> key_storage{};
+        const auto key = work_completion_key(start.id, key_storage);
+        if (key.empty())
+            co_return std::unexpected(pxa::Error::resource_limit);
         auto found = co_await context->storage().get(key, marker);
         pxa::WorkResult outcome = pxa::WorkResult::success;
         if (!found && found.error() == pxa::Error::not_found) {
