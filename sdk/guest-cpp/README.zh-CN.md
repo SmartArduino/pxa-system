@@ -371,6 +371,14 @@ auto result = frame.submit();
 资产句柄由 `Game` 保存，帧循环不访问文件。其他纹理选项需按 Host 返回的能力和
 所选 scratch 模式使用。
 
+可选的 `<pxa/game3d.hpp>` 接受相机空间的 `MeshVertex`，对三角形做近/远与屏幕
+视锥裁剪及背面剔除，写入调用方提供的 `std::span<game::Vertex>`。`Projector`
+在初始化时按渲染分辨率和视角创建；单个三角形裁剪后最多需要 21 个输出顶点。
+坐标的 `z` 向屏幕内增大，输出深度为 Q8 距离；可选 `Transform::rotation_y()`
+用于模型旋转。`project_triangle()` 不分配内存，返回的顶点可直接交给
+`Frame::solid_triangles()` 或 `Frame::triangles()`；屏幕覆盖的 UI/HUD 仍使用
+普通 UI 组件，不应混入深度批次。
+
 构建应用时，CMake 中使用 `pxa_add_app`，并提供
 `PXA_CPP_SDK_DIR`、`PXA_ARTIFACT_DIR` 和 `PXA_CMAKE_MODULE_DIR`。
 `Pxa::Cpp` 包含运行时静态库，头文件中的模板只负责类型化 UI 与任务。

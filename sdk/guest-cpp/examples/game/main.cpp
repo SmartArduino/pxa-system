@@ -1,4 +1,5 @@
 #include <pxa/app.hpp>
+#include <pxa/game3d.hpp>
 
 #include <algorithm>
 #include <optional>
@@ -7,6 +8,7 @@
 struct Game {
     pxa::game::DrawBuffer<4096> commands;
     std::optional<pxa::game::Renderer> renderer;
+    std::optional<pxa::game3d::Projector> projector;
     std::optional<pxa::Asset> texture;
     std::optional<pxa::Asset> palette;
     std::int16_t x = 0;
@@ -32,6 +34,12 @@ struct Game {
         options.height = static_cast<std::uint16_t>(
             std::min(window->pixel_height / 2, 240u));
         options.scratch = pxa::game::Scratch::depth16;
+        auto projection = pxa::game3d::Projector::create(
+            options.width, options.height, 1.2f, 0.25f, 32.0f);
+        if (!projection) {
+            initializing = false;
+            co_return std::unexpected(projection.error());
+        }
         auto created = co_await context.game().create(options);
         if (!created) {
             char message[48] = "Game create failed: ";
@@ -70,6 +78,7 @@ struct Game {
         (void)context.log().write(pxa::LogLevel::info,
                                   "Game context ready");
         renderer.emplace(std::move(*created));
+        projector.emplace(*projection);
         initializing = false;
         co_return pxa::Result<void>{};
     }
@@ -113,18 +122,20 @@ struct Game {
                 {.x_q4 = left, .y_q4 = bottom, .v_q4 = 8 * 16}}};
             frame.textured_quad({0}, panel, {.affine_uv = true});
         }
-        if (renderer->supports(pxa::game::RenderCapability::triangle_batch)) {
-            const std::array<pxa::game::Vertex, 3> face{{
-                {.x_q4 = static_cast<std::int16_t>(left + 8 * 16),
-                 .y_q4 = static_cast<std::int16_t>(top + 6 * 16),
-                 .depth_q8 = 128},
-                {.x_q4 = static_cast<std::int16_t>(right - 8 * 16),
-                 .y_q4 = static_cast<std::int16_t>(top + 6 * 16),
-                 .depth_q8 = 128},
-                {.x_q4 = static_cast<std::int16_t>((left + right) / 2),
-                 .y_q4 = static_cast<std::int16_t>(bottom - 6 * 16),
-                 .depth_q8 = 128}}};
-            frame.solid_triangles(face, {0xf800});
+        if (projector &&
+            renderer->supports(pxa::game::RenderCapability::triangle_batch)) {
+            auto model = pxa::game3d::Transform::rotation_y(frames * 0.04f);
+            model.origin.z = 0.5f;
+            const std::array<pxa::game3d::MeshVertex, 3> face{{
+                {model.apply({-0.12f, -0.10f, 0})},
+                {model.apply({0.12f, -0.10f, 0})},
+                {model.apply({0, 0.10f, 0})}}};
+            std::array<pxa::game::Vertex, 21> projected{};
+            auto count = projector->project_triangle(
+                face, projected, pxa::game3d::FrontFace::both);
+            if (count && *count)
+                frame.solid_triangles(std::span{projected}.first(*count),
+                                      {0xf800});
         }
         auto submitted = frame.submit();
         if (submitted) ++frames;

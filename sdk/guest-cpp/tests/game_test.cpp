@@ -1,4 +1,5 @@
 #include <pxa/game.hpp>
+#include <pxa/game3d.hpp>
 
 #include <array>
 #include <cassert>
@@ -141,4 +142,46 @@ int main() {
         assert(steady.submit());
     }
     assert(submits == 18 && allocations == before);
+
+    auto projection = pxa::game3d::Projector::create(320, 240, 1.2f, 0.25f, 32.0f);
+    assert(projection);
+    std::array<pxa::game::Vertex, 21> projected{};
+    const std::array<pxa::game3d::MeshVertex, 3> face{{
+        {{-0.5f, -0.5f, 2.0f}},
+        {{0.5f, -0.5f, 2.0f}},
+        {{0.0f, 0.5f, 2.0f}}}};
+    const auto visible = projection->project_triangle(face, projected);
+    assert(visible && *visible == 3);
+    assert(projected[0].depth_q8 == 512);
+    assert(projected[0].x_q4 < projected[1].x_q4);
+    const auto hidden = projection->project_triangle(
+        {face[0], face[2], face[1]}, projected);
+    assert(hidden && *hidden == 0);
+    auto near_face = face;
+    near_face[0].position.z = 0.1f;
+    const auto clipped = projection->project_triangle(near_face, projected);
+    assert(clipped && *clipped == 6);
+    for (std::size_t i = 0; i < *clipped; ++i) {
+        assert(projected[i].depth_q8 >= 64);
+        assert(projected[i].x_q4 >= 0 && projected[i].x_q4 <= 320 * 16);
+        assert(projected[i].y_q4 >= 0 && projected[i].y_q4 <= 240 * 16);
+    }
+    const auto too_small = projection->project_triangle(
+        near_face, std::span{projected}.first(3));
+    assert(!too_small && too_small.error() == pxa::Error::limit_exceeded);
+    auto outside = face;
+    for (auto& vertex : outside) vertex.position.x += 30;
+    const auto culled = projection->project_triangle(outside, projected);
+    assert(culled && *culled == 0);
+    auto partial = face;
+    partial[0].position.x = -5.0f;
+    const auto edge = projection->project_triangle(
+        partial, projected, pxa::game3d::FrontFace::both);
+    assert(edge && *edge >= 3);
+    for (std::size_t i = 0; i < *edge; ++i)
+        assert(projected[i].x_q4 >= 0 && projected[i].x_q4 <= 320 * 16);
+    auto transform = pxa::game3d::Transform::rotation_y(0.0f);
+    transform.origin.z = 1.0f;
+    assert(transform.apply({0.0f, 0.0f, 1.0f}).z == 2.0f);
+    assert(allocations == before);
 }
