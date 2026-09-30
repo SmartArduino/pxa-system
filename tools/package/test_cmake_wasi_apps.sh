@@ -34,7 +34,7 @@ libc_lab="$test_apps_root/wasi-libc-lab"
   -o "$work_dir/wasi_libc_lab_test"
 "$work_dir/wasi_libc_lab_test"
 
-apps=(wasi-libc-lab wasi-system-lab cmake-components-lab wasi-undeclared-random)
+apps=(wasi-libc-lab wasi-system-lab cmake-components-lab)
 for app in "${apps[@]}"; do
   PXA_APP_SOURCE_ROOT="$test_apps_root" \
   PXA_PACKAGE_OUTPUT_ROOT="$work_dir" \
@@ -52,11 +52,23 @@ test -s "$work_dir/pxa-wasi-libc-lab/artifacts/main.linux-x86_64.aot"
 test -s "$work_dir/pxa-wasi-system-lab/artifacts/main.linux-x86_64.aot"
 test -s "$work_dir/pxa-cmake-components-lab/artifacts/main.linux-x86_64.aot"
 test -s "$work_dir/pxa-cmake-components-lab/artifacts/responder.linux-x86_64.aot"
-test -s "$work_dir/pxa-wasi-undeclared-random/artifacts/main.linux-x86_64.aot"
 ! test -e "$work_dir/pxa-wasi-libc-lab/artifacts/main.wasm"
 ! test -e "$work_dir/pxa-wasi-system-lab/artifacts/main.wasm"
 ! test -e "$work_dir/pxa-cmake-components-lab/artifacts/main.wasm"
 ! test -e "$work_dir/pxa-cmake-components-lab/artifacts/responder.wasm"
-! test -e "$work_dir/pxa-wasi-undeclared-random/artifacts/main.wasm"
+
+if PXA_APP_SOURCE_ROOT="$test_apps_root" \
+   PXA_PACKAGE_OUTPUT_ROOT="$work_dir" \
+   PXA_SIGNING_KEY="$pxa_system_dir/apps/pxa/.dev-signing/publisher-private.pem" \
+   WASI_SDK_DIR="$wasi_sdk_dir" WAMRC="$wamrc_bin" \
+   "$script_dir/package_app.sh" wasi-undeclared-random simulator \
+     "$work_dir/pxa-wasi-undeclared-random" \
+     >"$work_dir/undeclared-random.log" 2>&1; then
+  echo "Undeclared WASI random import unexpectedly passed packaging" >&2
+  exit 1
+fi
+grep -q "random_get requires features: random" \
+    "$work_dir/undeclared-random.log"
+! test -e "$work_dir/pxa-wasi-undeclared-random.pxa"
 
 echo "PXA CMake/WASI test Apps OK"
