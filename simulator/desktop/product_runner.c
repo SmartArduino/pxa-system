@@ -1618,7 +1618,16 @@ static int surface_process_pending(product_host_t *host) {
     if ((host->surface_flags & PXA_SURFACE_FLAG_GUEST_MAPPED) != 0 &&
         !surface_enqueue_release(host, buffer_index, frame_id)) return 0;
     lv_image_set_src(host->surface_image, &host->surface_bitmap);
-    lv_obj_move_background(host->surface_image);
+    /* A raster surface *is* the application content, so it belongs above the
+     * Guest's base UI widgets: the device never scans that widget layer out
+     * while a raster surface owns the panel, and leaving it below made every
+     * GameRender application show the opaque root node instead of its frames.
+     * A guest-mapped surface stays at the back, because there the Guest draws
+     * its base UI on top of its own canvas. */
+    if ((host->surface_flags & PRODUCT_SURFACE_FLAG_GAME_RENDER) != 0)
+        lv_obj_move_foreground(host->surface_image);
+    else
+        lv_obj_move_background(host->surface_image);
     lv_obj_invalidate(host->surface_image);
     return 1;
 }
