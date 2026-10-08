@@ -49,6 +49,9 @@ pxa_component_slot_t *pxa_runtime_find_component(
 const pxa_component_slot_t *pxa_runtime_find_component_const(
     const pxa_runtime_t *runtime, pxa_component_t component,
     uint32_t *index_out);
+pxa_status_t pxa_runtime_validate_import(const pxa_runtime_t *runtime,
+                                        pxa_component_t component,
+                                        uint32_t *index_out);
 int pxa_runtime_authority_is_revoked(const pxa_runtime_t *runtime,
                                      uint32_t component_index,
                                      pxa_authority_t authority);

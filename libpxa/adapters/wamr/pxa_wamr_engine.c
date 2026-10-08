@@ -31,6 +31,7 @@
 
 #if defined(ESP_PLATFORM)
 #include "esp_log.h"
+#include "pxa/esp/pxa_esp_posix_shim.h"
 #define PXA_WAMR_LOG_TAG "PxaWamr"
 #endif
 
@@ -130,9 +131,6 @@ struct pxa_wamr_engine {
     wasm_module_inst_t executing_module;
     uint8_t busy;
     uint8_t wasi_enabled;
-    /* Native calls are serialized by the engine. Keep the copied Guest
-     * payload off the host task stack, including full-size Net requests. */
-    uint8_t control_scratch[PXA_WAMR_V1_MAX_PAYLOAD];
     uint8_t *pool;
     pxa_wamr_entry_t entries[];
 };
@@ -426,7 +424,9 @@ static uint64_t wasi_import_feature(const char *name) {
 
 static void close_wasi_null(pxa_wamr_entry_t *entry) {
     if (entry != NULL && entry->wasi_null_fd >= 0) {
+#if !defined(ESP_PLATFORM)
         (void)close(entry->wasi_null_fd);
+#endif
         entry->wasi_null_fd = -1;
     }
 }
@@ -898,15 +898,15 @@ static int32_t native_submit_v1(void *opaque_exec_env, const uint8_t *data,
         const size_t payload_size = message.payload.size;
         pxa_wamr_engine_t *engine = entry_engine(entry);
         pxa_message_view_t forwarded;
-        if (payload_size != 0)
-            memcpy(engine->control_scratch, message.payload.data,
-                   payload_size);
         memset(&forwarded, 0, sizeof(forwarded));
         forwarded.service = message.service;
         forwarded.opcode = message.opcode;
         forwarded.request_id = host_id;
-        forwarded.payload.data = payload_size == 0
-                                     ? NULL : engine->control_scratch;
+        /* WAMR has validated the native (*~) range. Guest execution is
+         * suspended and serialized until this import returns; services
+         * consume the borrowed payload synchronously and copy any data
+         * they need to retain for asynchronous work. */
+        forwarded.payload.data = payload_size == 0 ? NULL : message.payload.data;
         forwarded.payload.size = payload_size;
         status = pxa_runtime_control_view(engine->runtime,
                                           entry->component, &forwarded);
@@ -1447,7 +1447,11 @@ static pxa_status_t engine_instantiate(void *context, pxa_bytes_t package_root,
         /* No preopens, argv or environment are ambient. Resource-bearing
          * imports are rejected above unless their signed feature is present. */
 #if PXA_WAMR_LIBC_WASI
+#if defined(ESP_PLATFORM)
+        slot->wasi_null_fd = pxa_esp_wasi_null_fd();
+#else
         slot->wasi_null_fd = open("/dev/null", O_RDWR);
+#endif
         if (slot->wasi_null_fd < 0) {
             return discard_entry(engine, slot, PXA_STATUS_UNAVAILABLE);
         }

@@ -180,7 +180,9 @@ pxa_status_t pxa_runtime_control(pxa_runtime_t *runtime,
                                  pxa_component_t component,
                                  const void *message, size_t message_size);
 /* Trusted adapters may dispatch an already-decoded control message. The
- * payload must be Host-owned and remain valid until this call returns. */
+ * payload is borrowed until this call returns. The adapter must validate
+ * its range and prevent it from changing during dispatch (e.g. a suspended,
+ * serialized Guest import). Services must copy data retained for async work. */
 pxa_status_t pxa_runtime_control_view(pxa_runtime_t *runtime,
                                       pxa_component_t component,
                                       const pxa_message_view_t *message);

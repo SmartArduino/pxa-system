@@ -271,10 +271,11 @@ pxa_status_t pxa_component_abort(pxa_runtime_t *runtime,
     return PXA_STATUS_OK;
 }
 
-pxa_status_t pxa_component_validate_import(const pxa_runtime_t *runtime,
-                                           pxa_component_t component_ref) {
+pxa_status_t pxa_runtime_validate_import(const pxa_runtime_t *runtime,
+                                        pxa_component_t component_ref,
+                                        uint32_t *index_out) {
     const pxa_component_slot_t *component =
-        pxa_runtime_find_component_const(runtime, component_ref, NULL);
+        pxa_runtime_find_component_const(runtime, component_ref, index_out);
     if (component == NULL) return PXA_STATUS_NOT_FOUND;
     if ((component->state == PXA_COMPONENT_STARTING &&
          component->callback == PXA_GUEST_CALLBACK_START) ||
@@ -284,6 +285,11 @@ pxa_status_t pxa_component_validate_import(const pxa_runtime_t *runtime,
         return PXA_STATUS_OK;
     }
     return PXA_STATUS_BAD_STATE;
+}
+
+pxa_status_t pxa_component_validate_import(const pxa_runtime_t *runtime,
+                                           pxa_component_t component_ref) {
+    return pxa_runtime_validate_import(runtime, component_ref, NULL);
 }
 
 pxa_status_t pxa_component_snapshot(const pxa_runtime_t *runtime,

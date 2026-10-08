@@ -371,14 +371,11 @@ int32_t pxa_runtime_io(pxa_runtime_t *runtime, pxa_component_t component_ref,
                        pxa_handle_t handle, uint32_t operation,
                        uint8_t *data, size_t size) {
     uint32_t component_index;
-    pxa_status_t status = pxa_component_validate_import(runtime, component_ref);
+    pxa_status_t status = pxa_runtime_validate_import(runtime, component_ref,
+                                                     &component_index);
     if (status != PXA_STATUS_OK) return status;
     if ((data == NULL && size != 0) || size > INT32_MAX) {
         return PXA_STATUS_INVALID_ARGUMENT;
-    }
-    if (pxa_runtime_find_component(runtime, component_ref, &component_index) ==
-        NULL) {
-        return PXA_STATUS_NOT_FOUND;
     }
     return pxa_resource_table_io(&runtime->resources, component_index, handle,
                                  operation, data, size);
@@ -389,13 +386,11 @@ int32_t pxa_runtime_io64(pxa_runtime_t *runtime,
                          pxa_handle64_t handle, uint32_t operation,
                          uint8_t *data, size_t size) {
     uint32_t component_index;
-    pxa_status_t status = pxa_component_validate_import(runtime, component_ref);
+    pxa_status_t status = pxa_runtime_validate_import(runtime, component_ref,
+                                                     &component_index);
     if (status != PXA_STATUS_OK) return status;
     if ((data == NULL && size != 0) || size > INT32_MAX)
         return PXA_STATUS_INVALID_ARGUMENT;
-    if (pxa_runtime_find_component(runtime, component_ref, &component_index) ==
-        NULL)
-        return PXA_STATUS_NOT_FOUND;
     return pxa_resource_table_io64(&runtime->resources, component_index,
                                    handle, operation, data, size);
 }

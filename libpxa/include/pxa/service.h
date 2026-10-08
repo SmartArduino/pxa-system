@@ -18,6 +18,8 @@ extern "C" {
 #define PXA_STORE_INSTALLER_SERVICE_ID UINT16_C(20)
 #define PXA_STORE_INSTALLER_DOWNLOAD_PROGRESS UINT16_C(0x8001)
 
+/* message and payload are borrowed only for this callback. Asynchronous
+ * services must validate and copy any retained input before returning. */
 typedef pxa_status_t (*pxa_service_control_fn)(
     void *context, pxa_runtime_t *runtime, pxa_component_t component,
     const pxa_message_view_t *message);
