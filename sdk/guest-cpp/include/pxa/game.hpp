@@ -1,8 +1,10 @@
 #pragma once
 
 #include "core.hpp"
+#include "assets.hpp"
 
 #include <array>
+#include <cmath>
 #include <optional>
 #include <span>
 
@@ -68,6 +70,13 @@ struct Vertex {
     std::uint8_t light = 255;
     std::uint16_t depth_q8 = 256;
 };
+
+inline std::uint16_t painter_depth_from_z(float z) noexcept {
+    if (!(z > 0) || !std::isfinite(z)) return 0;
+    if (z >= 65535.0f / 256.0f) return UINT16_MAX;
+    const auto depth = static_cast<std::uint16_t>(z * 256.0f + .5f);
+    return depth ? depth : 1;
+}
 
 struct PolygonOptions {
     bool affine_uv = false;
@@ -287,6 +296,28 @@ public:
     const RenderInfo& info() const noexcept { return info_; }
     Transport& transport() noexcept { return transport_; }
     std::uint64_t handle() const noexcept { return handle_.handle(); }
+
+    // The renderer retains the bound asset. The caller can release its load
+    // handle immediately, avoiding a live handle for every atlas texture.
+    Result<void> bind_asset(const Asset& asset, AtlasBinding binding = {}) noexcept {
+        const auto kind = asset.descriptor().kind;
+        if (!asset.handle() || (kind != AssetKind::texture && kind != AssetKind::palette) ||
+            (kind == AssetKind::palette && binding.slot != 0) || binding.slot >= 48)
+            return std::unexpected(Error::invalid_argument);
+        if (kind == AssetKind::texture &&
+            ((info_.max_textures && binding.slot >= info_.max_textures) ||
+             (binding.slot >= 16 && !supports(RenderCapability::texture_slots_48))))
+            return std::unexpected(Error::unsupported);
+        std::array<std::byte, 16> bytes{};
+        wire::put16(bytes.data(), 1);
+        bytes[4] = std::byte(static_cast<std::uint8_t>(kind));
+        bytes[5] = std::byte(binding.slot);
+        wire::put64(bytes.data() + 8, asset.handle());
+        auto result = transport_.io(handle(), 0x103, bytes);
+        if (!result) return std::unexpected(result.error());
+        return *result == bytes.size() ? Result<void>{}
+            : Result<void>{std::unexpected(Error::protocol_error)};
+    }
 
     Result<void> bind_assets(std::span<const std::uint64_t> textures,
                              std::uint64_t palette = 0) noexcept {

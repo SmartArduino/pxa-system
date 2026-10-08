@@ -10,6 +10,7 @@ static std::array<std::byte, 512> last_draw{};
 static std::uint32_t last_draw_size = 0;
 static int submits = 0;
 static int binds = 0;
+static int bind_result = 0;
 static int allocations = 0;
 
 void* operator new(std::size_t size) {
@@ -35,8 +36,9 @@ extern "C" std::int32_t pxa_io(std::uint64_t handle, std::uint32_t operation,
     assert(handle == 77);
     if (operation == 0x103) {
         ++binds;
-        assert(size == 28);
-        assert(pxa::wire::get16(reinterpret_cast<std::byte*>(data)) == 2);
+        assert(size == 28 || size == 16);
+        assert(pxa::wire::get16(reinterpret_cast<std::byte*>(data)) == (size == 28 ? 2 : 1));
+        if (bind_result) return bind_result;
         return size;
     }
     assert(operation == 0x101);
@@ -55,6 +57,23 @@ int main() {
     std::array<std::uint64_t, 1> textures{11};
     assert(renderer.bind_assets(textures, 12));
     assert(binds == 1);
+    {
+        pxa::Asset texture(transport, 11, {.kind = pxa::AssetKind::texture});
+        pxa::Asset palette(transport, 12, {.kind = pxa::AssetKind::palette});
+        pxa::Asset image(transport, 13, {.kind = pxa::AssetKind::image});
+        pxa::Asset absent(transport, 0, {.kind = pxa::AssetKind::texture});
+        assert(renderer.bind_asset(texture));
+        assert(renderer.bind_asset(palette));
+        assert(!renderer.bind_asset(image) && !renderer.bind_asset(absent));
+        assert(!renderer.bind_asset(palette, {1}));
+        assert(!renderer.bind_asset(texture, {16}));
+        assert(binds == 3);
+        bind_result = 15;
+        assert(renderer.bind_asset(texture).error() == pxa::Error::protocol_error);
+        bind_result = -11;
+        assert(!renderer.bind_asset(texture));
+        bind_result = 0;
+    }
 
     pxa::game::DrawBuffer<512> buffer;
     std::array<pxa::game::Sprite, 1> sprites{{
@@ -183,5 +202,36 @@ int main() {
     auto transform = pxa::game3d::Transform::rotation_y(0.0f);
     transform.origin.z = 1.0f;
     assert(transform.apply({0.0f, 0.0f, 1.0f}).z == 2.0f);
+    assert(allocations == before);
+
+    const std::array<pxa::game3d::MeshVertex, 4> wide_quad{{
+        {{-4.0f, -0.5f, 2.0f}, 0, 0},
+        {{0.5f, -0.5f, 2.0f}, 16, 0},
+        {{0.5f, 0.5f, 2.0f}, 16, 16},
+        {{-4.0f, 0.5f, 2.0f}, 0, 16}}};
+    std::array<pxa::game::Vertex, pxa::game3d::Projector::max_polygon_vertices> perimeter{};
+    auto quad_count = projection->project_polygon(wide_quad, perimeter);
+    assert(quad_count && *quad_count == 4);
+    unsigned left = 0;
+    for (std::size_t i = 0; i < *quad_count; ++i) {
+        assert(perimeter[i].depth_q8 == 512); // Q8 camera depth, not a byte.
+        if (perimeter[i].x_q4 == 0) {
+            ++left;
+            assert(perimeter[i].u_q4 > 0 && perimeter[i].u_q4 < 16 * 16);
+        }
+    }
+    assert(left == 2); // Clipped UVs interpolate; clamping screen x cannot do this.
+    auto clipped_quad = wide_quad;
+    clipped_quad[0].position.z = 0.1f;
+    clipped_quad[3].position.z = 0.1f;
+    quad_count = projection->project_polygon(clipped_quad, perimeter);
+    assert(quad_count && *quad_count >= 3);
+    const auto no_space = projection->project_polygon(wide_quad, std::span{perimeter}.first(3));
+    assert(!no_space && no_space.error() == pxa::Error::limit_exceeded);
+    assert(pxa::game::painter_depth_from_z(2.0f) == 512);
+    assert(pxa::game::painter_depth_from_z(0.0001f) == 1);
+    assert(pxa::game::painter_depth_from_z(1000.0f) == 65535);
+    assert(pxa::game::painter_depth_from_z(-1.0f) == 0);
+    assert(pxa::game::painter_depth_from_z(INFINITY) == 0);
     assert(allocations == before);
 }

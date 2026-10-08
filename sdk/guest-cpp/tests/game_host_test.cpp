@@ -74,4 +74,41 @@ int main() {
     assert(pixels[1 * 8 + 1] == 0x07e0);
     assert(pixels[2 * 8 + 3] == 0xf800);
     assert(depth[2 * 8 + 3] != 0xffff);
+
+    // Cutout leaves and opaque trunks share depth across painter quads and
+    // clipped triangle batches. Transparent texels must not occlude a trunk.
+    pxa::game::Renderer forest(transport, 77, PXA_RASTER_CAP_KNOWN_MASK);
+    resources.capabilities = forest.capabilities();
+    std::array<std::uint16_t, 16 * 256> lit_palette{};
+    for (int level = 0; level < 16; ++level) lit_palette[level * 256 + 1] = 0x07e0;
+    resources.palette = lit_palette.data();
+    resources.palette_light_levels = 16;
+    const std::array<std::uint8_t, 4> leaves_texture{1, 0, 0, 1};
+    resources.textures[0] = {leaves_texture.data(), 2, 2};
+    auto crown = quad;
+    for (auto& vertex : crown) {vertex.depth_q8 = 512; vertex.light = 0;}
+    crown[1].u_q4 = crown[2].u_q4 = 32;
+    crown[2].v_q4 = crown[3].v_q4 = 32;
+    const std::array<pxa::game::Vertex, 6> trunk{{
+        {.x_q4=0,.y_q4=0,.depth_q8=1024},
+        {.x_q4=112,.y_q4=0,.depth_q8=1024},
+        {.x_q4=112,.y_q4=112,.depth_q8=1024},
+        {.x_q4=0,.y_q4=0,.depth_q8=1024},
+        {.x_q4=112,.y_q4=112,.depth_q8=1024},
+        {.x_q4=0,.y_q4=112,.depth_q8=1024}}};
+    for (bool leaves_first : {true, false}) {
+        auto tree = forest.frame(buffer);
+        tree.clear({0x001f});
+        if (!leaves_first) tree.solid_triangles(trunk, {0xf800});
+        tree.textured_quad({0}, crown, {.painter=true,.transparent_index0=true,.lit_palette=true});
+        if (leaves_first) tree.solid_triangles(trunk, {0xf800});
+        assert(tree.submit());
+        assert(pxa_raster_validate_draw_list(draw_list.data(), draw_size, &target,
+                                              &resources, &view) == PXA_STATUS_OK);
+        pxa_raster_execute_draw_list(draw_list.data(), &view, &target, &resources, nullptr);
+        assert(pixels[1 * 8 + 1] == 0x07e0);
+        assert(pixels[1 * 8 + 5] == 0xf800);
+        assert(pixels[5 * 8 + 1] == 0xf800);
+        assert(pixels[5 * 8 + 5] == 0x07e0);
+    }
 }

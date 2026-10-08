@@ -60,45 +60,77 @@ public:
         return Projector(width, height, focal, near_z, far_z);
     }
 
-    Result<std::size_t> project_triangle(
-        const std::array<MeshVertex, 3>& triangle,
-        std::span<game::Vertex> output,
-        FrontFace front = FrontFace::clockwise) const noexcept {
-        std::array<MeshVertex, 12> input{};
-        std::array<MeshVertex, 12> clipped{};
-        std::copy(triangle.begin(), triangle.end(), input.begin());
-        std::size_t count = 3;
-        for (const auto& vertex : triangle) {
+    // Six frustum planes can add at most six vertices to a convex polygon.
+    static constexpr std::size_t max_polygon_vertices = 10;
+    static constexpr std::size_t max_triangle_vertices = 21;
+
+    // Projects a convex triangle or quad, preserving perimeter order and UVs
+    // through clipping. The returned vertices are a polygon, not triangles.
+    Result<std::size_t> project_polygon(
+        std::span<const MeshVertex> polygon,
+        std::span<game::Vertex> output) const noexcept {
+        if (polygon.size() < 3 || polygon.size() > 4)
+            return std::unexpected(Error::invalid_argument);
+        std::size_t count = polygon.size();
+        unsigned crossed = 0, outside = 63;
+        for (const auto& vertex : polygon) {
             if (!valid(vertex)) return std::unexpected(Error::invalid_argument);
+            const auto p = vertex.position;
+            const float extent_x = p.z * horizontal_, extent_y = p.z * vertical_;
+            const unsigned code = (p.z < near_ ? 1u : 0u) | (p.z > far_ ? 2u : 0u) |
+                (p.x < -extent_x ? 4u : 0u) | (p.x > extent_x ? 8u : 0u) |
+                (p.y < -extent_y ? 16u : 0u) | (p.y > extent_y ? 32u : 0u);
+            crossed |= code;
+            outside &= code;
         }
+        if (outside) return std::size_t{0};
+        // Most visible terrain faces need no clipping or intermediate copy.
+        if (!crossed) return project_vertices(polygon, output);
+        std::array<MeshVertex, max_polygon_vertices> input{};
+        std::array<MeshVertex, max_polygon_vertices> clipped{};
+        std::copy(polygon.begin(), polygon.end(), input.begin());
         for (unsigned plane = 0; plane < 6; ++plane) {
+            if (!(crossed & (1u << plane))) continue;
             if (!count) return std::size_t{0};
             std::size_t next = 0;
+            auto emit = [&](const MeshVertex& vertex) {
+                if (next && same_position(clipped[next - 1], vertex)) return true;
+                if (next == clipped.size()) return false;
+                clipped[next++] = vertex;
+                return true;
+            };
             auto previous = input[count - 1];
             float previous_distance = distance(previous.position, plane);
             for (std::size_t i = 0; i < count; ++i) {
                 const auto current = input[i];
                 const float current_distance = distance(current.position, plane);
                 if ((previous_distance >= 0) != (current_distance >= 0)) {
-                    if (next == clipped.size())
-                        return std::unexpected(Error::limit_exceeded);
                     const float t = previous_distance /
                                     (previous_distance - current_distance);
-                    clipped[next++] = interpolate(previous, current, t);
+                    if (!emit(interpolate(previous, current, t)))
+                        return std::unexpected(Error::limit_exceeded);
                 }
                 if (current_distance >= 0) {
-                    if (next == clipped.size())
+                    if (!emit(current))
                         return std::unexpected(Error::limit_exceeded);
-                    clipped[next++] = current;
                 }
                 previous = current;
                 previous_distance = current_distance;
             }
+            if (next > 1 && same_position(clipped[0], clipped[next - 1])) --next;
             std::copy_n(clipped.begin(), next, input.begin());
             count = next;
         }
+        return project_vertices({input.data(), count}, output);
+    }
+
+private:
+    Result<std::size_t> project_vertices(std::span<const MeshVertex> input,
+                                        std::span<game::Vertex> output) const noexcept {
+        const auto count = input.size();
         if (count < 3) return std::size_t{0};
-        std::array<game::Vertex, 12> projected{};
+        if (count > output.size())
+            return std::unexpected(Error::limit_exceeded);
         for (std::size_t i = 0; i < count; ++i) {
             const auto& source = input[i];
             const float screen_x = width_ / 2.0f + focal_ * source.position.x / source.position.z;
@@ -107,7 +139,7 @@ public:
                 source.u * 16 < INT16_MIN || source.u * 16 > INT16_MAX ||
                 source.v * 16 < INT16_MIN || source.v * 16 > INT16_MAX)
                 return std::unexpected(Error::invalid_argument);
-            projected[i] = {
+            output[i] = {
                 .x_q4 = static_cast<std::int16_t>(std::clamp(std::lround(screen_x * 16), 0l,
                                                static_cast<long>(width_) * 16)),
                 .y_q4 = static_cast<std::int16_t>(std::clamp(std::lround(screen_y * 16), 0l,
@@ -118,6 +150,20 @@ public:
                 .depth_q8 = static_cast<std::uint16_t>(
                     std::clamp(std::lround(source.position.z * 256), 1l, 65535l))};
         }
+        return count;
+    }
+
+public:
+    // Emits whole, already triangulated triples; callers must not fan these
+    // vertices again. Use max_triangle_vertices for a fully clipped triangle.
+    Result<std::size_t> project_triangle(
+        const std::array<MeshVertex, 3>& triangle,
+        std::span<game::Vertex> output,
+        FrontFace front = FrontFace::clockwise) const noexcept {
+        std::array<game::Vertex, max_polygon_vertices> projected{};
+        auto polygon = project_polygon(triangle, projected);
+        if (!polygon) return std::unexpected(polygon.error());
+        const auto count = *polygon;
         std::size_t written = 0;
         for (std::size_t i = 1; i + 1 < count; ++i) {
             const auto& a = projected[0];
@@ -140,6 +186,10 @@ public:
     }
 
 private:
+    static bool same_position(const MeshVertex& a, const MeshVertex& b) noexcept {
+        return a.position.x == b.position.x && a.position.y == b.position.y &&
+               a.position.z == b.position.z;
+    }
     Projector(std::uint16_t width, std::uint16_t height, float focal,
               float near_z, float far_z) noexcept
         : width_(width), height_(height), focal_(focal),
@@ -167,6 +217,8 @@ private:
 
     static MeshVertex interpolate(const MeshVertex& a, const MeshVertex& b,
                                   float t) noexcept {
+        if (t <= 0) return a;
+        if (t >= 1) return b;
         return {{a.position.x + (b.position.x - a.position.x) * t,
                  a.position.y + (b.position.y - a.position.y) * t,
                  a.position.z + (b.position.z - a.position.z) * t},

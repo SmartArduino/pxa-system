@@ -67,13 +67,17 @@ public:
         if (timestamp_us <= previous_us_) return {};
         auto elapsed = timestamp_us - previous_us_;
         previous_us_ = timestamp_us;
+        // Report wall time even when simulation catch-up is capped. Using the
+        // capped interval as frame time makes slow games report the target FPS.
+        const auto frame_elapsed = static_cast<std::uint32_t>(
+            elapsed > UINT32_MAX ? UINT32_MAX : elapsed);
         const auto cap = std::uint64_t(step_us_) * maximum_steps_;
         if (elapsed > cap) elapsed = cap;
         auto accumulated = remainder_us_ + elapsed;
         auto count = accumulated / step_us_;
         if (count > maximum_steps_) count = maximum_steps_;
         remainder_us_ = accumulated - count * step_us_;
-        return {step_us_, static_cast<std::uint32_t>(elapsed),
+        return {step_us_, frame_elapsed,
                 static_cast<std::uint8_t>(count)};
     }
 private:

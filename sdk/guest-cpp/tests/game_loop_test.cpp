@@ -69,6 +69,7 @@ int main() {
     assert(updates == 2 && frames == 2 && last_tick.frame_delta_us == 16000);
     tick(2016000);
     assert(updates == 6 && frames == 3 && last_tick.simulation_steps == 4);
+    assert(last_tick.frame_delta_us == 1000000);
     lifecycle(0);
     assert(last_period == 0 && period_changes == 2);
     tick(3016000);
