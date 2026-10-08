@@ -224,7 +224,9 @@ Task<SurfaceState> Surface::query_state() {
         .flags = wire::get32(bytes + 48)};
 }
 
-Task<Surface> SurfaceService::create_mapped(SurfaceOptions options) {
+Task<Surface> SurfaceService::create_mapped(this SurfaceService self,
+                                           SurfaceOptions options) {
+    auto& [transport_, requests_] = self;
     if (!options.width || !options.height || options.buffers < 2 ||
         options.buffers > 3 || options.max_buffer_bytes == 0)
         co_return std::unexpected(Error::invalid_argument);

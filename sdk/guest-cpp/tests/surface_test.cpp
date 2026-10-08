@@ -70,9 +70,16 @@ extern "C" std::int32_t pxa_io(std::uint64_t handle,
     return 16;
 }
 
+// A service facade may be destroyed before the suspended coroutine starts.
+// The noinline boundary makes its lifetime observable to ASan as well.
+[[gnu::noinline]] static pxa::Task<pxa::Surface> create_after_return(
+    pxa::Context& context, pxa::SurfaceOptions options) {
+    return context.surface().create_mapped(options);
+}
+
 struct SurfaceApp {
     pxa::Task<void> initialize(pxa::Context& context) {
-        auto created = co_await context.surface().create_mapped({
+        auto created = co_await create_after_return(context, {
             .width = 8, .height = 4, .buffers = 2,
             .max_buffer_bytes = small_budget ? 100u : 128u});
         if (!created) {

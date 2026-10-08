@@ -98,7 +98,7 @@ public:
     SurfaceService(Transport& transport, RequestTable& requests) noexcept
         : transport_(transport), requests_(requests) {}
 
-    Task<Surface> create_mapped(SurfaceOptions options);
+    Task<Surface> create_mapped(this SurfaceService self, SurfaceOptions options);
 
 private:
     Transport& transport_;
