@@ -500,6 +500,76 @@ inline ImageView Image(std::string asset) {
     return ImageView(std::move(asset));
 }
 
+/* Raw pointer input delivered to a Canvas node. */
+struct CanvasPointer {
+    std::uint32_t node = 0;
+    std::uint8_t phase = 0; /* 0 down, 1 move, 2 up, 3 cancel */
+    std::uint16_t buttons = 0;
+    std::int32_t x = 0;
+    std::int32_t y = 0;
+    std::uint64_t timestamp_us = 0;
+};
+
+inline constexpr std::uint8_t pointer_phase_down = 0;
+inline constexpr std::uint8_t pointer_phase_move = 1;
+inline constexpr std::uint8_t pointer_phase_up = 2;
+inline constexpr std::uint8_t pointer_phase_cancel = 3;
+
+/* Decodes a UI pointer event as forwarded to App::on_event. Games need this
+ * for drag input: a Canvas node opts in with the pointer event mask and the
+ * application then drives its own controls. */
+inline Result<CanvasPointer> decode_pointer(const Event& event) noexcept {
+    if (event.service != protocol::service || event.opcode != 0x8001 ||
+        event.token != 0 || event.payload.size() < 36)
+        return std::unexpected(Error::invalid_argument);
+    const std::byte* payload = event.payload.data();
+    if (wire::get32(payload) == 0 || wire::get32(payload + 4) == 0)
+        return std::unexpected(Error::bad_state);
+    if (wire::get16(payload + 12) != protocol::event_pointer_kind)
+        return std::unexpected(Error::invalid_argument);
+    CanvasPointer out;
+    out.node = wire::get32(payload + 4);
+    out.timestamp_us = wire::get64(payload + 16);
+    out.phase = std::to_integer<std::uint8_t>(payload[25]);
+    out.buttons = wire::get16(payload + 26);
+    out.x = static_cast<std::int32_t>(wire::get32(payload + 28));
+    out.y = static_cast<std::int32_t>(wire::get32(payload + 32));
+    return out;
+}
+
+/* A canvas node: the application draws it and receives raw pointer events.
+ * Pair it with an Overlay when it should cover the whole window. */
+class CanvasView {
+public:
+    static constexpr Capacity capacity{1};
+    constexpr CanvasView(std::int32_t width, std::int32_t height) noexcept
+        : width_(width), height_(height) {}
+
+    template<class Page> bool render(Page& page, std::uint32_t parent) {
+        auto node = page.create(parent, protocol::canvas);
+        if (!node) return false;
+        if (!page.transaction().u64(node, protocol::event_mask,
+                                    protocol::event_mask_pointer))
+            return false;
+        if (width_ > 0 &&
+            !page.transaction().logical_px(node, protocol::width, width_))
+            return false;
+        if (height_ > 0 &&
+            !page.transaction().logical_px(node, protocol::height, height_))
+            return false;
+        return true;
+    }
+
+private:
+    std::int32_t width_ = 0;
+    std::int32_t height_ = 0;
+};
+
+inline constexpr CanvasView Canvas(std::int32_t width,
+                                   std::int32_t height) noexcept {
+    return CanvasView(width, height);
+}
+
 template<class... Children>
 class BoxView {
 public:

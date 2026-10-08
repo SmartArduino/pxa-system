@@ -69,6 +69,17 @@ struct Vertex {
     std::uint16_t depth_q8 = 256;
 };
 
+/* Painter polygons carry the real camera depth: the host interpolates the
+ * reciprocal of Vertex::depth_q8 (1/256 block units) for perspective texture
+ * mapping, and requires it to be non-zero. Packing a small sort key here makes
+ * painter quads collapse or vanish. */
+constexpr std::uint16_t painter_depth_from_z(float z) noexcept {
+    const float scaled = z * 256.0f;
+    if (!(scaled > 1.0f)) return 1u;
+    if (scaled > 65535.0f) return 65535u;
+    return static_cast<std::uint16_t>(scaled + 0.5f);
+}
+
 struct PolygonOptions {
     bool affine_uv = false;
     bool painter = false;

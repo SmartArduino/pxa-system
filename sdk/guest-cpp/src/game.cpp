@@ -82,6 +82,23 @@ Frame& Frame::textured_quad(AtlasBinding binding,
     const auto required = capability_bit(RenderCapability::textured_quad) |
                           capabilities_for(flags);
     if (!supports(required)) return *this;
+    /* The host rejects a whole draw list when a polygon has zero projected
+     * area, which happens whenever clipping collapses a quad onto a screen
+     * edge. Drop such quads here, mirroring the triangle path's degenerate
+     * triangle filter. */
+    {
+        const auto area2 = [&vertices] {
+            std::int64_t total = 0;
+            for (std::size_t i = 0; i < vertices.size(); ++i) {
+                const auto& a = vertices[i];
+                const auto& b = vertices[(i + 1) % vertices.size()];
+                total += static_cast<std::int64_t>(a.x_q4) * b.y_q4 -
+                         static_cast<std::int64_t>(b.x_q4) * a.y_q4;
+            }
+            return total;
+        }();
+        if (area2 == 0) return *this;
+    }
     auto record = append(3, 56);
     if (record.empty()) return *this;
     record[1] = std::byte(flags);
@@ -121,6 +138,8 @@ Frame& Frame::triangles(AtlasBinding binding,
                         PolygonOptions options) noexcept {
     if (error_ || !valid_texture_slot(binding)) return *this;
     const auto flags = flags_for(options);
+    /* The host's triangle-batch validation rejects painter with the lit
+     * palette; only the textured-quad path supports that combination. */
     if ((flags & (coverage_mask | coverage_resolve)) ||
         ((flags & painter) && (flags & lit_palette))) {
         error_ = Error::invalid_argument;

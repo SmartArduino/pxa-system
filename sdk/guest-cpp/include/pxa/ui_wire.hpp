@@ -27,6 +27,9 @@ constexpr std::uint8_t image = 5;
 constexpr std::uint8_t control = 6;
 constexpr std::uint8_t progress = 7;
 constexpr std::uint8_t virtual_list = 9;
+/* Node kind 8 is a canvas: a raw drawing surface that can also receive the
+ * pointer event mask, which is how games get drag input. */
+constexpr std::uint8_t canvas = 8;
 constexpr std::uint8_t button = 1;
 constexpr std::uint8_t toggle = 2;
 constexpr std::uint8_t slider = 3;
@@ -58,6 +61,9 @@ constexpr std::uint16_t scrollbar = 777;
 constexpr std::uint16_t item_count = 778;
 constexpr std::uint16_t item_extent = 779;
 constexpr std::uint16_t event_mask = 3;
+/* Event kinds and mask bits mirror pxa_ui.h. */
+constexpr std::uint16_t event_pointer_kind = 7;
+constexpr std::uint64_t event_mask_pointer = UINT64_C(1) << 6;
 constexpr std::uint8_t row = 1;
 constexpr std::uint8_t column = 2;
 constexpr std::uint8_t stack = 3;
