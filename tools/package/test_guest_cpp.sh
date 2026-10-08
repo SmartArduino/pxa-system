@@ -44,4 +44,10 @@ for test_name in features core_app ui_wire ui_page ui_controls counter_app navig
   "$work_dir/$test_name"
 done
 
+for slots in 3 8 65; do
+  "$cxx" "${flags[@]}" -DPXA_COROUTINE_SLOT_COUNT="$slots" \
+    "$cpp_sdk_dir/tests/task_pool_test.cpp" -o "$work_dir/task_pool_$slots"
+  "$work_dir/task_pool_$slots"
+done
+
 echo "PXA C++ Guest host tests OK"

@@ -3,6 +3,7 @@
 #include "core.hpp"
 
 #include <coroutine>
+#include <bit>
 #include <cstddef>
 #include <cstdio>
 #include <new>
@@ -17,37 +18,80 @@ namespace pxa {
 #ifndef PXA_COROUTINE_SLOT_COUNT
 #define PXA_COROUTINE_SLOT_COUNT 8
 #endif
+#ifndef PXA_REQUEST_CAPACITY
+#define PXA_REQUEST_CAPACITY 16
+#endif
+#ifndef PXA_TASK_SCOPE_CAPACITY
+#define PXA_TASK_SCOPE_CAPACITY PXA_COROUTINE_SLOT_COUNT
+#endif
+
+struct TaskPoolStats {
+    std::size_t reserved_bytes;
+    std::size_t slot_bytes;
+    std::size_t slot_count;
+    std::uint32_t active_slots;
+    std::uint32_t peak_slots;
+    std::uint32_t allocation_failures;
+};
 
 namespace detail {
 class FramePool {
     static constexpr std::size_t slot_bytes = PXA_COROUTINE_SLOT_BYTES;
     static constexpr std::size_t slot_count = PXA_COROUTINE_SLOT_COUNT;
-    static_assert(slot_bytes >= 256 && slot_count > 0);
+    static_assert(slot_bytes >= 256 && slot_count > 0 && slot_count <= UINT32_MAX);
+    using Word = std::conditional_t<(slot_count <= 32), std::uint32_t, std::uint64_t>;
+    static constexpr std::size_t word_bits = sizeof(Word) * 8;
+    static constexpr std::size_t word_count = (slot_count + word_bits - 1) / word_bits;
     struct alignas(std::max_align_t) Slot {
         std::byte bytes[slot_bytes];
-        bool used;
     };
 public:
     static void* allocate(std::size_t size) noexcept {
-        if (size > slot_bytes) return nullptr;
-        for (auto& slot : slots_) {
-            if (slot.used) continue;
-            slot.used = true;
-            return slot.bytes;
+        if (size <= slot_bytes) {
+            for (std::size_t word = 0; word < word_count; ++word) {
+                const auto remaining = slot_count - word * word_bits;
+                const Word valid = remaining >= word_bits ? ~Word{0}
+                    : (Word{1} << remaining) - 1;
+                const auto available = ~used_[word] & valid;
+                if (!available) continue;
+                const auto bit = std::countr_zero(available);
+                used_[word] |= Word{1} << bit;
+                ++active_;
+                if (active_ > peak_) peak_ = active_;
+                return slots_[word * word_bits + bit].bytes;
+            }
         }
+        if (failures_ != UINT32_MAX) ++failures_;
         return nullptr;
     }
     static void release(void* pointer) noexcept {
-        for (auto& slot : slots_) {
-            if (slot.bytes != pointer) continue;
-            slot.used = false;
-            return;
-        }
+        const auto base = reinterpret_cast<std::uintptr_t>(slots_);
+        const auto address = reinterpret_cast<std::uintptr_t>(pointer);
+        if (address < base || address - base >= sizeof(slots_) ||
+            (address - base) % sizeof(Slot)) return;
+        const auto index = (address - base) / sizeof(Slot);
+        const auto mask = Word{1} << (index % word_bits);
+        if (!(used_[index / word_bits] & mask)) return;
+        used_[index / word_bits] &= ~mask;
+        --active_;
+    }
+    static TaskPoolStats stats() noexcept {
+        return {sizeof(slots_) + sizeof(used_) + sizeof(active_) +
+                    sizeof(peak_) + sizeof(failures_),
+                slot_bytes, slot_count, active_, peak_, failures_};
     }
 private:
     inline static Slot slots_[slot_count]{};
+    inline static Word used_[word_count]{};
+    inline static std::uint32_t active_ = 0;
+    inline static std::uint32_t peak_ = 0;
+    inline static std::uint32_t failures_ = 0;
 };
 } // namespace detail
+
+inline TaskPoolStats task_pool_stats() noexcept {
+    return detail::FramePool::stats();
+}
 
 template<class T>
 class Task {
@@ -154,6 +198,7 @@ private:
 };
 
 class RequestTable {
+    static_assert(PXA_REQUEST_CAPACITY > 0 && PXA_REQUEST_CAPACITY <= 16);
     struct Entry {
         std::uint64_t token = 0;
         void* context = nullptr;
@@ -247,7 +292,7 @@ public:
     }
     void clear() noexcept { entries_ = {}; }
 private:
-    std::array<Entry, 16> entries_{};
+    std::array<Entry, PXA_REQUEST_CAPACITY> entries_{};
 };
 
 class Response {
@@ -343,6 +388,7 @@ private:
 };
 
 class TaskScope {
+    static_assert(PXA_TASK_SCOPE_CAPACITY > 0);
     struct Entry {
         std::coroutine_handle<> handle{};
         void (*destroy)(std::coroutine_handle<>) = nullptr;
@@ -406,7 +452,7 @@ public:
         }
     }
 private:
-    std::array<Entry, 16> entries_{};
+    std::array<Entry, PXA_TASK_SCOPE_CAPACITY> entries_{};
     void* error_context_ = nullptr;
     void (*error_report_)(void*, Error) noexcept = nullptr;
 };

@@ -15,6 +15,19 @@ if(DEFINED PXA_CPP_SDK_DIR AND IS_DIRECTORY "${PXA_CPP_SDK_DIR}/include"
     add_library(Pxa::Cpp ALIAS pxa_guest_cpp)
     target_include_directories(pxa_guest_cpp PUBLIC
         "${PXA_CPP_SDK_DIR}/include")
+    # Propagate layout-affecting capacities to the runtime AND all consumers.
+    # Defining these only on an app would give Transport/RequestTable different
+    # layouts across translation units.
+    foreach(_pxa_capacity PXA_COROUTINE_SLOT_BYTES PXA_COROUTINE_SLOT_COUNT
+                          PXA_REQUEST_CAPACITY PXA_TASK_SCOPE_CAPACITY)
+        if(DEFINED ${_pxa_capacity})
+            if(NOT "${${_pxa_capacity}}" MATCHES "^[1-9][0-9]*$")
+                message(FATAL_ERROR "${_pxa_capacity} must be a positive integer")
+            endif()
+            target_compile_definitions(pxa_guest_cpp PUBLIC
+                "${_pxa_capacity}=${${_pxa_capacity}}")
+        endif()
+    endforeach()
     if("cxx_std_26" IN_LIST CMAKE_CXX_COMPILE_FEATURES)
         target_compile_features(pxa_guest_cpp PUBLIC cxx_std_26)
     else()

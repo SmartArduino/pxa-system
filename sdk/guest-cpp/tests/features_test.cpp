@@ -6,6 +6,12 @@
 #include <span>
 #include <type_traits>
 #include <utility>
+// Suppress the standard library diagnostic at its template definition too:
+// Clang instantiates libstdc++ 16's deprecated is_trivial_v inside _M_init.
+#if defined(__clang__) && defined(__GLIBCXX__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+#endif
 #if defined(__cpp_lib_inplace_vector) && __cpp_lib_inplace_vector >= 202406L
 #include <inplace_vector>
 #endif
@@ -37,16 +43,8 @@ int main() {
     int values[]{1, 2};
     assert(std::span{values}.size() == 2);
 #if defined(__cpp_lib_inplace_vector) && __cpp_lib_inplace_vector >= 202406L
-    // Clang with libstdc++ 16 diagnoses the library's own is_trivial_v use.
-#if defined(__clang__) && defined(__GLIBCXX__)
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wdeprecated-declarations"
-#endif
     std::inplace_vector<int, 1> bounded;
     assert(bounded.try_push_back(1) && !bounded.try_push_back(2));
-#if defined(__clang__) && defined(__GLIBCXX__)
-#pragma clang diagnostic pop
-#endif
 #endif
 #if defined(__cpp_lib_function_ref) && __cpp_lib_function_ref >= 202306L
     auto callback = [&] { ++value.n; };
@@ -59,3 +57,6 @@ int main() {
                 pxa::features::language, pxa::features::inplace_vector,
                 pxa::features::function_ref);
 }
+#if defined(__clang__) && defined(__GLIBCXX__)
+#pragma clang diagnostic pop
+#endif
