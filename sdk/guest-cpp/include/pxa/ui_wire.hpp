@@ -26,6 +26,7 @@ constexpr std::uint8_t text = 4;
 constexpr std::uint8_t image = 5;
 constexpr std::uint8_t control = 6;
 constexpr std::uint8_t progress = 7;
+constexpr std::uint8_t canvas = 8;
 constexpr std::uint8_t virtual_list = 9;
 constexpr std::uint8_t button = 1;
 constexpr std::uint8_t toggle = 2;

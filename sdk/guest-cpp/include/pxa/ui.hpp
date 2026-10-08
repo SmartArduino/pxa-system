@@ -1,6 +1,8 @@
 #pragma once
 
 #include "ui_wire.hpp"
+#include "ui_input.hpp"
+#include "canvas.hpp"
 
 #include <bit>
 #include <charconv>
@@ -293,6 +295,70 @@ private:
 inline RefTextView<int> Text(Ref<int>& ref) { return RefTextView<int>(ref); }
 inline RefTextView<std::string> Text(Ref<std::string>& ref) {
     return RefTextView<std::string>(ref);
+}
+
+struct NoPointerCallback {};
+
+template<class F = NoPointerCallback, bool InputOnly = false, bool HasRef = false>
+class CanvasView {
+public:
+    static constexpr bool overlay = InputOnly;
+    static constexpr Capacity capacity{1, 0,
+        std::same_as<F, NoPointerCallback> ? 0u : 1u, 0, HasRef ? 1u : 0u};
+    explicit constexpr CanvasView(std::int32_t width = 0, std::int32_t height = 0,
+                                  F callback = {}, CanvasRef* ref = nullptr)
+        : width_(width), height_(height), callback_(std::move(callback)) {
+        if constexpr (HasRef) ref_ = ref;
+    }
+
+    template<class Callback> requires std::invocable<Callback&, const CanvasPointer&>
+    constexpr auto on_pointer(Callback&& callback) const {
+        return CanvasView<std::decay_t<Callback>, InputOnly, HasRef>(width_, height_,
+            std::forward<Callback>(callback), canvas_ref());
+    }
+
+    constexpr auto input_only() const {
+        return CanvasView<F, true, HasRef>(width_, height_, callback_, canvas_ref());
+    }
+
+    template<class Page> bool render(Page& page, std::uint32_t parent) {
+        if (width_ < 0 || height_ < 0) return page.fail(Error::invalid_argument);
+        const auto node = page.create(parent, protocol::canvas);
+        if (!node) return false;
+        auto& tx = page.transaction();
+        if (!(width_ ? tx.logical_px(node, protocol::width, width_)
+                     : tx.fill(node, protocol::width)) ||
+            !(height_ ? tx.logical_px(node, protocol::height, height_)
+                      : tx.fill(node, protocol::height)) ||
+            !tx.u64(node, protocol::event_mask, UINT64_C(1) << 6)) return false;
+        if constexpr (InputOnly) {
+            std::array<std::byte, 8> transparent{};
+            transparent[0] = std::byte{1};
+            if (!tx.property(node, protocol::background, transparent)) return false;
+        }
+        if constexpr (HasRef)
+            if (!ref_ || !page.attach_canvas(*ref_, node)) return false;
+        if constexpr (!std::same_as<F, NoPointerCallback>)
+            return page.on_pointer(node, callback_);
+        return true;
+    }
+private:
+    CanvasRef* canvas_ref() const noexcept {
+        if constexpr (HasRef) return ref_;
+        else return nullptr;
+    }
+    struct NoRef {};
+    std::int32_t width_, height_;
+    [[no_unique_address]] F callback_;
+    [[no_unique_address]] std::conditional_t<HasRef, CanvasRef*, NoRef> ref_{};
+};
+
+inline constexpr auto Canvas(std::int32_t width = 0, std::int32_t height = 0) {
+    return CanvasView<>(width, height);
+}
+
+inline constexpr auto Canvas(CanvasRef& ref, std::int32_t width = 0, std::int32_t height = 0) {
+    return CanvasView<NoPointerCallback, false, true>(width, height, {}, &ref);
 }
 
 template<class F>
@@ -756,8 +822,7 @@ public:
         for (std::size_t i = 0; i < handler_count_; ++i) {
             auto& handler = handlers_[i];
             if (handler.node == node && handler.kind == kind)
-                return handler.call(handler.callback,
-                                    event.payload.subspan(24));
+                return handler.call(handler.callback, event);
         }
         for (std::size_t i = 0; i < dynamic_count_; ++i)
             if (dynamic_[i].handle(dynamic_[i].object, event)) return true;
@@ -916,8 +981,49 @@ public:
         }
         handlers_[handler_count_++] = {
             node, 1, &callback,
-            [](void* value, std::span<const std::byte>) {
+            [](void* value, const Event&) {
                 (*static_cast<F*>(value))();
+                return true;
+            }};
+        return true;
+    }
+
+    bool attach_canvas(CanvasRef& ref, std::uint32_t node) noexcept {
+        if constexpr (MaxRefs == 0) return fail(Error::resource_limit);
+        else {
+            if (ref.mounted() && ref.owner_ != this) return fail(Error::bad_state);
+            if (refs_.size == MaxRefs) return fail(Error::resource_limit);
+            for (std::size_t i = 0; i < refs_.size; ++i)
+                if (refs_.entries[i].object == &ref) return fail(Error::bad_state);
+            ref.node_ = node;
+            ref.transport_ = &transport_;
+            refs_.entries[refs_.size++] = {
+                &ref,
+                [](void* object, void* owner) noexcept {
+                    static_cast<CanvasRef*>(object)->owner_ = owner;
+                },
+                [](void* object, void* owner) noexcept {
+                    auto& ref = *static_cast<CanvasRef*>(object);
+                    if (!ref.owner_ || ref.owner_ == owner) {
+                        ref.owner_ = nullptr; ref.transport_ = nullptr;
+                        ref.node_ = ref.frame_ = 0;
+                    }
+                }};
+            return true;
+        }
+    }
+
+    template<class F> bool on_pointer(std::uint32_t node, F& callback) noexcept {
+        if (handler_count_ == MaxHandlers) {
+            mount_error_ = Error::resource_limit;
+            return false;
+        }
+        handlers_[handler_count_++] = {
+            node, 7, &callback,
+            [](void* value, const Event& event) {
+                auto pointer = decode_pointer(event);
+                if (!pointer) return false;
+                (*static_cast<F*>(value))(*pointer);
                 return true;
             }};
         return true;
@@ -932,7 +1038,8 @@ public:
         }
         handlers_[handler_count_++] = {
             node, 2, &state,
-            [](void* pointer, std::span<const std::byte> data) {
+            [](void* pointer, const Event& event) {
+                const auto data = event.payload.subspan(24);
                 if (data.size() != 4) return false;
                 auto value = static_cast<std::int32_t>(
                     wire::get32(data.data()));
@@ -958,7 +1065,8 @@ public:
         }
         handlers_[handler_count_++] = {
             node, 6, &state,
-            [](void* pointer, std::span<const std::byte> data) {
+            [](void* pointer, const Event& event) {
+                const auto data = event.payload.subspan(24);
                 if (data.size() > 64) return false;
                 for (auto byte : data)
                     if (byte == std::byte{}) return false;
@@ -1037,7 +1145,7 @@ private:
         std::uint32_t node = 0;
         std::uint16_t kind = 0;
         void* callback = nullptr;
-        bool (*call)(void*, std::span<const std::byte>) = nullptr;
+        bool (*call)(void*, const Event&) = nullptr;
     };
     Transport& transport_;
     View view_;

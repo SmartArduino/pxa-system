@@ -1,0 +1,43 @@
+{
+  "format": "pxa-package-source-0.1",
+  "min_sdk": [
+    1,
+    0
+  ],
+  "target_sdk": [
+    1,
+    0
+  ],
+  "compile_sdk": [
+    1,
+    0
+  ],
+  "id": "pxa-cpp-canvas",
+  "version": "1.0.0",
+  "name": "C++ Canvas",
+  "description": "Bounded Canvas drawing and typed pointer input",
+  "build": {
+    "system": "cmake",
+    "source_dir": "."
+  },
+  "components": [
+    {
+      "id": "main",
+      "kind": "ui",
+      "services": [
+        "ui",
+        "window",
+        "log"
+      ],
+      "cmake_target": "pxa_main",
+      "wasi": {
+        "version": "preview1",
+        "libc": "wasi-libc",
+        "features": [
+          "monotonic-clock",
+          "wall-clock"
+        ]
+      }
+    }
+  ]
+}
