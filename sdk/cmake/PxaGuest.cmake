@@ -176,7 +176,11 @@ function(pxa_add_component target)
         -Wl,--export=pxa_app_on_event
         -Wl,--export=pxa_app_stop
         -Wl,--export=__heap_base
-        -Wl,--export=__data_end)
+        -Wl,--export=__data_end
+        # Let WAMR use the libc allocator when it is linked. A second heap
+        # inserted at __heap_base overlaps libc's constant heap address.
+        -Wl,--export-if-defined=malloc
+        -Wl,--export-if-defined=free)
     if(DEFINED PXA_LINEAR_MEMORY_MAXIMUM AND
        NOT PXA_LINEAR_MEMORY_MAXIMUM STREQUAL "0")
         target_link_options(${target} PRIVATE

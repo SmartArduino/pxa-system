@@ -413,6 +413,7 @@ else
       -Wl,--export=pxa_app_start \
       -Wl,--export=pxa_app_on_event -Wl,--export=pxa_app_stop \
       -Wl,--export=__heap_base -Wl,--export=__data_end \
+      -Wl,--export-if-defined=malloc -Wl,--export-if-defined=free \
       "${linear_memory_link_args[@]}" \
       "${component_objects[@]}" -o "$package_dir/artifacts/$component_id.wasm"
   done

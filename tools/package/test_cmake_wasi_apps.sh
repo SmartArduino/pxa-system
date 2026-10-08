@@ -50,6 +50,36 @@ for app in "${apps[@]}"; do
   test -s "$work_dir/pxa-$app.pxa"
 done
 
+# A libc Guest must share its allocator with WAMR's configuration/event
+# buffers. Without these exports both heaps start at the compiled heap base.
+"${PYTHON:-python3}" - "$work_dir/build-cache" "$script_dir" <<'PYTHON'
+from pathlib import Path
+import sys
+sys.path.insert(0, sys.argv[2])
+from verify_wasm_memory import read_u32_leb
+from verify_wasm_core_imports import read_name
+
+artifacts = [p for p in Path(sys.argv[1]).rglob("main.wasm")
+             if "wasi-libc-lab-" in str(p)]
+assert len(artifacts) == 1, artifacts
+data = artifacts[0].read_bytes()
+offset = 8
+exports = set()
+while offset < len(data):
+    section = data[offset]
+    size, offset = read_u32_leb(data, offset + 1)
+    end = offset + size
+    if section == 7:
+        count, cursor = read_u32_leb(data, offset)
+        for _ in range(count):
+            name, cursor = read_name(data, cursor, end)
+            cursor += 1
+            _, cursor = read_u32_leb(data, cursor)
+            exports.add(name)
+    offset = end
+assert {"malloc", "free"} <= exports, exports
+PYTHON
+
 find "$work_dir/build-cache" -name '*.obj' -printf '%p %T@\n' | LC_ALL=C sort \
   > "$work_dir/objects-before.txt"
 test -s "$work_dir/objects-before.txt"
