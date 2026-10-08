@@ -364,8 +364,11 @@ auto result = frame.submit();
 `RenderOptions::scratch = Scratch::depth16`；其额外存储约为渲染宽×高×2 字节，
 不应为只有 sprite 的游戏默认启用。`AtlasBinding` 是纹理槽号，不拥有资源。
 用 `ctx.assets().load(AssetKind::texture/palette, path)` 按需获取资源，在场景切换时
-用 `renderer.bind_assets(...)` 绑定，保持 `Asset` 存活到不再使用该槽；帧循环
-不读取或解码文件。透明图元仍按调用顺序编码，SDK 不跨透明边界重排批次。
+用 `renderer.bind_assets(...)` 批量绑定，或用 `renderer.bind_asset(asset, {slot})`
+逐个绑定。Host 的 Renderer 持有绑定资源的引用，成功绑定后可以销毁临时
+`Asset`，不会丢失纹理；这样加载 48 个槽也无需同时占用 48 个 Guest 句柄。
+替换绑定、关闭 Renderer 或 Host 撤销资源时释放相应引用；帧循环不读取或
+解码文件。透明图元仍按调用顺序编码，SDK 不跨透明边界重排批次。
 `examples/game` 从 PNG 与共享调色板编译包内 PXR，首次进入前台时加载并绑定，
 随后使用深度 scratch 绘制运动的纹理四边形和三角形。加载失败会终止本次初始化；
 资产句柄由 `Game` 保存，帧循环不访问文件。其他纹理选项需按 Host 返回的能力和
@@ -376,8 +379,33 @@ auto result = frame.submit();
 在初始化时按渲染分辨率和视角创建；单个三角形裁剪后最多需要 21 个输出顶点。
 坐标的 `z` 向屏幕内增大，输出深度为 Q8 距离；可选 `Transform::rotation_y()`
 用于模型旋转。`project_triangle()` 不分配内存，返回的顶点可直接交给
-`Frame::solid_triangles()` 或 `Frame::triangles()`；屏幕覆盖的 UI/HUD 仍使用
+`Frame::solid_triangles()` 或 `Frame::triangles()`，不能再将结果当作周界扇形
+三角化。`project_polygon()` 接受凸三角形或四边形，返回裁剪后的周界，最多
+10 个顶点并插值 UV；只有周界结果需要调用方三角化。完全位于视锥内的面
+直接投影，不构造或复制中间裁剪数组。屏幕覆盖的 UI/HUD 仍使用
 普通 UI 组件，不应混入深度批次。
+
+Canvas 直接绘制位于 `<pxa/canvas.hpp>`：应用持有 `ui::CanvasRef` 和复用的
+`ui::CanvasCommands<N>`，用 `Canvas(ref, width, height)` 挂载（零宽高表示填满）。
+命令支持矩形、圆角、线、文字和 clip/pop；`ref.present(commands)` 执行有界的
+BEGIN/WRITE/PRESENT，WRITE 直接使用命令缓冲中的最终协议包，没有第二份
+命令数组。容量不足、未闭合 clip、未挂载或已停止返回错误，不分配备用缓冲；
+当前直接控制包容量最多 4064 字节，不支持超出容量后的 StreamIO 分片。
+CanvasRef 必须比页面活得久，挂载成功才生效，卸载自动失效。
+完整绘制和点击示例见 `examples/canvas`。
+
+`Canvas().input_only().on_pointer(callback)` 只作为游戏输入层，根背景透明，
+不申请 Canvas 绘图缓冲或全屏 alpha 平面。回调收到拥有标量数据的
+`CanvasPointer`，坐标有符号，phase 为 down/move/up/cancel，包含 pointer_id；
+应用应按 ID 分别管理手指，处理 cancel，并在后台清除持续操作。
+
+有界任务池通过 `task_pool_stats()` 报告预留字节、槽大小、当前/峰值槽数和
+分配失败数。`PXA_COROUTINE_SLOT_BYTES` 默认 1024，`PXA_COROUTINE_SLOT_COUNT`
+默认 8；`PXA_REQUEST_CAPACITY` 默认 16（范围 1..16），`PXA_TASK_SCOPE_CAPACITY`
+默认等于协程槽数。使用 CMake cache 定义这些容量，`PxaGuest.cmake` 将同一值
+传播到 SDK 和所有 Component，不能只在单个源文件中定义导致对象布局不同。
+默认池的统计及占用位图合计为 8208 字节；默认原生 Context 从 2120 减为
+1736 字节。实际 WASI 栈/线性内存、Host 缓存和 AOT 映射仍需分别测量。
 
 游戏若需要 HUD，可让 `view()` 返回 `ui::Overlay(Column(...))`。它保持根节点
 透明且不拦截空白处的触摸，将内容标记为独立的 LVGL alpha 层；文字、按钮等
