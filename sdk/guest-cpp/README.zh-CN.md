@@ -1,8 +1,10 @@
 # PXA C++26 Guest SDK（开发中）
 
 此 SDK 是独立的 C++26 Guest 实现。它直接导入 `pxa_submit` 和 `pxa_io`，
-不包含或调用 Guest C SDK。构建目标为 `wasm32-wasip1`，需要 WASI SDK 的
-libc++。推荐使用仓库锁定的 WASI SDK 34；异常和 RTTI 默认关闭。
+不包含或调用 Guest C SDK。与 Host 的日常调用仍只有这两项导入。
+libc 的 `malloc/free` 若已链接，会额外导出供 WAMR 分配配置和事件缓冲，
+避免第二套堆覆盖 Guest 对象。构建目标为 `wasm32-wasip1`，需要 WASI SDK 的 libc++。
+推荐使用仓库锁定的 WASI SDK 34；异常和 RTTI 默认关闭。
 语言模式与必需特性在配置和公共头文件中检查，不静默回退。
 实际支持范围见 `FEATURES.zh-CN.md`；反射和 `template for` 不作为依赖。
 
@@ -305,12 +307,15 @@ job 已启动；`cancel(id)` 与 job 内的 `complete(id, WorkResult::success/re
 和最多 24 字节 input 可立即销毁。job 的 `on_start(Context&, config)` 使用
 `decode_work_start(config)` 获取拥有存储的 ID、attempt、deadline 和 input；
 `on_event` 可用 `decode_work_stop_requested(event)` 响应停止请求。
-`examples/work` 是 UI 与 job 两个独立 Component 的打包示例，使用业务键保存
-幂等标记，并按重试上限返回 retry/failure。产品模拟器已注册 Work 服务，
-可运行这个双 Component 示例；模拟器当前使用进程内有界队列，重启后不恢复
-待执行项。ESP 产品 Host 尚未接入 Work，不能把模拟器结果视为实机验收。
+`examples/work` 是 UI 与 job 两个独立 Component 的打包示例。UI 先在 Storage
+持久化业务动作序号，再将它放入 input；job 用该序号保存幂等标记，按重试上限
+返回 retry/failure。Host Work ID 只用于管理队列，空队列重新加载后可能重用，
+不能作为永久业务幂等键。产品模拟器与 ESP Host 均已接入持久化队列；跨启动的
+单调时间无法比较，恢复任务会重新到期，业务必须允许重复执行。
 
 Surface 的 RGB565 映射模式使用 `ctx.surface().create_mapped(options)` 创建。
+异步创建按值持有服务入口，可先销毁临时 facade 再启动任务；Context 和已创建
+Surface 仍须覆盖其请求及帧租约的使用期。
 SDK 按 Host 返回的 stride 和 frame bytes 一次分配 64 字节对齐的 Guest 缓冲区，
 注册后由 `Surface` 持有；移动 Surface 不会改变缓冲区地址。`acquire()` 返回不可
 复制的 `SurfaceFrame`，`pixels()` 是当前帧的可写视图，`present(frame_id)` 将帧
@@ -339,8 +344,10 @@ python3 spec/draft/tools/generate_service_codecs.py --language cpp --check
 声明式布局/常用控件、状态绑定与导航，Storage/Permission/Audio/FS/Device/Sensor/Net/IPC/Work/Surface，
 以及 GameRender 的上下文创建、清屏、矩形、精灵批次、纹理四边形和三角形批次 DrawList。
 动态 keyed list、VirtualList、条件分支与常用控件 Ref 已有实现；
-其余服务能力和完整性能验收尚未完成。独立开发包已可构建和打包示例，
-但目前不能作为完整发布版 SDK。
+Canvas 直接绘制与拥有数据的触摸输入、位图协程池、资源绑定和 3D 裁剪已补齐。
+15 个示例提供 Wasm 与 Linux/S3/S31 构建；当前仍是开发包，支持范围、设备验证和
+性能数据见 `VALIDATION.zh-CN.md`。S31 本轮只做交叉构建；未验证的设备与显示组合
+不能作为完整发布版的承诺。
 
 GameRender 帧使用调用方拥有的 `DrawBuffer<N>`，在每次 `frame(buffer)` 后按
 绘制顺序编码，`submit()` 一次调用提交；超出容量或缺少能力会返回错误，不

@@ -1,7 +1,27 @@
 # C++ Guest SDK 验证记录
 
-状态：开发中，尚未达到 `local/PLAN.md` 的完整交付条件。
-以下为 2026-09-29 至 2026-09-30 本地执行得到的阶段证据，不代表完整 SDK 验收。
+状态：开发 SDK；本轮实现与可用平台验证已完成，完整发布支持范围仍受下列限制。
+
+## 2026-10-08 至 2026-10-09 本轮验证
+
+本轮完成 Host 调用与内存优化、Canvas/Input API、任务容量统计与配置、3D 裁剪/深度、资产绑定及 Surface/Work 所有权修复。仍是开发 SDK；以下证据替代对应旧阶段的“尚未验证”记录，历史日志保留在后文。
+
+- 完整 C++26 主机套件 28 组、IPC 生成器 5 项及协程池 3/8/65、请求表容量 1 的配置回归通过。覆盖耗尽、重用、取消、晚到结果、失败回滚、旧事件拒绝、未挂载及停止阶段拒绝导入。Native 静态 UI 普通交互、VirtualList 行复用和稳定游戏帧的 Guest `new` 计数为零；不等于 Host 零分配。
+- Surface 服务 facade 的成员协程曾借用已经销毁的 `ctx.surface()` 临时对象。改为按值持有；旧实现通过 noinline 回归复现 ASan stack-use-after-return，修复后 ASan/UBSan 通过。映射对象和 Context 仍须覆盖帧租约与请求使用期。
+- 实机又发现 WAMR 在 `__heap_base` 插入 Host 堆，与 libc 编译出的堆地址重叠；事件覆盖 Surface 对象，创建成功却没有首帧。CMake/直编链接现对已经定义的 malloc/free 导出供 WAMR 共用分配器。原始 Surface 示例在 pai-touch 提交并显示活动条纹，Home/重新前台后继续显示；没有通过增加缓冲或永久保留任务规避。
+- Work 示例使用持久递增业务 action 键，Host 队列 ID 只用于管理。pai-touch 已验证立即完成、取消后 Pending，以及延迟任务在受控设备重启后恢复为 Completed。旧 ID 重用造成的假 Completed 已修正。
+- pai-touch Canvas 直接绘制及触摸更新 0→1；conditional 的 Ref 计数 0→1、隐藏/重显保留；IPC 独立 service 返回 1、2 均有真机截图。
+- 产品模拟器使用真实本地 HTTP 后端验证 C++ Permission→Net：404 状态、text/plain 正文 cpp-net-pass、读到 EOF 和关闭句柄。主机测试另覆盖取消、晚到句柄回收、非法权限/字段/容量。设备没有可连接 Wi-Fi，本轮没有真实 ESP HTTP 成功请求；ESP 后端 ASan/UBSan 测试通过。
+- Host 核心 83 项、C SDK、资源编译器 11 项、签名包/协议黄金向量、root 工具/PXADB、ESP 后端及资源完整脚本通过。资源脚本覆盖 LVGL、音频、加载取消、低预算、后台恢复和退出；这是软件回归，不是声学质量验收。
+- 独立包用 WASI SDK 34（Clang 23.1.1）、libc++、C++26 构建。Linux x86_64 的打包工具实际验证；15 个示例三目标的仓库内/外矩阵与逐项 Wasm 哈希记录在 workspace 的 local/host-interface-20261008。S31 当前不在可用设备列表，只有交叉构建，不能将旧 S31 阶段记录算成本轮实机测试。
+
+内存与性能：WASI Context 1456→1264 B，TaskScope 200→104 B，RequestTable 512 B 不变；原生 Context 2120→1736 B，TaskScope 400→208 B。默认帧池预留 8320→8208 B；统计 active/peak/failures，容量通过 PUBLIC 定义保持应用与 SDK 一致。稳定等效 C/C++ DrawList 均为 3112 B、每帧一次 IO、零 Guest `new`；pai-touch 三轮约 30.65/30.61 FPS，SRAM 增量均为 2732 B，PSRAM 约 761 KB。显示上限掩盖细小 CPU 差别。
+
+原生编码微基准中，C/C++ 中位数约 997/1140 ns（+14.4%，约 0.14 µs/帧），C++ 多了 capability/phase/result 检查；逐轮波动较大。该成本单列，不用语言模式或设备刷新上限宣称编码更快。Voxel 两版世界、材质和画质不同，不能直接作为语言对照。
+
+Wasm/AOT、代码/data 段与线性内存下限/上限清单由最终产物生成。内存对象大小、Host WAMR/资产/帧缓冲及整机空闲量已有证据；Guest 辅助栈实际使用峰值、逐模板实例化耗时与 libc++ 各功能独立成本尚未量化，不能用对象大小代替这些指标。宿主 toast/授权框、音量条/软键盘与直接扫描 Surface 的全部组合仍是后续发布验收项。
+
+以下保留 2026-09-29 至 2026-09-30 的历史阶段证据。
 
 ## 已执行
 
