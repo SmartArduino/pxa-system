@@ -385,7 +385,7 @@ and allocator overhead still require separate instrumentation.
 - `pxa_assets_service_test`: native SDK transport, full-width handles, request
   ID reuse after cancellation, cross-component rejection, atomic binding,
   old-frame ownership, explicit unbind and component shutdown.
-- `pxsys_resources_test PACKAGE_DIR PUBLISHER_KEY_DER`: actual signed
+- `pxsys_resource_app_test PACKAGE_DIR PUBLISHER_KEY_DER`: actual signed
   resource-scenes AOT through WAMR and the desktop loop, with slow reads,
   checked texture pixels over 100 scenes and normal teardown. Build the app
   before running this integration target; it is not an implicit core test.

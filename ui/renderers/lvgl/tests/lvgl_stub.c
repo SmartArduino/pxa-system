@@ -86,6 +86,21 @@ void lv_obj_remove_flag(lv_obj_t* object, uint32_t flags) {
     object->flags &= ~flags;
 }
 
+void lv_obj_set_scrollable(lv_obj_t* object, bool enabled) {
+    if (enabled) lv_obj_add_flag(object, LV_OBJ_FLAG_SCROLLABLE);
+    else lv_obj_remove_flag(object, LV_OBJ_FLAG_SCROLLABLE);
+}
+
+void lv_obj_set_clickable(lv_obj_t* object, bool enabled) {
+    if (enabled) lv_obj_add_flag(object, LV_OBJ_FLAG_CLICKABLE);
+    else lv_obj_remove_flag(object, LV_OBJ_FLAG_CLICKABLE);
+}
+
+void lv_obj_set_hidden(lv_obj_t* object, bool enabled) {
+    if (enabled) lv_obj_add_flag(object, LV_OBJ_FLAG_HIDDEN);
+    else lv_obj_remove_flag(object, LV_OBJ_FLAG_HIDDEN);
+}
+
 void lv_obj_move_foreground(lv_obj_t* object) {
     (void)object;
 }

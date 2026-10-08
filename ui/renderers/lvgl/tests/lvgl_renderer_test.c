@@ -45,6 +45,7 @@ int main(void) {
     pxsys_renderer_provider_t provider;
     pxsys_surface_config_t surface_config = {0};
     pxsys_surface_ref_t surface;
+    pxsys_theme_snapshot_t light;
     pxsys_theme_snapshot_t dark;
     pxsys_ui_transaction_t transaction = {0};
     lv_obj_t* root = NULL;
@@ -74,7 +75,8 @@ int main(void) {
     assert(pxsys_lvgl_renderer_surface_root(renderer, surface, &root) == PXSYS_STATUS_OK);
     assert(root != NULL && root->parent == &parent && root->width == 320 && root->height == 240);
     assert((root->flags & LV_OBJ_FLAG_HIDDEN) != 0);
-    assert(root->background == UINT32_C(0xf7f7f8));
+    pxsys_theme_snapshot_init(&light, PXSYS_COLOR_SCHEME_LIGHT);
+    assert(root->background == (light.colors[PXSYS_COLOR_BACKGROUND] & UINT32_C(0xffffff)));
 
     assert(pxsys_renderer_surface_set_visible(host, surface, 1) == PXSYS_STATUS_OK);
     assert((root->flags & LV_OBJ_FLAG_HIDDEN) == 0);
@@ -87,8 +89,8 @@ int main(void) {
 
     pxsys_theme_snapshot_init(&dark, PXSYS_COLOR_SCHEME_DARK);
     assert(pxsys_renderer_host_set_theme(host, &dark) == PXSYS_STATUS_OK);
-    assert(root->background == UINT32_C(0x111214));
-    assert(root->text == UINT32_C(0xf1f1f2));
+    assert(root->background == (dark.colors[PXSYS_COLOR_BACKGROUND] & UINT32_C(0xffffff)));
+    assert(root->text == (dark.colors[PXSYS_COLOR_TEXT_PRIMARY] & UINT32_C(0xffffff)));
     assert(pxsys_lvgl_renderer_destroy(renderer) == PXSYS_STATUS_BUSY);
 
     assert(pxsys_renderer_surface_destroy(host, surface) == PXSYS_STATUS_OK);

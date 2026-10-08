@@ -2,6 +2,7 @@
 #define LVGL_H
 
 #include <stdint.h>
+#include <stdbool.h>
 
 typedef uint32_t lv_color_t;
 typedef uint8_t lv_opa_t;
@@ -39,6 +40,9 @@ void lv_obj_set_style_border_color(lv_obj_t* object, lv_color_t color, int32_t s
 void lv_obj_set_scrollbar_mode(lv_obj_t* object, int32_t mode);
 void lv_obj_add_flag(lv_obj_t* object, uint32_t flags);
 void lv_obj_remove_flag(lv_obj_t* object, uint32_t flags);
+void lv_obj_set_scrollable(lv_obj_t* object, bool enabled);
+void lv_obj_set_clickable(lv_obj_t* object, bool enabled);
+void lv_obj_set_hidden(lv_obj_t* object, bool enabled);
 void lv_obj_move_foreground(lv_obj_t* object);
 
 #endif

@@ -173,14 +173,14 @@ endif()
 
 # These targets exercise the actual product backend, including in normal
 # simulator build trees. Keep dependency configuration identical to the runner.
-foreach(_test audio audio_app raster resources voxel_resources resource_budget ui_images store_images weather_images)
+foreach(_test audio audio_app raster resource_app voxel_resources resource_budget ui_images store_images weather_images)
     if(_test STREQUAL "audio")
         set(_source tests/audio_backend_test.c)
     elseif(_test STREQUAL "audio_app")
         set(_source tests/audio_app_test.c)
     elseif(_test STREQUAL "resource_budget")
         set(_source tests/resource_budget_test.c)
-    elseif(_test STREQUAL "resources")
+    elseif(_test STREQUAL "resource_app")
         set(_source tests/resource_app_test.c)
     elseif(_test STREQUAL "voxel_resources")
         set(_source tests/voxel_resource_test.c)

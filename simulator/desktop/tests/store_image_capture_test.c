@@ -41,7 +41,7 @@ typedef struct {
     product_host_t *host;
     const char *directory;
     uint64_t started,step_time;
-    unsigned step,captured,baseline,background_loading,background_state,exit_loading,low_budget;
+    unsigned step,captured,baseline,background_loading,background_state,exit_loading,low_budget,initial_unavailable;
 } capture_t;
 static void save(capture_t *test,const char *name,const void *data,size_t size) {
     char path[2048];int n=snprintf(path,sizeof(path),"%s/%s",test->directory,name);
@@ -109,7 +109,18 @@ static void pump_capture(void *context) {
     }
     if(elapsed<UINT64_C(1000000) || now-test->step_time<UINT64_C(300000))return;
     if(!test->baseline) {
-        if(test->low_budget) {if(!unavailable)return;assert(!ready && unavailable==(test->step>=5 ? 2u : 1u));}
+        if(test->low_budget) {
+            if(!unavailable)return;
+            // Startup foreground can retry if the initial load has already
+            // failed. Snapshot that bounded race; navigation must not retry,
+            // while the explicit foreground resume must add exactly one.
+            if (!test->initial_unavailable) {
+                assert(unavailable>=1 && unavailable<=2);
+                test->initial_unavailable=unavailable;
+            }
+            const unsigned expected=test->initial_unavailable+(test->step>=5);
+            assert(!ready && unavailable==expected);
+        }
         else {if(!ready)return;assert(ready==1 && !unavailable);}
         assert(!legacy_lookups);
     }
