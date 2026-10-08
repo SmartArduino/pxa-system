@@ -24,6 +24,9 @@ int pxa_esp_renameat(int olddirfd, const char *oldpath, int newdirfd,
 int pxa_esp_unlinkat(int dirfd, const char *path, int flags);
 int pxa_esp_fsync(int fd);
 DIR *pxa_esp_fdopendir(int fd);
+/* Process-owned WASI sink, borrowed by serialized PXA Host instances.
+ * WAMR marks stdio borrowed; callers must never close this descriptor. */
+int pxa_esp_wasi_null_fd(void);
 
 #ifdef __cplusplus
 }

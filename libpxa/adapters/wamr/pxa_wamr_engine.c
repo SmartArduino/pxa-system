@@ -31,6 +31,7 @@
 
 #if defined(ESP_PLATFORM)
 #include "esp_log.h"
+#include "pxa/esp/pxa_esp_posix_shim.h"
 #define PXA_WAMR_LOG_TAG "PxaWamr"
 #endif
 
@@ -423,7 +424,9 @@ static uint64_t wasi_import_feature(const char *name) {
 
 static void close_wasi_null(pxa_wamr_entry_t *entry) {
     if (entry != NULL && entry->wasi_null_fd >= 0) {
+#if !defined(ESP_PLATFORM)
         (void)close(entry->wasi_null_fd);
+#endif
         entry->wasi_null_fd = -1;
     }
 }
@@ -1444,7 +1447,11 @@ static pxa_status_t engine_instantiate(void *context, pxa_bytes_t package_root,
         /* No preopens, argv or environment are ambient. Resource-bearing
          * imports are rejected above unless their signed feature is present. */
 #if PXA_WAMR_LIBC_WASI
+#if defined(ESP_PLATFORM)
+        slot->wasi_null_fd = pxa_esp_wasi_null_fd();
+#else
         slot->wasi_null_fd = open("/dev/null", O_RDWR);
+#endif
         if (slot->wasi_null_fd < 0) {
             return discard_entry(engine, slot, PXA_STATUS_UNAVAILABLE);
         }

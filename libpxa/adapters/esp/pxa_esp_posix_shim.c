@@ -21,6 +21,17 @@
 
 #include "pxa/esp/pxa_esp_posix_shim.h"
 
+int pxa_esp_wasi_null_fd(void) {
+    /* IDF 6.2 nullfs close uses SET_FLAGS(..., 0), whose OR leaves the
+     * descriptor's occupied bits set. Reopening per Component exhausts its
+     * 16 slots. Own one sink for the process instead; WAMR's stdio entries
+     * borrow it, including when a Guest closes its local stdio handle.
+     * Calls are serialized by the PXA Host. Retry a failed initial open. */
+    static int descriptor = -1;
+    if (descriptor < 0) descriptor = open("/dev/null", O_RDWR);
+    return descriptor;
+}
+
 #ifndef AT_FDCWD
 #define AT_FDCWD (-100)
 #endif
