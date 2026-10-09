@@ -404,7 +404,8 @@ check_rejected_import(const char *label, const char *guest_path,
     snprintf(artifact_path, sizeof(artifact_path), "artifacts/%s",
              artifact_name);
     memset(&artifact, 0, sizeof(artifact));
-    artifact.kind = PXA_ARTIFACT_WASM;
+    artifact.kind = strstr(artifact_name, ".aot") == NULL ? PXA_ARTIFACT_WASM
+                                                          : PXA_ARTIFACT_AOT;
     artifact.path =
         (pxa_bytes_t){(const uint8_t *)artifact_path, strlen(artifact_path)};
     memset(&package_component, 0, sizeof(package_component));
@@ -485,6 +486,15 @@ static void check_wasi_guest(const char *label, const char *guest_path,
     CHECK(artifact_probe->allocate_count == allocate_count + 1);
     CHECK(artifact_probe->release_count == release_count ||
           artifact_probe->release_count == release_count + 1);
+    if (artifact.kind == PXA_ARTIFACT_AOT &&
+        strcmp(artifact_name, "retained-custom.aot") != 0) {
+        CHECK(artifact_probe->current_bytes == current_bytes);
+        CHECK(artifact_probe->release_count == release_count + 1);
+    }
+    if (strcmp(artifact_name, "retained-custom.aot") == 0) {
+        CHECK(artifact_probe->current_bytes > current_bytes);
+        CHECK(artifact_probe->release_count == release_count);
+    }
     check_status(label, engine_ops->start(engine_ops->context, component),
                  PXA_STATUS_OK);
     check_status(label, pxa_component_finish_start(runtime, component,
@@ -987,13 +997,57 @@ int main(void) {
                          package_dir, runtime, &engine_ops, &artifact_probe);
 #ifdef PXA_WAMR_TEST_WASI_LIBC_PATH
         check_wasi_guest("wasi-libc Wasm", PXA_WAMR_TEST_WASI_LIBC_PATH,
-                         "wasi-libc.wasm", UINT32_C(0x7ffffffd), 0, package_dir,
+                         "wasi-libc.wasm", UINT32_C(0x7ffffffd), PXA_WASI_FEATURE_CLOCKS, package_dir,
                          runtime, &engine_ops, &artifact_probe);
 #ifdef PXA_WAMR_TEST_WASI_LIBC_AOT_PATH
         check_wasi_guest("wasi-libc AOT", PXA_WAMR_TEST_WASI_LIBC_AOT_PATH,
-                         "wasi-libc.aot", UINT32_C(0x7ffffffc), 0, package_dir,
+                         "wasi-libc.aot", UINT32_C(0x7ffffffc), PXA_WASI_FEATURE_CLOCKS, package_dir,
                          runtime, &engine_ops, &artifact_probe);
 #endif
+#endif
+#ifdef PXA_WAMR_TEST_AOT_DATA_PATH
+        for (unsigned repeat = 0; repeat < 20; ++repeat)
+            check_wasi_guest("AOT initialized data after source release",
+                             PXA_WAMR_TEST_AOT_DATA_PATH, "aot-data.aot",
+                             UINT32_C(0x7ffffffa), 0, package_dir,
+                             runtime, &engine_ops, &artifact_probe);
+        {
+            uint8_t bytes[8192];
+            FILE *input = fopen(PXA_WAMR_TEST_AOT_DATA_PATH, "rb");
+            CHECK(input != NULL);
+            size_t size = fread(bytes, 1, sizeof(bytes), input);
+            fclose(input);
+            size_t at = 8;
+            while (at + 8 < size && pxa_read_u32(bytes + at) != 5) {
+                at += 8 + pxa_read_u32(bytes + at + 4);
+                at = (at + 3) & ~(size_t)3;
+            }
+            CHECK(at + 8 < size && pxa_read_u32(bytes + at) == 5);
+            /* Missing relocation section fails after initialized data and
+             * strings were cloned, exercising partial-load ownership cleanup. */
+            char truncated[512];
+            snprintf(truncated, sizeof(truncated), "%s/truncated.aot", package_dir);
+            write_file(truncated, bytes, at);
+            size_t current = artifact_probe.current_bytes;
+            unsigned releases = artifact_probe.release_count;
+            check_rejected_import("partial AOT load cleanup", truncated,
+                                  package_dir, "partial.aot", PXA_STATUS_UNSUPPORTED,
+                                  &engine_ops, NULL, 0);
+            CHECK(artifact_probe.current_bytes == current);
+            CHECK(artifact_probe.release_count == releases + 1);
+            /* An optional custom section preserves the original borrowed
+             * source policy, even in builds which ignore its payload. */
+            size_t custom = (size + 3) & ~(size_t)3;
+            CHECK(custom + 12 <= sizeof(bytes));
+            memset(bytes + size, 0, custom - size);
+            pxa_write_u32(bytes + custom, 100);
+            pxa_write_u32(bytes + custom + 4, 4);
+            pxa_write_u32(bytes + custom + 8, 0);
+            write_file(truncated, bytes, custom + 12);
+            check_wasi_guest("AOT custom source retained", truncated,
+                             "retained-custom.aot", UINT32_C(0x7ffffff9), 0,
+                             package_dir, runtime, &engine_ops, &artifact_probe);
+        }
 #endif
     }
 

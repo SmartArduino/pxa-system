@@ -29,7 +29,8 @@ extern "C" {
  * distinct maximum-sized module buffer in the workspace. Hosts may instead
  * provide the paired Artifact allocator callbacks. The adapter releases each
  * temporary Artifact after loading when WAMR reports that its underlying
- * buffer is freeable; XIP and unsupported interpreter modes retain it until
+ * buffer is freeable. Standard AOT clones initial data and names so the source
+ * is released before instantiation; XIP and interpreter modes retain it until
  * WAMR unloads the module. Event delivery copies through a transient
  * module_malloc buffer per event.
  */

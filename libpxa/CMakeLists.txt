@@ -402,6 +402,19 @@ if(PXA_BUILD_ADAPTERS AND PXA_WAMR_SOURCE_DIR)
             endif()
             add_executable(pxa_wamr_engine_test
                 adapters/tests/wamr_engine_test.c)
+            if(PXA_WAMRC AND EXISTS "${PXA_WAMRC}")
+                pxa_build_guest(wamr_aot_data_guest
+                    ${CMAKE_CURRENT_SOURCE_DIR}/adapters/tests/wamr_aot_data_guest.c)
+                set(wamr_aot_data_AOT "${CMAKE_CURRENT_BINARY_DIR}/wamr_aot_data_guest.aot")
+                add_custom_command(OUTPUT ${wamr_aot_data_AOT}
+                    COMMAND "${PXA_WAMRC}" --target=x86_64 -o ${wamr_aot_data_AOT}
+                            ${wamr_aot_data_guest_WASM}
+                    DEPENDS ${wamr_aot_data_guest_WASM})
+                add_custom_target(wamr_aot_data_guest_aot DEPENDS ${wamr_aot_data_AOT})
+                add_dependencies(pxa_wamr_engine_test wamr_aot_data_guest_aot)
+                target_compile_definitions(pxa_wamr_engine_test PRIVATE
+                    PXA_WAMR_TEST_AOT_DATA_PATH="${wamr_aot_data_AOT}")
+            endif()
             target_link_libraries(pxa_wamr_engine_test PRIVATE
                 pxa_adapters_posix pxa_adapters_wamr)
             target_compile_definitions(pxa_wamr_engine_test PRIVATE

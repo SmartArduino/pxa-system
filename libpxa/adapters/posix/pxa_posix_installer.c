@@ -19,10 +19,13 @@
 #include <dirent.h>
 
 #ifdef ESP_PLATFORM
+#include "sdkconfig.h"
+#include "esp_littlefs.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "pxa/esp/pxa_esp_posix_shim.h"
+#include "pxa/esp/pxa_esp_install_space.h"
 #define dup pxa_esp_dup
 #define fdopendir pxa_esp_fdopendir
 #define fstat pxa_esp_fstat
@@ -2683,6 +2686,49 @@ static pxa_status_t validate_lineage_transition(
     return PXA_STATUS_OK;
 }
 
+static pxa_status_t installer_check_space(
+    pxa_posix_installer_t *installer, int source_fd, int source_is_container,
+    const uint8_t *manifest_bytes, size_t manifest_size) {
+#ifdef ESP_PLATFORM
+    uint8_t *directory_manifest = NULL;
+    pxa_package_manifest_t *manifest = NULL;
+    size_t total = 0, used = 0;
+    pxa_status_t status = PXA_STATUS_OK;
+    if (!source_is_container) {
+        status = read_alloc_bounded(source_fd, "manifest.pxm", SIZE_MAX,
+                                    &directory_manifest, &manifest_size);
+        manifest_bytes = directory_manifest;
+    }
+    if (status == PXA_STATUS_OK)
+        status = ensure_manifest_workspace(
+            installer, (pxa_bytes_t){manifest_bytes, manifest_size});
+    if (status == PXA_STATUS_OK)
+        status = pxa_package_manifest_parse(
+            installer->scratch, installer->scratch_size,
+            (pxa_bytes_t){manifest_bytes, manifest_size},
+            &installer->scratch_limits, &manifest);
+    if (status == PXA_STATUS_OK) {
+        uint64_t needed = pxa_esp_install_space_required(manifest, manifest_size);
+        if (esp_littlefs_info(CONFIG_PXA_STORAGE_PARTITION_LABEL,
+                             &total, &used) != ESP_OK) {
+            status = PXA_STATUS_UNAVAILABLE;
+        } else if (!pxa_esp_install_space_available(needed, total, used)) {
+            ESP_LOGW(PXA_POSIX_INSTALLER_TAG,
+                     "Insufficient install space: needed=%llu free=%u",
+                     (unsigned long long)needed,
+                     (unsigned)(used <= total ? total - used : 0));
+            status = PXA_STATUS_RESOURCE_LIMIT;
+        }
+    }
+    free(directory_manifest);
+    return status;
+#else
+    (void)installer; (void)source_fd; (void)source_is_container;
+    (void)manifest_bytes; (void)manifest_size;
+    return PXA_STATUS_OK;
+#endif
+}
+
 pxa_status_t pxa_posix_installer_install_for_identity(
     pxa_posix_installer_t *installer, const char *source_dir,
     const pxa_posix_installer_identity_t *expected,
@@ -2850,6 +2896,14 @@ pxa_status_t pxa_posix_installer_install_for_identity(
      * identity lock makes this transaction directory exclusively ours. */
     stage = "remove-stale-session";
     status = remove_tree(ctx.session);
+    if (status != PXA_STATUS_OK) goto done;
+
+    /* LittleFS 2 cannot safely continue after every NOSPC commit failure.
+     * Admit the complete decoded transaction before creating/writing incoming.
+     * Keep current package and private data intact on a rejected update. */
+    stage = "check-install-space";
+    status = installer_check_space(installer, source_fd, source_is_container,
+                                   source_manifest, source_manifest_size);
     if (status != PXA_STATUS_OK) goto done;
 
     {

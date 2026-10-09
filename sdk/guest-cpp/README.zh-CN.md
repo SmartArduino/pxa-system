@@ -54,6 +54,17 @@ PXA_APPLICATION(Counter)
 动态字符串使用 `Text(std::string)`，状态文字使用 `Text(state)`，异步借用规则
 不因固定描述而改变。
 
+
+自绘游戏可按需包含 `<pxa/ui_display.hpp>`。`ui::decode_start_display(config)`
+从 `on_start(Context&, span<const byte>)` 的配置读取屏幕宽高、DPI 密度、
+字体缩放、安全边距及四角半径；`ui::decode_display_metrics(event.payload)`
+处理 UI 环境变更事件（service 3、opcode 0x8002）。环境几何使用 Surface/Window 坐标；
+Canvas 指针坐标使用 dp，叠加自绘 Surface 的游戏须用
+`ui::canvas_to_surface_coordinate(value, metrics)` 转换后再命中控件。
+`density_q16` 是 DPI 相对 160 的比例，不能替换为 Window 的像素尺寸比例。
+缺省圆角扩展按矩形处理；重复、截断及无效尺寸返回协议错误。此可选头文件
+只提供小值结构和解码函数，不注册服务、不分配缓存、不增加其他应用的默认开销。
+
 导航应用提供 `navigation()`，返回其持有的 `ui::Navigator<>`，不再提供单一
 `view()`。在 `on_start` 中排入首页：
 

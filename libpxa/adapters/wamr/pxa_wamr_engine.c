@@ -456,6 +456,24 @@ static void release_module_buffer(pxa_wamr_engine_t *engine,
     entry->module_size = 0;
 }
 
+static int standard_aot_sections(const uint8_t *bytes, size_t size) {
+    /* Raw/custom sections may still borrow payload bytes in WAMR. Keep the
+     * original ownership for extensions; reclaim only the six standard AOT
+     * sections. The loader still validates their order, version and contents. */
+    size_t at = 8;
+    if (size < 8) return 0;
+    while (at < size) {
+        if (size - at < 8 || pxa_read_u32(bytes + at) > 5) return 0;
+        size_t length = pxa_read_u32(bytes + at + 4);
+        if (length > size - at - 8) return 0;
+        at += 8 + length;
+        if (at == size) return 1;
+        if (at > SIZE_MAX - 3) return 0;
+        at = (at + 3) & ~(size_t)3;
+    }
+    return at == size;
+}
+
 static pxa_status_t load_module_buffer(pxa_wamr_engine_t *engine,
                                        pxa_wamr_entry_t *entry,
                                        pxa_bytes_t path) {
@@ -1417,12 +1435,15 @@ static pxa_status_t engine_instantiate(void *context, pxa_bytes_t package_root,
 #endif
         return discard_entry(engine, slot, status);
     }
-    /* The adapter owns module_bytes and releases it after wasm_runtime_unload().
-     * WAMR's AOT loader retains direct pointers into its input while parsing;
-     * marking the binary freeable afterward makes its teardown pass those
-     * interior pointers to the runtime allocator. */
+    /* Standard AOT code is already copied to an executable mapping. Let the
+     * loader own its strings and initial data so the duplicate source buffer
+     * can be released before instantiation. Static workspaces and XIP retain
+     * their source; interpreted Wasm keeps its existing ownership policy. */
     load_args.name = "";
-    load_args.wasm_binary_freeable = false;
+    load_args.wasm_binary_freeable = slot->dynamic_module_bytes &&
+        entry->artifact->kind == PXA_ARTIFACT_AOT &&
+        standard_aot_sections(slot->module_bytes, slot->module_size) &&
+        !wasm_runtime_is_xip_file(slot->module_bytes, (uint32_t)slot->module_size);
     slot->module = wasm_runtime_load_ex(slot->module_bytes,
                                         (uint32_t)slot->module_size,
                                         &load_args, error, sizeof(error));

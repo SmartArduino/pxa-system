@@ -89,6 +89,7 @@ typedef struct {
     uint32_t safe_insets[4];
     uint32_t display_shape;
     uint32_t corner_radius;
+    uint32_t density_dpi;
     uint8_t shape_background_matte;
 } options_t;
 
@@ -2856,7 +2857,7 @@ static pxa_status_t permission_save(void *context, pxa_bytes_t identity,
 
 #ifndef PXSYS_PRODUCT_RUNNER_LIBRARY
 static void print_usage(const char *program) {
-    fprintf(stderr, "Usage: %s --package DIR --publisher-key DER [--state-root DIR] [--locale TAG] [--pxadb-control-socket PATH] [--width PX --height PX] [--safe-insets T,R,B,L] [--corner-radius PX|--round] [--shape-background matte|black]\n",
+    fprintf(stderr, "Usage: %s --package DIR --publisher-key DER [--state-root DIR] [--locale TAG] [--pxadb-control-socket PATH] [--width PX --height PX] [--density-dpi DPI] [--safe-insets T,R,B,L] [--corner-radius PX|--round] [--shape-background matte|black]\n",
             program);
 }
 
@@ -2865,6 +2866,7 @@ static int parse_options(int argc, char **argv, options_t *options) {
     memset(options, 0, sizeof(*options));
     options->width = 296;
     options->height = 240;
+    options->density_dpi = 160;
     options->locale = "en-US";
     options->shape_background_matte = 1;
     for (index = 1; index < argc; ++index) {
@@ -2882,6 +2884,12 @@ static int parse_options(int argc, char **argv, options_t *options) {
             options->width = (uint32_t)strtoul(argv[++index], NULL, 10);
         else if (strcmp(argv[index], "--height") == 0 && index + 1 < argc)
             options->height = (uint32_t)strtoul(argv[++index], NULL, 10);
+        else if (strcmp(argv[index], "--density-dpi") == 0 && index + 1 < argc) {
+            char *end = NULL;
+            unsigned long dpi = strtoul(argv[++index], &end, 10);
+            if (*end != '\0' || dpi < 48 || dpi > 640) return 0;
+            options->density_dpi = (uint32_t)dpi;
+        }
         else if (strcmp(argv[index], "--safe-insets") == 0 && index + 1 < argc) {
             if (sscanf(argv[++index], "%u,%u,%u,%u", &options->safe_insets[0],
                        &options->safe_insets[1], &options->safe_insets[2],
@@ -3249,6 +3257,8 @@ static int run_product_simulator(const options_t *input,
         PXA_UI_FEATURE_CONTROLLER_INPUT | PXA_UI_FEATURE_MULTIPLE_SURFACES |
         PXA_UI_FEATURE_CANVAS_STREAM_IO;
     ui_config.primary_width = options.width; ui_config.primary_height = options.height;
+    ui_config.density_q16 = (uint32_t)((((uint64_t)
+        (options.density_dpi ? options.density_dpi : 160u) << 16) + 80u) / 160u);
     for (size_t index = 0; index < 4; ++index)
         ui_config.safe_insets[index] = host.safe_insets[index];
     ui_config.display_shape = host.display_shape;
@@ -3355,7 +3365,8 @@ static int run_product_simulator(const options_t *input,
     }
     posix_fs_config.struct_size = sizeof(posix_fs_config);
     posix_fs_config.root_path = fs_path;
-    posix_fs_config.quota_bytes = 256u * 1024u;
+    /* Match pai-touch's logical disk quota; this does not reserve memory. */
+    posix_fs_config.quota_bytes = 1024u * 1024u;
     posix_fs_config.max_open_resources = 16;
     fs_backend_workspace = malloc(pxa_posix_fs_workspace_size(&posix_fs_config));
     if (fs_backend_workspace == NULL ||
@@ -3434,7 +3445,7 @@ static int run_product_simulator(const options_t *input,
     lvgl_config.parent_object = host.content_parent;
     lvgl_config.primary_environment.width = options.width;
     lvgl_config.primary_environment.height = options.height;
-    lvgl_config.primary_environment.density_q16 = UINT32_C(1) << 16;
+    lvgl_config.primary_environment.density_q16 = ui_config.density_q16;
     lvgl_config.primary_environment.font_scale_q16 = UINT32_C(1) << 16;
     lvgl_config.primary_environment.display_shape = host.display_shape;
     for (size_t index = 0; index < 4; ++index)
