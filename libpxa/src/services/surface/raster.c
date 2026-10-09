@@ -2142,6 +2142,23 @@ static uint32_t draw_sprite_instance(
         ty = source_y + y_numerator / height;
         y_error = y_numerator % height;
     }
+    /* Opaque INDEX8 with unit horizontal scale needs only palette lookup and
+     * a store. Keep clipping and rational vertical stepping identical to the
+     * general path; no per-pixel blend/flag/coordinate branches or scratch. */
+    if (flags == 0 && source_width == width) {
+        for (dy = dy_begin; dy < dy_end; ++dy) {
+            const uint8_t *source = texture->pixels + (size_t)ty * texture->width + tx_begin;
+            uint16_t *destination = target->pixels +
+                (size_t)(y0 + (int32_t)dy) * target->stride_pixels + x0 + (int32_t)dx_begin;
+            uint32_t dx;
+            for (dx = 0; dx < dx_end - dx_begin; ++dx)
+                destination[dx] = resources->palette[source[dx]];
+            ty += y_advance;
+            y_error += y_remainder_step;
+            if (y_error >= height) { y_error -= height; ++ty; }
+        }
+        return (dx_end - dx_begin) * (dy_end - dy_begin);
+    }
     for (dy = dy_begin; dy < dy_end; ++dy) {
         const int32_t y = y0 + (int32_t)dy;
         uint32_t tx = tx_begin;
@@ -2214,11 +2231,52 @@ static uint32_t draw_sprite_batch(
     uint32_t covered = 0;
     uint16_t index;
     for (index = 0; index < count; ++index) {
-        covered += draw_sprite_instance(
-            record + PXA_RASTER_SPRITE_BATCH_HEADER_BYTES +
-                (uint32_t)index * PXA_RASTER_SPRITE_INSTANCE_BYTES,
-            texture, record[1], read_u16(record + 6), target, resources,
-            row_begin, row_end);
+        const uint8_t *instance = record + PXA_RASTER_SPRITE_BATCH_HEADER_BYTES +
+            (uint32_t)index * PXA_RASTER_SPRITE_INSTANCE_BYTES;
+        covered += draw_sprite_instance(instance, texture, record[1],
+            read_u16(record + 6), target, resources, row_begin, row_end);
+        /* Adjacent opaque instances with the same source rectangle repeat
+         * exactly the first tile. Expand its already written scanline by
+         * nonoverlapping prefix copies. No tile cache or additional scratch;
+         * preserves clipping and disjoint-row execution. */
+        if (record[1] == 0) {
+            const int32_t x = read_i16(instance);
+            const int32_t y = read_i16(instance + 2);
+            const uint32_t width = read_u16(instance + 4);
+            uint16_t end = index + 1u;
+            if (x < 0 || (uint32_t)x + width > target->width) continue;
+            while (end < count) {
+                const uint8_t *next = record + PXA_RASTER_SPRITE_BATCH_HEADER_BYTES +
+                    (uint32_t)end * PXA_RASTER_SPRITE_INSTANCE_BYTES;
+                if (read_i16(next) != x + (int32_t)((end - index) * width) ||
+                    memcmp(next + 2, instance + 2, 14) != 0) break;
+                ++end;
+            }
+            if (end > index + 1u) {
+                int32_t top = y > row_begin ? y : row_begin;
+                int32_t bottom = y + read_u16(instance + 6);
+                uint32_t span = (end - index) * width;
+                int32_t line;
+                if (top < 0) top = 0;
+                if (bottom > row_end) bottom = row_end;
+                if (bottom > target->height) bottom = target->height;
+                if (span > target->width - (uint32_t)x)
+                    span = target->width - (uint32_t)x;
+                for (line = top; line < bottom; ++line) {
+                    uint16_t *destination = target->pixels +
+                        (size_t)line * target->stride_pixels + x;
+                    uint32_t written = width;
+                    while (written < span) {
+                        const uint32_t copy = written < span - written ?
+                            written : span - written;
+                        memcpy(destination + written, destination, copy * sizeof(uint16_t));
+                        written += copy;
+                    }
+                }
+                if (bottom > top) covered += (span - width) * (uint32_t)(bottom - top);
+                index = end - 1u;
+            }
+        }
     }
     return covered;
 }
