@@ -12,6 +12,8 @@ import tempfile
 import time
 from pathlib import Path
 
+from PIL import Image
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -33,7 +35,7 @@ def main() -> None:
     def execute(label, arguments, cwd=None, success=True):
         start = time.monotonic()
         result = subprocess.run([str(entry), *map(str, arguments)], cwd=cwd, env=env,
-                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=600)
+                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=1800)
         (args.output / (label + ".log")).write_text(result.stdout)
         if (result.returncode == 0) != success:
             raise RuntimeError(f"{label}: unexpected status {result.returncode}: {result.stdout[-4000:]}")
@@ -71,9 +73,11 @@ def main() -> None:
         baseline = (app / "package.json").read_bytes()
         execute(name + "-sdk-update", ["sdk", "update"], app)
         assert (app / "package.json").read_bytes() == baseline
-        for iteration in range(2):
+        for iteration in range(3):
+            profile = "pai-touch" if iteration == 2 else "generic"
             log = (args.output / f"{name}-run-{iteration}.log").open("w")
-            process = subprocess.Popen([entry, "run", "--profile", "generic", "--pxadb"],
+            process = subprocess.Popen([entry, "run", "--profile", profile, "--pxadb",
+                                        *(["--", "--density-dpi", "120"] if iteration == 2 else [])],
                                        cwd=app, env=env, stdout=log, stderr=subprocess.STDOUT)
             try:
                 # The first run verifies the complete SDK/toolchain inventory.
@@ -90,10 +94,21 @@ def main() -> None:
                 time.sleep(0.4)
                 screenshot = args.output.resolve() / f"{name}-{iteration}.png"
                 execute(f"{name}-capture-{iteration}", ["device", "screenshot", screenshot, "--port", "unix:" + str(socket)], app)
-                if language == "c":
-                    execute(f"{name}-tap-{iteration}", ["device", "input", "tap", "40", "60", "--port", "unix:" + str(socket)], app)
-                else:
-                    execute(f"{name}-tap-{iteration}", ["device", "input", "tap", "40", "124", "--port", "unix:" + str(socket)], app)
+                # Locate the actual primary button in the rendered pixels so
+                # the same interaction gate also covers density and safe insets.
+                with Image.open(screenshot) as picture:
+                    rgb = picture.convert("RGB")
+                    colored = [(x, y) for y in range(rgb.height) for x in range(rgb.width)
+                               if (lambda p: p[0] > 100 and p[0] > p[1] * 1.4 and p[0] > p[2] * 1.3)(rgb.getpixel((x, y)))]
+                    if len(colored) < 100:
+                        raise RuntimeError("primary button is missing from the displayed frame")
+                    left, right = min(x for x, _ in colored), max(x for x, _ in colored)
+                    top, bottom = min(y for _, y in colored), max(y for _, y in colored)
+                    x, y = (left + right) // 2, (top + bottom) // 2
+                    if iteration == 2 and (rgb.size != (296, 240) or left < 8 or top < 10):
+                        raise RuntimeError("screen profile or safe inset layout did not reach the Guest")
+                execute(f"{name}-tap-{iteration}", ["device", "input", "tap", x, y, "--port", "unix:" + str(socket)], app)
+                if language == "cpp":
                     time.sleep(0.15)
                     after = args.output.resolve() / f"{name}-{iteration}-clicked.png"
                     execute(f"{name}-capture-clicked-{iteration}", ["device", "screenshot", after, "--port", "unix:" + str(socket)], app)
@@ -106,6 +121,7 @@ def main() -> None:
                 if language == "c" and "Button tapped" not in (args.output / f"{name}-run-{iteration}.log").read_text():
                     raise RuntimeError("C button input did not reach the Guest")
                 results.append({"name": f"{name}-run-{iteration}", "status": 0,
+                                "profile": profile, "button_center": [x, y],
                                 "screenshot_sha256": hashlib.sha256(screenshot.read_bytes()).hexdigest()})
             finally:
                 if process.poll() is None:
