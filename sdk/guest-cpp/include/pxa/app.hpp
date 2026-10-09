@@ -180,7 +180,7 @@ public:
                                game::FrameTick tick) {
                           app.on_frame(ctx, tick);
                       }) {
-            auto period = context_.clock().set_period(16);
+            auto period = context_.clock().set_period(loop_options_.frame_period_ms);
             if (!period) {
                 auto error = period.error();
                 context_.transport_.phase(Phase::stopped);
@@ -221,7 +221,7 @@ public:
                                   app.on_frame(ctx, tick);
                               }) {
                     stepper_.reset();
-                    auto period = context_.clock().set_period(16);
+                    auto period = context_.clock().set_period(loop_options_.frame_period_ms);
                     if (!period) {
                         context_.transport_.phase(Phase::inactive);
                         return static_cast<std::int32_t>(period.error());
@@ -363,7 +363,18 @@ private:
 
     inline static Context context_{};
     inline static UiSlot<App> ui_{};
-    inline static FixedStepper stepper_{};
+    static constexpr game::LoopOptions loop_options_ = [] {
+        if constexpr (requires { App::loop_options; }) return App::loop_options;
+        else return game::LoopOptions{};
+    }();
+    static_assert(loop_options_.simulation_step_us >= 1000 &&
+                  loop_options_.simulation_step_us <= 1000000 &&
+                  loop_options_.frame_period_ms >= 16 &&
+                  loop_options_.frame_period_ms <= 1000 &&
+                  loop_options_.maximum_updates >= 1 &&
+                  loop_options_.maximum_updates <= 16);
+    inline static FixedStepper stepper_{loop_options_.simulation_step_us,
+                                       loop_options_.maximum_updates};
     alignas(App) inline static std::byte storage_[sizeof(App)]{};
     inline static App* app_ = nullptr;
     inline static bool live_ = false;

@@ -20,6 +20,8 @@
 
 #ifdef ESP_PLATFORM
 #include "esp_log.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "pxa/esp/pxa_esp_posix_shim.h"
 #define dup pxa_esp_dup
 #define fdopendir pxa_esp_fdopendir
@@ -63,6 +65,15 @@
 #define PXA_POSIX_INSTALLER_SESSION_INCOMING_BYTES \
     ((sizeof(".session-") - 1u) + PXA_POSIX_INSTALLER_MAX_IDENTITY_NAME + \
      sizeof("/incoming"))
+
+/* Flash-backed verification can remain runnable across hundreds of files.
+ * Give the idle/audio tasks a bounded opportunity to run; this adds no task,
+ * buffer or state and leaves all digest/stat checks in place. */
+static void installer_yield(void) {
+#ifdef ESP_PLATFORM
+    vTaskDelay(1);
+#endif
+}
 
 typedef struct {
     char **items;
@@ -814,6 +825,7 @@ static pxa_status_t hash_and_copy(pxa_posix_installer_t *installer,
             }
             if (status != PXA_STATUS_OK) break;
         }
+        installer_yield();
     }
     if (status == PXA_STATUS_OK &&
         pxa_openssl_sha256_stream_finish(&stream, digest) != PXA_STATUS_OK) {
@@ -844,6 +856,7 @@ static pxa_status_t hash_and_copy(pxa_posix_installer_t *installer,
             status = PXA_STATUS_INTERNAL;
         }
     }
+    installer_yield();
     return status;
 }
 
@@ -2053,6 +2066,7 @@ static pxa_status_t write_all(int file, const uint8_t *bytes, size_t size) {
         if (written <= 0) return PXA_STATUS_INTERNAL;
         offset += (size_t)written;
     }
+    installer_yield();
     return PXA_STATUS_OK;
 }
 

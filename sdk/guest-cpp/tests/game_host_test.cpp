@@ -89,19 +89,36 @@ int main() {
     for (auto& vertex : crown) {vertex.depth_q8 = 512; vertex.light = 0;}
     crown[1].u_q4 = crown[2].u_q4 = 32;
     crown[2].v_q4 = crown[3].v_q4 = 32;
-    const std::array<pxa::game::Vertex, 6> trunk{{
-        {.x_q4=0,.y_q4=0,.depth_q8=1024},
-        {.x_q4=112,.y_q4=0,.depth_q8=1024},
-        {.x_q4=112,.y_q4=112,.depth_q8=1024},
-        {.x_q4=0,.y_q4=0,.depth_q8=1024},
-        {.x_q4=112,.y_q4=112,.depth_q8=1024},
-        {.x_q4=0,.y_q4=112,.depth_q8=1024}}};
+    auto trunk_quad = crown;
+    for (auto& vertex : trunk_quad) vertex.depth_q8 = 1024;
+    // Exercise all paths used by Voxel: perspective scanlines, affine depth
+    // quads and clipped affine triangles, with both opaque submission orders.
+    for (int leaf_path : {0, 1, 2, 3, 4, 5}) {
+    for (bool trunk_scanline : {false, true}) {
     for (bool leaves_first : {true, false}) {
         auto tree = forest.frame(buffer);
         tree.clear({0x001f});
-        if (!leaves_first) tree.solid_triangles(trunk, {0xf800});
-        tree.textured_quad({0}, crown, {.painter=true,.transparent_index0=true,.lit_palette=true});
-        if (leaves_first) tree.solid_triangles(trunk, {0xf800});
+        if (!leaves_first) tree.solid_depth_quad(trunk_quad, {0xf800}, trunk_scanline);
+        const pxa::game::PolygonOptions leaf_options{
+            .affine_uv = leaf_path != 0, .painter = leaf_path == 0 || leaf_path == 3,
+            .transparent_index0 = true, .lit_palette = true};
+        if (leaf_path == 2) {
+            const std::array<pxa::game::Vertex, 6> leaf_triangles{
+                crown[0], crown[1], crown[2], crown[0], crown[2], crown[3]};
+            tree.triangles({0}, leaf_triangles, leaf_options);
+        } else if (leaf_path >= 4) {
+            // Two clipped triangles exercise the repeated-corner quad ABI,
+            // including perspective/affine cutout with independent depth.
+            auto options = leaf_options;
+            options.affine_uv = leaf_path == 5;
+            const std::array<pxa::game::Vertex, 3> a{crown[0], crown[1], crown[2]};
+            const std::array<pxa::game::Vertex, 3> b{crown[0], crown[2], crown[3]};
+            tree.textured_depth_polygon({0}, a, options);
+            tree.textured_depth_polygon({0}, b, options);
+        } else {
+            tree.textured_quad({0}, crown, leaf_options);
+        }
+        if (leaves_first) tree.solid_depth_quad(trunk_quad, {0xf800}, trunk_scanline);
         assert(tree.submit());
         assert(pxa_raster_validate_draw_list(draw_list.data(), draw_size, &target,
                                               &resources, &view) == PXA_STATUS_OK);
@@ -110,5 +127,25 @@ int main() {
         assert(pixels[1 * 8 + 5] == 0xf800);
         assert(pixels[5 * 8 + 1] == 0xf800);
         assert(pixels[5 * 8 + 5] == 0x07e0);
+        assert(depth[1 * 8 + 1] > depth[1 * 8 + 5]);
+    }
+    }
+    }
+
+    // RGB565 depth quads also work with no palette/texture resources, and a
+    // farther quad never overwrites a near quad, regardless of draw order.
+    resources.palette = nullptr;
+    resources.textures[0] = {};
+    for (bool near_first : {true, false}) {
+        auto flat = forest.frame(buffer);
+        flat.clear({0});
+        if (near_first) flat.solid_depth_quad(crown, {0x07e0});
+        flat.solid_depth_quad(trunk_quad, {0xf800});
+        if (!near_first) flat.solid_depth_quad(crown, {0x07e0});
+        assert(flat.submit());
+        assert(pxa_raster_validate_draw_list(draw_list.data(), draw_size, &target,
+                                              &resources, &view) == PXA_STATUS_OK);
+        pxa_raster_execute_draw_list(draw_list.data(), &view, &target, &resources, nullptr);
+        assert(pixels[3 * 8 + 3] == 0x07e0 && depth[3 * 8 + 3] != 0);
     }
 }

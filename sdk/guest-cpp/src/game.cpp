@@ -48,6 +48,11 @@ void write_vertex(std::byte* out, const Vertex& vertex) noexcept {
     wire::put16(out + 10, vertex.depth_q8);
 }
 
+bool nonzero_triangle(const Vertex& a, const Vertex& b, const Vertex& c) noexcept {
+    return std::int64_t(b.x_q4 - a.x_q4) * (c.y_q4 - a.y_q4) !=
+           std::int64_t(b.y_q4 - a.y_q4) * (c.x_q4 - a.x_q4);
+}
+
 } // namespace
 
 bool Frame::valid_texture_slot(AtlasBinding binding) noexcept {
@@ -89,6 +94,78 @@ Frame& Frame::textured_quad(AtlasBinding binding,
     for (std::size_t i = 0; i < vertices.size(); ++i)
         write_vertex(record.data() + 8 + i * 12, vertices[i]);
     required_ |= required;
+    return *this;
+}
+
+Frame& Frame::solid_depth_quad(const std::array<Vertex, 4>& vertices,
+                               Color565 color, bool scanline) noexcept {
+    const auto flags = static_cast<std::uint8_t>(solid_color |
+        (scanline ? painter | lit_palette : 0));
+    const auto required = capability_bit(RenderCapability::textured_quad) |
+                          capabilities_for(flags);
+    if (error_ || !supports(required)) return *this;
+    auto record = append(3, 56);
+    if (record.empty()) return *this;
+    record[1] = std::byte(flags);
+    wire::put16(record.data() + 6, color.value);
+    for (std::size_t i = 0; i < vertices.size(); ++i)
+        write_vertex(record.data() + 8 + i * 12, vertices[i]);
+    required_ |= required;
+    return *this;
+}
+
+bool Frame::reserve_depth_polygon(std::span<const Vertex> vertices) noexcept {
+    if (error_) return false;
+    if (vertices.size() < 3 || vertices.size() > 10) {
+        error_ = Error::invalid_argument;
+        return false;
+    }
+    std::size_t records = 0;
+    if (vertices.size() == 4) {
+        std::int64_t area = 0;
+        for (std::size_t i = 0; i < 4; ++i) {
+            const auto& a = vertices[i];
+            const auto& b = vertices[(i + 1) & 3];
+            area += std::int64_t(a.x_q4) * b.y_q4 - std::int64_t(b.x_q4) * a.y_q4;
+        }
+        if (!area) return false;
+        records = 1;
+    } else {
+        for (std::size_t i = 1; i + 1 < vertices.size(); ++i)
+            records += nonzero_triangle(vertices[0], vertices[i], vertices[i + 1]);
+    }
+    if (records > 1024 - commands_ || records * 56 > bytes_.size() - used_) {
+        error_ = Error::limit_exceeded;
+        return false;
+    }
+    return true;
+}
+
+Frame& Frame::textured_depth_polygon(AtlasBinding binding,
+                                     std::span<const Vertex> vertices,
+                                     PolygonOptions options) noexcept {
+    if (!reserve_depth_polygon(vertices)) return *this;
+    options.painter = options.lit_palette = true;
+    if (vertices.size() == 4) {
+        textured_quad(binding, {vertices[0], vertices[1], vertices[2], vertices[3]}, options);
+    } else {
+        for (std::size_t i = 1; i + 1 < vertices.size(); ++i)
+            if (nonzero_triangle(vertices[0], vertices[i], vertices[i + 1]))
+                textured_quad(binding, {vertices[0], vertices[i], vertices[i + 1], vertices[i + 1]}, options);
+    }
+    return *this;
+}
+
+Frame& Frame::solid_depth_polygon(std::span<const Vertex> vertices,
+                                  Color565 color) noexcept {
+    if (!reserve_depth_polygon(vertices)) return *this;
+    if (vertices.size() == 4) {
+        solid_depth_quad({vertices[0], vertices[1], vertices[2], vertices[3]}, color, true);
+    } else {
+        for (std::size_t i = 1; i + 1 < vertices.size(); ++i)
+            if (nonzero_triangle(vertices[0], vertices[i], vertices[i + 1]))
+                solid_depth_quad({vertices[0], vertices[i], vertices[i + 1], vertices[i + 1]}, color, true);
+    }
     return *this;
 }
 

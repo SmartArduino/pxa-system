@@ -97,6 +97,14 @@ struct FrameTick {
     std::uint8_t simulation_steps = 0;
 };
 
+// Declare App::loop_options only when the game needs a different simulation
+// budget. The runtime folds these constants into its existing FixedStepper.
+struct LoopOptions {
+    std::uint32_t simulation_step_us = 16000;
+    std::uint16_t frame_period_ms = 16;
+    std::uint8_t maximum_updates = 4;
+};
+
 struct RenderInfo {
     std::uint32_t capabilities = 0;
     std::uint32_t max_draw_bytes = 0;
@@ -233,6 +241,19 @@ public:
     Frame& textured_quad(AtlasBinding binding,
                          const std::array<Vertex, 4>& vertices,
                          PolygonOptions options = {}) noexcept;
+    // Opaque RGB565 quad in the shared depth buffer; no texture binding needed.
+    // Scanline mode requires the painter-depth capability.
+    Frame& solid_depth_quad(const std::array<Vertex, 4>& vertices,
+                            Color565 color, bool scanline = false) noexcept;
+    // Convex perimeter, 3..10 vertices, in the shared scanline depth buffer.
+    // Texture lighting uses palette rows. Clipped triangles repeat their final
+    // corner in the existing quad ABI; larger polygons fan exactly once.
+    // Zero-area fans caused by wire quantization are omitted.
+    Frame& textured_depth_polygon(AtlasBinding binding,
+                                  std::span<const Vertex> vertices,
+                                  PolygonOptions options = {}) noexcept;
+    Frame& solid_depth_polygon(std::span<const Vertex> vertices,
+                               Color565 color) noexcept;
     Frame& triangles(AtlasBinding binding, std::span<const Vertex> vertices,
                      PolygonOptions options = {}) noexcept;
     Frame& solid_triangles(std::span<const Vertex> vertices,
@@ -242,6 +263,7 @@ public:
     std::size_t bytes_used() const noexcept { return used_; }
 
 private:
+    bool reserve_depth_polygon(std::span<const Vertex> vertices) noexcept;
     bool supports(std::uint32_t capability) noexcept;
     bool valid_texture_slot(AtlasBinding binding) noexcept;
     Frame& append_triangles(std::span<const Vertex> vertices,

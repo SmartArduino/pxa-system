@@ -11,6 +11,8 @@ struct RenderOptions {
     std::uint8_t buffers = 2;
     std::uint8_t scale = 0;
     Scratch scratch = Scratch::none;
+    // Prefer scanout for games that draw their HUD in the surface. The Host
+    // retains composition whenever visible UI or system overlays require it.
     bool direct_scanout = false;
     std::uint32_t max_draw_bytes = 4096;
 };

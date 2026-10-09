@@ -1,5 +1,6 @@
 include_guard(GLOBAL)
 include(CMakeParseArguments)
+option(PXA_KEEP_WASM_DEBUG "Retain Wasm DWARF in non-Debug packages" OFF)
 
 if(DEFINED PXA_CPP_SDK_DIR AND IS_DIRECTORY "${PXA_CPP_SDK_DIR}/include"
    AND CMAKE_CXX_COMPILER_LOADED)
@@ -181,6 +182,13 @@ function(pxa_add_component target)
         # inserted at __heap_base overlaps libc's constant heap address.
         -Wl,--export-if-defined=malloc
         -Wl,--export-if-defined=free)
+    # Precompiled WASI libc can contribute DWARF even without -g on the app.
+    # Keep the name section for diagnostics, and leave executable sections
+    # unchanged. Debug builds and explicit opt-in retain the original DWARF.
+    if(NOT PXA_KEEP_WASM_DEBUG)
+        target_link_options(${target} PRIVATE
+            "$<$<NOT:$<CONFIG:Debug>>:-Wl,--strip-debug>")
+    endif()
     if(DEFINED PXA_LINEAR_MEMORY_MAXIMUM AND
        NOT PXA_LINEAR_MEMORY_MAXIMUM STREQUAL "0")
         target_link_options(${target} PRIVATE

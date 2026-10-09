@@ -80,6 +80,48 @@ while offset < len(data):
 assert {"malloc", "free"} <= exports, exports
 PYTHON
 
+# Release strips inherited WASI-libc DWARF, preserving executable sections,
+# names and AOT bytes. Explicit opt-in must still retain debugging metadata.
+libc_wasm=$(find "$work_dir/build-cache" -path '*wasi-libc-lab-*/artifacts/main.wasm')
+cp "$libc_wasm" "$work_dir/release.wasm"
+cp "$work_dir/pxa-wasi-libc-lab/artifacts/main.linux-x86_64.aot" "$work_dir/release.aot"
+PXA_APP_SOURCE_ROOT="$test_apps_root" \
+PXA_PACKAGE_OUTPUT_ROOT="$work_dir" \
+PXA_BUILD_CACHE_DIR="$work_dir/build-cache" \
+PXA_SIGNING_KEY="$pxa_system_dir/apps/pxa/.dev-signing/publisher-private.pem" \
+PXA_KEEP_WASM_DEBUG=ON WASI_SDK_DIR="$wasi_sdk_dir" WAMRC="$wamrc_bin" \
+  "$script_dir/package_app.sh" wasi-libc-lab simulator "$work_dir/pxa-wasi-libc-lab"
+"${PYTHON:-python3}" - "$work_dir/release.wasm" "$libc_wasm" "$script_dir" <<'PYTHON'
+from pathlib import Path
+import sys
+sys.path.insert(0, sys.argv[3])
+from verify_wasm_memory import read_u32_leb
+from verify_wasm_core_imports import read_name
+def sections(path):
+    data = Path(path).read_bytes()
+    core, custom = [], {}
+    offset = 8
+    while offset < len(data):
+        kind = data[offset]
+        size, cursor = read_u32_leb(data, offset + 1)
+        end = cursor + size
+        if kind:
+            core.append((kind, data[cursor:end]))
+        else:
+            name, _ = read_name(data, cursor, end)
+            custom[name] = data[cursor:end]
+        offset = end
+    return core, custom
+release, rc = sections(sys.argv[1])
+debug, dc = sections(sys.argv[2])
+assert release == debug
+assert not any(name.startswith('.debug_') for name in rc)
+assert any(name.startswith('.debug_') for name in dc)
+assert rc['name'] == dc['name']
+assert Path(sys.argv[1]).stat().st_size < Path(sys.argv[2]).stat().st_size
+PYTHON
+cmp "$work_dir/release.aot" "$work_dir/pxa-wasi-libc-lab/artifacts/main.linux-x86_64.aot"
+
 find "$work_dir/build-cache" -name '*.obj' -printf '%p %T@\n' | LC_ALL=C sort \
   > "$work_dir/objects-before.txt"
 test -s "$work_dir/objects-before.txt"

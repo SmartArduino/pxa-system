@@ -28,7 +28,7 @@ python3 "$cpp_sdk_dir/tools/generate_ipc_contract.py" \
   "$cpp_sdk_dir/examples/ipc-stats/stats_contract.hpp" --check
 python3 "$cpp_sdk_dir/tests/test_generate_ipc_contract.py"
 
-for test_name in features core_app ui_wire ui_page ui_input canvas ui_controls counter_app navigation list task assets storage fs permission audio device sensor net ipc ipc_contract work surface game game_host game_service game_loop; do
+for test_name in features core_app ui_wire ui_page ui_input canvas ui_controls counter_app navigation list task assets storage fs permission audio device sensor net ipc ipc_contract work surface game game_host game_service game_loop game_utils; do
   extra_includes=()
   extra_objects=()
   if [[ "$test_name" == game_host ]]; then

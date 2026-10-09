@@ -27,6 +27,8 @@ extern "C" std::int32_t pxa_submit(const std::uint8_t* data,
         assert(pxa::wire::get16(bytes + 20) == (fixed_mode ? 160 : 0));
         assert(pxa::wire::get16(bytes + 22) == (fixed_mode ? 120 : 0));
         assert(std::to_integer<unsigned>(bytes[20 + 4]) == 2);
+        assert(std::to_integer<unsigned>(bytes[20 + 5]) ==
+               static_cast<unsigned>(fixed_mode));
     } else {
         assert(service == 1 && opcode == 2);
         assert(pxa::wire::get64(bytes + 20) == 77);
@@ -46,6 +48,7 @@ pxa::Task<void> create_renderer(pxa::Context& context) {
     if (fixed_mode) {
         options.width = 160;
         options.height = 120;
+        options.direct_scanout = true;
     }
     auto renderer = co_await context.game().create(options);
     if (!renderer) {

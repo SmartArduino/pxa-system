@@ -753,6 +753,59 @@ static void test_painter_depth(void) {
     assert(pixels[3 * 8 + 6] == UINT16_C(0xf800));
 }
 
+static void test_depth_span_equivalence(void) {
+    enum { TOTAL = PXA_RASTER_DRAW_HEADER_BYTES + PXA_RASTER_CLEAR_BYTES +
+                   PXA_RASTER_TEXTURED_QUAD_BYTES };
+    uint8_t bytes[TOTAL], texels[16];
+    uint16_t palette[512], pixels[64], depth[64], expected[64], expected_depth[64];
+    pxa_raster_resources_t resources = {0};
+    pxa_raster_target_t target = {0};
+    pxa_raster_draw_list_view_t list;
+    const int16_t xy[8] = {-16, 0, 144, 0, 144, 128, -16, 128};
+    for (unsigned i = 0; i < 256; ++i) palette[i] = palette[256 + i] = (uint16_t)(i * 233);
+    for (unsigned i = 0; i < 16; ++i) texels[i] = i % 3 ? (uint8_t)i : 0;
+    resources.palette = palette;
+    resources.palette_light_levels = 2;
+    resources.capabilities = PXA_RASTER_CAP_TEXTURED_QUAD | PXA_RASTER_CAP_AFFINE_UV |
+        PXA_RASTER_CAP_PAINTER_POLYGON | PXA_RASTER_CAP_LIT_PALETTE_DEPTH |
+        PXA_RASTER_CAP_PAINTER_DEPTH;
+    resources.textures[0].pixels = texels;
+    resources.textures[0].width = resources.textures[0].height = 4;
+    target.width = target.height = target.stride_pixels = target.depth_stride_pixels = 8;
+    target.pixels = pixels;
+    target.depth_pixels = depth;
+    for (unsigned sample = 0; sample < 32; ++sample) {
+        const uint32_t offset = begin_list(bytes, resources.capabilities, 2, 61, TOTAL);
+        bytes[offset] = PXA_RASTER_RECORD_CLEAR_RGB565;
+        put_u16(bytes + offset + 2, PXA_RASTER_CLEAR_BYTES);
+        uint8_t *record = bytes + offset + PXA_RASTER_CLEAR_BYTES;
+        record[0] = PXA_RASTER_RECORD_TEXTURED_QUAD;
+        record[1] = PXA_RASTER_QUAD_PAINTER | PXA_RASTER_QUAD_LIT_PALETTE;
+        if (sample & 1) record[1] |= PXA_RASTER_QUAD_AFFINE_UV;
+        if (sample & 2) record[1] |= PXA_RASTER_QUAD_TRANSPARENT_INDEX0;
+        put_u16(record + 2, PXA_RASTER_TEXTURED_QUAD_BYTES);
+        for (unsigned i = 0; i < 4; ++i) {
+            const int left = i == 0 || i == 3;
+            put_vertex_depth(record + 8 + i * PXA_RASTER_VERTEX_BYTES,
+                xy[i * 2], xy[i * 2 + 1], left ? -32 : 144,
+                i < 2 ? -16 : 128, 0,
+                left ? (uint16_t)(64 + sample * 9) : (uint16_t)(256 + sample * 67));
+        }
+        assert(pxa_raster_validate_draw_list(bytes, TOTAL, &target, &resources, &list) == PXA_STATUS_OK);
+        pxa_raster_execute_draw_list(bytes, &list, &target, &resources, NULL);
+        memcpy(expected, pixels, sizeof(pixels));
+        memcpy(expected_depth, depth, sizeof(depth));
+        // Varying lighting selects the generic fallback. Identical palette
+        // rows make its color/depth result an independent reference for the
+        // specialized opaque/cutout kernels, including wrapped/clipped UVs.
+        record[8 + PXA_RASTER_VERTEX_BYTES + 8] = 1;
+        record[8 + 3 * PXA_RASTER_VERTEX_BYTES + 8] = 1;
+        pxa_raster_execute_draw_list(bytes, &list, &target, &resources, NULL);
+        assert(memcmp(expected, pixels, sizeof(pixels)) == 0);
+        assert(memcmp(expected_depth, depth, sizeof(depth)) == 0);
+    }
+}
+
 static void test_coverage_mask(void) {
     enum {
         COMMANDS = 4,
@@ -1158,6 +1211,48 @@ static void test_painter_perspective_uv(void) {
     assert(pxa_raster_validate_draw_list(bytes, sizeof(bytes), &target,
                                          &resources, &list) ==
            PXA_STATUS_UNSUPPORTED);
+    /* Painter depth must honor affine UVs without losing inverse depth. The
+     * texture samples differ, but the depth field must be exactly identical
+     * at every pixel of this slanted face. */
+    {
+        uint16_t perspective_depth[WIDTH * HEIGHT];
+        resources.capabilities = PXA_RASTER_CAP_KNOWN_MASK;
+        put_u32(bytes + 12, PXA_RASTER_CAP_TEXTURED_QUAD |
+                PXA_RASTER_CAP_PAINTER_POLYGON | PXA_RASTER_CAP_AFFINE_UV |
+                PXA_RASTER_CAP_LIT_PALETTE_DEPTH | PXA_RASTER_CAP_PAINTER_DEPTH);
+        target.scratch_mode = PXA_RASTER_SCRATCH_DEPTH16;
+        record[1] = PXA_RASTER_QUAD_PAINTER | PXA_RASTER_QUAD_LIT_PALETTE;
+        memset(pixels, 0, sizeof(pixels));
+        memset(coverage, 0, sizeof(coverage));
+        assert(pxa_raster_validate_draw_list(bytes, sizeof(bytes), &target,
+                                             &resources, &list) == PXA_STATUS_OK);
+        pxa_raster_execute_draw_list(bytes, &list, &target, &resources, NULL);
+        assert(pixels[WIDTH / 2u] == palette[1]);
+        memcpy(perspective_depth, coverage, sizeof(coverage));
+        record[1] |= PXA_RASTER_QUAD_AFFINE_UV;
+        memset(pixels, 0, sizeof(pixels));
+        memset(coverage, 0, sizeof(coverage));
+        assert(pxa_raster_validate_draw_list(bytes, sizeof(bytes), &target,
+                                             &resources, &list) == PXA_STATUS_OK);
+        pxa_raster_execute_draw_list(bytes, &list, &target, &resources, NULL);
+        assert(pixels[WIDTH / 2u] == palette[8]);
+        assert(memcmp(perspective_depth, coverage, sizeof(coverage)) == 0);
+        assert(coverage[0] > coverage[WIDTH - 1u] && coverage[WIDTH - 1u] > 0);
+        /* A transparent affine texel must preserve the existing depth and
+         * color; nonzero texels still use the same reciprocal depth field. */
+        record[1] |= PXA_RASTER_QUAD_TRANSPARENT_INDEX0;
+        for (index = 0; index < WIDTH * HEIGHT; ++index) {
+            coverage[index] = 1;
+            pixels[index] = 0xbeef;
+        }
+        assert(pxa_raster_validate_draw_list(bytes, sizeof(bytes), &target,
+                                             &resources, &list) == PXA_STATUS_OK);
+        pxa_raster_execute_draw_list(bytes, &list, &target, &resources, NULL);
+        // execute_draw_list clears frame depth before this first primitive.
+        assert(pixels[0] == 0xbeef && coverage[0] == 0);
+        assert(pixels[WIDTH / 2u] == palette[8]);
+        assert(coverage[WIDTH / 2u] == perspective_depth[WIDTH / 2u]);
+    }
 }
 
 static void test_sprite_and_triangle_batches(void) {
@@ -1265,6 +1360,7 @@ int main(void) {
     test_affine_uv_flag_and_depth();
     test_lit_palette_depth();
     test_painter_depth();
+    test_depth_span_equivalence();
     test_coverage_mask();
     test_solid_coverage_occlusion();
     test_depth_cutout();

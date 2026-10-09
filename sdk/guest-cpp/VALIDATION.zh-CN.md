@@ -2,6 +2,17 @@
 
 状态：开发 SDK；本轮实现与可用平台验证已完成，完整发布支持范围仍受下列限制。
 
+## 2026-10-09 3D 与游戏路径补充
+
+- 新增按需 CameraBasis、MaterialPolicy、RecyclingPool/StageStatistics、短区间 WASI profile clock 和 LoopOptions；不增加未使用模块的默认缓存。微小面纯色与仿射近似没有树林场景实测收益，Voxel 正式包默认保留完整透视纹理。
+- 深度纯色 quad 和凸 3–10 顶点 depth polygon 使用同一扫描线内核，保留 cutout 的色/Z 孔洞，预检整个面预算；三角形采用退化 quad，无动态扇形容器。原生编码、能力/容量、Host 像素与深度对照通过。
+- 裁剪使用原有两块 480 B 栈存储，交换输入/输出且仅构造实际顶点；8192 六平面多边形的坐标、UV、光照、深度与改动前逐字段一致。IEEE wire rounding 与可选固定属性经 1024 组多平面测试；固定属性在 S3 实测变慢，未默认采用。
+- 最新完整 C++ 主机 29 组、IPC 生成器 5 项、协程池 3/8/65 通过；两版 Voxel 的地图/输入/全部区块/编辑/渲染 ASan/UBSan 通过。稳定游戏帧零 Guest new，Host 内存按单次 allocation minimum 分别记录启动与稳态。
+- 独立 SDK 15 示例仓库内三目标与仓库外 45 次构建通过，17 Component Wasm 三个目标逐项一致。最终裁剪头更改后，game 示例追加仓库内/外三目标重建，再次审计全部 17 项哈希。
+- Release 默认去除 DWARF，可用 PXA_KEEP_WASM_DEBUG=ON/Debug 保留；17 Component Wasm 4224894→1219455 B，执行/数据/name 与原生 AOT 一致，不作为运行 FPS 收益。
+
+相同方块世界、相机、完整纹理、视距及 LCD 完成 FPS 的最终 C/C++ 对照、真实峰值和设备/模拟器交互记录见 workspace `docs/performance/pxa-3d-20261009.zh-CN.md`，原始数据在 `local/pxa-3d-goal-20261009/`。以前两个生产地图的 FPS 不再用于语言性能对比。S31 实机、实际 Guest 辅助栈高水位及全部弹层/模块成本仍未补齐，开发包交付不等于完成整个 M6 正式发布。
+
 ## 2026-10-08 至 2026-10-09 本轮验证
 
 本轮完成 Host 调用与内存优化、Canvas/Input API、任务容量统计与配置、3D 裁剪/深度、资产绑定及 Surface/Work 所有权修复。仍是开发 SDK；以下证据替代对应旧阶段的“尚未验证”记录，历史日志保留在后文。

@@ -364,7 +364,8 @@ if [[ "$build_system" == "cmake" ]]; then
     -DPXA_ARTIFACT_DIR="$cmake_artifact_dir" \
     -DPXA_LINEAR_MEMORY_MAXIMUM="$linear_memory_maximum" \
     -DPXA_APP_DEFINITIONS="$joined_definitions" \
-    -DPXA_CMAKE_MODULE_DIR="$pxa_system_dir/sdk/cmake"
+    -DPXA_CMAKE_MODULE_DIR="$pxa_system_dir/sdk/cmake" \
+    -DPXA_KEEP_WASM_DEBUG="${PXA_KEEP_WASM_DEBUG:-OFF}"
   cmake_targets=()
   for component_id in "${component_ids[@]}"; do
     cmake_targets+=("${component_value_map[$component_id]}")
@@ -379,6 +380,12 @@ if [[ "$build_system" == "cmake" ]]; then
     exec 9>&-
   fi
 else
+  wasm_debug_link_args=()
+  case "${PXA_KEEP_WASM_DEBUG:-OFF}" in
+    1|ON|on|TRUE|true|YES|yes) ;;
+    0|OFF|off|FALSE|false|NO|no) wasm_debug_link_args=(-Wl,--strip-debug) ;;
+    *) echo "PXA_KEEP_WASM_DEBUG must be ON or OFF" >&2; exit 2 ;;
+  esac
   linear_memory_link_args=()
   if [[ "$linear_memory_maximum" -ne 0 ]]; then
     linear_memory_link_args=("-Wl,--max-memory=$linear_memory_maximum")
@@ -414,6 +421,7 @@ else
       -Wl,--export=pxa_app_on_event -Wl,--export=pxa_app_stop \
       -Wl,--export=__heap_base -Wl,--export=__data_end \
       -Wl,--export-if-defined=malloc -Wl,--export-if-defined=free \
+      "${wasm_debug_link_args[@]}" \
       "${linear_memory_link_args[@]}" \
       "${component_objects[@]}" -o "$package_dir/artifacts/$component_id.wasm"
   done

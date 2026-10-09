@@ -349,6 +349,10 @@ Canvas 直接绘制与拥有数据的触摸输入、位图协程池、资源绑�
 性能数据见 `VALIDATION.zh-CN.md`。S31 本轮只做交叉构建；未验证的设备与显示组合
 不能作为完整发布版的承诺。
 
+若游戏和 HUD 都绘制在 Surface 中，可设置 `RenderOptions::direct_scanout=true`
+并使用输入专用 Canvas，让 Host 选择直接显示。该选项是偏好，系统覆盖层及
+可见 UI 仍由 Host 决定合成；默认关闭，不改变普通 UI 应用的显示行为。
+
 GameRender 帧使用调用方拥有的 `DrawBuffer<N>`，在每次 `frame(buffer)` 后按
 绘制顺序编码，`submit()` 一次调用提交；超出容量或缺少能力会返回错误，不
 分配备用堆缓冲。`SpriteOptions` 和 `PolygonOptions` 使用具名字段，
@@ -366,6 +370,47 @@ frame.textured_quad({0}, quad_vertices, {.affine_uv = true});
 frame.solid_triangles(triangle_vertices, {0xf800});
 auto result = frame.submit();
 ```
+
+`solid_depth_quad(vertices, color)` 直接提交 RGB565 深度四边形，不需要纹理绑定。
+第三个参数 `true` 使用扫描线深度路径，需要 painter-depth 能力和已绑定的
+lit palette；颜色直接使用 RGB565，透明面应继续使用纹理。扫描线纹理的
+`affine_uv` 只改变 UV 插值，仍使用完整的逆深度检测。
+
+`textured_depth_polygon(binding, perimeter, options)` 和
+`solid_depth_polygon(perimeter, color)` 接受 3–10 个凸周界顶点，将裁剪后的
+面编码为同一深度扫描线内核的四边形或退化四边形扇形。量化后零面积扇面
+被跳过；先检查整个面的命令/字节预算，容量不足不写入半个面。
+需要 painter-depth 能力及已绑定的 lit palette，不重排透明面，也不分配缓存。
+
+游戏辅助模块按需包含，不增加所有应用的默认存储：
+
+慢帧游戏可以显式声明 `static constexpr pxa::game::LoopOptions loop_options`。
+默认为 16 ms tick、16 ms 模拟步长、最多 4 次更新；Voxel 使用最多 8 次，
+使约 10 FPS 的帧保留六个模拟步，避免每帧丢失约三分之一移动/重力时间。
+后台恢复仍重置时钟，超过预算的长暂停仍有界；常量配置不增加运行时存储。
+
+- `game3d_camera.hpp` 的 `CameraBasis::from_pose(eye, yaw, pitch)` 一次准备
+  相机基向量，`to_view` 重用它；世界 Y 向上、屏幕 Y 向下，正 pitch 向下。
+  每个显式持有的基向量占 48 字节，不缓存全场景的顶点。
+- `game3d_material.hpp` 的 `choose_material_path(vertices, max_uv_texels,
+  cutout, policy)` 按屏幕尺寸与 Q8 深度范围选择透视、仿射或纯色。
+  `max_uv_texels` 包括合并面的重复纹理跨度；仿射判据包含深度量化余量，
+  将 UV 偏差限制在约半个纹素。纯色会丢失微小面的纹理细节，只用于不透明面；
+  `MaterialPolicy{.solid_extent_q4=0}` 可禁用这种画质取舍。树叶孔洞继续采样纹理。
+- `game_utils.hpp` 的 `RecyclingPool<T,N>` 使用显式固定容量，`acquire()`
+  清空并循环复用最旧槽。大小为 N 个 T 加游标及对齐；无默认全局池，
+  调用方不能把槽引用保留超过 N 次复用。`StageStatistics<N>` 只保存
+  N 个 24 字节计数器，不自行调用时钟或输出日志；窗口之间显式 `reset()`。
+- `profile_clock.hpp` 提供可选的 WASI 单调时钟采样。短区间工具使用低 32 位
+  纳秒，单个区间必须短于 4.29 秒。时钟调用本身有成本，应在阶段边界采样，
+  不要逐面、逐像素计时；异步提交的墙钟时间还可能包含 Host 任务抢占。
+
+`Projector::clip_range(near, far)` 更新裁剪距离而不重算 FOV；
+`focal_length()` 供同一投影的区块可见性判定使用。裁剪采用两个固定容量数组，
+每个平面后交换输入输出，仅复制构造实际使用的顶点，避免默认成员初始化
+清写未使用的存储。两块栈存储仍合计 480 字节，不分配临时容器。
+`project_polygon` 返回凸多边形周界，
+需要三角形的调用方只做一次扇形展开；`project_triangle` 已返回连续三角形。
 
 `textured_quad` 和普通 triangle batch 使用深度缓冲，创建上下文时应设置
 `RenderOptions::scratch = Scratch::depth16`；其额外存储约为渲染宽×高×2 字节，
@@ -438,6 +483,11 @@ SDK include、C++26 模式和异常/RTTI 配置，不依赖最终可执行文件
 使用仓库中的 `tools/package/build_guest_cpp_sdk.sh <输出目录>` 生成可搬移的
 开发包，其中有 CMake、打包工具、锁定的工具链信息、示例及 `VERSION`。
 开发包没有 C Guest SDK 依赖；用户可在源码仓库之外编译和打包：
+
+发布构建默认删除 Wasm 的 DWARF 调试段，保留函数名与执行段；预编译 WASI
+libc 也可能带有大量 DWARF。需要保留时设置 `PXA_KEEP_WASM_DEBUG=ON`
+（CMake cache 或打包环境变量）；CMake `Debug` 构建自动保留。该选择不改变
+Guest 线性内存、AOT 执行代码或运行时缓存。
 
 ```sh
 export WASI_SDK_DIR=/path/to/wasi-sdk-34.0

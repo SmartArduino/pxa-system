@@ -747,13 +747,13 @@ static int32_t painter_perspective_block(int32_t remaining, int64_t reciprocal,
     return limit >= (uint32_t)remaining ? remaining : (int32_t)limit;
 }
 
-/* Per-pixel Q16 texel step across one block. The clamp keeps the shift inside
+/* Per-pixel Q16 texel step across one block. The clamp keeps the product inside
  * int32 for the near-degenerate spans a clipped polygon can still produce. */
 static int32_t painter_block_step(int32_t delta_q8, int32_t block) {
     const int32_t limit = INT32_C(1) << 22;
     if (delta_q8 > limit) delta_q8 = limit;
     if (delta_q8 < -limit) delta_q8 = -limit;
-    return (delta_q8 << 8) / block;
+    return (delta_q8 * 256) / block;
 }
 
 static inline int32_t wrap_texture_coordinate(int32_t coordinate,
@@ -1267,6 +1267,7 @@ typedef struct {
     uint8_t remaining;
     uint8_t forward;
     uint8_t perspective;
+    uint8_t depth;
     raster_painter_edge_t edge;
 } raster_painter_chain_t;
 
@@ -1294,6 +1295,7 @@ static inline int painter_span_covered(const uint8_t *mask, int32_t first,
 static int painter_setup_edge(const raster_vertex_t *a,
                               const raster_vertex_t *b, int32_t start_row,
                               uint8_t perspective,
+                              uint8_t depth,
                               raster_painter_edge_t *edge) {
     const int32_t dy = (int32_t)b->y - a->y;
     int32_t first_row;
@@ -1323,19 +1325,23 @@ static int painter_setup_edge(const raster_vertex_t *a,
     edge->u = PXA_PAINTER_EDGE_AT(u0, edge->du);
     edge->v = PXA_PAINTER_EDGE_AT(v0, edge->dv);
     edge->light = PXA_PAINTER_EDGE_AT(light0, edge->dlight);
-    if (perspective) {
+    if (depth || perspective) {
         const int32_t wa = (int32_t)reciprocal_depth(a->depth);
         const int32_t wb = (int32_t)reciprocal_depth(b->depth);
-        const int32_t uwa = (int32_t)a->u * wa;
-        const int32_t uwb = (int32_t)b->u * wb;
-        const int32_t vwa = (int32_t)a->v * wa;
-        const int32_t vwb = (int32_t)b->v * wb;
         edge->dw = (int32_t)((float)(wb - wa) * per_row);
-        edge->duw = (int32_t)((float)(uwb - uwa) * per_row);
-        edge->dvw = (int32_t)((float)(vwb - vwa) * per_row);
         edge->w = painter_clamp32(wa + (((int64_t)edge->dw * rows16) >> 4));
-        edge->uw = painter_clamp32(uwa + (((int64_t)edge->duw * rows16) >> 4));
-        edge->vw = painter_clamp32(vwa + (((int64_t)edge->dvw * rows16) >> 4));
+        if (perspective) {
+            const int32_t uwa = (int32_t)a->u * wa;
+            const int32_t uwb = (int32_t)b->u * wb;
+            const int32_t vwa = (int32_t)a->v * wa;
+            const int32_t vwb = (int32_t)b->v * wb;
+            edge->duw = (int32_t)((float)(uwb - uwa) * per_row);
+            edge->dvw = (int32_t)((float)(vwb - vwa) * per_row);
+            edge->uw = painter_clamp32(uwa + (((int64_t)edge->duw * rows16) >> 4));
+            edge->vw = painter_clamp32(vwa + (((int64_t)edge->dvw * rows16) >> 4));
+        } else {
+            edge->uw = edge->vw = edge->duw = edge->dvw = 0;
+        }
     } else {
         edge->w = 0;
         edge->uw = 0;
@@ -1359,7 +1365,7 @@ static int painter_advance_chain(raster_painter_chain_t *chain, int32_t row) {
             next = chain->index == 0 ? chain->count - 1u
                                      : chain->index - 1u;
         if (painter_setup_edge(&chain->vertices[chain->index],
-                               &chain->vertices[next], row, chain->perspective,
+                               &chain->vertices[next], row, chain->perspective, chain->depth,
                                &chain->edge)) {
             chain->index = next;
             return 1;
@@ -1540,10 +1546,8 @@ static uint32_t draw_painter_polygon(
         return 0;
     /* A Guest that wants the screen-linear mapping says so with AFFINE_UV;
      * one that predates the perspective painter path sends no depth at all. */
-    perspective = (uint8_t)(has_depth &&
-                            (coverage_mode == 3 ||
-                             (!flat &&
-                              (flags & PXA_RASTER_QUAD_AFFINE_UV) == 0)));
+    perspective = (uint8_t)(has_depth && !flat &&
+                            (flags & PXA_RASTER_QUAD_AFFINE_UV) == 0);
     if (perspective && !flat) {
         /* u/z and 1/z are held in 32 bits so the whole span setup stays on
          * hardware instructions. A face that would overflow that window keeps
@@ -1579,6 +1583,9 @@ static uint32_t draw_painter_polygon(
     right.forward = area > 0;
     left.perspective = perspective;
     right.perspective = perspective;
+    // Depth interpolation is independent of UV interpolation: affine and
+    // RGB565 scanlines still need 1/z, but neither needs u/z or v/z.
+    left.depth = right.depth = coverage_mode == 3;
     if (!painter_advance_chain(&left, row) ||
         !painter_advance_chain(&right, row))
         return 0;
@@ -1659,17 +1666,19 @@ static uint32_t draw_painter_polygon(
             int32_t u_texture_q8 = 0;
             int32_t v_texture_q8 = 0;
             int32_t bx0 = x0;
-            if (perspective_span) {
-                duw = (int32_t)((float)(r->uw - l->uw) * per_pixel);
-                dvw = (int32_t)((float)(r->vw - l->vw) * per_pixel);
+            if ((coverage_mode == 3 || perspective_span) && l->w > 0 && r->w > 0) {
                 dw = (int32_t)((float)(r->w - l->w) * per_pixel);
-                uw = painter_clamp32(l->uw + (((int64_t)duw * prestep) >> 16));
-                vw = painter_clamp32(l->vw + (((int64_t)dvw * prestep) >> 16));
                 w = painter_clamp32(l->w + (((int64_t)dw * prestep) >> 16));
                 if (w <= 0) {
                     w = l->w > r->w ? r->w : l->w;
                     dw = 0;
                 }
+            }
+            if (perspective_span) {
+                duw = (int32_t)((float)(r->uw - l->uw) * per_pixel);
+                dvw = (int32_t)((float)(r->vw - l->vw) * per_pixel);
+                uw = painter_clamp32(l->uw + (((int64_t)duw * prestep) >> 16));
+                vw = painter_clamp32(l->vw + (((int64_t)dvw * prestep) >> 16));
                 u_texture_q8 = painter_texture_q8(uw, w);
                 v_texture_q8 = painter_texture_q8(vw, w);
             }
@@ -1706,7 +1715,7 @@ static uint32_t draw_painter_polygon(
                         !flat && min_light == max_light
                             ? palette + (size_t)min_light * 256u : NULL;
                     if (constant_palette != NULL && texture_power_of_two &&
-                        !transparent && !blend_75) {
+                        !blend_75) {
                         const uint8_t *texels = texture->pixels;
                         for (x = bx0; x < bx1; ++x) {
                             const int32_t inverse = depth_w > UINT16_MAX
@@ -1716,9 +1725,14 @@ static uint32_t draw_painter_polygon(
                                     painter_texture_index_pow2(
                                         u, v, texture_mask_u, texture_mask_v,
                                         texture_log2_width)];
-                                *out = constant_palette[texel];
-                                *depth_out = (uint16_t)inverse;
-                                ++covered;
+                                // A cutout with one lighting row needs the
+                                // same cheap lookup as an opaque face. Holes
+                                // update neither color nor depth.
+                                if (!transparent || texel != 0) {
+                                    *out = constant_palette[texel];
+                                    *depth_out = (uint16_t)inverse;
+                                    ++covered;
+                                }
                             }
                             ++out;
                             ++depth_out;

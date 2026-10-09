@@ -38,16 +38,28 @@ struct Game {
 
 PXA_GAME(Game)
 
-static void tick(std::uint64_t timestamp) {
+using Dispatch = std::int32_t (*)(const std::uint8_t*, std::uint32_t);
+static void tick(std::uint64_t timestamp, Dispatch dispatch = pxa_app_on_event) {
     std::array<std::byte, 28> packet{};
     pxa::wire::put16(packet.data(), 4);
     pxa::wire::put16(packet.data() + 2, 0x8001);
     pxa::wire::put32(packet.data() + 12, 8);
     pxa::wire::put64(packet.data() + 20, timestamp);
-    assert(pxa_app_on_event(
+    assert(dispatch(
                reinterpret_cast<const std::uint8_t*>(packet.data()),
                packet.size()) == 1);
 }
+
+static int slow_updates;
+static pxa::game::FrameTick slow_tick;
+struct SlowGame {
+    static constexpr pxa::game::LoopOptions loop_options{
+        .simulation_step_us = 20000, .frame_period_ms = 20, .maximum_updates = 8};
+    void on_update(pxa::Context&, std::uint32_t step_us) {
+        assert(step_us == 20000); ++slow_updates;
+    }
+    void on_frame(pxa::Context&, pxa::game::FrameTick value) { slow_tick = value; }
+};
 
 static void lifecycle(std::uint8_t state) {
     std::array<std::byte, 21> packet{};
@@ -79,4 +91,14 @@ int main() {
     tick(4016000);
     assert(updates == 7 && frames == 4 && last_tick.simulation_steps == 1);
     pxa_app_stop(0);
+    using SlowRuntime = pxa::AppRuntime<SlowGame>;
+    assert(SlowRuntime::start(nullptr, 0) == 0 && last_period == 20);
+    tick(1000000, SlowRuntime::event);
+    tick(1100000, SlowRuntime::event);
+    assert(slow_updates == 6 && slow_tick.simulation_steps == 5);
+    assert(slow_tick.frame_delta_us == 100000); // All 10 Hz simulation time kept.
+    tick(2100000, SlowRuntime::event);
+    assert(slow_updates == 14 && slow_tick.simulation_steps == 8);
+    assert(slow_tick.frame_delta_us == 1000000); // Long pauses still bounded.
+    SlowRuntime::stop(0);
 }
