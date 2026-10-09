@@ -344,8 +344,12 @@ def run(args) -> None:
     if not re.fullmatch(r"[a-z][a-z0-9-]{0,60}", args.profile):
         raise ValueError("invalid screen profile")
     screen = load(ROOT / "share/pxa/profiles" / (args.profile + ".json"))
+    # Debug service startup also creates this directory, but normal run must
+    # work on a fresh project without depending on the optional PXADB process.
+    state_root = app / ".pxa/state"
+    state_root.mkdir(mode=0o700, parents=True, exist_ok=True)
     command = [ROOT / "bin/pxa-simulator", "--package", package,
-               "--publisher-key", public, "--state-root", app / ".pxa/state"]
+               "--publisher-key", public, "--state-root", state_root]
     for name in ("width", "height", "density-dpi", "corner-radius", "locale"):
         if name in screen:
             command.extend(["--" + name, str(screen[name])])

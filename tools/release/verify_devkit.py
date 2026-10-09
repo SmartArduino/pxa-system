@@ -8,6 +8,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import time
 from pathlib import Path
@@ -30,6 +31,8 @@ def main() -> None:
     socket_directory = tempfile.TemporaryDirectory(prefix="pxa-kit-sockets-")
     env["PXA_SIMULATOR_SOCKET_ROOT"] = socket_directory.name
     entry = kit / "bin/pxa"
+    sys.path.insert(0, str(kit / "tools/devkit"))
+    from simulator_pxadb import SimulatorPxaDb
     results = []
 
     def execute(label, arguments, cwd=None, success=True):
@@ -73,6 +76,53 @@ def main() -> None:
         baseline = (app / "package.json").read_bytes()
         execute(name + "-sdk-update", ["sdk", "update"], app)
         assert (app / "package.json").read_bytes() == baseline
+        # First launch without the optional debug service. That service creates
+        # its state directory, and previously masked a broken ordinary run.
+        assert not (app / ".pxa/state").exists()
+        control = Path(socket_directory.name) / (name + "-plain.control")
+        plain_log = (args.output / (name + "-plain-run.log")).open("w")
+        process = subprocess.Popen([entry, "run", "--", "--pxadb-control-socket", control],
+            cwd=app, env=env, stdout=plain_log, stderr=subprocess.STDOUT)
+        try:
+            deadline = time.monotonic() + 180
+            while not control.exists() and time.monotonic() < deadline:
+                if process.poll() is not None:
+                    raise RuntimeError("ordinary simulator run failed on a fresh project")
+                time.sleep(0.05)
+            if not control.exists() or list(Path(socket_directory.name).glob("*.sock")):
+                raise RuntimeError("ordinary run did not start without the debug service")
+            time.sleep(0.4)
+            state = app / ".pxa/state"
+            client = SimulatorPxaDb(state, kit / "bin/pxa-installer",
+                args.output.resolve() / "user/keys/development.der", control)
+            before = client.control("SCREENSHOT", timeout=30)
+            screenshot = args.output / (name + "-plain.png")
+            screenshot.write_bytes(before)
+            with Image.open(screenshot) as picture:
+                rgb = picture.convert("RGB")
+                colored = [(x, y) for y in range(rgb.height) for x in range(rgb.width)
+                    if (lambda p: max(p) > 100 and max(p) - min(p) > 60)(rgb.getpixel((x, y)))]
+                if len(colored) < 100: raise RuntimeError("ordinary run has no rendered button")
+                x = (min(x for x, _ in colored) + max(x for x, _ in colored)) // 2
+                y = (min(y for _, y in colored) + max(y for _, y in colored)) // 2
+            client.control(f"TAP {x} {y}")
+            time.sleep(0.15)
+            if language == "cpp" and before == client.control("SCREENSHOT", timeout=30):
+                raise RuntimeError("ordinary C++ run did not handle input")
+            client.control("KEY HOME")
+            process.wait(timeout=20)
+            if process.returncode != 0 or control.exists():
+                raise RuntimeError("ordinary run did not exit cleanly")
+            if language == "c" and "Button tapped" not in (args.output / (name + "-plain-run.log")).read_text():
+                raise RuntimeError("ordinary C run did not handle input")
+            results.append({"name": name + "-fresh-ordinary-run", "status": 0,
+                            "debug_service": False, "button_center": [x, y]})
+        finally:
+            if process.poll() is None:
+                process.terminate()
+                try: process.wait(timeout=5)
+                except subprocess.TimeoutExpired: process.kill(); process.wait()
+            plain_log.close()
         for iteration in range(4):
             profile = "pai-touch" if iteration == 2 else "generic"
             log = (args.output / f"{name}-run-{iteration}.log").open("w")

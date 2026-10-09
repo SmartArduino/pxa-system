@@ -68,8 +68,12 @@ def main() -> None:
                   "For the supported offline workflow, use bin/pxa from the full DevKit.\n"
                   if component == "sdk" else
                   "# PXA Linux x86_64 simulator\n\nRequires glibc 2.35+, Bash and a display server. "
-                  "Run bin/pxa-simulator --package APP.pxa --publisher-key publisher.der "
-                  "--state-root /writable/app-state. bin/pxa-desktop provides the standard system demo. "
+                  "Run bin/pxa-simulator --package UNPACKED_PACKAGE_DIR --publisher-key publisher.der "
+                  "--state-root /writable/app-state. Create the writable state directory first. "
+                  "bin/pxa-desktop provides the standard system demo. "
+                  "The simulator accepts the signed directory produced by the packager; "
+                  "use bin/pxa-installer with an existing writable storage directory "
+                  "to verify and install .pxa containers first. "
                   "Headless tests use SDL_VIDEODRIVER=dummy and SDL_AUDIODRIVER=dummy. "
                   "For project build/run, PXADB and profile selection use the matching full DevKit.\n")
         (root / "README.md").write_text(readme + "\nSee docs/DEVKIT.zh-CN.md and docs/VERSIONING.zh-CN.md.\n")
