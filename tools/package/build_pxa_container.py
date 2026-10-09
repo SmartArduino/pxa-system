@@ -7,6 +7,7 @@ import argparse
 import binascii
 import ctypes
 import ctypes.util
+import os
 import hashlib
 import os
 import struct
@@ -62,7 +63,7 @@ def manifest_files(manifest: bytes) -> list[tuple[str, int, bytes]]:
 
 class Lz4:
     def __init__(self) -> None:
-        library = ctypes.util.find_library("lz4")
+        library = os.environ.get("PXA_LZ4_LIBRARY") or ctypes.util.find_library("lz4")
         require(library is not None, "liblz4 is required to build codec 1")
         self.library = ctypes.CDLL(library)
         self.library.LZ4_compressBound.argtypes = [ctypes.c_int]
