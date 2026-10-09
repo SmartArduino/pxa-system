@@ -524,3 +524,10 @@ Ninja，也可用 `CMAKE_GENERATOR='Unix Makefiles'` 指定生成器。独立 Co
 仓库根目录的 `VERSION`，开发包直接复制该值，不维护独立 SDK 版本号。
 WASI SDK 34 链接 libc++ 后，当前最小应用也会导入 `clock_time_get`；
 清单需要声明 `monotonic-clock` 和 `wall-clock`，打包校验会检查实际导入。
+
+自绘游戏可选用 `<pxa/game_pacing.hpp>` 的 `can_build_frame(telemetry, limit)`，
+在几何构造之前检查尚未退休的绘制列表。默认 limit=2 允许一份正在光栅化、一份
+待处理；limit=1 保留 LCD 传输与下一帧构造的重叠，减少 Guest 和光栅化同时访问
+外部内存的压力。调用方决定查询时机与失败策略；此头文件不增加队列或常驻状态。
+背压只跳过绘制，固定步长更新和输入仍应继续；FPS 和自适应视距需累计跳过的
+绘制 tick 时间，不能仅用提交成功的 tick 间隔。实际显示速度应由 Host 完成计数验证。
