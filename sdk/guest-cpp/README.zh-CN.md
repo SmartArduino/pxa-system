@@ -2,6 +2,10 @@
 
 应用接口边界与最近的封装改进见 [API_AUDIT.zh-CN.md](API_AUDIT.zh-CN.md)。
 
+后续新增能力、接口设计和性能优化以 C++ SDK 为主要维护方向。Guest C SDK
+逐步退出功能开发，过渡期间保留已有应用必需的兼容与正确性修复。
+这不改变 Core wire ABI，也不立即移除旧应用所依赖的接口。
+
 此 SDK 是独立的 C++26 Guest 实现。它直接导入 `pxa_submit` 和 `pxa_io`，
 不包含或调用 Guest C SDK。与 Host 的日常调用仍只有这两项导入。
 libc 的 `malloc/free` 若已链接，会额外导出供 WAMR 分配配置和事件缓冲，
