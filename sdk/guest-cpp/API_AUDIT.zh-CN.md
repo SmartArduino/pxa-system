@@ -28,9 +28,10 @@ if (pixels) {
 ```
 
 FixedText 保持原有非空 UTF-8 约定。RGB565 视图不延长租约，present、关闭或
-销毁帧后必须丢弃；行的 x 索引采用 span 的调用方保证边界约定。旧的 Storage
-字节接口仍借用 key/value/output/外部 packet；新类型化入口创建任务时拥有
-键和值。自定义数据的版本、校验和和业务合法性仍由应用决定。
+销毁帧后必须丢弃；行的 x 索引采用 span 的调用方保证边界约定。Storage 的
+字节及类型化入口现在都在创建任务时复制键和值；字节入口只借用 output 和
+外部 packet。自定义数据的版本、校验和和业务合法性仍由应用决定。
+后续这轮的异步修复、事件类型匹配和基准限制见 [API_FOLLOWUP.zh-CN.md](API_FOLLOWUP.zh-CN.md)。
 
 验证结果：完整 C++ Guest host 套件通过；binary、storage_value、surface
 定向 ASan/UBSan 通过；voxel 的 VOXEL_PROFILE=1 ASan/UBSan 全部通过；
@@ -61,10 +62,10 @@ Surface 的线性内存上限也保持 2 MiB。这是接口迁移对照，不是
 
 后续应继续完善：
 
-- 一些异步通知仍由应用通过 `Event.service/opcode` 手动分流；可进一步提供
-  类型化匹配/订阅，保留现在的有界事件路由与取消语义。
-- 通用 Storage 字节接口与部分服务的字符串、span 借用规则不一致；可以
-  继续统一创建任务时编码的行为，同时验证协程帧和池峰值。
+- 可选 `events.hpp` 已补上七类通知的 `event.is<T>()` 匹配。类型化订阅及
+  尚未覆盖的窗口/UI 环境通知仍需设计；不得默认增加订阅表。
+- Storage、Permission、FS、Assets、IPC、Net、Work 已采用创建任务时编码
+  小参数的方式；输出/外部封包与资源对象的借用规则仍需逐个接口明确。
 - 类型化 Storage 本轮只覆盖标量，自定义结构仍需 Reader/Writer 或自己的
   codec。应通过显式 schema/codec 扩展，不能直接写原生结构体布局。
 - 文件接口仍明确返回短读、短写和 would_block；尚未加入持有部分进度的

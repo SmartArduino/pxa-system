@@ -170,8 +170,12 @@ auto saved = co_await ctx.storage().set_value("count", std::int32_t{42});
 这些入口使用明确的小端格式，拒绝字节数不符及非 0/1 的布尔值；不会序列化
 C++ 结构体内存布局。键和值在创建任务时已经复制，临时字符串及服务入口可
 立即销毁，Context 须保持有效。四字节值最多预留 96 字节最终封包，使用一个
-服务协程，不经过通用 `set` 的 512 字节临时包及第二个协程。原有字节接口仍
-适用于自定义版本化存档；其 key/value/output/外部 packet 的借用规则未改变。
+服务协程，不预留通用 `set` 的 512 字节封包容量。原有字节接口仍适用于
+自定义版本化存档，现在也在创建任务时复制键和值，只借用 output 和外部 packet。
+外部 packet 必须活到完成或取消，不能给多个尚未完成的请求复用；默认字节
+`set` 的最终封包仍最多 512 B，但只用一个服务协程且只复制实际载荷。
+无效参数直接返回失败任务，不占用协程槽。`list(after, output)` 校验返回键严格
+递增且大于 after；容量或协议错误不会覆盖旧输出。
 
 应用自有的文件、Work input 等数据可按需包含 `<pxa/binary.hpp>`，使用
 `binary::encode(value)`、`decode<T>(bytes)` 或有界的 `Reader`/`Writer`。
@@ -221,8 +225,20 @@ Assets 的 load/query/read 和 FS 路径在任务创建时复制到有界存储�
 可以立即销毁；Assets 直接提交协程内的最终包。读取的输出缓冲区仍为借用。
 Clock/Window/Game/Audio/Storage/Permission 的协程按值保存小型服务入口，
 `ctx.service()` 临时对象可以立即销毁；Context 必须活到任务完成或取消。
+Permission 的 name/scope 也在创建任务时编码；默认 check/acquire 不再嵌套
+第二个服务协程，512 B 默认封包容量保持不变。外部 packet 仍借用到完成或取消。
+Storage/Permission 的默认拥有式入口使用新鲜封包，不暂存另一份键或名称；
+外部封包入口另行处理输入重叠。
 其他异步接口的 `string_view`、`span`、权限及音频等资源对象仍按其接口约定借用，
 调用方必须保持它们有效。默认封包与协程帧均有界。
+
+按需包含 `<pxa/events.hpp>` 可写 `event.is<pxa::SensorSample>()`、
+`event.is<pxa::PermissionRevoked>()` 等，无需填写服务号和操作码。
+支持 SensorSample、PermissionRevoked、PlaybackEvent、SurfaceRelease、
+WorkStopRequested、IpcRequest/TypedIpcRequest 和 ui::CanvasPointer。
+它只匹配消息类型；即使 token/载荷损坏也会匹配，随后必须调用对应解码器
+并传播错误。IPC 还需匹配 endpoint/契约，Canvas/资源还需匹配页面代次/句柄。
+没有额外订阅表、协程、缓存或 Event 字段。完整示例见 device-sensor、ipc-stats、work。
 
 Device 使用 `ctx.device().runtime_info()` 获取目标、架构、引擎、引擎 ABI 与
 格式位（Wasm=1、AOT=2）。返回值拥有有界字符串存储，`.target.view()` 等
