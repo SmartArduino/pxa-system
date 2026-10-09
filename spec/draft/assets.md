@@ -395,3 +395,8 @@ and allocator overhead still require separate instrumentation.
   reuse of one task across activations. Requires system mbedTLS development
   headers/library. Shared ESP/desktop renderer tests check unused frame
   references can be reclaimed before presentation without changing pixels.
+
+Prepared Audio 0.8 sounds also accept encoding 9 (`.s16`): signed 16-bit
+little-endian mono at 16 kHz, nonempty even byte count, at most 960000 bytes.
+They are loaded as resident budgeted assets. Ogg background music remains
+streamed rather than loaded as a resident sound.

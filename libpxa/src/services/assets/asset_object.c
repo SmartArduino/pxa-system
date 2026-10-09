@@ -18,9 +18,12 @@ size_t pxa_asset_object_required_bytes(const pxa_asset_info_t *info) {
     uint32_t expected;
     if (!info) return 0;
     if (info->kind == PXA_ASSET_AUDIO) {
-        if (info->encoding != PXA_ASSET_ENCODING_PCM_U8_16K_MONO ||
+        if ((info->encoding != PXA_ASSET_ENCODING_PCM_U8_16K_MONO &&
+             info->encoding != PXA_ASSET_ENCODING_PCM_S16LE_16K_MONO) ||
             info->format_version || info->payload_offset || info->width || info->height ||
-            !info->decoded_bytes || info->decoded_bytes > 16000 ||
+            !info->decoded_bytes ||
+            (info->encoding == PXA_ASSET_ENCODING_PCM_U8_16K_MONO ? info->decoded_bytes > 16000 :
+                info->decoded_bytes > PXA_ASSET_AUDIO_MAX_PCM_BYTES || info->decoded_bytes % 2) ||
             info->stored_bytes != info->decoded_bytes) return 0;
         return sizeof(pxa_asset_object_t) + info->decoded_bytes;
     }

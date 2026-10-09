@@ -23,6 +23,7 @@
 #define PXA_ASSET_ENCODING_RGB565 2u
 #define PXA_ASSET_ENCODING_BGRA8888 7u
 #define PXA_ASSET_ENCODING_BGRA8888_PREMULTIPLIED 8u
+#define PXA_ASSET_ENCODING_PCM_S16LE_16K_MONO 9u
 #define PXA_ASSET_PATH_MAX 255u
 
 /* The Host C API owns pxa_asset_info_t for its resident asset objects, so the

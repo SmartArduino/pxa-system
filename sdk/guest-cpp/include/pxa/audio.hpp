@@ -120,6 +120,37 @@ public:
         return command_io(0x103, command);
     }
 
+    // Audio 0.8: one independently controlled resident sound per track.
+    Result<void> sound_track(const Asset& asset, std::uint8_t track,
+        bool loop = false, std::int16_t gain_db_q8 = -12 * 256) noexcept {
+        if (asset.descriptor().kind != AssetKind::audio || track >= 6 || !valid_gain(gain_db_q8))
+            return std::unexpected(Error::invalid_argument);
+        std::array<std::byte,16> command{};
+        wire::put64(command.data(),asset.handle());
+        wire::put16(command.data()+8,static_cast<std::uint16_t>(gain_db_q8));
+        command[10]=std::byte(track);command[11]=std::byte(loop ? 1 : 0);
+        return command_io(0x103,command);
+    }
+    Result<void> control_sound(std::uint8_t track, MusicAction action,
+        std::int16_t gain_db_q8 = 0) noexcept {
+        if (track >= 6 || static_cast<unsigned>(action)<1 || static_cast<unsigned>(action)>4 ||
+            (action==MusicAction::gain ? !valid_gain(gain_db_q8) : gain_db_q8!=0))
+            return std::unexpected(Error::invalid_argument);
+        std::array<std::byte,8> command{};
+        command[0]=std::byte(track);command[1]=std::byte(static_cast<std::uint8_t>(action));
+        wire::put16(command.data()+2,static_cast<std::uint16_t>(gain_db_q8));
+        return command_io(0x105,command);
+    }
+    Result<void> control_music(MusicAction action,std::int16_t gain_db_q8 = 0) noexcept {
+        if (static_cast<unsigned>(action)<1 || static_cast<unsigned>(action)>4 ||
+            (action==MusicAction::gain ? !valid_gain(gain_db_q8) : gain_db_q8!=0))
+            return std::unexpected(Error::invalid_argument);
+        std::array<std::byte,4> command{};
+        command[0]=std::byte(static_cast<std::uint8_t>(action));
+        wire::put16(command.data()+2,static_cast<std::uint16_t>(gain_db_q8));
+        return command_io(0x106,command);
+    }
+
     Result<std::uint64_t> music(std::string_view path, bool loop = false,
                                 std::int16_t gain_db_q8 = -12 * 256) noexcept {
         if (path.empty() || path.size() >= 512 ||

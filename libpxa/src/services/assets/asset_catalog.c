@@ -61,6 +61,10 @@ static pxa_status_t validate_info(const pxa_asset_info_t *info) {
         if (info->encoding == PXA_ASSET_ENCODING_PCM_U8_16K_MONO) {
             if (info->decoded_bytes != info->stored_bytes || info->stored_bytes > 16000)
                 return PXA_STATUS_LIMIT_EXCEEDED;
+        } else if (info->encoding == PXA_ASSET_ENCODING_PCM_S16LE_16K_MONO) {
+            if (info->decoded_bytes != info->stored_bytes || info->stored_bytes % 2 ||
+                info->stored_bytes > PXA_ASSET_AUDIO_MAX_PCM_BYTES)
+                return PXA_STATUS_LIMIT_EXCEEDED;
         } else if ((info->encoding != PXA_ASSET_ENCODING_OGG_OPUS &&
                     info->encoding != PXA_ASSET_ENCODING_OGG_VORBIS) ||
                    info->decoded_bytes != 0) return PXA_STATUS_UNSUPPORTED;

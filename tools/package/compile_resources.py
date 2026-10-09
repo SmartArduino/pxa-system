@@ -197,6 +197,10 @@ def describe(path):
         return 3, encoding, 0, 0, size, 0, 0, 0
     if path.suffix.lower() == ".pcm" and 0 < size <= 16000:
         return 3, 5, 0, 0, size, size, 0, 0
+    if path.suffix.lower() == ".s16":
+        require(0 < size <= 16000 * 2 * 30 and size % 2 == 0,
+                "PCM S16LE sound must contain whole 16 kHz mono samples, at most 30 seconds")
+        return 3, 9, 0, 0, size, size, 0, 0
     return 5, 0, 0, 0, size, size, 0, 0
 
 

@@ -141,6 +141,15 @@ class ResourcesTest(unittest.TestCase):
             self.assertEqual(result[start:], b"")
             self.assertEqual(build_index(self.package), result)
 
+    def test_signed_pcm_resource_bounds(self):
+        path=self.package / "assets/loop.s16"
+        path.write_bytes(bytes(32000 * 2))
+        result=build_index(self.package)
+        self.assertEqual(RECORD.unpack_from(result,16)[1:8], (3,9,0,0,64000,64000,0))
+        for data in (b"",b"abc",bytes(960002)):
+            path.write_bytes(data)
+            with self.assertRaises(ResourceError): build_index(self.package)
+
     def test_blob_metadata_and_empty_file(self):
         content = bytes(range(251)) * 34
         (self.package / "assets/map.bin").write_bytes(content)

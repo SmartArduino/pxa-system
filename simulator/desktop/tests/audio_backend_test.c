@@ -91,6 +91,27 @@ int main(int argc, char **argv) {
     pxa_audio_asset_control_t stop_sound={0,PXA_AUDIO_ASSET_STOP};
     assert(!audio_control_asset(h,b,&stop_sound) && pxa_asset_object_reference_count(sound)==1);
     pxa_asset_object_release(sound);
+    // Resident signed PCM and independent tracks use the actual SDL callback.
+    info.encoding=PXA_ASSET_ENCODING_PCM_S16LE_16K_MONO;
+    info.stored_bytes=info.decoded_bytes=2000;
+    assert(!pxa_asset_object_create(&info,raster_asset_allocate,raster_asset_free,
+        &h->resource_allocators[1][PXA_MEMORY_AUDIO],&sound,&sound_data));
+    for(unsigned i=0;i<1000;++i) {sound_data[2*i]=0xe8;sound_data[2*i+1]=3;}
+    pxa_asset_object_finish_loading(sound);
+    pxa_audio_sound_options_t tracked={0,1,1};
+    assert(!audio_play_sound_ex(h,b,sound,&tracked));
+    for(unsigned i=0;i<12;++i) audio_callback(h,(uint8_t*)output,sizeof(output));
+    assert(output[80]==1000 && pxa_asset_object_reference_count(sound)==2);
+    pxa_audio_asset_control_t music_gain={-20*256,PXA_AUDIO_ASSET_SET_GAIN};
+    assert(!audio_control_music(h,b,&music_gain));
+    audio_callback(h,(uint8_t*)output,sizeof(output)); assert(output[80]==1000);
+    assert(!audio_play_sound_ex(h,b,sound,&tracked));
+    assert(pxa_asset_object_reference_count(sound)==2);
+    pxa_audio_sound_control_t track_stop={0,1,PXA_AUDIO_ASSET_STOP};
+    assert(!audio_control_sound(h,b,&track_stop));
+    audio_callback(h,(uint8_t*)output,sizeof(output));
+    assert(pxa_asset_object_reference_count(sound)==1 && output[80]==0);
+    pxa_asset_object_release(sound);
     /* Ogg streams into 8192 samples regardless of track length. */
     static const uint8_t path[]="assets/tone.ogg";
     pxa_audio_asset_t asset={path,sizeof(path)-1,0,0};

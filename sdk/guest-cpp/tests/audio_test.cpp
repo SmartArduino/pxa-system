@@ -57,6 +57,12 @@ extern "C" std::int32_t pxa_io(std::uint64_t handle, std::uint32_t operation,
         pxa::wire::put64(p, 41);
         return size;
     }
+    if (operation==0x105) {
+        assert(size==8 && p[0]==std::byte{2} && p[1]==std::byte{3});return size;
+    }
+    if (operation==0x106) {
+        assert(size==4 && p[0]==std::byte{4} && pxa::wire::get16(p+2)==static_cast<std::uint16_t>(-20*256));return size;
+    }
     assert(operation == 0x102 && size == 4);
     return size;
 }
@@ -79,6 +85,9 @@ pxa::Task<void> run(pxa::Context& context) {
     auto blocked = session->music("music.opus");
     assert(!blocked && blocked.error() == pxa::Error::would_block);
     assert(session->control(pxa::MusicAction::pause));
+    assert(session->control_sound(2,pxa::MusicAction::stop));
+    assert(!session->control_sound(6,pxa::MusicAction::stop));
+    assert(session->control_music(pxa::MusicAction::gain,-20*256));
     auto state = co_await session->query();
     assert(state && state->submitted_samples == 100 && state->queued_samples == 20);
     auto flushed = co_await session->flush();

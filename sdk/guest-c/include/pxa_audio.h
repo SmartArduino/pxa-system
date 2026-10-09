@@ -16,6 +16,8 @@
 #define PXA_AUDIO_IO_CONTROL_ASSET 0x102u
 #define PXA_AUDIO_IO_PLAY_SOUND 0x103u
 #define PXA_AUDIO_IO_PLAY_MUSIC 0x104u
+#define PXA_AUDIO_IO_CONTROL_SOUND 0x105u
+#define PXA_AUDIO_IO_CONTROL_MUSIC 0x106u
 #define PXA_AUDIO_PLAYBACK_EVENT 0x8001u
 #define PXA_AUDIO_PLAYBACK_READY 1u
 #define PXA_AUDIO_PLAYBACK_ENDED 2u
@@ -377,6 +379,34 @@ static inline int32_t pxa_audio_play_sound(uint64_t session,uint64_t sound,int16
     uint8_t command[12] = {0};
     pxa_store_u64(command,sound); pxa_store_u16(command+8,(uint16_t)gain_db_q8);
     return pxa_io(session,PXA_AUDIO_IO_PLAY_SOUND,command,sizeof(command));
+}
+/* Audio 0.8: one independently controlled prepared sound per track (0..5).
+ * A successful replacement pins the new asset before releasing the old one.
+ * The Host owns timing, looping, fades and mixing; no Guest PCM pumping. */
+static inline int32_t pxa_audio_play_sound_track(uint64_t session, uint64_t sound,
+    uint8_t track, int loop, int16_t gain_db_q8) {
+    if (!(session >> 32) || !(sound >> 32) || track >= 6 ||
+        gain_db_q8 > 0 || gain_db_q8 < -60*256) return -1;
+    uint8_t command[16] = {0};
+    pxa_store_u64(command,sound); pxa_store_u16(command+8,(uint16_t)gain_db_q8);
+    command[10]=track; command[11]=loop ? 1 : 0;
+    return pxa_io(session,PXA_AUDIO_IO_PLAY_SOUND,command,sizeof(command));
+}
+static inline int32_t pxa_audio_control_sound(uint64_t session, uint8_t track,
+    uint8_t action, int16_t gain_db_q8) {
+    if (!(session >> 32) || track >= 6 || action < 1 || action > 4 ||
+        (action == 4 ? gain_db_q8 > 0 || gain_db_q8 < -60*256 : gain_db_q8 != 0)) return -1;
+    uint8_t command[8] = {track, action, 0, 0, 0, 0, 0, 0};
+    pxa_store_u16(command+2,(uint16_t)gain_db_q8);
+    return pxa_io(session,PXA_AUDIO_IO_CONTROL_SOUND,command,sizeof(command));
+}
+/* Controls only streamed music; prepared sound tracks retain their gains. */
+static inline int32_t pxa_audio_control_music(uint64_t session,uint8_t action,int16_t gain) {
+    if (!(session >> 32) || action < 1 || action > 4 ||
+        (action == 4 ? gain > 0 || gain < -60*256 : gain != 0)) return -1;
+    uint8_t command[4]={action,0,0,0};
+    pxa_store_u16(command+2,(uint16_t)gain);
+    return pxa_io(session,PXA_AUDIO_IO_CONTROL_MUSIC,command,sizeof(command));
 }
 /* Audio 0.7: success returns accepted bytes and a nonzero playback instance.
  * It does not imply decoder readiness. Match later events by session+instance.

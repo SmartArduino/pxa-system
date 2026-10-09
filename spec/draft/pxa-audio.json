@@ -1,11 +1,11 @@
 {
-  "schema": "pxa-audio-spec-0.7",
+  "schema": "pxa-audio-spec-0.8",
   "status": "draft",
   "service": {
     "name": "audio",
     "id": 10,
     "major": 0,
-    "minor": 7,
+    "minor": 8,
     "patch": 0
   },
   "opcodes": [
@@ -72,7 +72,9 @@
       "id": 259,
       "payload": "asset-handle:u64|gain-db-q8:i16|reserved:2*u8",
       "result": "payload-size-or-status",
-      "since": "0.6"
+      "since": "0.6",
+      "extended_payload": "asset-handle:u64|gain-db-q8:i16|track:u8|loop:u8|reserved:4*u8",
+      "extended_since": "0.8"
     },
     {
       "name": "play-music",
@@ -80,6 +82,20 @@
       "payload": "instance-out:u64|path-size:u16|gain-db-q8:i16|flags:u8|reserved:3*u8|package-path:bytes",
       "result": "payload-size-or-status; accepted command writes nonzero instance",
       "since": "0.7"
+    },
+    {
+      "name": "control-sound",
+      "id": 261,
+      "payload": "track:u8|action:u8|gain-db-q8:i16|reserved:4*u8",
+      "result": "payload-size-or-status",
+      "since": "0.8"
+    },
+    {
+      "name": "control-music",
+      "id": 262,
+      "payload": "action:u8|reserved:u8|gain-db-q8:i16",
+      "result": "payload-size-or-status",
+      "since": "0.8"
     }
   ],
   "record_tags": [
@@ -195,7 +211,7 @@
     "min_frame_ms": 5,
     "max_frame_ms": 120
   },
-  "protocol_version": "0.7.0",
+  "protocol_version": "0.8.0",
   "playback_event": {
     "id": 32769,
     "since": "0.7",
@@ -209,5 +225,14 @@
       "error": 5
     },
     "delivery": "reliable; retain until queued; bounded admission"
+  },
+  "sound_tracks": {
+    "count": 6,
+    "scope": "session",
+    "replacement": "atomically replace the previous sound on the same track; retain the new asset before retiring the old pin",
+    "timing": "Host sampling clock, independent of Guest ticks",
+    "controls": "pause, resume, faded stop, gain ramp",
+    "legacy": "12-byte play-sound appends an untracked one-shot; control-asset still controls all sounds and music",
+    "music": "control-music affects streamed music only"
   }
 }

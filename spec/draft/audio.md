@@ -1,6 +1,6 @@
-# PXA Audio Draft 0.7
+# PXA Audio Draft 0.8
 
-Audio 0.7 defines a permission-bound session and an atomic, App-owned playback
+Audio 0.8 defines a permission-bound session and an atomic, App-owned playback
 graph control plane. `open-session` requires an `audio.playback` Permission
 Handle whose exact scope is `media`. It returns a Component-owned audio-graph
 Handle plus the Host-selected PCM format. v1 currently defines only the media
@@ -147,3 +147,34 @@ failure is ERROR, not successful ENDED. Sample-accurate hardware drain remains
 outside the current backend callback contract. Music integrity-before-consume,
 shared-storage underrun tests and full decoder memory accounting remain part
 of the resource-refactor acceptance work.
+
+## Prepared sound tracks and music-only control (minor 8)
+
+The existing twelve-byte `play-sound` command keeps its append-one-shot behavior.
+The sixteen-byte form contains asset handle (u64), gain (i16 Q8 dB), track (u8,
+0..5), loop (u8, 0/1), and four zero reserved bytes. A successful command replaces
+the existing voice owned by that session and track, or uses an available voice.
+Admission failure leaves the existing voice unchanged. The Host pins the new
+asset before releasing the replaced pin. Loops and fades advance on the Host
+sampling clock, without Guest timers or PCM pumping.
+
+`control-sound` (0x105) is eight bytes: track, action, gain (i16), four reserved
+zero bytes. Actions reuse PAUSE=1, RESUME=2, STOP=3, SET_GAIN=4; non-gain commands
+require zero gain. It affects only that session's named track. Missing tracks
+are an idempotent no-op. Stops and replacement tails fade over at most 64 samples
+(4 ms at 16 kHz); paused stops release immediately. Gain changes ramp per sample.
+The ESP and SDL implementations share the resident voice renderer and a soft
+output limiter (unchanged below 28800, smooth saturation above), with six
+concurrent sound voices globally; named tracks do not reserve extra capacity.
+
+`control-music` (0x106) reuses the four-byte control-asset payload but affects
+only streamed music. Legacy control-asset retains its whole-session asset
+behavior. Music ducking therefore cannot overwrite prepared-sound gains.
+
+Assets encoding 9 identifies raw signed 16-bit little-endian mono 16 kHz PCM
+(`.s16`), with even, nonzero stored/decoded length and a 960000-byte ceiling
+(30 seconds). Load goes through the authenticated Assets worker/cache and its
+memory budgets. Encoding 5 unsigned eight-bit PCM remains limited to one second.
+Long loops may need a larger bounded asset-cache ceiling; no allocation, file
+read or codec processing occurs on prepared-voice rendering. Sound commands
+return admission status; unlike music, they do not emit readiness/end events.

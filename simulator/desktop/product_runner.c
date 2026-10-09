@@ -17,6 +17,7 @@
 #include "lvgl.h"
 #include "pxa/activation.h"
 #include "pxa/audio.h"
+#include "pxa/audio_sound.h"
 #include "pxa/audio_mixer.h"
 #include "pxa/clock.h"
 #include "pxa/game_render.h"
@@ -184,15 +185,7 @@ static int install_shape_mask(lv_display_t *display,
     return 1;
 }
 
-typedef struct {
-    pxa_asset_object_t *asset;
-    const uint8_t *pcm;
-    uint32_t samples;
-    uint32_t position;
-    int32_t gain_q15;
-    uint64_t session;
-    uint8_t paused;
-} product_sound_voice_t;
+typedef pxa_audio_sound_voice_t product_sound_voice_t;
 
 typedef struct {
     lv_display_t *display;
@@ -2293,20 +2286,9 @@ static void audio_callback(void *context, uint8_t *stream, int bytes) {
                  host->music_output_gain_q15 >> 15;
         for (size_t voice = 0; voice < PRODUCT_AUDIO_SOUND_VOICES; ++voice) {
             product_sound_voice_t *sound = &host->sound_voices[voice];
-            if (sound->paused || sound->position >= sound->samples) continue;
-            uint32_t remaining = sound->samples - sound->position;
-            uint32_t attack = sound->position + 1u;
-            uint32_t envelope = remaining < attack ? remaining : attack;
-            if (envelope > 64u) envelope = 64u;
-            int32_t sample = ((int32_t)sound->pcm[sound->position++] - 128)
-                             * 256;
-            mixed += ((sample * sound->gain_q15) >> 15) *
-                     (int32_t)envelope / 64;
-            if (sound->position == sound->samples) audio_release_sound(sound);
+            mixed += pxa_audio_sound_render(sound);
         }
-        if (mixed > INT16_MAX) mixed = INT16_MAX;
-        if (mixed < INT16_MIN) mixed = INT16_MIN;
-        output[index] = (int16_t)mixed;
+        output[index] = pxa_audio_output_limit(mixed);
     }
 }
 
@@ -2644,28 +2626,48 @@ static void audio_stop_worker(product_host_t *host) {
     }
 }
 
-static pxa_status_t audio_play_sound(void *context,uint64_t session,pxa_asset_object_t *asset,int16_t gain) {
+static pxa_status_t audio_play_sound_ex(void *context, uint64_t session,
+    pxa_asset_object_t *asset, const pxa_audio_sound_options_t *options) {
     product_host_t *host = context;
     int voice = audio_voice(host,session);
     if (voice < 0 || !host->audio_device) return PXA_STATUS_NOT_FOUND;
     if (!host->audio_mixer.voices[voice].committed) return PXA_STATUS_BAD_STATE;
-    pxa_asset_object_view_t view; pxa_asset_object_view(asset,&view);
-    if (view.kind != PXA_ASSET_AUDIO || !view.bytes || view.bytes > 16000 || gain > 0 || gain < -60*256)
-        return PXA_STATUS_INVALID_ARGUMENT;
-    int32_t gain_q15 = (int32_t)(32768.0 * pow(10.0,gain/5120.0));
+    int32_t gain = (int32_t)(32768.0 * pow(10.0,options->gain_db_q8/5120.0));
     pxa_status_t status = PXA_STATUS_WOULD_BLOCK;
+    product_sound_voice_t *selected = NULL;
     SDL_LockAudioDevice(host->audio_device);
-    for (unsigned i=0;i<PRODUCT_AUDIO_SOUND_VOICES;++i) if (!host->sound_voices[i].asset) {
-        pxa_asset_object_retain(asset);
-        host->sound_voices[i] = (product_sound_voice_t){asset,view.data,view.bytes,0,gain_q15,session,0};
-        status = PXA_STATUS_OK; break;
+    for (unsigned i=0;i<PRODUCT_AUDIO_SOUND_VOICES;++i) {
+        product_sound_voice_t *v = &host->sound_voices[i];
+        if (options->track != PXA_AUDIO_SOUND_APPEND && v->asset &&
+            v->voice == session && v->track == options->track) { selected=v; break; }
     }
+    if (!selected) for (unsigned i=0;i<PRODUCT_AUDIO_SOUND_VOICES;++i)
+        if (!host->sound_voices[i].asset) { selected=&host->sound_voices[i]; break; }
+    if (selected) status = pxa_audio_sound_start(selected,asset,session,
+        options->track,options->loop,gain) ? PXA_STATUS_OK : PXA_STATUS_INVALID_ARGUMENT;
     SDL_UnlockAudioDevice(host->audio_device);
     return status;
 }
+static pxa_status_t audio_play_sound(void *context,uint64_t session,pxa_asset_object_t *asset,int16_t gain) {
+    const pxa_audio_sound_options_t options = {gain,PXA_AUDIO_SOUND_APPEND,0};
+    return audio_play_sound_ex(context,session,asset,&options);
+}
+static pxa_status_t audio_control_sound(void *context, uint64_t session,
+    const pxa_audio_sound_control_t *control) {
+    product_host_t *host=context;
+    if (audio_voice(host,session)<0 || !host->audio_device) return PXA_STATUS_NOT_FOUND;
+    int32_t gain=(int32_t)(32768.0 * pow(10.0,control->gain_db_q8/5120.0));
+    SDL_LockAudioDevice(host->audio_device);
+    for (unsigned i=0;i<PRODUCT_AUDIO_SOUND_VOICES;++i) {
+        product_sound_voice_t *v=&host->sound_voices[i];
+        if (v->asset && v->voice==session && v->track==control->track)
+            pxa_audio_sound_control(v,control->action,gain);
+    }
+    SDL_UnlockAudioDevice(host->audio_device);
+    return PXA_STATUS_OK;
+}
 static void audio_release_sound(product_sound_voice_t *sound) {
-    pxa_asset_object_release_pinned(sound->asset);
-    memset(sound,0,sizeof(*sound));
+    pxa_audio_sound_release(sound);
 }
 static void audio_release_all_sounds(product_host_t *host) {
     for (unsigned i=0;i<PRODUCT_AUDIO_SOUND_VOICES;++i) audio_release_sound(&host->sound_voices[i]);
@@ -2746,8 +2748,15 @@ static pxa_status_t audio_playback_consume(void *context, const pxa_audio_playba
     return status;
 }
 
-static pxa_status_t audio_control_asset(void *context, uint64_t session,
-                                        const pxa_audio_asset_control_t *control) {
+static pxa_status_t audio_control_asset_impl(void *,uint64_t,const pxa_audio_asset_control_t *,int);
+static pxa_status_t audio_control_asset(void *c,uint64_t s,const pxa_audio_asset_control_t *v) {
+    return audio_control_asset_impl(c,s,v,0);
+}
+static pxa_status_t audio_control_music(void *c,uint64_t s,const pxa_audio_asset_control_t *v) {
+    return audio_control_asset_impl(c,s,v,1);
+}
+static pxa_status_t audio_control_asset_impl(void *context, uint64_t session,
+                                        const pxa_audio_asset_control_t *control, int music_only) {
     product_host_t *host = context;
     if (audio_voice(host, session) < 0 || host->audio_device == 0) return PXA_STATUS_NOT_FOUND;
     if (control == NULL) return PXA_STATUS_INVALID_ARGUMENT;
@@ -2758,13 +2767,13 @@ static pxa_status_t audio_control_asset(void *context, uint64_t session,
     }
     for (size_t i = 0; i < PRODUCT_AUDIO_SOUND_VOICES; ++i) {
         product_sound_voice_t *v = &host->sound_voices[i];
-        if (v->session != session) continue;
+        if (music_only || v->voice != session) continue;
         switch (control->action) {
             case PXA_AUDIO_ASSET_STOP: audio_release_sound(v); break;
             case PXA_AUDIO_ASSET_PAUSE: v->paused = 1; break;
             case PXA_AUDIO_ASSET_RESUME: v->paused = 0; break;
             case PXA_AUDIO_ASSET_SET_GAIN:
-                v->gain_q15 = (int32_t)(32768.0 * pow(10.0, control->gain_db_q8 / 5120.0)); break;
+                v->gain_q15 = v->target_gain_q15 = (int32_t)(32768.0 * pow(10.0, control->gain_db_q8 / 5120.0)); break;
         }
     }
     if (host->music_session != session) {
@@ -3416,6 +3425,9 @@ static int run_product_simulator(const options_t *input,
     audio_backend.play_tone = audio_play_tone;
     audio_backend.play_asset = audio_play_asset;
     audio_backend.play_sound = audio_play_sound;
+    audio_backend.play_sound_ex = audio_play_sound_ex;
+    audio_backend.control_sound = audio_control_sound;
+    audio_backend.control_music = audio_control_music;
     audio_backend.play_music = audio_play_music;
     audio_backend.playback_peek = audio_playback_peek;
     audio_backend.playback_consume = audio_playback_consume;

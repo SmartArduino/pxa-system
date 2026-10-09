@@ -31,6 +31,8 @@ extern "C" {
 #define PXA_ASSET_ENCODING_OGG_OPUS 3u
 #define PXA_ASSET_ENCODING_OGG_VORBIS 4u
 #define PXA_ASSET_ENCODING_PCM_U8_16K_MONO 5u
+#define PXA_ASSET_ENCODING_PCM_S16LE_16K_MONO 9u
+#define PXA_ASSET_AUDIO_MAX_PCM_BYTES (16000u * 2u * 30u)
 #define PXA_ASSET_ENCODING_PNG 6u
 /* Offline UI pixels: B,G,R,A bytes, straight alpha; no runtime decoder. */
 #define PXA_ASSET_ENCODING_BGRA8888 7u
