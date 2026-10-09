@@ -445,8 +445,13 @@ lit palette；颜色直接使用 RGB565，透明面应继续使用纹理。扫�
 `Frame::solid_triangles()` 或 `Frame::triangles()`，不能再将结果当作周界扇形
 三角化。`project_polygon()` 接受凸三角形或四边形，返回裁剪后的周界，最多
 10 个顶点并插值 UV；只有周界结果需要调用方三角化。完全位于视锥内的面
-直接投影，不构造或复制中间裁剪数组。屏幕覆盖的 UI/HUD 仍使用
-普通 UI 组件，不应混入深度批次。
+直接投影，不构造或复制中间裁剪数组。屏幕覆盖的 UI/HUD 可以用普通 UI 组件，
+也可以在世界之后追加到同一 Surface 的 2D 绘制列表；不要混入世界的深度批次。
+完全自绘的 HUD 可用 `sprites()`，或给 `textured_quad()` 设置
+`{.affine_uv=true, .painter=true, .transparent_index0=true}`，并在顶点明确指定
+palette 光照行（例如 0）。这复用 2D 扫描线内核，不检测或写入深度；
+`painter=true` 同时设置 `lit_palette=true` 则选择带深度路径，适合世界几何。
+顺序覆盖的 HUD 无需增加全屏图层或合成缓冲；按钮和字体本身的光栅化仍有成本。
 
 Canvas 直接绘制位于 `<pxa/canvas.hpp>`：应用持有 `ui::CanvasRef` 和复用的
 `ui::CanvasCommands<N>`，用 `Canvas(ref, width, height)` 挂载（零宽高表示填满）。
