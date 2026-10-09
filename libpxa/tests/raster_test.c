@@ -806,6 +806,143 @@ static void test_depth_span_equivalence(void) {
     }
 }
 
+/* Regression: the Guest's voxel terrain submits painter quads over a 16x16
+ * index8 texture with a 16 level lit palette, UVs that span several blocks and
+ * the real camera depth. Reproduces the "painter quads render nothing" report
+ * without the Guest in the loop. */
+static void test_painter_depth_lit_terrain(void) {
+    enum {
+        COMMANDS = 2,
+        TOTAL_BYTES = PXA_RASTER_DRAW_HEADER_BYTES + PXA_RASTER_CLEAR_BYTES +
+                      PXA_RASTER_TEXTURED_QUAD_BYTES,
+    };
+    static const int16_t xy[8] = {-16, -16, 144, -16, 144, 56, -16, 56};
+    static uint8_t texels[16 * 16];
+    uint16_t palette[16 * 256];
+    uint16_t pixels[64];
+    uint16_t depth[64];
+    uint8_t bytes[TOTAL_BYTES];
+    pxa_raster_resources_t resources = {0};
+    pxa_raster_target_t target = {0};
+    pxa_raster_draw_list_view_t list;
+    uint32_t offset;
+    for (unsigned i = 0; i < sizeof(texels); ++i)
+        texels[i] = (uint8_t)(1 + (i % 7));
+    for (unsigned level = 0; level < 16; ++level)
+        for (unsigned index = 0; index < 256; ++index)
+            palette[level * 256 + index] =
+                (uint16_t)(level == 0 ? 0x07e0 : 0x0400);
+    resources.palette = palette;
+    resources.palette_light_levels = 16;
+    resources.capabilities = PXA_RASTER_CAP_TEXTURED_QUAD |
+                             PXA_RASTER_CAP_PAINTER_POLYGON |
+                             PXA_RASTER_CAP_LIT_PALETTE_DEPTH |
+                             PXA_RASTER_CAP_PAINTER_DEPTH |
+                             PXA_RASTER_CAP_TEXTURE_SLOTS_48;
+    resources.textures[0].pixels = texels;
+    resources.textures[0].width = 16;
+    resources.textures[0].height = 16;
+    target.pixels = pixels;
+    target.depth_pixels = depth;
+    target.width = target.height = 8;
+    target.stride_pixels = target.depth_stride_pixels = 8;
+    memset(depth, 0, sizeof(depth));
+    offset = begin_list(bytes, resources.capabilities, COMMANDS, 31,
+                        sizeof(bytes));
+    bytes[offset] = PXA_RASTER_RECORD_CLEAR_RGB565;
+    put_u16(bytes + offset + 2, PXA_RASTER_CLEAR_BYTES);
+    offset += PXA_RASTER_CLEAR_BYTES;
+    uint8_t *record = bytes + offset;
+    record[0] = PXA_RASTER_RECORD_TEXTURED_QUAD;
+    record[1] = PXA_RASTER_QUAD_PAINTER | PXA_RASTER_QUAD_LIT_PALETTE;
+    record[4] = 0;
+    put_u16(record + 2, PXA_RASTER_TEXTURED_QUAD_BYTES);
+    /* UVs span four blocks worth of texels, exactly like merged terrain. */
+    const int16_t uv[8] = {0, 0, 64 * 16, 0, 64 * 16, 32 * 16, 0, 32 * 16};
+    for (uint8_t vertex = 0; vertex < 4; ++vertex)
+        put_vertex_depth(record + 8 + vertex * PXA_RASTER_VERTEX_BYTES,
+                         xy[vertex * 2], xy[vertex * 2 + 1], uv[vertex * 2],
+                         uv[vertex * 2 + 1], 0, 8000);
+    offset += PXA_RASTER_TEXTURED_QUAD_BYTES;
+    /* The list must validate and must actually cover pixels. */
+    assert(pxa_raster_validate_draw_list(bytes, sizeof(bytes), &target,
+                                         &resources, &list) == PXA_STATUS_OK);
+    pxa_raster_execute_draw_list(bytes, &list, &target, &resources, NULL);
+    unsigned lit = 0;
+    for (offset = 0; offset < 64; ++offset)
+        if (pixels[offset] != 0) ++lit;
+    assert(lit > 0);
+}
+
+/* Mixing painter polygons with depth-tested primitives in one list: the host
+ * marks the whole list as depth using, which decides whether the painter
+ * polygons survive. The Guest's HUD does exactly this. */
+static void test_painter_mixed_with_depth(void) {
+    enum {
+        COMMANDS = 3,
+        TOTAL_BYTES = PXA_RASTER_DRAW_HEADER_BYTES + PXA_RASTER_CLEAR_BYTES +
+                      2 * PXA_RASTER_TEXTURED_QUAD_BYTES,
+    };
+    static const int16_t xy[8] = {0, 0, 128, 0, 128, 128, 0, 128};
+    uint8_t texels[4] = {1, 1, 1, 1};
+    uint16_t palette[16 * 256];
+    uint16_t pixels[64];
+    uint16_t depth[64];
+    uint8_t bytes[TOTAL_BYTES];
+    pxa_raster_resources_t resources = {0};
+    pxa_raster_target_t target = {0};
+    pxa_raster_draw_list_view_t list;
+    uint32_t offset;
+    for (unsigned level = 0; level < 16; ++level)
+        for (unsigned index = 0; index < 256; ++index)
+            palette[level * 256 + index] = (uint16_t)(level == 0 ? 0x07e0 : 0x0400);
+    resources.palette = palette;
+    resources.palette_light_levels = 16;
+    resources.capabilities = PXA_RASTER_CAP_TEXTURED_QUAD |
+                             PXA_RASTER_CAP_PAINTER_POLYGON |
+                             PXA_RASTER_CAP_LIT_PALETTE_DEPTH |
+                             PXA_RASTER_CAP_PAINTER_DEPTH;
+    resources.textures[0].pixels = texels;
+    resources.textures[0].width = 1;
+    resources.textures[0].height = 1;
+    target.pixels = pixels;
+    target.depth_pixels = depth;
+    target.width = target.height = 8;
+    target.stride_pixels = target.depth_stride_pixels = 8;
+    memset(depth, 0, sizeof(depth));
+    offset = begin_list(bytes, resources.capabilities, COMMANDS, 33,
+                        sizeof(bytes));
+    bytes[offset] = PXA_RASTER_RECORD_CLEAR_RGB565;
+    put_u16(bytes + offset + 2, PXA_RASTER_CLEAR_BYTES);
+    offset += PXA_RASTER_CLEAR_BYTES;
+    /* Painter quad first, then a depth-tested quad covering the same area. */
+    uint8_t *record = bytes + offset;
+    record[0] = PXA_RASTER_RECORD_TEXTURED_QUAD;
+    record[1] = PXA_RASTER_QUAD_PAINTER | PXA_RASTER_QUAD_LIT_PALETTE;
+    record[4] = 0;
+    put_u16(record + 2, PXA_RASTER_TEXTURED_QUAD_BYTES);
+    for (uint8_t vertex = 0; vertex < 4; ++vertex)
+        put_vertex_depth(record + 8 + vertex * PXA_RASTER_VERTEX_BYTES,
+                         xy[vertex * 2], xy[vertex * 2 + 1], 0, 0, 0, 8000);
+    offset += PXA_RASTER_TEXTURED_QUAD_BYTES;
+    record = bytes + offset;
+    record[0] = PXA_RASTER_RECORD_TEXTURED_QUAD;
+    record[1] = PXA_RASTER_QUAD_LIT_PALETTE;
+    record[4] = 0;
+    put_u16(record + 2, PXA_RASTER_TEXTURED_QUAD_BYTES);
+    for (uint8_t vertex = 0; vertex < 4; ++vertex)
+        put_vertex_depth(record + 8 + vertex * PXA_RASTER_VERTEX_BYTES,
+                         xy[vertex * 2], xy[vertex * 2 + 1], 0, 0, 0, 4000);
+    offset += PXA_RASTER_TEXTURED_QUAD_BYTES;
+    assert(pxa_raster_validate_draw_list(bytes, sizeof(bytes), &target,
+                                         &resources, &list) == PXA_STATUS_OK);
+    pxa_raster_execute_draw_list(bytes, &list, &target, &resources, NULL);
+    unsigned lit = 0;
+    for (offset = 0; offset < 64; ++offset)
+        if (pixels[offset] != 0) ++lit;
+    assert(lit > 0);
+}
+
 static void test_coverage_mask(void) {
     enum {
         COMMANDS = 4,
@@ -1361,6 +1498,8 @@ int main(void) {
     test_lit_palette_depth();
     test_painter_depth();
     test_depth_span_equivalence();
+    test_painter_depth_lit_terrain();
+    test_painter_mixed_with_depth();
     test_coverage_mask();
     test_solid_coverage_occlusion();
     test_depth_cutout();

@@ -59,6 +59,9 @@ constexpr std::uint16_t scrollbar = 777;
 constexpr std::uint16_t item_count = 778;
 constexpr std::uint16_t item_extent = 779;
 constexpr std::uint16_t event_mask = 3;
+/* Event kinds and mask bits mirror pxa_ui.h. */
+constexpr std::uint16_t event_pointer_kind = 7;
+constexpr std::uint64_t event_mask_pointer = UINT64_C(1) << 6;
 constexpr std::uint8_t row = 1;
 constexpr std::uint8_t column = 2;
 constexpr std::uint8_t stack = 3;

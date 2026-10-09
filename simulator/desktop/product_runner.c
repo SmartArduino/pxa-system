@@ -956,6 +956,16 @@ static uint8_t product_fit_scale(uint32_t surface_width,
     return best;
 }
 
+/* Reorder only within the application container. System chrome and dialogs
+ * remain on layer_top; a non-clickable image lets Canvas input pass through. */
+static void surface_order_image(product_host_t *host) {
+    if (host->surface_image == NULL) return;
+    if ((host->surface_flags & PRODUCT_SURFACE_FLAG_GAME_RENDER) != 0)
+        lv_obj_move_foreground(host->surface_image);
+    else
+        lv_obj_move_background(host->surface_image);
+}
+
 static pxa_status_t surface_create_with_raster_capacity(
     void *context, const pxa_surface_desc_t *desc, uint64_t *surface,
     uint32_t *stride, uint32_t raster_draw_capacity) {
@@ -1064,7 +1074,7 @@ static pxa_status_t surface_create_with_raster_capacity(
         lv_obj_set_clickable(host->surface_image, false);
         lv_obj_set_size(host->surface_image, host->surface_display_width,
                         host->surface_display_height);
-        lv_obj_move_background(host->surface_image);
+        surface_order_image(host);
     }
     return PXA_STATUS_OK;
 failed:
@@ -1149,7 +1159,7 @@ static pxa_status_t surface_register_buffers(void *context, uint64_t surface,
     lv_obj_set_size(host->surface_image, host->surface_display_width,
                     host->surface_display_height);
     lv_obj_set_pos(host->surface_image, 0, 0);
-    lv_obj_move_background(host->surface_image);
+    surface_order_image(host);
     return PXA_STATUS_OK;
 }
 
@@ -1237,7 +1247,7 @@ static pxa_status_t surface_configure(void *context, uint64_t surface,
     if (host->surface_image != NULL) {
         lv_obj_set_pos(host->surface_image, 0, 0);
         lv_obj_set_hidden(host->surface_image, !layer->visible);
-        lv_obj_move_background(host->surface_image);
+        surface_order_image(host);
         lv_obj_invalidate(host->surface_image);
     }
     return PXA_STATUS_OK;
@@ -1619,7 +1629,7 @@ static int surface_process_pending(product_host_t *host) {
     if ((host->surface_flags & PXA_SURFACE_FLAG_GUEST_MAPPED) != 0 &&
         !surface_enqueue_release(host, buffer_index, frame_id)) return 0;
     lv_image_set_src(host->surface_image, &host->surface_bitmap);
-    lv_obj_move_background(host->surface_image);
+    surface_order_image(host);
     lv_obj_invalidate(host->surface_image);
     return 1;
 }

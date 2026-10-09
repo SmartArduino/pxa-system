@@ -28,10 +28,10 @@ python3 "$cpp_sdk_dir/tools/generate_ipc_contract.py" \
   "$cpp_sdk_dir/examples/ipc-stats/stats_contract.hpp" --check
 python3 "$cpp_sdk_dir/tests/test_generate_ipc_contract.py"
 
-for test_name in features core_app ui_wire ui_page ui_input ui_display canvas ui_controls counter_app navigation list task assets storage fs permission audio device sensor net ipc ipc_contract work surface game game_pacing game_host game_service game_loop game_utils; do
+for test_name in features core_app ui_wire ui_page ui_input ui_display canvas ui_controls ui_canvas game_painter game_painter_replay counter_app navigation list task assets storage fs permission audio device sensor net ipc ipc_contract work surface game game_pacing game_host game_service game_loop game_utils; do
   extra_includes=()
   extra_objects=()
-  if [[ "$test_name" == game_host ]]; then
+  if [[ "$test_name" == game_host || "$test_name" == game_painter_replay ]]; then
     extra_includes=(-I"$pxa_system_dir/libpxa/include")
     extra_objects=("$work_dir/raster.o" "$work_dir/wire.o")
   fi

@@ -71,6 +71,8 @@ struct Vertex {
     std::uint16_t depth_q8 = 256;
 };
 
+// Positive finite camera Z is Q8 depth; invalid Z returns zero so callers
+// can reject it rather than render invalid geometry at the near plane.
 inline std::uint16_t painter_depth_from_z(float z) noexcept {
     if (!(z > 0) || !std::isfinite(z)) return 0;
     if (z >= 65535.0f / 256.0f) return UINT16_MAX;
