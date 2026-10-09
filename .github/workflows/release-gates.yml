@@ -16,7 +16,10 @@ jobs:
         with:
           python-version: '3.13'
       - name: Native dependencies
-        run: sudo apt-get update && sudo apt-get install -y ninja-build libssl-dev liblz4-dev
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build libssl-dev liblz4-dev
+          python -m pip install Pillow==12.3.0
       - name: Protocol and release metadata
         run: |
           python tools/release/metadata.py check
