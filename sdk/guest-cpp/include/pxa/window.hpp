@@ -29,6 +29,7 @@ struct WindowMetrics {
 };
 
 enum class BackAction : std::uint8_t { close = 0, stay = 1 };
+enum class WindowBarMode : std::uint8_t { visible = 0, hidden = 1, transient = 2 };
 
 inline Result<WindowMetrics> decode_window_metrics(
     std::span<const std::byte> bytes) noexcept {
@@ -88,13 +89,18 @@ public:
                                {payload.data(), message.size() + 2});
     }
 
-    Result<void> fullscreen() noexcept {
+    Result<void> fullscreen(WindowBarMode status = WindowBarMode::transient,
+                            WindowBarMode navigation = WindowBarMode::transient) noexcept {
+        if (static_cast<unsigned>(status) > 2 ||
+            static_cast<unsigned>(navigation) > 2)
+            return std::unexpected(Error::invalid_argument);
         std::array<std::byte, 15> payload{};
         for (std::size_t i = 0; i < 3; ++i) {
             wire::put16(payload.data() + i * 5,
                         static_cast<std::uint16_t>(i + 1));
             wire::put16(payload.data() + i * 5 + 2, 1);
-            payload[i * 5 + 4] = std::byte(i == 0 ? 1 : 2);
+            payload[i * 5 + 4] = std::byte(i == 0 ? 1 : i == 1
+                ? static_cast<unsigned>(status) : static_cast<unsigned>(navigation));
         }
         return transport_.send(2, 1, 0, payload);
     }

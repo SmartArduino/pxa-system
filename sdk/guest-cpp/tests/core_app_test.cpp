@@ -71,6 +71,23 @@ struct TestApp {
 PXA_APPLICATION(TestApp)
 
 int main() {
+    // Existing fullscreen callers retain transient bars. Games can hide only
+    // the status bar while preserving system navigation; invalid modes must
+    // not publish a partially encoded configuration.
+    {
+        pxa::Transport transport;
+        pxa::RequestTable requests;
+        std::array<std::byte,64> scratch{};
+        assert(transport.scratch(scratch));
+        transport.phase(pxa::Phase::start);
+        pxa::WindowService window(transport,requests);
+        assert(window.fullscreen());
+        assert(last_packet_size==35&&last_packet[24]==1&&last_packet[29]==2&&last_packet[34]==2);
+        assert(window.fullscreen(pxa::WindowBarMode::hidden));
+        assert(last_packet[29]==1&&last_packet[34]==2);
+        auto previous=last_packet;
+        assert(!window.fullscreen(static_cast<pxa::WindowBarMode>(3))&&last_packet==previous);
+    }
     assert(pxa_app_start(nullptr, 0) == 0);
     assert(starts == 1 && last_packet_size == 23);
     const std::array<std::uint8_t, 23> golden{
