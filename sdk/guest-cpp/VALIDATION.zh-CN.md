@@ -11,7 +11,7 @@
 - 独立 SDK 15 示例仓库内三目标与仓库外 45 次构建通过，17 Component Wasm 三个目标逐项一致。最终裁剪头更改后，game 示例追加仓库内/外三目标重建，再次审计全部 17 项哈希。
 - Release 默认去除 DWARF，可用 PXA_KEEP_WASM_DEBUG=ON/Debug 保留；17 Component Wasm 4224894→1219455 B，执行/数据/name 与原生 AOT 一致，不作为运行 FPS 收益。
 
-相同方块世界、相机、完整纹理、视距及 LCD 完成 FPS 的最终 C/C++ 对照、真实峰值和设备/模拟器交互记录见 workspace `docs/performance/pxa-3d-20261009.zh-CN.md`，原始数据在 `local/pxa-3d-goal-20261009/`。以前两个生产地图的 FPS 不再用于语言性能对比。S31 实机、实际 Guest 辅助栈高水位及全部弹层/模块成本仍未补齐，开发包交付不等于完成整个 M6 正式发布。
+相同方块世界、相机、完整纹理、视距及 LCD 完成 FPS 的最终 C/C++ 对照、真实峰值和设备/模拟器交互记录见 pxa-apps 的 [voxel-craft-cpp 3D 性能报告](https://github.com/SmartArduino/pxa-apps/blob/main/voxel-craft-cpp/docs/performance/pxa-3d-20261009.zh-CN.md)（workspace 本地路径 `local/pxa-apps/voxel-craft-cpp/docs/performance/pxa-3d-20261009.zh-CN.md`），原始数据在 `local/pxa-3d-goal-20261009/`。以前两个生产地图的 FPS 不再用于语言性能对比。S31 实机、实际 Guest 辅助栈高水位及全部弹层/模块成本仍未补齐，开发包交付不等于完成整个 M6 正式发布。
 
 ## 2026-10-08 至 2026-10-09 本轮验证
 
