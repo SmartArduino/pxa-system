@@ -6,7 +6,7 @@
 
 使用 Ubuntu 22.04 / glibc 2.35 的 Linux x86_64 构建环境。安装 Bash、coreutils、util-linux、Git、Python 3、CMake、Ninja、Clang 14/lld 14，以及 SDL2、PNG、FreeType、curl、OpenSSL、LZ4、Vorbisfile、Opusfile 和 zstd 的开发包。运行库收集要求对应 Debian 包的版权文件；精简镜像删除了 `/usr/share/doc` 时应重新安装匹配版本的软件包。
 
-WAMR 使用仓库锁定的子模块提交。独立检出 `config/wamr.json` 中固定的 Espressif LLVM 提交，保留用户原有源码。LVGL 使用工作区 `firmware/dependencies.lock.pai-touch` 的来源和版本。编译器仅启用 X86、RISCV 和 Xtensa，覆盖本轮宣称的三个应用目标；不宣称其他交叉目标。
+WAMR 使用仓库锁定的子模块提交。 首个候选版的定制提交已公开到 `lucinhu/wasm-micro-runtime`，源码 URL 与该固定提交一致；不依赖构建者的本地镜像。独立检出 `config/wamr.json` 中固定的 Espressif LLVM 提交，保留用户原有源码。LVGL 使用工作区 `firmware/dependencies.lock.pai-touch` 的来源和版本。编译器仅启用 X86、RISCV 和 Xtensa，覆盖本轮宣称的三个应用目标；不宣称其他交叉目标。
 
 ```sh
 PXA_RELEASE_JOBS=8 bash tools/release/build_linux_baseline.sh \

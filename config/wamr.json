@@ -1,5 +1,5 @@
 {
-  "repository": "https://github.com/78/wasm-micro-runtime.git",
+  "repository": "https://github.com/lucinhu/wasm-micro-runtime.git",
   "commit": "6a54186abc1c10c37c28e443107107c97af8f25f",
   "version": "78-wamr-6a54186a",
   "engine_abi": "wamr-pxa-aot-v6-core-1",
