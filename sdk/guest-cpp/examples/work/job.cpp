@@ -1,4 +1,5 @@
 #include <pxa/app.hpp>
+#include <pxa/events.hpp>
 
 #include <array>
 
@@ -47,7 +48,7 @@ struct SyncJob {
     }
 
     pxa::Result<bool> on_event(pxa::Context& ctx, const pxa::Event& event) {
-        if (event.service != 13 || event.opcode != 0x8001) return false;
+        if (!event.is<pxa::WorkStopRequested>()) return false;
         auto stop = pxa::decode_work_stop_requested(event);
         if (!stop) return std::unexpected(stop.error());
         if (stop->id != start.id)

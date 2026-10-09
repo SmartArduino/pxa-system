@@ -104,11 +104,21 @@ private:
 };
 } // namespace wire
 
+template<class T> struct EventTraits;
+
 struct Event {
     std::uint16_t service;
     std::uint16_t opcode;
     std::uint64_t token;
     std::span<const std::byte> payload;
+
+    // Routing only: the matching decoder still validates token and payload.
+    // Include events.hpp to enable the SDK notification type mappings.
+    template<class T>
+        requires requires { EventTraits<T>::service; EventTraits<T>::opcode; }
+    constexpr bool is() const noexcept {
+        return service == EventTraits<T>::service && opcode == EventTraits<T>::opcode;
+    }
 };
 
 Result<Event> parse_event(std::span<const std::byte> bytes) noexcept;

@@ -1,4 +1,5 @@
 #include <pxa/app.hpp>
+#include <pxa/events.hpp>
 #include <charconv>
 
 using namespace pxa::ui;
@@ -78,14 +79,14 @@ struct DeviceSensorApp {
         if (monitoring) begin_monitoring();
     }
     pxa::Result<bool> on_event(pxa::Context&, const pxa::Event& event) {
-        if (event.service == 8 && event.opcode == 0x8001) {
+        if (event.is<pxa::SensorSample>()) {
             auto sample = subscription.sample(event);
             if (sample) sample_value.set(sample->values[0]);
             else if (sample.error() != pxa::Error::not_found)
                 return std::unexpected(sample.error());
             return true;
         }
-        if (event.service == 11 && event.opcode == 0x8001) {
+        if (event.is<pxa::PermissionRevoked>()) {
             auto revoked = pxa::decode_permission_revoked(event);
             if (!revoked) return std::unexpected(revoked.error());
             if (revoked->name == "sensor.read") {

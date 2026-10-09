@@ -1,4 +1,5 @@
 #include <pxa/app.hpp>
+#include <pxa/events.hpp>
 
 #include <stats_generated.hpp>
 
@@ -12,7 +13,7 @@ struct StatsProvider {
     }
 
     pxa::Result<bool> on_event(pxa::Context& ctx, const pxa::Event& event) {
-        if (event.service != 7 || event.opcode != 0x8001) return false;
+        if (!event.is<pxa::IpcRequest>()) return false;
         auto request = pxa::decode_ipc_request<stats::Get>(event);
         if (!request) {
             if (request.error() == pxa::Error::not_found) return false;
