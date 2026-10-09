@@ -99,7 +99,7 @@ def main() -> None:
                 with Image.open(screenshot) as picture:
                     rgb = picture.convert("RGB")
                     colored = [(x, y) for y in range(rgb.height) for x in range(rgb.width)
-                               if (lambda p: p[0] > 100 and p[0] > p[1] * 1.4 and p[0] > p[2] * 1.3)(rgb.getpixel((x, y)))]
+                               if (lambda p: max(p) > 100 and max(p) - min(p) > 60)(rgb.getpixel((x, y)))]
                     if len(colored) < 100:
                         raise RuntimeError("primary button is missing from the displayed frame")
                     left, right = min(x for x, _ in colored), max(x for x, _ in colored)
