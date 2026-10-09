@@ -40,6 +40,11 @@ Changes are delivered through `ENVIRONMENT_CHANGED`. Baseline applications do no
 perform an explicit capability handshake. They declare required service
 features in the signed Package and use SDK fallbacks for optional features.
 
+Environment width, height, safe insets and corner radii are native Surface
+pixels. Logical lengths (dp) apply the density factor once. Viewport lengths
+(`vw`/`vh`) use fractions of the corresponding native pixel extent without
+applying density again.
+
 `composition=alpha-overlay` marks a complete UI subtree for the transparent
 UI plane. The Host snapshots that subtree before it is flattened into the
 primary RGB565 framebuffer, retains its color and alpha, and composites it

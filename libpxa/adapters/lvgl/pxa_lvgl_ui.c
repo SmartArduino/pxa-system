@@ -438,10 +438,10 @@ static int32_t canvas_end_pixels(const pxa_lvgl_ui_t *ui, int64_t value) {
     return result;
 }
 
-static int32_t viewport_length(const pxa_lvgl_ui_t *ui, int32_t fraction_q16,
-                               uint32_t logical_extent) {
-    int64_t extent = canvas_pixels(ui, logical_extent);
-    int64_t scaled = extent * fraction_q16 / (INT64_C(1) << 16);
+static int32_t viewport_length(int32_t fraction_q16, uint32_t pixel_extent) {
+    /* Environment extents are Surface pixels. Only dp lengths apply density;
+     * applying it to vw/vh a second time makes dense-panel layouts overflow. */
+    int64_t scaled = (int64_t)pixel_extent * fraction_q16 / (INT64_C(1) << 16);
     if (scaled > LV_COORD_MAX) return LV_COORD_MAX;
     if (scaled < -LV_COORD_MAX) return -LV_COORD_MAX;
     return (int32_t)scaled;
@@ -457,10 +457,10 @@ static int32_t length_value(const pxa_lvgl_ui_t *ui,
         case PXA_UI_LENGTH_PERCENT_Q16:
             return LV_PCT(amount >> 16);
         case PXA_UI_LENGTH_VIEWPORT_WIDTH_Q16:
-            return viewport_length(ui, amount,
+            return viewport_length(amount,
                                    ui->primary_environment.width);
         case PXA_UI_LENGTH_VIEWPORT_HEIGHT_Q16:
-            return viewport_length(ui, amount,
+            return viewport_length(amount,
                                    ui->primary_environment.height);
         case PXA_UI_LENGTH_FILL:
             return LV_PCT(100);

@@ -751,8 +751,8 @@ static void replace_content_subtree(void) {
     transact(6, 6, 2, PXA_UI_REPLACE_SUBTREE, &stream);
 }
 
-static pxa_status_t bounded_overlay(pxa_ui_backend_t *backend, void **old_root,
-                                      unsigned side, int overlay) {
+static pxa_status_t bounded_overlay_length(pxa_ui_backend_t *backend, void **old_root,
+                    int32_t width, int32_t height, uint8_t unit, int overlay) {
     pxa_ui_transaction_info_t info = {.kind=PXA_UI_REPLACE_SURFACE,
         .surface=PXA_UI_PRIMARY_SURFACE, .target_handle=*old_root};
     void *transaction=NULL, *root=NULL, *box=NULL;
@@ -761,10 +761,12 @@ static pxa_status_t bounded_overlay(pxa_ui_backend_t *backend, void **old_root,
     assert(!backend->apply(backend->context,transaction,&view,&root));
     view.node=2;view.parent=1;view.parent_handle=root;view.type=PXA_UI_NODE_BOX;
     assert(!backend->apply(backend->context,transaction,&view,&box));
-    uint8_t value[8]={PXA_UI_LENGTH_LOGICAL_PX};pxa_write_u32(value+4,side*64);
+    uint8_t value[8]={0};value[0]=unit;pxa_write_u32(value+4,(uint32_t)width);
     view.command=PXA_UI_COMMAND_SET_PROPERTY;view.node_handle=box;
     view.property=PXA_UI_PROPERTY_WIDTH;view.value=(pxa_bytes_t){value,8};
     assert(!backend->apply(backend->context,transaction,&view,NULL));
+    value[0]=unit==PXA_UI_LENGTH_VIEWPORT_WIDTH_Q16?PXA_UI_LENGTH_VIEWPORT_HEIGHT_Q16:unit;
+    pxa_write_u32(value+4,(uint32_t)height);
     view.property=PXA_UI_PROPERTY_HEIGHT;
     assert(!backend->apply(backend->context,transaction,&view,NULL));
     value[0]=1;pxa_write_u32(value+4,UINT32_C(0xd05030ff));
@@ -777,6 +779,36 @@ static pxa_status_t bounded_overlay(pxa_ui_backend_t *backend, void **old_root,
     if(status) backend->cancel(backend->context,transaction);
     else *old_root=root;
     return status;
+}
+
+static pxa_status_t bounded_overlay(pxa_ui_backend_t *backend, void **root,
+                                    unsigned side, int overlay) {
+    return bounded_overlay_length(backend,root,(int32_t)side*64,(int32_t)side*64,
+                                   PXA_UI_LENGTH_LOGICAL_PX,overlay);
+}
+
+static void test_viewport_density(void) {
+    allocator_state_t allocator={0};
+    pxa_lvgl_ui_config_t config={0};
+    config.struct_size=sizeof(config);config.allocate=test_allocate;config.release=test_release;
+    config.allocator_context=&allocator;config.execute=sync_execute;config.execute_user_data=&allocator;
+    config.primary_environment.width=320;config.primary_environment.height=240;
+    config.primary_environment.surface=PXA_UI_PRIMARY_SURFACE;
+    config.primary_environment.density_q16=65536;config.primary_environment.font_scale_q16=65536;
+    pxa_lvgl_ui_theme_init(&config.theme);
+    void *workspace=malloc(pxa_lvgl_ui_workspace_size()),*root=NULL;
+    pxa_lvgl_ui_t *adapter=NULL;pxa_ui_backend_t backend;
+    assert(workspace&&!pxa_lvgl_ui_init(workspace,pxa_lvgl_ui_workspace_size(),&config,&adapter,&backend));
+    const uint32_t densities[]={65536,98304,124928,196608};
+    for(unsigned i=0;i<4;++i){
+        config.primary_environment.density_q16=densities[i];
+        assert(!backend.environment_changed(backend.context,&config.primary_environment));
+        assert(!bounded_overlay_length(&backend,&root,32768,32768,PXA_UI_LENGTH_VIEWPORT_WIDTH_Q16,1));
+        lv_obj_t *box=lv_obj_get_child(lv_obj_get_child(lv_screen_active(),0),0);
+        assert(lv_obj_get_width(box)==160&&lv_obj_get_height(box)==120);
+    }
+    pxa_lvgl_ui_deinit(adapter);free(workspace);assert(allocator.current==0);
+    puts("LVGL viewport lengths: 50vw/50vh stay 160x120 at 160/240/305/480 DPI OK");
 }
 
 static void test_snapshot_limits(void) {
@@ -2170,6 +2202,7 @@ int main(void) {
 
     pxa_lvgl_ui_deinit(adapter);
     if (!getenv("PXA_CANVAS_MEASURE")) test_snapshot_limits();
+    if (!getenv("PXA_CANVAS_MEASURE")) test_viewport_density();
     pxa_ui_service_deinit(service);
     pxa_runtime_deinit(g_runtime);
     free(adapter_workspace);
