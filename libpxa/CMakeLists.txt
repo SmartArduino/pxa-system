@@ -413,7 +413,8 @@ if(PXA_BUILD_ADAPTERS AND PXA_WAMR_SOURCE_DIR)
                 add_custom_target(wamr_aot_data_guest_aot DEPENDS ${wamr_aot_data_AOT})
                 add_dependencies(pxa_wamr_engine_test wamr_aot_data_guest_aot)
                 target_compile_definitions(pxa_wamr_engine_test PRIVATE
-                    PXA_WAMR_TEST_AOT_DATA_PATH="${wamr_aot_data_AOT}")
+                    PXA_WAMR_TEST_AOT_DATA_PATH="${wamr_aot_data_AOT}"
+                    PXA_WAMR_TEST_AOT_DATA_WASM_PATH="${wamr_aot_data_guest_WASM}")
             endif()
             target_link_libraries(pxa_wamr_engine_test PRIVATE
                 pxa_adapters_posix pxa_adapters_wamr)

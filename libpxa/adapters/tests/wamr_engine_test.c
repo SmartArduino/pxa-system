@@ -486,12 +486,13 @@ static void check_wasi_guest(const char *label, const char *guest_path,
     CHECK(artifact_probe->allocate_count == allocate_count + 1);
     CHECK(artifact_probe->release_count == release_count ||
           artifact_probe->release_count == release_count + 1);
-    if (artifact.kind == PXA_ARTIFACT_AOT &&
-        strcmp(artifact_name, "retained-custom.aot") != 0) {
+    int retained_source = strcmp(artifact_name, "retained-custom.aot") == 0 ||
+                          strcmp(artifact_name, "retained-wasm.aot") == 0;
+    if (artifact.kind == PXA_ARTIFACT_AOT && !retained_source) {
         CHECK(artifact_probe->current_bytes == current_bytes);
         CHECK(artifact_probe->release_count == release_count + 1);
     }
-    if (strcmp(artifact_name, "retained-custom.aot") == 0) {
+    if (retained_source) {
         CHECK(artifact_probe->current_bytes > current_bytes);
         CHECK(artifact_probe->release_count == release_count);
     }
@@ -1006,6 +1007,10 @@ int main(void) {
 #endif
 #endif
 #ifdef PXA_WAMR_TEST_AOT_DATA_PATH
+        check_wasi_guest("Wasm declared as AOT retains its source",
+                         PXA_WAMR_TEST_AOT_DATA_WASM_PATH, "retained-wasm.aot",
+                         UINT32_C(0x7ffffff8), 0, package_dir,
+                         runtime, &engine_ops, &artifact_probe);
         for (unsigned repeat = 0; repeat < 20; ++repeat)
             check_wasi_guest("AOT initialized data after source release",
                              PXA_WAMR_TEST_AOT_DATA_PATH, "aot-data.aot",

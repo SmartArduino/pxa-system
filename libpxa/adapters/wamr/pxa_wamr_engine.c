@@ -461,7 +461,8 @@ static int standard_aot_sections(const uint8_t *bytes, size_t size) {
      * original ownership for extensions; reclaim only the six standard AOT
      * sections. The loader still validates their order, version and contents. */
     size_t at = 8;
-    if (size < 8) return 0;
+    if (size < 8 || size > UINT32_MAX ||
+        get_package_type(bytes, (uint32_t)size) != Wasm_Module_AoT) return 0;
     while (at < size) {
         if (size - at < 8 || pxa_read_u32(bytes + at) > 5) return 0;
         size_t length = pxa_read_u32(bytes + at + 4);
