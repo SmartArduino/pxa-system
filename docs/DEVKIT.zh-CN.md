@@ -33,6 +33,8 @@ pxa sdk install --archive ./pxa-devkit-0.2.0-rc.1-linux-x86_64.tar.gz --sha256 '
 
 安装不覆盖已有 SDK。安装后使用新目录的 `bin/pxa`；再显式执行 `pxa sdk update` 升级项目。归档和内部文件清单都会验证，解压会拒绝目录穿越和逃逸链接。
 
+开发工具的 HTTPS 使用随 Python 分发的公共 CA 证书；即使基础系统未安装证书包也能下载。已有 `SSL_CERT_FILE` 配置优先保留，便于使用自己的信任配置。
+
 首次创建项目生成用户独立的 P-256 开发密钥，默认保存在 `~/.local/share/pxa/keys`。可用 `PXA_USER_HOME` 指定用户目录，或用 `PXA_SIGNING_KEY` 指向已有开发私钥。私钥不进入项目、发行包或 provenance。保管并备份密钥；更换密钥意味着新的发布者身份。生产签名、发布者轮换及应用商店策略仍沿用 PXA 原有信任体系。
 
 ## 真机与模拟器

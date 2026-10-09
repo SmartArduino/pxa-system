@@ -128,6 +128,7 @@ pxa_prefix="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
             executable(stage / "bin" / name, prefix +
                 'export PYTHONPATH="$pxa_prefix/runtime/python-site"\n'
                 'export PYTHONDONTWRITEBYTECODE=1\n'
+                'export SSL_CERT_FILE="${SSL_CERT_FILE:-$pxa_prefix/runtime/python/lib/python3.13/site-packages/pip/_vendor/certifi/cacert.pem}"\n'
                 'export LD_LIBRARY_PATH="$pxa_prefix/runtime/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"\n'
                 f'exec "$pxa_prefix/runtime/python/bin/python3" "$pxa_prefix/tools/devkit/{script}" "$@"\n')
         for name, target in (("wamrc", "wamrc"), ("openssl", "openssl"),
