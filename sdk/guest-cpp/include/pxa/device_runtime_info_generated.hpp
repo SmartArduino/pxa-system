@@ -4,10 +4,10 @@
 
 namespace pxa {
 struct DeviceRuntimeInfo {
-    wire::OwnedText<31> target;
-    wire::OwnedText<23> architecture;
-    wire::OwnedText<23> engine;
-    wire::OwnedText<79> engine_abi;
+    FixedText<31> target;
+    FixedText<23> architecture;
+    FixedText<23> engine;
+    FixedText<79> engine_abi;
     std::uint32_t formats = 0;
 };
 

@@ -357,7 +357,7 @@ def render_cpp_device_header() -> str:
         "",
         "namespace pxa {",
         "struct DeviceRuntimeInfo {",
-        *(f"    wire::OwnedText<{field['max_bytes']}> "
+        *(f"    FixedText<{field['max_bytes']}> "
           f"{field['name'].replace('-', '_')};" for field in fields[:4]),
         "    std::uint32_t formats = 0;",
         "};",

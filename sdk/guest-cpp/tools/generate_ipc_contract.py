@@ -104,7 +104,7 @@ def validate(document: dict) -> tuple[list[dict], list[dict]]:
 def field_type(field: dict) -> str:
     kind = field["type"]
     if kind == "text":
-        return f"pxa::wire::OwnedText<{field['max_bytes']}>"
+        return f"pxa::FixedText<{field['max_bytes']}>"
     return {"u32": "std::uint32_t", "i32": "std::int32_t",
             "bool": "bool"}[kind]
 

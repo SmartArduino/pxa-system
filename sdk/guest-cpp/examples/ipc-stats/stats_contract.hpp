@@ -17,15 +17,15 @@ struct Get {
         pxa::wire::header_bytes + 20 + response_bytes;
     struct Request {
         std::uint32_t seed{};
-        pxa::wire::OwnedText<16> label{};
+        pxa::FixedText<16> label{};
     };
 
     struct Response {
         std::uint32_t next{};
         bool valid{};
-        pxa::wire::OwnedText<16> label{};
+        pxa::FixedText<16> label{};
         std::optional<bool> cached{};
-        std::optional<pxa::wire::OwnedText<12>> note{};
+        std::optional<pxa::FixedText<12>> note{};
     };
 
     static pxa::Result<std::size_t> encode_request(

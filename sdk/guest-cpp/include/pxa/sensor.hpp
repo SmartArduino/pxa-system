@@ -10,7 +10,7 @@ enum class SensorUnit : std::uint16_t {
 };
 struct SensorDescriptor {
     std::uint16_t id = 0;
-    wire::OwnedText<64> semantic;
+    FixedText<64> semantic;
     SensorUnit unit{};
     std::uint8_t dimensions = 0;
     std::uint32_t min_period_ms = 0, max_period_ms = 0;

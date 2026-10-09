@@ -83,7 +83,7 @@ class ContractGenerationTest(unittest.TestCase):
     def test_optional_field_is_bounded_and_omittable(self) -> None:
         output = generator.render(self.document)
         self.assertIn("std::optional<bool> cached{};", output)
-        self.assertIn("std::optional<pxa::wire::OwnedText<12>> note{};", output)
+        self.assertIn("std::optional<pxa::FixedText<12>> note{};", output)
         self.assertIn("if (value.cached)", output)
         self.assertIn("pxa::wire::record(writer, 32772, bytes)", output)
         self.assertIn("(*value.note).view()", output)
