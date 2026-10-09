@@ -234,4 +234,11 @@ Frame& Frame::solid_triangles(std::span<const Vertex> vertices,
         capability_bit(RenderCapability::triangle_batch));
 }
 
+Frame& Frame::palette_triangles(std::span<const Vertex> vertices,
+                                std::uint8_t palette_index) noexcept {
+    return append_triangles(vertices, {}, solid_color | painter,
+        Color565{palette_index}, capability_bit(RenderCapability::triangle_batch) |
+                                  capability_bit(RenderCapability::painter_polygon));
+}
+
 } // namespace pxa::game

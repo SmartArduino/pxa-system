@@ -260,6 +260,11 @@ public:
                      PolygonOptions options = {}) noexcept;
     Frame& solid_triangles(std::span<const Vertex> vertices,
                            Color565 color) noexcept;
+    // Ordered opaque polygons with per-vertex light and a palette index.
+    // No depth scratch: callers must provide a reliable painter order,
+    // depth_q8=0 and light < the uploaded palette row count.
+    Frame& palette_triangles(std::span<const Vertex> vertices,
+                             std::uint8_t palette_index) noexcept;
 
     Result<void> submit() noexcept;
     std::size_t bytes_used() const noexcept { return used_; }
