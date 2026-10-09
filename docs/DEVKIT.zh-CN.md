@@ -21,6 +21,8 @@ pxa run --sim --profile pai-touch --pxadb
 
 `--language c` 创建 C 模板。默认优化为 O3。`pxa build --target simulator,esp32s3,esp32s31` 将多个 AOT 和 Wasm 后备产物一起签名打包。`dist/hello.pxa` 是分发容器，`dist/pxa-hello` 是可检查的目录，旁边的 provenance JSON 记录发行与工具链身份。
 
+两个窗口示例会换算物理安全边距，并预留 32 dp 的系统栏空间，兼顾旧 Host 上覆盖在 Surface 上方的时钟。这是示例的保守布局策略，不是 SDK 的全局留白或全屏游戏规则；需要精确布局的应用应结合 Window snapshot 的 `system_bar_insets`、窗口模式与 UI environment 的物理安全边距。
+
 `pxa.lock` 锁定准确的发行包与工具链；它不是 Host 固件版本要求。将锁文件和 `package.json` 一起提交。`pxa sdk update` 是显式升级，只更新开发套件身份，保留应用原有兼容要求。构建会核对完整分发文件清单；修改这些文件需要创建新发行包，不能沿用旧锁。`pxa check --publisher-key publisher.der` 可以检查另一个明确受信任的发布者，默认检查当前用户的开发身份。
 
 ## 独立安装与签名

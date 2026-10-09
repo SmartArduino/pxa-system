@@ -7,14 +7,16 @@ using namespace pxa::ui::literals;
 
 struct Counter {
     State<int> count{0};
-    std::int32_t content_padding_dp = 16;
+    // Physical safe insets exclude the system bar. This windowed example
+    // reserves 32 dp for chrome on older Hosts as well as the current Host.
+    std::int32_t content_padding_dp = 32;
 
     pxa::Result<void> on_start(pxa::Context&, std::span<const std::byte> config) {
         if (auto display = decode_start_display(config)) {
             const auto& safe = display->safe;
             auto largest = std::max({safe.left, safe.top, safe.right, safe.bottom});
             auto inset = (std::uint64_t(largest) * 65536 + display->density_q16 - 1) / display->density_q16;
-            content_padding_dp = std::int32_t(std::min<std::uint64_t>(65535, inset + 16));
+            content_padding_dp = std::int32_t(std::min<std::uint64_t>(65535, inset + 32));
         }
         return {};
     }

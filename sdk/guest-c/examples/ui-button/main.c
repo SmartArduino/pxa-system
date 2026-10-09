@@ -11,7 +11,10 @@ static uint16_t inset_dp(const pxa_ui_environment_t* environment, unsigned edge)
                            ? environment->density_q16 : 65536u;
     uint64_t padding = environment
         ? ((uint64_t)environment->safe_insets[edge] * 65536u + density - 1u) / density : 0u;
-    padding += 12u;
+    /* The UI environment reports physical safe insets, not system chrome.
+       Keep a small status-bar reserve in this windowed example, including
+       older Hosts that place their clock over the primary Surface. */
+    padding += edge == 0 ? 32u : 12u;
     return (uint16_t)(padding > UINT16_MAX ? UINT16_MAX : padding);
 }
 
