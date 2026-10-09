@@ -8,6 +8,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import stat
 import subprocess
 import sys
@@ -99,8 +100,45 @@ def environment() -> dict:
     return env
 
 
+def stop_process(process, *, group=False):
+    if process.poll() is not None:
+        return
+    def send(number):
+        try:
+            if group:
+                os.killpg(process.pid, number)
+            else:
+                process.send_signal(number)
+        except ProcessLookupError:
+            pass
+    send(signal.SIGTERM)
+    try:
+        process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        send(signal.SIGKILL)
+        process.wait()
+
+
 def execute(command: list, **kwargs):
-    return subprocess.run([str(x) for x in command], check=True, env=environment(), **kwargs)
+    command = [str(x) for x in command]
+    capture = kwargs.pop("capture_output", False)
+    if capture:
+        if "stdout" in kwargs or "stderr" in kwargs:
+            raise ValueError("capture_output conflicts with stdout/stderr")
+        kwargs.update(stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    timeout = kwargs.pop("timeout", None)
+    input_data = kwargs.pop("input", None)
+    with subprocess.Popen(command, env=environment(), start_new_session=True, **kwargs) as process:
+        try:
+            stdout, stderr = process.communicate(input_data, timeout=timeout)
+        except BaseException:
+            # A packaging shell can own Ninja/Clang children. Stop the entire
+            # command group, and give a simulator time to save and shut down.
+            stop_process(process, group=True)
+            raise
+        if process.returncode:
+            raise subprocess.CalledProcessError(process.returncode, command, stdout, stderr)
+        return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
 
 
 def keys() -> tuple[Path, Path]:
@@ -342,11 +380,9 @@ def run(args) -> None:
         print(f"PXADB: --simulator {selector}", flush=True)
         execute(command)
     finally:
-        service.terminate()
-        try:
-            service.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            service.kill(); service.wait()
+        stop_process(service)
+        socket_path.unlink(missing_ok=True)
+        control_path.unlink(missing_ok=True)
 
 
 def doctor(args) -> None:
@@ -413,6 +449,9 @@ def device(args) -> None:
 
 
 def main() -> int:
+    # Convert termination into normal stack unwinding so child commands,
+    # simulator services and atomic build directories are always cleaned up.
+    signal.signal(signal.SIGTERM, lambda number, frame: sys.exit(128 + number))
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--version", action="version", version="PXA " + metadata.release())
     commands = parser.add_subparsers(dest="command", required=True)
@@ -455,6 +494,8 @@ def main() -> int:
     args = parser.parse_args()
     try:
         args.handler(args)
+    except KeyboardInterrupt:
+        return 130
     except (ValueError, OSError, subprocess.CalledProcessError, KeyError) as error:
         print(f"pxa: {error}", file=sys.stderr)
         return 1

@@ -73,7 +73,7 @@ def main() -> None:
         baseline = (app / "package.json").read_bytes()
         execute(name + "-sdk-update", ["sdk", "update"], app)
         assert (app / "package.json").read_bytes() == baseline
-        for iteration in range(3):
+        for iteration in range(4):
             profile = "pai-touch" if iteration == 2 else "generic"
             log = (args.output / f"{name}-run-{iteration}.log").open("w")
             process = subprocess.Popen([entry, "run", "--profile", profile, "--pxadb",
@@ -115,13 +115,36 @@ def main() -> None:
                     if hashlib.sha256(after.read_bytes()).digest() == hashlib.sha256(screenshot.read_bytes()).digest():
                         raise RuntimeError("C++ counter did not change after touch")
                 execute(f"{name}-runtime-{iteration}", ["device", "runtime", "--port", "unix:" + str(socket)], app)
-                execute(f"{name}-home-{iteration}", ["device", "input", "key", "home", "--port", "unix:" + str(socket)], app)
+                children = {}
+                if iteration == 3:
+                    for path in Path("/proc").iterdir():
+                        if not path.name.isdigit(): continue
+                        try: command = (path / "cmdline").read_bytes()
+                        except OSError: continue
+                        if str(app).encode() in command and (
+                                b"pxsys_product_simulator" in command or b"simulator_pxadb.py" in command):
+                            children[path] = command
+                    if len(children) != 2:
+                        raise RuntimeError("cancellation gate did not find both simulator children")
+                    process.terminate()
+                else:
+                    execute(f"{name}-home-{iteration}", ["device", "input", "key", "home", "--port", "unix:" + str(socket)], app)
                 process.wait(timeout=20)
-                if process.returncode: raise RuntimeError(f"simulator shutdown status {process.returncode}")
+                expected = 143 if iteration == 3 else 0
+                if process.returncode != expected:
+                    raise RuntimeError(f"simulator shutdown status {process.returncode}, expected {expected}")
+                for path, command in children.items():
+                    try: remaining = (path / "cmdline").read_bytes()
+                    except OSError: continue
+                    if remaining == command:
+                        raise RuntimeError("cancelled command left a simulator child running")
+                if list(Path(socket_directory.name).glob("*.sock")) or list(Path(socket_directory.name).glob("*.control")):
+                    raise RuntimeError("simulator shutdown left a debug endpoint")
                 if language == "c" and "Button tapped" not in (args.output / f"{name}-run-{iteration}.log").read_text():
                     raise RuntimeError("C button input did not reach the Guest")
                 results.append({"name": f"{name}-run-{iteration}", "status": 0,
                                 "profile": profile, "button_center": [x, y],
+                                "cancelled": iteration == 3, "cancelled_children": len(children),
                                 "screenshot_sha256": hashlib.sha256(screenshot.read_bytes()).hexdigest()})
             finally:
                 if process.poll() is None:
