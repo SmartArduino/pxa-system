@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include <stdio.h>
 
 #include "lvgl.h"
 #include "pxa/window.h"
@@ -10,6 +11,10 @@
 #include "pxsys/theme.h"
 
 typedef void (*pxsys_product_simulator_pump_fn)(void *context);
+
+/* On-demand diagnostics use the same service table as package activation. */
+int pxsys_product_print_profile(FILE *stream);
+const char *pxsys_product_font_path(void);
 typedef void (*pxsys_product_simulator_window_fn)(
     void *context, const pxa_window_configuration_t *configuration);
 typedef void (*pxsys_product_simulator_control_bind_fn)(

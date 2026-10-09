@@ -17,6 +17,8 @@
 
 #include "lvgl.h"
 #include "pxa/package.h"
+#include "pxa/version.h"
+#include "product_runner.h"
 #include "pxsys/lvgl_renderer.h"
 #include "pxsys/pxa_catalog.h"
 #include "pxsys/reference_lvgl.h"
@@ -309,8 +311,10 @@ static void simulator_power_poll(simulator_power_state_t* state) {
 
 static int create_ui_font(lv_font_t** destination, uint32_t size,
                           const lv_font_t* symbol_fallback) {
+    const char *path = pxsys_product_font_path();
+    if (path == NULL || path[0] == '\0') return 0;
     *destination = lv_freetype_font_create(
-        PXSYS_DESKTOP_TEXT_FONT, LV_FREETYPE_FONT_RENDER_MODE_BITMAP, size,
+        path, LV_FREETYPE_FONT_RENDER_MODE_BITMAP, size,
         LV_FREETYPE_FONT_STYLE_NORMAL);
     if (*destination == NULL) return 0;
     if (size >= 24) symbol_fallback = &lv_font_montserrat_24;
@@ -1926,6 +1930,12 @@ done:
 
 int main(int argc, char** argv) {
     simulator_options_t options;
+    if (argc == 2 && strcmp(argv[1], "--version") == 0) {
+        printf("PXA simulator %s\n", PXA_VERSION_STRING);
+        return 0;
+    }
+    if (argc == 2 && strcmp(argv[1], "--capabilities") == 0)
+        return pxsys_product_print_profile(stdout);
     if (!parse_options(argc, argv, &options)) {
         print_usage(argv[0]);
         return 2;

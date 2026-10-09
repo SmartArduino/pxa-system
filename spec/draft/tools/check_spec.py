@@ -174,10 +174,11 @@ def validate_package_golden(document: dict[str, object], package: dict[str, obje
     return len(inventory)
 
 
-def validate_v1_envelope_proposal(document: dict[str, object]) -> None:
-    require(document.get("schema") == "pxa-abi-envelope-proposal-1.0" and
-            document.get("status") == "proposal",
-            "v1 envelope must remain a proposal")
+def validate_v1_envelope(document: dict[str, object]) -> None:
+    require(document.get("schema") == "pxa-abi-envelope-1.0" and
+            document.get("status") == "defined" and
+            document.get("core_version") == {"major": 1, "minor": 0},
+            "Guest v1 envelope version mismatch")
     require(document.get("byte_order") == "little-endian" and
             document.get("size") == 20 and
             document.get("max_control_message") == 4096,
@@ -209,7 +210,7 @@ def validate_specs() -> tuple[int, int]:
         require(output.is_file() and
                 output.read_text(encoding="utf-8") == renderer(),
                 f"generated Service codec is stale: {output.name}")
-    validate_v1_envelope_proposal(
+    validate_v1_envelope(
         load_json(ROOT / "abi-1.0-envelope.json"))
     paths = sorted(ROOT.glob("pxa-*.json"))
     require(len(paths) == 21, "the consolidated draft must contain 21 machine specifications")

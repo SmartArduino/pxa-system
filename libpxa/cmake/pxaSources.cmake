@@ -51,6 +51,7 @@ function(pxa_collect_sources output root)
         src/package/manifest_decode.c
         src/package/manifest_security.c
         src/package/inventory.c
+        src/package/profile.c
         src/package/artifact_select.c
         src/package/container.c
         src/package/activation.c

@@ -2,7 +2,7 @@
 
 include(CMakeFindDependencyMacro)
 if(@PXSYS_CONFIG_NEEDS_LIBPXA@)
-    find_dependency(pxa 0.1)
+    find_dependency(pxa @PROJECT_VERSION@ EXACT)
 endif()
 
 include("${CMAKE_CURRENT_LIST_DIR}/pxsysTargets.cmake")
