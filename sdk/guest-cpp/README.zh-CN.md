@@ -1,5 +1,7 @@
 # PXA C++26 Guest SDK（开发中）
 
+应用接口边界与最近的封装改进见 [API_AUDIT.zh-CN.md](API_AUDIT.zh-CN.md)。
+
 此 SDK 是独立的 C++26 Guest 实现。它直接导入 `pxa_submit` 和 `pxa_io`，
 不包含或调用 Guest C SDK。与 Host 的日常调用仍只有这两项导入。
 libc 的 `malloc/free` 若已链接，会额外导出供 WAMR 分配配置和事件缓冲，
@@ -157,6 +159,29 @@ auto updated = score.update([](int value) { return value + 1; });
 封包缓冲区。较大的值可调用 `set(key, value, packet)`；最大 key/value 组合需
 2140 字节的复用缓冲区，SDK 直接在其中生成最终协议包，不额外复制大值。协议允许最大
 2048 字节，但设备 Host 可以配置更低的单值上限，超过时由 Host 返回错误。
+
+保存整数、布尔值或 IEEE 浮点数可直接使用类型化入口：
+
+```cpp
+auto count = co_await ctx.storage().get_value<std::int32_t>("count");
+auto saved = co_await ctx.storage().set_value("count", std::int32_t{42});
+```
+
+这些入口使用明确的小端格式，拒绝字节数不符及非 0/1 的布尔值；不会序列化
+C++ 结构体内存布局。键和值在创建任务时已经复制，临时字符串及服务入口可
+立即销毁，Context 须保持有效。四字节值最多预留 96 字节最终封包，使用一个
+服务协程，不经过通用 `set` 的 512 字节临时包及第二个协程。原有字节接口仍
+适用于自定义版本化存档；其 key/value/output/外部 packet 的借用规则未改变。
+
+应用自有的文件、Work input 等数据可按需包含 `<pxa/binary.hpp>`，使用
+`binary::encode(value)`、`decode<T>(bytes)` 或有界的 `Reader`/`Writer`。
+读写均返回 `Result`，容量不足不会推进位置，支持显式小端整数、float/double
+和规范布尔值；`Reader::finish()` 检查尾部多余数据。它不负责版本、校验和或
+业务字段校验。PXA 服务编码保留在 SDK 的 `wire` 内部，普通应用不需要拼包。
+
+服务结果与生成 IPC 结构的文本类型为 `pxa::FixedText<N>`，位于 `<pxa/text.hpp>`。
+这是拥有存储、无堆分配的有界 UTF-8 文本；非空文本赋值超过容量或非法 UTF-8
+会失败并保留原值。`wire::OwnedText<N>` 保留为同一类型的兼容别名。
 
 `ctx.fs()` 操作应用私有文件。`open(path, mode)` 返回不可复制、可移动的
 `File`；提供 `read`、`write`、`seek` 和显式 `close`，离开作用域也会关闭。
@@ -336,6 +361,19 @@ SDK 按 Host 返回的 stride 和 frame bytes 一次分配 64 字节对齐的 Gu
 `decode_surface_release(event)` 解码 Host 的释放通知，`query_state()` 返回实际
 提交、显示、丢弃和空闲缓冲区计数。映射避免每帧通过 ABI 复制像素，不保证
 Host 合成和显示链路零拷贝。
+
+绘制映射像素时，`frame.rgb565()` 提供借用的类型化像素视图：
+
+```cpp
+auto pixels = frame.rgb565();
+if (!pixels) return;
+auto row = pixels->row(y); // 每行检查 y 和实际 stride。
+if (row) (*row)[x] = 0x07e0; // x 须小于 row->size()，与 span 索引约定一致。
+```
+
+视图按 RGB565 小端格式读写，支持填充、未对齐地址和有 padding 的 stride，
+不需要应用调用 `wire::put16`，也不增加帧缓冲或 Surface 常驻字段。视图和行
+均不延长帧租约，present、关闭或销毁帧之后必须丢弃它们。
 
 映射需要签名的 pinned-memory 声明。CMake 应用在 `package.json` 的 `build`
 中声明 `linear_memory.maximum_bytes`（64 KiB 整页）和 `pinned: true`；打包工具
