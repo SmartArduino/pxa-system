@@ -1,6 +1,7 @@
 #pragma once
 
 #include "task.hpp"
+#include "binary.hpp"
 
 #include <array>
 #include <string_view>
@@ -17,6 +18,32 @@ class StorageService {
 public:
     StorageService(Transport& transport, RequestTable& requests) noexcept
         : transport_(transport), requests_(requests) {}
+
+    // The key and value are owned by the task as soon as this call returns.
+    // Small scalar operations use one coroutine and a precisely bounded packet,
+    // without the generic set() overload's 512-byte temporary buffer.
+    template<binary::Scalar T>
+    Task<T> get_value(this StorageService self, std::string_view key) {
+        KeyPayload payload;
+        if (!encode_key(key, payload.bytes))
+            return Task<T>::failed(Error::invalid_argument);
+        payload.size = 4 + key.size();
+        return get_value_impl<T>(self, payload);
+    }
+
+    template<binary::Scalar T>
+    Task<void> set_value(this StorageService self, std::string_view key, T value) {
+        if (!valid_key(key)) return Task<void>::failed(Error::invalid_argument);
+        ValuePacket<T> packet;
+        auto* payload = packet.bytes.data() + wire::header_bytes;
+        (void)encode_key(key, {payload, 4 + key.size()});
+        auto* record = payload + 4 + key.size();
+        wire::put16(record, 2);
+        wire::put16(record + 2, sizeof(T));
+        (void)binary::write(std::span{record + 4, sizeof(T)}, value);
+        packet.size = wire::header_bytes + 8 + key.size() + sizeof(T);
+        return set_value_impl<T>(self, packet);
+    }
 
     Task<std::size_t> get(this StorageService self, std::string_view key,
                           std::span<std::byte> output) {
@@ -157,6 +184,46 @@ public:
     }
 
 private:
+    struct KeyPayload {
+        std::array<std::byte, 68> bytes{};
+        std::size_t size = 0;
+    };
+    template<binary::Scalar T> struct ValuePacket {
+        std::array<std::byte, wire::header_bytes + 8 + 64 + sizeof(T)> bytes{};
+        std::size_t size = 0;
+    };
+    static bool encode_key(std::string_view key, std::span<std::byte> output) noexcept {
+        if (!valid_key(key) || output.size() < 4 + key.size()) return false;
+        wire::put16(output.data(), 1);
+        wire::put16(output.data() + 2, static_cast<std::uint16_t>(key.size()));
+        for (std::size_t i = 0; i < key.size(); ++i) output[4 + i] = std::byte(key[i]);
+        return true;
+    }
+    template<binary::Scalar T>
+    static Task<T> get_value_impl(StorageService self, KeyPayload payload) {
+        auto event = co_await Response(self.transport_, self.requests_, 6, 1,
+            std::span{payload.bytes}.first(payload.size));
+        if (!event) co_return std::unexpected(event.error());
+        auto status = check_status(event->payload);
+        if (!status) co_return std::unexpected(status.error());
+        const auto records = event->payload.subspan(4);
+        if (records.size() != 4 + sizeof(T) || wire::get16(records.data()) != 2 ||
+            wire::get16(records.data() + 2) != sizeof(T))
+            co_return std::unexpected(Error::protocol_error);
+        co_return binary::decode<T>(records.subspan(4));
+    }
+    template<binary::Scalar T>
+    static Task<void> set_value_impl(StorageService self, ValuePacket<T> packet) {
+        auto event = co_await Response(self.transport_, self.requests_, 6, 2,
+            Response::PrebuiltPacket{std::span{packet.bytes}.first(packet.size)});
+        if (!event) co_return std::unexpected(event.error());
+        auto status = check_status(event->payload);
+        if (!status) co_return std::unexpected(status.error());
+        if (event->payload.size() != 4)
+            co_return std::unexpected(Error::protocol_error);
+        co_return Result<void>{};
+    }
+
     static bool valid_key(std::string_view key) noexcept {
         if (key.empty() || key.size() > 64 ||
             !((key[0] >= 'A' && key[0] <= 'Z') ||

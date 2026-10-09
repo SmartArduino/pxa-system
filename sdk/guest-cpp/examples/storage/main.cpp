@@ -11,10 +11,9 @@ struct StorageApp {
     pxa::Context* context = nullptr;
 
     pxa::Task<void> load() {
-        std::array<std::byte, 4> data{};
-        auto result = co_await context->storage().get("count", data);
-        if (result && *result == data.size()) {
-            count.set(static_cast<int>(pxa::wire::get32(data.data())));
+        auto result = co_await context->storage().get_value<std::int32_t>("count");
+        if (result) {
+            count.set(*result);
             status.set("Loaded");
         } else if (!result && result.error() == pxa::Error::not_found) {
             status.set("New save");
@@ -25,9 +24,7 @@ struct StorageApp {
     }
 
     pxa::Task<void> save() {
-        std::array<std::byte, 4> data{};
-        pxa::wire::put32(data.data(), static_cast<std::uint32_t>(count.get()));
-        auto result = co_await context->storage().set("count", data);
+        auto result = co_await context->storage().set_value("count", std::int32_t(count.get()));
         status.set(result ? "Saved" : "Save failed");
         co_return pxa::Result<void>{};
     }

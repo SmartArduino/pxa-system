@@ -15,27 +15,24 @@ struct WorkApp {
     bool busy = false;
 
     pxa::Task<void> schedule(std::uint32_t delay_ms) {
-        std::array<std::byte, 4> sequence{};
-        auto previous = co_await context->storage().get("sync.action.next", sequence);
+        auto previous = co_await context->storage().get_value<std::uint32_t>("sync.action.next");
         if ((!previous && previous.error() != pxa::Error::not_found) ||
-            (previous && *previous != sequence.size()) ||
-            (previous && pxa::wire::get32(sequence.data()) == UINT32_MAX)) {
+            (previous && *previous == UINT32_MAX)) {
             status.set("Action sequence failed");
             busy = false;
             co_return pxa::Result<void>{};
         }
-        const auto action = previous ? pxa::wire::get32(sequence.data()) + 1 : 1;
-        pxa::wire::put32(sequence.data(), action);
+        const std::uint32_t action = previous ? *previous + 1 : 1;
         // Reserve the action before enqueue. A failed enqueue may leave a gap,
         // but a completed action is never mistaken for a later request.
-        auto reserved = co_await context->storage().set("sync.action.next", sequence);
+        auto reserved = co_await context->storage().set_value("sync.action.next", action);
         if (!reserved) {
             status.set("Action sequence failed");
             busy = false;
             co_return pxa::Result<void>{};
         }
         std::array<std::byte, 5> input{std::byte{1}};
-        pxa::wire::put32(input.data() + 1, action);
+        (void)pxa::binary::write(input, action, 1);
         auto queued = co_await context->work().enqueue({
             .worker = "sync.job", .initial_delay_ms = delay_ms,
             .input = input,
@@ -43,8 +40,9 @@ struct WorkApp {
         if (queued) {
             last_id = queued->id;
             std::array<std::byte, 8> id_bytes{};
-            pxa::wire::put32(id_bytes.data(), last_id);
-            pxa::wire::put32(id_bytes.data() + 4, action);
+            pxa::binary::Writer tracked(id_bytes);
+            (void)tracked.write(last_id);
+            (void)tracked.write(action);
             auto saved = co_await context->storage().set("sync.latest.action", id_bytes);
             status.set(saved ? "Queued" : "Queued, tracking failed");
             completion.set("Pending");
@@ -69,9 +67,10 @@ struct WorkApp {
                                ? "No tracked job" : "Check failed");
             co_return pxa::Result<void>{};
         }
-        last_id = pxa::wire::get32(id_bytes.data());
+        pxa::binary::Reader tracked(id_bytes);
+        last_id = *tracked.read<std::uint32_t>();
         std::array<char, 32> key_storage{};
-        const auto key = work_completion_key(pxa::wire::get32(id_bytes.data() + 4),
+        const auto key = work_completion_key(*tracked.read<std::uint32_t>(),
                                              key_storage);
         if (key.empty())
             co_return std::unexpected(pxa::Error::resource_limit);

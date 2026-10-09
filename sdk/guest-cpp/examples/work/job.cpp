@@ -12,14 +12,14 @@ struct SyncJob {
     pxa::Task<void> run() {
         if (start.input_view().size() != 5 ||
             start.input_view()[0] != std::byte{1} ||
-            pxa::wire::get32(start.input_view().data() + 1) == 0) {
+            *pxa::binary::read<std::uint32_t>(start.input_view(), 1) == 0) {
             auto rejected = co_await context->work().complete(
                 start.id, pxa::WorkResult::failure);
             co_return rejected;
         }
         std::array<char, 32> key_storage{};
         const auto key = work_completion_key(
-            pxa::wire::get32(start.input_view().data() + 1), key_storage);
+            *pxa::binary::read<std::uint32_t>(start.input_view(), 1), key_storage);
         if (key.empty())
             co_return std::unexpected(pxa::Error::resource_limit);
         auto found = co_await context->storage().get(key, marker);

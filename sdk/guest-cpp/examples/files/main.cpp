@@ -16,8 +16,10 @@ struct FilesApp {
         } else {
             std::array<std::byte, 4> bytes{};
             auto read = file->read(bytes);
-            if (read && *read == bytes.size()) {
-                count.set(static_cast<int>(pxa::wire::get32(bytes.data())));
+            auto value = read ? pxa::binary::decode<std::int32_t>(std::span{bytes}.first(*read))
+                              : pxa::Result<std::int32_t>{std::unexpected(read.error())};
+            if (value) {
+                count.set(*value);
                 status.set("Loaded");
             } else {
                 status.set("Read failed");
@@ -33,8 +35,7 @@ struct FilesApp {
         if (!file) {
             status.set("Open failed");
         } else {
-            std::array<std::byte, 4> bytes{};
-            pxa::wire::put32(bytes.data(), static_cast<std::uint32_t>(count.get()));
+            const auto bytes = pxa::binary::encode(std::int32_t(count.get()));
             auto written = file->write(bytes);
             status.set(written && *written == bytes.size() ? "Saved" : "Write failed");
         }
