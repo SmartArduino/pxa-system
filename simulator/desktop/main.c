@@ -20,6 +20,7 @@
 #include "pxsys/lvgl_renderer.h"
 #include "pxsys/pxa_catalog.h"
 #include "pxsys/reference_lvgl.h"
+#include "pxsys/reference_layout.h"
 #include "pxsys/lvgl_flags.h"
 #include "pxsys/standard_system.h"
 #include "pxadb_control.h"
@@ -312,22 +313,32 @@ static int create_ui_font(lv_font_t** destination, uint32_t size,
         PXSYS_DESKTOP_TEXT_FONT, LV_FREETYPE_FONT_RENDER_MODE_BITMAP, size,
         LV_FREETYPE_FONT_STYLE_NORMAL);
     if (*destination == NULL) return 0;
+    if (size >= 24) symbol_fallback = &lv_font_montserrat_24;
     (*destination)->fallback = symbol_fallback;
     return 1;
 }
 
-static int create_ui_fonts(void) {
-    if (!create_ui_font(&simulator_ui_fonts.display, 28,
+static int create_ui_fonts(uint16_t density_dpi) {
+    pxsys_display_profile_t profile;
+    pxsys_display_profile_init(&profile, 480, 480);
+    profile.density_dpi = density_dpi;
+    if (!create_ui_font(&simulator_ui_fonts.display,
+                        pxsys_reference_display_scale_px(&profile, 28),
                         &lv_font_montserrat_28) ||
-        !create_ui_font(&simulator_ui_fonts.headline, 24,
+        !create_ui_font(&simulator_ui_fonts.headline,
+                        pxsys_reference_display_scale_px(&profile, 24),
                         &lv_font_montserrat_24) ||
-        !create_ui_font(&simulator_ui_fonts.title, 20,
+        !create_ui_font(&simulator_ui_fonts.title,
+                        pxsys_reference_display_scale_px(&profile, 20),
                         &lv_font_montserrat_20) ||
-        !create_ui_font(&simulator_ui_fonts.body, 16,
+        !create_ui_font(&simulator_ui_fonts.body,
+                        pxsys_reference_display_scale_px(&profile, 16),
                         &lv_font_montserrat_16) ||
-        !create_ui_font(&simulator_ui_fonts.label, 14,
+        !create_ui_font(&simulator_ui_fonts.label,
+                        pxsys_reference_display_scale_px(&profile, 14),
                         &lv_font_montserrat_14) ||
-        !create_ui_font(&simulator_ui_fonts.caption, 12,
+        !create_ui_font(&simulator_ui_fonts.caption,
+                        pxsys_reference_display_scale_px(&profile, 12),
                         &lv_font_montserrat_12))
         return 0;
     return 1;
@@ -367,6 +378,7 @@ typedef struct {
     const char* screenshot;
     pxsys_display_shape_t shape;
     uint16_t corner_radius;
+    uint16_t density_dpi;
     simulator_shape_background_t shape_background;
     pxsys_insets_t safe_insets;
     uint8_t custom_theme;
@@ -1259,7 +1271,7 @@ static int parse_options(int argc, char** argv, simulator_options_t* options) {
     *options = (simulator_options_t){
         480, 320, 0, PXSYS_COLOR_SCHEME_LIGHT,
         PXSYS_NAVIGATION_BUTTONS, "en-US", NULL, NULL,
-        PXSYS_DISPLAY_SHAPE_RECTANGLE, 0, SIMULATOR_SHAPE_BACKGROUND_MATTE,
+        PXSYS_DISPLAY_SHAPE_RECTANGLE, 0, 160, SIMULATOR_SHAPE_BACKGROUND_MATTE,
         {0, 0, 0, 0}, 0, 0,
         9, 41, 82, 4, PXSYS_NETWORK_WIFI, 1, 0, 24u * 1024u,
         NULL, NULL, NULL, NULL, NULL,
@@ -1311,6 +1323,11 @@ static int parse_options(int argc, char** argv, simulator_options_t* options) {
             } else {
                 return 0;
             }
+        } else if (strcmp(argv[index], "--density-dpi") == 0 &&
+                   index + 1 < argc) {
+            uint32_t density;
+            if (!parse_u32(argv[++index], 1, UINT16_MAX, &density)) return 0;
+            options->density_dpi = (uint16_t)density;
         } else if (strcmp(argv[index], "--safe-insets") == 0 &&
                    index + 1 < argc) {
             unsigned top, right, bottom, left;
@@ -1419,7 +1436,7 @@ static void print_usage(const char* program) {
             "[--permission allow|deny] [--storage-bytes N] "
             "[--installed-packages-root DIR --product-runner PATH "
             "--publisher-key DER --state-root DIR] "
-            "[--launch APP_ID] [--locked] [--screenshot PNG] [--duration-ms MS] "
+            "[--density-dpi DPI] [--launch APP_ID] [--locked] [--screenshot PNG] [--duration-ms MS] "
             "[--smoke-test|--self-test]\n",
             program);
 }
@@ -1565,7 +1582,7 @@ static int run_simulator(const simulator_options_t* options) {
     simulator_preferences_init(&preferences, options->state_root);
 
     lv_init();
-    if (!create_ui_fonts()) goto done;
+    if (!create_ui_fonts(options->density_dpi ? options->density_dpi : 160)) goto done;
     display = lv_sdl_window_create((int32_t)options->width,
                                    (int32_t)options->height);
     if (display == NULL) goto done;
@@ -1600,6 +1617,9 @@ static int run_simulator(const simulator_options_t* options) {
     pxsys_display_profile_init(&system_config.initial_display,
                                options->width, options->height);
     system_config.initial_display.shape = options->shape;
+    if (options->density_dpi != 0)
+        system_config.initial_display.density_dpi = options->density_dpi;
+    lv_display_set_dpi(display, system_config.initial_display.density_dpi);
     system_config.initial_display.safe_insets = options->safe_insets;
     if (options->shape == PXSYS_DISPLAY_SHAPE_CIRCLE ||
         options->shape == PXSYS_DISPLAY_SHAPE_ROUNDED_RECTANGLE) {
@@ -1646,6 +1666,8 @@ static int run_simulator(const simulator_options_t* options) {
             (uint8_t)system_config.initial_theme.effective_scheme;
         preferences.palette = PXSYS_THEME_PALETTE_BLUE;
     }
+    pxsys_reference_theme_adapt_display(&system_config.initial_display,
+                                        &system_config.initial_theme);
     if (pxsys_locale_snapshot_init(
             &system_config.initial_locale,
             pxsys_string_from_cstr(options->locale)) != PXSYS_STATUS_OK) goto done;

@@ -55,6 +55,39 @@ int main(void) {
                layout.safe_area.x + (int32_t)layout.safe_area.width);
     assert(layout.grid_columns <= 2);
 
+    pxsys_display_profile_init(&display, 480, 480);
+    display.density_dpi = 305;
+    display.shape = PXSYS_DISPLAY_SHAPE_ROUNDED_RECTANGLE;
+    display.corner_radii = (pxsys_corner_radii_t){58, 58, 58, 58};
+    display.safe_insets = (pxsys_insets_t){12, 12, 12, 12};
+    assert(pxsys_reference_layout_compute(&display, &layout) == PXSYS_STATUS_OK);
+    assert(layout.safe_area.width == 456 && layout.safe_area.height == 456);
+    assert(layout.status_bar.height == 48);
+    assert(layout.navigation_bar.height == 69);
+    assert(layout.content.width == 420 && layout.content.height == 345);
+    assert(pxsys_reference_display_scale_px(&display, 50) == 75);
+    {
+        pxsys_theme_snapshot_t theme;
+        pxsys_theme_snapshot_init(&theme, PXSYS_COLOR_SCHEME_DARK);
+        pxsys_reference_theme_adapt_display(&display, &theme);
+        assert(pxsys_theme_snapshot_validate(&theme) == PXSYS_STATUS_OK);
+        assert(theme.typography_px[PXSYS_TYPOGRAPHY_BODY] == 24);
+        assert(theme.typography_px[PXSYS_TYPOGRAPHY_CAPTION] == 18);
+        assert(pxsys_reference_layout_status_content_rect(
+                   &display, &layout, 22, &status_content) == PXSYS_STATUS_OK);
+        for (int32_t row = status_content.y;
+             row < status_content.y + (int32_t)status_content.height; ++row) {
+            assert(pxsys_display_contains_point(&display, status_content.x, row));
+            assert(pxsys_display_contains_point(&display,
+                status_content.x + (int32_t)status_content.width - 1, row));
+        }
+    }
+    display.density_dpi = 160;
+    assert(pxsys_reference_display_scale_px(&display, 50) == 50);
+    display.density_dpi = UINT16_MAX;
+    assert(pxsys_reference_display_scale_px(&display, 50) == 75);
+    assert(pxsys_reference_display_scale_px(&display, UINT16_MAX) == UINT16_MAX);
+
     pxsys_display_profile_init(&display, 1280, 720);
     assert(pxsys_reference_layout_compute(&display, &layout) == PXSYS_STATUS_OK);
     assert(layout.size_class == PXSYS_UI_SIZE_EXPANDED);

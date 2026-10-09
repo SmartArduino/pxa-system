@@ -121,6 +121,11 @@ typedef void (*pxsys_reference_lvgl_preview_overlay_fn)(
     uint32_t content_width, uint32_t content_height, uint32_t padding,
     uint16_t display_width, uint16_t display_height);
 
+/* Capture external application pixels once when an interactive Home drag
+ * begins. The UI owns/destroys the returned untransformed RGB565 snapshot. */
+typedef lv_draw_buf_t* (*pxsys_reference_lvgl_capture_application_fn)(
+    void* context, lv_obj_t* application);
+
 /* Product-owned diagnostics switches. The reference UI only supplies the
  * controls; rendering, logging and persistence remain outside LVGL. */
 typedef enum {
@@ -392,6 +397,11 @@ typedef struct {
     pxsys_reference_lvgl_idle_lock_fn idle_lock;
     void* system_overlay_objects_context;
     pxsys_reference_lvgl_overlay_objects_fn system_overlay_objects_changed;
+    /* External Surface renderers hand output to LVGL during Home motion and
+     * Recents. NULL hooks preserve ordinary LVGL-only application behavior. */
+    void* application_presentation_context;
+    pxsys_reference_lvgl_capture_application_fn capture_application;
+    pxsys_reference_lvgl_lock_changed_fn application_presentation_changed;
 } pxsys_reference_lvgl_config_t;
 
 typedef struct pxsys_reference_lvgl pxsys_reference_lvgl_t;

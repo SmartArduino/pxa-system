@@ -4,6 +4,7 @@
 #include <stdint.h>
 
 #include "pxsys/display.h"
+#include "pxsys/theme.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -29,6 +30,13 @@ typedef struct {
     uint8_t grid_columns;
     uint8_t reserved[3];
 } pxsys_reference_layout_t;
+
+/* Reference UI readability scale: retain legacy sizing up to 200 DPI and
+ * increase to at most 150% on small, dense panels. Apply to a fresh theme. */
+uint16_t pxsys_reference_display_scale_px(
+    const pxsys_display_profile_t* display, uint16_t pixels);
+void pxsys_reference_theme_adapt_display(
+    const pxsys_display_profile_t* display, pxsys_theme_snapshot_t* theme);
 
 pxsys_status_t pxsys_reference_layout_compute(
     const pxsys_display_profile_t* display,

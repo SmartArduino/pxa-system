@@ -2,6 +2,26 @@
 
 #include <string.h>
 
+uint16_t pxsys_reference_display_scale_px(
+    const pxsys_display_profile_t* display, uint16_t pixels) {
+    uint32_t percent = display != NULL ? display->density_dpi / 2u : 100u;
+    if (percent < 100u) percent = 100u;
+    if (percent > 150u) percent = 150u;
+    uint32_t scaled = ((uint32_t)pixels * percent + 50u) / 100u;
+    return scaled > UINT16_MAX ? UINT16_MAX : (uint16_t)scaled;
+}
+
+void pxsys_reference_theme_adapt_display(
+    const pxsys_display_profile_t* display, pxsys_theme_snapshot_t* theme) {
+    size_t role;
+    if (theme == NULL) return;
+    theme->base_font_px = pxsys_reference_display_scale_px(display, theme->base_font_px);
+    theme->base_spacing_px = pxsys_reference_display_scale_px(display, theme->base_spacing_px);
+    theme->base_radius_px = pxsys_reference_display_scale_px(display, theme->base_radius_px);
+    for (role = 0; role < PXSYS_TYPOGRAPHY_ROLE_COUNT; ++role)
+        theme->typography_px[role] = pxsys_reference_display_scale_px(display, theme->typography_px[role]);
+}
+
 static uint32_t minimum(uint32_t left, uint32_t right) {
     return left < right ? left : right;
 }
@@ -70,6 +90,11 @@ pxsys_status_t pxsys_reference_layout_compute(
         status_height = 28;
         navigation_height = 44;
     }
+    status_height = pxsys_reference_display_scale_px(display, (uint16_t)status_height);
+    navigation_height = pxsys_reference_display_scale_px(display, (uint16_t)navigation_height);
+    output->outer_padding = pxsys_reference_display_scale_px(display, output->outer_padding);
+    output->item_gap = pxsys_reference_display_scale_px(display, output->item_gap);
+    output->tile_min_width = pxsys_reference_display_scale_px(display, output->tile_min_width);
     if (status_height + navigation_height + 1u >= safe.height) {
         status_height = minimum(status_height, safe.height / 5u);
         navigation_height = minimum(navigation_height, safe.height / 4u);
