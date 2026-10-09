@@ -2,7 +2,9 @@
 
 #include "task.hpp"
 #include "service_wire.hpp"
+#include "request_packet.hpp"
 
+#include <cstring>
 #include <string_view>
 
 namespace pxa {
@@ -36,30 +38,32 @@ inline Result<PermissionRevoked> decode_permission_revoked(
 }
 
 class PermissionService {
+    using OwnedPacket = detail::OwnedRequestPacket<512>;
+    struct BorrowedPacket {
+        std::span<std::byte> bytes;
+        std::span<std::byte> packet() noexcept { return bytes; }
+    };
 public:
     PermissionService(Transport& transport, RequestTable& requests) noexcept
         : transport_(transport), requests_(requests) {}
 
+    // name/scope are encoded during this call. An external packet remains
+    // borrowed until completion/cancellation and must not be reused meanwhile.
     Task<bool> check(this PermissionService self, std::string_view name,
                      std::span<const std::byte> scope,
                      std::span<std::byte> packet) {
-        auto& [transport_, requests_] = self;
-        auto size = encode(name, scope, packet);
-        if (!size) co_return std::unexpected(size.error());
-        auto event = co_await Response(transport_, requests_, 11, 1,
-            Response::PrebuiltPacket{packet.first(*size)});
-        if (!event) co_return std::unexpected(event.error());
-        auto body = wire::result_body(event->payload);
-        if (!body) co_return std::unexpected(body.error());
-        if (body->size() != 1 || std::to_integer<unsigned>((*body)[0]) > 1)
-            co_return std::unexpected(Error::protocol_error);
-        co_return (*body)[0] == std::byte{1};
+        auto size = encode<true>(name, scope, packet);
+        if (!size) return Task<bool>::failed(size.error());
+        return check_impl(self, BorrowedPacket{packet.first(*size)});
     }
 
     Task<bool> check(this PermissionService self, std::string_view name,
                      std::span<const std::byte> scope = {}) {
-        std::array<std::byte, 512> packet{};
-        co_return co_await self.check(name, scope, packet);
+        OwnedPacket packet;
+        auto size = encode<false>(name, scope, packet.bytes);
+        if (!size) return Task<bool>::failed(size.error());
+        packet.size = *size;
+        return check_impl(self, packet);
     }
 
     Task<bool> check(std::string_view name, std::string_view scope) {
@@ -69,23 +73,18 @@ public:
     Task<Permission> acquire(this PermissionService self, std::string_view name,
                              std::span<const std::byte> scope,
                              std::span<std::byte> packet) {
-        auto& [transport_, requests_] = self;
-        auto size = encode(name, scope, packet);
-        if (!size) co_return std::unexpected(size.error());
-        auto event = co_await Response(transport_, requests_, 11, 2,
-            Response::PrebuiltPacket{packet.first(*size)}, true);
-        if (!event) co_return std::unexpected(event.error());
-        auto body = wire::result_body(event->payload);
-        if (!body) co_return std::unexpected(body.error());
-        if (body->size() != 8 || !(wire::get64(body->data()) >> 32))
-            co_return std::unexpected(Error::protocol_error);
-        co_return Permission(transport_, wire::get64(body->data()));
+        auto size = encode<true>(name, scope, packet);
+        if (!size) return Task<Permission>::failed(size.error());
+        return acquire_impl(self, BorrowedPacket{packet.first(*size)});
     }
 
     Task<Permission> acquire(this PermissionService self, std::string_view name,
                              std::span<const std::byte> scope = {}) {
-        std::array<std::byte, 512> packet{};
-        co_return co_await self.acquire(name, scope, packet);
+        OwnedPacket packet;
+        auto size = encode<false>(name, scope, packet.bytes);
+        if (!size) return Task<Permission>::failed(size.error());
+        packet.size = *size;
+        return acquire_impl(self, packet);
     }
 
     Task<Permission> acquire(std::string_view name, std::string_view scope) {
@@ -93,6 +92,36 @@ public:
     }
 
 private:
+    template<class Packet>
+    static Task<bool> check_impl(PermissionService self, Packet packet) {
+        auto event = co_await Response(self.transport_, self.requests_, 11, 1,
+            Response::PrebuiltPacket{packet.packet()});
+        if (!event) co_return std::unexpected(event.error());
+        auto body = wire::result_body(event->payload);
+        if (!body) co_return std::unexpected(body.error());
+        if (body->size() != 1 || std::to_integer<unsigned>((*body)[0]) > 1)
+            co_return std::unexpected(Error::protocol_error);
+        co_return (*body)[0] == std::byte{1};
+    }
+
+    template<class Packet>
+    static Task<Permission> acquire_impl(PermissionService self, Packet packet) {
+        auto event = co_await Response(self.transport_, self.requests_, 11, 2,
+            Response::PrebuiltPacket{packet.packet()}, true);
+        if (!event) co_return std::unexpected(event.error());
+        auto body = wire::result_body(event->payload);
+        if (!body) co_return std::unexpected(body.error());
+        // Own a recognizable result handle before validating the exact length,
+        // so a malformed success result cannot leak a granted permission.
+        Permission pending;
+        if (body->size() >= 8 && (wire::get64(body->data()) >> 32))
+            pending = Permission(self.transport_, wire::get64(body->data()));
+        if (body->size() != 8 || !pending)
+            co_return std::unexpected(Error::protocol_error);
+        co_return std::move(pending);
+    }
+
+    template<bool MayAlias>
     static Result<std::size_t> encode(
         std::string_view name, std::span<const std::byte> scope,
         std::span<std::byte> packet) noexcept {
@@ -103,10 +132,23 @@ private:
                           (scope.empty() ? 0 : 4 + scope.size());
         if (packet.size() < size)
             return std::unexpected(Error::resource_limit);
-        wire::Writer writer(packet.subspan(wire::header_bytes));
-        wire::record(writer, 1, {reinterpret_cast<const std::byte*>(name.data()),
-                                 name.size()});
-        if (!scope.empty()) wire::record(writer, 2, scope);
+        auto* out = packet.data() + wire::header_bytes;
+        auto* scope_record = out + 4 + name.size();
+        if constexpr (MayAlias) {
+            std::array<char, 96> owned_name;
+            std::memcpy(owned_name.data(), name.data(), name.size());
+            if (!scope.empty()) std::memmove(scope_record + 4, scope.data(), scope.size());
+            std::memcpy(out + 4, owned_name.data(), name.size());
+        } else {
+            std::memcpy(out + 4, name.data(), name.size());
+            if (!scope.empty()) std::memcpy(scope_record + 4, scope.data(), scope.size());
+        }
+        wire::put16(out, 1);
+        wire::put16(out + 2, static_cast<std::uint16_t>(name.size()));
+        if (!scope.empty()) {
+            wire::put16(scope_record, 2);
+            wire::put16(scope_record + 2, static_cast<std::uint16_t>(scope.size()));
+        }
         return size;
     }
     Transport& transport_;

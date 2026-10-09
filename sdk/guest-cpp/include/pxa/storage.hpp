@@ -2,8 +2,10 @@
 
 #include "task.hpp"
 #include "binary.hpp"
+#include "request_packet.hpp"
 
 #include <array>
+#include <cstring>
 #include <string_view>
 
 namespace pxa {
@@ -33,127 +35,80 @@ public:
 
     template<binary::Scalar T>
     Task<void> set_value(this StorageService self, std::string_view key, T value) {
-        if (!valid_key(key)) return Task<void>::failed(Error::invalid_argument);
-        ValuePacket<T> packet;
-        auto* payload = packet.bytes.data() + wire::header_bytes;
-        (void)encode_key(key, {payload, 4 + key.size()});
-        auto* record = payload + 4 + key.size();
-        wire::put16(record, 2);
-        wire::put16(record + 2, sizeof(T));
-        (void)binary::write(std::span{record + 4, sizeof(T)}, value);
-        packet.size = wire::header_bytes + 8 + key.size() + sizeof(T);
-        return set_value_impl<T>(self, packet);
+        Packet<wire::header_bytes + 8 + 64 + sizeof(T)> packet;
+        const auto encoded = binary::encode(value);
+        auto size = encode_set<false>(key, encoded, packet.bytes);
+        if (!size) return Task<void>::failed(size.error());
+        packet.size = *size;
+        return set_owned(self, packet);
     }
 
     Task<std::size_t> get(this StorageService self, std::string_view key,
                           std::span<std::byte> output) {
-        auto& [transport_, requests_] = self;
-        if (!valid_key(key))
-            co_return std::unexpected(Error::invalid_argument);
-        std::array<std::byte, 68> payload{};
-        wire::put16(payload.data(), 1);
-        wire::put16(payload.data() + 2,
-                    static_cast<std::uint16_t>(key.size()));
-        for (std::size_t i = 0; i < key.size(); ++i)
-            payload[4 + i] = std::byte(key[i]);
-        auto event = co_await Response(
-            transport_, requests_, 6, 1, {payload.data(), 4 + key.size()});
-        if (!event) co_return std::unexpected(event.error());
-        auto status = check_status(event->payload);
-        if (!status) co_return std::unexpected(status.error());
-        const auto records = event->payload.subspan(4);
-        if (records.size() < 4 || wire::get16(records.data()) != 2)
-            co_return std::unexpected(Error::protocol_error);
-        const auto size = wire::get16(records.data() + 2);
-        if (size > 2048 || records.size() != 4u + size)
-            co_return std::unexpected(Error::protocol_error);
-        if (output.size() < size)
-            co_return std::unexpected(Error::resource_limit);
-        for (std::size_t i = 0; i < size; ++i)
-            output[i] = records[4 + i];
-        co_return size;
+        KeyPayload payload;
+        if (!encode_key(key, payload.bytes))
+            return Task<std::size_t>::failed(Error::invalid_argument);
+        payload.size = 4 + key.size();
+        return get_impl(self, payload, output);
     }
 
+    // Inputs are encoded now. Only packet/output storage is borrowed until
+    // completion or cancellation; do not reuse it for another pending request.
     Task<void> set(this StorageService self, std::string_view key,
                    std::span<const std::byte> value,
                    std::span<std::byte> packet) {
-        auto& [transport_, requests_] = self;
-        if (!valid_key(key) || value.size() > 2048)
-            co_return std::unexpected(Error::invalid_argument);
-        const auto size = wire::header_bytes + 8 + key.size() + value.size();
-        if (packet.size() < size)
-            co_return std::unexpected(Error::resource_limit);
-        if (size > wire::max_control_bytes)
-            co_return std::unexpected(Error::invalid_argument);
-        auto* payload = packet.data() + wire::header_bytes;
-        wire::put16(payload, 1);
-        wire::put16(payload + 2, static_cast<std::uint16_t>(key.size()));
-        for (std::size_t i = 0; i < key.size(); ++i)
-            payload[4 + i] = std::byte(key[i]);
-        auto* record = payload + 4 + key.size();
-        wire::put16(record, 2);
-        wire::put16(record + 2, static_cast<std::uint16_t>(value.size()));
-        for (std::size_t i = 0; i < value.size(); ++i)
-            record[4 + i] = value[i];
-        auto event = co_await Response(
-            transport_, requests_, 6, 2,
-            Response::PrebuiltPacket{packet.first(size)});
-        if (!event) co_return std::unexpected(event.error());
-        auto status = check_status(event->payload);
-        if (!status) co_return std::unexpected(status.error());
-        if (event->payload.size() != 4)
-            co_return std::unexpected(Error::protocol_error);
-        co_return Result<void>{};
+        auto size = encode_set<true>(key, value, packet);
+        if (!size) return Task<void>::failed(size.error());
+        return set_borrowed(self, packet.first(*size));
     }
 
     Task<void> set(this StorageService self, std::string_view key,
                    std::span<const std::byte> value) {
-        std::array<std::byte, 512> packet{};
-        co_return co_await self.set(key, value, packet);
+        Packet<512> packet;
+        auto size = encode_set<false>(key, value, packet.bytes);
+        if (!size) return Task<void>::failed(size.error());
+        packet.size = *size;
+        return set_owned(self, packet);
     }
 
     Task<void> remove(this StorageService self, std::string_view key) {
-        auto& [transport_, requests_] = self;
-        if (!valid_key(key))
-            co_return std::unexpected(Error::invalid_argument);
-        std::array<std::byte, 68> payload{};
-        wire::put16(payload.data(), 1);
-        wire::put16(payload.data() + 2,
-                    static_cast<std::uint16_t>(key.size()));
-        for (std::size_t i = 0; i < key.size(); ++i)
-            payload[4 + i] = std::byte(key[i]);
-        auto event = co_await Response(
-            transport_, requests_, 6, 3, {payload.data(), 4 + key.size()});
-        if (!event) co_return std::unexpected(event.error());
-        auto status = check_status(event->payload);
-        if (!status) co_return std::unexpected(status.error());
-        if (event->payload.size() != 4)
-            co_return std::unexpected(Error::protocol_error);
-        co_return Result<void>{};
+        KeyPayload payload;
+        if (!encode_key(key, payload.bytes))
+            return Task<void>::failed(Error::invalid_argument);
+        payload.size = 4 + key.size();
+        return remove_impl(self, payload);
     }
 
     Task<std::size_t> list(this StorageService self, std::string_view after,
                            std::span<StorageKey> output) {
-        auto& [transport_, requests_] = self;
-        if (!after.empty() && !valid_key(after))
-            co_return std::unexpected(Error::invalid_argument);
-        std::array<std::byte, 68> payload{};
+        KeyPayload payload;
         if (!after.empty()) {
-            wire::put16(payload.data(), 1);
-            wire::put16(payload.data() + 2,
-                        static_cast<std::uint16_t>(after.size()));
-            for (std::size_t i = 0; i < after.size(); ++i)
-                payload[4 + i] = std::byte(after[i]);
+            if (!encode_key(after, payload.bytes))
+                return Task<std::size_t>::failed(Error::invalid_argument);
+            payload.size = 4 + after.size();
         }
+        return list_impl(self, payload, output);
+    }
+
+private:
+    struct KeyPayload {
+        std::array<std::byte, 68> bytes{};
+        std::size_t size = 0;
+    };
+    template<std::size_t Capacity> using Packet = detail::OwnedRequestPacket<Capacity>;
+
+    static Task<std::size_t> list_impl(StorageService self, KeyPayload payload,
+                                      std::span<StorageKey> output) {
         auto event = co_await Response(
-            transport_, requests_, 6, 4,
-            {payload.data(), after.empty() ? 0u : 4u + after.size()});
+            self.transport_, self.requests_, 6, 4,
+            std::span{payload.bytes}.first(payload.size));
         if (!event) co_return std::unexpected(event.error());
         auto status = check_status(event->payload);
         if (!status) co_return std::unexpected(status.error());
         auto records = event->payload.subspan(4);
         std::size_t count = 0;
-        std::string_view previous;
+        std::string_view previous(reinterpret_cast<const char*>(payload.bytes.data() + 4),
+                                  payload.size ? payload.size - 4 : 0);
         for (std::size_t offset = 0; offset < records.size();) {
             if (records.size() - offset < 4 ||
                 wire::get16(records.data() + offset) != 1)
@@ -183,45 +138,100 @@ public:
         co_return count;
     }
 
-private:
-    struct KeyPayload {
-        std::array<std::byte, 68> bytes{};
-        std::size_t size = 0;
-    };
-    template<binary::Scalar T> struct ValuePacket {
-        std::array<std::byte, wire::header_bytes + 8 + 64 + sizeof(T)> bytes{};
-        std::size_t size = 0;
-    };
+    template<bool MayAlias>
+    static Result<std::size_t> encode_set(std::string_view key,
+        std::span<const std::byte> value, std::span<std::byte> packet) noexcept {
+        if (value.size() > 2048 || !valid_key(key))
+            return std::unexpected(Error::invalid_argument);
+        const auto size = wire::header_bytes + 8 + key.size() + value.size();
+        if (packet.size() < size) return std::unexpected(Error::resource_limit);
+        auto* payload = packet.data() + wire::header_bytes;
+        auto* record = payload + 4 + key.size();
+        if constexpr (MayAlias) {
+            // External inputs may overlap packet: snapshot the key first.
+            std::array<std::byte, 68> encoded_key;
+            write_key(key, encoded_key.data());
+            if (!value.empty()) std::memmove(record + 4, value.data(), value.size());
+            std::memcpy(payload, encoded_key.data(), 4 + key.size());
+        } else {
+            // Fresh owned storage cannot alias either input.
+            write_key(key, payload);
+            if (!value.empty()) std::memcpy(record + 4, value.data(), value.size());
+        }
+        wire::put16(record, 2);
+        wire::put16(record + 2, static_cast<std::uint16_t>(value.size()));
+        return size;
+    }
     static bool encode_key(std::string_view key, std::span<std::byte> output) noexcept {
         if (!valid_key(key) || output.size() < 4 + key.size()) return false;
-        wire::put16(output.data(), 1);
-        wire::put16(output.data() + 2, static_cast<std::uint16_t>(key.size()));
-        for (std::size_t i = 0; i < key.size(); ++i) output[4 + i] = std::byte(key[i]);
+        write_key(key, output.data());
         return true;
+    }
+    static void write_key(std::string_view key, std::byte* output) noexcept {
+        wire::put16(output, 1);
+        wire::put16(output + 2, static_cast<std::uint16_t>(key.size()));
+        for (std::size_t i = 0; i < key.size(); ++i) output[4 + i] = std::byte(key[i]);
     }
     template<binary::Scalar T>
     static Task<T> get_value_impl(StorageService self, KeyPayload payload) {
         auto event = co_await Response(self.transport_, self.requests_, 6, 1,
             std::span{payload.bytes}.first(payload.size));
         if (!event) co_return std::unexpected(event.error());
-        auto status = check_status(event->payload);
-        if (!status) co_return std::unexpected(status.error());
-        const auto records = event->payload.subspan(4);
-        if (records.size() != 4 + sizeof(T) || wire::get16(records.data()) != 2 ||
-            wire::get16(records.data() + 2) != sizeof(T))
-            co_return std::unexpected(Error::protocol_error);
-        co_return binary::decode<T>(records.subspan(4));
+        auto value = decode_value(event->payload);
+        if (!value) co_return std::unexpected(value.error());
+        co_return binary::decode<T>(*value);
     }
-    template<binary::Scalar T>
-    static Task<void> set_value_impl(StorageService self, ValuePacket<T> packet) {
+
+    static Task<std::size_t> get_impl(StorageService self, KeyPayload payload,
+                                     std::span<std::byte> output) {
+        auto event = co_await Response(self.transport_, self.requests_, 6, 1,
+            std::span{payload.bytes}.first(payload.size));
+        if (!event) co_return std::unexpected(event.error());
+        auto value = decode_value(event->payload);
+        if (!value) co_return std::unexpected(value.error());
+        if (output.size() < value->size()) co_return std::unexpected(Error::resource_limit);
+        if (!value->empty()) std::memmove(output.data(), value->data(), value->size());
+        co_return value->size();
+    }
+
+    static Result<std::span<const std::byte>> decode_value(
+        std::span<const std::byte> payload) noexcept {
+        auto status = check_status(payload);
+        if (!status) return std::unexpected(status.error());
+        const auto records = payload.subspan(4);
+        if (records.size() < 4 || wire::get16(records.data()) != 2)
+            return std::unexpected(Error::protocol_error);
+        const auto size = wire::get16(records.data() + 2);
+        if (size > 2048 || records.size() != 4u + size)
+            return std::unexpected(Error::protocol_error);
+        return records.subspan(4);
+    }
+
+    static Task<void> remove_impl(StorageService self, KeyPayload payload) {
+        auto event = co_await Response(self.transport_, self.requests_, 6, 3,
+            std::span{payload.bytes}.first(payload.size));
+        if (!event) co_return std::unexpected(event.error());
+        co_return decode_status(event->payload);
+    }
+
+    static Task<void> set_borrowed(StorageService self, std::span<std::byte> packet) {
+        auto event = co_await Response(self.transport_, self.requests_, 6, 2,
+            Response::PrebuiltPacket{packet});
+        co_return event ? decode_status(event->payload) : Result<void>{std::unexpected(event.error())};
+    }
+
+    template<std::size_t Capacity>
+    static Task<void> set_owned(StorageService self, Packet<Capacity> packet) {
         auto event = co_await Response(self.transport_, self.requests_, 6, 2,
             Response::PrebuiltPacket{std::span{packet.bytes}.first(packet.size)});
-        if (!event) co_return std::unexpected(event.error());
-        auto status = check_status(event->payload);
-        if (!status) co_return std::unexpected(status.error());
-        if (event->payload.size() != 4)
-            co_return std::unexpected(Error::protocol_error);
-        co_return Result<void>{};
+        co_return event ? decode_status(event->payload) : Result<void>{std::unexpected(event.error())};
+    }
+
+    static Result<void> decode_status(std::span<const std::byte> payload) noexcept {
+        auto status = check_status(payload);
+        if (!status) return std::unexpected(status.error());
+        if (payload.size() != 4) return std::unexpected(Error::protocol_error);
+        return {};
     }
 
     static bool valid_key(std::string_view key) noexcept {
