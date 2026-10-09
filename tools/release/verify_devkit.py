@@ -1,0 +1,215 @@
+#!/usr/bin/env python3
+"""Exercise an installed DevKit outside its source checkout, without downloads."""
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+from pathlib import Path
+
+from PIL import Image
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--devkit", type=Path, required=True)
+    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--targets", default="simulator,esp32s3,esp32s31")
+    args = parser.parse_args()
+    kit = args.devkit.resolve()
+    args.output.mkdir(parents=True, exist_ok=True)
+    env = dict(os.environ, PXA_USER_HOME=str(args.output.resolve() / "user"),
+               SDL_VIDEODRIVER="dummy", SDL_AUDIODRIVER="dummy", PYTHONDONTWRITEBYTECODE="1",
+               PXA_WASI_SDK_AUTO_DOWNLOAD="0", PXA_SIMULATOR_SOCKET_ROOT=str(args.output.resolve() / "sockets"))
+    # Unix sockets have short path limits; isolate them outside deep worktrees.
+    socket_directory = tempfile.TemporaryDirectory(prefix="pxa-kit-sockets-")
+    env["PXA_SIMULATOR_SOCKET_ROOT"] = socket_directory.name
+    entry = kit / "bin/pxa"
+    sys.path.insert(0, str(kit / "tools/devkit"))
+    from simulator_pxadb import SimulatorPxaDb
+    results = []
+
+    def execute(label, arguments, cwd=None, success=True):
+        start = time.monotonic()
+        result = subprocess.run([str(entry), *map(str, arguments)], cwd=cwd, env=env,
+                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=1800)
+        (args.output / (label + ".log")).write_text(result.stdout)
+        if (result.returncode == 0) != success:
+            raise RuntimeError(f"{label}: unexpected status {result.returncode}: {result.stdout[-4000:]}")
+        results.append({"name": label, "status": result.returncode, "seconds": time.monotonic() - start})
+        return result.stdout
+
+    execute("doctor", ["doctor", "--verify"])
+    project_root = args.output.resolve() / "outside repository with spaces"
+    project_root.mkdir(exist_ok=True)
+    for language in ("c", "cpp"):
+        name = "hello-" + language
+        execute(name + "-init", ["init", name, "--language", language], project_root)
+        app = project_root / name
+        execute(name + "-build", ["build", "--target", args.targets], app)
+        execute(name + "-check", ["check", app / "dist" / (name + ".pxa")], app)
+        # A signed package must be rejected when one payload byte is changed.
+        broken = app / "dist/broken"
+        shutil.copytree(app / "dist" / ("pxa-" + name), broken)
+        artifact = next((broken / "artifacts").glob("*.aot"))
+        data = bytearray(artifact.read_bytes()); data[-1] ^= 1; artifact.write_bytes(data)
+        execute(name + "-tamper", ["check", broken], app, False)
+        shutil.rmtree(broken)
+        original_lock = (app / "pxa.lock").read_bytes()
+        lock = json.loads(original_lock); lock["distribution_sha256"] = "0" * 64
+        (app / "pxa.lock").write_text(json.dumps(lock))
+        execute(name + "-bad-lock", ["build"], app, False)
+        (app / "pxa.lock").write_bytes(original_lock)
+        # Actual native profile; incompatible service floor must fail before run.
+        profile = json.loads(subprocess.check_output([kit / "bin/pxa-simulator", "--capabilities"], env=env))
+        profile["services"] = [s | {"version": [0, 0]} if s["id"] == 3 else s for s in profile["services"]]
+        profile_file = app / ".pxa/old-host.json"
+        profile_file.parent.mkdir(exist_ok=True)
+        profile_file.write_text(json.dumps(profile))
+        execute(name + "-old-service", ["check", app / "dist" / (name + ".pxa"), "--host-profile", profile_file], app, False)
+        baseline = (app / "package.json").read_bytes()
+        execute(name + "-sdk-update", ["sdk", "update"], app)
+        assert (app / "package.json").read_bytes() == baseline
+        # First launch without the optional debug service. That service creates
+        # its state directory, and previously masked a broken ordinary run.
+        assert not (app / ".pxa/state").exists()
+        control = Path(socket_directory.name) / (name + "-plain.control")
+        plain_log = (args.output / (name + "-plain-run.log")).open("w")
+        process = subprocess.Popen([entry, "run", "--", "--pxadb-control-socket", control],
+            cwd=app, env=env, stdout=plain_log, stderr=subprocess.STDOUT)
+        try:
+            deadline = time.monotonic() + 180
+            while not control.exists() and time.monotonic() < deadline:
+                if process.poll() is not None:
+                    raise RuntimeError("ordinary simulator run failed on a fresh project")
+                time.sleep(0.05)
+            if not control.exists() or list(Path(socket_directory.name).glob("*.sock")):
+                raise RuntimeError("ordinary run did not start without the debug service")
+            time.sleep(0.4)
+            state = app / ".pxa/state"
+            client = SimulatorPxaDb(state, kit / "bin/pxa-installer",
+                args.output.resolve() / "user/keys/development.der", control)
+            before = client.control("SCREENSHOT", timeout=30)
+            screenshot = args.output / (name + "-plain.png")
+            screenshot.write_bytes(before)
+            with Image.open(screenshot) as picture:
+                rgb = picture.convert("RGB")
+                colored = [(x, y) for y in range(rgb.height) for x in range(rgb.width)
+                    if (lambda p: max(p) > 100 and max(p) - min(p) > 60)(rgb.getpixel((x, y)))]
+                if len(colored) < 100: raise RuntimeError("ordinary run has no rendered button")
+                x = (min(x for x, _ in colored) + max(x for x, _ in colored)) // 2
+                y = (min(y for _, y in colored) + max(y for _, y in colored)) // 2
+            client.control(f"TAP {x} {y}")
+            time.sleep(0.15)
+            if language == "cpp" and before == client.control("SCREENSHOT", timeout=30):
+                raise RuntimeError("ordinary C++ run did not handle input")
+            client.control("KEY HOME")
+            process.wait(timeout=20)
+            if process.returncode != 0 or control.exists():
+                raise RuntimeError("ordinary run did not exit cleanly")
+            if language == "c" and "Button tapped" not in (args.output / (name + "-plain-run.log")).read_text():
+                raise RuntimeError("ordinary C run did not handle input")
+            results.append({"name": name + "-fresh-ordinary-run", "status": 0,
+                            "debug_service": False, "button_center": [x, y]})
+        finally:
+            if process.poll() is None:
+                process.terminate()
+                try: process.wait(timeout=5)
+                except subprocess.TimeoutExpired: process.kill(); process.wait()
+            plain_log.close()
+        for iteration in range(4):
+            profile = "pai-touch" if iteration == 2 else "generic"
+            log = (args.output / f"{name}-run-{iteration}.log").open("w")
+            process = subprocess.Popen([entry, "run", "--profile", profile, "--pxadb",
+                                        *(["--", "--density-dpi", "120"] if iteration == 2 else [])],
+                                       cwd=app, env=env, stdout=log, stderr=subprocess.STDOUT)
+            try:
+                # The first run verifies the complete SDK/toolchain inventory.
+                deadline = time.monotonic() + 180
+                socket = None
+                while time.monotonic() < deadline:
+                    candidates = list(Path(socket_directory.name).glob("*.sock"))
+                    if candidates and list(Path(socket_directory.name).glob("*.control")):
+                        socket = candidates[0]; break
+                    if process.poll() is not None:
+                        raise RuntimeError(f"{name} simulator exited before display; inspect run log")
+                    time.sleep(0.05)
+                if socket is None: raise RuntimeError("simulator debug endpoint did not start")
+                time.sleep(0.4)
+                screenshot = args.output.resolve() / f"{name}-{iteration}.png"
+                execute(f"{name}-capture-{iteration}", ["device", "screenshot", screenshot, "--port", "unix:" + str(socket)], app)
+                # Locate the actual primary button in the rendered pixels so
+                # the same interaction gate also covers density and safe insets.
+                with Image.open(screenshot) as picture:
+                    rgb = picture.convert("RGB")
+                    colored = [(x, y) for y in range(rgb.height) for x in range(rgb.width)
+                               if (lambda p: max(p) > 100 and max(p) - min(p) > 60)(rgb.getpixel((x, y)))]
+                    if len(colored) < 100:
+                        raise RuntimeError("primary button is missing from the displayed frame")
+                    left, right = min(x for x, _ in colored), max(x for x, _ in colored)
+                    top, bottom = min(y for _, y in colored), max(y for _, y in colored)
+                    x, y = (left + right) // 2, (top + bottom) // 2
+                    if iteration == 2 and (rgb.size != (296, 240) or left < 8 or top < 10):
+                        raise RuntimeError("screen profile or safe inset layout did not reach the Guest")
+                execute(f"{name}-tap-{iteration}", ["device", "input", "tap", x, y, "--port", "unix:" + str(socket)], app)
+                if language == "cpp":
+                    time.sleep(0.15)
+                    after = args.output.resolve() / f"{name}-{iteration}-clicked.png"
+                    execute(f"{name}-capture-clicked-{iteration}", ["device", "screenshot", after, "--port", "unix:" + str(socket)], app)
+                    if hashlib.sha256(after.read_bytes()).digest() == hashlib.sha256(screenshot.read_bytes()).digest():
+                        raise RuntimeError("C++ counter did not change after touch")
+                execute(f"{name}-runtime-{iteration}", ["device", "runtime", "--port", "unix:" + str(socket)], app)
+                children = {}
+                if iteration == 3:
+                    for path in Path("/proc").iterdir():
+                        if not path.name.isdigit(): continue
+                        try: command = (path / "cmdline").read_bytes()
+                        except OSError: continue
+                        if str(app).encode() in command and (
+                                b"pxsys_product_simulator" in command or b"simulator_pxadb.py" in command):
+                            children[path] = command
+                    if len(children) != 2:
+                        raise RuntimeError("cancellation gate did not find both simulator children")
+                    process.terminate()
+                else:
+                    execute(f"{name}-home-{iteration}", ["device", "input", "key", "home", "--port", "unix:" + str(socket)], app)
+                process.wait(timeout=20)
+                expected = 143 if iteration == 3 else 0
+                if process.returncode != expected:
+                    raise RuntimeError(f"simulator shutdown status {process.returncode}, expected {expected}")
+                for path, command in children.items():
+                    try: remaining = (path / "cmdline").read_bytes()
+                    except OSError: continue
+                    if remaining == command:
+                        raise RuntimeError("cancelled command left a simulator child running")
+                if list(Path(socket_directory.name).glob("*.sock")) or list(Path(socket_directory.name).glob("*.control")):
+                    raise RuntimeError("simulator shutdown left a debug endpoint")
+                if language == "c" and "Button tapped" not in (args.output / f"{name}-run-{iteration}.log").read_text():
+                    raise RuntimeError("C button input did not reach the Guest")
+                results.append({"name": f"{name}-run-{iteration}", "status": 0,
+                                "profile": profile, "button_center": [x, y],
+                                "cancelled": iteration == 3, "cancelled_children": len(children),
+                                "screenshot_sha256": hashlib.sha256(screenshot.read_bytes()).hexdigest()})
+            finally:
+                if process.poll() is None:
+                    process.terminate()
+                    try: process.wait(timeout=5)
+                    except subprocess.TimeoutExpired: process.kill(); process.wait()
+                log.close()
+    socket_directory.cleanup()
+    distribution = json.loads((kit / "distribution.json").read_text())
+    (args.output / "report.json").write_text(json.dumps({
+        "release": distribution["release"], "source_commit": distribution["source_commit"],
+        "distribution_sha256": hashlib.sha256((kit / "distribution.json").read_bytes()).hexdigest(),
+        "targets": args.targets.split(","), "checks": results}, indent=2) + "\n")
+    print(f"DevKit acceptance passed: {len(results)} checks; {args.output}")
+
+
+if __name__ == "__main__":
+    main()

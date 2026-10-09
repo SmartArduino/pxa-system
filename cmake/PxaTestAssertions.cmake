@@ -1,0 +1,20 @@
+include_guard(GLOBAL)
+
+# Several native regressions express the operation itself inside assert().
+# Release builds must execute those operations as well as their checks.
+function(pxa_enable_test_assertions directory)
+    get_property(_pxa_targets DIRECTORY "${directory}" PROPERTY BUILDSYSTEM_TARGETS)
+    foreach(_pxa_target IN LISTS _pxa_targets)
+        if(_pxa_target MATCHES "_test$")
+            if(MSVC)
+                target_compile_options(${_pxa_target} PRIVATE /UNDEBUG)
+            else()
+                target_compile_options(${_pxa_target} PRIVATE -UNDEBUG)
+            endif()
+        endif()
+    endforeach()
+    get_property(_pxa_subdirectories DIRECTORY "${directory}" PROPERTY SUBDIRECTORIES)
+    foreach(_pxa_directory IN LISTS _pxa_subdirectories)
+        pxa_enable_test_assertions("${_pxa_directory}")
+    endforeach()
+endfunction()

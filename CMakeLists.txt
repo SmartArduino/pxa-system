@@ -1,6 +1,7 @@
 cmake_minimum_required(VERSION 3.16)
 
 include("${CMAKE_CURRENT_LIST_DIR}/cmake/PxaSystemSources.cmake")
+include("${CMAKE_CURRENT_LIST_DIR}/cmake/PxaVersion.cmake")
 
 if(COMMAND idf_component_register)
     include("${PXSYS_ROOT}/libpxa/cmake/pxaSources.cmake")
@@ -22,7 +23,7 @@ if(COMMAND idf_component_register)
     return()
 endif()
 
-project(pxa_system VERSION 0.1.0 LANGUAGES C)
+project(pxa_system VERSION ${PXA_RELEASE_NUMERIC} LANGUAGES C)
 
 if(CMAKE_SOURCE_DIR STREQUAL PROJECT_SOURCE_DIR)
     set(PXSYS_TOP_LEVEL ON)
@@ -80,6 +81,17 @@ endif()
 if(PXSYS_BUILD_TESTS)
     include(CTest)
     find_package(Python3 COMPONENTS Interpreter REQUIRED)
+    add_test(NAME pxsys_release_metadata_test
+        COMMAND ${Python3_EXECUTABLE}
+                "${PXSYS_ROOT}/tools/release/metadata.py" check)
+    add_test(NAME pxsys_release_metadata_unit_test
+        COMMAND ${Python3_EXECUTABLE}
+                "${PXSYS_ROOT}/tools/release/test_metadata.py")
+    if(EXISTS "${PXSYS_ROOT}/tools/devkit/test_devkit.py")
+        add_test(NAME pxsys_devkit_unit_test
+            COMMAND ${Python3_EXECUTABLE} -m unittest discover
+                    -s "${PXSYS_ROOT}/tools/devkit" -p "test_*.py")
+    endif()
     add_test(NAME pxsys_wamr_source_pin_test
         COMMAND ${Python3_EXECUTABLE}
                 "${PXSYS_ROOT}/tools/wamr/test_source_pin.py")
@@ -218,4 +230,9 @@ install(EXPORT pxsysTargets
     FILE pxsysTargets.cmake
     NAMESPACE pxsys::
     DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/pxsys")
+endif()
+
+if(PXSYS_BUILD_TESTS)
+    include("${CMAKE_CURRENT_LIST_DIR}/cmake/PxaTestAssertions.cmake")
+    pxa_enable_test_assertions("${CMAKE_CURRENT_SOURCE_DIR}")
 endif()

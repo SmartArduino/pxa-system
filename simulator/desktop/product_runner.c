@@ -32,6 +32,8 @@
 #include "pxa/lvgl/pxa_lvgl_ui.h"
 #include "pxa/openssl/pxa_openssl.h"
 #include "pxa/package.h"
+#include "pxa/profile.h"
+#include "pxa/version.h"
 #include "pxa/permission.h"
 #include "pxa/posix/pxa_posix_installer.h"
 #include "pxa/posix/pxa_posix_storage.h"
@@ -47,6 +49,7 @@
 #include "pxa/ui.h"
 #include "pxa/wasi.h"
 #include "pxa/wamr/pxa_wamr_engine.h"
+#include "wasm_export.h"
 #include "pxa/wire.h"
 #include "pxa/window.h"
 #include "pxadb_control.h"
@@ -412,7 +415,7 @@ static lv_font_t *load_product_font(uint32_t size,
                                     const lv_font_t *symbol_fallback) {
 #ifdef PXSYS_DESKTOP_TEXT_FONT
     lv_font_t *font = lv_freetype_font_create(
-        PXSYS_DESKTOP_TEXT_FONT, LV_FREETYPE_FONT_RENDER_MODE_BITMAP, size,
+        pxsys_product_font_path(), LV_FREETYPE_FONT_RENDER_MODE_BITMAP, size,
         LV_FREETYPE_FONT_STYLE_NORMAL);
     if (font != NULL) font->fallback = symbol_fallback;
     return font;
@@ -2874,11 +2877,94 @@ static pxa_status_t permission_save(void *context, pxa_bytes_t identity,
     return PXA_STATUS_OK;
 }
 
+static uint64_t product_ui_features(void) {
+    return PXA_UI_FEATURE_CANVAS | PXA_UI_FEATURE_VIRTUAL_LIST |
+    PXA_UI_FEATURE_GRID | PXA_UI_FEATURE_RGB565_BITMAP |
+    PXA_UI_FEATURE_CONTROLLER_INPUT | PXA_UI_FEATURE_MULTIPLE_SURFACES |
+    PXA_UI_FEATURE_CANVAS_STREAM_IO;
+}
+
+static size_t product_capabilities(pxa_package_service_capability_t *capabilities, size_t capacity) {
+    if (capacity < 19) return 0;
+    memset(capabilities, 0, 19 * sizeof(*capabilities));
+    capabilities[0].service = PXA_SERVICE_CORE; capabilities[0].version.major = 0; capabilities[0].version.minor = 1;
+    capabilities[1].service = PXA_WINDOW_SERVICE_ID; capabilities[1].version.major = PXA_WINDOW_SERVICE_MAJOR; capabilities[1].version.minor = PXA_WINDOW_SERVICE_MINOR;
+    capabilities[2].service = PXA_UI_SERVICE_ID; capabilities[2].version.major = PXA_UI_SERVICE_MAJOR; capabilities[2].version.minor = PXA_UI_SERVICE_MINOR;
+    capabilities[2].features = product_ui_features();
+    capabilities[3].service = PRODUCT_CLOCK_SERVICE; capabilities[3].version.major = 0; capabilities[3].version.minor = 1;
+    capabilities[4].service = PXA_AUDIO_SERVICE_ID; capabilities[4].version.major = PXA_AUDIO_SERVICE_MAJOR; capabilities[4].version.minor = PXA_AUDIO_SERVICE_MINOR;
+    capabilities[5].service = PXA_PERMISSION_SERVICE_ID; capabilities[5].version.major = 0; capabilities[5].version.minor = 1;
+    capabilities[6].service = PXA_STORAGE_SERVICE_ID; capabilities[6].version.major = 0; capabilities[6].version.minor = 1;
+    capabilities[7].service = PXA_SURFACE_SERVICE_ID; capabilities[7].version.major = 0; capabilities[7].version.minor = 2;
+    capabilities[8].service = PXA_GAME_RENDER_SERVICE_ID; capabilities[8].version.major = PXA_GAME_RENDER_SERVICE_MAJOR; capabilities[8].version.minor = PXA_GAME_RENDER_SERVICE_MINOR;
+    capabilities[9].service = PXA_LOG_SERVICE_ID; capabilities[9].version.major = PXA_LOG_SERVICE_MAJOR; capabilities[9].version.minor = PXA_LOG_SERVICE_MINOR;
+    capabilities[10].service = PXA_DEVICE_SERVICE_ID; capabilities[10].version.major = PXA_DEVICE_SERVICE_MAJOR; capabilities[10].version.minor = PXA_DEVICE_SERVICE_MINOR;
+    capabilities[11].service = PXA_NET_SERVICE_ID; capabilities[11].version.major = PXA_NET_SERVICE_MAJOR; capabilities[11].version.minor = PXA_NET_SERVICE_MINOR;
+    capabilities[12].service = PXA_FS_SERVICE_ID; capabilities[12].version.major = PXA_FS_SERVICE_MAJOR; capabilities[12].version.minor = PXA_FS_SERVICE_MINOR;
+    capabilities[13].service = PXA_IPC_SERVICE_ID; capabilities[13].version.major = PXA_IPC_SERVICE_MAJOR; capabilities[13].version.minor = PXA_IPC_SERVICE_MINOR;
+    capabilities[14].service = PXA_WASI_SERVICE_ID; capabilities[14].version.major = PXA_WASI_SERVICE_MAJOR; capabilities[14].version.minor = PXA_WASI_SERVICE_MINOR;
+    capabilities[14].features = PXA_WASI_FEATURE_CLOCKS | PXA_WASI_FEATURE_RANDOM;
+    capabilities[15].service = PXA_STORE_INSTALLER_SERVICE_ID;
+    capabilities[15].version.major = 0;
+    capabilities[15].version.minor = 5;
+    capabilities[8].features |= PXA_GAME_RENDER_FEATURE_ASSET_BINDINGS;
+    capabilities[16].service = PXA_ASSETS_SERVICE_ID;
+    capabilities[16].version.major = PXA_ASSETS_SERVICE_MAJOR;
+    capabilities[16].version.minor = PXA_ASSETS_SERVICE_MINOR;
+    capabilities[17].service = PXA_SENSOR_SERVICE_ID;
+    capabilities[17].version.major = PXA_SENSOR_SERVICE_MAJOR;
+    capabilities[17].version.minor = PXA_SENSOR_SERVICE_MINOR;
+    capabilities[18].service = PXA_WORK_SERVICE_ID;
+    capabilities[18].version.major = PXA_WORK_SERVICE_MAJOR;
+    capabilities[18].version.minor = PXA_WORK_SERVICE_MINOR;
+    return 19;
+}
+
+const char *pxsys_product_font_path(void) {
+    const char *path = getenv("PXA_SIMULATOR_FONT");
+    if (path != NULL && path[0] != '\0') return path;
+#ifdef PXSYS_DESKTOP_TEXT_FONT
+    return PXSYS_DESKTOP_TEXT_FONT;
+#else
+    return NULL;
+#endif
+}
+
+int pxsys_product_print_profile(FILE *stream) {
+    pxa_package_service_capability_t services[19];
+    pxa_package_activation_profile_t activation = {0};
+    pxa_package_host_profile_t host = {0};
+    char record[512];
+    size_t index;
+    static const uint8_t target[] = "linux-x86_64";
+    static const uint8_t engine[] = "wamr";
+    static const uint8_t abi[] = PXSYS_WAMR_ENGINE_ABI;
+    activation.core_version.major = PXA_CORE_VERSION_MAJOR;
+    activation.core_version.minor = PXA_CORE_VERSION_MINOR;
+    activation.services = services;
+    activation.service_count = (uint16_t)product_capabilities(services, 19);
+    host.target = (pxa_bytes_t){target, sizeof(target) - 1};
+    host.engine = (pxa_bytes_t){engine, sizeof(engine) - 1};
+    host.engine_abi = (pxa_bytes_t){abi, sizeof(abi) - 1};
+    host.memory_model = PXA_MEMORY_WASM32;
+    if (pxa_package_profile_record(&host, &activation,
+        wasm_runtime_is_running_mode_supported(Mode_Interp), 0, record, sizeof(record)) != PXA_STATUS_OK) return 1;
+    /* Extend the header with actual service records, without a second copy. */
+    record[strlen(record) - 1] = '\0';
+    fprintf(stream, "%s,\"services\":[", record);
+    for (index = 1; index <= activation.service_count; ++index) {
+        if (pxa_package_profile_record(&host, &activation, 1, index, record, sizeof(record)) != PXA_STATUS_OK) return 1;
+        fprintf(stream, "%s%s", index == 1 ? "" : ",", record);
+    }
+    return fprintf(stream, "]}\n") < 0 ? 1 : 0;
+}
+
 #ifndef PXSYS_PRODUCT_RUNNER_LIBRARY
 static void print_usage(const char *program) {
     fprintf(stderr, "Usage: %s --package DIR --publisher-key DER [--state-root DIR] [--locale TAG] [--pxadb-control-socket PATH] [--width PX --height PX] [--density-dpi DPI] [--safe-insets T,R,B,L] [--corner-radius PX|--round] [--shape-background matte|black]\n",
             program);
 }
+
 
 static int parse_options(int argc, char **argv, options_t *options) {
     int index;
@@ -3270,11 +3356,7 @@ static int run_product_simulator(const options_t *input,
                 ? PXA_UI_COLOR_SCHEME_DARK : PXA_UI_COLOR_SCHEME_LIGHT;
     ui_config.allocate = allocate_memory; ui_config.release = release_memory;
     ui_config.resize = reallocate_memory;
-    ui_config.now_us = now_us; ui_config.features = PXA_UI_FEATURE_CANVAS |
-        PXA_UI_FEATURE_VIRTUAL_LIST | PXA_UI_FEATURE_GRID |
-        PXA_UI_FEATURE_RGB565_BITMAP |
-        PXA_UI_FEATURE_CONTROLLER_INPUT | PXA_UI_FEATURE_MULTIPLE_SURFACES |
-        PXA_UI_FEATURE_CANVAS_STREAM_IO;
+    ui_config.now_us = now_us; ui_config.features = product_ui_features();
     ui_config.primary_width = options.width; ui_config.primary_height = options.height;
     ui_config.density_q16 = (uint32_t)((((uint64_t)
         (options.density_dpi ? options.density_dpi : 160u) << 16) + 80u) / 160u);
@@ -3765,40 +3847,9 @@ static int run_product_simulator(const options_t *input,
     pxa_wamr_engine_set_runtime(host.engine, host.runtime);
     stage = "start configuration";
     if (configure_start_locale(&host, 1, &ui_config) != PXA_STATUS_OK) goto done;
-    capabilities[0].service = PXA_SERVICE_CORE; capabilities[0].version.major = 0; capabilities[0].version.minor = 1;
-    capabilities[1].service = PXA_WINDOW_SERVICE_ID; capabilities[1].version.major = PXA_WINDOW_SERVICE_MAJOR; capabilities[1].version.minor = PXA_WINDOW_SERVICE_MINOR;
-    capabilities[2].service = PXA_UI_SERVICE_ID; capabilities[2].version.major = PXA_UI_SERVICE_MAJOR; capabilities[2].version.minor = PXA_UI_SERVICE_MINOR;
-    capabilities[2].features = PXA_UI_FEATURE_CANVAS |
-                              PXA_UI_FEATURE_CANVAS_STREAM_IO |
-                              PXA_UI_FEATURE_GRID;
-    capabilities[3].service = PRODUCT_CLOCK_SERVICE; capabilities[3].version.major = 0; capabilities[3].version.minor = 1;
-    capabilities[4].service = PXA_AUDIO_SERVICE_ID; capabilities[4].version.major = PXA_AUDIO_SERVICE_MAJOR; capabilities[4].version.minor = PXA_AUDIO_SERVICE_MINOR;
-    capabilities[5].service = PXA_PERMISSION_SERVICE_ID; capabilities[5].version.major = 0; capabilities[5].version.minor = 1;
-    capabilities[6].service = PXA_STORAGE_SERVICE_ID; capabilities[6].version.major = 0; capabilities[6].version.minor = 1;
-    capabilities[7].service = PXA_SURFACE_SERVICE_ID; capabilities[7].version.major = 0; capabilities[7].version.minor = 2;
-    capabilities[8].service = PXA_GAME_RENDER_SERVICE_ID; capabilities[8].version.major = PXA_GAME_RENDER_SERVICE_MAJOR; capabilities[8].version.minor = PXA_GAME_RENDER_SERVICE_MINOR;
-    capabilities[9].service = PXA_LOG_SERVICE_ID; capabilities[9].version.major = PXA_LOG_SERVICE_MAJOR; capabilities[9].version.minor = PXA_LOG_SERVICE_MINOR;
-    capabilities[10].service = PXA_DEVICE_SERVICE_ID; capabilities[10].version.major = PXA_DEVICE_SERVICE_MAJOR; capabilities[10].version.minor = PXA_DEVICE_SERVICE_MINOR;
-    capabilities[11].service = PXA_NET_SERVICE_ID; capabilities[11].version.major = PXA_NET_SERVICE_MAJOR; capabilities[11].version.minor = PXA_NET_SERVICE_MINOR;
-    capabilities[12].service = PXA_FS_SERVICE_ID; capabilities[12].version.major = PXA_FS_SERVICE_MAJOR; capabilities[12].version.minor = PXA_FS_SERVICE_MINOR;
-    capabilities[13].service = PXA_IPC_SERVICE_ID; capabilities[13].version.major = PXA_IPC_SERVICE_MAJOR; capabilities[13].version.minor = PXA_IPC_SERVICE_MINOR;
-    capabilities[14].service = PXA_WASI_SERVICE_ID; capabilities[14].version.major = PXA_WASI_SERVICE_MAJOR; capabilities[14].version.minor = PXA_WASI_SERVICE_MINOR;
-    capabilities[14].features = PXA_WASI_FEATURE_CLOCKS | PXA_WASI_FEATURE_RANDOM;
-    capabilities[15].service = PXA_STORE_INSTALLER_SERVICE_ID;
-    capabilities[15].version.major = 0;
-    capabilities[15].version.minor = 5;
+    (void)product_capabilities(capabilities, 19);
     activation.core_version.major = PXA_CORE_VERSION_MAJOR;
     activation.core_version.minor = PXA_CORE_VERSION_MINOR;
-    capabilities[8].features |= PXA_GAME_RENDER_FEATURE_ASSET_BINDINGS;
-    capabilities[16].service = PXA_ASSETS_SERVICE_ID;
-    capabilities[16].version.major = PXA_ASSETS_SERVICE_MAJOR;
-    capabilities[16].version.minor = PXA_ASSETS_SERVICE_MINOR;
-    capabilities[17].service = PXA_SENSOR_SERVICE_ID;
-    capabilities[17].version.major = PXA_SENSOR_SERVICE_MAJOR;
-    capabilities[17].version.minor = PXA_SENSOR_SERVICE_MINOR;
-    capabilities[18].service = PXA_WORK_SERVICE_ID;
-    capabilities[18].version.major = PXA_WORK_SERVICE_MAJOR;
-    capabilities[18].version.minor = PXA_WORK_SERVICE_MINOR;
     activation.services = capabilities; activation.service_count = 19;
     profile.target = (pxa_bytes_t){(const uint8_t *)"linux-x86_64", sizeof("linux-x86_64") - 1u};
     profile.engine = (pxa_bytes_t){(const uint8_t *)"wamr", 4};
@@ -4099,6 +4150,12 @@ int pxsys_product_simulator_run_embedded(const char *package_path,
 #ifndef PXSYS_PRODUCT_RUNNER_LIBRARY
 int main(int argc, char **argv) {
     options_t options;
+    if (argc == 2 && strcmp(argv[1], "--version") == 0) {
+        printf("PXA simulator %s\n", PXA_VERSION_STRING);
+        return 0;
+    }
+    if (argc == 2 && strcmp(argv[1], "--capabilities") == 0)
+        return pxsys_product_print_profile(stdout);
     if (!parse_options(argc, argv, &options)) {
         print_usage(argv[0]);
         return 2;

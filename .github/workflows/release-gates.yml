@@ -1,0 +1,37 @@
+name: Release source gates
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  native:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Native dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build libssl-dev liblz4-dev
+          python -m pip install Pillow==12.3.0
+      - name: Protocol and release metadata
+        run: |
+          python tools/release/metadata.py check
+          python spec/draft/tools/check_spec.py
+      - name: Release build with active assertions
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DPXSYS_BUILD_DESKTOP_SIMULATOR=OFF
+          cmake --build build --parallel 2
+          ctest --test-dir build --output-on-failure
+      - name: Test logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-test-logs
+          path: build/Testing/Temporary

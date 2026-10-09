@@ -1,7 +1,8 @@
 cmake_minimum_required(VERSION 3.16)
 
 if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
-    project(pxsys_desktop_simulator VERSION 0.1.0 LANGUAGES C)
+    include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/PxaVersion.cmake")
+    project(pxsys_desktop_simulator VERSION ${PXA_RELEASE_NUMERIC} LANGUAGES C)
     set(PXSYS_DESKTOP_STANDALONE ON)
     include(CTest)
 else()
@@ -22,7 +23,7 @@ include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/PxaWamrMetadata.cmake")
 set(PXSYS_DESKTOP_TEXT_FONT
     "${CMAKE_CURRENT_LIST_DIR}/../../../../factory/base/system/fonts/noto_sans_cjk_common.ttf"
     CACHE FILEPATH "TTF used for all desktop simulator text")
-if(NOT EXISTS "${PXSYS_DESKTOP_TEXT_FONT}")
+if(PXSYS_DESKTOP_TEXT_FONT AND NOT EXISTS "${PXSYS_DESKTOP_TEXT_FONT}")
     message(FATAL_ERROR "Desktop simulator text font is missing: ${PXSYS_DESKTOP_TEXT_FONT}")
 endif()
 
@@ -96,8 +97,11 @@ target_link_libraries(pxsys_product_simulator PRIVATE
     pxa_adapters_wamr lvgl SDL2::SDL2 PNG::PNG CURL::libcurl Threads::Threads
     PkgConfig::VORBISFILE PkgConfig::OPUSFILE m)
 if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(pxsys_desktop_simulator PRIVATE
+        -Werror=implicit-function-declaration -Werror=int-conversion)
     target_compile_options(pxsys_product_simulator PRIVATE
-        -Wall -Wextra -Wpedantic)
+        -Wall -Wextra -Wpedantic
+        -Werror=implicit-function-declaration -Werror=int-conversion)
 endif()
 
 add_executable(pxsys_package_installer package_installer.c)
@@ -217,6 +221,11 @@ foreach(_test audio audio_app raster resource_app voxel_resources resource_budge
         endif()
     endif()
 endforeach()
+
+if(PXSYS_BUILD_TESTS OR BUILD_TESTING)
+    include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/PxaTestAssertions.cmake")
+    pxa_enable_test_assertions("${CMAKE_CURRENT_SOURCE_DIR}")
+endif()
 
 set(PXSYS_RASTER_BASELINE_SOURCE "" CACHE FILEPATH
     "Saved product_runner.c used for the pre-refactor raster benchmark")

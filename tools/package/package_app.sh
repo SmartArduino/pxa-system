@@ -2,23 +2,29 @@
 set -euo pipefail
 
 if [[ $# -ne 3 ]]; then
-  echo "Usage: $0 <app-directory> <esp32s3|esp32s31|simulator> <output-dir>" >&2
+  echo "Usage: $0 <app-name-or-path> <esp32s3|esp32s31|simulator> <output-dir>" >&2
   echo "Optional: PXA_APP_DEFINES=NAME=VALUE,NAME2=VALUE2" >&2
   exit 2
 fi
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 pxa_system_dir="$(cd "$script_dir/../.." && pwd)"
-app_name="$1"
+app_argument="$1"
 package_target="$2"
 output_dir="$3"
+if [[ "$app_argument" == */* || "$app_argument" == "." ]]; then
+  app_dir="$(realpath -m -- "$app_argument")"
+  app_name="$(basename -- "$app_dir")"
+  app_source_root="$(dirname -- "$app_dir")"
+else
+  app_name="$app_argument"
+  app_source_root="$(realpath -m -- "${PXA_APP_SOURCE_ROOT:-$pxa_system_dir/apps/pxa}")"
+  app_dir="$(realpath -m -- "$app_source_root/$app_name")"
+fi
 if [[ ! "$app_name" =~ ^[a-z][a-z0-9._-]{0,63}$ ]]; then
   echo "Invalid PXA App directory name: $app_name" >&2
   exit 2
 fi
-default_app_source_root="$pxa_system_dir/apps/pxa"
-app_source_root="$(realpath -m -- "${PXA_APP_SOURCE_ROOT:-$default_app_source_root}")"
-app_dir="$(realpath -m -- "$app_source_root/$app_name")"
 if [[ "$app_dir" != "$app_source_root/$app_name" ]]; then
   echo "PXA App source must remain below its source root: $app_name" >&2
   exit 2
@@ -44,17 +50,10 @@ if [[ -n "${PXA_APP_DEFINES:-}" ]]; then
   done
 fi
 
-output_allowed=0
-for output_root in "$default_output_root" "$extra_output_root"; do
-  [[ -n "$output_root" ]] || continue
-  output_root="$(realpath -m -- "$output_root")"
-  if [[ "$output_dir" == "$output_root/pxa-$app_name" ]]; then
-    output_allowed=1
-    break
-  fi
-done
-if [[ "$output_allowed" -ne 1 ]]; then
-  echo "Refusing PXA Package output outside an approved built-in root: $output_dir" >&2
+if [[ "$output_dir" == "/" || "$output_dir" == "$app_dir" ||
+      "$app_dir" == "$output_dir/"* || "$output_dir" == "$pxa_system_dir" ||
+      "$pxa_system_dir" == "$output_dir/"* || -L "$3" ]]; then
+  echo "Refusing Package output that would overwrite App or SDK sources: $output_dir" >&2
   exit 2
 fi
 
@@ -218,7 +217,7 @@ if linear_memory is not None:
         raise SystemExit("build linear_memory pinned must be a boolean")
 open(sys.argv[2], "w", encoding="utf-8").write(
     f"{build_system}\t{source_dir}\t{linear_memory_maximum}\t"
-    f"{metadata.get('min_sdk', [1, 0])[0]}\n")
+    f"{metadata.get('min_core', metadata.get('min_sdk', [1, 0]))[0]}\n")
 components = metadata.get("components", [{"id": "main", "source": "main.c"}])
 if not isinstance(components, list) or not components:
     raise SystemExit("components must be a non-empty array")
@@ -365,6 +364,7 @@ if [[ "$build_system" == "cmake" ]]; then
     -DPXA_LINEAR_MEMORY_MAXIMUM="$linear_memory_maximum" \
     -DPXA_APP_DEFINITIONS="$joined_definitions" \
     -DPXA_CMAKE_MODULE_DIR="$pxa_system_dir/sdk/cmake" \
+    -DPxaGuest_DIR="$pxa_system_dir/sdk/cmake" \
     -DPXA_KEEP_WASM_DEBUG="${PXA_KEEP_WASM_DEBUG:-OFF}"
   cmake_targets=()
   for component_id in "${component_ids[@]}"; do
@@ -481,6 +481,11 @@ fi
   "$manifest_target" "$engine_abi" "${manifest_mode_args[@]}"
 
 mkdir -p "$output_dir"
+# Preserve arbitrary user content. Existing outputs must be identifiable Packages.
+if [[ -n "$(ls -A "$output_dir")" && ! -f "$output_dir/manifest.pxm" ]]; then
+  echo "Refusing to replace a non-Package output directory: $output_dir" >&2
+  exit 2
+fi
 find "$output_dir" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
 cp -R "$package_dir"/. "$output_dir"/
 

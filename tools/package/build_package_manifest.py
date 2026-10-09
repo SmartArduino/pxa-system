@@ -303,27 +303,30 @@ def parse_version(value, label):
 
 
 def default_service_requirement(name):
-    service_id = DECLARABLE_SERVICE_IDS[name]
+    service_id = SERVICE_IDS[name]
     major, minor = SERVICE_VERSIONS[service_id]
     return service_id, (major, minor), (major, 0xFFFF), 0
 
 
-def parse_services(values, label):
+def parse_services(values, label, *, allow_wasi=False):
     require(isinstance(values, list), f"{label} must be an array")
+    allowed = dict(DECLARABLE_SERVICE_IDS)
+    if allow_wasi:
+        allowed["wasi"] = SERVICE_IDS["wasi"]
     requirements = []
     names = set()
     for value in values:
         if isinstance(value, str):
             name = value
             requirement = default_service_requirement(name) \
-                if name in DECLARABLE_SERVICE_IDS else None
+                if name in allowed else None
         elif isinstance(value, dict):
             require(set(value).issubset(
                         {"name", "min_version", "max_version", "features"}),
                     f"invalid {label[:-1]} fields")
             name = value.get("name")
             requirement = None
-            if isinstance(name, str) and name in DECLARABLE_SERVICE_IDS:
+            if isinstance(name, str) and name in allowed:
                 service_id, default_min, default_max, _ = default_service_requirement(name)
                 min_version = parse_version(value.get("min_version", list(default_min)),
                                             f"{name} min_version")
@@ -410,6 +413,15 @@ def main(argv):
     require(isinstance(release_sequence, int) and not isinstance(release_sequence, bool)
             and 0 < release_sequence <= 0xFFFFFFFFFFFFFFFF,
             "release_sequence must be a positive u64")
+    # New source names describe Core wire compatibility, not SDK releases.
+    # Preserve binary tag semantics and reject ambiguous authoring metadata.
+    metadata = dict(metadata)
+    for alias, legacy in (("min_core", "min_sdk"), ("target_core", "target_sdk"),
+                          ("compile_core", "compile_sdk")):
+        if alias in metadata:
+            require(legacy not in metadata or metadata[legacy] == metadata[alias],
+                    f"conflicting {alias} and {legacy}")
+            metadata[legacy] = metadata[alias]
     min_sdk = parse_sdk(metadata, "min_sdk", [1, 0])
     target_sdk = parse_sdk(metadata, "target_sdk", list(min_sdk))
     compile_sdk = parse_sdk(metadata, "compile_sdk", list(target_sdk))
@@ -534,7 +546,7 @@ def main(argv):
         require(isinstance(kind_name, str) and kind_name in COMPONENT_KINDS,
                 "invalid component kind")
         service_requirements = (
-            parse_services(item["services"], "component services")
+            parse_services(item["services"], "component services", allow_wasi="wasi" in item)
             if "services" in item else declared_services
         )
         wasi_features = parse_wasi(item.get("wasi"))
@@ -575,8 +587,10 @@ def main(argv):
         if wasi_features is not None:
             service_id = SERVICE_IDS["wasi"]
             major, minor = SERVICE_VERSIONS[service_id]
+            previous = services_by_id.get(service_id, (
+                service_id, (major, minor), (major, 0xFFFF), 0))
             services_by_id[service_id] = (
-                service_id, (major, minor), (major, 0xFFFF), wasi_features)
+                service_id, previous[1], previous[2], previous[3] | wasi_features)
         services = [services_by_id[service_id] for service_id in sorted(services_by_id)]
         aot_targets, include_wasm = component_artifacts(
             file_paths, component_id, target, artifact_mode)

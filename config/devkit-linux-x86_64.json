@@ -1,0 +1,25 @@
+{
+  "schema": "pxa-devkit-build-inputs-1",
+  "host": "linux-x86_64",
+  "minimum_glibc": "2.35",
+  "baseline_os": "Ubuntu 22.04",
+  "python": {
+    "version": "3.13.16",
+    "build": "20261003",
+    "archive": "cpython-3.13.16+20261003-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz",
+    "sha256": "4595c5589fff7bf0cb158d9a88a797e0d791fa33830770fcb7bf3f4b104feeae"
+  },
+  "python_packages": {
+    "Pillow": "12.3.0",
+    "pyserial": "3.5",
+    "cmake": "4.3.1",
+    "ninja": "1.13.0"
+  },
+  "wasi_sdk": {
+    "version": "34.0",
+    "sha256": "b761e3a0721dbae9c09a0059e5fdb2bf917d1b4a8a7b430fb3b5aafb0984b2c4"
+  },
+  "wamr": "config/wamr.json",
+  "font": "workspace:factory/base/system/fonts/noto_sans_cjk_common.ttf",
+  "lvgl": "workspace:firmware/dependencies.lock.pai-touch"
+}

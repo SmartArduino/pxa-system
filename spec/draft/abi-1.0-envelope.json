@@ -1,6 +1,7 @@
 {
-  "schema": "pxa-abi-envelope-proposal-1.0",
-  "status": "proposal",
+  "schema": "pxa-abi-envelope-1.0",
+  "status": "defined",
+  "core_version": {"major": 1, "minor": 0},
   "byte_order": "little-endian",
   "size": 20,
   "max_control_message": 4096,
