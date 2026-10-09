@@ -91,6 +91,12 @@ std::uint32_t SurfaceFrame::stride_bytes() const noexcept {
     return control_ && control_->open ? control_->stride_bytes : 0;
 }
 
+Result<Rgb565Pixels> SurfaceFrame::rgb565() const noexcept {
+    if (!control_ || !control_->open) return std::unexpected(Error::bad_state);
+    return Rgb565Pixels::from_bytes(pixels(), control_->width, control_->height,
+                                    control_->stride_bytes);
+}
+
 Result<void> SurfaceFrame::present(std::uint64_t frame_id) noexcept {
     if (!control_ || !control_->open)
         return std::unexpected(Error::bad_state);

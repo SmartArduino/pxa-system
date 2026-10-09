@@ -112,6 +112,12 @@ struct SurfaceApp {
         } else {
             assert(frame && frame->pixels().size() == 64);
             assert(frame->stride_bytes() == 16);
+            auto pixels = frame->rgb565();
+            assert(pixels && pixels->width() == 8 && pixels->height() == 4);
+            auto row = *pixels->row(3);
+            row[7] = 0xbeef;
+            assert(frame->pixels()[62] == std::byte{0xef} &&
+                   frame->pixels()[63] == std::byte{0xbe});
             frame->pixels()[0] = std::byte{0x34};
             if (action == 1) {
                 auto moved = std::move(*surface);

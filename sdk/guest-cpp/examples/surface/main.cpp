@@ -82,12 +82,15 @@ struct SurfaceDemo {
                 report(context, "acquire", acquired.error());
             return;
         }
-        auto pixels = acquired->pixels();
-        const auto width = surface->width();
-        const auto height = surface->height();
-        const auto stride = surface->stride_bytes();
+        auto pixels = acquired->rgb565();
+        if (!pixels) {
+            report(context, "pixels", pixels.error());
+            return;
+        }
+        const auto width = pixels->width();
+        const auto height = pixels->height();
         for (std::uint32_t y = 0; y < height; ++y) {
-            auto* row = pixels.data() + y * stride;
+            auto row = *pixels->row(y);
             for (std::uint32_t x = 0; x < width; ++x) {
                 const bool stripe = ((x + offset) / 16) % 2 == 0;
                 const std::uint16_t color = stripe
@@ -95,7 +98,7 @@ struct SurfaceDemo {
                           ((y * 7 / height) << 11))
                     : static_cast<std::uint16_t>(0x001f +
                           ((y * 15 / height) << 11));
-                pxa::wire::put16(row + x * 2, color);
+                row[x] = color;
             }
         }
         auto presented = acquired->present(next_frame);

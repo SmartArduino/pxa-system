@@ -1,6 +1,7 @@
 #pragma once
 
 #include "task.hpp"
+#include "pixels.hpp"
 
 #include <cstdint>
 #include <span>
@@ -53,6 +54,8 @@ public:
     ~SurfaceFrame();
 
     std::span<std::byte> pixels() const noexcept;
+    // The view has the frame lease's lifetime; discard it after present/reset.
+    Result<Rgb565Pixels> rgb565() const noexcept;
     std::uint32_t stride_bytes() const noexcept;
     std::uint8_t buffer_index() const noexcept { return index_; }
     Result<void> present(std::uint64_t frame_id) noexcept;
