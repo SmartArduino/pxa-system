@@ -425,6 +425,38 @@ static void test_empty_text(pxa_runtime_t *runtime, pxa_component_t component,
     assert(pxa_event_pop(runtime,component,message,sizeof(message),&size) == PXA_STATUS_OK);
     assert(pxa_message_decode(message,size,sizeof(message),&decoded) == PXA_STATUS_OK);
     assert(decoded.payload.size == 24 && pxa_read_u16(decoded.payload.data + 12) == PXA_UI_EVENT_TEXT);
+    uint8_t long_text[PXA_UI_EVENT_TEXT_MAX_BYTES + 1];
+    memset(long_text, 'a', sizeof(long_text));
+    for (size_t length = 65; length <= PXA_UI_EVENT_TEXT_MAX_BYTES;
+         length = PXA_UI_EVENT_TEXT_MAX_BYTES) {
+        assert(pxa_ui_queue_event(service, component, 1, 5, PXA_UI_EVENT_TEXT,
+            PXA_UI_EVENT_FLAG_RELIABLE, 124, long_text, length) == PXA_STATUS_OK);
+        uint8_t large_message[PXA_MAX_CONTROL_MESSAGE];
+        assert(pxa_event_pop(runtime, component, large_message, sizeof(large_message), &size) == PXA_STATUS_OK);
+        assert(pxa_message_decode(large_message, size, sizeof(large_message), &decoded) == PXA_STATUS_OK);
+        assert(decoded.payload.size == 24 + length);
+        assert(!memcmp(decoded.payload.data + 24, long_text, length));
+        if (length == PXA_UI_EVENT_TEXT_MAX_BYTES) break;
+    }
+    assert(pxa_ui_queue_event(service, component, 1, 5, PXA_UI_EVENT_TEXT,
+        PXA_UI_EVENT_FLAG_RELIABLE, 124, long_text, sizeof(long_text)) == PXA_STATUS_INVALID_ARGUMENT);
+    long_text[0] = 0xe4; long_text[1] = 0xb8;
+    assert(pxa_ui_queue_event(service, component, 1, 5, PXA_UI_EVENT_TEXT,
+        PXA_UI_EVENT_FLAG_RELIABLE, 124, long_text, 2) == PXA_STATUS_INVALID_ARGUMENT);
+    uint8_t limit[4];
+    pxa_write_u32(limit, 1024);
+    assert(pxa_ui_validate_property(PXA_UI_FEATURE_DYNAMIC_TEXT,
+        PXA_UI_PROPERTY_TEXT_MAX_BYTES, PXA_UI_NODE_CONTROL, PXA_UI_CONTROL_TEXT_INPUT,
+        (pxa_bytes_t){limit,4}) == PXA_STATUS_OK);
+    assert(pxa_ui_validate_property(0, PXA_UI_PROPERTY_TEXT_MAX_BYTES,
+        PXA_UI_NODE_CONTROL, PXA_UI_CONTROL_TEXT_INPUT, (pxa_bytes_t){limit,4}) == PXA_STATUS_UNSUPPORTED);
+    assert(pxa_ui_validate_property(PXA_UI_FEATURE_DYNAMIC_TEXT,
+        PXA_UI_PROPERTY_TEXT_MAX_BYTES, PXA_UI_NODE_CONTROL, PXA_UI_CONTROL_BUTTON,
+        (pxa_bytes_t){limit,4}) == PXA_STATUS_INVALID_ARGUMENT);
+    pxa_write_u32(limit, PXA_UI_EVENT_TEXT_MAX_BYTES+1);
+    assert(pxa_ui_validate_property(PXA_UI_FEATURE_DYNAMIC_TEXT,
+        PXA_UI_PROPERTY_TEXT_MAX_BYTES, PXA_UI_NODE_CONTROL, PXA_UI_CONTROL_TEXT_INPUT,
+        (pxa_bytes_t){limit,4}) == PXA_STATUS_INVALID_ARGUMENT);
 }
 
 static void test_atomic_patch(pxa_runtime_t *runtime,
@@ -1023,7 +1055,7 @@ int main(void) {
                       PXA_UI_FEATURE_CONTROLLER_INPUT |
                       PXA_UI_FEATURE_MULTIPLE_SURFACES |
                       PXA_UI_FEATURE_CANVAS_STREAM_IO |
-                      PXA_UI_FEATURE_TEXT_INPUT_CONTROL;
+                      PXA_UI_FEATURE_TEXT_INPUT_CONTROL | PXA_UI_FEATURE_DYNAMIC_TEXT;
     config.allocator_context = &allocator;
     config.allocate = test_allocate;
     config.release = test_release;

@@ -670,8 +670,11 @@ static void on_widget_event(lv_event_t *event) {
         else if (node->subtype == PXA_UI_CONTROL_TEXT_INPUT) {
             const char *text = lv_textarea_get_text(node->object);
             size_t length = text == NULL ? 0u : strlen(text);
-            if (length > PXA_UI_EVENT_TEXT_MAX_BYTES) {
-                length = PXA_UI_EVENT_TEXT_MAX_BYTES;
+            /* Text inputs reuse maximum, which otherwise belongs to sliders.
+             * Legacy nodes retain 64 bytes; opted-in nodes allocate no cache. */
+            size_t maximum = (size_t)node->maximum;
+            if (length > maximum) {
+                length = maximum;
                 while (length != 0 &&
                        ((uint8_t)text[length] & UINT8_C(0xc0)) == UINT8_C(0x80))
                     --length;
@@ -895,7 +898,8 @@ static lv_obj_t *create_object(pxa_lvgl_ui_node_t *node,
                                      LV_STATE_PRESSED);
     }
     node->minimum = 0;
-    node->maximum = 100;
+    node->maximum = node->subtype == PXA_UI_CONTROL_TEXT_INPUT
+                        ? PXA_UI_EVENT_TEXT_LEGACY_BYTES : 100;
     apply_node_colors(node);
     return object;
 }
@@ -1051,6 +1055,15 @@ static int property_is_guest_text_write(const pxa_lvgl_ui_node_t *node,
     return node->type == PXA_UI_NODE_CONTROL &&
            node->subtype == PXA_UI_CONTROL_TEXT_INPUT &&
            property == PXA_UI_PROPERTY_TEXT;
+}
+
+/* LVGL's mode setter also changes the input height. Preserve Guest layout. */
+static void set_text_single_line(lv_obj_t *object, int single_line) {
+    lv_style_value_t height;
+    int present = lv_obj_get_local_style_prop(object, LV_STYLE_HEIGHT, &height, 0) == LV_STYLE_RES_FOUND;
+    lv_textarea_set_one_line(object, single_line != 0);
+    if (present) lv_obj_set_local_style_prop(object, LV_STYLE_HEIGHT, height, 0);
+    else lv_obj_remove_local_style_prop(object, LV_STYLE_HEIGHT, 0);
 }
 
 static void apply_property(pxa_lvgl_ui_node_t *node,
@@ -1222,12 +1235,24 @@ static void apply_property(pxa_lvgl_ui_node_t *node,
                     lv_label_set_text(content,
                                       value.size == 0 ? "" : (const char *)data);
             }
-            else if (node->subtype == PXA_UI_CONTROL_TEXT_INPUT)
-                lv_textarea_set_text(object,
-                                     value.size == 0 ? "" : (const char *)data);
+            else if (node->subtype == PXA_UI_CONTROL_TEXT_INPUT) {
+                const char *current = lv_textarea_get_text(object);
+                /* State bindings echo user edits. Avoid another allocation,
+                 * layout pass and cursor reset when Host already has them. */
+                if (strlen(current) != value.size ||
+                    (value.size != 0 && memcmp(current, data, value.size) != 0))
+                    lv_textarea_set_text(object,
+                                         value.size == 0 ? "" : (const char *)data);
+            }
             else if (node->subtype == PXA_UI_CONTROL_SELECTION)
                 lv_dropdown_set_options(object,
                                         value.size == 0 ? "" : (const char *)data);
+            break;
+        case PXA_UI_PROPERTY_TEXT_SINGLE_LINE:
+            set_text_single_line(object, data[0]);
+            break;
+        case PXA_UI_PROPERTY_TEXT_MAX_BYTES:
+            node->maximum = (int32_t)pxa_read_u32(data);
             break;
         case PXA_UI_PROPERTY_ICON:
             node->font_role = 3;
@@ -1327,6 +1352,13 @@ static void clear_property(pxa_lvgl_ui_node_t *node,
                            pxa_ui_property_t property) {
     uint8_t value[16] = {0};
     switch (property) {
+        case PXA_UI_PROPERTY_TEXT_SINGLE_LINE:
+            apply_property(node, property, (pxa_bytes_t){value, 1});
+            break;
+        case PXA_UI_PROPERTY_TEXT_MAX_BYTES:
+            pxa_write_u32(value, PXA_UI_EVENT_TEXT_LEGACY_BYTES);
+            apply_property(node, property, (pxa_bytes_t){value, 4});
+            break;
         case PXA_UI_PROPERTY_VISIBLE:
         case PXA_UI_PROPERTY_ENABLED:
             value[0] = 1;
@@ -1482,6 +1514,7 @@ static pxa_status_t prepare_property_undo(pxa_lvgl_ui_t *ui, pxa_lvgl_ui_command
             case PXA_UI_PROPERTY_EVENT_MASK: case PXA_UI_PROPERTY_POSITION:
             case PXA_UI_PROPERTY_TEXT: case PXA_UI_PROPERTY_IMAGE_FIT:
             case PXA_UI_PROPERTY_VALUE: case PXA_UI_PROPERTY_MIN_VALUE: case PXA_UI_PROPERTY_MAX_VALUE:
+            case PXA_UI_PROPERTY_TEXT_SINGLE_LINE: case PXA_UI_PROPERTY_TEXT_MAX_BYTES:
             case PXA_UI_PROPERTY_SCROLL_AXIS: case PXA_UI_PROPERTY_SCROLLBAR:
             case PXA_UI_PROPERTY_SCROLL_POSITION: break;
             default: return PXA_STATUS_OK;
@@ -1501,6 +1534,15 @@ static pxa_status_t capture_property_undo(pxa_lvgl_ui_command_t *command) {
     if (!undo) return PXA_STATUS_OK;
     pxa_lvgl_ui_node_t *node = command->view.node_handle;
     lv_obj_t *object = node->object;
+    if (command->view.command == PXA_UI_COMMAND_SET_PROPERTY &&
+        command->view.property == PXA_UI_PROPERTY_TEXT &&
+        node->subtype == PXA_UI_CONTROL_TEXT_INPUT) {
+        const char *current = lv_textarea_get_text(object);
+        if (strlen(current) == command->view.value.size &&
+            (command->view.value.size == 0 ||
+             !memcmp(current, command->view.value.data, command->view.value.size)))
+            return PXA_STATUS_OK;
+    }
     memcpy(undo->state, (uint8_t *)node + NODE_STATE_OFFSET, NODE_STATE_BYTES);
     undo->content = node->content;
     undo->object_state = lv_obj_get_state(object);
@@ -1520,6 +1562,7 @@ static pxa_status_t capture_property_undo(pxa_lvgl_ui_command_t *command) {
             style->object, style->property, &style->value, style->selector) == LV_STYLE_RES_FOUND;
     }
     uint16_t property = command->view.property;
+    if (property == PXA_UI_PROPERTY_TEXT_SINGLE_LINE) undo->selected = lv_textarea_get_one_line(object);
     if (property == PXA_UI_PROPERTY_TEXT || property == PXA_UI_PROPERTY_ICON) {
         const char *text = NULL;
         if (node->type == PXA_UI_NODE_TEXT) text = lv_label_get_text(object);
@@ -1560,6 +1603,7 @@ static void rollback_property(pxa_lvgl_ui_command_t *command) {
     lv_obj_t *object = node->object;
     uint16_t property = command->view.property;
     memcpy((uint8_t *)node + NODE_STATE_OFFSET, undo->state, NODE_STATE_BYTES);
+    if (property == PXA_UI_PROPERTY_TEXT_SINGLE_LINE) set_text_single_line(object, undo->selected);
     if (property == PXA_UI_PROPERTY_TEXT || property == PXA_UI_PROPERTY_ICON) {
         if (undo->text) apply_property(node, PXA_UI_PROPERTY_TEXT,
             (pxa_bytes_t){(uint8_t *)undo->text, strlen(undo->text)});

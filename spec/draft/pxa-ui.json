@@ -1,11 +1,11 @@
 {
-  "schema": "pxa-ui-spec-0.7",
+  "schema": "pxa-ui-spec-0.8",
   "status": "draft",
   "service": {
     "name": "ui",
     "id": 3,
     "major": 0,
-    "minor": 7,
+    "minor": 8,
     "patch": 0
   },
   "byte_order": "little-endian",
@@ -70,6 +70,10 @@
     {
       "name": "text-input-control",
       "bit": 12
+    },
+    {
+      "name": "dynamic-text",
+      "bit": 13
     }
   ],
   "opcodes": [
@@ -609,6 +613,20 @@
       "id": 781,
       "type": "u64",
       "ownership": "Prepared Assets IMAGE; transaction preparation retains pixels, failure releases them, committed node owns until replacement/removal. Closing Guest handle after commit does not remove image."
+    },
+    {
+      "name": "text-max-bytes",
+      "id": 782,
+      "type": "u32",
+      "feature": "dynamic-text",
+      "rule": "Text inputs only; 1..4052 UTF-8 bytes. Default 64 for legacy nodes; clear restores 64. No capacity reservation. Truncate only at complete UTF-8 boundaries."
+    },
+    {
+      "name": "text-single-line",
+      "id": 783,
+      "type": "bool",
+      "feature": "dynamic-text",
+      "rule": "Text inputs only. Default false; true uses horizontal scrolling and avoids long-word wrapping. Clear restores false. Does not change configured input height."
     }
   ],
   "value_types": {
@@ -770,15 +788,15 @@
     }
   ],
   "resource_policy": "Hosts enforce private byte budgets and queue policy. Node, canvas, property, and text counts are not ABI limits and are never advertised as fixed quotas.",
-  "protocol_version": "0.6.0",
+  "protocol_version": "0.8.0",
   "events": [
     {
       "name": "text",
       "kind": 6,
       "feature": null,
-      "payload": "utf8 bytes, no terminator, 1..64 bytes",
+      "payload": "UTF-8 bytes, no terminator, 0..4052 bytes with dynamic-text; legacy maximum 64",
       "flags": "reliable",
-      "note": "Current text of a text input after any change, including a change made by the Guest itself."
+      "note": "Current text after user/IME changes. Guest writes are not echoed. Payload storage follows actual length, bounded by control-message and queue budgets."
     }
   ]
 }

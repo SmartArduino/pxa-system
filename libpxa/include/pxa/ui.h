@@ -13,7 +13,7 @@ extern "C" {
 
 #define PXA_UI_SERVICE_ID UINT16_C(3)
 #define PXA_UI_SERVICE_MAJOR UINT16_C(0)
-#define PXA_UI_SERVICE_MINOR UINT16_C(7)
+#define PXA_UI_SERVICE_MINOR UINT16_C(8)
 #define PXA_UI_SERVICE_PATCH UINT16_C(0)
 
 #define PXA_UI_TX_BEGIN UINT16_C(1)
@@ -204,6 +204,9 @@ pxa_status_t pxa_ui_validate_grid_tracks(pxa_bytes_t value);
 #define PXA_UI_PROPERTY_SCROLL_POSITION ((pxa_ui_property_t)780)
 /* Assets IMAGE handle, u64. Binding retains prepared pixels independently. */
 #define PXA_UI_PROPERTY_IMAGE_HANDLE ((pxa_ui_property_t)781)
+/* Optional per-input UTF-8 byte limit. Does not reserve a text buffer. */
+#define PXA_UI_PROPERTY_TEXT_MAX_BYTES ((pxa_ui_property_t)782)
+#define PXA_UI_PROPERTY_TEXT_SINGLE_LINE ((pxa_ui_property_t)783)
 
 #define PXA_UI_IMAGE_FIT_CONTAIN UINT8_C(0)
 #define PXA_UI_IMAGE_FIT_STRETCH UINT8_C(1)
@@ -261,9 +264,11 @@ typedef uint16_t pxa_ui_event_kind_t;
 #define PXA_UI_EVENT_MASK_CONTROLLER_STATE (UINT64_C(1) << 9)
 
 /* A text event payload is the current UTF-8 text of a text input, without a
- * terminator. Hosts and Guests agree on this bound so both sides can use fixed
- * buffers. */
-#define PXA_UI_EVENT_TEXT_MAX_BYTES 64u
+ * terminator. Legacy inputs keep a 64-byte default; dynamic-text inputs
+ * configure a limit without reserving a maximum-sized payload buffer. */
+#define PXA_UI_EVENT_TEXT_LEGACY_BYTES 64u
+/* Core 1 envelope + UI event prefix must fit one control message. */
+#define PXA_UI_EVENT_TEXT_MAX_BYTES (PXA_WIRE_MAX_CONTROL_MESSAGE - PXA_WIRE_V1_SIZE - 24u)
 
 #define PXA_UI_KEY_VOLUME_UP UINT32_C(1)
 #define PXA_UI_KEY_VOLUME_DOWN UINT32_C(2)
@@ -284,6 +289,7 @@ typedef uint64_t pxa_ui_features_t;
 #define PXA_UI_FEATURE_CANVAS_STREAM_IO (UINT64_C(1) << 10)
 #define PXA_UI_FEATURE_SIZED_TEXT (UINT64_C(1) << 11)
 #define PXA_UI_FEATURE_TEXT_INPUT_CONTROL (UINT64_C(1) << 12)
+#define PXA_UI_FEATURE_DYNAMIC_TEXT (UINT64_C(1) << 13)
 
 #define PXA_UI_CONTROLLER_UP (UINT32_C(1) << 0)
 #define PXA_UI_CONTROLLER_DOWN (UINT32_C(1) << 1)

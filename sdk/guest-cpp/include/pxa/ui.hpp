@@ -4,6 +4,7 @@
 #include "ui_input.hpp"
 #include "canvas.hpp"
 #include "text_input.hpp"
+#include "text.hpp"
 
 #include <bit>
 #include <charconv>
@@ -511,28 +512,67 @@ ProgressView<Source> Progress(Source& value, int minimum = 0,
 
 struct NoInputSubmit {};
 struct NoInputRef {};
+struct NoInputLimit {};
+struct NoInputMode {};
 
-template<class Source, class Submit = NoInputSubmit, bool HasRef = false>
+template<class Source, class Submit = NoInputSubmit, bool HasRef = false,
+         bool HasLimit = false, bool HasMode = false>
 class TextInputView {
 public:
     static constexpr bool has_submit = !std::same_as<Submit, NoInputSubmit>;
     static constexpr Capacity capacity{1, 1, 1 + has_submit, 0,
                                       (is_ref_v<Source> ? 1u : 0u) + HasRef};
-    explicit TextInputView(Source& value, Submit submit = {}, TextInputRef* ref = nullptr)
+    explicit TextInputView(Source& value, Submit submit = {}, TextInputRef* ref = nullptr,
+                           std::uint32_t limit = max_text_bytes, bool single_line = false)
         : value_(value), submit_(std::move(submit)) {
         if constexpr (HasRef) ref_ = ref;
+        if constexpr (HasLimit) limit_ = limit;
+        if constexpr (HasMode) single_line_ = single_line;
     }
     template<class Self, class F> auto on_submit(this Self&& self, F&& callback) {
         TextInputRef* ref = nullptr;
         if constexpr (HasRef) ref = self.ref_;
-        return TextInputView<Source, std::decay_t<F>, HasRef>(
-            self.value_, std::forward<F>(callback), ref);
+        std::uint32_t limit = max_text_bytes;
+        if constexpr (HasLimit) limit = self.limit_;
+        bool mode = false;
+        if constexpr (HasMode) mode = self.single_line_;
+        return TextInputView<Source, std::decay_t<F>, HasRef, HasLimit, HasMode>(
+            self.value_, std::forward<F>(callback), ref, limit, mode);
+    }
+    template<class Self> auto max_bytes(this Self&& self,
+                                      std::uint32_t limit = max_text_bytes) {
+        TextInputRef* ref = nullptr;
+        if constexpr (HasRef) ref = self.ref_;
+        bool mode = false;
+        if constexpr (HasMode) mode = self.single_line_;
+        return TextInputView<Source, Submit, HasRef, true, HasMode>(
+            self.value_, std::forward<Self>(self).submit_, ref, limit, mode);
+    }
+
+    template<class Self> auto single_line(this Self&& self, bool enabled = true) {
+        TextInputRef* ref = nullptr;
+        if constexpr (HasRef) ref = self.ref_;
+        std::uint32_t limit = max_text_bytes;
+        if constexpr (HasLimit) limit = self.limit_;
+        return TextInputView<Source, Submit, HasRef, HasLimit, true>(
+            self.value_, std::forward<Self>(self).submit_, ref, limit, enabled);
     }
 
     template<class Page> bool render(Page& page, std::uint32_t parent) {
         auto node = page.create(parent, protocol::control,
                                 protocol::text_input);
         if (!node) return false;
+        if constexpr (HasLimit) {
+            if (!limit_ || limit_ > max_text_bytes)
+                return page.fail(Error::invalid_argument);
+            if (value_.get().size() > limit_)
+                return page.fail(Error::limit_exceeded);
+            if (!page.transaction().u32(node, protocol::text_max_bytes, limit_))
+                return false;
+        }
+        if constexpr (HasMode)
+            if (!page.transaction().u8(node, protocol::text_single_line, single_line_))
+                return false;
         if constexpr (HasRef)
             if (!ref_ || !page.attach_text_input(*ref_, node)) return false;
         if constexpr (has_submit)
@@ -550,6 +590,8 @@ private:
     Source& value_;
     [[no_unique_address]] Submit submit_;
     [[no_unique_address]] std::conditional_t<HasRef, TextInputRef*, NoInputRef> ref_;
+    [[no_unique_address]] std::conditional_t<HasLimit, std::uint32_t, NoInputLimit> limit_;
+    [[no_unique_address]] std::conditional_t<HasMode, bool, NoInputMode> single_line_;
 };
 
 template<class Source> requires
@@ -1121,9 +1163,7 @@ public:
             node, 6, &state,
             [](void* pointer, const Event& event) {
                 const auto data = event.payload.subspan(24);
-                if (data.size() > 64) return false;
-                for (auto byte : data)
-                    if (byte == std::byte{}) return false;
+                if (data.size() > max_text_bytes || !wire::valid_utf8(data)) return false;
                 static_cast<State<std::string>*>(pointer)->set(
                     {reinterpret_cast<const char*>(data.data()),
                      data.size()});

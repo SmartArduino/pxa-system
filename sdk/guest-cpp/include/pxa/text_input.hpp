@@ -6,6 +6,8 @@
 namespace pxa::ui {
 
 inline constexpr std::uint64_t text_input_control_feature = std::uint64_t{1} << 12;
+inline constexpr std::uint64_t dynamic_text_feature = std::uint64_t{1} << 13;
+inline constexpr std::uint32_t max_text_bytes = wire::max_control_bytes - wire::header_bytes - 24;
 
 // Borrowed from its Page, like CanvasRef. Keep it alive until Page unmounts.
 // System IME settings and dictionary belong to the Host, not the application.

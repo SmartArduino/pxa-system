@@ -130,6 +130,36 @@ int main() {
     }
     assert(!editor.mounted() && !editor.hide_keyboard());
     {
+        auto dynamic = Page(transport, TextInput(name, editor).single_line().max_bytes(2048)
+            .on_submit([&submitted] { ++submitted; }));
+        assert(dynamic.mount());
+        std::string long_text;
+        for (unsigned i = 0; i < 300; ++i) long_text += "中文🙂";
+        assert(long_text.size() == 3000);
+        long_text.resize(2000); // An exact UTF-8 boundary.
+        auto bytes = std::as_bytes(std::span{long_text.data(), long_text.size()});
+        assert(dynamic.handle(event(2, dynamic.generation(), 6, bytes)));
+        assert(name.get() == long_text);
+        assert(dynamic.flush()); // Large properties stream through small WRITE packets.
+        assert(dynamic.handle(event(2, dynamic.generation(), 1, {})) && submitted == 2);
+        auto malformed = std::array{std::byte{0xe4}, std::byte{0xb8}};
+        assert(!dynamic.handle(event(2, dynamic.generation(), 6, malformed)));
+        assert(name.get() == long_text);
+        assert(dynamic.handle(event(2, dynamic.generation(), 6, {})));
+        assert(name.get().empty() && dynamic.flush());
+        const std::string url = "https://example.org/catalog.json?token=" + std::string(200, 'a');
+        assert(dynamic.handle(event(2, dynamic.generation(), 6,
+            std::as_bytes(std::span{url.data(), url.size()}))));
+        assert(name.get() == url && dynamic.flush());
+        name.set("");
+    }
+    {
+        auto invalid = Page(transport, TextInput(name).max_bytes(0));
+        assert(!invalid.mount());
+        auto oversized = Page(transport, TextInput(name).max_bytes(max_text_bytes + 1));
+        assert(!oversized.mount());
+    }
+    {
         auto duplicate = Page(transport, Column(TextInput(name, editor),
                                                 TextInput(name, editor)));
         assert(!duplicate.mount() && !editor.mounted());

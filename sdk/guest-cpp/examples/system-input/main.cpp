@@ -16,7 +16,7 @@ struct SystemInput {
     auto view() {
         return Column(
             Text("系统输入法").font(Font::title),
-            TextInput(text, editor).on_submit([this] {
+            TextInput(text, editor).max_bytes(2048).single_line().on_submit([this] {
                 report(editor.hide_keyboard(), "IME submitted");
                 (void)context->log().write(pxa::LogLevel::info, text.get());
             }),

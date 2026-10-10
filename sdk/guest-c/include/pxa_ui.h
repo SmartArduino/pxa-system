@@ -271,7 +271,9 @@ static inline int pxa_ui_parse_theme_event(const pxa_ui_wire_event_t* event,
 #define PXA_UI_EVENT_MASK_SCROLL (UINT64_C(1) << 2)
 #define PXA_UI_EVENT_MASK_KEY (UINT64_C(1) << 4)
 #define PXA_UI_EVENT_MASK_TEXT (UINT64_C(1) << 5)
-#define PXA_UI_EVENT_TEXT_MAX_BYTES 64u
+#define PXA_UI_EVENT_TEXT_LEGACY_BYTES 64u
+#define PXA_UI_EVENT_TEXT_MAX_BYTES PXA_UI_EVENT_TEXT_LEGACY_BYTES
+#define PXA_UI_EVENT_TEXT_DYNAMIC_MAX_BYTES 4052u
 #define PXA_UI_EVENT_MASK_POINTER (UINT64_C(1) << 6)
 #define PXA_UI_EVENT_MASK_VISIBLE_RANGE (UINT64_C(1) << 8)
 #define PXA_UI_EVENT_MASK_CONTROLLER_STATE (UINT64_C(1) << 9)
@@ -836,17 +838,19 @@ static inline int pxa_ui_parse_event(const pxa_ui_wire_event_t* event,
 }
 
 /* Text events carry the current UTF-8 text of a text input without a
- * terminator and never longer than PXA_UI_EVENT_TEXT_MAX_BYTES. The copy is
- * always terminated; the text is truncated when `capacity` is too small. */
+ * terminator. Long-input nodes use up to TEXT_DYNAMIC_MAX_BYTES. The copy is
+ * terminated and truncated at a UTF-8 boundary if `capacity` is too small. */
 static inline int pxa_ui_event_text(const pxa_ui_event_data_t* event,
                                     char* output, size_t capacity) {
     size_t copy;
     if (event == NULL || output == NULL || capacity == 0 ||
-        event->kind != PXA_UI_EVENT_TEXT_KIND || event->data == NULL ||
-        event->data_size == 0 ||
-        event->data_size > PXA_UI_EVENT_TEXT_MAX_BYTES)
+        event->kind != PXA_UI_EVENT_TEXT_KIND ||
+        (event->data == NULL && event->data_size != 0) ||
+        event->data_size > PXA_UI_EVENT_TEXT_DYNAMIC_MAX_BYTES)
         return 0;
     copy = event->data_size < capacity - 1u ? event->data_size : capacity - 1u;
+    while (copy && copy < event->data_size &&
+           (event->data[copy] & 0xc0u) == 0x80u) --copy;
     for (size_t index = 0; index < copy; ++index)
         output[index] = (char)event->data[index];
     output[copy] = '\0';

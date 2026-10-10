@@ -114,6 +114,10 @@ static int property_allowed(pxa_ui_property_t property,
             return type == PXA_UI_NODE_PROGRESS ||
                    (type == PXA_UI_NODE_CONTROL &&
                     subtype == PXA_UI_CONTROL_SLIDER);
+        case PXA_UI_PROPERTY_TEXT_SINGLE_LINE:
+        case PXA_UI_PROPERTY_TEXT_MAX_BYTES:
+            return type == PXA_UI_NODE_CONTROL &&
+                   subtype == PXA_UI_CONTROL_TEXT_INPUT;
         case PXA_UI_PROPERTY_STEP:
             return type == PXA_UI_NODE_CONTROL &&
                    subtype == PXA_UI_CONTROL_SLIDER;
@@ -135,6 +139,9 @@ pxa_status_t pxa_ui_validate_clear_property(
     pxa_ui_node_type_t node_type, pxa_ui_control_type_t subtype) {
     if (!property_allowed(property, node_type, subtype))
         return PXA_STATUS_INVALID_ARGUMENT;
+    if (property == PXA_UI_PROPERTY_TEXT_MAX_BYTES || property == PXA_UI_PROPERTY_TEXT_SINGLE_LINE)
+        return (features & PXA_UI_FEATURE_DYNAMIC_TEXT) ? PXA_STATUS_OK
+                                                      : PXA_STATUS_UNSUPPORTED;
     if ((property == PXA_UI_PROPERTY_GRID_COLUMNS ||
          property == PXA_UI_PROPERTY_GRID_ROWS ||
          property == PXA_UI_PROPERTY_GRID_CELL) &&
@@ -223,6 +230,16 @@ pxa_status_t pxa_ui_validate_property(
     if ((value.data == NULL && value.size != 0) ||
         !property_allowed(property, node_type, subtype))
         return PXA_STATUS_INVALID_ARGUMENT;
+    if (property == PXA_UI_PROPERTY_TEXT_SINGLE_LINE) {
+        if (!(features & PXA_UI_FEATURE_DYNAMIC_TEXT)) return PXA_STATUS_UNSUPPORTED;
+        return value.size == 1 && value.data[0] <= 1 ? PXA_STATUS_OK : PXA_STATUS_INVALID_ARGUMENT;
+    }
+    if (property == PXA_UI_PROPERTY_TEXT_MAX_BYTES) {
+        if (!(features & PXA_UI_FEATURE_DYNAMIC_TEXT)) return PXA_STATUS_UNSUPPORTED;
+        return value.size == 4 && pxa_read_u32(value.data) >= 1 &&
+                   pxa_read_u32(value.data) <= PXA_UI_EVENT_TEXT_MAX_BYTES
+                   ? PXA_STATUS_OK : PXA_STATUS_INVALID_ARGUMENT;
+    }
     if ((property == PXA_UI_PROPERTY_GRID_COLUMNS ||
          property == PXA_UI_PROPERTY_GRID_ROWS ||
          property == PXA_UI_PROPERTY_GRID_CELL) &&

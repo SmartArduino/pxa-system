@@ -48,6 +48,7 @@ constexpr std::uint16_t font_role = 519;
 constexpr std::uint16_t composition = 522;
 constexpr std::uint8_t alpha_overlay = 1;
 constexpr std::uint16_t text_value = 768;
+constexpr std::uint16_t text_max_bytes = 782, text_single_line = 783;
 constexpr std::uint16_t asset = 770;
 constexpr std::uint16_t image_fit = 771;
 constexpr std::uint16_t value = 772;

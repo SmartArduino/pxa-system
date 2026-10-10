@@ -1,5 +1,6 @@
 #include "ui/ui_internal.h"
 #include "common/checked_math.h"
+#include "common/bytes_internal.h"
 
 #include <limits.h>
 #include <string.h>
@@ -482,9 +483,14 @@ pxa_status_t pxa_ui_queue_event(pxa_ui_service_t *service,
         (value == NULL && value_size != 0) ||
         value_size > PXA_MAX_CONTROL_MESSAGE - PXA_ENVELOPE_SIZE - 24u)
         return PXA_STATUS_INVALID_ARGUMENT;
-    if (kind == PXA_UI_EVENT_TEXT &&
-        value_size > PXA_UI_EVENT_TEXT_MAX_BYTES)
-        return PXA_STATUS_INVALID_ARGUMENT;
+    if (kind == PXA_UI_EVENT_TEXT) {
+        size_t maximum = (service->config.features & PXA_UI_FEATURE_DYNAMIC_TEXT)
+                         ? PXA_UI_EVENT_TEXT_MAX_BYTES : PXA_UI_EVENT_TEXT_LEGACY_BYTES;
+        if (value_size > maximum ||
+            !pxa_utf8_validate(value, value_size,
+                PXA_UTF8_REJECT_C0 | PXA_UTF8_ALLOW_TEXT_WHITESPACE))
+            return PXA_STATUS_INVALID_ARGUMENT;
+    }
     if (kind == PXA_UI_EVENT_CONTROLLER_STATE &&
         ((service->config.features & PXA_UI_FEATURE_CONTROLLER_INPUT) == 0 ||
          value_size != 8 || ((const uint8_t *)value)[1] > 1 ||

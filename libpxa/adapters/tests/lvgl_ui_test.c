@@ -71,7 +71,7 @@ static int g_missing_asset;
 static uint32_t g_event_surface;
 static uint32_t g_event_node;
 static pxa_ui_event_kind_t g_event_kind;
-static uint8_t g_event_value[64];
+static uint8_t g_event_value[PXA_UI_EVENT_TEXT_MAX_BYTES];
 static size_t g_event_value_size;
 static uint32_t g_visible_first;
 static uint32_t g_visible_count;
@@ -303,7 +303,9 @@ static pxa_status_t transact_status(uint32_t transaction, uint32_t generation,
 
 static void transact(uint32_t transaction, uint32_t generation,
                      uint32_t target, uint8_t kind, const bytes_t *stream) {
-    assert(transact_status(transaction, generation, target, kind, stream) == PXA_STATUS_OK);
+    pxa_status_t result = transact_status(transaction, generation, target, kind, stream);
+    if (result != PXA_STATUS_OK) fprintf(stderr, "Transaction %u generation %u failed: %d\n", transaction, generation, result);
+    assert(result == PXA_STATUS_OK);
 }
 
 static void create_overlay(bytes_t *commands, uint32_t node, uint32_t parent,
@@ -947,7 +949,7 @@ int main(void) {
     pxa_ui_config_init(&service_config);
     service_config.features = PXA_UI_FEATURE_CANVAS | PXA_UI_FEATURE_GRID |
                               PXA_UI_FEATURE_RGB565_BITMAP |
-                              PXA_UI_FEATURE_VIRTUAL_LIST;
+                              PXA_UI_FEATURE_VIRTUAL_LIST | PXA_UI_FEATURE_DYNAMIC_TEXT;
     service_config.allocator_context = &allocator;
     service_config.allocate = test_allocate;
     service_config.release = test_release;
@@ -2238,6 +2240,67 @@ int main(void) {
         lv_obj_get_coords(row,&row_coords);
         assert(row_coords.y1==list_coords.y1+10);
         assert(snapshot_hash(root)==hash && allocator.current==resident);
+    }
+
+    /* Dynamic text limits are optional, transactional, and resettable. */
+    {
+        bytes_t commands = {{0}, 0};
+        uint8_t value[8];
+        create_node(&commands, 1, 0, PXA_UI_NODE_ROOT, 0);
+        create_node(&commands, 2, 1, PXA_UI_NODE_CONTROL, PXA_UI_CONTROL_TEXT_INPUT);
+        pxa_write_u64(value, PXA_UI_EVENT_MASK_TEXT);
+        set_property(&commands, 2, PXA_UI_PROPERTY_EVENT_MASK, value, 8);
+        transact(61, 61, 0, PXA_UI_REPLACE_SURFACE, &commands);
+        root = lv_obj_get_child(lv_screen_active(), 0);
+        lv_obj_t *input = lv_obj_get_child(root, 0);
+        commands.size = 0;
+        value[0] = 1;
+        set_property(&commands, 2, PXA_UI_PROPERTY_TEXT_SINGLE_LINE, value, 1);
+        pxa_write_u32(value, 512);
+        set_property(&commands, 2, PXA_UI_PROPERTY_TEXT_MAX_BYTES, value, 4);
+        value[0] = PXA_UI_LENGTH_LOGICAL_PX; value[1] = value[2] = value[3] = 0;
+        pxa_write_u32(value + 4, 32 * 64);
+        set_property(&commands, 2, PXA_UI_PROPERTY_HEIGHT, value, 8);
+        transact(62, 62, 0, PXA_UI_PATCH, &commands);
+        assert(lv_textarea_get_one_line(input) && lv_obj_get_height(input) == 32);
+        char longer[520]; memset(longer, 'x', 508);
+        memcpy(longer + 508, "中文🙂", 11);
+        lv_textarea_set_text(input, longer);
+        assert(g_event_value_size == 511 && !memcmp(g_event_value, longer, 511));
+        lv_textarea_set_text(input, "");
+        assert(g_event_value_size == 0);
+        commands.size = 0;
+        bytes_t property = {{0}, 0};
+        put_u32(&property, 2); put_u16(&property, PXA_UI_PROPERTY_TEXT_MAX_BYTES);
+        command(&commands, PXA_UI_COMMAND_CLEAR_PROPERTY, &property);
+        transact(63, 63, 0, PXA_UI_PATCH, &commands);
+        lv_textarea_set_text(input, longer);
+        assert(g_event_value_size == PXA_UI_EVENT_TEXT_LEGACY_BYTES);
+        size_t resident = allocator.current;
+        commands.size = 0;
+        value[0] = 0;
+        set_property(&commands, 2, PXA_UI_PROPERTY_TEXT_SINGLE_LINE, value, 1);
+        pxa_write_u32(value, 1024);
+        set_property(&commands, 2, PXA_UI_PROPERTY_TEXT_MAX_BYTES, value, 4);
+        create_overlay(&commands, 3, 1, 11, 13);
+        allocator.fail_during_execute = 1;
+        assert(transact_status(64, 64, 0, PXA_UI_PATCH, &commands) == PXA_STATUS_RESOURCE_LIMIT);
+        allocator.fail_during_execute = 0;
+        lv_textarea_set_text(input, "");
+        lv_textarea_set_text(input, longer);
+        assert(g_event_value_size == PXA_UI_EVENT_TEXT_LEGACY_BYTES);
+        assert(allocator.current == resident && lv_textarea_get_one_line(input));
+        commands.size = 0; property.size = 0;
+        put_u32(&property, 2); put_u16(&property, PXA_UI_PROPERTY_TEXT_SINGLE_LINE);
+        command(&commands, PXA_UI_COMMAND_CLEAR_PROPERTY, &property);
+        transact(65, 65, 0, PXA_UI_PATCH, &commands);
+        assert(!lv_textarea_get_one_line(input) && lv_obj_get_height(input) == 32);
+        lv_textarea_set_cursor_pos(input, 10);
+        commands.size = 0;
+        set_property(&commands, 2, PXA_UI_PROPERTY_TEXT, longer, strlen(longer));
+        transact(66, 66, 0, PXA_UI_PATCH, &commands);
+        assert(lv_textarea_get_cursor_pos(input) == 10);
+        printf("Dynamic text: UTF-8 boundary, empty edit, clear limit and failed transaction rollback OK\n");
     }
 
     assert(pxa_component_finish_start(g_runtime, g_component,

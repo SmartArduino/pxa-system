@@ -1,4 +1,4 @@
-# PXA UI Service 0.7.0
+# PXA UI Service 0.8.0
 
 UI is a backend-neutral command protocol. The Host owns the rendered tree;
 the service does not retain a second property-complete scene. A Component has a
@@ -160,11 +160,19 @@ that subscribes to scrolling or pointer input also observes a gesture that
 starts on one of its children, and the event carries the subscribing node.
 
 A text event (`kind` 6) carries the current UTF-8 text of a text input as its
-payload, with no terminator and at most `PXA_UI_EVENT_TEXT_MAX_BYTES` (64)
-bytes. Empty text is valid and clears the Guest value. Hosts truncate oversized
-text only at UTF-8 character boundaries. It is reliable, so a Host never
-coalesces two edits, and it is emitted
-whenever the text changes - including when a Guest writes the text itself. A
+payload without a terminator. Empty text is valid and clears the Guest value.
+UI 0.8 `dynamic-text` (bit 13) adds `text-max-bytes` (property 782, u32,
+text inputs only), an optional limit of 1..4052 bytes. Clearing it restores
+the legacy limit of 64 bytes. The limit reserves no memory: Host payloads and
+Guest strings use the actual input length. The 4052-byte ceiling is one 4096-byte
+Core 1 message minus the 20-byte envelope and 24-byte UI event prefix.
+Hosts truncate oversized input only at UTF-8 boundaries and enforce their queue
+and allocation budgets. Unmodified legacy nodes keep their 64-byte behavior.
+`text-single-line` (property 783, bool, same feature) optionally enables
+horizontal scrolling, avoiding repeated long-word wrapping for URLs/search.
+Its default and clear value are false; changing it preserves the input height.
+Text is reliable, so a Host never coalesces two edits. User and IME changes emit
+events; Guest property writes do not echo another text event. A
 Host that presents a system input method delivers its result through these
 events, so a Guest that wants the system keyboard only has to render a text
 input, subscribe to the text mask and follow the text events. Resource pressure is semantic (`normal`,

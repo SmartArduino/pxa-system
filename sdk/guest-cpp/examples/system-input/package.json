@@ -7,7 +7,7 @@
   "build": {"system": "cmake", "source_dir": "."},
   "components": [{
     "id": "main", "kind": "ui", "cmake_target": "pxa_main",
-    "services": [{"name": "ui", "features": ["text-input-control"]}, "log"],
+    "services": [{"name": "ui", "features": ["dynamic-text", "text-input-control"]}, "log"],
     "wasi": {"version": "preview1", "libc": "wasi-libc",
              "features": ["monotonic-clock", "wall-clock"]}
   }]
