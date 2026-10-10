@@ -197,13 +197,17 @@ else()
     set_target_properties(pxsys_system_gestures_test PROPERTIES EXCLUDE_FROM_ALL TRUE)
 endif()
 
-foreach(_test audio audio_app i18n_app raster resource_app voxel_resources resource_budget ui_images store_images weather_images)
+foreach(_test audio audio_app i18n_app sdk_patterns declarative_ui raster resource_app voxel_resources resource_budget ui_images store_images weather_images)
     if(_test STREQUAL "audio")
         set(_source tests/audio_backend_test.c)
     elseif(_test STREQUAL "audio_app")
         set(_source tests/audio_app_test.c)
     elseif(_test STREQUAL "i18n_app")
         set(_source tests/i18n_app_test.c)
+    elseif(_test STREQUAL "sdk_patterns")
+        set(_source tests/sdk_patterns_test.c)
+    elseif(_test STREQUAL "declarative_ui")
+        set(_source tests/declarative_ui_test.c)
     elseif(_test STREQUAL "resource_budget")
         set(_source tests/resource_budget_test.c)
     elseif(_test STREQUAL "resource_app")
@@ -241,6 +245,16 @@ foreach(_test audio audio_app i18n_app raster resource_app voxel_resources resou
                 "${CMAKE_CURRENT_LIST_DIR}/../../tools/package/test_cpp_i18n_app.sh"
                 $<TARGET_FILE:pxsys_i18n_app_test>)
             set_tests_properties(pxsys_i18n_app_test PROPERTIES TIMEOUT 90)
+        elseif(_test STREQUAL "sdk_patterns")
+            add_test(NAME pxsys_sdk_patterns_test COMMAND bash
+                "${CMAKE_CURRENT_LIST_DIR}/../../tools/package/test_cpp_sdk_patterns.sh"
+                $<TARGET_FILE:pxsys_sdk_patterns_test>)
+            set_tests_properties(pxsys_sdk_patterns_test PROPERTIES TIMEOUT 90)
+        elseif(_test STREQUAL "declarative_ui")
+            add_test(NAME pxsys_declarative_ui_test COMMAND bash
+                "${CMAKE_CURRENT_LIST_DIR}/../../tools/package/test_cpp_declarative_ui.sh"
+                $<TARGET_FILE:pxsys_declarative_ui_test>)
+            set_tests_properties(pxsys_declarative_ui_test PROPERTIES TIMEOUT 120)
         elseif(_test STREQUAL "resource_budget")
             add_test(NAME pxsys_resource_budget_test COMMAND pxsys_resource_budget_test)
         elseif(_test STREQUAL "raster")

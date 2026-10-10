@@ -56,9 +56,12 @@ public:
     Result<std::uint32_t> read(std::span<std::byte> output) noexcept {
         if (!handle_ || !transport_ || output.empty())
             return std::unexpected(Error::invalid_argument);
-        return transport_->io(handle_.handle(), 1, output);
+        auto result = transport_->io(handle_.handle(), 1, output);
+        if (result && *result > output.size())
+            return std::unexpected(Error::protocol_error);
+        return result;
     }
-    void close() noexcept { handle_.reset(); }
+    Result<void> close() noexcept { return handle_.close(); }
 private:
     Transport* transport_ = nullptr;
     Resource<NetBodyTag> handle_;

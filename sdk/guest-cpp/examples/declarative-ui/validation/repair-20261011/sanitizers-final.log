@@ -1,0 +1,3 @@
+Declarative UI: coalesced bindings, rollback, component removal, transient borrowed callbacks, numeric text, safe area, action errors/cancellation/pool limits, zero allocations OK (29 commits)
+UI lifecycle: initial mount retries, move-only args, partial builds, final modifiers, compound control targets, SafeArea composition/recovery, list/Refresh modifiers, zero heap OK
+UI Environment: selected State storage only, atomic init/notifications, 100 identical metrics/zero submits, zero heap; display=64 B all=152 B

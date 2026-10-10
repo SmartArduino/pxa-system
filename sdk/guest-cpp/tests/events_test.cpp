@@ -1,4 +1,5 @@
 #include <pxa/events.hpp>
+#include <pxa/clock.hpp>
 #include <pxa/audio.hpp>
 #include <pxa/ipc.hpp>
 #include <pxa/sensor.hpp>
@@ -34,6 +35,14 @@ template<class T> concept Routable=requires(pxa::Event event) { event.template i
 static_assert(!Routable<int>);
 
 int main() {
+    std::array<std::byte,8> clock{};
+    pxa::wire::put64(clock.data(),1234567);
+    verify<pxa::ClockTick>({4,0x8001,0,clock},pxa::decode_clock_tick);
+    assert(pxa::decode_clock_tick({4,0x8001,0,clock})->timestamp_us==1234567);
+    clock.fill(std::byte{});
+    assert(pxa::decode_clock_tick({4,0x8001,0,clock})->timestamp_us==0);
+    std::array<std::byte,9> extra{};
+    assert(!pxa::decode_clock_tick({4,0x8001,0,extra}));
     const auto handle=0x1234567800000001ull;
     std::array<std::byte,38> sensor{};
     auto record=[](std::byte* p,std::uint16_t tag,std::uint16_t size) {
@@ -75,5 +84,5 @@ int main() {
     assert(request.is<pxa::TypedIpcRequest<TestContract>>());
     // An IPC kind match leaves endpoint/schema matching to decode_ipc_request<Contract>.
     assert((!pxa::Event{13,0x8001,0,{}}.is<pxa::TypedIpcRequest<TestContract>>()));
-    std::puts("Typed event routing: 7 valid decoder paths, malformed token/payload retained, Event layout unchanged OK");
+    std::puts("Typed event routing: 8 valid decoder paths, malformed token/payload retained, Event layout unchanged OK");
 }

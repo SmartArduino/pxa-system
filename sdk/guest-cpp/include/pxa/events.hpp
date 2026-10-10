@@ -5,19 +5,31 @@
 // Optional notification routing. Forward declarations avoid pulling every
 // service into an application; include the service used to decode its payload.
 namespace pxa {
-struct SystemEnvironment;
 struct SensorSample;
+struct ClockTick;
+struct SystemEnvironment;
 struct PermissionRevoked;
 struct PlaybackEvent;
 struct SurfaceRelease;
 struct WorkStopRequested;
 struct IpcRequest;
 template<class Contract> struct TypedIpcRequest;
-namespace ui { struct CanvasPointer; }
+namespace ui { struct CanvasPointer; struct DisplayMetrics; struct UiCapabilities; struct UiAppearance; }
 
+template<> struct EventTraits<ClockTick> {
+    static constexpr std::uint16_t service = 4, opcode = 0x8001;
+};
 template<> struct EventTraits<SystemEnvironment> {
     static constexpr std::uint16_t service = 17, opcode = 0x8004;
 };
+template<> struct EventTraits<ui::DisplayMetrics> {
+    static constexpr std::uint16_t service = 3, opcode = 0x8002;
+};
+template<> struct EventTraits<ui::UiAppearance> {
+    static constexpr std::uint16_t service = 3, opcode = 0x8006;
+};
+template<> struct EventTraits<ui::UiCapabilities> : EventTraits<ui::DisplayMetrics> {};
+
 template<> struct EventTraits<SensorSample> {
     static constexpr std::uint16_t service = 8, opcode = 0x8001;
 };

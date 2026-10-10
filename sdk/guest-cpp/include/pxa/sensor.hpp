@@ -34,6 +34,7 @@ public:
         : resource_(transport, handle), dimensions_(dimensions) {}
     std::uint64_t handle() const noexcept { return resource_.handle(); }
     explicit operator bool() const noexcept { return bool(resource_); }
+    Result<void> close() noexcept { return resource_.close(); }
     void reset() noexcept { resource_.reset(); }
     Result<SensorSample> sample(const Event& event) const noexcept {
         auto result = decode_sensor_sample(event);

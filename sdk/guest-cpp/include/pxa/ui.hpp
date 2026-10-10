@@ -6,6 +6,7 @@
 #include "text_input.hpp"
 #include "text.hpp"
 
+#include <algorithm>
 #include <bit>
 #include <charconv>
 #include <concepts>
@@ -69,8 +70,11 @@ public:
         }
     }
 
-    template<class F> void update(F&& operation) {
-        set(operation(value_));
+    template<class F>
+        requires std::invocable<F, const T&> &&
+                 std::convertible_to<std::invoke_result_t<F, const T&>, T>
+    void update(F&& operation) {
+        set(std::invoke(std::forward<F>(operation), std::as_const(value_)));
     }
 
     void subscribe(Subscription& item) noexcept {
@@ -105,7 +109,10 @@ public:
         state_.set(std::move(value));
         return {};
     }
-    template<class F> Result<void> update(F&& operation) {
+    template<class F>
+        requires std::invocable<F, const T&> &&
+                 std::convertible_to<std::invoke_result_t<F, const T&>, T>
+    Result<void> update(F&& operation) {
         if (!mounted()) return std::unexpected(Error::bad_state);
         state_.update(std::forward<F>(operation));
         return {};
@@ -129,7 +136,18 @@ enum class Font : std::uint16_t {
 
 enum class Color : std::uint8_t {
     background = 0, surface = 1, primary = 2,
-    on_primary = 3, text = 4, muted = 5, border = 6
+    on_primary = 3, text = 4, muted = 5, border = 6,
+    success = 7, warning = 8, danger = 9,
+    surface_container_low = 10, surface_container = 11,
+    surface_container_high = 12, surface_container_highest = 13,
+    surface_variant = 14, on_surface_variant = 15,
+    primary_container = 16, on_primary_container = 17,
+    secondary = 18, on_secondary = 19,
+    secondary_container = 20, on_secondary_container = 21,
+    tertiary = 22, on_tertiary = 23,
+    tertiary_container = 24, on_tertiary_container = 25,
+    outline_variant = 26, error_container = 27, on_error_container = 28,
+    inverse_surface = 29, inverse_on_surface = 30, inverse_primary = 31
 };
 
 inline bool write_int_text(Transaction<>& tx, std::uint32_t node,
@@ -156,13 +174,171 @@ inline bool write_string_text(Transaction<>& tx, std::uint32_t node,
 }
 
 struct Dp { std::int32_t value; };
+struct Padding { Dp left, top, right, bottom; };
 namespace literals {
-constexpr Dp operator""_dp(unsigned long long value) noexcept {
+consteval Dp operator""_dp(unsigned long long value) noexcept {
+    if (value > INT32_MAX) std::abort();
     return {static_cast<std::int32_t>(value)};
 }
 } // namespace literals
 
-class TextAppearance {
+namespace detail {
+template<std::uint16_t Key, class View, class Value>
+constexpr auto modify(View&& view, Value value);
+struct ViewProbe {};
+struct FillLength {};
+template<class View> concept ResettableView = requires(View& view) {
+    { view.reset_mount() } noexcept -> std::same_as<void>;
+};
+template<class View> void reset_view(View& view) noexcept {
+    if constexpr (ResettableView<View>) view.reset_mount();
+}
+template<class T> inline constexpr bool is_reference_wrapper = false;
+template<class T> inline constexpr bool is_reference_wrapper<std::reference_wrapper<T>> = true;
+} // namespace detail
+
+template<class T>
+concept ViewLike = requires(T& view, detail::ViewProbe& owner) {
+    { view.render(owner, std::uint32_t{}) } -> std::same_as<bool>;
+};
+template<class F> concept ViewFactory = std::invocable<F&> &&
+    ViewLike<std::remove_cvref_t<std::invoke_result_t<F&>>>;
+
+template<class F>
+concept ClickCallback = std::invocable<F&> &&
+    std::same_as<std::invoke_result_t<F&>, void>;
+template<class F>
+concept PointerCallback = std::invocable<F&, const CanvasPointer&> &&
+    std::same_as<std::invoke_result_t<F&, const CanvasPointer&>, void>;
+
+enum class Align : std::uint8_t { start = 0, center = 1, end = 2 };
+enum class Justify : std::uint8_t {
+    start = 0, center = 1, end = 2, space_between = 4, space_around = 5
+};
+enum class TextAlign : std::uint8_t { start = 0, center = 1, end = 2 };
+
+// Empty base: a modifier stores only the property requested by the caller.
+class ViewModifiers {
+public:
+    template<class Self> requires std::constructible_from<std::remove_cvref_t<Self>, Self>
+    constexpr auto frame(this Self&& self, CanvasRegion value) {
+        return detail::modify<0>(std::forward<Self>(self), value);
+    }
+    template<class Self> requires std::constructible_from<std::remove_cvref_t<Self>, Self>
+    constexpr auto width(this Self&& self, Dp value) {
+        return detail::modify<protocol::width>(std::forward<Self>(self), value);
+    }
+    template<class Self> requires std::constructible_from<std::remove_cvref_t<Self>, Self>
+    constexpr auto height(this Self&& self, Dp value) {
+        return detail::modify<protocol::height>(std::forward<Self>(self), value);
+    }
+    template<class Self> requires std::constructible_from<std::remove_cvref_t<Self>, Self>
+    constexpr auto min_width(this Self&& self, Dp value) {
+        return detail::modify<protocol::min_width>(std::forward<Self>(self), value);
+    }
+    template<class Self> requires std::constructible_from<std::remove_cvref_t<Self>, Self>
+    constexpr auto max_width(this Self&& self, Dp value) {
+        return detail::modify<protocol::max_width>(std::forward<Self>(self), value);
+    }
+    template<class Self> requires std::constructible_from<std::remove_cvref_t<Self>, Self>
+    constexpr auto min_height(this Self&& self, Dp value) {
+        return detail::modify<protocol::min_height>(std::forward<Self>(self), value);
+    }
+    template<class Self> requires std::constructible_from<std::remove_cvref_t<Self>, Self>
+    constexpr auto max_height(this Self&& self, Dp value) {
+        return detail::modify<protocol::max_height>(std::forward<Self>(self), value);
+    }
+    template<class Self> requires std::constructible_from<std::remove_cvref_t<Self>, Self>
+    constexpr auto fill(this Self&& self) {
+        return detail::modify<protocol::width>(std::forward<Self>(self), detail::FillLength{});
+    }
+    template<class Self> requires std::constructible_from<std::remove_cvref_t<Self>, Self>
+    constexpr auto fill_height(this Self&& self) {
+        return detail::modify<protocol::height>(std::forward<Self>(self), detail::FillLength{});
+    }
+    template<class Self> requires std::constructible_from<std::remove_cvref_t<Self>, Self>
+    constexpr auto padding(this Self&& self, Dp value) {
+        return detail::modify<268>(std::forward<Self>(self), value);
+    }
+    template<class Self> requires std::constructible_from<std::remove_cvref_t<Self>, Self>
+    constexpr auto padding(this Self&& self, Padding value) {
+        return detail::modify<268>(std::forward<Self>(self), value);
+    }
+    template<class Self> requires std::constructible_from<std::remove_cvref_t<Self>, Self>
+    constexpr auto gap(this Self&& self, Dp value) {
+        return detail::modify<protocol::gap>(std::forward<Self>(self), value);
+    }
+    template<class Self> requires std::constructible_from<std::remove_cvref_t<Self>, Self>
+    constexpr auto radius(this Self&& self, Dp value) {
+        return detail::modify<protocol::radius>(std::forward<Self>(self), value);
+    }
+    template<class Self> requires std::constructible_from<std::remove_cvref_t<Self>, Self>
+    constexpr auto grow(this Self&& self, std::uint16_t value = 1) {
+        return detail::modify<protocol::grow>(std::forward<Self>(self), value);
+    }
+    template<class Self> requires std::constructible_from<std::remove_cvref_t<Self>, Self>
+    constexpr auto align(this Self&& self, Align value) {
+        return detail::modify<protocol::align>(std::forward<Self>(self), value);
+    }
+    template<class Self> requires std::constructible_from<std::remove_cvref_t<Self>, Self>
+    constexpr auto justify(this Self&& self, Justify value) {
+        return detail::modify<protocol::justify>(std::forward<Self>(self), value);
+    }
+    template<class Self> requires std::constructible_from<std::remove_cvref_t<Self>, Self>
+    constexpr auto text_align(this Self&& self, TextAlign value) {
+        return detail::modify<protocol::text_align>(std::forward<Self>(self), value);
+    }
+    template<class Self> requires std::constructible_from<std::remove_cvref_t<Self>, Self>
+    constexpr auto font(this Self&& self, Font value) {
+        return detail::modify<protocol::font_role>(std::forward<Self>(self), value);
+    }
+    template<class Self> requires std::constructible_from<std::remove_cvref_t<Self>, Self>
+    constexpr auto color(this Self&& self, Color value) {
+        return detail::modify<protocol::foreground>(std::forward<Self>(self), value);
+    }
+    template<class Self> requires std::constructible_from<std::remove_cvref_t<Self>, Self>
+    constexpr auto rgba(this Self&& self, std::uint32_t value) {
+        return detail::modify<protocol::foreground>(std::forward<Self>(self), value);
+    }
+    template<class Self> requires std::constructible_from<std::remove_cvref_t<Self>, Self>
+    constexpr auto background(this Self&& self, Color value) {
+        return detail::modify<protocol::background>(std::forward<Self>(self), value);
+    }
+    template<class Self> requires std::constructible_from<std::remove_cvref_t<Self>, Self>
+    constexpr auto background(this Self&& self, std::uint32_t value) {
+        return detail::modify<protocol::background>(std::forward<Self>(self), value);
+    }
+    template<class Self> requires std::constructible_from<std::remove_cvref_t<Self>, Self>
+    constexpr auto border_width(this Self&& self, Dp value) {
+        return detail::modify<protocol::border_width>(std::forward<Self>(self), value);
+    }
+    template<class Self> requires std::constructible_from<std::remove_cvref_t<Self>, Self>
+    constexpr auto border_color(this Self&& self, Color value) {
+        return detail::modify<protocol::border_color>(std::forward<Self>(self), value);
+    }
+    template<class Self> requires std::constructible_from<std::remove_cvref_t<Self>, Self>
+    constexpr auto border_color(this Self&& self, std::uint32_t value) {
+        return detail::modify<protocol::border_color>(std::forward<Self>(self), value);
+    }
+    template<class Self> requires std::constructible_from<std::remove_cvref_t<Self>, Self>
+    constexpr auto visible(this Self&& self, bool value) {
+        return detail::modify<protocol::visible>(std::forward<Self>(self), value);
+    }
+    template<class Self> requires std::constructible_from<std::remove_cvref_t<Self>, Self>
+    constexpr auto visible(this Self&& self, State<bool>& value) {
+        return detail::modify<protocol::visible>(std::forward<Self>(self), &value);
+    }
+    template<class Self> requires std::constructible_from<std::remove_cvref_t<Self>, Self>
+    constexpr auto enabled(this Self&& self, bool value) {
+        return detail::modify<protocol::enabled>(std::forward<Self>(self), value);
+    }
+    template<class Self> requires std::constructible_from<std::remove_cvref_t<Self>, Self>
+    constexpr auto enabled(this Self&& self, State<bool>& value) {
+        return detail::modify<protocol::enabled>(std::forward<Self>(self), &value);
+    }
+};
+
+class TextAppearance : public ViewModifiers {
 public:
     template<class Self> constexpr decltype(auto) font(this Self&& self,
                                                        Font value) noexcept {
@@ -302,7 +478,7 @@ inline RefTextView<std::string> Text(Ref<std::string>& ref) {
 struct NoPointerCallback {};
 
 template<class F = NoPointerCallback, bool InputOnly = false, bool HasRef = false>
-class CanvasView {
+class CanvasView : public ViewModifiers {
 public:
     static constexpr bool overlay = InputOnly;
     static constexpr Capacity capacity{1, 0,
@@ -364,8 +540,9 @@ inline constexpr auto Canvas(CanvasRef& ref, std::int32_t width = 0, std::int32_
 }
 
 template<class F>
-class ButtonView {
+class ButtonView : public ViewModifiers {
 public:
+    static constexpr std::uint32_t text_node_offset = 1;
     static constexpr Capacity capacity{2, 0, 1};
     ButtonView(std::string label, F callback)
         : label_(std::move(label)), callback_(std::move(callback)) {}
@@ -389,12 +566,52 @@ private:
     [[no_unique_address]] F callback_;
 };
 
+template<class F>
+class PointerButtonView : public ViewModifiers {
+public:
+    static constexpr std::uint32_t text_node_offset = 1;
+    static constexpr Capacity capacity{2, 0, 1};
+    PointerButtonView(std::string label, F callback)
+        : label_(std::move(label)), callback_(std::move(callback)) {}
+
+    template<class Page>
+    bool render(Page& page, std::uint32_t parent) {
+        auto node = page.create(parent, protocol::control, protocol::button);
+        if (!node || !page.transaction().u8(node, protocol::layout,
+                                              protocol::row) ||
+            !page.transaction().u64(node, protocol::event_mask, protocol::event_mask_pointer) ||
+            !page.theme(node, protocol::background, Color::primary) ||
+            !page.on_pointer(node, callback_)) return false;
+        auto label_node = page.create(node, protocol::text);
+        return label_node && page.transaction().text(label_node, label_) &&
+               page.transaction().u16(label_node, protocol::font_role, 1) &&
+               page.theme(label_node, protocol::foreground,
+                          Color::on_primary);
+    }
+private:
+    std::string label_;
+    [[no_unique_address]] F callback_;
+};
+
 class ButtonBuilder {
 public:
     explicit ButtonBuilder(std::string label) : label_(std::move(label)) {}
-    template<class F> auto on_click(F&& callback) && {
+    template<class F> requires ClickCallback<std::decay_t<F>>
+    auto on_click(F&& callback) && {
         return ButtonView<std::decay_t<F>>(
             std::move(label_), std::forward<F>(callback));
+    }
+    template<class F> requires ClickCallback<F>
+    auto on_click_ref(F& callback) && {
+        return std::move(*this).on_click(std::ref(callback));
+    }
+    template<class F> requires PointerCallback<std::decay_t<F>>
+    auto on_pointer(F&& callback) && {
+        return PointerButtonView<std::decay_t<F>>(std::move(label_), std::forward<F>(callback));
+    }
+    template<class F> requires PointerCallback<F>
+    auto on_pointer_ref(F& callback) && {
+        return std::move(*this).on_pointer(std::ref(callback));
     }
 private:
     std::string label_;
@@ -405,9 +622,11 @@ inline ButtonBuilder Button(std::string label) {
 }
 
 template<class Source>
-class ToggleView {
+class ToggleView : public ViewModifiers {
 public:
     static constexpr Capacity capacity{3, 1, 1, 0, is_ref_v<Source> ? 1u : 0u};
+    static constexpr std::uint32_t text_node_offset = 1;
+    static constexpr std::uint32_t interaction_node_offset = 2;
     ToggleView(std::string label, Source& value)
         : label_(std::move(label)), value_(value) {}
 
@@ -440,7 +659,7 @@ ToggleView<Source> Toggle(std::string label, Source& value) {
 }
 
 template<class Source>
-class SliderView {
+class SliderView : public ViewModifiers {
 public:
     static constexpr Capacity capacity{1, 1, 1, 0, is_ref_v<Source> ? 1u : 0u};
     SliderView(Source& value, int minimum, int maximum, int step)
@@ -477,7 +696,7 @@ SliderView<Source> Slider(Source& value, int minimum,
 }
 
 template<class Source>
-class ProgressView {
+class ProgressView : public ViewModifiers {
 public:
     static constexpr Capacity capacity{1, 1, 0, 0, is_ref_v<Source> ? 1u : 0u};
     ProgressView(Source& value, int minimum, int maximum)
@@ -514,20 +733,46 @@ struct NoInputSubmit {};
 struct NoInputRef {};
 struct NoInputLimit {};
 struct NoInputMode {};
+struct NoInputBox {};
+
+// Optional absolute layout in logical UI pixels, not physical screen pixels.
+// The app owns the State; an unconfigured TextInput keeps its Host theme/layout.
+struct TextInputBox {
+    CanvasRegion region{};
+    bool visible = false;
+    Font font = Font::body;
+    std::uint32_t foreground = 0x000000ff;
+    constexpr bool operator==(const TextInputBox&) const noexcept = default;
+};
+
+inline bool write_text_input_box(Transaction<>& tx, std::uint32_t node,
+                                 const TextInputBox& box) noexcept {
+    if (box.font > Font::display) return tx.fail(Error::invalid_argument);
+    return tx.u8(node, protocol::visible, box.visible) &&
+           tx.u16(node, protocol::font_role, static_cast<std::uint16_t>(box.font)) &&
+           tx.rgba(node, protocol::foreground, box.foreground) &&
+           tx.u8(node, protocol::position, 1) &&
+           tx.logical_px(node, protocol::x, box.region.x) &&
+           tx.logical_px(node, protocol::y, box.region.y) &&
+           tx.logical_px(node, protocol::width, std::max(1, box.region.width)) &&
+           tx.logical_px(node, protocol::height, std::max(1, box.region.height));
+}
 
 template<class Source, class Submit = NoInputSubmit, bool HasRef = false,
-         bool HasLimit = false, bool HasMode = false>
-class TextInputView {
+         bool HasLimit = false, bool HasMode = false, bool HasBox = false>
+class TextInputView : public ViewModifiers {
 public:
     static constexpr bool has_submit = !std::same_as<Submit, NoInputSubmit>;
-    static constexpr Capacity capacity{1, 1, 1 + has_submit, 0,
+    static constexpr Capacity capacity{1, 1 + HasBox, 1 + has_submit, 0,
                                       (is_ref_v<Source> ? 1u : 0u) + HasRef};
     explicit TextInputView(Source& value, Submit submit = {}, TextInputRef* ref = nullptr,
-                           std::uint32_t limit = max_text_bytes, bool single_line = false)
+                           std::uint32_t limit = max_text_bytes, bool single_line = false,
+                           State<TextInputBox>* box = nullptr)
         : value_(value), submit_(std::move(submit)) {
         if constexpr (HasRef) ref_ = ref;
         if constexpr (HasLimit) limit_ = limit;
         if constexpr (HasMode) single_line_ = single_line;
+        if constexpr (HasBox) box_ = box;
     }
     template<class Self, class F> auto on_submit(this Self&& self, F&& callback) {
         TextInputRef* ref = nullptr;
@@ -536,8 +781,10 @@ public:
         if constexpr (HasLimit) limit = self.limit_;
         bool mode = false;
         if constexpr (HasMode) mode = self.single_line_;
-        return TextInputView<Source, std::decay_t<F>, HasRef, HasLimit, HasMode>(
-            self.value_, std::forward<F>(callback), ref, limit, mode);
+        State<TextInputBox>* box = nullptr;
+        if constexpr (HasBox) box = self.box_;
+        return TextInputView<Source, std::decay_t<F>, HasRef, HasLimit, HasMode, HasBox>(
+            self.value_, std::forward<F>(callback), ref, limit, mode, box);
     }
     template<class Self> auto max_bytes(this Self&& self,
                                       std::uint32_t limit = max_text_bytes) {
@@ -545,8 +792,10 @@ public:
         if constexpr (HasRef) ref = self.ref_;
         bool mode = false;
         if constexpr (HasMode) mode = self.single_line_;
-        return TextInputView<Source, Submit, HasRef, true, HasMode>(
-            self.value_, std::forward<Self>(self).submit_, ref, limit, mode);
+        State<TextInputBox>* box = nullptr;
+        if constexpr (HasBox) box = self.box_;
+        return TextInputView<Source, Submit, HasRef, true, HasMode, HasBox>(
+            self.value_, std::forward<Self>(self).submit_, ref, limit, mode, box);
     }
 
     template<class Self> auto single_line(this Self&& self, bool enabled = true) {
@@ -554,8 +803,21 @@ public:
         if constexpr (HasRef) ref = self.ref_;
         std::uint32_t limit = max_text_bytes;
         if constexpr (HasLimit) limit = self.limit_;
-        return TextInputView<Source, Submit, HasRef, HasLimit, true>(
-            self.value_, std::forward<Self>(self).submit_, ref, limit, enabled);
+        State<TextInputBox>* box = nullptr;
+        if constexpr (HasBox) box = self.box_;
+        return TextInputView<Source, Submit, HasRef, HasLimit, true, HasBox>(
+            self.value_, std::forward<Self>(self).submit_, ref, limit, enabled, box);
+    }
+
+    template<class Self> auto box(this Self&& self, State<TextInputBox>& state) {
+        TextInputRef* ref = nullptr;
+        if constexpr (HasRef) ref = self.ref_;
+        std::uint32_t limit = max_text_bytes;
+        if constexpr (HasLimit) limit = self.limit_;
+        bool mode = false;
+        if constexpr (HasMode) mode = self.single_line_;
+        return TextInputView<Source, Submit, HasRef, HasLimit, HasMode, true>(
+            self.value_, std::forward<Self>(self).submit_, ref, limit, mode, &state);
     }
 
     template<class Page> bool render(Page& page, std::uint32_t parent) {
@@ -577,9 +839,18 @@ public:
             if (!ref_ || !page.attach_text_input(*ref_, node)) return false;
         if constexpr (has_submit)
             if (!page.on_click(node, submit_)) return false;
+        if constexpr (HasBox) {
+            if (!box_ || box_->get().font > Font::display)
+                return page.fail(Error::invalid_argument);
+            if (!write_text_input_box(page.transaction(), node, box_->get()) ||
+                !page.template bind<TextInputBox, write_text_input_box>(*box_, node))
+                return false;
+        } else {
+            if (!page.transaction().fill(node, protocol::width) ||
+                !page.transaction().logical_px(node, protocol::height, 32))
+                return false;
+        }
         return
-               page.transaction().fill(node, protocol::width) &&
-               page.transaction().logical_px(node, protocol::height, 32) &&
                write_string_text(page.transaction(), node, value_.get()) &&
                page.transaction().u64(node, protocol::event_mask,
                                       (1u << 5) | (has_submit ? 1u : 0u)) &&
@@ -592,6 +863,7 @@ private:
     [[no_unique_address]] std::conditional_t<HasRef, TextInputRef*, NoInputRef> ref_;
     [[no_unique_address]] std::conditional_t<HasLimit, std::uint32_t, NoInputLimit> limit_;
     [[no_unique_address]] std::conditional_t<HasMode, bool, NoInputMode> single_line_;
+    [[no_unique_address]] std::conditional_t<HasBox, State<TextInputBox>*, NoInputBox> box_;
 };
 
 template<class Source> requires
@@ -610,7 +882,7 @@ TextInputView<Source, NoInputSubmit, true> TextInput(Source& value, TextInputRef
 
 enum class ImageFit : std::uint8_t { contain, stretch, cover };
 
-class ImageView {
+class ImageView : public ViewModifiers {
 public:
     static constexpr Capacity capacity{1};
     explicit ImageView(std::string asset) : asset_(std::move(asset)) {}
@@ -639,7 +911,7 @@ inline ImageView Image(std::string asset) {
 }
 
 template<class... Children>
-class BoxView {
+class BoxView : public ViewModifiers {
 public:
     static constexpr Capacity capacity = container_capacity<Children...>();
     constexpr BoxView(std::uint8_t layout, Children... children)
@@ -653,6 +925,10 @@ public:
         self.padding_ = value.value;
         return std::forward<Self>(self);
     }
+    template<class Self> requires std::constructible_from<std::remove_cvref_t<Self>, Self>
+    constexpr auto padding(this Self&& self, Padding value) {
+        return detail::modify<268>(std::forward<Self>(self), value);
+    }
     template<class Self> constexpr decltype(auto) fill(this Self&& self) noexcept {
         self.fill_ = true;
         return std::forward<Self>(self);
@@ -662,6 +938,9 @@ public:
         return std::forward<Self>(self);
     }
 
+    void reset_mount() noexcept requires (detail::ResettableView<Children> || ...) {
+        std::apply([](auto&... child) { (detail::reset_view(child), ...); }, children_);
+    }
     template<class Page>
     bool render(Page& page, std::uint32_t parent) {
         auto node = page.create(parent, protocol::box);
@@ -688,13 +967,14 @@ private:
 };
 
 template<class... Children>
+    requires (ViewLike<std::decay_t<Children>> && ...)
 constexpr auto Column(Children&&... children) {
     return BoxView<std::decay_t<Children>...>(
         protocol::column, std::forward<Children>(children)...);
 }
 
 template<class View>
-class OverlayView {
+class OverlayView : public ViewModifiers {
 public:
     static constexpr Capacity capacity = [] {
         auto value = capacity_of<View>;
@@ -703,6 +983,9 @@ public:
     }();
     static constexpr bool overlay = true;
     explicit constexpr OverlayView(View view) : view_(std::move(view)) {}
+    void reset_mount() noexcept requires detail::ResettableView<View> {
+        detail::reset_view(view_);
+    }
     template<class Page> bool render(Page& page, std::uint32_t parent) {
         const auto node = page.create(parent, protocol::box);
         return node &&
@@ -716,28 +999,34 @@ private:
 };
 
 template<class View>
+    requires ViewLike<std::decay_t<View>>
 constexpr auto Overlay(View&& view) {
     return OverlayView<std::decay_t<View>>(std::forward<View>(view));
 }
 
 template<class... Children>
+    requires (ViewLike<std::decay_t<Children>> && ...)
 constexpr auto Row(Children&&... children) {
     return BoxView<std::decay_t<Children>...>(
         protocol::row, std::forward<Children>(children)...);
 }
 
 template<class... Children>
+    requires (ViewLike<std::decay_t<Children>> && ...)
 constexpr auto Stack(Children&&... children) {
     return BoxView<std::decay_t<Children>...>(
         protocol::stack, std::forward<Children>(children)...);
 }
 
 template<class... Children>
-class ScrollView {
+class ScrollView : public ViewModifiers {
 public:
     static constexpr Capacity capacity = container_capacity<Children...>();
     explicit ScrollView(Children... children)
         : children_(std::move(children)...) {}
+    void reset_mount() noexcept requires (detail::ResettableView<Children> || ...) {
+        std::apply([](auto&... child) { (detail::reset_view(child), ...); }, children_);
+    }
     template<class Page> bool render(Page& page, std::uint32_t parent) {
         auto node = page.create(parent, 3);
         if (!node ||
@@ -754,6 +1043,7 @@ private:
 };
 
 template<class... Children>
+    requires (ViewLike<std::decay_t<Children>> && ...)
 auto Scroll(Children&&... children) {
     return ScrollView<std::decay_t<Children>...>(
         std::forward<Children>(children)...);
@@ -838,12 +1128,12 @@ public:
         }
         current_ = nullptr;
         if (!rendered) {
-            rollback_dynamic();
+            discard_mount();
             return std::unexpected(
                 mount_error_.value_or(tx.error()));
         }
         auto result = tx.commit();
-        if (!result) { rollback_dynamic(); return result; }
+        if (!result) { discard_mount(); return result; }
         generation_ = generation;
         mounted_ = true;
         for (std::size_t i = 0; i < binding_count_; ++i)
@@ -913,6 +1203,17 @@ public:
         return false;
     }
     Transaction<>& transaction() noexcept { return *current_; }
+
+    // Native views create their root first. Decorators add properties to that
+    // root after rendering, without adding a wrapper node or persistent state.
+    template<class Child, class Apply>
+    bool decorate(Child& child, std::uint32_t parent, Apply&& apply) {
+        const auto root = external_ids_ ? *external_ids_ : next_id_;
+        if (!child.render(*this, parent)) return false;
+        if (root == (external_ids_ ? *external_ids_ : next_id_))
+            return fail(Error::bad_state);
+        return std::invoke(std::forward<Apply>(apply), *this, root);
+    }
 
     template<class Module> bool dynamic(Module& module) noexcept {
         if (dynamic_count_ == MaxDynamic) return fail(Error::resource_limit);
@@ -1012,6 +1313,34 @@ public:
         return true;
     }
 
+
+    // One output binding may subscribe to several explicitly listed sources.
+    // Observer owns subscriptions; the Page owns its single dirty bit.
+    template<class Observer, auto Write>
+    bool observe(Observer& source, std::uint32_t node) noexcept {
+        if (binding_count_ == MaxBindings) {
+            mount_error_ = Error::resource_limit;
+            return false;
+        }
+        const auto index = binding_count_++;
+        auto& binding = bindings_[index];
+        binding.state = &source;
+        binding.node = node;
+        binding.subscription.dirty_word = &dirty_words_[index / 64];
+        binding.subscription.mask = std::uint64_t{1} << (index % 64);
+        binding.subscribe = [](void* pointer, Subscription& subscription) {
+            static_cast<Observer*>(pointer)->subscribe(subscription);
+        };
+        binding.unsubscribe = [](void* pointer, Subscription& subscription) {
+            static_cast<Observer*>(pointer)->unsubscribe(subscription);
+        };
+        binding.write = [](Transaction<>& tx, std::uint32_t id,
+                           void* pointer) {
+            return Write(tx, id, *static_cast<Observer*>(pointer));
+        };
+        return true;
+    }
+
     template<class T,
              bool (*Write)(Transaction<>&, std::uint32_t, const T&)>
     bool bind_source(State<T>& state, std::uint32_t node) noexcept {
@@ -1047,6 +1376,9 @@ public:
     }
 
     template<class F> bool on_click(std::uint32_t node, F& callback) noexcept {
+        static_assert(ClickCallback<F>,
+            "on_click needs a void callback; wrap Result<void>/Task<void> with ui::Action(scope, callback)");
+        if constexpr (detail::is_reference_wrapper<F>) return on_click(node, callback.get());
         if (handler_count_ == MaxHandlers) {
             mount_error_ = Error::resource_limit;
             return false;
@@ -1110,6 +1442,9 @@ public:
     }
 
     template<class F> bool on_pointer(std::uint32_t node, F& callback) noexcept {
+        static_assert(PointerCallback<F>,
+            "on_pointer needs a void callback; wrap Result<void>/Task<void> with ui::Action(scope, callback)");
+        if constexpr (detail::is_reference_wrapper<F>) return on_pointer(node, callback.get());
         if (handler_count_ == MaxHandlers) {
             mount_error_ = Error::resource_limit;
             return false;
@@ -1185,10 +1520,7 @@ public:
 
     bool rgba(std::uint32_t node, std::uint16_t property,
               std::uint32_t value) noexcept {
-        std::array<std::byte, 8> bytes{};
-        bytes[0] = std::byte{1};
-        wire::put32(bytes.data() + 4, value);
-        return current_->property(node, property, bytes);
+        return current_->rgba(node, property, value);
     }
 
     bool padding(std::uint32_t node, std::int32_t value) noexcept {
@@ -1201,6 +1533,17 @@ public:
     }
 
 private:
+    void discard_mount() noexcept {
+        rollback_dynamic();
+        if constexpr (detail::ResettableView<View>) {
+            detach_refs();
+            for (std::size_t i = 0; i < binding_count_; ++i)
+                bindings_[i].unsubscribe(bindings_[i].state, bindings_[i].subscription);
+            binding_count_ = handler_count_ = dynamic_count_ = 0;
+            if constexpr (MaxRefs > 0) refs_.size = 0;
+            detail::reset_view(view_);
+        }
+    }
     void attach_refs() noexcept {
         if constexpr (MaxRefs > 0)
             for (std::size_t i = 0; i < refs_.size; ++i)
@@ -1263,7 +1606,7 @@ template<class View>
 Page(Transport&, View) -> Page<View>;
 
 template<class ThenFactory, class ElseFactory>
-class WhenView {
+class WhenView : public ViewModifiers {
     using ThenView = std::invoke_result_t<ThenFactory&>;
     using ElseView = std::invoke_result_t<ElseFactory&>;
     using ThenPage = Page<ThenView>;
@@ -1287,6 +1630,12 @@ public:
     }
     ~WhenView() {
         if (attached_) condition_.unsubscribe(subscription_);
+    }
+    void reset_mount() noexcept {
+        if (active_ || attached_) std::abort();
+        then_page_.reset(); else_page_.reset();
+        anchor_ = root_ = candidate_root_ = 0;
+        pending_ = 0; prepared_ = switching_ = false;
     }
 
     template<class Owner> bool render(Owner& owner, std::uint32_t parent) {
@@ -1390,6 +1739,7 @@ private:
 };
 
 template<class ThenFactory, class ElseFactory>
+    requires ViewFactory<std::decay_t<ThenFactory>> && ViewFactory<std::decay_t<ElseFactory>>
 auto When(State<bool>& condition, ThenFactory&& then_factory,
           ElseFactory&& else_factory) {
     return WhenView<std::decay_t<ThenFactory>, std::decay_t<ElseFactory>>(
@@ -1398,3 +1748,6 @@ auto When(State<bool>& condition, ThenFactory&& then_factory,
 }
 
 } // namespace pxa::ui
+
+#include "ui_modifiers.hpp"
+#include "ui_bind.hpp"

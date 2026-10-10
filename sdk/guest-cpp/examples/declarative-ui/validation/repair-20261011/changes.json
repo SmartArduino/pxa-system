@@ -1,0 +1,34 @@
+{
+  "include/pxa/ui.hpp": {
+    "before_sha256": "7cc61b5332bc3ed8e934ca7f3c642270915789ed25a8a371b794e5ec06b3b78b",
+    "after_sha256": "d874dc36cdeedf486b6efca7ee3555dbd4f9a68f4369709ab0bf8cd8ecbf5d05"
+  },
+  "include/pxa/ui_modifiers.hpp": {
+    "before_sha256": "bc432d265ba56bf73ae459a5a0f6165235afc389eb40721a23d062e51dbff3e5",
+    "after_sha256": "58985af6568d7a4a59c4da7957a40cffc1f86e7f3c7c46af36c5d3349b61acbc"
+  },
+  "include/pxa/ui_component.hpp": {
+    "before_sha256": "e9ad47a0a5787e77e51f667b80d04d8f586f1725d33a89088e6f8a9231a35449",
+    "after_sha256": "e7fbf8ed7c876623cb6251f56c6df2b67b6ae217dfbc15c440f1a3c22a003539"
+  },
+  "include/pxa/ui_layout.hpp": {
+    "before_sha256": "1b54a80ccd924cdda566f064da37dcb86ba911c4b10a432716b5209b2fa51416",
+    "after_sha256": "79a802cbb488c89933cd33d289e0d093986700920020a9f1a7e3d5a9ba989f17"
+  },
+  "include/pxa/ui_refresh.hpp": {
+    "before_sha256": "ebabe23d47a13b4a00b9edc0a2e44f9f85e9807d5d90026cf3c7214a1cc8e425",
+    "after_sha256": "6776124e464295a37c951ddf5c8b4e3dbd238091c306b308e5423306046636fa"
+  },
+  "include/pxa/list.hpp": {
+    "before_sha256": "a27fa89847d1c0199af9d87b8f663553afc637bec589c6b300617310c2ed281a",
+    "after_sha256": "9cdcfe33e243bf0577c5e3e8a26a8d6bf0cd0335c564d5bdbd7dac71181db57f"
+  },
+  "include/pxa/ui_display.hpp": {
+    "before_sha256": "86296f3db29573946efb6def06e282afdd61f6cf9b87bcc45b3a7bc45c0e89eb",
+    "after_sha256": "0c2b495c79317ac3957c6019ec5aecb7e1dc90c50ecb35fe9df7c476c99ed85e"
+  },
+  "include/pxa/window.hpp": {
+    "before_sha256": "2eb866f7c3764e2b01c717c5c0c0c4ef3e4130f75866bde71bcd66db37d36fa0",
+    "after_sha256": "c0bc1ffde0e8b4d0996e121366bf8aa351b501174b2d98f82950c8d90460a6f3"
+  }
+}

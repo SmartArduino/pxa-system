@@ -1,0 +1,15 @@
+Test project /home/lucinhu/Documents/workspace/esp32/zuowei_paixueji_touch/pxa-projects/local/sdk-polish-20261010/simulator
+    Start  5: pxsys_desktop_simulator_smoke
+1/5 Test  #5: pxsys_desktop_simulator_smoke .......   Passed    0.32 sec
+    Start  6: pxsys_desktop_simulator_self_test
+2/5 Test  #6: pxsys_desktop_simulator_self_test ...   Passed    0.38 sec
+    Start 15: pxsys_i18n_app_test
+3/5 Test #15: pxsys_i18n_app_test .................   Passed   23.78 sec
+    Start 16: pxsys_sdk_patterns_test
+4/5 Test #16: pxsys_sdk_patterns_test .............   Passed   61.88 sec
+    Start 28: pxa_lvgl_ui_test
+5/5 Test #28: pxa_lvgl_ui_test ....................   Passed    0.11 sec
+
+100% tests passed out of 5
+
+Total Test time (real) =  86.47 sec

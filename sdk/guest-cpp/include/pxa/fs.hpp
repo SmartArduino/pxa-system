@@ -70,7 +70,7 @@ inline bool valid_mode(OpenMode mode) noexcept {
         (!(flags & 48) || (flags & 2));
 }
 template<class T> Task<T> failure(Error error) {
-    co_return std::unexpected(error);
+    return Task<T>::failed(error);
 }
 template<std::size_t Capacity> using Payload = wire::RequestPacket<Capacity>;
 template<std::size_t N>
@@ -148,7 +148,7 @@ public:
     File& operator=(File&&) noexcept = default;
     std::uint64_t handle() const noexcept { return resource_.handle(); }
     explicit operator bool() const noexcept { return static_cast<bool>(resource_); }
-    void close() noexcept { resource_.reset(); }
+    Result<void> close() noexcept { return resource_.close(); }
     Result<std::uint32_t> read(std::span<std::byte> buffer) noexcept {
         return transfer(1, buffer);
     }

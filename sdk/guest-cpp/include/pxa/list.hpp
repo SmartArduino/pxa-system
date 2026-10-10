@@ -9,6 +9,12 @@
 
 namespace pxa::ui {
 
+template<class Keys, class Rows>
+concept ListFactories = std::invocable<Keys&, std::uint32_t> &&
+    std::invocable<Rows&, std::invoke_result_t<Keys&, std::uint32_t>> &&
+    ViewLike<std::remove_cvref_t<std::invoke_result_t<Rows&,
+        std::invoke_result_t<Keys&, std::uint32_t>>>>;
+
 class ListState {
 public:
     explicit ListState(std::uint32_t count = 0) : count_(count) {}
@@ -29,7 +35,7 @@ private:
 
 template<bool Virtual, std::size_t MaxRows, std::size_t RowBindings,
          std::size_t RowHandlers, class KeyFunction, class RowFunction>
-class ListView {
+class ListView : public ViewModifiers {
     using Key = std::remove_cvref_t<std::invoke_result_t<KeyFunction&, std::uint32_t>>;
     using Row = std::invoke_result_t<RowFunction&, Key>;
     using RowPage = Page<Row,
@@ -69,6 +75,13 @@ public:
     ~ListView() {
         if (attached_) state_.unsubscribe(subscription_);
         for (auto& slot : slots_) slot.clear();
+    }
+    void reset_mount() noexcept {
+        if (active_count_ || attached_) std::abort();
+        for (auto& slot : slots_) slot.clear();
+        node_ = first_ = count_ = 0;
+        dirty_word_ = 1; range_dirty_ = prepared_ = prepared_structure_ = false;
+        pending_count_ = 0;
     }
 
     template<class Self> decltype(auto) grow(this Self&& self,
@@ -268,6 +281,7 @@ private:
 
 template<std::size_t MaxRows, std::size_t RowBindings = std::dynamic_extent,
          std::size_t RowHandlers = std::dynamic_extent, class Keys, class Rows>
+    requires ListFactories<std::decay_t<Keys>, std::decay_t<Rows>>
 auto KeyedList(ListState& state, Keys&& keys, Rows&& rows) {
     return ListView<false, MaxRows, RowBindings, RowHandlers,
                     std::decay_t<Keys>, std::decay_t<Rows>>(
@@ -276,6 +290,7 @@ auto KeyedList(ListState& state, Keys&& keys, Rows&& rows) {
 
 template<std::size_t MaxRows, std::size_t RowBindings = std::dynamic_extent,
          std::size_t RowHandlers = std::dynamic_extent, class Keys, class Rows>
+    requires ListFactories<std::decay_t<Keys>, std::decay_t<Rows>>
 auto VirtualList(ListState& state, Dp item_extent, Keys&& keys, Rows&& rows) {
     return ListView<true, MaxRows, RowBindings, RowHandlers,
                     std::decay_t<Keys>, std::decay_t<Rows>>(

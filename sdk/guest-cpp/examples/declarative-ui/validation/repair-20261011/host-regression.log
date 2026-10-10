@@ -1,0 +1,14 @@
+Alpha warm path: frames=100 native_snapshot_calls=0 adapter_allocations=0 hash=3301561681495607219
+Alpha staging: frames=100 allocations=0 resident=7603 final=7603 peak=7603 hash=4637473789383918359
+Alpha staging rollback: first=preserved second=preserved resize_failures=3 retry=ok
+Canvas prepared metadata: frames=2000 allocations=0 resident_before=4248 resident_after=4248 window_peak=4248 acquires=3000
+Canvas duplicated metadata: frames=2000 allocations=0 resident_before=13776 resident_after=13776 window_peak=13776 acquires=2000
+Property rollback: variant=0 resident=23503 peak=34781 remaining=23503 allocations=78
+Property rollback: variant=1 resident=23503 peak=71078 remaining=23503 allocations=83
+Property rollback: variant=2 resident=23503 peak=71175 remaining=23503 allocations=84
+Dynamic text: UTF-8 boundary, empty edit, clear limit and failed transaction rollback OK
+Canvas input state: no snapshots/allocations; native child pressed feedback preserved
+Alpha limits: snapshot=8192 plane=2048 rejected=3 recovered=1 opaque_released=4035
+LVGL viewport lengths: 50vw/50vh stay 160x120 at 160/240/305/480 DPI OK
+LVGL input focus: ownership, single focus, hide, hidden/disabled denial, no adapter allocation OK
+Enabled inheritance: real pointer denied, focus denied, own state preserved, MOVE, failed commit rollback, stable adapter bytes OK

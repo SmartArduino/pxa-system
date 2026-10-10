@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ui.hpp"
+#include "ui_theme.hpp"
 #include "navigation.hpp"
 #include "task.hpp"
 #include "game_service.hpp"
@@ -45,6 +46,7 @@ public:
     FilesystemService fs() noexcept { return {transport_, requests_}; }
     PermissionService permissions() noexcept { return {transport_, requests_}; }
     AudioService audio() noexcept { return {transport_, requests_}; }
+    ui::ThemeService theme() noexcept { return {transport_, requests_}; }
     ClockService clock() noexcept { return {transport_, requests_}; }
     LogService log() noexcept { return LogService(transport_); }
     DeviceService device() noexcept { return {transport_, requests_}; }
@@ -128,6 +130,17 @@ public:
         context_.foreground_ = true;
         app_ = std::construct_at(reinterpret_cast<App*>(storage_));
         live_ = true;
+        context_.tasks_.on_error(nullptr, nullptr);
+        context_.foreground_tasks_.on_error(nullptr, nullptr);
+        if constexpr (requires(App& app, Context& ctx, Error error) {
+                          app.on_error(ctx, error);
+                      }) {
+            auto report = [](void*, Error error) noexcept {
+                app_->on_error(context_, error);
+            };
+            context_.tasks_.on_error(nullptr, report);
+            context_.foreground_tasks_.on_error(nullptr, report);
+        }
         if constexpr (requires(App& app, Context& ctx,
                                std::span<const std::byte> bytes) {
                           { app.on_start(ctx, bytes) } ->
@@ -341,6 +354,8 @@ public:
         context_.foreground_tasks_.cancel();
         context_.requests_.clear();
         ui_.reset();
+        context_.tasks_.on_error(nullptr, nullptr);
+        context_.foreground_tasks_.on_error(nullptr, nullptr);
         if constexpr (requires(App& app, StopReason value) {
                           app.on_stop(value);
                       }) app_->on_stop(static_cast<StopReason>(reason));
@@ -356,8 +371,7 @@ private:
         if constexpr (requires(App& app, Context& ctx, Error error) {
                           app.on_error(ctx, error);
                       }) app_->on_error(context_, result.error());
-        else std::fprintf(stderr, "PXA UI update failed: %d\n",
-                          static_cast<int>(result.error()));
+        else detail::report_error("PXA UI update failed: ", result.error());
         return {};
     }
 

@@ -1,0 +1,11 @@
+mount_retry plain first=-6 retry=0
+mount_retry component first=-6 retry=-2
+mount_retry when first=-6 retry=-2
+modifiers keyed_list_width=0
+mount_retry keyed_list first=-6 retry=-1
+modifiers refresh_width=0
+mount_retry refresh first=-6 retry=0
+duplicate_modifier enabled_initial=0 enabled_after_state=1
+safe_area_visibility initial=0 after_display_change=1
+safe_area_exhausted_by_padding visible=1
+toggle_disabled row_enabled=0 switch_enabled=-1

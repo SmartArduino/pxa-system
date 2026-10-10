@@ -36,6 +36,8 @@ public:
     Asset& operator=(Asset&&) noexcept = default;
 
     std::uint64_t handle() const noexcept { return handle_.handle(); }
+    explicit operator bool() const noexcept { return bool(handle_); }
+    Result<void> close() noexcept { return handle_.close(); }
     const AssetDescriptor& descriptor() const noexcept { return descriptor_; }
 private:
     Resource<AssetTag> handle_;

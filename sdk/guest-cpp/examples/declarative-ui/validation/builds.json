@@ -1,0 +1,53 @@
+{
+  "simulator": {
+    "status": "passed",
+    "artifacts": {
+      "main.linux-x86_64.aot": {
+        "bytes": 313484,
+        "sha256": "7dc70720030ac00d3ff101306bba60839b95c282b5bbeb5e01cd5caf4f66d918"
+      },
+      "main.wasm": {
+        "bytes": 468963,
+        "sha256": "4c06d94e8cd07a54ae7a94657faeb62bace269634f139060fcf4928e0651bf99"
+      }
+    },
+    "linear_memory_pages": [
+      3,
+      16
+    ]
+  },
+  "esp32s3": {
+    "status": "passed",
+    "artifacts": {
+      "main.esp32-s3.aot": {
+        "bytes": 493144,
+        "sha256": "42d6426da95cc9fe65f50475f0959d5d81450237f28fb9cb5e4cd00ed5633b17"
+      },
+      "main.wasm": {
+        "bytes": 468963,
+        "sha256": "4c06d94e8cd07a54ae7a94657faeb62bace269634f139060fcf4928e0651bf99"
+      }
+    },
+    "linear_memory_pages": [
+      3,
+      16
+    ]
+  },
+  "esp32s31": {
+    "status": "passed",
+    "artifacts": {
+      "main.esp32-s31.aot": {
+        "bytes": 495764,
+        "sha256": "3855016a955e02cd2767e7926d1e2d6dbe97380fd8771d77f99bd40174e4e88d"
+      },
+      "main.wasm": {
+        "bytes": 468963,
+        "sha256": "4c06d94e8cd07a54ae7a94657faeb62bace269634f139060fcf4928e0651bf99"
+      }
+    },
+    "linear_memory_pages": [
+      3,
+      16
+    ]
+  }
+}

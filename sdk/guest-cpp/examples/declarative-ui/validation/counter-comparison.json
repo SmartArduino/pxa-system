@@ -1,0 +1,30 @@
+{
+  "before": {
+    "main.wasm": {
+      "bytes": 55592,
+      "sha256": "9f0909d3643e528d26cc95370f40cc584475eb4a3fe034f3b72e5cb5111c88c5"
+    },
+    "main.linux-x86_64.aot": {
+      "bytes": 86440,
+      "sha256": "aacaa5ab7cc4555857ce72c0afd9800dd76a20b184ad4aa6584404fdef615084"
+    },
+    "linear_memory_pages": [
+      2,
+      null
+    ]
+  },
+  "after": {
+    "main.wasm": {
+      "bytes": 55594,
+      "sha256": "e90885a19dd6af0d85443dbd090b46c7d271bea06ceb7e09e291e1afd06edf62"
+    },
+    "main.linux-x86_64.aot": {
+      "bytes": 86424,
+      "sha256": "b58cbb22f863c10674684f72022138d47d10d6666e7b3330ac9a0b2941203db2"
+    },
+    "linear_memory_pages": [
+      2,
+      null
+    ]
+  }
+}

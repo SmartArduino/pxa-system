@@ -186,9 +186,17 @@ public:
         handle_ = 0;
         return handle;
     }
+    // A rejected close preserves ownership so callers can retry. Acceptance
+    // follows the Core CLOSE contract; it is not a durability/flush guarantee.
+    Result<void> close() noexcept {
+        if (!handle_) return {};
+        if (!transport_) return std::unexpected(Error::bad_state);
+        auto result = transport_->close(handle_);
+        if (result) handle_ = 0;
+        return result;
+    }
     void reset() noexcept {
-        if (handle_ && transport_)
-            (void)transport_->close(handle_);
+        (void)close();
         handle_ = 0;
     }
 private:

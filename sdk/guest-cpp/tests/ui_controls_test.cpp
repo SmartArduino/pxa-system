@@ -25,7 +25,9 @@ static pxa::Event event(std::uint32_t node, std::uint32_t generation,
     pxa::wire::put32(header.data() + 4, node);
     pxa::wire::put32(header.data() + 8, generation);
     pxa::wire::put16(header.data() + 12, kind);
-    static std::array<std::byte, 88> payload{};
+    // Dynamic input tests below send up to 2048 bytes, not just the legacy 64.
+    static std::array<std::byte, 24 + pxa::ui::max_text_bytes> payload{};
+    assert(value.size() <= pxa::ui::max_text_bytes);
     for (std::size_t i = 0; i < header.size(); ++i)
         payload[i] = header[i];
     for (std::size_t i = 0; i < value.size(); ++i)

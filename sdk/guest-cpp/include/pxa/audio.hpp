@@ -77,6 +77,8 @@ public:
     AudioSession(AudioSession&&) noexcept = default;
 
     std::uint64_t handle() const noexcept { return resource_.handle(); }
+    explicit operator bool() const noexcept { return bool(resource_); }
+    Result<void> close() noexcept { return resource_.close(); }
     const AudioFormat& format() const noexcept { return format_; }
 
     Result<void> tone(Tone tone = {}) noexcept {

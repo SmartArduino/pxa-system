@@ -1,0 +1,18 @@
+{
+  "unfinished_button": {
+    "exit_code": 1,
+    "diagnostic_lines": 13
+  },
+  "model_without_component": {
+    "exit_code": 1,
+    "diagnostic_lines": 13
+  },
+  "ignored_result": {
+    "exit_code": 1,
+    "diagnostic_lines": 19
+  },
+  "action_adapter": {
+    "exit_code": 0,
+    "diagnostic_lines": 0
+  }
+}

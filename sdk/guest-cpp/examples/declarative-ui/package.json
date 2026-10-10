@@ -1,0 +1,12 @@
+{
+  "format": "pxa-package-source-0.1",
+  "min_sdk": [1, 0], "target_sdk": [1, 0], "compile_sdk": [1, 0],
+  "id": "pxa-cpp-declarative-ui", "version": "1.0.0", "name": "C++ Declarative UI",
+  "description": "Bound labels, computed text, components, safe layout and actions",
+  "build": {"system": "cmake", "source_dir": "."},
+  "components": [{
+    "id": "main", "kind": "ui", "services": ["ui", "clock"],
+    "cmake_target": "pxa_main",
+    "wasi": {"version": "preview1", "libc": "wasi-libc", "features": ["monotonic-clock", "wall-clock"]}
+  }]
+}

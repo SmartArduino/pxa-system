@@ -1,0 +1,32 @@
+{
+  "simulator": {
+    "main.wasm": {
+      "bytes": 93817,
+      "sha256": "5e7022d49651a8609111be280565fba325fc94778d26e683d43bbbc875e7ad49"
+    },
+    "main.linux-x86_64.aot": {
+      "bytes": 141812,
+      "sha256": "39ed60bf8d8db9f06dde28f271459170069fda255ea09bf625048317057e0585"
+    }
+  },
+  "s3": {
+    "main.wasm": {
+      "bytes": 93817,
+      "sha256": "5e7022d49651a8609111be280565fba325fc94778d26e683d43bbbc875e7ad49"
+    },
+    "main.esp32-s3.aot": {
+      "bytes": 244716,
+      "sha256": "a16c2441978d04b6b66bcb41ad7501ba2b925b657f9ca53f1672ca5916145005"
+    }
+  },
+  "s31": {
+    "main.wasm": {
+      "bytes": 93817,
+      "sha256": "5e7022d49651a8609111be280565fba325fc94778d26e683d43bbbc875e7ad49"
+    },
+    "main.esp32-s31.aot": {
+      "bytes": 247572,
+      "sha256": "eb6324d93a03ce165bc91305a4207bfe76f866e1a4f9c3eae1a21803609faf8a"
+    }
+  }
+}

@@ -868,6 +868,88 @@ static void test_text_input_focus(void) {
     puts("LVGL input focus: ownership, single focus, hide, hidden/disabled denial, no adapter allocation OK");
 }
 
+static void test_enabled_inheritance(void) {
+    allocator_state_t allocator={0}; pxa_lvgl_ui_config_t config={0};
+    config.struct_size=sizeof(config); config.allocate=test_allocate; config.release=test_release;
+    config.allocator_context=&allocator; config.execute=sync_execute; config.execute_user_data=&allocator;
+    config.event_callback=on_event; config.primary_environment=(pxa_ui_environment_t){
+        .surface=1,.width=320,.height=240,.density_q16=65536,.font_scale_q16=65536};
+    pxa_lvgl_ui_theme_init(&config.theme);
+    void *workspace=malloc(pxa_lvgl_ui_workspace_size()), *transaction=NULL, *handles[5]={0};
+    pxa_lvgl_ui_t *adapter=NULL; pxa_ui_backend_t backend;
+    assert(workspace && !pxa_lvgl_ui_init(workspace,pxa_lvgl_ui_workspace_size(),&config,&adapter,&backend));
+    g_adapter=adapter;
+    pxa_ui_transaction_info_t info={.surface=1,.generation=1,.kind=PXA_UI_REPLACE_SURFACE};
+    assert(!backend.begin(backend.context,&info,&transaction));
+    for(unsigned i=0;i<5;++i) {
+        unsigned parent=i==0?0:i==1||i==3?1:2;
+        pxa_ui_command_view_t c={.command=PXA_UI_COMMAND_CREATE,.node=i+1,.parent=parent,
+            .parent_handle=parent?handles[parent-1]:NULL,
+            .type=i==0?PXA_UI_NODE_ROOT:i==2?PXA_UI_NODE_CONTROL:i==4?PXA_UI_NODE_CONTROL:PXA_UI_NODE_BOX,
+            .subtype=i==2?PXA_UI_CONTROL_TOGGLE:i==4?PXA_UI_CONTROL_TEXT_INPUT:0};
+        assert(!backend.apply(backend.context,transaction,&c,&handles[i]));
+        uint8_t length[8]={PXA_UI_LENGTH_LOGICAL_PX};
+        c.command=PXA_UI_COMMAND_SET_PROPERTY; c.node_handle=handles[i]; c.property=PXA_UI_PROPERTY_WIDTH;
+        pxa_write_u32(length+4,(i==0?320:i==2?36:160)*64); c.value=(pxa_bytes_t){length,8};
+        assert(!backend.apply(backend.context,transaction,&c,NULL));
+        c.property=PXA_UI_PROPERTY_HEIGHT; pxa_write_u32(length+4,(i==0?240:i==2?20:40)*64);
+        assert(!backend.apply(backend.context,transaction,&c,NULL));
+    }
+    uint8_t enabled=0, mask[8]; pxa_write_u64(mask,PXA_UI_EVENT_MASK_VALUE_CHANGED);
+    pxa_ui_command_view_t property={.command=PXA_UI_COMMAND_SET_PROPERTY,.node_handle=handles[1],
+        .property=PXA_UI_PROPERTY_ENABLED,.value={&enabled,1}};
+    assert(!backend.apply(backend.context,transaction,&property,NULL));
+    property.node_handle=handles[2]; property.property=PXA_UI_PROPERTY_EVENT_MASK; property.value=(pxa_bytes_t){mask,8};
+    assert(!backend.apply(backend.context,transaction,&property,NULL));
+    assert(!backend.commit(backend.context,transaction));
+    lv_obj_t *root=lv_obj_get_child(lv_screen_active(),0), *row=lv_obj_get_child(root,0);
+    lv_obj_t *toggle=lv_obj_get_child(row,0), *input=lv_obj_get_child(row,1);
+    lv_obj_update_layout(root); test_lvgl_tick();
+    assert(lv_obj_has_state(toggle,LV_STATE_DISABLED));
+    assert(backend.text_input_focus(backend.context,handles[4],true)==PXA_STATUS_DENIED);
+    lv_area_t area; lv_obj_get_coords(toggle,&area);
+    pointer_input_t pointer_state={{(area.x1+area.x2)/2,(area.y1+area.y2)/2},lv_tick_get(),1};
+    lv_indev_t *pointer=lv_indev_create(); assert(pointer);
+    lv_indev_set_type(pointer,LV_INDEV_TYPE_POINTER); lv_indev_set_display(pointer,g_test_display);
+    lv_indev_set_user_data(pointer,&pointer_state); lv_indev_set_read_cb(pointer,read_pointer);
+    g_events=0; lv_indev_read(pointer); lv_tick_inc(20);
+    pointer_state.timestamp_ms=lv_tick_get(); pointer_state.pressed=0; lv_indev_read(pointer);
+    assert(!lv_obj_has_state(toggle,LV_STATE_CHECKED) && g_events==0);
+    lv_indev_delete(pointer);
+    size_t resident=allocator.current;
+    // Parent enable restores eligible children, but preserves a child's own disable.
+    info.kind=PXA_UI_PATCH; info.generation++;
+    assert(!backend.begin(backend.context,&info,&transaction));
+    property.node_handle=handles[4]; property.property=PXA_UI_PROPERTY_ENABLED; property.value=(pxa_bytes_t){&enabled,1};
+    assert(!backend.apply(backend.context,transaction,&property,NULL));
+    enabled=1; property.node_handle=handles[1];
+    assert(!backend.apply(backend.context,transaction,&property,NULL));
+    assert(!backend.commit(backend.context,transaction));
+    assert(!lv_obj_has_state(toggle,LV_STATE_DISABLED) && lv_obj_has_state(input,LV_STATE_DISABLED));
+    assert(allocator.current==resident);
+    // A failed alpha preparation must restore inherited AND requested states.
+    info.generation++; assert(!backend.begin(backend.context,&info,&transaction));
+    enabled=0; property.node_handle=handles[1];
+    assert(!backend.apply(backend.context,transaction,&property,NULL));
+    enabled=1; property.node_handle=handles[0]; property.property=PXA_UI_PROPERTY_COMPOSITION;
+    assert(!backend.apply(backend.context,transaction,&property,NULL));
+    allocator.fail_during_execute=1;
+    assert(backend.commit(backend.context,transaction)==PXA_STATUS_RESOURCE_LIMIT);
+    allocator.fail_during_execute=0; backend.cancel(backend.context,transaction);
+    assert(!lv_obj_has_state(toggle,LV_STATE_DISABLED) && lv_obj_has_state(input,LV_STATE_DISABLED));
+    assert(allocator.current==resident);
+    // Reparenting into a disabled container recomputes inherited state.
+    info.generation++; assert(!backend.begin(backend.context,&info,&transaction));
+    enabled=0; property.node_handle=handles[3]; property.property=PXA_UI_PROPERTY_ENABLED;
+    assert(!backend.apply(backend.context,transaction,&property,NULL));
+    pxa_ui_command_view_t move={.command=PXA_UI_COMMAND_MOVE,.node_handle=handles[2],.parent_handle=handles[3]};
+    assert(!backend.apply(backend.context,transaction,&move,NULL));
+    assert(!backend.commit(backend.context,transaction));
+    assert(lv_obj_has_state(toggle,LV_STATE_DISABLED));
+    pxa_lvgl_ui_deinit(adapter); free(workspace); assert(allocator.current==0);
+    puts("Enabled inheritance: real pointer denied, focus denied, own state preserved, MOVE, failed commit rollback, stable adapter bytes OK");
+}
+
 static void test_snapshot_limits(void) {
     allocator_state_t allocator={0};
     pxa_lvgl_ui_config_t config={0};
@@ -2411,6 +2493,7 @@ int main(void) {
     if (!getenv("PXA_CANVAS_MEASURE")) test_snapshot_limits();
     if (!getenv("PXA_CANVAS_MEASURE")) test_viewport_density();
     if (!getenv("PXA_CANVAS_MEASURE")) test_text_input_focus();
+    if (!getenv("PXA_CANVAS_MEASURE")) test_enabled_inheritance();
     pxa_ui_service_deinit(service);
     pxa_runtime_deinit(g_runtime);
     free(adapter_workspace);

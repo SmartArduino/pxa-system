@@ -1,6 +1,7 @@
 # PXA C++26 Guest SDK（开发中）
 
-应用接口边界与最近的封装改进见 [API_AUDIT.zh-CN.md](API_AUDIT.zh-CN.md)。
+应用接口边界与最近的封装改进见 [API_AUDIT.zh-CN.md](API_AUDIT.zh-CN.md)；
+输入框、启动语言、UI 能力及通知的补齐见 [INPUT_API_AUDIT.zh-CN.md](INPUT_API_AUDIT.zh-CN.md)。
 
 后续新增能力、接口设计和性能优化以 C++ SDK 为主要维护方向。Guest C SDK
 逐步退出功能开发，过渡期间保留已有应用必需的兼容与正确性修复。
@@ -63,13 +64,28 @@ PXA_APPLICATION(Counter)
 
 自绘游戏可按需包含 `<pxa/ui_display.hpp>`。`ui::decode_start_display(config)`
 从 `on_start(Context&, span<const byte>)` 的配置读取屏幕宽高、DPI 密度、
-字体缩放、安全边距及四角半径；`ui::decode_display_metrics(event.payload)`
+字体缩放、安全边距及四角半径；`ui::decode_display_metrics(event)`
 处理 UI 环境变更事件（service 3、opcode 0x8002）。环境几何使用 Surface/Window 坐标；
 Canvas 指针坐标使用 dp，叠加自绘 Surface 的游戏须用
 `ui::canvas_to_surface_coordinate(value, metrics)` 转换后再命中控件。
 `density_q16` 是 DPI 相对 160 的比例，不能替换为 Window 的像素尺寸比例。
 缺省圆角扩展按矩形处理；重复、截断及无效尺寸返回协议错误。此可选头文件
 只提供小值结构和解码函数，不注册服务、不分配缓存、不增加其他应用的默认开销。
+
+声明式页面可选用 `<pxa/ui_environment.hpp>` 的 `ui::Environment<>`，在 on_start
+调用 `initialize(config)`，在 on_event 返回 `update(event)`，将 `display()` 直接
+交给 SafeArea。需要主题或能力时显式增加类型参数，只保存所选 State；重复指标
+不会触发 UI PATCH。主题启动快照只有深浅方案，完整调色板仍须显式查询。
+组合、修饰覆盖、挂载重试及所有权规则见
+[DECLARATIVE_UI.zh-CN.md](DECLARATIVE_UI.zh-CN.md)。
+
+`ui::decode_start_ui_capabilities(config)` / `ui::decode_ui_capabilities(event)`
+返回独立的 `UiCapabilities`，用 `supports(UiFeature::sized_text)` 等检查功能。
+它不扩大 `DisplayMetrics`。启动语言可按需包含 `<pxa/startup.hpp>`，调用
+`decode_start_system_environment(config)` 后使用 `is_language("zh")`；返回的
+`locale` 借用启动配置，只能在配置仍存活时访问。需要长期保存时由应用显式复制。
+`<pxa/events.hpp>` 提供 `Event::is<ui::DisplayMetrics>()`、`Event::is<ClockTick>()`
+等路由；`decode_clock_tick(event)` 读取时钟时间戳并检查消息长度与 token。
 
 `ctx.window().fullscreen()` 默认将状态栏和导航栏都设为可临时唤出。
 游戏可调用 `fullscreen(pxa::WindowBarMode::hidden)` 隐藏状态栏并保留临时导航栏；
@@ -193,6 +209,25 @@ Core 1 事件减去消息头）；可设置 1..4052。超限按完整 UTF-8 字�
 对象仍只有一个指针大小。ESP 队列中不超过 64 字节的文本继续内联保存；长文本
 按实际长度分配，事件处理、过期丢弃或入队失败都会释放，队列槽位大小不变。
 输入框卸载、删除或退到后台后，系统会收起键盘。
+
+与自绘内容组合时，可绑定输入框的位置、可见性、字体和颜色：
+
+```cpp
+State<TextInputBox> box{TextInputBox{{12, 72, 180, 36}, true,
+                                    Font::body, 0x20343bff}};
+// view 内，无需写协议属性或 pxa::wire：
+TextInput(query, editor).box(box).max_bytes(512).single_line()
+    .on_submit([this] { search(); });
+// 例如旋转、切换配色或切换页面时：
+box.update([](auto b) { b.region.width = 220; return b; });
+```
+
+`region` 使用逻辑 UI 像素，Host 根据密度换算；不是 Surface 的物理像素。
+`foreground` 为 `0xRRGGBBAA`，显式设置时用于跟随应用自己的配色。
+未调用 `.box()` 的输入框继续使用 Host 的默认布局和主题，不增加绑定或状态。
+配置 box 的输入框多一条绑定；未变化不发送，变化只 PATCH 外观与布局，
+不重建节点、不重新写入输入文本、长度限制及单行模式。State 与 Ref 都须
+比页面活得久；无效字体或坐标使事务取消，脏状态保留以便修正后重试。
 
 键盘复用系统拼音词典、中文/英文/数字/符号模式、字号与主题色。应用不会复制
 词典，也不能通过本接口覆盖系统键盘配色。系统浅色/深色或主色改变时，已打开
@@ -647,4 +682,16 @@ WASI SDK 34 链接 libc++ 后，当前最小应用也会导入 `clock_time_get`�
 `rename` 仍要求目标不存在。先完成写入、调用 `File::close()`，再 `co_await replace`；
 不要用“删除旧文件再重命名”模拟原子保存。Host 不支持时返回 `unsupported`。
 
+原生控件的可选定位、配色和按状态刷新：[声明式控件模块](DECLARATIVE_WIDGETS.zh-CN.md)。
+
+统一修饰、派生文本/按钮标签绑定、组件所有权、安全区布局和可失败动作见
+[声明式 UI 开发指南](DECLARATIVE_UI.zh-CN.md)，完整可交互示例为 `examples/declarative-ui`。
+
 国际化可选模块支持静态翻译目录、类型化具名参数、复数、数字格式、动态字符串与固定缓冲区、系统语言切换及 UI 绑定：[国际化 SDK](I18N.zh-CN.md)。
+
+自定义存档 codec、有进度的短读写、可重试资源关闭、任务错误钩子及状态更新约束：
+[接口完善与模拟器验证](API_POLISH.zh-CN.md)。这些能力按需使用，不扩大默认池或服务状态。
+
+需要控制 AOT 启动临时内存的应用可显式启用
+[有界 libc++ 诊断](BOUNDED_DIAGNOSTICS.zh-CN.md)，保留硬化检查、错误上下文和异常终止，
+避免为错误路径引入完整浮点格式化器；其他应用默认不启用。

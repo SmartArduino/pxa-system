@@ -87,7 +87,7 @@ Task<void> exercise_files(Context& ctx) {
     assert(position && *position == 1);
     auto info = co_await ctx.fs().stat("save.bin");
     assert(info && info->kind == FileKind::regular && info->size == 3);
-    file.close();
+    assert(file.close());
     assert(!file && closes == 1);
     assert(!file.read(bytes));
     co_return Result<void>{};
@@ -105,7 +105,7 @@ Task<void> exercise_directory(Context& ctx) {
     assert(end && !*end && retained->name() == "save.bin");
     auto malformed = co_await dir->next();
     assert(!malformed && malformed.error() == Error::protocol_error);
-    dir->close();
+    assert(dir->close());
     co_return Result<void>{};
 }
 

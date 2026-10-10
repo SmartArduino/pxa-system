@@ -35,6 +35,8 @@ constexpr std::uint8_t text_input = 4;
 constexpr std::uint16_t layout = 262;
 constexpr std::uint16_t width = 256;
 constexpr std::uint16_t height = 257;
+constexpr std::uint16_t min_width = 258, max_width = 259;
+constexpr std::uint16_t min_height = 260, max_height = 261;
 constexpr std::uint16_t justify = 264;
 constexpr std::uint16_t align = 265;
 constexpr std::uint16_t gap = 267;
@@ -44,7 +46,10 @@ constexpr std::uint16_t x = 272;
 constexpr std::uint16_t y = 273;
 constexpr std::uint16_t foreground = 513;
 constexpr std::uint16_t background = 514;
+constexpr std::uint16_t border_color = 515;
+constexpr std::uint16_t radius = 517, border_width = 518;
 constexpr std::uint16_t font_role = 519;
+constexpr std::uint16_t text_align = 520;
 constexpr std::uint16_t composition = 522;
 constexpr std::uint8_t alpha_overlay = 1;
 constexpr std::uint16_t text_value = 768;
@@ -61,6 +66,7 @@ constexpr std::uint16_t item_count = 778;
 constexpr std::uint16_t item_extent = 779;
 constexpr std::uint16_t event_mask = 3;
 constexpr std::uint16_t visible = 1;
+constexpr std::uint16_t enabled = 2;
 /* Event kinds and mask bits mirror pxa_ui.h. */
 constexpr std::uint16_t event_pointer_kind = 7;
 constexpr std::uint64_t event_mask_pointer = UINT64_C(1) << 6;
@@ -103,6 +109,7 @@ public:
 
     bool valid() const noexcept { return active_ && !error_.has_value(); }
     Error error() const noexcept { return error_.value_or(Error::bad_state); }
+    bool fail(Error error) noexcept { error_ = error; return false; }
 
     bool create(std::uint32_t id, std::uint32_t parent,
                 std::uint8_t type, std::uint8_t subtype = 0) noexcept {
@@ -184,6 +191,14 @@ public:
         return u32(id, key, static_cast<std::uint32_t>(value));
     }
 
+    bool rgba(std::uint32_t id, std::uint16_t key,
+              std::uint32_t value) noexcept {
+        std::array<std::byte, 8> data{};
+        data[0] = std::byte{1};
+        wire::put32(data.data() + 4, value);
+        return property(id, key, data);
+    }
+
     bool fill(std::uint32_t id, std::uint16_t key) noexcept {
         if (key != protocol::width && key != protocol::height) {
             error_ = Error::invalid_argument;
@@ -207,6 +222,20 @@ public:
         wire::put32(data.data() + 4,
                     static_cast<std::uint32_t>(value * 64));
         return property(id, key, data);
+    }
+
+    // Constraint keys are compiled only when used. Existing runtime-key
+    // callers retain their original encoder and generated code.
+    template<std::uint16_t Key> requires
+        ((Key >= protocol::width && Key <= protocol::max_height) ||
+         Key == protocol::x || Key == protocol::y)
+    bool logical_px(std::uint32_t id, std::int32_t value) noexcept {
+        if (value < 0 || value > INT32_MAX / 64)
+            return fail(Error::invalid_argument);
+        std::array<std::byte, 8> data{};
+        data[0] = std::byte{1};
+        wire::put32(data.data() + 4, static_cast<std::uint32_t>(value * 64));
+        return property(id, Key, data);
     }
 
     bool dp(std::uint32_t id, std::uint16_t key,
@@ -248,7 +277,9 @@ public:
     }
 
 private:
-    bool record(std::uint8_t command, std::span<const std::byte> prefix,
+    // Share packet encoding across property setters. O3 otherwise duplicates
+    // the fragmented append/flush loop at every styled-widget property.
+    [[gnu::noinline]] bool record(std::uint8_t command, std::span<const std::byte> prefix,
                 std::span<const std::byte> value) noexcept {
         if (!valid()) return false;
         if (prefix.size() + value.size() > UINT16_MAX) {

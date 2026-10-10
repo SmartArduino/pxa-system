@@ -120,7 +120,14 @@ struct pxa_lvgl_ui_node {
     /* Visual suppression must follow a node across MOVE and rollback. */
     uint8_t alpha_hidden;
     uint8_t range_scheduled;
+    /* Requested state, separate from the inherited LVGL effective state. */
+    uint8_t own_disabled;
 };
+/* This byte must occupy existing tail padding on every supported ABI. */
+_Static_assert(sizeof(pxa_lvgl_ui_node_t) ==
+    (offsetof(pxa_lvgl_ui_node_t, own_disabled) + _Alignof(pxa_lvgl_ui_node_t) - 1) /
+    _Alignof(pxa_lvgl_ui_node_t) * _Alignof(pxa_lvgl_ui_node_t),
+    "Inherited enabled state must not enlarge UI nodes");
 
 struct pxa_lvgl_ui_command {
     pxa_lvgl_ui_command_t *next;
@@ -783,6 +790,32 @@ static void on_node_delete(lv_event_t *event) {
     ui_release(node->ui, node);
 }
 
+static pxa_lvgl_ui_node_t *node_for_object(lv_obj_t *object) {
+    if (!object) return NULL;
+    /* Reuse the existing deletion registration; no object map or user-data
+     * ownership change, and native widget children simply have no entry. */
+    for (uint32_t i = 0; i < lv_obj_get_event_count(object); ++i) {
+        lv_event_dsc_t *descriptor = lv_obj_get_event_dsc(object, i);
+        if (lv_event_dsc_get_cb(descriptor) == on_node_delete)
+            return lv_event_dsc_get_user_data(descriptor);
+    }
+    return NULL;
+}
+
+static void update_enabled_nodes(pxa_lvgl_ui_t *ui) {
+    for (pxa_lvgl_ui_node_t *node = ui->nodes; node; node = node->next) {
+        if (!node->object) continue;
+        bool disabled = node->own_disabled != 0;
+        for (lv_obj_t *parent = lv_obj_get_parent(node->object); !disabled && parent;
+             parent = lv_obj_get_parent(parent)) {
+            pxa_lvgl_ui_node_t *ancestor = node_for_object(parent);
+            disabled = ancestor && ancestor->ui == ui ? ancestor->own_disabled != 0
+                : lv_obj_has_state(parent, LV_STATE_DISABLED);
+        }
+        lv_obj_set_disabled(node->object, disabled);
+    }
+}
+
 static lv_obj_t *create_object(pxa_lvgl_ui_node_t *node,
                                lv_obj_t *parent) {
     lv_obj_t *object;
@@ -814,6 +847,7 @@ static lv_obj_t *create_object(pxa_lvgl_ui_node_t *node,
     }
     if (object == NULL) return NULL;
     node->object = object;
+    if (lv_obj_has_state(parent, LV_STATE_DISABLED)) lv_obj_set_disabled(object, true);
     node->visible = 1;
     node->opacity = LV_OPA_COVER;
     node->composition = PXA_UI_COMPOSITION_BASE;
@@ -850,7 +884,9 @@ static lv_obj_t *create_object(pxa_lvgl_ui_node_t *node,
     lv_obj_set_event_bubble(object, true);
     lv_obj_set_style_border_width(object, 0, 0);
     lv_obj_set_style_pad_all(object, 0, 0);
-    lv_obj_set_style_radius(object, 0, 0);
+    lv_obj_set_style_radius(object,
+        node->type == PXA_UI_NODE_CONTROL && node->subtype == PXA_UI_CONTROL_TOGGLE
+            ? LV_RADIUS_CIRCLE : 0, 0);
     lv_obj_set_style_bg_opa(object, LV_OPA_TRANSP, 0);
     lv_obj_set_style_text_font(object, font_for_role(node->ui, 1), 0);
     if (node->type == PXA_UI_NODE_ROOT) {
@@ -905,6 +941,14 @@ static lv_obj_t *create_object(pxa_lvgl_ui_node_t *node,
         lv_obj_set_style_transform_height(object, 0, LV_STATE_PRESSED);
         lv_obj_set_style_recolor_opa(object, LV_OPA_TRANSP,
                                      LV_STATE_PRESSED);
+    }
+    if (node->type == PXA_UI_NODE_CONTROL &&
+        node->subtype == PXA_UI_CONTROL_TOGGLE) {
+        // The generic transparent background used to erase the native track,
+        // leaving a floating knob. Reuse the existing background/radius
+        // properties; this adds no style entries, node storage or commands.
+        node->background_kind = 0;
+        node->background_token = 26; // outline_variant, resolved on theme changes
     }
     node->minimum = 0;
     node->maximum = node->subtype == PXA_UI_CONTROL_TEXT_INPUT
@@ -1090,6 +1134,7 @@ static void apply_property(pxa_lvgl_ui_node_t *node,
             lv_obj_set_hidden(object, !node->visible);
             break;
         case PXA_UI_PROPERTY_ENABLED:
+            node->own_disabled = !data[0];
             if (data[0]) lv_obj_remove_state(object, LV_STATE_DISABLED);
             else lv_obj_add_state(object, LV_STATE_DISABLED);
             break;
@@ -1558,7 +1603,8 @@ static pxa_status_t capture_property_undo(pxa_lvgl_ui_command_t *command) {
     undo->flags = (lv_obj_is_hidden(object) ? LV_OBJ_FLAG_HIDDEN : 0) |
                   (lv_obj_is_floating(object) ? LV_OBJ_FLAG_FLOATING : 0) |
                   (lv_obj_is_ignore_layout(object) ? LV_OBJ_FLAG_IGNORE_LAYOUT : 0) |
-                  (lv_obj_is_clickable(object) ? LV_OBJ_FLAG_CLICKABLE : 0);
+                  (lv_obj_is_clickable(object) ? LV_OBJ_FLAG_CLICKABLE : 0) |
+                  (node->own_disabled ? UINT32_C(0x80000000) : 0);
     undo->index = lv_obj_get_index(object);
     undo->scroll_x = lv_obj_get_scroll_x(object);
     undo->scroll_y = lv_obj_get_scroll_y(object);
@@ -1612,6 +1658,7 @@ static void rollback_property(pxa_lvgl_ui_command_t *command) {
     lv_obj_t *object = node->object;
     uint16_t property = command->view.property;
     memcpy((uint8_t *)node + NODE_STATE_OFFSET, undo->state, NODE_STATE_BYTES);
+    node->own_disabled = (undo->flags & UINT32_C(0x80000000)) != 0;
     if (property == PXA_UI_PROPERTY_TEXT_SINGLE_LINE) set_text_single_line(object, undo->selected);
     if (property == PXA_UI_PROPERTY_TEXT || property == PXA_UI_PROPERTY_ICON) {
         if (undo->text) apply_property(node, PXA_UI_PROPERTY_TEXT,
@@ -2123,6 +2170,7 @@ static void execute_transaction(void *data) {
     pxa_lvgl_ui_node_t *old_root =
         (pxa_lvgl_ui_node_t *)transaction->info.target_handle;
     int32_t old_index = -1;
+    bool enabled_dirty = false;
     transaction->ui->transaction_active = 1;
     if (old_root != NULL && old_root->object != NULL)
         old_index = lv_obj_get_index(old_root->object);
@@ -2171,6 +2219,7 @@ static void execute_transaction(void *data) {
         } else if (is_plain_property(&command->view)) {
             transaction->status = capture_property_undo(command);
             if (transaction->status != PXA_STATUS_OK) goto failed;
+            if (command->view.property == PXA_UI_PROPERTY_ENABLED) enabled_dirty = true;
             if (command->view.command == PXA_UI_COMMAND_SET_PROPERTY)
                 apply_property(node, command->view.property, command->view.value);
             else clear_property(node, command->view.property);
@@ -2179,6 +2228,7 @@ static void execute_transaction(void *data) {
     for (command = transaction->commands; command != NULL;
          command = command->next) {
         if (command->view.command == PXA_UI_COMMAND_MOVE) {
+            enabled_dirty = true;
             pxa_lvgl_ui_node_t *node =
                 (pxa_lvgl_ui_node_t *)command->view.node_handle;
             pxa_lvgl_ui_node_t *parent =
@@ -2202,6 +2252,7 @@ static void execute_transaction(void *data) {
             }
         }
     }
+    if (enabled_dirty) update_enabled_nodes(transaction->ui);
     if (transaction->info.kind != PXA_UI_PATCH) {
         stage_removal(transaction->ui, old_root);
         if (new_root != NULL && new_root->object != NULL && old_index >= 0)
@@ -2243,6 +2294,7 @@ failed:
         restore_removals(transaction->ui);
         rollback_commands(transaction);
         discard_created(transaction);
+        if (enabled_dirty) update_enabled_nodes(transaction->ui);
         set_alpha_overlay_base_visibility(transaction->ui, 0);
         lv_obj_update_layout(lv_screen_active());
         transaction->ui->transaction_active = 0;

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core.hpp"
+#include "diagnostics.hpp"
 
 #include <coroutine>
 #include <bit>
@@ -406,6 +407,11 @@ public:
         error_report_ = report;
     }
 
+    void report(Error error) noexcept {
+        if (error_report_) error_report_(error_context_, error);
+        else detail::report_error("PXA task failed: ", error);
+    }
+
     template<class T> Result<void> start(Task<T> task) noexcept {
         if (!task.valid()) return std::unexpected(task.failure());
         Entry* available = nullptr;
@@ -438,9 +444,7 @@ public:
             auto failure = completed.failure(completed.handle);
             completed.destroy(completed.handle);
             if (!failure) continue;
-            if (error_report_) error_report_(error_context_, *failure);
-            else std::fprintf(stderr, "PXA task failed: %d\n",
-                              static_cast<int>(*failure));
+            report(*failure);
         }
     }
     void cancel() noexcept {

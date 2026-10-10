@@ -423,6 +423,15 @@ static lv_font_t *load_product_font(uint32_t size,
 #endif
 }
 
+/* Font roles are logical sp; the adapter receives actual pixel fonts. Reuse
+ * the six existing font objects rather than introducing a second font cache. */
+static uint32_t product_font_pixels(uint32_t sp, uint32_t density_q16,
+                                    uint32_t font_scale_q16) {
+    uint64_t pixels = ((uint64_t)sp * density_q16 * font_scale_q16 +
+                       (UINT64_C(1) << 31)) >> 32;
+    return (uint32_t)(pixels < 1 ? 1 : pixels > 256 ? 256 : pixels);
+}
+
 static void map_host_theme(const pxsys_theme_snapshot_t *source,
                            uint32_t rgba[PXA_UI_THEME_ROLE_COUNT]) {
     static const pxsys_color_token_t tokens[PXA_UI_THEME_ROLE_COUNT] = {
@@ -3486,12 +3495,14 @@ static int run_product_simulator(const options_t *input,
     pxa_lvgl_ui_theme_init(&lvgl_config.theme);
     if (host_theme != NULL)
         map_host_theme(host_theme, lvgl_config.theme.rgba);
-    host.caption_font = load_product_font(12, &lv_font_montserrat_14);
-    host.label_font = load_product_font(14, &lv_font_montserrat_14);
-    host.body_font = load_product_font(16, &lv_font_montserrat_16);
-    host.title_font = load_product_font(20, &lv_font_montserrat_20);
-    host.headline_font = load_product_font(24, &lv_font_montserrat_20);
-    host.display_font = load_product_font(28, &lv_font_montserrat_20);
+    const uint32_t font_density = lvgl_config.primary_environment.density_q16;
+    const uint32_t font_scale = lvgl_config.primary_environment.font_scale_q16;
+    host.caption_font = load_product_font(product_font_pixels(12,font_density,font_scale), &lv_font_montserrat_14);
+    host.label_font = load_product_font(product_font_pixels(14,font_density,font_scale), &lv_font_montserrat_14);
+    host.body_font = load_product_font(product_font_pixels(16,font_density,font_scale), &lv_font_montserrat_16);
+    host.title_font = load_product_font(product_font_pixels(20,font_density,font_scale), &lv_font_montserrat_20);
+    host.headline_font = load_product_font(product_font_pixels(24,font_density,font_scale), &lv_font_montserrat_20);
+    host.display_font = load_product_font(product_font_pixels(28,font_density,font_scale), &lv_font_montserrat_20);
     lvgl_config.theme.caption_font = host.caption_font != NULL
                                         ? host.caption_font
                                         : &lv_font_montserrat_14;
@@ -4075,6 +4086,10 @@ done:
     free(encoded); free(installer_workspace); free(public_key);
     if (owns_display && display != NULL && lv_display_get_default() != NULL) {
         lv_display_delete(display);
+        // SDL retains its init flag and event timer outside LVGL's globals.
+        // Reset them before lv_deinit frees the timer, so a second standalone
+        // run installs a fresh tick callback and input event pump.
+        lv_sdl_quit();
         lv_deinit();
     }
     free(shape_mask.pixels);

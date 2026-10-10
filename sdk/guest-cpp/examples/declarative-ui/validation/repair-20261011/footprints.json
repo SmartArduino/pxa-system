@@ -1,0 +1,26 @@
+{
+  "before": {
+    "safe_bound": 40,
+    "safe_static": 88,
+    "component": 40,
+    "component_in_place": 104,
+    "when": 288,
+    "list": 1152,
+    "refresh": 264,
+    "repeated_modifier_view": 80,
+    "repeated_modifier_page": 256,
+    "repeated_bindings": 1
+  },
+  "after": {
+    "safe_bound": 40,
+    "safe_static": 88,
+    "component": 40,
+    "component_in_place": 104,
+    "when": 288,
+    "list": 1152,
+    "refresh": 264,
+    "repeated_modifier_view": 64,
+    "repeated_modifier_page": 176,
+    "repeated_bindings": 0
+  }
+}

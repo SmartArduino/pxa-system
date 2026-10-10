@@ -2,6 +2,7 @@
 
 #include "task.hpp"
 #include "binary.hpp"
+#include "codec.hpp"
 #include "request_packet.hpp"
 
 #include <array>
@@ -41,6 +42,61 @@ public:
         if (!size) return Task<void>::failed(size.error());
         packet.size = *size;
         return set_owned(self, packet);
+    }
+
+    // Explicit custom schema, sharing the same one-coroutine request path.
+    // The codec decodes directly from the response; there is no intermediate
+    // max-size value buffer. Encoding snapshots the object during this call.
+    template<binary::ValueCodec Codec>
+    Task<typename Codec::value_type> get_value(this StorageService self,
+                                               std::string_view key) {
+        static_assert(Codec::max_bytes <= 2048, "Storage values are limited to 2048 bytes");
+        KeyPayload payload;
+        if (!encode_key(key, payload.bytes))
+            return Task<typename Codec::value_type>::failed(Error::invalid_argument);
+        payload.size = 4 + key.size();
+        return get_codec_impl<Codec>(self, payload);
+    }
+
+    template<binary::ValueCodec Codec>
+    Task<void> set_value(this StorageService self, std::string_view key,
+                         const typename Codec::value_type& value) {
+        static_assert(Codec::max_bytes <= 2048, "Storage values are limited to 2048 bytes");
+        if (!valid_key(key)) return Task<void>::failed(Error::invalid_argument);
+        Packet<wire::header_bytes + 8 + 64 + Codec::max_bytes> packet;
+        auto* payload = packet.bytes.data() + wire::header_bytes;
+        write_key(key, payload);
+        auto* record = payload + 4 + key.size();
+        auto size = binary::encode<Codec>(value,
+            std::span{record + 4, std::size_t{Codec::max_bytes}});
+        if (!size) return Task<void>::failed(size.error());
+        wire::put16(record, 2);
+        wire::put16(record + 2, static_cast<std::uint16_t>(*size));
+        packet.size = wire::header_bytes + 8 + key.size() + *size;
+        return set_owned(self, packet);
+    }
+
+    // Large codecs can encode into an explicitly borrowed packet without
+    // reserving their max_bytes in a coroutine slot. The source object must
+    // not alias packet; key is snapshotted before the codec writes any bytes.
+    template<binary::ValueCodec Codec>
+    Task<void> set_value(this StorageService self, std::string_view key,
+                         const typename Codec::value_type& value,
+                         std::span<std::byte> packet) {
+        static_assert(Codec::max_bytes <= 2048, "Storage values are limited to 2048 bytes");
+        if (!valid_key(key)) return Task<void>::failed(Error::invalid_argument);
+        const auto prefix = wire::header_bytes + 8 + key.size();
+        if (packet.size() < prefix)
+            return Task<void>::failed(Error::resource_limit);
+        std::array<std::byte,68> key_snapshot;
+        write_key(key,key_snapshot.data());
+        auto size = binary::encode<Codec>(value,packet.subspan(prefix));
+        if (!size) return Task<void>::failed(size.error());
+        std::memcpy(packet.data()+wire::header_bytes,key_snapshot.data(),4+key.size());
+        auto* record = packet.data()+prefix-4;
+        wire::put16(record,2);
+        wire::put16(record+2,static_cast<std::uint16_t>(*size));
+        return set_borrowed(self,packet.first(prefix+*size));
     }
 
     Task<std::size_t> get(this StorageService self, std::string_view key,
@@ -192,6 +248,17 @@ private:
         if (output.size() < value->size()) co_return std::unexpected(Error::resource_limit);
         if (!value->empty()) std::memmove(output.data(), value->data(), value->size());
         co_return value->size();
+    }
+
+    template<binary::ValueCodec Codec>
+    static Task<typename Codec::value_type> get_codec_impl(StorageService self,
+                                                           KeyPayload payload) {
+        auto event = co_await Response(self.transport_, self.requests_, 6, 1,
+            std::span{payload.bytes}.first(payload.size));
+        if (!event) co_return std::unexpected(event.error());
+        auto value = decode_value(event->payload);
+        if (!value) co_return std::unexpected(value.error());
+        co_return binary::decode<Codec>(*value);
     }
 
     static Result<std::span<const std::byte>> decode_value(

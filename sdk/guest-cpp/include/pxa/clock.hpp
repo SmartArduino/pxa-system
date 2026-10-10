@@ -6,6 +6,15 @@
 
 namespace pxa {
 
+struct ClockTick { std::uint64_t timestamp_us = 0; };
+
+inline Result<ClockTick> decode_clock_tick(const Event& event) noexcept {
+    if (event.service != 4 || event.opcode != 0x8001 || event.token != 0 ||
+        event.payload.size() != 8)
+        return std::unexpected(Error::protocol_error);
+    return ClockTick{wire::get64(event.payload.data())};
+}
+
 class ClockService {
 public:
     ClockService(Transport& transport, RequestTable& requests) noexcept
@@ -18,6 +27,29 @@ public:
         wire::put16(payload.data(), period_ms);
         return transport_.send(4, 1, 0, payload);
     }
+
+    // A cooperative round trip without a nested Task/frame-pool slot. Useful
+    // between synchronous Flash/stream blocks; this is not a timed delay.
+    class Yield {
+    public:
+        Yield(Transport& transport, RequestTable& requests) noexcept
+            : response_(transport, requests, 4, 2, std::span<const std::byte>{}) {}
+        bool await_ready() const noexcept { return false; }
+        bool await_suspend(std::coroutine_handle<> handle) noexcept { return response_.await_suspend(handle); }
+        Result<void> await_resume() const noexcept {
+            auto event = response_.await_resume();
+            if (!event) return std::unexpected(event.error());
+            if (event->payload.size() < 4) return std::unexpected(Error::protocol_error);
+            const auto status = static_cast<std::int32_t>(wire::get32(event->payload.data()));
+            if (status) return event->payload.size() == 4 ? Result<void>(std::unexpected(static_cast<Error>(status)))
+                                                        : Result<void>(std::unexpected(Error::protocol_error));
+            if (event->payload.size() != 12) return std::unexpected(Error::protocol_error);
+            return {};
+        }
+    private:
+        Response response_;
+    };
+    Yield yield() noexcept { return Yield(transport_, requests_); }
 
     Task<std::uint64_t> now(this ClockService self) {
         auto& [transport_, requests_] = self;

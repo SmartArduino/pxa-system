@@ -1,0 +1,60 @@
+{
+  "before": [
+    {
+      "updates": 100,
+      "wamr_current_bytes": 31393,
+      "wamr_peak_bytes": 48193,
+      "linear_current_bytes": 131072,
+      "linear_peak_bytes": 131072,
+      "artifact_buffer_bytes": 0,
+      "event_buffer_bytes": 128
+    },
+    {
+      "updates": 100,
+      "wamr_current_bytes": 31393,
+      "wamr_peak_bytes": 48193,
+      "linear_current_bytes": 131072,
+      "linear_peak_bytes": 131072,
+      "artifact_buffer_bytes": 0,
+      "event_buffer_bytes": 128
+    },
+    {
+      "updates": 100,
+      "wamr_current_bytes": 31393,
+      "wamr_peak_bytes": 48193,
+      "linear_current_bytes": 131072,
+      "linear_peak_bytes": 131072,
+      "artifact_buffer_bytes": 0,
+      "event_buffer_bytes": 128
+    }
+  ],
+  "after": [
+    {
+      "updates": 100,
+      "wamr_current_bytes": 31393,
+      "wamr_peak_bytes": 48193,
+      "linear_current_bytes": 131072,
+      "linear_peak_bytes": 131072,
+      "artifact_buffer_bytes": 0,
+      "event_buffer_bytes": 128
+    },
+    {
+      "updates": 100,
+      "wamr_current_bytes": 31393,
+      "wamr_peak_bytes": 48193,
+      "linear_current_bytes": 131072,
+      "linear_peak_bytes": 131072,
+      "artifact_buffer_bytes": 0,
+      "event_buffer_bytes": 128
+    },
+    {
+      "updates": 100,
+      "wamr_current_bytes": 31393,
+      "wamr_peak_bytes": 48193,
+      "linear_current_bytes": 131072,
+      "linear_peak_bytes": 131072,
+      "artifact_buffer_bytes": 0,
+      "event_buffer_bytes": 128
+    }
+  ]
+}

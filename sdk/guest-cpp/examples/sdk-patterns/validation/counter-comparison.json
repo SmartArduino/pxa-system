@@ -1,0 +1,22 @@
+{
+  "main.linux-x86_64.aot": {
+    "before": {
+      "bytes": 86440,
+      "sha256": "aacaa5ab7cc4555857ce72c0afd9800dd76a20b184ad4aa6584404fdef615084"
+    },
+    "after": {
+      "bytes": 86440,
+      "sha256": "aacaa5ab7cc4555857ce72c0afd9800dd76a20b184ad4aa6584404fdef615084"
+    }
+  },
+  "main.wasm": {
+    "before": {
+      "bytes": 55592,
+      "sha256": "9f0909d3643e528d26cc95370f40cc584475eb4a3fe034f3b72e5cb5111c88c5"
+    },
+    "after": {
+      "bytes": 55592,
+      "sha256": "9f0909d3643e528d26cc95370f40cc584475eb4a3fe034f3b72e5cb5111c88c5"
+    }
+  }
+}

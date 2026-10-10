@@ -8,7 +8,10 @@
 
 namespace pxa::ui {
 
-struct CanvasRegion { std::int32_t x, y, width, height; };
+struct CanvasRegion {
+    std::int32_t x, y, width, height;
+    constexpr bool operator==(const CanvasRegion&) const noexcept = default;
+};
 
 // Commands occupy their final WRITE packet. No intermediate display list or
 // heap allocation is needed; Capacity is the application's explicit budget.
