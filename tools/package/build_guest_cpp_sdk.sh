@@ -36,7 +36,10 @@ for tool in package_app.sh resolve_wasi_sdk.sh \
   cp "$script_dir/$tool" "$output_dir/tools/package/$tool"
 done
 cp "$pxa_system_dir/tools/wamr/metadata.py" "$output_dir/tools/wamr/"
-cp "$pxa_system_dir/tools/i18n/compile_catalog.py" "$output_dir/tools/i18n/"
+for tool in compile_catalog.py message_compiler.py plural_rules.py; do
+  cp "$pxa_system_dir/tools/i18n/$tool" "$output_dir/tools/i18n/"
+done
+cp -R "$pxa_system_dir/tools/i18n/cldr" "$output_dir/tools/i18n/"
 cp "$pxa_system_dir"/spec/draft/pxa-*.json "$output_dir/spec/draft/"
 cp "$pxa_system_dir/spec/draft/tools/generate_service_codecs.py" \
   "$output_dir/spec/draft/tools/"

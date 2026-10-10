@@ -1,0 +1,45 @@
+namespace: sdk_test
+default_locale: en
+messages:
+  title:
+    source: "Hello"
+    context: "Title"
+  fallback:
+    source: "English fallback"
+    context: "Missing translations"
+  items:
+    source: "{count, plural, =0 {No items} one {# item} other {# items}}"
+    context: "Inventory"
+    placeholders:
+      count: u32
+  ordinal:
+    source: "{rank, selectordinal, one {#st} two {#nd} few {#rd} other {#th}}"
+    context: "Rank"
+    placeholders:
+      rank: u64
+  nested:
+    source: "{gender, select, male {{count, plural, one {He has # apple} other {He has # apples}}} other {{count, plural, one {They have # apple} other {They have # apples}}}}"
+    context: "Nested select/plural"
+    placeholders:
+      gender: string
+      count: i64
+  value:
+    source: "{value, number}"
+    context: "Decimal number"
+    placeholders:
+      value: number
+  decimal_plural:
+    source: "{value, plural, one {one} few {few} many {many} other {other}}"
+    context: "Decimal operands"
+    placeholders:
+      value: number
+  quoted:
+    source: "don't '{count}' '' {count}"
+    context: "Escaping"
+    placeholders:
+      count: u32
+  welcome:
+    source: "Hello {name}!"
+    context: "UTF-8 argument"
+    placeholders:
+      name: string

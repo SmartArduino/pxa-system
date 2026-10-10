@@ -164,17 +164,7 @@ wait_build_batch() {
 
 generated_include_dir="$work_dir/generated/include"
 generated_include_args=()
-if [[ -f "$app_dir/i18n/messages.yaml" ]]; then
-  mapfile -t locale_catalogs < <(
-    find "$app_dir/i18n" -maxdepth 1 -type f -name '*.yaml' \
-      ! -name 'messages.yaml' -print | LC_ALL=C sort
-  )
-  "${PYTHON:-python3}" \
-    "$pxa_system_dir/tools/i18n/compile_catalog.py" \
-    "$app_dir/i18n/messages.yaml" "${locale_catalogs[@]}" \
-    --output "$generated_include_dir/pxa_app_messages.h"
-  generated_include_args=("-I$generated_include_dir")
-fi
+
 
 component_rows="$work_dir/components.tsv"
 build_settings="$work_dir/build.tsv"
@@ -258,6 +248,18 @@ if [[ "$core_major" != "1" ]]; then
   echo "Core v1 is required for new packages" >&2
   exit 2
 fi
+if [[ "$build_system" == "direct" && -f "$app_dir/i18n/messages.yaml" ]]; then
+  mapfile -t locale_catalogs < <(
+    find "$app_dir/i18n" -maxdepth 1 -type f -name '*.yaml' \
+      ! -name 'messages.yaml' -print | LC_ALL=C sort
+  )
+  "${PYTHON:-python3}" \
+    "$pxa_system_dir/tools/i18n/compile_catalog.py" \
+    "$app_dir/i18n/messages.yaml" "${locale_catalogs[@]}" \
+    --output "$generated_include_dir/pxa_app_messages.h"
+  generated_include_args=("-I$generated_include_dir")
+fi
+
 component_ids=()
 declare -A component_seen=()
 declare -A component_value_map=()

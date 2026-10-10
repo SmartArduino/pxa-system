@@ -1,0 +1,5 @@
+locale: ru
+translations:
+  title: "Русский"
+  items: "{count, plural, one {# предмет} few {# предмета} many {# предметов} other {# предмета}}"
+  decimal_plural: "{value, plural, one {one} few {few} many {many} other {other}}"

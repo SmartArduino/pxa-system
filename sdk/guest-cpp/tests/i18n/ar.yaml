@@ -1,0 +1,9 @@
+locale: ar
+number_symbols:
+  decimal: "٫"
+  group: "٬"
+  digits: "٠١٢٣٤٥٦٧٨٩"
+  primary_group: 3
+translations:
+  value: "{value, number}"
+  items: "{count, plural, zero {zero} one {one} two {two} few {few} many {many} other {other}}"

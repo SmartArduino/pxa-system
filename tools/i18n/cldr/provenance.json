@@ -1,0 +1,23 @@
+{
+  "version": "CLDR 48",
+  "files": [
+    {
+      "file": "plurals.xml",
+      "url": "https://raw.githubusercontent.com/unicode-org/cldr/release-48/common/supplemental/plurals.xml",
+      "bytes": 26048,
+      "sha256": "d701d8b461afd2ba5eb21f9c1d645c8a661de225596afcf0f492ee36c69d727d"
+    },
+    {
+      "file": "ordinals.xml",
+      "url": "https://raw.githubusercontent.com/unicode-org/cldr/release-48/common/supplemental/ordinals.xml",
+      "bytes": 10751,
+      "sha256": "129bf4aa6f41d47931bf908ebaa261ec0b73b768f1fe3be90c06ab11fb49880a"
+    },
+    {
+      "file": "LICENSE",
+      "url": "https://raw.githubusercontent.com/unicode-org/cldr/release-48/LICENSE",
+      "bytes": 2033,
+      "sha256": "b4c0ae8ef04f7059f96ce5bbe0467f9fe6f6d81bbe13517701dfeb961fb4d0b6"
+    }
+  ]
+}

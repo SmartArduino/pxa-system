@@ -1,0 +1,4 @@
+locale: zh-CN
+translations:
+  title: "简体中文"
+  items: "{count, plural, other {# 件物品}}"

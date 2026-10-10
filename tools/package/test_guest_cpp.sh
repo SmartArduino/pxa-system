@@ -28,8 +28,14 @@ python3 "$cpp_sdk_dir/tools/generate_ipc_contract.py" \
   "$cpp_sdk_dir/examples/ipc-stats/stats_contract.hpp" --check
 python3 "$cpp_sdk_dir/tests/test_generate_ipc_contract.py"
 
-for test_name in features binary events core_app ui_wire ui_page ui_input ui_display canvas ui_controls ui_canvas game_painter game_painter_replay game_arcade counter_app navigation list task assets storage storage_value storage_ownership fs permission permission_ownership audio device sensor net ipc ipc_contract work surface game game_pacing game_host game_service game_loop game_utils; do
-  extra_includes=()
+python3 "$pxa_system_dir/tools/i18n/compile_catalog.py" \
+  "$cpp_sdk_dir/tests/i18n/messages.yaml" "$cpp_sdk_dir"/tests/i18n/{en-GB,zh-CN,zh-Hant,ru,ar}.yaml \
+  --language cpp --output "$work_dir/pxa_i18n_test_messages.hpp"
+python3 "$pxa_system_dir/tools/i18n/test_compile_catalog.py"
+
+
+for test_name in features binary events startup locale i18n core_app ui_wire ui_page ui_input ui_display canvas ui_controls ui_canvas game_painter game_painter_replay game_arcade counter_app navigation list task assets storage storage_value storage_ownership fs permission permission_ownership audio device sensor net ipc ipc_contract work surface game game_pacing game_host game_service game_loop game_utils; do
+  extra_includes=(-I"$work_dir")
   extra_objects=()
   if [[ "$test_name" == game_host || "$test_name" == game_painter_replay || "$test_name" == game_arcade ]]; then
     extra_includes=(-I"$pxa_system_dir/libpxa/include")
