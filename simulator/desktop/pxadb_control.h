@@ -6,6 +6,8 @@
 
 #include "lvgl.h"
 
+typedef int (*pxsys_pxadb_package_action_fn)(void *context, const char *id, unsigned action);
+
 typedef int (*pxsys_pxadb_catalog_refresh_fn)(void *context);
 
 typedef struct {
@@ -18,6 +20,7 @@ typedef struct {
     uint32_t tap_release_at;
     void *catalog_context;
     pxsys_pxadb_catalog_refresh_fn refresh_catalog;
+    pxsys_pxadb_package_action_fn package_action;
     char path[108];
 } pxsys_pxadb_control_t;
 

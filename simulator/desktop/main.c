@@ -24,6 +24,7 @@
 #include "pxsys/lvgl_flags.h"
 #include "pxsys/standard_system.h"
 #include "pxadb_control.h"
+#include "package_store.h"
 #include "simulator_runtime.h"
 #include "src/core/lv_obj_event_private.h"
 #include "src/drivers/sdl/lv_sdl_private.h"
@@ -63,6 +64,9 @@ typedef struct {
     pxsys_standard_system_t* system;
     pxsys_reference_lvgl_t* ui;
     const char* installed_packages_root;
+    const char* state_root;
+    char pending_id[PXSYS_REFERENCE_MANAGED_APP_IDENTITY_MAX];
+    pxsys_reference_app_action_t pending_action;
 } simulator_catalog_t;
 
 typedef struct {
@@ -632,17 +636,24 @@ static pxsys_status_t publish_installed_package(
         localized_manifest.icon_path = localized_metadata.icon_path;
         manifest = &localized_manifest;
     }
+    uint32_t flags = PXSYS_APP_FLAG_REMOVABLE | PXSYS_APP_FLAG_LAUNCHER;
+    char disabled[1450];
+    struct stat metadata;
+    // The package root's marker survives replacement installs and restarts.
+    const char* suffix = strlen(root) >= 8 && !strcmp(root + strlen(root) - 8, "/current") ? "/../.disabled" : "/.disabled";
+    if (snprintf(disabled, sizeof(disabled), "%s%s", root, suffix) >= (int)sizeof(disabled)) goto done;
+    if (lstat(disabled, &metadata) != 0 && errno == ENOENT) flags |= PXSYS_APP_FLAG_ENABLED;
     result = pxsys_pxa_catalog_publish(
         apps, manifest, pxsys_string_from_cstr(PXSYS_DESKTOP_RUNTIME_ID),
-        PXSYS_APP_FLAG_REMOVABLE | PXSYS_APP_FLAG_ENABLED |
-            PXSYS_APP_FLAG_LAUNCHER,
-        &change);
+        flags, &change);
 done:
     free(workspace);
     free(encoded);
     return result;
 }
 
+static pxsys_status_t stop_managed_app(simulator_catalog_t* catalog,
+                                       const pxsys_app_identity_t* identity);
 static pxsys_status_t sync_installed_catalog(simulator_catalog_t* catalog) {
     DIR* directory;
     struct dirent* entry;
@@ -658,6 +669,22 @@ static pxsys_status_t sync_installed_catalog(simulator_catalog_t* catalog) {
     if (directory == NULL)
         return errno == ENOENT ? PXSYS_STATUS_OK : PXSYS_STATUS_UNAVAILABLE;
     apps = pxsys_standard_system_apps(catalog->system);
+    // Installation scans add/update packages; they must also remove stale
+    // registry entries so an uninstalled icon cannot survive until restart.
+    for (size_t i = 0; i < pxsys_app_registry_count(apps);) {
+        const pxsys_app_descriptor_t* app = pxsys_app_registry_at(apps, i);
+        char id[131];
+        if (app != NULL && !(app->flags & PXSYS_APP_FLAG_SYSTEM) &&
+            app->identity.app_id.size < sizeof(id)) {
+            memcpy(id, app->identity.app_id.data, app->identity.app_id.size);
+            id[app->identity.app_id.size] = 0;
+            if (!pxsys_desktop_package_installed(catalog->installed_packages_root, id) &&
+                stop_managed_app(catalog, &app->identity) == PXSYS_STATUS_OK) {
+                if (pxsys_app_registry_unregister(apps, &app->identity) == PXSYS_STATUS_OK) continue;
+            }
+        }
+        ++i;
+    }
     while ((entry = readdir(directory)) != NULL) {
         char package_root[1400];
         char current_root[1400];
@@ -821,6 +848,19 @@ static bool simulator_wifi_forget(void* context, const char* ssid) {
     return true;
 }
 
+static int simulator_load_manifest(const simulator_catalog_t* catalog,
+                                   const char* app_id, uint8_t** encoded,
+                                   void** workspace, pxa_package_manifest_t** manifest);
+static bool managed_data_publisher(const simulator_catalog_t* catalog,
+                                    const char* id, uint8_t publisher[32]) {
+    uint8_t* encoded = NULL; void* workspace = NULL;
+    pxa_package_manifest_t* manifest = NULL;
+    bool valid = simulator_load_manifest(catalog, id, &encoded, &workspace, &manifest) &&
+                 manifest->publisher_key_id != NULL;
+    if (valid) memcpy(publisher, manifest->publisher_key_id, 32);
+    free(workspace); free(encoded);
+    return valid;
+}
 static size_t simulator_list_apps(
     void* context, pxsys_reference_managed_app_t* output, size_t capacity) {
     const simulator_catalog_t* catalog = (const simulator_catalog_t*)context;
@@ -851,40 +891,129 @@ static size_t simulator_list_apps(
             (app->flags & PXSYS_APP_FLAG_SYSTEM) != 0 ? 1 : 0;
         managed->enabled =
             (app->flags & PXSYS_APP_FLAG_ENABLED) != 0 ? 1 : 0;
-        /* Package removal and data deletion need a persistent package-store
-         * transaction, which this desktop registry adapter does not own. */
-        managed->installed = 0;
-        managed->has_private_data = 0;
+        managed->installed = !managed->built_in && pxsys_desktop_package_installed(
+            catalog->installed_packages_root, managed->identity);
+        uint8_t data_publisher[32];
+        managed->has_private_data = managed->installed &&
+            managed_data_publisher(catalog, managed->identity, data_publisher) &&
+            pxsys_desktop_package_has_data(catalog->state_root, managed->identity, data_publisher);
+        pxsys_task_manager_t* tasks = pxsys_standard_system_tasks(catalog->system);
+        for (size_t task = 0; task < pxsys_task_manager_count(tasks); ++task) {
+            pxsys_instance_ref_t ref;
+            pxsys_instance_snapshot_t snapshot = {.struct_size = sizeof(snapshot)};
+            if (pxsys_task_manager_task(tasks, task, &ref, &snapshot) == PXSYS_STATUS_OK &&
+                snapshot.app != NULL && pxsys_app_identity_equal(&snapshot.app->identity, &app->identity))
+                managed->active = 1;
+        }
     }
     return written;
 }
 
-static bool simulator_app_action(void* context, const char* identity,
+static pxsys_status_t stop_managed_app(simulator_catalog_t* catalog,
+                                       const pxsys_app_identity_t* identity) {
+    pxsys_task_manager_t* tasks = pxsys_standard_system_tasks(catalog->system);
+    bool pending = false;
+    for (size_t i = pxsys_task_manager_count(tasks); i > 0; --i) {
+        pxsys_instance_ref_t ref;
+        pxsys_instance_snapshot_t snapshot = {.struct_size = sizeof(snapshot)};
+        if (pxsys_task_manager_task(tasks, i - 1, &ref, &snapshot) != PXSYS_STATUS_OK ||
+            snapshot.app == NULL || !pxsys_app_identity_equal(&snapshot.app->identity, identity)) continue;
+        if (snapshot.lifecycle.state == PXSYS_APP_STOPPING) { pending = true; continue; }
+        pxsys_status_t status = pxsys_task_manager_finish_instance(tasks, ref, PXSYS_STOP_POLICY);
+        if (status == PXSYS_STATUS_PENDING) pending = true;
+        else if (status != PXSYS_STATUS_OK) return status;
+    }
+    return pending ? PXSYS_STATUS_PENDING : PXSYS_STATUS_OK;
+}
+
+static const pxsys_app_descriptor_t* find_managed_app(simulator_catalog_t* catalog,
+                                                     const char* id) {
+    pxsys_app_registry_t* apps = pxsys_standard_system_apps(catalog->system);
+    const char* separator = strchr(id, ':');
+    const char* app_id = separator != NULL ? separator + 1 : id;
+    if (separator != NULL && separator - id != 64) return NULL;
+    static const char hex[] = "0123456789abcdef";
+    for (size_t i = 0; i < pxsys_app_registry_count(apps); ++i) {
+        const pxsys_app_descriptor_t* app = pxsys_app_registry_at(apps, i);
+        if (app == NULL || app->identity.app_id.size != strlen(app_id) ||
+            memcmp(app->identity.app_id.data, app_id, strlen(app_id))) continue;
+        bool match = true;
+        for (size_t byte = 0; separator != NULL && byte < 32; ++byte)
+            if (id[2 * byte] != hex[app->identity.publisher_root[byte] >> 4] ||
+                id[2 * byte + 1] != hex[app->identity.publisher_root[byte] & 15]) match = false;
+        if (match) return app;
+    }
+    return NULL;
+}
+static bool complete_app_action(simulator_catalog_t* catalog, const char* id,
                                  pxsys_reference_app_action_t action) {
-    const simulator_catalog_t* catalog = (const simulator_catalog_t*)context;
-    pxsys_app_registry_t* apps;
-    size_t index;
-    if (catalog == NULL || catalog->system == NULL || identity == NULL)
+    const pxsys_app_descriptor_t* app = find_managed_app(catalog, id);
+    if (app == NULL || (app->flags & PXSYS_APP_FLAG_SYSTEM)) return false;
+    uint8_t data_publisher[32];
+    if (!managed_data_publisher(catalog, id, data_publisher)) return false;
+    pxa_status_t result = pxsys_desktop_package_manage(catalog->installed_packages_root,
+        catalog->state_root, id, data_publisher,
+        (pxsys_desktop_package_action_t)action);
+    if (result != PXA_STATUS_OK) {
+        fprintf(stderr, "PXA simulator: package action %u for %s failed: %d\n", action, id, result);
         return false;
-    if (action != PXSYS_REFERENCE_APP_ACTION_ENABLE &&
-        action != PXSYS_REFERENCE_APP_ACTION_DISABLE)
-        return false;
-    apps = pxsys_standard_system_apps(catalog->system);
-    for (index = 0; index < pxsys_app_registry_count(apps); ++index) {
-        const pxsys_app_descriptor_t* app = pxsys_app_registry_at(apps, index);
-        pxsys_app_descriptor_t replacement;
-        if (app == NULL || app->identity.app_id.size != strlen(identity) ||
-            memcmp(app->identity.app_id.data, identity,
-                   app->identity.app_id.size) != 0)
-            continue;
-        replacement = *app;
-        if (action == PXSYS_REFERENCE_APP_ACTION_ENABLE)
-            replacement.flags |= PXSYS_APP_FLAG_ENABLED;
-        else
-            replacement.flags &= ~PXSYS_APP_FLAG_ENABLED;
+    }
+    pxsys_app_registry_t* apps = pxsys_standard_system_apps(catalog->system);
+    if (action == PXSYS_REFERENCE_APP_ACTION_UNINSTALL)
+        return pxsys_app_registry_unregister(apps, &app->identity) == PXSYS_STATUS_OK;
+    if (action != PXSYS_REFERENCE_APP_ACTION_CLEAR_DATA) {
+        pxsys_app_descriptor_t replacement = *app;
+        if (action == PXSYS_REFERENCE_APP_ACTION_ENABLE) replacement.flags |= PXSYS_APP_FLAG_ENABLED;
+        else replacement.flags &= ~PXSYS_APP_FLAG_ENABLED;
         return pxsys_app_registry_update(apps, &replacement) == PXSYS_STATUS_OK;
     }
-    return false;
+    return true;
+}
+static bool simulator_app_action(void* context, const char* identity,
+                                 pxsys_reference_app_action_t action) {
+    simulator_catalog_t* catalog = context;
+    if (catalog == NULL || catalog->system == NULL || identity == NULL ||
+        strlen(identity) >= sizeof(catalog->pending_id) ||
+        action > PXSYS_REFERENCE_APP_ACTION_UNINSTALL || catalog->pending_id[0]) return false;
+    const pxsys_app_descriptor_t* app = find_managed_app(catalog, identity);
+    if (app == NULL || (app->flags & PXSYS_APP_FLAG_SYSTEM) || app->identity.app_id.size > 64) return false;
+    char app_id[65];
+    memcpy(app_id, app->identity.app_id.data, app->identity.app_id.size);
+    app_id[app->identity.app_id.size] = 0;
+    if (!pxsys_desktop_package_installed(catalog->installed_packages_root, app_id)) return false;
+    if (action != PXSYS_REFERENCE_APP_ACTION_ENABLE) {
+        pxsys_status_t stopped = stop_managed_app(catalog, &app->identity);
+        if (stopped == PXSYS_STATUS_PENDING) {
+            strcpy(catalog->pending_id, app_id); catalog->pending_action = action;
+            return true; // Accepted; disk mutation waits for Guest shutdown.
+        }
+        if (stopped != PXSYS_STATUS_OK) return false;
+    }
+    return complete_app_action(catalog, app_id, action);
+}
+static int control_app_action(void* context, const char* identity, unsigned action) {
+    bool success = action <= PXSYS_REFERENCE_APP_ACTION_UNINSTALL &&
+                   simulator_app_action(context, identity, (pxsys_reference_app_action_t)action);
+    simulator_catalog_t* catalog = context;
+    if (success && !catalog->pending_id[0] && catalog->ui != NULL)
+        pxsys_reference_lvgl_refresh_apps(catalog->ui);
+    return success;
+}
+static void poll_app_action(simulator_catalog_t* catalog) {
+    if (!catalog->pending_id[0]) return;
+    const pxsys_app_descriptor_t* app = find_managed_app(catalog, catalog->pending_id);
+    if (app != NULL && stop_managed_app(catalog, &app->identity) != PXSYS_STATUS_OK) return;
+    bool success = complete_app_action(catalog, catalog->pending_id, catalog->pending_action);
+    catalog->pending_id[0] = 0;
+    if (catalog->ui != NULL) pxsys_reference_lvgl_refresh_apps(catalog->ui);
+    pxsys_toast_message_t toast;
+    pxsys_locale_snapshot_t locale = {.struct_size = sizeof(locale)};
+    bool chinese = pxsys_locale_service_get(pxsys_standard_system_locale(catalog->system), &locale) == PXSYS_STATUS_OK &&
+                   locale.tag_size >= 2 && !memcmp(locale.tag, "zh", 2);
+    pxsys_toast_message_init(&toast, pxsys_string_from_cstr(success
+        ? (chinese ? "操作完成" : "Completed") : (chinese ? "应用操作失败，请重试" : "App operation failed")));
+    toast.tone = success ? PXSYS_TOAST_SUCCESS : PXSYS_TOAST_ERROR;
+    (void)pxsys_toast_service_post(pxsys_standard_system_toasts(catalog->system), &toast);
 }
 
 static bool simulator_launcher_load(void* context, char* order,
@@ -1719,6 +1848,7 @@ static int run_simulator(const simulator_options_t* options) {
     icon_resolver.installed_packages_root = options->installed_packages_root;
     catalog.system = system;
     catalog.installed_packages_root = options->installed_packages_root;
+    catalog.state_root = options->state_root;
     device_info.width = options->width;
     device_info.height = options->height;
     device_info.storage_bytes = options->storage_bytes;
@@ -1814,6 +1944,8 @@ static int run_simulator(const simulator_options_t* options) {
                                    &catalog, refresh_installed_catalog))
         goto done;
 
+    pxadb_control.package_action = control_app_action;
+
     if (options->launch_app != NULL &&
         launch_app(system, options->launch_app) !=
             PXSYS_STATUS_OK) {
@@ -1843,6 +1975,7 @@ static int run_simulator(const simulator_options_t* options) {
            (options->duration_ms == 0 ||
             lv_tick_elaps(started) < options->duration_ms)) {
         pxsys_desktop_runtime_poll(simulator_runtime);
+        poll_app_action(&catalog);
         pxsys_pxadb_control_poll(&pxadb_control);
         uint32_t delay = lv_timer_handler();
         int steps = SDL_AtomicSet(&power_state.volume_steps, 0);

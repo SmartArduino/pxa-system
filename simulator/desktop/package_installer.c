@@ -6,6 +6,7 @@
 
 #include "pxa/openssl/pxa_openssl.h"
 #include "pxa/package.h"
+#include "package_store.h"
 #include "pxa/posix/pxa_posix_installer.h"
 
 typedef struct {
@@ -13,10 +14,11 @@ typedef struct {
     const char *publisher_key;
     const char *source;
     const char *expected_id;
+    const char *action;
 } options_t;
 
 static void print_usage(const char *program) {
-    fprintf(stderr, "Usage: %s --storage-root DIR --publisher-key DER --source PACKAGE --expected-id ID\n",
+    fprintf(stderr, "Usage: %s --storage-root DIR --publisher-key DER (--source PACKAGE | --action enable|disable|clear-data|uninstall) --expected-id ID\n",
             program);
 }
 
@@ -30,13 +32,15 @@ static int parse_options(int argc, char **argv, options_t *options) {
             options->publisher_key = argv[++index];
         else if (strcmp(argv[index], "--source") == 0 && index + 1 < argc)
             options->source = argv[++index];
+        else if (strcmp(argv[index], "--action") == 0 && index + 1 < argc)
+            options->action = argv[++index];
         else if (strcmp(argv[index], "--expected-id") == 0 && index + 1 < argc)
             options->expected_id = argv[++index];
         else
             return 0;
     }
     return options->storage_root != NULL && options->publisher_key != NULL &&
-           options->source != NULL && options->expected_id != NULL;
+           ((options->source != NULL) != (options->action != NULL)) && options->expected_id != NULL;
 }
 
 static int read_file(const char *path, uint8_t **output, size_t *output_size) {
@@ -111,7 +115,29 @@ int main(int argc, char **argv) {
         fprintf(stderr, "unable to initialize package installer\n");
         goto done;
     }
-    status = pxa_posix_installer_source_manifest_size(installer, options.source,
+    char managed_root[1400], packages[1400];
+    pxsys_desktop_package_action_t action = PXSYS_DESKTOP_PACKAGE_ENABLE;
+    const char* source = options.source;
+    if (options.action != NULL) {
+        const char* names[] = {"enable", "disable", "clear-data", "uninstall"};
+        int selected = -1;
+        for (int i = 0; i < 4; ++i) if (!strcmp(options.action, names[i])) selected = i;
+        if (selected < 0 || snprintf(packages, sizeof(packages), "%s/packages", options.storage_root) >= (int)sizeof(packages) ||
+            !pxsys_desktop_package_installed(packages, options.expected_id) ||
+            snprintf(managed_root, sizeof(managed_root), "%s/%s/current", packages, options.expected_id) >= (int)sizeof(managed_root)) {
+            fprintf(stderr, "invalid action or package not installed\n"); goto done;
+        }
+        action = (pxsys_desktop_package_action_t)selected;
+        // Installer-managed packages use current/; legacy prepared directories
+        // keep a manifest directly below the app root.
+        FILE* probe; char manifest_path[1500];
+        snprintf(manifest_path, sizeof(manifest_path), "%s/manifest.pxm", managed_root);
+        probe = fopen(manifest_path, "rb");
+        if (probe == NULL) managed_root[strlen(managed_root) - strlen("/current")] = 0;
+        else fclose(probe);
+        source = managed_root;
+    }
+    status = pxa_posix_installer_source_manifest_size(installer, source,
                                                       &manifest_size);
     if (status != PXA_STATUS_OK || manifest_size == 0) {
         fprintf(stderr, "unable to inspect package (status=%d)\n", (int)status);
@@ -132,8 +158,9 @@ int main(int argc, char **argv) {
     package_result.manifest = &manifest;
     package_result.root = root;
     package_result.root_capacity = sizeof(root);
-    status = pxa_posix_installer_verify_source(installer, options.source,
-                                               &package_result);
+    status = options.action != NULL
+        ? pxa_posix_installer_load_directory(installer, source, &package_result)
+        : pxa_posix_installer_verify_source(installer, source, &package_result);
     if (status != PXA_STATUS_OK || manifest == NULL ||
         manifest->publisher_key_id == NULL ||
         manifest->app_id.size != strlen(options.expected_id) ||
@@ -141,6 +168,15 @@ int main(int argc, char **argv) {
                manifest->app_id.size) != 0) {
         fprintf(stderr, "package identity does not match the requested app ID\n");
         goto done;
+    }
+    if (options.action != NULL) {
+        status = pxsys_desktop_package_manage(packages, options.storage_root, options.expected_id,
+            manifest->publisher_key_id, action);
+        if (status != PXA_STATUS_OK) {
+            fprintf(stderr, "package management failed (status=%d)\n", status); goto done;
+        }
+        printf("id=%s;action=%s\n", options.expected_id, options.action);
+        result = 0; goto done;
     }
     expected.publisher_key_id =
         (pxa_bytes_t){manifest->publisher_key_id, PXA_PACKAGE_DIGEST_BYTES};

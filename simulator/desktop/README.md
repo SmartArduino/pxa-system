@@ -81,6 +81,38 @@ application tree. The source root must contain one `package.json` per app.
 可通过 `PXSYS_DESKTOP_APP_SOURCE_ROOT` 从其他 PXA 应用树生成目录；每个应用
 目录必须包含一个 `package.json`。
 
+## Installed application management
+
+Packages in `--installed-packages-root` are removable user applications, not
+built-in system applications. Settings → Apps supports enable/disable, clear
+data and uninstall; the launcher also supports long-press → delete → confirm.
+Uninstall removes the package and its private data, then refreshes both lists.
+Clear data keeps the package. Built-in system applications cannot be removed.
+Disable state is stored beside the committed package and survives restarts and
+replacement installs. Re-running a development launch installs its requested
+package again, so a previously uninstalled app will reappear when explicitly
+launched through the development command.
+
+The desktop PXADB service supports `PACKAGE enable|disable|clear-data|uninstall
+<app-id>`. With a live full-system simulator, it delegates to the UI owner;
+`OK accepted` means the request was accepted, and live Guests stop before files
+are changed. The list and a completion/error toast update after shutdown.
+Without a live control socket, the installer helper performs the same operation
+offline. An error from a live owner never falls back to deleting its files.
+
+模拟器安装的 PXA 包属于可卸载的用户应用。可在“设置 → 应用”中卸载、清除数据
+或停用，也可在桌面长按图标后点击删除并确认。运行中的应用先退出，再清理文件；
+取消确认不会删除。卸载会删除该应用包和私有数据，清除数据则保留包；系统内置
+应用不可卸载。停用状态在重启和覆盖安装后保留。再次执行指定该应用的开发启动
+命令会重新安装它，这属于显式安装，不是卸载后自动恢复。
+
+Filesystem regression (including busy installer locks and symlink isolation):
+
+```sh
+cmake --build build/desktop --target pxsys_desktop_package_store_test
+ctest --test-dir build/desktop -R '^pxsys_desktop_package_store_test$' --output-on-failure
+```
+
 ## Shared resource and temporary limits
 
 The product runner's `PXA_RESOURCE_INTERNAL_BYTES` and

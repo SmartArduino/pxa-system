@@ -172,6 +172,7 @@ static const pxsys_resource_entry_t reference_en_resources[] = {
     RESOURCE_ENTRY("settings.apps.disable", "Disable"),
     RESOURCE_ENTRY("settings.apps.clear", "Clear data"),
     RESOURCE_ENTRY("settings.apps.uninstall", "Uninstall"),
+    RESOURCE_ENTRY("settings.apps.failed", "App operation failed"),
     RESOURCE_ENTRY("settings.apps.close", "Close"),
     RESOURCE_ENTRY("settings.apps.confirm.clear", "Clear all app data?"),
     RESOURCE_ENTRY("settings.apps.confirm.uninstall", "Uninstall this app?"),
@@ -323,6 +324,7 @@ static const pxsys_resource_entry_t reference_zh_resources[] = {
     RESOURCE_ENTRY("settings.apps.disable", "停用"),
     RESOURCE_ENTRY("settings.apps.clear", "清除数据"),
     RESOURCE_ENTRY("settings.apps.uninstall", "卸载"),
+    RESOURCE_ENTRY("settings.apps.failed", "应用操作失败，请重试"),
     RESOURCE_ENTRY("settings.apps.close", "关闭"),
     RESOURCE_ENTRY("settings.apps.confirm.clear", "确认清除应用数据？"),
     RESOURCE_ENTRY("settings.apps.confirm.uninstall", "确认卸载该应用？"),
@@ -6577,6 +6579,8 @@ static void page_confirm_clicked(lv_event_t* event) {
                 (pxsys_reference_app_action_t)ui->pending_action);
             uninstalled = success &&
                           ui->pending_action == PXSYS_REFERENCE_APP_ACTION_UNINSTALL;
+            if (!success)
+                file_message(ui, translated(ui, "settings.apps.failed", "App operation failed"), PXSYS_TOAST_ERROR);
             ui->managed_apps_loaded = 0;
         } else if (ui->pending_kind == 1 && ui->file_action != NULL) {
             if (!ui->file_action(
@@ -6665,8 +6669,9 @@ static void app_action_clicked(lv_event_t* event) {
                            "Uninstall this app?"));
         return;
     }
-    (void)ui->app_action(ui->app_manager_context, ui->pending_identity,
-                         (pxsys_reference_app_action_t)action);
+    if (!ui->app_action(ui->app_manager_context, ui->pending_identity,
+                         (pxsys_reference_app_action_t)action))
+        file_message(ui, translated(ui, "settings.apps.failed", "App operation failed"), PXSYS_TOAST_ERROR);
     ui->managed_apps_loaded = 0;
     page_close_dialogs(ui);
     rebuild(ui);
@@ -6897,7 +6902,7 @@ static void build_app_manager(pxsys_reference_lvgl_t* ui,
         return;
     }
     section = make_settings_section(
-        ui, translated(ui, "settings.section.system", "System"));
+        ui, translated(ui, "settings.apps", "Apps"));
     for (index = 0; index < ui->managed_app_count; ++index) {
         pxsys_reference_managed_app_t* app = &ui->managed_apps[index];
         char subtitle[128];
@@ -8693,7 +8698,12 @@ pxsys_status_t pxsys_reference_lvgl_home(pxsys_reference_lvgl_t* ui) {
 }
 
 void pxsys_reference_lvgl_refresh_apps(pxsys_reference_lvgl_t* ui) {
-    if (ui_valid(ui) && ui->active_page == REFERENCE_PAGE_HOME) rebuild(ui);
+    if (!ui_valid(ui)) return;
+    ui->managed_apps_loaded = 0;
+    if (ui->active_page == REFERENCE_PAGE_HOME || ui->active_page == REFERENCE_PAGE_APP_MANAGER) {
+        page_close_dialogs(ui);
+        rebuild(ui);
+    }
 }
 
 pxsys_status_t pxsys_reference_lvgl_set_navigation_mode(

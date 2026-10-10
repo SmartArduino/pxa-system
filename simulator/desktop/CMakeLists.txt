@@ -70,7 +70,7 @@ add_custom_command(
 
 add_executable(pxsys_desktop_simulator
     main.c builtin_catalog.c simulator_runtime.c product_runner.c desktop_net.c
-    pxadb_control.c "${PXSYS_DESKTOP_CATALOG_DATA}")
+    pxadb_control.c package_store.c "${PXSYS_DESKTOP_CATALOG_DATA}")
 target_compile_features(pxsys_desktop_simulator PRIVATE c_std_99)
 pxsys_apply_wamr_metadata(pxsys_desktop_simulator)
 target_include_directories(pxsys_desktop_simulator PRIVATE
@@ -100,7 +100,7 @@ if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
         -Wall -Wextra -Wpedantic)
 endif()
 
-add_executable(pxsys_package_installer package_installer.c)
+add_executable(pxsys_package_installer package_installer.c package_store.c)
 target_compile_features(pxsys_package_installer PRIVATE c_std_99)
 target_link_libraries(pxsys_package_installer PRIVATE
     pxa::pxa pxa_adapters_openssl pxa_adapters_posix)
@@ -117,6 +117,12 @@ if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
 endif()
 
 if(PXSYS_BUILD_TESTS OR BUILD_TESTING)
+    add_executable(pxsys_desktop_package_store_test tests/package_store_test.c package_store.c)
+    target_link_libraries(pxsys_desktop_package_store_test PRIVATE pxa::pxa)
+    if(NOT MSVC)
+        target_compile_options(pxsys_desktop_package_store_test PRIVATE -UNDEBUG)
+    endif()
+    add_test(NAME pxsys_desktop_package_store_test COMMAND pxsys_desktop_package_store_test)
     add_executable(pxsys_desktop_net_headers_test tests/net_headers_test.c)
     target_compile_features(pxsys_desktop_net_headers_test PRIVATE c_std_99)
     target_link_libraries(pxsys_desktop_net_headers_test PRIVATE
