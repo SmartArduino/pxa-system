@@ -394,6 +394,7 @@ typedef struct {
     lv_obj_t* tile;
     lv_obj_t* remove_button;
     uint8_t uninstallable;
+    uint8_t tap_cancelled;
     int32_t drag_start_x;
     int32_t drag_start_y;
 } launcher_item_t;
@@ -1241,6 +1242,7 @@ static void launcher_clicked(lv_event_t* event) {
     pxsys_intent_t intent = {0};
     pxsys_instance_ref_t instance;
     if (item == NULL || !ui_valid(item->ui)) return;
+    if (item->tap_cancelled) return;
     if (item->ui->launcher_long_pressed) {
         item->ui->launcher_long_pressed = 0;
         return;
@@ -1376,9 +1378,37 @@ static void launcher_gesture(lv_event_t* event) {
     code = lv_event_get_code(event);
     if (code == LV_EVENT_PRESSED) {
         ui->launcher_long_pressed = 0;
+        item->tap_cancelled = ui->content != NULL &&
+                              lv_obj_is_scrolling(ui->content);
+        indev = lv_event_get_indev(event);
+        if (indev != NULL) {
+            lv_indev_get_point(indev, &point);
+            item->drag_start_x = point.x;
+            item->drag_start_y = point.y;
+        }
         return;
     }
+    if (code == LV_EVENT_PRESS_LOST) {
+        item->tap_cancelled = 1;
+        return;
+    }
+    if (code == LV_EVENT_PRESSING || code == LV_EVENT_RELEASED ||
+        code == LV_EVENT_LONG_PRESSED) {
+        indev = lv_event_get_indev(event);
+        if (indev != NULL && lv_indev_get_type(indev) == LV_INDEV_TYPE_POINTER) {
+            int32_t slop = pxsys_reference_display_scale_px(&ui->display, 8);
+            if (slop < 6) slop = 6;
+            lv_indev_get_point(indev, &point);
+            /* Keep cancellation latched even when the pointer returns to its
+             * origin. LVGL may still emit CLICKED at a page boundary or for
+             * movement along the launcher's non-scrollable vertical axis. */
+            if (LV_ABS(point.x - item->drag_start_x) >= slop ||
+                LV_ABS(point.y - item->drag_start_y) >= slop)
+                item->tap_cancelled = 1;
+        }
+    }
     if (code == LV_EVENT_LONG_PRESSED) {
+        if (item->tap_cancelled) return;
         indev = lv_event_get_indev(event);
         if (indev == NULL) return;
         lv_indev_get_point(indev, &point);
@@ -2844,6 +2874,7 @@ static lv_obj_t* make_launcher_tile(pxsys_reference_lvgl_t* ui,
     lv_obj_add_event_cb(tile, launcher_gesture, LV_EVENT_LONG_PRESSED, item);
     lv_obj_add_event_cb(tile, launcher_gesture, LV_EVENT_PRESSING, item);
     lv_obj_add_event_cb(tile, launcher_gesture, LV_EVENT_RELEASED, item);
+    lv_obj_add_event_cb(tile, launcher_gesture, LV_EVENT_PRESS_LOST, item);
     lv_obj_add_event_cb(tile, launcher_clicked, LV_EVENT_CLICKED, item);
     return tile;
 }
