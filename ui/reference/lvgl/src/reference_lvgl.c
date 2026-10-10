@@ -6131,7 +6131,10 @@ static void app_input_method_close(pxsys_reference_lvgl_t* ui) {
 static void app_input_method_event(lv_event_t* event) {
     pxsys_reference_lvgl_t* ui =
         (pxsys_reference_lvgl_t*)lv_event_get_user_data(event);
-    if (ui_valid(ui)) app_input_method_close(ui);
+    /* LVGL emits READY on the keyboard before forwarding it to the textarea.
+     * Deleting the keyboard here interrupts that forwarding and loses the
+     * Guest submit event. Close after the current event has finished. */
+    if (ui_valid(ui)) ui->app_ime_close_requested = 1;
 }
 
 static void app_input_method_closed(void* context) {

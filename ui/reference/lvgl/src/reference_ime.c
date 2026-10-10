@@ -454,7 +454,8 @@ static void keyboard_preprocess(lv_event_t *event) {
         } else if (strcmp(text, "EN") == 0) {
             pxsys_reference_ime_set_mode(input_method, PXSYS_REFERENCE_IME_MODE_ENGLISH);
             lv_event_stop_processing(event);
-        } else if (strcmp(text, LV_SYMBOL_DOWN) == 0) {
+        } else if (strcmp(text, LV_SYMBOL_DOWN) == 0 ||
+                   strcmp(text, LV_SYMBOL_OK) == 0) {
             submit_and_hide(input_method);
             lv_event_stop_processing(event);
         }
@@ -474,7 +475,8 @@ static void keyboard_preprocess(lv_event_t *event) {
     } else if (strcmp(text, "#+") == 0) {
         pxsys_reference_ime_set_mode(input_method, PXSYS_REFERENCE_IME_MODE_SYMBOLS);
         lv_event_stop_processing(event);
-    } else if (strcmp(text, LV_SYMBOL_DOWN) == 0) {
+    } else if (strcmp(text, LV_SYMBOL_DOWN) == 0 ||
+                   strcmp(text, LV_SYMBOL_OK) == 0) {
         submit_and_hide(input_method);
         lv_event_stop_processing(event);
     } else if (strcmp(text, LV_SYMBOL_BACKSPACE) == 0 &&

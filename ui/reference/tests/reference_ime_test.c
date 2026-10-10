@@ -4,7 +4,17 @@
 #include <string.h>
 
 static unsigned closed;
+static unsigned submitted;
+static void on_submit(lv_event_t *event) { (void)event; ++submitted; }
 static void on_close(void *ctx) { ++*(unsigned *)ctx; }
+static lv_obj_t *find_keyboard(lv_obj_t *root) {
+    if (lv_obj_check_type(root, &lv_keyboard_class)) return root;
+    for (uint32_t i = 0; i < lv_obj_get_child_count(root); ++i) {
+        lv_obj_t *found = find_keyboard(lv_obj_get_child(root, i));
+        if (found) return found;
+    }
+    return NULL;
+}
 static void flush(lv_display_t *d, const lv_area_t *area, uint8_t *pixels) {
     (void)area; (void)pixels; lv_display_flush_ready(d);
 }
@@ -43,6 +53,24 @@ int main(void) {
         assert(!pxsys_reference_ime_is_visible(ime));
     }
     assert(closed==20);
+    lv_obj_add_event_cb(input,on_submit,LV_EVENT_READY,NULL);
+    lv_obj_t *keyboard = find_keyboard(pxsys_reference_ime_get_root(ime));
+    assert(keyboard);
+    static const char *const confirm_map[] = {LV_SYMBOL_OK, ""};
+    static const lv_buttonmatrix_ctrl_t confirm_ctrl[] = {1};
+    for (unsigned pass = 0; pass < 2; ++pass) {
+        pxsys_reference_ime_set_mode(ime,pass ? PXSYS_REFERENCE_IME_MODE_CHINESE
+                                              : PXSYS_REFERENCE_IME_MODE_ENGLISH);
+        pxsys_reference_ime_show(ime);
+        // Landscape/native maps use OK; compact K9 maps use DOWN.
+        lv_keyboard_set_map(keyboard,LV_KEYBOARD_MODE_USER_1,confirm_map,confirm_ctrl);
+        lv_keyboard_set_mode(keyboard,LV_KEYBOARD_MODE_USER_1);
+        lv_buttonmatrix_set_selected_button(keyboard,0);
+        lv_obj_send_event(keyboard,LV_EVENT_VALUE_CHANGED,NULL);
+        assert(!pxsys_reference_ime_is_visible(ime));
+        assert(submitted==pass+1 && closed==21+pass);
+        assert(strcmp(lv_textarea_get_text(input),"西遊記 https://example.org/")==0);
+    }
     /* Guest surface replacement deletes the target before the keyboard. */
     lv_obj_delete(input);
     pxsys_reference_ime_set_theme(ime,&theme);
