@@ -166,14 +166,14 @@ Result<void> Transport::send(std::uint16_t service, std::uint16_t opcode,
     if (!service || !opcode || payload.size() >
         packet_.size() - wire::header_bytes)
         return std::unexpected(Error::invalid_argument);
+    // Copy before writing the header: payload may alias any part of scratch().
+    wire::copy_bytes(packet_.subspan(wire::header_bytes), payload);
     wire::put16(packet_.data(), service);
     wire::put16(packet_.data() + 2, opcode);
     wire::put64(packet_.data() + 4, token);
     wire::put32(packet_.data() + 12,
                 static_cast<std::uint32_t>(payload.size()));
     wire::put32(packet_.data() + 16, 0);
-    for (std::size_t i = 0; i < payload.size(); ++i)
-        packet_[wire::header_bytes + i] = payload[i];
     auto result = pxa_submit(
         reinterpret_cast<const std::uint8_t*>(packet_.data()),
         static_cast<std::uint32_t>(wire::header_bytes + payload.size()));

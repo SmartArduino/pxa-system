@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <expected>
+#include <cstring>
 #include <span>
 
 extern "C" {
@@ -59,6 +60,26 @@ constexpr std::uint64_t get64(const std::byte* p) noexcept {
     return value;
 }
 
+// Byte streams may be encoded in place. Keep constant evaluation available
+// while using the platform's optimized, overlap-safe copy at runtime.
+constexpr void copy_bytes(std::span<std::byte> output,
+                          std::span<const std::byte> input) noexcept {
+    if (input.empty()) return;
+    if consteval {
+        // Pointer ordering across unrelated constexpr arrays is not defined.
+        bool backwards = false;
+        for (std::size_t i = 1; i < input.size(); ++i)
+            if (output.data() == input.data() + i) { backwards = true; break; }
+        if (backwards) {
+            for (std::size_t i = input.size(); i--;) output[i] = input[i];
+        } else {
+            for (std::size_t i = 0; i < input.size(); ++i) output[i] = input[i];
+        }
+    } else {
+        std::memmove(output.data(), input.data(), input.size());
+    }
+}
+
 class Writer {
 public:
     explicit constexpr Writer(std::span<std::byte> output) noexcept
@@ -66,8 +87,7 @@ public:
 
     constexpr bool bytes(std::span<const std::byte> input) noexcept {
         if (input.size() > output_.size() - length_) return false;
-        for (std::size_t i = 0; i < input.size(); ++i)
-            output_[length_ + i] = input[i];
+        copy_bytes(output_.subspan(length_), input);
         length_ += input.size();
         return true;
     }
@@ -127,6 +147,12 @@ enum class Phase : std::uint8_t { inactive, start, event, stopped };
 
 class Transport {
 public:
+    Transport() noexcept = default;
+    Transport(const Transport&) = delete("Transport must keep a stable address; share it by reference");
+    Transport& operator=(const Transport&) = delete("Transport must keep a stable address; share it by reference");
+    Transport(Transport&&) = delete("Transport must keep a stable address; share it by reference");
+    Transport& operator=(Transport&&) = delete("Transport must keep a stable address; share it by reference");
+
     Result<void> scratch(std::span<std::byte> buffer) noexcept;
 
     void phase(Phase value) noexcept { phase_ = value; }
@@ -165,8 +191,8 @@ public:
     Resource() = default;
     Resource(Transport& transport, std::uint64_t handle) noexcept
         : transport_(&transport), handle_(handle) {}
-    Resource(const Resource&) = delete;
-    Resource& operator=(const Resource&) = delete;
+    Resource(const Resource&) = delete("A resource has one owner; move it or borrow a reference");
+    Resource& operator=(const Resource&) = delete("A resource has one owner; move it or borrow a reference");
     Resource(Resource&& other) noexcept
         : transport_(other.transport_), handle_(other.release()) {}
     Resource& operator=(Resource&& other) noexcept {

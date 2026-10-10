@@ -314,7 +314,7 @@ public:
         : transport_(transport), handle_(transport, handle), info_(info) {}
 
     template<std::size_t Capacity>
-    Frame frame(DrawBuffer<Capacity>& buffer) noexcept {
+    Frame frame(DrawBuffer<Capacity>& buffer) & noexcept {
         return Frame(*this, buffer.bytes(), next_frame_);
     }
 
@@ -322,7 +322,8 @@ public:
     bool supports(RenderCapability capability) const noexcept {
         return (info_.capabilities & capability_bit(capability)) != 0;
     }
-    const RenderInfo& info() const noexcept { return info_; }
+    const RenderInfo& info() const & noexcept { return info_; }
+    RenderInfo info() const && noexcept { return info_; }
     Transport& transport() noexcept { return transport_; }
     std::uint64_t handle() const noexcept { return handle_.handle(); }
 
@@ -429,6 +430,8 @@ inline bool Frame::supports(std::uint32_t capability) noexcept {
 
 inline Result<void> Frame::submit() noexcept {
     if (error_) return std::unexpected(*error_);
+    if (!id_ || id_ != renderer_.next_frame_)
+        return std::unexpected(Error::bad_state);
     if (!commands_ || used_ > UINT32_MAX ||
         (required_ & ~renderer_.capabilities()) != 0)
         return std::unexpected(Error::invalid_argument);
@@ -449,6 +452,8 @@ inline Result<void> Frame::submit() noexcept {
     if (!result) return std::unexpected(result.error());
     if (*result != used_) return std::unexpected(Error::protocol_error);
     ++renderer_.next_frame_;
+    id_ = 0;
+    error_ = Error::bad_state;
     return {};
 }
 

@@ -38,7 +38,8 @@ public:
     std::uint64_t handle() const noexcept { return handle_.handle(); }
     explicit operator bool() const noexcept { return bool(handle_); }
     Result<void> close() noexcept { return handle_.close(); }
-    const AssetDescriptor& descriptor() const noexcept { return descriptor_; }
+    const AssetDescriptor& descriptor() const & noexcept { return descriptor_; }
+    AssetDescriptor descriptor() const && noexcept { return descriptor_; }
 private:
     Resource<AssetTag> handle_;
     AssetDescriptor descriptor_;
@@ -98,18 +99,11 @@ private:
             transport, requests, 21, 2,
             Response::PrebuiltPacket{packet.packet()}, true);
         if (!event) co_return std::unexpected(event.error());
-        auto status = parse_status(event->payload);
-        if (!status) co_return std::unexpected(status.error());
-        if (*status != 0) {
-            if (event->payload.size() != 4)
-                co_return std::unexpected(Error::protocol_error);
-            co_return std::unexpected(static_cast<Error>(*status));
-        }
-        if (event->payload.size() != 32)
+        auto body = wire::result_body(event->payload);
+        if (!body) co_return std::unexpected(body.error());
+        auto pending = wire::result_resource<AssetTag>(transport, *body);
+        if (body->size() != 28 || !pending)
             co_return std::unexpected(Error::protocol_error);
-        auto handle = wire::get64(event->payload.data() + 4);
-        if (!handle) co_return std::unexpected(Error::protocol_error);
-        Resource<AssetTag> pending(transport, handle);
         auto descriptor = decode_descriptor(event->payload.subspan(12));
         if (!descriptor || descriptor->kind != kind)
             co_return std::unexpected(Error::protocol_error);
@@ -121,13 +115,8 @@ private:
         auto event = co_await Response(
             transport, requests, 21, 1, Response::PrebuiltPacket{packet.packet()});
         if (!event) co_return std::unexpected(event.error());
-        auto status = parse_status(event->payload);
-        if (!status) co_return std::unexpected(status.error());
-        if (*status != 0) {
-            if (event->payload.size() != 4)
-                co_return std::unexpected(Error::protocol_error);
-            co_return std::unexpected(static_cast<Error>(*status));
-        }
+        auto body = wire::result_body(event->payload);
+        if (!body) co_return std::unexpected(body.error());
         if (event->payload.size() != 24)
             co_return std::unexpected(Error::protocol_error);
         co_return decode_descriptor(event->payload.subspan(4));
@@ -139,13 +128,8 @@ private:
         auto event = co_await Response(
             transport, requests, 21, 5, Response::PrebuiltPacket{packet.packet()});
         if (!event) co_return std::unexpected(event.error());
-        auto status = parse_status(event->payload);
-        if (!status) co_return std::unexpected(status.error());
-        if (*status != 0) {
-            if (event->payload.size() != 4)
-                co_return std::unexpected(Error::protocol_error);
-            co_return std::unexpected(static_cast<Error>(*status));
-        }
+        auto body = wire::result_body(event->payload);
+        if (!body) co_return std::unexpected(body.error());
         if (event->payload.size() < 12 ||
             event->payload.size() > 12 + output.size())
             co_return std::unexpected(Error::protocol_error);
@@ -169,12 +153,6 @@ private:
     static bool valid_path(std::string_view path) noexcept {
         return !path.empty() && path.size() <= 255 &&
                path.find('\0') == std::string_view::npos;
-    }
-    static Result<std::int32_t> parse_status(
-        std::span<const std::byte> payload) noexcept {
-        if (payload.size() < 4)
-            return std::unexpected(Error::protocol_error);
-        return static_cast<std::int32_t>(wire::get32(payload.data()));
     }
     static Result<AssetDescriptor> decode_descriptor(
         std::span<const std::byte> payload) noexcept {

@@ -47,21 +47,12 @@ public:
             transport_, requests_, 18, opcode,
             {payload.data(), options.max_draw_bytes ? 12u : 8u}, true);
         if (!event) co_return std::unexpected(event.error());
-        if (event->payload.size() < 4)
-            co_return std::unexpected(Error::protocol_error);
-        auto status = static_cast<std::int32_t>(
-            wire::get32(event->payload.data()));
-        if (status != 0) {
-            if (event->payload.size() != 4)
-                co_return std::unexpected(Error::protocol_error);
-            co_return std::unexpected(static_cast<Error>(status));
-        }
-        if (event->payload.size() != (automatic ? 36u : 24u))
-            co_return std::unexpected(Error::protocol_error);
-        auto handle = wire::get64(event->payload.data() + 4);
-        if (!handle) co_return std::unexpected(Error::protocol_error);
+        auto body = wire::result_body(event->payload);
+        if (!body) co_return std::unexpected(body.error());
         struct PendingContext {};
-        Resource<PendingContext> pending(transport_, handle);
+        auto pending = wire::result_resource<PendingContext>(transport_, *body);
+        if (event->payload.size() != (automatic ? 36u : 24u) || !pending)
+            co_return std::unexpected(Error::protocol_error);
         RenderInfo info;
         info.capabilities = wire::get32(event->payload.data() + 12);
         info.max_draw_bytes = wire::get32(event->payload.data() + 16);

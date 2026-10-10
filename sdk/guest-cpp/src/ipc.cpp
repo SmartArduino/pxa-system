@@ -87,6 +87,9 @@ Result<std::size_t> encode_ipc_call(std::string_view endpoint,
     const auto size = wire::header_bytes + 4 + endpoint.size() +
                       (payload.empty() ? 0 : 4 + payload.size());
     if (packet.size() < size) return std::unexpected(Error::resource_limit);
+    if (wire::overlaps(bytes(endpoint), packet.first(size)) ||
+        wire::overlaps(payload, packet.first(size)))
+        return std::unexpected(Error::invalid_argument);
     wire::Writer writer(packet.subspan(wire::header_bytes));
     if (!wire::record(writer, 1, bytes(endpoint)) ||
         (!payload.empty() && !wire::record(writer, 2, payload)))
@@ -102,9 +105,11 @@ Result<std::size_t> encode_ipc_call_in_place(std::string_view endpoint,
                       (payload_size ? 4 + payload_size : 0);
     if (packet.size() < size) return std::unexpected(Error::resource_limit);
     auto* records = packet.data() + wire::header_bytes;
+    // This encoder owns the final payload layout; move the endpoint before
+    // writing its prefix so an endpoint borrowed from the packet stays valid.
+    wire::copy_bytes({records + 4, endpoint.size()}, bytes(endpoint));
     wire::put16(records, 1);
     wire::put16(records + 2, static_cast<std::uint16_t>(endpoint.size()));
-    std::copy(bytes(endpoint).begin(), bytes(endpoint).end(), records + 4);
     if (payload_size) {
         auto* payload = records + 4 + endpoint.size();
         wire::put16(payload, 2);
@@ -122,6 +127,8 @@ Result<std::size_t> encode_ipc_reply(std::uint32_t call_id,
     const auto size = wire::header_bytes + 16 +
                       (payload.empty() ? 0 : 4 + payload.size());
     if (packet.size() < size) return std::unexpected(Error::resource_limit);
+    if (wire::overlaps(payload, packet.first(size)))
+        return std::unexpected(Error::invalid_argument);
     wire::Writer writer(packet.subspan(wire::header_bytes));
     std::array<std::byte, 4> scalar{};
     wire::put32(scalar.data(), call_id);

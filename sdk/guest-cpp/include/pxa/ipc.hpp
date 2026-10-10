@@ -49,7 +49,8 @@ Result<TypedIpcRequest<Contract>> decode_ipc_request(
     return TypedIpcRequest<Contract>{raw->call_id, std::move(*value)};
 }
 
-template<class Contract> class TypedIpcCall {
+template<class Contract>
+class [[nodiscard("A lazy IPC call must be co_awaited")]] TypedIpcCall {
 public:
     TypedIpcCall(Task<IpcCallResult> pending,
                  std::span<std::byte> output) noexcept

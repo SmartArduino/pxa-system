@@ -12,6 +12,9 @@
 #if !defined(__cpp_pack_indexing) || __cpp_pack_indexing < 202311L
 #error "PXA C++ SDK requires pack indexing; use locked WASI SDK 34"
 #endif
+#if !defined(__cpp_deleted_function) || __cpp_deleted_function < 202403L
+#error "PXA C++ SDK requires C++26 deleted-function explanations; use locked WASI SDK 34"
+#endif
 #if !defined(__cpp_lib_expected) || __cpp_lib_expected < 202202L
 #error "PXA C++ SDK requires a standard library providing std::expected"
 #endif

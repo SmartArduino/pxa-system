@@ -1,4 +1,5 @@
 #include "pxa/surface.hpp"
+#include "pxa/service_wire.hpp"
 
 #include <array>
 #include <cstdlib>
@@ -24,10 +25,18 @@ struct SurfaceControl {
     bool open;
 };
 
+static Result<void> try_close(SurfaceControl* control) noexcept {
+    if (!control || !control->open) return {};
+    auto result = control->transport->close(control->handle);
+    if (result) control->open = false;
+    return result;
+}
+
 static void close(SurfaceControl* control) noexcept {
-    if (!control || !control->open) return;
+    if (!control) return;
+    (void)try_close(control);
+    // reset/destruction relinquish ownership; leases must no longer access it.
     control->open = false;
-    (void)control->transport->close(control->handle);
 }
 
 static void release(SurfaceControl* control) noexcept {
@@ -81,7 +90,7 @@ void SurfaceFrame::reset() noexcept {
     detail::release(std::exchange(control_, nullptr));
 }
 
-std::span<std::byte> SurfaceFrame::pixels() const noexcept {
+std::span<std::byte> SurfaceFrame::pixels() const & noexcept {
     if (!control_ || !control_->open) return {};
     return {control_->pixels + std::size_t(index_) * control_->frame_bytes,
             control_->frame_bytes};
@@ -91,7 +100,7 @@ std::uint32_t SurfaceFrame::stride_bytes() const noexcept {
     return control_ && control_->open ? control_->stride_bytes : 0;
 }
 
-Result<Rgb565Pixels> SurfaceFrame::rgb565() const noexcept {
+Result<Rgb565Pixels> SurfaceFrame::rgb565() const & noexcept {
     if (!control_ || !control_->open) return std::unexpected(Error::bad_state);
     return Rgb565Pixels::from_bytes(pixels(), control_->width, control_->height,
                                     control_->stride_bytes);
@@ -160,6 +169,12 @@ void Surface::reset() noexcept {
     detail::release(std::exchange(control_, nullptr));
 }
 
+Result<void> Surface::close() noexcept {
+    auto result = detail::try_close(control_);
+    if (result) detail::release(std::exchange(control_, nullptr));
+    return result;
+}
+
 Result<SurfaceFrame> Surface::acquire() noexcept {
     if (!*this) return std::unexpected(Error::bad_state);
     std::array<std::byte, 4> record{};
@@ -175,13 +190,16 @@ Result<SurfaceFrame> Surface::acquire() noexcept {
 }
 
 Task<void> Surface::configure(SurfaceLayer layer) {
-    if (!*this) co_return std::unexpected(Error::bad_state);
+    if (!*this) return Task<void>::failed(Error::bad_state);
     if (!layer.width || !layer.height)
-        co_return std::unexpected(Error::invalid_argument);
-    auto* transport = control_->transport;
-    auto* requests = control_->requests;
+        return Task<void>::failed(Error::invalid_argument);
+    return configure_request(*control_->transport, *control_->requests, control_->handle, layer);
+}
+
+Task<void> Surface::configure_request(Transport& transport, RequestTable& requests,
+    std::uint64_t handle, SurfaceLayer layer) {
     std::array<std::byte, 24> payload{};
-    wire::put64(payload.data(), control_->handle);
+    wire::put64(payload.data(), handle);
     wire::put32(payload.data() + 8,
                 static_cast<std::uint32_t>(layer.x));
     wire::put32(payload.data() + 12,
@@ -191,32 +209,27 @@ Task<void> Surface::configure(SurfaceLayer layer) {
     wire::put16(payload.data() + 20,
                 static_cast<std::uint16_t>(layer.z));
     payload[22] = std::byte(layer.visible ? 1 : 0);
-    auto event = co_await Response(*transport, *requests, 16, 2, payload);
+    auto event = co_await Response(transport, requests, 16, 2, payload);
     if (!event) co_return std::unexpected(event.error());
-    if (event->payload.size() != 4)
-        co_return std::unexpected(Error::protocol_error);
-    auto status = static_cast<std::int32_t>(wire::get32(event->payload.data()));
-    if (status != 0)
-        co_return std::unexpected(static_cast<Error>(status));
+    auto body = wire::result_body(event->payload);
+    if (!body) co_return std::unexpected(body.error());
+    if (!body->empty()) co_return std::unexpected(Error::protocol_error);
     co_return Result<void>{};
 }
 
 Task<SurfaceState> Surface::query_state() {
-    if (!*this) co_return std::unexpected(Error::bad_state);
-    auto* transport = control_->transport;
-    auto* requests = control_->requests;
+    if (!*this) return Task<SurfaceState>::failed(Error::bad_state);
+    return query_request(*control_->transport, *control_->requests, control_->handle);
+}
+
+Task<SurfaceState> Surface::query_request(Transport& transport, RequestTable& requests,
+    std::uint64_t handle) {
     std::array<std::byte, 8> payload{};
-    wire::put64(payload.data(), control_->handle);
-    auto event = co_await Response(*transport, *requests, 16, 4, payload);
+    wire::put64(payload.data(), handle);
+    auto event = co_await Response(transport, requests, 16, 4, payload);
     if (!event) co_return std::unexpected(event.error());
-    if (event->payload.size() < 4)
-        co_return std::unexpected(Error::protocol_error);
-    auto status = static_cast<std::int32_t>(wire::get32(event->payload.data()));
-    if (status != 0) {
-        if (event->payload.size() != 4)
-            co_return std::unexpected(Error::protocol_error);
-        co_return std::unexpected(static_cast<Error>(status));
-    }
+    auto body = wire::result_body(event->payload);
+    if (!body) co_return std::unexpected(body.error());
     if (event->payload.size() != 52)
         co_return std::unexpected(Error::protocol_error);
     const auto* bytes = event->payload.data();
@@ -245,14 +258,8 @@ Task<Surface> SurfaceService::create_mapped(this SurfaceService self,
     auto event = co_await Response(transport_, requests_, 16, 1,
                                    payload, true);
     if (!event) co_return std::unexpected(event.error());
-    if (event->payload.size() < 4)
-        co_return std::unexpected(Error::protocol_error);
-    auto status = static_cast<std::int32_t>(wire::get32(event->payload.data()));
-    if (status != 0) {
-        if (event->payload.size() != 4)
-            co_return std::unexpected(Error::protocol_error);
-        co_return std::unexpected(static_cast<Error>(status));
-    }
+    auto body = wire::result_body(event->payload);
+    if (!body) co_return std::unexpected(body.error());
     if (event->payload.size() < 12)
         co_return std::unexpected(Error::protocol_error);
     const auto handle = wire::get64(event->payload.data() + 4);

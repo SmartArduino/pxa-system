@@ -84,9 +84,10 @@ private:
         if (!event) co_return std::unexpected(event.error());
         auto body = wire::result_body(event->payload);
         if (!body) co_return std::unexpected(body.error());
-        if (body->size() != 8 || !(wire::get64(body->data()) >> 32))
+        auto pending = wire::result_resource<SensorSubscriptionTag>(self.transport_, *body);
+        if (body->size() != 8 || !(pending.handle() >> 32))
             co_return std::unexpected(Error::protocol_error);
-        co_return SensorSubscription(self.transport_, wire::get64(body->data()), dimensions);
+        co_return SensorSubscription(self.transport_, pending.release(), dimensions);
     }
     Transport& transport_;
     RequestTable& requests_;

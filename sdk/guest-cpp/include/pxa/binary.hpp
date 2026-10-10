@@ -110,7 +110,7 @@ public:
     }
     constexpr Result<void> bytes(std::span<const std::byte> input) noexcept {
         if (input.size() > remaining()) return std::unexpected(Error::resource_limit);
-        for (std::size_t i = 0; i < input.size(); ++i) output_[position_ + i] = input[i];
+        wire::copy_bytes(output_.subspan(position_), input);
         position_ += input.size();
         return {};
     }

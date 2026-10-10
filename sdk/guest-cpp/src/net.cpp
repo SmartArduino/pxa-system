@@ -88,6 +88,23 @@ Result<std::size_t> encode_net_request(const NetRequest& request,
         packet = packet.first(wire::max_control_bytes);
     if (packet.size() < wire::header_bytes)
         return std::unexpected(Error::resource_limit);
+    // Request descriptors and their text/body must survive every record write.
+    // Reject destructive aliasing before touching caller storage; no scratch
+    // copy proportional to a URL, HTTP body or header set is needed.
+    if (wire::overlaps(std::as_bytes(std::span{&request, 1}), packet) ||
+        wire::overlaps(bytes(request.url), packet) ||
+        wire::overlaps(request.body, packet) ||
+        wire::overlaps(std::as_bytes(request.headers), packet) ||
+        wire::overlaps(std::as_bytes(request.wanted_headers), packet) ||
+        wire::overlaps(std::as_bytes(std::span{&permission, 1}), packet))
+        return std::unexpected(Error::invalid_argument);
+    for (const auto& header : request.headers)
+        if (wire::overlaps(bytes(header.name), packet) ||
+            wire::overlaps(bytes(header.value), packet))
+            return std::unexpected(Error::invalid_argument);
+    for (auto name : request.wanted_headers)
+        if (wire::overlaps(bytes(name), packet))
+            return std::unexpected(Error::invalid_argument);
     wire::Writer writer(packet.subspan(wire::header_bytes));
     std::array<std::byte, 8> scalar{};
     if (!wire::record(writer, 1, bytes(request.url)))

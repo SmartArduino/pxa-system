@@ -245,17 +245,20 @@ private:
     }
     static Task<File> open_request(Transport& transport, RequestTable& requests,
                                     fs_detail::Payload<267> payload, bool directory) {
-        auto event = co_await Response(transport, requests, 5, 1, payload.view(), true);
+        auto event = co_await Response(transport, requests, 5, 1,
+            Response::PrebuiltPacket{payload.packet()}, true);
         if (!event) co_return std::unexpected(event.error());
         auto body = wire::result_body(event->payload);
         if (!body) co_return std::unexpected(body.error());
-        if (body->size() != 8 || !(wire::get64(body->data()) >> 32))
+        auto pending = wire::result_resource<FileTag>(transport, *body);
+        if (body->size() != 8 || !(pending.handle() >> 32))
             co_return std::unexpected(Error::protocol_error);
-        co_return File(transport, requests, wire::get64(body->data()), directory);
+        co_return File(transport, requests, pending.release(), directory);
     }
     static Task<FileInfo> stat_request(Transport& transport, RequestTable& requests,
                                         fs_detail::Payload<259> payload) {
-        auto event = co_await Response(transport, requests, 5, 5, payload.view());
+        auto event = co_await Response(transport, requests, 5, 5,
+            Response::PrebuiltPacket{payload.packet()});
         if (!event) co_return std::unexpected(event.error());
         auto body = wire::result_body(event->payload);
         if (!body) co_return std::unexpected(body.error());

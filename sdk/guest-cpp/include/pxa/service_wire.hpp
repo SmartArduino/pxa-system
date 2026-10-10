@@ -9,12 +9,29 @@ namespace pxa::wire {
 
 bool valid_utf8(std::span<const std::byte> bytes) noexcept;
 
+inline bool overlaps(std::span<const std::byte> left,
+                     std::span<const std::byte> right) noexcept {
+    if (left.empty() || right.empty()) return false;
+    const auto a = reinterpret_cast<std::uintptr_t>(left.data());
+    const auto b = reinterpret_cast<std::uintptr_t>(right.data());
+    return a < b ? b - a < left.size() : a - b < right.size();
+}
+
 // Source-compatible name for code written before FixedText became public.
 template<std::size_t Capacity> using OwnedText = pxa::FixedText<Capacity>;
 
 template<std::size_t Capacity> struct RequestPacket {
-    std::array<std::byte, header_bytes + Capacity> bytes{};
+    std::array<std::byte, header_bytes + Capacity> bytes;
     std::size_t size = 0;
+    RequestPacket() noexcept : bytes{} {}
+    RequestPacket(const RequestPacket& other) noexcept : size(other.size) {
+        // The transport overwrites the header; spare capacity is never sent.
+        if (size) std::memcpy(bytes.data() + header_bytes,
+                              other.bytes.data() + header_bytes, size);
+    }
+    RequestPacket(RequestPacket&& other) noexcept : RequestPacket(other) {}
+    RequestPacket& operator=(const RequestPacket&) = delete;
+    RequestPacket& operator=(RequestPacket&&) = delete;
     std::span<const std::byte> view() const noexcept {
         return {bytes.data() + header_bytes, size};
     }
@@ -31,6 +48,14 @@ inline Result<std::span<const std::byte>> result_body(
     if (payload.size() != 4 || status > -1 || status < -16)
         return std::unexpected(Error::protocol_error);
     return std::unexpected(static_cast<Error>(status));
+}
+
+// Take ownership before validating trailing metadata. A malformed successful
+// resource response must not leak the recognizable handle it returned.
+template<class Tag>
+inline Resource<Tag> result_resource(Transport& transport,
+    std::span<const std::byte> body) noexcept {
+    return Resource<Tag>(transport, body.size() >= 8 ? get64(body.data()) : 0);
 }
 
 inline bool record(Writer& writer, std::uint16_t tag,

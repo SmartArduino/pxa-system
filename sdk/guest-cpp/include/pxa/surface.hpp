@@ -53,9 +53,11 @@ public:
     SurfaceFrame& operator=(SurfaceFrame&& other) noexcept;
     ~SurfaceFrame();
 
-    std::span<std::byte> pixels() const noexcept;
+    std::span<std::byte> pixels() const & noexcept;
+    std::span<std::byte> pixels() const && = delete("Keep the SurfaceFrame alive while borrowing its pixels");
     // The view has the frame lease's lifetime; discard it after present/reset.
-    Result<Rgb565Pixels> rgb565() const noexcept;
+    Result<Rgb565Pixels> rgb565() const & noexcept;
+    Result<Rgb565Pixels> rgb565() const && = delete("Keep the SurfaceFrame alive while borrowing its pixels");
     std::uint32_t stride_bytes() const noexcept;
     std::uint8_t buffer_index() const noexcept { return index_; }
     Result<void> present(std::uint64_t frame_id) noexcept;
@@ -87,10 +89,16 @@ public:
     Result<SurfaceFrame> acquire() noexcept;
     Task<void> configure(SurfaceLayer layer);
     Task<SurfaceState> query_state();
+    // Explicit close preserves ownership on rejection and can be retried.
+    Result<void> close() noexcept;
     void reset() noexcept;
 
 private:
     friend class SurfaceService;
+    static Task<void> configure_request(Transport&, RequestTable&,
+        std::uint64_t handle, SurfaceLayer);
+    static Task<SurfaceState> query_request(Transport&, RequestTable&,
+        std::uint64_t handle);
     explicit Surface(detail::SurfaceControl* control) noexcept
         : control_(control) {}
     detail::SurfaceControl* control_ = nullptr;

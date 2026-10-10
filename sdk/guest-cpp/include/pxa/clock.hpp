@@ -1,6 +1,7 @@
 #pragma once
 
 #include "task.hpp"
+#include "service_wire.hpp"
 
 #include <array>
 
@@ -30,7 +31,7 @@ public:
 
     // A cooperative round trip without a nested Task/frame-pool slot. Useful
     // between synchronous Flash/stream blocks; this is not a timed delay.
-    class Yield {
+    class [[nodiscard("Clock yield must be co_awaited")]] Yield {
     public:
         Yield(Transport& transport, RequestTable& requests) noexcept
             : response_(transport, requests, 4, 2, std::span<const std::byte>{}) {}
@@ -39,11 +40,9 @@ public:
         Result<void> await_resume() const noexcept {
             auto event = response_.await_resume();
             if (!event) return std::unexpected(event.error());
-            if (event->payload.size() < 4) return std::unexpected(Error::protocol_error);
-            const auto status = static_cast<std::int32_t>(wire::get32(event->payload.data()));
-            if (status) return event->payload.size() == 4 ? Result<void>(std::unexpected(static_cast<Error>(status)))
-                                                        : Result<void>(std::unexpected(Error::protocol_error));
-            if (event->payload.size() != 12) return std::unexpected(Error::protocol_error);
+            auto body = wire::result_body(event->payload);
+            if (!body) return std::unexpected(body.error());
+            if (body->size() != 8) return std::unexpected(Error::protocol_error);
             return {};
         }
     private:
@@ -55,17 +54,9 @@ public:
         auto& [transport_, requests_] = self;
         auto event = co_await Response(transport_, requests_, 4, 2, {});
         if (!event) co_return std::unexpected(event.error());
-        if (event->payload.size() < 4)
-            co_return std::unexpected(Error::protocol_error);
-        auto status = static_cast<std::int32_t>(
-            wire::get32(event->payload.data()));
-        if (status != 0) {
-            if (event->payload.size() != 4)
-                co_return std::unexpected(Error::protocol_error);
-            co_return std::unexpected(static_cast<Error>(status));
-        }
-        if (event->payload.size() != 12)
-            co_return std::unexpected(Error::protocol_error);
+        auto body = wire::result_body(event->payload);
+        if (!body) co_return std::unexpected(body.error());
+        if (body->size() != 8) co_return std::unexpected(Error::protocol_error);
         co_return wire::get64(event->payload.data() + 4);
     }
 

@@ -79,7 +79,8 @@ public:
     std::uint64_t handle() const noexcept { return resource_.handle(); }
     explicit operator bool() const noexcept { return bool(resource_); }
     Result<void> close() noexcept { return resource_.close(); }
-    const AudioFormat& format() const noexcept { return format_; }
+    const AudioFormat& format() const & noexcept { return format_; }
+    AudioFormat format() const && noexcept { return format_; }
 
     Result<void> tone(Tone tone = {}) noexcept {
         if (tone.frequency_hz < 40 || tone.frequency_hz > 8000 ||
@@ -101,11 +102,12 @@ public:
         return command_io(0x100, command);
     }
 
-    Result<std::uint32_t> write_pcm(std::span<std::byte> pcm) noexcept {
+    Result<std::uint32_t> write_pcm(std::span<const std::byte> pcm) noexcept {
         const auto alignment = 2u * format_.channels;
         if (!alignment || pcm.size() % alignment)
             return std::unexpected(Error::invalid_argument);
-        auto written = transport_.io(handle(), 2, pcm);
+        auto written = transport_.io(handle(), 2,
+            {const_cast<std::byte*>(pcm.data()), pcm.size()});
         if (written && (*written > pcm.size() || *written % alignment))
             return std::unexpected(Error::protocol_error);
         return written;
@@ -185,10 +187,11 @@ public:
 
     Task<void> graph(std::int16_t gain_db_q8,
                       std::span<const EqBand> bands = {}) {
+        if (!resource_) return Task<void>::failed(Error::bad_state);
         if (gain_db_q8 < -48 * 256 || gain_db_q8 > 12 * 256 || bands.size() > 5)
-            co_return std::unexpected(Error::invalid_argument);
-        std::array<std::byte, 74> payload{};
-        wire::Writer writer(payload);
+            return Task<void>::failed(Error::invalid_argument);
+        wire::RequestPacket<74> packet;
+        wire::Writer writer(std::span(packet.bytes).subspan(wire::header_bytes));
         std::array<std::byte, 8> value{};
         wire::put64(value.data(), handle());
         wire::record(writer, 1, value);
@@ -198,7 +201,7 @@ public:
             if (band.frequency_hz < 20 || band.frequency_hz > 20000 ||
                 band.gain_db_q8 < -12 * 256 || band.gain_db_q8 > 12 * 256 ||
                 band.q_q8 < 64 || band.q_q8 > 4096)
-                co_return std::unexpected(Error::invalid_argument);
+                return Task<void>::failed(Error::invalid_argument);
             wire::put16(value.data(), band.frequency_hz);
             wire::put16(value.data() + 2, static_cast<std::uint16_t>(band.gain_db_q8));
             wire::put16(value.data() + 4, band.q_q8);
@@ -206,8 +209,38 @@ public:
         }
         wire::put16(value.data(), 1);
         wire::record(writer, 4, {value.data(), 2});
-        auto event = co_await Response(transport_, requests_, 10, 2,
-                                       {payload.data(), writer.size()});
+        packet.size = writer.size();
+        return status_request<74>(endpoint(), std::move(packet), 2);
+    }
+
+    Task<AudioState> query() {
+        if (!resource_) return Task<AudioState>::failed(Error::bad_state);
+        return query_request(endpoint());
+    }
+
+    Task<void> flush() {
+        if (!resource_) return Task<void>::failed(Error::bad_state);
+        wire::RequestPacket<12> packet;
+        auto* payload = packet.bytes.data() + wire::header_bytes;
+        wire::put16(payload, 1);
+        wire::put16(payload + 2, 8);
+        wire::put64(payload + 4, handle());
+        packet.size = 12;
+        return status_request<12>(endpoint(), std::move(packet), 4);
+    }
+
+private:
+    struct Endpoint {
+        Transport& transport;
+        RequestTable& requests;
+        std::uint64_t handle;
+    };
+    Endpoint endpoint() const noexcept { return {transport_, requests_, handle()}; }
+    template<std::size_t Capacity>
+    static Task<void> status_request(Endpoint endpoint,
+        wire::RequestPacket<Capacity> packet, std::uint16_t opcode) {
+        auto event = co_await Response(endpoint.transport, endpoint.requests, 10, opcode,
+            Response::PrebuiltPacket{packet.packet()});
         if (!event) co_return std::unexpected(event.error());
         auto body = wire::result_body(event->payload);
         if (!body) co_return std::unexpected(body.error());
@@ -215,12 +248,12 @@ public:
         co_return Result<void>{};
     }
 
-    Task<AudioState> query() {
+    static Task<AudioState> query_request(Endpoint endpoint) {
         std::array<std::byte, 12> payload{};
         wire::put16(payload.data(), 1);
         wire::put16(payload.data() + 2, 8);
-        wire::put64(payload.data() + 4, handle());
-        auto event = co_await Response(transport_, requests_, 10, 3, payload);
+        wire::put64(payload.data() + 4, endpoint.handle);
+        auto event = co_await Response(endpoint.transport, endpoint.requests, 10, 3, payload);
         if (!event) co_return std::unexpected(event.error());
         auto body = wire::result_body(event->payload);
         if (!body) co_return std::unexpected(body.error());
@@ -240,20 +273,6 @@ public:
         co_return state;
     }
 
-    Task<void> flush() {
-        std::array<std::byte, 12> payload{};
-        wire::put16(payload.data(), 1);
-        wire::put16(payload.data() + 2, 8);
-        wire::put64(payload.data() + 4, handle());
-        auto event = co_await Response(transport_, requests_, 10, 4, payload);
-        if (!event) co_return std::unexpected(event.error());
-        auto body = wire::result_body(event->payload);
-        if (!body) co_return std::unexpected(body.error());
-        if (!body->empty()) co_return std::unexpected(Error::protocol_error);
-        co_return Result<void>{};
-    }
-
-private:
     static bool valid_gain(std::int16_t gain) noexcept {
         return gain >= -60 * 256 && gain <= 0;
     }
@@ -276,13 +295,17 @@ public:
         : transport_(transport), requests_(requests) {}
 
     Task<AudioSession> open(this AudioService self, const Permission& permission) {
-        auto& [transport_, requests_] = self;
         if (!(permission.handle() >> 32))
-            co_return std::unexpected(Error::invalid_argument);
+            return Task<AudioSession>::failed(Error::invalid_argument);
+        return open_request(self, permission.handle());
+    }
+private:
+    static Task<AudioSession> open_request(AudioService self, std::uint64_t permission) {
+        auto& [transport_, requests_] = self;
         std::array<std::byte, 18> payload{};
         wire::put16(payload.data(), 1);
         wire::put16(payload.data() + 2, 8);
-        wire::put64(payload.data() + 4, permission.handle());
+        wire::put64(payload.data() + 4, permission);
         wire::put16(payload.data() + 12, 2);
         wire::put16(payload.data() + 14, 2);
         wire::put16(payload.data() + 16, 1);

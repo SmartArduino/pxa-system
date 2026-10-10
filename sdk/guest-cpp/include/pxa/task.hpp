@@ -95,7 +95,7 @@ inline TaskPoolStats task_pool_stats() noexcept {
 }
 
 template<class T>
-class Task {
+class [[nodiscard("A lazy Task must be co_awaited or started by TaskScope")]] Task {
 public:
     struct promise_type {
         std::optional<Result<T>> result;
@@ -148,8 +148,8 @@ public:
     };
     using handle_type = std::coroutine_handle<promise_type>;
 
-    Task(const Task&) = delete;
-    Task& operator=(const Task&) = delete;
+    Task(const Task&) = delete("A Task has one consumer; move it into co_await or TaskScope");
+    Task& operator=(const Task&) = delete("A Task has one consumer; move it into co_await or TaskScope");
     Task(Task&& other) noexcept
         : handle_(std::exchange(other.handle_, {})),
           failed_(other.failed_) {}
@@ -189,6 +189,7 @@ public:
     Awaiter operator co_await() && noexcept {
         return Awaiter{std::move(*this)};
     }
+    Awaiter operator co_await() & = delete("Consume the Task with co_await std::move(task)");
 
 private:
     explicit Task(handle_type handle) noexcept : handle_(handle) {}

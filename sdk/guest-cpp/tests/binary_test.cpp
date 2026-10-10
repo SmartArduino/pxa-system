@@ -14,6 +14,12 @@ static_assert(binary::encode(std::uint32_t{0x12345678}) ==
     std::array{std::byte{0x78}, std::byte{0x56}, std::byte{0x34}, std::byte{0x12}});
 static_assert(*binary::decode<std::int32_t>(binary::encode(std::int32_t{-123})) == -123);
 static_assert(std::same_as<FixedText<12>, wire::OwnedText<12>>);
+static_assert([] {
+    std::array<std::byte, 6> bytes{std::byte{1}, std::byte{2}, std::byte{3}};
+    binary::Writer writer(std::span(bytes).subspan(1));
+    return writer.bytes(std::span(bytes).first(3)) &&
+           bytes[1] == std::byte{1} && bytes[2] == std::byte{2} && bytes[3] == std::byte{3};
+}());
 
 int main() {
     std::array<std::byte, 32> buffer{};

@@ -19,6 +19,11 @@ function(pxa_check_cpp_features)
                 return std::forward<Self>(self);
             }
         };
+        struct AddressStable {
+            AddressStable() = default;
+            AddressStable(AddressStable&&) = delete("Keep a stable address");
+        };
+        static_assert(!std::is_move_constructible_v<AddressStable>);
         static_assert(std::is_same_v<At<1, char, int>, int>);
         static_assert([] { Value v{1}; return v.next().n == 2; }());
         static_assert(std::is_same_v<decltype(Value{}.next()), Value&&>);
@@ -29,7 +34,7 @@ function(pxa_check_cpp_features)
     ]=] PXA_CPP_REQUIRED_FEATURES)
     if(NOT PXA_CPP_REQUIRED_FEATURES)
         message(FATAL_ERROR
-            "PXA C++ SDK requires C++26 mode, explicit object parameters, pack indexing, "
+            "PXA C++ SDK requires C++26 mode, explicit object parameters, pack indexing, deleted-function explanations, "
             "std::expected, std::span and coroutine support. Use locked WASI SDK 34; "
             "see sdk/guest-cpp/FEATURES.zh-CN.md. No language fallback is performed.")
     endif()
