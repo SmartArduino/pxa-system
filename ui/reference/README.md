@@ -38,6 +38,16 @@ status and button-navigation reservations to compatibility Native surfaces.
 Gesture navigation reports no bottom reservation, so applications recover that
 space without learning reference-UI geometry or linking its layout module.
 
+In fullscreen applications, a downward swipe starting at the hidden status
+bar's physical top edge temporarily reveals the status bar. The first gesture
+is consumed through release; a second swipe from the visible bar opens the
+notification shade. A tap, short swipe or cancelled gesture does neither.
+Hidden status chrome overlays the application without changing its content
+insets or revealing hidden navigation. The existing 2.5-second transient timer
+hides it again, deferring expiry while a chrome gesture or shade is active.
+Window-policy changes clear the temporary reveal. Transient status bars keep
+the same reveal-first policy; permanently visible bars open the shade directly.
+
 Reference applications use ordinary canonical application identities and the
 same Intent/RPC/event protocol as third-party native and PXA applications.
 Nothing in the core gives a reference application a private navigation path.

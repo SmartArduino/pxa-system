@@ -23,6 +23,8 @@ extern const lv_font_t pxsys_reference_lock_digits_72;
 #define REFERENCE_MAGIC UINT32_C(0x50585255)
 #define REFERENCE_APP_COUNT 8u
 #define TRANSIENT_BAR_TIMEOUT_MS 2500u
+#define CHROME_REVEALED_TRANSIENT 1u
+#define CHROME_REVEALED_HIDDEN_STATUS 2u
 #define NAVIGATION_GESTURE_COMMIT_DISTANCE 32
 #define NAVIGATION_GESTURE_HOLD_MS 180u
 #define NAVIGATION_GESTURE_MOTION_SLOP 4
@@ -590,7 +592,7 @@ struct pxsys_reference_lvgl {
     uint8_t notification_dragging;
     uint8_t notification_drag_moved;
     uint8_t notification_close_armed;
-    uint8_t transient_revealed;
+    uint8_t transient_revealed; /* CHROME_REVEALED_* bits; no extra state. */
     uint8_t navigation_dragging;
     uint8_t navigation_back_ready;
     uint8_t animations_enabled;
@@ -756,6 +758,7 @@ static void dismiss_recent_item(pxsys_reference_lvgl_t* ui,
 static void lock_screen_refresh(pxsys_reference_lvgl_t* ui);
 static int bar_is_visible(const pxsys_reference_lvgl_t* ui,
                           pxsys_window_bar_mode_t mode);
+static int status_bar_is_visible(const pxsys_reference_lvgl_t* ui);
 
 static void rebuild_async(void* context) {
     rebuild((pxsys_reference_lvgl_t*)context);
@@ -782,7 +785,7 @@ static void update_system_overlay(pxsys_reference_lvgl_t* ui) {
         lv_obj_t* objects[8];
         size_t count = 0;
         if (ui->status_bar != NULL &&
-            bar_is_visible(ui, status_bar_mode(ui)) &&
+            status_bar_is_visible(ui) &&
             !lv_obj_is_hidden(ui->status_bar))
             objects[count++] = ui->status_bar;
         if (ui->navigation_bar != NULL &&
@@ -1208,6 +1211,21 @@ static void navigation_back_gesture_event(lv_event_t* event) {
     navigation_back(ui);
 }
 
+/* Only inspect the small set of chrome-root children when opening the shade;
+ * retain the existing Back target without another object or cached pointer. */
+static void navigation_back_restack(pxsys_reference_lvgl_t* ui) {
+    for (uint32_t i = 0; i < lv_obj_get_child_count(ui->root); ++i) {
+        lv_obj_t* child = lv_obj_get_child(ui->root, i);
+        for (uint32_t j = 0; j < lv_obj_get_event_count(child); ++j) {
+            if (lv_event_dsc_get_cb(lv_obj_get_event_dsc(child, j)) ==
+                navigation_back_gesture_event) {
+                lv_obj_move_foreground(child);
+                return;
+            }
+        }
+    }
+}
+
 static const char* accent_name(const pxsys_theme_snapshot_t* theme) {
     for (int palette = PXSYS_THEME_PALETTE_TEAL;
          palette < PXSYS_THEME_PALETTE_COUNT; ++palette) {
@@ -1255,12 +1273,23 @@ static void launcher_clicked(lv_event_t* event) {
         rebuild(item->ui);
         return;
     }
+    pxsys_task_manager_t* tasks = pxsys_standard_system_tasks(item->ui->system);
+    /* Resume an existing task without clearing the launcher or other apps
+     * above it. Otherwise its next exit can leave no Home task to restore. */
+    for (size_t index = 0; index < pxsys_task_manager_count(tasks); ++index) {
+        pxsys_instance_snapshot_t snapshot = {.struct_size = sizeof(snapshot)};
+        if (pxsys_task_manager_task(tasks, index, &instance, &snapshot) ==
+                PXSYS_STATUS_OK &&
+            pxsys_app_identity_equal(&snapshot.app->identity, &item->identity)) {
+            (void)pxsys_task_manager_activate(tasks, instance);
+            return;
+        }
+    }
     intent.struct_size = sizeof(intent);
     intent.target = &item->identity;
     intent.action = pxsys_string_from_cstr("system.intent.main");
-    intent.flags = PXSYS_INTENT_FLAG_CLEAR_TOP;
-    (void)pxsys_task_manager_start(pxsys_standard_system_tasks(item->ui->system),
-                                   &intent, &instance);
+    intent.flags = PXSYS_INTENT_FLAG_SINGLE_TOP;
+    (void)pxsys_task_manager_start(tasks, &intent, &instance);
 }
 
 static void launcher_position_tiles(pxsys_reference_lvgl_t* ui) {
@@ -4010,7 +4039,14 @@ static int has_transient_chrome(const pxsys_reference_lvgl_t* ui) {
 static int bar_is_visible(const pxsys_reference_lvgl_t* ui,
                           pxsys_window_bar_mode_t mode) {
     return mode == PXSYS_WINDOW_BAR_VISIBLE ||
-           (mode == PXSYS_WINDOW_BAR_TRANSIENT && ui->transient_revealed);
+           (mode == PXSYS_WINDOW_BAR_TRANSIENT &&
+            (ui->transient_revealed & CHROME_REVEALED_TRANSIENT));
+}
+
+static int status_bar_is_visible(const pxsys_reference_lvgl_t* ui) {
+    return bar_is_visible(ui, status_bar_mode(ui)) ||
+           (status_bar_mode(ui) == PXSYS_WINDOW_BAR_HIDDEN &&
+            (ui->transient_revealed & CHROME_REVEALED_HIDDEN_STATUS));
 }
 
 static void transient_timeout(lv_timer_t* timer) {
@@ -4032,9 +4068,9 @@ static void transient_timeout(lv_timer_t* timer) {
     rebuild(ui);
 }
 
-static void reveal_transient_chrome(pxsys_reference_lvgl_t* ui) {
-    if (!ui_valid(ui) || !has_transient_chrome(ui)) return;
-    ui->transient_revealed = 1;
+static void reveal_chrome(pxsys_reference_lvgl_t* ui, uint8_t revealed) {
+    if (!ui_valid(ui)) return;
+    ui->transient_revealed |= revealed;
     if (ui->transient_timer == NULL) {
         ui->transient_timer =
             lv_timer_create(transient_timeout, TRANSIENT_BAR_TIMEOUT_MS, ui);
@@ -4044,6 +4080,11 @@ static void reveal_transient_chrome(pxsys_reference_lvgl_t* ui) {
         lv_timer_resume(ui->transient_timer);
     }
     if (lv_async_call(rebuild_async, ui) != LV_RESULT_OK) rebuild(ui);
+}
+
+static void reveal_transient_chrome(pxsys_reference_lvgl_t* ui) {
+    if (!ui_valid(ui) || !has_transient_chrome(ui)) return;
+    reveal_chrome(ui, CHROME_REVEALED_TRANSIENT);
 }
 
 static void shade_close_clicked(lv_event_t* event) {
@@ -4719,6 +4760,7 @@ static void build_notification_shade(pxsys_reference_lvgl_t* ui,
     }
     pxsys_lvgl_remove_flags(ui->notification_shade, LV_OBJ_FLAG_HIDDEN);
     lv_obj_move_foreground(ui->notification_shade);
+    navigation_back_restack(ui);
     if (ui->navigation_mode == PXSYS_NAVIGATION_BUTTONS &&
         ui->navigation_bar != NULL)
         lv_obj_move_foreground(ui->navigation_bar);
@@ -4742,8 +4784,10 @@ static void status_bar_event(lv_event_t* event) {
     } else if (lv_event_get_code(event) == LV_EVENT_PRESSING) {
         int32_t distance = point.y - ui->status_press_y;
         int32_t progress;
-        if (!bar_is_visible(ui, status_bar_mode(ui)) || distance <= 0)
-            return;
+        /* The transparent edge target owns the whole first gesture. Reveal
+         * chrome only after release, so rebuilding cannot turn this same drag
+         * into a notification-shade gesture or leak it to the game. */
+        if (distance <= 0 || !status_bar_is_visible(ui)) return;
         if (distance >= 6) ui->notification_drag_moved = 1;
         if (ui->notification_shade == NULL ||
             !ui->notification_shade_open) {
@@ -4756,16 +4800,17 @@ static void status_bar_event(lv_event_t* event) {
         notification_shade_progress_set(ui, progress);
     } else if (lv_event_get_code(event) == LV_EVENT_RELEASED) {
         int32_t distance = point.y - ui->status_press_y;
-        if (!ui->transient_revealed && has_transient_chrome(ui) &&
-            distance >= 8) {
-            reveal_transient_chrome(ui);
+        if (!status_bar_is_visible(ui) && distance >= 8) {
+            reveal_chrome(ui, status_bar_mode(ui) == PXSYS_WINDOW_BAR_HIDDEN
+                                  ? CHROME_REVEALED_HIDDEN_STATUS
+                                  : CHROME_REVEALED_TRANSIENT);
         } else if (ui->notification_shade_open) {
             int32_t open = !ui->notification_drag_moved ||
                            ui->notification_progress >= 64;
             ui->notification_dragging = 0;
             settle_notification_shade(ui, open ? 256 : 0);
         } else if (point.y >= ui->status_press_y &&
-                   bar_is_visible(ui, status_bar_mode(ui))) {
+                   status_bar_is_visible(ui)) {
             build_notification_shade(ui, 0);
             settle_notification_shade(ui, 256);
         }
@@ -5056,7 +5101,7 @@ static void build_status_bar(pxsys_reference_lvgl_t* ui,
                     (lv_coord_t)layout->status_bar.height);
     lv_obj_set_style_bg_color(status,
                               color_token(ui, PXSYS_COLOR_BACKGROUND), 0);
-    if (status_bar_mode(ui) == PXSYS_WINDOW_BAR_TRANSIENT)
+    if (status_bar_mode(ui) != PXSYS_WINDOW_BAR_VISIBLE)
         lv_obj_set_style_bg_opa(status, (lv_opa_t)224, 0);
     if (ui->features & PXSYS_REFERENCE_UI_NOTIFICATION_SHADE) {
         pxsys_lvgl_add_flags(status, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_PRESS_LOCK);
@@ -7445,8 +7490,9 @@ static void rebuild(pxsys_reference_lvgl_t* ui) {
 #endif
 
     if ((ui->active_chrome & PXSYS_REFERENCE_UI_STATUS_BAR) &&
-        status_bar_mode(ui) != PXSYS_WINDOW_BAR_HIDDEN) {
-        if (bar_is_visible(ui, status_bar_mode(ui))) {
+        (status_bar_mode(ui) != PXSYS_WINDOW_BAR_HIDDEN ||
+         (ui->features & PXSYS_REFERENCE_UI_NOTIFICATION_SHADE))) {
+        if (status_bar_is_visible(ui)) {
             build_status_bar(ui, &layout);
         } else {
             lv_obj_t* catcher = lv_obj_create(ui->root);
@@ -7604,7 +7650,8 @@ static void rebuild(pxsys_reference_lvgl_t* ui) {
     }
 
     if ((ui->active_chrome & PXSYS_REFERENCE_UI_NAVIGATION_BAR) &&
-        navigation_bar_mode(ui) != PXSYS_WINDOW_BAR_HIDDEN) {
+        (navigation_bar_mode(ui) != PXSYS_WINDOW_BAR_HIDDEN ||
+         ui->navigation_mode == PXSYS_NAVIGATION_GESTURES)) {
         int visible = bar_is_visible(ui, navigation_bar_mode(ui));
         int gesture_height = (int)gesture_strip_height(&layout);
         navigation = lv_obj_create(ui->root);
@@ -7690,20 +7737,22 @@ static void rebuild(pxsys_reference_lvgl_t* ui) {
         int32_t top = (int32_t)layout.safe_area.y;
         int32_t bottom = (int32_t)ui->display.height -
                          (int32_t)gesture_strip_height(&layout);
-        int32_t edge_x = (int32_t)layout.safe_area.x;
+        /* The visible feedback belongs inside the safe area, but the swipe
+         * must begin at the physical edge, including the safe inset. */
+        int32_t edge_x = 0;
         uint32_t edge_width = ui->back_gesture_edge_width != 0
                                   ? ui->back_gesture_edge_width
                                   : pxsys_reference_layout_back_gesture_width();
         if ((ui->active_chrome & PXSYS_REFERENCE_UI_STATUS_BAR) &&
-            status_bar_mode(ui) != PXSYS_WINDOW_BAR_HIDDEN &&
-            bar_is_visible(ui, status_bar_mode(ui)))
+            status_bar_is_visible(ui))
             top += (int32_t)layout.status_bar.height;
         if (bottom > top) {
             ui->back_gesture_override = 0;
             back_gesture = lv_obj_create(ui->root);
             style_plain(back_gesture);
             lv_obj_set_pos(back_gesture, edge_x, top);
-            lv_obj_set_size(back_gesture, edge_width, bottom - top);
+            lv_obj_set_size(back_gesture,
+                            edge_width + layout.safe_area.x, bottom - top);
             lv_obj_set_style_bg_opa(back_gesture, LV_OPA_TRANSP, 0);
             pxsys_lvgl_add_flags(back_gesture,
                             LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_PRESS_LOCK);
@@ -8116,8 +8165,7 @@ static void status_refresh_poll(lv_timer_t* timer) {
         ui->status_rebuild_pending = 0;
         notification_refresh_values(ui);
         if (ui->status_bar != NULL &&
-            status_bar_mode(ui) != PXSYS_WINDOW_BAR_HIDDEN &&
-            bar_is_visible(ui, status_bar_mode(ui)) &&
+            status_bar_is_visible(ui) &&
             pxsys_reference_layout_compute(&ui->display, &layout) == PXSYS_STATUS_OK) {
             build_status_bar(ui, &layout);
             refresh_overlay = 1;
@@ -8753,7 +8801,8 @@ bool pxsys_reference_lvgl_dismiss_overlay(pxsys_reference_lvgl_t* ui) {
         settle_notification_shade(ui, 0);
         return true;
     }
-    if (has_transient_chrome(ui) && !ui->transient_revealed) {
+    if (has_transient_chrome(ui) &&
+        !(ui->transient_revealed & CHROME_REVEALED_TRANSIENT)) {
         reveal_transient_chrome(ui);
         return true;
     }
