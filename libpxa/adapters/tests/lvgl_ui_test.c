@@ -1,3 +1,5 @@
+/* Assertions also execute fixture setup; keep them in Release test builds. */
+#undef NDEBUG
 #include "pxa/lvgl/pxa_lvgl_ui.h"
 
 #include <assert.h>
@@ -62,6 +64,8 @@ static pxa_component_t g_component;
 static pxa_lvgl_ui_t *g_adapter;
 static uint64_t g_now_us;
 static uint64_t g_event_timestamp_us;
+static uint32_t g_input_test_tick;
+static uint32_t input_test_tick(void) { return g_input_test_tick; }
 static unsigned g_events;
 static unsigned g_asset_resolves;
 static unsigned g_asset_releases;
@@ -1061,14 +1065,14 @@ int main(void) {
         press_state.point.y = button_area.y1 + 4;
         press_state.pressed = 1;
         g_now_us = UINT64_C(124000000);
-        press_state.timestamp_ms = (uint32_t)(g_now_us / 1000u) - 2u;
+        press_state.timestamp_ms = lv_tick_get() - 2u;
         g_event_kind = (pxa_ui_event_kind_t)0;
         g_event_node = 0;
         events_before = g_events;
         lv_indev_read(press_input);
         assert(g_event_kind == PXA_UI_EVENT_POINTER && g_event_node == 2);
         press_state.pressed = 0;
-        press_state.timestamp_ms = (uint32_t)(g_now_us / 1000u);
+        press_state.timestamp_ms = lv_tick_get();
         lv_indev_read(press_input);
         /* The container saw the gesture, the child emitted nothing. */
         assert(g_events > events_before);
@@ -1120,13 +1124,27 @@ int main(void) {
     pointer_state.point.y = canvas_area.y1 + 2;
     pointer_state.pressed = 1;
     g_now_us = UINT64_C(200000000);
-    pointer_state.timestamp_ms = (uint32_t)(g_now_us / 1000u) - 7u;
+    pointer_state.timestamp_ms = lv_tick_get() - 7u;
     lv_indev_read(pointer_input);
     assert(g_event_kind == PXA_UI_EVENT_POINTER &&
            g_event_timestamp_us == g_now_us - 7000u);
+    /* Host and LVGL clocks deliberately have different epochs above. Also
+     * preserve sample age across the 32-bit LVGL tick rollover. */
+    lv_tick_set_cb(input_test_tick);
+    g_input_test_tick = 3;
     pointer_state.pressed = 0;
-    pointer_state.timestamp_ms = (uint32_t)(g_now_us / 1000u);
+    pointer_state.timestamp_ms = UINT32_MAX - 3u;
     lv_indev_read(pointer_input);
+    assert(g_event_timestamp_us == g_now_us - 7000u);
+    pointer_state.pressed = 1;
+    pointer_state.timestamp_ms = g_input_test_tick - 1001u;
+    lv_indev_read(pointer_input);
+    assert(g_event_timestamp_us == g_now_us);
+    pointer_state.pressed = 0;
+    pointer_state.timestamp_ms = g_input_test_tick + 1u;
+    lv_indev_read(pointer_input);
+    assert(g_event_timestamp_us == g_now_us);
+    lv_tick_set_cb(NULL);
     lv_indev_delete(pointer_input);
     g_test_rgb565_x = canvas_area.x1 + 50;
     g_test_rgb565_y = canvas_area.y1 + 20;
@@ -1135,6 +1153,9 @@ int main(void) {
     test_lvgl_tick();
     assert(g_test_flush_count > flushes);
     assert(g_test_rgb565_pixels == UINT8_C(0x0f));
+    /* Finish unrelated pointer/state animations before measuring only the
+     * dirty rectangle submitted by the next Canvas frame. */
+    for (unsigned tick = 0; tick < 10; ++tick) test_lvgl_tick();
     {
         size_t allocations;
         uint64_t pixels = g_test_flushed_pixels;
@@ -1142,6 +1163,9 @@ int main(void) {
         allocations = allocator.allocations;
         test_lvgl_tick();
         assert(g_test_flushed_pixels > pixels);
+        if (g_test_flushed_pixels - pixels >= 80u * 80u)
+            fprintf(stderr, "Dirty canvas flush: %llu pixels\n",
+                (unsigned long long)(g_test_flushed_pixels - pixels));
         assert(g_test_flushed_pixels - pixels < 80u * 80u);
         present_canvas(3, 1);
         assert(allocator.allocations == allocations);
@@ -1175,6 +1199,29 @@ int main(void) {
     assert(alpha_plane.revision > 1);
     assert(alpha_plane_hash(&alpha_plane, &alpha_visible) != alpha_before);
     assert(alpha_visible != 0);
+
+    /* Focus/press/release on a Canvas only affect hit testing. A visible
+     * command list, like an empty input layer, is independent of that state:
+     * do not snapshot or allocate before forwarding input. */
+    {
+        const uint64_t revision = alpha_plane.revision;
+        const uint64_t hash = alpha_plane_hash(&alpha_plane, &alpha_visible);
+        const size_t allocations = allocator.allocations;
+#ifdef PXA_TEST_WRAP_SNAPSHOT
+        const unsigned snapshots = g_snapshot_draw_calls;
+#endif
+        lv_obj_add_state(canvas, LV_STATE_FOCUSED);
+        lv_obj_add_state(canvas, LV_STATE_PRESSED);
+        lv_obj_remove_state(canvas, LV_STATE_PRESSED);
+        lv_obj_remove_state(canvas, LV_STATE_FOCUSED);
+        assert(pxa_lvgl_ui_alpha_plane(adapter, &alpha_plane));
+        assert(alpha_plane.revision == revision);
+        assert(alpha_plane_hash(&alpha_plane, &alpha_visible) == hash);
+        assert(allocator.allocations == allocations);
+#ifdef PXA_TEST_WRAP_SNAPSHOT
+        assert(g_snapshot_draw_calls == snapshots);
+#endif
+    }
 
     if (!getenv("PXA_CANVAS_MEASURE")) {
         present_canvas(7,0);
@@ -2301,6 +2348,47 @@ int main(void) {
         transact(66, 66, 0, PXA_UI_PATCH, &commands);
         assert(lv_textarea_get_cursor_pos(input) == 10);
         printf("Dynamic text: UTF-8 boundary, empty edit, clear limit and failed transaction rollback OK\n");
+    }
+
+    /* A Canvas can contain native controls. Their pressed feedback must
+     * refresh once even when the state event bubbles through the Canvas. */
+    {
+        bytes_t commands = {{0}, 0};
+        uint8_t value[8] = {PXA_UI_LENGTH_LOGICAL_PX};
+        const uint8_t composition = PXA_UI_COMPOSITION_ALPHA_OVERLAY;
+        create_node(&commands, 1, 0, PXA_UI_NODE_ROOT, 0);
+        create_node(&commands, 2, 1, PXA_UI_NODE_CANVAS, 0);
+        pxa_write_u32(value + 4, 80 * 64);
+        set_property(&commands, 2, PXA_UI_PROPERTY_WIDTH, value, 8);
+        set_property(&commands, 2, PXA_UI_PROPERTY_HEIGHT, value, 8);
+        set_property(&commands, 2, PXA_UI_PROPERTY_COMPOSITION, &composition, 1);
+        create_node(&commands, 3, 2, PXA_UI_NODE_CONTROL, PXA_UI_CONTROL_BUTTON);
+        pxa_write_u32(value + 4, 40 * 64);
+        set_property(&commands, 3, PXA_UI_PROPERTY_WIDTH, value, 8);
+        set_property(&commands, 3, PXA_UI_PROPERTY_HEIGHT, value, 8);
+        transact(67, 67, 0, PXA_UI_REPLACE_SURFACE, &commands);
+        root = lv_obj_get_child(lv_screen_active(), 0);
+        lv_obj_t *control = lv_obj_get_child(lv_obj_get_child(root, 0), 0);
+        static const lv_style_prop_t no_transition_props[] = {0};
+        static const lv_style_transition_dsc_t no_transition = {.props = no_transition_props};
+        lv_obj_set_style_transition(control, &no_transition, LV_STATE_ANY);
+        assert(pxa_lvgl_ui_alpha_plane(adapter, &alpha_plane));
+        const uint64_t revision = alpha_plane.revision;
+        const uint64_t hash = alpha_plane_hash(&alpha_plane, &alpha_visible);
+#ifdef PXA_TEST_WRAP_SNAPSHOT
+        const unsigned snapshots = g_snapshot_draw_calls;
+#endif
+        lv_obj_add_state(control, LV_STATE_PRESSED);
+        assert(pxa_lvgl_ui_alpha_plane(adapter, &alpha_plane));
+        assert(alpha_plane.revision > revision);
+        assert(alpha_plane_hash(&alpha_plane, &alpha_visible) != hash);
+#ifdef PXA_TEST_WRAP_SNAPSHOT
+        assert(g_snapshot_draw_calls == snapshots + 1);
+#endif
+        lv_obj_remove_state(control, LV_STATE_PRESSED);
+        assert(pxa_lvgl_ui_alpha_plane(adapter, &alpha_plane));
+        assert(alpha_plane_hash(&alpha_plane, &alpha_visible) == hash);
+        puts("Canvas input state: no snapshots/allocations; native child pressed feedback preserved");
     }
 
     assert(pxa_component_finish_start(g_runtime, g_component,

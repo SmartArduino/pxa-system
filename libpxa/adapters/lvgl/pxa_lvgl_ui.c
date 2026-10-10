@@ -567,9 +567,10 @@ static uint64_t input_timestamp_us(const pxa_lvgl_ui_t *ui,
     if (ui == NULL || ui->config.now_us == NULL) return 0;
     now_us = ui->config.now_us(ui->config.callback_user_data);
     if (input == NULL) return now_us;
-    age_ms = lv_tick_diff((uint32_t)(now_us / 1000u), input->timestamp);
-    /* Reject timestamps from a different clock domain or stale synthetic
-     * events. A real pointer sample reaches the Canvas in the same LVGL pass. */
+    /* Input timestamps belong to LVGL's tick clock, whose origin need not
+     * match the Host monotonic clock. Translate the sample age, not its epoch. */
+    age_ms = lv_tick_diff(lv_tick_get(), input->timestamp);
+    /* Reject stale synthetic events (also covers future ticks/wrap errors). */
     if (age_ms > 1000u) return now_us;
     age_us = (uint64_t)age_ms * 1000u;
     return age_us <= now_us ? now_us - age_us : now_us;
@@ -711,6 +712,14 @@ static void on_alpha_overlay_state_changed(lv_event_t *event) {
         (pxa_lvgl_ui_node_t *)lv_event_get_user_data(event);
     if (node == NULL || node->object == NULL || node->ui->transaction_active ||
         !node_is_in_alpha_overlay(node->ui, node))
+        return;
+    /* Canvas commands and colors have no state-dependent styling. In
+     * particular, an input-only Canvas must not snapshot the full screen
+     * before forwarding a press/release. Native controls still refresh their
+     * pressed/focused appearance. Ignore their bubbled state notifications
+     * here; the target's own handler performs the refresh once. */
+    if (lv_event_get_target(event) != node->object ||
+        node->type == PXA_UI_NODE_CANVAS)
         return;
     (void)refresh_alpha_plane(node->ui);
 }
