@@ -1,4 +1,5 @@
 #include <pxa/game_upload.hpp>
+#include <pxa/game_quality.hpp>
 #include <pxa/ui_controller.hpp>
 #include <pxa/ui_geometry.hpp>
 #include <pxa/raster.h>
@@ -19,6 +20,19 @@ extern "C" int32_t pxa_io(uint64_t handle,uint32_t opcode,uint8_t* bytes,uint32_
     if(opcode==0x100)upload_size=size;else{assert(opcode==0x101);draw_size=size;}return size;
 }
 int main(){
+    pxa::game::AdaptiveResolution quality;
+    pxa::game::Telemetry sample{};
+    auto observe=[&](uint32_t cost,unsigned shift){sample.rendered_frames+=48;
+        sample.host_raster_us+=48ull*cost;return quality.observe(sample,shift);};
+    for(int i=0;i<12;++i)assert(observe(60000,0)==0); // initialization warmup
+    for(int i=0;i<3;++i)assert(observe(60000,0)==0);
+    assert(observe(60000,0)==1);
+    sample={};assert(quality.observe(sample,1)==0); // renderer replacement
+    for(int i=0;i<25;++i)assert(observe(10000,1)==0); // never retry a proven slow mode
+    quality={};sample={};sample.present_us=1000000000;
+    for(int i=0;i<40;++i)assert(observe(10000,0)==0); // panel stalls keep sharpness
+    for(int i=0;i<3;++i)assert(observe(60000,0)==0);
+    assert(observe(10000,0)==0); // isolated overload does not lower resolution
     pxa::Transport transport;transport.phase(pxa::Phase::event);
     pxa::game::Renderer renderer(transport,77,PXA_RASTER_CAP_KNOWN_MASK);
     std::array<std::byte,1044> scratch{};pxa::game::Upload uploader(renderer,scratch);
