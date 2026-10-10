@@ -1,6 +1,7 @@
 #include <pxa/game_upload.hpp>
 #include <pxa/game_quality.hpp>
 #include <pxa/ui_controller.hpp>
+#include <pxa/ui.h>
 #include <pxa/ui_geometry.hpp>
 #include <pxa/raster.h>
 #include <array>
@@ -104,10 +105,15 @@ int main(){
         assert(scaled.density_q16==d.density_q16/2);
     }
     std::array<std::byte,32> bytes{};pxa::wire::put32(bytes.data(),1);pxa::wire::put32(bytes.data()+4,2);pxa::wire::put32(bytes.data()+8,3);
-    pxa::wire::put16(bytes.data()+12,10);pxa::wire::put16(bytes.data()+14,8);bytes[25]=std::byte{1};
+    pxa::wire::put16(bytes.data()+12,PXA_UI_EVENT_CONTROLLER_STATE);
+    pxa::wire::put16(bytes.data()+14,PXA_UI_EVENT_FLAG_RELIABLE);bytes[25]=std::byte{1};
     pxa::wire::put32(bytes.data()+28,pxa::ui::controller_a|pxa::ui::controller_left);
     pxa::Event event{};event.service=3;event.opcode=0x8001;event.payload=bytes;
     auto controller=pxa::ui::decode_controller(event);assert(controller&&controller->buttons==20);
+    pxa::wire::put16(bytes.data()+14,0);assert(pxa::ui::decode_controller(event));
+    event.token=1;assert(!pxa::ui::decode_controller(event));event.token=0;
+    pxa::wire::put32(bytes.data()+28,256);assert(!pxa::ui::decode_controller(event));
+    pxa::wire::put32(bytes.data()+28,20);
     bytes[25]=std::byte{};assert(!pxa::ui::decode_controller(event));
     bytes[25]=std::byte{1};bytes[26]=std::byte{1};assert(!pxa::ui::decode_controller(event));
     assert(allocations==0);
