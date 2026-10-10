@@ -1,6 +1,7 @@
 #include "pxsys/reference_lvgl.h"
 #include "pxsys/reference_ime.h"
 #include "pxsys/lvgl_flags.h"
+#include "src/indev/lv_indev_scroll.h"
 #include "src/misc/cache/instance/lv_image_cache.h"
 
 /* Temporary bring-up switch: open the input method for the first application
@@ -1350,6 +1351,7 @@ static void launcher_remove_clicked(lv_event_t* event) {
     static const char digits[] = "0123456789abcdef";
     size_t index;
     if (item == NULL || !ui_valid(item->ui) || !item->uninstallable) return;
+    if (item->tap_cancelled) return;
     ui = item->ui;
     for (index = 0; index < PXSYS_PUBLISHER_ROOT_BYTES; ++index) {
         ui->pending_identity[index * 2u] = digits[item->identity.publisher_root[index] >> 4];
@@ -1407,6 +1409,9 @@ static void launcher_gesture(lv_event_t* event) {
                 item->tap_cancelled = 1;
         }
     }
+    /* The delete target shares tap cancellation, but never starts a tile drag
+     * or changes the editing mode on a long press. */
+    if (lv_event_get_current_target(event) == item->remove_button) return;
     if (code == LV_EVENT_LONG_PRESSED) {
         if (item->tap_cancelled) return;
         indev = lv_event_get_indev(event);
@@ -1470,25 +1475,53 @@ static void launcher_background_clicked(lv_event_t* event) {
     rebuild(ui);
 }
 
-static void launcher_scroll_ended(lv_event_t* event) {
+static void launcher_scroll_event(lv_event_t* event) {
     pxsys_reference_lvgl_t* ui = lv_event_get_user_data(event);
     if (!ui_valid(ui) || ui->content == NULL ||
         lv_event_get_current_target(event) != ui->content ||
         ui->launcher_count == 0) return;
+    const lv_event_code_t code = lv_event_get_code(event);
+    if (code == LV_EVENT_SCROLL_BEGIN) {
+        lv_anim_t* animation = lv_event_get_param(event);
+        if (animation != NULL) lv_anim_set_duration(animation, 160);
+        return;
+    }
     const int32_t width = lv_obj_get_width(ui->content);
     if (width <= 0) return;
     const size_t per_page = PXSYS_REFERENCE_UI_LAUNCHER_COLUMNS *
                             PXSYS_REFERENCE_UI_LAUNCHER_ROWS;
     const size_t last_page = (ui->launcher_count - 1u) / per_page;
     const int32_t scroll_x = lv_obj_get_scroll_x(ui->content);
-    const int32_t offset = scroll_x - (int32_t)ui->launcher_page * width;
-    size_t page = ui->launcher_page;
-    if (offset > width / 4 && page < last_page) page++;
-    else if (offset < -width / 4 && page > 0) page--;
-    ui->launcher_page = (uint16_t)page;
-    const int32_t target_x = (int32_t)page * width;
+    if (code == LV_EVENT_SCROLL_THROW_BEGIN) {
+        int32_t offset = scroll_x - (int32_t)ui->launcher_page * width;
+        /* Use release velocity only to choose a page. Do not run a long
+         * inertial coast followed by a second snap animation. */
+        lv_indev_t* indev = lv_event_get_param(event);
+        int32_t prediction = lv_indev_scroll_throw_predict(indev, LV_DIR_HOR);
+        prediction = LV_CLAMP(-width / 4, prediction, width / 4);
+        offset -= prediction;
+        if (offset > width / 5 && ui->launcher_page < last_page)
+            ui->launcher_page++;
+        else if (offset < -width / 5 && ui->launcher_page > 0)
+            ui->launcher_page--;
+        return;
+    }
+    const int32_t target_x = (int32_t)ui->launcher_page * width;
     if (scroll_x != target_x)
         lv_obj_scroll_to_x(ui->content, target_x, LV_ANIM_ON);
+}
+
+static void launcher_configure_paging(pxsys_reference_lvgl_t* ui) {
+    lv_obj_set_scroll_dir(ui->content, LV_DIR_HOR);
+    lv_obj_set_scroll_momentum(ui->content, false);
+    lv_obj_set_scroll_elastic(ui->content, false);
+    lv_obj_set_scrollbar_mode(ui->content, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_add_event_cb(ui->content, launcher_scroll_event,
+                        LV_EVENT_SCROLL_BEGIN, ui);
+    lv_obj_add_event_cb(ui->content, launcher_scroll_event,
+                        LV_EVENT_SCROLL_THROW_BEGIN, ui);
+    lv_obj_add_event_cb(ui->content, launcher_scroll_event,
+                        LV_EVENT_SCROLL_END, ui);
 }
 
 static lv_obj_t* make_label(lv_obj_t* parent, const char* text,
@@ -2839,31 +2872,50 @@ static lv_obj_t* make_launcher_tile(pxsys_reference_lvgl_t* ui,
                    color_token(ui, PXSYS_COLOR_ON_ACCENT));
         lv_obj_center(lv_obj_get_child(marker, 0));
     }
-    lv_obj_align(marker, LV_ALIGN_TOP_MID, 0, 0);
     label = make_label(tile, name, typography_font(ui, PXSYS_TYPOGRAPHY_CAPTION),
                        color_token(ui, PXSYS_COLOR_TEXT_PRIMARY));
     lv_obj_set_width(label, LV_PCT(100));
-    lv_obj_set_height(label,
+    const int32_t label_height =
                       typography_font(ui, PXSYS_TYPOGRAPHY_CAPTION) != NULL
                           ? (lv_coord_t)typography_font(
                                 ui, PXSYS_TYPOGRAPHY_CAPTION)->line_height + 2
-                          : 16);
+                          : 16;
+    lv_obj_set_height(label, label_height);
     lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_align(label, LV_ALIGN_TOP_MID, 0, icon_size + label_gap);
+    /* Center the icon and caption as one block, without another container. */
+    const int32_t group_height = icon_size + label_gap + label_height;
+    lv_obj_align(marker, LV_ALIGN_CENTER, 0, -(group_height - icon_size) / 2);
+    lv_obj_align(label, LV_ALIGN_CENTER, 0, (group_height - label_height + 1) / 2);
     item->tile = tile;
     if (item->uninstallable) {
         lv_obj_t* remove_button = lv_button_create(tile);
-        lv_obj_set_size(remove_button, 25, 25);
+        const int32_t hit_size = ui->display.width < 360 ? 40 :
+            pxsys_reference_display_scale_px(&ui->display, 40);
+        const int32_t disc_size = ui->display.width < 360 ? 32 :
+            pxsys_reference_display_scale_px(&ui->display, 30);
+        lv_obj_set_size(remove_button, hit_size, hit_size);
         lv_obj_align(remove_button, LV_ALIGN_TOP_RIGHT, 0, -1);
         lv_obj_set_style_radius(remove_button, LV_RADIUS_CIRCLE, 0);
-        lv_obj_set_style_bg_color(remove_button,
-                                  color_token(ui, PXSYS_COLOR_ERROR_CONTAINER), 0);
+        lv_obj_set_style_bg_opa(remove_button, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_border_width(remove_button, 0, 0);
         lv_obj_set_style_shadow_width(remove_button, 0, 0);
         lv_obj_set_style_pad_all(remove_button, 0, 0);
-        lv_obj_t* remove_icon = make_label(remove_button, LV_SYMBOL_CLOSE,
+        pxsys_lvgl_remove_flags(remove_button,
+            LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_SCROLL_ON_FOCUS);
+        pxsys_lvgl_add_flags(remove_button, LV_OBJ_FLAG_PRESS_LOCK);
+        lv_obj_t* disc = lv_obj_create(remove_button);
+        style_plain(disc);
+        lv_obj_set_size(disc, disc_size, disc_size);
+        lv_obj_set_style_radius(disc, LV_RADIUS_CIRCLE, 0);
+        lv_obj_set_style_bg_color(disc,
+                                  color_token(ui, PXSYS_COLOR_ERROR_CONTAINER), 0);
+        lv_obj_set_style_bg_opa(disc, LV_OPA_COVER, 0);
+        lv_obj_center(disc);
+        lv_obj_t* remove_icon = make_label(disc, LV_SYMBOL_CLOSE,
             typography_font(ui, PXSYS_TYPOGRAPHY_LABEL),
             color_token(ui, PXSYS_COLOR_ON_ERROR_CONTAINER));
         lv_obj_center(remove_icon);
+        lv_obj_add_event_cb(remove_button, launcher_gesture, LV_EVENT_ALL, item);
         lv_obj_add_event_cb(remove_button, launcher_remove_clicked,
                             LV_EVENT_CLICKED, item);
         if (!ui->launcher_editing)
@@ -3470,14 +3522,9 @@ static void build_home(pxsys_reference_lvgl_t* ui,
         ? (layout->content.height - (rows - 1u) * gap) / rows : 1u;
     pxsys_lvgl_add_flags(ui->content,
                     LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_set_scroll_dir(ui->content, LV_DIR_HOR);
-    lv_obj_set_scroll_momentum(ui->content, false);
-    lv_obj_set_scroll_elastic(ui->content, false);
-    lv_obj_set_scrollbar_mode(ui->content, LV_SCROLLBAR_MODE_OFF);
+    launcher_configure_paging(ui);
     lv_obj_add_event_cb(ui->content, launcher_background_clicked,
                         LV_EVENT_CLICKED, ui);
-    lv_obj_add_event_cb(ui->content, launcher_scroll_ended,
-                        LV_EVENT_SCROLL_END, ui);
 
     for (index = 0; index < pxsys_app_registry_count(registry) &&
                     ui->launcher_count < ui->max_launcher_apps; ++index) {
