@@ -261,6 +261,25 @@ static pxa_status_t ui_control(void *context, pxa_runtime_t *runtime,
             return pxa_ui_surface_open(service, entry, message);
         case PXA_UI_SURFACE_CLOSE:
             return pxa_ui_surface_close(service, entry, message);
+        case PXA_UI_TEXT_INPUT_FOCUS: {
+            const uint8_t *data = message->payload.data;
+            const pxa_ui_node_t *node;
+            if (message->request_id != 0 || message->payload.size != 12 ||
+                data[8] > 1 || data[9] || data[10] || data[11])
+                return PXA_STATUS_INVALID_ARGUMENT;
+            if (!(service->config.features & PXA_UI_FEATURE_TEXT_INPUT_CONTROL) ||
+                entry->backend.text_input_focus == NULL)
+                return PXA_STATUS_UNSUPPORTED;
+            node = pxa_ui_registry_find_const(entry, pxa_read_u32(data),
+                                               pxa_read_u32(data + 4));
+            if (node == NULL) return PXA_STATUS_NOT_FOUND;
+            if (node->type != PXA_UI_NODE_CONTROL ||
+                node->subtype != PXA_UI_CONTROL_TEXT_INPUT)
+                return PXA_STATUS_INVALID_ARGUMENT;
+            return entry->backend.text_input_focus(entry->backend.context,
+                                                    node->backend_handle,
+                                                    data[8] != 0);
+        }
         case PXA_UI_THEME_GET: {
             uint8_t payload[PXA_UI_THEME_WIRE_BYTES];
             pxa_status_t status;
@@ -313,7 +332,8 @@ pxa_status_t pxa_ui_bind(pxa_ui_service_t *service,
     pxa_ui_entry_t *entry;
     pxa_status_t status;
     if (!service_valid(service) || component == PXA_COMPONENT_INVALID ||
-        backend == NULL || backend->struct_size < sizeof(*backend) ||
+        backend == NULL ||
+        backend->struct_size < offsetof(pxa_ui_backend_t, text_input_focus) ||
         backend->begin == NULL || backend->apply == NULL ||
         backend->commit == NULL || backend->cancel == NULL ||
         ((service->config.features & PXA_UI_FEATURE_CANVAS) != 0 &&
@@ -325,7 +345,10 @@ pxa_status_t pxa_ui_bind(pxa_ui_service_t *service,
     if (entry == NULL) return PXA_STATUS_RESOURCE_LIMIT;
     memset(entry, 0, sizeof(*entry));
     entry->component = component;
-    entry->backend = *backend;
+    /* Accept the pre-0.7 backend prefix; the new hook remains null. */
+    memcpy(&entry->backend, backend, offsetof(pxa_ui_backend_t, text_input_focus));
+    if (backend->struct_size >= sizeof(*backend))
+        entry->backend.text_input_focus = backend->text_input_focus;
     entry->primary.id = PXA_UI_PRIMARY_SURFACE;
     entry->primary.occupied = 1;
     entry->primary.environment.surface = PXA_UI_PRIMARY_SURFACE;
@@ -460,7 +483,7 @@ pxa_status_t pxa_ui_queue_event(pxa_ui_service_t *service,
         value_size > PXA_MAX_CONTROL_MESSAGE - PXA_ENVELOPE_SIZE - 24u)
         return PXA_STATUS_INVALID_ARGUMENT;
     if (kind == PXA_UI_EVENT_TEXT &&
-        (value_size == 0 || value_size > PXA_UI_EVENT_TEXT_MAX_BYTES))
+        value_size > PXA_UI_EVENT_TEXT_MAX_BYTES)
         return PXA_STATUS_INVALID_ARGUMENT;
     if (kind == PXA_UI_EVENT_CONTROLLER_STATE &&
         ((service->config.features & PXA_UI_FEATURE_CONTROLLER_INPUT) == 0 ||

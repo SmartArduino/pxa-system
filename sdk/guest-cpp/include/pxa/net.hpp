@@ -7,6 +7,10 @@
 
 namespace pxa {
 
+// Explicit net.client scope for a user-approved browser/reader. Exact-origin
+// grants remain preferable for applications with a fixed server.
+inline constexpr std::string_view web_network_scope="web";
+
 enum class HttpMethod : std::uint16_t {
     get = 1, head = 2, post = 3, put = 4, patch = 5, delete_ = 6
 };

@@ -1,11 +1,11 @@
 {
-  "schema": "pxa-fs-spec-0.1",
+  "schema": "pxa-fs-spec-0.2",
   "status": "draft",
   "service": {
     "name": "fs",
     "id": 5,
     "major": 0,
-    "minor": 1,
+    "minor": 2,
     "patch": 0
   },
   "opcodes": [
@@ -61,6 +61,13 @@
       "request_id": "nonzero",
       "payload": "directory-handle:u32",
       "result": "entry-record-list"
+    },
+    {
+      "name": "replace",
+      "id": 8,
+      "direction": "guest-to-host",
+      "payload": "path record and destination record, as rename",
+      "rule": "Optional backend support: atomically move a regular file over another closed regular file within the private filesystem. Does not replace directories, links or open files. Failure preserves the previous destination; missing backend support returns unsupported. Both paths use the existing filesystem authority."
     }
   ],
   "open_flags": [

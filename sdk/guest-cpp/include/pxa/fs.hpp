@@ -211,13 +211,22 @@ public:
     Task<void> make_directory(std::string_view path) { return path_status(2, path); }
     Task<void> remove(std::string_view path) { return path_status(3, path); }
     Task<void> rename(std::string_view source, std::string_view destination) {
+        return move_path(4,source,destination);
+    }
+    // UI/fs Host 0.2: atomically publish a completed regular file, preserving
+    // the prior version on failure. Does not replace directories or open files.
+    Task<void> replace(std::string_view source, std::string_view destination) {
+        return move_path(8,source,destination);
+    }
+    Task<void> move_path(std::uint16_t opcode, std::string_view source,
+                         std::string_view destination) {
         if (!fs_detail::valid_path(source) || !fs_detail::valid_path(destination) ||
             source == destination)
             return fs_detail::failure<void>(Error::invalid_argument);
         fs_detail::Payload<518> payload;
         fs_detail::path_record(payload, 1, source);
         fs_detail::path_record(payload, 2, destination);
-        return fs_detail::status(transport_, requests_, 4, payload);
+        return fs_detail::status(transport_, requests_, opcode, payload);
     }
     Task<FileInfo> stat(std::string_view path) {
         if (!fs_detail::valid_path(path))

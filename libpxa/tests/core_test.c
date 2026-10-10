@@ -3613,6 +3613,7 @@ static void test_fs_service(void) {
     config.backend.make_directory = fs_mutation;
     config.backend.remove = fs_mutation;
     config.backend.rename = fs_rename;
+    config.backend.replace = fs_rename;
     config.backend.stat = fs_stat;
     config.backend.read = fs_read;
     config.backend.write = fs_write;
@@ -3746,6 +3747,11 @@ static void test_fs_service(void) {
                PXA_STATUS_INVALID_ARGUMENT &&
            backend.mutations == 0);
 
+    command_size = make_fs_path_request(command, sizeof(command), PXA_FS_REPLACE,
+                                        31, "notes/new", "notes/old");
+    (void)dispatch_control_completion(test.runtime, component, command, command_size,
+                                     event_bytes, sizeof(event_bytes), &event);
+    assert((int32_t)pxa_read_u32(event.payload.data) == PXA_STATUS_OK && backend.mutations == 1);
     command_size = make_fs_open(
         command, sizeof(command), 30, "notes/today.txt", PXA_FS_OPEN_READ);
     (void)dispatch_control_completion(
@@ -4816,7 +4822,7 @@ static void test_scheduler_sorted_load(void) {
     free(scheduler_workspace);
 }
 
-static void test_net_service(void) {
+static void test_net_service(int web_scope) {
     static const uint8_t identity[] = "net.app";
     static const uint8_t permission_name[] = "net.client";
     static const uint8_t origin[] = "https://example.test";
@@ -4909,7 +4915,7 @@ static void test_net_service(void) {
     memset(&permission_config, 0, sizeof(permission_config));
     declaration.name =
         (pxa_bytes_t){permission_name, sizeof(permission_name) - 1};
-    declaration.scope = (pxa_bytes_t){origin, sizeof(origin) - 1};
+    declaration.scope = web_scope ? (pxa_bytes_t){(const uint8_t *)"web", 3} : (pxa_bytes_t){origin, sizeof(origin) - 1};
     declaration.required = 1;
     permission_config.struct_size = sizeof(permission_config);
     permission_config.app_identity =
@@ -4967,7 +4973,7 @@ static void test_net_service(void) {
     command_size = make_permission_request(
         command, sizeof(command), PXA_PERMISSION_ACQUIRE, 51,
         permission_name, sizeof(permission_name) - 1,
-        origin, sizeof(origin) - 1);
+        declaration.scope.data, declaration.scope.size);
     (void)dispatch_control_completion(
         test.runtime, component, command, command_size, event_bytes,
         sizeof(event_bytes), &event);
@@ -4976,9 +4982,18 @@ static void test_net_service(void) {
     assert(pxa_permission_resolve(
                permission, component, permission_handle,
                (pxa_bytes_t){permission_name, sizeof(permission_name) - 1},
-               (pxa_bytes_t){origin, sizeof(origin) - 1},
+               declaration.scope,
                &authority) == PXA_STATUS_OK);
 
+    /* Reserved web authority is explicit and cannot be resolved as an origin.
+     * Existing origin authorities remain restricted to their exact scope. */
+    if (web_scope) {
+        assert(pxa_permission_resolve(permission, component, permission_handle,
+                   declaration.name, (pxa_bytes_t){origin,sizeof(origin)-1},
+                   &authority) == PXA_STATUS_DENIED);
+        assert(pxa_permission_resolve(permission, component, permission_handle,
+                   declaration.name, declaration.scope, &authority) == PXA_STATUS_OK);
+    }
     {
         uint8_t flood_payload[1024] = {0};
         pxa_writer_t flood_writer;
@@ -5134,7 +5149,7 @@ static void test_net_service(void) {
         command_size = make_permission_request(
             command, sizeof(command), PXA_PERMISSION_ACQUIRE, 81,
             permission_name, sizeof(permission_name) - 1,
-            origin, sizeof(origin) - 1);
+            declaration.scope.data, declaration.scope.size);
         (void)dispatch_control_completion(
             test.runtime, v1_component, command, command_size,
             event_bytes, sizeof(event_bytes), &event);
@@ -5675,7 +5690,8 @@ int main(void) {
     test_scheduler_service();
     test_empty_scheduler_service();
     test_scheduler_sorted_load();
-    test_net_service();
+    test_net_service(0);
+    test_net_service(1);
     test_audio_service();
     return 0;
 }

@@ -3,6 +3,7 @@
 #include "ui_wire.hpp"
 #include "ui_input.hpp"
 #include "canvas.hpp"
+#include "text_input.hpp"
 
 #include <bit>
 #include <charconv>
@@ -508,25 +509,47 @@ ProgressView<Source> Progress(Source& value, int minimum = 0,
     return {value, minimum, maximum};
 }
 
-template<class Source>
+struct NoInputSubmit {};
+struct NoInputRef {};
+
+template<class Source, class Submit = NoInputSubmit, bool HasRef = false>
 class TextInputView {
 public:
-    static constexpr Capacity capacity{1, 1, 1, 0, is_ref_v<Source> ? 1u : 0u};
-    explicit TextInputView(Source& value) : value_(value) {}
+    static constexpr bool has_submit = !std::same_as<Submit, NoInputSubmit>;
+    static constexpr Capacity capacity{1, 1, 1 + has_submit, 0,
+                                      (is_ref_v<Source> ? 1u : 0u) + HasRef};
+    explicit TextInputView(Source& value, Submit submit = {}, TextInputRef* ref = nullptr)
+        : value_(value), submit_(std::move(submit)) {
+        if constexpr (HasRef) ref_ = ref;
+    }
+    template<class Self, class F> auto on_submit(this Self&& self, F&& callback) {
+        TextInputRef* ref = nullptr;
+        if constexpr (HasRef) ref = self.ref_;
+        return TextInputView<Source, std::decay_t<F>, HasRef>(
+            self.value_, std::forward<F>(callback), ref);
+    }
 
     template<class Page> bool render(Page& page, std::uint32_t parent) {
         auto node = page.create(parent, protocol::control,
                                 protocol::text_input);
-        return node &&
+        if (!node) return false;
+        if constexpr (HasRef)
+            if (!ref_ || !page.attach_text_input(*ref_, node)) return false;
+        if constexpr (has_submit)
+            if (!page.on_click(node, submit_)) return false;
+        return
                page.transaction().fill(node, protocol::width) &&
                page.transaction().logical_px(node, protocol::height, 32) &&
                write_string_text(page.transaction(), node, value_.get()) &&
-               page.transaction().u64(node, protocol::event_mask, 1u << 5) &&
+               page.transaction().u64(node, protocol::event_mask,
+                                      (1u << 5) | (has_submit ? 1u : 0u)) &&
                page.template bind_source<std::string, write_string_text>(value_, node) &&
                page.on_text(node, value_);
     }
 private:
     Source& value_;
+    [[no_unique_address]] Submit submit_;
+    [[no_unique_address]] std::conditional_t<HasRef, TextInputRef*, NoInputRef> ref_;
 };
 
 template<class Source> requires
@@ -534,6 +557,13 @@ template<class Source> requires
      std::same_as<Source, Ref<std::string>>)
 TextInputView<Source> TextInput(Source& value) {
     return TextInputView<Source>(value);
+}
+
+template<class Source> requires
+    (std::same_as<Source, State<std::string>> ||
+     std::same_as<Source, Ref<std::string>>)
+TextInputView<Source, NoInputSubmit, true> TextInput(Source& value, TextInputRef& ref) {
+    return TextInputView<Source, NoInputSubmit, true>(value, {}, &ref);
 }
 
 enum class ImageFit : std::uint8_t { contain, stretch, cover };
@@ -1007,6 +1037,30 @@ public:
                     if (!ref.owner_ || ref.owner_ == owner) {
                         ref.owner_ = nullptr; ref.transport_ = nullptr;
                         ref.node_ = ref.frame_ = 0;
+                    }
+                }};
+            return true;
+        }
+    }
+
+    bool attach_text_input(TextInputRef& ref, std::uint32_t node) noexcept {
+        if constexpr (MaxRefs == 0) return fail(Error::resource_limit);
+        else {
+            if (ref.mounted() && ref.owner_ != this) return fail(Error::bad_state);
+            if (refs_.size == MaxRefs) return fail(Error::resource_limit);
+            for (std::size_t i = 0; i < refs_.size; ++i)
+                if (refs_.entries[i].object == &ref) return fail(Error::bad_state);
+            ref.node_ = node;
+            ref.transport_ = &transport_;
+            refs_.entries[refs_.size++] = {
+                &ref,
+                [](void* object, void* owner) noexcept {
+                    static_cast<TextInputRef*>(object)->owner_ = owner;
+                },
+                [](void* object, void* owner) noexcept {
+                    auto& ref = *static_cast<TextInputRef*>(object);
+                    if (!ref.owner_ || ref.owner_ == owner) {
+                        ref.owner_ = nullptr; ref.transport_ = nullptr; ref.node_ = 0;
                     }
                 }};
             return true;

@@ -93,7 +93,7 @@ static int config_valid(const pxa_fs_config_t *config) {
         return 0;
     }
     backend = &config->backend;
-    return backend->struct_size >= sizeof(*backend) && backend->open != NULL &&
+    return backend->struct_size >= offsetof(pxa_fs_backend_t, replace) && backend->open != NULL &&
            backend->make_directory != NULL && backend->remove != NULL &&
            backend->rename != NULL && backend->stat != NULL &&
            backend->read != NULL && backend->write != NULL &&
@@ -145,7 +145,9 @@ pxa_status_t pxa_fs_service_init(
     }
     memset(service, 0, sizeof(*service));
     service->runtime = runtime;
-    service->backend = config->backend;
+    memcpy(&service->backend, &config->backend, offsetof(pxa_fs_backend_t, replace));
+    if (config->backend.struct_size >= sizeof(config->backend))
+        service->backend.replace = config->backend.replace;
     service->authorization_context = config->authorization_context;
     service->authorize = config->authorize;
     service->slots = (pxa_fs_resource_slot_t *)cursor;
@@ -403,7 +405,8 @@ static pxa_status_t handle_path_operation(
     uint8_t *result, size_t *result_size) {
     pxa_fs_paths_t paths;
     pxa_status_t status;
-    status = parse_paths(message->payload, message->opcode == PXA_FS_RENAME,
+    status = parse_paths(message->payload, message->opcode == PXA_FS_RENAME ||
+                         message->opcode == PXA_FS_REPLACE,
                          0, &paths);
     if (status != PXA_STATUS_OK) return status;
     if (message->opcode == PXA_FS_MAKE_DIRECTORY) {
@@ -416,6 +419,11 @@ static pxa_status_t handle_path_operation(
     }
     if (message->opcode == PXA_FS_RENAME) {
         return pxa_status_normalize(service->backend.rename(
+            service->backend.context, paths.path, paths.destination));
+    }
+    if (message->opcode == PXA_FS_REPLACE) {
+        if (service->backend.replace == NULL) return PXA_STATUS_UNSUPPORTED;
+        return pxa_status_normalize(service->backend.replace(
             service->backend.context, paths.path, paths.destination));
     }
     if (message->opcode == PXA_FS_STAT) {
@@ -561,7 +569,7 @@ static pxa_status_t fs_control(void *context, pxa_runtime_t *runtime,
         return PXA_STATUS_INVALID_ARGUMENT;
     }
     if (message->opcode < PXA_FS_OPEN ||
-        message->opcode > PXA_FS_READ_DIRECTORY) {
+        message->opcode > PXA_FS_REPLACE) {
         return PXA_STATUS_UNSUPPORTED;
     }
     status = pxa_component_core_major(service->runtime, component,
@@ -594,7 +602,7 @@ static pxa_status_t fs_control(void *context, pxa_runtime_t *runtime,
                              &result_size, &opened_handle);
     } else if (status == PXA_STATUS_OK &&
                message->opcode >= PXA_FS_MAKE_DIRECTORY &&
-               message->opcode <= PXA_FS_STAT) {
+               (message->opcode <= PXA_FS_STAT || message->opcode == PXA_FS_REPLACE)) {
         status = handle_path_operation(service, message, result, &result_size);
     } else if (status == PXA_STATUS_OK && message->opcode == PXA_FS_SEEK) {
         status = handle_seek(service, component, core_major, message,

@@ -670,14 +670,15 @@ static pxa_status_t remove_backend(void *context, pxa_bytes_t path) {
     }
 }
 
-static pxa_status_t rename_backend(void *context, pxa_bytes_t source,
-                                   pxa_bytes_t destination) {
+static pxa_status_t move_backend(void *context, pxa_bytes_t source,
+                                 pxa_bytes_t destination, int replace) {
     pxa_posix_fs_t *fs = (pxa_posix_fs_t *)context;
     pxa_posix_path_split_t source_split;
     pxa_posix_path_split_t destination_split;
     int source_parent = -1;
     int destination_parent = -1;
     struct stat source_metadata;
+    struct stat destination_metadata;
     int source_exists = 0;
     int destination_exists = 0;
     int result;
@@ -719,7 +720,6 @@ static pxa_status_t rename_backend(void *context, pxa_bytes_t source,
         return PXA_STATUS_NOT_FOUND;
     }
     {
-        struct stat destination_metadata;
         if (fstatat(destination_parent,
                     destination_split.scratch +
                         destination_split.offset[destination_split.count - 1],
@@ -732,7 +732,9 @@ static pxa_status_t rename_backend(void *context, pxa_bytes_t source,
             return PXA_STATUS_DENIED;
         }
     }
-    if (destination_exists ||
+    if ((!replace && destination_exists) ||
+        (replace && (!safe_regular(&source_metadata) ||
+                      (destination_exists && !safe_regular(&destination_metadata)))) ||
         (!safe_regular(&source_metadata) &&
          !S_ISDIR(source_metadata.st_mode))) {
         close(source_parent);
@@ -740,7 +742,9 @@ static pxa_status_t rename_backend(void *context, pxa_bytes_t source,
         return destination_exists ? PXA_STATUS_BUSY : PXA_STATUS_DENIED;
     }
     if (S_ISREG(source_metadata.st_mode) &&
-        entry_is_open_regular(fs, (const char *)source.data, source.size)) {
+        (entry_is_open_regular(fs, (const char *)source.data, source.size) ||
+         (replace && destination_exists &&
+          entry_is_open_regular(fs, (const char *)destination.data, destination.size)))) {
         close(source_parent);
         close(destination_parent);
         return PXA_STATUS_BUSY;
@@ -755,8 +759,21 @@ static pxa_status_t rename_backend(void *context, pxa_bytes_t source,
         const int error = errno;
         close(source_parent);
         close(destination_parent);
+        if (result == 0 && replace && destination_exists) {
+            size_t released = (size_t)destination_metadata.st_size;
+            fs->usage = released <= fs->usage ? fs->usage - released : 0;
+        }
         return result == 0 ? PXA_STATUS_OK : status_from_errno(error);
     }
+}
+
+static pxa_status_t rename_backend(void *context, pxa_bytes_t source,
+                                   pxa_bytes_t destination) {
+    return move_backend(context,source,destination,0);
+}
+static pxa_status_t replace_backend(void *context, pxa_bytes_t source,
+                                    pxa_bytes_t destination) {
+    return move_backend(context,source,destination,1);
 }
 
 static pxa_status_t stat_backend(void *context, pxa_bytes_t path,
@@ -854,6 +871,7 @@ pxa_status_t pxa_posix_fs_init(void *workspace, size_t workspace_size,
     backend->make_directory = make_directory_backend;
     backend->remove = remove_backend;
     backend->rename = rename_backend;
+    backend->replace = replace_backend;
     backend->stat = stat_backend;
     backend->read = read_backend;
     backend->write = write_backend;

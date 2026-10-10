@@ -366,6 +366,17 @@ static pxa_status_t net_control(void *context, pxa_runtime_t *runtime,
                 (pxa_bytes_t){permission_name, sizeof(permission_name) - 1},
                 parsed.request.origin, &authority);
     }
+    if (status == PXA_STATUS_DENIED) {
+        static const uint8_t web_scope[] = "web";
+        if (core_major == 1)
+            status = pxa_permission_resolve64(service->permissions,component,
+                parsed.permission_handle,(pxa_bytes_t){permission_name,sizeof(permission_name)-1},
+                (pxa_bytes_t){web_scope,sizeof(web_scope)-1},&authority);
+        else
+            status = pxa_permission_resolve(service->permissions,component,
+                (pxa_handle_t)parsed.permission_handle,(pxa_bytes_t){permission_name,sizeof(permission_name)-1},
+                (pxa_bytes_t){web_scope,sizeof(web_scope)-1},&authority);
+    }
     begin = pxa_request_begin_reserved(
         service->runtime, component, message->request_id,
         PXA_NET_SERVICE_ID, message->opcode,

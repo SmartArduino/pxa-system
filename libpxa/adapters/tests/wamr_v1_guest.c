@@ -25,6 +25,8 @@ int32_t pxa_app_start(const uint8_t *config, uint32_t size) {
     uint8_t surface_packet[PXA_HEADER_BYTES + 8u];
     uint32_t surface_size = 0;
     uint8_t ui_packet[PXA_HEADER_BYTES];
+    uint8_t focus_packet[PXA_HEADER_BYTES + 12u];
+    uint8_t focus_payload[12]={1,0,0,0,2,0,0,0,1,0,0,0};
     uint32_t ui_size = 0;
     uint8_t store_packet[64];
     pxa_net_request_t net_request = {0};
@@ -64,6 +66,10 @@ int32_t pxa_app_start(const uint8_t *config, uint32_t size) {
                                     UINT64_C(0x123456789abcdee8),
                                     &ui_size) ||
         pxa_submit(ui_packet, ui_size) != -3) return -1;
+    /* The mock rejects this, but the v1 adapter must route it to UI. */
+    if (!pxa_build_message(focus_packet,sizeof(focus_packet),PXA_UI_SERVICE,
+            12,0,focus_payload,sizeof(focus_payload),&ui_size) ||
+        pxa_submit(focus_packet,ui_size) != -3) return -1;
     if (!pxa_store_send(PXA_STORE_DOWNLOAD_REQUEST, STORE_TOKEN,
                         NULL, 0, store_packet, sizeof(store_packet)))
         return -1;

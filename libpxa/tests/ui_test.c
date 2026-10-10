@@ -32,6 +32,9 @@ typedef struct {
     unsigned surface_opens;
     unsigned surface_closes;
     unsigned environment_changes;
+    unsigned input_focus_changes;
+    void *focused_handle;
+    bool focused;
     int reject_commit;
     int reject_canvas;
     pxa_ui_transaction_info_t transaction;
@@ -39,6 +42,14 @@ typedef struct {
     pxa_ui_release_fn canvas_release;
     void *canvas_release_context;
 } backend_state_t;
+
+static pxa_status_t backend_input_focus(void *context, void *node, bool focused) {
+    backend_state_t *state = context;
+    ++state->input_focus_changes;
+    state->focused_handle = node;
+    state->focused = focused;
+    return PXA_STATUS_OK;
+}
 
 static uint64_t test_now_us(void *context) {
     uint64_t *clock = (uint64_t *)context;
@@ -357,6 +368,65 @@ static void test_initial_tree(pxa_runtime_t *runtime,
     free(stream.data);
 }
 
+static void test_text_input_focus(pxa_runtime_t *runtime,
+                                  pxa_component_t component,
+                                  backend_state_t *backend) {
+    bytes_t stream = {0};
+    uint8_t focus[12] = {0};
+    uint8_t mask[8] = {0};
+    create_node(&stream, 5, 2, PXA_UI_NODE_CONTROL, PXA_UI_CONTROL_TEXT_INPUT);
+    pxa_write_u64(mask, UINT64_C(1) << (PXA_UI_EVENT_TEXT - 1u));
+    set_property(&stream, 5, PXA_UI_PROPERTY_EVENT_MASK, mask, sizeof(mask));
+    assert(begin(runtime, component, 8, 2, 0, PXA_UI_PATCH) == PXA_STATUS_OK);
+    assert(write_stream(runtime, component, 8, &stream) == PXA_STATUS_OK);
+    assert(commit(runtime, component, 8) == PXA_STATUS_OK);
+    pxa_write_u32(focus, 1);
+    pxa_write_u32(focus + 4, 5);
+    focus[8] = 1;
+    assert(control(runtime, component, PXA_UI_TEXT_INPUT_FOCUS, focus, 12) ==
+           PXA_STATUS_OK);
+    assert(backend->input_focus_changes == 1 && backend->focused &&
+           backend->focused_handle == (void *)(uintptr_t)6);
+    focus[8] = 0;
+    assert(control(runtime, component, PXA_UI_TEXT_INPUT_FOCUS, focus, 12) ==
+           PXA_STATUS_OK);
+    assert(!backend->focused);
+    focus[9] = 1;
+    assert(control(runtime, component, PXA_UI_TEXT_INPUT_FOCUS, focus, 12) ==
+           PXA_STATUS_INVALID_ARGUMENT);
+    focus[9] = 0;
+    focus[8] = 2;
+    assert(control(runtime, component, PXA_UI_TEXT_INPUT_FOCUS, focus, 12) ==
+           PXA_STATUS_INVALID_ARGUMENT);
+    focus[8] = 1;
+    assert(control(runtime, component, PXA_UI_TEXT_INPUT_FOCUS, focus, 11) ==
+           PXA_STATUS_INVALID_ARGUMENT);
+    pxa_write_u32(focus + 4, 4); /* A button is not an editor. */
+    assert(control(runtime, component, PXA_UI_TEXT_INPUT_FOCUS, focus, 12) ==
+           PXA_STATUS_INVALID_ARGUMENT);
+    pxa_write_u32(focus + 4, 500);
+    assert(control(runtime, component, PXA_UI_TEXT_INPUT_FOCUS, focus, 12) ==
+           PXA_STATUS_NOT_FOUND);
+    pxa_write_u32(focus, 500); /* Cannot address another surface/component. */
+    pxa_write_u32(focus + 4, 5);
+    assert(control(runtime, component, PXA_UI_TEXT_INPUT_FOCUS, focus, 12) ==
+           PXA_STATUS_NOT_FOUND);
+    assert(backend->input_focus_changes == 2);
+    free(stream.data);
+}
+
+static void test_empty_text(pxa_runtime_t *runtime, pxa_component_t component,
+                           pxa_ui_service_t *service) {
+    assert(pxa_ui_queue_event(service, component, 1, 5, PXA_UI_EVENT_TEXT,
+        PXA_UI_EVENT_FLAG_RELIABLE, 123, NULL, 0) == PXA_STATUS_OK);
+    uint8_t message[64];
+    size_t size = 0;
+    pxa_message_view_t decoded;
+    assert(pxa_event_pop(runtime,component,message,sizeof(message),&size) == PXA_STATUS_OK);
+    assert(pxa_message_decode(message,size,sizeof(message),&decoded) == PXA_STATUS_OK);
+    assert(decoded.payload.size == 24 && pxa_read_u16(decoded.payload.data + 12) == PXA_UI_EVENT_TEXT);
+}
+
 static void test_atomic_patch(pxa_runtime_t *runtime,
                               pxa_component_t component,
                               pxa_ui_service_t *service,
@@ -415,6 +485,20 @@ static void test_canvas_image_validation(void) {
     image[21] = 0;
     pxa_write_u64(image + 22,0);
     assert(pxa_ui_validate_canvas(PXA_UI_FEATURE_CANVAS,image,sizeof(image)) == PXA_STATUS_INVALID_ARGUMENT);
+}
+
+static void test_canvas_sized_text_validation(void) {
+    uint8_t text[31]={PXA_UI_CANVAS_TEXT_SIZED};
+    pxa_write_u16(text+2,27);pxa_write_u32(text+12,80);pxa_write_u32(text+16,32);
+    pxa_write_u16(text+24,16);memcpy(text+28,"\xe4\xb9\xa6",3);
+    pxa_ui_features_t features=PXA_UI_FEATURE_CANVAS|PXA_UI_FEATURE_SIZED_TEXT;
+    assert(pxa_ui_validate_canvas(features,text,sizeof(text))==PXA_STATUS_OK);
+    assert(pxa_ui_validate_canvas(PXA_UI_FEATURE_CANVAS,text,sizeof(text))==PXA_STATUS_UNSUPPORTED);
+    for(unsigned i=0;i<2;++i){pxa_write_u16(text+24,i?129:7);assert(pxa_ui_validate_canvas(features,text,sizeof(text))==PXA_STATUS_INVALID_ARGUMENT);}
+    pxa_write_u16(text+24,128);assert(!pxa_ui_validate_canvas(features,text,sizeof(text)));
+    text[26]=3;assert(pxa_ui_validate_canvas(features,text,sizeof(text))==PXA_STATUS_INVALID_ARGUMENT);text[26]=0;
+    text[27]=1;assert(pxa_ui_validate_canvas(features,text,sizeof(text))==PXA_STATUS_INVALID_ARGUMENT);text[27]=0;
+    text[28]=0xff;assert(pxa_ui_validate_canvas(features,text,sizeof(text))==PXA_STATUS_INVALID_ARGUMENT);
 }
 
 static void test_canvas_bitmap_validation(void) {
@@ -938,7 +1022,8 @@ int main(void) {
                       PXA_UI_FEATURE_RGB565_BITMAP |
                       PXA_UI_FEATURE_CONTROLLER_INPUT |
                       PXA_UI_FEATURE_MULTIPLE_SURFACES |
-                      PXA_UI_FEATURE_CANVAS_STREAM_IO;
+                      PXA_UI_FEATURE_CANVAS_STREAM_IO |
+                      PXA_UI_FEATURE_TEXT_INPUT_CONTROL;
     config.allocator_context = &allocator;
     config.allocate = test_allocate;
     config.release = test_release;
@@ -977,6 +1062,7 @@ int main(void) {
     backend.surface_open = backend_surface_open;
     backend.surface_close = backend_surface_close;
     backend.environment_changed = backend_environment_changed;
+    backend.text_input_focus = backend_input_focus;
     assert(pxa_ui_bind(service, component, &backend) == PXA_STATUS_OK);
     assert(pxa_ui_get_environment(service, component, PXA_UI_PRIMARY_SURFACE,
                                   &primary_environment) == PXA_STATUS_OK);
@@ -995,6 +1081,7 @@ int main(void) {
     test_atomic_patch(runtime, component, service, &backend_state);
     test_invalid_utf8(runtime, component, &backend_state);
     test_canvas_image_validation();
+    test_canvas_sized_text_validation();
     test_canvas_bitmap_validation();
     test_canvas(runtime, component, service, &backend_state);
     assert(pxa_component_finish_start(runtime, component, PXA_STATUS_OK) ==
@@ -1062,6 +1149,21 @@ int main(void) {
     assert(backend_state.resets == 1);
     assert(backend_state.surface_closes == 2);
     assert(allocator.current == 0);
+    {
+        pxa_component_t editor_component = PXA_COMPONENT_INVALID;
+        memset(&backend_state, 0, sizeof(backend_state));
+        assert(pxa_component_create(runtime, 3, &editor_component) == PXA_STATUS_OK);
+        assert(pxa_ui_bind(service, editor_component, &backend) == PXA_STATUS_OK);
+        assert(pxa_component_begin_start(runtime, editor_component) == PXA_STATUS_OK);
+        test_initial_tree(runtime, editor_component, service, &backend_state);
+        test_text_input_focus(runtime, editor_component, &backend_state);
+        assert(pxa_component_finish_start(runtime, editor_component, PXA_STATUS_OK) == PXA_STATUS_OK);
+        test_empty_text(runtime, editor_component, service);
+        assert(pxa_component_request_stop(runtime, editor_component, PXA_STOP_NORMAL) == PXA_STATUS_OK);
+        assert(pxa_component_begin_stop(runtime, editor_component) == PXA_STATUS_OK);
+        assert(pxa_component_finish_stop(runtime, editor_component) == PXA_STATUS_OK);
+        assert(allocator.current == 0);
+    }
     {
         pxa_component_t v1_component = PXA_COMPONENT_INVALID;
         uint8_t event[128];

@@ -159,6 +159,34 @@ auto updated = score.update([](int value) { return value + 1; });
 同一视图片段不能把一个 `Ref` 挂载到两个节点。`Ref` 必须比引用它的页面存活更久；
 要在隐藏页面期间修改共享数据，应使用 `State<T>` 作为应用模型。
 
+`TextInput(value)` 在完整系统中点击后会弹出系统输入法。需要主动打开或
+关闭时，使用 `<pxa/text_input.hpp>` 的 `TextInputRef`：
+
+```cpp
+State<std::string> query{""};
+TextInputRef editor;  // 比 Page 活得久
+// view 内：TextInput(query, editor).on_submit([this] { search(); })
+// 已挂载、前台可见时：
+auto opened = editor.show_keyboard();
+auto closed = editor.hide_keyboard();
+```
+
+`show_keyboard`/`hide_keyboard` 不分配堆内存；未挂载返回 `bad_state`。
+Host 必须支持 UI 0.7 的 `text-input-control` 特性，否则返回 `unsupported`。
+只有所属应用的可见、启用输入框可以请求打开；切换输入框会取消原焦点。
+系统在 UI 轮询中异步显示或收起键盘，当前轮询周期为 200 ms。成功返回表示
+焦点请求已接受，不保证该调用返回时键盘动画已完成。
+`.on_submit` 在系统输入法确认文本时调用；内容变化仍由 `State<std::string>` 接收。
+清空会传递空字符串。当前 UI 文本事件最多 64 个 UTF-8 字节（约 21 个汉字），
+超限按完整字形边界截取；较长的书源地址请使用短链接。该限制尚未扩展。
+输入框卸载、删除或退到后台后，系统会收起键盘。
+
+键盘复用系统拼音词典、中文/英文/数字/符号模式、字号与主题色。应用不会复制
+词典，也不能通过本接口覆盖系统键盘配色。系统浅色/深色或主色改变时，已打开
+的键盘、候选面板与符号页会一起更新并保留输入内容；阅读器自身的纸张配色
+可以与系统主题独立。`examples/system-input` 演示打开、关闭和提交。
+独立 `product` 模拟器没有系统输入法层，应使用完整 `ui` 模拟器或真机验证。
+
 运行中的 UI 提交失败会保留页面，并调用可选的
 `void on_error(Context&, Error)`；没有钩子时输出错误日志。容量不足等
 可恢复错误不会使 Host 停止应用，可以在后续事件重试；协议错误仍返回
@@ -600,3 +628,8 @@ WASI SDK 34 链接 libc++ 后，当前最小应用也会导入 `clock_time_get`�
 外部内存的压力。调用方决定查询时机与失败策略；此头文件不增加队列或常驻状态。
 背压只跳过绘制，固定步长更新和输入仍应继续；FPS 和自适应视距需累计跳过的
 绘制 tick 时间，不能仅用提交成功的 tick 间隔。实际显示速度应由 Host 完成计数验证。
+
+`ctx.fs().replace(temporary, destination)`（FS 0.2）可原子发布已关闭的普通文件，
+用于书架、存档或下载缓存。失败保留原目标；不替换目录、链接或打开的文件。
+`rename` 仍要求目标不存在。先完成写入、调用 `File::close()`，再 `co_await replace`；
+不要用“删除旧文件再重命名”模拟原子保存。Host 不支持时返回 `unsupported`。

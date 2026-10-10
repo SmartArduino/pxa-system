@@ -80,3 +80,11 @@ the successful open result. Removing a closed regular file releases its size.
 No FS v1 operation recursively removes a tree. A failed request makes no
 partial protocol-visible result. A Host may report `resource-limit` before
 opening a file when its component or App file-handle limit is exhausted.
+
+FS 0.2 adds optional `replace` (opcode 8), with the same path records as `rename`.
+It atomically publishes a completed regular file over a closed regular file in
+its private filesystem, or into an absent destination. Directories, links and
+open source/destination files are rejected. Failure leaves the old destination
+intact. A backend without replacement support returns `unsupported`. The POSIX
+and ESP LittleFS adapters use the filesystem rename operation and subtract the
+replaced file from disk quota usage after success. No body buffer is allocated.

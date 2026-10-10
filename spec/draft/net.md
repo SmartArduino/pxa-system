@@ -1,12 +1,21 @@
 # PXA Network Draft 0.1
 
-Network service 0.2.0 provides bounded, Host-managed HTTP(S) requests. Opcode 1 is
+Network service 0.3.0 provides bounded, Host-managed HTTP(S) requests. Opcode 1 is
 the frozen v1.0 GET operation. Opcode 2 adds GET, HEAD, POST, PUT, PATCH and
 DELETE, bounded request headers and inline bodies, per-request timeouts,
 selected response headers, response length metadata and optional response
-streams. A 0.2 Host must continue accepting the 0.1 wire format unchanged.
+streams. Version 0.3 adds the explicitly granted `web` authority below. A 0.3 Host must continue accepting the 0.1 wire format unchanged.
 
 ## Security and URL model
+
+Version 0.3 additionally accepts the exact reserved scope `web` for
+`net.client`. The signed manifest must declare that scope and Host policy must
+grant it; a handle acquired for `web` permits any validated HTTP(S) URL. It is
+intended for clients that let users add servers, such as readers. It is not a
+wildcard Permission matcher: every other service and origin remains exact.
+An origin-bound handle cannot become a `web` handle. Missing, wrong-service,
+stale or revoked handles remain rejected, including under the 64-bit Core v1
+binding. Redirects still require a new explicit request.
 
 Every request carries a live `net.client` Permission Handle. Its scope must
 equal the parsed URL origin byte for byte, for example `https://example.test`

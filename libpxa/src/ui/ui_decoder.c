@@ -380,6 +380,16 @@ pxa_status_t pxa_ui_validate_canvas(pxa_ui_features_t features,
                     !utf8_valid(value + 18, length - 18u))
                     return PXA_STATUS_INVALID_ARGUMENT;
                 break;
+            case PXA_UI_CANVAS_TEXT_SIZED:
+                if ((features & PXA_UI_FEATURE_SIZED_TEXT) == 0)
+                    return PXA_STATUS_UNSUPPORTED;
+                if (length < 24 || pxa_read_u32(value + 8) == 0 ||
+                    pxa_read_u32(value + 12) == 0 ||
+                    pxa_read_u16(value + 20) < 8 ||
+                    pxa_read_u16(value + 20) > 128 || value[22] > 2 ||
+                    value[23] != 0 || !utf8_valid(value + 24, length - 24u))
+                    return PXA_STATUS_INVALID_ARGUMENT;
+                break;
             case PXA_UI_CANVAS_TEXT_BOX:
                 if (length < 24 || pxa_read_u32(value + 8) == 0 ||
                     pxa_read_u32(value + 12) == 0 || value[20] > 3 ||

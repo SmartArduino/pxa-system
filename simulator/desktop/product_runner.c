@@ -3275,6 +3275,10 @@ static int run_product_simulator(const options_t *input,
         PXA_UI_FEATURE_RGB565_BITMAP |
         PXA_UI_FEATURE_CONTROLLER_INPUT | PXA_UI_FEATURE_MULTIPLE_SURFACES |
         PXA_UI_FEATURE_CANVAS_STREAM_IO;
+    if (!owns_display) ui_config.features |= PXA_UI_FEATURE_TEXT_INPUT_CONTROL;
+#ifdef PXSYS_DESKTOP_TEXT_FONT
+    ui_config.features |= PXA_UI_FEATURE_SIZED_TEXT;
+#endif
     ui_config.primary_width = options.width; ui_config.primary_height = options.height;
     ui_config.density_q16 = (uint32_t)((((uint64_t)
         (options.density_dpi ? options.density_dpi : 160u) << 16) + 80u) / 160u);
@@ -3385,7 +3389,7 @@ static int run_product_simulator(const options_t *input,
     posix_fs_config.struct_size = sizeof(posix_fs_config);
     posix_fs_config.root_path = fs_path;
     /* Match pai-touch's logical disk quota; this does not reserve memory. */
-    posix_fs_config.quota_bytes = 1024u * 1024u;
+    posix_fs_config.quota_bytes = 8u * 1024u * 1024u;
     posix_fs_config.max_open_resources = 16;
     fs_backend_workspace = malloc(pxa_posix_fs_workspace_size(&posix_fs_config));
     if (fs_backend_workspace == NULL ||
@@ -3499,6 +3503,9 @@ static int run_product_simulator(const options_t *input,
     lvgl_config.theme.display_font = host.display_font != NULL
                                          ? host.display_font
                                          : lvgl_config.theme.title_font;
+#ifdef PXSYS_DESKTOP_TEXT_FONT
+    lvgl_config.sized_text_font_path=PXSYS_DESKTOP_TEXT_FONT;
+#endif
     lvgl_workspace = malloc(pxa_lvgl_ui_workspace_size());
     if (lvgl_workspace == NULL || pxa_lvgl_ui_init(lvgl_workspace,
         pxa_lvgl_ui_workspace_size(), &lvgl_config, &lvgl_ui, &ui_backend) != PXA_STATUS_OK)
@@ -3768,9 +3775,7 @@ static int run_product_simulator(const options_t *input,
     capabilities[0].service = PXA_SERVICE_CORE; capabilities[0].version.major = 0; capabilities[0].version.minor = 1;
     capabilities[1].service = PXA_WINDOW_SERVICE_ID; capabilities[1].version.major = PXA_WINDOW_SERVICE_MAJOR; capabilities[1].version.minor = PXA_WINDOW_SERVICE_MINOR;
     capabilities[2].service = PXA_UI_SERVICE_ID; capabilities[2].version.major = PXA_UI_SERVICE_MAJOR; capabilities[2].version.minor = PXA_UI_SERVICE_MINOR;
-    capabilities[2].features = PXA_UI_FEATURE_CANVAS |
-                              PXA_UI_FEATURE_CANVAS_STREAM_IO |
-                              PXA_UI_FEATURE_GRID;
+    capabilities[2].features = ui_config.features;
     capabilities[3].service = PRODUCT_CLOCK_SERVICE; capabilities[3].version.major = 0; capabilities[3].version.minor = 1;
     capabilities[4].service = PXA_AUDIO_SERVICE_ID; capabilities[4].version.major = PXA_AUDIO_SERVICE_MAJOR; capabilities[4].version.minor = PXA_AUDIO_SERVICE_MINOR;
     capabilities[5].service = PXA_PERMISSION_SERVICE_ID; capabilities[5].version.major = 0; capabilities[5].version.minor = 1;
@@ -4090,6 +4095,7 @@ int pxsys_product_simulator_run_embedded(const char *package_path,
         .locale = locale,
         .width = width,
         .height = height,
+        .density_dpi = host_display != NULL ? host_display->density_dpi : 160u,
     };
     return run_product_simulator(&options, display, parent, pump, pump_context,
                                  window_changed, window_context, control_bind,

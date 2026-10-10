@@ -99,4 +99,39 @@ int main() {
            !progress_ref.mounted() && !input_ref.mounted());
     assert(!toggle_ref.set(false) && !slider_ref.set(1) &&
            !progress_ref.set(1) && !input_ref.set("Gone"));
+
+    TextInputRef editor;
+    assert(!editor.mounted() && !editor.show_keyboard());
+    static_assert(sizeof(TextInput(name)) == sizeof(void*));
+    unsigned submitted = 0;
+    {
+        auto inputs = Page(transport, TextInput(name, editor).on_submit(
+            [&submitted] { ++submitted; }));
+        static_assert(decltype(inputs)::ref_capacity == 1);
+        static_assert(decltype(inputs)::handler_capacity == 2);
+        assert(inputs.mount() && editor.mounted());
+        assert(editor.show_keyboard());
+        auto focus = packets.back();
+        assert(pxa::wire::get16(focus.data()) == 3);
+        assert(pxa::wire::get16(focus.data() + 2) == 12);
+        assert(focus.size() == pxa::wire::header_bytes + 12);
+        const auto* payload = focus.data() + pxa::wire::header_bytes;
+        assert(pxa::wire::get32(payload) == 1);
+        assert(pxa::wire::get32(payload + 4) == 2 && payload[8] == std::byte{1});
+        assert(editor.hide_keyboard());
+        assert(packets.back()[pxa::wire::header_bytes + 8] == std::byte{0});
+        auto conflicting = Page(transport, TextInput(name, editor));
+        assert(!conflicting.mount() && editor.mounted());
+        assert(inputs.handle(event(2, inputs.generation(), 6, text)));
+        assert(name.get() == "Bob");
+        assert(inputs.handle(event(2, inputs.generation(), 6, {})));
+        assert(name.get().empty());
+        assert(inputs.handle(event(2, inputs.generation(), 1, {})) && submitted == 1);
+    }
+    assert(!editor.mounted() && !editor.hide_keyboard());
+    {
+        auto duplicate = Page(transport, Column(TextInput(name, editor),
+                                                TextInput(name, editor)));
+        assert(!duplicate.mount() && !editor.mounted());
+    }
 }

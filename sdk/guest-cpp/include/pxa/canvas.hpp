@@ -60,6 +60,21 @@ public:
         }
         return *this;
     }
+    // Optional Host feature SIZED_TEXT (bit 11). One clipped line; size is native Surface pixels.
+    CanvasCommands& text_sized(CanvasRegion box, std::uint32_t rgba,
+        std::string_view value, std::uint16_t size_pixels, std::uint8_t align=0) noexcept {
+        if (box.width <= 0 || box.height <= 0 || size_pixels < 8 || size_pixels > 128 ||
+            align > 2 || value.size() > UINT16_MAX-24)
+            return fail(Error::invalid_argument);
+        auto out=record(12, static_cast<std::uint16_t>(24+value.size()));
+        if (!out.empty()) {
+            coordinates(out.data(),box.x,box.y,box.width,box.height);
+            wire::put32(out.data()+16,rgba);wire::put16(out.data()+20,size_pixels);
+            out[22]=std::byte(align);
+            std::copy(value.begin(),value.end(),reinterpret_cast<char*>(out.data()+24));
+        }
+        return *this;
+    }
     CanvasCommands& clip(CanvasRegion region) noexcept {
         if (region.width <= 0 || region.height <= 0)
             return fail(Error::invalid_argument);

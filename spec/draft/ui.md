@@ -1,6 +1,6 @@
-# PXA UI Service 0.3.0
+# PXA UI Service 0.7.0
 
-UI 0.3 is a backend-neutral command protocol. The Host owns the rendered tree;
+UI is a backend-neutral command protocol. The Host owns the rendered tree;
 the service does not retain a second property-complete scene. A Component has a
 primary Surface with ID 1 and may request more Surfaces when the corresponding
 feature is available.
@@ -161,7 +161,9 @@ starts on one of its children, and the event carries the subscribing node.
 
 A text event (`kind` 6) carries the current UTF-8 text of a text input as its
 payload, with no terminator and at most `PXA_UI_EVENT_TEXT_MAX_BYTES` (64)
-bytes. It is reliable, so a Host never coalesces two edits, and it is emitted
+bytes. Empty text is valid and clears the Guest value. Hosts truncate oversized
+text only at UTF-8 character boundaries. It is reliable, so a Host never
+coalesces two edits, and it is emitted
 whenever the text changes - including when a Guest writes the text itself. A
 Host that presents a system input method delivers its result through these
 events, so a Guest that wants the system keyboard only has to render a text
@@ -169,6 +171,33 @@ input, subscribe to the text mask and follow the text events. Resource pressure 
 `constrained`, `critical`); raw free-memory values are not application ABI.
 
 ## Core 1 preview binding
+
+### Optional text input control (0.7)
+
+`text-input-control` is feature bit 12. `TEXT_INPUT_FOCUS` (opcode 12) uses
+`surface:u32 | node:u32 | focused:u8 | reserved:u8[3]`, with a zero envelope
+token. Reserved bytes must be zero and focused must be 0 or 1. The target must
+be a committed Control/TextInput owned by the calling Component. Opening a
+hidden or disabled target is denied. Unavailable backends return unsupported.
+The LVGL adapter keeps one focused app input without allocating another tree.
+
+Focus requests select or blur a native input. The system shell presents the
+input method asynchronously; successful submission does not mean that its
+keyboard is already visible. The reference shell polls at 200 ms. Keyboard,
+dictionary and semantic theme roles belong to the Host; a Guest need not ship
+them. Closing or deleting the target also dismisses its input method. Text
+change and submitted events retain their existing wire format.
+
+### Optional sized Canvas text (0.6)
+
+`sized-text` is feature bit 11. Canvas primitive 12 accepts a logical-pixel box,
+a native-pixel font size from 8 through 128, alignment 0 through 2 and UTF-8
+text, as defined in `pxa-ui.json`. The box follows normal DPI conversion; the
+font size already represents the desired native pixels and is not scaled
+again. The LVGL backend creates fonts only when used and retains at most 16
+sizes per adapter. Font creation failure leaves the previous Canvas committed.
+
+### Envelope and resources
 
 The `pxa.core.v1` binding keeps transaction, Canvas, Surface and event record
 payloads unchanged. UI Surface and node IDs remain `u32` logical identifiers;

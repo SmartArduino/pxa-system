@@ -139,7 +139,7 @@ static size_t desktop_net_header_cb(char *data, size_t size, size_t count,
     while (value_size != 0 &&
            (value[value_size - 1] == '\r' || value[value_size - 1] == '\n'))
         --value_size;
-    if ((size_t)(colon - data) == 10u &&
+    if ((size_t)(colon - data) == 12u &&
         strncasecmp(data, "Content-Type", 12u) == 0) {
         if (value_size >= sizeof(slot->content_type))
             value_size = sizeof(slot->content_type) - 1u;
@@ -157,8 +157,12 @@ static size_t desktop_net_header_cb(char *data, size_t size, size_t count,
             slot->header_overflow = 1;
             return bytes;
         }
-        memcpy(slot->header_storage + slot->header_storage_size, data,
-               name_size);
+        /* HTTP names are case-insensitive; PXA's wire names are lowercase. */
+        for (size_t i = 0; i < name_size; ++i) {
+            unsigned char c = (unsigned char)data[i];
+            slot->header_storage[slot->header_storage_size + i] =
+                (char)(c >= 'A' && c <= 'Z' ? c + ('a' - 'A') : c);
+        }
         header->name.data =
             (const uint8_t *)(slot->header_storage + slot->header_storage_size);
         header->name.size = name_size;

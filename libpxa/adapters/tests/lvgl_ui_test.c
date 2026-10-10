@@ -811,6 +811,57 @@ static void test_viewport_density(void) {
     puts("LVGL viewport lengths: 50vw/50vh stay 160x120 at 160/240/305/480 DPI OK");
 }
 
+static void test_text_input_focus(void) {
+    allocator_state_t allocator={0};
+    pxa_lvgl_ui_config_t config={0};
+    config.struct_size=sizeof(config);config.allocate=test_allocate;config.release=test_release;
+    config.allocator_context=&allocator;config.execute=sync_execute;config.execute_user_data=&allocator;
+    config.primary_environment.width=320;config.primary_environment.height=240;
+    config.primary_environment.surface=PXA_UI_PRIMARY_SURFACE;
+    config.primary_environment.density_q16=65536;
+    pxa_lvgl_ui_theme_init(&config.theme);
+    void *workspace=malloc(pxa_lvgl_ui_workspace_size()), *handles[3]={0}, *transaction=NULL;
+    pxa_lvgl_ui_t *adapter=NULL;pxa_ui_backend_t backend;
+    assert(workspace&&!pxa_lvgl_ui_init(workspace,pxa_lvgl_ui_workspace_size(),&config,&adapter,&backend));
+    pxa_ui_transaction_info_t info={.surface=1,.generation=1,.kind=PXA_UI_REPLACE_SURFACE};
+    assert(!backend.begin(backend.context,&info,&transaction));
+    for(unsigned i=0;i<3;++i) {
+        pxa_ui_command_view_t command={.command=PXA_UI_COMMAND_CREATE,.node=i+1,
+            .parent=i?1:0,.parent_handle=i?handles[0]:NULL,.type=i?PXA_UI_NODE_CONTROL:PXA_UI_NODE_ROOT,
+            .subtype=i?PXA_UI_CONTROL_TEXT_INPUT:0};
+        assert(!backend.apply(backend.context,transaction,&command,&handles[i]));
+        uint8_t size[8]={PXA_UI_LENGTH_LOGICAL_PX};
+        command.command=PXA_UI_COMMAND_SET_PROPERTY;
+        command.node_handle=handles[i];command.value=(pxa_bytes_t){size,8};
+        command.property=PXA_UI_PROPERTY_WIDTH;
+        pxa_write_u32(size+4,(i?100:320)*64);
+        assert(!backend.apply(backend.context,transaction,&command,NULL));
+        command.property=PXA_UI_PROPERTY_HEIGHT;
+        pxa_write_u32(size+4,(i?32:240)*64);
+        assert(!backend.apply(backend.context,transaction,&command,NULL));
+    }
+    assert(!backend.commit(backend.context,transaction));
+    lv_obj_t *root=lv_obj_get_child(lv_screen_active(),0);
+    lv_obj_t *a=lv_obj_get_child(root,0), *b=lv_obj_get_child(root,1);
+    size_t resident=allocator.current;
+    assert(!backend.text_input_focus(backend.context,handles[1],true));
+    assert(lv_obj_has_state(a,LV_STATE_FOCUSED));
+    assert(!backend.text_input_focus(backend.context,handles[2],true));
+    assert(!lv_obj_has_state(a,LV_STATE_FOCUSED) && lv_obj_has_state(b,LV_STATE_FOCUSED));
+    assert(!backend.text_input_focus(backend.context,handles[2],false));
+    assert(!lv_obj_has_state(b,LV_STATE_FOCUSED));
+    lv_obj_set_hidden(root,true);
+    assert(backend.text_input_focus(backend.context,handles[1],true)==PXA_STATUS_DENIED);
+    lv_obj_set_hidden(root,false);
+    lv_obj_add_state(a,LV_STATE_DISABLED);
+    assert(backend.text_input_focus(backend.context,handles[1],true)==PXA_STATUS_DENIED);
+    assert(backend.text_input_focus(backend.context,&allocator,true)==PXA_STATUS_NOT_FOUND);
+    assert(backend.text_input_focus(backend.context,handles[0],true)==PXA_STATUS_INVALID_ARGUMENT);
+    assert(allocator.current==resident);
+    pxa_lvgl_ui_deinit(adapter);free(workspace);assert(allocator.current==0);
+    puts("LVGL input focus: ownership, single focus, hide, hidden/disabled denial, no adapter allocation OK");
+}
+
 static void test_snapshot_limits(void) {
     allocator_state_t allocator={0};
     pxa_lvgl_ui_config_t config={0};
@@ -1197,6 +1248,11 @@ int main(void) {
         assert(g_event_node == 2);
         assert(g_event_value_size == 5);
         assert(memcmp(g_event_value, "hello", 5) == 0);
+        lv_textarea_set_text(input, "");
+        assert(g_event_kind == PXA_UI_EVENT_TEXT && g_event_value_size == 0);
+        lv_textarea_set_text(input,
+            "123456789012345678901234567890123456789012345678901234567890123西遊記");
+        assert(g_event_value_size == 63); /* Never split the next UTF-8 rune. */
         g_events = 0;
         lv_obj_send_event(input, LV_EVENT_CLICKED, NULL);
         assert(g_events == 0);
@@ -2203,6 +2259,7 @@ int main(void) {
     pxa_lvgl_ui_deinit(adapter);
     if (!getenv("PXA_CANVAS_MEASURE")) test_snapshot_limits();
     if (!getenv("PXA_CANVAS_MEASURE")) test_viewport_density();
+    if (!getenv("PXA_CANVAS_MEASURE")) test_text_input_focus();
     pxa_ui_service_deinit(service);
     pxa_runtime_deinit(g_runtime);
     free(adapter_workspace);

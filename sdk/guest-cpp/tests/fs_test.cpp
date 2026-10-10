@@ -117,6 +117,8 @@ Task<void> exercise_paths(Context& ctx) {
     const std::string destination = source.substr(0, 254) + "e";
     auto renamed = co_await ctx.fs().rename(source, destination);
     assert(renamed);
+    auto replaced = co_await ctx.fs().replace(source, destination);
+    assert(replaced);
     auto removed = co_await ctx.fs().remove("save.bin");
     assert(!removed && removed.error() == Error::not_found);
     finished = true;
@@ -207,6 +209,8 @@ int main() {
     assert(wire::get16(submitted.data() + 22) == 255);
     assert(wire::get16(submitted.data() + 279) == 2);
     assert(wire::get16(submitted.data() + 281) == 255);
+    deliver(success);
+    assert(opcode == 8 && submitted_bytes == 538);
     deliver(success);
     assert(opcode == 3);
     std::array<std::byte, 4> missing{};

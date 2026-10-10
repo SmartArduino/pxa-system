@@ -227,9 +227,11 @@ static pxa_status_t rejected_v1_ui(void *context, pxa_runtime_t *runtime,
     unsigned *calls = (unsigned *)context;
     (void)runtime;
     (void)component;
-    if (calls == NULL || message == NULL ||
-        message->opcode != PXA_UI_THEME_GET || message->request_id == 0 ||
-        message->payload.size != 0) return PXA_STATUS_INVALID_ARGUMENT;
+    if (calls == NULL || message == NULL) return PXA_STATUS_INVALID_ARGUMENT;
+    if (!((message->opcode == PXA_UI_THEME_GET && message->request_id != 0 &&
+           message->payload.size == 0) ||
+          (message->opcode == PXA_UI_TEXT_INPUT_FOCUS && message->request_id == 0 &&
+           message->payload.size == 12))) return PXA_STATUS_INVALID_ARGUMENT;
     ++*calls;
     return PXA_STATUS_UNSUPPORTED;
 }
@@ -1216,7 +1218,7 @@ int main(void) {
         CHECK(work_calls == 1);
         CHECK(surface_calls == 1);
         CHECK(clock_calls == 1);
-        CHECK(ui_calls == 1);
+        CHECK(ui_calls == 2);
         CHECK(store_host_id != 0);
         check_status("v1 cancellation delivery",
                      pxa_wamr_engine_deliver_event_result(

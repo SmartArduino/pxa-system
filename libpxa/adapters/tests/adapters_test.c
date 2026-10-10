@@ -230,6 +230,26 @@ static void test_fs_backend(void) {
                                 (pxa_bytes_t){(const uint8_t *)"moved.txt",
                                               8}),
                  PXA_STATUS_OK);
+    {
+        const pxa_bytes_t temporary={(const uint8_t *)"new.tmp",7};
+        const pxa_bytes_t destination={(const uint8_t *)"moved.txt",8};
+        check_status("replacement temp",backend.open(backend.context,temporary,
+            PXA_FS_OPEN_WRITE|PXA_FS_OPEN_CREATE,&resource,&kind),PXA_STATUS_OK);
+        check_status("replacement write",backend.write(backend.context,resource,
+            (const uint8_t *)"bye",3,&size),PXA_STATUS_OK);
+        check_status("open source replacement busy",backend.replace(backend.context,
+            temporary,destination),PXA_STATUS_BUSY);
+        backend.close(backend.context,resource,kind);
+        check_status("exclusive rename retained",backend.rename(backend.context,
+            temporary,destination),PXA_STATUS_BUSY);
+        check_status("atomic replacement",backend.replace(backend.context,
+            temporary,destination),PXA_STATUS_OK);
+        check_status("same path replacement rejected",backend.replace(backend.context,
+            destination,destination),PXA_STATUS_INVALID_ARGUMENT);
+        check_status("replacement result",backend.stat(backend.context,destination,&entry),PXA_STATUS_OK);
+        CHECK(entry.size==3);
+        check_status("replacement removes temp",backend.stat(backend.context,temporary,&entry),PXA_STATUS_NOT_FOUND);
+    }
     check_status(
         "stat moved",
         backend.stat(backend.context,

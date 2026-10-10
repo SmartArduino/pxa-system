@@ -734,6 +734,8 @@ static int32_t native_submit_v1(void *opaque_exec_env, const uint8_t *data,
                  message.payload.size <=
                      13u + PXA_UI_MAX_DIRTY_RECTS * 16u) ||
                 (message.opcode == PXA_UI_CANVAS_STREAM_OPEN &&
+                 message.payload.size == 12u) ||
+                (message.opcode == PXA_UI_TEXT_INPUT_FOCUS &&
                  message.payload.size == 12u))) {
         /* The UI service validates transaction state, commands and bounds. */
     } else if (message.service == PXA_DEVICE_SERVICE_ID &&
@@ -798,7 +800,8 @@ static int32_t native_submit_v1(void *opaque_exec_env, const uint8_t *data,
                 (message.opcode == PXA_FS_OPEN &&
                     message.payload.size >= 13u &&
                     message.payload.size <= 8u + PXA_FS_MAX_PATH_BYTES) ||
-                (message.opcode == PXA_FS_RENAME &&
+                ((message.opcode == PXA_FS_RENAME ||
+                  message.opcode == PXA_FS_REPLACE) &&
                     message.payload.size >= 10u &&
                     message.payload.size <= 8u + 2u * PXA_FS_MAX_PATH_BYTES) ||
                 (message.opcode == PXA_FS_SEEK &&

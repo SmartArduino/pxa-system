@@ -117,6 +117,15 @@ if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
 endif()
 
 if(PXSYS_BUILD_TESTS OR BUILD_TESTING)
+    add_executable(pxsys_desktop_net_headers_test tests/net_headers_test.c)
+    target_compile_features(pxsys_desktop_net_headers_test PRIVATE c_std_99)
+    target_link_libraries(pxsys_desktop_net_headers_test PRIVATE
+        pxa::pxa CURL::libcurl)
+    if(NOT MSVC)
+        target_compile_options(pxsys_desktop_net_headers_test PRIVATE -UNDEBUG)
+    endif()
+    add_test(NAME pxsys_desktop_net_headers_test
+        COMMAND pxsys_desktop_net_headers_test)
     find_program(PXSYS_GUEST_CLANG clang)
     find_program(PXSYS_TEST_TIMEOUT timeout)
     set(PXSYS_V1_SMOKE_APP_ROOT

@@ -13,7 +13,7 @@ extern "C" {
 
 #define PXA_UI_SERVICE_ID UINT16_C(3)
 #define PXA_UI_SERVICE_MAJOR UINT16_C(0)
-#define PXA_UI_SERVICE_MINOR UINT16_C(6)
+#define PXA_UI_SERVICE_MINOR UINT16_C(7)
 #define PXA_UI_SERVICE_PATCH UINT16_C(0)
 
 #define PXA_UI_TX_BEGIN UINT16_C(1)
@@ -27,6 +27,7 @@ extern "C" {
 #define PXA_UI_CANVAS_PRESENT UINT16_C(9)
 #define PXA_UI_CANVAS_STREAM_OPEN UINT16_C(10)
 #define PXA_UI_THEME_GET UINT16_C(11)
+#define PXA_UI_TEXT_INPUT_FOCUS UINT16_C(12)
 #define PXA_UI_EVENT UINT16_C(0x8001)
 #define PXA_UI_ENVIRONMENT_CHANGED UINT16_C(0x8002)
 #define PXA_UI_RESOURCE_PRESSURE UINT16_C(0x8003)
@@ -230,6 +231,7 @@ pxa_status_t pxa_ui_validate_grid_tracks(pxa_bytes_t value);
 #define PXA_UI_CANVAS_CLIP_PUSH UINT8_C(7)
 #define PXA_UI_CANVAS_CLIP_POP UINT8_C(8)
 #define PXA_UI_CANVAS_TEXT_BOX UINT8_C(9)
+#define PXA_UI_CANVAS_TEXT_SIZED UINT8_C(12)
 #define PXA_UI_CANVAS_BITMAP_RGB565 UINT8_C(10)
 #define PXA_UI_CANVAS_IMAGE_HANDLE UINT8_C(11)
 
@@ -280,6 +282,8 @@ typedef uint64_t pxa_ui_features_t;
 #define PXA_UI_FEATURE_RGB565_BITMAP (UINT64_C(1) << 8)
 #define PXA_UI_FEATURE_CONTROLLER_INPUT (UINT64_C(1) << 9)
 #define PXA_UI_FEATURE_CANVAS_STREAM_IO (UINT64_C(1) << 10)
+#define PXA_UI_FEATURE_SIZED_TEXT (UINT64_C(1) << 11)
+#define PXA_UI_FEATURE_TEXT_INPUT_CONTROL (UINT64_C(1) << 12)
 
 #define PXA_UI_CONTROLLER_UP (UINT32_C(1) << 0)
 #define PXA_UI_CONTROLLER_DOWN (UINT32_C(1) << 1)
@@ -426,6 +430,8 @@ typedef void (*pxa_ui_backend_surface_close_fn)(void *context,
                                                    uint32_t surface);
 typedef pxa_status_t (*pxa_ui_backend_environment_fn)(
     void *context, const pxa_ui_environment_t *environment);
+typedef pxa_status_t (*pxa_ui_backend_text_input_focus_fn)(
+    void *context, void *node_handle, bool focused);
 
 typedef struct {
     uint32_t struct_size;
@@ -439,6 +445,8 @@ typedef struct {
     pxa_ui_backend_surface_open_fn surface_open;
     pxa_ui_backend_surface_close_fn surface_close;
     pxa_ui_backend_environment_fn environment_changed;
+    /* Optional, enabled by TEXT_INPUT_CONTROL. Runs on the UI executor. */
+    pxa_ui_backend_text_input_focus_fn text_input_focus;
 } pxa_ui_backend_t;
 
 typedef struct {

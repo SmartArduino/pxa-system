@@ -12,7 +12,7 @@ extern "C" {
 
 #define PXA_FS_SERVICE_ID UINT16_C(5)
 #define PXA_FS_SERVICE_MAJOR UINT16_C(0)
-#define PXA_FS_SERVICE_MINOR UINT16_C(1)
+#define PXA_FS_SERVICE_MINOR UINT16_C(2)
 #define PXA_FS_SERVICE_PATCH UINT16_C(0)
 
 #define PXA_FS_OPEN UINT16_C(1)
@@ -22,6 +22,7 @@ extern "C" {
 #define PXA_FS_STAT UINT16_C(5)
 #define PXA_FS_SEEK UINT16_C(6)
 #define PXA_FS_READ_DIRECTORY UINT16_C(7)
+#define PXA_FS_REPLACE UINT16_C(8)
 
 #define PXA_FS_OPEN_READ UINT32_C(1)
 #define PXA_FS_OPEN_WRITE UINT32_C(2)
@@ -85,6 +86,8 @@ typedef struct {
     pxa_fs_seek_fn seek;
     pxa_fs_read_directory_fn read_directory;
     pxa_fs_close_fn close;
+    /* Optional atomic replacement of a regular file; rename remains exclusive. */
+    pxa_fs_rename_fn replace;
 } pxa_fs_backend_t;
 
 typedef pxa_status_t (*pxa_fs_authorize_fn)(

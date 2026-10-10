@@ -69,6 +69,10 @@ typedef struct {
      * limits are not a global native-heap cap. */
     size_t snapshot_limit_bytes;
     size_t alpha_limit_bytes;
+    /* Optional sized Canvas text. Borrowed path, alive until deinit. Fonts are
+     * created only when requested; at most 16 pixel sizes per adapter lifetime.
+     * No whole-page bitmap or default font atlas cache is allocated. */
+    const char *sized_text_font_path;
 } pxa_lvgl_ui_config_t;
 
 typedef struct pxa_lvgl_ui pxa_lvgl_ui_t;
