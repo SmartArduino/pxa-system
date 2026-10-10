@@ -1972,6 +1972,13 @@ static void product_request_exit(void *context) {
     if (host != NULL) host->exit_requested = 1;
 }
 
+bool pxsys_product_simulator_request_back(void *runner) {
+    product_host_t *host = runner;
+    if (host == NULL || !host->focused) return false;
+    SDL_AtomicSet(&host->back_requested, 1);
+    return true;
+}
+
 static void dispatch_lifecycle(product_host_t *host) {
     uint8_t state;
     if (host == NULL || host->pending_lifecycle > 1u ||

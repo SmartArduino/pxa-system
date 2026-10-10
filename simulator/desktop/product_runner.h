@@ -17,6 +17,10 @@ typedef void (*pxsys_product_simulator_control_bind_fn)(
     void *context, void (*set_focus)(void *runner, bool focused),
     void (*request_exit)(void *runner), void *runner);
 
+/* Queue Back for a live, focused runner supplied by control_bind. The Guest
+ * decides whether to consume it or close; delivery happens on the next turn. */
+bool pxsys_product_simulator_request_back(void *runner);
+
 /* Deliver the standard System configuration-changed notification to the live
  * Guest. The event owns its payload; no locale cache or allocation is added. */
 bool pxsys_product_simulator_update_locale(void *runner,

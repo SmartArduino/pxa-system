@@ -352,8 +352,11 @@ static pxsys_status_t backend_deliver(void* context, void* opaque,
 }
 
 static pxsys_back_result_t backend_back(void* context, void* opaque) {
+    simulator_instance_t* instance = opaque;
     (void)context;
-    (void)opaque;
+    if (instance != NULL &&
+        pxsys_product_simulator_request_back(instance->product_runner))
+        return PXSYS_BACK_HANDLED;
     return PXSYS_BACK_UNHANDLED;
 }
 

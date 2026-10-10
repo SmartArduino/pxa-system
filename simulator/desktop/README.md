@@ -81,6 +81,29 @@ application tree. The source root must contain one `package.json` per app.
 可通过 `PXSYS_DESKTOP_APP_SOURCE_ROOT` 从其他 PXA 应用树生成目录；每个应用
 目录必须包含一个 `package.json`。
 
+## Full-system game gestures
+
+When using the full system with `--gestures`, fullscreen games keep transparent
+edge targets even when they hide both bars. Swipe from the physical left edge
+for Back, up from the bottom for Home (hold for recents), and down from the top
+for the notification shade. Back first closes system overlays, then reaches
+the Guest's Back handler. The Guest can open its own menu or close normally.
+Tapping a running app's launcher icon resumes its existing task and retains Home
+so closing the app restores the launcher. Hidden bars remain visually hidden.
+
+完整系统的手势模式会为全屏游戏保留透明边缘触摸区：从屏幕左边缘滑入返回、
+底部上滑回桌面（停留打开最近任务）、顶部下拉打开通知面板。返回先关闭系统
+浮层，再交给 Guest 的返回处理。点击后台应用的图标会恢复原任务并保留桌面；
+退出应用后仍能回到桌面。隐藏栏不会因此常驻显示。
+
+The regression test uses actual LVGL pointer hit testing at 480×480, 305 DPI,
+12-pixel safe insets and 58-pixel rounded corners:
+
+```sh
+cmake --build build/desktop --target pxsys_system_gestures_test
+ctest --test-dir build/desktop -R '^pxsys_system_gestures_test$' --output-on-failure
+```
+
 ## Installed application management
 
 Packages in `--installed-packages-root` are removable user applications, not
