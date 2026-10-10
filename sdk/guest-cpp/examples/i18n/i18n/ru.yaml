@@ -1,0 +1,6 @@
+locale: ru
+translations:
+  title: "Локализация"
+  items: "{count, plural, one {# предмет} few {# предмета} many {# предметов} other {# предмета}}"
+  add: "Добавить"
+  language: "Язык"

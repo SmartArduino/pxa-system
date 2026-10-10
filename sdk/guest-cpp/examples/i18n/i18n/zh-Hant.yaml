@@ -1,0 +1,8 @@
+locale: zh-Hant
+metadata:
+  name: "C++ 國際化"
+translations:
+  title: "國際化範例"
+  items: "{count, plural, other {# 件物品}}"
+  add: "增加一件"
+  language: "切換語言"

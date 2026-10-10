@@ -188,11 +188,13 @@ endif()
 
 # These targets exercise the actual product backend, including in normal
 # simulator build trees. Keep dependency configuration identical to the runner.
-foreach(_test audio audio_app raster resource_app voxel_resources resource_budget ui_images store_images weather_images)
+foreach(_test audio audio_app i18n_app raster resource_app voxel_resources resource_budget ui_images store_images weather_images)
     if(_test STREQUAL "audio")
         set(_source tests/audio_backend_test.c)
     elseif(_test STREQUAL "audio_app")
         set(_source tests/audio_app_test.c)
+    elseif(_test STREQUAL "i18n_app")
+        set(_source tests/i18n_app_test.c)
     elseif(_test STREQUAL "resource_budget")
         set(_source tests/resource_budget_test.c)
     elseif(_test STREQUAL "resource_app")
@@ -225,6 +227,11 @@ foreach(_test audio audio_app raster resource_app voxel_resources resource_budge
                 "${CMAKE_CURRENT_LIST_DIR}/../../tools/package/test_audio_backend.py"
                 $<TARGET_FILE:pxsys_audio_test>
                 "${CMAKE_CURRENT_LIST_DIR}/tests/audio-assets")
+        elseif(_test STREQUAL "i18n_app")
+            add_test(NAME pxsys_i18n_app_test COMMAND bash
+                "${CMAKE_CURRENT_LIST_DIR}/../../tools/package/test_cpp_i18n_app.sh"
+                $<TARGET_FILE:pxsys_i18n_app_test>)
+            set_tests_properties(pxsys_i18n_app_test PROPERTIES TIMEOUT 90)
         elseif(_test STREQUAL "resource_budget")
             add_test(NAME pxsys_resource_budget_test COMMAND pxsys_resource_budget_test)
         elseif(_test STREQUAL "raster")

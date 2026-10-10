@@ -457,7 +457,7 @@ static void map_host_theme(const pxsys_theme_snapshot_t *source,
 static pxa_status_t configure_start_locale(product_host_t *host,
                                            uint64_t instance_id,
                                            const pxa_ui_config_t *ui_config) {
-    uint8_t environment[4u + PRODUCT_LOCALE_MAX_BYTES];
+    uint8_t environment[9u + PRODUCT_LOCALE_MAX_BYTES];
     uint8_t ui_environment[128];
     uint8_t config[8u + sizeof(ui_environment) + sizeof(environment)];
     pxa_ui_environment_t ui_environment_value;
@@ -495,6 +495,12 @@ static pxa_status_t configure_start_locale(product_host_t *host,
     status = pxa_writer_record(&environment_writer,
                                PRODUCT_SYSTEM_CONFIGURATION_LOCALE,
                                host->locale, locale_size);
+    if (status != PXA_STATUS_OK) return status;
+    pxsys_locale_snapshot_t locale = {.struct_size = sizeof(locale)};
+    if (pxsys_locale_snapshot_init(&locale, pxsys_string_from_cstr(host->locale)) != PXSYS_STATUS_OK)
+        return PXA_STATUS_INVALID_ARGUMENT;
+    const uint8_t direction = (uint8_t)locale.direction;
+    status = pxa_writer_record(&environment_writer, UINT16_C(0x8002), &direction, 1);
     if (status != PXA_STATUS_OK) return status;
     pxa_writer_init(&config_writer, config, sizeof(config));
     status = pxa_writer_record(&config_writer, PXA_UI_CONFIG_ENVIRONMENT,
@@ -4073,6 +4079,28 @@ done:
     }
     free(shape_mask.pixels);
     return result;
+}
+
+bool pxsys_product_simulator_update_locale(void *runner,
+    const pxsys_locale_snapshot_t *locale) {
+    product_host_t *host = runner;
+    uint8_t payload[9u + PRODUCT_LOCALE_MAX_BYTES];
+    pxa_writer_t writer;
+    if (host == NULL || host->runtime == NULL ||
+        host->active_component == PXA_COMPONENT_INVALID ||
+        pxsys_locale_snapshot_validate(locale) != PXSYS_STATUS_OK) return false;
+    pxa_writer_init(&writer, payload, sizeof(payload));
+    const uint8_t direction = (uint8_t)locale->direction;
+    if (pxa_writer_record(&writer, PRODUCT_SYSTEM_CONFIGURATION_LOCALE,
+            locale->tag, locale->tag_size) != PXA_STATUS_OK ||
+        pxa_writer_record(&writer, UINT16_C(0x8002), &direction, 1) != PXA_STATUS_OK)
+        return false;
+    if (pxa_event_post_message(host->runtime, host->active_component, 17, 0x8004,
+            0, (pxa_bytes_t){writer.data, writer.size}, 0,
+            UINT64_C(0x001100008004)) != PXA_STATUS_OK) return false;
+    memcpy(host->locale, locale->tag, locale->tag_size);
+    host->locale[locale->tag_size] = '\0';
+    return true;
 }
 
 int pxsys_product_simulator_run_embedded(const char *package_path,

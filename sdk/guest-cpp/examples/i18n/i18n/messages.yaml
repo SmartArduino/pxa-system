@@ -1,0 +1,17 @@
+namespace: app.pxa-cpp-i18n
+default_locale: en
+messages:
+  title:
+    source: "Internationalization"
+    context: "Page title"
+  items:
+    source: "{count, plural, one {# item} other {# items}}"
+    context: "Inventory count"
+    placeholders:
+      count: u32
+  add:
+    source: "Add one"
+    context: "Increment button"
+  language:
+    source: "Change language"
+    context: "Local override demonstration, without changing system settings"

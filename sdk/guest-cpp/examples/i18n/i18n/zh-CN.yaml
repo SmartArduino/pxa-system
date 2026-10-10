@@ -1,0 +1,9 @@
+locale: zh-CN
+metadata:
+  name: "C++ 国际化"
+  description: "静态翻译目录与实时语言切换"
+translations:
+  title: "国际化示例"
+  items: "{count, plural, other {# 件物品}}"
+  add: "增加一件"
+  language: "切换语言"

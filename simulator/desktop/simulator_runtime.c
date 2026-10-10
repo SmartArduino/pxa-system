@@ -172,8 +172,12 @@ static void locale_changed(void* context,
         return;
     runtime->locale = *locale;
     for (instance = runtime->instances; instance != NULL;
-         instance = instance->next)
+         instance = instance->next) {
         update_locale(instance);
+        if (instance->product_runner != NULL &&
+            !pxsys_product_simulator_update_locale(instance->product_runner, locale))
+            fprintf(stderr, "PXA simulator: cannot deliver locale update\n");
+    }
 }
 
 static pxsys_status_t backend_instantiate(

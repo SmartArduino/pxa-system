@@ -8,6 +8,7 @@
 #include "pxa/window.h"
 #include "pxsys/display.h"
 #include "pxsys/theme.h"
+#include "pxsys/locale.h"
 
 typedef void (*pxsys_product_simulator_pump_fn)(void *context);
 typedef void (*pxsys_product_simulator_window_fn)(
@@ -15,6 +16,11 @@ typedef void (*pxsys_product_simulator_window_fn)(
 typedef void (*pxsys_product_simulator_control_bind_fn)(
     void *context, void (*set_focus)(void *runner, bool focused),
     void (*request_exit)(void *runner), void *runner);
+
+/* Deliver the standard System configuration-changed notification to the live
+ * Guest. The event owns its payload; no locale cache or allocation is added. */
+bool pxsys_product_simulator_update_locale(void *runner,
+    const pxsys_locale_snapshot_t *locale);
 
 /* Runs a package against an already-initialized LVGL display. The call returns
  * when the package exits, leaving the caller's display and input devices live.
