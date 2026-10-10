@@ -255,6 +255,10 @@ foreach(_test audio audio_app i18n_app sdk_patterns declarative_ui raster resour
                 "${CMAKE_CURRENT_LIST_DIR}/../../tools/package/test_cpp_declarative_ui.sh"
                 $<TARGET_FILE:pxsys_declarative_ui_test>)
             set_tests_properties(pxsys_declarative_ui_test PROPERTIES TIMEOUT 120)
+            add_test(NAME pxsys_cpp_service_safety_test COMMAND bash
+                "${CMAKE_CURRENT_LIST_DIR}/../../tools/package/test_cpp_service_safety.sh"
+                "${CMAKE_CURRENT_BINARY_DIR}")
+            set_tests_properties(pxsys_cpp_service_safety_test PROPERTIES TIMEOUT 180)
         elseif(_test STREQUAL "resource_budget")
             add_test(NAME pxsys_resource_budget_test COMMAND pxsys_resource_budget_test)
         elseif(_test STREQUAL "raster")

@@ -1,0 +1,85 @@
+=================================================================
+==3663607==ERROR: AddressSanitizer: stack-use-after-scope on address 0x7b20146f0178 at pc 0x558fd436fcbd bp 0x7ffc6ee04fd0 sp 0x7ffc6ee04fc8
+READ of size 8 at 0x7b20146f0178 thread T0
+    #0 0x558fd436fcbc in pxa::Resource<pxa::AudioSessionTag>::handle() const /home/lucinhu/Documents/workspace/esp32/zuowei_paixueji_touch/pxa-projects/local/sdk-audit-20261011/before-sdk/include/pxa/core.hpp:182:52
+    #1 0x558fd436fcbc in pxa::AudioSession::handle() const /home/lucinhu/Documents/workspace/esp32/zuowei_paixueji_touch/pxa-projects/local/sdk-audit-20261011/before-sdk/include/pxa/audio.hpp:79:62
+    #2 0x558fd436fcbc in pxa::AudioSession::graph(short, std::span<pxa::EqBand const, 18446744073709551615ul>) (.resume) /home/lucinhu/Documents/workspace/esp32/zuowei_paixueji_touch/pxa-projects/local/sdk-audit-20261011/before-sdk/include/pxa/audio.hpp:193:35
+    #3 0x558fd43697f4 in std::__n4861::coroutine_handle<pxa::Task<void>::promise_type>::resume() const /usr/bin/../lib64/gcc/x86_64-pc-linux-gnu/16/../../../../include/c++/16/coroutine:247:29
+    #4 0x558fd43697f4 in std::expected<void, pxa::Error> complete<void, exercise(std::basic_string_view<char, std::char_traits<char>>)::$_0>(pxa::Task<void>, pxa::RequestTable&, std::span<std::byte const, 18446744073709551615ul>, exercise(std::basic_string_view<char, std::char_traits<char>>)::$_0) /home/lucinhu/Documents/workspace/esp32/zuowei_paixueji_touch/pxa-projects/deps/pxa-system/sdk/guest-cpp/tests/service_lifetime_test.cpp:61:15
+    #5 0x558fd43697f4 in exercise(std::basic_string_view<char, std::char_traits<char>>) /home/lucinhu/Documents/workspace/esp32/zuowei_paixueji_touch/pxa-projects/deps/pxa-system/sdk/guest-cpp/tests/service_lifetime_test.cpp:93:16
+    #6 0x558fd4366fba in main /home/lucinhu/Documents/workspace/esp32/zuowei_paixueji_touch/pxa-projects/deps/pxa-system/sdk/guest-cpp/tests/service_lifetime_test.cpp:234:20
+    #7 0x7f2016427780 in __libc_start_call_main /usr/src/debug/glibc/glibc/csu/../sysdeps/nptl/libc_start_call_main.h:59:16
+    #8 0x7f20164278b8 in __libc_start_main /usr/src/debug/glibc/glibc/csu/../csu/libc-start.c:372:3
+    #9 0x558fd41ff2e4 in _start (/home/lucinhu/Documents/workspace/esp32/zuowei_paixueji_touch/pxa-projects/local/sdk-audit-20261011/before-lifetime-sanitizer+0x8a2e4) (BuildId: d5d47d6a28411cd8ee16e3f4738fe57a18036fc2)
+
+Address 0x7b20146f0178 is located in stack of thread T0 at offset 376 in frame
+    #0 0x558fd4367147 in exercise(std::basic_string_view<char, std::char_traits<char>>) /home/lucinhu/Documents/workspace/esp32/zuowei_paixueji_touch/pxa-projects/deps/pxa-system/sdk/guest-cpp/tests/service_lifetime_test.cpp:78
+
+  This frame has 32 object(s):
+    [32, 64) 'ref.tmp' (line 64)
+    [96, 128) 'ref.tmp' (line 64)
+    [160, 192) 'ref.tmp' (line 64)
+    [224, 256) 'ref.tmp' (line 64)
+    [288, 320) 'ref.tmp' (line 64)
+    [352, 392) 'original' (line 86) <== Memory access at offset 376 is inside this variable
+    [432, 438) 'bands' (line 87)
+    [464, 1008) 'transport' (line 79)
+    [1136, 1904) 'requests' (line 81)
+    [2032, 2036) 'success' (line 82)
+    [2048, 2088) 'original' (line 98)
+    [2128, 2144) 'permission' (line 114)
+    [2160, 2184) 'created' (line 122)
+    [2224, 2240) 'original' (line 127)
+    [2256, 2272) 'agg.tmp'
+    [2288, 2304) 'task' (line 141)
+    [2320, 2328) 'moved' (line 142)
+    [2352, 2368) 'task' (line 147)
+    [2384, 2392) 'moved' (line 148)
+    [2416, 2468) 'state' (line 149)
+    [2512, 2525) 'malformed' (line 158)
+    [2544, 2560) 'ref.tmp' (line 179)
+    [2576, 2580) 'invalid' (line 180)
+    [2592, 2648) 'renderer' (line 194)
+    [2688, 2944) 'buffer' (line 195)
+    [3008, 3064) 'frame' (line 196)
+    [3104, 3160) 'next' (line 205)
+    [3200, 3296) 'scratch' (line 209)
+    [3328, 3424) 'expected' (line 211)
+    [3456, 3458) 'ref.tmp' (line 216)
+    [3472, 3504) 'bytes' (line 217)
+    [3536, 3568) 'original' (line 219)
+HINT: this may be a false positive if your program uses some custom stack unwind mechanism, swapcontext or vfork
+      (longjmp and C++ exceptions *are* supported)
+SUMMARY: AddressSanitizer: stack-use-after-scope /home/lucinhu/Documents/workspace/esp32/zuowei_paixueji_touch/pxa-projects/local/sdk-audit-20261011/before-sdk/include/pxa/core.hpp:182:52 in pxa::Resource<pxa::AudioSessionTag>::handle() const
+Shadow bytes around the buggy address:
+  0x7b20146efe80: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  0x7b20146eff00: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  0x7b20146eff80: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  0x7b20146f0000: f1 f1 f1 f1 f8 f8 f8 f8 f2 f2 f2 f2 f8 f8 f8 f8
+  0x7b20146f0080: f2 f2 f2 f2 f8 f8 f8 f8 f2 f2 f2 f2 f8 f8 f8 f8
+=>0x7b20146f0100: f2 f2 f2 f2 f8 f8 f8 f8 f2 f2 f2 f2 f8 f8 f8[f8]
+  0x7b20146f0180: f8 f2 f2 f2 f2 f2 f8 f2 f2 f2 00 00 00 00 00 00
+  0x7b20146f0200: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  0x7b20146f0280: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  0x7b20146f0300: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  0x7b20146f0380: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 f2 f2
+Shadow byte legend (one shadow byte represents 8 application bytes):
+  Addressable:           00
+  Partially addressable: 01 02 03 04 05 06 07
+  Heap left redzone:       fa
+  Freed heap region:       fd
+  Stack left redzone:      f1
+  Stack mid redzone:       f2
+  Stack right redzone:     f3
+  Stack after return:      f5
+  Stack use after scope:   f8
+  Global redzone:          f9
+  Global init order:       f6
+  Poisoned by user:        f7
+  Container overflow:      fc
+  Array cookie:            ac
+  Intra object redzone:    bb
+  ASan internal:           fe
+  Left alloca redzone:     ca
+  Right alloca redzone:    cb
+==3663607==ABORTING

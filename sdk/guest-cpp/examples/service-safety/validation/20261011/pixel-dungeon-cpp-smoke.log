@@ -1,0 +1,14 @@
+PXA STORAGE CONFIG bytes_per_second=0 latency_us=0 max_read=4096
+[32m[PXA app=pxa-pixel-dungeon-cpp component=65537 level=INFO] PDCPP ready pixels=296,240 dpi_q16=65536 render=296,240 first=148,122[0m
+[32m[PXA app=pxa-pixel-dungeon-cpp component=65537 level=INFO] C++ game audio ready[0m
+[32m[PXA app=pxa-pixel-dungeon-cpp component=65537 level=INFO] PDCPP perf submitted=2 rendered=1 visible=1 raster_us=858 queue_us=0 present_us=0 dropped=0 draw=1080 turn=0 phase=0[0m
+PXA MUSIC INPUT read_bytes=81920 read_calls=40
+PXA ASSETS peak_internal=0 peak_external=386592 metadata=12575 native_stack=131072 hits=0 evictions=0 failures=0 pressure_retries=0 prefetch_requests=0 prefetch_failures=0
+PXA STORAGE lane=0 reads=115 bytes=388512 wait_us=19 max_wait_us=1 service_us=873 max_service_us=114 max_read=4096 errors=0 elapsed_us=3528083 stalls=0 stall_us=0
+PXA STORAGE lane=1 reads=40 bytes=81920 wait_us=7 max_wait_us=1 service_us=118 max_service_us=23 max_read=2048 errors=0 elapsed_us=3528083 stalls=0 stall_us=0
+PXA MUSIC BUFFER underruns=0 recoveries=0 missing_samples=0 consumed=54272 high_water=6422 low_water=5654 low_water_valid=1 ready_max_us=14664
+PXA MUSIC DECODE calls=190 total_us=40044 max_us=11600 excludes_input_io=1
+PXA RESOURCE BUDGET peak_internal=560 peak_external=401055 remaining_internal=0 remaining_external=0 denied=0 counter_storage=1856 allocator_storage=576
+PXA TEMPORARY BUDGET peak_internal=0 peak_external=0 limit_internal=16384 limit_external=524288
+GAME_SMOKE rendered=4 presented=4 wamr=52461 peak=103527 linear=262144
+Game real AOT smoke OK

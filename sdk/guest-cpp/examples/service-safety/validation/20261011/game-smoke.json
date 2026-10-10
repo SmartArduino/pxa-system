@@ -1,0 +1,26 @@
+{
+  "voxel-craft-cpp": {
+    "rendered": 2,
+    "presented": 2,
+    "wamr_current": 51873,
+    "wamr_peak": 192263,
+    "linear_bytes": 393216,
+    "scope": "Startup view, rendered/presented frames and background/foreground; not a gameplay FPS comparison"
+  },
+  "jump-jump-3d-cpp": {
+    "rendered": 174,
+    "presented": 174,
+    "wamr_current": 39830,
+    "wamr_peak": 160472,
+    "linear_bytes": 131072,
+    "scope": "Startup view, rendered/presented frames and background/foreground; not a gameplay FPS comparison"
+  },
+  "pixel-dungeon-cpp": {
+    "rendered": 4,
+    "presented": 4,
+    "wamr_current": 52461,
+    "wamr_peak": 103527,
+    "linear_bytes": 262144,
+    "scope": "Startup view, rendered/presented frames and background/foreground; not a gameplay FPS comparison"
+  }
+}

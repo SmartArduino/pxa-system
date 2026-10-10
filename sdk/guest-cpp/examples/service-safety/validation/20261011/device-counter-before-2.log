@@ -1,0 +1,16 @@
+I (873772) PxaHost: Queueing launch request: 17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171:pxa-cpp-counter-bench
+I (873787) PxaHost: Processing launch request: 17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171:pxa-cpp-counter-bench
+I (873897) PxaHost: Audio: active=0 queued=0/12 peak_queued=1 submitted=5 rendered=5 tones=5/5 tone_drop=0 voice_exhaust=0 queue_full=0 stale=0 rejected=0 assets=0/0 asset_fail=0 storage=8640 stack=4096
+I (873908) PxaHost: Heap[launch-begin]: SRAM used=277056 free=43931 total=320987 min_free=39595 largest=19456 exec_free=6876160 exec_largest=6291456; PSRAM used=1482412 free=6876160 total=8358572 min_free=6372336 largest=6291456
+I (874033) PXA_WAMR_MEMMAP: AOT mapped: ibus=0x42b20000 dbus=0x3c510000 request=126676 map=131072 alloc=131072 free_psram=6564140
+I (874084) PxaHost: Component memory: id=main status=0 sram_delta=752 free_sram=42775 largest_sram=19456 psram_delta=312500 free_psram=6526564 largest_psram=6160384 wamr_delta=28955 wamr_current=29371
+I (874088) PxaHost: Heap[launch-ready]: SRAM used=278212 free=42775 total=320987 min_free=39303 largest=19456 exec_free=6526344 exec_largest=6160384; PSRAM used=1832228 free=6526344 total=8358572 min_free=6372336 largest=6160384
+I (874090) PxaBridge: Application foregrounded: 17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171:pxa-cpp-counter-bench
+I (874093) PxaBridge: Launch completion: 17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171:pxa-cpp-counter-bench intent=0 status=0
+I (874095) PxaHost: WAMR dynamic: peak=29375 current=29371 linear=131072 linear_peak=131072 artifact=0 events=128
+I (874100) PxaHost: Started verified Package 17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171:pxa-cpp-counter-bench
+I (874103) PxaHost: UI lifecycle: component=65537 foreground=1 requested=1 display_interactive=1
+I (876635) PxaHost: UI lifecycle: component=65537 foreground=0 requested=0 display_interactive=1
+I (876637) PxaHost: UI peaks: dynamic=2508 current=1660 assets=0 current_assets=0 largest_decoded=0 asset_count=0 referenced=0 hits=0 misses=0 evictions=0 nodes=6 canvases=0 surfaces=1
+I (876639) PxaHost: Audio: active=0 queued=0/12 peak_queued=1 submitted=5 rendered=5 tones=5/5 tone_drop=0 voice_exhaust=0 queue_full=0 stale=0 rejected=0 assets=0/0 asset_fail=0 storage=8640 stack=4096
+I (876648) PXA_WAMR_MEMMAP: AOT released: ibus=0x42b20000 dbus=0x3c510000 size=126676 free_psram=6702920->6833996 delta=131076

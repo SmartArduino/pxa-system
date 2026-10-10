@@ -1,0 +1,58 @@
+{
+  "format": "pxa-package-source-0.1",
+  "min_sdk": [
+    1,
+    0
+  ],
+  "target_sdk": [
+    1,
+    0
+  ],
+  "compile_sdk": [
+    1,
+    0
+  ],
+  "id": "pxa-cpp-service-safety",
+  "version": "1.0.0",
+  "name": "C++ Service Safety",
+  "description": "Async ownership, mapped surfaces, draw retries and portable file IO",
+  "build": {
+    "system": "cmake",
+    "source_dir": ".",
+    "linear_memory": {
+      "maximum_bytes": 131072,
+      "pinned": true
+    }
+  },
+  "permissions": [
+    {
+      "name": "audio.playback",
+      "scope": "media",
+      "required": false
+    }
+  ],
+  "components": [
+    {
+      "id": "main",
+      "kind": "ui",
+      "services": [
+        "ui",
+        "device",
+        "clock",
+        "fs",
+        "surface",
+        "game-render",
+        "audio"
+      ],
+      "cmake_target": "pxa_main",
+      "wasi": {
+        "version": "preview1",
+        "libc": "wasi-libc",
+        "features": [
+          "monotonic-clock",
+          "wall-clock"
+        ]
+      }
+    }
+  ]
+}

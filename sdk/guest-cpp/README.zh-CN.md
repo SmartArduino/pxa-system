@@ -2,6 +2,9 @@
 
 应用接口边界与最近的封装改进见 [API_AUDIT.zh-CN.md](API_AUDIT.zh-CN.md)；
 输入框、启动语言、UI 能力及通知的补齐见 [INPUT_API_AUDIT.zh-CN.md](INPUT_API_AUDIT.zh-CN.md)。
+服务所有权、C++26 编译诊断、请求编码优化及前后实测见
+[SDK_RELIABILITY.zh-CN.md](SDK_RELIABILITY.zh-CN.md)，可运行示例见
+[Service safety](examples/service-safety/README.zh-CN.md)。
 
 后续新增能力、接口设计和性能优化以 C++ SDK 为主要维护方向。Guest C SDK
 逐步退出功能开发，过渡期间保留已有应用必需的兼容与正确性修复。

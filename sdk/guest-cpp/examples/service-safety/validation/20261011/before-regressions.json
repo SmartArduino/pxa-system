@@ -1,0 +1,66 @@
+{
+  "audio-graph": {
+    "returncode": -6,
+    "stderr": "before-probe: sdk/guest-cpp/tests/service_lifetime_test.cpp:76: auto exercise(std::string_view)::(lambda)::operator()() const: Assertion `wire::get64(packet.data() + 24) == handle' failed.\n"
+  },
+  "audio-query": {
+    "returncode": -6,
+    "stderr": "before-probe: sdk/guest-cpp/tests/service_lifetime_test.cpp:89: auto exercise(std::string_view)::(lambda)::operator()() const: Assertion `wire::get64(packet.data() + 24) == handle' failed.\n"
+  },
+  "audio-flush": {
+    "returncode": -6,
+    "stderr": "before-probe: sdk/guest-cpp/tests/service_lifetime_test.cpp:84: auto exercise(std::string_view)::(lambda)::operator()() const: Assertion `wire::get64(packet.data() + 24) == handle' failed.\n"
+  },
+  "audio-open": {
+    "returncode": -6,
+    "stderr": "before-probe: sdk/guest-cpp/tests/service_lifetime_test.cpp:98: auto exercise(std::string_view)::(lambda)::operator()() const: Assertion `wire::get64(packet.data() + 24) == handle' failed.\n"
+  },
+  "surface-configure": {
+    "returncode": -6,
+    "stderr": "before-probe: sdk/guest-cpp/tests/service_lifetime_test.cpp:114: void exercise(std::string_view): Assertion `complete(std::move(task), requests, success)' failed.\n"
+  },
+  "surface-query": {
+    "returncode": -6,
+    "stderr": "before-probe: sdk/guest-cpp/tests/service_lifetime_test.cpp:121: void exercise(std::string_view): Assertion `complete(std::move(task), requests, state)' failed.\n"
+  },
+  "fs-handle": {
+    "returncode": -6,
+    "stderr": "before-probe: sdk/guest-cpp/tests/service_lifetime_test.cpp:147: void exercise(std::string_view): Assertion `closes == before + 1' failed.\n"
+  },
+  "asset-handle": {
+    "returncode": -6,
+    "stderr": "before-probe: sdk/guest-cpp/tests/service_lifetime_test.cpp:147: void exercise(std::string_view): Assertion `closes == before + 1' failed.\n"
+  },
+  "sensor-handle": {
+    "returncode": -6,
+    "stderr": "before-probe: sdk/guest-cpp/tests/service_lifetime_test.cpp:147: void exercise(std::string_view): Assertion `closes == before + 1' failed.\n"
+  },
+  "game-handle": {
+    "returncode": -6,
+    "stderr": "before-probe: sdk/guest-cpp/tests/service_lifetime_test.cpp:147: void exercise(std::string_view): Assertion `closes == before + 1' failed.\n"
+  },
+  "clock-status": {
+    "returncode": -6,
+    "stderr": "before-probe: sdk/guest-cpp/tests/service_lifetime_test.cpp:154: void exercise(std::string_view): Assertion `!result && result.error() == Error::protocol_error' failed.\n"
+  },
+  "asset-status": {
+    "returncode": -6,
+    "stderr": "before-probe: sdk/guest-cpp/tests/service_lifetime_test.cpp:157: void exercise(std::string_view): Assertion `!result && result.error() == Error::protocol_error' failed.\n"
+  },
+  "game-status": {
+    "returncode": -6,
+    "stderr": "before-probe: sdk/guest-cpp/tests/service_lifetime_test.cpp:160: void exercise(std::string_view): Assertion `!result && result.error() == Error::protocol_error' failed.\n"
+  },
+  "frame-submit": {
+    "returncode": -6,
+    "stderr": "before-probe: sdk/guest-cpp/tests/service_lifetime_test.cpp:174: void exercise(std::string_view): Assertion `!repeated && repeated.error() == Error::bad_state && draws == before' failed.\n"
+  },
+  "transport-alias": {
+    "returncode": -6,
+    "stderr": "before-probe: sdk/guest-cpp/tests/service_lifetime_test.cpp:184: void exercise(std::string_view): Assertion `packet_size == 84 && std::equal(expected.begin(), expected.begin() + 64, packet.begin() + 20)' failed.\n"
+  },
+  "writer-alias": {
+    "returncode": -6,
+    "stderr": "before-probe: sdk/guest-cpp/tests/service_lifetime_test.cpp:197: void exercise(std::string_view): Assertion `std::equal(original.begin(), original.begin() + 24, bytes.begin() + 4)' failed.\n"
+  }
+}

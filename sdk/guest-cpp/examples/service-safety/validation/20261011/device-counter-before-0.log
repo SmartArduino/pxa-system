@@ -1,0 +1,19 @@
+I (808070) PxaHost: Queueing launch request: 17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171:pxa-cpp-counter-bench
+I (808089) PxaHost: Processing launch request: 17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171:pxa-cpp-counter-bench
+E (808133) adc_battery_estimation: Failed to read ADC: ESP_ERR_TIMEOUT
+W (808134) AdcBatteryMonitor: Battery capacity unavailable: ESP_ERR_TIMEOUT
+I (808229) PxaHost: Audio: active=0 queued=0/12 peak_queued=1 submitted=5 rendered=5 tones=5/5 tone_drop=0 voice_exhaust=0 queue_full=0 stale=0 rejected=0 assets=0/0 asset_fail=0 storage=8640 stack=4096
+I (808240) PxaHost: Heap[launch-begin]: SRAM used=277020 free=43967 total=320987 min_free=39439 largest=19456 exec_free=6880620 exec_largest=6291456; PSRAM used=1477952 free=6880620 total=8358572 min_free=6376812 largest=6291456
+I (808432) PXA_WAMR_MEMMAP: AOT mapped: ibus=0x42b20000 dbus=0x3c510000 request=126676 map=131072 alloc=131072 free_psram=6568616
+I (808520) PxaHost: Component memory: id=main status=0 sram_delta=752 free_sram=42775 largest_sram=19456 psram_delta=315708 free_psram=6527832 largest_psram=6160384 wamr_delta=28955 wamr_current=29371
+I (808573) PxaBridge: Application foregrounded: 17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171:pxa-cpp-counter-bench
+I (808575) PxaBridge: Launch completion: 17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171:pxa-cpp-counter-bench intent=0 status=0
+I (808572) PxaHost: Heap[launch-ready]: SRAM used=278212 free=42775 total=320987 min_free=38639 largest=19456 exec_free=6528648 exec_largest=6160384; PSRAM used=1829924 free=6528648 total=8358572 min_free=6376812 largest=6160384
+I (808589) PxaHost: WAMR dynamic: peak=29375 current=29371 linear=131072 linear_peak=131072 artifact=0 events=128
+I (808590) PxaHost: Started verified Package 17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171:pxa-cpp-counter-bench
+I (808592) PxaHost: UI lifecycle: component=65537 foreground=1 requested=1 display_interactive=1
+I (810878) PxaHost: UI lifecycle: component=65537 foreground=0 requested=0 display_interactive=1
+I (810880) PxaHost: UI peaks: dynamic=2508 current=1660 assets=0 current_assets=0 largest_decoded=0 asset_count=0 referenced=0 hits=0 misses=0 evictions=0 nodes=6 canvases=0 surfaces=1
+I (810883) PxaHost: Audio: active=0 queued=0/12 peak_queued=1 submitted=5 rendered=5 tones=5/5 tone_drop=0 voice_exhaust=0 queue_full=0 stale=0 rejected=0 assets=0/0 asset_fail=0 storage=8640 stack=4096
+I (810892) PXA_WAMR_MEMMAP: AOT released: ibus=0x42b20000 dbus=0x3c510000 size=126676 free_psram=6702936->6834012 delta=131076
+I (810903) PxaHost: Runtime peaks: components=1 requests=0 handles=0 events=1 event_blocks=2 services=17

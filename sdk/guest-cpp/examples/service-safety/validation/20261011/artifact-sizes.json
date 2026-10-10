@@ -1,0 +1,32 @@
+{
+  "simulator": {
+    "before": {
+      "main.wasm": 55594,
+      "main.linux-x86_64.aot": 86424
+    },
+    "after": {
+      "main.wasm": 55307,
+      "main.linux-x86_64.aot": 86200
+    }
+  },
+  "esp32s3": {
+    "before": {
+      "main.wasm": 55594,
+      "main.esp32-s3.aot": 140460
+    },
+    "after": {
+      "main.wasm": 55307,
+      "main.esp32-s3.aot": 139900
+    }
+  },
+  "esp32s31": {
+    "before": {
+      "main.wasm": 55594,
+      "main.esp32-s31.aot": 141472
+    },
+    "after": {
+      "main.wasm": 55307,
+      "main.esp32-s31.aot": 140920
+    }
+  }
+}

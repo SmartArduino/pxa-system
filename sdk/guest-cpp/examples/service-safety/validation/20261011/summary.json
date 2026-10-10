@@ -1,0 +1,108 @@
+{
+  "simulator": {
+    "main.wasm": {
+      "before": 55594,
+      "after": 55307,
+      "delta": -287
+    },
+    "main.linux-x86_64.aot": {
+      "before": 86424,
+      "after": 86200,
+      "delta": -224
+    }
+  },
+  "esp32s3": {
+    "main.wasm": {
+      "before": 55594,
+      "after": 55307,
+      "delta": -287
+    },
+    "main.esp32-s3.aot": {
+      "before": 140460,
+      "after": 139900,
+      "delta": -560
+    }
+  },
+  "esp32s31": {
+    "main.wasm": {
+      "before": 55594,
+      "after": 55307,
+      "delta": -287
+    },
+    "main.esp32-s31.aot": {
+      "before": 141472,
+      "after": 140920,
+      "delta": -552
+    }
+  },
+  "ui-counter": {
+    "before_ns": 918.9770000000001,
+    "after_ns": 874.2685,
+    "change_percent": -4.865029266238441
+  },
+  "fs-8": {
+    "before_ns": 391.728,
+    "after_ns": 393.5025,
+    "change_percent": 0.45299289302780377
+  },
+  "fs-64": {
+    "before_ns": 807.6965,
+    "after_ns": 658.751,
+    "change_percent": -18.44077571216417
+  },
+  "fs-255": {
+    "before_ns": 2320.048,
+    "after_ns": 2001.612,
+    "change_percent": -13.72540568126176
+  },
+  "limits": {
+    "device_run": "Passed on pai-touch ESP32-S3; /dev/ttyACM1; same board MAC A4:CB:8F:D6:8D:A4; temporary apps removed",
+    "native_timing": "Guest only, identical simulated imports, one CPU, excludes Host IO latency",
+    "device_whole_heap": "Local peak intervals are real but include asynchronous Host/display/background allocations; keep all samples and do not infer zero whole-device heap change"
+  },
+  "validation": {
+    "native_binaries": 56,
+    "additional_diagnostics_binary": 1,
+    "compiler_service_diagnostics": 7,
+    "sanitizers": "8 suites passed; latest surface-close lease case recompiled/passed",
+    "standalone_targets": [
+      "simulator",
+      "esp32s3",
+      "esp32s31"
+    ],
+    "device_service_runs": 3,
+    "device_counter_runs": 6,
+    "device_reproduction_script_runs": 1,
+    "device_original_file_checks": 138,
+    "existing_game_build_and_real_aot_smoke": [
+      "voxel-craft-cpp",
+      "jump-jump-3d-cpp",
+      "pixel-dungeon-cpp"
+    ]
+  },
+  "device_counter": {
+    "aot_map_bytes": 131072,
+    "wamr_launch": {
+      "peak": 29375,
+      "current": 29371,
+      "linear": 131072,
+      "linear_peak": 131072,
+      "artifact": 0,
+      "events": 128
+    },
+    "ui_on_stop": {
+      "peak": 2508,
+      "current": 1660
+    },
+    "samples": "device-counter.json",
+    "screen_review": "All six captures show five increments"
+  },
+  "device_restoration": {
+    "original_packages": 5,
+    "file_hashes_verified": 138,
+    "all_match": true,
+    "temporary_packages_removed": 2,
+    "settings_modified": false,
+    "storage_free_after_reboot": 2215936
+  }
+}

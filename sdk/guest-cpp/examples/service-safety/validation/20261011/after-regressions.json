@@ -1,0 +1,66 @@
+{
+  "audio-graph": {
+    "returncode": 0,
+    "stderr": ""
+  },
+  "audio-query": {
+    "returncode": 0,
+    "stderr": ""
+  },
+  "audio-flush": {
+    "returncode": 0,
+    "stderr": ""
+  },
+  "audio-open": {
+    "returncode": 0,
+    "stderr": ""
+  },
+  "surface-configure": {
+    "returncode": 0,
+    "stderr": ""
+  },
+  "surface-query": {
+    "returncode": 0,
+    "stderr": ""
+  },
+  "fs-handle": {
+    "returncode": 0,
+    "stderr": ""
+  },
+  "asset-handle": {
+    "returncode": 0,
+    "stderr": ""
+  },
+  "sensor-handle": {
+    "returncode": 0,
+    "stderr": ""
+  },
+  "game-handle": {
+    "returncode": 0,
+    "stderr": ""
+  },
+  "clock-status": {
+    "returncode": 0,
+    "stderr": ""
+  },
+  "asset-status": {
+    "returncode": 0,
+    "stderr": ""
+  },
+  "game-status": {
+    "returncode": 0,
+    "stderr": ""
+  },
+  "frame-submit": {
+    "returncode": 0,
+    "stderr": ""
+  },
+  "transport-alias": {
+    "returncode": 0,
+    "stderr": ""
+  },
+  "writer-alias": {
+    "returncode": 0,
+    "stderr": ""
+  }
+}

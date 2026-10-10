@@ -1,0 +1,855 @@
+{
+  "port": "/dev/ttyACM1",
+  "original_packages_unchanged": true,
+  "file_count": 138,
+  "all_files_match": true,
+  "files": [
+    {
+      "path": "/pxa-state/data/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-jump-jump-3d-cpp/.pxa-storage/.pxa-kv-a",
+      "bytes": 37,
+      "sha256": "6060bcf0dc661e800172ab4969cd84d9f3ee0b5e52d7a72d091c0fc254cfe840",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/data/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-jump-jump-3d-cpp/.pxa-storage/.pxa-kv-b",
+      "bytes": 37,
+      "sha256": "a75235a3dc090f8ea6f07b059dee7da1897ee433e907e41f185255d7d6f2d3df",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/data/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-voxel-craft-cpp/voxel-slot-0-b.bin",
+      "bytes": 98492,
+      "sha256": "9f0b47d272467311103f4557f21f9c56ba13ac5bc85b2f4915dd6f8ed3a7d1d4",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/data/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-voxel-craft-cpp/.pxa-storage/.pxa-kv-b",
+      "bytes": 121,
+      "sha256": "3c9eaaabbda80ab562eb86ba05a71a704dc94532968934a35603ccb075327734",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/owners/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-cpp-counter",
+      "bytes": 40,
+      "sha256": "b0ce62900218ba465f46fdec30d1f17da804a6341996db4c12e6f3f97a3ad1f4",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/owners/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-cpp-i18n",
+      "bytes": 40,
+      "sha256": "b0ce62900218ba465f46fdec30d1f17da804a6341996db4c12e6f3f97a3ad1f4",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/owners/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-jump-jump-3d-cpp",
+      "bytes": 40,
+      "sha256": "b0ce62900218ba465f46fdec30d1f17da804a6341996db4c12e6f3f97a3ad1f4",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/owners/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-jump-jump-3d",
+      "bytes": 40,
+      "sha256": "b0ce62900218ba465f46fdec30d1f17da804a6341996db4c12e6f3f97a3ad1f4",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/owners/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-voxel-craft-cpp",
+      "bytes": 40,
+      "sha256": "b0ce62900218ba465f46fdec30d1f17da804a6341996db4c12e6f3f97a3ad1f4",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/owners/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-voxel-craft",
+      "bytes": 40,
+      "sha256": "b0ce62900218ba465f46fdec30d1f17da804a6341996db4c12e6f3f97a3ad1f4",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/owners/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-weather",
+      "bytes": 40,
+      "sha256": "b0ce62900218ba465f46fdec30d1f17da804a6341996db4c12e6f3f97a3ad1f4",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-cpp-counter.lock",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-cpp-i18n.lock",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-jump-jump-3d-cpp.lock",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-jump-jump-3d.lock",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-voxel-craft-cpp.lock",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-voxel-craft.lock",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-weather.lock",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-cpp-counter/manifest.pxm",
+      "bytes": 654,
+      "sha256": "bff9656e89273e3d748236f8ecfa077fbf89de05d2cf8f390d3210f6c1da244d",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-cpp-counter/signature.pxs",
+      "bytes": 108,
+      "sha256": "95abb9ab20618d0e722be2252acee8f84ab9f8640ae8c0077922e35c8631d3a1",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-cpp-counter/artifacts/main.esp32-s3.aot",
+      "bytes": 141468,
+      "sha256": "17ad182b519ac51830a4967cc098a81fc51781cb3050c71605f58f0d03076360",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-cpp-counter/artifacts/main.wasm",
+      "bytes": 212672,
+      "sha256": "e84fadb306979ffdc58d66dc60e5e81141f343ba5ebef951d96f29df9132f7b0",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-cpp-i18n/manifest.pxm",
+      "bytes": 829,
+      "sha256": "fff26da6e7e760b2fafc72cb91d0888cca8b28bf7351b0c4fb95aee690a1419e",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-cpp-i18n/signature.pxs",
+      "bytes": 108,
+      "sha256": "8ca1033158687c1626403156d7fd18bda058c9a428527a9bf2d42ee7da651530",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-cpp-i18n/artifacts/main.esp32-s3.aot",
+      "bytes": 189664,
+      "sha256": "57b5c3cb79b7c284de2b1fe80c98919bc2dc0bba5aef259b32aec90ee2633e21",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-cpp-i18n/artifacts/main.wasm",
+      "bytes": 81319,
+      "sha256": "5e467bfc8de039c76d385a858c8ac9fb086faef9d8528d3a4c1d69e4d7de238b",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-jump-jump-3d-cpp/manifest.pxm",
+      "bytes": 3491,
+      "sha256": "9a6e65fb8a609c69e8d50609080bdc1d1ad76b3bfd4f3cde82988b2c2bbcab37",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-jump-jump-3d-cpp/signature.pxs",
+      "bytes": 108,
+      "sha256": "29eea049768c0d087e9b9ddb255ef0b297087ddb4dc9b88aab0be67a23e68b00",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-jump-jump-3d-cpp/artifacts/main.esp32-s3.aot",
+      "bytes": 428260,
+      "sha256": "ce98d8865db34c9bbadfff91f39de3962479bcac1032e07c0b286de054fa1646",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-jump-jump-3d-cpp/assets/icon.png",
+      "bytes": 3751,
+      "sha256": "47626b5420bd2ac053eeb3179eb5cf3d7300b870b3cc18b96b4ba6dc64c02936",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-jump-jump-3d-cpp/assets/icon.svg",
+      "bytes": 1284,
+      "sha256": "0302bc9f82daba649d1270a405afa78a66ea41978c005967f1ab7a9902427c97",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-jump-jump-3d-cpp/assets/resources.pxi",
+      "bytes": 1528,
+      "sha256": "8fb1cd8003fb1bf24c936da9624fd18e3f9cda4d0a27b336757041a88cfc7c38",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-jump-jump-3d-cpp/assets/audio/combo1.s16",
+      "bytes": 18880,
+      "sha256": "e1bba6d8d49b11f59d027a8ee4372382931748d0f19cd24652e2164e784b82cf",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-jump-jump-3d-cpp/assets/audio/combo2.s16",
+      "bytes": 16960,
+      "sha256": "a80e84615b1021ac63903fe37559579f93fd3dd2b5626c70bc3cd11f2b3aa839",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-jump-jump-3d-cpp/assets/audio/combo3.s16",
+      "bytes": 17600,
+      "sha256": "16da1f3b044aac1b12d1f6b1f94549e287078fc511965daca25d5a69b903703a",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-jump-jump-3d-cpp/assets/audio/combo4.s16",
+      "bytes": 17600,
+      "sha256": "d9ef93032bf5597c233bb57713c42a1c428f28c50d8362fc82a29994b676f574",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-jump-jump-3d-cpp/assets/audio/combo5.s16",
+      "bytes": 16960,
+      "sha256": "4d93388f9394bfad0be3de32a1c7d65ccfd0a38956642ccf5e1f66ac2c0c773b",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-jump-jump-3d-cpp/assets/audio/combo6.s16",
+      "bytes": 16960,
+      "sha256": "560c2d5f6468fe74bca3466239ee7d75ea6b27176408bb585a830415424ba8b2",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-jump-jump-3d-cpp/assets/audio/combo7.s16",
+      "bytes": 16320,
+      "sha256": "d1f697d373c4148409500c6f1702b17f50aa2182a99d838325f6f49c1d937d0a",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-jump-jump-3d-cpp/assets/audio/combo8.s16",
+      "bytes": 15040,
+      "sha256": "343a59e701d2728f4f78cce8e4ef0359f57dfca6d827fa09559b9d8393fad578",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-jump-jump-3d-cpp/assets/audio/fall.s16",
+      "bytes": 22720,
+      "sha256": "c5c0c6018e5ac89db6b109eed2409c66cd5db8e5e68f6e152f52df0073fcb8d8",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-jump-jump-3d-cpp/assets/audio/fall_2.s16",
+      "bytes": 52800,
+      "sha256": "a1996505a0de19660e78127ef5188257f5093795c8ba13cf8590fadf1137959f",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-jump-jump-3d-cpp/assets/audio/icon.ogg",
+      "bytes": 13599,
+      "sha256": "c7565aad78801f5f36bc4d3a788893f4ea0f0935fe74905e75e8261d13f8ae82",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-jump-jump-3d-cpp/assets/audio/pop.s16",
+      "bytes": 4930,
+      "sha256": "ae99d6b3bbb78dbc7d5ef3c2347eea2fd2aa615a1b6091a2e45a4da4fdc86899",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-jump-jump-3d-cpp/assets/audio/scale_intro.s16",
+      "bytes": 70734,
+      "sha256": "aa89d2e8c855e9b8d4a5feccc3b9a0103bb794a1f06facb4e9db92a6fbbf72bf",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-jump-jump-3d-cpp/assets/audio/scale_loop.s16",
+      "bytes": 40000,
+      "sha256": "6508665ee500c238c4303973eff965e2d23a1f7b53040332ef21966ecb271e3b",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-jump-jump-3d-cpp/assets/audio/sing.s16",
+      "bytes": 430400,
+      "sha256": "a7782a6a989d1bf5f55520cbf8a23c37e71c87dd0d8480181efee04ce1d5f3f3",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-jump-jump-3d-cpp/assets/audio/start.s16",
+      "bytes": 21440,
+      "sha256": "da36783408502d85fcd57b677ba767d435a7df5eb8411471506ce6170f394fe3",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-jump-jump-3d-cpp/assets/audio/store.s16",
+      "bytes": 148160,
+      "sha256": "aaf14b8ae9c6870a7151f7916cff0a2af95555d5c83ccefb984c06addae222a8",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-jump-jump-3d-cpp/assets/audio/success.s16",
+      "bytes": 6080,
+      "sha256": "08df92fb9d8c844896f4615e8d50f62b072cf4456f84f23b6a9f826f25dbf6b4",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-jump-jump-3d-cpp/assets/audio/water.s16",
+      "bytes": 140480,
+      "sha256": "3ac76ce0955ffb60d2ba35150d505c4fc0e8188e5d452a3083a626272a7bbbf5",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-jump-jump-3d-cpp/assets/fonts/j3_font_big_t0.pxr",
+      "bytes": 1832,
+      "sha256": "fca17f04379cc54d15820a17752dab860638436c403e02b24075fd16efbbe364",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-jump-jump-3d-cpp/assets/fonts/j3_font_big_t1.pxr",
+      "bytes": 7232,
+      "sha256": "fdf1580e2110d1b6b30ac93925aaf12c8011196be6fd6347f097d63eeddcf66f",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-jump-jump-3d-cpp/assets/fonts/j3_font_big_t2.pxr",
+      "bytes": 19958,
+      "sha256": "1a0e989e9bf3ea32211ea5cc59f3362877b7bf99fb6d5f4f303fa865e5ed7796",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-jump-jump-3d-cpp/assets/fonts/j3_font_cjk_t0.pxr",
+      "bytes": 1904,
+      "sha256": "dcf92e49d124cfb8a8df8b990b70f623cf99aa8e84df1c2dafc09833e52e9769",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-jump-jump-3d-cpp/assets/fonts/j3_font_cjk_t1.pxr",
+      "bytes": 3360,
+      "sha256": "8d1931b86d949c42c2071dd999e16fa118f5823b46f3d38c0e0caa9eb5d169ac",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-jump-jump-3d-cpp/assets/fonts/j3_font_cjk_t2.pxr",
+      "bytes": 10680,
+      "sha256": "563de3d5895322d7fe5dfeefc7e4679d22127c1fbc3775a70f6369355d5b930b",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-jump-jump-3d-cpp/assets/fonts/j3_font_small_t0.pxr",
+      "bytes": 1502,
+      "sha256": "f0ee15eda2d0cad4eccb98abffd532e0c963f1cfb141ebccf7fdf918f644f509",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-jump-jump-3d-cpp/assets/fonts/j3_font_small_t1.pxr",
+      "bytes": 5664,
+      "sha256": "a6112977bb73a754666258019b1aff4f38de9d5c6e6c2ff64b5246ebceabeebd",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-jump-jump-3d-cpp/assets/fonts/j3_font_small_t2.pxr",
+      "bytes": 7622,
+      "sha256": "4611defbfedce85b5ac897d58ae7e624500cb19ea31236dc39ce6723b9ae1d86",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-voxel-craft-cpp/assets/b00.pxr",
+      "bytes": 288,
+      "sha256": "ba1ce167869d792c031fb26fe7f60b53d5c45423587154d1da072c036c95d34c",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-voxel-craft-cpp/assets/b01.pxr",
+      "bytes": 288,
+      "sha256": "5b7a6e18c5ca01133dd470c3b74e649bbb46b82c213a29834ad9a441e9c2822a",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-voxel-craft-cpp/assets/b02.pxr",
+      "bytes": 288,
+      "sha256": "5696d5e869dd20fa5f4dd0ce5a667dd4cbde2333875115eaaf951b4f7d421a18",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-voxel-craft-cpp/assets/b03.pxr",
+      "bytes": 288,
+      "sha256": "7fb4aaaad853af2c2ff140dead4a5dd11ebd9ea538e2b0f0cff62d8b0b2a7b0b",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-voxel-craft-cpp/assets/b04.pxr",
+      "bytes": 288,
+      "sha256": "395ecf0850f1f43cd2b3c56bbca4f719d1f02438c766a8241c0ae689168dbd7d",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-voxel-craft-cpp/assets/b05.pxr",
+      "bytes": 288,
+      "sha256": "8fbfc2ed03a7c11abd0845c3cf38d3787e3062a8dee91d9dc6b2bf25b38567f8",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-voxel-craft-cpp/assets/b06.pxr",
+      "bytes": 288,
+      "sha256": "7457a8cf3b8ee088ea747545a15fefd6de6be44435086b88d5602298397703e6",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-voxel-craft-cpp/assets/b07.pxr",
+      "bytes": 288,
+      "sha256": "a14842bf631f11023ff1a47dcbd1e7c02ac554b645e7fa0e3233957ffc16a87b",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-voxel-craft-cpp/assets/b08.pxr",
+      "bytes": 288,
+      "sha256": "bc74c1d4ddf310c6144399a11720280c0c1697c520793837ef0d3a9f7522f31d",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-voxel-craft-cpp/assets/b09.pxr",
+      "bytes": 288,
+      "sha256": "b21f7c143c5f6e333cd2c43e565af26e8389d12373a9462a8615b75d12912e23",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-voxel-craft-cpp/assets/b10.pxr",
+      "bytes": 288,
+      "sha256": "d3c5835568669c5e70c56e6ac598752c2748e235dc498876e37230f96848dbfb",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-voxel-craft-cpp/assets/b11.pxr",
+      "bytes": 288,
+      "sha256": "06adcf9d0f8d5250dd7432401fbe3b52d010ca52a896ada08364b7e70858e82d",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-voxel-craft-cpp/assets/b12.pxr",
+      "bytes": 288,
+      "sha256": "bd093f502720e4d05994067b9ec9ff5a3a67fcfb333404b4541b9d4ec2df294f",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-voxel-craft-cpp/assets/b13.pxr",
+      "bytes": 288,
+      "sha256": "565b24b3e1db37a1efbf7d9cf78ffffdf236c4cfc471009530bb2b067466e922",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-voxel-craft-cpp/assets/b14.pxr",
+      "bytes": 288,
+      "sha256": "e4f2173fd90e271da062ba0c5abcb2aa4434ac405cdd614af5cd3e3929499e99",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-voxel-craft-cpp/assets/b15.pxr",
+      "bytes": 288,
+      "sha256": "aefc44f2d7f24710f47b3c23d2bf01add67034baae2477b9e823148e23e63ef0",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-voxel-craft-cpp/assets/b16.pxr",
+      "bytes": 288,
+      "sha256": "8f5913a85b4d404bd1a30f3f5abc046155984db3b7784c1c1b029292a9087297",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-voxel-craft-cpp/assets/b17.pxr",
+      "bytes": 288,
+      "sha256": "ca3faf64ad25a20ce91e6cd9f17a0933c7b7f5083f58a3731e8b642718df706e",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-voxel-craft-cpp/assets/b18.pxr",
+      "bytes": 288,
+      "sha256": "a48707d7fe2950b5587421934760eb6c74cab6bf420ad09c1fd8d6e746968f60",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-voxel-craft-cpp/assets/b19.pxr",
+      "bytes": 288,
+      "sha256": "1fa572d337319b1540b210d37e3c5d9a8c51ef9b22461b55401cc522982b31ea",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-voxel-craft-cpp/assets/b20.pxr",
+      "bytes": 288,
+      "sha256": "58bd9dd9bc75438e7aafa8742a81f89867f51745bcf5a28902230a3b1f988f3d",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-voxel-craft-cpp/assets/b21.pxr",
+      "bytes": 288,
+      "sha256": "af4885e05a5facb5de526d4396d21b603953c0e32dde5b215333c76e4151ffe3",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-voxel-craft-cpp/assets/b22.pxr",
+      "bytes": 288,
+      "sha256": "06b7761fd1b27288776756a32051f83f80aa11da18f9b2baab18c18067a868a9",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-voxel-craft-cpp/assets/b23.pxr",
+      "bytes": 288,
+      "sha256": "1adb90d1776d73e68a95d8156d78f228af9c5ec3ee85fb75ada028679796d131",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-voxel-craft-cpp/assets/b24.pxr",
+      "bytes": 288,
+      "sha256": "b30b1f7ff358293002bd1833955103098f2dd5ba62a6f1b371f9b1ab35619ca9",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-voxel-craft-cpp/assets/b25.pxr",
+      "bytes": 288,
+      "sha256": "d75fd67b3a59695b9e78a8b18830e1290295059ca904ec7c3924a29695824076",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-voxel-craft-cpp/assets/b26.pxr",
+      "bytes": 288,
+      "sha256": "6ca585473b851c65dfa811250e1d74c04861cf48be96431b6a9d49af89ebc031",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-voxel-craft-cpp/assets/b27.pxr",
+      "bytes": 288,
+      "sha256": "de9d244b7b9097d70a722a45156f37d9b77ddd48b2d681c1d9d7d8d248f995b3",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-voxel-craft-cpp/assets/b28.pxr",
+      "bytes": 288,
+      "sha256": "af3229dfcd0fd0715733455c4d0132cda3a405e6e8f252e6b38ab63c591fbd93",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-voxel-craft-cpp/assets/b29.pxr",
+      "bytes": 288,
+      "sha256": "108c5a89ac271ca833cd204e7242635138bf6d18f8bd1134d195d8ddb2b56427",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-voxel-craft-cpp/assets/b30.pxr",
+      "bytes": 288,
+      "sha256": "0ce1bb40752a62ce25bb003d0d63b8d40840c8269d4a27b81bcdaa5399be1bc4",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-voxel-craft-cpp/assets/b31.pxr",
+      "bytes": 288,
+      "sha256": "0f559934cfcecefce6db9763ec80ad06ae5942a789ca213587f90091c319c770",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-voxel-craft-cpp/assets/b32.pxr",
+      "bytes": 288,
+      "sha256": "39310b1d476e8dd842136d285c533bdbb57f789cbbed4b4e9aaaab3539aff7bf",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-voxel-craft-cpp/assets/b33.pxr",
+      "bytes": 288,
+      "sha256": "aa999830fd48998953dc08857f2b961976cc8f1821a76b7fdc746391927fcf9c",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-voxel-craft-cpp/assets/b34.pxr",
+      "bytes": 288,
+      "sha256": "d47e6d92883597418fffb339d711df43815e2f50c3455b42ed4b5a0c761fd774",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-voxel-craft-cpp/assets/b35.pxr",
+      "bytes": 288,
+      "sha256": "5ad93845f4d5c9f4d2fbb5bb62f56ee5296a5067ded645212432b14672bdbb1b",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-voxel-craft-cpp/assets/b36.pxr",
+      "bytes": 288,
+      "sha256": "5a5242140f4d2d10cdbca6e8af548fc5a12d50c944cb7d3514252490656ce9d9",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-voxel-craft-cpp/assets/b37.pxr",
+      "bytes": 288,
+      "sha256": "3d132e0dc4c28acecff78f5c42bfe5fc8060de56d86e4ed2bd60421c28dbea0e",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-voxel-craft-cpp/assets/b38.pxr",
+      "bytes": 288,
+      "sha256": "a9bea357d56b78643c3f6b57994f9e614219fbae46641b680ae38e9a5a612444",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-voxel-craft-cpp/assets/b39.pxr",
+      "bytes": 288,
+      "sha256": "77c89427998e78f0b978f256b85511bf1a87dd8388e2c46773f6ff8717736a96",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-voxel-craft-cpp/assets/b40.pxr",
+      "bytes": 288,
+      "sha256": "2ba2b60fbf30826db71c2c4772e9f88665bb9fb6e32824a735b68787a0f96c80",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-voxel-craft-cpp/assets/b41.pxr",
+      "bytes": 288,
+      "sha256": "049c4ce557d72ae8f7a7238b29111af2066fd887732363c0f5d4a70825984a51",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-voxel-craft-cpp/assets/b42.pxr",
+      "bytes": 288,
+      "sha256": "fd9d1f28127db41464132385958212c89dfc2305f2c2357a674b3569402e97a3",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-voxel-craft-cpp/assets/b43.pxr",
+      "bytes": 288,
+      "sha256": "b58f9fa5d50d2cb127652f19b780dd0acbdd61ee0e4b798caac74aac037362f6",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-voxel-craft-cpp/assets/b44.pxr",
+      "bytes": 288,
+      "sha256": "37cf09bb1edc4ff86441cfa7919e82e8a0816187a7f01101e079acf74564406f",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-voxel-craft-cpp/assets/hud.pxr",
+      "bytes": 2080,
+      "sha256": "472ff88e57dbbd5910454cb57c5799b5dd70985336aa2a62ca7ab552d8c7cbb2",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-voxel-craft-cpp/assets/icon.png",
+      "bytes": 9043,
+      "sha256": "bf7093fe36f33098d6335eb25349768734eb847d187a3b2e8eac34c08a021d9c",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-voxel-craft-cpp/assets/menu-font-10.pxr",
+      "bytes": 12132,
+      "sha256": "9c042562fd193510fb81f1a39b3757c99f4c0940148539f1d08a6780727fe1bd",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-voxel-craft-cpp/assets/menu-font-14.pxr",
+      "bytes": 23748,
+      "sha256": "dc1d33f81112a266c4a76c4b3cda90383d25c1d16ac255dfe1f52102894d97fb",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-voxel-craft-cpp/assets/menu-font-18.pxr",
+      "bytes": 39236,
+      "sha256": "73dd4f97e5365e4a2aa45e8c8bf5c904884928ed0dc5deea1da4a56d52313dbf",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-voxel-craft-cpp/assets/palette-lit.pxr",
+      "bytes": 8224,
+      "sha256": "ecdef94de67ef6fffe91b82aa0cdccd742fe5be8f7815315a3bc1339f6fa26be",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-voxel-craft-cpp/assets/resources.pxi",
+      "bytes": 2088,
+      "sha256": "6aefbe837c8211abede22960b95f422e56b4b1182d4d797b9ec1379a4e9ba407",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-weather/manifest.pxm",
+      "bytes": 2490,
+      "sha256": "5e8be890b5acd3288dcd6924f2de73849873f441ead1ba1e8100dea38811bbf1",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-weather/signature.pxs",
+      "bytes": 108,
+      "sha256": "71900a2dd5aa48e70ba01853007ee3f93a74d60945cc3889b851b657edb9d6c8",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-weather/artifacts/main.linux-x86_64.aot",
+      "bytes": 111232,
+      "sha256": "8ab858685157512f01e3eada9257bc255ade352bf5a976d31136ff1f61a84a8a",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-weather/artifacts/main.wasm",
+      "bytes": 71969,
+      "sha256": "77248c4e6b600e1aa5b3be408a53385664a49385bcba1ddc2fdcfe237b87b957",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-weather/assets/clock.pxr",
+      "bytes": 1188,
+      "sha256": "66e11ce44e089411f6c2b8282a4073d87450e58eca7454ef290d40ccbf903360",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-weather/assets/cloud.pxr",
+      "bytes": 16416,
+      "sha256": "001db13e0001e931cb7d3196fd095d25b5a0eab993eb32dd957cfd4466e370ee",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-weather/assets/fog.pxr",
+      "bytes": 16416,
+      "sha256": "243918bb345c808e4acd88cfefd792a6bf10f754ae628bd79100f4ea21bdf385",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-weather/assets/icon.png",
+      "bytes": 4123,
+      "sha256": "92989207bd16e16f215b9e4f4383be78125f4a7057114217edc4ebc3c1e1441c",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-weather/assets/icon.svg",
+      "bytes": 1136,
+      "sha256": "b6b2e7487c34c22e12be57c5800d1de78468931d1c9a1718a236c3b2138e1f6d",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-weather/assets/info.pxr",
+      "bytes": 1328,
+      "sha256": "fcf607424ee7c61c65fabbb9d47d3ee1fd972ceba7d7f3b8cb43cf144864ca4a",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-weather/assets/location.pxr",
+      "bytes": 1476,
+      "sha256": "d22443a3ccf79cb0583703bdd458afa1cdc5da4e1a898584f1dd3f3a2de1ff45",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-weather/assets/moon.pxr",
+      "bytes": 16416,
+      "sha256": "de44e99699aff3e5c6da1a49aeb5f3b73c35b76b7e3e62024093ecdc622d6d92",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-weather/assets/partly-cloudy.pxr",
+      "bytes": 16416,
+      "sha256": "b1fd6bd4c777721111932592234794de9ea5e4be00fb79c85b2e816034eb8ada",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-weather/assets/rain.pxr",
+      "bytes": 16416,
+      "sha256": "9ca854db8282f77fa5de8c5bbc3d78f3199b3ecdda20448491b8e87170b6c483",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-weather/assets/refresh.pxr",
+      "bytes": 1188,
+      "sha256": "35e460699175a641746304cf6fb7652ac7e2140362a0d71c179a07962209a020",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-weather/assets/resources.pxi",
+      "bytes": 592,
+      "sha256": "c2a79d3422caf8dc808a0d8bf9547e8a642191ec3bc4cf2147e7bf69bfe8cc3f",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-weather/assets/snow.pxr",
+      "bytes": 16416,
+      "sha256": "f20f115148b5bafb94452de7fa0d6ed1cdedd5a9fbbb72943ee77c6b7fe7f686",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-weather/assets/storm.pxr",
+      "bytes": 16416,
+      "sha256": "225fe2bfe365c838008b2daaaf34ff76b5f172415e57b5d961c9a4a110a85f8f",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/packages/17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171~pxa-weather/assets/sun.pxr",
+      "bytes": 16416,
+      "sha256": "558c7d6ffd0cc221fbce99200688b863bb77eb6cf21b17bee00b6c7d9a5529f6",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/policy/p_47cc8078aa856b1b3549b55c.a",
+      "bytes": 52,
+      "sha256": "cd63c37feaef73938fe7d955daea5dfe625811b5a9c71d92130780e2d21e6ee4",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/policy/p_47cc8078aa856b1b3549b55c.b",
+      "bytes": 52,
+      "sha256": "cd63c37feaef73938fe7d955daea5dfe625811b5a9c71d92130780e2d21e6ee4",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/policy/p_759bd915e64fe053f25e67da.a",
+      "bytes": 52,
+      "sha256": "cd63c37feaef73938fe7d955daea5dfe625811b5a9c71d92130780e2d21e6ee4",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/policy/p_759bd915e64fe053f25e67da.b",
+      "bytes": 52,
+      "sha256": "cd63c37feaef73938fe7d955daea5dfe625811b5a9c71d92130780e2d21e6ee4",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/policy/p_f6f83c16968a8cd560d3f1c7.a",
+      "bytes": 132,
+      "sha256": "f02c4fe65acb43c804ef9a78501dd9f06172e8cea17e06cb4aaf2fa263fc7ba8",
+      "match": true
+    },
+    {
+      "path": "/pxa-state/policy/p_f6f83c16968a8cd560d3f1c7.b",
+      "bytes": 132,
+      "sha256": "f02c4fe65acb43c804ef9a78501dd9f06172e8cea17e06cb4aaf2fa263fc7ba8",
+      "match": true
+    },
+    {
+      "path": "/system/fonts/noto_sans_cjk_common.ttf",
+      "bytes": 3224544,
+      "sha256": "17f6e5bd2b8fbac78e38f16a8d454a551a064f6edc0070917c152c9caeaab543",
+      "match": true
+    }
+  ],
+  "memory_monitor_stopped": true,
+  "device_returned_to_launcher": true,
+  "test_packages_uninstalled": true,
+  "test_package_permission_and_data_cleared_by_uninstall": true,
+  "image": {
+    "format": "rgb565le",
+    "width": "296",
+    "height": "240",
+    "stride": "592",
+    "orientation": "logical",
+    "frame_id": "0",
+    "device_us": "112920684",
+    "source": "lvgl",
+    "bytes": "142080",
+    "sha256": "7e6a8b2e98dada2050cce378b987919b304b7a3b12291618c24a9c2de51d8b6e"
+  },
+  "info_before_cleanup_reboot": "target=esp32s3;serial=a4:cb:8f:d6:8d:a4;version=efdacc3-dirty;free_heap=6910195;pxa=ready;storage_total=9437184;storage_used=9437184;storage_free=0",
+  "info": "target=esp32s3;serial=a4:cb:8f:d6:8d:a4;version=efdacc3-dirty;free_heap=6953819;pxa=ready;storage_total=9437184;storage_used=7221248;storage_free=2215936",
+  "storage_stats_after_reboot_match_baseline": true
+}
