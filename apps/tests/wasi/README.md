@@ -22,3 +22,13 @@ Run all packaging checks with:
 WASI_SDK_DIR=/opt/wasi-sdk-34.0 WAMRC=/path/to/wamrc \
   tools/package/test_cmake_wasi_apps.sh
 ```
+
+To check AOT-only packaging (including explicit `artifact: "both"` and a
+Wasm-only service in the same signed package):
+
+```sh
+tools/package/test_aot_only.sh
+```
+
+This check builds a temporary copy of `cmake-components-lab`, verifies that
+the AOT is unchanged, strips its Wasm fallback and retains the service's Wasm.

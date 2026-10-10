@@ -79,12 +79,16 @@ case "$package_target" in
   esp32s31)
     aot_target="riscv32"
     manifest_target="esp32-s31"
-    # ESP32-S31 is RV32IMAF. Keep the ABI in step with the WAMR runtime's
-    # RISCV32_ILP32F configuration selected by ESP-IDF 6.2.
-    # LLVM's RISC-V backend does not support the large code model selected by
-    # size-level 0, unlike the Xtensa target above.
+    # Match ESP-IDF's RV32IMAFCB ISA: C reduces instruction-fetch traffic;
+    # B (Zba/Zbb/Zbs) accelerates address calculation and bit operations.
+    # Keep the ILP32F ABI used by the firmware's WAMR runtime. This LLVM does
+    # not have an esp32s31 CPU model; esp32p4 also enables vendor/Zc features
+    # and must not be substituted for it.
+    # WAMR's size-level selects the code model, not Os/Oz optimization.
+    # Keep Small (3) with O3; RISC-V cannot use the Large (0) model here.
     wamrc_extra_args=(--target-abi=ilp32f --cpu=generic-rv32
-                      --cpu-features=+m,+a,+f --opt-level=3 --size-level=3)
+                      --cpu-features=+m,+a,+f,+c,+zba,+zbb,+zbs
+                      --opt-level=3 --size-level=3)
     ;;
   simulator)
     aot_target="x86_64"
@@ -165,7 +169,6 @@ wait_build_batch() {
 generated_include_dir="$work_dir/generated/include"
 generated_include_args=()
 
-
 component_rows="$work_dir/components.tsv"
 build_settings="$work_dir/build.tsv"
 package_artifact_mode="${PXA_PACKAGE_ARTIFACT_MODE:-}"
@@ -219,9 +222,13 @@ for component in components:
     if not isinstance(component_id, str):
         raise SystemExit("component id is required")
     mode = os.environ.get("PXA_PACKAGE_ARTIFACT_MODE", "")
-    artifact = "wasm" if mode == "wasm" else component.get("artifact", "aot" if mode == "aot" else "both")
+    artifact = component.get("artifact", "both")
     if artifact not in ("aot", "wasm", "both"):
         raise SystemExit("component artifact must be aot, wasm, or both")
+    if mode == "wasm":
+        artifact = "wasm"
+    elif mode == "aot" and artifact != "wasm":
+        artifact = "aot"
     if build_system == "cmake":
         target = component.get("cmake_target")
         if not isinstance(target, str) or not target:

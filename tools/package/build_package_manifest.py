@@ -538,12 +538,13 @@ def main(argv):
             if "services" in item else declared_services
         )
         wasi_features = parse_wasi(item.get("wasi"))
-        artifact_mode = (
-            "wasm" if forced_mode == "wasm" else
-            item.get("artifact", "aot" if aot_only or forced_mode == "aot" else "both")
-        )
+        artifact_mode = item.get("artifact", "both")
         require(artifact_mode in ("aot", "wasm", "both"),
                 "component artifact must be aot, wasm, or both")
+        if forced_mode == "wasm":
+            artifact_mode = "wasm"
+        elif (aot_only or forced_mode == "aot") and artifact_mode != "wasm":
+            artifact_mode = "aot"
         flags = COMPONENT_FLAG_PINNED_MEMORY if pinned_memory else 0
         components.append((component_id, COMPONENT_KINDS[kind_name], flags,
                            service_requirements, wasi_features, artifact_mode))
