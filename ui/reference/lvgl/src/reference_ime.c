@@ -705,15 +705,32 @@ void pxsys_reference_ime_set_theme(pxsys_reference_ime_t *input_method,
         lv_obj_set_style_bg_color(surface,
             lv_color_hex(theme->colors[PXSYS_COLOR_PRIMARY_CONTAINER]),
             LV_PART_ITEMS | LV_STATE_PRESSED);
+        lv_obj_set_style_text_color(surface,
+            lv_color_hex(theme->colors[PXSYS_COLOR_ON_PRIMARY_CONTAINER]),
+            LV_PART_ITEMS | LV_STATE_PRESSED);
+        lv_obj_set_style_bg_color(surface,
+            lv_color_hex(theme->colors[PXSYS_COLOR_SECONDARY_CONTAINER]),
+            LV_PART_ITEMS | LV_STATE_CHECKED);
+        lv_obj_set_style_text_color(surface,
+            lv_color_hex(theme->colors[PXSYS_COLOR_ON_SECONDARY_CONTAINER]),
+            LV_PART_ITEMS | LV_STATE_CHECKED);
     }
-    if (input_method->symbol_grid != NULL) {
-        for (index = 0; index < lv_obj_get_child_count(input_method->symbol_grid);
+    lv_obj_t *groups[2] = {input_method->symbol_grid, input_method->symbol_toolbar};
+    for (size_t group = 0; group < 2; ++group) {
+        if (groups[group] == NULL) continue;
+        for (index = 0; index < lv_obj_get_child_count(groups[group]);
              ++index) {
-            lv_obj_t *button = lv_obj_get_child(input_method->symbol_grid, index);
+            lv_obj_t *button = lv_obj_get_child(groups[group], index);
             lv_obj_set_style_bg_color(button,
                 lv_color_hex(theme->colors[PXSYS_COLOR_SURFACE_CONTAINER_HIGHEST]), 0);
             lv_obj_set_style_text_color(button,
                 lv_color_hex(theme->colors[PXSYS_COLOR_ON_SURFACE]), 0);
+            lv_obj_set_style_bg_color(button,
+                lv_color_hex(theme->colors[PXSYS_COLOR_PRIMARY_CONTAINER]),
+                LV_STATE_PRESSED);
+            lv_obj_set_style_text_color(button,
+                lv_color_hex(theme->colors[PXSYS_COLOR_ON_PRIMARY_CONTAINER]),
+                LV_STATE_PRESSED);
         }
     }
 }
@@ -774,7 +791,9 @@ void pxsys_reference_ime_set_layout(pxsys_reference_ime_t *input_method,
     lv_obj_set_size(input_method->symbol_panel, width, height);
     lv_obj_align(input_method->symbol_panel, align, offset_x, offset_y);
 #if LV_USE_IME_PINYIN && LV_IME_PINYIN_USE_K9_MODE
-    lv_obj_set_size(input_method->candidates, width, 36);
+    lv_coord_t candidate_height = input_method->text_font
+        ? input_method->text_font->line_height + 8 : 36;
+    lv_obj_set_size(input_method->candidates, width, candidate_height);
     lv_obj_align_to(input_method->candidates, input_method->keyboard,
                     LV_ALIGN_OUT_TOP_MID, 0, -6);
 #endif

@@ -16,6 +16,14 @@ target_include_directories(pxa_system_reference_lvgl PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_LIST_DIR}/include>)
 target_link_libraries(pxa_system_reference_lvgl PUBLIC
     pxsys::standard pxsys::reference_layout lvgl)
+if(PXSYS_BUILD_TESTS OR BUILD_TESTING)
+    add_executable(pxsys_reference_ime_test ../tests/reference_ime_test.c)
+    target_link_libraries(pxsys_reference_ime_test PRIVATE pxsys::reference_lvgl)
+    if(NOT MSVC)
+        target_compile_options(pxsys_reference_ime_test PRIVATE -UNDEBUG)
+    endif()
+    add_test(NAME pxsys_reference_ime_test COMMAND pxsys_reference_ime_test)
+endif()
 if(DEFINED PXSYS_REFERENCE_UI_LAUNCHER_COLUMNS AND
    DEFINED PXSYS_REFERENCE_UI_LAUNCHER_ROWS)
     target_compile_definitions(pxa_system_reference_lvgl PRIVATE

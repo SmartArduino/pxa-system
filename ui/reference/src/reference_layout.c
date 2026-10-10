@@ -2,6 +2,47 @@
 
 #include <string.h>
 
+pxsys_status_t pxsys_reference_input_method_rect(
+    const pxsys_display_profile_t* display, pxsys_rect_t* output) {
+    pxsys_rect_t content;
+    if (output == NULL ||
+        pxsys_display_content_rect(display, &content) != PXSYS_STATUS_OK)
+        return PXSYS_STATUS_INVALID_ARGUMENT;
+    uint32_t gap = pxsys_reference_display_scale_px(display, 8);
+    if (display->shape == PXSYS_DISPLAY_SHAPE_CIRCLE && gap < display->height / 10)
+        gap = display->height / 10;
+    if (gap >= content.height) gap = 0;
+    output->height = content.height * 43 / 100;
+    if (output->height == 0) output->height = 1;
+    if (gap > content.height - output->height) gap = content.height - output->height;
+    output->y = content.y + (int32_t)(content.height - gap - output->height);
+    int32_t bottom = output->y + (int32_t)output->height - 1;
+    int32_t left = content.x;
+    int32_t right = content.x + (int32_t)content.width - 1;
+    int32_t middle = content.x + (int32_t)content.width / 2;
+    if (!pxsys_display_contains_point(display,middle,output->y) ||
+        !pxsys_display_contains_point(display,middle,bottom))
+        return PXSYS_STATUS_UNAVAILABLE;
+    /* Circular and rounded profiles are convex. Effective insets cover cutouts.
+     * Binary search both ends using the top and bottom corners, no allocation. */
+    int32_t low = left, high = middle;
+    while (low < high) {
+        int32_t x = low + (high - low) / 2;
+        if (pxsys_display_contains_point(display,x,output->y) &&
+            pxsys_display_contains_point(display,x,bottom)) high=x;
+        else low=x+1;
+    }
+    left=low; low=middle; high=right;
+    while (low < high) {
+        int32_t x = low + (high - low + 1) / 2;
+        if (pxsys_display_contains_point(display,x,output->y) &&
+            pxsys_display_contains_point(display,x,bottom)) low=x;
+        else high=x-1;
+    }
+    output->x=left; output->width=(uint32_t)(low-left+1);
+    return PXSYS_STATUS_OK;
+}
+
 uint16_t pxsys_reference_display_scale_px(
     const pxsys_display_profile_t* display, uint16_t pixels) {
     uint32_t percent = display != NULL ? display->density_dpi / 2u : 100u;

@@ -5818,9 +5818,9 @@ static void wide_ime_add_modes(pxsys_reference_lvgl_t* ui, lv_obj_t* parent,
     static const char* const modes[] = {"CN", "EN", "123", "#+"};
     static const char* const labels[] = {"中", "EN", "123", "#+"};
     style_plain(bar);
-    lv_obj_set_size(bar, LV_PCT(100), 38);
-    lv_obj_align(bar, LV_ALIGN_BOTTOM_MID, 0,
-                 -(lv_coord_t)(ui->display.height * 40 / 100));
+    lv_obj_update_layout(keyboard);
+    lv_obj_set_size(bar, lv_obj_get_width(keyboard), ui_px(ui,38));
+    lv_obj_align_to(bar, keyboard, LV_ALIGN_OUT_TOP_MID, 0, 0);
     lv_obj_set_layout(bar, LV_LAYOUT_FLEX);
     lv_obj_set_flex_flow(bar, LV_FLEX_FLOW_ROW);
     for (size_t index = 0; index < 4; ++index) {
@@ -5830,7 +5830,7 @@ static void wide_ime_add_modes(pxsys_reference_lvgl_t* ui, lv_obj_t* parent,
         lv_obj_set_style_text_font(text, typography_font(ui, PXSYS_TYPOGRAPHY_BODY), 0);
         lv_obj_center(text);
         lv_obj_set_flex_grow(button, 1);
-        lv_obj_set_height(button, 36);
+        lv_obj_set_height(button, ui_px(ui,36));
         lv_obj_set_user_data(button, (void*)modes[index]);
         lv_obj_add_event_cb(button, wide_ime_mode_clicked, LV_EVENT_CLICKED, ui);
     }
@@ -5888,7 +5888,8 @@ static lv_obj_t* find_any_textarea(lv_obj_t* object) {
 static lv_obj_t* find_focused_textarea(lv_obj_t* object) {
     uint32_t count;
     uint32_t index;
-    if (object == NULL) return NULL;
+    if (object == NULL || !lv_obj_is_visible(object) ||
+        lv_obj_has_state(object, LV_STATE_DISABLED)) return NULL;
     if (lv_obj_check_type(object, &lv_textarea_class) &&
         lv_obj_has_state(object, LV_STATE_FOCUSED))
         return object;
@@ -5960,8 +5961,7 @@ static void app_input_method_close(pxsys_reference_lvgl_t* ui) {
         if (ui->app_ime_target != NULL) {
             lv_obj_remove_event_cb_with_user_data(
                 ui->app_ime_target, app_input_method_target_deleted, ui);
-            if (wifi_input_active)
-                lv_obj_remove_state(ui->app_ime_target, LV_STATE_FOCUSED);
+            lv_obj_remove_state(ui->app_ime_target, LV_STATE_FOCUSED);
         }
         pxsys_reference_ime_destroy(ui->app_ime_keypad);
         ui->app_ime_keypad = NULL;
@@ -6013,6 +6013,51 @@ static void app_input_method_target_deleted(lv_event_t* event) {
     ui->app_ime_close_requested = 1;
 }
 
+static void app_input_method_theme(pxsys_reference_lvgl_t* ui) {
+    if (ui->app_ime_keypad != NULL) {
+        pxsys_reference_ime_set_theme(ui->app_ime_keypad, &ui->theme);
+        return;
+    }
+    if (ui->app_ime == NULL) return;
+    /* Apply semantic roles without rebuilding the IME or losing composition. */
+    for (uint32_t i = 0; i < lv_obj_get_child_count(ui->app_ime); ++i) {
+        lv_obj_t* child = lv_obj_get_child(ui->app_ime, i);
+        lv_obj_t* surface = child;
+#if LV_USE_IME_PINYIN
+        if (child == ui->app_ime_pinyin)
+            surface = lv_ime_pinyin_get_cand_panel(child);
+#endif
+        lv_obj_set_style_bg_color(surface,
+            color_token(ui, PXSYS_COLOR_SURFACE_CONTAINER), 0);
+        lv_obj_set_style_border_color(surface,
+            color_token(ui, PXSYS_COLOR_OUTLINE_VARIANT), 0);
+        lv_obj_set_style_text_color(surface,
+            color_token(ui, PXSYS_COLOR_ON_SURFACE), 0);
+        lv_obj_set_style_bg_color(surface,
+            color_token(ui, PXSYS_COLOR_SURFACE_CONTAINER_HIGHEST), LV_PART_ITEMS);
+        lv_obj_set_style_text_color(surface,
+            color_token(ui, PXSYS_COLOR_ON_SURFACE), LV_PART_ITEMS);
+        lv_obj_set_style_bg_color(surface,
+            color_token(ui, PXSYS_COLOR_PRIMARY_CONTAINER),
+            LV_PART_ITEMS | LV_STATE_PRESSED);
+        lv_obj_set_style_text_color(surface,
+            color_token(ui, PXSYS_COLOR_ON_PRIMARY_CONTAINER),
+            LV_PART_ITEMS | LV_STATE_PRESSED);
+        for (uint32_t j = 0; j < lv_obj_get_child_count(surface); ++j) {
+            lv_obj_t* button = lv_obj_get_child(surface, j);
+            if (!lv_obj_check_type(button, &lv_button_class)) continue;
+            lv_obj_set_style_bg_color(button,
+                color_token(ui, PXSYS_COLOR_SURFACE_CONTAINER_HIGHEST), 0);
+            lv_obj_set_style_text_color(button,
+                color_token(ui, PXSYS_COLOR_ON_SURFACE), 0);
+            lv_obj_set_style_bg_color(button,
+                color_token(ui, PXSYS_COLOR_PRIMARY_CONTAINER), LV_STATE_PRESSED);
+            lv_obj_set_style_text_color(button,
+                color_token(ui, PXSYS_COLOR_ON_PRIMARY_CONTAINER), LV_STATE_PRESSED);
+        }
+    }
+}
+
 static void app_input_method_open(pxsys_reference_lvgl_t* ui,
                                   lv_obj_t* target) {
     lv_obj_t* panel;
@@ -6021,7 +6066,8 @@ static void app_input_method_open(pxsys_reference_lvgl_t* ui,
 #if LV_USE_IME_PINYIN && LV_IME_PINYIN_USE_K9_MODE
     /* Narrow panels get the nine key pad: bigger targets, pinyin candidates
      * and symbol pages. */
-    if (ui->display.width < 480u) {
+    if ((uint64_t)ui->display.width * 160u <
+        (uint64_t)(ui->display.density_dpi ? ui->display.density_dpi : 160u) * 480u) {
         ui->app_ime_keypad = pxsys_reference_ime_create(ui->parent, target);
         if (ui->app_ime_keypad == NULL) return;
         pxsys_reference_ime_set_font(
@@ -6029,6 +6075,12 @@ static void app_input_method_open(pxsys_reference_lvgl_t* ui,
         pxsys_reference_ime_set_icon_font(
             ui->app_ime_keypad, typography_font(ui, PXSYS_TYPOGRAPHY_TITLE));
         pxsys_reference_ime_set_theme(ui->app_ime_keypad, &ui->theme);
+        pxsys_rect_t keyboard_rect;
+        if (pxsys_reference_input_method_rect(&ui->display, &keyboard_rect) ==
+            PXSYS_STATUS_OK)
+            pxsys_reference_ime_set_layout(ui->app_ime_keypad,
+                keyboard_rect.width, keyboard_rect.height, LV_ALIGN_TOP_LEFT,
+                keyboard_rect.x, keyboard_rect.y);
         if (target == ui->wifi_password_input)
             pxsys_reference_ime_set_mode(ui->app_ime_keypad,
                                          PXSYS_REFERENCE_IME_MODE_ENGLISH);
@@ -6063,6 +6115,14 @@ static void app_input_method_open(pxsys_reference_lvgl_t* ui,
         return;
     }
     lv_obj_set_size(ui->app_ime_keyboard, LV_PCT(100), LV_PCT(40));
+    pxsys_rect_t keyboard_rect;
+    if (pxsys_reference_input_method_rect(&ui->display,&keyboard_rect) == PXSYS_STATUS_OK) {
+        lv_obj_set_size(ui->app_ime_keyboard,keyboard_rect.width,keyboard_rect.height);
+        lv_obj_align(ui->app_ime_keyboard,LV_ALIGN_TOP_LEFT,
+                     keyboard_rect.x,keyboard_rect.y);
+    } else {
+        lv_obj_align(ui->app_ime_keyboard, LV_ALIGN_BOTTOM_MID, 0, 0);
+    }
     lv_obj_set_style_bg_color(ui->app_ime_keyboard,
         color_token(ui, PXSYS_COLOR_SURFACE_CONTAINER), 0);
     lv_obj_set_style_border_color(ui->app_ime_keyboard,
@@ -6074,7 +6134,6 @@ static void app_input_method_open(pxsys_reference_lvgl_t* ui,
     lv_obj_set_style_bg_color(ui->app_ime_keyboard,
         color_token(ui, PXSYS_COLOR_PRIMARY_CONTAINER),
         LV_PART_ITEMS | LV_STATE_PRESSED);
-    lv_obj_align(ui->app_ime_keyboard, LV_ALIGN_BOTTOM_MID, 0, 0);
     lv_obj_set_style_text_font(ui->app_ime_keyboard,
                               typography_font(ui, PXSYS_TYPOGRAPHY_BODY), 0);
     lv_obj_add_event_cb(target, app_input_method_target_deleted,
@@ -6097,6 +6156,7 @@ static void app_input_method_open(pxsys_reference_lvgl_t* ui,
                         LV_EVENT_CANCEL, ui);
     lv_obj_move_foreground(panel);
     ui->app_ime_target = target;
+    app_input_method_theme(ui);
     update_system_overlay(ui);
     if (target == ui->wifi_password_input) {
         lv_area_t keyboard_area;
@@ -6138,7 +6198,10 @@ static void app_input_method_poll(lv_timer_t* timer) {
         update_system_overlay(ui);
         return;
     }
-    if (target == NULL) return;
+    if (target == NULL) {
+        if (ui->app_ime != NULL) app_input_method_close(ui);
+        return;
+    }
     if (ui->app_ime != NULL && object_is_within(target, ui->app_ime)) return;
     if (ui->app_ime_target != NULL &&
         object_is_within(target, ui->app_ime_target)) return;
@@ -7871,6 +7934,12 @@ static void display_changed(void* context,
     if (!ui_valid(ui)) return;
     ui->display = *profile;
     rebuild(ui);
+    if (ui->app_ime_keypad != NULL) {
+        pxsys_rect_t keyboard_rect;
+        if (pxsys_reference_input_method_rect(profile,&keyboard_rect) == PXSYS_STATUS_OK)
+            pxsys_reference_ime_set_layout(ui->app_ime_keypad,keyboard_rect.width,
+                keyboard_rect.height,LV_ALIGN_TOP_LEFT,keyboard_rect.x,keyboard_rect.y);
+    }
 }
 
 static void theme_changed(void* context,
@@ -7879,6 +7948,7 @@ static void theme_changed(void* context,
     if (!ui_valid(ui)) return;
     ui->theme = *theme;
     rebuild(ui);
+    app_input_method_theme(ui);
     toast_apply_theme(ui, ui->toast_tone);
     volume_osd_apply_theme(ui);
 }

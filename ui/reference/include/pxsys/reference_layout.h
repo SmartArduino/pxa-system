@@ -37,6 +37,9 @@ uint16_t pxsys_reference_display_scale_px(
     const pxsys_display_profile_t* display, uint16_t pixels);
 void pxsys_reference_theme_adapt_display(
     const pxsys_display_profile_t* display, pxsys_theme_snapshot_t* theme);
+/* Keyboard rectangle inside effective insets and convex display boundaries. */
+pxsys_status_t pxsys_reference_input_method_rect(
+    const pxsys_display_profile_t* display, pxsys_rect_t* output);
 
 pxsys_status_t pxsys_reference_layout_compute(
     const pxsys_display_profile_t* display,

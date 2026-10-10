@@ -6,6 +6,19 @@ int main(void) {
     pxsys_display_profile_t display;
     pxsys_reference_layout_t layout;
     pxsys_rect_t status_content;
+    const unsigned sizes[]={128,240,296,480,640,800};
+    for(unsigned i=0;i<6;++i) for(unsigned shape=0;shape<3;++shape) {
+        pxsys_rect_t keyboard;
+        pxsys_display_profile_init(&display,sizes[i],sizes[i]);
+        display.shape=(pxsys_display_shape_t)shape;
+        display.corner_radii=(pxsys_corner_radii_t){sizes[i]/4,sizes[i]/4,sizes[i]/4,sizes[i]/4};
+        display.safe_insets=(pxsys_insets_t){8,8,8,8};
+        display.density_dpi=320;
+        assert(pxsys_reference_input_method_rect(&display,&keyboard)==PXSYS_STATUS_OK);
+        assert(keyboard.width>0 && keyboard.height>0);
+        for(unsigned y=0;y<keyboard.height;++y) for(unsigned x=0;x<keyboard.width;++x)
+            assert(pxsys_display_contains_point(&display,keyboard.x+x,keyboard.y+y));
+    }
 
     pxsys_display_profile_init(&display, 296, 240);
     display.shape = PXSYS_DISPLAY_SHAPE_ROUNDED_RECTANGLE;
