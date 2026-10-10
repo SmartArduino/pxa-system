@@ -495,6 +495,10 @@ struct pxsys_reference_lvgl {
     lv_obj_t* notification_shade;
     lv_obj_t* notification_panel;
     lv_obj_t* notification_content;
+    lv_obj_t* notification_time;
+    lv_obj_t* notification_date;
+    lv_obj_t* notification_volume;
+    lv_obj_t* notification_brightness;
     lv_obj_t* task_switcher;
     lv_obj_t* task_switcher_memory;
     lv_obj_t* lock_screen;
@@ -2779,7 +2783,7 @@ static lv_obj_t* make_launcher_tile(pxsys_reference_lvgl_t* ui,
     lv_obj_set_style_radius(marker, icon_size / 4, 0);
     lv_obj_set_style_bg_color(marker, color_token(ui, icon_token), 0);
     lv_obj_set_style_bg_opa(marker, LV_OPA_COVER, 0);
-    lv_obj_set_style_shadow_width(marker, 8, 0);
+    lv_obj_set_style_shadow_width(marker, ui->display.width <= 320 ? 0 : 8, 0);
     lv_obj_set_style_shadow_opa(marker, LV_OPA_20, 0);
     lv_obj_set_style_shadow_offset_y(marker, 3, 0);
     if (item != NULL && item->icon.source != NULL) {
@@ -4209,7 +4213,7 @@ static lv_obj_t* make_control_tile(pxsys_reference_lvgl_t* ui,
     return tile;
 }
 
-static void make_control_slider(pxsys_reference_lvgl_t* ui, lv_obj_t* parent,
+static lv_obj_t* make_control_slider(pxsys_reference_lvgl_t* ui, lv_obj_t* parent,
                                 int32_t x, int32_t y, int32_t width,
                                 const char* symbol, const char* title,
                                 uint8_t value,
@@ -4261,6 +4265,7 @@ static void make_control_slider(pxsys_reference_lvgl_t* ui, lv_obj_t* parent,
     context->control = control;
     lv_obj_add_event_cb(slider, control_level_released, LV_EVENT_RELEASED,
                         context);
+    return slider;
 }
 
 static void make_round_control(pxsys_reference_lvgl_t* ui, lv_obj_t* parent,
@@ -4346,6 +4351,10 @@ static void build_notification_shade(pxsys_reference_lvgl_t* ui,
     if (ui->notification_shade != NULL)
         lv_obj_delete(ui->notification_shade);
     ui->notification_content = NULL;
+    ui->notification_time = NULL;
+    ui->notification_date = NULL;
+    ui->notification_volume = NULL;
+    ui->notification_brightness = NULL;
     ui->notification_shade = lv_obj_create(ui->root);
     style_plain(ui->notification_shade);
     lv_obj_set_pos(ui->notification_shade, 0, 0);
@@ -4410,6 +4419,7 @@ static void build_notification_shade(pxsys_reference_lvgl_t* ui,
     date_height = date_font != NULL ? date_font->line_height + 2 : 16;
     time = make_label(ui->notification_panel, time_text, time_font,
                       color_token(ui, PXSYS_COLOR_TEXT_PRIMARY));
+    ui->notification_time = time;
     lv_obj_set_pos(time, content_x, header_y);
     lv_obj_set_size(time, content_width - ui_px(ui, 48), time_height);
     if (ui->system_status.date_valid)
@@ -4421,6 +4431,7 @@ static void build_notification_shade(pxsys_reference_lvgl_t* ui,
         snprintf(date_text, sizeof(date_text), "---- -- --");
     label = make_label(ui->notification_panel, date_text, date_font,
                        color_token(ui, PXSYS_COLOR_TEXT_SECONDARY));
+    ui->notification_date = label;
     lv_obj_set_pos(label, content_x, header_y + time_height - 1);
     lv_obj_set_size(label, content_width - ui_px(ui, 48), date_height);
 
@@ -4513,7 +4524,7 @@ static void build_notification_shade(pxsys_reference_lvgl_t* ui,
 
     slider_y = tile_y + (network_count ? tile_height + ui_px(ui, 10) : 0);
     if (ui->system_status.volume_supported) {
-        make_control_slider(ui, body, content_x, slider_y, content_width,
+        ui->notification_volume = make_control_slider(ui, body, content_x, slider_y, content_width,
                             LV_SYMBOL_VOLUME_MAX,
                             translated(ui, "control.volume", "Volume"),
                             ui->system_status.volume_percent,
@@ -4522,7 +4533,7 @@ static void build_notification_shade(pxsys_reference_lvgl_t* ui,
         slider_y += ui_px(ui, 56);
     }
     if (ui->system_status.brightness_supported) {
-        make_control_slider(ui, body, content_x, slider_y, content_width,
+        ui->notification_brightness = make_control_slider(ui, body, content_x, slider_y, content_width,
                             LV_SYMBOL_EYE_OPEN,
                             translated(ui, "control.brightness", "Brightness"),
                             ui->system_status.brightness_percent,
@@ -7318,6 +7329,10 @@ static void rebuild(pxsys_reference_lvgl_t* ui) {
         ui->notification_shade = NULL;
         ui->notification_panel = NULL;
         ui->notification_content = NULL;
+        ui->notification_time = NULL;
+        ui->notification_date = NULL;
+        ui->notification_volume = NULL;
+        ui->notification_brightness = NULL;
     }
     /* Dialogs are children of root and are deleted by lv_obj_clean(). */
     ui->language_dialog = NULL;
@@ -7974,24 +7989,58 @@ static int status_interaction_active(pxsys_reference_lvgl_t* ui) {
     return 0;
 }
 
+static void notification_refresh_values(pxsys_reference_lvgl_t* ui) {
+    char text[40];
+    if (!ui->notification_shade_open) return;
+    snprintf(text, sizeof(text),
+             ui->system_status.time_valid ? "%02u:%02u" : "--:--",
+             (unsigned)ui->system_status.hour, (unsigned)ui->system_status.minute);
+    if (ui->notification_time != NULL &&
+        strcmp(lv_label_get_text(ui->notification_time), text) != 0)
+        lv_label_set_text(ui->notification_time, text);
+    if (ui->system_status.date_valid)
+        snprintf(text, sizeof(text), "%04u-%02u-%02u",
+                 (unsigned)ui->system_status.year, (unsigned)ui->system_status.month,
+                 (unsigned)ui->system_status.day);
+    else snprintf(text, sizeof(text), "---- -- --");
+    if (ui->notification_date != NULL &&
+        strcmp(lv_label_get_text(ui->notification_date), text) != 0)
+        lv_label_set_text(ui->notification_date, text);
+    if (ui->notification_volume != NULL &&
+        lv_slider_get_value(ui->notification_volume) != ui->system_status.volume_percent)
+        lv_slider_set_value(ui->notification_volume, ui->system_status.volume_percent, LV_ANIM_OFF);
+    if (ui->notification_brightness != NULL &&
+        lv_slider_get_value(ui->notification_brightness) != ui->system_status.brightness_percent)
+        lv_slider_set_value(ui->notification_brightness, ui->system_status.brightness_percent, LV_ANIM_OFF);
+}
+
 static void status_refresh_poll(lv_timer_t* timer) {
     pxsys_reference_lvgl_t* ui = lv_timer_get_user_data(timer);
     if (!ui_valid(ui) || !ui->status_refresh_pending ||
         status_interaction_active(ui)) return;
     ui->status_refresh_pending = 0;
-    if (ui->status_rebuild_pending || ui->notification_shade_open) {
+    if (ui->status_rebuild_pending && ui->content_active &&
+        ui->active_page != REFERENCE_PAGE_HOME) {
         ui->status_rebuild_pending = 0;
         rebuild(ui);
     } else {
         pxsys_reference_layout_t layout;
+        int refresh_overlay = ui->notification_shade_open;
+        /* Control support/state may change the shade's structure, but never
+         * requires reloading launcher icons or rebuilding the chrome root. */
+        if (ui->status_rebuild_pending && ui->notification_shade_open)
+            build_notification_shade(ui, ui->notification_progress);
+        ui->status_rebuild_pending = 0;
+        notification_refresh_values(ui);
         if (ui->status_bar != NULL &&
             status_bar_mode(ui) != PXSYS_WINDOW_BAR_HIDDEN &&
             bar_is_visible(ui, status_bar_mode(ui)) &&
             pxsys_reference_layout_compute(&ui->display, &layout) == PXSYS_STATUS_OK) {
             build_status_bar(ui, &layout);
-            update_system_overlay(ui);
+            refresh_overlay = 1;
         }
         lock_screen_refresh(ui);
+        if (refresh_overlay) update_system_overlay(ui);
     }
 }
 
