@@ -1,15 +1,15 @@
 {
   "format": "pxa-package-source-0.1",
   "min_sdk": [
-    1,
+    2,
     0
   ],
   "target_sdk": [
-    1,
+    2,
     0
   ],
   "compile_sdk": [
-    1,
+    2,
     0
   ],
   "id": "pxa-cpp-service-safety",

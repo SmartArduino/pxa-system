@@ -224,21 +224,21 @@ static pxa_status_t lease_control(void *context, pxa_runtime_t *runtime,
     uint8_t has_duration;
     uint64_t now;
     pxa_handle64_t handle = PXA_HANDLE_INVALID;
-    uint16_t core_major = 0;
+    uint16_t wire_profile = 0;
     pxa_resource_t resource;
     uint8_t result_record[12];
     (void)runtime;
-    if (message->opcode != PXA_LEASE_ACQUIRE || message->request_id == 0) {
+    if (message->opcode != PXA_LEASE_ACQUIRE || message->request_token == 0) {
         return PXA_STATUS_INVALID_ARGUMENT;
     }
-    result = pxa_component_core_major(service->runtime, component,
-                                      &core_major);
+    result = pxa_component_wire_profile(service->runtime, component,
+                                      &wire_profile);
     if (result != PXA_STATUS_OK) return result;
     result = pxa_request_begin_reserved(service->runtime, component,
-                                        message->request_id,
+                                        message->request_token,
                                         PXA_SERVICE_CORE,
                                         PXA_LEASE_ACQUIRE, 0,
-                                        core_major == 1 ? 12u : 8u);
+                                        wire_profile == 1 ? 12u : 8u);
     if (result != PXA_STATUS_OK) return result;
     result = parse_request(message->payload, &kind, &requested_duration,
                            &has_duration);
@@ -262,7 +262,7 @@ static pxa_status_t lease_control(void *context, pxa_runtime_t *runtime,
     }
     if (result == PXA_STATUS_OK)
         result = pxa_request_commit(service->runtime, component,
-                                    message->request_id);
+                                    message->request_token);
     if (result == PXA_STATUS_OK) {
         entry = allocate_entry(service);
         if (entry == NULL) result = PXA_STATUS_RESOURCE_LIMIT;
@@ -273,7 +273,7 @@ static pxa_status_t lease_control(void *context, pxa_runtime_t *runtime,
         resource.close = lease_closed;
         entry->component = component;
         entry->expires_at_ms = now + duration;
-        if (core_major == 1)
+        if (wire_profile == 1)
             result = pxa_handle_open64(service->runtime, component,
                                         PXA_RESOURCE_LEASE, 0, &resource,
                                         &handle);
@@ -287,27 +287,27 @@ static pxa_status_t lease_control(void *context, pxa_runtime_t *runtime,
         if (result == PXA_STATUS_OK) {
             entry->handle = handle;
             pxa_write_u16(result_record, 4);
-            pxa_write_u16(result_record + 2, core_major == 1 ? 8 : 4);
-            if (core_major == 1) pxa_write_u64(result_record + 4, handle);
+            pxa_write_u16(result_record + 2, wire_profile == 1 ? 8 : 4);
+            if (wire_profile == 1) pxa_write_u64(result_record + 4, handle);
             else pxa_write_u32(result_record + 4, (pxa_handle_t)handle);
         } else {
             release_entry(service, entry);
         }
     }
     complete = pxa_request_complete(
-        service->runtime, component, message->request_id, result,
+        service->runtime, component, message->request_token, result,
         result == PXA_STATUS_OK ? result_record : NULL,
-        result == PXA_STATUS_OK ? (core_major == 1 ? 12u : 8u) : 0);
+        result == PXA_STATUS_OK ? (wire_profile == 1 ? 12u : 8u) : 0);
     if (complete != PXA_STATUS_OK) {
         if (handle != PXA_HANDLE_INVALID) {
-            if (core_major == 1)
+            if (wire_profile == 1)
                 (void)pxa_handle_close64(service->runtime, component, handle);
             else
                 (void)pxa_handle_close(service->runtime, component,
                                        (pxa_handle_t)handle);
         }
         (void)pxa_request_cancel(service->runtime, component,
-                                 message->request_id);
+                                 message->request_token);
     }
     return PXA_STATUS_OK;
 }

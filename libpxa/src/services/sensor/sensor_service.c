@@ -1,5 +1,5 @@
 #include "pxa/sensor.h"
-#include "pxa/wire_v1.h"
+#include "pxa/wire.h"
 #include "common/bytes_internal.h"
 #include "common/checked_math.h"
 #include "common/status_internal.h"
@@ -114,7 +114,7 @@ static int config_valid(const pxa_sensor_config_t *config,
         list_total += 41u + descriptor->semantic.size;
     }
     if (list_total >
-        PXA_MAX_CONTROL_MESSAGE - PXA_V1_ENVELOPE_SIZE - sizeof(uint32_t)) {
+        PXA_MAX_CONTROL_MESSAGE - PXA_ENVELOPE_SIZE - sizeof(uint32_t)) {
         return 0;
     }
     *semantic_bytes = semantic_total;
@@ -292,7 +292,7 @@ static pxa_status_t encode_list(pxa_sensor_service_t *service,
 }
 
 static pxa_status_t parse_subscribe(
-    pxa_bytes_t payload, uint16_t core_major,
+    pxa_bytes_t payload, uint16_t wire_profile,
     pxa_sensor_subscribe_request_t *output) {
     pxa_record_iterator_t iterator;
     pxa_record_view_t record;
@@ -316,11 +316,11 @@ static pxa_status_t parse_subscribe(
             output->period_ms = pxa_read_u32(record.payload.data);
             output->seen |= 2u;
         } else if (record.tag == 3 && (output->seen & 4u) == 0 &&
-                   record.payload.size == (core_major == 1 ? 8u : 4u)) {
-            output->permission_handle = core_major == 1
+                   record.payload.size == (wire_profile == 1 ? 8u : 4u)) {
+            output->permission_handle = wire_profile == 1
                 ? pxa_read_u64(record.payload.data)
                 : pxa_read_u32(record.payload.data);
-            if (core_major == 1 &&
+            if (wire_profile == 1 &&
                 (output->permission_handle >> 32) == 0)
                 return PXA_STATUS_INVALID_ARGUMENT;
             output->seen |= 4u;
@@ -417,7 +417,7 @@ static uint16_t component_subscription_count(
 
 static pxa_status_t subscribe_component(
     pxa_sensor_service_t *service, pxa_component_t component,
-    const pxa_message_view_t *message, uint16_t core_major,
+    const pxa_message_view_t *message, uint16_t wire_profile,
     uint8_t result[8], pxa_handle64_t *opened_handle) {
     static const uint8_t permission_name[] = "sensor.read";
     pxa_sensor_subscribe_request_t request;
@@ -425,7 +425,7 @@ static pxa_status_t subscribe_component(
     pxa_sensor_subscription_t *subscription;
     pxa_authority_t authority = 0;
     pxa_resource_t resource;
-    pxa_status_t status = parse_subscribe(message->payload, core_major,
+    pxa_status_t status = parse_subscribe(message->payload, wire_profile,
                                           &request);
     if (status != PXA_STATUS_OK) return status;
     descriptor = find_descriptor(service, request.sensor_id);
@@ -434,7 +434,7 @@ static pxa_status_t subscribe_component(
         request.period_ms > descriptor->max_period_ms) {
         return PXA_STATUS_INVALID_ARGUMENT;
     }
-    status = core_major == 1
+    status = wire_profile == 1
         ? pxa_permission_resolve64(
             service->permissions, component, request.permission_handle,
             (pxa_bytes_t){permission_name, sizeof(permission_name) - 1},
@@ -468,7 +468,7 @@ static pxa_status_t subscribe_component(
     resource.context = subscription;
     resource.operations = &k_sensor_resource_ops;
     resource.close = close_subscription;
-    if (core_major == 1)
+    if (wire_profile == 1)
         status = pxa_handle_open64(service->runtime, component,
                                    PXA_RESOURCE_SENSOR, authority,
                                    &resource, opened_handle);
@@ -484,7 +484,7 @@ static pxa_status_t subscribe_component(
         return status;
     }
     subscription->handle = *opened_handle;
-    if (core_major == 1) pxa_write_u64(result, *opened_handle);
+    if (wire_profile == 1) pxa_write_u64(result, *opened_handle);
     else pxa_write_u32(result, (pxa_handle_t)*opened_handle);
     return PXA_STATUS_OK;
 }
@@ -497,46 +497,46 @@ static pxa_status_t sensor_control(void *context, pxa_runtime_t *runtime,
     const void *result = NULL;
     size_t result_size = 0;
     pxa_handle64_t opened_handle = PXA_HANDLE_INVALID;
-    uint16_t core_major = 0;
+    uint16_t wire_profile = 0;
     pxa_status_t status;
     pxa_status_t complete;
     (void)runtime;
-    if (!service_valid(service) || message->request_id == 0) {
+    if (!service_valid(service) || message->request_token == 0) {
         return PXA_STATUS_INVALID_ARGUMENT;
     }
     if (message->opcode != PXA_SENSOR_LIST &&
         message->opcode != PXA_SENSOR_SUBSCRIBE) {
         return PXA_STATUS_UNSUPPORTED;
     }
-    status = pxa_component_core_major(service->runtime, component,
-                                      &core_major);
+    status = pxa_component_wire_profile(service->runtime, component,
+                                      &wire_profile);
     if (status != PXA_STATUS_OK) return status;
     status = pxa_request_begin_reserved(
-        service->runtime, component, message->request_id,
+        service->runtime, component, message->request_token,
         PXA_SENSOR_SERVICE_ID, message->opcode, 0,
         message->opcode == PXA_SENSOR_LIST ? service->list_capacity
-                                            : (core_major == 1 ? 8u : 4u));
+                                            : (wire_profile == 1 ? 8u : 4u));
     if (status != PXA_STATUS_OK) return status;
     status = pxa_request_commit(service->runtime, component,
-                                message->request_id);
+                                message->request_token);
     if (status == PXA_STATUS_OK && message->opcode == PXA_SENSOR_LIST) {
         status = message->payload.size == 0
                      ? encode_list(service, &result_size)
                      : PXA_STATUS_INVALID_ARGUMENT;
         result = service->list_scratch;
     } else if (status == PXA_STATUS_OK) {
-        status = subscribe_component(service, component, message, core_major,
+        status = subscribe_component(service, component, message, wire_profile,
                                      handle_result, &opened_handle);
         result = handle_result;
-        result_size = core_major == 1 ? 8 : 4;
+        result_size = wire_profile == 1 ? 8 : 4;
     }
     complete = pxa_request_complete(
-        service->runtime, component, message->request_id, status,
+        service->runtime, component, message->request_token, status,
         status == PXA_STATUS_OK ? result : NULL,
         status == PXA_STATUS_OK ? result_size : 0);
     if (complete != PXA_STATUS_OK) {
         if (opened_handle != PXA_HANDLE_INVALID) {
-            if (core_major == 1)
+            if (wire_profile == 1)
                 (void)pxa_handle_close64(service->runtime, component,
                                          opened_handle);
             else
@@ -544,7 +544,7 @@ static pxa_status_t sensor_control(void *context, pxa_runtime_t *runtime,
                                        (pxa_handle_t)opened_handle);
         }
         (void)pxa_request_cancel(service->runtime, component,
-                                 message->request_id);
+                                 message->request_token);
     }
     return PXA_STATUS_OK;
 }

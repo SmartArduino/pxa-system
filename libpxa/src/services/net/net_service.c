@@ -38,14 +38,14 @@ struct pxa_net_service {
 };
 
 struct pxa_net_pending {
-    pxa_component_t component;
     pxa_handle64_t permission_handle;
     pxa_authority_t authority;
     uint64_t operation;
-    uint32_t request_id;
+    pxa_request_token_t request_token;
+    pxa_component_t component;
     uint32_t max_response_bytes;
     uint16_t opcode;
-    uint16_t core_major;
+    uint16_t wire_profile;
     uint16_t next;
     uint16_t previous_active;
 };
@@ -317,12 +317,12 @@ static const pxa_resource_ops_t k_stream_resource_ops = {
 
 static pxa_status_t complete_immediate(pxa_net_service_t *service,
                                        pxa_component_t component,
-                                       uint32_t request_id,
+                                       pxa_request_token_t request_token,
                                        pxa_status_t result) {
     pxa_status_t status = pxa_request_complete(
-        service->runtime, component, request_id, result, NULL, 0);
+        service->runtime, component, request_token, result, NULL, 0);
     if (status != PXA_STATUS_OK) {
-        (void)pxa_request_cancel(service->runtime, component, request_id);
+        (void)pxa_request_cancel(service->runtime, component, request_token);
     }
     return PXA_STATUS_OK;
 }
@@ -336,25 +336,25 @@ static pxa_status_t net_control(void *context, pxa_runtime_t *runtime,
     pxa_net_pending_t *pending = NULL;
     pxa_authority_t authority = 0;
     uint64_t operation = 0;
-    uint16_t core_major = 0;
+    uint16_t wire_profile = 0;
     pxa_status_t status;
     pxa_status_t begin;
     (void)runtime;
-    if (!service_valid(service) || message->request_id == 0) {
+    if (!service_valid(service) || message->request_token == 0) {
         return PXA_STATUS_INVALID_ARGUMENT;
     }
     if (message->opcode != PXA_NET_FETCH &&
         message->opcode != PXA_NET_HTTP_REQUEST) {
         return PXA_STATUS_UNSUPPORTED;
     }
-    status = pxa_component_core_major(service->runtime, component,
-                                      &core_major);
+    status = pxa_component_wire_profile(service->runtime, component,
+                                      &wire_profile);
     if (status == PXA_STATUS_OK)
-        status = pxa_net_request_parse(&service->request_limits, core_major,
+        status = pxa_net_request_parse(&service->request_limits, wire_profile,
                                        message->opcode, message->payload,
                                        &parsed);
     if (status == PXA_STATUS_OK) {
-        if (core_major == 1)
+        if (wire_profile == 1)
             status = pxa_permission_resolve64(
                 service->permissions, component, parsed.permission_handle,
                 (pxa_bytes_t){permission_name, sizeof(permission_name) - 1},
@@ -368,7 +368,7 @@ static pxa_status_t net_control(void *context, pxa_runtime_t *runtime,
     }
     if (status == PXA_STATUS_DENIED) {
         static const uint8_t web_scope[] = "web";
-        if (core_major == 1)
+        if (wire_profile == 1)
             status = pxa_permission_resolve64(service->permissions,component,
                 parsed.permission_handle,(pxa_bytes_t){permission_name,sizeof(permission_name)-1},
                 (pxa_bytes_t){web_scope,sizeof(web_scope)-1},&authority);
@@ -378,7 +378,7 @@ static pxa_status_t net_control(void *context, pxa_runtime_t *runtime,
                 (pxa_bytes_t){web_scope,sizeof(web_scope)-1},&authority);
     }
     begin = pxa_request_begin_reserved(
-        service->runtime, component, message->request_id,
+        service->runtime, component, message->request_token,
         PXA_NET_SERVICE_ID, message->opcode,
         status == PXA_STATUS_OK ? authority : 0,
         message->opcode == PXA_NET_FETCH
@@ -415,17 +415,17 @@ static pxa_status_t net_control(void *context, pxa_runtime_t *runtime,
     }
     if (status != PXA_STATUS_OK) {
         if (pending != NULL) release_pending(service, pending);
-        return complete_immediate(service, component, message->request_id,
+        return complete_immediate(service, component, message->request_token,
                                   status);
     }
     pending->component = component;
     pending->permission_handle = parsed.permission_handle;
     pending->authority = authority;
     pending->operation = operation;
-    pending->request_id = message->request_id;
+    pending->request_token = message->request_token;
     pending->max_response_bytes = parsed.request.max_response_bytes;
     pending->opcode = message->opcode;
-    pending->core_major = core_major;
+    pending->wire_profile = wire_profile;
     return PXA_STATUS_OK;
 }
 
@@ -503,8 +503,8 @@ pxa_status_t pxa_net_poll(
         pxa_status_t status;
         pxa_status_t complete;
         if (!pxa_request_is_active(service->runtime, pending->component,
-                                   pending->request_id) ||
-            (pending->core_major == 1
+                                   pending->request_token) ||
+            (pending->wire_profile == 1
                 ? pxa_handle_get64(service->runtime, pending->component,
                                    pending->permission_handle,
                                    PXA_RESOURCE_PERMISSION,
@@ -559,7 +559,7 @@ pxa_status_t pxa_net_poll(
                 resource.context = stream;
                 resource.operations = &k_stream_resource_ops;
                 resource.close = close_stream;
-                if (pending->core_major == 1)
+                if (pending->wire_profile == 1)
                     status = pxa_handle_open64(
                         service->runtime, pending->component,
                         PXA_RESOURCE_STREAM, pending->authority,
@@ -578,7 +578,7 @@ pxa_status_t pxa_net_poll(
         if (status == PXA_STATUS_OK) {
             status = pxa_net_response_encode(
                 service->result_buffer, service->result_capacity,
-                pending->core_major, pending->opcode, &response,
+                pending->wire_profile, pending->opcode, &response,
                 handle, &result_size);
         }
         if (pending->opcode == PXA_NET_HTTP_REQUEST &&
@@ -589,12 +589,12 @@ pxa_status_t pxa_net_poll(
             response.body_stream = NULL;
         }
         complete = pxa_request_complete(
-            service->runtime, pending->component, pending->request_id, status,
+            service->runtime, pending->component, pending->request_token, status,
             status == PXA_STATUS_OK ? service->result_buffer : NULL,
             status == PXA_STATUS_OK ? result_size : 0);
         if (complete != PXA_STATUS_OK) {
             if (handle != PXA_HANDLE_INVALID) {
-                if (pending->core_major == 1)
+                if (pending->wire_profile == 1)
                     (void)pxa_handle_close64(service->runtime,
                                              pending->component, handle);
                 else
@@ -603,7 +603,7 @@ pxa_status_t pxa_net_poll(
                                            (pxa_handle_t)handle);
             }
             (void)pxa_request_cancel(service->runtime, pending->component,
-                                     pending->request_id);
+                                     pending->request_token);
         }
         append_affected(pending->component, affected, capacity, count);
         release_pending(service, pending);

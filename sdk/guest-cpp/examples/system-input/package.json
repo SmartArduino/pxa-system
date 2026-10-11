@@ -1,6 +1,6 @@
 {
   "format": "pxa-package-source-0.1",
-  "min_sdk": [1, 0], "target_sdk": [1, 0], "compile_sdk": [1, 0],
+  "min_sdk": [2, 0], "target_sdk": [2, 0], "compile_sdk": [2, 0],
   "id": "pxa-cpp-system-input", "version": "1.0.0",
   "name": "系统输入法示例",
   "description": "C++ TextInputRef with system IME and system theme",

@@ -1,3 +1,4 @@
+#include "../../testing/pxa_control_capture.h"
 #include <pxa/ui_widgets.hpp>
 #include <pxa/ui_refresh.hpp>
 #include <cassert>
@@ -13,7 +14,7 @@ static std::size_t encoded_size = 0;
 static bool capture = true;
 void* operator new(std::size_t size) { ++allocations; return std::malloc(size); }
 void operator delete(void* pointer) noexcept { std::free(pointer); }
-extern "C" std::int32_t pxa_submit(const std::uint8_t* data, std::uint32_t size) {
+extern "C" std::int32_t pxa_test_control(const std::uint8_t* data, std::uint32_t size) {
     ++submits;
     if (capture && data[2] == 2) {
         assert(size >= 24 && encoded_size + size - 24 <= encoded.size());

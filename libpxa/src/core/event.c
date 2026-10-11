@@ -137,6 +137,7 @@ pxa_status_t pxa_event_pool_allocate(pxa_event_pool_t *pool,
         if (last != PXA_EVENT_INDEX_NONE) pool->block_next[last] = block;
         last = block;
     }
+    pool->slots[event_index].completion_request = PXA_EVENT_INDEX_NONE;
     pool->slots[event_index].occupied = 1;
     pool->slots[event_index].owner_index = (uint16_t)owner_index;
     pool->slots[event_index].size = (uint32_t)size;
@@ -449,16 +450,16 @@ pxa_status_t pxa_event_post(pxa_runtime_t *runtime,
 
 pxa_status_t pxa_event_post_message(
     pxa_runtime_t *runtime, pxa_component_t component_ref, uint16_t service,
-    uint16_t opcode, uint32_t request_id, pxa_bytes_t payload,
+    uint16_t opcode, pxa_request_token_t request_token, pxa_bytes_t payload,
     uint8_t reliable, uint64_t coalesce_key) {
     return pxa_event_post_messagev(
-        runtime, component_ref, service, opcode, request_id, &payload, 1,
+        runtime, component_ref, service, opcode, request_token, &payload, 1,
         reliable, coalesce_key);
 }
 
 pxa_status_t pxa_event_post_messagev(
     pxa_runtime_t *runtime, pxa_component_t component_ref, uint16_t service,
-    uint16_t opcode, uint32_t request_id, const pxa_bytes_t *payload_parts,
+    uint16_t opcode, pxa_request_token_t request_token, const pxa_bytes_t *payload_parts,
     size_t payload_part_count, uint8_t reliable, uint64_t coalesce_key) {
     uint8_t envelope[PXA_ENVELOPE_SIZE];
     uint32_t component_index;
@@ -482,8 +483,9 @@ pxa_status_t pxa_event_post_messagev(
     if (component->state != PXA_COMPONENT_RUNNING) return PXA_STATUS_BAD_STATE;
     pxa_write_u16(envelope, service);
     pxa_write_u16(envelope + 2, opcode);
-    pxa_write_u32(envelope + 4, request_id);
-    pxa_write_u32(envelope + 8, (uint32_t)payload_size);
+    pxa_write_u64(envelope + PXA_WIRE_REQUEST_TOKEN_OFFSET, request_token);
+    pxa_write_u32(envelope + PXA_WIRE_PAYLOAD_LEN_OFFSET, (uint32_t)payload_size);
+    pxa_write_u32(envelope + PXA_WIRE_FLAGS_OFFSET, 0);
     return event_mailbox_post_parts(
         &runtime->event_pool, &component->mailbox, component_index,
         runtime->limits.mailbox_capacity,
@@ -520,7 +522,7 @@ pxa_status_t pxa_event_read(const pxa_runtime_t *runtime,
 pxa_status_t pxa_event_pop(pxa_runtime_t *runtime,
                            pxa_component_t component_ref, void *output,
                            size_t capacity, size_t *event_size) {
-    uint32_t component_index;
+    uint32_t component_index, event_index, request_index;
     pxa_component_slot_t *component;
     pxa_status_t status;
     if (event_size == NULL || (output == NULL && capacity != 0)) {
@@ -531,9 +533,15 @@ pxa_status_t pxa_event_pop(pxa_runtime_t *runtime,
                                            &component_index);
     if (component == NULL) return PXA_STATUS_NOT_FOUND;
     if (component->state != PXA_COMPONENT_RUNNING) return PXA_STATUS_BAD_STATE;
+    event_index = component->mailbox.head;
+    request_index = event_index != PXA_EVENT_INDEX_NONE
+        ? runtime->event_pool.slots[event_index].completion_request : PXA_EVENT_INDEX_NONE;
     status = pxa_event_mailbox_pop(&runtime->event_pool, &component->mailbox,
                                    output, capacity, event_size);
     if (status != PXA_STATUS_OK) return status;
+    if (request_index != PXA_EVENT_INDEX_NONE)
+        pxa_request_table_delivered(&runtime->requests, &component->requests,
+            component_index, request_index, event_index, &runtime->event_pool);
     pxa_request_table_flush(
         &runtime->requests, &component->requests, component_index,
         &runtime->event_pool, &component->mailbox,
@@ -544,16 +552,23 @@ pxa_status_t pxa_event_pop(pxa_runtime_t *runtime,
 pxa_status_t pxa_event_consume(pxa_runtime_t *runtime,
                                pxa_component_t component_ref,
                                pxa_event_token_t token) {
-    uint32_t component_index;
+    uint32_t component_index, event_index, request_index;
     pxa_component_slot_t *component = pxa_runtime_find_component(
         runtime, component_ref, &component_index);
     pxa_status_t status;
     if (component == NULL) return PXA_STATUS_NOT_FOUND;
     if (component->state != PXA_COMPONENT_RUNNING) return PXA_STATUS_BAD_STATE;
+    /* Capture the internal association before the event returns to its pool. */
+    event_index = component->mailbox.head;
+    request_index = event_index != PXA_EVENT_INDEX_NONE
+        ? runtime->event_pool.slots[event_index].completion_request : PXA_EVENT_INDEX_NONE;
     status = pxa_event_mailbox_consume(&runtime->event_pool,
                                        &component->mailbox, component_index,
                                        token);
     if (status != PXA_STATUS_OK) return status;
+    if (request_index != PXA_EVENT_INDEX_NONE)
+        pxa_request_table_delivered(&runtime->requests, &component->requests,
+            component_index, request_index, event_index, &runtime->event_pool);
     pxa_request_table_flush(
         &runtime->requests, &component->requests, component_index,
         &runtime->event_pool, &component->mailbox,

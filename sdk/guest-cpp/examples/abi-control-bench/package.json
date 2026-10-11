@@ -1,0 +1,46 @@
+{
+  "format": "pxa-package-source-0.1",
+  "min_sdk": [
+    2,
+    0
+  ],
+  "target_sdk": [
+    2,
+    0
+  ],
+  "compile_sdk": [
+    2,
+    0
+  ],
+  "id": "pxa-cpp-abi-control-bench",
+  "version": "1.0.0",
+  "name": "ABI control benchmark",
+  "description": "Bounded Core cancellation calls; not a game FPS benchmark",
+  "build": {
+    "system": "cmake",
+    "source_dir": ".",
+    "linear_memory": {
+      "maximum_bytes": 131072,
+      "pinned": false
+    }
+  },
+  "components": [
+    {
+      "id": "main",
+      "kind": "ui",
+      "services": [
+        "clock",
+        "log"
+      ],
+      "cmake_target": "pxa_main",
+      "wasi": {
+        "version": "preview1",
+        "libc": "wasi-libc",
+        "features": [
+          "monotonic-clock",
+          "wall-clock"
+        ]
+      }
+    }
+  ]
+}

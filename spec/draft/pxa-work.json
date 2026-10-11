@@ -13,7 +13,7 @@
       "name": "enqueue",
       "id": 1,
       "direction": "bidirectional-result",
-      "request_id": "nonzero",
+      "request_token": "nonzero",
       "payload": "worker|initial-delay-ms|execution-hint-ms|input?|retry-delay-ms|max-attempts",
       "result": "status|work-id|granted-execution-ms"
     },
@@ -21,7 +21,7 @@
       "name": "cancel",
       "id": 2,
       "direction": "bidirectional-result",
-      "request_id": "nonzero",
+      "request_token": "nonzero",
       "payload": "work-id",
       "result": "status"
     },
@@ -29,7 +29,7 @@
       "name": "complete",
       "id": 3,
       "direction": "bidirectional-result",
-      "request_id": "nonzero",
+      "request_token": "nonzero",
       "payload": "work-id|result",
       "result": "status"
     },
@@ -37,7 +37,7 @@
       "name": "stop-requested",
       "id": 32769,
       "direction": "host-event",
-      "request_id": "zero",
+      "request_token": "zero",
       "payload": "work-id:u32|deadline-ms:u64"
     }
   ],

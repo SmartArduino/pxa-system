@@ -35,19 +35,11 @@ def layout(path: Path, envelope: dict, label: str) -> dict:
     }
 
 
-def layouts() -> tuple[dict, dict]:
-    core_path = SPEC / "pxa-core.json"
-    v1_path = SPEC / "abi-1.0-envelope.json"
-    core = json.loads(core_path.read_text(encoding="utf-8"))
-    v1 = json.loads(v1_path.read_text(encoding="utf-8"))
-    legacy = layout(core_path, {
-        **core["envelope"],
-        "max_control_message": core["abi"]["max_control_message"],
-    }, "v0")
-    current = layout(v1_path, v1, "v1")
-    if legacy["max_size"] != current["max_size"]:
-        raise ValueError("Host and Guest envelope limits disagree")
-    return legacy, current
+def layout_current() -> dict:
+    path = SPEC / "pxa-core.json"
+    core = json.loads(path.read_text(encoding="utf-8"))
+    return layout(path, {**core["envelope"],
+        "max_control_message": core["abi"]["max_control_message"]}, "")
 
 
 def record_layout() -> dict:
@@ -230,17 +222,9 @@ def emit_layout(schema: dict) -> list[str]:
 
 
 def render_header(*, guest: bool = False) -> str:
-    legacy, current = layouts()
+    current = layout_current()
     record = record_layout()
-    if guest:
-        current = {**current, "name": ""}
-    banner = (
-        "/* Generated from spec/draft/abi-1.0-envelope.json and",
-        " * spec/draft/pxa-core.json for the Guest SDK. Do not edit by hand. */",
-    ) if guest else (
-        "/* Generated from spec/draft/pxa-core.json and",
-        " * spec/draft/abi-1.0-envelope.json. Do not edit by hand. */",
-    )
+    banner = ("/* Generated from spec/draft/pxa-core.json. Do not edit by hand. */",)
     guard = "PXA_GUEST_WIRE_H" if guest else "PXA_WIRE_GENERATED_H"
     other = "PXA_WIRE_GENERATED_H" if guest else "PXA_GUEST_WIRE_H"
     lines = [
@@ -251,7 +235,7 @@ def render_header(*, guest: bool = False) -> str:
         "#include <stddef.h>",
         "#include <stdint.h>",
         "",
-        f"#define PXA_WIRE_MAX_CONTROL_MESSAGE ((size_t){legacy['max_size']})",
+        f"#define PXA_WIRE_MAX_CONTROL_MESSAGE ((size_t){current['max_size']})",
         "",
         "/* The Host and Guest copies share the byte and record helpers; keep one",
         " * definition when a translation unit includes both. */",
@@ -293,15 +277,8 @@ def render_header(*, guest: bool = False) -> str:
         "",
     ]
     lines += emit_record(record)
-    lines += [
-        f"#endif /* {other} */",
-        "",
-    ]
-    if guest:
-        lines += emit_layout(current)
-    else:
-        lines += emit_layout(legacy)
-        lines += emit_layout(current)
+    lines += emit_layout(current)
+    lines += [f"#endif /* {other} */", ""]
     lines += [
         "#endif",
         "",

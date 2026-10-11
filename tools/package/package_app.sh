@@ -211,7 +211,8 @@ if linear_memory is not None:
         raise SystemExit("build linear_memory pinned must be a boolean")
 open(sys.argv[2], "w", encoding="utf-8").write(
     f"{build_system}\t{source_dir}\t{linear_memory_maximum}\t"
-    f"{metadata.get('min_sdk', [1, 0])[0]}\n")
+    f"{metadata.get('min_sdk', [2, 0])[0]}\t"
+    f"{metadata.get('min_sdk', [2, 0])[1]}\n")
 components = metadata.get("components", [{"id": "main", "source": "main.c"}])
 if not isinstance(components, list) or not components:
     raise SystemExit("components must be a non-empty array")
@@ -249,10 +250,10 @@ for component in components:
         print(f"{component_id}\t{artifact}\t{source}")
 PYTHON
 
-IFS=$'\t' read -r build_system build_source_dir linear_memory_maximum core_major \
+IFS=$'\t' read -r build_system build_source_dir linear_memory_maximum core_major core_minor \
   < "$build_settings"
-if [[ "$core_major" != "1" ]]; then
-  echo "Core v1 is required for new packages" >&2
+if [[ "$core_major" != "2" ]]; then
+  echo "Core 2 is required for new packages" >&2
   exit 2
 fi
 if [[ "$build_system" == "direct" && -f "$app_dir/i18n/messages.yaml" ]]; then
@@ -342,10 +343,13 @@ if [[ "$build_system" == "cmake" ]]; then
       echo "PXA_BUILD_CACHE_DIR must be outside the Package output directory" >&2
       exit 2
     fi
+    # The Guest is always wasm32-wasip1. Only the later AOT compiler and
+    # manifest depend on package_target; sharing this locked CMake build avoids
+    # recompiling the identical SDK and Guest for every architecture.
     cache_key="$(printf '%s\0' "$app_dir" "$pxa_system_dir" "$wasi_sdk_dir" \
-      "$package_target" "${CMAKE_GENERATOR:-${cmake_generator_args[*]}}" |
+      "${CMAKE_GENERATOR:-${cmake_generator_args[*]}}" |
       sha256sum | cut -c 1-16)"
-    cache_dir="$cache_root/$app_name-$package_target-$cache_key"
+    cache_dir="$cache_root/$app_name-wasm-$cache_key"
     mkdir -p "$cache_dir"
     exec 9>"$cache_dir/.lock"
     flock 9
@@ -369,6 +373,8 @@ if [[ "$build_system" == "cmake" ]]; then
     -DWASI_SDK_DIR="$wasi_sdk_dir" \
     -DPXA_GUEST_SDK_DIR="$pxa_system_dir/sdk/guest-c" \
     -DPXA_CPP_SDK_DIR="$pxa_system_dir/sdk/guest-cpp" \
+    -DCMAKE_C_COMPILER_LAUNCHER="${PXA_COMPILER_CACHE:-}" \
+    -DCMAKE_CXX_COMPILER_LAUNCHER="${PXA_COMPILER_CACHE:-}" \
     -DPXA_GENERATED_INCLUDE_DIR="$generated_include_dir" \
     -DPXA_ARTIFACT_DIR="$cmake_artifact_dir" \
     -DPXA_LINEAR_MEMORY_MAXIMUM="$linear_memory_maximum" \
@@ -448,7 +454,7 @@ for component_id in "${component_ids[@]}"; do
   fi
   "${PYTHON:-python3}" "$script_dir/verify_wasm_core_imports.py" \
     "$package_dir/artifacts/$component_id.wasm" \
-    --core-major "$core_major" \
+    --core-major "$core_major" --core-minor "$core_minor" \
     --manifest-source "$app_dir/package.json" \
     --component-id "$component_id"
 done

@@ -13,44 +13,44 @@
       "name": "create",
       "id": 1,
       "direction": "bidirectional-result",
-      "request_id": "nonzero",
+      "request_token": "nonzero",
       "payload": "width:u16|height:u16|format:u16|buffer-count:u8|flags:u8",
-      "result": "handle:u32|stride:u32|frame-bytes:u32|buffer-count:u8|reserved:bytes[3]"
+      "result": "handle:u64|stride:u32|frame-bytes:u32|buffer-count:u8|reserved:bytes[3]"
     },
     {
       "name": "configure-layer",
       "id": 2,
       "direction": "bidirectional-result",
-      "request_id": "nonzero",
-      "payload": "handle:u32|x:i32|y:i32|width:u16|height:u16|z:i16|visible:u8|reserved:u8"
+      "request_token": "nonzero",
+      "payload": "handle:u64|x:i32|y:i32|width:u16|height:u16|z:i16|visible:u8|reserved:u8"
     },
     {
       "name": "queue-frame",
       "id": 3,
       "direction": "guest-to-host",
-      "request_id": "zero",
-      "payload": "handle:u32|frame-id:u64|damage-count:u8|reserved:bytes[3]|damage:rect[damage-count]"
+      "request_token": "zero",
+      "payload": "handle:u64|frame-id:u64|damage-count:u8|reserved:bytes[3]|damage:rect[damage-count]"
     },
     {
       "name": "query-state",
       "id": 4,
       "direction": "bidirectional-result",
-      "request_id": "nonzero",
-      "payload": "handle:u32",
+      "request_token": "nonzero",
+      "payload": "handle:u64",
       "result": "submitted:u64|presented:u64|dropped:u64|replaced:u64|released:u64|free-buffers:u32|flags:u32"
     },
     {
       "name": "configure-opaque-ui-regions",
       "id": 5,
       "direction": "bidirectional-result",
-      "request_id": "nonzero",
-      "payload": "handle:u32|count:u8|reserved:bytes[3]|regions:rect[count]"
+      "request_token": "nonzero",
+      "payload": "handle:u64|count:u8|reserved:bytes[3]|regions:rect[count]"
     },
     {
       "name": "released",
       "id": 32769,
       "direction": "host-to-guest-event",
-      "request_id": "zero",
+      "request_token": "zero",
       "payload": "buffer-index:u8|reserved:bytes[7]|frame-id:u64"
     }
   ],

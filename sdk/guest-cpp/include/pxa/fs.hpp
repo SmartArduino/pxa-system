@@ -76,7 +76,7 @@ template<std::size_t Capacity> using Payload = wire::RequestPacket<Capacity>;
 template<std::size_t N>
 inline void path_record(Payload<N>& payload, std::uint16_t tag,
                          std::string_view path) noexcept {
-    auto* out = payload.bytes.data() + wire::header_bytes + payload.size;
+    auto* out = payload.bytes.data() + payload.size;
     wire::put16(out, tag);
     wire::put16(out + 2, static_cast<std::uint16_t>(path.size()));
     for (std::size_t i = 0; i < path.size(); ++i) out[4 + i] = std::byte(path[i]);
@@ -86,7 +86,7 @@ template<std::size_t N>
 Task<void> status(Transport& transport, RequestTable& requests,
                    std::uint16_t opcode, Payload<N> payload) {
     auto event = co_await Response(transport, requests, 5, opcode,
-                                   Response::PrebuiltPacket{payload.packet()});
+                                   payload.packet());
     if (!event) co_return std::unexpected(event.error());
     auto body = wire::result_body(event->payload);
     if (!body) co_return std::unexpected(body.error());
@@ -197,7 +197,7 @@ public:
             return fs_detail::failure<File>(Error::invalid_argument);
         fs_detail::Payload<267> payload;
         fs_detail::path_record(payload, 1, path);
-        auto* out = payload.bytes.data() + wire::header_bytes + payload.size;
+        auto* out = payload.bytes.data() + payload.size;
         wire::put16(out, 3);
         wire::put16(out + 2, 4);
         wire::put32(out + 4, static_cast<std::uint32_t>(mode));
@@ -246,7 +246,7 @@ private:
     static Task<File> open_request(Transport& transport, RequestTable& requests,
                                     fs_detail::Payload<267> payload, bool directory) {
         auto event = co_await Response(transport, requests, 5, 1,
-            Response::PrebuiltPacket{payload.packet()}, true);
+            payload.packet(), true);
         if (!event) co_return std::unexpected(event.error());
         auto body = wire::result_body(event->payload);
         if (!body) co_return std::unexpected(body.error());
@@ -258,7 +258,7 @@ private:
     static Task<FileInfo> stat_request(Transport& transport, RequestTable& requests,
                                         fs_detail::Payload<259> payload) {
         auto event = co_await Response(transport, requests, 5, 5,
-            Response::PrebuiltPacket{payload.packet()});
+            payload.packet());
         if (!event) co_return std::unexpected(event.error());
         auto body = wire::result_body(event->payload);
         if (!body) co_return std::unexpected(body.error());

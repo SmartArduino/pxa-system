@@ -45,11 +45,11 @@ Result<std::size_t> encode_work_enqueue(const WorkRequest& request,
         !request.max_attempts || request.max_attempts > 5 ||
         (request.max_attempts > 1 && request.retry_delay_ms < 1000))
         return std::unexpected(Error::invalid_argument);
-    const auto size = wire::header_bytes + 4 + request.worker.size() +
+    const auto size = 4 + request.worker.size() +
                       8 + 8 + (request.input.empty() ? 0 : 4 + request.input.size()) +
                       8 + 5;
     if (packet.size() < size) return std::unexpected(Error::resource_limit);
-    wire::Writer writer(packet.subspan(wire::header_bytes));
+    wire::Writer writer(packet);
     std::array<std::byte, 4> scalar{};
     if (!wire::record(writer, 1, bytes(request.worker)))
         return std::unexpected(Error::resource_limit);

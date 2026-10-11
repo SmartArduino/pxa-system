@@ -1,3 +1,4 @@
+#include "../../testing/pxa_control_capture.h"
 #include <pxa/ipc.hpp>
 #include <pxa/net.hpp>
 #include <cassert>
@@ -6,7 +7,7 @@
 #include <new>
 #include <memory>
 using namespace pxa;
-extern "C" int pxa_submit(const std::uint8_t*,std::uint32_t){std::abort();}
+extern "C" int pxa_test_control(const std::uint8_t*,std::uint32_t){std::abort();}
 extern "C" int pxa_io(std::uint64_t,std::uint32_t,std::uint8_t*,std::uint32_t){std::abort();}
 int main(){
     Transport transport;
@@ -36,7 +37,7 @@ int main(){
     rejected(*request);
     std::destroy_at(request);
     packet.fill(std::byte{});
-    auto endpoint=text(20,"test.echo");
+    auto endpoint=text(4,"test.echo");
     auto before=packet;
     auto result=encode_ipc_call(endpoint,{},packet);
     assert(!result&&result.error()==Error::invalid_argument&&packet==before);
@@ -45,8 +46,8 @@ int main(){
     result=encode_ipc_reply(1,0,std::span(packet).subspan(20,12),packet);
     assert(!result&&result.error()==Error::invalid_argument&&packet==before);
     result=encode_ipc_call_in_place(endpoint,0,packet);
-    assert(result&&wire::get16(packet.data()+20)==1&&wire::get16(packet.data()+22)==9);
-    assert(std::memcmp(packet.data()+24,"test.echo",9)==0);
+    assert(result&&wire::get16(packet.data())==1&&wire::get16(packet.data()+2)==9);
+    assert(std::memcmp(packet.data()+4,"test.echo",9)==0);
 #if !defined(PXA_BASELINE)
     assert(!wire::overlaps({},packet));
     assert(!wire::overlaps(std::span(packet).first(4),std::span(packet).subspan(4)));

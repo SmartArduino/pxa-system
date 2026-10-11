@@ -104,7 +104,7 @@ static int service_valid(const pxa_device_service_t *service) {
     return service != NULL && service->magic == PXA_DEVICE_MAGIC;
 }
 
-static pxa_status_t parse_get_mac(pxa_bytes_t payload, uint16_t core_major,
+static pxa_status_t parse_get_mac(pxa_bytes_t payload, uint16_t wire_profile,
                                   pxa_device_get_mac_request_t *output) {
     pxa_record_iterator_t iterator;
     pxa_record_view_t record;
@@ -126,8 +126,8 @@ static pxa_status_t parse_get_mac(pxa_bytes_t payload, uint16_t core_major,
             output->seen |= 1u;
         } else if (record.tag == PXA_DEVICE_TAG_PERMISSION_HANDLE &&
                    (output->seen & 2u) == 0 &&
-                   record.payload.size == (core_major == 1 ? 8u : 4u)) {
-            output->permission_handle = core_major == 1
+                   record.payload.size == (wire_profile == 1 ? 8u : 4u)) {
+            output->permission_handle = wire_profile == 1
                                             ? pxa_read_u64(record.payload.data)
                                             : pxa_read_u32(record.payload.data);
             output->seen |= 2u;
@@ -137,7 +137,7 @@ static pxa_status_t parse_get_mac(pxa_bytes_t payload, uint16_t core_major,
     }
     return output->seen == 3u && kind_valid(output->kind) &&
                    output->permission_handle != PXA_HANDLE64_INVALID &&
-                   (core_major != 1 || (output->permission_handle >> 32) != 0)
+                   (wire_profile != 1 || (output->permission_handle >> 32) != 0)
                ? PXA_STATUS_OK
                : PXA_STATUS_INVALID_ARGUMENT;
 }
@@ -154,13 +154,13 @@ static pxa_status_t get_mac(pxa_device_service_t *service,
     uint8_t mac[6];
     uint8_t value[4];
     uint32_t flags = 0;
-    uint16_t core_major = 0;
-    status = pxa_component_core_major(service->runtime, component,
-                                      &core_major);
+    uint16_t wire_profile = 0;
+    status = pxa_component_wire_profile(service->runtime, component,
+                                      &wire_profile);
     if (status != PXA_STATUS_OK) return status;
-    status = parse_get_mac(message->payload, core_major, &request);
+    status = parse_get_mac(message->payload, wire_profile, &request);
     if (status != PXA_STATUS_OK) return status;
-    if (core_major == 1)
+    if (wire_profile == 1)
         status = pxa_permission_resolve64(
             service->permissions, component, request.permission_handle,
             (pxa_bytes_t){permission_name, sizeof(permission_name) - 1u},
@@ -199,14 +199,14 @@ static pxa_status_t device_control(void *context, pxa_runtime_t *runtime,
     pxa_status_t status;
     pxa_status_t complete;
     (void)runtime;
-    if (!service_valid(service) || message == NULL || message->request_id == 0) {
+    if (!service_valid(service) || message == NULL || message->request_token == 0) {
         return PXA_STATUS_INVALID_ARGUMENT;
     }
     if (message->opcode != PXA_DEVICE_GET_MAC &&
         message->opcode != PXA_DEVICE_GET_RUNTIME_INFO)
         return PXA_STATUS_UNSUPPORTED;
     status = pxa_request_begin_reserved(
-        service->runtime, component, message->request_id,
+        service->runtime, component, message->request_token,
         PXA_DEVICE_SERVICE_ID, message->opcode, 0,
         message->opcode == PXA_DEVICE_GET_MAC ? 24u : sizeof(result));
     if (status != PXA_STATUS_OK) return status;
@@ -222,12 +222,12 @@ static pxa_status_t device_control(void *context, pxa_runtime_t *runtime,
             status = PXA_STATUS_UNSUPPORTED;
     }
     complete = pxa_request_complete(service->runtime, component,
-                                    message->request_id, status,
+                                    message->request_token, status,
                                     status == PXA_STATUS_OK ? result : NULL,
                                     status == PXA_STATUS_OK ? result_size : 0);
     if (complete != PXA_STATUS_OK) {
         (void)pxa_request_cancel(service->runtime, component,
-                                 message->request_id);
+                                 message->request_token);
     }
     return PXA_STATUS_OK;
 }

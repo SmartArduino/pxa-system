@@ -102,6 +102,7 @@ pxa_status_t pxa_activation_plan_prepare(
         entries[index].component = &manifest->components[index];
         entries[index].artifact = artifact;
         entries[index].core_major = manifest->min_sdk.major;
+        entries[index].core_minor = manifest->min_sdk.minor;
     }
     *output = &storage->plan;
     return PXA_STATUS_OK;

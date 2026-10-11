@@ -37,7 +37,7 @@ static inline int32_t pxa_clock_set_period(uint16_t period_ms) {
     uint32_t size = 0;
     if (!pxa_clock_build_set_period(packet, sizeof(packet), period_ms,
                                         &size)) return -1;
-    return pxa_submit(packet, size);
+    return pxa_control_packet(packet, size);
 }
 
 static inline int32_t pxa_clock_now(uint64_t token) {
@@ -45,7 +45,7 @@ static inline int32_t pxa_clock_now(uint64_t token) {
     uint32_t size = 0;
     if (!pxa_clock_build_now(packet, sizeof(packet), token, &size))
         return -1;
-    return pxa_submit(packet, size);
+    return pxa_control_packet(packet, size);
 }
 
 static inline int pxa_clock_parse_tick(

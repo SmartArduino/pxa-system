@@ -740,15 +740,10 @@ if(PXA_BUILD_TESTS)
                     ${CMAKE_CURRENT_SOURCE_DIR}/tests/data/ui-vectors.json)
     endif()
 
-    if(MSVC)
-        target_compile_options(pxa_api_compile_test PRIVATE /UNDEBUG)
-        target_compile_options(pxa_core_test PRIVATE /UNDEBUG)
-        target_compile_options(pxa_package_test PRIVATE /UNDEBUG)
-    else()
-        target_compile_options(pxa_api_compile_test PRIVATE -UNDEBUG)
-        target_compile_options(pxa_core_test PRIVATE -UNDEBUG)
-        target_compile_options(pxa_package_test PRIVATE -UNDEBUG)
-    endif()
+    # Assertions contain test operations, not just checks. Every test must
+    # retain them in Release builds as well as Debug builds.
+    include(cmake/pxaTestAssertions.cmake)
+    pxa_enable_test_assertions("${CMAKE_CURRENT_SOURCE_DIR}")
 endif()
 
 install(TARGETS pxa EXPORT pxaTargets

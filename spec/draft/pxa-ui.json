@@ -171,7 +171,7 @@
       "name": "canvas-stream-ready",
       "id": 32773,
       "direction": "host-to-guest",
-      "payload": "request:u32|handle:u32|status:i32"
+      "payload": "request:u32|handle:u64|status:i32"
     },
     {
       "name": "theme-changed",
@@ -183,7 +183,7 @@
       "name": "text-input-focus",
       "id": 12,
       "direction": "guest-to-host",
-      "payload": "surface:u32|node:u32|focused:u8|reserved:zero[3]; envelope request-id zero",
+      "payload": "surface:u32|node:u32|focused:u8|reserved:zero[3]; envelope request_token zero",
       "rule": "Requires text-input-control. Node must be a committed text-input owned by the caller. Focus is denied for hidden or disabled inputs. Host system IME opens/closes asynchronously, with system theme and input settings. No application dictionary is required."
     }
   ],

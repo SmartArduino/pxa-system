@@ -1,5 +1,5 @@
 {
-  "schema": "pxa-net-spec-0.2",
+  "schema": "pxa-net-spec-0.3",
   "status": "draft",
   "service": {
     "name": "net",
@@ -14,7 +14,7 @@
       "id": 1,
       "since": "0.1",
       "direction": "bidirectional-result",
-      "request_id": "nonzero",
+      "request_token": "nonzero",
       "payload": "http-url|method=get|permission|max-response",
       "result": "status|content-type|body-stream"
     },
@@ -23,7 +23,7 @@
       "id": 2,
       "since": "0.2",
       "direction": "bidirectional-result",
-      "request_id": "nonzero",
+      "request_token": "nonzero",
       "payload": "url|method|permission|max-response|timeout|request-headers|inline-body|wanted-response-headers",
       "result": "status|http-status|content-type|optional-body-stream|response-metadata"
     }
@@ -68,7 +68,7 @@
     {
       "name": "body-handle",
       "id": 7,
-      "payload": "core-v1:stream-handle:u64|core-v0:stream-handle:u32",
+      "payload": "stream-handle:u64",
       "cardinality": "fetch-result-one|http-result-zero-or-one"
     },
     {
@@ -170,5 +170,5 @@
     "default_timeout_ms": 15000,
     "max_timeout_ms": 60000
   },
-  "protocol_version": "0.2.0"
+  "protocol_version": "0.3.0"
 }

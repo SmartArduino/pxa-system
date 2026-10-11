@@ -1,3 +1,4 @@
+#include "../../testing/pxa_control_capture.h"
 #include <pxa/ui_component.hpp>
 #include <pxa/ui_layout.hpp>
 #include <pxa/ui_refresh.hpp>
@@ -19,7 +20,7 @@ static std::size_t used;
 void* operator new(std::size_t n) { ++allocations; return std::malloc(n); }
 void operator delete(void* p) noexcept { std::free(p); }
 void operator delete(void* p, std::size_t) noexcept { std::free(p); }
-extern "C" std::int32_t pxa_submit(const std::uint8_t* bytes, std::uint32_t length) {
+extern "C" std::int32_t pxa_test_control(const std::uint8_t* bytes, std::uint32_t length) {
     ++submissions;
     const auto* p = reinterpret_cast<const std::byte*>(bytes);
     if (wire::get16(p) == 3) {

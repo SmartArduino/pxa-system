@@ -1,3 +1,4 @@
+#include "../../testing/pxa_control_capture.h"
 #include <pxa/storage.hpp>
 #include "../examples/sdk-patterns/save_codec.hpp"
 #include <cassert>
@@ -13,7 +14,7 @@ static int submits;
 void* operator new(std::size_t) { std::abort(); }
 void operator delete(void*) noexcept {}
 void operator delete(void*, std::size_t) noexcept {}
-extern "C" std::int32_t pxa_submit(const std::uint8_t* p, std::uint32_t n) {
+extern "C" std::int32_t pxa_test_control(const std::uint8_t* p, std::uint32_t n) {
     assert(n <= sent.size()); std::memcpy(sent.data(), p, n); sent_size = n; ++submits; return 0;
 }
 extern "C" std::int32_t pxa_io(std::uint64_t, std::uint32_t, std::uint8_t*, std::uint32_t) { return 0; }
@@ -55,11 +56,11 @@ int main() {
     std::memcpy(external.data()+32,"save",4);
     std::string_view aliased_key(reinterpret_cast<const char*>(external.data()+32),4);
     auto external_set=storage.set_value<SaveCodec>(aliased_key,original,external);
-    assert(std::equal(golden.begin(),golden.end(),external.begin()+32));
+    assert(std::equal(golden.begin(),golden.end(),external.begin()+12));
     assert(tasks.start(std::move(external_set)));
     assert(!std::memcmp(sent.data()+24,"save",4));
     assert(requests.dispatch({6,2,wire::get64(sent.data()+4),success}));tasks.reap();
-    assert(!storage.set_value<SaveCodec>("save",original,std::span{external}.first(38)).valid());
+    assert(!storage.set_value<SaveCodec>("save",original,std::span{external}.first(18)).valid());
     auto run = [&]() -> Task<void> {
         auto result = co_await storage.get_value<SaveCodec>("save");
         assert(result == original); loaded=true; co_return Result<void>{};

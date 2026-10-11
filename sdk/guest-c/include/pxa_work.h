@@ -112,7 +112,7 @@ static inline int32_t pxa_work_enqueue(
     uint32_t size = 0;
     if (!pxa_work_build_enqueue(packet, sizeof(packet), token,
                                     request, &size)) return -1;
-    return pxa_submit(packet, size);
+    return pxa_control_packet(packet, size);
 }
 
 static inline int pxa_work_build_id_request(
@@ -143,7 +143,7 @@ static inline int32_t pxa_work_cancel(uint64_t token, uint32_t id) {
     if (!pxa_work_build_id_request(packet, sizeof(packet),
                                       PXA_WORK_CANCEL, token, id, 0,
                                       &size)) return -1;
-    return pxa_submit(packet, size);
+    return pxa_control_packet(packet, size);
 }
 
 static inline int32_t pxa_work_complete(uint64_t token, uint32_t id,
@@ -153,7 +153,7 @@ static inline int32_t pxa_work_complete(uint64_t token, uint32_t id,
     if (!pxa_work_build_id_request(packet, sizeof(packet),
                                       PXA_WORK_COMPLETE, token, id,
                                       result, &size)) return -1;
-    return pxa_submit(packet, size);
+    return pxa_control_packet(packet, size);
 }
 
 static inline int pxa_work_parse_enqueue(

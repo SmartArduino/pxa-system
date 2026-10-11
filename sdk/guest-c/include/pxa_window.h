@@ -72,7 +72,7 @@ static inline int32_t pxa_window_configure(
     uint32_t size = 0;
     if (!pxa_window_build_configure(packet, sizeof(packet), config,
                                        &size)) return -1;
-    return pxa_submit(packet, size);
+    return pxa_control_packet(packet, size);
 }
 
 static inline int32_t pxa_window_fullscreen(void) {
@@ -88,7 +88,7 @@ static inline int32_t pxa_window_fullscreen(void) {
     if (!pxa_finish_message_in_place(
             packet, sizeof(packet), PXA_WINDOW_SERVICE,
             PXA_WINDOW_CONFIGURE, 0, sizeof(packet), &size)) return -1;
-    return pxa_submit(packet, size);
+    return pxa_control_packet(packet, size);
 }
 
 static inline int pxa_window_build_toast(
@@ -117,7 +117,7 @@ static inline int32_t pxa_window_show_toast(
     uint32_t size = 0;
     if (!pxa_window_build_toast(packet, sizeof(packet), duration_ms,
                                    text, length, &size)) return -1;
-    return pxa_submit(packet, size);
+    return pxa_control_packet(packet, size);
 }
 
 static inline int pxa_window_build_snapshot(
@@ -133,7 +133,7 @@ static inline int32_t pxa_window_request_snapshot(uint64_t token) {
     uint32_t size = 0;
     if (!pxa_window_build_snapshot(packet, sizeof(packet), token, &size))
         return -1;
-    return pxa_submit(packet, size);
+    return pxa_control_packet(packet, size);
 }
 
 static inline int pxa_window_parse_snapshot(

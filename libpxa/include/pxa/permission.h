@@ -40,7 +40,7 @@ typedef pxa_status_t (*pxa_permission_store_save_fn)(
  * must later call pxa_permission_prompt_complete() from the runtime owner
  * thread. */
 typedef pxa_status_t (*pxa_permission_prompt_fn)(
-    void *context, pxa_component_t component, uint32_t request_id,
+    void *context, pxa_component_t component, pxa_request_token_t request_token,
     pxa_bytes_t app_identity, pxa_bytes_t name, pxa_bytes_t scope);
 
 typedef struct {
@@ -88,7 +88,7 @@ pxa_status_t pxa_permission_set(pxa_permission_service_t *service,
  * PXA_STATUS_OK means the guest completion was queued. */
 pxa_status_t pxa_permission_prompt_complete(
     pxa_permission_service_t *service, pxa_component_t component,
-    uint32_t request_id, pxa_permission_decision_t decision);
+    pxa_request_token_t request_token, pxa_permission_decision_t decision);
 pxa_status_t pxa_permission_revoke(
     pxa_permission_service_t *service, pxa_bytes_t name, pxa_bytes_t scope,
     pxa_component_t *affected, size_t capacity, size_t *count);

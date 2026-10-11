@@ -2,16 +2,16 @@
 
 [English](README.md)
 
-这是合并后的唯一当前草案。Host 和 Package 使用 UI service 0.3，不再存在 UI 0.1
+这是合并后的唯一当前草案。Host 和 Package 使用 UI service 0.8，不再存在 UI 0.1
 转换层。每个 `pxa-*.json` 都携带自己的 `protocol_version`。
 
 主要说明文档：
 
 - `architecture.md`：所有权与执行规则；
 - `core-wire.md`、`lifecycle.md`：Core envelope、handle、请求和生命周期；
-- `abi-1.0-migration.md`：下一版 Core ABI、64 位令牌及 Guest SDK 的迁移设计；
-- `abi-1.0-envelope.json`：v1 消息封装布局及校验过的黄金字节；
-- `window.md`、`ui.md`、`surface.md`：窗口、UI 0.3 transaction/Canvas 和 surface；
+- `abi-2.0-migration.md`：当前 Core 2.0、64 位令牌及 Guest SDK 的迁移说明；
+- `pxa-core.json`：唯一的 Core 2.0 封装、导入和黄金字节来源；
+- `window.md`、`ui.md`、`surface.md`：窗口、UI 0.8 transaction/Canvas 和 surface；
 - `clock.md`、`fs.md`、`storage.md`、`ipc.md`：基础异步服务；
 - `sensor.md`、`device.md`、`net.md`、`audio.md`：权限绑定的设备能力；
 - `work.md`、`permission.md`：后台工作、授权和撤销；
@@ -34,7 +34,7 @@ major 内的 minor 范围和必需 feature bits。旧式 `services: ["net"]` 表
 FreeRTOS 是实现细节，不是协议概念。实现要被视为权威前，必须同时具备 golden
 vectors 和 malformed-input 测试。
 
-修改 Core v0/v1 envelope 或 record schema 后，运行 `python3 tools/generate_wire_codecs.py`
+修改 Core envelope 或 record schema 后，运行 `python3 tools/generate_wire_codecs.py`
 更新 Host 与 Guest 共源的 codec。`tools/check_spec.py` 检查生成结果是否过期，
 `tools/test_wire_codecs.py` 编译两份头文件并逐字节对照 Core 消息与 record 的 golden vectors。
 修改 Device runtime-info 或 Window snapshot 结果 schema 后运行 `python3 tools/generate_service_codecs.py`；

@@ -13,28 +13,28 @@
       "name": "configure",
       "id": 1,
       "direction": "guest-to-host",
-      "request_id": "zero",
+      "request_token": "zero",
       "payload": "configure-records"
     },
     {
       "name": "get-snapshot",
       "id": 2,
       "direction": "bidirectional-result",
-      "request_id": "nonzero",
+      "request_token": "nonzero",
       "payload": "empty"
     },
     {
       "name": "show-toast",
       "id": 3,
       "direction": "guest-to-host",
-      "request_id": "zero",
+      "request_token": "zero",
       "payload": "duration-u16-le-and-utf8-text-1-to-240-bytes"
     },
     {
       "name": "metrics-changed",
       "id": 32769,
       "direction": "host-to-guest",
-      "request_id": "zero",
+      "request_token": "zero",
       "payload": "snapshot-records",
       "delivery": "coalescible"
     },
@@ -42,7 +42,7 @@
       "name": "back-requested",
       "id": 32770,
       "direction": "host-to-guest",
-      "request_id": "zero",
+      "request_token": "zero",
       "payload": "empty",
       "delivery": "reliable",
       "default_action": "close-window"

@@ -1,10 +1,11 @@
+#include "../../testing/pxa_control_capture.h"
 #include <pxa/ui_geometry.hpp>
 #include <cassert>
 #include <cstdio>
 #include <cstdlib>
 #include <limits>
 using namespace pxa::ui;
-extern "C" std::int32_t pxa_submit(const std::uint8_t*, std::uint32_t) { std::abort(); }
+extern "C" std::int32_t pxa_test_control(const std::uint8_t*, std::uint32_t) { std::abort(); }
 extern "C" std::int32_t pxa_io(std::uint64_t, std::uint32_t, std::uint8_t*, std::uint32_t) { std::abort(); }
 int main() {
     DisplayMetrics d; d.width=300;d.height=240;d.safe={150,10,20,30};

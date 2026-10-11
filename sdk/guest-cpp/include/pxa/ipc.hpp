@@ -141,7 +141,7 @@ public:
     TypedIpcCall<Contract> call(const typename Contract::Request& request,
         std::span<std::byte> packet, std::span<std::byte> output) {
         constexpr auto endpoint = Contract::endpoint;
-        const auto offset = wire::header_bytes + 8 + endpoint.size();
+        const auto offset = 8 + endpoint.size();
         if (packet.size() < offset)
             return {Task<IpcCallResult>::failed(Error::resource_limit), output};
         auto payload_size = Contract::encode_request(request,
@@ -171,7 +171,7 @@ public:
     Task<void> reply(std::uint32_t call_id,
         const typename Contract::Response& response,
         std::span<std::byte> packet) {
-        constexpr auto offset = wire::header_bytes + 20;
+        constexpr auto offset = 20;
         if (packet.size() < offset)
             return Task<void>::failed(Error::resource_limit);
         auto payload_size = Contract::encode_response(response,
@@ -194,7 +194,7 @@ private:
         RequestTable& requests, std::span<std::byte> packet,
         std::span<std::byte> output) {
         auto accepted = co_await Response(transport, requests, 7, 1,
-            Response::PrebuiltPacket{packet});
+            packet);
         if (!accepted) co_return std::unexpected(accepted.error());
         auto body = wire::result_body(accepted->payload);
         if (!body) co_return std::unexpected(body.error());
@@ -211,7 +211,7 @@ private:
     static Task<void> reply_impl(Transport& transport, RequestTable& requests,
                                  std::span<std::byte> packet) {
         auto event = co_await Response(transport, requests, 7, 2,
-            Response::PrebuiltPacket{packet});
+            packet);
         if (!event) co_return std::unexpected(event.error());
         auto body = wire::result_body(event->payload);
         if (!body) co_return std::unexpected(body.error());

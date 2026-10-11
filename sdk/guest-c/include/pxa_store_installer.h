@@ -61,7 +61,7 @@ static inline int pxa_store_send(uint16_t opcode, pxa_store_token_t token,
     return pxa_build_message(packet, packet_capacity,
                                  PXA_SERVICE_STORE_INSTALLER, opcode,
                                  token, payload, payload_size, &written) &&
-           pxa_submit(packet, written) == 0;
+           pxa_control_packet(packet, written) == 0;
 }
 
 static inline int pxa_store_request_package(uint16_t opcode,

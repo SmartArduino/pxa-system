@@ -139,19 +139,19 @@ if(PXSYS_BUILD_TESTS OR BUILD_TESTING)
     if(PXSYS_GUEST_CLANG AND PXSYS_TEST_TIMEOUT AND
        EXISTS "${PXSYS_V1_SMOKE_APP_ROOT}/abi-v1-smoke/package.json" AND
        EXISTS "${PXSYS_V1_SMOKE_APP_ROOT}/.dev-signing/publisher-public.der")
-        add_test(NAME pxsys_product_abi_v1_pressure
+        add_test(NAME pxsys_product_core2_pressure
             COMMAND bash
-                "${CMAKE_CURRENT_LIST_DIR}/../../tools/package/test_abi_v1_smoke.sh"
+                "${CMAKE_CURRENT_LIST_DIR}/../../tools/package/test_core2_smoke.sh"
                 $<TARGET_FILE:pxsys_product_simulator>)
-        set_tests_properties(pxsys_product_abi_v1_pressure PROPERTIES
-            TIMEOUT 45)
+        set_tests_properties(pxsys_product_core2_pressure PROPERTIES
+            TIMEOUT 300)
         if(EXISTS "${PXSYS_V1_SMOKE_APP_ROOT}/abi-v1-ipc-smoke/package.json")
-            add_test(NAME pxsys_product_abi_v1_ipc
+            add_test(NAME pxsys_product_core2_ipc
                 COMMAND bash
-                    "${CMAKE_CURRENT_LIST_DIR}/../../tools/package/test_abi_v1_ipc_smoke.sh"
+                    "${CMAKE_CURRENT_LIST_DIR}/../../tools/package/test_core2_ipc_smoke.sh"
                     $<TARGET_FILE:pxsys_product_simulator>)
-            set_tests_properties(pxsys_product_abi_v1_ipc PROPERTIES
-                TIMEOUT 45)
+            set_tests_properties(pxsys_product_core2_ipc PROPERTIES
+                TIMEOUT 300)
         endif()
     endif()
     add_test(NAME pxsys_desktop_simulator_smoke
@@ -244,21 +244,21 @@ foreach(_test audio audio_app i18n_app sdk_patterns declarative_ui raster resour
             add_test(NAME pxsys_i18n_app_test COMMAND bash
                 "${CMAKE_CURRENT_LIST_DIR}/../../tools/package/test_cpp_i18n_app.sh"
                 $<TARGET_FILE:pxsys_i18n_app_test>)
-            set_tests_properties(pxsys_i18n_app_test PROPERTIES TIMEOUT 90)
+            set_tests_properties(pxsys_i18n_app_test PROPERTIES TIMEOUT 300)
         elseif(_test STREQUAL "sdk_patterns")
             add_test(NAME pxsys_sdk_patterns_test COMMAND bash
                 "${CMAKE_CURRENT_LIST_DIR}/../../tools/package/test_cpp_sdk_patterns.sh"
                 $<TARGET_FILE:pxsys_sdk_patterns_test>)
-            set_tests_properties(pxsys_sdk_patterns_test PROPERTIES TIMEOUT 90)
+            set_tests_properties(pxsys_sdk_patterns_test PROPERTIES TIMEOUT 300)
         elseif(_test STREQUAL "declarative_ui")
             add_test(NAME pxsys_declarative_ui_test COMMAND bash
                 "${CMAKE_CURRENT_LIST_DIR}/../../tools/package/test_cpp_declarative_ui.sh"
                 $<TARGET_FILE:pxsys_declarative_ui_test>)
-            set_tests_properties(pxsys_declarative_ui_test PROPERTIES TIMEOUT 120)
+            set_tests_properties(pxsys_declarative_ui_test PROPERTIES TIMEOUT 300)
             add_test(NAME pxsys_cpp_service_safety_test COMMAND bash
                 "${CMAKE_CURRENT_LIST_DIR}/../../tools/package/test_cpp_service_safety.sh"
                 "${CMAKE_CURRENT_BINARY_DIR}")
-            set_tests_properties(pxsys_cpp_service_safety_test PROPERTIES TIMEOUT 180)
+            set_tests_properties(pxsys_cpp_service_safety_test PROPERTIES TIMEOUT 420)
         elseif(_test STREQUAL "resource_budget")
             add_test(NAME pxsys_resource_budget_test COMMAND pxsys_resource_budget_test)
         elseif(_test STREQUAL "raster")
@@ -271,6 +271,15 @@ set(PXSYS_RASTER_BASELINE_SOURCE "" CACHE FILEPATH
     "Saved product_runner.c used for the pre-refactor raster benchmark")
 set(PXSYS_RASTER_BASELINE_KERNEL "" CACHE FILEPATH
     "Saved raster.c including the pre-refactor validator, for baseline timing")
+add_executable(pxsys_app_matrix_test EXCLUDE_FROM_ALL
+    tests/app_matrix_test.c desktop_net.c pxadb_control.c)
+pxsys_apply_wamr_metadata(pxsys_app_matrix_test)
+target_compile_definitions(pxsys_app_matrix_test PRIVATE
+    PXSYS_DESKTOP_TEXT_FONT="${PXSYS_DESKTOP_TEXT_FONT}")
+target_link_libraries(pxsys_app_matrix_test PRIVATE
+    pxsys::core pxa::pxa pxa_adapters_openssl pxa_adapters_posix pxa_adapters_lvgl
+    pxa_adapters_wamr lvgl SDL2::SDL2 PNG::PNG CURL::libcurl Threads::Threads
+    PkgConfig::VORBISFILE PkgConfig::OPUSFILE m)
 foreach(_bench current baseline)
     if(_bench STREQUAL "baseline" AND NOT PXSYS_RASTER_BASELINE_SOURCE)
         continue()

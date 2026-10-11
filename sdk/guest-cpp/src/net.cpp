@@ -84,9 +84,9 @@ Result<std::size_t> encode_net_request(const NetRequest& request,
     for (const unsigned char c : request.url)
         if (c < 0x21 || c > 0x7e)
             return std::unexpected(Error::invalid_argument);
-    if (packet.size() > wire::max_control_bytes)
-        packet = packet.first(wire::max_control_bytes);
-    if (packet.size() < wire::header_bytes)
+    if (packet.size() > wire::max_call_payload_bytes)
+        packet = packet.first(wire::max_call_payload_bytes);
+    if (packet.empty())
         return std::unexpected(Error::resource_limit);
     // Request descriptors and their text/body must survive every record write.
     // Reject destructive aliasing before touching caller storage; no scratch
@@ -105,7 +105,7 @@ Result<std::size_t> encode_net_request(const NetRequest& request,
     for (auto name : request.wanted_headers)
         if (wire::overlaps(bytes(name), packet))
             return std::unexpected(Error::invalid_argument);
-    wire::Writer writer(packet.subspan(wire::header_bytes));
+    wire::Writer writer(packet);
     std::array<std::byte, 8> scalar{};
     if (!wire::record(writer, 1, bytes(request.url)))
         return std::unexpected(Error::resource_limit);
@@ -149,7 +149,7 @@ Result<std::size_t> encode_net_request(const NetRequest& request,
         if (!wire::record(writer, 11, bytes(name)))
             return std::unexpected(Error::resource_limit);
     }
-    return wire::header_bytes + writer.size();
+    return writer.size();
 }
 
 std::uint64_t net_late_body_handle(

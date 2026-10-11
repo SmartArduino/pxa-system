@@ -1,3 +1,4 @@
+#include "../../testing/pxa_control_capture.h"
 #include <pxa/ui.hpp>
 
 #include <cassert>
@@ -17,7 +18,7 @@ void operator delete(void* p, std::size_t) noexcept { std::free(p); }
 struct Packet { std::array<std::byte, 1024> data{}; std::size_t size = 0; };
 static std::array<Packet, 64> packets;
 static std::size_t count = 0;
-extern "C" std::int32_t pxa_submit(const std::uint8_t* p, std::uint32_t n) {
+extern "C" std::int32_t pxa_test_control(const std::uint8_t* p, std::uint32_t n) {
     assert(count < packets.size() && n <= packets[count].data.size());
     auto& packet = packets[count++]; packet.size = n;
     std::memcpy(packet.data.data(), p, n); return 0;

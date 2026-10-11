@@ -38,7 +38,7 @@ public:
         if (value < 1 || value > 5 || !(permission.handle() >> 32))
             return Task<DeviceMac>::failed(Error::invalid_argument);
         wire::RequestPacket<18> packet;
-        wire::Writer writer(std::span(packet.bytes).subspan(wire::header_bytes));
+        wire::Writer writer(std::span(packet.bytes));
         writer.u16(1); writer.u16(2); writer.u16(value);
         writer.u16(2); writer.u16(8); writer.u64(permission.handle());
         packet.size = writer.size();
@@ -49,7 +49,7 @@ private:
     static Task<DeviceMac> mac_impl(DeviceService self,
         wire::RequestPacket<18> packet, MacKind kind) {
         auto response = co_await Response(self.transport_, self.requests_, 15, 1,
-            Response::PrebuiltPacket{packet.packet()});
+            packet.packet());
         if (!response) co_return std::unexpected(response.error());
         auto body = wire::result_body(response->payload);
         if (!body) co_return std::unexpected(body.error());

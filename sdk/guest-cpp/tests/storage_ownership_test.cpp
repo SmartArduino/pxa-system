@@ -1,3 +1,4 @@
+#include "../../testing/pxa_control_capture.h"
 #include <pxa/storage.hpp>
 
 #include <algorithm>
@@ -13,7 +14,7 @@ static std::uint64_t token;
 static unsigned submits, cancels, completed;
 static std::int32_t submit_result;
 
-extern "C" std::int32_t pxa_submit(const std::uint8_t* data, std::uint32_t size) {
+extern "C" std::int32_t pxa_test_control(const std::uint8_t* data, std::uint32_t size) {
     const auto* bytes = reinterpret_cast<const std::byte*>(data);
     if (pxa::wire::get16(bytes) == 1) {
         assert(pxa::wire::get16(bytes + 2) == 1 && size == 28);
@@ -25,7 +26,7 @@ extern "C" std::int32_t pxa_submit(const std::uint8_t* data, std::uint32_t size)
     token = pxa::wire::get64(bytes + 4);
     assert(token && pxa::wire::get32(bytes + 12) == size - 20);
     assert(pxa::task_pool_stats().active_slots == 2);
-    if (expected_packet) assert(bytes == expected_packet);
+    if (expected_packet) assert(pxa_test_payload == reinterpret_cast<const std::uint8_t*>(expected_packet));
     const auto key_bytes = expected_key.empty() ? 0u : 4u + expected_key.size();
     if (key_bytes) {
         assert(pxa::wire::get16(bytes + 20) == 1);
@@ -193,10 +194,10 @@ int main() {
         assert(pxa::task_pool_stats().active_slots == 0 && !task.valid() && task.failure() == error);
     };
     packet.fill(std::byte{0x55});
-    failed(storage.set("a", std::span{large}.first(484)), pxa::Error::resource_limit);
+    failed(storage.set("a", std::span{large}.first(504)), pxa::Error::resource_limit);
     failed(storage.set("a", large, packet), pxa::Error::invalid_argument);
     failed(storage.set("bad/key", abc, packet), pxa::Error::invalid_argument);
-    failed(storage.set("a", abc, std::span{packet}.first(31)), pxa::Error::resource_limit);
+    failed(storage.set("a", abc, std::span{packet}.first(11)), pxa::Error::resource_limit);
     failed(storage.get("", output), pxa::Error::invalid_argument);
     failed(storage.remove(std::string(65,'a')), pxa::Error::invalid_argument);
     failed(storage.list("bad/key", keys), pxa::Error::invalid_argument);

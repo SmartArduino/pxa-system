@@ -69,7 +69,7 @@ public:
             !(permission.handle() >> 32))
             return Task<SensorSubscription>::failed(Error::invalid_argument);
         wire::RequestPacket<26> packet;
-        wire::Writer writer(std::span(packet.bytes).subspan(wire::header_bytes));
+        wire::Writer writer(std::span(packet.bytes));
         writer.u16(1); writer.u16(2); writer.u16(descriptor.id);
         writer.u16(2); writer.u16(4); writer.u32(period_ms);
         writer.u16(3); writer.u16(8); writer.u64(permission.handle());
@@ -80,7 +80,7 @@ private:
     static Task<SensorSubscription> subscribe_impl(SensorService self,
         wire::RequestPacket<26> packet, std::uint8_t dimensions) {
         auto event = co_await Response(self.transport_, self.requests_, 8, 2,
-            Response::PrebuiltPacket{packet.packet()}, true);
+            packet.packet(), true);
         if (!event) co_return std::unexpected(event.error());
         auto body = wire::result_body(event->payload);
         if (!body) co_return std::unexpected(body.error());

@@ -1,3 +1,4 @@
+#include "../../testing/pxa_control_capture.h"
 #include <pxa/permission.hpp>
 #include <pxa/binary.hpp>
 
@@ -15,7 +16,7 @@ static unsigned submits, closes, cancels, completed;
 static std::int32_t submit_result;
 static constexpr std::uint64_t handle = 0x1234567800000001ull;
 
-extern "C" std::int32_t pxa_submit(const std::uint8_t* data, std::uint32_t size) {
+extern "C" std::int32_t pxa_test_control(const std::uint8_t* data, std::uint32_t size) {
     const auto* bytes = reinterpret_cast<const std::byte*>(data);
     if (pxa::wire::get16(bytes) == 1) {
         const auto op = pxa::wire::get16(bytes+2);
@@ -28,7 +29,7 @@ extern "C" std::int32_t pxa_submit(const std::uint8_t* data, std::uint32_t size)
     token = pxa::wire::get64(bytes+4);
     assert(token && pxa::wire::get32(bytes+12) == size-20);
     assert(pxa::task_pool_stats().active_slots == 2);
-    if (expected_packet) assert(bytes == expected_packet);
+    if (expected_packet) assert(pxa_test_payload == reinterpret_cast<const std::uint8_t*>(expected_packet));
     assert(pxa::wire::get16(bytes+20) == 1 && pxa::wire::get16(bytes+22) == expected_name.size());
     assert(std::string_view(reinterpret_cast<const char*>(bytes+24),expected_name.size()) == expected_name);
     const auto* scope = bytes+24+expected_name.size();
@@ -108,7 +109,7 @@ int main() {
 
     std::array<std::byte,1025> scope; scope.fill(std::byte{0xaa});
     const std::string max_name(96,'a'); expected_name=max_name;
-    expected_scope=std::span{scope}.first(388); // Exactly 512 B default packet.
+    expected_scope=std::span{scope}.first(408); // Exactly 512 B default packet.
     assert(tasks.start(check(service.check(expected_name,expected_scope),true))); finish(allowed);
     expected_scope=std::span{scope}.first(1024); expected_packet=packet.data();
     assert(tasks.start(check(service.check(expected_name,expected_scope,packet),true))); finish(allowed);
@@ -118,13 +119,13 @@ int main() {
     auto failed = [&](auto task,pxa::Error error) {
         assert(!task.valid() && task.failure()==error && pxa::task_pool_stats().active_slots==0);
     };
-    failed(service.check(max_name,std::span{scope}.first(389)),pxa::Error::resource_limit);
-    failed(service.acquire(max_name,std::span{scope}.first(389)),pxa::Error::resource_limit);
+    failed(service.check(max_name,std::span{scope}.first(409)),pxa::Error::resource_limit);
+    failed(service.acquire(max_name,std::span{scope}.first(409)),pxa::Error::resource_limit);
     failed(service.check(max_name,scope,packet),pxa::Error::invalid_argument);
     failed(service.acquire("",{},packet),pxa::Error::invalid_argument);
     failed(service.check(std::string(97,'a'),{},packet),pxa::Error::invalid_argument);
     failed(service.check(std::string_view{"a\0b",3},{},packet),pxa::Error::invalid_argument);
-    failed(service.check("a",{},std::span{packet}.first(24)),pxa::Error::resource_limit);
+    failed(service.check("a",{},std::span{packet}.first(4)),pxa::Error::resource_limit);
     assert(std::all_of(packet.begin(),packet.end(),[](auto b){return b==std::byte{0x55};}));
 
     expected_name="permission"; expected_scope={};

@@ -74,6 +74,7 @@
 #define PRODUCT_SURFACE_FLAG_GAME_RENDER UINT8_C(8)
 #define PRODUCT_SURFACE_FLAG_RASTER_NO_SCRATCH UINT8_C(16)
 #define PRODUCT_SURFACE_FLAG_RASTER_COVERAGE UINT8_C(32)
+#define PRODUCT_SURFACE_FLAG_BORROW_COMMANDS UINT8_C(64)
 #define PRODUCT_ASSET_MAX_BYTES (4u * 1024u * 1024u)
 #define PRODUCT_ASSET_MAX_DIMENSION 4096u
 #define PRODUCT_AUDIO_SOUND_CACHE 8u
@@ -279,14 +280,13 @@ typedef struct {
     pxa_surface_layer_t surface_layer;
     uint8_t *raster_buffers[2];
     uint16_t *raster_depth_buffer;
-    uint8_t *raster_draw_lists[2];
-    uint32_t raster_draw_sizes[2];
+    uint8_t *raster_draw_list;
     int8_t raster_current_buffer;
-    int8_t raster_draw_pending;
+    uint8_t raster_draw_pending;
     uint64_t raster_last_frame_id;
     pxa_raster_bindings_t raster_bindings;
-    pxa_raster_bindings_t raster_frame_bindings[2];
-    pxa_raster_draw_list_view_t raster_draw_views[2];
+    pxa_raster_bindings_t raster_frame_bindings;
+    pxa_raster_draw_list_view_t raster_draw_view;
     pxa_raster_telemetry_t raster_telemetry;
     pxa_wamr_engine_t *engine;
     pxa_component_engine_t engine_ops;
@@ -988,14 +988,16 @@ static pxa_status_t surface_create_with_raster_capacity(
         (desc->flags & ~(PXA_SURFACE_FLAG_KNOWN_MASK |
                          PRODUCT_SURFACE_FLAG_GAME_RENDER |
                          PRODUCT_SURFACE_FLAG_RASTER_NO_SCRATCH |
-                         PRODUCT_SURFACE_FLAG_RASTER_COVERAGE)) != 0 ||
+                         PRODUCT_SURFACE_FLAG_RASTER_COVERAGE |
+                         PRODUCT_SURFACE_FLAG_BORROW_COMMANDS)) != 0 ||
         ((desc->flags & (PRODUCT_SURFACE_FLAG_RASTER_NO_SCRATCH |
                          PRODUCT_SURFACE_FLAG_RASTER_COVERAGE)) ==
          (PRODUCT_SURFACE_FLAG_RASTER_NO_SCRATCH |
           PRODUCT_SURFACE_FLAG_RASTER_COVERAGE)) ||
         (!raster &&
          (desc->flags & (PRODUCT_SURFACE_FLAG_RASTER_NO_SCRATCH |
-                         PRODUCT_SURFACE_FLAG_RASTER_COVERAGE)) != 0) ||
+                         PRODUCT_SURFACE_FLAG_RASTER_COVERAGE |
+                         PRODUCT_SURFACE_FLAG_BORROW_COMMANDS)) != 0) ||
         mapped == raster ||
         desc->width == 0 || desc->height == 0 ||
         desc->buffer_count < 2 || desc->buffer_count > 3 ||
@@ -1042,7 +1044,7 @@ static pxa_status_t surface_create_with_raster_capacity(
     host->surface_layer.height = desc->height;
     host->surface_layer.visible = 1;
     host->raster_current_buffer = -1;
-    host->raster_draw_pending = -1;
+    host->raster_draw_pending = 0;
     if (raster) {
         uint8_t index;
         size_t scratch_bytes = 0;
@@ -1061,9 +1063,13 @@ static pxa_status_t surface_create_with_raster_capacity(
         }
         for (index = 0; index < 2; ++index) {
             host->raster_buffers[index] = malloc(host->surface_frame_bytes);
-            host->raster_draw_lists[index] = malloc(host->raster_max_draw_bytes);
-            if (host->raster_buffers[index] == NULL ||
-                host->raster_draw_lists[index] == NULL) goto failed;
+            if (host->raster_buffers[index] == NULL) goto failed;
+        }
+        /* The product loop serializes submit and execution. One pending copy
+         * is enough; borrowed mode needs no command storage at all. */
+        if (!(desc->flags & PRODUCT_SURFACE_FLAG_BORROW_COMMANDS)) {
+            host->raster_draw_list = malloc(host->raster_max_draw_bytes);
+            if (host->raster_draw_list == NULL) goto failed;
         }
         host->surface_registered = 1;
         memset(&host->surface_bitmap, 0, sizeof(host->surface_bitmap));
@@ -1088,11 +1094,11 @@ static pxa_status_t surface_create_with_raster_capacity(
 failed:
     for (uint8_t index = 0; index < 2; ++index) {
         free(host->raster_buffers[index]);
-        free(host->raster_draw_lists[index]);
-        pxa_raster_bindings_release(&host->raster_frame_bindings[index]);
         host->raster_buffers[index] = NULL;
-        host->raster_draw_lists[index] = NULL;
     }
+    free(host->raster_draw_list);
+    host->raster_draw_list = NULL;
+    pxa_raster_bindings_release(&host->raster_frame_bindings);
     free(host->raster_depth_buffer);
     host->raster_depth_buffer = NULL;
     if (host->surface_image != NULL) lv_obj_delete(host->surface_image);
@@ -1112,7 +1118,7 @@ failed:
     host->surface_flags = 0;
     host->surface_registered = 0;
     host->raster_current_buffer = -1;
-    host->raster_draw_pending = -1;
+    host->raster_draw_pending = 0;
     return PXA_STATUS_RESOURCE_LIMIT;
 }
 
@@ -1324,49 +1330,90 @@ static pxa_status_t surface_raster_bind_assets(void *context, uint64_t surface,
     return PXA_STATUS_OK;
 }
 
-static pxa_status_t surface_raster_submit(void *context, uint64_t surface,
-                                          const uint8_t *bytes, size_t size) {
-    product_host_t *host = context;
-    pxa_raster_resources_t resources;
-    /* The reference executor skips prefilled_commands; the desktop backend
-     * materializes every command itself, so the count must be zero. */
+/* Both modes execute on the product loop's thread. Only queued commands need
+ * retained resource snapshots; borrowed input and bindings stay valid through
+ * this synchronous call. Presentation always reads the Host-owned buffer. */
+static pxa_raster_target_t surface_raster_target(product_host_t *host,
+                                                uint8_t buffer_index) {
     pxa_raster_target_t target = {0};
-    pxa_raster_draw_list_view_t list;
-    pxa_status_t status;
-    uint8_t mailbox;
-    if (host == NULL || surface != 1 || bytes == NULL ||
-        (host->surface_flags & PRODUCT_SURFACE_FLAG_GAME_RENDER) == 0)
-        return PXA_STATUS_BAD_STATE;
-    if (size > host->raster_max_draw_bytes)
-        return PXA_STATUS_LIMIT_EXCEEDED;
-    pxa_raster_bindings_view(&host->raster_bindings,
-                              PXA_RASTER_CAP_KNOWN_MASK, &resources);
-    target.pixels = (uint16_t *)host->raster_buffers[0];
+    target.pixels = (uint16_t *)host->raster_buffers[buffer_index];
     target.depth_pixels = host->raster_depth_buffer;
     target.scratch_mode = host->raster_scratch_mode;
     target.stride_pixels = host->surface_stride_bytes / 2u;
     target.depth_stride_pixels = host->surface_width;
     target.width = host->surface_width;
     target.height = host->surface_height;
+    return target;
+}
+
+static void surface_raster_execute(product_host_t *host, const uint8_t *bytes,
+                                   const pxa_raster_draw_list_view_t *list,
+                                   const pxa_raster_resources_t *resources) {
+    const uint8_t buffer_index = host->raster_current_buffer == 0 ? 1 : 0;
+    pxa_raster_target_t target = surface_raster_target(host, buffer_index);
+    pxa_raster_telemetry_t frame_telemetry = {0};
+    const uint64_t raster_started_us = now_us(NULL);
+    pxa_raster_execute_draw_list(bytes, list, &target, resources, &frame_telemetry);
+    const uint64_t raster_finished_us = now_us(NULL);
+    ++host->raster_telemetry.rendered_frames;
+    host->raster_telemetry.host_raster_us +=
+        raster_finished_us - raster_started_us;
+    host->raster_telemetry.last_host_raster_us =
+        raster_finished_us - raster_started_us > UINT32_MAX
+            ? UINT32_MAX
+            : (uint32_t)(raster_finished_us - raster_started_us);
+    host->raster_telemetry.draw_list_bytes += frame_telemetry.draw_list_bytes;
+    host->raster_telemetry.covered_pixels += frame_telemetry.covered_pixels;
+    host->raster_telemetry.clear_commands += frame_telemetry.clear_commands;
+    host->raster_telemetry.flat_quad_commands += frame_telemetry.flat_quad_commands;
+    host->raster_telemetry.textured_quad_commands += frame_telemetry.textured_quad_commands;
+    host->raster_telemetry.sprite_commands += frame_telemetry.sprite_commands;
+    host->raster_telemetry.last_draw_list_bytes = frame_telemetry.last_draw_list_bytes;
+    host->raster_telemetry.last_covered_pixels = frame_telemetry.last_covered_pixels;
+    host->raster_current_buffer = (int8_t)buffer_index;
+    host->surface_pending_buffer = (int8_t)buffer_index;
+    host->surface_pending_frame_id = list->frame_id;
+}
+
+static pxa_status_t surface_raster_submit(void *context, uint64_t surface,
+                                          const uint8_t *bytes, size_t size) {
+    product_host_t *host = context;
+    pxa_raster_resources_t resources;
+    pxa_raster_target_t target;
+    pxa_raster_draw_list_view_t list;
+    pxa_status_t status;
+    if (host == NULL || surface != 1 || bytes == NULL ||
+        (host->surface_flags & PRODUCT_SURFACE_FLAG_GAME_RENDER) == 0)
+        return PXA_STATUS_BAD_STATE;
+    if (size > host->raster_max_draw_bytes)
+        return PXA_STATUS_LIMIT_EXCEEDED;
+    if ((host->surface_flags & PRODUCT_SURFACE_FLAG_BORROW_COMMANDS) &&
+        (!host->focused || !host->surface_layer.visible ||
+         host->surface_pending_buffer >= 0))
+        return PXA_STATUS_WOULD_BLOCK;
+    pxa_raster_bindings_view(&host->raster_bindings,
+                              PXA_RASTER_CAP_KNOWN_MASK, &resources);
+    target = surface_raster_target(host, 0);
     status = pxa_raster_validate_draw_list(bytes, size, &target, &resources, &list);
     if (status != PXA_STATUS_OK || list.frame_id <= host->raster_last_frame_id) {
         ++host->raster_telemetry.rejected_lists;
         return status != PXA_STATUS_OK ? status : PXA_STATUS_BAD_STATE;
     }
-    mailbox = host->raster_draw_pending >= 0 ?
-                  (uint8_t)host->raster_draw_pending : (uint8_t)(list.frame_id & 1u);
-    if (host->raster_draw_pending >= 0) {
-        ++host->surface_dropped_frames;
-        ++host->surface_replaced_frames;
-        ++host->raster_telemetry.dropped_frames;
+    if (host->surface_flags & PRODUCT_SURFACE_FLAG_BORROW_COMMANDS) {
+        surface_raster_execute(host, bytes, &list, &resources);
+    } else {
+        if (host->raster_draw_pending) {
+            ++host->surface_dropped_frames;
+            ++host->surface_replaced_frames;
+            ++host->raster_telemetry.dropped_frames;
+        }
+        pxa_raster_bindings_release(&host->raster_frame_bindings);
+        pxa_raster_bindings_snapshot_for_draw(&host->raster_frame_bindings,
+                                              &host->raster_bindings, &list);
+        host->raster_draw_view = list;
+        memcpy(host->raster_draw_list, bytes, size);
+        host->raster_draw_pending = 1;
     }
-    pxa_raster_bindings_release(&host->raster_frame_bindings[mailbox]);
-    pxa_raster_bindings_snapshot_for_draw(&host->raster_frame_bindings[mailbox],
-                                          &host->raster_bindings, &list);
-    host->raster_draw_views[mailbox] = list;
-    memcpy(host->raster_draw_lists[mailbox], bytes, size);
-    host->raster_draw_sizes[mailbox] = (uint32_t)size;
-    host->raster_draw_pending = (int8_t)mailbox;
     host->raster_last_frame_id = list.frame_id;
     ++host->surface_submitted_frames;
     ++host->raster_telemetry.submitted_frames;
@@ -1393,11 +1440,11 @@ static void surface_close(void *context, uint64_t surface) {
     host->surface_display_buffer = NULL;
     for (uint8_t index = 0; index < 2; ++index) {
         free(host->raster_buffers[index]);
-        free(host->raster_draw_lists[index]);
-        pxa_raster_bindings_release(&host->raster_frame_bindings[index]);
         host->raster_buffers[index] = NULL;
-        host->raster_draw_lists[index] = NULL;
     }
+    free(host->raster_draw_list);
+    host->raster_draw_list = NULL;
+    pxa_raster_bindings_release(&host->raster_frame_bindings);
     free(host->raster_depth_buffer);
     host->raster_depth_buffer = NULL;
     pxa_raster_bindings_release(&host->raster_bindings);
@@ -1419,7 +1466,7 @@ static void surface_close(void *context, uint64_t surface) {
     host->surface_release_count = 0;
     host->surface_release_pending_mask = 0;
     host->raster_current_buffer = -1;
-    host->raster_draw_pending = -1;
+    host->raster_draw_pending = 0;
     host->raster_last_frame_id = 0;
     memset(&host->raster_telemetry, 0, sizeof(host->raster_telemetry));
 }
@@ -1436,7 +1483,11 @@ static pxa_status_t game_render_create(
     surface_desc.height = desc->height;
     surface_desc.format = PXA_SURFACE_FORMAT_RGB565;
     surface_desc.buffer_count = desc->buffer_count;
+    if (desc->flags & ~PXA_GAME_RENDER_FLAG_KNOWN_MASK)
+        return PXA_STATUS_UNSUPPORTED;
     surface_desc.flags = PRODUCT_SURFACE_FLAG_GAME_RENDER;
+    if (desc->flags & PXA_GAME_RENDER_FLAG_BORROW_COMMANDS)
+        surface_desc.flags |= PRODUCT_SURFACE_FLAG_BORROW_COMMANDS;
     if (desc->scratch_mode == PXA_GAME_RENDER_SCRATCH_NONE)
         surface_desc.flags |= PRODUCT_SURFACE_FLAG_RASTER_NO_SCRATCH;
     else if (desc->scratch_mode == PXA_GAME_RENDER_SCRATCH_COVERAGE_2BIT)
@@ -1520,49 +1571,19 @@ static int surface_process_pending(product_host_t *host) {
         host->surface_image == NULL)
         return 0;
     if ((host->surface_flags & PRODUCT_SURFACE_FLAG_GAME_RENDER) != 0) {
-        pxa_raster_resources_t resources;
-        /* The desktop backend owns every command; prefilled_commands stays 0
-         * or the reference executor would skip the whole list. */
-        pxa_raster_target_t target = {0};
-        pxa_raster_draw_list_view_t list;
-        pxa_raster_telemetry_t frame_telemetry = {0};
-        uint64_t raster_started_us;
-        uint64_t raster_finished_us;
-        const uint8_t draw_index = (uint8_t)host->raster_draw_pending;
-        if (host->raster_draw_pending < 0) return 0;
-        buffer_index = host->raster_current_buffer == 0 ? 1 : 0;
-        pxa_raster_bindings_view(&host->raster_frame_bindings[draw_index],
-                                  PXA_RASTER_CAP_KNOWN_MASK, &resources);
-        target.pixels = (uint16_t *)host->raster_buffers[buffer_index];
-        target.depth_pixels = host->raster_depth_buffer;
-        target.scratch_mode = host->raster_scratch_mode;
-        target.stride_pixels = host->surface_stride_bytes / 2u;
-        target.depth_stride_pixels = host->surface_width;
-        target.width = host->surface_width;
-        target.height = host->surface_height;
-        list = host->raster_draw_views[draw_index];
-        host->raster_draw_pending = -1;
-        raster_started_us = now_us(NULL);
-        pxa_raster_execute_draw_list(host->raster_draw_lists[draw_index], &list,
-                                     &target, &resources, &frame_telemetry);
-        raster_finished_us = now_us(NULL);
-        pxa_raster_bindings_release(&host->raster_frame_bindings[draw_index]);
-        ++host->raster_telemetry.rendered_frames;
-        host->raster_telemetry.host_raster_us +=
-            raster_finished_us - raster_started_us;
-        host->raster_telemetry.last_host_raster_us =
-            raster_finished_us - raster_started_us > UINT32_MAX
-                ? UINT32_MAX
-                : (uint32_t)(raster_finished_us - raster_started_us);
-        host->raster_telemetry.draw_list_bytes += frame_telemetry.draw_list_bytes;
-        host->raster_telemetry.covered_pixels += frame_telemetry.covered_pixels;
-        host->raster_telemetry.clear_commands += frame_telemetry.clear_commands;
-        host->raster_telemetry.flat_quad_commands += frame_telemetry.flat_quad_commands;
-        host->raster_telemetry.textured_quad_commands += frame_telemetry.textured_quad_commands;
-        host->raster_telemetry.sprite_commands += frame_telemetry.sprite_commands;
-        host->raster_telemetry.last_draw_list_bytes = frame_telemetry.last_draw_list_bytes;
-        host->raster_telemetry.last_covered_pixels = frame_telemetry.last_covered_pixels;
-        host->raster_current_buffer = (int8_t)buffer_index;
+        if (!host->focused || !host->surface_layer.visible) return 0;
+        if (!(host->surface_flags & PRODUCT_SURFACE_FLAG_BORROW_COMMANDS)) {
+            if (!host->raster_draw_pending) return 0;
+            pxa_raster_resources_t resources;
+            pxa_raster_bindings_view(&host->raster_frame_bindings,
+                                      PXA_RASTER_CAP_KNOWN_MASK, &resources);
+            host->raster_draw_pending = 0;
+            surface_raster_execute(host, host->raster_draw_list,
+                                    &host->raster_draw_view, &resources);
+            pxa_raster_bindings_release(&host->raster_frame_bindings);
+        }
+        if (host->surface_pending_buffer < 0) return 0;
+        buffer_index = (uint8_t)host->surface_pending_buffer;
         source = (const uint16_t *)host->raster_buffers[buffer_index];
     } else {
         if (host->surface_pending_buffer < 0) return 0;
@@ -1627,10 +1648,8 @@ static int surface_process_pending(product_host_t *host) {
         }
     }
     surface_composite_ui(host);
-    if ((host->surface_flags & PXA_SURFACE_FLAG_GUEST_MAPPED) != 0) {
-        host->surface_pending_buffer = -1;
-        host->surface_pending_frame_id = 0;
-    }
+    host->surface_pending_buffer = -1;
+    host->surface_pending_frame_id = 0;
     ++host->surface_presented_frames;
     if ((host->surface_flags & PRODUCT_SURFACE_FLAG_GAME_RENDER) != 0)
         ++host->raster_telemetry.visible_frames;
@@ -1873,7 +1892,7 @@ static void dispatch_component_events(product_host_t *host) {
             delivered = 1;
             if (result.service == PXA_WINDOW_SERVICE_ID &&
                 result.opcode == PXA_WINDOW_BACK_REQUESTED &&
-                result.request_id == 0 && result.payload_size == 0 &&
+                result.request_token == 0 && result.payload_size == 0 &&
                 result.guest_result == 0)
                 host->exit_requested = 1;
         }
@@ -2175,28 +2194,28 @@ static pxa_status_t clock_control(void *context, pxa_runtime_t *runtime,
                                   pxa_component_t component,
                                   const pxa_message_view_t *message) {
     product_host_t *host = context;
-    uint16_t core_major = 0;
+    uint16_t wire_profile = 0;
     if (host == NULL || message == NULL || component != host->active_component)
         return PXA_STATUS_BAD_STATE;
     if (message->opcode == PRODUCT_CLOCK_NOW) {
         uint8_t result[8];
         pxa_status_t status;
-        if (message->request_id == 0 || message->payload.size != 0)
+        if (message->request_token == 0 || message->payload.size != 0)
             return PXA_STATUS_INVALID_ARGUMENT;
-        status = pxa_component_core_major(runtime, component, &core_major);
+        status = pxa_component_wire_profile(runtime, component, &wire_profile);
         if (status != PXA_STATUS_OK) return status;
-        if (core_major == 1) {
+        if (wire_profile == 1) {
             status = pxa_request_begin_reserved(
-                runtime, component, message->request_id,
+                runtime, component, message->request_token,
                 PRODUCT_CLOCK_SERVICE, PRODUCT_CLOCK_NOW, 0,
                 sizeof(result));
             if (status != PXA_STATUS_OK) return status;
             status = pxa_request_commit(runtime, component,
-                                        message->request_id);
+                                        message->request_token);
             if (status == PXA_STATUS_OK) {
                 pxa_write_u64(result, PXSYS_CLOCK_NOW_US());
                 status = pxa_request_complete(runtime, component,
-                                              message->request_id,
+                                              message->request_token,
                                               PXA_STATUS_OK, result,
                                               sizeof(result));
             }
@@ -2208,11 +2227,11 @@ static pxa_status_t clock_control(void *context, pxa_runtime_t *runtime,
             pxa_write_u64(payload + 4, PXSYS_CLOCK_NOW_US());
             return pxa_event_post_message(
                 runtime, component, PRODUCT_CLOCK_SERVICE,
-                PRODUCT_CLOCK_NOW_RESULT, message->request_id,
+                PRODUCT_CLOCK_NOW_RESULT, message->request_token,
                 (pxa_bytes_t){payload, sizeof(payload)}, 1, 0);
         }
     }
-    if (message->opcode != 1 || message->request_id != 0 ||
+    if (message->opcode != 1 || message->request_token != 0 ||
         message->payload.size != 2)
         return PXA_STATUS_UNSUPPORTED;
     host->clock_period_ms = (uint16_t)message->payload.data[0] |
@@ -2236,17 +2255,17 @@ static pxa_status_t store_installer_sim_control(
     const int list = message != NULL &&
         (message->opcode == 4u || message->opcode == 5u);
     (void)context;
-    if (message == NULL || message->request_id == 0 ||
+    if (message == NULL || message->request_token == 0 ||
         message->opcode < 1u || message->opcode > 8u ||
         (list && message->payload.size != 0))
         return PXA_STATUS_INVALID_ARGUMENT;
-    status = pxa_request_begin_reserved(runtime, component, message->request_id,
+    status = pxa_request_begin_reserved(runtime, component, message->request_token,
                                         PXA_STORE_INSTALLER_SERVICE_ID,
                                         message->opcode, 0, list ? 1u : 0u);
     if (status != PXA_STATUS_OK) return status;
-    status = pxa_request_commit(runtime, component, message->request_id);
+    status = pxa_request_commit(runtime, component, message->request_token);
     if (status != PXA_STATUS_OK) return status;
-    return pxa_request_complete(runtime, component, message->request_id,
+    return pxa_request_complete(runtime, component, message->request_token,
                                 list ? PXA_STATUS_OK : PXA_STATUS_UNSUPPORTED,
                                 list ? &empty_count : NULL, list ? 1u : 0u);
 }

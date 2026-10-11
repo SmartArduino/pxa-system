@@ -36,7 +36,7 @@ public:
 
     template<binary::Scalar T>
     Task<void> set_value(this StorageService self, std::string_view key, T value) {
-        Packet<wire::header_bytes + 8 + 64 + sizeof(T)> packet;
+        Packet<8 + 64 + sizeof(T)> packet;
         const auto encoded = binary::encode(value);
         auto size = encode_set<false>(key, encoded, packet.bytes);
         if (!size) return Task<void>::failed(size.error());
@@ -63,8 +63,8 @@ public:
                          const typename Codec::value_type& value) {
         static_assert(Codec::max_bytes <= 2048, "Storage values are limited to 2048 bytes");
         if (!valid_key(key)) return Task<void>::failed(Error::invalid_argument);
-        Packet<wire::header_bytes + 8 + 64 + Codec::max_bytes> packet;
-        auto* payload = packet.bytes.data() + wire::header_bytes;
+        Packet<8 + 64 + Codec::max_bytes> packet;
+        auto* payload = packet.bytes.data();
         write_key(key, payload);
         auto* record = payload + 4 + key.size();
         auto size = binary::encode<Codec>(value,
@@ -72,7 +72,7 @@ public:
         if (!size) return Task<void>::failed(size.error());
         wire::put16(record, 2);
         wire::put16(record + 2, static_cast<std::uint16_t>(*size));
-        packet.size = wire::header_bytes + 8 + key.size() + *size;
+        packet.size = 8 + key.size() + *size;
         return set_owned(self, packet);
     }
 
@@ -85,14 +85,14 @@ public:
                          std::span<std::byte> packet) {
         static_assert(Codec::max_bytes <= 2048, "Storage values are limited to 2048 bytes");
         if (!valid_key(key)) return Task<void>::failed(Error::invalid_argument);
-        const auto prefix = wire::header_bytes + 8 + key.size();
+        const auto prefix = 8 + key.size();
         if (packet.size() < prefix)
             return Task<void>::failed(Error::resource_limit);
         std::array<std::byte,68> key_snapshot;
         write_key(key,key_snapshot.data());
         auto size = binary::encode<Codec>(value,packet.subspan(prefix));
         if (!size) return Task<void>::failed(size.error());
-        std::memcpy(packet.data()+wire::header_bytes,key_snapshot.data(),4+key.size());
+        std::memcpy(packet.data(),key_snapshot.data(),4+key.size());
         auto* record = packet.data()+prefix-4;
         wire::put16(record,2);
         wire::put16(record+2,static_cast<std::uint16_t>(*size));
@@ -199,9 +199,9 @@ private:
         std::span<const std::byte> value, std::span<std::byte> packet) noexcept {
         if (value.size() > 2048 || !valid_key(key))
             return std::unexpected(Error::invalid_argument);
-        const auto size = wire::header_bytes + 8 + key.size() + value.size();
+        const auto size = 8 + key.size() + value.size();
         if (packet.size() < size) return std::unexpected(Error::resource_limit);
-        auto* payload = packet.data() + wire::header_bytes;
+        auto* payload = packet.data();
         auto* record = payload + 4 + key.size();
         if constexpr (MayAlias) {
             // External inputs may overlap packet: snapshot the key first.
@@ -283,14 +283,14 @@ private:
 
     static Task<void> set_borrowed(StorageService self, std::span<std::byte> packet) {
         auto event = co_await Response(self.transport_, self.requests_, 6, 2,
-            Response::PrebuiltPacket{packet});
+            packet);
         co_return event ? decode_status(event->payload) : Result<void>{std::unexpected(event.error())};
     }
 
     template<std::size_t Capacity>
     static Task<void> set_owned(StorageService self, Packet<Capacity> packet) {
         auto event = co_await Response(self.transport_, self.requests_, 6, 2,
-            Response::PrebuiltPacket{std::span{packet.bytes}.first(packet.size)});
+            std::span{packet.bytes}.first(packet.size));
         co_return event ? decode_status(event->payload) : Result<void>{std::unexpected(event.error())};
     }
 

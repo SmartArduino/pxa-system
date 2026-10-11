@@ -1,3 +1,4 @@
+#include "../../testing/pxa_control_capture.h"
 #include <assert.h>
 
 #include "pxa_ui.h"
@@ -7,7 +8,7 @@ static unsigned writes;
 static unsigned themes;
 static const uint64_t theme_token = UINT64_C(0x10000004d);
 
-int32_t pxa_submit(const uint8_t *packet, uint32_t size) {
+int32_t pxa_test_control(const uint8_t *packet, uint32_t size) {
     pxa_event_t message;
     assert(pxa_parse_event(packet, size, &message));
     assert(message.service == PXA_UI_SERVICE);

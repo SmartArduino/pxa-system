@@ -199,12 +199,12 @@ static void backend_close(void *context, uint64_t surface) {
 }
 
 static size_t message(uint8_t *packet, size_t capacity, uint16_t opcode,
-                      uint32_t request_id, const uint8_t *payload,
+                      pxa_request_token_t request_token, const uint8_t *payload,
                       size_t payload_size) {
     pxa_writer_t writer;
     pxa_writer_init(&writer, packet, capacity);
     assert(pxa_writer_message(&writer, PXA_SURFACE_SERVICE_ID, opcode,
-                              request_id, payload, payload_size) ==
+                              request_token, payload, payload_size) ==
            PXA_STATUS_OK);
     return writer.size;
 }
@@ -347,7 +347,7 @@ int main(void) {
     assert(dispatch(runtime, component, packet, size) == PXA_STATUS_OK);
     completion(runtime, component, event_bytes, sizeof(event_bytes), &event);
     assert(event.opcode == PXA_SURFACE_CREATE &&
-           event.request_id == 1 && event.payload.size == 20 &&
+           event.request_token == 1 && event.payload.size == 20 &&
            (int32_t)pxa_read_u32(event.payload.data) == PXA_STATUS_OK);
     handle = pxa_read_u32(event.payload.data + 4);
     assert(handle != PXA_HANDLE_INVALID &&
@@ -438,7 +438,7 @@ int main(void) {
     assert(dispatch(runtime, component, packet, size) == PXA_STATUS_OK);
     completion(runtime, component, event_bytes, sizeof(event_bytes), &event);
     assert(event.opcode == PXA_SURFACE_CREATE &&
-           event.request_id == 5 && event.payload.size == 20 &&
+           event.request_token == 5 && event.payload.size == 20 &&
            (int32_t)pxa_read_u32(event.payload.data) == PXA_STATUS_OK &&
            pxa_read_u32(event.payload.data + 8) == 16 &&
            pxa_read_u32(event.payload.data + 12) == 64);
@@ -451,7 +451,7 @@ int main(void) {
     assert(dispatch(runtime, component, packet, size) == PXA_STATUS_OK);
     completion(runtime, component, event_bytes, sizeof(event_bytes), &event);
     assert(event.opcode == PXA_SURFACE_CREATE &&
-           event.request_id == 6 && event.payload.size == 20 &&
+           event.request_token == 6 && event.payload.size == 20 &&
            (int32_t)pxa_read_u32(event.payload.data) == PXA_STATUS_OK);
     handle = pxa_read_u32(event.payload.data + 4);
     assert(dispatch_io_op(runtime, component, handle,
@@ -484,7 +484,7 @@ int main(void) {
            (int32_t)sizeof(present_record));
     assert(pxa_surface_service_flush_releases(surface) == 1);
     completion(runtime, component, event_bytes, sizeof(event_bytes), &event);
-    assert(event.opcode == PXA_SURFACE_RELEASED && event.request_id == 0 &&
+    assert(event.opcode == PXA_SURFACE_RELEASED && event.request_token == 0 &&
            event.payload.size == PXA_SURFACE_RELEASED_PAYLOAD_BYTES &&
            pxa_read_u32(event.payload.data) == handle &&
            event.payload.data[4] == 0 &&
@@ -497,7 +497,7 @@ int main(void) {
 
     assert(pxa_component_create(runtime, 2, &v1_component) == PXA_STATUS_OK);
     assert(pxa_component_begin_start(runtime, v1_component) == PXA_STATUS_OK);
-    assert(pxa_component_set_core_major(runtime, v1_component, 1) ==
+    assert(pxa_component_set_wire_profile(runtime, v1_component, 1) ==
            PXA_STATUS_OK);
     assert(pxa_component_validate_import(runtime, v1_component) ==
            PXA_STATUS_OK);

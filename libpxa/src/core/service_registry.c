@@ -109,22 +109,33 @@ pxa_status_t pxa_service_register(pxa_runtime_t *runtime,
 
 static pxa_status_t dispatch_control(pxa_runtime_t *runtime,
                                      pxa_component_t component_ref,
+                                     uint32_t component_index,
                                      const pxa_message_view_t *message) {
     const pxa_service_ops_t *service;
     if (message->service == PXA_SERVICE_CORE) {
         if (message->opcode == PXA_CORE_CANCEL_REQUEST) {
-            if (message->request_id != 0 || message->payload.size != 4) {
+            if (message->request_token != 0 || message->payload.size != 8) {
                 return PXA_STATUS_INVALID_ARGUMENT;
             }
-            return pxa_request_cancel(runtime, component_ref,
-                                      pxa_read_u32(message->payload.data));
+            const pxa_request_token_t target =
+                pxa_wire_generated_load_u64(message->payload.data);
+            if (target == 0) return PXA_STATUS_INVALID_ARGUMENT;
+            /* The import gate already checked the generation and callback
+             * phase. Reuse that owner instead of resolving it a second time. */
+            pxa_component_slot_t *component = &runtime->components[component_index];
+            return pxa_request_table_cancel(
+                &runtime->requests, &component->requests, component_index,
+                &runtime->event_pool, &component->mailbox,
+                runtime->limits.mailbox_capacity, target);
         }
         if (message->opcode == PXA_CORE_CLOSE_HANDLE) {
-            if (message->request_id != 0 || message->payload.size != 4) {
+            if (message->request_token != 0 || message->payload.size != 8) {
                 return PXA_STATUS_INVALID_ARGUMENT;
             }
-            return pxa_handle_close(runtime, component_ref,
-                                    pxa_read_u32(message->payload.data));
+            pxa_component_slot_t *component = &runtime->components[component_index];
+            return pxa_resource_table_close64(
+                &runtime->resources, &component->resources, component_index,
+                pxa_wire_generated_load_u64(message->payload.data));
         }
     }
     service = pxa_service_registry_find(&runtime->services, message->service);
@@ -138,23 +149,25 @@ pxa_status_t pxa_runtime_control(pxa_runtime_t *runtime,
                                  size_t message_size) {
     pxa_message_view_t message;
     pxa_status_t status;
-    status = pxa_component_validate_import(runtime, component_ref);
+    uint32_t component_index;
+    status = pxa_runtime_validate_import(runtime, component_ref, &component_index);
     if (status != PXA_STATUS_OK) return status;
     status = pxa_message_decode((const uint8_t *)message_bytes, message_size,
                                 PXA_MAX_CONTROL_MESSAGE, &message);
     if (status != PXA_STATUS_OK) return status;
-    return dispatch_control(runtime, component_ref, &message);
+    return dispatch_control(runtime, component_ref, component_index, &message);
 }
 
 pxa_status_t pxa_runtime_control_view(pxa_runtime_t *runtime,
                                       pxa_component_t component_ref,
                                       const pxa_message_view_t *message) {
     pxa_status_t status;
-    if (message == NULL ||
+    uint32_t component_index;
+    if (message == NULL || message->service == 0 || message->opcode == 0 ||
         (message->payload.data == NULL && message->payload.size != 0) ||
         message->payload.size > PXA_MAX_CONTROL_MESSAGE - PXA_ENVELOPE_SIZE)
         return PXA_STATUS_INVALID_ARGUMENT;
-    status = pxa_component_validate_import(runtime, component_ref);
+    status = pxa_runtime_validate_import(runtime, component_ref, &component_index);
     if (status != PXA_STATUS_OK) return status;
-    return dispatch_control(runtime, component_ref, message);
+    return dispatch_control(runtime, component_ref, component_index, message);
 }

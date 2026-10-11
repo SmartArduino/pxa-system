@@ -13,7 +13,7 @@
       "name": "check",
       "id": 1,
       "direction": "bidirectional-result",
-      "request_id": "nonzero",
+      "request_token": "nonzero",
       "payload": "declaration-records",
       "result": "decision:u8"
     },
@@ -21,15 +21,15 @@
       "name": "acquire",
       "id": 2,
       "direction": "bidirectional-result",
-      "request_id": "nonzero",
+      "request_token": "nonzero",
       "payload": "declaration-records",
-      "result": "permission-handle:u32"
+      "result": "permission-handle:u64"
     },
     {
       "name": "revoked",
       "id": 32769,
       "direction": "host-to-guest",
-      "request_id": "zero",
+      "request_token": "zero",
       "payload": "declaration-records"
     }
   ],

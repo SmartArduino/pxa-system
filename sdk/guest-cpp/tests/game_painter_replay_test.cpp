@@ -1,3 +1,4 @@
+#include "../../testing/pxa_control_capture.h"
 // Replay test: build a painter draw list through the C++ SDK exactly the way
 // the voxel terrain does, then feed the emitted bytes straight into the host
 // rasteriser. This is the shortest path from "the device shows a black frame"
@@ -16,7 +17,7 @@ extern "C" {
 
 static std::vector<std::byte> captured;
 
-extern "C" std::int32_t pxa_submit(const std::uint8_t*, std::uint32_t) {
+extern "C" std::int32_t pxa_test_control(const std::uint8_t*, std::uint32_t) {
     return 0;
 }
 extern "C" std::int32_t pxa_io(std::uint64_t, std::uint32_t operation,

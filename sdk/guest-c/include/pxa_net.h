@@ -199,7 +199,7 @@ static inline int32_t pxa_net_submit(
     uint32_t written = 0;
     if (!pxa_net_build(packet, capacity, opcode, token, request,
                           &written)) return -1;
-    return pxa_submit(packet, written);
+    return pxa_control_packet(packet, written);
 }
 
 static inline int pxa_net_parse_header(const uint8_t *data, size_t size,

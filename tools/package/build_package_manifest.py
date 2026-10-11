@@ -410,10 +410,10 @@ def main(argv):
     require(isinstance(release_sequence, int) and not isinstance(release_sequence, bool)
             and 0 < release_sequence <= 0xFFFFFFFFFFFFFFFF,
             "release_sequence must be a positive u64")
-    min_sdk = parse_sdk(metadata, "min_sdk", [1, 0])
+    min_sdk = parse_sdk(metadata, "min_sdk", [2, 0])
     target_sdk = parse_sdk(metadata, "target_sdk", list(min_sdk))
     compile_sdk = parse_sdk(metadata, "compile_sdk", list(target_sdk))
-    require(min_sdk[0] == 1, "Core v1 is required for new packages")
+    require(min_sdk[0] == 2, "Core 2 is required; rebuild test packages with min_sdk [2, 0]")
     require(min_sdk[0] == target_sdk[0] == compile_sdk[0] and
             min_sdk <= target_sdk <= compile_sdk,
             "SDK versions must use one major and min <= target <= compile")

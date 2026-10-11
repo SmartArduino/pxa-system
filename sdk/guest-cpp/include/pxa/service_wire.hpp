@@ -21,22 +21,22 @@ inline bool overlaps(std::span<const std::byte> left,
 template<std::size_t Capacity> using OwnedText = pxa::FixedText<Capacity>;
 
 template<std::size_t Capacity> struct RequestPacket {
-    std::array<std::byte, header_bytes + Capacity> bytes;
+    std::array<std::byte, Capacity> bytes;
     std::size_t size = 0;
     RequestPacket() noexcept : bytes{} {}
     RequestPacket(const RequestPacket& other) noexcept : size(other.size) {
-        // The transport overwrites the header; spare capacity is never sent.
-        if (size) std::memcpy(bytes.data() + header_bytes,
-                              other.bytes.data() + header_bytes, size);
+        // Spare capacity is never copied or sent.
+        if (size) std::memcpy(bytes.data(),
+                              other.bytes.data(), size);
     }
     RequestPacket(RequestPacket&& other) noexcept : RequestPacket(other) {}
     RequestPacket& operator=(const RequestPacket&) = delete;
     RequestPacket& operator=(RequestPacket&&) = delete;
     std::span<const std::byte> view() const noexcept {
-        return {bytes.data() + header_bytes, size};
+        return {bytes.data(), size};
     }
     std::span<std::byte> packet() noexcept {
-        return {bytes.data(), header_bytes + size};
+        return {bytes.data(), size};
     }
 };
 

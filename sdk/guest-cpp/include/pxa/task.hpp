@@ -200,7 +200,7 @@ private:
 };
 
 class RequestTable {
-    static_assert(PXA_REQUEST_CAPACITY > 0 && PXA_REQUEST_CAPACITY <= 16);
+    static_assert(PXA_REQUEST_CAPACITY > 0 && PXA_REQUEST_CAPACITY <= UINT16_MAX);
     struct Entry {
         std::uint64_t token = 0;
         void* context = nullptr;
@@ -221,8 +221,9 @@ public:
             return std::unexpected(Error::invalid_argument);
         Entry* free = nullptr;
         for (auto& entry : entries_) {
-            if (entry.token == token && entry.service == service &&
-                entry.opcode == opcode)
+            if (entry.token == token &&
+                ((entry.opcode < 0x8000 && opcode < 0x8000) ||
+                 (entry.service == service && entry.opcode == opcode)))
                 return std::unexpected(Error::bad_state);
             if (!entry.token && !free) free = &entry;
         }
@@ -262,6 +263,9 @@ public:
         Entry* core_fallback = nullptr;
         for (auto& entry : entries_) {
             if (entry.token != event.token) continue;
+            // Wildcard Core response handlers must not consume a notification
+            // whose independent broker/subscription ID happens to match.
+            if ((entry.opcode >= 0x8000) != (event.opcode >= 0x8000)) continue;
             if ((!entry.service || entry.service == event.service) &&
                 (!entry.opcode || entry.opcode == event.opcode)) {
                 exact = &entry;
@@ -299,12 +303,6 @@ private:
 
 class Response {
 public:
-    struct PrebuiltPacket {
-        explicit PrebuiltPacket(std::span<std::byte> packet) noexcept
-            : bytes(packet) {}
-        std::span<std::byte> bytes;
-    };
-
     Response(Transport& transport, RequestTable& requests,
              std::uint16_t service, std::uint16_t opcode,
              std::span<const std::byte> payload,
@@ -313,15 +311,6 @@ public:
              std::uint64_t (*late_handle)(std::span<const std::byte>) noexcept = nullptr) noexcept
         : transport_(transport), requests_(requests), service_(service),
           opcode_(opcode), payload_(payload),
-          close_late_handle_(close_late_handle),
-          late_handle_offset_(late_handle_offset), late_handle_(late_handle) {}
-    Response(Transport& transport, RequestTable& requests,
-             std::uint16_t service, std::uint16_t opcode,
-             PrebuiltPacket packet, bool close_late_handle = false,
-             std::uint16_t late_handle_offset = 4,
-             std::uint64_t (*late_handle)(std::span<const std::byte>) noexcept = nullptr) noexcept
-        : transport_(transport), requests_(requests), service_(service),
-          opcode_(opcode), packet_(packet.bytes),
           close_late_handle_(close_late_handle),
           late_handle_offset_(late_handle_offset), late_handle_(late_handle) {}
     Response(const Response&) = delete;
@@ -348,9 +337,7 @@ public:
         }, service_, opcode_);
         if (!added) { error_ = added.error(); return false; }
         registered_ = true;
-        auto sent = packet_.empty()
-            ? transport_.send(service_, opcode_, token_, payload_)
-            : transport_.send_prebuilt(service_, opcode_, token_, packet_);
+        auto sent = transport_.send(service_, opcode_, token_, payload_);
         if (!sent) {
             error_ = sent.error();
             requests_.remove(token_, service_, opcode_);
@@ -378,7 +365,6 @@ private:
     std::uint16_t service_;
     std::uint16_t opcode_;
     std::span<const std::byte> payload_;
-    std::span<std::byte> packet_;
     std::coroutine_handle<> suspended_{};
     std::uint64_t token_ = 0;
     std::optional<Event> event_;

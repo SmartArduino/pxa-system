@@ -1,3 +1,4 @@
+#include "../../testing/pxa_control_capture.h"
 #include <pxa/game_upload.hpp>
 #include <pxa/game_quality.hpp>
 #include <pxa/ui_controller.hpp>
@@ -15,7 +16,7 @@ void* operator new(size_t n){++allocations;if(auto p=std::malloc(n))return p;std
 void* operator new[](size_t n){return ::operator new(n);}
 void operator delete(void* p)noexcept{std::free(p);}void operator delete[](void* p)noexcept{std::free(p);}
 void operator delete(void* p,size_t)noexcept{std::free(p);}void operator delete[](void* p,size_t)noexcept{std::free(p);}
-extern "C" int32_t pxa_submit(const uint8_t*,uint32_t){return 0;}
+extern "C" int32_t pxa_test_control(const uint8_t*,uint32_t){return 0;}
 extern "C" int32_t pxa_io(uint64_t handle,uint32_t opcode,uint8_t* bytes,uint32_t size){
     assert(handle==77&&size<=captured.size());++io_calls;std::memcpy(captured.data(),bytes,size);
     if(opcode==0x100)upload_size=size;else{assert(opcode==0x101);draw_size=size;}return size;

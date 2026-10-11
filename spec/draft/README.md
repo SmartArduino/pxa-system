@@ -3,7 +3,7 @@
 [简体中文](README.zh-CN.md)
 
 This directory is the single current draft. Current Hosts and Packages use UI
-service 0.3; no UI 0.1 translation or compatibility implementation exists.
+service 0.8; no UI 0.1 translation or compatibility implementation exists.
 Each machine-readable specification carries its real `protocol_version`.
 
 PXA is a small, capability-based application runtime for resource-constrained
@@ -17,14 +17,14 @@ Status: **design draft; no compatibility guarantee**.
 - [architecture.md](architecture.md) defines ownership and execution rules.
 - [core-wire.md](core-wire.md) defines the Core message, request, handle and IO
   semantics.
-- [abi-1.0-migration.md](abi-1.0-migration.md) proposes the breaking Core v1
-  envelope, token layout, Guest SDK and rollout sequence.
-- [abi-1.0-envelope.json](abi-1.0-envelope.json) fixes the proposed v1
-  envelope layout and its checked golden bytes.
+- [abi-2.0-migration.md](abi-2.0-migration.md) documents the current Core 2
+  contract, token layout, Guest SDK and migration requirements.
+- [pxa-core.json](pxa-core.json) defines the single canonical Core 2.0
+  envelope, imports and checked golden bytes.
 - [lifecycle.md](lifecycle.md) defines Component callbacks, stop and
   cancellation commit points.
 - [window.md](window.md) defines the first independently versioned service.
-- [ui.md](ui.md) defines UI service 0.3, retained transactions and the
+- [ui.md](ui.md) defines UI service 0.8, retained transactions and the
   backend-neutral Canvas display-list protocol.
 - [surface.md](surface.md) defines Surface ownership and composition.
 - [clock.md](clock.md) defines bounded periodic monotonic wake-ups.
@@ -59,7 +59,7 @@ Status: **design draft; no compatibility guarantee**.
   published Draft service assignments. [pxa-surface.json](pxa-surface.json)
   defines the bulk-pixel Surface service. [pxa-game-render.json](pxa-game-render.json)
   defines the game-oriented persistent-resource renderer.
-- `golden/` contains reproducible Core, Package and UI 0.3 wire examples.
+- `golden/` contains reproducible Core, Package and UI 0.8 wire examples.
 - `tools/check_spec.py` validates the specification and golden vectors without
   third-party dependencies. After changing a Core envelope or record schema, run
   `python3 tools/generate_wire_codecs.py` from this directory to refresh the

@@ -6,12 +6,26 @@
 [SDK_RELIABILITY.zh-CN.md](SDK_RELIABILITY.zh-CN.md)，可运行示例见
 [Service safety](examples/service-safety/README.zh-CN.md)。
 
-后续新增能力、接口设计和性能优化以 C++ SDK 为主要维护方向。Guest C SDK
-逐步退出功能开发，过渡期间保留已有应用必需的兼容与正确性修复。
-这不改变 Core wire ABI，也不立即移除旧应用所依赖的接口。
+后续接口与性能优化以 C++ SDK 为主要维护方向。此 SDK 是独立的 C++26
+Guest 实现，不包含或调用 Guest C SDK。
 
-此 SDK 是独立的 C++26 Guest 实现。它直接导入 `pxa_submit` 和 `pxa_io`，
-不包含或调用 Guest C SDK。与 Host 的日常调用仍只有这两项导入。
+当前 SDK 采用 Core 2：只从 `pxa.core.v2` 导入 `pxa_call` 和 `pxa_io`。
+控制请求直接借用载荷，不构造请求信封；批量绘制和资源流使用 `pxa_io`。
+`Transport` 为 Wasm32 的 16 字节，无内部 scratch、兼容宏或双路径分支。
+请求编码器从偏移 0 写入载荷，返回载荷长度；不再预留 20 字节请求头。
+异步完成事件仍使用原有 20 字节信封、64 位令牌及句柄。
+
+应用清单需要把 `min_sdk`、`target_sdk`、`compile_sdk` 设为 `[2,0]`。
+旧 Core 包在新 Host 上会明确拒绝；pxa-apps 和 SDK 示例已统一迁移，
+需要重新构建并签名，不能只修改旧二进制的清单。详见 [Core 2 迁移](../../spec/draft/abi-2.0-migration.md)。
+
+`RenderOptions::borrow_commands` 是 ESP 和模拟器的可选同步光栅化路径，提交期间消费命令，
+无命令队列复制；遇到帧缓冲背压返回 `would_block`。它不等待屏幕显示，且可能
+改变 Guest 与光栅线程的调度关系。默认保持排队模式；不支持此能力的 Host 必须在
+创建时返回 `unsupported`。深度缓冲与画质不变。`Frame::submit()` 遇到 `would_block`
+不会消耗帧 ID，可以在下一次调度重试同一 Frame；也可以丢弃它并以最新输入重建。
+避免在同一次事件回调中忙等重试，否则可能阻止显示流水线释放帧缓冲。
+
 libc 的 `malloc/free` 若已链接，会额外导出供 WAMR 分配配置和事件缓冲，
 避免第二套堆覆盖 Guest 对象。构建目标为 `wasm32-wasip1`，需要 WASI SDK 的 libc++。
 推荐使用仓库锁定的 WASI SDK 34；异常和 RTTI 默认关闭。
@@ -204,7 +218,7 @@ TextInput(query, editor).max_bytes(1024).single_line().on_submit([this] { search
 
 `.max_bytes(n)` 配置 UTF-8 字节上限，字符串与事件按实际内容长度增长，不预留
 `n` 字节缓存。`.max_bytes()` 不带参数采用协议上限 4052 字节（一个 4096 字节
-Core 1 事件减去消息头）；可设置 1..4052。超限按完整 UTF-8 字符边界截取。
+Core 2 事件减去消息头）；可设置 1..4052。超限按完整 UTF-8 字符边界截取。
 搜索和网址使用 `.single_line()`，以横向滚动避免长网址反复折行；
 需要多行时保留默认模式或使用 `.single_line(false)`。输入框高度保持应用设定值。
 组件清单应声明 UI 的 `dynamic-text` 特性，旧 Host 会在加载时报告不支持。
@@ -698,3 +712,22 @@ WASI SDK 34 链接 libc++ 后，当前最小应用也会导入 `clock_time_get`�
 需要控制 AOT 启动临时内存的应用可显式启用
 [有界 libc++ 诊断](BOUNDED_DIAGNOSTICS.zh-CN.md)，保留硬化检查、错误上下文和异常终止，
 避免为错误路径引入完整浮点格式化器；其他应用默认不启用。
+
+显式不使用分配器的组件可写 `pxa_add_component(app CPP NO_ALLOCATOR ...)`。
+它省去 libc 分配器及相应导出；`malloc/calloc/realloc/free/aligned_alloc/posix_memalign`
+的意外引用会在链接时失败。适合状态、缓冲区均由应用预留的回调游戏。
+需要动态分配的组件使用默认构建方式，使 WAMR 的事件缓冲与 libc 共用
+同一分配器。不要只手工移除 allocator 导出，否则两套堆可能重叠。
+验证：`python3 tools/package/test_no_allocator.py`。
+
+自行管理生命周期与请求完成的回调组件可直接使用 `<pxa/core.hpp>` 中的
+`pxa::call(service, opcode, token, payload)`，返回 `Result<void>`；payload
+是 `std::span<const std::byte>`，默认空，token 是完整 64 位。函数验证
+路由及负载边界后调用 Core 2，不创建 Context、请求表或协程池。
+调用期间借用 payload；异步完成仍由应用按 token 关联，stop 回调禁止导入。
+常规应用继续使用 Context 与类型化服务获得生命周期和资源所有权管理。
+
+`Device::identity()` 中的 `engine_abi` 是 `config/wamr.json` 定义的 AOT
+引擎兼容标识，与 PXA Core 版本独立；其历史字符串包含 `core-1`，不能
+据此判定应用使用 Core 1。Core 2 由清单的 SDK 主版本和
+`pxa.core.v2` 导入命名空间验证，服务版本/能力另行协商。

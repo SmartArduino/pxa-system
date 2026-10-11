@@ -690,7 +690,7 @@ static pxa_status_t scheduler_control(
     pxa_status_t complete;
     (void)runtime;
     if (!service_valid(service) || !service->initialized ||
-        message->request_id == 0) {
+        message->request_token == 0) {
         return PXA_STATUS_INVALID_ARGUMENT;
     }
     if (message->opcode != PXA_WORK_ENQUEUE &&
@@ -699,12 +699,12 @@ static pxa_status_t scheduler_control(
         return PXA_STATUS_UNSUPPORTED;
     }
     status = pxa_request_begin_reserved(
-        service->runtime, component, message->request_id,
+        service->runtime, component, message->request_token,
         PXA_WORK_SERVICE_ID, message->opcode, 0,
         message->opcode == PXA_WORK_ENQUEUE ? sizeof(result) : 0u);
     if (status != PXA_STATUS_OK) return status;
     status = pxa_request_commit(service->runtime, component,
-                                message->request_id);
+                                message->request_token);
     if (status == PXA_STATUS_OK && message->opcode == PXA_WORK_ENQUEUE) {
         status = schedule_entry(service, message, result, &result_size);
     } else if (status == PXA_STATUS_OK &&
@@ -714,12 +714,12 @@ static pxa_status_t scheduler_control(
         status = cancel_entry(service, message);
     }
     complete = pxa_request_complete(
-        service->runtime, component, message->request_id, status,
+        service->runtime, component, message->request_token, status,
         status == PXA_STATUS_OK ? result : NULL,
         status == PXA_STATUS_OK ? result_size : 0);
     if (complete != PXA_STATUS_OK) {
         (void)pxa_request_cancel(service->runtime, component,
-                                 message->request_id);
+                                 message->request_token);
     }
     return PXA_STATUS_OK;
 }

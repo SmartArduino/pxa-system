@@ -1,5 +1,4 @@
-/* Generated from spec/draft/abi-1.0-envelope.json and
- * spec/draft/pxa-core.json for the Guest SDK. Do not edit by hand. */
+/* Generated from spec/draft/pxa-core.json. Do not edit by hand. */
 #ifndef PXA_GUEST_WIRE_H
 #define PXA_GUEST_WIRE_H
 
@@ -109,8 +108,6 @@ static inline int pxa_wire_record_encode(
     return 1;
 }
 
-#endif /* PXA_WIRE_GENERATED_H */
-
 #define PXA_WIRE_SIZE ((size_t)20)
 #define PXA_WIRE_SERVICE_OFFSET ((size_t)0)
 #define PXA_WIRE_OPCODE_OFFSET ((size_t)2)
@@ -174,5 +171,7 @@ static inline int pxa_wire_encode(
     *written = PXA_WIRE_SIZE + payload_size;
     return 1;
 }
+
+#endif /* PXA_WIRE_GENERATED_H */
 
 #endif

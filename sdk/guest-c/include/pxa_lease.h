@@ -48,7 +48,7 @@ static inline int32_t pxa_lease_acquire(uint64_t token, uint16_t kind,
     uint32_t size = 0;
     if (!pxa_lease_build_acquire(packet, sizeof(packet), token,
                                     kind, duration_ms, &size)) return -1;
-    return pxa_submit(packet, size);
+    return pxa_control_packet(packet, size);
 }
 
 static inline int pxa_lease_parse_result(

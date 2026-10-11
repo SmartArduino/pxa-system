@@ -227,7 +227,7 @@ static pxa_status_t bind_assets(pxa_game_render_resource_t *r,
     pxa_status_t status = PXA_STATUS_INVALID_ARGUMENT;
     uint16_t major = 0, count;
     if (!r->service->backend.bind_assets) return PXA_STATUS_UNSUPPORTED;
-    if (pxa_component_core_major(r->service->runtime, r->component, &major) != PXA_STATUS_OK || major != 1)
+    if (pxa_component_wire_profile(r->service->runtime, r->component, &major) != PXA_STATUS_OK || major != 1)
         return PXA_STATUS_UNSUPPORTED;
     if (size < 4 || pxa_read_u16(data + 2)) return status;
     count = pxa_read_u16(data);
@@ -316,7 +316,7 @@ static const pxa_resource_ops_t k_resource_ops = {
 static pxa_status_t create_context(pxa_game_render_service_t *service,
                                    pxa_component_t component,
                                    pxa_bytes_t payload, int auto_target,
-                                   uint16_t core_major, uint8_t result[32],
+                                   uint16_t wire_profile, uint8_t result[32],
                                    size_t *result_size,
                                    pxa_handle64_t *opened_handle) {
     pxa_game_render_desc_t desc;
@@ -324,7 +324,7 @@ static pxa_status_t create_context(pxa_game_render_service_t *service,
     pxa_resource_t handle_resource;
     uint64_t provider_context = 0;
     uint32_t capabilities = 0;
-    size_t offset = core_major == 1 ? 8u : 4u;
+    size_t offset = wire_profile == 1 ? 8u : 4u;
     pxa_status_t status;
     pxa_game_render_target_t target = {0};
     if (payload.size != 8 && payload.size != 12)
@@ -375,7 +375,7 @@ static pxa_status_t create_context(pxa_game_render_service_t *service,
     handle_resource.context = context;
     handle_resource.operations = &k_resource_ops;
     handle_resource.close = close_context;
-    if (core_major == 1) {
+    if (wire_profile == 1) {
         status = pxa_handle_open64(service->runtime, component,
                                    PXA_RESOURCE_GAME_RENDER_CONTEXT, 0,
                                    &handle_resource, opened_handle);
@@ -390,7 +390,7 @@ static pxa_status_t create_context(pxa_game_render_service_t *service,
         close_context(context);
         return status;
     }
-    if (core_major == 1)
+    if (wire_profile == 1)
         pxa_write_u64(result, *opened_handle);
     else
         pxa_write_u32(result, (pxa_handle_t)*opened_handle);
@@ -423,38 +423,38 @@ static pxa_status_t game_render_control(
     uint8_t result[32] = {0};
     size_t result_size = 0;
     pxa_handle64_t opened_handle = PXA_HANDLE64_INVALID;
-    uint16_t core_major = 0;
+    uint16_t wire_profile = 0;
     pxa_status_t status;
     pxa_status_t complete;
     (void)runtime;
     if (!service_valid(service)) return PXA_STATUS_INVALID_ARGUMENT;
-    status = pxa_component_core_major(service->runtime, component,
-                                      &core_major);
+    status = pxa_component_wire_profile(service->runtime, component,
+                                      &wire_profile);
     if (status != PXA_STATUS_OK) return status;
-    if (message->request_id == 0) return PXA_STATUS_INVALID_ARGUMENT;
+    if (message->request_token == 0) return PXA_STATUS_INVALID_ARGUMENT;
     if (message->opcode != PXA_GAME_RENDER_CREATE_CONTEXT &&
         message->opcode != PXA_GAME_RENDER_CREATE_AUTO_CONTEXT)
         return PXA_STATUS_UNSUPPORTED;
     status = pxa_request_begin_reserved(
-        service->runtime, component, message->request_id,
+        service->runtime, component, message->request_token,
         PXA_GAME_RENDER_SERVICE_ID, message->opcode, 0,
         (message->opcode == PXA_GAME_RENDER_CREATE_AUTO_CONTEXT ? 28u : 16u) +
-            (core_major == 1 ? 4u : 0u));
+            (wire_profile == 1 ? 4u : 0u));
     if (status != PXA_STATUS_OK) return status;
     status = pxa_request_commit(service->runtime, component,
-                                message->request_id);
+                                message->request_token);
     if (status == PXA_STATUS_OK)
         status = create_context(
             service, component, message->payload,
             message->opcode == PXA_GAME_RENDER_CREATE_AUTO_CONTEXT,
-            core_major, result, &result_size, &opened_handle);
+            wire_profile, result, &result_size, &opened_handle);
     complete = pxa_request_complete(
-        service->runtime, component, message->request_id, status,
+        service->runtime, component, message->request_token, status,
         status == PXA_STATUS_OK ? result : NULL,
         status == PXA_STATUS_OK ? result_size : 0);
     if (complete != PXA_STATUS_OK) {
         if (opened_handle != PXA_HANDLE64_INVALID) {
-            if (core_major == 1)
+            if (wire_profile == 1)
                 (void)pxa_handle_close64(service->runtime, component,
                                           opened_handle);
             else
@@ -462,7 +462,7 @@ static pxa_status_t game_render_control(
                                         (pxa_handle_t)opened_handle);
         }
         (void)pxa_request_cancel(service->runtime, component,
-                                 message->request_id);
+                                 message->request_token);
     }
     return PXA_STATUS_OK;
 }

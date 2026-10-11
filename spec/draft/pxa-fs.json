@@ -13,36 +13,36 @@
       "name": "open",
       "id": 1,
       "direction": "bidirectional-result",
-      "request_id": "nonzero",
+      "request_token": "nonzero",
       "payload": "record-list",
-      "result": "handle:u32"
+      "result": "handle:u64"
     },
     {
       "name": "make-directory",
       "id": 2,
       "direction": "bidirectional-result",
-      "request_id": "nonzero",
+      "request_token": "nonzero",
       "payload": "path-records"
     },
     {
       "name": "remove",
       "id": 3,
       "direction": "bidirectional-result",
-      "request_id": "nonzero",
+      "request_token": "nonzero",
       "payload": "path-records"
     },
     {
       "name": "rename",
       "id": 4,
       "direction": "bidirectional-result",
-      "request_id": "nonzero",
+      "request_token": "nonzero",
       "payload": "source-and-destination-path-records"
     },
     {
       "name": "stat",
       "id": 5,
       "direction": "bidirectional-result",
-      "request_id": "nonzero",
+      "request_token": "nonzero",
       "payload": "path-records",
       "result": "kind:u8|size:u64"
     },
@@ -50,16 +50,16 @@
       "name": "seek",
       "id": 6,
       "direction": "bidirectional-result",
-      "request_id": "nonzero",
-      "payload": "handle:u32|offset:i64|origin:u8",
+      "request_token": "nonzero",
+      "payload": "handle:u64|offset:i64|origin:u8",
       "result": "position:u64"
     },
     {
       "name": "read-directory",
       "id": 7,
       "direction": "bidirectional-result",
-      "request_id": "nonzero",
-      "payload": "directory-handle:u32",
+      "request_token": "nonzero",
+      "payload": "directory-handle:u64",
       "result": "entry-record-list"
     },
     {
@@ -173,5 +173,5 @@
     "max_segment_bytes": 64,
     "quota_unit": "logical-regular-file-bytes"
   },
-  "protocol_version": "0.1.0"
+  "protocol_version": "0.2.0"
 }

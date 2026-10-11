@@ -1,3 +1,4 @@
+#include "../../testing/pxa_control_capture.h"
 #include <pxa/device.hpp>
 #include "device_runtime_info_golden.hpp"
 
@@ -13,7 +14,7 @@ static pxa::DeviceMac mac{pxa::MacKind::wifi_station_hardware};
 static pxa::Error failure;
 static bool done;
 
-extern "C" std::int32_t pxa_submit(const std::uint8_t* data, std::uint32_t size) {
+extern "C" std::int32_t pxa_test_control(const std::uint8_t* data, std::uint32_t size) {
     auto bytes = reinterpret_cast<const std::byte*>(data);
     if (pxa::wire::get16(bytes) == 1) {
         assert(pxa::wire::get16(bytes + 2) == 2);

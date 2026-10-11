@@ -1,3 +1,4 @@
+#include "../../testing/pxa_control_capture.h"
 #include <pxa/ui_environment.hpp>
 #include <pxa/ui_layout.hpp>
 #include <cassert>
@@ -11,7 +12,7 @@ static unsigned allocations, submissions;
 void* operator new(std::size_t n) { ++allocations; return std::malloc(n); }
 void operator delete(void* p) noexcept { std::free(p); }
 void operator delete(void* p, std::size_t) noexcept { std::free(p); }
-extern "C" std::int32_t pxa_submit(const std::uint8_t*, std::uint32_t) { ++submissions; return 0; }
+extern "C" std::int32_t pxa_test_control(const std::uint8_t*, std::uint32_t) { ++submissions; return 0; }
 extern "C" std::int32_t pxa_io(std::uint64_t, std::uint32_t, std::uint8_t*, std::uint32_t) { return -3; }
 static_assert(sizeof(Environment<>) == sizeof(State<DisplayMetrics>));
 static_assert(sizeof(Environment<UiAppearance>) == sizeof(State<UiAppearance>));

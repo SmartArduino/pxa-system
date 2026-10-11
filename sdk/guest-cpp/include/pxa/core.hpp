@@ -10,9 +10,10 @@
 #include <span>
 
 extern "C" {
-__attribute__((import_module("pxa.core.v1"), import_name("pxa_submit")))
-std::int32_t pxa_submit(const std::uint8_t* data, std::uint32_t length);
-__attribute__((import_module("pxa.core.v1"), import_name("pxa_io")))
+__attribute__((import_module("pxa.core.v2"), import_name("pxa_call")))
+std::int32_t pxa_call(std::uint32_t route, std::uint64_t token,
+                      const std::uint8_t* data, std::uint32_t length);
+__attribute__((import_module("pxa.core.v2"), import_name("pxa_io")))
 std::int32_t pxa_io(std::uint64_t handle, std::uint32_t operation,
                     std::uint8_t* data, std::uint32_t length);
 }
@@ -31,7 +32,8 @@ template<class T> using Result = std::expected<T, Error>;
 
 namespace wire {
 constexpr std::size_t header_bytes = 20;
-constexpr std::size_t max_control_bytes = 4096;
+constexpr std::size_t max_control_bytes = 4096; // Event envelope plus payload.
+constexpr std::size_t max_call_payload_bytes = 4076; // Independent input admission budget.
 
 constexpr void put16(std::byte* p, std::uint16_t value) noexcept {
     p[0] = std::byte(value);
@@ -124,6 +126,21 @@ private:
 };
 } // namespace wire
 
+// Callback-based components can use the same payload-only transport without
+// allocating a Context or request table. Runtime users normally use Transport,
+// which also enforces callback phase and owns token/generation sequences.
+inline Result<void> call(std::uint16_t service, std::uint16_t opcode,
+                         std::uint64_t token,
+                         std::span<const std::byte> payload = {}) noexcept {
+    if (!service || !opcode || payload.size() > wire::max_call_payload_bytes)
+        return std::unexpected(Error::invalid_argument);
+    const auto status = pxa_call(std::uint32_t(service) | (std::uint32_t(opcode) << 16),
+        token, reinterpret_cast<const std::uint8_t*>(payload.data()),
+        static_cast<std::uint32_t>(payload.size()));
+    if (status != 0) return std::unexpected(static_cast<Error>(status));
+    return {};
+}
+
 template<class T> struct EventTraits;
 
 struct Event {
@@ -153,7 +170,6 @@ public:
     Transport(Transport&&) = delete("Transport must keep a stable address; share it by reference");
     Transport& operator=(Transport&&) = delete("Transport must keep a stable address; share it by reference");
 
-    Result<void> scratch(std::span<std::byte> buffer) noexcept;
 
     void phase(Phase value) noexcept { phase_ = value; }
     Phase phase() const noexcept { return phase_; }
@@ -168,18 +184,12 @@ public:
                       std::uint64_t token,
                       std::span<const std::byte> payload = {}) noexcept;
 
-    Result<void> send_prebuilt(std::uint16_t service, std::uint16_t opcode,
-                               std::uint64_t token,
-                               std::span<std::byte> packet) noexcept;
-
     Result<std::uint32_t> io(std::uint64_t handle, std::uint32_t operation,
                              std::span<std::byte> buffer) noexcept;
 
     Result<void> close(std::uint64_t handle) noexcept;
 
 private:
-    std::array<std::byte, 512> local_packet_{};
-    std::span<std::byte> packet_ = local_packet_;
     std::uint64_t token_ = 0;
     std::uint32_t ui_generation_ = 0;
     Phase phase_ = Phase::inactive;

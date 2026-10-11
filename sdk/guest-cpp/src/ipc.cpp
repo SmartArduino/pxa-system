@@ -84,13 +84,13 @@ Result<std::size_t> encode_ipc_call(std::string_view endpoint,
     std::span<const std::byte> payload, std::span<std::byte> packet) noexcept {
     if (!valid_ipc_endpoint(endpoint) || payload.size() > 1024)
         return std::unexpected(Error::invalid_argument);
-    const auto size = wire::header_bytes + 4 + endpoint.size() +
+    const auto size = 4 + endpoint.size() +
                       (payload.empty() ? 0 : 4 + payload.size());
     if (packet.size() < size) return std::unexpected(Error::resource_limit);
     if (wire::overlaps(bytes(endpoint), packet.first(size)) ||
         wire::overlaps(payload, packet.first(size)))
         return std::unexpected(Error::invalid_argument);
-    wire::Writer writer(packet.subspan(wire::header_bytes));
+    wire::Writer writer(packet);
     if (!wire::record(writer, 1, bytes(endpoint)) ||
         (!payload.empty() && !wire::record(writer, 2, payload)))
         return std::unexpected(Error::resource_limit);
@@ -101,10 +101,10 @@ Result<std::size_t> encode_ipc_call_in_place(std::string_view endpoint,
     std::size_t payload_size, std::span<std::byte> packet) noexcept {
     if (!valid_ipc_endpoint(endpoint) || payload_size > 1024)
         return std::unexpected(Error::invalid_argument);
-    const auto size = wire::header_bytes + 4 + endpoint.size() +
+    const auto size = 4 + endpoint.size() +
                       (payload_size ? 4 + payload_size : 0);
     if (packet.size() < size) return std::unexpected(Error::resource_limit);
-    auto* records = packet.data() + wire::header_bytes;
+    auto* records = packet.data();
     // This encoder owns the final payload layout; move the endpoint before
     // writing its prefix so an endpoint borrowed from the packet stays valid.
     wire::copy_bytes({records + 4, endpoint.size()}, bytes(endpoint));
@@ -124,12 +124,12 @@ Result<std::size_t> encode_ipc_reply(std::uint32_t call_id,
     if (!call_id || !status_valid(status) || payload.size() > 1024 ||
         (status != 0 && !payload.empty()))
         return std::unexpected(Error::invalid_argument);
-    const auto size = wire::header_bytes + 16 +
+    const auto size = 16 +
                       (payload.empty() ? 0 : 4 + payload.size());
     if (packet.size() < size) return std::unexpected(Error::resource_limit);
     if (wire::overlaps(payload, packet.first(size)))
         return std::unexpected(Error::invalid_argument);
-    wire::Writer writer(packet.subspan(wire::header_bytes));
+    wire::Writer writer(packet);
     std::array<std::byte, 4> scalar{};
     wire::put32(scalar.data(), call_id);
     if (!wire::record(writer, 1, scalar))
@@ -145,10 +145,10 @@ Result<std::size_t> encode_ipc_reply_in_place(std::uint32_t call_id,
     std::size_t payload_size, std::span<std::byte> packet) noexcept {
     if (!call_id || payload_size > 1024)
         return std::unexpected(Error::invalid_argument);
-    const auto size = wire::header_bytes + 16 +
+    const auto size = 16 +
                       (payload_size ? 4 + payload_size : 0);
     if (packet.size() < size) return std::unexpected(Error::resource_limit);
-    auto* records = packet.data() + wire::header_bytes;
+    auto* records = packet.data();
     wire::put16(records, 1);
     wire::put16(records + 2, 4);
     wire::put32(records + 4, call_id);

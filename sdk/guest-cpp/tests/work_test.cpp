@@ -1,3 +1,4 @@
+#include "../../testing/pxa_control_capture.h"
 #include <pxa/app.hpp>
 
 #include <array>
@@ -11,7 +12,7 @@ static unsigned requests;
 static bool cancelled;
 static bool completed;
 
-extern "C" std::int32_t pxa_submit(const std::uint8_t* data,
+extern "C" std::int32_t pxa_test_control(const std::uint8_t* data,
                                      std::uint32_t length) {
     const auto* bytes = reinterpret_cast<const std::byte*>(data);
     assert(pxa::wire::get16(bytes) == 13 && length >= 20);

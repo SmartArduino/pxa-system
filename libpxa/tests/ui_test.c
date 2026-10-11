@@ -1152,7 +1152,7 @@ int main(void) {
                    PXA_STATUS_OK);
             assert(pxa_message_decode(event, event_size, sizeof(event), &decoded) ==
                    PXA_STATUS_OK);
-            assert(decoded.request_id == 71 && decoded.opcode == PXA_UI_THEME_GET &&
+            assert(decoded.request_token == 71 && decoded.opcode == PXA_UI_THEME_GET &&
                    decoded.payload.size == 4u + PXA_UI_THEME_WIRE_BYTES &&
                    (int32_t)pxa_read_u32(decoded.payload.data) == PXA_STATUS_OK &&
                    pxa_read_u32(decoded.payload.data + 4) == 2);
@@ -1213,7 +1213,7 @@ int main(void) {
         assert(pxa_ui_bind(service, v1_component, &backend) == PXA_STATUS_OK);
         assert(pxa_component_begin_start(runtime, v1_component) ==
                PXA_STATUS_OK);
-        assert(pxa_component_set_core_major(runtime, v1_component, 1) ==
+        assert(pxa_component_set_wire_profile(runtime, v1_component, 1) ==
                PXA_STATUS_OK);
         assert(pxa_component_validate_import(runtime, v1_component) ==
                PXA_STATUS_OK);
@@ -1235,7 +1235,7 @@ int main(void) {
         assert(pxa_message_decode(event, event_size, sizeof(event),
                                   &decoded) == PXA_STATUS_OK &&
                decoded.opcode == PXA_UI_THEME_GET &&
-               decoded.request_id == 81 && decoded.payload.size == 64);
+               decoded.request_token == 81 && decoded.payload.size == 64);
 
         pxa_write_u32(frame_payload, PXA_UI_PRIMARY_SURFACE);
         pxa_write_u32(frame_payload + 4, 3);

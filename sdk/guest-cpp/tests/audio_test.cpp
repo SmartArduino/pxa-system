@@ -1,3 +1,4 @@
+#include "../../testing/pxa_control_capture.h"
 #include <pxa/app.hpp>
 
 #include <cassert>
@@ -12,7 +13,7 @@ static unsigned music_calls;
 static bool finished;
 static bool graph_ready;
 
-extern "C" std::int32_t pxa_submit(const std::uint8_t* data,
+extern "C" std::int32_t pxa_test_control(const std::uint8_t* data,
                                       std::uint32_t size) {
     const auto* p = reinterpret_cast<const std::byte*>(data);
     service = pxa::wire::get16(p);

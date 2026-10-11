@@ -535,7 +535,7 @@ static void test_package_golden(void) {
         7, {0, 1}, 0,
     };
     memset(&activation, 0, sizeof(activation));
-    activation.core_version = (pxa_package_version_t){1, 0};
+    activation.core_version = (pxa_package_version_t){PXA_CORE_VERSION_MAJOR, 0};
     activation.services = capabilities;
     activation.service_count = 3;
     /* Historical golden package remains parseable for signature/inventory
@@ -556,8 +556,8 @@ static void test_package_golden(void) {
     assert(pxa_package_same_identity(manifest, manifest));
     {
         pxa_package_manifest_t current_manifest = *manifest;
-        current_manifest.min_sdk = (pxa_package_version_t){1, 0};
-        activation.core_version = (pxa_package_version_t){1, 0};
+        current_manifest.min_sdk = (pxa_package_version_t){PXA_CORE_VERSION_MAJOR, 0};
+        activation.core_version = (pxa_package_version_t){PXA_CORE_VERSION_MAJOR, 0};
         test_activation(&current_manifest, &activation, &host);
     }
 
@@ -690,13 +690,13 @@ static void test_localized_metadata(void) {
                &metadata) == PXA_STATUS_INVALID_ARGUMENT);
 }
 
-static void test_core_v1_gate(void) {
+static void test_core_2_gate(void) {
     pxa_package_manifest_t manifest = {0};
     pxa_package_service_requirement_t requirement = {0};
     pxa_package_component_t component = {0};
     pxa_package_service_capability_t service = {0};
     pxa_package_activation_profile_t host = {0};
-    manifest.min_sdk = (pxa_package_version_t){1, 0};
+    manifest.min_sdk = (pxa_package_version_t){PXA_CORE_VERSION_MAJOR, 0};
     requirement.service = PXA_LOG_SERVICE_ID;
     requirement.min_version = (pxa_package_version_t){0, 1};
     requirement.max_version = (pxa_package_version_t){0, 1};
@@ -709,7 +709,7 @@ static void test_core_v1_gate(void) {
     host.service_count = 1;
     assert(pxa_package_requirements_validate(&manifest, &component, &host) ==
            PXA_STATUS_UNSUPPORTED);
-    host.core_version = (pxa_package_version_t){1, 0};
+    host.core_version = (pxa_package_version_t){PXA_CORE_VERSION_MAJOR, 0};
     assert(pxa_package_requirements_validate(&manifest, &component, &host) ==
            PXA_STATUS_OK);
     requirement.service = PXA_DEVICE_SERVICE_ID;
@@ -806,6 +806,25 @@ static void test_core_v1_gate(void) {
     requirement.service = 255;
     assert(pxa_package_requirements_validate(&manifest, &component, &host) ==
            PXA_STATUS_UNSUPPORTED);
+    // Independently registered service IDs require only a matching Host
+    // capability. Missing version/features still reject them.
+    service.service = 255;
+    assert(pxa_package_requirements_validate(&manifest, &component, &host) ==
+           PXA_STATUS_OK);
+    requirement.required_features = 8;
+    assert(pxa_package_requirements_validate(&manifest, &component, &host) ==
+           PXA_STATUS_UNSUPPORTED);
+    service.features |= 8;
+    assert(pxa_package_requirements_validate(&manifest, &component, &host) ==
+           PXA_STATUS_OK);
+    service.version.minor = 2;
+    assert(pxa_package_requirements_validate(&manifest, &component, &host) ==
+           PXA_STATUS_UNSUPPORTED);
+    service.version.minor = 1;
+    manifest.min_sdk.major = 1;
+    assert(pxa_package_requirements_validate(&manifest, &component, &host) ==
+           PXA_STATUS_UNSUPPORTED);
+    manifest.min_sdk.major = PXA_CORE_VERSION_MAJOR;
     requirement.service = PXA_LOG_SERVICE_ID;
     manifest.min_sdk.minor = 1;
     assert(pxa_package_requirements_validate(&manifest, &component, &host) ==
@@ -813,7 +832,7 @@ static void test_core_v1_gate(void) {
 }
 
 int main(void) {
-    test_core_v1_gate();
+    test_core_2_gate();
     test_recovery_states();
     test_commit_and_recovery();
     test_package_golden();

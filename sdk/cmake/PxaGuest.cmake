@@ -204,7 +204,7 @@ function(pxa_add_translations target)
 endfunction()
 
 function(pxa_add_component target)
-    cmake_parse_arguments(PXA "CPP;NO_TRANSLATIONS" "COMPONENT_ID"
+    cmake_parse_arguments(PXA "CPP;NO_TRANSLATIONS;NO_ALLOCATOR" "COMPONENT_ID"
         "SOURCES;SOURCE_DIRS;MODULES;LIBRARIES;INCLUDE_DIRS;DEFINITIONS" ${ARGN})
     string(LENGTH "${PXA_COMPONENT_ID}" _pxa_component_id_length)
     if(_pxa_component_id_length LESS 1 OR _pxa_component_id_length GREATER 64 OR
@@ -244,11 +244,21 @@ function(pxa_add_component target)
         -Wl,--export=pxa_app_on_event
         -Wl,--export=pxa_app_stop
         -Wl,--export=__heap_base
-        -Wl,--export=__data_end
-        # Let WAMR use the libc allocator when it is linked. A second heap
-        # inserted at __heap_base overlaps libc's constant heap address.
-        -Wl,--export-if-defined=malloc
-        -Wl,--export-if-defined=free)
+        -Wl,--export=__data_end)
+    if(PXA_NO_ALLOCATOR)
+        # --export-if-defined also extracts lazy libc archive members. Apps
+        # with explicitly bounded state can avoid that allocator entirely.
+        # Wrapping makes accidental allocation a link error instead of
+        # silently allowing a second heap to overlap WAMR's event heap.
+        foreach(_pxa_allocator malloc calloc realloc free aligned_alloc posix_memalign)
+            target_link_options(${target} PRIVATE "-Wl,--wrap=${_pxa_allocator}")
+        endforeach()
+    else()
+        # When libc allocation is used, WAMR must share that allocator.
+        target_link_options(${target} PRIVATE
+            -Wl,--export-if-defined=malloc
+            -Wl,--export-if-defined=free)
+    endif()
     if(PXA_CPP)
         set_property(TARGET ${target} PROPERTY PXA_TRANSLATION_LANGUAGE cpp)
     else()

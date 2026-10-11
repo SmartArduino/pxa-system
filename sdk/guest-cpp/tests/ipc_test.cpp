@@ -1,3 +1,4 @@
+#include "../../testing/pxa_control_capture.h"
 #include <pxa/app.hpp>
 
 #include <array>
@@ -15,7 +16,7 @@ static bool cancellation_mode;
 static std::array<std::byte, 96> submitted_call{};
 static std::size_t submitted_call_size;
 
-extern "C" std::int32_t pxa_submit(const std::uint8_t* data,
+extern "C" std::int32_t pxa_test_control(const std::uint8_t* data,
                                      std::uint32_t length) {
     const auto* bytes = reinterpret_cast<const std::byte*>(data);
     const auto service = pxa::wire::get16(bytes);
@@ -169,11 +170,11 @@ int main() {
     auto invalid = pxa::encode_ipc_call("1bad", {}, packet);
     assert(!invalid && invalid.error() == pxa::Error::invalid_argument);
     auto too_small = pxa::encode_ipc_call("Stats.get", {},
-                                           std::span{packet}.first(24));
+                                           std::span{packet}.first(12));
     assert(!too_small && too_small.error() == pxa::Error::resource_limit);
     auto encoded = pxa::encode_ipc_reply(2, 0,
         std::as_bytes(std::span{"ok", 2}), packet);
-    assert(encoded && *encoded == 42);
+    assert(encoded && *encoded == 22);
     auto error_reply = pxa::encode_ipc_reply(2, -17, {}, packet);
     assert(!error_reply && error_reply.error() == pxa::Error::invalid_argument);
 }

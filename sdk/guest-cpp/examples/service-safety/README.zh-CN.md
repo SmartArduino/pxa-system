@@ -39,15 +39,17 @@ HTTP/IPC 重叠编码的独立回归在 `tests/encoding_alias_test.cpp`，链接
 
 [三种屏幕配置的实际 AOT 截图](validation/20261011/profiles.png)
 
-设备复现使用项目工作区的 PXADB。先构建/安装临时 `service-safety` 包，并在第一次点击 `Test audio` 时批准该测试包的可选音频权限；下面的脚本只运行已安装的测试包，不安装、授权或修改设备设置。默认点击坐标对应本轮 296×240 pai-touch，其他布局使用 `--core-point x,y --audio-point x,y` 调整。
+设备复现使用项目工作区的 PXADB。先构建/安装临时 `service-safety` 包，并在第一次点击 `Test audio` 时批准该测试包的可选音频权限；脚本默认不授权或修改设备设置。默认点击坐标对应本轮 296×240 pai-touch 的按钮中心，其他布局使用 `--core-point x,y --audio-point x,y` 调整。
 
 ```sh
 python3 sdk/guest-cpp/examples/service-safety/validation/run_device.py \
   --pxadb /path/to/pxa-projects/tools/pxadb/pxadb.py --port /dev/ttyACM1 \
-  --output /tmp/service-device --repeat 3
+  --output /tmp/service-device --repeat 3 --verify-text
 ```
 
-检查每轮的 `core-*.png` 显示 `Core checks OK`、`audio-*.png` 和 `resume-*.png` 显示 `Audio checks OK`。权限对话框或错误文本应判为失败，不能只以脚本退出码判断功能成功。`device.json` 将启动和稳定阶段分开，`MEMORY START/STOP` 测本次局部最小空闲值，不能和历史累计峰值混用。测试后通过 PXADB 卸载临时包，清除其私有目录与权限。
+`--verify-text` 需要 Pillow 与 tesseract，在有界等待期间截图识别实际结果；启动、重复核心检查、音频和恢复都必须看到成功文本。自动批准测试权限须显式传入 `--audio-allow-point x,y` 与对话框内该包的 `--permission-marker` 文本。省略 `--verify-text` 只采集截图，报告保留 `passed=false` 以待人工审核。
+
+检查每轮的 `core-*.png` 和 `repeat-*.png` 显示 `Core checks OK`、`audio-*.png` 和 `resume-*.png` 显示 `Audio checks OK`。权限对话框或错误文本应判为失败，不能只以脚本退出码判断功能成功。`device.json` 将启动和稳定阶段分开，`MEMORY START/STOP` 测本次局部最小空闲值，不能和历史累计峰值混用。截图传输的临时内存也包含在该诊断窗口内；游戏内存应使用独立的无截图计时窗口。测试后通过 PXADB 卸载临时包，清除其私有目录与权限。
 
 本轮[设备服务截图](validation/20261011/device-services.png)、[六轮前后计数器截图](validation/20261011/device-counter.png)与原始 JSON 一并保留。计数器前后只更换 SDK，测试包采用独立 ID，不能覆盖原有应用；按 before/after、after/before、before/after 安装、启动、点击五次、截图、停止，阶段前后读取 `MEMORY` 并重置局部监测。它验证默认 SDK 占用与相同 UI 行为，不是游戏 FPS 基准。
 

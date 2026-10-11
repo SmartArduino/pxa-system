@@ -54,7 +54,7 @@ static inline int32_t pxa_sensor_request_list(uint64_t token) {
     uint32_t size = 0;
     if (!pxa_sensor_build_list(packet, sizeof(packet), token, &size))
         return -1;
-    return pxa_submit(packet, size);
+    return pxa_control_packet(packet, size);
 }
 
 static inline int pxa_sensor_build_subscribe(
@@ -92,7 +92,7 @@ static inline int32_t pxa_sensor_request_subscribe(
     if (!pxa_sensor_build_subscribe(packet, sizeof(packet), token,
                                         sensor_id, period_ms,
                                         permission_handle, &size)) return -1;
-    return pxa_submit(packet, size);
+    return pxa_control_packet(packet, size);
 }
 
 static inline int pxa_sensor_parse_list(

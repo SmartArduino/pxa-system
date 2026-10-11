@@ -8,6 +8,10 @@
 #include "pxa_wire.h"
 #include "pxa_log_levels.h"
 
+#ifdef PXA_GUEST_CPP_TRANSPORT
+#include <pxa/core.hpp>
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -51,10 +55,30 @@ static inline void pxa_zero(void *pointer, size_t size) {
     for (size_t i = 0; i < size; ++i) bytes[i] = 0;
 }
 
-__attribute__((import_module("pxa.core.v1"), import_name("pxa_submit")))
-int32_t pxa_submit(const uint8_t *data, uint32_t length);
+__attribute__((import_module("pxa.core.v2"), import_name("pxa_call")))
+int32_t pxa_call(uint32_t route, uint64_t token, const uint8_t *data, uint32_t length);
 
-__attribute__((import_module("pxa.core.v1"), import_name("pxa_io")))
+/* Both callback styles share the payload-only Core 2 transport. */
+static inline int32_t pxa_control_call(uint16_t service, uint16_t opcode,
+    uint64_t token, const uint8_t *payload, uint32_t length) {
+#ifdef PXA_GUEST_CPP_TRANSPORT
+    auto result = pxa::call(service, opcode, token,
+        std::as_bytes(std::span{payload, length}));
+    return result ? 0 : static_cast<int32_t>(result.error());
+#else
+    return pxa_call((uint32_t)service | ((uint32_t)opcode << 16), token, payload, length);
+#endif
+}
+
+/* C packet builders share the event codec; only call/io cross the boundary. */
+static inline int32_t pxa_control_packet(const uint8_t *data, uint32_t length) {
+    pxa_wire_view_t message;
+    if (!pxa_wire_decode(data, length, PXA_MAX_CONTROL_BYTES, &message)) return -1;
+    return pxa_control_call(message.service, message.opcode, message.request_token,
+                            message.payload, (uint32_t)message.payload_size);
+}
+
+__attribute__((import_module("pxa.core.v2"), import_name("pxa_io")))
 int32_t pxa_io(uint64_t handle, uint32_t operation, uint8_t *data,
                   uint32_t length);
 
@@ -165,46 +189,34 @@ static inline int pxa_build_cancel(
 }
 
 static inline int32_t pxa_cancel(uint64_t target_token) {
-    uint8_t packet[PXA_HEADER_BYTES + 8u];
-    uint32_t size = 0;
-    if (!pxa_build_cancel(packet, sizeof(packet), target_token, &size))
-        return -1;
-    return pxa_submit(packet, size);
+    uint8_t payload[8];
+    if (target_token == 0) return -1;
+    pxa_store_u64(payload, target_token);
+    return pxa_control_call(PXA_CORE_SERVICE, PXA_CORE_CANCEL_REQUEST,
+                    0, payload, sizeof(payload));
 }
 
 static inline int32_t pxa_close_handle(uint64_t handle) {
-    uint8_t packet[PXA_HEADER_BYTES + 8u];
     uint8_t payload[8];
-    uint32_t size = 0;
     if (handle == 0) return -1;
     pxa_store_u64(payload, handle);
-    if (!pxa_build_message(packet, sizeof(packet), PXA_CORE_SERVICE,
-                              PXA_CORE_CLOSE_HANDLE, 0, payload,
-                              sizeof(payload), &size))
-        return -1;
-    return pxa_submit(packet, size);
+    return pxa_control_call(PXA_CORE_SERVICE, PXA_CORE_CLOSE_HANDLE,
+                    0, payload, sizeof(payload));
 }
 
 static inline int32_t pxa_log_write(uint8_t level,
                                         const char *message) {
-    uint8_t packet[PXA_HEADER_BYTES + 1u + PXA_LOG_MAX_MESSAGE_BYTES];
+    uint8_t payload[1u + PXA_LOG_MAX_MESSAGE_BYTES];
     size_t length = 0;
     if (message == NULL || level > 4u) return -1;
     while (length <= PXA_LOG_MAX_MESSAGE_BYTES && message[length] != '\0')
         ++length;
     if (length == 0 || length > PXA_LOG_MAX_MESSAGE_BYTES) return -1;
-    pxa_store_u16(packet + PXA_WIRE_SERVICE_OFFSET,
-                     PXA_LOG_SERVICE);
-    pxa_store_u16(packet + PXA_WIRE_OPCODE_OFFSET, PXA_LOG_WRITE);
-    pxa_store_u64(packet + PXA_WIRE_REQUEST_TOKEN_OFFSET, 0);
-    pxa_store_u32(packet + PXA_WIRE_PAYLOAD_LEN_OFFSET,
-                     (uint32_t)length + 1u);
-    pxa_store_u32(packet + PXA_WIRE_FLAGS_OFFSET, 0);
-    packet[PXA_HEADER_BYTES] = level;
+    payload[0] = level;
     for (size_t i = 0; i < length; ++i)
-        packet[PXA_HEADER_BYTES + 1u + i] = (uint8_t)message[i];
-    return pxa_submit(packet,
-                         (uint32_t)(PXA_HEADER_BYTES + 1u + length));
+        payload[1u + i] = (uint8_t)message[i];
+    return pxa_control_call(PXA_LOG_SERVICE, PXA_LOG_WRITE,
+                    0, payload, (uint32_t)length + 1u);
 }
 
 #endif

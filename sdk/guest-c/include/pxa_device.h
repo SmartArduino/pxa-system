@@ -53,7 +53,7 @@ static inline int32_t pxa_device_request_get_mac(
     uint32_t size = 0;
     if (!pxa_device_build_get_mac(packet, sizeof(packet), token, kind,
                                      permission_handle, &size)) return -1;
-    return pxa_submit(packet, size);
+    return pxa_control_packet(packet, size);
 }
 
 static inline int pxa_device_parse_get_mac(
@@ -101,7 +101,7 @@ static inline int32_t pxa_device_request_runtime_info(uint64_t token) {
                               PXA_DEVICE_GET_RUNTIME_INFO, token,
                               NULL, 0, &size))
         return -1;
-    return pxa_submit(packet, size);
+    return pxa_control_packet(packet, size);
 }
 
 static inline int pxa_device_parse_runtime_info(

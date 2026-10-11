@@ -69,4 +69,9 @@ for slots in 3 8 65; do
   "$work_dir/task_pool_$slots"
 done
 
+"$cxx" "${flags[@]}" -DPXA_REQUEST_CAPACITY=32 \
+  "$cpp_sdk_dir/tests/direct_control_test.cpp" "$cpp_sdk_dir/src/runtime.cpp" \
+  -o "$work_dir/direct_control"
+"$work_dir/direct_control"
+
 echo "PXA C++ Guest host tests OK"

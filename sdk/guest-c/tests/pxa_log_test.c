@@ -1,3 +1,4 @@
+#include "../../testing/pxa_control_capture.h"
 #include "pxa_log.h"
 
 #include <assert.h>
@@ -6,7 +7,7 @@
 static uint8_t captured[512];
 static uint32_t captured_length;
 
-int32_t pxa_submit(const uint8_t *data, uint32_t length) {
+int32_t pxa_test_control(const uint8_t *data, uint32_t length) {
     assert(length <= sizeof(captured));
     memcpy(captured, data, length);
     captured_length = length;

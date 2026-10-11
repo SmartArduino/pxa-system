@@ -14,6 +14,7 @@ publisher_key="$app_root/.dev-signing/publisher-public.der"
 work_dir="$(mktemp -d "${TMPDIR:-/tmp}/pxa-abi-v1-ipc.XXXXXX")"
 trap 'rm -rf "$work_dir"' EXIT
 
+PXA_SIGNING_KEY="$app_root/.dev-signing/publisher-private.pem" \
 PXA_APP_SOURCE_ROOT="$app_root" PXA_PACKAGE_OUTPUT_ROOT="$work_dir" \
   bash "$script_dir/package_app.sh" abi-v1-ipc-smoke simulator \
   "$work_dir/pxa-abi-v1-ipc-smoke" >"$work_dir/build.log" 2>&1 || {
@@ -31,10 +32,10 @@ run_status=$?
 set -e
 
 if [[ "$run_status" -ne 0 && "$run_status" -ne 124 ]] || \
-   ! grep -Fq 'ABI v1 IPC two-component exchange OK' "$work_dir/run.log"; then
+   ! grep -Fq 'Core 2 IPC two-component exchange OK' "$work_dir/run.log"; then
   cat "$work_dir/build.log" >&2
   cat "$work_dir/run.log" >&2
-  echo "ABI v1 signed IPC smoke test failed (simulator status $run_status)" >&2
+  echo "Core 2 signed IPC smoke test failed (simulator status $run_status)" >&2
   exit 1
 fi
-echo 'ABI v1 signed IPC smoke test OK'
+echo 'Core 2 signed IPC smoke test OK'

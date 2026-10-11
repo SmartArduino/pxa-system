@@ -219,3 +219,8 @@ install(EXPORT pxsysTargets
     NAMESPACE pxsys::
     DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/pxsys")
 endif()
+
+if(PXSYS_BUILD_TESTS)
+    include(libpxa/cmake/pxaTestAssertions.cmake)
+    pxa_enable_test_assertions("${CMAKE_CURRENT_SOURCE_DIR}")
+endif()

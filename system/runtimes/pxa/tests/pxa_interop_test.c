@@ -54,10 +54,10 @@ static pxsys_status_t invoke_native_service(void* context, const pxsys_service_r
     return PXSYS_STATUS_OK;
 }
 
-static void complete_call(void* context, uint64_t request_id, pxsys_status_t status,
+static void complete_call(void* context, uint64_t request_token, pxsys_status_t status,
                           pxsys_bytes_t payload) {
     int* completed = (int*)context;
-    assert(request_id == 42);
+    assert(request_token == 42);
     assert(status == PXSYS_STATUS_OK);
     assert(payload.size == 0);
     *completed = 1;

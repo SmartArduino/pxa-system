@@ -12,9 +12,9 @@ struct Get {
     static constexpr std::size_t request_bytes = 28;
     static constexpr std::size_t response_bytes = 54;
     static constexpr std::size_t call_packet_bytes =
-        pxa::wire::header_bytes + 8 + endpoint.size() + request_bytes;
+        8 + endpoint.size() + request_bytes;
     static constexpr std::size_t reply_packet_bytes =
-        pxa::wire::header_bytes + 20 + response_bytes;
+        20 + response_bytes;
     struct Request {
         std::uint32_t seed{};
         pxa::FixedText<16> label{};

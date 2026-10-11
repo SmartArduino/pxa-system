@@ -6,20 +6,18 @@
 
 namespace pxa::detail {
 
-// Internal owned request storage. Copy only initialized payload bytes when a
-// coroutine captures the packet. Transport writes the complete header before
-// submission; neither the header nor spare capacity needs a preliminary copy.
+// Owned service payload. Coroutine capture copies only initialized bytes.
 template<std::size_t Capacity> struct OwnedRequestPacket {
-    static_assert(Capacity >= wire::header_bytes && Capacity <= wire::max_control_bytes);
+    static_assert(Capacity > 0 && Capacity <= wire::max_call_payload_bytes);
     std::array<std::byte, Capacity> bytes;
-    std::size_t size = 0; // Total packet bytes, including the reserved header.
+    std::size_t size = 0; // Initialized service payload bytes.
 
     OwnedRequestPacket() noexcept = default;
     OwnedRequestPacket(const OwnedRequestPacket& other) noexcept : size(other.size) {
-        if (size > wire::header_bytes)
-            std::memcpy(bytes.data() + wire::header_bytes,
-                        other.bytes.data() + wire::header_bytes,
-                        size - wire::header_bytes);
+        if (size > 0)
+            std::memcpy(bytes.data(),
+                        other.bytes.data(),
+                        size);
     }
     OwnedRequestPacket(OwnedRequestPacket&& other) noexcept : OwnedRequestPacket(other) {}
     OwnedRequestPacket& operator=(const OwnedRequestPacket&) = delete;

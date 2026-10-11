@@ -1,3 +1,4 @@
+#include "../../testing/pxa_control_capture.h"
 #include <pxa/game.hpp>
 #include <pxa/game3d.hpp>
 
@@ -29,7 +30,7 @@ void operator delete[](void* pointer) noexcept { std::free(pointer); }
 void operator delete(void* pointer, std::size_t) noexcept { std::free(pointer); }
 void operator delete[](void* pointer, std::size_t) noexcept { std::free(pointer); }
 
-extern "C" std::int32_t pxa_submit(const std::uint8_t*, std::uint32_t) {
+extern "C" std::int32_t pxa_test_control(const std::uint8_t*, std::uint32_t) {
     return 0;
 }
 extern "C" std::int32_t pxa_io(std::uint64_t handle, std::uint32_t operation,

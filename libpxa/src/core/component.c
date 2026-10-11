@@ -85,7 +85,7 @@ pxa_status_t pxa_component_create(pxa_runtime_t *runtime, uint64_t instance_id,
     runtime->component_free_head = component->next_free;
     component->instance_id = instance_id;
     component->occupied = 1;
-    component->core_major = 0;
+    component->wire_profile = 0;
     component->state = PXA_COMPONENT_CREATED;
     component->callback = PXA_GUEST_CALLBACK_NONE;
     component->stop_reason = PXA_STOP_NORMAL;
@@ -100,23 +100,23 @@ pxa_status_t pxa_component_create(pxa_runtime_t *runtime, uint64_t instance_id,
     return PXA_STATUS_OK;
 }
 
-pxa_status_t pxa_component_set_core_major(pxa_runtime_t *runtime,
+pxa_status_t pxa_component_set_wire_profile(pxa_runtime_t *runtime,
                                           pxa_component_t component_ref,
-                                          uint16_t core_major) {
+                                          uint16_t wire_profile) {
     pxa_component_slot_t *component =
         pxa_runtime_find_component(runtime, component_ref, NULL);
     if (component == NULL) return PXA_STATUS_NOT_FOUND;
-    if (core_major > 1) return PXA_STATUS_UNSUPPORTED;
+    if (wire_profile > 1) return PXA_STATUS_UNSUPPORTED;
     if (component->state != PXA_COMPONENT_CREATED &&
         component->state != PXA_COMPONENT_STARTING)
         return PXA_STATUS_BAD_STATE;
     if (component->resources.count != 0 || component->requests.count != 0)
         return PXA_STATUS_BAD_STATE;
-    component->core_major = core_major;
+    component->wire_profile = wire_profile;
     return PXA_STATUS_OK;
 }
 
-pxa_status_t pxa_component_core_major(const pxa_runtime_t *runtime,
+pxa_status_t pxa_component_wire_profile(const pxa_runtime_t *runtime,
                                       pxa_component_t component_ref,
                                       uint16_t *output) {
     const pxa_component_slot_t *component;
@@ -124,7 +124,7 @@ pxa_status_t pxa_component_core_major(const pxa_runtime_t *runtime,
     *output = 0;
     component = pxa_runtime_find_component_const(runtime, component_ref, NULL);
     if (component == NULL) return PXA_STATUS_NOT_FOUND;
-    *output = component->core_major;
+    *output = component->wire_profile;
     return PXA_STATUS_OK;
 }
 

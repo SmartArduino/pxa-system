@@ -13,7 +13,7 @@
       "name": "get",
       "id": 1,
       "direction": "bidirectional-result",
-      "request_id": "nonzero",
+      "request_token": "nonzero",
       "payload": "key-record",
       "result": "value-record"
     },
@@ -21,21 +21,21 @@
       "name": "set",
       "id": 2,
       "direction": "bidirectional-result",
-      "request_id": "nonzero",
+      "request_token": "nonzero",
       "payload": "key-and-value-records"
     },
     {
       "name": "remove",
       "id": 3,
       "direction": "bidirectional-result",
-      "request_id": "nonzero",
+      "request_token": "nonzero",
       "payload": "key-record"
     },
     {
       "name": "list",
       "id": 4,
       "direction": "bidirectional-result",
-      "request_id": "nonzero",
+      "request_token": "nonzero",
       "payload": "optional-cursor-key-record",
       "result": "sorted-key-page"
     }

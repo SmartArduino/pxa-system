@@ -1,3 +1,4 @@
+#include "../../testing/pxa_control_capture.h"
 #include <assert.h>
 #include <string.h>
 
@@ -7,7 +8,7 @@ static uint64_t last_io_handle;
 static uint32_t last_io_operation;
 static uint8_t last_io_data[12];
 
-int32_t pxa_submit(const uint8_t *data, uint32_t size) {
+int32_t pxa_test_control(const uint8_t *data, uint32_t size) {
     (void)data;
     (void)size;
     return 0;

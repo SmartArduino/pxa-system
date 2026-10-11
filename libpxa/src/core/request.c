@@ -13,8 +13,8 @@ uint32_t pxa_request_table_bucket_count(uint16_t per_owner_capacity) {
 }
 
 static uint32_t request_hash(const pxa_request_table_t *table,
-                             uint32_t request_id) {
-    return (request_id * UINT32_C(2654435761)) &
+                             pxa_request_token_t request_token) {
+    return ((uint32_t)(request_token ^ (request_token >> 32)) * UINT32_C(2654435761)) &
            (table->buckets_per_owner - 1u);
 }
 
@@ -32,18 +32,18 @@ static const uint32_t *owner_buckets_const(
 
 static uint32_t find_request_index(const pxa_request_table_t *table,
                                    uint32_t owner_index,
-                                   uint32_t request_id) {
+                                   pxa_request_token_t request_token) {
     uint32_t index;
     if (table == NULL || table->slots == NULL || table->buckets == NULL ||
         table->buckets_per_owner == 0 || owner_index >= table->owner_capacity) {
         return PXA_REQUEST_INDEX_NONE;
     }
     index = owner_buckets_const(table, owner_index)
-        [request_hash(table, request_id)];
+        [request_hash(table, request_token)];
     while (index != PXA_REQUEST_INDEX_NONE) {
         const pxa_request_slot_t *request = &table->slots[index];
         if (request->occupied && request->owner_index == owner_index &&
-            request->request_id == request_id) {
+            request->request_token == request_token) {
             return index;
         }
         index = request->hash_next;
@@ -55,11 +55,11 @@ static pxa_status_t write_completion_event(
     pxa_event_pool_t *event_pool, uint32_t owner_index,
     const pxa_request_slot_t *request, pxa_status_t result,
     const void *payload, size_t payload_size, uint32_t event_index) {
-    uint8_t header[PXA_ENVELOPE_SIZE];
-    uint8_t status_bytes[4];
+    uint8_t header[PXA_ENVELOPE_SIZE + 4u];
     size_t event_size;
     pxa_event_writer_t writer;
-    if (payload_size > PXA_MAX_CONTROL_MESSAGE - PXA_ENVELOPE_SIZE - 4u) {
+    if ((payload == NULL && payload_size != 0) ||
+        payload_size > PXA_MAX_CONTROL_MESSAGE - PXA_ENVELOPE_SIZE - 4u) {
         return PXA_STATUS_INVALID_ARGUMENT;
     }
     event_size = PXA_ENVELOPE_SIZE + 4u + payload_size;
@@ -68,18 +68,29 @@ static pxa_status_t write_completion_event(
         event_pool->slots[event_index].owner_index != owner_index ||
         event_size > event_pool->slots[event_index].size)
         return PXA_STATUS_LIMIT_EXCEEDED;
-    pxa_write_u16(header, request->service);
-    pxa_write_u16(header + 2, request->opcode);
-    pxa_write_u32(header + 4, request->request_id);
-    pxa_write_u32(header + 8, (uint32_t)(4u + payload_size));
-    pxa_write_u32(status_bytes, (uint32_t)result);
+    pxa_wire_generated_store_u16(header, request->service);
+    pxa_wire_generated_store_u16(header + 2, request->opcode);
+    pxa_wire_generated_store_u64(header + PXA_WIRE_REQUEST_TOKEN_OFFSET, request->request_token);
+    pxa_wire_generated_store_u32(header + PXA_WIRE_PAYLOAD_LEN_OFFSET, (uint32_t)(4u + payload_size));
+    pxa_wire_generated_store_u32(header + PXA_WIRE_FLAGS_OFFSET, 0);
+    pxa_wire_generated_store_u32(header + PXA_ENVELOPE_SIZE, (uint32_t)result);
+    /* Most completions fit one event block. Write the fixed header and status
+     * together, avoiding writer setup and block traversal on this hot path. */
+    if (event_size <= event_pool->block_size) {
+        uint8_t *destination = event_pool->block_data +
+            (size_t)event_pool->slots[event_index].first_block * event_pool->block_size;
+        memcpy(destination, header, sizeof(header));
+        if (payload_size != 0)
+            memcpy(destination + sizeof(header), payload, payload_size);
+        event_pool->slots[event_index].size = (uint32_t)event_size;
+        return PXA_STATUS_OK;
+    }
     pxa_event_writer_init(&writer, event_pool, event_index);
     if (pxa_event_writer_write(&writer, header, sizeof(header)) !=
             PXA_STATUS_OK ||
-        pxa_event_writer_write(&writer, status_bytes, sizeof(status_bytes)) !=
-            PXA_STATUS_OK ||
-        pxa_event_writer_write(&writer, payload, payload_size) !=
-            PXA_STATUS_OK ||
+        (payload_size != 0 &&
+         pxa_event_writer_write(&writer, payload, payload_size) !=
+            PXA_STATUS_OK) ||
         writer.written != event_size) {
         return PXA_STATUS_INTERNAL;
     }
@@ -128,7 +139,7 @@ static void remove_request(pxa_request_table_t *table,
                            pxa_event_pool_t *event_pool) {
     pxa_request_slot_t *request = &table->slots[request_index];
     uint32_t *bucket = &owner_buckets(table, owner_index)
-        [request_hash(table, request->request_id)];
+        [request_hash(table, request->request_token)];
     uint32_t *hash_link = bucket;
     uint32_t *owner_link = &owner->request_head;
     while (*hash_link != PXA_REQUEST_INDEX_NONE &&
@@ -197,16 +208,16 @@ uint16_t pxa_request_owner_count(const pxa_request_owner_t *owner) {
 
 pxa_status_t pxa_request_table_begin(
     pxa_request_table_t *table, pxa_request_owner_t *owner,
-    uint32_t owner_index, uint16_t per_owner_capacity, uint32_t request_id,
+    uint32_t owner_index, uint16_t per_owner_capacity, pxa_request_token_t request_token,
     uint16_t service, uint16_t opcode, pxa_authority_t authority) {
     uint32_t request_index;
     uint32_t hash;
     pxa_request_slot_t *request;
-    if (table == NULL || owner == NULL || request_id == 0 || service == 0 ||
+    if (table == NULL || owner == NULL || request_token == 0 || service == 0 ||
         opcode == 0 || owner_index >= table->owner_capacity) {
         return PXA_STATUS_INVALID_ARGUMENT;
     }
-    if (find_request_index(table, owner_index, request_id) !=
+    if (find_request_index(table, owner_index, request_token) !=
         PXA_REQUEST_INDEX_NONE) {
         return PXA_STATUS_BUSY;
     }
@@ -222,14 +233,14 @@ pxa_status_t pxa_request_table_begin(
     request->occupied = 1;
     request->identity = ++table->next_identity;
     request->owner_index = (uint16_t)owner_index;
-    request->request_id = request_id;
+    request->request_token = request_token;
     request->service = service;
     request->opcode = opcode;
     request->authority = authority;
     request->completion_event = PXA_REQUEST_INDEX_NONE;
     request->owner_next = owner->request_head;
     owner->request_head = request_index;
-    hash = request_hash(table, request_id);
+    hash = request_hash(table, request_token);
     request->hash_next = owner_buckets(table, owner_index)[hash];
     owner_buckets(table, owner_index)[hash] = request_index;
     owner->count++;
@@ -241,8 +252,8 @@ pxa_status_t pxa_request_table_begin(
 pxa_status_t pxa_request_table_reserve_completion(
     pxa_request_table_t *table, pxa_request_owner_t *owner,
     uint32_t owner_index, pxa_event_pool_t *event_pool,
-    uint32_t request_id, size_t payload_capacity) {
-    const uint32_t index = find_request_index(table, owner_index, request_id);
+    pxa_request_token_t request_token, size_t payload_capacity) {
+    const uint32_t index = find_request_index(table, owner_index, request_token);
     uint32_t event_index;
     pxa_status_t status;
     if (index == PXA_REQUEST_INDEX_NONE || owner == NULL || event_pool == NULL)
@@ -267,9 +278,9 @@ pxa_status_t pxa_request_table_reserve_completion(
 
 pxa_status_t pxa_request_table_commit(pxa_request_table_t *table,
                                       uint32_t owner_index,
-                                      uint32_t request_id) {
+                                      pxa_request_token_t request_token) {
     uint32_t request_index =
-        find_request_index(table, owner_index, request_id);
+        find_request_index(table, owner_index, request_token);
     pxa_request_slot_t *request;
     if (request_index == PXA_REQUEST_INDEX_NONE) return PXA_STATUS_NOT_FOUND;
     request = &table->slots[request_index];
@@ -305,10 +316,10 @@ void pxa_request_table_flush(pxa_request_table_t *table,
         if (owner->completion_head == PXA_REQUEST_INDEX_NONE) {
             owner->completion_tail = PXA_REQUEST_INDEX_NONE;
         }
+        event_pool->slots[event_index].completion_request = request_index;
         pxa_event_mailbox_append(event_pool, mailbox, event_index);
-        request->completion_event = PXA_REQUEST_INDEX_NONE;
-        remove_request(table, owner, owner_index, request_index, 1,
-                       event_pool);
+        request->completion_in_mailbox = 1;
+        request->completion_next = PXA_REQUEST_INDEX_NONE;
     }
 }
 
@@ -316,10 +327,10 @@ pxa_status_t pxa_request_table_complete(
     pxa_request_table_t *table, pxa_request_owner_t *owner,
     uint32_t owner_index, pxa_event_pool_t *event_pool,
     pxa_event_mailbox_t *mailbox, uint16_t mailbox_capacity,
-    uint32_t request_id, pxa_status_t result, const void *payload,
+    pxa_request_token_t request_token, pxa_status_t result, const void *payload,
     size_t payload_size) {
     uint32_t request_index =
-        find_request_index(table, owner_index, request_id);
+        find_request_index(table, owner_index, request_token);
     uint32_t event_index;
     pxa_request_slot_t *request;
     pxa_status_t status;
@@ -360,9 +371,9 @@ pxa_status_t pxa_request_table_cancel(
     pxa_request_table_t *table, pxa_request_owner_t *owner,
     uint32_t owner_index, pxa_event_pool_t *event_pool,
     pxa_event_mailbox_t *mailbox, uint16_t mailbox_capacity,
-    uint32_t request_id) {
+    pxa_request_token_t request_token) {
     uint32_t request_index =
-        find_request_index(table, owner_index, request_id);
+        find_request_index(table, owner_index, request_token);
     pxa_request_slot_t *request;
     if (request_index == PXA_REQUEST_INDEX_NONE) return PXA_STATUS_OK;
     request = &table->slots[request_index];
@@ -386,9 +397,9 @@ pxa_status_t pxa_request_table_cancel(
 }
 
 int pxa_request_table_is_active(const pxa_request_table_t *table,
-                                uint32_t owner_index, uint32_t request_id) {
+                                uint32_t owner_index, pxa_request_token_t request_token) {
     uint32_t request_index =
-        find_request_index(table, owner_index, request_id);
+        find_request_index(table, owner_index, request_token);
     const pxa_request_slot_t *request;
     if (request_index == PXA_REQUEST_INDEX_NONE) return 0;
     request = &table->slots[request_index];
@@ -428,6 +439,18 @@ void pxa_request_table_revoke_authority(
                             mailbox_capacity);
 }
 
+void pxa_request_table_delivered(pxa_request_table_t *table,
+    pxa_request_owner_t *owner, uint32_t owner_index,
+    uint32_t request_index, uint32_t event_index, pxa_event_pool_t *event_pool) {
+    if (request_index >= table->capacity) return;
+    pxa_request_slot_t *request = &table->slots[request_index];
+    if (!request->occupied || request->owner_index != owner_index ||
+        !request->completion_in_mailbox || request->completion_event != event_index)
+        return;
+    request->completion_event = PXA_REQUEST_INDEX_NONE;
+    remove_request(table, owner, owner_index, request_index, 1, event_pool);
+}
+
 void pxa_request_table_clear_owner(pxa_request_table_t *table,
                                    pxa_request_owner_t *owner,
                                    uint32_t owner_index,
@@ -436,7 +459,8 @@ void pxa_request_table_clear_owner(pxa_request_table_t *table,
     uint32_t bucket;
     while (index != PXA_REQUEST_INDEX_NONE) {
         uint32_t next = table->slots[index].owner_next;
-        if (table->slots[index].completion_event != PXA_REQUEST_INDEX_NONE) {
+        if (table->slots[index].completion_event != PXA_REQUEST_INDEX_NONE &&
+            !table->slots[index].completion_in_mailbox) {
             pxa_event_pool_release(event_pool,
                                    table->slots[index].completion_event);
         }
@@ -455,12 +479,12 @@ void pxa_request_table_clear_owner(pxa_request_table_t *table,
 
 pxa_status_t pxa_request_begin(pxa_runtime_t *runtime,
                                pxa_component_t component_ref,
-                               uint32_t request_id, uint16_t service,
+                               pxa_request_token_t request_token, uint16_t service,
                                uint16_t opcode, pxa_authority_t authority) {
     uint32_t component_index;
     pxa_component_slot_t *component = pxa_runtime_find_component(
         runtime, component_ref, &component_index);
-    if (request_id == 0 || service == 0 || opcode == 0) {
+    if (request_token == 0 || service == 0 || opcode == 0) {
         return PXA_STATUS_INVALID_ARGUMENT;
     }
     if (component == NULL) return PXA_STATUS_NOT_FOUND;
@@ -474,45 +498,45 @@ pxa_status_t pxa_request_begin(pxa_runtime_t *runtime,
     }
     return pxa_request_table_begin(
         &runtime->requests, &component->requests, component_index,
-        runtime->limits.max_requests_per_component, request_id, service,
+        runtime->limits.max_requests_per_component, request_token, service,
         opcode, authority);
 }
 
 pxa_status_t pxa_request_begin_reserved(
     pxa_runtime_t *runtime, pxa_component_t component_ref,
-    uint32_t request_id, uint16_t service, uint16_t opcode,
+    pxa_request_token_t request_token, uint16_t service, uint16_t opcode,
     pxa_authority_t authority, size_t payload_capacity) {
     uint32_t component_index;
     pxa_component_slot_t *component;
     pxa_status_t status = pxa_request_begin(
-        runtime, component_ref, request_id, service, opcode, authority);
+        runtime, component_ref, request_token, service, opcode, authority);
     if (status != PXA_STATUS_OK) return status;
     component = pxa_runtime_find_component(runtime, component_ref,
                                             &component_index);
     if (component == NULL) return PXA_STATUS_NOT_FOUND;
     return pxa_request_table_reserve_completion(
         &runtime->requests, &component->requests, component_index,
-        &runtime->event_pool, request_id, payload_capacity);
+        &runtime->event_pool, request_token, payload_capacity);
 }
 
 pxa_status_t pxa_request_commit(pxa_runtime_t *runtime,
                                 pxa_component_t component_ref,
-                                uint32_t request_id) {
+                                pxa_request_token_t request_token) {
     uint32_t component_index;
     pxa_component_slot_t *component = pxa_runtime_find_component(
         runtime, component_ref, &component_index);
     if (component == NULL) return PXA_STATUS_NOT_FOUND;
     return pxa_request_table_commit(&runtime->requests, component_index,
-                                    request_id);
+                                    request_token);
 }
 
 pxa_status_t pxa_request_complete(pxa_runtime_t *runtime,
                                   pxa_component_t component_ref,
-                                  uint32_t request_id, pxa_status_t result,
+                                  pxa_request_token_t request_token, pxa_status_t result,
                                   const void *payload, size_t payload_size) {
     uint32_t component_index;
     pxa_component_slot_t *component;
-    if (request_id == 0 || !pxa_status_is_known(result) ||
+    if (request_token == 0 || !pxa_status_is_known(result) ||
         (payload == NULL && payload_size != 0) ||
         (result != PXA_STATUS_OK && payload_size != 0)) {
         return PXA_STATUS_INVALID_ARGUMENT;
@@ -528,16 +552,16 @@ pxa_status_t pxa_request_complete(pxa_runtime_t *runtime,
     return pxa_request_table_complete(
         &runtime->requests, &component->requests, component_index,
         &runtime->event_pool, &component->mailbox,
-        runtime->limits.mailbox_capacity, request_id, result, payload,
+        runtime->limits.mailbox_capacity, request_token, result, payload,
         payload_size);
 }
 
 pxa_status_t pxa_request_cancel(pxa_runtime_t *runtime,
                                 pxa_component_t component_ref,
-                                uint32_t request_id) {
+                                pxa_request_token_t request_token) {
     uint32_t component_index;
     pxa_component_slot_t *component;
-    if (request_id == 0) return PXA_STATUS_INVALID_ARGUMENT;
+    if (request_token == 0) return PXA_STATUS_INVALID_ARGUMENT;
     component = pxa_runtime_find_component(runtime, component_ref,
                                            &component_index);
     if (component == NULL) return PXA_STATUS_NOT_FOUND;
@@ -549,31 +573,31 @@ pxa_status_t pxa_request_cancel(pxa_runtime_t *runtime,
     return pxa_request_table_cancel(
         &runtime->requests, &component->requests, component_index,
         &runtime->event_pool, &component->mailbox,
-        runtime->limits.mailbox_capacity, request_id);
+        runtime->limits.mailbox_capacity, request_token);
 }
 
 int pxa_request_is_active(const pxa_runtime_t *runtime,
                           pxa_component_t component_ref,
-                          uint32_t request_id) {
+                          pxa_request_token_t request_token) {
     uint32_t component_index;
-    if (!pxa_runtime_is_valid(runtime) || request_id == 0 ||
+    if (!pxa_runtime_is_valid(runtime) || request_token == 0 ||
         pxa_runtime_find_component_const(runtime, component_ref,
                                          &component_index) == NULL) {
         return 0;
     }
     return pxa_request_table_is_active(&runtime->requests, component_index,
-                                       request_id);
+                                       request_token);
 }
 
 uint64_t pxa_request_identity(const pxa_runtime_t *runtime,
                               pxa_component_t component_ref,
-                              uint32_t request_id) {
+                              pxa_request_token_t request_token) {
     uint32_t component_index, index;
-    if (!pxa_runtime_is_valid(runtime) || request_id == 0 ||
+    if (!pxa_runtime_is_valid(runtime) || request_token == 0 ||
         pxa_runtime_find_component_const(runtime, component_ref,
                                          &component_index) == NULL ||
         !pxa_request_table_is_active(&runtime->requests, component_index,
-                                      request_id)) return 0;
-    index = find_request_index(&runtime->requests, component_index, request_id);
+                                      request_token)) return 0;
+    index = find_request_index(&runtime->requests, component_index, request_token);
     return runtime->requests.slots[index].identity;
 }

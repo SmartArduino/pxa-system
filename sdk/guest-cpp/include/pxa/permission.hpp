@@ -95,7 +95,7 @@ private:
     template<class Packet>
     static Task<bool> check_impl(PermissionService self, Packet packet) {
         auto event = co_await Response(self.transport_, self.requests_, 11, 1,
-            Response::PrebuiltPacket{packet.packet()});
+            packet.packet());
         if (!event) co_return std::unexpected(event.error());
         auto body = wire::result_body(event->payload);
         if (!body) co_return std::unexpected(body.error());
@@ -107,7 +107,7 @@ private:
     template<class Packet>
     static Task<Permission> acquire_impl(PermissionService self, Packet packet) {
         auto event = co_await Response(self.transport_, self.requests_, 11, 2,
-            Response::PrebuiltPacket{packet.packet()}, true);
+            packet.packet(), true);
         if (!event) co_return std::unexpected(event.error());
         auto body = wire::result_body(event->payload);
         if (!body) co_return std::unexpected(body.error());
@@ -128,11 +128,11 @@ private:
         if (name.empty() || name.size() > 96 || scope.size() > 1024 ||
             name.find('\0') != std::string_view::npos)
             return std::unexpected(Error::invalid_argument);
-        const auto size = wire::header_bytes + 4 + name.size() +
+        const auto size = 4 + name.size() +
                           (scope.empty() ? 0 : 4 + scope.size());
         if (packet.size() < size)
             return std::unexpected(Error::resource_limit);
-        auto* out = packet.data() + wire::header_bytes;
+        auto* out = packet.data();
         auto* scope_record = out + 4 + name.size();
         if constexpr (MayAlias) {
             std::array<char, 96> owned_name;

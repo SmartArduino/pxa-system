@@ -1,3 +1,4 @@
+#include "../../testing/pxa_control_capture.h"
 #include <assert.h>
 #include <string.h>
 
@@ -10,8 +11,10 @@ static unsigned writes;
 static unsigned stream_writes;
 static uint8_t copied[128];
 static size_t copied_size;
+static uint32_t host_generation;
+static int reject_write, reject_stream, reject_present;
 
-int32_t pxa_submit(const uint8_t *packet, uint32_t size) {
+int32_t pxa_test_control(const uint8_t *packet, uint32_t size) {
     pxa_event_t message;
     assert(pxa_parse_event(packet, size, &message));
     assert(message.service == PXA_UI_SERVICE && message.token == 0);
@@ -20,9 +23,13 @@ int32_t pxa_submit(const uint8_t *packet, uint32_t size) {
         ++stream_opens;
     } else if (message.opcode == PXA_UI_CANVAS_BEGIN) {
         assert(message.payload_size == 16);
+        uint32_t frame = pxa_read_u32(message.payload + 8);
+        assert(frame > host_generation);
+        host_generation = frame;
         ++begins;
     } else if (message.opcode == PXA_UI_CANVAS_WRITE) {
         assert(message.payload_size > 12);
+        if (reject_write) { reject_write=0; return PXA_STATUS_WOULD_BLOCK; }
         assert(copied_size + message.payload_size - 12 <= sizeof(copied));
         memcpy(copied + copied_size, message.payload + 12,
                message.payload_size - 12);
@@ -30,6 +37,7 @@ int32_t pxa_submit(const uint8_t *packet, uint32_t size) {
         ++writes;
     } else if (message.opcode == PXA_UI_CANVAS_PRESENT) {
         assert(message.payload_size == 13);
+        if (reject_present) { reject_present=0; return PXA_STATUS_BUSY; }
         ++presents;
     } else {
         assert(0);
@@ -42,6 +50,7 @@ int32_t pxa_io(uint64_t handle, uint32_t operation, uint8_t *data,
     assert(handle == UINT64_C(0x100000001) && operation == 2);
     assert(data != NULL && size != 0);
     ++stream_writes;
+    if (reject_stream) { reject_stream=0; return PXA_STATUS_WOULD_BLOCK; }
     return (int32_t)size;
 }
 
@@ -99,6 +108,28 @@ int main(void) {
     assert(writes > 1 && begins == 2 && presents == 2);
     assert(copied_size == frame.length &&
            memcmp(copied, frame.data, frame.length) == 0);
+
+    reject_write=1;
+    assert(!pxa_canvas_present(2,&frame,&generation,&initialized,packet,
+                               sizeof(packet),packet,sizeof(packet)));
+    assert(generation==3 && initialized);
+    assert(pxa_canvas_present(2,&frame,&generation,&initialized,packet,
+                              sizeof(packet),packet,sizeof(packet)));
+    assert(generation==4);
+    reject_stream=1;
+    assert(!pxa_canvas_present_stream(handle,2,&frame,&generation,&initialized,
+                                      NULL,0,packet,sizeof(packet)));
+    assert(generation==5);
+    assert(pxa_canvas_present_stream(handle,2,&frame,&generation,&initialized,
+                                     NULL,0,packet,sizeof(packet)));
+    assert(generation==6);
+    reject_present=1;
+    assert(!pxa_canvas_present(2,&frame,&generation,&initialized,packet,
+                               sizeof(packet),packet,sizeof(packet)));
+    assert(generation==7);
+    assert(pxa_canvas_present(2,&frame,&generation,&initialized,packet,
+                              sizeof(packet),packet,sizeof(packet)));
+    assert(generation==8 && presents==5);
 
     pxa_store_u32(pointer_bytes, 1);
     pxa_store_u32(pointer_bytes + 4, 2);

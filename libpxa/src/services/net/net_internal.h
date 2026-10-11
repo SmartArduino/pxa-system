@@ -22,7 +22,7 @@ typedef struct {
 } pxa_net_parsed_request_t;
 
 pxa_status_t pxa_net_request_parse(
-    const pxa_net_request_limits_t *limits, uint16_t core_major,
+    const pxa_net_request_limits_t *limits, uint16_t wire_profile,
     uint16_t opcode,
     pxa_bytes_t payload, pxa_net_parsed_request_t *output);
 
@@ -31,7 +31,7 @@ pxa_status_t pxa_net_response_validate(
     uint16_t opcode, uint32_t max_response_bytes,
     const pxa_net_response_t *response);
 pxa_status_t pxa_net_response_encode(
-    uint8_t *output, size_t capacity, uint16_t core_major,
+    uint8_t *output, size_t capacity, uint16_t wire_profile,
     uint16_t opcode, const pxa_net_response_t *response,
     pxa_handle64_t handle,
     size_t *result_size);

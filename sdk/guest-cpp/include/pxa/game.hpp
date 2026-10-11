@@ -10,6 +10,15 @@
 
 namespace pxa::game {
 
+// Wire-format bounds, not per-application allocations. Hosts may advertise
+// a smaller context budget in RenderInfo. Kept in sync with the draft by CI.
+namespace limits {
+inline constexpr std::size_t draw_list_bytes = 49152;
+inline constexpr std::size_t draw_commands = 1024;
+inline constexpr std::size_t texture_slots = 48;
+inline constexpr std::size_t texture_dimension = 256;
+} // namespace limits
+
 struct Color565 {
     std::uint16_t value;
     static constexpr Color565 black() noexcept { return {0}; }
@@ -142,7 +151,7 @@ struct Telemetry {
 
 template<std::size_t Capacity>
 class DrawBuffer {
-    static_assert(Capacity >= 32 && Capacity <= 49152);
+    static_assert(Capacity >= 32 && Capacity <= limits::draw_list_bytes);
 public:
     static constexpr std::size_t capacity() noexcept { return Capacity; }
     std::span<std::byte> bytes() noexcept { return bytes_; }
@@ -154,6 +163,7 @@ class Renderer;
 
 class Frame {
 public:
+    Frame(Renderer& renderer, std::span<std::byte> bytes) noexcept;
     Frame(Renderer& renderer, std::span<std::byte> bytes,
           std::uint64_t id) noexcept;
     Frame(const Frame&) = delete;
@@ -279,7 +289,7 @@ private:
     std::span<std::byte> append(std::uint8_t type,
                                 std::uint16_t size) noexcept {
         if (error_) return {};
-        if (commands_ >= 1024 || size > bytes_.size() - used_) {
+        if (commands_ >= limits::draw_commands || size > bytes_.size() - used_) {
             error_ = Error::limit_exceeded;
             return {};
         }
@@ -315,7 +325,11 @@ public:
 
     template<std::size_t Capacity>
     Frame frame(DrawBuffer<Capacity>& buffer) & noexcept {
-        return Frame(*this, buffer.bytes(), next_frame_);
+        return frame(buffer.bytes());
+    }
+
+    Frame frame(std::span<std::byte> bytes) & noexcept {
+        return Frame(*this, bytes, next_frame_);
     }
 
     std::uint32_t capabilities() const noexcept { return info_.capabilities; }
@@ -332,7 +346,7 @@ public:
     Result<void> bind_asset(const Asset& asset, AtlasBinding binding = {}) noexcept {
         const auto kind = asset.descriptor().kind;
         if (!asset.handle() || (kind != AssetKind::texture && kind != AssetKind::palette) ||
-            (kind == AssetKind::palette && binding.slot != 0) || binding.slot >= 48)
+            (kind == AssetKind::palette && binding.slot != 0) || binding.slot >= limits::texture_slots)
             return std::unexpected(Error::invalid_argument);
         if (kind == AssetKind::texture &&
             ((info_.max_textures && binding.slot >= info_.max_textures) ||
@@ -351,7 +365,7 @@ public:
 
     Result<void> bind_assets(std::span<const std::uint64_t> textures,
                              std::uint64_t palette = 0) noexcept {
-        if (textures.size() > 48 || (!palette && textures.empty()))
+        if (textures.size() > limits::texture_slots || (!palette && textures.empty()))
             return std::unexpected(Error::invalid_argument);
         if ((info_.max_textures && textures.size() > info_.max_textures) ||
             (textures.size() > 16 &&
@@ -415,6 +429,9 @@ private:
     RenderInfo info_;
     std::uint64_t next_frame_ = 1;
 };
+
+inline Frame::Frame(Renderer& renderer, std::span<std::byte> bytes) noexcept
+    : Frame(renderer, bytes, renderer.next_frame_) {}
 
 inline Frame::Frame(Renderer& renderer, std::span<std::byte> bytes,
                      std::uint64_t id) noexcept

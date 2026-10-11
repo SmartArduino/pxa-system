@@ -1,10 +1,11 @@
+#include "../../../../testing/pxa_control_capture.h"
 #include <pxa/fs.hpp>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <string>
 static std::uint64_t token;static unsigned imports,digest=2166136261u;
-extern "C" int pxa_submit(const std::uint8_t* data,std::uint32_t size){
+extern "C" int pxa_test_control(const std::uint8_t* data,std::uint32_t size){
  ++imports;const auto*p=reinterpret_cast<const std::byte*>(data);
  if(pxa::wire::get16(p)==5)token=pxa::wire::get64(p+4);
  for(unsigned i=0;i<size;++i)digest=(digest^data[i])*16777619u;

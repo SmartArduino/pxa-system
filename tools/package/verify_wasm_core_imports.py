@@ -5,6 +5,8 @@ import argparse
 import json
 from pathlib import Path
 
+from protocol_metadata import read_spec
+
 from verify_wasm_memory import WASM_HEADER, WasmMemoryError, read_u32_leb
 
 
@@ -29,7 +31,7 @@ def skip_limits(data: bytes, offset: int) -> int:
     return offset
 
 
-def import_entries(data: bytes) -> list[tuple[str, str]]:
+def import_details(data: bytes) -> list[tuple[str, str, int]]:
     if not data.startswith(WASM_HEADER):
         raise WasmMemoryError("invalid WebAssembly header")
     offset = len(WASM_HEADER)
@@ -66,25 +68,37 @@ def import_entries(data: bytes) -> list[tuple[str, str]]:
                     raise WasmMemoryError("unknown WebAssembly import kind")
                 if cursor > end:
                     raise WasmMemoryError("WebAssembly import extends past section")
-                imports.append((module, field))
+                imports.append((module, field, kind))
             if cursor != end:
                 raise WasmMemoryError("trailing WebAssembly import data")
         offset = end
     return imports
 
 
+def import_entries(data: bytes) -> list[tuple[str, str]]:
+    return [(module, field) for module, field, _ in import_details(data)]
+
+
 def import_modules(data: bytes) -> list[str]:
     return [module for module, _ in import_entries(data)]
 
 
-def verify_core_imports(data: bytes, core_major: int) -> None:
-    if core_major != 1:
-        raise WasmMemoryError("unsupported PXA Core major")
+def verify_core_imports(data: bytes, core_major: int, core_minor: int = 0) -> None:
+    core = read_spec("core")
+    if core_major != core["abi"]["major"]:
+        raise WasmMemoryError("unsupported PXA Core major; rebuild for Core 2")
     expected = f"pxa.core.v{core_major}"
-    for module in import_modules(data):
+    imports = {entry["name"]: entry for entry in core["imports"]}
+    for module, field, kind in import_details(data):
         if module.startswith("pxa.core.") and module != expected:
             raise WasmMemoryError(
                 f"Core {core_major} package imports {module}; expected {expected}")
+        if module == expected:
+            if kind != 0 or field not in imports:
+                raise WasmMemoryError(f"unsupported Core function import {field}")
+            since = imports[field].get("since", [core_major, 0])
+            if core_minor < since[1]:
+                raise WasmMemoryError(f"{field} requires min_sdk >= {since}")
 
 
 def wasi_feature_for_import(name: str) -> set[str]:
@@ -137,12 +151,13 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("wasm", type=Path)
     parser.add_argument("--core-major", type=int, required=True)
+    parser.add_argument("--core-minor", type=int, default=0)
     parser.add_argument("--manifest-source", type=Path)
     parser.add_argument("--component-id")
     args = parser.parse_args()
     try:
         data = args.wasm.read_bytes()
-        verify_core_imports(data, args.core_major)
+        verify_core_imports(data, args.core_major, args.core_minor)
         if args.manifest_source is not None:
             if not args.component_id:
                 raise WasmMemoryError("--component-id is required with --manifest-source")

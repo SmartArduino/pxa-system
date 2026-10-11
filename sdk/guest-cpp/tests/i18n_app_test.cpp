@@ -1,3 +1,4 @@
+#include "../../testing/pxa_control_capture.h"
 #include <pxa/core.hpp>
 #include <array>
 #include <cassert>
@@ -20,7 +21,7 @@ void* operator new(std::size_t size) {
 }
 void operator delete(void* pointer) noexcept { std::free(pointer); }
 void operator delete(void* pointer, std::size_t) noexcept { std::free(pointer); }
-extern "C" std::int32_t pxa_submit(const std::uint8_t* data, std::uint32_t length) {
+extern "C" std::int32_t pxa_test_control(const std::uint8_t* data, std::uint32_t length) {
     if (length >= 40 && data[0]==3 && data[1]==0 && data[2]==1 && data[3]==0)
         last_generation=pxa::wire::get32(reinterpret_cast<const std::byte*>(data)+24);
     std::string_view packet(reinterpret_cast<const char*>(data),length);

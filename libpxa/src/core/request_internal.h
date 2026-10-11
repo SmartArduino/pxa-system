@@ -9,7 +9,7 @@
 typedef struct {
     pxa_authority_t authority;
     uint64_t identity;
-    uint32_t request_id;
+    pxa_request_token_t request_token;
     uint32_t next_free;
     uint32_t owner_next;
     uint32_t hash_next;
@@ -19,11 +19,12 @@ typedef struct {
     uint16_t owner_index;
     uint16_t service;
     uint16_t opcode;
-    uint8_t occupied;
-    uint8_t committed;
-    uint8_t cancelling;
-    uint8_t completion_queued;
-    uint8_t completion_reserved;
+    uint8_t occupied : 1;
+    uint8_t committed : 1;
+    uint8_t cancelling : 1;
+    uint8_t completion_queued : 1;
+    uint8_t completion_reserved : 1;
+    uint8_t completion_in_mailbox : 1;
 } pxa_request_slot_t;
 
 typedef struct {
@@ -55,28 +56,28 @@ uint16_t pxa_request_owner_count(const pxa_request_owner_t *owner);
 
 pxa_status_t pxa_request_table_begin(
     pxa_request_table_t *table, pxa_request_owner_t *owner,
-    uint32_t owner_index, uint16_t per_owner_capacity, uint32_t request_id,
+    uint32_t owner_index, uint16_t per_owner_capacity, pxa_request_token_t request_token,
     uint16_t service, uint16_t opcode, pxa_authority_t authority);
 pxa_status_t pxa_request_table_reserve_completion(
     pxa_request_table_t *table, pxa_request_owner_t *owner,
     uint32_t owner_index, pxa_event_pool_t *event_pool,
-    uint32_t request_id, size_t payload_capacity);
+    pxa_request_token_t request_token, size_t payload_capacity);
 pxa_status_t pxa_request_table_commit(pxa_request_table_t *table,
                                       uint32_t owner_index,
-                                      uint32_t request_id);
+                                      pxa_request_token_t request_token);
 pxa_status_t pxa_request_table_complete(
     pxa_request_table_t *table, pxa_request_owner_t *owner,
     uint32_t owner_index, pxa_event_pool_t *event_pool,
     pxa_event_mailbox_t *mailbox, uint16_t mailbox_capacity,
-    uint32_t request_id, pxa_status_t result, const void *payload,
+    pxa_request_token_t request_token, pxa_status_t result, const void *payload,
     size_t payload_size);
 pxa_status_t pxa_request_table_cancel(
     pxa_request_table_t *table, pxa_request_owner_t *owner,
     uint32_t owner_index, pxa_event_pool_t *event_pool,
     pxa_event_mailbox_t *mailbox, uint16_t mailbox_capacity,
-    uint32_t request_id);
+    pxa_request_token_t request_token);
 int pxa_request_table_is_active(const pxa_request_table_t *table,
-                                uint32_t owner_index, uint32_t request_id);
+                                uint32_t owner_index, pxa_request_token_t request_token);
 void pxa_request_table_revoke_authority(
     pxa_request_table_t *table, pxa_request_owner_t *owner,
     uint32_t owner_index, pxa_event_pool_t *event_pool,
@@ -88,6 +89,11 @@ void pxa_request_table_flush(pxa_request_table_t *table,
                              pxa_event_pool_t *event_pool,
                              pxa_event_mailbox_t *mailbox,
                              uint16_t mailbox_capacity);
+/* Completion reservation and token remain live until the mailbox event is
+ * taken. This replaces adapter-local duplicate-token tables. */
+void pxa_request_table_delivered(pxa_request_table_t *table,
+    pxa_request_owner_t *owner, uint32_t owner_index,
+    uint32_t request_index, uint32_t event_index, pxa_event_pool_t *event_pool);
 void pxa_request_table_clear_owner(pxa_request_table_t *table,
                                    pxa_request_owner_t *owner,
                                    uint32_t owner_index,

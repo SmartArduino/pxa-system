@@ -140,12 +140,15 @@ pxa_status_t pxa_runtime_usage_snapshot(const pxa_runtime_t *runtime,
 
 pxa_status_t pxa_component_create(pxa_runtime_t *runtime, uint64_t instance_id,
                                   pxa_component_t *output);
-/* Set by the package engine after validating the signed Core requirement and
- * module imports, before invoking Guest code. Defaults to major 0. */
-pxa_status_t pxa_component_set_core_major(pxa_runtime_t *runtime,
+/* Service payload layouts are independent of the Core import generation.
+ * NATIVE32 serves existing in-process users; loadable Core 2 Guests always
+ * use HANDLE64. This does not enable legacy Guest imports or packages. */
+#define PXA_WIRE_PROFILE_NATIVE32 UINT16_C(0)
+#define PXA_WIRE_PROFILE_HANDLE64 UINT16_C(1)
+pxa_status_t pxa_component_set_wire_profile(pxa_runtime_t *runtime,
                                           pxa_component_t component,
-                                          uint16_t core_major);
-pxa_status_t pxa_component_core_major(const pxa_runtime_t *runtime,
+                                          uint16_t wire_profile);
+pxa_status_t pxa_component_wire_profile(const pxa_runtime_t *runtime,
                                       pxa_component_t component,
                                       uint16_t *output);
 pxa_status_t pxa_component_remove(pxa_runtime_t *runtime,
@@ -194,34 +197,34 @@ int32_t pxa_runtime_io64(pxa_runtime_t *runtime, pxa_component_t component,
                          uint8_t *data, size_t size);
 
 pxa_status_t pxa_request_begin(pxa_runtime_t *runtime,
-                               pxa_component_t component, uint32_t request_id,
+                               pxa_component_t component, pxa_request_token_t request_token,
                                uint16_t service, uint16_t opcode,
                                pxa_authority_t authority);
 /* Accepts a request only if its completion storage can be reserved. A failed
  * reservation releases the request slot and ID before returning. Synchronous
  * services that can mutate state must reserve before calling their backend. */
 pxa_status_t pxa_request_begin_reserved(
-    pxa_runtime_t *runtime, pxa_component_t component, uint32_t request_id,
+    pxa_runtime_t *runtime, pxa_component_t component, pxa_request_token_t request_token,
     uint16_t service, uint16_t opcode, pxa_authority_t authority,
     size_t payload_capacity);
 pxa_status_t pxa_request_commit(pxa_runtime_t *runtime,
                                 pxa_component_t component,
-                                uint32_t request_id);
+                                pxa_request_token_t request_token);
 pxa_status_t pxa_request_complete(pxa_runtime_t *runtime,
                                   pxa_component_t component,
-                                  uint32_t request_id, pxa_status_t result,
+                                  pxa_request_token_t request_token, pxa_status_t result,
                                   const void *payload, size_t payload_size);
 pxa_status_t pxa_request_cancel(pxa_runtime_t *runtime,
                                 pxa_component_t component,
-                                uint32_t request_id);
+                                pxa_request_token_t request_token);
 int pxa_request_is_active(const pxa_runtime_t *runtime,
-                          pxa_component_t component, uint32_t request_id);
+                          pxa_component_t component, pxa_request_token_t request_token);
 /* Host-only identity of the currently active request, or zero. Unlike the
- * reusable request_id, this identity never repeats within a runtime lifetime.
+ * reusable request_token, this identity never repeats within a runtime lifetime.
  * Async services save it after begin and compare before publishing a result.
  * Runtime calls remain serialized by the Host; this is not a thread API. */
 uint64_t pxa_request_identity(const pxa_runtime_t *runtime,
-                              pxa_component_t component, uint32_t request_id);
+                              pxa_component_t component, pxa_request_token_t request_token);
 
 pxa_status_t pxa_handle_open(pxa_runtime_t *runtime,
                              pxa_component_t component,
@@ -268,11 +271,11 @@ pxa_status_t pxa_event_post(pxa_runtime_t *runtime,
  * staging buffer. The payload is copied into the Runtime event pool. */
 pxa_status_t pxa_event_post_message(
     pxa_runtime_t *runtime, pxa_component_t component, uint16_t service,
-    uint16_t opcode, uint32_t request_id, pxa_bytes_t payload,
+    uint16_t opcode, pxa_request_token_t request_token, pxa_bytes_t payload,
     uint8_t reliable, uint64_t coalesce_key);
 pxa_status_t pxa_event_post_messagev(
     pxa_runtime_t *runtime, pxa_component_t component, uint16_t service,
-    uint16_t opcode, uint32_t request_id, const pxa_bytes_t *payload_parts,
+    uint16_t opcode, pxa_request_token_t request_token, const pxa_bytes_t *payload_parts,
     size_t payload_part_count, uint8_t reliable, uint64_t coalesce_key);
 pxa_status_t pxa_event_peek(const pxa_runtime_t *runtime,
                             pxa_component_t component,

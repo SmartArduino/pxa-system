@@ -64,10 +64,74 @@ static void present_snapshot(void *context, uint64_t id, uint16_t color) {
     }
 }
 
+static void borrowed_scenario(product_host_t *host,
+                               const pxa_game_render_backend_t *backend) {
+    const pxa_game_render_desc_t desc = {
+        4, 4, 2, PXA_GAME_RENDER_FLAG_BORROW_COMMANDS,
+        PXA_GAME_RENDER_SCRATCH_DEPTH16, 4096};
+    uint64_t surface;
+    uint32_t capabilities;
+    uint8_t draw[PXA_RASTER_DRAW_HEADER_BYTES + PXA_RASTER_CLEAR_BYTES] = {0};
+    uint8_t *record = draw + PXA_RASTER_DRAW_HEADER_BYTES;
+    assert(backend->create(host, &desc, &surface, &capabilities) == 0);
+    assert(host->raster_depth_buffer != NULL);
+    assert(host->raster_draw_list == NULL);
+    pxa_write_u32(draw, PXA_RASTER_DRAW_MAGIC);
+    pxa_write_u16(draw + 4, PXA_RASTER_ABI_MAJOR);
+    pxa_write_u16(draw + 6, PXA_RASTER_ABI_MINOR);
+    pxa_write_u32(draw + 8, sizeof(draw));
+    pxa_write_u32(draw + 16, 1);
+    pxa_write_u64(draw + 20, 1);
+    record[0] = PXA_RASTER_RECORD_CLEAR_RGB565;
+    pxa_write_u16(record + 2, PXA_RASTER_CLEAR_BYTES);
+    pxa_write_u16(record + 4, 0x1234);
+
+    host->focused = 0;
+    assert(backend->submit(host, surface, draw, sizeof(draw)) == PXA_STATUS_WOULD_BLOCK);
+    host->focused = 1;
+    host->surface_layer.visible = 0;
+    assert(backend->submit(host, surface, draw, sizeof(draw)) == PXA_STATUS_WOULD_BLOCK);
+    host->surface_layer.visible = 1;
+    assert(host->raster_last_frame_id == 0);
+    assert(backend->submit(host, surface, draw, sizeof(draw)) == 0);
+    assert(host->raster_telemetry.rendered_frames == 1);
+    assert(host->raster_telemetry.visible_frames == 0);
+    pxa_write_u64(draw + 20, 2);
+    pxa_write_u16(record + 4, 0x5678);
+    assert(backend->submit(host, surface, draw, sizeof(draw)) == PXA_STATUS_WOULD_BLOCK);
+    assert(host->raster_last_frame_id == 1);
+    host->focused = 0;
+    assert(!surface_process_pending(host));
+    host->focused = 1;
+    present_snapshot(host, 1, 0x1234); // mutated Guest bytes must not change the frame
+    assert(!surface_process_pending(host)); // present exactly once
+    record[0] = 255;
+    assert(backend->submit(host, surface, draw, sizeof(draw)) == PXA_STATUS_UNSUPPORTED);
+    assert(host->raster_last_frame_id == 1);
+    record[0] = PXA_RASTER_RECORD_CLEAR_RGB565;
+    assert(backend->submit(host, surface, draw, sizeof(draw)) == 0); // same ID retry
+    uint8_t next_draw[sizeof(draw)];
+    memcpy(next_draw, draw, sizeof(draw));
+    memset(draw, 0, sizeof(draw));
+    present_snapshot(host, 2, 0x5678);
+    assert(host->raster_telemetry.rendered_frames == 2 &&
+           host->raster_telemetry.visible_frames == 2 &&
+           host->raster_telemetry.submitted_frames == 2 &&
+           host->raster_telemetry.dropped_frames == 0);
+    backend->close(host, surface);
+    assert(host->raster_buffers[0] == NULL && host->raster_depth_buffer == NULL);
+    // Closing a completed, not yet presented frame retains no Guest storage.
+    assert(backend->create(host, &desc, &surface, &capabilities) == 0);
+    pxa_write_u64(next_draw + 20, 1);
+    assert(backend->submit(host, surface, next_draw, sizeof(next_draw)) == 0);
+    backend->close(host, surface);
+}
+
 int main(void) {
     product_host_t *host = calloc(1, sizeof(*host));
     pxa_game_render_backend_t backend = {0};
     assert(host != NULL);
+    host->focused = 1;
     assert(resource_memory_init(host, 128 * 1024, 2 * 1024 * 1024, 16 * 1024, 512 * 1024) == 0);
     lv_init();
     host->display = lv_display_create(4, 4);
@@ -89,10 +153,10 @@ int main(void) {
     backend.submit = surface_raster_submit;
     backend.bind_assets = surface_raster_bind_assets;
     backend.close = surface_close;
+    borrowed_scenario(host, &backend);
     raster_snapshot_scenario(&backend, present_snapshot, host);
     assert(host->raster_bindings.palette == NULL);
-    assert(host->raster_frame_bindings[0].palette == NULL);
-    assert(host->raster_frame_bindings[1].palette == NULL);
+    assert(host->raster_frame_bindings.palette == NULL);
     /* Guest-mapped Surface keeps the existing UI-on-top composition policy. */
     pxa_surface_desc_t mapped = {0};
     mapped.width = mapped.height = 4;
@@ -112,6 +176,6 @@ int main(void) {
     lv_display_delete(host->display);
     assert(resource_memory_end(host) == 0);
     free(host);
-    puts("desktop raster: immutable frame snapshots, replacement and close passed");
+    puts("desktop raster: queued snapshots and synchronous borrowed lifetime/backpressure passed");
     return 0;
 }

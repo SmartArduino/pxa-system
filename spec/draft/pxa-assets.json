@@ -15,7 +15,7 @@
       "name": "query",
       "id": 1,
       "direction": "bidirectional-result",
-      "request_id": "nonzero",
+      "request_token": "nonzero",
       "payload": "path-bytes:u16|kind:0|reserved:u8|path:bytes",
       "result": "info:20-bytes"
     },
@@ -23,7 +23,7 @@
       "name": "load",
       "id": 2,
       "direction": "bidirectional-result",
-      "request_id": "nonzero",
+      "request_token": "nonzero",
       "payload": "path-bytes:u16|kind:u8|reserved:u8|path:bytes",
       "result": "handle:u64|info:20-bytes"
     },
@@ -31,7 +31,7 @@
       "name": "prefetch",
       "id": 3,
       "direction": "bidirectional-result",
-      "request_id": "nonzero",
+      "request_token": "nonzero",
       "payload": "path-bytes:u16|kind:u8|reserved:u8|path:bytes",
       "result": "info:20-bytes"
     },
@@ -39,7 +39,7 @@
       "name": "status",
       "id": 4,
       "direction": "bidirectional-result",
-      "request_id": "nonzero",
+      "request_token": "nonzero",
       "payload": "path-bytes:u16|kind:0|reserved:u8|path:bytes",
       "result": "state:u8|reserved:3-bytes|load-status:i32"
     },
@@ -47,7 +47,7 @@
       "name": "read",
       "id": 5,
       "direction": "bidirectional-result",
-      "request_id": "nonzero",
+      "request_token": "nonzero",
       "payload": "path-bytes:u16|reserved:2-bytes|offset:u32|max-bytes:u32|path:bytes",
       "result": "offset:u32|total-bytes:u32|data:bytes"
     }

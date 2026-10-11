@@ -93,7 +93,7 @@ static pxa_status_t log_control(void *context, pxa_runtime_t *runtime,
     pxa_log_level_t level;
     (void)runtime;
     if (!service_valid(service) || message == NULL ||
-        message->request_id != 0) {
+        message->request_token != 0) {
         return PXA_STATUS_INVALID_ARGUMENT;
     }
     if (message->opcode != PXA_LOG_WRITE) return PXA_STATUS_UNSUPPORTED;

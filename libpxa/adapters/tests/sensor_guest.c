@@ -20,7 +20,7 @@ int32_t pxa_app_start(const uint8_t *config, uint32_t config_length) {
                               PERMISSION_TOKEN, "sensor.read", 11,
                               (const uint8_t *)"ambient.temperature", 18,
                               &size)) return PXA_STATUS_INTERNAL;
-    return pxa_submit(packet, size);
+    return pxa_control_packet(packet, size);
 }
 
 int32_t pxa_app_on_event(const uint8_t *event, uint32_t length) {

@@ -1,3 +1,4 @@
+#include "../../testing/pxa_control_capture.h"
 #include <pxa/app.hpp>
 
 #include <array>
@@ -10,8 +11,11 @@ static int closes;
 static pxa::Error result_error = pxa::Error::bad_state;
 static bool created;
 static bool fixed_mode;
+static bool borrow_commands;
+static unsigned corrupt_offset;
+static std::byte corrupt_value;
 
-extern "C" std::int32_t pxa_submit(const std::uint8_t* data,
+extern "C" std::int32_t pxa_test_control(const std::uint8_t* data,
                                       std::uint32_t size) {
     auto* bytes = reinterpret_cast<const std::byte*>(data);
     assert(size >= pxa::wire::header_bytes);
@@ -28,7 +32,7 @@ extern "C" std::int32_t pxa_submit(const std::uint8_t* data,
         assert(pxa::wire::get16(bytes + 22) == (fixed_mode ? 120 : 0));
         assert(std::to_integer<unsigned>(bytes[20 + 4]) == 2);
         assert(std::to_integer<unsigned>(bytes[20 + 5]) ==
-               static_cast<unsigned>(fixed_mode));
+               (static_cast<unsigned>(fixed_mode) | (borrow_commands ? 2u : 0u)));
     } else {
         assert(service == 1 && opcode == 2);
         assert(pxa::wire::get64(bytes + 20) == 77);
@@ -45,6 +49,7 @@ extern "C" std::int32_t pxa_io(std::uint64_t, std::uint32_t,
 
 pxa::Task<void> create_renderer(pxa::Context& context) {
     pxa::game::RenderOptions options;
+    options.borrow_commands = borrow_commands;
     if (fixed_mode) {
         options.width = 160;
         options.height = 120;
@@ -94,8 +99,10 @@ static void deliver(std::int32_t status) {
             pxa::wire::put16(event.data() + 48, 160);
             pxa::wire::put16(event.data() + 50, 120);
             event[52] = std::byte{2};
+            event[53] = std::byte{3};
         }
     }
+    if (corrupt_offset) event[corrupt_offset] = corrupt_value;
     assert(pxa_app_on_event(
                reinterpret_cast<const std::uint8_t*>(event.data()),
                pxa::wire::header_bytes + payload_size) == 1);
@@ -120,4 +127,47 @@ int main() {
     assert(!created && result_error == pxa::Error::denied);
     pxa_app_stop(0);
     assert(closes == 2);
+
+    // A successful Host result still needs semantic validation. A malformed
+    // result carrying a valid handle must close it exactly once on every exit.
+    struct Corruption { unsigned offset; std::byte value; bool fixed; };
+    constexpr Corruption corruptions[] = {
+        {36, std::byte{31}, true}, // capacity exceeds the requested 4096
+        {37, std::byte{0}, true},  // zero capacity
+        {37, std::byte{0xff}, true}, // capacity exceeds wire maximum
+        {41, std::byte{0}, true},  // zero texture dimension
+        {41, std::byte{2}, true},  // texture dimension exceeds wire maximum
+        {42, std::byte{0}, true}, {42, std::byte{49}, true},
+        {43, std::byte{1}, true}, // reserved
+        {44, std::byte{1}, false}, // inconsistent display width
+        {48, std::byte{0}, false}, // zero render width
+        {50, std::byte{0}, false}, // zero render height
+        {52, std::byte{0}, false}, {52, std::byte{5}, false},
+        {53, std::byte{1}, false}, // negotiated scale absent from mask
+        {53, std::byte{0x83}, false}, // unknown scale bit
+        {54, std::byte{1}, false}, {55, std::byte{1}, false},
+    };
+    for (const auto& mutation : corruptions) {
+        const auto previous_closes = closes;
+        fixed_mode = mutation.fixed;
+        corrupt_offset = mutation.offset;
+        corrupt_value = mutation.value;
+        created = false;
+        assert(pxa_app_start(nullptr, 0) == 0);
+        deliver(0);
+        assert(!created && result_error == pxa::Error::protocol_error);
+        assert(closes == previous_closes + 1);
+        pxa_app_stop(0);
+        assert(closes == previous_closes + 1);
+    }
+    corrupt_offset = 0;
+    borrow_commands = true;
+    for (const bool fixed : {false, true}) {
+        fixed_mode = fixed;
+        const auto previous_closes = closes;
+        assert(pxa_app_start(nullptr, 0) == 0);
+        deliver(0);
+        assert(created && closes == previous_closes + 1);
+        pxa_app_stop(0);
+    }
 }

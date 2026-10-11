@@ -30,7 +30,7 @@ static int32_t acquire(uint64_t token, const char *name, size_t name_size,
                               token, name, name_size,
                               (const uint8_t *)scope, scope_size, &size))
         return PXA_STATUS_INTERNAL;
-    return pxa_submit(packet, size);
+    return pxa_control_packet(packet, size);
 }
 
 int32_t pxa_app_start(const uint8_t *config, uint32_t config_length) {
@@ -80,7 +80,7 @@ int32_t pxa_app_on_event(const uint8_t *event, uint32_t length) {
         request.wanted_header_count = 1;
         if (!pxa_net_build(packet, sizeof(packet), PXA_NET_HTTP_REQUEST,
                            NET_TOKEN, &request, &size) ||
-            pxa_submit(packet, size) != PXA_STATUS_OK)
+            pxa_control_packet(packet, size) != PXA_STATUS_OK)
             return PXA_EVENT_UNHANDLED;
         return PXA_EVENT_HANDLED;
     }

@@ -13,7 +13,7 @@
       "name": "open-session",
       "id": 1,
       "direction": "bidirectional-result",
-      "request_id": "nonzero",
+      "request_token": "nonzero",
       "payload": "permission-handle|media-usage",
       "result": "status|session-handle|format"
     },
@@ -21,7 +21,7 @@
       "name": "commit-graph",
       "id": 2,
       "direction": "bidirectional-result",
-      "request_id": "nonzero",
+      "request_token": "nonzero",
       "payload": "session-handle|gain|eq-band*|speaker-route",
       "result": "status"
     },
@@ -29,7 +29,7 @@
       "name": "query-state",
       "id": 3,
       "direction": "bidirectional-result",
-      "request_id": "nonzero",
+      "request_token": "nonzero",
       "payload": "session-handle",
       "result": "status|submitted-samples|accepted-samples|queued-samples|state-flags",
       "since": "0.2"
@@ -38,7 +38,7 @@
       "name": "flush",
       "id": 4,
       "direction": "bidirectional-result",
-      "request_id": "nonzero",
+      "request_token": "nonzero",
       "payload": "session-handle",
       "result": "status",
       "since": "0.2"
@@ -102,7 +102,7 @@
     {
       "name": "permission-handle",
       "id": 1,
-      "payload": "permission-handle:u32",
+      "payload": "permission-handle:u64",
       "cardinality": "open-request-one"
     },
     {
@@ -114,7 +114,7 @@
     {
       "name": "session-handle",
       "id": 3,
-      "payload": "audio-graph-handle:u32",
+      "payload": "audio-graph-handle:u64",
       "cardinality": "open-result-one"
     },
     {
@@ -169,7 +169,7 @@
     {
       "name": "session-handle",
       "id": 1,
-      "payload": "audio-graph-handle:u32",
+      "payload": "audio-graph-handle:u64",
       "cardinality": "graph-request-one"
     },
     {
@@ -215,7 +215,7 @@
   "playback_event": {
     "id": 32769,
     "since": "0.7",
-    "request_id": "zero",
+    "request_token": "zero",
     "payload": "session-handle:u64|instance:u64|state:u8|reserved:3*u8|status:i32",
     "states": {
       "ready": 1,

@@ -1,3 +1,4 @@
+#include "../../testing/pxa_control_capture.h"
 #include <pxa/app.hpp>
 #include <algorithm>
 #include <cassert>
@@ -8,7 +9,7 @@ static std::uint16_t opcode;
 static unsigned submits;
 static bool finished;
 
-extern "C" std::int32_t pxa_submit(const std::uint8_t* data, std::uint32_t size) {
+extern "C" std::int32_t pxa_test_control(const std::uint8_t* data, std::uint32_t size) {
     const auto* bytes = reinterpret_cast<const std::byte*>(data);
     assert(pxa::wire::get16(bytes) == 6);
     opcode = pxa::wire::get16(bytes + 2);

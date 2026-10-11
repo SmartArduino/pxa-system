@@ -6,13 +6,12 @@ shared linear memory, nested Guest calls, inter-App routing, endpoint discovery,
 streams, timeouts or cross-App ACLs. Those require signed Package endpoint
 metadata and a separate access-policy review.
 
-The Core v1 preview accepts the existing IPC call/reply record payloads with
-full 64-bit request tokens. Their normal completions restore the exact Guest
-token. The broker's `request` and `result` notifications remain keyed by its
-opaque 32-bit call ID; the WAMR adapter zero-extends that ID into the v1 event
-envelope token field without consuming a pending-request mapping. A Guest must
-not treat notification call IDs as request tokens. `pxa_ipc.h` provides
-separate typed decoders for both kinds of event.
+Core 1.x accepts IPC call/reply records with full 64-bit request tokens.
+Their normal completions carry the exact token. The broker's `request` and
+`result` notifications use a separate opaque 32-bit call ID, zero-extended
+into the canonical event token. These notifications do not reserve Core
+requests. A Guest must not treat notification call IDs as request tokens.
+`pxa_ipc.h` provides separate typed decoders for both kinds of event.
 
 The Host registers an endpoint name to one running provider Component. An
 endpoint is 1 to 64 ASCII bytes: it starts with a letter and later bytes may be
@@ -23,7 +22,7 @@ letters, digits, `.`, `_` or `-`. A name is unique in the active App.
 `call` has one endpoint record (tag 1) and an optional opaque payload record
 (tag 2). Its normal Core completion carries a nonzero `call_id:u32`. The Broker
 then posts a reliable `request` event (`opcode 0x8001`) to the provider with
-that call ID as the event request ID and the original records as payload.
+that call ID as the event token and the original records as payload.
 
 The provider answers with `reply`: tag 1 is the call ID, tag 2 is a known Core
 `status:i32`, and tag 3 is an optional opaque result payload. The Broker posts

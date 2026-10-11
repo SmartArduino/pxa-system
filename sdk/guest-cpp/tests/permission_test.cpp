@@ -1,3 +1,4 @@
+#include "../../testing/pxa_control_capture.h"
 #include <pxa/permission.hpp>
 
 #include <cassert>
@@ -10,7 +11,7 @@ static bool complete;
 static std::array<std::byte, 1024> scope_bytes;
 static std::array<std::byte, 1200> packet;
 
-extern "C" std::int32_t pxa_submit(const std::uint8_t* data,
+extern "C" std::int32_t pxa_test_control(const std::uint8_t* data,
                                       std::uint32_t size) {
     const auto* bytes = reinterpret_cast<const std::byte*>(data);
     if (pxa::wire::get16(bytes) == 1) {
@@ -23,7 +24,7 @@ extern "C" std::int32_t pxa_submit(const std::uint8_t* data,
     token = pxa::wire::get64(bytes + 4);
     assert(token);
     if (++submits == 1) {
-        assert(opcode == 1 && bytes == packet.data());
+        assert(opcode == 1 && pxa_test_payload == reinterpret_cast<const std::uint8_t*>(packet.data()));
         assert(size == 20 + 4 + 12 + 4 + 1024);
     } else {
         assert(submits == 2 && opcode == 2);

@@ -113,7 +113,7 @@ pxa_status_t pxa_ui_surface_open(pxa_ui_service_t *service,
     uint32_t request;
     uint8_t role;
     pxa_status_t status;
-    if (message->request_id != 0 || message->payload.size != 8 ||
+    if (message->request_token != 0 || message->payload.size != 8 ||
         message->payload.data[5] != 0 || message->payload.data[6] != 0 ||
         message->payload.data[7] != 0)
         return PXA_STATUS_INVALID_ARGUMENT;
@@ -169,7 +169,7 @@ pxa_status_t pxa_ui_surface_close(pxa_ui_service_t *service,
     pxa_ui_node_chunk_t *chunk;
     uint32_t id;
     uint32_t index;
-    if (message->request_id != 0 || message->payload.size != 4)
+    if (message->request_token != 0 || message->payload.size != 4)
         return PXA_STATUS_INVALID_ARGUMENT;
     id = pxa_read_u32(message->payload.data);
     if (id == PXA_UI_PRIMARY_SURFACE) return PXA_STATUS_DENIED;

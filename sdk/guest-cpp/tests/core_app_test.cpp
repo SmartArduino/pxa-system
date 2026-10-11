@@ -1,3 +1,4 @@
+#include "../../testing/pxa_control_capture.h"
 #include <pxa/app.hpp>
 
 #include <array>
@@ -13,7 +14,7 @@ static int metric_changes = 0;
 static int back_requests = 0;
 static bool stop_rejected = false;
 
-extern "C" std::int32_t pxa_submit(const std::uint8_t* bytes,
+extern "C" std::int32_t pxa_test_control(const std::uint8_t* bytes,
                                       std::uint32_t size) {
     assert(size <= last_packet.size());
     for (std::uint32_t i = 0; i < size; ++i) last_packet[i] = bytes[i];
@@ -71,14 +72,25 @@ struct TestApp {
 PXA_APPLICATION(TestApp)
 
 int main() {
+    // The optional stateless callback path shares Transport's route/payload
+    // validation and preserves high-bit tokens without allocating a Context.
+    {
+        const auto before = last_packet_size;
+        assert(!pxa::call(0, 1, 0) && last_packet_size == before);
+        assert(!pxa::call(1, 0, 0) && last_packet_size == before);
+        std::array<std::byte, pxa::wire::max_call_payload_bytes + 1> oversized{};
+        assert(!pxa::call(1, 1, 0, oversized) && last_packet_size == before);
+        assert(pxa::call(7, 2, UINT64_C(0xf123456789abcdef)));
+        assert(last_packet_size == 20);
+        assert(pxa::wire::get64(reinterpret_cast<const std::byte*>(last_packet.data()) + 4)
+               == UINT64_C(0xf123456789abcdef));
+    }
     // Existing fullscreen callers retain transient bars. Games can hide only
     // the status bar while preserving system navigation; invalid modes must
     // not publish a partially encoded configuration.
     {
         pxa::Transport transport;
         pxa::RequestTable requests;
-        std::array<std::byte,64> scratch{};
-        assert(transport.scratch(scratch));
         transport.phase(pxa::Phase::start);
         pxa::WindowService window(transport,requests);
         assert(window.fullscreen());

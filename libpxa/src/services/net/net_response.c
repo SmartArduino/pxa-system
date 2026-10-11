@@ -48,7 +48,7 @@ static pxa_status_t encode_header_record(pxa_writer_t *writer,
 }
 
 static pxa_status_t encode_legacy_response(
-    uint8_t *output, size_t capacity, uint16_t core_major,
+    uint8_t *output, size_t capacity, uint16_t wire_profile,
     const pxa_net_response_t *response, pxa_handle64_t handle,
     size_t *result_size) {
     pxa_writer_t writer;
@@ -62,10 +62,10 @@ static pxa_status_t encode_legacy_response(
                                    response->content_type.size);
     }
     if (status == PXA_STATUS_OK) {
-        if (core_major == 1) pxa_write_u64(value, handle);
+        if (wire_profile == 1) pxa_write_u64(value, handle);
         else pxa_write_u32(value, (uint32_t)handle);
         status = pxa_writer_record(&writer, 7, value,
-                                   core_major == 1 ? 8 : 4);
+                                   wire_profile == 1 ? 8 : 4);
     }
     if (status != PXA_STATUS_OK) return PXA_STATUS_INTERNAL;
     *result_size = writer.size;
@@ -73,7 +73,7 @@ static pxa_status_t encode_legacy_response(
 }
 
 static pxa_status_t encode_http_response(
-    uint8_t *output, size_t capacity, uint16_t core_major,
+    uint8_t *output, size_t capacity, uint16_t wire_profile,
     const pxa_net_response_t *response, pxa_handle64_t handle,
     size_t *result_size) {
     pxa_writer_t writer;
@@ -89,10 +89,10 @@ static pxa_status_t encode_http_response(
     }
     if (status == PXA_STATUS_OK &&
         (response->flags & PXA_NET_RESPONSE_BODY_PRESENT) != 0) {
-        if (core_major == 1) pxa_write_u64(value, handle);
+        if (wire_profile == 1) pxa_write_u64(value, handle);
         else pxa_write_u32(value, (uint32_t)handle);
         status = pxa_writer_record(&writer, 7, value,
-                                   core_major == 1 ? 8 : 4);
+                                   wire_profile == 1 ? 8 : 4);
     }
     for (index = 0; status == PXA_STATUS_OK && index < response->header_count;
          ++index) {
@@ -162,19 +162,19 @@ pxa_status_t pxa_net_response_validate(
 }
 
 pxa_status_t pxa_net_response_encode(
-    uint8_t *output, size_t capacity, uint16_t core_major,
+    uint8_t *output, size_t capacity, uint16_t wire_profile,
     uint16_t opcode, const pxa_net_response_t *response,
     pxa_handle64_t handle,
     size_t *result_size) {
     if (output == NULL || response == NULL || result_size == NULL ||
-        core_major > 1) {
+        wire_profile > 1) {
         return PXA_STATUS_INVALID_ARGUMENT;
     }
     return opcode == PXA_NET_FETCH
-               ? encode_legacy_response(output, capacity, core_major,
+               ? encode_legacy_response(output, capacity, wire_profile,
                                         response, handle,
                                         result_size)
-               : encode_http_response(output, capacity, core_major,
+               : encode_http_response(output, capacity, wire_profile,
                                       response, handle,
                                       result_size);
 }

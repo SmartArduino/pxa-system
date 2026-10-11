@@ -1,8 +1,9 @@
+#include "../../testing/pxa_control_capture.h"
 #include "../examples/ipc-stats/stats_contract.hpp"
 
 #include <cassert>
 
-extern "C" std::int32_t pxa_submit(const std::uint8_t*, std::uint32_t) {
+extern "C" std::int32_t pxa_test_control(const std::uint8_t*, std::uint32_t) {
     return 0;
 }
 extern "C" std::int32_t pxa_io(std::uint64_t, std::uint32_t,
@@ -13,13 +14,13 @@ extern "C" std::int32_t pxa_io(std::uint64_t, std::uint32_t,
 int main() {
     static_assert(stats::Get::request_bytes == 28);
     static_assert(stats::Get::response_bytes == 54);
-    static_assert(stats::Get::call_packet_bytes == 68);
-    static_assert(stats::Get::reply_packet_bytes == 94);
+    static_assert(stats::Get::call_packet_bytes == 48);
+    static_assert(stats::Get::reply_packet_bytes == 74);
     stats::Get::Request request{};
     request.seed = 41;
     assert(request.label.set("test"));
     std::array<std::byte, 128> packet{};
-    const auto offset = pxa::wire::header_bytes + 8 + stats::Get::endpoint.size();
+    const auto offset = 8 + stats::Get::endpoint.size();
     auto payload_size = stats::Get::encode_request(request,
                                                    std::span(packet).subspan(offset));
     assert(payload_size && *payload_size == 16);
@@ -30,10 +31,10 @@ int main() {
     auto raw_size = pxa::encode_ipc_call(stats::Get::endpoint,
         std::span<const std::byte>(packet).subspan(offset, *payload_size), raw);
     assert(raw_size == size);
-    assert(std::equal(packet.begin() + 20, packet.begin() + *size,
-                      raw.begin() + 20));
+    assert(std::equal(packet.begin(), packet.begin() + *size,
+                      raw.begin()));
     auto incoming = pxa::decode_ipc_request<stats::Get>({
-        7, 0x8001, 9, std::span<const std::byte>(packet).subspan(20, *size - 20)});
+        7, 0x8001, 9, std::span<const std::byte>(packet).first(*size)});
     assert(incoming && incoming->call_id == 9);
     assert(incoming->value.seed == 41 && incoming->value.label.view() == "test");
 
@@ -41,7 +42,7 @@ int main() {
     response.next = 42;
     response.valid = true;
     assert(response.label.set("ready"));
-    constexpr auto reply_offset = pxa::wire::header_bytes + 20;
+    constexpr auto reply_offset = 20;
     auto response_size = stats::Get::encode_response(
         response, std::span(packet).subspan(reply_offset));
     assert(response_size && *response_size == 22);
@@ -50,8 +51,8 @@ int main() {
     auto raw_reply_size = pxa::encode_ipc_reply(9, 0,
         std::span<const std::byte>(packet).subspan(reply_offset, *response_size), raw);
     assert(raw_reply_size == reply_size);
-    assert(std::equal(packet.begin() + 20, packet.begin() + *reply_size,
-                      raw.begin() + 20));
+    assert(std::equal(packet.begin(), packet.begin() + *reply_size,
+                      raw.begin()));
     auto decoded = stats::Get::decode_response(
         std::span<const std::byte>(packet).subspan(reply_offset, *response_size));
     assert(decoded && decoded->next == 42 && decoded->valid);

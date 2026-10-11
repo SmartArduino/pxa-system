@@ -34,7 +34,7 @@ static pxa_status_t backend_write(
 }
 
 static size_t make_log(uint8_t *packet, size_t capacity, uint16_t opcode,
-                       uint32_t request_id, uint8_t level,
+                       pxa_request_token_t request_token, uint8_t level,
                        const uint8_t *message, size_t message_size) {
     uint8_t payload[1u + PXA_LOG_MAX_MESSAGE_BYTES];
     pxa_writer_t writer;
@@ -42,7 +42,7 @@ static size_t make_log(uint8_t *packet, size_t capacity, uint16_t opcode,
     payload[0] = level;
     memcpy(payload + 1, message, message_size);
     pxa_writer_init(&writer, packet, capacity);
-    assert(pxa_writer_message(&writer, PXA_LOG_SERVICE_ID, opcode, request_id,
+    assert(pxa_writer_message(&writer, PXA_LOG_SERVICE_ID, opcode, request_token,
                               payload, message_size + 1u) == PXA_STATUS_OK);
     return writer.size;
 }

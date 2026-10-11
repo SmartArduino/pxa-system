@@ -191,7 +191,7 @@ public:
         if (gain_db_q8 < -48 * 256 || gain_db_q8 > 12 * 256 || bands.size() > 5)
             return Task<void>::failed(Error::invalid_argument);
         wire::RequestPacket<74> packet;
-        wire::Writer writer(std::span(packet.bytes).subspan(wire::header_bytes));
+        wire::Writer writer(std::span(packet.bytes));
         std::array<std::byte, 8> value{};
         wire::put64(value.data(), handle());
         wire::record(writer, 1, value);
@@ -221,7 +221,7 @@ public:
     Task<void> flush() {
         if (!resource_) return Task<void>::failed(Error::bad_state);
         wire::RequestPacket<12> packet;
-        auto* payload = packet.bytes.data() + wire::header_bytes;
+        auto* payload = packet.bytes.data();
         wire::put16(payload, 1);
         wire::put16(payload + 2, 8);
         wire::put64(payload + 4, handle());
@@ -240,7 +240,7 @@ private:
     static Task<void> status_request(Endpoint endpoint,
         wire::RequestPacket<Capacity> packet, std::uint16_t opcode) {
         auto event = co_await Response(endpoint.transport, endpoint.requests, 10, opcode,
-            Response::PrebuiltPacket{packet.packet()});
+            packet.packet());
         if (!event) co_return std::unexpected(event.error());
         auto body = wire::result_body(event->payload);
         if (!body) co_return std::unexpected(body.error());

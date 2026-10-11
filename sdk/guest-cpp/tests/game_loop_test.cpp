@@ -1,3 +1,4 @@
+#include "../../testing/pxa_control_capture.h"
 #include <pxa/app.hpp>
 
 #include <array>
@@ -9,7 +10,7 @@ static int period_changes;
 static std::uint16_t last_period;
 static pxa::game::FrameTick last_tick;
 
-extern "C" std::int32_t pxa_submit(const std::uint8_t* data,
+extern "C" std::int32_t pxa_test_control(const std::uint8_t* data,
                                       std::uint32_t length) {
     auto* bytes = reinterpret_cast<const std::byte*>(data);
     assert(length == 22);

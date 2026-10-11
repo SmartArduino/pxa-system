@@ -36,7 +36,7 @@ struct pxa_surface_resource {
     pxa_surface_service_t *service;
     pxa_component_t component;
     pxa_handle64_t handle;
-    uint8_t core_major;
+    uint8_t wire_profile;
     uint64_t provider_surface;
     uint32_t stride_bytes;
     uint32_t frame_bytes;
@@ -172,7 +172,7 @@ static void release_surface(pxa_surface_resource_t *surface) {
         service->surfaces[surface->next].previous = surface->previous;
     surface->component = PXA_COMPONENT_INVALID;
     surface->handle = PXA_HANDLE64_INVALID;
-    surface->core_major = 0;
+    surface->wire_profile = 0;
     surface->provider_surface = 0;
     surface->stride_bytes = 0;
     surface->frame_bytes = 0;
@@ -276,12 +276,12 @@ static void close_surface(void *context) {
 
 static pxa_status_t resolve_surface(pxa_surface_service_t *service,
                                     pxa_component_t component,
-                                    pxa_handle64_t handle, uint16_t core_major,
+                                    pxa_handle64_t handle, uint16_t wire_profile,
                                     pxa_surface_resource_t **output) {
     pxa_resource_t resource;
     pxa_status_t status;
     *output = NULL;
-    status = core_major == 1
+    status = wire_profile == 1
                  ? pxa_handle_get64(service->runtime, component, handle,
                                     PXA_RESOURCE_SURFACE, &resource)
                  : pxa_handle_get(service->runtime, component,
@@ -291,7 +291,7 @@ static pxa_status_t resolve_surface(pxa_surface_service_t *service,
     *output = (pxa_surface_resource_t *)resource.context;
     if (!surface_valid(*output) || (*output)->service != service ||
         (*output)->component != component || (*output)->handle != handle ||
-        (*output)->core_major != core_major) {
+        (*output)->wire_profile != wire_profile) {
         *output = NULL;
         return PXA_STATUS_INTERNAL;
     }
@@ -300,7 +300,7 @@ static pxa_status_t resolve_surface(pxa_surface_service_t *service,
 
 static pxa_status_t create_surface(pxa_surface_service_t *service,
                                    pxa_component_t component,
-                                   pxa_bytes_t payload, uint16_t core_major,
+                                   pxa_bytes_t payload, uint16_t wire_profile,
                                    uint8_t result[20],
                                    size_t *result_size,
                                    pxa_handle64_t *opened_handle) {
@@ -354,7 +354,7 @@ static pxa_status_t create_surface(pxa_surface_service_t *service,
     resource.context = surface;
     resource.operations = &k_surface_resource_ops;
     resource.close = close_surface;
-    if (core_major == 1) {
+    if (wire_profile == 1) {
         status = pxa_handle_open64(service->runtime, component,
                                    PXA_RESOURCE_SURFACE, 0, &resource,
                                    opened_handle);
@@ -370,11 +370,11 @@ static pxa_status_t create_surface(pxa_surface_service_t *service,
         return status;
     }
     surface->handle = *opened_handle;
-    surface->core_major = (uint8_t)core_major;
-    if (core_major == 1) pxa_write_u64(result, *opened_handle);
+    surface->wire_profile = (uint8_t)wire_profile;
+    if (wire_profile == 1) pxa_write_u64(result, *opened_handle);
     else pxa_write_u32(result, (pxa_handle_t)*opened_handle);
     {
-        const size_t offset = core_major == 1 ? 8u : 4u;
+        const size_t offset = wire_profile == 1 ? 8u : 4u;
         pxa_write_u32(result + offset, stride);
         pxa_write_u32(result + offset + 4u, surface->frame_bytes);
         result[offset + 8u] = desc.buffer_count;
@@ -387,13 +387,13 @@ static pxa_status_t create_surface(pxa_surface_service_t *service,
 
 static pxa_status_t configure_layer(pxa_surface_service_t *service,
                                     pxa_component_t component,
-                                    pxa_bytes_t payload, uint16_t core_major) {
+                                    pxa_bytes_t payload, uint16_t wire_profile) {
     pxa_surface_resource_t *surface;
     pxa_surface_layer_t layer;
     pxa_handle64_t handle;
-    const size_t offset = core_major == 1 ? 8u : 4u;
+    const size_t offset = wire_profile == 1 ? 8u : 4u;
     if (payload.size != offset + 16u) return PXA_STATUS_INVALID_ARGUMENT;
-    handle = core_major == 1 ? pxa_read_u64(payload.data)
+    handle = wire_profile == 1 ? pxa_read_u64(payload.data)
                              : pxa_read_u32(payload.data);
     layer.x = (int32_t)pxa_read_u32(payload.data + offset);
     layer.y = (int32_t)pxa_read_u32(payload.data + offset + 4u);
@@ -405,7 +405,7 @@ static pxa_status_t configure_layer(pxa_surface_service_t *service,
     if (layer.reserved != 0 || layer.visible > 1 ||
         layer.width == 0 || layer.height == 0)
         return PXA_STATUS_INVALID_ARGUMENT;
-    if (resolve_surface(service, component, handle, core_major,
+    if (resolve_surface(service, component, handle, wire_profile,
                         &surface) != PXA_STATUS_OK)
         return PXA_STATUS_NOT_FOUND;
     if (layer.width != surface->desc.width ||
@@ -418,18 +418,18 @@ static pxa_status_t configure_layer(pxa_surface_service_t *service,
 static pxa_status_t queue_frame(pxa_surface_service_t *service,
                                 pxa_component_t component,
                                 const pxa_message_view_t *message,
-                                uint16_t core_major) {
+                                uint16_t wire_profile) {
     pxa_surface_damage_rect_t damage[PXA_SURFACE_MAX_DAMAGE_RECTS];
     pxa_surface_resource_t *surface;
     pxa_handle64_t handle;
-    const size_t offset = core_major == 1 ? 8u : 4u;
+    const size_t offset = wire_profile == 1 ? 8u : 4u;
     uint64_t frame_id;
     uint8_t count;
     uint8_t index;
-    if (message->request_id != 0 ||
+    if (message->request_token != 0 ||
         message->payload.size < offset + 12u)
         return PXA_STATUS_INVALID_ARGUMENT;
-    handle = core_major == 1 ? pxa_read_u64(message->payload.data)
+    handle = wire_profile == 1 ? pxa_read_u64(message->payload.data)
                              : pxa_read_u32(message->payload.data);
     frame_id = pxa_read_u64(message->payload.data + offset);
     count = message->payload.data[offset + 8u];
@@ -439,7 +439,7 @@ static pxa_status_t queue_frame(pxa_surface_service_t *service,
         message->payload.data[offset + 11u] != 0 ||
         message->payload.size != offset + 12u + (size_t)count * 8u)
         return PXA_STATUS_INVALID_ARGUMENT;
-    if (resolve_surface(service, component, handle, core_major,
+    if (resolve_surface(service, component, handle, wire_profile,
                         &surface) != PXA_STATUS_OK)
         return PXA_STATUS_NOT_FOUND;
     if ((surface->desc.flags & PXA_SURFACE_FLAG_GUEST_MAPPED) != 0)
@@ -467,17 +467,17 @@ static pxa_status_t queue_frame(pxa_surface_service_t *service,
 static pxa_status_t configure_opaque_ui_regions(pxa_surface_service_t *service,
                                          pxa_component_t component,
                                          pxa_bytes_t payload,
-                                         uint16_t core_major) {
+                                         uint16_t wire_profile) {
     pxa_surface_damage_rect_t regions[PXA_SURFACE_MAX_OPAQUE_UI_REGIONS];
     pxa_surface_resource_t *surface;
     pxa_handle64_t handle;
-    const size_t offset = core_major == 1 ? 8u : 4u;
+    const size_t offset = wire_profile == 1 ? 8u : 4u;
     uint8_t count;
     uint8_t index;
     if (payload.size < offset + 4u ||
         service->backend.configure_opaque_ui_regions == NULL)
         return PXA_STATUS_UNSUPPORTED;
-    handle = core_major == 1 ? pxa_read_u64(payload.data)
+    handle = wire_profile == 1 ? pxa_read_u64(payload.data)
                              : pxa_read_u32(payload.data);
     count = payload.data[offset];
     if (count > PXA_SURFACE_MAX_OPAQUE_UI_REGIONS ||
@@ -486,7 +486,7 @@ static pxa_status_t configure_opaque_ui_regions(pxa_surface_service_t *service,
         payload.data[offset + 3u] != 0 ||
         payload.size != offset + 4u + (size_t)count * 8u)
         return PXA_STATUS_INVALID_ARGUMENT;
-    if (resolve_surface(service, component, handle, core_major,
+    if (resolve_surface(service, component, handle, wire_profile,
                         &surface) != PXA_STATUS_OK)
         return PXA_STATUS_NOT_FOUND;
     for (index = 0; index < count; ++index) {
@@ -510,18 +510,18 @@ static pxa_status_t configure_opaque_ui_regions(pxa_surface_service_t *service,
 
 static pxa_status_t query_state(pxa_surface_service_t *service,
                                 pxa_component_t component,
-                                pxa_bytes_t payload, uint16_t core_major,
+                                pxa_bytes_t payload, uint16_t wire_profile,
                                 uint8_t result[48],
                                 size_t *result_size) {
     pxa_surface_resource_t *surface;
     pxa_surface_state_t state;
     pxa_status_t status;
-    if (payload.size != (core_major == 1 ? 8u : 4u))
+    if (payload.size != (wire_profile == 1 ? 8u : 4u))
         return PXA_STATUS_INVALID_ARGUMENT;
     status = resolve_surface(service, component,
-                             core_major == 1 ? pxa_read_u64(payload.data)
+                             wire_profile == 1 ? pxa_read_u64(payload.data)
                                              : pxa_read_u32(payload.data),
-                             core_major, &surface);
+                             wire_profile, &surface);
     if (status != PXA_STATUS_OK) return status;
     memset(&state, 0, sizeof(state));
     status = pxa_status_normalize(service->backend.query(
@@ -545,53 +545,53 @@ static pxa_status_t surface_control(void *context, pxa_runtime_t *runtime,
     uint8_t result[48] = {0};
     size_t result_size = 0;
     pxa_handle64_t opened_handle = PXA_HANDLE64_INVALID;
-    uint16_t core_major = 0;
+    uint16_t wire_profile = 0;
     pxa_status_t status;
     pxa_status_t complete;
     (void)runtime;
     if (!service_valid(service)) return PXA_STATUS_INVALID_ARGUMENT;
-    status = pxa_component_core_major(service->runtime, component,
-                                      &core_major);
+    status = pxa_component_wire_profile(service->runtime, component,
+                                      &wire_profile);
     if (status != PXA_STATUS_OK) return status;
     if (message->opcode == PXA_SURFACE_QUEUE_FRAME)
-        return queue_frame(service, component, message, core_major);
-    if (message->request_id == 0) return PXA_STATUS_INVALID_ARGUMENT;
+        return queue_frame(service, component, message, wire_profile);
+    if (message->request_token == 0) return PXA_STATUS_INVALID_ARGUMENT;
     if (message->opcode != PXA_SURFACE_CREATE &&
         message->opcode != PXA_SURFACE_CONFIGURE_LAYER &&
         message->opcode != PXA_SURFACE_CONFIGURE_OPAQUE_UI_REGIONS &&
         message->opcode != PXA_SURFACE_QUERY_STATE)
         return PXA_STATUS_UNSUPPORTED;
     status = pxa_request_begin_reserved(
-        service->runtime, component, message->request_id,
+        service->runtime, component, message->request_token,
         PXA_SURFACE_SERVICE_ID, message->opcode, 0,
         message->opcode == PXA_SURFACE_CREATE
-            ? (core_major == 1 ? 20u : 16u) :
+            ? (wire_profile == 1 ? 20u : 16u) :
         message->opcode == PXA_SURFACE_QUERY_STATE ? sizeof(result) : 0u);
     if (status != PXA_STATUS_OK) return status;
     status = pxa_request_commit(service->runtime, component,
-                                message->request_id);
+                                message->request_token);
     if (status == PXA_STATUS_OK && message->opcode == PXA_SURFACE_CREATE)
         status = create_surface(service, component, message->payload,
-                                core_major, result, &result_size,
+                                wire_profile, result, &result_size,
                                 &opened_handle);
     else if (status == PXA_STATUS_OK &&
              message->opcode == PXA_SURFACE_CONFIGURE_LAYER)
         status = configure_layer(service, component, message->payload,
-                                 core_major);
+                                 wire_profile);
     else if (status == PXA_STATUS_OK &&
              message->opcode == PXA_SURFACE_CONFIGURE_OPAQUE_UI_REGIONS)
         status = configure_opaque_ui_regions(service, component,
-                                             message->payload, core_major);
+                                             message->payload, wire_profile);
     else if (status == PXA_STATUS_OK)
         status = query_state(service, component, message->payload,
-                             core_major, result, &result_size);
+                             wire_profile, result, &result_size);
     complete = pxa_request_complete(
-        service->runtime, component, message->request_id, status,
+        service->runtime, component, message->request_token, status,
         status == PXA_STATUS_OK && result_size != 0 ? result : NULL,
         status == PXA_STATUS_OK ? result_size : 0);
     if (complete != PXA_STATUS_OK) {
         if (opened_handle != PXA_HANDLE64_INVALID) {
-            if (core_major == 1)
+            if (wire_profile == 1)
                 (void)pxa_handle_close64(service->runtime, component,
                                           opened_handle);
             else
@@ -599,7 +599,7 @@ static pxa_status_t surface_control(void *context, pxa_runtime_t *runtime,
                                         (pxa_handle_t)opened_handle);
         }
         (void)pxa_request_cancel(service->runtime, component,
-                                 message->request_id);
+                                 message->request_token);
     }
     return PXA_STATUS_OK;
 }
@@ -640,14 +640,14 @@ int32_t pxa_surface_service_flush_releases(pxa_surface_service_t *service) {
         for (;;) {
             pxa_surface_release_t release;
             uint8_t payload[PXA_SURFACE_RELEASED_V1_PAYLOAD_BYTES] = {0};
-            const size_t offset = surface->core_major == 1 ? 8u : 4u;
+            const size_t offset = surface->wire_profile == 1 ? 8u : 4u;
             pxa_status_t status = pxa_status_normalize(
                 service->backend.peek_release(
                     service->backend.context, surface->provider_surface,
                     &release));
             if (status == PXA_STATUS_WOULD_BLOCK) break;
             if (status != PXA_STATUS_OK) return status;
-            if (surface->core_major == 1)
+            if (surface->wire_profile == 1)
                 pxa_write_u64(payload, surface->handle);
             else
                 pxa_write_u32(payload, (pxa_handle_t)surface->handle);

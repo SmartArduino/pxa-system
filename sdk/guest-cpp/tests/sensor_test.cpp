@@ -1,3 +1,4 @@
+#include "../../testing/pxa_control_capture.h"
 #include <pxa/sensor.hpp>
 
 #include <algorithm>
@@ -21,7 +22,7 @@ void* operator new(std::size_t size) {
 void operator delete(void* pointer) noexcept { std::free(pointer); }
 void operator delete(void* pointer, std::size_t) noexcept { std::free(pointer); }
 
-extern "C" std::int32_t pxa_submit(const std::uint8_t* data, std::uint32_t size) {
+extern "C" std::int32_t pxa_test_control(const std::uint8_t* data, std::uint32_t size) {
     const auto bytes = reinterpret_cast<const std::byte*>(data);
     const auto service = pxa::wire::get16(bytes);
     if (service == 1) {

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import pathlib
+import re
 import struct
 
 from generate_wire_codecs import RENDERERS
@@ -104,8 +105,34 @@ def validate_device_runtime_info_golden(
             "Device runtime-info golden result is stale")
 
 
+def validate_render_contract(document: dict[str, object]) -> None:
+    """Keep advertised wire bounds/capabilities in agreement across all layers."""
+    source_root = ROOT.parent.parent
+    host = (source_root / "libpxa/include/pxa/raster.h").read_text()
+    sdk = (source_root / "sdk/guest-cpp/include/pxa/game.hpp").read_text()
+    host_constants = {name: int(value) for name, value in re.findall(
+        r"#define (PXA_RASTER_\w+) UINT\d+_C\((\d+)\)", host)}
+    cpp_enum = re.search(r"enum class RenderCapability[^}]+}", sdk)
+    require(cpp_enum is not None, "C++ render capability enum missing")
+    cpp_capabilities = {name: int(value) for name, value in re.findall(
+        r"(\w+) = (\d+)", cpp_enum.group())}
+    expected_host, expected_cpp = {}, {}
+    for cap in document["capabilities"]:
+        expected_host["PXA_RASTER_CAP_" + cap["name"].replace("-", "_").upper()] = 1 << cap["bit"]
+        expected_cpp[cap.get("cpp_name", cap["name"].replace("-", "_"))] = 1 << cap["bit"]
+    require({k: v for k, v in host_constants.items() if k.startswith("PXA_RASTER_CAP_")} == expected_host,
+            "Host raster capabilities differ from game-render spec")
+    require(cpp_capabilities == expected_cpp, "C++ render capabilities differ from game-render spec")
+    cpp_limits = {name: int(value) for name, value in re.findall(
+        r"inline constexpr std::size_t (\w+) = (\d+);", sdk)}
+    for name, constant in {"draw_list_bytes": "MAX_DRAW_BYTES", "draw_commands": "MAX_COMMANDS",
+                           "texture_slots": "MAX_TEXTURES", "texture_dimension": "MAX_TEXTURE_DIMENSION"}.items():
+        require(document["limits"][name] == host_constants["PXA_RASTER_" + constant] == cpp_limits[name],
+                f"game-render {name} differs between spec, Host and C++ SDK")
+
+
 def validate_core_golden(document: dict[str, object]) -> int:
-    require(document.get("schema") == "pxa-core-golden-0.1",
+    require(document.get("schema") == "pxa-core-golden-1.0",
             "Core golden schema mismatch")
     require(document.get("generated_by") == "tools/generate_golden.py",
             "Core golden generator metadata is stale")
@@ -119,15 +146,15 @@ def validate_core_golden(document: dict[str, object]) -> int:
             item = vector["message"]
             payload = parse_hex(item["payload_hex"], f"{vector['name']} payload")
             encoded = struct.pack(
-                "<HHII", item["service"], item["opcode"],
-                item["request_id"], len(payload)
+                "<HHQII", item["service"], item["opcode"],
+                item["request_token"], len(payload), 0
             ) + payload
-            require(len(encoded) >= 12, f"{vector['name']} envelope is truncated")
-            service, opcode, request_id, payload_size = struct.unpack_from("<HHII", encoded)
-            require(payload_size == len(encoded) - 12,
+            require(len(encoded) >= 20, f"{vector['name']} envelope is truncated")
+            service, opcode, request_token, payload_size, flags = struct.unpack_from("<HHQII", encoded)
+            require(payload_size == len(encoded) - 20 and flags == 0,
                     f"{vector['name']} envelope length mismatch")
-            require([service, opcode, request_id] ==
-                    [item["service"], item["opcode"], item["request_id"]],
+            require([service, opcode, request_token] ==
+                    [item["service"], item["opcode"], item["request_token"]],
                     f"{vector['name']} does not round-trip")
         elif kind == "records":
             encoded = encode_records(vector["records"])
@@ -174,14 +201,8 @@ def validate_package_golden(document: dict[str, object], package: dict[str, obje
     return len(inventory)
 
 
-def validate_v1_envelope_proposal(document: dict[str, object]) -> None:
-    require(document.get("schema") == "pxa-abi-envelope-proposal-1.0" and
-            document.get("status") == "proposal",
-            "v1 envelope must remain a proposal")
-    require(document.get("byte_order") == "little-endian" and
-            document.get("size") == 20 and
-            document.get("max_control_message") == 4096,
-            "v1 envelope constants mismatch")
+def validate_core_envelope(document: dict[str, object]) -> None:
+    require(document.get("size") == 20, "Core envelope size mismatch")
     require([(field["name"], field["type"], field["offset"])
              for field in document["fields"]] == [
                  ("service", "u16", 0), ("opcode", "u16", 2),
@@ -209,8 +230,7 @@ def validate_specs() -> tuple[int, int]:
         require(output.is_file() and
                 output.read_text(encoding="utf-8") == renderer(),
                 f"generated Service codec is stale: {output.name}")
-    validate_v1_envelope_proposal(
-        load_json(ROOT / "abi-1.0-envelope.json"))
+    validate_core_envelope(load_json(ROOT / "pxa-core.json")["envelope"])
     paths = sorted(ROOT.glob("pxa-*.json"))
     require(len(paths) == 21, "the consolidated draft must contain 21 machine specifications")
     require(not list(ROOT.glob("pxa-*.yaml")),
@@ -223,7 +243,7 @@ def validate_specs() -> tuple[int, int]:
     }, "machine specification inventory mismatch")
 
     core = specs["core"]
-    require(core.get("schema") == "pxa-core-spec-0.1", "Core schema mismatch")
+    require(core.get("schema") == "pxa-core-spec-2.0", "Core schema mismatch")
     require(core.get("status") == "draft", "Core must remain marked draft")
     require(core.get("protocol_version") == version_of(core["abi"]),
             "Core protocol version is stale")
@@ -232,23 +252,24 @@ def validate_specs() -> tuple[int, int]:
             "Core encoded ABI version mismatch")
     require(abi["byte_order"] == "little-endian", "Core byte order mismatch")
     envelope = core["envelope"]
-    require(envelope["size"] == 12, "Core envelope size mismatch")
+    require(envelope["size"] == 20, "Core envelope size mismatch")
     require([(field["name"], field["type"], field["offset"])
              for field in envelope["fields"]] == [
                  ("service", "u16", 0), ("opcode", "u16", 2),
-                 ("request_id", "u32", 4), ("payload_len", "u32", 8),
+                 ("request_token", "u64", 4), ("payload_len", "u32", 12),
+                 ("flags", "u32", 16),
              ], "Core envelope layout mismatch")
     validate_named_registries(core, "Core")
 
     expected_services = {
-        "window": (2, "0.2.0"), "ui": (3, "0.6.0"),
-        "clock": (4, "0.1.0"), "fs": (5, "0.1.0"),
+        "window": (2, "0.2.0"), "ui": (3, "0.8.0"),
+        "clock": (4, "0.1.0"), "fs": (5, "0.2.0"),
         "storage": (6, "0.1.0"), "ipc": (7, "0.1.0"),
-        "sensor": (8, "0.1.0"), "net": (9, "0.2.0"),
+        "sensor": (8, "0.1.0"), "net": (9, "0.3.0"),
         "audio": (10, "0.8.0"), "permission": (11, "0.1.0"),
         "work": (13, "0.1.0"), "wasi": (14, "0.1.0"),
         "device": (15, "0.2.0"), "surface": (16, "0.2.0"),
-        "game-render": (18, "0.5.0"), "log": (19, "0.1.0"),
+        "game-render": (18, "0.6.0"), "log": (19, "0.1.0"),
         "store-installer": (20, "0.5.0"), "assets": (21, "2.1.0"),
     }
     core_services = {item["name"]: item for item in core["services"]}
@@ -269,6 +290,8 @@ def validate_specs() -> tuple[int, int]:
                 f"Core and {name} service versions differ")
         validate_named_registries(document, name)
 
+    validate_render_contract(specs["game-render"])
+
     package = specs["package"]
     container = specs["container"]
     require(package.get("protocol_version") == "0.7.0",
@@ -286,7 +309,9 @@ def validate_specs() -> tuple[int, int]:
     validate_named_registries(container, "Container")
 
     ui = specs["ui"]
-    require(len(ui["opcodes"]) == 17, "UI opcode inventory mismatch")
+    require(len(ui["opcodes"]) == 18 and
+            any(op["name"] == "text-input-focus" and op["id"] == 12
+                for op in ui["opcodes"]), "UI opcode inventory mismatch")
     require(len(ui["commands"]) == 5, "UI command inventory mismatch")
     require({feature["name"] for feature in ui["features"]} >=
             {"canvas", "virtual-list", "controller-input", "canvas-stream-io"},

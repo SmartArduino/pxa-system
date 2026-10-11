@@ -268,7 +268,7 @@ typedef uint16_t pxa_ui_event_kind_t;
  * configure a limit without reserving a maximum-sized payload buffer. */
 #define PXA_UI_EVENT_TEXT_LEGACY_BYTES 64u
 /* Core 1 envelope + UI event prefix must fit one control message. */
-#define PXA_UI_EVENT_TEXT_MAX_BYTES (PXA_WIRE_MAX_CONTROL_MESSAGE - PXA_WIRE_V1_SIZE - 24u)
+#define PXA_UI_EVENT_TEXT_MAX_BYTES (PXA_WIRE_MAX_CONTROL_MESSAGE - PXA_WIRE_SIZE - 24u)
 
 #define PXA_UI_KEY_VOLUME_UP UINT32_C(1)
 #define PXA_UI_KEY_VOLUME_DOWN UINT32_C(2)

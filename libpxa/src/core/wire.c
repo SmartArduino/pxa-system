@@ -1,5 +1,4 @@
 #include "pxa/wire.h"
-#include "pxa/wire_v1.h"
 
 #include <limits.h>
 #include <string.h>
@@ -40,26 +39,10 @@ void pxa_write_u64(uint8_t *output, uint64_t value) {
 
 pxa_status_t pxa_message_decode(const uint8_t *data, size_t size,
                                 size_t max_size, pxa_message_view_t *output) {
-    pxa_wire_v0_view_t decoded;
+    pxa_wire_view_t decoded;
     if (output == NULL) return PXA_STATUS_INVALID_ARGUMENT;
     memset(output, 0, sizeof(*output));
-    if (!pxa_wire_v0_decode(data, size, max_size, &decoded))
-        return PXA_STATUS_INVALID_ARGUMENT;
-    output->service = decoded.service;
-    output->opcode = decoded.opcode;
-    output->request_id = decoded.request_id;
-    output->payload.data = decoded.payload;
-    output->payload.size = decoded.payload_size;
-    return PXA_STATUS_OK;
-}
-
-pxa_status_t pxa_v1_message_decode(const uint8_t *data, size_t size,
-                                   size_t max_size,
-                                   pxa_v1_message_view_t *output) {
-    pxa_wire_v1_view_t decoded;
-    if (output == NULL) return PXA_STATUS_INVALID_ARGUMENT;
-    memset(output, 0, sizeof(*output));
-    if (!pxa_wire_v1_decode(data, size, max_size, &decoded))
+    if (!pxa_wire_decode(data, size, max_size, &decoded))
         return PXA_STATUS_INVALID_ARGUMENT;
     output->service = decoded.service;
     output->opcode = decoded.opcode;
@@ -170,7 +153,7 @@ pxa_status_t pxa_writer_record(pxa_writer_t *writer, uint16_t raw_tag,
 }
 
 pxa_status_t pxa_writer_message(pxa_writer_t *writer, uint16_t service,
-                                uint16_t opcode, uint32_t request_id,
+                                uint16_t opcode, pxa_request_token_t request_token,
                                 const void *payload, size_t payload_size) {
     size_t written = 0;
     if (writer == NULL) return PXA_STATUS_INVALID_ARGUMENT;
@@ -186,36 +169,7 @@ pxa_status_t pxa_writer_message(pxa_writer_t *writer, uint16_t service,
         writer->status = PXA_STATUS_RESOURCE_LIMIT;
         return writer->status;
     }
-    if (!pxa_wire_v0_encode(writer->data + writer->size,
-                             writer->capacity - writer->size,
-                             service, opcode, request_id, payload,
-                             payload_size, &written)) {
-        writer->status = PXA_STATUS_INVALID_ARGUMENT;
-        return writer->status;
-    }
-    writer->size += written;
-    return PXA_STATUS_OK;
-}
-
-pxa_status_t pxa_v1_writer_message(pxa_writer_t *writer, uint16_t service,
-                                   uint16_t opcode, uint64_t request_token,
-                                   const void *payload, size_t payload_size) {
-    size_t written = 0;
-    if (writer == NULL) return PXA_STATUS_INVALID_ARGUMENT;
-    if (writer->status != PXA_STATUS_OK) return writer->status;
-    if (service == 0 || opcode == 0 ||
-        payload_size > PXA_MAX_CONTROL_MESSAGE - PXA_V1_ENVELOPE_SIZE ||
-        (payload == NULL && payload_size != 0)) {
-        writer->status = PXA_STATUS_INVALID_ARGUMENT;
-        return writer->status;
-    }
-    if (writer->size > writer->capacity ||
-        PXA_V1_ENVELOPE_SIZE + payload_size >
-            writer->capacity - writer->size) {
-        writer->status = PXA_STATUS_RESOURCE_LIMIT;
-        return writer->status;
-    }
-    if (!pxa_wire_v1_encode(writer->data + writer->size,
+    if (!pxa_wire_encode(writer->data + writer->size,
                              writer->capacity - writer->size,
                              service, opcode, request_token, payload,
                              payload_size, &written)) {

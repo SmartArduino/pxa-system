@@ -9,7 +9,7 @@
 
 typedef struct {
     pxa_component_t component;
-    uint32_t request_id;
+    pxa_request_token_t request_token;
     uint64_t identity;
     pxa_asset_ticket_t ticket;
     union {
@@ -135,7 +135,7 @@ void pxa_assets_service_poll(pxa_assets_service_t *s) {
         pxa_status_t status, complete;
         resource_t *r;
         if (!p->component) continue;
-        if (pxa_request_identity(s->runtime, p->component, p->request_id) != p->identity) {
+        if (pxa_request_identity(s->runtime, p->component, p->request_token) != p->identity) {
             release_pending(s, p);
             continue;
         }
@@ -151,7 +151,7 @@ void pxa_assets_service_poll(pxa_assets_service_t *s) {
                     pxa_read_u32(bytes.data) != p->data.read.offset ||
                     pxa_read_u32(bytes.data+4) != p->data.read.total) status = PXA_STATUS_PROTOCOL_ERROR;
             }
-            (void)pxa_request_complete(s->runtime,p->component,p->request_id,status,
+            (void)pxa_request_complete(s->runtime,p->component,p->request_token,status,
                 status ? NULL : bytes.data,status ? 0 : bytes.size);
             release_pending(s,p);
             continue;
@@ -192,7 +192,7 @@ void pxa_assets_service_poll(pxa_assets_service_t *s) {
         memcpy(result + 8, p->data.info, PXA_ASSETS_INFO_BYTES);
         /* Runtime serialization makes publication versus Core cancellation
          * atomic. Do not commit while I/O is pending: it must stay cancellable. */
-        complete = pxa_request_complete(s->runtime, p->component, p->request_id,
+        complete = pxa_request_complete(s->runtime, p->component, p->request_token,
             status, status == PXA_STATUS_OK ? (p->operation == PXA_ASSETS_PREFETCH ? p->data.info : result) : NULL,
             status == PXA_STATUS_OK ? (p->operation == PXA_ASSETS_PREFETCH ? PXA_ASSETS_INFO_BYTES : sizeof(result)) : 0);
         if (complete != PXA_STATUS_OK && handle)
@@ -224,7 +224,7 @@ static pxa_status_t control(void *context, pxa_runtime_t *runtime,
     unsigned count = 0;
     if (!s || s->magic != ASSETS_MAGIC || runtime != s->runtime)
         return PXA_STATUS_INVALID_ARGUMENT;
-    if (pxa_component_core_major(runtime, component, &major) != PXA_STATUS_OK || major != 1)
+    if (pxa_component_wire_profile(runtime, component, &major) != PXA_STATUS_OK || major != 1)
         return PXA_STATUS_UNSUPPORTED;
     if (message->opcode != PXA_ASSETS_QUERY && message->opcode != PXA_ASSETS_LOAD &&
         message->opcode != PXA_ASSETS_PREFETCH && message->opcode != PXA_ASSETS_STATUS &&
@@ -232,7 +232,7 @@ static pxa_status_t control(void *context, pxa_runtime_t *runtime,
         return PXA_STATUS_UNSUPPORTED;
     const int reading = message->opcode == PXA_ASSETS_READ;
     size_t prefix = reading ? 12u : 4u;
-    if (!message->request_id || message->payload.size <= prefix || !message->payload.data)
+    if (!message->request_token || message->payload.size <= prefix || !message->payload.data)
         return PXA_STATUS_INVALID_ARGUMENT;
     const uint8_t *data = message->payload.data;
     uint32_t offset = reading ? pxa_read_u32(data+4) : 0;
@@ -251,7 +251,7 @@ static pxa_status_t control(void *context, pxa_runtime_t *runtime,
         }
         if (!p || count >= s->config.max_pending_per_component) return PXA_STATUS_WOULD_BLOCK;
     }
-    status = pxa_request_begin_reserved(runtime, component, message->request_id,
+    status = pxa_request_begin_reserved(runtime, component, message->request_token,
         PXA_ASSETS_SERVICE_ID, message->opcode, 0,
         reading ? 8u+read_bytes : message->opcode == PXA_ASSETS_LOAD ? PXA_ASSETS_LOAD_RESULT_BYTES :
         message->opcode == PXA_ASSETS_STATUS ? PXA_ASSETS_STATUS_BYTES : PXA_ASSETS_INFO_BYTES);
@@ -265,7 +265,7 @@ static pxa_status_t control(void *context, pxa_runtime_t *runtime,
             status = PXA_STATUS_INTERNAL;
         snapshot[0] = state.state;
         pxa_write_u32(snapshot + 4, (uint32_t)state.status);
-        return pxa_request_complete(runtime, component, message->request_id, status,
+        return pxa_request_complete(runtime, component, message->request_token, status,
             status == PXA_STATUS_OK ? snapshot : NULL, status == PXA_STATUS_OK ? sizeof(snapshot) : 0);
     }
     memset(&info, 0, sizeof(info));
@@ -274,8 +274,8 @@ static pxa_status_t control(void *context, pxa_runtime_t *runtime,
         if (info.kind != PXA_ASSET_BLOB) status = PXA_STATUS_UNSUPPORTED;
         else if (offset > info.stored_bytes) status = PXA_STATUS_INVALID_ARGUMENT;
         else {
-            p->component = component; p->request_id = message->request_id;
-            p->identity = pxa_request_identity(runtime,component,message->request_id);
+            p->component = component; p->request_token = message->request_token;
+            p->identity = pxa_request_identity(runtime,component,message->request_token);
             p->operation = PXA_ASSETS_READ;
             p->data.read.offset = offset; p->data.read.bytes = read_bytes; p->data.read.total = info.stored_bytes;
             status = pxa_status_normalize(s->config.backend.read(s->config.backend.context,
@@ -290,9 +290,9 @@ static pxa_status_t control(void *context, pxa_runtime_t *runtime,
         if (info.kind != data[2] || !pxa_asset_object_required_bytes(&info)) status = PXA_STATUS_UNSUPPORTED;
         else {
             p->component = component;
-            p->request_id = message->request_id;
+            p->request_token = message->request_token;
             p->operation = (uint8_t)message->opcode;
-            p->identity = pxa_request_identity(runtime, component, message->request_id);
+            p->identity = pxa_request_identity(runtime, component, message->request_token);
             memcpy(p->data.info, encoded, sizeof(encoded));
             status = pxa_status_normalize((p->operation == PXA_ASSETS_PREFETCH ? s->config.backend.prefetch : s->config.backend.request)(s->config.backend.context,
                 component, path, pxa_asset_default_memory_class(&info),
@@ -302,7 +302,7 @@ static pxa_status_t control(void *context, pxa_runtime_t *runtime,
             release_pending(s, p);
         }
     }
-    return pxa_request_complete(runtime, component, message->request_id, status,
+    return pxa_request_complete(runtime, component, message->request_token, status,
         status == PXA_STATUS_OK ? encoded : NULL, status == PXA_STATUS_OK ? sizeof(encoded) : 0);
 }
 

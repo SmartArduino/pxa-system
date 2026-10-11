@@ -1,3 +1,4 @@
+#include "../../sdk/testing/pxa_control_capture.h"
 #undef NDEBUG
 #include <assert.h>
 #include <stdio.h>
@@ -157,7 +158,7 @@ static void run_jobs(void) {
 
 /* Native SDK transport test. Real WAMR maintains its own full-token map;
  * this bridge restricts request tokens to u32 but never truncates handles. */
-int32_t pxa_submit(const uint8_t *data, uint32_t size) {
+int32_t pxa_test_control(const uint8_t *data, uint32_t size) {
     pxa_event_t wire;
     assert(pxa_parse_event(data, size, &wire));
     assert(wire.token <= UINT32_MAX);
@@ -181,7 +182,7 @@ static size_t pop(uint32_t id, uint16_t opcode, uint8_t *data) {
     uint8_t buffer[512]; size_t size; pxa_message_view_t message;
     assert(pxa_event_pop(runtime, component, buffer, sizeof(buffer), &size) == 0);
     assert(pxa_message_decode(buffer, size, sizeof(buffer), &message) == 0);
-    assert(message.request_id == id && message.opcode == opcode);
+    assert(message.request_token == id && message.opcode == opcode);
     memcpy(data, message.payload.data, message.payload.size);
     return message.payload.size;
 }
@@ -273,11 +274,11 @@ int main(void) {
     assert(pxa_game_render_service_init(gw, n, runtime, &gc, &render) == 0);
     assert(pxa_game_render_service_register(render) == 0);
     assert(pxa_component_create(runtime, 1, &component) == 0);
-    assert(pxa_component_set_core_major(runtime, component, 1) == 0);
+    assert(pxa_component_set_wire_profile(runtime, component, 1) == 0);
     assert(pxa_component_begin_start(runtime, component) == 0);
     assert(pxa_component_finish_start(runtime, component, 0) == 0);
     assert(pxa_component_create(runtime, 2, &other) == 0);
-    assert(pxa_component_set_core_major(runtime, other, 1) == 0);
+    assert(pxa_component_set_wire_profile(runtime, other, 1) == 0);
     assert(pxa_component_begin_start(runtime, other) == 0);
     assert(pxa_component_finish_start(runtime, other, 0) == 0);
 
@@ -335,7 +336,7 @@ int main(void) {
     assert(pxa_assets_acquire_handle(runtime, component, a.handle, 2, &native) != 0 && !native);
     pxa_game_render_options_t options = {0}; options.width = options.height = 2; options.buffer_count = 2;
     assert(pxa_game_render_build_create(data, sizeof(data), 7, &options, &size));
-    assert(pxa_submit(data, size) == 0); assert(pop(7, 1, data) == 24);
+    assert(pxa_test_control(data, size) == 0); assert(pop(7, 1, data) == 24);
     uint64_t context = pxa_read_u64(data + 4);
     pxa_game_render_binding_t batch[2] = {{a.handle, 1, 0}, {p.handle, 2, 0}};
     assert(pxa_game_render_bind_assets(context, batch, 2) == 28 && binds == 1);

@@ -29,7 +29,7 @@
 #include "pxa/storage.h"
 #include "pxa/wamr/pxa_wamr_engine.h"
 #include "pxa/wasi.h"
-#include "pxa/wire_v1.h"
+#include "pxa/wire.h"
 
 #include "test_manifest.h"
 
@@ -81,10 +81,10 @@ static pxa_status_t deferred_v1_device(void *context, pxa_runtime_t *runtime,
                                        const pxa_message_view_t *message) {
     unsigned *calls = (unsigned *)context;
     if (calls == NULL || message == NULL || message->opcode != 2 ||
-        message->request_id == 0 || message->payload.size != 0)
+        message->request_token == 0 || message->payload.size != 0)
         return PXA_STATUS_INVALID_ARGUMENT;
     if (++*calls <= 2) return PXA_STATUS_UNSUPPORTED;
-    return pxa_request_begin_reserved(runtime, component, message->request_id,
+    return pxa_request_begin_reserved(runtime, component, message->request_token,
                                       15, 2, 0, 0);
 }
 
@@ -97,7 +97,7 @@ static pxa_status_t rejected_v1_net(void *context, pxa_runtime_t *runtime,
     (void)runtime;
     (void)component;
     if (calls == NULL || message == NULL ||
-        message->opcode != PXA_NET_FETCH || message->request_id == 0)
+        message->opcode != PXA_NET_FETCH || message->request_token == 0)
         return PXA_STATUS_INVALID_ARGUMENT;
     pxa_record_iterator_init(&iterator, message->payload);
     if (pxa_record_next(&iterator, &record) != PXA_STATUS_OK ||
@@ -121,7 +121,7 @@ static pxa_status_t rejected_v1_audio(void *context, pxa_runtime_t *runtime,
     (void)runtime;
     (void)component;
     if (calls == NULL || message == NULL ||
-        message->opcode != PXA_AUDIO_OPEN_SESSION || message->request_id == 0)
+        message->opcode != PXA_AUDIO_OPEN_SESSION || message->request_token == 0)
         return PXA_STATUS_INVALID_ARGUMENT;
     pxa_record_iterator_init(&iterator, message->payload);
     if (pxa_record_next(&iterator, &record) != PXA_STATUS_OK ||
@@ -139,7 +139,7 @@ static pxa_status_t rejected_v1_sensor(void *context, pxa_runtime_t *runtime,
     (void)runtime;
     (void)component;
     if (calls == NULL || message == NULL ||
-        message->opcode != PXA_SENSOR_LIST || message->request_id == 0 ||
+        message->opcode != PXA_SENSOR_LIST || message->request_token == 0 ||
         message->payload.size != 0) return PXA_STATUS_INVALID_ARGUMENT;
     ++*calls;
     return PXA_STATUS_UNSUPPORTED;
@@ -152,7 +152,7 @@ static pxa_status_t rejected_v1_lease(void *context, pxa_runtime_t *runtime,
     (void)runtime;
     (void)component;
     if (calls == NULL || message == NULL ||
-        message->opcode != PXA_LEASE_ACQUIRE || message->request_id == 0 ||
+        message->opcode != PXA_LEASE_ACQUIRE || message->request_token == 0 ||
         message->payload.size != 14) return PXA_STATUS_INVALID_ARGUMENT;
     ++*calls;
     return PXA_STATUS_UNSUPPORTED;
@@ -167,7 +167,7 @@ static pxa_status_t rejected_v1_work(void *context, pxa_runtime_t *runtime,
     (void)runtime;
     (void)component;
     if (calls == NULL || message == NULL ||
-        message->opcode != PXA_WORK_CANCEL || message->request_id == 0)
+        message->opcode != PXA_WORK_CANCEL || message->request_token == 0)
         return PXA_STATUS_INVALID_ARGUMENT;
     pxa_record_iterator_init(&iterator, message->payload);
     if (pxa_record_next(&iterator, &record) != PXA_STATUS_OK ||
@@ -186,7 +186,7 @@ static pxa_status_t rejected_v1_surface(void *context, pxa_runtime_t *runtime,
     (void)component;
     if (calls == NULL || message == NULL ||
         message->opcode != PXA_SURFACE_QUERY_STATE ||
-        message->request_id == 0 || message->payload.size != 8 ||
+        message->request_token == 0 || message->payload.size != 8 ||
         pxa_read_u64(message->payload.data) !=
             UINT64_C(0x1234567800000001))
         return PXA_STATUS_INVALID_ARGUMENT;
@@ -197,13 +197,13 @@ static pxa_status_t rejected_v1_surface(void *context, pxa_runtime_t *runtime,
 static pxa_status_t pending_v1_store_download(
     void *context, pxa_runtime_t *runtime, pxa_component_t component,
     const pxa_message_view_t *message) {
-    uint32_t *host_id = context;
+    pxa_request_token_t *host_id = context;
     if (host_id == NULL || message == NULL ||
-        message->opcode != 2u || message->request_id == 0 ||
+        message->opcode != 2u || message->request_token == 0 ||
         message->payload.size != 0)
         return PXA_STATUS_INVALID_ARGUMENT;
-    *host_id = message->request_id;
-    return pxa_request_begin_reserved(runtime, component, message->request_id,
+    *host_id = message->request_token;
+    return pxa_request_begin_reserved(runtime, component, message->request_token,
                                       PXA_STORE_INSTALLER_SERVICE_ID, 2u, 0,
                                       0);
 }
@@ -215,7 +215,7 @@ static pxa_status_t rejected_v1_clock(void *context, pxa_runtime_t *runtime,
     (void)runtime;
     (void)component;
     if (calls == NULL || message == NULL ||
-        message->opcode != PXA_CLOCK_NOW || message->request_id == 0 ||
+        message->opcode != PXA_CLOCK_NOW || message->request_token == 0 ||
         message->payload.size != 0) return PXA_STATUS_INVALID_ARGUMENT;
     ++*calls;
     return PXA_STATUS_UNSUPPORTED;
@@ -228,9 +228,9 @@ static pxa_status_t rejected_v1_ui(void *context, pxa_runtime_t *runtime,
     (void)runtime;
     (void)component;
     if (calls == NULL || message == NULL) return PXA_STATUS_INVALID_ARGUMENT;
-    if (!((message->opcode == PXA_UI_THEME_GET && message->request_id != 0 &&
+    if (!((message->opcode == PXA_UI_THEME_GET && message->request_token != 0 &&
            message->payload.size == 0) ||
-          (message->opcode == PXA_UI_TEXT_INPUT_FOCUS && message->request_id == 0 &&
+          (message->opcode == PXA_UI_TEXT_INPUT_FOCUS && message->request_token == 0 &&
            message->payload.size == 12))) return PXA_STATUS_INVALID_ARGUMENT;
     ++*calls;
     return PXA_STATUS_UNSUPPORTED;
@@ -419,7 +419,7 @@ check_rejected_import(const char *label, const char *guest_path,
     package_component.service_count = requirement_count;
     activation_entry.component = &package_component;
     activation_entry.artifact = &artifact;
-    activation_entry.core_major = 1;
+    activation_entry.core_major = 2;
     check_status(
         label,
         engine_ops->instantiate(
@@ -470,7 +470,7 @@ static void check_wasi_guest(const char *label, const char *guest_path,
     package_component.service_count = 1;
     activation_entry.component = &package_component;
     activation_entry.artifact = &artifact;
-    activation_entry.core_major = 1;
+    activation_entry.core_major = 2;
     check_status(label, pxa_component_create(runtime, instance_id, &component),
                  PXA_STATUS_OK);
     check_status(label, pxa_component_begin_start(runtime, component),
@@ -900,7 +900,7 @@ int main(void) {
     CHECK(synchronization_probe.enter_count ==
           synchronization_probe.leave_count);
     {
-        uint8_t payload[PXA_MAX_CONTROL_MESSAGE - PXA_V1_ENVELOPE_SIZE];
+        uint8_t payload[PXA_MAX_CONTROL_MESSAGE - PXA_ENVELOPE_SIZE];
         pxa_wamr_event_result_t event_result;
         memset(payload, 0x5a, sizeof(payload));
         check_status(
@@ -1071,7 +1071,7 @@ int main(void) {
         unsigned surface_calls = 0;
         unsigned clock_calls = 0;
         unsigned ui_calls = 0;
-        uint32_t store_host_id = 0;
+        pxa_request_token_t store_host_id = 0;
         pxa_service_ops_t device_service = {0};
         pxa_service_ops_t net_service = {0};
         pxa_service_ops_t audio_service = {0};
@@ -1189,14 +1189,25 @@ int main(void) {
         package_component.artifact_count = 1;
         activation_entry.component = &package_component;
         activation_entry.artifact = &artifact;
-        activation_entry.core_major = 1;
+        activation_entry.core_major = 2;
         check_status("v1 component create",
                      pxa_component_create(runtime, UINT64_C(200),
                                           &v1_component), PXA_STATUS_OK);
         check_status("v1 begin start",
                      pxa_component_begin_start(runtime, v1_component),
                      PXA_STATUS_OK);
-        check_status("v1 instantiate",
+        activation_entry.core_major = 1;
+        activation_entry.core_minor = 0;
+        check_status("Core 1 package rejected",
+                     engine_ops.instantiate(
+                         engine_ops.context,
+                         (pxa_bytes_t){(const uint8_t *)package_dir,
+                                       strlen(package_dir)},
+                         &activation_entry, v1_component, UINT64_C(200)),
+                     PXA_STATUS_UNSUPPORTED);
+        activation_entry.core_major = PXA_CORE_VERSION_MAJOR;
+        activation_entry.core_minor = PXA_CORE_VERSION_MINOR;
+        check_status("Core 2 instantiate",
                      engine_ops.instantiate(
                          engine_ops.context,
                          (pxa_bytes_t){(const uint8_t *)package_dir,
@@ -1301,10 +1312,10 @@ int main(void) {
             CHECK(event_result.guest_result == 1);
         }
         {
-            uint8_t progress[20] = {0};
-            pxa_write_u32(progress, store_host_id);
-            pxa_write_u64(progress + 4, 123);
-            pxa_write_u64(progress + 12, 456);
+            uint8_t progress[24] = {0};
+            pxa_write_u64(progress, store_host_id);
+            pxa_write_u64(progress + 8, 123);
+            pxa_write_u64(progress + 16, 456);
             check_status("v1 Store progress post",
                          pxa_event_post_message(
                              runtime, v1_component,

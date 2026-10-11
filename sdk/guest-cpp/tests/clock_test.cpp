@@ -1,9 +1,10 @@
+#include "../../testing/pxa_control_capture.h"
 #include <pxa/clock.hpp>
 #include <cassert>
 static std::uint64_t token;
 static unsigned completed = 0, cancelled = 0;
 static std::int32_t send_result = 0;
-extern "C" std::int32_t pxa_submit(const std::uint8_t* data, std::uint32_t size) {
+extern "C" std::int32_t pxa_test_control(const std::uint8_t* data, std::uint32_t size) {
     auto p = reinterpret_cast<const std::byte*>(data);
     if (pxa::wire::get16(p) == 1) { ++cancelled; return 0; }
     assert(size == 20 && pxa::wire::get16(p) == 4 && pxa::wire::get16(p+2) == 2);

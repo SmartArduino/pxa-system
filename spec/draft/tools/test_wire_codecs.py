@@ -21,7 +21,7 @@ def c_array(data: bytes) -> str:
 def source(header: str, service_header: str, window_header: str,
            guest: bool) -> str:
     core = json.loads((SPEC / "golden/core-vectors.json").read_text())
-    v1 = json.loads((SPEC / "abi-1.0-envelope.json").read_text())
+    v1 = json.loads((SPEC / "pxa-core.json").read_text())["envelope"]
     device = json.loads((SPEC / "golden/device-runtime-info.json").read_text())
     messages = [item for item in core["vectors"] if item["kind"] == "message"]
     records = [item for item in core["vectors"] if item["kind"] == "records"]
@@ -29,8 +29,8 @@ def source(header: str, service_header: str, window_header: str,
                           if item["name"] == "window.snapshot.records")
     window_result = next(item for item in messages
                          if item["name"] == "window.get-snapshot.result")
-    wire = "pxa_wire" if guest else "pxa_wire_v1"
-    macro = "PXA_WIRE" if guest else "PXA_WIRE_V1"
+    wire = "pxa_wire"
+    macro = "PXA_WIRE"
     lines = [
         "#include <stddef.h>",
         "#include <stdint.h>",
@@ -40,23 +40,6 @@ def source(header: str, service_header: str, window_header: str,
         f'#include "{service_header}"',
         f'#include "{window_header}"',
     ]
-    if not guest:
-        lines += [
-            "static int check_v0(const uint8_t *wire, size_t size,",
-            "                    uint16_t service, uint16_t opcode, uint32_t id,",
-            "                    const uint8_t *payload, size_t payload_size) {",
-            "    uint8_t encoded[4096];",
-            "    size_t written = 0;",
-            "    pxa_wire_v0_view_t view;",
-            "    return !pxa_wire_v0_decode(wire, size, 4096, &view) ||",
-            "           view.service != service || view.opcode != opcode ||",
-            "           view.request_id != id || view.payload_size != payload_size ||",
-            "           memcmp(view.payload, payload, payload_size) != 0 ||",
-            "           !pxa_wire_v0_encode(encoded, sizeof(encoded), service, opcode,",
-            "                               id, payload, payload_size, &written) ||",
-            "           written != size || memcmp(encoded, wire, size) != 0;",
-            "}",
-        ]
     lines += [
         "static int check_v1(const uint8_t *wire, size_t size,",
         "                    uint16_t service, uint16_t opcode, uint64_t token,",
@@ -94,23 +77,22 @@ def source(header: str, service_header: str, window_header: str,
         "int main(void) {",
         f"    {wire}_view_t view;",
     ]
-    if not guest:
-        for index, item in enumerate(messages):
-            message = item["message"]
-            wire_bytes = bytes.fromhex(item["wire_hex"])
-            payload = bytes.fromhex(message["payload_hex"])
-            lines += [
-                f"    static const uint8_t wire_{index}[] = "
-                f"{{{c_array(wire_bytes)}}};",
-                f"    static const uint8_t payload_{index}[] = "
-                f"{{{c_array(payload)}}};",
-                f"    if (check_v0(wire_{index}, sizeof(wire_{index}), "
-                f"{message['service']}, {message['opcode']}, "
-                f"{message['request_id']}, payload_{index}, {len(payload)})) {{",
-                f'        fprintf(stderr, "v0 golden failed: {item["name"]}\\n");',
-                "        return 1;",
-                "    }",
-            ]
+    for index, item in enumerate(messages):
+        message = item["message"]
+        wire_bytes = bytes.fromhex(item["wire_hex"])
+        payload = bytes.fromhex(message["payload_hex"])
+        lines += [
+            f"    static const uint8_t wire_{index}[] = "
+            f"{{{c_array(wire_bytes)}}};",
+            f"    static const uint8_t payload_{index}[] = "
+            f"{{{c_array(payload)}}};",
+            f"    if (check_v1(wire_{index}, sizeof(wire_{index}), "
+            f"{message['service']}, {message['opcode']}, "
+            f"{message['request_token']}, payload_{index}, {len(payload)})) {{",
+            f'        fprintf(stderr, "Core golden failed: {item["name"]}\\n");',
+            "        return 1;",
+            "    }",
+        ]
     for index, item in enumerate(records):
         record_bytes = bytes.fromhex(item["wire_hex"])
         lines += [
@@ -285,7 +267,7 @@ def source(header: str, service_header: str, window_header: str,
         "            malformed_window, sizeof(malformed_window), &snapshot))",
         "        return 24;",
         f"    puts(\""
-        + ("" if guest else f"{len(messages)} v0 messages, ")
+        + f"{len(messages)} Core messages, "
         + f"{len(records)} record lists, envelope, Device and Window payloads OK\");",
         "    return 0;",
         "}",
@@ -317,6 +299,21 @@ def main() -> int:
                 str(output_path),
             ], check=True)
             subprocess.run([str(output_path)], check=True)
+        # Native tools may include Host and Guest codecs together. Check both
+        # include orders; this catches duplicate helpers/types after generation.
+        for index, headers in enumerate((
+            ("pxa/wire_generated.h", "pxa_wire.h"),
+            ("pxa_wire.h", "pxa/wire_generated.h"),
+        )):
+            path = work / f"combined-{index}.c"
+            path.write_text("".join(f"#include <{header}>\n" for header in headers)
+                + "int main(void) { return PXA_WIRE_SIZE != 20; }\n")
+            binary = work / f"combined-{index}"
+            subprocess.run([compiler, "-std=c11", "-O2", "-Wall", "-Wextra",
+                "-Werror", "-Wpedantic", f"-I{SYSTEM / 'libpxa/include'}",
+                f"-I{SYSTEM / 'sdk/guest-c/include'}", str(path), "-o", str(binary)], check=True)
+            subprocess.run([str(binary)], check=True)
+
     return 0
 
 

@@ -20,8 +20,8 @@ class CanvasCommands {
     static_assert(Capacity >= 4 && Capacity <= wire::max_control_bytes - 32);
     friend class CanvasRef;
 public:
-    void reset() noexcept { used_ = 32; error_.reset(); clip_depth_ = 0; }
-    std::size_t bytes_used() const noexcept { return used_ - 32; }
+    void reset() noexcept { used_ = 12; error_.reset(); clip_depth_ = 0; }
+    std::size_t bytes_used() const noexcept { return used_ - 12; }
     CanvasCommands& rect(std::int32_t x, std::int32_t y, std::uint32_t width,
                          std::uint32_t height, std::uint32_t rgba,
                          std::uint16_t radius = 0) noexcept {
@@ -112,8 +112,8 @@ private:
         used_ += size;
         return {out + 4, std::size_t(payload)};
     }
-    std::array<std::byte, 32 + Capacity> packet_{};
-    std::size_t used_ = 32;
+    std::array<std::byte, 12 + Capacity> packet_{};
+    std::size_t used_ = 12;
     std::optional<Error> error_;
     std::uint16_t clip_depth_ = 0;
 };
@@ -144,10 +144,10 @@ public:
         auto result = transport_->send(3, 7, 0, begin);
         if (!result) return result;
         if (commands.bytes_used()) {
-            auto* prefix = commands.packet_.data() + wire::header_bytes;
+            auto* prefix = commands.packet_.data();
             wire::put32(prefix, 1); wire::put32(prefix + 4, node_);
             wire::put32(prefix + 8, frame);
-            result = transport_->send_prebuilt(3, 8, 0,
+            result = transport_->send(3, 8, 0,
                 std::span{commands.packet_}.first(commands.used_));
             if (!result) return result;
         }

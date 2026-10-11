@@ -13,7 +13,7 @@
       "name": "list",
       "id": 1,
       "direction": "bidirectional-result",
-      "request_id": "nonzero",
+      "request_token": "nonzero",
       "payload": "empty",
       "result": "descriptor-records"
     },
@@ -21,7 +21,7 @@
       "name": "subscribe",
       "id": 2,
       "direction": "bidirectional-result",
-      "request_id": "nonzero",
+      "request_token": "nonzero",
       "payload": "sensor-id|period|permission-handle",
       "result": "sensor-handle:u64"
     },
@@ -29,7 +29,7 @@
       "name": "sample",
       "id": 32769,
       "direction": "host-to-guest",
-      "request_id": "zero",
+      "request_token": "zero",
       "payload": "subscription|timestamp|batch"
     }
   ],

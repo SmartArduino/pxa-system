@@ -31,8 +31,8 @@ typedef struct {
 } pxa_permission_authority_t;
 
 typedef struct {
+    pxa_request_token_t request_token;
     pxa_component_t component;
-    uint32_t request_id;
     union {
         uint16_t declaration_index;
         uint16_t next_free;

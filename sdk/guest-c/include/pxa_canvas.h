@@ -440,6 +440,9 @@ static inline int pxa_canvas_present_regions_via(
         !pxa_put_u32(&value, next_generation) || !pxa_put_u32(&value, 0) ||
         !pxa_canvas_send(packet, packet_capacity, PXA_UI_CANVAS_BEGIN,
                          begin_payload, sizeof(begin_payload))) return 0;
+    /* BEGIN consumes the Host generation even if WRITE/PRESENT is refused.
+     * Retrying that frame ID would permanently fail with BAD_STATE. */
+    *generation = next_generation;
     if (stream_handle != 0) {
         if (canvas->length > UINT32_MAX ||
             pxa_ui_wire_canvas_stream_write(stream_handle, canvas->data,
@@ -465,7 +468,7 @@ static inline int pxa_canvas_present_regions_via(
                 append.data, append.capacity, PXA_UI_SERVICE,
                 PXA_UI_CANVAS_WRITE, 0, append.length,
                 &encoded_size) ||
-            pxa_submit(append.data, encoded_size) !=
+            pxa_control_packet(append.data, encoded_size) !=
                 PXA_STATUS_OK) return 0;
         offset += chunk;
     }
@@ -482,7 +485,6 @@ static inline int pxa_canvas_present_regions_via(
     }
     if (!pxa_canvas_send(packet, packet_capacity, PXA_UI_CANVAS_PRESENT,
                          present_payload, value.length)) return 0;
-    *generation = next_generation;
     return 1;
 }
 

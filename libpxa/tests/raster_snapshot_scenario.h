@@ -135,6 +135,13 @@ static void raster_snapshot_scenario(const pxa_game_render_backend_t *backend,
     pxa_write_u16(record + 20, 4);
     pxa_write_u16(record + 22, 4);
     assert(backend->submit(backend->context, surface, draw, sizeof(draw)) == 0);
+    /* Reject a malformed replacement before modifying the accepted frame or
+     * consuming its successor's ID. The valid frame below must still be red. */
+    pxa_write_u64(draw + 20, 2);
+    record[0] = 255;
+    assert(backend->submit(backend->context, surface, draw, sizeof(draw)) ==
+           PXA_STATUS_UNSUPPORTED);
+    record[0] = PXA_RASTER_RECORD_SPRITE;
     /* Old pending frame must retain the old palette and texture. */
     pxa_write_u16(palette + PXA_RASTER_UPLOAD_HEADER_BYTES + 2, 0x07e0);
     pxa_write_u16(palette + PXA_RASTER_UPLOAD_HEADER_BYTES + 4, 0x001f);

@@ -145,14 +145,6 @@ Result<Event> parse_event(std::span<const std::byte> bytes) noexcept {
                  bytes.subspan(wire::header_bytes)};
 }
 
-Result<void> Transport::scratch(std::span<std::byte> buffer) noexcept {
-    if (buffer.size() < wire::header_bytes + 1 ||
-        buffer.size() > wire::max_control_bytes)
-        return std::unexpected(Error::invalid_argument);
-    packet_ = buffer;
-    return {};
-}
-
 std::uint64_t Transport::next_token() noexcept {
     token_ = token_ == UINT64_MAX ? 1 : token_ + 1;
     return token_;
@@ -163,43 +155,7 @@ Result<void> Transport::send(std::uint16_t service, std::uint16_t opcode,
                              std::span<const std::byte> payload) noexcept {
     if (phase_ != Phase::start && phase_ != Phase::event)
         return std::unexpected(Error::bad_state);
-    if (!service || !opcode || payload.size() >
-        packet_.size() - wire::header_bytes)
-        return std::unexpected(Error::invalid_argument);
-    // Copy before writing the header: payload may alias any part of scratch().
-    wire::copy_bytes(packet_.subspan(wire::header_bytes), payload);
-    wire::put16(packet_.data(), service);
-    wire::put16(packet_.data() + 2, opcode);
-    wire::put64(packet_.data() + 4, token);
-    wire::put32(packet_.data() + 12,
-                static_cast<std::uint32_t>(payload.size()));
-    wire::put32(packet_.data() + 16, 0);
-    auto result = pxa_submit(
-        reinterpret_cast<const std::uint8_t*>(packet_.data()),
-        static_cast<std::uint32_t>(wire::header_bytes + payload.size()));
-    if (result != 0) return std::unexpected(static_cast<Error>(result));
-    return {};
-}
-
-Result<void> Transport::send_prebuilt(
-    std::uint16_t service, std::uint16_t opcode, std::uint64_t token,
-    std::span<std::byte> packet) noexcept {
-    if (phase_ != Phase::start && phase_ != Phase::event)
-        return std::unexpected(Error::bad_state);
-    if (!service || !opcode || packet.size() < wire::header_bytes ||
-        packet.size() > wire::max_control_bytes)
-        return std::unexpected(Error::invalid_argument);
-    wire::put16(packet.data(), service);
-    wire::put16(packet.data() + 2, opcode);
-    wire::put64(packet.data() + 4, token);
-    wire::put32(packet.data() + 12,
-                static_cast<std::uint32_t>(packet.size() - wire::header_bytes));
-    wire::put32(packet.data() + 16, 0);
-    const auto result = pxa_submit(
-        reinterpret_cast<const std::uint8_t*>(packet.data()),
-        static_cast<std::uint32_t>(packet.size()));
-    if (result != 0) return std::unexpected(static_cast<Error>(result));
-    return {};
+    return call(service, opcode, token, payload);
 }
 
 Result<std::uint32_t> Transport::io(std::uint64_t handle,
@@ -207,7 +163,7 @@ Result<std::uint32_t> Transport::io(std::uint64_t handle,
                                      std::span<std::byte> buffer) noexcept {
     if (phase_ != Phase::start && phase_ != Phase::event)
         return std::unexpected(Error::bad_state);
-    if (!handle || buffer.size() > UINT32_MAX)
+    if (!handle || buffer.size() > INT32_MAX)
         return std::unexpected(Error::invalid_argument);
     auto result = pxa_io(handle, operation,
                          reinterpret_cast<std::uint8_t*>(buffer.data()),

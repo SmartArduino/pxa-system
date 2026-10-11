@@ -13,7 +13,7 @@
       "name": "set-period",
       "id": 1,
       "direction": "guest-to-host",
-      "request_id": "zero",
+      "request_token": "zero",
       "payload": "period-ms:u16",
       "constraint": "zero-or-16-through-1000"
     },
@@ -21,14 +21,14 @@
       "name": "now",
       "id": 2,
       "direction": "guest-to-host",
-      "request_id": "nonzero",
+      "request_token": "nonzero",
       "payload": "empty"
     },
     {
       "name": "tick",
       "id": 32769,
       "direction": "host-to-guest",
-      "request_id": "zero",
+      "request_token": "zero",
       "payload": "monotonic-us:u64",
       "delivery": "coalescible"
     },
@@ -36,7 +36,7 @@
       "name": "now-result",
       "id": 32770,
       "direction": "host-to-guest",
-      "request_id": "echo",
+      "request_token": "echo",
       "payload": "status:i32,monotonic-us:u64"
     }
   ],

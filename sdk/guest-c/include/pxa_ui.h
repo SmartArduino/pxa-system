@@ -214,7 +214,7 @@ static inline int pxa_ui_theme_get(pxa_ui_token_t request) {
     uint8_t packet[PXA_HEADER_BYTES];
     uint32_t size = 0;
     return pxa_ui_wire_build_theme_get(packet, sizeof(packet), request,
-                                      &size) && pxa_submit(packet, size) == 0;
+                                      &size) && pxa_control_packet(packet, size) == 0;
 }
 
 static inline int pxa_ui_parse_theme_payload(const uint8_t* payload,
@@ -397,7 +397,7 @@ static inline int pxa_ui_send_packet(uint8_t* scratch, size_t capacity,
     uint32_t size = 0;
     if (!pxa_ui_wire_build_command(scratch, capacity, opcode,
                                payload, payload_size, &size)) return 0;
-    int32_t status = pxa_submit(scratch, size);
+    int32_t status = pxa_control_packet(scratch, size);
     /* Optional application diagnostics; successful commands add no logging. */
 #ifdef PXA_UI_COMMAND_FAILED
     if (status != 0) PXA_UI_COMMAND_FAILED(opcode, status);
@@ -434,7 +434,7 @@ static inline int pxa_ui_write_stream(pxa_ui_transaction_t* transaction,
                 packet, transaction->scratch_capacity, PXA_UI_SERVICE,
                 PXA_UI_TX_WRITE, 0,
                 PXA_HEADER_BYTES + 4u + chunk, &packet_size) ||
-            pxa_submit(packet, packet_size) != 0) {
+            pxa_control_packet(packet, packet_size) != 0) {
             transaction->failed = 1;
             return 0;
         }
@@ -465,7 +465,7 @@ static inline int pxa_ui_write_record(
             transaction->scratch_capacity, &packet_size);
         if (next == 0) return 1;
         if (next < 0 ||
-            pxa_submit(transaction->scratch, packet_size) != 0) {
+            pxa_control_packet(transaction->scratch, packet_size) != 0) {
             transaction->failed = 1;
             return 0;
         }

@@ -14,7 +14,7 @@ extern "C" {
 
 #define PXA_GAME_RENDER_SERVICE_ID UINT16_C(18)
 #define PXA_GAME_RENDER_SERVICE_MAJOR UINT16_C(0)
-#define PXA_GAME_RENDER_SERVICE_MINOR UINT16_C(5)
+#define PXA_GAME_RENDER_SERVICE_MINOR UINT16_C(6)
 #define PXA_GAME_RENDER_SERVICE_PATCH UINT16_C(0)
 
 #define PXA_GAME_RENDER_CREATE_CONTEXT UINT16_C(1)
@@ -40,8 +40,11 @@ extern "C" {
      PXA_GAME_RENDER_SCALE_MASK_3X | PXA_GAME_RENDER_SCALE_MASK_4X)
 
 #define PXA_GAME_RENDER_FLAG_PREFER_DIRECT_SCANOUT UINT8_C(1)
+/* Allow CPU rasterization during submit. Input is borrowed only until the
+ * import returns; no retained Guest pointer, memory pinning or fence required. */
+#define PXA_GAME_RENDER_FLAG_BORROW_COMMANDS UINT8_C(2)
 #define PXA_GAME_RENDER_FLAG_KNOWN_MASK \
-    PXA_GAME_RENDER_FLAG_PREFER_DIRECT_SCANOUT
+    (PXA_GAME_RENDER_FLAG_PREFER_DIRECT_SCANOUT | PXA_GAME_RENDER_FLAG_BORROW_COMMANDS)
 
 /* The scratch mode is fixed for the context lifetime. DEPTH16 preserves the
  * original contract; NONE and COVERAGE_2BIT use no depth test. */

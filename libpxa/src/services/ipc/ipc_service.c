@@ -18,19 +18,24 @@ typedef struct {
 } pxa_ipc_endpoint_t;
 
 typedef struct {
+    pxa_request_token_t caller_request_token;
+    uint8_t *request_payload;
     uint32_t call_id;
-    uint32_t caller_request_id;
     pxa_component_t caller;
     pxa_component_t provider;
-    pxa_status_t pending_status;
-    uint8_t *request_payload;
     uint8_t endpoint[PXA_IPC_MAX_ENDPOINT_BYTES];
     uint16_t next;
     uint16_t request_payload_size;
+    /* Only normalized Core statuses are queued. Keep the compact slot when
+     * widening its request token, without narrowing any wire field. */
+    int8_t pending_status;
     uint8_t endpoint_size;
     uint8_t pending_notification;
     uint8_t waiting_provider;
 } pxa_ipc_call_t;
+
+_Static_assert(PXA_STATUS_LIMIT_EXCEEDED >= INT8_MIN && PXA_STATUS_OK <= INT8_MAX,
+               "queued Core statuses must fit the IPC slot");
 
 struct pxa_ipc_broker {
     uint32_t magic;
@@ -401,7 +406,7 @@ static pxa_status_t post_reply(pxa_ipc_broker_t *broker,
 static pxa_status_t queue_waiting_call(pxa_ipc_broker_t *broker,
                                        pxa_ipc_call_t *call,
                                        pxa_component_t caller,
-                                       uint32_t caller_request_id,
+                                       pxa_request_token_t caller_request_token,
                                        const pxa_ipc_call_request_t *request) {
     if (request->payload.size != 0) {
         if (broker->allocate == NULL) return PXA_STATUS_UNAVAILABLE;
@@ -415,7 +420,7 @@ static pxa_status_t queue_waiting_call(pxa_ipc_broker_t *broker,
     call->endpoint_size = (uint8_t)request->endpoint.size;
     call->request_payload_size = (uint16_t)request->payload.size;
     call->caller = caller;
-    call->caller_request_id = caller_request_id;
+    call->caller_request_token = caller_request_token;
     call->provider = PXA_COMPONENT_INVALID;
     call->waiting_provider = 1;
     return PXA_STATUS_OK;
@@ -455,12 +460,12 @@ static pxa_status_t complete_waiting_request(pxa_ipc_broker_t *broker,
     pxa_status_t status;
     pxa_write_u32(result_data, call_id);
     status = pxa_request_complete(
-        broker->runtime, call->caller, call->caller_request_id, result,
+        broker->runtime, call->caller, call->caller_request_token, result,
         result == PXA_STATUS_OK ? result_data : NULL,
         result == PXA_STATUS_OK ? sizeof(result_data) : 0);
     if (status != PXA_STATUS_OK) {
         (void)pxa_request_cancel(broker->runtime, call->caller,
-                                 call->caller_request_id);
+                                 call->caller_request_token);
     }
     return status;
 }
@@ -475,14 +480,14 @@ static pxa_status_t ipc_control(void *context, pxa_runtime_t *runtime,
     size_t result_size = 0;
     int defer_completion = 0;
     (void)runtime;
-    if (!broker_valid(broker) || message->request_id == 0) {
+    if (!broker_valid(broker) || message->request_token == 0) {
         return PXA_STATUS_INVALID_ARGUMENT;
     }
     if (message->opcode != PXA_IPC_CALL && message->opcode != PXA_IPC_REPLY) {
         return PXA_STATUS_UNSUPPORTED;
     }
     result = pxa_request_begin_reserved(
-        broker->runtime, component, message->request_id,
+        broker->runtime, component, message->request_token,
         PXA_IPC_SERVICE_ID, message->opcode, 0,
         message->opcode == PXA_IPC_CALL ? sizeof(result_data) : 0);
     if (result != PXA_STATUS_OK) return result;
@@ -506,7 +511,7 @@ static pxa_status_t ipc_control(void *context, pxa_runtime_t *runtime,
                 result = PXA_STATUS_UNAVAILABLE;
             } else {
                 result = queue_waiting_call(broker, call, component,
-                                            message->request_id, &request);
+                                            message->request_token, &request);
                 defer_completion = result == PXA_STATUS_OK;
             }
         }
@@ -516,7 +521,7 @@ static pxa_status_t ipc_control(void *context, pxa_runtime_t *runtime,
         }
         if (result == PXA_STATUS_OK && !defer_completion)
             result = pxa_request_commit(broker->runtime, component,
-                                        message->request_id);
+                                        message->request_token);
         if (result == PXA_STATUS_OK && !defer_completion) {
             result = pxa_event_post_message(
                 broker->runtime, endpoint->provider, PXA_IPC_SERVICE_ID,
@@ -550,7 +555,7 @@ static pxa_status_t ipc_control(void *context, pxa_runtime_t *runtime,
         }
         if (result == PXA_STATUS_OK)
             result = pxa_request_commit(broker->runtime, component,
-                                        message->request_id);
+                                        message->request_token);
         if (result == PXA_STATUS_OK) {
             result = post_reply(broker, call, request.status, request.payload);
             if (result == PXA_STATUS_OK) {
@@ -560,12 +565,12 @@ static pxa_status_t ipc_control(void *context, pxa_runtime_t *runtime,
     }
     if (defer_completion) return PXA_STATUS_OK;
     complete = pxa_request_complete(broker->runtime, component,
-                                    message->request_id, result,
+                                    message->request_token, result,
                                     result == PXA_STATUS_OK ? result_data : NULL,
                                     result == PXA_STATUS_OK ? result_size : 0);
     if (complete != PXA_STATUS_OK) {
         (void)pxa_request_cancel(broker->runtime, component,
-                                 message->request_id);
+                                 message->request_token);
     }
     return PXA_STATUS_OK;
 }
@@ -668,7 +673,7 @@ pxa_status_t pxa_ipc_flush(pxa_ipc_broker_t *broker) {
         uint16_t next = call->next;
         if (call->waiting_provider) {
             if (!pxa_request_is_active(broker->runtime, call->caller,
-                                       call->caller_request_id)) {
+                                       call->caller_request_token)) {
                 release_call(broker, index, previous);
                 index = next;
                 continue;
@@ -705,7 +710,7 @@ pxa_status_t pxa_ipc_flush(pxa_ipc_broker_t *broker) {
                         call->waiting_provider = 0;
                         complete = complete_waiting_request(
                             broker, call, PXA_STATUS_OK, call_id);
-                        call->caller_request_id = 0;
+                        call->caller_request_token = 0;
                         if (call->request_payload != NULL) {
                             broker->release(broker->allocator_context,
                                             call->request_payload);

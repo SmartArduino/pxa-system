@@ -1,39 +1,55 @@
 {
-  "schema": "pxa-core-spec-0.1",
+  "schema": "pxa-core-spec-2.0",
   "status": "draft",
   "abi": {
-    "major": 0,
-    "minor": 1,
+    "major": 2,
+    "minor": 0,
     "patch": 0,
-    "encoded": 1,
+    "encoded": 131072,
     "byte_order": "little-endian",
     "max_control_message": 4096,
     "max_record_payload": 65535
   },
   "envelope": {
-    "size": 12,
+    "size": 20,
     "fields": [
       {
         "name": "service",
         "type": "u16",
-        "offset": 0
+        "offset": 0,
+        "required_nonzero": true
       },
       {
         "name": "opcode",
         "type": "u16",
-        "offset": 2
+        "offset": 2,
+        "required_nonzero": true
       },
       {
-        "name": "request_id",
-        "type": "u32",
+        "name": "request_token",
+        "type": "u64",
         "offset": 4
       },
       {
         "name": "payload_len",
         "type": "u32",
-        "offset": 8
+        "offset": 12
+      },
+      {
+        "name": "flags",
+        "type": "u32",
+        "offset": 16,
+        "required_value": 0
       }
-    ]
+    ],
+    "golden": {
+      "service": 7,
+      "opcode": 2,
+      "request_token": 1234605616436508552,
+      "payload_hex": "010203",
+      "wire_hex": "0700020088776655443322110300000000000000010203"
+    },
+    "usage": "Host-to-Guest events and internal native message serialization only; pxa_call has no envelope."
   },
   "record": {
     "header_size": 4,
@@ -74,16 +90,7 @@
   },
   "imports": [
     {
-      "module": "pxa.core.v1",
-      "name": "pxa_submit",
-      "parameters": [
-        "guest-read-buffer"
-      ],
-      "result": "status-i32",
-      "blocking": false
-    },
-    {
-      "module": "pxa.core.v1",
+      "module": "pxa.core.v2",
       "name": "pxa_io",
       "parameters": [
         "handle-u64",
@@ -92,6 +99,18 @@
       ],
       "result": "byte-count-or-status-i32",
       "blocking": false
+    },
+    {
+      "module": "pxa.core.v2",
+      "name": "pxa_call",
+      "parameters": [
+        "route-u32",
+        "request-token-u64",
+        "guest-read-buffer"
+      ],
+      "result": "status-i32",
+      "blocking": false,
+      "route": "service:u16|opcode:u16 packed into u32; service in low bits"
     }
   ],
   "exports": [
@@ -202,8 +221,8 @@
       "name": "core",
       "id": 1,
       "state": "defined",
-      "major": 0,
-      "minor": 1,
+      "major": 2,
+      "minor": 0,
       "patch": 0
     },
     {
@@ -328,7 +347,7 @@
       "id": 18,
       "state": "defined",
       "major": 0,
-      "minor": 5,
+      "minor": 6,
       "patch": 0
     },
     {
@@ -361,43 +380,43 @@
       "name": "cancel-request",
       "id": 1,
       "direction": "guest-to-host",
-      "request_id": "zero",
-      "payload": "target_request_id:u32"
+      "payload": "target_request_token:u64",
+      "request_token": "zero"
     },
     {
       "name": "close-handle",
       "id": 2,
       "direction": "guest-to-host",
-      "request_id": "zero",
-      "payload": "handle:u32"
+      "payload": "handle:u64",
+      "request_token": "zero"
     },
     {
       "name": "acquire-lease",
       "id": 3,
       "direction": "bidirectional-result",
-      "request_id": "nonzero",
-      "payload": "record-list"
+      "payload": "record-list",
+      "request_token": "nonzero"
     },
     {
       "name": "handle-ready",
       "id": 32769,
       "direction": "host-to-guest",
-      "request_id": "zero",
-      "payload": "handle:u32|ready_flags:u32"
+      "payload": "handle:u64|ready_flags:u32",
+      "request_token": "zero"
     },
     {
       "name": "handle-closed",
       "id": 32770,
       "direction": "host-to-guest",
-      "request_id": "zero",
-      "payload": "handle:u32|reason:i32"
+      "payload": "handle:u64|reason:i32",
+      "request_token": "zero"
     },
     {
       "name": "lease-revoked",
       "id": 32771,
       "direction": "host-to-guest",
-      "request_id": "zero",
-      "payload": "lease_handle:u32|reason:i32"
+      "payload": "lease_handle:u64|reason:i32",
+      "request_token": "zero"
     }
   ],
   "io_operations": [
@@ -558,9 +577,9 @@
     {
       "name": "granted-handle",
       "id": 4,
-      "payload": "u32",
+      "payload": "u64",
       "cardinality": "result-one"
     }
   ],
-  "protocol_version": "0.1.0"
+  "protocol_version": "2.0.0"
 }

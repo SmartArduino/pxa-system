@@ -13,7 +13,7 @@
       "name": "get-mac",
       "id": 1,
       "direction": "bidirectional-result",
-      "request_id": "nonzero",
+      "request_token": "nonzero",
       "payload": "kind|permission-handle",
       "result": "kind|mac|flags"
     },
@@ -21,7 +21,7 @@
       "name": "get-runtime-info",
       "id": 2,
       "direction": "bidirectional-result",
-      "request_id": "nonzero",
+      "request_token": "nonzero",
       "payload": "empty",
       "result": "target|architecture|engine|engine-abi|formats"
     }

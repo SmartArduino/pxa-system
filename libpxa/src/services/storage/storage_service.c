@@ -201,7 +201,7 @@ static pxa_status_t storage_control(void *context, pxa_runtime_t *runtime,
     pxa_status_t complete;
     size_t value_size = 0;
     (void)runtime;
-    if (message->request_id == 0) return PXA_STATUS_INVALID_ARGUMENT;
+    if (message->request_token == 0) return PXA_STATUS_INVALID_ARGUMENT;
     if (message->opcode < PXA_STORAGE_GET ||
         message->opcode > PXA_STORAGE_LIST) {
         return PXA_STATUS_UNSUPPORTED;
@@ -214,7 +214,7 @@ static pxa_status_t storage_control(void *context, pxa_runtime_t *runtime,
                       ? PXA_STORAGE_LIST_RESULT_BYTES
                       : 0;
         result = pxa_request_begin_reserved(
-            service->runtime, component, message->request_id,
+            service->runtime, component, message->request_token,
             PXA_STORAGE_SERVICE_ID, message->opcode, 0, result_capacity);
     }
     if (result != PXA_STATUS_OK) return result;
@@ -224,7 +224,7 @@ static pxa_status_t storage_control(void *context, pxa_runtime_t *runtime,
                            service->max_value_bytes, &request);
     if (result == PXA_STATUS_OK) {
         result = pxa_request_commit(service->runtime, component,
-                                    message->request_id);
+                                    message->request_token);
     }
     pxa_writer_init(&result_writer, service->result_scratch,
                     service->result_capacity);
@@ -261,12 +261,12 @@ static pxa_status_t storage_control(void *context, pxa_runtime_t *runtime,
         }
     }
     complete = pxa_request_complete(
-        service->runtime, component, message->request_id, result,
+        service->runtime, component, message->request_token, result,
         result == PXA_STATUS_OK ? service->result_scratch : NULL,
         result == PXA_STATUS_OK ? result_writer.size : 0);
     if (complete != PXA_STATUS_OK) {
         (void)pxa_request_cancel(service->runtime, component,
-                                 message->request_id);
+                                 message->request_token);
     }
     return PXA_STATUS_OK;
 }

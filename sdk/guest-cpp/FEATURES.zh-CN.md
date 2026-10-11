@@ -34,8 +34,7 @@ bash tools/package/test_guest_cpp.sh
 ```
 
 WASI 初始化、stdio、时钟与随机源受到实际导入和清单能力约束。libc++ 链接可以
-引入额外 WASI 导入，打包时检查全部导入；PXA SDK 本身直接使用 `pxa_submit` 和
-`pxa_io`，不意味着整个 Wasm 只有这两个导入。异常和 RTTI 默认关闭，不能依赖
+引入额外 WASI 导入，打包时检查全部导入；PXA Core 2 SDK 使用 `pxa_call`、`pxa_io`。这些自定义导入不涵盖 WASI 导入。异常和 RTTI 默认关闭，不能依赖
 抛异常处理容器耗尽；借用式回调不能作为页面持有的长期 lambda。
 
 工具链升级必须锁定发行包与摘要，重新运行特性探测、主机测试、三目标

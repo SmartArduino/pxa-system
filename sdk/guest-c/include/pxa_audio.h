@@ -118,7 +118,7 @@ static inline int32_t pxa_audio_open_media(uint64_t token,
     uint32_t size = 0;
     if (!pxa_audio_build_open(packet, sizeof(packet), token,
                                  permission_handle, &size)) return -1;
-    return pxa_submit(packet, size);
+    return pxa_control_packet(packet, size);
 }
 
 static inline int pxa_audio_build_graph(
@@ -161,7 +161,7 @@ static inline int32_t pxa_audio_commit_graph(
     uint32_t size = 0;
     if (!pxa_audio_build_graph(packet, sizeof(packet), token,
                                   session, graph, &size)) return -1;
-    return pxa_submit(packet, size);
+    return pxa_control_packet(packet, size);
 }
 
 static inline int pxa_audio_build_session_request(
@@ -188,7 +188,7 @@ static inline int32_t pxa_audio_session_request(uint16_t opcode,
     uint32_t size = 0;
     if (!pxa_audio_build_session_request(packet, sizeof(packet), opcode,
                                              token, session, &size)) return -1;
-    return pxa_submit(packet, size);
+    return pxa_control_packet(packet, size);
 }
 
 static inline int pxa_audio_parse_status(const pxa_event_t *event,

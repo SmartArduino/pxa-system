@@ -13,7 +13,7 @@
       "name": "write",
       "id": 1,
       "direction": "guest-to-host",
-      "request_id": "zero",
+      "request_token": "zero",
       "payload": "level:u8|message:utf8"
     }
   ],

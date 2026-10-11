@@ -238,13 +238,13 @@ static pxa_status_t window_control(void *context, pxa_runtime_t *runtime,
     if (entry == NULL) return PXA_STATUS_DENIED;
     switch (message->opcode) {
         case PXA_WINDOW_CONFIGURE:
-            if (message->request_id != 0) return PXA_STATUS_INVALID_ARGUMENT;
+            if (message->request_token != 0) return PXA_STATUS_INVALID_ARGUMENT;
             return configure(entry, message->payload);
         case PXA_WINDOW_SHOW_TOAST: {
             char text[PXA_WINDOW_TOAST_MAX_BYTES + 1u];
             uint16_t duration;
             size_t length = message->payload.size;
-            if (message->request_id != 0 || length < 3u ||
+            if (message->request_token != 0 || length < 3u ||
                 length > PXA_WINDOW_TOAST_MAX_BYTES + 2u ||
                 !pxa_utf8_validate(message->payload.data + 2u, length - 2u, 0))
                 return PXA_STATUS_INVALID_ARGUMENT;
@@ -260,20 +260,20 @@ static pxa_status_t window_control(void *context, pxa_runtime_t *runtime,
             return entry->backend.show_toast(entry->backend.context, text, duration);
         }
         case PXA_WINDOW_GET_SNAPSHOT:
-            if (message->request_id == 0 || message->payload.size != 0) {
+            if (message->request_token == 0 || message->payload.size != 0) {
                 return PXA_STATUS_INVALID_ARGUMENT;
             }
             status = encode_snapshot(entry, payload, sizeof(payload),
                                      &payload_size);
             if (status != PXA_STATUS_OK) return status;
             status = pxa_request_begin_reserved(service->runtime, component,
-                                                message->request_id,
+                                                message->request_token,
                                                 PXA_WINDOW_SERVICE_ID,
                                                 PXA_WINDOW_GET_SNAPSHOT, 0,
                                                 payload_size);
             if (status != PXA_STATUS_OK) return status;
             return pxa_request_complete(service->runtime, component,
-                                        message->request_id, PXA_STATUS_OK,
+                                        message->request_token, PXA_STATUS_OK,
                                         payload, payload_size);
         default:
             return PXA_STATUS_UNSUPPORTED;
@@ -494,7 +494,7 @@ pxa_status_t pxa_window_resolve_event_result(
         return PXA_STATUS_INVALID_ARGUMENT;
     }
     *close_requested = 0;
-    if (event->service != PXA_WINDOW_SERVICE_ID || event->request_id != 0 ||
+    if (event->service != PXA_WINDOW_SERVICE_ID || event->request_token != 0 ||
         guest_result > 1 ||
         (guest_result < 0 && !pxa_status_is_known(guest_result))) {
         return PXA_STATUS_INVALID_ARGUMENT;

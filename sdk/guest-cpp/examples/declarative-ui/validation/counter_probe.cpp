@@ -1,3 +1,4 @@
+#include "../../../../testing/pxa_control_capture.h"
 // Native Guest encoding probe with a byte-consuming Host stub.
 // This deliberately measures neither LVGL rasterization nor display FPS.
 #include <pxa/app.hpp>
@@ -8,7 +9,7 @@
 using namespace pxa;
 static unsigned calls;
 static volatile unsigned long long digest;
-extern "C" std::int32_t pxa_submit(const std::uint8_t* p, std::uint32_t n) {
+extern "C" std::int32_t pxa_test_control(const std::uint8_t* p, std::uint32_t n) {
     ++calls;
     unsigned long long sum = 0;
     for (unsigned i = 0; i < n; ++i) sum += p[i];

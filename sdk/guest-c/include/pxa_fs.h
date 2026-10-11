@@ -106,7 +106,7 @@ static inline int32_t pxa_fs_request_open(
     uint32_t size = 0;
     if (!pxa_fs_build_open(packet, sizeof(packet), token,
                               path, path_size, flags, &size)) return -1;
-    return pxa_submit(packet, size);
+    return pxa_control_packet(packet, size);
 }
 
 static inline int pxa_fs_build_path(
@@ -136,7 +136,7 @@ static inline int32_t pxa_fs_request_path(
     uint32_t size = 0;
     if (!pxa_fs_build_path(packet, sizeof(packet), opcode, token,
                               path, path_size, &size)) return -1;
-    return pxa_submit(packet, size);
+    return pxa_control_packet(packet, size);
 }
 
 static inline int pxa_fs_build_rename(
@@ -191,7 +191,7 @@ static inline int32_t pxa_fs_request_seek(
     uint32_t size = 0;
     if (!pxa_fs_build_seek(packet, sizeof(packet), token,
                               handle, offset, origin, &size)) return -1;
-    return pxa_submit(packet, size);
+    return pxa_control_packet(packet, size);
 }
 
 static inline int32_t pxa_fs_request_read_directory(
@@ -204,7 +204,7 @@ static inline int32_t pxa_fs_request_read_directory(
     if (!pxa_build_message(packet, sizeof(packet), PXA_FS_SERVICE,
                               PXA_FS_READ_DIRECTORY, token, payload,
                               sizeof(payload), &size)) return -1;
-    return pxa_submit(packet, size);
+    return pxa_control_packet(packet, size);
 }
 
 static inline int32_t pxa_fs_read(uint64_t handle, uint8_t *data,

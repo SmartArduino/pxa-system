@@ -1,10 +1,11 @@
+#include "../../testing/pxa_control_capture.h"
 #include <pxa/ui.hpp>
 #include <cassert>
 #include <vector>
 
 static std::vector<std::vector<std::byte>> packets;
 static bool reject_write;
-extern "C" std::int32_t pxa_submit(const std::uint8_t* data, std::uint32_t size) {
+extern "C" std::int32_t pxa_test_control(const std::uint8_t* data, std::uint32_t size) {
     auto* bytes = reinterpret_cast<const std::byte*>(data);
     packets.emplace_back(bytes, bytes + size);
     return reject_write && pxa::wire::get16(bytes + 2) == 8 ? -9 : 0;

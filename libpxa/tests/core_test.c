@@ -16,7 +16,7 @@
 #include "pxa/sensor.h"
 #include "pxa/storage.h"
 #include "pxa/window.h"
-#include "pxa/wire_v1.h"
+#include "pxa/wire.h"
 
 typedef struct {
     void *workspace;
@@ -56,7 +56,7 @@ typedef struct {
 typedef struct {
     unsigned calls;
     pxa_component_t component;
-    uint32_t request_id;
+    pxa_request_token_t request_token;
     pxa_status_t status;
 } test_permission_prompt_t;
 
@@ -149,8 +149,8 @@ typedef struct {
 } test_audio_backend_t;
 
 static const uint8_t k_close_handle_golden[] = {
-    0x01, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x04, 0x00, 0x00, 0x00, 0x04, 0x03, 0x02, 0x01,
+    1, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8, 0, 0, 0, 0, 0, 0, 0,
+    4, 3, 2, 1, 0, 0, 0, 0
 };
 
 static const uint8_t k_lease_records_golden[] = {
@@ -255,13 +255,13 @@ static pxa_component_t create_started(pxa_runtime_t *runtime,
 }
 
 static size_t make_message(uint8_t *output, size_t capacity, uint16_t service,
-                           uint16_t opcode, uint32_t request_id,
+                           uint16_t opcode, pxa_request_token_t request_token,
                            uint8_t marker) {
     pxa_writer_t writer;
     const void *payload = marker == 0 ? NULL : &marker;
     size_t payload_size = marker == 0 ? 0 : 1;
     pxa_writer_init(&writer, output, capacity);
-    assert(pxa_writer_message(&writer, service, opcode, request_id,
+    assert(pxa_writer_message(&writer, service, opcode, request_token,
                               payload, payload_size) == PXA_STATUS_OK);
     return writer.size;
 }
@@ -1063,19 +1063,19 @@ static pxa_status_t permission_save(
 }
 
 static pxa_status_t permission_prompt(
-    void *context, pxa_component_t component, uint32_t request_id,
+    void *context, pxa_component_t component, pxa_request_token_t request_token,
     pxa_bytes_t identity, pxa_bytes_t name, pxa_bytes_t scope) {
     test_permission_prompt_t *prompt = (test_permission_prompt_t *)context;
     assert(identity.size != 0 && name.size != 0);
     assert(scope.data != NULL || scope.size == 0);
     prompt->calls++;
     prompt->component = component;
-    prompt->request_id = request_id;
+    prompt->request_token = request_token;
     return prompt->status;
 }
 
 static size_t make_permission_request(
-    uint8_t *output, size_t capacity, uint16_t opcode, uint32_t request_id,
+    uint8_t *output, size_t capacity, uint16_t opcode, pxa_request_token_t request_token,
     const uint8_t *name, size_t name_size,
     const uint8_t *scope, size_t scope_size) {
     uint8_t payload[128];
@@ -1089,13 +1089,13 @@ static size_t make_permission_request(
     }
     pxa_writer_init(&message, output, capacity);
     assert(pxa_writer_message(&message, PXA_PERMISSION_SERVICE_ID, opcode,
-                              request_id, payload, records.size) ==
+                              request_token, payload, records.size) ==
            PXA_STATUS_OK);
     return message.size;
 }
 
 static size_t make_device_get_mac(uint8_t *output, size_t capacity,
-                                  uint32_t request_id, uint16_t kind,
+                                  pxa_request_token_t request_token, uint16_t kind,
                                   pxa_handle_t permission_handle) {
     uint8_t payload[16];
     uint8_t value[4];
@@ -1110,13 +1110,13 @@ static size_t make_device_get_mac(uint8_t *output, size_t capacity,
                              value, 4) == PXA_STATUS_OK);
     pxa_writer_init(&message, output, capacity);
     assert(pxa_writer_message(&message, PXA_DEVICE_SERVICE_ID,
-                              PXA_DEVICE_GET_MAC, request_id, payload,
+                              PXA_DEVICE_GET_MAC, request_token, payload,
                               records.size) == PXA_STATUS_OK);
     return message.size;
 }
 
 static size_t make_ipc_call(uint8_t *output, size_t capacity,
-                            uint32_t request_id, const char *endpoint,
+                            pxa_request_token_t request_token, const char *endpoint,
                             const char *body) {
     uint8_t payload[1100];
     pxa_writer_t records;
@@ -1130,13 +1130,13 @@ static size_t make_ipc_call(uint8_t *output, size_t capacity,
     }
     pxa_writer_init(&message, output, capacity);
     assert(pxa_writer_message(&message, PXA_IPC_SERVICE_ID, PXA_IPC_CALL,
-                              request_id, payload, records.size) ==
+                              request_token, payload, records.size) ==
            PXA_STATUS_OK);
     return message.size;
 }
 
 static size_t make_ipc_reply(uint8_t *output, size_t capacity,
-                             uint32_t request_id, uint32_t call_id,
+                             pxa_request_token_t request_token, uint32_t call_id,
                              pxa_status_t status, const char *body) {
     uint8_t payload[1100];
     uint8_t value[4];
@@ -1153,7 +1153,7 @@ static size_t make_ipc_reply(uint8_t *output, size_t capacity,
     }
     pxa_writer_init(&message, output, capacity);
     assert(pxa_writer_message(&message, PXA_IPC_SERVICE_ID, PXA_IPC_REPLY,
-                              request_id, payload, records.size) ==
+                              request_token, payload, records.size) ==
            PXA_STATUS_OK);
     return message.size;
 }
@@ -1193,7 +1193,7 @@ static void test_ipc_release(void *context, void *memory) {
 }
 
 static size_t make_lease_acquire(uint8_t *output, size_t capacity,
-                                 uint32_t request_id, uint16_t kind,
+                                 pxa_request_token_t request_token, uint16_t kind,
                                  uint32_t duration_ms) {
     uint8_t payload[32];
     uint8_t value[4];
@@ -1206,13 +1206,13 @@ static size_t make_lease_acquire(uint8_t *output, size_t capacity,
     assert(pxa_writer_record(&records, 2, value, 4) == PXA_STATUS_OK);
     pxa_writer_init(&message, output, capacity);
     assert(pxa_writer_message(&message, PXA_SERVICE_CORE, PXA_LEASE_ACQUIRE,
-                              request_id, payload, records.size) ==
+                              request_token, payload, records.size) ==
            PXA_STATUS_OK);
     return message.size;
 }
 
 static size_t make_storage_request(uint8_t *output, size_t capacity,
-                                   uint16_t opcode, uint32_t request_id,
+                                   uint16_t opcode, pxa_request_token_t request_token,
                                    const char *key, const char *value) {
     uint8_t payload[160];
     pxa_writer_t records;
@@ -1228,13 +1228,13 @@ static size_t make_storage_request(uint8_t *output, size_t capacity,
     }
     pxa_writer_init(&message, output, capacity);
     assert(pxa_writer_message(&message, PXA_STORAGE_SERVICE_ID, opcode,
-                              request_id, payload, records.size) ==
+                              request_token, payload, records.size) ==
            PXA_STATUS_OK);
     return message.size;
 }
 
 static size_t make_fs_path_request(uint8_t *output, size_t capacity,
-                                   uint16_t opcode, uint32_t request_id,
+                                   uint16_t opcode, pxa_request_token_t request_token,
                                    const char *path,
                                    const char *destination) {
     uint8_t payload[560];
@@ -1248,13 +1248,13 @@ static size_t make_fs_path_request(uint8_t *output, size_t capacity,
                                  strlen(destination)) == PXA_STATUS_OK);
     }
     pxa_writer_init(&message, output, capacity);
-    assert(pxa_writer_message(&message, PXA_FS_SERVICE_ID, opcode, request_id,
+    assert(pxa_writer_message(&message, PXA_FS_SERVICE_ID, opcode, request_token,
                               payload, records.size) == PXA_STATUS_OK);
     return message.size;
 }
 
 static size_t make_fs_open(uint8_t *output, size_t capacity,
-                           uint32_t request_id, const char *path,
+                           pxa_request_token_t request_token, const char *path,
                            uint32_t flags) {
     uint8_t payload[300];
     uint8_t flag_bytes[4];
@@ -1268,25 +1268,25 @@ static size_t make_fs_open(uint8_t *output, size_t capacity,
            PXA_STATUS_OK);
     pxa_writer_init(&message, output, capacity);
     assert(pxa_writer_message(&message, PXA_FS_SERVICE_ID, PXA_FS_OPEN,
-                              request_id, payload, records.size) ==
+                              request_token, payload, records.size) ==
            PXA_STATUS_OK);
     return message.size;
 }
 
 static size_t make_fs_handle_request(uint8_t *output, size_t capacity,
-                                     uint16_t opcode, uint32_t request_id,
+                                     uint16_t opcode, pxa_request_token_t request_token,
                                      pxa_handle_t handle) {
     uint8_t payload[13];
     pxa_writer_t message;
     pxa_write_u32(payload, handle);
     pxa_writer_init(&message, output, capacity);
-    assert(pxa_writer_message(&message, PXA_FS_SERVICE_ID, opcode, request_id,
+    assert(pxa_writer_message(&message, PXA_FS_SERVICE_ID, opcode, request_token,
                               payload, 4) == PXA_STATUS_OK);
     return message.size;
 }
 
 static size_t make_fs_seek(uint8_t *output, size_t capacity,
-                           uint32_t request_id, pxa_handle_t handle,
+                           pxa_request_token_t request_token, pxa_handle_t handle,
                            int64_t offset, uint8_t origin) {
     uint8_t payload[13];
     uint64_t bits;
@@ -1297,13 +1297,13 @@ static size_t make_fs_seek(uint8_t *output, size_t capacity,
     payload[12] = origin;
     pxa_writer_init(&message, output, capacity);
     assert(pxa_writer_message(&message, PXA_FS_SERVICE_ID, PXA_FS_SEEK,
-                              request_id, payload, sizeof(payload)) ==
+                              request_token, payload, sizeof(payload)) ==
            PXA_STATUS_OK);
     return message.size;
 }
 
 static size_t make_sensor_subscribe(uint8_t *output, size_t capacity,
-                                    uint32_t request_id, uint16_t sensor_id,
+                                    pxa_request_token_t request_token, uint16_t sensor_id,
                                     uint32_t period_ms,
                                     pxa_handle_t permission_handle) {
     uint8_t payload[32];
@@ -1319,13 +1319,13 @@ static size_t make_sensor_subscribe(uint8_t *output, size_t capacity,
     assert(pxa_writer_record(&records, 3, value, 4) == PXA_STATUS_OK);
     pxa_writer_init(&message, output, capacity);
     assert(pxa_writer_message(&message, PXA_SENSOR_SERVICE_ID,
-                              PXA_SENSOR_SUBSCRIBE, request_id, payload,
+                              PXA_SENSOR_SUBSCRIBE, request_token, payload,
                               records.size) == PXA_STATUS_OK);
     return message.size;
 }
 
 static size_t make_sensor_subscribe_v1(uint8_t *output, size_t capacity,
-                                       uint32_t request_id,
+                                       pxa_request_token_t request_token,
                                        pxa_handle64_t permission_handle) {
     uint8_t payload[32];
     uint8_t value[8];
@@ -1340,13 +1340,13 @@ static size_t make_sensor_subscribe_v1(uint8_t *output, size_t capacity,
     assert(pxa_writer_record(&records, 3, value, 8) == PXA_STATUS_OK);
     pxa_writer_init(&message, output, capacity);
     assert(pxa_writer_message(&message, PXA_SENSOR_SERVICE_ID,
-                              PXA_SENSOR_SUBSCRIBE, request_id, payload,
+                              PXA_SENSOR_SUBSCRIBE, request_token, payload,
                               records.size) == PXA_STATUS_OK);
     return message.size;
 }
 
 static size_t make_work_cancel(uint8_t *output, size_t capacity,
-                               uint32_t request_id, uint32_t id) {
+                               pxa_request_token_t request_token, uint32_t id) {
     uint8_t payload[8];
     uint8_t value[4];
     pxa_writer_t records;
@@ -1356,13 +1356,13 @@ static size_t make_work_cancel(uint8_t *output, size_t capacity,
     assert(pxa_writer_record(&records, 4, value, 4) == PXA_STATUS_OK);
     pxa_writer_init(&message, output, capacity);
     assert(pxa_writer_message(&message, PXA_WORK_SERVICE_ID,
-                              PXA_WORK_CANCEL, request_id, payload,
+                              PXA_WORK_CANCEL, request_token, payload,
                               records.size) == PXA_STATUS_OK);
     return message.size;
 }
 
 static size_t make_work_enqueue(uint8_t *output, size_t capacity,
-                                uint32_t request_id,
+                                pxa_request_token_t request_token,
                                 const char *component_id, uint32_t delay_ms,
                                 uint32_t execution_ms) {
     static const uint8_t input[] = {1, 2, 3};
@@ -1385,13 +1385,13 @@ static size_t make_work_enqueue(uint8_t *output, size_t capacity,
     assert(pxa_writer_record(&records, 7, &attempts, 1) == PXA_STATUS_OK);
     pxa_writer_init(&message, output, capacity);
     assert(pxa_writer_message(&message, PXA_WORK_SERVICE_ID,
-                              PXA_WORK_ENQUEUE, request_id, payload,
+                              PXA_WORK_ENQUEUE, request_token, payload,
                               records.size) == PXA_STATUS_OK);
     return message.size;
 }
 
 static size_t make_work_complete(uint8_t *output, size_t capacity,
-                                 uint32_t request_id, uint32_t work_id,
+                                 pxa_request_token_t request_token, uint32_t work_id,
                                  pxa_work_result_t result) {
     uint8_t payload[16];
     uint8_t value[4];
@@ -1403,13 +1403,13 @@ static size_t make_work_complete(uint8_t *output, size_t capacity,
     assert(pxa_writer_record(&records, 9, &result, 1) == PXA_STATUS_OK);
     pxa_writer_init(&message, output, capacity);
     assert(pxa_writer_message(&message, PXA_WORK_SERVICE_ID,
-                              PXA_WORK_COMPLETE, request_id, payload,
+                              PXA_WORK_COMPLETE, request_token, payload,
                               records.size) == PXA_STATUS_OK);
     return message.size;
 }
 
 static size_t make_net_fetch(uint8_t *output, size_t capacity,
-                             uint32_t request_id,
+                             pxa_request_token_t request_token,
                              pxa_handle_t permission_handle) {
     static const uint8_t url[] = "https://example.test/hello";
     uint8_t payload[96];
@@ -1427,13 +1427,13 @@ static size_t make_net_fetch(uint8_t *output, size_t capacity,
     assert(pxa_writer_record(&records, 4, value, 4) == PXA_STATUS_OK);
     pxa_writer_init(&message, output, capacity);
     assert(pxa_writer_message(&message, PXA_NET_SERVICE_ID, PXA_NET_FETCH,
-                              request_id, payload, records.size) ==
+                              request_token, payload, records.size) ==
            PXA_STATUS_OK);
     return message.size;
 }
 
 static size_t make_net_http_request(uint8_t *output, size_t capacity,
-                                    uint32_t request_id,
+                                    pxa_request_token_t request_token,
                                     pxa_handle_t permission_handle) {
     static const uint8_t url[] = "https://example.test?mode=post";
     static const uint8_t header_name[] = "content-type";
@@ -1470,13 +1470,13 @@ static size_t make_net_http_request(uint8_t *output, size_t capacity,
                              sizeof(wanted_header) - 1) == PXA_STATUS_OK);
     pxa_writer_init(&message, output, capacity);
     assert(pxa_writer_message(&message, PXA_NET_SERVICE_ID,
-                              PXA_NET_HTTP_REQUEST, request_id, payload,
+                              PXA_NET_HTTP_REQUEST, request_token, payload,
                               records.size) == PXA_STATUS_OK);
     return message.size;
 }
 
 static size_t make_net_request_v1(uint8_t *output, size_t capacity,
-                                   uint16_t opcode, uint32_t request_id,
+                                   uint16_t opcode, pxa_request_token_t request_token,
                                    pxa_handle64_t permission_handle) {
     static const uint8_t get_url[] = "https://example.test/hello";
     static const uint8_t post_url[] = "https://example.test?mode=post";
@@ -1520,13 +1520,13 @@ static size_t make_net_request_v1(uint8_t *output, size_t capacity,
     }
     pxa_writer_init(&message, output, capacity);
     assert(pxa_writer_message(&message, PXA_NET_SERVICE_ID, opcode,
-                              request_id, payload, records.size) ==
+                              request_token, payload, records.size) ==
            PXA_STATUS_OK);
     return message.size;
 }
 
 static size_t make_audio_open(uint8_t *output, size_t capacity,
-                              uint32_t request_id,
+                              pxa_request_token_t request_token,
                               pxa_handle_t permission_handle) {
     uint8_t payload[24];
     uint8_t value[4];
@@ -1539,13 +1539,13 @@ static size_t make_audio_open(uint8_t *output, size_t capacity,
     assert(pxa_writer_record(&records, 2, value, 2) == PXA_STATUS_OK);
     pxa_writer_init(&message, output, capacity);
     assert(pxa_writer_message(&message, PXA_AUDIO_SERVICE_ID,
-                              PXA_AUDIO_OPEN_SESSION, request_id, payload,
+                              PXA_AUDIO_OPEN_SESSION, request_token, payload,
                               records.size) == PXA_STATUS_OK);
     return message.size;
 }
 
 static size_t make_audio_graph(uint8_t *output, size_t capacity,
-                               uint32_t request_id,
+                               pxa_request_token_t request_token,
                                pxa_handle_t session_handle) {
     uint8_t payload[48];
     uint8_t value[6];
@@ -1564,14 +1564,14 @@ static size_t make_audio_graph(uint8_t *output, size_t capacity,
     assert(pxa_writer_record(&records, 4, value, 2) == PXA_STATUS_OK);
     pxa_writer_init(&message, output, capacity);
     assert(pxa_writer_message(&message, PXA_AUDIO_SERVICE_ID,
-                              PXA_AUDIO_COMMIT_GRAPH, request_id, payload,
+                              PXA_AUDIO_COMMIT_GRAPH, request_token, payload,
                               records.size) == PXA_STATUS_OK);
     return message.size;
 }
 
 static size_t make_audio_session_command(uint8_t *output, size_t capacity,
                                          uint16_t opcode,
-                                         uint32_t request_id,
+                                         pxa_request_token_t request_token,
                                          pxa_handle_t session_handle) {
     uint8_t payload[8];
     uint8_t value[4];
@@ -1582,13 +1582,13 @@ static size_t make_audio_session_command(uint8_t *output, size_t capacity,
     assert(pxa_writer_record(&records, 1, value, 4) == PXA_STATUS_OK);
     pxa_writer_init(&message, output, capacity);
     assert(pxa_writer_message(&message, PXA_AUDIO_SERVICE_ID, opcode,
-                              request_id, payload, records.size) ==
+                              request_token, payload, records.size) ==
            PXA_STATUS_OK);
     return message.size;
 }
 
 static size_t make_audio_v1_command(uint8_t *output, size_t capacity,
-                                    uint16_t opcode, uint32_t request_id,
+                                    uint16_t opcode, pxa_request_token_t request_token,
                                     pxa_handle64_t handle) {
     uint8_t payload[64];
     uint8_t value[8];
@@ -1612,7 +1612,7 @@ static size_t make_audio_v1_command(uint8_t *output, size_t capacity,
     }
     pxa_writer_init(&message, output, capacity);
     assert(pxa_writer_message(&message, PXA_AUDIO_SERVICE_ID, opcode,
-                              request_id, payload, records.size) ==
+                              request_token, payload, records.size) ==
            PXA_STATUS_OK);
     return message.size;
 }
@@ -1631,7 +1631,7 @@ static void test_wire(void) {
                               PXA_MAX_CONTROL_MESSAGE,
                               &message) == PXA_STATUS_OK);
     assert(message.service == 1 && message.opcode == 2 &&
-           message.request_id == 0 && message.payload.size == 4);
+           message.request_token == 0 && message.payload.size == 8);
     assert(pxa_read_u32(message.payload.data) == UINT32_C(0x01020304));
     assert(pxa_message_decode(k_close_handle_golden,
                               sizeof(k_close_handle_golden) - 1,
@@ -1650,7 +1650,7 @@ static void test_wire(void) {
 
     pxa_writer_init(&writer, encoded, sizeof(encoded));
     assert(pxa_writer_message(&writer, 1, 2, 0,
-                              k_close_handle_golden + 12, 4) == PXA_STATUS_OK);
+                              k_close_handle_golden + PXA_ENVELOPE_SIZE, 8) == PXA_STATUS_OK);
     assert(writer.size == sizeof(k_close_handle_golden));
     assert(memcmp(encoded, k_close_handle_golden, writer.size) == 0);
 
@@ -1669,45 +1669,45 @@ static void test_wire_v1_codec(void) {
     uint8_t encoded[sizeof(golden)];
     uint8_t malformed[sizeof(golden)];
     pxa_writer_t writer;
-    pxa_v1_message_view_t decoded;
+    pxa_message_view_t decoded;
     pxa_writer_init(&writer, encoded, sizeof(encoded));
-    assert(pxa_v1_writer_message(&writer, 7, 2,
+    assert(pxa_writer_message(&writer, 7, 2,
                                  UINT64_C(0x1122334455667788),
-                                 golden + PXA_V1_ENVELOPE_SIZE, 3) ==
+                                 golden + PXA_ENVELOPE_SIZE, 3) ==
            PXA_STATUS_OK);
     assert(writer.size == sizeof(golden) &&
            memcmp(encoded, golden, sizeof(golden)) == 0);
-    assert(pxa_v1_message_decode(encoded, sizeof(encoded),
+    assert(pxa_message_decode(encoded, sizeof(encoded),
                                  PXA_MAX_CONTROL_MESSAGE, &decoded) ==
            PXA_STATUS_OK);
     assert(decoded.service == 7 && decoded.opcode == 2 &&
            decoded.request_token == UINT64_C(0x1122334455667788) &&
            decoded.payload.size == 3 && decoded.payload.data[2] == 3);
     for (size_t length = 0; length < sizeof(golden); ++length)
-        assert(pxa_v1_message_decode(golden, length,
+        assert(pxa_message_decode(golden, length,
                                      PXA_MAX_CONTROL_MESSAGE, &decoded) ==
                PXA_STATUS_INVALID_ARGUMENT);
     memcpy(malformed, golden, sizeof(golden));
     malformed[16] = 1;
-    assert(pxa_v1_message_decode(malformed, sizeof(malformed),
+    assert(pxa_message_decode(malformed, sizeof(malformed),
                                  PXA_MAX_CONTROL_MESSAGE, &decoded) ==
            PXA_STATUS_INVALID_ARGUMENT);
     malformed[16] = 0;
     malformed[12] = 4;
-    assert(pxa_v1_message_decode(malformed, sizeof(malformed),
+    assert(pxa_message_decode(malformed, sizeof(malformed),
                                  PXA_MAX_CONTROL_MESSAGE, &decoded) ==
            PXA_STATUS_INVALID_ARGUMENT);
     memcpy(malformed, golden, sizeof(golden));
     malformed[0] = 0;
-    assert(pxa_v1_message_decode(malformed, sizeof(malformed),
+    assert(pxa_message_decode(malformed, sizeof(malformed),
                                  PXA_MAX_CONTROL_MESSAGE, &decoded) ==
            PXA_STATUS_INVALID_ARGUMENT);
-    pxa_writer_init(&writer, encoded, PXA_V1_ENVELOPE_SIZE);
-    assert(pxa_v1_writer_message(&writer, 7, 2, 1, golden + 20, 3) ==
+    pxa_writer_init(&writer, encoded, PXA_ENVELOPE_SIZE);
+    assert(pxa_writer_message(&writer, 7, 2, 1, golden + 20, 3) ==
            PXA_STATUS_RESOURCE_LIMIT);
     assert(writer.size == 0);
     pxa_writer_init(&writer, encoded, sizeof(encoded));
-    assert(pxa_v1_writer_message(&writer, 0, 2, 1, NULL, 0) ==
+    assert(pxa_writer_message(&writer, 0, 2, 1, NULL, 0) ==
            PXA_STATUS_INVALID_ARGUMENT && writer.size == 0);
 }
 
@@ -1776,7 +1776,7 @@ static void test_requests_and_mailbox(void) {
            PXA_STATUS_OK);
     assert(pxa_component_snapshot(test.runtime, component, &snapshot) ==
            PXA_STATUS_OK);
-    assert(snapshot.pending_requests == 1 && snapshot.queued_events == 2);
+    assert(snapshot.pending_requests == 2 && snapshot.queued_events == 2);
 
     assert(pxa_event_peek(test.runtime, component, &view) == PXA_STATUS_OK);
     assert(pxa_event_consume(test.runtime, component, view.token) ==
@@ -1785,7 +1785,7 @@ static void test_requests_and_mailbox(void) {
                                  sizeof(event), &view);
     assert(pxa_message_decode(event, event_size, PXA_MAX_CONTROL_MESSAGE,
                               &message) == PXA_STATUS_OK);
-    assert(message.request_id == 7 && message.payload.size == 6 &&
+    assert(message.request_token == 7 && message.payload.size == 6 &&
            (int32_t)pxa_read_u32(message.payload.data) == PXA_STATUS_OK);
     assert(pxa_event_consume(test.runtime, component, view.token) ==
            PXA_STATUS_OK);
@@ -1793,7 +1793,7 @@ static void test_requests_and_mailbox(void) {
                                  sizeof(event), &view);
     assert(pxa_message_decode(event, event_size, PXA_MAX_CONTROL_MESSAGE,
                               &message) == PXA_STATUS_OK);
-    assert(message.request_id == 8 && message.payload.size == 4 &&
+    assert(message.request_token == 8 && message.payload.size == 4 &&
            (int32_t)pxa_read_u32(message.payload.data) ==
                PXA_STATUS_CANCELLED);
     assert(pxa_event_consume(test.runtime, component, view.token) ==
@@ -1829,13 +1829,13 @@ static void test_request_table_collision_and_completion_order(void) {
                                 NULL, 0) == PXA_STATUS_OK);
     assert(pxa_component_snapshot(test.runtime, component, &snapshot) ==
            PXA_STATUS_OK);
-    assert(snapshot.pending_requests == 0 && snapshot.queued_events == 2);
+    assert(snapshot.pending_requests == 2 && snapshot.queued_events == 2);
 
     event_size = read_head_event(test.runtime, component, event,
                                  sizeof(event), &view);
     assert(pxa_message_decode(event, event_size, PXA_MAX_CONTROL_MESSAGE,
                               &completion) == PXA_STATUS_OK);
-    assert(completion.request_id == 1 && completion.opcode == 10 &&
+    assert(completion.request_token == 1 && completion.opcode == 10 &&
            completion.payload.size == 5 &&
            completion.payload.data[4] == payload[0]);
     assert(pxa_event_consume(test.runtime, component, view.token) ==
@@ -1845,10 +1845,70 @@ static void test_request_table_collision_and_completion_order(void) {
                                  sizeof(event), &view);
     assert(pxa_message_decode(event, event_size, PXA_MAX_CONTROL_MESSAGE,
                               &completion) == PXA_STATUS_OK);
-    assert(completion.request_id == 9 && completion.opcode == 11 &&
+    assert(completion.request_token == 9 && completion.opcode == 11 &&
            completion.payload.size == 4);
     assert(pxa_event_consume(test.runtime, component, view.token) ==
            PXA_STATUS_OK);
+    destroy_runtime(&test);
+}
+
+static void test_wide_tokens_and_queued_ownership(void) {
+    test_runtime_t test = make_runtime(1, 64, 32, 1, 64, 64, 1);
+    pxa_component_t component = create_started(test.runtime, 1);
+    pxa_component_snapshot_t snapshot;
+    pxa_event_view_t view;
+    pxa_message_view_t completion;
+    uint8_t bytes[64], payload[8];
+    size_t size;
+    const pxa_request_token_t first = UINT64_C(0x123);
+    /* An IPC notification may use the same number in a separate namespace. */
+    assert(pxa_event_post_message(test.runtime, component, 8, 0x8003, first,
+        (pxa_bytes_t){NULL, 0}, 1, 0) == PXA_STATUS_OK);
+    assert(pxa_event_post_message(test.runtime, component, 9, 2, first,
+        (pxa_bytes_t){NULL, 0}, 1, 0) == PXA_STATUS_OK);
+    for (unsigned i = 0; i < 32; ++i) {
+        const pxa_request_token_t token = ((uint64_t)i << 32) | first;
+        assert(pxa_request_begin_reserved(test.runtime, component, token,
+            9, 2, 0, 0) == PXA_STATUS_OK);
+        assert(pxa_request_complete(test.runtime, component, token,
+            PXA_STATUS_OK, NULL, 0) == PXA_STATUS_OK);
+        assert(pxa_request_begin(test.runtime, component, token, 10, 3, 0) ==
+            PXA_STATUS_BUSY);
+    }
+    assert(pxa_component_snapshot(test.runtime, component, &snapshot) == PXA_STATUS_OK);
+    assert(snapshot.pending_requests == 32 && snapshot.queued_events == 34);
+    assert(pxa_event_pop(test.runtime, component, bytes, sizeof(bytes), &size) == PXA_STATUS_OK);
+    assert(pxa_request_begin(test.runtime, component, first, 9, 2, 0) == PXA_STATUS_BUSY);
+    assert(pxa_event_pop(test.runtime, component, bytes, sizeof(bytes), &size) == PXA_STATUS_OK);
+    assert(pxa_request_begin(test.runtime, component, first, 9, 2, 0) == PXA_STATUS_BUSY);
+    assert(pxa_event_peek(test.runtime, component, &view) == PXA_STATUS_OK);
+    assert(pxa_event_pop(test.runtime, component, bytes, 1, &size) != PXA_STATUS_OK);
+    assert(pxa_event_consume(test.runtime, component, view.token + 1) != PXA_STATUS_OK);
+    assert(pxa_request_begin(test.runtime, component, first, 9, 2, 0) == PXA_STATUS_BUSY);
+    for (unsigned i = 0; i < 32; ++i) {
+        assert(pxa_event_pop(test.runtime, component, bytes, sizeof(bytes), &size) == PXA_STATUS_OK);
+        assert(pxa_message_decode(bytes, size, sizeof(bytes), &completion) == PXA_STATUS_OK);
+        assert(completion.request_token == (((uint64_t)i << 32) | first));
+        assert(completion.service == 9 && completion.opcode == 2);
+    }
+    /* Cancellation must use all 64 bits and leave the other token untouched. */
+    assert(pxa_request_begin(test.runtime, component, first, 9, 2, 0) == PXA_STATUS_OK);
+    assert(pxa_request_begin(test.runtime, component, first | (UINT64_C(1) << 32),
+        9, 2, 0) == PXA_STATUS_OK);
+    pxa_write_u64(payload, first | (UINT64_C(1) << 32));
+    pxa_writer_t writer;
+    pxa_writer_init(&writer, bytes, sizeof(bytes));
+    assert(pxa_writer_message(&writer, 1, 1, 0, payload, sizeof(payload)) == PXA_STATUS_OK);
+    assert(pxa_component_begin_event(test.runtime, component) == PXA_STATUS_OK);
+    assert(pxa_runtime_control(test.runtime, component, bytes, writer.size) == PXA_STATUS_OK);
+    assert(pxa_component_finish_event(test.runtime, component, 1) == PXA_STATUS_OK);
+    assert(pxa_request_is_active(test.runtime, component, first));
+    assert(!pxa_request_is_active(test.runtime, component, first | (UINT64_C(1) << 32)));
+    assert(pxa_component_request_stop(test.runtime, component, PXA_STOP_NORMAL) == PXA_STATUS_OK);
+    assert(pxa_component_begin_stop(test.runtime, component) == PXA_STATUS_OK);
+    assert(pxa_component_finish_stop(test.runtime, component) == PXA_STATUS_OK);
+    assert(pxa_component_snapshot(test.runtime, component, &snapshot) == PXA_STATUS_OK);
+    assert(snapshot.pending_requests == 0 && snapshot.queued_events == 0);
     destroy_runtime(&test);
 }
 
@@ -1872,14 +1932,14 @@ static void test_reserved_completion_backpressure(void) {
                                  sizeof(event), &view);
     assert(pxa_message_decode(event, event_size, PXA_MAX_CONTROL_MESSAGE,
                               &completion) == PXA_STATUS_OK &&
-           completion.request_id == 0);
+           completion.request_token == 0);
     assert(pxa_event_consume(test.runtime, component, view.token) ==
            PXA_STATUS_OK);
     event_size = read_head_event(test.runtime, component, event,
                                  sizeof(event), &view);
     assert(pxa_message_decode(event, event_size, PXA_MAX_CONTROL_MESSAGE,
                               &completion) == PXA_STATUS_OK &&
-           completion.request_id == 33 && completion.opcode == 2 &&
+           completion.request_token == 33 && completion.opcode == 2 &&
            completion.payload.size == 8 &&
            (int32_t)pxa_read_u32(completion.payload.data) == PXA_STATUS_OK &&
            memcmp(completion.payload.data + 4, payload,
@@ -1894,7 +1954,7 @@ static void test_reserved_completion_backpressure(void) {
                                  sizeof(event), &view);
     assert(pxa_message_decode(event, event_size, PXA_MAX_CONTROL_MESSAGE,
                               &completion) == PXA_STATUS_OK &&
-           completion.request_id == 34 && completion.payload.size == 4 &&
+           completion.request_token == 34 && completion.payload.size == 4 &&
            (int32_t)pxa_read_u32(completion.payload.data) ==
                PXA_STATUS_LIMIT_EXCEEDED);
     assert(pxa_event_consume(test.runtime, component, view.token) ==
@@ -2461,7 +2521,7 @@ static void test_window_service(void) {
         assert(pxa_component_finish_event(test.runtime, component, 0) == PXA_STATUS_OK);
         assert(backend_state.toast_count == 1 && backend_state.last_duration == 2000u);
         assert(strcmp(backend_state.last_toast, "Fail") == 0);
-        message[16] = 0;
+        message[PXA_ENVELOPE_SIZE + 4] = 0;
         assert(pxa_component_begin_event(test.runtime, component) == PXA_STATUS_OK);
         assert(pxa_runtime_control(test.runtime, component, message,
                                    message_writer.size) == PXA_STATUS_INVALID_ARGUMENT);
@@ -2482,7 +2542,7 @@ static void test_window_service(void) {
                                  sizeof(event_bytes), &event_view);
     assert(pxa_message_decode(event_bytes, event_size, PXA_MAX_CONTROL_MESSAGE,
                               &event) == PXA_STATUS_OK);
-    assert(event.request_id == 51 && event.payload.size > 4 &&
+    assert(event.request_token == 51 && event.payload.size > 4 &&
            (int32_t)pxa_read_u32(event.payload.data) == PXA_STATUS_OK);
     assert(pxa_event_consume(test.runtime, component, event_view.token) ==
            PXA_STATUS_OK);
@@ -2545,7 +2605,7 @@ static void test_lease_service(void) {
            PXA_STATUS_OK);
     assert(pxa_component_begin_start(test.runtime, v1_component) ==
            PXA_STATUS_OK);
-    assert(pxa_component_set_core_major(test.runtime, v1_component, 1) ==
+    assert(pxa_component_set_wire_profile(test.runtime, v1_component, 1) ==
            PXA_STATUS_OK);
     assert(pxa_component_validate_import(test.runtime, v1_component) ==
            PXA_STATUS_OK);
@@ -2581,7 +2641,7 @@ static void test_lease_service(void) {
                                  sizeof(event_bytes), &view);
     assert(pxa_message_decode(event_bytes, event_size, PXA_MAX_CONTROL_MESSAGE,
                               &event) == PXA_STATUS_OK);
-    assert(event.opcode == PXA_LEASE_ACQUIRE && event.request_id == 11 &&
+    assert(event.opcode == PXA_LEASE_ACQUIRE && event.request_token == 11 &&
            event.payload.size == 12 &&
            (int32_t)pxa_read_u32(event.payload.data) == PXA_STATUS_OK &&
            pxa_read_u16(event.payload.data + 4) == 4 &&
@@ -2671,7 +2731,7 @@ static void test_lease_service(void) {
                                  sizeof(event_bytes), &view);
     assert(pxa_message_decode(event_bytes, event_size, PXA_MAX_CONTROL_MESSAGE,
                               &event) == PXA_STATUS_OK &&
-           event.opcode == PXA_LEASE_ACQUIRE && event.request_id == 15 &&
+           event.opcode == PXA_LEASE_ACQUIRE && event.request_token == 15 &&
            (int32_t)pxa_read_u32(event.payload.data) == PXA_STATUS_OK);
     other_handle = pxa_read_u32(event.payload.data + 8);
     assert(pxa_event_consume(test.runtime, other, view.token) ==
@@ -2864,7 +2924,7 @@ static void test_permission_service(void) {
                                  sizeof(event_bytes), &view);
     assert(pxa_message_decode(event_bytes, event_size, PXA_MAX_CONTROL_MESSAGE,
                               &event) == PXA_STATUS_OK);
-    assert(event.request_id == 11 && event.payload.size == 8 &&
+    assert(event.request_token == 11 && event.payload.size == 8 &&
            (int32_t)pxa_read_u32(event.payload.data) == PXA_STATUS_OK);
     permission_handle = pxa_read_u32(event.payload.data + 4);
     assert(pxa_event_consume(test.runtime, component, view.token) ==
@@ -2912,7 +2972,7 @@ static void test_permission_service(void) {
         assert(pxa_message_decode(event_bytes, event_size,
                                   PXA_MAX_CONTROL_MESSAGE,
                                   &event) == PXA_STATUS_OK);
-        assert(event.request_id == 20u + iteration && event.payload.size == 8 &&
+        assert(event.request_token == 20u + iteration && event.payload.size == 8 &&
                (int32_t)pxa_read_u32(event.payload.data) == PXA_STATUS_OK);
         permission_handle = pxa_read_u32(event.payload.data + 4);
         assert(pxa_event_consume(test.runtime, component, view.token) ==
@@ -2928,7 +2988,7 @@ static void test_permission_service(void) {
     assert(pxa_component_finish_event(test.runtime, component, 1) ==
            PXA_STATUS_OK);
     assert(prompt.calls == 1 && prompt.component == component &&
-           prompt.request_id == 12);
+           prompt.request_token == 12);
     assert(pxa_event_peek(test.runtime, component, &view) ==
            PXA_STATUS_WOULD_BLOCK);
     store.save_status = PXA_STATUS_IO_ERROR;
@@ -2945,7 +3005,7 @@ static void test_permission_service(void) {
                                  sizeof(event_bytes), &view);
     assert(pxa_message_decode(event_bytes, event_size, PXA_MAX_CONTROL_MESSAGE,
                               &event) == PXA_STATUS_OK);
-    assert(event.request_id == 12 && event.payload.size == 8 &&
+    assert(event.request_token == 12 && event.payload.size == 8 &&
            (int32_t)pxa_read_u32(event.payload.data) == PXA_STATUS_OK);
     net_permission_handle = pxa_read_u32(event.payload.data + 4);
     assert(pxa_event_consume(test.runtime, component, view.token) ==
@@ -2968,7 +3028,7 @@ static void test_permission_service(void) {
            PXA_STATUS_OK);
     assert(pxa_component_finish_event(test.runtime, component, 1) ==
            PXA_STATUS_OK);
-    assert(prompt.calls == 2 && prompt.request_id == 13);
+    assert(prompt.calls == 2 && prompt.request_token == 13);
     assert(pxa_permission_prompt_complete(permission, component, 13,
                                           PXA_PERMISSION_DENY) ==
            PXA_STATUS_OK);
@@ -2976,7 +3036,7 @@ static void test_permission_service(void) {
                                  sizeof(event_bytes), &view);
     assert(pxa_message_decode(event_bytes, event_size, PXA_MAX_CONTROL_MESSAGE,
                               &event) == PXA_STATUS_OK);
-    assert(event.request_id == 13 && event.payload.size == 4 &&
+    assert(event.request_token == 13 && event.payload.size == 4 &&
            (int32_t)pxa_read_u32(event.payload.data) == PXA_STATUS_DENIED);
     assert(pxa_event_consume(test.runtime, component, view.token) ==
            PXA_STATUS_OK);
@@ -3048,7 +3108,7 @@ static void test_permission_v1_handle(void) {
     assert(pxa_component_create(test.runtime, 77, &component) ==
            PXA_STATUS_OK);
     assert(pxa_component_begin_start(test.runtime, component) == PXA_STATUS_OK);
-    assert(pxa_component_set_core_major(test.runtime, component, 1) ==
+    assert(pxa_component_set_wire_profile(test.runtime, component, 1) ==
            PXA_STATUS_OK);
     assert(pxa_component_validate_import(test.runtime, component) ==
            PXA_STATUS_OK);
@@ -3145,7 +3205,7 @@ static void test_permission_v1_handle(void) {
     assert(pxa_message_decode(event_bytes, event_size, PXA_MAX_CONTROL_MESSAGE,
                               &event) == PXA_STATUS_OK);
     assert(event.service == PXA_PERMISSION_SERVICE_ID &&
-           event.opcode == PXA_PERMISSION_REVOKED && event.request_id == 0);
+           event.opcode == PXA_PERMISSION_REVOKED && event.request_token == 0);
     assert(pxa_event_consume(test.runtime, component, view.token) ==
            PXA_STATUS_OK);
     destroy_runtime(&test);
@@ -3223,7 +3283,7 @@ static void test_ipc_service(void) {
                stranger) == PXA_STATUS_BUSY);
 
     {
-        uint8_t filler[2036] = {0};
+        uint8_t filler[sizeof(ipc_flood_event) - PXA_ENVELOPE_SIZE] = {0};
         pxa_writer_t writer;
         pxa_writer_init(&writer, ipc_flood_event,
                         sizeof(ipc_flood_event));
@@ -3265,7 +3325,7 @@ static void test_ipc_service(void) {
     assert(pxa_message_decode(event_bytes, event_size, PXA_MAX_CONTROL_MESSAGE,
                               &event) == PXA_STATUS_OK);
     assert(event.service == PXA_IPC_SERVICE_ID &&
-           event.opcode == PXA_IPC_CALL && event.request_id == 10 &&
+           event.opcode == PXA_IPC_CALL && event.request_token == 10 &&
            event.payload.size == 4 &&
            (int32_t)pxa_read_u32(event.payload.data) ==
                PXA_STATUS_RESOURCE_LIMIT);
@@ -3289,7 +3349,7 @@ static void test_ipc_service(void) {
                                  sizeof(event_bytes), &view);
     assert(pxa_message_decode(event_bytes, event_size, PXA_MAX_CONTROL_MESSAGE,
                               &event) == PXA_STATUS_OK &&
-           event.request_id == 16 &&
+           event.request_token == 16 &&
            (int32_t)pxa_read_u32(event.payload.data) == PXA_STATUS_CANCELLED);
     assert(pxa_event_consume(test.runtime, caller, view.token) ==
            PXA_STATUS_OK);
@@ -3307,15 +3367,15 @@ static void test_ipc_service(void) {
                                  sizeof(event_bytes), &view);
     assert(pxa_message_decode(event_bytes, event_size, PXA_MAX_CONTROL_MESSAGE,
                               &event) == PXA_STATUS_OK);
-    assert(event.opcode == PXA_IPC_REQUEST_EVENT && event.request_id != 0);
-    call_id = event.request_id;
+    assert(event.opcode == PXA_IPC_REQUEST_EVENT && event.request_token != 0);
+    call_id = event.request_token;
     assert(pxa_event_consume(test.runtime, provider, view.token) ==
            PXA_STATUS_OK);
     event_size = read_head_event(test.runtime, caller, event_bytes,
                                  sizeof(event_bytes), &view);
     assert(pxa_message_decode(event_bytes, event_size, PXA_MAX_CONTROL_MESSAGE,
                               &event) == PXA_STATUS_OK);
-    assert(event.opcode == PXA_IPC_CALL && event.request_id == 11 &&
+    assert(event.opcode == PXA_IPC_CALL && event.request_token == 11 &&
            event.payload.size == 8 &&
            pxa_read_u32(event.payload.data + 4) == call_id);
     assert(pxa_event_consume(test.runtime, caller, view.token) ==
@@ -3332,7 +3392,7 @@ static void test_ipc_service(void) {
                                  sizeof(event_bytes), &view);
     assert(pxa_message_decode(event_bytes, event_size, PXA_MAX_CONTROL_MESSAGE,
                               &event) == PXA_STATUS_OK);
-    assert(event.request_id == 12 &&
+    assert(event.request_token == 12 &&
            (int32_t)pxa_read_u32(event.payload.data) == PXA_STATUS_DENIED);
     assert(pxa_event_consume(test.runtime, stranger, view.token) ==
            PXA_STATUS_OK);
@@ -3348,7 +3408,7 @@ static void test_ipc_service(void) {
                                  sizeof(event_bytes), &view);
     assert(pxa_message_decode(event_bytes, event_size, PXA_MAX_CONTROL_MESSAGE,
                               &event) == PXA_STATUS_OK);
-    assert(event.opcode == PXA_IPC_REPLY_EVENT && event.request_id == call_id &&
+    assert(event.opcode == PXA_IPC_REPLY_EVENT && event.request_token == call_id &&
            event.payload.size == 13 &&
            memcmp(event.payload.data + 8, "world", 5) == 0);
     assert(pxa_event_consume(test.runtime, caller, view.token) ==
@@ -3356,7 +3416,7 @@ static void test_ipc_service(void) {
     event_size = read_head_event(test.runtime, provider, event_bytes,
                                  sizeof(event_bytes), &view);
     assert(pxa_message_decode(event_bytes, event_size, PXA_MAX_CONTROL_MESSAGE,
-                              &event) == PXA_STATUS_OK && event.request_id == 13);
+                              &event) == PXA_STATUS_OK && event.request_token == 13);
     assert(pxa_event_consume(test.runtime, provider, view.token) ==
            PXA_STATUS_OK);
 
@@ -3384,7 +3444,7 @@ static void test_ipc_service(void) {
                                  sizeof(event_bytes), &view);
     assert(pxa_message_decode(event_bytes, event_size, PXA_MAX_CONTROL_MESSAGE,
                               &event) == PXA_STATUS_OK);
-    call_id = event.request_id;
+    call_id = event.request_token;
     assert(pxa_event_consume(test.runtime, provider, view.token) ==
            PXA_STATUS_OK);
     assert(pxa_event_peek(test.runtime, caller, &view) == PXA_STATUS_OK);
@@ -3403,7 +3463,7 @@ static void test_ipc_service(void) {
     assert(pxa_message_decode(event_bytes, event_size, PXA_MAX_CONTROL_MESSAGE,
                               &event) == PXA_STATUS_OK &&
            event.opcode == PXA_IPC_REQUEST_EVENT);
-    second_call_id = event.request_id;
+    second_call_id = event.request_token;
     assert(second_call_id != call_id);
     assert(pxa_event_consume(test.runtime, provider, view.token) ==
            PXA_STATUS_OK);
@@ -3411,7 +3471,7 @@ static void test_ipc_service(void) {
                                  sizeof(event_bytes), &view);
     assert(pxa_message_decode(event_bytes, event_size, PXA_MAX_CONTROL_MESSAGE,
                               &event) == PXA_STATUS_OK &&
-           event.opcode == PXA_IPC_CALL && event.request_id == 15 &&
+           event.opcode == PXA_IPC_CALL && event.request_token == 15 &&
            pxa_read_u32(event.payload.data + 4) == second_call_id);
     assert(pxa_event_consume(test.runtime, caller, view.token) ==
            PXA_STATUS_OK);
@@ -3423,7 +3483,7 @@ static void test_ipc_service(void) {
     assert(pxa_message_decode(event_bytes, event_size, PXA_MAX_CONTROL_MESSAGE,
                               &event) == PXA_STATUS_OK);
     assert(event.opcode == PXA_IPC_REPLY_EVENT &&
-           event.request_id == second_call_id &&
+           event.request_token == second_call_id &&
            (int32_t)pxa_read_u32(event.payload.data) == PXA_STATUS_CANCELLED);
     assert(pxa_event_consume(test.runtime, caller, view.token) ==
            PXA_STATUS_OK);
@@ -3431,7 +3491,7 @@ static void test_ipc_service(void) {
                                  sizeof(event_bytes), &view);
     assert(pxa_message_decode(event_bytes, event_size, PXA_MAX_CONTROL_MESSAGE,
                               &event) == PXA_STATUS_OK);
-    assert(event.opcode == PXA_IPC_REPLY_EVENT && event.request_id == call_id &&
+    assert(event.opcode == PXA_IPC_REPLY_EVENT && event.request_token == call_id &&
            (int32_t)pxa_read_u32(event.payload.data) == PXA_STATUS_CANCELLED);
     assert(pxa_event_consume(test.runtime, caller, view.token) ==
            PXA_STATUS_OK);
@@ -3483,7 +3543,7 @@ static void test_storage_service(void) {
     (void)dispatch_control_completion(
         test.runtime, component, command, command_size, event_bytes,
         sizeof(event_bytes), &event);
-    assert(event.request_id == 11 && event.payload.size == 4 &&
+    assert(event.request_token == 11 && event.payload.size == 4 &&
            (int32_t)pxa_read_u32(event.payload.data) == PXA_STATUS_OK);
     command_size = make_storage_request(command, sizeof(command),
                                         PXA_STORAGE_SET, 12, "alpha", "a1");
@@ -3634,7 +3694,7 @@ static void test_fs_service(void) {
     (void)dispatch_control_completion(
         test.runtime, component, command, command_size, event_bytes,
         sizeof(event_bytes), &event);
-    assert(event.opcode == PXA_FS_OPEN && event.request_id == 21 &&
+    assert(event.opcode == PXA_FS_OPEN && event.request_token == 21 &&
            event.payload.size == 8 &&
            (int32_t)pxa_read_u32(event.payload.data) == PXA_STATUS_OK);
     file_handle = pxa_read_u32(event.payload.data + 4);
@@ -3790,7 +3850,7 @@ static void test_fs_v1_native_handles(void) {
            PXA_STATUS_OK);
     assert(pxa_component_begin_start(test.runtime, component) ==
            PXA_STATUS_OK);
-    assert(pxa_component_set_core_major(test.runtime, component, 1) ==
+    assert(pxa_component_set_wire_profile(test.runtime, component, 1) ==
            PXA_STATUS_OK);
     assert(pxa_component_validate_import(test.runtime, component) ==
            PXA_STATUS_OK);
@@ -3943,7 +4003,7 @@ static void test_fs_completion_reservation(void) {
     (void)dispatch_control_completion(test.runtime, component, command,
                                       command_size, event_bytes,
                                       sizeof(event_bytes), &event);
-    assert(event.request_id == 29 &&
+    assert(event.request_token == 29 &&
            (int32_t)pxa_read_u32(event.payload.data) == PXA_STATUS_OK &&
            backend.mutations == 1);
     destroy_runtime(&test);
@@ -3989,7 +4049,7 @@ static void test_sensor_service(void) {
            PXA_STATUS_OK);
     assert(pxa_component_begin_start(test.runtime, v1_component) ==
            PXA_STATUS_OK);
-    assert(pxa_component_set_core_major(test.runtime, v1_component, 1) ==
+    assert(pxa_component_set_wire_profile(test.runtime, v1_component, 1) ==
            PXA_STATUS_OK);
     assert(pxa_component_validate_import(test.runtime, v1_component) ==
            PXA_STATUS_OK);
@@ -4160,7 +4220,7 @@ static void test_sensor_service(void) {
     assert(pxa_message_decode(event_bytes, event_size, PXA_MAX_CONTROL_MESSAGE,
                               &event) == PXA_STATUS_OK);
     assert(event.service == PXA_SENSOR_SERVICE_ID &&
-           event.opcode == PXA_SENSOR_SAMPLE && event.request_id == 0);
+           event.opcode == PXA_SENSOR_SAMPLE && event.request_token == 0);
     pxa_record_iterator_init(&iterator, event.payload);
     assert(pxa_record_next(&iterator, &record) == PXA_STATUS_OK &&
            record.tag == 4 && record.payload.size == 4 &&
@@ -4181,7 +4241,7 @@ static void test_sensor_service(void) {
     assert(pxa_message_decode(event_bytes, event_size, PXA_MAX_CONTROL_MESSAGE,
                               &event) == PXA_STATUS_OK);
     assert(event.service == PXA_SENSOR_SERVICE_ID &&
-           event.opcode == PXA_SENSOR_SAMPLE && event.request_id == 0);
+           event.opcode == PXA_SENSOR_SAMPLE && event.request_token == 0);
     pxa_record_iterator_init(&iterator, event.payload);
     assert(pxa_record_next(&iterator, &record) == PXA_STATUS_OK &&
            record.tag == 4 && record.payload.size == 4 &&
@@ -4256,7 +4316,7 @@ static void test_sensor_service(void) {
         assert(pxa_message_decode(event_bytes, event_size,
                                   PXA_MAX_CONTROL_MESSAGE, &event) ==
                PXA_STATUS_OK && event.opcode == PXA_SENSOR_SAMPLE &&
-               event.request_id == 0);
+               event.request_token == 0);
         pxa_record_iterator_init(&iterator, event.payload);
         assert(pxa_record_next(&iterator, &record) == PXA_STATUS_OK &&
                record.tag == 4 && record.payload.size == 8 &&
@@ -4477,7 +4537,7 @@ static void test_scheduler_service(void) {
            PXA_STATUS_OK);
     assert(pxa_component_begin_start(test.runtime, v1_component) ==
            PXA_STATUS_OK);
-    assert(pxa_component_set_core_major(test.runtime, v1_component, 1) ==
+    assert(pxa_component_set_wire_profile(test.runtime, v1_component, 1) ==
            PXA_STATUS_OK);
     assert(pxa_component_validate_import(test.runtime, v1_component) ==
            PXA_STATUS_OK);
@@ -4507,7 +4567,7 @@ static void test_scheduler_service(void) {
                                   &completion_v1) == PXA_STATUS_OK);
         assert(completion_v1.service == PXA_WORK_SERVICE_ID &&
                completion_v1.opcode == PXA_WORK_ENQUEUE &&
-               completion_v1.request_id == 60 &&
+               completion_v1.request_token == 60 &&
                completion_v1.payload.size == 20 &&
                (int32_t)pxa_read_u32(completion_v1.payload.data) ==
                    PXA_STATUS_OK);
@@ -4531,7 +4591,7 @@ static void test_scheduler_service(void) {
         assert(pxa_message_decode(event_bytes, event_size,
                                   PXA_MAX_CONTROL_MESSAGE,
                                   &completion_v1) == PXA_STATUS_OK &&
-               completion_v1.request_id == 61 &&
+               completion_v1.request_token == 61 &&
                completion_v1.payload.size == 4 &&
                (int32_t)pxa_read_u32(completion_v1.payload.data) ==
                    PXA_STATUS_OK && store.count == 0);
@@ -4869,7 +4929,7 @@ static void test_net_service(int web_scope) {
            PXA_STATUS_OK);
     assert(pxa_component_begin_start(test.runtime, v1_component) ==
            PXA_STATUS_OK);
-    assert(pxa_component_set_core_major(test.runtime, v1_component, 1) ==
+    assert(pxa_component_set_wire_profile(test.runtime, v1_component, 1) ==
            PXA_STATUS_OK);
     assert(pxa_component_validate_import(test.runtime, v1_component) ==
            PXA_STATUS_OK);
@@ -5038,7 +5098,7 @@ static void test_net_service(int web_scope) {
                                  sizeof(event_bytes), &view);
     assert(pxa_message_decode(event_bytes, event_size, PXA_MAX_CONTROL_MESSAGE,
                               &event) == PXA_STATUS_OK);
-    assert(event.opcode == PXA_NET_FETCH && event.request_id == 52 &&
+    assert(event.opcode == PXA_NET_FETCH && event.request_token == 52 &&
            (int32_t)pxa_read_u32(event.payload.data) == PXA_STATUS_OK);
     pxa_record_iterator_init(
         &iterator,
@@ -5083,7 +5143,7 @@ static void test_net_service(int web_scope) {
                                  sizeof(event_bytes), &view);
     assert(pxa_message_decode(event_bytes, event_size, PXA_MAX_CONTROL_MESSAGE,
                               &event) == PXA_STATUS_OK &&
-           event.opcode == PXA_NET_HTTP_REQUEST && event.request_id == 53 &&
+           event.opcode == PXA_NET_HTTP_REQUEST && event.request_token == 53 &&
            (int32_t)pxa_read_u32(event.payload.data) == PXA_STATUS_OK);
     pxa_record_iterator_init(
         &iterator,
@@ -5128,7 +5188,7 @@ static void test_net_service(int web_scope) {
                                  sizeof(event_bytes), &view);
     assert(pxa_message_decode(event_bytes, event_size, PXA_MAX_CONTROL_MESSAGE,
                               &event) == PXA_STATUS_OK &&
-           event.request_id == 54 &&
+           event.request_token == 54 &&
            (int32_t)pxa_read_u32(event.payload.data) == PXA_STATUS_CANCELLED);
     assert(pxa_event_consume(test.runtime, component, view.token) ==
            PXA_STATUS_OK);
@@ -5183,7 +5243,7 @@ static void test_net_service(int web_scope) {
                                      event_bytes, sizeof(event_bytes), &view);
         assert(pxa_message_decode(event_bytes, event_size,
                                   PXA_MAX_CONTROL_MESSAGE, &event) ==
-               PXA_STATUS_OK && event.request_id == 83 &&
+               PXA_STATUS_OK && event.request_token == 83 &&
                (int32_t)pxa_read_u32(event.payload.data) == PXA_STATUS_OK);
         pxa_record_iterator_init(
             &iterator,
@@ -5223,7 +5283,7 @@ static void test_net_service(int web_scope) {
                                      event_bytes, sizeof(event_bytes), &view);
         assert(pxa_message_decode(event_bytes, event_size,
                                   PXA_MAX_CONTROL_MESSAGE, &event) ==
-               PXA_STATUS_OK && event.request_id == 84);
+               PXA_STATUS_OK && event.request_token == 84);
         pxa_record_iterator_init(
             &iterator,
             (pxa_bytes_t){event.payload.data + 4, event.payload.size - 4});
@@ -5261,7 +5321,7 @@ static void test_net_service(int web_scope) {
                                      event_bytes, sizeof(event_bytes), &view);
         assert(pxa_message_decode(event_bytes, event_size,
                                   PXA_MAX_CONTROL_MESSAGE, &event) ==
-               PXA_STATUS_OK && event.request_id == 85 &&
+               PXA_STATUS_OK && event.request_token == 85 &&
                (int32_t)pxa_read_u32(event.payload.data) ==
                    PXA_STATUS_CANCELLED);
         assert(pxa_event_consume(test.runtime, v1_component, view.token) ==
@@ -5310,7 +5370,7 @@ static void test_audio_service(void) {
            PXA_STATUS_OK);
     assert(pxa_component_begin_start(test.runtime, v1_component) ==
            PXA_STATUS_OK);
-    assert(pxa_component_set_core_major(test.runtime, v1_component, 1) ==
+    assert(pxa_component_set_wire_profile(test.runtime, v1_component, 1) ==
            PXA_STATUS_OK);
     assert(pxa_component_validate_import(test.runtime, v1_component) ==
            PXA_STATUS_OK);
@@ -5666,6 +5726,7 @@ int main(void) {
     test_lifecycle();
     test_requests_and_mailbox();
     test_request_table_collision_and_completion_order();
+    test_wide_tokens_and_queued_ownership();
     test_reserved_completion_backpressure();
     test_coalescing_and_reserve();
     test_event_block_boundaries_and_stale_tokens();

@@ -1,9 +1,10 @@
+#include "../../testing/pxa_control_capture.h"
 #include <pxa/startup.hpp>
 #include <cassert>
 #include <cstring>
 #include <vector>
 
-extern "C" std::int32_t pxa_submit(const std::uint8_t*, std::uint32_t) { assert(false); return -1; }
+extern "C" std::int32_t pxa_test_control(const std::uint8_t*, std::uint32_t) { assert(false); return -1; }
 extern "C" std::int32_t pxa_io(std::uint64_t, std::uint32_t, std::uint8_t*, std::uint32_t) { assert(false); return -1; }
 
 using Bytes = std::vector<std::byte>;

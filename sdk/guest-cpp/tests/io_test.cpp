@@ -1,3 +1,4 @@
+#include "../../testing/pxa_control_capture.h"
 #include <pxa/io.hpp>
 #include <array>
 #include <cassert>
@@ -9,7 +10,7 @@ using namespace pxa;
 void* operator new(std::size_t) { std::abort(); }
 void operator delete(void*) noexcept {}
 void operator delete(void*, std::size_t) noexcept {}
-extern "C" std::int32_t pxa_submit(const std::uint8_t*, std::uint32_t) { std::abort(); }
+extern "C" std::int32_t pxa_test_control(const std::uint8_t*, std::uint32_t) { std::abort(); }
 extern "C" std::int32_t pxa_io(std::uint64_t, std::uint32_t, std::uint8_t*, std::uint32_t) { std::abort(); }
 
 int main() {

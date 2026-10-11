@@ -12,7 +12,7 @@ static void pop(pxa_runtime_t *runtime,pxa_component_t component,uint16_t opcode
     uint8_t bytes[128]; size_t n; pxa_message_view_t event;
     assert(!pxa_event_pop(runtime,component,bytes,sizeof(bytes),&n));
     assert(!pxa_message_decode(bytes,n,sizeof(bytes),&event));
-    assert(event.opcode==opcode && !event.request_id);
+    assert(event.opcode==opcode && !event.request_token);
     if (opcode==PXA_AUDIO_PLAYBACK_EVENT) {
         assert(event.service==PXA_AUDIO_SERVICE_ID && event.payload.size==24);
         assert(pxa_read_u64(event.payload.data)==session);
@@ -28,7 +28,7 @@ int main(void) {
     assert(workspace && !pxa_runtime_init(workspace,bytes,&limits,&runtime));
     pxa_component_t component;
     assert(!pxa_component_create(runtime,1,&component));
-    assert(!pxa_component_set_core_major(runtime,component,1));
+    assert(!pxa_component_set_wire_profile(runtime,component,1));
     assert(!pxa_component_begin_start(runtime,component));
     assert(!pxa_component_finish_start(runtime,component,0));
     pxa_audio_playback_queue_t queue={0};

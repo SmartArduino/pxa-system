@@ -8,7 +8,9 @@
 
 typedef struct {
     uint64_t coalesce_key;
-    uint32_t next_free;
+    /* Mutually exclusive: a free slot links the freelist; an occupied
+     * completion points to its reserved request. Ordinary events use NONE. */
+    union { uint32_t next_free; uint32_t completion_request; };
     uint32_t next_queue;
     uint32_t first_block;
     uint32_t size;

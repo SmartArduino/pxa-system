@@ -112,7 +112,7 @@ private:
         RequestTable& requests, std::span<std::byte> packet,
         std::span<NetHeader> headers, std::uint32_t max_response_bytes) {
         auto event = co_await Response(transport, requests, 9, 2,
-            Response::PrebuiltPacket{packet}, true, 4, net_late_body_handle);
+            packet, true, 4, net_late_body_handle);
         if (!event) co_return std::unexpected(event.error());
         co_return decode_net_response(transport, event->payload, headers,
                                       max_response_bytes);

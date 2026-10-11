@@ -1,3 +1,4 @@
+#include "../../testing/pxa_control_capture.h"
 #include <pxa/app.hpp>
 
 #include <cassert>
@@ -22,7 +23,7 @@ static unsigned started;
 static unsigned destroyed;
 static std::uint64_t token;
 
-extern "C" std::int32_t pxa_submit(const std::uint8_t* bytes,
+extern "C" std::int32_t pxa_test_control(const std::uint8_t* bytes,
                                       std::uint32_t size) {
     assert(size >= 20);
     ++submissions;

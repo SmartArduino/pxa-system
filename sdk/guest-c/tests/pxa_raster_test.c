@@ -1,3 +1,4 @@
+#include "../../testing/pxa_control_capture.h"
 #include "pxa_raster.h"
 
 #include <assert.h>
@@ -8,7 +9,7 @@ static uint64_t captured_handle;
 static uint32_t captured_operation;
 static uint32_t captured_length;
 
-int32_t pxa_submit(const uint8_t *data, uint32_t length) {
+int32_t pxa_test_control(const uint8_t *data, uint32_t length) {
     (void)data;
     (void)length;
     return PXA_STATUS_OK;

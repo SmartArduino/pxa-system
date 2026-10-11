@@ -1,9 +1,10 @@
+#include "../../testing/pxa_control_capture.h"
 #include <pxa/game_utils.hpp>
 #include <pxa/game3d_camera.hpp>
 #include <pxa/game3d_material.hpp>
 #include <cassert>
 #include <cmath>
-extern "C" std::int32_t pxa_submit(const std::uint8_t*,std::uint32_t) { return 0; }
+extern "C" std::int32_t pxa_test_control(const std::uint8_t*,std::uint32_t) { return 0; }
 extern "C" std::int32_t pxa_io(std::uint64_t,std::uint32_t,std::uint8_t*,std::uint32_t) { return 0; }
 static bool close(float a,float b) { return std::fabs(a-b)<0.00002f; }
 int main() {

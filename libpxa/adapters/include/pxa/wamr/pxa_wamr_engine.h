@@ -15,7 +15,7 @@ extern "C" {
  * (`pxa_component_engine_t`). Mirrors the legacy C++ WAMR host semantics:
  *  - loads one Artifact (portable Wasm or AOT) per Component from the package
  *    root through the `read_artifact` callback;
- *  - binds the `pxa.core.v1` natives;
+ *  - binds the `pxa.core.v2` natives;
  *  - calls the guest exports pxa_app_start / pxa_app_on_event / pxa_app_stop;
  *  - optional guest-call deadline: poll pxa_wamr_engine_poll_deadlines from a
  *    host timer to abort overdue calls with wasm_runtime_terminate. Hosts that
@@ -102,11 +102,11 @@ typedef struct pxa_wamr_engine pxa_wamr_engine_t;
  * intentionally not exposed because the adapter releases its temporary
  * guest buffer before returning. */
 typedef struct {
-    uint16_t service;
-    uint16_t opcode;
-    uint32_t request_id;
+    pxa_request_token_t request_token;
     size_t payload_size;
     int32_t guest_result;
+    uint16_t service;
+    uint16_t opcode;
     /* Set after the event has been removed from the mailbox. */
     uint8_t event_consumed;
 } pxa_wamr_event_result_t;
@@ -141,7 +141,7 @@ void pxa_wamr_engine_deinit(pxa_wamr_engine_t *engine);
 pxa_status_t pxa_wamr_engine_memory_snapshot(
     const pxa_wamr_engine_t *engine, pxa_wamr_memory_snapshot_t *output);
 
-/* Bind the runtime the pxa.core.v1 natives dispatch into. */
+/* Bind the runtime the pxa.core.v2 natives dispatch into. */
 void pxa_wamr_engine_set_runtime(pxa_wamr_engine_t *engine,
                                  pxa_runtime_t *runtime);
 

@@ -1,3 +1,4 @@
+#include "../../testing/pxa_control_capture.h"
 #include <pxa/binary.hpp>
 #include <pxa/pixels.hpp>
 #include <pxa/service_wire.hpp>
@@ -6,7 +7,7 @@
 
 using namespace pxa;
 
-extern "C" std::int32_t pxa_submit(const std::uint8_t*, std::uint32_t) { assert(false); return -1; }
+extern "C" std::int32_t pxa_test_control(const std::uint8_t*, std::uint32_t) { assert(false); return -1; }
 extern "C" std::int32_t pxa_io(std::uint64_t, std::uint32_t, std::uint8_t*, std::uint32_t) { assert(false); return -1; }
 
 static_assert(!binary::Scalar<std::array<int, 2>>);

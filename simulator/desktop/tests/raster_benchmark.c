@@ -12,7 +12,7 @@
 int main(int argc, char **argv) {
     product_host_t *host = calloc(1, sizeof(*host));
     pxa_game_render_desc_t desc = {240, 240, 3, 0,
-                                  PXA_GAME_RENDER_SCRATCH_NONE, 4096};
+                                  PXA_GAME_RENDER_SCRATCH_NONE, 49152};
     uint8_t *texture = calloc(1, PXA_RASTER_UPLOAD_HEADER_BYTES + 65536);
     uint8_t palette[PXA_RASTER_UPLOAD_HEADER_BYTES + 512] = {0};
     uint8_t draw[PXA_RASTER_DRAW_HEADER_BYTES + PXA_RASTER_CLEAR_BYTES +
@@ -22,6 +22,12 @@ int main(int argc, char **argv) {
     uint32_t capabilities;
     uint32_t checksum = 2166136261u;
     assert(host && texture && frames > 0 && frames <= 100000);
+    host->focused = 1;
+    if (argc > 2) {
+        assert(strcmp(argv[2], "queued") == 0 || strcmp(argv[2], "borrowed") == 0);
+        if (strcmp(argv[2], "borrowed") == 0)
+            desc.flags |= PXA_GAME_RENDER_FLAG_BORROW_COMMANDS;
+    }
 #ifdef PRODUCT_RESOURCE_BUDGET
     assert(resource_memory_init(host, 128 * 1024, 2 * 1024 * 1024, 16 * 1024, 512 * 1024) == 0);
 #endif
@@ -31,6 +37,14 @@ int main(int argc, char **argv) {
     host->width = host->height = 240;
     host->content_parent = lv_display_get_screen_active(host->display);
     assert(game_render_create(host, &desc, &surface, &capabilities) == 0);
+#ifdef PRODUCT_SURFACE_FLAG_BORROW_COMMANDS
+    const size_t command_buffers = host->raster_draw_list != NULL ? 1 : 0;
+#else
+    const size_t command_buffers = 2;
+#endif
+    fprintf(stderr, "host_struct=%zu command_storage=%zu mode=%s\n", sizeof(*host),
+            command_buffers * host->raster_max_draw_bytes,
+            desc.flags & PXA_GAME_RENDER_FLAG_BORROW_COMMANDS ? "borrowed" : "queued");
     snapshot_upload_header(palette, PXA_RASTER_UPLOAD_PALETTE_RGB565, 256, 1);
     for (unsigned i = 0; i < 256; ++i)
         pxa_write_u16(palette + PXA_RASTER_UPLOAD_HEADER_BYTES + 2 * i,

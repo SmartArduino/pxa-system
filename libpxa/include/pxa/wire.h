@@ -10,15 +10,17 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-#define PXA_CORE_VERSION_MAJOR UINT16_C(1)
+#define PXA_CORE_VERSION_MAJOR UINT16_C(2)
 #define PXA_CORE_VERSION_MINOR UINT16_C(0)
 #define PXA_CORE_VERSION_PATCH UINT16_C(0)
-#define PXA_CORE_VERSION UINT32_C(0x00010000)
-#define PXA_ENVELOPE_SIZE PXA_WIRE_V0_SIZE
+#define PXA_CORE_VERSION UINT32_C(0x00020000)
+#define PXA_ENVELOPE_SIZE PXA_WIRE_SIZE
 #define PXA_RECORD_HEADER_SIZE PXA_WIRE_RECORD_SIZE
 #define PXA_MAX_CONTROL_MESSAGE PXA_WIRE_MAX_CONTROL_MESSAGE
 #define PXA_RECORD_OPTIONAL_MASK PXA_WIRE_RECORD_OPTIONAL_MASK
 #define PXA_RECORD_TAG_MASK PXA_WIRE_RECORD_TAG_MASK
+
+typedef uint64_t pxa_request_token_t;
 
 typedef struct {
     const uint8_t *data;
@@ -28,7 +30,7 @@ typedef struct {
 typedef struct {
     uint16_t service;
     uint16_t opcode;
-    uint32_t request_id;
+    pxa_request_token_t request_token;
     pxa_bytes_t payload;
 } pxa_message_view_t;
 
@@ -78,7 +80,7 @@ pxa_status_t pxa_writer_u64(pxa_writer_t *writer, uint64_t value);
 pxa_status_t pxa_writer_record(pxa_writer_t *writer, uint16_t raw_tag,
                                const void *payload, size_t payload_size);
 pxa_status_t pxa_writer_message(pxa_writer_t *writer, uint16_t service,
-                                uint16_t opcode, uint32_t request_id,
+                                uint16_t opcode, pxa_request_token_t request_token,
                                 const void *payload, size_t payload_size);
 
 #ifdef __cplusplus

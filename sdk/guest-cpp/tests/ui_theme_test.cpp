@@ -1,7 +1,8 @@
+#include "../../testing/pxa_control_capture.h"
 #include <pxa/ui_theme.hpp>
 #include <pxa/events.hpp>
 #include <cassert>
-extern "C" std::int32_t pxa_submit(const std::uint8_t*, std::uint32_t) { return -1; }
+extern "C" std::int32_t pxa_test_control(const std::uint8_t*, std::uint32_t) { return -1; }
 extern "C" std::int32_t pxa_io(std::uint64_t, std::uint32_t, std::uint8_t*, std::uint32_t) { return -1; }
 int main() {
     std::array<std::byte, 60> bytes{};

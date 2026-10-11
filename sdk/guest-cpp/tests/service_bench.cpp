@@ -1,3 +1,4 @@
+#include "../../testing/pxa_control_capture.h"
 // Optional native mock benchmark; never represents Host/device latency or displayed FPS.
 #include <pxa/storage.hpp>
 #include <pxa/permission.hpp>
@@ -8,7 +9,7 @@
 static unsigned mode, iterations=2000000, submits;
 static std::uint64_t token;
 static bool done;
-extern "C" std::int32_t pxa_submit(const std::uint8_t* data,std::uint32_t size) {
+extern "C" std::int32_t pxa_test_control(const std::uint8_t* data,std::uint32_t size) {
     auto* b=reinterpret_cast<const std::byte*>(data);
     assert(pxa::wire::get16(b)==(mode?11:6));
     assert(pxa::wire::get16(b+2)==(mode?1:2));

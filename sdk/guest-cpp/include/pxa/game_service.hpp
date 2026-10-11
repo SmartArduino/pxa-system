@@ -14,6 +14,9 @@ struct RenderOptions {
     // Prefer scanout for games that draw their HUD in the surface. The Host
     // retains composition whenever visible UI or system overlays require it.
     bool direct_scanout = false;
+    // Opt in to consuming the draw list during submit, without a Host queue
+    // copy. The call can spend CPU time rasterizing but never waits for scanout.
+    bool borrow_commands = false;
     std::uint32_t max_draw_bytes = 4096;
 };
 
@@ -31,14 +34,14 @@ public:
             options.scale > 4 ||
             static_cast<unsigned>(options.scratch) > 2 ||
             (options.max_draw_bytes &&
-             (options.max_draw_bytes < 32 || options.max_draw_bytes > 49152)))
+             (options.max_draw_bytes < 32 || options.max_draw_bytes > limits::draw_list_bytes)))
             co_return std::unexpected(Error::invalid_argument);
 
         std::array<std::byte, 12> payload{};
         wire::put16(payload.data(), options.width);
         wire::put16(payload.data() + 2, options.height);
         payload[4] = std::byte(options.buffers);
-        payload[5] = std::byte(options.direct_scanout ? 1 : 0);
+        payload[5] = std::byte((options.direct_scanout ? 1 : 0) | (options.borrow_commands ? 2 : 0));
         payload[6] = std::byte(options.scale);
         payload[7] = std::byte(static_cast<std::uint8_t>(options.scratch));
         wire::put32(payload.data() + 8, options.max_draw_bytes);
@@ -58,7 +61,11 @@ public:
         info.max_draw_bytes = wire::get32(event->payload.data() + 16);
         info.max_texture_dimension = wire::get16(event->payload.data() + 20);
         info.max_textures = std::to_integer<std::uint8_t>(event->payload[22]);
-        if (event->payload[23] != std::byte{})
+        if (event->payload[23] != std::byte{} ||
+            info.max_draw_bytes < 32 || info.max_draw_bytes > limits::draw_list_bytes ||
+            (options.max_draw_bytes && info.max_draw_bytes != options.max_draw_bytes) ||
+            !info.max_texture_dimension || info.max_texture_dimension > limits::texture_dimension ||
+            !info.max_textures || info.max_textures > limits::texture_slots)
             co_return std::unexpected(Error::protocol_error);
         if (automatic) {
             info.display_width = wire::get16(event->payload.data() + 24);
@@ -70,7 +77,14 @@ public:
             info.supported_scale_mask = std::to_integer<std::uint8_t>(
                 event->payload[33]);
             if (event->payload[34] != std::byte{} ||
-                event->payload[35] != std::byte{})
+                event->payload[35] != std::byte{} ||
+                !info.render_width || !info.render_height ||
+                info.render_scale < 1 || info.render_scale > 4 ||
+                (options.scale && info.render_scale != options.scale) ||
+                (info.supported_scale_mask & ~0x0fu) != 0 ||
+                !(info.supported_scale_mask & (1u << (info.render_scale - 1))) ||
+                std::uint32_t(info.render_width) * info.render_scale != info.display_width ||
+                std::uint32_t(info.render_height) * info.render_scale != info.display_height)
                 co_return std::unexpected(Error::protocol_error);
         } else {
             info.render_width = options.width;

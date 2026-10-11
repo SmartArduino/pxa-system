@@ -1,3 +1,4 @@
+#include "../../sdk/testing/pxa_control_capture.h"
 #undef NDEBUG
 #include "pxa_asset_scene.h"
 #include <assert.h>
@@ -7,7 +8,7 @@
 static uint64_t submitted[128], cancelled[128], closed[128];
 static unsigned submits, cancels, closes, binds, reject_at;
 static int32_t bind_error, close_error;
-int32_t pxa_submit(const uint8_t *packet, uint32_t bytes) {
+int32_t pxa_test_control(const uint8_t *packet, uint32_t bytes) {
     pxa_event_t message; assert(pxa_parse_event(packet, bytes, &message));
     if (message.service == PXA_ASSETS_SERVICE) {
         assert(message.opcode == PXA_ASSETS_LOAD && submits < 128);

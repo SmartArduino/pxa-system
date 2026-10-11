@@ -5,9 +5,9 @@ and lifecycle events, then include only the service headers you use, such as
 `pxa_clock.h` or `pxa_ui.h`. Header, function and macro names carry no version
 suffix, and the SDK never ships a second API generation beside the current one.
 Only the wire ABI keeps its version: application Wasm artifacts import
-`pxa_submit` and `pxa_io` from `pxa.core.v1`, and package metadata records the
+`pxa_call` and `pxa_io` from `pxa.core.v2`, and package metadata records the
 required Core version through `min_sdk`/`target_sdk`/`compile_sdk`, which
-default to SDK 1.0.
+default to SDK 2.0.
 
 In `pxa_ui.h`, `pxa_ui_parse_event`, `pxa_ui_parse_pointer`,
 `pxa_ui_parse_controller`, `pxa_ui_parse_environment_event` and related
@@ -42,8 +42,8 @@ optional `.c` library after comparing Wasm/AOT size and build time. The public
 declarations can stay in `.h`; keeping one implementation avoids duplicated
 maintenance. A `.c` split should not add a second ABI or hidden allocation.
 
-The Core imports are `pxa_submit` and `pxa_io` from `pxa.core.v1`. Its 20-byte
-envelope and 64-bit request tokens support Log, Device runtime information and scoped MAC, Window
+The Core imports are `pxa_call` and `pxa_io` from `pxa.core.v2`. Control calls pass the route, 64-bit token and borrowed payload separately;
+completion events retain a 20-byte envelope. Services include Log, Device runtime information and scoped MAC, Window
 configure/snapshot/toast, Permission check/acquire, Storage get/set/remove/list,
 private FS, IPC call/reply, Net fetch/HTTP, Audio media, Sensor discovery and
 subscriptions, Core leases, and GameRender context creation, telemetry I/O
@@ -105,7 +105,9 @@ The FS helpers share one UTF-8 path validator in `pxa_fs_path.h`.
 `pxa_pending.h` provides an optional fixed-capacity, caller-owned table:
 build a packet, call `pxa_send_tracked()`, then match the completion with
 `pxa_pending_take()`. Immediate Host rejection removes the pending entry.
-One-way commands can call `pxa_submit()` directly.
+One-way commands can call `pxa_call(route, 0, payload, length)` directly.
+The C packet builders remain available for custom encoders; `pxa_control_packet`
+unpacks their local envelope before calling the same Core 2 import.
 `pxa_cancel(token)` submits an idempotent Core cancellation command. A
 request cancelled before commit completes once with `PXA_STATUS_CANCELLED`;
 cancellation after completion is queued leaves that result unchanged.
@@ -128,7 +130,7 @@ runtime reads do not repeat SHA checks. Reads return the requested count or
 stop at EOF, without a 4096-byte block boundary. Declare Assets 2.0 (the current
 packager default); recompile and repackage older Guests because their parsers
 may reject results that cross the former boundary. Core messages remain
-on `pxa.core.v1`.
+on `pxa.core.v2`.
 Textures and audio should stay on their Host consumer paths rather than being
 read into Guest memory and uploaded again.
 

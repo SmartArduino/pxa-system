@@ -98,11 +98,11 @@ int main(void) {
 
     start = monotonic_ns();
     for (index = 0; index < QUEUE_ITERATIONS; ++index) {
-        const uint32_t request_id = index + 1u;
-        checksum += (uint64_t)pxa_request_begin(runtime, component, request_id,
+        const pxa_request_token_t request_token = index + 1u;
+        checksum += (uint64_t)pxa_request_begin(runtime, component, request_token,
                                                 5, 1, 0);
         checksum += (uint64_t)pxa_request_complete(
-            runtime, component, request_id, PXA_STATUS_OK, NULL, 0);
+            runtime, component, request_token, PXA_STATUS_OK, NULL, 0);
         {
             size_t read_size = 0;
             checksum += (uint64_t)pxa_event_pop(

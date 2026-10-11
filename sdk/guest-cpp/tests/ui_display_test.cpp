@@ -1,10 +1,11 @@
+#include "../../testing/pxa_control_capture.h"
 #include <pxa/ui_display.hpp>
 #include <pxa/events.hpp>
 #include <algorithm>
 #include <cassert>
 #include <climits>
 
-extern "C" std::int32_t pxa_submit(const std::uint8_t*,std::uint32_t){return 0;}
+extern "C" std::int32_t pxa_test_control(const std::uint8_t*,std::uint32_t){return 0;}
 extern "C" std::int32_t pxa_io(std::uint64_t,std::uint32_t,std::uint8_t*,std::uint32_t){return -3;}
 
 int main(){

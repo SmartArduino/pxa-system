@@ -1,3 +1,4 @@
+#include "../../testing/pxa_control_capture.h"
 #include <pxa/app.hpp>
 
 #include <array>
@@ -9,7 +10,7 @@ static int accepted_requests;
 static int failed_tasks;
 static bool foreground_mode;
 
-extern "C" std::int32_t pxa_submit(const std::uint8_t* data,
+extern "C" std::int32_t pxa_test_control(const std::uint8_t* data,
                                       std::uint32_t length) {
     assert(length >= 20);
     if (data[0] == 42) {

@@ -69,14 +69,14 @@ static void release_pending_prompt(pxa_permission_service_t *service,
 
 static pxa_permission_pending_prompt_t *find_pending_prompt(
     pxa_permission_service_t *service, pxa_component_t component,
-    uint32_t request_id) {
+    pxa_request_token_t request_token) {
     uint16_t index;
-    if (request_id == 0) return NULL;
+    if (request_token == 0) return NULL;
     for (index = 0; index < service->max_pending_prompts; ++index) {
         pxa_permission_pending_prompt_t *pending =
             &service->pending_prompts[index];
         if (pending->active && pending->component == component &&
-            pending->request_id == request_id) {
+            pending->request_token == request_token) {
             return pending;
         }
     }
@@ -91,7 +91,7 @@ static pxa_status_t authorize(pxa_permission_service_t *service,
     pxa_component_snapshot_t snapshot;
     pxa_resource_t resource;
     pxa_status_t status;
-    uint16_t core_major = 0;
+    uint16_t wire_profile = 0;
     if (service->declarations[declaration_index].decision !=
         PXA_PERMISSION_ALLOW) {
         return PXA_STATUS_DENIED;
@@ -108,8 +108,8 @@ static pxa_status_t authorize(pxa_permission_service_t *service,
         snapshot.state != PXA_COMPONENT_RUNNING) {
         return PXA_STATUS_BAD_STATE;
     }
-    status = pxa_component_core_major(service->runtime, component,
-                                      &core_major);
+    status = pxa_component_wire_profile(service->runtime, component,
+                                      &wire_profile);
     if (status != PXA_STATUS_OK) return status;
     issued = allocate_authority(service);
     if (issued == NULL) return PXA_STATUS_RESOURCE_LIMIT;
@@ -120,7 +120,7 @@ static pxa_status_t authorize(pxa_permission_service_t *service,
     memset(&resource, 0, sizeof(resource));
     resource.context = issued;
     resource.close = permission_authority_closed;
-    if (core_major == 1) {
+    if (wire_profile == 1) {
         status = pxa_handle_open64(service->runtime, component,
                                    PXA_RESOURCE_PERMISSION,
                                    issued->authority, &resource, handle_out);
@@ -153,20 +153,20 @@ static void discard_authority(pxa_permission_service_t *service,
 
 static pxa_status_t complete_permission_request(
     pxa_permission_service_t *service, pxa_component_t component,
-    uint32_t request_id, uint16_t opcode, pxa_status_t result,
+    pxa_request_token_t request_token, uint16_t opcode, pxa_status_t result,
     pxa_handle64_t handle) {
     uint8_t result_data[8];
     size_t result_size = 0;
     pxa_status_t complete;
-    uint16_t core_major = 0;
-    pxa_status_t status = pxa_component_core_major(service->runtime,
-                                                   component, &core_major);
+    uint16_t wire_profile = 0;
+    pxa_status_t status = pxa_component_wire_profile(service->runtime,
+                                                   component, &wire_profile);
     if (status != PXA_STATUS_OK) {
         discard_authority(service, component, handle);
         return status;
     }
     if (result == PXA_STATUS_OK && opcode == PXA_PERMISSION_ACQUIRE) {
-        if (core_major == 1) {
+        if (wire_profile == 1) {
             pxa_write_u64(result_data, handle);
             result_size = 8;
         } else {
@@ -174,20 +174,20 @@ static pxa_status_t complete_permission_request(
             result_size = 4;
         }
     }
-    complete = pxa_request_complete(service->runtime, component, request_id,
+    complete = pxa_request_complete(service->runtime, component, request_token,
                                     result,
                                     result == PXA_STATUS_OK ? result_data : NULL,
                                     result == PXA_STATUS_OK ? result_size : 0);
     if (complete != PXA_STATUS_OK) {
         discard_authority(service, component, handle);
-        (void)pxa_request_cancel(service->runtime, component, request_id);
+        (void)pxa_request_cancel(service->runtime, component, request_token);
     }
     return complete;
 }
 
 static pxa_status_t request_runtime_prompt(pxa_permission_service_t *service,
                                            pxa_component_t component,
-                                           uint32_t request_id,
+                                           pxa_request_token_t request_token,
                                            uint16_t declaration_index) {
     pxa_permission_pending_prompt_t *pending;
     pxa_status_t status;
@@ -197,10 +197,10 @@ static pxa_status_t request_runtime_prompt(pxa_permission_service_t *service,
     pending = allocate_pending_prompt(service);
     if (pending == NULL) return PXA_STATUS_RESOURCE_LIMIT;
     pending->component = component;
-    pending->request_id = request_id;
+    pending->request_token = request_token;
     pending->slot.declaration_index = declaration_index;
     status = pxa_status_normalize(service->prompt(
-        service->prompt_context, component, request_id, service->identity,
+        service->prompt_context, component, request_token, service->identity,
         service->declarations[declaration_index].name,
         service->declarations[declaration_index].scope));
     if (status != PXA_STATUS_OK) release_pending_prompt(service, pending);
@@ -318,21 +318,21 @@ static pxa_status_t permission_control(void *context, pxa_runtime_t *runtime,
     uint8_t result_data[8];
     size_t result_size = 0;
     pxa_handle64_t handle = PXA_HANDLE64_INVALID;
-    uint16_t core_major = 0;
+    uint16_t wire_profile = 0;
     (void)runtime;
-    if (message->request_id == 0) return PXA_STATUS_INVALID_ARGUMENT;
+    if (message->request_token == 0) return PXA_STATUS_INVALID_ARGUMENT;
     if (message->opcode != PXA_PERMISSION_CHECK &&
         message->opcode != PXA_PERMISSION_ACQUIRE) {
         return PXA_STATUS_UNSUPPORTED;
     }
-    result = pxa_component_core_major(service->runtime, component,
-                                       &core_major);
+    result = pxa_component_wire_profile(service->runtime, component,
+                                       &wire_profile);
     if (result != PXA_STATUS_OK) return result;
     result = pxa_request_begin_reserved(
-        service->runtime, component, message->request_id,
+        service->runtime, component, message->request_token,
         PXA_PERMISSION_SERVICE_ID, message->opcode, 0,
         message->opcode == PXA_PERMISSION_ACQUIRE
-            ? (core_major == 1 ? 8u : 4u) : 1u);
+            ? (wire_profile == 1 ? 8u : 4u) : 1u);
     if (result != PXA_STATUS_OK) return result;
     result = parse_request(message->payload, &name, &scope);
     if (result == PXA_STATUS_OK &&
@@ -351,7 +351,7 @@ static pxa_status_t permission_control(void *context, pxa_runtime_t *runtime,
         if (declaration->decision == PXA_PERMISSION_DENY &&
             !declaration->required && service->prompt != NULL) {
             result = request_runtime_prompt(service, component,
-                                            message->request_id,
+                                            message->request_token,
                                             declaration_index);
             if (result == PXA_STATUS_OK) return PXA_STATUS_OK;
         }
@@ -359,7 +359,7 @@ static pxa_status_t permission_control(void *context, pxa_runtime_t *runtime,
             result = authorize(service, component, declaration_index, &handle);
         }
         if (result == PXA_STATUS_OK) {
-            if (core_major == 1) {
+            if (wire_profile == 1) {
                 pxa_write_u64(result_data, handle);
                 result_size = 8;
             } else {
@@ -370,13 +370,13 @@ static pxa_status_t permission_control(void *context, pxa_runtime_t *runtime,
     }
     {
         pxa_status_t complete = pxa_request_complete(
-            service->runtime, component, message->request_id, result,
+            service->runtime, component, message->request_token, result,
             result == PXA_STATUS_OK ? result_data : NULL,
             result == PXA_STATUS_OK ? result_size : 0);
         if (complete != PXA_STATUS_OK) {
             discard_authority(service, component, handle);
             (void)pxa_request_cancel(service->runtime, component,
-                                     message->request_id);
+                                     message->request_token);
         }
     }
     return PXA_STATUS_OK;
@@ -426,7 +426,7 @@ pxa_status_t pxa_permission_service_register(
 
 pxa_status_t pxa_permission_prompt_complete(
     pxa_permission_service_t *service, pxa_component_t component,
-    uint32_t request_id, pxa_permission_decision_t decision) {
+    pxa_request_token_t request_token, pxa_permission_decision_t decision) {
     pxa_permission_pending_prompt_t *pending;
     pxa_status_t result;
     pxa_status_t complete;
@@ -436,7 +436,7 @@ pxa_status_t pxa_permission_prompt_complete(
         (decision != PXA_PERMISSION_DENY && decision != PXA_PERMISSION_ALLOW)) {
         return PXA_STATUS_INVALID_ARGUMENT;
     }
-    pending = find_pending_prompt(service, component, request_id);
+    pending = find_pending_prompt(service, component, request_token);
     if (pending == NULL) return PXA_STATUS_NOT_FOUND;
     if (decision == PXA_PERMISSION_ALLOW) {
         result = pxa_permission_set(
@@ -454,7 +454,7 @@ pxa_status_t pxa_permission_prompt_complete(
         release_pending_prompt(service, pending);
         result = PXA_STATUS_DENIED;
     }
-    complete = complete_permission_request(service, component, request_id,
+    complete = complete_permission_request(service, component, request_token,
                                            PXA_PERMISSION_ACQUIRE, result,
                                            handle);
     return complete;
@@ -492,16 +492,16 @@ pxa_status_t pxa_permission_revoke(
         pxa_permission_pending_prompt_t *pending =
             &service->pending_prompts[index];
         pxa_component_t pending_component;
-        uint32_t pending_request_id;
+        pxa_request_token_t pending_request_token;
         if (!pending->active ||
             pending->slot.declaration_index != declaration_index) {
             continue;
         }
         pending_component = pending->component;
-        pending_request_id = pending->request_id;
+        pending_request_token = pending->request_token;
         release_pending_prompt(service, pending);
         result = complete_permission_request(
-            service, pending_component, pending_request_id,
+            service, pending_component, pending_request_token,
             PXA_PERMISSION_ACQUIRE, PXA_STATUS_DENIED,
             PXA_HANDLE64_INVALID);
         if (result != PXA_STATUS_OK && result != PXA_STATUS_NOT_FOUND &&

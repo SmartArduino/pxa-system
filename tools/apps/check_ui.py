@@ -19,6 +19,13 @@ REQUIRED_THEME_TOKENS = (
 )
 
 
+def entry_source(app: Path) -> str:
+    source = app / "main.cpp"
+    if not source.is_file():
+        source = app / "main.c"
+    return source.read_text(encoding="utf-8")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("root", type=Path)
@@ -38,7 +45,7 @@ def main() -> int:
         for catalog in ("messages.yaml", "zh-CN.yaml"):
             if not (app_dir / "i18n" / catalog).is_file():
                 raise SystemExit(f"{app_dir}: missing i18n/{catalog}")
-        source = (app_dir / "main.c").read_text(encoding="utf-8")
+        source = entry_source(app_dir)
         if "pxa_i18n_init_from_start_config" not in source or not any(
             marker in source for marker in ("pxa_i18n_handle_event",)
         ):
@@ -47,7 +54,7 @@ def main() -> int:
     for app_name in SEMANTIC_APPS:
         if not (apps / app_name).is_dir():
             continue
-        source = (apps / app_name / "main.c").read_text(encoding="utf-8")
+        source = entry_source(apps / app_name)
         for token in REQUIRED_THEME_TOKENS:
             if token not in source:
                 raise SystemExit(f"{app_name}: missing semantic theme token {token}")
@@ -55,21 +62,21 @@ def main() -> int:
     for app_name in CANVAS_APPS:
         if not (apps / app_name).is_dir():
             continue
-        source = (apps / app_name / "main.c").read_text(encoding="utf-8")
+        source = entry_source(apps / app_name)
         if "pxa_canvas_" not in source:
             raise SystemExit(f"{app_name}: expected an app-owned Canvas surface")
 
     for app_name in RASTER_SURFACE_APPS:
         if not (apps / app_name).is_dir():
             continue
-        source = (apps / app_name / "main.c").read_text(encoding="utf-8")
+        source = entry_source(apps / app_name)
         if not any(name in source for name in ("pxa_surface_",)):
             raise SystemExit(f"{app_name}: expected an app-owned raster Surface")
 
     for app_name in GAME_RENDER_APPS:
         if not (apps / app_name).is_dir():
             continue
-        source = (apps / app_name / "main.c").read_text(encoding="utf-8")
+        source = entry_source(apps / app_name)
         if not any(name in source for name in ("pxa_game_render_",)):
             raise SystemExit(f"{app_name}: expected an app-owned GameRender context")
 

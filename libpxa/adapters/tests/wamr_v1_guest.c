@@ -12,6 +12,9 @@
 #include "pxa_ui_wire.h"
 #include "pxa_store_installer.h"
 
+__attribute__((import_module("pxa.core.v2"), import_name("pxa_call")))
+int32_t pxa_call(uint32_t route, uint64_t token, const uint8_t *payload, uint32_t size);
+
 #define STORE_TOKEN UINT64_C(0x12345678abcdeee7)
 
 int32_t pxa_app_start(const uint8_t *config, uint32_t size) {
@@ -32,8 +35,20 @@ int32_t pxa_app_start(const uint8_t *config, uint32_t size) {
     pxa_net_request_t net_request = {0};
     (void)config;
     (void)size;
+    /* Route, token and payload keep their original widths at the boundary. */
+    uint8_t cancel_payload[8];
+    static const uint8_t control_limit[4077] = {1};
+    pxa_store_u64(cancel_payload, UINT64_C(0xffeeddcc12345678));
+    if (pxa_call(1u | (1u << 16), 0, cancel_payload, 8) != 0 ||
+        pxa_call(1u | (1u << 16), 1, cancel_payload, 8) != -1 ||
+        pxa_call(1u | (1u << 16), 0, cancel_payload, 7) != -1 ||
+        pxa_call(0, 0, NULL, 0) != -1 ||
+        pxa_call(0xffffu | (1u << 16), 0, NULL, 0) != -3 ||
+        pxa_call(0xffffu | (1u << 16), 0, control_limit, 4076) != -3 ||
+        pxa_call(0xffffu | (1u << 16), 0, control_limit, 4077) != -1)
+        return -1;
     invalid[16] = 1;
-    if (pxa_submit(invalid, sizeof(invalid)) != -1) return -1;
+    if (pxa_control_packet(invalid, sizeof(invalid)) != -1) return -1;
     if (pxa_io(0, 1, 0, 0) != -1) return -1;
     net_request.url = "https://example.test/hello";
     net_request.url_size = sizeof("https://example.test/hello") - 1;
@@ -43,12 +58,12 @@ int32_t pxa_app_start(const uint8_t *config, uint32_t size) {
     if (!pxa_net_build(net_packet, sizeof(net_packet),
                           PXA_NET_FETCH, UINT64_C(0x123456789abcdeff),
                           &net_request, &net_size) ||
-        pxa_submit(net_packet, net_size) != -3) return -1;
+        pxa_control_packet(net_packet, net_size) != -3) return -1;
     if (!pxa_audio_build_open(audio_packet, sizeof(audio_packet),
                                  UINT64_C(0x123456789abcdeee),
                                  UINT64_C(0x1234567800000001),
                                  &audio_size) ||
-        pxa_submit(audio_packet, audio_size) != -3) return -1;
+        pxa_control_packet(audio_packet, audio_size) != -3) return -1;
     if (pxa_sensor_request_list(UINT64_C(0x123456789abcdeed)) != -3)
         return -1;
     if (pxa_lease_acquire(UINT64_C(0x123456789abcdeec), 1, 10) != -3)
@@ -59,17 +74,17 @@ int32_t pxa_app_start(const uint8_t *config, uint32_t size) {
             surface_packet, sizeof(surface_packet),
             UINT64_C(0x123456789abcdeea),
             UINT64_C(0x1234567800000001), &surface_size) ||
-        pxa_submit(surface_packet, surface_size) != -3) return -1;
+        pxa_control_packet(surface_packet, surface_size) != -3) return -1;
     if (pxa_clock_now(UINT64_C(0x123456789abcdee9)) != -3)
         return -1;
     if (!pxa_ui_wire_build_theme_get(ui_packet, sizeof(ui_packet),
                                     UINT64_C(0x123456789abcdee8),
                                     &ui_size) ||
-        pxa_submit(ui_packet, ui_size) != -3) return -1;
+        pxa_control_packet(ui_packet, ui_size) != -3) return -1;
     /* The mock rejects this, but the v1 adapter must route it to UI. */
     if (!pxa_build_message(focus_packet,sizeof(focus_packet),PXA_UI_SERVICE,
             12,0,focus_payload,sizeof(focus_payload),&ui_size) ||
-        pxa_submit(focus_packet,ui_size) != -3) return -1;
+        pxa_control_packet(focus_packet,ui_size) != -3) return -1;
     if (!pxa_store_send(PXA_STORE_DOWNLOAD_REQUEST, STORE_TOKEN,
                         NULL, 0, store_packet, sizeof(store_packet)))
         return -1;
@@ -79,14 +94,14 @@ int32_t pxa_app_start(const uint8_t *config, uint32_t size) {
         pxa_device_request_runtime_info(
             UINT64_C(0x123456789abcdef0)) != -3)
         return -1;
-    if (pxa_device_request_runtime_info(
-            UINT64_C(0x123456789abcdef0)) != 0 ||
+    if (pxa_call(15u | (2u << 16), UINT64_C(0x123456789abcdef0),
+                 NULL, 0) != 0 ||
         !pxa_build_cancel(bad_cancel, sizeof(bad_cancel),
                              UINT64_C(0x123456789abcdef0), &cancel_size) ||
         cancel_size != sizeof(bad_cancel))
         return -1;
     bad_cancel[4] = 1;
-    if (pxa_submit(bad_cancel, cancel_size) != -1 ||
+    if (pxa_control_packet(bad_cancel, cancel_size) != -1 ||
         pxa_cancel(0) != -1 ||
         pxa_cancel(UINT64_C(0x123456789abcdef0)) != 0 ||
         pxa_cancel(UINT64_C(0x123456789abcdef0)) != 0 ||

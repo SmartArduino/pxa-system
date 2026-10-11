@@ -1,9 +1,10 @@
+#include "../../testing/pxa_control_capture.h"
 #include <pxa/i18n.hpp>
 #include <pxa/events.hpp>
 #include "pxa_i18n_test_messages.hpp"
 #include <cassert>
 
-extern "C" std::int32_t pxa_submit(const std::uint8_t*, std::uint32_t) { assert(false); return -1; }
+extern "C" std::int32_t pxa_test_control(const std::uint8_t*, std::uint32_t) { assert(false); return -1; }
 extern "C" std::int32_t pxa_io(std::uint64_t, std::uint32_t, std::uint8_t*, std::uint32_t) { assert(false); return -1; }
 #include <cstdio>
 #include <cstdlib>

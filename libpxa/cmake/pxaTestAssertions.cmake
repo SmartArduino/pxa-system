@@ -1,0 +1,20 @@
+include_guard(GLOBAL)
+
+# Test expressions frequently perform the operation being checked. Release
+# must execute those operations too; production library flags are unaffected.
+function(pxa_enable_test_assertions directory)
+    get_property(_targets DIRECTORY "${directory}" PROPERTY BUILDSYSTEM_TARGETS)
+    foreach(_target IN LISTS _targets)
+        if(_target MATCHES "_test$")
+            if(MSVC)
+                target_compile_options(${_target} PRIVATE /UNDEBUG)
+            else()
+                target_compile_options(${_target} PRIVATE -UNDEBUG)
+            endif()
+        endif()
+    endforeach()
+    get_property(_children DIRECTORY "${directory}" PROPERTY SUBDIRECTORIES)
+    foreach(_child IN LISTS _children)
+        pxa_enable_test_assertions("${_child}")
+    endforeach()
+endfunction()

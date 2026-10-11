@@ -62,7 +62,7 @@ public:
         if (!valid_path(path) || !valid_kind(kind))
             return Task<Asset>::failed(Error::invalid_argument);
         auto packet = path_packet(path, 4);
-        packet.bytes[wire::header_bytes + 2] = std::byte(kind);
+        packet.bytes[2] = std::byte(kind);
         return load_impl(transport_, requests_, kind, std::move(packet));
     }
 
@@ -77,7 +77,7 @@ public:
         if (!valid_path(path) || output.empty() || output.size() > 4064)
             return Task<AssetRead>::failed(Error::invalid_argument);
         auto packet = path_packet(path, 12);
-        auto* payload = packet.bytes.data() + wire::header_bytes;
+        auto* payload = packet.bytes.data();
         wire::put32(payload + 4, offset);
         wire::put32(payload + 8, static_cast<std::uint32_t>(output.size()));
         return read_impl(transport_, requests_, std::move(packet), offset, output);
@@ -86,7 +86,7 @@ public:
 private:
     static Packet path_packet(std::string_view path, std::size_t prefix) noexcept {
         Packet packet;
-        auto* payload = packet.bytes.data() + wire::header_bytes;
+        auto* payload = packet.bytes.data();
         wire::put16(payload, static_cast<std::uint16_t>(path.size()));
         for (std::size_t i = 0; i < path.size(); ++i) payload[prefix + i] = std::byte(path[i]);
         packet.size = prefix + path.size();
@@ -97,7 +97,7 @@ private:
                                  AssetKind kind, Packet packet) {
         auto event = co_await Response(
             transport, requests, 21, 2,
-            Response::PrebuiltPacket{packet.packet()}, true);
+            packet.packet(), true);
         if (!event) co_return std::unexpected(event.error());
         auto body = wire::result_body(event->payload);
         if (!body) co_return std::unexpected(body.error());
@@ -113,7 +113,7 @@ private:
     static Task<AssetDescriptor> query_impl(Transport& transport,
                                             RequestTable& requests, Packet packet) {
         auto event = co_await Response(
-            transport, requests, 21, 1, Response::PrebuiltPacket{packet.packet()});
+            transport, requests, 21, 1, packet.packet());
         if (!event) co_return std::unexpected(event.error());
         auto body = wire::result_body(event->payload);
         if (!body) co_return std::unexpected(body.error());
@@ -126,7 +126,7 @@ private:
                                      Packet packet, std::uint32_t offset,
                                      std::span<std::byte> output) {
         auto event = co_await Response(
-            transport, requests, 21, 5, Response::PrebuiltPacket{packet.packet()});
+            transport, requests, 21, 5, packet.packet());
         if (!event) co_return std::unexpected(event.error());
         auto body = wire::result_body(event->payload);
         if (!body) co_return std::unexpected(body.error());

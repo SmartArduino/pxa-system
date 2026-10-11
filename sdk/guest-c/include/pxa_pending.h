@@ -54,7 +54,7 @@ static inline int32_t pxa_send_tracked(
     free_entry->service = request.service;
     free_entry->opcode = request.opcode;
     free_entry->user = user;
-    status = pxa_submit(packet, packet_size);
+    status = pxa_control_packet(packet, packet_size);
     if (status != 0) pxa_zero(free_entry, sizeof(*free_entry));
     return status;
 }

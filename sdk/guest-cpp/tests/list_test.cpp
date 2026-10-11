@@ -1,3 +1,4 @@
+#include "../../testing/pxa_control_capture.h"
 #include <pxa/list.hpp>
 
 #include <cassert>
@@ -67,7 +68,7 @@ static void apply() {
         offset += 4 + size;
     }
 }
-extern "C" std::int32_t pxa_submit(const std::uint8_t* bytes, std::uint32_t size) {
+extern "C" std::int32_t pxa_test_control(const std::uint8_t* bytes, std::uint32_t size) {
     ++submissions;
     const auto* data = reinterpret_cast<const std::byte*>(bytes);
     assert(wire::get16(data) == protocol::service);

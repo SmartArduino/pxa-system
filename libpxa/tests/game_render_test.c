@@ -268,7 +268,7 @@ int main(void) {
            PXA_STATUS_OK);
     assert(pxa_component_remove(runtime, component) == PXA_STATUS_OK);
     assert(pxa_component_create(runtime, 2, &component) == PXA_STATUS_OK);
-    assert(pxa_component_set_core_major(runtime, component, 1) ==
+    assert(pxa_component_set_wire_profile(runtime, component, 1) ==
            PXA_STATUS_OK);
     assert(pxa_component_begin_start(runtime, component) == PXA_STATUS_OK);
     assert(pxa_component_finish_start(runtime, component, PXA_STATUS_OK) ==

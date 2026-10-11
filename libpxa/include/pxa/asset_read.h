@@ -9,7 +9,7 @@ extern "C" {
 /* Host profile capacity, not a Guest wire limit. Uses the existing file worker
  * and its mutex; no thread, I/O, allocation or free in the queue operations. */
 #define PXA_ASSET_READ_SLOTS 4u
-#define PXA_ASSET_READ_MAX_BYTES (PXA_WIRE_MAX_CONTROL_MESSAGE - PXA_WIRE_V1_SIZE - 12u)
+#define PXA_ASSET_READ_MAX_BYTES (PXA_WIRE_MAX_CONTROL_MESSAGE - PXA_WIRE_SIZE - 12u)
 #define PXA_ASSET_READ_RESULT_HEADER_BYTES 8u
 #define PXA_ASSET_READ_JOB_LOAD 1u
 #define PXA_ASSET_READ_JOB_RELEASE 2u

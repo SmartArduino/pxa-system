@@ -203,4 +203,5 @@ fi
 grep -q "PXA build failed: AOT main" "$work_dir/aot-failure.log"
 ! test -e "$work_dir/aot-failure/pxa-direct-parallel.pxa"
 
+"${PYTHON:-python3}" "$script_dir/test_no_allocator.py"
 echo "PXA CMake/WASI test Apps OK"

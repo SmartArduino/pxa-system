@@ -1,3 +1,4 @@
+#include "../../testing/pxa_control_capture.h"
 #include <pxa/game.hpp>
 #include <pxa/raster.h>
 
@@ -8,7 +9,7 @@
 static std::array<std::uint8_t, 512> draw_list{};
 static std::size_t draw_size;
 
-extern "C" std::int32_t pxa_submit(const std::uint8_t*, std::uint32_t) {
+extern "C" std::int32_t pxa_test_control(const std::uint8_t*, std::uint32_t) {
     return 0;
 }
 

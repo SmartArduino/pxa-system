@@ -5,7 +5,7 @@
 #include "pxa_common.h"
 #include "pxa_core.h"
 
-#define PXA_CORE_VERSION_MAJOR 1u
+#define PXA_CORE_VERSION_MAJOR 2u
 #define PXA_CORE_VERSION_MINOR 0u
 #define PXA_CORE_VERSION_PATCH 0u
 

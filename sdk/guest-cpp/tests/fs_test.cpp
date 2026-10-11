@@ -1,3 +1,4 @@
+#include "../../testing/pxa_control_capture.h"
 #include <pxa/app.hpp>
 
 #include <algorithm>
@@ -17,7 +18,7 @@ static constexpr std::uint64_t file_handle = 0x100000001;
 static constexpr std::uint64_t directory_handle = 0x200000002;
 static std::optional<DirectoryEntry> retained;
 
-extern "C" std::int32_t pxa_submit(const std::uint8_t* data, std::uint32_t size) {
+extern "C" std::int32_t pxa_test_control(const std::uint8_t* data, std::uint32_t size) {
     assert(size <= submitted.size());
     const auto* bytes = reinterpret_cast<const std::byte*>(data);
     if (wire::get16(bytes) == 1) {

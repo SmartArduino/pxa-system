@@ -1,3 +1,4 @@
+#include "../../testing/pxa_control_capture.h"
 #include <assert.h>
 #include <stdint.h>
 #include <string.h>
@@ -24,7 +25,7 @@ static uint32_t submitted_size;
 static unsigned submit_calls;
 static int32_t next_submit_status;
 
-int32_t pxa_submit(const uint8_t *data, uint32_t length) {
+int32_t pxa_test_control(const uint8_t *data, uint32_t length) {
     assert(length <= sizeof(submitted));
     memcpy(submitted, data, length);
     submitted_size = length;
@@ -50,7 +51,7 @@ int main(void) {
     pxa_device_runtime_info_t info;
     uint32_t size = 9;
     const uint8_t payload[] = {0xaa, 0xbb};
-    assert(PXA_CORE_VERSION_MAJOR == 1u);
+    assert(PXA_CORE_VERSION_MAJOR == 2u);
     assert(pxa_next_token(&token_cursor) == 1u);
     assert(pxa_next_token(&token_cursor) == 2u);
     token_cursor = UINT64_MAX;

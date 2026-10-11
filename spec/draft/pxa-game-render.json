@@ -1,11 +1,11 @@
 {
-  "schema": "pxa-game-render-spec-0.5",
+  "schema": "pxa-game-render-spec-0.6",
   "status": "draft",
   "service": {
     "name": "game-render",
     "id": 18,
     "major": 0,
-    "minor": 5,
+    "minor": 6,
     "patch": 0
   },
   "opcodes": [
@@ -13,47 +13,150 @@
       "name": "create-context",
       "id": 1,
       "direction": "bidirectional-result",
-      "request_id": "nonzero",
+      "request_token": "nonzero",
       "payload": "width:u16|height:u16|buffer-count:u8|flags:u8|reserved:u8|scratch-mode:u8[|max-draw-bytes:u32]",
-      "result": "handle:u32|capabilities:u32|max-draw-bytes:u32|max-texture-dimension:u16|max-textures:u8|reserved:u8"
+      "result": "handle:u64|capabilities:u32|max-draw-bytes:u32|max-texture-dimension:u16|max-textures:u8|reserved:u8"
     },
     {
       "name": "create-auto-context",
       "id": 2,
       "direction": "bidirectional-result",
-      "request_id": "nonzero",
+      "request_token": "nonzero",
       "payload": "width:0|height:0|buffer-count:u8|flags:u8|requested-scale:u8|scratch-mode:u8[|max-draw-bytes:u32]",
-      "result": "handle:u32|capabilities:u32|max-draw-bytes:u32|max-texture-dimension:u16|max-textures:u8|reserved:u8|display-width:u16|display-height:u16|render-width:u16|render-height:u16|render-scale:u8|supported-scale-mask:u8|reserved:[2]"
+      "result": "handle:u64|capabilities:u32|max-draw-bytes:u32|max-texture-dimension:u16|max-textures:u8|reserved:u8|display-width:u16|display-height:u16|render-width:u16|render-height:u16|render-scale:u8|supported-scale-mask:u8|reserved:[2]"
     }
   ],
   "io_operations": [
-    {"name": "upload", "id": 256, "payload": "resource-record", "result": "accepted-bytes"},
-    {"name": "submit", "id": 257, "payload": "draw-list", "result": "accepted-bytes"},
-    {"name": "telemetry", "id": 258, "payload": "zeroed-telemetry-buffer", "result": "telemetry-record"},
-    {"name": "bind-assets", "id": 259, "core_major": 1, "payload": "count:u16|reserved:u16|entries[count]:(kind:u8|slot:u8|reserved:u16|handle:u64)", "result": "accepted-bytes", "atomic": true}
+    {
+      "name": "upload",
+      "id": 256,
+      "payload": "resource-record",
+      "result": "accepted-bytes"
+    },
+    {
+      "name": "submit",
+      "id": 257,
+      "payload": "draw-list",
+      "result": "accepted-bytes"
+    },
+    {
+      "name": "telemetry",
+      "id": 258,
+      "payload": "zeroed-telemetry-buffer",
+      "result": "telemetry-record"
+    },
+    {
+      "name": "bind-assets",
+      "id": 259,
+      "payload": "count:u16|reserved:u16|entries[count]:(kind:u8|slot:u8|reserved:u16|handle:u64)",
+      "result": "accepted-bytes",
+      "atomic": true
+    }
   ],
-  "features": [{"name": "asset-bindings", "bit": 0}],
+  "features": [
+    {
+      "name": "asset-bindings",
+      "bit": 0
+    }
+  ],
   "create_flags": [
-    {"name": "prefer-direct-scanout", "bit": 0}
+    {
+      "name": "prefer-direct-scanout",
+      "bit": 0
+    },
+    {
+      "name": "borrow-commands",
+      "bit": 1,
+      "semantics": "Submit validates and rasterizes borrowed bytes synchronously. Never retains the input pointer. WOULD_BLOCK consumes no frame ID; retry after framebuffer progress. Host may reject unsupported mode at creation. Display remains asynchronous."
+    }
   ],
   "scratch_modes": [
-    {"name": "depth16", "value": 0},
-    {"name": "none", "value": 1},
-    {"name": "coverage-2bit", "value": 2}
+    {
+      "name": "depth16",
+      "value": 0
+    },
+    {
+      "name": "none",
+      "value": 1
+    },
+    {
+      "name": "coverage-2bit",
+      "value": 2
+    }
   ],
   "capabilities": [
-    {"name": "flat-quad", "bit": 0},
-    {"name": "textured-quad", "bit": 1},
-    {"name": "additive-sprite", "bit": 2},
-    {"name": "sprite-batch", "bit": 3},
-    {"name": "triangle-batch", "bit": 4}
+    {
+      "name": "flat-quad",
+      "bit": 0
+    },
+    {
+      "name": "textured-quad",
+      "bit": 1
+    },
+    {
+      "name": "additive-sprite",
+      "bit": 2
+    },
+    {
+      "name": "sprite-batch",
+      "bit": 3
+    },
+    {
+      "name": "triangle-batch",
+      "bit": 4
+    },
+    {
+      "name": "affine-uv",
+      "bit": 5
+    },
+    {
+      "name": "texture-slots-48",
+      "bit": 6
+    },
+    {
+      "name": "painter-polygon",
+      "bit": 7
+    },
+    {
+      "name": "lit-palette-depth",
+      "bit": 8
+    },
+    {
+      "name": "depth-cutout",
+      "bit": 9
+    },
+    {
+      "name": "fixed-alpha-blend",
+      "bit": 10,
+      "cpp_name": "blend_75"
+    },
+    {
+      "name": "coverage-mask",
+      "bit": 11
+    },
+    {
+      "name": "sprite-palette-ramp",
+      "bit": 12
+    },
+    {
+      "name": "sprite-texel-alpha",
+      "bit": 13
+    },
+    {
+      "name": "painter-perspective",
+      "bit": 14
+    },
+    {
+      "name": "painter-depth",
+      "bit": 15
+    }
   ],
   "limits": {
     "draw_list_bytes": 49152,
-    "draw_commands": 768,
-    "texture_slots": 16,
+    "draw_commands": 1024,
+    "texture_slots": 48,
     "texture_dimension": 256,
     "palette_colors": 256
   },
-  "protocol_version": "0.5.0"
+  "protocol_version": "0.6.0"
 }

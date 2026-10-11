@@ -15,6 +15,7 @@ typedef struct {
     const pxa_package_component_t *component;
     const pxa_package_artifact_t *artifact;
     uint16_t core_major;
+    uint16_t core_minor;
 } pxa_activation_entry_t;
 
 typedef struct pxa_activation_plan {

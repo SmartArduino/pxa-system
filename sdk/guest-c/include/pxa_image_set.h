@@ -22,7 +22,9 @@ typedef struct {
 
 #define PXA_IMAGE_SET_INIT(paths_, handles_, token_) \
     { .paths=(paths_), .handles=(handles_), .next_token=(token_), \
-      .count=sizeof(paths_)/sizeof((paths_)[0]) }
+      .pending_token=0, .wanted=0, .error=0, \
+      .count=sizeof(paths_)/sizeof((paths_)[0]), \
+      .pending_image=0, .paused=0, .cancelling=0, .stopped=0 }
 
 static inline uint64_t pxa_image_set_handle(const pxa_image_set_t *set, unsigned id) {
     return set && id<set->count ? set->handles[id] : 0;

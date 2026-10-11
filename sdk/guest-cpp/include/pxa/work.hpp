@@ -56,7 +56,7 @@ public:
         Packet packet;
         auto size = encode_work_enqueue(request, packet.bytes);
         if (!size) return Task<WorkSchedule>::failed(size.error());
-        packet.size = *size - wire::header_bytes;
+        packet.size = *size;
         return enqueue_impl(transport_, requests_, std::move(packet));
     }
 
@@ -75,7 +75,7 @@ private:
     static Task<WorkSchedule> enqueue_impl(Transport& transport,
         RequestTable& requests, Packet packet) {
         auto event = co_await Response(transport, requests, 13, 1,
-            Response::PrebuiltPacket{packet.packet()});
+            packet.packet());
         if (!event) co_return std::unexpected(event.error());
         auto body = wire::result_body(event->payload);
         if (!body) co_return std::unexpected(body.error());

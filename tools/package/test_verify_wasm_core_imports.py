@@ -28,9 +28,9 @@ def wasm(*imports: tuple[str, str, int, bytes]) -> bytes:
     return WASM_HEADER + bytes([2]) + leb(len(section)) + section
 
 
-def rejected(data: bytes, major: int) -> None:
+def rejected(data: bytes, major: int, minor: int = 0) -> None:
     try:
-        verify_core_imports(data, major)
+        verify_core_imports(data, major, minor)
     except WasmMemoryError:
         return
     raise AssertionError("expected Core import rejection")
@@ -39,16 +39,18 @@ def rejected(data: bytes, major: int) -> None:
 v0 = wasm(("pxa.core.v0", "pxa_control", 0, leb(0)))
 v1 = wasm(("pxa.core.v1", "pxa_submit", 0, leb(0)),
           ("wasi_snapshot_preview1", "random_get", 0, leb(1)))
+v2 = wasm(("pxa.core.v2", "pxa_call", 0, leb(0)),
+          ("pxa.core.v2", "pxa_io", 0, leb(1)))
 assert import_modules(v0) == ["pxa.core.v0"]
 assert import_modules(v1) == ["pxa.core.v1", "wasi_snapshot_preview1"]
-rejected(v0, 0)
-verify_core_imports(v1, 1)
-rejected(v0, 1)
-rejected(v1, 0)
-rejected(wasm(("pxa.core.v2", "pxa_submit", 0, leb(0))), 1)
-rejected(wasm(("pxa.core.v1extra", "pxa_submit", 0, leb(0))), 1)
-verify_core_imports(wasm(("env", "memory", 2, leb(1) + leb(2) + leb(3))), 1)
-rejected(WASM_HEADER + bytes([2, 4, 1, 1, 65]), 1)
+for old in (v0, v1):
+    for major in (0, 1, 2): rejected(old, major)
+verify_core_imports(v2, 2)
+rejected(v2, 1)
+rejected(wasm(("pxa.core.v2", "pxa_submit", 0, leb(0))), 2)
+rejected(wasm(("pxa.core.v2extra", "pxa_call", 0, leb(0))), 2)
+verify_core_imports(wasm(("env", "memory", 2, leb(1) + leb(2) + leb(3))), 2)
+rejected(WASM_HEADER + bytes([2, 4, 1, 1, 65]), 2)
 verify_wasi_imports(v1, {"random"})
 clock = wasm(("wasi_snapshot_preview1", "clock_time_get", 0, leb(0)))
 verify_wasi_imports(clock, {"monotonic-clock", "wall-clock"})
@@ -66,3 +68,9 @@ except WasmMemoryError:
 else:
     raise AssertionError("expected WASI random capability rejection")
 print("PXA Wasm Core import verification OK")
+
+direct = wasm(("pxa.core.v2", "pxa_call", 0, leb(0)))
+verify_core_imports(direct, 2, 0)
+rejected(wasm(("pxa.core.v2", "pxa_call", 1, b"\x70" + leb(0) + leb(1))), 2)
+rejected(wasm(("pxa.core.v2", "unknown", 0, leb(0))), 2)
+print("Core 2 call/io accepted; Submit, old generations and non-function imports rejected")

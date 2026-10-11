@@ -26,7 +26,7 @@
 #include "pxa/game_render.h"
 #include "pxa/assets.h"
 #include "pxa/service.h"
-#include "pxa/wire_v1.h"
+#include "pxa/wire.h"
 #include "wasm_export.h"
 
 #if defined(ESP_PLATFORM)
@@ -40,22 +40,9 @@
 #define PXA_WAMR_DEFAULT_STACK_HEAP ((uint32_t)16384)
 #define PXA_WAMR_DEFAULT_BYTES ((size_t)(1u << 20))
 #define PXA_WAMR_MAX_MODULE_PATH ((size_t)512)
-#define PXA_WAMR_V1_PENDING_REQUESTS 16u
-#define PXA_WAMR_V1_MAX_PERMISSION_PAYLOAD (8u + 96u + 1024u)
-#define PXA_WAMR_V1_MAX_STORAGE_PAYLOAD \
-    (8u + PXA_STORAGE_MAX_KEY_BYTES + PXA_STORAGE_MAX_VALUE_BYTES)
-#define PXA_WAMR_V1_MAX_PAYLOAD \
-    (PXA_MAX_CONTROL_MESSAGE - PXA_V1_ENVELOPE_SIZE)
 #ifndef PXA_WAMR_LIBC_WASI
 #define PXA_WAMR_LIBC_WASI 0
 #endif
-
-typedef struct {
-    uint64_t token;
-    uint32_t host_id;
-    uint16_t service;
-    uint16_t opcode;
-} pxa_wamr_v1_request_t;
 
 typedef struct {
     struct pxa_wamr_engine *engine;
@@ -65,8 +52,6 @@ typedef struct {
     pxa_component_t component;
     const pxa_package_component_t *package_component;
     uint16_t core_major;
-    uint32_t next_v1_host_id;
-    pxa_wamr_v1_request_t v1_requests[PXA_WAMR_V1_PENDING_REQUESTS];
     uint16_t config_size;
     uint8_t kind;
     uint8_t occupied;
@@ -132,13 +117,15 @@ struct pxa_wamr_engine {
     uint8_t busy;
     uint8_t wasi_enabled;
     uint8_t *pool;
+    /* WAMR retains and sorts this array. Keep it in the engine workspace,
+     * whose lifetime already encloses the runtime; no extra global SRAM. */
+    NativeSymbol native_symbols[2];
     pxa_wamr_entry_t entries[];
 };
 
 /* WAMR owns one process-global allocator. The adapter likewise supports one
  * live engine per process and keeps this pointer valid through runtime destroy. */
 static pxa_wamr_engine_t *runtime_allocator_engine;
-static NativeSymbol v1_symbols[2];
 
 static void update_runtime_peak(pxa_wamr_engine_t *engine) {
     if (engine->runtime_current_bytes > engine->runtime_peak_bytes) {
@@ -543,8 +530,6 @@ static pxa_status_t discard_entry(pxa_wamr_engine_t *engine,
     entry->component = PXA_COMPONENT_INVALID;
     entry->package_component = NULL;
     entry->core_major = 0;
-    entry->next_v1_host_id = 0;
-    memset(entry->v1_requests, 0, sizeof(entry->v1_requests));
     entry->kind = 0;
     entry->start_fn = NULL;
     entry->event_fn = NULL;
@@ -555,8 +540,10 @@ static pxa_status_t discard_entry(pxa_wamr_engine_t *engine,
 
 static pxa_status_t validate_module_imports(wasm_module_t module,
                                             const char *path, uint16_t core_major,
+                                            uint16_t core_minor,
                                             int wasi_declared,
                                             uint64_t wasi_features) {
+    (void)core_minor;
     int32_t count = wasm_runtime_get_import_count(module);
     int32_t index;
     if (count < 0) {
@@ -573,10 +560,10 @@ static pxa_status_t validate_module_imports(wasm_module_t module,
                                 "non-function or unnamed import");
             return PXA_STATUS_UNSUPPORTED;
         }
-        if (strcmp(imported.module_name, "pxa.core.v1") == 0) {
-            if (core_major != 1 ||
-                (strcmp(imported.name, "pxa_submit") != 0 &&
-                 strcmp(imported.name, "pxa_io") != 0)) {
+        if (strcmp(imported.module_name, "pxa.core.v2") == 0) {
+            if (core_major != 2 ||
+                (strcmp(imported.name, "pxa_io") != 0 &&
+                 strcmp(imported.name, "pxa_call") != 0)) {
                 log_runtime_failure("validate-import", path, imported.name);
                 return PXA_STATUS_UNSUPPORTED;
             }
@@ -598,356 +585,32 @@ static pxa_status_t validate_module_imports(wasm_module_t module,
     return PXA_STATUS_OK;
 }
 
-static pxa_status_t v1_request_reserve(pxa_wamr_entry_t *entry,
-                                       uint64_t token, uint16_t service,
-                                       uint16_t opcode, uint32_t *host_id) {
-    pxa_wamr_v1_request_t *free_slot = NULL;
-    unsigned index;
-    unsigned attempt;
-    if (token == 0 || host_id == NULL) return PXA_STATUS_INVALID_ARGUMENT;
-    for (index = 0; index < PXA_WAMR_V1_PENDING_REQUESTS; ++index) {
-        pxa_wamr_v1_request_t *slot = &entry->v1_requests[index];
-        if (slot->host_id == 0) free_slot = slot;
-        else if (slot->token == token) return PXA_STATUS_BUSY;
-    }
-    if (free_slot == NULL) return PXA_STATUS_RESOURCE_LIMIT;
-    for (attempt = 0; attempt <= PXA_WAMR_V1_PENDING_REQUESTS; ++attempt) {
-        uint32_t candidate = ++entry->next_v1_host_id;
-        if (candidate == 0) candidate = ++entry->next_v1_host_id;
-        for (index = 0; index < PXA_WAMR_V1_PENDING_REQUESTS; ++index) {
-            if (entry->v1_requests[index].host_id == candidate) break;
-        }
-        if (index == PXA_WAMR_V1_PENDING_REQUESTS) {
-            free_slot->token = token;
-            free_slot->host_id = candidate;
-            free_slot->service = service;
-            free_slot->opcode = opcode;
-            *host_id = candidate;
-            return PXA_STATUS_OK;
-        }
-    }
-    return PXA_STATUS_RESOURCE_LIMIT;
+/* Core 2 borrows the validated Guest range until this import returns.
+ * Backends must copy any bytes retained after return. */
+static int32_t native_call(void *opaque_exec_env, uint32_t route,
+                           uint64_t token, const uint8_t *data, uint32_t size) {
+    wasm_module_inst_t module = wasm_runtime_get_module_inst(
+        (wasm_exec_env_t)opaque_exec_env);
+    pxa_wamr_entry_t *entry = wasm_runtime_get_custom_data(module);
+    pxa_message_view_t message;
+    if (entry == NULL || entry->core_major != 2 ||
+        entry_engine(entry)->runtime == NULL) return PXA_STATUS_BAD_STATE;
+    message.service = (uint16_t)route;
+    message.opcode = (uint16_t)(route >> 16);
+    message.request_token = token;
+    message.payload = (pxa_bytes_t){data, size};
+    return pxa_runtime_control_view(entry_engine(entry)->runtime,
+                                    entry->component, &message);
 }
 
-static pxa_wamr_v1_request_t *v1_request_find(pxa_wamr_entry_t *entry,
-                                               uint32_t host_id) {
-    unsigned index;
-    for (index = 0; index < PXA_WAMR_V1_PENDING_REQUESTS; ++index) {
-        if (entry->v1_requests[index].host_id == host_id)
-            return &entry->v1_requests[index];
-    }
-    return NULL;
-}
-
-static pxa_wamr_v1_request_t *v1_request_find_token(
-    pxa_wamr_entry_t *entry, uint64_t token) {
-    unsigned index;
-    for (index = 0; index < PXA_WAMR_V1_PENDING_REQUESTS; ++index) {
-        if (entry->v1_requests[index].host_id != 0 &&
-            entry->v1_requests[index].token == token)
-            return &entry->v1_requests[index];
-    }
-    return NULL;
-}
-
-/* v1 admits only the migrated operations of these services. */
-static int32_t native_submit_v1(void *opaque_exec_env, const uint8_t *data,
-                                uint32_t size) {
-    wasm_exec_env_t exec_env = (wasm_exec_env_t)opaque_exec_env;
-    wasm_module_inst_t module = wasm_runtime_get_module_inst(exec_env);
-    pxa_wamr_entry_t *entry =
-        (pxa_wamr_entry_t *)wasm_runtime_get_custom_data(module);
-    pxa_v1_message_view_t message;
-    uint32_t host_id = 0;
-    pxa_status_t status;
-    if (entry == NULL || entry->core_major != 1 ||
-        entry_engine(entry)->runtime == NULL)
-        return PXA_STATUS_BAD_STATE;
-    if (pxa_v1_message_decode(data, size,
-            PXA_V1_ENVELOPE_SIZE + PXA_WAMR_V1_MAX_PAYLOAD,
-            &message) != PXA_STATUS_OK)
-        return PXA_STATUS_INVALID_ARGUMENT;
-    if (message.service == PXA_SERVICE_CORE &&
-        message.opcode == PXA_CORE_CANCEL_REQUEST) {
-        pxa_wamr_v1_request_t *target;
-        uint64_t token;
-        if (message.request_token != 0 || message.payload.size != 8)
-            return PXA_STATUS_INVALID_ARGUMENT;
-        token = pxa_read_u64(message.payload.data);
-        if (token == 0) return PXA_STATUS_INVALID_ARGUMENT;
-        target = v1_request_find_token(entry, token);
-        if (target == NULL) return PXA_STATUS_OK;
-        return pxa_request_cancel(entry_engine(entry)->runtime,
-                                  entry->component, target->host_id);
-    }
-    if (message.service == PXA_SERVICE_CORE &&
-        message.opcode == PXA_CORE_CLOSE_HANDLE &&
-        message.request_token == 0 && message.payload.size == 8) {
-        return pxa_handle_close64(entry_engine(entry)->runtime,
-                                  entry->component,
-                                  pxa_read_u64(message.payload.data));
-    }
-    if (message.service == PXA_SERVICE_CORE &&
-        message.opcode == PXA_LEASE_ACQUIRE &&
-        message.request_token != 0 &&
-        (message.payload.size == 6u || message.payload.size == 14u)) {
-        status = v1_request_reserve(entry, message.request_token,
-                                    message.service, message.opcode, &host_id);
-        if (status != PXA_STATUS_OK) return status;
-    } else if (message.service == PXA_LOG_SERVICE_ID &&
-        message.opcode == PXA_LOG_WRITE && message.request_token == 0) {
-        /* The Log payload is validated by the existing Service. */
-    } else if (message.service == PXA_CLOCK_SERVICE_ID &&
-               message.opcode == PXA_CLOCK_SET_PERIOD &&
-               message.request_token == 0 && message.payload.size == 2) {
-        /* The Host validates the requested period. */
-    } else if (message.service == PXA_CLOCK_SERVICE_ID &&
-               message.opcode == PXA_CLOCK_NOW &&
-               message.request_token != 0 && message.payload.size == 0) {
-        status = v1_request_reserve(entry, message.request_token,
-                                    message.service, message.opcode, &host_id);
-        if (status != PXA_STATUS_OK) return status;
-    } else if (message.service == PXA_UI_SERVICE_ID &&
-               message.opcode == PXA_UI_THEME_GET &&
-               message.request_token != 0 && message.payload.size == 0) {
-        status = v1_request_reserve(entry, message.request_token,
-                                    message.service, message.opcode, &host_id);
-        if (status != PXA_STATUS_OK) return status;
-    } else if (message.service == PXA_UI_SERVICE_ID &&
-               message.request_token == 0 &&
-               ((message.opcode == PXA_UI_TX_BEGIN &&
-                 message.payload.size == 20u) ||
-                (message.opcode == PXA_UI_TX_WRITE &&
-                 message.payload.size > 4u) ||
-                ((message.opcode == PXA_UI_TX_COMMIT ||
-                  message.opcode == PXA_UI_TX_CANCEL ||
-                  message.opcode == PXA_UI_SURFACE_CLOSE) &&
-                 message.payload.size == 4u) ||
-                (message.opcode == PXA_UI_SURFACE_OPEN &&
-                 message.payload.size == 8u) ||
-                (message.opcode == PXA_UI_CANVAS_BEGIN &&
-                 message.payload.size == 16u) ||
-                (message.opcode == PXA_UI_CANVAS_WRITE &&
-                 message.payload.size > 12u) ||
-                (message.opcode == PXA_UI_CANVAS_PRESENT &&
-                 message.payload.size >= 13u &&
-                 message.payload.size <=
-                     13u + PXA_UI_MAX_DIRTY_RECTS * 16u) ||
-                (message.opcode == PXA_UI_CANVAS_STREAM_OPEN &&
-                 message.payload.size == 12u) ||
-                (message.opcode == PXA_UI_TEXT_INPUT_FOCUS &&
-                 message.payload.size == 12u))) {
-        /* The UI service validates transaction state, commands and bounds. */
-    } else if (message.service == PXA_DEVICE_SERVICE_ID &&
-               message.opcode == PXA_DEVICE_GET_RUNTIME_INFO &&
-               message.request_token != 0 && message.payload.size == 0) {
-        status = v1_request_reserve(entry, message.request_token,
-                                    message.service, message.opcode, &host_id);
-        if (status != PXA_STATUS_OK) return status;
-    } else if (message.service == PXA_DEVICE_SERVICE_ID &&
-               message.opcode == PXA_DEVICE_GET_MAC &&
-               message.request_token != 0 && message.payload.size == 18) {
-        status = v1_request_reserve(entry, message.request_token,
-                                    message.service, message.opcode, &host_id);
-        if (status != PXA_STATUS_OK) return status;
-    } else if (message.service == PXA_WINDOW_SERVICE_ID &&
-               message.opcode == PXA_WINDOW_GET_SNAPSHOT &&
-               message.request_token != 0 && message.payload.size == 0) {
-        status = v1_request_reserve(entry, message.request_token,
-                                    message.service, message.opcode, &host_id);
-        if (status != PXA_STATUS_OK) return status;
-    } else if (message.service == PXA_WINDOW_SERVICE_ID &&
-               message.opcode == PXA_WINDOW_CONFIGURE &&
-               message.request_token == 0 &&
-               message.payload.size <= 41u) {
-        /* Existing Window parser validates the individual records. */
-    } else if (message.service == PXA_WINDOW_SERVICE_ID &&
-               message.opcode == PXA_WINDOW_SHOW_TOAST &&
-               message.request_token == 0 &&
-               message.payload.size >= 3u &&
-               message.payload.size <= PXA_WINDOW_TOAST_MAX_BYTES + 2u) {
-        /* Existing Window parser validates duration and UTF-8. */
-    } else if (message.service == PXA_PERMISSION_SERVICE_ID &&
-               (message.opcode == PXA_PERMISSION_CHECK ||
-                message.opcode == PXA_PERMISSION_ACQUIRE) &&
-               message.request_token != 0 &&
-               message.payload.size >= 5 &&
-               message.payload.size <= PXA_WAMR_V1_MAX_PERMISSION_PAYLOAD) {
-        status = v1_request_reserve(entry, message.request_token,
-                                    message.service, message.opcode, &host_id);
-        if (status != PXA_STATUS_OK) return status;
-    } else if (message.service == PXA_STORAGE_SERVICE_ID &&
-               message.request_token != 0 &&
-               (((message.opcode == PXA_STORAGE_GET ||
-                  message.opcode == PXA_STORAGE_REMOVE) &&
-                    message.payload.size >= 5u &&
-                    message.payload.size <= 4u + PXA_STORAGE_MAX_KEY_BYTES) ||
-                (message.opcode == PXA_STORAGE_LIST &&
-                    message.payload.size <= 4u + PXA_STORAGE_MAX_KEY_BYTES) ||
-                (message.opcode == PXA_STORAGE_SET &&
-                    message.payload.size >= 9u &&
-                    message.payload.size <= PXA_WAMR_V1_MAX_STORAGE_PAYLOAD))) {
-        status = v1_request_reserve(entry, message.request_token,
-                                    message.service, message.opcode, &host_id);
-        if (status != PXA_STATUS_OK) return status;
-    } else if (message.service == PXA_FS_SERVICE_ID &&
-               message.request_token != 0 &&
-               (((message.opcode == PXA_FS_MAKE_DIRECTORY ||
-                  message.opcode == PXA_FS_REMOVE ||
-                  message.opcode == PXA_FS_STAT) &&
-                    message.payload.size >= 5u &&
-                    message.payload.size <= 4u + PXA_FS_MAX_PATH_BYTES) ||
-                (message.opcode == PXA_FS_OPEN &&
-                    message.payload.size >= 13u &&
-                    message.payload.size <= 8u + PXA_FS_MAX_PATH_BYTES) ||
-                ((message.opcode == PXA_FS_RENAME ||
-                  message.opcode == PXA_FS_REPLACE) &&
-                    message.payload.size >= 10u &&
-                    message.payload.size <= 8u + 2u * PXA_FS_MAX_PATH_BYTES) ||
-                (message.opcode == PXA_FS_SEEK &&
-                    message.payload.size == 17u) ||
-                (message.opcode == PXA_FS_READ_DIRECTORY &&
-                    message.payload.size == 8u))) {
-        status = v1_request_reserve(entry, message.request_token,
-                                    message.service, message.opcode, &host_id);
-        if (status != PXA_STATUS_OK) return status;
-    } else if (message.service == PXA_IPC_SERVICE_ID &&
-               message.request_token != 0 &&
-               (((message.opcode == PXA_IPC_CALL) &&
-                 message.payload.size >= 5u &&
-                 message.payload.size <= 4u + PXA_IPC_MAX_ENDPOINT_BYTES +
-                                             4u + PXA_IPC_MAX_PAYLOAD_BYTES) ||
-                ((message.opcode == PXA_IPC_REPLY) &&
-                 message.payload.size >= 16u &&
-                 message.payload.size <= 20u + PXA_IPC_MAX_PAYLOAD_BYTES))) {
-        status = v1_request_reserve(entry, message.request_token,
-                                    message.service, message.opcode, &host_id);
-        if (status != PXA_STATUS_OK) return status;
-    } else if (message.service == PXA_NET_SERVICE_ID &&
-               (message.opcode == PXA_NET_FETCH ||
-                message.opcode == PXA_NET_HTTP_REQUEST) &&
-               message.request_token != 0 &&
-               message.payload.size >= 26u &&
-               message.payload.size <= PXA_WAMR_V1_MAX_PAYLOAD) {
-        status = v1_request_reserve(entry, message.request_token,
-                                    message.service, message.opcode, &host_id);
-        if (status != PXA_STATUS_OK) return status;
-    } else if (message.service == PXA_AUDIO_SERVICE_ID &&
-               message.request_token != 0 &&
-               (((message.opcode == PXA_AUDIO_OPEN_SESSION) &&
-                 message.payload.size == 18u) ||
-                ((message.opcode == PXA_AUDIO_COMMIT_GRAPH) &&
-                 message.payload.size >= 24u &&
-                 message.payload.size <= 74u) ||
-                ((message.opcode == PXA_AUDIO_QUERY_STATE ||
-                  message.opcode == PXA_AUDIO_FLUSH) &&
-                 message.payload.size == 12u))) {
-        status = v1_request_reserve(entry, message.request_token,
-                                    message.service, message.opcode, &host_id);
-        if (status != PXA_STATUS_OK) return status;
-    } else if (message.service == PXA_SENSOR_SERVICE_ID &&
-               message.request_token != 0 &&
-               ((message.opcode == PXA_SENSOR_LIST &&
-                 message.payload.size == 0) ||
-                (message.opcode == PXA_SENSOR_SUBSCRIBE &&
-                 message.payload.size == 26u))) {
-        status = v1_request_reserve(entry, message.request_token,
-                                    message.service, message.opcode, &host_id);
-        if (status != PXA_STATUS_OK) return status;
-    } else if (message.service == PXA_WORK_SERVICE_ID &&
-               message.request_token != 0 &&
-               ((message.opcode == PXA_WORK_ENQUEUE &&
-                 message.payload.size >= 34u &&
-                 message.payload.size <= 125u) ||
-                (message.opcode == PXA_WORK_CANCEL &&
-                 message.payload.size == 8u) ||
-                (message.opcode == PXA_WORK_COMPLETE &&
-                 message.payload.size == 13u))) {
-        status = v1_request_reserve(entry, message.request_token,
-                                    message.service, message.opcode, &host_id);
-        if (status != PXA_STATUS_OK) return status;
-    } else if (message.service == PXA_SURFACE_SERVICE_ID &&
-               message.opcode == PXA_SURFACE_QUEUE_FRAME &&
-               message.request_token == 0 &&
-               message.payload.size >= 20u &&
-               message.payload.size <=
-                   20u + PXA_SURFACE_MAX_DAMAGE_RECTS * 8u) {
-        /* The Surface service validates the damage rectangles and Handle. */
-    } else if (message.service == PXA_SURFACE_SERVICE_ID &&
-               message.request_token != 0 &&
-               ((message.opcode == PXA_SURFACE_CREATE &&
-                 message.payload.size == 8u) ||
-                (message.opcode == PXA_SURFACE_CONFIGURE_LAYER &&
-                 message.payload.size == 24u) ||
-                (message.opcode == PXA_SURFACE_QUERY_STATE &&
-                 message.payload.size == 8u) ||
-                (message.opcode == PXA_SURFACE_CONFIGURE_OPAQUE_UI_REGIONS &&
-                 message.payload.size >= 12u &&
-                 message.payload.size <=
-                     12u + PXA_SURFACE_MAX_OPAQUE_UI_REGIONS * 8u))) {
-        status = v1_request_reserve(entry, message.request_token,
-                                    message.service, message.opcode, &host_id);
-        if (status != PXA_STATUS_OK) return status;
-    } else if (message.service == PXA_GAME_RENDER_SERVICE_ID &&
-               (message.opcode == PXA_GAME_RENDER_CREATE_CONTEXT ||
-                message.opcode == PXA_GAME_RENDER_CREATE_AUTO_CONTEXT) &&
-               message.request_token != 0 &&
-               (message.payload.size == 8 || message.payload.size == 12)) {
-        status = v1_request_reserve(entry, message.request_token,
-                                    message.service, message.opcode, &host_id);
-        if (status != PXA_STATUS_OK) return status;
-    } else if (message.service == PXA_ASSETS_SERVICE_ID &&
-               (message.opcode == PXA_ASSETS_QUERY || message.opcode == PXA_ASSETS_LOAD ||
-                message.opcode == PXA_ASSETS_PREFETCH || message.opcode == PXA_ASSETS_STATUS ||
-                message.opcode == PXA_ASSETS_READ) &&
-               message.request_token != 0 && message.payload.size >= 5u &&
-               message.payload.size <= 4u + PXA_ASSET_PATH_MAX) {
-        status = v1_request_reserve(entry, message.request_token,
-                                    message.service, message.opcode, &host_id);
-        if (status != PXA_STATUS_OK) return status;
-    } else if (message.service == PXA_STORE_INSTALLER_SERVICE_ID &&
-               message.opcode >= 1u && message.opcode <= 8u &&
-               message.request_token != 0 &&
-               message.payload.size <= 362u) {
-        /* The registered privileged Installer validates its own payload. */
-        status = v1_request_reserve(entry, message.request_token,
-                                    message.service, message.opcode, &host_id);
-        if (status != PXA_STATUS_OK) return status;
-    } else {
-        return PXA_STATUS_UNSUPPORTED;
-    }
-    {
-        const size_t payload_size = message.payload.size;
-        pxa_wamr_engine_t *engine = entry_engine(entry);
-        pxa_message_view_t forwarded;
-        memset(&forwarded, 0, sizeof(forwarded));
-        forwarded.service = message.service;
-        forwarded.opcode = message.opcode;
-        forwarded.request_id = host_id;
-        /* WAMR has validated the native (*~) range. Guest execution is
-         * suspended and serialized until this import returns; services
-         * consume the borrowed payload synchronously and copy any data
-         * they need to retain for asynchronous work. */
-        forwarded.payload.data = payload_size == 0 ? NULL : message.payload.data;
-        forwarded.payload.size = payload_size;
-        status = pxa_runtime_control_view(engine->runtime,
-                                          entry->component, &forwarded);
-    }
-    if (status != PXA_STATUS_OK && host_id != 0) {
-        pxa_wamr_v1_request_t *slot = v1_request_find(entry, host_id);
-        if (slot != NULL) memset(slot, 0, sizeof(*slot));
-    }
-    return status;
-}
-
-static int32_t native_io_v1(void *opaque_exec_env, uint64_t handle,
+static int32_t native_io(void *opaque_exec_env, uint64_t handle,
                             uint32_t operation, uint8_t *data,
                             uint32_t size) {
     wasm_exec_env_t exec_env = (wasm_exec_env_t)opaque_exec_env;
     wasm_module_inst_t module = wasm_runtime_get_module_inst(exec_env);
     pxa_wamr_entry_t *entry =
         (pxa_wamr_entry_t *)wasm_runtime_get_custom_data(module);
-    if (entry == NULL || entry->core_major != 1 ||
+    if (entry == NULL || entry->core_major != 2 ||
         entry_engine(entry)->runtime == NULL)
         return PXA_STATUS_BAD_STATE;
     if (operation == PXA_SURFACE_IO_REGISTER_BUFFERS &&
@@ -1080,8 +743,7 @@ pxa_status_t pxa_wamr_engine_init(void *workspace, size_t workspace_size,
     uint8_t *cursor;
     uint16_t index;
     RuntimeInitArgs arguments;
-    /* WAMR keeps this array for the lifetime of the runtime: it must not be
-     * stack storage. One WAMR runtime per process, so static is safe. */
+    /* Native registrations are stored in this workspace until deinit. */
     if (output == NULL || engine_output == NULL) {
         return PXA_STATUS_INVALID_ARGUMENT;
     }
@@ -1148,29 +810,30 @@ pxa_status_t pxa_wamr_engine_init(void *workspace, size_t workspace_size,
         memset(engine->pool, 0, pool_bytes);
     }
 
-    v1_symbols[0].symbol = "pxa_submit";
-    {
-        union {
-            void *object;
-            int32_t (*function)(void *, const uint8_t *, uint32_t);
-        } conversion;
-        conversion.function = native_submit_v1;
-        v1_symbols[0].func_ptr = conversion.object;
-    }
-    v1_symbols[0].signature = "(*~)i";
-    v1_symbols[0].attachment = NULL;
-    v1_symbols[1].symbol = "pxa_io";
+    engine->native_symbols[0].symbol = "pxa_io";
     {
         union {
             void *object;
             int32_t (*function)(void *, uint64_t, uint32_t, uint8_t *,
                                 uint32_t);
         } conversion;
-        conversion.function = native_io_v1;
-        v1_symbols[1].func_ptr = conversion.object;
+        conversion.function = native_io;
+        engine->native_symbols[0].func_ptr = conversion.object;
     }
-    v1_symbols[1].signature = "(Ii*~)i";
-    v1_symbols[1].attachment = NULL;
+    engine->native_symbols[0].signature = "(Ii*~)i";
+    engine->native_symbols[0].attachment = NULL;
+    engine->native_symbols[1].symbol = "pxa_call";
+    {
+        union {
+            void *object;
+            int32_t (*function)(void *, uint32_t, uint64_t,
+                                const uint8_t *, uint32_t);
+        } conversion;
+        conversion.function = native_call;
+        engine->native_symbols[1].func_ptr = conversion.object;
+    }
+    engine->native_symbols[1].signature = "(iI*~)i";
+    engine->native_symbols[1].attachment = NULL;
     memset(&arguments, 0, sizeof(arguments));
     if (engine->allocate_runtime != NULL) {
         union {
@@ -1225,9 +888,9 @@ pxa_status_t pxa_wamr_engine_init(void *workspace, size_t workspace_size,
         arguments.mem_alloc_option.pool.heap_buf = engine->pool;
         arguments.mem_alloc_option.pool.heap_size = (uint32_t)pool_bytes;
     }
-    arguments.native_module_name = "pxa.core.v1";
-    arguments.native_symbols = v1_symbols;
-    arguments.n_native_symbols = 2;
+    arguments.native_module_name = "pxa.core.v2";
+    arguments.native_symbols = engine->native_symbols;
+    arguments.n_native_symbols = sizeof(engine->native_symbols) / sizeof(engine->native_symbols[0]);
     if (!wasm_runtime_full_init(&arguments)) {
         if (runtime_allocator_engine == engine) runtime_allocator_engine = NULL;
         return PXA_STATUS_INTERNAL;
@@ -1427,7 +1090,7 @@ static pxa_status_t engine_instantiate(void *context, pxa_bytes_t package_root,
     if (slot == NULL) return PXA_STATUS_RESOURCE_LIMIT;
     slot->package_component = entry->component;
     slot->core_major = entry->core_major;
-    if (slot->core_major != 1)
+    if (slot->core_major != 2)
         return discard_entry(engine, slot, PXA_STATUS_UNSUPPORTED);
     status = load_module_buffer(
         engine, slot, (pxa_bytes_t){(const uint8_t *)path, strlen(path)});
@@ -1463,6 +1126,7 @@ static pxa_status_t engine_instantiate(void *context, pxa_bytes_t package_root,
         return discard_entry(engine, slot, PXA_STATUS_UNSUPPORTED);
     }
     status = validate_module_imports(slot->module, path, slot->core_major,
+                                     entry->core_minor,
                                      wasi_declared,
                                      wasi_features);
     if (status != PXA_STATUS_OK) {
@@ -1520,8 +1184,8 @@ static pxa_status_t engine_instantiate(void *context, pxa_bytes_t package_root,
         wasm_runtime_lookup_function(slot->module_instance, "pxa_app_on_event");
     slot->stop_fn =
         wasm_runtime_lookup_function(slot->module_instance, "pxa_app_stop");
-    status = pxa_component_set_core_major(engine->runtime, component,
-                                          slot->core_major);
+    status = pxa_component_set_wire_profile(engine->runtime, component,
+                                          PXA_WIRE_PROFILE_HANDLE64);
     if (status != PXA_STATUS_OK)
         return discard_entry(engine, slot, status);
     slot->pending = 0;
@@ -1637,15 +1301,12 @@ pxa_status_t pxa_wamr_engine_deliver_event_result(
     status = pxa_event_peek(runtime, component, &view);
     if (status != PXA_STATUS_OK) return status;
     if (view.size == 0 ||
-        view.size > PXA_MAX_CONTROL_MESSAGE -
-                        (PXA_V1_ENVELOPE_SIZE - PXA_ENVELOPE_SIZE)) {
+        view.size > PXA_MAX_CONTROL_MESSAGE) {
         return PXA_STATUS_INTERNAL;
     }
-    /* Core v1 adds eight envelope bytes. The only extra payload expansion,
-     * Store progress 20 -> 24 bytes, always fits the minimum 64-byte buffer.
-     * Reserving twelve for every event would turn a valid 4096-byte READ
-     * completion into an unnecessary 8192-byte Guest allocation. */
-    callback_size = view.size + PXA_V1_ENVELOPE_SIZE - PXA_ENVELOPE_SIZE;
+    /* Runtime and Guest share the envelope: copy once into Guest memory.
+     * Retain the existing geometric buffer growth, capped at the wire limit. */
+    callback_size = view.size;
     if (callback_size > entry->event_capacity) {
         uint32_t capacity = 64;
         while (capacity < callback_size)
@@ -1675,75 +1336,8 @@ pxa_status_t pxa_wamr_engine_deliver_event_result(
     if (output != NULL) {
         output->service = decoded.service;
         output->opcode = decoded.opcode;
-        output->request_id = decoded.request_id;
+        output->request_token = decoded.request_token;
         output->payload_size = decoded.payload.size;
-    }
-    {
-        uint8_t *envelope = (uint8_t *)native;
-        uint64_t guest_token = 0;
-        int game_render_create = 0;
-        size_t payload_size = decoded.payload.size;
-        if (decoded.service == PXA_IPC_SERVICE_ID &&
-            (decoded.opcode == PXA_IPC_REQUEST_EVENT ||
-             decoded.opcode == PXA_IPC_REPLY_EVENT)) {
-            if (decoded.request_id == 0) return PXA_STATUS_PROTOCOL_ERROR;
-            guest_token = decoded.request_id;
-        } else if (decoded.request_id != 0) {
-            pxa_wamr_v1_request_t *slot =
-                v1_request_find(entry, decoded.request_id);
-            if (slot == NULL) return PXA_STATUS_PROTOCOL_ERROR;
-            if (slot->service != decoded.service ||
-                slot->opcode != decoded.opcode) {
-                memset(slot, 0, sizeof(*slot));
-                return PXA_STATUS_PROTOCOL_ERROR;
-            }
-            guest_token = slot->token;
-            game_render_create = slot->service == PXA_GAME_RENDER_SERVICE_ID &&
-                (slot->opcode == PXA_GAME_RENDER_CREATE_CONTEXT ||
-                 slot->opcode == PXA_GAME_RENDER_CREATE_AUTO_CONTEXT);
-            memset(slot, 0, sizeof(*slot));
-        }
-        memmove(envelope + PXA_V1_ENVELOPE_SIZE,
-                envelope + PXA_ENVELOPE_SIZE, decoded.payload.size);
-        if (decoded.service == PXA_STORE_INSTALLER_SERVICE_ID &&
-            decoded.opcode == PXA_STORE_INSTALLER_DOWNLOAD_PROGRESS &&
-            decoded.request_id == 0) {
-            uint8_t *payload = envelope + PXA_V1_ENVELOPE_SIZE;
-            pxa_wamr_v1_request_t *slot;
-            if (payload_size != 20u) return PXA_STATUS_PROTOCOL_ERROR;
-            slot = v1_request_find(entry, pxa_read_u32(payload));
-            if (slot != NULL &&
-                (slot->service != PXA_STORE_INSTALLER_SERVICE_ID ||
-                 slot->opcode != 2u)) return PXA_STATUS_PROTOCOL_ERROR;
-            memmove(payload + 8u, payload + 4u, 16u);
-            pxa_wire_generated_store_u64(
-                payload, slot == NULL ? 0u : slot->token);
-            payload_size = 24u;
-        }
-        if (game_render_create) {
-            uint8_t *payload = envelope + PXA_V1_ENVELOPE_SIZE;
-            if (payload_size < 4u) return PXA_STATUS_PROTOCOL_ERROR;
-            if ((int32_t)pxa_read_u32(payload) == PXA_STATUS_OK) {
-                size_t expected = decoded.opcode ==
-                    PXA_GAME_RENDER_CREATE_AUTO_CONTEXT ? 36u : 24u;
-                if (payload_size != expected ||
-                    pxa_read_u64(payload + 4) == PXA_HANDLE64_INVALID)
-                    return PXA_STATUS_PROTOCOL_ERROR;
-            } else if (payload_size != 4u) {
-                return PXA_STATUS_PROTOCOL_ERROR;
-            }
-        }
-        pxa_wire_generated_store_u64(
-            envelope + PXA_WIRE_V1_REQUEST_TOKEN_OFFSET, guest_token);
-        pxa_wire_generated_store_u32(
-            envelope + PXA_WIRE_V1_PAYLOAD_LEN_OFFSET,
-            (uint32_t)payload_size);
-        pxa_wire_generated_store_u32(
-            envelope + PXA_WIRE_V1_FLAGS_OFFSET, 0);
-        callback_size = PXA_V1_ENVELOPE_SIZE + payload_size;
-        if (callback_size > PXA_MAX_CONTROL_MESSAGE)
-            return PXA_STATUS_PROTOCOL_ERROR;
-        if (output != NULL) output->payload_size = payload_size;
     }
     status = pxa_component_begin_event(runtime, component);
     if (status != PXA_STATUS_OK) {
@@ -1783,7 +1377,7 @@ void pxa_wamr_engine_deinit(pxa_wamr_engine_t *engine) {
             engine_destroy(engine, engine->entries[index].component);
         }
     }
-    (void)wasm_runtime_unregister_natives("pxa.core.v1", v1_symbols);
+    (void)wasm_runtime_unregister_natives("pxa.core.v2", engine->native_symbols);
     wasm_runtime_destroy();
     if (runtime_allocator_engine == engine) runtime_allocator_engine = NULL;
     engine->magic = 0;

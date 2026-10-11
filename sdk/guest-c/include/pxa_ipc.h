@@ -92,7 +92,7 @@ static inline int32_t pxa_ipc_request_call(
     return pxa_ipc_build_call(packet, capacity, token, endpoint,
                                  endpoint_size, payload, payload_size,
                                  &size)
-               ? pxa_submit(packet, size) : -1;
+               ? pxa_control_packet(packet, size) : -1;
 }
 
 static inline int pxa_ipc_build_reply(
@@ -141,7 +141,7 @@ static inline int32_t pxa_ipc_request_reply(
     uint32_t size = 0;
     return pxa_ipc_build_reply(packet, capacity, token, call_id,
                                   status, payload, payload_size, &size)
-               ? pxa_submit(packet, size) : -1;
+               ? pxa_control_packet(packet, size) : -1;
 }
 
 static inline int pxa_ipc_parse_call_result(

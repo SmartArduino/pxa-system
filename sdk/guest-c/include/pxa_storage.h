@@ -93,7 +93,7 @@ static inline int32_t pxa_storage_request_small(
     if (opcode == PXA_STORAGE_SET ||
         !pxa_storage_build(packet, sizeof(packet), opcode, token,
                               key, key_size, NULL, 0, &size)) return -1;
-    return pxa_submit(packet, size);
+    return pxa_control_packet(packet, size);
 }
 
 static inline int32_t pxa_storage_request_get(
@@ -124,7 +124,7 @@ static inline int32_t pxa_storage_request_set(
     if (!pxa_storage_build(packet, capacity, PXA_STORAGE_SET,
                               token, key, key_size, value, value_size,
                               &size)) return -1;
-    return pxa_submit(packet, size);
+    return pxa_control_packet(packet, size);
 }
 
 static inline int pxa_storage_parse_status(

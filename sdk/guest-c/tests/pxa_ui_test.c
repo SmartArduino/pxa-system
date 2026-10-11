@@ -1,8 +1,9 @@
+#include "../../testing/pxa_control_capture.h"
 #include <assert.h>
 
 #include "pxa_ui_wire.h"
 
-int32_t pxa_submit(const uint8_t *bytes, uint32_t size) {
+int32_t pxa_test_control(const uint8_t *bytes, uint32_t size) {
     (void)bytes;
     (void)size;
     return 0;

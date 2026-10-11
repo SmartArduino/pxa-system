@@ -159,7 +159,7 @@ static pxa_status_t begin_transaction(pxa_ui_service_t *service,
     uint8_t flags;
     pxa_ui_surface_t *surface_state;
     (void)service;
-    if (message->request_id != 0 || message->payload.size != 20 ||
+    if (message->request_token != 0 || message->payload.size != 20 ||
         message->payload.data[18] != 0 || message->payload.data[19] != 0 ||
         transaction->active)
         return PXA_STATUS_BAD_STATE;
@@ -200,7 +200,7 @@ static pxa_status_t write_transaction(pxa_ui_service_t *service,
     size_t fragment;
     size_t required;
     void *grown;
-    if (message->request_id != 0 || message->payload.size <= 4 ||
+    if (message->request_token != 0 || message->payload.size <= 4 ||
         !transaction->active ||
         pxa_read_u32(message->payload.data) != transaction->id)
         return PXA_STATUS_BAD_STATE;
@@ -224,7 +224,7 @@ static pxa_status_t finish_transaction(pxa_ui_service_t *service,
                                        const pxa_message_view_t *message,
                                        int commit) {
     pxa_status_t status;
-    if (message->request_id != 0 || message->payload.size != 4 ||
+    if (message->request_token != 0 || message->payload.size != 4 ||
         !entry->transaction.active ||
         pxa_read_u32(message->payload.data) != entry->transaction.id)
         return PXA_STATUS_BAD_STATE;
@@ -265,7 +265,7 @@ static pxa_status_t ui_control(void *context, pxa_runtime_t *runtime,
         case PXA_UI_TEXT_INPUT_FOCUS: {
             const uint8_t *data = message->payload.data;
             const pxa_ui_node_t *node;
-            if (message->request_id != 0 || message->payload.size != 12 ||
+            if (message->request_token != 0 || message->payload.size != 12 ||
                 data[8] > 1 || data[9] || data[10] || data[11])
                 return PXA_STATUS_INVALID_ARGUMENT;
             if (!(service->config.features & PXA_UI_FEATURE_TEXT_INPUT_CONTROL) ||
@@ -284,17 +284,17 @@ static pxa_status_t ui_control(void *context, pxa_runtime_t *runtime,
         case PXA_UI_THEME_GET: {
             uint8_t payload[PXA_UI_THEME_WIRE_BYTES];
             pxa_status_t status;
-            if (message->request_id == 0 || message->payload.size != 0)
+            if (message->request_token == 0 || message->payload.size != 0)
                 return PXA_STATUS_INVALID_ARGUMENT;
             encode_theme(payload, &service->theme);
             status = pxa_request_begin_reserved(
-                runtime, component, message->request_id, PXA_UI_SERVICE_ID,
+                runtime, component, message->request_token, PXA_UI_SERVICE_ID,
                 PXA_UI_THEME_GET, 0, sizeof(payload));
             if (status != PXA_STATUS_OK) return status;
             status = pxa_request_commit(runtime, component,
-                                        message->request_id);
+                                        message->request_token);
             if (status != PXA_STATUS_OK) return status;
-            return pxa_request_complete(runtime, component, message->request_id,
+            return pxa_request_complete(runtime, component, message->request_token,
                                         PXA_STATUS_OK, payload, sizeof(payload));
         }
         default:

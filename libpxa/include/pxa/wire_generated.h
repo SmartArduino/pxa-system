@@ -1,5 +1,4 @@
-/* Generated from spec/draft/pxa-core.json and
- * spec/draft/abi-1.0-envelope.json. Do not edit by hand. */
+/* Generated from spec/draft/pxa-core.json. Do not edit by hand. */
 #ifndef PXA_WIRE_GENERATED_H
 #define PXA_WIRE_GENERATED_H
 
@@ -109,70 +108,12 @@ static inline int pxa_wire_record_encode(
     return 1;
 }
 
-#endif /* PXA_GUEST_WIRE_H */
-
-#define PXA_WIRE_V0_SIZE ((size_t)12)
-#define PXA_WIRE_V0_SERVICE_OFFSET ((size_t)0)
-#define PXA_WIRE_V0_OPCODE_OFFSET ((size_t)2)
-#define PXA_WIRE_V0_REQUEST_ID_OFFSET ((size_t)4)
-#define PXA_WIRE_V0_PAYLOAD_LEN_OFFSET ((size_t)8)
-
-typedef struct {
-    uint16_t service;
-    uint16_t opcode;
-    uint32_t request_id;
-    const uint8_t *payload;
-    uint32_t payload_size;
-} pxa_wire_v0_view_t;
-
-static inline int pxa_wire_v0_decode(
-    const uint8_t *data, size_t size, size_t max_size,
-    pxa_wire_v0_view_t *output) {
-    uint32_t payload_size;
-    if (output == NULL) return 0;
-    output->service = 0;
-    output->opcode = 0;
-    output->request_id = 0;
-    output->payload = NULL;
-    output->payload_size = 0;
-    if (data == NULL ||
-        size < PXA_WIRE_V0_SIZE ||
-        size > max_size) return 0;
-    payload_size = pxa_wire_generated_load_u32(
-        data + PXA_WIRE_V0_PAYLOAD_LEN_OFFSET);
-    if ((size_t)payload_size != size - PXA_WIRE_V0_SIZE) return 0;
-    output->service = pxa_wire_generated_load_u16(data + PXA_WIRE_V0_SERVICE_OFFSET);
-    output->opcode = pxa_wire_generated_load_u16(data + PXA_WIRE_V0_OPCODE_OFFSET);
-    output->request_id = pxa_wire_generated_load_u32(data + PXA_WIRE_V0_REQUEST_ID_OFFSET);
-    output->payload = data + PXA_WIRE_V0_SIZE;
-    output->payload_size = payload_size;
-    return 1;
-}
-
-static inline int pxa_wire_v0_encode(
-    uint8_t *out, size_t capacity, uint16_t service, uint16_t opcode, uint32_t request_id,
-    const uint8_t *payload, size_t payload_size, size_t *written) {
-    if (written != NULL) *written = 0;
-    if (out == NULL || written == NULL ||
-        (payload == NULL && payload_size != 0) ||
-        payload_size > PXA_WIRE_MAX_CONTROL_MESSAGE - PXA_WIRE_V0_SIZE ||
-        capacity < PXA_WIRE_V0_SIZE + payload_size) return 0;
-    pxa_wire_generated_store_u16(out + PXA_WIRE_V0_SERVICE_OFFSET, service);
-    pxa_wire_generated_store_u16(out + PXA_WIRE_V0_OPCODE_OFFSET, opcode);
-    pxa_wire_generated_store_u32(out + PXA_WIRE_V0_REQUEST_ID_OFFSET, request_id);
-    pxa_wire_generated_store_u32(out + PXA_WIRE_V0_PAYLOAD_LEN_OFFSET, (uint32_t)payload_size);
-    for (size_t i = 0; i < payload_size; ++i)
-        out[PXA_WIRE_V0_SIZE + i] = payload[i];
-    *written = PXA_WIRE_V0_SIZE + payload_size;
-    return 1;
-}
-
-#define PXA_WIRE_V1_SIZE ((size_t)20)
-#define PXA_WIRE_V1_SERVICE_OFFSET ((size_t)0)
-#define PXA_WIRE_V1_OPCODE_OFFSET ((size_t)2)
-#define PXA_WIRE_V1_REQUEST_TOKEN_OFFSET ((size_t)4)
-#define PXA_WIRE_V1_PAYLOAD_LEN_OFFSET ((size_t)12)
-#define PXA_WIRE_V1_FLAGS_OFFSET ((size_t)16)
+#define PXA_WIRE_SIZE ((size_t)20)
+#define PXA_WIRE_SERVICE_OFFSET ((size_t)0)
+#define PXA_WIRE_OPCODE_OFFSET ((size_t)2)
+#define PXA_WIRE_REQUEST_TOKEN_OFFSET ((size_t)4)
+#define PXA_WIRE_PAYLOAD_LEN_OFFSET ((size_t)12)
+#define PXA_WIRE_FLAGS_OFFSET ((size_t)16)
 
 typedef struct {
     uint16_t service;
@@ -180,11 +121,11 @@ typedef struct {
     uint64_t request_token;
     const uint8_t *payload;
     uint32_t payload_size;
-} pxa_wire_v1_view_t;
+} pxa_wire_view_t;
 
-static inline int pxa_wire_v1_decode(
+static inline int pxa_wire_decode(
     const uint8_t *data, size_t size, size_t max_size,
-    pxa_wire_v1_view_t *output) {
+    pxa_wire_view_t *output) {
     uint32_t payload_size;
     if (output == NULL) return 0;
     output->service = 0;
@@ -193,42 +134,44 @@ static inline int pxa_wire_v1_decode(
     output->payload = NULL;
     output->payload_size = 0;
     if (data == NULL ||
-        size < PXA_WIRE_V1_SIZE ||
+        size < PXA_WIRE_SIZE ||
         size > max_size ||
         size > PXA_WIRE_MAX_CONTROL_MESSAGE) return 0;
     payload_size = pxa_wire_generated_load_u32(
-        data + PXA_WIRE_V1_PAYLOAD_LEN_OFFSET);
-    if ((size_t)payload_size != size - PXA_WIRE_V1_SIZE) return 0;
-    if (pxa_wire_generated_load_u16(data + PXA_WIRE_V1_SERVICE_OFFSET) == 0) return 0;
-    if (pxa_wire_generated_load_u16(data + PXA_WIRE_V1_OPCODE_OFFSET) == 0) return 0;
-    if (pxa_wire_generated_load_u32(data + PXA_WIRE_V1_FLAGS_OFFSET) != 0) return 0;
-    output->service = pxa_wire_generated_load_u16(data + PXA_WIRE_V1_SERVICE_OFFSET);
-    output->opcode = pxa_wire_generated_load_u16(data + PXA_WIRE_V1_OPCODE_OFFSET);
-    output->request_token = pxa_wire_generated_load_u64(data + PXA_WIRE_V1_REQUEST_TOKEN_OFFSET);
-    output->payload = data + PXA_WIRE_V1_SIZE;
+        data + PXA_WIRE_PAYLOAD_LEN_OFFSET);
+    if ((size_t)payload_size != size - PXA_WIRE_SIZE) return 0;
+    if (pxa_wire_generated_load_u16(data + PXA_WIRE_SERVICE_OFFSET) == 0) return 0;
+    if (pxa_wire_generated_load_u16(data + PXA_WIRE_OPCODE_OFFSET) == 0) return 0;
+    if (pxa_wire_generated_load_u32(data + PXA_WIRE_FLAGS_OFFSET) != 0) return 0;
+    output->service = pxa_wire_generated_load_u16(data + PXA_WIRE_SERVICE_OFFSET);
+    output->opcode = pxa_wire_generated_load_u16(data + PXA_WIRE_OPCODE_OFFSET);
+    output->request_token = pxa_wire_generated_load_u64(data + PXA_WIRE_REQUEST_TOKEN_OFFSET);
+    output->payload = data + PXA_WIRE_SIZE;
     output->payload_size = payload_size;
     return 1;
 }
 
-static inline int pxa_wire_v1_encode(
+static inline int pxa_wire_encode(
     uint8_t *out, size_t capacity, uint16_t service, uint16_t opcode, uint64_t request_token,
     const uint8_t *payload, size_t payload_size, size_t *written) {
     if (written != NULL) *written = 0;
     if (out == NULL || written == NULL ||
         (payload == NULL && payload_size != 0) ||
-        payload_size > PXA_WIRE_MAX_CONTROL_MESSAGE - PXA_WIRE_V1_SIZE ||
-        capacity < PXA_WIRE_V1_SIZE + payload_size) return 0;
+        payload_size > PXA_WIRE_MAX_CONTROL_MESSAGE - PXA_WIRE_SIZE ||
+        capacity < PXA_WIRE_SIZE + payload_size) return 0;
     if (service == 0) return 0;
     if (opcode == 0) return 0;
-    pxa_wire_generated_store_u16(out + PXA_WIRE_V1_SERVICE_OFFSET, service);
-    pxa_wire_generated_store_u16(out + PXA_WIRE_V1_OPCODE_OFFSET, opcode);
-    pxa_wire_generated_store_u64(out + PXA_WIRE_V1_REQUEST_TOKEN_OFFSET, request_token);
-    pxa_wire_generated_store_u32(out + PXA_WIRE_V1_PAYLOAD_LEN_OFFSET, (uint32_t)payload_size);
-    pxa_wire_generated_store_u32(out + PXA_WIRE_V1_FLAGS_OFFSET, 0);
+    pxa_wire_generated_store_u16(out + PXA_WIRE_SERVICE_OFFSET, service);
+    pxa_wire_generated_store_u16(out + PXA_WIRE_OPCODE_OFFSET, opcode);
+    pxa_wire_generated_store_u64(out + PXA_WIRE_REQUEST_TOKEN_OFFSET, request_token);
+    pxa_wire_generated_store_u32(out + PXA_WIRE_PAYLOAD_LEN_OFFSET, (uint32_t)payload_size);
+    pxa_wire_generated_store_u32(out + PXA_WIRE_FLAGS_OFFSET, 0);
     for (size_t i = 0; i < payload_size; ++i)
-        out[PXA_WIRE_V1_SIZE + i] = payload[i];
-    *written = PXA_WIRE_V1_SIZE + payload_size;
+        out[PXA_WIRE_SIZE + i] = payload[i];
+    *written = PXA_WIRE_SIZE + payload_size;
     return 1;
 }
+
+#endif /* PXA_GUEST_WIRE_H */
 
 #endif

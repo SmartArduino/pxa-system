@@ -1,3 +1,4 @@
+#include "../../testing/pxa_control_capture.h"
 #include "pxa_ui_components.h"
 
 #include <assert.h>
@@ -25,7 +26,7 @@ static int record(pxa_writer_t *writer, uint16_t tag, const void *data,
     return 1;
 }
 
-int32_t pxa_submit(const uint8_t* data, uint32_t length) {
+int32_t pxa_test_control(const uint8_t* data, uint32_t length) {
     uint16_t opcode;
     assert(data != NULL && length >= PXA_HEADER_BYTES);
     opcode = pxa_read_u16(data + 2);

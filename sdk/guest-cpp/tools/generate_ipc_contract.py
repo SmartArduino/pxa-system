@@ -219,9 +219,9 @@ def render(document: dict) -> str:
         f"    static constexpr std::size_t request_bytes = {max_bytes(request)};",
         f"    static constexpr std::size_t response_bytes = {max_bytes(response)};",
         "    static constexpr std::size_t call_packet_bytes =",
-        "        pxa::wire::header_bytes + 8 + endpoint.size() + request_bytes;",
+        "        8 + endpoint.size() + request_bytes;",
         "    static constexpr std::size_t reply_packet_bytes =",
-        "        pxa::wire::header_bytes + 20 + response_bytes;",
+        "        20 + response_bytes;",
     ]
     for title, spec in (("Request", request), ("Response", response)):
         lines.extend([f"    struct {title} {{"])

@@ -1,3 +1,4 @@
+#include "../../testing/pxa_control_capture.h"
 #include <pxa/audio.hpp>
 #include <pxa/clock.hpp>
 #include <pxa/fs.hpp>
@@ -28,7 +29,7 @@ void* operator new(std::size_t size) {
 void operator delete(void* memory) noexcept { std::free(memory); }
 void operator delete(void* memory, std::size_t) noexcept { std::free(memory); }
 
-extern "C" std::int32_t pxa_submit(const std::uint8_t* data, std::uint32_t size) {
+extern "C" std::int32_t pxa_test_control(const std::uint8_t* data, std::uint32_t size) {
     const auto* bytes = reinterpret_cast<const std::byte*>(data);
     if (wire::get16(bytes) == 1) {
         if (wire::get16(bytes + 2) == 2) {
@@ -214,7 +215,6 @@ static void exercise(std::string_view which) {
         std::array<std::byte, 96> scratch;
         for (std::size_t i = 0; i < scratch.size(); ++i) scratch[i] = std::byte(i);
         const auto expected = scratch;
-        assert(transport.scratch(scratch));
         assert(transport.send(4, 2, 1, std::span(scratch).first(64)));
         assert(packet_size == 84 && std::equal(expected.begin(), expected.begin() + 64, packet.begin() + 20));
     } else if (which == "writer-alias") {

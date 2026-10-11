@@ -1,3 +1,4 @@
+#include "../../sdk/testing/pxa_control_capture.h"
 #undef NDEBUG
 #include <assert.h>
 #include <stdio.h>
@@ -7,7 +8,7 @@
 static uint64_t pending[4],live[64],next_handle=UINT64_C(0xf001000000000000);
 static unsigned loads,cancels,closes;
 static int32_t reject;
-int32_t pxa_submit(const uint8_t *data,uint32_t size) {
+int32_t pxa_test_control(const uint8_t *data,uint32_t size) {
     pxa_event_t e;assert(pxa_parse_event(data,size,&e));
     if(e.service==PXA_ASSETS_SERVICE) {
         assert(e.opcode==PXA_ASSETS_LOAD && e.payload[2]==PXA_ASSET_IMAGE);

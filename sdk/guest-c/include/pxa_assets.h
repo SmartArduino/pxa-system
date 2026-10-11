@@ -81,7 +81,7 @@ static inline int pxa_assets_build_read(uint8_t *packet, size_t capacity,
 static inline int32_t pxa_assets_read(uint64_t token, const char *path, uint32_t offset, uint32_t bytes) {
     uint8_t packet[PXA_HEADER_BYTES+12+PXA_ASSET_PATH_MAX]; uint32_t size;
     if (!pxa_assets_build_read(packet,sizeof(packet),token,path,offset,bytes,&size)) return -1;
-    return pxa_submit(packet,size);
+    return pxa_control_packet(packet,size);
 }
 static inline int pxa_assets_parse_read(const pxa_event_t *event, uint64_t token,
     pxa_asset_read_result_t *output) {
@@ -128,14 +128,14 @@ static inline int32_t pxa_assets_query(uint64_t token, const char *path) {
     uint8_t packet[PXA_HEADER_BYTES + 4u + PXA_ASSET_PATH_MAX];
     uint32_t size;
     if (!pxa_assets_build(packet, sizeof(packet), PXA_ASSETS_QUERY, token, path, 0, &size)) return -1;
-    return pxa_submit(packet, size);
+    return pxa_control_packet(packet, size);
 }
 
 static inline int32_t pxa_assets_load(uint64_t token, const char *path, uint8_t kind) {
     uint8_t packet[PXA_HEADER_BYTES + 4u + PXA_ASSET_PATH_MAX];
     uint32_t size;
     if (!pxa_assets_build(packet, sizeof(packet), PXA_ASSETS_LOAD, token, path, kind, &size)) return -1;
-    return pxa_submit(packet, size);
+    return pxa_control_packet(packet, size);
 }
 
 static inline int32_t pxa_assets_load_texture(uint64_t token, const char *path) {
@@ -163,7 +163,7 @@ static inline int32_t pxa_assets_prefetch(uint64_t token, const char *path, uint
     uint8_t packet[PXA_HEADER_BYTES + 4u + PXA_ASSET_PATH_MAX];
     uint32_t size;
     if (!pxa_assets_build(packet, sizeof(packet), PXA_ASSETS_PREFETCH, token, path, kind, &size)) return -1;
-    return pxa_submit(packet, size);
+    return pxa_control_packet(packet, size);
 }
 static inline int32_t pxa_assets_prefetch_texture(uint64_t token, const char *path) {
     return pxa_assets_prefetch(token, path, PXA_ASSET_TEXTURE);
@@ -177,7 +177,7 @@ static inline int32_t pxa_assets_status(uint64_t token, const char *path) {
     uint8_t packet[PXA_HEADER_BYTES + 4u + PXA_ASSET_PATH_MAX];
     uint32_t size;
     if (!pxa_assets_build(packet, sizeof(packet), PXA_ASSETS_STATUS, token, path, 0, &size)) return -1;
-    return pxa_submit(packet, size);
+    return pxa_control_packet(packet, size);
 }
 static inline int pxa_assets_parse_status(const pxa_event_t *event,
     uint64_t token, pxa_asset_status_t *output) {

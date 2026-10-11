@@ -1611,20 +1611,27 @@ static uint32_t draw_painter_polygon(
                  opaque_coverage + (size_t)row * coverage_stride,
                  x0, x1))) {
             const float per_pixel = 65536.0f / (float)width;
-            int32_t du = (int32_t)((float)(r->u - l->u) * per_pixel);
-            int32_t dv = (int32_t)((float)(r->v - l->v) * per_pixel);
-            int32_t dlight =
-                (int32_t)((float)(r->light - l->light) * per_pixel);
             const int64_t prestep = ((int64_t)x0 << 16) + 0x8000 - l->x;
-            uint32_t u = (uint32_t)(l->u +
-                (int32_t)(((int64_t)du * prestep) >> 16));
-            uint32_t v = (uint32_t)(l->v +
-                (int32_t)(((int64_t)dv * prestep) >> 16));
-            int32_t light = l->light +
-                (int32_t)(((int64_t)dlight * prestep) >> 16);
+            const int perspective_span =
+                perspective && l->w > 0 && r->w > 0;
+            int32_t du = 0, dv = 0, dlight = 0;
+            uint32_t u = 0, v = 0;
+            int32_t light = (int32_t)min_light << 16;
             const int32_t light_low = (int32_t)min_light << 16;
             const int32_t light_high = ((int32_t)max_light << 16) | 0xffff;
-            int32_t light_end;
+            int32_t light_end = light;
+            /* Perspective blocks replace screen-linear UVs before use. Solid
+             * spans do not sample a texture. Keep the affine fallback when
+             * reciprocal endpoints are invalid, without paying for it on
+             * every normal perspective span. */
+            if (!flat && !perspective_span) {
+                du = (int32_t)((float)(r->u - l->u) * per_pixel);
+                dv = (int32_t)((float)(r->v - l->v) * per_pixel);
+                u = (uint32_t)(l->u +
+                    (int32_t)(((int64_t)du * prestep) >> 16));
+                v = (uint32_t)(l->v +
+                    (int32_t)(((int64_t)dv * prestep) >> 16));
+            }
             uint16_t *out = target->pixels +
                             (size_t)row * target->stride_pixels + x0;
             uint8_t *opaque_mask = opaque_coverage != NULL
@@ -1642,21 +1649,24 @@ static uint32_t draw_painter_polygon(
                       (size_t)row * target->depth_stride_pixels + x0
                 : NULL;
             int32_t x;
-            if (light < light_low) light = light_low;
-            if (light > light_high) light = light_high;
-            light_end = light + (int32_t)((int64_t)dlight * (x1 - x0 - 1));
-            if (light_end < light_low || light_end > light_high) {
-                if (light_end < light_low) light_end = light_low;
-                if (light_end > light_high) light_end = light_high;
-                dlight = x1 - x0 > 1
-                             ? (light_end - light) / (x1 - x0 - 1)
-                             : 0;
+            if (min_light != max_light) {
+                dlight = (int32_t)((float)(r->light - l->light) * per_pixel);
+                light = l->light +
+                    (int32_t)(((int64_t)dlight * prestep) >> 16);
+                if (light < light_low) light = light_low;
+                if (light > light_high) light = light_high;
+                light_end = light + (int32_t)((int64_t)dlight * (x1 - x0 - 1));
+                if (light_end < light_low || light_end > light_high) {
+                    if (light_end < light_low) light_end = light_low;
+                    if (light_end > light_high) light_end = light_high;
+                    dlight = x1 - x0 > 1
+                                 ? (light_end - light) / (x1 - x0 - 1)
+                                 : 0;
+                }
             }
             /* Perspective interpolants for this span. They are exact for a
              * planar face, so the only approximation left is the linear UV
              * step inside one short block. */
-            const int perspective_span =
-                perspective && l->w > 0 && r->w > 0;
             int32_t uw = 0;
             int32_t vw = 0;
             int32_t w = 0;
