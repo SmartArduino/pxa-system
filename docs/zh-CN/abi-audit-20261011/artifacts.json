@@ -1,0 +1,89 @@
+{
+  "product_base_commit": "4faf6cf",
+  "sdk_base_commit": "8693fc9",
+  "apps_base_commit": "e18d430",
+  "device": "pai-touch / esp32s3 / a4:cb:8f:d6:8d:a4",
+  "port": "/dev/ttyACM1",
+  "compiler": "WASI SDK 34; wamrc Xtensa opt-level=3 size-level=0; firmware sdkconfig.pai-touch",
+  "definitions": "VOXEL_BENCH_SCENE=2,VOXEL_PROFILE=1",
+  "scene": {
+    "seed": "0x5ae1",
+    "world": [
+      64,
+      24,
+      64
+    ],
+    "world_hash": "667de4b0",
+    "trees": 49,
+    "resolution": [
+      296,
+      240
+    ],
+    "far": 24,
+    "near": 0.25,
+    "fov": 1.221451928,
+    "eye": [
+      18.5,
+      9.6,
+      18.5
+    ],
+    "yaw": 0.7,
+    "pitch": -0.15,
+    "materials": "perspective textured; leaf cutout; depth tested"
+  },
+  "packages": {
+    "control-submit": {
+      "path": "local/abi-audit-20261011/packages/pxa-abi-control-bench.pxa",
+      "sha256": "6ba3bba5cc23053bd015ece93da20392694de44c17b3dcb0d6997f54b0db8a1e",
+      "bytes": 95103
+    },
+    "control-call": {
+      "path": "local/abi-audit-20261011/packages-direct/pxa-abi-control-bench.pxa",
+      "sha256": "2981d5dabe1b5eb7e06526a9dcfa85e91b8ba1bd0dc9e826cebb90d736ba4bc1",
+      "bytes": 94680
+    },
+    "voxel-submit": {
+      "path": "local/abi-audit-20261011/voxel-submit-final/pxa-voxel-craft-cpp.pxa",
+      "sha256": "383c5833b590991f0dd3f7b20a5bcb736583202bb6abe41981dbdc0b16406a77",
+      "bytes": 537789
+    },
+    "voxel-call": {
+      "path": "local/abi-audit-20261011/voxel-call-probe-device/pxa-voxel-craft-cpp.pxa",
+      "sha256": "e8c945038b49bdfae5994d372d334cca51a41183d45ff57f106c8ad0786d0258",
+      "bytes": 537647
+    },
+    "service-call": {
+      "path": "local/abi-audit-20261011/direct-service/pxa-service-safety.pxa",
+      "sha256": "39626c5ba8b6b07eacf24805337e3c60fa3e1f0621b3b0f041cea6ef23364dc5",
+      "bytes": 407112
+    },
+    "firmware-before": {
+      "path": "local/abi-audit-20261011/firmware-before/pxa_esp_platform.bin",
+      "sha256": "e1ad7693080bf682e508129460ab5a39784728b6c35748cffa1b88f62d416a28",
+      "bytes": 3339472
+    },
+    "firmware-after": {
+      "path": "build/firmware/pai-touch/pxa_esp_platform.bin",
+      "sha256": "fdb4e32da5a0c6529b90ae85b0ca849f33ef7bd6d45a50cf16b3ee4ad9e9fe9c",
+      "bytes": 3337616
+    }
+  },
+  "excluded": "All input runs without explicit PERF ownership; failed/incomplete captures; exploratory and intermediate firmware runs; service runs before visible status/permission verification.",
+  "serial_log_sha256": {
+    "before": {
+      "control": "733f3c1be13a5ad3bda94f4afeeef6cf1000924600acf81493b27af7c10727c6",
+      "voxel": "a9cc375990ae381c467cecd2d1402524a53aee4c1aa2fccebcfd0598bd3c6b90",
+      "input": "6c6e8762fb813bf504f0c349e3b6faf581ce56f6713a5cb6183273f8a07b8114"
+    },
+    "after": {
+      "control": "49d2fc6aa7172489b5c19f3d722aee2ebd79dd23d8bd86b5ee34c8546cd390bc",
+      "voxel": "cd1436eeb421c36e774852ea9523fd65f8c1bdd8565816ec20d0fe18cec69b30",
+      "input": "bfe81f15af2cbd3651cfbfee29dba786069fc15e0a2c4d712324abd091f85fab"
+    },
+    "call": {
+      "control": "60af9ec6c56a97e755f25c8c11d7ddc2d5239acd4ab83725026713b93149447c",
+      "voxel": "770903cedbeb8cf7096d4a2a39dd3e49e0692a6fd986f39ae852033936b4f8cd",
+      "input": "50f0d75ac6de140a389bc82b00507ca46cffb6542a8d7f05d8584cf7814f00ae"
+    }
+  }
+}

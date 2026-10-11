@@ -1,0 +1,116 @@
+diff --git a/firmware/boards/pai-touch/include/parallel_sw_rotation_flush.h b/firmware/boards/pai-touch/include/parallel_sw_rotation_flush.h
+index 6a596c5..95428bf 100644
+--- a/firmware/boards/pai-touch/include/parallel_sw_rotation_flush.h
++++ b/firmware/boards/pai-touch/include/parallel_sw_rotation_flush.h
+@@ -1397,7 +1397,7 @@ private:
+             context->pxa_presenter_task == nullptr ? 0 :
+             uxTaskGetStackHighWaterMark(context->pxa_presenter_task);
+         pxa_esp_surface_input_metrics_t input_metrics = {};
+-        pxa_esp_surface_take_input_metrics(&input_metrics);
++        pxa_esp_surface_take_display_input_metrics(&input_metrics);
+         const uint32_t sample_to_guest_us =
+             input_metrics.sample_to_guest_count == 0 ? 0 :
+             static_cast<uint32_t>(input_metrics.sample_to_guest_total_us /
+diff --git a/firmware/components/pxa/include/pxa/pxa_esp_surface.h b/firmware/components/pxa/include/pxa/pxa_esp_surface.h
+index d6695c8..8d6f725 100644
+--- a/firmware/components/pxa/include/pxa/pxa_esp_surface.h
++++ b/firmware/components/pxa/include/pxa/pxa_esp_surface.h
+@@ -226,6 +226,10 @@ void pxa_esp_surface_note_raster_frame_presented(uint64_t frame_id,
+                                                  uint32_t elapsed_us);
+ void pxa_esp_surface_take_input_metrics(
+     pxa_esp_surface_input_metrics_t *metrics);
++/* Presenter telemetry yields the counters to an active explicit PERF window.
++ * Uses the existing optional probe; no additional queue, counters or setting. */
++void pxa_esp_surface_take_display_input_metrics(
++    pxa_esp_surface_input_metrics_t *metrics);
+ bool pxa_esp_surface_acquire_latest(pxa_esp_surface_frame_t *frame);
+ bool pxa_esp_surface_acquire_current_for_preview(
+     pxa_esp_surface_frame_t *frame);
+diff --git a/firmware/components/pxa/src/services/pxa_esp_surface.c b/firmware/components/pxa/src/services/pxa_esp_surface.c
+index 37d8173..87f8032 100644
+--- a/firmware/components/pxa/src/services/pxa_esp_surface.c
++++ b/firmware/components/pxa/src/services/pxa_esp_surface.c
+@@ -1830,10 +1830,17 @@ void pxa_esp_surface_note_raster_frame_presented(uint64_t frame_id,
+     taskEXIT_CRITICAL(&g_surface_lock);
+ }
+ 
+-void pxa_esp_surface_take_input_metrics(
+-    pxa_esp_surface_input_metrics_t *metrics) {
++static void take_input_metrics(
++    pxa_esp_surface_input_metrics_t *metrics, bool display_consumer) {
+     if (metrics == NULL) return;
+     taskENTER_CRITICAL(&g_surface_lock);
++    /* Explicit PERF windows own the counters. The periodic presenter must
++     * not drain part of a test window, even when its logs are disabled. */
++    if (display_consumer && g_perf != NULL && g_perf->active) {
++        *metrics = (pxa_esp_surface_input_metrics_t){0};
++        taskEXIT_CRITICAL(&g_surface_lock);
++        return;
++    }
+     g_input_metrics.sample_to_guest_p95_us = latency_p95_us(
+         PXA_ESP_SURFACE_LATENCY_GUEST,
+         g_input_metrics.sample_to_guest_count,
+@@ -1853,6 +1860,16 @@ void pxa_esp_surface_take_input_metrics(
+     taskEXIT_CRITICAL(&g_surface_lock);
+ }
+ 
++void pxa_esp_surface_take_input_metrics(
++    pxa_esp_surface_input_metrics_t *metrics) {
++    take_input_metrics(metrics, false);
++}
++
++void pxa_esp_surface_take_display_input_metrics(
++    pxa_esp_surface_input_metrics_t *metrics) {
++    take_input_metrics(metrics, true);
++}
++
+ static void execute_raster_draw_list(
+     const uint8_t *bytes, const pxa_raster_draw_list_view_t *list,
+     const pxa_raster_target_t *target,
+@@ -2463,6 +2480,10 @@ void pxa_esp_surface_take_input_metrics(
+     pxa_esp_surface_input_metrics_t *metrics) {
+     if (metrics != NULL) *metrics = (pxa_esp_surface_input_metrics_t){0};
+ }
++void pxa_esp_surface_take_display_input_metrics(
++    pxa_esp_surface_input_metrics_t *metrics) {
++    pxa_esp_surface_take_input_metrics(metrics);
++}
+ void pxa_esp_surface_memory_snapshot(pxa_esp_surface_memory_info_t *info) {
+     if (info != NULL) *info = (pxa_esp_surface_memory_info_t){0};
+ }
+diff --git a/firmware/components/pxadb/src_pxa_service.cc b/firmware/components/pxadb/src_pxa_service.cc
+index cad70af..9acbbf3 100644
+--- a/firmware/components/pxadb/src_pxa_service.cc
++++ b/firmware/components/pxadb/src_pxa_service.cc
+@@ -1251,6 +1251,31 @@ bool ParseUnsigned(const char* text, uint32_t maximum, uint32_t* value) {
+ #if CONFIG_PXA_ENABLED
+ void HandlePerf(unsigned long sequence, char* const* arguments,
+                 size_t argument_count) {
++    if (argument_count == 1 && strcmp(arguments[0], "INPUT") == 0) {
++        // Drain the existing counters at explicit test-window boundaries.
++        // This does not enable display logging, change settings or allocate.
++        pxa_esp_surface_input_metrics_t metrics = {};
++        pxa_esp_surface_take_input_metrics(&metrics);
++        char payload[kMaxFramePayload] = {};
++        snprintf(payload, sizeof(payload),
++                 "guest_total_us=%llu;guest_count=%u;guest_p95_us=%u;guest_max_us=%u;"
++                 "present_total_us=%llu;present_count=%u;present_p95_us=%u;present_max_us=%u;"
++                 "visible_total_us=%llu;visible_count=%u;visible_p95_us=%u;visible_max_us=%u",
++                 static_cast<unsigned long long>(metrics.sample_to_guest_total_us),
++                 static_cast<unsigned>(metrics.sample_to_guest_count),
++                 static_cast<unsigned>(metrics.sample_to_guest_p95_us),
++                 static_cast<unsigned>(metrics.sample_to_guest_max_us),
++                 static_cast<unsigned long long>(metrics.sample_to_present_total_us),
++                 static_cast<unsigned>(metrics.sample_to_present_count),
++                 static_cast<unsigned>(metrics.sample_to_present_p95_us),
++                 static_cast<unsigned>(metrics.sample_to_present_max_us),
++                 static_cast<unsigned long long>(metrics.sample_to_visible_total_us),
++                 static_cast<unsigned>(metrics.sample_to_visible_count),
++                 static_cast<unsigned>(metrics.sample_to_visible_p95_us),
++                 static_cast<unsigned>(metrics.sample_to_visible_max_us));
++        SendFrame(sequence, "OK", payload);
++        return;
++    }
+     if (argument_count == 1 && strcmp(arguments[0], "START") == 0) {
+         SendFrame(sequence, pxa_esp_surface_perf_start() ? "OK" : "ERR",
+                   "recording");

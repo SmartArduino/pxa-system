@@ -1,0 +1,140 @@
+{
+  "host-control-tests.log": {
+    "sha256": "9e745cd86fb6204c9a99832856e6bae5fefd161e5c2058ea4c7ff3cf60a74e59",
+    "tail": [
+      "      Start 30: pxa_package_test",
+      "30/32 Test #30: pxa_package_test ..................   Passed    0.01 sec",
+      "      Start 31: pxa_generated_wire_vectors_test",
+      "31/32 Test #31: pxa_generated_wire_vectors_test ...   Passed    1.89 sec",
+      "      Start 32: pxa_ui_vectors_test",
+      "32/32 Test #32: pxa_ui_vectors_test ...............   Passed    0.05 sec",
+      "",
+      "100% tests passed out of 32",
+      "",
+      "Total Test time (real) =   6.01 sec"
+    ]
+  },
+  "sanitize-control-tests.log": {
+    "sha256": "f7f7eac60f956c49ed16a9c86c44805413e7eae8d53cb70357cdc6f36a5dd3bf",
+    "tail": [
+      "      Start 30: pxa_package_test",
+      "30/32 Test #30: pxa_package_test ..................   Passed    0.13 sec",
+      "      Start 31: pxa_generated_wire_vectors_test",
+      "31/32 Test #31: pxa_generated_wire_vectors_test ...   Passed    3.15 sec",
+      "      Start 32: pxa_ui_vectors_test",
+      "32/32 Test #32: pxa_ui_vectors_test ...............   Passed    0.14 sec",
+      "",
+      "100% tests passed out of 32",
+      "",
+      "Total Test time (real) =  12.50 sec"
+    ]
+  },
+  "sim-control-full-tests.log": {
+    "sha256": "65cd26fa20182de7aad806d81e1f29dd24747da76ea30498cea7a1b5dcf7f98e",
+    "tail": [
+      "      Start 86: pxsys_headless_renderer_test",
+      "86/88 Test #86: pxsys_headless_renderer_test ............   Passed    0.00 sec",
+      "      Start 87: pxsys_lvgl_renderer_test",
+      "87/88 Test #87: pxsys_lvgl_renderer_test ................   Passed    0.00 sec",
+      "      Start 88: pxsys_reference_ime_test",
+      "88/88 Test #88: pxsys_reference_ime_test ................   Passed    0.02 sec",
+      "",
+      "100% tests passed out of 88",
+      "",
+      "Total Test time (real) = 157.60 sec"
+    ]
+  },
+  "cpp-final-tests.log": {
+    "sha256": "fa47517df9d31aceb68acb43811767d295eeb052bc3cba3f53a421645408111e",
+    "tail": [
+      "Declarative UI: coalesced bindings, rollback, component removal, transient borrowed callbacks, numeric text, safe area, action errors/cancellation/pool limits, zero allocations OK (29 commits)",
+      "UI lifecycle: initial mount retries, move-only args, partial builds, final modifiers, compound control targets, SafeArea composition/recovery, list/Refresh modifiers, zero heap OK",
+      "UI Environment: selected State storage only, atomic init/notifications, 100 identical metrics/zero submits, zero heap; display=64 B all=152 B",
+      "captured draw list: 11240 bytes",
+      "validate status=0 commands=201",
+      "lit pixels=42725",
+      "Typed storage: wire compatible, owned keys/values, malformed results, peak 2 task slots, pool 8208 B unchanged OK",
+      "Storage ownership/boundaries/aliasing/cancel OK: 17 submits, peak 2 slots, reserved 8208 B",
+      "Permission ownership/boundaries/aliasing/late handles OK: 12 submits, peak 2 slots, reserved 8208 B",
+      "PXA C++ Guest host tests OK"
+    ]
+  },
+  "esp-host-probe-tests.log": {
+    "sha256": "bf4faee1643e3751a221a6d6c03618e2335af02b24f53b253c031a4aa4688570",
+    "tail": [
+      "DMA clock fixture: device_paced=0 frames=320 gaps=1 buffered=2 elapsed_us=6380500",
+      "DMA clock fixture: device_paced=1 frames=320 gaps=0 buffered=5 elapsed_us=6300000",
+      "shared ESP output: bounded cache, total/temporary quota rollback/recovery, command replacement/cancel, prebuffer/EOF/underrun recovery/pause, decoder metrics and old/new owner isolation passed",
+      "codec allocation hooks: overflow, total/temporary quotas, realloc rollback, nested scopes, late free and task isolation passed",
+      "......",
+      "----------------------------------------------------------------------",
+      "Ran 6 tests in 0.016s",
+      "",
+      "OK",
+      "PXA ESP adapter host tests passed"
+    ]
+  },
+  "pxadb-probe-tests.log": {
+    "sha256": "19f1f0c720ee78da331128796c79259c79d07ee5a0ed9455c40f7590ff75545c",
+    "tail": [
+      "Ran 66 tests in 2.089s",
+      "",
+      "OK",
+      "unlocked: system;seconds=300",
+      "install: pxa-pixel-dungeon",
+      "run: pxa-voxel-craft",
+      "stop: pxa-voxel-craft",
+      "saved screenshot: frame.jpg",
+      "saved screenshot: screenshot.jpg",
+      "saved screenshot: capture.png"
+    ]
+  },
+  "wire-final.log": {
+    "sha256": "d67dfddbd9dd2709d7be0ed64c73f5f952704dedbf4dc99da7a196204d5436ba",
+    "tail": [
+      "39 Core messages, 13 record lists, envelope, Device and Window payloads OK",
+      "39 Core messages, 13 record lists, envelope, Device and Window payloads OK"
+    ]
+  },
+  "core-import-final.log": {
+    "sha256": "6bcdd5de9103080004792e86a3d38aa6af73e6600e78d91e3302cd4e9eaa1ffa",
+    "tail": [
+      "Test project /home/lucinhu/Documents/workspace/esp32/zuowei_paixueji_touch/pxa-projects/local/abi-audit-20261011/host",
+      "    Start  8: pxa_wamr_engine_test",
+      "1/2 Test  #8: pxa_wamr_engine_test .............   Passed    0.09 sec",
+      "    Start 23: pxa_core_test",
+      "2/2 Test #23: pxa_core_test ....................   Passed    0.05 sec",
+      "",
+      "100% tests passed out of 2",
+      "",
+      "Total Test time (real) =   0.15 sec"
+    ]
+  },
+  "sim-direct-service-final.log": {
+    "sha256": "8ea011df34a7a32a916b8cb274d86c47bfd62e722de9a04c5452792fc0d0a4b3",
+    "tail": [
+      "PXA RESOURCE BUDGET peak_internal=0 peak_external=0 remaining_internal=0 remaining_external=0 denied=0 counter_storage=1856 allocator_storage=576",
+      "PXA TEMPORARY BUDGET peak_internal=0 peak_external=0 limit_internal=16384 limit_external=524288",
+      "PXA MUSIC INPUT read_bytes=0 read_calls=0",
+      "PXA STORAGE lane=0 reads=0 bytes=0 wait_us=0 max_wait_us=0 service_us=0 max_service_us=0 max_read=0 errors=0 elapsed_us=0 stalls=0 stall_us=0",
+      "PXA STORAGE lane=1 reads=0 bytes=0 wait_us=0 max_wait_us=0 service_us=0 max_service_us=0 max_read=0 errors=0 elapsed_us=0 stalls=0 stall_us=0",
+      "PXA MUSIC BUFFER underruns=0 recoveries=0 missing_samples=0 consumed=0 high_water=0 low_water=0 low_water_valid=0 ready_max_us=0",
+      "PXA MUSIC DECODE calls=0 total_us=0 max_us=0 excludes_input_io=1",
+      "PXA RESOURCE BUDGET peak_internal=0 peak_external=0 remaining_internal=0 remaining_external=0 denied=0 counter_storage=1856 allocator_storage=576",
+      "PXA TEMPORARY BUDGET peak_internal=0 peak_external=0 limit_internal=16384 limit_external=524288",
+      ""
+    ]
+  },
+  "spec-final-check.log": {
+    "sha256": "b3c5009956a4de1ac33b79874e521c6242f45dc824a4766992c6a890731f8346",
+    "tail": [
+      "PXA consolidated draft OK (52 Core vectors, 5 package payloads)"
+    ]
+  },
+  "import-final-check.log": {
+    "sha256": "3aad61677b9c521a675313fb7258f9ad1358733177384cd2c73c3fdc9b225b59",
+    "tail": [
+      "PXA Wasm Core import verification OK"
+    ]
+  }
+}

@@ -1,0 +1,2492 @@
+{
+  "app": "pxa-cpp-abi-control-direct",
+  "package_sha256": "2981d5dabe1b5eb7e06526a9dcfa85e91b8ba1bd0dc9e826cebb90d736ba4bc1",
+  "runs": [
+    {
+      "index": 0,
+      "launch": {
+        "samples": [
+          {
+            "path": "call",
+            "index": 0,
+            "iterations": 1000,
+            "elapsed_ns": 19166000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 1,
+            "iterations": 1000,
+            "elapsed_ns": 21106000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 2,
+            "iterations": 1000,
+            "elapsed_ns": 11727000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 3,
+            "iterations": 1000,
+            "elapsed_ns": 10499000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 4,
+            "iterations": 1000,
+            "elapsed_ns": 10000000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 5,
+            "iterations": 1000,
+            "elapsed_ns": 10404000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 6,
+            "iterations": 1000,
+            "elapsed_ns": 10760000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 7,
+            "iterations": 1000,
+            "elapsed_ns": 11102000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 8,
+            "iterations": 1000,
+            "elapsed_ns": 10755000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 9,
+            "iterations": 1000,
+            "elapsed_ns": 10815000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 10,
+            "iterations": 1000,
+            "elapsed_ns": 10531000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 11,
+            "iterations": 1000,
+            "elapsed_ns": 10415000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 12,
+            "iterations": 1000,
+            "elapsed_ns": 10508000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 13,
+            "iterations": 1000,
+            "elapsed_ns": 10321000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 14,
+            "iterations": 1000,
+            "elapsed_ns": 10568000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 15,
+            "iterations": 1000,
+            "elapsed_ns": 10685000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 16,
+            "iterations": 1000,
+            "elapsed_ns": 10294000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 17,
+            "iterations": 1000,
+            "elapsed_ns": 10237000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 18,
+            "iterations": 1000,
+            "elapsed_ns": 10370000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 19,
+            "iterations": 1000,
+            "elapsed_ns": 10987000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 20,
+            "iterations": 1000,
+            "elapsed_ns": 10309000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 21,
+            "iterations": 1000,
+            "elapsed_ns": 10267000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 22,
+            "iterations": 1000,
+            "elapsed_ns": 10624000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 23,
+            "iterations": 1000,
+            "elapsed_ns": 10569000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 24,
+            "iterations": 1000,
+            "elapsed_ns": 10662000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 25,
+            "iterations": 1000,
+            "elapsed_ns": 10679000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 26,
+            "iterations": 1000,
+            "elapsed_ns": 10036000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 27,
+            "iterations": 1000,
+            "elapsed_ns": 11155000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 28,
+            "iterations": 1000,
+            "elapsed_ns": 10333000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 29,
+            "iterations": 1000,
+            "elapsed_ns": 10348000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 30,
+            "iterations": 1000,
+            "elapsed_ns": 10377000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 31,
+            "iterations": 1000,
+            "elapsed_ns": 10514000,
+            "errors": 0,
+            "transport_bytes": 16
+          }
+        ],
+        "ns_per_call_median": 10522.5,
+        "ns_per_call_mean": 11160.09375,
+        "memory_start": {
+          "heap": {
+            "sram_total": 321019,
+            "sram_free": 57431,
+            "sram_min": 57431,
+            "sram_largest": 19456,
+            "psram_total": 8358572,
+            "psram_free": 6919380,
+            "psram_min": 6919380,
+            "psram_largest": 6815744
+          },
+          "budget": {
+            "internal": 27468,
+            "external": 16516,
+            "peak_internal": 27468,
+            "peak_external": 16516,
+            "temporary_peak_internal": 0,
+            "temporary_peak_external": 0,
+            "fixed": 2224,
+            "denied": 0,
+            "allocation_failures": 0
+          },
+          "kind:raster": {
+            "internal": 0,
+            "external": 0
+          },
+          "kind:image": {
+            "internal": 0,
+            "external": 0
+          },
+          "kind:audio": {
+            "internal": 0,
+            "external": 16392
+          },
+          "kind:temporary": {
+            "internal": 0,
+            "external": 0
+          },
+          "kind:metadata": {
+            "internal": 27468,
+            "external": 124
+          },
+          "kind:frame": {
+            "internal": 0,
+            "external": 0
+          },
+          "surface": {
+            "frame": 0,
+            "scratch": 0,
+            "mailbox": 0,
+            "probe": 0,
+            "peak_total": 0
+          }
+        },
+        "memory_end": {
+          "heap": {
+            "sram_total": 321019,
+            "sram_free": 56151,
+            "sram_min": 52679,
+            "sram_largest": 19456,
+            "psram_total": 8358572,
+            "psram_free": 6667080,
+            "psram_min": 6414028,
+            "psram_largest": 6291456
+          },
+          "budget": {
+            "internal": 27468,
+            "external": 16640,
+            "peak_internal": 27468,
+            "peak_external": 16640,
+            "temporary_peak_internal": 0,
+            "temporary_peak_external": 0,
+            "fixed": 2224,
+            "denied": 0,
+            "allocation_failures": 0
+          },
+          "kind:raster": {
+            "internal": 0,
+            "external": 0
+          },
+          "kind:image": {
+            "internal": 0,
+            "external": 0
+          },
+          "kind:audio": {
+            "internal": 0,
+            "external": 16392
+          },
+          "kind:temporary": {
+            "internal": 0,
+            "external": 0
+          },
+          "kind:metadata": {
+            "internal": 27468,
+            "external": 248
+          },
+          "kind:frame": {
+            "internal": 0,
+            "external": 0
+          },
+          "surface": {
+            "frame": 0,
+            "scratch": 0,
+            "mailbox": 0,
+            "probe": 0,
+            "peak_total": 0
+          }
+        },
+        "heap": {
+          "sram": {
+            "stable_used": 264868,
+            "true_peak_used": 268340,
+            "allocation_delta": 1280,
+            "true_peak_delta": 4752
+          },
+          "psram": {
+            "stable_used": 1691492,
+            "true_peak_used": 1944544,
+            "allocation_delta": 252300,
+            "true_peak_delta": 505352
+          }
+        }
+      },
+      "steady": {
+        "samples": [
+          {
+            "path": "call",
+            "index": 0,
+            "iterations": 1000,
+            "elapsed_ns": 20277000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 1,
+            "iterations": 1000,
+            "elapsed_ns": 11127000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 2,
+            "iterations": 1000,
+            "elapsed_ns": 11186000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 3,
+            "iterations": 1000,
+            "elapsed_ns": 10060000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 4,
+            "iterations": 1000,
+            "elapsed_ns": 11317000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 5,
+            "iterations": 1000,
+            "elapsed_ns": 10395000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 6,
+            "iterations": 1000,
+            "elapsed_ns": 10347000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 7,
+            "iterations": 1000,
+            "elapsed_ns": 10065000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 8,
+            "iterations": 1000,
+            "elapsed_ns": 10296000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 9,
+            "iterations": 1000,
+            "elapsed_ns": 10729000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 10,
+            "iterations": 1000,
+            "elapsed_ns": 10176000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 11,
+            "iterations": 1000,
+            "elapsed_ns": 10349000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 12,
+            "iterations": 1000,
+            "elapsed_ns": 10416000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 13,
+            "iterations": 1000,
+            "elapsed_ns": 10502000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 14,
+            "iterations": 1000,
+            "elapsed_ns": 9966000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 15,
+            "iterations": 1000,
+            "elapsed_ns": 10860000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 16,
+            "iterations": 1000,
+            "elapsed_ns": 10204000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 17,
+            "iterations": 1000,
+            "elapsed_ns": 11444000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 18,
+            "iterations": 1000,
+            "elapsed_ns": 10196000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 19,
+            "iterations": 1000,
+            "elapsed_ns": 10274000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 20,
+            "iterations": 1000,
+            "elapsed_ns": 10462000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 21,
+            "iterations": 1000,
+            "elapsed_ns": 10337000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 22,
+            "iterations": 1000,
+            "elapsed_ns": 10342000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 23,
+            "iterations": 1000,
+            "elapsed_ns": 10309000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 24,
+            "iterations": 1000,
+            "elapsed_ns": 10383000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 25,
+            "iterations": 1000,
+            "elapsed_ns": 10346000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 26,
+            "iterations": 1000,
+            "elapsed_ns": 10366000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 27,
+            "iterations": 1000,
+            "elapsed_ns": 10364000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 28,
+            "iterations": 1000,
+            "elapsed_ns": 10736000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 29,
+            "iterations": 1000,
+            "elapsed_ns": 10229000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 30,
+            "iterations": 1000,
+            "elapsed_ns": 10856000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 31,
+            "iterations": 1000,
+            "elapsed_ns": 10333000,
+            "errors": 0,
+            "transport_bytes": 16
+          }
+        ],
+        "ns_per_call_median": 10356.5,
+        "ns_per_call_mean": 10789.03125,
+        "memory_start": {
+          "heap": {
+            "sram_total": 321019,
+            "sram_free": 56115,
+            "sram_min": 52015,
+            "sram_largest": 19456,
+            "psram_total": 8358572,
+            "psram_free": 6729860,
+            "psram_min": 6724956,
+            "psram_largest": 6291456
+          },
+          "budget": {
+            "internal": 27468,
+            "external": 16640,
+            "peak_internal": 27468,
+            "peak_external": 16640,
+            "temporary_peak_internal": 0,
+            "temporary_peak_external": 0,
+            "fixed": 2224,
+            "denied": 0,
+            "allocation_failures": 0
+          },
+          "kind:raster": {
+            "internal": 0,
+            "external": 0
+          },
+          "kind:image": {
+            "internal": 0,
+            "external": 0
+          },
+          "kind:audio": {
+            "internal": 0,
+            "external": 16392
+          },
+          "kind:temporary": {
+            "internal": 0,
+            "external": 0
+          },
+          "kind:metadata": {
+            "internal": 27468,
+            "external": 248
+          },
+          "kind:frame": {
+            "internal": 0,
+            "external": 0
+          },
+          "surface": {
+            "frame": 0,
+            "scratch": 0,
+            "mailbox": 0,
+            "probe": 0,
+            "peak_total": 0
+          }
+        },
+        "memory_end": {
+          "heap": {
+            "sram_total": 321019,
+            "sram_free": 56151,
+            "sram_min": 51839,
+            "sram_largest": 19456,
+            "psram_total": 8358572,
+            "psram_free": 6667100,
+            "psram_min": 6414644,
+            "psram_largest": 6291456
+          },
+          "budget": {
+            "internal": 27468,
+            "external": 16640,
+            "peak_internal": 27468,
+            "peak_external": 16640,
+            "temporary_peak_internal": 0,
+            "temporary_peak_external": 0,
+            "fixed": 2224,
+            "denied": 0,
+            "allocation_failures": 0
+          },
+          "kind:raster": {
+            "internal": 0,
+            "external": 0
+          },
+          "kind:image": {
+            "internal": 0,
+            "external": 0
+          },
+          "kind:audio": {
+            "internal": 0,
+            "external": 16392
+          },
+          "kind:temporary": {
+            "internal": 0,
+            "external": 0
+          },
+          "kind:metadata": {
+            "internal": 27468,
+            "external": 248
+          },
+          "kind:frame": {
+            "internal": 0,
+            "external": 0
+          },
+          "surface": {
+            "frame": 0,
+            "scratch": 0,
+            "mailbox": 0,
+            "probe": 0,
+            "peak_total": 0
+          }
+        },
+        "heap": {
+          "sram": {
+            "stable_used": 264868,
+            "true_peak_used": 269180,
+            "allocation_delta": -36,
+            "true_peak_delta": 4276
+          },
+          "psram": {
+            "stable_used": 1691472,
+            "true_peak_used": 1943928,
+            "allocation_delta": 62760,
+            "true_peak_delta": 315216
+          }
+        }
+      },
+      "stopped": {
+        "heap": {
+          "sram_total": 321019,
+          "sram_free": 57255,
+          "sram_min": 27664,
+          "sram_largest": 19456,
+          "psram_total": 8358572,
+          "psram_free": 6992936,
+          "psram_min": 6414028,
+          "psram_largest": 6291456
+        },
+        "budget": {
+          "internal": 27468,
+          "external": 16516,
+          "peak_internal": 27468,
+          "peak_external": 16640,
+          "temporary_peak_internal": 0,
+          "temporary_peak_external": 0,
+          "fixed": 2224,
+          "denied": 0,
+          "allocation_failures": 0
+        },
+        "kind:raster": {
+          "internal": 0,
+          "external": 0
+        },
+        "kind:image": {
+          "internal": 0,
+          "external": 0
+        },
+        "kind:audio": {
+          "internal": 0,
+          "external": 16392
+        },
+        "kind:temporary": {
+          "internal": 0,
+          "external": 0
+        },
+        "kind:metadata": {
+          "internal": 27468,
+          "external": 124
+        },
+        "kind:frame": {
+          "internal": 0,
+          "external": 0
+        },
+        "surface": {
+          "frame": 0,
+          "scratch": 0,
+          "mailbox": 0,
+          "probe": 0,
+          "peak_total": 0
+        }
+      }
+    },
+    {
+      "index": 1,
+      "launch": {
+        "samples": [
+          {
+            "path": "call",
+            "index": 0,
+            "iterations": 1000,
+            "elapsed_ns": 20398000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 1,
+            "iterations": 1000,
+            "elapsed_ns": 20494000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 2,
+            "iterations": 1000,
+            "elapsed_ns": 11116000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 3,
+            "iterations": 1000,
+            "elapsed_ns": 10007000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 4,
+            "iterations": 1000,
+            "elapsed_ns": 10106000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 5,
+            "iterations": 1000,
+            "elapsed_ns": 10412000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 6,
+            "iterations": 1000,
+            "elapsed_ns": 10421000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 7,
+            "iterations": 1000,
+            "elapsed_ns": 10704000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 8,
+            "iterations": 1000,
+            "elapsed_ns": 10302000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 9,
+            "iterations": 1000,
+            "elapsed_ns": 10262000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 10,
+            "iterations": 1000,
+            "elapsed_ns": 10320000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 11,
+            "iterations": 1000,
+            "elapsed_ns": 10308000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 12,
+            "iterations": 1000,
+            "elapsed_ns": 10530000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 13,
+            "iterations": 1000,
+            "elapsed_ns": 10407000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 14,
+            "iterations": 1000,
+            "elapsed_ns": 10291000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 15,
+            "iterations": 1000,
+            "elapsed_ns": 12114000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 16,
+            "iterations": 1000,
+            "elapsed_ns": 10745000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 17,
+            "iterations": 1000,
+            "elapsed_ns": 10506000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 18,
+            "iterations": 1000,
+            "elapsed_ns": 10662000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 19,
+            "iterations": 1000,
+            "elapsed_ns": 10292000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 20,
+            "iterations": 1000,
+            "elapsed_ns": 10571000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 21,
+            "iterations": 1000,
+            "elapsed_ns": 10031000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 22,
+            "iterations": 1000,
+            "elapsed_ns": 10569000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 23,
+            "iterations": 1000,
+            "elapsed_ns": 11158000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 24,
+            "iterations": 1000,
+            "elapsed_ns": 10029000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 25,
+            "iterations": 1000,
+            "elapsed_ns": 10339000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 26,
+            "iterations": 1000,
+            "elapsed_ns": 10720000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 27,
+            "iterations": 1000,
+            "elapsed_ns": 10295000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 28,
+            "iterations": 1000,
+            "elapsed_ns": 10875000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 29,
+            "iterations": 1000,
+            "elapsed_ns": 11335000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 30,
+            "iterations": 1000,
+            "elapsed_ns": 10127000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 31,
+            "iterations": 1000,
+            "elapsed_ns": 10785000,
+            "errors": 0,
+            "transport_bytes": 16
+          }
+        ],
+        "ns_per_call_median": 10463.5,
+        "ns_per_call_mean": 11163.46875,
+        "memory_start": {
+          "heap": {
+            "sram_total": 321019,
+            "sram_free": 57343,
+            "sram_min": 57343,
+            "sram_largest": 19456,
+            "psram_total": 8358572,
+            "psram_free": 6919332,
+            "psram_min": 6919332,
+            "psram_largest": 6553600
+          },
+          "budget": {
+            "internal": 27468,
+            "external": 16516,
+            "peak_internal": 27468,
+            "peak_external": 16640,
+            "temporary_peak_internal": 0,
+            "temporary_peak_external": 0,
+            "fixed": 2224,
+            "denied": 0,
+            "allocation_failures": 0
+          },
+          "kind:raster": {
+            "internal": 0,
+            "external": 0
+          },
+          "kind:image": {
+            "internal": 0,
+            "external": 0
+          },
+          "kind:audio": {
+            "internal": 0,
+            "external": 16392
+          },
+          "kind:temporary": {
+            "internal": 0,
+            "external": 0
+          },
+          "kind:metadata": {
+            "internal": 27468,
+            "external": 124
+          },
+          "kind:frame": {
+            "internal": 0,
+            "external": 0
+          },
+          "surface": {
+            "frame": 0,
+            "scratch": 0,
+            "mailbox": 0,
+            "probe": 0,
+            "peak_total": 0
+          }
+        },
+        "memory_end": {
+          "heap": {
+            "sram_total": 321019,
+            "sram_free": 56115,
+            "sram_min": 52679,
+            "sram_largest": 19456,
+            "psram_total": 8358572,
+            "psram_free": 6667068,
+            "psram_min": 6414020,
+            "psram_largest": 6160384
+          },
+          "budget": {
+            "internal": 27468,
+            "external": 16640,
+            "peak_internal": 27468,
+            "peak_external": 16640,
+            "temporary_peak_internal": 0,
+            "temporary_peak_external": 0,
+            "fixed": 2224,
+            "denied": 0,
+            "allocation_failures": 0
+          },
+          "kind:raster": {
+            "internal": 0,
+            "external": 0
+          },
+          "kind:image": {
+            "internal": 0,
+            "external": 0
+          },
+          "kind:audio": {
+            "internal": 0,
+            "external": 16392
+          },
+          "kind:temporary": {
+            "internal": 0,
+            "external": 0
+          },
+          "kind:metadata": {
+            "internal": 27468,
+            "external": 248
+          },
+          "kind:frame": {
+            "internal": 0,
+            "external": 0
+          },
+          "surface": {
+            "frame": 0,
+            "scratch": 0,
+            "mailbox": 0,
+            "probe": 0,
+            "peak_total": 0
+          }
+        },
+        "heap": {
+          "sram": {
+            "stable_used": 264904,
+            "true_peak_used": 268340,
+            "allocation_delta": 1228,
+            "true_peak_delta": 4664
+          },
+          "psram": {
+            "stable_used": 1691504,
+            "true_peak_used": 1944552,
+            "allocation_delta": 252264,
+            "true_peak_delta": 505312
+          }
+        }
+      },
+      "steady": {
+        "samples": [
+          {
+            "path": "call",
+            "index": 0,
+            "iterations": 1000,
+            "elapsed_ns": 11012000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 1,
+            "iterations": 1000,
+            "elapsed_ns": 10842000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 2,
+            "iterations": 1000,
+            "elapsed_ns": 11366000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 3,
+            "iterations": 1000,
+            "elapsed_ns": 10277000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 4,
+            "iterations": 1000,
+            "elapsed_ns": 10831000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 5,
+            "iterations": 1000,
+            "elapsed_ns": 10056000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 6,
+            "iterations": 1000,
+            "elapsed_ns": 11049000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 7,
+            "iterations": 1000,
+            "elapsed_ns": 10379000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 8,
+            "iterations": 1000,
+            "elapsed_ns": 10711000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 9,
+            "iterations": 1000,
+            "elapsed_ns": 10567000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 10,
+            "iterations": 1000,
+            "elapsed_ns": 10329000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 11,
+            "iterations": 1000,
+            "elapsed_ns": 10266000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 12,
+            "iterations": 1000,
+            "elapsed_ns": 10575000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 13,
+            "iterations": 1000,
+            "elapsed_ns": 10320000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 14,
+            "iterations": 1000,
+            "elapsed_ns": 10849000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 15,
+            "iterations": 1000,
+            "elapsed_ns": 10328000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 16,
+            "iterations": 1000,
+            "elapsed_ns": 10024000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 17,
+            "iterations": 1000,
+            "elapsed_ns": 10723000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 18,
+            "iterations": 1000,
+            "elapsed_ns": 9969000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 19,
+            "iterations": 1000,
+            "elapsed_ns": 10344000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 20,
+            "iterations": 1000,
+            "elapsed_ns": 10797000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 21,
+            "iterations": 1000,
+            "elapsed_ns": 10240000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 22,
+            "iterations": 1000,
+            "elapsed_ns": 9905000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 23,
+            "iterations": 1000,
+            "elapsed_ns": 10645000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 24,
+            "iterations": 1000,
+            "elapsed_ns": 10095000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 25,
+            "iterations": 1000,
+            "elapsed_ns": 10955000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 26,
+            "iterations": 1000,
+            "elapsed_ns": 9974000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 27,
+            "iterations": 1000,
+            "elapsed_ns": 10724000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 28,
+            "iterations": 1000,
+            "elapsed_ns": 10764000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 29,
+            "iterations": 1000,
+            "elapsed_ns": 10458000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 30,
+            "iterations": 1000,
+            "elapsed_ns": 10737000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 31,
+            "iterations": 1000,
+            "elapsed_ns": 10007000,
+            "errors": 0,
+            "transport_bytes": 16
+          }
+        ],
+        "ns_per_call_median": 10512.5,
+        "ns_per_call_mean": 10503.6875,
+        "memory_start": {
+          "heap": {
+            "sram_total": 321019,
+            "sram_free": 56151,
+            "sram_min": 51963,
+            "sram_largest": 19456,
+            "psram_total": 8358572,
+            "psram_free": 6729876,
+            "psram_min": 6716516,
+            "psram_largest": 6160384
+          },
+          "budget": {
+            "internal": 27468,
+            "external": 16640,
+            "peak_internal": 27468,
+            "peak_external": 16640,
+            "temporary_peak_internal": 0,
+            "temporary_peak_external": 0,
+            "fixed": 2224,
+            "denied": 0,
+            "allocation_failures": 0
+          },
+          "kind:raster": {
+            "internal": 0,
+            "external": 0
+          },
+          "kind:image": {
+            "internal": 0,
+            "external": 0
+          },
+          "kind:audio": {
+            "internal": 0,
+            "external": 16392
+          },
+          "kind:temporary": {
+            "internal": 0,
+            "external": 0
+          },
+          "kind:metadata": {
+            "internal": 27468,
+            "external": 248
+          },
+          "kind:frame": {
+            "internal": 0,
+            "external": 0
+          },
+          "surface": {
+            "frame": 0,
+            "scratch": 0,
+            "mailbox": 0,
+            "probe": 0,
+            "peak_total": 0
+          }
+        },
+        "memory_end": {
+          "heap": {
+            "sram_total": 321019,
+            "sram_free": 56151,
+            "sram_min": 51839,
+            "sram_largest": 19456,
+            "psram_total": 8358572,
+            "psram_free": 6667096,
+            "psram_min": 6414752,
+            "psram_largest": 6160384
+          },
+          "budget": {
+            "internal": 27468,
+            "external": 16640,
+            "peak_internal": 27468,
+            "peak_external": 16640,
+            "temporary_peak_internal": 0,
+            "temporary_peak_external": 0,
+            "fixed": 2224,
+            "denied": 0,
+            "allocation_failures": 0
+          },
+          "kind:raster": {
+            "internal": 0,
+            "external": 0
+          },
+          "kind:image": {
+            "internal": 0,
+            "external": 0
+          },
+          "kind:audio": {
+            "internal": 0,
+            "external": 16392
+          },
+          "kind:temporary": {
+            "internal": 0,
+            "external": 0
+          },
+          "kind:metadata": {
+            "internal": 27468,
+            "external": 248
+          },
+          "kind:frame": {
+            "internal": 0,
+            "external": 0
+          },
+          "surface": {
+            "frame": 0,
+            "scratch": 0,
+            "mailbox": 0,
+            "probe": 0,
+            "peak_total": 0
+          }
+        },
+        "heap": {
+          "sram": {
+            "stable_used": 264868,
+            "true_peak_used": 269180,
+            "allocation_delta": 0,
+            "true_peak_delta": 4312
+          },
+          "psram": {
+            "stable_used": 1691476,
+            "true_peak_used": 1943820,
+            "allocation_delta": 62780,
+            "true_peak_delta": 315124
+          }
+        }
+      },
+      "stopped": {
+        "heap": {
+          "sram_total": 321019,
+          "sram_free": 57255,
+          "sram_min": 27664,
+          "sram_largest": 19456,
+          "psram_total": 8358572,
+          "psram_free": 6992932,
+          "psram_min": 6414020,
+          "psram_largest": 6160384
+        },
+        "budget": {
+          "internal": 27468,
+          "external": 16516,
+          "peak_internal": 27468,
+          "peak_external": 16640,
+          "temporary_peak_internal": 0,
+          "temporary_peak_external": 0,
+          "fixed": 2224,
+          "denied": 0,
+          "allocation_failures": 0
+        },
+        "kind:raster": {
+          "internal": 0,
+          "external": 0
+        },
+        "kind:image": {
+          "internal": 0,
+          "external": 0
+        },
+        "kind:audio": {
+          "internal": 0,
+          "external": 16392
+        },
+        "kind:temporary": {
+          "internal": 0,
+          "external": 0
+        },
+        "kind:metadata": {
+          "internal": 27468,
+          "external": 124
+        },
+        "kind:frame": {
+          "internal": 0,
+          "external": 0
+        },
+        "surface": {
+          "frame": 0,
+          "scratch": 0,
+          "mailbox": 0,
+          "probe": 0,
+          "peak_total": 0
+        }
+      }
+    },
+    {
+      "index": 2,
+      "launch": {
+        "samples": [
+          {
+            "path": "call",
+            "index": 0,
+            "iterations": 1000,
+            "elapsed_ns": 10439000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 1,
+            "iterations": 1000,
+            "elapsed_ns": 19879000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 2,
+            "iterations": 1000,
+            "elapsed_ns": 10905000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 3,
+            "iterations": 1000,
+            "elapsed_ns": 10285000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 4,
+            "iterations": 1000,
+            "elapsed_ns": 10829000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 5,
+            "iterations": 1000,
+            "elapsed_ns": 10508000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 6,
+            "iterations": 1000,
+            "elapsed_ns": 10681000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 7,
+            "iterations": 1000,
+            "elapsed_ns": 10397000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 8,
+            "iterations": 1000,
+            "elapsed_ns": 10535000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 9,
+            "iterations": 1000,
+            "elapsed_ns": 10609000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 10,
+            "iterations": 1000,
+            "elapsed_ns": 10314000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 11,
+            "iterations": 1000,
+            "elapsed_ns": 10211000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 12,
+            "iterations": 1000,
+            "elapsed_ns": 10407000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 13,
+            "iterations": 1000,
+            "elapsed_ns": 10619000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 14,
+            "iterations": 1000,
+            "elapsed_ns": 10876000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 15,
+            "iterations": 1000,
+            "elapsed_ns": 10382000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 16,
+            "iterations": 1000,
+            "elapsed_ns": 10660000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 17,
+            "iterations": 1000,
+            "elapsed_ns": 10667000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 18,
+            "iterations": 1000,
+            "elapsed_ns": 10092000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 19,
+            "iterations": 1000,
+            "elapsed_ns": 10587000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 20,
+            "iterations": 1000,
+            "elapsed_ns": 10368000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 21,
+            "iterations": 1000,
+            "elapsed_ns": 11102000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 22,
+            "iterations": 1000,
+            "elapsed_ns": 10565000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 23,
+            "iterations": 1000,
+            "elapsed_ns": 10005000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 24,
+            "iterations": 1000,
+            "elapsed_ns": 11296000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 25,
+            "iterations": 1000,
+            "elapsed_ns": 10082000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 26,
+            "iterations": 1000,
+            "elapsed_ns": 10364000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 27,
+            "iterations": 1000,
+            "elapsed_ns": 10308000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 28,
+            "iterations": 1000,
+            "elapsed_ns": 10635000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 29,
+            "iterations": 1000,
+            "elapsed_ns": 10467000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 30,
+            "iterations": 1000,
+            "elapsed_ns": 10300000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 31,
+            "iterations": 1000,
+            "elapsed_ns": 10167000,
+            "errors": 0,
+            "transport_bytes": 16
+          }
+        ],
+        "ns_per_call_median": 10487.5,
+        "ns_per_call_mean": 10798.15625,
+        "memory_start": {
+          "heap": {
+            "sram_total": 321019,
+            "sram_free": 57343,
+            "sram_min": 57343,
+            "sram_largest": 19456,
+            "psram_total": 8358572,
+            "psram_free": 6919324,
+            "psram_min": 6919324,
+            "psram_largest": 6815744
+          },
+          "budget": {
+            "internal": 27468,
+            "external": 16516,
+            "peak_internal": 27468,
+            "peak_external": 16640,
+            "temporary_peak_internal": 0,
+            "temporary_peak_external": 0,
+            "fixed": 2224,
+            "denied": 0,
+            "allocation_failures": 0
+          },
+          "kind:raster": {
+            "internal": 0,
+            "external": 0
+          },
+          "kind:image": {
+            "internal": 0,
+            "external": 0
+          },
+          "kind:audio": {
+            "internal": 0,
+            "external": 16392
+          },
+          "kind:temporary": {
+            "internal": 0,
+            "external": 0
+          },
+          "kind:metadata": {
+            "internal": 27468,
+            "external": 124
+          },
+          "kind:frame": {
+            "internal": 0,
+            "external": 0
+          },
+          "surface": {
+            "frame": 0,
+            "scratch": 0,
+            "mailbox": 0,
+            "probe": 0,
+            "peak_total": 0
+          }
+        },
+        "memory_end": {
+          "heap": {
+            "sram_total": 321019,
+            "sram_free": 56151,
+            "sram_min": 52679,
+            "sram_largest": 19456,
+            "psram_total": 8358572,
+            "psram_free": 6667108,
+            "psram_min": 6413224,
+            "psram_largest": 6291456
+          },
+          "budget": {
+            "internal": 27468,
+            "external": 16640,
+            "peak_internal": 27468,
+            "peak_external": 16640,
+            "temporary_peak_internal": 0,
+            "temporary_peak_external": 0,
+            "fixed": 2224,
+            "denied": 0,
+            "allocation_failures": 0
+          },
+          "kind:raster": {
+            "internal": 0,
+            "external": 0
+          },
+          "kind:image": {
+            "internal": 0,
+            "external": 0
+          },
+          "kind:audio": {
+            "internal": 0,
+            "external": 16392
+          },
+          "kind:temporary": {
+            "internal": 0,
+            "external": 0
+          },
+          "kind:metadata": {
+            "internal": 27468,
+            "external": 248
+          },
+          "kind:frame": {
+            "internal": 0,
+            "external": 0
+          },
+          "surface": {
+            "frame": 0,
+            "scratch": 0,
+            "mailbox": 0,
+            "probe": 0,
+            "peak_total": 0
+          }
+        },
+        "heap": {
+          "sram": {
+            "stable_used": 264868,
+            "true_peak_used": 268340,
+            "allocation_delta": 1192,
+            "true_peak_delta": 4664
+          },
+          "psram": {
+            "stable_used": 1691464,
+            "true_peak_used": 1945348,
+            "allocation_delta": 252216,
+            "true_peak_delta": 506100
+          }
+        }
+      },
+      "steady": {
+        "samples": [
+          {
+            "path": "call",
+            "index": 0,
+            "iterations": 1000,
+            "elapsed_ns": 10037000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 1,
+            "iterations": 1000,
+            "elapsed_ns": 11202000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 2,
+            "iterations": 1000,
+            "elapsed_ns": 11227000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 3,
+            "iterations": 1000,
+            "elapsed_ns": 11184000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 4,
+            "iterations": 1000,
+            "elapsed_ns": 10855000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 5,
+            "iterations": 1000,
+            "elapsed_ns": 10379000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 6,
+            "iterations": 1000,
+            "elapsed_ns": 10477000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 7,
+            "iterations": 1000,
+            "elapsed_ns": 10906000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 8,
+            "iterations": 1000,
+            "elapsed_ns": 9999000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 9,
+            "iterations": 1000,
+            "elapsed_ns": 10843000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 10,
+            "iterations": 1000,
+            "elapsed_ns": 10507000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 11,
+            "iterations": 1000,
+            "elapsed_ns": 10458000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 12,
+            "iterations": 1000,
+            "elapsed_ns": 10783000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 13,
+            "iterations": 1000,
+            "elapsed_ns": 10314000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 14,
+            "iterations": 1000,
+            "elapsed_ns": 10450000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 15,
+            "iterations": 1000,
+            "elapsed_ns": 10545000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 16,
+            "iterations": 1000,
+            "elapsed_ns": 10485000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 17,
+            "iterations": 1000,
+            "elapsed_ns": 11056000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 18,
+            "iterations": 1000,
+            "elapsed_ns": 10532000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 19,
+            "iterations": 1000,
+            "elapsed_ns": 10313000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 20,
+            "iterations": 1000,
+            "elapsed_ns": 10827000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 21,
+            "iterations": 1000,
+            "elapsed_ns": 10010000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 22,
+            "iterations": 1000,
+            "elapsed_ns": 10488000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 23,
+            "iterations": 1000,
+            "elapsed_ns": 10556000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 24,
+            "iterations": 1000,
+            "elapsed_ns": 10296000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 25,
+            "iterations": 1000,
+            "elapsed_ns": 10680000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 26,
+            "iterations": 1000,
+            "elapsed_ns": 10363000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 27,
+            "iterations": 1000,
+            "elapsed_ns": 10359000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 28,
+            "iterations": 1000,
+            "elapsed_ns": 10690000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 29,
+            "iterations": 1000,
+            "elapsed_ns": 10270000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 30,
+            "iterations": 1000,
+            "elapsed_ns": 10648000,
+            "errors": 0,
+            "transport_bytes": 16
+          },
+          {
+            "path": "call",
+            "index": 31,
+            "iterations": 1000,
+            "elapsed_ns": 9989000,
+            "errors": 0,
+            "transport_bytes": 16
+          }
+        ],
+        "ns_per_call_median": 10497.5,
+        "ns_per_call_mean": 10554.0,
+        "memory_start": {
+          "heap": {
+            "sram_total": 321019,
+            "sram_free": 56115,
+            "sram_min": 51963,
+            "sram_largest": 19456,
+            "psram_total": 8358572,
+            "psram_free": 6729860,
+            "psram_min": 6716424,
+            "psram_largest": 6291456
+          },
+          "budget": {
+            "internal": 27468,
+            "external": 16640,
+            "peak_internal": 27468,
+            "peak_external": 16640,
+            "temporary_peak_internal": 0,
+            "temporary_peak_external": 0,
+            "fixed": 2224,
+            "denied": 0,
+            "allocation_failures": 0
+          },
+          "kind:raster": {
+            "internal": 0,
+            "external": 0
+          },
+          "kind:image": {
+            "internal": 0,
+            "external": 0
+          },
+          "kind:audio": {
+            "internal": 0,
+            "external": 16392
+          },
+          "kind:temporary": {
+            "internal": 0,
+            "external": 0
+          },
+          "kind:metadata": {
+            "internal": 27468,
+            "external": 248
+          },
+          "kind:frame": {
+            "internal": 0,
+            "external": 0
+          },
+          "surface": {
+            "frame": 0,
+            "scratch": 0,
+            "mailbox": 0,
+            "probe": 0,
+            "peak_total": 0
+          }
+        },
+        "memory_end": {
+          "heap": {
+            "sram_total": 321019,
+            "sram_free": 56151,
+            "sram_min": 51891,
+            "sram_largest": 19456,
+            "psram_total": 8358572,
+            "psram_free": 6667112,
+            "psram_min": 6414768,
+            "psram_largest": 6291456
+          },
+          "budget": {
+            "internal": 27468,
+            "external": 16640,
+            "peak_internal": 27468,
+            "peak_external": 16640,
+            "temporary_peak_internal": 0,
+            "temporary_peak_external": 0,
+            "fixed": 2224,
+            "denied": 0,
+            "allocation_failures": 0
+          },
+          "kind:raster": {
+            "internal": 0,
+            "external": 0
+          },
+          "kind:image": {
+            "internal": 0,
+            "external": 0
+          },
+          "kind:audio": {
+            "internal": 0,
+            "external": 16392
+          },
+          "kind:temporary": {
+            "internal": 0,
+            "external": 0
+          },
+          "kind:metadata": {
+            "internal": 27468,
+            "external": 248
+          },
+          "kind:frame": {
+            "internal": 0,
+            "external": 0
+          },
+          "surface": {
+            "frame": 0,
+            "scratch": 0,
+            "mailbox": 0,
+            "probe": 0,
+            "peak_total": 0
+          }
+        },
+        "heap": {
+          "sram": {
+            "stable_used": 264868,
+            "true_peak_used": 269128,
+            "allocation_delta": -36,
+            "true_peak_delta": 4224
+          },
+          "psram": {
+            "stable_used": 1691460,
+            "true_peak_used": 1943804,
+            "allocation_delta": 62748,
+            "true_peak_delta": 315092
+          }
+        }
+      },
+      "stopped": {
+        "heap": {
+          "sram_total": 321019,
+          "sram_free": 57183,
+          "sram_min": 27664,
+          "sram_largest": 19456,
+          "psram_total": 8358572,
+          "psram_free": 6992956,
+          "psram_min": 6413224,
+          "psram_largest": 6291456
+        },
+        "budget": {
+          "internal": 27468,
+          "external": 16516,
+          "peak_internal": 27468,
+          "peak_external": 16640,
+          "temporary_peak_internal": 0,
+          "temporary_peak_external": 0,
+          "fixed": 2224,
+          "denied": 0,
+          "allocation_failures": 0
+        },
+        "kind:raster": {
+          "internal": 0,
+          "external": 0
+        },
+        "kind:image": {
+          "internal": 0,
+          "external": 0
+        },
+        "kind:audio": {
+          "internal": 0,
+          "external": 16392
+        },
+        "kind:temporary": {
+          "internal": 0,
+          "external": 0
+        },
+        "kind:metadata": {
+          "internal": 27468,
+          "external": 124
+        },
+        "kind:frame": {
+          "internal": 0,
+          "external": 0
+        },
+        "surface": {
+          "frame": 0,
+          "scratch": 0,
+          "mailbox": 0,
+          "probe": 0,
+          "peak_total": 0
+        }
+      }
+    }
+  ],
+  "passed": true,
+  "hello": "protocol=1;mode=normal;capabilities=info,memory,logcat,packages,package-deploy,package-run,package-stop,fs,reboot,doctor,input-v2,screenshot-rgb565,screenshot-jpeg,poweroff,perf-raster,heap-local;max_chunk=1024;fs_offset=1;fs_sha256=1;target=esp32s3;serial=a4:cb:8f:d6:8d:a4;version=4faf6cf-dirty",
+  "packages_before": [
+    "17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171:pxa-abi-voxel-call-probe\tABI voxel direct probe\t0.12.2\tbuiltin=0;installed=1;staged=0;enabled=1;active=0",
+    "17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171:pxa-cpp-abi-control-direct\tABI control benchmark\t1.0.0\tbuiltin=0;installed=1;staged=0;enabled=1;active=0",
+    "17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171:pxa-cpp-counter\tC++ Counter\t1.0.0\tbuiltin=0;installed=1;staged=0;enabled=1;active=0",
+    "17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171:pxa-cpp-i18n\tC++ I18n\t1.0.0\tbuiltin=0;installed=1;staged=0;enabled=1;active=0",
+    "17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171:pxa-jump-jump-3d-cpp\tJump Jump 3D C++\t0.1.0\tbuiltin=0;installed=1;staged=0;enabled=1;active=0",
+    "17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171:pxa-voxel-craft-cpp\tVoxel Craft C++\t0.12.2\tbuiltin=0;installed=1;staged=0;enabled=1;active=0",
+    "17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171:pxa-weather\tWeather\t0.3.2\tbuiltin=0;installed=1;staged=0;enabled=1;active=0"
+  ]
+}

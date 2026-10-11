@@ -1,0 +1,72 @@
+{
+  "before": {
+    "sections": {
+      ".iram0.vectors": 1028,
+      ".iram0.text": 114215,
+      ".dram0.dummy": 99072,
+      ".dram0.data": 32402,
+      ".dram0.bss": 18088,
+      ".flash.text": 2461720,
+      ".flash.appdesc": 256,
+      ".flash.rodata": 716316,
+      ".flash.tdata": 8,
+      ".flash.rodata_noload": 16677,
+      ".ext_ram.dummy": 3276768,
+      ".ext_ram.bss": 30036,
+      ".ext_ram_noinit": 0,
+      ".iram0.text_end": 213,
+      ".iram0.data": 0,
+      ".iram0.bss": 0,
+      ".dram0.heap_start": 0
+    },
+    "types": {
+      "system_request_t": 192,
+      "pxa_wamr_event_result_t": 20,
+      "pxa_esp_host_permission_prompt_t": 16,
+      "pxa_esp_host_activation_t": 816,
+      "pxa_esp_host_t": 2488,
+      "pxa_permission_pending_prompt_t": 12,
+      "pxa_event_slot_t": 32,
+      "pxa_request_slot_t": 56,
+      "pxa_ipc_call_t": 96,
+      "pxa_net_pending_t": 48,
+      "pxa_wamr_engine": 144,
+      "pxa_wamr_entry_t": 632
+    }
+  },
+  "after": {
+    "sections": {
+      ".iram0.vectors": 1028,
+      ".iram0.text": 114215,
+      ".dram0.dummy": 99072,
+      ".dram0.data": 32402,
+      ".dram0.bss": 18056,
+      ".flash.text": 2460084,
+      ".flash.appdesc": 256,
+      ".flash.rodata": 716124,
+      ".flash.tdata": 8,
+      ".flash.rodata_noload": 16677,
+      ".ext_ram.dummy": 3276768,
+      ".ext_ram.bss": 30036,
+      ".ext_ram_noinit": 0,
+      ".iram0.text_end": 213,
+      ".iram0.data": 0,
+      ".iram0.bss": 0,
+      ".dram0.heap_start": 0
+    },
+    "types": {
+      "system_request_t": 192,
+      "pxa_wamr_event_result_t": 24,
+      "pxa_esp_host_permission_prompt_t": 16,
+      "pxa_esp_host_activation_t": 816,
+      "pxa_esp_host_t": 2488,
+      "pxa_permission_pending_prompt_t": 16,
+      "pxa_event_slot_t": 32,
+      "pxa_request_slot_t": 56,
+      "pxa_ipc_call_t": 96,
+      "pxa_net_pending_t": 48,
+      "pxa_wamr_engine": 192,
+      "pxa_wamr_entry_t": 368
+    }
+  }
+}

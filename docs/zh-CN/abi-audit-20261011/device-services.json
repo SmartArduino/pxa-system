@@ -1,0 +1,1082 @@
+{
+  "port": "/dev/ttyACM1",
+  "app": "pxa-cpp-abi-service-probe",
+  "runs": [
+    {
+      "index": 0,
+      "launch_start": {
+        "heap": {
+          "sram_total": 321019,
+          "sram_free": 50659,
+          "sram_min": 50659,
+          "sram_largest": 19456,
+          "psram_total": 8358572,
+          "psram_free": 6904436,
+          "psram_min": 6904436,
+          "psram_largest": 6291456
+        },
+        "budget": {
+          "internal": 27468,
+          "external": 16516,
+          "peak_internal": 28956,
+          "peak_external": 50109,
+          "temporary_peak_internal": 0,
+          "temporary_peak_external": 0,
+          "fixed": 2224,
+          "denied": 0,
+          "allocation_failures": 0
+        },
+        "kind:raster": {
+          "internal": 0,
+          "external": 0
+        },
+        "kind:image": {
+          "internal": 0,
+          "external": 0
+        },
+        "kind:audio": {
+          "internal": 0,
+          "external": 16392
+        },
+        "kind:temporary": {
+          "internal": 0,
+          "external": 0
+        },
+        "kind:metadata": {
+          "internal": 27468,
+          "external": 124
+        },
+        "kind:frame": {
+          "internal": 0,
+          "external": 0
+        },
+        "surface": {
+          "frame": 0,
+          "scratch": 0,
+          "mailbox": 0,
+          "probe": 0,
+          "peak_total": 575808
+        }
+      },
+      "core_image": {
+        "metadata": {
+          "format": "rgb565le",
+          "width": "296",
+          "height": "240",
+          "stride": "592",
+          "orientation": "logical",
+          "frame_id": "0",
+          "device_us": "274077894",
+          "source": "lvgl",
+          "bytes": "142080",
+          "sha256": "488ce00cf07f54cd607644d47260a12720716c8917535a8c9129fac80887ece8"
+        },
+        "ocr": "10:30 e BE '!\u2018.\u2018EELOO(?-'b (=)\nService safety\nesp32-s3\nCore checks OK\n",
+        "permission_allowed": false
+      },
+      "launch_end": {
+        "heap": {
+          "sram_total": 321019,
+          "sram_free": 49467,
+          "sram_min": 45331,
+          "sram_largest": 19456,
+          "psram_total": 8358572,
+          "psram_free": 6356148,
+          "psram_min": 6098172,
+          "psram_largest": 5636096
+        },
+        "budget": {
+          "internal": 27468,
+          "external": 16639,
+          "peak_internal": 28956,
+          "peak_external": 50109,
+          "temporary_peak_internal": 0,
+          "temporary_peak_external": 0,
+          "fixed": 2224,
+          "denied": 0,
+          "allocation_failures": 0
+        },
+        "kind:raster": {
+          "internal": 0,
+          "external": 0
+        },
+        "kind:image": {
+          "internal": 0,
+          "external": 0
+        },
+        "kind:audio": {
+          "internal": 0,
+          "external": 16392
+        },
+        "kind:temporary": {
+          "internal": 0,
+          "external": 0
+        },
+        "kind:metadata": {
+          "internal": 27468,
+          "external": 247
+        },
+        "kind:frame": {
+          "internal": 0,
+          "external": 0
+        },
+        "surface": {
+          "frame": 0,
+          "scratch": 0,
+          "mailbox": 0,
+          "probe": 0,
+          "peak_total": 575808
+        }
+      },
+      "steady_start": {
+        "heap": {
+          "sram_total": 321019,
+          "sram_free": 49431,
+          "sram_min": 49431,
+          "sram_largest": 19456,
+          "psram_total": 8358572,
+          "psram_free": 6356148,
+          "psram_min": 6356148,
+          "psram_largest": 5636096
+        },
+        "budget": {
+          "internal": 27468,
+          "external": 16639,
+          "peak_internal": 28956,
+          "peak_external": 50109,
+          "temporary_peak_internal": 0,
+          "temporary_peak_external": 0,
+          "fixed": 2224,
+          "denied": 0,
+          "allocation_failures": 0
+        },
+        "kind:raster": {
+          "internal": 0,
+          "external": 0
+        },
+        "kind:image": {
+          "internal": 0,
+          "external": 0
+        },
+        "kind:audio": {
+          "internal": 0,
+          "external": 16392
+        },
+        "kind:temporary": {
+          "internal": 0,
+          "external": 0
+        },
+        "kind:metadata": {
+          "internal": 27468,
+          "external": 247
+        },
+        "kind:frame": {
+          "internal": 0,
+          "external": 0
+        },
+        "surface": {
+          "frame": 0,
+          "scratch": 0,
+          "mailbox": 0,
+          "probe": 0,
+          "peak_total": 575808
+        }
+      },
+      "repeat_image": {
+        "metadata": {
+          "format": "rgb565le",
+          "width": "296",
+          "height": "240",
+          "stride": "592",
+          "orientation": "logical",
+          "frame_id": "0",
+          "device_us": "277243688",
+          "source": "lvgl",
+          "bytes": "142080",
+          "sha256": "2e6e4b4174f4f208be8fe2bb347f09812bd2830b45eeeba0f3b5dc15a1375c8b"
+        },
+        "ocr": "10:30 1l Muv.!a\ufb01uoc,-b (=)\nService safety\nesp32-s3\nCore checks OK\n",
+        "permission_allowed": false
+      },
+      "audio_image": {
+        "metadata": {
+          "format": "rgb565le",
+          "width": "296",
+          "height": "240",
+          "stride": "592",
+          "orientation": "logical",
+          "frame_id": "0",
+          "device_us": "281000224",
+          "source": "lvgl",
+          "bytes": "142080",
+          "sha256": "8854ece1b2b82b3a844fe7582029b8eec05cf30c40362f5d2c594679768a4004"
+        },
+        "ocr": "10:30 1ca A EL '!\u2018.\u2018ETLOO(?-'b (=)\nService safety\nesp32-s3\nAudio checks OK\n",
+        "permission_allowed": true
+      },
+      "steady_end": {
+        "heap": {
+          "sram_total": 321019,
+          "sram_free": 36303,
+          "sram_min": 36139,
+          "sram_largest": 19456,
+          "psram_total": 8358572,
+          "psram_free": 6356112,
+          "psram_min": 5846392,
+          "psram_largest": 5636096
+        },
+        "budget": {
+          "internal": 27468,
+          "external": 16639,
+          "peak_internal": 28956,
+          "peak_external": 50109,
+          "temporary_peak_internal": 0,
+          "temporary_peak_external": 0,
+          "fixed": 2224,
+          "denied": 0,
+          "allocation_failures": 0
+        },
+        "kind:raster": {
+          "internal": 0,
+          "external": 0
+        },
+        "kind:image": {
+          "internal": 0,
+          "external": 0
+        },
+        "kind:audio": {
+          "internal": 0,
+          "external": 16392
+        },
+        "kind:temporary": {
+          "internal": 0,
+          "external": 0
+        },
+        "kind:metadata": {
+          "internal": 27468,
+          "external": 247
+        },
+        "kind:frame": {
+          "internal": 0,
+          "external": 0
+        },
+        "surface": {
+          "frame": 0,
+          "scratch": 0,
+          "mailbox": 0,
+          "probe": 0,
+          "peak_total": 575808
+        }
+      },
+      "launch_heap": {
+        "sram": {
+          "stable_delta": 1192,
+          "true_peak_delta": 5328
+        },
+        "psram": {
+          "stable_delta": 548288,
+          "true_peak_delta": 806264
+        }
+      },
+      "steady_heap": {
+        "sram": {
+          "stable_delta": 13128,
+          "true_peak_delta": 13292
+        },
+        "psram": {
+          "stable_delta": 36,
+          "true_peak_delta": 509756
+        }
+      },
+      "resume_image": {
+        "metadata": {
+          "format": "rgb565le",
+          "width": "296",
+          "height": "240",
+          "stride": "592",
+          "orientation": "logical",
+          "frame_id": "0",
+          "device_us": "283599167",
+          "source": "lvgl",
+          "bytes": "142080",
+          "sha256": "ea6fcb9ae1ad9c6c2ca9f5369a19a7eda081f98a46f84468170d2787216a21ba"
+        },
+        "ocr": "10:30 1 BRI '!\u2018.\u201825100(?-'b (=)\nService safety\nesp32-s3\nAudio checks OK\n",
+        "permission_allowed": false
+      },
+      "stopped": {
+        "heap": {
+          "sram_total": 321019,
+          "sram_free": 37495,
+          "sram_min": 17932,
+          "sram_largest": 19456,
+          "psram_total": 8358572,
+          "psram_free": 6904428,
+          "psram_min": 4689560,
+          "psram_largest": 6291456
+        },
+        "budget": {
+          "internal": 27468,
+          "external": 16516,
+          "peak_internal": 28956,
+          "peak_external": 50109,
+          "temporary_peak_internal": 0,
+          "temporary_peak_external": 0,
+          "fixed": 2224,
+          "denied": 0,
+          "allocation_failures": 0
+        },
+        "kind:raster": {
+          "internal": 0,
+          "external": 0
+        },
+        "kind:image": {
+          "internal": 0,
+          "external": 0
+        },
+        "kind:audio": {
+          "internal": 0,
+          "external": 16392
+        },
+        "kind:temporary": {
+          "internal": 0,
+          "external": 0
+        },
+        "kind:metadata": {
+          "internal": 27468,
+          "external": 124
+        },
+        "kind:frame": {
+          "internal": 0,
+          "external": 0
+        },
+        "surface": {
+          "frame": 0,
+          "scratch": 0,
+          "mailbox": 0,
+          "probe": 0,
+          "peak_total": 575808
+        }
+      }
+    },
+    {
+      "index": 1,
+      "launch_start": {
+        "heap": {
+          "sram_total": 321019,
+          "sram_free": 37495,
+          "sram_min": 37495,
+          "sram_largest": 19456,
+          "psram_total": 8358572,
+          "psram_free": 6904400,
+          "psram_min": 6904400,
+          "psram_largest": 6291456
+        },
+        "budget": {
+          "internal": 27468,
+          "external": 16516,
+          "peak_internal": 28956,
+          "peak_external": 50109,
+          "temporary_peak_internal": 0,
+          "temporary_peak_external": 0,
+          "fixed": 2224,
+          "denied": 0,
+          "allocation_failures": 0
+        },
+        "kind:raster": {
+          "internal": 0,
+          "external": 0
+        },
+        "kind:image": {
+          "internal": 0,
+          "external": 0
+        },
+        "kind:audio": {
+          "internal": 0,
+          "external": 16392
+        },
+        "kind:temporary": {
+          "internal": 0,
+          "external": 0
+        },
+        "kind:metadata": {
+          "internal": 27468,
+          "external": 124
+        },
+        "kind:frame": {
+          "internal": 0,
+          "external": 0
+        },
+        "surface": {
+          "frame": 0,
+          "scratch": 0,
+          "mailbox": 0,
+          "probe": 0,
+          "peak_total": 575808
+        }
+      },
+      "core_image": {
+        "metadata": {
+          "format": "rgb565le",
+          "width": "296",
+          "height": "240",
+          "stride": "592",
+          "orientation": "logical",
+          "frame_id": "0",
+          "device_us": "289055193",
+          "source": "lvgl",
+          "bytes": "142080",
+          "sha256": "b8a59583b77c54bb3680c5346807fdafdff024b994441c0a3cee4485a67a6533"
+        },
+        "ocr": "10:30 e B R '!\u2018.\u2018EELOO(?-'b (=)\nService safety\nesp32-s3\nCore checks OK\n",
+        "permission_allowed": false
+      },
+      "launch_end": {
+        "heap": {
+          "sram_total": 321019,
+          "sram_free": 36303,
+          "sram_min": 27039,
+          "sram_largest": 19456,
+          "psram_total": 8358572,
+          "psram_free": 6356124,
+          "psram_min": 5956036,
+          "psram_largest": 5636096
+        },
+        "budget": {
+          "internal": 27468,
+          "external": 16639,
+          "peak_internal": 28956,
+          "peak_external": 50109,
+          "temporary_peak_internal": 0,
+          "temporary_peak_external": 0,
+          "fixed": 2224,
+          "denied": 0,
+          "allocation_failures": 0
+        },
+        "kind:raster": {
+          "internal": 0,
+          "external": 0
+        },
+        "kind:image": {
+          "internal": 0,
+          "external": 0
+        },
+        "kind:audio": {
+          "internal": 0,
+          "external": 16392
+        },
+        "kind:temporary": {
+          "internal": 0,
+          "external": 0
+        },
+        "kind:metadata": {
+          "internal": 27468,
+          "external": 247
+        },
+        "kind:frame": {
+          "internal": 0,
+          "external": 0
+        },
+        "surface": {
+          "frame": 0,
+          "scratch": 0,
+          "mailbox": 0,
+          "probe": 0,
+          "peak_total": 575808
+        }
+      },
+      "steady_start": {
+        "heap": {
+          "sram_total": 321019,
+          "sram_free": 36303,
+          "sram_min": 36303,
+          "sram_largest": 19456,
+          "psram_total": 8358572,
+          "psram_free": 6356124,
+          "psram_min": 6356124,
+          "psram_largest": 5636096
+        },
+        "budget": {
+          "internal": 27468,
+          "external": 16639,
+          "peak_internal": 28956,
+          "peak_external": 50109,
+          "temporary_peak_internal": 0,
+          "temporary_peak_external": 0,
+          "fixed": 2224,
+          "denied": 0,
+          "allocation_failures": 0
+        },
+        "kind:raster": {
+          "internal": 0,
+          "external": 0
+        },
+        "kind:image": {
+          "internal": 0,
+          "external": 0
+        },
+        "kind:audio": {
+          "internal": 0,
+          "external": 16392
+        },
+        "kind:temporary": {
+          "internal": 0,
+          "external": 0
+        },
+        "kind:metadata": {
+          "internal": 27468,
+          "external": 247
+        },
+        "kind:frame": {
+          "internal": 0,
+          "external": 0
+        },
+        "surface": {
+          "frame": 0,
+          "scratch": 0,
+          "mailbox": 0,
+          "probe": 0,
+          "peak_total": 575808
+        }
+      },
+      "repeat_image": {
+        "metadata": {
+          "format": "rgb565le",
+          "width": "296",
+          "height": "240",
+          "stride": "592",
+          "orientation": "logical",
+          "frame_id": "0",
+          "device_us": "291133880",
+          "source": "lvgl",
+          "bytes": "142080",
+          "sha256": "cf143e326aecdeb7ebb1623bc188d1026c054e9d5c4f14b222984baaded49b7a"
+        },
+        "ocr": "10:30 itk Muv.!-EEuoc..-b (=)\nService safety\nesp32-s3\nCore checks OK\n",
+        "permission_allowed": false
+      },
+      "audio_image": {
+        "metadata": {
+          "format": "rgb565le",
+          "width": "296",
+          "height": "240",
+          "stride": "592",
+          "orientation": "logical",
+          "frame_id": "0",
+          "device_us": "293283502",
+          "source": "lvgl",
+          "bytes": "142080",
+          "sha256": "0d553265ba94c558bb01e1f5eb7722b3c62f59a94e6db0a19d246b7384ce92ae"
+        },
+        "ocr": "10:30 1 AEL '!\u2018.\u201825100(?-'b (=)\nService safety\nesp32-s3\nAudio checks OK\n",
+        "permission_allowed": false
+      },
+      "steady_end": {
+        "heap": {
+          "sram_total": 321019,
+          "sram_free": 36303,
+          "sram_min": 26563,
+          "sram_largest": 19456,
+          "psram_total": 8358572,
+          "psram_free": 6356124,
+          "psram_min": 6212252,
+          "psram_largest": 5636096
+        },
+        "budget": {
+          "internal": 27468,
+          "external": 16639,
+          "peak_internal": 28956,
+          "peak_external": 50109,
+          "temporary_peak_internal": 0,
+          "temporary_peak_external": 0,
+          "fixed": 2224,
+          "denied": 0,
+          "allocation_failures": 0
+        },
+        "kind:raster": {
+          "internal": 0,
+          "external": 0
+        },
+        "kind:image": {
+          "internal": 0,
+          "external": 0
+        },
+        "kind:audio": {
+          "internal": 0,
+          "external": 16392
+        },
+        "kind:temporary": {
+          "internal": 0,
+          "external": 0
+        },
+        "kind:metadata": {
+          "internal": 27468,
+          "external": 247
+        },
+        "kind:frame": {
+          "internal": 0,
+          "external": 0
+        },
+        "surface": {
+          "frame": 0,
+          "scratch": 0,
+          "mailbox": 0,
+          "probe": 0,
+          "peak_total": 575808
+        }
+      },
+      "launch_heap": {
+        "sram": {
+          "stable_delta": 1192,
+          "true_peak_delta": 10456
+        },
+        "psram": {
+          "stable_delta": 548276,
+          "true_peak_delta": 948364
+        }
+      },
+      "steady_heap": {
+        "sram": {
+          "stable_delta": 0,
+          "true_peak_delta": 9740
+        },
+        "psram": {
+          "stable_delta": 0,
+          "true_peak_delta": 143872
+        }
+      },
+      "resume_image": {
+        "metadata": {
+          "format": "rgb565le",
+          "width": "296",
+          "height": "240",
+          "stride": "592",
+          "orientation": "logical",
+          "frame_id": "0",
+          "device_us": "295881813",
+          "source": "lvgl",
+          "bytes": "142080",
+          "sha256": "617f4ab231af2d0b0ed8ef99ea7e963b7ddf720fa856f66b779c27f1a1e9bcbf"
+        },
+        "ocr": "10:30 B '!\u2018.\u201825100(?-'b (=)\nService safety\nesp32-s3\nAudio checks OK\n",
+        "permission_allowed": false
+      },
+      "stopped": {
+        "heap": {
+          "sram_total": 321019,
+          "sram_free": 37459,
+          "sram_min": 17932,
+          "sram_largest": 19456,
+          "psram_total": 8358572,
+          "psram_free": 6904440,
+          "psram_min": 4689560,
+          "psram_largest": 6291456
+        },
+        "budget": {
+          "internal": 27468,
+          "external": 16516,
+          "peak_internal": 28956,
+          "peak_external": 50109,
+          "temporary_peak_internal": 0,
+          "temporary_peak_external": 0,
+          "fixed": 2224,
+          "denied": 0,
+          "allocation_failures": 0
+        },
+        "kind:raster": {
+          "internal": 0,
+          "external": 0
+        },
+        "kind:image": {
+          "internal": 0,
+          "external": 0
+        },
+        "kind:audio": {
+          "internal": 0,
+          "external": 16392
+        },
+        "kind:temporary": {
+          "internal": 0,
+          "external": 0
+        },
+        "kind:metadata": {
+          "internal": 27468,
+          "external": 124
+        },
+        "kind:frame": {
+          "internal": 0,
+          "external": 0
+        },
+        "surface": {
+          "frame": 0,
+          "scratch": 0,
+          "mailbox": 0,
+          "probe": 0,
+          "peak_total": 575808
+        }
+      }
+    },
+    {
+      "index": 2,
+      "launch_start": {
+        "heap": {
+          "sram_total": 321019,
+          "sram_free": 37495,
+          "sram_min": 37495,
+          "sram_largest": 19456,
+          "psram_total": 8358572,
+          "psram_free": 6904412,
+          "psram_min": 6904412,
+          "psram_largest": 6291456
+        },
+        "budget": {
+          "internal": 27468,
+          "external": 16516,
+          "peak_internal": 28956,
+          "peak_external": 50109,
+          "temporary_peak_internal": 0,
+          "temporary_peak_external": 0,
+          "fixed": 2224,
+          "denied": 0,
+          "allocation_failures": 0
+        },
+        "kind:raster": {
+          "internal": 0,
+          "external": 0
+        },
+        "kind:image": {
+          "internal": 0,
+          "external": 0
+        },
+        "kind:audio": {
+          "internal": 0,
+          "external": 16392
+        },
+        "kind:temporary": {
+          "internal": 0,
+          "external": 0
+        },
+        "kind:metadata": {
+          "internal": 27468,
+          "external": 124
+        },
+        "kind:frame": {
+          "internal": 0,
+          "external": 0
+        },
+        "surface": {
+          "frame": 0,
+          "scratch": 0,
+          "mailbox": 0,
+          "probe": 0,
+          "peak_total": 575808
+        }
+      },
+      "core_image": {
+        "metadata": {
+          "format": "rgb565le",
+          "width": "296",
+          "height": "240",
+          "stride": "592",
+          "orientation": "logical",
+          "frame_id": "0",
+          "device_us": "301337575",
+          "source": "lvgl",
+          "bytes": "142080",
+          "sha256": "c1c3854fe7fcdc5f6594079620d939f10e205028570e3bd2201b51f2826813f8"
+        },
+        "ocr": "10:30 e B R '!\u2018.\u2018EELOO(?-'b (=)\nService safety\nesp32-s3\nCore checks OK\n",
+        "permission_allowed": false
+      },
+      "launch_end": {
+        "heap": {
+          "sram_total": 321019,
+          "sram_free": 36303,
+          "sram_min": 27075,
+          "sram_largest": 19456,
+          "psram_total": 8358572,
+          "psram_free": 6356160,
+          "psram_min": 5956908,
+          "psram_largest": 5636096
+        },
+        "budget": {
+          "internal": 27468,
+          "external": 16639,
+          "peak_internal": 28956,
+          "peak_external": 50109,
+          "temporary_peak_internal": 0,
+          "temporary_peak_external": 0,
+          "fixed": 2224,
+          "denied": 0,
+          "allocation_failures": 0
+        },
+        "kind:raster": {
+          "internal": 0,
+          "external": 0
+        },
+        "kind:image": {
+          "internal": 0,
+          "external": 0
+        },
+        "kind:audio": {
+          "internal": 0,
+          "external": 16392
+        },
+        "kind:temporary": {
+          "internal": 0,
+          "external": 0
+        },
+        "kind:metadata": {
+          "internal": 27468,
+          "external": 247
+        },
+        "kind:frame": {
+          "internal": 0,
+          "external": 0
+        },
+        "surface": {
+          "frame": 0,
+          "scratch": 0,
+          "mailbox": 0,
+          "probe": 0,
+          "peak_total": 575808
+        }
+      },
+      "steady_start": {
+        "heap": {
+          "sram_total": 321019,
+          "sram_free": 36303,
+          "sram_min": 36303,
+          "sram_largest": 19456,
+          "psram_total": 8358572,
+          "psram_free": 6356160,
+          "psram_min": 6356160,
+          "psram_largest": 5636096
+        },
+        "budget": {
+          "internal": 27468,
+          "external": 16639,
+          "peak_internal": 28956,
+          "peak_external": 50109,
+          "temporary_peak_internal": 0,
+          "temporary_peak_external": 0,
+          "fixed": 2224,
+          "denied": 0,
+          "allocation_failures": 0
+        },
+        "kind:raster": {
+          "internal": 0,
+          "external": 0
+        },
+        "kind:image": {
+          "internal": 0,
+          "external": 0
+        },
+        "kind:audio": {
+          "internal": 0,
+          "external": 16392
+        },
+        "kind:temporary": {
+          "internal": 0,
+          "external": 0
+        },
+        "kind:metadata": {
+          "internal": 27468,
+          "external": 247
+        },
+        "kind:frame": {
+          "internal": 0,
+          "external": 0
+        },
+        "surface": {
+          "frame": 0,
+          "scratch": 0,
+          "mailbox": 0,
+          "probe": 0,
+          "peak_total": 575808
+        }
+      },
+      "repeat_image": {
+        "metadata": {
+          "format": "rgb565le",
+          "width": "296",
+          "height": "240",
+          "stride": "592",
+          "orientation": "logical",
+          "frame_id": "0",
+          "device_us": "304289735",
+          "source": "lvgl",
+          "bytes": "142080",
+          "sha256": "31e2364fb815667d4ac67c61c014dd9c56f47ed840c98e6a5c9cd3f17105f756"
+        },
+        "ocr": "10:30 ic BN '!\u2018.\u2018EELOO(?-'b (=)\nService safety\nesp32-s3\nCore checks OK\n",
+        "permission_allowed": false
+      },
+      "audio_image": {
+        "metadata": {
+          "format": "rgb565le",
+          "width": "296",
+          "height": "240",
+          "stride": "592",
+          "orientation": "logical",
+          "frame_id": "0",
+          "device_us": "306628275",
+          "source": "lvgl",
+          "bytes": "142080",
+          "sha256": "0b67f88f5114dd5973278c5388305ff00676d20883b1894674819334678cd3cd"
+        },
+        "ocr": "10:30 1ca AR '!\u2018.\u2018EELOO(?-'b (=)\nService safety\nesp32-s3\nAudio checks OK\n",
+        "permission_allowed": false
+      },
+      "steady_end": {
+        "heap": {
+          "sram_total": 321019,
+          "sram_free": 36303,
+          "sram_min": 27075,
+          "sram_largest": 19456,
+          "psram_total": 8358572,
+          "psram_free": 6356144,
+          "psram_min": 6212008,
+          "psram_largest": 5636096
+        },
+        "budget": {
+          "internal": 27468,
+          "external": 16639,
+          "peak_internal": 28956,
+          "peak_external": 50109,
+          "temporary_peak_internal": 0,
+          "temporary_peak_external": 0,
+          "fixed": 2224,
+          "denied": 0,
+          "allocation_failures": 0
+        },
+        "kind:raster": {
+          "internal": 0,
+          "external": 0
+        },
+        "kind:image": {
+          "internal": 0,
+          "external": 0
+        },
+        "kind:audio": {
+          "internal": 0,
+          "external": 16392
+        },
+        "kind:temporary": {
+          "internal": 0,
+          "external": 0
+        },
+        "kind:metadata": {
+          "internal": 27468,
+          "external": 247
+        },
+        "kind:frame": {
+          "internal": 0,
+          "external": 0
+        },
+        "surface": {
+          "frame": 0,
+          "scratch": 0,
+          "mailbox": 0,
+          "probe": 0,
+          "peak_total": 575808
+        }
+      },
+      "launch_heap": {
+        "sram": {
+          "stable_delta": 1192,
+          "true_peak_delta": 10420
+        },
+        "psram": {
+          "stable_delta": 548252,
+          "true_peak_delta": 947504
+        }
+      },
+      "steady_heap": {
+        "sram": {
+          "stable_delta": 0,
+          "true_peak_delta": 9228
+        },
+        "psram": {
+          "stable_delta": 16,
+          "true_peak_delta": 144152
+        }
+      },
+      "resume_image": {
+        "metadata": {
+          "format": "rgb565le",
+          "width": "296",
+          "height": "240",
+          "stride": "592",
+          "orientation": "logical",
+          "frame_id": "0",
+          "device_us": "309179655",
+          "source": "lvgl",
+          "bytes": "142080",
+          "sha256": "cef9a4572925dff660de1d19fbe94df62bf88c0c9d5c654d73ba2e6e96042709"
+        },
+        "ocr": "10:30 1 A '!\u2018.\u201825100(?-'b (=)\nService safety\nesp32-s3\nAudio checks OK\n",
+        "permission_allowed": false
+      },
+      "stopped": {
+        "heap": {
+          "sram_total": 321019,
+          "sram_free": 37459,
+          "sram_min": 17932,
+          "sram_largest": 19456,
+          "psram_total": 8358572,
+          "psram_free": 6904440,
+          "psram_min": 4689560,
+          "psram_largest": 6291456
+        },
+        "budget": {
+          "internal": 27468,
+          "external": 16516,
+          "peak_internal": 28956,
+          "peak_external": 50109,
+          "temporary_peak_internal": 0,
+          "temporary_peak_external": 0,
+          "fixed": 2224,
+          "denied": 0,
+          "allocation_failures": 0
+        },
+        "kind:raster": {
+          "internal": 0,
+          "external": 0
+        },
+        "kind:image": {
+          "internal": 0,
+          "external": 0
+        },
+        "kind:audio": {
+          "internal": 0,
+          "external": 16392
+        },
+        "kind:temporary": {
+          "internal": 0,
+          "external": 0
+        },
+        "kind:metadata": {
+          "internal": 27468,
+          "external": 124
+        },
+        "kind:frame": {
+          "internal": 0,
+          "external": 0
+        },
+        "surface": {
+          "frame": 0,
+          "scratch": 0,
+          "mailbox": 0,
+          "probe": 0,
+          "peak_total": 575808
+        }
+      }
+    }
+  ],
+  "passed": true,
+  "hello": "protocol=1;mode=normal;capabilities=info,memory,logcat,packages,package-deploy,package-run,package-stop,fs,reboot,doctor,input-v2,screenshot-rgb565,screenshot-jpeg,poweroff,perf-raster,heap-local;max_chunk=1024;fs_offset=1;fs_sha256=1;target=esp32s3;serial=a4:cb:8f:d6:8d:a4;version=4faf6cf-dirty",
+  "info": "target=esp32s3;serial=a4:cb:8f:d6:8d:a4;version=4faf6cf-dirty;free_heap=6955123;pxa=ready;storage_total=9437184;storage_used=7815168;storage_free=1622016",
+  "verification": "Visible result text asserted; retain screenshots for visual review",
+  "visual_review": "All 12 captures reviewed: cold/repeat Core checks OK and audio/resume Audio checks OK in every run."
+}

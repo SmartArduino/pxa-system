@@ -1,0 +1,262 @@
+{
+  "cpu": 14,
+  "runs": [
+    {
+      "version": "before",
+      "run": 0,
+      "output": "native_c snapshot_ns 11.62\nnative_c event_roundtrip_ns 79.06\nnative_c request_roundtrip_ns 198.25\nnative_c workspace_bytes 5984\n"
+    },
+    {
+      "version": "after",
+      "run": 0,
+      "output": "native_c snapshot_ns 15.36\nnative_c event_roundtrip_ns 112.20\nnative_c request_roundtrip_ns 215.51\nnative_c workspace_bytes 5984\n"
+    },
+    {
+      "version": "after",
+      "run": 1,
+      "output": "native_c snapshot_ns 14.01\nnative_c event_roundtrip_ns 85.15\nnative_c request_roundtrip_ns 212.63\nnative_c workspace_bytes 5984\n"
+    },
+    {
+      "version": "before",
+      "run": 1,
+      "output": "native_c snapshot_ns 14.86\nnative_c event_roundtrip_ns 93.44\nnative_c request_roundtrip_ns 218.14\nnative_c workspace_bytes 5984\n"
+    },
+    {
+      "version": "before",
+      "run": 2,
+      "output": "native_c snapshot_ns 16.19\nnative_c event_roundtrip_ns 100.33\nnative_c request_roundtrip_ns 244.69\nnative_c workspace_bytes 5984\n"
+    },
+    {
+      "version": "after",
+      "run": 2,
+      "output": "native_c snapshot_ns 17.47\nnative_c event_roundtrip_ns 114.20\nnative_c request_roundtrip_ns 256.59\nnative_c workspace_bytes 5984\n"
+    },
+    {
+      "version": "after",
+      "run": 3,
+      "output": "native_c snapshot_ns 15.02\nnative_c event_roundtrip_ns 109.70\nnative_c request_roundtrip_ns 208.79\nnative_c workspace_bytes 5984\n"
+    },
+    {
+      "version": "before",
+      "run": 3,
+      "output": "native_c snapshot_ns 15.52\nnative_c event_roundtrip_ns 101.44\nnative_c request_roundtrip_ns 280.29\nnative_c workspace_bytes 5984\n"
+    },
+    {
+      "version": "before",
+      "run": 4,
+      "output": "native_c snapshot_ns 18.55\nnative_c event_roundtrip_ns 111.92\nnative_c request_roundtrip_ns 223.07\nnative_c workspace_bytes 5984\n"
+    },
+    {
+      "version": "after",
+      "run": 4,
+      "output": "native_c snapshot_ns 15.87\nnative_c event_roundtrip_ns 99.39\nnative_c request_roundtrip_ns 240.22\nnative_c workspace_bytes 5984\n"
+    },
+    {
+      "version": "after",
+      "run": 5,
+      "output": "native_c snapshot_ns 16.52\nnative_c event_roundtrip_ns 104.83\nnative_c request_roundtrip_ns 262.33\nnative_c workspace_bytes 5984\n"
+    },
+    {
+      "version": "before",
+      "run": 5,
+      "output": "native_c snapshot_ns 15.59\nnative_c event_roundtrip_ns 94.15\nnative_c request_roundtrip_ns 211.68\nnative_c workspace_bytes 5984\n"
+    },
+    {
+      "version": "before",
+      "run": 6,
+      "output": "native_c snapshot_ns 15.41\nnative_c event_roundtrip_ns 97.30\nnative_c request_roundtrip_ns 214.88\nnative_c workspace_bytes 5984\n"
+    },
+    {
+      "version": "after",
+      "run": 6,
+      "output": "native_c snapshot_ns 22.55\nnative_c event_roundtrip_ns 236.72\nnative_c request_roundtrip_ns 479.25\nnative_c workspace_bytes 5984\n"
+    },
+    {
+      "version": "after",
+      "run": 7,
+      "output": "native_c snapshot_ns 24.77\nnative_c event_roundtrip_ns 245.17\nnative_c request_roundtrip_ns 441.64\nnative_c workspace_bytes 5984\n"
+    },
+    {
+      "version": "before",
+      "run": 7,
+      "output": "native_c snapshot_ns 25.99\nnative_c event_roundtrip_ns 242.69\nnative_c request_roundtrip_ns 475.46\nnative_c workspace_bytes 5984\n"
+    },
+    {
+      "version": "before",
+      "run": 8,
+      "output": "native_c snapshot_ns 27.82\nnative_c event_roundtrip_ns 255.55\nnative_c request_roundtrip_ns 521.79\nnative_c workspace_bytes 5984\n"
+    },
+    {
+      "version": "after",
+      "run": 8,
+      "output": "native_c snapshot_ns 24.68\nnative_c event_roundtrip_ns 206.11\nnative_c request_roundtrip_ns 418.02\nnative_c workspace_bytes 5984\n"
+    },
+    {
+      "version": "after",
+      "run": 9,
+      "output": "native_c snapshot_ns 24.74\nnative_c event_roundtrip_ns 236.23\nnative_c request_roundtrip_ns 463.87\nnative_c workspace_bytes 5984\n"
+    },
+    {
+      "version": "before",
+      "run": 9,
+      "output": "native_c snapshot_ns 24.21\nnative_c event_roundtrip_ns 209.58\nnative_c request_roundtrip_ns 357.92\nnative_c workspace_bytes 5984\n"
+    },
+    {
+      "version": "before",
+      "run": 10,
+      "output": "native_c snapshot_ns 16.30\nnative_c event_roundtrip_ns 119.91\nnative_c request_roundtrip_ns 238.11\nnative_c workspace_bytes 5984\n"
+    },
+    {
+      "version": "after",
+      "run": 10,
+      "output": "native_c snapshot_ns 14.86\nnative_c event_roundtrip_ns 105.94\nnative_c request_roundtrip_ns 245.80\nnative_c workspace_bytes 5984\n"
+    },
+    {
+      "version": "after",
+      "run": 11,
+      "output": "native_c snapshot_ns 16.17\nnative_c event_roundtrip_ns 106.85\nnative_c request_roundtrip_ns 301.64\nnative_c workspace_bytes 5984\n"
+    },
+    {
+      "version": "before",
+      "run": 11,
+      "output": "native_c snapshot_ns 16.75\nnative_c event_roundtrip_ns 87.35\nnative_c request_roundtrip_ns 180.60\nnative_c workspace_bytes 5984\n"
+    },
+    {
+      "version": "before",
+      "run": 12,
+      "output": "native_c snapshot_ns 11.99\nnative_c event_roundtrip_ns 72.57\nnative_c request_roundtrip_ns 169.47\nnative_c workspace_bytes 5984\n"
+    },
+    {
+      "version": "after",
+      "run": 12,
+      "output": "native_c snapshot_ns 13.67\nnative_c event_roundtrip_ns 91.33\nnative_c request_roundtrip_ns 217.23\nnative_c workspace_bytes 5984\n"
+    },
+    {
+      "version": "after",
+      "run": 13,
+      "output": "native_c snapshot_ns 13.50\nnative_c event_roundtrip_ns 86.04\nnative_c request_roundtrip_ns 213.07\nnative_c workspace_bytes 5984\n"
+    },
+    {
+      "version": "before",
+      "run": 13,
+      "output": "native_c snapshot_ns 15.14\nnative_c event_roundtrip_ns 84.64\nnative_c request_roundtrip_ns 202.72\nnative_c workspace_bytes 5984\n"
+    },
+    {
+      "version": "before",
+      "run": 14,
+      "output": "native_c snapshot_ns 13.74\nnative_c event_roundtrip_ns 86.66\nnative_c request_roundtrip_ns 170.12\nnative_c workspace_bytes 5984\n"
+    },
+    {
+      "version": "after",
+      "run": 14,
+      "output": "native_c snapshot_ns 10.58\nnative_c event_roundtrip_ns 76.89\nnative_c request_roundtrip_ns 166.79\nnative_c workspace_bytes 5984\n"
+    },
+    {
+      "version": "after",
+      "run": 15,
+      "output": "native_c snapshot_ns 10.65\nnative_c event_roundtrip_ns 71.24\nnative_c request_roundtrip_ns 202.79\nnative_c workspace_bytes 5984\n"
+    },
+    {
+      "version": "before",
+      "run": 15,
+      "output": "native_c snapshot_ns 15.93\nnative_c event_roundtrip_ns 120.97\nnative_c request_roundtrip_ns 236.59\nnative_c workspace_bytes 5984\n"
+    },
+    {
+      "version": "before",
+      "run": 16,
+      "output": "native_c snapshot_ns 15.56\nnative_c event_roundtrip_ns 89.03\nnative_c request_roundtrip_ns 217.73\nnative_c workspace_bytes 5984\n"
+    },
+    {
+      "version": "after",
+      "run": 16,
+      "output": "native_c snapshot_ns 16.12\nnative_c event_roundtrip_ns 106.42\nnative_c request_roundtrip_ns 220.05\nnative_c workspace_bytes 5984\n"
+    },
+    {
+      "version": "after",
+      "run": 17,
+      "output": "native_c snapshot_ns 12.96\nnative_c event_roundtrip_ns 90.25\nnative_c request_roundtrip_ns 184.87\nnative_c workspace_bytes 5984\n"
+    },
+    {
+      "version": "before",
+      "run": 17,
+      "output": "native_c snapshot_ns 11.65\nnative_c event_roundtrip_ns 70.87\nnative_c request_roundtrip_ns 184.91\nnative_c workspace_bytes 5984\n"
+    },
+    {
+      "version": "before",
+      "run": 18,
+      "output": "native_c snapshot_ns 12.56\nnative_c event_roundtrip_ns 76.53\nnative_c request_roundtrip_ns 211.86\nnative_c workspace_bytes 5984\n"
+    },
+    {
+      "version": "after",
+      "run": 18,
+      "output": "native_c snapshot_ns 23.44\nnative_c event_roundtrip_ns 215.04\nnative_c request_roundtrip_ns 328.38\nnative_c workspace_bytes 5984\n"
+    },
+    {
+      "version": "after",
+      "run": 19,
+      "output": "native_c snapshot_ns 20.15\nnative_c event_roundtrip_ns 194.29\nnative_c request_roundtrip_ns 320.32\nnative_c workspace_bytes 5984\n"
+    },
+    {
+      "version": "before",
+      "run": 19,
+      "output": "native_c snapshot_ns 21.20\nnative_c event_roundtrip_ns 198.69\nnative_c request_roundtrip_ns 373.19\nnative_c workspace_bytes 5984\n"
+    },
+    {
+      "version": "before",
+      "run": 20,
+      "output": "native_c snapshot_ns 19.92\nnative_c event_roundtrip_ns 186.48\nnative_c request_roundtrip_ns 357.43\nnative_c workspace_bytes 5984\n"
+    },
+    {
+      "version": "after",
+      "run": 20,
+      "output": "native_c snapshot_ns 21.72\nnative_c event_roundtrip_ns 193.72\nnative_c request_roundtrip_ns 341.79\nnative_c workspace_bytes 5984\n"
+    }
+  ],
+  "note": "Interleaved CPU-pinned Release/O3 native tests; not Wasm import timing; desktop background load is uncontrolled.",
+  "summary": {
+    "before": {
+      "snapshot_ns": {
+        "median": 15.59,
+        "min": 11.62,
+        "max": 27.82
+      },
+      "event_roundtrip_ns": {
+        "median": 97.3,
+        "min": 70.87,
+        "max": 255.55
+      },
+      "request_roundtrip_ns": {
+        "median": 218.14,
+        "min": 169.47,
+        "max": 521.79
+      },
+      "workspace_bytes": {
+        "median": 5984.0,
+        "min": 5984.0,
+        "max": 5984.0
+      }
+    },
+    "after": {
+      "snapshot_ns": {
+        "median": 16.12,
+        "min": 10.58,
+        "max": 24.77
+      },
+      "event_roundtrip_ns": {
+        "median": 106.85,
+        "min": 71.24,
+        "max": 245.17
+      },
+      "request_roundtrip_ns": {
+        "median": 245.8,
+        "min": 166.79,
+        "max": 479.25
+      },
+      "workspace_bytes": {
+        "median": 5984.0,
+        "min": 5984.0,
+        "max": 5984.0
+      }
+    }
+  }
+}

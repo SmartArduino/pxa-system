@@ -1,0 +1,775 @@
+{
+  "before": {
+    "control_passed": true,
+    "control": {
+      "launch": {
+        "run_medians_ns": [
+          12493.0,
+          12323.0,
+          12367.5
+        ],
+        "median_ns": 12367.5
+      },
+      "steady": {
+        "run_medians_ns": [
+          12365.5,
+          12345.0,
+          12252.5
+        ],
+        "median_ns": 12345.0
+      }
+    },
+    "voxel_passed": true,
+    "voxel": {
+      "display_fps": {
+        "runs": [
+          12.601303453626636,
+          12.514507031446428,
+          12.6875623700467
+        ],
+        "median": 12.601303453626636
+      },
+      "raster_us": {
+        "runs": [
+          36684.50495049505,
+          36965.0099009901,
+          36591.46078431373
+        ],
+        "median": 36684.50495049505
+      },
+      "display_interval_us": {
+        "runs": [
+          79356.87,
+          79907.26262626263,
+          78817.34653465346
+        ],
+        "median": 79356.87
+      }
+    },
+    "memory": {
+      "launch": [
+        {
+          "sram_used": 272904,
+          "sram_peak_used": 277092,
+          "psram_used": 2919180,
+          "psram_peak_used": 2982184,
+          "sram_peak_delta": 13388,
+          "psram_peak_delta": 1543776
+        },
+        {
+          "sram_used": 273084,
+          "sram_peak_used": 277220,
+          "psram_used": 2919540,
+          "psram_peak_used": 3667892,
+          "sram_peak_delta": 6868,
+          "psram_peak_delta": 2229288
+        },
+        {
+          "sram_used": 273084,
+          "sram_peak_used": 277308,
+          "psram_used": 2919552,
+          "psram_peak_used": 3095924,
+          "sram_peak_delta": 6920,
+          "psram_peak_delta": 1657292
+        }
+      ],
+      "steady": [
+        {
+          "sram_used": 272904,
+          "sram_peak_used": 273068,
+          "psram_used": 2921300,
+          "psram_peak_used": 2924916,
+          "sram_peak_delta": 128,
+          "psram_peak_delta": 5732
+        },
+        {
+          "sram_used": 273084,
+          "sram_peak_used": 273248,
+          "psram_used": 2921656,
+          "psram_peak_used": 2923464,
+          "sram_peak_delta": 164,
+          "psram_peak_delta": 3924
+        },
+        {
+          "sram_used": 273084,
+          "sram_peak_used": 273248,
+          "psram_used": 2921668,
+          "psram_peak_used": 2925256,
+          "sram_peak_delta": 164,
+          "psram_peak_delta": 5704
+        }
+      ]
+    },
+    "stable_heap": [
+      {
+        "sram_total": 320987,
+        "sram_free": 48083,
+        "psram_total": 8358572,
+        "psram_free": 5439392
+      },
+      {
+        "sram_total": 320987,
+        "sram_free": 47903,
+        "psram_total": 8358572,
+        "psram_free": 5439032
+      },
+      {
+        "sram_total": 320987,
+        "sram_free": 47903,
+        "psram_total": 8358572,
+        "psram_free": 5439020
+      }
+    ],
+    "surface": {
+      "frame": 284160,
+      "scratch": 142080,
+      "mailbox": 147456,
+      "probe": 2112,
+      "peak_total": 575808
+    },
+    "guest_stages": [
+      {
+        "VOXEL-PIPE": {
+          "sub": 362,
+          "render": 362,
+          "visible": 362,
+          "drop": 0,
+          "queue_us": 795881,
+          "present_us": 13232000,
+          "host_us": 35725
+        },
+        "VOXEL-STAGES": {
+          "total_us": 68717,
+          "geometry_us": 23442,
+          "encode_us": 5902,
+          "hud_us": 79,
+          "submit_us": 39186,
+          "update_us": 0,
+          "samples": 242
+        }
+      },
+      {
+        "VOXEL-PIPE": {
+          "sub": 361,
+          "render": 361,
+          "visible": 361,
+          "drop": 0,
+          "queue_us": 814226,
+          "present_us": 13180000,
+          "host_us": 34815
+        },
+        "VOXEL-STAGES": {
+          "total_us": 68688,
+          "geometry_us": 23317,
+          "encode_us": 5946,
+          "hud_us": 83,
+          "submit_us": 39246,
+          "update_us": 0,
+          "samples": 241
+        }
+      },
+      {
+        "VOXEL-PIPE": {
+          "sub": 364,
+          "render": 363,
+          "visible": 363,
+          "drop": 0,
+          "queue_us": 816041,
+          "present_us": 13461000,
+          "host_us": 34846
+        },
+        "VOXEL-STAGES": {
+          "total_us": 68467,
+          "geometry_us": 23345,
+          "encode_us": 5918,
+          "hud_us": 85,
+          "submit_us": 39021,
+          "update_us": 0,
+          "samples": 244
+        }
+      }
+    ],
+    "allocator_logs": [
+      "21569\tI (21569) PxaHost: WAMR dynamic: peak=24667 current=416 linear=0 linear_peak=131072 artifact=0 events=0",
+      "21569\tI (21569) PxaHost: Activation memory: workspaces=18 blocks=3 used=13309 reserved=17923 peak_used=13309 peak_reserved=17923",
+      "23998\tI (23998) PXA_WAMR_MEMMAP: AOT mapped: ibus=0x42b20000 dbus=0x3c5c0000 request=572204 map=589824 alloc=589824 free_psram=5617288",
+      "24088\tI (24087) PxaHost: Component memory: id=main status=0 sram_delta=716 free_sram=49623 largest_sram=19456 psram_delta=1060076 free_psram=5770116 largest_psram=4980736 wamr_delta=47165 wamr_current=47581",
+      "24098\tI (24098) PxaHost: WAMR dynamic: peak=57311 current=47581 linear=393216 linear_peak=393216 artifact=0 events=128",
+      "56141\tI (56141) PxaHost: WAMR dynamic: peak=57311 current=416 linear=0 linear_peak=393216 artifact=0 events=0",
+      "56141\tI (56141) PxaHost: Activation memory: workspaces=22 blocks=3 used=22576 reserved=23078 peak_used=22576 peak_reserved=23078",
+      "59234\tI (59234) PXA_WAMR_MEMMAP: AOT mapped: ibus=0x42b20000 dbus=0x3c550000 request=572204 map=589824 alloc=589824 free_psram=5616948",
+      "59329\tI (59323) PxaHost: Component memory: id=main status=0 sram_delta=752 free_sram=49443 largest_sram=19456 psram_delta=1060088 free_psram=5769764 largest_psram=5373952 wamr_delta=47165 wamr_current=47581",
+      "59354\tI (59354) PxaHost: WAMR dynamic: peak=57311 current=47581 linear=393216 linear_peak=393216 artifact=0 events=128",
+      "91453\tI (91453) PxaHost: WAMR dynamic: peak=57311 current=416 linear=0 linear_peak=393216 artifact=0 events=0",
+      "91453\tI (91453) PxaHost: Activation memory: workspaces=22 blocks=3 used=22580 reserved=23078 peak_used=22580 peak_reserved=23078",
+      "94541\tI (94541) PXA_WAMR_MEMMAP: AOT mapped: ibus=0x42b20000 dbus=0x3c5c0000 request=572204 map=589824 alloc=589824 free_psram=5616940",
+      "94639\tI (94636) PxaHost: Component memory: id=main status=0 sram_delta=752 free_sram=49443 largest_sram=19456 psram_delta=1061984 free_psram=5767860 largest_psram=4980736 wamr_delta=47165 wamr_current=47581",
+      "94660\tI (94660) PxaHost: WAMR dynamic: peak=57311 current=47581 linear=393216 linear_peak=393216 artifact=0 events=128",
+      "126838\tI (126838) PxaHost: WAMR dynamic: peak=57311 current=416 linear=0 linear_peak=393216 artifact=0 events=0",
+      "126838\tI (126838) PxaHost: Activation memory: workspaces=22 blocks=3 used=22576 reserved=23078 peak_used=22576 peak_reserved=23078"
+    ],
+    "input_passed": true,
+    "input": {
+      "guest": {
+        "count": 403,
+        "weighted_mean_us": 5471.821339950372,
+        "run_mean_us": [
+          4683.816176470588,
+          5783.594202898551,
+          5969.062015503876
+        ],
+        "run_p95_histogram_upper_us": [
+          8000,
+          8000,
+          8000
+        ],
+        "max_us": 130913
+      },
+      "present": {
+        "count": 299,
+        "weighted_mean_us": 42822.67892976588,
+        "run_mean_us": [
+          41745.48484848485,
+          42771.73,
+          43940.05
+        ],
+        "run_p95_histogram_upper_us": [
+          54000,
+          54000,
+          54000
+        ],
+        "max_us": 178212
+      },
+      "visible": {
+        "count": 299,
+        "weighted_mean_us": 121727.5685618729,
+        "run_mean_us": [
+          120911.07070707071,
+          121535.22,
+          122728.25
+        ],
+        "run_p95_histogram_upper_us": [
+          173905,
+          246055,
+          257424
+        ],
+        "max_us": 257424
+      }
+    }
+  },
+  "after": {
+    "control_passed": true,
+    "control": {
+      "launch": {
+        "run_medians_ns": [
+          13023.0,
+          13115.0,
+          12978.5
+        ],
+        "median_ns": 13023.0
+      },
+      "steady": {
+        "run_medians_ns": [
+          12986.5,
+          12969.0,
+          13041.5
+        ],
+        "median_ns": 12986.5
+      }
+    },
+    "voxel_passed": true,
+    "voxel": {
+      "display_fps": {
+        "runs": [
+          12.524981074753596,
+          12.471273555117929,
+          12.54633271961912
+        ],
+        "median": 12.524981074753596
+      },
+      "raster_us": {
+        "runs": [
+          36544.95,
+          36951.9,
+          36727.3
+        ],
+        "median": 36727.3
+      },
+      "display_interval_us": {
+        "runs": [
+          79840.44,
+          80184.27272727272,
+          79704.56565656565
+        ],
+        "median": 79840.44
+      }
+    },
+    "memory": {
+      "launch": [
+        {
+          "sram_used": 272900,
+          "sram_peak_used": 277164,
+          "psram_used": 2918836,
+          "psram_peak_used": 3667200,
+          "sram_peak_delta": 13500,
+          "psram_peak_delta": 2228968
+        },
+        {
+          "sram_used": 273084,
+          "sram_peak_used": 277272,
+          "psram_used": 2918788,
+          "psram_peak_used": 3667168,
+          "sram_peak_delta": 6884,
+          "psram_peak_delta": 2229116
+        },
+        {
+          "sram_used": 273084,
+          "sram_peak_used": 277220,
+          "psram_used": 2919104,
+          "psram_peak_used": 3667468,
+          "sram_peak_delta": 6868,
+          "psram_peak_delta": 2229052
+        }
+      ],
+      "steady": [
+        {
+          "sram_used": 272900,
+          "sram_peak_used": 273064,
+          "psram_used": 2921008,
+          "psram_peak_used": 2924484,
+          "sram_peak_delta": 164,
+          "psram_peak_delta": 5648
+        },
+        {
+          "sram_used": 273084,
+          "sram_peak_used": 273248,
+          "psram_used": 2920904,
+          "psram_peak_used": 2924424,
+          "sram_peak_delta": 128,
+          "psram_peak_delta": 5636
+        },
+        {
+          "sram_used": 273084,
+          "sram_peak_used": 273248,
+          "psram_used": 2921224,
+          "psram_peak_used": 2923040,
+          "sram_peak_delta": 164,
+          "psram_peak_delta": 3936
+        }
+      ]
+    },
+    "stable_heap": [
+      {
+        "sram_total": 321019,
+        "sram_free": 48119,
+        "psram_total": 8358572,
+        "psram_free": 5439736
+      },
+      {
+        "sram_total": 321019,
+        "sram_free": 47935,
+        "psram_total": 8358572,
+        "psram_free": 5439784
+      },
+      {
+        "sram_total": 321019,
+        "sram_free": 47935,
+        "psram_total": 8358572,
+        "psram_free": 5439468
+      }
+    ],
+    "surface": {
+      "frame": 284160,
+      "scratch": 142080,
+      "mailbox": 147456,
+      "probe": 2112,
+      "peak_total": 575808
+    },
+    "guest_stages": [
+      {
+        "VOXEL-PIPE": {
+          "sub": 361,
+          "render": 360,
+          "visible": 360,
+          "drop": 0,
+          "queue_us": 813822,
+          "present_us": 13308000,
+          "host_us": 34780
+        },
+        "VOXEL-STAGES": {
+          "total_us": 69444,
+          "geometry_us": 24026,
+          "encode_us": 5935,
+          "hud_us": 81,
+          "submit_us": 39272,
+          "update_us": 0,
+          "samples": 241
+        }
+      },
+      {
+        "VOXEL-PIPE": {
+          "sub": 362,
+          "render": 361,
+          "visible": 361,
+          "drop": 0,
+          "queue_us": 816063,
+          "present_us": 13336000,
+          "host_us": 35355
+        },
+        "VOXEL-STAGES": {
+          "total_us": 69403,
+          "geometry_us": 24036,
+          "encode_us": 5887,
+          "hud_us": 84,
+          "submit_us": 39289,
+          "update_us": 0,
+          "samples": 242
+        }
+      },
+      {
+        "VOXEL-PIPE": {
+          "sub": 361,
+          "render": 361,
+          "visible": 361,
+          "drop": 0,
+          "queue_us": 809147,
+          "present_us": 13212000,
+          "host_us": 36840
+        },
+        "VOXEL-STAGES": {
+          "total_us": 69619,
+          "geometry_us": 24327,
+          "encode_us": 5857,
+          "hud_us": 87,
+          "submit_us": 39243,
+          "update_us": 0,
+          "samples": 241
+        }
+      }
+    ],
+    "allocator_logs": [
+      "21656\tI (21656) PxaHost: WAMR dynamic: peak=24667 current=416 linear=0 linear_peak=131072 artifact=0 events=0",
+      "21656\tI (21656) PxaHost: Activation memory: workspaces=18 blocks=3 used=13305 reserved=17923 peak_used=13305 peak_reserved=17923",
+      "23943\tI (23943) PXA_WAMR_MEMMAP: AOT mapped: ibus=0x42b20000 dbus=0x3c5c0000 request=572204 map=589824 alloc=589824 free_psram=5617680",
+      "24038\tI (24032) PxaHost: Component memory: id=main status=0 sram_delta=752 free_sram=49659 largest_sram=19456 psram_delta=1060128 free_psram=5770456 largest_psram=4980736 wamr_delta=47165 wamr_current=47581",
+      "24063\tI (24063) PxaHost: WAMR dynamic: peak=57311 current=47581 linear=393216 linear_peak=393216 artifact=0 events=128",
+      "56093\tI (56093) PxaHost: WAMR dynamic: peak=57311 current=416 linear=0 linear_peak=393216 artifact=0 events=0",
+      "56093\tI (56093) PxaHost: Activation memory: workspaces=22 blocks=3 used=22696 reserved=23078 peak_used=22696 peak_reserved=23078",
+      "59258\tI (59258) PXA_WAMR_MEMMAP: AOT mapped: ibus=0x42b20000 dbus=0x3c570000 request=572204 map=589824 alloc=589824 free_psram=5617680",
+      "59353\tI (59351) PxaHost: Component memory: id=main status=0 sram_delta=752 free_sram=49475 largest_sram=19456 psram_delta=1061944 free_psram=5768648 largest_psram=5242880 wamr_delta=47165 wamr_current=47581",
+      "59375\tI (59375) PxaHost: WAMR dynamic: peak=57311 current=47581 linear=393216 linear_peak=393216 artifact=0 events=128",
+      "91353\tI (91353) PxaHost: WAMR dynamic: peak=57311 current=416 linear=0 linear_peak=393216 artifact=0 events=0",
+      "91353\tI (91353) PxaHost: Activation memory: workspaces=22 blocks=3 used=22704 reserved=23078 peak_used=22704 peak_reserved=23078",
+      "94436\tI (94436) PXA_WAMR_MEMMAP: AOT mapped: ibus=0x42b20000 dbus=0x3c590000 request=572204 map=589824 alloc=589824 free_psram=5617352",
+      "94526\tI (94525) PxaHost: Component memory: id=main status=0 sram_delta=752 free_sram=49475 largest_sram=19456 psram_delta=1060084 free_psram=5770172 largest_psram=5111808 wamr_delta=47165 wamr_current=47581",
+      "94560\tI (94560) PxaHost: WAMR dynamic: peak=57311 current=47581 linear=393216 linear_peak=393216 artifact=0 events=128",
+      "126394\tI (126394) PxaHost: WAMR dynamic: peak=57311 current=416 linear=0 linear_peak=393216 artifact=0 events=0",
+      "126394\tI (126394) PxaHost: Activation memory: workspaces=22 blocks=3 used=22700 reserved=23078 peak_used=22700 peak_reserved=23078"
+    ],
+    "input_passed": true,
+    "input": {
+      "guest": {
+        "count": 386,
+        "weighted_mean_us": 4766.756476683938,
+        "run_mean_us": [
+          4679.573643410853,
+          4237.9384615384615,
+          5396.622047244095
+        ],
+        "run_p95_histogram_upper_us": [
+          8000,
+          8000,
+          8000
+        ],
+        "max_us": 118572
+      },
+      "present": {
+        "count": 297,
+        "weighted_mean_us": 42597.42760942761,
+        "run_mean_us": [
+          42093.53535353536,
+          41648.0306122449,
+          44026.69
+        ],
+        "run_p95_histogram_upper_us": [
+          54000,
+          54000,
+          58000
+        ],
+        "max_us": 165636
+      },
+      "visible": {
+        "count": 297,
+        "weighted_mean_us": 121580.69023569024,
+        "run_mean_us": [
+          121668.72727272728,
+          120738.8163265306,
+          122318.57
+        ],
+        "run_p95_histogram_upper_us": [
+          177886,
+          157637,
+          246852
+        ],
+        "max_us": 246852
+      }
+    }
+  },
+  "call": {
+    "control_passed": true,
+    "control": {
+      "launch": {
+        "run_medians_ns": [
+          10522.5,
+          10463.5,
+          10487.5
+        ],
+        "median_ns": 10487.5
+      },
+      "steady": {
+        "run_medians_ns": [
+          10356.5,
+          10512.5,
+          10497.5
+        ],
+        "median_ns": 10497.5
+      }
+    },
+    "voxel_passed": true,
+    "voxel": {
+      "display_fps": {
+        "runs": [
+          12.397526305296724,
+          12.493659149265952,
+          12.50782054638203
+        ],
+        "median": 12.493659149265952
+      },
+      "raster_us": {
+        "runs": [
+          36577.83838383838,
+          36622.91,
+          36719.81188118812
+        ],
+        "median": 36622.91
+      },
+      "display_interval_us": {
+        "runs": [
+          80661.25252525252,
+          80040.60204081633,
+          79949.9797979798
+        ],
+        "median": 80040.60204081633
+      }
+    },
+    "memory": {
+      "launch": [
+        {
+          "sram_used": 272948,
+          "sram_peak_used": 277100,
+          "psram_used": 2919640,
+          "psram_peak_used": 2983796,
+          "sram_peak_delta": 13424,
+          "psram_peak_delta": 1544548
+        },
+        {
+          "sram_used": 273128,
+          "sram_peak_used": 277356,
+          "psram_used": 2919576,
+          "psram_peak_used": 2983632,
+          "sram_peak_delta": 6996,
+          "psram_peak_delta": 1544236
+        },
+        {
+          "sram_used": 273092,
+          "sram_peak_used": 277280,
+          "psram_used": 2919952,
+          "psram_peak_used": 3668324,
+          "sram_peak_delta": 6920,
+          "psram_peak_delta": 2228600
+        }
+      ],
+      "steady": [
+        {
+          "sram_used": 272912,
+          "sram_peak_used": 273076,
+          "psram_used": 2921756,
+          "psram_peak_used": 2925336,
+          "sram_peak_delta": 128,
+          "psram_peak_delta": 5696
+        },
+        {
+          "sram_used": 273092,
+          "sram_peak_used": 273216,
+          "psram_used": 2921692,
+          "psram_peak_used": 2925300,
+          "sram_peak_delta": 124,
+          "psram_peak_delta": 5724
+        },
+        {
+          "sram_used": 273092,
+          "sram_peak_used": 273256,
+          "psram_used": 2922040,
+          "psram_peak_used": 2925664,
+          "sram_peak_delta": 164,
+          "psram_peak_delta": 5712
+        }
+      ]
+    },
+    "stable_heap": [
+      {
+        "sram_total": 321019,
+        "sram_free": 48071,
+        "psram_total": 8358572,
+        "psram_free": 5438932
+      },
+      {
+        "sram_total": 321019,
+        "sram_free": 47891,
+        "psram_total": 8358572,
+        "psram_free": 5438996
+      },
+      {
+        "sram_total": 321019,
+        "sram_free": 47927,
+        "psram_total": 8358572,
+        "psram_free": 5438620
+      }
+    ],
+    "surface": {
+      "frame": 284160,
+      "scratch": 142080,
+      "mailbox": 147456,
+      "probe": 2112,
+      "peak_total": 575808
+    },
+    "guest_stages": [
+      {
+        "VOXEL-PIPE": {
+          "sub": 361,
+          "render": 361,
+          "visible": 360,
+          "drop": 0,
+          "queue_us": 820786,
+          "present_us": 13083000,
+          "host_us": 44572
+        },
+        "VOXEL-STAGES": {
+          "total_us": 70845,
+          "geometry_us": 25620,
+          "encode_us": 5926,
+          "hud_us": 82,
+          "submit_us": 39102,
+          "update_us": 0,
+          "samples": 241
+        }
+      },
+      {
+        "VOXEL-PIPE": {
+          "sub": 361,
+          "render": 361,
+          "visible": 361,
+          "drop": 0,
+          "queue_us": 784528,
+          "present_us": 12903000,
+          "host_us": 36613
+        },
+        "VOXEL-STAGES": {
+          "total_us": 70227,
+          "geometry_us": 25430,
+          "encode_us": 5978,
+          "hud_us": 84,
+          "submit_us": 38620,
+          "update_us": 0,
+          "samples": 241
+        }
+      },
+      {
+        "VOXEL-PIPE": {
+          "sub": 361,
+          "render": 361,
+          "visible": 361,
+          "drop": 0,
+          "queue_us": 800576,
+          "present_us": 12840000,
+          "host_us": 36352
+        },
+        "VOXEL-STAGES": {
+          "total_us": 70296,
+          "geometry_us": 25444,
+          "encode_us": 5957,
+          "hud_us": 77,
+          "submit_us": 38708,
+          "update_us": 0,
+          "samples": 241
+        }
+      }
+    ],
+    "allocator_logs": [
+      "22328\tI (22328) PxaHost: WAMR dynamic: peak=24145 current=416 linear=0 linear_peak=131072 artifact=0 events=0",
+      "22328\tI (22328) PxaHost: Activation memory: workspaces=18 blocks=3 used=13314 reserved=17924 peak_used=13314 peak_reserved=17924",
+      "24761\tI (24761) PXA_WAMR_MEMMAP: AOT mapped: ibus=0x42b20000 dbus=0x3c5c0000 request=571064 map=589824 alloc=589824 free_psram=5616340",
+      "24860\tI (24858) PxaHost: Component memory: id=main status=0 sram_delta=752 free_sram=49647 largest_sram=19456 psram_delta=1061464 free_psram=5767784 largest_psram=4980736 wamr_delta=46643 wamr_current=47059",
+      "24883\tI (24883) PxaHost: WAMR dynamic: peak=56757 current=47059 linear=393216 linear_peak=393216 artifact=0 events=128",
+      "56917\tI (56890) PxaHost: WAMR dynamic: peak=56757 current=416 linear=0 linear_peak=393216 artifact=0 events=0",
+      "56918\tI (56917) PxaHost: Activation memory: workspaces=22 blocks=3 used=22736 reserved=23090 peak_used=22736 peak_reserved=23090",
+      "59984\tI (59984) PXA_WAMR_MEMMAP: AOT mapped: ibus=0x42b20000 dbus=0x3c550000 request=571064 map=589824 alloc=589824 free_psram=5616428",
+      "60074\tI (60072) PxaHost: Component memory: id=main status=0 sram_delta=752 free_sram=49467 largest_sram=19456 psram_delta=1059572 free_psram=5769760 largest_psram=5373952 wamr_delta=46643 wamr_current=47059",
+      "92284\tI (92284) PxaHost: WAMR dynamic: peak=56757 current=416 linear=0 linear_peak=393216 artifact=0 events=0",
+      "92284\tI (92284) PxaHost: Activation memory: workspaces=22 blocks=3 used=22724 reserved=23090 peak_used=22724 peak_reserved=23090",
+      "95375\tI (95375) PXA_WAMR_MEMMAP: AOT mapped: ibus=0x42b20000 dbus=0x3c590000 request=571064 map=589824 alloc=589824 free_psram=5616032",
+      "95471\tI (95464) PxaHost: Component memory: id=main status=0 sram_delta=752 free_sram=49467 largest_sram=19456 psram_delta=1059600 free_psram=5769340 largest_psram=5111808 wamr_delta=46643 wamr_current=47059",
+      "95496\tI (95496) PxaHost: WAMR dynamic: peak=56757 current=47059 linear=393216 linear_peak=393216 artifact=0 events=128",
+      "127689\tI (127689) PxaHost: WAMR dynamic: peak=56757 current=416 linear=0 linear_peak=393216 artifact=0 events=0",
+      "127689\tI (127689) PxaHost: Activation memory: workspaces=22 blocks=3 used=22724 reserved=23090 peak_used=22724 peak_reserved=23090"
+    ],
+    "input_passed": true,
+    "input": {
+      "guest": {
+        "count": 380,
+        "weighted_mean_us": 5443.534210526316,
+        "run_mean_us": [
+          5275.841269841269,
+          5375.792,
+          5672.968992248062
+        ],
+        "run_p95_histogram_upper_us": [
+          8000,
+          8000,
+          8000
+        ],
+        "max_us": 122385
+      },
+      "present": {
+        "count": 298,
+        "weighted_mean_us": 44230.721476510065,
+        "run_mean_us": [
+          43402.27272727273,
+          44544.90909090909,
+          44739.84
+        ],
+        "run_p95_histogram_upper_us": [
+          58000,
+          58000,
+          58000
+        ],
+        "max_us": 169470
+      },
+      "visible": {
+        "count": 298,
+        "weighted_mean_us": 121982.59395973154,
+        "run_mean_us": [
+          120971.77777777778,
+          122532.32323232324,
+          122439.07
+        ],
+        "run_p95_histogram_upper_us": [
+          177596,
+          194655,
+          235520
+        ],
+        "max_us": 235520
+      }
+    }
+  }
+}

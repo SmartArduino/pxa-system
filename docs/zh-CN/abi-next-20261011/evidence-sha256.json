@@ -1,0 +1,30 @@
+{
+  "artifacts.json": {
+    "size": 706,
+    "sha256": "3e71a14cd11431524461eb14a1cf5efdc94a18252f4dbdbec720e7da5f218697"
+  },
+  "baseline.json": {
+    "size": 3064,
+    "sha256": "659185641a3f1cd3815d59830228a1ed8e94f557f945ca4d1bd9c860fe6c4eb5"
+  },
+  "control-final.json": {
+    "size": 65221,
+    "sha256": "d47df68852a9232996a2e7527115e8b7aaf9825146f4d40e1671b4726ab3e7a7"
+  },
+  "device-cleanup.json": {
+    "size": 1467,
+    "sha256": "d74b7273c865afe2305ed27d252fccca1b723a30f4035d8f91ee3f3a884ee319"
+  },
+  "device-restored.json": {
+    "size": 8545,
+    "sha256": "8df836542a21a04920cae3854c6f4d26dc685f00ec5698e23bfd56cd35b5ff4d"
+  },
+  "restored-counter.png": {
+    "size": 3751,
+    "sha256": "44e30965d2b3d4e2fbebf73e34e6d40e845d119423473168e6214aceb309286f"
+  },
+  "validation.json": {
+    "size": 3188,
+    "sha256": "d3376d4037d4a7a196b92c7b2b6f60dd5b74380f2d0a2943dc5af244e2d67b80"
+  }
+}

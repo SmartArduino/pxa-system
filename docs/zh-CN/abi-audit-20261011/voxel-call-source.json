@@ -1,0 +1,64 @@
+{
+  "format": "pxa-package-source-0.1",
+  "min_sdk": [
+    1,
+    1
+  ],
+  "target_sdk": [
+    1,
+    1
+  ],
+  "compile_sdk": [
+    1,
+    1
+  ],
+  "id": "pxa-abi-voxel-call-probe",
+  "version": "0.12.2",
+  "release_sequence": 15,
+  "name": "ABI voxel direct probe",
+  "description": "First-person voxel sandbox on the PXA C++26 SDK with depth-tested scanline rendering, optional bounded-error material paths and touch controls",
+  "build": {
+    "system": "cmake",
+    "source_dir": ".",
+    "linear_memory": {
+      "maximum_bytes": 2097152,
+      "pinned": false
+    }
+  },
+  "components": [
+    {
+      "id": "main",
+      "kind": "ui",
+      "cmake_target": "pxa_main",
+      "services": [
+        "window",
+        "log",
+        "clock",
+        "assets",
+        "game-render",
+        "ui",
+        "surface",
+        "fs",
+        "storage",
+        "audio"
+      ],
+      "wasi": {
+        "version": "preview1",
+        "libc": "wasi-libc",
+        "features": [
+          "monotonic-clock",
+          "random",
+          "wall-clock"
+        ]
+      }
+    }
+  ],
+  "permissions": [
+    {
+      "name": "audio.playback",
+      "scope": "media",
+      "required": false
+    }
+  ],
+  "icon": "assets/icon.png"
+}
