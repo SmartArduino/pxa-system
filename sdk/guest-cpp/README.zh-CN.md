@@ -623,6 +623,9 @@ CanvasRef 必须比页面活得久，挂载成功才生效，卸载自动失效�
 不申请 Canvas 绘图缓冲或全屏 alpha 平面。回调收到拥有标量数据的
 `CanvasPointer`，坐标有符号，phase 为 down/move/up/cancel，包含 pointer_id；
 应用应按 ID 分别管理手指，处理 cancel，并在后台清除持续操作。
+可选的 `ui::PointerCapture` 为每个操作捕获一根手指，固定 16 B、无堆分配，
+匹配页面 generation 和事件节点；`action()` 提供 `PointerPhase` 强类型枚举。
+双指行走/转向示例与生命周期规则见 [多点触摸](MULTITOUCH.zh-CN.md)。
 
 有界任务池通过 `task_pool_stats()` 报告预留字节、槽大小、当前/峰值槽数和
 分配失败数。`PXA_COROUTINE_SLOT_BYTES` 默认 1024，`PXA_COROUTINE_SLOT_COUNT`

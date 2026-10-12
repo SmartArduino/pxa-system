@@ -7,6 +7,43 @@
 extern "C" std::int32_t pxa_test_control(const std::uint8_t*, std::uint32_t) { return 0; }
 extern "C" std::int32_t pxa_io(std::uint64_t, std::uint32_t, std::uint8_t*, std::uint32_t) { return -3; }
 
+constexpr bool capture_two_fingers() {
+    using namespace pxa::ui;
+    PointerCapture walk, look;
+    CanvasPointer first{.surface = 1, .node = 2, .generation = 3,
+                        .pointer_id = 17, .phase = pointer_phase_down};
+    auto second = first;
+    second.pointer_id = 255;
+    if (!walk.try_capture(first) || !look.try_capture(second)) return false;
+    if (walk.try_capture(second) || walk.owns(second) || look.owns(first)) return false;
+    first.phase = pointer_phase_move;
+    first.x = 250; // Crossing a control boundary does not change ownership.
+    if (!walk.owns(first) || walk.release(first)) return false;
+    auto unrelated = first;
+    ++unrelated.node;
+    if (walk.owns(unrelated)) return false;
+    unrelated = first; ++unrelated.surface;
+    if (walk.owns(unrelated)) return false;
+    unrelated = first; ++unrelated.generation;
+    if (walk.owns(unrelated)) return false;
+    unrelated = first; unrelated.phase = 4;
+    if (walk.owns(unrelated)) return false;
+    first.phase = pointer_phase_up;
+    if (!first.ended() || !walk.release(first) || walk.release(first) ||
+        walk.active() || !look.owns(second)) return false;
+    second.phase = pointer_phase_cancel;
+    if (!second.ended() || !look.release(second) || look.active()) return false;
+    if (look.try_capture(second)) return false;
+    second.phase = pointer_phase_down;
+    if (!walk.try_capture(second)) return false; // ID reuse after release.
+    walk.reset(); // Background/unmount without an UP.
+    if (walk.active() || walk.owns(second)) return false;
+    second.generation = 0;
+    return !walk.try_capture(second);
+}
+static_assert(sizeof(pxa::ui::PointerCapture) == 16);
+static_assert(capture_two_fingers());
+
 int main() {
     using namespace pxa::ui;
     pxa::Transport transport;

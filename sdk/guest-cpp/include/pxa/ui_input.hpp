@@ -10,6 +10,8 @@ inline constexpr std::uint8_t pointer_phase_move = 1;
 inline constexpr std::uint8_t pointer_phase_up = 2;
 inline constexpr std::uint8_t pointer_phase_cancel = 3;
 
+enum class PointerPhase : std::uint8_t { down, move, up, cancel };
+
 struct CanvasPointer {
     std::uint32_t surface = 0;
     std::uint32_t node = 0;
@@ -21,6 +23,53 @@ struct CanvasPointer {
     std::uint16_t buttons = 0;
     std::uint8_t pointer_id = 0;
     std::uint8_t phase = 0;
+
+    constexpr PointerPhase action() const noexcept {
+        return static_cast<PointerPhase>(phase);
+    }
+    constexpr bool ended() const noexcept {
+        return action() == PointerPhase::up || action() == PointerPhase::cancel;
+    }
+};
+
+// One gesture owner, scoped to the subscribing surface/node/page generation.
+// Compose independent captures for walking, looking, buttons, etc. No event
+// storage or allocation: applications retain only the positions they need.
+// Reset on background/unmount, where a final pointer event is not guaranteed.
+class PointerCapture {
+public:
+    [[nodiscard]] constexpr bool try_capture(const CanvasPointer& event) noexcept {
+        if (active() || event.action() != PointerPhase::down ||
+            !event.surface || !event.node || !event.generation) return false;
+        surface_ = event.surface;
+        node_ = event.node;
+        generation_ = event.generation;
+        pointer_id_ = event.pointer_id;
+        return true;
+    }
+
+    [[nodiscard]] constexpr bool owns(const CanvasPointer& event) const noexcept {
+        return active() && event.phase <= pointer_phase_cancel &&
+            surface_ == event.surface && node_ == event.node &&
+            generation_ == event.generation && pointer_id_ == event.pointer_id;
+    }
+
+    // Both UP and CANCEL release ownership. Inspect action() first when only
+    // a completed UP should activate an action; cancellation is never a tap.
+    constexpr bool release(const CanvasPointer& event) noexcept {
+        if (!event.ended() || !owns(event)) return false;
+        reset();
+        return true;
+    }
+
+    [[nodiscard]] constexpr bool active() const noexcept { return generation_ != 0; }
+    constexpr void reset() noexcept { generation_ = 0; }
+
+private:
+    std::uint32_t surface_ = 0;
+    std::uint32_t node_ = 0;
+    std::uint32_t generation_ = 0;
+    std::uint8_t pointer_id_ = 0;
 };
 
 // The result owns its scalars. Raw users must check the page generation;
