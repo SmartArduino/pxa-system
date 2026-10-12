@@ -14,7 +14,7 @@ extern "C" {
 
 #define PXA_AUDIO_SERVICE_ID UINT16_C(10)
 #define PXA_AUDIO_SERVICE_MAJOR UINT16_C(0)
-#define PXA_AUDIO_SERVICE_MINOR UINT16_C(8)
+#define PXA_AUDIO_SERVICE_MINOR UINT16_C(9)
 #define PXA_AUDIO_SERVICE_PATCH UINT16_C(0)
 #define PXA_AUDIO_OPEN_SESSION UINT16_C(1)
 #define PXA_AUDIO_COMMIT_GRAPH UINT16_C(2)
@@ -30,6 +30,9 @@ extern "C" {
 #define PXA_AUDIO_IO_PLAY_MUSIC UINT32_C(0x104)
 #define PXA_AUDIO_IO_CONTROL_SOUND UINT32_C(0x105)
 #define PXA_AUDIO_IO_CONTROL_MUSIC UINT32_C(0x106)
+#define PXA_AUDIO_IO_PLAY_EFFECT UINT32_C(0x107)
+#define PXA_AUDIO_IO_STOP_EFFECT UINT32_C(0x108)
+#define PXA_AUDIO_EFFECT_LAYERS 8u
 #define PXA_AUDIO_SOUND_TRACKS 6u
 #define PXA_AUDIO_SOUND_APPEND 255u
 #define PXA_AUDIO_PLAYBACK_EVENT UINT16_C(0x8001)
@@ -153,6 +156,10 @@ typedef struct {
         const pxa_audio_sound_options_t *);
     pxa_status_t (*control_sound)(void *, uint64_t, const pxa_audio_sound_control_t *);
     pxa_audio_control_asset_fn control_music;
+    /* Atomic, parallel synthesized layers; track 255 is independent, 0..5
+     * replaces that effect track. No deferred event queue. */
+    pxa_status_t (*play_effect)(void *, uint64_t, const pxa_audio_tone_t *, size_t, uint8_t);
+    pxa_status_t (*stop_effect)(void *, uint64_t, uint8_t);
 } pxa_audio_backend_t;
 
 typedef struct {

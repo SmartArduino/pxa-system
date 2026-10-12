@@ -971,6 +971,22 @@ static pxa_status_t audio_play_tone(void *context,
     return PXA_STATUS_OK;
 }
 
+static unsigned audio_effect_calls, audio_effect_stops;
+static pxa_status_t audio_play_effect(void *context, uint64_t session,
+    const pxa_audio_tone_t *tones, size_t count, uint8_t track) {
+    test_audio_backend_t *backend = context;
+    assert(session == backend->session && count == 2 && track == 3);
+    assert(tones[0].frequency_hz == 440 && tones[1].delay_ms == 40);
+    ++audio_effect_calls;
+    return audio_effect_calls == 2 ? PXA_STATUS_WOULD_BLOCK : PXA_STATUS_OK;
+}
+static pxa_status_t audio_stop_effect(void *context, uint64_t session, uint8_t track) {
+    test_audio_backend_t *backend = context;
+    assert(session == backend->session && track == 3);
+    ++audio_effect_stops;
+    return PXA_STATUS_OK;
+}
+
 static pxa_status_t audio_play_asset(void *context,
                                      uint64_t provider_session,
                                      const pxa_audio_asset_t *asset) {
@@ -5417,6 +5433,8 @@ static void test_audio_service(void) {
     audio_config.backend.query = audio_query;
     audio_config.backend.flush = audio_flush;
     audio_config.backend.play_tone = audio_play_tone;
+    audio_config.backend.play_effect = audio_play_effect;
+    audio_config.backend.stop_effect = audio_stop_effect;
     audio_config.backend.play_asset = audio_play_asset;
     audio_config.backend.control_asset = audio_control_asset;
     audio_config.backend.close = audio_close;
@@ -5555,6 +5573,23 @@ static void test_audio_service(void) {
                                sizeof(enveloped)) ==
                    PXA_STATUS_INVALID_ARGUMENT);
         }
+        uint8_t effect[32] = {2, 3, 0, 0};
+        uint8_t layer[14] = {0xb8, 1, 80, 0, 0, 0xfa, PXA_AUDIO_TONE_TRIANGLE, 0, 5, 0, 30, 0, 40, 0};
+        memcpy(effect + 4, layer, 14); memcpy(effect + 18, layer, 14);
+        assert(dispatch_io(test.runtime, component, reused_session_handle,
+            PXA_AUDIO_IO_PLAY_EFFECT, effect, sizeof(effect)) == sizeof(effect));
+        assert(audio_effect_calls == 1);
+        effect[18 + 7] = 1;
+        assert(dispatch_io(test.runtime, component, reused_session_handle,
+            PXA_AUDIO_IO_PLAY_EFFECT, effect, sizeof(effect)) == PXA_STATUS_INVALID_ARGUMENT);
+        assert(audio_effect_calls == 1); /* don't submit a valid first layer */
+        effect[18 + 7] = 0;
+        assert(dispatch_io(test.runtime, component, reused_session_handle,
+            PXA_AUDIO_IO_PLAY_EFFECT, effect, sizeof(effect)) == PXA_STATUS_WOULD_BLOCK);
+        uint8_t stop[4] = {3};
+        assert(dispatch_io(test.runtime, component, reused_session_handle,
+            PXA_AUDIO_IO_STOP_EFFECT, stop, sizeof(stop)) == sizeof(stop));
+        assert(audio_effect_stops == 1);
         tone[7] = 1;
         assert(dispatch_io(test.runtime, component, reused_session_handle,
                            PXA_AUDIO_IO_PLAY_TONE, tone, sizeof(tone)) ==

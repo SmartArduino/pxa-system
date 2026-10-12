@@ -5,18 +5,34 @@
 extern "C" {
 #endif
 /* Host-side, allocation-free renderer. Caller serializes access. PCM and
- * tones share a FIFO per voice; different voices advance on one sample clock. */
+ * legacy tones share a FIFO per voice. Effects run in parallel on the same
+ * sample clock, using free FIFO slots rather than allocating another pool. */
 #define PXA_AUDIO_MIXER_VOICES 3
 #define PXA_AUDIO_MIXER_PACKETS 4
 #define PXA_AUDIO_MIXER_FRAME 320
 #define PXA_AUDIO_MIXER_RATE 16000
 
 typedef struct {
-    uint32_t length, position, phase, noise;
-    float gain;
     pxa_audio_tone_t tone;
-    uint8_t is_tone;
-    int16_t pcm[PXA_AUDIO_MIXER_FRAME];
+    uint32_t step;
+    float gain, attack_inverse, release_inverse;
+} pxa_audio_mixer_layer_t;
+
+enum { PXA_AUDIO_PACKET_PCM, PXA_AUDIO_PACKET_TONE, PXA_AUDIO_PACKET_EFFECT };
+
+typedef struct {
+    uint32_t length, position, phase, noise;
+    union {
+        pxa_audio_tone_t tone;
+        struct { uint8_t track, count; } effect;
+    } meta;
+    uint8_t kind;
+    uint8_t next; /* FIFO link, PACKETS is the end sentinel. */
+    union {
+        int16_t pcm[PXA_AUDIO_MIXER_FRAME];
+        struct { uint32_t step; float gain; } oscillator;
+        pxa_audio_mixer_layer_t layers[PXA_AUDIO_EFFECT_LAYERS];
+    } data;
 } pxa_audio_mixer_packet_t;
 typedef struct {
     float b0, b1, b2, a1, a2, z1, z2;
@@ -39,6 +55,9 @@ pxa_status_t pxa_audio_mixer_write(pxa_audio_mixer_voice_t *voice,
                                   const uint8_t *pcm, size_t bytes);
 pxa_status_t pxa_audio_mixer_tone(pxa_audio_mixer_voice_t *voice,
                                  const pxa_audio_tone_t *tone);
+pxa_status_t pxa_audio_mixer_effect(pxa_audio_mixer_voice_t *voice,
+    const pxa_audio_tone_t *tones, size_t count, uint8_t track);
+pxa_status_t pxa_audio_mixer_stop_effect(pxa_audio_mixer_voice_t *voice, uint8_t track);
 /* Always writes capacity samples (zero padded); returns non-padding extent.
  * accepted_samples counts renderer consumption, not physical DAC playback. */
 size_t pxa_audio_mixer_render(pxa_audio_mixer_t *mixer, int16_t *out,

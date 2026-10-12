@@ -3,6 +3,7 @@
 #include <assert.h>
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 static pxa_audio_mixer_t mixer;
 static int16_t output[320];
@@ -20,7 +21,72 @@ static void fill(unsigned voice, int16_t value, unsigned n) {
     }
     assert(pxa_audio_mixer_write(&mixer.voices[voice], pcm, n*2) == PXA_STATUS_OK);
 }
+static void effects_test(void) {
+    memset(&mixer, 0, sizeof(mixer));
+    pxa_audio_mixer_reset(&mixer.voices[0]);
+    pxa_audio_graph_t graph = {.route=PXA_AUDIO_ROUTE_SPEAKER};
+    assert(pxa_audio_mixer_commit(&mixer.voices[0], &graph) == PXA_STATUS_OK);
+    fill(0, 11, 320);
+    assert(pxa_audio_mixer_render(&mixer, output, 320) == 320);
+    assert(!mixer.voices[1].state.queued_samples && !mixer.voices[2].state.queued_samples);
+    assert(pxa_audio_mixer_render(&mixer, output, 320) == 0);
+    reset();
+    pxa_audio_tone_t tones[2] = {
+        {.frequency_hz=1000, .duration_ms=100, .gain_db_q8=-12*256},
+        {.frequency_hz=1000, .duration_ms=100, .delay_ms=40, .gain_db_q8=-12*256}};
+    pxa_audio_mixer_voice_t *v = &mixer.voices[0];
+    assert(pxa_audio_mixer_effect(v, tones, 2, 0) == PXA_STATUS_OK);
+    assert(v->count == 1 && v->state.queued_samples == 2240);
+    pxa_audio_mixer_render(&mixer, output, 320);
+    const int16_t single = output[4];
+    assert(single > 8200 && single < 8250);
+    pxa_audio_mixer_render(&mixer, output, 320);
+    pxa_audio_mixer_render(&mixer, output, 320);
+    assert(abs(output[4] - 2 * single) <= 1); /* exact 40ms relative onset */
+    assert(v->state.queued_samples == 1280);
+    tones[1].frequency_hz = 0;
+    pxa_audio_mixer_voice_t before = *v;
+    assert(pxa_audio_mixer_effect(v, tones, 2, 0) == PXA_STATUS_INVALID_ARGUMENT);
+    assert(!memcmp(v, &before, sizeof(before))); /* invalid replacement is atomic */
+    tones[1].frequency_hz = 1000;
+    assert(pxa_audio_mixer_effect(v, tones, 2, 0) == PXA_STATUS_OK);
+    assert(v->count == 1 && v->state.queued_samples == 2240);
+    for (unsigned track = 1; track < 4; ++track)
+        assert(pxa_audio_mixer_effect(v, tones, 2, track) == PXA_STATUS_OK);
+    before = *v;
+    assert(pxa_audio_mixer_effect(v, tones, 2, 255) == PXA_STATUS_WOULD_BLOCK);
+    assert(!memcmp(v, &before, sizeof(before)));
+    assert(pxa_audio_mixer_effect(v, tones, 2, 0) == PXA_STATUS_OK); /* replace while full */
+    for (unsigned track = 0; track < 4; ++track)
+        assert(pxa_audio_mixer_stop_effect(v, track) == PXA_STATUS_OK);
+    assert(!v->count && !v->state.queued_samples);
+    assert(pxa_audio_mixer_render(&mixer, output, 320) == 0);
+    /* PCM remains FIFO through holes occupied/released by effects. */
+    reset();
+    fill(0, 11, 1);
+    assert(pxa_audio_mixer_effect(v, tones, 2, 0) == PXA_STATUS_OK);
+    fill(0, 22, 1);
+    assert(pxa_audio_mixer_stop_effect(v, 0) == PXA_STATUS_OK);
+    fill(0, 33, 1);
+    assert(pxa_audio_mixer_render(&mixer, output, 320) == 3);
+    assert(output[0] == 11 && output[1] == 22 && output[2] == 33);
+    /* Noise, delay, phase and envelope must not depend on block size. */
+    reset();
+    tones[0].waveform = PXA_AUDIO_TONE_NOISE;
+    tones[0].attack_ms = 5; tones[0].release_ms = 10;
+    assert(pxa_audio_mixer_effect(v, tones, 2, 0) == PXA_STATUS_OK);
+    pxa_audio_mixer_t saved = mixer;
+    int16_t whole[320], chunked[320];
+    pxa_audio_mixer_render(&mixer, whole, 320);
+    mixer = saved;
+    for (unsigned i = 0; i < 320; ++i)
+        pxa_audio_mixer_render(&mixer, chunked + i, 1);
+    assert(!memcmp(whole, chunked, sizeof(whole)));
+    pxa_audio_mixer_flush(v);
+    assert(pxa_audio_mixer_render(&mixer, output, 320) == 0);
+}
 int main(void) {
+    effects_test();
     reset(); fill(0, 20000, 320); fill(1, 20000, 320); fill(2, -10000, 160);
     assert(pxa_audio_mixer_render(&mixer, output, 320) == 320);
     assert(output[0] == 30000 && output[159] == 30000 && output[160] == 32767);

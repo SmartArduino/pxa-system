@@ -1,6 +1,6 @@
-# PXA Audio Draft 0.8
+# PXA Audio Draft 0.9
 
-Audio 0.8 defines a permission-bound session and an atomic, App-owned playback
+Audio 0.9 defines a permission-bound session and an atomic, App-owned playback
 graph control plane. `open-session` requires an `audio.playback` Permission
 Handle whose exact scope is `media`. It returns a Component-owned audio-graph
 Handle plus the Host-selected PCM format. v1 currently defines only the media
@@ -178,3 +178,41 @@ memory budgets. Encoding 5 unsigned eight-bit PCM remains limited to one second.
 Long loops may need a larger bounded asset-cache ceiling; no allocation, file
 read or codec processing occurs on prepared-voice rendering. Sound commands
 return admission status; unlike music, they do not emit readiness/end events.
+
+
+## Synthesized effect groups (0.9)
+
+`PLAY_EFFECT` (`0x107`) submits `u8 layer_count`, `u8 track`, two zero
+reserved bytes, followed by 1..8 existing 14-byte tone descriptors. All layers
+share a starting sample, and their delays are relative to that sample. The
+entire group is validated and accepted atomically; an invalid layer or exhausted
+budget changes nothing. `WOULD_BLOCK` retains no pending event.
+
+Track 255 creates an independent effect. Tracks 0..5 atomically replace the
+previous synthesized effect on that track, including at full capacity. These
+tracks are separate from prepared PCM asset sound tracks. `STOP_EFFECT`
+(`0x108`) takes a track byte and three zero reserved bytes; stopping an inactive
+track succeeds. Flush/close cancel all groups. Suspension pauses their clock.
+Already submitted physical output cannot be retroactively replaced or stopped.
+
+PCM and legacy `PLAY_TONE` retain ordered FIFO semantics. Effect groups use
+otherwise free FIFO slots and run alongside that FIFO. ESP and SDL currently
+share four slots per session, with three sessions, without another allocation.
+The maximum number of named tracks is not a guarantee of six simultaneous
+slots. Applications should handle admission errors and choose their own
+replacement categories rather than retrying obsolete game events.
+
+For state accounting, one group submits its longest layer extent, including
+delay, as one timeline; `queued_samples` sums remaining timelines (PCM FIFO
+and parallel groups), not estimated wall time to silence. Replaced/cancelled
+samples leave the queue without increasing `accepted_samples`. Accepted still
+means renderer/sink submission, not speaker onset. Oscillator phase and
+pseudo-random white noise are position-derived, so output block size and sink
+retry do not change the waveform. Noise uses a deterministic integer hash;
+legacy FIFO tones retain their previous noise generator.
+
+C++: `session.effect(tones)` plays independently,
+`session.effect(tones, 0)` replaces track zero, and
+`session.stop_effect(0)` stops it. The span is borrowed only during the call;
+the Host copies compact descriptors before returning. No hot-path allocation
+or decoding is required.

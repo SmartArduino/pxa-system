@@ -2410,6 +2410,26 @@ static pxa_status_t audio_play_tone(void *context, uint64_t session,
     return status;
 }
 
+static pxa_status_t audio_play_effect(void *context, uint64_t session,
+    const pxa_audio_tone_t *tones, size_t count, uint8_t track) {
+    product_host_t *host = context;
+    int voice = audio_voice(host, session);
+    if (voice < 0) return PXA_STATUS_NOT_FOUND;
+    SDL_LockAudioDevice(host->audio_device);
+    pxa_status_t status = pxa_audio_mixer_effect(&host->audio_mixer.voices[voice], tones, count, track);
+    SDL_UnlockAudioDevice(host->audio_device);
+    return status;
+}
+static pxa_status_t audio_stop_effect(void *context, uint64_t session, uint8_t track) {
+    product_host_t *host = context;
+    int voice = audio_voice(host, session);
+    if (voice < 0) return PXA_STATUS_NOT_FOUND;
+    SDL_LockAudioDevice(host->audio_device);
+    pxa_status_t status = pxa_audio_mixer_stop_effect(&host->audio_mixer.voices[voice], track);
+    SDL_UnlockAudioDevice(host->audio_device);
+    return status;
+}
+
 typedef struct {
     product_host_t *host;
     uint64_t token;
@@ -3469,6 +3489,8 @@ static int run_product_simulator(const options_t *input,
     audio_backend.submit = audio_submit; audio_backend.close = audio_close;
     audio_backend.query = audio_query; audio_backend.flush = audio_flush;
     audio_backend.play_tone = audio_play_tone;
+    audio_backend.play_effect = audio_play_effect;
+    audio_backend.stop_effect = audio_stop_effect;
     audio_backend.play_asset = audio_play_asset;
     audio_backend.play_sound = audio_play_sound;
     audio_backend.play_sound_ex = audio_play_sound_ex;

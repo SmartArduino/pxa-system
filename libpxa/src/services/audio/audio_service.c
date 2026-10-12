@@ -339,6 +339,41 @@ static int32_t audio_stream_io(void *context, uint32_t operation,
         session->provider_session == 0 || session->service == NULL) {
         return PXA_STATUS_NOT_FOUND;
     }
+    if (operation == PXA_AUDIO_IO_PLAY_EFFECT) {
+        if (!data || size < 4 || !data[0] || data[0] > PXA_AUDIO_EFFECT_LAYERS ||
+            size != 4u + 14u * data[0] || data[2] || data[3] ||
+            (data[1] != PXA_AUDIO_SOUND_APPEND && data[1] >= PXA_AUDIO_SOUND_TRACKS))
+            return PXA_STATUS_INVALID_ARGUMENT;
+        pxa_audio_tone_t tones[PXA_AUDIO_EFFECT_LAYERS];
+        for (unsigned i = 0; i < data[0]; ++i) {
+            const uint8_t *p = data + 4 + 14 * i;
+            tones[i] = (pxa_audio_tone_t){
+                .frequency_hz = pxa_read_u16(p), .duration_ms = pxa_read_u16(p + 2),
+                .gain_db_q8 = read_i16(p + 4), .waveform = p[6],
+                .attack_ms = pxa_read_u16(p + 8), .release_ms = pxa_read_u16(p + 10),
+                .delay_ms = pxa_read_u16(p + 12)};
+            if (p[7] || tones[i].frequency_hz < 40 || tones[i].frequency_hz > 8000 ||
+                tones[i].duration_ms < 10 || tones[i].duration_ms > 1000 ||
+                tones[i].gain_db_q8 > 0 || tones[i].gain_db_q8 < -60 * 256 ||
+                tones[i].waveform > PXA_AUDIO_TONE_NOISE ||
+                tones[i].attack_ms > tones[i].duration_ms ||
+                tones[i].release_ms > tones[i].duration_ms || tones[i].delay_ms > 1000)
+                return PXA_STATUS_INVALID_ARGUMENT;
+        }
+        if (!session->service->backend.play_effect) return PXA_STATUS_UNSUPPORTED;
+        status = pxa_status_normalize(session->service->backend.play_effect(
+            session->service->backend.context, session->provider_session,
+            tones, data[0], data[1]));
+        return status == PXA_STATUS_OK ? (int32_t)size : status;
+    }
+    if (operation == PXA_AUDIO_IO_STOP_EFFECT) {
+        if (!data || size != 4 || data[0] >= PXA_AUDIO_SOUND_TRACKS ||
+            data[1] || data[2] || data[3]) return PXA_STATUS_INVALID_ARGUMENT;
+        if (!session->service->backend.stop_effect) return PXA_STATUS_UNSUPPORTED;
+        status = pxa_status_normalize(session->service->backend.stop_effect(
+            session->service->backend.context, session->provider_session, data[0]));
+        return status == PXA_STATUS_OK ? (int32_t)size : status;
+    }
     if (operation == PXA_AUDIO_IO_PLAY_TONE) {
         pxa_audio_tone_t tone;
         if (data == NULL || (size != 8 && size != 14) ||

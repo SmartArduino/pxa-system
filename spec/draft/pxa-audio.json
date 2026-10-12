@@ -1,11 +1,11 @@
 {
-  "schema": "pxa-audio-spec-0.8",
+  "schema": "pxa-audio-spec-0.9",
   "status": "draft",
   "service": {
     "name": "audio",
     "id": 10,
     "major": 0,
-    "minor": 8,
+    "minor": 9,
     "patch": 0
   },
   "opcodes": [
@@ -96,6 +96,22 @@
       "payload": "action:u8|reserved:u8|gain-db-q8:i16",
       "result": "payload-size-or-status",
       "since": "0.8"
+    },
+    {
+      "name": "play-effect",
+      "id": 263,
+      "since": "0.9",
+      "payload": "layer-count:u8|track:u8|reserved:u16|tone[14]*",
+      "semantics": "1..8 layers on a common sample clock, atomic replacement for tracks 0..5, independent at 255; WOULD_BLOCK accepts no layers and queues no event",
+      "result": "payload-size-or-status"
+    },
+    {
+      "name": "stop-effect",
+      "id": 264,
+      "since": "0.9",
+      "payload": "track:u8|reserved:24",
+      "semantics": "idempotent stop for a synthesized effect track, separate from resident sound tracks",
+      "result": "payload-size-or-status"
     }
   ],
   "record_tags": [
@@ -211,7 +227,7 @@
     "min_frame_ms": 5,
     "max_frame_ms": 120
   },
-  "protocol_version": "0.8.0",
+  "protocol_version": "0.9.0",
   "playback_event": {
     "id": 32769,
     "since": "0.7",
