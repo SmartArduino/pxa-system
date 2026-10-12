@@ -3424,15 +3424,15 @@ static void on_canvas_draw(lv_event_t *event) {
     layer->_clip_area = saved_clip;
 }
 
-/* Stable pointer id for multi-touch: the ordinal among pointer input
- * devices. Boards that register several pointer indevs (one per reported
- * touch point) automatically produce distinct ids for Guest pointer
- * events. */
+/* LVGL inserts new indevs at the HEAD. Number pointers from the oldest
+ * instead, so lazily creating an injected pointer does not rename physical
+ * fingers already holding a gesture. Boards must retain pointer indevs while
+ * interactive; removing an older indev requires cancelling active gestures
+ * first, since ids are scoped to this input-device topology. */
 static uint8_t pointer_id_for_indev(lv_indev_t *input) {
-    lv_indev_t *item = NULL;
+    lv_indev_t *item = input;
     uint8_t index = 0;
     while ((item = lv_indev_get_next(item)) != NULL) {
-        if (item == input) break;
         if (lv_indev_get_type(item) == LV_INDEV_TYPE_POINTER) ++index;
     }
     return index;

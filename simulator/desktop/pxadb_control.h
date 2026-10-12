@@ -11,6 +11,12 @@ typedef int (*pxsys_pxadb_package_action_fn)(void *context, const char *id, unsi
 typedef int (*pxsys_pxadb_catalog_refresh_fn)(void *context);
 
 typedef struct {
+    lv_indev_t *indev;
+    lv_point_t point;
+    uint8_t pressed;
+} pxsys_pxadb_touch_t;
+
+typedef struct {
     int listener;
     lv_display_t *display;
     uint32_t window_id;
@@ -18,6 +24,8 @@ typedef struct {
     int16_t tap_x;
     int16_t tap_y;
     uint32_t tap_release_at;
+    /* Debug-only contacts, allocated lazily; no firmware or Guest storage. */
+    pxsys_pxadb_touch_t touches[2];
     void *catalog_context;
     pxsys_pxadb_catalog_refresh_fn refresh_catalog;
     pxsys_pxadb_package_action_fn package_action;

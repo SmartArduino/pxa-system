@@ -188,6 +188,44 @@ static int push_key(uint32_t window_id, const char *name) {
            push_key_phase(window_id, name, 0);
 }
 
+static void read_touch(lv_indev_t *indev, lv_indev_data_t *data) {
+    const pxsys_pxadb_touch_t *touch = lv_indev_get_user_data(indev);
+    data->point = touch->point;
+    data->state = touch->pressed ? LV_INDEV_STATE_PRESSED : LV_INDEV_STATE_RELEASED;
+    data->timestamp = lv_tick_get();
+}
+
+/* These are independent LVGL indevs, matching the physical board path. SDL's
+ * mouse driver represents only one pointer, even for SDL finger events. */
+static int inject_touch(pxsys_pxadb_control_t *control, const char *action,
+                        unsigned id, int x, int y) {
+    pxsys_pxadb_touch_t *touch;
+    int down = strcmp(action, "DOWN") == 0;
+    int move = strcmp(action, "MOVE") == 0;
+    int up = strcmp(action, "UP") == 0;
+    int cancel = strcmp(action, "CANCEL") == 0;
+    if (id >= 2 || x < 0 || y < 0 ||
+        x >= lv_display_get_horizontal_resolution(control->display) ||
+        y >= lv_display_get_vertical_resolution(control->display) ||
+        (!down && !move && !up && !cancel)) return 0;
+    touch = &control->touches[id];
+    if (down ? touch->pressed : !touch->pressed) return 0;
+    if (touch->indev == NULL) {
+        touch->indev = lv_indev_create();
+        if (touch->indev == NULL) return 0;
+        lv_indev_set_type(touch->indev, LV_INDEV_TYPE_POINTER);
+        lv_indev_set_display(touch->indev, control->display);
+        lv_indev_set_user_data(touch->indev, touch);
+        lv_indev_set_read_cb(touch->indev, read_touch);
+        lv_indev_set_mode(touch->indev, LV_INDEV_MODE_EVENT);
+    }
+    if (cancel) lv_indev_wait_release(touch->indev);
+    else { touch->point.x = x; touch->point.y = y; }
+    touch->pressed = down || move;
+    lv_indev_read(touch->indev);
+    return 1;
+}
+
 static void handle_client(pxsys_pxadb_control_t *control, int client) {
     char command[128] = {0};
     char action[16] = {0};
@@ -196,6 +234,7 @@ static void handle_client(pxsys_pxadb_control_t *control, int client) {
     char extra;
     int x;
     int y;
+    unsigned pointer_id;
     ssize_t size;
     uint8_t *png = NULL;
     size_t png_size = 0;
@@ -212,6 +251,15 @@ static void handle_client(pxsys_pxadb_control_t *control, int client) {
             !send_text(client, header) || !send_all(client, png, png_size))
             (void)send_text(client, "ERR screenshot_failed\n");
         free(png);
+    } else if (strcmp(command, "TOUCH CANCEL_ALL\n") == 0) {
+        for (unsigned id = 0; id < 2; ++id)
+            if (control->touches[id].pressed)
+                (void)inject_touch(control, "CANCEL", id, 0, 0);
+        (void)send_text(client, "OK\n");
+    } else if (sscanf(command, "TOUCH %15s %u %d %d %c", action, &pointer_id,
+                      &x, &y, &extra) == 4) {
+        (void)send_text(client, inject_touch(control, action, pointer_id, x, y)
+            ? "OK\n" : "ERR invalid_touch\n");
     } else if (sscanf(command, "POINTER %15s %d %d", action, &x, &y) == 3) {
         if (strcmp(action, "UP") == 0) control->tap_pending = 0;
         (void)send_text(client, push_pointer(control->window_id, action, x, y) ? "OK\n"
@@ -302,6 +350,14 @@ void pxsys_pxadb_control_poll(pxsys_pxadb_control_t *control) {
 
 void pxsys_pxadb_control_stop(pxsys_pxadb_control_t *control) {
     if (control == NULL) return;
+    for (unsigned id = 0; id < 2; ++id) {
+        if (control->touches[id].indev != NULL) {
+            if (control->touches[id].pressed)
+                (void)inject_touch(control, "CANCEL", id, 0, 0);
+            lv_indev_delete(control->touches[id].indev);
+            control->touches[id].indev = NULL;
+        }
+    }
     if (control->listener >= 0) close(control->listener);
     if (control->path[0] != '\0') unlink(control->path);
     control->listener = -1;

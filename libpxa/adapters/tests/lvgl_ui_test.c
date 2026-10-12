@@ -67,6 +67,8 @@ static uint64_t g_event_timestamp_us;
 static uint32_t g_input_test_tick;
 static uint32_t input_test_tick(void) { return g_input_test_tick; }
 static unsigned g_events;
+static unsigned g_pointer_downs;
+static uint8_t g_pointer_down_id;
 static unsigned g_asset_resolves;
 static unsigned g_asset_releases;
 static unsigned g_execute_depth;
@@ -180,6 +182,11 @@ static void on_event(uint32_t surface, uint32_t node,
     if (value_size != 0 && value != NULL) {
         assert(value_size <= sizeof(g_event_value));
         memcpy(g_event_value, value, value_size);
+    }
+    if (kind == PXA_UI_EVENT_POINTER && value_size == 12 &&
+        ((const uint8_t *)value)[1] == 0) {
+        ++g_pointer_downs;
+        g_pointer_down_id = ((const uint8_t *)value)[0];
     }
     if (kind == PXA_UI_EVENT_VISIBLE_RANGE) {
         assert(value != NULL && value_size == 8);
@@ -1210,6 +1217,50 @@ int main(void) {
     lv_indev_read(pointer_input);
     assert(g_event_kind == PXA_UI_EVENT_POINTER &&
            g_event_timestamp_us == g_now_us - 7000u);
+    {
+        /* Register a second pointer WHILE the first is held: adding an indev
+         * must not rename its existing gesture. Non-pointer indevs are skipped. */
+        const uint8_t first_id = g_event_value[0];
+        pointer_input_t second_state = pointer_state;
+        lv_indev_t *keypad = lv_indev_create();
+        lv_indev_t *second = lv_indev_create();
+        assert(keypad != NULL && second != NULL);
+        lv_indev_set_type(keypad, LV_INDEV_TYPE_KEYPAD);
+        lv_indev_set_type(second, LV_INDEV_TYPE_POINTER);
+        lv_indev_set_display(second, g_test_display);
+        lv_indev_set_user_data(second, &second_state);
+        lv_indev_set_read_cb(second, read_pointer);
+        lv_indev_read(pointer_input);
+        assert(g_event_value[0] == first_id && g_event_value[1] == 1);
+        unsigned downs = g_pointer_downs;
+        lv_indev_read(second);
+        assert(g_pointer_downs > downs);
+        const uint8_t second_id = g_pointer_down_id;
+        assert(first_id != second_id);
+        ++pointer_state.point.x;
+        lv_indev_read(pointer_input);
+        assert(g_event_value[0] == first_id && g_event_value[1] == 1);
+        ++second_state.point.y;
+        lv_indev_read(second);
+        assert(g_event_value[0] == second_id && g_event_value[1] == 1);
+        lv_indev_wait_release(second);
+        second_state.pressed = 0;
+        lv_indev_read(second);
+        assert(g_event_value[0] == second_id && g_event_value[1] == 3);
+        lv_indev_read(pointer_input);
+        assert(g_event_value[0] == first_id && g_event_value[1] == 1);
+        second_state.pressed = 1;
+        downs = g_pointer_downs;
+        lv_indev_read(second);
+        assert(g_pointer_downs > downs && g_pointer_down_id == second_id);
+        second_state.pressed = 0;
+        lv_indev_read(second);
+        assert(g_event_value[0] == second_id && g_event_value[1] == 2);
+        lv_indev_delete(second);
+        lv_indev_delete(keypad);
+        lv_indev_read(pointer_input);
+        assert(g_event_value[0] == first_id && g_event_value[1] == 1);
+    }
     /* Host and LVGL clocks deliberately have different epochs above. Also
      * preserve sample age across the 32-bit LVGL tick rollover. */
     lv_tick_set_cb(input_test_tick);
