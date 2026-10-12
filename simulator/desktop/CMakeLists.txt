@@ -117,6 +117,12 @@ if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
 endif()
 
 if(PXSYS_BUILD_TESTS OR BUILD_TESTING)
+    add_executable(pxsys_png_writer_test tests/png_writer_test.c)
+    target_link_libraries(pxsys_png_writer_test PRIVATE PNG::PNG)
+    if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(pxsys_png_writer_test PRIVATE -Wall -Wextra -Werror)
+    endif()
+    add_test(NAME pxsys_png_writer_test COMMAND pxsys_png_writer_test)
     add_executable(pxsys_desktop_package_store_test tests/package_store_test.c package_store.c)
     target_link_libraries(pxsys_desktop_package_store_test PRIVATE pxa::pxa)
     if(NOT MSVC)
@@ -197,8 +203,10 @@ else()
     set_target_properties(pxsys_system_gestures_test PROPERTIES EXCLUDE_FROM_ALL TRUE)
 endif()
 
-foreach(_test audio audio_app i18n_app sdk_patterns declarative_ui raster resource_app voxel_resources resource_budget ui_images store_images weather_images)
-    if(_test STREQUAL "audio")
+foreach(_test ime audio audio_app i18n_app sdk_patterns declarative_ui raster resource_app voxel_resources resource_budget ui_images store_images weather_images)
+    if(_test STREQUAL "ime")
+        set(_source tests/ime_app_test.c)
+    elseif(_test STREQUAL "audio")
         set(_source tests/audio_backend_test.c)
     elseif(_test STREQUAL "audio_app")
         set(_source tests/audio_app_test.c)
@@ -235,7 +243,12 @@ foreach(_test audio audio_app i18n_app sdk_patterns declarative_ui raster resour
         pxa_adapters_wamr lvgl SDL2::SDL2 PNG::PNG CURL::libcurl Threads::Threads
         PkgConfig::VORBISFILE PkgConfig::OPUSFILE m)
     if(PXSYS_BUILD_TESTS OR BUILD_TESTING)
-        if(_test STREQUAL "audio")
+        if(_test STREQUAL "ime" AND PXA_TEST_IME_PACKAGE AND PXA_TEST_IME_SIGNING_KEY)
+            add_test(NAME pxsys_ime_app_test COMMAND bash
+                "${CMAKE_CURRENT_LIST_DIR}/../../tools/package/test_cpp_ime_app.sh"
+                $<TARGET_FILE:pxsys_ime_test> "${PXA_TEST_IME_PACKAGE}" "${PXA_TEST_IME_SIGNING_KEY}")
+            set_tests_properties(pxsys_ime_app_test PROPERTIES TIMEOUT 300)
+        elseif(_test STREQUAL "audio")
             add_test(NAME pxsys_audio_test COMMAND ${Python3_EXECUTABLE}
                 "${CMAKE_CURRENT_LIST_DIR}/../../tools/package/test_audio_backend.py"
                 $<TARGET_FILE:pxsys_audio_test>

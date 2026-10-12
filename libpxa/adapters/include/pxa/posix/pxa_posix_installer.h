@@ -124,6 +124,19 @@ pxa_status_t pxa_posix_installer_install_for_identity(
 pxa_status_t pxa_posix_installer_verify_source(
     pxa_posix_installer_t *installer, const char *source_path,
     pxa_posix_installer_result_t *result);
+/* Optional cooperative directory verification. begin reads/parses metadata;
+ * successive steps authenticate that exact manifest, check the inventory,
+ * then hash at most byte_budget bytes per call. Metadata stages each occupy
+ * one step and are not bounded by byte_budget. WOULD_BLOCK means unfinished.
+ * Result buffers are untrusted until step returns OK; keep them and the installer alive
+ * until close. Single owner: serialize steps with other installer operations
+ * and prevent the source from being replaced before activation. No worker,
+ * persistent cache or extra I/O buffer is created. close also cancels a job. */
+typedef struct pxa_posix_verification pxa_posix_verification_t;
+pxa_status_t pxa_posix_installer_verify_begin(pxa_posix_installer_t *,
+    const char *directory, pxa_posix_installer_result_t *, pxa_posix_verification_t **);
+pxa_status_t pxa_posix_installer_verify_step(pxa_posix_verification_t *, size_t byte_budget);
+void pxa_posix_installer_verify_close(pxa_posix_verification_t *);
 /* Parse an already installed/prepared directory. No signature or file SHA
  * verification. Caller owns its trust decision; raw incoming packages must
  * first use install/verify_source. Used by the simulator's prepared app path. */

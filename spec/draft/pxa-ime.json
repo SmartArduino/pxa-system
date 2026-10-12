@@ -1,0 +1,114 @@
+{
+  "schema": "pxa-ime-spec-0.1",
+  "status": "draft",
+  "service": {
+    "name": "ime",
+    "id": 22,
+    "major": 0,
+    "minor": 1,
+    "patch": 0
+  },
+  "features": [
+    {
+      "name": "provider",
+      "bit": 0
+    },
+    {
+      "name": "pinyin",
+      "bit": 1
+    },
+    {
+      "name": "latin",
+      "bit": 2
+    },
+    {
+      "name": "t9",
+      "bit": 3
+    }
+  ],
+  "opcodes": [
+    {
+      "name": "present",
+      "id": 1,
+      "direction": "guest-to-host",
+      "request_token": "zero",
+      "header_bytes": 32
+    },
+    {
+      "name": "input",
+      "id": 32769,
+      "direction": "host-to-guest",
+      "request_token": "zero",
+      "header_bytes": 24
+    }
+  ],
+  "protocol_version": "0.1.0",
+  "wire": {
+    "integer_encoding": "little-endian",
+    "text_encoding": "UTF-8 without NUL",
+    "max_payload_bytes": 4076,
+    "reserved_fields": "zero",
+    "documentation": "../../docs/zh-CN/input-methods.md"
+  },
+  "actions": [
+    {
+      "name": "reset",
+      "id": 1
+    },
+    {
+      "name": "text",
+      "id": 2
+    },
+    {
+      "name": "backspace",
+      "id": 3
+    },
+    {
+      "name": "confirm",
+      "id": 4
+    },
+    {
+      "name": "choose",
+      "id": 5
+    },
+    {
+      "name": "page",
+      "id": 6
+    },
+    {
+      "name": "choose_pinyin",
+      "id": 7
+    }
+  ],
+  "edits": [
+    {
+      "name": "none",
+      "id": 0
+    },
+    {
+      "name": "insert",
+      "id": 1
+    },
+    {
+      "name": "backspace",
+      "id": 2
+    },
+    {
+      "name": "submit",
+      "id": 3
+    },
+    {
+      "name": "clear",
+      "id": 4
+    }
+  ],
+  "startup_records": [
+    {
+      "name": "dictionary",
+      "tag": 32781,
+      "payload_bytes": 16,
+      "layout": "handle:u64, size:u64",
+      "access": "component-private read-only"
+    }
+  ]
+}

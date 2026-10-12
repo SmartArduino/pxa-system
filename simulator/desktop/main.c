@@ -4,7 +4,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <math.h>
-#include <png.h>
+#include "png_writer.h"
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -17,6 +17,8 @@
 
 #include "lvgl.h"
 #include "pxa/package.h"
+#include "pxa/posix/pxa_posix_ime.h"
+#include "pxa/lvgl/pxa_lvgl_ime.h"
 #include "pxsys/lvgl_renderer.h"
 #include "pxsys/pxa_catalog.h"
 #include "pxsys/reference_lvgl.h"
@@ -63,6 +65,7 @@ typedef struct {
 typedef struct {
     pxsys_standard_system_t* system;
     pxsys_reference_lvgl_t* ui;
+    pxsys_desktop_runtime_t *runtime;
     const char* installed_packages_root;
     const char* state_root;
     char pending_id[PXSYS_REFERENCE_MANAGED_APP_IDENTITY_MAX];
@@ -405,6 +408,45 @@ typedef struct {
 static pxsys_display_profile_t s_display_profile;
 static simulator_shape_background_t s_shape_background =
     SIMULATOR_SHAPE_BACKGROUND_MATTE;
+
+typedef struct {
+    pxsys_reference_input_method_emit_fn emit; void *context; const char *selected;
+} simulator_ime_list_t;
+static void simulator_ime_emit(void *context,const char *identity,pxa_bytes_t name) {
+    simulator_ime_list_t *list=context;
+    list->emit(list->context,identity,(pxsys_string_t){(const char *)name.data,name.size},!strcmp(identity,list->selected));
+}
+static void simulator_ime_list(void *context,pxsys_reference_input_method_emit_fn emit,void *emit_context) {
+    simulator_catalog_t *catalog=context; char selected[131]="",path[1536];
+    if (catalog->state_root && snprintf(path,sizeof(path),"%s/input-method",catalog->state_root)>0)
+        (void)pxa_posix_ime_selection_read(path,selected,sizeof(selected));
+    emit(emit_context,"",pxsys_string_from_cstr("系统键盘 / System keyboard"),!*selected);
+    if (catalog->installed_packages_root) {
+        simulator_ime_list_t list={emit,emit_context,selected};
+        (void)pxa_posix_ime_registry_visit(catalog->installed_packages_root,simulator_ime_emit,&list);
+    }
+}
+static bool simulator_ime_select(void *context,const char *identity) {
+    simulator_catalog_t *catalog=context; char directory[1024]="",path[1536];
+    if (!catalog->state_root || !catalog->installed_packages_root) return false;
+    if (*identity && pxa_posix_ime_registry_resolve(catalog->installed_packages_root,identity,directory,sizeof(directory)) != PXA_STATUS_OK) return false;
+    int n=snprintf(path,sizeof(path),"%s/input-method",catalog->state_root);
+    if (n<0 || (size_t)n>=sizeof(path) || pxa_posix_ime_selection_write(path,identity)!=PXA_STATUS_OK) return false;
+    pxsys_desktop_runtime_update_input_method(catalog->runtime,directory); return true;
+}
+static bool simulator_ime_preferences(void *context,pxsys_reference_input_method_preferences_t *value,bool save) {
+    simulator_catalog_t *catalog=context; char path[1536];
+    if (!catalog->state_root) { if (!save) *value=(pxsys_reference_input_method_preferences_t){0}; return !save; }
+    int n=snprintf(path,sizeof(path),"%s/input-method-preferences",catalog->state_root);
+    if (n<0 || (size_t)n>=sizeof(path)) return false;
+    pxa_ime_preferences_t preferences={value->layout,value->language};
+    bool success=(save?pxa_posix_ime_preferences_write(path,preferences):pxa_posix_ime_preferences_read(path,&preferences))==PXA_STATUS_OK;
+    if (success) *value=(pxsys_reference_input_method_preferences_t){preferences.layout,preferences.language};
+    return success;
+}
+static bool simulator_ime_managed(void *context,void *textarea) {
+    (void)context; return pxa_lvgl_ime_owns_textarea(textarea);
+}
 
 static uint32_t read_be_u32(const uint8_t* value) {
     return ((uint32_t)value[0] << 24) | ((uint32_t)value[1] << 16) |
@@ -1617,21 +1659,14 @@ static int save_png(lv_display_t* display, const char* path) {
     png = png_create_write_struct(PNG_LIBPNG_VER_STRING, NULL, NULL, NULL);
     if (png == NULL) goto done;
     info = png_create_info_struct(png);
-    if (info == NULL || setjmp(png_jmpbuf(png))) goto done;
-    png_init_io(png, file);
-    png_set_IHDR(png, info, (png_uint_32)width, (png_uint_32)height, 8,
-                 PNG_COLOR_TYPE_RGBA, PNG_INTERLACE_NONE,
-                 PNG_COMPRESSION_TYPE_DEFAULT, PNG_FILTER_TYPE_DEFAULT);
-    png_write_info(png, info);
+    if (info == NULL) goto done;
     for (y = 0; y < height; ++y)
         rows[y] = pixels + (size_t)y * (size_t)width * 4u;
-    png_write_image(png, rows);
-    png_write_end(png, NULL);
-    ok = 1;
+    ok = pxsys_png_write(png,info,file,(png_uint_32)width,(png_uint_32)height,rows);
 done:
     if (png != NULL)
         png_destroy_write_struct(&png, info == NULL ? NULL : &info);
-    if (file != NULL) fclose(file);
+    if (file != NULL && fclose(file) != 0) ok = 0;
     free(rows);
     free(pixels);
     return ok;
@@ -1869,7 +1904,11 @@ static int run_simulator(const simulator_options_t* options) {
     if (sync_installed_catalog(&catalog) != PXSYS_STATUS_OK)
         goto done;
 
+    catalog.runtime=simulator_runtime;
     pxsys_reference_lvgl_config_init(&ui_config);
+    ui_config.input_method_context=&catalog; ui_config.input_method_list=simulator_ime_list;
+    ui_config.input_method_preferences=simulator_ime_preferences;
+    ui_config.input_method_select=simulator_ime_select; ui_config.input_method_managed=simulator_ime_managed;
     ui_config.system = system;
     simulated_wifi.connected = options->network == PXSYS_NETWORK_WIFI;
     snprintf(simulated_wifi.ssid, sizeof(simulated_wifi.ssid), "PXA Simulator");

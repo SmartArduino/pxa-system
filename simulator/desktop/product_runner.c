@@ -40,6 +40,9 @@
 #include "pxa/fs.h"
 #include "pxa/ipc.h"
 #include "pxa/runtime.h"
+#include "pxa/ime.h"
+#include "pxa/posix/pxa_posix_ime.h"
+#include "pxa/lvgl/pxa_lvgl_ime.h"
 #include "pxa/scheduler.h"
 #include "pxa/service.h"
 #include "pxa/storage.h"
@@ -81,6 +84,7 @@
 #define PRODUCT_AUDIO_SOUND_VOICES 6u
 
 typedef struct {
+    const char *ime_package;
     const char *package_path;
     const char *publisher_key;
     const char *state_root;
@@ -303,6 +307,19 @@ typedef struct {
     uint8_t running_work_stop_posted;
     uint8_t running_work_finished;
     uint8_t running_work_cancelled;
+    pxa_ime_service_t *ime_service;
+    void *ime_workspace;
+    pxa_posix_installer_t *ime_installer;
+    pxa_posix_ime_provider_t *ime_provider;
+    pxa_component_t ime_component;
+    pxa_lvgl_ime_t *ime_keyboard;
+    const char *ime_preferences_root;
+    pxa_lvgl_ime_config_t ime_config;
+    const pxa_package_activation_profile_t *ime_capabilities;
+    const pxa_package_host_profile_t *ime_profile;
+    char *ime_directory;
+    uint64_t ime_generation, ime_bound_generation, ime_session;
+    uint8_t ime_wanted, ime_required, ime_failed, ime_dirty;
     pxa_component_t active_component;
     pxa_component_t service_components[PRODUCT_COMPONENTS];
     uint16_t service_component_count;
@@ -1858,13 +1875,121 @@ static size_t asset_setting(const char *name, size_t fallback, size_t maximum) {
     return (size_t)parsed;
 }
 
+static pxa_status_t ime_input(void *context, uint64_t generation,
+    uint16_t action, uint8_t layout, uint8_t language, uint32_t value, pxa_bytes_t text) {
+    product_host_t *host = context;
+    if (!host->ime_service || !host->ime_session || generation != host->ime_generation)
+        return PXA_STATUS_WOULD_BLOCK;
+    return pxa_ime_send(host->ime_service, host->ime_session, action, layout, language, value, text);
+}
+static void ime_focus_changed(void *context, uint64_t generation, bool active, bool required) {
+    product_host_t *host = context;
+    host->ime_generation = generation; host->ime_wanted = active;
+    host->ime_required = required; host->ime_dirty = 1;
+}
+static pxa_status_t ime_present(void *context, const pxa_ime_frame_t *frame) {
+    product_host_t *host = context;
+    if (!frame) { host->ime_failed = 1; host->ime_dirty = 1; }
+    return host->ime_keyboard ? pxa_lvgl_ime_present(host->ime_keyboard, host->ime_bound_generation, frame)
+                              : PXA_STATUS_BAD_STATE;
+}
+static void ime_stop(product_host_t *host) {
+    if (host->ime_service && host->ime_session) pxa_ime_end(host->ime_service, host->ime_session);
+    host->ime_session = 0;
+    if (host->ime_provider) {
+        pxa_posix_ime_provider_close(host->ime_provider); host->ime_provider = NULL;
+        fprintf(stderr,"PXA IME unloaded\n");
+    }
+    host->ime_component = PXA_COMPONENT_INVALID;
+}
+static void ime_pump(product_host_t *host) {
+    bool loading=pxa_posix_ime_provider_loading(host->ime_provider);
+    if (!host->ime_dirty && !loading) return;
+    if (host->ime_wanted && !host->ime_failed && host->ime_required &&
+        !pxa_lvgl_ime_loading_allowed(host->ime_keyboard)) return;
+    bool dirty=host->ime_dirty; host->ime_dirty=0;
+    if (!host->ime_wanted || host->ime_failed || !host->ime_required) {
+        ime_stop(host);
+        pxa_lvgl_ime_provider_released(host->ime_keyboard,host->ime_generation);
+        if (host->ime_keyboard && !pxa_lvgl_ime_active(host->ime_keyboard)) {
+            pxa_lvgl_ime_destroy(host->ime_keyboard); host->ime_keyboard=NULL;
+            host->ime_dirty=0;
+        }
+        return;
+    }
+    if (!host->ime_directory || !host->ime_capabilities || !host->ime_profile) return;
+    if (!host->ime_service) {
+        host->ime_workspace = malloc(pxa_ime_service_workspace_size());
+        pxa_ime_config_t config = {sizeof(config),host,ime_present};
+        if (!host->ime_workspace || pxa_ime_service_init(host->ime_workspace,pxa_ime_service_workspace_size(),
+            host->runtime,&config,&host->ime_service) != PXA_STATUS_OK ||
+            pxa_ime_service_register(host->ime_service) != PXA_STATUS_OK) {
+            free(host->ime_workspace); host->ime_workspace=NULL; host->ime_service=NULL;
+            host->ime_failed = 1; (void)ime_present(host,NULL); return;
+        }
+    }
+    if (dirty && host->ime_session) pxa_ime_end(host->ime_service, host->ime_session);
+    if (dirty) { host->ime_session=0; host->ime_bound_generation=host->ime_generation; }
+    pxa_status_t status=PXA_STATUS_OK;
+    if (!host->ime_provider) {
+        status=pxa_posix_ime_provider_open_begin(host->ime_installer,host->ime_directory,
+            host->runtime,&host->engine_ops,host->ime_capabilities,host->ime_profile,&host->ime_provider);
+        if (status==PXA_STATUS_OK) return;
+    }
+    if (status==PXA_STATUS_OK && pxa_posix_ime_provider_loading(host->ime_provider)) {
+        status=pxa_posix_ime_provider_open_step(host->ime_provider,16384);
+        if (status==PXA_STATUS_WOULD_BLOCK) return;
+        if (status==PXA_STATUS_OK) status=pxa_posix_ime_provider_start(
+            host->ime_provider,++host->next_instance_id,&host->ime_component);
+        fprintf(stderr,"PXA IME load status=%d metadata_bytes=%zu\n",status,
+            pxa_posix_ime_provider_metadata_bytes(host->ime_provider));
+    }
+    if (status==PXA_STATUS_OK && !host->ime_session) {
+        status=pxa_ime_begin(host->ime_service,host->ime_component,0,&host->ime_session);
+        if (status==PXA_STATUS_OK) status=pxa_ime_send(host->ime_service,host->ime_session,
+            PXA_IME_RESET,PXA_IME_K26,PXA_IME_CHINESE,0,(pxa_bytes_t){0});
+    }
+    if (status!=PXA_STATUS_OK) {
+        host->ime_failed=1; ime_stop(host);
+        if (host->ime_keyboard) (void)pxa_lvgl_ime_present(host->ime_keyboard,host->ime_generation,NULL);
+    }
+}
+static void ime_editor_focus(void *context, void *textarea, bool focused) {
+    product_host_t *host = context;
+    if (!host->ime_directory || host->ime_failed) return;
+    if (focused) {
+        char path[1536];
+        const char *root=host->ime_preferences_root;
+        if (root) {
+            int n=snprintf(path,sizeof(path),"%s/input-method-preferences",root);
+            if (n>0 && (size_t)n<sizeof(path))
+                (void)pxa_posix_ime_preferences_read(path,&host->ime_config.preferences);
+        }
+        if (host->ime_keyboard) pxa_lvgl_ime_set_preferences(host->ime_keyboard,host->ime_config.preferences);
+        if (!host->ime_keyboard) host->ime_keyboard = pxa_lvgl_ime_create(&host->ime_config);
+        if (host->ime_keyboard) (void)pxa_lvgl_ime_focus(host->ime_keyboard,textarea);
+    } else if (host->ime_keyboard && pxa_lvgl_ime_owns_textarea(textarea)) {
+        pxa_lvgl_ime_close(host->ime_keyboard);
+    }
+}
+
 static void dispatch_component_events(product_host_t *host) {
     pxa_wamr_event_result_t result;
     if (host == NULL || host->engine == NULL || host->runtime == NULL ||
-        host->active_component == PXA_COMPONENT_INVALID)
+        host->active_component == PXA_COMPONENT_INVALID || pxa_wamr_engine_busy(host->engine))
         return;
+    ime_pump(host);
     for (unsigned round = 0; round < 64; ++round) {
         int delivered = 0;
+        pxa_status_t foreground_status;
+        if (host->ime_component != PXA_COMPONENT_INVALID) {
+            pxa_status_t ime_status=pxa_wamr_engine_deliver_event_result(
+                host->engine,host->runtime,host->ime_component,&result);
+            if (ime_status==PXA_STATUS_OK) delivered=1;
+            else if (ime_status!=PXA_STATUS_WOULD_BLOCK && ime_status!=PXA_STATUS_NOT_FOUND &&
+                !(ime_status==PXA_STATUS_RESOURCE_LIMIT && !result.event_consumed))
+                (void)ime_present(host,NULL);
+        }
         if (host->assets != NULL) pxa_assets_service_poll(host->assets);
         if (host->audio != NULL) pxa_audio_service_poll(host->audio);
         if (host->sensor != NULL && pxa_sensor_has_active_subscriptions(host->sensor)) {
@@ -1886,15 +2011,18 @@ static void dispatch_component_events(product_host_t *host) {
             pxa_wamr_engine_deliver_event_result(
                 host->engine, host->runtime, host->running_work_component,
                 &result) == PXA_STATUS_OK) delivered = 1;
-        if (pxa_wamr_engine_deliver_event_result(
-                host->engine, host->runtime, host->active_component,
-                &result) == PXA_STATUS_OK) {
+        foreground_status=pxa_wamr_engine_deliver_event_result(
+            host->engine,host->runtime,host->active_component,&result);
+        if (foreground_status == PXA_STATUS_OK) {
             delivered = 1;
             if (result.service == PXA_WINDOW_SERVICE_ID &&
                 result.opcode == PXA_WINDOW_BACK_REQUESTED &&
                 result.request_token == 0 && result.payload_size == 0 &&
                 result.guest_result == 0)
                 host->exit_requested = 1;
+        } else if (result.event_consumed) {
+            fprintf(stderr,"PXA foreground callback failed: status=%d service=%u opcode=%u guest=%d\n",
+                foreground_status,result.service,result.opcode,result.guest_result);
         }
         if (!delivered) break;
     }
@@ -1978,6 +2106,7 @@ static void product_focus_changed(void *context, bool focused) {
     product_host_t *host = context;
     if (host == NULL || host->focused == (uint8_t)focused) return;
     host->focused = focused ? 1u : 0u;
+    if (!focused && host->ime_keyboard) pxa_lvgl_ime_close(host->ime_keyboard);
     host->pending_lifecycle = host->focused;
     if (host->clock_period_ms != 0)
         host->next_clock_tick_us =
@@ -2116,8 +2245,13 @@ static pxa_status_t prepare_start(void *context, pxa_component_t component,
     pxa_window_backend_t window_backend = {0};
     pxa_window_snapshot_t snapshot = {0};
     pxa_status_t status;
-    (void)instance_id;
     if (host == NULL) return PXA_STATUS_INVALID_ARGUMENT;
+    if (host->ime_provider) {
+        uint8_t config[20]; size_t size;
+        status = pxa_posix_ime_provider_prepare(host->ime_provider, instance_id, component, config, sizeof(config), &size);
+        if (status != PXA_STATUS_NOT_FOUND) return status == PXA_STATUS_OK ?
+            pxa_wamr_engine_set_config(host->engine, instance_id, (pxa_bytes_t){config,size}) : status;
+    }
     if (kind == PXA_COMPONENT_KIND_SERVICE ||
         kind == PXA_COMPONENT_KIND_JOB) return PXA_STATUS_OK;
     if (kind != PXA_COMPONENT_KIND_UI) return PXA_STATUS_UNSUPPORTED;
@@ -3125,7 +3259,7 @@ static int run_product_simulator(const options_t *input,
     pxa_service_ops_t clock_service = {0};
     pxa_service_ops_t store_installer_service = {0};
     pxa_wamr_engine_config_t engine_config = {0};
-    pxa_package_service_capability_t capabilities[19] = {0};
+    pxa_package_service_capability_t capabilities[20] = {0};
     pxa_package_activation_profile_t activation = {0};
     pxa_package_host_profile_t profile = {0};
     pxa_activation_plan_t *plan = NULL;
@@ -3185,6 +3319,8 @@ static int run_product_simulator(const options_t *input,
     host.focused = owns_display ? 1u : 0u;
     host.pending_lifecycle = owns_display ? 1u : 2u;
     host.next_instance_id = 1;
+    const char *ime_directory = options.ime_package ? options.ime_package : getenv("PXA_IME_PACKAGE");
+    if (ime_directory && *ime_directory) host.ime_directory = strdup(ime_directory);
     host.running_work_component = PXA_COMPONENT_INVALID;
 
     {
@@ -3324,6 +3460,14 @@ static int run_product_simulator(const options_t *input,
         PRODUCT_COMPONENTS, &host.window) != PXA_STATUS_OK ||
         pxa_window_service_register(host.window) != PXA_STATUS_OK) goto done;
     pxa_ui_config_init(&ui_config);
+    host.ime_installer = installer;
+    if (manifest_uses_service(manifest,PXA_IME_SERVICE_ID)) {
+        host.ime_workspace = malloc(pxa_ime_service_workspace_size());
+        pxa_ime_config_t ime_config = {sizeof(ime_config), &host, ime_present};
+        if (!host.ime_workspace || pxa_ime_service_init(host.ime_workspace,pxa_ime_service_workspace_size(),
+            host.runtime,&ime_config,&host.ime_service) != PXA_STATUS_OK ||
+            pxa_ime_service_register(host.ime_service) != PXA_STATUS_OK) goto done;
+    }
     stage = "ui service";
     if (host_theme != NULL)
         ui_config.color_scheme =
@@ -3336,7 +3480,7 @@ static int run_product_simulator(const options_t *input,
         PXA_UI_FEATURE_RGB565_BITMAP |
         PXA_UI_FEATURE_CONTROLLER_INPUT | PXA_UI_FEATURE_MULTIPLE_SURFACES |
         PXA_UI_FEATURE_CANVAS_STREAM_IO;
-    if (!owns_display) ui_config.features |= PXA_UI_FEATURE_TEXT_INPUT_CONTROL;
+    if (!owns_display || host.ime_directory) ui_config.features |= PXA_UI_FEATURE_TEXT_INPUT_CONTROL;
     ui_config.features |= PXA_UI_FEATURE_DYNAMIC_TEXT;
 #ifdef PXSYS_DESKTOP_TEXT_FONT
     ui_config.features |= PXA_UI_FEATURE_SIZED_TEXT;
@@ -3538,8 +3682,10 @@ static int run_product_simulator(const options_t *input,
     lvgl_config.primary_environment.density_q16 = ui_config.density_q16;
     lvgl_config.primary_environment.font_scale_q16 = UINT32_C(1) << 16;
     lvgl_config.primary_environment.display_shape = host.display_shape;
-    for (size_t index = 0; index < 4; ++index)
+    for (size_t index = 0; index < 4; ++index) {
         lvgl_config.primary_environment.corner_radii[index] = host.corner_radii[index];
+        lvgl_config.primary_environment.safe_insets[index] = host.safe_insets[index];
+    }
     pxa_lvgl_ui_theme_init(&lvgl_config.theme);
     if (host_theme != NULL)
         map_host_theme(host_theme, lvgl_config.theme.rgba);
@@ -3572,6 +3718,11 @@ static int run_product_simulator(const options_t *input,
 #ifdef PXSYS_DESKTOP_TEXT_FONT
     lvgl_config.sized_text_font_path=PXSYS_DESKTOP_TEXT_FONT;
 #endif
+    host.ime_preferences_root=options.state_root;
+    host.ime_config = (pxa_lvgl_ime_config_t){.struct_size=sizeof(host.ime_config),.parent=lv_layer_top(),
+        .theme=lvgl_config.theme,.environment=lvgl_config.primary_environment,.context=&host,
+        .input=ime_input,.focus=ime_focus_changed,.sized_text_font_path=lvgl_config.sized_text_font_path};
+    lvgl_config.text_input_focus = ime_editor_focus; lvgl_config.text_input_context = &host;
     lvgl_workspace = malloc(pxa_lvgl_ui_workspace_size());
     if (lvgl_workspace == NULL || pxa_lvgl_ui_init(lvgl_workspace,
         pxa_lvgl_ui_workspace_size(), &lvgl_config, &lvgl_ui, &ui_backend) != PXA_STATUS_OK)
@@ -3870,7 +4021,11 @@ static int run_product_simulator(const options_t *input,
     capabilities[18].service = PXA_WORK_SERVICE_ID;
     capabilities[18].version.major = PXA_WORK_SERVICE_MAJOR;
     capabilities[18].version.minor = PXA_WORK_SERVICE_MINOR;
-    activation.services = capabilities; activation.service_count = 19;
+    capabilities[19].service = PXA_IME_SERVICE_ID;
+    capabilities[19].version = (pxa_package_version_t){PXA_IME_SERVICE_MAJOR, PXA_IME_SERVICE_MINOR};
+    capabilities[19].features = PXA_IME_FEATURE_ALL;
+    activation.services = capabilities; activation.service_count = 20;
+    host.ime_capabilities = &activation; host.ime_profile = &profile;
     profile.target = (pxa_bytes_t){(const uint8_t *)"linux-x86_64", sizeof("linux-x86_64") - 1u};
     profile.engine = (pxa_bytes_t){(const uint8_t *)"wamr", 4};
     profile.engine_abi = (pxa_bytes_t){(const uint8_t *)PXSYS_WAMR_ENGINE_ABI,
@@ -4050,6 +4205,8 @@ done:
     if (control_bind != NULL) control_bind(window_context, NULL, NULL, NULL);
     pxsys_pxadb_control_stop(&pxadb_control);
     if (result != 0) fprintf(stderr, "PXA product simulator failed at %s\n", stage);
+    if (host.ime_keyboard) { pxa_lvgl_ime_destroy(host.ime_keyboard); host.ime_keyboard = NULL; }
+    ime_stop(&host);
     if (host.coordinator != NULL && lv_display_get_default() != NULL)
         pxa_activation_deactivate_all(host.coordinator, PXA_STOP_SHUTDOWN);
     audio_stop_worker(&host);
@@ -4116,6 +4273,7 @@ done:
             result = 1;
         }
     }
+    free(host.ime_workspace); free(host.ime_directory);
     free(assets_workspace);
     if (posix_fs != NULL) pxa_posix_fs_deinit(posix_fs);
     if (scheduler_store != NULL) pxa_posix_scheduler_store_deinit(scheduler_store);
@@ -4142,6 +4300,17 @@ done:
     }
     free(shape_mask.pixels);
     return result;
+}
+
+bool pxsys_product_simulator_update_input_method(void *runner, const char *directory) {
+    product_host_t *host=runner;
+    if (!host || (directory && strlen(directory)>1023)) return false;
+    char *copy=directory && *directory ? strdup(directory) : NULL;
+    if (directory && *directory && !copy) return false;
+    if (host->ime_keyboard) pxa_lvgl_ime_close(host->ime_keyboard);
+    free(host->ime_directory); host->ime_directory=copy;
+    host->ime_failed=0; host->ime_dirty=1;
+    return true;
 }
 
 bool pxsys_product_simulator_update_locale(void *runner,
@@ -4179,9 +4348,11 @@ int pxsys_product_simulator_run_embedded(const char *package_path,
                                          pxsys_product_simulator_control_bind_fn control_bind,
                                          const pxsys_display_profile_t *host_display,
                                          const pxsys_insets_t *host_bar_insets,
-                                         const pxsys_theme_snapshot_t *host_theme) {
+                                         const pxsys_theme_snapshot_t *host_theme,
+                                         const char *ime_package) {
     const options_t options = {
         .package_path = package_path,
+        .ime_package = ime_package,
         .publisher_key = publisher_key,
         .state_root = state_root,
         .locale = locale,

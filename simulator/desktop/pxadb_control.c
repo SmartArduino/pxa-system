@@ -4,7 +4,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
-#include <png.h>
+#include "png_writer.h"
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -98,16 +98,10 @@ static int capture_png(lv_display_t *display, uint8_t **output,
     png = png_create_write_struct(PNG_LIBPNG_VER_STRING, NULL, NULL, NULL);
     if (png == NULL) goto done;
     info = png_create_info_struct(png);
-    if (info == NULL || setjmp(png_jmpbuf(png))) goto done;
-    png_init_io(png, stream);
-    png_set_IHDR(png, info, (png_uint_32)width, (png_uint_32)height, 8,
-                 PNG_COLOR_TYPE_RGBA, PNG_INTERLACE_NONE,
-                 PNG_COMPRESSION_TYPE_DEFAULT, PNG_FILTER_TYPE_DEFAULT);
-    png_write_info(png, info);
+    if (info == NULL) goto done;
     for (y = 0; y < height; ++y)
         rows[y] = pixels + (size_t)y * (size_t)width * 4u;
-    png_write_image(png, rows);
-    png_write_end(png, NULL);
+    if (!pxsys_png_write(png,info,stream,(png_uint_32)width,(png_uint_32)height,rows)) goto done;
     if (fclose(stream) != 0) {
         stream = NULL;
         goto done;

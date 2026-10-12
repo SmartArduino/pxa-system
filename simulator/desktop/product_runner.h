@@ -42,6 +42,8 @@ int pxsys_product_simulator_run_embedded(const char *package_path,
                                          pxsys_product_simulator_control_bind_fn control_bind,
                                          const pxsys_display_profile_t *host_display,
                                          const pxsys_insets_t *host_bar_insets,
-                                         const pxsys_theme_snapshot_t *host_theme);
+                                         const pxsys_theme_snapshot_t *host_theme,
+                                         const char *ime_package);
+bool pxsys_product_simulator_update_input_method(void *runner, const char *directory);
 
 #endif

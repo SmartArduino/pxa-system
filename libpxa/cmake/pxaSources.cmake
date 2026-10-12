@@ -14,6 +14,7 @@ function(pxa_collect_sources output root)
         src/services/permission/permission_policy.c
         src/services/ipc/ipc_service.c
         src/services/ipc/ipc_codec.c
+        src/services/ime/ime_service.c
         src/services/storage/storage_service.c
         src/services/fs/fs_service.c
         src/services/sensor/sensor_service.c

@@ -129,6 +129,21 @@ static const pxsys_resource_entry_t reference_en_resources[] = {
     RESOURCE_ENTRY("settings.wifi.open", "Open network"),
     RESOURCE_ENTRY("settings.wifi.secured", "Secured"),
     RESOURCE_ENTRY("language.title", "Language"),
+    RESOURCE_ENTRY("input-method.title", "Input method"),
+    RESOURCE_ENTRY("input-method.detail", "Keyboard, language and installed input methods"),
+    RESOURCE_ENTRY("input-method.default", "Default input method"),
+    RESOURCE_ENTRY("input-method.layout", "Keyboard layout"),
+    RESOURCE_ENTRY("input-method.layout.auto", "Automatic"),
+    RESOURCE_ENTRY("input-method.layout.full", "Full keyboard"),
+    RESOURCE_ENTRY("input-method.layout.nine", "Nine key"),
+    RESOURCE_ENTRY("input-method.language", "Starting language"),
+    RESOURCE_ENTRY("input-method.language.chinese", "Chinese"),
+    RESOURCE_ENTRY("input-method.language.english", "English"),
+    RESOURCE_ENTRY("input-method.help", "Nine key: spelling above, words below; swipe each row. Hold backspace to delete. Down hides keyboard."),
+    RESOURCE_ENTRY("input-method.manage", "Manage installed apps"),
+    RESOURCE_ENTRY("input-method.manage.detail", "Update, disable or uninstall in app management"),
+    RESOURCE_ENTRY("input-method.saved", "Saved; applies next time you open the keyboard"),
+    RESOURCE_ENTRY("input-method.failed", "Could not save input method settings"),
     RESOURCE_ENTRY("state.connected", "Connected"),
     RESOURCE_ENTRY("state.on", "On"),
     RESOURCE_ENTRY("state.off", "Off"),
@@ -281,6 +296,21 @@ static const pxsys_resource_entry_t reference_zh_resources[] = {
     RESOURCE_ENTRY("settings.wifi.open", "开放网络"),
     RESOURCE_ENTRY("settings.wifi.secured", "已加密"),
     RESOURCE_ENTRY("language.title", "语言"),
+    RESOURCE_ENTRY("input-method.title", "输入法"),
+    RESOURCE_ENTRY("input-method.detail", "键盘布局、默认语言与已安装输入法"),
+    RESOURCE_ENTRY("input-method.default", "默认输入法"),
+    RESOURCE_ENTRY("input-method.layout", "键盘布局"),
+    RESOURCE_ENTRY("input-method.layout.auto", "自动适应屏幕"),
+    RESOURCE_ENTRY("input-method.layout.full", "全键盘"),
+    RESOURCE_ENTRY("input-method.layout.nine", "九键拼音"),
+    RESOURCE_ENTRY("input-method.language", "默认输入语言"),
+    RESOURCE_ENTRY("input-method.language.chinese", "中文"),
+    RESOURCE_ENTRY("input-method.language.english", "英文"),
+    RESOURCE_ENTRY("input-method.help", "上排选拼音，下排选字；左右滑动翻页。长按退格删除，↓收起键盘。密码只用英文。"),
+    RESOURCE_ENTRY("input-method.manage", "管理已安装输入法"),
+    RESOURCE_ENTRY("input-method.manage.detail", "在应用管理中更新、停用或卸载输入法"),
+    RESOURCE_ENTRY("input-method.saved", "已保存，下次打开键盘生效"),
+    RESOURCE_ENTRY("input-method.failed", "输入法设置保存失败"),
     RESOURCE_ENTRY("state.connected", "已连接"),
     RESOURCE_ENTRY("state.on", "已开启"),
     RESOURCE_ENTRY("state.off", "已关闭"),
@@ -377,6 +407,8 @@ typedef enum {
     REFERENCE_PAGE_FILE_MANAGER,
     REFERENCE_PAGE_WIFI,
     REFERENCE_PAGE_APPEARANCE,
+    REFERENCE_PAGE_INPUT_METHOD,
+    REFERENCE_PAGE_INPUT_METHOD_APPS,
 } reference_page_t;
 
 typedef enum {
@@ -623,6 +655,12 @@ struct pxsys_reference_lvgl {
     settings_action_t settings_actions[REFERENCE_SETTINGS_ACTION_COUNT];
     const pxsys_reference_language_t* languages;
     size_t language_count;
+    void *input_method_context;
+    pxsys_reference_input_method_list_fn input_method_list;
+    pxsys_reference_input_method_select_fn input_method_select;
+    pxsys_reference_input_method_preferences_fn input_method_preferences;
+    bool (*input_method_managed)(void *, void *);
+    bool (*input_method_focus)(void *, void *);
     const void* wallpaper_source;
     pxsys_navigation_mode_t navigation_mode;
     uint8_t back_gesture_enabled;
@@ -748,6 +786,9 @@ static void build_task_switcher(pxsys_reference_lvgl_t* ui);
 static void close_task_switcher(pxsys_reference_lvgl_t* ui);
 static int task_switcher_is_open(const pxsys_reference_lvgl_t* ui);
 static void close_language_dialog(pxsys_reference_lvgl_t* ui);
+#if PXSYS_REFERENCE_UI_BUILTIN_SETTINGS
+static void page_close_dialogs(pxsys_reference_lvgl_t* ui);
+#endif
 static void close_notification_shade(pxsys_reference_lvgl_t* ui);
 static void toast_restack(pxsys_reference_lvgl_t* ui);
 static void volume_osd_restack(pxsys_reference_lvgl_t* ui);
@@ -1120,6 +1161,23 @@ static void navigation_back(pxsys_reference_lvgl_t* ui) {
         rebuild(ui);
         return;
     }
+    if (ui->active_page == REFERENCE_PAGE_INPUT_METHOD) {
+        for (unsigned i=0;i<lv_obj_get_child_count(ui->content);++i) {
+            lv_obj_t *child=lv_obj_get_child(ui->content,i);
+            if (lv_obj_has_class(child,&lv_dropdown_class) && lv_dropdown_is_open(child)) {
+                lv_dropdown_close(child); return;
+            }
+        }
+        ui->active_page=REFERENCE_PAGE_SETTINGS;
+        rebuild(ui); return;
+    }
+#if PXSYS_REFERENCE_UI_BUILTIN_SETTINGS
+    if (ui->active_page == REFERENCE_PAGE_INPUT_METHOD_APPS) {
+        if (ui->app_dialog || ui->confirm_dialog) page_close_dialogs(ui);
+        else ui->active_page=REFERENCE_PAGE_INPUT_METHOD;
+        rebuild(ui); return;
+    }
+#endif
     if (ui->active_page == REFERENCE_PAGE_APPEARANCE) {
         ui->active_page = REFERENCE_PAGE_SETTINGS;
         rebuild(ui);
@@ -3365,20 +3423,46 @@ static void language_selected(lv_event_t* event) {
         pxsys_standard_system_locale(ui->system), &locale);
 }
 
-static void language_clicked(lv_event_t* event) {
-    pxsys_reference_lvgl_t* ui =
-        (pxsys_reference_lvgl_t*)lv_event_get_user_data(event);
+typedef struct {
+    pxsys_reference_lvgl_t *ui;
+    const pxsys_reference_layout_t *layout;
+    lv_obj_t *list;
+} input_method_list_t;
+typedef struct { pxsys_reference_lvgl_t *ui; char identity[]; } input_method_row_t;
+static void input_method_open(pxsys_reference_lvgl_t *ui);
+static void input_method_notice(pxsys_reference_lvgl_t *ui,bool success);
+static void input_method_row_deleted(lv_event_t *event) { lv_free(lv_event_get_user_data(event)); }
+static void input_method_selected(lv_event_t *event) {
+    input_method_row_t *row = lv_event_get_user_data(event);
+    pxsys_reference_lvgl_t *ui=row->ui;
+    if (ui->input_method_select && ui->input_method_select(ui->input_method_context,row->identity)) {
+        rebuild(ui);
+    } else input_method_notice(ui,false);
+}
+static void input_method_emit(void *context, const char *identity, pxsys_string_t name, bool selected) {
+    input_method_list_t *list = context;
+    if (!identity || !pxsys_display_text_validate(name,128)) return;
+    size_t bytes = strlen(identity);
+    input_method_row_t *data = lv_malloc(sizeof(*data)+bytes+1);
+    if (!data) return;
+    data->ui=list->ui; memcpy(data->identity,identity,bytes+1);
+    lv_obj_t *row = make_settings_row(list->ui,list->layout,list->list,LV_SYMBOL_KEYBOARD,
+        PXSYS_COLOR_ACCENT,borrowed_text(list->ui,name),selected ? "✓" : "",input_method_selected,data);
+    if (!row) { lv_free(data); return; }
+    lv_obj_add_event_cb(row,input_method_row_deleted,LV_EVENT_DELETE,data);
+}
+static lv_obj_t *selection_dialog(pxsys_reference_lvgl_t *ui,const char *title,pxsys_reference_layout_t *output) {
     pxsys_reference_layout_t layout;
     lv_obj_t* panel;
     lv_obj_t* header;
     lv_obj_t* list;
     lv_obj_t* action;
-    size_t index;
     int32_t panel_height;
     if (!ui_valid(ui) || ui->language_dialog != NULL ||
         pxsys_reference_layout_compute(&ui->display, &layout) !=
             PXSYS_STATUS_OK)
-        return;
+        return NULL;
+    *output=layout;
     expand_content_into_hidden_gesture_area(ui, &layout);
     ui->language_dialog = lv_obj_create(ui->root);
     style_plain(ui->language_dialog);
@@ -3403,14 +3487,16 @@ static void language_clicked(lv_event_t* event) {
 
     header = lv_obj_create(panel);
     style_plain(header);
-    lv_obj_set_size(header, LV_PCT(100), 42);
+    const lv_font_t *title_font=typography_font(ui,PXSYS_TYPOGRAPHY_TITLE);
+    int header_height=(title_font?title_font:LV_FONT_DEFAULT)->line_height+ui_px(ui,16);
+    lv_obj_set_size(header, LV_PCT(100), header_height);
     lv_obj_set_style_pad_hor(header, 12, 0);
     lv_obj_set_layout(header, LV_LAYOUT_FLEX);
     lv_obj_set_flex_flow(header, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(header, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER,
                           LV_FLEX_ALIGN_CENTER);
     action = lv_button_create(header);
-    lv_obj_set_size(action, 32, 32);
+    lv_obj_set_size(action, header_height-ui_px(ui,8), header_height-ui_px(ui,8));
     lv_obj_set_style_radius(action, LV_RADIUS_CIRCLE, 0);
     lv_obj_set_style_bg_opa(action, LV_OPA_TRANSP, 0);
     lv_obj_set_style_bg_color(action, color_token(ui, PXSYS_COLOR_BORDER),
@@ -3424,15 +3510,15 @@ static void language_clicked(lv_event_t* event) {
     lv_obj_add_event_cb(action, language_dialog_close_clicked,
                         LV_EVENT_CLICKED, ui);
     action = make_label(header,
-                        translated(ui, "language.title", "Language"),
+                        title,
                         typography_font(ui, PXSYS_TYPOGRAPHY_TITLE),
                         color_token(ui, PXSYS_COLOR_TEXT_PRIMARY));
     lv_obj_set_flex_grow(action, 1);
 
     list = lv_obj_create(panel);
     style_plain(list);
-    lv_obj_set_pos(list, 0, 42);
-    lv_obj_set_size(list, LV_PCT(100), panel_height - 42);
+    lv_obj_set_pos(list, 0, header_height);
+    lv_obj_set_size(list, LV_PCT(100), panel_height - header_height);
     lv_obj_set_style_pad_all(list, 8, 0);
     lv_obj_set_style_pad_row(list, 6, 0);
     lv_obj_set_layout(list, LV_LAYOUT_FLEX);
@@ -3441,6 +3527,18 @@ static void language_clicked(lv_event_t* event) {
     lv_obj_set_scroll_dir(list, LV_DIR_VER);
     lv_obj_set_scrollbar_mode(list, LV_SCROLLBAR_MODE_AUTO);
     style_scrollbar(ui, list);
+    lv_obj_move_foreground(ui->language_dialog);
+    if (ui->status_bar) lv_obj_move_foreground(ui->status_bar);
+    if (ui->navigation_bar) lv_obj_move_foreground(ui->navigation_bar);
+    return list;
+}
+static void language_clicked(lv_event_t *event) {
+    pxsys_reference_lvgl_t *ui=lv_event_get_user_data(event);
+    pxsys_reference_layout_t layout;
+    lv_obj_t *list=selection_dialog(ui,translated(ui,"language.title","Language"),&layout);
+    if (!list) return;
+    lv_obj_t *action;
+    size_t index;
     for (index = 0; index < ui->language_count; ++index) {
         const pxsys_reference_language_t* language = &ui->languages[index];
         int selected = language->locale.size == ui->locale.tag_size &&
@@ -3461,9 +3559,131 @@ static void language_clicked(lv_event_t* event) {
             lv_obj_set_style_min_width(action, 14, 0);
         }
     }
-    lv_obj_move_foreground(ui->language_dialog);
-    if (ui->status_bar != NULL) lv_obj_move_foreground(ui->status_bar);
-    if (ui->navigation_bar != NULL) lv_obj_move_foreground(ui->navigation_bar);
+}
+
+static void input_method_notice(pxsys_reference_lvgl_t *ui,bool success) {
+    pxsys_toast_message_t toast;
+    pxsys_toast_message_init(&toast,pxsys_string_from_cstr(translated(ui,
+        success?"input-method.saved":"input-method.failed",
+        success?"Saved":"Could not save settings")));
+    toast.tone=success?PXSYS_TOAST_SUCCESS:PXSYS_TOAST_ERROR;
+    (void)pxsys_toast_service_post(pxsys_standard_system_toasts(ui->system),&toast);
+}
+static void input_method_manage_clicked(lv_event_t *event) {
+    pxsys_reference_lvgl_t *ui=lv_event_get_user_data(event);
+#if PXSYS_REFERENCE_UI_BUILTIN_SETTINGS
+    ui->active_page=REFERENCE_PAGE_INPUT_METHOD_APPS;
+    ui->managed_apps_loaded=0;
+    rebuild(ui);
+#else
+    (void)open_role(ui,PXSYS_ROLE_APP_MANAGER);
+#endif
+}
+static void input_method_preferences_changed(lv_event_t *event) {
+    pxsys_reference_lvgl_t *ui=lv_event_get_user_data(event);
+    lv_obj_t *dropdown=lv_event_get_current_target(event);
+    pxsys_reference_input_method_preferences_t previous={0},value;
+    if (!ui->input_method_preferences ||
+        !ui->input_method_preferences(ui->input_method_context,&previous,false)) return;
+    value=previous;
+    bool language=(uintptr_t)lv_obj_get_user_data(dropdown)!=0;
+    uint16_t selected=lv_dropdown_get_selected(dropdown);
+    if (language) value.language=(uint8_t)selected; else value.layout=(uint8_t)selected;
+    bool success=pxsys_reference_input_method_preferences_valid(value) &&
+        ui->input_method_preferences(ui->input_method_context,&value,true);
+    if (!success) lv_dropdown_set_selected(dropdown,language?previous.language:previous.layout);
+    input_method_notice(ui,success);
+}
+/* Dropdown lists live on the rectangular screen. Keep them inside the
+ * page's safe viewport, allowing scrolling for long option lists. */
+static void input_method_popup_fit(pxsys_reference_lvgl_t *ui,lv_obj_t *dropdown) {
+    if (ui->active_page!=REFERENCE_PAGE_INPUT_METHOD || !ui->content || !lv_dropdown_is_open(dropdown)) return;
+    lv_obj_t *popup=lv_dropdown_get_list(dropdown);
+    lv_obj_update_layout(ui->content); lv_obj_update_layout(popup);
+    lv_area_t safe,area;
+    lv_obj_get_coords(ui->content,&safe);
+    safe.x1+=lv_obj_get_style_pad_left(ui->content,0);
+    safe.x2-=lv_obj_get_style_pad_right(ui->content,0);
+    lv_obj_get_coords(popup,&area);
+    int x=area.x1,y=area.y1;
+    if (area.x2>safe.x2) x-=area.x2-safe.x2;
+    if (area.y2>safe.y2) y-=area.y2-safe.y2;
+    if (x<safe.x1) x=safe.x1;
+    if (y<safe.y1) y=safe.y1;
+    lv_obj_set_pos(popup,x,y);
+}
+static void input_method_popup_event(lv_event_t *event) {
+    pxsys_reference_lvgl_t *ui=lv_event_get_user_data(event);
+    lv_obj_t *dropdown=lv_event_get_current_target(event);
+    if (lv_event_get_code(event)==LV_EVENT_READY && ui->content) {
+        lv_obj_update_layout(ui->content);
+        lv_obj_t *popup=lv_dropdown_get_list(dropdown);
+        lv_obj_set_style_max_height(popup,lv_obj_get_height(ui->content),0);
+        lv_obj_set_style_max_width(popup,lv_obj_get_content_width(ui->content),0);
+    } else if (lv_event_get_code(event)==LV_EVENT_RELEASED ||
+               lv_event_get_code(event)==LV_EVENT_KEY) input_method_popup_fit(ui,dropdown);
+}
+static void input_method_preference(pxsys_reference_lvgl_t *ui,lv_obj_t *list,
+    const char *title,const char *options,unsigned value,bool language) {
+    lv_obj_t *label=make_label(list,title,typography_font(ui,PXSYS_TYPOGRAPHY_LABEL),color_token(ui,PXSYS_COLOR_TEXT_PRIMARY));
+    lv_obj_set_width(label,LV_PCT(100));
+    lv_obj_t *dropdown=lv_dropdown_create(list);
+    lv_dropdown_set_options(dropdown,options); lv_dropdown_set_selected(dropdown,value);
+    lv_obj_set_width(dropdown,LV_PCT(100));
+    lv_obj_set_style_text_font(dropdown,typography_font(ui,PXSYS_TYPOGRAPHY_BODY),0);
+    lv_obj_set_style_bg_color(dropdown,color_token(ui,PXSYS_COLOR_SURFACE_CONTAINER_HIGHEST),0);
+    lv_obj_set_style_text_color(dropdown,color_token(ui,PXSYS_COLOR_TEXT_PRIMARY),0);
+    lv_obj_t *popup=lv_dropdown_get_list(dropdown);
+    lv_obj_set_style_text_font(popup,typography_font(ui,PXSYS_TYPOGRAPHY_BODY),0);
+    lv_obj_set_style_text_color(popup,color_token(ui,PXSYS_COLOR_TEXT_PRIMARY),0);
+    lv_obj_set_style_bg_color(popup,color_token(ui,PXSYS_COLOR_SURFACE),0);
+    lv_obj_set_user_data(dropdown,(void *)(uintptr_t)language);
+    lv_obj_add_event_cb(dropdown,input_method_preferences_changed,LV_EVENT_VALUE_CHANGED,ui);
+    lv_obj_add_event_cb(dropdown,input_method_popup_event,LV_EVENT_ALL,ui);
+}
+static void input_method_open(pxsys_reference_lvgl_t *ui) {
+    if (!ui_valid(ui)) return;
+    ui->active_page=REFERENCE_PAGE_INPUT_METHOD;
+    rebuild(ui);
+}
+static void build_input_method_page(pxsys_reference_lvgl_t *ui,const pxsys_reference_layout_t *layout) {
+    lv_obj_t *list=ui->content;
+    lv_obj_set_layout(list,LV_LAYOUT_FLEX);
+    lv_obj_set_flex_flow(list,LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_row(list,ui_px(ui,8),0);
+    lv_obj_set_style_pad_bottom(list,ui_px(ui,8),0);
+    pxsys_lvgl_add_flags(list,LV_OBJ_FLAG_SCROLLABLE|LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_scroll_dir(list,LV_DIR_VER);
+    make_label(list,translated(ui,"input-method.default","Default input method"),
+        typography_font(ui,PXSYS_TYPOGRAPHY_LABEL),color_token(ui,PXSYS_COLOR_TEXT_PRIMARY));
+    if (ui->input_method_list) {
+        input_method_list_t methods={ui,layout,list};
+        ui->input_method_list(ui->input_method_context,input_method_emit,&methods);
+    }
+    pxsys_reference_input_method_preferences_t value={0};
+    if (ui->input_method_preferences && ui->input_method_preferences(ui->input_method_context,&value,false) && pxsys_reference_input_method_preferences_valid(value)) {
+        char options[128];
+        snprintf(options,sizeof(options),"%s\n%s\n%s",
+            translated(ui,"input-method.layout.auto","Automatic"),
+            translated(ui,"input-method.layout.full","Full keyboard"),
+            translated(ui,"input-method.layout.nine","Nine key"));
+        input_method_preference(ui,list,translated(ui,"input-method.layout","Keyboard layout"),options,value.layout,false);
+        snprintf(options,sizeof(options),"%s\n%s",
+            translated(ui,"input-method.language.chinese","Chinese"),
+            translated(ui,"input-method.language.english","English"));
+        input_method_preference(ui,list,translated(ui,"input-method.language","Starting language"),options,value.language,true);
+    }
+    if (ui->app_list && ui->app_action)
+        make_settings_row(ui,layout,list,LV_SYMBOL_LIST,PXSYS_COLOR_ACCENT,
+            translated(ui,"input-method.manage","Manage installed apps"),
+            translated(ui,"input-method.manage.detail","Update, disable or uninstall in app management"),
+            input_method_manage_clicked,ui);
+    lv_obj_t *help=make_label(list,translated(ui,"input-method.help","Choose spelling above, words below. Swipe sideways for more."),
+        typography_font(ui,PXSYS_TYPOGRAPHY_BODY),color_token(ui,PXSYS_COLOR_TEXT_SECONDARY));
+    lv_obj_set_width(help,LV_PCT(100)); lv_label_set_long_mode(help,LV_LABEL_LONG_WRAP);
+}
+static void input_method_clicked(lv_event_t *event) {
+    input_method_open(lv_event_get_user_data(event));
 }
 
 #if PXSYS_REFERENCE_UI_ENABLE_WALLPAPER
@@ -3734,6 +3954,11 @@ static void build_settings(pxsys_reference_lvgl_t* ui,
         ui, layout, section, LV_SYMBOL_EDIT, PXSYS_COLOR_ACCENT,
         translated(ui, "settings.language", "Language"), language_detail,
         language_clicked, ui);
+    if (ui->input_method_list || ui->input_method_preferences)
+        make_settings_row(ui,layout,section,LV_SYMBOL_KEYBOARD,PXSYS_COLOR_ACCENT,
+            translated(ui,"input-method.title","Input method"),
+            translated(ui,"input-method.detail","Keyboard, language and installed input methods"),
+            input_method_clicked,ui);
     add_settings_chevron(ui, row);
 
     if (has_sound || has_alarm) {
@@ -5933,6 +6158,8 @@ static void wide_ime_mode_clicked(lv_event_t* event) {
     lv_obj_t* pinyin = ui->app_wide_ime.pinyin;
     const int chinese = strcmp(mode, "CN") == 0;
     if (keyboard == NULL) return;
+    lv_obj_t *target=lv_keyboard_get_textarea(keyboard);
+    if (chinese && target && lv_textarea_get_password_mode(target)) return;
     ui->app_wide_ime.chinese = chinese;
 #if LV_USE_IME_PINYIN && LV_IME_PINYIN_USE_K9_MODE
     if (pinyin != NULL) {
@@ -5967,6 +6194,9 @@ static void wide_ime_add_modes(pxsys_reference_lvgl_t* ui, lv_obj_t* parent,
         lv_obj_center(text);
         lv_obj_set_flex_grow(button, 1);
         lv_obj_set_height(button, ui_px(ui,36));
+        lv_obj_t *target=lv_keyboard_get_textarea(keyboard);
+        if (index==0 && target && lv_textarea_get_password_mode(target))
+            lv_obj_add_state(button,LV_STATE_DISABLED);
         lv_obj_set_user_data(button, (void*)modes[index]);
         lv_obj_add_event_cb(button, wide_ime_mode_clicked, LV_EVENT_CLICKED, ui);
     }
@@ -6202,11 +6432,15 @@ static void app_input_method_open(pxsys_reference_lvgl_t* ui,
     lv_obj_t* panel;
     if (!ui_valid(ui) || ui->parent == NULL || target == NULL) return;
     app_input_method_close(ui);
+    pxsys_reference_input_method_preferences_t preferences={0};
+    if (ui->input_method_preferences) (void)ui->input_method_preferences(ui->input_method_context,&preferences,false);
+    if (!pxsys_reference_input_method_preferences_valid(preferences)) preferences=(pxsys_reference_input_method_preferences_t){0};
 #if LV_USE_IME_PINYIN && LV_IME_PINYIN_USE_K9_MODE
     /* Narrow panels get the nine key pad: bigger targets, pinyin candidates
      * and symbol pages. */
-    if ((uint64_t)ui->display.width * 160u <
-        (uint64_t)(ui->display.density_dpi ? ui->display.density_dpi : 160u) * 480u) {
+    if (preferences.layout==PXSYS_INPUT_LAYOUT_NINE || (preferences.layout==PXSYS_INPUT_LAYOUT_AUTO &&
+        (uint64_t)ui->display.width * 160u <
+        (uint64_t)(ui->display.density_dpi ? ui->display.density_dpi : 160u) * 480u)) {
         ui->app_ime_keypad = pxsys_reference_ime_create(ui->parent, target);
         if (ui->app_ime_keypad == NULL) return;
         pxsys_reference_ime_set_font(
@@ -6220,7 +6454,7 @@ static void app_input_method_open(pxsys_reference_lvgl_t* ui,
             pxsys_reference_ime_set_layout(ui->app_ime_keypad,
                 keyboard_rect.width, keyboard_rect.height, LV_ALIGN_TOP_LEFT,
                 keyboard_rect.x, keyboard_rect.y);
-        if (target == ui->wifi_password_input)
+        if (lv_textarea_get_password_mode(target) || preferences.language==PXSYS_INPUT_ENGLISH)
             pxsys_reference_ime_set_mode(ui->app_ime_keypad,
                                          PXSYS_REFERENCE_IME_MODE_ENGLISH);
         pxsys_reference_ime_set_close_callback(ui->app_ime_keypad,
@@ -6289,6 +6523,16 @@ static void app_input_method_open(pxsys_reference_lvgl_t* ui,
     }
 #endif
     wide_ime_add_modes(ui, panel, ui->app_ime_keyboard, ui->app_ime_pinyin);
+    if (lv_textarea_get_password_mode(target) || preferences.language==PXSYS_INPUT_ENGLISH) {
+        ui->app_wide_ime.chinese=0;
+#if LV_USE_IME_PINYIN && LV_IME_PINYIN_USE_K9_MODE
+        if (ui->app_ime_pinyin) {
+            lv_ime_pinyin_set_mode(ui->app_ime_pinyin,LV_IME_PINYIN_MODE_K9_NUMBER);
+            lv_obj_set_hidden(lv_ime_pinyin_get_cand_panel(ui->app_ime_pinyin),true);
+        }
+#endif
+        lv_keyboard_set_mode(ui->app_ime_keyboard,LV_KEYBOARD_MODE_TEXT_LOWER);
+    }
     lv_obj_add_event_cb(ui->app_ime_keyboard, app_input_method_event,
                         LV_EVENT_READY, ui);
     lv_obj_add_event_cb(ui->app_ime_keyboard, app_input_method_event,
@@ -6333,6 +6577,11 @@ static void app_input_method_poll(lv_timer_t* timer) {
 #if PXSYS_REFERENCE_UI_DEBUG_INPUT_METHOD
     if (target == NULL) target = find_any_textarea(lv_screen_active());
 #endif
+    if (target != NULL && ui->input_method_managed != NULL &&
+        ui->input_method_managed(ui->input_method_context, target)) {
+        if (ui->app_ime != NULL) app_input_method_close(ui);
+        return;
+    }
     if (target == ui->app_ime_target && ui->app_ime != NULL) {
         update_system_overlay(ui);
         return;
@@ -6344,6 +6593,10 @@ static void app_input_method_poll(lv_timer_t* timer) {
     if (ui->app_ime != NULL && object_is_within(target, ui->app_ime)) return;
     if (ui->app_ime_target != NULL &&
         object_is_within(target, ui->app_ime_target)) return;
+    if (ui->input_method_focus != NULL && ui->input_method_focus(ui->input_method_context,target)) {
+        if (ui->app_ime != NULL) app_input_method_close(ui);
+        return;
+    }
     app_input_method_open(ui, target);
 }
 
@@ -7571,12 +7824,20 @@ static void rebuild(pxsys_reference_lvgl_t* ui) {
             } else if (ui->active_page == REFERENCE_PAGE_APPEARANCE) {
                 title_key = "settings.appearance";
                 title_default = "Appearance";
+            } else if (ui->active_page == REFERENCE_PAGE_INPUT_METHOD) {
+                title_key = "input-method.title";
+                title_default = "Input method";
+            } else if (ui->active_page == REFERENCE_PAGE_INPUT_METHOD_APPS) {
+                title_key = "settings.apps";
+                title_default = "Apps";
             }
             if (title_height < minimum_title_height)
                 title_height = minimum_title_height;
             lv_obj_t* title_parent = ui->content;
             if (ui->active_page == REFERENCE_PAGE_WIFI ||
                 ui->active_page == REFERENCE_PAGE_APPEARANCE ||
+                ui->active_page == REFERENCE_PAGE_INPUT_METHOD ||
+                ui->active_page == REFERENCE_PAGE_INPUT_METHOD_APPS ||
                 ui->active_page == REFERENCE_PAGE_FILE_MANAGER) {
                 lv_obj_t* header = lv_obj_create(ui->content);
                 style_plain(header);
@@ -7639,12 +7900,14 @@ static void rebuild(pxsys_reference_lvgl_t* ui) {
             build_wifi_page(ui, &layout);
         else if (ui->active_page == REFERENCE_PAGE_APPEARANCE)
             build_appearance_page(ui, &layout);
+        else if (ui->active_page == REFERENCE_PAGE_INPUT_METHOD)
+            build_input_method_page(ui,&layout);
 #if PXSYS_REFERENCE_UI_BUILTIN_SETTINGS
         else if (ui->active_page == REFERENCE_PAGE_SOUND_SETTINGS)
             build_sound_settings(ui, &layout);
         else if (ui->active_page == REFERENCE_PAGE_DEVICE_INFO)
             build_device_info_page(ui, &layout);
-        else if (ui->active_page == REFERENCE_PAGE_APP_MANAGER)
+        else if (ui->active_page == REFERENCE_PAGE_APP_MANAGER || ui->active_page == REFERENCE_PAGE_INPUT_METHOD_APPS)
             build_app_manager(ui, &layout);
         else if (ui->active_page == REFERENCE_PAGE_FILE_MANAGER)
             build_file_manager(ui, &layout);
@@ -8342,6 +8605,14 @@ static pxsys_status_t app_event(void* context, void* instance,
 static pxsys_back_result_t app_back(void* context, void* instance) {
     app_context_t* app = (app_context_t*)instance;
     (void)context;
+    /* Hardware/API Back must use the same subpage navigation as the header
+     * and edge gesture, instead of popping the owning Settings task. */
+    if (app && app->page==REFERENCE_PAGE_SETTINGS && ui_valid(app->ui) &&
+        (app->ui->active_page==REFERENCE_PAGE_INPUT_METHOD ||
+         app->ui->active_page==REFERENCE_PAGE_INPUT_METHOD_APPS)) {
+        navigation_back(app->ui);
+        return PXSYS_BACK_HANDLED;
+    }
     /* Back on the launcher page must not pop it and surface an older task. */
     if (app != NULL && app->page == REFERENCE_PAGE_HOME) {
         if (ui_valid(app->ui) && app->ui->launcher_editing) {
@@ -8572,6 +8843,12 @@ pxsys_status_t pxsys_reference_lvgl_create(
                              ? sizeof(reference_languages) /
                                    sizeof(reference_languages[0])
                              : config->language_count;
+    ui->input_method_context = config->input_method_context;
+    ui->input_method_list = config->input_method_list;
+    ui->input_method_select = config->input_method_select;
+    ui->input_method_preferences = config->input_method_preferences;
+    ui->input_method_managed = config->input_method_managed;
+    ui->input_method_focus = config->input_method_focus;
     ui->wallpaper_source = config->wallpaper_source;
     if (ui->fonts[PXSYS_TYPOGRAPHY_BODY] == NULL)
         ui->fonts[PXSYS_TYPOGRAPHY_BODY] = ui->text_font;
@@ -8751,7 +9028,8 @@ pxsys_status_t pxsys_reference_lvgl_home(pxsys_reference_lvgl_t* ui) {
 void pxsys_reference_lvgl_refresh_apps(pxsys_reference_lvgl_t* ui) {
     if (!ui_valid(ui)) return;
     ui->managed_apps_loaded = 0;
-    if (ui->active_page == REFERENCE_PAGE_HOME || ui->active_page == REFERENCE_PAGE_APP_MANAGER) {
+    if (ui->active_page == REFERENCE_PAGE_HOME || ui->active_page == REFERENCE_PAGE_APP_MANAGER ||
+        ui->active_page == REFERENCE_PAGE_INPUT_METHOD || ui->active_page == REFERENCE_PAGE_INPUT_METHOD_APPS) {
         page_close_dialogs(ui);
         rebuild(ui);
     }

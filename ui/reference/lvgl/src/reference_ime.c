@@ -427,8 +427,7 @@ static void create_symbol_panel(pxsys_reference_ime_t *input_method) {
                       LV_EVENT_CLICKED, NULL);
 }
 
-/* The pad has no confirm key of its own: closing it submits the text, so a
- * Guest that waits for the submitted event applies what the user typed. */
+/* Completion and hiding are distinct actions, including in the native fallback. */
 static void submit_and_hide(pxsys_reference_ime_t *input_method) {
     if (ime_text_area(input_method) != NULL)
         lv_obj_send_event(ime_text_area(input_method), LV_EVENT_READY, NULL);
@@ -454,8 +453,10 @@ static void keyboard_preprocess(lv_event_t *event) {
         } else if (strcmp(text, "EN") == 0) {
             pxsys_reference_ime_set_mode(input_method, PXSYS_REFERENCE_IME_MODE_ENGLISH);
             lv_event_stop_processing(event);
-        } else if (strcmp(text, LV_SYMBOL_DOWN) == 0 ||
-                   strcmp(text, LV_SYMBOL_OK) == 0) {
+        } else if (strcmp(text, LV_SYMBOL_DOWN) == 0) {
+            pxsys_reference_ime_hide(input_method);
+            lv_event_stop_processing(event);
+        } else if (strcmp(text, LV_SYMBOL_OK) == 0) {
             submit_and_hide(input_method);
             lv_event_stop_processing(event);
         }
@@ -475,8 +476,10 @@ static void keyboard_preprocess(lv_event_t *event) {
     } else if (strcmp(text, "#+") == 0) {
         pxsys_reference_ime_set_mode(input_method, PXSYS_REFERENCE_IME_MODE_SYMBOLS);
         lv_event_stop_processing(event);
-    } else if (strcmp(text, LV_SYMBOL_DOWN) == 0 ||
-                   strcmp(text, LV_SYMBOL_OK) == 0) {
+    } else if (strcmp(text, LV_SYMBOL_DOWN) == 0) {
+        pxsys_reference_ime_hide(input_method);
+        lv_event_stop_processing(event);
+    } else if (strcmp(text, LV_SYMBOL_OK) == 0) {
         submit_and_hide(input_method);
         lv_event_stop_processing(event);
     } else if (strcmp(text, LV_SYMBOL_BACKSPACE) == 0 &&
@@ -813,6 +816,8 @@ lv_coord_t pxsys_reference_ime_keyboard_top(
 void pxsys_reference_ime_set_mode(pxsys_reference_ime_t *input_method,
                                pxsys_reference_ime_mode_t mode) {
     if (input_method == NULL || input_method->keyboard == NULL) return;
+    if (mode==PXSYS_REFERENCE_IME_MODE_CHINESE && input_method->text_area &&
+        lv_textarea_get_password_mode(input_method->text_area)) mode=PXSYS_REFERENCE_IME_MODE_ENGLISH;
     input_method->mode = mode;
 
     if (mode == PXSYS_REFERENCE_IME_MODE_SYMBOLS) {

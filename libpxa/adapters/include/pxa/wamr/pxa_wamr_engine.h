@@ -173,6 +173,13 @@ pxa_status_t pxa_wamr_engine_deliver_event_result(
 int pxa_wamr_engine_poll_deadlines(pxa_wamr_engine_t *engine,
                                    uint64_t now_us);
 
+/* Atomically expire only the specified Component's active call. A Host can
+ * isolate an optional service timeout without stopping a foreground app or
+ * racing a completed call followed by a call in a different Component. */
+int pxa_wamr_engine_poll_component_deadline(pxa_wamr_engine_t *engine,
+                                           pxa_component_t component,
+                                           uint64_t now_us);
+
 /* Take one expired deadline without terminating the guest call. The deadline
  * is disarmed so this returns 1 only once until the host extends it. */
 int pxa_wamr_engine_take_expired_deadline(pxa_wamr_engine_t *engine,

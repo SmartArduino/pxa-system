@@ -670,9 +670,21 @@ static pxa_status_t enumerate_files(int directory, const char *prefix,
             continue;
         }
         *found_entry = 1;
-        if (!segment_safe(item->d_name, name_size) ||
-            fstatat(directory, item->d_name, &metadata,
-                    AT_SYMLINK_NOFOLLOW) != 0) {
+        if (!segment_safe(item->d_name, name_size)) {
+            status = PXA_STATUS_DENIED;
+            break;
+        }
+#ifdef ESP_PLATFORM
+        /* LittleFS supplies the type with readdir and has neither links nor
+         * special files. Avoid a second flash directory walk per entry.
+         * Each opened file is still checked with fstat before/after hashing. */
+        if (item->d_type == DT_REG || item->d_type == DT_DIR) {
+            memset(&metadata, 0, sizeof(metadata));
+            metadata.st_mode = item->d_type == DT_REG ? S_IFREG : S_IFDIR;
+            metadata.st_nlink = 1;
+        } else
+#endif
+        if (fstatat(directory, item->d_name, &metadata, AT_SYMLINK_NOFOLLOW) != 0) {
             status = PXA_STATUS_DENIED;
             break;
         }
@@ -1378,6 +1390,38 @@ digest_done:
     return status;
 }
 
+/* Check the directory against the signed inventory once; the hashing job
+ * subsequently borrows the caller's parsed manifest, never installer scratch. */
+static pxa_status_t verify_directory_inventory(int root, const pxa_package_manifest_t *manifest) {
+    pxa_string_array_t actual = {0};
+    pxa_path_view_t *expected = NULL, *views = NULL;
+    size_t count = 0, expected_count = (size_t)manifest->file_count + 2;
+    int found = 0;
+    pxa_status_t status = enumerate_files(root, NULL, &actual, &found);
+    if (status != PXA_STATUS_OK || !found) {
+        if (status == PXA_STATUS_OK) status = PXA_STATUS_DENIED;
+        goto done;
+    }
+    expected = malloc(expected_count * sizeof(*expected));
+    if (!expected) { status = PXA_STATUS_RESOURCE_LIMIT; goto done; }
+    expected[0] = (pxa_path_view_t){"manifest.pxm", sizeof("manifest.pxm")-1};
+    expected[1] = (pxa_path_view_t){"signature.pxs", sizeof("signature.pxs")-1};
+    for (size_t i=0; i<manifest->file_count; ++i)
+        expected[i+2] = (pxa_path_view_t){(const char *)manifest->files[i].path.data, manifest->files[i].path.size};
+    views = collect_views(&actual, &count);
+    if (!views && count) { status = PXA_STATUS_RESOURCE_LIMIT; goto done; }
+    if (count != expected_count) { status = PXA_STATUS_DENIED; goto done; }
+    qsort(expected, count, sizeof(*expected), path_view_compare);
+    qsort(views, count, sizeof(*views), path_view_compare);
+    for (size_t i=0; i<count; ++i)
+        if (views[i].size != expected[i].size || memcmp(views[i].data, expected[i].data, expected[i].size)) {
+            status = PXA_STATUS_DENIED; break;
+        }
+done:
+    free(views); free(expected); string_array_clear(&actual);
+    return status;
+}
+
 static pxa_status_t verify_opened_directory(
     pxa_posix_installer_t *installer, int root_fd, int verify_contents,
     uint8_t publisher_key_id_out[PXA_PACKAGE_DIGEST_BYTES],
@@ -1388,16 +1432,11 @@ static pxa_status_t verify_opened_directory(
     pxa_package_signature_t signature;
     pxa_package_publisher_lineage_t lineage;
     pxa_package_manifest_t *manifest = NULL;
-    pxa_string_array_t actual;
-    pxa_path_view_t *expected = NULL;
-    pxa_path_view_t *actual_views = NULL;
-    size_t expected_count;
     size_t index;
     pxa_status_t status;
     const char *stage = "validate-arguments";
     size_t manifest_size;
     size_t signature_size;
-    memset(&actual, 0, sizeof(actual));
     if (app_id_out == NULL || app_id_size_out == NULL) {
         return PXA_STATUS_INVALID_ARGUMENT;
     }
@@ -1464,65 +1503,11 @@ static pxa_status_t verify_opened_directory(
         goto done;
     }
 
-    {
-        int found = 0;
-        stage = "enumerate-files";
-        status = enumerate_files(root_fd, NULL, &actual, &found);
-        if (status != PXA_STATUS_OK || !found) {
-            status = status == PXA_STATUS_OK ? PXA_STATUS_DENIED : status;
-            goto done;
-        }
-    }
-    expected_count = (size_t)manifest->file_count + 2;
-    stage = "allocate-expected-files";
-    expected = (pxa_path_view_t *)malloc(expected_count *
-                                         sizeof(pxa_path_view_t));
-    if (expected == NULL) {
-        status = PXA_STATUS_RESOURCE_LIMIT;
-        goto done;
-    }
-    expected[0].data = "manifest.pxm";
-    expected[0].size = sizeof("manifest.pxm") - 1;
-    expected[1].data = "signature.pxs";
-    expected[1].size = sizeof("signature.pxs") - 1;
+    stage = "check-inventory";
+    status = verify_directory_inventory(root_fd, manifest);
+    if (status != PXA_STATUS_OK) goto done;
     status = ensure_inventory_capacity(installer, manifest->file_count);
     if (status != PXA_STATUS_OK) goto done;
-    for (index = 0; index < (size_t)manifest->file_count; ++index) {
-        expected[index + 2].data =
-            (const char *)manifest->files[index].path.data;
-        expected[index + 2].size = manifest->files[index].path.size;
-    }
-    qsort(expected, expected_count, sizeof(pxa_path_view_t),
-          path_view_compare);
-    {
-        size_t actual_views_count = 0;
-        stage = "collect-files";
-        actual_views = collect_views(&actual, &actual_views_count);
-        if (actual_views == NULL && actual_views_count != 0) {
-            status = PXA_STATUS_RESOURCE_LIMIT;
-            goto done;
-        }
-        if (actual_views_count != expected_count) {
-            status = PXA_STATUS_DENIED;
-            goto done;
-        }
-        stage = "compare-files";
-        qsort(actual_views, actual_views_count, sizeof(pxa_path_view_t),
-              path_view_compare);
-        for (index = 0; index < actual_views_count; ++index) {
-            if (actual_views[index].size != expected[index].size ||
-                memcmp(actual_views[index].data, expected[index].data,
-                       expected[index].size) != 0) {
-                status = PXA_STATUS_DENIED;
-                goto done;
-            }
-        }
-        free(actual_views);
-        actual_views = NULL;
-    }
-    free(expected);
-    expected = NULL;
-    string_array_clear(&actual);
 
     for (index = 0; index < (size_t)manifest->file_count; ++index) {
         installer->inventory[index].path = manifest->files[index].path;
@@ -1552,9 +1537,6 @@ done:
     if (status != PXA_STATUS_OK) {
         PXA_POSIX_INSTALLER_LOG_FAILURE("Verify package", stage, status);
     }
-    free(actual_views);
-    free(expected);
-    string_array_clear(&actual);
     free(manifest_bytes);
     return status;
 }
@@ -3041,6 +3023,114 @@ pxa_status_t pxa_posix_installer_source_manifest_size(
     if (manifest_fd >= 0) close(manifest_fd);
     close(source_fd);
     return status;
+}
+
+struct pxa_posix_verification {
+    pxa_posix_installer_t *installer;
+    const pxa_package_manifest_t *manifest;
+    int root, source;
+    uint16_t index;
+    uint8_t stage;
+    uint64_t total;
+    struct stat before;
+    pxa_openssl_sha256_stream_t hash;
+    pxa_status_t status;
+};
+
+void pxa_posix_installer_verify_close(pxa_posix_verification_t *job) {
+    if (!job) return;
+    pxa_openssl_sha256_stream_abort(&job->hash);
+    if (job->source >= 0) close(job->source);
+    if (job->root >= 0) close(job->root);
+    free(job);
+}
+
+pxa_status_t pxa_posix_installer_verify_begin(pxa_posix_installer_t *installer,
+    const char *directory, pxa_posix_installer_result_t *result,
+    pxa_posix_verification_t **output) {
+    if (!output) return PXA_STATUS_INVALID_ARGUMENT;
+    *output = NULL;
+    if (!installer || installer->magic != PXA_POSIX_INSTALLER_MAGIC || !directory)
+        return PXA_STATUS_INVALID_ARGUMENT;
+    pxa_posix_verification_t *job = calloc(1, sizeof(*job));
+    if (!job) return PXA_STATUS_RESOURCE_LIMIT;
+    job->source = job->root = -1; job->installer = installer;
+    job->root = open(directory, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+    pxa_status_t status = job->root < 0 ? PXA_STATUS_NOT_FOUND :
+        fill_result(installer, job->root, directory, result);
+    if (status != PXA_STATUS_OK) goto fail;
+    job->manifest = *result->manifest;
+    job->status = PXA_STATUS_WOULD_BLOCK;
+    *output = job; return PXA_STATUS_OK;
+fail:
+    if (result && result->struct_size >= sizeof(*result) && result->manifest) *result->manifest = NULL;
+    pxa_posix_installer_verify_close(job); return status;
+}
+
+static pxa_status_t verification_authenticate(pxa_posix_verification_t *job) {
+    pxa_posix_installer_t *installer = job->installer;
+    uint8_t signature_bytes[PXA_POSIX_INSTALLER_SIGNATURE_ENVELOPE_BYTES];
+    size_t signature_size = 0;
+    pxa_package_signature_t signature;
+    pxa_package_publisher_lineage_t lineage;
+    pxa_status_t status = read_bounded(job->root, "signature.pxs", sizeof(signature_bytes),
+        signature_bytes, sizeof(signature_bytes), &signature_size);
+    if (status == PXA_STATUS_OK) status = pxa_package_signature_parse(
+        (pxa_bytes_t){signature_bytes, signature_size}, &signature);
+    if (status == PXA_STATUS_OK) status = pxa_package_signature_identity_validate(job->manifest, &signature);
+    if (status == PXA_STATUS_OK) status = installer->verify ? verify_manifest_signature(installer, job->manifest, &signature, &lineage) : PXA_STATUS_UNSUPPORTED;
+    return status;
+}
+
+pxa_status_t pxa_posix_installer_verify_step(pxa_posix_verification_t *job, size_t budget) {
+    if (!job || !budget) return PXA_STATUS_INVALID_ARGUMENT;
+    if (job->status != PXA_STATUS_WOULD_BLOCK) return job->status;
+    /* Keep expensive metadata operations in distinct owner turns, so a
+     * close/focus event can cancel between authentication, inventory and I/O. */
+    if (job->stage < 2) {
+        pxa_status_t status = job->stage == 0 ? verification_authenticate(job) :
+            verify_directory_inventory(job->root, job->manifest);
+        if (status != PXA_STATUS_OK) return job->status = status;
+        ++job->stage;
+        return PXA_STATUS_WOULD_BLOCK;
+    }
+    if (job->index == job->manifest->file_count) return job->status = PXA_STATUS_OK;
+    const pxa_package_file_t *expected = &job->manifest->files[job->index];
+    pxa_status_t status = PXA_STATUS_OK;
+    if (job->source < 0) {
+        char path[PXA_POSIX_INSTALLER_MAX_PACKAGE_PATH+1];
+        if (expected->path.size >= sizeof(path)) return job->status = PXA_STATUS_DENIED;
+        memcpy(path, expected->path.data, expected->path.size); path[expected->path.size] = 0;
+        status = open_relative(job->root, path, &job->source, &job->before);
+        if (status == PXA_STATUS_OK && (job->before.st_size < 0 || (uint64_t)job->before.st_size != expected->size))
+            status = PXA_STATUS_DENIED;
+        if (status == PXA_STATUS_OK) status = pxa_openssl_sha256_stream_begin(&job->hash);
+        job->total = 0;
+    }
+    while (status == PXA_STATUS_OK && budget) {
+        size_t amount = budget < job->installer->io_buffer_size ? budget : job->installer->io_buffer_size;
+        ssize_t count;
+        do { count = read(job->source, job->installer->io_buffer, amount); } while (count < 0 && errno == EINTR);
+        if (count < 0) { status = PXA_STATUS_DENIED; break; }
+        if (!count) {
+            uint8_t digest[PXA_PACKAGE_DIGEST_BYTES]; struct stat after;
+            status = pxa_openssl_sha256_stream_finish(&job->hash, digest);
+            if (status == PXA_STATUS_OK && (job->total != expected->size ||
+                memcmp(digest, expected->sha256, sizeof(digest)) ||
+                fstat(job->source, &after) || !stat_same(&job->before, &after))) status = PXA_STATUS_DENIED;
+            close(job->source); job->source = -1;
+            if (status == PXA_STATUS_OK) {
+                ++job->index;
+                return job->status = job->index == job->manifest->file_count ? PXA_STATUS_OK : PXA_STATUS_WOULD_BLOCK;
+            }
+            break;
+        }
+        job->total += (uint64_t)count;
+        if (job->total > expected->size) { status = PXA_STATUS_DENIED; break; }
+        status = pxa_openssl_sha256_stream_update(&job->hash, job->installer->io_buffer, (size_t)count);
+        budget -= (size_t)count;
+    }
+    return job->status = status == PXA_STATUS_OK ? PXA_STATUS_WOULD_BLOCK : status;
 }
 
 pxa_status_t pxa_posix_installer_verify_source(

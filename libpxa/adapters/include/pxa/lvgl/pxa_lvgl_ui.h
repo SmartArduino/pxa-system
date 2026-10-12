@@ -73,6 +73,10 @@ typedef struct {
      * created only when requested; at most 16 pixel sizes per adapter lifetime.
      * No whole-page bitmap or default font atlas cache is allocated. */
     const char *sized_text_font_path;
+    /* Trusted Host focus observer, called inside execute. A service provider
+     * never receives these native objects. NULL leaves native polling intact. */
+    void (*text_input_focus)(void *context, void *textarea, bool focused);
+    void *text_input_context;
 } pxa_lvgl_ui_config_t;
 
 typedef struct pxa_lvgl_ui pxa_lvgl_ui_t;

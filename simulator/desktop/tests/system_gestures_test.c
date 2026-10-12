@@ -92,6 +92,74 @@ static void game_destroy(void *context, void *instance) {
     (void)context; (void)instance;
 }
 
+static unsigned ime_selections,ime_lists;
+static bool ime_save_fails;
+static pxsys_reference_input_method_preferences_t ime_preferences;
+static void ime_list(void *context,pxsys_reference_input_method_emit_fn emit,void *output) {
+    (void)context; ++ime_lists;
+    emit(output,"",pxsys_string_from_cstr("System keyboard"),ime_selections==0);
+    emit(output,"test:ime",pxsys_string_from_cstr("Pinyin IME"),ime_selections!=0);
+}
+static bool ime_select(void *context,const char *identity) {
+    (void)context; assert(!strcmp(identity,"test:ime")); ++ime_selections; return true;
+}
+static bool ime_preferences_control(void *context,pxsys_reference_input_method_preferences_t *value,bool save) {
+    (void)context;
+    if (!save) { *value=ime_preferences; return true; }
+    if (ime_save_fails) return false;
+    assert(pxsys_reference_input_method_preferences_valid(*value)); ime_preferences=*value; return true;
+}
+static lv_obj_t *find_label(lv_obj_t *root,const char *text) {
+    if (lv_obj_has_class(root,&lv_label_class) && !strcmp(lv_label_get_text(root),text)) return root;
+    for (unsigned i=0;i<lv_obj_get_child_count(root);++i) {
+        lv_obj_t *found=find_label(lv_obj_get_child(root,i),text); if (found) return found;
+    }
+    return NULL;
+}
+static void check_input_method_settings(pxsys_reference_lvgl_t *ui) {
+    ui->input_method_list=ime_list; ui->input_method_select=ime_select;
+    ui->input_method_preferences=ime_preferences_control;
+    assert(open_role(ui,PXSYS_ROLE_SETTINGS)==PXSYS_STATUS_OK);
+    input_method_open(ui); assert(!ui->language_dialog && ui->active_page==REFERENCE_PAGE_INPUT_METHOD && ime_lists==1);
+    lv_obj_t *list=ui->content;
+    lv_obj_t *layout=NULL,*language=NULL;
+    for (unsigned i=0;i<lv_obj_get_child_count(list);++i) {
+        lv_obj_t *child=lv_obj_get_child(list,i);
+        if (lv_obj_has_class(child,&lv_dropdown_class)) {
+            if (lv_obj_get_user_data(child)) language=child; else layout=child;
+        }
+    }
+    assert(layout && language);
+    lv_obj_update_layout(ui->content);
+    lv_dropdown_open(layout); input_method_popup_fit(ui,layout);
+    lv_obj_update_layout(lv_dropdown_get_list(layout));
+    lv_area_t popup_area,panel_area;
+    lv_obj_get_coords(lv_dropdown_get_list(layout),&popup_area);
+    lv_obj_get_coords(ui->content,&panel_area);
+    assert(popup_area.x1>=panel_area.x1 && popup_area.x2<=panel_area.x2);
+    assert(popup_area.y1>=panel_area.y1 && popup_area.y2<=panel_area.y2);
+    lv_dropdown_close(layout);
+
+    lv_dropdown_set_selected(layout,PXSYS_INPUT_LAYOUT_NINE); lv_obj_send_event(layout,LV_EVENT_VALUE_CHANGED,NULL);
+    lv_dropdown_set_selected(language,PXSYS_INPUT_ENGLISH); lv_obj_send_event(language,LV_EVENT_VALUE_CHANGED,NULL);
+    assert(ime_preferences.layout==PXSYS_INPUT_LAYOUT_NINE && ime_preferences.language==PXSYS_INPUT_ENGLISH);
+    ime_save_fails=true;
+    lv_dropdown_set_selected(layout,PXSYS_INPUT_LAYOUT_FULL); lv_obj_send_event(layout,LV_EVENT_VALUE_CHANGED,NULL);
+    assert(ime_preferences.layout==PXSYS_INPUT_LAYOUT_NINE && lv_dropdown_get_selected(layout)==PXSYS_INPUT_LAYOUT_NINE);
+    ime_save_fails=false;
+    lv_obj_t *label=find_label(list,"Pinyin IME"); assert(label);
+    lv_obj_t *row=lv_obj_get_parent(label);
+    while (lv_obj_get_parent(row)!=list) row=lv_obj_get_parent(row);
+    lv_obj_send_event(row,LV_EVENT_CLICKED,NULL);
+    assert(ime_selections==1 && !ui->language_dialog && ui->active_page==REFERENCE_PAGE_INPUT_METHOD && ime_lists==2);
+    navigation_back(ui); assert(ui->active_page==REFERENCE_PAGE_SETTINGS);
+    input_method_open(ui); assert(ime_lists==3 && !ui->language_dialog && ui->active_page==REFERENCE_PAGE_INPUT_METHOD);
+    pxsys_back_result_t back_result;
+    assert(pxsys_task_manager_back(pxsys_standard_system_tasks(ui->system),&back_result)==PXSYS_STATUS_OK);
+    assert(back_result==PXSYS_BACK_HANDLED && ui->active_page==REFERENCE_PAGE_SETTINGS);
+    assert(ime_preferences.layout==PXSYS_INPUT_LAYOUT_NINE && ime_preferences.language==PXSYS_INPUT_ENGLISH);
+}
+
 int main(void) {
     lv_init();
     lv_display_t *display = lv_display_create(480, 480);
@@ -283,6 +351,7 @@ int main(void) {
 
     assert(!pxsys_task_manager_finish_all(
         pxsys_standard_system_tasks(system_under_test), PXSYS_STOP_SHUTDOWN));
+    check_input_method_settings(ui);
     assert(!pxsys_reference_lvgl_destroy(ui));
     assert(!pxsys_standard_system_destroy(system_under_test));
     assert(!pxsys_lvgl_renderer_destroy(renderer));

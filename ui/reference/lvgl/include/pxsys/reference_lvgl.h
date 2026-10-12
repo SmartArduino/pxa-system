@@ -301,6 +301,23 @@ typedef void (*pxsys_reference_lvgl_idle_lock_fn)(void* context);
 #define PXSYS_REFERENCE_UI_BUILTIN_SETTINGS 1
 #endif
 
+typedef void (*pxsys_reference_input_method_emit_fn)(void *context,
+    const char *identity, pxsys_string_t name, bool selected);
+typedef void (*pxsys_reference_input_method_list_fn)(void *context,
+    pxsys_reference_input_method_emit_fn emit, void *emit_context);
+typedef bool (*pxsys_reference_input_method_select_fn)(void *context, const char *identity);
+/* UI policy, independent of the PXA runtime. Products map these defaults to
+ * their input engine. Password fields always override the starting language. */
+typedef enum { PXSYS_INPUT_LAYOUT_AUTO, PXSYS_INPUT_LAYOUT_FULL, PXSYS_INPUT_LAYOUT_NINE } pxsys_reference_keyboard_layout_t;
+typedef enum { PXSYS_INPUT_CHINESE, PXSYS_INPUT_ENGLISH } pxsys_reference_input_language_t;
+typedef struct { uint8_t layout, language; } pxsys_reference_input_method_preferences_t;
+static inline bool pxsys_reference_input_method_preferences_valid(pxsys_reference_input_method_preferences_t value) {
+    return value.layout<=PXSYS_INPUT_LAYOUT_NINE && value.language<=PXSYS_INPUT_ENGLISH;
+}
+/* Read or atomically persist Host keyboard defaults, without running an IME. */
+typedef bool (*pxsys_reference_input_method_preferences_fn)(void *context,
+    pxsys_reference_input_method_preferences_t *preferences,bool save);
+
 typedef struct {
     uint32_t struct_size;
     pxsys_standard_system_t* system;
@@ -329,6 +346,15 @@ typedef struct {
     /* Borrowed for the UI lifetime. NULL selects the built-in en/zh list. */
     const pxsys_reference_language_t* languages;
     size_t language_count;
+    /* Optional installed input methods. Enumeration borrows each entry only
+     * during emit, so Hosts need no fixed catalog/name buffers. */
+    void *input_method_context;
+    pxsys_reference_input_method_list_fn input_method_list;
+    pxsys_reference_input_method_select_fn input_method_select;
+    pxsys_reference_input_method_preferences_fn input_method_preferences;
+    bool (*input_method_managed)(void *context, void *textarea);
+    /* Optional system-native editor hook. Return true when ownership was taken. */
+    bool (*input_method_focus)(void *context, void *textarea);
     /* Optional borrowed LVGL image source. NULL uses the built-in adaptive
      * wallpaper; the WALLPAPER feature bit or compile option can remove it. */
     const void* wallpaper_source;

@@ -205,6 +205,8 @@ typedef struct {
     size_t snapshot_limit_bytes;
     size_t alpha_limit_bytes;
     const char *sized_text_font_path;
+    void (*text_input_focus)(void *, void *, bool);
+    void *text_input_context;
 } pxa_lvgl_ui_runtime_config_t;
 
 struct pxa_lvgl_ui {
@@ -665,6 +667,8 @@ static void on_widget_event(lv_event_t *event) {
                     other->subtype == PXA_UI_CONTROL_TEXT_INPUT)
                     lv_obj_remove_state(other->object, LV_STATE_FOCUSED);
             lv_obj_add_state(node->object, LV_STATE_FOCUSED);
+            if (node->ui->config.text_input_focus)
+                node->ui->config.text_input_focus(node->ui->config.text_input_context, node->object, true);
             return;
         }
         emit_event(node, lv_event_get_indev(event), PXA_UI_EVENT_ACTION,
@@ -761,6 +765,8 @@ static void on_node_delete(lv_event_t *event) {
     pxa_lvgl_ui_node_t *node =
         (pxa_lvgl_ui_node_t *)lv_event_get_user_data(event);
     if (node == NULL) return;
+    if (node->subtype == PXA_UI_CONTROL_TEXT_INPUT && node->ui->config.text_input_focus)
+        node->ui->config.text_input_focus(node->ui->config.text_input_context, node->object, false);
     if (node->range_scheduled) lv_async_call_cancel(report_visible_range, node);
     /* Deleting a parent recursively destroys children whose CREATE commands
      * have not yet been visited by cancellation or transaction cleanup. */
@@ -3039,6 +3045,8 @@ static void execute_text_input_focus(void *data) {
     } else {
         lv_obj_remove_state(node->object, LV_STATE_FOCUSED);
     }
+    if (focus->ui->config.text_input_focus)
+        focus->ui->config.text_input_focus(focus->ui->config.text_input_context, node->object, focus->focused);
     focus->status = PXA_STATUS_OK;
 }
 
@@ -3531,6 +3539,8 @@ pxa_status_t pxa_lvgl_ui_init(void *workspace, size_t workspace_size,
         .snapshot_limit_bytes=config->snapshot_limit_bytes,
         .alpha_limit_bytes=config->alpha_limit_bytes,
         .sized_text_font_path=config->sized_text_font_path,
+        .text_input_focus=config->text_input_focus,
+        .text_input_context=config->text_input_context,
     };
     ui->theme = config->theme;
     ui->primary_environment = config->primary_environment;

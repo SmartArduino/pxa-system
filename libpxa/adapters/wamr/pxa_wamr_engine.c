@@ -653,7 +653,8 @@ static int call(pxa_wamr_engine_t *engine, pxa_wamr_entry_t *entry,
         wasm_runtime_get_exception(entry->module_instance) != NULL) {
         /* Guest exceptions surface as PXA_STATUS_INTERNAL; the message is
          * available through wasm_runtime_get_exception for host logging. */
-        (void)wasm_runtime_get_exception(entry->module_instance);
+        fprintf(stderr,"PXA Guest exception: component=%u %s\n",
+            (unsigned)entry->component,wasm_runtime_get_exception(entry->module_instance));
     }
     engine_enter_critical(engine);
     if (engine->executing_module == entry->module_instance) {
@@ -1020,6 +1021,28 @@ int pxa_wamr_engine_take_expired_deadline(pxa_wamr_engine_t *engine,
     return expired;
 }
 
+int pxa_wamr_engine_poll_component_deadline(pxa_wamr_engine_t *engine,
+                                           pxa_component_t component,
+                                           uint64_t now_us) {
+    int terminated = 0;
+    if (!engine || engine->magic != PXA_WAMR_ENGINE_MAGIC ||
+        component == PXA_COMPONENT_INVALID) return 0;
+    engine_enter_critical(engine);
+    if (engine->executing_module && engine->executing_deadline_us &&
+        now_us >= engine->executing_deadline_us) {
+        for (uint16_t i = 0; i < engine->max_components; ++i) {
+            pxa_wamr_entry_t *entry = &engine->entries[i];
+            if (entry->component == component && entry->module_instance == engine->executing_module) {
+                engine->executing_deadline_us = 0;
+                wasm_runtime_terminate(engine->executing_module);
+                terminated = 1; break;
+            }
+        }
+    }
+    engine_leave_critical(engine);
+    return terminated;
+}
+
 int pxa_wamr_engine_extend_active_deadline(pxa_wamr_engine_t *engine,
                                            uint64_t now_us) {
     int extended = 0;
@@ -1295,6 +1318,10 @@ pxa_status_t pxa_wamr_engine_deliver_event_result(
     if (engine == NULL || engine->magic != PXA_WAMR_ENGINE_MAGIC) {
         return PXA_STATUS_INVALID_ARGUMENT;
     }
+    /* A Host widget callback can enqueue another event inside a Guest import.
+     * Leave that event untouched until the owner returns to its dispatch loop;
+     * popping first would turn harmless reentrancy into a Component fault. */
+    if (engine->busy) return PXA_STATUS_WOULD_BLOCK;
     entry = find_by_component(engine, component);
     if (entry == NULL) return PXA_STATUS_NOT_FOUND;
 

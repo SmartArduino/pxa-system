@@ -373,6 +373,14 @@
       "major": 2,
       "minor": 1,
       "patch": 0
+    },
+    {
+      "name": "ime",
+      "id": 22,
+      "state": "defined",
+      "major": 0,
+      "minor": 1,
+      "patch": 0
     }
   ],
   "core_opcodes": [

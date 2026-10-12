@@ -71,6 +71,20 @@ int main(void) {
         assert(submitted==pass+1 && closed==21+pass);
         assert(strcmp(lv_textarea_get_text(input),"西遊記 https://example.org/")==0);
     }
+    static const char *const hide_map[] = {LV_SYMBOL_DOWN, ""};
+    pxsys_reference_ime_set_mode(ime,PXSYS_REFERENCE_IME_MODE_ENGLISH);
+    pxsys_reference_ime_show(ime);
+    lv_keyboard_set_map(keyboard,LV_KEYBOARD_MODE_USER_1,hide_map,confirm_ctrl);
+    lv_keyboard_set_mode(keyboard,LV_KEYBOARD_MODE_USER_1);
+    lv_buttonmatrix_set_selected_button(keyboard,0);
+    lv_obj_send_event(keyboard,LV_EVENT_VALUE_CHANGED,NULL);
+    assert(!pxsys_reference_ime_is_visible(ime) && submitted==2 && closed==23);
+    lv_textarea_set_password_mode(input,true);
+    pxsys_reference_ime_set_mode(ime,PXSYS_REFERENCE_IME_MODE_CHINESE);
+    assert(pxsys_reference_ime_get_mode(ime)==PXSYS_REFERENCE_IME_MODE_ENGLISH);
+    lv_textarea_set_password_mode(input,false);
+    pxsys_reference_ime_set_mode(ime,PXSYS_REFERENCE_IME_MODE_CHINESE);
+    assert(pxsys_reference_ime_get_mode(ime)==PXSYS_REFERENCE_IME_MODE_CHINESE);
     /* Guest surface replacement deletes the target before the keyboard. */
     lv_obj_delete(input);
     pxsys_reference_ime_set_theme(ime,&theme);

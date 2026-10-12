@@ -111,6 +111,7 @@ if(PXA_BUILD_ADAPTERS)
     target_link_libraries(pxa_adapters_openssl PUBLIC pxa OpenSSL::Crypto)
 
     add_library(pxa_adapters_posix
+        adapters/posix/pxa_posix_ime.c
         adapters/posix/pxa_posix_storage_gate.c
         adapters/posix/pxa_posix_asset.c
         adapters/posix/pxa_posix_asset_worker.c
@@ -168,6 +169,9 @@ if(PXA_BUILD_ADAPTERS)
                 "${PXA_PACKAGE_TOOLS_DIR}/test_resource_blob.py"
                 $<TARGET_FILE:pxa_asset_blob_test>)
         endif()
+        add_executable(pxa_ime_preferences_test adapters/tests/ime_preferences_test.c)
+        target_link_libraries(pxa_ime_preferences_test PRIVATE pxa_adapters_posix)
+        add_test(NAME pxa_ime_preferences_test COMMAND pxa_ime_preferences_test)
         add_executable(pxa_adapters_test adapters/tests/adapters_test.c)
         target_include_directories(pxa_adapters_test PRIVATE
             ${_pxa_lz4_include_dir})
@@ -224,7 +228,8 @@ if(PXA_BUILD_ADAPTERS AND (PXA_LVGL_TARGET OR PXA_LVGL_SOURCE_DIR))
     endif()
 
     add_library(pxa_adapters_lvgl
-        adapters/lvgl/pxa_lvgl_ui.c)
+        adapters/lvgl/pxa_lvgl_ui.c
+        adapters/lvgl/pxa_lvgl_ime.c)
     add_library(pxa::adapters_lvgl ALIAS pxa_adapters_lvgl)
     set_target_properties(pxa_adapters_lvgl PROPERTIES
         EXPORT_NAME adapters_lvgl
@@ -675,6 +680,13 @@ if(PXA_BUILD_TESTS)
         endif()
     endif()
     add_test(NAME pxa_game_render_test COMMAND pxa_game_render_test)
+
+    add_executable(pxa_ime_test tests/ime_test.c)
+    target_link_libraries(pxa_ime_test PRIVATE pxa)
+    if(NOT MSVC)
+        target_compile_options(pxa_ime_test PRIVATE -UNDEBUG)
+    endif()
+    add_test(NAME pxa_ime_test COMMAND pxa_ime_test)
 
     add_executable(pxa_log_test tests/log_test.c)
     target_link_libraries(pxa_log_test PRIVATE pxa)

@@ -734,3 +734,16 @@ WASI SDK 34 链接 libc++ 后，当前最小应用也会导入 `clock_time_get`�
 引擎兼容标识，与 PXA Core 版本独立；其历史字符串包含 `core-1`，不能
 据此判定应用使用 Core 1。Core 2 由清单的 SDK 主版本和
 `pxa.core.v2` 导入命名空间验证，服务版本/能力另行协商。
+
+## 可安装输入法（可选）
+
+普通应用继续使用 `ui::TextInput`，不用引入输入法服务。输入法 Provider
+单独包含 `<pxa/ime.hpp>`，用 `decode_input(Event)` 接收有序输入，
+用 `Frame` 编码组合、候选和编辑结果；编码缓冲由调用者提供，不默认分配。
+拼音引擎自身可按需使用动态字符串。词库只在中文编辑期间加载，英文和密码
+由 Host 直接处理；Provider 无法获得编辑器指针、密码或周边正文。
+
+每次焦点变化采用新会话，过期回复返回 `bad_state` 或 `denied`，应丢弃而非
+终止 Provider。`Frame` 的错误区分调用顺序、无效文本/分页和缓冲容量不足；
+写入失败不增加候选计数。完整协议、安装与布局说明见
+[输入法文档](../../docs/zh-CN/input-methods.md)，参考实现位于 pxa-apps 的 `pinyin-ime`。

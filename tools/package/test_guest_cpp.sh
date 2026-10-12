@@ -41,12 +41,14 @@ python3 "$pxa_system_dir/tools/i18n/compile_catalog.py" \
   --language cpp --output "$work_dir/pxa_app_messages.hpp"
 python3 "$pxa_system_dir/tools/i18n/test_compile_catalog.py"
 
-for test_name in features binary io codec service_lifetime encoding_alias lifecycle_state ui_geometry events startup locale i18n i18n_app core_app ui_wire ui_page ui_input ui_display canvas ui_controls text_input_box ui_widgets ui_declarative ui_lifecycle ui_environment ui_theme ui_canvas game_painter game_painter_replay game_arcade counter_app navigation list task assets storage storage_value storage_ownership fs permission permission_ownership audio device sensor clock net ipc ipc_contract work surface game game_pacing game_host game_service game_loop game_utils; do
+for test_name in ime features binary io codec service_lifetime encoding_alias lifecycle_state ui_geometry events startup locale i18n i18n_app core_app ui_wire ui_page ui_input ui_display canvas ui_controls text_input_box ui_widgets ui_declarative ui_lifecycle ui_environment ui_theme ui_canvas game_painter game_painter_replay game_arcade counter_app navigation list task assets storage storage_value storage_ownership fs permission permission_ownership audio device sensor clock net ipc ipc_contract work surface game game_pacing game_host game_service game_loop game_utils; do
   extra_includes=(-I"$work_dir")
   extra_objects=()
   if [[ "$test_name" == game_host || "$test_name" == game_painter_replay || "$test_name" == game_arcade ]]; then
     extra_includes=(-I"$pxa_system_dir/libpxa/include")
     extra_objects=("$work_dir/raster.o" "$work_dir/wire.o")
+  elif [[ "$test_name" == audio ]]; then
+    extra_includes=(-I"$pxa_system_dir/libpxa/include")
   fi
   "$cxx" "${flags[@]}" \
     "${extra_includes[@]}" \

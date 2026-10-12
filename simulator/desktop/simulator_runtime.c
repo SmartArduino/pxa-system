@@ -1,5 +1,6 @@
 #include "simulator_runtime.h"
 #include "product_runner.h"
+#include "pxa/posix/pxa_posix_ime.h"
 #include "pxsys/reference_layout.h"
 
 #include <stdio.h>
@@ -415,6 +416,11 @@ void pxsys_desktop_runtime_poll(pxsys_desktop_runtime_t* runtime) {
                         (display.height - layout.navigation_bar.y);
                 }
             }
+            char ime_path[1024] = "", selected[131], setting[1536];
+            if (fixture->state_root && fixture->installed_packages_root &&
+                snprintf(setting,sizeof(setting),"%s/input-method",fixture->state_root)>0 &&
+                pxa_posix_ime_selection_read(setting,selected,sizeof(selected)) == PXA_STATUS_OK && *selected)
+                (void)pxa_posix_ime_registry_resolve(fixture->installed_packages_root,selected,ime_path,sizeof(ime_path));
             status = pxsys_product_simulator_run_embedded(
                 instance->product_package_path, fixture->publisher_key,
                 fixture->state_root, runtime->locale.tag,
@@ -422,7 +428,7 @@ void pxsys_desktop_runtime_poll(pxsys_desktop_runtime_t* runtime) {
                 instance->display_height, lv_display_get_default(), instance->root,
                 fixture->pump, fixture->pump_context,
                 product_window_changed, instance, product_control_bind,
-                &display, &bars, &runtime->theme);
+                &display, &bars, &runtime->theme, ime_path);
             if (status != 0)
                 fprintf(stderr, "PXA simulator: product exited status=%d\n",
                         status);
@@ -535,4 +541,10 @@ pxsys_status_t pxsys_desktop_runtime_destroy(pxsys_desktop_runtime_t* runtime) {
     runtime->magic = 0;
     allocator.release(allocator.context, runtime);
     return PXSYS_STATUS_OK;
+}
+
+void pxsys_desktop_runtime_update_input_method(pxsys_desktop_runtime_t *runtime,const char *directory) {
+    if (!runtime) return;
+    for (simulator_instance_t *i=runtime->instances;i;i=i->next)
+        if (i->product_runner) (void)pxsys_product_simulator_update_input_method(i->product_runner,directory);
 }

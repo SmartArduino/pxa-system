@@ -24,6 +24,7 @@ pxsys_status_t pxsys_desktop_runtime_create(
     pxsys_allocator_t allocator, pxsys_desktop_runtime_t** output);
 pxsys_status_t pxsys_desktop_runtime_provider(
     pxsys_desktop_runtime_t* runtime, pxsys_runtime_provider_t* output);
+void pxsys_desktop_runtime_update_input_method(pxsys_desktop_runtime_t *runtime, const char *directory);
 void pxsys_desktop_runtime_poll(pxsys_desktop_runtime_t* runtime);
 pxsys_status_t pxsys_desktop_runtime_destroy(pxsys_desktop_runtime_t* runtime);
 
