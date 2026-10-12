@@ -4,6 +4,8 @@
 #include "permission.hpp"
 #include "service_wire.hpp"
 
+#include <array>
+#include <span>
 #include <string_view>
 
 namespace pxa {
@@ -83,23 +85,31 @@ public:
     AudioFormat format() const && noexcept { return format_; }
 
     Result<void> tone(Tone tone = {}) noexcept {
-        if (tone.frequency_hz < 40 || tone.frequency_hz > 8000 ||
-            tone.duration_ms < 10 || tone.duration_ms > 1000 ||
-            !valid_gain(tone.gain_db_q8) ||
-            static_cast<unsigned>(tone.waveform) > 3 ||
-            tone.attack_ms > tone.duration_ms ||
-            tone.release_ms > tone.duration_ms || tone.delay_ms > 1000)
-            return std::unexpected(Error::invalid_argument);
+        if (!valid_tone(tone)) return std::unexpected(Error::invalid_argument);
         std::array<std::byte, 14> command{};
-        wire::put16(command.data(), tone.frequency_hz);
-        wire::put16(command.data() + 2, tone.duration_ms);
-        wire::put16(command.data() + 4,
-                    static_cast<std::uint16_t>(tone.gain_db_q8));
-        command[6] = std::byte(static_cast<std::uint8_t>(tone.waveform));
-        wire::put16(command.data() + 8, tone.attack_ms);
-        wire::put16(command.data() + 10, tone.release_ms);
-        wire::put16(command.data() + 12, tone.delay_ms);
+        encode_tone(command.data(), tone);
         return command_io(0x100, command);
+    }
+
+    // Audio 0.9: all layers start on one sample clock. Their delay is relative
+    // to this call, never to the end of a previous effect. Track 0..5 replaces
+    // that track atomically; 255 plays independently. Would-block never queues.
+    Result<void> effect(std::span<const Tone> layers, std::uint8_t track = 255) noexcept {
+        if (layers.empty() || layers.size() > 8 || (track != 255 && track >= 6))
+            return std::unexpected(Error::invalid_argument);
+        std::array<std::byte, 4 + 14 * 8> command{};
+        command[0] = std::byte(layers.size());
+        command[1] = std::byte(track);
+        for (std::size_t i = 0; i < layers.size(); ++i) {
+            if (!valid_tone(layers[i])) return std::unexpected(Error::invalid_argument);
+            encode_tone(command.data() + 4 + 14 * i, layers[i]);
+        }
+        return command_io(0x107, {command.data(), 4 + 14 * layers.size()});
+    }
+    Result<void> stop_effect(std::uint8_t track) noexcept {
+        if (track >= 6) return std::unexpected(Error::invalid_argument);
+        std::array<std::byte, 4> command{std::byte(track)};
+        return command_io(0x108, command);
     }
 
     Result<std::uint32_t> write_pcm(std::span<const std::byte> pcm) noexcept {
@@ -230,6 +240,23 @@ public:
     }
 
 private:
+    static bool valid_tone(const Tone& tone) noexcept {
+        return tone.frequency_hz >= 40 && tone.frequency_hz <= 8000 &&
+            tone.duration_ms >= 10 && tone.duration_ms <= 1000 &&
+            valid_gain(tone.gain_db_q8) && static_cast<unsigned>(tone.waveform) <= 3 &&
+            tone.attack_ms <= tone.duration_ms && tone.release_ms <= tone.duration_ms &&
+            tone.delay_ms <= 1000;
+    }
+    static void encode_tone(std::byte* p, const Tone& tone) noexcept {
+        wire::put16(p, tone.frequency_hz);
+        wire::put16(p + 2, tone.duration_ms);
+        wire::put16(p + 4, static_cast<std::uint16_t>(tone.gain_db_q8));
+        p[6] = std::byte(static_cast<std::uint8_t>(tone.waveform));
+        wire::put16(p + 8, tone.attack_ms);
+        wire::put16(p + 10, tone.release_ms);
+        wire::put16(p + 12, tone.delay_ms);
+    }
+
     struct Endpoint {
         Transport& transport;
         RequestTable& requests;

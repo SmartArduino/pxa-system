@@ -50,6 +50,15 @@ extern "C" std::int32_t pxa_io(std::uint64_t handle, std::uint32_t operation,
         assert(size == 14 && pxa::wire::get16(p) == 440);
         return size;
     }
+    if (operation == 0x107) {
+        assert(size == 32 && p[0] == std::byte{2} && p[1] == std::byte{3});
+        assert(pxa::wire::get16(p + 4) == 440 && pxa::wire::get16(p + 30) == 40);
+        return size;
+    }
+    if (operation == 0x108) {
+        assert(size == 4 && p[0] == std::byte{3});
+        return size;
+    }
     if (operation == 2) return 4;
     if (operation == 0x104) {
         assert(size == 26 && pxa::wire::get16(p + 8) == 10);
@@ -78,6 +87,14 @@ pxa::Task<void> run(pxa::Context& context) {
     assert(graph);
     graph_ready = true;
     assert(session->tone());
+    std::array tones{pxa::Tone{}, pxa::Tone{.delay_ms = 40}};
+    assert(session->effect(tones, 3));
+    assert(session->stop_effect(3));
+    assert(!session->effect({}, 3));
+    assert(!session->effect(tones, 6));
+    tones[1].frequency_hz = 0;
+    assert(!session->effect(tones, 3));
+    assert(!session->stop_effect(6));
     std::array<std::byte, 8> pcm{};
     auto written = session->write_pcm(pcm);
     assert(written && *written == 4);

@@ -12,7 +12,7 @@
   "components": [{
     "id": "main",
     "kind": "ui",
-    "services": ["ui", "audio"],
+    "services": ["ui", "audio", "permission"],
     "cmake_target": "pxa_main",
     "wasi": {"version": "preview1", "libc": "wasi-libc", "features": ["monotonic-clock", "wall-clock"]}
   }]
