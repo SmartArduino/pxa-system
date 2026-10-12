@@ -179,9 +179,9 @@ static const char *const idle_nine[] = {LV_SYMBOL_SETTINGS,"中文 · 九键",""
 static const char *const idle_full[] = {LV_SYMBOL_SETTINGS,"中文 · 全键",""};
 static const char *const idle_english[] = {LV_SYMBOL_SETTINGS,"English",""};
 static const char *const idle_password[] = {LV_SYMBOL_SETTINGS,"English · 密码",""};
-static const char *const idle_loading[] = {LV_SYMBOL_SETTINGS,"正在准备词库…",""};
+static const char *const idle_loading[] = {LV_SYMBOL_SETTINGS,"正在准备…",""};
 static const char *const empty_map[] = {" ",""};
-static const char *const loading_map[] = {"正在准备词库…",""};
+static const char *const loading_map[] = {"正在准备…",""};
 static const char *const navigation_map[] = {LV_SYMBOL_LEFT,LV_SYMBOL_RIGHT,""};
 static void target_event(lv_event_t *event);
 static void rebuild_keys(pxa_lvgl_ime_t *ime);

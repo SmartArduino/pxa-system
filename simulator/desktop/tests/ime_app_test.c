@@ -73,6 +73,7 @@ typedef struct {
     product_host_t *host; unsigned stage, repeat; uint64_t started;
     const char *artifacts;
     bool expect_load_failure;
+    bool single_character_provider;
     pxa_wamr_memory_snapshot_t idle, loaded, closed;
 } ime_test_t;
 static lv_obj_t *find_textarea(lv_obj_t *root) {
@@ -418,7 +419,10 @@ static void pump_test(void *context) {
         assert(find_matrix(lv_layer_top(),"你")); key(test,"你");
         assert(!strcmp(lv_textarea_get_text(target),"你"));
         key(test,"n"); key(test,"i"); key(test,"h"); key(test,"a"); key(test,"o");
-        assert(find_matrix(lv_layer_top(),"你好")); key(test,"你好");
+        if (test->single_character_provider) {
+            assert(!find_matrix(lv_layer_top(),"你好"));
+            key(test,"你"); key(test,"好");
+        } else { assert(find_matrix(lv_layer_top(),"你好")); key(test,"你好"); }
         assert(!strcmp(lv_textarea_get_text(target),"你你好"));
         lv_textarea_set_text(target,""); settle_ime(host);
         key(test,"九键");
@@ -464,7 +468,10 @@ static void pump_test(void *context) {
         for (unsigned p=0;p<32 && !find_matrix(lv_layer_top(),"ni'hao");++p)
             swipe_candidates(test,find_matrix(lv_layer_top(),LV_SYMBOL_SETTINGS),true,false);
         key(test,"ni'hao");
-        assert(find_matrix(lv_layer_top(),"你好")); key(test,"你好");
+        if (test->single_character_provider) {
+            assert(!find_matrix(lv_layer_top(),"你好"));
+            key(test,"你"); key(test,"好");
+        } else { assert(find_matrix(lv_layer_top(),"你好")); key(test,"你好"); }
         assert(!strcmp(lv_textarea_get_text(target),"你好"));
         lv_textarea_set_text(target,"你"); settle_ime(host);
         // The UI can switch a caret while a provider reply is still queued.
@@ -716,7 +723,13 @@ static void pump_test(void *context) {
     }
 }
 int main(int argc,char **argv) {
-    assert(argc==6 || (argc==7 && !strcmp(argv[6],"--expect-load-failure")));
+    assert(argc>=6);
+    bool expect_load_failure=false, single_character_provider=false;
+    for (int i=6;i<argc;++i) {
+        if (!strcmp(argv[i],"--expect-load-failure")) expect_load_failure=true;
+        else if (!strcmp(argv[i],"--single-character-provider")) single_character_provider=true;
+        else assert(!"Unknown IME test option");
+    }
     setenv("SDL_VIDEODRIVER","dummy",1); setenv("SDL_AUDIODRIVER","dummy",1);
     setenv("PXA_IME_PACKAGE",argv[3],1);
     options_t options={0}; options.package_path=argv[1]; options.publisher_key=argv[2];
@@ -735,10 +748,11 @@ int main(int argc,char **argv) {
         for (unsigned i=0;i<4;++i) options.safe_insets[i]=profiles[profile][5];
         if (profile==4) options.safe_insets[1]=options.safe_insets[3]=10;
         ime_test_t test={0}; test.started=now_us(NULL); test.repeat=profile; test.artifacts=argv[5];
-        test.expect_load_failure=argc==7;
+        test.expect_load_failure=expect_load_failure;
+        test.single_character_provider=single_character_provider;
         assert(!run_product_simulator(&options,NULL,NULL,pump_test,&test,NULL,&test,bind_test,NULL,NULL,NULL));
         assert(!test.host && test.stage==2);
     }
-    puts(argc==7 ? "PXA IME: rejected provider, native fallback and memory recovery passed" :
+    puts(expect_load_failure ? "PXA IME: rejected provider, native fallback and memory recovery passed" :
         "PXA IME: separate signed provider, composition, Chinese/English edits, submit and 8 unload/restart cycles passed");
 }
