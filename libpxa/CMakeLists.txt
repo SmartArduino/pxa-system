@@ -1,6 +1,7 @@
 cmake_minimum_required(VERSION 3.16)
 
-project(libpxa VERSION 0.1.0 LANGUAGES C)
+include("${CMAKE_CURRENT_LIST_DIR}/../cmake/PxaVersion.cmake")
+project(libpxa VERSION ${PXA_RELEASE_NUMERIC} LANGUAGES C)
 
 include(CMakePackageConfigHelpers)
 include(GNUInstallDirs)
@@ -52,7 +53,7 @@ if(UNIX)
 endif()
 set_target_properties(pxa PROPERTIES
     VERSION ${PROJECT_VERSION}
-    SOVERSION ${PROJECT_VERSION_MAJOR}
+    SOVERSION ${PXA_HOST_C_ABI}
     WINDOWS_EXPORT_ALL_SYMBOLS ON)
 
 target_compile_features(pxa PUBLIC c_std_99)
@@ -103,7 +104,7 @@ if(PXA_BUILD_ADAPTERS)
     set_target_properties(pxa_adapters_openssl PROPERTIES
         EXPORT_NAME adapters_openssl
         VERSION ${PROJECT_VERSION}
-        SOVERSION ${PROJECT_VERSION_MAJOR})
+        SOVERSION ${PXA_HOST_C_ABI})
     target_compile_features(pxa_adapters_openssl PUBLIC c_std_99)
     target_include_directories(pxa_adapters_openssl PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/adapters/include>
@@ -125,7 +126,7 @@ if(PXA_BUILD_ADAPTERS)
     set_target_properties(pxa_adapters_posix PROPERTIES
         EXPORT_NAME adapters_posix
         VERSION ${PROJECT_VERSION}
-        SOVERSION ${PROJECT_VERSION_MAJOR})
+        SOVERSION ${PXA_HOST_C_ABI})
     target_compile_features(pxa_adapters_posix PUBLIC c_std_99)
     target_include_directories(pxa_adapters_posix PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/adapters/include>
@@ -238,7 +239,7 @@ if(PXA_BUILD_ADAPTERS AND (PXA_LVGL_TARGET OR PXA_LVGL_SOURCE_DIR))
     set_target_properties(pxa_adapters_lvgl PROPERTIES
         EXPORT_NAME adapters_lvgl
         VERSION ${PROJECT_VERSION}
-        SOVERSION ${PROJECT_VERSION_MAJOR})
+        SOVERSION ${PXA_HOST_C_ABI})
     target_compile_features(pxa_adapters_lvgl PUBLIC c_std_99)
     target_include_directories(pxa_adapters_lvgl PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/adapters/include>
@@ -303,7 +304,7 @@ if(PXA_BUILD_ADAPTERS AND PXA_WAMR_SOURCE_DIR)
     set_target_properties(pxa_adapters_wamr PROPERTIES
         EXPORT_NAME adapters_wamr
         VERSION ${PROJECT_VERSION}
-        SOVERSION ${PROJECT_VERSION_MAJOR})
+        SOVERSION ${PXA_HOST_C_ABI})
     target_compile_features(pxa_adapters_wamr PUBLIC c_std_99)
     target_include_directories(pxa_adapters_wamr PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/adapters/include>
