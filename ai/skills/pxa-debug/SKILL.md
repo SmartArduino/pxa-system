@@ -1,0 +1,23 @@
+---
+name: pxa-debug
+description: Reproduce and debug PXA application failures using the simulator, PXADB screenshots and scripted touch input; verify UI across DPI and screen profiles and collect bounded machine-readable evidence.
+---
+
+# PXA debugging and verification
+
+Identify the app, pinned DevKit, failing action and expected screen. Reproduce before editing. Use a separate checkout or test project when editing a live app would interfere with another developer. Keep the user's existing lock, signing identity and data.
+
+For repeatable simulator checks, run the bundled [verification helper](scripts/verify_app.py):
+
+```sh
+python3 <skill-directory>/scripts/verify_app.py <project> \
+  --pxa /path/to/devkit/bin/pxa --output /path/to/new-evidence --headless
+```
+
+The default covers all five DevKit 0.3.0 profiles. It builds offline, starts each real Guest with an owned debug bridge, checks active app identity, captures a screen, and stops its processes. Once execution starts, it writes `result.json` even on failure; exit 0 means runtime checks passed, not visual correctness. Review screenshots before accepting layout or interaction. Evidence directories must be new and outside the app; app build caches/lock and simulator saves persist normally. `--headless` uses SDL dummy; omit it for an actual desktop window. Use `--online` only when a pinned dependency needs downloading.
+
+For interaction, read [scenario format](references/scenarios.md), supply `--scenario`, then compare before/after images. Pixel coordinates are per profile, not dp. The helper does not guess control locations, OCR, infer game FPS or silently clear saves. A missing memory capability is recorded as unavailable, never as zero usage.
+
+For manual live debugging, run `pxa run <project> --debug --watch` and use the exact emitted selector with `pxa device info`, `input`, `screenshot`, `package list` or `memory`. A failed watch rebuild should retain the previous running Guest. Inspect build diagnostics for compiler errors, actual INFO/Core/CPU/AOT capabilities for incompatibility, and package/public-key identity for verification errors. Do not conceal errors by restarting forever or changing ABI/budgets without evidence.
+
+Use [measurement notes](references/measurements.md) when profiling games or device memory. After a fix, repeat the failing action and relevant screen profiles; broader checks are needed only if a new failure or cross-cutting change warrants them. Report what was actually displayed and changed, not just command exit codes. Hardware validation belongs to `$pxa-device-test` if installed.

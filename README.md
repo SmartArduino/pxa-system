@@ -21,6 +21,8 @@ pxa publish hello/dist/pxa-hello.pxa --check-only
 
 [入门教程](https://pxa.doit.am/docs/first-app/) · [C++ SDK](sdk/guest-cpp/README.zh-CN.md) · [架构与协议文档](docs/README.zh-CN.md)
 
+可选的 [AI 开发套件](ai/README.md) 提供四个按需加载的 skills、两个 Codex agent 和真实 Guest 自动验收脚本。支持现有 DevKit 0.3.0，单独分发签名小包；后续完整 DevKit 会携带 `ai/`。不修改全局配置或增加设备开销。
+
 ## 目录与边界
 
 ```text

@@ -1,0 +1,8 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "pxa",
+  "version": "0.1.0",
+  "description": "Develop, debug, test and publish PXA C++26 applications with a standalone DevKit.",
+  "homepage": "https://pxa.doit.am/docs/ai-development/",
+  "repository": "https://github.com/SmartArduino/pxa-system"
+}

@@ -56,6 +56,8 @@ def profile_options(name: str):
         result += ['--round']
     if profile.get('gestures', False):
         result += ['--gestures']
+    if profile.get('theme') == 'dark':
+        result += ['--dark']
     return result
 
 

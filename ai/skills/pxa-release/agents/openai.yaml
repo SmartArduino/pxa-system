@@ -1,0 +1,4 @@
+interface:
+  display_name: "PXA 打包与发布"
+  short_description: "检查签名包、兼容性与发布流程，准备中文在前英文在后的发行说明。"
+  default_prompt: "使用 $pxa-release 准备并验证当前应用的发布包。"

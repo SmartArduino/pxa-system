@@ -1,0 +1,4 @@
+interface:
+  display_name: "PXA 真机测试"
+  short_description: "在明确选择的设备上验证应用兼容性、交互、内存并保留已有数据。"
+  default_prompt: "使用 $pxa-device-test 验证指定设备上的当前应用。"

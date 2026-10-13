@@ -127,6 +127,7 @@ def main():
     ignore = shutil.ignore_patterns('__pycache__', '*.pyc', '.git', '.pxa', 'dist', 'build')
     for name in ('VERSION', 'LICENSE', 'sdk', 'config', 'docs'):
         copy(source / name, root / name, ignore=ignore)
+    copy(source / 'ai', root / 'ai', ignore=ignore)
     copy(source / 'spec/draft', root / 'spec/draft', ignore=ignore)
     for name in ('pxa_tools', 'package', 'i18n'):
         copy(source / 'tools' / name, root / 'tools' / name, ignore=ignore)
@@ -177,10 +178,11 @@ Offline: `pxa build hello --offline --target esp32s3,esp32s31,simulator`.
 SDK/tool versions are locked in pxa.lock. Updates require `pxa sdk update`.
 Project build caches and development identities are outside this directory.
 Guides: https://pxa.doit.am/docs/setup/
+Optional AI skills/agents: ai/README.md; install into a project with ai/install.py.
 ''')
     epoch = int(os.environ.get('SOURCE_DATE_EPOCH', '1791849600'))
     groups = {'sdk': ['VERSION', 'LICENSE', 'sdk', 'config', 'spec', 'docs'],
-              'devtools': ['bin/pxa', 'bin/pxadb', 'tools', 'README.md'],
+              'devtools': ['bin/pxa', 'bin/pxadb', 'tools', 'ai', 'README.md'],
               'runtime': ['runtime', 'build-environment-packages.txt', 'licenses'],
               'toolchain': ['bin/wamrc', 'toolchains'],
               'simulator': ['simulator', 'share']}

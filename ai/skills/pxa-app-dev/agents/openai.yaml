@@ -1,0 +1,4 @@
+interface:
+  display_name: "PXA 应用开发"
+  short_description: "使用独立 DevKit 开发 C++26 应用并完成真实构建及界面验证。"
+  default_prompt: "使用 $pxa-app-dev 完成当前 PXA 应用并验证主要交互。"
