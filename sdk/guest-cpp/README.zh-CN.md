@@ -104,6 +104,11 @@ Canvas 指针坐标使用 dp，叠加自绘 Surface 的游戏须用
 `<pxa/events.hpp>` 提供 `Event::is<ui::DisplayMetrics>()`、`Event::is<ClockTick>()`
 等路由；`decode_clock_tick(event)` 读取时钟时间戳并检查消息长度与 token。
 
+显示系统日期和本地时间可用 `co_await ctx.clock().wall_time()`，通过返回值的
+`local()` 获得 `std::chrono::local_time`；只需当前偏移时用 `time_zone()`。
+Clock 0.2 同时采样 UTC、单调时间锚点、有效时区偏移和夏令时状态，不增加默认缓存。
+接口、版本要求和用法见 [CLOCK.zh-CN.md](CLOCK.zh-CN.md)。
+
 `ctx.window().fullscreen()` 默认将状态栏和导航栏都设为可临时唤出。
 游戏可调用 `fullscreen(pxa::WindowBarMode::hidden)` 隐藏状态栏并保留临时导航栏；
 第二个参数可独立指定导航栏模式。此选项仍使用同一窗口配置请求，不分配额外状态。

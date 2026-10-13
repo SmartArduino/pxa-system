@@ -80,7 +80,7 @@ not the same as publishing that service ABI.
 | 1 | `core` | Lifecycle support, handles, cancellation, leases and readiness |
 | 2 | `window` | Window 0.2.0: metrics, insets, system UI, navigation and toasts |
 | 3 | `ui` | Declarative UI tree, Canvas node and input events |
-| 4 | `clock` | Monotonic time, timers and animation-frame requests |
+| 4 | `clock` | Clock 0.2.0: monotonic time, UTC wall time with effective timezone, timers and animation-frame requests |
 | 5 | `fs` | Package, private, cache, temporary and granted files |
 | 6 | `storage` | Bounded private App key/value storage |
 | 7 | `ipc` | Asynchronous intra-App Component request/reply brokerage |
@@ -94,7 +94,10 @@ not the same as publishing that service ABI.
 | 15 | `device` | Permission-bound physical interface identifiers |
 | 16 | `surface` | Host-owned bulk-pixel BufferQueue and composition |
 | 18 | `game-render` | Persistent 2D/software-3D resources and asynchronous draw lists |
+| 19 | `log` | Structured App diagnostics |
 | 20 | `store-installer` | Host-owned signed package download, confirmation and installation |
+| 21 | `assets` | Host-owned asynchronous resource loading and bounded caching |
+| 22 | `ime` | Registered input methods, composition and text-input sessions |
 
 Canvas is not a top-level service. It is a UI node plus a length-delimited
 display-list subprotocol, so a UI transaction can atomically create and update

@@ -4,10 +4,30 @@
 #include "service_wire.hpp"
 
 #include <array>
+#include <bit>
+#include <chrono>
+#include <limits>
+#include <type_traits>
 
 namespace pxa {
 
 struct ClockTick { std::uint64_t timestamp_us = 0; };
+
+// The effective zone at the sampled instant, including any DST adjustment.
+// This is not a rule database for converting arbitrary past/future instants.
+struct TimeZone {
+    std::chrono::seconds utc_offset{};
+    bool daylight_saving=false;
+};
+
+struct WallTime {
+    std::chrono::sys_time<std::chrono::microseconds> utc{};
+    std::uint64_t monotonic_us=0;
+    TimeZone zone{};
+    std::chrono::local_time<std::chrono::microseconds> local() const noexcept {
+        return std::chrono::local_time<std::chrono::microseconds>{utc.time_since_epoch()+zone.utc_offset};
+    }
+};
 
 inline Result<ClockTick> decode_clock_tick(const Event& event) noexcept {
     if (event.service != 4 || event.opcode != 0x8001 || event.token != 0 ||
@@ -59,6 +79,44 @@ public:
         if (body->size() != 8) co_return std::unexpected(Error::protocol_error);
         co_return wire::get64(event->payload.data() + 4);
     }
+
+private:
+    // A fixed 24-byte snapshot and no nested coroutine/frame-pool allocation.
+    // UTC, monotonic anchor and local offset come from the same Host sample.
+    template<bool ZoneOnly>
+    class [[nodiscard("Clock query must be co_awaited")]] WallTimeQuery {
+    public:
+        using Value=std::conditional_t<ZoneOnly,TimeZone,WallTime>;
+        WallTimeQuery(Transport& transport,RequestTable& requests) noexcept
+            : response_(transport,requests,4,3,std::span<const std::byte>{}) {}
+        bool await_ready() const noexcept {return false;}
+        bool await_suspend(std::coroutine_handle<> handle) noexcept {return response_.await_suspend(handle);}
+        Result<Value> await_resume() const noexcept {
+            auto event=response_.await_resume();
+            if(!event)return std::unexpected(event.error());
+            auto body=wire::result_body(event->payload);
+            if(!body)return std::unexpected(body.error());
+            if(body->size()!=24)return std::unexpected(Error::protocol_error);
+            const auto* bytes=body->data();
+            const auto unix_us=std::bit_cast<std::int64_t>(wire::get64(bytes));
+            const auto offset=std::bit_cast<std::int32_t>(wire::get32(bytes+16));
+            const auto flags=wire::get32(bytes+20);
+            const auto delta=std::int64_t(offset)*1000000;
+            if(offset < -86400 || offset > 86400 || (flags&~1u) ||
+               (delta>0 && unix_us>std::numeric_limits<std::int64_t>::max()-delta) ||
+               (delta<0 && unix_us<std::numeric_limits<std::int64_t>::min()-delta))
+                return std::unexpected(Error::protocol_error);
+            TimeZone zone{std::chrono::seconds{offset},bool(flags&1u)};
+            if constexpr(ZoneOnly)return zone;
+            else return WallTime{std::chrono::sys_time<std::chrono::microseconds>{
+                std::chrono::microseconds{unix_us}},wire::get64(bytes+8),zone};
+        }
+    private:
+        Response response_;
+    };
+public:
+    auto wall_time() noexcept {return WallTimeQuery<false>(transport_,requests_);}
+    auto time_zone() noexcept {return WallTimeQuery<true>(transport_,requests_);}
 
 private:
     Transport& transport_;

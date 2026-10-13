@@ -232,12 +232,11 @@ def validate_specs() -> tuple[int, int]:
                 f"generated Service codec is stale: {output.name}")
     validate_core_envelope(load_json(ROOT / "pxa-core.json")["envelope"])
     paths = sorted(ROOT.glob("pxa-*.json"))
-    require(len(paths) == 21, "the consolidated draft must contain 21 machine specifications")
     require(not list(ROOT.glob("pxa-*.yaml")),
             "machine specifications must use the .json extension")
     specs = {path.stem.removeprefix("pxa-"): load_json(path) for path in paths}
     require(set(specs) == {
-        "assets", "audio", "clock", "container", "core", "device", "fs", "ipc",
+        "assets", "audio", "clock", "container", "core", "device", "fs", "ime", "ipc",
         "game-render", "log", "net", "package", "permission", "sensor", "storage", "surface", "ui",
         "wasi", "window", "work", "store-installer",
     }, "machine specification inventory mismatch")
@@ -263,7 +262,7 @@ def validate_specs() -> tuple[int, int]:
 
     expected_services = {
         "window": (2, "0.2.0"), "ui": (3, "0.8.0"),
-        "clock": (4, "0.1.0"), "fs": (5, "0.2.0"),
+        "clock": (4, "0.2.0"), "fs": (5, "0.2.0"),
         "storage": (6, "0.1.0"), "ipc": (7, "0.1.0"),
         "sensor": (8, "0.1.0"), "net": (9, "0.3.0"),
         "audio": (10, "0.9.0"), "permission": (11, "0.1.0"),
@@ -271,6 +270,7 @@ def validate_specs() -> tuple[int, int]:
         "device": (15, "0.2.0"), "surface": (16, "0.2.0"),
         "game-render": (18, "0.6.0"), "log": (19, "0.1.0"),
         "store-installer": (20, "0.5.0"), "assets": (21, "2.1.0"),
+        "ime": (22, "0.1.0"),
     }
     core_services = {item["name"]: item for item in core["services"]}
     for name, (service_id, version) in expected_services.items():

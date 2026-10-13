@@ -7,6 +7,11 @@ namespace pxa::game {
 // submission FPS or panel stalls. No allocations or frame/image cache.
 class AdaptiveResolution {
 public:
+    // Start measuring a new workload without including earlier menu/idle work.
+    // A baseline also prevents cumulative counters from bypassing the warmup.
+    void reset(const Telemetry& baseline={}) noexcept {
+        *this={};last_frames_=baseline.rendered_frames;last_raster_=baseline.host_raster_us;
+    }
     int observe(const Telemetry& t,unsigned shift) noexcept {
         if(shift>2)return 0;
         if(t.rendered_frames<last_frames_||t.host_raster_us<last_raster_){

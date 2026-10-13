@@ -1,6 +1,8 @@
 #ifndef PXA_IME_H
 #define PXA_IME_H
 
+#include <stdbool.h>
+
 #include "pxa/package.h"
 #include "pxa/activation.h"
 

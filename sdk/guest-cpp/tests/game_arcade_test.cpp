@@ -35,6 +35,11 @@ int main(){
     for(int i=0;i<40;++i)assert(observe(10000,0)==0); // panel stalls keep sharpness
     for(int i=0;i<3;++i)assert(observe(60000,0)==0);
     assert(observe(10000,0)==0); // isolated overload does not lower resolution
+    sample.rendered_frames+=10000;sample.host_raster_us+=10000ull*100000;
+    quality.reset(sample); // A costly menu must not contaminate the next game.
+    for(int i=0;i<40;++i)assert(observe(10000,0)==0);
+    for(int i=0;i<3;++i)assert(observe(60000,0)==0);
+    assert(observe(60000,0)==1); // Sustained gameplay overload still adapts.
     pxa::Transport transport;transport.phase(pxa::Phase::event);
     pxa::game::Renderer renderer(transport,77,PXA_RASTER_CAP_KNOWN_MASK);
     std::array<std::byte,1044> scratch{};pxa::game::Upload uploader(renderer,scratch);

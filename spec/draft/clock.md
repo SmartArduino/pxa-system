@@ -1,4 +1,4 @@
-# PXA Clock Draft 0.1
+# PXA Clock Draft 0.2
 
 Clock v1 exposes a bounded periodic wake-up for foreground Components.
 `set-period` uses a `u16` millisecond period: zero cancels the timer and values
@@ -31,3 +31,29 @@ Core 0; it is not a second completion path in Core 1.
 `pxa_clock.h` provides no-allocation builders and typed completion/tick
 parsers. The Host reserves completion capacity before reading the clock so a
 successful `now` request cannot lose its result under mailbox pressure.
+
+## Wall time and the effective system time zone
+
+Clock 0.2 adds `wall-time` (opcode 3) for Core 1/2. Its request has a nonzero
+token and an empty payload. The reserved completion contains status followed
+by exactly 24 bytes on success:
+
+| Offset | Type | Meaning |
+|---|---|---|
+| 0 | i64 | UTC microseconds since 1970-01-01, excluding leap seconds |
+| 8 | u64 | Host monotonic microseconds sampled with the wall clock |
+| 16 | i32 | Local time minus UTC, in seconds; includes daylight saving |
+| 20 | u32 | Bit 0: daylight saving active; other bits zero |
+
+The offset is for this sampled instant, including non-hour offsets and DST.
+Local time is UTC plus the offset. This snapshot does not provide an IANA
+identifier, historical/future zone rules, or a claim that network time is
+synchronized. Applications must not reuse its offset to convert arbitrary
+dates. The reference POSIX adapter reads the Host's effective local time zone;
+it never changes the process `TZ` or loads a database into Guest memory.
+
+The Host reserves completion capacity before sampling. The operation does not
+change periodic ticks or application scheduling. Applications can refresh on
+foreground and periodically while displaying wall time, rather than polling
+each frame. Older Hosts reject the opcode or a package requirement for Clock
+0.2; there is no silent assumption of a particular local offset.

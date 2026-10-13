@@ -20,6 +20,7 @@
 #include "pxa/audio_sound.h"
 #include "pxa/audio_mixer.h"
 #include "pxa/clock.h"
+#include "pxa/posix/pxa_posix_clock.h"
 #include "pxa/game_render.h"
 #include "pxa/assets.h"
 #include "pxa/asset_stream.h"
@@ -2331,6 +2332,8 @@ static pxa_status_t clock_control(void *context, pxa_runtime_t *runtime,
     uint16_t wire_profile = 0;
     if (host == NULL || message == NULL || component != host->active_component)
         return PXA_STATUS_BAD_STATE;
+    if (message->opcode == PXA_CLOCK_WALL_TIME)
+        return pxa_posix_clock_control(runtime, component, message, now_us(NULL));
     if (message->opcode == PRODUCT_CLOCK_NOW) {
         uint8_t result[8];
         pxa_status_t status;
@@ -3656,7 +3659,8 @@ static int run_product_simulator(const options_t *input,
         pxa_audio_service_register(host.audio) != PXA_STATUS_OK) goto done;
     clock_service.struct_size = sizeof(clock_service);
     clock_service.service_id = PRODUCT_CLOCK_SERVICE;
-    clock_service.major = 0; clock_service.minor = 1;
+    clock_service.major = PXA_CLOCK_SERVICE_MAJOR;
+    clock_service.minor = PXA_CLOCK_SERVICE_MINOR;
     clock_service.context = &host;
     clock_service.control = clock_control;
     if (pxa_service_register(host.runtime, &clock_service) != PXA_STATUS_OK) goto done;
@@ -3993,7 +3997,9 @@ static int run_product_simulator(const options_t *input,
     capabilities[1].service = PXA_WINDOW_SERVICE_ID; capabilities[1].version.major = PXA_WINDOW_SERVICE_MAJOR; capabilities[1].version.minor = PXA_WINDOW_SERVICE_MINOR;
     capabilities[2].service = PXA_UI_SERVICE_ID; capabilities[2].version.major = PXA_UI_SERVICE_MAJOR; capabilities[2].version.minor = PXA_UI_SERVICE_MINOR;
     capabilities[2].features = ui_config.features;
-    capabilities[3].service = PRODUCT_CLOCK_SERVICE; capabilities[3].version.major = 0; capabilities[3].version.minor = 1;
+    capabilities[3].service = PRODUCT_CLOCK_SERVICE;
+    capabilities[3].version.major = PXA_CLOCK_SERVICE_MAJOR;
+    capabilities[3].version.minor = PXA_CLOCK_SERVICE_MINOR;
     capabilities[4].service = PXA_AUDIO_SERVICE_ID; capabilities[4].version.major = PXA_AUDIO_SERVICE_MAJOR; capabilities[4].version.minor = PXA_AUDIO_SERVICE_MINOR;
     capabilities[5].service = PXA_PERMISSION_SERVICE_ID; capabilities[5].version.major = 0; capabilities[5].version.minor = 1;
     capabilities[6].service = PXA_STORAGE_SERVICE_ID; capabilities[6].version.major = 0; capabilities[6].version.minor = 1;

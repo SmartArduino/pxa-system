@@ -1,11 +1,11 @@
 {
-  "schema": "pxa-clock-spec-0.1",
+  "schema": "pxa-clock-spec-0.2",
   "status": "draft",
   "service": {
     "name": "clock",
     "id": 4,
     "major": 0,
-    "minor": 1,
+    "minor": 2,
     "patch": 0
   },
   "opcodes": [
@@ -38,7 +38,16 @@
       "direction": "host-to-guest",
       "request_token": "echo",
       "payload": "status:i32,monotonic-us:u64"
+    },
+    {
+      "name": "wall-time",
+      "id": 3,
+      "direction": "guest-to-host",
+      "request_token": "nonzero",
+      "payload": "empty",
+      "completion": "status:i32,unix-us:i64,monotonic-us:u64,utc-offset-seconds:i32,flags:u32",
+      "semantics": "Core 1/2 reserved completion; effective Host zone at the sampled instant; flags bit 0 is daylight saving; all other bits zero"
     }
   ],
-  "protocol_version": "0.1.0"
+  "protocol_version": "0.2.0"
 }

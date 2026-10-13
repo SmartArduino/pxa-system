@@ -111,6 +111,7 @@ if(PXA_BUILD_ADAPTERS)
     target_link_libraries(pxa_adapters_openssl PUBLIC pxa OpenSSL::Crypto)
 
     add_library(pxa_adapters_posix
+        adapters/posix/pxa_posix_clock.c
         adapters/posix/pxa_posix_ime.c
         adapters/posix/pxa_posix_storage_gate.c
         adapters/posix/pxa_posix_asset.c
@@ -144,6 +145,9 @@ if(PXA_BUILD_ADAPTERS)
     endif()
 
     if(PXA_BUILD_TESTS)
+        add_executable(pxa_posix_clock_test adapters/tests/clock_test.c)
+        target_link_libraries(pxa_posix_clock_test PRIVATE pxa_adapters_posix)
+        add_test(NAME pxa_posix_clock_test COMMAND pxa_posix_clock_test)
         if(Python3_Interpreter_FOUND AND PXA_PACKAGE_TOOLS_DIR)
             add_executable(pxa_asset_worker_test adapters/tests/asset_worker_test.c)
             target_link_libraries(pxa_asset_worker_test PRIVATE pxa_adapters_posix)
@@ -709,6 +713,10 @@ if(PXA_BUILD_TESTS)
         endif()
     endif()
     add_test(NAME pxa_raster_test COMMAND pxa_raster_test)
+
+    add_executable(pxa_raster_span_test tests/raster_span_test.c)
+    target_link_libraries(pxa_raster_span_test PRIVATE pxa)
+    add_test(NAME pxa_raster_span_test COMMAND pxa_raster_span_test)
 
     add_executable(pxa_ui_test tests/ui_test.c)
     target_include_directories(pxa_ui_test PRIVATE

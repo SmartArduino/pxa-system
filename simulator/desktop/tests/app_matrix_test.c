@@ -105,7 +105,7 @@ static void pump_probe(void *context) {
 }
 
 int main(int argc, char **argv) {
-    assert(argc == 9);
+    assert(argc == 9 || argc == 14);
     setenv("SDL_VIDEODRIVER", "dummy", 1);
     setenv("SDL_AUDIODRIVER", "dummy", 1);
     options_t options = {0};
@@ -120,6 +120,12 @@ int main(int argc, char **argv) {
     options.corner_radius = options.display_shape == PXA_UI_DISPLAY_SHAPE_ROUNDED_RECTANGLE ? 24 : 0;
     for (unsigned i = 0; i < 4; ++i)
         options.safe_insets[i] = options.display_shape == PXA_UI_DISPLAY_SHAPE_CIRCLE ? 26 : 8;
+    // Optional exact board geometry, while retaining the small-screen matrix.
+    if (argc == 14) {
+        options.corner_radius = (uint16_t)strtoul(argv[9], NULL, 10);
+        for (unsigned i = 0; i < 4; ++i)
+            options.safe_insets[i] = (uint16_t)strtoul(argv[10 + i], NULL, 10);
+    }
     matrix_probe_t probe = {.output = argv[8], .started = now_us(NULL),
                              .density_dpi = options.density_dpi};
     // Exercise the embedded product Host used by the system shell. Standalone

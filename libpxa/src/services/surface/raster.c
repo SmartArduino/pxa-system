@@ -1487,6 +1487,54 @@ static RASTER_NOINLINE void painter_span_textured(
     }
 }
 
+/* Keep the depth/texture inner loop separate from polygon and perspective
+ * setup. On 32-bit targets their live edge/interpolant state otherwise spills
+ * into this loop. Common spans stay entirely in the 16-bit depth range, so
+ * prove the endpoints once instead of clamping every pixel. Cutout holes
+ * preserve both color and depth; equal depth retains the earlier primitive. */
+static RASTER_NOINLINE uint32_t painter_span_depth_textured(
+    uint16_t *out, uint16_t *depth, uint32_t count,
+    uint32_t u, uint32_t v, int32_t du, int32_t dv,
+    const uint8_t *texels, const uint16_t *lit,
+    uint32_t mask_u, uint32_t mask_v, uint8_t log2_width,
+    int32_t w, int32_t dw, int transparent) {
+    uint32_t covered = 0;
+    const int64_t end_w = (int64_t)w + (int64_t)dw * (count - 1u);
+    if (w > 0 && w <= UINT16_MAX && end_w > 0 && end_w <= UINT16_MAX) {
+        for (uint32_t i = 0; i < count; ++i) {
+            if ((uint32_t)w > depth[i]) {
+                const uint8_t texel = texels[painter_texture_index_pow2(
+                    u, v, mask_u, mask_v, log2_width)];
+                if (!transparent || texel != 0) {
+                    out[i] = lit[texel];
+                    depth[i] = (uint16_t)w;
+                    ++covered;
+                }
+            }
+            u += (uint32_t)du;
+            v += (uint32_t)dv;
+            w += dw;
+        }
+    } else {
+        for (uint32_t i = 0; i < count; ++i) {
+            const int32_t inverse = w > UINT16_MAX ? UINT16_MAX : w;
+            if (inverse > 0 && inverse > depth[i]) {
+                const uint8_t texel = texels[painter_texture_index_pow2(
+                    u, v, mask_u, mask_v, log2_width)];
+                if (!transparent || texel != 0) {
+                    out[i] = lit[texel];
+                    depth[i] = (uint16_t)inverse;
+                    ++covered;
+                }
+            }
+            u += (uint32_t)du;
+            v += (uint32_t)dv;
+            w += dw;
+        }
+    }
+    return covered;
+}
+
 static uint32_t draw_painter_polygon(
     const raster_vertex_t *vertices, uint8_t count, uint8_t flags,
     uint16_t color_index, const pxa_raster_texture_t *texture,
@@ -1726,30 +1774,16 @@ static uint32_t draw_painter_polygon(
                             ? palette + (size_t)min_light * 256u : NULL;
                     if (constant_palette != NULL && texture_power_of_two &&
                         !blend_75) {
-                        const uint8_t *texels = texture->pixels;
-                        for (x = bx0; x < bx1; ++x) {
-                            const int32_t inverse = depth_w > UINT16_MAX
-                                ? UINT16_MAX : depth_w;
-                            if (inverse > 0 && inverse > *depth_out) {
-                                const uint8_t texel = texels[
-                                    painter_texture_index_pow2(
-                                        u, v, texture_mask_u, texture_mask_v,
-                                        texture_log2_width)];
-                                // A cutout with one lighting row needs the
-                                // same cheap lookup as an opaque face. Holes
-                                // update neither color nor depth.
-                                if (!transparent || texel != 0) {
-                                    *out = constant_palette[texel];
-                                    *depth_out = (uint16_t)inverse;
-                                    ++covered;
-                                }
-                            }
-                            ++out;
-                            ++depth_out;
-                            u += (uint32_t)du;
-                            v += (uint32_t)dv;
-                            depth_w += dw;
-                        }
+                        const uint32_t pixels = (uint32_t)(bx1 - bx0);
+                        covered += painter_span_depth_textured(
+                            out, depth_out, pixels, u, v, du, dv,
+                            texture->pixels, constant_palette, texture_mask_u,
+                            texture_mask_v, texture_log2_width,
+                            depth_w, dw, transparent);
+                        out += pixels;
+                        depth_out += pixels;
+                        u += (uint32_t)du * pixels;
+                        v += (uint32_t)dv * pixels;
                     } else if (flat && !blend_75) {
                         for (x = bx0; x < bx1; ++x) {
                             const int32_t inverse = depth_w > UINT16_MAX
