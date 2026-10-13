@@ -224,7 +224,7 @@ static void handle_client(pxsys_pxadb_control_t *control, int client) {
     char command[128] = {0};
     char action[16] = {0};
     char key[24] = {0};
-    char package_id[65] = {0};
+    char package_id[130] = {0};
     char extra;
     int x;
     int y;
@@ -287,13 +287,14 @@ static void handle_client(pxsys_pxadb_control_t *control, int client) {
              control->refresh_catalog(control->catalog_context))
                 ? "OK\n"
                 : "ERR catalog_refresh_failed\n");
-    } else if (sscanf(command, "PACKAGE %15s %64s %c", action, package_id, &extra) == 2) {
-        const char* actions[] = {"enable", "disable", "clear-data", "uninstall"};
+    } else if (sscanf(command, "PACKAGE %15s %129s %c", action, package_id, &extra) == 2) {
+        const char* actions[] = {"enable", "disable", "clear-data", "uninstall", "run", "stop", "active"};
         int selected = -1;
-        for (unsigned i = 0; i < 4; ++i) if (!strcmp(action, actions[i])) selected = (int)i;
-        (void)send_text(client, selected >= 0 && control->package_action != NULL &&
-            control->package_action(control->catalog_context, package_id, (unsigned)selected)
-                ? "OK\n" : "ERR package_action_failed\n");
+        for (unsigned i = 0; i < 7; ++i) if (!strcmp(action, actions[i])) selected = (int)i;
+        int result = selected >= 0 && control->package_action != NULL &&
+            control->package_action(control->catalog_context, package_id, (unsigned)selected);
+        (void)send_text(client, selected == PXSYS_PXADB_PACKAGE_ACTIVE ? (result ? "OK 1\n" : "OK 0\n") :
+                                (result ? "OK\n" : "ERR package_action_failed\n"));
     } else if (strcmp(command, "CAPABILITIES\n") == 0) {
         (void)send_text(client, "OK\n");
     } else {

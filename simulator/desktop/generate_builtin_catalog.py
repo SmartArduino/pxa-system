@@ -16,6 +16,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--apps", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--allow-empty", action="store_true")
     args = parser.parse_args()
 
     entries: list[dict[str, str]] = []
@@ -34,11 +35,12 @@ def main() -> int:
             if not isinstance(value, str) or not value:
                 raise ValueError(f"{manifest_path}: {key} must be a non-empty string")
         entries.append(entry)
-    if not entries:
+    if not entries and not args.allow_empty:
         raise ValueError(f"no package.json files found below {args.apps}")
 
     lines = [
         "/* Generated from apps/pxa package manifests. Do not edit. */",
+        f"#define PXSYS_DESKTOP_BUILTIN_COUNT {len(entries)}u",
         "static const pxsys_desktop_builtin_app_t k_builtin_apps[] = {",
     ]
     for entry in entries:
@@ -46,6 +48,8 @@ def main() -> int:
             "    {%s, %s, %s, %s, %s},"
             % tuple(c_string(entry[key]) for key in ("id", "name", "version", "description", "icon"))
         )
+    if not entries:
+        lines.append("    {0},")
     lines.extend(["};", ""])
     output = "\n".join(lines)
     args.output.parent.mkdir(parents=True, exist_ok=True)

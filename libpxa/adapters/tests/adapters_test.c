@@ -732,6 +732,7 @@ typedef struct {
 } test_signer_t;
 
 static void generate_signer(test_signer_t *signer) {
+    signer->key = NULL;
     EVP_PKEY_CTX *ctx = EVP_PKEY_CTX_new_id(EVP_PKEY_EC, NULL);
     CHECK(ctx != NULL);
     CHECK(EVP_PKEY_keygen_init(ctx) == 1);

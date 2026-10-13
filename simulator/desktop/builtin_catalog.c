@@ -7,7 +7,7 @@
 #define PXSYS_DESKTOP_RUNTIME_ID "pxa-sim"
 
 size_t pxsys_desktop_builtin_app_count(void) {
-    return sizeof(k_builtin_apps) / sizeof(k_builtin_apps[0]);
+    return PXSYS_DESKTOP_BUILTIN_COUNT;
 }
 
 const pxsys_desktop_builtin_app_t* pxsys_desktop_builtin_app(size_t index) {

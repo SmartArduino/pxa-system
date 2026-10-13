@@ -1,7 +1,8 @@
 cmake_minimum_required(VERSION 3.16)
 
 if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
-    project(pxsys_desktop_simulator VERSION 0.1.0 LANGUAGES C)
+    include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/PxaVersion.cmake")
+    project(pxsys_desktop_simulator VERSION ${PXA_RELEASE_NUMERIC} LANGUAGES C)
     set(PXSYS_DESKTOP_STANDALONE ON)
     include(CTest)
 else()
@@ -62,6 +63,7 @@ add_custom_command(
     COMMAND ${Python3_EXECUTABLE}
             "${CMAKE_CURRENT_LIST_DIR}/generate_builtin_catalog.py"
             --apps "${PXSYS_DESKTOP_APP_SOURCE_ROOT}"
+            --allow-empty
             --output "${PXSYS_DESKTOP_CATALOG_DATA}"
     DEPENDS
         "${CMAKE_CURRENT_LIST_DIR}/generate_builtin_catalog.py"
@@ -203,7 +205,7 @@ else()
     set_target_properties(pxsys_system_gestures_test PROPERTIES EXCLUDE_FROM_ALL TRUE)
 endif()
 
-foreach(_test ime audio audio_sdk audio_app i18n_app sdk_patterns declarative_ui raster resource_app voxel_resources resource_budget ui_images store_images weather_images)
+foreach(_test ime audio audio_sdk audio_app i18n_app sdk_patterns declarative_ui cpp_service_safety raster resource_app voxel_resources resource_budget ui_images store_images weather_images)
     if(_test STREQUAL "ime")
         set(_source tests/ime_app_test.c)
     elseif(_test STREQUAL "audio")
@@ -218,6 +220,8 @@ foreach(_test ime audio audio_sdk audio_app i18n_app sdk_patterns declarative_ui
         set(_source tests/sdk_patterns_test.c)
     elseif(_test STREQUAL "declarative_ui")
         set(_source tests/declarative_ui_test.c)
+    elseif(_test STREQUAL "cpp_service_safety")
+        set(_source ../../sdk/guest-cpp/examples/service-safety/validation/host_probe.c)
     elseif(_test STREQUAL "resource_budget")
         set(_source tests/resource_budget_test.c)
     elseif(_test STREQUAL "resource_app")
@@ -240,6 +244,10 @@ foreach(_test ime audio audio_sdk audio_app i18n_app sdk_patterns declarative_ui
     pxsys_apply_wamr_metadata(pxsys_${_test}_test)
     target_compile_definitions(pxsys_${_test}_test PRIVATE
         PXSYS_DESKTOP_TEXT_FONT="${PXSYS_DESKTOP_TEXT_FONT}")
+    if(_test STREQUAL "cpp_service_safety")
+        target_compile_definitions(pxsys_${_test}_test PRIVATE
+            PXA_PRODUCT_RUNNER="${CMAKE_CURRENT_LIST_DIR}/product_runner.c")
+    endif()
     target_link_libraries(pxsys_${_test}_test PRIVATE
         pxsys::core pxa::pxa pxa_adapters_openssl pxa_adapters_posix pxa_adapters_lvgl
         pxa_adapters_wamr lvgl SDL2::SDL2 PNG::PNG CURL::libcurl Threads::Threads
@@ -275,6 +283,7 @@ foreach(_test ime audio audio_sdk audio_app i18n_app sdk_patterns declarative_ui
                 "${CMAKE_CURRENT_LIST_DIR}/../../tools/package/test_cpp_declarative_ui.sh"
                 $<TARGET_FILE:pxsys_declarative_ui_test>)
             set_tests_properties(pxsys_declarative_ui_test PROPERTIES TIMEOUT 300)
+        elseif(_test STREQUAL "cpp_service_safety")
             add_test(NAME pxsys_cpp_service_safety_test COMMAND bash
                 "${CMAKE_CURRENT_LIST_DIR}/../../tools/package/test_cpp_service_safety.sh"
                 "${CMAKE_CURRENT_BINARY_DIR}")

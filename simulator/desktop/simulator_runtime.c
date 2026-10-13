@@ -361,6 +361,15 @@ static pxsys_back_result_t backend_back(void* context, void* opaque) {
     return PXSYS_BACK_UNHANDLED;
 }
 
+void pxsys_desktop_runtime_request_exit(pxsys_desktop_runtime_t* runtime) {
+    simulator_instance_t* instance;
+    if (runtime == NULL || runtime->magic != PXSYS_DESKTOP_RUNTIME_MAGIC) return;
+    for (instance = runtime->instances; instance != NULL; instance = instance->next) {
+        if (instance->request_product_exit != NULL)
+            instance->request_product_exit(instance->product_runner);
+    }
+}
+
 static void backend_stop(void* context, void* opaque,
                          pxsys_stop_reason_t reason) {
     (void)reason;

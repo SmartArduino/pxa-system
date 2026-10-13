@@ -6,6 +6,12 @@
 
 #include "lvgl.h"
 
+enum {
+    PXSYS_PXADB_PACKAGE_RUN = 4,
+    PXSYS_PXADB_PACKAGE_STOP = 5,
+    PXSYS_PXADB_PACKAGE_ACTIVE = 6
+};
+
 typedef int (*pxsys_pxadb_package_action_fn)(void *context, const char *id, unsigned action);
 
 typedef int (*pxsys_pxadb_catalog_refresh_fn)(void *context);

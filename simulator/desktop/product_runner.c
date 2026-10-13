@@ -9,6 +9,7 @@
 #include <time.h>
 #include <limits.h>
 #include <math.h>
+#include "desktop_resources.h"
 
 #include <SDL2/SDL.h>
 #include <vorbis/vorbisfile.h>
@@ -16,6 +17,7 @@
 
 #include "lvgl.h"
 #include "pxa/activation.h"
+#include "pxa/version.h"
 #include "pxa/audio.h"
 #include "pxa/audio_sound.h"
 #include "pxa/audio_mixer.h"
@@ -430,7 +432,7 @@ static lv_font_t *load_product_font(uint32_t size,
                                     const lv_font_t *symbol_fallback) {
 #ifdef PXSYS_DESKTOP_TEXT_FONT
     lv_font_t *font = lv_freetype_font_create(
-        PXSYS_DESKTOP_TEXT_FONT, LV_FREETYPE_FONT_RENDER_MODE_BITMAP, size,
+        pxsys_desktop_font_path(), LV_FREETYPE_FONT_RENDER_MODE_BITMAP, size,
         LV_FREETYPE_FONT_STYLE_NORMAL);
     if (font != NULL) font->fallback = symbol_fallback;
     return font;
@@ -3720,7 +3722,7 @@ static int run_product_simulator(const options_t *input,
                                          ? host.display_font
                                          : lvgl_config.theme.title_font;
 #ifdef PXSYS_DESKTOP_TEXT_FONT
-    lvgl_config.sized_text_font_path=PXSYS_DESKTOP_TEXT_FONT;
+    lvgl_config.sized_text_font_path=pxsys_desktop_font_path();
 #endif
     host.ime_preferences_root=options.state_root;
     host.ime_config = (pxa_lvgl_ime_config_t){.struct_size=sizeof(host.ime_config),.parent=lv_layer_top(),
@@ -4374,6 +4376,14 @@ int pxsys_product_simulator_run_embedded(const char *package_path,
 #ifndef PXSYS_PRODUCT_RUNNER_LIBRARY
 int main(int argc, char **argv) {
     options_t options;
+    if (argc == 2 && strcmp(argv[1], "--version") == 0) {
+        printf("PXA product simulator %s\n", PXA_VERSION_STRING);
+        return 0;
+    }
+    if (argc == 2 && strcmp(argv[1], "--help") == 0) {
+        print_usage(argv[0]);
+        return 0;
+    }
     if (!parse_options(argc, argv, &options)) {
         print_usage(argv[0]);
         return 2;

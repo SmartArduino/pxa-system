@@ -5,6 +5,7 @@
 #include <fcntl.h>
 #include <math.h>
 #include "png_writer.h"
+#include "desktop_resources.h"
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -17,6 +18,7 @@
 
 #include "lvgl.h"
 #include "pxa/package.h"
+#include "pxa/version.h"
 #include "pxa/posix/pxa_posix_ime.h"
 #include "pxa/lvgl/pxa_lvgl_ime.h"
 #include "pxsys/lvgl_renderer.h"
@@ -317,7 +319,7 @@ static void simulator_power_poll(simulator_power_state_t* state) {
 static int create_ui_font(lv_font_t** destination, uint32_t size,
                           const lv_font_t* symbol_fallback) {
     *destination = lv_freetype_font_create(
-        PXSYS_DESKTOP_TEXT_FONT, LV_FREETYPE_FONT_RENDER_MODE_BITMAP, size,
+        pxsys_desktop_font_path(), LV_FREETYPE_FONT_RENDER_MODE_BITMAP, size,
         LV_FREETYPE_FONT_STYLE_NORMAL);
     if (*destination == NULL) return 0;
     if (size >= 24) symbol_fallback = &lv_font_montserrat_24;
@@ -1033,10 +1035,37 @@ static bool simulator_app_action(void* context, const char* identity,
     }
     return complete_app_action(catalog, app_id, action);
 }
+static pxsys_status_t launch_registered_app(pxsys_standard_system_t* system,
+                                           const pxsys_app_descriptor_t* app) {
+    pxsys_intent_t intent = {.struct_size = sizeof(intent),
+                            .target = &app->identity,
+                            .action = pxsys_string_from_cstr("system.intent.main"),
+                            .flags = PXSYS_INTENT_FLAG_CLEAR_TOP};
+    pxsys_instance_ref_t instance;
+    return pxsys_task_manager_start(pxsys_standard_system_tasks(system), &intent, &instance);
+}
 static int control_app_action(void* context, const char* identity, unsigned action) {
+    simulator_catalog_t* catalog = context;
+    if (action >= PXSYS_PXADB_PACKAGE_RUN && action <= PXSYS_PXADB_PACKAGE_ACTIVE) {
+        const pxsys_app_descriptor_t* app = find_managed_app(catalog, identity);
+        if (app == NULL) return false;
+        if (action == PXSYS_PXADB_PACKAGE_RUN) return launch_registered_app(catalog->system, app) == PXSYS_STATUS_OK;
+        if (action == PXSYS_PXADB_PACKAGE_STOP) {
+            pxsys_status_t result = stop_managed_app(catalog, &app->identity);
+            return result == PXSYS_STATUS_OK || result == PXSYS_STATUS_PENDING;
+        }
+        pxsys_task_manager_t* tasks = pxsys_standard_system_tasks(catalog->system);
+        for (size_t index = 0; index < pxsys_task_manager_count(tasks); ++index) {
+            pxsys_instance_ref_t ref;
+            pxsys_instance_snapshot_t snapshot = {.struct_size = sizeof(snapshot)};
+            if (pxsys_task_manager_task(tasks, index, &ref, &snapshot) == PXSYS_STATUS_OK &&
+                snapshot.app != NULL && pxsys_app_identity_equal(&snapshot.app->identity, &app->identity))
+                return true;
+        }
+        return false;
+    }
     bool success = action <= PXSYS_REFERENCE_APP_ACTION_UNINSTALL &&
                    simulator_app_action(context, identity, (pxsys_reference_app_action_t)action);
-    simulator_catalog_t* catalog = context;
     if (success && !catalog->pending_id[0] && catalog->ui != NULL)
         pxsys_reference_lvgl_refresh_apps(catalog->ui);
     return success;
@@ -1265,8 +1294,25 @@ static bool simulator_set_app_permission(void* context, const char* identity,
     return true;
 }
 
+typedef struct {
+    pxsys_pxadb_control_t* control;
+    pxsys_desktop_runtime_t* runtime;
+    lv_display_t* display;
+    const char* screenshot;
+    uint32_t started, duration_ms;
+    int captured;
+} simulator_pump_t;
+
+static int save_png(lv_display_t* display, const char* path);
+
 static void pump_pxadb_control(void* context) {
-    pxsys_pxadb_control_poll((pxsys_pxadb_control_t*)context);
+    simulator_pump_t* pump = context;
+    pxsys_pxadb_control_poll(pump->control);
+    if (pump->duration_ms && lv_tick_elaps(pump->started) >= pump->duration_ms) {
+        if (pump->screenshot && !pump->captured)
+            pump->captured = save_png(pump->display, pump->screenshot) ? 1 : -1;
+        pxsys_desktop_runtime_request_exit(pump->runtime);
+    }
 }
 
 static void* simulator_allocate(void* context, size_t size) {
@@ -1674,39 +1720,19 @@ done:
 
 static pxsys_status_t launch_app(pxsys_standard_system_t* system,
                                  const char* app_id) {
-    pxsys_app_identity_t identity = {0};
-    pxsys_intent_t intent = {0};
-    pxsys_instance_ref_t instance;
-    pxsys_app_registry_t* apps;
-    pxsys_status_t status;
-    size_t index;
     if (system == NULL || app_id == NULL) return PXSYS_STATUS_INVALID_ARGUMENT;
-    apps = pxsys_standard_system_apps(system);
-    for (index = 0; index < pxsys_app_registry_count(apps); ++index) {
+    pxsys_app_registry_t* apps = pxsys_standard_system_apps(system);
+    for (size_t index = 0; index < pxsys_app_registry_count(apps); ++index) {
         const pxsys_app_descriptor_t* app = pxsys_app_registry_at(apps, index);
         if (app != NULL && (app->flags & PXSYS_APP_FLAG_LAUNCHER) != 0 &&
             app->identity.app_id.size == strlen(app_id) &&
             memcmp(app->identity.app_id.data, app_id,
                    app->identity.app_id.size) == 0) {
-            identity = app->identity;
-            break;
+            return launch_registered_app(system, app);
         }
     }
-    if (identity.app_id.data == NULL) {
-        fprintf(stderr, "PXA simulator: launcher app is not registered: %s\n",
-                app_id);
-        return PXSYS_STATUS_NOT_FOUND;
-    }
-    intent.struct_size = sizeof(intent);
-    intent.target = &identity;
-    intent.action = pxsys_string_from_cstr("system.intent.main");
-    intent.flags = PXSYS_INTENT_FLAG_CLEAR_TOP;
-    status = pxsys_task_manager_start(pxsys_standard_system_tasks(system),
-                                      &intent, &instance);
-    if (status != PXSYS_STATUS_OK)
-        fprintf(stderr, "PXA simulator: launch status=%d for %s\n",
-                (int)status, app_id);
-    return status;
+    fprintf(stderr, "PXA simulator: launcher app is not registered: %s\n", app_id);
+    return PXSYS_STATUS_NOT_FOUND;
 }
 
 static int run_simulator(const simulator_options_t* options) {
@@ -1732,6 +1758,7 @@ static int run_simulator(const simulator_options_t* options) {
     lv_indev_t* keyboard = NULL;
     simulator_power_state_t power_state = {0};
     pxsys_pxadb_control_t pxadb_control = {.listener = -1};
+    simulator_pump_t pump = {0};
     uint32_t started;
     uint8_t publisher_root[PXSYS_PUBLISHER_ROOT_BYTES];
     int result = 1;
@@ -1878,7 +1905,11 @@ static int run_simulator(const simulator_options_t* options) {
     runtime_fixture.state_root = options->state_root;
     runtime_fixture.navigation_gestures =
         options->navigation == PXSYS_NAVIGATION_GESTURES;
-    runtime_fixture.pump_context = &pxadb_control;
+    pump.control = &pxadb_control;
+    pump.display = display;
+    pump.duration_ms = options->duration_ms;
+    pump.screenshot = options->screenshot;
+    runtime_fixture.pump_context = &pump;
     runtime_fixture.pump = pump_pxadb_control;
     icon_resolver.installed_packages_root = options->installed_packages_root;
     catalog.system = system;
@@ -2009,6 +2040,8 @@ static int run_simulator(const simulator_options_t* options) {
             goto done;
     }
     started = lv_tick_get();
+    pump.started = started;
+    pump.runtime = simulator_runtime;
     while (lv_display_get_default() != NULL &&
            !power_state.quit_requested &&
            (options->duration_ms == 0 ||
@@ -2035,7 +2068,7 @@ static int run_simulator(const simulator_options_t* options) {
         sleep_ms(delay);
     }
     if (options->screenshot != NULL &&
-        !save_png(display, options->screenshot)) {
+        (pump.captured < 0 || (!pump.captured && !save_png(display, options->screenshot)))) {
         fprintf(stderr, "PXA simulator: cannot write screenshot %s\n",
                 options->screenshot);
         goto done;
@@ -2098,6 +2131,14 @@ done:
 
 int main(int argc, char** argv) {
     simulator_options_t options;
+    if (argc == 2 && strcmp(argv[1], "--version") == 0) {
+        printf("PXA desktop simulator %s\n", PXA_VERSION_STRING);
+        return 0;
+    }
+    if (argc == 2 && strcmp(argv[1], "--help") == 0) {
+        print_usage(argv[0]);
+        return 0;
+    }
     if (!parse_options(argc, argv, &options)) {
         print_usage(argv[0]);
         return 2;
