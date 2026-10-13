@@ -1,133 +1,87 @@
 # PXA System
 
-[简体中文](README.zh-CN.md)
+[English](README.en.md)
 
-PXA System is a portable application system for embedded products. This tree
-is intentionally self-contained so it can become its own Git repository or be
-embedded directly in a product repository.
+PXA（Portable eXecutable Application，可移植可执行应用）是面向嵌入式产品的应用系统。应用以签名 `.pxa` 包独立开发、安装和更新；系统为原生应用与 PXA 应用提供统一的身份、生命周期、界面、权限和服务契约。核心不依赖 LVGL，产品可以选择自己的渲染器和驱动。
 
-The system gives native and PXA applications the same identity, lifecycle,
-Intent, RPC, event, role and service contracts. Native applications link the
-native C binding and do not use the PXA Guest SDK. LVGL is an optional renderer,
-not a dependency of the system core.
+## 开发 C++26 应用
 
-## Repository layout
+下载 [DevKit 0.3.0](https://github.com/SmartArduino/pxa-system/releases/tag/v0.3.0)。完整包包含 SDK、WASI/AOT 工具链、Python、CMake/Ninja、PXADB 与预编译模拟器，无需先构建固件。当前二进制要求 Linux x86_64、glibc 2.39+。
+
+```sh
+export PATH="$PWD/pxa-devkit-0.3.0-linux-x86_64/bin:$PATH"
+pxa init hello
+pxa run hello
+# 关闭模拟器后再打包：
+pxa build hello --target esp32s3,esp32s31,simulator --offline
+pxa publish hello/dist/pxa-hello.pxa --check-only
+```
+
+默认 C++26、O3，CMake 是唯一的源文件与依赖描述；`pxa.lock` 固定发行版本和工具链输入。开发私钥在 SDK 外的用户数据目录生成。正式发布使用自己保存的长期密钥。
+
+[入门教程](https://pxa.doit.am/docs/first-app/) · [C++ SDK](sdk/guest-cpp/README.zh-CN.md) · [架构与协议文档](docs/README.zh-CN.md)
+
+## 目录与边界
 
 ```text
-pxa-system/
-  CMakeLists.txt              standalone CMake and ESP component entry
-  apps/pxa/                   minimal Hello Guest smoke test and signing fixture
-  cmake/                      shared source manifests and package helpers
-  wamr/                        upstream WAMR runtime submodule
-  libpxa/                     platform-neutral PXA Host library
-  system/core/                identity, lifecycle, Intent, RPC, roles, themes
-  system/runtimes/native/     native-static application runtime
-  system/runtimes/pxa/        libpxa-backed application runtime binding
-  system/standard/            standard composition root
-  ui/reference/               reference shell and standard Native App boundary
-  ui/renderers/               backend-neutral renderer implementations
-  ui/backends/lvgl/           optional LVGL-only helpers, including page_manager
-  services/                   standard and vendor service provider boundary
-  sdk/guest-c/                PXA Guest C SDK
-  sdk/cmake/                  WASI toolchain and PXA App CMake helpers
-  tools/package/              manifest, signing and package tools
-  tools/wamr/                 WAMR metadata and patch verification
-  scripts/                    host build, test and SDK release scripts
-  platforms/esp-idf/          ESP-IDF integration helpers
-  simulator/                  backend-neutral smoke simulator
-  examples/                   installed SDK and integration examples
-  spec/                       wire/service specifications and golden vectors
-  docs/                       architecture, protocol and porting documents
+libpxa/                    可移植 Host 运行库
+system/core/               身份、生命周期、Intent、RPC、角色与主题
+system/runtimes/           原生与 PXA 应用运行时
+system/standard/           标准系统组合入口
+ui/                        系统界面、渲染器与可选 LVGL 后端
+services/                  系统与产品服务接口
+sdk/guest-cpp/             持续维护的 C++26 Guest SDK
+tools/pxa_tools/                   独立 DevKit 命令行与分发工具
+sdk/templates/             pxa init 使用的应用模板
+sdk/cmake/                 WASI 工具链与应用 CMake 支持
+sdk/guest-c/                旧绑定与协议参考，新应用使用 C++ SDK
+wamr/                      固定提交的运行时子模块
+config/                    运行时与编译器版本约束
+platforms/esp-idf/          ESP-IDF 集成支持
+simulator/                 无界面及 SDL2/LVGL 桌面模拟器
+spec/                      协议、服务规格与测试向量
+tools/package/             清单、签名与打包工具
+scripts/                   Host 构建、测试与 SDK 发布入口
 ```
 
-Product-specific hardware services and UI implementations are not part of the
-portable core. A product registers them through service, renderer and system
-role provider interfaces. The current firmware's `app_pages` and ESP PXA host
-bridges are examples of such external product adapters.
+板级驱动与产品业务不放入可移植核心。产品通过服务、渲染器和角色接口接入自己的实现。原生应用链接原生绑定，PXA 应用使用 Guest SDK。
 
-Clone this tree with its runtime and UI dependencies:
+## 从源码构建系统
+
+以下命令面向系统维护者，与上面的独立应用开发二选一：
 
 ```sh
-git clone --recurse-submodules <pxa-system-repository>
+git clone --recurse-submodules https://github.com/SmartArduino/pxa-system.git
 cd pxa-system
-```
-
-The checked-in WAMR submodule is detached at the exact commit declared in
-`config/wamr.json`; it currently identifies as WAMR 2.4.3. The same metadata
-file owns the AOT engine ABI and Espressif LLVM pin. Updating WAMR is an
-ABI-impacting operation: rebase and verify the ordered ESP patches, update the
-metadata, and regenerate packages with `tools/package/build_wamrc.sh` before
-deployment.
-
-Its ESP runtime uses the pinned WAMR API to reserve linear memory only for
-Components whose signed package manifest declares pinned memory; ordinary
-Components keep WAMR's normal growable-memory behavior.
-
-`build_wamrc.sh` uses `wamr/` as its only WAMR source checkout. It stores the
-host LLVM checkout, the out-of-tree `wamrc` build and compiler cache under
-`.pxa/`; those generated files can be relocated with
-`PXA_WAMR_CACHE_DIR`. Its Xtensa backend is pinned to Espressif LLVM 18.1.2
-revision declared in `config/wamr.json`. The `wamrc` cache key includes both the WAMR and LLVM
-commits so switching toolchains cannot reuse an incompatible compiler binary.
-The host compiler retains the AArch64, ARM, Mips, RISC-V, X86 and Xtensa
-backends, so the same toolchain can generate AOT artifacts for ESP32-P4 and
-other supported devices as targets are added to the package flow. ESP32-P4
-uses `--target=riscv32 --target-abi=ilp32f --cpu=esp32p4`; the explicit ABI is
-required because WAMR otherwise defaults RISC-V 32-bit output to `ilp32d`.
-
-CMake/WASI Apps additionally need wasi-sdk 29.0. Packaging first honors
-`PXA_WASI_SDK_DIR`, `WASI_SDK_DIR` and `WASI_SDK_PATH`, then `/opt/wasi-sdk`,
-and finally the cached SDK under `.pxa`. If none exists, it downloads
-the pinned, checksum-verified SDK to that cache. Set
-`PXA_WASI_SDK_AUTO_DOWNLOAD=0` to prohibit downloads in an offline build.
-Set `PXA_WASI_SDK_CACHE_DIR` to relocate the cache.
-
-## Standalone build
-
-```sh
 cmake -S . -B /tmp/pxa-system-build
 cmake --build /tmp/pxa-system-build
 ctest --test-dir /tmp/pxa-system-build --output-on-failure
 ```
 
-The default build includes libpxa with the bundled WAMR adapter, native and
-PXA runtime bindings, the standard composition, headless renderer, tests and
-the headless and SDL2/LVGL standard-UI simulators. It needs OpenSSL, `liblz4`
-and SDL2 development packages for
-the host installer adapter. The desktop simulator additionally needs libpng.
-The desktop simulator downloads pinned LVGL 9.5 by default. For offline builds,
-set `PXSYS_LVGL_SOURCE_DIR` to an existing LVGL 9.5 checkout. See
-[`simulator/desktop`](simulator/desktop/README.md).
+Host 构建需要 C/C++ 编译器、CMake、OpenSSL、LZ4、SDL2 与 libpng 开发包。桌面模拟器默认获取固定版本 LVGL 9.5；离线构建可设置 `PXSYS_LVGL_SOURCE_DIR` 指向已有的 LVGL 9.5 源码。详见[桌面模拟器](simulator/desktop/README.md)。
 
-`scripts/test-host.sh` provides the same default build and test flow.
-`scripts/package-sdk.sh` creates an installable SDK archive containing libpxa,
-PXA System headers, libraries and CMake package metadata.
+`scripts/test-host.sh` 提供相同的默认构建与测试流程。`scripts/package-sdk.sh` 生成可安装的原生系统 SDK；它与面向 Guest 应用的 DevKit 是不同交付物。
 
-## ESP-IDF component
+## 运行时与工具链
 
-Place this directory at `components/pxa_system`, use it through a Git component,
-or add its parent to `EXTRA_COMPONENT_DIRS`. Its root `CMakeLists.txt` detects
-ESP-IDF and registers the portable foundation as one component named after the
-directory. The component deliberately does not require LVGL.
+`config/wamr.json` 固定 WAMR 提交（当前标识 `78-wamr-6a54186a`）、AOT 引擎 ABI 和 Espressif LLVM 提交。更新运行时需核对 ESP 补丁、更新元数据并重新生成 AOT，不应只替换某个编译器二进制。
 
-For the optional LVGL renderer, add
-`platforms/esp-idf/components` to `EXTRA_COMPONENT_DIRS` and require
-`pxa_system_renderer_lvgl`. A product may instead provide another renderer.
+`tools/package/build_wamrc.sh` 使用本仓库的 `wamr/`；生成源码与编译缓存在 `.pxa/`，可用 `PXA_WAMR_CACHE_DIR` 重定位。缓存键包含 WAMR 与 LLVM 提交。工具保留 X86、Xtensa、ARM、AArch64、Mips 与 RISC-V 后端；新增目标仍须补齐打包和设备支持。
 
-For PXA execution, add `wamr/` to `EXTRA_COMPONENT_DIRS` and require `wamr`.
-The ESP32-S3 WAMR compatibility setup lives under `platforms/esp-idf`; product
-components call it rather than referring to a Component Manager installation.
-`ui/backends/lvgl/page_manager` is the canonical LVGL page stack; the parent
-firmware keeps `components/page_manager` only as a compatibility component.
+Guest 编译使用 WASI SDK 34.0（Clang 23）。源码打包工具依次读取 `PXA_WASI_SDK_DIR`、`WASI_SDK_DIR`、`WASI_SDK_PATH`，再检查 `/opt/wasi-sdk` 和缓存。`PXA_WASI_SDK_AUTO_DOWNLOAD=0` 禁止自动下载，`PXA_WASI_SDK_CACHE_DIR` 改变缓存目录。DevKit 自带工具链，不需要另行下载。
 
-See [Product integration](docs/product-integration.md) for system UI, service
-and driver overrides.
-See [Display profiles and standard UI](docs/display-and-system-ui.md) for
-responsive layout, shape simulation, role replacement, and UI backend ports.
-The complete bilingual document map is in [`docs/`](docs/README.md).
+ESP 运行时只为清单明确声明 pinned memory 的组件保留固定线性内存；普通组件保持可增长内存行为。
 
-## Compatibility policy
+## ESP-IDF 集成
 
-All contracts are currently draft `0.x`. Public structures carry `struct_size`
-and wire formats use explicit versions, but compatibility is not promised
-until the conformance suite and first external product port are complete.
+将本目录作为 ESP-IDF component，或将父目录加入 `EXTRA_COMPONENT_DIRS`。根 `CMakeLists.txt` 自动识别 IDF；核心组件不要求 LVGL。
+
+需要 LVGL 渲染器时，将 `platforms/esp-idf/components` 加入组件搜索路径，并依赖 `pxa_system_renderer_lvgl`。执行 PXA 时还需引入 `wamr/`。ESP 兼容配置集中在 `platforms/esp-idf`，产品代码调用该入口。
+
+[产品集成](docs/zh-CN/product-integration.md) · [显示与系统 UI](docs/zh-CN/display-and-system-ui.md) · [ESP 产品工作区](https://github.com/SmartArduino/pxa-workspace)
+
+## 兼容性
+
+当前维护的 Guest ABI 是 Core 2.0，导入接口为 `pxa.core.v2::pxa_call` 和 `pxa_io`。C++ 源码 API 仍处于 1.0 之前，允许演进；使用 `pxa.lock` 固定输入，显式升级后重新编译和测试。Host 结构携带 `struct_size`，线协议使用明确版本。
+
+AOT 引擎 ABI 与 Guest Core 版本分别管理：引擎标签中的 `core-1` 不是 Guest Core 1。旧 Core 1 包不能直接在 Core 2 Host 运行；设备还须满足应用声明的服务、功能与目标架构要求。

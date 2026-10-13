@@ -161,7 +161,12 @@ int main(int argc, char **argv) {
     status = options.action != NULL
         ? pxa_posix_installer_load_directory(installer, source, &package_result)
         : pxa_posix_installer_verify_source(installer, source, &package_result);
-    if (status != PXA_STATUS_OK || manifest == NULL ||
+    if (status != PXA_STATUS_OK) {
+        fprintf(stderr, "package verification failed (status=%d); check the package and publisher key\n",
+                (int)status);
+        goto done;
+    }
+    if (manifest == NULL ||
         manifest->publisher_key_id == NULL ||
         manifest->app_id.size != strlen(options.expected_id) ||
         memcmp(manifest->app_id.data, options.expected_id,

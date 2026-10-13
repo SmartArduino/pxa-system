@@ -24,6 +24,20 @@ fi
 work_dir="$(mktemp -d "${TMPDIR:-/tmp}/pxa-cmake-wasi-apps.XXXXXX")"
 trap 'rm -rf "$work_dir"' EXIT
 
+# An unmodified pxa init project must also build through workspace packaging.
+# Its component target defaults to the ID, and find_package(Pxa) must resolve
+# outside the WASI sysroot without editing the user's manifest or CMake graph.
+mkdir -p "$work_dir/template-apps"
+cp -a "$pxa_system_dir/sdk/templates/hello" "$work_dir/template-apps/hello"
+PXA_APP_SOURCE_ROOT="$work_dir/template-apps" \
+PXA_PACKAGE_OUTPUT_ROOT="$work_dir" \
+PXA_CONTAINER_OUTPUT="$work_dir/pxa-hello.pxa" \
+PXA_SIGNING_KEY="$pxa_system_dir/apps/pxa/.dev-signing/publisher-private.pem" \
+WASI_SDK_DIR="$wasi_sdk_dir" WAMRC="$wamrc_bin" \
+  "$script_dir/package_app.sh" hello simulator "$work_dir/pxa-hello"
+test -s "$work_dir/pxa-hello/artifacts/main.wasm"
+test -s "$work_dir/pxa-hello/artifacts/main.linux-x86_64.aot"
+
 libc_lab="$test_apps_root/wasi-libc-lab"
 "${CC:-cc}" -std=c11 -O2 -Wall -Wextra -Werror -Wpedantic \
   -I"$libc_lab/include" \

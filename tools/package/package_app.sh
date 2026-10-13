@@ -205,9 +205,11 @@ for component in components:
     elif mode == "aot" and artifact != "wasm":
         artifact = "aot"
     if build_system == "cmake":
-        target = component.get("cmake_target")
+        # Match DevKit: pxa_add_app(<component-id>) needs no repeated target name.
+        # Explicit targets remain supported for existing pxa_main-style projects.
+        target = component.get("cmake_target", component_id)
         if not isinstance(target, str) or not target:
-            raise SystemExit("component cmake_target is required for a CMake build")
+            raise SystemExit("component cmake_target must be a non-empty string")
         if component.get("wasi") is None:
             raise SystemExit("CMake components must declare wasi metadata")
         print(f"{component_id}\t{artifact}\t{target}")
@@ -354,6 +356,7 @@ if [[ "$build_system" == "cmake" ]]; then
     -DPXA_LINEAR_MEMORY_MAXIMUM="$linear_memory_maximum" \
     -DPXA_APP_DEFINITIONS="$joined_definitions" \
     -DPXA_CMAKE_MODULE_DIR="$pxa_system_dir/sdk/cmake" \
+    -DPxa_DIR="$pxa_system_dir/sdk/cmake" \
     -DPXA_KEEP_WASM_DEBUG="${PXA_KEEP_WASM_DEBUG:-OFF}"
   cmake_targets=()
   for component_id in "${component_ids[@]}"; do
