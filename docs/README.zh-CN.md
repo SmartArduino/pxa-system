@@ -17,6 +17,7 @@ PXA System 定义 RTOS 或桌面宿主之上的应用环境，包括身份、生
 
 ## 文档地图
 
+- [独立 DevKit 与发布、项目锁定](zh-CN/devkit.md)
 - [架构](zh-CN/architecture.md)
 - [应用与协议模型](zh-CN/app-protocol.md)
 - [PXA Binding](zh-CN/pxa-binding.md)

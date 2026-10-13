@@ -1,0 +1,36 @@
+{
+  "esp32s3": {
+    "cpu": "xtensa",
+    "flags": [
+      "--cpu=esp32s3",
+      "--stack-bounds-checks=0",
+      "--opt-level=3",
+      "--size-level=0",
+      "--mllvm=-mtext-section-literals"
+    ],
+    "target": "esp32-s3"
+  },
+  "esp32s31": {
+    "cpu": "riscv32",
+    "flags": [
+      "--target-abi=ilp32f",
+      "--cpu=generic-rv32",
+      "--cpu-features=+m,+a,+f,+c,+zba,+zbb,+zbs",
+      "--opt-level=3",
+      "--size-level=3"
+    ],
+    "target": "esp32-s31"
+  },
+  "simulator": {
+    "cpu": "x86_64",
+    "flags": [
+      "--opt-level=3"
+    ],
+    "target": "linux-x86_64"
+  },
+  "wasm": {
+    "cpu": "",
+    "flags": [],
+    "target": "linux-x86_64"
+  }
+}

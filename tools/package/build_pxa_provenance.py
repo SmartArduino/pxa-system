@@ -114,9 +114,9 @@ def main(argv: list[str]) -> None:
             "files": sorted(files, key=lambda item: item["path"]),
         },
         "tools": {
-            "clang": version([os.getenv("CLANG", "clang"), "--version"]),
-            "wamrc": version([os.getenv("WAMRC", "wamrc"), "--version"]),
-            "wasi_sdk_dir": os.getenv("WASI_SDK_DIR", ""),
+            "clang": version([os.getenv("PXA_RESOLVED_CLANG", os.getenv("CLANG", "clang")), "--version"]),
+            "wamrc": version([os.getenv("PXA_RESOLVED_WAMRC", os.getenv("WAMRC", "wamrc")), "--version"]),
+            "wasi_sdk_dir": os.getenv("PXA_RESOLVED_WASI_SDK", os.getenv("WASI_SDK_DIR", "")),
             "python": sys.version.split()[0],
         },
     }

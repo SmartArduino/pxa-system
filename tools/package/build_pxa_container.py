@@ -62,7 +62,8 @@ def manifest_files(manifest: bytes) -> list[tuple[str, int, bytes]]:
 
 class Lz4:
     def __init__(self) -> None:
-        library = ctypes.util.find_library("lz4")
+        private = Path(__file__).resolve().parents[2] / "runtime/lib/liblz4.so.1"
+        library = str(private) if private.is_file() else ctypes.util.find_library("lz4")
         require(library is not None, "liblz4 is required to build codec 1")
         self.library = ctypes.CDLL(library)
         self.library.LZ4_compressBound.argtypes = [ctypes.c_int]
@@ -98,26 +99,30 @@ def encode_payload(package_dir: Path, files, payload_file, codec: int) -> tuple[
     for index, (relative, expected_size, expected_digest) in enumerate(files):
         source_path = package_dir / relative
         require(source_path.is_file(), f"missing package file: {relative}")
-        content = source_path.read_bytes()
-        require(len(content) == expected_size, f"size mismatch: {relative}")
-        require(hashlib.sha256(content).digest() == expected_digest,
-                f"digest mismatch: {relative}")
-        chunks = [content[offset:offset + CHUNK_SIZE]
-                  for offset in range(0, len(content), CHUNK_SIZE)]
-        encoded_chunks = []
+        digest = hashlib.sha256()
         encoded_size = 0
-        for chunk in chunks:
-            compressed = lz4.compress(chunk) if lz4 is not None else chunk
-            stored = compressed if len(compressed) < len(chunk) else chunk
-            encoded_chunks.append((stored, len(chunk)))
-            encoded_size += 4 + len(stored)
-        payload_file.write(struct.pack("<HHIQ", index, 0, len(chunks), encoded_size))
-        payload_size += 16
-        for stored, decoded_size in encoded_chunks:
-            payload_file.write(struct.pack("<HH", len(stored), decoded_size))
-            payload_file.write(stored)
-            payload_size += 4 + len(stored)
-        unpacked_size += len(content)
+        decoded_size = 0
+        chunk_count = 0
+        record_offset = payload_file.tell()
+        payload_file.write(bytes(16))
+        with source_path.open("rb") as source:
+            while chunk := source.read(CHUNK_SIZE):
+                digest.update(chunk)
+                compressed = lz4.compress(chunk) if lz4 is not None else chunk
+                stored = compressed if len(compressed) < len(chunk) else chunk
+                payload_file.write(struct.pack("<HH", len(stored), len(chunk)))
+                payload_file.write(stored)
+                encoded_size += 4 + len(stored)
+                decoded_size += len(chunk)
+                chunk_count += 1
+        require(decoded_size == expected_size, f"size mismatch: {relative}")
+        require(digest.digest() == expected_digest, f"digest mismatch: {relative}")
+        end_offset = payload_file.tell()
+        payload_file.seek(record_offset)
+        payload_file.write(struct.pack("<HHIQ", index, 0, chunk_count, encoded_size))
+        payload_file.seek(end_offset)
+        payload_size += 16 + encoded_size
+        unpacked_size += decoded_size
     return payload_size, unpacked_size
 
 

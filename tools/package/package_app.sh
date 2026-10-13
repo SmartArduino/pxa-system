@@ -58,48 +58,22 @@ if [[ "$output_allowed" -ne 1 ]]; then
   exit 2
 fi
 
-case "$package_target" in
-  esp32s3)
-    aot_target="xtensa"
-    manifest_target="esp32-s3"
-    # Select the actual ESP32-S3 instruction model and match the firmware's
-    # windowed ABI. Keep the CPU explicit so a future LLVM default change
-    # cannot silently switch packages to a generic or call0 configuration.
-    # The board disables FreeRTOS trace, so WAMR cannot obtain a native stack
-    # boundary for per-function checks.
-    # Performance first: size-level 0 selects the LLVM large code model, which
-    # is what WAMR's xtensa AOT loader wants for modules whose text exceeds the
-    # l32r literal range (literal islands). The AOT is larger but the raster
-    # loops keep their full optimization.
-    wamrc_extra_args=(--cpu=esp32s3
-                      --stack-bounds-checks=0
-                      --opt-level=3 --size-level=0
-                      --mllvm=-mtext-section-literals)
-    ;;
-  esp32s31)
-    aot_target="riscv32"
-    manifest_target="esp32-s31"
-    # Match ESP-IDF's RV32IMAFCB ISA: C reduces instruction-fetch traffic;
-    # B (Zba/Zbb/Zbs) accelerates address calculation and bit operations.
-    # Keep the ILP32F ABI used by the firmware's WAMR runtime. This LLVM does
-    # not have an esp32s31 CPU model; esp32p4 also enables vendor/Zc features
-    # and must not be substituted for it.
-    # WAMR's size-level selects the code model, not Os/Oz optimization.
-    # Keep Small (3) with O3; RISC-V cannot use the Large (0) model here.
-    wamrc_extra_args=(--target-abi=ilp32f --cpu=generic-rv32
-                      --cpu-features=+m,+a,+f,+c,+zba,+zbb,+zbs
-                      --opt-level=3 --size-level=3)
-    ;;
-  simulator)
-    aot_target="x86_64"
-    manifest_target="linux-x86_64"
-    wamrc_extra_args=()
-    ;;
-  *)
-    echo "Unsupported PXA Package target: $package_target" >&2
-    exit 2
-    ;;
-esac
+# One CPU/code-model recipe is shared with the standalone CLI.
+recipe_output="$("${PYTHON:-python3}" - "$pxa_system_dir/config/aot-targets.json" "$package_target" <<'PYRECIPE'
+import json, sys
+entry = json.load(open(sys.argv[1])).get(sys.argv[2])
+if entry is None or not entry['cpu']:
+    raise SystemExit('Unsupported AOT target: ' + sys.argv[2])
+print(entry['cpu'])
+print(entry['target'])
+print('\n'.join(entry['flags']))
+PYRECIPE
+)"
+mapfile -t recipe_lines <<< "$recipe_output"
+aot_target="${recipe_lines[0]}"
+manifest_target="${recipe_lines[1]}"
+wamrc_extra_args=("${recipe_lines[@]:2}")
+
 
 if [[ ! -f "$app_dir/package.json" ]]; then
   echo "PXA App source is incomplete: $app_dir" >&2
@@ -504,6 +478,8 @@ container_output="${PXA_CONTAINER_OUTPUT:-${output_dir}.pxa}"
   "$package_dir" "$private_key" "$container_output" --codec lz4
 
 provenance_output="${PXA_PROVENANCE_OUTPUT:-${container_output}.provenance.json}"
+PXA_RESOLVED_CLANG="$clang_bin" PXA_RESOLVED_WAMRC="$wamrc_bin" \
+PXA_RESOLVED_WASI_SDK="$wasi_sdk_dir" \
 "${PYTHON:-python3}" "$script_dir/build_pxa_provenance.py" \
   "$package_dir" "$container_output" "$app_dir/package.json" \
   "$manifest_target" "$engine_abi" "$provenance_output"

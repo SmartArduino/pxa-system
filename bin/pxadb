@@ -1,0 +1,4 @@
+#!/bin/sh
+set -eu
+pxa_bin=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+exec "$pxa_bin/pxa" device "$@"

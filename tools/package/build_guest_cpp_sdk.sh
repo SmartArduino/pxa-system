@@ -28,6 +28,7 @@ mkdir -p "$output_dir/sdk" "$output_dir/tools/package" \
   "$output_dir/spec/draft/tools" "$output_dir/spec/draft/golden" \
   "$output_dir/config" "$output_dir/bin"
 cp -R "$pxa_system_dir/sdk/guest-cpp" "$output_dir/sdk/"
+cp -R "$pxa_system_dir/sdk/guest-c" "$output_dir/sdk/"
 cp -R "$pxa_system_dir/sdk/cmake" "$output_dir/sdk/"
 for tool in package_app.sh resolve_wasi_sdk.sh \
   verify_wasm_core_imports.py verify_wasm_memory.py \
@@ -46,7 +47,8 @@ cp "$pxa_system_dir/spec/draft/tools/generate_service_codecs.py" \
 cp "$pxa_system_dir/spec/draft/golden/device-runtime-info.json" \
   "$output_dir/spec/draft/golden/"
 cp "$pxa_system_dir/config/wamr.json" "$output_dir/config/"
+cp "$pxa_system_dir/config/aot-targets.json" "$output_dir/config/"
 cp "$wamrc_bin" "$output_dir/bin/wamrc"
 cp "$pxa_system_dir/VERSION" "$output_dir/VERSION"
 
-echo "PXA C++ SDK bundle: $output_dir"
+echo "PXA SDK source export (manual host dependencies): $output_dir"

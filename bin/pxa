@@ -1,0 +1,16 @@
+#!/bin/sh
+set -eu
+pxa_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+export PYTHONPATH="$pxa_root/tools:$pxa_root/runtime/python/lib/python3.12/site-packages${PYTHONPATH:+:$PYTHONPATH}"
+export PYTHONDONTWRITEBYTECODE=1
+if [ -d "$pxa_root/runtime/bin" ]; then
+    export PATH="$pxa_root/runtime/bin:$PATH"
+    SSL_CERT_FILE=${SSL_CERT_FILE:-"$pxa_root/runtime/share/ssl/ca-certificates.crt"}
+    CURL_CA_BUNDLE=${CURL_CA_BUNDLE:-"$SSL_CERT_FILE"}
+    export SSL_CERT_FILE CURL_CA_BUNDLE
+fi
+if [ -x "$pxa_root/runtime/python/bin/python3" ]; then
+    export PYTHONHOME="$pxa_root/runtime/python"
+    exec "$pxa_root/runtime/python/bin/python3" -m pxa_tools "$@"
+fi
+exec "${PYTHON:-python3}" -m pxa_tools "$@"

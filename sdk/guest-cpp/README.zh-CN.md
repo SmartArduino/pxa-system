@@ -1,5 +1,10 @@
 # PXA C++26 Guest SDK（开发中）
 
+从 0.3.0 起，App 开发推荐使用独立 [DevKit](../../docs/zh-CN/devkit.md)：
+`pxa init hello`、`pxa run hello`、`pxa build hello --target esp32s3,esp32s31,simulator`。
+发布包包含匹配的工具链、运行环境和模拟器，不要求克隆产品源码或安装 ESP-IDF。
+已有 CMake 项目仍可直接消费 SDK，项目锁定和发布包可并用。
+
 应用接口边界与最近的封装改进见 [API_AUDIT.zh-CN.md](API_AUDIT.zh-CN.md)；
 输入框、启动语言、UI 能力及通知的补齐见 [INPUT_API_AUDIT.zh-CN.md](INPUT_API_AUDIT.zh-CN.md)。
 服务所有权、C++26 编译诊断、请求编码优化及前后实测见
@@ -15,7 +20,8 @@ Guest 实现，不包含或调用 Guest C SDK。
 请求编码器从偏移 0 写入载荷，返回载荷长度；不再预留 20 字节请求头。
 异步完成事件仍使用原有 20 字节信封、64 位令牌及句柄。
 
-应用清单需要把 `min_sdk`、`target_sdk`、`compile_sdk` 设为 `[2,0]`。
+新模板的 Core 默认值为 `[2,0]`；已有清单若显式声明
+`min_sdk`、`target_sdk`、`compile_sdk`，需要迁移到 `[2,0]`。
 旧 Core 包在新 Host 上会明确拒绝；pxa-apps 和 SDK 示例已统一迁移，
 需要重新构建并签名，不能只修改旧二进制的清单。详见 [Core 2 迁移](../../spec/draft/abi-2.0-migration.md)。
 
@@ -698,9 +704,11 @@ alpha 层按内容边界缓存，只在 UI 属性变化时重新生成；设备�
 再通过 `pxa_add_app(... CPP MODULES model)` 组合。CPP 选项让模块同时获得
 SDK include、C++26 模式和异常/RTTI 配置，不依赖最终可执行文件反向传播编译选项。
 完整示例见 `examples/modules`。
-使用仓库中的 `tools/package/build_guest_cpp_sdk.sh <输出目录>` 生成可搬移的
+以下保留维护者使用的源码导出流程。它要求手动提供宿主依赖，不是完整 DevKit；普通 App 开发使用本文开头的 `pxa` 入口。
+
+使用仓库中的 `tools/package/build_guest_cpp_sdk.sh <输出目录>` 导出
 开发包，其中有 CMake、打包工具、锁定的工具链信息、示例及 `VERSION`。
-开发包没有 C Guest SDK 依赖；用户可在源码仓库之外编译和打包：
+源码导出包含构建模块使用的 C ABI 头文件；应用仍使用 C++ SDK。用户可在源码仓库之外编译和打包：
 
 发布构建默认删除 Wasm 的 DWARF 调试段，保留函数名与执行段；预编译 WASI
 libc 也可能带有大量 DWARF。需要保留时设置 `PXA_KEEP_WASM_DEBUG=ON`
