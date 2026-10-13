@@ -405,6 +405,35 @@ def render_cpp_device_golden() -> str:
     ])
 
 
+def render_cpp_audio_protocol() -> str:
+    document = json.loads((SPEC / "pxa-audio.json").read_text(encoding="utf-8"))
+    effects = document["effect_groups"]
+    lines = [
+        "// Generated from spec/draft/pxa-audio.json. Do not edit by hand.",
+        "#pragma once",
+        "#include <cstddef>",
+        "#include <cstdint>",
+        "",
+        "namespace pxa::detail::audio_wire {",
+        f"inline constexpr std::uint16_t service = {document['service']['id']};",
+    ]
+    for section, prefix, kind in (("opcodes", "", "std::uint16_t"),
+                                 ("resource_io", "io_", "std::uint32_t")):
+        for item in document[section]:
+            name = prefix + item["name"].replace("-", "_")
+            lines.append(f"inline constexpr {kind} {name} = {item['id']};")
+    lines += [
+        f"inline constexpr std::uint16_t playback_event = {document['playback_event']['id']};",
+        f"inline constexpr std::size_t sound_tracks = {document['sound_tracks']['count']};",
+        *(f"inline constexpr std::size_t effect_{name} = {effects[name]};"
+          for name in ("max_layers", "track_count", "header_bytes", "tone_bytes", "stop_bytes")),
+        f"inline constexpr std::uint8_t independent_effect = {effects['independent_track']};",
+        "} // namespace pxa::detail::audio_wire",
+        "",
+    ]
+    return "\n".join(lines)
+
+
 RENDERERS = (
     (OUTPUTS[0], render_header),
     (OUTPUTS[1], lambda: render_header(guest=True)),
@@ -414,6 +443,8 @@ RENDERERS = (
      render_cpp_device_header),
     (SYSTEM / "sdk/guest-cpp/tests/device_runtime_info_golden.hpp",
      render_cpp_device_golden),
+    (SYSTEM / "sdk/guest-cpp/include/pxa/audio_protocol_generated.hpp",
+     render_cpp_audio_protocol),
 )
 
 

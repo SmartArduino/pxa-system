@@ -1,0 +1,68 @@
+{
+  "scope": "Compare native audio SDK layout, stack and code with an earlier header.\n\nThis is a codec-only compiler probe, not a game FPS or device memory benchmark.\nBoth headers use the current shared SDK dependencies and the same O3 compiler.\n",
+  "baseline": "272995888e63a2f4fbb8590e9ac8adbac5b5b639",
+  "machine": "x86_64",
+  "compiler": "clang version 23.1.1",
+  "before": {
+    "layout_bytes": {
+      "AudioSession": 40,
+      "Tone": 14,
+      "Result<void>": 8
+    },
+    "stack": [
+      {
+        "function": "independent",
+        "bytes": 8,
+        "kind": "static"
+      },
+      {
+        "function": "_ZN3pxa12AudioSession6effectESt4spanIKNS_4ToneELm18446744073709551615EEh",
+        "bytes": 152,
+        "kind": "static"
+      },
+      {
+        "function": "tracked",
+        "bytes": 8,
+        "kind": "static"
+      }
+    ],
+    "text_bytes": 1817,
+    "static_storage_bytes": 0,
+    "allocation_reference": false,
+    "undefined_symbols": [
+      "                 U _ZN3pxa9Transport2ioEmjSt4spanISt4byteLm18446744073709551615EE",
+      "                 U __stack_chk_fail"
+    ]
+  },
+  "after": {
+    "layout_bytes": {
+      "AudioSession": 40,
+      "Tone": 14,
+      "Result<void>": 8
+    },
+    "stack": [
+      {
+        "function": "independent",
+        "bytes": 8,
+        "kind": "static"
+      },
+      {
+        "function": "tracked",
+        "bytes": 8,
+        "kind": "static"
+      },
+      {
+        "function": "_ZN3pxa12AudioSession11play_effectESt4spanIKNS_4ToneELm18446744073709551615EEh",
+        "bytes": 152,
+        "kind": "static"
+      }
+    ],
+    "text_bytes": 1899,
+    "static_storage_bytes": 0,
+    "allocation_reference": false,
+    "undefined_symbols": [
+      "                 U _ZN3pxa9Transport2ioEmjSt4spanISt4byteLm18446744073709551615EE",
+      "                 U __stack_chk_fail"
+    ]
+  }
+}

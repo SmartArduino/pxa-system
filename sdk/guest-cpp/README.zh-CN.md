@@ -324,6 +324,43 @@ ready、ended、stopped、replaced、error。PCM 可以短写，`would_block` �
 后续事件重试，不在回调内忙等。权限撤销后 Host 会关闭绑定资源，后续操作
 返回错误；`decode_permission_revoked` 的字符串和字节视图仅在当前事件有效。
 
+Audio 0.9 的合成音效组使用共同采样时钟，一次提交全部音层。默认独立播放；
+指定 `EffectTrack` 时原子替换该分类中上一组声音，不积压过时的游戏事件：
+
+```cpp
+constexpr auto weapon = pxa::EffectTrack::track0;
+constexpr std::array layers{
+    pxa::Tone{.frequency_hz = 440, .duration_ms = 180},
+    pxa::Tone{.frequency_hz = 660, .duration_ms = 120, .delay_ms = 40},
+};
+auto played = session.effect(layers, weapon);
+if (!played && played.error() == pxa::Error::would_block) {
+    // 当前没有空槽：这一组完全没有提交。由游戏决定丢弃或稍后重试，勿忙等。
+}
+auto stopped = session.stop_effect(weapon); // 未播放时停止也成功。
+auto independent = session.effect(layers); // 独立播放，不替换命名轨道。
+```
+
+资源音效使用另一种类型：`session.sound_track(asset, SoundTrack::track0)`，
+`session.control_sound(SoundTrack::track0, MusicAction::stop)`。
+两套轨道互不影响，也不能互相传入；裸整数不再被接受。游戏可为轨道定义
+`constexpr` 名称，无需包装类、动态注册或额外存储。
+
+每组 1..`AudioSession::max_effect_layers` 层（当前 8）。
+`effect_track_count` 和 `sound_track_count` 是协议的分类数量（各 6），
+不是并发保证：ESP/SDL 合成路径每会话当前有 4 个与 PCM 共用的槽位。
+满容量时同轨替换仍可成功；新增分类或独立音效可能返回 `would_block`。
+合成轨道停止/替换不能撤回已交给物理设备的采样。
+`queued_samples` 是各剩余时间线之和，不能直接换算成并行音效的等待时间。
+
+`effect` 和 `stop_effect` 同步返回接收结果，借用数组只持续本次调用；
+不创建协程、堆分配或默认缓存，编码临时缓冲上限仍为 116 B。
+会话关闭或移走后，合法的同步操作返回 `bad_state`，不进行 Host I/O。
+协议操作码、分组布局和数量限制由 `pxa-audio.json` 生成，统一通过
+`spec/draft/tools/generate_service_codecs.py --check` 检查。
+接口取舍、编译器内存对比及模拟器验证见
+[音效接口迭代报告](docs/audio-effects-20261012.zh-CN.md)。
+
 Assets 的 load/query/read 和 FS 路径在任务创建时复制到有界存储，源字符串
 可以立即销毁；Assets 直接提交协程内的最终包。读取的输出缓冲区仍为借用。
 Clock/Window/Game/Audio/Storage/Permission 的协程按值保存小型服务入口，

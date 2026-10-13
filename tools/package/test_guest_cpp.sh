@@ -6,6 +6,7 @@ pxa_system_dir="$(cd "$script_dir/../.." && pwd)"
 cpp_sdk_dir="$pxa_system_dir/sdk/guest-cpp"
 work_dir="$(mktemp -d "${TMPDIR:-/tmp}/pxa-guest-cpp-test.XXXXXX")"
 trap 'rm -rf "$work_dir"' EXIT
+mkdir -p "$work_dir/bin"
 
 cxx="${CXX:-clang++}"
 flags=(-std=c++2c -O2 -fno-exceptions -fno-rtti
@@ -55,8 +56,8 @@ for test_name in ime features binary io codec service_lifetime encoding_alias li
     "$cpp_sdk_dir/tests/${test_name}_test.cpp" \
     "$work_dir/runtime.o" "$work_dir/net.o" "$work_dir/ipc.o" "$work_dir/work.o" "$work_dir/game.o" "$work_dir/surface.o" \
     "${extra_objects[@]}" \
-    -o "$work_dir/$test_name"
-  "$work_dir/$test_name"
+    -o "$work_dir/bin/$test_name"
+  "$work_dir/bin/$test_name"
 done
 
 "$cxx" "${flags[@]}" -I"$work_dir" -DPXA_I18N_DYNAMIC_TEXT=1 \

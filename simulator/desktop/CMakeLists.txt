@@ -203,11 +203,13 @@ else()
     set_target_properties(pxsys_system_gestures_test PROPERTIES EXCLUDE_FROM_ALL TRUE)
 endif()
 
-foreach(_test ime audio audio_app i18n_app sdk_patterns declarative_ui raster resource_app voxel_resources resource_budget ui_images store_images weather_images)
+foreach(_test ime audio audio_sdk audio_app i18n_app sdk_patterns declarative_ui raster resource_app voxel_resources resource_budget ui_images store_images weather_images)
     if(_test STREQUAL "ime")
         set(_source tests/ime_app_test.c)
     elseif(_test STREQUAL "audio")
         set(_source tests/audio_backend_test.c)
+    elseif(_test STREQUAL "audio_sdk")
+        set(_source tests/audio_sdk_test.c)
     elseif(_test STREQUAL "audio_app")
         set(_source tests/audio_app_test.c)
     elseif(_test STREQUAL "i18n_app")
@@ -253,6 +255,11 @@ foreach(_test ime audio audio_app i18n_app sdk_patterns declarative_ui raster re
                 "${CMAKE_CURRENT_LIST_DIR}/../../tools/package/test_audio_backend.py"
                 $<TARGET_FILE:pxsys_audio_test>
                 "${CMAKE_CURRENT_LIST_DIR}/tests/audio-assets")
+        elseif(_test STREQUAL "audio_sdk")
+            add_test(NAME pxsys_audio_sdk_test COMMAND bash
+                "${CMAKE_CURRENT_LIST_DIR}/../../tools/package/test_cpp_audio.sh"
+                $<TARGET_FILE:pxsys_audio_sdk_test>)
+            set_tests_properties(pxsys_audio_sdk_test PROPERTIES TIMEOUT 300)
         elseif(_test STREQUAL "i18n_app")
             add_test(NAME pxsys_i18n_app_test COMMAND bash
                 "${CMAKE_CURRENT_LIST_DIR}/../../tools/package/test_cpp_i18n_app.sh"

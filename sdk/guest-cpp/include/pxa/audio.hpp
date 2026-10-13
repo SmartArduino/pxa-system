@@ -1,18 +1,27 @@
 #pragma once
 
 #include "assets.hpp"
+#include "audio_protocol_generated.hpp"
 #include "permission.hpp"
 #include "service_wire.hpp"
 
 #include <array>
 #include <span>
 #include <string_view>
+#include <utility>
 
 namespace pxa {
 
 enum class Waveform : std::uint8_t { sine, square, triangle, noise };
 enum class PlaybackState : std::uint8_t { ready = 1, ended, stopped, replaced, error };
 enum class MusicAction : std::uint8_t { pause = 1, resume, stop, gain };
+
+// Session-local replacement categories, not reserved concurrent voices.
+// Synthesized effects and prepared asset sounds have separate track spaces.
+enum class EffectTrack : std::uint8_t { track0, track1, track2, track3, track4, track5 };
+enum class SoundTrack : std::uint8_t { track0, track1, track2, track3, track4, track5 };
+static_assert(std::to_underlying(EffectTrack::track5) + 1 == detail::audio_wire::effect_track_count);
+static_assert(std::to_underlying(SoundTrack::track5) + 1 == detail::audio_wire::sound_tracks);
 
 struct Tone {
     std::uint16_t frequency_hz = 440;
@@ -51,7 +60,8 @@ struct PlaybackEvent {
 };
 
 inline Result<PlaybackEvent> decode_playback(const Event& event) noexcept {
-    if (event.service != 10 || event.opcode != 0x8001 || event.token ||
+    if (event.service != detail::audio_wire::service ||
+        event.opcode != detail::audio_wire::playback_event || event.token ||
         event.payload.size() != 24)
         return std::unexpected(Error::protocol_error);
     const auto* p = event.payload.data();
@@ -70,6 +80,10 @@ struct AudioSessionTag {};
 
 class AudioSession {
 public:
+    static constexpr std::size_t max_effect_layers = detail::audio_wire::effect_max_layers;
+    static constexpr std::size_t effect_track_count = detail::audio_wire::effect_track_count;
+    static constexpr std::size_t sound_track_count = detail::audio_wire::sound_tracks;
+
     AudioSession(Transport& transport, RequestTable& requests,
                  std::uint64_t handle, AudioFormat format) noexcept
         : transport_(transport), requests_(requests), resource_(transport, handle),
@@ -86,33 +100,36 @@ public:
 
     Result<void> tone(Tone tone = {}) noexcept {
         if (!valid_tone(tone)) return std::unexpected(Error::invalid_argument);
-        std::array<std::byte, 14> command{};
+        std::array<std::byte, detail::audio_wire::effect_tone_bytes> command;
         encode_tone(command.data(), tone);
-        return command_io(0x100, command);
+        return command_io(detail::audio_wire::io_play_tone, command);
     }
 
-    // Audio 0.9: all layers start on one sample clock. Their delay is relative
-    // to this call, never to the end of a previous effect. Track 0..5 replaces
-    // that track atomically; 255 plays independently. Would-block never queues.
-    Result<void> effect(std::span<const Tone> layers, std::uint8_t track = 255) noexcept {
-        if (layers.empty() || layers.size() > 8 || (track != 255 && track >= 6))
-            return std::unexpected(Error::invalid_argument);
-        std::array<std::byte, 4 + 14 * 8> command{};
-        command[0] = std::byte(layers.size());
-        command[1] = std::byte(track);
-        for (std::size_t i = 0; i < layers.size(); ++i) {
-            if (!valid_tone(layers[i])) return std::unexpected(Error::invalid_argument);
-            encode_tone(command.data() + 4 + 14 * i, layers[i]);
-        }
-        return command_io(0x107, {command.data(), 4 + 14 * layers.size()});
+    // Independent one-shot. Borrowed layers are copied by the Host before
+    // returning; delays share the group's first sample, not a previous FIFO.
+    [[nodiscard("Check admission: a busy effect is not queued")]]
+    Result<void> effect(std::span<const Tone> layers) noexcept {
+        return play_effect(layers, detail::audio_wire::independent_effect);
     }
-    Result<void> stop_effect(std::uint8_t track) noexcept {
-        if (track >= 6) return std::unexpected(Error::invalid_argument);
-        std::array<std::byte, 4> command{std::byte(track)};
-        return command_io(0x108, command);
+    // Atomically replace this category, including when its slot is occupied.
+    // Would-block submits nothing; don't retry obsolete gameplay events.
+    [[nodiscard("Check admission: a busy effect is not queued")]]
+    Result<void> effect(std::span<const Tone> layers, EffectTrack track) noexcept {
+        if (std::to_underlying(track) >= effect_track_count)
+            return std::unexpected(Error::invalid_argument);
+        return play_effect(layers, std::to_underlying(track));
+    }
+    // Idempotent; samples already submitted to the device cannot be recalled.
+    [[nodiscard]] Result<void> stop_effect(EffectTrack track) noexcept {
+        if (std::to_underlying(track) >= effect_track_count)
+            return std::unexpected(Error::invalid_argument);
+        std::array<std::byte, detail::audio_wire::effect_stop_bytes> command{
+            std::byte(std::to_underlying(track))};
+        return command_io(detail::audio_wire::io_stop_effect, command);
     }
 
     Result<std::uint32_t> write_pcm(std::span<const std::byte> pcm) noexcept {
+        if (!resource_) return std::unexpected(Error::bad_state);
         const auto alignment = 2u * format_.channels;
         if (!alignment || pcm.size() % alignment)
             return std::unexpected(Error::invalid_argument);
@@ -131,29 +148,33 @@ public:
         std::array<std::byte, 12> command{};
         wire::put64(command.data(), asset.handle());
         wire::put16(command.data() + 8, static_cast<std::uint16_t>(gain_db_q8));
-        return command_io(0x103, command);
+        return command_io(detail::audio_wire::io_play_sound, command);
     }
 
     // Audio 0.8: one independently controlled resident sound per track.
-    Result<void> sound_track(const Asset& asset, std::uint8_t track,
+    Result<void> sound_track(const Asset& asset, SoundTrack track,
         bool loop = false, std::int16_t gain_db_q8 = -12 * 256) noexcept {
-        if (asset.descriptor().kind != AssetKind::audio || track >= 6 || !valid_gain(gain_db_q8))
+        if (asset.descriptor().kind != AssetKind::audio ||
+            std::to_underlying(track) >= sound_track_count || !valid_gain(gain_db_q8))
             return std::unexpected(Error::invalid_argument);
-        std::array<std::byte,16> command{};
-        wire::put64(command.data(),asset.handle());
-        wire::put16(command.data()+8,static_cast<std::uint16_t>(gain_db_q8));
-        command[10]=std::byte(track);command[11]=std::byte(loop ? 1 : 0);
-        return command_io(0x103,command);
+        std::array<std::byte, 16> command{};
+        wire::put64(command.data(), asset.handle());
+        wire::put16(command.data() + 8, static_cast<std::uint16_t>(gain_db_q8));
+        command[10] = std::byte(std::to_underlying(track));
+        command[11] = std::byte(loop ? 1 : 0);
+        return command_io(detail::audio_wire::io_play_sound, command);
     }
-    Result<void> control_sound(std::uint8_t track, MusicAction action,
+    Result<void> control_sound(SoundTrack track, MusicAction action,
         std::int16_t gain_db_q8 = 0) noexcept {
-        if (track >= 6 || static_cast<unsigned>(action)<1 || static_cast<unsigned>(action)>4 ||
-            (action==MusicAction::gain ? !valid_gain(gain_db_q8) : gain_db_q8!=0))
+        if (std::to_underlying(track) >= sound_track_count ||
+            std::to_underlying(action) < 1 || std::to_underlying(action) > 4 ||
+            (action == MusicAction::gain ? !valid_gain(gain_db_q8) : gain_db_q8 != 0))
             return std::unexpected(Error::invalid_argument);
-        std::array<std::byte,8> command{};
-        command[0]=std::byte(track);command[1]=std::byte(static_cast<std::uint8_t>(action));
-        wire::put16(command.data()+2,static_cast<std::uint16_t>(gain_db_q8));
-        return command_io(0x105,command);
+        std::array<std::byte, 8> command{};
+        command[0] = std::byte(std::to_underlying(track));
+        command[1] = std::byte(std::to_underlying(action));
+        wire::put16(command.data() + 2, static_cast<std::uint16_t>(gain_db_q8));
+        return command_io(detail::audio_wire::io_control_sound, command);
     }
     Result<void> control_music(MusicAction action,std::int16_t gain_db_q8 = 0) noexcept {
         if (static_cast<unsigned>(action)<1 || static_cast<unsigned>(action)>4 ||
@@ -162,7 +183,7 @@ public:
         std::array<std::byte,4> command{};
         command[0]=std::byte(static_cast<std::uint8_t>(action));
         wire::put16(command.data()+2,static_cast<std::uint16_t>(gain_db_q8));
-        return command_io(0x106,command);
+        return command_io(detail::audio_wire::io_control_music,command);
     }
 
     Result<std::uint64_t> music(std::string_view path, bool loop = false,
@@ -176,7 +197,7 @@ public:
         command[12] = std::byte(loop ? 1 : 0);
         for (std::size_t i = 0; i < path.size(); ++i)
             command[16 + i] = std::byte(path[i]);
-        auto result = command_io(0x104, {command.data(), 16 + path.size()});
+        auto result = command_io(detail::audio_wire::io_play_music, {command.data(), 16 + path.size()});
         if (!result) return std::unexpected(result.error());
         const auto instance = wire::get64(command.data());
         if (!instance) return std::unexpected(Error::protocol_error);
@@ -192,7 +213,7 @@ public:
         std::array<std::byte, 4> command{};
         command[0] = std::byte(static_cast<std::uint8_t>(action));
         wire::put16(command.data() + 2, static_cast<std::uint16_t>(gain_db_q8));
-        return command_io(0x102, command);
+        return command_io(detail::audio_wire::io_control_asset, command);
     }
 
     Task<void> graph(std::int16_t gain_db_q8,
@@ -220,7 +241,7 @@ public:
         wire::put16(value.data(), 1);
         wire::record(writer, 4, {value.data(), 2});
         packet.size = writer.size();
-        return status_request<74>(endpoint(), std::move(packet), 2);
+        return status_request<74>(endpoint(), std::move(packet), detail::audio_wire::commit_graph);
     }
 
     Task<AudioState> query() {
@@ -236,22 +257,41 @@ public:
         wire::put16(payload + 2, 8);
         wire::put64(payload + 4, handle());
         packet.size = 12;
-        return status_request<12>(endpoint(), std::move(packet), 4);
+        return status_request<12>(endpoint(), std::move(packet), detail::audio_wire::flush);
     }
 
 private:
-    static bool valid_tone(const Tone& tone) noexcept {
+    Result<void> play_effect(std::span<const Tone> layers, std::uint8_t track) noexcept {
+        if (layers.empty() || layers.size() > max_effect_layers)
+            return std::unexpected(Error::invalid_argument);
+        constexpr auto header = detail::audio_wire::effect_header_bytes;
+        constexpr auto stride = detail::audio_wire::effect_tone_bytes;
+        // Every transmitted byte is written explicitly; spare capacity is not
+        // initialized or sent. There is no heap allocation or retained span.
+        std::array<std::byte, header + stride * max_effect_layers> command;
+        command[0] = std::byte(layers.size());
+        command[1] = std::byte(track);
+        wire::put16(command.data() + 2, 0);
+        for (std::size_t i = 0; i < layers.size(); ++i) {
+            if (!valid_tone(layers[i])) return std::unexpected(Error::invalid_argument);
+            encode_tone(command.data() + header + stride * i, layers[i]);
+        }
+        return command_io(detail::audio_wire::io_play_effect,
+                          {command.data(), header + stride * layers.size()});
+    }
+    static constexpr bool valid_tone(const Tone& tone) noexcept {
         return tone.frequency_hz >= 40 && tone.frequency_hz <= 8000 &&
             tone.duration_ms >= 10 && tone.duration_ms <= 1000 &&
             valid_gain(tone.gain_db_q8) && static_cast<unsigned>(tone.waveform) <= 3 &&
             tone.attack_ms <= tone.duration_ms && tone.release_ms <= tone.duration_ms &&
             tone.delay_ms <= 1000;
     }
-    static void encode_tone(std::byte* p, const Tone& tone) noexcept {
+    static constexpr void encode_tone(std::byte* p, const Tone& tone) noexcept {
         wire::put16(p, tone.frequency_hz);
         wire::put16(p + 2, tone.duration_ms);
         wire::put16(p + 4, static_cast<std::uint16_t>(tone.gain_db_q8));
         p[6] = std::byte(static_cast<std::uint8_t>(tone.waveform));
+        p[7] = std::byte{};
         wire::put16(p + 8, tone.attack_ms);
         wire::put16(p + 10, tone.release_ms);
         wire::put16(p + 12, tone.delay_ms);
@@ -266,7 +306,7 @@ private:
     template<std::size_t Capacity>
     static Task<void> status_request(Endpoint endpoint,
         wire::RequestPacket<Capacity> packet, std::uint16_t opcode) {
-        auto event = co_await Response(endpoint.transport, endpoint.requests, 10, opcode,
+        auto event = co_await Response(endpoint.transport, endpoint.requests, detail::audio_wire::service, opcode,
             packet.packet());
         if (!event) co_return std::unexpected(event.error());
         auto body = wire::result_body(event->payload);
@@ -280,7 +320,8 @@ private:
         wire::put16(payload.data(), 1);
         wire::put16(payload.data() + 2, 8);
         wire::put64(payload.data() + 4, endpoint.handle);
-        auto event = co_await Response(endpoint.transport, endpoint.requests, 10, 3, payload);
+        auto event = co_await Response(endpoint.transport, endpoint.requests,
+            detail::audio_wire::service, detail::audio_wire::query_state, payload);
         if (!event) co_return std::unexpected(event.error());
         auto body = wire::result_body(event->payload);
         if (!body) co_return std::unexpected(body.error());
@@ -300,11 +341,12 @@ private:
         co_return state;
     }
 
-    static bool valid_gain(std::int16_t gain) noexcept {
+    static constexpr bool valid_gain(std::int16_t gain) noexcept {
         return gain >= -60 * 256 && gain <= 0;
     }
     Result<void> command_io(std::uint32_t operation,
                             std::span<std::byte> command) noexcept {
+        if (!resource_) return std::unexpected(Error::bad_state);
         auto result = transport_.io(handle(), operation, command);
         if (!result) return std::unexpected(result.error());
         if (*result != command.size()) return std::unexpected(Error::protocol_error);
@@ -336,7 +378,8 @@ private:
         wire::put16(payload.data() + 12, 2);
         wire::put16(payload.data() + 14, 2);
         wire::put16(payload.data() + 16, 1);
-        auto event = co_await Response(transport_, requests_, 10, 1, payload, true, 8);
+        auto event = co_await Response(transport_, requests_, detail::audio_wire::service,
+            detail::audio_wire::open_session, payload, true, 8);
         if (!event) co_return std::unexpected(event.error());
         auto body = wire::result_body(event->payload);
         if (!body) co_return std::unexpected(body.error());

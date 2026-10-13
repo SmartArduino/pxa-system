@@ -212,7 +212,12 @@ retry do not change the waveform. Noise uses a deterministic integer hash;
 legacy FIFO tones retain their previous noise generator.
 
 C++: `session.effect(tones)` plays independently,
-`session.effect(tones, 0)` replaces track zero, and
-`session.stop_effect(0)` stops it. The span is borrowed only during the call;
+`session.effect(tones, EffectTrack::track0)` replaces track zero, and
+`session.stop_effect(EffectTrack::track0)` stops it. Prepared assets use the
+distinct `SoundTrack` type; integers and the other track type are not accepted.
+An explicit cast of an invalid track returns `invalid_argument` without I/O.
+`AudioSession::max_effect_layers`, `effect_track_count`, and `sound_track_count`
+describe protocol limits, not available concurrent capacity.
+The span is borrowed only during the call;
 the Host copies compact descriptors before returning. No hot-path allocation
 or decoding is required.

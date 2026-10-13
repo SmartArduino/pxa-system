@@ -77,7 +77,7 @@ def main() -> int:
         if not (apps / app_name).is_dir():
             continue
         source = entry_source(apps / app_name)
-        if not any(name in source for name in ("pxa_game_render_",)):
+        if not any(name in source for name in ("pxa_game_render_", "pxa::game::Renderer")):
             raise SystemExit(f"{app_name}: expected an app-owned GameRender context")
 
     print("PXA reference UI theme and locale boundaries OK")

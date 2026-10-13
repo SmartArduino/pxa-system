@@ -242,6 +242,16 @@
     },
     "delivery": "reliable; retain until queued; bounded admission"
   },
+  "effect_groups": {
+    "max_layers": 8,
+    "track_count": 6,
+    "independent_track": 255,
+    "header_bytes": 4,
+    "tone_bytes": 14,
+    "stop_bytes": 4,
+    "scope": "session; separate from prepared sound tracks",
+    "capacity": "track_count names replacement categories; simultaneous admission is determined by available shared slots"
+  },
   "sound_tracks": {
     "count": 6,
     "scope": "session",

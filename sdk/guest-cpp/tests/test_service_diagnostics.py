@@ -41,6 +41,19 @@ class ServiceDiagnostics(unittest.TestCase):
             result = self.compile('void test(SurfaceFrame&& frame){auto pixels=std::move(frame).' + method + '();}')
             self.assertNotEqual(result.returncode, 0)
             self.assertIn('Keep the SurfaceFrame alive', result.stderr)
+    def test_audio_effect_requires_admission_handling(self):
+        for expression in ('session.effect(tones)',
+                           'session.effect(tones, EffectTrack::track0)',
+                           'session.stop_effect(EffectTrack::track0)'):
+            result = self.compile('void test(AudioSession& session, std::span<const Tone> tones){' + expression + ';}')
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('ignoring return value', result.stderr)
+    def test_audio_tracks_are_not_interchangeable(self):
+        for expression in ('session.effect(tones, SoundTrack::track0)',
+                           'session.effect(tones, 0)',
+                           'session.control_sound(EffectTrack::track0, MusicAction::stop)'):
+            result = self.compile('void test(AudioSession& session, std::span<const Tone> tones){(void)' + expression + ';}')
+            self.assertNotEqual(result.returncode, 0)
     def test_valid_consumers(self):
         result = self.compile('''
 Task<void> test(Context& ctx){
@@ -54,6 +67,12 @@ static_assert(std::same_as<decltype(std::declval<Asset&&>().descriptor()), Asset
 static_assert(std::same_as<decltype(std::declval<game::Renderer&&>().info()), game::RenderInfo>);
 static_assert(!std::is_move_constructible_v<Transport>);
 static_assert(!std::is_copy_constructible_v<Transport>);
+void play(AudioSession& session){
+    constexpr std::array layers{Tone{}};
+    (void)session.effect(layers);
+    (void)session.effect(layers, EffectTrack::track0);
+    (void)session.stop_effect(EffectTrack::track0);
+}
 ''')
         self.assertEqual(result.returncode, 0, result.stderr)
 if __name__ == '__main__': unittest.main()
