@@ -93,5 +93,30 @@ int main(void) {
         assert(memcmp(actual, expected, sizeof(actual)) == 0);
         assert(memcmp(depths, expected_depths, sizeof(depths)) == 0);
     }
+    for (unsigned trial = 0; trial < 3000; ++trial) {
+        uint16_t depths[64];
+        const uint32_t count = next_random() % 65;
+        const int32_t starts[] = {INT32_MIN, -1, 0, 1, 65535, INT32_MAX};
+        const int32_t steps[] = {INT32_MIN, -65536, -1, 0, 1, 65536, INT32_MAX};
+        const int32_t w = trial % 3 ? (int32_t)(next_random() % 65536)
+                                    : starts[trial % 6];
+        const int32_t dw = steps[trial % 7];
+        int hidden = 1;
+        for (uint32_t i = 0; i < count; ++i) {
+            depths[i] = trial % 2 ? UINT16_MAX : (uint16_t)next_random();
+            int64_t z = (int64_t)w + (int64_t)i * dw;
+            if (z > UINT16_MAX) z = UINT16_MAX;
+            if (z > 0 && z > depths[i]) hidden = 0;
+        }
+        const int actual = painter_depth_span_occluded(depths, count, w, dw);
+        // Rejection may be conservative, but must never hide a visible pixel.
+        assert(!actual || hidden);
+        if (count == 0) assert(actual);
+        else {
+            const int64_t last = (int64_t)w + (int64_t)(count - 1) * dw;
+            if (w > 0 && w <= UINT16_MAX && last > 0 && last <= UINT16_MAX)
+                assert(actual == hidden);
+        }
+    }
     return 0;
 }

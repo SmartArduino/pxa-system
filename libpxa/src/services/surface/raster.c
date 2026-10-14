@@ -1622,6 +1622,24 @@ static RASTER_NOINLINE uint32_t painter_span_depth_flat(
     return covered;
 }
 
+/* A fully hidden perspective row needs no UV interpolation or division.
+ * Test existing depth directly, without allocating a coarse coverage cache.
+ * Proving the whole row is in range also keeps block-end clamping irrelevant;
+ * otherwise leave the uncommon case to the normal per-block path. */
+static RASTER_NOINLINE int painter_depth_span_occluded(
+    const uint16_t *depth, uint32_t count, int32_t w, int32_t dw) {
+    if (count == 0) return 1;
+    const int64_t end_w = (int64_t)w + (int64_t)dw * (count - 1u);
+    if (w <= 0 || w > UINT16_MAX || end_w <= 0 || end_w > UINT16_MAX)
+        return 0;
+    uint32_t current_w = (uint32_t)w;
+    for (uint32_t i = 0; i < count; ++i) {
+        if (current_w > depth[i]) return 0;
+        current_w += (uint32_t)dw;
+    }
+    return 1;
+}
+
 static uint32_t draw_painter_polygon(
     const raster_vertex_t *vertices, uint8_t count, uint8_t flags,
     uint16_t color_index, const pxa_raster_texture_t *texture,
@@ -1819,6 +1837,9 @@ static uint32_t draw_painter_polygon(
                     dw = 0;
                 }
             }
+            if (coverage_mode == 3 && perspective_span &&
+                painter_depth_span_occluded(depth_out, (uint32_t)(x1 - x0), w, dw))
+                goto next_row;
             if (perspective_span) {
                 duw = (int32_t)((float)(r->uw - l->uw) * per_pixel);
                 dvw = (int32_t)((float)(r->vw - l->vw) * per_pixel);
@@ -2118,6 +2139,7 @@ static uint32_t draw_painter_polygon(
             }
             if (coverage_mode == 0) covered += (uint32_t)(x1 - x0);
         }
+next_row:
         if (++row >= end) break;
         if (row == left.edge.end_row) {
             if (!painter_advance_chain(&left, row)) break;
