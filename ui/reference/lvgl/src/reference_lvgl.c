@@ -779,8 +779,10 @@ struct pxsys_reference_lvgl {
 
 static void rebuild(pxsys_reference_lvgl_t* ui);
 static int idle_policy_valid(const pxsys_reference_idle_policy_t* policy);
+#if PXSYS_REFERENCE_UI_BUILTIN_SETTINGS
 static void show_page_confirm(pxsys_reference_lvgl_t* ui,
                               const char* message);
+#endif
 static void navigation_back(pxsys_reference_lvgl_t* ui);
 static void build_task_switcher(pxsys_reference_lvgl_t* ui);
 static void close_task_switcher(pxsys_reference_lvgl_t* ui);
@@ -1453,8 +1455,13 @@ static void launcher_remove_clicked(lv_event_t* event) {
              "%s", item->app_id);
     ui->pending_kind = 0;
     ui->pending_action = PXSYS_REFERENCE_APP_ACTION_UNINSTALL;
+#if PXSYS_REFERENCE_UI_BUILTIN_SETTINGS
     show_page_confirm(ui, translated(ui, "settings.apps.confirm.uninstall",
                                      "Uninstall this app?"));
+#else
+    /* The product owns app management and its trusted confirmation UI. */
+    (void)open_role(ui, PXSYS_ROLE_APP_MANAGER);
+#endif
 }
 
 static void launcher_gesture(lv_event_t* event) {
@@ -3036,6 +3043,7 @@ static int radio_has_explicit_capabilities(
     return status->wifi_supported || status->cellular_supported;
 }
 
+#if PXSYS_REFERENCE_UI_WIFI || PXSYS_REFERENCE_UI_CELLULAR
 static int radio_supported(const pxsys_reference_lvgl_t* ui,
                            pxsys_network_type_t network) {
     if (radio_has_explicit_capabilities(&ui->system_status)) {
@@ -3045,6 +3053,8 @@ static int radio_supported(const pxsys_reference_lvgl_t* ui,
     }
     return ui->system_status.network_type == network;
 }
+
+#endif
 
 static int radio_enabled(const pxsys_reference_lvgl_t* ui,
                          pxsys_network_type_t network) {
@@ -3067,6 +3077,7 @@ static int radio_connected(const pxsys_reference_lvgl_t* ui,
            ui->system_status.network_connected;
 }
 
+#if PXSYS_REFERENCE_UI_WIFI || PXSYS_REFERENCE_UI_CELLULAR
 static uint8_t radio_signal_level(const pxsys_reference_lvgl_t* ui,
                                   pxsys_network_type_t network) {
     if (radio_has_explicit_capabilities(&ui->system_status)) {
@@ -3077,6 +3088,8 @@ static uint8_t radio_signal_level(const pxsys_reference_lvgl_t* ui,
     return ui->system_status.network_type == network
                ? ui->system_status.network_signal_level : 0;
 }
+
+#endif
 
 static int settings_role_available(pxsys_reference_lvgl_t* ui,
                                    const char* role) {
@@ -3093,7 +3106,9 @@ static lv_obj_t* make_settings_row(pxsys_reference_lvgl_t* ui,
                                    pxsys_color_token_t icon_color,
                                    const char* title, const char* subtitle,
                                    lv_event_cb_t clicked, void* user_data);
+#if PXSYS_REFERENCE_UI_BUILTIN_SETTINGS && (PXSYS_REFERENCE_UI_WIFI || PXSYS_REFERENCE_UI_CELLULAR)
 static void wifi_settings_clicked(lv_event_t* event);
+#endif
 
 static void settings_action_clicked(lv_event_t* event) {
     settings_action_t* action =
@@ -3102,6 +3117,7 @@ static void settings_action_clicked(lv_event_t* event) {
     (void)open_role(action->ui, action->role);
 }
 
+#if PXSYS_REFERENCE_UI_BUILTIN_SETTINGS
 static void performance_switch_changed(lv_event_t* event) {
     performance_control_t* control =
         (performance_control_t*)lv_event_get_user_data(event);
@@ -3143,6 +3159,8 @@ static void make_performance_setting(
     lv_obj_add_event_cb(toggle, performance_switch_changed,
                         LV_EVENT_VALUE_CHANGED, control);
 }
+
+#endif
 
 static lv_obj_t* make_settings_section(pxsys_reference_lvgl_t* ui,
                                        const char* title) {
@@ -5974,7 +5992,9 @@ static lv_obj_t* make_page_dialog(pxsys_reference_lvgl_t* ui,
 }
 
 static void page_dialog_scrim_clicked(lv_event_t* event);
+#if PXSYS_REFERENCE_UI_WIFI || PXSYS_REFERENCE_UI_CELLULAR
 static void show_wifi_networks(pxsys_reference_lvgl_t* ui);
+#endif
 static void wifi_render_networks(pxsys_reference_lvgl_t* ui, size_t count);
 static void app_input_method_close(pxsys_reference_lvgl_t* ui);
 
@@ -6697,6 +6717,7 @@ static void wifi_scan_poll(lv_timer_t* timer) {
     }
 }
 
+#if PXSYS_REFERENCE_UI_WIFI || PXSYS_REFERENCE_UI_CELLULAR
 static void show_wifi_networks(pxsys_reference_lvgl_t* ui) {
     if (!ui_valid(ui) || ui->wifi_scan == NULL || ui->wifi_connect == NULL) return;
     ui->active_page = REFERENCE_PAGE_WIFI;
@@ -6708,6 +6729,8 @@ static void show_wifi_networks(pxsys_reference_lvgl_t* ui) {
                                              PXSYS_REFERENCE_WIFI_NETWORK_MAX);
     rebuild(ui);
 }
+
+#endif
 
 static void build_wifi_page(pxsys_reference_lvgl_t* ui,
                             const pxsys_reference_layout_t* layout) {
@@ -6848,9 +6871,12 @@ static void build_wifi_page(pxsys_reference_lvgl_t* ui,
         lv_timer_resume(ui->wifi_scan_timer);
 }
 
+#if PXSYS_REFERENCE_UI_WIFI || PXSYS_REFERENCE_UI_CELLULAR
 static void wifi_settings_clicked(lv_event_t* event) {
     show_wifi_networks((pxsys_reference_lvgl_t*)lv_event_get_user_data(event));
 }
+
+#endif
 
 static void page_dialog_scrim_clicked(lv_event_t* event) {
     page_close_dialogs(
@@ -7685,8 +7711,10 @@ static void rebuild(pxsys_reference_lvgl_t* ui) {
     if (ui->file_edit_input != NULL) {
         snprintf(ui->file_edit_draft, sizeof(ui->file_edit_draft), "%s",
                  lv_textarea_get_text(ui->file_edit_input));
+#if PXSYS_REFERENCE_UI_BUILTIN_SETTINGS
         if (ui->app_ime_target == ui->file_edit_input)
             app_input_method_close(ui);
+#endif
     }
     ui->file_edit_input = NULL;
     ui->file_edit_error = NULL;
@@ -7694,8 +7722,10 @@ static void rebuild(pxsys_reference_lvgl_t* ui) {
         if (ui->wifi_input_stage != 0)
             snprintf(ui->wifi_input_draft, sizeof(ui->wifi_input_draft), "%s",
                      lv_textarea_get_text(ui->wifi_password_input));
+#if PXSYS_REFERENCE_UI_BUILTIN_SETTINGS
         if (ui->app_ime_target == ui->wifi_password_input)
             app_input_method_close(ui);
+#endif
     }
     if (ui->wifi_scan_timer != NULL) lv_timer_pause(ui->wifi_scan_timer);
     ui->wifi_password_input = NULL;
@@ -7896,8 +7926,10 @@ static void rebuild(pxsys_reference_lvgl_t* ui) {
             build_home(ui, &layout);
         else if (ui->active_page == REFERENCE_PAGE_SETTINGS)
             build_settings(ui, &layout);
+#if PXSYS_REFERENCE_UI_BUILTIN_SETTINGS
         else if (ui->active_page == REFERENCE_PAGE_WIFI)
             build_wifi_page(ui, &layout);
+#endif
         else if (ui->active_page == REFERENCE_PAGE_APPEARANCE)
             build_appearance_page(ui, &layout);
         else if (ui->active_page == REFERENCE_PAGE_INPUT_METHOD)
@@ -8361,7 +8393,9 @@ static void theme_changed(void* context,
     if (!ui_valid(ui)) return;
     ui->theme = *theme;
     rebuild(ui);
+#if PXSYS_REFERENCE_UI_BUILTIN_SETTINGS
     app_input_method_theme(ui);
+#endif
     toast_apply_theme(ui, ui->toast_tone);
     volume_osd_apply_theme(ui);
 }
@@ -8914,12 +8948,16 @@ pxsys_status_t pxsys_reference_lvgl_create(
     ui->magic = REFERENCE_MAGIC;
     ui->root = lv_obj_create(ui->parent);
     style_plain(ui->root);
+#if PXSYS_REFERENCE_UI_BUILTIN_SETTINGS
     ui->app_ime_timer = lv_timer_create(app_input_method_poll, 200, ui);
+#endif
     ui->status_refresh_timer = lv_timer_create(status_refresh_poll, 50, ui);
     if (idle_policy_valid(&ui->idle_policy))
         ui->idle_timer = lv_timer_create(idle_policy_poll, 500, ui);
+#if PXSYS_REFERENCE_UI_BUILTIN_SETTINGS
     ui->wifi_scan_timer = lv_timer_create(wifi_scan_poll, 250, ui);
     if (ui->wifi_scan_timer != NULL) lv_timer_pause(ui->wifi_scan_timer);
+#endif
     /* The transparent system-chrome root sits above application surfaces.
      * Only its concrete bars and overlays may participate in hit testing. */
     pxsys_lvgl_remove_flags(ui->root, LV_OBJ_FLAG_CLICKABLE);
@@ -9030,7 +9068,9 @@ void pxsys_reference_lvgl_refresh_apps(pxsys_reference_lvgl_t* ui) {
     ui->managed_apps_loaded = 0;
     if (ui->active_page == REFERENCE_PAGE_HOME || ui->active_page == REFERENCE_PAGE_APP_MANAGER ||
         ui->active_page == REFERENCE_PAGE_INPUT_METHOD || ui->active_page == REFERENCE_PAGE_INPUT_METHOD_APPS) {
+#if PXSYS_REFERENCE_UI_BUILTIN_SETTINGS
         page_close_dialogs(ui);
+#endif
         rebuild(ui);
     }
 }

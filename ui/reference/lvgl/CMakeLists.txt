@@ -23,6 +23,26 @@ if(PXSYS_BUILD_TESTS OR BUILD_TESTING)
         target_compile_options(pxsys_reference_ime_test PRIVATE -UNDEBUG)
     endif()
     add_test(NAME pxsys_reference_ime_test COMMAND pxsys_reference_ime_test)
+    # Native builds must also exercise the feature combinations used by
+    # products that provide their own settings and radio UI.
+    foreach(settings RANGE 0 1)
+        add_library(pxsys_reference_config_${settings} OBJECT src/reference_lvgl.c)
+        target_link_libraries(pxsys_reference_config_${settings} PRIVATE
+            pxsys::reference_lvgl)
+        target_compile_definitions(pxsys_reference_config_${settings} PRIVATE
+            PXSYS_REFERENCE_UI_BUILTIN_SETTINGS=${settings}
+            PXSYS_REFERENCE_UI_WIFI=0 PXSYS_REFERENCE_UI_CELLULAR=0
+            PXSYS_REFERENCE_UI_ENABLE_ANIMATIONS=0
+            PXSYS_REFERENCE_UI_ENABLE_WALLPAPER=0
+            PXSYS_REFERENCE_UI_BACK_GESTURE=0
+            PXSYS_REFERENCE_UI_GESTURE_HANDLE=0
+            PXSYS_REFERENCE_UI_BATTERY_PERCENT=0
+            PXSYS_REFERENCE_UI_TASK_SWITCHER=PXSYS_TASK_SWITCHER_LIST)
+        if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+            target_compile_options(pxsys_reference_config_${settings} PRIVATE
+                -Wall -Wextra -Wpedantic -Werror)
+        endif()
+    endforeach()
 endif()
 if(DEFINED PXSYS_REFERENCE_UI_LAUNCHER_COLUMNS AND
    DEFINED PXSYS_REFERENCE_UI_LAUNCHER_ROWS)
