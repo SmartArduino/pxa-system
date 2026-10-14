@@ -721,27 +721,21 @@ static int32_t painter_texture_q8(int32_t reciprocal_uv, int32_t reciprocal) {
 }
 
 /* Longest run of pixels over which the reciprocal depth moves by less than
- * 1/8, capped by what is left of the span. Flat-depth spans collapse to one
- * block, so the perspective divide costs nothing where it would change
- * nothing. Every operand stays 32-bit: a 64-bit divide is a software call on
- * both RISC-V32 and Xtensa and measured 6x the whole painter fill. */
-static int32_t painter_perspective_block(int32_t remaining, int64_t reciprocal,
-                                         int64_t reciprocal_dx) {
-    uint32_t magnitude;
-    uint32_t delta;
+ * 1/8, capped by what is left of the span. Flat-depth spans use the maximum
+ * block size. Both callers already bound depth and its step to int32; keeping
+ * this calculation narrow avoids wide comparisons and absolute values.
+ * Unsigned negation also handles an INT32_MIN step without overflow. */
+static int32_t painter_perspective_block(int32_t remaining, int32_t reciprocal,
+                                         int32_t reciprocal_dx) {
+    const uint32_t delta = reciprocal_dx < 0
+        ? 0u - (uint32_t)reciprocal_dx : (uint32_t)reciprocal_dx;
     uint32_t limit;
-    int64_t magnitude_dx;
     if (remaining <= RASTER_PERSPECTIVE_BLOCK_MIN_PIXELS) return remaining;
     if (reciprocal <= 0) return RASTER_PERSPECTIVE_BLOCK_MIN_PIXELS;
-    magnitude_dx = reciprocal_dx < 0 ? -reciprocal_dx : reciprocal_dx;
-    if (magnitude_dx == 0)
+    if (delta == 0)
         return remaining < RASTER_PERSPECTIVE_BLOCK_MAX_PIXELS
                    ? remaining : RASTER_PERSPECTIVE_BLOCK_MAX_PIXELS;
-    magnitude = reciprocal > (int64_t)UINT32_MAX ? UINT32_MAX
-                                                 : (uint32_t)reciprocal;
-    delta = magnitude_dx > (int64_t)UINT32_MAX ? UINT32_MAX
-                                               : (uint32_t)magnitude_dx;
-    limit = (magnitude >> RASTER_PERSPECTIVE_BLOCK_DEPTH_SHIFT) / delta;
+    limit = ((uint32_t)reciprocal >> RASTER_PERSPECTIVE_BLOCK_DEPTH_SHIFT) / delta;
     if (limit <= (uint32_t)RASTER_PERSPECTIVE_BLOCK_MIN_PIXELS)
         return RASTER_PERSPECTIVE_BLOCK_MIN_PIXELS;
     if (limit > RASTER_PERSPECTIVE_BLOCK_MAX_PIXELS)
@@ -1651,6 +1645,8 @@ static uint32_t draw_painter_polygon(
     int32_t max_y = vertices[0].y;
     uint8_t min_light = vertices[0].light;
     uint8_t max_light = vertices[0].light;
+    int32_t previous_width = 0;
+    float per_pixel = 0.0f;
     int32_t row;
     int32_t end;
     raster_painter_chain_t left;
@@ -1763,7 +1759,13 @@ static uint32_t draw_painter_polygon(
              !painter_span_covered(
                  opaque_coverage + (size_t)row * coverage_stride,
                  x0, x1))) {
-            const float per_pixel = 65536.0f / (float)width;
+            /* Consecutive rows of vertical faces share their exact width.
+             * Reuse that exact quotient; changing widths keep normal division.
+             * Only this polygon's two local values are retained. */
+            if (width != previous_width) {
+                per_pixel = 65536.0f / (float)width;
+                previous_width = width;
+            }
             const int64_t prestep = ((int64_t)x0 << 16) + 0x8000 - l->x;
             const int perspective_span =
                 perspective && l->w > 0 && r->w > 0;

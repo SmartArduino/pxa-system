@@ -118,5 +118,27 @@ int main(void) {
                 assert(actual == hidden);
         }
     }
+    // An independent wide-arithmetic bound protects INT32_MIN slopes and the
+    // small-span cases when perspective setup stays on 32-bit hardware.
+    for (unsigned trial = 0; trial < 3000; ++trial) {
+        const int32_t lengths[] = {-1, 0, 1, 8, 9, 24, 25, 412, INT32_MAX};
+        const int32_t slopes[] = {INT32_MIN, -65536, -1, 0, 1, 65536, INT32_MAX};
+        const int32_t remaining = lengths[trial % 9];
+        const int32_t w = trial % 3 ? (int32_t)(next_random() % 65536)
+                                    : (trial % 2 ? INT32_MIN : INT32_MAX);
+        const int32_t dw = slopes[trial % 7];
+        int64_t expected = remaining;
+        if (remaining > 8) {
+            expected = 8;
+            if (w > 0) {
+                const int64_t magnitude = dw < 0 ? -(int64_t)dw : dw;
+                expected = magnitude ? ((int64_t)w / 8) / magnitude : 24;
+                if (expected < 8) expected = 8;
+                if (expected > 24) expected = 24;
+                if (expected > remaining) expected = remaining;
+            }
+        }
+        assert(painter_perspective_block(remaining, w, dw) == expected);
+    }
     return 0;
 }
