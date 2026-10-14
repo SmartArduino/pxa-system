@@ -23,26 +23,51 @@ if(PXSYS_BUILD_TESTS OR BUILD_TESTING)
         target_compile_options(pxsys_reference_ime_test PRIVATE -UNDEBUG)
     endif()
     add_test(NAME pxsys_reference_ime_test COMMAND pxsys_reference_ime_test)
-    # Native builds must also exercise the feature combinations used by
-    # products that provide their own settings and radio UI.
-    foreach(settings RANGE 0 1)
-        add_library(pxsys_reference_config_${settings} OBJECT src/reference_lvgl.c)
-        target_link_libraries(pxsys_reference_config_${settings} PRIVATE
-            pxsys::reference_lvgl)
-        target_compile_definitions(pxsys_reference_config_${settings} PRIVATE
-            PXSYS_REFERENCE_UI_BUILTIN_SETTINGS=${settings}
-            PXSYS_REFERENCE_UI_WIFI=0 PXSYS_REFERENCE_UI_CELLULAR=0
-            PXSYS_REFERENCE_UI_ENABLE_ANIMATIONS=0
-            PXSYS_REFERENCE_UI_ENABLE_WALLPAPER=0
-            PXSYS_REFERENCE_UI_BACK_GESTURE=0
-            PXSYS_REFERENCE_UI_GESTURE_HANDLE=0
-            PXSYS_REFERENCE_UI_BATTERY_PERCENT=0
-            PXSYS_REFERENCE_UI_TASK_SWITCHER=PXSYS_TASK_SWITCHER_LIST)
+    function(pxsys_add_reference_feature_test name)
+        add_executable(${name} ../tests/reference_features_test.c)
+        target_link_libraries(${name} PRIVATE pxsys::reference_lvgl)
+        target_compile_definitions(${name} PRIVATE ${ARGN})
         if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
-            target_compile_options(pxsys_reference_config_${settings} PRIVATE
-                -Wall -Wextra -Wpedantic -Werror)
+            target_compile_options(${name} PRIVATE -Wall -Wextra -Wpedantic -Werror)
         endif()
+        add_test(NAME ${name} COMMAND ${name})
+    endfunction()
+    # Exercise independent switches: products may replace settings while
+    # retaining radio chrome, or show battery text without either radio.
+    foreach(settings RANGE 0 1)
+        foreach(radios RANGE 0 3)
+            math(EXPR wifi "${radios} & 1")
+            math(EXPR cellular "(${radios} >> 1) & 1")
+            set(config_target pxsys_reference_config_${settings}_${radios})
+            add_library(${config_target} OBJECT src/reference_lvgl.c)
+            target_link_libraries(${config_target} PRIVATE pxsys::reference_lvgl)
+            target_compile_definitions(${config_target} PRIVATE
+                PXSYS_REFERENCE_UI_BUILTIN_SETTINGS=${settings}
+                PXSYS_REFERENCE_UI_WIFI=${wifi}
+                PXSYS_REFERENCE_UI_CELLULAR=${cellular}
+                PXSYS_REFERENCE_UI_ENABLE_ANIMATIONS=0
+                PXSYS_REFERENCE_UI_ENABLE_WALLPAPER=0
+                PXSYS_REFERENCE_UI_BACK_GESTURE=0
+                PXSYS_REFERENCE_UI_GESTURE_HANDLE=0
+                PXSYS_REFERENCE_UI_BATTERY_PERCENT=1
+                PXSYS_REFERENCE_UI_TASK_SWITCHER=PXSYS_TASK_SWITCHER_LIST)
+            if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+                target_compile_options(${config_target} PRIVATE
+                    -Wall -Wextra -Wpedantic -Werror)
+            endif()
+        endforeach()
+        pxsys_add_reference_feature_test(pxsys_reference_features_${settings}_test
+            PXSYS_REFERENCE_UI_BUILTIN_SETTINGS=${settings})
     endforeach()
+    # Cards must fall back to a working list if the product's LVGL omits the
+    # snapshot API. The test overrides the header switch before including the UI.
+    pxsys_add_reference_feature_test(pxsys_reference_no_snapshot_test
+        PXSYS_TEST_NO_SNAPSHOT=1 PXSYS_REFERENCE_UI_BUILTIN_SETTINGS=0
+        PXSYS_REFERENCE_UI_TASK_SWITCHER=PXSYS_TASK_SWITCHER_CARDS)
+    pxsys_add_reference_feature_test(pxsys_reference_no_pinyin_test PXSYS_TEST_PINYIN=0)
+    pxsys_add_reference_feature_test(pxsys_reference_k26_test PXSYS_TEST_PINYIN=1)
+    pxsys_add_reference_feature_test(pxsys_reference_no_animations_test
+        PXSYS_REFERENCE_UI_ENABLE_ANIMATIONS=0)
 endif()
 if(DEFINED PXSYS_REFERENCE_UI_LAUNCHER_COLUMNS AND
    DEFINED PXSYS_REFERENCE_UI_LAUNCHER_ROWS)

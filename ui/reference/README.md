@@ -25,6 +25,24 @@ Products can set `pxsys_reference_lvgl_config_t.wallpaper_source` to a borrowed
 LVGL image source; it is center-cropped with cover sizing for the active display
 profile. A null source keeps the allocation-free built-in wallpaper.
 
+`PXSYS_REFERENCE_UI_BUILTIN_SETTINGS=0` removes the built-in Sound, About, Apps,
+Files and Wi-Fi detail pages. Home, the Settings landing page, appearance,
+language, keyboard preferences and status/navigation roles remain independent.
+Network rows use the product's network-settings role when the built-in details
+are unavailable. The Wi-Fi and cellular compile switches are independent of
+this setting; battery percentage also works with both radios disabled.
+
+The runtime `features` mask controls registration of individual roles. Clearing
+Home still permits `pxsys_reference_lvgl_start()` to start enabled chrome roles;
+calling `pxsys_reference_lvgl_home()` explicitly then returns `NOT_FOUND`.
+Card recents fall back to a list when LVGL snapshots are disabled. Disabling
+pinyin or K9 mode retains the full keyboard fallback.
+
+Native test builds compile all four radio combinations with built-in settings
+enabled and disabled. Feature tests exercise all 16 combinations of Home,
+Settings and the two bars, including repeated startup/teardown, theme updates,
+recents and keyboard fallback. These test targets add no product runtime cost.
+
 Launcher icons are resolved by the optional
 `pxsys_reference_lvgl_config_t.resolve_app_icon` hook. The platform can return
 an icon from a native resource table or an installed PXA package together with

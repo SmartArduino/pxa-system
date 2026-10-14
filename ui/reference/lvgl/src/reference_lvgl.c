@@ -1579,7 +1579,8 @@ static void launcher_scroll_event(lv_event_t* event) {
     const lv_event_code_t code = lv_event_get_code(event);
     if (code == LV_EVENT_SCROLL_BEGIN) {
         lv_anim_t* animation = lv_event_get_param(event);
-        if (animation != NULL) lv_anim_set_duration(animation, 160);
+        if (animation != NULL)
+            lv_anim_set_duration(animation, ui->animations_enabled ? 160 : 0);
         return;
     }
     const int32_t width = lv_obj_get_width(ui->content);
@@ -1604,7 +1605,8 @@ static void launcher_scroll_event(lv_event_t* event) {
     }
     const int32_t target_x = (int32_t)ui->launcher_page * width;
     if (scroll_x != target_x)
-        lv_obj_scroll_to_x(ui->content, target_x, LV_ANIM_ON);
+        lv_obj_scroll_to_x(ui->content, target_x,
+                           ui->animations_enabled ? LV_ANIM_ON : LV_ANIM_OFF);
 }
 
 static void launcher_configure_paging(pxsys_reference_lvgl_t* ui) {
@@ -1630,7 +1632,8 @@ static lv_obj_t* make_label(lv_obj_t* parent, const char* text,
     return label;
 }
 
-#if PXSYS_REFERENCE_UI_TASK_SWITCHER == PXSYS_TASK_SWITCHER_LIST
+#if !(PXSYS_REFERENCE_UI_TASK_SWITCHER == PXSYS_TASK_SWITCHER_CARDS && \
+      LV_USE_SNAPSHOT)
 static lv_obj_t* make_button(pxsys_reference_lvgl_t* ui, lv_obj_t* parent,
                              const char* text, lv_event_cb_t clicked,
                              void* user_data) {
@@ -3359,6 +3362,8 @@ static void make_network_setting(pxsys_reference_lvgl_t* ui,
     lv_obj_t* toggle;
     const char* title;
     const char* state;
+    lv_event_cb_t clicked = details == NULL ? NULL : settings_action_clicked;
+    void* clicked_context = details;
     int connected = radio_connected(ui, network);
     title = network == PXSYS_NETWORK_WIFI
                 ? translated(ui, "settings.wifi", "Wi-Fi")
@@ -3367,18 +3372,17 @@ static void make_network_setting(pxsys_reference_lvgl_t* ui,
                       : radio_enabled(ui, network)
                             ? translated(ui, "state.on", "On")
                             : translated(ui, "state.off", "Off");
+#if PXSYS_REFERENCE_UI_BUILTIN_SETTINGS
+    if (network == PXSYS_NETWORK_WIFI && ui->wifi_scan != NULL &&
+        ui->wifi_connect != NULL) {
+        clicked = wifi_settings_clicked;
+        clicked_context = ui;
+    }
+#endif
     row = make_settings_row(
         ui, layout, section,
         network == PXSYS_NETWORK_WIFI ? LV_SYMBOL_WIFI : NULL,
-        PXSYS_COLOR_ACCENT, title, state,
-        network == PXSYS_NETWORK_WIFI && ui->wifi_scan != NULL &&
-                ui->wifi_connect != NULL
-            ? wifi_settings_clicked
-            : details == NULL ? NULL : settings_action_clicked,
-        network == PXSYS_NETWORK_WIFI && ui->wifi_scan != NULL &&
-                ui->wifi_connect != NULL
-            ? ui
-            : (void*)details);
+        PXSYS_COLOR_ACCENT, title, state, clicked, clicked_context);
     toggle = lv_switch_create(row);
     lv_obj_set_size(toggle, ui_px(ui, 42), ui_px(ui, 24));
     lv_obj_align(toggle, LV_ALIGN_RIGHT_MID, -10, 0);
@@ -5316,7 +5320,9 @@ static void build_status_bar(pxsys_reference_lvgl_t* ui,
 #if PXSYS_REFERENCE_UI_BATTERY_PERCENT
     lv_obj_t* percent_label;
     const lv_font_t* percent_font;
+#if PXSYS_REFERENCE_UI_WIFI || PXSYS_REFERENCE_UI_CELLULAR
     int32_t percent_width;
+#endif
 #endif
     char time_text[8];
 #if PXSYS_REFERENCE_UI_BATTERY_PERCENT
@@ -5365,7 +5371,9 @@ static void build_status_bar(pxsys_reference_lvgl_t* ui,
                  content_area.x + (int32_t)layout->outer_padding,
                  align_y);
 #if PXSYS_REFERENCE_UI_BATTERY_PERCENT
+#if PXSYS_REFERENCE_UI_WIFI || PXSYS_REFERENCE_UI_CELLULAR
     percent_width = 0;
+#endif
     if (ui->system_status.battery_valid) {
         snprintf(percent_text, sizeof(percent_text), "%u%%",
                  (unsigned)ui->system_status.battery_percent);
@@ -5382,8 +5390,10 @@ static void build_status_bar(pxsys_reference_lvgl_t* ui,
                      -((int32_t)layout->viewport.width - safe_right) -
                          (int32_t)layout->outer_padding - 29,
                      align_y);
+#if PXSYS_REFERENCE_UI_WIFI || PXSYS_REFERENCE_UI_CELLULAR
         lv_obj_update_layout(status);
         percent_width = lv_obj_get_width(percent_label);
+#endif
     }
 #endif
 #if PXSYS_REFERENCE_UI_WIFI || PXSYS_REFERENCE_UI_CELLULAR
@@ -5612,8 +5622,13 @@ static void toast_posted(void* context, const pxsys_toast_message_t* toast) {
     ui->toast_visible = 1;
     update_system_overlay(ui);
     lv_anim_delete(ui->toast, NULL);
-    lv_obj_set_style_opa(ui->toast, LV_OPA_TRANSP, 0);
-    lv_obj_fade_in(ui->toast, 140, 0);
+    lv_obj_set_style_opa(ui->toast, LV_OPA_COVER, 0);
+#if PXSYS_REFERENCE_UI_ENABLE_ANIMATIONS
+    if (ui->animations_enabled) {
+        lv_obj_set_style_opa(ui->toast, LV_OPA_TRANSP, 0);
+        lv_obj_fade_in(ui->toast, 140, 0);
+    }
+#endif
     duration = toast->duration_ms == 0 ? 2500 : toast->duration_ms;
     if (ui->toast_timer == NULL)
         ui->toast_timer = lv_timer_create(toast_hide, duration, ui);
@@ -6387,10 +6402,12 @@ static void app_input_method_event(lv_event_t* event) {
     if (ui_valid(ui)) ui->app_ime_close_requested = 1;
 }
 
+#if LV_USE_IME_PINYIN && LV_IME_PINYIN_USE_K9_MODE
 static void app_input_method_closed(void* context) {
     pxsys_reference_lvgl_t* ui = (pxsys_reference_lvgl_t*)context;
     if (ui_valid(ui)) ui->app_ime_close_requested = 1;
 }
+#endif
 
 /* The Guest deletes its input when it replaces the surface; the delete
  * notification keeps the pointer from going stale. */
@@ -8720,7 +8737,7 @@ static int page_registration_enabled(const pxsys_reference_lvgl_t* ui,
             break;
     }
 #else
-    if (index >= REFERENCE_PAGE_STATUS_BAR) return 0;
+    if (index >= REFERENCE_PAGE_SOUND_SETTINGS) return 0;
 #endif
     return 1;
 }
@@ -9031,9 +9048,11 @@ pxsys_status_t pxsys_reference_lvgl_start(pxsys_reference_lvgl_t* ui) {
     pxsys_instance_ref_t instance;
     pxsys_status_t status;
     if (!ui_valid(ui)) return PXSYS_STATUS_INVALID_ARGUMENT;
-    status = pxsys_reference_lvgl_home(ui);
-    if (status != PXSYS_STATUS_OK && status != PXSYS_STATUS_PENDING)
-        return status;
+    if (ui->features & PXSYS_REFERENCE_UI_HOME) {
+        status = pxsys_reference_lvgl_home(ui);
+        if (status != PXSYS_STATUS_OK && status != PXSYS_STATUS_PENDING)
+            return status;
+    }
     intent.struct_size = sizeof(intent);
     intent.action = pxsys_string_from_cstr("system.intent.main");
     if (ui->features & PXSYS_REFERENCE_UI_STATUS_BAR) {
