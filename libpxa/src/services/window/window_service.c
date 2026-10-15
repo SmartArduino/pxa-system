@@ -237,6 +237,10 @@ static pxa_status_t window_control(void *context, pxa_runtime_t *runtime,
     (void)runtime;
     if (entry == NULL) return PXA_STATUS_DENIED;
     switch (message->opcode) {
+        case PXA_WINDOW_REQUEST_BACK:
+            if (message->request_token != 0 || message->payload.size != 0)
+                return PXA_STATUS_INVALID_ARGUMENT;
+            return pxa_window_queue_back(service, component);
         case PXA_WINDOW_CONFIGURE:
             if (message->request_token != 0) return PXA_STATUS_INVALID_ARGUMENT;
             return configure(entry, message->payload);

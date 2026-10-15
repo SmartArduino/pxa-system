@@ -21,6 +21,10 @@ typedef void (*pxsys_product_simulator_control_bind_fn)(
  * decides whether to consume it or close; delivery happens on the next turn. */
 bool pxsys_product_simulator_request_back(void *runner);
 
+/* Main/LVGL thread only. True means the focused Guest captures volume keys;
+ * false leaves the key to the system volume control. key is PXA_UI_KEY_*. */
+bool pxsys_product_simulator_volume_key(void *runner, uint32_t key);
+
 /* Deliver the standard System configuration-changed notification to the live
  * Guest. The event owns its payload; no locale cache or allocation is added. */
 bool pxsys_product_simulator_update_locale(void *runner,

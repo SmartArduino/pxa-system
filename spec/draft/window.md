@@ -1,6 +1,6 @@
-# PXA Window Service Draft 0.2
+# PXA Window Service Draft 0.3
 
-Window service ID is `2`; service version is `0.2.0`. Numeric assignments in this
+Window service ID is `2`; service version is `0.3.0`. Numeric assignments in this
 document are explanatory. `pxa-window.json` is authoritative.
 
 ## Ownership boundary
@@ -52,9 +52,16 @@ errors in their own UI. An unsupported backend rejects the command.
 The Core v1 preview also accepts `show-toast` with a zero request token and
 the same bounded payload.
 
-The bottom system-bar inset reserves the visible button bar or gesture handle,
-not a hidden gesture hit target. Without a gesture handle, the bottom bar inset
-is zero unless a physical display safe inset independently requires space.
+`request-back` (`opcode=4`, since 0.3) has a zero request token and empty
+payload. It queues the same reliable `back-requested` event as system Back,
+which is delivered after the current callback returns. The App's `on_back()`
+may navigate locally or return close. Hosts apply that result even when the
+event is delivered by their ordinary event pump; no reentrant stop is allowed.
+Acceptance does not mean the app has stopped. A full mailbox rejects the request.
+
+System-bar insets include persistent Home/Back gesture input strips even when
+their visual handles are hidden. A hidden status bar reserves no top space;
+physical safe insets continue to apply independently.
 
 ## Snapshot and events
 

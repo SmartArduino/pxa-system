@@ -49,6 +49,42 @@ int main() {
         assert(pxa::wire::get32(packets[retry].data() + 28) == 3);
         const auto& present = packets.back();
         assert(present[32] == std::byte{1} && present.size() == 49);
+        commands.reset();
+        commands.arc(-5, 7, 9, 45, 315, 0x123456ff, 2);
+        const auto arc_begin = packets.size();
+        assert(canvas.present(commands));
+        const auto& arc = packets[arc_begin + 1];
+        assert(arc.size() == 58 && arc[32] == std::byte{4});
+        assert(pxa::wire::get16(arc.data() + 34) == 22);
+        assert(pxa::wire::get32(arc.data() + 36) == std::uint32_t(-5));
+        assert(pxa::wire::get32(arc.data() + 40) == 7);
+        assert(pxa::wire::get32(arc.data() + 44) == 9);
+        assert(pxa::wire::get16(arc.data() + 48) == 45);
+        assert(pxa::wire::get16(arc.data() + 50) == 315);
+        assert(pxa::wire::get32(arc.data() + 52) == 0x123456ff);
+        assert(pxa::wire::get16(arc.data() + 56) == 2);
+        commands.reset();commands.image({-2,3,64,36},77,ImageFit::cover,128);
+        const auto image_begin=packets.size();assert(canvas.present(commands));
+        const auto& image=packets[image_begin+1];
+        assert(image.size()==62 && image[32]==std::byte{11});
+        assert(pxa::wire::get16(image.data()+34)==26);
+        assert(pxa::wire::get32(image.data()+36)==std::uint32_t(-2));
+        assert(image[52]==std::byte{128} && image[53]==std::byte{2});
+        assert(pxa::wire::get64(image.data()+54)==77);
+        for (auto fit : {ImageFit::contain,ImageFit{3}}) {
+            commands.reset();commands.image({0,0,10,10},fit==ImageFit::contain?0:77,fit);
+            const auto count=packets.size();assert(!canvas.present(commands));
+            assert(packets.size()==count);
+        }
+        for (const auto radius : {0u, 65536u}) {
+            commands.reset(); commands.arc(0, 0, radius, 0, 90, 0xffffffff);
+            const auto count = packets.size();
+            auto invalid_arc = canvas.present(commands);
+            assert(!invalid_arc && invalid_arc.error() == pxa::Error::invalid_argument);
+            assert(packets.size() == count);
+        }
+        commands.reset(); commands.arc(0, 0, 1, 0, 90, 0xffffffff, 0);
+        assert(!canvas.present(commands));
         CanvasCommands<4> tiny;
         tiny.rect(0, 0, 1, 1, 0xffffffff);
         const auto stable = packets.size();

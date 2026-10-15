@@ -221,12 +221,6 @@ Result<NetResponse> decode_net_response(Transport& transport,
             std::string_view name, text;
             if (!parse_header(value, name, text))
                 return std::unexpected(Error::protocol_error);
-            for (std::size_t i = 0; i < header_count; ++i) {
-                std::string_view prior, ignored;
-                (void)parse_header(header_fields[i], prior, ignored);
-                if (prior == name)
-                    return std::unexpected(Error::protocol_error);
-            }
             header_fields[header_count++] = value;
             header_bytes += value.size() + 4;
             break;

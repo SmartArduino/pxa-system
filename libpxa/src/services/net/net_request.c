@@ -1,13 +1,15 @@
 #include "services/net/net_internal.h"
 
 #include <string.h>
+#include <limits.h>
+#include "pxa/http_stream.h"
 
 static int method_valid(uint16_t method) {
     return method >= PXA_NET_METHOD_GET && method <= PXA_NET_METHOD_DELETE;
 }
 
 static pxa_status_t parse_header(pxa_bytes_t payload,
-                                 pxa_net_header_t *output) {
+                                 pxa_net_header_t *output, int streaming) {
     pxa_record_iterator_t iterator;
     pxa_record_view_t record;
     uint8_t seen = 0;
@@ -28,7 +30,14 @@ static pxa_status_t parse_header(pxa_bytes_t payload,
             output->name = record.payload;
             seen |= 1u;
         } else if (record.tag == 2 && (seen & 2u) == 0 &&
-                   pxa_net_header_value_valid(record.payload)) {
+                   (streaming || pxa_net_header_value_valid(record.payload))) {
+            if (streaming) {
+                size_t i;
+                for (i=0;i<record.payload.size;++i)
+                    if (record.payload.data[i]!='\t' &&
+                        (record.payload.data[i]<0x20 || record.payload.data[i]==0x7f))
+                        return PXA_STATUS_INVALID_ARGUMENT;
+            }
             output->value = record.payload;
             seen |= 2u;
         } else {
@@ -38,23 +47,31 @@ static pxa_status_t parse_header(pxa_bytes_t payload,
     return seen == 3u ? PXA_STATUS_OK : PXA_STATUS_INVALID_ARGUMENT;
 }
 
+static int name_equal(pxa_bytes_t a, pxa_bytes_t b) {
+    size_t i;
+    if (a.size != b.size) return 0;
+    for (i = 0; i < a.size; ++i) {
+        unsigned x = a.data[i], y = b.data[i];
+        if (x >= 'A' && x <= 'Z') x += 'a' - 'A';
+        if (y >= 'A' && y <= 'Z') y += 'a' - 'A';
+        if (x != y) return 0;
+    }
+    return 1;
+}
+
 static int bytes_duplicate(const pxa_bytes_t *values, uint16_t count,
                            pxa_bytes_t value) {
     uint16_t index;
-    for (index = 0; index < count; ++index) {
-        if (values[index].size == value.size &&
-            memcmp(values[index].data, value.data, value.size) == 0) return 1;
-    }
+    for (index = 0; index < count; ++index)
+        if (name_equal(values[index], value)) return 1;
     return 0;
 }
 
 static int header_duplicate(const pxa_net_header_t *headers, uint16_t count,
                             pxa_bytes_t name) {
     uint16_t index;
-    for (index = 0; index < count; ++index) {
-        if (headers[index].name.size == name.size &&
-            memcmp(headers[index].name.data, name.data, name.size) == 0) return 1;
-    }
+    for (index = 0; index < count; ++index)
+        if (name_equal(headers[index].name, name)) return 1;
     return 0;
 }
 
@@ -66,6 +83,8 @@ pxa_status_t pxa_net_request_parse(
     pxa_record_view_t record;
     uint16_t previous = 0;
     uint16_t required_seen;
+    uint8_t stream_fields = 0;
+    int streaming = opcode == PXA_NET_HTTP_OPEN;
     pxa_status_t status;
     if (limits == NULL || output == NULL || wire_profile > 1)
         return PXA_STATUS_INVALID_ARGUMENT;
@@ -90,7 +109,7 @@ pxa_status_t pxa_net_request_parse(
             output->seen |= 2u;
             if ((opcode == PXA_NET_FETCH &&
                  output->request.method != PXA_NET_METHOD_GET) ||
-                (opcode == PXA_NET_HTTP_REQUEST &&
+                ((opcode == PXA_NET_HTTP_REQUEST || streaming) &&
                  !method_valid(output->request.method))) {
                 return PXA_STATUS_UNSUPPORTED;
             }
@@ -104,19 +123,22 @@ pxa_status_t pxa_net_request_parse(
                 return PXA_STATUS_INVALID_ARGUMENT;
             output->seen |= 4u;
         } else if (record.tag == 4 && (output->seen & 8u) == 0 &&
-                   record.payload.size == 4) {
-            output->request.max_response_bytes =
+                   record.payload.size == (streaming ? 8u : 4u)) {
+            if (streaming) {
+                output->request.max_body_bytes = pxa_read_u64(record.payload.data);
+                output->request.max_response_bytes = UINT32_MAX;
+            } else output->request.max_response_bytes =
                 pxa_read_u32(record.payload.data);
             output->seen |= 8u;
-        } else if (opcode == PXA_NET_HTTP_REQUEST && record.tag == 8 &&
+        } else if ((opcode == PXA_NET_HTTP_REQUEST || streaming) && record.tag == 8 &&
                    (output->seen & 16u) == 0 && record.payload.size == 4) {
             output->request.timeout_ms = pxa_read_u32(record.payload.data);
             output->seen |= 16u;
-        } else if (opcode == PXA_NET_HTTP_REQUEST && record.tag == 9 &&
+        } else if ((opcode == PXA_NET_HTTP_REQUEST || streaming) && record.tag == 9 &&
                    output->request.header_count < limits->max_headers) {
             pxa_net_header_t *header =
                 &output->headers[output->request.header_count];
-            status = parse_header(record.payload, header);
+            status = parse_header(record.payload, header, streaming);
             if (status != PXA_STATUS_OK ||
                 header_duplicate(output->headers,
                                  output->request.header_count, header->name) ||
@@ -129,12 +151,12 @@ pxa_status_t pxa_net_request_parse(
             }
             output->request_header_bytes += record.payload.size + 4u;
             output->request.header_count++;
-        } else if (opcode == PXA_NET_HTTP_REQUEST && record.tag == 10 &&
+        } else if ((opcode == PXA_NET_HTTP_REQUEST || streaming) && record.tag == 10 &&
                    (output->seen & 32u) == 0 &&
                    record.payload.size <= limits->max_inline_body_bytes) {
             output->request.body = record.payload;
             output->seen |= 32u;
-        } else if (opcode == PXA_NET_HTTP_REQUEST && record.tag == 11 &&
+        } else if ((opcode == PXA_NET_HTTP_REQUEST || streaming) && record.tag == 11 &&
                    output->request.wanted_response_header_count <
                        limits->max_headers &&
                    pxa_net_header_name_valid(record.payload, 0) &&
@@ -145,15 +167,36 @@ pxa_status_t pxa_net_request_parse(
             output->wanted_response_headers
                 [output->request.wanted_response_header_count++] =
                     record.payload;
+        } else if (streaming && record.tag == 14 && !(stream_fields & 1u) &&
+                   record.payload.size == 4) {
+            output->request.buffer_bytes = pxa_read_u32(record.payload.data);
+            stream_fields |= 1u;
+        } else if (streaming && record.tag == 15 && !(stream_fields & 2u) &&
+                   record.payload.size == 8) {
+            output->request.upload_bytes = pxa_read_u64(record.payload.data);
+            stream_fields |= 2u;
+        } else if (streaming && record.tag == 16 && !(stream_fields & 4u) &&
+                   record.payload.size == 4) {
+            output->request.response_header_bytes = pxa_read_u32(record.payload.data);
+            stream_fields |= 4u;
         } else {
             return PXA_STATUS_INVALID_ARGUMENT;
         }
     }
+    if (streaming && (stream_fields != 7u || !output->request.max_body_bytes ||
+        output->request.upload_bytes > INT32_MAX ||
+        output->request.body.size > output->request.buffer_bytes / 2u ||
+        (output->request.body.size && output->request.body.size != output->request.upload_bytes) ||
+        !pxa_http_stream_storage_size(output->request.buffer_bytes,
+                                      output->request.response_header_bytes) ||
+        ((output->request.method == PXA_NET_METHOD_GET ||
+          output->request.method == PXA_NET_METHOD_HEAD) && output->request.upload_bytes)))
+        return PXA_STATUS_INVALID_ARGUMENT;
     required_seen = opcode == PXA_NET_FETCH ? 15u : 31u;
     if ((output->seen & required_seen) != required_seen ||
         output->permission_handle == PXA_HANDLE_INVALID ||
         output->request.max_response_bytes == 0 ||
-        (opcode == PXA_NET_HTTP_REQUEST &&
+        ((opcode == PXA_NET_HTTP_REQUEST || streaming) &&
          (output->request.timeout_ms < limits->min_timeout_ms ||
           output->request.timeout_ms > limits->max_timeout_ms)) ||
         ((output->request.method == PXA_NET_METHOD_GET ||
@@ -168,7 +211,7 @@ pxa_status_t pxa_net_request_parse(
         output->request.timeout_ms = limits->default_timeout_ms;
         output->request.abi_minor = 0;
     } else {
-        output->request.abi_minor = 1;
+        output->request.abi_minor = streaming ? 2 : 1;
     }
     return PXA_STATUS_OK;
 }

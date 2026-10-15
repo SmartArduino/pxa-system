@@ -10,6 +10,7 @@ else()
 endif()
 
 find_package(SDL2 REQUIRED)
+find_package(JPEG REQUIRED)
 find_package(PNG REQUIRED)
 find_package(Freetype REQUIRED)
 find_package(CURL REQUIRED)
@@ -119,6 +120,12 @@ if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
 endif()
 
 if(PXSYS_BUILD_TESTS OR BUILD_TESTING)
+    add_executable(pxsys_volume_key_input_test tests/volume_key_input_test.c)
+    target_link_libraries(pxsys_volume_key_input_test PRIVATE SDL2::SDL2)
+    if(NOT MSVC)
+        target_compile_options(pxsys_volume_key_input_test PRIVATE -UNDEBUG)
+    endif()
+    add_test(NAME pxsys_volume_key_input_test COMMAND pxsys_volume_key_input_test)
     add_executable(pxsys_png_writer_test tests/png_writer_test.c)
     target_link_libraries(pxsys_png_writer_test PRIVATE PNG::PNG)
     if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
@@ -140,6 +147,13 @@ if(PXSYS_BUILD_TESTS OR BUILD_TESTING)
     endif()
     add_test(NAME pxsys_desktop_net_headers_test
         COMMAND pxsys_desktop_net_headers_test)
+    add_executable(pxsys_desktop_http_stream_test tests/http_stream_test.c)
+    target_link_libraries(pxsys_desktop_http_stream_test PRIVATE
+        pxa::pxa CURL::libcurl Threads::Threads)
+    target_compile_options(pxsys_desktop_http_stream_test PRIVATE -UNDEBUG)
+    add_test(NAME pxsys_desktop_http_stream_test COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_LIST_DIR}/tests/http_fixture.py
+        $<TARGET_FILE:pxsys_desktop_http_stream_test>)
     find_program(PXSYS_GUEST_CLANG clang)
     find_program(PXSYS_TEST_TIMEOUT timeout)
     set(PXSYS_V1_SMOKE_APP_ROOT
@@ -252,6 +266,7 @@ foreach(_test ime audio audio_sdk audio_app i18n_app sdk_patterns declarative_ui
         pxsys::core pxa::pxa pxa_adapters_openssl pxa_adapters_posix pxa_adapters_lvgl
         pxa_adapters_wamr lvgl SDL2::SDL2 PNG::PNG CURL::libcurl Threads::Threads
         PkgConfig::VORBISFILE PkgConfig::OPUSFILE m)
+    target_link_libraries(pxsys_${_test}_test PRIVATE pxa_adapters_image_posix)
     if(PXSYS_BUILD_TESTS OR BUILD_TESTING)
         if(_test STREQUAL "ime" AND PXA_TEST_IME_PACKAGE AND PXA_TEST_IME_SIGNING_KEY)
             add_test(NAME pxsys_ime_app_test COMMAND bash
@@ -334,4 +349,8 @@ foreach(_bench current baseline)
         pxsys::core pxa::pxa pxa_adapters_openssl pxa_adapters_posix pxa_adapters_lvgl
         pxa_adapters_wamr lvgl SDL2::SDL2 PNG::PNG CURL::libcurl Threads::Threads
         PkgConfig::VORBISFILE PkgConfig::OPUSFILE m)
+    target_link_libraries(pxsys_raster_bench_${_bench} PRIVATE pxa_adapters_image_posix)
 endforeach()
+
+target_link_libraries(pxsys_product_simulator PRIVATE pxa_adapters_image_posix)
+target_link_libraries(pxsys_desktop_simulator PRIVATE pxa_adapters_image_posix)

@@ -120,6 +120,20 @@ done:
     return ok;
 }
 
+/* Debug text input uses the same LVGL edit/value-changed path as the IME.
+ * Guests do not need a diagnostic ABI or access to their private state. */
+static lv_obj_t *focused_text_input(lv_obj_t *root) {
+    if (root == NULL || !lv_obj_is_visible(root) ||
+        lv_obj_has_state(root, LV_STATE_DISABLED)) return NULL;
+    if (lv_obj_check_type(root, &lv_textarea_class) &&
+        lv_obj_has_state(root, LV_STATE_FOCUSED)) return root;
+    for (uint32_t i = 0; i < lv_obj_get_child_count(root); ++i) {
+        lv_obj_t *found = focused_text_input(lv_obj_get_child(root, (int32_t)i));
+        if (found != NULL) return found;
+    }
+    return NULL;
+}
+
 static SDL_Keycode keycode_from_name(const char *name) {
     if (strcmp(name, "POWER") == 0) return SDLK_POWER;
     if (strcmp(name, "BACK") == 0) return SDLK_ESCAPE;
@@ -131,6 +145,7 @@ static SDL_Keycode keycode_from_name(const char *name) {
     if (strcmp(name, "DOWN") == 0) return SDLK_DOWN;
     if (strcmp(name, "LEFT") == 0) return SDLK_LEFT;
     if (strcmp(name, "RIGHT") == 0) return SDLK_RIGHT;
+    if (strcmp(name, "BACKSPACE") == 0) return SDLK_BACKSPACE;
     return SDLK_UNKNOWN;
 }
 
@@ -268,6 +283,20 @@ static void handle_client(pxsys_pxadb_control_t *control, int client) {
             control->tap_release_at = lv_tick_get() + 16u;
         }
         (void)send_text(client, ok ? "OK\n" : "ERR input_queue_full\n");
+    } else if (strncmp(command, "TEXT ", 5) == 0) {
+        size_t length = strcspn(command + 5, "\r\n");
+        lv_obj_t *target = focused_text_input(lv_display_get_layer_top(control->display));
+        if (target == NULL)
+            target = focused_text_input(lv_display_get_screen_active(control->display));
+        if (length == 0) {
+            (void)send_text(client, "ERR text_length\n");
+        } else if (target == NULL) {
+            (void)send_text(client, "ERR no_focused_text_input\n");
+        } else {
+            command[5 + length] = '\0';
+            lv_textarea_add_text(target, command + 5);
+            (void)send_text(client, "OK\n");
+        }
     } else if (sscanf(command, "KEY_DOWN %23s", key) == 1) {
         (void)send_text(client, push_key_phase(control->window_id, key, 1)
                                     ? "OK\n"

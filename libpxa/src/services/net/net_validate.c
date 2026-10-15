@@ -49,6 +49,7 @@ static int hex_character(uint8_t value) {
 
 static int header_token_character(uint8_t value) {
     return (value >= 'a' && value <= 'z') ||
+           (value >= 'A' && value <= 'Z') ||
            (value >= '0' && value <= '9') || value == '!' || value == '#' ||
            value == '$' || value == '%' || value == '&' || value == '\'' ||
            value == '*' || value == '+' || value == '-' || value == '.' ||
@@ -58,7 +59,14 @@ static int header_token_character(uint8_t value) {
 
 static int bytes_equal_literal(pxa_bytes_t value, const char *literal) {
     size_t size = strlen(literal);
-    return value.size == size && memcmp(value.data, literal, size) == 0;
+    size_t i;
+    if (value.size != size) return 0;
+    for (i = 0; i < size; ++i) {
+        uint8_t c = value.data[i];
+        if (c >= 'A' && c <= 'Z') c += 32;
+        if (c != (uint8_t)literal[i]) return 0;
+    }
+    return 1;
 }
 
 int pxa_net_header_name_valid(pxa_bytes_t name, int request_header) {
@@ -78,7 +86,8 @@ int pxa_net_header_name_valid(pxa_bytes_t name, int request_header) {
            !bytes_equal_literal(name, "te") &&
            !bytes_equal_literal(name, "trailer") &&
            !bytes_equal_literal(name, "transfer-encoding") &&
-           !bytes_equal_literal(name, "upgrade");
+           !bytes_equal_literal(name, "upgrade") &&
+           !bytes_equal_literal(name, "expect");
 }
 
 int pxa_net_header_value_valid(pxa_bytes_t value) {

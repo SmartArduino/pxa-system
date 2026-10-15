@@ -78,7 +78,7 @@ not the same as publishing that service ABI.
 | ID | Service | Responsibility |
 | ---: | --- | --- |
 | 1 | `core` | Lifecycle support, handles, cancellation, leases and readiness |
-| 2 | `window` | Window 0.2.0: metrics, insets, system UI, navigation and toasts |
+| 2 | `window` | Window 0.3.0: metrics, insets, system UI, navigation requests and toasts |
 | 3 | `ui` | Declarative UI tree, Canvas node and input events |
 | 4 | `clock` | Clock 0.2.0: monotonic time, UTC wall time with effective timezone, timers and animation-frame requests |
 | 5 | `fs` | Package, private, cache, temporary and granted files |

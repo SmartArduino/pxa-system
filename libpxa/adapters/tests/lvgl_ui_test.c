@@ -296,8 +296,9 @@ static pxa_status_t transact_status(uint32_t transaction, uint32_t generation,
     pxa_write_u32(begin_payload + 12, target);
     begin_payload[16] = kind;
     begin_payload[17] = PXA_UI_PRESERVE_ON_FAILURE;
-    assert(control(PXA_UI_TX_BEGIN, begin_payload,
-                   sizeof(begin_payload)) == PXA_STATUS_OK);
+    pxa_status_t begin_status = control(PXA_UI_TX_BEGIN, begin_payload, sizeof(begin_payload));
+    if (begin_status) fprintf(stderr, "Begin %u generation %u failed: %d\n", transaction, generation, begin_status);
+    assert(begin_status == PXA_STATUS_OK);
     while (offset < stream->size) {
         size_t chunk = stream->size - offset;
         if (chunk > sizeof(write_payload) - 4u)
@@ -1000,6 +1001,63 @@ static void test_snapshot_limits(void) {
     free(workspace);
 }
 
+/* Synchronous Host dispatch can replace the emitting page before returning.
+ * Cover both the post-callback timestamp restore and virtual-list scheduling. */
+static void reset_during_event(uint32_t surface, uint32_t node,
+    pxa_ui_event_kind_t kind, uint16_t flags, const void *value,
+    size_t size, void *context) {
+    (void)surface; (void)node; (void)flags; (void)value; (void)size;
+    assert(kind == PXA_UI_EVENT_ACTION || kind == PXA_UI_EVENT_SCROLL);
+    pxa_lvgl_ui_reset(*(pxa_lvgl_ui_t **)context);
+}
+static void test_reentrant_page_removal(void) {
+    allocator_state_t allocator = {0};
+    pxa_lvgl_ui_config_t config = {0};
+    pxa_ui_backend_t backend;
+    pxa_lvgl_ui_t *adapter;
+    void *workspace = malloc(pxa_lvgl_ui_workspace_size());
+    assert(workspace);
+    config.struct_size = sizeof(config);
+    config.allocator_context = &allocator;
+    config.allocate = test_allocate; config.release = test_release;
+    config.execute = sync_execute;
+    pxa_lvgl_ui_theme_init(&config.theme);
+    config.event_callback = reset_during_event;
+    config.primary_environment = (pxa_ui_environment_t){
+        .surface = PXA_UI_PRIMARY_SURFACE, .width = 320, .height = 240,
+        .density_q16 = 65536};
+    config.callback_user_data = &adapter;
+    assert(!pxa_lvgl_ui_init(workspace, pxa_lvgl_ui_workspace_size(),
+                            &config, &adapter, &backend));
+    for (unsigned mode = 0; mode < 2; ++mode) {
+        void *transaction, *root, *child;
+        pxa_ui_transaction_info_t info = {.kind = PXA_UI_REPLACE_SURFACE,
+            .surface = PXA_UI_PRIMARY_SURFACE};
+        assert(!backend.begin(backend.context, &info, &transaction));
+        pxa_ui_command_view_t command = {.command = PXA_UI_COMMAND_CREATE,
+            .node = 1, .type = PXA_UI_NODE_ROOT};
+        assert(!backend.apply(backend.context, transaction, &command, &root));
+        command.node = 2; command.parent = 1; command.parent_handle = root;
+        command.type = mode ? PXA_UI_NODE_VIRTUAL_LIST : PXA_UI_NODE_CONTROL;
+        command.subtype = mode ? 0 : PXA_UI_CONTROL_BUTTON;
+        assert(!backend.apply(backend.context, transaction, &command, &child));
+        uint8_t mask[8]; pxa_write_u64(mask,
+            mode ? (UINT64_C(1) << (PXA_UI_EVENT_SCROLL - 1)) : PXA_UI_EVENT_MASK_ACTION);
+        command.command = PXA_UI_COMMAND_SET_PROPERTY;
+        command.node_handle = child; command.property = PXA_UI_PROPERTY_EVENT_MASK;
+        command.value = (pxa_bytes_t){mask, sizeof(mask)};
+        assert(!backend.apply(backend.context, transaction, &command, NULL));
+        assert(!backend.commit(backend.context, transaction));
+        lv_obj_t *object = lv_obj_get_child(lv_obj_get_child(lv_screen_active(), 0), 0);
+        lv_obj_send_event(object, mode ? LV_EVENT_SCROLL : LV_EVENT_CLICKED, NULL);
+        assert(allocator.current == 0);
+        assert(lv_obj_get_child_count(lv_screen_active()) == 0);
+        lv_timer_handler(); // Reset must cancel any pending visible-range work.
+    }
+    pxa_lvgl_ui_deinit(adapter); free(workspace);
+    puts("Reentrant page removal during click/scroll is safe");
+}
+
 int main(void) {
     pxa_runtime_limits_t runtime_limits;
     pxa_ui_config_t service_config;
@@ -1031,6 +1089,7 @@ int main(void) {
     size_t alpha_visible;
 
     test_lvgl_init();
+    if (!getenv("PXA_CANVAS_MEASURE")) test_reentrant_page_removal();
     pxa_runtime_limits_init(&runtime_limits);
     runtime_limits.max_components = 1;
     size = pxa_runtime_workspace_size(&runtime_limits);
@@ -1042,7 +1101,7 @@ int main(void) {
     pxa_ui_config_init(&service_config);
     service_config.features = PXA_UI_FEATURE_CANVAS | PXA_UI_FEATURE_GRID |
                               PXA_UI_FEATURE_RGB565_BITMAP |
-                              PXA_UI_FEATURE_VIRTUAL_LIST | PXA_UI_FEATURE_DYNAMIC_TEXT;
+                              PXA_UI_FEATURE_VIRTUAL_LIST | PXA_UI_FEATURE_DYNAMIC_TEXT | PXA_UI_FEATURE_PASSWORD_INPUT;
     service_config.allocator_context = &allocator;
     service_config.allocate = test_allocate;
     service_config.release = test_release;
@@ -2436,6 +2495,7 @@ int main(void) {
         commands.size = 0;
         value[0] = 1;
         set_property(&commands, 2, PXA_UI_PROPERTY_TEXT_SINGLE_LINE, value, 1);
+        set_property(&commands, 2, PXA_UI_PROPERTY_TEXT_PASSWORD, value, 1);
         pxa_write_u32(value, 512);
         set_property(&commands, 2, PXA_UI_PROPERTY_TEXT_MAX_BYTES, value, 4);
         value[0] = PXA_UI_LENGTH_LOGICAL_PX; value[1] = value[2] = value[3] = 0;
@@ -2443,10 +2503,12 @@ int main(void) {
         set_property(&commands, 2, PXA_UI_PROPERTY_HEIGHT, value, 8);
         transact(62, 62, 0, PXA_UI_PATCH, &commands);
         assert(lv_textarea_get_one_line(input) && lv_obj_get_height(input) == 32);
+        assert(lv_textarea_get_password_mode(input) && lv_textarea_get_password_show_time(input) == 0);
         char longer[520]; memset(longer, 'x', 508);
         memcpy(longer + 508, "中文🙂", 11);
         lv_textarea_set_text(input, longer);
         assert(g_event_value_size == 511 && !memcmp(g_event_value, longer, 511));
+        assert(strcmp(lv_label_get_text(lv_textarea_get_label(input)), lv_textarea_get_text(input)));
         lv_textarea_set_text(input, "");
         assert(g_event_value_size == 0);
         commands.size = 0;
@@ -2460,6 +2522,7 @@ int main(void) {
         commands.size = 0;
         value[0] = 0;
         set_property(&commands, 2, PXA_UI_PROPERTY_TEXT_SINGLE_LINE, value, 1);
+        set_property(&commands, 2, PXA_UI_PROPERTY_TEXT_PASSWORD, value, 1);
         pxa_write_u32(value, 1024);
         set_property(&commands, 2, PXA_UI_PROPERTY_TEXT_MAX_BYTES, value, 4);
         create_overlay(&commands, 3, 1, 11, 13);
@@ -2470,10 +2533,15 @@ int main(void) {
         lv_textarea_set_text(input, longer);
         assert(g_event_value_size == PXA_UI_EVENT_TEXT_LEGACY_BYTES);
         assert(allocator.current == resident && lv_textarea_get_one_line(input));
+        assert(lv_textarea_get_password_mode(input));
         commands.size = 0; property.size = 0;
         put_u32(&property, 2); put_u16(&property, PXA_UI_PROPERTY_TEXT_SINGLE_LINE);
         command(&commands, PXA_UI_COMMAND_CLEAR_PROPERTY, &property);
+        property.size = 0;
+        put_u32(&property, 2); put_u16(&property, PXA_UI_PROPERTY_TEXT_PASSWORD);
+        command(&commands, PXA_UI_COMMAND_CLEAR_PROPERTY, &property);
         transact(65, 65, 0, PXA_UI_PATCH, &commands);
+        assert(!lv_textarea_get_password_mode(input));
         assert(!lv_textarea_get_one_line(input) && lv_obj_get_height(input) == 32);
         lv_textarea_set_cursor_pos(input, 10);
         commands.size = 0;

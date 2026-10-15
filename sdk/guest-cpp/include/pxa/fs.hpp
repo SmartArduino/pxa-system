@@ -147,6 +147,9 @@ public:
     File(File&&) noexcept = default;
     File& operator=(File&&) noexcept = default;
     std::uint64_t handle() const noexcept { return resource_.handle(); }
+    ReadableResource readable() const & noexcept {
+        return {transport_, directory_ ? 0 : resource_.handle(), 3};
+    }
     explicit operator bool() const noexcept { return static_cast<bool>(resource_); }
     Result<void> close() noexcept { return resource_.close(); }
     Result<std::uint32_t> read(std::span<std::byte> buffer) noexcept {

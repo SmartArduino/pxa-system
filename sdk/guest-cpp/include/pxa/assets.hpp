@@ -4,7 +4,9 @@
 #include "service_wire.hpp"
 
 #include <array>
+#include <concepts>
 #include <string_view>
+#include <utility>
 
 namespace pxa {
 
@@ -21,6 +23,9 @@ struct AssetDescriptor {
     std::uint32_t stored_bytes = 0;
     std::uint32_t decoded_bytes = 0;
     std::uint32_t resident_bytes = 0;
+    std::uint32_t source_bytes = 0;
+    // Available for decoded images; prepared dimensions above may be smaller.
+    std::uint16_t source_width = 0, source_height = 0;
 };
 
 struct AssetTag {};
@@ -52,11 +57,42 @@ struct AssetRead {
     bool eof() const noexcept { return offset + bytes == total_bytes; }
 };
 
+enum class ImageFormats : std::uint16_t { any = 0, png = 1, jpeg = 2, gif = 4 };
+constexpr ImageFormats operator|(ImageFormats a, ImageFormats b) noexcept {
+    return static_cast<ImageFormats>(std::to_underlying(a) | std::to_underlying(b));
+}
+struct ImageDecodeOptions {
+    std::uint16_t max_width = 320, max_height = 320;
+    std::uint32_t max_pixels = 32768, max_encoded_bytes = 131072;
+    ImageFormats formats = ImageFormats::any;
+};
+class ImageDecodeService;
+class DecodedImage;
 class AssetService {
     using Packet = wire::RequestPacket<267>;
 public:
     AssetService(Transport& transport, RequestTable& requests) noexcept
         : transport_(transport), requests_(requests) {}
+
+    // Consume a File/HttpExchange (or another readable resource) immediately.
+    // Core reads it on the Host: no encoded-data transfer through Guest memory.
+    // Source and decode request close together on completion/error/cancellation.
+    template <class Source>
+        requires requires(const Source &source) {
+            { source.readable() } -> std::same_as<ReadableResource>;
+        }
+    Task<Asset> decode_image(Source source, ImageDecodeOptions options = {}) {
+        const auto view = source.readable();
+        if (!valid_image_options(options))
+            return Task<Asset>::failed(Error::invalid_argument);
+        if (view.transport != &transport_ || !view.handle || (view.type != 2 && view.type != 3))
+            return Task<Asset>::failed(Error::bad_state);
+        return decode_image_impl(transport_, requests_, std::move(source), options);
+    }
+
+    // Optional frame support: include <pxa/image_frames.hpp> and require the
+    // Assets image-frames feature. No state is added to Context or AssetService.
+    ImageDecodeService images() noexcept;
 
     Task<Asset> load(AssetKind kind, std::string_view path) {
         if (!valid_path(path) || !valid_kind(kind))
@@ -84,11 +120,60 @@ public:
     }
 
 private:
+    friend class ImageDecodeService;
+    friend class DecodedImage;
+    static bool valid_image_options(ImageDecodeOptions options) noexcept {
+        return options.max_width && options.max_width <= 1024 && options.max_height &&
+            options.max_height <= 1024 && options.max_pixels && options.max_pixels <= 65536 &&
+            options.max_encoded_bytes && options.max_encoded_bytes <= 524288 &&
+            !(std::to_underlying(options.formats) & ~7u);
+    }
+    static Result<Asset> decode_image_result(Transport &transport,
+        std::span<const std::byte> body, ImageDecodeOptions options, std::size_t size = 36) {
+        // Own any recognizable handle before validating the rest of the reply.
+        auto pending = wire::result_resource<AssetTag>(transport, body);
+        if (body.size() != size || !pending)
+            return std::unexpected(Error::protocol_error);
+        auto descriptor = decode_descriptor(body.subspan(8, 20));
+        if (!descriptor || descriptor->kind != AssetKind::image)
+            return std::unexpected(Error::protocol_error);
+        descriptor->source_width = wire::get16(body.data() + 28);
+        descriptor->source_height = wire::get16(body.data() + 30);
+        descriptor->source_bytes = wire::get32(body.data() + 32);
+        if (!descriptor->source_width || !descriptor->source_height ||
+            !descriptor->width || !descriptor->height ||
+            descriptor->width > options.max_width || descriptor->height > options.max_height ||
+            std::uint32_t(descriptor->width) * descriptor->height > options.max_pixels ||
+            !descriptor->source_bytes || descriptor->source_bytes > options.max_encoded_bytes)
+            return std::unexpected(Error::protocol_error);
+        return Asset(transport, pending.release(), *descriptor);
+    }
+    template <class Source>
+    static Task<Asset> decode_image_impl(Transport &transport, RequestTable &requests, Source source,
+                                         ImageDecodeOptions options) {
+        const auto view = source.readable();
+        std::array<std::byte, 24> packet{};
+        wire::put64(packet.data(), view.handle);
+        wire::put16(packet.data() + 8, view.type);
+        wire::put16(packet.data() + 10, std::to_underlying(options.formats));
+        wire::put16(packet.data() + 12, options.max_width);
+        wire::put16(packet.data() + 14, options.max_height);
+        wire::put32(packet.data() + 16, options.max_pixels);
+        wire::put32(packet.data() + 20, options.max_encoded_bytes);
+        auto event = co_await Response(transport, requests, 21, 6, packet, true);
+        if (!event)
+            co_return std::unexpected(event.error());
+        auto body = wire::result_body(event->payload);
+        if (!body)
+            co_return std::unexpected(body.error());
+        co_return decode_image_result(transport, *body, options);
+    }
     static Packet path_packet(std::string_view path, std::size_t prefix) noexcept {
         Packet packet;
-        auto* payload = packet.bytes.data();
+        auto *payload = packet.bytes.data();
         wire::put16(payload, static_cast<std::uint16_t>(path.size()));
-        for (std::size_t i = 0; i < path.size(); ++i) payload[prefix + i] = std::byte(path[i]);
+        for (std::size_t i = 0; i < path.size(); ++i)
+            payload[prefix + i] = std::byte(path[i]);
         packet.size = prefix + path.size();
         return packet;
     }

@@ -5,6 +5,14 @@
 
 #include <string.h>
 
+typedef struct {
+    pxa_image_decoder_t *decoder;
+    pxa_handle64_t source;
+    uint32_t encoded_bytes;
+    uint16_t source_type;
+    uint8_t with_frames;
+} image_job_t;
+
 #define ASSETS_MAGIC UINT32_C(0x50584153)
 
 typedef struct {
@@ -15,6 +23,10 @@ typedef struct {
     union {
         uint8_t info[PXA_ASSETS_INFO_BYTES];
         struct { uint32_t offset, bytes, total; } read;
+        image_job_t *image;
+        /* Byte storage keeps the union's 32-bit alignment on ESP32. A u64
+         * member would pad every pending slot, even without image frames. */
+        uint8_t frame[8];
     } data;
     uint8_t operation;
 } pending_t;
@@ -22,10 +34,17 @@ typedef struct {
 typedef struct {
     pxa_assets_service_t *service;
     pxa_component_t component;
-    pxa_asset_ticket_t ticket;
+    union { pxa_asset_ticket_t ticket; image_job_t *image; } retained;
     pxa_raster_asset_t *asset;
     uint8_t kind;
 } resource_t;
+#define IMAGE_FRAMES_KIND (PXA_ASSET_IMAGE | 128u)
+
+static void destroy_image_job(image_job_t *job) {
+    if (!job) return;
+    pxa_image_decoder_destroy(job->decoder);
+    pxa_memory_release(job);
+}
 
 struct pxa_assets_service {
     uint32_t magic;
@@ -37,13 +56,18 @@ struct pxa_assets_service {
 };
 
 static int valid_config(const pxa_assets_config_t *c) {
+    if (!c || c->struct_size < sizeof(*c)) return 0;
+    int package_backend = c->backend.find && c->backend.request && c->backend.query &&
+        c->backend.acquire && c->backend.release && c->backend.prefetch && c->backend.inspect &&
+        c->backend.read && c->backend.read_result && c->backend.read_release;
+    int empty_backend = !c->backend.find && !c->backend.request && !c->backend.query &&
+        !c->backend.acquire && !c->backend.release && !c->backend.prefetch && !c->backend.inspect &&
+        !c->backend.read && !c->backend.read_result && !c->backend.read_release;
     return c && c->struct_size >= sizeof(*c) && c->max_pending &&
         c->max_pending_per_component && c->max_pending_per_component <= c->max_pending &&
         c->max_resources && c->max_resources_per_component &&
         c->max_resources_per_component <= c->max_resources &&
-        c->backend.find && c->backend.request && c->backend.query &&
-        c->backend.acquire && c->backend.release && c->backend.prefetch && c->backend.inspect &&
-        c->backend.read && c->backend.read_result && c->backend.read_release;
+        (package_backend || (empty_backend && c->image_allocator && c->image_temporary_allocator && c->image_backend));
 }
 
 size_t pxa_assets_service_workspace_size(const pxa_assets_config_t *c) {
@@ -77,6 +101,9 @@ pxa_status_t pxa_assets_service_init(void *workspace, size_t bytes,
 }
 
 static void release_pending(pxa_assets_service_t *s, pending_t *p) {
+    if (p->operation == PXA_ASSETS_DECODE_IMAGE && p->data.image) {
+        destroy_image_job(p->data.image);
+    }
     if (p->ticket) (p->operation == PXA_ASSETS_READ ? s->config.backend.read_release : s->config.backend.release)(
         s->config.backend.context, p->component, p->ticket);
     memset(p, 0, sizeof(*p));
@@ -87,7 +114,8 @@ static void close_resource(void *context) {
     if (!r || !r->component) return;
     /* The cache ticket still pins a cache reference during this release. */
     pxa_raster_asset_release(r->asset);
-    r->service->config.backend.release(r->service->config.backend.context, r->component, r->ticket);
+    if (r->kind == IMAGE_FRAMES_KIND) destroy_image_job(r->retained.image);
+    else if (r->retained.ticket) r->service->config.backend.release(r->service->config.backend.context, r->component, r->retained.ticket);
     memset(r, 0, sizeof(*r));
 }
 static const pxa_resource_ops_t resource_ops = {sizeof(pxa_resource_ops_t), NULL};
@@ -107,7 +135,7 @@ pxa_status_t pxa_assets_acquire_handle(pxa_runtime_t *runtime,
     if (native.operations != &resource_ops || native.close != close_resource)
         return PXA_STATUS_DENIED;
     r = native.context;
-    if (!r || r->component != component || r->kind != expected_kind || !r->asset)
+    if (!r || r->component != component || (r->kind & 127u) != expected_kind || !r->asset)
         return PXA_STATUS_INVALID_ARGUMENT;
     pxa_raster_asset_retain(r->asset);
     *output = r->asset;
@@ -125,8 +153,143 @@ static resource_t *find_resource_slot(pxa_assets_service_t *s, pxa_component_t c
     return count < s->config.max_resources_per_component ? empty : NULL;
 }
 
-void pxa_assets_service_poll(pxa_assets_service_t *s) {
-    if (!s || s->magic != ASSETS_MAGIC) return;
+static void encode_info(uint8_t output[PXA_ASSETS_INFO_BYTES], const pxa_asset_info_t *info);
+static pxa_status_t publish_image(pxa_assets_service_t *s, pxa_component_t component,
+                                  pxa_decoded_image_t *decoded, image_job_t *frames,
+                                  pxa_handle64_t *handle) {
+    resource_t *r = find_resource_slot(s, component);
+    if (!r) return PXA_STATUS_RESOURCE_LIMIT;
+    r->service = s; r->component = component; r->asset = decoded->image;
+    r->kind = frames ? IMAGE_FRAMES_KIND : PXA_ASSET_IMAGE;
+    if (frames) r->retained.image = frames;
+    else r->retained.ticket = 0;
+    pxa_resource_t native = {r, &resource_ops, close_resource};
+    pxa_status_t status = pxa_handle_open64(s->runtime, component, PXA_RESOURCE_ASSET, 0, &native, handle);
+    if (status) memset(r, 0, sizeof(*r));
+    else decoded->image = NULL;
+    return status;
+}
+static void encode_frame(uint8_t output[PXA_ASSETS_FRAME_RESULT_BYTES], pxa_handle64_t handle,
+                          const pxa_decoded_image_t *decoded, uint32_t bytes,
+                          const pxa_image_frame_info_t *frame) {
+    pxa_write_u64(output, handle);
+    encode_info(output + 8, &decoded->info);
+    pxa_write_u16(output + 28, decoded->source_width);
+    pxa_write_u16(output + 30, decoded->source_height);
+    pxa_write_u32(output + 32, bytes);
+    pxa_write_u32(output + 36, frame->delay_ms);
+    pxa_write_u32(output + 40, frame->iteration);
+    pxa_write_u32(output + 44, frame->last ? 1u : 0u);
+}
+static int poll_image(pxa_assets_service_t *s, pending_t *p) {
+    image_job_t *job = p->data.image;
+    pxa_status_t status = PXA_STATUS_OK;
+    int finished = 0;
+    /* Bounded stack scratch and work per poll; independent of image size.
+     * Resolve through Core on every read: a retained pointer could outlive a
+     * source close, revocation or generation change. The borrowed operations
+     * are the public byte-resource interface, not a backend-specific API. */
+    uint8_t input[1024];
+    for (unsigned slice = 0; slice < 4; ++slice) {
+        pxa_resource_t source = {0};
+        status = pxa_handle_get64(s->runtime, p->component, job->source, job->source_type, &source);
+        if (status) {
+            finished = 1;
+            break;
+        }
+        const pxa_resource_ops_t *ops = source.operations;
+        if (!ops || ops->struct_size < sizeof(*ops) || !ops->io) {
+            status = PXA_STATUS_UNSUPPORTED;
+            finished = 1;
+            break;
+        }
+        int32_t count = ops->io(source.context, PXA_IO_READ, input, sizeof(input));
+        if (count == PXA_STATUS_WOULD_BLOCK)
+            return 0;
+        if (count < 0) {
+            status = pxa_status_normalize(count);
+            finished = 1;
+            break;
+        }
+        if ((size_t)count > sizeof(input)) {
+            status = PXA_STATUS_PROTOCOL_ERROR;
+            finished = 1;
+            break;
+        }
+        if (!count) {
+            finished = 1;
+            break;
+        }
+        status = pxa_image_decoder_write(job->decoder, (pxa_bytes_t){input, (size_t)count});
+        if (status) {
+            finished = 1;
+            break;
+        }
+        job->encoded_bytes += (uint32_t)count;
+    }
+    if (!finished)
+        return 1;
+    pxa_decoded_image_t decoded = {0};
+    pxa_image_frame_info_t frame = {0};
+    if (!status)
+        status = job->with_frames ? pxa_image_decoder_next(job->decoder, &decoded, &frame) :
+                                   pxa_image_decoder_finish(job->decoder, &decoded);
+    if (!status && !decoded.image) status = PXA_STATUS_PROTOCOL_ERROR;
+    pxa_handle64_t handle = 0;
+    uint8_t result[PXA_ASSETS_FRAME_RESULT_BYTES] = {0};
+    const size_t result_bytes = job->with_frames ? sizeof(result) : PXA_ASSETS_IMAGE_RESULT_BYTES;
+    if (!status) {
+        status = publish_image(s, p->component, &decoded,
+                               job->with_frames && !frame.last ? job : NULL, &handle);
+        if (!status) {
+            encode_frame(result, handle, &decoded, job->encoded_bytes, &frame);
+            if (job->with_frames && !frame.last) p->data.image = NULL;
+        }
+    }
+    pxa_asset_object_release(decoded.image);
+    pxa_status_t complete =
+        pxa_request_complete(s->runtime, p->component, p->request_token, status,
+                             status ? NULL : result, status ? 0 : result_bytes);
+    if (complete && handle)
+        (void)pxa_handle_close64(s->runtime, p->component, handle);
+    release_pending(s, p);
+    return 1;
+}
+
+static int poll_frame(pxa_assets_service_t *s, pending_t *p) {
+    pxa_resource_t native = {0};
+    pxa_status_t status = pxa_handle_get64(s->runtime, p->component, pxa_read_u64(p->data.frame),
+                                          PXA_RESOURCE_ASSET, &native);
+    resource_t *source = native.context;
+    if (!status && (native.operations != &resource_ops || native.close != close_resource ||
+                    !source || source->kind != IMAGE_FRAMES_KIND)) status = PXA_STATUS_BAD_STATE;
+    pxa_decoded_image_t decoded = {0};
+    pxa_image_frame_info_t frame = {0};
+    pxa_handle64_t handle = 0;
+    uint8_t result[PXA_ASSETS_FRAME_RESULT_BYTES] = {0};
+    if (!status) {
+        image_job_t *job = source->retained.image;
+        status = pxa_image_decoder_next(job->decoder, &decoded, &frame);
+        if (!status && !decoded.image) status = PXA_STATUS_PROTOCOL_ERROR;
+        if (!status) status = publish_image(s, p->component, &decoded, frame.last ? NULL : job, &handle);
+        if (!status) encode_frame(result, handle, &decoded, job->encoded_bytes, &frame);
+        /* Moving decoder ownership never changes old published pixels. A
+         * failed/cancelled advance releases state and leaves the old still. */
+        if (status || frame.last) destroy_image_job(job);
+        source->retained.ticket = 0;
+        source->kind = PXA_ASSET_IMAGE;
+    }
+    pxa_asset_object_release(decoded.image);
+    pxa_status_t complete = pxa_request_complete(s->runtime, p->component, p->request_token,
+        status, status ? NULL : result, status ? 0 : sizeof(result));
+    if (complete && handle) (void)pxa_handle_close64(s->runtime, p->component, handle);
+    release_pending(s, p);
+    return 1;
+}
+
+int pxa_assets_service_poll(pxa_assets_service_t *s) {
+    if (!s || s->magic != ASSETS_MAGIC) return 0;
+    int progress = 0;
     for (unsigned i = 0; i < s->config.max_pending; ++i) {
         pending_t *p = &s->pending[i];
         pxa_asset_request_state_t state = {0};
@@ -137,6 +300,14 @@ void pxa_assets_service_poll(pxa_assets_service_t *s) {
         if (!p->component) continue;
         if (pxa_request_identity(s->runtime, p->component, p->request_token) != p->identity) {
             release_pending(s, p);
+            continue;
+        }
+        if (p->operation == PXA_ASSETS_DECODE_IMAGE) {
+            progress |= poll_image(s,p);
+            continue;
+        }
+        if (p->operation == PXA_ASSETS_NEXT_IMAGE_FRAME) {
+            progress |= poll_frame(s, p);
             continue;
         }
         if (p->operation == PXA_ASSETS_READ) {
@@ -154,6 +325,7 @@ void pxa_assets_service_poll(pxa_assets_service_t *s) {
             (void)pxa_request_complete(s->runtime,p->component,p->request_token,status,
                 status ? NULL : bytes.data,status ? 0 : bytes.size);
             release_pending(s,p);
+            progress = 1;
             continue;
         }
         status = pxa_status_normalize(s->config.backend.query(
@@ -177,7 +349,7 @@ void pxa_assets_service_poll(pxa_assets_service_t *s) {
                 if (status == PXA_STATUS_OK) {
                     r->service = s;
                     r->component = p->component;
-                    r->ticket = p->ticket;
+                    r->retained.ticket = p->ticket;
                     r->kind = p->data.info[0];
                     status = pxa_handle_open64(s->runtime, p->component, PXA_RESOURCE_ASSET, 0, &native, &handle);
                     if (status == PXA_STATUS_OK) p->ticket = 0; /* Handle owns the pin. */
@@ -198,7 +370,9 @@ void pxa_assets_service_poll(pxa_assets_service_t *s) {
         if (complete != PXA_STATUS_OK && handle)
             (void)pxa_handle_close64(s->runtime, p->component, handle);
         release_pending(s, p);
+        progress = 1;
     }
+    return progress;
 }
 
 static void encode_info(uint8_t output[PXA_ASSETS_INFO_BYTES], const pxa_asset_info_t *info) {
@@ -212,8 +386,118 @@ static void encode_info(uint8_t output[PXA_ASSETS_INFO_BYTES], const pxa_asset_i
     pxa_write_u32(output + 16, (uint32_t)pxa_asset_object_required_bytes(info));
 }
 
-static pxa_status_t control(void *context, pxa_runtime_t *runtime,
-    pxa_component_t component, const pxa_message_view_t *message) {
+static pxa_status_t image_control(pxa_assets_service_t *s, pxa_component_t component,
+                                  const pxa_message_view_t *message) {
+    const uint8_t *data = message->payload.data;
+    if (!message->request_token || !data || message->payload.size < 24)
+        return PXA_STATUS_INVALID_ARGUMENT;
+    const uint16_t flags = pxa_read_u16(data + 10);
+    const int frames = (flags & PXA_ASSETS_IMAGE_WITH_FRAMES) != 0;
+    if ((flags & ~(PXA_ASSETS_IMAGE_FORMATS_MASK | PXA_ASSETS_IMAGE_WITH_FRAMES)) ||
+        message->payload.size != (frames ? 32u : 24u))
+        return PXA_STATUS_INVALID_ARGUMENT;
+    if (!s->config.image_allocator || !s->config.image_temporary_allocator ||
+        !s->config.image_backend)
+        return PXA_STATUS_UNSUPPORTED;
+    uint16_t type = pxa_read_u16(data + 8);
+    if (type != PXA_RESOURCE_FILE && type != PXA_RESOURCE_STREAM)
+        return PXA_STATUS_INVALID_ARGUMENT;
+    pxa_handle64_t source = pxa_read_u64(data);
+    pxa_resource_t native = {0};
+    pxa_status_t status = pxa_handle_get64(s->runtime, component, source, type, &native);
+    if (status)
+        return status;
+    const pxa_resource_ops_t *ops = native.operations;
+    if (!ops || ops->struct_size < sizeof(*ops) || !ops->io)
+        return PXA_STATUS_UNSUPPORTED;
+    pxa_assets_service_poll(s);
+    pending_t *p = NULL;
+    unsigned count = 0;
+    for (unsigned i = 0; i < s->config.max_pending; ++i) {
+        pending_t *entry = &s->pending[i];
+        if (entry->component == component) {
+            ++count;
+            if (entry->operation == PXA_ASSETS_DECODE_IMAGE && entry->data.image->source == source)
+                return PXA_STATUS_BAD_STATE;
+        } else if (!entry->component && !p)
+            p = entry;
+    }
+    if (!p || count >= s->config.max_pending_per_component)
+        return PXA_STATUS_WOULD_BLOCK;
+    status = pxa_request_begin_reserved(s->runtime, component, message->request_token,
+                                        PXA_ASSETS_SERVICE_ID, message->opcode, 0,
+                                        frames ? PXA_ASSETS_FRAME_RESULT_BYTES : PXA_ASSETS_IMAGE_RESULT_BYTES);
+    if (status)
+        return status;
+    image_job_t *job = pxa_memory_allocate(s->config.image_temporary_allocator, sizeof(*job));
+    if (!job)
+        status = PXA_STATUS_RESOURCE_LIMIT;
+    else {
+        memset(job, 0, sizeof(*job));
+        job->source = source;
+        job->source_type = type;
+        job->with_frames = (uint8_t)frames;
+        pxa_image_decode_options_t options = {
+            .max_width = pxa_read_u16(data + 12), .max_height = pxa_read_u16(data + 14),
+            .max_pixels = pxa_read_u32(data + 16), .max_encoded_bytes = pxa_read_u32(data + 20),
+            .max_animation_pixels = frames ? pxa_read_u32(data + 24) : 0,
+            .max_animation_encoded_bytes = frames ? pxa_read_u32(data + 28) : 0,
+            .formats = (uint8_t)(flags & PXA_ASSETS_IMAGE_FORMATS_MASK)};
+        status = pxa_image_decoder_create(&options, s->config.image_allocator,
+                                          s->config.image_temporary_allocator,
+                                          s->config.image_backend, &job->decoder);
+        if (!status) {
+            p->component = component;
+            p->request_token = message->request_token;
+            p->identity = pxa_request_identity(s->runtime, component, message->request_token);
+            p->operation = PXA_ASSETS_DECODE_IMAGE;
+            p->data.image = job;
+            return PXA_STATUS_OK;
+        }
+        pxa_memory_release(job);
+    }
+    return pxa_request_complete(s->runtime, component, message->request_token, status, NULL, 0);
+}
+
+static pxa_status_t frame_control(pxa_assets_service_t *s, pxa_component_t component,
+                                  const pxa_message_view_t *message) {
+    if (!message->request_token || !message->payload.data || message->payload.size != 8)
+        return PXA_STATUS_INVALID_ARGUMENT;
+    const pxa_handle64_t handle = pxa_read_u64(message->payload.data);
+    pxa_resource_t native = {0};
+    pxa_status_t status = pxa_handle_get64(s->runtime, component, handle,
+                                          PXA_RESOURCE_ASSET, &native);
+    if (status) return status;
+    resource_t *resource = native.context;
+    if (native.operations != &resource_ops || native.close != close_resource ||
+        !resource || resource->kind != IMAGE_FRAMES_KIND)
+        return PXA_STATUS_BAD_STATE;
+    pending_t *available = NULL;
+    unsigned count = 0;
+    for (unsigned i = 0; i < s->config.max_pending; ++i) {
+        pending_t *p = &s->pending[i];
+        if (p->component == component) {
+            ++count;
+            if (p->operation == PXA_ASSETS_NEXT_IMAGE_FRAME && pxa_read_u64(p->data.frame) == handle)
+                return PXA_STATUS_BAD_STATE;
+        } else if (!p->component && !available) available = p;
+    }
+    if (!available || count >= s->config.max_pending_per_component)
+        return PXA_STATUS_WOULD_BLOCK;
+    if (!find_resource_slot(s, component)) return PXA_STATUS_RESOURCE_LIMIT;
+    status = pxa_request_begin_reserved(s->runtime, component, message->request_token,
+        PXA_ASSETS_SERVICE_ID, message->opcode, 0, PXA_ASSETS_FRAME_RESULT_BYTES);
+    if (status) return status;
+    available->component = component;
+    available->request_token = message->request_token;
+    available->identity = pxa_request_identity(s->runtime, component, message->request_token);
+    available->operation = PXA_ASSETS_NEXT_IMAGE_FRAME;
+    pxa_write_u64(available->data.frame, handle);
+    return PXA_STATUS_OK;
+}
+
+static pxa_status_t control(void *context, pxa_runtime_t *runtime, pxa_component_t component,
+                            const pxa_message_view_t *message) {
     pxa_assets_service_t *s = context;
     pxa_asset_info_t info;
     pxa_bytes_t path;
@@ -226,6 +510,11 @@ static pxa_status_t control(void *context, pxa_runtime_t *runtime,
         return PXA_STATUS_INVALID_ARGUMENT;
     if (pxa_component_wire_profile(runtime, component, &major) != PXA_STATUS_OK || major != 1)
         return PXA_STATUS_UNSUPPORTED;
+    if(message->opcode==PXA_ASSETS_DECODE_IMAGE)
+        return image_control(s,component,message);
+    if(message->opcode==PXA_ASSETS_NEXT_IMAGE_FRAME)
+        return frame_control(s,component,message);
+    if(!s->config.backend.find) return PXA_STATUS_UNSUPPORTED;
     if (message->opcode != PXA_ASSETS_QUERY && message->opcode != PXA_ASSETS_LOAD &&
         message->opcode != PXA_ASSETS_PREFETCH && message->opcode != PXA_ASSETS_STATUS &&
         message->opcode != PXA_ASSETS_READ)
@@ -323,6 +612,8 @@ pxa_status_t pxa_assets_service_register(pxa_assets_service_t *s) {
     ops.service_id = PXA_ASSETS_SERVICE_ID;
     ops.major = PXA_ASSETS_SERVICE_MAJOR;
     ops.minor = PXA_ASSETS_SERVICE_MINOR;
+    if (s->config.image_allocator && s->config.image_temporary_allocator && s->config.image_backend)
+        ops.features |= PXA_ASSETS_FEATURE_IMAGE_DECODE | PXA_ASSETS_FEATURE_IMAGE_FRAMES;
     ops.context = s;
     ops.control = control;
     ops.component_stopped = component_stopped;

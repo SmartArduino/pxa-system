@@ -20,6 +20,7 @@ function(pxa_collect_sources output root)
         src/services/sensor/sensor_service.c
         src/services/device/device_service.c
         src/services/scheduler/scheduler_service.c
+        src/services/net/http_stream.c
         src/services/net/net_service.c
         src/services/net/net_request.c
         src/services/net/net_response.c
@@ -40,6 +41,7 @@ function(pxa_collect_sources output root)
         src/services/assets/asset_cache.c
         src/services/assets/resource_budget.c
         src/services/assets/assets_service.c
+        src/services/assets/image/image_decode.c
         src/services/surface/surface_service.c
         src/ui/ui_service.c
         src/ui/ui_memory.c

@@ -443,6 +443,16 @@ static void test_empty_text(pxa_runtime_t *runtime, pxa_component_t component,
     long_text[0] = 0xe4; long_text[1] = 0xb8;
     assert(pxa_ui_queue_event(service, component, 1, 5, PXA_UI_EVENT_TEXT,
         PXA_UI_EVENT_FLAG_RELIABLE, 124, long_text, 2) == PXA_STATUS_INVALID_ARGUMENT);
+    uint8_t masked = 1;
+    assert(pxa_ui_validate_property(PXA_UI_FEATURE_PASSWORD_INPUT, PXA_UI_PROPERTY_TEXT_PASSWORD,
+        PXA_UI_NODE_CONTROL, PXA_UI_CONTROL_TEXT_INPUT, (pxa_bytes_t){&masked,1}) == PXA_STATUS_OK);
+    assert(pxa_ui_validate_property(0, PXA_UI_PROPERTY_TEXT_PASSWORD,
+        PXA_UI_NODE_CONTROL, PXA_UI_CONTROL_TEXT_INPUT, (pxa_bytes_t){&masked,1}) == PXA_STATUS_UNSUPPORTED);
+    assert(pxa_ui_validate_property(PXA_UI_FEATURE_PASSWORD_INPUT, PXA_UI_PROPERTY_TEXT_PASSWORD,
+        PXA_UI_NODE_CONTROL, PXA_UI_CONTROL_BUTTON, (pxa_bytes_t){&masked,1}) == PXA_STATUS_INVALID_ARGUMENT);
+    masked = 2;
+    assert(pxa_ui_validate_property(PXA_UI_FEATURE_PASSWORD_INPUT, PXA_UI_PROPERTY_TEXT_PASSWORD,
+        PXA_UI_NODE_CONTROL, PXA_UI_CONTROL_TEXT_INPUT, (pxa_bytes_t){&masked,1}) == PXA_STATUS_INVALID_ARGUMENT);
     uint8_t limit[4];
     pxa_write_u32(limit, 1024);
     assert(pxa_ui_validate_property(PXA_UI_FEATURE_DYNAMIC_TEXT,

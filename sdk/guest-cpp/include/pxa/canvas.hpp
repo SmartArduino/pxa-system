@@ -1,12 +1,15 @@
 #pragma once
 
 #include "core.hpp"
+#include "assets.hpp"
 #include <array>
 #include <algorithm>
 #include <optional>
 #include <string_view>
 
 namespace pxa::ui {
+
+enum class ImageFit : std::uint8_t { contain, stretch, cover };
 
 struct CanvasRegion {
     std::int32_t x, y, width, height;
@@ -42,6 +45,25 @@ public:
         if (!out.empty()) {
             coordinates(out.data(), x1, y1, static_cast<std::uint32_t>(x2),
                                              static_cast<std::uint32_t>(y2));
+            wire::put32(out.data() + 16, rgba);
+            wire::put16(out.data() + 20, width);
+        }
+        return *this;
+    }
+    // Degrees clockwise from the right; angles follow the Host Canvas ABI.
+    CanvasCommands& arc(std::int32_t center_x, std::int32_t center_y,
+                        std::uint32_t radius, std::uint16_t start_angle,
+                        std::uint16_t end_angle, std::uint32_t rgba,
+                        std::uint16_t width = 1) noexcept {
+        if (!radius || radius > UINT16_MAX || !width)
+            return fail(Error::invalid_argument);
+        auto out = record(4, 22);
+        if (!out.empty()) {
+            wire::put32(out.data(), static_cast<std::uint32_t>(center_x));
+            wire::put32(out.data() + 4, static_cast<std::uint32_t>(center_y));
+            wire::put32(out.data() + 8, radius);
+            wire::put16(out.data() + 12, start_angle);
+            wire::put16(out.data() + 14, end_angle);
             wire::put32(out.data() + 16, rgba);
             wire::put16(out.data() + 20, width);
         }
@@ -87,6 +109,24 @@ public:
             ++clip_depth_;
         }
         return *this;
+    }
+    // Retained immutable IMAGE handle. No pixel data is copied into commands.
+    CanvasCommands& image(CanvasRegion box, std::uint64_t handle,
+                          ImageFit fit = ImageFit::contain, std::uint8_t opacity = 255) noexcept {
+        if (!handle || box.width <= 0 || box.height <= 0 || std::uint8_t(fit) > 2)
+            return fail(Error::invalid_argument);
+        auto out = record(11, 26);
+        if (!out.empty()) {
+            coordinates(out.data(), box.x, box.y, box.width, box.height);
+            out[16] = std::byte(opacity); out[17] = std::byte(fit);
+            wire::put64(out.data()+18, handle);
+        }
+        return *this;
+    }
+    CanvasCommands& image(CanvasRegion box, const Asset& asset,
+                          ImageFit fit = ImageFit::contain, std::uint8_t opacity = 255) noexcept {
+        if (asset.descriptor().kind != AssetKind::image) return fail(Error::invalid_argument);
+        return image(box, asset.handle(), fit, opacity);
     }
     CanvasCommands& pop_clip() noexcept {
         if (!clip_depth_) return fail(Error::bad_state);

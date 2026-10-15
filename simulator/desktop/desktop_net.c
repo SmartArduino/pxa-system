@@ -8,10 +8,12 @@
 #include "desktop_net.h"
 
 #include <errno.h>
+#include <limits.h>
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <time.h>
 
 #include <curl/curl.h>
@@ -29,6 +31,8 @@ typedef struct desktop_net_slot desktop_net_slot_t;
 typedef struct {
     pthread_mutex_t lock;
     uint64_t next_operation;
+    unsigned workers;
+    unsigned wake_pending; /* Occupies existing alignment padding on 64-bit. */
     pxsys_desktop_net_notify_fn notify;
     void *notify_context;
     desktop_net_slot_t *slots[DESKTOP_NET_MAX_PENDING];
@@ -64,7 +68,7 @@ struct desktop_net_slot {
     size_t header_storage_size;
     size_t response_header_count;
     uint8_t header_overflow;
-    uint8_t response_too_large;
+    pxa_status_t response_error;
 };
 
 static desktop_net_t *g_desktop_net;
@@ -79,6 +83,24 @@ static uint64_t desktop_net_now_ms(void) {
     if (clock_gettime(CLOCK_MONOTONIC, &now) != 0) return 0;
     return (uint64_t)now.tv_sec * UINT64_C(1000) +
            (uint64_t)now.tv_nsec / UINT64_C(1000000);
+}
+
+static void desktop_net_signal_locked(desktop_net_t *net);
+static void desktop_net_notify(desktop_net_t *net) {
+    pxsys_desktop_net_notify_fn notify;
+    void *context;
+    pthread_mutex_lock(&net->lock);
+    notify=net->notify;context=net->notify_context;
+    pthread_mutex_unlock(&net->lock);
+    if(notify) notify(context);
+    pthread_mutex_lock(&net->lock);
+    desktop_net_signal_locked(net);
+    pthread_mutex_unlock(&net->lock);
+}
+static void desktop_net_worker_done(desktop_net_t *net) {
+    pthread_mutex_lock(&net->lock);
+    --net->workers;
+    pthread_mutex_unlock(&net->lock);
 }
 
 static int desktop_net_name_matches(const desktop_net_slot_t *slot,
@@ -100,12 +122,12 @@ static size_t desktop_net_write_cb(char *data, size_t size, size_t count,
     if (slot == NULL || bytes == 0) return 0;
     if (slot->body_size > slot->max_response_bytes ||
         bytes > slot->max_response_bytes - slot->body_size) {
-        slot->response_too_large = 1;
+        slot->response_error = PXA_STATUS_LIMIT_EXCEEDED;
         return 0;
     }
     replacement = realloc(slot->body, slot->body_size + bytes);
     if (replacement == NULL) {
-        slot->response_too_large = 1;
+        slot->response_error = PXA_STATUS_RESOURCE_LIMIT;
         return 0;
     }
     memcpy(replacement + slot->body_size, data, bytes);
@@ -212,7 +234,7 @@ static void desktop_net_reset_slot(desktop_net_slot_t *slot) {
     slot->response_header_count = 0;
     slot->header_storage_size = 0;
     slot->header_overflow = 0;
-    slot->response_too_large = 0;
+    slot->response_error = PXA_STATUS_OK;
     slot->status_code = 0;
     slot->content_type[0] = '\0';
     slot->wanted_count = 0;
@@ -285,8 +307,8 @@ static void *desktop_net_worker(void *argument) {
     code = curl_easy_perform(curl);
     if (slot->cancelled) {
         result = PXA_STATUS_CANCELLED;
-    } else if (slot->response_too_large) {
-        result = PXA_STATUS_RESOURCE_LIMIT;
+    } else if (slot->response_error != PXA_STATUS_OK) {
+        result = slot->response_error;
     } else if (code != CURLE_OK) {
         result = code == CURLE_OPERATION_TIMEDOUT ? PXA_STATUS_TIMED_OUT
                                                   : PXA_STATUS_UNAVAILABLE;
@@ -308,14 +330,16 @@ done:
         /* The owner dropped the request while it was in flight. */
         desktop_net_reset_slot(slot);
         pthread_mutex_unlock(&net->lock);
-        if (net->notify != NULL) net->notify(net->notify_context);
+        desktop_net_notify(net);
+        desktop_net_worker_done(net);
         return NULL;
     }
     slot->result = result;
     slot->status_code = (uint16_t)status_code;
     slot->complete = 1;
     pthread_mutex_unlock(&net->lock);
-    if (net->notify != NULL) net->notify(net->notify_context);
+    desktop_net_notify(net);
+    desktop_net_worker_done(net);
     return NULL;
 }
 
@@ -331,6 +355,8 @@ static desktop_net_slot_t *desktop_net_find(desktop_net_t *net,
     return NULL;
 }
 
+#include "desktop_http.inc"
+
 static pxa_status_t desktop_net_start(void *context,
                                       const pxa_net_request_t *request,
                                       uint64_t *operation) {
@@ -344,7 +370,7 @@ static pxa_status_t desktop_net_start(void *context,
         request->url.size >= DESKTOP_NET_MAX_URL_BYTES ||
         request->method < PXA_NET_METHOD_GET ||
         request->method > PXA_NET_METHOD_DELETE || request->max_response_bytes == 0 ||
-        request->max_response_bytes > DESKTOP_NET_MAX_RESPONSE_BYTES ||
+        (request->abi_minor < 2 && request->max_response_bytes > DESKTOP_NET_MAX_RESPONSE_BYTES) ||
         request->timeout_ms < 100 || request->timeout_ms > 60000 ||
         request->header_count > PXA_NET_MAX_HEADERS ||
         request->wanted_response_header_count > PXA_NET_MAX_HEADERS ||
@@ -419,12 +445,44 @@ static pxa_status_t desktop_net_start(void *context,
         slot->wanted_names[slot->wanted_count][copy] = '\0';
         ++slot->wanted_count;
     }
+    if (request->abi_minor >= 2) {
+        desktop_http_t *h;
+        size_t bytes = pxa_http_stream_storage_size(request->buffer_bytes,
+                                                    request->response_header_bytes);
+        if (!bytes || request->upload_bytes > INT32_MAX ||
+            request->body.size > request->buffer_bytes / 2u) {
+            desktop_net_reset_slot(slot);
+            pthread_mutex_unlock(&net->lock);
+            return PXA_STATUS_INVALID_ARGUMENT;
+        }
+        h = calloc(1, sizeof(*h) + bytes);
+        if (!h || pthread_cond_init(&h->changed, NULL)) {
+            free(h); desktop_net_reset_slot(slot);
+            pthread_mutex_unlock(&net->lock);
+            return PXA_STATUS_RESOURCE_LIMIT;
+        }
+        slot->body = (uint8_t *)h;
+        slot->streaming = 2;
+        pxa_http_stream_init(&h->stream, h + 1, request->buffer_bytes,
+            request->response_header_bytes, request->max_body_bytes,
+            request->upload_bytes, request->method);
+        if (request->body.size) {
+            (void)pxa_http_stream_io(&h->stream, PXA_IO_WRITE,
+                (uint8_t *)slot->request_body, request->body.size);
+            (void)pxa_http_stream_io(&h->stream, PXA_HTTP_IO_FINISH_UPLOAD, NULL, 0);
+        }
+        free(slot->request_body); slot->request_body = NULL;
+        slot->request_body_size = 0;
+    }
     slot->operation = ++net->next_operation;
     if (slot->operation == 0) slot->operation = ++net->next_operation;
     *operation = slot->operation;
+    ++net->workers;
     pthread_mutex_unlock(&net->lock);
-    if (pthread_create(&thread, NULL, desktop_net_worker, slot) != 0) {
+    if (pthread_create(&thread, NULL, slot->streaming == 2 ? desktop_http_worker : desktop_net_worker, slot) != 0) {
         pthread_mutex_lock(&net->lock);
+        --net->workers;
+        if (slot->streaming == 2) pthread_cond_destroy(&desktop_http(slot)->changed);
         desktop_net_reset_slot(slot);
         pthread_mutex_unlock(&net->lock);
         return PXA_STATUS_RESOURCE_LIMIT;
@@ -520,6 +578,45 @@ static void desktop_net_close_body(void *context, void *body_stream) {
     pthread_mutex_unlock(&net->lock);
 }
 
+static pxa_status_t desktop_http_open(void *context, const pxa_net_request_t *request,
+                                       void **exchange) {
+    desktop_net_t *net = context;
+    uint64_t operation = 0;
+    pxa_status_t status = desktop_net_start(context, request, &operation);
+    *exchange = NULL;
+    if (status != PXA_STATUS_OK) return status;
+    pthread_mutex_lock(&net->lock);
+    *exchange = desktop_net_find(net, operation);
+    pthread_mutex_unlock(&net->lock);
+    return *exchange ? PXA_STATUS_OK : PXA_STATUS_INTERNAL;
+}
+static int32_t desktop_http_io(void *context, void *exchange, uint32_t operation,
+                                uint8_t *data, size_t size) {
+    desktop_net_t *net = context;
+    desktop_net_slot_t *slot = exchange;
+    int32_t result;
+    pthread_mutex_lock(&net->lock);
+    result = pxa_http_stream_io(&desktop_http(slot)->stream, operation, data, size);
+    pthread_cond_broadcast(&desktop_http(slot)->changed);
+    if (desktop_http(slot)->multi) curl_multi_wakeup(desktop_http(slot)->multi);
+    pthread_mutex_unlock(&net->lock);
+    return result;
+}
+static void desktop_http_close(void *context, void *exchange) {
+    desktop_net_t *net = context;
+    desktop_net_slot_t *slot = exchange;
+    pthread_mutex_lock(&net->lock);
+    __atomic_fetch_or(&desktop_http(slot)->stream.state, PXA_HTTP_STREAM_CLOSED, __ATOMIC_RELEASE);
+    if (slot->complete) {
+        pthread_cond_destroy(&desktop_http(slot)->changed);
+        desktop_net_reset_slot(slot);
+    } else {
+        pthread_cond_broadcast(&desktop_http(slot)->changed);
+        if (desktop_http(slot)->multi) curl_multi_wakeup(desktop_http(slot)->multi);
+    }
+    pthread_mutex_unlock(&net->lock);
+}
+
 int pxsys_desktop_net_backend(pxa_net_backend_t *output,
                               pxsys_desktop_net_notify_fn notify,
                               void *notify_context) {
@@ -528,6 +625,8 @@ int pxsys_desktop_net_backend(pxa_net_backend_t *output,
     pthread_once(&g_curl_once, desktop_net_curl_init);
     if (pthread_mutex_init(&net.lock, NULL) != 0) return 0;
     net.next_operation = 0;
+    net.workers = 0;
+    net.wake_pending = 0;
     net.notify = notify;
     net.notify_context = notify_context;
     memset(net.slots, 0, sizeof(net.slots));
@@ -540,5 +639,44 @@ int pxsys_desktop_net_backend(pxa_net_backend_t *output,
     output->cancel = desktop_net_cancel;
     output->read_body = desktop_net_read_body;
     output->close_body = desktop_net_close_body;
+    output->open_exchange = desktop_http_open;
+    output->exchange_io = desktop_http_io;
+    output->close_exchange = desktop_http_close;
     return 1;
+}
+
+void pxsys_desktop_net_shutdown(pxa_net_backend_t *backend) {
+    desktop_net_t *net;
+    if (!backend || !(net=backend->context)) return;
+    pthread_mutex_lock(&net->lock);
+    net->notify=NULL;
+    net->notify_context=NULL;
+    for (unsigned i=0;i<DESKTOP_NET_MAX_PENDING;++i) {
+        desktop_net_slot_t *slot=net->slots[i];
+        if (!slot || !slot->in_use) continue;
+        if (slot->streaming==2) {
+            __atomic_fetch_or(&desktop_http(slot)->stream.state,PXA_HTTP_STREAM_CLOSED,__ATOMIC_RELEASE);
+            if (slot->complete) {
+                pthread_cond_destroy(&desktop_http(slot)->changed);
+                desktop_net_reset_slot(slot);
+            } else {
+                pthread_cond_broadcast(&desktop_http(slot)->changed);
+                if (desktop_http(slot)->multi) curl_multi_wakeup(desktop_http(slot)->multi);
+            }
+        } else if (slot->complete) desktop_net_reset_slot(slot);
+        else slot->cancelled=1;
+    }
+    pthread_mutex_unlock(&net->lock);
+    for (;;) {
+        unsigned workers;
+        pthread_mutex_lock(&net->lock);workers=net->workers;pthread_mutex_unlock(&net->lock);
+        if(!workers) break;
+        struct timespec delay={0,1000000};nanosleep(&delay,NULL);
+    }
+    for(unsigned i=0;i<DESKTOP_NET_MAX_PENDING;++i) {
+        if(net->slots[i]) desktop_net_reset_slot(net->slots[i]);
+        free(net->slots[i]);net->slots[i]=NULL;
+    }
+    pthread_mutex_destroy(&net->lock);
+    backend->context=NULL;
 }

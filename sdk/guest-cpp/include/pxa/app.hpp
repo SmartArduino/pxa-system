@@ -16,6 +16,7 @@
 #include "device.hpp"
 #include "sensor.hpp"
 #include "net.hpp"
+#include "http.hpp"
 #include "ipc.hpp"
 #include "work.hpp"
 #include "surface.hpp"
@@ -52,6 +53,7 @@ public:
     DeviceService device() noexcept { return {transport_, requests_}; }
     SensorService sensors() noexcept { return {transport_, requests_}; }
     NetService net() noexcept { return {transport_, requests_}; }
+    HttpClient http() noexcept { return {transport_, requests_}; }
     IpcService ipc() noexcept { return {transport_, requests_}; }
     WorkService work() noexcept { return {transport_, requests_}; }
     SurfaceService surface() noexcept { return {transport_, requests_}; }

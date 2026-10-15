@@ -433,11 +433,15 @@ static inline int pxa_ui_write_stream(pxa_ui_transaction_t* transaction,
         if (!pxa_finish_message_in_place(
                 packet, transaction->scratch_capacity, PXA_UI_SERVICE,
                 PXA_UI_TX_WRITE, 0,
-                PXA_HEADER_BYTES + 4u + chunk, &packet_size) ||
-            pxa_control_packet(packet, packet_size) != 0) {
+                PXA_HEADER_BYTES + 4u + chunk, &packet_size)) {
             transaction->failed = 1;
             return 0;
         }
+        int32_t status = pxa_control_packet(packet, packet_size);
+#ifdef PXA_UI_COMMAND_FAILED
+        if (status != 0) PXA_UI_COMMAND_FAILED(PXA_UI_TX_WRITE, status);
+#endif
+        if (status != 0) { transaction->failed = 1; return 0; }
         offset += chunk;
     }
     return 1;
@@ -464,11 +468,15 @@ static inline int pxa_ui_write_record(
             &stream, transaction->scratch,
             transaction->scratch_capacity, &packet_size);
         if (next == 0) return 1;
-        if (next < 0 ||
-            pxa_control_packet(transaction->scratch, packet_size) != 0) {
+        if (next < 0) {
             transaction->failed = 1;
             return 0;
         }
+        int32_t status = pxa_control_packet(transaction->scratch, packet_size);
+#ifdef PXA_UI_COMMAND_FAILED
+        if (status != 0) PXA_UI_COMMAND_FAILED(PXA_UI_TX_WRITE, status);
+#endif
+        if (status != 0) { transaction->failed = 1; return 0; }
     }
 }
 

@@ -16,5 +16,16 @@ int main(void) {
     assert(memcmp(slot.response_headers[0].name.data,"content-range",13)==0);
     assert(memcmp(slot.response_headers[1].name.data,"etag",4)==0);
     assert(strcmp(slot.content_type,"text/plain; charset=utf-8")==0);
+    slot.max_response_bytes = 2;
+    char body[] = "abc";
+    assert(desktop_net_write_cb(body, 1, 3, &slot) == 0);
+    assert(slot.response_error == PXA_STATUS_LIMIT_EXCEEDED);
+    assert(slot.body == NULL && slot.body_size == 0);
+    slot.response_error = PXA_STATUS_OK;
+    assert(desktop_net_write_cb(body, 1, 2, &slot) == 2);
+    assert(slot.body_size == 2 && memcmp(slot.body, "ab", 2) == 0);
+    assert(desktop_net_write_cb(body, 1, 1, &slot) == 0);
+    assert(slot.response_error == PXA_STATUS_LIMIT_EXCEEDED);
+    free(slot.body);
     puts("Desktop HTTP: mixed-case response names normalize to PXA wire names OK");
 }

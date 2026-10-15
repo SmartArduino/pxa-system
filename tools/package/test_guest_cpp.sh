@@ -16,6 +16,7 @@ flags=(-std=c++2c -O2 -fno-exceptions -fno-rtti
 "$work_dir/libcpp_diagnostics"
 "$cxx" "${flags[@]}" -c "$cpp_sdk_dir/src/runtime.cpp" -o "$work_dir/runtime.o"
 "$cxx" "${flags[@]}" -c "$cpp_sdk_dir/src/net.cpp" -o "$work_dir/net.o"
+"$cxx" "${flags[@]}" -c "$cpp_sdk_dir/src/http.cpp" -o "$work_dir/http.o"
 "$cxx" "${flags[@]}" -c "$cpp_sdk_dir/src/ipc.cpp" -o "$work_dir/ipc.o"
 "$cxx" "${flags[@]}" -c "$cpp_sdk_dir/src/work.cpp" -o "$work_dir/work.o"
 "$cxx" "${flags[@]}" -c "$cpp_sdk_dir/src/game.cpp" -o "$work_dir/game.o"
@@ -42,7 +43,7 @@ python3 "$pxa_system_dir/tools/i18n/compile_catalog.py" \
   --language cpp --output "$work_dir/pxa_app_messages.hpp"
 python3 "$pxa_system_dir/tools/i18n/test_compile_catalog.py"
 
-for test_name in ime features binary io codec service_lifetime encoding_alias lifecycle_state ui_geometry events startup locale i18n i18n_app core_app ui_wire ui_page ui_input ui_display canvas ui_controls text_input_box ui_widgets ui_declarative ui_lifecycle ui_environment ui_theme ui_canvas game_painter game_painter_replay game_arcade counter_app navigation list task assets storage storage_value storage_ownership fs permission permission_ownership audio device sensor clock net ipc ipc_contract work surface game game_pacing game_host game_service game_loop game_utils; do
+for test_name in ime features binary io codec service_lifetime encoding_alias lifecycle_state ui_geometry events startup locale i18n i18n_app core_app ui_wire ui_page ui_input ui_volume_keys ui_display canvas ui_controls text_input_box ui_widgets ui_declarative ui_lifecycle ui_environment ui_theme ui_canvas game_painter game_painter_replay game_arcade counter_app navigation list task assets image_decode image_frames storage storage_value storage_ownership fs permission permission_ownership audio device sensor clock net http ipc ipc_contract work surface game game_pacing game_host game_service game_loop game_utils; do
   extra_includes=(-I"$work_dir")
   extra_objects=()
   if [[ "$test_name" == game_host || "$test_name" == game_painter_replay || "$test_name" == game_arcade ]]; then
@@ -54,7 +55,7 @@ for test_name in ime features binary io codec service_lifetime encoding_alias li
   "$cxx" "${flags[@]}" \
     "${extra_includes[@]}" \
     "$cpp_sdk_dir/tests/${test_name}_test.cpp" \
-    "$work_dir/runtime.o" "$work_dir/net.o" "$work_dir/ipc.o" "$work_dir/work.o" "$work_dir/game.o" "$work_dir/surface.o" \
+    "$work_dir/runtime.o" "$work_dir/net.o" "$work_dir/http.o" "$work_dir/ipc.o" "$work_dir/work.o" "$work_dir/game.o" "$work_dir/surface.o" \
     "${extra_objects[@]}" \
     -o "$work_dir/bin/$test_name"
   "$work_dir/bin/$test_name"
@@ -62,7 +63,7 @@ done
 
 "$cxx" "${flags[@]}" -I"$work_dir" -DPXA_I18N_DYNAMIC_TEXT=1 \
   "$cpp_sdk_dir/tests/i18n_app_test.cpp" \
-  "$work_dir/runtime.o" "$work_dir/net.o" "$work_dir/ipc.o" "$work_dir/work.o" "$work_dir/game.o" "$work_dir/surface.o" \
+  "$work_dir/runtime.o" "$work_dir/net.o" "$work_dir/http.o" "$work_dir/ipc.o" "$work_dir/work.o" "$work_dir/game.o" "$work_dir/surface.o" \
   -o "$work_dir/i18n_dynamic_app"
 "$work_dir/i18n_dynamic_app"
 

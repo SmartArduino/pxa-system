@@ -67,6 +67,14 @@ PXA_APPLICATION(Counter)
 `on_event`、`on_foreground`、`on_background`、`on_stop`。`on_stop` 中不能
 调用 Host 导入；`Transport` 会拒绝该调用。UI 视图在启动时挂载；
 `State<int>` 变化后，框架在当前事件结束前合并并提交一次 PATCH。
+
+需要接管实体音量键的阅读器或游戏可以按需包含 `<pxa/ui_volume_keys.hpp>`，
+将顶层视图包装为 `ui::CaptureVolumeKeys(view, enabled, callback)`。
+`enabled` 是 `ui::State<bool>`，默认建议关闭；回调接收 `ui::VolumeKeyEvent`，
+其 `key` 为 `up`、`down`、`up_released` 或 `down_released`。
+输入文本及进入后台时将状态设为 `false`，把音量调节交还系统，同时清除应用的长按状态。
+组件只增加一个绑定和一个回调，复用 UI 的根节点及现有按键 ABI，没有动态分配，
+未使用此模块的应用没有默认存储开销。页面代次及事件内容由 SDK 校验。
 控件节点 ID 和 UI 事务由 SDK 管理。
 
 内置视图在编译期推导绑定、回调和动态模块容量，布局汇总子视图预算；
@@ -91,6 +99,16 @@ PXA_APPLICATION(Counter)
 处理 UI 环境变更事件（service 3、opcode 0x8002）。环境几何使用 Surface/Window 坐标；
 Canvas 指针坐标使用 dp，叠加自绘 Surface 的游戏须用
 `ui::canvas_to_surface_coordinate(value, metrics)` 转换后再命中控件。
+Canvas 绘图命令的坐标同样使用逻辑像素；`text_sized` 的字号单独使用 Surface 像素。
+按屏幕像素和安全区计算布局时，可按需包含 `<pxa/canvas_geometry.hpp>`，用
+`surface_to_canvas_region(rect, metrics)` 转换绘图及裁剪矩形，用
+`surface_to_canvas_coordinate(value, metrics)` 转换端点，用
+`surface_to_canvas_length(value, metrics)` 转换线宽和半径。矩形按边缘向外取整，
+正长度向上取整，避免分数 DPI 下少画一列像素或把细线缩成零像素；
+这些函数没有状态、缓存或动态分配。
+Canvas 自行排版交互控件时，可用 `interactive_rectangle(metrics, window.system_bar_insets)`
+同时避开屏幕安全区和系统输入手势条。`window` 来自 `WindowService::snapshot()` 或
+`on_window_changed`，系统栏 inset 是从屏幕边缘量起的绝对距离；不要重复相加。
 `density_q16` 是 DPI 相对 160 的比例，不能替换为 Window 的像素尺寸比例。
 缺省圆角扩展按矩形处理；重复、截断及无效尺寸返回协议错误。此可选头文件
 只提供小值结构和解码函数，不注册服务、不分配缓存、不增加其他应用的默认开销。
@@ -238,6 +256,20 @@ Core 2 事件减去消息头）；可设置 1..4052。超限按完整 UTF-8 字�
 按实际长度分配，事件处理、过期丢弃或入队失败都会释放，队列槽位大小不变。
 输入框卸载、删除或退到后台后，系统会收起键盘。
 
+密码输入使用 UI 0.9 的可选 `password-input` 特性：
+
+```cpp
+State<bool> sensitive{true};
+TextInput(password).max_bytes(512).single_line().password();
+// 同一个编辑器切换普通/密码字段时：
+TextInput(value, editor).single_line().password(sensitive);
+```
+
+`.password()` 会立即遮盖全部字符，并让系统输入法进入敏感模式，关闭联想和学习。
+它不改变文本值、字节上限和布局；应用仍通过自己的 `State<std::string>` 接收真实值。
+组件清单须声明 `password-input`。固定模式不增加绑定，动态模式只增加一个绑定，
+普通输入框没有额外字段或默认缓存。提交或取消后应清空临时密码状态；不要记录输入内容。
+
 与自绘内容组合时，可绑定输入框的位置、可见性、字体和颜色：
 
 ```cpp
@@ -374,6 +406,61 @@ auto independent = session.effect(layers); // 独立播放，不替换命名轨�
 
 Assets 的 load/query/read 和 FS 路径在任务创建时复制到有界存储，源字符串
 可以立即销毁；Assets 直接提交协程内的最终包。读取的输出缓冲区仍为借用。
+
+Host 提供可选的 **Assets 2.2 / `image-decode`**，直接把 HTTP 响应体或文件变成可绘制资源：
+
+```cpp
+// response 是已经检查过状态码、类型和重定向的 HttpResponse。
+auto image = co_await ctx.assets().decode_image(std::move(response.body),
+    {.max_width = 320, .max_height = 240, .max_pixels = 32768});
+if (!image) co_return std::unexpected(image.error());
+commands.image(region, *image); // Asset 活到提交完成；Host 绑定随后保留独立引用。
+```
+
+`decode_image(std::move(file), options)` 同样支持 `File`，从当前位置读取到 EOF。
+任务创建时立即取得源对象的所有权，完成、失败或取消时自动关闭；源不能再被并发读取。
+图片持有独立所有权，不依赖 HTTP 或文件对象。SDK 不再暴露解码器句柄、分块写入或 finish 步骤。
+Host 通过一个请求直接读取源资源，编码数据不经过 Guest 内存；不是整个网络/解码管线零拷贝。
+Core 每次读取均校验完整句柄、所属组件及权限撤销；每轮最多读取 4 KiB，遇到 WOULD_BLOCK 即让出。
+`ImageDecodeOptions` 限制输出宽高、像素数和编码字节数；返回的
+`AssetDescriptor::source_width/source_height/source_bytes` 描述原图，`width/height` 是实际驻留尺寸。
+
+格式与解码实现属于可选 Host 后端，ABI 不绑定 PNG/JPEG 或 LVGL。ESP32-S3 默认复用 ROM JPEG，
+桌面复用系统 libjpeg；已有 LVGL 的新平台可以直接选共享适配器，调用其注册的原生解码器。
+PNG 的默认流式后端保留透明度，并避免展开完整原图；当前 LodePNG 做不到这一点。
+没有调用接口就不分配解码缓冲区，不创建图片线程或全局缓存。需在 manifest 的 Assets 服务中声明
+`image-decode`，后端不支持的格式正常返回 unsupported。默认后端支持 PNG 和普通 JPEG，
+不支持渐进 JPEG、WebP、SVG；ESP32-S3 ROM 另不支持灰度 JPEG。启用 GIF 的产品支持首帧
+解码，完整动画使用下述按需接口。
+源图最多 4096 边长且总像素不超过 1048576。
+后端接入、内存边界及硬件选择见 [图像解码设计](../../docs/zh-CN/image-decoding.md)。
+
+需要动画时显式包含 `<pxa/image_frames.hpp>`，并在 Assets 服务中声明 `image-frames`（2.3）：
+
+```cpp
+auto picture = co_await ctx.assets().images().decode(std::move(response.body),
+    {.max_width = 320, .max_height = 240},
+    {.max_pixels = 8192, .max_encoded_bytes = 65536});
+if (!picture) co_return std::unexpected(picture.error());
+commands.image(region, picture->image());
+// 根据 frame_info().delay_ms、页面可见性与显示节奏，在以后某一帧调用：
+if (!picture->frame_info().last) {
+    auto changed = co_await picture->advance();
+    if (!changed) co_return std::unexpected(changed.error());
+    if (*changed) commands.image(region, picture->image());
+}
+```
+
+服务入口是临时值，任务立即取得源所有权；普通静态图片没有保留解码状态。
+`ImageAnimationLimits` 只收紧动画预算，零沿用普通上限，不改变 PNG/JPEG 质量。
+`ImageDecodeOptions::formats = ImageFormats::png | ImageFormats::jpeg` 可从签名层排除 GIF；
+默认 any 接受 Host 支持的格式，后端决定 codec。
+`DecodedImage` 拥有当前图片和可选 Host 状态。`advance()` 借用该对象，等待期间必须保持其
+存活且不移动；并发 advance 返回 bad_state。最终帧再次 advance 返回 false，不发送请求。
+每帧替换旧句柄，已提交的 UI 保留独立像素引用。取消推进后应释放并重载序列，因 Host 可能
+已经生成新帧；迟到句柄由 RequestTable 回收。任务取消后再销毁对象，前后台与可见性策略由
+应用决定。该模块不增加 Context 字段、默认缓冲、线程、计时器或预解码队列。
+
 Clock/Window/Game/Audio/Storage/Permission 的协程按值保存小型服务入口，
 `ctx.service()` 临时对象可以立即销毁；Context 必须活到任务完成或取消。
 Permission 的 name/scope 也在创建任务时编码；默认 check/acquire 不再嵌套
@@ -660,6 +747,8 @@ palette 光照行（例如 0）。这复用 2D 扫描线内核，不检测或写
 
 Canvas 直接绘制位于 `<pxa/canvas.hpp>`：应用持有 `ui::CanvasRef` 和复用的
 `ui::CanvasCommands<N>`，用 `Canvas(ref, width, height)` 挂载（零宽高表示填满）。
+`commands.arc(cx, cy, radius, start, end, rgba, width)` 使用现有 Canvas 圆弧指令，
+角度从右侧起顺时针计算；无需把曲线拆成多条线或添加位图。命令直接写入固定容量包。
 命令支持矩形、圆角、线、文字和 clip/pop；`ref.present(commands)` 执行有界的
 BEGIN/WRITE/PRESENT，WRITE 直接使用命令缓冲中的最终协议包，没有第二份
 命令数组。容量不足、未闭合 clip、未挂载或已停止返回错误，不分配备用缓冲；
@@ -797,3 +886,12 @@ WASI SDK 34 链接 libc++ 后，当前最小应用也会导入 `clock_time_get`�
 终止 Provider。`Frame` 的错误区分调用顺序、无效文本/分页和缓冲容量不足；
 写入失败不增加候选计数。完整协议、安装与布局说明见
 [输入法文档](../../docs/zh-CN/input-methods.md)，参考实现位于 pxa-apps 的 `pinyin-ime`。
+
+## 流式 HTTP
+
+`context.http()` 提供 `get/open/capabilities`，支持提前响应头、分块下载/上传、背压和取消。`co_await reply.body.read_some(buffer)` 直接挂起调用方，不为每个数据块分配协程。正文总量和缓冲预算独立，重复响应头按顺序保留。请求文本在返回 Task 前捕获；响应头按实际大小持有，正文路径不动态分配。详见 [使用说明与 ABI](../../docs/zh-CN/http-streaming.md) 和 [真网络验证示例](examples/http-stream/README.zh-CN.md)。现有 `context.net()` 保留。
+
+`HttpRequest::wanted_headers` 可指定最多 8 个需要保留的响应字段，留空则保留全部。
+Host 在写入响应头缓冲之前筛选，避免无用的大型 CSP、Cookie 等字段耗尽预算；
+HTTP 长度与传输格式仍由 Host 完整检查。名称不区分大小写，重复或无效名称会被拒绝，
+请求返回 Task 前即复制名称，调用方无需维持数组或字符串的生命周期。

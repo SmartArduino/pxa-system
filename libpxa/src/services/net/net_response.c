@@ -2,16 +2,6 @@
 
 #include <string.h>
 
-static int header_duplicate(const pxa_net_header_t *headers, uint16_t count,
-                            pxa_bytes_t name) {
-    uint16_t index;
-    for (index = 0; index < count; ++index) {
-        if (headers[index].name.size == name.size &&
-            memcmp(headers[index].name.data, name.data, name.size) == 0) return 1;
-    }
-    return 0;
-}
-
 static int content_type_valid(pxa_bytes_t content_type) {
     size_t index;
     if (content_type.size > PXA_NET_MAX_CONTENT_TYPE_BYTES ||
@@ -147,8 +137,7 @@ pxa_status_t pxa_net_response_validate(
         const pxa_net_header_t *header = &response->headers[index];
         size_t encoded_size;
         if (!pxa_net_header_name_valid(header->name, 0) ||
-            !pxa_net_header_value_valid(header->value) ||
-            header_duplicate(response->headers, index, header->name)) {
+            !pxa_net_header_value_valid(header->value)) {
             return PXA_STATUS_PROTOCOL_ERROR;
         }
         encoded_size = header->name.size + header->value.size + 12u;

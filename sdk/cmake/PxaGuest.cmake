@@ -9,6 +9,7 @@ if(DEFINED PXA_CPP_SDK_DIR AND IS_DIRECTORY "${PXA_CPP_SDK_DIR}/include"
     add_library(pxa_guest_cpp STATIC
         "${PXA_CPP_SDK_DIR}/src/runtime.cpp"
         "${PXA_CPP_SDK_DIR}/src/net.cpp"
+        "${PXA_CPP_SDK_DIR}/src/http.cpp"
         "${PXA_CPP_SDK_DIR}/src/ipc.cpp"
         "${PXA_CPP_SDK_DIR}/src/work.cpp"
         "${PXA_CPP_SDK_DIR}/src/game.cpp"

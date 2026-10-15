@@ -1,11 +1,11 @@
 {
-  "schema": "pxa-ui-spec-0.8",
+  "schema": "pxa-ui-spec-0.9",
   "status": "draft",
   "service": {
     "name": "ui",
     "id": 3,
     "major": 0,
-    "minor": 8,
+    "minor": 9,
     "patch": 0
   },
   "byte_order": "little-endian",
@@ -74,6 +74,10 @@
     {
       "name": "dynamic-text",
       "bit": 13
+    },
+    {
+      "name": "password-input",
+      "bit": 14
     }
   ],
   "opcodes": [
@@ -627,6 +631,13 @@
       "type": "bool",
       "feature": "dynamic-text",
       "rule": "Text inputs only. Default false; true uses horizontal scrolling and avoids long-word wrapping. Clear restores false. Does not change configured input height."
+    },
+    {
+      "name": "text-password",
+      "id": 784,
+      "type": "bool",
+      "feature": "password-input",
+      "rule": "Text inputs only; default false. Mask all characters immediately, disable prediction/learning via the Host sensitive IME path. Clear restores false. No change to text or input geometry."
     }
   ],
   "value_types": {
@@ -788,7 +799,7 @@
     }
   ],
   "resource_policy": "Hosts enforce private byte budgets and queue policy. Node, canvas, property, and text counts are not ABI limits and are never advertised as fixed quotas.",
-  "protocol_version": "0.8.0",
+  "protocol_version": "0.9.0",
   "events": [
     {
       "name": "text",

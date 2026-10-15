@@ -809,6 +809,14 @@ public:
             self.value_, std::forward<Self>(self).submit_, ref, limit, enabled, box);
     }
 
+    // Optional modifier: ordinary inputs carry no additional state/binding.
+    template<class Self> auto password(this Self&& self, bool enabled = true) {
+        return detail::modify<protocol::text_password>(std::forward<Self>(self), enabled);
+    }
+    template<class Self> auto password(this Self&& self, State<bool>& enabled) {
+        return detail::modify<protocol::text_password>(std::forward<Self>(self), &enabled);
+    }
+
     template<class Self> auto box(this Self&& self, State<TextInputBox>& state) {
         TextInputRef* ref = nullptr;
         if constexpr (HasRef) ref = self.ref_;
@@ -880,7 +888,6 @@ TextInputView<Source, NoInputSubmit, true> TextInput(Source& value, TextInputRef
     return TextInputView<Source, NoInputSubmit, true>(value, {}, &ref);
 }
 
-enum class ImageFit : std::uint8_t { contain, stretch, cover };
 
 class ImageView : public ViewModifiers {
 public:
@@ -1439,6 +1446,22 @@ public:
                 }};
             return true;
         }
+    }
+
+    template<class F> bool on_volume_key(std::uint32_t node, F& callback) noexcept {
+        static_assert(std::invocable<F&, const VolumeKeyEvent&> &&
+            std::same_as<std::invoke_result_t<F&, const VolumeKeyEvent&>, void>);
+        if constexpr (detail::is_reference_wrapper<F>) return on_volume_key(node, callback.get());
+        if (handler_count_ == MaxHandlers) return fail(Error::resource_limit);
+        handlers_[handler_count_++] = {
+            node, 5, &callback,
+            [](void* value, const Event& event) {
+                auto key = decode_volume_key(event);
+                if (!key) return false;
+                (*static_cast<F*>(value))(*key);
+                return true;
+            }};
+        return true;
     }
 
     template<class F> bool on_pointer(std::uint32_t node, F& callback) noexcept {

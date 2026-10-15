@@ -1,11 +1,11 @@
 {
-  "schema": "pxa-net-spec-0.3",
+  "schema": "pxa-net-spec-0.4",
   "status": "draft",
   "service": {
     "name": "net",
     "id": 9,
     "major": 0,
-    "minor": 3,
+    "minor": 4,
     "patch": 0
   },
   "opcodes": [
@@ -26,6 +26,24 @@
       "request_token": "nonzero",
       "payload": "url|method|permission|max-response|timeout|request-headers|inline-body|wanted-response-headers",
       "result": "status|http-status|content-type|optional-body-stream|response-metadata"
+    },
+    {
+      "name": "http-open",
+      "id": 3,
+      "since": "0.4",
+      "direction": "bidirectional-result",
+      "request_token": "nonzero",
+      "payload": "http-request-records-with-u64-max-body|buffer-bytes|upload-bytes|response-header-bytes",
+      "result": "status:i32|exchange-handle:u64"
+    },
+    {
+      "name": "capabilities",
+      "id": 4,
+      "since": "0.4",
+      "direction": "bidirectional-result",
+      "request_token": "nonzero",
+      "payload": "empty",
+      "result": "status:i32|features:u32|max-buffer:u32|max-headers:u32|max-request-headers:u32|max-url:u32|max-upload:u64|max-concurrent:u32"
     }
   ],
   "record_tags": [
@@ -50,7 +68,7 @@
     {
       "name": "max-response-bytes",
       "id": 4,
-      "payload": "u32",
+      "payload": "fetch/http-request:u32|http-open:u64",
       "cardinality": "request-one"
     },
     {
@@ -106,13 +124,31 @@
       "id": 13,
       "payload": "u32",
       "cardinality": "http-result-one"
+    },
+    {
+      "name": "buffer-bytes",
+      "id": 14,
+      "payload": "u32",
+      "cardinality": "http-open-one"
+    },
+    {
+      "name": "upload-bytes",
+      "id": 15,
+      "payload": "u64",
+      "cardinality": "http-open-one"
+    },
+    {
+      "name": "response-header-bytes",
+      "id": 16,
+      "payload": "u32",
+      "cardinality": "http-open-one"
     }
   ],
   "header_tags": [
     {
       "name": "name",
       "id": 1,
-      "payload": "lowercase-http-field-name",
+      "payload": "case-insensitive-http-token-name",
       "cardinality": "one"
     },
     {
@@ -170,5 +206,48 @@
     "default_timeout_ms": 15000,
     "max_timeout_ms": 60000
   },
-  "protocol_version": "0.3.0"
+  "protocol_version": "0.4.0",
+  "exchange_io": [
+    {
+      "name": "read",
+      "id": 1,
+      "result": "byte-count|would-block|eof-zero|status"
+    },
+    {
+      "name": "write",
+      "id": 2,
+      "result": "byte-count|would-block|status"
+    },
+    {
+      "name": "poll",
+      "id": 3,
+      "result": "read:1|write:2|headers:4|end:8|status"
+    },
+    {
+      "name": "response",
+      "id": 4,
+      "result": "encoded-immutable-head|would-block|status"
+    },
+    {
+      "name": "response-size",
+      "id": 5,
+      "result": "encoded-head-byte-count|would-block|status"
+    },
+    {
+      "name": "finish-upload",
+      "id": 6,
+      "result": "zero|status"
+    }
+  ],
+  "stream_limits": {
+    "min_buffer_bytes": 512,
+    "max_buffer_bytes": 65536,
+    "buffer_power_of_two": true,
+    "min_header_bytes": 16,
+    "max_header_bytes": 4096,
+    "max_upload_bytes": 2147483647,
+    "max_body_bytes": "caller-u64-budget-independent-of-buffer",
+    "upload_buffer_partition": "half-send-half-receive",
+    "sdk_default_header_bytes": 1024
+  }
 }

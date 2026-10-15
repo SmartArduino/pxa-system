@@ -76,6 +76,12 @@ public:
     WindowService(Transport& transport, RequestTable& requests) noexcept
         : transport_(transport), requests_(requests) {}
 
+    // Queue normal system navigation after the current callback returns.
+    // on_back() decides whether to close the app or handle navigation locally.
+    Result<void> request_back() noexcept {
+        return transport_.send(2, 4, 0, {});
+    }
+
     Result<void> toast(std::string_view message,
                        std::uint16_t duration_ms = 2000) noexcept {
         if (message.empty() || message.size() > 240 ||

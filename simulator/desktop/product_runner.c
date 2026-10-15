@@ -1,5 +1,6 @@
 #define _XOPEN_SOURCE 700
 #define _POSIX_C_SOURCE 200809L
+#include "pxa/image/codecs.h"
 
 #include <errno.h>
 #include <stdio.h>
@@ -32,6 +33,7 @@
 #include "pxa/resource_budget.h"
 #include "pxa/audio_buffer.h"
 #include "pxa/log.h"
+#include "pxa/lease.h"
 #include "pxa/lvgl/pxa_lvgl_ui.h"
 #include "pxa/openssl/pxa_openssl.h"
 #include "pxa/package.h"
@@ -57,6 +59,7 @@
 #include "pxa/window.h"
 #include "pxadb_control.h"
 #include "product_runner.h"
+#include "volume_key_input.h"
 #include "src/core/lv_obj_event_private.h"
 #include "include/lvgl/drivers/sdl/lv_sdl_keyboard.h"
 #include "desktop_net.h"
@@ -251,6 +254,7 @@ typedef struct {
     pxa_sensor_service_t *sensor;
     int32_t sensor_temperature_milli_celsius;
     pxa_net_service_t *net;
+    pxa_lease_service_t *io_waits;
     pxa_log_service_t *log;
     volatile uint8_t net_completion_ready;
     lv_obj_t *surface_image;
@@ -354,6 +358,7 @@ typedef struct {
     uint8_t exit_requested;
     SDL_atomic_t back_requested;
     SDL_atomic_t home_requested;
+    pxsys_volume_key_input_t volume_events;
     uint32_t input_window_id;
 } product_host_t;
 
@@ -776,6 +781,11 @@ static void system_back_indicator_update(product_host_t *host, int32_t x,
 
 static int SDLCALL product_key_event_watch(void *context, SDL_Event *event) {
     product_host_t *host = context;
+    if ((event->type == SDL_KEYDOWN || event->type == SDL_KEYUP) &&
+        event->key.windowID == host->input_window_id) {
+        const uint32_t key = pxsys_volume_key_from_sdl(event);
+        if (key) (void)pxsys_volume_key_push(&host->volume_events, key);
+    }
     if (event->type == SDL_KEYUP &&
         event->key.windowID == host->input_window_id) {
         if (event->key.keysym.sym == SDLK_ESCAPE)
@@ -1993,7 +2003,9 @@ static void dispatch_component_events(product_host_t *host) {
                 !(ime_status==PXA_STATUS_RESOURCE_LIMIT && !result.event_consumed))
                 (void)ime_present(host,NULL);
         }
-        if (host->assets != NULL) pxa_assets_service_poll(host->assets);
+        SDL_AtomicSet(&host->asset_ready, 0);
+        if (host->assets != NULL && pxa_assets_service_poll(host->assets))
+            SDL_AtomicSet(&host->asset_ready, 1);
         if (host->audio != NULL) pxa_audio_service_poll(host->audio);
         if (host->sensor != NULL && pxa_sensor_has_active_subscriptions(host->sensor)) {
             pxa_component_t affected[PRODUCT_COMPONENTS];
@@ -2001,7 +2013,6 @@ static void dispatch_component_events(product_host_t *host) {
             (void)pxa_sensor_poll(host->sensor, now_us(NULL), affected,
                                   PRODUCT_COMPONENTS, &count);
         }
-        SDL_AtomicSet(&host->asset_ready, 0);
         if (host->ipc != NULL) (void)pxa_ipc_flush(host->ipc);
         for (uint16_t index = 0; index < host->service_component_count;
              ++index) {
@@ -2128,6 +2139,30 @@ bool pxsys_product_simulator_request_back(void *runner) {
     if (host == NULL || !host->focused) return false;
     SDL_AtomicSet(&host->back_requested, 1);
     return true;
+}
+
+bool pxsys_product_simulator_volume_key(void *runner, uint32_t key) {
+    product_host_t *host = runner;
+    if (host == NULL || !host->focused || key < PXA_UI_KEY_VOLUME_UP ||
+        key > PXA_UI_KEY_VOLUME_DOWN_RELEASED ||
+        !pxa_ui_accepts_event(host->ui, host->active_component,
+                             PXA_UI_PRIMARY_SURFACE, 1u, PXA_UI_EVENT_KEY)) return false;
+    return pxsys_volume_key_push(&host->volume_events, key);
+}
+
+static void dispatch_volume_keys(product_host_t *host) {
+    uint32_t key;
+    while ((key = pxsys_volume_key_front(&host->volume_events)) != 0) {
+        if (host->focused && pxa_ui_accepts_event(host->ui, host->active_component,
+                PXA_UI_PRIMARY_SURFACE, 1u, PXA_UI_EVENT_KEY)) {
+            const uint8_t bytes[4] = {(uint8_t)key, 0, 0, 0};
+            if (pxa_ui_queue_event(host->ui, host->active_component,
+                    PXA_UI_PRIMARY_SURFACE, 1u, PXA_UI_EVENT_KEY,
+                    PXA_UI_EVENT_FLAG_RELIABLE, now_us(NULL), bytes, sizeof(bytes)) != PXA_STATUS_OK)
+                return; // Preserve the queue head and retry after mailbox drain.
+        }
+        pxsys_volume_key_pop(&host->volume_events);
+    }
 }
 
 static void dispatch_lifecycle(product_host_t *host) {
@@ -3170,7 +3205,7 @@ static pxa_status_t desktop_get_mac(void *context, uint16_t kind,
 
 static void desktop_net_completion_ready(void *context) {
     product_host_t *host = (product_host_t *)context;
-    if (host != NULL) host->net_completion_ready = 1;
+    if (host != NULL) __atomic_store_n(&host->net_completion_ready, 1, __ATOMIC_RELEASE);
 }
 
 static pxa_status_t desktop_sensor_subscribe(void *context, uint16_t id,
@@ -3198,14 +3233,18 @@ static void desktop_sensor_unsubscribe(void *context, void *subscription, uint16
 static void drain_net_completions(product_host_t *host) {
     pxa_component_t affected[4];
     size_t count = 0;
-    if (host == NULL || host->net == NULL || !host->net_completion_ready)
+    if (host == NULL || host->net == NULL ||
+        !__atomic_exchange_n(&host->net_completion_ready, 0, __ATOMIC_ACQ_REL))
         return;
-    host->net_completion_ready = 0;
     (void)pxa_net_poll(host->net, affected,
                        sizeof(affected) / sizeof(affected[0]), &count);
     /* A completion is delivered as an event; wake the waiting Guest so its
      * response handler runs in this loop turn. */
     if (count != 0) dispatch_component_events(host);
+    if (host->io_waits) {
+        (void)pxa_lease_revoke_expired(host->io_waits, affected, 4, &count);
+        if (count) dispatch_component_events(host);
+    }
 }
 
 static int run_product_simulator(const options_t *input,
@@ -3278,6 +3317,7 @@ static int run_product_simulator(const options_t *input,
     void *scheduler_store_workspace = NULL;
     void *surface_workspace = NULL, *game_render_workspace = NULL;
     void *device_workspace = NULL, *net_workspace = NULL;
+    void *io_wait_workspace = NULL;
     void *sensor_workspace = NULL;
     void *log_workspace = NULL, *assets_workspace = NULL;
     void *plan_workspace = NULL, *coordinator_workspace = NULL;
@@ -3486,7 +3526,7 @@ static int run_product_simulator(const options_t *input,
         PXA_UI_FEATURE_CONTROLLER_INPUT | PXA_UI_FEATURE_MULTIPLE_SURFACES |
         PXA_UI_FEATURE_CANVAS_STREAM_IO;
     if (!owns_display || host.ime_directory) ui_config.features |= PXA_UI_FEATURE_TEXT_INPUT_CONTROL;
-    ui_config.features |= PXA_UI_FEATURE_DYNAMIC_TEXT;
+    ui_config.features |= PXA_UI_FEATURE_DYNAMIC_TEXT | PXA_UI_FEATURE_PASSWORD_INPUT;
 #ifdef PXSYS_DESKTOP_TEXT_FONT
     ui_config.features |= PXA_UI_FEATURE_SIZED_TEXT;
 #endif
@@ -3837,6 +3877,15 @@ static int run_product_simulator(const options_t *input,
         assets_config.struct_size = sizeof(assets_config);
         assets_config.max_pending = assets_config.max_pending_per_component = 16;
         assets_config.max_resources = assets_config.max_resources_per_component = 32;
+        /* Product composition keeps the headless POSIX adapter independent
+         * of LVGL while sharing the embedded scanline GIF implementation. */
+        static const pxa_image_codec_t *const image_codecs[] = {
+            &pxa_stream_png_codec, &pxa_posix_jpeg_codec, &pxa_lvgl_gif_codec};
+        static const pxa_image_backend_t image_backend = {
+            image_codecs, sizeof(image_codecs) / sizeof(image_codecs[0])};
+        assets_config.image_backend = &image_backend;
+        assets_config.image_allocator = &host.resource_allocators[PXA_MEMORY_EXTERNAL][PXA_MEMORY_IMAGE];
+        assets_config.image_temporary_allocator = &host.resource_allocators[PXA_MEMORY_EXTERNAL][PXA_MEMORY_TEMPORARY];
         assets_config.backend = (pxa_assets_backend_t){&host, asset_find, asset_request, asset_query, asset_acquire, asset_release, asset_prefetch, asset_inspect,
             asset_read,asset_read_result,asset_read_release};
         assets_workspace = malloc(pxa_assets_service_workspace_size(&assets_config));
@@ -3913,6 +3962,17 @@ static int run_product_simulator(const options_t *input,
             pxa_sensor_service_init(sensor_workspace, workspace_size, host.runtime,
                                     &sensor_config, &host.sensor) != PXA_STATUS_OK ||
             pxa_sensor_service_register(host.sensor) != PXA_STATUS_OK) goto done;
+    }
+    if (manifest_uses_service(manifest, PXA_NET_SERVICE_ID)) {
+        pxa_lease_limits_t wait_limits;
+        pxa_lease_limits_init(&wait_limits);
+        wait_limits.max_leases = 4;
+        wait_limits.max_leases_per_component = 2;
+        size_t wait_size = pxa_lease_service_workspace_size(&wait_limits);
+        io_wait_workspace = malloc(wait_size);
+        if (!io_wait_workspace || pxa_lease_service_init(io_wait_workspace,
+            wait_size, host.runtime, &wait_limits, &host.io_waits) != PXA_STATUS_OK ||
+            pxa_lease_service_register(host.io_waits) != PXA_STATUS_OK) goto done;
     }
     stage = "net service";
     if (!pxsys_desktop_net_backend(&net_backend,
@@ -3995,7 +4055,7 @@ static int run_product_simulator(const options_t *input,
     pxa_wamr_engine_set_runtime(host.engine, host.runtime);
     stage = "start configuration";
     if (configure_start_locale(&host, 1, &ui_config) != PXA_STATUS_OK) goto done;
-    capabilities[0].service = PXA_SERVICE_CORE; capabilities[0].version.major = 0; capabilities[0].version.minor = 1;
+    capabilities[0].service = PXA_SERVICE_CORE; capabilities[0].version.major = 0; capabilities[0].version.minor = PXA_CORE_SERVICE_MINOR;
     capabilities[1].service = PXA_WINDOW_SERVICE_ID; capabilities[1].version.major = PXA_WINDOW_SERVICE_MAJOR; capabilities[1].version.minor = PXA_WINDOW_SERVICE_MINOR;
     capabilities[2].service = PXA_UI_SERVICE_ID; capabilities[2].version.major = PXA_UI_SERVICE_MAJOR; capabilities[2].version.minor = PXA_UI_SERVICE_MINOR;
     capabilities[2].features = ui_config.features;
@@ -4023,6 +4083,7 @@ static int run_product_simulator(const options_t *input,
     capabilities[16].service = PXA_ASSETS_SERVICE_ID;
     capabilities[16].version.major = PXA_ASSETS_SERVICE_MAJOR;
     capabilities[16].version.minor = PXA_ASSETS_SERVICE_MINOR;
+    capabilities[16].features = PXA_ASSETS_FEATURE_IMAGE_DECODE | PXA_ASSETS_FEATURE_IMAGE_FRAMES;
     capabilities[17].service = PXA_SENSOR_SERVICE_ID;
     capabilities[17].version.major = PXA_SENSOR_SERVICE_MAJOR;
     capabilities[17].version.minor = PXA_SENSOR_SERVICE_MINOR;
@@ -4123,6 +4184,7 @@ static int run_product_simulator(const options_t *input,
             SDL_AtomicSet(&host.back_requested, 0);
         sync_host_theme(&host, lvgl_ui, &lvgl_config.theme);
         dispatch_lifecycle(&host);
+        dispatch_volume_keys(&host);
         /* Services can complete without producing a UI or clock event. */
         dispatch_component_events(&host);
         if (pump_work(&host) != PXA_STATUS_OK) {
@@ -4150,6 +4212,12 @@ static int run_product_simulator(const options_t *input,
         const uint64_t tick_start_us = now_us(NULL);
 #endif
         drain_net_completions(&host);
+        if (host.io_waits) {
+            pxa_component_t waiting[4];
+            size_t waiting_count = 0;
+            (void)pxa_lease_revoke_expired(host.io_waits, waiting, 4, &waiting_count);
+            if (waiting_count) dispatch_component_events(&host);
+        }
         dispatch_clock_tick(&host);
         if (drain_surface_updates(&host) < 0) goto done;
 #ifdef PXSYS_PRODUCT_FRAME_OBSERVER
@@ -4163,7 +4231,7 @@ static int run_product_simulator(const options_t *input,
         if (delay > 16) delay = 16;
         delay = limit_delay_to_clock_deadline(&host, delay);
         if (SDL_AtomicGet(&host.asset_ready)) delay = 1;
-        SDL_Delay(delay);
+        if (!pxsys_desktop_net_wait(&net_backend, delay)) SDL_Delay(delay);
         if (trace_loop) {
             const uint64_t sleep_end_us = now_us(NULL);
             const uint64_t pre_us = pre_end_us - loop_start_us;
@@ -4235,6 +4303,7 @@ done:
     if (host.label_font != NULL) lv_freetype_font_delete(host.label_font);
     if (host.caption_font != NULL) lv_freetype_font_delete(host.caption_font);
     if (host.runtime != NULL) pxa_runtime_deinit(host.runtime);
+    pxsys_desktop_net_shutdown(&net_backend);
     if (host.asset_worker != NULL) {
         pxa_asset_cache_stats_t stats;
         size_t metadata;
@@ -4289,7 +4358,7 @@ done:
     if (installer != NULL) pxa_posix_installer_deinit(installer);
     free(coordinator_workspace); free(plan_workspace); free(engine_workspace); free(lvgl_workspace);
     free(log_workspace); free(game_render_workspace); free(surface_workspace);
-    free(device_workspace); free(net_workspace);
+    free(device_workspace); free(net_workspace); free(io_wait_workspace);
     free(sensor_workspace);
     free(ui_workspace); free(window_workspace); free(permission_workspace); free(runtime_workspace); free(manifest_workspace);
     free(fs_service_workspace); free(fs_backend_workspace); free(fs_path); free(fs_parent);

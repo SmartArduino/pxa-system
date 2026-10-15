@@ -1,0 +1,56 @@
+{
+  "format": "pxa-package-source-0.1",
+  "min_sdk": [
+    2,
+    0
+  ],
+  "target_sdk": [
+    2,
+    0
+  ],
+  "compile_sdk": [
+    2,
+    0
+  ],
+  "id": "pxa-http-stream",
+  "version": "1.0.0",
+  "name": "HTTP 流式传输验证",
+  "description": "有界下载、上传、重复响应头、取消和网络预算验证",
+  "build": {
+    "system": "cmake",
+    "source_dir": ".",
+    "linear_memory": {
+      "maximum_bytes": 131072,
+      "pinned": true
+    }
+  },
+  "permissions": [
+    {
+      "name": "net.client",
+      "scope": "web",
+      "required": false
+    }
+  ],
+  "components": [
+    {
+      "id": "main",
+      "kind": "ui",
+      "cmake_target": "pxa_main",
+      "services": [
+        "ui",
+        "clock",
+        "net",
+        "fs",
+        "log"
+      ],
+      "wasi": {
+        "version": "preview1",
+        "libc": "wasi-libc",
+        "features": [
+          "monotonic-clock",
+          "wall-clock"
+        ]
+      }
+    }
+  ]
+}

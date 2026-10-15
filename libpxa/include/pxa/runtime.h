@@ -68,6 +68,12 @@ typedef uint16_t pxa_resource_type_t;
 /* Operations shared by byte-oriented resource streams. */
 #define PXA_IO_READ UINT32_C(1)
 #define PXA_IO_WRITE UINT32_C(2)
+/* Nonblocking, side-effect-free readiness query. No buffer; returns a mask. */
+#define PXA_IO_POLL UINT32_C(3)
+#define PXA_READY_READ UINT32_C(1)
+#define PXA_READY_WRITE UINT32_C(2)
+#define PXA_READY_HEADERS UINT32_C(4)
+#define PXA_READY_END UINT32_C(8)
 
 typedef struct {
     uint32_t struct_size;
@@ -250,6 +256,9 @@ pxa_status_t pxa_handle_get64(const pxa_runtime_t *runtime,
                               pxa_handle64_t handle,
                               pxa_resource_type_t expected_type,
                               pxa_resource_t *output);
+/* Host maintenance query: validates owner/generation without a Guest import. */
+int32_t pxa_handle_poll64(pxa_runtime_t *runtime, pxa_component_t component,
+                          pxa_handle64_t handle);
 pxa_status_t pxa_handle_close64(pxa_runtime_t *runtime,
                                 pxa_component_t component,
                                 pxa_handle64_t handle);

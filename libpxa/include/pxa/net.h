@@ -12,10 +12,15 @@ extern "C" {
 
 #define PXA_NET_SERVICE_ID UINT16_C(9)
 #define PXA_NET_SERVICE_MAJOR UINT16_C(0)
-#define PXA_NET_SERVICE_MINOR UINT16_C(3)
+#define PXA_NET_SERVICE_MINOR UINT16_C(4)
 #define PXA_NET_SERVICE_PATCH UINT16_C(0)
 #define PXA_NET_FETCH UINT16_C(1)
 #define PXA_NET_HTTP_REQUEST UINT16_C(2)
+#define PXA_NET_HTTP_OPEN UINT16_C(3)
+#define PXA_NET_CAPABILITIES UINT16_C(4)
+#define PXA_NET_FEATURE_STREAM_DOWNLOAD UINT32_C(1)
+#define PXA_NET_FEATURE_STREAM_UPLOAD UINT32_C(2)
+#define PXA_NET_FEATURE_RESPONSE_HEADERS UINT32_C(4)
 #define PXA_NET_METHOD_GET UINT16_C(1)
 #define PXA_NET_METHOD_HEAD UINT16_C(2)
 #define PXA_NET_METHOD_POST UINT16_C(3)
@@ -51,6 +56,11 @@ typedef struct {
     const pxa_bytes_t *wanted_response_headers;
     uint16_t wanted_response_header_count;
     uint16_t abi_minor;
+    /* HTTP_OPEN: separate bounded storage and total transfer budgets. */
+    uint32_t buffer_bytes;
+    uint32_t response_header_bytes;
+    uint64_t max_body_bytes;
+    uint64_t upload_bytes;
 } pxa_net_request_t;
 
 typedef struct {
@@ -84,6 +94,14 @@ typedef struct {
     pxa_net_cancel_fn cancel;
     pxa_net_read_body_fn read_body;
     pxa_net_close_body_fn close_body;
+    /* Optional v0.4 exchange backend. OPEN copies all retained input before
+     * returning; I/O never blocks on sockets. CLOSE transfers cleanup to the
+     * backend and is safe before headers, during transfer and after EOF. */
+    pxa_status_t (*open_exchange)(void *context, const pxa_net_request_t *request,
+                                  void **exchange);
+    int32_t (*exchange_io)(void *context, void *exchange, uint32_t operation,
+                           uint8_t *data, size_t size);
+    void (*close_exchange)(void *context, void *exchange);
 } pxa_net_backend_t;
 
 typedef struct {

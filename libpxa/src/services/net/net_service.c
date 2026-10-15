@@ -1,4 +1,5 @@
 #include "pxa/net.h"
+#include "pxa/http_stream.h"
 #include "common/checked_math.h"
 #include "common/status_internal.h"
 #include "services/net/net_internal.h"
@@ -10,7 +11,7 @@
 #define PXA_NET_MAGIC UINT32_C(0x50584e54)
 #define PXA_NET_STREAM_MAGIC UINT32_C(0x50584e53)
 #define PXA_NET_SLOT_NONE UINT16_MAX
-#define PXA_NET_RESULT_OVERHEAD ((size_t)160)
+#define PXA_NET_RESULT_OVERHEAD ((size_t)144)
 
 typedef struct pxa_net_pending pxa_net_pending_t;
 typedef struct pxa_net_stream pxa_net_stream_t;
@@ -22,11 +23,9 @@ struct pxa_net_service {
     pxa_net_backend_t backend;
     pxa_net_pending_t *pending;
     pxa_net_stream_t *streams;
-    uint8_t *result_buffer;
     uint32_t max_response_bytes;
     uint32_t max_response_header_bytes;
     pxa_net_request_limits_t request_limits;
-    size_t result_capacity;
     uint16_t max_pending_requests;
     uint16_t max_requests_per_component;
     uint16_t max_response_streams;
@@ -36,6 +35,13 @@ struct pxa_net_service {
     uint16_t stream_free_head;
     uint8_t registered;
 };
+
+/* The trailing completion workspace has a fixed position and capacity;
+ * derive these instead of storing redundant pointers/size in every Host. */
+static size_t result_capacity(const pxa_net_service_t *s) {
+    return (size_t)s->max_response_header_bytes + PXA_NET_RESULT_OVERHEAD;
+}
+static uint8_t *result_buffer(pxa_net_service_t *s);
 
 struct pxa_net_pending {
     pxa_handle64_t permission_handle;
@@ -54,10 +60,21 @@ struct pxa_net_stream {
     uint32_t magic;
     pxa_net_service_t *service;
     void *body_stream;
-    uint32_t remaining;
+    union { uint32_t remaining; pxa_component_t owner; } cursor;
     uint16_t next_free;
     uint8_t active;
 };
+
+/* The service itself contains only 32-bit-aligned members on Xtensa, but
+ * the following pending array contains uint64_t. Preserve its alignment
+ * when callback or metadata fields change the service header's size. */
+static size_t service_header_size(void) {
+    return pxa_internal_align_size(sizeof(pxa_net_service_t), sizeof(uint64_t));
+}
+
+static uint8_t *result_buffer(pxa_net_service_t *s) {
+    return (uint8_t *)(s->streams + s->max_response_streams);
+}
 
 static int config_valid(const pxa_net_config_t *config) {
     const pxa_net_backend_t *backend;
@@ -104,8 +121,8 @@ size_t pxa_net_service_workspace_size(const pxa_net_config_t *config) {
                    sizeof(pxa_net_stream_t);
     result_size = (size_t)config->max_response_header_bytes +
                   PXA_NET_RESULT_OVERHEAD;
-    if (sizeof(pxa_net_service_t) > SIZE_MAX - size) return 0;
-    size += sizeof(pxa_net_service_t);
+    if (service_header_size() > SIZE_MAX - size) return 0;
+    size += service_header_size();
     if (pending_size > SIZE_MAX - size) return 0;
     size += pending_size;
     if (streams_size > SIZE_MAX - size) return 0;
@@ -134,17 +151,14 @@ pxa_status_t pxa_net_service_init(
     cursor = pxa_internal_align_pointer((uintptr_t)workspace, PXA_INTERNAL_WORKSPACE_ALIGNMENT);
     service = (pxa_net_service_t *)cursor;
     memset(service, 0, sizeof(*service));
-    cursor += sizeof(*service);
+    cursor += service_header_size();
     service->pending = (pxa_net_pending_t *)cursor;
     cursor += (size_t)config->max_pending_requests *
               sizeof(service->pending[0]);
     service->streams = (pxa_net_stream_t *)cursor;
     cursor += (size_t)config->max_response_streams *
               sizeof(service->streams[0]);
-    service->result_buffer = (uint8_t *)cursor;
-    service->result_capacity =
-        (size_t)config->max_response_header_bytes + PXA_NET_RESULT_OVERHEAD;
-    cursor += service->result_capacity;
+    cursor += (size_t)config->max_response_header_bytes + PXA_NET_RESULT_OVERHEAD;
     if (cursor > end) return PXA_STATUS_INVALID_ARGUMENT;
     service->runtime = runtime;
     service->permissions = config->permissions;
@@ -195,7 +209,7 @@ static int service_valid(const pxa_net_service_t *service) {
     return service != NULL && service->magic == PXA_NET_MAGIC;
 }
 
-static uint16_t pending_for_component(const pxa_net_service_t *service,
+static uint16_t requests_for_component(const pxa_net_service_t *service,
                                       pxa_component_t component) {
     uint16_t index = service->pending_active_head;
     uint16_t count = 0;
@@ -204,6 +218,9 @@ static uint16_t pending_for_component(const pxa_net_service_t *service,
         if (pending->component == component) count++;
         index = pending->next;
     }
+    for (index = 0; index < service->max_response_streams; ++index)
+        if (service->streams[index].active == 2 &&
+            service->streams[index].cursor.owner == component) ++count;
     return count;
 }
 
@@ -261,7 +278,7 @@ static pxa_net_stream_t *allocate_stream(pxa_net_service_t *service) {
     service->stream_free_head = stream->next_free;
     stream->next_free = PXA_NET_SLOT_NONE;
     stream->body_stream = NULL;
-    stream->remaining = 0;
+    stream->cursor.remaining = 0;
     stream->active = 1;
     return stream;
 }
@@ -270,7 +287,7 @@ static void release_stream(pxa_net_stream_t *stream) {
     pxa_net_service_t *service = stream->service;
     uint16_t index = (uint16_t)(stream - service->streams);
     stream->body_stream = NULL;
-    stream->remaining = 0;
+    stream->cursor.remaining = 0;
     stream->active = 0;
     stream->next_free = service->stream_free_head;
     service->stream_free_head = index;
@@ -282,8 +299,11 @@ static void close_stream(void *context) {
         !stream->active) {
         return;
     }
-    stream->service->backend.close_body(stream->service->backend.context,
-                                        stream->body_stream);
+    if (stream->active == 2)
+        stream->service->backend.close_exchange(stream->service->backend.context,
+                                                stream->body_stream);
+    else stream->service->backend.close_body(stream->service->backend.context,
+                                             stream->body_stream);
     release_stream(stream);
 }
 
@@ -297,9 +317,13 @@ static int32_t stream_io(void *context, uint32_t operation, uint8_t *data,
         !stream->active) {
         return PXA_STATUS_NOT_FOUND;
     }
+    if (stream->active == 2)
+        return stream->service->backend.exchange_io(
+            stream->service->backend.context, stream->body_stream,
+            operation, data, size);
     if (operation != PXA_NET_IO_READ) return PXA_STATUS_UNSUPPORTED;
-    if (stream->remaining == 0) return 0;
-    read_capacity = size < stream->remaining ? size : stream->remaining;
+    if (stream->cursor.remaining == 0) return 0;
+    read_capacity = size < stream->cursor.remaining ? size : stream->cursor.remaining;
     status = pxa_status_normalize(stream->service->backend.read_body(
         stream->service->backend.context, stream->body_stream, data,
         read_capacity, &read_size));
@@ -307,7 +331,7 @@ static int32_t stream_io(void *context, uint32_t operation, uint8_t *data,
     if (read_size > read_capacity || read_size > (size_t)INT32_MAX) {
         return PXA_STATUS_INTERNAL;
     }
-    stream->remaining -= (uint32_t)read_size;
+    stream->cursor.remaining -= (uint32_t)read_size;
     return (int32_t)read_size;
 }
 
@@ -323,6 +347,60 @@ static pxa_status_t complete_immediate(pxa_net_service_t *service,
         service->runtime, component, request_token, result, NULL, 0);
     if (status != PXA_STATUS_OK) {
         (void)pxa_request_cancel(service->runtime, component, request_token);
+    }
+    return PXA_STATUS_OK;
+}
+
+static int exchanges_supported(const pxa_net_service_t *s) {
+    return s->backend.open_exchange && s->backend.exchange_io &&
+           s->backend.close_exchange;
+}
+
+static pxa_status_t open_exchange(pxa_net_service_t *s, pxa_component_t component,
+    pxa_request_token_t token, pxa_authority_t authority,
+    const pxa_net_request_t *request, pxa_status_t status) {
+    pxa_net_stream_t *stream = NULL;
+    pxa_resource_t resource;
+    pxa_handle64_t handle = 0;
+    uint8_t payload[8];
+    if (status == PXA_STATUS_OK && !exchanges_supported(s))
+        status = PXA_STATUS_UNSUPPORTED;
+    if (status == PXA_STATUS_OK && requests_for_component(s, component) >= s->max_requests_per_component)
+        status = PXA_STATUS_RESOURCE_LIMIT;
+    if (status == PXA_STATUS_OK)
+        status = pxa_request_commit(s->runtime, component, token);
+    if (status == PXA_STATUS_OK) {
+        stream = allocate_stream(s);
+        if (!stream) status = PXA_STATUS_RESOURCE_LIMIT;
+    }
+    if (status == PXA_STATUS_OK) {
+        stream->active = 2;
+        stream->cursor.owner = component;
+        status = s->backend.open_exchange(s->backend.context, request,
+                                          &stream->body_stream);
+        if (status == PXA_STATUS_OK && !stream->body_stream)
+            status = PXA_STATUS_PROTOCOL_ERROR;
+        if (status != PXA_STATUS_OK) {
+            if (stream->body_stream) s->backend.close_exchange(s->backend.context,
+                                                               stream->body_stream);
+            release_stream(stream);
+            stream = NULL;
+        }
+    }
+    if (status == PXA_STATUS_OK) {
+        resource.context = stream;
+        resource.operations = &k_stream_resource_ops;
+        resource.close = close_stream;
+        status = pxa_handle_open64(s->runtime, component, PXA_RESOURCE_STREAM,
+                                   authority, &resource, &handle);
+        if (status != PXA_STATUS_OK) close_stream(stream);
+    }
+    pxa_write_u64(payload, handle);
+    if (pxa_request_complete(s->runtime, component, token, status,
+        status == PXA_STATUS_OK ? payload : NULL,
+        status == PXA_STATUS_OK ? sizeof(payload) : 0) != PXA_STATUS_OK) {
+        if (handle) (void)pxa_handle_close64(s->runtime, component, handle);
+        (void)pxa_request_cancel(s->runtime, component, token);
     }
     return PXA_STATUS_OK;
 }
@@ -343,8 +421,25 @@ static pxa_status_t net_control(void *context, pxa_runtime_t *runtime,
     if (!service_valid(service) || message->request_token == 0) {
         return PXA_STATUS_INVALID_ARGUMENT;
     }
+    if (message->opcode == PXA_NET_CAPABILITIES) {
+        uint8_t caps[32] = {0};
+        if (message->payload.size) return PXA_STATUS_INVALID_ARGUMENT;
+        status = pxa_request_begin_reserved(service->runtime, component,
+            message->request_token, PXA_NET_SERVICE_ID, message->opcode, 0, sizeof(caps));
+        if (status != PXA_STATUS_OK) return status;
+        pxa_write_u32(caps, exchanges_supported(service) ? 7 : 0);
+        pxa_write_u32(caps + 4, PXA_HTTP_MAX_BUFFER_BYTES);
+        pxa_write_u32(caps + 8, PXA_HTTP_MAX_HEAD_BYTES);
+        pxa_write_u32(caps + 12, service->request_limits.max_request_header_bytes);
+        pxa_write_u32(caps + 16, PXA_NET_MAX_URL_BYTES);
+        pxa_write_u64(caps + 20, INT32_MAX);
+        pxa_write_u32(caps + 28, service->max_requests_per_component);
+        return pxa_request_complete(service->runtime, component,
+            message->request_token, PXA_STATUS_OK, caps, sizeof(caps));
+    }
     if (message->opcode != PXA_NET_FETCH &&
-        message->opcode != PXA_NET_HTTP_REQUEST) {
+        message->opcode != PXA_NET_HTTP_REQUEST &&
+        message->opcode != PXA_NET_HTTP_OPEN) {
         return PXA_STATUS_UNSUPPORTED;
     }
     status = pxa_component_wire_profile(service->runtime, component,
@@ -381,16 +476,22 @@ static pxa_status_t net_control(void *context, pxa_runtime_t *runtime,
         service->runtime, component, message->request_token,
         PXA_NET_SERVICE_ID, message->opcode,
         status == PXA_STATUS_OK ? authority : 0,
+        message->opcode == PXA_NET_HTTP_OPEN ? 8u :
         message->opcode == PXA_NET_FETCH
             ? PXA_NET_RESULT_OVERHEAD
-            : service->result_capacity);
+            : result_capacity(service));
     if (begin != PXA_STATUS_OK) return begin;
+    if (message->opcode == PXA_NET_HTTP_OPEN) {
+        if (wire_profile != 1) status = PXA_STATUS_UNSUPPORTED;
+        return open_exchange(service, component, message->request_token,
+                              authority, &parsed.request, status);
+    }
     if (status == PXA_STATUS_OK &&
         parsed.request.max_response_bytes > service->max_response_bytes) {
         status = PXA_STATUS_INVALID_ARGUMENT;
     }
     if (status == PXA_STATUS_OK &&
-        pending_for_component(service, component) >=
+        requests_for_component(service, component) >=
             service->max_requests_per_component) {
         status = PXA_STATUS_RESOURCE_LIMIT;
     }
@@ -552,7 +653,7 @@ pxa_status_t pxa_net_poll(
                 status = PXA_STATUS_RESOURCE_LIMIT;
             } else {
                 stream->body_stream = response.body_stream;
-                stream->remaining =
+                stream->cursor.remaining =
                     (response.flags & PXA_NET_RESPONSE_BODY_LENGTH_KNOWN) != 0
                         ? (uint32_t)response.body_length
                         : pending->max_response_bytes;
@@ -577,7 +678,7 @@ pxa_status_t pxa_net_poll(
         }
         if (status == PXA_STATUS_OK) {
             status = pxa_net_response_encode(
-                service->result_buffer, service->result_capacity,
+                result_buffer(service), result_capacity(service),
                 pending->wire_profile, pending->opcode, &response,
                 handle, &result_size);
         }
@@ -590,7 +691,7 @@ pxa_status_t pxa_net_poll(
         }
         complete = pxa_request_complete(
             service->runtime, pending->component, pending->request_token, status,
-            status == PXA_STATUS_OK ? service->result_buffer : NULL,
+            status == PXA_STATUS_OK ? result_buffer(service) : NULL,
             status == PXA_STATUS_OK ? result_size : 0);
         if (complete != PXA_STATUS_OK) {
             if (handle != PXA_HANDLE_INVALID) {

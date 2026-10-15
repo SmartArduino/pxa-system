@@ -13,7 +13,7 @@ extern "C" {
 
 #define PXA_UI_SERVICE_ID UINT16_C(3)
 #define PXA_UI_SERVICE_MAJOR UINT16_C(0)
-#define PXA_UI_SERVICE_MINOR UINT16_C(8)
+#define PXA_UI_SERVICE_MINOR UINT16_C(9)
 #define PXA_UI_SERVICE_PATCH UINT16_C(0)
 
 #define PXA_UI_TX_BEGIN UINT16_C(1)
@@ -207,6 +207,7 @@ pxa_status_t pxa_ui_validate_grid_tracks(pxa_bytes_t value);
 /* Optional per-input UTF-8 byte limit. Does not reserve a text buffer. */
 #define PXA_UI_PROPERTY_TEXT_MAX_BYTES ((pxa_ui_property_t)782)
 #define PXA_UI_PROPERTY_TEXT_SINGLE_LINE ((pxa_ui_property_t)783)
+#define PXA_UI_PROPERTY_TEXT_PASSWORD ((pxa_ui_property_t)784)
 
 #define PXA_UI_IMAGE_FIT_CONTAIN UINT8_C(0)
 #define PXA_UI_IMAGE_FIT_STRETCH UINT8_C(1)
@@ -290,6 +291,7 @@ typedef uint64_t pxa_ui_features_t;
 #define PXA_UI_FEATURE_SIZED_TEXT (UINT64_C(1) << 11)
 #define PXA_UI_FEATURE_TEXT_INPUT_CONTROL (UINT64_C(1) << 12)
 #define PXA_UI_FEATURE_DYNAMIC_TEXT (UINT64_C(1) << 13)
+#define PXA_UI_FEATURE_PASSWORD_INPUT (UINT64_C(1) << 14)
 
 #define PXA_UI_CONTROLLER_UP (UINT32_C(1) << 0)
 #define PXA_UI_CONTROLLER_DOWN (UINT32_C(1) << 1)

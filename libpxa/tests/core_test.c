@@ -2428,8 +2428,8 @@ static void test_window_service(void) {
 
     assert(pxa_window_negotiate_version((pxa_version_range_t){0, 1, 0, 9},
                                         &selected) == PXA_STATUS_OK);
-    assert(selected.major == 0 && selected.minor == 2);
-    assert(pxa_window_negotiate_version((pxa_version_range_t){0, 3, 1, 0},
+    assert(selected.major == 0 && selected.minor == 3);
+    assert(pxa_window_negotiate_version((pxa_version_range_t){0, 4, 1, 0},
                                         &selected) == PXA_STATUS_UNSUPPORTED);
     assert(pxa_window_negotiate_version((pxa_version_range_t){1, 0, 1, 9},
                                         &selected) == PXA_STATUS_UNSUPPORTED);
@@ -2563,7 +2563,28 @@ static void test_window_service(void) {
     assert(pxa_event_consume(test.runtime, component, event_view.token) ==
            PXA_STATUS_OK);
 
-    assert(pxa_window_queue_back(window, component) == PXA_STATUS_OK);
+    /* Guest navigation uses the ordinary reliable Back lifecycle. Invalid
+     * tokens/payloads must not enqueue an event or stop the component. */
+    pxa_writer_init(&message_writer, message, sizeof(message));
+    assert(pxa_writer_message(&message_writer, PXA_WINDOW_SERVICE_ID,
+                              PXA_WINDOW_REQUEST_BACK, 1, NULL, 0) == PXA_STATUS_OK);
+    assert(pxa_component_begin_event(test.runtime, component) == PXA_STATUS_OK);
+    assert(pxa_runtime_control(test.runtime, component, message, message_writer.size) ==
+           PXA_STATUS_INVALID_ARGUMENT);
+    assert(pxa_component_finish_event(test.runtime, component, 0) == PXA_STATUS_OK);
+    pxa_writer_init(&message_writer, message, sizeof(message));
+    assert(pxa_writer_message(&message_writer, PXA_WINDOW_SERVICE_ID,
+                              PXA_WINDOW_REQUEST_BACK, 0, &value, 1) == PXA_STATUS_OK);
+    assert(pxa_component_begin_event(test.runtime, component) == PXA_STATUS_OK);
+    assert(pxa_runtime_control(test.runtime, component, message, message_writer.size) ==
+           PXA_STATUS_INVALID_ARGUMENT);
+    assert(pxa_component_finish_event(test.runtime, component, 0) == PXA_STATUS_OK);
+    pxa_writer_init(&message_writer, message, sizeof(message));
+    assert(pxa_writer_message(&message_writer, PXA_WINDOW_SERVICE_ID,
+                              PXA_WINDOW_REQUEST_BACK, 0, NULL, 0) == PXA_STATUS_OK);
+    assert(pxa_component_begin_event(test.runtime, component) == PXA_STATUS_OK);
+    assert(pxa_runtime_control(test.runtime, component, message, message_writer.size) == PXA_STATUS_OK);
+    assert(pxa_component_finish_event(test.runtime, component, 1) == PXA_STATUS_OK);
     event_size = read_head_event(test.runtime, component, event_bytes,
                                  sizeof(event_bytes), &event_view);
     assert(pxa_message_decode(event_bytes, event_size, PXA_MAX_CONTROL_MESSAGE,

@@ -588,17 +588,20 @@ static uint64_t input_timestamp_us(const pxa_lvgl_ui_t *ui,
 static void emit_event(pxa_lvgl_ui_node_t *node, lv_indev_t *input,
                        pxa_ui_event_kind_t kind, uint16_t flags,
                        const void *value, size_t value_size) {
+    /* A Host may dispatch the Guest synchronously. Its handler can replace
+     * the surface and delete node before the callback returns. Only the
+     * adapter itself remains alive across that boundary. */
+    pxa_lvgl_ui_t *ui = node->ui;
     uint64_t previous_timestamp_us;
     if (node->suppress_events ||
-        node->ui->config.event_callback == NULL ||
+        ui->config.event_callback == NULL ||
         (node->event_mask & (UINT64_C(1) << (kind - 1u))) == 0)
         return;
-    previous_timestamp_us = node->ui->event_timestamp_us;
-    node->ui->event_timestamp_us = input_timestamp_us(node->ui, input);
-    node->ui->config.event_callback(node->surface, node->id, kind, flags,
-                                    value, value_size,
-                                    node->ui->config.callback_user_data);
-    node->ui->event_timestamp_us = previous_timestamp_us;
+    previous_timestamp_us = ui->event_timestamp_us;
+    ui->event_timestamp_us = input_timestamp_us(ui, input);
+    ui->config.event_callback(node->surface, node->id, kind, flags,
+                              value, value_size, ui->config.callback_user_data);
+    ui->event_timestamp_us = previous_timestamp_us;
 }
 
 static void report_visible_range(void *context);
@@ -705,9 +708,9 @@ static void on_widget_event(lv_event_t *event) {
     } else if (code == LV_EVENT_SCROLL) {
         int32_t scroll_y = lv_obj_get_scroll_y(node->object);
         value = canvas_logical_pixels(node->ui, scroll_y);
+        schedule_visible_range(node);
         emit_event(node, lv_event_get_indev(event), PXA_UI_EVENT_SCROLL, 0,
                    &value, sizeof(value));
-        schedule_visible_range(node);
     }
 }
 
@@ -1308,6 +1311,10 @@ static void apply_property(pxa_lvgl_ui_node_t *node,
                 lv_dropdown_set_options(object,
                                         value.size == 0 ? "" : (const char *)data);
             break;
+        case PXA_UI_PROPERTY_TEXT_PASSWORD:
+            lv_textarea_set_password_show_time(object, 0);
+            lv_textarea_set_password_mode(object, data[0] != 0);
+            break;
         case PXA_UI_PROPERTY_TEXT_SINGLE_LINE:
             set_text_single_line(object, data[0]);
             break;
@@ -1412,6 +1419,7 @@ static void clear_property(pxa_lvgl_ui_node_t *node,
                            pxa_ui_property_t property) {
     uint8_t value[16] = {0};
     switch (property) {
+        case PXA_UI_PROPERTY_TEXT_PASSWORD:
         case PXA_UI_PROPERTY_TEXT_SINGLE_LINE:
             apply_property(node, property, (pxa_bytes_t){value, 1});
             break;
@@ -1574,6 +1582,7 @@ static pxa_status_t prepare_property_undo(pxa_lvgl_ui_t *ui, pxa_lvgl_ui_command
             case PXA_UI_PROPERTY_EVENT_MASK: case PXA_UI_PROPERTY_POSITION:
             case PXA_UI_PROPERTY_TEXT: case PXA_UI_PROPERTY_IMAGE_FIT:
             case PXA_UI_PROPERTY_VALUE: case PXA_UI_PROPERTY_MIN_VALUE: case PXA_UI_PROPERTY_MAX_VALUE:
+            case PXA_UI_PROPERTY_TEXT_PASSWORD:
             case PXA_UI_PROPERTY_TEXT_SINGLE_LINE: case PXA_UI_PROPERTY_TEXT_MAX_BYTES:
             case PXA_UI_PROPERTY_SCROLL_AXIS: case PXA_UI_PROPERTY_SCROLLBAR:
             case PXA_UI_PROPERTY_SCROLL_POSITION: break;
@@ -1623,6 +1632,7 @@ static pxa_status_t capture_property_undo(pxa_lvgl_ui_command_t *command) {
             style->object, style->property, &style->value, style->selector) == LV_STYLE_RES_FOUND;
     }
     uint16_t property = command->view.property;
+    if (property == PXA_UI_PROPERTY_TEXT_PASSWORD) undo->selected = lv_textarea_get_password_mode(object);
     if (property == PXA_UI_PROPERTY_TEXT_SINGLE_LINE) undo->selected = lv_textarea_get_one_line(object);
     if (property == PXA_UI_PROPERTY_TEXT || property == PXA_UI_PROPERTY_ICON) {
         const char *text = NULL;
@@ -1665,6 +1675,7 @@ static void rollback_property(pxa_lvgl_ui_command_t *command) {
     uint16_t property = command->view.property;
     memcpy((uint8_t *)node + NODE_STATE_OFFSET, undo->state, NODE_STATE_BYTES);
     node->own_disabled = (undo->flags & UINT32_C(0x80000000)) != 0;
+    if (property == PXA_UI_PROPERTY_TEXT_PASSWORD) lv_textarea_set_password_mode(object, undo->selected);
     if (property == PXA_UI_PROPERTY_TEXT_SINGLE_LINE) set_text_single_line(object, undo->selected);
     if (property == PXA_UI_PROPERTY_TEXT || property == PXA_UI_PROPERTY_ICON) {
         if (undo->text) apply_property(node, PXA_UI_PROPERTY_TEXT,

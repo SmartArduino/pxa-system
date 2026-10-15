@@ -195,6 +195,15 @@ private:
     Phase phase_ = Phase::inactive;
 };
 
+// Borrowed readable byte resource for Host-to-Host operations. Consumers
+// validate the transport as well as the handle; ownership remains in the
+// source object. FILE and STREAM preserve their usual permission checks.
+struct ReadableResource {
+    Transport* transport = nullptr;
+    std::uint64_t handle = 0;
+    std::uint16_t type = 0;
+};
+
 template<class Tag>
 class Resource {
 public:

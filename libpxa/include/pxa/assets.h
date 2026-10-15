@@ -4,6 +4,7 @@
 #include "pxa/runtime.h"
 #include "pxa/asset_cache.h"
 #include "pxa/asset_read.h"
+#include "pxa/image_decode.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -11,12 +12,37 @@ extern "C" {
 
 #define PXA_ASSETS_SERVICE_ID UINT16_C(21)
 #define PXA_ASSETS_SERVICE_MAJOR UINT16_C(2)
-#define PXA_ASSETS_SERVICE_MINOR UINT16_C(1)
+#define PXA_ASSETS_SERVICE_MINOR UINT16_C(3)
 #define PXA_ASSETS_QUERY UINT16_C(1)
 #define PXA_ASSETS_LOAD UINT16_C(2)
 #define PXA_ASSETS_PREFETCH UINT16_C(3)
 #define PXA_ASSETS_STATUS UINT16_C(4)
 #define PXA_ASSETS_READ UINT16_C(5)
+/* DECODE_IMAGE: source:u64|resource_type:u16|options:u16|max_width:u16|
+ * max_height:u16|max_pixels:u32|max_encoded_bytes:u32 (24 bytes).
+ * Source is an owned FILE or STREAM in this component. Host reads from its
+ * current position without a Guest copy, yielding at WOULD_BLOCK. The caller
+ * keeps it alive and exclusively readable until completion/cancel. Source is
+ * never closed by this service. Returns LOAD result | source_width:u16 |
+ * source_height:u16 | encoded_bytes:u32 (36 bytes). Core cancellation reclaims
+ * the pending decoder; no separate decoder handle is published. The optional
+ * image-frames extension below attaches state to the current image. */
+#define PXA_ASSETS_FEATURE_IMAGE_DECODE UINT64_C(1)
+#define PXA_ASSETS_FEATURE_IMAGE_FRAMES UINT64_C(2)
+#define PXA_ASSETS_IMAGE_FORMATS_MASK UINT16_C(7)
+#define PXA_ASSETS_IMAGE_WITH_FRAMES UINT16_C(256)
+#define PXA_ASSETS_DECODE_IMAGE UINT16_C(6)
+#define PXA_ASSETS_NEXT_IMAGE_FRAME UINT16_C(7)
+#define PXA_ASSETS_IMAGE_RESULT_BYTES 36u
+#define PXA_ASSETS_FRAME_RESULT_BYTES 48u
+/* DECODE_IMAGE options:u16 replaces reserved; low 3 bits accept PNG/JPEG/GIF
+ * (zero=any). WITH_FRAMES uses a 32-byte request, appending animation pixel
+ * and encoded-byte ceilings, and returns image result | delay_ms:u32 |
+ * iteration:u32 | flags:u32 (LAST=1). The image owns optional frame state.
+ * NEXT_IMAGE_FRAME borrows that image:u64 and returns the same 48-byte result,
+ * moving frame state to the new image. Old pixels remain immutable. Closing
+ * either image releases only what it still owns; ordinary static images have
+ * no frame state. One completion transfers exactly one image handle. */
 #define PXA_ASSETS_STATUS_BYTES 8u
 #define PXA_ASSETS_INFO_BYTES 20u
 #define PXA_ASSETS_LOAD_RESULT_BYTES 28u
@@ -55,6 +81,11 @@ typedef struct {
     uint16_t max_resources;
     uint16_t max_resources_per_component;
     pxa_assets_backend_t backend;
+    /* Optional, immutable through the last image reference. NULL disables
+     * source-resource image decoding; no decoder/cache is allocated by init. */
+    const pxa_memory_allocator_t *image_allocator;
+    const pxa_memory_allocator_t *image_temporary_allocator;
+    const pxa_image_backend_t *image_backend;
 } pxa_assets_config_t;
 typedef struct pxa_assets_service pxa_assets_service_t;
 
@@ -63,12 +94,14 @@ pxa_status_t pxa_assets_service_init(void *workspace, size_t bytes,
     pxa_runtime_t *runtime, const pxa_assets_config_t *config,
     pxa_assets_service_t **output);
 pxa_status_t pxa_assets_service_register(pxa_assets_service_t *service);
-/* Run on the runtime thread after worker notification and after Core cancel.
- * Iterates a bounded request table, never waits for I/O. Resource close/stop
- * callbacks require this service and its backend to outlive the runtime. */
-void pxa_assets_service_poll(pxa_assets_service_t *service);
+/* Run on the runtime thread after Guest callbacks, Core cancel and source I/O
+ * notifications (including notifications without a completed Net request).
+ * Nonzero requests another owner-loop turn: work yielded its slice or emitted
+ * a completion. WOULD_BLOCK does not request a turn; wait for the source wake.
+ * Never waits for I/O. Service/backend must outlive resource close/stop. */
+int pxa_assets_service_poll(pxa_assets_service_t *service);
 /* Resolve once during binding/submit; caller owns the returned reference.
- * expected_kind is TEXTURE or PALETTE. Full generation and owner validated. */
+ * expected_kind is TEXTURE, PALETTE, AUDIO or IMAGE. Owner/generation validated. */
 pxa_status_t pxa_assets_acquire_handle(pxa_runtime_t *runtime,
     pxa_component_t component, pxa_handle64_t handle, uint8_t expected_kind,
     pxa_raster_asset_t **output);

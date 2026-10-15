@@ -511,6 +511,19 @@ pxa_status_t pxa_handle_close(pxa_runtime_t *runtime,
                                     handle);
 }
 
+int32_t pxa_handle_poll64(pxa_runtime_t *runtime, pxa_component_t component_ref,
+                          pxa_handle64_t handle) {
+    uint32_t index;
+    pxa_component_slot_t *component =
+        pxa_runtime_find_component(runtime, component_ref, &index);
+    if (component == NULL) return PXA_STATUS_NOT_FOUND;
+    if (component->state != PXA_COMPONENT_STARTING &&
+        component->state != PXA_COMPONENT_RUNNING)
+        return PXA_STATUS_BAD_STATE;
+    return pxa_resource_table_io64(&runtime->resources, index, handle,
+                                   PXA_IO_POLL, NULL, 0);
+}
+
 pxa_status_t pxa_handle_close64(pxa_runtime_t *runtime,
                                 pxa_component_t component_ref,
                                 pxa_handle64_t handle) {

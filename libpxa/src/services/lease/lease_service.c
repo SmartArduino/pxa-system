@@ -12,16 +12,36 @@ typedef uint8_t pxa_lease_state_t;
 #define PXA_LEASE_ACTIVE ((pxa_lease_state_t)1)
 #define PXA_LEASE_REVOKING ((pxa_lease_state_t)2)
 #define PXA_LEASE_PENDING_EVENT ((pxa_lease_state_t)3)
+#define PXA_LEASE_WAITING ((pxa_lease_state_t)4)
 
 typedef struct {
-    struct pxa_lease_service *service;
+    union { struct pxa_lease_service *service; uint32_t identity_low; } owner;
     pxa_component_t component;
     pxa_handle64_t handle;
-    uint64_t expires_at_ms;
-    pxa_status_t revoke_reason;
+    union { uint64_t expires_at_ms; pxa_request_token_t token; } value;
+    union { pxa_status_t revoke_reason; uint32_t identity_high; } detail;
     uint16_t next;
     pxa_lease_state_t state;
 } pxa_lease_entry_t;
+
+/* The four readiness bits share the existing state byte. Split a wait's
+ * request identity across two otherwise lease-only fields: a uint64_t in the
+ * pointer union would grow every slot on 32-bit targets because of alignment.
+ * These helpers keep that storage decision out of scheduling code. */
+static int entry_waiting(const pxa_lease_entry_t *entry) {
+    return (entry->state & 15u) == PXA_LEASE_WAITING;
+}
+static uint32_t wait_interests(const pxa_lease_entry_t *entry) {
+    return entry->state >> 4;
+}
+static uint64_t wait_identity(const pxa_lease_entry_t *entry) {
+    return ((uint64_t)entry->detail.identity_high << 32) | entry->owner.identity_low;
+}
+static void set_wait(pxa_lease_entry_t *entry, uint32_t interests, uint64_t identity) {
+    entry->state = (pxa_lease_state_t)(PXA_LEASE_WAITING | (interests << 4));
+    entry->owner.identity_low = (uint32_t)identity;
+    entry->detail.identity_high = (uint32_t)(identity >> 32);
+}
 
 struct pxa_lease_service {
     uint32_t magic;
@@ -99,7 +119,7 @@ pxa_status_t pxa_lease_service_init(void *workspace, size_t workspace_size,
     memset(service->entries, 0,
            (size_t)limits->max_leases * sizeof(*service->entries));
     for (index = 0; index < limits->max_leases; ++index) {
-        service->entries[index].service = service;
+        service->entries[index].owner.service = service;
         service->entries[index].next =
             index + 1u < limits->max_leases
                 ? (uint16_t)(index + 1u)
@@ -121,7 +141,7 @@ static void release_entry_at(pxa_lease_service_t *service, uint16_t index,
         service->entries[previous].next = entry->next;
     }
     memset(entry, 0, sizeof(*entry));
-    entry->service = service;
+    entry->owner.service = service;
     entry->next = service->free_head;
     service->free_head = index;
 }
@@ -146,7 +166,7 @@ static pxa_lease_entry_t *allocate_entry(pxa_lease_service_t *service) {
     entry = &service->entries[index];
     service->free_head = entry->next;
     memset(entry, 0, sizeof(*entry));
-    entry->service = service;
+    entry->owner.service = service;
     entry->next = service->active_head;
     service->active_head = index;
     entry->state = PXA_LEASE_ACTIVE;
@@ -159,7 +179,7 @@ static void lease_closed(void *context) {
         entry->state = PXA_LEASE_PENDING_EVENT;
         return;
     }
-    release_entry(entry->service, entry);
+    release_entry(entry->owner.service, entry);
 }
 
 static pxa_status_t parse_request(pxa_bytes_t payload, uint16_t *kind,
@@ -211,6 +231,62 @@ static uint16_t active_for_component(const pxa_lease_service_t *service,
     return count;
 }
 
+/* Readiness waits share the existing bounded Core pool with leases. No new
+ * per-component table or additional entry storage is required. */
+static pxa_status_t wait_control(pxa_lease_service_t *service,
+                                 pxa_component_t component,
+                                 const pxa_message_view_t *message) {
+    pxa_status_t status;
+    pxa_lease_entry_t *entry;
+    uint32_t interests;
+    uint64_t handle;
+    int32_t ready;
+    uint16_t i, count = 0, profile;
+    uint8_t result[4];
+    if (!message->request_token || message->payload.size != 12)
+        return PXA_STATUS_INVALID_ARGUMENT;
+    status = pxa_component_wire_profile(service->runtime, component, &profile);
+    if (status != PXA_STATUS_OK) return status;
+    if (profile != 1) return PXA_STATUS_UNSUPPORTED;
+    handle = pxa_read_u64(message->payload.data);
+    interests = pxa_read_u32(message->payload.data + 8);
+    if (!handle || !interests || (interests & ~UINT32_C(15)))
+        return PXA_STATUS_INVALID_ARGUMENT;
+    /* Prune cancelled waits before admitting a replacement. */
+    i = service->active_head;
+    while (i != PXA_LEASE_SLOT_NONE) {
+        entry = &service->entries[i];
+        i = entry->next;
+        if (!entry_waiting(entry)) continue;
+        if (pxa_request_identity(service->runtime, entry->component,
+                entry->value.token) != wait_identity(entry))
+            release_entry(service, entry);
+        else if (entry->component == component) ++count;
+    }
+    if (count >= service->limits.max_leases_per_component)
+        return PXA_STATUS_RESOURCE_LIMIT;
+    status = pxa_request_begin_reserved(service->runtime, component,
+        message->request_token, PXA_SERVICE_CORE, PXA_CORE_WAIT_RESOURCE, 0, 4);
+    if (status != PXA_STATUS_OK) return status;
+    ready = pxa_handle_poll64(service->runtime, component, handle);
+    if (ready < 0 || ((uint32_t)ready & (interests | PXA_READY_END))) {
+        pxa_write_u32(result, ready < 0 ? 0 : (uint32_t)ready);
+        return pxa_request_complete(service->runtime, component,
+            message->request_token, ready < 0 ? ready : PXA_STATUS_OK,
+            ready < 0 ? NULL : result, ready < 0 ? 0 : 4);
+    }
+    entry = allocate_entry(service);
+    if (!entry)
+        return pxa_request_complete(service->runtime, component,
+            message->request_token, PXA_STATUS_RESOURCE_LIMIT, NULL, 0);
+    entry->component = component;
+    entry->handle = handle;
+    entry->value.token = message->request_token;
+    set_wait(entry, interests, pxa_request_identity(service->runtime, component,
+                                                    message->request_token));
+    return PXA_STATUS_OK;
+}
+
 static pxa_status_t lease_control(void *context, pxa_runtime_t *runtime,
                                   pxa_component_t component,
                                   const pxa_message_view_t *message) {
@@ -228,6 +304,8 @@ static pxa_status_t lease_control(void *context, pxa_runtime_t *runtime,
     pxa_resource_t resource;
     uint8_t result_record[12];
     (void)runtime;
+    if (message->opcode == PXA_CORE_WAIT_RESOURCE)
+        return wait_control(service, component, message);
     if (message->opcode != PXA_LEASE_ACQUIRE || message->request_token == 0) {
         return PXA_STATUS_INVALID_ARGUMENT;
     }
@@ -272,7 +350,7 @@ static pxa_status_t lease_control(void *context, pxa_runtime_t *runtime,
         resource.context = entry;
         resource.close = lease_closed;
         entry->component = component;
-        entry->expires_at_ms = now + duration;
+        entry->value.expires_at_ms = now + duration;
         if (wire_profile == 1)
             result = pxa_handle_open64(service->runtime, component,
                                         PXA_RESOURCE_LEASE, 0, &resource,
@@ -358,7 +436,7 @@ static pxa_status_t post_revoked(pxa_lease_service_t *service,
     else
         pxa_write_u32(payload, (pxa_handle_t)entry->handle);
     pxa_write_u32(payload + payload_size - 4,
-                  (uint32_t)entry->revoke_reason);
+                  (uint32_t)entry->detail.revoke_reason);
     status = pxa_event_post_message(
         service->runtime, entry->component, PXA_SERVICE_CORE,
         PXA_LEASE_REVOKED, 0, (pxa_bytes_t){payload, payload_size}, 1, 0);
@@ -396,10 +474,41 @@ static pxa_status_t revoke_matching(pxa_lease_service_t *service,
         pxa_lease_entry_t *entry = &service->entries[index];
         uint16_t next = entry->next;
         int released = 0;
+        if (entry_waiting(entry)) {
+            uint8_t payload[4];
+            int32_t ready;
+            if (pxa_request_identity(service->runtime, entry->component,
+                    entry->value.token) != wait_identity(entry)) {
+                release_entry_at(service, index, previous);
+                index = next;
+                continue;
+            }
+            ready = expired_only ? pxa_handle_poll64(service->runtime,
+                entry->component, entry->handle) : reason;
+            if (ready < 0 || ((uint32_t)ready &
+                    (wait_interests(entry) | PXA_READY_END))) {
+                pxa_status_t completed;
+                pxa_write_u32(payload, ready < 0 ? 0 : (uint32_t)ready);
+                completed = pxa_request_complete(service->runtime,
+                    entry->component, entry->value.token,
+                    ready < 0 ? ready : PXA_STATUS_OK,
+                    ready < 0 ? NULL : payload, ready < 0 ? 0 : 4);
+                if (completed == PXA_STATUS_OK) {
+                    append_affected(entry->component, affected, capacity, count);
+                    release_entry_at(service, index, previous);
+                    index = next;
+                    continue;
+                }
+                final_status = completed;
+            }
+            previous = index;
+            index = next;
+            continue;
+        }
         if (entry->state == PXA_LEASE_ACTIVE &&
-            (!expired_only || now >= entry->expires_at_ms)) {
+            (!expired_only || now >= entry->value.expires_at_ms)) {
             pxa_component_t component = entry->component;
-            entry->revoke_reason = reason;
+            entry->detail.revoke_reason = reason;
             entry->state = PXA_LEASE_REVOKING;
             if ((entry->handle >> 32) != 0)
                 (void)pxa_handle_close64(service->runtime, component,
@@ -433,7 +542,8 @@ int pxa_lease_has_active(const pxa_lease_service_t *service) {
     if (!service_valid(service)) return 0;
     index = service->active_head;
     while (index != PXA_LEASE_SLOT_NONE) {
-        if (service->entries[index].state == PXA_LEASE_ACTIVE) return 1;
+        if (service->entries[index].state == PXA_LEASE_ACTIVE ||
+            entry_waiting(&service->entries[index])) return 1;
         index = service->entries[index].next;
     }
     return 0;

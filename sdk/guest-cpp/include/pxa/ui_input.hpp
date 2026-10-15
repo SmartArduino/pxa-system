@@ -5,6 +5,26 @@
 
 namespace pxa::ui {
 
+enum class VolumeKey : std::uint32_t { up = 1, down = 2, up_released = 3, down_released = 4 };
+struct VolumeKeyEvent {
+    std::uint32_t surface, node, generation;
+    std::uint64_t timestamp_us;
+    VolumeKey key;
+};
+
+inline Result<VolumeKeyEvent> decode_volume_key(const Event& event) noexcept {
+    if (event.service != 3 || event.opcode != 0x8001 || event.token ||
+        event.payload.size() != 28 || wire::get16(event.payload.data() + 12) != 5)
+        return std::unexpected(Error::protocol_error);
+    const auto* data = event.payload.data();
+    VolumeKeyEvent key{wire::get32(data), wire::get32(data + 4), wire::get32(data + 8),
+                       wire::get64(data + 16), VolumeKey(wire::get32(data + 24))};
+    if (!key.surface || !key.node || !key.generation ||
+        key.key < VolumeKey::up || key.key > VolumeKey::down_released)
+        return std::unexpected(Error::protocol_error);
+    return key;
+}
+
 inline constexpr std::uint8_t pointer_phase_down = 0;
 inline constexpr std::uint8_t pointer_phase_move = 1;
 inline constexpr std::uint8_t pointer_phase_up = 2;

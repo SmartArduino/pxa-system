@@ -1,6 +1,28 @@
 {
-  "ui": ["grid", "canvas", "virtual-list", "rgb565-bitmap", "controller-input", "canvas-stream-io", "sized-text", "text-input-control", "dynamic-text"],
-  "wasi": ["monotonic-clock", "wall-clock", "random"],
-  "game-render": ["asset-bindings"],
-  "ime": ["provider", "pinyin", "latin", "t9"]
+  "ui": [
+    "grid",
+    "canvas",
+    "virtual-list",
+    "rgb565-bitmap",
+    "controller-input",
+    "canvas-stream-io",
+    "sized-text",
+    "text-input-control",
+    "dynamic-text",
+    "password-input"
+  ],
+  "wasi": [
+    "monotonic-clock",
+    "wall-clock",
+    "random"
+  ],
+  "game-render": [
+    "asset-bindings"
+  ],
+  "ime": [
+    "provider",
+    "pinyin",
+    "latin",
+    "t9"
+  ]
 }

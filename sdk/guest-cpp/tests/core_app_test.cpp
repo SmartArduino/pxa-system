@@ -99,6 +99,8 @@ int main() {
         assert(last_packet[29]==1&&last_packet[34]==2);
         auto previous=last_packet;
         assert(!window.fullscreen(static_cast<pxa::WindowBarMode>(3))&&last_packet==previous);
+        assert(window.request_back());
+        assert(last_packet_size==20&&last_packet[0]==2&&last_packet[2]==4&&last_packet[4]==0);
     }
     assert(pxa_app_start(nullptr, 0) == 0);
     assert(starts == 1 && last_packet_size == 23);

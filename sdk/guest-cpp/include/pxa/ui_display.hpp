@@ -10,7 +10,7 @@ enum class UiFeature : std::uint64_t {
     multiple_surfaces = 1ull << 6, shared_command_buffer = 1ull << 7,
     rgb565_bitmap = 1ull << 8, controller_input = 1ull << 9,
     canvas_stream_io = 1ull << 10, sized_text = 1ull << 11,
-    text_input_control = 1ull << 12, dynamic_text = 1ull << 13
+    text_input_control = 1ull << 12, dynamic_text = 1ull << 13, password_input = 1ull << 14
 };
 
 // Optional result, separate from DisplayMetrics so geometry users pay no cost.

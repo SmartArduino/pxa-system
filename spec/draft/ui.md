@@ -1,4 +1,4 @@
-# PXA UI Service 0.8.0
+# PXA UI Service 0.9.0
 
 UI is a backend-neutral command protocol. The Host owns the rendered tree;
 the service does not retain a second property-complete scene. A Component has a
@@ -177,6 +177,16 @@ Host that presents a system input method delivers its result through these
 events, so a Guest that wants the system keyboard only has to render a text
 input, subscribe to the text mask and follow the text events. Resource pressure is semantic (`normal`,
 `constrained`, `critical`); raw free-memory values are not application ABI.
+
+UI 0.9 `password-input` (bit 14) adds `text-password` (property 784,
+bool, text inputs only). Default and clear value are false. When true the
+Host masks every character immediately, uses its sensitive IME mode, and
+disables prediction/learning. Text events still carry the actual UTF-8 value
+to the owning Guest; neither masking nor clearing the property changes the
+value, dimensions, or byte limit. It participates in transaction rollback.
+Guests must request this feature for password fields rather than drawing
+bullets over an ordinary input. This is display/IME behavior, not a password
+vault: applications own and should promptly clear their input state.
 
 ## Core 1 preview binding
 

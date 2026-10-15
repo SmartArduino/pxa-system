@@ -30,6 +30,7 @@
 #include "pxadb_control.h"
 #include "package_store.h"
 #include "simulator_runtime.h"
+#include "volume_key_input.h"
 #include "src/core/lv_obj_event_private.h"
 #include "src/drivers/sdl/lv_sdl_private.h"
 #include "include/lvgl/drivers/sdl/lv_sdl_keyboard.h"
@@ -213,7 +214,7 @@ static simulator_ui_fonts_t simulator_ui_fonts;
 typedef struct {
     pxsys_reference_lvgl_t* ui;
     simulator_preferences_t* prefs;
-    SDL_atomic_t volume_steps;
+    pxsys_volume_key_input_t volume_events;
     lv_obj_t* screen_off_overlay;
     uint32_t window_id;
     uint32_t pressed_at_ms;
@@ -256,13 +257,11 @@ static void simulator_screen_wake(simulator_power_state_t* state) {
 
 static int simulator_power_event_watch(void* context, SDL_Event* event) {
     simulator_power_state_t* state = (simulator_power_state_t*)context;
-    if (state != NULL && event != NULL && event->type == SDL_KEYDOWN &&
-        !event->key.repeat && state->prefs != NULL &&
+    if (state != NULL && event != NULL && state->prefs != NULL &&
+        (event->type == SDL_KEYDOWN || event->type == SDL_KEYUP) &&
         (state->window_id == 0 || event->key.windowID == state->window_id)) {
-        if (event->key.keysym.sym == SDLK_VOLUMEUP)
-            SDL_AtomicAdd(&state->volume_steps, 1);
-        else if (event->key.keysym.sym == SDLK_VOLUMEDOWN)
-            SDL_AtomicAdd(&state->volume_steps, -1);
+        const uint32_t key = pxsys_volume_key_from_sdl(event);
+        if (key) (void)pxsys_volume_key_push(&state->volume_events, key);
     }
     if (state == NULL || event == NULL ||
         (event->type != SDL_KEYDOWN && event->type != SDL_KEYUP) ||
@@ -313,6 +312,29 @@ static void simulator_power_poll(simulator_power_state_t* state) {
         simulator_screen_wake(state);
         (void)pxsys_reference_lvgl_set_locked(state->ui, false);
         (void)pxsys_reference_lvgl_home(state->ui);
+    }
+}
+
+static void simulator_volume_poll(simulator_power_state_t* state,
+                                  pxsys_desktop_runtime_t* runtime) {
+    int steps = 0;
+    uint32_t key;
+    while ((key = pxsys_volume_key_front(&state->volume_events)) != 0) {
+        if (!pxsys_desktop_runtime_volume_key(runtime, key)) {
+            if (key == 1) ++steps;
+            else if (key == 2) --steps;
+        }
+        pxsys_volume_key_pop(&state->volume_events);
+    }
+    if (steps && state->prefs && state->prefs->system) {
+        pxsys_system_status_snapshot_t status = {.struct_size = sizeof(status)};
+        if (pxsys_system_status_service_get(
+                pxsys_standard_system_status(state->prefs->system), &status) == PXSYS_STATUS_OK) {
+            int next = (int)status.volume_percent + steps * 10;
+            if (next < 0) next = 0;
+            if (next > 100) next = 100;
+            (void)simulator_set_level(state->prefs, PXSYS_LEVEL_CONTROL_VOLUME, (uint8_t)next);
+        }
     }
 }
 
@@ -1297,6 +1319,7 @@ static bool simulator_set_app_permission(void* context, const char* identity,
 typedef struct {
     pxsys_pxadb_control_t* control;
     pxsys_desktop_runtime_t* runtime;
+    simulator_power_state_t* power;
     lv_display_t* display;
     const char* screenshot;
     uint32_t started, duration_ms;
@@ -1308,6 +1331,7 @@ static int save_png(lv_display_t* display, const char* path);
 static void pump_pxadb_control(void* context) {
     simulator_pump_t* pump = context;
     pxsys_pxadb_control_poll(pump->control);
+    simulator_volume_poll(pump->power, pump->runtime);
     if (pump->duration_ms && lv_tick_elaps(pump->started) >= pump->duration_ms) {
         if (pump->screenshot && !pump->captured)
             pump->captured = save_png(pump->display, pump->screenshot) ? 1 : -1;
@@ -1906,6 +1930,7 @@ static int run_simulator(const simulator_options_t* options) {
     runtime_fixture.navigation_gestures =
         options->navigation == PXSYS_NAVIGATION_GESTURES;
     pump.control = &pxadb_control;
+    pump.power = &power_state;
     pump.display = display;
     pump.duration_ms = options->duration_ms;
     pump.screenshot = options->screenshot;
@@ -2050,18 +2075,7 @@ static int run_simulator(const simulator_options_t* options) {
         poll_app_action(&catalog);
         pxsys_pxadb_control_poll(&pxadb_control);
         uint32_t delay = lv_timer_handler();
-        int steps = SDL_AtomicSet(&power_state.volume_steps, 0);
-        if (steps != 0) {
-            pxsys_system_status_snapshot_t status = {.struct_size = sizeof(status)};
-            if (pxsys_system_status_service_get(
-                    pxsys_standard_system_status(system), &status) == PXSYS_STATUS_OK) {
-                int next = (int)status.volume_percent + steps * 10;
-                if (next < 0) next = 0;
-                if (next > 100) next = 100;
-                (void)simulator_set_level(&preferences, PXSYS_LEVEL_CONTROL_VOLUME,
-                                          (uint8_t)next);
-            }
-        }
+        simulator_volume_poll(&power_state, simulator_runtime);
         simulator_power_poll(&power_state);
         if (delay < 1) delay = 1;
         if (delay > 16) delay = 16;

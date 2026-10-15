@@ -1,10 +1,12 @@
-# PXA Network Draft 0.1
+# PXA Network Draft 0.4
 
-Network service 0.3.0 provides bounded, Host-managed HTTP(S) requests. Opcode 1 is
+Network service 0.4.0 provides bounded, Host-managed HTTP(S) requests. Opcode 1 is
 the frozen v1.0 GET operation. Opcode 2 adds GET, HEAD, POST, PUT, PATCH and
 DELETE, bounded request headers and inline bodies, per-request timeouts,
 selected response headers, response length metadata and optional response
-streams. Version 0.3 adds the explicitly granted `web` authority below. A 0.3 Host must continue accepting the 0.1 wire format unchanged.
+streams. Version 0.3 adds the explicitly granted `web` authority below. Version
+0.4 adds bounded bidirectional exchanges and response heads before the body
+completes. A 0.4 Host continues accepting opcodes 1 and 2 unchanged.
 
 ## Security and URL model
 
@@ -75,19 +77,20 @@ The request records are in ascending tag order:
 | 3 | Permission Handle | exactly one nonzero u32 |
 | 4 | maximum response bytes | exactly one nonzero u32, at most 262144 |
 | 8 | timeout milliseconds | exactly one u32 in 100..60000 |
-| 9 | request header | zero to 8 unique nested name/value records |
+| 9 | request header | zero to 8 nested name/value records |
 | 10 | inline request body | zero or one, at most 2048 bytes |
 | 11 | wanted response header | zero to 8 unique header names |
 
-GET and HEAD have no request body. Header names are lowercase HTTP token bytes,
+GET and HEAD have no request body. Legacy SDKs emit lowercase HTTP token names;
+Hosts also accept uppercase tokens and compare names case-insensitively. Names are
 1 to 64 bytes. Values are at most 256 printable ASCII bytes, with horizontal
 tab also allowed. The total encoded request-header block is at most 2048 bytes.
 Guest-controlled `connection`, `content-length`, `host`, `proxy-connection`,
-`te`, `trailer`, `transfer-encoding` and `upgrade` are forbidden. The Host owns
+`te`, `trailer`, `transfer-encoding`, `upgrade` and `expect` are forbidden. The Host owns
 framing, authority and hop-by-hop behavior.
 
 Wanted response headers form an allowlist. The provider returns only available
-headers named by that list, with no duplicates. This avoids exposing ambient
+headers named by that list, preserving duplicate fields in provider order. This avoids exposing ambient
 or sensitive headers the Guest did not request.
 
 The success result records are also in ascending tag order:
@@ -97,7 +100,7 @@ The success result records are also in ascending tag order:
 | 5 | status code | exactly one u16 in 100..599 |
 | 6 | content type | exactly one printable ASCII value, at most 96 bytes |
 | 7 | body Stream Handle | present exactly when BODY_PRESENT is set |
-| 9 | selected response header | zero to 8 unique nested name/value records |
+| 9 | selected response header | zero to 8 nested name/value records |
 | 12 | body length | u64 present exactly when BODY_LENGTH_KNOWN is set |
 | 13 | response flags | exactly one u32 |
 
@@ -143,3 +146,13 @@ the ABI does not require allocation on the request path.
 WebSocket, TCP, UDP, listening sockets, multipart construction, cookie jars,
 automatic decompression, redirects and streaming request bodies are outside
 Network 0.2.
+
+## Version 0.4: streaming exchanges
+
+HTTP_OPEN (3) returns an owned exchange immediately. CAPABILITIES (4) queries backend support and current bounds. HTTP_OPEN keeps ordered request records but uses u64 tag 4 for total response budget; tag 14/u32 is the combined receive/upload buffer budget, tag 15/u64 is known upload size, and tag 16/u32 is the total response-head budget. These three fields are required. Core wire profile 1 (64-bit handles, used by the current Core v2 import) is required. Request bodies can be captured inline or written incrementally, but their declared length must agree.
+
+The exchange uses IO READ=1, WRITE=2, POLL=3, RESPONSE=4, RESPONSE_SIZE=5, FINISH_UPLOAD=6. READ zero means successful EOF; would-block is temporary. Buffered data drains before a terminal error. RESPONSE returns a 16-byte prefix (status/u16, flags/u16, header byte count/u32, body length/u64) followed by repeated name-size/u16, value-size/u16, name, value records. Flag 1 means known length; otherwise length is UINT64_MAX. Names are compared case-insensitively; duplicates remain separate and values are bounded by the total response-head budget. Both HEAD and no-body final responses have known length zero.
+
+Core service 0.2 WAIT_RESOURCE (4) accepts handle/u64 and interests/u32, and reliably completes with status/i32 followed by ready/u32. Masks are READ=1, WRITE=2, HEADERS=4, END=8. Completion does not consume data; callers retry and rearm after advisory readiness. Cancellation removes the wait, while exchange ownership determines transport cancellation. Each direction allows one concurrent producer/consumer.
+
+Buffers are 512..65536 power-of-two bytes; upload and download split that total when uploading. Heads are 16..4096 bytes, subject to the product cap. Known upload length is limited to INT32_MAX by the ESP client API. Download budget is an independent u64; a response is never accumulated in memory just because its total limit is large. Redirects return to the Guest for another permission check; content-encoding is not automatically decoded. See [C++ API and implementation](../../docs/zh-CN/http-streaming.md).

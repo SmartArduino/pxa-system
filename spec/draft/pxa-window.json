@@ -1,11 +1,11 @@
 {
-  "schema": "pxa-window-spec-0.2",
+  "schema": "pxa-window-spec-0.3",
   "status": "draft",
   "service": {
     "name": "window",
     "id": 2,
     "major": 0,
-    "minor": 2,
+    "minor": 3,
     "patch": 0
   },
   "opcodes": [
@@ -29,6 +29,14 @@
       "direction": "guest-to-host",
       "request_token": "zero",
       "payload": "duration-u16-le-and-utf8-text-1-to-240-bytes"
+    },
+    {
+      "name": "request-back",
+      "id": 4,
+      "direction": "guest-to-host",
+      "request_token": "zero",
+      "payload": "empty",
+      "delivery": "queues-reliable-back-requested"
     },
     {
       "name": "metrics-changed",
@@ -184,5 +192,5 @@
       "value": 2
     }
   ],
-  "protocol_version": "0.2.0"
+  "protocol_version": "0.3.0"
 }

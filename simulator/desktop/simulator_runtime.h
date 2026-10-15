@@ -27,6 +27,7 @@ pxsys_status_t pxsys_desktop_runtime_provider(
 void pxsys_desktop_runtime_update_input_method(pxsys_desktop_runtime_t *runtime, const char *directory);
 void pxsys_desktop_runtime_poll(pxsys_desktop_runtime_t* runtime);
 void pxsys_desktop_runtime_request_exit(pxsys_desktop_runtime_t* runtime);
+bool pxsys_desktop_runtime_volume_key(pxsys_desktop_runtime_t* runtime, uint32_t key);
 pxsys_status_t pxsys_desktop_runtime_destroy(pxsys_desktop_runtime_t* runtime);
 
 #endif

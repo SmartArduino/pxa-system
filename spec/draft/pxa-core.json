@@ -222,7 +222,7 @@
       "id": 1,
       "state": "defined",
       "major": 2,
-      "minor": 0,
+      "minor": 2,
       "patch": 0
     },
     {
@@ -230,7 +230,7 @@
       "id": 2,
       "state": "defined",
       "major": 0,
-      "minor": 2,
+      "minor": 3,
       "patch": 0
     },
     {
@@ -238,7 +238,7 @@
       "id": 3,
       "state": "defined",
       "major": 0,
-      "minor": 8,
+      "minor": 9,
       "patch": 0
     },
     {
@@ -286,7 +286,7 @@
       "id": 9,
       "state": "defined",
       "major": 0,
-      "minor": 3,
+      "minor": 4,
       "patch": 0
     },
     {
@@ -371,7 +371,7 @@
       "id": 21,
       "state": "defined",
       "major": 2,
-      "minor": 1,
+      "minor": 3,
       "patch": 0
     },
     {
@@ -406,6 +406,15 @@
       "request_token": "nonzero"
     },
     {
+      "name": "wait-resource",
+      "id": 4,
+      "since": "0.2",
+      "direction": "bidirectional-result",
+      "payload": "handle:u64|interests:u32",
+      "result": "status:i32|ready-flags:u32",
+      "request_token": "nonzero"
+    },
+    {
       "name": "handle-ready",
       "id": 32769,
       "direction": "host-to-guest",
@@ -437,23 +446,29 @@
       "name": "write",
       "id": 2,
       "buffer": "guest-to-host"
+    },
+    {
+      "name": "poll",
+      "id": 3,
+      "result": "ready-mask-or-status-i32",
+      "blocking": false
     }
   ],
   "ready_flags": [
     {
-      "name": "readable",
+      "name": "read",
       "value": 1
     },
     {
-      "name": "writable",
+      "name": "write",
       "value": 2
     },
     {
-      "name": "hangup",
+      "name": "headers",
       "value": 4
     },
     {
-      "name": "error",
+      "name": "end",
       "value": 8
     }
   ],

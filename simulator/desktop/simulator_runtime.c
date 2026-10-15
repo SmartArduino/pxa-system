@@ -47,6 +47,14 @@ struct pxsys_desktop_runtime {
     pxsys_desktop_runtime_fixture_t fixture;
 };
 
+bool pxsys_desktop_runtime_volume_key(pxsys_desktop_runtime_t* runtime, uint32_t key) {
+    if (runtime == NULL) return false;
+    for (simulator_instance_t* instance = runtime->instances; instance; instance = instance->next)
+        if (instance->foreground &&
+            pxsys_product_simulator_volume_key(instance->product_runner, key)) return true;
+    return false;
+}
+
 static lv_color_t color(uint32_t argb) {
     return lv_color_hex(argb & UINT32_C(0x00ffffff));
 }

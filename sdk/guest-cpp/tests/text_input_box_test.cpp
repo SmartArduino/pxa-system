@@ -112,5 +112,17 @@ int main() {
     assert(!ref.mounted() && !ref.show_keyboard());
     box.update([](auto value) { value.visible = true; return value; }); // Subscription detached.
     input.set("卸载");
+    {
+        count = 0;
+        State<bool> masked{true};
+        auto password = TextInput(input).single_line().max_bytes(512).password(masked);
+        static_assert(decltype(password)::capacity.bindings == 2);
+        auto page = Page(transport, std::move(password));
+        assert(page.mount());
+        assert(property(commands(), protocol::text_password)[0] == std::byte{1});
+        count = 0; masked.set(false); assert(page.flush());
+        assert(property(commands(), protocol::text_password)[0] == std::byte{0});
+        assert(property(commands(), protocol::text_value).empty());
+    }
     assert(allocations == before); // All layout, text, keyboard and callback operations above are allocation-free.
 }

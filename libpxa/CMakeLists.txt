@@ -72,6 +72,25 @@ if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
 endif()
 
 if(PXA_BUILD_ADAPTERS)
+    # Optional codecs are adapters; libpxa itself has no codec dependency.
+    add_library(pxa_adapters_image
+        adapters/image/pxa_stream_png.c
+        adapters/image/vendor/pngle.c
+        adapters/image/vendor/miniz.c)
+    add_library(pxa::adapters_image ALIAS pxa_adapters_image)
+    set_target_properties(pxa_adapters_image PROPERTIES EXPORT_NAME adapters_image)
+    target_include_directories(pxa_adapters_image PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/adapters/include>
+        $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/pxa-adapters>)
+    target_link_libraries(pxa_adapters_image PUBLIC pxa)
+    find_package(JPEG QUIET)
+    if(JPEG_FOUND)
+        add_library(pxa_adapters_image_posix adapters/posix/pxa_posix_image.c)
+        add_library(pxa::adapters_image_posix ALIAS pxa_adapters_image_posix)
+        set_target_properties(pxa_adapters_image_posix PROPERTIES EXPORT_NAME adapters_image_posix)
+        target_link_libraries(pxa_adapters_image_posix PUBLIC pxa_adapters_image PRIVATE JPEG::JPEG)
+    endif()
+
     find_package(OpenSSL REQUIRED)
     find_package(Threads REQUIRED)
 
@@ -234,6 +253,9 @@ if(PXA_BUILD_ADAPTERS AND (PXA_LVGL_TARGET OR PXA_LVGL_SOURCE_DIR))
 
     add_library(pxa_adapters_lvgl
         adapters/lvgl/pxa_lvgl_ui.c
+        adapters/lvgl/pxa_lvgl_image.c
+        adapters/lvgl/pxa_lvgl_gif.c
+        adapters/lvgl/pxa_lvgl_gif_native.c
         adapters/lvgl/pxa_lvgl_ime.c)
     add_library(pxa::adapters_lvgl ALIAS pxa_adapters_lvgl)
     set_target_properties(pxa_adapters_lvgl PROPERTIES
@@ -244,7 +266,7 @@ if(PXA_BUILD_ADAPTERS AND (PXA_LVGL_TARGET OR PXA_LVGL_SOURCE_DIR))
     target_include_directories(pxa_adapters_lvgl PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/adapters/include>
         $<INSTALL_INTERFACE:include/pxa-adapters>)
-    target_link_libraries(pxa_adapters_lvgl PUBLIC pxa)
+    target_link_libraries(pxa_adapters_lvgl PUBLIC pxa pxa_adapters_image)
     target_link_libraries(pxa_adapters_lvgl PRIVATE
         $<BUILD_INTERFACE:${_pxa_lvgl_target}>)
     if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
@@ -592,6 +614,9 @@ if(PXA_BUILD_TESTS)
         target_compile_options(pxa_guest_image_set_test PRIVATE -Wno-attributes -Wall -Wextra -Werror)
     endif()
     add_test(NAME pxa_guest_image_set_test COMMAND pxa_guest_image_set_test)
+    add_executable(pxa_image_service_test tests/image_service_test.c)
+    target_link_libraries(pxa_image_service_test PRIVATE pxa)
+    add_test(NAME pxa_image_service_test COMMAND pxa_image_service_test)
     add_executable(pxa_assets_service_test tests/assets_service_test.c)
     target_include_directories(pxa_assets_service_test PRIVATE ../sdk/guest-c/include)
     if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
@@ -599,6 +624,21 @@ if(PXA_BUILD_TESTS)
     endif()
     target_link_libraries(pxa_assets_service_test PRIVATE pxa)
     add_test(NAME pxa_assets_service_test COMMAND pxa_assets_service_test)
+    if(Python3_Interpreter_FOUND AND TARGET pxa_adapters_image_posix AND TARGET pxa_adapters_lvgl)
+        add_executable(pxa_image_decode_test tests/image_decode_test.c)
+        target_link_libraries(pxa_image_decode_test PRIVATE pxa_adapters_image_posix pxa_adapters_lvgl ${_pxa_lvgl_target})
+        add_test(NAME pxa_image_decode_test COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_image_decode.py
+            $<TARGET_FILE:pxa_image_decode_test>)
+    endif()
+    if(Python3_Interpreter_FOUND AND TARGET pxa_adapters_lvgl)
+        add_executable(pxa_gif_decode_test tests/gif_decode_test.c)
+        target_link_libraries(pxa_gif_decode_test PRIVATE pxa_adapters_lvgl ${_pxa_lvgl_target})
+        add_test(NAME pxa_gif_decode_test COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_gif_decode.py
+            $<TARGET_FILE:pxa_gif_decode_test>)
+        set_tests_properties(pxa_gif_decode_test PROPERTIES SKIP_RETURN_CODE 77)
+    endif()
 
     add_executable(pxa_asset_scene_test tests/asset_scene_test.c)
     target_include_directories(pxa_asset_scene_test PRIVATE ../sdk/guest-c/include)
@@ -655,6 +695,10 @@ if(PXA_BUILD_TESTS)
         endif()
     endif()
     add_test(NAME pxa_core_test COMMAND pxa_core_test)
+
+    add_executable(pxa_http_stream_test tests/http_stream_test.c)
+    target_link_libraries(pxa_http_stream_test PRIVATE pxa)
+    add_test(NAME pxa_http_stream_test COMMAND pxa_http_stream_test)
 
     add_executable(pxa_handle64_test tests/handle64_test.c)
     target_include_directories(pxa_handle64_test PRIVATE
@@ -777,7 +821,10 @@ install(FILES README.md ABI.md ARCHITECTURE.md AUDIT.md LICENSE
     DESTINATION "${CMAKE_INSTALL_DOCDIR}")
 
 if(PXA_BUILD_ADAPTERS)
-    set(_pxa_adapter_targets pxa_adapters_openssl pxa_adapters_posix)
+    set(_pxa_adapter_targets pxa_adapters_openssl pxa_adapters_posix pxa_adapters_image)
+    if(TARGET pxa_adapters_image_posix)
+        list(APPEND _pxa_adapter_targets pxa_adapters_image_posix)
+    endif()
     install(TARGETS ${_pxa_adapter_targets}
         EXPORT pxaAdaptersTargets
         ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
