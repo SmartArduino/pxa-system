@@ -1,0 +1,42 @@
+{
+  "format": "pxa-package-source-0.1",
+  "min_sdk": [
+    2,
+    0
+  ],
+  "target_sdk": [
+    2,
+    0
+  ],
+  "compile_sdk": [
+    2,
+    0
+  ],
+  "id": "pxa-cpp-gestures",
+  "version": "1.0.0",
+  "name": "Gesture example",
+  "description": "Optional tap and held-press gestures without an application frame loop",
+  "build": {
+    "system": "cmake",
+    "source_dir": "."
+  },
+  "components": [
+    {
+      "id": "main",
+      "kind": "ui",
+      "services": [
+        "ui",
+        "clock"
+      ],
+      "cmake_target": "pxa_main",
+      "wasi": {
+        "version": "preview1",
+        "libc": "wasi-libc",
+        "features": [
+          "monotonic-clock",
+          "wall-clock"
+        ]
+      }
+    }
+  ]
+}
