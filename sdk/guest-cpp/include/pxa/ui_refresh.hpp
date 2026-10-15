@@ -9,7 +9,7 @@ template<class Factory> class RefreshView : public ViewModifiers {
     using View = std::invoke_result_t<Factory&>;
     using Fragment = Page<View>;
 public:
-    static constexpr Capacity capacity{1 + 2 * capacity_of<View>.nodes, 0, 0, 1};
+    static constexpr Capacity capacity{1 + 2 * capacity_of<View>.nodes, 0, 0, 1, 0, capacity_of<View>.gestures};
     RefreshView(State<std::uint32_t>& revision, Factory factory)
         : revision_(revision), factory_(std::move(factory)) {}
     RefreshView(RefreshView&& other) noexcept
@@ -66,6 +66,10 @@ public:
     bool handle(const Event& event) noexcept {
         return active_ >= 0 && pages_[active_]->handle_fragment(event);
     }
+    void gesture_tick(std::uint64_t now) { if(active_>=0)pages_[active_]->gesture_tick(now); }
+    std::uint64_t gesture_deadline() const noexcept { return active_>=0?pages_[active_]->gesture_deadline():0; }
+    void gesture_cancel() noexcept { if(active_>=0)pages_[active_]->gesture_cancel(); }
+    void gesture_rebase(std::uint32_t generation) noexcept { if(active_>=0)pages_[active_]->gesture_rebase(generation); }
 private:
     State<std::uint32_t>& revision_;
     [[no_unique_address]] Factory factory_;

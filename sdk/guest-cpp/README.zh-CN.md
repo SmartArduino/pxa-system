@@ -77,6 +77,10 @@ PXA_APPLICATION(Counter)
 未使用此模块的应用没有默认存储开销。页面代次及事件内容由 SDK 校验。
 控件节点 ID 和 UI 事务由 SDK 管理。
 
+需要按住即触发的按钮可使用 `.on_click(tap).on_long_press(hold, {.long_press=500ms})`，
+框架自动管理捕获、拖动取消及临时帧钟。Canvas/游戏可按需使用无分配的 `PressGesture`。
+接口、生命周期与例子见 [手势 SDK](GESTURES.zh-CN.md)。
+
 内置视图在编译期推导绑定、回调和动态模块容量，布局汇总子视图预算；
 没有动态模块的页面不会预留其槽。`Text(state)` 预留一个绑定，字符数组与
 固定描述不预留绑定。动态 `std::string` 文字目前也保留一个绑定上限。

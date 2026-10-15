@@ -28,7 +28,7 @@ public:
     std::uint64_t revision() const noexcept { return revision_.get(); }
     void subscribe(Subscription& item) noexcept { revision_.subscribe(item); }
     void unsubscribe(Subscription& item) noexcept { revision_.unsubscribe(item); }
-private:
+ private:
     std::uint32_t count_;
     State<std::uint64_t> revision_{0};
 };
@@ -61,7 +61,7 @@ class ListView : public ViewModifiers {
     };
 public:
     static constexpr Capacity capacity{
-        1 + 2 * MaxRows * (1 + capacity_of<Row>.nodes), 0, 0, 1};
+        1 + 2 * MaxRows * (1 + capacity_of<Row>.nodes), 0, 0, 1, 0, MaxRows * capacity_of<Row>.gestures};
     ListView(ListState& state, Dp extent, KeyFunction keys, RowFunction rows)
         : state_(state), keys_(std::move(keys)), rows_(std::move(rows)), extent_(extent) {}
     ListView(const ListView&) = delete;
@@ -247,6 +247,23 @@ public:
             if (row.page().handle_fragment(event)) return true;
         }
         return false;
+    }
+    void gesture_tick(std::uint64_t now) {
+        for(std::size_t i=0;i<active_count_;++i)active_[i]->page().gesture_tick(now);
+    }
+    std::uint64_t gesture_deadline() const noexcept {
+        std::uint64_t next=0;
+        for(std::size_t i=0;i<active_count_;++i) {
+            const auto due=active_[i]->page().gesture_deadline();
+            if(due && (!next || due<next))next=due;
+        }
+        return next;
+    }
+    void gesture_cancel() noexcept {
+        for(std::size_t i=0;i<active_count_;++i)active_[i]->page().gesture_cancel();
+    }
+    void gesture_rebase(std::uint32_t generation) noexcept {
+        for(std::size_t i=0;i<active_count_;++i)active_[i]->page().gesture_rebase(generation);
     }
 private:
     bool kept(const Slot* slot) const noexcept {

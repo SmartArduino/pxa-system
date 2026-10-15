@@ -86,3 +86,7 @@ SDK Color 枚举与 Host 现有的 32 个角色一一对应；UiAppearance 线�
 前 10 个基础角色，扩展角色交给原生控件的 Host 解析，不扩大通知载荷。
 WidgetStyle 的可选尾字段 `border_width` / `border` 可指定主题边框，例如
 `1, Color::outline_variant`。这些字段没有增加普通控件或应用的默认存储。
+
+
+点击与按住即触发的长按可组合为 `Button("项目").on_click(tap).on_long_press(hold)`；
+详见 [手势 SDK](GESTURES.zh-CN.md)。仅选用长按的控件保存识别状态，普通按钮保持原有开销。

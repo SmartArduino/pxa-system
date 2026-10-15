@@ -139,15 +139,35 @@ public:
     static constexpr std::uint32_t text_node_offset = 1;
     SourceButtonView(Source source, Callback callback)
         : source_(std::move(source)), callback_(std::move(callback)) {}
+    template<class Self, ClickCallback Hold> requires (!Pointer)
+    auto on_long_press(this Self&& self, Hold hold, PressOptions options = {}) {
+        return PressButtonView<SourceButtonView, Hold>(std::forward<Self>(self), std::move(hold), options);
+    }
+    template<class Self, ClickCallback F> requires (!Pointer)
+    auto on_click(this Self&& self, F callback) {
+        return SourceButtonView<Source, F>(std::forward<Self>(self).source_, std::move(callback));
+    }
+    void click() requires (!Pointer) { std::invoke(callback_); }
     template<class Owner> bool render(Owner& owner, std::uint32_t parent) {
+        return render_events<Pointer ? 1 : 0>(owner, parent, callback_);
+    }
+    template<class Owner, class Gesture> requires (!Pointer)
+    bool render_gesture(Owner& owner, std::uint32_t parent, Gesture& gesture) {
+        return render_events<2>(owner, parent, gesture);
+    }
+private:
+    template<unsigned Kind, class Owner, class F>
+    bool render_events(Owner& owner, std::uint32_t parent, F& callback) {
         const auto node = owner.create(parent, protocol::control, protocol::button);
         if (!node || !owner.transaction().u8(node, protocol::layout, protocol::row) ||
             !owner.transaction().u64(node, protocol::event_mask,
-                                    Pointer ? protocol::event_mask_pointer : 1) ||
+                                    Kind ? protocol::event_mask_pointer : 1) ||
             !owner.theme(node, protocol::background, Color::primary)) return false;
-        if constexpr (Pointer) {
-            if (!owner.on_pointer(node, callback_)) return false;
-        } else if (!owner.on_click(node, callback_)) return false;
+        if constexpr (Kind == 2) {
+            if (!owner.on_press(node, callback)) return false;
+        } else if constexpr (Kind == 1) {
+            if (!owner.on_pointer(node, callback)) return false;
+        } else if (!owner.on_click(node, callback)) return false;
         const auto label = owner.create(node, protocol::text);
         return label && write(owner.transaction(), label, source_) &&
             detail::bind_text_source<Source, Owner, write>(owner, source_, label) &&
@@ -164,6 +184,10 @@ private:
 template<class Source> class SourceButtonBuilder {
 public:
     explicit SourceButtonBuilder(Source source) : source_(std::move(source)) {}
+    template<ClickCallback Hold> auto on_long_press(Hold hold, PressOptions options = {}) && {
+        return SourceButtonView<Source, detail::NoClick>(std::move(source_), {})
+            .on_long_press(std::move(hold), options);
+    }
     template<class Callback> requires ClickCallback<std::decay_t<Callback>>
     auto on_click(Callback&& callback) && {
         return SourceButtonView<Source, std::decay_t<Callback>>(

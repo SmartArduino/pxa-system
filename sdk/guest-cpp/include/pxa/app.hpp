@@ -72,6 +72,7 @@ template<class App, bool HasView = requires(App& app) { app.view(); },
          bool HasNavigation = requires(App& app) { app.navigation(); }>
 class UiSlot {
 public:
+    static constexpr bool has_gestures = false;
     Result<void> mount(App&, Transport&) noexcept { return {}; }
     bool handle(const Event&) noexcept { return false; }
     Result<void> flush() noexcept { return {}; }
@@ -82,6 +83,10 @@ template<class App>
 class UiSlot<App, true, false> {
     using View = decltype(std::declval<App&>().view());
 public:
+    static constexpr bool has_gestures = ui::capacity_of<View>.gestures > 0;
+    void gesture_tick(std::uint64_t now) { if(page_)page_->gesture_tick(now); }
+    std::uint64_t gesture_deadline() const noexcept { return page_?page_->gesture_deadline():0; }
+    void gesture_cancel() noexcept { if(page_)page_->gesture_cancel(); }
     Result<void> mount(App& app, Transport& transport) {
         page_.emplace(transport, app.view());
         auto result = page_->mount();
@@ -103,6 +108,10 @@ template<class App, bool HasView>
 class UiSlot<App, HasView, true> {
     using Navigation = std::remove_reference_t<decltype(std::declval<App&>().navigation())>;
 public:
+    static constexpr bool has_gestures = true; // Navigator routes are selected at run time.
+    void gesture_tick(std::uint64_t now) { if(navigation_)navigation_->gesture_tick(now); }
+    std::uint64_t gesture_deadline() const noexcept { return navigation_?navigation_->gesture_deadline():0; }
+    void gesture_cancel() noexcept { if(navigation_)navigation_->gesture_cancel(); }
     Result<void> mount(App& app, Transport& transport) noexcept {
         navigation_ = &app.navigation();
         return navigation_->attach(transport);
@@ -130,6 +139,7 @@ public:
             return static_cast<std::int32_t>(Error::bad_state);
         context_.transport_.phase(Phase::start);
         context_.foreground_ = true;
+        if constexpr(UiSlot<App>::has_gestures) gesture_period_=0;
         app_ = std::construct_at(reinterpret_cast<App*>(storage_));
         live_ = true;
         context_.tasks_.on_error(nullptr, nullptr);
@@ -209,6 +219,7 @@ public:
                 return static_cast<std::int32_t>(error);
             }
             stepper_.reset();
+            if constexpr(UiSlot<App>::has_gestures)gesture_period_=loop_options_.frame_period_ms;
         }
         context_.transport_.phase(Phase::inactive);
         return 0;
@@ -230,6 +241,7 @@ public:
                 return static_cast<std::int32_t>(Error::protocol_error);
             }
             context_.foreground_ = state != 0;
+            if constexpr(UiSlot<App>::has_gestures)ui_.gesture_cancel();
             if (context_.foreground_) {
                 if constexpr (requires(App& app, Context& ctx,
                                        game::FrameTick tick) {
@@ -241,6 +253,7 @@ public:
                         context_.transport_.phase(Phase::inactive);
                         return static_cast<std::int32_t>(period.error());
                     }
+                    if constexpr(UiSlot<App>::has_gestures)gesture_period_=loop_options_.frame_period_ms;
                 }
                 if constexpr (requires(App& app, Context& ctx) {
                                   app.on_foreground(ctx);
@@ -257,6 +270,7 @@ public:
                         context_.transport_.phase(Phase::inactive);
                         return static_cast<std::int32_t>(period.error());
                     }
+                    if constexpr(UiSlot<App>::has_gestures)gesture_period_=0;
                 }
                 if constexpr (requires(App& app, Context& ctx) {
                                   app.on_background(ctx);
@@ -266,10 +280,7 @@ public:
             context_.transport_.phase(Phase::inactive);
             return flushed ? 1 : static_cast<std::int32_t>(flushed.error());
         }
-        if constexpr (requires(App& app, Context& ctx,
-                               game::FrameTick tick) {
-                          app.on_frame(ctx, tick);
-                      }) {
+        if constexpr (has_frame_ || UiSlot<App>::has_gestures) {
         if (parsed->service == 4 && parsed->opcode == 0x8001 &&
             parsed->token == 0) {
             if (parsed->payload.size() != 8) {
@@ -277,6 +288,8 @@ public:
                 return static_cast<std::int32_t>(Error::protocol_error);
             }
             if (context_.foreground_) {
+                if constexpr(UiSlot<App>::has_gestures)
+                    ui_.gesture_tick(wire::get64(parsed->payload.data()));
                 if constexpr (requires(App& app, Context& ctx,
                                        game::FrameTick tick) {
                                   app.on_frame(ctx, tick);
@@ -369,6 +382,16 @@ public:
 private:
     static Result<void> flush_ui() noexcept {
         auto result = ui_.flush();
+        if constexpr(UiSlot<App>::has_gestures) {
+            const std::uint16_t base=context_.foreground_ && has_frame_?loop_options_.frame_period_ms:0;
+            const std::uint16_t period=context_.foreground_ && ui_.gesture_deadline()
+                ? (base?std::min<std::uint16_t>(base,16):16) : base;
+            if(period!=gesture_period_) {
+                auto changed=context_.clock().set_period(period);
+                if(!changed)return changed;
+                gesture_period_=period;
+            }
+        }
         if (result || result.error() == Error::protocol_error) return result;
         if constexpr (requires(App& app, Context& ctx, Error error) {
                           app.on_error(ctx, error);
@@ -378,6 +401,8 @@ private:
     }
 
     inline static Context context_{};
+    static constexpr bool has_frame_=requires(App& app,Context& ctx,game::FrameTick tick){app.on_frame(ctx,tick);};
+    inline static std::uint16_t gesture_period_=0;
     inline static UiSlot<App> ui_{};
     static constexpr game::LoopOptions loop_options_ = [] {
         if constexpr (requires { App::loop_options; }) return App::loop_options;

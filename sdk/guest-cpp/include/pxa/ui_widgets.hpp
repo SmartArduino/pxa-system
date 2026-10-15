@@ -90,12 +90,32 @@ public:
     static constexpr Capacity capacity{1, 0, 1};
     StyledButtonView(std::string_view label, WidgetStyle style, F callback)
         : label_(label), style_(style), callback_(std::move(callback)) {}
+    template<class Self, ClickCallback Hold>
+    auto on_long_press(this Self&& self, Hold hold, PressOptions options = {}) {
+        return PressButtonView<StyledButtonView,Hold>(std::forward<Self>(self),std::move(hold),options);
+    }
+    template<class Self, ClickCallback Click>
+    auto on_click(this Self&& self, Click callback) {
+        return StyledButtonView<Click>(self.label_,self.style_,std::move(callback));
+    }
+    void click() { std::invoke(callback_); }
     template<class Owner> [[gnu::noinline]] bool render(Owner& owner, std::uint32_t parent) {
+        return render_events<false>(owner,parent,callback_);
+    }
+    template<class Owner, class Gesture> bool render_gesture(Owner& owner, std::uint32_t parent, Gesture& gesture) {
+        return render_events<true>(owner,parent,gesture);
+    }
+private:
+    template<bool Pointer,class Owner,class Callback>
+    bool render_events(Owner& owner, std::uint32_t parent, Callback& callback) {
         auto node = owner.create(parent, protocol::control, protocol::button);
         return node && widget_style(owner, node, style_) &&
             owner.transaction().text(node, label_) &&
-            owner.transaction().u64(node, protocol::event_mask, 1) &&
-            owner.on_click(node, callback_);
+            owner.transaction().u64(node, protocol::event_mask, Pointer?protocol::event_mask_pointer:1) &&
+            [&] {
+                if constexpr(Pointer)return owner.on_press(node,callback);
+                else return owner.on_click(node,callback);
+            }();
     }
 private:
     std::string_view label_;
@@ -106,6 +126,9 @@ class StyledButtonBuilder {
 public:
     StyledButtonBuilder(std::string_view label, WidgetStyle style)
         : label_(label), style_(style) {}
+    template<ClickCallback Hold> auto on_long_press(Hold hold, PressOptions options = {}) const {
+        return StyledButtonView<detail::NoClick>(label_,style_,{}).on_long_press(std::move(hold),options);
+    }
     // Explicitly borrowed: callback must outlive the mounted Page/fragment.
     template<class F> requires ClickCallback<std::decay_t<F>>
     auto on_click(F&& callback) const {

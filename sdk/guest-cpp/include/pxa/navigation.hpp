@@ -29,6 +29,10 @@ class Navigator {
                               value.on_mount(scope);
                           }) screen.on_mount(tasks);
         }
+        void gesture_tick(std::uint64_t now) { page.gesture_tick(now); }
+        std::uint64_t gesture_deadline() const noexcept { return page.gesture_deadline(); }
+        void gesture_cancel() noexcept { page.gesture_cancel(); }
+        void gesture_rebase(std::uint32_t generation) noexcept { page.gesture_rebase(generation); }
         ~Mounted() {
             tasks.cancel();
         }
@@ -41,6 +45,7 @@ class Navigator {
         void (*activate)(void*) noexcept;
         std::uint32_t (*generation)(void*) noexcept;
         TaskScope& (*tasks)(void*) noexcept;
+        const detail::GestureMethods* gestures;
     };
     struct RouteOps {
         void (*destroy)(void*) noexcept;
@@ -115,6 +120,22 @@ public:
         handling_ = false;
         return result;
     }
+    void gesture_tick(std::uint64_t now) {
+        auto& slot=slots_[active_];
+        if(slot.ops && slot.ops->gestures) {
+            handling_=true;
+            slot.ops->gestures->tick(slot.bytes,now);
+            handling_=false;
+        }
+    }
+    std::uint64_t gesture_deadline() const noexcept {
+        const auto& slot=slots_[active_];
+        return slot.ops && slot.ops->gestures?slot.ops->gestures->deadline(slot.bytes):0;
+    }
+    void gesture_cancel() noexcept {
+        auto& slot=slots_[active_];
+        if(slot.ops && slot.ops->gestures)slot.ops->gestures->cancel(slot.bytes);
+    }
 
     Result<void> flush() noexcept {
         if (!transport_ || handling_) return std::unexpected(Error::bad_state);
@@ -188,7 +209,12 @@ private:
             [](void* p) noexcept { return static_cast<PageType*>(p)->page.flush(); },
             [](void* p) noexcept { static_cast<PageType*>(p)->activated(); },
             [](void* p) noexcept { return static_cast<PageType*>(p)->page.generation(); },
-            [](void* p) noexcept -> TaskScope& { return static_cast<PageType*>(p)->tasks; }
+            [](void* p) noexcept -> TaskScope& { return static_cast<PageType*>(p)->tasks; },
+            []() -> const detail::GestureMethods* {
+                if constexpr(capacity_of<typename PageType::View>.gestures>0)
+                    return &detail::gesture_methods<PageType>;
+                else return nullptr;
+            }()
         };
         static constexpr RouteOps route_ops{
             [](void* p) noexcept { std::destroy_at(static_cast<Arguments*>(p)); },

@@ -2,6 +2,7 @@
 
 #include "ui_wire.hpp"
 #include "ui_input.hpp"
+#include "ui_gesture.hpp"
 #include "canvas.hpp"
 #include "text_input.hpp"
 #include "text.hpp"
@@ -20,13 +21,14 @@
 namespace pxa::ui {
 
 struct Capacity {
-    std::size_t nodes = 0, bindings = 0, handlers = 0, dynamic = 0, refs = 0;
+    std::size_t nodes = 0, bindings = 0, handlers = 0, dynamic = 0, refs = 0, gestures = 0;
     constexpr Capacity& operator+=(Capacity value) noexcept {
         nodes += value.nodes;
         bindings += value.bindings;
         handlers += value.handlers;
         dynamic += value.dynamic;
         refs += value.refs;
+        gestures += value.gestures;
         return *this;
     }
 };
@@ -539,6 +541,41 @@ inline constexpr auto Canvas(CanvasRef& ref, std::int32_t width = 0, std::int32_
     return CanvasView<NoPointerCallback, false, true>(width, height, {}, &ref);
 }
 
+// Optional held-press state lives with its view, never in ordinary Buttons.
+template<class Button, class Hold>
+class PressButtonView : public ViewModifiers {
+public:
+    static constexpr Capacity capacity = [] {
+        auto value = capacity_of<Button>; value.gestures = 1; return value;
+    }();
+    PressButtonView(Button button, Hold hold, PressOptions options)
+        : button_(std::move(button)), hold_(std::move(hold)), options_(options) {}
+    template<class Owner> bool render(Owner& owner, std::uint32_t parent) & {
+        if (!options_.valid() || options_.long_press.count() == 0)
+            return owner.fail(Error::invalid_argument);
+        return button_.render_gesture(owner, parent, *this);
+    }
+    void operator()(const CanvasPointer& event) {
+        const auto result = press_.update(event, options_);
+        if (result == PressResult::tap) button_.click();
+        else if (result == PressResult::long_press) std::invoke(hold_);
+    }
+    void gesture_tick(std::uint64_t now) { if (press_.advance(now,options_)) std::invoke(hold_); }
+    std::uint64_t gesture_deadline() const noexcept { return press_.deadline(options_); }
+    void gesture_cancel() noexcept { press_.reset(); }
+    void gesture_rebase(std::uint32_t generation) noexcept { press_.rebase(generation); }
+    template<class Self, ClickCallback F> auto on_click(this Self&& self, F callback) {
+        auto next = std::forward<Self>(self).button_.on_click(std::move(callback));
+        return PressButtonView<decltype(next),Hold>(std::move(next),
+            std::forward<Self>(self).hold_, self.options_);
+    }
+private:
+    Button button_;
+    [[no_unique_address]] Hold hold_;
+    PressOptions options_;
+    PressGesture press_;
+};
+
 template<class F>
 class ButtonView : public ViewModifiers {
 public:
@@ -547,14 +584,36 @@ public:
     ButtonView(std::string label, F callback)
         : label_(std::move(label)), callback_(std::move(callback)) {}
 
+    template<class Self, ClickCallback Hold>
+    auto on_long_press(this Self&& self, Hold hold, PressOptions options = {}) {
+        return PressButtonView<ButtonView,Hold>(std::forward<Self>(self), std::move(hold), options);
+    }
+    template<class Self, ClickCallback Click>
+    auto on_click(this Self&& self, Click callback) {
+        return ButtonView<Click>(std::forward<Self>(self).label_, std::move(callback));
+    }
+    void click() { std::invoke(callback_); }
+
     template<class Page>
     bool render(Page& page, std::uint32_t parent) {
+        return render_events<false>(page, parent, callback_);
+    }
+    template<class Page, class Gesture>
+    bool render_gesture(Page& page, std::uint32_t parent, Gesture& gesture) {
+        return render_events<true>(page, parent, gesture);
+    }
+private:
+    template<bool Pointer, class Page, class Callback>
+    bool render_events(Page& page, std::uint32_t parent, Callback& callback) {
         auto node = page.create(parent, protocol::control, protocol::button);
         if (!node || !page.transaction().u8(node, protocol::layout,
                                               protocol::row) ||
-            !page.transaction().u64(node, protocol::event_mask, 1) ||
+            !page.transaction().u64(node, protocol::event_mask, Pointer ? protocol::event_mask_pointer : 1) ||
             !page.theme(node, protocol::background, Color::primary) ||
-            !page.on_click(node, callback_)) return false;
+            ![&] {
+                if constexpr (Pointer) return page.on_press(node, callback);
+                else return page.on_click(node, callback);
+            }()) return false;
         auto label_node = page.create(node, protocol::text);
         return label_node && page.transaction().text(label_node, label_) &&
                page.transaction().u16(label_node, protocol::font_role, 1) &&
@@ -596,6 +655,10 @@ private:
 class ButtonBuilder {
 public:
     explicit ButtonBuilder(std::string label) : label_(std::move(label)) {}
+    template<ClickCallback Hold>
+    auto on_long_press(Hold hold, PressOptions options = {}) && {
+        return ButtonView<detail::NoClick>(std::move(label_), {}).on_long_press(std::move(hold), options);
+    }
     template<class F> requires ClickCallback<std::decay_t<F>>
     auto on_click(F&& callback) && {
         return ButtonView<std::decay_t<F>>(
@@ -1093,6 +1156,7 @@ public:
     Page(const Page&) = delete;
     Page& operator=(const Page&) = delete;
     ~Page() {
+        gestures_.cancel();
         rollback_dynamic();
         detach_refs();
         for (std::size_t i = 0; i < binding_count_; ++i)
@@ -1114,6 +1178,7 @@ public:
         binding_count_ = 0;
         handler_count_ = 0;
         dynamic_count_ = 0;
+        gestures_.clear();
         if constexpr (MaxRefs > 0) refs_.size = 0;
         dirty_words_.fill(0);
         auto root = create(0, protocol::root);
@@ -1199,6 +1264,10 @@ public:
     }
 
     std::uint32_t generation() const noexcept { return generation_; }
+    void gesture_tick(std::uint64_t now) { gestures_.tick(now); }
+    std::uint64_t gesture_deadline() const noexcept { return gestures_.deadline(); }
+    void gesture_cancel() noexcept { gestures_.cancel(); }
+    void gesture_rebase(std::uint32_t generation) noexcept { gestures_.rebase(generation); }
     bool dirty() const noexcept {
         for (auto word : dirty_words_) if (word) return true;
         for (std::size_t i = 0; i < dynamic_count_; ++i)
@@ -1224,6 +1293,8 @@ public:
 
     template<class Module> bool dynamic(Module& module) noexcept {
         if (dynamic_count_ == MaxDynamic) return fail(Error::resource_limit);
+        if constexpr (capacity_of<Module>.gestures > 0)
+            if (!gestures_.add(module)) return fail(Error::resource_limit);
         dynamic_[dynamic_count_++] = {
             &module,
             [](void* p) noexcept { return static_cast<Module*>(p)->dirty(); },
@@ -1483,6 +1554,12 @@ public:
         return true;
     }
 
+    template<class F> bool on_press(std::uint32_t node, F& callback) noexcept {
+        static_assert(capacity_of<View>.gestures > 0,
+            "Custom view Capacity must include its long-press gesture count");
+        return gestures_.add(callback) ? on_pointer(node, callback) : fail(Error::resource_limit);
+    }
+
     template<class T> bool on_value(std::uint32_t node,
                                     State<T>& state) noexcept {
         static_assert(std::same_as<T, bool> || std::same_as<T, int>);
@@ -1557,6 +1634,7 @@ public:
 
 private:
     void discard_mount() noexcept {
+        gestures_.clear();
         rollback_dynamic();
         if constexpr (detail::ResettableView<View>) {
             detach_refs();
@@ -1591,6 +1669,7 @@ private:
     void commit_dynamic(std::uint32_t generation) noexcept {
         for (std::size_t i = 0; i < dynamic_count_; ++i)
             dynamic_[i].commit(dynamic_[i].object, generation);
+        gestures_.rebase(generation);
     }
 
     struct Binding {
@@ -1612,6 +1691,7 @@ private:
     std::array<Binding, MaxBindings> bindings_{};
     std::array<Handler, MaxHandlers> handlers_{};
     std::array<Dynamic, MaxDynamic> dynamic_{};
+    [[no_unique_address]] detail::GestureRegistry<capacity_of<View>.gestures> gestures_{};
     [[no_unique_address]] detail::RefStorage<MaxRefs> refs_{};
     std::array<std::uint64_t, (MaxBindings + 63) / 64> dirty_words_{};
     Transaction<>* current_ = nullptr;
@@ -1637,7 +1717,7 @@ class WhenView : public ViewModifiers {
 public:
     static constexpr Capacity capacity{
         3 + capacity_of<ThenView>.nodes + capacity_of<ElseView>.nodes,
-        0, 0, 1};
+        0, 0, 1, 0, capacity_of<ThenView>.gestures + capacity_of<ElseView>.gestures};
 
     WhenView(State<bool>& condition, ThenFactory then_factory,
              ElseFactory else_factory)
@@ -1740,6 +1820,21 @@ public:
         if (active_ == 1) return then_page_->handle_fragment(event);
         if (active_ == 2) return else_page_->handle_fragment(event);
         return false;
+    }
+    void gesture_tick(std::uint64_t now) {
+        if(active_==1)then_page_->gesture_tick(now);
+        if(active_==2)else_page_->gesture_tick(now);
+    }
+    std::uint64_t gesture_deadline() const noexcept {
+        return active_==1?then_page_->gesture_deadline():active_==2?else_page_->gesture_deadline():0;
+    }
+    void gesture_cancel() noexcept {
+        if(active_==1)then_page_->gesture_cancel();
+        if(active_==2)else_page_->gesture_cancel();
+    }
+    void gesture_rebase(std::uint32_t generation) noexcept {
+        if(active_==1)then_page_->gesture_rebase(generation);
+        if(active_==2)else_page_->gesture_rebase(generation);
     }
 private:
     std::uint8_t selected() const noexcept { return condition_.get() ? 1 : 2; }

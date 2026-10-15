@@ -57,6 +57,7 @@ struct CanvasPointer {
 // storage or allocation: applications retain only the positions they need.
 // Reset on background/unmount, where a final pointer event is not guaranteed.
 class PointerCapture {
+    friend class PressGesture;
 public:
     [[nodiscard]] constexpr bool try_capture(const CanvasPointer& event) noexcept {
         if (active() || event.action() != PointerPhase::down ||
