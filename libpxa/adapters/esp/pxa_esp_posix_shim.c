@@ -196,7 +196,11 @@ int pxa_esp_fsync(int fd) {
     struct stat metadata;
     int saved_errno = errno;
     int result;
-    if (fstat(fd, &metadata) == 0 && S_ISDIR(metadata.st_mode)) {
+    /* LittleFS fstat resolves the handle's pathname. Once its empty parent
+     * was pruned by SPIFFS compatibility mode, that lookup can fail. Never
+     * pass such a directory handle to LittleFS's file-only fsync callback. */
+    if (fstat(fd, &metadata) != 0) return -1;
+    if (S_ISDIR(metadata.st_mode)) {
         /* LittleFS persists directory metadata during its file/rename
          * operations but does not implement fsync for directory handles. */
         return 0;

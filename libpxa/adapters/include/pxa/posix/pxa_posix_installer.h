@@ -29,6 +29,7 @@ extern "C" {
  */
 
 #define PXA_POSIX_INSTALLER_SIGNATURE_ENVELOPE_BYTES ((size_t)108)
+#define PXA_POSIX_INSTALLER_RECEIVING_PREFIX ".receiving-"
 
 typedef struct {
     /* Management/lineage-root key ID. The field name is retained for ABI
@@ -118,10 +119,40 @@ pxa_status_t pxa_posix_installer_install_for_identity(
     const pxa_posix_installer_identity_t *expected,
     pxa_posix_installer_result_t *result,
     pxa_posix_install_disposition_t *disposition);
+/* Transfer ownership of storage_root/inbox/<name> into the incoming slot by
+ * rename, without duplicating its decoded files. name must be one safe path
+ * component; containers and cross-filesystem sources are not accepted. The
+ * caller must serialize all writes to this staging directory until return.
+ * The normal signature, inventory, file-digest, identity, lineage and recovery
+ * checks still apply. The current installation/private data survive rejection.
+ * Once adopted, the source may be absent even on failure: retry by restaging
+ * or recovering the transaction. ALREADY_CURRENT leaves the source in place.
+ * No persistent cache or additional installer workspace is allocated. */
+pxa_status_t pxa_posix_installer_adopt_staged_directory(
+    pxa_posix_installer_t *installer, const char *name,
+    const pxa_posix_installer_identity_t *expected,
+    pxa_posix_installer_result_t *result,
+    pxa_posix_install_disposition_t *disposition);
+/* Upload into inbox/.receiving-<app-id>[.pxa], then fully authenticate and
+ * publish by rename. Only the matching App ID is accepted. A failed publish
+ * discards its uncommitted source; installed packages/private data are untouched.
+ * Serialize all inbox writers with these operations. */
+pxa_status_t pxa_posix_installer_publish_transfer(
+    pxa_posix_installer_t *, const char *app_id, pxa_posix_installer_result_t *);
+/* Remove reserved, unpublished transfer sources. Call after the transport has
+ * closed its upload file, or at cold start before accepting transfers. */
+pxa_status_t pxa_posix_installer_discard_transfers(pxa_posix_installer_t *);
 /* Fully authenticate a read-only Package directory or single-file `.pxa`
  * source without copying it into the managed slots. For a container, result
  * root names the authenticated container rather than an extracted directory. */
 pxa_status_t pxa_posix_installer_verify_source(
+    pxa_posix_installer_t *installer, const char *source_path,
+    pxa_posix_installer_result_t *result);
+/* Authenticate only the signed logical manifest, for identity/permission
+ * inspection. Does not hash files or authenticate container compression
+ * metadata. Raw contents MUST still pass verify_source/install before use.
+ * Result buffers have the same lifetime rules as verify_source. */
+pxa_status_t pxa_posix_installer_read_signed_manifest(
     pxa_posix_installer_t *installer, const char *source_path,
     pxa_posix_installer_result_t *result);
 /* Optional cooperative directory verification. begin reads/parses metadata;
@@ -145,6 +176,11 @@ pxa_status_t pxa_posix_installer_load_directory(pxa_posix_installer_t *,
 pxa_status_t pxa_posix_installer_recover(
     pxa_posix_installer_t *installer,
     const pxa_posix_installer_identity_t *identity);
+/* Cold-start recovery of abandoned session directories, including legacy
+ * identities with owner records. Call before accepting installs/writers.
+ * Successful recovery removes obsolete incoming/previous/session storage.
+ * Unrecoverable data is preserved and reported, rather than guessed away. */
+pxa_status_t pxa_posix_installer_recover_pending(pxa_posix_installer_t *);
 /* Read the committed manifest without revalidating installed contents. */
 pxa_status_t pxa_posix_installer_load_current(
     pxa_posix_installer_t *installer,

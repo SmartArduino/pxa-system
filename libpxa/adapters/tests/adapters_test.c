@@ -1350,9 +1350,17 @@ static void test_installer(void) {
     buffer[0] ^= 0x01;
     CHECK(lseek(fd, -1, SEEK_END) >= 0 && write(fd, buffer, 1) == 1);
     close(fd);
+    check_status("signed metadata inspection does not claim payload verification",
+                 pxa_posix_installer_read_signed_manifest(installer, container_lz4,
+                                                           &result),
+                 PXA_STATUS_OK);
     check_status("reject tampered LZ4 container",
                  pxa_posix_installer_verify_source(installer, container_lz4,
                                                     &result),
+                 PXA_STATUS_DENIED);
+    check_status("metadata inspection never authorizes a tampered install",
+                 pxa_posix_installer_install(installer, container_lz4,
+                                              &result, &disposition),
                  PXA_STATUS_DENIED);
     build_test_container(container_lz4, package_lz4, &signer, artifact_lz4,
                          sizeof(artifact_lz4), PXA_CONTAINER_CODEC_LZ4);
@@ -1367,6 +1375,130 @@ static void test_installer(void) {
     CHECK(memcmp(buffer, artifact_lz4, sizeof(buffer)) == 0);
     close(fd);
 
+    {
+        char inbox[600], staged[650], staged_file[700], private_file[700];
+        struct stat source_inode, installed_inode;
+        snprintf(inbox, sizeof(inbox), "%s/inbox", storage_root);
+        CHECK(mkdir(inbox, 0700) == 0);
+        snprintf(private_file, sizeof(private_file), "%s/data/com.example.testapp", storage_root);
+        make_dirs(private_file);
+        strcat(private_file, "/keep-save");
+        write_file(private_file, (const uint8_t *)"saved game", 10);
+        snprintf(staged, sizeof(staged), "%s/ready", inbox);
+        {
+            char receiving[700], published[700], leftover[700];
+            snprintf(receiving, sizeof(receiving), "%s/.receiving-com.example.testapp.pxa", inbox);
+            build_test_container(receiving, package_lz4, &signer, artifact_lz4,
+                                 sizeof(artifact_lz4), PXA_CONTAINER_CODEC_LZ4);
+            check_status("publish authenticated container",
+                         pxa_posix_installer_publish_transfer(installer, "com.example.testapp", &result),
+                         PXA_STATUS_OK);
+            snprintf(published, sizeof(published), "%s/com.example.testapp.pxa", inbox);
+            CHECK(strcmp(result.root, published) == 0 && access(receiving, F_OK) != 0);
+            snprintf(receiving, sizeof(receiving), "%s/.receiving-com.example.testapp", inbox);
+            build_package(receiving, &signer, "com.example.testapp", "0.2.0",
+                          "artifacts/main.wasm", artifact_v2, sizeof(artifact_v2) - 1);
+            check_status("publish fully verified receiving directory",
+                         pxa_posix_installer_publish_transfer(installer, "com.example.testapp", &result),
+                         PXA_STATUS_OK);
+            snprintf(published, sizeof(published), "%s/com.example.testapp", inbox);
+            CHECK(strcmp(result.root, published) == 0 && access(receiving, F_OK) != 0);
+            snprintf(leftover, sizeof(leftover), "%s/com.example.testapp.pxa", inbox);
+            CHECK(access(leftover, F_OK) != 0);
+            snprintf(receiving, sizeof(receiving), "%s/.receiving-other.app", inbox);
+            build_package(receiving, &signer, "com.example.testapp", "0.2.0",
+                          "artifacts/main.wasm", artifact_v2, sizeof(artifact_v2) - 1);
+            check_status("wrong identity discards only uncommitted transfer",
+                         pxa_posix_installer_publish_transfer(installer, "other.app", &result),
+                         PXA_STATUS_DENIED);
+            CHECK(access(receiving, F_OK) != 0 && access(published, F_OK) == 0);
+            for (unsigned i = 0; i < 3; ++i) {
+                snprintf(leftover, sizeof(leftover), "%s/.receiving-partial-%u", inbox, i);
+                make_dirs(leftover);
+            }
+            check_status("discard every interrupted transfer",
+                         pxa_posix_installer_discard_transfers(installer), PXA_STATUS_OK);
+            for (unsigned i = 0; i < 3; ++i) {
+                snprintf(leftover, sizeof(leftover), "%s/.receiving-partial-%u", inbox, i);
+                CHECK(access(leftover, F_OK) != 0);
+            }
+            CHECK(access(published, F_OK) == 0);
+            CHECK(rename(published, staged) == 0);
+        }
+        snprintf(staged_file, sizeof(staged_file), "%s/artifacts/main.wasm", staged);
+        CHECK(stat(staged_file, &source_inode) == 0);
+        check_status("adopt rejects parent traversal",
+                     pxa_posix_installer_adopt_staged_directory(
+                         installer, "../ready", &identity, &result, &disposition),
+                     PXA_STATUS_INVALID_ARGUMENT);
+        {
+            pxa_posix_installer_identity_t wrong = identity;
+            wrong.app_id = (pxa_bytes_t){(const uint8_t *)"other.app", 9};
+            check_status("adopt rejects unexpected identity before ownership move",
+                         pxa_posix_installer_adopt_staged_directory(
+                             installer, "ready", &wrong, &result, &disposition),
+                         PXA_STATUS_DENIED);
+            CHECK(stat(staged_file, &installed_inode) == 0 &&
+                  installed_inode.st_ino == source_inode.st_ino);
+        }
+        check_status("adopt verified inbox directory",
+                     pxa_posix_installer_adopt_staged_directory(
+                         installer, "ready", &identity, &result, &disposition),
+                     PXA_STATUS_OK);
+        CHECK(lstat(staged, &installed_inode) != 0 && errno == ENOENT);
+        snprintf(staged_file, sizeof(staged_file), "%s/artifacts/main.wasm", root_path);
+        CHECK(stat(staged_file, &installed_inode) == 0);
+        CHECK(source_inode.st_ino == installed_inode.st_ino &&
+              source_inode.st_dev == installed_inode.st_dev);
+        CHECK(memcmp(manifest->version.data, "0.2.0", 5) == 0);
+
+        /* Invalid payload never replaces the committed package. */
+        CHECK(rename(package_v3, staged) == 0);
+        snprintf(staged_file, sizeof(staged_file), "%s/artifacts/main.wasm", staged);
+        write_file(staged_file, artifact_v1, sizeof(artifact_v1) - 1);
+        check_status("adopt rejects modified payload",
+                     pxa_posix_installer_adopt_staged_directory(
+                         installer, "ready", &identity, &result, &disposition),
+                     PXA_STATUS_DENIED);
+        check_status("recover after corrupt adopted incoming",
+                     pxa_posix_installer_recover(installer, &identity), PXA_STATUS_OK);
+        check_status("old installation retained",
+                     pxa_posix_installer_load_current(installer, &identity, &result),
+                     PXA_STATUS_OK);
+        CHECK(memcmp(manifest->version.data, "0.2.0", 5) == 0);
+
+        for (uint8_t point = PXA_CHECKPOINT_INCOMING_VERIFIED;
+             point <= PXA_CHECKPOINT_CURRENT_MOVED; ++point) {
+            pxa_posix_installer_t *fault_installer = NULL;
+            void *fault_workspace = malloc(workspace_size);
+            CHECK(fault_workspace != NULL);
+            build_package(staged, &signer, "com.example.testapp", "0.3.0",
+                          "artifacts/main.wasm", artifact_v3, sizeof(artifact_v3) - 1);
+            checkpoint_state.enabled = 1;
+            checkpoint_state.fail_checkpoint = point;
+            check_status("adopt fault installer init",
+                         pxa_posix_installer_init(fault_workspace, workspace_size,
+                                                   &config, &fault_installer), PXA_STATUS_OK);
+            check_status("adopt interrupted",
+                         pxa_posix_installer_adopt_staged_directory(
+                             fault_installer, "ready", &identity, &result, &disposition),
+                         PXA_STATUS_CANCELLED);
+            pxa_posix_installer_deinit(fault_installer);
+            free(fault_workspace);
+            checkpoint_state.enabled = 0;
+            check_status("recover interrupted adoption",
+                         pxa_posix_installer_recover_pending(installer), PXA_STATUS_OK);
+            check_status("load recovered adoption",
+                         pxa_posix_installer_load_current(installer, &identity, &result),
+                         PXA_STATUS_OK);
+            CHECK(manifest != NULL && manifest->version.size == 5);
+            CHECK(memcmp(manifest->version.data, "0.2.0", 5) == 0);
+            fd = open(private_file, O_RDONLY);
+            CHECK(fd >= 0 && read(fd, buffer, 10) == 10 &&
+                  memcmp(buffer, "saved game", 10) == 0);
+            close(fd);
+        }
+    }
     pxa_posix_installer_deinit(installer);
     free(manifest_workspace);
     free(workspace);

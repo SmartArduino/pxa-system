@@ -1148,7 +1148,8 @@ static pxa_status_t verify_opened_container(
     size_t *manifest_capacity_io, size_t *manifest_size_out,
     uint8_t publisher_key_id_out[PXA_PACKAGE_DIGEST_BYTES],
     char app_id_out[PXA_POSIX_INSTALLER_MAX_APP_ID + 1],
-    size_t *app_id_size_out, pxa_container_header_t *header_out) {
+    size_t *app_id_size_out, pxa_container_header_t *header_out,
+    int verify_payload) {
     static const uint8_t domain[] = "PXA-PACKAGE-CONTAINER-DIGEST\0";
     uint8_t header_bytes[PXA_CONTAINER_HEADER_BYTES];
     uint8_t package_signature_bytes[PXA_POSIX_INSTALLER_SIGNATURE_ENVELOPE_BYTES];
@@ -1248,6 +1249,7 @@ static pxa_status_t verify_opened_container(
         return PXA_STATUS_DENIED;
     }
 
+    if (!verify_payload) goto authenticated_manifest;
     status = pxa_openssl_sha256_stream_begin(&stream);
     if (status != PXA_STATUS_OK) return status;
     if (pxa_openssl_sha256_stream_update(&stream, header_bytes,
@@ -1374,6 +1376,7 @@ static pxa_status_t verify_opened_container(
         (pxa_bytes_t){container_signature.signature,
                       PXA_PACKAGE_SIGNATURE_BYTES});
     if (status != PXA_STATUS_OK) return status;
+authenticated_manifest:
     if (fstat(source_fd, &after) != 0 || !stat_same(&before, &after))
         return PXA_STATUS_DENIED;
     memcpy(publisher_key_id_out, lineage.root_key_id,
@@ -2711,11 +2714,69 @@ static pxa_status_t installer_check_space(
 #endif
 }
 
-pxa_status_t pxa_posix_installer_install_for_identity(
+/* Only an inbox leaf can be consumed. Open both parents without following
+ * links and compare the source inode immediately before the ownership move.
+ * The slot transaction authenticates the adopted incoming tree before it can
+ * move current, including on recovery after a reset. */
+static pxa_status_t adopt_incoming_directory(
+    pxa_posix_installer_t *installer, int *source_fd, const char *name,
+    const pxa_posix_slot_ctx_t *ctx) {
+    struct stat opened, named;
+    int root_fd = -1, inbox_fd = -1, session_fd = -1;
+    pxa_status_t status = PXA_STATUS_IO_ERROR;
+    root_fd = open(installer->storage_root,
+                   O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+    if (root_fd < 0) goto done;
+    inbox_fd = openat(root_fd, "inbox",
+                      O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+    session_fd = open(ctx->session,
+                      O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+    if (inbox_fd < 0 || session_fd < 0) goto done;
+    /* LittleFS's fstat directory timestamps come from the open handle's
+     * attribute buffer, whereas stat reads the persisted attribute. Use the
+     * same directory-entry query for both names; POSIX still compares inodes. */
+    if (fstatat(*source_fd, ".", &opened, AT_SYMLINK_NOFOLLOW) != 0 ||
+        fstatat(inbox_fd, name, &named, AT_SYMLINK_NOFOLLOW) != 0 ||
+        !S_ISDIR(named.st_mode) || !stat_same(&opened, &named)) {
+        status = PXA_STATUS_DENIED;
+        goto done;
+    }
+    status = sync_tree(*source_fd);
+    if (status != PXA_STATUS_OK) goto done;
+    /* ESP LittleFS forbids renaming an open source directory. Its contents
+     * are now durable and the caller owns all staging mutations. */
+    if (close(*source_fd) != 0) {
+        *source_fd = -1;
+        status = PXA_STATUS_IO_ERROR;
+        goto done;
+    }
+    *source_fd = -1;
+    if (renameat(inbox_fd, name, session_fd, "incoming") != 0) {
+        status = PXA_STATUS_IO_ERROR;
+        goto done;
+    }
+#ifndef ESP_PLATFORM
+    if (fsync(inbox_fd) != 0 || fsync(session_fd) != 0) {
+        status = PXA_STATUS_IO_ERROR;
+        goto done;
+    }
+#endif
+    /* LittleFS commits rename synchronously. Its SPIFFS compatibility mode
+     * may also remove the now-empty inbox; that parent's handle then has no
+     * pathname to stat and cannot be used as a POSIX directory barrier. */
+    status = PXA_STATUS_OK;
+done:
+    if (session_fd >= 0) close(session_fd);
+    if (inbox_fd >= 0) close(inbox_fd);
+    if (root_fd >= 0) close(root_fd);
+    return status;
+}
+
+static pxa_status_t install_source(
     pxa_posix_installer_t *installer, const char *source_dir,
     const pxa_posix_installer_identity_t *expected,
     pxa_posix_installer_result_t *result,
-    pxa_posix_install_disposition_t *disposition) {
+    pxa_posix_install_disposition_t *disposition, const char *adopt_name) {
     pxa_posix_slot_ctx_t ctx;
     pxa_slot_storage_t storage;
     uint8_t source_key_id[PXA_PACKAGE_DIGEST_BYTES];
@@ -2743,12 +2804,16 @@ pxa_status_t pxa_posix_installer_install_for_identity(
     status = open_package_source(source_dir, &source_fd,
                                  &source_is_container, &source_metadata);
     if (status != PXA_STATUS_OK) goto done;
+    if (adopt_name != NULL && source_is_container) {
+        status = PXA_STATUS_INVALID_ARGUMENT;
+        goto done;
+    }
     stage = "verify-source-identity";
     if (source_is_container) {
         status = verify_opened_container(
             installer, source_fd, &source_manifest, &source_manifest_capacity,
             &source_manifest_size, source_key_id, source_app_id,
-            &source_app_id_size, &container_header);
+            &source_app_id_size, &container_header, 1);
     } else {
         status = verify_opened_directory(
             installer, source_fd, 0, source_key_id, source_app_id,
@@ -2793,7 +2858,7 @@ pxa_status_t pxa_posix_installer_install_for_identity(
                 installer, source_fd, &source_manifest,
                 &source_manifest_capacity, &source_manifest_size,
                 source_key_id, source_app_id, &source_app_id_size,
-                &container_header);
+                &container_header, 1);
         } else {
             status = verify_source_contents(installer, source_fd,
                                             source_key_id, source_app_id,
@@ -2844,7 +2909,7 @@ pxa_status_t pxa_posix_installer_install_for_identity(
                         installer, source_fd, &source_manifest,
                         &source_manifest_capacity, &source_manifest_size,
                         source_key_id, source_app_id, &source_app_id_size,
-                        &container_header);
+                        &container_header, 1);
                 } else {
                     status = verify_source_contents(
                         installer, source_fd, source_key_id, source_app_id,
@@ -2884,8 +2949,22 @@ pxa_status_t pxa_posix_installer_install_for_identity(
      * Admit the complete decoded transaction before creating/writing incoming.
      * Keep current package and private data intact on a rejected update. */
     stage = "check-install-space";
-    status = installer_check_space(installer, source_fd, source_is_container,
-                                   source_manifest, source_manifest_size);
+    if (adopt_name == NULL) {
+        status = installer_check_space(installer, source_fd, source_is_container,
+                                       source_manifest, source_manifest_size);
+    } else {
+#ifdef ESP_PLATFORM
+        size_t total = 0, used = 0;
+        /* Payload is already on flash. Retain the same metadata/compaction
+         * reserve as copying installs, without admitting a second payload. */
+        status = esp_littlefs_info(CONFIG_PXA_STORAGE_PARTITION_LABEL,
+                                  &total, &used) == ESP_OK &&
+                 pxa_esp_install_space_available(UINT64_C(128) * 1024, total, used)
+                     ? PXA_STATUS_OK : PXA_STATUS_RESOURCE_LIMIT;
+#else
+        status = PXA_STATUS_OK;
+#endif
+    }
     if (status != PXA_STATUS_OK) goto done;
 
     {
@@ -2917,7 +2996,9 @@ pxa_status_t pxa_posix_installer_install_for_identity(
         if (status != PXA_STATUS_OK) goto done;
     }
     stage = "prepare-incoming";
-    status = source_is_container
+    status = adopt_name != NULL
+                 ? adopt_incoming_directory(installer, &source_fd, adopt_name, &ctx)
+                 : source_is_container
                  ? prepare_incoming_container(
                        installer, source_fd, &container_header,
                        source_manifest, source_manifest_size, &ctx)
@@ -2965,6 +3046,41 @@ done:
     free(source_manifest);
     free(current_manifest);
     free_ctx(&ctx);
+    return status;
+}
+
+pxa_status_t pxa_posix_installer_install_for_identity(
+    pxa_posix_installer_t *installer, const char *source_dir,
+    const pxa_posix_installer_identity_t *expected,
+    pxa_posix_installer_result_t *result,
+    pxa_posix_install_disposition_t *disposition) {
+    return install_source(installer, source_dir, expected, result, disposition, NULL);
+}
+
+pxa_status_t pxa_posix_installer_adopt_staged_directory(
+    pxa_posix_installer_t *installer, const char *name,
+    const pxa_posix_installer_identity_t *expected,
+    pxa_posix_installer_result_t *result,
+    pxa_posix_install_disposition_t *disposition) {
+    char *inbox = NULL, *source = NULL;
+    pxa_status_t status;
+    if (installer == NULL || installer->magic != PXA_POSIX_INSTALLER_MAGIC ||
+        name == NULL || name[0] == '\0' || strcmp(name, ".") == 0 ||
+        strcmp(name, "..") == 0 ||
+        strlen(name) > PXA_POSIX_INSTALLER_MAX_IDENTITY_NAME)
+        return PXA_STATUS_INVALID_ARGUMENT;
+    for (const char *p = name; *p != '\0'; ++p) {
+        if (!((*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') ||
+              (*p >= '0' && *p <= '9') || *p == '-' || *p == '_' ||
+              *p == '.' || *p == ':' || *p == '~'))
+            return PXA_STATUS_INVALID_ARGUMENT;
+    }
+    inbox = join_path(installer->storage_root, "inbox");
+    if (inbox != NULL) source = join_path(inbox, name);
+    free(inbox);
+    if (source == NULL) return PXA_STATUS_RESOURCE_LIMIT;
+    status = install_source(installer, source, expected, result, disposition, name);
+    free(source);
     return status;
 }
 
@@ -3133,9 +3249,9 @@ pxa_status_t pxa_posix_installer_verify_step(pxa_posix_verification_t *job, size
     return job->status = status == PXA_STATUS_OK ? PXA_STATUS_WOULD_BLOCK : status;
 }
 
-pxa_status_t pxa_posix_installer_verify_source(
+static pxa_status_t read_source(
     pxa_posix_installer_t *installer, const char *source_dir,
-    pxa_posix_installer_result_t *result) {
+    pxa_posix_installer_result_t *result, int verify_payload) {
     uint8_t publisher_key_id[PXA_PACKAGE_DIGEST_BYTES];
     char app_id[PXA_POSIX_INSTALLER_MAX_APP_ID + 1];
     size_t app_id_size = 0;
@@ -3161,14 +3277,14 @@ pxa_status_t pxa_posix_installer_verify_source(
         status = verify_opened_container(
             installer, source_fd, &manifest_bytes, &manifest_capacity,
             &manifest_size,
-            publisher_key_id, app_id, &app_id_size, &container_header);
+            publisher_key_id, app_id, &app_id_size, &container_header, verify_payload);
         if (status == PXA_STATUS_OK) {
             status = fill_result_encoded(installer, manifest_bytes,
                                          manifest_size, source_dir, result);
         }
     } else {
         status = verify_opened_directory(
-            installer, source_fd, 1, publisher_key_id, app_id, &app_id_size);
+            installer, source_fd, verify_payload, publisher_key_id, app_id, &app_id_size);
         if (status == PXA_STATUS_OK) {
             status = fill_result(installer, source_fd, source_dir, result);
         }
@@ -3176,6 +3292,18 @@ pxa_status_t pxa_posix_installer_verify_source(
     free(manifest_bytes);
     close(source_fd);
     return status;
+}
+
+pxa_status_t pxa_posix_installer_verify_source(
+    pxa_posix_installer_t *installer, const char *source,
+    pxa_posix_installer_result_t *result) {
+    return read_source(installer, source, result, 1);
+}
+
+pxa_status_t pxa_posix_installer_read_signed_manifest(
+    pxa_posix_installer_t *installer, const char *source,
+    pxa_posix_installer_result_t *result) {
+    return read_source(installer, source, result, 0);
 }
 
 pxa_status_t pxa_posix_installer_load_directory(pxa_posix_installer_t *installer,
@@ -3186,6 +3314,96 @@ pxa_status_t pxa_posix_installer_load_directory(pxa_posix_installer_t *installer
     if (fd < 0) return errno == ENOENT ? PXA_STATUS_NOT_FOUND : PXA_STATUS_IO_ERROR;
     pxa_status_t status = fill_result(installer,fd,directory,result);
     close(fd);
+    return status;
+}
+
+pxa_status_t pxa_posix_installer_publish_transfer(
+    pxa_posix_installer_t *installer, const char *app_id,
+    pxa_posix_installer_result_t *result) {
+    char receiving[PXA_POSIX_INSTALLER_MAX_APP_ID + sizeof(PXA_POSIX_INSTALLER_RECEIVING_PREFIX) + 5];
+    char filename[PXA_POSIX_INSTALLER_MAX_APP_ID + 5];
+    char *inbox = NULL, *source = NULL, *directory = NULL, *container = NULL;
+    const char *destination = NULL;
+    struct stat metadata;
+    int inbox_fd = -1;
+    int published = 0;
+    pxa_status_t status = PXA_STATUS_RESOURCE_LIMIT;
+    if (installer == NULL || installer->magic != PXA_POSIX_INSTALLER_MAGIC ||
+        app_id == NULL || !safe_app_id((pxa_bytes_t){(const uint8_t *)app_id, strlen(app_id)}))
+        return PXA_STATUS_INVALID_ARGUMENT;
+    snprintf(receiving, sizeof(receiving), "%s%s", PXA_POSIX_INSTALLER_RECEIVING_PREFIX, app_id);
+    snprintf(filename, sizeof(filename), "%s.pxa", app_id);
+    inbox = join_path(installer->storage_root, "inbox");
+    if (inbox == NULL) goto done;
+    source = join_path(inbox, receiving);
+    directory = join_path(inbox, app_id);
+    container = join_path(inbox, filename);
+    if (source == NULL || directory == NULL || container == NULL) goto done;
+    if (lstat(source, &metadata) != 0) {
+        free(source);
+        strcat(receiving, ".pxa");
+        source = join_path(inbox, receiving);
+        if (source == NULL) goto done;
+        destination = container;
+    } else {
+        destination = directory;
+        if (!S_ISDIR(metadata.st_mode)) { status = PXA_STATUS_DENIED; goto done; }
+    }
+    inbox_fd = open(inbox, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+    if (inbox_fd < 0) { status = PXA_STATUS_IO_ERROR; goto done; }
+    status = pxa_posix_installer_verify_source(installer, source, result);
+    if (status != PXA_STATUS_OK) goto done;
+    if ((*result->manifest)->app_id.size != strlen(app_id) ||
+        memcmp((*result->manifest)->app_id.data, app_id, strlen(app_id)) != 0) {
+        status = PXA_STATUS_DENIED;
+        goto done;
+    }
+    status = remove_tree(directory);
+    if (status == PXA_STATUS_OK) status = remove_tree(container);
+    if (status != PXA_STATUS_OK) goto done;
+    if (rename(source, destination) != 0) { status = PXA_STATUS_IO_ERROR; goto done; }
+    published = 1;
+    if (fsync(inbox_fd) != 0) { status = PXA_STATUS_IO_ERROR; goto done; }
+    /* The authenticated pending root is longer than the published root. */
+    strcpy(result->root, destination);
+done:
+    if (status != PXA_STATUS_OK && !published && source != NULL)
+        (void)remove_tree(source);
+    if (inbox_fd >= 0) close(inbox_fd);
+    free(container); free(directory); free(source); free(inbox);
+    return status;
+}
+
+pxa_status_t pxa_posix_installer_discard_transfers(pxa_posix_installer_t *installer) {
+    char *inbox;
+    pxa_status_t status = PXA_STATUS_OK;
+    if (installer == NULL || installer->magic != PXA_POSIX_INSTALLER_MAGIC)
+        return PXA_STATUS_INVALID_ARGUMENT;
+    inbox = join_path(installer->storage_root, "inbox");
+    if (inbox == NULL) return PXA_STATUS_RESOURCE_LIMIT;
+    for (;;) {
+        DIR *directory = opendir(inbox);
+        struct dirent *entry;
+        int removed = 0;
+        if (directory == NULL) {
+            status = errno == ENOENT ? PXA_STATUS_OK : PXA_STATUS_IO_ERROR;
+            break;
+        }
+        while ((entry = readdir(directory)) != NULL) {
+            char *path;
+            if (strncmp(entry->d_name, PXA_POSIX_INSTALLER_RECEIVING_PREFIX,
+                        sizeof(PXA_POSIX_INSTALLER_RECEIVING_PREFIX) - 1) != 0) continue;
+            path = join_path(inbox, entry->d_name);
+            status = path == NULL ? PXA_STATUS_RESOURCE_LIMIT : remove_tree(path);
+            free(path);
+            removed = status == PXA_STATUS_OK;
+            break;
+        }
+        closedir(directory);
+        /* Reopen after removal: LittleFS can shift its directory cursor. */
+        if (!removed) break;
+    }
+    free(inbox);
     return status;
 }
 
@@ -3206,10 +3424,79 @@ pxa_status_t pxa_posix_installer_recover(
         goto done;
     }
     status = recover_locked(installer, &ctx);
+    if (status == PXA_STATUS_OK) status = slot_remove(&ctx, PXA_PACKAGE_SLOT_PREVIOUS);
+    if (status == PXA_STATUS_OK) status = remove_tree(ctx.session);
+    if (status == PXA_STATUS_OK) status = slot_barrier(&ctx);
 done:
     if (lock_fd >= 0) close(lock_fd);
     free_ctx(&ctx);
     return status;
+}
+
+pxa_status_t pxa_posix_installer_recover_pending(pxa_posix_installer_t *installer) {
+    char *packages;
+    char last[PXA_POSIX_INSTALLER_MAX_IDENTITY_NAME + 10] = {0};
+    pxa_status_t first_error = PXA_STATUS_OK;
+    if (installer == NULL || installer->magic != PXA_POSIX_INSTALLER_MAGIC)
+        return PXA_STATUS_INVALID_ARGUMENT;
+    packages = join_path(installer->storage_root, "packages");
+    if (packages == NULL) return PXA_STATUS_RESOURCE_LIMIT;
+    for (;;) {
+        DIR *directory = opendir(packages);
+        struct dirent *entry;
+        char next[PXA_POSIX_INSTALLER_MAX_IDENTITY_NAME + 10] = {0};
+        if (directory == NULL) {
+            if (errno != ENOENT && first_error == PXA_STATUS_OK) first_error = PXA_STATUS_IO_ERROR;
+            break;
+        }
+        while ((entry = readdir(directory)) != NULL) {
+            if (strncmp(entry->d_name, ".session-", 9) == 0 &&
+                strlen(entry->d_name) < sizeof(next) && strcmp(entry->d_name, last) > 0 &&
+                (next[0] == '\0' || strcmp(entry->d_name, next) < 0))
+                strcpy(next, entry->d_name);
+        }
+        closedir(directory);
+        if (next[0] == '\0') break;
+        strcpy(last, next);
+        uint8_t owner[PXA_POSIX_INSTALLER_OWNER_BYTES];
+        char relative[sizeof("owners/") + PXA_POSIX_INSTALLER_MAX_IDENTITY_NAME];
+        const char *name;
+        const char *app_id;
+        pxa_posix_installer_identity_t identity;
+        pxa_status_t status;
+        size_t size = 0;
+        int root;
+        name = last + 9;
+        if (strlen(name) > PXA_POSIX_INSTALLER_MAX_IDENTITY_NAME) continue;
+        app_id = name;
+        if ((installer->flags & PXA_POSIX_INSTALLER_FLAG_COMPOSITE_IDENTITY) != 0) {
+            if (strlen(name) <= 65 || name[64] != '~') continue;
+            app_id = name + 65;
+        }
+        if (!safe_app_id((pxa_bytes_t){(const uint8_t *)app_id, strlen(app_id)})) continue;
+        /* An owner record is durable before a session can be created. It
+         * supplies the lineage root for both legacy and composite layouts. */
+        snprintf(relative, sizeof(relative), "owners/%s", name);
+        root = open(installer->storage_root,
+                    O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+        status = root < 0 ? PXA_STATUS_IO_ERROR :
+            read_bounded(root, relative, sizeof(owner), owner, sizeof(owner), &size);
+        if (root >= 0) close(root);
+        if (status == PXA_STATUS_OK &&
+            (size != sizeof(owner) || memcmp(owner, "PXAO\1\0\0\0", 8) != 0))
+            status = PXA_STATUS_DENIED;
+        if (status == PXA_STATUS_OK) {
+            char expected[PXA_POSIX_INSTALLER_MAX_IDENTITY_NAME + 1];
+            identity.publisher_key_id = (pxa_bytes_t){owner + 8, PXA_PACKAGE_DIGEST_BYTES};
+            identity.app_id = (pxa_bytes_t){(const uint8_t *)app_id, strlen(app_id)};
+            status = identity_storage_name(installer, &identity, expected, sizeof(expected)) &&
+                     strcmp(expected, name) == 0
+                ? pxa_posix_installer_recover(installer, &identity) : PXA_STATUS_DENIED;
+        }
+        if (first_error == PXA_STATUS_OK && status != PXA_STATUS_OK) first_error = status;
+    }
+    free(packages);
+    return first_error;
 }
 
 pxa_status_t pxa_posix_installer_load_current(
