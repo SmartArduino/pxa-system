@@ -70,6 +70,8 @@ constexpr std::uint16_t enabled = 2;
 /* Event kinds and mask bits mirror pxa_ui.h. */
 constexpr std::uint16_t event_pointer_kind = 7;
 constexpr std::uint64_t event_mask_pointer = UINT64_C(1) << 6;
+constexpr std::uint16_t event_controller_kind = 10;
+constexpr std::uint64_t event_mask_controller = UINT64_C(1) << 9;
 constexpr std::uint8_t row = 1;
 constexpr std::uint8_t column = 2;
 constexpr std::uint8_t stack = 3;
@@ -83,8 +85,9 @@ class Transaction {
     static_assert(PacketBytes >= 48 && PacketBytes <= wire::max_control_bytes);
 public:
     Transaction(Transport& transport, std::uint32_t generation,
-                std::uint32_t surface, std::uint8_t kind) noexcept
-        : transport_(transport), generation_(generation) {
+                std::uint32_t surface, std::uint8_t kind,
+                std::uint64_t root_input_mask = 0) noexcept
+        : transport_(transport), generation_(generation), root_input_mask_(root_input_mask) {
         std::array<std::byte, 20> begin{};
         wire::put32(begin.data(), surface);
         wire::put32(begin.data() + 4, generation);
@@ -134,6 +137,12 @@ public:
         std::array<std::byte, 6> prefix{};
         wire::put32(prefix.data(), id);
         wire::put16(prefix.data() + 4, key);
+        // Application input survives reactive UI masks (e.g. volume capture).
+        if (id == 1 && key == protocol::event_mask && root_input_mask_ && value.size() == 8) {
+            std::array<std::byte, 8> mask{};
+            wire::put64(mask.data(), wire::get64(value.data()) | root_input_mask_);
+            return record(protocol::set_property, prefix, mask);
+        }
         return record(protocol::set_property, prefix, value);
     }
 
@@ -320,6 +329,7 @@ private:
 
     Transport& transport_;
     std::uint32_t generation_;
+    std::uint64_t root_input_mask_;
     std::array<std::byte, PacketBytes - wire::header_bytes> buffer_{};
     std::size_t used_ = 0;
     std::optional<Error> error_;

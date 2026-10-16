@@ -345,7 +345,11 @@ typedef struct {
 #define PXA_CONTROLLER_B (UINT32_C(1) << 5)
 #define PXA_CONTROLLER_START (UINT32_C(1) << 6)
 #define PXA_CONTROLLER_SELECT (UINT32_C(1) << 7)
-#define PXA_CONTROLLER_BUTTON_MASK UINT32_C(0xff)
+#define PXA_CONTROLLER_X (UINT32_C(1) << 8)
+#define PXA_CONTROLLER_Y (UINT32_C(1) << 9)
+#define PXA_CONTROLLER_L (UINT32_C(1) << 10)
+#define PXA_CONTROLLER_R (UINT32_C(1) << 11)
+#define PXA_CONTROLLER_BUTTON_MASK UINT32_C(0xfff)
 
 typedef struct {
     uint32_t surface;
@@ -905,7 +909,8 @@ static inline int pxa_ui_parse_controller(const pxa_ui_wire_event_t* event,
     output->connected = parsed.data[1];
     output->buttons = pxa_read_u32(parsed.data + 4);
     output->timestamp_us = parsed.timestamp_us;
-    return output->connected || output->buttons == 0;
+    return (output->buttons & ~PXA_CONTROLLER_BUTTON_MASK) == 0 &&
+           (output->connected || output->buttons == 0);
 }
 
 static inline int pxa_ui_event_is_current(const pxa_ui_event_data_t* event,

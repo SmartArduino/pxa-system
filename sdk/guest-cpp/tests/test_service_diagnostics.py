@@ -75,4 +75,14 @@ void play(AudioSession& session){
 }
 ''')
         self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_input_callbacks_cannot_discard_results(self):
+        for name, event in (('on_controller', 'ControllerState'),
+                            ('on_pointer', 'Pointer'), ('on_volume_key', 'VolumeKeyEvent')):
+            with self.subTest(callback=name):
+                result = self.compile('struct App { Result<void> ' + name +
+                    '(Context&,const input::' + event + '&){return {};} }; '
+                    'void test(){(void)AppRuntime<App>::start(nullptr,0);}')
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(name + ' must return void', result.stderr)
 if __name__ == '__main__': unittest.main()

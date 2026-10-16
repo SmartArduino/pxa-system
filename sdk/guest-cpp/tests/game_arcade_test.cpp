@@ -118,7 +118,9 @@ int main(){
     auto controller=pxa::ui::decode_controller(event);assert(controller&&controller->buttons==20);
     pxa::wire::put16(bytes.data()+14,0);assert(pxa::ui::decode_controller(event));
     event.token=1;assert(!pxa::ui::decode_controller(event));event.token=0;
-    pxa::wire::put32(bytes.data()+28,256);assert(!pxa::ui::decode_controller(event));
+    pxa::wire::put32(bytes.data()+28,pxa::ui::controller_x|pxa::ui::controller_y|pxa::ui::controller_l|pxa::ui::controller_r);
+    controller=pxa::ui::decode_controller(event);assert(controller&&controller->buttons==3840);
+    pxa::wire::put32(bytes.data()+28,4096);assert(!pxa::ui::decode_controller(event));
     pxa::wire::put32(bytes.data()+28,20);
     bytes[25]=std::byte{};assert(!pxa::ui::decode_controller(event));
     bytes[25]=std::byte{1};bytes[26]=std::byte{1};assert(!pxa::ui::decode_controller(event));

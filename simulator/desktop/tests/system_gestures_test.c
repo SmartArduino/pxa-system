@@ -160,6 +160,69 @@ static void check_input_method_settings(pxsys_reference_lvgl_t *ui) {
     assert(ime_preferences.layout==PXSYS_INPUT_LAYOUT_NINE && ime_preferences.language==PXSYS_INPUT_ENGLISH);
 }
 
+static bool manager_enabled[]={true,false},manager_present[]={true,true};
+static const char *const manager_ids[]={"test:enabled-ime","test:disabled-ime"};
+static size_t managed_apps(void *context,pxsys_reference_managed_app_t *output,size_t capacity,
+    pxsys_reference_app_filter_t filter) {
+    (void)context; size_t count=0;
+    const unsigned ordinary=PXSYS_REFERENCE_MANAGED_APP_MAX+2;
+    for (unsigned i=0;i<ordinary+2;++i) {
+        bool ime=i>=ordinary;
+        if (ime && !manager_present[i-ordinary]) continue;
+        if (filter==PXSYS_REFERENCE_APPS_INPUT_METHODS && !ime) continue;
+        if (!output) { ++count; continue; }
+        if (count==capacity) break;
+        pxsys_reference_managed_app_t *app=&output[count++]; memset(app,0,sizeof(*app));
+        if (ime) snprintf(app->identity,sizeof(app->identity),"%s",manager_ids[i-ordinary]);
+        else snprintf(app->identity,sizeof(app->identity),"test:game-%u",i);
+        snprintf(app->name,sizeof(app->name),"%s",ime?(i==ordinary?"Enabled IME":"Disabled IME"):"Ordinary game");
+        app->installed=1; app->enabled=ime?manager_enabled[i-ordinary]:1;
+    }
+    return count;
+}
+static bool managed_action(void *context,const char *identity,pxsys_reference_app_action_t action) {
+    (void)context;
+    unsigned index=0; while (index<2 && strcmp(identity,manager_ids[index])) ++index;
+    assert(index<2);
+    if (action==PXSYS_REFERENCE_APP_ACTION_ENABLE) manager_enabled[index]=true;
+    else if (action==PXSYS_REFERENCE_APP_ACTION_DISABLE) manager_enabled[index]=false;
+    else if (action==PXSYS_REFERENCE_APP_ACTION_UNINSTALL) manager_present[index]=false;
+    else assert(0);
+    return true;
+}
+static void click_label(lv_obj_t *root,const char *text) {
+    lv_obj_t *object=find_label(root,text); assert(object);
+    while (object && !lv_obj_is_clickable(object)) object=lv_obj_get_parent(object);
+    assert(object); lv_obj_send_event(object,LV_EVENT_CLICKED,NULL);
+}
+static void check_input_method_app_manager(pxsys_reference_lvgl_t *ui) {
+    ui->app_list=managed_apps; ui->app_action=managed_action;
+    input_method_open(ui);
+    click_label(ui->content,translated(ui,"input-method.manage","Manage installed input methods"));
+    assert(ui->active_page==REFERENCE_PAGE_INPUT_METHOD_APPS && ui->managed_app_count==2);
+    assert(find_label(ui->content,"Enabled IME") && find_label(ui->content,"Disabled IME"));
+    assert(!find_label(ui->content,"Ordinary game"));
+    click_label(ui->content,"Disabled IME");
+    assert(!strcmp(ui->pending_identity,manager_ids[1]));
+    click_label(ui->app_dialog,translated(ui,"settings.apps.enable","Enable"));
+    assert(manager_enabled[1] && ui->managed_app_count==2 && !ui->app_dialog);
+    click_label(ui->content,"Disabled IME");
+    click_label(ui->app_dialog,translated(ui,"settings.apps.disable","Disable"));
+    assert(!manager_enabled[1] && find_label(ui->content,"Disabled IME"));
+    for (unsigned i=0;i<2;++i) {
+        click_label(ui->content,i?"Disabled IME":"Enabled IME");
+        click_label(ui->app_dialog,translated(ui,"settings.apps.uninstall","Uninstall"));
+        assert(ui->confirm_dialog);
+        click_label(ui->confirm_dialog,translated(ui,"settings.confirm","Confirm"));
+        assert(!manager_present[i] && ui->managed_app_count==1-i);
+    }
+    assert(find_label(ui->content,translated(ui,"input-method.apps.empty","No installed input method apps")));
+    navigation_back(ui); assert(ui->active_page==REFERENCE_PAGE_INPUT_METHOD);
+    assert(!open_role(ui,PXSYS_ROLE_APP_MANAGER));
+    assert(ui->managed_app_count==PXSYS_REFERENCE_MANAGED_APP_MAX);
+    assert(find_label(ui->content,"Ordinary game"));
+}
+
 int main(void) {
     lv_init();
     lv_display_t *display = lv_display_create(480, 480);
@@ -199,6 +262,7 @@ int main(void) {
     ui_config.allocator = allocator;
     ui_config.parent = lv_layer_top();
     ui_config.navigation_mode = PXSYS_NAVIGATION_GESTURES;
+    ui_config.app_list=managed_apps; ui_config.app_action=managed_action;
     pxsys_reference_lvgl_t *ui;
     assert(!pxsys_reference_lvgl_create(&ui_config, &ui));
     assert(!pxsys_reference_lvgl_start(ui));
@@ -352,6 +416,7 @@ int main(void) {
     assert(!pxsys_task_manager_finish_all(
         pxsys_standard_system_tasks(system_under_test), PXSYS_STOP_SHUTDOWN));
     check_input_method_settings(ui);
+    check_input_method_app_manager(ui);
     assert(!pxsys_reference_lvgl_destroy(ui));
     assert(!pxsys_standard_system_destroy(system_under_test));
     assert(!pxsys_lvgl_renderer_destroy(renderer));

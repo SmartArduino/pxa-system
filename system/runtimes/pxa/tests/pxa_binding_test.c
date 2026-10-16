@@ -5,6 +5,7 @@
 
 #include "pxsys/pxa_binding.h"
 #include "pxsys/pxa_client.h"
+#include "pxa/ime.h"
 
 static void* allocate(void* context, size_t size) {
     size_t* count = (size_t*)context;
@@ -51,6 +52,21 @@ int main(void) {
            0);
     assert(descriptor.identity.app_id.size == sizeof(app_id) - 1u);
     assert(descriptor.runtime_id.size == strlen(PXSYS_PXA_RUNTIME_AOT));
+    assert(!(descriptor.flags&PXSYS_APP_FLAG_INPUT_METHOD));
+    pxa_package_service_requirement_t ime_service={.service=PXA_IME_SERVICE_ID,
+        .required_features=PXA_IME_FEATURE_PROVIDER};
+    component.services=&ime_service; component.service_count=1;
+    component.kind=PXA_COMPONENT_KIND_UI;
+    assert(!pxsys_pxa_manifest_descriptor(&manifest,pxsys_string_from_cstr(PXSYS_PXA_RUNTIME_AOT),
+        PXSYS_APP_FLAG_INPUT_METHOD,&descriptor));
+    assert(!(descriptor.flags&PXSYS_APP_FLAG_INPUT_METHOD));
+    component.kind=PXA_COMPONENT_KIND_SERVICE;
+    // Classification survives disabling: the manager must allow re-enabling.
+    assert(!pxsys_pxa_manifest_descriptor(&manifest,pxsys_string_from_cstr(PXSYS_PXA_RUNTIME_AOT),0,&descriptor));
+    assert((descriptor.flags&PXSYS_APP_FLAG_INPUT_METHOD) && !(descriptor.flags&PXSYS_APP_FLAG_ENABLED));
+    ime_service.required_features=PXA_IME_FEATURE_PINYIN;
+    assert(!pxsys_pxa_manifest_descriptor(&manifest,pxsys_string_from_cstr(PXSYS_PXA_RUNTIME_AOT),0,&descriptor));
+    assert(!(descriptor.flags&PXSYS_APP_FLAG_INPUT_METHOD));
     assert(pxsys_pxa_manifest_caller(&manifest, component.id, &caller) == PXSYS_STATUS_OK);
     assert(caller.component_id.size == 4 &&
            memcmp(caller.app.publisher_root, management_key, PXSYS_PUBLISHER_ROOT_BYTES) == 0);

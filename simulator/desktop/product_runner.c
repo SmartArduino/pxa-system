@@ -3702,6 +3702,7 @@ static int run_product_simulator(const options_t *input,
         map_host_theme(host_theme, lvgl_config.theme.rgba);
     const uint32_t font_density = lvgl_config.primary_environment.density_q16;
     const uint32_t font_scale = lvgl_config.primary_environment.font_scale_q16;
+    lvgl_config.theme.icon_font = pxa_lvgl_ui_icon_font(font_density);
     host.caption_font = load_product_font(product_font_pixels(12,font_density,font_scale), &lv_font_montserrat_14);
     host.label_font = load_product_font(product_font_pixels(14,font_density,font_scale), &lv_font_montserrat_14);
     host.body_font = load_product_font(product_font_pixels(16,font_density,font_scale), &lv_font_montserrat_16);

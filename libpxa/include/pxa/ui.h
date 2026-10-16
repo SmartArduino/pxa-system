@@ -301,7 +301,11 @@ typedef uint64_t pxa_ui_features_t;
 #define PXA_UI_CONTROLLER_B (UINT32_C(1) << 5)
 #define PXA_UI_CONTROLLER_START (UINT32_C(1) << 6)
 #define PXA_UI_CONTROLLER_SELECT (UINT32_C(1) << 7)
-#define PXA_UI_CONTROLLER_BUTTON_MASK UINT32_C(0xff)
+#define PXA_UI_CONTROLLER_X (UINT32_C(1) << 8)
+#define PXA_UI_CONTROLLER_Y (UINT32_C(1) << 9)
+#define PXA_UI_CONTROLLER_L (UINT32_C(1) << 10)
+#define PXA_UI_CONTROLLER_R (UINT32_C(1) << 11)
+#define PXA_UI_CONTROLLER_BUTTON_MASK UINT32_C(0xfff)
 
 typedef uint8_t pxa_ui_pressure_t;
 #define PXA_UI_PRESSURE_NORMAL ((pxa_ui_pressure_t)0)

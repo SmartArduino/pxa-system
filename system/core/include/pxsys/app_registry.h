@@ -16,6 +16,8 @@ extern "C" {
 #define PXSYS_APP_FLAG_SINGLE_INSTANCE UINT32_C(4)
 #define PXSYS_APP_FLAG_ENABLED UINT32_C(8)
 #define PXSYS_APP_FLAG_LAUNCHER UINT32_C(16)
+/* Package metadata, independent of enabled state. */
+#define PXSYS_APP_FLAG_INPUT_METHOD UINT32_C(32)
 
 typedef struct {
     uint32_t struct_size;

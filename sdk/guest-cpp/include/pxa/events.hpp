@@ -14,7 +14,8 @@ struct SurfaceRelease;
 struct WorkStopRequested;
 struct IpcRequest;
 template<class Contract> struct TypedIpcRequest;
-namespace ui { struct CanvasPointer; struct DisplayMetrics; struct UiCapabilities; struct UiAppearance; }
+namespace input { struct Pointer; struct ControllerState; struct VolumeKeyEvent; }
+namespace ui { struct DisplayMetrics; struct UiCapabilities; struct UiAppearance; }
 
 template<> struct EventTraits<ClockTick> {
     static constexpr std::uint16_t service = 4, opcode = 0x8001;
@@ -49,7 +50,9 @@ template<> struct EventTraits<IpcRequest> {
     static constexpr std::uint16_t service = 7, opcode = 0x8001;
 };
 template<class Contract> struct EventTraits<TypedIpcRequest<Contract>> : EventTraits<IpcRequest> {};
-template<> struct EventTraits<ui::CanvasPointer> {
+template<> struct EventTraits<input::Pointer> {
     static constexpr std::uint16_t service = 3, opcode = 0x8001;
 };
+template<> struct EventTraits<input::ControllerState> : EventTraits<input::Pointer> {};
+template<> struct EventTraits<input::VolumeKeyEvent> : EventTraits<input::Pointer> {};
 } // namespace pxa

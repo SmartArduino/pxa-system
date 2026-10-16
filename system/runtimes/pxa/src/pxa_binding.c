@@ -1,4 +1,5 @@
 #include "pxsys/pxa_binding.h"
+#include "pxa/ime.h"
 
 #include <string.h>
 
@@ -17,7 +18,7 @@ pxsys_status_t pxsys_pxa_manifest_identity(const pxa_package_manifest_t* manifes
 pxsys_status_t pxsys_pxa_manifest_descriptor(const pxa_package_manifest_t* manifest,
                                              pxsys_string_t runtime_id, uint32_t app_flags,
                                              pxsys_app_descriptor_t* descriptor) {
-    if (manifest == NULL || descriptor == NULL || manifest->name.data == NULL ||
+    if (manifest == NULL || descriptor == NULL || (manifest->component_count && !manifest->components) || manifest->name.data == NULL ||
         manifest->name.size == 0 || manifest->version.data == NULL || manifest->version.size == 0 ||
         runtime_id.data == NULL || runtime_id.size == 0) {
         return PXSYS_STATUS_INVALID_ARGUMENT;
@@ -35,7 +36,12 @@ pxsys_status_t pxsys_pxa_manifest_descriptor(const pxa_package_manifest_t* manif
                      manifest->icon_path.size);
     descriptor->version = pxsys_string((const char*)manifest->version.data, manifest->version.size);
     descriptor->runtime_id = runtime_id;
-    descriptor->flags = app_flags;
+    descriptor->flags = app_flags & ~PXSYS_APP_FLAG_INPUT_METHOD;
+    for (uint16_t i=0;i<manifest->component_count;++i) {
+        if (!pxa_ime_is_provider(&manifest->components[i])) continue;
+        descriptor->flags |= PXSYS_APP_FLAG_INPUT_METHOD;
+        break;
+    }
     return PXSYS_STATUS_OK;
 }
 

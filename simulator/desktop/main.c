@@ -427,6 +427,7 @@ typedef struct {
     const char* publisher_key;
     const char* state_root;
     const char* pxadb_control_socket;
+    uint8_t no_navigation_bar;
 } simulator_options_t;
 
 static pxsys_display_profile_t s_display_profile;
@@ -928,7 +929,8 @@ static bool managed_data_publisher(const simulator_catalog_t* catalog,
     return valid;
 }
 static size_t simulator_list_apps(
-    void* context, pxsys_reference_managed_app_t* output, size_t capacity) {
+    void* context, pxsys_reference_managed_app_t* output, size_t capacity,
+    pxsys_reference_app_filter_t filter) {
     const simulator_catalog_t* catalog = (const simulator_catalog_t*)context;
     pxsys_app_registry_t* apps;
     size_t count;
@@ -937,11 +939,14 @@ static size_t simulator_list_apps(
     if (catalog == NULL || catalog->system == NULL) return 0;
     apps = pxsys_standard_system_apps(catalog->system);
     count = pxsys_app_registry_count(apps);
-    if (output == NULL) return count;
-    for (index = 0; index < count && written < capacity; ++index) {
+    for (index = 0; index < count; ++index) {
         const pxsys_app_descriptor_t* app = pxsys_app_registry_at(apps, index);
         pxsys_reference_managed_app_t* managed;
         if (app == NULL) continue;
+        if (filter==PXSYS_REFERENCE_APPS_INPUT_METHODS &&
+            !(app->flags&PXSYS_APP_FLAG_INPUT_METHOD)) continue;
+        if (output == NULL) { ++written; continue; }
+        if (written>=capacity) break;
         managed = &output[written++];
         memset(managed, 0, sizeof(*managed));
         copy_pxsys_string(managed->identity, sizeof(managed->identity),
@@ -1515,7 +1520,7 @@ static int parse_options(int argc, char** argv, simulator_options_t* options) {
         PXSYS_DISPLAY_SHAPE_RECTANGLE, 0, 160, SIMULATOR_SHAPE_BACKGROUND_MATTE,
         {0, 0, 0, 0}, 0, 0,
         9, 41, 82, 4, PXSYS_NETWORK_WIFI, 1, 0, 24u * 1024u,
-        NULL, NULL, NULL, NULL, NULL,
+        NULL, NULL, NULL, NULL, NULL, 0,
     };
     for (index = 1; index < argc; ++index) {
         if (strcmp(argv[index], "--dark") == 0) {
@@ -1524,6 +1529,8 @@ static int parse_options(int argc, char** argv, simulator_options_t* options) {
             options->scheme = PXSYS_COLOR_SCHEME_LIGHT;
         } else if (strcmp(argv[index], "--gestures") == 0) {
             options->navigation = PXSYS_NAVIGATION_GESTURES;
+        } else if (strcmp(argv[index], "--no-navigation-bar") == 0) {
+            options->no_navigation_bar = 1;
         } else if (strcmp(argv[index], "--smoke-test") == 0) {
             options->duration_ms = 300;
         } else if (strcmp(argv[index], "--self-test") == 0) {
@@ -1668,7 +1675,7 @@ static int parse_options(int argc, char** argv, simulator_options_t* options) {
 
 static void print_usage(const char* program) {
     fprintf(stderr,
-            "Usage: %s [--light|--dark] [--gestures] [--locale TAG] "
+            "Usage: %s [--light|--dark] [--gestures|--no-navigation-bar] [--locale TAG] "
             "[--profile compact|phone|round] [--width PX] [--height PX] "
             "[--round|--corner-radius PX] [--shape-background matte|black] "
             "[--safe-insets T,R,B,L] [--custom-theme] "
@@ -1962,6 +1969,8 @@ static int run_simulator(const simulator_options_t* options) {
 
     catalog.runtime=simulator_runtime;
     pxsys_reference_lvgl_config_init(&ui_config);
+    if (options->no_navigation_bar)
+        ui_config.features &= ~PXSYS_REFERENCE_UI_NAVIGATION_BAR;
     ui_config.input_method_context=&catalog; ui_config.input_method_list=simulator_ime_list;
     ui_config.input_method_preferences=simulator_ime_preferences;
     ui_config.input_method_select=simulator_ime_select; ui_config.input_method_managed=simulator_ime_managed;

@@ -6,6 +6,7 @@
 #include <pxa/sensor.hpp>
 #include <pxa/surface.hpp>
 #include <pxa/ui_input.hpp>
+#include <pxa/ui_controller.hpp>
 #include <pxa/work.hpp>
 
 #include <cassert>
@@ -78,6 +79,22 @@ int main() {
     pxa::wire::put32(pointer.data()+8,3); pxa::wire::put16(pointer.data()+12,7);
     verify<pxa::ui::CanvasPointer>({3,0x8001,0,pointer},pxa::ui::decode_pointer);
 
+    std::array<std::byte,32> controller{};
+    pxa::wire::put32(controller.data(),1); pxa::wire::put32(controller.data()+4,2);
+    pxa::wire::put32(controller.data()+8,3); pxa::wire::put16(controller.data()+12,10);
+    controller[25]=std::byte{1}; pxa::wire::put32(controller.data()+28,pxa::ui::controller_x);
+    verify<pxa::ui::ControllerState>({3,0x8001,0,controller},pxa::ui::decode_controller);
+    assert(!pxa::ui::decode_controller({3,0x8001,0,pointer}));
+    assert(!pxa::ui::decode_pointer({3,0x8001,0,controller}));
+
+    std::array<std::byte,28> volume{};
+    pxa::wire::put32(volume.data(),1); pxa::wire::put32(volume.data()+4,1);
+    pxa::wire::put32(volume.data()+8,3); pxa::wire::put16(volume.data()+12,5);
+    pxa::wire::put32(volume.data()+24,1);
+    verify<pxa::input::VolumeKeyEvent>({3,0x8001,0,volume},pxa::input::decode_volume_key);
+    static_assert(std::same_as<pxa::ui::CanvasPointer,pxa::input::Pointer>);
+    static_assert(std::same_as<pxa::ui::ControllerState,pxa::input::ControllerState>);
+
     std::array<std::byte,11> ipc{};
     record(ipc.data(),1,7); std::memcpy(ipc.data()+4,"example",7);
     const pxa::Event request{7,0x8001,42,ipc};
@@ -85,5 +102,5 @@ int main() {
     assert(request.is<pxa::TypedIpcRequest<TestContract>>());
     // An IPC kind match leaves endpoint/schema matching to decode_ipc_request<Contract>.
     assert((!pxa::Event{13,0x8001,0,{}}.is<pxa::TypedIpcRequest<TestContract>>()));
-    std::puts("Typed event routing: 8 valid decoder paths, malformed token/payload retained, Event layout unchanged OK");
+    std::puts("Typed event routing: 10 valid decoder paths, malformed token/payload retained, Event layout unchanged OK");
 }

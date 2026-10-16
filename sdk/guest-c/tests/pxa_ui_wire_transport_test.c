@@ -68,6 +68,13 @@ int main(void) {
     assert(pxa_ui_parse_controller(&event, &controller));
     assert(controller.node == 2 && controller.buttons == 7 &&
            controller.timestamp_us == 1234);
+    pxa_store_u32(controller_bytes + 28, PXA_CONTROLLER_X | PXA_CONTROLLER_Y |
+                                         PXA_CONTROLLER_L | PXA_CONTROLLER_R);
+    assert(pxa_ui_parse_controller(&event, &controller));
+    assert(controller.buttons == 0xf00);
+    pxa_store_u32(controller_bytes + 28, 0x1000);
+    assert(!pxa_ui_parse_controller(&event, &controller));
+    pxa_store_u32(controller_bytes + 28, 7);
     controller_bytes[25] = 0;
     assert(!pxa_ui_parse_controller(&event, &controller));
     pxa_store_u16(controller_bytes + 12, PXA_UI_EVENT_KEY_KIND);

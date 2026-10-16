@@ -2,6 +2,7 @@
 
 #include "ui_wire.hpp"
 #include "ui_input.hpp"
+#include "ui_controller.hpp"
 #include "ui_gesture.hpp"
 #include "canvas.hpp"
 #include "text_input.hpp"
@@ -1151,8 +1152,8 @@ public:
     static constexpr std::size_t handler_capacity = MaxHandlers;
     static constexpr std::size_t dynamic_capacity = MaxDynamic;
     static constexpr std::size_t ref_capacity = MaxRefs;
-    Page(Transport& transport, View view)
-        : transport_(transport), view_(std::move(view)) {}
+    Page(Transport& transport, View view, std::uint64_t root_input_mask = 0)
+        : transport_(transport), view_(std::move(view)), root_input_mask_(root_input_mask) {}
     Page(const Page&) = delete;
     Page& operator=(const Page&) = delete;
     ~Page() {
@@ -1170,7 +1171,7 @@ public:
         if (!generation)
             return std::unexpected(Error::limit_exceeded);
         Transaction tx(transport_, generation, 1,
-                       protocol::replace_surface);
+                       protocol::replace_surface, root_input_mask_);
         if (!tx.valid()) return std::unexpected(tx.error());
         current_ = &tx;
         mount_error_.reset();
@@ -1184,6 +1185,8 @@ public:
         auto root = create(0, protocol::root);
         bool rendered = root &&
             tx.u8(root, protocol::layout, protocol::column);
+        if (root_input_mask_)
+            rendered = rendered && tx.u64(root, protocol::event_mask, root_input_mask_);
         if constexpr (requires { View::overlay; }) {
             if constexpr (View::overlay) {
                 std::array<std::byte, 8> transparent{};
@@ -1222,7 +1225,7 @@ public:
             return std::unexpected(Error::bad_state);
         const auto generation = transport_.next_ui_generation();
         if (!generation) return std::unexpected(Error::limit_exceeded);
-        Transaction tx(transport_, generation, 1, protocol::patch);
+        Transaction tx(transport_, generation, 1, protocol::patch, root_input_mask_);
         if (!tx.valid()) return std::unexpected(tx.error());
         auto written = write_fragment(tx, next_id_);
         if (!written) {
@@ -1688,6 +1691,7 @@ private:
     };
     Transport& transport_;
     View view_;
+    std::uint64_t root_input_mask_;
     std::array<Binding, MaxBindings> bindings_{};
     std::array<Handler, MaxHandlers> handlers_{};
     std::array<Dynamic, MaxDynamic> dynamic_{};

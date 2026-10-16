@@ -732,8 +732,9 @@ static void test_events(pxa_runtime_t *runtime, pxa_component_t component,
                         pxa_ui_service_t *service) {
     uint8_t message[128];
     uint8_t controller[8] = {0, 1, 0, 0, 0x18, 0, 0, 0};
-    uint8_t controller_update[8] = {0, 1, 0, 0, 0x08, 0, 0, 0};
+    uint8_t controller_update[8] = {0, 1, 0, 0, 0x08, 0x0f, 0, 0};
     uint8_t controller_two[8] = {1, 1, 0, 0, 0x10, 0, 0, 0};
+    uint8_t invalid_controller[8] = {0, 1, 0, 0, 0, 0x10, 0, 0};
     size_t size;
     pxa_message_view_t decoded;
     assert(pxa_ui_accepts_event(service, component, 1, 4,
@@ -744,6 +745,11 @@ static void test_events(pxa_runtime_t *runtime, pxa_component_t component,
                                  PXA_UI_EVENT_ACTION));
     assert(pxa_ui_accepts_event(service, component, 1, 1,
                                 PXA_UI_EVENT_CONTROLLER_STATE));
+    assert(pxa_ui_queue_event(service, component, 1, 1,
+                              PXA_UI_EVENT_CONTROLLER_STATE,
+                              PXA_UI_EVENT_FLAG_COALESCIBLE, 120,
+                              invalid_controller, sizeof(invalid_controller)) ==
+           PXA_STATUS_INVALID_ARGUMENT);
     assert(pxa_ui_queue_event(service, component, 1, 4,
                                  PXA_UI_EVENT_ACTION,
                                  PXA_UI_EVENT_FLAG_RELIABLE, 123, NULL, 0) ==
@@ -779,7 +785,7 @@ static void test_events(pxa_runtime_t *runtime, pxa_component_t component,
                PXA_UI_EVENT_CONTROLLER_STATE &&
            pxa_read_u16(decoded.payload.data + 14) ==
                PXA_UI_EVENT_FLAG_COALESCIBLE &&
-           pxa_read_u32(decoded.payload.data + 28) == 0x08);
+           pxa_read_u32(decoded.payload.data + 28) == 0xf08);
     assert(pxa_event_pop(runtime, component, message, sizeof(message), &size) ==
            PXA_STATUS_OK);
     assert(pxa_message_decode(message, size, sizeof(message), &decoded) ==

@@ -1,24 +1,26 @@
 # C++ 多点触摸
 
-`Canvas().input_only().on_pointer(callback)` 和 `Button(...).on_pointer(callback)`
-都接收 `CanvasPointer`。事件包含独立 `pointer_id`、时间戳、坐标以及
+`App::on_pointer(Context&, const input::Pointer&)` 可直接接收窗口指针事件，
+GameRender / Surface 应用无需创建 Canvas 或 `view()`。控件区域继续使用
+`Canvas(...).on_pointer(callback)` 或 `Button(...).on_pointer(callback)`；
+`ui::CanvasPointer` 是 `input::Pointer` 的兼容别名。事件包含独立 `pointer_id`、时间戳、坐标以及
 DOWN / MOVE / UP / CANCEL；支持几根手指由硬件和 Host 决定，不由 C++ 回调限制。
 pai-touch 的 CST826 驱动提供两个独立 LVGL pointer indev。
 
 原来的接口只有事件解码，应用需要自行维护 ID 和释放条件。现在提供可选的
-`ui::PointerCapture`，让每项持续操作独立拥有一根手指：
+`input::PointerCapture`，让每项持续操作独立拥有一根手指：
 
 ```cpp
-#include <pxa/ui.hpp>
+#include <pxa/app.hpp>
 
 struct GameInput {
-    pxa::ui::PointerCapture walk, look;
+    pxa::input::PointerCapture walk, look;
     int middle_x = 148;
     int walk_origin_y = 0, look_last_x = 0;
     int forward_pixels = 0, turn_pixels = 0;
 
-    void pointer(const pxa::ui::CanvasPointer& event) {
-        using enum pxa::ui::PointerPhase;
+    void pointer(const pxa::input::Pointer& event) {
+        using enum pxa::input::PointerPhase;
         if (event.action() == down) {
             // Do not let a replayed DOWN acquire the other control.
             if (walk.owns(event) || look.owns(event)) return;
@@ -42,10 +44,8 @@ struct GameInput {
         }
     }
 
-    auto view() {
-        return pxa::ui::Canvas().input_only().on_pointer(
-            [this](const pxa::ui::CanvasPointer& event) { pointer(event); });
-    }
+    void on_pointer(pxa::Context&, const pxa::input::Pointer& event) { pointer(event); }
+    void on_background(pxa::Context&) { reset(); }
 
     void reset() {
         walk.reset(); look.reset();

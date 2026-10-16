@@ -15,6 +15,7 @@ struct Game {
     std::uint32_t frames = 0;
     std::uint32_t updates = 0;
     pxa::ui::State<int> score{0};
+    pxa::input::Controller controller;
     bool initializing = false;
 
     auto view() {
@@ -110,6 +111,13 @@ struct Game {
         x = static_cast<std::int16_t>((x + 2) % (width > 32 ? width - 32 : 1));
         if (++updates % 60 == 0) score.set(score.get() + 1);
     }
+
+    void on_controller(pxa::Context&, const pxa::input::ControllerState& state) {
+        if (!controller.update(state)) return;
+        if (controller.pressed(pxa::input::controller_a)) score.set(score.get() + 1);
+        if (controller.pressed(pxa::input::controller_b)) score.set(0);
+    }
+    void on_background(pxa::Context&) { controller.reset(); }
 
     void on_frame(pxa::Context& context, pxa::game::FrameTick) {
         if (!renderer) return;

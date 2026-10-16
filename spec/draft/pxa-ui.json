@@ -337,7 +337,11 @@
       "a": 4,
       "b": 5,
       "start": 6,
-      "select": 7
+      "select": 7,
+      "x": 8,
+      "y": 9,
+      "l": 10,
+      "r": 11
     },
     "policy": "each coalescible event is a complete state; disconnected state has zero buttons"
   },

@@ -477,7 +477,8 @@ Storage/Permission 的默认拥有式入口使用新鲜封包，不暂存另一�
 按需包含 `<pxa/events.hpp>` 可写 `event.is<pxa::SensorSample>()`、
 `event.is<pxa::PermissionRevoked>()` 等，无需填写服务号和操作码。
 支持 SensorSample、PermissionRevoked、PlaybackEvent、SurfaceRelease、
-WorkStopRequested、IpcRequest/TypedIpcRequest 和 ui::CanvasPointer。
+WorkStopRequested、IpcRequest/TypedIpcRequest、input::Pointer、input::ControllerState
+和 input::VolumeKeyEvent（兼容原有 ui 类型别名）。
 它只匹配消息类型；即使 token/载荷损坏也会匹配，随后必须调用对应解码器
 并传播错误。IPC 还需匹配 endpoint/契约，Canvas/资源还需匹配页面代次/句柄。
 没有额外订阅表、协程、缓存或 Event 字段。完整示例见 device-sensor、ipc-stats、work。
@@ -760,13 +761,63 @@ BEGIN/WRITE/PRESENT，WRITE 直接使用命令缓冲中的最终协议包，没�
 CanvasRef 必须比页面活得久，挂载成功才生效，卸载自动失效。
 完整绘制和点击示例见 `examples/canvas`。
 
-`Canvas().input_only().on_pointer(callback)` 只作为游戏输入层，根背景透明，
-不申请 Canvas 绘图缓冲或全屏 alpha 平面。回调收到拥有标量数据的
+`Canvas(...).on_pointer(callback)` 用于画布区域内的指针交互；可选的
+`input_only()` 保留兼容的透明输入画布，不申请绘图缓冲或全屏 alpha 平面。
+纯游戏的窗口输入优先使用下文的应用回调。画布回调收到拥有标量数据的
 `CanvasPointer`，坐标有符号，phase 为 down/move/up/cancel，包含 pointer_id；
 应用应按 ID 分别管理手指，处理 cancel，并在后台清除持续操作。
 可选的 `ui::PointerCapture` 为每个操作捕获一根手指，固定 16 B、无堆分配，
 匹配页面 generation 和事件节点；`action()` 提供 `PointerPhase` 强类型枚举。
 双指行走/转向示例与生命周期规则见 [多点触摸](MULTITOUCH.zh-CN.md)。
+
+通用输入位于 `<pxa/input.hpp>`，由应用声明回调，AppRuntime 自动订阅和校验：
+
+```cpp
+struct Game {
+    pxa::input::Controller controller;
+
+    void on_controller(pxa::Context&, const pxa::input::ControllerState& state) {
+        if (!controller.update(state)) return;
+        if (controller.pressed(pxa::input::controller_a)) jump();
+    }
+    void on_pointer(pxa::Context&, const pxa::input::Pointer& pointer) {
+        // 触摸、鼠标及设备模拟鼠标，坐标为窗口内的 dp。
+    }
+    void on_update(pxa::Context&, std::uint32_t step_us) {
+        move(controller.horizontal(), controller.vertical(), step_us);
+    }
+    void on_frame(pxa::Context&, pxa::game::FrameTick) {
+        // 通过 GameRender 或 Surface 绘制。
+    }
+    void on_background(pxa::Context&) { controller.reset(); }
+};
+PXA_GAME(Game)
+```
+
+这些输入回调不依赖 `view()`、Canvas、Renderer 或 Surface 对象。没有 UI 的
+应用只注册透明输入根节点，不创建 Canvas、绘图缓冲或 alpha 图层；包需声明
+`ui` 服务。只声明用到的回调即可，未声明输入回调的应用不增加输入节点或回调表。
+完整可构建示例见 [examples/game-input](examples/game-input/README.zh-CN.md)。
+
+音量键同样支持 `on_volume_key(Context&, const input::VolumeKeyEvent&)`。
+声明该回调即捕获音量键，按下/松开通过 `VolumeKey` 区分；不声明时保持系统音量
+行为。需要按页面动态启停捕获时可继续使用 `ui::CaptureVolumeKeys`。
+应用级回调只接收窗口根节点事件，控件区域的触摸仍使用控件上的 `on_pointer()`；
+后台不调用输入回调，页面切换和响应式更新自动保留订阅并拒绝旧代次事件。
+回调返回 `void`，异步操作通过 Context 任务域显式启动并处理错误。
+
+`input::Controller` 固定 12 B、无堆分配，默认编号 0，可显式传入其他编号。
+支持方向键、A/B/X/Y、L/R、Start/Select 共 12 键，对应 `controller_up`、
+`controller_a` 等位掩码。`buttons()` 返回位图，`down(mask)` 查询持续按住，
+`pressed(mask)` / `released(mask)` 查询最近一次 `update()` 的边沿；组合掩码
+匹配其中任意键。边沿应在回调内消费，逐帧移动使用持续状态。
+`horizontal()` 为左 -1、右 +1，`vertical()` 为上 -1、下 +1，对向同时按下为 0。
+重复上报不重复触发，断开释放全部按键。后台、卸载或重建输入页面时清空
+`Controller` / `PointerCapture`，避免缺失松开或取消事件后持续操作。
+
+`input::PointerCapture` 为每项操作捕获一根手指，无堆分配。旧的
+`ui::CanvasPointer`、`ui::PointerCapture`、`ui::Controller` 等名称作为同一类型
+的别名保留；原始事件解码仍可独立使用。输入协议没有改变，现有 Host 可直接运行。
 
 有界任务池通过 `task_pool_stats()` 报告预留字节、槽大小、当前/峰值槽数和
 分配失败数。`PXA_COROUTINE_SLOT_BYTES` 默认 1024，`PXA_COROUTINE_SLOT_COUNT`

@@ -19,7 +19,7 @@ extern "C" {
 /* Core control transport: cancellation, Log, Device info/MAC, Window
  * configure/snapshot/toast, Permission check/acquire, Storage, private FS,
  * IPC call/reply, Net fetch/HTTP, Audio media, Sensor, Lease, Work, Surface
- * Clock, UI, GameRender, Assets and the privileged Store Installer,
+ * Clock, UI, GameRender, Assets and the Host-confirmed Store Installer,
  * I/O and close. Other services remain
  * gated. */
 #define PXA_HEADER_BYTES PXA_WIRE_SIZE

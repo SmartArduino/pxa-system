@@ -21,9 +21,9 @@ class Navigator {
         TaskScope tasks;
         Page<View> page;
         template<class Arguments>
-        Mounted(const Arguments& arguments, Transport& transport)
+        Mounted(const Arguments& arguments, Transport& transport, std::uint64_t input_mask)
             : screen(std::make_from_tuple<Screen>(arguments)),
-              page(transport, screen.view()) {}
+              page(transport, screen.view(), input_mask) {}
         void activated() noexcept {
             if constexpr (requires(Screen& value, TaskScope& scope) {
                               value.on_mount(scope);
@@ -50,7 +50,7 @@ class Navigator {
     struct RouteOps {
         void (*destroy)(void*) noexcept;
         void (*copy)(void*, const void*);
-        Result<const PageOps*> (*mount)(const void*, void*, Transport&);
+        Result<const PageOps*> (*mount)(const void*, void*, Transport&, std::uint64_t);
     };
     struct Route {
         alignas(std::max_align_t) std::byte bytes[RouteBytes];
@@ -76,10 +76,11 @@ public:
     Navigator& operator=(const Navigator&) = delete;
     ~Navigator() { reset(); }
 
-    Result<void> attach(Transport& transport) noexcept {
+    Result<void> attach(Transport& transport, std::uint64_t input_mask = 0) noexcept {
         if (transport_ && transport_ != &transport)
             return std::unexpected(Error::bad_state);
         transport_ = &transport;
+        input_mask_ = input_mask;
         return flush();
     }
 
@@ -144,7 +145,7 @@ public:
             auto& route = action == Action::pop ? history_[depth_ - 2] : pending_route_;
             const auto next = 1u - active_;
             auto& candidate = slots_[next];
-            auto mounted = route.ops->mount(route.bytes, candidate.bytes, *transport_);
+            auto mounted = route.ops->mount(route.bytes, candidate.bytes, *transport_, input_mask_);
             if (!mounted) {
                 pending_route_.clear();
                 pending_ = Action::none;
@@ -180,6 +181,7 @@ public:
         active_ = 0;
         pending_ = Action::none;
         transport_ = nullptr;
+        input_mask_ = 0;
         handling_ = false;
     }
 
@@ -223,9 +225,9 @@ private:
                                   *static_cast<const Arguments*>(source));
             },
             [](const void* route, void* target,
-               Transport& transport) -> Result<const PageOps*> {
+               Transport& transport, std::uint64_t input_mask) -> Result<const PageOps*> {
                 auto* page = std::construct_at(static_cast<PageType*>(target),
-                    *static_cast<const Arguments*>(route), transport);
+                    *static_cast<const Arguments*>(route), transport, input_mask);
                 auto mounted = page->page.mount();
                 if (!mounted) {
                     std::destroy_at(page);
@@ -245,6 +247,7 @@ private:
     Route pending_route_;
     std::array<Slot, 2> slots_;
     Transport* transport_ = nullptr;
+    std::uint64_t input_mask_ = 0;
     std::size_t depth_ = 0;
     unsigned active_ = 0;
     Action pending_ = Action::none;
