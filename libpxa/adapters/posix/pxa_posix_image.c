@@ -1,4 +1,4 @@
-#include "../image/image_buffer.h"
+#include "../image/image_chunks.h"
 #include "pxa/image/codecs.h"
 #include <setjmp.h>
 #include <stdio.h>
@@ -6,7 +6,9 @@
 #include <jpeglib.h>
 
 typedef struct {
-    pxa_image_buffer_t input;
+    pxa_image_chunks_t input;
+    struct jpeg_source_mgr source;
+    const pxa_image_chunk_t *next;
     struct jpeg_decompress_struct decoder;
     struct jpeg_error_mgr error;
     jmp_buf failure;
@@ -18,6 +20,29 @@ static void jpeg_error(j_common_ptr decoder) {
     longjmp(s->failure, 1);
 }
 static void jpeg_message(j_common_ptr decoder) { (void)decoder; }
+static void source_init(j_decompress_ptr decoder) { (void)decoder; }
+static void source_term(j_decompress_ptr decoder) { (void)decoder; }
+static boolean source_fill(j_decompress_ptr decoder) {
+    jpeg_session_t *s = decoder->client_data;
+    if (!s->next) {
+        /* Never fabricate an EOI for a truncated untrusted image. */
+        (*decoder->err->error_exit)((j_common_ptr)decoder);
+        return FALSE;
+    }
+    s->source.next_input_byte = s->next->data;
+    s->source.bytes_in_buffer = s->next->used;
+    s->next = s->next->next;
+    return TRUE;
+}
+static void source_skip(j_decompress_ptr decoder, long count) {
+    if (count <= 0) return;
+    while ((size_t)count > decoder->src->bytes_in_buffer) {
+        count -= (long)decoder->src->bytes_in_buffer;
+        source_fill(decoder);
+    }
+    decoder->src->next_input_byte += count;
+    decoder->src->bytes_in_buffer -= (size_t)count;
+}
 static pxa_status_t open_jpeg(pxa_bytes_t signature, pxa_image_target_t *target,
                               const pxa_memory_allocator_t *temporary, void **session) {
     *session = NULL;
@@ -34,12 +59,12 @@ static pxa_status_t open_jpeg(pxa_bytes_t signature, pxa_image_target_t *target,
     return PXA_STATUS_OK;
 }
 static pxa_status_t write_jpeg(void *session, pxa_bytes_t bytes) {
-    return pxa_image_buffer_write(&((jpeg_session_t *)session)->input, bytes);
+    return pxa_image_chunks_write(&((jpeg_session_t *)session)->input, bytes);
 }
 static pxa_status_t finish_jpeg(void *session) {
     jpeg_session_t *s = session;
     uint16_t w, h;
-    pxa_status_t status = pxa_image_jpeg_info((pxa_bytes_t){s->input.data, s->input.size}, &w, &h);
+    pxa_status_t status = pxa_image_chunks_jpeg_info(&s->input, &w, &h);
     if (status)
         return status;
     s->decoder.err = jpeg_std_error(&s->error);
@@ -51,7 +76,11 @@ static pxa_status_t finish_jpeg(void *session) {
     s->created = 1;
     jpeg_create_decompress(&s->decoder);
     s->decoder.client_data = s;
-    jpeg_mem_src(&s->decoder, s->input.data, (unsigned long)s->input.size);
+    s->next = s->input.first;
+    s->source = (struct jpeg_source_mgr){.init_source = source_init,
+        .fill_input_buffer = source_fill, .skip_input_data = source_skip,
+        .resync_to_restart = jpeg_resync_to_restart, .term_source = source_term};
+    s->decoder.src = &s->source;
     if (jpeg_read_header(&s->decoder, TRUE) != JPEG_HEADER_OK)
         return PXA_STATUS_PROTOCOL_ERROR;
     if (s->decoder.image_width != w || s->decoder.image_height != h)
@@ -100,7 +129,7 @@ static void close_jpeg(void *session) {
     if (s->created)
         jpeg_destroy_decompress(&s->decoder);
     pxa_memory_release(s->row);
-    pxa_memory_release(s->input.data);
+    pxa_image_chunks_close(&s->input);
     pxa_memory_release(s);
 }
 const pxa_image_codec_t pxa_posix_jpeg_codec = {.open = open_jpeg, .write = write_jpeg, .finish = finish_jpeg, .close = close_jpeg};

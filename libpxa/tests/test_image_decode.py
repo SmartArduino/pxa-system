@@ -58,6 +58,25 @@ def main():
                 (directory/(name+'.rgb')).write_bytes(reference.tobytes())
         (directory/'broken.png').write_bytes((directory/'alpha.png').read_bytes()[:-16])
         (directory/'unsupported.svg').write_text('<svg/>')
+        # Non-MCU-aligned portrait, plus headers crossing many input blocks.
+        # The padding is legitimate APP metadata, not copyright web content.
+        portrait = Image.new('RGB', (1199, 2533))
+        portrait.putdata([(25+x*190//1199, 20+y*210//2533, 205-y*130//2533)
+                          for y in range(2533) for x in range(1199)])
+        for name, picture in [('portrait.jpg', portrait), ('padded.jpg', image.convert('RGB'))]:
+            encoded = BytesIO();picture.save(encoded, format='JPEG', quality=88)
+            data = encoded.getvalue()
+            padding = b''.join(b'\xff\xe1'+struct.pack('>H',50002)+b'\0'*50000 for _ in range(5))
+            (directory/name).write_bytes(data[:2]+padding+data[2:])
+            w,h = picture.size
+            ow,oh = w,h
+            if ow>256: oh=oh*256//ow;ow=256
+            if oh>1024: ow=ow*1024//oh;oh=1024
+            while ow*oh>32768:
+                if ow>=oh and ow>1: ow-=1;oh=max(1,h*ow//w)
+                else: oh-=1;ow=max(1,w*oh//h)
+            reference = Image.open(BytesIO(data)).convert('RGB').resize((ow,oh), Image.Resampling.BOX)
+            (directory/(name+'.rgb')).write_bytes(reference.tobytes())
         subprocess.run([sys.argv[1], str(directory)], check=True)
 
 

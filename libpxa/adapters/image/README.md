@@ -64,6 +64,42 @@ colors to 5/6/5 bits; transparent animations retain straight BGRA8888. Tests che
 the selected representation against the same conversion, not a claim of lossless
 RGB888 color in the RGB565 case.
 
+## Bounded large JPEGs
+
+The ROM MCU adapter and POSIX scanline adapter accept baseline JPEG sources up
+to 4096 pixels per side. Native IDCT scaling precedes the common output mapping;
+only the requested, bounded output is retained. Progressive JPEG is still
+rejected: its coefficient storage needs a separate policy. ROM grayscale support
+also remains platform-dependent. PNG, GIF and the full-frame LVGL adapter retain
+their existing one-megapixel input limit. A platform adapter must check its
+workspace needs before passing larger dimensions to the common target.
+
+JPEG compressed input is stored in individually charged 4 KiB blocks. The ROM
+reader walks those blocks; libjpeg borrows them through a source manager. There
+is no contiguous flattening or geometric old-plus-new input allocation. A small
+forward-only validator checks headers/tables across block boundaries before
+entering the native decoder. Input is still retained until download completes;
+this is not entropy decoding concurrently with the network. Static completion
+releases the input and workspace and publishes only the immutable output.
+
+Nothing allocates at service initialization. Encoded input, output and temporary
+ceilings remain caller-controlled and use the existing ABI. Allowing a larger
+file consumes more on-demand input memory; it does not make arbitrary original
+images free or restore detail lost by shrinking to a small output budget.
+
+An optional POSIX microbenchmark measures write/finish separately, verifies
+identical output checksums and reports newly initialized budget peaks:
+
+```sh
+cmake --build build/simulator/pai-touch --target pxa_image_input_bench
+python deps/pxa-system/libpxa/tests/image_input_bench.py \
+  build/simulator/pai-touch/pxa-system/libpxa/pxa_image_input_bench
+```
+
+The synthetic 320×180 input includes 250 KB of valid APP metadata to exercise
+input growth. These are desktop codec numbers, excluding libjpeg's private heap,
+the preloaded fixture, Guest memory, network and display. They are not device FPS.
+
 ## Checks
 
 With the desktop LVGL configuration:

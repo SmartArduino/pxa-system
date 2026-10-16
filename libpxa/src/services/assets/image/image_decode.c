@@ -73,7 +73,7 @@ pxa_status_t pxa_image_target_begin(pxa_image_target_t *d, uint32_t width, uint3
                                     int alpha) {
     if (!d || d->image)
         return PXA_STATUS_BAD_STATE;
-    if (!width || !height || width > 4096 || height > 4096 || width > 1048576u / height)
+    if (!width || !height || width > 4096 || height > 4096)
         return PXA_STATUS_LIMIT_EXCEEDED;
     d->source_width = width;
     d->source_height = height;

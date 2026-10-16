@@ -220,12 +220,84 @@ static pxa_status_t decode(const uint8_t *data, size_t bytes, size_t chunk, int 
     assert(!pxa_memory_owner_close(&budget, owner));
     return status;
 }
+static pxa_status_t large_jpeg(const uint8_t *data, size_t bytes, const uint8_t *reference,
+    size_t reference_bytes, unsigned width, unsigned height, size_t chunk) {
+    pxa_memory_budget_t budget;
+    pxa_memory_budget_config_t config = {0};
+    config.limit[1] = 512 * 1024;
+    config.temporary_limit[1] = 384 * 1024;
+    assert(!pxa_memory_budget_init(&budget, &config));
+    pxa_memory_owner_t owner;
+    assert(!pxa_memory_owner_open(&budget, config.limit, &owner));
+    pxa_memory_allocator_t pixels = {&budget, owner, 1, PXA_MEMORY_IMAGE, NULL, raw_alloc, raw_free};
+    pxa_memory_allocator_t temporary = pixels;
+    temporary.kind = PXA_MEMORY_TEMPORARY;
+    pxa_image_decode_options_t options = {.max_width=256, .max_height=1024,
+        .max_pixels=32768, .max_encoded_bytes=524288};
+    pxa_image_decoder_t *decoder = NULL;
+    pxa_status_t status = pxa_image_decoder_create(&options,&pixels,&temporary,pxa_posix_image_backend(),&decoder);
+    for (size_t at=0; !status && at<bytes;) {
+        size_t n=bytes-at;
+        if (n>chunk) n=chunk;
+        status=pxa_image_decoder_write(decoder,(pxa_bytes_t){data+at,n});
+        at+=n;
+    }
+    pxa_decoded_image_t decoded = {0};
+    if (!status) status=pxa_image_decoder_finish(decoder,&decoded);
+    pxa_image_decoder_destroy(decoder);
+    if (!status) {
+        assert(decoded.source_width==width && decoded.source_height==height);
+        pxa_asset_object_view_t view;
+        pxa_asset_object_view(decoded.image,&view);
+        assert(view.width*view.height<=32768 && reference_bytes==(size_t)view.width*view.height*3);
+        unsigned long error=0;
+        for (unsigned i=0;i<view.width*view.height;++i) {
+            uint16_t rgb;
+            memcpy(&rgb,view.data+2*i,2);
+            int channels[3]={(rgb>>11)*255/31,((rgb>>5)&63)*255/63,(rgb&31)*255/31};
+            for (unsigned c=0;c<3;++c) error+=(unsigned)abs(channels[c]-reference[3*i+c]);
+        }
+        assert(error<reference_bytes*18); /* Same intentional IDCT/RGB565 loss. */
+        pxa_asset_object_release(decoded.image);
+    }
+    pxa_memory_stats_t stats;
+    assert(!pxa_memory_budget_stats(&budget,owner,&stats) && !stats.charged[1]);
+    if (!status) {
+        /* Input + bounded block slack/metadata, not a geometric resize peak.
+         * libjpeg's private allocator is not part of this budget statistic. */
+        assert(stats.temporary_peak[1] < bytes + 16000);
+        printf("JPEG_INPUT bytes=%zu source=%ux%u temporary_peak=%zu charged_peak=%zu\n",
+            bytes,width,height,stats.temporary_peak[1],stats.peak[1]);
+    }
+    assert(!pxa_memory_owner_close(&budget,owner));
+    return status;
+}
 int main(int argc, char **argv) {
     lv_init();
     test_tiles();
     assert(argc == 2);
     const char *names[] = {"alpha.png",      "palette.png", "gray.png", "interlaced.png",
                            "background.png", "photo.jpg",   "gray.jpg"};
+    for (unsigned i=0;i<2;++i) {
+        const char *name=i ? "portrait.jpg" : "padded.jpg";
+        size_t n, reference_bytes;
+        uint8_t *data=read_file(argv[1],name,&n);
+        char reference_name[64];snprintf(reference_name,sizeof(reference_name),"%s.rgb",name);
+        uint8_t *reference=read_file(argv[1],reference_name,&reference_bytes);
+        for (unsigned chunk=1;chunk<=4096;chunk*=16)
+            assert(!large_jpeg(data,n,reference,reference_bytes,i?1199:320,i?2533:180,chunk));
+        /* Fail every block/output/session allocation; every path returns all
+         * charges, and a later fresh decoder still succeeds. */
+        allocations=0;
+        assert(!large_jpeg(data,n,reference,reference_bytes,i?1199:320,i?2533:180,4096));
+        const size_t total_allocations=allocations;
+        for (size_t failure=1;failure<=total_allocations;++failure) {
+            allocations=0;fail_at=failure;
+            assert(large_jpeg(data,n,reference,reference_bytes,i?1199:320,i?2533:180,4096));
+        }
+        fail_at=0;
+        free(reference);free(data);
+    }
     const size_t chunks[] = {1, 7, 1024, 4096};
     for (unsigned i = 0; i < 7; ++i) {
         int png = i < 5;

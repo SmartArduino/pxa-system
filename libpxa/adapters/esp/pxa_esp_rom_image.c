@@ -1,12 +1,12 @@
-#include "../image/image_buffer.h"
+#include "../image/image_chunks.h"
 #include "pxa/image/codecs.h"
 #include "sdkconfig.h"
 #if CONFIG_ESP_ROM_HAS_JPEG_DECODE
 #include "rom/tjpgd.h"
 
 typedef struct {
-    pxa_image_buffer_t input;
-    size_t position;
+    pxa_image_chunks_t input;
+    pxa_image_cursor_t cursor;
     pxa_status_t status;
 } rom_session_t;
 static pxa_status_t open_rom(pxa_bytes_t signature, pxa_image_target_t *target,
@@ -25,17 +25,11 @@ static pxa_status_t open_rom(pxa_bytes_t signature, pxa_image_target_t *target,
     return PXA_STATUS_OK;
 }
 static pxa_status_t write_rom(void *session, pxa_bytes_t bytes) {
-    return pxa_image_buffer_write(&((rom_session_t *)session)->input, bytes);
+    return pxa_image_chunks_write(&((rom_session_t *)session)->input, bytes);
 }
 static UINT read_rom(JDEC *jpeg, BYTE *output, UINT bytes) {
     rom_session_t *s = jpeg->device;
-    size_t n = s->input.size - s->position;
-    if (n > bytes)
-        n = bytes;
-    if (output && n)
-        memcpy(output, s->input.data + s->position, n);
-    s->position += n;
-    return (UINT)n;
+    return (UINT)pxa_image_cursor_read(&s->cursor, output, bytes);
 }
 static UINT pixels_rom(JDEC *jpeg, void *pixels, JRECT *rect) {
     rom_session_t *s = jpeg->device;
@@ -56,13 +50,14 @@ static UINT pixels_rom(JDEC *jpeg, void *pixels, JRECT *rect) {
 static pxa_status_t finish_rom(void *session) {
     rom_session_t *s = session;
     uint16_t source_width, source_height;
-    pxa_status_t checked = pxa_image_jpeg_info((pxa_bytes_t){s->input.data, s->input.size},
+    pxa_status_t checked = pxa_image_chunks_jpeg_info(&s->input,
                                                &source_width, &source_height);
     if (checked)
         return checked;
     void *workspace = pxa_memory_allocate(s->input.temporary, 8192);
     if (!workspace)
         return PXA_STATUS_RESOURCE_LIMIT;
+    s->cursor = (pxa_image_cursor_t){s->input.first, 0};
     JDEC jpeg = {0};
     JRESULT result = jd_prepare(&jpeg, read_rom, workspace, 8192, s);
     pxa_status_t status = result == JDR_OK
@@ -83,7 +78,7 @@ static pxa_status_t finish_rom(void *session) {
 }
 static void close_rom(void *session) {
     rom_session_t *s = session;
-    pxa_memory_release(s->input.data);
+    pxa_image_chunks_close(&s->input);
     pxa_memory_release(s);
 }
 const pxa_image_codec_t pxa_esp_rom_jpeg_codec = {.open = open_rom, .write = write_rom, .finish = finish_rom, .close = close_rom};

@@ -23,7 +23,11 @@ static void begin(pngle_t *png, uint32_t w, uint32_t h) {
     png_session_t *s = pngle_get_user_data(png);
     s->width = w;
     s->height = h;
-    s->status = pxa_image_target_begin(s->target, w, h, 1);
+    /* Keep PNG's existing entropy/work limit; lifting the JPEG input ceiling
+     * must not increase unrelated decoder workloads. */
+    s->status = !w || !h || w > 4096 || h > 4096 || w > 1048576u / h
+                    ? PXA_STATUS_LIMIT_EXCEEDED
+                    : pxa_image_target_begin(s->target, w, h, 1);
     pxa_image_target_dimensions(s->target, &s->output_width, &s->output_height);
 }
 static void done(pngle_t *png) {
