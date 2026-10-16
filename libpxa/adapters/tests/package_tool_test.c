@@ -244,7 +244,7 @@ int main(int argc, char **argv) {
         };
     }
     activation = (pxa_package_activation_profile_t){
-        .core_version = {1, 0},
+        .core_version = {2, 0},
         .services = capabilities,
         .service_count = main_component->service_count,
     };

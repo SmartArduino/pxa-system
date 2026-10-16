@@ -27,7 +27,7 @@ mkdir -p "$package_dir/artifacts" "$package_dir/assets/flappy-bird" \
   "$app_source_root/weather/i18n/zh-CN.yaml" \
   --output "$work_dir/generated/weather/pxa_app_messages.h"
 
-clang --target=wasm32-unknown-unknown -O2 -fno-builtin -nostdlib \
+clang++ -std=c++26 --target=wasm32-unknown-unknown -O2 -fno-builtin -nostdlib \
   -I"$pxa_system_dir/sdk/guest-c/include" \
   -I"$app_source_root/common" \
   -I"$work_dir/generated/arcade" \
@@ -35,21 +35,21 @@ clang --target=wasm32-unknown-unknown -O2 -fno-builtin -nostdlib \
   -Wl,--allow-undefined-file="$pxa_system_dir/sdk/guest-c/pxa-imports.txt" \
   -Wl,--export=pxa_app_on_event -Wl,--export=pxa_app_stop \
   -DPXA_ARCADE_STANDALONE_TEST \
-  "$app_source_root/arcade/modules/tetris.c" \
+  "$app_source_root/arcade/modules/tetris.cpp" \
   -o "$package_dir/artifacts/main.wasm"
 
 # Clang recognizes Weather's bounded string loop as strlen at -O2. The direct
 # builder must keep it self-contained instead of creating an ambient env import.
-clang --target=wasm32-unknown-unknown -O2 -fno-builtin -nostdlib \
+clang++ -std=c++26 --target=wasm32-unknown-unknown -O2 -fno-builtin -nostdlib \
   -I"$pxa_system_dir/sdk/guest-c/include" \
   -I"$app_source_root/common" \
   -I"$work_dir/generated/weather" \
   -Wl,--no-entry \
   -Wl,--allow-undefined-file="$pxa_system_dir/sdk/guest-c/pxa-imports.txt" \
   -Wl,--export=pxa_app_on_event -Wl,--export=pxa_app_stop \
-  "$app_source_root/weather/main.c" \
-  "$app_source_root/weather/weather_providers.c" \
-  "$app_source_root/weather/images.c" \
+  "$app_source_root/weather/main.cpp" \
+  "$app_source_root/weather/weather_providers.cpp" \
+  "$app_source_root/weather/images.cpp" \
   -o "$work_dir/weather-import-regression.wasm"
 
 # The manifest layer inventories opaque Artifact bytes. WAMR format validation
@@ -69,8 +69,24 @@ cp "$app_source_root/arcade/i18n/messages.yaml" \
    "$work_dir/i18n/"
 
 metadata="$work_dir/package.json"
-sed '/^}/i\\  ,"build": {"system": "direct", "linear_memory": {"maximum_bytes": 65536, "pinned": true}}\n  ,"services": ["fs", {"name": "net", "min_version": [0, 1], "max_version": [0, 4]}, {"name": "ui", "features": ["canvas"]}]\n  ,"components": [{"id": "main", "kind": "ui", "services": ["window", {"name": "ui", "features": ["canvas"]}, "clock", "fs", "permission", {"name": "net", "min_version": [0, 1], "max_version": [0, 4]}], "wasi": {"version": "preview1", "libc": "wasi-libc", "features": ["monotonic-clock", "stdio"]}}, {"id": "responder", "kind": "service", "artifact": "wasm", "services": ["ipc", "permission"]}]\n  ,"permissions": [{"name": "net.client", "required": false, "scope": "api.example"}]\n  ,"ipc_endpoints": [{"name": "demo.echo", "component": "responder"}]' \
-  "$app_source_root/arcade/package.json" > "$metadata"
+"${PYTHON:-python3}" - "$app_source_root/arcade/package.json" "$metadata" <<'PYTHON'
+import json, sys
+from pathlib import Path
+metadata = json.loads(Path(sys.argv[1]).read_text())
+# Keep package/security assertions independent of the public store description.
+metadata.update({
+    "description": "A collection of compact arcade games",
+    "build": {"system": "direct", "linear_memory": {"maximum_bytes": 65536, "pinned": True}},
+    "services": ["fs", {"name": "net", "min_version": [0, 1], "max_version": [0, 4]}, {"name": "ui", "features": ["canvas"]}],
+    "components": [
+        {"id": "main", "kind": "ui", "services": ["window", {"name": "ui", "features": ["canvas"]}, "clock", "fs", "permission", {"name": "net", "min_version": [0, 1], "max_version": [0, 4]}], "wasi": {"version": "preview1", "libc": "wasi-libc", "features": ["monotonic-clock", "stdio"]}},
+        {"id": "responder", "kind": "service", "artifact": "wasm", "services": ["ipc", "permission"]},
+    ],
+    "permissions": [{"name": "net.client", "required": False, "scope": "api.example"}],
+    "ipc_endpoints": [{"name": "demo.echo", "component": "responder"}],
+})
+Path(sys.argv[2]).write_text(json.dumps(metadata) + "\n")
+PYTHON
 
 "${PYTHON:-python3}" "$script_dir/compile_resources.py" "$work_dir" "$package_dir"
 
