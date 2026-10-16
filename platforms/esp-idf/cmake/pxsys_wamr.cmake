@@ -75,12 +75,13 @@ function(pxsys_configure_wamr_esp_idf wamr_component)
     message(STATUS "${patch_output}")
 
     set(relative_platform_header "core/shared/platform/esp-idf/platform_internal.h")
+    set(relative_platform_source "core/shared/platform/esp-idf/espidf_platform.c")
     set(relative_file_source "core/shared/platform/esp-idf/espidf_file.c")
     set(relative_memmap_source "core/shared/platform/esp-idf/espidf_memmap.c")
     set(relative_xtensa_reloc "core/iwasm/aot/arch/aot_reloc_xtensa.c")
 
     set(required_overlay_sources
-        ${relative_platform_header} ${relative_file_source})
+        ${relative_platform_header} ${relative_platform_source} ${relative_file_source})
     if(CONFIG_IDF_TARGET_ARCH_XTENSA)
         list(APPEND required_overlay_sources ${relative_xtensa_reloc})
     endif()
@@ -95,6 +96,9 @@ function(pxsys_configure_wamr_esp_idf wamr_component)
 
     target_include_directories(${wamr_component} BEFORE PRIVATE
         "${wamr_overlay}/core/shared/platform/esp-idf")
+    pxsys_replace_wamr_source(${wamr_component}
+        "${wamr_root}/${relative_platform_source}"
+        "${wamr_overlay}/${relative_platform_source}")
     pxsys_replace_wamr_source(${wamr_component}
         "${wamr_root}/${relative_file_source}"
         "${wamr_overlay}/${relative_file_source}")

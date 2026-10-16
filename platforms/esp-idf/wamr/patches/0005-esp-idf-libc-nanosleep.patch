@@ -1,0 +1,14 @@
+diff --git a/core/shared/platform/esp-idf/espidf_platform.c b/core/shared/platform/esp-idf/espidf_platform.c
+--- a/core/shared/platform/esp-idf/espidf_platform.c
++++ b/core/shared/platform/esp-idf/espidf_platform.c
+@@ -332,7 +332,9 @@
+     return -1;
+ }
+ 
+-int
++/* Recent ESP-IDF libc provides nanosleep. Keep the ENOSYS fallback for
++ * older releases without overriding libc or causing a duplicate symbol. */
++int __attribute__((weak))
+ nanosleep(const struct timespec *req, struct timespec *rem)
+ {
+     errno = ENOSYS;

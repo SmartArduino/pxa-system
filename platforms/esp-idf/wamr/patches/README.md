@@ -5,6 +5,9 @@ to the WAMR commit pinned in `config/wamr.json`. `tools/wamr/prepare_overlay.py`
 verifies the commit and exact hunk context, writes patched files below the build
 directory, and verifies that the submodule remains clean.
 
+The `nanosleep` compatibility stub is weak: recent ESP-IDF libc supplies the
+real implementation, while older releases retain WAMR's `ENOSYS` fallback.
+
 To update WAMR, first change the submodule gitlink, then rebase every patch onto
 that commit. Run the verifier before changing `config/wamr.json`; update the
 WAMR version and `engine_abi` together, regenerate all AOT packages, and record

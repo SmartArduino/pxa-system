@@ -9,6 +9,11 @@
 
 #include "platform_api_vmcore.h"
 #include "platform_api_extension.h"
+#if (WASM_MEM_EXEC_IN_PSRAM != 0)
+#include "esp_cache.h"
+#include "esp_err.h"
+#include "esp_memory_utils.h"
+#endif
 #if (WASM_MEM_DUAL_BUS_MIRROR != 0)
 #include "esp_cache.h"
 #include "esp_err.h"
@@ -212,6 +217,22 @@ os_icache_flush(void *start, size_t len)
     }
 #else
 #if (WASM_MEM_EXEC_IN_PSRAM != 0)
+    if (start == NULL || len == 0) return;
+    if (esp_ptr_external_ram(start)) {
+        /* S31 has distinct data and instruction caches even though PSRAM
+         * shares one virtual address. fence.i alone does not write back the
+         * relocated AOT bytes: instruction fetch can see the original zeros.
+         * Publish the dirty data lines before the local instruction fence.
+         * Guest threads are pinned to the runtime core by espidf_thread.c. */
+        const size_t line = esp_cache_get_line_size_by_addr(start);
+        if (line != 0) {
+            const uintptr_t first = (uintptr_t)start & ~(uintptr_t)(line - 1U);
+            const uintptr_t last = ((uintptr_t)start + len + line - 1U) &
+                                   ~(uintptr_t)(line - 1U);
+            ESP_ERROR_CHECK(esp_cache_msync((void *)first, last - first,
+                ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_TYPE_DATA));
+        }
+    }
     __builtin___clear_cache((char *)start, (char *)start + len);
 #else
     (void)start;
