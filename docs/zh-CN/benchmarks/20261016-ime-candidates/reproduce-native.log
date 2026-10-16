@@ -1,0 +1,13 @@
+Test project /home/lucinhu/Documents/workspace/esp32/zuowei_paixueji_touch/pxa-projects/local/ime-ux-20261015/build
+    Start 103: pxsys_reference_ime_test
+1/1 Test #103: pxsys_reference_ime_test .........Subprocess aborted***Exception:   0.14 sec
+pxsys_reference_ime_test: /home/lucinhu/Documents/workspace/esp32/zuowei_paixueji_touch/pxa-projects/deps/pxa-system/ui/reference/tests/reference_ime_test.c:68: assert_keyboard_restored: Assertion `letters && !lv_obj_is_hidden(letters)' failed.
+
+
+0% tests passed, 1 tests failed out of 1
+
+Total Test time (real) =   0.14 sec
+
+The following tests FAILED:
+	103 - pxsys_reference_ime_test (Subprocess aborted)
+Errors while running CTest

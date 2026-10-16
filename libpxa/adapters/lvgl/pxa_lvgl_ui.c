@@ -522,7 +522,9 @@ static const lv_font_t *font_for_role(const pxa_lvgl_ui_t *ui,
         : role == PXA_UI_FONT_ROLE_DISPLAY
             ? (ui->theme.display_font != NULL ? ui->theme.display_font
                                               : ui->theme.title_font)
-        : role == PXA_UI_FONT_ROLE_ICON ? ui->theme.icon_font
+        : role == PXA_UI_FONT_ROLE_ICON
+            ? (ui->theme.icon_font != NULL ? ui->theme.icon_font
+                : pxa_lvgl_ui_icon_font(ui->primary_environment.density_q16))
                                         : ui->theme.body_font;
     return font == NULL ? LV_FONT_DEFAULT : (const lv_font_t *)font;
 }

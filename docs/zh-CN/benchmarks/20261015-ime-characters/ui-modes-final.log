@@ -1,0 +1,39 @@
+[1/2] Building C object pxa-system/ui/reference/lvgl/CMakeFiles/pxsys_reference_ime_test.dir/home/lucinhu/Documents/workspace/esp32/zuowei_paixueji_touch/pxa-projects/deps/pxa-system/ui/reference/tests/reference_ime_test.c.o
+[2/2] Linking C executable pxa-system/ui/reference/lvgl/pxsys_reference_ime_test
+Test project /home/lucinhu/Documents/workspace/esp32/zuowei_paixueji_touch/pxa-projects/local/ime-dictionary-20261015/native-none
+    Start 27: pxsys_reference_ime_test
+1/2 Test #27: pxsys_reference_ime_test ..........   Passed    0.00 sec
+    Start 33: pxsys_reference_features_0_test
+2/2 Test #33: pxsys_reference_features_0_test ...   Passed    0.06 sec
+
+100% tests passed out of 2
+
+Total Test time (real) =   0.06 sec
+[1/5] Building C object pxa-system/ui/reference/lvgl/CMakeFiles/pxa_system_reference_lvgl.dir/home/lucinhu/Documents/workspace/esp32/zuowei_paixueji_touch/pxa-projects/deps/pxa-system/libpxa/adapters/lvgl/pxa_lvgl_ime_builtin.c.o
+[2/5] Linking C static library pxa-system/ui/reference/lvgl/libpxa_system_reference_lvgl.a
+[3/5] Building C object pxa-system/ui/reference/lvgl/CMakeFiles/pxsys_reference_ime_test.dir/home/lucinhu/Documents/workspace/esp32/zuowei_paixueji_touch/pxa-projects/deps/pxa-system/ui/reference/tests/reference_ime_test.c.o
+[4/5] Linking C executable pxa-system/ui/reference/lvgl/pxsys_reference_features_0_test
+[5/5] Linking C executable pxa-system/ui/reference/lvgl/pxsys_reference_ime_test
+Test project /home/lucinhu/Documents/workspace/esp32/zuowei_paixueji_touch/pxa-projects/local/ime-dictionary-20261015/native-traditional
+    Start 27: pxsys_reference_ime_test
+1/2 Test #27: pxsys_reference_ime_test ..........   Passed    0.03 sec
+    Start 33: pxsys_reference_features_0_test
+2/2 Test #33: pxsys_reference_features_0_test ...   Passed    0.06 sec
+
+100% tests passed out of 2
+
+Total Test time (real) =   0.09 sec
+[1/5] Building C object pxa-system/ui/reference/lvgl/CMakeFiles/pxsys_reference_ime_test.dir/home/lucinhu/Documents/workspace/esp32/zuowei_paixueji_touch/pxa-projects/deps/pxa-system/ui/reference/tests/reference_ime_test.c.o
+[2/5] Building C object pxa-system/ui/reference/lvgl/CMakeFiles/pxa_system_reference_lvgl.dir/home/lucinhu/Documents/workspace/esp32/zuowei_paixueji_touch/pxa-projects/deps/pxa-system/libpxa/adapters/lvgl/pxa_lvgl_ime_builtin.c.o
+[3/5] Linking C static library pxa-system/ui/reference/lvgl/libpxa_system_reference_lvgl.a
+[4/5] Linking C executable pxa-system/ui/reference/lvgl/pxsys_reference_features_0_test
+[5/5] Linking C executable pxa-system/ui/reference/lvgl/pxsys_reference_ime_test
+Test project /home/lucinhu/Documents/workspace/esp32/zuowei_paixueji_touch/pxa-projects/local/ime-dictionary-20261015/native-both
+    Start 27: pxsys_reference_ime_test
+1/2 Test #27: pxsys_reference_ime_test ..........   Passed    0.03 sec
+    Start 33: pxsys_reference_features_0_test
+2/2 Test #33: pxsys_reference_features_0_test ...   Passed    0.08 sec
+
+100% tests passed out of 2
+
+Total Test time (real) =   0.11 sec

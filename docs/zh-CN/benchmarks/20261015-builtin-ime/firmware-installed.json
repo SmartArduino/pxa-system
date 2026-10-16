@@ -1,0 +1,11 @@
+{
+  "binary": "build/firmware/pai-touch/pxa_esp_platform.bin",
+  "sha256": "5d96fb8c4180fdbb4ff0a6fac50e80865867a3d7c75df83e43c0f2e291ec2cc7",
+  "bytes": 3422240,
+  "app_offset": 65536,
+  "app_partition_bytes": 7274496,
+  "partition_table_matches_backup": true,
+  "device_info_before": "protocol=1;mode=normal;capabilities=info,memory,logcat,packages,package-deploy,package-run,package-stop,fs,reboot,doctor,input-v2,screenshot-rgb565,screenshot-jpeg,poweroff,perf-raster,heap-local,ime;max_chunk=1024;fs_offset=1;fs_sha256=1;target=esp32s3;serial=a4:cb:8f:d5:d4:f0;version=host-tools-v0.1.0-15-g744d1b8-d",
+  "status": "focus ownership fix application written; esptool hash verified",
+  "libc_nanosleep_symbol": "4200a018 T nanosleep"
+}

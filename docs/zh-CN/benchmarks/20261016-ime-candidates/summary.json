@@ -1,0 +1,161 @@
+{
+  "date": "2026-10-16",
+  "device_accessed": true,
+  "firmware_flashed": true,
+  "provider_matrix": {
+    "passed": [
+      "pinyin-ime-simulator",
+      "pinyin-ime-wasm",
+      "pinyin-ime-lite-simulator",
+      "pinyin-ime-lite-wasm"
+    ],
+    "profiles": 14,
+    "pointer_selection": true,
+    "partial_commits": true,
+    "spelling_keeps_grid": true
+  },
+  "native_tests": 13,
+  "native_sanitizers": [
+    "ASan",
+    "UBSan",
+    "LSan"
+  ],
+  "native_memory": [
+    {
+      "shape": 0,
+      "loaded_delta": 5862,
+      "initialization_absolute_peak": 16794,
+      "reopen_peak_delta": 6887,
+      "closed_delta": 0,
+      "variant": "before"
+    },
+    {
+      "shape": 1,
+      "loaded_delta": 5902,
+      "initialization_absolute_peak": 16810,
+      "reopen_peak_delta": 6927,
+      "closed_delta": 0,
+      "variant": "before"
+    },
+    {
+      "shape": 0,
+      "loaded_delta": 5862,
+      "initialization_absolute_peak": 16794,
+      "reopen_peak_delta": 6887,
+      "closed_delta": 0,
+      "variant": "after"
+    },
+    {
+      "shape": 1,
+      "loaded_delta": 5902,
+      "initialization_absolute_peak": 16810,
+      "reopen_peak_delta": 6927,
+      "closed_delta": 0,
+      "variant": "after"
+    }
+  ],
+  "mosaico_profile": {
+    "width": 480,
+    "height": 480,
+    "dpi": 305,
+    "corner_radius": 58,
+    "safe_insets": [
+      12,
+      12,
+      12,
+      12
+    ],
+    "min_toggle_width_asserted_px": 84
+  },
+  "unfixed_reproduction": {
+    "keyboard_hidden": true,
+    "toggle_width_px": 10,
+    "required_width_px": 44,
+    "profile": [
+      240,
+      320,
+      160
+    ]
+  },
+  "source_sha256": {
+    "libpxa/adapters/lvgl/pxa_lvgl_ime.c": "51298c821e5fb661cda4706d424c922bf056a08466b238d0a2f6bae686c17926",
+    "ui/reference/tests/reference_ime_test.c": "bf08d000be861ae3126246dd3e8a1f55870c31cf22636a3762c76112bc2d641e",
+    "simulator/desktop/tests/ime_app_test.c": "107143acab9c5132ceababf32c7f31de22023304259ce0f1cd519fa223763cd3"
+  },
+  "frontend_before_sha256": "49190171b226530d0ab916b2355d7dd7187cf9ae22302968d916f882c8122123",
+  "native_dictionary_variants": {
+    "modes": [
+      "none",
+      "traditional",
+      "both"
+    ],
+    "tests_per_mode": 2,
+    "passed": true
+  },
+  "esp32s3_frontend_compile": {
+    "passed": true,
+    "firmware_built": false,
+    "firmware_flashed": false
+  },
+  "hardware_ime_checks": {
+    "board": "pai-touch",
+    "resolution": [
+      296,
+      240
+    ],
+    "input": "serial pointer injection",
+    "captures": "LVGL completed frame capture via PXADB JPEG; no external LCD photograph",
+    "providers": [
+      "builtin",
+      "lite"
+    ],
+    "before_reproduced": true,
+    "after_expanded_selection": true,
+    "after_continued_input": "你你",
+    "reopen_cycles_per_provider": 3,
+    "full_provider": "archived on device before task; simulator verified only"
+  },
+  "isolated_firmware": {
+    "source_sha256": "51298c821e5fb661cda4706d424c922bf056a08466b238d0a2f6bae686c17926",
+    "changed_archive_members": [
+      "pxa_lvgl_ime.c.obj"
+    ],
+    "production_code_baseline_verified": true,
+    "shared_build_outputs_modified": false,
+    "firmware_sha256": "51362b62af8fd704eeb7b301cc4453901ffbc2426c8984e9b87944c429500e02",
+    "firmware_bytes": 3445184,
+    "production_firmware_sha256": "6036e4cae795273504db3c1bb71c4d09d21e55c3301ab205f83a5e160ce10275"
+  },
+  "startup_incident": {
+    "observed_panic_count": 1,
+    "function": "lv_event_mark_deleted",
+    "stage": "native page background rebuild while launching fixture",
+    "cause": "unresolved",
+    "original_independent_cold_start": {
+      "panic": false,
+      "active": true
+    },
+    "candidate_independent_cold_start": {
+      "panic": false,
+      "active": true
+    },
+    "claimed_fixed": false,
+    "automation_guards_added": [
+      "wait for active fixture",
+      "OCR visible page",
+      "check active app before and after touches"
+    ]
+  },
+  "final_device": {
+    "firmware_sha256": "51362b62af8fd704eeb7b301cc4453901ffbc2426c8984e9b87944c429500e02",
+    "only_application_partition_flashed": true,
+    "unchanged_package_files": 21,
+    "private_data_unchanged": true,
+    "fixture_removed": true,
+    "selected_restored": "",
+    "wifi_switch_restored_enabled": true,
+    "wifi_credentials_not_modified": true,
+    "display_and_jpeg_candidates_not_included": true,
+    "system_files_locked": true
+  }
+}

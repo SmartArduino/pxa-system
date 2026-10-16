@@ -1,0 +1,6 @@
+[
+  {
+    "kind": "OK",
+    "payload": "target=esp32s3;serial=a4:cb:8f:d5:d4:f0;version=host-tools-v0.1.0-20-gc3dd9e5-d;free_heap=7198735;pxa=ready;package_directory_adopt=1;package_receive=1;board=pai-touch;pxa_version=0.3.0;pxa_core=2.0;storage_total=9437184;storage_used=4931584;storage_free=4505600"
+  }
+]

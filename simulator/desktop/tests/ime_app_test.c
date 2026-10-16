@@ -180,6 +180,44 @@ static void pointer_matrix_key(ime_test_t *test,lv_obj_t *object,const char *tex
 static void pointer_key(ime_test_t *test,const char *text,unsigned hold_ms) {
     pointer_matrix_key(test,find_matrix(lv_layer_top(),text),text,hold_ms);
 }
+static void assert_candidate_toggle_width(ime_test_t *test) {
+    lv_obj_t *matrix=find_matrix(lv_layer_top(),LV_SYMBOL_UP);assert(matrix);
+    lv_obj_update_layout(matrix);unsigned index=0;
+    while(strcmp(lv_buttonmatrix_get_button_text(matrix,index),LV_SYMBOL_UP)) ++index;
+    int minimum=(int)(((uint64_t)test->host->ime_config.environment.density_q16*44+32768)/65536);
+    int width=lv_obj_get_content_width(matrix);
+    if (minimum>width/3) minimum=width/3;
+    lv_area_t cell=((lv_buttonmatrix_t *)matrix)->button_areas[index];
+    if(lv_area_get_width(&cell)<minimum)
+        fprintf(stderr,"Squeezed candidate toggle: profile=%u width=%d required=%d\n",test->repeat,lv_area_get_width(&cell),minimum);
+    assert(lv_area_get_width(&cell)>=minimum);
+}
+static void assert_keyboard_restored(ime_test_t *test) {
+    lv_obj_t *keys=find_matrix(lv_layer_top(),"q");
+    if(!keys) keys=find_matrix(lv_layer_top(),"2 ABC");
+    assert(keys);assert(!find_matrix(lv_layer_top(),"键盘"));
+    lv_obj_t *candidates=find_matrix(lv_layer_top(),LV_SYMBOL_SETTINGS);assert(candidates);
+    lv_obj_update_layout(lv_layer_top());lv_area_t a,b;
+    lv_obj_get_coords(candidates,&a);lv_obj_get_coords(keys,&b);assert(a.y2<b.y1);
+    assert(pxa_lvgl_ime_active(test->host->ime_keyboard));
+}
+static void immediate_backspace(ime_test_t *test,lv_obj_t *target) {
+    lv_textarea_set_text(target,"abcd"); settle_ime(test->host);
+    lv_obj_t *object=find_matrix(lv_layer_top(),LV_SYMBOL_BACKSPACE); assert(object);
+    lv_obj_update_layout(object);
+    unsigned index=0;
+    while(strcmp(lv_buttonmatrix_get_button_text(object,index),LV_SYMBOL_BACKSPACE)) ++index;
+    lv_area_t area; lv_obj_get_coords(object,&area);
+    lv_area_t cell=((lv_buttonmatrix_t *)object)->button_areas[index];
+    pointer_position=(lv_point_t){area.x1+(cell.x1+cell.x2)/2,area.y1+(cell.y1+cell.y2)/2};
+    lv_indev_t *pointer=lv_indev_create(); lv_indev_set_type(pointer,LV_INDEV_TYPE_POINTER);
+    lv_indev_set_read_cb(pointer,pointer_read);
+    pointer_down=true; lv_indev_read(pointer); settle_ime(test->host);
+    assert(!strcmp(lv_textarea_get_text(target),"abc"));
+    pointer_down=false; lv_indev_read(pointer); settle_ime(test->host);
+    assert(!strcmp(lv_textarea_get_text(target),"abc")); // no extra release edit
+    lv_indev_delete(pointer); lv_textarea_set_text(target,""); settle_ime(test->host);
+}
 static void swipe_candidates(ime_test_t *test,lv_obj_t *object,bool next,bool cross_boundary) {
     lv_obj_update_layout(lv_layer_top());
     lv_area_t area; lv_obj_get_coords(object,&area);
@@ -187,12 +225,30 @@ static void swipe_candidates(ime_test_t *test,lv_obj_t *object,bool next,bool cr
     lv_indev_t *pointer=lv_indev_create(); lv_indev_set_type(pointer,LV_INDEV_TYPE_POINTER);
     lv_indev_set_read_cb(pointer,pointer_read);
     pointer_down=true; lv_indev_read(pointer);
-    int distance=lv_obj_get_style_text_font(object,0)->line_height/2+4;
-    if (distance<12) distance=12;
+    int distance=(int)(((uint64_t)test->host->ime_config.environment.density_q16*12+32768)/65536);
+    if (distance>(area.x2-area.x1+1)/6) distance=(area.x2-area.x1+1)/6;
+    if (distance<10) distance=10;
+    distance+=2;
     if (cross_boundary) distance=(area.x2-area.x1)/2+4;
     pointer_position.x+=next?-distance:distance;
     lv_indev_read(pointer); settle_ime(test->host);
     pointer_down=false; lv_indev_read(pointer); settle_ime(test->host); lv_indev_delete(pointer);
+}
+static void candidate_vertical_swipe(ime_test_t *test,bool expand) {
+    lv_obj_t *object=find_matrix(lv_layer_top(),LV_SYMBOL_SETTINGS); assert(object);
+    lv_obj_update_layout(object);
+    lv_area_t area; lv_obj_get_coords(object,&area);
+    pointer_position=(lv_point_t){(area.x1+area.x2)/2,(area.y1+area.y2)/2};
+    lv_indev_t *pointer=lv_indev_create(); lv_indev_set_type(pointer,LV_INDEV_TYPE_POINTER);
+    lv_indev_set_read_cb(pointer,pointer_read);
+    pointer_down=true; lv_indev_read(pointer);
+    int distance=(int)(((uint64_t)test->host->ime_config.environment.density_q16*12+32768)/65536);
+    if (distance>(area.x2-area.x1+1)/6) distance=(area.x2-area.x1+1)/6;
+    if (distance<10) distance=10;
+    pointer_position.y+=expand?-distance-2:distance+2;
+    lv_indev_read(pointer); settle_ime(test->host);
+    pointer_down=false; lv_indev_read(pointer); settle_ime(test->host); lv_indev_delete(pointer);
+    assert(expand ? find_matrix(lv_layer_top(),"键盘")!=NULL : find_matrix(lv_layer_top(),"2 ABC")!=NULL);
 }
 static bool physical_point(const pxa_ui_environment_t *e,int x,int y) {
     if (x<(int)e->safe_insets[3] || x>=(int)e->width-(int)e->safe_insets[1] ||
@@ -227,6 +283,19 @@ static void assert_keyboard_bounds(ime_test_t *test) {
         lv_area_t area; lv_obj_get_coords(child,&area);
         if (area.y1<box.y1 || area.y2>box.y2) fprintf(stderr,"outside child %u y=%d..%d root=%d..%d\n",i,area.y1,area.y2,box.y1,box.y2);
         assert(area.y1>=box.y1 && area.y2<=box.y2);
+        if (lv_obj_has_class(child,&lv_buttonmatrix_class)) {
+            // A circular footer has hidden side cells on its lower row.
+            // Validate each actual hit target instead of its transparent box.
+            const lv_buttonmatrix_t *matrix=(lv_buttonmatrix_t *)child;
+            for (unsigned k=0;lv_buttonmatrix_get_button_text(child,k);++k) {
+                if (lv_buttonmatrix_has_button_ctrl(child,k,LV_BUTTONMATRIX_CTRL_HIDDEN)) continue;
+                lv_area_t cell=matrix->button_areas[k];
+                cell.x1+=area.x1; cell.x2+=area.x1; cell.y1+=area.y1; cell.y2+=area.y1;
+                assert(physical_point(e,cell.x1,cell.y1) && physical_point(e,cell.x2,cell.y1));
+                assert(physical_point(e,cell.x1,cell.y2) && physical_point(e,cell.x2,cell.y2));
+            }
+            continue;
+        }
         assert(physical_point(e,area.x1,area.y1) && physical_point(e,area.x2,area.y1));
         assert(physical_point(e,area.x1,area.y2) && physical_point(e,area.x2,area.y2));
     }
@@ -262,7 +331,13 @@ static void drag_space(ime_test_t *test) {
     int distance=lv_obj_get_style_text_font(object,0)->line_height+2;
     if (distance<24) distance=24;
     pointer_position.x-=distance; lv_indev_read(pointer);
+    // Continue across neighboring keys and above the toolbar. This remains
+    // one captured caret gesture, never a language switch or keyboard hide.
+    pointer_position.x=area.x1+2; pointer_position.y=area.y1-4;
+    lv_indev_read(pointer);
     pointer_down=false; lv_indev_read(pointer); settle_ime(test->host); lv_indev_delete(pointer);
+    assert(pxa_lvgl_ime_active(test->host->ime_keyboard));
+    assert(!lv_obj_is_press_lock(object));
 }
 static unsigned blocked;
 static pxa_status_t blocked_input(void *context,uint64_t generation,uint16_t action,
@@ -364,7 +439,7 @@ static void pump_test(void *context) {
         settle_ime(host);
         if (test->expect_load_failure) {
             assert(!host->ime_provider && host->ime_keyboard);
-            assert(find_matrix(lv_layer_top(),"abc ") || find_matrix(lv_layer_top(),"q"));
+            assert(find_matrix(lv_layer_top(),"2 ABC") || find_matrix(lv_layer_top(),"q"));
             capture(test,"rejected-provider");
             pxa_lvgl_ime_close(host->ime_keyboard); settle_ime(host);
             assert(pxa_wamr_engine_memory_snapshot(host->engine,&test->closed)==PXA_STATUS_OK);
@@ -388,11 +463,16 @@ static void pump_test(void *context) {
         assert(!lv_buttonmatrix_has_button_ctrl(page_strip,next_index,LV_BUTTONMATRIX_CTRL_DISABLED));
         page.flags=0;
         assert(pxa_lvgl_ime_present(host->ime_keyboard,generation,&page)==PXA_STATUS_OK);
+        assert(find_matrix(lv_layer_top(),"键盘")==page_strip);
         assert(lv_buttonmatrix_has_button_ctrl(page_strip,next_index,LV_BUTTONMATRIX_CTRL_DISABLED));
         key(test,"键盘");
+        key(test,LV_SYMBOL_UP);
+        page.candidate_count=0;page.items=(pxa_bytes_t){0};
+        assert(pxa_lvgl_ime_present(host->ime_keyboard,generation,&page)==PXA_STATUS_OK);
+        assert_keyboard_restored(test);
         // A dictionary word may have the same text as a navigation control.
         const uint8_t reserved_word[]={6,0,0xe9,0x94,0xae,0xe7,0x9b,0x98};
-        page.items=(pxa_bytes_t){reserved_word,sizeof(reserved_word)};
+        page.candidate_count=1;page.items=(pxa_bytes_t){reserved_word,sizeof(reserved_word)};
         assert(pxa_lvgl_ime_present(host->ime_keyboard,generation,&page)==PXA_STATUS_OK);
         key(test,"键盘");
         assert(find_matrix(lv_layer_top(),"q") || find_matrix(lv_layer_top(),"2 ABC"));
@@ -411,7 +491,9 @@ static void pump_test(void *context) {
         }
         lv_area_t idle_keys,composing_keys;
         lv_obj_get_coords(find_matrix(lv_layer_top(),"q"),&idle_keys);
+        immediate_backspace(test,target);
         key(test,"n"); key(test,"i"); capture(test,"full");
+        assert_candidate_toggle_width(test);
         assert_key_label_fits("分词"); assert_key_label_fits("完成");
         lv_obj_get_coords(find_matrix(lv_layer_top(),"q"),&composing_keys);
         assert(composing_keys.y1==idle_keys.y1);
@@ -419,10 +501,13 @@ static void pump_test(void *context) {
         assert(find_matrix(lv_layer_top(),"你")); key(test,"你");
         assert(!strcmp(lv_textarea_get_text(target),"你"));
         key(test,"n"); key(test,"i"); key(test,"h"); key(test,"a"); key(test,"o");
+        pointer_key(test,LV_SYMBOL_UP,0);
         if (test->single_character_provider) {
             assert(!find_matrix(lv_layer_top(),"你好"));
-            key(test,"你"); key(test,"好");
-        } else { assert(find_matrix(lv_layer_top(),"你好")); key(test,"你好"); }
+            pointer_key(test,"你",0);assert_keyboard_restored(test);
+            pointer_key(test,LV_SYMBOL_UP,0);pointer_key(test,"好",0);
+        } else { assert(find_matrix(lv_layer_top(),"你好")); pointer_key(test,"你好",0); }
+        assert_keyboard_restored(test);capture(test,"expanded-word-selected");
         assert(!strcmp(lv_textarea_get_text(target),"你你好"));
         lv_textarea_set_text(target,""); settle_ime(host);
         key(test,"九键");
@@ -432,7 +517,10 @@ static void pump_test(void *context) {
         assert(!strcmp(lv_textarea_get_text(target),""));
         capture(test,"spelling-swipe");
         for(unsigned page=0;page<32 && !find_matrix(lv_layer_top(),"ni");++page) swipe_candidates(test,candidate_strip,true,false);
-        assert(find_matrix(lv_layer_top(),"ni")); pointer_key(test,"ni",0);
+        assert(find_matrix(lv_layer_top(),"ni"));
+        pointer_key(test,LV_SYMBOL_UP,0);pointer_key(test,"ni",0);
+        assert(find_matrix(lv_layer_top(),"键盘")); // Spelling choices keep browsing open.
+        key(test,"键盘");
         // Spellings and words remain visible together. A spelling choice
         // filters the word row; neither a swipe nor a spelling commits text.
         assert(find_matrix(lv_layer_top(),"你"));
@@ -441,14 +529,36 @@ static void pump_test(void *context) {
         assert(!strcmp(lv_textarea_get_text(target),""));
         assert_edit_controls(test);
         capture(test,"nine");
+        static const char *const nine_labels[]={"2 ABC","3 DEF","4 GHI","5 JKL",
+            "6 MNO","7 PQRS","8 TUV","9 WXYZ","分词","完成","空格"};
+        for (unsigned i=0;i<sizeof(nine_labels)/sizeof(nine_labels[0]);++i)
+            assert_key_label_fits(nine_labels[i]);
+        lv_obj_t *toolbar=find_matrix(lv_layer_top(),"空格");
+        const char *const *toolbar_map=lv_buttonmatrix_get_map(toolbar);
+        bool arc_footer=false;
+        for (unsigned i=0;*toolbar_map[i];++i) arc_footer|=!strcmp(toolbar_map[i],"\n");
+        if (arc_footer) {
+            assert(host->ime_config.environment.display_shape==2);
+            const lv_buttonmatrix_t *matrix=(lv_buttonmatrix_t *)toolbar;
+            assert(matrix->button_areas[4].y1>matrix->button_areas[0].y2);
+            // Invisible chord spacers consume neither text nor a close action.
+            pointer_matrix_key(test,toolbar," ",0);
+            assert(pxa_lvgl_ime_active(host->ime_keyboard));
+            assert(!strcmp(lv_textarea_get_text(target),""));
+            assert(find_matrix(lv_layer_top(),"ni"));
+        }
+        candidate_vertical_swipe(test,true);
+        assert(!strcmp(lv_textarea_get_text(target),""));
+        candidate_vertical_swipe(test,false);
+        assert(!strcmp(lv_textarea_get_text(target),""));
         key(test,LV_SYMBOL_UP); capture(test,"expanded-candidates");
         if (test->repeat==4) {
             const char *const *map=lv_buttonmatrix_get_map(find_matrix(lv_layer_top(),"键盘"));
             unsigned rows=1; for (unsigned i=0;*map[i];++i) rows+=!strcmp(map[i],"\n");
             assert(rows>=4); // At least two word rows, plus reading and navigation.
         }
-        key(test,"键盘");
-        key(test,"你");
+        pointer_key(test,"你",0);assert_keyboard_restored(test);
+        capture(test,"expanded-character-selected");
         assert(!strcmp(lv_textarea_get_text(target),"你"));
         key(test,"123"); assert_edit_controls(test); key(test,"7"); assert(!strcmp(lv_textarea_get_text(target),"你7"));
         capture(test,"number"); key(test,"返回");
@@ -538,6 +648,7 @@ static void pump_test(void *context) {
         pointer_key(test,"a",0); assert(!strcmp(lv_textarea_get_text(target),"a"));
         pointer_key(test,"b",0); assert(!strcmp(lv_textarea_get_text(target),"ab"));
         pointer_key(test,LV_SYMBOL_BACKSPACE,150); assert(!strcmp(lv_textarea_get_text(target),""));
+        immediate_backspace(test,target);
         assert_edit_controls(test);
         key(test,LV_SYMBOL_UP); key(test,"A");
         assert(!strcmp(lv_textarea_get_text(target),"A") && find_matrix(lv_layer_top(),"a"));
@@ -586,7 +697,7 @@ static void pump_test(void *context) {
         lv_obj_send_event(target,LV_EVENT_CLICKED,NULL); lv_refr_now(NULL); settle_ime(host); assert(host->ime_provider);
         assert(pxa_component_abort(host->runtime,host->ime_component,PXA_STOP_FAULT)==PXA_STATUS_OK);
         settle_ime(host); assert(!host->ime_provider && host->ime_keyboard);
-        assert(find_matrix(lv_layer_top(),"abc ") || find_matrix(lv_layer_top(),"q")); capture(test,"fallback");
+        assert(find_matrix(lv_layer_top(),"2 ABC") || find_matrix(lv_layer_top(),"q")); capture(test,"fallback");
         pxa_lvgl_ime_close(host->ime_keyboard); settle_ime(host);
         // An expired provider call cannot terminate the foreground component.
         pxa_component_snapshot_t before_expiration;
@@ -650,6 +761,7 @@ static void pump_test(void *context) {
         drag_space(test);
         assert(lv_textarea_get_cursor_pos(bottom_editor)<cursor_before);
         assert(!strcmp(lv_textarea_get_text(bottom_editor),saved_text));
+        lv_textarea_set_cursor_pos(bottom_editor,3);
         unsigned before=lv_textarea_get_cursor_pos(bottom_editor);
         pointer_matrix_key(test,find_matrix(view,LV_SYMBOL_LEFT),LV_SYMBOL_LEFT,0);
         assert(lv_textarea_get_cursor_pos(bottom_editor)==before-1);
@@ -664,6 +776,26 @@ static void pump_test(void *context) {
         pxa_lvgl_ime_set_environment(host->ime_keyboard,&changed); lv_refr_now(NULL);
         assert(pxa_lvgl_ime_editor_view(host->ime_keyboard));
         capture(test,"environment-update");
+        // A live font/theme refresh must immediately restore usable key maps,
+        // without waiting for a decoder reply (English has no provider).
+        pxa_lvgl_ui_theme_t compact=host->ime_config.theme;
+        compact.body_font=compact.label_font=compact.caption_font=LV_FONT_DEFAULT;
+        pxa_lvgl_ime_set_theme(host->ime_keyboard,&compact);
+        assert_keyboard_bounds(test);
+        pointer_matrix_key(test,find_matrix(lv_layer_top(),"q"),"q",0);
+        assert(lv_textarea_get_text(bottom_editor)[0]=='q');
+        pxa_lvgl_ime_set_theme(host->ime_keyboard,&host->ime_config.theme);
+        assert_keyboard_bounds(test);
+        // Model updates can replace UTF-8 text without moving the caret.
+        // The current-line aid must refresh changed text and clear old tails.
+        lv_textarea_set_text(bottom_editor,"正文abc"); lv_textarea_set_cursor_pos(bottom_editor,0);
+        SDL_Delay(100); lv_timer_handler(); settle_ime(host);
+        assert(!strncmp(lv_label_get_text(lv_obj_get_child(view,0)),"正",3));
+        lv_textarea_set_text(bottom_editor,"内容xyz"); lv_textarea_set_cursor_pos(bottom_editor,0);
+        SDL_Delay(100); lv_timer_handler(); settle_ime(host);
+        assert(!strncmp(lv_label_get_text(lv_obj_get_child(view,0)),"内",3));
+        lv_textarea_set_text(bottom_editor,""); settle_ime(host);
+        assert(!*lv_label_get_text(lv_obj_get_child(view,0)));
         pxa_lvgl_ime_close(host->ime_keyboard); settle_ime(host);
         host->ime_config.parent=lv_layer_top(); lv_obj_delete(keyboard_parent);
         lv_obj_delete(form);
@@ -707,6 +839,10 @@ static void pump_test(void *context) {
         assert(host->ime_provider && find_matrix(lv_layer_top(),"2 ABC"));
         pxa_lvgl_ime_close(host->ime_keyboard); settle_ime(host);
         assert(unlink(preferences_path)==0);
+        // Include all reopen, password and environment-update paths in this
+        // fresh engine's peak, rather than stopping at its first close.
+        assert(pxa_wamr_engine_memory_snapshot(host->engine,&test->closed)==PXA_STATUS_OK);
+        assert(test->closed.linear_current_bytes==test->idle.linear_current_bytes);
         char path[1536]; snprintf(path,sizeof(path),"%s/profile-%u-memory.json",test->artifacts,test->repeat);
         FILE *file=fopen(path,"w"); assert(file);
         fprintf(file,"{\"idle_wamr\":%u,\"loaded_wamr\":%u,\"closed_wamr\":%u,\"run_wamr_peak\":%u,"
@@ -739,7 +875,8 @@ int main(int argc,char **argv) {
         {390,844,160,0,0,0}, {296,240,160,1,58,8},
         {160,160,160,1,40,4}, {240,240,480,2,0,4}, {320,180,320,1,20,4},
         {1280,800,160,0,0,8}, {720,720,480,2,0,16}, {320,320,640,1,80,8},
-        {800,480,240,1,56,8}, {160,320,320,2,0,4}
+        {800,480,240,1,56,8}, {160,320,320,2,0,4},
+        {480,480,305,1,58,12} // Actual esp-mosaico density and safe contour.
     };
     for (unsigned profile=0;profile<sizeof(profiles)/sizeof(profiles[0]);++profile) {
         options.width=profiles[profile][0]; options.height=profiles[profile][1];

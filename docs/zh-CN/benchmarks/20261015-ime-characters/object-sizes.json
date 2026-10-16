@@ -1,0 +1,26 @@
+[
+  {
+    "scripts": 0,
+    "rodata": 28,
+    "text": 2084,
+    "data_bss": 0
+  },
+  {
+    "scripts": 1,
+    "rodata": 30133,
+    "text": 2167,
+    "data_bss": 0
+  },
+  {
+    "scripts": 2,
+    "rodata": 33142,
+    "text": 2169,
+    "data_bss": 0
+  },
+  {
+    "scripts": 3,
+    "rodata": 63247,
+    "text": 2175,
+    "data_bss": 0
+  }
+]

@@ -1,0 +1,12 @@
+{
+  "passed": [
+    "pinyin-ime-simulator",
+    "pinyin-ime-wasm",
+    "pinyin-ime-lite-simulator",
+    "pinyin-ime-lite-wasm"
+  ],
+  "profiles": 14,
+  "pointer_selection": true,
+  "partial_commits": true,
+  "spelling_keeps_grid": true
+}

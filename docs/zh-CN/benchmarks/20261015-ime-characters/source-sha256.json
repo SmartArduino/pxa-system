@@ -1,0 +1,11 @@
+{
+  "deps/pxa-system/libpxa/adapters/lvgl/pxa_lvgl_ime.c": "0e7774ceedb486f520c0cb49ea99f5a5d0d1812f91cd14b9e6f74260169d1a34",
+  "deps/pxa-system/libpxa/adapters/lvgl/pxa_lvgl_ime_builtin.c": "422dbe80f571ee8afebd7056d20b9bb98ddd902f9218489e042bbb9b2bc35e8c",
+  "deps/pxa-system/libpxa/adapters/lvgl/dictionaries/simplified.h": "6ba39e6703d3b38694989de8a14ebdae192d2d06c6dcb6a00ab8f06f327ca8a6",
+  "deps/pxa-system/libpxa/adapters/lvgl/dictionaries/traditional.h": "c2cd564c072e3e2aaf1706b233dfd958b13c66e619108633899b86ee735bf551",
+  "deps/pxa-system/ui/reference/lvgl/src/reference_ime.c": "61c475b85228058158aa5818766cbd2d5973999336c9481c1acb0c1d605dd311",
+  "deps/pxa-system/tools/ime/generate_builtin.py": "688c630353cb39cb809cd6aefe920240466b644917aa3faf9c61df4bb641dd10",
+  "deps/pxa-system/tools/ime/extract_unihan.py": "71a94df7d36dbed85d5f841653630884940e5c43215ebc6832e24be72f07512a",
+  "tools/fonts/build_common_font.py": "9696c67c6bc08559cde1ced676304cc0729d423b5a83e0da992baf268aef98d5",
+  "factory/base/system/fonts/noto_sans_cjk_common.ttf": "c705d23f6a239e43f21075a660ec2739cf399fd7926140687dc516a3f6e4f698"
+}

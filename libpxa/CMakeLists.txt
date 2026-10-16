@@ -253,11 +253,15 @@ if(PXA_BUILD_ADAPTERS AND (PXA_LVGL_TARGET OR PXA_LVGL_SOURCE_DIR))
 
     add_library(pxa_adapters_lvgl
         adapters/lvgl/pxa_lvgl_ui.c
+        adapters/lvgl/pxa_lvgl_ui_symbols.c
         adapters/lvgl/pxa_lvgl_image.c
         adapters/lvgl/pxa_lvgl_gif.c
         adapters/lvgl/pxa_lvgl_gif_native.c
-        adapters/lvgl/pxa_lvgl_ime.c)
+        adapters/lvgl/pxa_lvgl_ime.c
+        adapters/lvgl/pxa_lvgl_ime_builtin.c)
     add_library(pxa::adapters_lvgl ALIAS pxa_adapters_lvgl)
+    include("${CMAKE_CURRENT_LIST_DIR}/../cmake/PxaBuiltinIme.cmake")
+    pxa_configure_builtin_ime(pxa_adapters_lvgl)
     set_target_properties(pxa_adapters_lvgl PROPERTIES
         EXPORT_NAME adapters_lvgl
         VERSION ${PROJECT_VERSION}
@@ -642,6 +646,10 @@ if(PXA_BUILD_TESTS)
     target_link_libraries(pxa_assets_service_test PRIVATE pxa)
     add_test(NAME pxa_assets_service_test COMMAND pxa_assets_service_test)
     if(Python3_Interpreter_FOUND AND TARGET pxa_adapters_image_posix AND TARGET pxa_adapters_lvgl)
+        # Optional microbenchmark; never linked into a product or run as a
+        # timing assertion in CI. Input generation lives in tests/.
+        add_executable(pxa_image_input_bench EXCLUDE_FROM_ALL tests/image_input_bench.c)
+        target_link_libraries(pxa_image_input_bench PRIVATE pxa_adapters_image_posix)
         add_executable(pxa_image_decode_test tests/image_decode_test.c)
         target_link_libraries(pxa_image_decode_test PRIVATE pxa_adapters_image_posix pxa_adapters_lvgl ${_pxa_lvgl_target})
         add_test(NAME pxa_image_decode_test COMMAND ${Python3_EXECUTABLE}

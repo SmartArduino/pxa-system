@@ -1,0 +1,41 @@
+--- before-frontend.c
++++ after-frontend.c
+@@ -465,9 +465,13 @@
+     uint8_t action=ime->pending_switch; ime->pending_switch=SWITCH_NONE;
+     if (action==SWITCH_CLOSE) { pxa_lvgl_ime_close(ime); return; }
+     if (action==MOVE_LEFT || action==MOVE_RIGHT) {
++        uint32_t before=lv_textarea_get_cursor_pos(ime->target);
++        ime->multi_key=0;
+         if (action==MOVE_LEFT) lv_textarea_cursor_left(ime->target);
+         else lv_textarea_cursor_right(ime->target);
+-        restart_session(ime); refresh_editor(ime,true);
++        if (ime->target && before!=lv_textarea_get_cursor_pos(ime->target)) {
++            restart_session(ime); refresh_editor(ime,true);
++        }
+         return;
+     }
+     bool release=action==SWITCH_LANGUAGE && needs_provider(ime) && ime->provider_ready;
+@@ -690,9 +694,10 @@
+                 else if (!strcmp(label,"完成") || !strcmp(label,LV_SYMBOL_NEW_LINE))
+                     lv_buttonmatrix_set_button_width(object,i,2);
+             }
+-            if (!strcmp(label,LV_SYMBOL_BACKSPACE)) {
+-                /* Delete on press, repeat while held, never once more on
+-                 * release. Letters and layout changes remain release-only. */
++            if (!strcmp(label,LV_SYMBOL_BACKSPACE) || (ime->panel==PANEL_TOOLS &&
++                (!strcmp(label,LV_SYMBOL_LEFT) || !strcmp(label,LV_SYMBOL_RIGHT)))) {
++                /* Editing controls respond on press and repeat while held,
++                 * never once more on release. Letters stay release-only. */
+                 lv_buttonmatrix_clear_button_ctrl(object,i,
+                     LV_BUTTONMATRIX_CTRL_NO_REPEAT | LV_BUTTONMATRIX_CTRL_CLICK_TRIG);
+                 if (ime->panel==PANEL_LETTERS && ime->layout==PXA_IME_K26)
+@@ -1352,7 +1357,8 @@
+     /* Cursor controls are a text rail too: only a held arrow gets a fill. */
+     lv_obj_add_style(ime->editor_navigation,&rail_style,LV_PART_ITEMS);
+     lv_buttonmatrix_set_map(ime->editor_navigation,navigation_map);
+-    lv_buttonmatrix_set_button_ctrl_all(ime->editor_navigation,LV_BUTTONMATRIX_CTRL_CLICK_TRIG);
++    lv_buttonmatrix_clear_button_ctrl_all(ime->editor_navigation,
++        LV_BUTTONMATRIX_CTRL_NO_REPEAT | LV_BUTTONMATRIX_CTRL_CLICK_TRIG);
+     return true;
+ }
+ static bool copy_editor_bytes(char **out,const char *text,size_t size) {

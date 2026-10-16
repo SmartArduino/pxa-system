@@ -94,6 +94,11 @@ typedef struct {
 } pxa_lvgl_ui_alpha_plane_t;
 
 void pxa_lvgl_ui_theme_init(pxa_lvgl_ui_theme_t *theme);
+/* Built-in Font Awesome symbols at the nearest raster size for 18 dp.
+ * Borrowed, immutable, allocation-free; never delete the returned font.
+ * Graphics use density only, independently of accessibility text scaling. */
+const void *pxa_lvgl_ui_icon_font(uint32_t density_q16);
+
 size_t pxa_lvgl_ui_workspace_size(void);
 pxa_status_t pxa_lvgl_ui_init(void *workspace, size_t workspace_size,
                                  const pxa_lvgl_ui_config_t *config,

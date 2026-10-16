@@ -1,0 +1,698 @@
+{
+  "passed": true,
+  "expected": "𠳐",
+  "rows": [
+    {
+      "command": "IME select builtin",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "selected"
+        }
+      ]
+    },
+    {
+      "command": "PACKAGE run pxa-ime-heartbeat",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "launch_queued"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER DOWN 35 55 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=664;device_us=392211993;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER UP 35 55 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=665;device_us=392356918;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT SYNC",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=666;device_us=392358249;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER DOWN 30 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=667;device_us=392609792;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER UP 30 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=668;device_us=392712087;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT SYNC",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=669;device_us=392713184;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER DOWN 210 142 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=670;device_us=392964791;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER UP 210 142 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=671;device_us=393066972;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT SYNC",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=672;device_us=393069140;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER DOWN 172 184 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=673;device_us=393322055;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER UP 172 184 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=674;device_us=393423799;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT SYNC",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=675;device_us=393424867;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER DOWN 32 163 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=676;device_us=393677802;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER UP 32 163 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=677;device_us=393779797;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT SYNC",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=678;device_us=393780830;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER DOWN 196 184 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=679;device_us=394033110;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER UP 196 184 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=680;device_us=394135807;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT SYNC",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=681;device_us=394136815;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER DOWN 124 163 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=682;device_us=394388806;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER UP 124 163 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=683;device_us=394490804;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT SYNC",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=684;device_us=394491830;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "SCREENSHOT JPEG",
+      "frames": [
+        {
+          "kind": "META",
+          "payload": "format=jpeg;width=296;height=240;orientation=logical;frame_id=0;device_us=394667228;source=lvgl;bytes=11095;sha256=8b0d5b1f79ad7465b91cf3847993005c23a67a55ccb596f9b628f7aecc42d739"
+        },
+        {
+          "kind": "OK",
+          "payload": ""
+        }
+      ]
+    },
+    {
+      "capture": "bang-first",
+      "metadata": {
+        "format": "jpeg",
+        "width": "296",
+        "height": "240",
+        "orientation": "logical",
+        "frame_id": "0",
+        "device_us": "394667228",
+        "source": "lvgl",
+        "bytes": "11095",
+        "sha256": "8b0d5b1f79ad7465b91cf3847993005c23a67a55ccb596f9b628f7aecc42d739"
+      }
+    },
+    {
+      "command": "INPUT POINTER DOWN 235 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=685;device_us=394842293;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER MOVE 220 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=686;device_us=394867811;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER MOVE 205 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=687;device_us=394923961;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER MOVE 190 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=688;device_us=395010790;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER MOVE 175 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=689;device_us=395030786;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER MOVE 160 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=690;device_us=395050786;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER MOVE 145 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=691;device_us=395069789;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER MOVE 130 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=692;device_us=395089783;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER MOVE 115 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=693;device_us=395109805;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER MOVE 100 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=694;device_us=395130788;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER MOVE 85 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=695;device_us=395149783;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER MOVE 70 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=696;device_us=395169783;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER MOVE 55 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=697;device_us=395189813;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER UP 50 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=698;device_us=395209805;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT SYNC",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=699;device_us=395210741;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER DOWN 235 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=700;device_us=395512806;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER MOVE 220 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=701;device_us=395533815;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER MOVE 205 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=702;device_us=395590883;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER MOVE 190 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=703;device_us=395669807;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER MOVE 175 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=704;device_us=395689791;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER MOVE 160 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=705;device_us=395708835;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER MOVE 145 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=706;device_us=395728783;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER MOVE 130 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=707;device_us=395747783;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER MOVE 115 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=708;device_us=395768783;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER MOVE 100 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=709;device_us=395787783;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER MOVE 85 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=710;device_us=395806807;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER MOVE 70 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=711;device_us=395826808;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER MOVE 55 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=712;device_us=395846868;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER UP 50 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=713;device_us=395866802;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT SYNC",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=714;device_us=395867990;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "SCREENSHOT JPEG",
+      "frames": [
+        {
+          "kind": "META",
+          "payload": "format=jpeg;width=296;height=240;orientation=logical;frame_id=0;device_us=396094950;source=lvgl;bytes=11116;sha256=70da0c1321a3e2297ca2fa57ee5e9be96ed407cbfef03ea39b676e24d08882e4"
+        },
+        {
+          "kind": "OK",
+          "payload": ""
+        }
+      ]
+    },
+    {
+      "capture": "bang-last",
+      "metadata": {
+        "format": "jpeg",
+        "width": "296",
+        "height": "240",
+        "orientation": "logical",
+        "frame_id": "0",
+        "device_us": "396094950",
+        "source": "lvgl",
+        "bytes": "11116",
+        "sha256": "70da0c1321a3e2297ca2fa57ee5e9be96ed407cbfef03ea39b676e24d08882e4"
+      }
+    },
+    {
+      "command": "INPUT POINTER DOWN 239 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=715;device_us=396258790;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER UP 239 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=716;device_us=396360807;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT SYNC",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=717;device_us=396361957;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "SCREENSHOT JPEG",
+      "frames": [
+        {
+          "kind": "META",
+          "payload": "format=jpeg;width=296;height=240;orientation=logical;frame_id=0;device_us=396475581;source=lvgl;bytes=11148;sha256=9b0b1f73b49d5fab7d4fabdeb63cac95facefe8ae621bfce06f41713f8230c67"
+        },
+        {
+          "kind": "OK",
+          "payload": ""
+        }
+      ]
+    },
+    {
+      "capture": "supplementary-committed",
+      "metadata": {
+        "format": "jpeg",
+        "width": "296",
+        "height": "240",
+        "orientation": "logical",
+        "frame_id": "0",
+        "device_us": "396475581",
+        "source": "lvgl",
+        "bytes": "11148",
+        "sha256": "9b0b1f73b49d5fab7d4fabdeb63cac95facefe8ae621bfce06f41713f8230c67"
+      }
+    },
+    {
+      "command": "INPUT POINTER DOWN 265 184 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=718;device_us=396703794;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER UP 265 184 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=719;device_us=396805790;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT SYNC",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=720;device_us=396806947;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "PING",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "pong"
+        }
+      ]
+    },
+    {
+      "command": "PACKAGE stop pxa-ime-heartbeat",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "stop_queued"
+        }
+      ]
+    }
+  ],
+  "logs": [
+    {
+      "kind": "LOG",
+      "payload": "391712\tI (391712) PxaHost: UI lifecycle: component=65537 foreground=0 requested=0 display_interactive=1"
+    },
+    {
+      "kind": "LOG",
+      "payload": "391712\tI (391712) PxaHost: UI lifecycle: component=65537 foreground=0 requested=0 display_interactive=1"
+    },
+    {
+      "kind": "LOG",
+      "payload": "392088\tI (392088) PxaHost: Queueing launch request: 17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171:pxa-ime-heartbeat"
+    },
+    {
+      "kind": "LOG",
+      "payload": "392098\tI (392098) PxaHost: Processing launch request: 17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171:pxa-ime-heartbeat"
+    },
+    {
+      "kind": "LOG",
+      "payload": "392216\tI (392216) PxaHost: Audio: active=0 queued=0/0 peak_queued=0 submitted=0 rendered=0 tones=0/0 tone_drop=0 voice_exhaust=0 queue_full=0 stale=0 rejected=0 assets=0/0 asset_fail=0 storage=0 stack=0"
+    },
+    {
+      "kind": "LOG",
+      "payload": "392228\tI (392217) PxaHost: Heap[launch-begin]: SRAM used=263848 free=56867 total=320715 min_free=18040 largest=19456 exec_free=6978052 exec_largest=6160384; PSRAM used=1380472 free=6978052 total=8358524 min_free=4524636 largest=6160384"
+    },
+    {
+      "kind": "LOG",
+      "payload": "392284\tI (392284) PXA_WAMR_MEMMAP: AOT mapped: ibus=0x42b30000 dbus=0x3c540000 request=157472 map=196608 alloc=196608 free_psram=6733884"
+    },
+    {
+      "kind": "LOG",
+      "payload": "392342\tI (392342) PxaWamr: AOT streamed: file=173072 source_buffer=0"
+    },
+    {
+      "kind": "LOG",
+      "payload": "392412\tI (392410) PxaHost: Component memory: id=main status=0 sram_delta=716 free_sram=55675 largest_sram=19456 psram_delta=386356 free_psram=6553952 largest_psram=5898240 wamr_delta=29887 wamr_current=30303"
+    },
+    {
+      "kind": "LOG",
+      "payload": "392430\tI (392430) PxaBridge: Application foregrounded: 17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171:pxa-ime-heartbeat"
+    },
+    {
+      "kind": "LOG",
+      "payload": "392431\tI (392431) PxaBridge: Launch completion: 17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171:pxa-ime-heartbeat intent=0 status=0"
+    },
+    {
+      "kind": "LOG",
+      "payload": "392432\tI (392429) PxaHost: Heap[launch-ready]: SRAM used=265040 free=55675 total=320715 min_free=18040 largest=19456 exec_free=6557248 exec_largest=5898240; PSRAM used=1801276 free=6557248 total=8358524 min_free=4524636 largest=5898240"
+    },
+    {
+      "kind": "LOG",
+      "payload": "392434\tI (392434) PxaHost: UI lifecycle: component=65537 foreground=1 requested=1 display_interactive=1"
+    },
+    {
+      "kind": "LOG",
+      "payload": "397355\t\u001b[32m[PXA app=pxa-ime-heartbeat component=65537 level=INFO] IME submitted\u001b[0m"
+    },
+    {
+      "kind": "LOG",
+      "payload": "397355\t\u001b[32m[PXA app=pxa-ime-heartbeat component=65537 level=INFO] 𠳐\u001b[0m"
+    }
+  ]
+}

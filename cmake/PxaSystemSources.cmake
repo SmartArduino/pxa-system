@@ -50,7 +50,12 @@ set(PXSYS_REFERENCE_LAYOUT_SOURCES
 set(PXSYS_REFERENCE_LVGL_SOURCES
     "${PXSYS_ROOT}/ui/reference/lvgl/src/reference_lvgl.c"
     "${PXSYS_ROOT}/ui/reference/lvgl/src/reference_ime.c"
-    "${PXSYS_ROOT}/ui/reference/lvgl/src/reference_lock_digits_72.c")
+    "${PXSYS_ROOT}/ui/reference/lvgl/src/reference_lock_digits_72.c"
+    "${PXSYS_ROOT}/libpxa/adapters/lvgl/pxa_lvgl_ime.c"
+    "${PXSYS_ROOT}/libpxa/adapters/lvgl/pxa_lvgl_ime_builtin.c")
+set(PXSYS_REFERENCE_LVGL_PRIVATE_INCLUDE_DIRS
+    "${PXSYS_ROOT}/libpxa/include"
+    "${PXSYS_ROOT}/libpxa/adapters/include")
 
 set(PXSYS_PUBLIC_INCLUDE_DIRS
     "${PXSYS_ROOT}/system/core/include"

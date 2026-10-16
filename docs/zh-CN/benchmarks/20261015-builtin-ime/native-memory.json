@@ -1,0 +1,34 @@
+[
+  {
+    "shape": 0,
+    "loaded_delta": 43752,
+    "initialization_absolute_peak": 62543,
+    "reopen_peak_delta": 52147,
+    "closed_delta": 0,
+    "variant": "before"
+  },
+  {
+    "shape": 1,
+    "loaded_delta": 43752,
+    "initialization_absolute_peak": 60055,
+    "reopen_peak_delta": 49659,
+    "closed_delta": 0,
+    "variant": "before"
+  },
+  {
+    "shape": 0,
+    "loaded_delta": 5862,
+    "initialization_absolute_peak": 21261,
+    "reopen_peak_delta": 11026,
+    "closed_delta": 0,
+    "variant": "after"
+  },
+  {
+    "shape": 1,
+    "loaded_delta": 5902,
+    "initialization_absolute_peak": 20941,
+    "reopen_peak_delta": 10730,
+    "closed_delta": 0,
+    "variant": "after"
+  }
+]

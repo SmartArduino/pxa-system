@@ -1,0 +1,15 @@
+Test project /home/lucinhu/Documents/workspace/esp32/zuowei_paixueji_touch/pxa-projects/local/ime-device-update-20261015/native-only/build
+    Start 27: pxsys_reference_ime_test
+1/5 Test #27: pxsys_reference_ime_test ..........   Passed    0.04 sec
+    Start 28: pxsys_reference_features_0_test
+2/5 Test #28: pxsys_reference_features_0_test ...   Passed    0.10 sec
+    Start 29: pxsys_reference_features_1_test
+3/5 Test #29: pxsys_reference_features_1_test ...   Passed    0.14 sec
+    Start 31: pxsys_reference_no_pinyin_test
+4/5 Test #31: pxsys_reference_no_pinyin_test ....   Passed    0.16 sec
+    Start 32: pxsys_reference_k26_test
+5/5 Test #32: pxsys_reference_k26_test ..........   Passed    0.15 sec
+
+100% tests passed out of 5
+
+Total Test time (real) =   0.59 sec

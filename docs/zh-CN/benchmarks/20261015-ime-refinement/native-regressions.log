@@ -1,0 +1,31 @@
+Test project /home/lucinhu/Documents/workspace/esp32/zuowei_paixueji_touch/pxa-projects/local/ime-ux-20261015/build
+      Start  99: pxsys_reference_layout_test
+ 1/13 Test  #99: pxsys_reference_layout_test ...........   Passed    0.02 sec
+      Start 102: pxsys_reference_ime_test
+ 2/13 Test #102: pxsys_reference_ime_test ..............   Passed    0.03 sec
+      Start 103: pxsys_ime_dictionary_0_test
+ 3/13 Test #103: pxsys_ime_dictionary_0_test ...........   Passed    0.00 sec
+      Start 104: pxsys_ime_dictionary_1_test
+ 4/13 Test #104: pxsys_ime_dictionary_1_test ...........   Passed    0.07 sec
+      Start 105: pxsys_ime_dictionary_2_test
+ 5/13 Test #105: pxsys_ime_dictionary_2_test ...........   Passed    0.09 sec
+      Start 106: pxsys_ime_dictionary_3_test
+ 6/13 Test #106: pxsys_ime_dictionary_3_test ...........   Passed    0.17 sec
+      Start 107: pxsys_ime_dictionary_generated_test
+ 7/13 Test #107: pxsys_ime_dictionary_generated_test ...   Passed    0.24 sec
+      Start 108: pxsys_reference_features_0_test
+ 8/13 Test #108: pxsys_reference_features_0_test .......   Passed    0.09 sec
+      Start 109: pxsys_reference_features_1_test
+ 9/13 Test #109: pxsys_reference_features_1_test .......   Passed    0.11 sec
+      Start 110: pxsys_reference_no_snapshot_test
+10/13 Test #110: pxsys_reference_no_snapshot_test ......   Passed    0.10 sec
+      Start 111: pxsys_reference_no_pinyin_test
+11/13 Test #111: pxsys_reference_no_pinyin_test ........   Passed    0.11 sec
+      Start 112: pxsys_reference_k26_test
+12/13 Test #112: pxsys_reference_k26_test ..............   Passed    0.11 sec
+      Start 113: pxsys_reference_no_animations_test
+13/13 Test #113: pxsys_reference_no_animations_test ....   Passed    0.10 sec
+
+100% tests passed out of 13
+
+Total Test time (real) =   1.25 sec

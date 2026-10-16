@@ -1,0 +1,196 @@
+{
+  "hello": "protocol=1;mode=normal;capabilities=info,memory,logcat,packages,package-deploy,package-run,package-stop,fs,reboot,doctor,input-v2,screenshot-rgb565,screenshot-jpeg,poweroff,perf-raster,heap-local,ime;max_chunk=1024;fs_offset=1;fs_sha256=1;target=esp32s3;serial=a4:cb:8f:d5:d4:f0;version=host-tools-v0.1.0-23-g586e1db-d",
+  "firmware_sha256": "2888648beb53b8db69e85d16e01dad86b8df2f7d3dba92a158c092a2efa27fe4",
+  "firmware_bytes": 3444960,
+  "font_sha256": "121cb206d826af5259cfb78418defde651a9daa80fa1d7d51de3eea716c934a4",
+  "font_bytes": 2777480,
+  "packages": [
+    {
+      "kind": "PKG",
+      "payload": "17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171:pxa-browser\tPXA 浏览器\t0.1.1\tbuiltin=0;installed=1;staged=0;enabled=1;active=0"
+    },
+    {
+      "kind": "PKG",
+      "payload": "17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171:pxa-pinyin-ime-lite\t轻量拼音输入法\t1.0.1\tbuiltin=0;installed=1;staged=0;enabled=1;active=0"
+    },
+    {
+      "kind": "PKG",
+      "payload": "17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171:pxa-pinyin-ime\t拼音输入法\t1.0.1\tbuiltin=0;installed=1;staged=0;enabled=1;active=0"
+    },
+    {
+      "kind": "OK",
+      "payload": ""
+    }
+  ],
+  "installed_file_hashes": {
+    "pxa-pinyin-ime-lite": {
+      "artifacts/main.esp32-s3.aot": {
+        "sha256": "482ee61721ddee4f4d42ff3f6686d62f2c3147ec8ba44fe8d091b83a14589535",
+        "bytes": 103600
+      },
+      "artifacts/main.wasm": {
+        "sha256": "83bdc374666375c2781e8be840fa14426aed9e33725a68d7c1d1d521a755163f",
+        "bytes": 41170
+      },
+      "artifacts/provider.esp32-s3.aot": {
+        "sha256": "e6dca017bd87f063559c84d80081b2cd5e06017679093ae0f6e290cc322ab8c2",
+        "bytes": 153500
+      },
+      "artifacts/provider.wasm": {
+        "sha256": "255a1f9852e21a48ae549d2922d6570b612abbb8cc25c8c9b5c7378b14eb0d95",
+        "bytes": 75190
+      },
+      "manifest.pxm": {
+        "sha256": "712be87d358804599d2929abfb5cedb3b33fc527092582fc006836dd0d75a0d1",
+        "bytes": 1239
+      },
+      "signature.pxs": {
+        "sha256": "d7147a10bbbd33f7792728f66bdf2b595fc5a34f42f0eb02fd14c2d247f04562",
+        "bytes": 108
+      }
+    },
+    "pxa-pinyin-ime": {
+      "artifacts/main.esp32-s3.aot": {
+        "sha256": "04dab767e88e53beb53535abe66675b0afae430f29b37846f43513cf5fe71464",
+        "bytes": 101256
+      },
+      "artifacts/main.wasm": {
+        "sha256": "b5955769eda32c39c86f61aa1a2fd256a69387c50c8ea0b0b3011f036987f395",
+        "bytes": 40742
+      },
+      "artifacts/provider.esp32-s3.aot": {
+        "sha256": "0c281e624acbf84c84bdd7224f9478ecc35393fb7a00911a3658d785b79d048a",
+        "bytes": 270540
+      },
+      "artifacts/provider.wasm": {
+        "sha256": "8b7557eff929563843655794d98256d368582e73660ed7145b09bd90bbc5658c",
+        "bytes": 110453
+      },
+      "assets/dict_pinyin.dat": {
+        "sha256": "179311c55ab9b912a07ef040e5a95af97e704e2248b7b97735f17a3e05d13b67",
+        "bytes": 1068442
+      },
+      "assets/resources.pxi": {
+        "sha256": "e2b1ff70f89d7c1de54903226b845ab46a5ffb1d49b82505b94d5c051cabd5c4",
+        "bytes": 64
+      },
+      "manifest.pxm": {
+        "sha256": "73e26ca1e718a5c3b6bcb261602b45b28072d949c5971c80ec59cdf37c85603c",
+        "bytes": 1396
+      },
+      "signature.pxs": {
+        "sha256": "21fdcba0fa5c267cb8af36717e4353571c8f10fb83ce01364ff47fd6f2c47c59",
+        "bytes": 108
+      }
+    },
+    "pxa-browser": {
+      "artifacts/main.esp32-s3.aot": {
+        "sha256": "7eafd04913074e57325b5b7c9fc7b81f73f19df9d645e1ec18b6e338afa7b8da",
+        "bytes": 2801592
+      },
+      "assets/browser-runtime.qjb": {
+        "sha256": "eb44974a5b606fd77677deb2600086cfd2dd5d58d68de8c9e9cc613b8bf37211",
+        "bytes": 15934
+      },
+      "assets/encoding-license.txt": {
+        "sha256": "7f1d31b39b985b8dbca9e43ee7092141dc7d10833a608160c83eab6c9a7bc814",
+        "bytes": 16529
+      },
+      "assets/gb18030.bin": {
+        "sha256": "4168af99aff74e8b92b788cd7db7a446c6a4417256d56f68669a8b3368291e8f",
+        "bytes": 49536
+      },
+      "assets/icon.png": {
+        "sha256": "9906d4af7855020c5e9ba2dfa037e0d50972f0c9f19d5f896bfc309decc1aad2",
+        "bytes": 5350
+      },
+      "assets/icon.svg": {
+        "sha256": "646b5915b02c785182479e6356c9455c8074af5b42738e3b18f7cfe0b7e3c4ad",
+        "bytes": 409
+      },
+      "assets/quickjs-license.txt": {
+        "sha256": "598fd7fc928e4350abce36e337ba5a1346923c5c692f5be92c3d8e29ddd7c18d",
+        "bytes": 1130
+      },
+      "assets/resources.pxi": {
+        "sha256": "92914b5fb036a08030ec4ca7994c52ba765e9ba90e59608e1222c132e859fdd3",
+        "bytes": 296
+      },
+      "manifest.pxm": {
+        "sha256": "eb651b7e270270f89c0ed39ff085f581fab3b72b6795fb1c694aa9030697533c",
+        "bytes": 1707
+      },
+      "signature.pxs": {
+        "sha256": "652ff8e7a6caa10632b9f5bfb18e97618eeaedb468112d58f79be81449e8703d",
+        "bytes": 108
+      }
+    }
+  },
+  "all_original_package_files_verified": true,
+  "private_app_data_unchanged": true,
+  "private_data_file_count": 0,
+  "wifi_configuration_untouched": true,
+  "only_application_partition_flashed": true,
+  "system_files_locked": true,
+  "fixture_removed": true,
+  "selected_restored": "",
+  "memory": [
+    {
+      "kind": "DATA",
+      "payload": "scope=heap;sram_total=320715;sram_free=56835;sram_min=17888;sram_largest=19456;psram_total=8358524;psram_free=6945540;psram_min=6506920;psram_largest=6815744"
+    },
+    {
+      "kind": "DATA",
+      "payload": "scope=budget;internal=27468;external=16516;peak_internal=27468;peak_external=16516;temporary_peak_internal=0;temporary_peak_external=0;fixed=2224;denied=0;allocation_failures=0"
+    },
+    {
+      "kind": "DATA",
+      "payload": "scope=kind;name=raster;internal=0;external=0"
+    },
+    {
+      "kind": "DATA",
+      "payload": "scope=kind;name=image;internal=0;external=0"
+    },
+    {
+      "kind": "DATA",
+      "payload": "scope=kind;name=audio;internal=0;external=16392"
+    },
+    {
+      "kind": "DATA",
+      "payload": "scope=kind;name=temporary;internal=0;external=0"
+    },
+    {
+      "kind": "DATA",
+      "payload": "scope=kind;name=metadata;internal=27468;external=124"
+    },
+    {
+      "kind": "DATA",
+      "payload": "scope=kind;name=frame;internal=0;external=0"
+    },
+    {
+      "kind": "DATA",
+      "payload": "scope=surface;frame=0;scratch=0;mailbox=0;probe=0;peak_total=0"
+    },
+    {
+      "kind": "OK",
+      "payload": ""
+    }
+  ],
+  "info": [
+    {
+      "kind": "OK",
+      "payload": "target=esp32s3;serial=a4:cb:8f:d5:d4:f0;version=host-tools-v0.1.0-23-g586e1db-d;free_heap=7002375;pxa=ready;package_directory_adopt=1;package_receive=1;board=pai-touch;pxa_version=0.3.0;pxa_core=2.0;storage_total=9437184;storage_used=9437184;storage_free=0"
+    }
+  ],
+  "screenshot_metadata": {
+    "format": "jpeg",
+    "width": "296",
+    "height": "240",
+    "orientation": "logical",
+    "frame_id": "0",
+    "device_us": "21928198",
+    "source": "lvgl",
+    "bytes": "8225",
+    "sha256": "89e59a24c69117accbd1b0063d172c707f6932983aa93cfa5135813705f37d04"
+  }
+}

@@ -1,0 +1,1397 @@
+{
+  "provider": "lite",
+  "passed": true,
+  "expected_submission": "你好qabcde",
+  "rows": [
+    {
+      "command": "IME select 17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171:pxa-pinyin-ime-lite",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "selected"
+        }
+      ]
+    },
+    {
+      "command": "PACKAGE run pxa-ime-heartbeat",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "launch_queued"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER DOWN 35 55 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=400;device_us=209466800;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER UP 35 55 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=401;device_us=209570812;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT SYNC",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=402;device_us=209572188;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "IME",
+      "frames": [
+        {
+          "kind": "SELECTED",
+          "payload": "17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171:pxa-pinyin-ime-lite"
+        },
+        {
+          "kind": "TIMING",
+          "payload": "count=0;queue_us=0;processing_us=0;queue_max_us=0;processing_max_us=0;provider_load_us=0;keyboard_drawn=1;first_draw_ms=22;candidates_ready=0;candidates_ready_ms=0;provider_steps=1;provider_step_max_us=58935"
+        },
+        {
+          "kind": "METHOD",
+          "payload": "17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171:pxa-pinyin-ime-lite"
+        },
+        {
+          "kind": "METHOD",
+          "payload": "17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171:pxa-pinyin-ime"
+        },
+        {
+          "kind": "OK",
+          "payload": "listed"
+        }
+      ]
+    },
+    {
+      "command": "IME",
+      "frames": [
+        {
+          "kind": "SELECTED",
+          "payload": "17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171:pxa-pinyin-ime-lite"
+        },
+        {
+          "kind": "TIMING",
+          "payload": "count=0;queue_us=0;processing_us=0;queue_max_us=0;processing_max_us=0;provider_load_us=0;keyboard_drawn=1;first_draw_ms=22;candidates_ready=0;candidates_ready_ms=0;provider_steps=1;provider_step_max_us=58935"
+        },
+        {
+          "kind": "METHOD",
+          "payload": "17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171:pxa-pinyin-ime-lite"
+        },
+        {
+          "kind": "METHOD",
+          "payload": "17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171:pxa-pinyin-ime"
+        },
+        {
+          "kind": "OK",
+          "payload": "listed"
+        }
+      ]
+    },
+    {
+      "command": "IME",
+      "frames": [
+        {
+          "kind": "SELECTED",
+          "payload": "17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171:pxa-pinyin-ime-lite"
+        },
+        {
+          "kind": "TIMING",
+          "payload": "count=0;queue_us=0;processing_us=0;queue_max_us=0;processing_max_us=0;provider_load_us=0;keyboard_drawn=1;first_draw_ms=22;candidates_ready=0;candidates_ready_ms=0;provider_steps=3;provider_step_max_us=292615"
+        },
+        {
+          "kind": "METHOD",
+          "payload": "17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171:pxa-pinyin-ime-lite"
+        },
+        {
+          "kind": "METHOD",
+          "payload": "17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171:pxa-pinyin-ime"
+        },
+        {
+          "kind": "OK",
+          "payload": "listed"
+        }
+      ]
+    },
+    {
+      "command": "IME",
+      "frames": [
+        {
+          "kind": "SELECTED",
+          "payload": "17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171:pxa-pinyin-ime-lite"
+        },
+        {
+          "kind": "TIMING",
+          "payload": "count=0;queue_us=0;processing_us=0;queue_max_us=0;processing_max_us=0;provider_load_us=0;keyboard_drawn=1;first_draw_ms=22;candidates_ready=0;candidates_ready_ms=0;provider_steps=10;provider_step_max_us=292615"
+        },
+        {
+          "kind": "METHOD",
+          "payload": "17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171:pxa-pinyin-ime-lite"
+        },
+        {
+          "kind": "METHOD",
+          "payload": "17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171:pxa-pinyin-ime"
+        },
+        {
+          "kind": "OK",
+          "payload": "listed"
+        }
+      ]
+    },
+    {
+      "command": "IME",
+      "frames": [
+        {
+          "kind": "SELECTED",
+          "payload": "17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171:pxa-pinyin-ime-lite"
+        },
+        {
+          "kind": "TIMING",
+          "payload": "count=0;queue_us=0;processing_us=0;queue_max_us=0;processing_max_us=0;provider_load_us=0;keyboard_drawn=1;first_draw_ms=22;candidates_ready=0;candidates_ready_ms=0;provider_steps=13;provider_step_max_us=292615"
+        },
+        {
+          "kind": "METHOD",
+          "payload": "17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171:pxa-pinyin-ime-lite"
+        },
+        {
+          "kind": "METHOD",
+          "payload": "17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171:pxa-pinyin-ime"
+        },
+        {
+          "kind": "OK",
+          "payload": "listed"
+        }
+      ]
+    },
+    {
+      "command": "IME",
+      "frames": [
+        {
+          "kind": "SELECTED",
+          "payload": "17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171:pxa-pinyin-ime-lite"
+        },
+        {
+          "kind": "TIMING",
+          "payload": "count=0;queue_us=0;processing_us=0;queue_max_us=0;processing_max_us=0;provider_load_us=0;keyboard_drawn=1;first_draw_ms=22;candidates_ready=0;candidates_ready_ms=0;provider_steps=23;provider_step_max_us=292615"
+        },
+        {
+          "kind": "METHOD",
+          "payload": "17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171:pxa-pinyin-ime-lite"
+        },
+        {
+          "kind": "METHOD",
+          "payload": "17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171:pxa-pinyin-ime"
+        },
+        {
+          "kind": "OK",
+          "payload": "listed"
+        }
+      ]
+    },
+    {
+      "command": "IME",
+      "frames": [
+        {
+          "kind": "SELECTED",
+          "payload": "17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171:pxa-pinyin-ime-lite"
+        },
+        {
+          "kind": "TIMING",
+          "payload": "count=0;queue_us=0;processing_us=0;queue_max_us=0;processing_max_us=0;provider_load_us=0;keyboard_drawn=1;first_draw_ms=22;candidates_ready=0;candidates_ready_ms=0;provider_steps=27;provider_step_max_us=292615"
+        },
+        {
+          "kind": "METHOD",
+          "payload": "17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171:pxa-pinyin-ime-lite"
+        },
+        {
+          "kind": "METHOD",
+          "payload": "17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171:pxa-pinyin-ime"
+        },
+        {
+          "kind": "OK",
+          "payload": "listed"
+        }
+      ]
+    },
+    {
+      "command": "IME",
+      "frames": [
+        {
+          "kind": "SELECTED",
+          "payload": "17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171:pxa-pinyin-ime-lite"
+        },
+        {
+          "kind": "TIMING",
+          "payload": "count=0;queue_us=0;processing_us=0;queue_max_us=0;processing_max_us=0;provider_load_us=890420;keyboard_drawn=1;first_draw_ms=22;candidates_ready=1;candidates_ready_ms=942;provider_steps=28;provider_step_max_us=292615"
+        },
+        {
+          "kind": "METHOD",
+          "payload": "17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171:pxa-pinyin-ime-lite"
+        },
+        {
+          "kind": "METHOD",
+          "payload": "17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171:pxa-pinyin-ime"
+        },
+        {
+          "kind": "OK",
+          "payload": "listed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER DOWN 179 163 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=403;device_us=210560799;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER UP 179 163 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=404;device_us=210662831;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT SYNC",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=405;device_us=210664634;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER DOWN 50 163 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=406;device_us=210916806;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER UP 50 163 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=407;device_us=211018813;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT SYNC",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=408;device_us=211019707;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER DOWN 232 99 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=409;device_us=211272021;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER UP 232 99 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=410;device_us=211374801;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT SYNC",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=411;device_us=211375818;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER DOWN 45 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=412;device_us=211628815;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER UP 45 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=413;device_us=211730798;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT SYNC",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=414;device_us=211732183;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER DOWN 30 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=415;device_us=211984803;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER UP 30 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=416;device_us=212086792;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT SYNC",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=417;device_us=212087750;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER DOWN 210 142 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=418;device_us=212339806;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER UP 210 142 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=419;device_us=212441996;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT SYNC",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=420;device_us=212443108;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER DOWN 161 163 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=421;device_us=212694820;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER UP 161 163 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=422;device_us=212796802;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT SYNC",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=423;device_us=212797812;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER DOWN 32 163 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=424;device_us=213049800;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER UP 32 163 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=425;device_us=213152810;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT SYNC",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=426;device_us=213153801;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER DOWN 239 142 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=427;device_us=213406793;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER UP 239 142 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=428;device_us=213508797;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT SYNC",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=429;device_us=213509809;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER DOWN 45 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=430;device_us=213762039;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER UP 45 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=431;device_us=213863798;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT SYNC",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=432;device_us=213864860;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER DOWN 111 209 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=433;device_us=214116807;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER UP 111 209 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=434;device_us=214218808;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT SYNC",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=435;device_us=214219856;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER DOWN 32 163 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=436;device_us=214472015;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER UP 32 163 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=437;device_us=214574794;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT SYNC",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=438;device_us=214575837;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER DOWN 172 184 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=439;device_us=214828808;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER UP 172 184 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=440;device_us=214930793;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT SYNC",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=441;device_us=214931885;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER DOWN 124 184 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=442;device_us=215183797;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER UP 124 184 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=443;device_us=215285800;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT SYNC",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=444;device_us=215286818;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER DOWN 77 163 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=445;device_us=215538802;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER UP 77 163 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=446;device_us=215640796;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT SYNC",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=447;device_us=215641923;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER DOWN 82 142 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=448;device_us=215893802;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER UP 82 142 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=449;device_us=215995808;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT SYNC",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=450;device_us=215996738;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "SCREENSHOT JPEG",
+      "frames": [
+        {
+          "kind": "META",
+          "payload": "format=jpeg;width=296;height=240;orientation=logical;frame_id=0;device_us=216071656;source=lvgl;bytes=11684;sha256=035f608cec384daf491e8a250246a44efa8a4594782e6a625b88f30a2dceeec5"
+        },
+        {
+          "kind": "OK",
+          "payload": ""
+        }
+      ]
+    },
+    {
+      "capture": "before-move",
+      "metadata": {
+        "format": "jpeg",
+        "width": "296",
+        "height": "240",
+        "orientation": "logical",
+        "frame_id": "0",
+        "device_us": "216071656",
+        "source": "lvgl",
+        "bytes": "11684",
+        "sha256": "035f608cec384daf491e8a250246a44efa8a4594782e6a625b88f30a2dceeec5"
+      }
+    },
+    {
+      "command": "INPUT POINTER DOWN 111 209 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=451;device_us=216339793;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER UP 111 209 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=452;device_us=216441974;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT SYNC",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=453;device_us=216443133;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "IME",
+      "frames": [
+        {
+          "kind": "SELECTED",
+          "payload": "17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171:pxa-pinyin-ime-lite"
+        },
+        {
+          "kind": "TIMING",
+          "payload": "count=0;queue_us=0;processing_us=0;queue_max_us=0;processing_max_us=0;provider_load_us=0;keyboard_drawn=1;first_draw_ms=22;candidates_ready=0;candidates_ready_ms=2920;provider_steps=1;provider_step_max_us=92208"
+        },
+        {
+          "kind": "METHOD",
+          "payload": "17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171:pxa-pinyin-ime-lite"
+        },
+        {
+          "kind": "METHOD",
+          "payload": "17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171:pxa-pinyin-ime"
+        },
+        {
+          "kind": "OK",
+          "payload": "listed"
+        }
+      ]
+    },
+    {
+      "command": "IME",
+      "frames": [
+        {
+          "kind": "SELECTED",
+          "payload": "17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171:pxa-pinyin-ime-lite"
+        },
+        {
+          "kind": "TIMING",
+          "payload": "count=0;queue_us=0;processing_us=0;queue_max_us=0;processing_max_us=0;provider_load_us=0;keyboard_drawn=1;first_draw_ms=22;candidates_ready=0;candidates_ready_ms=2920;provider_steps=1;provider_step_max_us=92208"
+        },
+        {
+          "kind": "METHOD",
+          "payload": "17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171:pxa-pinyin-ime-lite"
+        },
+        {
+          "kind": "METHOD",
+          "payload": "17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171:pxa-pinyin-ime"
+        },
+        {
+          "kind": "OK",
+          "payload": "listed"
+        }
+      ]
+    },
+    {
+      "command": "IME",
+      "frames": [
+        {
+          "kind": "SELECTED",
+          "payload": "17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171:pxa-pinyin-ime-lite"
+        },
+        {
+          "kind": "TIMING",
+          "payload": "count=0;queue_us=0;processing_us=0;queue_max_us=0;processing_max_us=0;provider_load_us=0;keyboard_drawn=1;first_draw_ms=22;candidates_ready=0;candidates_ready_ms=2920;provider_steps=3;provider_step_max_us=280339"
+        },
+        {
+          "kind": "METHOD",
+          "payload": "17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171:pxa-pinyin-ime-lite"
+        },
+        {
+          "kind": "METHOD",
+          "payload": "17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171:pxa-pinyin-ime"
+        },
+        {
+          "kind": "OK",
+          "payload": "listed"
+        }
+      ]
+    },
+    {
+      "command": "IME",
+      "frames": [
+        {
+          "kind": "SELECTED",
+          "payload": "17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171:pxa-pinyin-ime-lite"
+        },
+        {
+          "kind": "TIMING",
+          "payload": "count=0;queue_us=0;processing_us=0;queue_max_us=0;processing_max_us=0;provider_load_us=0;keyboard_drawn=1;first_draw_ms=22;candidates_ready=0;candidates_ready_ms=2920;provider_steps=10;provider_step_max_us=280339"
+        },
+        {
+          "kind": "METHOD",
+          "payload": "17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171:pxa-pinyin-ime-lite"
+        },
+        {
+          "kind": "METHOD",
+          "payload": "17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171:pxa-pinyin-ime"
+        },
+        {
+          "kind": "OK",
+          "payload": "listed"
+        }
+      ]
+    },
+    {
+      "command": "IME",
+      "frames": [
+        {
+          "kind": "SELECTED",
+          "payload": "17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171:pxa-pinyin-ime-lite"
+        },
+        {
+          "kind": "TIMING",
+          "payload": "count=0;queue_us=0;processing_us=0;queue_max_us=0;processing_max_us=0;provider_load_us=0;keyboard_drawn=1;first_draw_ms=22;candidates_ready=0;candidates_ready_ms=2920;provider_steps=13;provider_step_max_us=280339"
+        },
+        {
+          "kind": "METHOD",
+          "payload": "17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171:pxa-pinyin-ime-lite"
+        },
+        {
+          "kind": "METHOD",
+          "payload": "17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171:pxa-pinyin-ime"
+        },
+        {
+          "kind": "OK",
+          "payload": "listed"
+        }
+      ]
+    },
+    {
+      "command": "IME",
+      "frames": [
+        {
+          "kind": "SELECTED",
+          "payload": "17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171:pxa-pinyin-ime-lite"
+        },
+        {
+          "kind": "TIMING",
+          "payload": "count=0;queue_us=0;processing_us=0;queue_max_us=0;processing_max_us=0;provider_load_us=0;keyboard_drawn=1;first_draw_ms=22;candidates_ready=0;candidates_ready_ms=2920;provider_steps=23;provider_step_max_us=280339"
+        },
+        {
+          "kind": "METHOD",
+          "payload": "17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171:pxa-pinyin-ime-lite"
+        },
+        {
+          "kind": "METHOD",
+          "payload": "17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171:pxa-pinyin-ime"
+        },
+        {
+          "kind": "OK",
+          "payload": "listed"
+        }
+      ]
+    },
+    {
+      "command": "IME",
+      "frames": [
+        {
+          "kind": "SELECTED",
+          "payload": "17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171:pxa-pinyin-ime-lite"
+        },
+        {
+          "kind": "TIMING",
+          "payload": "count=0;queue_us=0;processing_us=0;queue_max_us=0;processing_max_us=0;provider_load_us=0;keyboard_drawn=1;first_draw_ms=22;candidates_ready=0;candidates_ready_ms=2920;provider_steps=27;provider_step_max_us=280339"
+        },
+        {
+          "kind": "METHOD",
+          "payload": "17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171:pxa-pinyin-ime-lite"
+        },
+        {
+          "kind": "METHOD",
+          "payload": "17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171:pxa-pinyin-ime"
+        },
+        {
+          "kind": "OK",
+          "payload": "listed"
+        }
+      ]
+    },
+    {
+      "command": "IME",
+      "frames": [
+        {
+          "kind": "SELECTED",
+          "payload": "17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171:pxa-pinyin-ime-lite"
+        },
+        {
+          "kind": "TIMING",
+          "payload": "count=0;queue_us=0;processing_us=0;queue_max_us=0;processing_max_us=0;provider_load_us=920234;keyboard_drawn=1;first_draw_ms=22;candidates_ready=1;candidates_ready_ms=7808;provider_steps=28;provider_step_max_us=280339"
+        },
+        {
+          "kind": "METHOD",
+          "payload": "17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171:pxa-pinyin-ime-lite"
+        },
+        {
+          "kind": "METHOD",
+          "payload": "17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171:pxa-pinyin-ime"
+        },
+        {
+          "kind": "OK",
+          "payload": "listed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER DOWN 30 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=454;device_us=217429795;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER UP 30 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=455;device_us=217532002;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT SYNC",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=456;device_us=217533076;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER DOWN 62 184 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=457;device_us=217784804;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER UP 62 184 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=458;device_us=219787792;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT SYNC",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=459;device_us=219788911;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "SCREENSHOT JPEG",
+      "frames": [
+        {
+          "kind": "META",
+          "payload": "format=jpeg;width=296;height=240;orientation=logical;frame_id=0;device_us=220069960;source=lvgl;bytes=10151;sha256=ca77259992439e7e0653fbe6093f660f99a8dc5bac614277a80a53485a019e23"
+        },
+        {
+          "kind": "OK",
+          "payload": ""
+        }
+      ]
+    },
+    {
+      "capture": "held-left-to-start",
+      "metadata": {
+        "format": "jpeg",
+        "width": "296",
+        "height": "240",
+        "orientation": "logical",
+        "frame_id": "0",
+        "device_us": "220069960",
+        "source": "lvgl",
+        "bytes": "10151",
+        "sha256": "ca77259992439e7e0653fbe6093f660f99a8dc5bac614277a80a53485a019e23"
+      }
+    },
+    {
+      "command": "INPUT POINTER DOWN 234 184 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=460;device_us=220176792;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER UP 234 184 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=461;device_us=220278788;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT SYNC",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=462;device_us=220279957;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER DOWN 234 184 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=463;device_us=220532005;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER UP 234 184 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=464;device_us=220633826;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT SYNC",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=465;device_us=220634706;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "SCREENSHOT JPEG",
+      "frames": [
+        {
+          "kind": "META",
+          "payload": "format=jpeg;width=296;height=240;orientation=logical;frame_id=0;device_us=220664906;source=lvgl;bytes=10225;sha256=23d380ef17e3c99468ab833ca4b7e9b3742fb3334fdb5b3c4eba8420b2131041"
+        },
+        {
+          "kind": "OK",
+          "payload": ""
+        }
+      ]
+    },
+    {
+      "capture": "right-two",
+      "metadata": {
+        "format": "jpeg",
+        "width": "296",
+        "height": "240",
+        "orientation": "logical",
+        "frame_id": "0",
+        "device_us": "220664906",
+        "source": "lvgl",
+        "bytes": "10225",
+        "sha256": "23d380ef17e3c99468ab833ca4b7e9b3742fb3334fdb5b3c4eba8420b2131041"
+      }
+    },
+    {
+      "command": "INPUT POINTER DOWN 148 184 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=466;device_us=220978790;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER UP 148 184 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=467;device_us=221080803;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT SYNC",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=468;device_us=221081881;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER DOWN 111 209 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=469;device_us=221334822;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER UP 111 209 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=470;device_us=221437805;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT SYNC",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=471;device_us=221440021;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER DOWN 32 142 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=472;device_us=221692797;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER UP 32 142 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=473;device_us=221795797;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT SYNC",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=474;device_us=221797437;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "SCREENSHOT JPEG",
+      "frames": [
+        {
+          "kind": "META",
+          "payload": "format=jpeg;width=296;height=240;orientation=logical;frame_id=0;device_us=221854571;source=lvgl;bytes=11633;sha256=b9d5fa5afddfee2351683893fe69e9792bb02cf7ee3b483a43f7d8d52826bd51"
+        },
+        {
+          "kind": "OK",
+          "payload": ""
+        }
+      ]
+    },
+    {
+      "capture": "insert-between",
+      "metadata": {
+        "format": "jpeg",
+        "width": "296",
+        "height": "240",
+        "orientation": "logical",
+        "frame_id": "0",
+        "device_us": "221854571",
+        "source": "lvgl",
+        "bytes": "11633",
+        "sha256": "b9d5fa5afddfee2351683893fe69e9792bb02cf7ee3b483a43f7d8d52826bd51"
+      }
+    },
+    {
+      "command": "INPUT POINTER DOWN 265 184 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=475;device_us=222142007;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER UP 265 184 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=476;device_us=222243799;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT SYNC",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=477;device_us=222245073;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "PING",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "pong"
+        }
+      ]
+    },
+    {
+      "command": "PACKAGE stop pxa-ime-heartbeat",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "stop_queued"
+        }
+      ]
+    },
+    {
+      "command": "IME select builtin",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "selected"
+        }
+      ]
+    }
+  ],
+  "logs": [
+    {
+      "kind": "LOG",
+      "payload": "208810\tI (208810) PxaHost: UI lifecycle: component=65537 foreground=0 requested=0 display_interactive=1"
+    },
+    {
+      "kind": "LOG",
+      "payload": "208813\tI (208812) Pxadb: Package list finished: stack_free=6268B"
+    },
+    {
+      "kind": "LOG",
+      "payload": "208820\tI (208820) PxaHost: UI peaks: dynamic=3196 current=1660 assets=0 current_assets=0 largest_decoded=0 asset_count=0 referenced=0 hits=0 misses=0 evictions=0 nodes=10 canvases=0 surfaces=1"
+    },
+    {
+      "kind": "LOG",
+      "payload": "208820\tI (208820) PxaHost: Audio: active=0 queued=0/0 peak_queued=0 submitted=0 rendered=0 tones=0/0 tone_drop=0 voice_exhaust=0 queue_full=0 stale=0 rejected=0 assets=0/0 asset_fail=0 storage=0 stack=0"
+    },
+    {
+      "kind": "LOG",
+      "payload": "208826\tI (208826) PXA_WAMR_MEMMAP: AOT released: ibus=0x42b30000 dbus=0x3c500000 size=157472 free_psram=6756848->6953460 delta=196612"
+    },
+    {
+      "kind": "LOG",
+      "payload": "208826\tI (208826) PxaHost: Runtime peaks: components=2 requests=0 handles=0 events=1 event_blocks=3 services=18"
+    },
+    {
+      "kind": "LOG",
+      "payload": "208826\tI (208826) PxaHost: WAMR dynamic: peak=111349 current=416 linear=0 linear_peak=262144 artifact=0 events=0"
+    },
+    {
+      "kind": "LOG",
+      "payload": "208826\tI (208826) PxaHost: Activation memory: workspaces=18 blocks=3 used=13041 reserved=17691 peak_used=13041 peak_reserved=17691"
+    },
+    {
+      "kind": "LOG",
+      "payload": "208918\tI (208917) Pxadb: Package list finished: stack_free=6268B"
+    },
+    {
+      "kind": "LOG",
+      "payload": "209338\tI (209338) PxaHost: Queueing launch request: 17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171:pxa-ime-heartbeat"
+    },
+    {
+      "kind": "LOG",
+      "payload": "209348\tI (209348) PxaHost: Processing launch request: 17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171:pxa-ime-heartbeat"
+    },
+    {
+      "kind": "LOG",
+      "payload": "209468\tI (209468) PxaHost: Audio: active=0 queued=0/0 peak_queued=0 submitted=0 rendered=0 tones=0/0 tone_drop=0 voice_exhaust=0 queue_full=0 stale=0 rejected=0 assets=0/0 asset_fail=0 storage=0 stack=0"
+    },
+    {
+      "kind": "LOG",
+      "payload": "209479\tI (209477) PxaHost: Heap[launch-begin]: SRAM used=263848 free=56867 total=320715 min_free=18040 largest=19456 exec_free=6995092 exec_largest=6160384; PSRAM used=1363432 free=6995092 total=8358524 min_free=4524636 largest=6160384"
+    },
+    {
+      "kind": "LOG",
+      "payload": "209536\tI (209536) PXA_WAMR_MEMMAP: AOT mapped: ibus=0x42b30000 dbus=0x3c540000 request=157472 map=196608 alloc=196608 free_psram=6750908"
+    },
+    {
+      "kind": "LOG",
+      "payload": "209594\tI (209594) PxaWamr: AOT streamed: file=173072 source_buffer=0"
+    },
+    {
+      "kind": "LOG",
+      "payload": "209661\tI (209659) PxaHost: Component memory: id=main status=0 sram_delta=756 free_sram=55671 largest_sram=19456 psram_delta=386244 free_psram=6571096 largest_psram=5898240 wamr_delta=29887 wamr_current=30303"
+    },
+    {
+      "kind": "LOG",
+      "payload": "209682\tI (209680) PxaHost: Heap[launch-ready]: SRAM used=265044 free=55671 total=320715 min_free=18040 largest=19456 exec_free=6574412 exec_largest=5898240; PSRAM used=1784112 free=6574412 total=8358524 min_free=4524636 largest=5898240"
+    },
+    {
+      "kind": "LOG",
+      "payload": "209683\tI (209683) PxaHost: WAMR dynamic: peak=39812 current=30303 linear=131072 linear_peak=131072 artifact=0 events=128"
+    },
+    {
+      "kind": "LOG",
+      "payload": "209683\tI (209683) PxaHost: Started verified Package 17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171:pxa-ime-heartbeat"
+    },
+    {
+      "kind": "LOG",
+      "payload": "209684\tI (209684) PxaBridge: Application foregrounded: 17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171:pxa-ime-heartbeat"
+    },
+    {
+      "kind": "LOG",
+      "payload": "210990\tI (210990) PXA_WAMR_MEMMAP: AOT mapped: ibus=0x42b60000 dbus=0x3c580000 request=116532 map=131072 alloc=131072 free_psram=6405948"
+    },
+    {
+      "kind": "LOG",
+      "payload": "211038\tI (211038) PxaWamr: AOT streamed: file=153500 source_buffer=0"
+    },
+    {
+      "kind": "LOG",
+      "payload": "211045\tI (211045) PxaIme: activation status=0 us=89218"
+    },
+    {
+      "kind": "LOG",
+      "payload": "211045\tI (211045) PxaIme: load status=0 us=890420 step_max=292615 metadata=2254"
+    },
+    {
+      "kind": "LOG",
+      "payload": "214808\tI (214808) PXA_WAMR_MEMMAP: AOT released: ibus=0x42b60000 dbus=0x3c580000 size=116532 free_psram=6433732->6564808 delta=131076"
+    },
+    {
+      "kind": "LOG",
+      "payload": "216359\tI (216359) AdcBatteryMonitor: Battery: channel=1 raw=3400 adc=2823mV battery=4263mV level=100% charging=1"
+    },
+    {
+      "kind": "LOG",
+      "payload": "217857\tI (217857) PXA_WAMR_MEMMAP: AOT mapped: ibus=0x42b60000 dbus=0x3c580000 request=116532 map=131072 alloc=131072 free_psram=6405616"
+    },
+    {
+      "kind": "LOG",
+      "payload": "217904\tI (217904) PxaWamr: AOT streamed: file=153500 source_buffer=0"
+    },
+    {
+      "kind": "LOG",
+      "payload": "217911\tI (217911) PxaIme: activation status=0 us=89212"
+    },
+    {
+      "kind": "LOG",
+      "payload": "217911\tI (217911) PxaIme: load status=0 us=920234 step_max=280339 metadata=2254"
+    },
+    {
+      "kind": "LOG",
+      "payload": "222026\tI (222026) PXA_WAMR_MEMMAP: AOT released: ibus=0x42b60000 dbus=0x3c580000 size=116532 free_psram=6433728->6564804 delta=131076"
+    },
+    {
+      "kind": "LOG",
+      "payload": "222825\t\u001b[32m[PXA app=pxa-ime-heartbeat component=65537 level=INFO] IME submitted\u001b[0m"
+    },
+    {
+      "kind": "LOG",
+      "payload": "222825\t\u001b[32m[PXA app=pxa-ime-heartbeat component=65537 level=INFO] 你好qabcde\u001b[0m"
+    }
+  ],
+  "selected_restored": ""
+}

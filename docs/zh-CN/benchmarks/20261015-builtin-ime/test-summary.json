@@ -1,0 +1,35 @@
+{
+  "native_regressions": "9/9 passed",
+  "sanitizers": [
+    "ASan",
+    "UBSan",
+    "LSan"
+  ],
+  "provider_product_matrix": {
+    "engines": [
+      "pinyin-ime",
+      "pinyin-ime-lite"
+    ],
+    "code_modes": [
+      "native AOT",
+      "portable Wasm"
+    ],
+    "screen_profiles_per_mode": 13,
+    "fault_packages_per_mode": 6
+  },
+  "native_memory_raw": "native-memory.json",
+  "note": "No full-flash backup or private NVS data may be copied into documentation.",
+  "native_only_regressions": "5/5 passed",
+  "hardware": {
+    "providers": [
+      "builtin",
+      "full",
+      "lite"
+    ],
+    "submission": "你好",
+    "reopen_cycles_per_provider": 8,
+    "fixture_removed": true,
+    "selected_restored": "builtin",
+    "physical_screen_recovery": "user confirmed"
+  }
+}

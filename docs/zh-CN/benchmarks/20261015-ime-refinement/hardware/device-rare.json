@@ -1,0 +1,1072 @@
+{
+  "passed": true,
+  "expected": "啰",
+  "rows": [
+    {
+      "command": "IME select builtin",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "selected"
+        }
+      ]
+    },
+    {
+      "command": "PACKAGE run pxa-ime-heartbeat",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "launch_queued"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER DOWN 35 55 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=564;device_us=384853793;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER UP 35 55 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=565;device_us=384956819;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT SYNC",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=566;device_us=384957573;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER DOWN 30 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=567;device_us=385209806;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER UP 30 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=568;device_us=385312012;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT SYNC",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=569;device_us=385313141;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER DOWN 210 142 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=570;device_us=385564810;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER UP 210 142 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=571;device_us=385666802;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT SYNC",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=572;device_us=385667879;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER DOWN 220 163 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=573;device_us=385919787;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER UP 220 163 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=574;device_us=386021982;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT SYNC",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=575;device_us=386023057;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER DOWN 185 142 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=576;device_us=386275024;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER UP 185 142 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=577;device_us=386376819;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT SYNC",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=578;device_us=386378709;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER DOWN 239 142 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=579;device_us=386630798;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER UP 239 142 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=580;device_us=386732806;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT SYNC",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=581;device_us=386733751;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "SCREENSHOT JPEG",
+      "frames": [
+        {
+          "kind": "META",
+          "payload": "format=jpeg;width=296;height=240;orientation=logical;frame_id=0;device_us=386935811;source=lvgl;bytes=10978;sha256=273dc570d3b4d8466fef9a4ec85ae34400e08364c8cf4bf0433459f42fd95e69"
+        },
+        {
+          "kind": "OK",
+          "payload": ""
+        }
+      ]
+    },
+    {
+      "capture": "luo-first",
+      "metadata": {
+        "format": "jpeg",
+        "width": "296",
+        "height": "240",
+        "orientation": "logical",
+        "frame_id": "0",
+        "device_us": "386935811",
+        "source": "lvgl",
+        "bytes": "10978",
+        "sha256": "273dc570d3b4d8466fef9a4ec85ae34400e08364c8cf4bf0433459f42fd95e69"
+      }
+    },
+    {
+      "command": "INPUT POINTER DOWN 235 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=582;device_us=387074791;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER MOVE 220 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=583;device_us=387099806;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER MOVE 205 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=584;device_us=387132792;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER MOVE 190 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=585;device_us=387152783;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER MOVE 175 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=586;device_us=387172788;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER MOVE 160 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=587;device_us=387192784;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER MOVE 145 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=588;device_us=387211807;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER MOVE 130 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=589;device_us=387231844;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER MOVE 115 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=590;device_us=387250784;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER MOVE 100 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=591;device_us=387270789;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER MOVE 85 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=592;device_us=387289784;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER MOVE 70 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=593;device_us=387309792;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER MOVE 55 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=594;device_us=387338791;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER UP 50 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=595;device_us=387358849;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT SYNC",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=596;device_us=387360075;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER DOWN 235 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=597;device_us=387662803;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER MOVE 220 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=598;device_us=387684823;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER MOVE 205 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=599;device_us=387721887;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER MOVE 190 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=600;device_us=387741987;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER MOVE 175 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=601;device_us=387761848;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER MOVE 160 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=602;device_us=387781849;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER MOVE 145 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=603;device_us=387801866;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER MOVE 130 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=604;device_us=387821843;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER MOVE 115 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=605;device_us=387841840;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER MOVE 100 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=606;device_us=387860783;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER MOVE 85 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=607;device_us=387880788;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER MOVE 70 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=608;device_us=387899784;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER MOVE 55 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=609;device_us=387918783;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER UP 50 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=610;device_us=387937790;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT SYNC",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=611;device_us=387939149;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER DOWN 235 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=612;device_us=388241979;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER MOVE 220 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=613;device_us=388263810;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER MOVE 205 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=614;device_us=388298791;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER MOVE 190 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=615;device_us=388318783;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER MOVE 175 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=616;device_us=388338784;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER MOVE 160 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=617;device_us=388357783;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER MOVE 145 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=618;device_us=388377790;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER MOVE 130 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=619;device_us=388397787;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER MOVE 115 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=620;device_us=388416783;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER MOVE 100 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=621;device_us=388435784;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER MOVE 85 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=622;device_us=388455789;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER MOVE 70 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=623;device_us=388474783;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER MOVE 55 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=624;device_us=388494785;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER UP 50 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=625;device_us=388513792;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT SYNC",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=626;device_us=388515158;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER DOWN 235 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=627;device_us=388816794;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER MOVE 220 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=628;device_us=388819808;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER MOVE 205 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=629;device_us=388844811;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER MOVE 190 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=630;device_us=388864784;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER MOVE 175 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=631;device_us=388884811;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER MOVE 160 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=632;device_us=388904811;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER MOVE 145 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=633;device_us=388924783;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER MOVE 130 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=634;device_us=388944803;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER MOVE 115 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=635;device_us=388964825;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER MOVE 100 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=636;device_us=388984807;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER MOVE 85 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=637;device_us=389004789;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER MOVE 70 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=638;device_us=389023787;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER MOVE 55 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=639;device_us=389043785;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER UP 50 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=640;device_us=389062790;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT SYNC",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=641;device_us=389064128;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER DOWN 235 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=642;device_us=389366808;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER MOVE 220 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=643;device_us=389368810;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER MOVE 205 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=644;device_us=389403812;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER MOVE 190 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=645;device_us=389479802;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER MOVE 175 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=646;device_us=389499791;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER MOVE 160 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=647;device_us=389519784;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER MOVE 145 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=648;device_us=389539784;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER MOVE 130 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=649;device_us=389559968;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER MOVE 115 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=650;device_us=389579784;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER MOVE 100 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=651;device_us=389598784;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER MOVE 85 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=652;device_us=389617784;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER MOVE 70 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=653;device_us=389636825;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER MOVE 55 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=654;device_us=389656868;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER UP 50 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=655;device_us=389676790;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT SYNC",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=656;device_us=389677932;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "SCREENSHOT JPEG",
+      "frames": [
+        {
+          "kind": "META",
+          "payload": "format=jpeg;width=296;height=240;orientation=logical;frame_id=0;device_us=389813609;source=lvgl;bytes=10951;sha256=b7a97c2df579a69bc2454952bfd249a99f449a766f51a03740ffbb4ca6c992b6"
+        },
+        {
+          "kind": "OK",
+          "payload": ""
+        }
+      ]
+    },
+    {
+      "capture": "luo-last",
+      "metadata": {
+        "format": "jpeg",
+        "width": "296",
+        "height": "240",
+        "orientation": "logical",
+        "frame_id": "0",
+        "device_us": "389813609",
+        "source": "lvgl",
+        "bytes": "10951",
+        "sha256": "b7a97c2df579a69bc2454952bfd249a99f449a766f51a03740ffbb4ca6c992b6"
+      }
+    },
+    {
+      "command": "INPUT POINTER DOWN 170 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=657;device_us=390066793;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER UP 170 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=658;device_us=390168796;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT SYNC",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=659;device_us=390169926;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "SCREENSHOT JPEG",
+      "frames": [
+        {
+          "kind": "META",
+          "payload": "format=jpeg;width=296;height=240;orientation=logical;frame_id=0;device_us=390289455;source=lvgl;bytes=11142;sha256=d030abe399d4056b97873a45c0d87fc27b901d9323ee83eb8aa9db0e2fa24bcb"
+        },
+        {
+          "kind": "OK",
+          "payload": ""
+        }
+      ]
+    },
+    {
+      "capture": "rare-committed",
+      "metadata": {
+        "format": "jpeg",
+        "width": "296",
+        "height": "240",
+        "orientation": "logical",
+        "frame_id": "0",
+        "device_us": "390289455",
+        "source": "lvgl",
+        "bytes": "11142",
+        "sha256": "d030abe399d4056b97873a45c0d87fc27b901d9323ee83eb8aa9db0e2fa24bcb"
+      }
+    },
+    {
+      "command": "INPUT POINTER DOWN 265 184 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=660;device_us=390510790;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER UP 265 184 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=661;device_us=390613915;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT SYNC",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=662;device_us=390616005;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "PING",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "pong"
+        }
+      ]
+    },
+    {
+      "command": "PACKAGE stop pxa-ime-heartbeat",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "stop_queued"
+        }
+      ]
+    }
+  ],
+  "logs": [
+    {
+      "kind": "LOG",
+      "payload": "297612\tI (297612) PxaHost: UI lifecycle: component=65537 foreground=0 requested=0 display_interactive=1"
+    },
+    {
+      "kind": "LOG",
+      "payload": "297612\tI (297612) PxaHost: UI lifecycle: component=65537 foreground=0 requested=0 display_interactive=1"
+    },
+    {
+      "kind": "LOG",
+      "payload": "384724\tI (384724) PxaHost: Queueing launch request: 17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171:pxa-ime-heartbeat"
+    },
+    {
+      "kind": "LOG",
+      "payload": "384734\tI (384734) PxaHost: Processing launch request: 17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171:pxa-ime-heartbeat"
+    },
+    {
+      "kind": "LOG",
+      "payload": "384856\tI (384856) PxaHost: Audio: active=0 queued=0/0 peak_queued=0 submitted=0 rendered=0 tones=0/0 tone_drop=0 voice_exhaust=0 queue_full=0 stale=0 rejected=0 assets=0/0 asset_fail=0 storage=0 stack=0"
+    },
+    {
+      "kind": "LOG",
+      "payload": "384867\tI (384856) PxaHost: Heap[launch-begin]: SRAM used=263848 free=56867 total=320715 min_free=18040 largest=19456 exec_free=6980040 exec_largest=6160384; PSRAM used=1378484 free=6980040 total=8358524 min_free=4524636 largest=6160384"
+    },
+    {
+      "kind": "LOG",
+      "payload": "384924\tI (384924) PXA_WAMR_MEMMAP: AOT mapped: ibus=0x42b30000 dbus=0x3c540000 request=157472 map=196608 alloc=196608 free_psram=6735872"
+    },
+    {
+      "kind": "LOG",
+      "payload": "384983\tI (384983) PxaWamr: AOT streamed: file=173072 source_buffer=0"
+    },
+    {
+      "kind": "LOG",
+      "payload": "385049\tI (385047) PxaHost: Component memory: id=main status=0 sram_delta=756 free_sram=55671 largest_sram=19456 psram_delta=386296 free_psram=6556000 largest_psram=5898240 wamr_delta=29887 wamr_current=30303"
+    },
+    {
+      "kind": "LOG",
+      "payload": "385068\tI (385066) PxaHost: Heap[launch-ready]: SRAM used=265044 free=55671 total=320715 min_free=18040 largest=19456 exec_free=6559300 exec_largest=5898240; PSRAM used=1799224 free=6559300 total=8358524 min_free=4524636 largest=5898240"
+    },
+    {
+      "kind": "LOG",
+      "payload": "385069\tI (385069) PxaHost: WAMR dynamic: peak=39812 current=30303 linear=131072 linear_peak=131072 artifact=0 events=128"
+    },
+    {
+      "kind": "LOG",
+      "payload": "385069\tI (385069) PxaHost: Started verified Package 17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171:pxa-ime-heartbeat"
+    },
+    {
+      "kind": "LOG",
+      "payload": "391165\t\u001b[32m[PXA app=pxa-ime-heartbeat component=65537 level=INFO] IME submitted\u001b[0m"
+    },
+    {
+      "kind": "LOG",
+      "payload": "391165\t\u001b[32m[PXA app=pxa-ime-heartbeat component=65537 level=INFO] 啰\u001b[0m"
+    }
+  ]
+}

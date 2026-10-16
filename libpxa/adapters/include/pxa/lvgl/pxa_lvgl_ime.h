@@ -23,6 +23,8 @@ typedef struct {
     pxa_ime_preferences_t preferences;
     pxa_ui_environment_t environment;
     void *context;
+    /* NULL selects the local built-in decoder with the same keyboard UI.
+     * Non-NULL enqueues work for an external Provider. */
     pxa_lvgl_ime_input_fn input;
     pxa_lvgl_ime_focus_fn focus;
     /* Optional borrowed CJK font path. At most one smaller face is opened on

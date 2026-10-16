@@ -1,0 +1,10 @@
+{
+  "font_bytes": 2777480,
+  "font_sha256": "121cb206d826af5259cfb78418defde651a9daa80fa1d7d51de3eea716c934a4",
+  "maintenance_sha256": "3f8177842557a3cbf3f8683b6eff5921ade7cca550ed9130a0bd0c3f49824b38",
+  "prepared_normal_firmware_bytes": 3442704,
+  "prepared_normal_firmware_sha256": "89a71493481cc8f5b4875323be4463afa95c3567fb7f33f4bc730adee234e35b",
+  "normal_firmware_bytes": 3444960,
+  "normal_firmware_sha256": "2888648beb53b8db69e85d16e01dad86b8df2f7d3dba92a158c092a2efa27fe4",
+  "normal_final_build": "current_worktree_20261016"
+}

@@ -1,0 +1,29 @@
+{
+  "before": {
+    "text": 21134,
+    "literal": 3420,
+    "rodata": 16663,
+    "data": 0,
+    "bss": 0,
+    "dram": 0,
+    "iram": 0
+  },
+  "after": {
+    "text": 21252,
+    "literal": 3448,
+    "rodata": 16663,
+    "data": 0,
+    "bss": 0,
+    "dram": 0,
+    "iram": 0
+  },
+  "delta": {
+    "text": 118,
+    "literal": 28,
+    "rodata": 0,
+    "data": 0,
+    "bss": 0,
+    "dram": 0,
+    "iram": 0
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "unchanged_tables": {
+    "hhea": true,
+    "maxp": true,
+    "OS/2": true,
+    "hmtx": true,
+    "loca": true,
+    "glyf": true,
+    "name": true,
+    "post": true
+  },
+  "active_format_12_bytes_identical": true,
+  "pillow_sample": "你好𠳐A"
+}

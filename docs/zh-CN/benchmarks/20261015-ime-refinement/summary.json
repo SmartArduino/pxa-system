@@ -1,0 +1,336 @@
+{
+  "status": "local_and_pai_touch_verified_restored_device_released",
+  "font_bytes_previous": 2805772,
+  "font_bytes_current": 2777480,
+  "font_saved_this_iteration": 28292,
+  "font_saved_from_initial": 1101648,
+  "font_sha256": "121cb206d826af5259cfb78418defde651a9daa80fa1d7d51de3eea716c934a4",
+  "font_codepoints": 9883,
+  "font_glyphs": 9851,
+  "simplified_characters": 8105,
+  "default_native_tests": 13,
+  "font_tests_with_native_probe": 11,
+  "provider_matrix": {
+    "providers": 2,
+    "code_modes": 2,
+    "profiles_per_mode": 13,
+    "fault_packages_per_mode": 6
+  },
+  "frontend_memory_sync": [
+    {
+      "variant": "before",
+      "repeats": 5,
+      "shape": 0,
+      "loaded_delta": 5862,
+      "initialization_absolute_peak": 16794,
+      "reopen_peak_delta": 6887,
+      "closed_delta": 0
+    },
+    {
+      "variant": "before",
+      "repeats": 5,
+      "shape": 1,
+      "loaded_delta": 5902,
+      "initialization_absolute_peak": 16810,
+      "reopen_peak_delta": 6927,
+      "closed_delta": 0
+    },
+    {
+      "variant": "after",
+      "repeats": 5,
+      "shape": 0,
+      "loaded_delta": 5862,
+      "initialization_absolute_peak": 16794,
+      "reopen_peak_delta": 6887,
+      "closed_delta": 0
+    },
+    {
+      "variant": "after",
+      "repeats": 5,
+      "shape": 1,
+      "loaded_delta": 5902,
+      "initialization_absolute_peak": 16810,
+      "reopen_peak_delta": 6927,
+      "closed_delta": 0
+    }
+  ],
+  "frontend_esp_sections": {
+    "before": {
+      "text": 21134,
+      "literal": 3420,
+      "rodata": 16663,
+      "data": 0,
+      "bss": 0,
+      "dram": 0,
+      "iram": 0
+    },
+    "after": {
+      "text": 21252,
+      "literal": 3448,
+      "rodata": 16663,
+      "data": 0,
+      "bss": 0,
+      "dram": 0,
+      "iram": 0
+    },
+    "delta": {
+      "text": 118,
+      "literal": 28,
+      "rodata": 0,
+      "data": 0,
+      "bss": 0,
+      "dram": 0,
+      "iram": 0
+    }
+  },
+  "source_sha256": {
+    "tools/fonts/build_common_font.py": "cbb57b5a51010bbb8a39a5838dd3282fc133076dea641568ca6dddbbc636e205",
+    "tools/fonts/test_common_font.py": "467710dca88920ade802b2321e25962fdb86941f783d93a0da52835ea5735b35",
+    "tools/fonts/ft_font_probe.c": "92cb3f460a4663522b17687900d9e1316c6f15dc66cf41ee4bb94f6faaffb063",
+    "deps/pxa-system/libpxa/adapters/lvgl/pxa_lvgl_ime.c": "49190171b226530d0ab916b2355d7dd7187cf9ae22302968d916f882c8122123",
+    "deps/pxa-system/ui/reference/tests/reference_ime_test.c": "a4b0fc851a2dfdb3efa99771e9e203b9ab256d439e0a654fea8bf35d543071b5",
+    "deps/pxa-system/ui/reference/lvgl/CMakeLists.txt": "001ccfec3be0f4754574371a1e0b1d782b67a944dd0e017b178091e5713928b8"
+  },
+  "hardware_this_iteration": {
+    "accessed": true,
+    "flashed": true,
+    "font_replaced": true,
+    "device_released": true,
+    "original_package_files_verified": 24,
+    "normal_firmware_sha256": "2888648beb53b8db69e85d16e01dad86b8df2f7d3dba92a158c092a2efa27fe4",
+    "normal_firmware_bytes": 3444960,
+    "providers": [
+      "builtin",
+      "full",
+      "lite"
+    ],
+    "reopen_cycles": {
+      "before_builtin": 8,
+      "after_builtin": 8,
+      "after_full": 2,
+      "after_lite": 2
+    },
+    "actual_submission": "你好",
+    "actual_hold_submission": "你好qabcde",
+    "rare_submission": "啰",
+    "supplementary_submission": "𠳐",
+    "wifi_configuration_untouched": true,
+    "private_data_unchanged": true,
+    "warm_memory": {
+      "before-builtin": {
+        "cycles": 8,
+        "warm": {
+          "sram": {
+            "initial_free": 48611,
+            "end_free": 48575,
+            "local_min_free": 48447,
+            "peak_delta": 164,
+            "closed_delta": 36,
+            "closed_free_range": [
+              48575,
+              48611
+            ]
+          },
+          "psram": {
+            "initial_free": 6438912,
+            "end_free": 6438860,
+            "local_min_free": 6073324,
+            "peak_delta": 365588,
+            "closed_delta": 52,
+            "closed_free_range": [
+              6438860,
+              6438884
+            ]
+          }
+        },
+        "first_app_plus_open": {
+          "sram": {
+            "peak_delta": 5292,
+            "end_delta": 1192
+          },
+          "psram": {
+            "peak_delta": 777580,
+            "end_delta": 417284
+          }
+        },
+        "first_ready": {
+          "count": "0",
+          "queue_us": "0",
+          "processing_us": "0",
+          "queue_max_us": "0",
+          "processing_max_us": "0",
+          "provider_load_us": "0",
+          "keyboard_drawn": "0",
+          "first_draw_ms": "0",
+          "candidates_ready": "0",
+          "candidates_ready_ms": "0",
+          "provider_steps": "0",
+          "provider_step_max_us": "0"
+        }
+      },
+      "after-builtin": {
+        "cycles": 8,
+        "warm": {
+          "sram": {
+            "initial_free": 55671,
+            "end_free": 55671,
+            "local_min_free": 55507,
+            "peak_delta": 164,
+            "closed_delta": 0,
+            "closed_free_range": [
+              55635,
+              55671
+            ]
+          },
+          "psram": {
+            "initial_free": 6581504,
+            "end_free": 6581480,
+            "local_min_free": 6217620,
+            "peak_delta": 363884,
+            "closed_delta": 24,
+            "closed_free_range": [
+              6581476,
+              6581480
+            ]
+          }
+        },
+        "first_app_plus_open": {
+          "sram": {
+            "peak_delta": 5420,
+            "end_delta": 1284
+          },
+          "psram": {
+            "peak_delta": 788012,
+            "end_delta": 427776
+          }
+        },
+        "first_ready": {
+          "count": "0",
+          "queue_us": "0",
+          "processing_us": "0",
+          "queue_max_us": "0",
+          "processing_max_us": "0",
+          "provider_load_us": "0",
+          "keyboard_drawn": "0",
+          "first_draw_ms": "0",
+          "candidates_ready": "0",
+          "candidates_ready_ms": "0",
+          "provider_steps": "0",
+          "provider_step_max_us": "0"
+        }
+      },
+      "after-full": {
+        "cycles": 2,
+        "warm": {
+          "sram": {
+            "initial_free": 55671,
+            "end_free": 55671,
+            "local_min_free": 50731,
+            "peak_delta": 4940,
+            "closed_delta": 0,
+            "closed_free_range": [
+              55671,
+              55671
+            ]
+          },
+          "psram": {
+            "initial_free": 6575608,
+            "end_free": 6575580,
+            "local_min_free": 4958652,
+            "peak_delta": 1616956,
+            "closed_delta": 28,
+            "closed_free_range": [
+              6575580,
+              6575580
+            ]
+          }
+        },
+        "first_app_plus_open": {
+          "sram": {
+            "peak_delta": 6084,
+            "end_delta": 1948
+          },
+          "psram": {
+            "peak_delta": 2030812,
+            "end_delta": 2024584
+          }
+        },
+        "first_ready": {
+          "count": "0",
+          "queue_us": "0",
+          "processing_us": "0",
+          "queue_max_us": "0",
+          "processing_max_us": "0",
+          "provider_load_us": "2159407",
+          "keyboard_drawn": "1",
+          "first_draw_ms": "30",
+          "candidates_ready": "1",
+          "candidates_ready_ms": "2236",
+          "provider_steps": "104",
+          "provider_step_max_us": "610789"
+        }
+      },
+      "after-lite": {
+        "cycles": 2,
+        "warm": {
+          "sram": {
+            "initial_free": 55671,
+            "end_free": 55671,
+            "local_min_free": 51415,
+            "peak_delta": 4256,
+            "closed_delta": 0,
+            "closed_free_range": [
+              55635,
+              55671
+            ]
+          },
+          "psram": {
+            "initial_free": 6575332,
+            "end_free": 6575304,
+            "local_min_free": 6236100,
+            "peak_delta": 339232,
+            "closed_delta": 28,
+            "closed_free_range": [
+              6575304,
+              6575304
+            ]
+          }
+        },
+        "first_app_plus_open": {
+          "sram": {
+            "peak_delta": 5452,
+            "end_delta": 1948
+          },
+          "psram": {
+            "peak_delta": 752596,
+            "end_delta": 750752
+          }
+        },
+        "first_ready": {
+          "count": "0",
+          "queue_us": "0",
+          "processing_us": "0",
+          "queue_max_us": "0",
+          "processing_max_us": "0",
+          "provider_load_us": "902873",
+          "keyboard_drawn": "1",
+          "first_draw_ms": "20",
+          "candidates_ready": "1",
+          "candidates_ready_ms": "944",
+          "provider_steps": "28",
+          "provider_step_max_us": "289711"
+        }
+      }
+    },
+    "first_window_not_controlled_firmware_or_cache_baseline": true
+  },
+  "prepared_artifacts": {
+    "normal_firmware_bytes": 3442704,
+    "normal_firmware_sha256": "89a71493481cc8f5b4875323be4463afa95c3567fb7f33f4bc730adee234e35b",
+    "font_bytes": 2777480,
+    "font_sha256": "121cb206d826af5259cfb78418defde651a9daa80fa1d7d51de3eea716c934a4",
+    "maintenance_sha256": "3f8177842557a3cbf3f8683b6eff5921ade7cca550ed9130a0bd0c3f49824b38"
+  },
+  "font_reproducible": true,
+  "documented_cmake_reproduction": "built_native_test_passed_paired_memory_passed"
+}

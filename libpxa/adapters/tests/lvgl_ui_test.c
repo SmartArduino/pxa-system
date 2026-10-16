@@ -1058,6 +1058,44 @@ static void test_reentrant_page_removal(void) {
     puts("Reentrant page removal during click/scroll is safe");
 }
 
+static void test_density_icon_fonts(void) {
+    const lv_font_t *small = pxa_lvgl_ui_icon_font(130u * 65536u / 160u);
+    const lv_font_t *mosaico = pxa_lvgl_ui_icon_font(305u * 65536u / 160u);
+    const lv_font_t *large = pxa_lvgl_ui_icon_font(480u * 65536u / 160u);
+    lv_mem_monitor_t before, after;
+    lv_mem_monitor(&before);
+    assert(small->line_height < mosaico->line_height);
+    assert(mosaico->line_height < large->line_height);
+    assert(pxa_lvgl_ui_icon_font(0) == pxa_lvgl_ui_icon_font(65536));
+    unsigned symbols = 0;
+    for (uint32_t cp=0xe000; cp<=0xf8ff; ++cp) {
+        lv_font_glyph_dsc_t reference = {0}, actual = {0};
+        bool found = lv_font_montserrat_16.get_glyph_dsc(&lv_font_montserrat_16, &reference, cp, 0);
+        assert(small->get_glyph_dsc(small, &actual, cp, 0) == found);
+        if (!found) continue;
+        ++symbols;
+        assert(actual.adv_w == reference.adv_w && actual.box_w == reference.box_w &&
+               actual.box_h == reference.box_h && actual.ofs_x == reference.ofs_x &&
+               actual.ofs_y == reference.ofs_y);
+        reference.resolved_font = &lv_font_montserrat_16; reference.req_raw_bitmap = 1;
+        actual.resolved_font = small; actual.req_raw_bitmap = 1;
+        const void *a = lv_font_montserrat_16.get_glyph_bitmap(&reference, NULL);
+        const void *b = small->get_glyph_bitmap(&actual, NULL);
+        assert(a && b && memcmp(a,b,((size_t)actual.box_w*actual.box_h+1)/2)==0);
+    }
+    assert(symbols == 60);
+    const uint32_t navigation[] = {0xf015,0xf04b,0xf00c,0xf019};
+    for (size_t i=0;i<sizeof(navigation)/sizeof(navigation[0]);++i) {
+        lv_font_glyph_dsc_t a={0}, b={0};
+        assert(small->get_glyph_dsc(small,&a,navigation[i],0));
+        assert(mosaico->get_glyph_dsc(mosaico,&b,navigation[i],0));
+        assert(b.box_h > a.box_h && b.box_w > a.box_w);
+    }
+    lv_mem_monitor(&after);
+    assert(before.free_size == after.free_size);
+    puts("UI symbols: DPI selection, 60 original glyphs byte-exact, navigation growth and zero heap allocation passed");
+}
+
 int main(void) {
     pxa_runtime_limits_t runtime_limits;
     pxa_ui_config_t service_config;
@@ -1089,6 +1127,7 @@ int main(void) {
     size_t alpha_visible;
 
     test_lvgl_init();
+    test_density_icon_fonts();
     if (!getenv("PXA_CANVAS_MEASURE")) test_reentrant_page_removal();
     pxa_runtime_limits_init(&runtime_limits);
     runtime_limits.max_components = 1;

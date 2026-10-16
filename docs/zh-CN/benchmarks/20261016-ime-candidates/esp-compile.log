@@ -1,0 +1,7 @@
+In file included from [01m[K/home/lucinhu/Documents/workspace/esp32/zuowei_paixueji_touch/pxa-projects/firmware/managed_components/lvgl__lvgl/include/lvgl/3d/lv_3dmath.h:17[m[K,
+                 from [01m[K/home/lucinhu/Documents/workspace/esp32/zuowei_paixueji_touch/pxa-projects/firmware/managed_components/lvgl__lvgl/include/lvgl/lvgl.h:5[m[K,
+                 from [01m[K/home/lucinhu/Documents/workspace/esp32/zuowei_paixueji_touch/pxa-projects/firmware/managed_components/lvgl__lvgl/lvgl.h:1[m[K,
+                 from [01m[K/home/lucinhu/Documents/workspace/esp32/zuowei_paixueji_touch/pxa-projects/deps/pxa-system/libpxa/adapters/lvgl/pxa_lvgl_ime.c:3[m[K:
+[01m[K/home/lucinhu/Documents/workspace/esp32/zuowei_paixueji_touch/pxa-projects/firmware/managed_components/lvgl__lvgl/include/lvgl/3d/../config/lv_conf_internal.h:4976:10:[m[K [01;35m[Kwarning: [m[K#warning "LV_ASSERT_HANDLER_INCLUDE is deprecated and will be removed in a future release. Use LV_ASSERT_CUSTOM_INCLUDE and define LV_ASSERT_HANDLER inside. To suppress this warning, remove LV_ASSERT_HANDLER_INCLUDE or enable LV_DISABLE_ASSERT_HANDLER_INCLUDE_WARNING." [[01;35m[K-Wcpp[m[K]
+ 4976 |         #[01;35m[Kwarning[m[K "LV_ASSERT_HANDLER_INCLUDE is deprecated and will be removed in a future release. Use LV_ASSERT_CUSTOM_INCLUDE and define LV_ASSERT_HANDLER inside. To suppress this warning, remove LV_ASSERT_HANDLER_INCLUDE or enable LV_DISABLE_ASSERT_HANDLER_INCLUDE_WARNING."
+      |          [01;35m[K^~~~~~~[m[K

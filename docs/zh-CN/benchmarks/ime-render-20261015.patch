@@ -1,0 +1,139 @@
+--- a/libpxa/adapters/lvgl/pxa_lvgl_ime.c
++++ b/libpxa/adapters/lvgl/pxa_lvgl_ime.c
+@@ -204,6 +204,11 @@
+     LV_STYLE_CONST_PROPS_END,
+ };
+ static LV_STYLE_CONST_INIT(rail_style,rail_properties);
++static const lv_style_const_prop_t disabled_properties[] = {
++    {.prop=LV_STYLE_TEXT_OPA,.value={.num=LV_OPA_50}},
++    LV_STYLE_CONST_PROPS_END,
++};
++static LV_STYLE_CONST_INIT(disabled_style,disabled_properties);
+ static void target_event(lv_event_t *event);
+ static void rebuild_keys(pxa_lvgl_ime_t *ime);
+ static const char *composition(const pxa_lvgl_ime_t *ime);
+@@ -674,8 +679,10 @@
+             lv_buttonmatrix_set_button_width(ime->toolbar,5,2);
+         }
+     }
+-    if (ime->sensitive) lv_buttonmatrix_set_button_ctrl(ime->toolbar,2,LV_BUTTONMATRIX_CTRL_DISABLED);
+-    else lv_buttonmatrix_clear_button_ctrl(ime->toolbar,2,LV_BUTTONMATRIX_CTRL_DISABLED);
++    if (lv_buttonmatrix_has_button_ctrl(ime->toolbar,2,LV_BUTTONMATRIX_CTRL_DISABLED)!=ime->sensitive) {
++        if (ime->sensitive) lv_buttonmatrix_set_button_ctrl(ime->toolbar,2,LV_BUTTONMATRIX_CTRL_DISABLED);
++        else lv_buttonmatrix_clear_button_ctrl(ime->toolbar,2,LV_BUTTONMATRIX_CTRL_DISABLED);
++    }
+ }
+ static void toolbar_event(lv_event_t *event) {
+     pxa_lvgl_ime_t *ime=lv_event_get_user_data(event);
+@@ -790,10 +797,14 @@
+ static lv_obj_t *matrix(lv_obj_t *root, lv_event_cb_t callback, pxa_lvgl_ime_t *ime) {
+     lv_obj_t *object = lv_buttonmatrix_create(root);
+     if (!object) return NULL;
++    /* These private matrices use system tokens below. Do not retain the
++     * default theme's button shadows, recoloring or state transitions. */
++    lv_obj_remove_style_all(object);
+     lv_obj_set_scrollable(object, false); lv_obj_set_click_focusable(object, false);
+     lv_obj_add_style(object,&ime->matrix_style,0);
+     lv_obj_add_style(object,&ime->item_style,LV_PART_ITEMS);
+     lv_obj_add_style(object,&ime->pressed_style,LV_PART_ITEMS|LV_STATE_PRESSED);
++    lv_obj_add_style(object,&disabled_style,LV_PART_ITEMS|LV_STATE_DISABLED);
+     if (callback) lv_obj_add_event_cb(object, callback, LV_EVENT_ALL, ime);
+     lv_buttonmatrix_set_map(object, empty_map);
+     return object;
+@@ -925,6 +936,11 @@
+     lv_obj_set_style_text_color(ime->root, lv_color_hex(theme->rgba[PXA_UI_THEME_TEXT] >> 8), 0);
+     lv_obj_set_style_bg_color(ime->root, lv_color_hex(theme->rgba[PXA_UI_THEME_SURFACE_CONTAINER] >> 8), 0);
+     lv_obj_set_style_border_color(ime->root,lv_color_hex(theme->rgba[PXA_UI_THEME_OUTLINE_VARIANT]>>8),0);
++    /* Only theme/environment updates change these panel properties. Setting
++     * them during each candidate layout invalidates the whole keyboard. */
++    lv_obj_set_style_pad_all(ime->root,ime->config.environment.display_shape==2?2:4,0);
++    lv_obj_set_style_border_width(ime->root,ime->config.environment.display_shape?0:1,0);
++    lv_obj_set_style_bg_opa(ime->root,LV_OPA_COVER,0);
+     if (ime->preedit) {
+         lv_obj_set_style_bg_color(ime->preedit,lv_color_hex(theme->rgba[PXA_UI_THEME_SURFACE_CONTAINER]>>8),0);
+         lv_obj_set_style_bg_opa(ime->preedit,LV_OPA_COVER,0);
+@@ -962,6 +978,7 @@
+     lv_style_set_pad_row(&ime->matrix_style,3); lv_style_set_pad_column(&ime->matrix_style,3);
+     lv_style_set_bg_opa(&ime->matrix_style,LV_OPA_TRANSP);
+     lv_style_set_radius(&ime->item_style,4);
++    lv_style_set_bg_opa(&ime->item_style,LV_OPA_COVER);
+     lv_style_set_bg_opa(&ime->pressed_style,LV_OPA_COVER);
+     ime->root = lv_obj_create(config->parent ? config->parent : lv_layer_top());
+     if (!ime->root) goto failed;
+@@ -1114,11 +1131,8 @@
+     int width=right-left, limit=px(ime,640);
+     if (width>limit) { left+=(width-limit)/2; width=limit; }
+     if (width<24 || height<header+footer+view+padding) return;
+-    lv_obj_set_style_pad_all(ime->root,circle?2:4,0);
+-    lv_obj_set_style_border_width(ime->root,contoured?0:1,0);
+     /* The panel covers text behind inter-key gaps. Physical display masking
+      * clips its background; each interactive row still fits the safe contour. */
+-    lv_obj_set_style_bg_opa(ime->root,LV_OPA_COVER,0);
+     lv_obj_set_size(ime->root,width,height); lv_obj_set_pos(ime->root,left,y);
+     lv_obj_update_layout(ime->root);
+     /* Environment bounds are display coordinates; parent padding and scroll
+@@ -1299,9 +1313,16 @@
+     lv_obj_set_style_bg_color(ime->editor_caret,
+         lv_color_hex(ime->config.theme.rgba[PXA_UI_THEME_TEXT]>>8),0);
+     lv_obj_set_clickable(ime->editor_caret,false);
++    /* Cursor controls are a text rail too: only a held arrow gets a fill. */
++    lv_obj_add_style(ime->editor_navigation,&rail_style,LV_PART_ITEMS);
+     lv_buttonmatrix_set_map(ime->editor_navigation,navigation_map);
+     lv_buttonmatrix_set_button_ctrl_all(ime->editor_navigation,LV_BUTTONMATRIX_CTRL_CLICK_TRIG);
+     return true;
++}
++static bool copy_editor_bytes(char **out,const char *text,size_t size) {
++    bool changed=memcmp(*out,text,size)!=0;
++    memcpy(*out,text,size); *out+=size;
++    return changed;
+ }
+ static void update_editor_text(pxa_lvgl_ime_t *ime) {
+     lv_obj_update_layout(ime->editor_view);
+@@ -1340,15 +1361,19 @@
+         used+=width; finish=p; ++end; ++count;
+     }
+     char *out=ime->editor_buffer;
+-    if (prefix) { memcpy(out,"…",3); out+=3; }
++    bool changed=lv_label_get_text(ime->editor_text)!=ime->editor_buffer;
++    if (prefix) changed|=copy_editor_bytes(&out,"…",3);
+     for (const char *p=begin;p<finish;) {
+         const char *next=next_character(p);
+-        if (ime->sensitive) *out++='*'; else { memcpy(out,p,(size_t)(next-p)); out+=next-p; }
++        changed|=copy_editor_bytes(&out,ime->sensitive?"*":p,ime->sensitive?1:(size_t)(next-p));
+         p=next;
+     }
++    changed|=*out!=0;
+     *out=0;
+     ime->editor_start=start; ime->editor_end=end; ime->editor_cursor=cursor; ime->editor_prefix=prefix;
+-    lv_label_set_text_static(ime->editor_text,ime->editor_buffer);
++    /* Reuse the bounded buffer without invalidating an unchanged label.
++     * Caret position, font and viewport changes still take effect below. */
++    if (changed) lv_label_set_text_static(ime->editor_text,ime->editor_buffer);
+     lv_obj_update_layout(ime->editor_view);
+     lv_point_t point; lv_label_get_letter_pos(ime->editor_text,cursor-start+(prefix?1:0),&point);
+     lv_obj_set_pos(ime->editor_caret,4+point.x,(lv_obj_get_height(ime->editor_view)-ime->font.line_height)/2);
+@@ -1416,10 +1441,12 @@
+     if (!*preedit && !ime->candidate_count) {
+         const char *const *map=ime->sensitive?idle_password:ime->language?idle_english:
+             !ime->ready?idle_loading:ime->layout==PXA_IME_K9?idle_nine:idle_full;
+-        lv_buttonmatrix_set_map(ime->candidates,map); map_controls(ime->candidates);
+-        lv_buttonmatrix_set_button_ctrl(ime->candidates,1,LV_BUTTONMATRIX_CTRL_DISABLED);
+-        lv_buttonmatrix_set_button_width(ime->candidates,0,1);
+-        lv_buttonmatrix_set_button_width(ime->candidates,1,8);
++        if (lv_buttonmatrix_get_map(ime->candidates)!=map) {
++            lv_buttonmatrix_set_map(ime->candidates,map); map_controls(ime->candidates);
++            lv_buttonmatrix_set_button_ctrl(ime->candidates,1,LV_BUTTONMATRIX_CTRL_DISABLED);
++            lv_buttonmatrix_set_button_width(ime->candidates,0,1);
++            lv_buttonmatrix_set_button_width(ime->candidates,1,8);
++        }
+         ime->visible=ime->spelling_visible=0; return;
+     }
+     const char *words=preedit+strlen(preedit)+1,*spellings=words;
+@@ -1557,7 +1584,6 @@
+     else if (frame->edit == PXA_IME_EDIT_CLEAR) lv_textarea_set_text(ime->target,"");
+     if (!ime->target) { ime->editing = false; free(buffer); return PXA_STATUS_OK; }
+     ime->fingerprint = text_fingerprint(ime->target); ime->editing = false;
+-    refresh_editor(ime,true);
+     cursor += frame->commit.size + 1;
+     memcpy(cursor,frame->preedit.data,frame->preedit.size); cursor[frame->preedit.size]=0;
+     if (ime->preedit) lv_label_set_text(ime->preedit,*cursor ? cursor : ime->language ? "English" : "拼音");

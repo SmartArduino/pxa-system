@@ -1,0 +1,92 @@
+{
+  ".dram0.data": {
+    "before": 32210,
+    "after": 32210,
+    "delta": 0
+  },
+  ".ext_ram_noinit": {
+    "before": 0,
+    "after": 0,
+    "delta": 0
+  },
+  ".flash.rodata": {
+    "before": 758356,
+    "after": 758356,
+    "delta": 0
+  },
+  ".ext_ram.dummy": {
+    "before": 3342304,
+    "after": 3342304,
+    "delta": 0
+  },
+  ".flash.rodata_noload": {
+    "before": 17011,
+    "after": 17011,
+    "delta": 0
+  },
+  ".iram0.vectors": {
+    "before": 1028,
+    "after": 1028,
+    "delta": 0
+  },
+  ".flash.tdata": {
+    "before": 8,
+    "after": 8,
+    "delta": 0
+  },
+  ".dram0.heap_start": {
+    "before": 0,
+    "after": 0,
+    "delta": 0
+  },
+  ".flash.appdesc": {
+    "before": 256,
+    "after": 256,
+    "delta": 0
+  },
+  ".iram0.bss": {
+    "before": 0,
+    "after": 0,
+    "delta": 0
+  },
+  ".dram0.bss": {
+    "before": 18552,
+    "after": 18552,
+    "delta": 0
+  },
+  ".dram0.dummy": {
+    "before": 99072,
+    "after": 99072,
+    "delta": 0
+  },
+  ".flash_rodata_dummy": {
+    "before": 2555904,
+    "after": 2555904,
+    "delta": 0
+  },
+  ".iram0.text": {
+    "before": 114267,
+    "after": 114267,
+    "delta": 0
+  },
+  ".ext_ram.bss": {
+    "before": 30084,
+    "after": 30084,
+    "delta": 0
+  },
+  ".iram0.data": {
+    "before": 0,
+    "after": 0,
+    "delta": 0
+  },
+  ".flash.text": {
+    "before": 2525016,
+    "after": 2525240,
+    "delta": 224
+  },
+  ".iram0.text_end": {
+    "before": 161,
+    "after": 161,
+    "delta": 0
+  }
+}

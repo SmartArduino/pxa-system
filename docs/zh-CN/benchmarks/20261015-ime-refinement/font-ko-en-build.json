@@ -1,0 +1,37 @@
+{
+  "base_sha256": "7b89dc0cb85fec0458461953a7e9a08c4012a0f84c3ce44e64407743a248bd10",
+  "source_sha256": "b76b0433203017ca80401b2ee0dd69350349871c4b19d504c34dbdd80541690a",
+  "source_face": 1,
+  "base_codepoints": 15135,
+  "fallback_source_sha256": "d4db8ef66da9e8bf8e22fcfeb22afd0d8731e5c7373134b1f261b08879f8f920",
+  "fallback_codepoints": [],
+  "languages": [
+    "ko",
+    "en"
+  ],
+  "source_region": "KR",
+  "base_region": "SC",
+  "unicode_cmap_format": 4,
+  "fixed_ui_codepoints": 267,
+  "omitted_optional_range_codepoints": [],
+  "traditional_coverage": null,
+  "codepoints": 13559,
+  "glyphs": 13528,
+  "added_codepoints": 9408,
+  "removed_codepoints": 10984,
+  "bytes": 2314140,
+  "sha256": "7d83720a814e8550d5781fa292b4b6f98fc88f75dbcb26ea7093b580fa3baddd",
+  "tables": {
+    "head": 54,
+    "hhea": 36,
+    "maxp": 32,
+    "OS/2": 96,
+    "hmtx": 54112,
+    "cmap": 2870,
+    "loca": 54116,
+    "glyf": 2202450,
+    "name": 162,
+    "post": 32
+  },
+  "corpora": []
+}

@@ -1,0 +1,206 @@
+{
+  "before-builtin": {
+    "cycles": 8,
+    "warm": {
+      "sram": {
+        "initial_free": 48611,
+        "end_free": 48575,
+        "local_min_free": 48447,
+        "peak_delta": 164,
+        "closed_delta": 36,
+        "closed_free_range": [
+          48575,
+          48611
+        ]
+      },
+      "psram": {
+        "initial_free": 6438912,
+        "end_free": 6438860,
+        "local_min_free": 6073324,
+        "peak_delta": 365588,
+        "closed_delta": 52,
+        "closed_free_range": [
+          6438860,
+          6438884
+        ]
+      }
+    },
+    "first_app_plus_open": {
+      "sram": {
+        "peak_delta": 5292,
+        "end_delta": 1192
+      },
+      "psram": {
+        "peak_delta": 777580,
+        "end_delta": 417284
+      }
+    },
+    "first_ready": {
+      "count": "0",
+      "queue_us": "0",
+      "processing_us": "0",
+      "queue_max_us": "0",
+      "processing_max_us": "0",
+      "provider_load_us": "0",
+      "keyboard_drawn": "0",
+      "first_draw_ms": "0",
+      "candidates_ready": "0",
+      "candidates_ready_ms": "0",
+      "provider_steps": "0",
+      "provider_step_max_us": "0"
+    }
+  },
+  "after-builtin": {
+    "cycles": 8,
+    "warm": {
+      "sram": {
+        "initial_free": 55671,
+        "end_free": 55671,
+        "local_min_free": 55507,
+        "peak_delta": 164,
+        "closed_delta": 0,
+        "closed_free_range": [
+          55635,
+          55671
+        ]
+      },
+      "psram": {
+        "initial_free": 6581504,
+        "end_free": 6581480,
+        "local_min_free": 6217620,
+        "peak_delta": 363884,
+        "closed_delta": 24,
+        "closed_free_range": [
+          6581476,
+          6581480
+        ]
+      }
+    },
+    "first_app_plus_open": {
+      "sram": {
+        "peak_delta": 5420,
+        "end_delta": 1284
+      },
+      "psram": {
+        "peak_delta": 788012,
+        "end_delta": 427776
+      }
+    },
+    "first_ready": {
+      "count": "0",
+      "queue_us": "0",
+      "processing_us": "0",
+      "queue_max_us": "0",
+      "processing_max_us": "0",
+      "provider_load_us": "0",
+      "keyboard_drawn": "0",
+      "first_draw_ms": "0",
+      "candidates_ready": "0",
+      "candidates_ready_ms": "0",
+      "provider_steps": "0",
+      "provider_step_max_us": "0"
+    }
+  },
+  "after-full": {
+    "cycles": 2,
+    "warm": {
+      "sram": {
+        "initial_free": 55671,
+        "end_free": 55671,
+        "local_min_free": 50731,
+        "peak_delta": 4940,
+        "closed_delta": 0,
+        "closed_free_range": [
+          55671,
+          55671
+        ]
+      },
+      "psram": {
+        "initial_free": 6575608,
+        "end_free": 6575580,
+        "local_min_free": 4958652,
+        "peak_delta": 1616956,
+        "closed_delta": 28,
+        "closed_free_range": [
+          6575580,
+          6575580
+        ]
+      }
+    },
+    "first_app_plus_open": {
+      "sram": {
+        "peak_delta": 6084,
+        "end_delta": 1948
+      },
+      "psram": {
+        "peak_delta": 2030812,
+        "end_delta": 2024584
+      }
+    },
+    "first_ready": {
+      "count": "0",
+      "queue_us": "0",
+      "processing_us": "0",
+      "queue_max_us": "0",
+      "processing_max_us": "0",
+      "provider_load_us": "2159407",
+      "keyboard_drawn": "1",
+      "first_draw_ms": "30",
+      "candidates_ready": "1",
+      "candidates_ready_ms": "2236",
+      "provider_steps": "104",
+      "provider_step_max_us": "610789"
+    }
+  },
+  "after-lite": {
+    "cycles": 2,
+    "warm": {
+      "sram": {
+        "initial_free": 55671,
+        "end_free": 55671,
+        "local_min_free": 51415,
+        "peak_delta": 4256,
+        "closed_delta": 0,
+        "closed_free_range": [
+          55635,
+          55671
+        ]
+      },
+      "psram": {
+        "initial_free": 6575332,
+        "end_free": 6575304,
+        "local_min_free": 6236100,
+        "peak_delta": 339232,
+        "closed_delta": 28,
+        "closed_free_range": [
+          6575304,
+          6575304
+        ]
+      }
+    },
+    "first_app_plus_open": {
+      "sram": {
+        "peak_delta": 5452,
+        "end_delta": 1948
+      },
+      "psram": {
+        "peak_delta": 752596,
+        "end_delta": 750752
+      }
+    },
+    "first_ready": {
+      "count": "0",
+      "queue_us": "0",
+      "processing_us": "0",
+      "queue_max_us": "0",
+      "processing_max_us": "0",
+      "provider_load_us": "902873",
+      "keyboard_drawn": "1",
+      "first_draw_ms": "20",
+      "candidates_ready": "1",
+      "candidates_ready_ms": "944",
+      "provider_steps": "28",
+      "provider_step_max_us": "289711"
+    }
+  }
+}

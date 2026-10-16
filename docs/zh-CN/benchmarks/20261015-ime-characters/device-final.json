@@ -1,0 +1,110 @@
+{
+  "hello": "protocol=1;mode=normal;capabilities=info,memory,logcat,packages,package-deploy,package-run,package-stop,fs,reboot,doctor,input-v2,screenshot-rgb565,screenshot-jpeg,poweroff,perf-raster,heap-local,ime;max_chunk=1024;fs_offset=1;fs_sha256=1;target=esp32s3;serial=a4:cb:8f:d5:d4:f0;version=host-tools-v0.1.0-20-gc3dd9e5-d",
+  "font_sha256": "c705d23f6a239e43f21075a660ec2739cf399fd7926140687dc516a3f6e4f698",
+  "font_bytes": 2805772,
+  "firmware_sha256": "42256b9fb7f4defbc6f897bec2b0356eef3b22e004bc5651d95a14f67d8eae5d",
+  "firmware_bytes": 3442576,
+  "packages": [
+    {
+      "kind": "PKG",
+      "payload": "17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171:pxa-pinyin-ime\t拼音输入法\t1.0.1\tbuiltin=0;installed=1;staged=0;enabled=1;active=0"
+    },
+    {
+      "kind": "PKG",
+      "payload": "17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171:pxa-pinyin-ime-lite\t轻量拼音输入法\t1.0.1\tbuiltin=0;installed=1;staged=0;enabled=1;active=0"
+    },
+    {
+      "kind": "PKG",
+      "payload": "17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171:pxa-browser\tPXA 浏览器\t0.1.1\tbuiltin=0;installed=1;staged=0;enabled=1;active=0"
+    },
+    {
+      "kind": "OK",
+      "payload": ""
+    }
+  ],
+  "memory": [
+    {
+      "kind": "DATA",
+      "payload": "scope=heap;sram_total=320715;sram_free=56771;sram_min=18040;sram_largest=19456;psram_total=8358524;psram_free=6858548;psram_min=4492332;psram_largest=6029312"
+    },
+    {
+      "kind": "DATA",
+      "payload": "scope=budget;internal=27468;external=16516;peak_internal=27468;peak_external=16631;temporary_peak_internal=0;temporary_peak_external=0;fixed=2224;denied=0;allocation_failures=0"
+    },
+    {
+      "kind": "DATA",
+      "payload": "scope=kind;name=raster;internal=0;external=0"
+    },
+    {
+      "kind": "DATA",
+      "payload": "scope=kind;name=image;internal=0;external=0"
+    },
+    {
+      "kind": "DATA",
+      "payload": "scope=kind;name=audio;internal=0;external=16392"
+    },
+    {
+      "kind": "DATA",
+      "payload": "scope=kind;name=temporary;internal=0;external=0"
+    },
+    {
+      "kind": "DATA",
+      "payload": "scope=kind;name=metadata;internal=27468;external=124"
+    },
+    {
+      "kind": "DATA",
+      "payload": "scope=kind;name=frame;internal=0;external=0"
+    },
+    {
+      "kind": "DATA",
+      "payload": "scope=surface;frame=0;scratch=0;mailbox=0;probe=0;peak_total=0"
+    },
+    {
+      "kind": "OK",
+      "payload": ""
+    }
+  ],
+  "info": [
+    {
+      "kind": "OK",
+      "payload": "target=esp32s3;serial=a4:cb:8f:d5:d4:f0;version=host-tools-v0.1.0-20-gc3dd9e5-d;free_heap=6915283;pxa=ready;package_directory_adopt=1;package_receive=1;board=pai-touch;pxa_version=0.3.0;pxa_core=2.0;storage_total=9437184;storage_used=9228288;storage_free=208896"
+    }
+  ],
+  "selected": [
+    {
+      "kind": "SELECTED",
+      "payload": ""
+    },
+    {
+      "kind": "TIMING",
+      "payload": "count=0;queue_us=0;processing_us=0;queue_max_us=0;processing_max_us=0;provider_load_us=1071438;keyboard_drawn=0;first_draw_ms=0;candidates_ready=0;candidates_ready_ms=0;provider_steps=28;provider_step_max_us=301746"
+    },
+    {
+      "kind": "METHOD",
+      "payload": "17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171:pxa-pinyin-ime"
+    },
+    {
+      "kind": "METHOD",
+      "payload": "17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171:pxa-pinyin-ime-lite"
+    },
+    {
+      "kind": "OK",
+      "payload": "listed"
+    }
+  ],
+  "original_package_signatures_verified": true,
+  "fixture_removed": true,
+  "wifi_configuration_untouched": true,
+  "system_files_locked": true,
+  "screenshot_metadata": {
+    "format": "jpeg",
+    "width": "296",
+    "height": "240",
+    "orientation": "logical",
+    "frame_id": "0",
+    "device_us": "613424978",
+    "source": "lvgl",
+    "bytes": "6836",
+    "sha256": "698ab7813892fc769d750351dc277c536625990841bfae2ae79dff47eaac6550"
+  }
+}

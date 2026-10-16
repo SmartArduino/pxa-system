@@ -1,0 +1,4 @@
+PXA IME unloaded
+PXA IME load status=0 metadata_bytes=2962
+Squeezed candidate toggle: profile=0 width=10 required=44
+pxsys_ime_test: /home/lucinhu/Documents/workspace/esp32/zuowei_paixueji_touch/pxa-projects/deps/pxa-system/simulator/desktop/tests/ime_app_test.c:193: assert_candidate_toggle_width: Assertion `lv_area_get_width(&cell)>=minimum' failed.

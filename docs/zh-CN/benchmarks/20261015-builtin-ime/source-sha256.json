@@ -1,0 +1,10 @@
+{
+  "deps/pxa-system/libpxa/adapters/lvgl/pxa_lvgl_ime.c": "f04ede9617c44639c27d42b0cea1cf7b8c6f3cc4dcf3fd0f1eec7c98924c13ef",
+  "deps/pxa-system/libpxa/adapters/lvgl/pxa_lvgl_ime_builtin.c": "b7a76f337d779c54ce70da4c5b6f2ab1f863cacb203cf7f7a7a40b3a5c34aa6f",
+  "deps/pxa-system/ui/reference/lvgl/src/reference_ime.c": "61c475b85228058158aa5818766cbd2d5973999336c9481c1acb0c1d605dd311",
+  "deps/pxa-system/ui/reference/lvgl/src/reference_lvgl.c": "b28d22cc78eac8fd4303226f7f542d08e3683fafdd45b26008f53c1d5a2d6ec5",
+  "deps/pxa-system/ui/reference/tests/reference_ime_test.c": "ba75a9b4332432b24eee371731a736b88011422837fbc29d42bff59d8939658a",
+  "deps/pxa-system/ui/reference/tests/reference_features_test.c": "4db7fe656b0bcba0aa9f13facec013dbe7074c22b8290014bcda3cffb9132930",
+  "local/ime-provider-20261015/esp32s3/pxa-pinyin-ime.pxa": "0932326dc0e9d3d5f3f809ea891593465e218d1ee3c3a5cb6b5140d6b6a100d3",
+  "local/ime-provider-20261015/esp32s3/pxa-pinyin-ime-lite.pxa": "3b529adb542f09e1a44d576469622ea4d478e26d0cd23d0805269a2fd4847035"
+}

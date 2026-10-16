@@ -1,0 +1,62 @@
+[
+  {
+    "segment": 0,
+    "expected_address": 1009188896,
+    "actual_address": 1009188896,
+    "expected_size": 772284,
+    "actual_size": 772284,
+    "identical_code": true,
+    "expected_sha": "efc6d5ff8d805f8da3e54cdf23c94b54b83605bd4965902eff5d599b63ec36c0",
+    "actual_sha": "efc6d5ff8d805f8da3e54cdf23c94b54b83605bd4965902eff5d599b63ec36c0"
+  },
+  {
+    "segment": 1,
+    "expected_address": 1070203648,
+    "actual_address": 1070203648,
+    "expected_size": 14132,
+    "actual_size": 14132,
+    "identical_code": true,
+    "expected_sha": "70bc83550695685721afa6c0e13fa5f310edb2ed22fb904cb4de37bf4347f61f",
+    "actual_sha": "70bc83550695685721afa6c0e13fa5f310edb2ed22fb904cb4de37bf4347f61f"
+  },
+  {
+    "segment": 2,
+    "expected_address": 1107296288,
+    "actual_address": 1107296288,
+    "expected_size": 2525016,
+    "actual_size": 2525016,
+    "identical_code": true,
+    "expected_sha": "689954914097a5b5c9bfa0edff844e3eeb66d1de867acb75bd7f87c8c1cc253a",
+    "actual_sha": "689954914097a5b5c9bfa0edff844e3eeb66d1de867acb75bd7f87c8c1cc253a"
+  },
+  {
+    "segment": 3,
+    "expected_address": 1070217780,
+    "actual_address": 1070217780,
+    "expected_size": 18080,
+    "actual_size": 18080,
+    "identical_code": true,
+    "expected_sha": "2ee6086b3b019b78bfabc714a06ad38fee75ba060e2a8866e8d8510fdfa39d4f",
+    "actual_sha": "2ee6086b3b019b78bfabc714a06ad38fee75ba060e2a8866e8d8510fdfa39d4f"
+  },
+  {
+    "segment": 4,
+    "expected_address": 1077362688,
+    "actual_address": 1077362688,
+    "expected_size": 115296,
+    "actual_size": 115296,
+    "identical_code": true,
+    "expected_sha": "44eaf1133e2454101a36cc69c8e0ca4f91033c81ee77113a18756c0fb12815e9",
+    "actual_sha": "44eaf1133e2454101a36cc69c8e0ca4f91033c81ee77113a18756c0fb12815e9"
+  },
+  {
+    "segment": 5,
+    "expected_address": 1342177280,
+    "actual_address": 1342177280,
+    "expected_size": 36,
+    "actual_size": 36,
+    "identical_code": true,
+    "expected_sha": "6db65fd59fd356f6729140571b5bcd6bb3b83492a16e1bf0a3884442fc3c8a0e",
+    "actual_sha": "6db65fd59fd356f6729140571b5bcd6bb3b83492a16e1bf0a3884442fc3c8a0e"
+  }
+]

@@ -1,0 +1,957 @@
+{
+  "provider": "builtin",
+  "passed": true,
+  "expected_submission": "你好qabcde",
+  "rows": [
+    {
+      "command": "IME select builtin",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "selected"
+        }
+      ]
+    },
+    {
+      "command": "PACKAGE run pxa-ime-heartbeat",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "launch_queued"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER DOWN 35 55 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=118;device_us=139003790;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER UP 35 55 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=119;device_us=139157026;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT SYNC",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=120;device_us=139158177;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER DOWN 179 163 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=121;device_us=139710808;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER UP 179 163 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=122;device_us=139812796;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT SYNC",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=123;device_us=139813819;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER DOWN 50 163 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=124;device_us=140065801;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER UP 50 163 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=125;device_us=140167801;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT SYNC",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=126;device_us=140168921;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER DOWN 232 99 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=127;device_us=140420816;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER UP 232 99 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=128;device_us=140522792;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT SYNC",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=129;device_us=140523808;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER DOWN 45 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=130;device_us=140775795;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER UP 45 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=131;device_us=140877801;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT SYNC",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=132;device_us=140878863;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER DOWN 30 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=133;device_us=141130805;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER UP 30 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=134;device_us=141232808;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT SYNC",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=135;device_us=141234075;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER DOWN 210 142 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=136;device_us=141485818;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER UP 210 142 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=137;device_us=141587798;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT SYNC",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=138;device_us=141588913;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER DOWN 161 163 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=139;device_us=141841091;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER UP 161 163 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=140;device_us=141942800;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT SYNC",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=141;device_us=141943750;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER DOWN 32 163 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=142;device_us=142195807;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER UP 32 163 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=143;device_us=142297804;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT SYNC",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=144;device_us=142298844;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER DOWN 239 142 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=145;device_us=142550859;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER UP 239 142 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=146;device_us=142652811;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT SYNC",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=147;device_us=142654119;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER DOWN 45 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=148;device_us=142905796;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER UP 45 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=149;device_us=143007802;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT SYNC",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=150;device_us=143008693;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER DOWN 111 209 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=151;device_us=143260800;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER UP 111 209 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=152;device_us=143362798;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT SYNC",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=153;device_us=143363708;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER DOWN 32 163 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=154;device_us=143615807;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER UP 32 163 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=155;device_us=143717794;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT SYNC",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=156;device_us=143718901;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER DOWN 172 184 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=157;device_us=143970805;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER UP 172 184 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=158;device_us=144072812;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT SYNC",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=159;device_us=144074184;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER DOWN 124 184 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=160;device_us=144325797;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER UP 124 184 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=161;device_us=144427811;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT SYNC",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=162;device_us=144429029;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER DOWN 77 163 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=163;device_us=144680810;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER UP 77 163 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=164;device_us=144782804;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT SYNC",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=165;device_us=144783851;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER DOWN 82 142 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=166;device_us=145035800;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER UP 82 142 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=167;device_us=145137802;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT SYNC",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=168;device_us=145139265;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "SCREENSHOT JPEG",
+      "frames": [
+        {
+          "kind": "META",
+          "payload": "format=jpeg;width=296;height=240;orientation=logical;frame_id=0;device_us=145223625;source=lvgl;bytes=11574;sha256=386ccadb180ba17e31f251d68438a6b37e670e86012a49830fa794d335cc4707"
+        },
+        {
+          "kind": "OK",
+          "payload": ""
+        }
+      ]
+    },
+    {
+      "capture": "before-move",
+      "metadata": {
+        "format": "jpeg",
+        "width": "296",
+        "height": "240",
+        "orientation": "logical",
+        "frame_id": "0",
+        "device_us": "145223625",
+        "source": "lvgl",
+        "bytes": "11574",
+        "sha256": "386ccadb180ba17e31f251d68438a6b37e670e86012a49830fa794d335cc4707"
+      }
+    },
+    {
+      "command": "INPUT POINTER DOWN 111 209 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=169;device_us=145482805;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER UP 111 209 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=170;device_us=145584796;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT SYNC",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=171;device_us=145585760;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER DOWN 30 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=172;device_us=146137808;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER UP 30 119 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=173;device_us=146239801;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT SYNC",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=174;device_us=146240896;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER DOWN 62 184 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=175;device_us=146492818;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER UP 62 184 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=176;device_us=148497029;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT SYNC",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=177;device_us=148498239;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "SCREENSHOT JPEG",
+      "frames": [
+        {
+          "kind": "META",
+          "payload": "format=jpeg;width=296;height=240;orientation=logical;frame_id=0;device_us=148792452;source=lvgl;bytes=10159;sha256=6e8266471ac2f05ec094a375f33f3476af4a4478d9b751e01e62e051700f2649"
+        },
+        {
+          "kind": "OK",
+          "payload": ""
+        }
+      ]
+    },
+    {
+      "capture": "held-left-to-start",
+      "metadata": {
+        "format": "jpeg",
+        "width": "296",
+        "height": "240",
+        "orientation": "logical",
+        "frame_id": "0",
+        "device_us": "148792452",
+        "source": "lvgl",
+        "bytes": "10159",
+        "sha256": "6e8266471ac2f05ec094a375f33f3476af4a4478d9b751e01e62e051700f2649"
+      }
+    },
+    {
+      "command": "INPUT POINTER DOWN 234 184 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=178;device_us=148887801;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER UP 234 184 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=179;device_us=148990797;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT SYNC",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=180;device_us=148992224;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER DOWN 234 184 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=181;device_us=149243793;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER UP 234 184 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=182;device_us=149345811;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT SYNC",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=183;device_us=149347032;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "SCREENSHOT JPEG",
+      "frames": [
+        {
+          "kind": "META",
+          "payload": "format=jpeg;width=296;height=240;orientation=logical;frame_id=0;device_us=149387181;source=lvgl;bytes=10218;sha256=e7df7b9264bcb714536da78a8f4681b300e02e9f70262001e3c8248e9842d43f"
+        },
+        {
+          "kind": "OK",
+          "payload": ""
+        }
+      ]
+    },
+    {
+      "capture": "right-two",
+      "metadata": {
+        "format": "jpeg",
+        "width": "296",
+        "height": "240",
+        "orientation": "logical",
+        "frame_id": "0",
+        "device_us": "149387181",
+        "source": "lvgl",
+        "bytes": "10218",
+        "sha256": "e7df7b9264bcb714536da78a8f4681b300e02e9f70262001e3c8248e9842d43f"
+      }
+    },
+    {
+      "command": "INPUT POINTER DOWN 148 184 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=184;device_us=149692863;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER UP 148 184 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=185;device_us=149794797;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT SYNC",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=186;device_us=149795795;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER DOWN 111 209 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=187;device_us=150047851;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER UP 111 209 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=188;device_us=150149800;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT SYNC",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=189;device_us=150150713;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER DOWN 32 142 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=190;device_us=150402818;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER UP 32 142 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=191;device_us=150505812;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT SYNC",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=192;device_us=150506820;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "SCREENSHOT JPEG",
+      "frames": [
+        {
+          "kind": "META",
+          "payload": "format=jpeg;width=296;height=240;orientation=logical;frame_id=0;device_us=150576659;source=lvgl;bytes=11642;sha256=8f0b4fe2bb2f069cb546a683c90aafb50e6ce44ee7252279f90b38e254307096"
+        },
+        {
+          "kind": "OK",
+          "payload": ""
+        }
+      ]
+    },
+    {
+      "capture": "insert-between",
+      "metadata": {
+        "format": "jpeg",
+        "width": "296",
+        "height": "240",
+        "orientation": "logical",
+        "frame_id": "0",
+        "device_us": "150576659",
+        "source": "lvgl",
+        "bytes": "11642",
+        "sha256": "8f0b4fe2bb2f069cb546a683c90aafb50e6ce44ee7252279f90b38e254307096"
+      }
+    },
+    {
+      "command": "INPUT POINTER DOWN 265 184 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=193;device_us=150852795;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT POINTER UP 265 184 0",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=194;device_us=150954826;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "INPUT SYNC",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "event=195;device_us=150956671;status=processed"
+        }
+      ]
+    },
+    {
+      "command": "PING",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "pong"
+        }
+      ]
+    },
+    {
+      "command": "PACKAGE stop pxa-ime-heartbeat",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "stop_queued"
+        }
+      ]
+    },
+    {
+      "command": "IME select builtin",
+      "frames": [
+        {
+          "kind": "OK",
+          "payload": "selected"
+        }
+      ]
+    }
+  ],
+  "logs": [
+    {
+      "kind": "LOG",
+      "payload": "138366\tI (138366) PxaHost: UI lifecycle: component=65537 foreground=0 requested=0 display_interactive=1"
+    },
+    {
+      "kind": "LOG",
+      "payload": "138368\tI (138368) Pxadb: Package list finished: stack_free=6268B"
+    },
+    {
+      "kind": "LOG",
+      "payload": "138368\tI (138368) PxaHost: UI peaks: dynamic=3196 current=1660 assets=0 current_assets=0 largest_decoded=0 asset_count=0 referenced=0 hits=0 misses=0 evictions=0 nodes=10 canvases=0 surfaces=1"
+    },
+    {
+      "kind": "LOG",
+      "payload": "138368\tI (138368) PxaHost: Audio: active=0 queued=0/0 peak_queued=0 submitted=0 rendered=0 tones=0/0 tone_drop=0 voice_exhaust=0 queue_full=0 stale=0 rejected=0 assets=0/0 asset_fail=0 storage=0 stack=0"
+    },
+    {
+      "kind": "LOG",
+      "payload": "138377\tI (138377) PXA_WAMR_MEMMAP: AOT released: ibus=0x42b30000 dbus=0x3c4c0000 size=157472 free_psram=6761472->6958084 delta=196612"
+    },
+    {
+      "kind": "LOG",
+      "payload": "138387\tI (138387) PxaHost: Runtime peaks: components=1 requests=0 handles=0 events=1 event_blocks=3 services=17"
+    },
+    {
+      "kind": "LOG",
+      "payload": "138387\tI (138387) PxaHost: WAMR dynamic: peak=39812 current=416 linear=0 linear_peak=131072 artifact=0 events=0"
+    },
+    {
+      "kind": "LOG",
+      "payload": "138387\tI (138387) PxaHost: Activation memory: workspaces=18 blocks=3 used=13049 reserved=17691 peak_used=13049 peak_reserved=17691"
+    },
+    {
+      "kind": "LOG",
+      "payload": "138472\tI (138472) Pxadb: Package list finished: stack_free=6268B"
+    },
+    {
+      "kind": "LOG",
+      "payload": "138873\tI (138873) PxaHost: Queueing launch request: 17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171:pxa-ime-heartbeat"
+    },
+    {
+      "kind": "LOG",
+      "payload": "138883\tI (138883) PxaHost: Processing launch request: 17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171:pxa-ime-heartbeat"
+    },
+    {
+      "kind": "LOG",
+      "payload": "139002\tI (139002) PxaHost: Audio: active=0 queued=0/0 peak_queued=0 submitted=0 rendered=0 tones=0/0 tone_drop=0 voice_exhaust=0 queue_full=0 stale=0 rejected=0 assets=0/0 asset_fail=0 storage=0 stack=0"
+    },
+    {
+      "kind": "LOG",
+      "payload": "139012\tI (139002) PxaHost: Heap[launch-begin]: SRAM used=263848 free=56867 total=320715 min_free=18040 largest=19456 exec_free=7000884 exec_largest=6684672; PSRAM used=1357640 free=7000884 total=8358524 min_free=6141468 largest=6684672"
+    },
+    {
+      "kind": "LOG",
+      "payload": "139070\tI (139070) PXA_WAMR_MEMMAP: AOT mapped: ibus=0x42b30000 dbus=0x3c4c0000 request=157472 map=196608 alloc=196608 free_psram=6756744"
+    },
+    {
+      "kind": "LOG",
+      "payload": "139128\tI (139128) PxaWamr: AOT streamed: file=173072 source_buffer=0"
+    },
+    {
+      "kind": "LOG",
+      "payload": "139194\tI (139192) PxaHost: Component memory: id=main status=0 sram_delta=756 free_sram=55671 largest_sram=19456 psram_delta=386144 free_psram=6577024 largest_psram=6422528 wamr_delta=29887 wamr_current=30303"
+    },
+    {
+      "kind": "LOG",
+      "payload": "139212\tI (139212) PxaBridge: Application foregrounded: 17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171:pxa-ime-heartbeat"
+    },
+    {
+      "kind": "LOG",
+      "payload": "139212\tI (139212) PxaBridge: Launch completion: 17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171:pxa-ime-heartbeat intent=0 status=0"
+    },
+    {
+      "kind": "LOG",
+      "payload": "139214\tI (139211) PxaHost: Heap[launch-ready]: SRAM used=265080 free=55635 total=320715 min_free=18040 largest=19456 exec_free=6580316 exec_largest=6422528; PSRAM used=1778208 free=6580316 total=8358524 min_free=6141468 largest=6422528"
+    },
+    {
+      "kind": "LOG",
+      "payload": "139214\tI (139214) PxaHost: WAMR dynamic: peak=39812 current=30303 linear=131072 linear_peak=131072 artifact=0 events=128"
+    },
+    {
+      "kind": "LOG",
+      "payload": "142357\tI (142357) AdcBatteryMonitor: Battery: channel=1 raw=3387 adc=2813mV battery=4248mV level=100% charging=1"
+    },
+    {
+      "kind": "LOG",
+      "payload": "151502\t\u001b[32m[PXA app=pxa-ime-heartbeat component=65537 level=INFO] IME submitted\u001b[0m"
+    },
+    {
+      "kind": "LOG",
+      "payload": "151503\t\u001b[32m[PXA app=pxa-ime-heartbeat component=65537 level=INFO] 你好qabcde\u001b[0m"
+    }
+  ],
+  "selected_restored": ""
+}

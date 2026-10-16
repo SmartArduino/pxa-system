@@ -11,6 +11,10 @@
     "dynamic-text",
     "password-input"
   ],
+  "assets": [
+    "image-decode",
+    "image-frames"
+  ],
   "wasi": [
     "monotonic-clock",
     "wall-clock",

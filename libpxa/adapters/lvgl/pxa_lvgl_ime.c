@@ -1,6 +1,8 @@
 #include "pxa/lvgl/pxa_lvgl_ime.h"
+#include "pxa_lvgl_ime_builtin.h"
 #include "lvgl.h"
 #include "fonts/ime_label_12.h"
+#include "fonts/ime_latin_12.h"
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
@@ -10,7 +12,7 @@ struct pxa_lvgl_ime {
     lv_obj_t *target, *root, *preedit, *candidates, *keys, *toolbar;
     lv_obj_t *key_rows[3];
     lv_style_t matrix_style, item_style, pressed_style;
-    lv_obj_t *fallback_keyboard, *fallback_pinyin;
+    pxa_lvgl_ime_builtin_t *builtin;
     lv_obj_t *scroll_parent;
     lv_obj_t *editor_view, *editor_text, *editor_caret, *editor_navigation;
     int32_t previous_scroll_y;
@@ -35,18 +37,19 @@ struct pxa_lvgl_ime {
     lv_point_t gesture_start;
     uint32_t awaiting_since, started_since;
     uint32_t opened_since, first_draw_ms, ready_ms;
+    uint8_t footer_weights;
     /* UI-thread-owned flags: no atomic or concurrent bitfield updates. Keep
      * state compact without a separate allocation or cached keyboard maps. */
     bool contour_keys:1, editor_prefix:1, view_visible:1, refreshing:1;
     bool editing:1, sensitive:1, uppercase:1, caps_lock:1, more:1, held:1;
     bool ready:1, awaiting:1, expanded:1, gesture_swiped:1, drawn:1, provider_ready:1;
-    bool waiting_release:1;
+    bool waiting_release:1, arc_toolbar:1, local:1, dispatching:1, traditional:1;
 
 };
 /* One set of immutable maps serves both rectangular and contoured displays.
  * Row views avoid per-instance pointer tables; no Latin alphabet paging. */
 enum { PANEL_LETTERS, PANEL_NUMBERS, PANEL_SYMBOLS, PANEL_TOOLS };
-enum { SWITCH_NONE, SWITCH_LANGUAGE, SWITCH_LAYOUT, SWITCH_CLOSE };
+enum { SWITCH_NONE, SWITCH_LANGUAGE, SWITCH_LAYOUT, SWITCH_CLOSE, SWITCH_SCRIPT, MOVE_LEFT, MOVE_RIGHT };
 typedef struct {
     const char *const *map;
     const char *const *row[4];
@@ -166,15 +169,26 @@ static const char *const en_symbols_1_line_map[] = {"+","-","=","*","/","&",LV_S
 static const ime_keyset_t en_symbols_1_line = {en_symbols_1_line_map,{en_symbols_1_line_0,en_symbols_1_line_1,en_symbols_1_line_2},3};
 static const char *const tools_0[] = {"九键","全键",""};
 static const char *const tools_1[] = {"中文","English",""};
-static const char *const tools_2[] = {"返回",""};
-static const char *const tools_map[] = {"九键","全键","\n","中文","English","\n","返回",""};
+static const char *const tools_2[] = {LV_SYMBOL_LEFT,"返回",LV_SYMBOL_RIGHT,""};
+static const char *const tools_map[] = {"九键","全键","\n","中文","English","\n",LV_SYMBOL_LEFT,"返回",LV_SYMBOL_RIGHT,""};
 static const ime_keyset_t tools = {tools_map,{tools_0,tools_1,tools_2},3};
+static const char *const tools_script_2[] = {"简体","繁體",""};
+static const char *const tools_script_map[] = {"九键","全键","\n","中文","English","\n","简体","繁體","\n",LV_SYMBOL_LEFT,"返回",LV_SYMBOL_RIGHT,""};
+static const ime_keyset_t tools_script = {tools_script_map,{tools_0,tools_1,tools_script_2,tools_2},4};
 static const char *const toolbar_letters_cn[] = {"符","123","中","空格",LV_SYMBOL_DOWN,""};
 static const char *const toolbar_numbers_cn[] = {"符","返回","中","空格",LV_SYMBOL_DOWN,""};
 static const char *const toolbar_symbols_cn[] = {"返回","123","中","空格",LV_SYMBOL_DOWN,""};
 static const char *const toolbar_letters_en[] = {"符","123","EN","空格",LV_SYMBOL_DOWN,""};
 static const char *const toolbar_numbers_en[] = {"符","返回","EN","空格",LV_SYMBOL_DOWN,""};
 static const char *const toolbar_symbols_en[] = {"返回","123","EN","空格",LV_SYMBOL_DOWN,""};
+/* One matrix, with invisible side cells fitting the lower circular chord.
+ * No additional widget or per-instance map is needed for the second row. */
+static const char *const arc_letters_cn[] = {"符","123","中","\n"," ","空格",LV_SYMBOL_DOWN," ",""};
+static const char *const arc_numbers_cn[] = {"符","返回","中","\n"," ","空格",LV_SYMBOL_DOWN," ",""};
+static const char *const arc_symbols_cn[] = {"返回","123","中","\n"," ","空格",LV_SYMBOL_DOWN," ",""};
+static const char *const arc_letters_en[] = {"符","123","EN","\n"," ","空格",LV_SYMBOL_DOWN," ",""};
+static const char *const arc_numbers_en[] = {"符","返回","EN","\n"," ","空格",LV_SYMBOL_DOWN," ",""};
+static const char *const arc_symbols_en[] = {"返回","123","EN","\n"," ","空格",LV_SYMBOL_DOWN," ",""};
 static const char *const idle_nine[] = {LV_SYMBOL_SETTINGS,"中文 · 九键",""};
 static const char *const idle_full[] = {LV_SYMBOL_SETTINGS,"中文 · 全键",""};
 static const char *const idle_english[] = {LV_SYMBOL_SETTINGS,"English",""};
@@ -183,6 +197,22 @@ static const char *const idle_loading[] = {LV_SYMBOL_SETTINGS,"正在准备…",
 static const char *const empty_map[] = {" ",""};
 static const char *const loading_map[] = {"正在准备…",""};
 static const char *const navigation_map[] = {LV_SYMBOL_LEFT,LV_SYMBOL_RIGHT,""};
+/* Fixed rail geometry belongs in ROM, not separate local style allocations
+ * for every editor. The same style also suppresses disabled highlights. */
+static const lv_style_const_prop_t rail_properties[] = {
+    {.prop=LV_STYLE_BG_OPA,.value={.num=LV_OPA_TRANSP}},
+    {.prop=LV_STYLE_BORDER_WIDTH,.value={.num=0}},
+    {.prop=LV_STYLE_OUTLINE_WIDTH,.value={.num=0}},
+    {.prop=LV_STYLE_SHADOW_WIDTH,.value={.num=0}},
+    {.prop=LV_STYLE_RADIUS,.value={.num=2}},
+    LV_STYLE_CONST_PROPS_END,
+};
+static LV_STYLE_CONST_INIT(rail_style,rail_properties);
+static const lv_style_const_prop_t disabled_properties[] = {
+    {.prop=LV_STYLE_TEXT_OPA,.value={.num=LV_OPA_50}},
+    LV_STYLE_CONST_PROPS_END,
+};
+static LV_STYLE_CONST_INIT(disabled_style,disabled_properties);
 static void target_event(lv_event_t *event);
 static void rebuild_keys(pxa_lvgl_ime_t *ime);
 static const char *composition(const pxa_lvgl_ime_t *ime);
@@ -190,22 +220,25 @@ static void layout(pxa_lvgl_ime_t *ime, bool choose_layout);
 static void pack_spellings(pxa_lvgl_ime_t *ime);
 static lv_obj_t *matrix(lv_obj_t *root,lv_event_cb_t callback,pxa_lvgl_ime_t *ime);
 static int text_width(const pxa_lvgl_ime_t *ime, const char *text);
+static int px(const pxa_lvgl_ime_t *ime, int dp);
 static void refresh_editor(pxa_lvgl_ime_t *ime, bool reveal);
 static void scroll_parent_deleted(lv_event_t *event) {
     pxa_lvgl_ime_t *ime=lv_event_get_user_data(event); ime->scroll_parent=NULL;
 }
 static void flush_input(pxa_lvgl_ime_t *ime);
+static pxa_status_t local_present(void *context,const pxa_ime_frame_t *frame);
 static pxa_status_t send_action(pxa_lvgl_ime_t *ime,uint16_t action,uint32_t value,const char *text);
 static void restart_session(pxa_lvgl_ime_t *ime);
 static bool sync_sensitive_mode(pxa_lvgl_ime_t *ime);
 static pxa_status_t fallback(pxa_lvgl_ime_t *ime);
 static bool needs_provider(const pxa_lvgl_ime_t *ime) {
-    return ime->target && !ime->sensitive && ime->language==PXA_IME_CHINESE && !ime->fallback_keyboard;
+    return ime->target && !ime->sensitive && ime->language==PXA_IME_CHINESE && !ime->local;
 }
 static bool busy(const pxa_lvgl_ime_t *ime) { return !ime->ready || ime->awaiting || ime->queue_count || ime->waiting_release; }
 static lv_obj_t *key_row(pxa_lvgl_ime_t *ime,unsigned row) {
     return row ? ime->key_rows[row-1] : ime->keys;
 }
+static unsigned space_button(const pxa_lvgl_ime_t *ime) { return ime->arc_toolbar?4:3; }
 static void update_interactivity(pxa_lvgl_ime_t *ime) {
     lv_obj_set_state(ime->candidates, LV_STATE_DISABLED, busy(ime));
     for (unsigned row=0;row<4;++row)
@@ -221,7 +254,24 @@ static void update_interactivity(pxa_lvgl_ime_t *ime) {
     }
 }
 static void flush_input(pxa_lvgl_ime_t *ime) {
-    if (!ime->target || ime->fallback_keyboard || !ime->ready || ime->awaiting || !ime->queue_count) return;
+    if (!ime->target || ime->dispatching || !ime->ready || ime->awaiting || !ime->queue_count) return;
+    if (ime->local) {
+        ime->dispatching=true;
+        /* Local replies can request another confirm during language/close
+         * switching. Drain iteratively, never recurse through PRESENT. */
+        for (unsigned budget=16;budget && ime->target && ime->queue_count;--budget) {
+            unsigned i=ime->queue_head;
+            uint16_t action=ime->queue[i].action; uint32_t value=ime->queue[i].value;
+            uint8_t input_layout=ime->queue[i].layout;
+            char text[sizeof(ime->queue[i].text)]; memcpy(text,ime->queue[i].text,sizeof(text));
+            ime->queue_head=(ime->queue_head+1)%16; --ime->queue_count;
+            ime->awaiting=true;
+            pxa_status_t status=pxa_lvgl_ime_builtin_input(ime->builtin,action,input_layout,value,
+                (pxa_bytes_t){(const uint8_t *)text,strlen(text)},local_present,ime);
+            if (status!=PXA_STATUS_OK) { ime->awaiting=false; pxa_lvgl_ime_close(ime); break; }
+        }
+        ime->dispatching=false; update_interactivity(ime); return;
+    }
     unsigned i = ime->queue_head;
     pxa_status_t status = ime->config.input(ime->config.context, ime->generation,
         ime->queue[i].action, ime->queue[i].layout, ime->queue[i].language,
@@ -283,13 +333,21 @@ static void header_event(lv_event_t *event) {
     } else if (code==LV_EVENT_PRESSING && !ime->gesture_swiped && !busy(ime)) {
         lv_point_t point; lv_indev_get_point(pointer,&point);
         int dx=point.x-ime->gesture_start.x,dy=point.y-ime->gesture_start.y;
-        int threshold=ime->font.line_height/2; if (threshold<8) threshold=8;
+        int threshold=px(ime,12);
+        int maximum=lv_obj_get_width(ime->candidates)/6;
+        if (threshold>maximum) threshold=maximum;
+        if (threshold<10) threshold=10;
         if (abs(dx)<threshold && abs(dy)<threshold) return;
         ime->gesture_swiped=true;
-        lv_area_t box; lv_obj_get_coords(ime->candidates,&box);
+        lv_area_t box; lv_obj_get_content_coords(ime->candidates,&box);
+        const char *const *map=lv_buttonmatrix_get_map(ime->candidates);
+        unsigned rows=1;
+        for (unsigned i=0;*map[i];++i) if (!strcmp(map[i],"\n")) ++rows;
+        const int gap=lv_obj_get_style_pad_row(ime->candidates,0);
+        const int first_height=(lv_area_get_height(&box)-gap*(int)(rows-1))/(int)rows;
         bool spelling=ime->layout==PXA_IME_K9 && ime->spelling_count &&
-            ime->gesture_start.y<box.y1+ime->font.line_height+8;
-        if (abs(dx)>abs(dy)) {
+            ime->gesture_start.y<box.y1+first_height;
+        if (abs(dx)>abs(dy)*3/2) {
             if (spelling) {
                 if (dx<0 && ime->spelling_start+ime->spelling_visible<ime->spelling_count)
                     ime->spelling_start+=ime->spelling_visible;
@@ -297,6 +355,9 @@ static void header_event(lv_event_t *event) {
                     ime->spelling_start-ime->spelling_visible:0;
                 pack_spellings(ime);
             } else turn_word_page(ime,dx<0);
+        } else if (abs(dy)>abs(dx)*3/2 && ime->candidate_count &&
+                   ((dy<0 && !ime->expanded) || (dy>0 && ime->expanded))) {
+            ime->expanded=dy<0; ime->panel=PANEL_LETTERS; layout(ime,false);
         }
         lv_buttonmatrix_set_selected_button(ime->candidates,LV_BUTTONMATRIX_BUTTON_NONE);
         /* Consume even an out-of-band drag: releasing must not choose a word
@@ -331,7 +392,26 @@ static void restart_session(pxa_lvgl_ime_t *ime) {
     ++ime->generation; ime->queue_count = 0; ime->awaiting = false; ime->provider_ready=false;
     ime->multi_key=0;
     ime->ready = !needs_provider(ime);
+    bool local_fallback=false;
+    if (ime->local) {
+        unsigned scripts=pxa_lvgl_ime_builtin_scripts();
+        if (!(scripts&1u)) ime->traditional=true;
+        else if (!(scripts&2u)) ime->traditional=false;
+        if (ime->sensitive || ime->language==PXA_IME_ENGLISH) {
+            pxa_lvgl_ime_builtin_destroy(ime->builtin); ime->builtin=NULL;
+        }
+        if (!ime->sensitive && ime->language==PXA_IME_CHINESE && !ime->builtin)
+            ime->builtin=pxa_lvgl_ime_builtin_create(ime->root);
+        if (!ime->builtin && !ime->sensitive && ime->language==PXA_IME_CHINESE) {
+            ime->language=PXA_IME_ENGLISH; ime->layout=PXA_IME_K26;
+            local_fallback=true;
+        }
+        if (ime->builtin) (void)pxa_lvgl_ime_builtin_set_traditional(ime->builtin,ime->traditional);
+        ime->provider_ready=ime->builtin!=NULL;
+        ime->ready_ms=0;
+    }
     ime->started_since = lv_tick_get(); clear_presentation(ime);
+    if (local_fallback) layout(ime,false);
     update_interactivity(ime);
     ime->config.focus(ime->config.context, ime->generation, true, needs_provider(ime));
 }
@@ -384,6 +464,16 @@ static void finish_switch(pxa_lvgl_ime_t *ime) {
     }
     uint8_t action=ime->pending_switch; ime->pending_switch=SWITCH_NONE;
     if (action==SWITCH_CLOSE) { pxa_lvgl_ime_close(ime); return; }
+    if (action==MOVE_LEFT || action==MOVE_RIGHT) {
+        uint32_t before=lv_textarea_get_cursor_pos(ime->target);
+        ime->multi_key=0;
+        if (action==MOVE_LEFT) lv_textarea_cursor_left(ime->target);
+        else lv_textarea_cursor_right(ime->target);
+        if (ime->target && before!=lv_textarea_get_cursor_pos(ime->target)) {
+            restart_session(ime); refresh_editor(ime,true);
+        }
+        return;
+    }
     bool release=action==SWITCH_LANGUAGE && needs_provider(ime) && ime->provider_ready;
     ime->multi_key=0; ime->expanded=false;
     if (action==SWITCH_LAYOUT || ime->panel==PANEL_TOOLS) ime->panel=PANEL_LETTERS;
@@ -391,7 +481,8 @@ static void finish_switch(pxa_lvgl_ime_t *ime) {
         if (!ime->language) { ime->chinese_layout=ime->layout; ime->layout=PXA_IME_K26; }
         else ime->layout=ime->chinese_layout;
         ime->language^=1;
-    } else { ime->layout^=1; if (!ime->language) ime->chinese_layout=ime->layout; }
+    } else if (action==SWITCH_SCRIPT) ime->traditional=!ime->traditional;
+    else { ime->layout^=1; if (!ime->language) ime->chinese_layout=ime->layout; }
     /* The runtime owner unloads outside LVGL's lock. Rebuilding a full keymap
      * before its acknowledgement would overlap it with the live dictionary. */
     ime->waiting_release=release;
@@ -406,12 +497,6 @@ void pxa_lvgl_ime_provider_released(pxa_lvgl_ime_t *ime,uint64_t generation) {
 }
 static bool sync_sensitive_mode(pxa_lvgl_ime_t *ime) {
     if (!ime->target || ime->sensitive==lv_textarea_get_password_mode(ime->target)) return false;
-    if (ime->fallback_keyboard) {
-        /* The built-in pinyin binding must also disappear for passwords. */
-        lv_obj_t *target=ime->target;
-        pxa_lvgl_ime_close(ime); (void)pxa_lvgl_ime_focus(ime,target);
-        return true;
-    }
     bool release=(needs_provider(ime) && ime->provider_ready) || ime->waiting_release;
     ime->sensitive=lv_textarea_get_password_mode(ime->target);
     ime->language=ime->sensitive?PXA_IME_ENGLISH:ime->config.preferences.language;
@@ -426,7 +511,8 @@ static bool sync_sensitive_mode(pxa_lvgl_ime_t *ime) {
     return true;
 }
 static void request_switch(pxa_lvgl_ime_t *ime,uint8_t action) {
-    if (ime->pending_switch || (ime->waiting_release && action!=SWITCH_CLOSE) || (ime->sensitive && action!=SWITCH_CLOSE)) return;
+    if (ime->pending_switch || (ime->waiting_release && action!=SWITCH_CLOSE) ||
+        (ime->sensitive && action!=SWITCH_CLOSE && action!=MOVE_LEFT && action!=MOVE_RIGHT)) return;
     ime->pending_switch=action;
     /* With no early Chinese input, English can cancel an unfinished load now. */
     if (!ime->queue_count && !ime->awaiting && !*composition(ime)) ime->ready=true;
@@ -435,7 +521,8 @@ static void request_switch(pxa_lvgl_ime_t *ime,uint8_t action) {
 static const ime_keyset_t *keyset(const pxa_lvgl_ime_t *ime) {
     bool done=ime->target && lv_textarea_get_one_line(ime->target);
 #define PICK(name) (done?&name##_done:&name##_line)
-    if (ime->panel==PANEL_TOOLS) return &tools;
+    if (ime->panel==PANEL_TOOLS) return ime->local && !ime->sensitive &&
+        pxa_lvgl_ime_builtin_scripts()==3 ? &tools_script : &tools;
     if (ime->panel==PANEL_NUMBERS) return PICK(number);
     if (ime->panel==PANEL_SYMBOLS) {
         if (ime->language || ime->sensitive) return ime->symbol_page?PICK(en_symbols_1):PICK(en_symbols_0);
@@ -499,7 +586,12 @@ static bool space_gesture(pxa_lvgl_ime_t *ime,lv_event_t *event,const char *key)
     lv_event_code_t code=lv_event_get_code(event); lv_indev_t *pointer=lv_event_get_indev(event);
     if (!pointer || lv_indev_get_type(pointer)!=LV_INDEV_TYPE_POINTER) return false;
     if (code==LV_EVENT_PRESSED) { ime->held=false; lv_indev_get_point(pointer,&ime->gesture_start); }
-    else if (code==LV_EVENT_LONG_PRESSED && !*composition(ime) && !ime->queue_count && !ime->awaiting) ime->held=true;
+    else if (code==LV_EVENT_LONG_PRESSED && !*composition(ime) && !ime->queue_count && !ime->awaiting) {
+        ime->held=true;
+        /* Capture the toolbar, even outside its bounds, until release. */
+        lv_obj_set_press_lock(ime->toolbar,true);
+        lv_buttonmatrix_set_button_ctrl(ime->toolbar,space_button(ime),LV_BUTTONMATRIX_CTRL_CHECKED);
+    }
     else if (code==LV_EVENT_PRESSING && ime->held) {
         lv_point_t point; lv_indev_get_point(pointer,&point);
         int step=px(ime,12); if (step<8) step=8;
@@ -546,9 +638,14 @@ static void keys_event(lv_event_t *event) {
     }
     if (!strcmp(key,"下一页") || !strcmp(key,"上一页")) { ime->symbol_page^=1; rebuild_keys(ime); return; }
     if (ime->panel==PANEL_TOOLS) {
-        if (!strcmp(key,"返回")) { ime->panel=PANEL_LETTERS; layout(ime,false); }
+        if (!strcmp(key,LV_SYMBOL_LEFT)) request_switch(ime,MOVE_LEFT);
+        else if (!strcmp(key,LV_SYMBOL_RIGHT)) request_switch(ime,MOVE_RIGHT);
+        else if (!strcmp(key,"返回")) { ime->panel=PANEL_LETTERS; layout(ime,false); }
         else if ((!strcmp(key,"九键") && ime->layout!=PXA_IME_K9) ||
                  (!strcmp(key,"全键") && ime->layout!=PXA_IME_K26)) request_switch(ime,SWITCH_LAYOUT);
+        else if (ime->local && pxa_lvgl_ime_builtin_scripts()==3 &&
+                 ((!strcmp(key,"简体") && ime->traditional) ||
+                  (!strcmp(key,"繁體") && !ime->traditional))) request_switch(ime,SWITCH_SCRIPT);
         else if ((!strcmp(key,"中文") && ime->language) ||
                  (!strcmp(key,"English") && !ime->language)) request_switch(ime,SWITCH_LANGUAGE);
         else { ime->panel=PANEL_LETTERS; layout(ime,false); }
@@ -577,7 +674,12 @@ static void rebuild_keys(pxa_lvgl_ime_t *ime) {
     }
     for (unsigned row=0;row<used;++row) {
         lv_obj_t *object=key_row(ime,row); if (!object) continue;
-        lv_buttonmatrix_set_map(object,ime->contour_keys?set->row[row]:set->map); map_controls(object);
+        const char *const *map=ime->contour_keys?set->row[row]:set->map;
+        /* Only the candidate map changes for an ordinary decoder reply.
+         * Reinstalling immutable key maps resets controls, recomputes every
+         * cell and can disturb a held key. No extra per-instance cache. */
+        if (lv_buttonmatrix_get_map(object)==map) continue;
+        lv_buttonmatrix_set_map(object,map); map_controls(object);
         for (uint32_t i=0;lv_buttonmatrix_get_button_text(object,i);++i) {
             const char *label=lv_buttonmatrix_get_button_text(object,i);
             /* Two CJK characters need more width than a Latin letter. This
@@ -592,7 +694,15 @@ static void rebuild_keys(pxa_lvgl_ime_t *ime) {
                 else if (!strcmp(label,"完成") || !strcmp(label,LV_SYMBOL_NEW_LINE))
                     lv_buttonmatrix_set_button_width(object,i,2);
             }
-            if (!strcmp(label,LV_SYMBOL_BACKSPACE)) lv_buttonmatrix_clear_button_ctrl(object,i,LV_BUTTONMATRIX_CTRL_NO_REPEAT);
+            if (!strcmp(label,LV_SYMBOL_BACKSPACE) || (ime->panel==PANEL_TOOLS &&
+                (!strcmp(label,LV_SYMBOL_LEFT) || !strcmp(label,LV_SYMBOL_RIGHT)))) {
+                /* Editing controls respond on press and repeat while held,
+                 * never once more on release. Letters stay release-only. */
+                lv_buttonmatrix_clear_button_ctrl(object,i,
+                    LV_BUTTONMATRIX_CTRL_NO_REPEAT | LV_BUTTONMATRIX_CTRL_CLICK_TRIG);
+                if (ime->panel==PANEL_LETTERS && ime->layout==PXA_IME_K26)
+                    lv_buttonmatrix_set_button_width(object,i,2);
+            }
             if (!strcmp(label,LV_SYMBOL_UP)) {
                 if (ime->uppercase) lv_buttonmatrix_set_button_ctrl(object,i,LV_BUTTONMATRIX_CTRL_CHECKED);
             }
@@ -600,7 +710,9 @@ static void rebuild_keys(pxa_lvgl_ime_t *ime) {
                 bool active=(!strcmp(label,"九键") && ime->layout==PXA_IME_K9) ||
                     (!strcmp(label,"全键") && ime->layout==PXA_IME_K26) ||
                     (!strcmp(label,"中文") && !ime->language) ||
-                    (!strcmp(label,"English") && ime->language);
+                    (!strcmp(label,"English") && ime->language) ||
+                    (!strcmp(label,"简体") && !ime->traditional) ||
+                    (!strcmp(label,"繁體") && ime->traditional);
                 if (active) lv_buttonmatrix_set_button_ctrl(object,i,LV_BUTTONMATRIX_CTRL_CHECKED);
                 if (ime->sensitive && (!strcmp(label,"中文") || !strcmp(label,"九键")))
                     lv_buttonmatrix_set_button_ctrl(object,i,LV_BUTTONMATRIX_CTRL_DISABLED);
@@ -610,14 +722,37 @@ static void rebuild_keys(pxa_lvgl_ime_t *ime) {
     const char *const *toolbar=ime->language?
         (ime->panel==PANEL_NUMBERS?toolbar_numbers_en:ime->panel==PANEL_SYMBOLS?toolbar_symbols_en:toolbar_letters_en):
         (ime->panel==PANEL_NUMBERS?toolbar_numbers_cn:ime->panel==PANEL_SYMBOLS?toolbar_symbols_cn:toolbar_letters_cn);
-    lv_buttonmatrix_set_map(ime->toolbar,toolbar); map_controls(ime->toolbar);
-    lv_buttonmatrix_set_button_width(ime->toolbar,3,3);
-    if (ime->sensitive) lv_buttonmatrix_set_button_ctrl(ime->toolbar,2,LV_BUTTONMATRIX_CTRL_DISABLED);
+    if (ime->arc_toolbar) toolbar=ime->language?
+        (ime->panel==PANEL_NUMBERS?arc_numbers_en:ime->panel==PANEL_SYMBOLS?arc_symbols_en:arc_letters_en):
+        (ime->panel==PANEL_NUMBERS?arc_numbers_cn:ime->panel==PANEL_SYMBOLS?arc_symbols_cn:arc_letters_cn);
+    if (lv_buttonmatrix_get_map(ime->toolbar)!=toolbar) {
+        lv_buttonmatrix_set_map(ime->toolbar,toolbar); map_controls(ime->toolbar);
+        ime->footer_weights=0;
+        lv_buttonmatrix_set_button_width(ime->toolbar,space_button(ime),ime->arc_toolbar?6:3);
+        if (ime->arc_toolbar) {
+            lv_buttonmatrix_set_button_ctrl(ime->toolbar,3,LV_BUTTONMATRIX_CTRL_HIDDEN);
+            lv_buttonmatrix_set_button_ctrl(ime->toolbar,6,LV_BUTTONMATRIX_CTRL_HIDDEN);
+            lv_buttonmatrix_set_button_width(ime->toolbar,5,2);
+        }
+    }
+    if (lv_buttonmatrix_has_button_ctrl(ime->toolbar,2,LV_BUTTONMATRIX_CTRL_DISABLED)!=ime->sensitive) {
+        if (ime->sensitive) lv_buttonmatrix_set_button_ctrl(ime->toolbar,2,LV_BUTTONMATRIX_CTRL_DISABLED);
+        else lv_buttonmatrix_clear_button_ctrl(ime->toolbar,2,LV_BUTTONMATRIX_CTRL_DISABLED);
+    }
 }
 static void toolbar_event(lv_event_t *event) {
     pxa_lvgl_ime_t *ime=lv_event_get_user_data(event);
     if (sync_sensitive_mode(ime)) return;
-    if (lv_event_get_code(event)==LV_EVENT_PRESSED) {
+    lv_event_code_t code=lv_event_get_code(event);
+    if ((code==LV_EVENT_RELEASED || code==LV_EVENT_PRESS_LOST) && ime->held) {
+        ime->held=false;
+        lv_obj_set_press_lock(ime->toolbar,false);
+        lv_buttonmatrix_clear_button_ctrl(ime->toolbar,space_button(ime),LV_BUTTONMATRIX_CTRL_CHECKED);
+        lv_buttonmatrix_set_selected_button(ime->toolbar,LV_BUTTONMATRIX_BUTTON_NONE);
+        lv_event_stop_processing(event);
+        return;
+    }
+    if (code==LV_EVENT_PRESSED) {
         ime->held=false;
         lv_indev_t *pointer=lv_event_get_indev(event);
         if (pointer) lv_indev_get_point(pointer,&ime->gesture_start);
@@ -672,7 +807,7 @@ static void target_event(lv_event_t *event) {
     if (code == LV_EVENT_CLICKED || code == LV_EVENT_VALUE_CHANGED ||
         code == LV_EVENT_SCROLL || code == LV_EVENT_SIZE_CHANGED || code == LV_EVENT_STYLE_CHANGED)
         refresh_editor(ime,true);
-    if (ime->editing || ime->fallback_keyboard) return;
+    if (ime->editing) return;
     if (code == LV_EVENT_CLICKED) restart_session(ime);
     else if (code == LV_EVENT_VALUE_CHANGED) {
         uint64_t now = text_fingerprint(ime->target);
@@ -693,6 +828,9 @@ void pxa_lvgl_ime_close(pxa_lvgl_ime_t *ime) {
     if (!ime) return;
     ime->queue_count = 0; ime->awaiting = false; ime->ready = true;
     ime->pending_switch=0; ime->multi_key=0; ime->expanded=false; ime->waiting_release=false;
+    ime->held=false;
+    lv_obj_set_press_lock(ime->toolbar,false);
+    lv_buttonmatrix_clear_button_ctrl(ime->toolbar,space_button(ime),LV_BUTTONMATRIX_CTRL_CHECKED);
     if (ime->target) {
         lv_obj_remove_event_cb_with_user_data(ime->target, target_event, ime);
         lv_obj_remove_state(ime->target, LV_STATE_FOCUSED);
@@ -703,8 +841,8 @@ void pxa_lvgl_ime_close(pxa_lvgl_ime_t *ime) {
         lv_obj_remove_event_cb_with_user_data(parent,scroll_parent_deleted,ime);
         lv_obj_scroll_to_y(parent,ime->previous_scroll_y,LV_ANIM_OFF);
     }
-    if (ime->fallback_pinyin) { lv_obj_delete(ime->fallback_pinyin); ime->fallback_pinyin = NULL; }
-    if (ime->fallback_keyboard) { lv_obj_delete(ime->fallback_keyboard); ime->fallback_keyboard = NULL; }
+    pxa_lvgl_ime_builtin_destroy(ime->builtin); ime->builtin=NULL;
+    ime->local=!ime->config.input;
     if (ime->root) lv_obj_set_hidden(ime->root, true);
     ime->view_visible=false; if (ime->editor_buffer) memset(ime->editor_buffer,0,257);
     free(ime->previous_page); ime->previous_page=NULL; ime->page_capacity=0;
@@ -715,10 +853,14 @@ void pxa_lvgl_ime_close(pxa_lvgl_ime_t *ime) {
 static lv_obj_t *matrix(lv_obj_t *root, lv_event_cb_t callback, pxa_lvgl_ime_t *ime) {
     lv_obj_t *object = lv_buttonmatrix_create(root);
     if (!object) return NULL;
+    /* These private matrices use system tokens below. Do not retain the
+     * default theme's button shadows, recoloring or state transitions. */
+    lv_obj_remove_style_all(object);
     lv_obj_set_scrollable(object, false); lv_obj_set_click_focusable(object, false);
     lv_obj_add_style(object,&ime->matrix_style,0);
     lv_obj_add_style(object,&ime->item_style,LV_PART_ITEMS);
     lv_obj_add_style(object,&ime->pressed_style,LV_PART_ITEMS|LV_STATE_PRESSED);
+    lv_obj_add_style(object,&disabled_style,LV_PART_ITEMS|LV_STATE_DISABLED);
     if (callback) lv_obj_add_event_cb(object, callback, LV_EVENT_ALL, ime);
     lv_buttonmatrix_set_map(object, empty_map);
     return object;
@@ -763,6 +905,10 @@ static const lv_font_t *bitmap_latin_font(unsigned height) {
 }
 void pxa_lvgl_ime_set_theme(pxa_lvgl_ime_t *ime, const pxa_lvgl_ui_theme_t *theme) {
     if (!ime || !theme) return;
+    /* Font and environment changes can alter size-dependent key weights.
+     * Ordinary decoder replies reuse the maps; a theme refresh rebuilds them. */
+    for (unsigned row=0;row<4;++row)
+        if (key_row(ime,row)) lv_buttonmatrix_set_map(key_row(ime,row),empty_map);
     ime->config.theme = *theme;
     const lv_font_t *font = theme->body_font ? theme->body_font : LV_FONT_DEFAULT;
     const lv_font_t *alternatives[] = {theme->body_font, theme->label_font, theme->caption_font};
@@ -809,7 +955,14 @@ void pxa_lvgl_ime_set_theme(pxa_lvgl_ime_t *ime, const pxa_lvgl_ui_theme_t *them
         ime->font.base_line=ime->font.base_line>leading/2?ime->font.base_line-leading/2:0;
     }
     ime->cjk_font=ime->font;
-    const lv_font_t *latin=bitmap_latin_font(ime->font.line_height);
+    /* Number+letter groups must fit four columns. Preserve CJK size and
+     * reuse compiled Latin faces; very narrow screens use a ROM-only face. */
+    unsigned latin_height=ime->font.line_height;
+    unsigned latin_limit=ime->config.environment.width>32?(ime->config.environment.width-32)/16:0;
+    if (latin_limit<12) latin_limit=12;
+    if (latin_height>latin_limit) latin_height=latin_limit;
+    const lv_font_t *latin=ime->config.environment.width<200?&ime_latin_12:bitmap_latin_font(latin_height);
+    if (!latin && ime->config.environment.width<360) latin=&ime_latin_12;
     if (latin) {
         /* Reuse compiled antialiased Latin glyphs, with the exact CJK face as
          * fallback. No extra face, atlas or FreeType cache for typing letters. */
@@ -838,6 +991,12 @@ void pxa_lvgl_ime_set_theme(pxa_lvgl_ime_t *ime, const pxa_lvgl_ui_theme_t *them
     lv_obj_set_style_text_font(ime->root, &ime->font, 0);
     lv_obj_set_style_text_color(ime->root, lv_color_hex(theme->rgba[PXA_UI_THEME_TEXT] >> 8), 0);
     lv_obj_set_style_bg_color(ime->root, lv_color_hex(theme->rgba[PXA_UI_THEME_SURFACE_CONTAINER] >> 8), 0);
+    lv_obj_set_style_border_color(ime->root,lv_color_hex(theme->rgba[PXA_UI_THEME_OUTLINE_VARIANT]>>8),0);
+    /* Only theme/environment updates change these panel properties. Setting
+     * them during each candidate layout invalidates the whole keyboard. */
+    lv_obj_set_style_pad_all(ime->root,ime->config.environment.display_shape==2?2:4,0);
+    lv_obj_set_style_border_width(ime->root,ime->config.environment.display_shape?0:1,0);
+    lv_obj_set_style_bg_opa(ime->root,LV_OPA_COVER,0);
     if (ime->preedit) {
         lv_obj_set_style_bg_color(ime->preedit,lv_color_hex(theme->rgba[PXA_UI_THEME_SURFACE_CONTAINER]>>8),0);
         lv_obj_set_style_bg_opa(ime->preedit,LV_OPA_COVER,0);
@@ -845,14 +1004,17 @@ void pxa_lvgl_ime_set_theme(pxa_lvgl_ime_t *ime, const pxa_lvgl_ui_theme_t *them
     }
     if (ime->editor_view) {
         lv_obj_set_style_bg_color(ime->editor_view,lv_color_hex(theme->rgba[PXA_UI_THEME_SURFACE_CONTAINER_HIGHEST]>>8),0);
+        lv_obj_set_style_border_color(ime->editor_view,lv_color_hex(theme->rgba[PXA_UI_THEME_OUTLINE_VARIANT]>>8),0);
         lv_obj_set_style_text_color(ime->editor_text,lv_color_hex(theme->rgba[PXA_UI_THEME_TEXT]>>8),0);
         lv_obj_set_style_bg_color(ime->editor_caret,lv_color_hex(theme->rgba[PXA_UI_THEME_TEXT]>>8),0);
     }
     lv_style_set_bg_color(&ime->item_style,lv_color_hex(theme->rgba[PXA_UI_THEME_SURFACE_CONTAINER_HIGHEST]>>8));
     lv_style_set_text_color(&ime->item_style,lv_color_hex(theme->rgba[PXA_UI_THEME_TEXT]>>8));
+    lv_style_set_border_color(&ime->item_style,lv_color_hex(theme->rgba[PXA_UI_THEME_OUTLINE_VARIANT]>>8));
     lv_style_set_bg_color(&ime->pressed_style,lv_color_hex(theme->rgba[PXA_UI_THEME_PRIMARY_CONTAINER]>>8));
-    lv_obj_set_style_bg_color(ime->candidates,lv_color_hex(theme->rgba[PXA_UI_THEME_PRIMARY_CONTAINER]>>8),LV_PART_ITEMS|LV_STATE_CHECKED);
+    lv_style_set_text_color(&ime->pressed_style,lv_color_hex(theme->rgba[PXA_UI_THEME_ON_PRIMARY_CONTAINER]>>8));
     lv_obj_report_style_change(&ime->item_style); lv_obj_report_style_change(&ime->pressed_style);
+    if (ime->target) layout(ime,false);
 }
 void pxa_lvgl_ime_set_preferences(pxa_lvgl_ime_t *ime,pxa_ime_preferences_t preferences) {
     if (ime && pxa_ime_preferences_valid(preferences)) ime->config.preferences=preferences;
@@ -861,18 +1023,20 @@ void pxa_lvgl_ime_set_environment(pxa_lvgl_ime_t *ime,const pxa_ui_environment_t
     if (!ime || !environment) return;
     ime->config.environment=*environment;
     pxa_lvgl_ime_set_theme(ime,&ime->config.theme);
-    if (ime->target) layout(ime,false);
 }
 pxa_lvgl_ime_t *pxa_lvgl_ime_create(const pxa_lvgl_ime_config_t *config) {
-    if (!config || config->struct_size < sizeof(*config) || !config->focus || !config->input || !pxa_ime_preferences_valid(config->preferences)) return NULL;
+    if (!config || config->struct_size < sizeof(*config) || !config->focus || !pxa_ime_preferences_valid(config->preferences)) return NULL;
     pxa_lvgl_ime_t *ime = calloc(1, sizeof(*ime)); if (!ime) return NULL;
     ime->config = *config;
+    ime->local=!config->input;
     lv_style_init(&ime->matrix_style); lv_style_init(&ime->item_style); lv_style_init(&ime->pressed_style);
     lv_style_set_border_width(&ime->matrix_style,0);
     lv_style_set_pad_all(&ime->matrix_style,2);
     lv_style_set_pad_row(&ime->matrix_style,3); lv_style_set_pad_column(&ime->matrix_style,3);
     lv_style_set_bg_opa(&ime->matrix_style,LV_OPA_TRANSP);
     lv_style_set_radius(&ime->item_style,4);
+    lv_style_set_bg_opa(&ime->item_style,LV_OPA_COVER);
+    lv_style_set_bg_opa(&ime->pressed_style,LV_OPA_COVER);
     ime->root = lv_obj_create(config->parent ? config->parent : lv_layer_top());
     if (!ime->root) goto failed;
     lv_obj_set_floating(ime->root, true); lv_obj_set_hidden(ime->root, true);
@@ -882,19 +1046,18 @@ pxa_lvgl_ime_t *pxa_lvgl_ime_create(const pxa_lvgl_ime_config_t *config) {
     ime->candidates = matrix(ime->root, NULL, ime);
     if (ime->candidates) lv_obj_add_event_cb(ime->candidates,candidate_event,LV_EVENT_ALL,ime);
     /* Candidate rows are text rails, distinct from the boxed typing keys.
-     * Only an explicitly selected spelling receives a filled background. */
+     * Selected and pressed items share the same accessible highlight. */
     if (ime->candidates) {
-        lv_obj_set_style_bg_opa(ime->candidates,LV_OPA_TRANSP,LV_PART_ITEMS);
-        lv_obj_set_style_bg_opa(ime->candidates,LV_OPA_TRANSP,LV_PART_ITEMS|LV_STATE_DISABLED);
-        lv_obj_set_style_bg_opa(ime->candidates,LV_OPA_COVER,LV_PART_ITEMS|LV_STATE_CHECKED);
-        lv_obj_set_style_border_width(ime->candidates,0,LV_PART_ITEMS);
-        lv_obj_set_style_outline_width(ime->candidates,0,LV_PART_ITEMS);
-        lv_obj_set_style_shadow_width(ime->candidates,0,LV_PART_ITEMS);
-        lv_obj_set_style_radius(ime->candidates,2,LV_PART_ITEMS);
+        lv_obj_add_style(ime->candidates,&rail_style,LV_PART_ITEMS);
+        lv_obj_add_style(ime->candidates,&rail_style,LV_PART_ITEMS|LV_STATE_DISABLED);
+        lv_obj_add_style(ime->candidates,&ime->pressed_style,LV_PART_ITEMS|LV_STATE_CHECKED);
     }
     ime->keys = matrix(ime->root, keys_event, ime);
     ime->toolbar = matrix(ime->root, NULL, ime);
-    if (ime->toolbar) lv_obj_add_event_cb(ime->toolbar,toolbar_event,LV_EVENT_ALL|LV_EVENT_PREPROCESS,ime);
+    if (ime->toolbar) {
+        lv_obj_add_style(ime->toolbar,&ime->pressed_style,LV_PART_ITEMS|LV_STATE_CHECKED);
+        lv_obj_add_event_cb(ime->toolbar,toolbar_event,LV_EVENT_ALL|LV_EVENT_PREPROCESS,ime);
+    }
     if (!ime->candidates || !ime->keys || !ime->toolbar) goto failed;
     ime->retry = lv_timer_create(retry_input, 8, ime);
     if (!ime->retry) goto failed;
@@ -963,6 +1126,7 @@ static void layout(pxa_lvgl_ime_t *ime, bool choose_layout) {
     const pxa_ui_environment_t *e=&ime->config.environment;
     int w=(int)e->width, h=(int)e->height;
     if (w<=0 || h<=0) return;
+    if (!ime->candidate_count) ime->expanded=false;
     bool circle=e->display_shape==2, contoured=e->display_shape!=0;
     if (choose_layout) ime->layout=(uint64_t)w*65536 <
         (uint64_t)360*(e->density_q16?e->density_q16:65536)?PXA_IME_K9:PXA_IME_K26;
@@ -981,13 +1145,18 @@ static void layout(pxa_lvgl_ime_t *ime, bool choose_layout) {
         if (bottom<h-circle_bottom) bottom=h-circle_bottom;
     }
     int top=(int)e->safe_insets[0]+margin;
-    int line=ime->font.line_height, row=px(ime,36), padding=circle?6:10;
+    int line=ime->font.line_height, row=px(ime,44), padding=circle?6:10;
     if (row<line+4) row=line+4;
     int header_line=line+(circle?4:8);
+    int touch_header=px(ime,36);
+    if (touch_header>extent/10) touch_header=extent/10;
+    if (header_line<touch_header) header_line=touch_header;
     int maximum_header=header_line*2;
     bool composing=*composition(ime) || ime->candidate_count;
     int header=(!ime->language && composing)?maximum_header:header_line;
-    int footer=line+(circle?4:10), view=ime->view_visible?line+(circle?6:12):0;
+    int footer=px(ime,40), view=ime->view_visible?line+(circle?6:12):0;
+    if (footer>extent/9) footer=extent/9;
+    if (footer<line+(circle?4:10)) footer=line+(circle?4:10);
     unsigned rows=keyset(ime)->rows;
     int height=maximum_header+footer+view+row*(int)rows+padding;
     int maximum=extent*3/5;
@@ -1003,17 +1172,25 @@ static void layout(pxa_lvgl_ime_t *ime, bool choose_layout) {
      * Adding the word rail must not move the keys under the user's fingers. */
     y+=maximum_header-header;
     height-=maximum_header-header;
+    /* Extend into the lower arc without moving or compressing the main keys.
+     * Keep a single footer when the extra row cannot fit comfortably. */
+    ime->arc_toolbar=false;
+    if (circle &&
+        y+height+footer<=((h+extent)/2-(int)e->safe_insets[2]-margin)) {
+        int arc_left,arc_right;
+        band_bounds(e,y+height-padding,y+height+footer,4,&arc_left,&arc_right);
+        if (arc_right-arc_left>=text_width(ime,"空格")+text_width(ime,LV_SYMBOL_DOWN)+16) {
+            ime->arc_toolbar=true; height+=footer; footer*=2;
+        }
+    }
     int left,right;
     if (contoured) { left=(int)e->safe_insets[3]+margin; right=w-(int)e->safe_insets[1]-margin; }
     else band_bounds(e,y,y+height-1,margin,&left,&right);
-    int width=right-left, limit=px(ime,520);
+    int width=right-left, limit=px(ime,640);
     if (width>limit) { left+=(width-limit)/2; width=limit; }
     if (width<24 || height<header+footer+view+padding) return;
-    lv_obj_set_style_pad_all(ime->root,circle?2:4,0);
-    lv_obj_set_style_border_width(ime->root,contoured?0:1,0);
     /* The panel covers text behind inter-key gaps. Physical display masking
      * clips its background; each interactive row still fits the safe contour. */
-    lv_obj_set_style_bg_opa(ime->root,LV_OPA_COVER,0);
     lv_obj_set_size(ime->root,width,height); lv_obj_set_pos(ime->root,left,y);
     lv_obj_update_layout(ime->root);
     /* Environment bounds are display coordinates; parent padding and scroll
@@ -1026,7 +1203,8 @@ static void layout(pxa_lvgl_ime_t *ime, bool choose_layout) {
     }
     int key_y=view+header, key_height=height-view-header-footer-padding;
     int key_x,key_width; section_bounds(ime,key_y,key_height,&key_x,&key_width);
-    int footer_x,footer_width; section_bounds(ime,height-footer-padding,footer,&footer_x,&footer_width);
+    int footer_x,footer_width;
+    section_bounds(ime,height-footer-padding,ime->arc_toolbar?footer/2:footer,&footer_x,&footer_width);
     if (ime->editor_view) {
         int x,inner; section_bounds(ime,0,view,&x,&inner);
         lv_obj_set_hidden(ime->editor_view,!ime->view_visible);
@@ -1039,7 +1217,7 @@ static void layout(pxa_lvgl_ime_t *ime, bool choose_layout) {
         lv_obj_set_width(ime->editor_text,inner-navigation-10);
     }
     int header_x,header_width; section_bounds(ime,view,header?header:1,&header_x,&header_width);
-    int preedit_w=ime->fallback_keyboard?header_width/4:0;
+    int preedit_w=0;
     if (ime->preedit) {
         lv_obj_set_pos(ime->preedit,header_x,view+2); lv_obj_set_width(ime->preedit,preedit_w);
         lv_obj_set_height(ime->preedit,line+2); lv_label_set_long_mode(ime->preedit,LV_LABEL_LONG_DOT);
@@ -1052,10 +1230,10 @@ static void layout(pxa_lvgl_ime_t *ime, bool choose_layout) {
         lv_obj_set_size(ime->candidates,expanded_width,header+key_height);
     } else lv_obj_set_size(ime->candidates,header_width-preedit_w,header);
     ime->contour_keys=contoured;
-    if (!ime->fallback_keyboard && !ime->waiting_release) rebuild_keys(ime);
+    if (!ime->waiting_release) rebuild_keys(ime);
     for (unsigned row=0;row<4;++row) {
         lv_obj_t *object=key_row(ime,row); if (!object) continue;
-        lv_obj_set_hidden(object,ime->fallback_keyboard || ime->expanded);
+        lv_obj_set_hidden(object,ime->expanded);
         int x=key_x,inner=key_width,offset=0,height_row=key_height;
         if (ime->contour_keys) {
             offset=key_height*(int)row/(int)rows;
@@ -1066,26 +1244,29 @@ static void layout(pxa_lvgl_ime_t *ime, bool choose_layout) {
     }
     lv_obj_set_pos(ime->toolbar,footer_x,height-footer-padding);
     lv_obj_set_size(ime->toolbar,footer_width,footer);
-    if (ime->fallback_keyboard) {
-        int x,inner; section_bounds(ime,view+header,height-view-header-padding,&x,&inner);
-        lv_obj_set_pos(ime->fallback_keyboard,x,view+header);
-        lv_obj_set_size(ime->fallback_keyboard,inner,height-view-header-padding);
-#if LV_USE_IME_PINYIN
-        if (ime->fallback_pinyin) {
-            lv_obj_t *panel=lv_ime_pinyin_get_cand_panel(ime->fallback_pinyin);
-            lv_obj_set_align(panel,LV_ALIGN_TOP_LEFT); lv_obj_set_style_pad_all(panel,2,0);
-            lv_obj_set_pos(panel,header_x+preedit_w,view);
-            lv_obj_set_size(panel,header_width-preedit_w,header);
+    if (ime->arc_toolbar) {
+        int lower_x,lower_width;
+        section_bounds(ime,height-footer/2-padding,footer/2,&lower_x,&lower_width);
+        /* The visible cells have widths 6:2. Round side weights outward,
+         * reserving matrix padding/gaps so both hit targets fit the chord. */
+        int available=lower_width-16; if (available<1) available=1;
+        int l=((lower_x-footer_x+2)*8+available-1)/available;
+        int r=((footer_x+footer_width-lower_x-lower_width+2)*8+available-1)/available;
+        if (l<1) l=1;
+        if (r<1) r=1;
+        if (l>15) l=15;
+        if (r>15) r=15;
+        uint8_t weights=(uint8_t)(l|(r<<4));
+        if (weights!=ime->footer_weights) {
+            lv_buttonmatrix_set_button_width(ime->toolbar,3,(uint32_t)l);
+            lv_buttonmatrix_set_button_width(ime->toolbar,6,(uint32_t)r);
+            ime->footer_weights=weights;
         }
-#endif
     }
-    if (!ime->fallback_keyboard) {
-        /* Grid capacity uses the new candidate height, not the previous rail
-         * height retained until LVGL's pending layout pass. */
-        lv_obj_update_layout(ime->candidates);
-        pack_spellings(ime);
-        if (ime->preedit) lv_obj_set_hidden(ime->preedit,true);
-    } else if (ime->preedit) lv_obj_set_hidden(ime->preedit,false);
+    /* All backends share the same rails, keys and contour layout. */
+    lv_obj_update_layout(ime->candidates);
+    pack_spellings(ime);
+    if (ime->preedit) lv_obj_set_hidden(ime->preedit,true);
     refresh_editor(ime,true);
 }
 static lv_area_t cursor_line(pxa_lvgl_ime_t *ime) {
@@ -1127,8 +1308,8 @@ static void editor_view_event(lv_event_t *event) {
     if (!ime->target) return;
     if (lv_event_get_current_target(event)==ime->editor_navigation) {
         if (lv_event_get_code(event)!=LV_EVENT_VALUE_CHANGED) return;
-        if (lv_buttonmatrix_get_selected_button(ime->editor_navigation)==0) lv_textarea_cursor_left(ime->target);
-        else lv_textarea_cursor_right(ime->target);
+        request_switch(ime,lv_buttonmatrix_get_selected_button(ime->editor_navigation)==0?MOVE_LEFT:MOVE_RIGHT);
+        return;
     } else {
         lv_indev_t *pointer=lv_indev_active(); if (!pointer) return;
         lv_point_t point; lv_indev_get_point(pointer,&point);
@@ -1149,6 +1330,8 @@ static bool create_editor_view(pxa_lvgl_ime_t *ime) {
     lv_obj_set_style_pad_all(ime->editor_view,0,0);
     lv_obj_set_style_radius(ime->editor_view,4,0);
     lv_obj_set_style_border_width(ime->editor_view,1,0);
+    lv_obj_set_style_border_color(ime->editor_view,
+        lv_color_hex(ime->config.theme.rgba[PXA_UI_THEME_OUTLINE_VARIANT]>>8),0);
     lv_obj_set_style_bg_color(ime->editor_view,
         lv_color_hex(ime->config.theme.rgba[PXA_UI_THEME_SURFACE_CONTAINER_HIGHEST]>>8),0);
     lv_obj_set_style_text_color(ime->editor_view,
@@ -1172,9 +1355,17 @@ static bool create_editor_view(pxa_lvgl_ime_t *ime) {
     lv_obj_set_style_bg_color(ime->editor_caret,
         lv_color_hex(ime->config.theme.rgba[PXA_UI_THEME_TEXT]>>8),0);
     lv_obj_set_clickable(ime->editor_caret,false);
+    /* Cursor controls are a text rail too: only a held arrow gets a fill. */
+    lv_obj_add_style(ime->editor_navigation,&rail_style,LV_PART_ITEMS);
     lv_buttonmatrix_set_map(ime->editor_navigation,navigation_map);
-    lv_buttonmatrix_set_button_ctrl_all(ime->editor_navigation,LV_BUTTONMATRIX_CTRL_CLICK_TRIG);
+    lv_buttonmatrix_clear_button_ctrl_all(ime->editor_navigation,
+        LV_BUTTONMATRIX_CTRL_NO_REPEAT | LV_BUTTONMATRIX_CTRL_CLICK_TRIG);
     return true;
+}
+static bool copy_editor_bytes(char **out,const char *text,size_t size) {
+    bool changed=memcmp(*out,text,size)!=0;
+    memcpy(*out,text,size); *out+=size;
+    return changed;
 }
 static void update_editor_text(pxa_lvgl_ime_t *ime) {
     lv_obj_update_layout(ime->editor_view);
@@ -1213,15 +1404,19 @@ static void update_editor_text(pxa_lvgl_ime_t *ime) {
         used+=width; finish=p; ++end; ++count;
     }
     char *out=ime->editor_buffer;
-    if (prefix) { memcpy(out,"…",3); out+=3; }
+    bool changed=lv_label_get_text(ime->editor_text)!=ime->editor_buffer;
+    if (prefix) changed|=copy_editor_bytes(&out,"…",3);
     for (const char *p=begin;p<finish;) {
         const char *next=next_character(p);
-        if (ime->sensitive) *out++='*'; else { memcpy(out,p,(size_t)(next-p)); out+=next-p; }
+        changed|=copy_editor_bytes(&out,ime->sensitive?"*":p,ime->sensitive?1:(size_t)(next-p));
         p=next;
     }
+    changed|=*out!=0;
     *out=0;
     ime->editor_start=start; ime->editor_end=end; ime->editor_cursor=cursor; ime->editor_prefix=prefix;
-    lv_label_set_text_static(ime->editor_text,ime->editor_buffer);
+    /* Reuse the bounded buffer without invalidating an unchanged label.
+     * Caret position, font and viewport changes still take effect below. */
+    if (changed) lv_label_set_text_static(ime->editor_text,ime->editor_buffer);
     lv_obj_update_layout(ime->editor_view);
     lv_point_t point; lv_label_get_letter_pos(ime->editor_text,cursor-start+(prefix?1:0),&point);
     lv_obj_set_pos(ime->editor_caret,4+point.x,(lv_obj_get_height(ime->editor_view)-ime->font.line_height)/2);
@@ -1284,15 +1479,16 @@ static int text_width(const pxa_lvgl_ime_t *ime, const char *text) {
     lv_point_t size; lv_text_get_size(&size,text,&ime->font,0,0,INT32_MAX,LV_TEXT_FLAG_NONE); return size.x;
 }
 static void pack_spellings(pxa_lvgl_ime_t *ime) {
-    if (ime->fallback_keyboard) return;
     const char *preedit=composition(ime);
     if (!*preedit && !ime->candidate_count) {
         const char *const *map=ime->sensitive?idle_password:ime->language?idle_english:
             !ime->ready?idle_loading:ime->layout==PXA_IME_K9?idle_nine:idle_full;
-        lv_buttonmatrix_set_map(ime->candidates,map); map_controls(ime->candidates);
-        lv_buttonmatrix_set_button_ctrl(ime->candidates,1,LV_BUTTONMATRIX_CTRL_DISABLED);
-        lv_buttonmatrix_set_button_width(ime->candidates,0,1);
-        lv_buttonmatrix_set_button_width(ime->candidates,1,8);
+        if (lv_buttonmatrix_get_map(ime->candidates)!=map) {
+            lv_buttonmatrix_set_map(ime->candidates,map); map_controls(ime->candidates);
+            lv_buttonmatrix_set_button_ctrl(ime->candidates,1,LV_BUTTONMATRIX_CTRL_DISABLED);
+            lv_buttonmatrix_set_button_width(ime->candidates,0,1);
+            lv_buttonmatrix_set_button_width(ime->candidates,1,8);
+        }
         ime->visible=ime->spelling_visible=0; return;
     }
     const char *words=preedit+strlen(preedit)+1,*spellings=words;
@@ -1329,14 +1525,23 @@ static void pack_spellings(pxa_lvgl_ime_t *ime) {
     if (grid_rows>2) grid_rows-=2; else grid_rows=1;
     if (grid_rows>4) grid_rows=4;
     unsigned maximum=ime->expanded?columns*grid_rows:ime->candidate_count;
-    available=width-px(ime,32);
+    int row_width=lv_obj_get_content_width(ime->candidates);
+    int gap=lv_obj_get_style_pad_column(ime->candidates,0);
+    int word_minimum=px(ime,44),toggle_width=word_minimum;
+    if (toggle_width>row_width/3) toggle_width=row_width/3;
+    if (toggle_width<1) toggle_width=1;
+    /* LVGL weights are 1..15. Scale the whole word row at high DPI so a
+     * reserved touch target never needs an unrepresentable weight. */
+    int word_unit=(toggle_width+14)/15;
+    if (word_unit<8) word_unit=8;
+    available=row_width-toggle_width;
     for (unsigned i=0;i<ime->candidate_count && i<maximum;++i) {
         int cell=text_width(ime,text)+padding;
-        if (cell<px(ime,44)) cell=px(ime,44);
-        if (!ime->expanded && ime->visible && cell>available) break;
+        if (cell<word_minimum) cell=word_minimum;
+        if (!ime->expanded && ime->visible && cell+gap>available) break;
         if (ime->expanded && i && i%columns==0) ime->candidate_map[used++]="\n";
         ime->candidate_map[used++]=text; ++ime->visible;
-        available-=cell; text+=strlen(text)+1;
+        available-=cell+gap; text+=strlen(text)+1;
     }
     if (ime->expanded) {
         ime->candidate_map[used++]="\n";
@@ -1353,14 +1558,25 @@ static void pack_spellings(pxa_lvgl_ime_t *ime) {
     }
     if (*preedit && ime->spelling_count) lv_buttonmatrix_set_button_ctrl(ime->candidates,1,LV_BUTTONMATRIX_CTRL_CHECKED);
     else lv_buttonmatrix_set_button_ctrl(ime->candidates,1,LV_BUTTONMATRIX_CTRL_DISABLED);
+    unsigned word_units=0;
     for (unsigned i=0;i<ime->visible;++i) {
         const char *word=lv_buttonmatrix_get_button_text(ime->candidates,reading_buttons+i);
-        unsigned weight=ime->expanded?1:(unsigned)((text_width(ime,word)+padding)/8);
-        if (!ime->expanded && weight<(unsigned)px(ime,44)/8) weight=(unsigned)px(ime,44)/8;
-        lv_buttonmatrix_set_button_width(ime->candidates,reading_buttons+i,weight>15?15:weight?weight:1);
+        unsigned weight=ime->expanded?1:(unsigned)((text_width(ime,word)+padding)/word_unit);
+        if (!ime->expanded && weight<(unsigned)word_minimum/word_unit) weight=(unsigned)word_minimum/word_unit;
+        weight=weight>15?15:weight?weight:1;
+        word_units+=weight;
+        lv_buttonmatrix_set_button_width(ime->candidates,reading_buttons+i,weight);
     }
     unsigned control=reading_buttons+ime->visible;
-    lv_buttonmatrix_set_button_width(ime->candidates,control,1);
+    unsigned control_weight=1;
+    if (!ime->expanded) {
+        int remaining=row_width-gap*(int)ime->visible-toggle_width;
+        if (remaining<1) remaining=1;
+        control_weight=(toggle_width*word_units+(unsigned)remaining-1)/(unsigned)remaining;
+        if (control_weight<1) control_weight=1;
+        if (control_weight>15) control_weight=15;
+    }
+    lv_buttonmatrix_set_button_width(ime->candidates,control,control_weight);
     if (ime->expanded) {
         if (!ime->page) lv_buttonmatrix_set_button_ctrl(ime->candidates,control,LV_BUTTONMATRIX_CTRL_DISABLED);
         lv_buttonmatrix_set_button_width(ime->candidates,control+1,3);
@@ -1369,42 +1585,17 @@ static void pack_spellings(pxa_lvgl_ime_t *ime) {
             lv_buttonmatrix_set_button_ctrl(ime->candidates,control+2,LV_BUTTONMATRIX_CTRL_DISABLED);
     } else if (!ime->candidate_count) lv_buttonmatrix_set_button_ctrl(ime->candidates,control,LV_BUTTONMATRIX_CTRL_HIDDEN);
 }
-static void fallback_event(lv_event_t *event) {
-    pxa_lvgl_ime_t *ime = lv_event_get_user_data(event);
-    if (lv_event_get_code(event) == LV_EVENT_READY && ime->target)
-        lv_obj_send_event(ime->target, LV_EVENT_READY, NULL);
-    pxa_lvgl_ime_close(ime);
-}
 static pxa_status_t fallback(pxa_lvgl_ime_t *ime) {
-    if (ime->fallback_keyboard) return PXA_STATUS_OK;
-    ime->queue_count = 0; ime->awaiting = false; ime->ready = true;
-    clear_presentation(ime);
-    if (!ime->preedit) ime->preedit=lv_label_create(ime->root);
-    if (!ime->preedit) return PXA_STATUS_RESOURCE_LIMIT;
-    ime->fallback_keyboard = lv_keyboard_create(ime->root);
-    if (!ime->fallback_keyboard) return PXA_STATUS_RESOURCE_LIMIT;
-    lv_obj_set_align(ime->fallback_keyboard,LV_ALIGN_TOP_LEFT);
-    lv_obj_set_pos(ime->fallback_keyboard, 0, ime->font.line_height + 2);
-    lv_obj_set_size(ime->fallback_keyboard, lv_obj_get_width(ime->root)-10,
-        lv_obj_get_height(ime->root)-ime->font.line_height-14);
-    lv_obj_set_style_text_font(ime->fallback_keyboard, &ime->font, LV_PART_ITEMS);
-    lv_keyboard_set_textarea(ime->fallback_keyboard, ime->target);
-#if LV_USE_IME_PINYIN
-    ime->fallback_pinyin = lv_ime_pinyin_create(ime->root);
-    if (ime->fallback_pinyin) {
-        lv_ime_pinyin_set_keyboard(ime->fallback_pinyin, ime->fallback_keyboard);
-#if LV_IME_PINYIN_USE_K9_MODE
-        lv_ime_pinyin_set_mode(ime->fallback_pinyin, ime->layout ? LV_IME_PINYIN_MODE_K9 : LV_IME_PINYIN_MODE_K26);
-#endif
-        lv_obj_set_style_text_font(lv_ime_pinyin_get_cand_panel(ime->fallback_pinyin), &ime->font, LV_PART_ITEMS);
-    }
-#endif
-    lv_obj_add_event_cb(ime->fallback_keyboard, fallback_event, LV_EVENT_READY, ime);
-    lv_obj_add_event_cb(ime->fallback_keyboard, fallback_event, LV_EVENT_CANCEL, ime);
-    lv_obj_set_hidden(ime->keys, true); lv_obj_set_hidden(ime->toolbar, true);
-    lv_obj_set_hidden(ime->candidates, true);
-    if (ime->preedit) lv_label_set_text(ime->preedit, "系统键盘");
-    layout(ime,false);
+    if (ime->local) return PXA_STATUS_OK;
+    ime->queue_count=0; ime->awaiting=false; ime->waiting_release=false;
+    ime->local=true;
+    if (!ime->builtin) ime->builtin=pxa_lvgl_ime_builtin_create(ime->root);
+    if (!ime->builtin) { ime->language=PXA_IME_ENGLISH; ime->layout=PXA_IME_K26; }
+    ime->traditional=!(pxa_lvgl_ime_builtin_scripts()&1u);
+    if (ime->builtin) (void)pxa_lvgl_ime_builtin_set_traditional(ime->builtin,ime->traditional);
+    ime->ready=true; ime->provider_ready=ime->builtin!=NULL;
+    clear_presentation(ime); layout(ime,false);
+    /* Release the failed Guest outside the UI lock; the local editor survives. */
     ime->config.focus(ime->config.context,ime->generation,false,false);
     return PXA_STATUS_OK;
 }
@@ -1412,38 +1603,64 @@ pxa_status_t pxa_lvgl_ime_present(pxa_lvgl_ime_t *ime, uint64_t generation, cons
     if (ime) (void)sync_sensitive_mode(ime);
     if (!ime || !ime->target || generation != ime->generation) return PXA_STATUS_BAD_STATE;
     if (!frame) return fallback(ime);
-    if (frame->sequence == 1) { ime->ready=ime->provider_ready=true; ime->ready_ms=lv_tick_elaps(ime->opened_since); }
+    if (frame->sequence == 1 && !ime->local) { ime->ready=ime->provider_ready=true; ime->ready_ms=lv_tick_elaps(ime->opened_since); }
     if (frame->sequence > 1) ime->awaiting = false; // sequence 1 acknowledges Host RESET
     unsigned count=frame->candidate_count<12?frame->candidate_count:12;
     unsigned spellings=frame->pinyin_count<32?frame->pinyin_count:32;
+    if ((frame->preedit.size && !frame->preedit.data) ||
+        (frame->commit.size && !frame->commit.data)) return PXA_STATUS_INVALID_ARGUMENT;
     /* Pointer tables share the presentation allocation and only reserve the
      * actual reply window. Empty RESETs do not need three maximum-size maps. */
     size_t pointer_bytes=(count || spellings || frame->preedit.size)?presentation_pointers(count,spellings)*sizeof(char *):0;
-    size_t total=pointer_bytes+frame->preedit.size+frame->commit.size+frame->items.size+4;
+    size_t total=pointer_bytes+4;
+    const size_t lengths[]={frame->preedit.size,frame->commit.size,frame->items.size};
+    for (unsigned i=0;i<3;++i) {
+        if (lengths[i]>SIZE_MAX-total) return PXA_STATUS_INVALID_ARGUMENT;
+        total+=lengths[i];
+    }
+    /* Walk encoded items once. Apart from avoiding quadratic rescans, this
+     * keeps the shared keyboard independent of the PXA service runtime. */
+    size_t checked=0;
+    for (unsigned i=0;i<(unsigned)frame->candidate_count+frame->pinyin_count;++i) {
+        if (checked>frame->items.size || frame->items.size-checked<2 || !frame->items.data)
+            return PXA_STATUS_INVALID_ARGUMENT;
+        size_t n=frame->items.data[checked] | ((size_t)frame->items.data[checked+1]<<8);
+        checked+=2;
+        if (!n || n>frame->items.size-checked) return PXA_STATUS_INVALID_ARGUMENT;
+        checked+=n;
+    }
+    if (checked!=frame->items.size) return PXA_STATUS_INVALID_ARGUMENT;
     char *buffer = malloc(total);
     if (!buffer) return PXA_STATUS_RESOURCE_LIMIT;
     char *cursor=buffer+pointer_bytes;
-    memcpy(cursor,frame->commit.data,frame->commit.size); cursor[frame->commit.size]=0;
+    if (frame->commit.size) memcpy(cursor,frame->commit.data,frame->commit.size);
+    cursor[frame->commit.size]=0;
     ime->editing = true;
     if (frame->edit == PXA_IME_EDIT_INSERT) lv_textarea_add_text(ime->target,cursor);
     else if (frame->edit == PXA_IME_EDIT_BACKSPACE) lv_textarea_delete_char(ime->target);
     else if (frame->edit == PXA_IME_EDIT_CLEAR) lv_textarea_set_text(ime->target,"");
-    if (!ime->target) { ime->editing = false; free(buffer); return PXA_STATUS_OK; }
+    if (!ime->target || generation!=ime->generation) {
+        /* VALUE_CHANGED may replace the editor or make it sensitive. Its
+         * observer already reset the session; never restore old candidates. */
+        ime->editing=false; free(buffer); return PXA_STATUS_OK;
+    }
     ime->fingerprint = text_fingerprint(ime->target); ime->editing = false;
-    refresh_editor(ime,true);
     cursor += frame->commit.size + 1;
-    memcpy(cursor,frame->preedit.data,frame->preedit.size); cursor[frame->preedit.size]=0;
+    if (frame->preedit.size) memcpy(cursor,frame->preedit.data,frame->preedit.size);
+    cursor[frame->preedit.size]=0;
     if (ime->preedit) lv_label_set_text(ime->preedit,*cursor ? cursor : ime->language ? "English" : "拼音");
     cursor += frame->preedit.size+1;
     ime->candidate_map=pointer_bytes?(const char **)buffer:NULL;
-    for (unsigned i=0;i<count;++i) {
-        pxa_bytes_t item; (void)pxa_ime_frame_item(frame,i,&item);
-        memcpy(cursor,item.data,item.size); cursor[item.size]=0; cursor+=item.size+1;
+    size_t offset=0;
+    for (unsigned i=0;i<frame->candidate_count;++i) {
+        size_t n=frame->items.data[offset] | ((size_t)frame->items.data[offset+1]<<8); offset+=2;
+        if (i<count) { memcpy(cursor,frame->items.data+offset,n); cursor[n]=0; cursor+=n+1; }
+        offset+=n;
     }
     ime->spelling_count=spellings;
     for (unsigned i=0;i<spellings;++i) {
-        pxa_bytes_t item; (void)pxa_ime_frame_item(frame,frame->candidate_count+i,&item);
-        memcpy(cursor,item.data,item.size); cursor[item.size]=0; cursor+=item.size+1;
+        size_t n=frame->items.data[offset] | ((size_t)frame->items.data[offset+1]<<8); offset+=2;
+        memcpy(cursor,frame->items.data+offset,n); cursor[n]=0; cursor+=n+1; offset+=n;
     }
     if (ime->spelling_start >= ime->spelling_count) ime->spelling_start = 0;
     ime->candidate_count = count;
@@ -1451,6 +1668,9 @@ pxa_status_t pxa_lvgl_ime_present(pxa_lvgl_ime_t *ime, uint64_t generation, cons
     ime->page = frame->page_start;
     ime->more = (frame->flags & PXA_IME_MORE_CANDIDATES) != 0;
     char *previous=ime->items; ime->items=buffer;
+    /* A committed word returns to typing even when a partial selection leaves
+     * more syllables. Paging and spelling-only replies keep the grid open. */
+    if (frame->edit==PXA_IME_EDIT_INSERT && frame->commit.size) ime->expanded=false;
     layout(ime,false);
     free(previous);
     if (frame->edit == PXA_IME_EDIT_SUBMIT || (frame->flags & PXA_IME_SUBMIT)) {
@@ -1469,3 +1689,8 @@ void pxa_lvgl_ime_timing(const pxa_lvgl_ime_t *ime,pxa_lvgl_ime_timing_t *output
     if (ime) *output=(pxa_lvgl_ime_timing_t){ime->drawn,ime->provider_ready,ime->first_draw_ms,ime->ready_ms};
 }
 uint64_t pxa_lvgl_ime_generation(const pxa_lvgl_ime_t *ime) { return ime ? ime->generation : 0; }
+
+static pxa_status_t local_present(void *context,const pxa_ime_frame_t *frame) {
+    pxa_lvgl_ime_t *ime=context;
+    return pxa_lvgl_ime_present(ime,ime->generation,frame);
+}

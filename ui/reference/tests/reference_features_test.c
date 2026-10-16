@@ -27,6 +27,17 @@ static void test_release(void* context, void* memory) {
     free(memory);
 }
 
+#if PXSYS_REFERENCE_UI_BUILTIN_SETTINGS
+static bool test_managed_input(void *context,void *textarea) {
+    return textarea == context;
+}
+static size_t empty_file_list(void* context, const char* path,
+    pxsys_reference_file_entry_t* entries, size_t capacity) {
+    (void)context; (void)path; (void)entries; (void)capacity;
+    return 0;
+}
+#endif
+
 static void flush(lv_display_t* display, const lv_area_t* area, uint8_t* pixels) {
     (void)area;
     (void)pixels;
@@ -60,6 +71,9 @@ static void check_features(uint32_t features) {
     ui_config.allocator = system_config.allocator;
     ui_config.parent = lv_layer_top();
     ui_config.features = features;
+#if PXSYS_REFERENCE_UI_BUILTIN_SETTINGS
+    ui_config.file_list = empty_file_list;
+#endif
     assert(pxsys_reference_lvgl_create(&ui_config, &ui) == PXSYS_STATUS_OK);
     check_role(system, PXSYS_ROLE_HOME, (features & PXSYS_REFERENCE_UI_HOME) != 0);
     check_role(system, PXSYS_ROLE_SETTINGS, (features & PXSYS_REFERENCE_UI_SETTINGS) != 0);
@@ -84,20 +98,83 @@ static void check_features(uint32_t features) {
     pxsys_reference_lvgl_refresh_apps(ui);
     build_task_switcher(ui);
     assert(ui->task_switcher != NULL);
+    assert(pxsys_reference_lvgl_key_navigation_scope(ui) == ui->task_switcher);
+    assert(pxsys_reference_lvgl_back(ui) == PXSYS_STATUS_OK);
+    assert(!task_switcher_is_open(ui));
     close_task_switcher(ui);
+    assert(pxsys_reference_lvgl_set_locked(ui, true) == PXSYS_STATUS_OK);
+    assert(pxsys_reference_lvgl_key_navigation_scope(ui) == ui->lock_screen);
+    assert(pxsys_reference_lvgl_back(ui) == PXSYS_STATUS_OK && ui->locked);
+    uint32_t unlock_key = LV_KEY_ENTER;
+    lv_obj_send_event(ui->lock_screen, LV_EVENT_KEY, &unlock_key);
+    assert(!ui->locked);
+    if (ui->status_bar && (features & PXSYS_REFERENCE_UI_NOTIFICATION_SHADE)) {
+        lv_obj_send_event(ui->status_bar, LV_EVENT_KEY, &unlock_key);
+        assert(ui->notification_shade_open);
+        assert(pxsys_reference_lvgl_key_navigation_scope(ui) == ui->notification_panel);
+        assert(pxsys_reference_lvgl_back(ui) == PXSYS_STATUS_OK);
+        assert(!ui->notification_shade_open);
+    }
+#if PXSYS_REFERENCE_UI_BUILTIN_SETTINGS
+    if (features & PXSYS_REFERENCE_UI_FILE_MANAGER) {
+        assert(open_role(ui, PXSYS_ROLE_FILE_MANAGER) == PXSYS_STATUS_OK);
+        strcpy(ui->file_path, "/sdcard/roms");
+        assert(pxsys_reference_lvgl_back(ui) == PXSYS_STATUS_OK);
+        assert(strcmp(ui->file_path, "/sdcard") == 0);
+        assert(pxsys_reference_lvgl_back(ui) == PXSYS_STATUS_OK);
+        assert(ui->file_path[0] == '\0');
+        show_page_confirm(ui, "Confirm test");
+        assert(ui->confirm_dialog != NULL);
+        assert(pxsys_reference_lvgl_key_navigation_scope(ui) == ui->confirm_dialog);
+        assert(pxsys_reference_lvgl_back(ui) == PXSYS_STATUS_OK);
+        assert(ui->confirm_dialog == NULL && ui->active_page == REFERENCE_PAGE_FILE_MANAGER);
+    }
+#endif
     lv_tick_inc(250);
     (void)lv_timer_handler();
 #if PXSYS_REFERENCE_UI_BUILTIN_SETTINGS
     lv_obj_t* input = lv_textarea_create(lv_screen_active());
     app_input_method_open(ui, input);
     assert(ui->app_ime != NULL);
-#if !LV_USE_IME_PINYIN || !LV_IME_PINYIN_USE_K9_MODE
-    assert(ui->app_ime_keyboard != NULL);
-#endif
-#if !LV_USE_IME_PINYIN
-    assert(ui->app_ime_pinyin == NULL);
-#endif
+    assert(ui->app_ime_keypad != NULL);
+    assert(pxsys_reference_ime_is_visible(ui->app_ime_keypad));
+    /* Native and external keyboards share an ownership marker. A later
+     * system poll must keep its own native keyboard open. */
+    lv_obj_add_state(input,LV_STATE_FOCUSED);
+    ui->input_method_managed=test_managed_input;
+    ui->input_method_context=input;
+    pxsys_reference_ime_t *opened=ui->app_ime_keypad;
+    app_input_method_poll(ui->app_ime_timer);
+    assert(ui->app_ime_keypad == opened);
+    assert(pxsys_reference_ime_is_visible(opened));
+    ui->input_method_managed=NULL;
+    ui->input_method_context=NULL;
     app_input_method_close(ui);
+    assert(ui->app_ime == NULL && ui->app_ime_keypad == NULL);
+    lv_group_t* key_group = lv_group_create();
+    lv_indev_t* keys = lv_indev_create();
+    lv_indev_set_type(keys, LV_INDEV_TYPE_KEYPAD);
+    lv_indev_set_group(keys, key_group);
+    lv_group_add_obj(key_group, input);
+    app_input_method_poll(ui->app_ime_timer);
+    assert(ui->app_ime == NULL); /* Focus alone must not open a keyboard. */
+    assert(pxsys_reference_lvgl_key_activate(ui, input) == PXSYS_STATUS_OK);
+    assert(ui->app_ime != NULL);
+    assert(pxsys_reference_lvgl_key_navigation_scope(ui) == ui->app_ime);
+    lv_group_remove_obj(input);
+    /* A keyboard key takes focus away from its text editor. Polling must
+     * preserve the session while keypad focus is inside that keyboard. */
+    lv_obj_t* key = lv_button_create(ui->app_ime);
+    lv_group_add_obj(key_group, key);
+    app_input_method_poll(ui->app_ime_timer);
+    assert(ui->app_ime != NULL);
+    assert(pxsys_reference_lvgl_back(ui) == PXSYS_STATUS_OK);
+    assert(ui->app_ime == NULL);
+    lv_group_add_obj(key_group, input);
+    app_input_method_poll(ui->app_ime_timer);
+    assert(ui->app_ime == NULL); /* Back does not immediately reopen it. */
+    lv_indev_delete(keys);
+    lv_group_delete(key_group);
     lv_obj_delete(input);
 #endif
     assert(pxsys_reference_lvgl_set_animations_enabled(ui, false) == PXSYS_STATUS_OK);

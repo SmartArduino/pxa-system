@@ -1,0 +1,14 @@
+{
+  "open_live": 6080,
+  "open_peak": 6080,
+  "render_live": 40788,
+  "render_peak": 49604,
+  "glyph_count": 44548,
+  "missing": 0,
+  "blank": 0,
+  "bitmap_mismatch": 0,
+  "checksum": 4034948236,
+  "charmaps": 1,
+  "unicode_cmap_format": 12,
+  "after_close": 0
+}

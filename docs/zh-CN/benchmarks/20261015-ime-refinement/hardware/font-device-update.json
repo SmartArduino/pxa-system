@@ -1,0 +1,20 @@
+{
+  "hello": "protocol=1;mode=normal;capabilities=info,memory,logcat,packages,package-deploy,package-run,package-stop,fs,reboot,doctor,input-v2,screenshot-rgb565,screenshot-jpeg,poweroff,perf-raster,heap-local,ime;max_chunk=1024;fs_offset=1;fs_sha256=1;target=esp32s3;serial=a4:cb:8f:d5:d4:f0;version=host-tools-v0.1.0-20-gc3dd9e5-d",
+  "files": {
+    "noto_sans_cjk_common.ttf": {
+      "sha256": "121cb206d826af5259cfb78418defde651a9daa80fa1d7d51de3eea716c934a4",
+      "bytes": 2777480
+    },
+    "NOTICE": {
+      "sha256": "6d385243c1663430c9762cd3efe4f5027b6fcc31e8e404ff38c3f4a41922b1eb",
+      "bytes": 1788
+    },
+    "OFL.txt": {
+      "sha256": "6a73f9541c2de74158c0e7cf6b0a58ef774f5a780bf191f2d7ec9cc53efe2bf2",
+      "bytes": 4301
+    }
+  },
+  "staging_free": 5828608,
+  "profile": "zh-Hans,en",
+  "app_image": "maintenance-complete.bin"
+}

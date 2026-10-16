@@ -188,9 +188,16 @@ typedef struct {
     uint8_t active;
 } pxsys_reference_managed_app_t;
 
-/* Two-phase enumeration: NULL items returns the required count. */
+typedef enum {
+    PXSYS_REFERENCE_APPS_ALL = 0,
+    PXSYS_REFERENCE_APPS_INPUT_METHODS,
+} pxsys_reference_app_filter_t;
+
+/* Filter before applying capacity, including disabled installed providers.
+ * Two-phase enumeration: NULL items returns the filtered required count. */
 typedef size_t (*pxsys_reference_lvgl_app_list_fn)(
-    void* context, pxsys_reference_managed_app_t* apps, size_t capacity);
+    void* context, pxsys_reference_managed_app_t* apps, size_t capacity,
+    pxsys_reference_app_filter_t filter);
 typedef bool (*pxsys_reference_lvgl_app_action_fn)(
     void* context, const char* identity, pxsys_reference_app_action_t action);
 typedef bool (*pxsys_reference_lvgl_launcher_load_fn)(
@@ -448,6 +455,18 @@ pxsys_status_t pxsys_reference_lvgl_set_animations_enabled(
 bool pxsys_reference_lvgl_animations_enabled(
     const pxsys_reference_lvgl_t* ui);
 bool pxsys_reference_lvgl_dismiss_overlay(pxsys_reference_lvgl_t* ui);
+/* Hardware Back follows the same page/dialog/task path as the navigation bar.
+ * Call from the LVGL task (or under its lock). */
+pxsys_status_t pxsys_reference_lvgl_back(pxsys_reference_lvgl_t* ui);
+pxsys_status_t pxsys_reference_lvgl_show_recents(pxsys_reference_lvgl_t* ui);
+/* Borrowed topmost modal scope for product-owned keypad focus. NULL means the
+ * normal application and shell layers are available. Never retain across UI
+ * mutations; modal scopes include the lock screen and built-in keyboard. */
+lv_obj_t* pxsys_reference_lvgl_key_navigation_scope(pxsys_reference_lvgl_t* ui);
+/* Explicit keypad confirmation of a text editor opens its input method.
+ * Merely moving hardware focus to an editor does not summon the keyboard. */
+pxsys_status_t pxsys_reference_lvgl_key_activate(pxsys_reference_lvgl_t* ui,
+                                               lv_obj_t* object);
 pxsys_status_t pxsys_reference_lvgl_set_locked(pxsys_reference_lvgl_t* ui,
                                                bool locked);
 bool pxsys_reference_lvgl_is_locked(const pxsys_reference_lvgl_t* ui);

@@ -1,0 +1,4 @@
+Builtin dictionaries disabled: no decoder allocation
+TGH characters=8105 decoder_checks=16908 scripts=1: complete readings, T9/QWERTY and all candidate pages passed
+TGH characters=8833 decoder_checks=18988 scripts=2: complete readings, T9/QWERTY and all candidate pages passed
+TGH characters=16938 decoder_checks=35896 scripts=3: complete readings, T9/QWERTY and all candidate pages passed

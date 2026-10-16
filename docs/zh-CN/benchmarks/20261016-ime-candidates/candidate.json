@@ -1,0 +1,11 @@
+{
+  "source_sha256": "51298c821e5fb661cda4706d424c922bf056a08466b238d0a2f6bae686c17926",
+  "changed_archive_members": [
+    "pxa_lvgl_ime.c.obj"
+  ],
+  "production_code_baseline_verified": true,
+  "shared_build_outputs_modified": false,
+  "firmware_sha256": "51362b62af8fd704eeb7b301cc4453901ffbc2426c8984e9b87944c429500e02",
+  "firmware_bytes": 3445184,
+  "production_firmware_sha256": "6036e4cae795273504db3c1bb71c4d09d21e55c3301ab205f83a5e160ce10275"
+}

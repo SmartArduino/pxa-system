@@ -1,0 +1,32 @@
+{
+  "source_sha256": {
+    "frequency.tsv": "34861b1eb5f3a240ebfa780278d94b70e39986e6d9fff7f1b50a04a56ccd26bf",
+    "tgh2013.tsv": "8a2152f1c85f04ef129846ed86ab588fb36ca9af9b438771081d2dddc2d201f8",
+    "traditional-readings.tsv": "3e16ce403fb3f3a891b31538d03248956789bf8a5340c880746ebd6c7e6b5d9a"
+  },
+  "simplified": {
+    "syllables": 410,
+    "readings_including_input_aliases": 8461,
+    "unique_characters": 8105,
+    "pool_bytes": 25993,
+    "row_bytes": 4100,
+    "static_bytes": 30093,
+    "max_t9_complete_spellings": 6,
+    "standard_levels": {
+      "3500": 3500,
+      "6500": 6500,
+      "8105": 8105
+    }
+  },
+  "traditional": {
+    "syllables": 415,
+    "readings_including_input_aliases": 9501,
+    "unique_characters": 8833,
+    "pool_bytes": 28952,
+    "row_bytes": 4150,
+    "static_bytes": 33102,
+    "max_t9_complete_spellings": 6,
+    "all_standard_character_counterparts_present": true,
+    "standard_source_characters": 8105
+  }
+}

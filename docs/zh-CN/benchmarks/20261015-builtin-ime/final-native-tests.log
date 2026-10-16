@@ -1,0 +1,23 @@
+Test project /home/lucinhu/Documents/workspace/esp32/zuowei_paixueji_touch/pxa-projects/local/ime-ux-20261015/build
+    Start  16: pxsys_system_gestures_test
+1/9 Test  #16: pxsys_system_gestures_test ........   Passed    0.21 sec
+    Start  32: pxa_ime_preferences_test
+2/9 Test  #32: pxa_ime_preferences_test ..........   Passed    0.00 sec
+    Start  63: pxa_ime_test
+3/9 Test  #63: pxa_ime_test ......................   Passed    0.00 sec
+    Start  99: pxsys_reference_layout_test
+4/9 Test  #99: pxsys_reference_layout_test .......   Passed    0.02 sec
+    Start 102: pxsys_reference_ime_test
+5/9 Test #102: pxsys_reference_ime_test ..........   Passed    0.03 sec
+    Start 103: pxsys_reference_features_0_test
+6/9 Test #103: pxsys_reference_features_0_test ...   Passed    0.10 sec
+    Start 104: pxsys_reference_features_1_test
+7/9 Test #104: pxsys_reference_features_1_test ...   Passed    0.10 sec
+    Start 106: pxsys_reference_no_pinyin_test
+8/9 Test #106: pxsys_reference_no_pinyin_test ....   Passed    0.14 sec
+    Start 107: pxsys_reference_k26_test
+9/9 Test #107: pxsys_reference_k26_test ..........   Passed    0.11 sec
+
+100% tests passed out of 9
+
+Total Test time (real) =   0.73 sec
