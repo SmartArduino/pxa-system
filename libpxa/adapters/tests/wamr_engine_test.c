@@ -429,6 +429,29 @@ check_rejected_import(const char *label, const char *guest_path,
         expected);
 }
 
+static pxa_wamr_artifact_reader_t file_reader;
+static unsigned reader_opens, reader_closes;
+static void close_reader(void *context) {
+    (void)context; CHECK(reader_opens == reader_closes + 1);
+    file_reader.close(file_reader.context); ++reader_closes;
+}
+static pxa_status_t read_reader(void *context, uint64_t offset, uint8_t *output,
+                                size_t capacity, size_t *size) {
+    (void)context; CHECK(capacity <= 16384);
+    /* Simulate a seekable SD/VFS driver that returns short reads. */
+    if (capacity > 127) capacity = 127;
+    return file_reader.read_at(file_reader.context, offset, output, capacity, size);
+}
+static pxa_status_t open_reader(void *context, pxa_bytes_t path,
+                                pxa_wamr_artifact_reader_t *output) {
+    CHECK(reader_opens == reader_closes);
+    pxa_status_t status = pxa_wamr_open_artifact_file(context, path, &file_reader);
+    if (status != PXA_STATUS_OK) return status;
+    ++reader_opens; *output = file_reader;
+    output->context = NULL; output->read_at = read_reader; output->close = close_reader;
+    return PXA_STATUS_OK;
+}
+
 static void check_wasi_guest(const char *label, const char *guest_path,
                              const char *artifact_name,
                              uint64_t instance_id, uint64_t features,
@@ -484,15 +507,19 @@ static void check_wasi_guest(const char *label, const char *guest_path,
         PXA_STATUS_OK);
     /* WAMR may retain the source binary until unload. Both ownership modes
      * are valid; the allocation must be returned after destroy. */
+    int streamed = getenv("PXA_TEST_ARTIFACT_READER") &&
+                   artifact.kind == PXA_ARTIFACT_AOT &&
+                   strcmp(artifact_name, "retained-custom.aot") != 0 &&
+                   strcmp(artifact_name, "retained-wasm.aot") != 0;
     CHECK(artifact_probe->current_bytes >= current_bytes);
-    CHECK(artifact_probe->allocate_count == allocate_count + 1);
+    CHECK(artifact_probe->allocate_count == allocate_count + !streamed);
     CHECK(artifact_probe->release_count == release_count ||
           artifact_probe->release_count == release_count + 1);
     int retained_source = strcmp(artifact_name, "retained-custom.aot") == 0 ||
                           strcmp(artifact_name, "retained-wasm.aot") == 0;
     if (artifact.kind == PXA_ARTIFACT_AOT && !retained_source) {
         CHECK(artifact_probe->current_bytes == current_bytes);
-        CHECK(artifact_probe->release_count == release_count + 1);
+        CHECK(artifact_probe->release_count == release_count + !streamed);
     }
     if (retained_source) {
         CHECK(artifact_probe->current_bytes > current_bytes);
@@ -510,7 +537,7 @@ static void check_wasi_guest(const char *label, const char *guest_path,
     check_status(label, pxa_component_remove(runtime, component),
                  PXA_STATUS_OK);
     CHECK(artifact_probe->current_bytes == current_bytes);
-    CHECK(artifact_probe->release_count == release_count + 1);
+    CHECK(artifact_probe->release_count == release_count + !streamed);
 }
 
 static pxa_status_t read_artifact(void *context, pxa_bytes_t path,
@@ -721,6 +748,10 @@ int main(void) {
     memset(&engine_config, 0, sizeof(engine_config));
     engine_config.struct_size = sizeof(engine_config);
     engine_config.read_artifact = read_artifact;
+    if (getenv("PXA_TEST_ARTIFACT_READER")) {
+        engine_config.read_artifact = NULL;
+        engine_config.open_artifact = open_reader;
+    }
     engine_config.now_us = now_us;
     engine_config.call_timeout_us = 0;
     engine_config.guest_stack_size = 128 * 1024;
@@ -1041,7 +1072,7 @@ int main(void) {
                                   package_dir, "partial.aot", PXA_STATUS_UNSUPPORTED,
                                   &engine_ops, NULL, 0);
             CHECK(artifact_probe.current_bytes == current);
-            CHECK(artifact_probe.release_count == releases + 1);
+            CHECK(artifact_probe.release_count == releases + !getenv("PXA_TEST_ARTIFACT_READER"));
             /* An optional custom section preserves the original borrowed
              * source policy, even in builds which ignore its payload. */
             size_t custom = (size + 3) & ~(size_t)3;
@@ -1438,6 +1469,7 @@ int main(void) {
     /* 10. Teardown. */
     pxa_wamr_engine_deinit(engine);
     CHECK(runtime_probe.allocate_count == runtime_probe.release_count);
+    CHECK(reader_opens == reader_closes);
     CHECK(artifact_probe.current_bytes == 0);
     CHECK(artifact_probe.allocate_count == artifact_probe.release_count);
     CHECK(artifact_probe.peak_bytes >= wasm_size);

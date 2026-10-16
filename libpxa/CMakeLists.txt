@@ -313,6 +313,8 @@ if(PXA_BUILD_ADAPTERS AND PXA_WAMR_SOURCE_DIR)
     set(WAMR_BUILD_SIMD 0)
     add_subdirectory(${PXA_WAMR_SOURCE_DIR}
         ${CMAKE_CURRENT_BINARY_DIR}/wamr EXCLUDE_FROM_ALL)
+    include("${CMAKE_CURRENT_SOURCE_DIR}/../cmake/PxaWamrLoader.cmake")
+    pxa_configure_wamr_loader(vmlib "${PXA_WAMR_SOURCE_DIR}")
     if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
         # WAMR's interpreter uses computed jumps and installs its own signal
         # handlers, which are incompatible with sanitizer instrumentation;
@@ -321,7 +323,8 @@ if(PXA_BUILD_ADAPTERS AND PXA_WAMR_SOURCE_DIR)
         target_compile_options(vmlib PRIVATE -fno-sanitize=all)
     endif()
 
-    add_library(pxa_adapters_wamr adapters/wamr/pxa_wamr_engine.c)
+    add_library(pxa_adapters_wamr adapters/wamr/pxa_wamr_engine.c
+        adapters/wamr/pxa_wamr_file_reader.c)
     add_library(pxa::adapters_wamr ALIAS pxa_adapters_wamr)
     set_target_properties(pxa_adapters_wamr PROPERTIES
         EXPORT_NAME adapters_wamr
@@ -447,6 +450,17 @@ if(PXA_BUILD_ADAPTERS AND PXA_WAMR_SOURCE_DIR)
                 target_compile_definitions(pxa_wamr_engine_test PRIVATE
                     PXA_WAMR_TEST_AOT_DATA_PATH="${wamr_aot_data_AOT}"
                     PXA_WAMR_TEST_AOT_DATA_WASM_PATH="${wamr_aot_data_guest_WASM}")
+                add_executable(pxa_wamr_aot_reader_test adapters/tests/wamr_aot_reader_test.c)
+                target_link_libraries(pxa_wamr_aot_reader_test PRIVATE pxa_adapters_wamr)
+                if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+                    target_link_options(pxa_wamr_aot_reader_test PRIVATE
+                        -Wl,--wrap=os_mmap -Wl,--wrap=os_munmap)
+                    target_compile_definitions(pxa_wamr_aot_reader_test PRIVATE PXA_TEST_WRAP_MMAP=1)
+                endif()
+                target_compile_definitions(pxa_wamr_aot_reader_test PRIVATE
+                    PXA_WAMR_TEST_AOT_DATA_PATH="${wamr_aot_data_AOT}")
+                add_dependencies(pxa_wamr_aot_reader_test wamr_aot_data_guest_aot)
+                add_test(NAME pxa_wamr_aot_reader_test COMMAND pxa_wamr_aot_reader_test)
             endif()
             target_link_libraries(pxa_wamr_engine_test PRIVATE
                 pxa_adapters_posix pxa_adapters_wamr)
@@ -479,6 +493,9 @@ if(PXA_BUILD_ADAPTERS AND PXA_WAMR_SOURCE_DIR)
             endif()
             add_test(NAME pxa_wamr_engine_test
                      COMMAND pxa_wamr_engine_test)
+            add_test(NAME pxa_wamr_reader_engine_test COMMAND pxa_wamr_engine_test)
+            set_tests_properties(pxa_wamr_reader_engine_test PROPERTIES
+                ENVIRONMENT "PXA_TEST_ARTIFACT_READER=1")
         endif()
     endif()
 endif()

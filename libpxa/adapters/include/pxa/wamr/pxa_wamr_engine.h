@@ -14,7 +14,7 @@ extern "C" {
 /* Layer 2 reference adapter: WAMR implementation of the Component engine
  * (`pxa_component_engine_t`). Mirrors the legacy C++ WAMR host semantics:
  *  - loads one Artifact (portable Wasm or AOT) per Component from the package
- *    root through the `read_artifact` callback;
+ *    root through a seekable Artifact reader (or legacy read_artifact);
  *  - binds the `pxa.core.v2` natives;
  *  - calls the guest exports pxa_app_start / pxa_app_on_event / pxa_app_stop;
  *  - optional guest-call deadline: poll pxa_wamr_engine_poll_deadlines from a
@@ -29,10 +29,11 @@ extern "C" {
  * distinct maximum-sized module buffer in the workspace. Hosts may instead
  * provide the paired Artifact allocator callbacks. The adapter releases each
  * temporary Artifact after loading when WAMR reports that its underlying
- * buffer is freeable. Standard AOT clones initial data and names so the source
- * is released before instantiation; XIP and interpreter modes retain it until
- * WAMR unloads the module. Event delivery copies through a transient
- * module_malloc buffer per event.
+ * buffer is freeable. With open_artifact, ordinary AOT is read directly into
+ * its final code mapping; temporary metadata is released before instantiation.
+ * Custom sections use the buffered loader to preserve borrowed payloads.
+ * Interpreted Wasm retains its source until unload. XIP is unsupported.
+ * Event delivery copies into a reusable Guest buffer owned by the instance.
  */
 
 #define PXA_WAMR_ENGINE_MAX_CONFIG_BYTES ((size_t)256)
@@ -45,10 +46,29 @@ typedef void *(*pxa_wamr_runtime_reallocate_fn)(void *context, void *memory,
                                                 size_t size);
 typedef void (*pxa_wamr_runtime_release_fn)(void *context, void *memory);
 
+/* One open, seekable Artifact. Short reads are allowed; zero before EOF is
+ * an I/O error. The owner thread closes it on every success/failure path.
+ * Keeping the same handle avoids reopening a different file between reads. */
+typedef struct {
+    void *context;
+    uint64_t size;
+    pxa_status_t (*read_at)(void *context, uint64_t offset, uint8_t *output,
+                           size_t capacity, size_t *size);
+    void (*close)(void *context);
+} pxa_wamr_artifact_reader_t;
+typedef pxa_status_t (*pxa_wamr_artifact_open_fn)(
+    void *context, pxa_bytes_t path, pxa_wamr_artifact_reader_t *output);
+
+/* POSIX/VFS implementation, shared by desktop, Flash filesystems and SD.
+ * No file-sized allocation or stdio cache; ignores context. */
+pxa_status_t pxa_wamr_open_artifact_file(
+    void *context, pxa_bytes_t path, pxa_wamr_artifact_reader_t *output);
+
 typedef struct {
     uint32_t struct_size;
     void *host_context;
-    /* Required: read one Artifact file into `output` (bounded). A call with
+    /* Required unless open_artifact is configured: read one Artifact file
+     * into `output` (bounded). A call with
      * output == NULL and capacity == 0 queries its size without reading it. */
     pxa_status_t (*read_artifact)(void *host_context, pxa_bytes_t path,
                                   uint8_t *output, size_t capacity,
@@ -82,7 +102,8 @@ typedef struct {
     pxa_wamr_synchronize_fn leave_critical;
     /* Optional pair. When absent, max_components independent module buffers
      * are included in the engine workspace. When present, the adapter queries
-     * the Artifact size and makes one exact-sized allocation per load. WAMR's
+     * the Artifact size and makes an exact-sized allocation for buffered loads
+     * (Wasm, custom-section AOT, or the legacy reader). WAMR's
      * ownership result determines whether it is released after loading or
      * retained until wasm_runtime_unload() completes. */
     void *artifact_allocator_context;
@@ -94,6 +115,11 @@ typedef struct {
     pxa_wamr_runtime_allocate_fn allocate_runtime;
     pxa_wamr_runtime_reallocate_fn reallocate_runtime;
     pxa_wamr_runtime_release_fn release_runtime;
+    /* Preferred over read_artifact. Ordinary AOT is read in bounded chunks
+     * directly into its final executable mapping. Wasm retains a bounded-by-
+     * file-size buffer for the interpreter. XIP is deliberately unsupported.
+     * read_artifact remains optional for existing embedders. */
+    pxa_wamr_artifact_open_fn open_artifact;
 } pxa_wamr_engine_config_t;
 
 typedef struct pxa_wamr_engine pxa_wamr_engine_t;

@@ -2322,41 +2322,6 @@ static pxa_status_t prepare_start(void *context, pxa_component_t component,
     return PXA_STATUS_OK;
 }
 
-static pxa_status_t read_artifact(void *context, pxa_bytes_t path,
-                                  uint8_t *output, size_t capacity,
-                                  size_t *size) {
-    FILE *file;
-    long file_size;
-    char filename[1536];
-    product_host_t *host = context;
-    if (host == NULL || path.data == NULL || size == NULL ||
-        path.size == 0 || path.size >= sizeof(filename))
-        return PXA_STATUS_INVALID_ARGUMENT;
-    /* The WAMR adapter already joins the package root and artifact path. */
-    memcpy(filename, path.data, path.size);
-    filename[path.size] = '\0';
-    file = fopen(filename, "rb");
-    if (file == NULL) return PXA_STATUS_NOT_FOUND;
-    if (fseek(file, 0, SEEK_END) != 0 || (file_size = ftell(file)) <= 0) {
-        fclose(file);
-        return PXA_STATUS_IO_ERROR;
-    }
-    rewind(file);
-    if (output == NULL) {
-        *size = (size_t)file_size;
-        fclose(file);
-        return PXA_STATUS_OK;
-    }
-    if ((size_t)file_size > capacity ||
-        fread(output, 1, (size_t)file_size, file) != (size_t)file_size) {
-        fclose(file);
-        return PXA_STATUS_RESOURCE_LIMIT;
-    }
-    fclose(file);
-    *size = (size_t)file_size;
-    return PXA_STATUS_OK;
-}
-
 /* Visual integration tests can fix Clock NOW without changing frame pacing. */
 #ifndef PXSYS_CLOCK_NOW_US
 #define PXSYS_CLOCK_NOW_US() now_us(NULL)
@@ -4042,7 +4007,7 @@ static int run_product_simulator(const options_t *input,
         goto done;
     engine_config.struct_size = sizeof(engine_config); engine_config.host_context = &host;
     stage = "WAMR engine";
-    engine_config.read_artifact = read_artifact; engine_config.now_us = now_us;
+    engine_config.open_artifact = pxa_wamr_open_artifact_file; engine_config.now_us = now_us;
     engine_config.prepare_start = prepare_start; engine_config.max_components = PRODUCT_COMPONENTS;
     engine_config.wasi_enabled = 1; engine_config.allocate_artifact = allocate_memory;
     engine_config.release_artifact = release_memory; engine_config.allocate_runtime = allocate_memory;

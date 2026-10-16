@@ -1,0 +1,37 @@
+--- a/core/iwasm/aot/aot_loader.c
++++ b/core/iwasm/aot/aot_loader.c
+@@ -4247,16 +4247,29 @@
+     AOTModule *module = create_module("", error_buf, error_buf_size);
+ 
+     if (!module)
+-        return NULL;
+-
++        goto fail;
++
++    /* Section callers can discard INIT_DATA after this call, just as the
++       public runtime API already advertises through is_binary_freeable. */
++    module->is_binary_freeable = true;
++    module->package_version = AOT_CURRENT_VERSION;
+     if (!load_from_sections(module, section_list, false, false, error_buf,
+                             error_buf_size)) {
++        /* TEXT ownership is transferred on entry, including partial loads.
++           Unmap the supplied base, never a partially parsed code pointer. */
++        module->code = NULL;
+         aot_unload(module);
+-        return NULL;
+-    }
+-
++        goto fail;
++    }
++    os_icache_flush(module->code, module->code_size);
+     LOG_VERBOSE("Load module from sections success.\n");
+     return module;
++fail:
++    for (AOTSection *section = section_list; section; section = section->next)
++        if (section->section_type == AOT_SECTION_TYPE_TEXT
++            && section->section_body)
++            os_munmap(section->section_body, section->section_body_size);
++    return NULL;
+ }
+ 
+ static void

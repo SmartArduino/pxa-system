@@ -112,4 +112,6 @@ function(pxsys_configure_wamr_esp_idf wamr_component)
         $<$<COMPILE_LANGUAGE:C,CXX>:${PXSYS_WAMR_ESP_IDF_COMPAT_HEADER}>
         $<$<COMPILE_LANGUAGE:C,CXX>:-Wno-error=dangling-pointer>)
     target_link_libraries(${wamr_component} PRIVATE __idf_esp_mm)
+    include("${PXSYS_WAMR_ROOT}/cmake/PxaWamrLoader.cmake")
+    pxa_configure_wamr_loader(${wamr_component} "${wamr_root}")
 endfunction()

@@ -28,6 +28,7 @@
 #include "pxa/service.h"
 #include "pxa/wire.h"
 #include "wasm_export.h"
+#include "pxa_wamr_aot_reader.h"
 
 #if defined(ESP_PLATFORM)
 #include "esp_log.h"
@@ -86,9 +87,11 @@ struct pxa_wamr_engine {
     uint32_t magic;
     pxa_runtime_t *runtime;
     void *host_context;
-    pxa_status_t (*read_artifact)(void *context, pxa_bytes_t path,
-                                  uint8_t *output, size_t capacity,
-                                  size_t *size);
+    union {
+        pxa_status_t (*read)(void *context, pxa_bytes_t path,
+                             uint8_t *output, size_t capacity, size_t *size);
+        pxa_wamr_artifact_open_fn open;
+    } artifact;
     uint64_t (*now_us)(void *context);
     pxa_status_t (*prepare_start)(void *context, pxa_component_t component,
                                   uint64_t instance_id, uint8_t kind);
@@ -116,6 +119,7 @@ struct pxa_wamr_engine {
     wasm_module_inst_t executing_module;
     uint8_t busy;
     uint8_t wasi_enabled;
+    uint8_t seekable_artifacts;
     uint8_t *pool;
     /* WAMR retains and sorts this array. Keep it in the engine workspace,
      * whose lifetime already encloses the runtime; no extra global SRAM. */
@@ -467,7 +471,7 @@ static pxa_status_t load_module_buffer(pxa_wamr_engine_t *engine,
                                        pxa_bytes_t path) {
     size_t expected_size = 0;
     size_t loaded_size = 0;
-    pxa_status_t status = engine->read_artifact(engine->host_context, path,
+    pxa_status_t status = engine->artifact.read(engine->host_context, path,
                                                 NULL, 0, &expected_size);
     if (status != PXA_STATUS_OK) return status;
     if (expected_size == 0 || expected_size > UINT32_MAX ||
@@ -487,13 +491,80 @@ static pxa_status_t load_module_buffer(pxa_wamr_engine_t *engine,
         return PXA_STATUS_RESOURCE_LIMIT;
     }
     status =
-        engine->read_artifact(engine->host_context, path, entry->module_bytes,
+        engine->artifact.read(engine->host_context, path, entry->module_bytes,
                               entry->module_capacity, &loaded_size);
     if (status != PXA_STATUS_OK || loaded_size != expected_size) {
         release_module_buffer(engine, entry);
         return status == PXA_STATUS_OK ? PXA_STATUS_INTERNAL : status;
     }
     entry->module_size = loaded_size;
+    return PXA_STATUS_OK;
+}
+
+/* The reader is scoped to loading: no open file or storage callback remains
+ * in the execution path. AOT-only packages never fall back to interpretation. */
+static pxa_status_t load_artifact(pxa_wamr_engine_t *engine,
+                                  pxa_wamr_entry_t *slot, pxa_bytes_t path,
+                                  uint8_t kind, char *error, uint32_t error_size) {
+    pxa_wamr_artifact_reader_t reader = {0};
+    pxa_status_t status;
+    LoadArgs args = {0};
+    error[0] = 0;
+    if (engine->seekable_artifacts) {
+        uint8_t header[8];
+        int buffered = 0;
+        status = engine->artifact.open(engine->host_context, path, &reader);
+        if (status != PXA_STATUS_OK) return status;
+        if (!reader.read_at || !reader.close) {
+            if (reader.close) reader.close(reader.context);
+            return PXA_STATUS_INVALID_ARGUMENT;
+        }
+        if (!reader.size || reader.size > UINT32_MAX ||
+            (engine->max_module_bytes && reader.size > engine->max_module_bytes)) {
+            status = PXA_STATUS_RESOURCE_LIMIT; goto close_reader;
+        }
+        status = pxa_wamr_read_exact(&reader, 0, header, sizeof(header));
+        if (status != PXA_STATUS_OK) goto close_reader;
+        if (kind == PXA_ARTIFACT_AOT && get_package_type(header, sizeof(header)) == Wasm_Module_AoT) {
+            status = pxa_wamr_read_aot(&reader, &slot->module, &buffered, error, error_size);
+#if defined(ESP_PLATFORM)
+            if (status == PXA_STATUS_OK && slot->module)
+                ESP_LOGI(PXA_WAMR_LOG_TAG, "AOT streamed: file=%u source_buffer=0",
+                         (unsigned)reader.size);
+#endif
+            if (status != PXA_STATUS_OK || !buffered) goto close_reader;
+        }
+        if (engine->allocate_artifact) {
+            slot->module_bytes = engine->allocate_artifact(engine->artifact_allocator_context,
+                                                           (size_t)reader.size);
+            if (!slot->module_bytes) { status = PXA_STATUS_RESOURCE_LIMIT; goto close_reader; }
+            slot->module_capacity = (size_t)reader.size;
+            slot->dynamic_module_bytes = 1;
+        }
+        if (!slot->module_bytes || reader.size > slot->module_capacity) {
+            status = PXA_STATUS_RESOURCE_LIMIT; goto close_reader;
+        }
+        status = pxa_wamr_read_exact(&reader, 0, slot->module_bytes, (size_t)reader.size);
+        if (status == PXA_STATUS_OK) slot->module_size = (size_t)reader.size;
+close_reader:
+        reader.close(reader.context);
+        if (status != PXA_STATUS_OK || slot->module) return status;
+    } else {
+        status = load_module_buffer(engine, slot, path);
+        if (status != PXA_STATUS_OK) return status;
+    }
+    if (wasm_runtime_is_xip_file(slot->module_bytes, (uint32_t)slot->module_size)) {
+        snprintf(error, error_size, "XIP is not supported; build ordinary AOT");
+        return PXA_STATUS_UNSUPPORTED;
+    }
+    args.name = "";
+    args.wasm_binary_freeable = slot->dynamic_module_bytes && kind == PXA_ARTIFACT_AOT &&
+        standard_aot_sections(slot->module_bytes, slot->module_size);
+    slot->module = wasm_runtime_load_ex(slot->module_bytes, (uint32_t)slot->module_size,
+                                        &args, error, error_size);
+    if (!slot->module) return PXA_STATUS_UNSUPPORTED;
+    if (wasm_runtime_is_underlying_binary_freeable(slot->module))
+        release_module_buffer(engine, slot);
     return PXA_STATUS_OK;
 }
 
@@ -668,7 +739,8 @@ static int call(pxa_wamr_engine_t *engine, pxa_wamr_entry_t *entry,
 
 static int config_valid(const pxa_wamr_engine_config_t *config) {
     return config != NULL && config->struct_size >= sizeof(*config) &&
-           config->read_artifact != NULL && config->max_components != 0 &&
+           (config->read_artifact != NULL || config->open_artifact != NULL) &&
+           config->max_components != 0 &&
            ((config->enter_critical == NULL &&
              config->leave_critical == NULL) ||
             (config->enter_critical != NULL &&
@@ -779,7 +851,9 @@ pxa_status_t pxa_wamr_engine_init(void *workspace, size_t workspace_size,
     memset(engine, 0, sizeof(*engine) + entries_size);
     engine->magic = PXA_WAMR_ENGINE_MAGIC;
     engine->host_context = config->host_context;
-    engine->read_artifact = config->read_artifact;
+    engine->seekable_artifacts = config->open_artifact != NULL;
+    if (engine->seekable_artifacts) engine->artifact.open = config->open_artifact;
+    else engine->artifact.read = config->read_artifact;
     engine->now_us = config->now_us;
     engine->prepare_start = config->prepare_start;
     engine->call_timeout_us = config->call_timeout_us;
@@ -1080,7 +1154,6 @@ static pxa_status_t engine_instantiate(void *context, pxa_bytes_t package_root,
     char path[PXA_WAMR_MAX_MODULE_PATH + 256];
     pxa_wamr_entry_t *slot = NULL;
     char error[192] = {0};
-    LoadArgs load_args = {0};
     pxa_status_t status;
     uint64_t wasi_features = 0;
     int wasi_declared;
@@ -1115,34 +1188,12 @@ static pxa_status_t engine_instantiate(void *context, pxa_bytes_t package_root,
     slot->core_major = entry->core_major;
     if (slot->core_major != 2)
         return discard_entry(engine, slot, PXA_STATUS_UNSUPPORTED);
-    status = load_module_buffer(
-        engine, slot, (pxa_bytes_t){(const uint8_t *)path, strlen(path)});
+    status = load_artifact(engine, slot,
+        (pxa_bytes_t){(const uint8_t *)path, strlen(path)},
+        entry->artifact->kind, error, sizeof(error));
     if (status != PXA_STATUS_OK) {
-#if defined(ESP_PLATFORM)
-        ESP_LOGE(PXA_WAMR_LOG_TAG,
-                 "read-artifact failed: artifact=%s status=%d", path,
-                 (int)status);
-#endif
-        return discard_entry(engine, slot, status);
-    }
-    /* Standard AOT code is already copied to an executable mapping. Let the
-     * loader own its strings and initial data so the duplicate source buffer
-     * can be released before instantiation. Static workspaces and XIP retain
-     * their source; interpreted Wasm keeps its existing ownership policy. */
-    load_args.name = "";
-    load_args.wasm_binary_freeable = slot->dynamic_module_bytes &&
-        entry->artifact->kind == PXA_ARTIFACT_AOT &&
-        standard_aot_sections(slot->module_bytes, slot->module_size) &&
-        !wasm_runtime_is_xip_file(slot->module_bytes, (uint32_t)slot->module_size);
-    slot->module = wasm_runtime_load_ex(slot->module_bytes,
-                                        (uint32_t)slot->module_size,
-                                        &load_args, error, sizeof(error));
-    if (slot->module == NULL) {
         log_runtime_failure("load", path, error);
-        return discard_entry(engine, slot, PXA_STATUS_UNSUPPORTED);
-    }
-    if (wasm_runtime_is_underlying_binary_freeable(slot->module)) {
-        release_module_buffer(engine, slot);
+        return discard_entry(engine, slot, status);
     }
     wasi_declared = component_wasi_features(entry->component, &wasi_features);
     if (wasi_declared && !engine->wasi_enabled) {

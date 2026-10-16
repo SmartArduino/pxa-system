@@ -74,6 +74,8 @@ Guest 编译使用 WASI SDK 34.0（Clang 23）。源码打包工具依次读取 
 
 ESP 运行时只为清单明确声明 pinned memory 的组件保留固定线性内存；普通组件保持可增长内存行为。
 
+普通 AOT 支持从 Flash／SD 的文件后端分段读入最终代码区，降低启动峰值；也可显式选择 Wasm 解释执行。接入、内存边界与验证方式见 [AOT 加载说明](docs/zh-CN/aot-loading.md)。当前不支持 XIP。
+
 ## ESP-IDF 集成
 
 将本目录作为 ESP-IDF component，或将父目录加入 `EXTRA_COMPONENT_DIRS`。根 `CMakeLists.txt` 自动识别 IDF；核心组件不要求 LVGL。
