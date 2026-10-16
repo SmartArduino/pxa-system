@@ -1,12 +1,12 @@
 # 独立 C++26 DevKit
 
-PXA 0.3.0 提供 Linux x86_64（glibc ≥ 2.39）开发套件。Guest SDK、CLI 和模拟器
+PXA 0.4.0 提供 Linux x86_64（glibc ≥ 2.39）开发套件。Guest SDK、CLI 和模拟器
 共用发行号；Core 2.0、服务版本、Manifest/Container 版本及 AOT engine ABI
 各自独立。0.2 系列的旧 Core 应用需要重新编译，不承诺直接二进制兼容。
 
 ## 开发入口
 
-解压 `pxa-devkit-0.3.0-linux-x86_64.tar.gz`，将其 `bin` 加入 PATH：
+解压 `pxa-devkit-0.4.0-linux-x86_64.tar.gz`，将其 `bin` 加入 PATH：
 
 ```sh
 pxa init hello
@@ -57,13 +57,13 @@ Host/Guest；应用自己的文件存档保留，内存中的游戏状态不会�
 ## 在线与离线发行
 
 ```sh
-pxa sdk install 0.3.0
-pxa sdk install 0.3.0 --offline --manifest /media/0.3.0/distribution.json
+pxa sdk install 0.4.0
+pxa sdk install 0.4.0 --offline --manifest /media/0.4.0/distribution.json
 ```
 
 两者读取同一份清单、签名及五个组件：sdk、devtools、runtime、toolchain、
 simulator。内置分发公钥校验清单，再校验每个组件大小/SHA-256、安全解包并
-原子安装到用户数据目录 `pxa/releases/0.3.0`。已安装版本不可覆盖。
+原子安装到用户数据目录 `pxa/releases/0.4.0`。已安装版本不可覆盖。
 首次完整包仍需通过可信官网/发行页取得，之后安装以其内置公钥为信任根。
 App 发布者密钥和 DevKit 分发密钥是不同用途的身份，不随 SDK 分发私钥。
 

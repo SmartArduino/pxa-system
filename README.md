@@ -6,10 +6,10 @@ PXA（Portable eXecutable Application，可移植可执行应用）是面向嵌�
 
 ## 开发 C++26 应用
 
-下载 [DevKit 0.3.0](https://github.com/SmartArduino/pxa-system/releases/tag/v0.3.0)。完整包包含 SDK、WASI/AOT 工具链、Python、CMake/Ninja、PXADB 与预编译模拟器，无需先构建固件。当前二进制要求 Linux x86_64、glibc 2.39+。
+下载 [DevKit 0.4.0](https://github.com/SmartArduino/pxa-system/releases/tag/v0.4.0)。完整包包含 SDK、WASI/AOT 工具链、Python、CMake/Ninja、PXADB 与预编译模拟器，无需先构建固件。当前二进制要求 Linux x86_64、glibc 2.39+。
 
 ```sh
-export PATH="$PWD/pxa-devkit-0.3.0-linux-x86_64/bin:$PATH"
+export PATH="$PWD/pxa-devkit-0.4.0-linux-x86_64/bin:$PATH"
 pxa init hello
 pxa run hello
 # 关闭模拟器后再打包：
@@ -21,7 +21,7 @@ pxa publish hello/dist/pxa-hello.pxa --check-only
 
 [入门教程](https://pxa.doit.am/docs/first-app/) · [C++ SDK](sdk/guest-cpp/README.zh-CN.md) · [架构与协议文档](docs/README.zh-CN.md)
 
-可选的 [AI 开发套件](ai/README.md) 提供四个按需加载的 skills、两个 Codex agent 和真实 Guest 自动验收脚本。支持现有 DevKit 0.3.0，单独分发签名小包；后续完整 DevKit 会携带 `ai/`。不修改全局配置或增加设备开销。
+可选的 [AI 开发套件](ai/README.md) 提供四个按需加载的 skills、两个 Codex agent 和真实 Guest 自动验收脚本。支持现有 DevKit 0.4.0，单独分发签名小包；后续完整 DevKit 会携带 `ai/`。不修改全局配置或增加设备开销。
 
 ## 目录与边界
 

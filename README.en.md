@@ -13,10 +13,10 @@ not a dependency of the system core.
 
 ## Develop a C++26 app
 
-Download [DevKit 0.3.0](https://github.com/SmartArduino/pxa-system/releases/tag/v0.3.0). The full Linux x86_64 archive contains the SDK, WASI/AOT toolchains, Python, CMake/Ninja, PXADB and a prebuilt simulator; glibc 2.39+ is required.
+Download [DevKit 0.4.0](https://github.com/SmartArduino/pxa-system/releases/tag/v0.4.0). The full Linux x86_64 archive contains the SDK, WASI/AOT toolchains, Python, CMake/Ninja, PXADB and a prebuilt simulator; glibc 2.39+ is required.
 
 ```sh
-export PATH="$PWD/pxa-devkit-0.3.0-linux-x86_64/bin:$PATH"
+export PATH="$PWD/pxa-devkit-0.4.0-linux-x86_64/bin:$PATH"
 pxa init hello
 pxa run hello
 pxa build hello --target esp32s3,esp32s31,simulator --offline
@@ -25,7 +25,7 @@ pxa publish hello/dist/pxa-hello.pxa --check-only
 
 Close the simulator before building the release. Project CMake is the single source graph, O3 is the default, and `pxa.lock` pins the release/toolchain inputs. Publisher private keys are generated outside the SDK. See the [C++ SDK guide](sdk/guest-cpp/README.zh-CN.md) and [website tutorials (Chinese)](https://pxa.doit.am/docs/first-app/). System maintainers can build from source below.
 
-The optional [AI kit](ai/README.en.md) provides four skills, two project-scoped Codex agents and a real-Guest verification helper. It is distributed as a small signed companion for DevKit 0.3.0 and included under `ai/` in future full DevKit builds. No global settings or device runtime overhead are added.
+The optional [AI kit](ai/README.en.md) provides four skills, two project-scoped Codex agents and a real-Guest verification helper. It is distributed as a small signed companion for DevKit 0.4.0 and included under `ai/` in future full DevKit builds. No global settings or device runtime overhead are added.
 
 ## Repository layout
 

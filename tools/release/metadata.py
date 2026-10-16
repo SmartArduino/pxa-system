@@ -41,6 +41,11 @@ def outputs(workspace=None, backend=None):
         for name in ('pxadb', 'pxadb-gui'):
             path = workspace / 'tools' / name / 'pyproject.toml'
             result[path] = re.sub(r'^version =.*$', f'version = "{version}"', path.read_text(), count=1, flags=re.M)
+        portable = workspace / 'tools/portable/pxa_container.py'
+        if portable.exists():
+            result[portable] = re.sub(r"^DEFAULT_IMAGE =.*$",
+                f"DEFAULT_IMAGE = 'pxa-devkit:{version}-linux-amd64'",
+                portable.read_text(), count=1, flags=re.M)
     if backend:
         declared = json.loads((ROOT / 'config/host-baseline-features.json').read_text())
         services = []
