@@ -59,14 +59,17 @@ if [[ "$output_allowed" -ne 1 ]]; then
 fi
 
 # One CPU/code-model recipe is shared with the standalone CLI.
-recipe_output="$("${PYTHON:-python3}" - "$pxa_system_dir/config/aot-targets.json" "$package_target" <<'PYRECIPE'
+recipe_output="$("${PYTHON:-python3}" - "$pxa_system_dir/config/aot-targets.json" "$package_target" "$app_dir/package.json" <<'PYRECIPE'
 import json, sys
+from pathlib import Path
+sys.path.insert(0, str(Path(sys.argv[1]).parents[1] / 'tools'))
+from pxa_tools.project import aot_flags
 entry = json.load(open(sys.argv[1])).get(sys.argv[2])
 if entry is None or not entry['cpu']:
     raise SystemExit('Unsupported AOT target: ' + sys.argv[2])
 print(entry['cpu'])
 print(entry['target'])
-print('\n'.join(entry['flags']))
+print('\n'.join(aot_flags(json.load(open(sys.argv[3])), sys.argv[2])))
 PYRECIPE
 )"
 mapfile -t recipe_lines <<< "$recipe_output"
@@ -157,9 +160,9 @@ import sys
 
 metadata = json.load(open(sys.argv[1], encoding="utf-8"))
 build = metadata.get("build", {"system": "direct"})
-if not isinstance(build, dict) or set(build) - {"system", "source_dir", "linear_memory"}:
+if not isinstance(build, dict) or set(build) - {"system", "source_dir", "linear_memory", "native_stack_checks"}:
     raise SystemExit(
-        "build must be an object with system, optional source_dir, and optional linear_memory")
+        "build must be an object with system, optional source_dir, linear_memory, and native_stack_checks")
 build_system = build.get("system", "direct")
 if build_system not in ("direct", "cmake"):
     raise SystemExit("build system must be direct or cmake")

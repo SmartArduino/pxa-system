@@ -11,7 +11,7 @@ import tempfile
 import time
 
 from .common import ToolError, atomic_json, command, digest, identity, locked
-from .project import Project, SDK_ROOT, TARGETS, lock_project, resolve_tools
+from .project import Project, SDK_ROOT, TARGETS, aot_flags, lock_project, resolve_tools
 
 
 def tree_digest(root: Path):
@@ -124,7 +124,8 @@ def build(project: Project, *, root=SDK_ROOT, targets=('simulator',), output=Non
                 c, target = pair
                 if target == 'wasm' or c.get('artifact') == 'wasm':
                     return
-                manifest_target, cpu, flags = TARGETS[target]
+                manifest_target, cpu, _ = TARGETS[target]
+                flags = aot_flags(project.metadata, target)
                 wasm = package / 'artifacts' / (c['id'] + '.wasm')
                 recipe = identity({'wasm': digest(wasm), 'compiler': lock['toolchain']['wamrc_sha256'],
                                    'cpu': cpu, 'flags': flags})

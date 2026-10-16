@@ -10,8 +10,12 @@ opcode 3 提交这 19 字节，由 Host 弹出安装确认，再返回 `status:i
 才使用 opcode 2 保存离线包，之后通过 opcode 3 安装。不存在该服务时，Guest
 直接显示安装失败。
 
-安装服务不按商城发布者身份限制调用方：任意运行中的签名 App 均可请求，
-**每次都需要 Host 弹窗确认**。Host 固定下载源由 `CONFIG_PXA_STORE_ORIGIN`
+安装服务不按商城发布者、App ID 或预置/普通安装位置限制调用方：任意运行中的
+已安装、已启用签名 App 均可请求。清单应声明 `store-installer`，用于兼容性检查。
+**每次安装、更新和离线包安装都需要 Host 原生弹窗确认；没有静默安装参数，
+也不会记住上次的批准。** 只下载不会安装。用户拒绝、弹窗无法显示、请求取消或
+请求方退出时，未开始的安装不执行；已获得批准并开始的原子事务安全完成。
+Host 固定下载源由 `CONFIG_PXA_STORE_ORIGIN`
 配置，要求 HTTPS，拒绝跨源重定向，并仅接受严格的 artifact 下载票据路径。
 Guest 的 URL、摘要及大小都不授予安装权限；它们仅是下载条件。Host 在
 独立任务中写入 Host 私有临时文件，限制为 4 MiB，核对 SHA-256 和字节数。
@@ -42,7 +46,7 @@ Guest 默认私有 FS 配额仍为 65536 字节。下载和暂存仍在 Host 完
 不会赋予 Guest 读取 Host 暂存文件的权限。
 
 下载时 Host 通过 opcode 0x8001 发送 `request_id=0` 的事件，负载为
-`download_request_id:u32 | received_bytes:u64 | total_bytes:u64`（小端）。进度
+`download_request_id:u64 | received_bytes:u64 | total_bytes:u64`（小端）。进度
 事件按约 5% 节流，可能合并或丢失；opcode 1/2 的完成事件才是最终状态。
 调用方停止时 Host 标记下载取消，网络事件停止写入并由 worker 删除临时文件；
 已开始的原子安装事务继续完成，避免破坏已安装版本。重启清理未登记的
@@ -51,3 +55,7 @@ Guest 默认私有 FS 配额仍为 65536 字节。下载和暂存仍在 Host 完
 刷新详情获取。桌面模拟器尚未实现该 Host 服务。
 产品应确保商城源及可安装发布者信任列表均按部署环境配置；如果未来允许
 非信任发布者，还需修改现有容器签名信任策略，不能绕过签名验证。
+
+SDK 的 `pxa_store_request_package_status()` 保留同步返回的 `DENIED`、`BUSY`、
+`RESOURCE_LIMIT`、`UNSUPPORTED` 等状态；返回 OK 仅表示接受请求，最终结果仍由
+完成事件给出。原布尔返回辅助函数保留。商城不得把所有提交失败都解释成网络不可用。

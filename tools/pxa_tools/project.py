@@ -16,6 +16,19 @@ TARGETS = {name: (value['target'], value['cpu'], value['flags'])
            for name, value in json.loads((SDK_ROOT / 'config/aot-targets.json').read_text()).items()}
 
 
+def aot_flags(metadata: dict, target: str) -> list[str]:
+    """Apply optional per-app safety instrumentation to the target recipe."""
+    flags = list(TARGETS[target][2])
+    build = metadata.get('build', {})
+    if 'native_stack_checks' in build:
+        checks = build['native_stack_checks']
+        if type(checks) is not bool:
+            raise ToolError('build.native_stack_checks must be a boolean')
+        flags = [flag for flag in flags if not flag.startswith('--stack-bounds-checks=')]
+        flags.append('--stack-bounds-checks=' + str(int(checks)))
+    return flags
+
+
 
 def sdk_identity(root: Path) -> dict:
     files = sorted([*root.glob('sdk/guest-cpp/include/**/*.hpp'),
@@ -47,6 +60,7 @@ class Project:
         build = data.get('build', {})
         if not isinstance(build, dict) or build.get('system', 'cmake') != 'cmake':
             raise ToolError('The C++ development tool requires a CMake project')
+        aot_flags(data, 'simulator')
         component_metadata = data.get('components', [{'id': 'main', 'kind': 'ui'}])
         if not isinstance(component_metadata, list):
             raise ToolError('components must be an array')

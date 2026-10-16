@@ -84,6 +84,18 @@ feature bit.
 
 No Artifact is loaded before all these checks succeed.
 
+### Optional AOT native stack checks
+
+Source metadata can set `build.native_stack_checks` to a boolean. `true` enables
+WAMR AOT native stack bounds checks for that application; omission preserves the
+platform recipe. Both the standalone CLI and repository packager use this flag,
+and the AOT cache identity includes the resolved flags. It does not add a
+manifest field, service, ABI import or Host requirement. Checks may stop a
+component at the native stack boundary; they do not enlarge the native task
+stack, replace an interpreter's own recursion limits, or protect every native
+Host callback. Applications executing untrusted code should enable them and
+validate their normal and adversarial workloads on each target.
+
 ## Canonical manifest encoding
 
 The manifest header is:

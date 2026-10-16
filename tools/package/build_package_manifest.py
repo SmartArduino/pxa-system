@@ -502,8 +502,11 @@ def main(argv):
 
     build = metadata.get("build", {"system": "direct"})
     require(isinstance(build, dict) and
-            set(build) <= {"system", "source_dir", "linear_memory"},
-            "build must contain only system, source_dir, and linear_memory")
+            set(build) <= {"system", "source_dir", "linear_memory", "native_stack_checks"},
+            "build must contain only system, source_dir, linear_memory, and native_stack_checks")
+    if "native_stack_checks" in build:
+        require(isinstance(build["native_stack_checks"], bool),
+                "build native_stack_checks must be a boolean")
     build_system = build.get("system", "direct")
     require(build_system in ("direct", "cmake"),
             "build system must be direct or cmake")

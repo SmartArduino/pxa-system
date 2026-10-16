@@ -54,17 +54,27 @@ static inline void pxa_store_copy_bytes(char *output, const uint8_t *input,
         output[index] = (char)input[index];
 }
 
-static inline int pxa_store_send(uint16_t opcode, pxa_store_token_t token,
+static inline int32_t pxa_store_send_status(uint16_t opcode, pxa_store_token_t token,
                                  const uint8_t *payload, size_t payload_size,
                                  uint8_t *packet, size_t packet_capacity) {
     uint32_t written = 0;
-    return pxa_build_message(packet, packet_capacity,
-                                 PXA_SERVICE_STORE_INSTALLER, opcode,
-                                 token, payload, payload_size, &written) &&
-           pxa_control_packet(packet, written) == 0;
+    if (!pxa_build_message(packet, packet_capacity,
+                           PXA_SERVICE_STORE_INSTALLER, opcode,
+                           token, payload, payload_size, &written))
+        return PXA_STATUS_INVALID_ARGUMENT;
+    return pxa_control_packet(packet, written);
 }
 
-static inline int pxa_store_request_package(uint16_t opcode,
+static inline int pxa_store_send(uint16_t opcode, pxa_store_token_t token,
+                                 const uint8_t *payload, size_t payload_size,
+                                 uint8_t *packet, size_t packet_capacity) {
+    return pxa_store_send_status(opcode, token, payload, payload_size,
+                                  packet, packet_capacity) == PXA_STATUS_OK;
+}
+
+/* Preserves synchronous Host errors; acceptance still requires a completion
+ * event, and installation always requires the Host's user confirmation. */
+static inline int32_t pxa_store_request_package_status(uint16_t opcode,
                                              pxa_store_token_t request_id,
                                              const char *app_id,
                                              const char *ticket,
@@ -77,14 +87,15 @@ static inline int pxa_store_request_package(uint16_t opcode,
     if ((opcode != PXA_STORE_INSTALL_REQUEST &&
          opcode != PXA_STORE_DOWNLOAD_REQUEST) || request_id == 0 ||
         app_id == NULL || ticket == NULL || sha256 == NULL ||
-        size == 0 || size > UINT64_C(4194304) || packet == NULL) return 0;
+        size == 0 || packet == NULL) return PXA_STATUS_INVALID_ARGUMENT;
+    if (size > UINT64_C(4194304)) return PXA_STATUS_LIMIT_EXCEEDED;
     while (app_size <= 64u && app_id[app_size] != '\0') ++app_size;
     while (ticket_size <= 255u && ticket[ticket_size] != '\0') ++ticket_size;
     if (app_size == 0 || app_size > 64u || ticket_size == 0 ||
-        ticket_size > 255u) return 0;
+        ticket_size > 255u) return PXA_STATUS_INVALID_ARGUMENT;
     size_t digest_size = 0;
     while (digest_size <= 64u && sha256[digest_size] != '\0') ++digest_size;
-    if (digest_size != 64u) return 0;
+    if (digest_size != 64u) return PXA_STATUS_INVALID_ARGUMENT;
     payload[0] = (uint8_t)app_size;
     payload[1] = (uint8_t)ticket_size;
     payload[2] = (uint8_t)(ticket_size >> 8);
@@ -95,19 +106,30 @@ static inline int pxa_store_request_package(uint16_t opcode,
         uint8_t low = (uint8_t)sha256[index * 2u + 1u];
         if (high >= '0' && high <= '9') high -= '0';
         else if (high >= 'a' && high <= 'f') high = high - 'a' + 10u;
-        else return 0;
+        else return PXA_STATUS_INVALID_ARGUMENT;
         if (low >= '0' && low <= '9') low -= '0';
         else if (low >= 'a' && low <= 'f') low = low - 'a' + 10u;
-        else return 0;
+        else return PXA_STATUS_INVALID_ARGUMENT;
         payload[11u + index] = (uint8_t)((high << 4) | low);
     }
     for (size_t index = 0; index < app_size; ++index)
         payload[43u + index] = (uint8_t)app_id[index];
     for (size_t index = 0; index < ticket_size; ++index)
         payload[43u + app_size + index] = (uint8_t)ticket[index];
-    return pxa_store_send(opcode, request_id, payload,
+    return pxa_store_send_status(opcode, request_id, payload,
                           43u + app_size + ticket_size,
                           packet, packet_capacity);
+}
+
+static inline int pxa_store_request_package(uint16_t opcode,
+                                             pxa_store_token_t request_id,
+                                             const char *app_id,
+                                             const char *ticket,
+                                             const char *sha256,
+                                             uint64_t size, uint8_t *packet,
+                                             size_t packet_capacity) {
+    return pxa_store_request_package_status(opcode, request_id, app_id, ticket,
+        sha256, size, packet, packet_capacity) == PXA_STATUS_OK;
 }
 
 static inline int pxa_store_install(pxa_store_token_t request_id, const char *app_id,

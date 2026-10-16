@@ -15,10 +15,23 @@ import unittest
 from .build import resource_inputs
 from .common import ToolError, digest, identity
 from .distribution import extract, fetch, verify_manifest
-from .project import Project, SDK_ROOT
+from .project import Project, SDK_ROOT, TARGETS, aot_flags
 
 
 class DevelopmentToolsTest(unittest.TestCase):
+    def test_native_stack_checks_are_opt_in_and_part_of_the_aot_recipe(self):
+        for target in ('esp32s3', 'esp32s31', 'simulator'):
+            self.assertEqual(aot_flags({}, target), TARGETS[target][2])
+            for enabled in (False, True):
+                flags = aot_flags({'build': {'native_stack_checks': enabled}}, target)
+                self.assertEqual([f for f in flags if f.startswith('--stack-bounds-checks=')],
+                                 ['--stack-bounds-checks=' + str(int(enabled))])
+            self.assertNotEqual(identity(aot_flags({'build': {'native_stack_checks': True}}, target)),
+                                identity(aot_flags({'build': {'native_stack_checks': False}}, target)))
+        for invalid in (None, 1, 'true', []):
+            with self.assertRaises(ToolError):
+                aot_flags({'build': {'native_stack_checks': invalid}}, 'esp32s3')
+
     def test_resource_cache_tracks_sources_outside_resource_directories(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
