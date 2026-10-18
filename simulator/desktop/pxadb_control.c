@@ -146,6 +146,9 @@ static SDL_Keycode keycode_from_name(const char *name) {
     if (strcmp(name, "LEFT") == 0) return SDLK_LEFT;
     if (strcmp(name, "RIGHT") == 0) return SDLK_RIGHT;
     if (strcmp(name, "BACKSPACE") == 0) return SDLK_BACKSPACE;
+    if (strcmp(name, "TAB") == 0) return SDLK_TAB;
+    if (strlen(name) == 1 && strchr("ZXASQW", name[0]))
+        return (SDL_Keycode)(name[0] - 'A' + SDLK_a);
     return SDLK_UNKNOWN;
 }
 

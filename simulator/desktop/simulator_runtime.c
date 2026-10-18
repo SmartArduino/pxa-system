@@ -446,6 +446,10 @@ void pxsys_desktop_runtime_poll(pxsys_desktop_runtime_t* runtime) {
                 fixture->pump, fixture->pump_context,
                 product_window_changed, instance, product_control_bind,
                 &display, &bars, &runtime->theme, ime_path);
+            /* SDL window close destroys the display while the embedded
+             * Guest loop is running. The outer loop owns process shutdown;
+             * avoid stop notifications touching its deleted UI objects. */
+            if (lv_display_get_default() == NULL) return;
             if (status != 0)
                 fprintf(stderr, "PXA simulator: product exited status=%d\n",
                         status);

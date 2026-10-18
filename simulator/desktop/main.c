@@ -2081,6 +2081,7 @@ static int run_simulator(const simulator_options_t* options) {
            (options->duration_ms == 0 ||
             lv_tick_elaps(started) < options->duration_ms)) {
         pxsys_desktop_runtime_poll(simulator_runtime);
+        if (lv_display_get_default() == NULL) break;
         poll_app_action(&catalog);
         pxsys_pxadb_control_poll(&pxadb_control);
         uint32_t delay = lv_timer_handler();

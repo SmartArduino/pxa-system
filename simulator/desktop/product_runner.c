@@ -36,6 +36,8 @@
 #include "pxa/lease.h"
 #include "pxa/lvgl/pxa_lvgl_ui.h"
 #include "pxa/openssl/pxa_openssl.h"
+#include "desktop_media_root.h"
+#include "desktop_controller.h"
 #include "pxa/package.h"
 #include "pxa/permission.h"
 #include "pxa/posix/pxa_posix_installer.h"
@@ -2180,6 +2182,22 @@ static void dispatch_lifecycle(product_host_t *host) {
     }
 }
 
+static void dispatch_controller(product_host_t *host, desktop_controller_t *input,
+    uint32_t *previous, uint64_t *refreshed) {
+    const uint32_t buttons = desktop_controller_poll(input, host->focused);
+    const uint64_t now = now_us(NULL);
+    uint8_t value[8] = {0, 1, 0, 0};
+    if (buttons == *previous && now-*refreshed < 50000) return;
+    if (!pxa_ui_accepts_event(host->ui, host->active_component,
+            PXA_UI_PRIMARY_SURFACE, 1, PXA_UI_EVENT_CONTROLLER_STATE)) return;
+    pxa_write_u32(value+4, buttons);
+    if (pxa_ui_queue_event(host->ui, host->active_component,
+            PXA_UI_PRIMARY_SURFACE, 1, PXA_UI_EVENT_CONTROLLER_STATE,
+            PXA_UI_EVENT_FLAG_COALESCIBLE, now, value, sizeof(value)) == PXA_STATUS_OK) {
+        *previous = buttons; *refreshed = now;
+    }
+}
+
 /* Consume a short event/presentation chain in one UI turn. This avoids adding
  * a full simulator-loop delay between a Guest frame submission and scanout. */
 static int drain_surface_updates(product_host_t *host) {
@@ -3249,6 +3267,7 @@ static int run_product_simulator(const options_t *input,
     pxa_fs_backend_t fs_backend = {0};
     pxa_posix_fs_t *posix_fs = NULL;
     pxa_fs_service_t *fs = NULL;
+    desktop_media_root_t media_root = {0};
     pxa_ipc_limits_t ipc_limits;
     pxa_surface_config_t surface_config = {0};
     pxa_game_render_config_t game_render_config = {0};
@@ -3305,6 +3324,10 @@ static int run_product_simulator(const options_t *input,
     const char *stage = "arguments";
     const int owns_display = embedded_display == NULL;
     int key_event_watch_added = 0;
+    desktop_controller_t controller = {0};
+    int controller_started = 0;
+    uint32_t controller_previous = UINT32_MAX;
+    uint64_t controller_refreshed = 0;
     const char *loop_perf_env = getenv("PXA_SIMULATOR_PERF");
     const int trace_loop = owns_display && loop_perf_env != NULL &&
                            strcmp(loop_perf_env, "1") == 0;
@@ -3616,6 +3639,10 @@ static int run_product_simulator(const options_t *input,
     fs_config.struct_size = sizeof(fs_config);
     fs_config.max_open_resources = 16;
     fs_config.backend = fs_backend;
+    stage = "app media FS service";
+    if (!desktop_media_init(&media_root, options.state_root != NULL
+            ? options.state_root : default_state_root, manifest)) goto done;
+    fs_config.roots = &media_root.api;
     fs_service_workspace = malloc(pxa_fs_service_workspace_size(&fs_config));
     if (fs_service_workspace == NULL ||
         pxa_fs_service_init(fs_service_workspace,
@@ -4037,6 +4064,8 @@ static int run_product_simulator(const options_t *input,
     capabilities[10].service = PXA_DEVICE_SERVICE_ID; capabilities[10].version.major = PXA_DEVICE_SERVICE_MAJOR; capabilities[10].version.minor = PXA_DEVICE_SERVICE_MINOR;
     capabilities[11].service = PXA_NET_SERVICE_ID; capabilities[11].version.major = PXA_NET_SERVICE_MAJOR; capabilities[11].version.minor = PXA_NET_SERVICE_MINOR;
     capabilities[12].service = PXA_FS_SERVICE_ID; capabilities[12].version.major = PXA_FS_SERVICE_MAJOR; capabilities[12].version.minor = PXA_FS_SERVICE_MINOR;
+    capabilities[12].features = PXA_FS_FEATURE_SCOPED_ROOTS |
+        PXA_FS_FEATURE_APP_MEDIA_ROOT | PXA_FS_FEATURE_READ_AT;
     capabilities[13].service = PXA_IPC_SERVICE_ID; capabilities[13].version.major = PXA_IPC_SERVICE_MAJOR; capabilities[13].version.minor = PXA_IPC_SERVICE_MINOR;
     capabilities[14].service = PXA_WASI_SERVICE_ID; capabilities[14].version.major = PXA_WASI_SERVICE_MAJOR; capabilities[14].version.minor = PXA_WASI_SERVICE_MINOR;
     capabilities[14].features = PXA_WASI_FEATURE_CLOCKS | PXA_WASI_FEATURE_RANDOM;
@@ -4120,6 +4149,9 @@ static int run_product_simulator(const options_t *input,
         SDL_AddEventWatch(product_key_event_watch, &host);
         key_event_watch_added = 1;
     }
+    desktop_controller_init(&controller,
+        SDL_GetWindowID(lv_sdl_window_get_window(display)));
+    controller_started = 1;
     stage = "shape mask";
     if (owns_display && !install_shape_mask(display, &options, &shape_mask))
         goto done;
@@ -4150,6 +4182,7 @@ static int run_product_simulator(const options_t *input,
             SDL_AtomicSet(&host.back_requested, 0);
         sync_host_theme(&host, lvgl_ui, &lvgl_config.theme);
         dispatch_lifecycle(&host);
+        dispatch_controller(&host, &controller, &controller_previous, &controller_refreshed);
         dispatch_volume_keys(&host);
         /* Services can complete without producing a UI or clock event. */
         dispatch_component_events(&host);
@@ -4243,6 +4276,7 @@ static int run_product_simulator(const options_t *input,
     }
     result = 0;
 done:
+    if (controller_started) desktop_controller_deinit(&controller);
     if (key_event_watch_added) SDL_DelEventWatch(product_key_event_watch, &host);
     if (control_bind != NULL) control_bind(window_context, NULL, NULL, NULL);
     pxsys_pxadb_control_stop(&pxadb_control);
@@ -4319,6 +4353,7 @@ done:
     free(host.ime_workspace); free(host.ime_directory);
     free(assets_workspace);
     if (posix_fs != NULL) pxa_posix_fs_deinit(posix_fs);
+    desktop_media_deinit(&media_root);
     if (scheduler_store != NULL) pxa_posix_scheduler_store_deinit(scheduler_store);
     if (posix_storage != NULL) pxa_posix_storage_deinit(posix_storage);
     if (installer != NULL) pxa_posix_installer_deinit(installer);
