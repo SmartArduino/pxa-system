@@ -7,6 +7,8 @@
 #define PXA_CLOCK_SET_PERIOD 1u
 #define PXA_CLOCK_NOW 2u
 #define PXA_CLOCK_TICK 0x8001u
+#define PXA_CLOCK_MIN_PERIOD_MS 16u
+#define PXA_CLOCK_MAX_PERIOD_MS 1000u
 
 typedef struct {
     int32_t status;
@@ -17,7 +19,8 @@ static inline int pxa_clock_build_set_period(
     uint8_t *packet, size_t capacity, uint16_t period_ms,
     uint32_t *written) {
     uint8_t payload[2];
-    if (period_ms != 0 && (period_ms < 16 || period_ms > 1000)) return 0;
+    if (period_ms != 0 && (period_ms < PXA_CLOCK_MIN_PERIOD_MS ||
+                          period_ms > PXA_CLOCK_MAX_PERIOD_MS)) return 0;
     pxa_store_u16(payload, period_ms);
     return pxa_build_message(packet, capacity, PXA_CLOCK_SERVICE,
                                  PXA_CLOCK_SET_PERIOD, 0, payload,
@@ -36,7 +39,7 @@ static inline int32_t pxa_clock_set_period(uint16_t period_ms) {
     uint8_t packet[PXA_HEADER_BYTES + 2u];
     uint32_t size = 0;
     if (!pxa_clock_build_set_period(packet, sizeof(packet), period_ms,
-                                        &size)) return -1;
+                                        &size)) return PXA_STATUS_INVALID_ARGUMENT;
     return pxa_control_packet(packet, size);
 }
 
@@ -44,7 +47,7 @@ static inline int32_t pxa_clock_now(uint64_t token) {
     uint8_t packet[PXA_HEADER_BYTES];
     uint32_t size = 0;
     if (!pxa_clock_build_now(packet, sizeof(packet), token, &size))
-        return -1;
+        return PXA_STATUS_INVALID_ARGUMENT;
     return pxa_control_packet(packet, size);
 }
 

@@ -4,6 +4,13 @@ Clock v1 exposes a bounded periodic wake-up for foreground Components.
 `set-period` uses a `u16` millisecond period: zero cancels the timer and values
 16 through 1000 arm or update it. Other values are invalid.
 
+This is the current protocol range, not a hardware timer precision claim.
+The C SDK exposes `PXA_CLOCK_MIN_PERIOD_MS` / `PXA_CLOCK_MAX_PERIOD_MS` and
+returns `PXA_STATUS_INVALID_ARGUMENT` without sending a command when the
+period is outside that range. Applications must check configuration errors.
+An accepted period requests wake-ups; load and event coalescing may delay
+delivery. Lower-period extensions require explicit capability negotiation.
+
 Each `tick` carries a little-endian `u64` monotonic timestamp in microseconds.
 Its epoch is unspecified. Tick events are coalescible and do not represent a
 count of elapsed periods; Components calculate elapsed time from timestamps.

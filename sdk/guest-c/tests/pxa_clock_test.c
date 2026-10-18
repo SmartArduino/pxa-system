@@ -2,10 +2,12 @@
 #include <assert.h>
 
 #include "pxa_clock.h"
+static unsigned controls;
 
 int32_t pxa_test_control(const uint8_t *data, uint32_t size) {
     (void)data;
     (void)size;
+    ++controls;
     return 0;
 }
 
@@ -25,6 +27,12 @@ int main(void) {
     uint64_t tick = 0;
     pxa_event_t event;
     pxa_clock_now_result_t result;
+    assert(pxa_clock_set_period(8)==PXA_STATUS_INVALID_ARGUMENT);
+    assert(pxa_clock_set_period(1001)==PXA_STATUS_INVALID_ARGUMENT);
+    assert(pxa_clock_now(0)==PXA_STATUS_INVALID_ARGUMENT);
+    assert(controls==0);
+    assert(!pxa_clock_set_period(0) && !pxa_clock_set_period(16) &&
+           !pxa_clock_set_period(1000) && controls==3);
     assert(!pxa_clock_build_set_period(packet, sizeof(packet), 15,
                                            &size));
     assert(pxa_clock_build_set_period(packet, sizeof(packet), 16,
