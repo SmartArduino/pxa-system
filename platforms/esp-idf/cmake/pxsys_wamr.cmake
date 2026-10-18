@@ -122,6 +122,6 @@ function(pxsys_configure_wamr_esp_idf wamr_component)
         target_compile_definitions(${wamr_component} PUBLIC
             WASM_LINEAR_MEMORY_RESERVE_MAX=1)
     endif()
-    include("${PXSYS_WAMR_ROOT}/cmake/PxaWamrLoader.cmake")
-    pxa_configure_wamr_loader(${wamr_component} "${wamr_root}")
+    include("${PXSYS_WAMR_ROOT}/cmake/PxaWamrRuntime.cmake")
+    pxa_configure_wamr_runtime(${wamr_component} "${wamr_root}")
 endfunction()

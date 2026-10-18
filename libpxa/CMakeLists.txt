@@ -318,8 +318,8 @@ if(PXA_BUILD_ADAPTERS AND PXA_WAMR_SOURCE_DIR)
     set(WAMR_BUILD_SIMD 0)
     add_subdirectory(${PXA_WAMR_SOURCE_DIR}
         ${CMAKE_CURRENT_BINARY_DIR}/wamr EXCLUDE_FROM_ALL)
-    include("${CMAKE_CURRENT_SOURCE_DIR}/../cmake/PxaWamrLoader.cmake")
-    pxa_configure_wamr_loader(vmlib "${PXA_WAMR_SOURCE_DIR}")
+    include("${CMAKE_CURRENT_SOURCE_DIR}/../cmake/PxaWamrRuntime.cmake")
+    pxa_configure_wamr_runtime(vmlib "${PXA_WAMR_SOURCE_DIR}")
     if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
         # WAMR's interpreter uses computed jumps and installs its own signal
         # handlers, which are incompatible with sanitizer instrumentation;
