@@ -5774,6 +5774,7 @@ static void test_audio_service(void) {
     free(permission_workspace);
 }
 
+#include "fs_roots_service_test.inc"
 int main(void) {
     test_runtime_workspace_contract();
     test_runtime_usage();
@@ -5800,6 +5801,7 @@ int main(void) {
     test_ipc_service();
     test_storage_service();
     test_fs_service();
+    test_fs_scoped_service();
     test_fs_v1_native_handles();
     test_fs_completion_reservation();
     test_sensor_service();

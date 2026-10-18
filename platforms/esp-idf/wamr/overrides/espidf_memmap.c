@@ -9,6 +9,7 @@
 
 #include "platform_api_vmcore.h"
 #include "platform_api_extension.h"
+#include "esp_heap_caps.h"
 #if (WASM_MEM_EXEC_IN_PSRAM != 0)
 #include "esp_cache.h"
 #include "esp_err.h"
@@ -123,6 +124,17 @@ os_mmap(void *hint, size_t size, int prot, int flags, os_file_handle file)
 void *
 os_mremap(void *old_addr, size_t old_size, size_t new_size)
 {
+    if (old_addr != NULL && new_size > old_size) {
+        /* Preserve AF07's reservation contract. Surface consumers retain
+         * native pointers into pinned Guest memory across memory.grow. */
+        void *origin = (void *)*((uintptr_t *)old_addr - 1);
+        const size_t offset = (size_t)((uintptr_t)old_addr - (uintptr_t)origin);
+        const size_t capacity = heap_caps_get_allocated_size(origin);
+        if (offset <= capacity && new_size <= capacity - offset) {
+            memset((uint8_t *)old_addr + old_size, 0, new_size - old_size);
+            return old_addr;
+        }
+    }
     return os_mremap_slow(old_addr, old_size, new_size);
 }
 

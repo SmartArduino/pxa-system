@@ -5,6 +5,7 @@
 #include "pxa_canvas.h"
 #include "pxa_device.h"
 #include "pxa_fs.h"
+#include "pxa_fs_roots.h"
 #include "pxa_game_render.h"
 #include "pxa_ipc.h"
 #include "pxa_lease.h"

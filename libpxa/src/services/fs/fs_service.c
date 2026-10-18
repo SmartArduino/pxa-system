@@ -24,12 +24,22 @@ struct pxa_fs_service {
     uint16_t slot_count;
     uint16_t free_head;
     uint8_t registered;
+    const pxa_fs_roots_backend_t *roots;
+    pxa_permission_service_t *permissions;
+    pxa_component_t picker_component;
+    pxa_request_token_t picker_token;
+    uint64_t picker_identity;
+    pxa_authority_t picker_authority;
+    uint32_t picker_rights;
+    uint8_t picker_persistent;
 };
 
 struct pxa_fs_resource_slot {
     uint32_t magic;
     pxa_fs_service_t *service;
     void *backend_resource;
+    const pxa_fs_backend_t *backend;
+    pxa_authority_t authority;
     uint16_t next_free;
     uint8_t kind;
     uint8_t occupied;
@@ -86,11 +96,50 @@ int pxa_fs_path_is_valid(pxa_bytes_t path) {
     return 1;
 }
 
+int pxa_fs_scoped_path_is_valid(pxa_bytes_t path) {
+    size_t begin = 0, i, j;
+    if (!path.data || !path.size || path.size > PXA_FS_SCOPED_MAX_PATH_BYTES ||
+        path.data[0] == '/' || path.data[path.size - 1] == '/' ||
+        !pxa_utf8_validate(path.data, path.size, 0)) return 0;
+    for (i = 0; i <= path.size; ++i) {
+        size_t n;
+        if (i < path.size && path.data[i] != '/') {
+            uint8_t c = path.data[i];
+            if (c < 0x20 || c == 0x7f || c == '\\' || c == ':') return 0;
+            continue;
+        }
+        n = i - begin;
+        if (!n || n > PXA_FS_SCOPED_MAX_SEGMENT_BYTES ||
+            (n == 1 && path.data[begin] == '.') ||
+            (n == 2 && path.data[begin] == '.' && path.data[begin+1] == '.') ||
+            path.data[i-1] == '.' || path.data[i-1] == ' ') return 0;
+        if (n >= 5) {
+            const char reserved[] = ".pxa-";
+            for (j = 0; j < 5; ++j) {
+                uint8_t c = path.data[begin+j];
+                if (c >= 'A' && c <= 'Z') c += 'a' - 'A';
+                if (c != (uint8_t)reserved[j]) break;
+            }
+            if (j == 5) return 0;
+        }
+        begin = i + 1;
+    }
+    return 1;
+}
+
 static int config_valid(const pxa_fs_config_t *config) {
     const pxa_fs_backend_t *backend;
-    if (config == NULL || config->struct_size < sizeof(*config) ||
+    if (config == NULL || config->struct_size < offsetof(pxa_fs_config_t, roots) ||
         config->max_open_resources == 0) {
         return 0;
+    }
+    if (config->struct_size >= sizeof(*config) && config->roots) {
+        const pxa_fs_roots_backend_t *r = config->roots;
+        if (r->struct_size < offsetof(pxa_fs_roots_backend_t, features) || !r->open_root || !r->open_at ||
+            !r->query_root || !r->files.read || !r->files.seek ||
+            !r->files.close || !r->files.read_directory ||
+            (r->request_access && (!r->cancel_access || !config->permissions)))
+            return 0;
     }
     backend = &config->backend;
     return backend->struct_size >= offsetof(pxa_fs_backend_t, replace) && backend->open != NULL &&
@@ -150,6 +199,10 @@ pxa_status_t pxa_fs_service_init(
         service->backend.replace = config->backend.replace;
     service->authorization_context = config->authorization_context;
     service->authorize = config->authorize;
+    if (config->struct_size >= sizeof(*config)) {
+        service->roots = config->roots;
+        service->permissions = config->permissions;
+    }
     service->slots = (pxa_fs_resource_slot_t *)cursor;
     service->slot_count = config->max_open_resources;
     service->free_head = 0;
@@ -250,6 +303,8 @@ static pxa_fs_resource_slot_t *allocate_resource(pxa_fs_service_t *service) {
     service->free_head = slot->next_free;
     slot->next_free = PXA_FS_SLOT_NONE;
     slot->backend_resource = NULL;
+    slot->backend = &service->backend;
+    slot->authority = 0;
     slot->kind = 0;
     slot->occupied = 1;
     return slot;
@@ -270,7 +325,7 @@ static void close_resource(void *context) {
     if (slot == NULL || slot->magic != PXA_FS_SLOT_MAGIC || !slot->occupied) {
         return;
     }
-    slot->service->backend.close(slot->service->backend.context,
+    slot->backend->close(slot->backend->context,
                                  slot->backend_resource, slot->kind);
     release_resource(slot);
 }
@@ -285,12 +340,13 @@ static int32_t file_io(void *context, uint32_t operation, uint8_t *data,
         return PXA_STATUS_NOT_FOUND;
     }
     if (operation == PXA_FS_IO_READ) {
-        status = slot->service->backend.read(
-            slot->service->backend.context, slot->backend_resource, data, size,
+        status = slot->backend->read(
+            slot->backend->context, slot->backend_resource, data, size,
             &transferred);
     } else if (operation == PXA_FS_IO_WRITE) {
-        status = slot->service->backend.write(
-            slot->service->backend.context, slot->backend_resource, data, size,
+        if (!slot->backend->write) return PXA_STATUS_DENIED;
+        status = slot->backend->write(
+            slot->backend->context, slot->backend_resource, data, size,
             &transferred);
     } else {
         return PXA_STATUS_UNSUPPORTED;
@@ -475,6 +531,7 @@ static pxa_status_t handle_seek(pxa_fs_service_t *service,
                                    (pxa_handle_t)handle,
                                    PXA_RESOURCE_FILE, &resource);
     if (status != PXA_STATUS_OK) return status;
+    if (resource.operations != &k_file_resource_ops) return PXA_STATUS_UNSUPPORTED;
     slot = (pxa_fs_resource_slot_t *)resource.context;
     if (slot == NULL || slot->magic != PXA_FS_SLOT_MAGIC || !slot->occupied ||
         slot->service != service || slot->kind != PXA_FS_KIND_REGULAR) {
@@ -482,8 +539,8 @@ static pxa_status_t handle_seek(pxa_fs_service_t *service,
     }
     offset_bits = pxa_read_u64(message->payload.data + handle_bytes);
     memcpy(&offset, &offset_bits, sizeof(offset));
-    status = pxa_status_normalize(service->backend.seek(
-        service->backend.context, slot->backend_resource, offset, origin,
+    status = pxa_status_normalize(slot->backend->seek(
+        slot->backend->context, slot->backend_resource, offset, origin,
         &position));
     if (status != PXA_STATUS_OK) return status;
     pxa_write_u64(result, position);
@@ -519,14 +576,15 @@ static pxa_status_t handle_read_directory(
                                    (pxa_handle_t)handle,
                                    PXA_RESOURCE_DIRECTORY, &resource);
     if (status != PXA_STATUS_OK) return status;
+    if (resource.operations != &k_directory_resource_ops) return PXA_STATUS_UNSUPPORTED;
     slot = (pxa_fs_resource_slot_t *)resource.context;
     if (slot == NULL || slot->magic != PXA_FS_SLOT_MAGIC || !slot->occupied ||
         slot->service != service || slot->kind != PXA_FS_KIND_DIRECTORY) {
         return PXA_STATUS_INTERNAL;
     }
     memset(&entry, 0, sizeof(entry));
-    status = pxa_status_normalize(service->backend.read_directory(
-        service->backend.context, slot->backend_resource, &entry, &end));
+    status = pxa_status_normalize(slot->backend->read_directory(
+        slot->backend->context, slot->backend_resource, &entry, &end));
     if (status != PXA_STATUS_OK) return status;
     if (end > 1) return PXA_STATUS_INTERNAL;
     pxa_writer_init(&writer, result, capacity);
@@ -553,6 +611,264 @@ static pxa_status_t handle_read_directory(
     return PXA_STATUS_OK;
 }
 
+static pxa_status_t scoped_directory(pxa_fs_service_t *s, pxa_component_t c,
+    uint64_t handle, pxa_fs_resource_slot_t **output) {
+    pxa_resource_t resource;
+    pxa_fs_resource_slot_t *slot;
+    pxa_status_t status = pxa_handle_get64(s->runtime, c, handle,
+        PXA_RESOURCE_DIRECTORY, &resource);
+    if (status != PXA_STATUS_OK) return status;
+    if (resource.operations != &k_directory_resource_ops)
+        return PXA_STATUS_UNSUPPORTED;
+    slot = resource.context;
+    if (!slot || slot->service != s || !slot->occupied ||
+        slot->backend != &s->roots->files) return PXA_STATUS_UNSUPPORTED;
+    *output = slot;
+    return PXA_STATUS_OK;
+}
+
+static pxa_status_t publish_scoped(pxa_fs_resource_slot_t *slot,
+    pxa_component_t c, pxa_authority_t authority, pxa_handle64_t *handle) {
+    pxa_resource_t resource;
+    pxa_status_t status;
+    slot->authority = authority;
+    resource.context = slot;
+    resource.operations = slot->kind == PXA_FS_KIND_DIRECTORY
+        ? &k_directory_resource_ops : &k_file_resource_ops;
+    resource.close = close_resource;
+    status = pxa_handle_open64(slot->service->runtime, c,
+        slot->kind == PXA_FS_KIND_DIRECTORY ? PXA_RESOURCE_DIRECTORY :
+        PXA_RESOURCE_FILE, authority, &resource, handle);
+    if (status != PXA_STATUS_OK) close_resource(slot);
+    return status;
+}
+
+static pxa_status_t directory_permission(pxa_fs_service_t *s, pxa_component_t c,
+    uint64_t handle, pxa_authority_t *authority, uint32_t *rights) {
+    const pxa_bytes_t name = {(const uint8_t *)"fs.user-directory",17};
+    pxa_status_t status;
+    if (!s->permissions) return PXA_STATUS_DENIED;
+    status = pxa_permission_resolve64(s->permissions, c, handle, name,
+        (pxa_bytes_t){(const uint8_t *)"read",4}, authority);
+    if (status == PXA_STATUS_OK) { *rights = 3; return status; }
+    status = pxa_permission_resolve64(s->permissions, c, handle, name,
+        (pxa_bytes_t){(const uint8_t *)"read-write",10}, authority);
+    if (status == PXA_STATUS_OK) *rights = 31;
+    return status;
+}
+
+static pxa_status_t open_scoped_root(pxa_fs_service_t *s, pxa_component_t c,
+    uint8_t kind, const uint8_t id[16], pxa_authority_t authority,
+    uint32_t allowed, uint8_t *result, uint64_t *handle) {
+    uint32_t rights = 0;
+    pxa_status_t status;
+    pxa_fs_resource_slot_t *slot = allocate_resource(s);
+    if (!slot) return PXA_STATUS_RESOURCE_LIMIT;
+    slot->backend = &s->roots->files; slot->kind = PXA_FS_KIND_DIRECTORY;
+    status = pxa_status_normalize(s->roots->open_root(s->roots->context,
+        kind, id, &slot->backend_resource, &rights));
+    if (status != PXA_STATUS_OK) { release_resource(slot); return status; }
+    if (!slot->backend_resource || !rights || (rights & ~allowed)) {
+        close_resource(slot); return PXA_STATUS_DENIED;
+    }
+    status = publish_scoped(slot, c, authority, handle);
+    if (status == PXA_STATUS_OK) {
+        pxa_write_u64(result, *handle); pxa_write_u32(result+8, rights);
+    }
+    return status;
+}
+
+static void clear_picker(pxa_fs_service_t *s) {
+    s->picker_token = 0; s->picker_identity = 0;
+    s->picker_component = PXA_COMPONENT_INVALID;
+    s->picker_authority = 0; s->picker_rights = 0;
+    s->picker_persistent = 0;
+}
+void pxa_fs_service_poll(pxa_fs_service_t *s) {
+    if (service_valid(s) && s->picker_token &&
+        (!pxa_request_is_active(s->runtime,s->picker_component,s->picker_token) ||
+         pxa_request_identity(s->runtime,s->picker_component,s->picker_token) !=
+             s->picker_identity)) {
+        pxa_component_t c = s->picker_component;
+        pxa_request_token_t t = s->picker_token;
+        clear_picker(s);
+        s->roots->cancel_access(s->roots->context,c,t);
+    }
+}
+pxa_status_t pxa_fs_access_complete(pxa_fs_service_t *s, pxa_component_t c,
+    pxa_request_token_t token, pxa_status_t status, const uint8_t id[16]) {
+    uint8_t result[28]; uint64_t handle = 0;
+    pxa_status_t complete;
+    pxa_authority_t authority; uint32_t rights; uint8_t persistent;
+    if (!service_valid(s)) return PXA_STATUS_INVALID_ARGUMENT;
+    pxa_fs_service_poll(s);
+    if (!token || token != s->picker_token || c != s->picker_component)
+        return PXA_STATUS_NOT_FOUND;
+    authority = s->picker_authority; rights = s->picker_rights;
+    persistent = s->picker_persistent;
+    status = pxa_status_normalize(status);
+    if (status == PXA_STATUS_OK && !id) return PXA_STATUS_INVALID_ARGUMENT;
+    clear_picker(s);
+    complete = pxa_request_commit(s->runtime,c,token);
+    if (complete != PXA_STATUS_OK) return complete;
+    if (status == PXA_STATUS_OK) {
+        status = open_scoped_root(s,c,PXA_FS_ROOT_GRANT,id,authority,rights,
+            result,&handle);
+        if (status == PXA_STATUS_OK) {
+            if(persistent) memcpy(result+12,id,16);
+            else memset(result+12,0,16);
+        }
+    }
+    complete = pxa_request_complete(s->runtime,c,token,status,
+        status == PXA_STATUS_OK ? result : NULL,
+        status == PXA_STATUS_OK ? sizeof(result) : 0);
+    if (complete != PXA_STATUS_OK && handle)
+        (void)pxa_handle_close64(s->runtime,c,handle);
+    return complete;
+}
+
+static pxa_status_t scoped_control(pxa_fs_service_t *s, pxa_component_t c,
+    const pxa_message_view_t *m) {
+    uint8_t result[PXA_FS_ROOT_INFO_BYTES]; size_t length = 0;
+    pxa_status_t status = PXA_STATUS_OK, complete;
+    pxa_authority_t authority = 0; uint32_t allowed = 31;
+    uint64_t handle = 0; uint16_t profile = 0;
+    const uint8_t *p = m->payload.data;
+    pxa_fs_resource_slot_t *parent = NULL;
+    pxa_fs_service_poll(s);
+    if (!s->roots) return PXA_STATUS_UNSUPPORTED;
+    if (pxa_component_wire_profile(s->runtime,c,&profile) != PXA_STATUS_OK ||
+        profile != 1) return PXA_STATUS_UNSUPPORTED;
+    if (m->opcode == PXA_FS_OPEN_ROOT) {
+        unsigned i; uint8_t any = 0;
+        if (m->payload.size != 28 || p[1] || p[2] || p[3] ||
+            p[0] < 1 || p[0] > PXA_FS_ROOT_APP_MEDIA) return PXA_STATUS_INVALID_ARGUMENT;
+        for (i = 0; i < 16; ++i) any |= p[12+i];
+        if (p[0] == PXA_FS_ROOT_GRANT) {
+            if (!any) return PXA_STATUS_INVALID_ARGUMENT;
+            status = directory_permission(s,c,pxa_read_u64(p+4),&authority,&allowed);
+        } else {
+            if (any || pxa_read_u64(p+4)) return PXA_STATUS_INVALID_ARGUMENT;
+            status = authorize_request(s,c,&authority);
+            if (status == PXA_STATUS_OK && p[0] == PXA_FS_ROOT_APP_MEDIA &&
+                (s->roots->struct_size < sizeof(*s->roots) ||
+                 !(s->roots->features & PXA_FS_FEATURE_APP_MEDIA_ROOT)))
+                status = PXA_STATUS_UNSUPPORTED;
+        }
+    } else if (m->opcode == PXA_FS_REQUEST_ACCESS) {
+        if (!s->roots->request_access) return PXA_STATUS_UNSUPPORTED;
+        if (m->payload.size < 18 || pxa_read_u32(p+12) > 1 ||
+            !pxa_read_u16(p+16) || pxa_read_u16(p+16) > 256 ||
+            m->payload.size != (size_t)18 + pxa_read_u16(p+16) ||
+            !pxa_utf8_validate(p+18,m->payload.size-18,0) ||
+            !(pxa_read_u32(p+8) & 3u) || (pxa_read_u32(p+8) & ~31u))
+            return PXA_STATUS_INVALID_ARGUMENT;
+        if (s->picker_token) return PXA_STATUS_BUSY;
+        status = directory_permission(s,c,pxa_read_u64(p),&authority,&allowed);
+        if (status == PXA_STATUS_OK && (pxa_read_u32(p+8) & ~allowed))
+            status = PXA_STATUS_DENIED;
+    } else {
+        if (m->payload.size < 8) return PXA_STATUS_INVALID_ARGUMENT;
+        status = scoped_directory(s,c,pxa_read_u64(p),&parent);
+        if (status == PXA_STATUS_OK) authority = parent->authority;
+    }
+    size_t capacity=m->opcode==PXA_FS_QUERY_ROOT ? PXA_FS_ROOT_INFO_BYTES :
+        m->opcode==PXA_FS_OPEN_ROOT ? 12u : m->opcode==PXA_FS_STAT_AT ? 16u : 28u;
+    complete = pxa_request_begin_reserved(s->runtime,c,m->request_token,
+        PXA_FS_SERVICE_ID,m->opcode,status == PXA_STATUS_OK ? authority : 0,
+        capacity);
+    if (complete != PXA_STATUS_OK) return complete;
+    if (status == PXA_STATUS_OK && m->opcode == PXA_FS_REQUEST_ACCESS) {
+        s->picker_component = c; s->picker_token = m->request_token;
+        s->picker_identity = pxa_request_identity(s->runtime,c,m->request_token);
+        s->picker_authority = authority; s->picker_rights = pxa_read_u32(p+8);
+        s->picker_persistent = (uint8_t)pxa_read_u32(p+12);
+        status = pxa_status_normalize(s->roots->request_access(s->roots->context,
+            c,m->request_token,(pxa_bytes_t){p+18,m->payload.size-18},
+            s->picker_rights,(uint8_t)pxa_read_u32(p+12)));
+        if (status == PXA_STATUS_OK) return status;
+        clear_picker(s);
+    }
+    if (status == PXA_STATUS_OK)
+        status = pxa_request_commit(s->runtime,c,m->request_token);
+    if (status == PXA_STATUS_OK && m->opcode == PXA_FS_OPEN_ROOT) {
+        status = open_scoped_root(s,c,p[0],p+12,authority,allowed,result,&handle);
+        length = 12;
+    } else if (status == PXA_STATUS_OK && m->opcode == PXA_FS_QUERY_ROOT) {
+        pxa_fs_root_info_t info;
+        if (m->payload.size != 8) status = PXA_STATUS_INVALID_ARGUMENT;
+        else {
+            memset(&info,0,sizeof(info));
+            status = pxa_status_normalize(s->roots->query_root(s->roots->context,
+                parent->backend_resource,&info));
+            if (status == PXA_STATUS_OK) {
+                memcpy(result,info.volume_id.bytes,16);
+                pxa_write_u64(result+16,info.mount_epoch);
+                pxa_write_u32(result+24,info.rights);
+                pxa_write_u64(result+28,info.capabilities);
+                pxa_write_u16(result+36,info.max_path_bytes);
+                pxa_write_u16(result+38,info.max_segment_bytes);
+                pxa_write_u32(result+40,info.max_read_at_bytes);
+                result[44]=info.naming; result[45]=info.state;
+                pxa_write_u16(result+46,info.space_known);
+                pxa_write_u64(result+48,info.total_bytes);
+                pxa_write_u64(result+56,info.free_bytes);
+                pxa_write_u64(result+64,info.quota_bytes);
+                length = sizeof(result);
+            }
+        }
+    } else if (status == PXA_STATUS_OK) {
+        size_t prefix = m->opcode == PXA_FS_OPEN_AT ? 14u : 10u;
+        pxa_fs_entry_t info; pxa_bytes_t path;
+        memset(&info,0,sizeof(info));
+        if (m->payload.size < prefix ||
+            (size_t)pxa_read_u16(p+prefix-2) != m->payload.size-prefix)
+            status = PXA_STATUS_INVALID_ARGUMENT;
+        else {
+            path = (pxa_bytes_t){p+prefix,m->payload.size-prefix};
+            if (!pxa_fs_scoped_path_is_valid(path)) status = PXA_STATUS_INVALID_ARGUMENT;
+            else if (m->opcode == PXA_FS_STAT_AT) {
+                status = s->roots->stat_at ? pxa_status_normalize(s->roots->stat_at(
+                    s->roots->context,parent->backend_resource,path,&info)) : PXA_STATUS_UNSUPPORTED;
+                if (status == PXA_STATUS_OK) {
+                    memset(result,0,16); result[0]=info.kind;
+                    pxa_write_u64(result+8,info.size); length=16;
+                }
+            } else {
+                uint64_t features = 0; uint32_t flags = pxa_read_u32(p+8);
+                pxa_fs_resource_slot_t *slot;
+                if (!open_flags_valid(flags)) status = PXA_STATUS_INVALID_ARGUMENT;
+                else if (!(slot=allocate_resource(s))) status = PXA_STATUS_RESOURCE_LIMIT;
+                else {
+                    slot->backend = &s->roots->files;
+                    status = pxa_status_normalize(s->roots->open_at(s->roots->context,
+                        parent->backend_resource,path,flags,&slot->backend_resource,
+                        &info,&features));
+                    if (status != PXA_STATUS_OK) release_resource(slot);
+                    else {
+                        slot->kind = info.kind;
+                        if (!slot->backend_resource ||
+                            (info.kind != PXA_FS_KIND_REGULAR && info.kind != PXA_FS_KIND_DIRECTORY) ||
+                            ((flags & PXA_FS_OPEN_DIRECTORY)!=0) != (info.kind==PXA_FS_KIND_DIRECTORY)) {
+                            close_resource(slot); status=PXA_STATUS_INTERNAL;
+                        } else status=publish_scoped(slot,c,authority,&handle);
+                        if (status == PXA_STATUS_OK) {
+                            memset(result,0,28); pxa_write_u64(result,handle);
+                            result[8]=info.kind; pxa_write_u64(result+12,features);
+                            pxa_write_u64(result+20,info.size); length=28;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    complete = pxa_request_complete(s->runtime,c,m->request_token,status,
+        status == PXA_STATUS_OK ? result : NULL,status == PXA_STATUS_OK ? length : 0);
+    if (complete != PXA_STATUS_OK && handle)
+        (void)pxa_handle_close64(s->runtime,c,handle);
+    return complete == PXA_STATUS_OK ? PXA_STATUS_OK : complete;
+}
+
 static pxa_status_t fs_control(void *context, pxa_runtime_t *runtime,
                                pxa_component_t component,
                                const pxa_message_view_t *message) {
@@ -568,6 +884,11 @@ static pxa_status_t fs_control(void *context, pxa_runtime_t *runtime,
     if (!service_valid(service) || message->request_token == 0) {
         return PXA_STATUS_INVALID_ARGUMENT;
     }
+    if (message->opcode == PXA_FS_OPEN_ROOT ||
+        message->opcode == PXA_FS_REQUEST_ACCESS ||
+        message->opcode == PXA_FS_OPEN_AT || message->opcode == PXA_FS_STAT_AT ||
+        message->opcode == PXA_FS_QUERY_ROOT)
+        return scoped_control(service,component,message);
     if (message->opcode < PXA_FS_OPEN ||
         message->opcode > PXA_FS_REPLACE) {
         return PXA_STATUS_UNSUPPORTED;
@@ -631,6 +952,14 @@ static pxa_status_t fs_control(void *context, pxa_runtime_t *runtime,
     return PXA_STATUS_OK;
 }
 
+static void fs_component_stopped(void *context,pxa_runtime_t *runtime,
+    pxa_component_t component) {
+    pxa_fs_service_t *s=context; (void)runtime;
+    if(s->picker_token && s->picker_component==component) {
+        pxa_request_token_t token=s->picker_token;
+        clear_picker(s); s->roots->cancel_access(s->roots->context,component,token);
+    }
+}
 pxa_status_t pxa_fs_service_register(pxa_fs_service_t *service) {
     pxa_service_ops_t operations;
     pxa_status_t status;
@@ -641,8 +970,14 @@ pxa_status_t pxa_fs_service_register(pxa_fs_service_t *service) {
     operations.service_id = PXA_FS_SERVICE_ID;
     operations.major = PXA_FS_SERVICE_MAJOR;
     operations.minor = PXA_FS_SERVICE_MINOR;
+    if (service->roots) operations.features |= PXA_FS_FEATURE_SCOPED_ROOTS;
+    if (service->roots && service->roots->request_access)
+        operations.features |= PXA_FS_FEATURE_USER_DIRECTORY_GRANTS;
+    if (service->roots && service->roots->struct_size >= sizeof(*service->roots))
+        operations.features |= service->roots->features & PXA_FS_FEATURE_APP_MEDIA_ROOT;
     operations.context = service;
     operations.control = fs_control;
+    operations.component_stopped = fs_component_stopped;
     status = pxa_service_register(service->runtime, &operations);
     if (status == PXA_STATUS_OK) service->registered = 1;
     return status;

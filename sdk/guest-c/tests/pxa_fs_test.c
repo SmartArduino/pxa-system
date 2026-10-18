@@ -1,5 +1,6 @@
 #include "../../testing/pxa_control_capture.h"
 #include "pxa_fs.h"
+#include "pxa_fs_roots.h"
 
 #include <assert.h>
 #include <string.h>
@@ -198,10 +199,46 @@ static void test_parse_results(void) {
     assert(directory.status == PXA_STATUS_OK && directory.end);
 }
 
+static void test_scoped_roots(void) {
+    uint8_t id[16]={7},packet[128],payload[76]={0}; pxa_event_t event;
+    pxa_fs_root_result_t root; pxa_fs_at_result_t file; pxa_fs_root_info_result_t info;
+    const uint64_t handle=UINT64_C(0x100000007);
+    assert(!pxa_fs_request_open_grant(30,handle,id));
+    assert(pxa_parse_event(captured,captured_length,&event));
+    assert(event.opcode==9 && event.payload_size==28 && event.payload[0]==4);
+    assert(pxa_load_u64(event.payload+4)==handle && event.payload[12]==7);
+    assert(!pxa_fs_request_directory(31,handle,"Data",4,3,1));
+    assert(pxa_parse_event(captured,captured_length,&event));
+    assert(event.opcode==10 && event.payload_size==22 && pxa_load_u32(event.payload+8)==3);
+    assert(pxa_fs_request_directory(31,handle,"x\0y",3,3,1)==-1);
+    pxa_store_u64(payload+4,handle);pxa_store_u32(payload+12,3);payload[16]=7;
+    assert(make_event(packet,sizeof(packet),10,31,payload,32,&event));
+    assert(pxa_fs_parse_root(&event,31,&root) && root.handle==handle && root.rights==3 && root.grant_id[0]==7);
+    event.payload_size--;assert(!pxa_fs_parse_root(&event,31,&root));
+    assert(!pxa_fs_request_open_at(32,handle,"map.bin",7,1));
+    assert(pxa_parse_event(captured,captured_length,&event));
+    assert(event.opcode==11 && event.payload_size==21 && pxa_load_u16(event.payload+12)==7);
+    memset(payload,0,sizeof(payload));pxa_store_u64(payload+4,handle);
+    payload[12]=1;pxa_store_u64(payload+24,8192);
+    assert(make_event(packet,sizeof(packet),11,32,payload,32,&event));
+    assert(pxa_fs_parse_open_at(&event,32,&file) && file.size==8192 && file.kind==1);
+    payload[13]=1;assert(make_event(packet,sizeof(packet),11,32,payload,32,&event));
+    assert(!pxa_fs_parse_open_at(&event,32,&file));payload[13]=0;
+    memset(payload,0,sizeof(payload));payload[4]=9;pxa_store_u64(payload+20,99);
+    pxa_store_u32(payload+28,3);pxa_store_u16(payload+40,255);pxa_store_u16(payload+42,255);
+    assert(make_event(packet,sizeof(packet),17,33,payload,76,&event));
+    assert(pxa_fs_parse_root_info(&event,33,&info) && info.mount_epoch==99 && info.volume_id[0]==9);
+    assert(!pxa_fs_parse_root_info(&event,34,&info));
+}
 int main(void) {
+    assert(pxa_fs_request_app_media(1)==0 && captured_length==48);
+    assert(captured[20]==5);
+    for(unsigned i=21;i<48;++i) assert(captured[i]==0);
+    assert(pxa_fs_request_app_media(0)==-1);
     test_path_and_flag_validation();
     test_build_open();
     test_build_path_and_rename();
     test_parse_results();
+    test_scoped_roots();
     return 0;
 }

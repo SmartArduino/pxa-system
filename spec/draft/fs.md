@@ -1,4 +1,55 @@
-# PXA Private Files Draft 0.1
+# PXA Files Draft 0.3
+
+FS 0.3 preserves private-file operations 1–8 and adds optional scoped directory
+roots. The existing private path and quota rules below remain unchanged.
+`pxa-fs.json` is the version/opcode authority. Implemented extensions are
+OPEN_ROOT (9), REQUEST_ACCESS (10), OPEN_AT (11), STAT_AT (16) and QUERY_ROOT (17),
+gated by `scoped-roots`, `user-directory-grants` and `app-media-root` feature bits. Other proposed
+multi-volume operations are not implemented or advertised yet.
+
+User roots require a signed `fs.user-directory` declaration, exact scope `read`
+or `read-write`, and a live Permission handle. Its Core authority binds every
+root, descendant and pending picker. The Host intersects this with the specific
+directory grant; a permission declaration alone does not authorize a path.
+Grant IDs are opaque 16-byte per-identity records; runtime handles are DIRECTORY
+type 4 or FILE type 3 and must never be persisted. Closing a parent directory
+does not close its independently owned children. Permission revocation does.
+
+OPEN_ROOT uses `kind:u8|reserved:3=0|permission:u64|grant-id:16` (28 B).
+Private/cache/temp kinds reserve IDs 1/2/3; the initial scoped provider supports
+grant kind 4. With feature bit 6, kind 5 opens the verified app's fixed media
+root. Permission and GrantId must both be zero for kind 5: the Host resolves
+the app identity and configured storage policy, without a picker or a broad
+storage permission. It cannot accept a Guest-selected volume or native path.
+An unavailable configured volume returns unavailable, never a fallback root.
+The initial ESP mapping is `/PXA/media/<app-key>` on the board-selected SD
+volume; future installation placement supplies that selection. This is shared
+media storage, not confidential private saves. Its initial rights are read and
+enumerate. Its success data is `directory:u64|rights:u32`. REQUEST_ACCESS uses
+`permission:u64|rights:u32|flags:u32|purpose-length:u16|purpose:utf8` and returns
+`directory:u64|rights:u32|grant-id:16`. Flag 1 requests persistence. Session-only
+access returns a zero GrantId. The picker is trusted Host UI; Core cancellation,
+revocation or stop prevents a late UI decision from publishing a handle.
+
+OPEN_AT uses `directory:u64|flags:u32|path-length:u16|path:utf8`; success is
+`handle:u64|kind:u8|reserved:3=0|file-features:u64|size:u64` (28 B). STAT_AT uses
+`directory:u64|path-length:u16|path:utf8`; success is `kind:u8|reserved:7=0|size:u64`.
+QUERY_ROOT uses one DIRECTORY u64; its 72-byte success layout is in the JSON.
+Success lengths exclude the common status. Errors have only status:i32.
+
+Scoped paths are bounded UTF-8 relative paths. The protocol ceilings are
+1024 B total and 255 B per segment, with smaller backend limits reported by
+QUERY_ROOT. Absolute paths, NUL, dot/parent segments, backslash, colon, trailing
+dot/space and case variants of `.pxa-*` segments are rejected. Native FAT also
+rejects short-alias `~` spellings. A Host may use that backend only on a link-free
+mount without nested mounts; POSIX instead opens directory descriptors with
+no-follow traversal and refuses non-regular or hard-linked files.
+
+Every read/open/seek checks the original mount epoch, grant revision and rights.
+Duplicate volume identities are ambiguous and inaccessible. Remounting cannot
+revive an old handle. The initial ESP adapter reports read-only roots, uses
+existing FILE READ and FS SEEK, and neither advertises READ_AT nor promises
+hotplug. No SD installation guarantee follows from data-read support.
 
 FS v1 exposes only the private, persistent App data domain. A Host maps one
 FS service instance to one verified `(publisher-key-id, app-id)` identity;

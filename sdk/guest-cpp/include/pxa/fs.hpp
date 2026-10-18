@@ -2,6 +2,7 @@
 
 #include "task.hpp"
 #include "service_wire.hpp"
+#include "permission.hpp"
 
 #include <optional>
 #include <string_view>
@@ -73,6 +74,10 @@ template<class T> Task<T> failure(Error error) {
     return Task<T>::failed(error);
 }
 template<std::size_t Capacity> using Payload = wire::RequestPacket<Capacity>;
+struct BorrowedPayload {
+    std::span<std::byte> bytes;
+    std::span<std::byte> packet() noexcept { return bytes; }
+};
 template<std::size_t N>
 inline void path_record(Payload<N>& payload, std::uint16_t tag,
                          std::string_view path) noexcept {
@@ -171,6 +176,7 @@ public:
     }
 private:
     friend class FilesystemService;
+    friend class Directory;
     File(Transport& transport, RequestTable& requests,
          std::uint64_t handle, bool directory) noexcept
         : resource_(transport, handle), transport_(&transport),
@@ -190,10 +196,124 @@ private:
     bool directory_ = false;
 };
 
+struct RootInfo {
+    std::array<std::byte,16> volume_id{};
+    std::uint64_t mount_epoch=0,capabilities=0,total_bytes=0,free_bytes=0,quota_bytes=0;
+    std::uint32_t rights=0,max_read_at_bytes=0;
+    std::uint16_t max_path_bytes=0,max_segment_bytes=0,space_known=0;
+    std::uint8_t naming=0,state=0;
+};
+class Directory {
+public:
+    Directory()=default;
+    std::uint64_t handle() const noexcept { return file_.handle(); }
+    explicit operator bool() const noexcept { return bool(file_); }
+    Result<void> close() noexcept { return file_.close(); }
+    Task<File> open(std::string_view path,OpenMode mode=OpenMode::read) const {
+        if(!file_ || path.empty() || path.find('\0')!=path.npos ||
+            !fs_detail::valid_mode(mode)) return Task<File>::failed(Error::invalid_argument);
+        if(path.size()>255) return Task<File>::failed(Error::limit_exceeded);
+        fs_detail::Payload<269> payload;
+        wire::put64(payload.bytes.data(),handle());
+        wire::put32(payload.bytes.data()+8,static_cast<std::uint32_t>(mode));
+        wire::put16(payload.bytes.data()+12,static_cast<std::uint16_t>(path.size()));
+        for(std::size_t i=0;i<path.size();++i) payload.bytes[14+i]=std::byte(path[i]);
+        payload.size=14+path.size();
+        return open_impl(*transport_,*requests_,payload,
+            (static_cast<std::uint32_t>(mode)&64)!=0);
+    }
+    Task<RootInfo> info() const {
+        if(!file_) return Task<RootInfo>::failed(Error::bad_state);
+        return info_impl(*transport_,*requests_,handle());
+    }
+    // Long paths use caller-owned storage instead of enlarging every coroutine
+    // slot. Keep packet unchanged and alive through completion/cancellation.
+    Task<File> open(std::string_view path,OpenMode mode,std::span<std::byte> packet) const {
+        if(!file_ || path.empty() || path.size()>1024 || path.find('\0')!=path.npos ||
+            !fs_detail::valid_mode(mode) || packet.size()<14+path.size())
+            return Task<File>::failed(Error::invalid_argument);
+        wire::put64(packet.data(),handle());
+        wire::put32(packet.data()+8,static_cast<std::uint32_t>(mode));
+        wire::put16(packet.data()+12,static_cast<std::uint16_t>(path.size()));
+        for(std::size_t i=0;i<path.size();++i) packet[14+i]=std::byte(path[i]);
+        return open_impl(*transport_,*requests_,fs_detail::BorrowedPayload{
+            packet.first(14+path.size())},(static_cast<std::uint32_t>(mode)&64)!=0);
+    }
+private:
+    friend class FilesystemService;
+    Directory(Transport& t,RequestTable& r,std::uint64_t h):file_(t,r,h,true),transport_(&t),requests_(&r){}
+    template<class Packet> static Task<File> open_impl(Transport& t,RequestTable& r,
+        Packet payload,bool directory) {
+        auto event=co_await Response(t,r,5,11,payload.packet());
+        if(!event) co_return std::unexpected(event.error());
+        auto body=wire::result_body(event->payload);
+        if(!body) co_return std::unexpected(body.error());
+        auto pending=wire::result_resource<FileTag>(t,*body);
+        if(body->size()!=28 || !(pending.handle()>>32) ||
+            (*body)[8]!=(directory?std::byte{2}:std::byte{1}) ||
+            (*body)[9]!=std::byte{} || (*body)[10]!=std::byte{} || (*body)[11]!=std::byte{})
+            co_return std::unexpected(Error::protocol_error);
+        co_return File(t,r,pending.release(),directory);
+    }
+    static Task<RootInfo> info_impl(Transport& t,RequestTable& r,std::uint64_t h) {
+        std::array<std::byte,8> payload{}; wire::put64(payload.data(),h);
+        auto event=co_await Response(t,r,5,17,payload);
+        if(!event) co_return std::unexpected(event.error());
+        auto body=wire::result_body(event->payload);
+        if(!body) co_return std::unexpected(body.error());
+        if(body->size()!=72) co_return std::unexpected(Error::protocol_error);
+        RootInfo info; const auto *p=body->data();
+        for(unsigned i=0;i<16;++i) info.volume_id[i]=p[i];
+        info.mount_epoch=wire::get64(p+16); info.rights=wire::get32(p+24);
+        info.capabilities=wire::get64(p+28); info.max_path_bytes=wire::get16(p+36);
+        info.max_segment_bytes=wire::get16(p+38); info.max_read_at_bytes=wire::get32(p+40);
+        info.naming=std::to_integer<std::uint8_t>(p[44]); info.state=std::to_integer<std::uint8_t>(p[45]);
+        info.space_known=wire::get16(p+46); info.total_bytes=wire::get64(p+48);
+        info.free_bytes=wire::get64(p+56); info.quota_bytes=wire::get64(p+64);
+        if(!info.mount_epoch || !info.max_path_bytes || !info.max_segment_bytes)
+            co_return std::unexpected(Error::protocol_error);
+        co_return info;
+    }
+    File file_;
+    Transport *transport_=nullptr; RequestTable *requests_=nullptr;
+};
+struct DirectoryGrant {
+    Directory root;
+    std::array<std::byte,16> id{};
+    std::uint32_t rights=0;
+};
+
 class FilesystemService {
 public:
     FilesystemService(Transport& transport, RequestTable& requests) noexcept
         : transport_(transport), requests_(requests) {}
+
+    // As with other service resources, keep permission alive until ALL derived
+    // directories/files close. Persistent IDs are safe to store; handles are not.
+    Task<DirectoryGrant> request_directory(const Permission& permission,
+        std::string_view purpose,bool persistent=true) {
+        if(!permission || purpose.empty() || purpose.size()>256 || purpose.find('\0')!=purpose.npos)
+            return Task<DirectoryGrant>::failed(Error::invalid_argument);
+        fs_detail::Payload<274> p;
+        wire::put64(p.bytes.data(),permission.handle()); wire::put32(p.bytes.data()+8,3);
+        wire::put32(p.bytes.data()+12,persistent?1:0); wire::put16(p.bytes.data()+16,purpose.size());
+        for(std::size_t i=0;i<purpose.size();++i) p.bytes[18+i]=std::byte(purpose[i]);
+        p.size=18+purpose.size();
+        return directory_request(transport_,requests_,p);
+    }
+    // Host binds this fixed root to the verified app identity and storage
+    // placement. No filesystem permission dialog or directory picker.
+    Task<Directory> app_media() {
+        fs_detail::Payload<28> p; p.bytes[0]=std::byte{5}; p.size=28;
+        return grant_request(transport_,requests_,p);
+    }
+    Task<Directory> open_grant(const Permission& permission,const std::array<std::byte,16>& id) {
+        if(!permission) return Task<Directory>::failed(Error::invalid_argument);
+        fs_detail::Payload<28> p; p.bytes[0]=std::byte{4};
+        wire::put64(p.bytes.data()+4,permission.handle());
+        for(unsigned i=0;i<16;++i) p.bytes[12+i]=id[i]; p.size=28;
+        return grant_request(transport_,requests_,p);
+    }
 
     Task<File> open(std::string_view path, OpenMode mode = OpenMode::read) {
         if (!fs_detail::valid_path(path) || !fs_detail::valid_mode(mode))
@@ -239,6 +359,32 @@ public:
         return stat_request(transport_, requests_, payload);
     }
 private:
+    static Task<DirectoryGrant> directory_request(Transport& t,RequestTable& r,
+        fs_detail::Payload<274> p) {
+        auto event=co_await Response(t,r,5,10,p.packet());
+        if(!event) co_return std::unexpected(event.error());
+        auto body=wire::result_body(event->payload);
+        if(!body) co_return std::unexpected(body.error());
+        auto pending=wire::result_resource<FileTag>(t,*body);
+        if(body->size()!=28 || !(pending.handle()>>32)) co_return std::unexpected(Error::protocol_error);
+        auto rights=wire::get32(body->data()+8);
+        if(!rights || (rights&~31u)) co_return std::unexpected(Error::protocol_error);
+        DirectoryGrant grant{Directory(t,r,pending.release()),{},rights};
+        for(unsigned i=0;i<16;++i) grant.id[i]=(*body)[12+i];
+        co_return std::move(grant);
+    }
+    static Task<Directory> grant_request(Transport& t,RequestTable& r,
+        fs_detail::Payload<28> p) {
+        auto event=co_await Response(t,r,5,9,p.packet());
+        if(!event) co_return std::unexpected(event.error());
+        auto body=wire::result_body(event->payload);
+        if(!body) co_return std::unexpected(body.error());
+        auto pending=wire::result_resource<FileTag>(t,*body);
+        if(body->size()!=12 || !(pending.handle()>>32)) co_return std::unexpected(Error::protocol_error);
+        auto rights=wire::get32(body->data()+8);
+        if(!rights || (rights&~31u)) co_return std::unexpected(Error::protocol_error);
+        co_return Directory(t,r,pending.release());
+    }
     Task<void> path_status(std::uint16_t opcode, std::string_view path) {
         if (!fs_detail::valid_path(path))
             return fs_detail::failure<void>(Error::invalid_argument);

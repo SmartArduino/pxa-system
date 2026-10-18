@@ -1,0 +1,59 @@
+{
+  "format": "pxa-package-source-0.1",
+  "min_sdk": [
+    2,
+    0
+  ],
+  "target_sdk": [
+    2,
+    0
+  ],
+  "compile_sdk": [
+    2,
+    0
+  ],
+  "id": "pxa-fixed-files",
+  "version": "0.1.0",
+  "release_sequence": 1,
+  "name": "Fixed SD Files Test",
+  "description": "Automatic app-owned SD root, without directory selection",
+  "build": {
+    "system": "cmake",
+    "source_dir": ".",
+    "linear_memory": {
+      "maximum_bytes": 1048576,
+      "pinned": false
+    }
+  },
+  "components": [
+    {
+      "id": "main",
+      "kind": "ui",
+      "services": [
+        "ui",
+        "log",
+        {
+          "name": "fs",
+          "min_version": [
+            0,
+            3
+          ],
+          "features": [
+            "app-media-root",
+            "scoped-roots"
+          ]
+        }
+      ],
+      "cmake_target": "pxa_main",
+      "wasi": {
+        "version": "preview1",
+        "libc": "wasi-libc",
+        "features": [
+          "monotonic-clock",
+          "wall-clock"
+        ]
+      }
+    }
+  ],
+  "permissions": []
+}

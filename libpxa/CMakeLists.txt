@@ -137,6 +137,7 @@ if(PXA_BUILD_ADAPTERS)
         adapters/posix/pxa_posix_asset.c
         adapters/posix/pxa_posix_asset_worker.c
         adapters/posix/pxa_posix_fs.c
+        adapters/posix/pxa_scoped_fs.c
         adapters/posix/pxa_posix_scheduler_store.c
         adapters/posix/pxa_posix_storage.c
         adapters/posix/pxa_posix_installer.c
@@ -720,6 +721,14 @@ if(PXA_BUILD_TESTS)
         endif()
     endif()
     add_test(NAME pxa_core_test COMMAND pxa_core_test)
+    if(UNIX)
+        add_executable(pxa_scoped_fs_test tests/scoped_fs_test.c
+            adapters/posix/pxa_scoped_fs.c)
+        target_include_directories(pxa_scoped_fs_test PRIVATE adapters/include)
+        target_link_libraries(pxa_scoped_fs_test PRIVATE pxa)
+        target_compile_options(pxa_scoped_fs_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
+        add_test(NAME pxa_scoped_fs_test COMMAND pxa_scoped_fs_test)
+    endif()
 
     add_executable(pxa_http_stream_test tests/http_stream_test.c)
     target_link_libraries(pxa_http_stream_test PRIVATE pxa)

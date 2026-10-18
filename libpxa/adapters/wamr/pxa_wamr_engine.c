@@ -31,6 +31,11 @@
 #include "pxa_wamr_aot_reader.h"
 
 #if defined(ESP_PLATFORM)
+#include "sdkconfig.h"
+#if defined(CONFIG_WAMR_LINEAR_MEMORY_RESERVE_MAX) && \
+    (!defined(WASM_LINEAR_MEMORY_RESERVE_MAX) || WASM_LINEAR_MEMORY_RESERVE_MAX == 0)
+#error "WAMR pinned-memory feature must propagate from the runtime to its Host adapter"
+#endif
 #include "esp_log.h"
 #include "pxa/esp/pxa_esp_posix_shim.h"
 #define PXA_WAMR_LOG_TAG "PxaWamr"
@@ -656,6 +661,29 @@ static pxa_status_t validate_module_imports(wasm_module_t module,
     return PXA_STATUS_OK;
 }
 
+static uint64_t import_started(pxa_wamr_entry_t *entry) {
+#if defined(ESP_PLATFORM)
+    pxa_wamr_engine_t *engine=entry_engine(entry);
+    return engine->now_us ? engine->now_us(engine->host_context) : 0;
+#else
+    (void)entry; return 0;
+#endif
+}
+static void import_finished(pxa_wamr_entry_t *entry,const char *kind,
+                            uint32_t operation,uint32_t bytes,uint64_t start) {
+#if defined(ESP_PLATFORM)
+    uint64_t end=import_started(entry);
+    if(start && end>=start && end-start>=250000) {
+        ESP_LOGW(PXA_WAMR_LOG_TAG,
+            "Slow Host import: component=%u kind=%s operation=%u bytes=%u elapsed_us=%llu",
+            (unsigned)entry->component,kind,(unsigned)operation,(unsigned)bytes,
+            (unsigned long long)(end-start));
+    }
+#else
+    (void)entry; (void)kind; (void)operation; (void)bytes; (void)start;
+#endif
+}
+
 /* Core 2 borrows the validated Guest range until this import returns.
  * Backends must copy any bytes retained after return. */
 static int32_t native_call(void *opaque_exec_env, uint32_t route,
@@ -670,8 +698,11 @@ static int32_t native_call(void *opaque_exec_env, uint32_t route,
     message.opcode = (uint16_t)(route >> 16);
     message.request_token = token;
     message.payload = (pxa_bytes_t){data, size};
-    return pxa_runtime_control_view(entry_engine(entry)->runtime,
-                                    entry->component, &message);
+    uint64_t start=import_started(entry);
+    int32_t result=pxa_runtime_control_view(entry_engine(entry)->runtime,
+                                          entry->component,&message);
+    import_finished(entry,"control",route,size,start);
+    return result;
 }
 
 static int32_t native_io(void *opaque_exec_env, uint64_t handle,
@@ -695,8 +726,11 @@ static int32_t native_io(void *opaque_exec_env, uint64_t handle,
             PXA_STATUS_OK)
             return PXA_STATUS_UNSUPPORTED;
     }
-    return pxa_runtime_io64(entry_engine(entry)->runtime, entry->component,
-                            handle, operation, data, size);
+    uint64_t start=import_started(entry);
+    int32_t result=pxa_runtime_io64(entry_engine(entry)->runtime,entry->component,
+                                   handle,operation,data,size);
+    import_finished(entry,"io",operation,size,start);
+    return result;
 }
 
 static int call(pxa_wamr_engine_t *engine, pxa_wamr_entry_t *entry,

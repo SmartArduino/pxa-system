@@ -1,11 +1,11 @@
 {
-  "schema": "pxa-fs-spec-0.2",
+  "schema": "pxa-fs-spec-0.3",
   "status": "draft",
   "service": {
     "name": "fs",
     "id": 5,
     "major": 0,
-    "minor": 2,
+    "minor": 3,
     "patch": 0
   },
   "opcodes": [
@@ -68,6 +68,51 @@
       "direction": "guest-to-host",
       "payload": "path record and destination record, as rename",
       "rule": "Optional backend support: atomically move a regular file over another closed regular file within the private filesystem. Does not replace directories, links or open files. Failure preserves the previous destination; missing backend support returns unsupported. Both paths use the existing filesystem authority."
+    },
+    {
+      "id": 9,
+      "name": "open-root",
+      "direction": "bidirectional-result",
+      "request_token": "nonzero",
+      "payload": "kind:u8|reserved:bytes[3]=0|permission:u64|grant_id:bytes[16]",
+      "result": "directory:u64|granted_rights:u32",
+      "feature": "scoped-roots"
+    },
+    {
+      "id": 10,
+      "name": "request-access",
+      "direction": "bidirectional-result",
+      "request_token": "nonzero",
+      "payload": "permission:u64|requested_rights:u32|flags:u32|purpose:utf8-u16",
+      "result": "directory:u64|granted_rights:u32|grant_id:bytes[16]",
+      "feature": "user-directory-grants"
+    },
+    {
+      "id": 11,
+      "name": "open-at",
+      "direction": "bidirectional-result",
+      "request_token": "nonzero",
+      "payload": "directory:u64|open_flags:u32|path:utf8-u16",
+      "result": "handle:u64|kind:u8|reserved:bytes[3]=0|file_features:u64|size:u64",
+      "feature": "scoped-roots"
+    },
+    {
+      "id": 16,
+      "name": "stat-at",
+      "direction": "bidirectional-result",
+      "request_token": "nonzero",
+      "payload": "directory:u64|path:utf8-u16",
+      "result": "kind:u8|reserved:bytes[7]=0|size:u64",
+      "feature": "scoped-roots"
+    },
+    {
+      "id": 17,
+      "name": "query-root",
+      "direction": "bidirectional-result",
+      "request_token": "nonzero",
+      "payload": "directory:u64",
+      "result": "RootInfo",
+      "feature": "scoped-roots"
     }
   ],
   "open_flags": [
@@ -173,5 +218,39 @@
     "max_segment_bytes": 64,
     "quota_unit": "logical-regular-file-bytes"
   },
-  "protocol_version": "0.2.0"
+  "protocol_version": "0.2.0",
+  "features": [
+    {
+      "name": "scoped-roots",
+      "bit": 0
+    },
+    {
+      "name": "user-directory-grants",
+      "bit": 4
+    },
+    {
+      "name": "app-media-root",
+      "bit": 6
+    }
+  ],
+  "root_info": {
+    "bytes": 72,
+    "fields": "volume-id:16|mount-epoch:u64|rights:u32|capabilities:u64|max-path:u16|max-segment:u16|max-read-at:u32|naming:u8|state:u8|space-known:u16|total:u64|free:u64|quota:u64",
+    "space_known": "bit0 total, bit1 free, bit2 quota; zero means unknown",
+    "naming": "1 byte-exact; 2 native case-insensitive",
+    "capabilities": "zero in initial read-only profile; READ_AT and SYNC not advertised"
+  },
+  "roots_rules": [
+    "Core 2 only; old operations 1..8 unchanged",
+    "Directory uses Core DIRECTORY type 4; files use FILE type 3",
+    "User grant operations require an exact fs.user-directory read or read-write Permission authority",
+    "Rights read=1/enumerate=2/write=4/create=8/remove=16; backend may support only read|enumerate",
+    "Root kind grant=4 requires Permission and GrantId; app-media=5 requires feature bit6 and zero Permission/GrantId; private/cache/temp roots remain unsupported in initial profile",
+    "Session-only picker returns zero GrantId; persistent picker returns Host opaque 16-byte GrantId",
+    "New paths are UTF-8, no NUL/absolute/dot/parent/backslash/colon/trailing-dot/trailing-space or case variants of .pxa-* segments; backend reports path limits",
+    "Initial adapter uses existing sequential FILE read and FS seek; no new I/O opcode advertised",
+    "72-byte root-info and 28-byte open-at success data exclude the Core status field",
+    "Revocation and component stop close authority-bound descendants; cancelled pickers cannot publish a result",
+    "App media roots are bound to the verified app identity and explicit Host storage policy; no picker, no arbitrary path and no fallback to another volume. Initial ESP profile is read-only."
+  ]
 }
