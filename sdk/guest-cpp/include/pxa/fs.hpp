@@ -160,6 +160,30 @@ public:
     Result<std::uint32_t> read(std::span<std::byte> buffer) noexcept {
         return transfer(1, buffer);
     }
+    std::uint64_t features() const noexcept { return features_; }
+    bool supports_read_at() const noexcept { return (features_&1)!=0; }
+    // Borrow header+data storage; result bytes begin at packet.subspan(24).
+    Result<std::uint32_t> read_at(std::uint64_t offset,std::uint64_t cookie,
+                                std::span<std::byte> packet) noexcept {
+        if(!resource_ || directory_)return std::unexpected(Error::bad_state);
+        if(!cookie || packet.size()<=24 || packet.size()>24+4096 ||
+            offset>UINT64_MAX-(packet.size()-24))return std::unexpected(Error::invalid_argument);
+        wire::put64(packet.data(),offset);wire::put64(packet.data()+8,cookie);
+        wire::put32(packet.data()+16,static_cast<std::uint32_t>(packet.size()-24));
+        wire::put32(packet.data()+20,0);
+        auto result=transport_->io(handle(),16,packet);
+        if(result && *result>packet.size()-24)return std::unexpected(Error::protocol_error);
+        return result;
+    }
+    Result<void> cancel_read_at(std::uint64_t cookie) noexcept {
+        if(!resource_ || directory_)return std::unexpected(Error::bad_state);
+        if(!cookie)return std::unexpected(Error::invalid_argument);
+        std::array<std::byte,8> packet{};wire::put64(packet.data(),cookie);
+        auto result=transport_->io(handle(),17,packet);
+        if(!result)return std::unexpected(result.error());
+        if(*result)return std::unexpected(Error::protocol_error);
+        return {};
+    }
     Result<std::uint32_t> write(std::span<const std::byte> buffer) noexcept {
         return transfer(2, {const_cast<std::byte*>(buffer.data()), buffer.size()});
     }
@@ -178,9 +202,9 @@ private:
     friend class FilesystemService;
     friend class Directory;
     File(Transport& transport, RequestTable& requests,
-         std::uint64_t handle, bool directory) noexcept
+         std::uint64_t handle, bool directory, std::uint64_t features=0) noexcept
         : resource_(transport, handle), transport_(&transport),
-          requests_(&requests), directory_(directory) {}
+          requests_(&requests), directory_(directory),features_(features) {}
     Result<std::uint32_t> transfer(std::uint32_t operation,
                                    std::span<std::byte> buffer) noexcept {
         if (!resource_ || directory_)
@@ -194,6 +218,7 @@ private:
     Transport* transport_ = nullptr;
     RequestTable* requests_ = nullptr;
     bool directory_ = false;
+    std::uint64_t features_=0;
 };
 
 struct RootInfo {
@@ -253,7 +278,7 @@ private:
             (*body)[8]!=(directory?std::byte{2}:std::byte{1}) ||
             (*body)[9]!=std::byte{} || (*body)[10]!=std::byte{} || (*body)[11]!=std::byte{})
             co_return std::unexpected(Error::protocol_error);
-        co_return File(t,r,pending.release(),directory);
+        co_return File(t,r,pending.release(),directory,wire::get64(body->data()+12));
     }
     static Task<RootInfo> info_impl(Transport& t,RequestTable& r,std::uint64_t h) {
         std::array<std::byte,8> payload{}; wire::put64(payload.data(),h);

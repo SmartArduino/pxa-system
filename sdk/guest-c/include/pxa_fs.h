@@ -12,6 +12,7 @@
 #define PXA_FS_STAT 5u
 #define PXA_FS_SEEK 6u
 #define PXA_FS_READ_DIRECTORY 7u
+#define PXA_FS_REPLACE 8u
 
 #define PXA_FS_OPEN_READ 1u
 #define PXA_FS_OPEN_WRITE 2u
@@ -139,8 +140,8 @@ static inline int32_t pxa_fs_request_path(
     return pxa_control_packet(packet, size);
 }
 
-static inline int pxa_fs_build_rename(
-    uint8_t *out, size_t capacity, uint64_t token,
+static inline int pxa_fs_build_move(
+    uint8_t *out, size_t capacity, uint16_t opcode, uint64_t token,
     const char *source, size_t source_size,
     const char *destination, size_t destination_size,
     uint32_t *written) {
@@ -148,7 +149,8 @@ static inline int pxa_fs_build_rename(
     size_t second_size = 0;
     uint8_t *payload;
     if (written != NULL) *written = 0;
-    if (out == NULL || written == NULL || token == 0 ||
+    if ((opcode != PXA_FS_RENAME && opcode != PXA_FS_REPLACE) ||
+        out == NULL || written == NULL || token == 0 ||
         !pxa_fs_valid_path(source, source_size) ||
         !pxa_fs_valid_path(destination, destination_size) ||
         (source_size == destination_size &&
@@ -165,8 +167,23 @@ static inline int pxa_fs_build_rename(
                                 2, (const uint8_t *)destination,
                                 destination_size, &second_size)) return 0;
     return pxa_build_message(out, capacity, PXA_FS_SERVICE,
-                                PXA_FS_RENAME, token, payload,
+                                opcode, token, payload,
                                 first_size + second_size, written);
+}
+
+static inline int pxa_fs_build_rename(
+    uint8_t *out, size_t capacity, uint64_t token,
+    const char *source, size_t source_size, const char *destination,
+    size_t destination_size, uint32_t *written) {
+    return pxa_fs_build_move(out,capacity,PXA_FS_RENAME,token,source,source_size,
+        destination,destination_size,written);
+}
+static inline int pxa_fs_build_replace(
+    uint8_t *out, size_t capacity, uint64_t token,
+    const char *source, size_t source_size, const char *destination,
+    size_t destination_size, uint32_t *written) {
+    return pxa_fs_build_move(out,capacity,PXA_FS_REPLACE,token,source,source_size,
+        destination,destination_size,written);
 }
 
 static inline int pxa_fs_build_seek(

@@ -31,6 +31,7 @@ extern "C" {
 #define PXA_FS_STAT_AT UINT16_C(16)
 #define PXA_FS_QUERY_ROOT UINT16_C(17)
 #define PXA_FS_FEATURE_SCOPED_ROOTS UINT64_C(1)
+#define PXA_FS_FEATURE_READ_AT UINT64_C(2)
 #define PXA_FS_FEATURE_USER_DIRECTORY_GRANTS UINT64_C(16)
 #define PXA_FS_FEATURE_APP_MEDIA_ROOT UINT64_C(64)
 #define PXA_FS_ROOT_PRIVATE UINT8_C(1)
@@ -82,6 +83,11 @@ typedef struct {
 
 #define PXA_FS_IO_READ UINT32_C(1)
 #define PXA_FS_IO_WRITE UINT32_C(2)
+#define PXA_FS_IO_READ_AT UINT32_C(16)
+#define PXA_FS_IO_CANCEL_READ_AT UINT32_C(17)
+#define PXA_FS_FILE_FEATURE_READ_AT UINT64_C(1)
+#define PXA_FS_READ_AT_HEADER_BYTES 24u
+#define PXA_FS_READ_AT_MAX_BYTES 4096u
 
 #define PXA_FS_MAX_PATH_BYTES ((size_t)255)
 #define PXA_FS_MAX_SEGMENT_BYTES ((size_t)64)
@@ -113,6 +119,10 @@ typedef pxa_status_t (*pxa_fs_read_directory_fn)(
     void *context, void *resource, pxa_fs_entry_t *entry, uint8_t *end);
 typedef void (*pxa_fs_close_fn)(
     void *context, void *resource, uint8_t kind);
+/* Bounded synchronous positional read. Never retain output or return
+ * WOULD_BLOCK; it leaves the sequential file cursor unchanged. */
+typedef pxa_status_t (*pxa_fs_read_at_fn)(void *context, void *resource,
+    uint64_t offset, uint8_t *output, size_t capacity, size_t *size);
 
 typedef struct {
     uint32_t struct_size;
@@ -156,6 +166,8 @@ typedef struct {
     /* Optional tail: additional implemented roots. Currently only bit 6
      * (app-media-root) is defined. Old providers default to no extra roots. */
     uint64_t features;
+    /* Optional tail; context is files.context. Older providers omit it. */
+    pxa_fs_read_at_fn read_at;
 } pxa_fs_roots_backend_t;
 
 typedef pxa_status_t (*pxa_fs_authorize_fn)(

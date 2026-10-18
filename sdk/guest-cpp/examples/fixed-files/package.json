@@ -13,8 +13,8 @@
     0
   ],
   "id": "pxa-fixed-files",
-  "version": "0.1.0",
-  "release_sequence": 1,
+  "version": "0.1.1",
+  "release_sequence": 2,
   "name": "Fixed SD Files Test",
   "description": "Automatic app-owned SD root, without directory selection",
   "build": {
@@ -40,6 +40,7 @@
           ],
           "features": [
             "app-media-root",
+            "read-at",
             "scoped-roots"
           ]
         }

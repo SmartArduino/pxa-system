@@ -39,6 +39,10 @@ static pxa_status_t roots_test_read(void *c,void *r,uint8_t *p,size_t n,size_t *
 static pxa_status_t roots_test_seek(void *c,void *r,int64_t p,uint8_t origin,uint64_t *out) {
     (void)c;(void)r;(void)origin; *out=(uint64_t)p; return 0;
 }
+static pxa_status_t roots_test_read_at(void *c,void *r,uint64_t offset,
+    uint8_t *p,size_t n,size_t *out) {
+    (void)c;(void)r;assert(offset==3 && n==4);memcpy(p,"test",4);*out=4;return 0;
+}
 static pxa_status_t roots_test_next(void *c,void *r,pxa_fs_entry_t *i,uint8_t *end) {
     (void)c;(void)r;(void)i; *end=1; return 0;
 }
@@ -84,6 +88,7 @@ static void test_fs_scoped_service(void) {
     roots.open_root=roots_test_open;roots.open_at=roots_test_at;roots.query_root=roots_test_info;
     roots.request_access=roots_test_picker;roots.cancel_access=roots_test_cancel;
     roots.features=PXA_FS_FEATURE_APP_MEDIA_ROOT;
+    roots.read_at=roots_test_read_at;
     fc.struct_size=sizeof(fc);fc.max_open_resources=4;fc.roots=&roots;fc.permissions=permissions;
     fc.authorization_context=&state;fc.authorize=roots_test_authorize;
     fc.backend.struct_size=sizeof(fc.backend);fc.backend.context=&legacy;
@@ -109,6 +114,23 @@ static void test_fs_scoped_service(void) {
     file=pxa_read_u64(event.payload.data+4);assert(pxa_read_u64(event.payload.data+24)==123);
     assert(dispatch_io64(test.runtime,c,file,1,&byte,1)==1 && byte==42);
     assert(dispatch_io64(test.runtime,c,file,2,&byte,1)==PXA_STATUS_DENIED);
+    {
+        uint8_t packet[28]={0};pxa_write_u64(packet,3);pxa_write_u64(packet+8,1);
+        pxa_write_u32(packet+16,4);
+        assert(dispatch_io64(test.runtime,c,file,16,packet,28)==4);
+        assert(!memcmp(packet+24,"test",4));
+        assert(dispatch_io64(test.runtime,c,file,16,packet,28)==PXA_STATUS_CANCELLED);
+        pxa_write_u64(packet+8,2);packet[20]=1;
+        assert(dispatch_io64(test.runtime,c,file,16,packet,28)==PXA_STATUS_INVALID_ARGUMENT);
+        packet[20]=0;assert(dispatch_io64(test.runtime,c,file,16,packet,28)==4);
+        pxa_write_u64(packet,3);assert(!dispatch_io64(test.runtime,c,file,17,packet,8));
+        assert(!dispatch_io64(test.runtime,c,file,17,packet,8));
+        pxa_write_u64(packet,3);pxa_write_u64(packet+8,3);
+        assert(dispatch_io64(test.runtime,c,file,16,packet,28)==PXA_STATUS_CANCELLED);
+        roots.struct_size=offsetof(pxa_fs_roots_backend_t,read_at);
+        pxa_write_u64(packet+8,4);
+        assert(dispatch_io64(test.runtime,c,file,16,packet,28)==PXA_STATUS_UNSUPPORTED);
+    }
     assert(!pxa_handle_close64(test.runtime,c,root));
     assert(dispatch_io64(test.runtime,c,file,1,&byte,1)==1);
     assert(!pxa_handle_close64(test.runtime,c,permission));

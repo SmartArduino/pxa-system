@@ -1,6 +1,30 @@
 #ifndef PXA_GUEST_FS_ROOTS_H
 #define PXA_GUEST_FS_ROOTS_H
 #include "pxa_fs.h"
+#define PXA_FS_IO_READ_AT 16u
+#define PXA_FS_IO_CANCEL_READ_AT 17u
+#define PXA_FS_FILE_FEATURE_READ_AT UINT64_C(1)
+#define PXA_FS_READ_AT_HEADER_BYTES 24u
+#define PXA_FS_READ_AT_MAX_BYTES 4096u
+/* packet is caller-owned header + destination. Bytes are returned in
+ * packet[24..24+result); the sequential cursor is unchanged. Use strictly
+ * increasing nonzero cookies for each FILE. No allocation or data copy. */
+static inline int32_t pxa_fs_read_at(uint64_t handle,uint64_t offset,
+    uint64_t cookie,uint8_t *packet,uint32_t packet_bytes) {
+    if(!(handle>>32) || !cookie || !packet || packet_bytes<=24 ||
+        packet_bytes>24+PXA_FS_READ_AT_MAX_BYTES ||
+        offset>UINT64_MAX-(packet_bytes-24)) return PXA_STATUS_INVALID_ARGUMENT;
+    pxa_store_u64(packet,offset);pxa_store_u64(packet+8,cookie);
+    pxa_store_u32(packet+16,packet_bytes-24);pxa_store_u32(packet+20,0);
+    int32_t n=pxa_io(handle,PXA_FS_IO_READ_AT,packet,packet_bytes);
+    return n>0 && (uint32_t)n>packet_bytes-24 ? PXA_STATUS_PROTOCOL_ERROR : n;
+}
+static inline int32_t pxa_fs_cancel_read_at(uint64_t handle,uint64_t cookie) {
+    uint8_t packet[8];
+    if(!(handle>>32) || !cookie) return PXA_STATUS_INVALID_ARGUMENT;
+    pxa_store_u64(packet,cookie);
+    return pxa_io(handle,PXA_FS_IO_CANCEL_READ_AT,packet,8);
+}
 
 #define PXA_FS_OPEN_ROOT 9u
 #define PXA_FS_REQUEST_ACCESS 10u

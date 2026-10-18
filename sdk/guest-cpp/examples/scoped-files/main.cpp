@@ -77,6 +77,23 @@ struct ScopedFiles {
         for(unsigned i=0;good && i<16;++i)
             good=std::to_integer<unsigned>(buffer[i])==(((4091+i)*37+11)&255);
         if(!good) { co_await fail("SD TEST seek or EOF failed"); co_return pxa::Result<void>{}; }
+        if(file->supports_read_at()) {
+            if(info->max_read_at_bytes!=4096) { co_await fail("SD TEST read-at limit failed"); co_return pxa::Result<void>{}; }
+            auto r=file->read_at(8190,1,std::span{buffer}.first(40));
+            if(!r || *r!=2 || std::to_integer<unsigned>(buffer[24])!=((8190*37+11)&255) ||
+                std::to_integer<unsigned>(buffer[25])!=((8191*37+11)&255)) {
+                co_await fail("SD TEST read-at tail failed"); co_return pxa::Result<void>{};
+            }
+            r=file->read_at(8192,2,std::span{buffer}.first(40));
+            auto cancel=file->cancel_read_at(3);auto again=file->cancel_read_at(3);
+            auto retired=file->read_at(0,3,std::span{buffer}.first(40));
+            auto position=co_await file->seek(0,pxa::SeekOrigin::current);
+            if(!r || *r || !cancel || !again || retired ||
+                retired.error()!=pxa::Error::cancelled || !position || *position!=4107) {
+                co_await fail("SD TEST read-at cursor or cancellation failed"); co_return pxa::Result<void>{};
+            }
+            (void)context->log().write(pxa::LogLevel::info,"SD TEST positional=1 cursor_unchanged=1 eof=1 cancel=1");
+        }
         auto denied=co_await root->open("fixture.bin",pxa::OpenMode::write);
         auto escape=co_await root->open("../outside.bin");
         if(denied || denied.error()!=pxa::Error::denied || escape ||

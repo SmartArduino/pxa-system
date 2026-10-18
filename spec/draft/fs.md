@@ -4,7 +4,8 @@ FS 0.3 preserves private-file operations 1–8 and adds optional scoped director
 roots. The existing private path and quota rules below remain unchanged.
 `pxa-fs.json` is the version/opcode authority. Implemented extensions are
 OPEN_ROOT (9), REQUEST_ACCESS (10), OPEN_AT (11), STAT_AT (16) and QUERY_ROOT (17),
-gated by `scoped-roots`, `user-directory-grants` and `app-media-root` feature bits. Other proposed
+gated by `scoped-roots`, `user-directory-grants` and `app-media-root` feature bits. Optional
+`read-at` (service bit 1, regular-file bit 0) adds bounded positional reads. Other proposed
 multi-volume operations are not implemented or advertised yet.
 
 User roots require a signed `fs.user-directory` declaration, exact scope `read`
@@ -47,9 +48,32 @@ no-follow traversal and refuses non-regular or hard-linked files.
 
 Every read/open/seek checks the original mount epoch, grant revision and rights.
 Duplicate volume identities are ambiguous and inaccessible. Remounting cannot
-revive an old handle. The initial ESP adapter reports read-only roots, uses
-existing FILE READ and FS SEEK, and neither advertises READ_AT nor promises
-hotplug. No SD installation guarantee follows from data-read support.
+revive an old handle. The ESP adapter reports read-only roots and supports
+FILE READ, FS SEEK and optional READ_AT. It does not promise hotplug. No SD
+installation guarantee follows from data-read support.
+
+READ_AT uses FILE I/O operation 16 with an exact
+`offset:u64|cookie:u64|requested:u32|reserved:u32=0|data[requested]` buffer.
+The return value is the number of data bytes (zero at EOF); data starts at
+byte 24. Requests contain 1–4096 data bytes. The sequential cursor is unchanged.
+Nonzero cookies must increase for each FILE; completed calls retire their
+cookie, including backend errors. Invalid headers and overflowing ranges are
+rejected before retirement. Reusing a retired cookie returns cancelled.
+Operation 17 accepts exactly one nonzero cookie:u64 and idempotently retires
+cookies up to that value. Closing the FILE invalidates its entire generation.
+
+This provider profile is bounded and synchronous: no retained Guest pointer,
+worker, pending lane, WOULD_BLOCK or async readiness is advertised. The future
+asynchronous lane proposal requires separate completion/readiness integration;
+it is not implemented by pretending a synchronous callback is asynchronous.
+The Host callback is an optional roots-backend tail, checked by struct_size;
+old providers retain their existing layout and feature behavior. READ_AT is
+advertised per regular file only when the provider implements it. RootInfo
+capability bit 0 and max_read_at_bytes=4096 describe this support.
+
+C and C++ SDK calls borrow a caller-owned header/data packet and perform no
+allocation or result copy. C also exposes the existing opcode 8 through
+build_replace, sharing the canonical path builder with rename.
 
 FS v1 exposes only the private, persistent App data domain. A Host maps one
 FS service instance to one verified `(publisher-key-id, app-id)` identity;

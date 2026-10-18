@@ -11,7 +11,13 @@ extern "C" std::int32_t pxa_test_control(const std::uint8_t *p,std::uint32_t n) 
     if(wire::get16(reinterpret_cast<const std::byte *>(p))==1) { ++closes; return 0; }
     std::memcpy(captured.data(),p,n); return 0;
 }
-extern "C" std::int32_t pxa_io(std::uint64_t,std::uint32_t,std::uint8_t *,std::uint32_t) { return -3; }
+extern "C" std::int32_t pxa_io(std::uint64_t h,std::uint32_t op,std::uint8_t *p,std::uint32_t n) {
+    assert(h==UINT64_C(0x100000002));
+    auto *b=reinterpret_cast<std::byte *>(p);
+    if(op==16) {assert(n==28 && wire::get64(b)==9 && wire::get64(b+8)==7);
+        assert(wire::get32(b+16)==4 && !wire::get32(b+20));std::memcpy(p+24,"read",4);return 4;}
+    assert(op==17 && n==8 && wire::get64(b)==7);return 0;
+}
 template<class T> static Result<T> complete(Task<T> task,RequestTable& requests,
     std::span<const std::byte> result) {
     assert(task.valid()); auto c=task.release();c.resume();
@@ -30,11 +36,16 @@ int main() {
     assert(grant && grant->rights==3 && grant->id[0]==std::byte{7});
     assert(wire::get16(captured.data()+2)==10 && wire::get32(captured.data()+28)==3);
     std::array<std::byte,32> opened{};wire::put64(opened.data()+4,UINT64_C(0x100000002));
-    opened[12]=std::byte{1};wire::put64(opened.data()+24,8192);
+    opened[12]=std::byte{1};wire::put64(opened.data()+16,1);wire::put64(opened.data()+24,8192);
     auto pending=[&]{std::string path="pak0.pak";return grant->root.open(path);}();
     auto file=complete(std::move(pending),requests,opened);
-    assert(file && wire::get16(captured.data()+32)==8);
+    assert(file && file->supports_read_at() && wire::get16(captured.data()+32)==8);
     assert(std::memcmp(captured.data()+34,"pak0.pak",8)==0);
+    std::array<std::byte,28> positional{};
+    assert(file->read_at(9,7,positional)==4);
+    assert(std::memcmp(positional.data()+24,"read",4)==0);
+    assert(file->cancel_read_at(7));
+    assert(!file->read_at(UINT64_MAX,7,positional));
     assert(grant->root.close() && file->handle()==UINT64_C(0x100000002));
     assert(file->close());assert(closes==2);
     auto root=complete(FilesystemService(t,requests).open_grant(permission,grant->id),requests,

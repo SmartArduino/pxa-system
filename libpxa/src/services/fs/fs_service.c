@@ -43,6 +43,7 @@ struct pxa_fs_resource_slot {
     uint16_t next_free;
     uint8_t kind;
     uint8_t occupied;
+    uint64_t retired_read_cookie;
 };
 
 typedef struct {
@@ -304,6 +305,7 @@ static pxa_fs_resource_slot_t *allocate_resource(pxa_fs_service_t *service) {
     slot->next_free = PXA_FS_SLOT_NONE;
     slot->backend_resource = NULL;
     slot->backend = &service->backend;
+    slot->retired_read_cookie = 0;
     slot->authority = 0;
     slot->kind = 0;
     slot->occupied = 1;
@@ -330,6 +332,42 @@ static void close_resource(void *context) {
     release_resource(slot);
 }
 
+static int roots_read_at_enabled(const pxa_fs_roots_backend_t *roots) {
+    return roots && roots->struct_size >=
+        offsetof(pxa_fs_roots_backend_t,read_at)+sizeof(roots->read_at) &&
+        roots->read_at;
+}
+
+static int32_t file_read_at(pxa_fs_resource_slot_t *slot,uint32_t operation,
+    uint8_t *data,size_t size) {
+    const pxa_fs_roots_backend_t *roots=slot->service->roots;
+    uint64_t cookie,offset;uint32_t requested;size_t transferred=0;
+    pxa_status_t status;
+    if(!roots_read_at_enabled(roots) || slot->backend!=&roots->files)
+        return PXA_STATUS_UNSUPPORTED;
+    if(operation==PXA_FS_IO_CANCEL_READ_AT) {
+        if(size!=8 || !data || !(cookie=pxa_read_u64(data)))
+            return PXA_STATUS_INVALID_ARGUMENT;
+        if(cookie>slot->retired_read_cookie)slot->retired_read_cookie=cookie;
+        return PXA_STATUS_OK;
+    }
+    if(!data || size<PXA_FS_READ_AT_HEADER_BYTES) return PXA_STATUS_INVALID_ARGUMENT;
+    offset=pxa_read_u64(data);cookie=pxa_read_u64(data+8);
+    requested=pxa_read_u32(data+16);
+    if(!cookie || !requested || requested>PXA_FS_READ_AT_MAX_BYTES ||
+        size!=PXA_FS_READ_AT_HEADER_BYTES+(size_t)requested ||
+        pxa_read_u32(data+20) || offset>UINT64_MAX-requested)
+        return PXA_STATUS_INVALID_ARGUMENT;
+    if(cookie<=slot->retired_read_cookie) return PXA_STATUS_CANCELLED;
+    slot->retired_read_cookie=cookie;
+    status=pxa_status_normalize(roots->read_at(roots->files.context,
+        slot->backend_resource,offset,data+PXA_FS_READ_AT_HEADER_BYTES,
+        requested,&transferred));
+    if(status==PXA_STATUS_WOULD_BLOCK) return PXA_STATUS_INTERNAL;
+    if(status!=PXA_STATUS_OK) return status;
+    return transferred<=requested ? (int32_t)transferred : PXA_STATUS_INTERNAL;
+}
+
 static int32_t file_io(void *context, uint32_t operation, uint8_t *data,
                        size_t size) {
     pxa_fs_resource_slot_t *slot = (pxa_fs_resource_slot_t *)context;
@@ -339,6 +377,8 @@ static int32_t file_io(void *context, uint32_t operation, uint8_t *data,
         slot->kind != PXA_FS_KIND_REGULAR) {
         return PXA_STATUS_NOT_FOUND;
     }
+    if(operation==PXA_FS_IO_READ_AT || operation==PXA_FS_IO_CANCEL_READ_AT)
+        return file_read_at(slot,operation,data,size);
     if (operation == PXA_FS_IO_READ) {
         status = slot->backend->read(
             slot->backend->context, slot->backend_resource, data, size,
@@ -751,7 +791,7 @@ static pxa_status_t scoped_control(pxa_fs_service_t *s, pxa_component_t c,
             if (any || pxa_read_u64(p+4)) return PXA_STATUS_INVALID_ARGUMENT;
             status = authorize_request(s,c,&authority);
             if (status == PXA_STATUS_OK && p[0] == PXA_FS_ROOT_APP_MEDIA &&
-                (s->roots->struct_size < sizeof(*s->roots) ||
+                (s->roots->struct_size < offsetof(pxa_fs_roots_backend_t,features)+sizeof(s->roots->features) ||
                  !(s->roots->features & PXA_FS_FEATURE_APP_MEDIA_ROOT)))
                 status = PXA_STATUS_UNSUPPORTED;
         }
@@ -971,9 +1011,10 @@ pxa_status_t pxa_fs_service_register(pxa_fs_service_t *service) {
     operations.major = PXA_FS_SERVICE_MAJOR;
     operations.minor = PXA_FS_SERVICE_MINOR;
     if (service->roots) operations.features |= PXA_FS_FEATURE_SCOPED_ROOTS;
+    if(roots_read_at_enabled(service->roots)) operations.features |= PXA_FS_FEATURE_READ_AT;
     if (service->roots && service->roots->request_access)
         operations.features |= PXA_FS_FEATURE_USER_DIRECTORY_GRANTS;
-    if (service->roots && service->roots->struct_size >= sizeof(*service->roots))
+    if (service->roots && service->roots->struct_size >= offsetof(pxa_fs_roots_backend_t,features)+sizeof(service->roots->features))
         operations.features |= service->roots->features & PXA_FS_FEATURE_APP_MEDIA_ROOT;
     operations.context = service;
     operations.control = fs_control;

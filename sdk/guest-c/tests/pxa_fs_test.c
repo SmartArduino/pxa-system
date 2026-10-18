@@ -17,10 +17,13 @@ int32_t pxa_test_control(const uint8_t *data, uint32_t length) {
 
 int32_t pxa_io(uint64_t handle, uint32_t operation, uint8_t *data,
                uint32_t length) {
-    (void)handle;
-    (void)operation;
-    (void)data;
-    (void)length;
+    assert(handle>>32);
+    if(operation==16) {
+        assert(length==28 && pxa_load_u64(data)==9 && pxa_load_u64(data+8)==7);
+        assert(pxa_load_u32(data+16)==4 && !pxa_load_u32(data+20));
+        memcpy(data+24,"read",4);return 4;
+    }
+    if(operation==17){assert(length==8 && pxa_load_u64(data)==7);return 0;}
     return PXA_STATUS_UNSUPPORTED;
 }
 
@@ -124,6 +127,14 @@ static void test_build_path_and_rename(void) {
                                "notes/new", 9, &size));
     assert(pxa_parse_event(packet, size, &event));
     assert(event.opcode == PXA_FS_RENAME && event.token == token);
+    assert(pxa_fs_build_replace(packet,sizeof(packet),token,"notes/old",9,"notes/new",9,&size));
+    assert(pxa_parse_event(packet,size,&event) && event.opcode==PXA_FS_REPLACE);
+    uint8_t positional[28];
+    assert(pxa_fs_read_at(UINT64_C(0x100000001),9,7,positional,28)==4);
+    assert(!memcmp(positional+24,"read",4));
+    assert(!pxa_fs_cancel_read_at(UINT64_C(0x100000001),7));
+    assert(pxa_fs_read_at(UINT64_C(0x100000001),UINT64_MAX,7,positional,28)==PXA_STATUS_INVALID_ARGUMENT);
+    assert(pxa_fs_read_at(UINT64_C(0x100000001),9,0,positional,28)==PXA_STATUS_INVALID_ARGUMENT);
     assert(!pxa_fs_build_rename(packet, sizeof(packet), token, "same", 4,
                                 "same", 4, &size));
     assert(!pxa_fs_build_rename(packet, sizeof(packet), token, "../old", 6,

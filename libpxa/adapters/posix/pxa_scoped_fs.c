@@ -233,6 +233,7 @@ static pxa_status_t open_at(void *context,void *directory,pxa_bytes_t path,
     e->grant_revision=parent->grant_revision;
     memset(info,0,sizeof(*info)); info->kind=e->kind;
     info->size=e->kind==PXA_FS_KIND_REGULAR ? (uint64_t)st.st_size : 0;
+    if(e->kind==PXA_FS_KIND_REGULAR) *features=PXA_FS_FILE_FEATURE_READ_AT;
     *resource=e; return PXA_STATUS_OK;
 }
 static pxa_status_t read_file(void *context,void *resource,uint8_t *out,
@@ -245,6 +246,21 @@ static pxa_status_t read_file(void *context,void *resource,uint8_t *out,
     do { n=read(e->fd,out,capacity>4096 ? 4096 : capacity); } while (n<0 && errno==EINTR);
     if (n<0) return os_error();
     *size=(size_t)n; return PXA_STATUS_OK;
+}
+static pxa_status_t read_at_file(void *context,void *resource,uint64_t offset,
+    uint8_t *out,size_t capacity,size_t *size) {
+    pxa_scoped_fs_t *fs=context;scoped_entry_t *e=resource;struct stat st;ssize_t n;
+    pxa_status_t s=check_entry(fs,e);*size=0;
+    if(s!=PXA_STATUS_OK)return s;
+    if(e->kind!=PXA_FS_KIND_REGULAR || !out || !capacity ||
+        capacity>PXA_FS_READ_AT_MAX_BYTES) return PXA_STATUS_INVALID_ARGUMENT;
+    if(fstat(e->fd,&st)) return os_error();
+    if(st.st_size<0)return PXA_STATUS_IO_ERROR;
+    if(offset>=(uint64_t)st.st_size)return PXA_STATUS_OK;
+    if((uint64_t)(off_t)offset!=offset)return PXA_STATUS_LIMIT_EXCEEDED;
+    do {n=pread(e->fd,out,capacity,(off_t)offset);}while(n<0 && errno==EINTR);
+    if(n<0)return os_error();
+    *size=(size_t)n;return PXA_STATUS_OK;
 }
 static pxa_status_t seek_file(void *context,void *resource,int64_t offset,
     uint8_t origin,uint64_t *position) {
@@ -277,6 +293,8 @@ static pxa_status_t query_root(void *context,void *directory,pxa_fs_root_info_t 
     out->volume_id=g->volume_id; out->mount_epoch=e->epoch; out->rights=g->rights;
     out->max_path_bytes=PXA_SCOPED_FS_PATH_BYTES-1;
     out->max_segment_bytes=PXA_SCOPED_FS_PATH_BYTES-1;
+    out->capabilities=PXA_FS_FILE_FEATURE_READ_AT;
+    out->max_read_at_bytes=PXA_FS_READ_AT_MAX_BYTES;
     if (pxa_volume_get(fs->config.volumes,e->epoch,&v)==PXA_STATUS_OK) {
         out->naming=v.capabilities & PXA_VOLUME_CASE_INSENSITIVE ?
             PXA_FS_NAMING_CASE_INSENSITIVE : PXA_FS_NAMING_BYTE_EXACT;
@@ -363,6 +381,7 @@ pxa_status_t pxa_scoped_fs_init(void *workspace,size_t bytes,
     b->files.read=read_file; b->files.seek=seek_file;
     b->files.read_directory=read_directory; b->files.close=close_entry;
     b->open_root=open_root; b->open_at=open_at; b->stat_at=stat_at; b->query_root=query_root;
+    b->read_at=read_at_file;
     *out=fs; return PXA_STATUS_OK;
 }
 void pxa_scoped_fs_deinit(pxa_scoped_fs_t *fs) {
