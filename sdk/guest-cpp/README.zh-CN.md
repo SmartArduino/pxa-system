@@ -132,6 +132,21 @@ Canvas 自行排版交互控件时，可用 `interactive_rectangle(metrics, wind
 `<pxa/events.hpp>` 提供 `Event::is<ui::DisplayMetrics>()`、`Event::is<ClockTick>()`
 等路由；`decode_clock_tick(event)` 读取时钟时间戳并检查消息长度与 token。
 
+Clock 0.3 的 `timing` 能力允许查询设备范围再配置微秒周期：
+
+```cpp
+auto limits = co_await ctx.clock().limits();
+if (!limits) co_return std::unexpected(limits.error());
+if (!limits->supports(8000)) co_return std::unexpected(pxa::Error::unsupported);
+auto accepted = co_await ctx.clock().configure(8000); // 成功值必须等于8000
+if (!accepted) co_return std::unexpected(accepted.error());
+```
+
+包声明 Clock >=0.3 和 `timing`；兼容旧 Host 时先查询 Core 能力，再选用
+旧 `set_period(16)` 等接口。`configure(0)` 取消同一个组件定时器；无效参数
+保留旧配置。`limits` / `configure` 使用直接 awaitable，无额外嵌套 Task 分配。
+步长和投递量化分别由 Host 报告，周期不保证回调延迟或游戏帧率。
+
 显示系统日期和本地时间可用 `co_await ctx.clock().wall_time()`，通过返回值的
 `local()` 获得 `std::chrono::local_time`；只需当前偏移时用 `time_zone()`。
 Clock 0.2 同时采样 UTC、单调时间锚点、有效时区偏移和夏令时状态，不增加默认缓存。

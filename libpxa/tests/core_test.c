@@ -6,6 +6,7 @@
 #include "pxa/runtime.h"
 #include "pxa/service.h"
 #include "pxa/audio.h"
+#include "pxa/clock.h"
 #include "pxa/device.h"
 #include "pxa/fs.h"
 #include "pxa/lease.h"
@@ -5775,7 +5776,71 @@ static void test_audio_service(void) {
 }
 
 #include "fs_roots_service_test.inc"
+static pxa_status_t test_clock_configure(void *context, pxa_component_t component,
+                                         uint32_t period_us) {
+    (void)component;
+    if (period_us == 9000) return PXA_STATUS_UNAVAILABLE;
+    *(uint32_t *)context = period_us;
+    return PXA_STATUS_OK;
+}
+
+static void test_clock_timing(void) {
+    test_runtime_t test = make_runtime(1, 1, 1, 1, 4, 2, 1);
+    pxa_component_t component;
+    uint32_t current = 16000;
+    pxa_clock_timing_backend_t backend = {
+        {1000, 60000000, 1, 1, 3}, &current, test_clock_configure};
+    pxa_message_view_t command, completion;
+    uint8_t period[4], event[64];
+    size_t size;
+    uint64_t token = 1;
+    const uint32_t cases[] = {1000, 8000, 33000, 60000000, 0, 999, 60000001, UINT32_MAX, 9000};
+    size_t i;
+    assert(pxa_component_create(test.runtime, 1, &component) == PXA_STATUS_OK);
+    assert(pxa_component_begin_start(test.runtime, component) == PXA_STATUS_OK);
+    assert(pxa_component_set_wire_profile(test.runtime, component, 1) == PXA_STATUS_OK);
+    assert(pxa_component_finish_start(test.runtime, component, PXA_STATUS_OK) == PXA_STATUS_OK);
+    memset(&command, 0, sizeof(command));
+    command.service = PXA_CLOCK_SERVICE_ID;
+    command.opcode = PXA_CLOCK_LIMITS;
+    command.request_token = token++;
+    assert(pxa_clock_timing_control(test.runtime, component, &command, &backend) == PXA_STATUS_OK);
+    assert(pxa_event_pop(test.runtime, component, event, sizeof(event), &size) == PXA_STATUS_OK);
+    assert(pxa_message_decode(event, size, PXA_MAX_CONTROL_MESSAGE, &completion) == PXA_STATUS_OK);
+    assert(completion.payload.size == 24 && pxa_read_u32(completion.payload.data + 4) == 1000);
+    assert(pxa_read_u32(completion.payload.data + 16) == 1 && current == 16000);
+    command.opcode = PXA_CLOCK_CONFIGURE;
+    command.payload = (pxa_bytes_t){period, sizeof(period)};
+    for (i = 0; i < sizeof(cases)/sizeof(cases[0]); ++i) {
+        uint32_t before = current;
+        pxa_status_t expected = cases[i] == 9000 ? PXA_STATUS_UNAVAILABLE :
+            (pxa_clock_period_supported(&backend.limits, cases[i]) ? PXA_STATUS_OK : PXA_STATUS_INVALID_ARGUMENT);
+        pxa_write_u32(period, cases[i]); command.request_token = token++;
+        assert(pxa_clock_timing_control(test.runtime, component, &command, &backend) == PXA_STATUS_OK);
+        assert(pxa_event_pop(test.runtime, component, event, sizeof(event), &size) == PXA_STATUS_OK);
+        assert(pxa_message_decode(event, size, PXA_MAX_CONTROL_MESSAGE, &completion) == PXA_STATUS_OK);
+        assert((int32_t)pxa_read_u32(completion.payload.data) == expected);
+        assert(current == (expected == PXA_STATUS_OK ? cases[i] : before));
+        assert(completion.payload.size == (expected == PXA_STATUS_OK ? 8u : 4u));
+        if (expected == PXA_STATUS_OK) assert(pxa_read_u32(completion.payload.data + 4) == cases[i]);
+    }
+    assert(pxa_request_begin_reserved(test.runtime, component, 999, 4, 2, 0, 8) == PXA_STATUS_OK);
+    pxa_write_u32(period, 8000); command.request_token = token++;
+    assert(pxa_clock_timing_control(test.runtime, component, &command, &backend) != PXA_STATUS_OK);
+    assert(current == 0); /* no side effect without a reserved completion */
+    assert(pxa_request_cancel(test.runtime, component, 999) == PXA_STATUS_OK);
+    command.request_token = 0;
+    assert(pxa_clock_timing_control(test.runtime, component, &command, &backend) == PXA_STATUS_INVALID_ARGUMENT);
+    command.request_token = token++; command.payload.size = 3;
+    assert(pxa_clock_timing_control(test.runtime, component, &command, &backend) == PXA_STATUS_INVALID_ARGUMENT);
+    backend.limits.period_step_us = 1000;
+    assert(!pxa_clock_period_supported(&backend.limits, 8001));
+    assert(pxa_clock_period_supported(&backend.limits, 8000));
+    destroy_runtime(&test);
+}
+
 int main(void) {
+    test_clock_timing();
     test_runtime_workspace_contract();
     test_runtime_usage();
     test_wire();

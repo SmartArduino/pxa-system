@@ -1,0 +1,47 @@
+{
+  "format": "pxa-package-source-0.1",
+  "min_sdk": [
+    2,
+    0
+  ],
+  "target_sdk": [
+    2,
+    0
+  ],
+  "compile_sdk": [
+    2,
+    0
+  ],
+  "id": "pxa-clock-timing",
+  "version": "0.1.1",
+  "release_sequence": 2,
+  "name": "Clock Timing Test",
+  "description": "Device timing negotiation and interval measurements",
+  "build": {
+    "system": "direct",
+    "linear_memory": {
+      "maximum_bytes": 262144,
+      "pinned": false
+    }
+  },
+  "components": [
+    {
+      "id": "main",
+      "kind": "ui",
+      "source": "main.c",
+      "services": [
+        "log",
+        {
+          "name": "clock",
+          "min_version": [
+            0,
+            3
+          ],
+          "features": [
+            "timing"
+          ]
+        }
+      ]
+    }
+  ]
+}

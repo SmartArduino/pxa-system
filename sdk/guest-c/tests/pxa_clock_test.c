@@ -22,7 +22,7 @@ int32_t pxa_io(uint64_t handle, uint32_t operation, uint8_t *data,
 
 int main(void) {
     uint8_t packet[32];
-    uint8_t payload[12];
+    uint8_t payload[24];
     uint32_t size = 0;
     uint64_t tick = 0;
     pxa_event_t event;
@@ -64,5 +64,31 @@ int main(void) {
     assert(pxa_clock_tick_steps(&tick, 1020000, 20, 2) == 0);
     assert(pxa_clock_tick_steps(&tick, 1200000, 20, 2) == 2);
     assert(pxa_clock_tick_steps(&tick, 1200001, 20, 2) == 0);
+    {
+        pxa_clock_limits_result_t limits;
+        pxa_clock_configure_result_t configured;
+        assert(!pxa_clock_build_limits(packet,sizeof(packet),0,&size));
+        assert(pxa_clock_build_limits(packet,sizeof(packet),51,&size) && size==20);
+        assert(pxa_clock_build_configure(packet,sizeof(packet),52,8000,&size) && size==24);
+        assert(pxa_parse_event(packet,size,&event) && event.token==52 &&
+            event.opcode==PXA_CLOCK_CONFIGURE && pxa_load_u32(event.payload)==8000);
+        pxa_zero(payload,sizeof(payload));
+        pxa_store_u32(payload+4,1000); pxa_store_u32(payload+8,60000000);
+        pxa_store_u32(payload+12,1); pxa_store_u32(payload+16,1); pxa_store_u32(payload+20,3);
+        event=(pxa_event_t){.service=4,.opcode=PXA_CLOCK_LIMITS,.token=51,
+            .payload=payload,.payload_size=24};
+        assert(pxa_clock_parse_limits(&event,51,&limits) && !limits.status);
+        assert(pxa_clock_period_supported(&limits.limits,8000));
+        assert(!pxa_clock_period_supported(&limits.limits,999));
+        event.payload_size=23; assert(!pxa_clock_parse_limits(&event,51,&limits));
+        event.payload_size=24; pxa_store_u32(payload+12,0);
+        assert(!pxa_clock_parse_limits(&event,51,&limits));
+        event.opcode=PXA_CLOCK_CONFIGURE;event.token=52;event.payload_size=8;
+        pxa_store_u32(payload+4,8000);
+        assert(pxa_clock_parse_configure(&event,52,8000,&configured) && configured.period_us==8000);
+        assert(!pxa_clock_parse_configure(&event,52,8001,&configured));
+        pxa_store_u32(payload,(uint32_t)PXA_STATUS_UNSUPPORTED); event.payload_size=4;
+        assert(pxa_clock_parse_configure(&event,52,8000,&configured) && configured.status==PXA_STATUS_UNSUPPORTED);
+    }
     return 0;
 }

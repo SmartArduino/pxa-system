@@ -10,6 +10,98 @@
 #define PXA_CLOCK_MIN_PERIOD_MS 16u
 #define PXA_CLOCK_MAX_PERIOD_MS 1000u
 
+#define PXA_CLOCK_LIMITS 4u
+#define PXA_CLOCK_CONFIGURE 5u
+#define PXA_CLOCK_FEATURE_TIMING UINT64_C(1)
+#define PXA_CLOCK_TIMING_COALESCED 1u
+#define PXA_CLOCK_TIMING_FOREGROUND 2u
+
+typedef struct {
+    uint32_t min_period_us, max_period_us, period_step_us, dispatch_quantum_us, flags;
+} pxa_clock_limits_t;
+
+typedef struct {
+    int32_t status;
+    pxa_clock_limits_t limits;
+} pxa_clock_limits_result_t;
+
+typedef struct {
+    int32_t status;
+    uint32_t period_us;
+} pxa_clock_configure_result_t;
+
+static inline int pxa_clock_period_supported(const pxa_clock_limits_t *limits,
+                                             uint32_t period_us) {
+    if (limits == NULL || limits->min_period_us == 0 ||
+        limits->max_period_us < limits->min_period_us ||
+        limits->period_step_us == 0 || limits->dispatch_quantum_us == 0)
+        return 0;
+    return period_us == 0 || (period_us >= limits->min_period_us &&
+        period_us <= limits->max_period_us && period_us % limits->period_step_us == 0);
+}
+
+static inline int pxa_clock_build_limits(uint8_t *packet, size_t capacity,
+                                          uint64_t token, uint32_t *written) {
+    return token != 0 && pxa_build_message(packet, capacity, PXA_CLOCK_SERVICE,
+        PXA_CLOCK_LIMITS, token, NULL, 0, written);
+}
+
+/* Call limits first or require Clock 0.3 + the timing feature in the manifest.
+ * No SDK-wide minimum: the Host returns a completion for device-specific limits. */
+static inline int pxa_clock_build_configure(uint8_t *packet, size_t capacity,
+    uint64_t token, uint32_t period_us, uint32_t *written) {
+    uint8_t payload[4];
+    pxa_store_u32(payload, period_us);
+    return token != 0 && pxa_build_message(packet, capacity, PXA_CLOCK_SERVICE,
+        PXA_CLOCK_CONFIGURE, token, payload, sizeof(payload), written);
+}
+
+static inline int32_t pxa_clock_limits(uint64_t token) {
+    uint8_t packet[PXA_HEADER_BYTES]; uint32_t size = 0;
+    if (!pxa_clock_build_limits(packet, sizeof(packet), token, &size))
+        return PXA_STATUS_INVALID_ARGUMENT;
+    return pxa_control_packet(packet, size);
+}
+
+static inline int32_t pxa_clock_configure(uint64_t token, uint32_t period_us) {
+    uint8_t packet[PXA_HEADER_BYTES + 4u]; uint32_t size = 0;
+    if (!pxa_clock_build_configure(packet, sizeof(packet), token, period_us, &size))
+        return PXA_STATUS_INVALID_ARGUMENT;
+    return pxa_control_packet(packet, size);
+}
+
+static inline int pxa_clock_parse_limits(const pxa_event_t *event, uint64_t token,
+                                         pxa_clock_limits_result_t *out) {
+    if (out == NULL) return 0;
+    pxa_zero(out, sizeof(*out));
+    if (event == NULL || token == 0 || event->service != PXA_CLOCK_SERVICE ||
+        event->opcode != PXA_CLOCK_LIMITS || event->token != token ||
+        event->payload == NULL || event->payload_size < 4) return 0;
+    out->status = (int32_t)pxa_load_u32(event->payload);
+    if (out->status != 0) return event->payload_size == 4;
+    if (event->payload_size != 24) return 0;
+    out->limits.min_period_us = pxa_load_u32(event->payload + 4);
+    out->limits.max_period_us = pxa_load_u32(event->payload + 8);
+    out->limits.period_step_us = pxa_load_u32(event->payload + 12);
+    out->limits.dispatch_quantum_us = pxa_load_u32(event->payload + 16);
+    out->limits.flags = pxa_load_u32(event->payload + 20);
+    return pxa_clock_period_supported(&out->limits, 0);
+}
+
+static inline int pxa_clock_parse_configure(const pxa_event_t *event, uint64_t token,
+    uint32_t requested_us, pxa_clock_configure_result_t *out) {
+    if (out == NULL) return 0;
+    pxa_zero(out, sizeof(*out));
+    if (event == NULL || token == 0 || event->service != PXA_CLOCK_SERVICE ||
+        event->opcode != PXA_CLOCK_CONFIGURE || event->token != token ||
+        event->payload == NULL || event->payload_size < 4) return 0;
+    out->status = (int32_t)pxa_load_u32(event->payload);
+    if (out->status != 0) return event->payload_size == 4;
+    if (event->payload_size != 8) return 0;
+    out->period_us = pxa_load_u32(event->payload + 4);
+    return out->period_us == requested_us;
+}
+
 typedef struct {
     int32_t status;
     uint64_t timestamp_us;

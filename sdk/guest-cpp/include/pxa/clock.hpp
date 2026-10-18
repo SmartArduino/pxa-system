@@ -11,6 +11,19 @@
 
 namespace pxa {
 
+struct ClockLimits {
+    std::uint32_t min_period_us=0, max_period_us=0, period_step_us=0;
+    std::uint32_t dispatch_quantum_us=0, flags=0;
+    bool valid() const noexcept {
+        return min_period_us && max_period_us>=min_period_us &&
+            period_step_us && dispatch_quantum_us;
+    }
+    bool supports(std::uint32_t period_us) const noexcept {
+        return valid() && (!period_us || (period_us>=min_period_us &&
+            period_us<=max_period_us && period_us%period_step_us==0));
+    }
+};
+
 struct ClockTick { std::uint64_t timestamp_us = 0; };
 
 // The effective zone at the sampled instant, including any DST adjustment.
@@ -47,6 +60,49 @@ public:
         std::array<std::byte, 2> payload{};
         wire::put16(payload.data(), period_ms);
         return transport_.send(4, 1, 0, payload);
+    }
+
+private:
+    template<bool Configure>
+    class [[nodiscard("Clock timing request must be co_awaited")]] TimingQuery {
+    public:
+        using Value=std::conditional_t<Configure,std::uint32_t,ClockLimits>;
+        TimingQuery(Transport& transport,RequestTable& requests,std::uint32_t period_us=0) noexcept
+            : response_(transport,requests,4,Configure?5:4,
+                std::span<const std::byte>{payload_}.first(Configure?4:0)), requested_(period_us) {
+            wire::put32(payload_.data(),period_us);
+        }
+        TimingQuery(const TimingQuery&)=delete;
+        TimingQuery(TimingQuery&&)=delete;
+        bool await_ready() const noexcept {return false;}
+        bool await_suspend(std::coroutine_handle<> handle) noexcept {return response_.await_suspend(handle);}
+        Result<Value> await_resume() const noexcept {
+            auto event=response_.await_resume();
+            if(!event)return std::unexpected(event.error());
+            auto body=wire::result_body(event->payload);
+            if(!body)return std::unexpected(body.error());
+            if(body->size()!=(Configure?4u:20u))return std::unexpected(Error::protocol_error);
+            const auto* p=body->data();
+            if constexpr(Configure){
+                auto accepted=wire::get32(p);
+                if(accepted!=requested_)return std::unexpected(Error::protocol_error);
+                return accepted;
+            }else{
+                ClockLimits limits{wire::get32(p),wire::get32(p+4),wire::get32(p+8),
+                    wire::get32(p+12),wire::get32(p+16)};
+                if(!limits.valid())return std::unexpected(Error::protocol_error);
+                return limits;
+            }
+        }
+    private:
+        std::array<std::byte,4> payload_{};
+        Response response_;
+        std::uint32_t requested_;
+    };
+public:
+    auto limits() noexcept {return TimingQuery<false>(transport_,requests_);}
+    auto configure(std::uint32_t period_us) noexcept {
+        return TimingQuery<true>(transport_,requests_,period_us);
     }
 
     // A cooperative round trip without a nested Task/frame-pool slot. Useful

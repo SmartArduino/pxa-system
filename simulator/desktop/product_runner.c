@@ -347,7 +347,7 @@ typedef struct {
     uint32_t display_shape;
     uint32_t corner_radius;
     uint32_t corner_radii[4];
-    uint16_t clock_period_ms;
+    uint32_t clock_period_us;
     uint64_t next_clock_tick_us;
     lv_obj_t *system_back_gesture;
     lv_obj_t *system_home_gesture;
@@ -2124,9 +2124,9 @@ static void product_focus_changed(void *context, bool focused) {
     host->focused = focused ? 1u : 0u;
     if (!focused && host->ime_keyboard) pxa_lvgl_ime_close(host->ime_keyboard);
     host->pending_lifecycle = host->focused;
-    if (host->clock_period_ms != 0)
+    if (host->clock_period_us != 0)
         host->next_clock_tick_us =
-            now_us(NULL) + (uint64_t)host->clock_period_ms * UINT64_C(1000);
+            now_us(NULL) + host->clock_period_us;
     if (host->audio_device != 0)
         SDL_PauseAudioDevice(host->audio_device, !focused);
 }
@@ -2223,11 +2223,11 @@ static void dispatch_clock_tick(product_host_t *host) {
     pxa_status_t status;
     if (host == NULL || host->runtime == NULL ||
         host->active_component == PXA_COMPONENT_INVALID ||
-        host->clock_period_ms == 0 || !host->focused)
+        host->clock_period_us == 0 || !host->focused)
         return;
     now = now_us(NULL);
     if (now < host->next_clock_tick_us) return;
-    period_us = (uint64_t)host->clock_period_ms * UINT64_C(1000);
+    period_us = host->clock_period_us;
     /* Keep the cadence anchored to its original deadline. Re-basing on
      * `now` makes ordinary scheduler jitter accumulate into a slower clock. */
     do {
@@ -2246,7 +2246,7 @@ static uint32_t limit_delay_to_clock_deadline(const product_host_t *host,
                                               uint32_t delay_ms) {
     uint64_t remaining_us;
     uint32_t clock_delay_ms;
-    if (host == NULL || !host->focused || host->clock_period_ms == 0 ||
+    if (host == NULL || !host->focused || host->clock_period_us == 0 ||
         host->next_clock_tick_us == 0)
         return delay_ms;
     {
@@ -2345,6 +2345,17 @@ static pxa_status_t prepare_start(void *context, pxa_component_t component,
 #define PXSYS_CLOCK_NOW_US() now_us(NULL)
 #endif
 
+static pxa_status_t product_configure_clock(void *context, pxa_component_t component,
+                                             uint32_t period_us) {
+    product_host_t *host = context;
+    uint64_t now = now_us(NULL);
+    (void)component;
+    if (now > UINT64_MAX - period_us) return PXA_STATUS_INVALID_ARGUMENT;
+    host->clock_period_us = period_us;
+    host->next_clock_tick_us = period_us ? now + period_us : 0;
+    return PXA_STATUS_OK;
+}
+
 static pxa_status_t clock_control(void *context, pxa_runtime_t *runtime,
                                   pxa_component_t component,
                                   const pxa_message_view_t *message) {
@@ -2352,6 +2363,13 @@ static pxa_status_t clock_control(void *context, pxa_runtime_t *runtime,
     uint16_t wire_profile = 0;
     if (host == NULL || message == NULL || component != host->active_component)
         return PXA_STATUS_BAD_STATE;
+    if (message->opcode == PXA_CLOCK_LIMITS || message->opcode == PXA_CLOCK_CONFIGURE) {
+        const pxa_clock_timing_backend_t timing = {
+            {1000u, 60000000u, 1u, 1000u,
+             PXA_CLOCK_TIMING_COALESCED | PXA_CLOCK_TIMING_FOREGROUND},
+            host, product_configure_clock};
+        return pxa_clock_timing_control(runtime, component, message, &timing);
+    }
     if (message->opcode == PXA_CLOCK_WALL_TIME)
         return pxa_posix_clock_control(runtime, component, message, now_us(NULL));
     if (message->opcode == PRODUCT_CLOCK_NOW) {
@@ -2391,13 +2409,12 @@ static pxa_status_t clock_control(void *context, pxa_runtime_t *runtime,
     if (message->opcode != 1 || message->request_token != 0 ||
         message->payload.size != 2)
         return PXA_STATUS_UNSUPPORTED;
-    host->clock_period_ms = (uint16_t)message->payload.data[0] |
-                            (uint16_t)((uint16_t)message->payload.data[1] << 8);
-    if (host->clock_period_ms != 0 &&
-        (host->clock_period_ms < 16 || host->clock_period_ms > 1000))
-        return PXA_STATUS_INVALID_ARGUMENT;
-    host->next_clock_tick_us =
-        now_us(NULL) + (uint64_t)host->clock_period_ms * UINT64_C(1000);
+    {
+        uint16_t period_ms = pxa_read_u16(message->payload.data);
+        if (period_ms != 0 && (period_ms < 16 || period_ms > 1000))
+            return PXA_STATUS_INVALID_ARGUMENT;
+        return product_configure_clock(host, component, (uint32_t)period_ms * 1000u);
+    }
     return PXA_STATUS_OK;
 }
 
@@ -3695,6 +3712,7 @@ static int run_product_simulator(const options_t *input,
     clock_service.service_id = PRODUCT_CLOCK_SERVICE;
     clock_service.major = PXA_CLOCK_SERVICE_MAJOR;
     clock_service.minor = PXA_CLOCK_SERVICE_MINOR;
+    clock_service.features = PXA_CLOCK_FEATURE_TIMING;
     clock_service.context = &host;
     clock_service.control = clock_control;
     if (pxa_service_register(host.runtime, &clock_service) != PXA_STATUS_OK) goto done;
@@ -4055,6 +4073,7 @@ static int run_product_simulator(const options_t *input,
     capabilities[3].service = PRODUCT_CLOCK_SERVICE;
     capabilities[3].version.major = PXA_CLOCK_SERVICE_MAJOR;
     capabilities[3].version.minor = PXA_CLOCK_SERVICE_MINOR;
+    capabilities[3].features = PXA_CLOCK_FEATURE_TIMING;
     capabilities[4].service = PXA_AUDIO_SERVICE_ID; capabilities[4].version.major = PXA_AUDIO_SERVICE_MAJOR; capabilities[4].version.minor = PXA_AUDIO_SERVICE_MINOR;
     capabilities[5].service = PXA_PERMISSION_SERVICE_ID; capabilities[5].version.major = 0; capabilities[5].version.minor = 1;
     capabilities[6].service = PXA_STORAGE_SERVICE_ID; capabilities[6].version.major = 0; capabilities[6].version.minor = 1;

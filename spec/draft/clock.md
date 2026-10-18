@@ -1,4 +1,4 @@
-# PXA Clock Draft 0.2
+# PXA Clock Draft 0.3
 
 Clock v1 exposes a bounded periodic wake-up for foreground Components.
 `set-period` uses a `u16` millisecond period: zero cancels the timer and values
@@ -64,3 +64,40 @@ change periodic ticks or application scheduling. Applications can refresh on
 foreground and periodically while displaying wall time, rather than polling
 each frame. Older Hosts reject the opcode or a package requirement for Clock
 0.2; there is no silent assumption of a particular local offset.
+
+## Device timing capabilities (0.3)
+
+Core 1/2 Hosts advertising the `timing` feature (bit 0) implement `limits`
+(opcode 4, empty request) and `configure` (opcode 5, `period_us:u32`). Both
+require a nonzero token and a reserved completion with the same opcode/token.
+A package using these operations requires Clock >= 0.3 and the timing feature,
+or queries Core capabilities and retains a legacy fallback on older Hosts.
+
+`limits` returns status followed by exactly 20 bytes: `min_period_us:u32`,
+`max_period_us:u32`, `period_step_us:u32`, `dispatch_quantum_us:u32`, `flags:u32`.
+Minimum, step and quantum are nonzero; maximum is at least minimum. Valid
+nonzero periods lie within the range and are multiples of the step (not an
+offset from the minimum). Flags bit 0 means ticks are coalesced; bit 1 means
+foreground-only scheduling. Unknown flag bits may be ignored. The dispatch
+quantum describes scheduling granularity, not a maximum delivery delay or a
+hard real-time guarantee. It is independent of the accepted period step.
+
+`configure` returns status and exactly `accepted_period_us:u32` on success.
+Zero cancels; a nonzero accepted value must equal the request. Unsupported
+values complete with INVALID_ARGUMENT, preserving the previous timer. A
+backend failure also preserves it. Malformed envelopes fail synchronously.
+There is no silent rounding. Legacy `set-period` retains 0 / 16..1000ms.
+Both operations replace the same Component-owned timer; they do not create
+multiple subscriptions. Reconfiguration invalidates queued ticks. Cancelling,
+pausing or destroying a Component discards stale ticks; resume rebases its
+next deadline. There is no backlog replay. Delayed ticks carry the current
+monotonic time, so applications use elapsed time rather than counting ticks.
+
+The ESP Host uses a serialized, one-shot timer for the nearest runnable
+subscription, separate from existing pointer/system maintenance. Pending and
+paused subscriptions cause no Clock timer wake-ups. Event consumption rearms
+the deadline; at most one tick per Component is queued while Guest runs. The
+reference GameKit range is 1000..60000000us, step 1us, dispatch quantum 1us.
+The SDL product simulator reports quantum 1000us; its platform scheduling and
+Guest workload can add delay. A microsecond wire format alone never implies
+microsecond callback precision.

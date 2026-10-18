@@ -9,6 +9,7 @@ function(pxa_collect_sources output root)
         src/core/service_registry.c
         src/core/wire.c
         src/services/window/window_service.c
+        src/services/clock/clock_timing.c
         src/services/lease/lease_service.c
         src/services/permission/permission_service.c
         src/services/permission/permission_policy.c

@@ -311,6 +311,17 @@ byte budgets and reports resource exhaustion instead of truncating content.
 generation and patches only the display list thereafter. Pointer payloads
 contain Surface, node, committed generation, phase and logical coordinates;
 stale-generation events are discarded with `pxa_ui_event_is_current()`.
+Clock 0.3 adds the `timing` feature: `pxa_clock_limits(token)` queries device
+limits and `pxa_clock_configure(token, period_us)` requests an exact period
+(zero cancels). Parse their reserved completions with `pxa_clock_parse_limits`
+and `pxa_clock_parse_configure`; check `pxa_clock_period_supported` before
+selecting a period. Require Clock >=0.3 and `timing`, or negotiate Core
+capabilities before using a legacy fallback. An invalid configuration preserves
+the previous subscription. Legacy `pxa_clock_set_period` retains 0 / 16..1000ms.
+The period step and dispatch quantum are different; neither promises a maximum
+callback delay. The freestanding `examples/clock-timing` diagnostic measures
+actual intervals without heap allocation.
+
 Clock ticks contain a monotonic `u64` microsecond timestamp; events may be
 coalesced.
 
