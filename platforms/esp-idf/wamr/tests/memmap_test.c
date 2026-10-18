@@ -35,6 +35,8 @@ void *os_mremap_slow(void *old,size_t before,size_t after) {
     os_munmap(old,before);return p;
 }
 int main(void) {
+    assert(os_mmap(NULL, SIZE_MAX, MMAP_PROT_NONE, MMAP_MAP_NONE, 0)==NULL);
+    assert(os_mmap(NULL, 0, MMAP_PROT_NONE, MMAP_MAP_NONE, 0)==NULL);
     uint8_t *p=os_mmap(NULL,65536,MMAP_PROT_NONE,MMAP_MAP_NONE,0);assert(p);
     for(unsigned i=0;i<4096;++i)p[i]=(uint8_t)(i*37+11);
     memset(p+4096,0xab,12288);

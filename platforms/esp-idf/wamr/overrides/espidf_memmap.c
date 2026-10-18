@@ -10,6 +10,9 @@
 #include "platform_api_vmcore.h"
 #include "platform_api_extension.h"
 #include "esp_heap_caps.h"
+#ifdef ESP_PLATFORM
+#include "esp_log.h"
+#endif
 #if (WASM_MEM_EXEC_IN_PSRAM != 0)
 #include "esp_cache.h"
 #include "esp_err.h"
@@ -35,6 +38,9 @@
 void *
 os_mmap(void *hint, size_t size, int prot, int flags, os_file_handle file)
 {
+    if (size == 0 || size > SIZE_MAX - 4 - sizeof(uintptr_t)) {
+        return NULL;
+    }
     if (prot & MMAP_PROT_EXEC) {
 #if (WASM_MEM_DUAL_BUS_MIRROR != 0)
         const size_t page_size = CONFIG_MMU_PAGE_SIZE;
@@ -81,6 +87,11 @@ os_mmap(void *hint, size_t size, int prot, int flags, os_file_handle file)
         void *buf_origin =
             heap_caps_malloc(size + 4 + sizeof(uintptr_t), mem_caps);
         if (!buf_origin) {
+#ifdef ESP_PLATFORM
+            ESP_LOGE("PxaWamrMap", "code allocation failed: bytes=%u free=%u largest=%u",
+                     (unsigned)size, (unsigned)heap_caps_get_free_size(mem_caps),
+                     (unsigned)heap_caps_get_largest_free_block(mem_caps));
+#endif
             return NULL;
         }
         void *buf_fixed = (uint8_t *)buf_origin + sizeof(void *);
@@ -104,6 +115,11 @@ os_mmap(void *hint, size_t size, int prot, int flags, os_file_handle file)
         void *buf_origin =
             heap_caps_malloc(size + 4 + sizeof(uintptr_t), mem_caps);
         if (!buf_origin) {
+#ifdef ESP_PLATFORM
+            ESP_LOGE("PxaWamrMap", "data allocation failed: bytes=%u free=%u largest=%u",
+                     (unsigned)size, (unsigned)heap_caps_get_free_size(mem_caps),
+                     (unsigned)heap_caps_get_largest_free_block(mem_caps));
+#endif
             return NULL;
         }
 
