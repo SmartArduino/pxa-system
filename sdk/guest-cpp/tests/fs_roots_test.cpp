@@ -46,6 +46,11 @@ int main() {
     assert(std::memcmp(positional.data()+24,"read",4)==0);
     assert(file->cancel_read_at(7));
     assert(!file->read_at(UINT64_MAX,7,positional));
+    FileReadBuffer<8> borrowed;
+    auto bytes=file->read_at(9,7,borrowed,4);
+    assert(bytes && bytes->size()==4 && std::memcmp(bytes->data(),"read",4)==0);
+    assert(!file->read_at(9,7,borrowed,9));
+    assert(!file->read_at(9,7,borrowed,0));
     assert(grant->root.close() && file->handle()==UINT64_C(0x100000002));
     assert(file->close());assert(closes==2);
     auto root=complete(FilesystemService(t,requests).open_grant(permission,grant->id),requests,

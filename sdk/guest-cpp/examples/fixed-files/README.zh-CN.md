@@ -20,5 +20,15 @@ auto file = co_await root->open("fixture.bin");
 单次最多 4096 B。每个文件使用严格递增的非零 cookie；取消会退役该 cookie 及更早请求。
 它不分配协程或堆缓冲，也没有正在后台执行的读取。
 
+也可用有类型的缓冲隐藏线格式，返回视图借用缓冲，下一次读取前有效：
+
+```cpp
+pxa::FileReadBuffer<4096> buffer;
+std::uint64_t cookie = 0;
+auto bytes = file->read_at(0, ++cookie, buffer);
+if (!bytes) co_return std::unexpected(bytes.error());
+// bytes->data() / bytes->size()；空视图表示 EOF。
+```
+
 该目录放可由用户导入、独立于卸载保留的资源。私有存档继续使用私有 FS；
 包内已签名资源继续使用 Assets。主动导入其他目录才使用可选的 `request_directory()`。

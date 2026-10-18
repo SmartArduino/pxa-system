@@ -144,6 +144,16 @@ inline Task<std::optional<DirectoryEntry>> next(
 } // namespace fs_detail
 
 struct FileTag {};
+// Caller-owned storage; the wire header stays private and result spans borrow
+// this buffer until its next read. No heap, coroutine or payload copy.
+template<std::size_t Capacity>
+class FileReadBuffer {
+    static_assert(Capacity>0 && Capacity<=4096);
+    friend class File;
+    std::array<std::byte,24+Capacity> packet_{};
+public:
+    static constexpr std::size_t capacity=Capacity;
+};
 class File {
 public:
     File() = default;
@@ -162,6 +172,14 @@ public:
     }
     std::uint64_t features() const noexcept { return features_; }
     bool supports_read_at() const noexcept { return (features_&1)!=0; }
+    template<std::size_t Capacity>
+    Result<std::span<const std::byte>> read_at(std::uint64_t offset,std::uint64_t cookie,
+        FileReadBuffer<Capacity>& buffer,std::size_t requested=Capacity) noexcept {
+        if(!requested || requested>Capacity)return std::unexpected(Error::invalid_argument);
+        auto result=read_at(offset,cookie,std::span{buffer.packet_}.first(24+requested));
+        if(!result)return std::unexpected(result.error());
+        return std::span<const std::byte>{buffer.packet_}.subspan(24,*result);
+    }
     // Borrow header+data storage; result bytes begin at packet.subspan(24).
     Result<std::uint32_t> read_at(std::uint64_t offset,std::uint64_t cookie,
                                 std::span<std::byte> packet) noexcept {
