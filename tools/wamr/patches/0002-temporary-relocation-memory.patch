@@ -1,0 +1,79 @@
+--- a/core/iwasm/aot/aot_loader.c
++++ b/core/iwasm/aot/aot_loader.c
+@@ -5,6 +5,7 @@
+ 
+ #include "aot_runtime.h"
+ #include "aot_reloc.h"
++#include "pxa_wamr_load_memory.h"
+ #include "bh_platform.h"
+ #include "../common/wasm_runtime_common.h"
+ #include "../common/wasm_native.h"
+@@ -294,6 +295,24 @@
+ 
+     memset(mem, 0, (uint32)size);
+     return mem;
++}
++
++/* Relocation arrays die before loading returns. When a pinned mapping has
++ * been reserved, borrow its not-yet-initialized bytes instead of increasing
++ * the peak permanent heap. Validation and relocation order are unchanged. */
++static void *
++loader_malloc_temporary(uint64 size, char *error_buf, uint32 error_buf_size)
++{
++    void *memory = size < UINT32_MAX
++                       ? pxa_wamr_aot_temporary_allocate((size_t)size)
++                       : NULL;
++    return memory ? memory : loader_malloc(size, error_buf, error_buf_size);
++}
++
++static void
++loader_free_temporary(void *memory)
++{
++    if (!pxa_wamr_aot_temporary_release(memory)) wasm_runtime_free(memory);
+ }
+ 
+ static void *
+@@ -3576,7 +3595,7 @@
+     }
+ 
+     if (symbol_count > 0) {
+-        symbols = loader_malloc((uint64)sizeof(*symbols) * symbol_count,
++        symbols = loader_malloc_temporary((uint64)sizeof(*symbols) * symbol_count,
+                                 error_buf, error_buf_size);
+         if (symbols == NULL) {
+             goto fail;
+@@ -3823,7 +3842,7 @@
+     /* Allocate memory for relocation groups */
+     size = sizeof(AOTRelocationGroup) * (uint64)group_count;
+     if (size > 0
+-        && !(groups = loader_malloc(size, error_buf, error_buf_size))) {
++        && !(groups = loader_malloc_temporary(size, error_buf, error_buf_size))) {
+         goto fail;
+     }
+ 
+@@ -3854,7 +3873,7 @@
+         /* Allocate memory for relocations */
+         size = sizeof(AOTRelocation) * (uint64)group->relocation_count;
+         if (!(group->relocations = relocation =
+-                  loader_malloc(size, error_buf, error_buf_size))) {
++                  loader_malloc_temporary(size, error_buf, error_buf_size))) {
+             ret = false;
+             goto fail;
+         }
+@@ -3958,13 +3977,13 @@
+ 
+ fail:
+     if (symbols) {
+-        wasm_runtime_free(symbols);
++        loader_free_temporary(symbols);
+     }
+     if (groups) {
+         for (i = 0, group = groups; i < group_count; i++, group++)
+             if (group->relocations)
+-                wasm_runtime_free(group->relocations);
+-        wasm_runtime_free(groups);
++                loader_free_temporary(group->relocations);
++        loader_free_temporary(groups);
+     }
+ 
+     (void)map_flags;

@@ -7,7 +7,8 @@ static volatile char initialized_text[] = "mainland sans";
 
 int32_t pxa_app_start(const uint8_t *config, uint32_t size) {
     (void)config; (void)size;
-    return initialized_data[0] == UINT32_C(0x11223344) &&
+    return __builtin_wasm_memory_size(0) > 0 &&
+           initialized_data[0] == UINT32_C(0x11223344) &&
            initialized_data[1] == UINT32_C(0x55667788) &&
            initialized_data[2] == UINT32_C(0x99aabbcc) &&
            initialized_text[0] == 'm' && initialized_text[12] == 's' ? 0 : -1;

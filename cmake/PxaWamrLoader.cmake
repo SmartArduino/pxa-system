@@ -13,8 +13,16 @@ function(pxa_configure_wamr_loader target wamr_root)
         set(overlay_tool "${PXA_HOST_SDK_ROOT}/tools/host-sdk/prepare_wamr_overlay.py")
     endif()
     set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
-        "${series}" "${system_root}/tools/wamr/patches/0001-owned-aot-sections.patch"
+        "${series}"
         "${overlay_tool}" "${system_root}/config/wamr.json")
+    file(STRINGS "${series}" patch_names)
+    foreach(patch_name IN LISTS patch_names)
+        string(STRIP "${patch_name}" patch_name)
+        if(NOT patch_name STREQUAL "" AND NOT patch_name MATCHES "^#")
+            set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+                "${system_root}/tools/wamr/patches/${patch_name}")
+        endif()
+    endforeach()
     execute_process(COMMAND "${Python3_EXECUTABLE}"
         "${overlay_tool}" --metadata "${system_root}/config/wamr.json"
         --source "${wamr_root}" --output "${overlay}" --series "${series}"
@@ -39,5 +47,6 @@ function(pxa_configure_wamr_loader target wamr_root)
     target_include_directories(${target} PRIVATE
         "${wamr_root}/core/iwasm/common"
         "${system_root}/libpxa/include"
+        "${system_root}/libpxa/adapters/wamr"
         "${system_root}/libpxa/adapters/include")
 endfunction()

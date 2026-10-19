@@ -3,18 +3,51 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifdef PXA_WAMR_TEST_LOAD_MEMORY
+#include "../wamr/pxa_wamr_load_memory.h"
+static uint8_t *load_arena;
+static size_t load_capacity,load_used,load_leases;
+static unsigned load_begins,fail_reservation,fail_scratch;
+static int test_pinned=1;
+int pxa_wamr_load_memory_begin(size_t bytes) {
+    assert(!load_arena);
+    if(fail_reservation){fail_reservation=0;return 0;}
+    if(!bytes || bytes>1024*1024)return 0;
+    load_arena=malloc(bytes);assert(load_arena);
+    load_capacity=bytes;load_used=load_leases=0;++load_begins;return 1;
+}
+void *pxa_wamr_load_memory_scratch(size_t bytes) {
+    if(fail_scratch){fail_scratch=0;return NULL;}
+    size_t at=(load_used+15)&~(size_t)15;
+    if(at>load_capacity || bytes>load_capacity-at)return NULL;
+    load_used=at+bytes;++load_leases;return load_arena+at;
+}
+int pxa_wamr_load_memory_release(void *p) {
+    uintptr_t at=(uintptr_t)p,base=(uintptr_t)load_arena;
+    if(!load_arena || at<base || at-base>=load_capacity)return 0;
+    assert(load_leases);--load_leases;return 1;
+}
+void pxa_wamr_load_memory_ready(void) {assert(!load_leases);}
+void pxa_wamr_load_memory_end(void) {
+    assert(!load_leases);
+    if(load_arena){memset(load_arena,0xa5,load_used);free(load_arena);load_arena=NULL;}
+}
+#endif
 
 /* Count requested executable mappings, not virtual linear-memory reservations
  * or process RSS. A failed load must release every executable allocation. */
 static size_t mapped_bytes, mapped_peak;
 static size_t runtime_bytes, artifact_bytes, total_peak, allocations, fail_allocation;
+static size_t runtime_limit,runtime_peak;
 typedef union { size_t size; long double alignment; } Header;
 static void peak(void) {
+    if(runtime_bytes>runtime_peak)runtime_peak=runtime_bytes;
     size_t n=mapped_bytes+runtime_bytes+artifact_bytes;
     if(n>total_peak)total_peak=n;
 }
 static void *allocate(unsigned int size) {
     if(++allocations==fail_allocation)return NULL;
+    if(runtime_limit && (runtime_bytes>runtime_limit || size>runtime_limit-runtime_bytes))return NULL;
     Header *h=malloc(sizeof(*h)+size);if(!h)return NULL;
     h->size=size;runtime_bytes+=size;peak();return h+1;
 }
@@ -25,6 +58,7 @@ static void *reallocate(void *p,unsigned int size) {
     if(!p)return allocate(size);
     if(++allocations==fail_allocation)return NULL;
     Header *h=(Header *)p-1;size_t old=h->size;
+    if(runtime_limit && (runtime_bytes-old>runtime_limit || size>runtime_limit-(runtime_bytes-old)))return NULL;
     h=realloc(h,sizeof(*h)+size);if(!h)return NULL;
     h->size=size;runtime_bytes=runtime_bytes-old+size;peak();return h+1;
 }
@@ -77,7 +111,15 @@ static wasm_module_t load(Source *source, pxa_status_t *status, int *buffered) {
     pxa_wamr_artifact_reader_t reader = { .context=source, .size=source->size, .read_at=read_at };
     wasm_module_t module = NULL;
     char error[128] = {0};
-    *status = pxa_wamr_read_aot(&reader, &module, buffered, error, sizeof(error));
+    int pinned=0;
+#ifdef PXA_WAMR_TEST_LOAD_MEMORY
+    pinned=test_pinned;
+#endif
+    *status = pxa_wamr_read_aot(&reader, &module, buffered, pinned, error, sizeof(error));
+#ifdef PXA_WAMR_TEST_LOAD_MEMORY
+    pxa_wamr_load_memory_ready();
+    pxa_wamr_load_memory_end(); /* Poison scratch before executing the module. */
+#endif
     assert(source->max_read <= 16384);
     return module;
 }
@@ -124,6 +166,9 @@ int main(void) {
     assert(wasm_runtime_full_init(&init));
     size_t runtime_base=runtime_bytes;
     for (unsigned n=0;n<20;++n) {
+#ifdef PXA_WAMR_TEST_LOAD_MEMORY
+        fail_reservation=n%3==0;fail_scratch=n%4==0;
+#endif
         memcpy(input,original,length);
         Source source = {.bytes=input,.size=length,.limit=n%2?7:0};
         pxa_status_t status; int buffered;
@@ -135,6 +180,28 @@ int main(void) {
         memset(input,0xa5,length); /* no initial-data or name pointers into the source */
         run(module);
     }
+#ifdef PXA_WAMR_TEST_LOAD_MEMORY
+    assert(load_begins);
+    /* At the same additional-heap budget, loading with a future linear
+     * mapping available must succeed where ordinary metadata allocation
+     * cannot. Scratch is poisoned before executing either loaded module. */
+    memcpy(input,original,length);runtime_peak=runtime_bytes;
+    Source budget_probe={.bytes=input,.size=length};
+    pxa_status_t budget_status;int budget_buffered;
+    wasm_module_t budget_module=load(&budget_probe,&budget_status,&budget_buffered);
+    assert(budget_status==PXA_STATUS_OK && budget_module);
+    size_t loan_budget=runtime_peak;run(budget_module);
+    runtime_limit=loan_budget;test_pinned=0;
+    Source without_loan={.bytes=input,.size=length};
+    budget_module=load(&without_loan,&budget_status,&budget_buffered);
+    assert(budget_status!=PXA_STATUS_OK && !budget_module);
+    assert(runtime_bytes==runtime_base && mapped_bytes==0);
+    test_pinned=1;
+    Source with_loan={.bytes=input,.size=length};
+    budget_module=load(&with_loan,&budget_status,&budget_buffered);
+    assert(budget_status==PXA_STATUS_OK && budget_module);
+    runtime_limit=0;run(budget_module);
+#endif
     memcpy(input,original,length);
     Source good = {.bytes=input,.size=length};
     pxa_status_t status; int buffered;

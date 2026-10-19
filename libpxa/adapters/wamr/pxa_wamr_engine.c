@@ -29,6 +29,9 @@
 #include "pxa/wire.h"
 #include "wasm_export.h"
 #include "pxa_wamr_aot_reader.h"
+#ifdef ESP_PLATFORM
+#include "pxa_wamr_load_memory.h"
+#endif
 
 #if defined(ESP_PLATFORM)
 #include "sdkconfig.h"
@@ -531,7 +534,9 @@ static pxa_status_t load_artifact(pxa_wamr_engine_t *engine,
         status = pxa_wamr_read_exact(&reader, 0, header, sizeof(header));
         if (status != PXA_STATUS_OK) goto close_reader;
         if (kind == PXA_ARTIFACT_AOT && get_package_type(header, sizeof(header)) == Wasm_Module_AoT) {
-            status = pxa_wamr_read_aot(&reader, &slot->module, &buffered, error, error_size);
+            status = pxa_wamr_read_aot(&reader, &slot->module, &buffered,
+                (slot->package_component->flags & PXA_PACKAGE_COMPONENT_FLAG_PINNED_MEMORY) != 0,
+                error, error_size);
 #if defined(ESP_PLATFORM)
             if (status == PXA_STATUS_OK && slot->module)
                 ESP_LOGI(PXA_WAMR_LOG_TAG, "AOT streamed: file=%u source_buffer=0",
@@ -597,6 +602,9 @@ static pxa_status_t discard_entry(pxa_wamr_engine_t *engine,
         wasm_runtime_unload(entry->module);
         entry->module = NULL;
     }
+#ifdef ESP_PLATFORM
+    pxa_wamr_load_memory_end();
+#endif
     release_module_buffer(engine, entry);
     entry->config_size = 0;
     entry->has_config = 0;
@@ -1265,9 +1273,15 @@ static pxa_status_t engine_instantiate(void *context, pxa_bytes_t package_root,
         (slot->package_component->flags &
          PXA_PACKAGE_COMPONENT_FLAG_PINNED_MEMORY) != 0);
 #endif
+#ifdef ESP_PLATFORM
+    pxa_wamr_load_memory_ready();
+#endif
     slot->module_instance = wasm_runtime_instantiate(
         slot->module, engine->guest_stack_size, engine->host_managed_heap_size,
         error, sizeof(error));
+#ifdef ESP_PLATFORM
+    pxa_wamr_load_memory_end();
+#endif
 #if defined(WASM_LINEAR_MEMORY_RESERVE_MAX) && \
     WASM_LINEAR_MEMORY_RESERVE_MAX != 0
     wasm_runtime_set_linear_memory_reserve_max(false);

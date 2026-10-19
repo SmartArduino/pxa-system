@@ -9,6 +9,7 @@
 
 #include "platform_api_vmcore.h"
 #include "platform_api_extension.h"
+#include "pxa_wamr_load_memory.h"
 #include "esp_heap_caps.h"
 #ifdef ESP_PLATFORM
 #include "esp_log.h"
@@ -35,11 +36,35 @@
      ((uintptr_t)(addr) < SOC_IRAM0_CACHE_ADDRESS_HIGH))
 #endif
 
+/* One transaction per runtime owner thread. Other Host/Guest threads cannot
+ * consume the reserved mapping while the loader builds permanent AOT data. */
+static __thread struct {
+    void *memory;
+    size_t bytes, used;
+    unsigned leases;
+    bool ready, adopted;
+} load_memory;
+
 void *
 os_mmap(void *hint, size_t size, int prot, int flags, os_file_handle file)
 {
     if (size == 0 || size > SIZE_MAX - 4 - sizeof(uintptr_t)) {
         return NULL;
+    }
+    if (!(prot & MMAP_PROT_EXEC) && load_memory.memory && load_memory.ready
+        && !load_memory.adopted) {
+        if (size == load_memory.bytes) {
+            load_memory.adopted = true;
+            memset(load_memory.memory, 0, size);
+#ifdef ESP_PLATFORM
+            ESP_LOGI("PxaWamrMap", "pinned mapping adopted: bytes=%u scratch=%u",
+                     (unsigned)size, (unsigned)load_memory.used);
+#endif
+            return load_memory.memory;
+        }
+        /* An inserted Host heap can change WAMR's effective maximum. Give
+         * the space back before using the normal mapping path in that case. */
+        pxa_wamr_load_memory_end();
     }
     if (prot & MMAP_PROT_EXEC) {
 #if (WASM_MEM_DUAL_BUS_MIRROR != 0)
@@ -135,6 +160,61 @@ os_mmap(void *hint, size_t size, int prot, int flags, os_file_handle file)
         memset(buf_fixed, 0, size);
         return buf_fixed;
     }
+}
+
+int
+pxa_wamr_load_memory_begin(size_t bytes)
+{
+    if (load_memory.memory || bytes == 0) return 0;
+    void *memory = os_mmap(NULL, bytes, MMAP_PROT_READ | MMAP_PROT_WRITE,
+                           MMAP_MAP_NONE, os_get_invalid_handle());
+    if (!memory) return 0;
+    load_memory.memory = memory;
+    load_memory.bytes = bytes;
+#ifdef ESP_PLATFORM
+    ESP_LOGI("PxaWamrMap", "pinned mapping reserved before AOT: bytes=%u", (unsigned)bytes);
+#endif
+    return 1;
+}
+
+void *
+pxa_wamr_load_memory_scratch(size_t bytes)
+{
+    if (!load_memory.memory || load_memory.ready || load_memory.adopted
+        || bytes == 0 || load_memory.used > SIZE_MAX - 15) return NULL;
+    size_t pad = (16 - (((uintptr_t)load_memory.memory + load_memory.used) & 15)) & 15;
+    size_t at = load_memory.used + pad;
+    if (at > load_memory.bytes || bytes > load_memory.bytes - at) return NULL;
+    load_memory.used = at + bytes;
+    ++load_memory.leases;
+    return (uint8_t *)load_memory.memory + at;
+}
+
+int
+pxa_wamr_load_memory_release(void *pointer)
+{
+    uintptr_t at = (uintptr_t)pointer, base = (uintptr_t)load_memory.memory;
+    if (!load_memory.memory || at < base || at - base >= load_memory.bytes)
+        return 0;
+    if (!load_memory.leases) return 0;
+    --load_memory.leases;
+    return 1;
+}
+
+void
+pxa_wamr_load_memory_ready(void)
+{
+    if (load_memory.memory && !load_memory.leases) load_memory.ready = true;
+}
+
+void
+pxa_wamr_load_memory_end(void)
+{
+    void *memory = load_memory.memory;
+    size_t bytes = load_memory.bytes;
+    bool adopted = load_memory.adopted;
+    memset(&load_memory, 0, sizeof(load_memory));
+    if (memory && !adopted) os_munmap(memory, bytes);
 }
 
 void *

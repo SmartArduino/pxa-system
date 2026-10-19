@@ -378,7 +378,7 @@ if(PXA_BUILD_ADAPTERS AND PXA_WAMR_SOURCE_DIR)
                             -Wl,--export=pxa_app_stop
                             -Wl,--export=__heap_base
                             -Wl,--export=__data_end
-                            -o ${output} ${source}
+                            ${ARGN} -o ${output} ${source}
                     DEPENDS ${source}
                             "${PXA_GUEST_SDK_INCLUDE}/pxa.h"
                             "${PXA_GUEST_SDK_INCLUDE}/pxa_audio.h"
@@ -444,7 +444,8 @@ if(PXA_BUILD_ADAPTERS AND PXA_WAMR_SOURCE_DIR)
                 adapters/tests/wamr_engine_test.c)
             if(PXA_WAMRC AND EXISTS "${PXA_WAMRC}")
                 pxa_build_guest(wamr_aot_data_guest
-                    ${CMAKE_CURRENT_SOURCE_DIR}/adapters/tests/wamr_aot_data_guest.c)
+                    ${CMAKE_CURRENT_SOURCE_DIR}/adapters/tests/wamr_aot_data_guest.c
+                    -Wl,--max-memory=1048576)
                 set(wamr_aot_data_AOT "${CMAKE_CURRENT_BINARY_DIR}/wamr_aot_data_guest.aot")
                 add_custom_command(OUTPUT ${wamr_aot_data_AOT}
                     COMMAND "${PXA_WAMRC}" --target=x86_64 -o ${wamr_aot_data_AOT}
@@ -455,17 +456,27 @@ if(PXA_BUILD_ADAPTERS AND PXA_WAMR_SOURCE_DIR)
                 target_compile_definitions(pxa_wamr_engine_test PRIVATE
                     PXA_WAMR_TEST_AOT_DATA_PATH="${wamr_aot_data_AOT}"
                     PXA_WAMR_TEST_AOT_DATA_WASM_PATH="${wamr_aot_data_guest_WASM}")
-                add_executable(pxa_wamr_aot_reader_test adapters/tests/wamr_aot_reader_test.c)
-                target_link_libraries(pxa_wamr_aot_reader_test PRIVATE pxa_adapters_wamr)
-                if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-                    target_link_options(pxa_wamr_aot_reader_test PRIVATE
-                        -Wl,--wrap=os_mmap -Wl,--wrap=os_munmap)
-                    target_compile_definitions(pxa_wamr_aot_reader_test PRIVATE PXA_TEST_WRAP_MMAP=1)
-                endif()
-                target_compile_definitions(pxa_wamr_aot_reader_test PRIVATE
-                    PXA_WAMR_TEST_AOT_DATA_PATH="${wamr_aot_data_AOT}")
-                add_dependencies(pxa_wamr_aot_reader_test wamr_aot_data_guest_aot)
-                add_test(NAME pxa_wamr_aot_reader_test COMMAND pxa_wamr_aot_reader_test)
+                foreach(reader_test pxa_wamr_aot_reader_test pxa_wamr_reserved_reader_test)
+                    add_executable(${reader_test} adapters/tests/wamr_aot_reader_test.c)
+                    target_link_libraries(${reader_test} PRIVATE pxa_adapters_wamr)
+                    if(reader_test STREQUAL "pxa_wamr_reserved_reader_test")
+                        target_sources(${reader_test} PRIVATE adapters/wamr/pxa_wamr_aot_reader.c)
+                        target_compile_definitions(${reader_test} PRIVATE PXA_WAMR_TEST_LOAD_MEMORY=1)
+                        target_include_directories(${reader_test} PRIVATE
+                            $<TARGET_PROPERTY:vmlib,INCLUDE_DIRECTORIES>)
+                        target_compile_definitions(${reader_test} PRIVATE
+                            $<TARGET_PROPERTY:vmlib,COMPILE_DEFINITIONS>)
+                    endif()
+                    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+                        target_link_options(${reader_test} PRIVATE
+                            -Wl,--wrap=os_mmap -Wl,--wrap=os_munmap)
+                        target_compile_definitions(${reader_test} PRIVATE PXA_TEST_WRAP_MMAP=1)
+                    endif()
+                    target_compile_definitions(${reader_test} PRIVATE
+                        PXA_WAMR_TEST_AOT_DATA_PATH="${wamr_aot_data_AOT}")
+                    add_dependencies(${reader_test} wamr_aot_data_guest_aot)
+                    add_test(NAME ${reader_test} COMMAND ${reader_test})
+                endforeach()
             endif()
             target_link_libraries(pxa_wamr_engine_test PRIVATE
                 pxa_adapters_posix pxa_adapters_wamr)

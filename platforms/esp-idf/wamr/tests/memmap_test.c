@@ -3,6 +3,8 @@
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <pthread.h>
+#include "../../../../libpxa/adapters/wamr/pxa_wamr_load_memory.h"
 static struct { void *pointer; size_t capacity; } allocations[8];
 static unsigned slow_calls,fail_next;
 void *heap_caps_malloc(size_t bytes,unsigned caps) {
@@ -34,6 +36,13 @@ void *os_mremap_slow(void *old,size_t before,size_t after) {
     memcpy(p,old,before<after?before:after);
     os_munmap(old,before);return p;
 }
+static void *other_owner(void *original) {
+    assert(pxa_wamr_load_memory_begin(8192));
+    void *p=pxa_wamr_load_memory_scratch(4096);
+    assert(p && p!=original);memset(p,0xcd,4096);
+    assert(pxa_wamr_load_memory_release(p));
+    pxa_wamr_load_memory_end();return NULL;
+}
 int main(void) {
     assert(os_mmap(NULL, SIZE_MAX, MMAP_PROT_NONE, MMAP_MAP_NONE, 0)==NULL);
     assert(os_mmap(NULL, 0, MMAP_PROT_NONE, MMAP_MAP_NONE, 0)==NULL);
@@ -55,6 +64,37 @@ int main(void) {
     for(unsigned i=0;i<4096;++i)assert(grown[i]==(uint8_t)(i*37+11));
     for(unsigned i=4096;i<131072;++i)assert(grown[i]==0);
     os_munmap(grown,131072);
+    assert(!pxa_wamr_load_memory_begin(0));
+    assert(!pxa_wamr_load_memory_begin(SIZE_MAX));
+    fail_next=1;assert(!pxa_wamr_load_memory_begin(65536));
+    assert(pxa_wamr_load_memory_begin(65536));
+    assert(!pxa_wamr_load_memory_begin(65536));
+    assert(!pxa_wamr_load_memory_scratch(0));
+    assert(!pxa_wamr_load_memory_scratch(65537));
+    uint8_t *a=pxa_wamr_load_memory_scratch(30001);
+    uint8_t *b=pxa_wamr_load_memory_scratch(30000);
+    assert(a && b && (uintptr_t)b%16==0 && b>=a+30001);
+    memset(a,0xa5,30001);memset(b,0x5a,30000);
+    pthread_t thread;assert(!pthread_create(&thread,NULL,other_owner,a));
+    assert(!pthread_join(thread,NULL));assert(a[0]==0xa5 && b[0]==0x5a);
+    pxa_wamr_load_memory_ready(); // Live scratch cannot be adopted.
+    uint8_t *separate=os_mmap(NULL,65536,MMAP_PROT_NONE,MMAP_MAP_NONE,0);
+    assert(separate && separate!=a);os_munmap(separate,65536);
+    assert(!pxa_wamr_load_memory_release(&thread));
+    assert(pxa_wamr_load_memory_release(a) && pxa_wamr_load_memory_release(b));
+    pxa_wamr_load_memory_ready();assert(!pxa_wamr_load_memory_scratch(1));
+    uint8_t *adopted=os_mmap(NULL,65536,MMAP_PROT_NONE,MMAP_MAP_NONE,0);
+    assert(adopted<=a && (size_t)(a-adopted)<16);
+    for(unsigned i=0;i<65536;++i)assert(adopted[i]==0);
+    pxa_wamr_load_memory_end();adopted[0]=47;
+    assert(adopted[0]==47);os_munmap(adopted,65536);
+    assert(pxa_wamr_load_memory_begin(4096));
+    assert(pxa_wamr_load_memory_scratch(32));
+    pxa_wamr_load_memory_end(); // Failed loader abandons scratch and mapping.
+    assert(pxa_wamr_load_memory_begin(4096));
+    pxa_wamr_load_memory_ready();
+    uint8_t *different=os_mmap(NULL,8192,MMAP_PROT_NONE,MMAP_MAP_NONE,0);
+    assert(different);pxa_wamr_load_memory_end();os_munmap(different,8192);
     for(unsigned i=0;i<8;++i)assert(!allocations[i].pointer);
-    puts("ESP WAMR mapping: stable reserved growth, zeroed tail, fallback and failure preservation passed");
+    puts("ESP WAMR: stable growth, reservation scratch/adoption, zeroing, owner isolation and failures passed");
 }

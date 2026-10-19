@@ -5,11 +5,33 @@
 
 /* WAMR's platform mapping contract, including the Xtensa I/D-bus aliases. */
 #include "platform_api_vmcore.h"
+#if (defined(ESP_PLATFORM) && defined(WASM_LINEAR_MEMORY_RESERVE_MAX) \
+     && WASM_LINEAR_MEMORY_RESERVE_MAX != 0) || defined(PXA_WAMR_TEST_LOAD_MEMORY)
+#include "pxa_wamr_load_memory.h"
+#define LOAD_MEMORY_RESERVATION 1
+#endif
 #if WASM_ENABLE_AOT != 0
 #include "aot_runtime.h"
 #endif
 
 #define READ_CHUNK ((size_t)16384)
+
+void *pxa_wamr_aot_temporary_allocate(size_t bytes) {
+#ifdef LOAD_MEMORY_RESERVATION
+    void *memory = pxa_wamr_load_memory_scratch(bytes);
+    if (memory) memset(memory, 0, bytes);
+    return memory;
+#else
+    (void)bytes;return NULL;
+#endif
+}
+int pxa_wamr_aot_temporary_release(void *pointer) {
+#ifdef LOAD_MEMORY_RESERVATION
+    return pxa_wamr_load_memory_release(pointer);
+#else
+    (void)pointer;return 0;
+#endif
+}
 
 pxa_status_t pxa_wamr_read_exact(pxa_wamr_artifact_reader_t *reader,
                                 uint64_t offset, uint8_t *output, size_t size) {
@@ -34,13 +56,15 @@ static uint32_t u32(const uint8_t *p) {
 
 pxa_status_t pxa_wamr_read_aot(pxa_wamr_artifact_reader_t *reader,
                               wasm_module_t *module, int *buffered,
-                              char *error, uint32_t error_size) {
+                              int pinned, char *error, uint32_t error_size) {
     aot_section_t sections[6] = {{0}};
     uint32_t offsets[6] = {0};
     uint8_t header[64];
     uint64_t offset = 8;
     unsigned count = 0;
     pxa_status_t status = PXA_STATUS_UNSUPPORTED;
+    int reserved = 0;
+    (void)pinned;(void)reserved;
 #if defined(__APPLE__)
     bool code_writable = false;
 #endif
@@ -83,6 +107,21 @@ pxa_status_t pxa_wamr_read_aot(pxa_wamr_artifact_reader_t *reader,
     if (count != 6 || sections[2].section_body_size < 4) {
         status = PXA_STATUS_UNSUPPORTED; goto done;
     }
+#ifdef LOAD_MEMORY_RESERVATION
+    /* This is only a placement hint. The normal loader still validates every
+     * memory declaration, bound, import and relocation. Other memory layouts
+     * and custom-section AOT retain their existing allocation path. */
+    if (pinned && sections[1].section_body_size >= 24) {
+        status = pxa_wamr_read_exact(reader, offsets[1], header, 24);
+        if (status != PXA_STATUS_OK) goto done;
+        if (u32(header) == 0 && u32(header + 4) == 1 && u32(header + 8) == 1
+            && u32(header + 12) == 65536 && u32(header + 16) <= u32(header + 20)) {
+            uint64_t bytes = (uint64_t)u32(header + 20) * 65536;
+            if (bytes && bytes <= SIZE_MAX)
+                reserved = pxa_wamr_load_memory_begin((size_t)bytes);
+        }
+    }
+#endif
 #if defined(__APPLE__)
     os_thread_jit_write_protect_np(false);
     code_writable = true;
@@ -102,7 +141,11 @@ pxa_status_t pxa_wamr_read_aot(pxa_wamr_artifact_reader_t *reader,
             if (sections[i].section_body == (void *)-1) sections[i].section_body = NULL;
             sections[i].section_body_size = (uint32_t)mapped;
         } else {
-            sections[i].section_body = wasm_runtime_malloc(size ? size : 1);
+            void *scratch = NULL;
+#ifdef LOAD_MEMORY_RESERVATION
+            if (reserved) scratch = pxa_wamr_load_memory_scratch(size ? size : 1);
+#endif
+            sections[i].section_body = scratch ? scratch : wasm_runtime_malloc(size ? size : 1);
         }
         if (!sections[i].section_body) { status = PXA_STATUS_RESOURCE_LIMIT; goto done; }
         uint8_t *destination = sections[i].section_body;
@@ -132,8 +175,16 @@ done:
     for (unsigned i = 0; i < 6; ++i) {
         if (!sections[i].section_body) continue;
         if (i == 2) os_munmap(sections[i].section_body, sections[i].section_body_size);
-        else wasm_runtime_free(sections[i].section_body);
+        else {
+#ifdef LOAD_MEMORY_RESERVATION
+            if (reserved && pxa_wamr_load_memory_release(sections[i].section_body)) continue;
+#endif
+            wasm_runtime_free(sections[i].section_body);
+        }
     }
+#ifdef LOAD_MEMORY_RESERVATION
+    if (reserved && status != PXA_STATUS_OK) pxa_wamr_load_memory_end();
+#endif
     if (status != PXA_STATUS_OK && error_size && !*error)
         snprintf(error, error_size, "AOT reader failed: status=%d", (int)status);
     return status;
@@ -141,8 +192,8 @@ done:
 #else
 pxa_status_t pxa_wamr_read_aot(pxa_wamr_artifact_reader_t *reader,
                               wasm_module_t *module, int *buffered,
-                              char *error, uint32_t error_size) {
-    (void)reader;
+                              int pinned, char *error, uint32_t error_size) {
+    (void)reader;(void)pinned;
     *module = NULL; *buffered = 0;
     if (error_size) snprintf(error, error_size, "AOT support is disabled");
     return PXA_STATUS_UNSUPPORTED;

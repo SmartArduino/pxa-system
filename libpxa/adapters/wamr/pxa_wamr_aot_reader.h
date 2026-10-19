@@ -11,5 +11,5 @@ pxa_status_t pxa_wamr_read_exact(pxa_wamr_artifact_reader_t *reader,
                                 uint64_t offset, uint8_t *output, size_t size);
 pxa_status_t pxa_wamr_read_aot(pxa_wamr_artifact_reader_t *reader,
                               wasm_module_t *module, int *buffered,
-                              char *error, uint32_t error_size);
+                              int pinned, char *error, uint32_t error_size);
 #endif
