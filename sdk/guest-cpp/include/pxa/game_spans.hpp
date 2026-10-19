@@ -35,6 +35,44 @@ private:
     std::optional<Error> error_;
 };
 
+using ProjectedRow = wire_spans::pxa_game_render_row_wire_t;
+using SpanProjection = wire_spans::pxa_game_render_projection_wire_t;
+
+class ProjectedBatch {
+public:
+    ProjectedBatch(std::span<std::byte> storage, IndexedSpanHeader header,
+        const SpanProjection& projection) noexcept : storage_(storage) {
+        if (storage.size() < PXA_GAME_RENDER_PROJECTED_PREFIX_BYTES) {
+            error_ = Error::invalid_argument; return;
+        }
+        header.magic = PXA_GAME_RENDER_PROJECTED_MAGIC;
+        header.major = 1; header.minor = 0; header.count = 0; header.reserved = 0;
+        wire_spans::pxa_game_render_spans_header_encode(storage.data(), storage.size(), &header);
+        wire_spans::pxa_game_render_projection_encode(storage.data() + PXA_GAME_RENDER_SPANS_HEADER_BYTES,
+            PXA_GAME_RENDER_PROJECTION_BYTES, &projection);
+    }
+    Result<void> append(ProjectedRow row) noexcept {
+        if (error_) return std::unexpected(*error_);
+        if (!row.count || row.reserved) {
+            error_ = Error::invalid_argument; return std::unexpected(*error_);
+        }
+        const auto position = PXA_GAME_RENDER_PROJECTED_PREFIX_BYTES +
+            std::size_t(count_) * PXA_GAME_RENDER_ROW_BYTES;
+        if (position > storage_.size() || storage_.size() - position < PXA_GAME_RENDER_ROW_BYTES) {
+            error_ = Error::limit_exceeded; return std::unexpected(*error_);
+        }
+        wire_spans::pxa_game_render_row_encode(storage_.data() + position, PXA_GAME_RENDER_ROW_BYTES, &row);
+        ++count_;
+        return {};
+    }
+    std::uint32_t count() const noexcept { return count_; }
+private:
+    friend class RasterContext;
+    std::span<std::byte> storage_;
+    std::uint32_t count_ = 0;
+    std::optional<Error> error_;
+};
+
 struct SpanTelemetry {
     std::uint64_t batches, rejected, spans, pixels, validation_us, execute_us;
     std::uint32_t last_validation_us, last_execute_us, max_spans;
@@ -53,6 +91,18 @@ public:
         wire::put32(batch.storage_.data() + 8, batch.count_);
         const auto size = 72u + std::size_t(batch.count_) * 24u;
         auto result = transport_.io(handle(), 0x104, batch.storage_.first(size));
+        if (!result) return std::unexpected(result.error());
+        if (*result != size) return std::unexpected(Error::protocol_error);
+        return {};
+    }
+    Result<void> execute(ProjectedBatch& batch) noexcept {
+        if (batch.error_) return std::unexpected(*batch.error_);
+        if (!batch.count_) return {};
+        if (batch.count_ > max_spans_) return std::unexpected(Error::limit_exceeded);
+        wire::put32(batch.storage_.data() + 8, batch.count_);
+        const auto size = PXA_GAME_RENDER_PROJECTED_PREFIX_BYTES +
+            std::size_t(batch.count_) * PXA_GAME_RENDER_ROW_BYTES;
+        auto result = transport_.io(handle(), 0x106, batch.storage_.first(size));
         if (!result) return std::unexpected(result.error());
         if (*result != size) return std::unexpected(Error::protocol_error);
         return {};

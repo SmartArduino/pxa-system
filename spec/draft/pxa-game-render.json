@@ -1,11 +1,11 @@
 {
-  "schema": "pxa-game-render-spec-1.0",
+  "schema": "pxa-game-render-spec-1.1",
   "status": "draft",
   "service": {
     "name": "game-render",
     "id": 18,
     "major": 1,
-    "minor": 0,
+    "minor": 1,
     "patch": 0
   },
   "opcodes": [
@@ -73,6 +73,13 @@
       "id": 261,
       "payload": "zeroed-64-byte-buffer",
       "result": "batches:u64|rejected:u64|spans:u64|pixels:u64|validation-us:u64|execute-us:u64|last-validation-us:u32|last-execute-us:u32|max-spans:u32|reserved:u32"
+    },
+    {
+      "name": "execute-projected-spans",
+      "id": 262,
+      "payload": "spans-header|projection|scanline[count]",
+      "result": "accepted-bytes",
+      "semantics": "Synchronous strict f32 projection, indexed lighting and optional inverse-depth writes; preflight complete batch before writes."
     }
   ],
   "features": [
@@ -83,6 +90,10 @@
     {
       "name": "borrowed-indexed-spans",
       "bit": 1
+    },
+    {
+      "name": "projected-indexed-spans",
+      "bit": 2
     }
   ],
   "create_flags": [
@@ -184,7 +195,7 @@
     "texture_dimension": 256,
     "palette_colors": 256
   },
-  "protocol_version": "1.0.0",
+  "protocol_version": "1.1.0",
   "indexed_spans": {
     "magic": 1347639376,
     "major": 1,
@@ -318,6 +329,119 @@
         "dt",
         "i32"
       ]
-    ]
+    ],
+    "projected": {
+      "magic": 1347442768,
+      "projection_bytes": 80,
+      "row_bytes": 8,
+      "segment_pixels": 32,
+      "flags": {
+        "write_depth": 1
+      },
+      "projection": [
+        [
+          "s_origin_bits",
+          "u32"
+        ],
+        [
+          "s_du_bits",
+          "u32"
+        ],
+        [
+          "s_dv_bits",
+          "u32"
+        ],
+        [
+          "t_origin_bits",
+          "u32"
+        ],
+        [
+          "t_du_bits",
+          "u32"
+        ],
+        [
+          "t_dv_bits",
+          "u32"
+        ],
+        [
+          "z_origin_bits",
+          "u32"
+        ],
+        [
+          "z_du_bits",
+          "u32"
+        ],
+        [
+          "z_dv_bits",
+          "u32"
+        ],
+        [
+          "s_adjust",
+          "i32"
+        ],
+        [
+          "t_adjust",
+          "i32"
+        ],
+        [
+          "s_max",
+          "i32"
+        ],
+        [
+          "t_max",
+          "i32"
+        ],
+        [
+          "s_offset",
+          "i32"
+        ],
+        [
+          "t_offset",
+          "i32"
+        ],
+        [
+          "pitch",
+          "u32"
+        ],
+        [
+          "depth_offset",
+          "u32"
+        ],
+        [
+          "depth_bytes",
+          "u32"
+        ],
+        [
+          "depth_pitch",
+          "u32"
+        ],
+        [
+          "flags",
+          "u16"
+        ],
+        [
+          "reserved",
+          "u16"
+        ]
+      ],
+      "row": [
+        [
+          "x",
+          "u16"
+        ],
+        [
+          "y",
+          "u16"
+        ],
+        [
+          "count",
+          "u16"
+        ],
+        [
+          "reserved",
+          "u16"
+        ]
+      ]
+    }
   }
 }

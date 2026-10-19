@@ -13,14 +13,25 @@ typedef struct {
     const uint8_t *colormap;
     uint32_t count, target_bytes;
     uint32_t first_pixel, end_pixel;
-    uint32_t texture_width, texture_height, light_width;
+    uint32_t texture_width, texture_height, light_width, light_height;
+    uint32_t texture_bytes, light_bytes, colormap_bytes;
     int32_t light_origin_s, light_origin_t;
     uint32_t wrap_s, wrap_t;
     uint64_t pixels;
-    uint8_t light_shift, flags;
+    uint8_t light_shift, flags, projected;
+    struct {
+        float s_origin, s_du, s_dv, t_origin, t_du, t_dv;
+        float z_origin, z_du, z_dv;
+        int32_t s_adjust, t_adjust, s_max, t_max, s_offset, t_offset;
+        uint32_t pitch, depth_bytes, depth_pitch;
+        uint8_t *depth;
+    } projection;
 } pxa_raster_spans_t;
 
 pxa_status_t pxa_raster_spans_validate(const uint8_t *packet, size_t size,
+    uint8_t *memory, size_t memory_size, uint32_t max_spans,
+    pxa_raster_spans_t *output);
+pxa_status_t pxa_raster_projected_spans_validate(const uint8_t *packet, size_t size,
     uint8_t *memory, size_t memory_size, uint32_t max_spans,
     pxa_raster_spans_t *output);
 /* Disjoint byte ranges may execute concurrently; ordering inside each range

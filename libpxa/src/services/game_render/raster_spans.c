@@ -6,16 +6,12 @@
  * d_scan.c lit-span kernel (MG24Quake / Nicola Wrachien and contributors).
  * Keep the 10.6 wrapping, packed vertical light pair and colormap semantics.
  */
-#include "pxa/raster_spans.h"
+#include "raster_spans_internal.h"
 #include <limits.h>
 #include <string.h>
 
 static int valid_range(uint32_t offset, uint32_t bytes, size_t size) {
     return bytes && offset <= size && bytes <= size - offset;
-}
-
-static int overlap(uint64_t a, uint32_t an, uint64_t b, uint32_t bn) {
-    return a < b + bn && b < a + an;
 }
 
 static inline int32_t asr(int32_t value, unsigned bits) {
@@ -39,24 +35,21 @@ static inline uint32_t light_word(const uint32_t *p) {
 #endif
 }
 
-pxa_status_t pxa_raster_spans_validate(const uint8_t *packet, size_t size,
-    uint8_t *memory, size_t memory_size, uint32_t max_spans,
+pxa_status_t pxa_raster_material_validate(const uint8_t *packet, size_t size,
+    uint8_t *memory, size_t memory_size, uint32_t max_spans, uint32_t magic, uint32_t prefix, uint32_t record_bytes,
     pxa_raster_spans_t *output) {
-    pxa_game_render_spans_header_wire_t h;
+    pxa_game_render_spans_header_wire_t h = {0};
     uint32_t i, light_limit;
-    uint64_t pixels = 0;
-    uint32_t first_pixel = UINT32_MAX, end_pixel = 0;
     if (!output) return PXA_STATUS_INVALID_ARGUMENT;
     memset(output, 0, sizeof(*output));
     if (!packet || !memory || (uintptr_t)packet > UINTPTR_MAX - size ||
         (uintptr_t)memory > UINTPTR_MAX - memory_size ||
         !pxa_game_render_spans_header_decode(packet, size, &h))
         return PXA_STATUS_INVALID_ARGUMENT;
-    if (h.magic != PXA_GAME_RENDER_SPANS_MAGIC || h.major != 1 || h.minor)
+    if (h.magic != magic || h.major != 1 || h.minor)
         return PXA_STATUS_UNSUPPORTED;
     if (h.reserved || !h.count || h.count > max_spans ||
-        (uint64_t)size != PXA_GAME_RENDER_SPANS_HEADER_BYTES +
-                    (uint64_t)h.count * PXA_GAME_RENDER_SPAN_BYTES ||
+        (uint64_t)size != prefix + (uint64_t)h.count * record_bytes ||
         h.flags & ~PXA_GAME_RENDER_SPANS_KNOWN_FLAGS ||
         !h.texture_width || !h.texture_height ||
         (uint64_t)h.texture_width * h.texture_height != h.texture_bytes ||
@@ -87,63 +80,77 @@ pxa_status_t pxa_raster_spans_validate(const uint8_t *packet, size_t size,
                 return PXA_STATUS_INVALID_ARGUMENT;
         }
     }
-    for (i = 0; i < h.count; ++i) {
-        pxa_game_render_span_wire_t s;
-        int32_t ss, tt, ds, dt;
-        int64_t se, te, lo_s, hi_s, lo_t, hi_t;
-        pxa_game_render_span_decode(packet + PXA_GAME_RENDER_SPANS_HEADER_BYTES +
-            (size_t)i * PXA_GAME_RENDER_SPAN_BYTES, PXA_GAME_RENDER_SPAN_BYTES, &s);
-        if (!s.count || s.destination > h.target_bytes ||
-            s.count > h.target_bytes - s.destination)
-            return PXA_STATUS_INVALID_ARGUMENT;
-        /* The target is a bounds view, not an allocation. Packed engines may
-         * include read-only subregions in its unused tail. Validate the exact
-         * write set against every source and the borrowed command bytes. */
-        {
-            uint64_t at = (uint64_t)h.target_offset + s.destination;
-            if (overlap(at, s.count, h.texture_offset, h.texture_bytes) ||
-                overlap(at, s.count, h.light_offset, h.light_bytes) ||
-                overlap(at, s.count, h.colormap_offset, h.colormap_bytes) ||
-                ((uintptr_t)packet < (uintptr_t)memory + at + s.count &&
-                 (uintptr_t)memory + at < (uintptr_t)packet + size))
-                return PXA_STATUS_INVALID_ARGUMENT;
-        }
-        ss = (int16_t)asr(s.s, 10); tt = (int16_t)asr(s.t, 10);
-        ds = asr(s.ds, 10); dt = asr(s.dt, 10);
-        se = ss + (int64_t)ds * (s.count - 1u);
-        te = tt + (int64_t)dt * (s.count - 1u);
-        /* A batch that crosses signed 10.6 wrap is left to the reference
-         * renderer. This makes the bounds proof constant work per span. */
-        if (se < INT16_MIN || se > INT16_MAX ||
-            te < INT16_MIN || te > INT16_MAX)
-            return PXA_STATUS_INVALID_ARGUMENT;
-        lo_s = asr(asr(ss < se ? ss : (int32_t)se, 6), h.light_shift) - h.light_origin_s;
-        hi_s = asr(asr(ss > se ? ss : (int32_t)se, 6), h.light_shift) - h.light_origin_s;
-        lo_t = asr(asr(tt < te ? tt : (int32_t)te, 6), h.light_shift) - h.light_origin_t;
-        hi_t = asr(asr(tt > te ? tt : (int32_t)te, 6), h.light_shift) - h.light_origin_t;
-        if (lo_s < 0 || hi_s + 1 >= h.light_width ||
-            lo_t < 0 || hi_t + 1 >= h.light_height)
-            return PXA_STATUS_INVALID_ARGUMENT;
-        pixels += s.count;
-        if (s.destination < first_pixel) first_pixel = s.destination;
-        if (s.destination + s.count > end_pixel) end_pixel = s.destination + s.count;
-        /* Bound total work, even when an untrusted batch redraws one pixel. */
-        if (pixels > 262144u || pixels > (uint64_t)h.target_bytes * 4u)
-            return PXA_STATUS_LIMIT_EXCEEDED;
-    }
-    output->records = packet + PXA_GAME_RENDER_SPANS_HEADER_BYTES;
+    output->records = packet + prefix;
     output->target = memory + h.target_offset;
     output->texture = memory + h.texture_offset;
     output->lights = (const uint32_t *)(const void *)(memory + h.light_offset);
     output->colormap = memory + h.colormap_offset;
     output->count = h.count; output->target_bytes = h.target_bytes;
-    output->first_pixel = first_pixel; output->end_pixel = end_pixel;
+    output->first_pixel = UINT32_MAX;
     output->texture_width = h.texture_width; output->texture_height = h.texture_height;
-    output->light_width = h.light_width;
+    output->light_width = h.light_width; output->light_height = h.light_height;
+    output->texture_bytes = h.texture_bytes; output->light_bytes = h.light_bytes;
+    output->colormap_bytes = h.colormap_bytes;
     output->light_origin_s = h.light_origin_s; output->light_origin_t = h.light_origin_t;
     output->wrap_s = h.wrap_s; output->wrap_t = h.wrap_t;
     output->light_shift = h.light_shift; output->flags = h.flags;
-    output->pixels = pixels;
+    return PXA_STATUS_OK;
+}
+
+
+int pxa_raster_write_disjoint(const pxa_raster_spans_t *b, const uint8_t *destination,
+    uint32_t bytes, const uint8_t *packet, size_t size) {
+    uintptr_t at = (uintptr_t)destination;
+#define DISJOINT(p, n) (at >= (uintptr_t)(p) + (n) || (uintptr_t)(p) >= at + bytes)
+    return DISJOINT(b->texture, b->texture_bytes) &&
+        DISJOINT(b->lights, b->light_bytes) &&
+        DISJOINT(b->colormap, b->colormap_bytes) && DISJOINT(packet, size);
+#undef DISJOINT
+}
+
+pxa_status_t pxa_raster_span_validate(pxa_raster_spans_t *b,
+    const pxa_game_render_span_wire_t *s, const uint8_t *packet, size_t size) {
+    int32_t ss, tt, ds, dt;
+    int64_t se, te, lo_s, hi_s, lo_t, hi_t;
+    if (!s->count || s->destination > b->target_bytes ||
+        s->count > b->target_bytes - s->destination ||
+        !pxa_raster_write_disjoint(b, b->target + s->destination, s->count, packet, size))
+        return PXA_STATUS_INVALID_ARGUMENT;
+    ss = (int16_t)asr(s->s, 10); tt = (int16_t)asr(s->t, 10);
+    ds = asr(s->ds, 10); dt = asr(s->dt, 10);
+    se = ss + (int64_t)ds * (s->count - 1u);
+    te = tt + (int64_t)dt * (s->count - 1u);
+    /* Crossing signed 10.6 wrap is left to the reference renderer. */
+    if (se < INT16_MIN || se > INT16_MAX || te < INT16_MIN || te > INT16_MAX)
+        return PXA_STATUS_INVALID_ARGUMENT;
+    lo_s = asr(asr(ss < se ? ss : (int32_t)se, 6), b->light_shift) - b->light_origin_s;
+    hi_s = asr(asr(ss > se ? ss : (int32_t)se, 6), b->light_shift) - b->light_origin_s;
+    lo_t = asr(asr(tt < te ? tt : (int32_t)te, 6), b->light_shift) - b->light_origin_t;
+    hi_t = asr(asr(tt > te ? tt : (int32_t)te, 6), b->light_shift) - b->light_origin_t;
+    if (lo_s < 0 || hi_s + 1 >= b->light_width ||
+        lo_t < 0 || hi_t + 1 >= b->light_height)
+        return PXA_STATUS_INVALID_ARGUMENT;
+    b->pixels += s->count;
+    if (b->pixels > 262144u || b->pixels > (uint64_t)b->target_bytes * 4u)
+        return PXA_STATUS_LIMIT_EXCEEDED;
+    if (s->destination < b->first_pixel) b->first_pixel = s->destination;
+    if (s->destination + s->count > b->end_pixel) b->end_pixel = s->destination + s->count;
+    return PXA_STATUS_OK;
+}
+
+pxa_status_t pxa_raster_spans_validate(const uint8_t *packet, size_t size,
+    uint8_t *memory, size_t memory_size, uint32_t max_spans, pxa_raster_spans_t *output) {
+    pxa_status_t status = pxa_raster_material_validate(packet, size, memory, memory_size,
+        max_spans, PXA_GAME_RENDER_SPANS_MAGIC, PXA_GAME_RENDER_SPANS_HEADER_BYTES,
+        PXA_GAME_RENDER_SPAN_BYTES, output);
+    if (status) return status;
+    for (uint32_t i = 0; i < output->count; ++i) {
+        pxa_game_render_span_wire_t s = {0};
+        pxa_game_render_span_decode(output->records + (size_t)i * PXA_GAME_RENDER_SPAN_BYTES,
+            PXA_GAME_RENDER_SPAN_BYTES, &s);
+        status = pxa_raster_span_validate(output, &s, packet, size);
+        if (status) return status;
+    }
     return PXA_STATUS_OK;
 }
 
@@ -158,8 +165,8 @@ static void span_##shift##_##pow2(const pxa_raster_spans_t *restrict b, uint8_t 
     while (n--) { \
         int32_t ss = (int16_t)s, tt = (int16_t)t; \
         int32_t si = asr(ss, 6), ti = asr(tt, 6); \
-        const uint32_t *p = b->lights + asr(si, shift) + \
-            (int32_t)b->light_width * asr(ti, shift) - origin; \
+        const uint32_t *p = b->lights + (asr(si, shift) + \
+            (int32_t)b->light_width * asr(ti, shift) - origin); \
         uint32_t l0 = light_word(p), l1 = light_word(p + 1), dy = (uint32_t)ti & mask; \
         int32_t a0 = (int16_t)l0, a1 = (int16_t)l1; \
         int32_t left = a0 * (1 << shift) + ((int32_t)(l0 >> 16) - a0) * (int32_t)dy; \
@@ -183,28 +190,34 @@ SPAN_KERNEL(1, 0) SPAN_KERNEL(2, 0) SPAN_KERNEL(3, 0) SPAN_KERNEL(4, 0)
 SPAN_KERNEL(1, 1) SPAN_KERNEL(2, 1) SPAN_KERNEL(3, 1) SPAN_KERNEL(4, 1)
 #undef SPAN_KERNEL
 
-void pxa_raster_spans_execute_range(const pxa_raster_spans_t *b,
-    uint32_t begin, uint32_t end) {
-    typedef void (*kernel_fn)(const pxa_raster_spans_t *, uint8_t *,
-        uint32_t, uint32_t, uint32_t, uint32_t, uint32_t);
-    static const kernel_fn kernels[2][4] = {
+pxa_span_kernel_fn pxa_raster_span_kernel(const pxa_raster_spans_t *b) {
+    static const pxa_span_kernel_fn kernels[2][4] = {
         {span_1_0, span_2_0, span_3_0, span_4_0},
         {span_1_1, span_2_1, span_3_1, span_4_1}};
-    kernel_fn fn = kernels[!!(b->flags & PXA_GAME_RENDER_SPANS_POW2)][b->light_shift - 1u];
-    uint32_t i;
+    return kernels[!!(b->flags & PXA_GAME_RENDER_SPANS_POW2)][b->light_shift - 1u];
+}
+
+void pxa_raster_span_execute_clipped(const pxa_raster_spans_t *b, pxa_span_kernel_fn fn,
+    const pxa_game_render_span_wire_t *s, uint32_t begin, uint32_t end) {
+    uint32_t first = s->destination > begin ? s->destination : begin;
+    uint32_t last = s->destination + s->count < end ? s->destination + s->count : end;
+    if (last <= first) return;
+    uint32_t skip = first - s->destination;
+    uint32_t ds = (uint32_t)asr(s->ds, 10), dt = (uint32_t)asr(s->dt, 10);
+    fn(b, b->target + first, last - first,
+        (uint32_t)asr(s->s, 10) + skip * ds,
+        (uint32_t)asr(s->t, 10) + skip * dt, ds, dt);
+}
+
+void pxa_raster_spans_execute_range(const pxa_raster_spans_t *b,
+    uint32_t begin, uint32_t end) {
+    if (b->projected) { pxa_raster_projected_execute_range(b, begin, end); return; }
+    pxa_span_kernel_fn fn = pxa_raster_span_kernel(b);
     if (end > b->target_bytes) end = b->target_bytes;
-    for (i = 0; i < b->count; ++i) {
+    for (uint32_t i = 0; i < b->count; ++i) {
         pxa_game_render_span_wire_t s = {0};
-        uint32_t first, last, skip, ds, dt;
         pxa_game_render_span_decode(b->records + (size_t)i * PXA_GAME_RENDER_SPAN_BYTES,
             PXA_GAME_RENDER_SPAN_BYTES, &s);
-        first = s.destination > begin ? s.destination : begin;
-        last = s.destination + s.count < end ? s.destination + s.count : end;
-        if (last <= first) continue;
-        skip = first - s.destination;
-        ds = (uint32_t)asr(s.ds, 10); dt = (uint32_t)asr(s.dt, 10);
-        fn(b, b->target + first, last - first,
-            (uint32_t)asr(s.s, 10) + skip * ds,
-            (uint32_t)asr(s.t, 10) + skip * dt, ds, dt);
+        pxa_raster_span_execute_clipped(b, fn, &s, begin, end);
     }
 }

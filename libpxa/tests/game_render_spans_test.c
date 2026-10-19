@@ -111,6 +111,60 @@ int main(void) {
     assert(pxa_read_u64(p) == 2 && pxa_read_u64(p + 8) == 3 && pxa_read_u64(p + 24) == 16);
     assert(pxa_read_u32(p + 56) == 2 && pxa_read_u32(p + 60) == 0);
     assert(pxa_runtime_io64(runtime, component, handle, 0x101, p, 64) == PXA_STATUS_UNSUPPORTED);
+    /* Projected execution borrows the fresh memory view, validates every row
+     * before either colour or depth writes, and shares the original context. */
+    h.magic = PXA_GAME_RENDER_PROJECTED_MAGIC;
+    pxa_game_render_projection_wire_t projection = {0};
+    projection.z_origin_bits = 0x3d800000; /* 1 / 16 */
+    projection.s_max = projection.t_max = 65535;
+    projection.pitch = 8; projection.flags = PXA_GAME_RENDER_PROJECTED_WRITE_DEPTH;
+    projection.depth_offset = 4200; projection.depth_bytes = 64; projection.depth_pitch = 16;
+    pxa_game_render_row_wire_t rows[2] = {{1, 1, 4, 0}, {0, 0, 8, 0}};
+    pxa_game_render_spans_header_encode(p, 72, &h);
+    pxa_game_render_projection_encode(p + 72, 80, &projection);
+    for (unsigned i = 0; i < 2; ++i) pxa_game_render_row_encode(p + 152 + i*8, 8, &rows[i]);
+    memset(memory + 4096, 0xa5, 32); memset(memory + 4200, 0x5a, 64);
+    assert(pxa_runtime_io64(runtime, component, handle, 0x106, p, 168) == PXA_STATUS_BAD_STATE);
+    assert(pxa_runtime_io64_memory(runtime, component, handle, 0x106, p, 168, memory, 8192) == 168);
+    assert(memory[4096] == 37 && memory[4105] == 37 && memory[4104] == 0xa5);
+    assert(pxa_read_u16(memory + 4200) == 0x0800 && pxa_read_u16(memory + 4218) == 0x0800);
+    assert(pxa_read_u16(memory + 4216) == 0x5a5a);
+    memcpy(moved, memory, 8192); memset(moved + 1024, 89, 16);
+    assert(pxa_runtime_io64_memory(runtime, component, handle, 0x106, moved + 6000,
+        168, moved, 8192) == 168);
+    assert(moved[4096] == 89 && memory[4096] == 37);
+    const uint32_t invalid_coefficients[] = {0x7fc00000, 0x7f800000, 0xff800000,
+        0xbf800000, 0x00000000, 0x7f7fffff};
+    for (unsigned i = 0; i < sizeof(invalid_coefficients)/sizeof(*invalid_coefficients); ++i) {
+        pxa_write_u32(p + 72 + 24, invalid_coefficients[i]);
+        memset(memory + 4096, 0xa5, 32); memset(memory + 4200, 0x5a, 64);
+        assert(pxa_runtime_io64_memory(runtime, component, handle, 0x106, p, 168,
+            memory, 8192) == PXA_STATUS_INVALID_ARGUMENT);
+        for (unsigned j = 0; j < 32; ++j) assert(memory[4096 + j] == 0xa5);
+        for (unsigned j = 0; j < 64; ++j) assert(memory[4200 + j] == 0x5a);
+    }
+    pxa_game_render_projection_encode(p + 72, 80, &projection);
+    /* A bad final row cannot leave the first row partially executed. */
+    pxa_write_u16(p + 160 + 2, 65535);
+    assert(pxa_runtime_io64_memory(runtime, component, handle, 0x106, p, 168,
+        memory, 8192) == PXA_STATUS_INVALID_ARGUMENT);
+    for (unsigned j = 0; j < 32; ++j) assert(memory[4096 + j] == 0xa5);
+    for (unsigned j = 0; j < 64; ++j) assert(memory[4200 + j] == 0x5a);
+    pxa_game_render_row_encode(p + 160, 8, &rows[1]);
+    const uint32_t invalid_depth[] = {4096, 1024, 2048, 3072, 6000, 8190, 4201};
+    for (unsigned i = 0; i < sizeof(invalid_depth)/sizeof(*invalid_depth); ++i) {
+        pxa_write_u32(p + 72 + 64, invalid_depth[i]);
+        assert(pxa_runtime_io64_memory(runtime, component, handle, 0x106, p, 168,
+            memory, 8192) == PXA_STATUS_INVALID_ARGUMENT);
+    }
+    pxa_game_render_projection_encode(p + 72, 80, &projection);
+    pxa_write_u16(p + 72 + 76, 0); /* Depth addresses require the explicit flag. */
+    assert(pxa_runtime_io64_memory(runtime, component, handle, 0x106, p, 168,
+        memory, 8192) == PXA_STATUS_INVALID_ARGUMENT);
+    projection.depth_offset = projection.depth_bytes = projection.depth_pitch = projection.flags = 0;
+    pxa_game_render_projection_encode(p + 72, 80, &projection);
+    assert(pxa_runtime_io64_memory(runtime, component, handle, 0x106, p, 168, memory, 8192) == 168);
+    for (unsigned j = 0; j < 64; ++j) assert(memory[4200 + j] == 0x5a);
     assert(pxa_handle_close64(runtime, component, handle) == 0);
     assert(pxa_runtime_io64(runtime, component, handle, 0x105, p, 64) < 0);
     assert(pxa_component_finish_event(runtime, component, 1) == 0);

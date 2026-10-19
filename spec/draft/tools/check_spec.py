@@ -268,7 +268,7 @@ def validate_specs() -> tuple[int, int]:
         "audio": (10, "0.9.0"), "permission": (11, "0.1.0"),
         "work": (13, "0.1.0"), "wasi": (14, "0.1.0"),
         "device": (15, "0.2.0"), "surface": (16, "0.2.0"),
-        "game-render": (18, "1.0.0"), "log": (19, "0.1.0"),
+        "game-render": (18, "1.1.0"), "log": (19, "0.1.0"),
         "store-installer": (20, "0.5.0"), "assets": (21, "2.3.0"),
         "ime": (22, "0.1.0"),
     }

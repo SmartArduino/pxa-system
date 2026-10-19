@@ -3,7 +3,7 @@
 #include <assert.h>
 #include <string.h>
 
-static uint8_t captured[120];
+static uint8_t captured[168];
 static int32_t failure;
 static int short_reply, reserved;
 int32_t pxa_test_control(const uint8_t *p, uint32_t n) {
@@ -12,7 +12,7 @@ int32_t pxa_test_control(const uint8_t *p, uint32_t n) {
 int32_t pxa_io(uint64_t handle, uint32_t op, uint8_t *p, uint32_t n) {
     assert(handle == 77);
     if (failure) return failure;
-    if (op == PXA_GAME_RENDER_IO_EXECUTE_SPANS) {
+    if (op == PXA_GAME_RENDER_IO_EXECUTE_SPANS || op == PXA_GAME_RENDER_IO_EXECUTE_PROJECTED_SPANS) {
         assert(n <= sizeof(captured)); memcpy(captured, p, n);
     } else {
         assert(op == PXA_GAME_RENDER_IO_SPAN_TELEMETRY && n == 64);
@@ -41,6 +41,25 @@ int main(void) {
     failure = 0;
     assert(!pxa_game_render_span_append(&batch, &span));
     assert(pxa_game_render_execute_spans(77, &batch) == PXA_STATUS_LIMIT_EXCEEDED);
+    uint8_t projected_bytes[168];
+    pxa_game_render_projection_wire_t projection = {0};
+    pxa_game_render_projected_batch_t projected;
+    pxa_game_render_row_wire_t row = {3, 4, 8, 0}, decoded_row;
+    pxa_game_render_projected_batch_begin(&projected, projected_bytes, sizeof(projected_bytes), &header, &projection);
+    assert(pxa_game_render_execute_projected_spans(77, &projected) == 0);
+    assert(pxa_game_render_projected_append(&projected, &row));
+    assert(pxa_game_render_execute_projected_spans(77, &projected) == 160);
+    assert(pxa_load_u32(captured) == PXA_GAME_RENDER_PROJECTED_MAGIC);
+    assert(pxa_game_render_row_decode(captured + 152, 8, &decoded_row));
+    assert(decoded_row.x == 3 && decoded_row.y == 4 && decoded_row.count == 8);
+    short_reply = 1;
+    assert(pxa_game_render_execute_projected_spans(77, &projected) == PXA_STATUS_PROTOCOL_ERROR);
+    short_reply = 0; failure = PXA_STATUS_WOULD_BLOCK;
+    assert(pxa_game_render_execute_projected_spans(77, &projected) == failure);
+    failure = 0;
+    assert(pxa_game_render_projected_append(&projected, &row));
+    assert(!pxa_game_render_projected_append(&projected, &row));
+    assert(pxa_game_render_execute_projected_spans(77, &projected) == PXA_STATUS_LIMIT_EXCEEDED);
     pxa_game_render_span_telemetry_t stats;
     assert(pxa_game_render_query_span_telemetry(77, &stats) == 0);
     assert(stats.batches == UINT64_C(0x123456789) && stats.pixels == 64000 && stats.max_spans == 256);

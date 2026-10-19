@@ -6,6 +6,8 @@
 #define PXA_GAME_RENDER_CREATE_RASTER_CONTEXT 3u
 #define PXA_GAME_RENDER_IO_EXECUTE_SPANS 0x104u
 #define PXA_GAME_RENDER_IO_SPAN_TELEMETRY 0x105u
+#define PXA_GAME_RENDER_IO_EXECUTE_PROJECTED_SPANS 0x106u
+#define PXA_GAME_RENDER_FEATURE_PROJECTED_INDEXED_SPANS UINT64_C(4)
 #define PXA_GAME_RENDER_FEATURE_BORROWED_INDEXED_SPANS UINT64_C(2)
 
 typedef struct {
@@ -109,5 +111,52 @@ static inline int32_t pxa_game_render_execute_spans(uint64_t context,
     pxa_store_u32(b->bytes + 8, b->count);
     return pxa_io(context, PXA_GAME_RENDER_IO_EXECUTE_SPANS, b->bytes,
         PXA_GAME_RENDER_SPANS_HEADER_BYTES + b->count * PXA_GAME_RENDER_SPAN_BYTES);
+}
+
+/* Projected batches use the same caller-owned storage and sticky errors.
+ * Keep the distinct builder type to prevent selecting the wrong wire format. */
+typedef struct { pxa_game_render_span_batch_t batch; } pxa_game_render_projected_batch_t;
+
+static inline void pxa_game_render_projected_batch_begin(
+    pxa_game_render_projected_batch_t *projected, uint8_t *bytes, size_t capacity,
+    const pxa_game_render_spans_header_wire_t *header,
+    const pxa_game_render_projection_wire_t *projection) {
+    if (!projected) return;
+    pxa_game_render_span_batch_t *b = &projected->batch;
+    pxa_game_render_span_batch_begin(b, bytes, capacity, header);
+    if (b->status) return;
+    if (!projection || capacity < PXA_GAME_RENDER_PROJECTED_PREFIX_BYTES) {
+        b->status = PXA_STATUS_INVALID_ARGUMENT; return;
+    }
+    pxa_store_u32(bytes, PXA_GAME_RENDER_PROJECTED_MAGIC);
+    pxa_game_render_projection_encode(bytes + PXA_GAME_RENDER_SPANS_HEADER_BYTES,
+        PXA_GAME_RENDER_PROJECTION_BYTES, projection);
+}
+
+static inline int pxa_game_render_projected_append(pxa_game_render_projected_batch_t *projected,
+    const pxa_game_render_row_wire_t *row) {
+    if (!projected) return 0;
+    pxa_game_render_span_batch_t *b = &projected->batch;
+    if (b->status) return 0;
+    if (!row || !row->count || row->reserved) { b->status = PXA_STATUS_INVALID_ARGUMENT; return 0; }
+    size_t pos = PXA_GAME_RENDER_PROJECTED_PREFIX_BYTES + (size_t)b->count * PXA_GAME_RENDER_ROW_BYTES;
+    if (pos > b->capacity || b->capacity - pos < PXA_GAME_RENDER_ROW_BYTES) {
+        b->status = PXA_STATUS_LIMIT_EXCEEDED; return 0;
+    }
+    pxa_game_render_row_encode(b->bytes + pos, PXA_GAME_RENDER_ROW_BYTES, row);
+    ++b->count;
+    return 1;
+}
+
+static inline int32_t pxa_game_render_execute_projected_spans(uint64_t context,
+    pxa_game_render_projected_batch_t *projected) {
+    if (!context || !projected) return PXA_STATUS_INVALID_ARGUMENT;
+    pxa_game_render_span_batch_t *b = &projected->batch;
+    if (b->status) return b->status;
+    if (!b->count) return 0;
+    pxa_store_u32(b->bytes + 8, b->count);
+    uint32_t size = PXA_GAME_RENDER_PROJECTED_PREFIX_BYTES + b->count * PXA_GAME_RENDER_ROW_BYTES;
+    int32_t result = pxa_io(context, PXA_GAME_RENDER_IO_EXECUTE_PROJECTED_SPANS, b->bytes, size);
+    return result < 0 ? result : result == (int32_t)size ? result : PXA_STATUS_PROTOCOL_ERROR;
 }
 #endif

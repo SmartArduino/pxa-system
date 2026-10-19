@@ -24,17 +24,26 @@ def render(guest):
     lines.append('#define PXA_GAME_RENDER_SPANS_KNOWN_FLAGS %du' % flags)
     lines += ['#ifndef PXA_GAME_RENDER_SPANS_WIRE_SHARED_H',
               '#define PXA_GAME_RENDER_SPANS_WIRE_SHARED_H']
-    for record, typename, sizekey in [('header', 'spans_header', 'header_bytes'),
-                                      ('span', 'span', 'span_bytes')]:
-        fields = schema[record]
-        assert sum(WIDTHS[t] for _, t in fields) == schema[sizekey]
+    projected = schema['projected']
+    lines += ['#define PXA_GAME_RENDER_PROJECTED_MAGIC UINT32_C(%d)' % projected['magic'],
+              '#define PXA_GAME_RENDER_PROJECTION_BYTES %du' % projected['projection_bytes'],
+              '#define PXA_GAME_RENDER_ROW_BYTES %du' % projected['row_bytes'],
+              '#define PXA_GAME_RENDER_PROJECTED_PREFIX_BYTES %du' % (schema['header_bytes'] + projected['projection_bytes']),
+              '#define PXA_GAME_RENDER_PROJECTED_WRITE_DEPTH 1u',
+              '#define PXA_GAME_RENDER_PROJECTED_SEGMENT_PIXELS %du' % projected['segment_pixels']]
+    layouts = [(schema['header'], 'spans_header', schema['header_bytes']),
+               (schema['span'], 'span', schema['span_bytes']),
+               (projected['projection'], 'projection', projected['projection_bytes']),
+               (projected['row'], 'row', projected['row_bytes'])]
+    for fields, typename, record_size in layouts:
+        assert sum(WIDTHS[t] for _, t in fields) == record_size
         lines.append('typedef struct {')
         for name, kind in fields:
             lines.append('    %sint%d_t %s;' % ('' if kind[0] == 'i' else 'u', WIDTHS[kind] * 8, name))
         lines += ['} pxa_game_render_%s_wire_t;' % typename,
                   'static inline int pxa_game_render_%s_decode(const uint8_t *p, size_t n,' % typename,
                   '    pxa_game_render_%s_wire_t *v) {' % typename,
-                  '    if (!p || !v || n < %du) return 0;' % schema[sizekey]]
+                  '    if (!p || !v || n < %du) return 0;' % record_size]
         offset = 0
         for name, kind in fields:
             width = WIDTHS[kind]
@@ -44,7 +53,7 @@ def render(guest):
         lines += ['    return 1;', '}',
                   'static inline int pxa_game_render_%s_encode(uint8_t *p, size_t n,' % typename,
                   '    const pxa_game_render_%s_wire_t *v) {' % typename,
-                  '    if (!p || !v || n < %du) return 0;' % schema[sizekey]]
+                  '    if (!p || !v || n < %du) return 0;' % record_size]
         offset = 0
         for name, kind in fields:
             width = WIDTHS[kind]

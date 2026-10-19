@@ -10,6 +10,12 @@
 #define PXA_GAME_RENDER_SPANS_KNOWN_FLAGS 3u
 #ifndef PXA_GAME_RENDER_SPANS_WIRE_SHARED_H
 #define PXA_GAME_RENDER_SPANS_WIRE_SHARED_H
+#define PXA_GAME_RENDER_PROJECTED_MAGIC UINT32_C(1347442768)
+#define PXA_GAME_RENDER_PROJECTION_BYTES 80u
+#define PXA_GAME_RENDER_ROW_BYTES 8u
+#define PXA_GAME_RENDER_PROJECTED_PREFIX_BYTES 152u
+#define PXA_GAME_RENDER_PROJECTED_WRITE_DEPTH 1u
+#define PXA_GAME_RENDER_PROJECTED_SEGMENT_PIXELS 32u
 typedef struct {
     uint32_t magic;
     uint16_t major;
@@ -122,6 +128,105 @@ static inline int pxa_game_render_span_encode(uint8_t *p, size_t n,
     pxa_wire_generated_store_u32(p + 12, (uint32_t)v->t);
     pxa_wire_generated_store_u32(p + 16, (uint32_t)v->ds);
     pxa_wire_generated_store_u32(p + 20, (uint32_t)v->dt);
+    return 1;
+}
+typedef struct {
+    uint32_t s_origin_bits;
+    uint32_t s_du_bits;
+    uint32_t s_dv_bits;
+    uint32_t t_origin_bits;
+    uint32_t t_du_bits;
+    uint32_t t_dv_bits;
+    uint32_t z_origin_bits;
+    uint32_t z_du_bits;
+    uint32_t z_dv_bits;
+    int32_t s_adjust;
+    int32_t t_adjust;
+    int32_t s_max;
+    int32_t t_max;
+    int32_t s_offset;
+    int32_t t_offset;
+    uint32_t pitch;
+    uint32_t depth_offset;
+    uint32_t depth_bytes;
+    uint32_t depth_pitch;
+    uint16_t flags;
+    uint16_t reserved;
+} pxa_game_render_projection_wire_t;
+static inline int pxa_game_render_projection_decode(const uint8_t *p, size_t n,
+    pxa_game_render_projection_wire_t *v) {
+    if (!p || !v || n < 80u) return 0;
+    v->s_origin_bits = (uint32_t)pxa_wire_generated_load_u32(p + 0);
+    v->s_du_bits = (uint32_t)pxa_wire_generated_load_u32(p + 4);
+    v->s_dv_bits = (uint32_t)pxa_wire_generated_load_u32(p + 8);
+    v->t_origin_bits = (uint32_t)pxa_wire_generated_load_u32(p + 12);
+    v->t_du_bits = (uint32_t)pxa_wire_generated_load_u32(p + 16);
+    v->t_dv_bits = (uint32_t)pxa_wire_generated_load_u32(p + 20);
+    v->z_origin_bits = (uint32_t)pxa_wire_generated_load_u32(p + 24);
+    v->z_du_bits = (uint32_t)pxa_wire_generated_load_u32(p + 28);
+    v->z_dv_bits = (uint32_t)pxa_wire_generated_load_u32(p + 32);
+    v->s_adjust = (int32_t)pxa_wire_generated_load_u32(p + 36);
+    v->t_adjust = (int32_t)pxa_wire_generated_load_u32(p + 40);
+    v->s_max = (int32_t)pxa_wire_generated_load_u32(p + 44);
+    v->t_max = (int32_t)pxa_wire_generated_load_u32(p + 48);
+    v->s_offset = (int32_t)pxa_wire_generated_load_u32(p + 52);
+    v->t_offset = (int32_t)pxa_wire_generated_load_u32(p + 56);
+    v->pitch = (uint32_t)pxa_wire_generated_load_u32(p + 60);
+    v->depth_offset = (uint32_t)pxa_wire_generated_load_u32(p + 64);
+    v->depth_bytes = (uint32_t)pxa_wire_generated_load_u32(p + 68);
+    v->depth_pitch = (uint32_t)pxa_wire_generated_load_u32(p + 72);
+    v->flags = (uint16_t)pxa_wire_generated_load_u16(p + 76);
+    v->reserved = (uint16_t)pxa_wire_generated_load_u16(p + 78);
+    return 1;
+}
+static inline int pxa_game_render_projection_encode(uint8_t *p, size_t n,
+    const pxa_game_render_projection_wire_t *v) {
+    if (!p || !v || n < 80u) return 0;
+    pxa_wire_generated_store_u32(p + 0, (uint32_t)v->s_origin_bits);
+    pxa_wire_generated_store_u32(p + 4, (uint32_t)v->s_du_bits);
+    pxa_wire_generated_store_u32(p + 8, (uint32_t)v->s_dv_bits);
+    pxa_wire_generated_store_u32(p + 12, (uint32_t)v->t_origin_bits);
+    pxa_wire_generated_store_u32(p + 16, (uint32_t)v->t_du_bits);
+    pxa_wire_generated_store_u32(p + 20, (uint32_t)v->t_dv_bits);
+    pxa_wire_generated_store_u32(p + 24, (uint32_t)v->z_origin_bits);
+    pxa_wire_generated_store_u32(p + 28, (uint32_t)v->z_du_bits);
+    pxa_wire_generated_store_u32(p + 32, (uint32_t)v->z_dv_bits);
+    pxa_wire_generated_store_u32(p + 36, (uint32_t)v->s_adjust);
+    pxa_wire_generated_store_u32(p + 40, (uint32_t)v->t_adjust);
+    pxa_wire_generated_store_u32(p + 44, (uint32_t)v->s_max);
+    pxa_wire_generated_store_u32(p + 48, (uint32_t)v->t_max);
+    pxa_wire_generated_store_u32(p + 52, (uint32_t)v->s_offset);
+    pxa_wire_generated_store_u32(p + 56, (uint32_t)v->t_offset);
+    pxa_wire_generated_store_u32(p + 60, (uint32_t)v->pitch);
+    pxa_wire_generated_store_u32(p + 64, (uint32_t)v->depth_offset);
+    pxa_wire_generated_store_u32(p + 68, (uint32_t)v->depth_bytes);
+    pxa_wire_generated_store_u32(p + 72, (uint32_t)v->depth_pitch);
+    pxa_wire_generated_store_u16(p + 76, (uint16_t)v->flags);
+    pxa_wire_generated_store_u16(p + 78, (uint16_t)v->reserved);
+    return 1;
+}
+typedef struct {
+    uint16_t x;
+    uint16_t y;
+    uint16_t count;
+    uint16_t reserved;
+} pxa_game_render_row_wire_t;
+static inline int pxa_game_render_row_decode(const uint8_t *p, size_t n,
+    pxa_game_render_row_wire_t *v) {
+    if (!p || !v || n < 8u) return 0;
+    v->x = (uint16_t)pxa_wire_generated_load_u16(p + 0);
+    v->y = (uint16_t)pxa_wire_generated_load_u16(p + 2);
+    v->count = (uint16_t)pxa_wire_generated_load_u16(p + 4);
+    v->reserved = (uint16_t)pxa_wire_generated_load_u16(p + 6);
+    return 1;
+}
+static inline int pxa_game_render_row_encode(uint8_t *p, size_t n,
+    const pxa_game_render_row_wire_t *v) {
+    if (!p || !v || n < 8u) return 0;
+    pxa_wire_generated_store_u16(p + 0, (uint16_t)v->x);
+    pxa_wire_generated_store_u16(p + 2, (uint16_t)v->y);
+    pxa_wire_generated_store_u16(p + 4, (uint16_t)v->count);
+    pxa_wire_generated_store_u16(p + 6, (uint16_t)v->reserved);
     return 1;
 }
 #endif /* shared Host/Guest definitions */

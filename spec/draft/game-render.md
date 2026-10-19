@@ -1,4 +1,7 @@
-# PXA GameRender Service 1.0.0
+# PXA GameRender Service 1.1.0
+
+GameRender 1.1 adds projected scanlines and optional inverse-depth writes,
+with unchanged 1.0 requests and no additional persistent raster storage.
 
 GameRender 1.0 separates a compute-only raster context from a display context.
 `CREATE_RASTER_CONTEXT` (3) allocates only a resource slot and bounded counters;

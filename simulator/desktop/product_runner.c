@@ -4094,7 +4094,8 @@ static int run_product_simulator(const options_t *input,
     activation.core_version.major = PXA_CORE_VERSION_MAJOR;
     activation.core_version.minor = PXA_CORE_VERSION_MINOR;
     capabilities[8].features |= PXA_GAME_RENDER_FEATURE_ASSET_BINDINGS |
-        PXA_GAME_RENDER_FEATURE_BORROWED_INDEXED_SPANS;
+        PXA_GAME_RENDER_FEATURE_BORROWED_INDEXED_SPANS |
+        PXA_GAME_RENDER_FEATURE_PROJECTED_INDEXED_SPANS;
     capabilities[16].service = PXA_ASSETS_SERVICE_ID;
     capabilities[16].version.major = PXA_ASSETS_SERVICE_MAJOR;
     capabilities[16].version.minor = PXA_ASSETS_SERVICE_MINOR;

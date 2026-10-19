@@ -257,7 +257,8 @@ static int32_t span_context_io(pxa_game_render_resource_t *r,
         pxa_write_u32(data + 56, r->max_spans); pxa_write_u32(data + 60, 0);
         return (int32_t)size;
     }
-    if (operation == PXA_GAME_RENDER_IO_EXECUTE_SPANS) {
+    if (operation == PXA_GAME_RENDER_IO_EXECUTE_SPANS ||
+        operation == PXA_GAME_RENDER_IO_EXECUTE_PROJECTED_SPANS) {
         pxa_raster_spans_t batch;
         uint8_t *memory;
         size_t memory_size;
@@ -265,7 +266,8 @@ static int32_t span_context_io(pxa_game_render_resource_t *r,
         pxa_status_t status = pxa_runtime_borrow_memory(service->runtime,
             r->component, &memory, &memory_size);
         if (status == PXA_STATUS_OK)
-            status = pxa_raster_spans_validate(data, size, memory, memory_size,
+            status = (operation == PXA_GAME_RENDER_IO_EXECUTE_PROJECTED_SPANS ?
+                pxa_raster_projected_spans_validate : pxa_raster_spans_validate)(data, size, memory, memory_size,
                                               r->max_spans, &batch);
         validated = now_us(service);
         r->last_validation_us = (uint32_t)(validated - before);
@@ -581,7 +583,8 @@ pxa_status_t pxa_game_render_service_register(
     operations.major = PXA_GAME_RENDER_SERVICE_MAJOR;
     operations.minor = PXA_GAME_RENDER_SERVICE_MINOR;
     if (service->backend.bind_assets) operations.features = PXA_GAME_RENDER_FEATURE_ASSET_BINDINGS;
-    operations.features |= PXA_GAME_RENDER_FEATURE_BORROWED_INDEXED_SPANS;
+    operations.features |= PXA_GAME_RENDER_FEATURE_BORROWED_INDEXED_SPANS |
+        PXA_GAME_RENDER_FEATURE_PROJECTED_INDEXED_SPANS;
     operations.context = service;
     operations.control = game_render_control;
     status = pxa_service_register(service->runtime, &operations);
