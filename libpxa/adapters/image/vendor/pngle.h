@@ -28,6 +28,10 @@
 #include <stdint.h>
 #include <stddef.h>
 
+/* PXA: shared source-work limits; output pixels have a separate caller budget. */
+#define PNGLE_MAX_DIMENSION 4096u
+#define PNGLE_MAX_PIXELS 4194304u
+
 #ifdef __cplusplus
 extern "C" {
 #endif

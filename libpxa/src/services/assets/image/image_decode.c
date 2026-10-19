@@ -18,7 +18,12 @@ struct pxa_image_decoder {
     size_t encoded, signature_size;
     pxa_status_t status;
     uint8_t signature[8], finished;
+    uint16_t input_budget;
 };
+void pxa_image_target_set_input_budget(pxa_image_target_t *target, size_t bytes) {
+    /* The opaque target is always the decoder's first member. */
+    if (target) ((pxa_image_decoder_t *)target)->input_budget = bytes < 4096 ? (uint16_t)bytes : 4096;
+}
 static void release_memory(void *context, void *memory) {
     (void)context;
     pxa_memory_release(memory);
@@ -218,6 +223,11 @@ pxa_status_t pxa_image_decoder_create(const pxa_image_decode_options_t *options,
     *out = d;
     return PXA_STATUS_OK;
 }
+size_t pxa_image_decoder_input_budget(const pxa_image_decoder_t *d) {
+    if (!d || !d->codec) return 64;
+    size_t hint = d->input_budget;
+    return hint && hint < 4096 ? hint : 4096;
+}
 pxa_status_t pxa_image_decoder_write(pxa_image_decoder_t *d, pxa_bytes_t input) {
     if (!d || !input.data || !input.size || input.size > 4096)
         return PXA_STATUS_INVALID_ARGUMENT;
@@ -249,6 +259,7 @@ pxa_status_t pxa_image_decoder_write(pxa_image_decoder_t *d, pxa_bytes_t input) 
         for (size_t i = 0; i < d->backend->count; ++i) {
             const pxa_image_codec_t *c = d->backend->codecs[i];
             void *session = NULL;
+            d->input_budget = 0;
             pxa_image_decode_options_t ordinary = d->target.options;
             if (c->next) {
                 uint32_t pixels = ordinary.max_animation_pixels, bytes = ordinary.max_animation_encoded_bytes;

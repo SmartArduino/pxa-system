@@ -6,11 +6,11 @@ typedef struct {
     pxa_image_target_t *target;
     const pxa_memory_allocator_t *temporary;
     pngle_t *png;
-    uint32_t width, height, pixels_seen, row_y, row_h, row_begin, row_end;
+    uint32_t width, height, pixels_seen, row_y, row_h, next_source_x, previous_end;
     uint16_t output_width, output_height;
     size_t pending_size;
     pxa_status_t status;
-    uint8_t done, pending[512];
+    uint8_t done, row_active, pending[512];
 } png_session_t;
 static void *allocate(void *context, size_t bytes) {
     return pxa_memory_allocate(((png_session_t *)context)->temporary, bytes);
@@ -23,9 +23,9 @@ static void begin(pngle_t *png, uint32_t w, uint32_t h) {
     png_session_t *s = pngle_get_user_data(png);
     s->width = w;
     s->height = h;
-    /* Keep PNG's existing entropy/work limit; lifting the JPEG input ceiling
-     * must not increase unrelated decoder workloads. */
-    s->status = !w || !h || w > 4096 || h > 4096 || w > 1048576u / h
+    /* Output remains caller-budgeted. Source storage is bounded by width,
+     * not source area; retain an area limit to bound decompression work. */
+    s->status = !w || !h || w > PNGLE_MAX_DIMENSION || h > PNGLE_MAX_DIMENSION || w > PNGLE_MAX_PIXELS / h
                     ? PXA_STATUS_LIMIT_EXCEEDED
                     : pxa_image_target_begin(s->target, w, h, 1);
     pxa_image_target_dimensions(s->target, &s->output_width, &s->output_height);
@@ -45,13 +45,27 @@ static void pixel(pngle_t *png, uint32_t x, uint32_t y, uint32_t w, uint32_t h,
     if (y != s->row_y || h != s->row_h) {
         s->row_y = y;
         s->row_h = h;
-        s->row_begin = (y * s->output_height + s->height - 1) / s->height;
-        s->row_end = ((y + h) * s->output_height + s->height - 1) / s->height;
+        uint32_t first = (y * s->output_height + s->height - 1) / s->height;
+        uint32_t end = ((y + h) * s->output_height + s->height - 1) / s->height;
+        s->row_active = first != end;
+        s->next_source_x = 0;
+        s->previous_end = 0;
     }
-    if (s->row_begin == s->row_end)
+    if (!s->row_active)
+        return;
+    /* Adam7 can revisit the same row in a later pass. Overlapping tiles start
+     * a fresh run, including tiny images whose previous pass had one tile.
+     * Skip source tiles containing no nearest-neighbour sample;
+     * keep the target's existing alpha/channel/interlace handling unchanged. */
+    if (x < s->previous_end)
+        s->next_source_x = 0;
+    s->previous_end = x + w;
+    if (x + w <= s->next_source_x)
         return;
     pxa_image_tile_t tile = {x, y, w, h, 1, 1, 4, PXA_IMAGE_RGBA8888, rgba};
     s->status = pxa_image_target_blit(s->target, &tile);
+    uint32_t next_output_x = ((x + w) * s->output_width + s->width - 1) / s->width;
+    s->next_source_x = next_output_x * s->width / s->output_width;
 }
 static pxa_status_t open_png(pxa_bytes_t signature, pxa_image_target_t *target,
                              const pxa_memory_allocator_t *temporary, void **session) {
@@ -59,6 +73,7 @@ static pxa_status_t open_png(pxa_bytes_t signature, pxa_image_target_t *target,
     *session = NULL;
     if (signature.size != 8 || memcmp(signature.data, magic, 8))
         return PXA_STATUS_UNSUPPORTED;
+    pxa_image_target_set_input_budget(target, 64);
     png_session_t *s = pxa_memory_allocate(temporary, sizeof(*s));
     if (!s)
         return PXA_STATUS_RESOURCE_LIMIT;
@@ -119,4 +134,5 @@ static void close_png(void *session) {
     pngle_destroy(s->png);
     pxa_memory_release(s);
 }
-const pxa_image_codec_t pxa_stream_png_codec = {.open = open_png, .write = write_png, .finish = finish_png, .close = close_png};
+const pxa_image_codec_t pxa_stream_png_codec = {
+    .open = open_png, .write = write_png, .finish = finish_png, .close = close_png};

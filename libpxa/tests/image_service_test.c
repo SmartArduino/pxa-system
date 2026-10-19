@@ -16,6 +16,7 @@ static unsigned live_sessions, io_calls, block_reads, input_position;
 static int codec_error, fail_read;
 static uint16_t decode_flags;
 static uint32_t animation_pixels, animation_bytes;
+static size_t input_hint;
 static int gif_signature;
 static const pxa_memory_allocator_t *allocator;
 static void *allocate(void *context, size_t n) {
@@ -29,6 +30,7 @@ static void release(void *context, void *p) {
 static pxa_status_t codec_open(pxa_bytes_t signature, pxa_image_target_t *target,
                                const pxa_memory_allocator_t *temporary, void **out) {
     assert(signature.size == 8);
+    pxa_image_target_set_input_budget(target, input_hint);
     codec_t *s = pxa_memory_allocate(temporary, sizeof(*s));
     if (!s)
         return PXA_STATUS_RESOURCE_LIMIT;
@@ -225,7 +227,7 @@ int main(void) {
     assert(!pxa_assets_service_poll(assets));
     assert(io_calls == 2 && !input_position);
     assert(pxa_assets_service_poll(assets));
-    assert(io_calls == 6 && input_position == 4096 && live_sessions == 1);
+    assert(io_calls == 6 && input_position == 64+3*1024 && live_sessions == 1);
     /* The owner schedules this solely from the preceding return value;
      * there are no Guest ticks and no pending Net wait operation. */
     assert(pxa_assets_service_poll(assets));
@@ -241,6 +243,23 @@ int main(void) {
     assert(!pxa_handle_close64(runtime, component, image));
     pxa_asset_object_release(view);
     pxa_asset_object_release(view);
+    /* A codec can ask the owner loop for short input slices. The initial
+     * probe is at most 64 bytes; later polls honor the selected codec, and a
+     * cancellation closes the partially decoded session before another read. */
+    input_hint = 16;
+    reset_input();
+    assert(!request(101, PXA_RESOURCE_STREAM));
+    assert(pxa_assets_service_poll(assets) && input_position == 64 && live_sessions == 1);
+    for (unsigned i = 0; i < 4; ++i) {
+        unsigned before = input_position;
+        assert(pxa_assets_service_poll(assets) && input_position - before == 16);
+    }
+    unsigned before_cancel = input_position;
+    assert(!pxa_request_cancel(runtime, component, 101));
+    pxa_assets_service_poll(assets);
+    assert(!live_sessions && input_position == before_cancel);
+    assert(result(101, &image) == PXA_STATUS_CANCELLED);
+    input_hint = 0;
     /* A plain ready file must make progress until EOF without native wakes. */
     assert(!pxa_handle_close64(runtime, component, source));
     assert(!pxa_handle_open64(runtime, component, PXA_RESOURCE_FILE, 0, &native, &source));

@@ -278,7 +278,18 @@ static int is_trans_color(pngle_t *pngle, uint16_t *value, size_t n)
 static inline void scanline_ringbuf_push(pngle_t *pngle, uint8_t value)
 {
 	pngle->scanline_ringbuf[pngle->scanline_ringbuf_cidx] = value;
-	pngle->scanline_ringbuf_cidx = (pngle->scanline_ringbuf_cidx + 1) % pngle->scanline_ringbuf_size;
+	if (++pngle->scanline_ringbuf_cidx == pngle->scanline_ringbuf_size) pngle->scanline_ringbuf_cidx = 0;
+}
+
+/* PXA: indices and distances are each less than the ring length. Use one
+ * conditional wrap instead of an integer division for every channel/byte. */
+static inline size_t ring_next(size_t index, size_t length)
+{
+	return index + 1 == length ? 0 : index + 1;
+}
+static inline size_t ring_before(size_t index, size_t distance, size_t length)
+{
+	return index >= distance ? index - distance : length - (distance - index);
 }
 
 static inline uint16_t read_pixel_value(const uint8_t *buf, size_t *ridx, int *bitcount, int depth, size_t buf_size)
@@ -292,7 +303,7 @@ static inline uint16_t read_pixel_value(const uint8_t *buf, size_t *ridx, int *b
 		{
 			if (*bitcount >= 8) {
 				*bitcount = 0;
-				*ridx = (*ridx + 1) % buf_size;
+				*ridx = ring_next(*ridx, buf_size);
 			}
 			*bitcount += depth;
 			const uint8_t mask = ((1UL << depth) - 1);
@@ -302,15 +313,15 @@ static inline uint16_t read_pixel_value(const uint8_t *buf, size_t *ridx, int *b
 
 	case 8:
 		v = buf[*ridx];
-		*ridx = (*ridx + 1) % buf_size;
+		*ridx = ring_next(*ridx, buf_size);
 		return v;
 
 	case 16:
 		v = buf[*ridx];
-		*ridx = (*ridx + 1) % buf_size;
+		*ridx = ring_next(*ridx, buf_size);
 
 		v = v * 0x100 + buf[*ridx];
-		*ridx = (*ridx + 1) % buf_size;
+		*ridx = ring_next(*ridx, buf_size);
 		return v;
 	}
 
@@ -352,10 +363,11 @@ static const uint8_t *adjust_color(pngle_t *pngle, uint16_t v[4])
 		v[1] = v[2] = v[0];
 	}
 
-	rgba[0] = (v[0] * 255 + maxval / 2) / maxval;
-	rgba[1] = (v[1] * 255 + maxval / 2) / maxval;
-	rgba[2] = (v[2] * 255 + maxval / 2) / maxval;
-	rgba[3] = (v[3] * 255 + maxval / 2) / maxval;
+	if (maxval == 255) {
+		for (unsigned i = 0; i < 4; ++i) rgba[i] = (uint8_t)v[i];
+	} else {
+		for (unsigned i = 0; i < 4; ++i) rgba[i] = (v[i] * 255 + maxval / 2) / maxval;
+	}
 
 #ifndef PNGLE_NO_GAMMA_CORRECTION
 	if (pngle->gamma_table) {
@@ -501,8 +513,9 @@ static int pngle_on_data(pngle_t *pngle, const uint8_t *p, int len)
 		}
 
 		size_t cidx =  pngle->scanline_ringbuf_cidx;
-		size_t bidx = (pngle->scanline_ringbuf_cidx                                + bytes_per_pixel) % pngle->scanline_ringbuf_size;
-		size_t aidx = (pngle->scanline_ringbuf_cidx + pngle->scanline_ringbuf_size - bytes_per_pixel) % pngle->scanline_ringbuf_size;
+		size_t bidx = cidx + bytes_per_pixel;
+		if (bidx >= pngle->scanline_ringbuf_size) bidx -= pngle->scanline_ringbuf_size;
+		size_t aidx = ring_before(cidx, bytes_per_pixel, pngle->scanline_ringbuf_size);
 		// debug_printf("[pngle] cidx = %zd, bidx = %zd, aidx = %zd\n", cidx, bidx, aidx);
 
 		uint8_t c = pngle->scanline_ringbuf[cidx]; // left-up
@@ -524,7 +537,7 @@ static int pngle_on_data(pngle_t *pngle, const uint8_t *p, int len)
 
 		if (pngle->scanline_remain_bytes_to_render < 0) pngle->scanline_remain_bytes_to_render = bytes_per_pixel;
 		if (--pngle->scanline_remain_bytes_to_render == 0) {
-			size_t xidx = (pngle->scanline_ringbuf_cidx + pngle->scanline_ringbuf_size - bytes_per_pixel) % pngle->scanline_ringbuf_size;
+			size_t xidx = ring_before(pngle->scanline_ringbuf_cidx, bytes_per_pixel, pngle->scanline_ringbuf_size);
 
 			if (pngle_draw_pixels(pngle, xidx) < 0) return -1;
 
@@ -600,8 +613,8 @@ static int pngle_handle_chunk(pngle_t *pngle, const uint8_t *buf, size_t len)
 		if (pngle->hdr.compression != 0) return PNGLE_ERROR("Unsupported compression type in IHDR");
 		if (pngle->hdr.filter      != 0) return PNGLE_ERROR("Unsupported filter type in IHDR");
 
-		if (!pngle->hdr.width || !pngle->hdr.height || pngle->hdr.width > 4096 || pngle->hdr.height > 4096 ||
-            pngle->hdr.width > 1048576u / pngle->hdr.height || pngle->hdr.interlace > 1) return PNGLE_ERROR("Image dimensions exceed decoder limits");
+		if (!pngle->hdr.width || !pngle->hdr.height || pngle->hdr.width > PNGLE_MAX_DIMENSION || pngle->hdr.height > PNGLE_MAX_DIMENSION ||
+            pngle->hdr.width > PNGLE_MAX_PIXELS / pngle->hdr.height || pngle->hdr.interlace > 1) return PNGLE_ERROR("Image dimensions exceed decoder limits");
 
 		// interlace
 		if (set_interlace_pass(pngle, pngle->hdr.interlace ? 1 : 0) < 0) return -1;

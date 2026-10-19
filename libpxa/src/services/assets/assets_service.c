@@ -190,7 +190,12 @@ static int poll_image(pxa_assets_service_t *s, pending_t *p) {
      * source close, revocation or generation change. The borrowed operations
      * are the public byte-resource interface, not a backend-specific API. */
     uint8_t input[1024];
+    size_t work = 0;
     for (unsigned slice = 0; slice < 4; ++slice) {
+        size_t budget = pxa_image_decoder_input_budget(job->decoder);
+        if (work >= budget) break;
+        size_t capacity = budget - work;
+        if (capacity > sizeof(input)) capacity = sizeof(input);
         pxa_resource_t source = {0};
         status = pxa_handle_get64(s->runtime, p->component, job->source, job->source_type, &source);
         if (status) {
@@ -203,7 +208,7 @@ static int poll_image(pxa_assets_service_t *s, pending_t *p) {
             finished = 1;
             break;
         }
-        int32_t count = ops->io(source.context, PXA_IO_READ, input, sizeof(input));
+        int32_t count = ops->io(source.context, PXA_IO_READ, input, capacity);
         if (count == PXA_STATUS_WOULD_BLOCK)
             return 0;
         if (count < 0) {
@@ -211,7 +216,7 @@ static int poll_image(pxa_assets_service_t *s, pending_t *p) {
             finished = 1;
             break;
         }
-        if ((size_t)count > sizeof(input)) {
+        if ((size_t)count > capacity) {
             status = PXA_STATUS_PROTOCOL_ERROR;
             finished = 1;
             break;
@@ -226,6 +231,7 @@ static int poll_image(pxa_assets_service_t *s, pending_t *p) {
             break;
         }
         job->encoded_bytes += (uint32_t)count;
+        work += (size_t)count;
     }
     if (!finished)
         return 1;

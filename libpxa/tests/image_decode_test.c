@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 static size_t allocations, fail_at;
 static int mutated;
@@ -220,6 +221,61 @@ static pxa_status_t decode(const uint8_t *data, size_t bytes, size_t chunk, int 
     assert(!pxa_memory_owner_close(&budget, owner));
     return status;
 }
+static double micros(void) {
+    struct timespec t;
+    clock_gettime(CLOCK_MONOTONIC, &t);
+    return t.tv_sec * 1e6 + t.tv_nsec / 1e3;
+}
+static pxa_status_t large_png(const uint8_t *data, size_t bytes, const uint8_t *reference,
+    unsigned width, unsigned height, unsigned max_width, unsigned max_height, size_t chunk) {
+    pxa_memory_budget_t budget;
+    pxa_memory_budget_config_t config = {0};
+    config.limit[1] = 512 * 1024;
+    config.temporary_limit[1] = 384 * 1024;
+    assert(!pxa_memory_budget_init(&budget, &config));
+    pxa_memory_owner_t owner;
+    assert(!pxa_memory_owner_open(&budget, config.limit, &owner));
+    pxa_memory_allocator_t pixels = {&budget, owner, 1, PXA_MEMORY_IMAGE, NULL, raw_alloc, raw_free};
+    pxa_memory_allocator_t temporary = pixels;
+    temporary.kind = PXA_MEMORY_TEMPORARY;
+    pxa_image_decode_options_t options = {.max_width=max_width, .max_height=max_height,
+        .max_pixels=65536, .max_encoded_bytes=524288};
+    pxa_image_decoder_t *decoder = NULL;
+    pxa_status_t status = pxa_image_decoder_create(&options,&pixels,&temporary,pxa_posix_image_backend(),&decoder);
+    double longest = 0;
+    for (size_t at=0; !status && at<bytes;) {
+        size_t n=bytes-at;
+        if (n>chunk) n=chunk;
+        double start=micros();
+        status=pxa_image_decoder_write(decoder,(pxa_bytes_t){data+at,n});
+        double elapsed=micros()-start;
+        if (elapsed>longest) longest=elapsed;
+        at+=n;
+    }
+    pxa_decoded_image_t decoded = {0};
+    if (!status) status=pxa_image_decoder_finish(decoder,&decoded);
+    pxa_image_decoder_destroy(decoder);
+    if (!status) {
+        assert(decoded.source_width==width && decoded.source_height==height);
+        pxa_asset_object_view_t view;
+        pxa_asset_object_view(decoded.image,&view);
+        assert(view.width<=max_width && view.height<=max_height && view.width*view.height<=65536);
+        assert(view.bytes==(uint32_t)view.width*view.height*4);
+        for (unsigned y=0;y<view.height;++y)
+            for (unsigned x=0;x<view.width;++x) {
+                const uint8_t *expected=reference+4*((y*height/view.height)*width+x*width/view.width);
+                const uint8_t *actual=view.data+4*(y*view.width+x);
+                assert(actual[0]==expected[2] && actual[1]==expected[1] && actual[2]==expected[0] && actual[3]==expected[3]);
+            }
+        pxa_asset_object_release(decoded.image);
+    }
+    pxa_memory_stats_t stats;
+    assert(!pxa_memory_budget_stats(&budget,owner,&stats) && !stats.charged[1]);
+    if (!status) printf("PNG_INPUT source=%ux%u chunk=%zu output_limit=%ux%u temporary_peak=%zu charged_peak=%zu max_write_us=%.3f\n",
+        width,height,chunk,max_width,max_height,stats.temporary_peak[1],stats.peak[1],longest);
+    assert(!pxa_memory_owner_close(&budget,owner));
+    return status;
+}
 static pxa_status_t large_jpeg(const uint8_t *data, size_t bytes, const uint8_t *reference,
     size_t reference_bytes, unsigned width, unsigned height, size_t chunk) {
     pxa_memory_budget_t budget;
@@ -276,8 +332,44 @@ int main(int argc, char **argv) {
     lv_init();
     test_tiles();
     assert(argc == 2);
+    /* Tiny Adam7 images can refine the same y/h without x moving backwards:
+     * e.g. a 5x1 first pass covers x=0..4, the next pass starts at x=4. */
+    for (unsigned w=1;w<=9;++w) for (unsigned h=1;h<=9;++h) {
+        char name[64];size_t n,ref_n;
+        snprintf(name,sizeof(name),"tiny-%u-%u.png",w,h);
+        uint8_t *data=read_file(argv[1],name,&n);
+        snprintf(name,sizeof(name),"tiny-%u-%u.png.rgba",w,h);
+        uint8_t *reference=read_file(argv[1],name,&ref_n);
+        assert(ref_n==(size_t)w*h*4);
+        assert(!large_png(data,n,reference,w,h,73,91,7));
+        assert(!large_png(data,n,reference,w,h,3,5,7));
+        free(reference);free(data);
+    }
     const char *names[] = {"alpha.png",      "palette.png", "gray.png", "interlaced.png",
                            "background.png", "photo.jpg",   "gray.jpg"};
+    const char *png_names[] = {"large.png","large-interlaced.png","odd-interlaced.png","tall.png","single.png","area-boundary.png",
+        "depth-1.png","depth-2.png","depth-4.png","depth-16.png"};
+    const unsigned png_widths[] = {1280,1280,97,1,1,2048,17,17,17,17},png_heights[] = {1778,1778,65,1778,1,2048,13,13,13,13};
+    for (unsigned i=0;i<sizeof(png_names)/sizeof(*png_names);++i) {
+        size_t n,ref_n;
+        uint8_t *data=read_file(argv[1],png_names[i],&n);
+        char name[64];snprintf(name,sizeof(name),"%s.rgba",png_names[i]);
+        uint8_t *reference=read_file(argv[1],name,&ref_n);
+        assert(ref_n==(size_t)png_widths[i]*png_heights[i]*4);
+        const unsigned limits[][2]={{73,91},{256,1024},{1024,1},{1,1024}};
+        for (unsigned size=0;size<4;++size) {
+            assert(!large_png(data,n,reference,png_widths[i],png_heights[i],limits[size][0],limits[size][1],511));
+            assert(!large_png(data,n,reference,png_widths[i],png_heights[i],limits[size][0],limits[size][1],4096));
+        }
+        allocations=0;
+        assert(!large_png(data,n,reference,png_widths[i],png_heights[i],73,91,4096));
+        const size_t total=allocations;
+        for (size_t failure=1;failure<=total;++failure) {
+            allocations=0;fail_at=failure;
+            assert(large_png(data,n,reference,png_widths[i],png_heights[i],73,91,4096));
+        }
+        fail_at=0;free(reference);free(data);
+    }
     for (unsigned i=0;i<2;++i) {
         const char *name=i ? "portrait.jpg" : "padded.jpg";
         size_t n, reference_bytes;
@@ -339,8 +431,8 @@ int main(int argc, char **argv) {
         free(data);
     }
     const char *invalid[] = {"broken.png", "progressive.jpg", "unsupported.svg", "extra-pixels.png",
-                             "metadata-before-header.png"};
-    for (unsigned i = 0; i < 5; ++i) {
+                             "metadata-before-header.png", "over-area.png", "over-width.png", "over-height.png", "zero-width.png"};
+    for (unsigned i = 0; i < sizeof(invalid)/sizeof(*invalid); ++i) {
         size_t n;
         uint8_t *data = read_file(argv[1], invalid[i], &n);
         assert(decode(data, n, 7, i != 1, NULL));

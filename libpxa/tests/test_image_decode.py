@@ -12,6 +12,23 @@ import zlib
 from PIL import Image, ImageDraw
 
 
+def chunk(kind, payload):
+    return struct.pack('>I', len(payload))+kind+payload+struct.pack('>I', zlib.crc32(kind+payload))
+
+
+def adam7(image):
+    width, height = image.size
+    scanlines = bytearray()
+    for left, top, dx, dy in [(0,0,8,8),(4,0,8,8),(0,4,4,8),(2,0,4,4),
+                              (0,2,2,4),(1,0,2,2),(0,1,1,2)]:
+        if left >= width or top >= height: continue
+        for y in range(top, height, dy):
+            scanlines.append(0)
+            for x in range(left, width, dx): scanlines.extend(image.getpixel((x,y)))
+    return (b'\x89PNG\r\n\x1a\n'+chunk(b'IHDR', struct.pack('>IIBBBBB',width,height,8,6,0,0,1))+
+            chunk(b'IDAT', zlib.compress(scanlines))+chunk(b'IEND', b''))
+
+
 def main():
     with tempfile.TemporaryDirectory(prefix='pxa-image-decode-') as work:
         directory = Path(work)
@@ -20,16 +37,7 @@ def main():
                        for y in range(180) for x in range(320)])
         ImageDraw.Draw(image).rectangle((110, 60, 190, 120), fill=(255, 255, 255, 0))
         # Write Adam7 explicitly: Pillow's PNG encoder does not emit interlaced PNG.
-        def chunk(kind, payload):
-            return struct.pack('>I', len(payload))+kind+payload+struct.pack('>I', zlib.crc32(kind+payload))
-        scanlines = bytearray()
-        for left, top, dx, dy in [(0,0,8,8),(4,0,8,8),(0,4,4,8),(2,0,4,4),
-                                  (0,2,2,4),(1,0,2,2),(0,1,1,2)]:
-            for y in range(top, 180, dy):
-                scanlines.append(0)
-                for x in range(left, 320, dx): scanlines.extend(image.getpixel((x,y)))
-        interlaced = b'\x89PNG\r\n\x1a\n'+chunk(b'IHDR', struct.pack('>IIBBBBB',320,180,8,6,0,0,1))
-        interlaced += chunk(b'IDAT', zlib.compress(scanlines))+chunk(b'IEND', b'')
+        interlaced = adam7(image)
         (directory/'interlaced.png').write_bytes(interlaced)
         (directory/'interlaced.png.rgba').write_bytes(image.tobytes())
         # Suggested RGB background previously overran pngle's local channel array.
@@ -40,6 +48,50 @@ def main():
         signature = b'\x89PNG\r\n\x1a\n'
         (directory/'extra-pixels.png').write_bytes(signature+ihdr+chunk(b'IDAT', zlib.compress(b'\0'*(180*(320*4+1)+32768)))+end)
         (directory/'metadata-before-header.png').write_bytes(signature+chunk(b'bKGD', b'\0'*6)+ihdr+end)
+        tiny=Image.new('RGBA',(9,9))
+        tiny.putdata([(x*29,y*31,(x*17+y*11)%256,(x*13+y*19)%256) for y in range(9) for x in range(9)])
+        for width in range(1,10):
+            for height in range(1,10):
+                picture=tiny.crop((0,0,width,height));name=f'tiny-{width}-{height}.png'
+                (directory/name).write_bytes(adam7(picture))
+                (directory/(name+'.rgba')).write_bytes(picture.tobytes())
+        # The same source width requires the same row buffers at every height.
+        # Exact RGBA references also cover non-integral output sampling/Adam7.
+        large = Image.new('RGBA', (1280, 1778))
+        large.putdata([((x//32%8)*31,(y//32%8)*31,((x//16+y//32)%2)*200,(x//16%2)*127+128)
+                       for y in range(1778) for x in range(1280)])
+        for name, picture, interlace in [('large.png',large,False),('large-interlaced.png',large,True),
+                ('odd-interlaced.png',large.crop((0,0,97,65)),True),
+                ('tall.png',large.crop((0,0,1,1778)),True),('single.png',large.crop((0,0,1,1)),True),
+                ('area-boundary.png',Image.new('RGBA',(2048,2048),(75,130,190,85)),False)]:
+            if interlace: encoded=adam7(picture)
+            else:
+                encoded=BytesIO();picture.save(encoded,'PNG');encoded=encoded.getvalue()
+            (directory/name).write_bytes(encoded)
+            assert len(encoded)<=524288,(name,len(encoded))
+            (directory/(name+'.rgba')).write_bytes(picture.tobytes())
+        for name,width,height in [('over-area.png',2049,2048),('over-width.png',4097,1),
+                                  ('over-height.png',1,4097),('zero-width.png',0,1)]:
+            (directory/name).write_bytes(signature+chunk(b'IHDR',struct.pack('>IIBBBBB',width,height,8,6,0,0,0))+end)
+        # Packed grayscale and 16-bit channels exercise wrap/scaling paths
+        # outside the common 8-bit RGBA fast path, including odd row widths.
+        for depth in (1,2,4,16):
+            rows=bytearray();reference=bytearray();maximum=(1<<depth)-1
+            for y in range(13):
+                rows.append(0);packed=bytearray();bits=0;value=0
+                for x in range(17):
+                    sample=(x*771+y*129)% (maximum+1)
+                    gray=(sample*255+maximum//2)//maximum;reference.extend((gray,gray,gray,255))
+                    if depth==16:packed.extend(struct.pack('>H',sample))
+                    else:
+                        value=(value<<depth)|sample;bits+=depth
+                        if bits==8:packed.append(value);value=bits=0
+                if bits:packed.append(value<<(8-bits))
+                rows.extend(packed)
+            name=f'depth-{depth}.png'
+            (directory/name).write_bytes(signature+chunk(b'IHDR',struct.pack('>IIBBBBB',17,13,depth,0,0,0,0))+
+                chunk(b'IDAT',zlib.compress(rows))+end)
+            (directory/(name+'.rgba')).write_bytes(reference)
         for name, picture, fmt, options in [
             ('alpha.png', image, 'PNG', {}),
             ('palette.png', image.convert('P', palette=Image.Palette.ADAPTIVE, colors=32), 'PNG', {}),

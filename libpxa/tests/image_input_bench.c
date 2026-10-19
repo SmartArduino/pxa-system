@@ -21,7 +21,10 @@ static double micros(void) {
     return t.tv_sec * 1e6 + t.tv_nsec / 1e3;
 }
 int main(int argc, char **argv) {
-    assert(argc == 2);
+    assert(argc >= 2 && argc <= 4);
+    unsigned repeats=argc>2?(unsigned)strtoul(argv[2],NULL,10):100;
+    unsigned chunk=argc>3?(unsigned)strtoul(argv[3],NULL,10):4096;
+    assert(repeats>0 && repeats<=10000 && chunk>0 && chunk<=4096);
     FILE *f = fopen(argv[1], "rb");
     assert(f);
     fseek(f, 0, SEEK_END);
@@ -30,10 +33,10 @@ int main(int argc, char **argv) {
     unsigned char *data = malloc(n);
     assert(fread(data, 1, n, f) == n);
     fclose(f);
-    double write_us = 0, finish_us = 0;
+    double write_us = 0, finish_us = 0, max_write_us=0;
     size_t temp_peak = 0, peak = 0;
     unsigned checksum = 0;
-    for (int repeat = 0; repeat < 101; ++repeat) {
+    for (unsigned repeat = 0; repeat <= repeats; ++repeat) {
         pxa_memory_budget_t b;
         pxa_memory_budget_config_t c = {0};
         c.limit[1] = 4 * 1024 * 1024;
@@ -55,9 +58,12 @@ int main(int argc, char **argv) {
         double t = micros();
         for (size_t at = 0; at < n;) {
             size_t size = n - at;
-            if (size > 4096)
-                size = 4096;
+            if (size > chunk)
+                size = chunk;
+            double slice_start=micros();
             assert(!pxa_image_decoder_write(d, (pxa_bytes_t){data + at, size}));
+            double elapsed=micros()-slice_start;
+            if (repeat && elapsed>max_write_us) max_write_us=elapsed;
             at += size;
         }
         double end = micros();
@@ -83,9 +89,9 @@ int main(int argc, char **argv) {
         peak = s.peak[1];
         assert(!pxa_memory_owner_close(&b, owner));
     }
-    printf("{\"bytes\":%zu,\"repeats\":100,\"write_mean_us\":%.3f,\"finish_"
+    printf("{\"bytes\":%zu,\"repeats\":%u,\"chunk\":%u,\"max_write_us\":%.3f,\"write_mean_us\":%.3f,\"finish_"
            "mean_us\":%.3f,\"temporary_peak\":%zu,\"charged_peak\":%zu,"
            "\"checksum\":%u}\n",
-           n, write_us / 100, finish_us / 100, temp_peak, peak, checksum);
+           n, repeats,chunk,max_write_us,write_us / repeats, finish_us / repeats, temp_peak, peak, checksum);
     free(data);
 }

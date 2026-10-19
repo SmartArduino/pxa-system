@@ -64,6 +64,11 @@ typedef struct {
     const uint8_t *pixels;
 } pxa_image_tile_t;
 const pxa_image_decode_options_t *pxa_image_target_options(const pxa_image_target_t *);
+/* Optional serialized work hint, e.g. a software PNG codec can request short
+ * owner-loop slices. Zero restores the 4096-byte default. This bounds encoded
+ * input per poll, not wall time; finish/next remain synchronous. The target
+ * and hint belong to the decoder; no codec descriptor/storage ABI changes. */
+void pxa_image_target_set_input_budget(pxa_image_target_t *, size_t bytes);
 pxa_status_t pxa_image_target_begin(pxa_image_target_t *, uint32_t width, uint32_t height,
                                     int alpha);
 void pxa_image_target_dimensions(const pxa_image_target_t *, uint16_t *, uint16_t *);
@@ -84,6 +89,9 @@ pxa_status_t pxa_image_decoder_create(const pxa_image_decode_options_t *,
                                       const pxa_memory_allocator_t *temporary,
                                       const pxa_image_backend_t *, pxa_image_decoder_t **);
 pxa_status_t pxa_image_decoder_write(pxa_image_decoder_t *, pxa_bytes_t);
+/* Before signature selection use a small probe. After selection clamp the
+ * target hint to the service's 4096-byte default. Does not allocate storage. */
+size_t pxa_image_decoder_input_budget(const pxa_image_decoder_t *);
 pxa_status_t pxa_image_decoder_finish(pxa_image_decoder_t *, pxa_decoded_image_t *);
 /* Finalizes input on the first call, then pulls frames on demand. OK with a
  * null image and last=1 means EOF. Static images yield one frame. A caller may
