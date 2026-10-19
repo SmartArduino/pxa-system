@@ -262,7 +262,7 @@ def validate_specs() -> tuple[int, int]:
 
     expected_services = {
         "window": (2, "0.3.0"), "ui": (3, "0.9.0"),
-        "clock": (4, "0.2.0"), "fs": (5, "0.2.0"),
+        "clock": (4, "0.3.0"), "fs": (5, "0.3.0"),
         "storage": (6, "0.1.0"), "ipc": (7, "0.1.0"),
         "sensor": (8, "0.1.0"), "net": (9, "0.4.0"),
         "audio": (10, "0.9.0"), "permission": (11, "0.1.0"),

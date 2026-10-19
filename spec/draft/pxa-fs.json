@@ -218,7 +218,7 @@
     "max_segment_bytes": 64,
     "quota_unit": "logical-regular-file-bytes"
   },
-  "protocol_version": "0.2.0",
+  "protocol_version": "0.3.0",
   "features": [
     {
       "name": "scoped-roots",
