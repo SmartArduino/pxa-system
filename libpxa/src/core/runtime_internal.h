@@ -41,6 +41,9 @@ struct pxa_runtime {
     uint64_t *revoked_authorities;
     uint16_t component_count;
     uint16_t component_peak;
+    uint8_t *import_memory;
+    size_t import_memory_size;
+    pxa_component_t import_memory_owner;
 };
 
 int pxa_runtime_is_valid(const pxa_runtime_t *runtime);

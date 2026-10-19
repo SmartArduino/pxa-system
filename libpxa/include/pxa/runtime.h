@@ -201,6 +201,13 @@ int32_t pxa_runtime_io(pxa_runtime_t *runtime, pxa_component_t component,
 int32_t pxa_runtime_io64(pxa_runtime_t *runtime, pxa_component_t component,
                          pxa_handle64_t handle, uint32_t operation,
                          uint8_t *data, size_t size);
+/* Trusted engine adapter only. The complete linear-memory view is borrowed
+ * for this serialized import. No service may retain it after return. */
+int32_t pxa_runtime_io64_memory(pxa_runtime_t *runtime,
+    pxa_component_t component, pxa_handle64_t handle, uint32_t operation,
+    uint8_t *data, size_t size, uint8_t *memory, size_t memory_size);
+pxa_status_t pxa_runtime_borrow_memory(pxa_runtime_t *runtime,
+    pxa_component_t component, uint8_t **memory, size_t *memory_size);
 
 pxa_status_t pxa_request_begin(pxa_runtime_t *runtime,
                                pxa_component_t component, pxa_request_token_t request_token,

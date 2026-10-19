@@ -6,6 +6,7 @@
 
 #include "pxa/raster.h"
 #include "pxa/raster_assets.h"
+#include "pxa/raster_spans.h"
 #include "pxa/runtime.h"
 
 #ifdef __cplusplus
@@ -13,12 +14,13 @@ extern "C" {
 #endif
 
 #define PXA_GAME_RENDER_SERVICE_ID UINT16_C(18)
-#define PXA_GAME_RENDER_SERVICE_MAJOR UINT16_C(0)
-#define PXA_GAME_RENDER_SERVICE_MINOR UINT16_C(6)
+#define PXA_GAME_RENDER_SERVICE_MAJOR UINT16_C(1)
+#define PXA_GAME_RENDER_SERVICE_MINOR UINT16_C(0)
 #define PXA_GAME_RENDER_SERVICE_PATCH UINT16_C(0)
 
 #define PXA_GAME_RENDER_CREATE_CONTEXT UINT16_C(1)
 #define PXA_GAME_RENDER_CREATE_AUTO_CONTEXT UINT16_C(2)
+#define PXA_GAME_RENDER_CREATE_RASTER_CONTEXT UINT16_C(3)
 
 #define PXA_GAME_RENDER_MAX_SCALE UINT8_C(4)
 #define PXA_GAME_RENDER_SCALE_1X UINT8_C(1)
@@ -58,6 +60,10 @@ extern "C" {
 #define PXA_GAME_RENDER_IO_TELEMETRY UINT32_C(0x102)
 #define PXA_GAME_RENDER_IO_BIND_ASSETS UINT32_C(0x103)
 #define PXA_GAME_RENDER_FEATURE_ASSET_BINDINGS UINT64_C(1)
+#define PXA_GAME_RENDER_FEATURE_BORROWED_INDEXED_SPANS UINT64_C(2)
+#define PXA_GAME_RENDER_IO_EXECUTE_SPANS UINT32_C(0x104)
+#define PXA_GAME_RENDER_IO_SPAN_TELEMETRY UINT32_C(0x105)
+#define PXA_GAME_RENDER_SPAN_TELEMETRY_BYTES 64u
 #define PXA_GAME_RENDER_TELEMETRY_BYTES ((size_t)104)
 
 typedef struct {
@@ -138,6 +144,12 @@ typedef struct {
      * dimension disables the optional opcode without affecting legacy create. */
     pxa_game_render_target_profile_t auto_target_profile;
     pxa_game_render_backend_t backend;
+    /* Compute contexts have no backend Surface and no persistent pixels.
+     * NULL executes portable kernels on the calling thread. */
+    pxa_raster_spans_execute_fn execute_spans;
+    void *execute_spans_context;
+    uint64_t (*now_us)(void *context);
+    void *clock_context;
 } pxa_game_render_config_t;
 
 typedef struct pxa_game_render_service pxa_game_render_service_t;

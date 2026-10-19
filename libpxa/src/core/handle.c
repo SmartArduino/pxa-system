@@ -395,6 +395,41 @@ int32_t pxa_runtime_io64(pxa_runtime_t *runtime,
                                    handle, operation, data, size);
 }
 
+int32_t pxa_runtime_io64_memory(pxa_runtime_t *runtime,
+    pxa_component_t component, pxa_handle64_t handle, uint32_t operation,
+    uint8_t *data, size_t size, uint8_t *memory, size_t memory_size) {
+    int32_t result;
+    if (!pxa_runtime_is_valid(runtime) || !memory || !memory_size ||
+        (uintptr_t)memory > UINTPTR_MAX - memory_size)
+        return PXA_STATUS_INVALID_ARGUMENT;
+    if (runtime->import_memory) return PXA_STATUS_BAD_STATE;
+    if (size && ((uintptr_t)data < (uintptr_t)memory ||
+        (uintptr_t)data - (uintptr_t)memory > memory_size ||
+        size > memory_size - ((uintptr_t)data - (uintptr_t)memory)))
+        return PXA_STATUS_INVALID_ARGUMENT;
+    runtime->import_memory = memory;
+    runtime->import_memory_size = memory_size;
+    runtime->import_memory_owner = component;
+    result = pxa_runtime_io64(runtime, component, handle, operation, data, size);
+    runtime->import_memory = NULL;
+    runtime->import_memory_size = 0;
+    runtime->import_memory_owner = PXA_COMPONENT_INVALID;
+    return result;
+}
+
+pxa_status_t pxa_runtime_borrow_memory(pxa_runtime_t *runtime,
+    pxa_component_t component, uint8_t **memory, size_t *memory_size) {
+    if (!memory || !memory_size) return PXA_STATUS_INVALID_ARGUMENT;
+    *memory = NULL;
+    *memory_size = 0;
+    if (!pxa_runtime_is_valid(runtime)) return PXA_STATUS_INVALID_ARGUMENT;
+    if (!runtime->import_memory || runtime->import_memory_owner != component)
+        return PXA_STATUS_BAD_STATE;
+    *memory = runtime->import_memory;
+    *memory_size = runtime->import_memory_size;
+    return PXA_STATUS_OK;
+}
+
 pxa_status_t pxa_handle_open(pxa_runtime_t *runtime,
                              pxa_component_t component_ref,
                              pxa_resource_type_t type,

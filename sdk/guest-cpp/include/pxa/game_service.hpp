@@ -1,6 +1,7 @@
 #pragma once
 
 #include "game.hpp"
+#include "game_spans.hpp"
 #include "task.hpp"
 
 namespace pxa::game {
@@ -24,6 +25,25 @@ class Service {
 public:
     Service(Transport& transport, RequestTable& requests) noexcept
         : transport_(transport), requests_(requests) {}
+
+    Task<RasterContext> create_raster(this Service self, std::uint32_t max_spans = 256) {
+        auto& [transport_, requests_] = self;
+        if (!max_spans || max_spans > 4096)
+            co_return std::unexpected(Error::limit_exceeded);
+        std::array<std::byte, 8> payload{};
+        wire::put32(payload.data(), max_spans);
+        auto event = co_await Response(transport_, requests_, 18, 3, payload, true);
+        if (!event) co_return std::unexpected(event.error());
+        auto body = wire::result_body(event->payload);
+        if (!body) co_return std::unexpected(body.error());
+        struct PendingContext {};
+        auto pending = wire::result_resource<PendingContext>(transport_, *body);
+        if (!pending || event->payload.size() != 20 ||
+            wire::get32(event->payload.data() + 12) != max_spans ||
+            wire::get32(event->payload.data() + 16))
+            co_return std::unexpected(Error::protocol_error);
+        co_return RasterContext(transport_, pending.release(), max_spans);
+    }
 
     Task<Renderer> create(this Service self, RenderOptions options = {}) {
         auto& [transport_, requests_] = self;

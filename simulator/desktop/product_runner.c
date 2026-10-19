@@ -3817,8 +3817,8 @@ static int run_product_simulator(const options_t *input,
         pxa_surface_service_register(host.surfaces) != PXA_STATUS_OK) goto done;
     stage = "game render service";
     game_render_config.struct_size = sizeof(game_render_config);
-    game_render_config.max_contexts = 1;
-    game_render_config.max_contexts_per_component = 1;
+    game_render_config.max_contexts = 2;
+    game_render_config.max_contexts_per_component = 2;
     game_render_config.min_buffer_count = 2;
     game_render_config.max_buffer_count = 3;
     game_render_config.backend.struct_size = sizeof(game_render_config.backend);
@@ -4093,7 +4093,8 @@ static int run_product_simulator(const options_t *input,
     capabilities[15].version.minor = 5;
     activation.core_version.major = PXA_CORE_VERSION_MAJOR;
     activation.core_version.minor = PXA_CORE_VERSION_MINOR;
-    capabilities[8].features |= PXA_GAME_RENDER_FEATURE_ASSET_BINDINGS;
+    capabilities[8].features |= PXA_GAME_RENDER_FEATURE_ASSET_BINDINGS |
+        PXA_GAME_RENDER_FEATURE_BORROWED_INDEXED_SPANS;
     capabilities[16].service = PXA_ASSETS_SERVICE_ID;
     capabilities[16].version.major = PXA_ASSETS_SERVICE_MAJOR;
     capabilities[16].version.minor = PXA_ASSETS_SERVICE_MINOR;

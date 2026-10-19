@@ -255,3 +255,6 @@ The benchmark measures snapshot, event delivery and request round trips for the
 portable C runtime. Results depend on the compiler, CPU and configured runtime
 limits. Native integrations choose their exact capacity and byte-pool tradeoff
 with `pxa_runtime_limits_t`.
+
+Third-party arithmetic kernels retain their per-file licenses; see
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

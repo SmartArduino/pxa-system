@@ -28,6 +28,10 @@ struct pxa_game_render_service {
     uint8_t max_buffer_count;
     pxa_game_render_target_profile_t auto_target_profile;
     uint8_t registered;
+    pxa_raster_spans_execute_fn execute_spans;
+    void *execute_spans_context;
+    uint64_t (*now_us)(void *);
+    void *clock_context;
 };
 
 struct pxa_game_render_resource {
@@ -37,6 +41,9 @@ struct pxa_game_render_resource {
     uint64_t provider_context;
     uint16_t next;
     uint16_t previous;
+    uint32_t max_spans;
+    uint64_t batches, rejected, spans, pixels, validation_us, execution_us;
+    uint32_t last_validation_us, last_execution_us;
 };
 
 static int scale_valid(uint8_t scale) {
@@ -82,16 +89,21 @@ static int auto_target_resolve(
 }
 
 static int config_valid(const pxa_game_render_config_t *config) {
+    int display_backend;
+    if (!config) return 0;
+    display_backend = config->backend.create || config->backend.upload ||
+        config->backend.submit || config->backend.query || config->backend.close ||
+        config->backend.bind_assets;
     return config != NULL && config->struct_size >= sizeof(*config) &&
            config->max_contexts != 0 &&
            config->max_contexts_per_component != 0 &&
            config->max_contexts_per_component <= config->max_contexts &&
-           config->min_buffer_count >= 2 &&
+           (!display_backend || (config->min_buffer_count >= 2 &&
            config->min_buffer_count <= config->max_buffer_count &&
            config->backend.struct_size >= sizeof(config->backend) &&
            config->backend.create != NULL && config->backend.upload != NULL &&
            config->backend.submit != NULL && config->backend.query != NULL &&
-           config->backend.close != NULL &&
+           config->backend.close != NULL)) &&
            (auto_target_profile_disabled(&config->auto_target_profile) ||
             auto_target_profile_valid(&config->auto_target_profile));
 }
@@ -139,6 +151,10 @@ pxa_status_t pxa_game_render_service_init(
     if (cursor > end) return PXA_STATUS_INVALID_ARGUMENT;
     service->runtime = runtime;
     service->backend = config->backend;
+    service->execute_spans = config->execute_spans;
+    service->execute_spans_context = config->execute_spans_context;
+    service->now_us = config->now_us;
+    service->clock_context = config->clock_context;
     service->max_contexts = config->max_contexts;
     service->max_contexts_per_component = config->max_contexts_per_component;
     service->min_buffer_count = config->min_buffer_count;
@@ -208,15 +224,65 @@ static int context_valid(const pxa_game_render_resource_t *resource) {
     return resource != NULL && resource->magic == PXA_GAME_RENDER_SLOT_MAGIC &&
            service_valid(resource->service) &&
            resource->component != PXA_COMPONENT_INVALID &&
-           resource->provider_context != 0;
+           (resource->provider_context != 0 || resource->max_spans != 0);
 }
 
 static void close_context(void *context) {
     pxa_game_render_resource_t *resource = context;
     if (!context_valid(resource)) return;
-    resource->service->backend.close(resource->service->backend.context,
-                                     resource->provider_context);
+    if (resource->provider_context)
+        resource->service->backend.close(resource->service->backend.context,
+                                         resource->provider_context);
+    resource->provider_context = 0;
+    resource->max_spans = 0;
     release_context(resource);
+}
+
+static uint64_t now_us(pxa_game_render_service_t *service) {
+    return service->now_us ? service->now_us(service->clock_context) : 0;
+}
+
+static int32_t span_context_io(pxa_game_render_resource_t *r,
+    uint32_t operation, uint8_t *data, size_t size) {
+    pxa_game_render_service_t *service = r->service;
+    if (operation == PXA_GAME_RENDER_IO_SPAN_TELEMETRY) {
+        if (size != PXA_GAME_RENDER_SPAN_TELEMETRY_BYTES)
+            return PXA_STATUS_INVALID_ARGUMENT;
+        pxa_write_u64(data, r->batches); pxa_write_u64(data + 8, r->rejected);
+        pxa_write_u64(data + 16, r->spans); pxa_write_u64(data + 24, r->pixels);
+        pxa_write_u64(data + 32, r->validation_us);
+        pxa_write_u64(data + 40, r->execution_us);
+        pxa_write_u32(data + 48, r->last_validation_us);
+        pxa_write_u32(data + 52, r->last_execution_us);
+        pxa_write_u32(data + 56, r->max_spans); pxa_write_u32(data + 60, 0);
+        return (int32_t)size;
+    }
+    if (operation == PXA_GAME_RENDER_IO_EXECUTE_SPANS) {
+        pxa_raster_spans_t batch;
+        uint8_t *memory;
+        size_t memory_size;
+        uint64_t before = now_us(service), validated, done;
+        pxa_status_t status = pxa_runtime_borrow_memory(service->runtime,
+            r->component, &memory, &memory_size);
+        if (status == PXA_STATUS_OK)
+            status = pxa_raster_spans_validate(data, size, memory, memory_size,
+                                              r->max_spans, &batch);
+        validated = now_us(service);
+        r->last_validation_us = (uint32_t)(validated - before);
+        r->validation_us += validated - before;
+        if (status != PXA_STATUS_OK) { ++r->rejected; return status; }
+        if (service->execute_spans)
+            status = service->execute_spans(service->execute_spans_context, &batch);
+        else
+            pxa_raster_spans_execute_range(&batch, 0, batch.target_bytes);
+        done = now_us(service);
+        r->last_execution_us = (uint32_t)(done - validated);
+        r->execution_us += done - validated;
+        if (status != PXA_STATUS_OK) { ++r->rejected; return status; }
+        ++r->batches; r->spans += batch.count; r->pixels += batch.pixels;
+        return (int32_t)size;
+    }
+    return PXA_STATUS_UNSUPPORTED;
 }
 
 static pxa_status_t bind_assets(pxa_game_render_resource_t *r,
@@ -265,6 +331,8 @@ static int32_t context_io(void *context, uint32_t operation, uint8_t *data,
     pxa_status_t status;
     if (!context_valid(resource)) return PXA_STATUS_BAD_STATE;
     if (data == NULL) return PXA_STATUS_INVALID_ARGUMENT;
+    if (resource->max_spans)
+        return span_context_io(resource, operation, data, size);
     if (operation == PXA_GAME_RENDER_IO_BIND_ASSETS) {
         status = bind_assets(resource, data, size);
     } else if (operation == PXA_GAME_RENDER_IO_UPLOAD) {
@@ -327,6 +395,7 @@ static pxa_status_t create_context(pxa_game_render_service_t *service,
     size_t offset = wire_profile == 1 ? 8u : 4u;
     pxa_status_t status;
     pxa_game_render_target_t target = {0};
+    if (!service->backend.create) return PXA_STATUS_UNSUPPORTED;
     if (payload.size != 8 && payload.size != 12)
         return PXA_STATUS_INVALID_ARGUMENT;
     desc.width = pxa_read_u16(payload.data);
@@ -432,7 +501,8 @@ static pxa_status_t game_render_control(
                                       &wire_profile);
     if (status != PXA_STATUS_OK) return status;
     if (message->request_token == 0) return PXA_STATUS_INVALID_ARGUMENT;
-    if (message->opcode != PXA_GAME_RENDER_CREATE_CONTEXT &&
+    if (message->opcode != PXA_GAME_RENDER_CREATE_RASTER_CONTEXT &&
+        message->opcode != PXA_GAME_RENDER_CREATE_CONTEXT &&
         message->opcode != PXA_GAME_RENDER_CREATE_AUTO_CONTEXT)
         return PXA_STATUS_UNSUPPORTED;
     status = pxa_request_begin_reserved(
@@ -443,7 +513,39 @@ static pxa_status_t game_render_control(
     if (status != PXA_STATUS_OK) return status;
     status = pxa_request_commit(service->runtime, component,
                                 message->request_token);
-    if (status == PXA_STATUS_OK)
+    if (status == PXA_STATUS_OK &&
+        message->opcode == PXA_GAME_RENDER_CREATE_RASTER_CONTEXT) {
+        pxa_game_render_resource_t *r = NULL;
+        uint32_t max_spans = 0;
+        if (wire_profile != 1 || message->payload.size != 8 ||
+            pxa_read_u32(message->payload.data + 4))
+            status = PXA_STATUS_INVALID_ARGUMENT;
+        else {
+            max_spans = pxa_read_u32(message->payload.data);
+            if (!max_spans || max_spans > 4096)
+                status = PXA_STATUS_LIMIT_EXCEEDED;
+        }
+        if (status == PXA_STATUS_OK) {
+            r = allocate_context(service, component);
+            if (!r) status = PXA_STATUS_RESOURCE_LIMIT;
+        }
+        if (status == PXA_STATUS_OK) {
+            pxa_resource_t resource = {r, &k_resource_ops, close_context};
+            r->provider_context = 0; r->max_spans = max_spans;
+            r->batches = r->rejected = r->spans = r->pixels = 0;
+            r->validation_us = r->execution_us = 0;
+            r->last_validation_us = r->last_execution_us = 0;
+            status = pxa_handle_open64(service->runtime, component,
+                PXA_RESOURCE_GAME_RENDER_CONTEXT, 0, &resource, &opened_handle);
+            if (status != PXA_STATUS_OK) close_context(r);
+            else {
+                pxa_write_u64(result, opened_handle);
+                pxa_write_u32(result + 8, max_spans);
+                pxa_write_u32(result + 12, 0);
+                result_size = 16;
+            }
+        }
+    } else if (status == PXA_STATUS_OK)
         status = create_context(
             service, component, message->payload,
             message->opcode == PXA_GAME_RENDER_CREATE_AUTO_CONTEXT,
@@ -479,6 +581,7 @@ pxa_status_t pxa_game_render_service_register(
     operations.major = PXA_GAME_RENDER_SERVICE_MAJOR;
     operations.minor = PXA_GAME_RENDER_SERVICE_MINOR;
     if (service->backend.bind_assets) operations.features = PXA_GAME_RENDER_FEATURE_ASSET_BINDINGS;
+    operations.features |= PXA_GAME_RENDER_FEATURE_BORROWED_INDEXED_SPANS;
     operations.context = service;
     operations.control = game_render_control;
     status = pxa_service_register(service->runtime, &operations);

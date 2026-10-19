@@ -735,8 +735,14 @@ static int32_t native_io(void *opaque_exec_env, uint64_t handle,
             return PXA_STATUS_UNSUPPORTED;
     }
     uint64_t start=import_started(entry);
-    int32_t result=pxa_runtime_io64(entry_engine(entry)->runtime,entry->component,
-                                   handle,operation,data,size);
+    uint64_t begin = 0, end = 0;
+    int32_t result;
+    if (!wasm_runtime_get_app_addr_range(module, 0, &begin, &end) ||
+        begin != 0 || end == 0 || end > SIZE_MAX)
+        return PXA_STATUS_INVALID_ARGUMENT;
+    result = pxa_runtime_io64_memory(entry_engine(entry)->runtime,
+        entry->component, handle, operation, data, size,
+        wasm_runtime_addr_app_to_native(module, 0), (size_t)end);
     import_finished(entry,"io",operation,size,start);
     return result;
 }

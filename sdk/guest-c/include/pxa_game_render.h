@@ -8,6 +8,8 @@
 #define PXA_GAME_RENDER_CREATE 1u
 #define PXA_GAME_RENDER_CREATE_AUTO 2u
 #define PXA_GAME_RENDER_IO_BIND_ASSETS UINT32_C(0x103)
+#define PXA_GAME_RENDER_FLAG_PREFER_DIRECT_SCANOUT UINT8_C(1)
+#define PXA_GAME_RENDER_FLAG_BORROW_COMMANDS UINT8_C(2)
 #ifndef PXA_GAME_RENDER_SCRATCH_DEPTH16
 #define PXA_GAME_RENDER_SCRATCH_DEPTH16 0u
 #define PXA_GAME_RENDER_SCRATCH_NONE 1u
@@ -58,7 +60,7 @@ typedef struct {
     uint16_t width;
     uint16_t height;
     uint8_t buffer_count;
-    uint8_t prefer_direct_scanout;
+    uint8_t flags;
     uint8_t requested_scale;
     uint8_t scratch_mode;
     uint32_t max_draw_bytes;
@@ -120,7 +122,7 @@ static inline int pxa_game_render_build_create(
     if (token == 0 || options == NULL || options->buffer_count < 2 ||
         options->buffer_count > 3 ||
         options->scratch_mode > PXA_GAME_RENDER_SCRATCH_COVERAGE_2BIT ||
-        options->prefer_direct_scanout > 1 ||
+        (options->flags & ~UINT8_C(3)) != 0 ||
         (options->max_draw_bytes != 0 &&
          (options->max_draw_bytes < 32 ||
           options->max_draw_bytes > 49152)))
@@ -136,7 +138,7 @@ static inline int pxa_game_render_build_create(
     pxa_store_u16(payload, options->width);
     pxa_store_u16(payload + 2, options->height);
     payload[4] = options->buffer_count;
-    payload[5] = options->prefer_direct_scanout;
+    payload[5] = options->flags;
     payload[6] = options->requested_scale;
     payload[7] = options->scratch_mode;
     if (options->max_draw_bytes != 0)

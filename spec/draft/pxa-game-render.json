@@ -1,11 +1,11 @@
 {
-  "schema": "pxa-game-render-spec-0.6",
+  "schema": "pxa-game-render-spec-1.0",
   "status": "draft",
   "service": {
     "name": "game-render",
     "id": 18,
-    "major": 0,
-    "minor": 6,
+    "major": 1,
+    "minor": 0,
     "patch": 0
   },
   "opcodes": [
@@ -24,6 +24,15 @@
       "request_token": "nonzero",
       "payload": "width:0|height:0|buffer-count:u8|flags:u8|requested-scale:u8|scratch-mode:u8[|max-draw-bytes:u32]",
       "result": "handle:u64|capabilities:u32|max-draw-bytes:u32|max-texture-dimension:u16|max-textures:u8|reserved:u8|display-width:u16|display-height:u16|render-width:u16|render-height:u16|render-scale:u8|supported-scale-mask:u8|reserved:[2]"
+    },
+    {
+      "name": "create-raster-context",
+      "id": 3,
+      "direction": "bidirectional-result",
+      "request_token": "nonzero",
+      "payload": "max-spans:u32|reserved:u32",
+      "result": "handle:u64|max-spans:u32|reserved:u32",
+      "semantics": "Compute-only context: no display, framebuffer, texture copies or scratch allocation."
     }
   ],
   "io_operations": [
@@ -51,12 +60,29 @@
       "payload": "count:u16|reserved:u16|entries[count]:(kind:u8|slot:u8|reserved:u16|handle:u64)",
       "result": "accepted-bytes",
       "atomic": true
+    },
+    {
+      "name": "execute-spans",
+      "id": 260,
+      "payload": "spans-header|span[count]",
+      "result": "accepted-bytes",
+      "semantics": "Synchronous; prevalidate complete batch, borrow memory only until return. No pixels written on validation error."
+    },
+    {
+      "name": "span-telemetry",
+      "id": 261,
+      "payload": "zeroed-64-byte-buffer",
+      "result": "batches:u64|rejected:u64|spans:u64|pixels:u64|validation-us:u64|execute-us:u64|last-validation-us:u32|last-execute-us:u32|max-spans:u32|reserved:u32"
     }
   ],
   "features": [
     {
       "name": "asset-bindings",
       "bit": 0
+    },
+    {
+      "name": "borrowed-indexed-spans",
+      "bit": 1
     }
   ],
   "create_flags": [
@@ -158,5 +184,140 @@
     "texture_dimension": 256,
     "palette_colors": 256
   },
-  "protocol_version": "0.6.0"
+  "protocol_version": "1.0.0",
+  "indexed_spans": {
+    "magic": 1347639376,
+    "major": 1,
+    "minor": 0,
+    "header_bytes": 72,
+    "span_bytes": 24,
+    "flags": {
+      "pow2": 1,
+      "fullbright": 2
+    },
+    "header": [
+      [
+        "magic",
+        "u32"
+      ],
+      [
+        "major",
+        "u16"
+      ],
+      [
+        "minor",
+        "u16"
+      ],
+      [
+        "count",
+        "u32"
+      ],
+      [
+        "reserved",
+        "u32"
+      ],
+      [
+        "target_offset",
+        "u32"
+      ],
+      [
+        "target_bytes",
+        "u32"
+      ],
+      [
+        "texture_offset",
+        "u32"
+      ],
+      [
+        "texture_bytes",
+        "u32"
+      ],
+      [
+        "texture_width",
+        "u16"
+      ],
+      [
+        "texture_height",
+        "u16"
+      ],
+      [
+        "light_offset",
+        "u32"
+      ],
+      [
+        "light_bytes",
+        "u32"
+      ],
+      [
+        "light_width",
+        "u16"
+      ],
+      [
+        "light_height",
+        "u16"
+      ],
+      [
+        "light_origin_s",
+        "i16"
+      ],
+      [
+        "light_origin_t",
+        "i16"
+      ],
+      [
+        "colormap_offset",
+        "u32"
+      ],
+      [
+        "colormap_bytes",
+        "u32"
+      ],
+      [
+        "colormap_levels",
+        "u16"
+      ],
+      [
+        "light_shift",
+        "u8"
+      ],
+      [
+        "flags",
+        "u8"
+      ],
+      [
+        "wrap_s",
+        "u32"
+      ],
+      [
+        "wrap_t",
+        "u32"
+      ]
+    ],
+    "span": [
+      [
+        "destination",
+        "u32"
+      ],
+      [
+        "count",
+        "u32"
+      ],
+      [
+        "s",
+        "i32"
+      ],
+      [
+        "t",
+        "i32"
+      ],
+      [
+        "ds",
+        "i32"
+      ],
+      [
+        "dt",
+        "i32"
+      ]
+    ]
+  }
 }

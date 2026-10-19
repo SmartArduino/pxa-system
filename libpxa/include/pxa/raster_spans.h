@@ -1,0 +1,32 @@
+#ifndef PXA_RASTER_SPANS_H
+#define PXA_RASTER_SPANS_H
+#include "pxa/game_render_spans_wire_generated.h"
+#include "pxa/status.h"
+
+/* All pointers are borrowed for one synchronous execution. The validated
+ * batch is Host-private and must never be serialized or retained. */
+typedef struct {
+    const uint8_t *records;
+    uint8_t *target;
+    const uint8_t *texture;
+    const uint32_t *lights;
+    const uint8_t *colormap;
+    uint32_t count, target_bytes;
+    uint32_t first_pixel, end_pixel;
+    uint32_t texture_width, texture_height, light_width;
+    int32_t light_origin_s, light_origin_t;
+    uint32_t wrap_s, wrap_t;
+    uint64_t pixels;
+    uint8_t light_shift, flags;
+} pxa_raster_spans_t;
+
+pxa_status_t pxa_raster_spans_validate(const uint8_t *packet, size_t size,
+    uint8_t *memory, size_t memory_size, uint32_t max_spans,
+    pxa_raster_spans_t *output);
+/* Disjoint byte ranges may execute concurrently; ordering inside each range
+ * is unchanged. No allocation, locks, runtime calls or retained pointers. */
+void pxa_raster_spans_execute_range(const pxa_raster_spans_t *batch,
+    uint32_t begin, uint32_t end);
+typedef pxa_status_t (*pxa_raster_spans_execute_fn)(void *context,
+    const pxa_raster_spans_t *batch);
+#endif

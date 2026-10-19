@@ -32,9 +32,10 @@ function(pxa_collect_sources output root)
         src/services/audio/audio_buffer.c
         src/services/audio/audio_playback.c
         src/services/game_render/game_render_service.c
+        src/services/game_render/raster_spans.c
         src/services/log/log_service.c
-        src/services/surface/raster.c
-        src/services/surface/raster_assets.c
+        src/services/game_render/raster.c
+        src/services/game_render/raster_assets.c
         src/services/assets/asset_catalog.c
         src/services/assets/asset_loader.c
         src/services/assets/asset_stream.c

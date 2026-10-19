@@ -1,4 +1,15 @@
-# PXA GameRender Service 0.5.0
+# PXA GameRender Service 1.0.0
+
+GameRender 1.0 separates a compute-only raster context from a display context.
+`CREATE_RASTER_CONTEXT` (3) allocates only a resource slot and bounded counters;
+it owns no Surface, framebuffer, depth buffer, texture copy or command mailbox.
+Its synchronous indexed-span execution path borrows the calling Component's
+linear memory until the import returns. See [indexed spans](game-render-indexed-spans.md)
+for the normative layouts, arithmetic and ownership rules.
+
+Service major 1 replaces major 0. Installed major-0 clients must be rebuilt;
+the screen-context requests and Raster DrawList 1.7 layouts below remain
+available in major 1. Render computation and display completion are distinct.
 
 GameRender is the low-overhead 2D and software-3D path. It owns persistent
 palettes and textures, validates compact draw lists, and rasterizes into

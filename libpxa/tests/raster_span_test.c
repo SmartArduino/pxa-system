@@ -1,7 +1,7 @@
 /* Direct numerical regression for the private scanline kernel. Including the
  * implementation keeps this test from adding a production ABI or test hook. */
 #undef NDEBUG
-#include "../src/services/surface/raster.c"
+#include "../src/services/game_render/raster.c"
 #include <assert.h>
 
 static uint32_t random_state = UINT32_C(0x416cf251);
