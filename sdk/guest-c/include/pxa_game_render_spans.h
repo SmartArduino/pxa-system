@@ -1,6 +1,7 @@
 #ifndef PXA_GUEST_GAME_RENDER_SPANS_H
 #define PXA_GUEST_GAME_RENDER_SPANS_H
 #include "pxa_game_render.h"
+#include <string.h>
 #include "pxa_game_render_spans_wire_generated.h"
 
 #define PXA_GAME_RENDER_CREATE_RASTER_CONTEXT 3u
@@ -158,5 +159,108 @@ static inline int32_t pxa_game_render_execute_projected_spans(uint64_t context,
     uint32_t size = PXA_GAME_RENDER_PROJECTED_PREFIX_BYTES + b->count * PXA_GAME_RENDER_ROW_BYTES;
     int32_t result = pxa_io(context, PXA_GAME_RENDER_IO_EXECUTE_PROJECTED_SPANS, b->bytes, size);
     return result < 0 ? result : result == (int32_t)size ? result : PXA_STATUS_PROTOCOL_ERROR;
+}
+
+#define PXA_GAME_RENDER_IO_EXECUTE_FRAME_SPANS 0x107u
+#define PXA_GAME_RENDER_FEATURE_INDEXED_FRAME_BATCHES UINT64_C(8)
+typedef struct {
+    uint8_t *bytes;
+    uint32_t capacity, command_end, resource_begin, count;
+    int32_t status;
+} pxa_game_render_frame_batch_t;
+
+static inline void pxa_game_render_frame_begin(pxa_game_render_frame_batch_t *b,
+    uint8_t *storage, uint32_t capacity) {
+    if (!b) return;
+    b->bytes = storage; b->capacity = capacity;
+    b->command_end = PXA_GAME_RENDER_FRAME_HEADER_BYTES;
+    b->resource_begin = capacity; b->count = 0;
+    b->status = !storage || capacity < PXA_GAME_RENDER_FRAME_HEADER_BYTES ||
+        capacity > PXA_GAME_RENDER_FRAME_MAX_PACKET_BYTES ? PXA_STATUS_INVALID_ARGUMENT : 0;
+}
+
+static inline uint32_t pxa_game_render_frame_remaining(const pxa_game_render_frame_batch_t *b) {
+    return !b || b->status ? 0 : b->resource_begin - b->command_end;
+}
+
+/* Reserve caller-initialized source storage. Returns a packet-relative offset,
+ * zero on sticky failure. Initialize all reserved bytes before execution. */
+static inline uint32_t pxa_game_render_frame_reserve_source(pxa_game_render_frame_batch_t *b,
+    uint32_t bytes) {
+    if (!b || b->status) return 0;
+    if (!bytes) { b->status = PXA_STATUS_INVALID_ARGUMENT; return 0; }
+    if (bytes > b->resource_begin) { b->status = PXA_STATUS_LIMIT_EXCEEDED; return 0; }
+    uint32_t position = b->resource_begin - bytes;
+    uint32_t padding = (uint32_t)((uintptr_t)(b->bytes + position) & 3u);
+    if (position < padding || position - padding < b->command_end) {
+        b->status = PXA_STATUS_LIMIT_EXCEEDED; return 0;
+    }
+    position -= padding;
+    b->resource_begin = position;
+    return position;
+}
+
+/* An acquired display buffer may be used as storage, then reused after execute
+ * returns. Overlapping source and destination have memmove semantics. */
+static inline uint32_t pxa_game_render_frame_copy_source(pxa_game_render_frame_batch_t *b,
+    const void *source, uint32_t bytes) {
+    if (!b || b->status) return 0;
+    if (!source) { b->status = PXA_STATUS_INVALID_ARGUMENT; return 0; }
+    uint32_t position = pxa_game_render_frame_reserve_source(b, bytes);
+    if (position) memmove(b->bytes + position, source, bytes);
+    return position;
+}
+
+static inline int pxa_game_render_frame_append(pxa_game_render_frame_batch_t *b,
+    const pxa_game_render_spans_header_wire_t *material,
+    const pxa_game_render_projection_wire_t *projection,
+    const pxa_game_render_row_wire_t *rows, uint32_t count) {
+    if (!b || b->status) return 0;
+    if (!material || !projection || !rows || !count || count > 4096) {
+        b->status = PXA_STATUS_INVALID_ARGUMENT; return 0;
+    }
+    uint32_t size = PXA_GAME_RENDER_PROJECTED_PREFIX_BYTES + count * PXA_GAME_RENDER_ROW_BYTES;
+    if (b->count == PXA_GAME_RENDER_FRAME_MAX_MATERIALS ||
+        size > pxa_game_render_frame_remaining(b)) {
+        b->status = PXA_STATUS_LIMIT_EXCEEDED; return 0;
+    }
+    for (uint32_t i = 0; i < count; ++i) if (!rows[i].count || rows[i].reserved) {
+        b->status = PXA_STATUS_INVALID_ARGUMENT; return 0;
+    }
+    pxa_game_render_spans_header_wire_t h = *material;
+    h.magic = PXA_GAME_RENDER_FRAME_MATERIAL_MAGIC;
+    h.major = 1; h.minor = 0; h.count = count; h.reserved = 0;
+    uint8_t *record = b->bytes + b->command_end;
+    pxa_game_render_spans_header_encode(record, PXA_GAME_RENDER_SPANS_HEADER_BYTES, &h);
+    pxa_game_render_projection_encode(record + PXA_GAME_RENDER_SPANS_HEADER_BYTES,
+        PXA_GAME_RENDER_PROJECTION_BYTES, projection);
+    for (uint32_t i = 0; i < count; ++i)
+        pxa_game_render_row_encode(record + PXA_GAME_RENDER_PROJECTED_PREFIX_BYTES +
+            i * PXA_GAME_RENDER_ROW_BYTES, PXA_GAME_RENDER_ROW_BYTES, rows + i);
+    b->command_end += size; ++b->count;
+    return 1;
+}
+
+static inline int32_t pxa_game_render_execute_frame_spans(uint64_t context,
+    pxa_game_render_frame_batch_t *b) {
+    if (!context || !b) return PXA_STATUS_INVALID_ARGUMENT;
+    if (b->status) return b->status;
+    if (!b->count) return 0;
+    pxa_game_render_frame_header_wire_t h = {
+        PXA_GAME_RENDER_FRAME_MAGIC, 1, 0, b->count, b->command_end};
+    pxa_game_render_frame_header_encode(b->bytes, PXA_GAME_RENDER_FRAME_HEADER_BYTES, &h);
+    int32_t result = pxa_io(context, PXA_GAME_RENDER_IO_EXECUTE_FRAME_SPANS, b->bytes, b->capacity);
+    return result < 0 ? result : result == (int32_t)b->capacity ? result : PXA_STATUS_PROTOCOL_ERROR;
+}
+
+#define PXA_GAME_RENDER_IO_BLIT_INDEXED_FRAME 0x108u
+#define PXA_GAME_RENDER_FEATURE_BORROWED_INDEXED_BLIT UINT64_C(16)
+static inline int32_t pxa_game_render_blit_indexed_frame(uint64_t context,
+    const pxa_game_render_blit_wire_t *frame) {
+    uint8_t bytes[PXA_GAME_RENDER_BLIT_BYTES];
+    if (!context || !frame) return PXA_STATUS_INVALID_ARGUMENT;
+    pxa_game_render_blit_encode(bytes, sizeof(bytes), frame);
+    int32_t result = pxa_io(context, PXA_GAME_RENDER_IO_BLIT_INDEXED_FRAME, bytes, sizeof(bytes));
+    return result < 0 ? result : result == sizeof(bytes) ? result : PXA_STATUS_PROTOCOL_ERROR;
 }
 #endif

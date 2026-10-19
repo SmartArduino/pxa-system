@@ -31,7 +31,15 @@ def render(guest):
               '#define PXA_GAME_RENDER_PROJECTED_PREFIX_BYTES %du' % (schema['header_bytes'] + projected['projection_bytes']),
               '#define PXA_GAME_RENDER_PROJECTED_WRITE_DEPTH 1u',
               '#define PXA_GAME_RENDER_PROJECTED_SEGMENT_PIXELS %du' % projected['segment_pixels']]
-    layouts = [(schema['header'], 'spans_header', schema['header_bytes']),
+    frame = schema['frames']
+    for name in ['magic', 'material_magic', 'header_bytes', 'max_packet_bytes', 'max_materials', 'max_light_validation_bytes']:
+        lines.append('#define PXA_GAME_RENDER_FRAME_%s UINT32_C(%d)' % (name.upper(), frame[name]))
+    blit = schema['blit']
+    lines += ['#define PXA_GAME_RENDER_BLIT_BYTES %du' % blit['bytes'],
+              '#define PXA_GAME_RENDER_BLIT_MAX_PIXELS UINT32_C(%d)' % blit['max_pixels']]
+    layouts = [(blit['fields'], 'blit', blit['bytes']),
+               (frame['header'], 'frame_header', frame['header_bytes']),
+               (schema['header'], 'spans_header', schema['header_bytes']),
                (schema['span'], 'span', schema['span_bytes']),
                (projected['projection'], 'projection', projected['projection_bytes']),
                (projected['row'], 'row', projected['row_bytes'])]

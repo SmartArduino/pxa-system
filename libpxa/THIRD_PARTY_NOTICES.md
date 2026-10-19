@@ -1,7 +1,8 @@
 # Third-party arithmetic kernel
 
 `src/services/game_render/raster_spans.c` and
-`src/services/game_render/raster_projected_spans.c` adapt the lit-span,
+`src/services/game_render/raster_projected_spans.c`, with batch glue in
+`src/services/game_render/raster_frame_spans.c`, adapt the lit-span,
 perspective subdivision and inverse-depth arithmetic from
 recrof/Quake-ESP32S3 (commit `b4c8c22bae3298b98c02166116eaeb91a34ffc24`),
 `QuakeESP32S3/quake/d_scan.c`, based on MG24Quake.

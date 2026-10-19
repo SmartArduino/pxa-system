@@ -3,7 +3,7 @@
 #include <assert.h>
 #include <string.h>
 
-static uint8_t captured[168];
+static uint8_t captured[1024];
 static int32_t failure;
 static int short_reply, reserved;
 int32_t pxa_test_control(const uint8_t *p, uint32_t n) {
@@ -12,7 +12,7 @@ int32_t pxa_test_control(const uint8_t *p, uint32_t n) {
 int32_t pxa_io(uint64_t handle, uint32_t op, uint8_t *p, uint32_t n) {
     assert(handle == 77);
     if (failure) return failure;
-    if (op == PXA_GAME_RENDER_IO_EXECUTE_SPANS || op == PXA_GAME_RENDER_IO_EXECUTE_PROJECTED_SPANS) {
+    if (op == PXA_GAME_RENDER_IO_EXECUTE_SPANS || op == PXA_GAME_RENDER_IO_EXECUTE_PROJECTED_SPANS || op == PXA_GAME_RENDER_IO_EXECUTE_FRAME_SPANS || op == PXA_GAME_RENDER_IO_BLIT_INDEXED_FRAME) {
         assert(n <= sizeof(captured)); memcpy(captured, p, n);
     } else {
         assert(op == PXA_GAME_RENDER_IO_SPAN_TELEMETRY && n == 64);
@@ -68,5 +68,43 @@ int main(void) {
     assert(!stats.batches && !stats.max_spans);
     short_reply = 0; reserved = 1;
     assert(pxa_game_render_query_span_telemetry(77, &stats) == PXA_STATUS_PROTOCOL_ERROR);
+    reserved = 0;
+    uint8_t frame_bytes[512] = {0}, source[16]; memset(source, 37, sizeof(source));
+    pxa_game_render_frame_batch_t frame;
+    pxa_game_render_frame_begin(&frame, frame_bytes, sizeof(frame_bytes));
+    assert(pxa_game_render_execute_frame_spans(77, &frame) == 0);
+    uint32_t offset = pxa_game_render_frame_copy_source(&frame, source, sizeof(source));
+    assert(offset && !((uintptr_t)(frame_bytes + offset) & 3u));
+    assert(!memcmp(source, frame_bytes + offset, sizeof(source)));
+    header.texture_offset = offset;
+    assert(pxa_game_render_frame_append(&frame, &header, &projection, &row, 1));
+    assert(pxa_game_render_execute_frame_spans(77, &frame) == 512);
+    pxa_game_render_frame_header_wire_t frame_header;
+    assert(pxa_game_render_frame_header_decode(captured, sizeof(captured), &frame_header));
+    assert(frame_header.magic == PXA_GAME_RENDER_FRAME_MAGIC && frame_header.count == 1 && frame_header.command_bytes == 176);
+    assert(pxa_load_u32(captured + 16) == PXA_GAME_RENDER_FRAME_MATERIAL_MAGIC);
+    short_reply = 1;
+    assert(pxa_game_render_execute_frame_spans(77, &frame) == PXA_STATUS_PROTOCOL_ERROR);
+    short_reply = 0;
+    assert(pxa_game_render_frame_append(&frame, &header, &projection, &row, 1));
+    assert(pxa_game_render_frame_append(&frame, &header, &projection, &row, 1));
+    assert(!pxa_game_render_frame_append(&frame, &header, &projection, &row, 1));
+    assert(pxa_game_render_execute_frame_spans(77, &frame) == PXA_STATUS_LIMIT_EXCEEDED);
+    pxa_game_render_frame_begin(&frame, frame_bytes + 1, sizeof(frame_bytes) - 1);
+    offset = pxa_game_render_frame_copy_source(&frame, source, 3);
+    assert(offset && !((uintptr_t)(frame.bytes + offset) & 3u));
+    offset = pxa_game_render_frame_reserve_source(&frame, 4);
+    assert(offset && !((uintptr_t)(frame.bytes + offset) & 3u));
+    memset(frame.bytes + offset, 73, 4);
+    assert(!pxa_game_render_frame_reserve_source(&frame, 512));
+    assert(frame.status == PXA_STATUS_LIMIT_EXCEEDED && frame.bytes[offset] == 73);
+    pxa_game_render_blit_wire_t blit = {0}, blit_read;
+    blit.source_offset = 1234; blit.target_width = 320; blit.target_height = 240;
+    blit.cursor_x = -4;
+    assert(pxa_game_render_blit_indexed_frame(77, &blit) == 64);
+    assert(pxa_game_render_blit_decode(captured, 64, &blit_read));
+    assert(blit_read.source_offset == 1234 && blit_read.cursor_x == -4);
+    short_reply = 1;
+    assert(pxa_game_render_blit_indexed_frame(77, &blit) == PXA_STATUS_PROTOCOL_ERROR);
     return 0;
 }

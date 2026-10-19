@@ -36,13 +36,21 @@ static inline uint32_t light_word(const uint32_t *p) {
 }
 
 pxa_status_t pxa_raster_material_validate(const uint8_t *packet, size_t size,
+    uint8_t *memory, size_t memory_size, uint32_t max_spans, uint32_t magic,
+    uint32_t prefix, uint32_t record_bytes, pxa_raster_spans_t *output) {
+    return pxa_raster_material_validate_sources(packet, size, memory, memory_size,
+        max_spans, magic, prefix, record_bytes, memory, memory_size, output);
+}
+
+pxa_status_t pxa_raster_material_validate_sources(const uint8_t *packet, size_t size,
     uint8_t *memory, size_t memory_size, uint32_t max_spans, uint32_t magic, uint32_t prefix, uint32_t record_bytes,
-    pxa_raster_spans_t *output) {
+    const uint8_t *sources, size_t source_size, pxa_raster_spans_t *output) {
     pxa_game_render_spans_header_wire_t h = {0};
     uint32_t i, light_limit;
     if (!output) return PXA_STATUS_INVALID_ARGUMENT;
     memset(output, 0, sizeof(*output));
-    if (!packet || !memory || (uintptr_t)packet > UINTPTR_MAX - size ||
+    if (!packet || !memory || !sources || (uintptr_t)sources > UINTPTR_MAX - source_size ||
+        (uintptr_t)packet > UINTPTR_MAX - size ||
         (uintptr_t)memory > UINTPTR_MAX - memory_size ||
         !pxa_game_render_spans_header_decode(packet, size, &h))
         return PXA_STATUS_INVALID_ARGUMENT;
@@ -60,10 +68,10 @@ pxa_status_t pxa_raster_material_validate(const uint8_t *packet, size_t size,
         !h.colormap_levels || h.colormap_levels > 256 ||
         h.colormap_bytes != (uint32_t)h.colormap_levels * 256 ||
         !valid_range(h.target_offset, h.target_bytes, memory_size) ||
-        !valid_range(h.texture_offset, h.texture_bytes, memory_size) ||
-        !valid_range(h.light_offset, h.light_bytes, memory_size) ||
-        !valid_range(h.colormap_offset, h.colormap_bytes, memory_size) ||
-        ((uintptr_t)(memory + h.light_offset) & 3u))
+        !valid_range(h.texture_offset, h.texture_bytes, source_size) ||
+        !valid_range(h.light_offset, h.light_bytes, source_size) ||
+        !valid_range(h.colormap_offset, h.colormap_bytes, source_size) ||
+        ((uintptr_t)(sources + h.light_offset) & 3u))
         return PXA_STATUS_INVALID_ARGUMENT;
     if ((h.flags & PXA_GAME_RENDER_SPANS_POW2) &&
         ((h.texture_width & (h.texture_width - 1u)) ||
@@ -75,26 +83,32 @@ pxa_status_t pxa_raster_material_validate(const uint8_t *packet, size_t size,
          * row's high halves. Its own high halves are never sampled. */
         uint32_t sampled_bytes = (uint32_t)(h.light_height - 1u) * h.light_width * 4u;
         for (i = 0; i < sampled_bytes; i += 4) {
-            uint32_t l = pxa_wire_generated_load_u32(memory + h.light_offset + i);
+            uint32_t l = pxa_wire_generated_load_u32(sources + h.light_offset + i);
             if ((l & 65535u) > light_limit || (l >> 16) > light_limit)
                 return PXA_STATUS_INVALID_ARGUMENT;
         }
     }
-    output->records = packet + prefix;
-    output->target = memory + h.target_offset;
-    output->texture = memory + h.texture_offset;
-    output->lights = (const uint32_t *)(const void *)(memory + h.light_offset);
-    output->colormap = memory + h.colormap_offset;
-    output->count = h.count; output->target_bytes = h.target_bytes;
-    output->first_pixel = UINT32_MAX;
-    output->texture_width = h.texture_width; output->texture_height = h.texture_height;
-    output->light_width = h.light_width; output->light_height = h.light_height;
-    output->texture_bytes = h.texture_bytes; output->light_bytes = h.light_bytes;
-    output->colormap_bytes = h.colormap_bytes;
-    output->light_origin_s = h.light_origin_s; output->light_origin_t = h.light_origin_t;
-    output->wrap_s = h.wrap_s; output->wrap_t = h.wrap_t;
-    output->light_shift = h.light_shift; output->flags = h.flags;
+    pxa_raster_material_load(&h, packet + prefix, memory, sources, output);
     return PXA_STATUS_OK;
+}
+
+void pxa_raster_material_load(const pxa_game_render_spans_header_wire_t *h,
+    const uint8_t *records, uint8_t *memory, const uint8_t *sources,
+    pxa_raster_spans_t *output) {
+    output->records = records;
+    output->target = memory + h->target_offset;
+    output->texture = sources + h->texture_offset;
+    output->lights = (const uint32_t *)(const void *)(sources + h->light_offset);
+    output->colormap = sources + h->colormap_offset;
+    output->count = h->count; output->target_bytes = h->target_bytes;
+    output->first_pixel = UINT32_MAX;
+    output->texture_width = h->texture_width; output->texture_height = h->texture_height;
+    output->light_width = h->light_width; output->light_height = h->light_height;
+    output->texture_bytes = h->texture_bytes; output->light_bytes = h->light_bytes;
+    output->colormap_bytes = h->colormap_bytes;
+    output->light_origin_s = h->light_origin_s; output->light_origin_t = h->light_origin_t;
+    output->wrap_s = h->wrap_s; output->wrap_t = h->wrap_t;
+    output->light_shift = h->light_shift; output->flags = h->flags;
 }
 
 
@@ -211,7 +225,9 @@ void pxa_raster_span_execute_clipped(const pxa_raster_spans_t *b, pxa_span_kerne
 
 void pxa_raster_spans_execute_range(const pxa_raster_spans_t *b,
     uint32_t begin, uint32_t end) {
-    if (b->projected) { pxa_raster_projected_execute_range(b, begin, end); return; }
+    if (b->kind == PXA_RASTER_SPANS_BLIT) { pxa_raster_blit_execute_range(b, begin, end); return; }
+    if (b->kind == PXA_RASTER_SPANS_FRAME) { pxa_raster_frame_execute_range(b, begin, end); return; }
+    if (b->kind == PXA_RASTER_SPANS_PROJECTED) { pxa_raster_projected_execute_range(b, begin, end); return; }
     pxa_span_kernel_fn fn = pxa_raster_span_kernel(b);
     if (end > b->target_bytes) end = b->target_bytes;
     for (uint32_t i = 0; i < b->count; ++i) {

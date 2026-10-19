@@ -33,6 +33,8 @@ function(pxa_collect_sources output root)
         src/services/audio/audio_playback.c
         src/services/game_render/game_render_service.c
         src/services/game_render/raster_spans.c
+        src/services/game_render/raster_frame_spans.c
+        src/services/game_render/raster_blit.c
         src/services/game_render/raster_projected_spans.c
         src/services/log/log_service.c
         src/services/game_render/raster.c
@@ -67,6 +69,6 @@ function(pxa_collect_sources output root)
         list(APPEND sources "${root}/${source}")
     endforeach()
     set_property(SOURCE "${root}/src/services/game_render/raster_projected_spans.c"
-        APPEND PROPERTY COMPILE_OPTIONS "-ffp-contract=off")
+        APPEND PROPERTY COMPILE_OPTIONS "-fno-fast-math" "-ffp-contract=off")
     set(${output} "${sources}" PARENT_SCOPE)
 endfunction()

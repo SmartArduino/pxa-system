@@ -1,4 +1,7 @@
-# PXA GameRender Service 1.1.0
+# PXA GameRender Service 1.2.0
+
+GameRender 1.2 adds immutable multi-material packets and borrowed INDEX8
+image/cursor resolve. Both reuse a compute context and caller-owned memory.
 
 GameRender 1.1 adds projected scanlines and optional inverse-depth writes,
 with unchanged 1.0 requests and no additional persistent raster storage.

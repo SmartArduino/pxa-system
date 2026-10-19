@@ -1,4 +1,4 @@
-# GameRender indexed spans 1.1
+# GameRender indexed spans 1.2
 
 The normative layout source is `pxa-game-render.json`. Run
 `tools/generate_game_render_spans.py --check` to verify the generated C Host,
@@ -176,3 +176,112 @@ responses are protocol errors. Telemetry uses the same 64-byte layout; its
 `spans` field counts submitted rows for 0x106, and `pixels` counts colour
 pixels, excluding the additional depth stores. These remain compute counters,
 not game FPS.
+
+## Material batches (GameRender 1.2)
+
+Feature `indexed-frame-batches` (bit 3), I/O `EXECUTE_FRAME_SPANS` (0x107),
+submits multiple materials with one serialized import. All source data is an
+immutable snapshot inside caller-owned packet storage; the Host retains no
+copy or pointer after returning. A caller may reuse an exclusively acquired
+Surface buffer for the packet, complete execution, then overwrite it with the
+RGB565 display frame. Buffer ownership must cover the entire use of this
+scratch storage. Registration or a native address alone does not grant write
+ownership.
+
+The packet starts with 16 bytes:
+`magic:u32=0x46495850, major:u16=1, minor:u16=0, count:u32, command-bytes:u32`.
+Exactly `count` material records follow. Each is the 152-byte projected prefix
+and its eight-byte rows, with material magic **0x4d495850**. Its texture,
+light-grid and colormap offsets are relative to the **parent packet**; output
+and depth offsets remain absolute Guest linear offsets. Every source starts at
+or after `command-bytes` and fits the packet. After the last row the command
+cursor must equal `command-bytes`; unused bytes between commands and resource
+snapshots are permitted. Packet-relative sources allow the packet itself to
+move without rewriting every source address.
+
+Limits are 262144 packet bytes, 1024 materials, the context's negotiated row
+limit per material, 262144 total colour pixels and at most four times the
+largest target view. In addition, the sum of non-fullbright light-grid byte
+lengths is at most **2097152**, including repeated references to the same grid.
+This bounds preflight work independently of unique storage and output pixels.
+
+All materials have the same colour base and pitch. Depth-enabled materials
+also have the same depth base and pitch; depth-disabled materials keep their
+three depth-view fields zero. View byte lengths may differ and the batch uses
+the largest. The full colour and depth bounding views must be disjoint from
+one another and the full parent packet, covering resources belonging to later
+materials as well as current ones. Tightly bounded output views avoid falsely
+including unrelated adjacent engine scratch.
+
+Every material and generated segment is validated before execution begins.
+Rejection writes nothing. Execution rebuilds one trusted material view at a
+time without repeating preflight, partitions colour addresses across workers,
+and preserves packet order for overlapping pixels. Depth follows the same
+pixel partition. All workers join before return. No per-material Host array,
+frame, depth buffer or texture allocation is created.
+
+C uses `pxa_game_render_frame_batch_t`, `frame_begin`, `frame_copy_source`,
+`frame_append` and `execute_frame_spans`. `copy_source` returns a packet-relative
+offset and aligns the copied source to a native four-byte boundary, including
+when the packet base is unaligned. Commands grow from the beginning and sources
+from the end. `frame_remaining` allows a caller to finish the current packet
+before a new material would exhaust it. C++ provides `FrameBatch` with the same
+caller-owned storage and a `RasterContext::execute` overload. Errors are sticky.
+The telemetry `spans` field counts the sum of material rows.
+
+`frame_reserve_source` / C++ `reserve_source` reserve the same aligned source
+storage without copying. They return its packet-relative offset; the caller
+must initialize every reserved byte before execution. This lets a decoder or
+file reader produce immutable inputs directly into the packet. The convenience
+copy operation uses this allocator and preserves `memmove` overlap semantics.
+
+A queued engine adapter must preserve resources until execution. If it needs a
+reference fallback after rejection, it must replay captured state and sources;
+the original live surface state may already have changed. Flush before the
+engine reuses output memory or reads depth for a later rendering stage.
+
+## Indexed image resolve (GameRender 1.2)
+
+Feature `borrowed-indexed-blit` (bit 4), I/O `BLIT_INDEXED_FRAME` (0x108), takes
+exactly 64 bytes generated as `pxa_game_render_blit_wire_t`. This is synchronous
+computation into caller-owned RGB565LE bytes, not a display present operation.
+It uses the same compute context and no persistent pixel storage.
+
+| Offset | Fields |
+| --- | --- |
+| 0 | source-offset:u32, source-bytes:u32 |
+| 8 | palette-offset:u32, palette-bytes:u32=512 |
+| 16 | target-offset:u32, target-bytes:u32 |
+| 24 | source-width:u16, source-height:u16, source-pitch:u32 |
+| 32 | target-width:u16, target-height:u16, target-pitch:u32 |
+| 40 | cursor-offset:u32, cursor-bytes:u32 |
+| 48 | cursor-x:i32, cursor-y:i32 |
+| 56 | cursor-width:u16, cursor-height:u16, cursor-pitch:u32 |
+
+Offsets identify current Guest memory. Image and cursor are INDEX8; palette is
+256 RGB565LE entries. Dimensions are nonzero. Source pitch is at least width;
+target pitch is even and at least two times width; palette and target are
+two-byte aligned. Views must contain every active row, with at most 262144
+output pixels. A zero cursor byte length requires all cursor fields zero;
+otherwise dimensions and stride must fit its view. Cursor position may be
+negative; sampling is clipped without signed overflow. Cursor index zero is
+transparent, while image index zero is an ordinary palette entry.
+
+For each target pixel `(x,y)`, sample
+`sx = floor(floor(x*320/target-width)*source-width/320)` and
+`sy = floor(floor(y*240/target-height)*source-height/240)`.
+The two integer divisions preserve the existing logical sampling grid,
+including displays such as 296×222. Apply the optional cursor at source-image
+coordinates and resolve the selected index through the RGB565LE palette.
+
+Preflight checks every written target row against the complete image, palette,
+cursor and command ranges. Unwritten target padding may overlap read-only
+sources. Invalid input writes nothing. Execution supports arbitrary disjoint
+byte partitions, including a partition through a two-byte pixel; each worker
+writes only the bytes it owns. Aligned execution uses halfword/word stores.
+No palette/frame copy or source pinning is required during the serialized
+import. Telemetry counts target rows and resolved colour pixels.
+
+C provides `pxa_game_render_blit_indexed_frame`; C++ provides `IndexedBlit`
+and `RasterContext::blit`. Both reject short successful I/O replies. The
+caller presents its acquired buffer separately after resolve returns.

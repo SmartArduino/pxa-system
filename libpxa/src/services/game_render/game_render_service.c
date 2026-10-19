@@ -258,7 +258,9 @@ static int32_t span_context_io(pxa_game_render_resource_t *r,
         return (int32_t)size;
     }
     if (operation == PXA_GAME_RENDER_IO_EXECUTE_SPANS ||
-        operation == PXA_GAME_RENDER_IO_EXECUTE_PROJECTED_SPANS) {
+        operation == PXA_GAME_RENDER_IO_EXECUTE_PROJECTED_SPANS ||
+        operation == PXA_GAME_RENDER_IO_EXECUTE_FRAME_SPANS ||
+        operation == PXA_GAME_RENDER_IO_BLIT_INDEXED_FRAME) {
         pxa_raster_spans_t batch;
         uint8_t *memory;
         size_t memory_size;
@@ -266,7 +268,9 @@ static int32_t span_context_io(pxa_game_render_resource_t *r,
         pxa_status_t status = pxa_runtime_borrow_memory(service->runtime,
             r->component, &memory, &memory_size);
         if (status == PXA_STATUS_OK)
-            status = (operation == PXA_GAME_RENDER_IO_EXECUTE_PROJECTED_SPANS ?
+            status = (operation == PXA_GAME_RENDER_IO_BLIT_INDEXED_FRAME ? pxa_raster_blit_validate :
+                operation == PXA_GAME_RENDER_IO_EXECUTE_FRAME_SPANS ? pxa_raster_frame_spans_validate :
+                operation == PXA_GAME_RENDER_IO_EXECUTE_PROJECTED_SPANS ?
                 pxa_raster_projected_spans_validate : pxa_raster_spans_validate)(data, size, memory, memory_size,
                                               r->max_spans, &batch);
         validated = now_us(service);
@@ -281,7 +285,7 @@ static int32_t span_context_io(pxa_game_render_resource_t *r,
         r->last_execution_us = (uint32_t)(done - validated);
         r->execution_us += done - validated;
         if (status != PXA_STATUS_OK) { ++r->rejected; return status; }
-        ++r->batches; r->spans += batch.count; r->pixels += batch.pixels;
+        ++r->batches; r->spans += batch.kind == PXA_RASTER_SPANS_FRAME ? batch.state.frame.rows : batch.count; r->pixels += batch.pixels;
         return (int32_t)size;
     }
     return PXA_STATUS_UNSUPPORTED;
@@ -584,7 +588,9 @@ pxa_status_t pxa_game_render_service_register(
     operations.minor = PXA_GAME_RENDER_SERVICE_MINOR;
     if (service->backend.bind_assets) operations.features = PXA_GAME_RENDER_FEATURE_ASSET_BINDINGS;
     operations.features |= PXA_GAME_RENDER_FEATURE_BORROWED_INDEXED_SPANS |
-        PXA_GAME_RENDER_FEATURE_PROJECTED_INDEXED_SPANS;
+        PXA_GAME_RENDER_FEATURE_PROJECTED_INDEXED_SPANS |
+        PXA_GAME_RENDER_FEATURE_INDEXED_FRAME_BATCHES |
+        PXA_GAME_RENDER_FEATURE_BORROWED_INDEXED_BLIT;
     operations.context = service;
     operations.control = game_render_control;
     status = pxa_service_register(service->runtime, &operations);

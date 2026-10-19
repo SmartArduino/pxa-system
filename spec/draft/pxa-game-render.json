@@ -1,11 +1,11 @@
 {
-  "schema": "pxa-game-render-spec-1.1",
+  "schema": "pxa-game-render-spec-1.2",
   "status": "draft",
   "service": {
     "name": "game-render",
     "id": 18,
     "major": 1,
-    "minor": 1,
+    "minor": 2,
     "patch": 0
   },
   "opcodes": [
@@ -80,6 +80,20 @@
       "payload": "spans-header|projection|scanline[count]",
       "result": "accepted-bytes",
       "semantics": "Synchronous strict f32 projection, indexed lighting and optional inverse-depth writes; preflight complete batch before writes."
+    },
+    {
+      "name": "execute-frame-spans",
+      "id": 263,
+      "payload": "frame-header|materials|source-snapshots",
+      "result": "accepted-bytes",
+      "semantics": "Atomic multi-material indexed projection. Sources are packet-relative snapshots; target/depth are Guest linear offsets. Synchronous borrowed execution."
+    },
+    {
+      "name": "blit-indexed-frame",
+      "id": 264,
+      "payload": "64-byte indexed-blit descriptor",
+      "result": "accepted-bytes",
+      "semantics": "Borrow INDEX8 image, RGB565LE palette, optional transparent-zero cursor and RGB565LE target. Preserve the legacy 320x240 logical sampling grid; no display allocation or present."
     }
   ],
   "features": [
@@ -94,6 +108,14 @@
     {
       "name": "projected-indexed-spans",
       "bit": 2
+    },
+    {
+      "name": "indexed-frame-batches",
+      "bit": 3
+    },
+    {
+      "name": "borrowed-indexed-blit",
+      "bit": 4
     }
   ],
   "create_flags": [
@@ -195,7 +217,7 @@
     "texture_dimension": 256,
     "palette_colors": 256
   },
-  "protocol_version": "1.1.0",
+  "protocol_version": "1.2.0",
   "indexed_spans": {
     "magic": 1347639376,
     "major": 1,
@@ -440,6 +462,118 @@
         [
           "reserved",
           "u16"
+        ]
+      ]
+    },
+    "frames": {
+      "magic": 1179211856,
+      "material_magic": 1296652368,
+      "header_bytes": 16,
+      "max_packet_bytes": 262144,
+      "max_materials": 1024,
+      "header": [
+        [
+          "magic",
+          "u32"
+        ],
+        [
+          "major",
+          "u16"
+        ],
+        [
+          "minor",
+          "u16"
+        ],
+        [
+          "count",
+          "u32"
+        ],
+        [
+          "command_bytes",
+          "u32"
+        ]
+      ],
+      "max_light_validation_bytes": 2097152
+    },
+    "blit": {
+      "bytes": 64,
+      "max_pixels": 262144,
+      "fields": [
+        [
+          "source_offset",
+          "u32"
+        ],
+        [
+          "source_bytes",
+          "u32"
+        ],
+        [
+          "palette_offset",
+          "u32"
+        ],
+        [
+          "palette_bytes",
+          "u32"
+        ],
+        [
+          "target_offset",
+          "u32"
+        ],
+        [
+          "target_bytes",
+          "u32"
+        ],
+        [
+          "source_width",
+          "u16"
+        ],
+        [
+          "source_height",
+          "u16"
+        ],
+        [
+          "source_pitch",
+          "u32"
+        ],
+        [
+          "target_width",
+          "u16"
+        ],
+        [
+          "target_height",
+          "u16"
+        ],
+        [
+          "target_pitch",
+          "u32"
+        ],
+        [
+          "cursor_offset",
+          "u32"
+        ],
+        [
+          "cursor_bytes",
+          "u32"
+        ],
+        [
+          "cursor_x",
+          "i32"
+        ],
+        [
+          "cursor_y",
+          "i32"
+        ],
+        [
+          "cursor_width",
+          "u16"
+        ],
+        [
+          "cursor_height",
+          "u16"
+        ],
+        [
+          "cursor_pitch",
+          "u32"
         ]
       ]
     }
