@@ -121,9 +121,8 @@ public:
         wire_spans::pxa_game_render_spans_header_encode(record, PXA_GAME_RENDER_SPANS_HEADER_BYTES, &material);
         wire_spans::pxa_game_render_projection_encode(record + PXA_GAME_RENDER_SPANS_HEADER_BYTES,
             PXA_GAME_RENDER_PROJECTION_BYTES, &projection);
-        for (std::size_t i = 0; i < rows.size(); ++i)
-            wire_spans::pxa_game_render_row_encode(record + PXA_GAME_RENDER_PROJECTED_PREFIX_BYTES +
-                i * PXA_GAME_RENDER_ROW_BYTES, PXA_GAME_RENDER_ROW_BYTES, &rows[i]);
+        wire_spans::pxa_game_render_rows_encode(record + PXA_GAME_RENDER_PROJECTED_PREFIX_BYTES,
+            rows.size() * PXA_GAME_RENDER_ROW_BYTES, rows.data(), rows.size());
         command_end_ += size; ++count_;
         if (rows.size() > max_rows_) max_rows_ = rows.size();
         return {};

@@ -285,3 +285,23 @@ import. Telemetry counts target rows and resolved colour pixels.
 C provides `pxa_game_render_blit_indexed_frame`; C++ provides `IndexedBlit`
 and `RasterContext::blit`. Both reject short successful I/O replies. The
 caller presents its acquired buffer separately after resolve returns.
+
+## Optional WASM command encoding
+
+Define `PXA_GAME_RENDER_WASM_PACKED_CODEC=1` consistently for Guest translation
+units to use bulk encoding with Clang/WASM and C11 or C++. Other targets retain
+the portable field codec. This is a compile option, not a different wire format
+or a Host feature negotiation.
+
+The generator proves the complete record size and **every field offset** before
+copying a WASM little-endian object representation. No pointer or padding is
+serialized. Records of at least 16 bytes use a bounded `memory.copy`; eight-byte
+individual rows keep the field codec. `rows_encode` copies a contiguous row array
+in one operation, so a frame batch does not issue a native copy per row. The
+builders still validate row counts and reserved values before writing commands;
+Host preflight and all lifetime/alias rules remain unchanged.
+
+`tools/package/test_game_render_wasm_codec.sh` runs both modes for the C SDK and
+C++ generated codecs. Independent wire byte patterns, all destination byte
+alignments, short-buffer no-write checks and row arrays are covered. These
+functional checks establish wire equivalence, not a game FPS improvement.

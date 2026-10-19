@@ -43,6 +43,21 @@ def render(guest):
                (schema['span'], 'span', schema['span_bytes']),
                (projected['projection'], 'projection', projected['projection_bytes']),
                (projected['row'], 'row', projected['row_bytes'])]
+    fast_guard = 'defined(PXA_GAME_RENDER_WASM_PACKED_CODEC) && PXA_GAME_RENDER_WASM_PACKED_CODEC && defined(__wasm__) && defined(__clang__) && (defined(__cplusplus) || (defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L))'
+    if guest:
+        lines += ['#if ' + fast_guard,
+                  '/* Only the WASM little-endian object layout is eligible. Each',
+                  ' * encoder proves every field offset and the complete size. */',
+                  '__attribute__((target("bulk-memory"), noinline))',
+                  'static void pxa_game_render_wire_copy(void *to, const void *from, size_t bytes) {',
+                  '    __builtin_memmove(to, from, bytes);', '}', '#endif']
+    def layout_proof(fields, typename, record_size):
+        result = ['    _Static_assert(sizeof(pxa_game_render_%s_wire_t) == %du, "wire size");' % (typename, record_size)]
+        offset = 0
+        for name, kind in fields:
+            result.append('    _Static_assert(offsetof(pxa_game_render_%s_wire_t, %s) == %du, "wire offset");' % (typename, name, offset))
+            offset += WIDTHS[kind]
+        return result
     for fields, typename, record_size in layouts:
         assert sum(WIDTHS[t] for _, t in fields) == record_size
         lines.append('typedef struct {')
@@ -62,6 +77,10 @@ def render(guest):
                   'static inline int pxa_game_render_%s_encode(uint8_t *p, size_t n,' % typename,
                   '    const pxa_game_render_%s_wire_t *v) {' % typename,
                   '    if (!p || !v || n < %du) return 0;' % record_size]
+        if guest and record_size >= 16:
+            lines += ['#if ' + fast_guard] + layout_proof(fields, typename, record_size) + [
+                '    pxa_game_render_wire_copy(p, v, %du);' % record_size,
+                '    return 1;', '#endif']
         offset = 0
         for name, kind in fields:
             width = WIDTHS[kind]
@@ -69,6 +88,17 @@ def render(guest):
                          '    pxa_wire_generated_store_u%d(p + %d, (uint%d_t)v->%s);' % (width * 8, offset, width * 8, name))
             offset += width
         lines += ['    return 1;', '}']
+    lines += ['static inline int pxa_game_render_rows_encode(uint8_t *p, size_t n,',
+              '    const pxa_game_render_row_wire_t *rows, uint32_t count) {',
+              '    if ((uint64_t)count * PXA_GAME_RENDER_ROW_BYTES > n || (count && (!p || !rows))) return 0;',
+              '    if (!count) return 1;']
+    if guest:
+        lines += ['#if ' + fast_guard] + layout_proof(projected['row'], 'row', projected['row_bytes']) + [
+            '    pxa_game_render_wire_copy(p, rows, (size_t)count * PXA_GAME_RENDER_ROW_BYTES);',
+            '    return 1;', '#endif']
+    lines += ['    for (uint32_t i = 0; i < count; ++i)',
+              '        pxa_game_render_row_encode(p + (size_t)i * PXA_GAME_RENDER_ROW_BYTES, PXA_GAME_RENDER_ROW_BYTES, rows + i);',
+              '    return 1;', '}']
     return '\n'.join(lines + ['#endif /* shared Host/Guest definitions */', '#endif', ''])
 
 
@@ -92,6 +122,7 @@ def main():
         'PXA_CPP_GAME_RENDER_SPANS_WIRE_SHARED_H')
     text = text.replace('#include "pxa_core.h"',
         '#include "core.hpp"\n#include <stdint.h>\nnamespace pxa::game::wire_spans {')
+    text = text.replace('_Static_assert(', 'static_assert(')
     text = text.replace('const uint8_t *p', 'const std::byte *p').replace('uint8_t *p', 'std::byte *p')
     import re
     text = re.sub(r'pxa_wire_generated_load_u(16|32)\(p \+ (\d+)\)',

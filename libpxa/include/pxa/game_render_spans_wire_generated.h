@@ -333,5 +333,13 @@ static inline int pxa_game_render_row_encode(uint8_t *p, size_t n,
     pxa_wire_generated_store_u16(p + 6, (uint16_t)v->reserved);
     return 1;
 }
+static inline int pxa_game_render_rows_encode(uint8_t *p, size_t n,
+    const pxa_game_render_row_wire_t *rows, uint32_t count) {
+    if ((uint64_t)count * PXA_GAME_RENDER_ROW_BYTES > n || (count && (!p || !rows))) return 0;
+    if (!count) return 1;
+    for (uint32_t i = 0; i < count; ++i)
+        pxa_game_render_row_encode(p + (size_t)i * PXA_GAME_RENDER_ROW_BYTES, PXA_GAME_RENDER_ROW_BYTES, rows + i);
+    return 1;
+}
 #endif /* shared Host/Guest definitions */
 #endif

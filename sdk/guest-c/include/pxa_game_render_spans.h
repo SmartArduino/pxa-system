@@ -234,9 +234,8 @@ static inline int pxa_game_render_frame_append(pxa_game_render_frame_batch_t *b,
     pxa_game_render_spans_header_encode(record, PXA_GAME_RENDER_SPANS_HEADER_BYTES, &h);
     pxa_game_render_projection_encode(record + PXA_GAME_RENDER_SPANS_HEADER_BYTES,
         PXA_GAME_RENDER_PROJECTION_BYTES, projection);
-    for (uint32_t i = 0; i < count; ++i)
-        pxa_game_render_row_encode(record + PXA_GAME_RENDER_PROJECTED_PREFIX_BYTES +
-            i * PXA_GAME_RENDER_ROW_BYTES, PXA_GAME_RENDER_ROW_BYTES, rows + i);
+    pxa_game_render_rows_encode(record + PXA_GAME_RENDER_PROJECTED_PREFIX_BYTES,
+        count * PXA_GAME_RENDER_ROW_BYTES, rows, count);
     b->command_end += size; ++b->count;
     return 1;
 }
