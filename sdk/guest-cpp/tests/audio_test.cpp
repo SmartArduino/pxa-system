@@ -28,6 +28,7 @@ static_assert(pxa::detail::audio_wire::io_play_effect == PXA_AUDIO_IO_PLAY_EFFEC
 static_assert(pxa::detail::audio_wire::io_stop_effect == PXA_AUDIO_IO_STOP_EFFECT);
 static_assert(pxa::detail::audio_wire::io_play_sound == PXA_AUDIO_IO_PLAY_SOUND);
 static_assert(pxa::detail::audio_wire::io_control_sound == PXA_AUDIO_IO_CONTROL_SOUND);
+static_assert(pxa::detail::audio_wire::io_mix_pcm == PXA_AUDIO_IO_MIX_PCM);
 static_assert(pxa::detail::audio_wire::independent_effect == PXA_AUDIO_SOUND_APPEND);
 static_assert(pxa::detail::audio_wire::effect_header_bytes == 4);
 static_assert(pxa::detail::audio_wire::effect_tone_bytes == 14);
@@ -88,6 +89,12 @@ extern "C" std::int32_t pxa_io(std::uint64_t handle, std::uint32_t operation,
     assert(graph_ready);
     ++io_calls;
     auto* p = reinterpret_cast<std::byte*>(data);
+    if (operation == 0x109) {
+        assert(size == 16 && pxa::wire::get32(p) == 1024 &&
+            pxa::wire::get32(p + 4) == 64 && pxa::wire::get32(p + 8) == 512 &&
+            pxa::wire::get16(p + 12) == 2 && !pxa::wire::get16(p + 14));
+        return effect_reply.value_or(size);
+    }
     if (operation == 0x100) {
         assert(size == 14 && pxa::wire::get16(p) == 440 && p[7] == std::byte{});
         return size;
@@ -340,6 +347,31 @@ int main() {
     pxa::Transport transport;
     transport.phase(pxa::Phase::event);
     pxa::RequestTable requests;
+    {
+        pxa::AudioMixSpan mix{.source_offset = 256, .source_bytes = 128,
+            .position_q16 = 32768, .target_first = 3, .frames = 64,
+            .left_gain_q8 = 248, .right_gain_q8 = 8,
+            .encoding = pxa::AudioMixEncoding::s8};
+        std::array<std::byte, 32> record{};
+        assert(mix.encode(record));
+        assert(pxa::wire::get32(record.data() + 8) == 32768 &&
+            pxa::wire::get32(record.data() + 12) == 65536 &&
+            pxa::wire::get32(record.data() + 16) == 3 &&
+            pxa::wire::get16(record.data() + 24) == 248 &&
+            record[28] == std::byte{1} && record[29] == std::byte{1});
+        mix.left_gain_q8 = 257;
+        assert(!mix.encode(record));
+        pxa::AudioSession session(transport, requests, session_handle, {11025, 2, 20});
+        effect_reply.reset();
+        assert(session.mix_pcm(1024, 64, 512, 2));
+        effect_reply = 15;
+        assert(session.mix_pcm(1024, 64, 512, 2).error() == pxa::Error::protocol_error);
+        effect_reply = -5;
+        assert(!session.mix_pcm(1024, 64, 512, 2));
+        const auto calls = io_calls;
+        assert(!session.mix_pcm(1024, 64, 512, 33) && io_calls == calls);
+        effect_reply.reset();
+    }
     pxa::TaskScope scope;
     // A late Audio open result carries its session inside a TLV at offset 8.
     service = 10;
@@ -347,9 +379,9 @@ int main() {
     assert(requests.add(999, &scope, [](void*, const pxa::Event&) {}));
     requests.abandon(999, transport, 10, 1, true, 8);
     assert(requests.dispatch({10, 1, 999, opened}));
-    assert(closes == 6);
+    assert(closes == 7);
     assert(requests.add(1000, &scope, [](void*, const pxa::Event&) {}));
     requests.abandon(1000, transport, 10, 5, true, 8);
     assert(requests.dispatch({10, 5, 1000, pcm_opened}));
-    assert(closes == 7);
+    assert(closes == 8);
 }

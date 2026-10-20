@@ -29,6 +29,7 @@ function(pxa_collect_sources output root)
         src/services/net/net_validate.c
         src/services/audio/audio_service.c
         src/services/audio/audio_mixer.c
+        src/services/audio/audio_mix.c
         src/services/audio/audio_buffer.c
         src/services/audio/audio_playback.c
         src/services/game_render/game_render_service.c

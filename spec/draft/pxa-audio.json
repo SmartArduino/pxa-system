@@ -1,11 +1,11 @@
 {
-  "schema": "pxa-audio-spec-0.10",
+  "schema": "pxa-audio-spec-0.11",
   "status": "draft",
   "service": {
     "name": "audio",
     "id": 10,
     "major": 0,
-    "minor": 10,
+    "minor": 11,
     "patch": 0
   },
   "opcodes": [
@@ -121,6 +121,13 @@
       "payload": "track:u8|reserved:24",
       "semantics": "idempotent stop for a synthesized effect track, separate from resident sound tracks",
       "result": "payload-size-or-status"
+    },
+    {
+      "name": "mix-pcm",
+      "id": 265,
+      "since": "0.11",
+      "payload": "target-offset:u32|target-frames:u32|spans-offset:u32|span-count:u16|reserved:u16",
+      "result": "16-or-status; atomic validation, synchronous S32LE stereo accumulation"
     }
   ],
   "record_tags": [
@@ -254,7 +261,7 @@
     "min_frame_ms": 5,
     "max_frame_ms": 120
   },
-  "protocol_version": "0.10.0",
+  "protocol_version": "0.11.0",
   "playback_event": {
     "id": 32769,
     "since": "0.7",
@@ -300,8 +307,31 @@
     "queue_frames": "bounded maximum in source frames; 1..floor(source_rate * 120 / 1000)",
     "sink_format": "reported physical route; stereo source can be mixed to a mono speaker by the Host",
     "state_counters": "source sample frames, independent of channels; accepted means renderer consumption unless flags specify sink-submitted",
-    "operations": "WRITE, commit-graph, query-state, flush and close; other resource I/O returns UNSUPPORTED",
+    "operations": "WRITE, MIX_PCM (since 0.11), commit-graph, query-state, flush and close; other resource I/O returns UNSUPPORTED",
     "permission": "audio.playback media; authority, quotas and close rules match open-session",
     "reserved": "all request reserved bytes must be zero; unknown flags rejected"
+  },
+  "mix_pcm": {
+    "header_bytes": 16,
+    "span_bytes": 32,
+    "max_spans": 32,
+    "max_frames": 4096,
+    "max_work": 16384,
+    "span": "source-offset:u32|source-bytes:u32|position-q16:u32|step-q16:u32|target-first:u32|frames:u32|left-gain-q8:u16|right-gain-q8:u16|encoding:u8|channels:u8|reserved:u16",
+    "encodings": {
+      "s8": 1,
+      "u8": 2,
+      "s16le": 3
+    },
+    "channels": [
+      1,
+      2
+    ],
+    "gain": "0..256, unity 256; expand 8-bit to signed 16-bit then multiply and divide by 256 toward zero",
+    "position": "unsigned Q16 source-frame position; nearest neighbour; step 1..1048576; last position must fit u32",
+    "result": "add into existing interleaved S32LE stereo; saturate S32 in span order; no clearing or final PCM quantization",
+    "ownership": "serialized wasm32 memory borrow for this synchronous call only; no retained pointers, copies, playback scheduling or extra task",
+    "validation": "all spans before all writes; entire target must be disjoint from header, descriptors and each declared source range; BAD_STATE without a serialized borrowed-memory dispatch",
+    "limits": "sum of span frames <= max_work; unknown/reserved fields rejected; no heap allocation"
   }
 }

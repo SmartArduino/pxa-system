@@ -1,4 +1,4 @@
-# PXA Audio Draft 0.10
+# PXA Audio Draft 0.11
 
 Audio defines a permission-bound session and an atomic, App-owned playback
 graph control plane. `open-session` requires an `audio.playback` Permission
@@ -260,3 +260,57 @@ describe protocol limits, not available concurrent capacity.
 The span is borrowed only during the call;
 the Host copies compact descriptors before returning. No hot-path allocation
 or decoding is required.
+
+## Synchronous PCM accumulation (0.11)
+
+`MIX_PCM` (`0x109`) is available on an existing Audio session, including a PCM
+session. It performs bounded computation in the calling Guest's linear memory.
+It does not play, enqueue, clear the output, advance counters or change the
+session clock. The Guest retains scheduling, loop splitting and final output
+quantization; the result may subsequently feed the ordinary PCM WRITE path.
+This is an intermediate migration path for engines with existing mix buffers.
+
+The 16-byte little-endian header is `target_offset:u32`, `target_frames:u32`,
+`spans_offset:u32`, `span_count:u16`, `reserved:u16`. The target is interleaved
+signed S32LE stereo, aligned to four bytes. Each 32-byte span contains:
+
+| Offset | Field |
+| --- | --- |
+| 0 | source offset, u32 |
+| 4 | source bytes, u32 |
+| 8 | initial source-frame position, unsigned Q16 u32 |
+| 12 | source-frame step, unsigned Q16 u32 |
+| 16 | first destination frame, u32 |
+| 20 | destination frame count, u32 |
+| 24, 26 | left/right linear gain, u16 Q8, 0..256 |
+| 28 | encoding: S8=1, U8=2, S16LE=3 |
+| 29 | source channels: 1 or 2 |
+| 30 | reserved u16, zero |
+
+The Host selects source frame `floor((position + n * step) / 65536)`. Mono
+feeds both sides; stereo preserves left/right assignment. S8 and U8 expand to
+signed 16-bit magnitude before multiplying by gain and dividing by 256 toward
+zero. Contributions add in descriptor order, saturating only at signed
+32-bit accumulator limits. There is no automatic fade, smoothing or S16
+clipping. In particular, S8 gain 248 produces exactly `signed_sample * 248`.
+
+Limits: 1..32 spans, 1..4096 target frames, sum of span frame counts at most
+16384, step 1..1048576. Last accessed Q16 position must fit u32, source bytes
+must contain complete source frames, and all accessed frames must fit their
+declared source and target extents. Reserved fields must be zero. The entire
+target extent must be disjoint from the header, descriptors and every declared
+source range. Source ranges may overlap each other.
+
+All validation precedes all target writes. Malformed input returns
+`INVALID_ARGUMENT`; exceeding work/count/target-frame limits returns
+`LIMIT_EXCEEDED`. Missing serialized linear-memory dispatch returns `BAD_STATE`;
+older Audio services return `UNSUPPORTED` for the operation. Errors leave the
+target unchanged. Success returns exactly 16. No source or target pointer
+survives return, and the Host must not re-enter the Guest during processing.
+The portable Host implementation allocates no heap memory and stores no
+additional per-session state.
+
+C: encode `pxa_audio_mix_span_t` entries with `pxa_audio_encode_mix_span`, then
+call `pxa_audio_mix_pcm` with their wasm32 offset. C++: `AudioMixSpan::encode`
+and `AudioSession::mix_pcm` expose the same explicit offsets. SDK wrappers
+check result length; a successful short response is a protocol error.

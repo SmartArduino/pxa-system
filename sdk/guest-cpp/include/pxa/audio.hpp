@@ -45,6 +45,35 @@ struct AudioPcmSink {
     std::uint8_t channels = 0;
 };
 
+enum class AudioMixEncoding : std::uint8_t { s8 = 1, u8, s16le };
+// Explicit wasm32 offsets for the synchronous Audio 0.11 kernel.
+// This native C++ structure is never sent across the ABI as raw bytes.
+struct AudioMixSpan {
+    std::uint32_t source_offset = 0, source_bytes = 0, position_q16 = 0;
+    std::uint32_t step_q16 = 65536, target_first = 0, frames = 0;
+    std::uint16_t left_gain_q8 = 256, right_gain_q8 = 256;
+    AudioMixEncoding encoding = AudioMixEncoding::s16le;
+    std::uint8_t channels = 1;
+
+    Result<void> encode(std::span<std::byte> out) const noexcept {
+        const auto format = std::to_underlying(encoding);
+        if (out.size() < detail::audio_wire::mix_span_bytes || !source_bytes ||
+            !frames || frames > detail::audio_wire::mix_max_frames ||
+            !step_q16 || step_q16 > (16u << 16) ||
+            left_gain_q8 > 256 || right_gain_q8 > 256 ||
+            format < 1 || format > 3 || (channels != 1 && channels != 2))
+            return std::unexpected(Error::invalid_argument);
+        auto* p = out.data();
+        wire::put32(p, source_offset); wire::put32(p + 4, source_bytes);
+        wire::put32(p + 8, position_q16); wire::put32(p + 12, step_q16);
+        wire::put32(p + 16, target_first); wire::put32(p + 20, frames);
+        wire::put16(p + 24, left_gain_q8); wire::put16(p + 26, right_gain_q8);
+        p[28] = std::byte(format); p[29] = std::byte(channels);
+        p[30] = p[31] = std::byte{};
+        return {};
+    }
+};
+
 struct AudioState {
     std::uint64_t submitted_samples = 0;
     std::uint64_t accepted_samples = 0;
@@ -146,6 +175,22 @@ public:
         if (written && (*written > pcm.size() || *written % alignment))
             return std::unexpected(Error::protocol_error);
         return written;
+    }
+
+    // Accumulates into caller-owned S32LE stereo; no playback, copying or
+    // ownership transfer. All encoded spans and sources must stay immutable
+    // until return. The Host rejects the entire batch before writing on error.
+    Result<void> mix_pcm(std::uint32_t target_offset, std::uint32_t target_frames,
+        std::uint32_t spans_offset, std::uint16_t count) noexcept {
+        if (!target_frames || target_frames > detail::audio_wire::mix_max_frames ||
+            !count || count > detail::audio_wire::mix_max_spans)
+            return std::unexpected(Error::invalid_argument);
+        std::array<std::byte, detail::audio_wire::mix_header_bytes> command{};
+        wire::put32(command.data(), target_offset);
+        wire::put32(command.data() + 4, target_frames);
+        wire::put32(command.data() + 8, spans_offset);
+        wire::put16(command.data() + 12, count);
+        return command_io(detail::audio_wire::io_mix_pcm, command);
     }
 
     Result<void> sound(const Asset& asset,

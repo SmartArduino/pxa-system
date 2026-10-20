@@ -19,6 +19,7 @@ inline constexpr std::uint32_t io_control_sound = 261;
 inline constexpr std::uint32_t io_control_music = 262;
 inline constexpr std::uint32_t io_play_effect = 263;
 inline constexpr std::uint32_t io_stop_effect = 264;
+inline constexpr std::uint32_t io_mix_pcm = 265;
 inline constexpr std::uint16_t playback_event = 32769;
 inline constexpr std::size_t sound_tracks = 6;
 inline constexpr std::size_t effect_max_layers = 8;
@@ -27,4 +28,9 @@ inline constexpr std::size_t effect_header_bytes = 4;
 inline constexpr std::size_t effect_tone_bytes = 14;
 inline constexpr std::size_t effect_stop_bytes = 4;
 inline constexpr std::uint8_t independent_effect = 255;
+inline constexpr std::size_t mix_header_bytes = 16;
+inline constexpr std::size_t mix_span_bytes = 32;
+inline constexpr std::size_t mix_max_spans = 32;
+inline constexpr std::size_t mix_max_frames = 4096;
+inline constexpr std::size_t mix_max_work = 16384;
 } // namespace pxa::detail::audio_wire

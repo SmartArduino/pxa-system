@@ -428,6 +428,8 @@ def render_cpp_audio_protocol() -> str:
         *(f"inline constexpr std::size_t effect_{name} = {effects[name]};"
           for name in ("max_layers", "track_count", "header_bytes", "tone_bytes", "stop_bytes")),
         f"inline constexpr std::uint8_t independent_effect = {effects['independent_track']};",
+        *(f"inline constexpr std::size_t mix_{name} = {document['mix_pcm'][name]};"
+          for name in ("header_bytes", "span_bytes", "max_spans", "max_frames", "max_work")),
         "} // namespace pxa::detail::audio_wire",
         "",
     ]

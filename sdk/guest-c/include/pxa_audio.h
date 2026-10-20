@@ -19,6 +19,7 @@
 #define PXA_AUDIO_IO_PLAY_MUSIC 0x104u
 #define PXA_AUDIO_IO_CONTROL_SOUND 0x105u
 #define PXA_AUDIO_IO_CONTROL_MUSIC 0x106u
+#define PXA_AUDIO_IO_MIX_PCM 0x109u
 #define PXA_AUDIO_PLAYBACK_EVENT 0x8001u
 #define PXA_AUDIO_PLAYBACK_READY 1u
 #define PXA_AUDIO_PLAYBACK_ENDED 2u
@@ -61,6 +62,52 @@ typedef struct {
     uint32_t sink_rate, queue_frames;
     uint8_t sink_channels;
 } pxa_audio_pcm_result_t;
+
+/* Audio 0.11. Offsets are wasm32 linear-memory offsets, not Host addresses.
+ * MIX_PCM is synchronous computation only: it does not enqueue playback or
+ * advance the session clock. The Host validates the whole batch before writing
+ * interleaved S32LE accumulators; use WRITE separately for final S16LE output. */
+#define PXA_AUDIO_MIX_HEADER_BYTES 16u
+#define PXA_AUDIO_MIX_SPAN_BYTES 32u
+#define PXA_AUDIO_MIX_MAX_SPANS 32u
+#define PXA_AUDIO_MIX_MAX_FRAMES 4096u
+#define PXA_AUDIO_MIX_MAX_WORK 16384u
+#define PXA_AUDIO_MIX_S8 1u
+#define PXA_AUDIO_MIX_U8 2u
+#define PXA_AUDIO_MIX_S16LE 3u
+typedef struct {
+    uint32_t source_offset, source_bytes, position_q16, step_q16;
+    uint32_t target_first, frames;
+    uint16_t left_gain_q8, right_gain_q8;
+    uint8_t encoding, channels;
+} pxa_audio_mix_span_t;
+
+static inline int pxa_audio_encode_mix_span(uint8_t *out, size_t size,
+    const pxa_audio_mix_span_t *s) {
+    if (!out || size < PXA_AUDIO_MIX_SPAN_BYTES || !s || !s->source_bytes ||
+        !s->frames || s->frames > PXA_AUDIO_MIX_MAX_FRAMES ||
+        !s->step_q16 || s->step_q16 > (16u << 16) ||
+        s->left_gain_q8 > 256 || s->right_gain_q8 > 256 ||
+        s->encoding < PXA_AUDIO_MIX_S8 || s->encoding > PXA_AUDIO_MIX_S16LE ||
+        (s->channels != 1 && s->channels != 2)) return 0;
+    pxa_store_u32(out, s->source_offset); pxa_store_u32(out + 4, s->source_bytes);
+    pxa_store_u32(out + 8, s->position_q16); pxa_store_u32(out + 12, s->step_q16);
+    pxa_store_u32(out + 16, s->target_first); pxa_store_u32(out + 20, s->frames);
+    pxa_store_u16(out + 24, s->left_gain_q8); pxa_store_u16(out + 26, s->right_gain_q8);
+    out[28] = s->encoding; out[29] = s->channels;
+    out[30] = out[31] = 0;
+    return 1;
+}
+static inline int32_t pxa_audio_mix_pcm(uint64_t session, uint32_t target_offset,
+    uint32_t target_frames, uint32_t spans_offset, uint16_t count) {
+    if (!(session >> 32) || !target_frames || target_frames > PXA_AUDIO_MIX_MAX_FRAMES ||
+        !count || count > PXA_AUDIO_MIX_MAX_SPANS) return PXA_STATUS_INVALID_ARGUMENT;
+    uint8_t header[PXA_AUDIO_MIX_HEADER_BYTES] = {0};
+    pxa_store_u32(header, target_offset); pxa_store_u32(header + 4, target_frames);
+    pxa_store_u32(header + 8, spans_offset); pxa_store_u16(header + 12, count);
+    int32_t result = pxa_io(session, PXA_AUDIO_IO_MIX_PCM, header, sizeof(header));
+    return result < 0 ? result : result == sizeof(header) ? 0 : PXA_STATUS_PROTOCOL_ERROR;
+}
 
 typedef struct {
     int32_t status;

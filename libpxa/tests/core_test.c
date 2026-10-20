@@ -5802,7 +5802,32 @@ static void test_audio_service(void) {
                 PXA_IO_WRITE, oversized, sizeof(oversized)) == PXA_STATUS_INVALID_ARGUMENT);
             assert(dispatch_io64(test.runtime, v1_component, pcm_session,
                 PXA_AUDIO_IO_PLAY_TONE, tone, sizeof(tone)) == PXA_STATUS_UNSUPPORTED);
+            /* Synchronous computation borrows only the dispatching component's
+             * memory. It neither queues PCM nor changes playback counters. */
+            _Alignas(8) uint8_t mix_memory[1024] = {0};
+            uint8_t *mix_header = mix_memory;
+            pxa_write_u32(mix_header, 512); pxa_write_u32(mix_header + 4, 2);
+            pxa_write_u32(mix_header + 8, 256); pxa_write_u16(mix_header + 12, 1);
+            uint8_t *mix_span = mix_memory + 256;
+            pxa_write_u32(mix_span, 128); pxa_write_u32(mix_span + 4, 2);
+            pxa_write_u32(mix_span + 12, 65536); pxa_write_u32(mix_span + 20, 2);
+            pxa_write_u16(mix_span + 24, 248); pxa_write_u16(mix_span + 26, 8);
+            mix_span[28] = 1; mix_span[29] = 1;
+            mix_memory[128] = 128; mix_memory[129] = 127;
+            assert(!pxa_component_begin_event(test.runtime, v1_component));
+            assert(pxa_runtime_io64_memory(test.runtime, v1_component, pcm_session,
+                PXA_AUDIO_IO_MIX_PCM, mix_header, 16, mix_memory, sizeof(mix_memory)) == 16);
+            assert(!pxa_component_finish_event(test.runtime, v1_component, 1));
+            assert((int32_t)pxa_read_u32(mix_memory + 512) == -128 * 248);
+            assert((int32_t)pxa_read_u32(mix_memory + 524) == 127 * 8);
+            assert(dispatch_io64(test.runtime, v1_component, pcm_session,
+                PXA_AUDIO_IO_MIX_PCM, mix_header, 16) == PXA_STATUS_BAD_STATE);
+            assert((int32_t)pxa_read_u32(mix_memory + 512) == -128 * 248);
             assert(!pxa_handle_close64(test.runtime, v1_component, pcm_session));
+            assert(!pxa_component_begin_event(test.runtime, v1_component));
+            assert(pxa_runtime_io64_memory(test.runtime, v1_component, pcm_session,
+                PXA_AUDIO_IO_MIX_PCM, mix_header, 16, mix_memory, sizeof(mix_memory)) < 0);
+            assert(!pxa_component_finish_event(test.runtime, v1_component, 1));
         }
         assert(backend.opens == 7 && backend.closes == 7);
         assert(pxa_handle_close64(test.runtime, v1_component, permission64) ==
