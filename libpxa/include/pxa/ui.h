@@ -535,6 +535,12 @@ pxa_status_t pxa_ui_queue_event(pxa_ui_service_t *service,
                                    uint64_t timestamp_us,
                                    const void *value, size_t value_size);
 
+/* Zero means this target does not currently accept the event. Nonzero is
+ * its committed UI generation, allowing Host input-state caches to expire
+ * when a Guest rebuilds the target. Serialize with the UI service owner. */
+uint32_t pxa_ui_event_target_generation(pxa_ui_service_t *service,
+    pxa_component_t component, uint32_t surface, uint32_t node, uint16_t kind);
+
 /* The caller must serialize this query with the UI service owner. */
 bool pxa_ui_accepts_event(pxa_ui_service_t *service,
                           pxa_component_t component,

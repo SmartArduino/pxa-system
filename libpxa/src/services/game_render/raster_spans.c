@@ -170,12 +170,76 @@ pxa_status_t pxa_raster_spans_validate(const uint8_t *packet, size_t size,
 
 /* Specialize the two texture modes and four light-grid sizes outside the
  * pixel loop. Unsigned arithmetic defines negative-coordinate wrapping. */
+/* Horizontal light interpolation reuses the same vertical pair until the
+ * texture row or light cell changes. Keep only coefficients on the stack;
+ * no texture/light cache or shared state is needed by either raster core. */
+#define CACHED_SPAN_KERNEL(shift, pow2) \
+static void cached_span_##shift##_##pow2(const pxa_raster_spans_t *restrict b, uint8_t *restrict out, \
+    uint32_t n, uint32_t s, uint32_t t, uint32_t ds, uint32_t dt) { \
+    const uint32_t mask = (1u << shift) - 1u; \
+    const int32_t origin = b->light_origin_s + b->light_origin_t * (int32_t)b->light_width; \
+    int32_t last_t = asr((int16_t)t, 6) ^ 1, last_cell = 0; \
+    int32_t base = 0, step = 0; \
+    while (n--) { \
+        int32_t ss = (int16_t)s, tt = (int16_t)t; \
+        int32_t si = asr(ss, 6), ti = asr(tt, 6), cell = asr(si, shift); \
+        if (ti != last_t || cell != last_cell) { \
+            const uint32_t *p = b->lights + cell + (int32_t)b->light_width * asr(ti, shift) - origin; \
+            uint32_t l0 = light_word(p), l1 = light_word(p + 1), dy = (uint32_t)ti & mask; \
+            int32_t a0 = (int16_t)l0, a1 = (int16_t)l1; \
+            int32_t left = a0 * (1 << shift) + ((int32_t)(l0 >> 16) - a0) * (int32_t)dy; \
+            int32_t right = a1 * (1 << shift) + ((int32_t)(l1 >> 16) - a1) * (int32_t)dy; \
+            base = left * (1 << shift); step = right - left; \
+            last_t = ti; last_cell = cell; \
+        } \
+        uint32_t light = (uint32_t)(base + step * (int32_t)((uint32_t)si & mask)); \
+        uint32_t x, y; \
+        if (pow2) { \
+            x = (uint32_t)si & (b->texture_width - 1u); \
+            y = (uint32_t)ti & (b->texture_height - 1u); \
+        } else { \
+            x = (uint32_t)(((uint64_t)(b->wrap_s * ((uint32_t)ss << 10)) * b->texture_width) >> 32); \
+            y = (uint32_t)(((uint64_t)(b->wrap_t * ((uint32_t)tt << 10)) * b->texture_height) >> 32); \
+        } \
+        *out++ = b->colormap[((light >> shift) & 0xff00u) + b->texture[y * b->texture_width + x]]; \
+        s += ds; t += dt; \
+    } \
+}
+CACHED_SPAN_KERNEL(1, 0) CACHED_SPAN_KERNEL(2, 0) CACHED_SPAN_KERNEL(3, 0) CACHED_SPAN_KERNEL(4, 0)
+CACHED_SPAN_KERNEL(1, 1) CACHED_SPAN_KERNEL(2, 1) CACHED_SPAN_KERNEL(3, 1) CACHED_SPAN_KERNEL(4, 1)
+#undef CACHED_SPAN_KERNEL
+
+/* Fullbright still applies the original colormap row zero. It needs no
+ * light reads or interpolation; validation/ownership rules remain unchanged. */
+#define FULLBRIGHT_KERNEL(pow2) \
+static void fullbright_##pow2(const pxa_raster_spans_t *restrict b, uint8_t *restrict out, \
+    uint32_t n, uint32_t s, uint32_t t, uint32_t ds, uint32_t dt) { \
+    while (n--) { \
+        uint32_t x, y; \
+        if (pow2) { \
+            x = (uint32_t)asr((int16_t)s, 6) & (b->texture_width - 1u); \
+            y = (uint32_t)asr((int16_t)t, 6) & (b->texture_height - 1u); \
+        } else { \
+            x = (uint32_t)(((uint64_t)(b->wrap_s * ((uint32_t)(int16_t)s << 10)) * b->texture_width) >> 32); \
+            y = (uint32_t)(((uint64_t)(b->wrap_t * ((uint32_t)(int16_t)t << 10)) * b->texture_height) >> 32); \
+        } \
+        *out++ = b->colormap[b->texture[y * b->texture_width + x]]; \
+        s += ds; t += dt; \
+    } \
+}
+FULLBRIGHT_KERNEL(0) FULLBRIGHT_KERNEL(1)
+#undef FULLBRIGHT_KERNEL
+
 #define SPAN_KERNEL(shift, pow2) \
 static void span_##shift##_##pow2(const pxa_raster_spans_t *restrict b, uint8_t *restrict out, \
     uint32_t n, uint32_t s, uint32_t t, uint32_t ds, uint32_t dt) { \
     const uint32_t mask = (1u << shift) - 1u; \
     const int32_t origin = b->light_origin_s + b->light_origin_t * (int32_t)b->light_width; \
-    const uint32_t light_mask = (b->flags & PXA_GAME_RENDER_SPANS_FULLBRIGHT) ? 0 : 0xff00u; \
+    const uint32_t ads = (int32_t)ds < 0 ? 0u - ds : ds; \
+    const uint32_t adt = (int32_t)dt < 0 ? 0u - dt : dt; \
+    if (n >= 8 && (uint64_t)adt + (ads >> shift) <= 16u) { \
+        cached_span_##shift##_##pow2(b, out, n, s, t, ds, dt); return; \
+    } \
     while (n--) { \
         int32_t ss = (int16_t)s, tt = (int16_t)t; \
         int32_t si = asr(ss, 6), ti = asr(tt, 6); \
@@ -195,7 +259,7 @@ static void span_##shift##_##pow2(const pxa_raster_spans_t *restrict b, uint8_t 
             x = (uint32_t)(((uint64_t)(b->wrap_s * ((uint32_t)ss << 10)) * b->texture_width) >> 32); \
             y = (uint32_t)(((uint64_t)(b->wrap_t * ((uint32_t)tt << 10)) * b->texture_height) >> 32); \
         } \
-        *out++ = b->colormap[((light >> shift) & light_mask) + \
+        *out++ = b->colormap[((light >> shift) & 0xff00u) + \
             b->texture[y * b->texture_width + x]]; \
         s += ds; t += dt; \
     } \
@@ -205,6 +269,8 @@ SPAN_KERNEL(1, 1) SPAN_KERNEL(2, 1) SPAN_KERNEL(3, 1) SPAN_KERNEL(4, 1)
 #undef SPAN_KERNEL
 
 pxa_span_kernel_fn pxa_raster_span_kernel(const pxa_raster_spans_t *b) {
+    if (b->flags & PXA_GAME_RENDER_SPANS_FULLBRIGHT)
+        return (b->flags & PXA_GAME_RENDER_SPANS_POW2) ? fullbright_1 : fullbright_0;
     static const pxa_span_kernel_fn kernels[2][4] = {
         {span_1_0, span_2_0, span_3_0, span_4_0},
         {span_1_1, span_2_1, span_3_1, span_4_1}};

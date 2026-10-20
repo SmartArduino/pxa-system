@@ -737,6 +737,16 @@ static void test_events(pxa_runtime_t *runtime, pxa_component_t component,
     uint8_t invalid_controller[8] = {0, 1, 0, 0, 0, 0x10, 0, 0};
     size_t size;
     pxa_message_view_t decoded;
+    const uint32_t generation = pxa_ui_event_target_generation(service, component,
+        1, 1, PXA_UI_EVENT_CONTROLLER_STATE);
+    assert(generation == pxa_ui_find_surface_const(
+        pxa_ui_find_entry_const(service, component), 1)->generation && generation);
+    assert(!pxa_ui_event_target_generation(service, component, 1, 99,
+        PXA_UI_EVENT_CONTROLLER_STATE));
+    assert(!pxa_ui_event_target_generation(service, component, 1, 4,
+        PXA_UI_EVENT_KEY));
+    assert(!pxa_ui_event_target_generation(NULL, component, 1, 1,
+        PXA_UI_EVENT_CONTROLLER_STATE));
     assert(pxa_ui_accepts_event(service, component, 1, 4,
                                 PXA_UI_EVENT_ACTION));
     assert(!pxa_ui_accepts_event(service, component, 1, 4,

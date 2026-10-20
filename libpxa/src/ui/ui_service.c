@@ -555,3 +555,11 @@ bool pxa_ui_accepts_event(pxa_ui_service_t *service,
     return target != NULL &&
            (target->event_mask & (UINT64_C(1) << (kind - 1u))) != 0;
 }
+
+uint32_t pxa_ui_event_target_generation(pxa_ui_service_t *service,
+    pxa_component_t component, uint32_t surface, uint32_t node, uint16_t kind) {
+    if (!pxa_ui_accepts_event(service, component, surface, node, kind)) return 0;
+    const pxa_ui_surface_t *target = pxa_ui_find_surface_const(
+        pxa_ui_find_entry_const(service, component), surface);
+    return target ? target->generation : 0;
+}
