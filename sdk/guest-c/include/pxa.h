@@ -6,7 +6,7 @@
 #include "pxa_core.h"
 
 #define PXA_CORE_VERSION_MAJOR 2u
-#define PXA_CORE_VERSION_MINOR 0u
+#define PXA_CORE_VERSION_MINOR 1u
 #define PXA_CORE_VERSION_PATCH 0u
 
 /* The lifecycle payload is borrowed from the event callback. */
