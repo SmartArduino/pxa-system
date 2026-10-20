@@ -126,6 +126,15 @@ pxa_status_t pxa_audio_mixer_write(pxa_audio_mixer_voice_t *v,
     publish(v, p);
     return PXA_STATUS_OK;
 }
+static int16_t interpolate_pcm(int32_t previous, int32_t current,
+                                uint32_t phase, uint32_t output_rate) {
+    const int32_t delta = current - previous;
+    /* Same interpolation and signed truncation as eager expansion. The
+     * full-scale product fits unsigned 32 bits for the supported rates. */
+    const uint32_t magnitude = (uint32_t)(delta < 0 ? -delta : delta);
+    const int32_t offset = (int32_t)(magnitude * (output_rate - phase) / output_rate);
+    return (int16_t)(previous + (delta < 0 ? -offset : offset));
+}
 static int16_t render_pcm(pxa_audio_mixer_packet_t *p, uint32_t source_rate,
                          uint32_t output_rate) {
     if (source_rate == output_rate) return p->data.pcm[p->position];
@@ -135,15 +144,8 @@ static int16_t render_pcm(pxa_audio_mixer_packet_t *p, uint32_t source_rate,
         p->noise = ++source_index;
     }
     p->phase -= source_rate;
-    const int32_t current = p->data.pcm[source_index];
-    const int32_t previous = source_index ? p->data.pcm[source_index - 1] :
-                                               p->meta.pcm.previous;
-    const int32_t delta = current - previous;
-    /* Same interpolation and signed truncation as eager expansion. The
-     * full-scale product fits unsigned 32 bits for the supported rates. */
-    const uint32_t magnitude = (uint32_t)(delta < 0 ? -delta : delta);
-    const int32_t offset = (int32_t)(magnitude * (output_rate - p->phase) / output_rate);
-    return (int16_t)(previous + (delta < 0 ? -offset : offset));
+    return interpolate_pcm(source_index ? p->data.pcm[source_index - 1] :
+        p->meta.pcm.previous, p->data.pcm[source_index], p->phase, output_rate);
 }
 pxa_status_t pxa_audio_mixer_tone(pxa_audio_mixer_voice_t *v,
                                  const pxa_audio_tone_t *t) {
@@ -321,17 +323,41 @@ static void account_frame(pxa_audio_mixer_voice_t *v, pxa_audio_mixer_packet_t *
  * every device sample. Tone/EQ/multi-voice cases keep the general mixer. */
 static size_t render_pcm_prefix(pxa_audio_mixer_voice_t *v, int16_t *out, size_t n) {
     size_t written = 0;
+    const uint32_t source_rate = v->source_rate, output_rate = v->output_rate;
+    const float gain = v->gain;
     while (written < n && v->read != PXA_AUDIO_MIXER_PACKETS) {
         pxa_audio_mixer_packet_t *p = &v->packets[v->read];
         if (p->kind != PXA_AUDIO_PACKET_PCM) break;
         size_t count = p->length - p->position;
         if (count > n - written) count = n - written;
-        for (size_t i = 0; i < count; ++i) {
-            const float sample = render_pcm(p, v->source_rate, v->output_rate) * v->gain;
-            out[written++] = sample > 32767 ? 32767 :
-                             sample < -32768 ? -32768 : (int16_t)sample;
-            ++p->position;
+        if (source_rate == output_rate) {
+            for (size_t i = 0; i < count; ++i) {
+                const float sample = p->data.pcm[p->position + i] * gain;
+                out[written++] = sample > 32767 ? 32767 :
+                                 sample < -32768 ? -32768 : (int16_t)sample;
+            }
+        } else {
+            /* Packet storage is PSRAM on ESP. Keep the hot cursor and the
+             * current source pair local for this block; touch source PCM only
+             * when advancing, and publish the mutable cursor once at the end. */
+            uint32_t phase = p->phase, index = p->noise;
+            int32_t current = p->data.pcm[index];
+            int32_t previous = index ? p->data.pcm[index - 1] : p->meta.pcm.previous;
+            for (size_t i = 0; i < count; ++i) {
+                if (phase < source_rate) {
+                    phase += output_rate;
+                    previous = current;
+                    current = p->data.pcm[++index];
+                }
+                phase -= source_rate;
+                const float sample = interpolate_pcm(previous, current, phase, output_rate) * gain;
+                out[written++] = sample > 32767 ? 32767 :
+                                 sample < -32768 ? -32768 : (int16_t)sample;
+            }
+            p->phase = phase;
+            p->noise = index;
         }
+        p->position += (uint32_t)count;
         const uint32_t phase = p->source_phase + (uint32_t)count * p->source_frames;
         const uint32_t frames = phase / p->length;
         p->source_phase = phase % p->length;
