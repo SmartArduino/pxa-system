@@ -1,6 +1,6 @@
-# PXA Audio Draft 0.9
+# PXA Audio Draft 0.10
 
-Audio 0.9 defines a permission-bound session and an atomic, App-owned playback
+Audio defines a permission-bound session and an atomic, App-owned playback
 graph control plane. `open-session` requires an `audio.playback` Permission
 Handle whose exact scope is `media`. It returns a Component-owned audio-graph
 Handle plus the Host-selected PCM format. v1 currently defines only the media
@@ -45,11 +45,50 @@ revokes the session when its Permission authority is revoked. PCM, tone and
 asset I/O use `pxa_io(handle:u64, ...)`. The freestanding
 `pxa_audio.h` offers one-buffer request builders and typed result parsers.
 
-The simulator sends PCM and generated tones to its SDL device. The ESP provider
+The simulator sends PCM and generated tones to its SDL device. The legacy ESP session
 accepts 16 kHz mono 20 ms frames and routes up to three concurrent PXA sessions
 to independent Game mixer inputs; it cannot address master gain, voice or other
 Apps' streams.
 
+
+## Exact source PCM (minor 10)
+
+`open-pcm` (opcode 5) uses wire profile 1 and a nonzero request token. It
+requires the same `audio.playback` / `media` permission and session quotas as
+`open-session`. The fixed 16-byte request contains a permission Handle (`u64`),
+source sample rate (`u32`, 8000..48000), channel count (`u8`, 1 or 2), and three
+zero reserved bytes. PCM is interleaved S16LE. An unsupported source format
+returns `unsupported`; the Host never substitutes another source format.
+
+The success result is 56 bytes including status: the existing session/format
+records 3..6, then tag 7 sink rate (`u32`), tag 8 sink channels (`u8`), and tag 9
+queue capacity in source frames (`u32`). Source rate and channels echo the
+request exactly; frame duration is 20 ms. Maximum WRITE size is
+`floor(source_rate * 20 / 1000) * channels * 2` bytes. Each write is atomic;
+`would-block` changes neither queued samples nor resampler phase. A main-loop
+Guest must cooperate through its event port before retrying. It must not busy
+spin or recursively enter another Guest callback.
+
+A PCM session supports WRITE, graph commit, query, flush and close. Tone,
+effect, prepared sound, asset and music I/O return `unsupported`. Its counters
+measure source sample frames, independent of channel count. The queue capacity
+is bounded to 1..`floor(source_rate * 120 / 1000)` source frames. `accepted`
+counts renderer consumption unless the sink-submitted flag is set; neither
+value guarantees that physical hardware has played the samples.
+
+The sink describes the actual route. A mono speaker can accept stereo source
+PCM and combine both channels on the Host; this does not imply stereo hardware.
+The ESP pull provider rejects rates above its sink rate, uses continuous linear
+interpolation for upsampling and symmetric stereo averaging, and places its
+fixed 24,144-byte mixer workspace in charged external memory. Existing boards
+retain 16 kHz unless configured otherwise. A 48 kHz device still renders old
+prepared sounds and streamed music on their 16 kHz source clock.
+
+C provides `pxa_audio_open_pcm` / `pxa_audio_parse_pcm`; C++ provides
+`AudioService::open_pcm(permission, rate, channels)` and `AudioSession::pcm_sink()`.
+The C++ parser checks the source echo and closes a newly allocated Handle on
+malformed results or abandoned requests. Old Guests can keep using
+`open-session` and its unchanged 35-byte result.
 
 ## Current 16 kHz product profile
 

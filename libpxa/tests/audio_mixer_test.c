@@ -85,7 +85,108 @@ static void effects_test(void) {
     pxa_audio_mixer_flush(v);
     assert(pxa_audio_mixer_render(&mixer, output, 320) == 0);
 }
+static void configure(uint32_t rate, uint8_t channels, uint32_t sink) {
+    memset(&mixer, 0, sizeof(mixer));
+    pxa_audio_mixer_voice_t *v = &mixer.voices[0];
+    pxa_audio_mixer_reset(v);
+    assert(pxa_audio_mixer_configure(v, rate, channels, sink) == PXA_STATUS_OK);
+    pxa_audio_graph_t graph = {.route=PXA_AUDIO_ROUTE_SPEAKER};
+    assert(pxa_audio_mixer_commit(v, &graph) == PXA_STATUS_OK);
+}
+static void format_test(void) {
+    static const uint32_t rates[] = {8000, 11025, 16000, 22050, 44100, 48000};
+    uint8_t input[960 * 4];
+    int16_t expected[6000], actual[6000];
+    for (unsigned r = 0; r < sizeof(rates)/sizeof(rates[0]); ++r) {
+        const uint32_t rate = rates[r];
+        for (unsigned channels = 1; channels <= 2; ++channels) {
+            const unsigned frames = rate / 50;
+            /* Full-scale transitions exercise overflow, endian and both channels. */
+            for (unsigned i = 0; i < frames; ++i)
+                for (unsigned c = 0; c < channels; ++c) {
+                    const int16_t sample = (int16_t)(i * 13753u + c * 37219u);
+                    input[(i*channels+c)*2] = (uint8_t)sample;
+                    input[(i*channels+c)*2+1] = (uint16_t)sample >> 8;
+                }
+            configure(rate, (uint8_t)channels, 48000);
+            pxa_audio_mixer_voice_t *v = &mixer.voices[0];
+            uint32_t phase = 0; int16_t previous = 0; size_t want = 0;
+            for (unsigned repeat = 0; repeat < 5; ++repeat)
+                for (unsigned i = 0; i < frames; ++i) {
+                    int32_t current = 0;
+                    for (unsigned c = 0; c < channels; ++c) {
+                        const unsigned k = (i*channels+c)*2;
+                        uint16_t bits = input[k] | (uint16_t)input[k+1] << 8;
+                        current += bits <= INT16_MAX ? bits : (int32_t)bits - 65536;
+                    }
+                    current /= (int32_t)channels;
+                    phase += 48000;
+                    while (phase >= rate) {
+                        phase -= rate;
+                        expected[want++] = (int16_t)(previous +
+                            (int64_t)(current - previous) * (48000 - phase) / 48000);
+                    }
+                    previous = (int16_t)current;
+                }
+            size_t got = 0;
+            /* Uneven packets and arbitrary render sizes must produce the same clock. */
+            for (unsigned repeat = 0; repeat < 5; ++repeat) {
+                for (unsigned start = 0; start < frames;) {
+                    unsigned count = (start % 31) + 1;
+                    if (count > frames - start) count = frames - start;
+                    assert(pxa_audio_mixer_write(v, input + start*channels*2,
+                        count*channels*2) == PXA_STATUS_OK);
+                    while (v->count) {
+                        size_t n = pxa_audio_mixer_render(&mixer, output, 17);
+                        assert(n && got+n <= sizeof(actual)/sizeof(actual[0]));
+                        memcpy(actual+got, output, n*sizeof(*output)); got += n;
+                    }
+                    start += count;
+                }
+            }
+            assert(got == want && !memcmp(expected, actual, want*sizeof(*actual)));
+            assert(got == (uint64_t)frames*5*48000/rate);
+            assert(v->state.submitted_samples == frames*5);
+            assert(v->state.accepted_samples == frames*5 && !v->state.queued_samples);
+            assert(v->resample_phase == phase);
+            /* Reconfiguration and queue-full failure preserve all state. */
+            pxa_audio_mixer_voice_t saved = *v;
+            assert(pxa_audio_mixer_configure(v, 16000, 1, 48000) == PXA_STATUS_BAD_STATE);
+            assert(!memcmp(&saved, v, sizeof(saved)));
+            for (unsigned slot = 0; slot < PXA_AUDIO_MIXER_PACKETS; ++slot)
+                assert(pxa_audio_mixer_write(v, input, channels*2) == PXA_STATUS_OK);
+            saved = *v;
+            assert(pxa_audio_mixer_write(v, input, channels*2) == PXA_STATUS_WOULD_BLOCK);
+            assert(!memcmp(&saved, v, sizeof(saved)));
+            pxa_audio_mixer_flush(v);
+            assert(!v->resample_phase && !v->previous_sample && !v->count);
+            assert(pxa_audio_mixer_render(&mixer, output, 320) == 0);
+        }
+    }
+    configure(48000, 2, 48000);
+    const uint8_t opposed[] = {0xff,0x7f,1,0x80, 0,0x80,0xff,0x7f};
+    assert(pxa_audio_mixer_write(&mixer.voices[0], opposed, sizeof(opposed)) == PXA_STATUS_OK);
+    assert(pxa_audio_mixer_render(&mixer, output, 2) == 2);
+    assert(output[0] == 0 && output[1] == 0); /* symmetric truncation toward zero */
+    configure(16000, 1, 48000);
+    pxa_audio_tone_t tone = {.frequency_hz=1000, .duration_ms=100,
+        .delay_ms=40, .gain_db_q8=-12*256, .attack_ms=5, .release_ms=10};
+    assert(pxa_audio_mixer_tone(&mixer.voices[0], &tone) == PXA_STATUS_OK);
+    size_t rendered = 0;
+    while (mixer.voices[0].count) {
+        size_t n = pxa_audio_mixer_render(&mixer, output, 320);
+        if (rendered < 1920) for (unsigned i = 0; i < 320; ++i) assert(!output[i]);
+        rendered += n;
+    }
+    assert(rendered == 6720 && mixer.voices[0].state.accepted_samples == 2240);
+    assert(!mixer.voices[0].state.queued_samples);
+    pxa_audio_mixer_reset(&mixer.voices[0]);
+    pxa_audio_mixer_voice_t saved = mixer.voices[0];
+    assert(pxa_audio_mixer_configure(&mixer.voices[0], 44100, 2, 16000) == PXA_STATUS_INVALID_ARGUMENT);
+    assert(!memcmp(&saved, &mixer.voices[0], sizeof(saved)));
+}
 int main(void) {
+    format_test();
     effects_test();
     reset(); fill(0, 20000, 320); fill(1, 20000, 320); fill(2, -10000, 160);
     assert(pxa_audio_mixer_render(&mixer, output, 320) == 320);

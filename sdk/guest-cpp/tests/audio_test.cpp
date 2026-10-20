@@ -22,6 +22,7 @@ static_assert(sizeof(pxa::EffectTrack) == 1 && sizeof(pxa::SoundTrack) == 1);
 static_assert(pxa::AudioSession::max_effect_layers == PXA_AUDIO_EFFECT_LAYERS);
 static_assert(pxa::AudioSession::effect_track_count == PXA_AUDIO_SOUND_TRACKS);
 static_assert(pxa::AudioSession::sound_track_count == PXA_AUDIO_SOUND_TRACKS);
+static_assert(pxa::detail::audio_wire::open_pcm == PXA_AUDIO_OPEN_PCM);
 static_assert(pxa::detail::audio_wire::service == PXA_AUDIO_SERVICE_ID);
 static_assert(pxa::detail::audio_wire::io_play_effect == PXA_AUDIO_IO_PLAY_EFFECT);
 static_assert(pxa::detail::audio_wire::io_stop_effect == PXA_AUDIO_IO_STOP_EFFECT);
@@ -67,6 +68,12 @@ extern "C" std::int32_t pxa_test_control(const std::uint8_t* data,
         assert(pxa::wire::get16(p + 40) == 5 && p[42] == std::byte{'m'});
     } else {
         assert(service == 10);
+        if (opcode == 5) {
+            assert(size == 36 && pxa::wire::get64(p+20) == permission_handle &&
+                pxa::wire::get32(p+28) == 22050 && p[32] == std::byte{2} &&
+                p[33] == std::byte{} && p[34] == std::byte{} && p[35] == std::byte{});
+            return 0;
+        }
         assert(pxa::wire::get16(p + 20) == 1);
         assert(pxa::wire::get16(p + 22) == 8);
         assert(pxa::wire::get64(p + 24) ==
@@ -236,6 +243,15 @@ pxa::Task<void> run(pxa::Context& context) {
     const auto before_closed = io_calls;
     auto closed = moved.effect(tones);
     assert(!closed && closed.error() == pxa::Error::bad_state && io_calls == before_closed);
+    assert(!(co_await context.audio().open_pcm(*permission, 7999, 2)));
+    auto malformed = co_await context.audio().open_pcm(*permission, 22050, 2);
+    assert(!malformed && malformed.error() == pxa::Error::protocol_error);
+    auto pcm_session = co_await context.audio().open_pcm(*permission, 22050, 2);
+    assert(pcm_session && pcm_session->format().sample_rate == 22050 &&
+        pcm_session->format().channels == 2 && pcm_session->format().frame_ms == 20);
+    const auto sink = pcm_session->pcm_sink();
+    assert(sink.sample_rate == 48000 && sink.channels == 1 && sink.queue_frames == 1764);
+    assert(pcm_session->close());
     finished = true;
     co_return pxa::Result<void>{};
 }
@@ -295,7 +311,21 @@ int main() {
     deliver(queried);
     assert(opcode == 4);
     deliver(success);
-    assert(finished && closes == 3);
+    assert(opcode == 5 && !finished);
+    std::array<std::byte, 56> pcm_opened{};
+    std::copy(opened.begin(), opened.end(), pcm_opened.begin());
+    pxa::wire::put32(pcm_opened.data()+20, 22051); // Host must echo the exact source.
+    pxa::wire::put16(pcm_opened.data()+35, 7); pxa::wire::put16(pcm_opened.data()+37, 4);
+    pxa::wire::put32(pcm_opened.data()+39, 48000);
+    pxa::wire::put16(pcm_opened.data()+43, 8); pxa::wire::put16(pcm_opened.data()+45, 1);
+    pcm_opened[47] = std::byte{1};
+    pxa::wire::put16(pcm_opened.data()+48, 9); pxa::wire::put16(pcm_opened.data()+50, 4);
+    pxa::wire::put32(pcm_opened.data()+52, 1764);
+    deliver(pcm_opened);
+    assert(opcode == 5 && !finished);
+    pxa::wire::put32(pcm_opened.data()+20, 22050);
+    deliver(pcm_opened);
+    assert(finished && closes == 5);
     pxa_app_stop(0);
 
     std::array<std::byte, 24> playback{};
@@ -317,5 +347,9 @@ int main() {
     assert(requests.add(999, &scope, [](void*, const pxa::Event&) {}));
     requests.abandon(999, transport, 10, 1, true, 8);
     assert(requests.dispatch({10, 1, 999, opened}));
-    assert(closes == 4);
+    assert(closes == 6);
+    assert(requests.add(1000, &scope, [](void*, const pxa::Event&) {}));
+    requests.abandon(1000, transport, 10, 5, true, 8);
+    assert(requests.dispatch({10, 5, 1000, pcm_opened}));
+    assert(closes == 7);
 }

@@ -14,12 +14,13 @@ extern "C" {
 
 #define PXA_AUDIO_SERVICE_ID UINT16_C(10)
 #define PXA_AUDIO_SERVICE_MAJOR UINT16_C(0)
-#define PXA_AUDIO_SERVICE_MINOR UINT16_C(9)
+#define PXA_AUDIO_SERVICE_MINOR UINT16_C(10)
 #define PXA_AUDIO_SERVICE_PATCH UINT16_C(0)
 #define PXA_AUDIO_OPEN_SESSION UINT16_C(1)
 #define PXA_AUDIO_COMMIT_GRAPH UINT16_C(2)
 #define PXA_AUDIO_QUERY_STATE UINT16_C(3)
 #define PXA_AUDIO_FLUSH UINT16_C(4)
+#define PXA_AUDIO_OPEN_PCM UINT16_C(5)
 #define PXA_AUDIO_USAGE_MEDIA UINT16_C(1)
 #define PXA_AUDIO_ROUTE_SPEAKER UINT16_C(1)
 #define PXA_AUDIO_MAX_EQ_BANDS UINT8_C(5)
@@ -62,6 +63,14 @@ typedef struct {
     uint8_t channels;
     uint16_t frame_ms;
 } pxa_audio_format_t;
+
+/* OPEN_PCM accepts exactly the requested interleaved S16LE source format.
+ * Sink fields describe the physical route; queue_frames is in source frames. */
+typedef struct {
+    uint32_t sink_rate;
+    uint32_t queue_frames;
+    uint8_t sink_channels;
+} pxa_audio_pcm_info_t;
 
 typedef struct {
     uint16_t frequency_hz;
@@ -160,6 +169,10 @@ typedef struct {
      * replaces that effect track. No deferred event queue. */
     pxa_status_t (*play_effect)(void *, uint64_t, const pxa_audio_tone_t *, size_t, uint8_t);
     pxa_status_t (*stop_effect)(void *, uint64_t, uint8_t);
+    /* Optional Audio 0.10 PCM-only session, no implicit legacy fallback.
+     * frame_ms is 20; WRITE/commit/query/flush/close share the existing hooks. */
+    pxa_status_t (*open_pcm)(void *, const pxa_audio_format_t *,
+        pxa_audio_pcm_info_t *, uint64_t *provider_session);
 } pxa_audio_backend_t;
 
 typedef struct {

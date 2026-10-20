@@ -39,6 +39,12 @@ struct AudioFormat {
     std::uint16_t frame_ms = 0;
 };
 
+struct AudioPcmSink {
+    std::uint32_t sample_rate = 0;
+    std::uint32_t queue_frames = 0;
+    std::uint8_t channels = 0;
+};
+
 struct AudioState {
     std::uint64_t submitted_samples = 0;
     std::uint64_t accepted_samples = 0;
@@ -85,9 +91,9 @@ public:
     static constexpr std::size_t sound_track_count = detail::audio_wire::sound_tracks;
 
     AudioSession(Transport& transport, RequestTable& requests,
-                 std::uint64_t handle, AudioFormat format) noexcept
+                 std::uint64_t handle, AudioFormat format, AudioPcmSink sink = {}) noexcept
         : transport_(transport), requests_(requests), resource_(transport, handle),
-          format_(format) {}
+          format_(format), pcm_sink_(sink) {}
     AudioSession(const AudioSession&) = delete;
     AudioSession& operator=(const AudioSession&) = delete;
     AudioSession(AudioSession&&) noexcept = default;
@@ -97,6 +103,8 @@ public:
     Result<void> close() noexcept { return resource_.close(); }
     const AudioFormat& format() const & noexcept { return format_; }
     AudioFormat format() const && noexcept { return format_; }
+    // Zero fields identify a legacy session; PCM sessions report their route.
+    AudioPcmSink pcm_sink() const noexcept { return pcm_sink_; }
 
     Result<void> tone(Tone tone = {}) noexcept {
         if (!valid_tone(tone)) return std::unexpected(Error::invalid_argument);
@@ -356,6 +364,7 @@ private:
     RequestTable& requests_;
     Resource<AudioSessionTag> resource_;
     AudioFormat format_;
+    AudioPcmSink pcm_sink_;
 };
 
 class AudioService {
@@ -368,18 +377,34 @@ public:
             return Task<AudioSession>::failed(Error::invalid_argument);
         return open_request(self, permission.handle());
     }
+    Task<AudioSession> open_pcm(this AudioService self, const Permission& permission,
+                               std::uint32_t rate, std::uint8_t channels) {
+        if (!(permission.handle() >> 32) || rate < 8000 || rate > 48000 ||
+            (channels != 1 && channels != 2))
+            return Task<AudioSession>::failed(Error::invalid_argument);
+        return open_request(self, permission.handle(), AudioFormat{rate, channels, 20});
+    }
 private:
-    static Task<AudioSession> open_request(AudioService self, std::uint64_t permission) {
+    static Task<AudioSession> open_request(AudioService self, std::uint64_t permission,
+                                         AudioFormat requested = {}) {
         auto& [transport_, requests_] = self;
         std::array<std::byte, 18> payload{};
-        wire::put16(payload.data(), 1);
-        wire::put16(payload.data() + 2, 8);
-        wire::put64(payload.data() + 4, permission);
-        wire::put16(payload.data() + 12, 2);
-        wire::put16(payload.data() + 14, 2);
-        wire::put16(payload.data() + 16, 1);
+        const bool pcm = requested.sample_rate != 0;
+        if (pcm) {
+            wire::put64(payload.data(), permission);
+            wire::put32(payload.data() + 8, requested.sample_rate);
+            payload[12] = std::byte(requested.channels);
+        } else {
+            wire::put16(payload.data(), 1);
+            wire::put16(payload.data() + 2, 8);
+            wire::put64(payload.data() + 4, permission);
+            wire::put16(payload.data() + 12, 2);
+            wire::put16(payload.data() + 14, 2);
+            wire::put16(payload.data() + 16, 1);
+        }
         auto event = co_await Response(transport_, requests_, detail::audio_wire::service,
-            detail::audio_wire::open_session, payload, true, 8);
+            pcm ? detail::audio_wire::open_pcm : detail::audio_wire::open_session,
+            std::span<const std::byte>(payload.data(), pcm ? 16 : 18), true, 8);
         if (!event) co_return std::unexpected(event.error());
         auto body = wire::result_body(event->payload);
         if (!body) co_return std::unexpected(body.error());
@@ -391,7 +416,7 @@ private:
         auto rate = records.take(4, 4);
         auto channels = records.take(5, 1);
         auto frame = records.take(6, 2);
-        if (!rate || !channels || !frame || !records.empty())
+        if (!rate || !channels || !frame)
             co_return std::unexpected(Error::protocol_error);
         AudioFormat format{wire::get32(rate->data()),
                            std::to_integer<std::uint8_t>((*channels)[0]),
@@ -400,7 +425,24 @@ private:
             (format.channels != 1 && format.channels != 2) ||
             format.frame_ms < 5 || format.frame_ms > 120)
             co_return std::unexpected(Error::protocol_error);
-        co_return AudioSession(transport_, requests_, pending.release(), format);
+        AudioPcmSink sink;
+        if (pcm) {
+            auto sink_rate = records.take(7, 4);
+            auto sink_channels = records.take(8, 1);
+            auto queue = records.take(9, 4);
+            if (!sink_rate || !sink_channels || !queue)
+                co_return std::unexpected(Error::protocol_error);
+            sink = {wire::get32(sink_rate->data()), wire::get32(queue->data()),
+                    std::to_integer<std::uint8_t>((*sink_channels)[0])};
+            if (format.sample_rate != requested.sample_rate ||
+                format.channels != requested.channels || format.frame_ms != 20 ||
+                sink.sample_rate < 8000 || sink.sample_rate > 48000 ||
+                (sink.channels != 1 && sink.channels != 2) ||
+                !sink.queue_frames || sink.queue_frames > format.sample_rate*120u/1000u)
+                co_return std::unexpected(Error::protocol_error);
+        }
+        if (!records.empty()) co_return std::unexpected(Error::protocol_error);
+        co_return AudioSession(transport_, requests_, pending.release(), format, sink);
     }
 private:
     Transport& transport_;

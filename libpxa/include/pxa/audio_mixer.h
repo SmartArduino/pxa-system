@@ -11,6 +11,8 @@ extern "C" {
 #define PXA_AUDIO_MIXER_PACKETS 4
 #define PXA_AUDIO_MIXER_FRAME 320
 #define PXA_AUDIO_MIXER_RATE 16000
+#define PXA_AUDIO_MIXER_MAX_RATE 48000
+#define PXA_AUDIO_MIXER_MAX_FRAME 960
 
 typedef struct {
     pxa_audio_tone_t tone;
@@ -22,6 +24,7 @@ enum { PXA_AUDIO_PACKET_PCM, PXA_AUDIO_PACKET_TONE, PXA_AUDIO_PACKET_EFFECT };
 
 typedef struct {
     uint32_t length, position, phase, noise;
+    uint32_t source_frames, accounted_frames, source_phase;
     union {
         pxa_audio_tone_t tone;
         struct { uint8_t track, count; } effect;
@@ -29,7 +32,7 @@ typedef struct {
     uint8_t kind;
     uint8_t next; /* FIFO link, PACKETS is the end sentinel. */
     union {
-        int16_t pcm[PXA_AUDIO_MIXER_FRAME];
+        int16_t pcm[PXA_AUDIO_MIXER_MAX_FRAME];
         struct { uint32_t step; float gain; } oscillator;
         pxa_audio_mixer_layer_t layers[PXA_AUDIO_EFFECT_LAYERS];
     } data;
@@ -41,6 +44,9 @@ typedef struct {
     pxa_audio_mixer_packet_t packets[PXA_AUDIO_MIXER_PACKETS];
     pxa_audio_biquad_t eq[PXA_AUDIO_MAX_EQ_BANDS];
     pxa_audio_state_t state;
+    uint32_t source_rate, output_rate, resample_phase;
+    int16_t previous_sample;
+    uint8_t channels;
     float gain;
     uint8_t read, count, committed, eq_count;
 } pxa_audio_mixer_voice_t;
@@ -48,6 +54,11 @@ typedef struct {
     pxa_audio_mixer_voice_t voices[PXA_AUDIO_MIXER_VOICES];
 } pxa_audio_mixer_t;
 void pxa_audio_mixer_reset(pxa_audio_mixer_voice_t *voice);
+/* Configure an idle, uncommitted voice. Interleaved S16LE input is converted
+ * to the advertised mono sink on submission; only upsampling is supported.
+ * State counters measure source frames, independent of channel count. */
+pxa_status_t pxa_audio_mixer_configure(pxa_audio_mixer_voice_t *voice,
+    uint32_t source_rate, uint8_t channels, uint32_t output_rate);
 void pxa_audio_mixer_flush(pxa_audio_mixer_voice_t *voice);
 pxa_status_t pxa_audio_mixer_commit(pxa_audio_mixer_voice_t *voice,
                                    const pxa_audio_graph_t *graph);

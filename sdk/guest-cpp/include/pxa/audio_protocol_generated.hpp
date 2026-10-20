@@ -9,6 +9,7 @@ inline constexpr std::uint16_t open_session = 1;
 inline constexpr std::uint16_t commit_graph = 2;
 inline constexpr std::uint16_t query_state = 3;
 inline constexpr std::uint16_t flush = 4;
+inline constexpr std::uint16_t open_pcm = 5;
 inline constexpr std::uint32_t io_play_tone = 256;
 inline constexpr std::uint32_t io_play_asset = 257;
 inline constexpr std::uint32_t io_control_asset = 258;

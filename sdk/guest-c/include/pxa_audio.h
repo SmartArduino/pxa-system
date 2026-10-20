@@ -8,6 +8,7 @@
 #define PXA_AUDIO_COMMIT_GRAPH 2u
 #define PXA_AUDIO_QUERY_STATE 3u
 #define PXA_AUDIO_FLUSH 4u
+#define PXA_AUDIO_OPEN_PCM 5u
 #define PXA_AUDIO_USAGE_MEDIA 1u
 #define PXA_AUDIO_ROUTE_SPEAKER 1u
 #define PXA_AUDIO_IO_WRITE 2u
@@ -54,6 +55,12 @@ typedef struct {
     uint8_t channels;
     uint16_t frame_ms;
 } pxa_audio_open_result_t;
+
+typedef struct {
+    pxa_audio_open_result_t source;
+    uint32_t sink_rate, queue_frames;
+    uint8_t sink_channels;
+} pxa_audio_pcm_result_t;
 
 typedef struct {
     int32_t status;
@@ -118,6 +125,29 @@ static inline int32_t pxa_audio_open_media(uint64_t token,
     uint32_t size = 0;
     if (!pxa_audio_build_open(packet, sizeof(packet), token,
                                  permission_handle, &size)) return -1;
+    return pxa_control_packet(packet, size);
+}
+
+/* Audio 0.10: exact source rate, 1/2 interleaved S16LE channels, 20 ms
+ * maximum writes. An unsupported source format never silently falls back. */
+static inline int pxa_audio_build_open_pcm(uint8_t *packet, size_t capacity,
+    uint64_t token, uint64_t permission, uint32_t rate, uint8_t channels,
+    uint32_t *written) {
+    if (written) *written = 0;
+    if (!packet || !written || !token || !(permission >> 32) ||
+        rate < 8000 || rate > 48000 || (channels != 1 && channels != 2) ||
+        capacity < PXA_HEADER_BYTES + 16) return 0;
+    uint8_t *p = packet + PXA_HEADER_BYTES;
+    pxa_store_u64(p, permission); pxa_store_u32(p+8, rate);
+    p[12] = channels; p[13] = p[14] = p[15] = 0;
+    return pxa_finish_message_in_place(packet, capacity, PXA_AUDIO_SERVICE,
+        PXA_AUDIO_OPEN_PCM, token, PXA_HEADER_BYTES + 16, written);
+}
+static inline int32_t pxa_audio_open_pcm(uint64_t token, uint64_t permission,
+    uint32_t rate, uint8_t channels) {
+    uint8_t packet[PXA_HEADER_BYTES + 16]; uint32_t size;
+    if (!pxa_audio_build_open_pcm(packet, sizeof(packet), token, permission,
+        rate, channels, &size)) return -1;
     return pxa_control_packet(packet, size);
 }
 
@@ -245,6 +275,35 @@ static inline int pxa_audio_parse_open(const pxa_event_t *event,
            out->sample_rate >= 8000 && out->sample_rate <= 48000 &&
            (out->channels == 1 || out->channels == 2) &&
            out->frame_ms >= 5 && out->frame_ms <= 120;
+}
+
+static inline int pxa_audio_parse_pcm(const pxa_event_t *event, uint64_t token,
+    pxa_audio_pcm_result_t *out) {
+    if (!out) return 0;
+    pxa_zero(out, sizeof(*out));
+    if (!event || event->opcode != PXA_AUDIO_OPEN_PCM || !event->payload ||
+        event->payload_size < 4) return 0;
+    pxa_event_t base = *event;
+    base.opcode = PXA_AUDIO_OPEN_SESSION;
+    if (pxa_load_u32(event->payload))
+        return pxa_audio_parse_open(&base, token, &out->source);
+    if (event->payload_size != 56) return 0;
+    base.payload_size = 35;
+    if (!pxa_audio_parse_open(&base, token, &out->source) ||
+        out->source.frame_ms != 20) return 0;
+    pxa_wire_record_view_t r; size_t size, offset = 35;
+    if (!pxa_wire_record_decode(event->payload+offset, 56-offset, &r, &size) ||
+        r.raw_tag != 7 || r.payload_size != 4) return 0;
+    out->sink_rate = pxa_load_u32(r.payload); offset += size;
+    if (!pxa_wire_record_decode(event->payload+offset, 56-offset, &r, &size) ||
+        r.raw_tag != 8 || r.payload_size != 1) return 0;
+    out->sink_channels = r.payload[0]; offset += size;
+    if (!pxa_wire_record_decode(event->payload+offset, 56-offset, &r, &size) ||
+        r.raw_tag != 9 || r.payload_size != 4 || offset+size != 56) return 0;
+    out->queue_frames = pxa_load_u32(r.payload);
+    return out->sink_rate >= 8000 && out->sink_rate <= 48000 &&
+        (out->sink_channels == 1 || out->sink_channels == 2) &&
+        out->queue_frames && out->queue_frames <= out->source.sample_rate*120u/1000u;
 }
 
 static inline int pxa_audio_parse_state(

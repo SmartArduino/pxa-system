@@ -40,6 +40,7 @@ int main(void) {
     pxa_event_t event = {0};
     pxa_audio_open_result_t opened;
     pxa_audio_state_result_t state;
+    pxa_audio_pcm_result_t pcm_open;
     pxa_wire_record_view_t record;
     pxa_audio_eq_band_t band = {1500, 256, 256};
     pxa_audio_graph_t graph = {-256, &band, 1};
@@ -92,6 +93,36 @@ int main(void) {
            opened.sample_rate == 16000 && opened.channels == 1 &&
            opened.frame_ms == 20);
     assert(!pxa_audio_parse_open(&event, 78, &opened));
+    assert(pxa_audio_build_open_pcm(packet, sizeof(packet), 90, permission,
+        22050, 2, &written) && written == 36);
+    pxa_event_t request;
+    assert(pxa_parse_event(packet, written, &request) && request.opcode == 5);
+    assert(pxa_load_u64(request.payload) == permission &&
+        pxa_load_u32(request.payload+8) == 22050 && request.payload[12] == 2 &&
+        !request.payload[13] && !request.payload[14] && !request.payload[15]);
+    assert(!pxa_audio_build_open_pcm(packet, 35, 90, permission, 22050, 2, &written) && !written);
+    assert(!pxa_audio_build_open_pcm(packet, sizeof(packet), 90, permission, 7999, 2, &written));
+    assert(!pxa_audio_build_open_pcm(packet, sizeof(packet), 90, permission, 48000, 3, &written));
+    assert(!pxa_audio_build_open_pcm(packet, sizeof(packet), 0, permission, 48000, 2, &written));
+    event.opcode = PXA_AUDIO_OPEN_PCM;
+    pxa_store_u32(value, 48000);
+    assert(pxa_audio_append(payload, sizeof(payload), &offset, 7, value, 4));
+    value[0] = 1;
+    assert(pxa_audio_append(payload, sizeof(payload), &offset, 8, value, 1));
+    pxa_store_u32(value, 1280);
+    assert(pxa_audio_append(payload, sizeof(payload), &offset, 9, value, 4));
+    event.payload_size = (uint32_t)offset;
+    assert(offset == 56 && pxa_audio_parse_pcm(&event, 77, &pcm_open));
+    assert(pcm_open.source.handle == session && pcm_open.source.sample_rate == 16000 &&
+        pcm_open.source.channels == 1 && pcm_open.sink_rate == 48000 &&
+        pcm_open.sink_channels == 1 && pcm_open.queue_frames == 1280);
+    assert(!pxa_audio_parse_pcm(&event, 78, &pcm_open));
+    payload[39] = payload[40] = payload[41] = payload[42] = 0;
+    assert(!pxa_audio_parse_pcm(&event, 77, &pcm_open));
+    event.payload_size = 4; pxa_store_u32(payload, (uint32_t)-4);
+    assert(pxa_audio_parse_pcm(&event, 77, &pcm_open) && pcm_open.source.status == -4);
+    event.payload_size = 5; assert(!pxa_audio_parse_pcm(&event, 77, &pcm_open));
+    pxa_store_u32(payload, 0); event.opcode = PXA_AUDIO_OPEN_SESSION; event.payload_size = 35;
     payload[4 + 2] = 4;
     assert(!pxa_audio_parse_open(&event, 77, &opened));
 

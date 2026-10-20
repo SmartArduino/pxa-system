@@ -1,11 +1,11 @@
 {
-  "schema": "pxa-audio-spec-0.9",
+  "schema": "pxa-audio-spec-0.10",
   "status": "draft",
   "service": {
     "name": "audio",
     "id": 10,
     "major": 0,
-    "minor": 9,
+    "minor": 10,
     "patch": 0
   },
   "opcodes": [
@@ -42,6 +42,15 @@
       "payload": "session-handle",
       "result": "status",
       "since": "0.2"
+    },
+    {
+      "name": "open-pcm",
+      "id": 5,
+      "direction": "bidirectional-result",
+      "request_token": "nonzero",
+      "since": "0.10",
+      "payload": "permission-handle:u64|source-rate:u32|source-channels:u8|reserved:3*u8",
+      "result": "status|session-handle|source-format|sink-rate|sink-channels|queue-source-frames"
     }
   ],
   "resource_io": [
@@ -150,6 +159,24 @@
       "id": 6,
       "payload": "u16",
       "cardinality": "open-result-one"
+    },
+    {
+      "name": "sink-rate",
+      "id": 7,
+      "payload": "u32",
+      "cardinality": "open-pcm-result-one"
+    },
+    {
+      "name": "sink-channels",
+      "id": 8,
+      "payload": "u8",
+      "cardinality": "open-pcm-result-one"
+    },
+    {
+      "name": "queue-source-frames",
+      "id": 9,
+      "payload": "u32",
+      "cardinality": "open-pcm-result-one"
     }
   ],
   "query_state_tags": [
@@ -227,7 +254,7 @@
     "min_frame_ms": 5,
     "max_frame_ms": 120
   },
-  "protocol_version": "0.9.0",
+  "protocol_version": "0.10.0",
   "playback_event": {
     "id": 32769,
     "since": "0.7",
@@ -260,5 +287,21 @@
     "controls": "pause, resume, faded stop, gain ramp",
     "legacy": "12-byte play-sound appends an untracked one-shot; control-asset still controls all sounds and music",
     "music": "control-music affects streamed music only"
+  },
+  "pcm_sessions": {
+    "since": "0.10",
+    "wire_profile": 1,
+    "request_bytes": 16,
+    "result_bytes": 56,
+    "sample_format": "interleaved signed 16-bit little endian",
+    "source_rate": "8000..48000 Hz, exact or UNSUPPORTED; never implicit fallback",
+    "source_channels": "1 or 2, exact",
+    "max_packet_frames": "floor(source_rate * 20 / 1000)",
+    "queue_frames": "bounded maximum in source frames; 1..floor(source_rate * 120 / 1000)",
+    "sink_format": "reported physical route; stereo source can be mixed to a mono speaker by the Host",
+    "state_counters": "source sample frames, independent of channels; accepted means renderer consumption unless flags specify sink-submitted",
+    "operations": "WRITE, commit-graph, query-state, flush and close; other resource I/O returns UNSUPPORTED",
+    "permission": "audio.playback media; authority, quotas and close rules match open-session",
+    "reserved": "all request reserved bytes must be zero; unknown flags rejected"
   }
 }

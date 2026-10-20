@@ -929,6 +929,15 @@ static pxa_status_t audio_open(void *context, uint16_t usage,
     return PXA_STATUS_OK;
 }
 
+static unsigned audio_pcm_behavior;
+static pxa_status_t audio_open_pcm(void *context, const pxa_audio_format_t *format,
+    pxa_audio_pcm_info_t *info, uint64_t *session) {
+    test_audio_backend_t *b = context;
+    assert(format->sample_rate == 22050 && format->channels == 2 && format->frame_ms == 20);
+    ++b->opens; *session = b->session;
+    *info = (pxa_audio_pcm_info_t){48000, audio_pcm_behavior == 2 ? 0 : 1764, 1};
+    return audio_pcm_behavior == 1 ? PXA_STATUS_UNSUPPORTED : PXA_STATUS_OK;
+}
 static pxa_status_t audio_commit(void *context, uint64_t provider_session,
                                  const pxa_audio_graph_t *graph) {
     test_audio_backend_t *backend = (test_audio_backend_t *)context;
@@ -5450,6 +5459,7 @@ static void test_audio_service(void) {
     audio_config.backend.struct_size = sizeof(audio_config.backend);
     audio_config.backend.context = &backend;
     audio_config.backend.open = audio_open;
+    audio_config.backend.open_pcm = audio_open_pcm;
     audio_config.backend.commit = audio_commit;
     audio_config.backend.submit = audio_submit;
     audio_config.backend.query = audio_query;
@@ -5765,12 +5775,42 @@ static void test_audio_service(void) {
                backend.flushes == 2);
         assert(pxa_handle_close64(test.runtime, v1_component, session64) ==
                PXA_STATUS_OK && backend.closes == 4);
+        uint8_t pcm_request[16] = {0};
+        pxa_write_u64(pcm_request, permission64);
+        pxa_write_u32(pcm_request+8, 22050); pcm_request[12] = 2;
+        for (unsigned trial = 0; trial < 5; ++trial) {
+            pcm_request[13] = trial == 0 ? 1 : 0;
+            audio_pcm_behavior = trial == 1 ? 1 : trial == 2 ? 2 : 0;
+            if (trial == 4) pxa_write_u64(pcm_request, (uint32_t)permission64);
+            pxa_writer_t writer; pxa_writer_init(&writer, command, sizeof(command));
+            assert(!pxa_writer_message(&writer, PXA_AUDIO_SERVICE_ID, PXA_AUDIO_OPEN_PCM,
+                90 + trial, pcm_request, sizeof(pcm_request)));
+            (void)dispatch_control_completion(test.runtime, v1_component, command, writer.size,
+                event_bytes, sizeof(event_bytes), &event);
+            const int32_t expected = trial == 0 || trial == 4 ? PXA_STATUS_INVALID_ARGUMENT :
+                trial == 1 ? PXA_STATUS_UNSUPPORTED : trial == 2 ? PXA_STATUS_INTERNAL : PXA_STATUS_OK;
+            assert((int32_t)pxa_read_u32(event.payload.data) == expected);
+            if (trial != 3) { assert(event.payload.size == 4); continue; }
+            assert(event.payload.size == 56 && pxa_read_u32(event.payload.data+20) == 22050 &&
+                event.payload.data[28] == 2 && pxa_read_u32(event.payload.data+39) == 48000 &&
+                event.payload.data[47] == 1 && pxa_read_u32(event.payload.data+52) == 1764);
+            uint64_t pcm_session = pxa_read_u64(event.payload.data+8);
+            assert(dispatch_io64(test.runtime, v1_component, pcm_session,
+                PXA_IO_WRITE, pcm, sizeof(pcm)) == 4);
+            uint8_t oversized[1768] = {0};
+            assert(dispatch_io64(test.runtime, v1_component, pcm_session,
+                PXA_IO_WRITE, oversized, sizeof(oversized)) == PXA_STATUS_INVALID_ARGUMENT);
+            assert(dispatch_io64(test.runtime, v1_component, pcm_session,
+                PXA_AUDIO_IO_PLAY_TONE, tone, sizeof(tone)) == PXA_STATUS_UNSUPPORTED);
+            assert(!pxa_handle_close64(test.runtime, v1_component, pcm_session));
+        }
+        assert(backend.opens == 7 && backend.closes == 7);
         assert(pxa_handle_close64(test.runtime, v1_component, permission64) ==
                PXA_STATUS_OK);
     }
 
     destroy_runtime(&test);
-    assert(backend.closes == 4);
+    assert(backend.closes == 7);
     free(audio_workspace);
     free(permission_workspace);
 }
