@@ -108,27 +108,42 @@ pxa_status_t pxa_audio_mixer_write(pxa_audio_mixer_voice_t *v,
     pxa_audio_mixer_packet_t *p = next_packet(v);
     p->kind = PXA_AUDIO_PACKET_PCM; p->length = length; p->position = 0;
     p->source_frames = (uint32_t)frames;
-    uint32_t phase = v->resample_phase;
-    int16_t previous = v->previous_sample;
-    size_t written = 0;
+    /* Keep compact source-rate PCM in the existing packet storage. Expansion
+     * belongs to the audio consumer, not the caller's game/render thread.
+     * phase/noise reuse the oscillator state, including its existing
+     * sink-retry checkpoint; the immutable previous sample bridges packets. */
+    p->phase = v->resample_phase + v->output_rate;
+    p->noise = 0;
+    p->meta.pcm.previous = v->previous_sample;
     for (size_t i = 0; i < frames; ++i) {
         int32_t current = pcm_sample(pcm + i * v->channels * 2u);
         if (v->channels == 2)
             current = (current + pcm_sample(pcm + i * 4u + 2)) / 2;
-        phase += v->output_rate;
-        while (phase >= v->source_rate) {
-            phase -= v->source_rate;
-            const int32_t delta = current - previous;
-            /* Unsigned magnitude keeps the full-scale product in 32 bits. */
-            const uint32_t magnitude = (uint32_t)(delta < 0 ? -delta : delta);
-            const int32_t offset = (int32_t)(magnitude * (v->output_rate - phase) / v->output_rate);
-            p->data.pcm[written++] = (int16_t)(previous + (delta < 0 ? -offset : offset));
-        }
-        previous = (int16_t)current;
+        p->data.pcm[i] = (int16_t)current;
     }
-    v->resample_phase = phase; v->previous_sample = previous;
+    v->resample_phase = (frames * v->output_rate + v->resample_phase) % v->source_rate;
+    v->previous_sample = p->data.pcm[frames - 1];
     publish(v, p);
     return PXA_STATUS_OK;
+}
+static int16_t render_pcm(pxa_audio_mixer_packet_t *p, uint32_t source_rate,
+                         uint32_t output_rate) {
+    if (source_rate == output_rate) return p->data.pcm[p->position];
+    uint32_t source_index = p->noise;
+    if (p->phase < source_rate) {
+        p->phase += output_rate;
+        p->noise = ++source_index;
+    }
+    p->phase -= source_rate;
+    const int32_t current = p->data.pcm[source_index];
+    const int32_t previous = source_index ? p->data.pcm[source_index - 1] :
+                                               p->meta.pcm.previous;
+    const int32_t delta = current - previous;
+    /* Same interpolation and signed truncation as eager expansion. The
+     * full-scale product fits unsigned 32 bits for the supported rates. */
+    const uint32_t magnitude = (uint32_t)(delta < 0 ? -delta : delta);
+    const int32_t offset = (int32_t)(magnitude * (output_rate - p->phase) / output_rate);
+    return (int16_t)(previous + (delta < 0 ? -offset : offset));
 }
 pxa_status_t pxa_audio_mixer_tone(pxa_audio_mixer_voice_t *v,
                                  const pxa_audio_tone_t *t) {
@@ -301,6 +316,32 @@ static void account_frame(pxa_audio_mixer_voice_t *v, pxa_audio_mixer_packet_t *
         ++v->state.accepted_samples;
     }
 }
+/* Games normally submit one PCM voice without EQ/effects. Account source
+ * frames once per packet fragment instead of updating 64-bit counters for
+ * every device sample. Tone/EQ/multi-voice cases keep the general mixer. */
+static size_t render_pcm_prefix(pxa_audio_mixer_voice_t *v, int16_t *out, size_t n) {
+    size_t written = 0;
+    while (written < n && v->read != PXA_AUDIO_MIXER_PACKETS) {
+        pxa_audio_mixer_packet_t *p = &v->packets[v->read];
+        if (p->kind != PXA_AUDIO_PACKET_PCM) break;
+        size_t count = p->length - p->position;
+        if (count > n - written) count = n - written;
+        for (size_t i = 0; i < count; ++i) {
+            const float sample = render_pcm(p, v->source_rate, v->output_rate) * v->gain;
+            out[written++] = sample > 32767 ? 32767 :
+                             sample < -32768 ? -32768 : (int16_t)sample;
+            ++p->position;
+        }
+        const uint32_t phase = p->source_phase + (uint32_t)count * p->source_frames;
+        const uint32_t frames = phase / p->length;
+        p->source_phase = phase % p->length;
+        p->accounted_frames += frames;
+        v->state.queued_samples -= frames;
+        v->state.accepted_samples += frames;
+        if (p->position == p->length) { v->read = p->next; --v->count; }
+    }
+    return written;
+}
 size_t pxa_audio_mixer_render(pxa_audio_mixer_t *m, int16_t *out, size_t n) {
     size_t extent = 0;
     uint8_t effects[PXA_AUDIO_MIXER_VOICES] = {0};
@@ -321,14 +362,24 @@ size_t pxa_audio_mixer_render(pxa_audio_mixer_t *m, int16_t *out, size_t n) {
         ++active_count;
     }
     if (!active_count) { memset(out, 0, n * sizeof(*out)); return 0; }
-    for (size_t i = 0; i < n; ++i) {
+    size_t start = 0;
+    if (active_count == 1 && !effects[0] && !active[0]->eq_count) {
+        start = render_pcm_prefix(active[0], out, n);
+        extent = start;
+        if (!active[0]->count) {
+            memset(out + start, 0, (n - start) * sizeof(*out));
+            return extent;
+        }
+    }
+    for (size_t i = start; i < n; ++i) {
         float mixed = 0;
         for (unsigned j = 0; j < active_count; ++j) {
             pxa_audio_mixer_voice_t *v = active[j];
             float sample = 0;
             if (v->count && v->read != PXA_AUDIO_MIXER_PACKETS) {
                 pxa_audio_mixer_packet_t *p = &v->packets[v->read];
-                sample = p->kind ? tone_sample(p, v->output_rate) : p->data.pcm[p->position];
+                sample = p->kind ? tone_sample(p, v->output_rate) :
+                    render_pcm(p, v->source_rate, v->output_rate);
                 if (++p->position == p->length) {
                     v->read = p->next;
                     --v->count;

@@ -23,11 +23,13 @@ typedef struct {
 enum { PXA_AUDIO_PACKET_PCM, PXA_AUDIO_PACKET_TONE, PXA_AUDIO_PACKET_EFFECT };
 
 typedef struct {
-    uint32_t length, position, phase, noise;
+    uint32_t length, position, phase;
+    uint32_t noise; /* Noise state, or PCM source index; included in sink rollback. */
     uint32_t source_frames, accounted_frames, source_phase;
     union {
         pxa_audio_tone_t tone;
         struct { uint8_t track, count; } effect;
+        struct { int16_t previous; } pcm;
     } meta;
     uint8_t kind;
     uint8_t next; /* FIFO link, PACKETS is the end sentinel. */
@@ -54,8 +56,9 @@ typedef struct {
     pxa_audio_mixer_voice_t voices[PXA_AUDIO_MIXER_VOICES];
 } pxa_audio_mixer_t;
 void pxa_audio_mixer_reset(pxa_audio_mixer_voice_t *voice);
-/* Configure an idle, uncommitted voice. Interleaved S16LE input is converted
- * to the advertised mono sink on submission; only upsampling is supported.
+/* Configure an idle, uncommitted voice. Submission copies/downmixes S16LE at
+ * source rate; the renderer upsamples into the advertised mono sink.
+ * No submitted guest pointer survives the call. Only upsampling is supported.
  * State counters measure source frames, independent of channel count. */
 pxa_status_t pxa_audio_mixer_configure(pxa_audio_mixer_voice_t *voice,
     uint32_t source_rate, uint8_t channels, uint32_t output_rate);

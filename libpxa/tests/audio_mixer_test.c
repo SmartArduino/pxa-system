@@ -185,7 +185,116 @@ static void format_test(void) {
     assert(pxa_audio_mixer_configure(&mixer.voices[0], 44100, 2, 16000) == PXA_STATUS_INVALID_ARGUMENT);
     assert(!memcmp(&saved, &mixer.voices[0], sizeof(saved)));
 }
+/* Queue several independent source buffers before rendering. This catches
+ * packet-boundary interpolation using the producer's newest previous sample,
+ * accidental borrowing of caller memory, slot reuse and partial-drain state. */
+static void queued_pcm_test(void) {
+    const uint32_t rates[] = {8000, 11025, 16000, 22050, 44100, 48000};
+    const size_t chunks[] = {1, 7, 17, 319, 320, 23};
+    uint8_t input[960 * 4];
+    int16_t expected[960 * 4];
+    uint32_t random = 1234567;
+    for (unsigned rate_id = 0; rate_id < sizeof(rates)/sizeof(*rates); ++rate_id)
+    for (uint8_t channels = 1; channels <= 2; ++channels) {
+        const uint32_t rate = rates[rate_id];
+        configure(rate, channels, 48000);
+        pxa_audio_mixer_voice_t *v = &mixer.voices[0];
+        int16_t previous = 0;
+        uint32_t phase = 0;
+        uint64_t submitted = 0;
+        for (unsigned round = 0; round < 32; ++round) {
+            size_t want = 0;
+            for (unsigned slot = 0; slot < 4; ++slot) {
+                random = random * 1664525u + 1013904223u;
+                const unsigned frames = 1 + random % (rate / 50);
+                for (unsigned i = 0; i < frames; ++i) {
+                    int32_t current = 0;
+                    for (unsigned ch = 0; ch < channels; ++ch) {
+                        random = random * 1664525u + 1013904223u;
+                        const int16_t sample = (int16_t)(random >> 16);
+                        const unsigned at = (i * channels + ch) * 2;
+                        input[at] = (uint8_t)sample;
+                        input[at + 1] = (uint16_t)sample >> 8;
+                        current += sample;
+                    }
+                    current /= channels;
+                    phase += 48000;
+                    while (phase >= rate) {
+                        phase -= rate;
+                        assert(want < sizeof(expected)/sizeof(*expected));
+                        expected[want++] = (int16_t)(previous +
+                            (int64_t)(current - previous) * (48000 - phase) / 48000);
+                    }
+                    previous = (int16_t)current;
+                }
+                assert(pxa_audio_mixer_write(v, input, frames * channels * 2) == PXA_STATUS_OK);
+                submitted += frames;
+                memset(input, 0xa5, sizeof(input)); /* Caller may immediately reuse it. */
+            }
+            pxa_audio_mixer_voice_t full = *v;
+            assert(pxa_audio_mixer_write(v, input, channels * 2) == PXA_STATUS_WOULD_BLOCK);
+            assert(!memcmp(v, &full, sizeof(full)));
+            size_t got = 0;
+            for (unsigned chunk = 0; v->count; ++chunk) {
+                const size_t capacity = chunks[chunk % (sizeof(chunks)/sizeof(*chunks))];
+                const pxa_audio_mixer_t checkpoint = mixer;
+                int16_t retry[320];
+                size_t count = pxa_audio_mixer_render(&mixer, output, capacity);
+                /* Retrying a rejected sink block must reproduce every sample. */
+                mixer = checkpoint;
+                assert(pxa_audio_mixer_render(&mixer, retry, capacity) == count);
+                assert(!memcmp(output, retry, capacity * sizeof(*output)));
+                assert(count && got + count <= want);
+                assert(!memcmp(expected + got, output, count * sizeof(*output)));
+                got += count;
+            }
+            assert(got == want && v->state.submitted_samples == submitted);
+            assert(v->state.accepted_samples == submitted && !v->state.queued_samples);
+            assert(v->resample_phase == phase && v->previous_sample == previous);
+        }
+    }
+}
+/* An identity EQ forces the general path without changing the waveform.
+ * Compare clipping, fractional source accounting and a PCM-to-tone transition
+ * across arbitrary consumer block boundaries. */
+static void pcm_fast_path_test(void) {
+    const uint32_t rates[] = {8000, 11025, 16000, 22050, 44100, 48000};
+    const int16_t gains[] = {-48 * 256, -6 * 256, 0, 12 * 256};
+    uint8_t input[960 * 4];
+    int16_t reference[320];
+    for (unsigned r = 0; r < sizeof(rates)/sizeof(*rates); ++r)
+    for (unsigned g = 0; g < sizeof(gains)/sizeof(*gains); ++g) {
+        configure(rates[r], 2, 48000);
+        pxa_audio_graph_t graph = {.route=PXA_AUDIO_ROUTE_SPEAKER,
+                                   .gain_db_q8=gains[g]};
+        assert(pxa_audio_mixer_commit(&mixer.voices[0], &graph) == PXA_STATUS_OK);
+        for (unsigned i = 0; i < sizeof(input); ++i)
+            input[i] = (uint8_t)(i * 13753u + r * 37219u);
+        const unsigned frames[] = {1, 31, rates[r] / 50};
+        for (unsigned i = 0; i < 3; ++i)
+            assert(pxa_audio_mixer_write(&mixer.voices[0], input,
+                frames[i] * 4) == PXA_STATUS_OK);
+        pxa_audio_tone_t tone = {.frequency_hz=997, .duration_ms=10,
+                                 .gain_db_q8=-6 * 256};
+        assert(pxa_audio_mixer_tone(&mixer.voices[0], &tone) == PXA_STATUS_OK);
+        pxa_audio_mixer_t general = mixer;
+        general.voices[0].eq_count = 1;
+        general.voices[0].eq[0].b0 = 1;
+        for (unsigned round = 0; mixer.voices[0].count; ++round) {
+            const unsigned capacity = 1 + round * 13 % 320;
+            const size_t got = pxa_audio_mixer_render(&mixer, output, capacity);
+            assert(pxa_audio_mixer_render(&general, reference, capacity) == got);
+            assert(!memcmp(output, reference, capacity * sizeof(*output)));
+            assert(!memcmp(&mixer.voices[0].state, &general.voices[0].state,
+                           sizeof(mixer.voices[0].state)));
+            assert(!memcmp(mixer.voices[0].packets, general.voices[0].packets,
+                           sizeof(mixer.voices[0].packets)));
+        }
+    }
+}
 int main(void) {
+    pcm_fast_path_test();
+    queued_pcm_test();
     format_test();
     effects_test();
     reset(); fill(0, 20000, 320); fill(1, 20000, 320); fill(2, -10000, 160);
