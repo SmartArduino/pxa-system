@@ -524,6 +524,10 @@ pxa_status_t pxa_ui_encode_environment(
     const pxa_ui_environment_t *environment, void *buffer, size_t capacity,
     size_t *encoded_size);
 
+/* Copies the event into the bounded Core pool without a temporary UI heap
+ * allocation. Digital controller states normalize to RELIABLE so a release
+ * cannot overwrite its pending press. On BUSY/RESOURCE_LIMIT the Host must
+ * retain and retry that state in order; success retains no caller pointer. */
 pxa_status_t pxa_ui_queue_event(pxa_ui_service_t *service,
                                    pxa_component_t component,
                                    uint32_t surface, uint32_t node,

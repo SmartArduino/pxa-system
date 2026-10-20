@@ -784,8 +784,8 @@ static void test_events(pxa_runtime_t *runtime, pxa_component_t component,
            pxa_read_u16(decoded.payload.data + 12) ==
                PXA_UI_EVENT_CONTROLLER_STATE &&
            pxa_read_u16(decoded.payload.data + 14) ==
-               PXA_UI_EVENT_FLAG_COALESCIBLE &&
-           pxa_read_u32(decoded.payload.data + 28) == 0xf08);
+               PXA_UI_EVENT_FLAG_RELIABLE &&
+           pxa_read_u32(decoded.payload.data + 28) == 0x18);
     assert(pxa_event_pop(runtime, component, message, sizeof(message), &size) ==
            PXA_STATUS_OK);
     assert(pxa_message_decode(message, size, sizeof(message), &decoded) ==
@@ -795,8 +795,55 @@ static void test_events(pxa_runtime_t *runtime, pxa_component_t component,
     assert(pxa_event_pop(runtime, component, message, sizeof(message), &size) ==
            PXA_STATUS_OK);
     assert(pxa_message_decode(message, size, sizeof(message), &decoded) ==
+               PXA_STATUS_OK &&
+           decoded.opcode == PXA_UI_EVENT && decoded.payload.data[24] == 0 &&
+           pxa_read_u32(decoded.payload.data + 28) == 0xf08);
+    assert(pxa_event_pop(runtime, component, message, sizeof(message), &size) ==
+           PXA_STATUS_OK);
+    assert(pxa_message_decode(message, size, sizeof(message), &decoded) ==
            PXA_STATUS_OK &&
            decoded.opcode == PXA_UI_RESOURCE_PRESSURE);
+}
+
+static void test_controller_edges(pxa_runtime_t *runtime, pxa_component_t component,
+                                 pxa_ui_service_t *service, allocator_state_t *allocator) {
+    uint8_t state[8] = {0, 1, 0, 0}, message[128];
+    size_t size, queued = 0, allocations = allocator->allocations;
+    /* A burst during a blocked frame must retain both press and release,
+     * even with the old Host's coalescible flag. No temporary UI heap needed. */
+    allocator->fail_at = allocations + 1;
+    for (; queued < 128; ++queued) {
+        pxa_write_u32(state + 4, queued & 1 ? 0 : PXA_UI_CONTROLLER_DOWN);
+        pxa_status_t status = pxa_ui_queue_event(service, component, 1, 1,
+            PXA_UI_EVENT_CONTROLLER_STATE, PXA_UI_EVENT_FLAG_COALESCIBLE,
+            1000 + queued, state, sizeof(state));
+        if (status == PXA_STATUS_BUSY || status == PXA_STATUS_RESOURCE_LIMIT) break;
+        assert(status == PXA_STATUS_OK);
+    }
+    assert(queued >= 2 && queued < 128 && allocator->allocations == allocations);
+    /* Failed admission must not replace any earlier state. Retry only after
+     * a consumer frees capacity, as the ESP command queue does. */
+    for (size_t i = 0; i <= queued; ++i) {
+        pxa_message_view_t decoded;
+        assert(pxa_event_pop(runtime, component, message, sizeof(message), &size) ==
+               PXA_STATUS_OK);
+        assert(pxa_message_decode(message, size, sizeof(message), &decoded) ==
+               PXA_STATUS_OK);
+        assert(pxa_read_u16(decoded.payload.data + 14) == PXA_UI_EVENT_FLAG_RELIABLE);
+        assert(pxa_read_u64(decoded.payload.data + 16) == 1000 + i);
+        assert(pxa_read_u32(decoded.payload.data + 28) ==
+               (i & 1 ? 0 : PXA_UI_CONTROLLER_DOWN));
+        if (!i) {
+            assert(pxa_ui_queue_event(service, component, 1, 1,
+                PXA_UI_EVENT_CONTROLLER_STATE, PXA_UI_EVENT_FLAG_COALESCIBLE,
+                1000 + queued, state, sizeof(state)) == PXA_STATUS_OK);
+            memset(state, 0xff, sizeof(state)); /* Core owns the accepted copy. */
+        }
+    }
+    assert(pxa_event_pop(runtime, component, message, sizeof(message), &size) ==
+           PXA_STATUS_WOULD_BLOCK);
+    assert(allocator->allocations == allocations);
+    allocator->fail_at = 0;
 }
 
 static void test_move_and_remove(pxa_runtime_t *runtime,
@@ -1176,6 +1223,7 @@ int main(void) {
     }
     test_canvas_stream(runtime, component, &backend_state);
     test_events(runtime, component, service);
+    test_controller_edges(runtime, component, service, &allocator);
     test_surfaces(runtime, component, service, &backend_state);
     assert(pxa_component_begin_event(runtime, component) == PXA_STATUS_OK);
     test_move_and_remove(runtime, component, service);

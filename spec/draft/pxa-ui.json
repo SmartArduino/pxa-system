@@ -343,7 +343,7 @@
       "l": 10,
       "r": 11
     },
-    "policy": "each coalescible event is a complete state; disconnected state has zero buttons"
+    "policy": "each event is a complete state; disconnected state has zero buttons. Digital controller events are reliable and ordered: the service normalizes flags to reliable even when an older Host requests coalescing. Host retries BUSY/RESOURCE_LIMIT without removing the pending input; a release must not overwrite a pending press"
   },
   "event_flags": [
     {

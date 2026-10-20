@@ -473,9 +473,7 @@ pxa_status_t pxa_ui_queue_event(pxa_ui_service_t *service,
                                    const void *value, size_t value_size) {
     pxa_ui_entry_t *entry;
     const pxa_ui_node_t *target;
-    uint8_t *payload;
-    size_t payload_size;
-    pxa_status_t status;
+    uint8_t payload[24];
     uint8_t reliable;
     uint64_t key;
     if (!service_valid(service) || kind < PXA_UI_EVENT_ACTION ||
@@ -505,37 +503,38 @@ pxa_status_t pxa_ui_queue_event(pxa_ui_service_t *service,
     target = pxa_ui_registry_find_const(entry, surface, node);
     if (target == NULL || (target->event_mask & (UINT64_C(1) << (kind - 1u))) == 0)
         return PXA_STATUS_DENIED;
-    payload_size = 24u + value_size;
-    payload = (uint8_t *)pxa_ui_alloc(service, payload_size);
-    if (payload == NULL) return PXA_STATUS_RESOURCE_LIMIT;
+    /* A full digital state still carries press/release edges. Coalescing a
+     * release over its pending press loses the action during a busy frame.
+     * Normalize here so every Host, including older adapters, preserves it. */
+    if (kind == PXA_UI_EVENT_CONTROLLER_STATE)
+        flags = (uint16_t)((flags | PXA_UI_EVENT_FLAG_RELIABLE) &
+                          ~PXA_UI_EVENT_FLAG_COALESCIBLE);
     pxa_write_u32(payload, surface);
     pxa_write_u32(payload + 4, node);
     {
         const pxa_ui_surface_t *surface_state =
             pxa_ui_find_surface_const(entry, surface);
-        if (surface_state == NULL) {
-            pxa_ui_free(service, payload);
-            return PXA_STATUS_NOT_FOUND;
-        }
+        if (surface_state == NULL) return PXA_STATUS_NOT_FOUND;
         pxa_write_u32(payload + 8, surface_state->generation);
     }
     pxa_write_u16(payload + 12, kind);
     pxa_write_u16(payload + 14, flags);
     pxa_write_u64(payload + 16, timestamp_us);
-    if (value_size != 0) memcpy(payload + 24, value, value_size);
     reliable = (flags & PXA_UI_EVENT_FLAG_RELIABLE) != 0;
     key = reliable ? 0 : ((uint64_t)kind << 48) | node;
     /* Coalescible events keep one pending instance per source. Pointer events
      * must key on the pointer id too, otherwise one finger's move overwrites
      * another finger's move aimed at the same node. */
-    if (!reliable && (kind == PXA_UI_EVENT_CONTROLLER_STATE ||
-                      kind == PXA_UI_EVENT_POINTER))
+    if (!reliable && kind == PXA_UI_EVENT_POINTER)
         key |= (uint64_t)((const uint8_t *)value)[0] << 32;
-    status = pxa_event_post_message(
+    /* Copy directly into the existing bounded Core event pool. Avoid one
+     * temporary heap allocation and a second value copy for every input. */
+    const pxa_bytes_t parts[] = {
+        {payload, sizeof(payload)}, {value, value_size}
+    };
+    return pxa_event_post_messagev(
         service->runtime, component, PXA_UI_SERVICE_ID, PXA_UI_EVENT, 0,
-        (pxa_bytes_t){payload, payload_size}, reliable, key);
-    pxa_ui_free(service, payload);
-    return status;
+        parts, 2, reliable, key);
 }
 
 bool pxa_ui_accepts_event(pxa_ui_service_t *service,
