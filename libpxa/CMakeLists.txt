@@ -442,7 +442,24 @@ if(PXA_BUILD_ADAPTERS AND PXA_WAMR_SOURCE_DIR)
             endif()
             add_executable(pxa_wamr_engine_test
                 adapters/tests/wamr_engine_test.c)
+            pxa_build_guest(event_port_guest ${CMAKE_CURRENT_SOURCE_DIR}/adapters/tests/event_port_guest.c
+                -Wl,--max-memory=1048576)
+            add_executable(pxa_event_port_engine_test adapters/tests/event_port_engine_test.c)
+            target_link_libraries(pxa_event_port_engine_test PRIVATE pxa_adapters_wamr)
+            target_compile_definitions(pxa_event_port_engine_test PRIVATE
+                PXA_EVENT_PORT_GUEST_DIR="${CMAKE_CURRENT_BINARY_DIR}")
+            add_dependencies(pxa_event_port_engine_test event_port_guest)
+            add_test(NAME pxa_event_port_engine_test COMMAND pxa_event_port_engine_test)
             if(PXA_WAMRC AND EXISTS "${PXA_WAMRC}")
+                set(event_port_aot "${CMAKE_CURRENT_BINARY_DIR}/event_port_guest.aot")
+                add_custom_command(OUTPUT ${event_port_aot}
+                    COMMAND "${PXA_WAMRC}" --target=x86_64 --bounds-checks=1
+                        -o ${event_port_aot} ${event_port_guest_WASM}
+                    DEPENDS ${event_port_guest_WASM})
+                add_custom_target(event_port_guest_aot DEPENDS ${event_port_aot})
+                add_dependencies(pxa_event_port_engine_test event_port_guest_aot)
+                add_test(NAME pxa_event_port_aot_test
+                    COMMAND pxa_event_port_engine_test event_port_guest.aot)
                 pxa_build_guest(wamr_aot_data_guest
                     ${CMAKE_CURRENT_SOURCE_DIR}/adapters/tests/wamr_aot_data_guest.c
                     -Wl,--max-memory=1048576)

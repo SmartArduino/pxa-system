@@ -864,6 +864,13 @@ pxa_status_t pxa_manifest_decode_finish(
         version_less(manifest->target_sdk, manifest->min_sdk)) {
         return PXA_STATUS_INVALID_ARGUMENT;
     }
+    for (uint16_t i = 0; i < manifest->component_count; ++i) {
+        if ((manifest->components[i].flags & PXA_PACKAGE_COMPONENT_FLAG_MAIN_LOOP) &&
+            (manifest->component_count != 1 ||
+             manifest->components[i].kind != PXA_COMPONENT_KIND_UI ||
+             manifest->min_sdk.major != 2 || manifest->min_sdk.minor < 1))
+            return PXA_STATUS_INVALID_ARGUMENT;
+    }
     status = validate_manifest_links(manifest);
     if (status != PXA_STATUS_OK) return status;
     status = pxa_package_publisher_lineage_root(manifest,

@@ -26,6 +26,7 @@ PACKAGE_PATH = re.compile(r"[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*")
 VERSION = re.compile(r"[0-9A-Za-z][0-9A-Za-z._+-]{0,63}")
 COMPONENT_KINDS = {"ui": 1, "service": 2, "job": 3}
 COMPONENT_FLAG_PINNED_MEMORY = 1
+COMPONENT_FLAG_MAIN_LOOP = 2
 P256_ORDER = int("FFFFFFFF00000000FFFFFFFFFFFFFFFFBCE6FAADA7179E84F3B9CAC2FC632551", 16)
 EC_PUBLIC_KEY_OID = bytes.fromhex("2a8648ce3d0201")
 P256_OID = bytes.fromhex("2a8648ce3d030107")
@@ -549,6 +550,14 @@ def main(argv):
         elif (aot_only or forced_mode == "aot") and artifact_mode != "wasm":
             artifact_mode = "aot"
         flags = COMPONENT_FLAG_PINNED_MEMORY if pinned_memory else 0
+        execution_model = item.get("execution_model", "callback")
+        require(execution_model in ("callback", "main-loop"),
+                "component execution_model must be callback or main-loop")
+        if execution_model == "main-loop":
+            require(min_sdk >= (2, 1) and len(raw_components) == 1 and
+                    component_id == "main" and kind_name == "ui",
+                    "main-loop requires Core 2.1 and exactly one main UI component")
+            flags |= COMPONENT_FLAG_MAIN_LOOP
         components.append((component_id, COMPONENT_KINDS[kind_name], flags,
                            service_requirements, wasi_features, artifact_mode))
     require(all(left[0] < right[0] for left, right in zip(components, components[1:])),

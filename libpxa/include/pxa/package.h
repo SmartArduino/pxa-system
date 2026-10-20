@@ -56,8 +56,10 @@ typedef uint8_t pxa_component_kind_t;
  * as GuestMapped Surface buffers. The declaration is part of the signed
  * component manifest and is consumed when its WAMR instance is created. */
 #define PXA_PACKAGE_COMPONENT_FLAG_PINNED_MEMORY UINT8_C(1)
+#define PXA_PACKAGE_COMPONENT_FLAG_MAIN_LOOP UINT8_C(2)
+#define PXA_EXECUTION_MODEL_MAIN_LOOP UINT32_C(1)
 #define PXA_PACKAGE_COMPONENT_FLAG_KNOWN_MASK \
-    PXA_PACKAGE_COMPONENT_FLAG_PINNED_MEMORY
+    (PXA_PACKAGE_COMPONENT_FLAG_PINNED_MEMORY | PXA_PACKAGE_COMPONENT_FLAG_MAIN_LOOP)
 
 typedef uint8_t pxa_artifact_kind_t;
 #define PXA_ARTIFACT_WASM ((pxa_artifact_kind_t)1)
@@ -221,6 +223,9 @@ typedef struct {
     pxa_package_version_t core_version;
     const pxa_package_service_capability_t *services;
     size_t service_count;
+    /* Zero retains ordinary callback execution. Optional modes are reported
+     * by the actual engine/backend, independently of service capabilities. */
+    uint32_t execution_models;
 } pxa_package_activation_profile_t;
 
 typedef pxa_status_t (*pxa_package_signature_verify_fn)(

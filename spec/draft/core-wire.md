@@ -1,4 +1,4 @@
-# PXA Core ABI 2.0
+# PXA Core ABI 2.1
 
 Numeric assignments in this document are explanatory. `pxa-core.json` is the
 machine-readable source of truth.
@@ -8,8 +8,9 @@ machine-readable source of truth.
 Core 2 Guests import exactly `pxa_call` and `pxa_io` from `pxa.core.v2`.
 There is no `pxa_submit` import or Core 0/1 compatibility binding. Packages
 must declare major 2; signing and activation reject earlier majors. Only test
-packages are migrated in this exploration; existing applications require a
-separate migration and must continue using their original firmware meanwhile.
+packages are migrated from older import majors in the original exploration.
+Core 2.0 callback packages retain their transport and execution semantics on a
+2.1 Host. The optional main-loop model requires explicit Host engine support.
 The Guest exports start, event and stop callbacks as listed in the specification.
 
 `pxa_call(route:u32, token:u64, ptr:u32, len:u32) -> status:i32` borrows the
@@ -30,7 +31,9 @@ absent. This rule can be extended in a later minor version only through an
 explicitly defined common diagnostic record namespace.
 
 `pxa_io` operates on one resource Handle. It returns a nonnegative byte count or
-a negative PXA status. It never waits for resource availability. Synchronous operations may consume CPU time. A zero-byte result is valid only when a
+a negative PXA status. Resource operations remain nonblocking except the
+explicitly negotiated Core 2.1 event-port wait described in
+[the main-loop contract](abi-2.1-main-loop.md). Synchronous operations may consume CPU time. A zero-byte result is valid only when a
 service defines end-of-stream for that operation; temporary lack of progress is
 reported as `would-block`.
 
@@ -60,8 +63,9 @@ budgets; enlarging every event block would increase all applications' memory.
 
 Invalid payloads return `invalid-argument`; unavailable services/opcodes return
 `unsupported`. The adapter validates memory, import capability and lifecycle;
-the service owns payload semantics. No parallel opcode whitelist exists in
-the adapter. Internal native 32/64-bit service helpers use an explicit wire
+the service owns payload semantics. Optional execution-kernel operations are
+implemented by the engine adapter, rather than a second service whitelist.
+Internal native 32/64-bit service helpers use an explicit wire
 profile, independent from the Guest Core import major; all Core 2 Guests use
 64-bit handles. This does not enable an older Guest import namespace.
 

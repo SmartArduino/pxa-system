@@ -242,7 +242,7 @@ def validate_specs() -> tuple[int, int]:
     }, "machine specification inventory mismatch")
 
     core = specs["core"]
-    require(core.get("schema") == "pxa-core-spec-2.0", "Core schema mismatch")
+    require(core.get("schema") == "pxa-core-spec-2.1", "Core schema mismatch")
     require(core.get("status") == "draft", "Core must remain marked draft")
     require(core.get("protocol_version") == version_of(core["abi"]),
             "Core protocol version is stale")

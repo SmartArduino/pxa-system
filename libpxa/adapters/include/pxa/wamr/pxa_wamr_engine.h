@@ -46,6 +46,17 @@ typedef void *(*pxa_wamr_runtime_reallocate_fn)(void *context, void *memory,
                                                 size_t size);
 typedef void (*pxa_wamr_runtime_release_fn)(void *context, void *memory);
 
+/* Owner-thread native maintenance only: never enter Guest code or destroy the
+ * active instance. deadline_us=0 performs a nonblocking maintenance pass.
+ * Otherwise pump native completions/input and wait at most until the absolute
+ * monotonic deadline. Return OK to retry the mailbox, WOULD_BLOCK on timeout,
+ * or CANCELLED to leave this Guest call before deferred lifecycle mutation.
+ * Cancellation unwinds the stack: stop that instance after return, then
+ * process the retained command. Never resume or re-enter a cancelled loop.
+ * The Host must make its maintenance/wakeup protocol free of lost wakeups. */
+typedef pxa_status_t (*pxa_wamr_cooperate_fn)(void *context,
+    pxa_component_t component, uint64_t deadline_us);
+
 /* One open, seekable Artifact. Short reads are allowed; zero before EOF is
  * an I/O error. The owner thread closes it on every success/failure path.
  * Keeping the same handle avoids reopening a different file between reads. */
@@ -120,6 +131,8 @@ typedef struct {
      * file-size buffer for the interpreter. XIP is deliberately unsupported.
      * read_artifact remains optional for existing embedders. */
     pxa_wamr_artifact_open_fn open_artifact;
+    /* Opt-in Core 2.1 main-loop support; requires now_us. No extra thread. */
+    pxa_wamr_cooperate_fn cooperate;
 } pxa_wamr_engine_config_t;
 
 typedef struct pxa_wamr_engine pxa_wamr_engine_t;
@@ -135,6 +148,9 @@ typedef struct {
     uint16_t opcode;
     /* Set after the event has been removed from the mailbox. */
     uint8_t event_consumed;
+    /* Stop this instance after the native call returns, then process the
+     * deferred lifecycle command. Never deliver another event to this loop. */
+    uint8_t cooperative_cancelled;
 } pxa_wamr_event_result_t;
 
 /* WAMR allocation occupancy and high-water mark since engine initialization.
@@ -220,6 +236,9 @@ int pxa_wamr_engine_terminate_active_call(pxa_wamr_engine_t *engine);
 
 /* 1 while a guest call is executing. */
 int pxa_wamr_engine_busy(const pxa_wamr_engine_t *engine);
+/* Optional execution modes backed by this configured engine. Use this when
+ * building package activation profiles; version numbers alone are insufficient. */
+uint32_t pxa_wamr_engine_execution_models(const pxa_wamr_engine_t *engine);
 
 #ifdef __cplusplus
 }

@@ -27,6 +27,7 @@
 #include "pxa/assets.h"
 #include "pxa/service.h"
 #include "pxa/wire.h"
+#include "pxa/event_port.h"
 #include "wasm_export.h"
 #include "pxa_wamr_aot_reader.h"
 #ifdef ESP_PLATFORM
@@ -61,6 +62,7 @@ typedef struct {
     pxa_component_t component;
     const pxa_package_component_t *package_component;
     uint16_t core_major;
+    uint16_t core_minor;
     uint16_t config_size;
     uint8_t kind;
     uint8_t occupied;
@@ -79,6 +81,8 @@ typedef struct {
     wasm_function_inst_t stop_fn;
     uint32_t event_buffer;
     uint32_t event_capacity;
+    uint64_t event_port;
+    uint8_t cooperative_cancelled;
     uint8_t config[PXA_WAMR_ENGINE_MAX_CONFIG_BYTES];
 } pxa_wamr_entry_t;
 
@@ -104,6 +108,7 @@ struct pxa_wamr_engine {
     pxa_status_t (*prepare_start)(void *context, pxa_component_t component,
                                   uint64_t instance_id, uint8_t kind);
     uint64_t call_timeout_us;
+    pxa_wamr_cooperate_fn cooperate;
     uint32_t guest_stack_size;
     uint32_t host_managed_heap_size;
     uint16_t max_components;
@@ -126,6 +131,7 @@ struct pxa_wamr_engine {
     uint64_t executing_deadline_us;
     wasm_module_inst_t executing_module;
     uint8_t busy;
+    uint8_t terminate_requested;
     uint8_t wasi_enabled;
     uint8_t seekable_artifacts;
     uint8_t *pool;
@@ -581,6 +587,9 @@ close_reader:
 static pxa_status_t discard_entry(pxa_wamr_engine_t *engine,
                                   pxa_wamr_entry_t *entry,
                                   pxa_status_t status) {
+    if (entry->event_port && engine->runtime)
+        (void)pxa_handle_close64(engine->runtime, entry->component, entry->event_port);
+    entry->event_port = 0;
     if (entry->module_instance != NULL) {
         if (entry->event_buffer != 0)
             wasm_runtime_module_free(entry->module_instance, entry->event_buffer);
@@ -614,6 +623,7 @@ static pxa_status_t discard_entry(pxa_wamr_engine_t *engine,
     entry->component = PXA_COMPONENT_INVALID;
     entry->package_component = NULL;
     entry->core_major = 0;
+    entry->core_minor = 0;
     entry->kind = 0;
     entry->start_fn = NULL;
     entry->event_fn = NULL;
@@ -692,6 +702,135 @@ static void import_finished(pxa_wamr_entry_t *entry,const char *kind,
 #endif
 }
 
+static int main_loop_enabled(const pxa_wamr_entry_t *entry) {
+    return entry->core_major == 2 && entry->core_minor >= 1 &&
+        entry->package_component != NULL &&
+        (entry->package_component->flags & PXA_PACKAGE_COMPONENT_FLAG_MAIN_LOOP) != 0;
+}
+
+static void close_event_port(void *context) {
+    pxa_wamr_entry_t *entry = context;
+    entry->event_port = 0;
+}
+
+static int32_t open_event_port(pxa_wamr_entry_t *entry, uint64_t token,
+                               uint32_t size) {
+    pxa_wamr_engine_t *engine = entry_engine(entry);
+    pxa_status_t status = pxa_component_validate_import(engine->runtime, entry->component);
+    uint8_t result[8];
+    pxa_resource_t resource = {entry, NULL, close_event_port};
+    if (status != PXA_STATUS_OK) return status;
+    if (!main_loop_enabled(entry) || !engine->cooperate || !engine->now_us)
+        return PXA_STATUS_UNSUPPORTED;
+    if (!token || size) return PXA_STATUS_INVALID_ARGUMENT;
+    if (entry->event_port) return PXA_STATUS_BAD_STATE;
+    status = pxa_request_begin_reserved(engine->runtime, entry->component, token,
+        PXA_SERVICE_CORE, PXA_CORE_OPEN_EVENT_PORT, 0, sizeof(result));
+    if (status != PXA_STATUS_OK) return status;
+    status = pxa_handle_open64(engine->runtime, entry->component,
+        PXA_RESOURCE_EVENT_PORT, 0, &resource, &entry->event_port);
+    if (status != PXA_STATUS_OK)
+        return pxa_request_complete(engine->runtime, entry->component, token, status, NULL, 0);
+    pxa_write_u64(result, entry->event_port);
+    status = pxa_request_complete(engine->runtime, entry->component, token,
+        PXA_STATUS_OK, result, sizeof(result));
+    if (status != PXA_STATUS_OK)
+        (void)pxa_handle_close64(engine->runtime, entry->component, entry->event_port);
+    return status;
+}
+
+static int32_t wait_event(pxa_wamr_entry_t *entry, uint64_t handle,
+                           uint8_t *data, uint32_t size) {
+    pxa_wamr_engine_t *engine = entry_engine(entry);
+    pxa_resource_t resource;
+    pxa_component_snapshot_t component;
+    pxa_status_t status;
+    int32_t result;
+    uint64_t entered, timeout, until;
+    int paused = 0;
+    if (!main_loop_enabled(entry) || !engine->cooperate || !engine->now_us)
+        return PXA_STATUS_UNSUPPORTED;
+    status = pxa_handle_get64(engine->runtime, entry->component, handle,
+        PXA_RESOURCE_EVENT_PORT, &resource);
+    if (status != PXA_STATUS_OK) return status;
+    if (resource.context != entry || handle != entry->event_port)
+        return PXA_STATUS_BAD_STATE;
+    status = pxa_component_snapshot(engine->runtime, entry->component, &component);
+    if (status != PXA_STATUS_OK) return status;
+    if (component.state != PXA_COMPONENT_RUNNING || component.callback != PXA_GUEST_CALLBACK_EVENT)
+        return PXA_STATUS_BAD_STATE;
+    if (!data || size < PXA_ENVELOPE_SIZE || size > PXA_MAX_CONTROL_MESSAGE)
+        return PXA_STATUS_INVALID_ARGUMENT;
+    timeout = pxa_read_u64(data);
+    if (timeout > PXA_EVENT_PORT_MAX_WAIT_US) return PXA_STATUS_LIMIT_EXCEEDED;
+    entered = engine->now_us(engine->host_context);
+    if (entered > UINT64_MAX - timeout) return PXA_STATUS_INVALID_ARGUMENT;
+    until = entered + timeout;
+    /* A wait is a cooperative execution boundary, like returning a callback.
+     * Never erase an already overdue deadline or an operator decision. While
+     * native maintenance owns the thread, UINT64_MAX suspends the deadline;
+     * an external terminate sets it to zero and wins over restoration. */
+    engine_enter_critical(engine);
+    if (engine->executing_deadline_us > entered && engine->executing_deadline_us != UINT64_MAX) {
+        engine->executing_deadline_us = UINT64_MAX;
+        paused = 1;
+    }
+    engine_leave_critical(engine);
+    /* Service Host input/completions even if the mailbox was already ready. */
+    status = engine->cooperate(engine->host_context, entry->component, 0);
+    for (;;) {
+        pxa_event_view_t view;
+        size_t popped = 0;
+        engine_enter_critical(engine);
+        int terminated = engine->terminate_requested;
+        engine_leave_critical(engine);
+        if (terminated) { result = PXA_STATUS_CANCELLED; break; }
+        if (status != PXA_STATUS_OK && status != PXA_STATUS_WOULD_BLOCK) {
+            result = status;
+            break;
+        }
+        if (entry->event_port != handle) { result = PXA_STATUS_CANCELLED; break; }
+        status = pxa_event_peek(engine->runtime, entry->component, &view);
+        if (status == PXA_STATUS_OK) {
+            if (!view.size || view.size > PXA_MAX_CONTROL_MESSAGE) {
+                result = PXA_STATUS_INTERNAL; break;
+            }
+            if (view.size > size) { result = PXA_STATUS_RESOURCE_LIMIT; break; }
+            status = pxa_event_pop(engine->runtime, entry->component, data, size, &popped);
+            result = status == PXA_STATUS_OK ? (int32_t)popped : status;
+            break;
+        }
+        if (status != PXA_STATUS_WOULD_BLOCK) { result = status; break; }
+        if (!timeout) { result = PXA_STATUS_WOULD_BLOCK; break; }
+        if (engine->now_us(engine->host_context) >= until) { result = PXA_STATUS_TIMED_OUT; break; }
+        /* A maintenance pass can handle an already overdue call and receive
+         * the operator's explicit "wait" decision. Suspend that newly granted
+         * deadline before the subsequent native sleep, too. */
+        engine_enter_critical(engine);
+        uint64_t now = engine->now_us(engine->host_context);
+        if (!paused && engine->executing_deadline_us > now &&
+            engine->executing_deadline_us != UINT64_MAX) {
+            engine->executing_deadline_us = UINT64_MAX;
+            paused = 1;
+        }
+        engine_leave_critical(engine);
+        status = engine->cooperate(engine->host_context, entry->component, until);
+    }
+    engine_enter_critical(engine);
+    if (paused && engine->executing_module == entry->module_instance &&
+        engine->executing_deadline_us == UINT64_MAX) {
+        uint64_t now = engine->now_us(engine->host_context);
+        engine->executing_deadline_us = now > UINT64_MAX - engine->call_timeout_us
+            ? UINT64_MAX : now + engine->call_timeout_us;
+    }
+    engine_leave_critical(engine);
+    if (result == PXA_STATUS_CANCELLED) {
+        entry->cooperative_cancelled = 1;
+        wasm_runtime_set_exception(entry->module_instance, "PXA cooperative stop");
+    }
+    return result;
+}
+
 /* Core 2 borrows the validated Guest range until this import returns.
  * Backends must copy any bytes retained after return. */
 static int32_t native_call(void *opaque_exec_env, uint32_t route,
@@ -702,6 +841,9 @@ static int32_t native_call(void *opaque_exec_env, uint32_t route,
     pxa_message_view_t message;
     if (entry == NULL || entry->core_major != 2 ||
         entry_engine(entry)->runtime == NULL) return PXA_STATUS_BAD_STATE;
+    if ((uint16_t)route == PXA_SERVICE_CORE &&
+        (uint16_t)(route >> 16) == PXA_CORE_OPEN_EVENT_PORT)
+        return open_event_port(entry, token, size);
     message.service = (uint16_t)route;
     message.opcode = (uint16_t)(route >> 16);
     message.request_token = token;
@@ -723,6 +865,12 @@ static int32_t native_io(void *opaque_exec_env, uint64_t handle,
     if (entry == NULL || entry->core_major != 2 ||
         entry_engine(entry)->runtime == NULL)
         return PXA_STATUS_BAD_STATE;
+    if (operation == PXA_EVENT_PORT_IO_WAIT) {
+        pxa_resource_t resource;
+        if (pxa_handle_get64(entry_engine(entry)->runtime, entry->component,
+            handle, PXA_RESOURCE_EVENT_PORT, &resource) == PXA_STATUS_OK)
+            return wait_event(entry, handle, data, size);
+    }
     if (operation == PXA_SURFACE_IO_REGISTER_BUFFERS &&
         (entry->package_component == NULL ||
          (entry->package_component->flags &
@@ -763,25 +911,29 @@ static int call(pxa_wamr_engine_t *engine, pxa_wamr_entry_t *entry,
         return 0;
     }
     engine->busy = 1;
+    engine->terminate_requested = 0;
+    entry->cooperative_cancelled = 0;
     engine->executing_module = entry->module_instance;
     engine->executing_deadline_us = deadline;
     engine_leave_critical(engine);
     success = wasm_runtime_call_wasm(entry->exec_env, fn, argc, values);
     sample_linear_memory(engine, entry);
-    if (!success &&
-        wasm_runtime_get_exception(entry->module_instance) != NULL) {
-        /* Guest exceptions surface as PXA_STATUS_INTERNAL; the message is
-         * available through wasm_runtime_get_exception for host logging. */
-        fprintf(stderr,"PXA Guest exception: component=%u %s\n",
-            (unsigned)entry->component,wasm_runtime_get_exception(entry->module_instance));
-    }
     engine_enter_critical(engine);
     if (engine->executing_module == entry->module_instance) {
+        if (main_loop_enabled(entry) && engine->terminate_requested) {
+            entry->cooperative_cancelled = 1;
+            success = 0;
+        }
         engine->executing_module = NULL;
         engine->executing_deadline_us = 0;
         engine->busy = 0;
     }
     engine_leave_critical(engine);
+    if (!success && !entry->cooperative_cancelled &&
+        wasm_runtime_get_exception(entry->module_instance) != NULL) {
+        fprintf(stderr,"PXA Guest exception: component=%u %s\n",
+            (unsigned)entry->component,wasm_runtime_get_exception(entry->module_instance));
+    }
     return success;
 }
 
@@ -789,6 +941,7 @@ static int config_valid(const pxa_wamr_engine_config_t *config) {
     return config != NULL && config->struct_size >= sizeof(*config) &&
            (config->read_artifact != NULL || config->open_artifact != NULL) &&
            config->max_components != 0 &&
+           (config->cooperate == NULL || config->now_us != NULL) &&
            ((config->enter_critical == NULL &&
              config->leave_critical == NULL) ||
             (config->enter_critical != NULL &&
@@ -905,6 +1058,7 @@ pxa_status_t pxa_wamr_engine_init(void *workspace, size_t workspace_size,
     engine->now_us = config->now_us;
     engine->prepare_start = config->prepare_start;
     engine->call_timeout_us = config->call_timeout_us;
+    engine->cooperate = config->cooperate;
     engine->guest_stack_size = config->guest_stack_size == 0
                                    ? PXA_WAMR_DEFAULT_STACK_HEAP
                                    : config->guest_stack_size;
@@ -1113,6 +1267,11 @@ int pxa_wamr_engine_busy(const pxa_wamr_engine_t *engine) {
     return busy;
 }
 
+uint32_t pxa_wamr_engine_execution_models(const pxa_wamr_engine_t *engine) {
+    return engine && engine->magic == PXA_WAMR_ENGINE_MAGIC && engine->cooperate && engine->now_us
+        ? PXA_EXECUTION_MODEL_MAIN_LOOP : 0;
+}
+
 int pxa_wamr_engine_poll_deadlines(pxa_wamr_engine_t *engine, uint64_t now_us) {
     int terminated = 0;
     if (engine == NULL || engine->magic != PXA_WAMR_ENGINE_MAGIC) return 0;
@@ -1121,6 +1280,7 @@ int pxa_wamr_engine_poll_deadlines(pxa_wamr_engine_t *engine, uint64_t now_us) {
         engine->executing_deadline_us != 0 &&
         now_us >= engine->executing_deadline_us) {
         engine->executing_deadline_us = 0;
+        engine->terminate_requested = 1;
         wasm_runtime_terminate(engine->executing_module);
         terminated = 1;
     }
@@ -1156,6 +1316,7 @@ int pxa_wamr_engine_poll_component_deadline(pxa_wamr_engine_t *engine,
             pxa_wamr_entry_t *entry = &engine->entries[i];
             if (entry->component == component && entry->module_instance == engine->executing_module) {
                 engine->executing_deadline_us = 0;
+                engine->terminate_requested = 1;
                 wasm_runtime_terminate(engine->executing_module);
                 terminated = 1; break;
             }
@@ -1187,6 +1348,7 @@ int pxa_wamr_engine_terminate_active_call(pxa_wamr_engine_t *engine) {
     engine_enter_critical(engine);
     if (engine->executing_module != NULL) {
         engine->executing_deadline_us = 0;
+        engine->terminate_requested = 1;
         wasm_runtime_terminate(engine->executing_module);
         terminated = 1;
     }
@@ -1234,7 +1396,12 @@ static pxa_status_t engine_instantiate(void *context, pxa_bytes_t package_root,
     if (slot == NULL) return PXA_STATUS_RESOURCE_LIMIT;
     slot->package_component = entry->component;
     slot->core_major = entry->core_major;
+    slot->core_minor = entry->core_minor;
     if (slot->core_major != 2)
+        return discard_entry(engine, slot, PXA_STATUS_UNSUPPORTED);
+    if ((entry->component->flags & PXA_PACKAGE_COMPONENT_FLAG_MAIN_LOOP) &&
+        (!main_loop_enabled(slot) || !engine->cooperate ||
+         entry->component->kind != PXA_COMPONENT_KIND_UI))
         return discard_entry(engine, slot, PXA_STATUS_UNSUPPORTED);
     status = load_artifact(engine, slot,
         (pxa_bytes_t){(const uint8_t *)path, strlen(path)},
@@ -1482,7 +1649,9 @@ pxa_status_t pxa_wamr_engine_deliver_event_result(
         values[1] = (uint32_t)callback_size;
         if (call(engine, entry, fn, 2, values)) {
             result = (int32_t)values[0];
-        } else {
+        } else if (entry->cooperative_cancelled) {
+            result = 0;
+            if (output != NULL) output->cooperative_cancelled = 1;
         }
     }
 

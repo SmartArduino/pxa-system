@@ -59,6 +59,13 @@ pxa_status_t pxa_package_requirements_validate(
         host->core_version.minor < manifest->min_sdk.minor) {
         return PXA_STATUS_UNSUPPORTED;
     }
+    if ((component->flags & PXA_PACKAGE_COMPONENT_FLAG_MAIN_LOOP) &&
+        (manifest->component_count != 1 || component->kind != PXA_COMPONENT_KIND_UI ||
+         manifest->min_sdk.major != 2 || manifest->min_sdk.minor < 1))
+        return PXA_STATUS_INVALID_ARGUMENT;
+    if ((component->flags & PXA_PACKAGE_COMPONENT_FLAG_MAIN_LOOP) &&
+        !(host->execution_models & PXA_EXECUTION_MODEL_MAIN_LOOP))
+        return PXA_STATUS_UNSUPPORTED;
     /* Service availability, versions and features come from the Host profile.
      * A second hardcoded ID whitelist prevents independently registered services
      * from extending Core without editing the package loader. */

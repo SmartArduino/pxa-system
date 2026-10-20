@@ -1,11 +1,11 @@
 {
-  "schema": "pxa-core-spec-2.0",
+  "schema": "pxa-core-spec-2.1",
   "status": "draft",
   "abi": {
     "major": 2,
-    "minor": 0,
+    "minor": 1,
     "patch": 0,
-    "encoded": 131072,
+    "encoded": 131073,
     "byte_order": "little-endian",
     "max_control_message": 4096,
     "max_record_payload": 65535
@@ -98,7 +98,8 @@
         "guest-read-write-buffer"
       ],
       "result": "byte-count-or-status-i32",
-      "blocking": false
+      "blocking": true,
+      "blocking_condition": "Core >=2.1, signed main-loop flag and Host engine execution model, only event-port WAIT."
     },
     {
       "module": "pxa.core.v2",
@@ -221,7 +222,7 @@
       "name": "core",
       "id": 1,
       "state": "defined",
-      "major": 2,
+      "major": 0,
       "minor": 2,
       "patch": 0
     },
@@ -415,6 +416,15 @@
       "request_token": "nonzero"
     },
     {
+      "name": "open-event-port",
+      "id": 5,
+      "since": "2.1",
+      "direction": "bidirectional-result",
+      "payload": "empty",
+      "result": "status:i32|handle:u64",
+      "request_token": "nonzero"
+    },
+    {
       "name": "handle-ready",
       "id": 32769,
       "direction": "host-to-guest",
@@ -604,5 +614,18 @@
       "cardinality": "result-one"
     }
   ],
-  "protocol_version": "2.0.0"
+  "protocol_version": "2.1.0",
+  "event_port": {
+    "component_flag": 2,
+    "maximum_wait_us": 60000000,
+    "operation": 513,
+    "request": "timeout_us:u64 in caller event buffer",
+    "result": "positive standard-event-envelope byte count, otherwise status",
+    "buffer_minimum": 20,
+    "buffer_maximum": 4096,
+    "timeout_zero": "nonblocking native maintenance checkpoint",
+    "too_small": "RESOURCE_LIMIT; queue head and caller bytes retained",
+    "constraints": "Core >=2.1; one UI component; Host engine main-loop execution model; no nested Guest entry, thread or continuation copying; Host must defer destruction until call returns",
+    "execution_model_bit": 0
+  }
 }

@@ -6,6 +6,8 @@
 #include <string.h>
 
 #include "pxa/activation.h"
+#include "pxa/event_port.h"
+#include "pxa/service.h"
 #include "pxa/package.h"
 #include "pxa/log.h"
 #include "pxa/device.h"
@@ -831,7 +833,33 @@ static void test_core_2_gate(void) {
            PXA_STATUS_UNSUPPORTED);
 }
 
+static void test_main_loop_gate(void) {
+    pxa_package_manifest_t manifest = {0};
+    pxa_package_component_t component = {0};
+    pxa_package_activation_profile_t host = {0};
+    manifest.min_sdk = (pxa_package_version_t){2, 1};
+    manifest.component_count = 1;
+    component.kind = PXA_COMPONENT_KIND_UI;
+    component.flags = PXA_PACKAGE_COMPONENT_FLAG_MAIN_LOOP;
+    host.core_version = (pxa_package_version_t){2, 1};
+    host.execution_models = PXA_EXECUTION_MODEL_MAIN_LOOP;
+    assert(pxa_package_requirements_validate(&manifest, &component, &host) == PXA_STATUS_OK);
+    host.core_version.minor = 0;
+    assert(pxa_package_requirements_validate(&manifest, &component, &host) == PXA_STATUS_UNSUPPORTED);
+    host.core_version.minor = 1; host.execution_models = 0;
+    assert(pxa_package_requirements_validate(&manifest, &component, &host) == PXA_STATUS_UNSUPPORTED);
+    host.execution_models = PXA_EXECUTION_MODEL_MAIN_LOOP; manifest.component_count = 2;
+    assert(pxa_package_requirements_validate(&manifest, &component, &host) == PXA_STATUS_INVALID_ARGUMENT);
+    manifest.component_count = 1; component.kind = PXA_COMPONENT_KIND_JOB;
+    assert(pxa_package_requirements_validate(&manifest, &component, &host) == PXA_STATUS_INVALID_ARGUMENT);
+    component.kind = PXA_COMPONENT_KIND_UI; manifest.min_sdk.minor = 0;
+    assert(pxa_package_requirements_validate(&manifest, &component, &host) == PXA_STATUS_INVALID_ARGUMENT);
+    component.flags = 0; host.execution_models = 0;
+    assert(pxa_package_requirements_validate(&manifest, &component, &host) == PXA_STATUS_OK);
+}
+
 int main(void) {
+    test_main_loop_gate();
     test_core_2_gate();
     test_recovery_states();
     test_commit_and_recovery();
