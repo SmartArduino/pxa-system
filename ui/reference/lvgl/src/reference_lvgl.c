@@ -7687,7 +7687,10 @@ static void rebuild(pxsys_reference_lvgl_t* ui) {
         if (ui->active_page != REFERENCE_PAGE_HOME) {
             /* Keep the existing content bounds, but let the scroll viewport
              * reach the safe screen edges so the scrollbar is not inset with
-             * the cards. The launcher uses absolute page/grid coordinates. */
+             * the cards. Gesture navigation overlays the bottom of the list;
+             * scroll padding keeps the last row clear of its handle without
+             * leaving a permanently clipped strip below the viewport.
+             * The launcher uses absolute page/grid coordinates. */
             const int32_t left_padding = layout.content.x - layout.safe_area.x;
             const int32_t right_padding =
                 layout.safe_area.x + (int32_t)layout.safe_area.width -
@@ -7696,6 +7699,16 @@ static void rebuild(pxsys_reference_lvgl_t* ui) {
             lv_obj_set_width(ui->content, (lv_coord_t)layout.safe_area.width);
             lv_obj_set_style_pad_left(ui->content, left_padding, 0);
             lv_obj_set_style_pad_right(ui->content, right_padding, 0);
+            if (ui->navigation_mode == PXSYS_NAVIGATION_GESTURES) {
+                const int32_t safe_bottom = layout.safe_area.y +
+                                           (int32_t)layout.safe_area.height;
+                const int32_t bottom_padding = safe_bottom -
+                    layout.content.y - (int32_t)layout.content.height;
+                if (bottom_padding > 0) {
+                    lv_obj_set_height(ui->content, safe_bottom - layout.content.y);
+                    lv_obj_set_style_pad_bottom(ui->content, bottom_padding, 0);
+                }
+            }
             style_scrollbar(ui, ui->content);
         }
         if (ui->active_page == REFERENCE_PAGE_HOME) {
