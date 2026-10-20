@@ -93,8 +93,45 @@ static void configure(uint32_t rate, uint8_t channels, uint32_t sink) {
     pxa_audio_graph_t graph = {.route=PXA_AUDIO_ROUTE_SPEAKER};
     assert(pxa_audio_mixer_commit(v, &graph) == PXA_STATUS_OK);
 }
+static void all_sink_rates_test(void) {
+    uint8_t input[31 * 2];
+    int16_t expected[31 * 6], actual[31 * 6];
+    /* Exercise every valid denominator, not just common audio rates.
+     * The independent eager reference keeps signed 64-bit division. */
+    for (uint32_t sink = 8000; sink <= 48000; ++sink) {
+        const uint32_t source = sink & 1 ? sink - 1 : 8000;
+        uint32_t phase = 0;
+        int32_t previous = 0;
+        size_t want = 0;
+        for (unsigned i = 0; i < 31; ++i) {
+            int32_t current = i % 3 == 0 ? INT16_MIN :
+                              i % 3 == 1 ? INT16_MAX :
+                              (int32_t)((sink * 13753u + i * 37219u) & 65535u) - 32768;
+            input[2 * i] = (uint8_t)current;
+            input[2 * i + 1] = (uint16_t)current >> 8;
+            phase += sink;
+            while (phase >= source) {
+                phase -= source;
+                expected[want++] = (int16_t)(previous +
+                    (int64_t)(current - previous) * (sink - phase) / sink);
+            }
+            previous = current;
+        }
+        configure(source, 1, sink);
+        assert(pxa_audio_mixer_write(&mixer.voices[0], input, sizeof(input)) ==
+               PXA_STATUS_OK);
+        size_t got = 0;
+        while (mixer.voices[0].count) {
+            size_t count = pxa_audio_mixer_render(&mixer, output, 17);
+            assert(count && got + count <= sizeof(actual) / sizeof(*actual));
+            memcpy(actual + got, output, count * sizeof(*actual));
+            got += count;
+        }
+        assert(got == want && !memcmp(actual, expected, got * sizeof(*actual)));
+    }
+}
 static void format_test(void) {
-    static const uint32_t rates[] = {8000, 11025, 16000, 22050, 44100, 48000};
+    static const uint32_t rates[] = {8000, 8001, 11025, 11027, 16000, 22050, 44100, 47999, 48000};
     uint8_t input[960 * 4];
     int16_t expected[6000], actual[6000];
     for (unsigned r = 0; r < sizeof(rates)/sizeof(rates[0]); ++r) {
@@ -189,7 +226,7 @@ static void format_test(void) {
  * packet-boundary interpolation using the producer's newest previous sample,
  * accidental borrowing of caller memory, slot reuse and partial-drain state. */
 static void queued_pcm_test(void) {
-    const uint32_t rates[] = {8000, 11025, 16000, 22050, 44100, 48000};
+    const uint32_t rates[] = {8000, 8001, 11025, 11027, 16000, 22050, 44100, 47999, 48000};
     const size_t chunks[] = {1, 7, 17, 319, 320, 23};
     uint8_t input[960 * 4];
     int16_t expected[960 * 4];
@@ -258,7 +295,7 @@ static void queued_pcm_test(void) {
  * Compare clipping, fractional source accounting and a PCM-to-tone transition
  * across arbitrary consumer block boundaries. */
 static void pcm_fast_path_test(void) {
-    const uint32_t rates[] = {8000, 11025, 16000, 22050, 44100, 48000};
+    const uint32_t rates[] = {8000, 8001, 11025, 11027, 16000, 22050, 44100, 47999, 48000};
     const int16_t gains[] = {-48 * 256, -6 * 256, 0, 12 * 256};
     uint8_t input[960 * 4];
     int16_t reference[320];
@@ -293,6 +330,7 @@ static void pcm_fast_path_test(void) {
     }
 }
 int main(void) {
+    all_sink_rates_test();
     pcm_fast_path_test();
     queued_pcm_test();
     format_test();
