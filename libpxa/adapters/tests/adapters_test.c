@@ -1148,12 +1148,34 @@ static void test_installer(void) {
                  PXA_STATUS_OK);
     CHECK(strcmp(root_path, container_v1) == 0);
 
+    {
+        /* A crash while claiming an identity may leave a partial temporary
+         * owner record behind; the next claim must replace it. */
+        char stale[512];
+        snprintf(file_path, sizeof(file_path), "%s/owners", storage_root);
+        CHECK(mkdir(file_path, 0700) == 0 || errno == EEXIST);
+        snprintf(stale, sizeof(stale), "%s/owners/.tmp-com.example.testapp",
+                 storage_root);
+        fd = open(stale, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+        CHECK(fd >= 0 && write(fd, "PXA", 3) == 3);
+        close(fd);
+    }
     result.encoded_capacity = sizeof(encoded);
     check_status("install v1 container",
                  pxa_posix_installer_install(installer, container_v1, &result,
                                              &disposition),
                  PXA_STATUS_OK);
     CHECK(disposition == PXA_POSIX_INSTALL_INSTALLED);
+    {
+        struct stat owner;
+        char stale[512];
+        snprintf(stale, sizeof(stale), "%s/owners/.tmp-com.example.testapp",
+                 storage_root);
+        CHECK(access(stale, F_OK) != 0 && errno == ENOENT);
+        snprintf(file_path, sizeof(file_path), "%s/owners/com.example.testapp",
+                 storage_root);
+        CHECK(stat(file_path, &owner) == 0 && owner.st_size == 40);
+    }
     CHECK(manifest != NULL);
     CHECK(manifest->app_id.size == sizeof("com.example.testapp") - 1);
     CHECK(memcmp(manifest->app_id.data, "com.example.testapp",

@@ -2473,7 +2473,20 @@ static pxa_status_t identity_owner_check_or_claim(
     memcpy(owner, owner_magic, sizeof(owner_magic));
     memcpy(owner + sizeof(owner_magic), ctx->publisher_key_id,
            PXA_PACKAGE_DIGEST_BYTES);
-    status = write_file_excl(owners_fd, ctx->identity_name, owner, sizeof(owner));
+    {
+        /* Publish the record by rename so that a crash can never leave a
+         * partially written owner file that would deny the identity. */
+        char temporary[PXA_POSIX_INSTALLER_MAX_IDENTITY_NAME + 8];
+        snprintf(temporary, sizeof(temporary), ".tmp-%s", ctx->identity_name);
+        if (unlinkat(owners_fd, temporary, 0) != 0 && errno != ENOENT) {
+            status = PXA_STATUS_INTERNAL;
+            goto done;
+        }
+        status = write_file_excl(owners_fd, temporary, owner, sizeof(owner));
+        if (status == PXA_STATUS_OK &&
+            renameat(owners_fd, temporary, owners_fd, ctx->identity_name) != 0)
+            status = PXA_STATUS_INTERNAL;
+    }
     if (status == PXA_STATUS_OK) status = sync_tree(owners_fd);
 
 done:

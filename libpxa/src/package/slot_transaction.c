@@ -72,9 +72,14 @@ pxa_status_t pxa_slots_recover(const pxa_slot_storage_t *storage) {
     if (!storage_valid(storage)) return PXA_STATUS_INVALID_ARGUMENT;
     status = inspect_all(storage, &states);
     if (status != PXA_STATUS_OK) return status;
-    if (states.current == PXA_SLOT_CORRUPT ||
-        states.previous == PXA_SLOT_CORRUPT) {
-        return PXA_STATUS_DENIED;
+    if (states.current == PXA_SLOT_CORRUPT) return PXA_STATUS_DENIED;
+    if (states.previous == PXA_SLOT_CORRUPT) {
+        /* An interrupted removal of the rollback copy leaves it corrupt.
+         * With a verified CURRENT it is discarded; otherwise fail closed. */
+        if (states.current != PXA_SLOT_VERIFIED) return PXA_STATUS_DENIED;
+        status = remove_and_barrier(storage, PXA_PACKAGE_SLOT_PREVIOUS);
+        if (status != PXA_STATUS_OK) return status;
+        states.previous = PXA_SLOT_ABSENT;
     }
     if (states.incoming == PXA_SLOT_CORRUPT) {
         status = remove_and_barrier(storage, PXA_PACKAGE_SLOT_INCOMING);

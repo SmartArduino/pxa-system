@@ -120,6 +120,35 @@ static void test_recovery_states(void) {
     }
 }
 
+static void test_corrupt_previous_recovery(void) {
+    /* A crash while removing the rollback copy leaves PREVIOUS partially
+     * deleted. With a verified CURRENT it is discarded instead of blocking
+     * every later update; without one, recovery still fails closed. */
+    slot_store_t after_commit = {
+        {PXA_SLOT_VERIFIED, PXA_SLOT_CORRUPT, PXA_SLOT_ABSENT}, 0, 0, 0,
+    };
+    slot_store_t before_commit = {
+        {PXA_SLOT_VERIFIED, PXA_SLOT_CORRUPT, PXA_SLOT_VERIFIED}, 0, 0, 0,
+    };
+    slot_store_t no_current = {
+        {PXA_SLOT_ABSENT, PXA_SLOT_CORRUPT, PXA_SLOT_VERIFIED}, 0, 0, 0,
+    };
+    pxa_slot_storage_t storage = make_storage(&after_commit);
+    assert(pxa_slots_recover(&storage) == PXA_STATUS_OK);
+    assert(after_commit.states[0] == PXA_SLOT_VERIFIED &&
+           after_commit.states[1] == PXA_SLOT_ABSENT &&
+           after_commit.states[2] == PXA_SLOT_ABSENT);
+    storage = make_storage(&before_commit);
+    assert(pxa_slots_recover(&storage) == PXA_STATUS_OK);
+    assert(before_commit.states[0] == PXA_SLOT_VERIFIED &&
+           before_commit.states[1] == PXA_SLOT_ABSENT &&
+           before_commit.states[2] == PXA_SLOT_ABSENT);
+    storage = make_storage(&no_current);
+    assert(pxa_slots_recover(&storage) == PXA_STATUS_DENIED);
+    assert(no_current.states[1] == PXA_SLOT_CORRUPT &&
+           no_current.states[2] == PXA_SLOT_VERIFIED);
+}
+
 static void test_commit_and_recovery(void) {
     size_t failure;
     slot_store_t completed = {
@@ -834,6 +863,7 @@ static void test_core_2_gate(void) {
 int main(void) {
     test_core_2_gate();
     test_recovery_states();
+    test_corrupt_previous_recovery();
     test_commit_and_recovery();
     test_package_golden();
     test_localized_metadata();
