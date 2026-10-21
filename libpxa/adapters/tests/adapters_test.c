@@ -1708,6 +1708,13 @@ static void test_short_installer_layout(void) {
     CHECK(pxa_posix_installer_load_current(installer,&identity,&result)!=PXA_STATUS_OK);
     layout.deny=0;
     check_status("short uninstall",pxa_posix_installer_uninstall(installer,&identity),PXA_STATUS_OK);
+    /* Some embedded filesystems do not retain empty directory entries. A
+     * retry must complete even after the final PublisherDir has disappeared. */
+    char publisher_dir[512];
+    snprintf(publisher_dir,sizeof(publisher_dir),"%s/packages/lucinhu",storage);
+    CHECK(rmdir(publisher_dir)==0);
+    check_status("uninstall without empty publisher directory",
+                 pxa_posix_installer_uninstall(installer,&identity),PXA_STATUS_OK);
     pxa_posix_installer_deinit(installer);free(workspace);free(manifest_workspace);free(storage);free(package);EVP_PKEY_free(signer.key);
     puts("test_short_installer_layout OK");
 }

@@ -353,6 +353,10 @@ static pxa_status_t open_tree_at(int parent_fd, const char *relative,
         memcpy(name, segment, remaining);
         name[remaining] = '\0';
         if (fstatat(current, name, &metadata, AT_SYMLINK_NOFOLLOW) != 0) {
+            if (!create && errno == ENOENT) {
+                close(current);
+                return PXA_STATUS_NOT_FOUND;
+            }
             if (!create || errno != ENOENT ||
                 mkdirat(current, name, 0700) != 0) {
                 close(current);
