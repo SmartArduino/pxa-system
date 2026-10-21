@@ -216,7 +216,7 @@ static int inject_touch(pxsys_pxadb_control_t *control, const char *action,
     int move = strcmp(action, "MOVE") == 0;
     int up = strcmp(action, "UP") == 0;
     int cancel = strcmp(action, "CANCEL") == 0;
-    if (id >= 2 || x < 0 || y < 0 ||
+    if (id >= PXSYS_PXADB_MAX_POINTERS || x < 0 || y < 0 ||
         x >= lv_display_get_horizontal_resolution(control->display) ||
         y >= lv_display_get_vertical_resolution(control->display) ||
         (!down && !move && !up && !cancel)) return 0;
@@ -264,7 +264,7 @@ static void handle_client(pxsys_pxadb_control_t *control, int client) {
             (void)send_text(client, "ERR screenshot_failed\n");
         free(png);
     } else if (strcmp(command, "TOUCH CANCEL_ALL\n") == 0) {
-        for (unsigned id = 0; id < 2; ++id)
+        for (unsigned id = 0; id < PXSYS_PXADB_MAX_POINTERS; ++id)
             if (control->touches[id].pressed)
                 (void)inject_touch(control, "CANCEL", id, 0, 0);
         (void)send_text(client, "OK\n");
@@ -328,7 +328,13 @@ static void handle_client(pxsys_pxadb_control_t *control, int client) {
         (void)send_text(client, selected == PXSYS_PXADB_PACKAGE_ACTIVE ? (result ? "OK 1\n" : "OK 0\n") :
                                 (result ? "OK\n" : "ERR package_action_failed\n"));
     } else if (strcmp(command, "CAPABILITIES\n") == 0) {
-        (void)send_text(client, "OK\n");
+        char capabilities[192];
+        snprintf(capabilities, sizeof(capabilities),
+            "OK protocol=1;width=%d;height=%d;max_pointers=%u;coordinates=logical;keys=back,home,volume-up,volume-down\n",
+            (int)lv_display_get_horizontal_resolution(control->display),
+            (int)lv_display_get_vertical_resolution(control->display),
+            PXSYS_PXADB_MAX_POINTERS);
+        (void)send_text(client, capabilities);
     } else {
         (void)send_text(client, "ERR invalid_control_command\n");
     }
@@ -377,7 +383,7 @@ void pxsys_pxadb_control_poll(pxsys_pxadb_control_t *control) {
 
 void pxsys_pxadb_control_stop(pxsys_pxadb_control_t *control) {
     if (control == NULL) return;
-    for (unsigned id = 0; id < 2; ++id) {
+    for (unsigned id = 0; id < PXSYS_PXADB_MAX_POINTERS; ++id) {
         if (control->touches[id].indev != NULL) {
             if (control->touches[id].pressed)
                 (void)inject_touch(control, "CANCEL", id, 0, 0);

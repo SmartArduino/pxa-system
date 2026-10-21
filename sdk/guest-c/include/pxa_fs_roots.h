@@ -31,6 +31,7 @@ static inline int32_t pxa_fs_cancel_read_at(uint64_t handle,uint64_t cookie) {
 #define PXA_FS_OPEN_AT 11u
 #define PXA_FS_STAT_AT 16u
 #define PXA_FS_QUERY_ROOT 17u
+#define PXA_FS_APP_MEDIA_PATH 18u
 #define PXA_FS_ROOT_APP_MEDIA 5u
 #define PXA_FS_RIGHT_READ 1u
 #define PXA_FS_RIGHT_ENUMERATE 2u
@@ -58,6 +59,22 @@ typedef struct {
     uint32_t max_read_at_bytes; uint8_t naming,state;
     uint16_t space_known; uint64_t total_bytes,free_bytes,quota_bytes;
 } pxa_fs_root_info_result_t;
+
+/* Cold display-only query. The returned text is never an access capability. */
+static inline int32_t pxa_fs_request_app_media_path(uint64_t token) {
+    if(!token)return PXA_STATUS_INVALID_ARGUMENT;
+    return pxa_control_call(PXA_FS_SERVICE,PXA_FS_APP_MEDIA_PATH,token,NULL,0);
+}
+static inline int pxa_fs_parse_app_media_path(const pxa_event_t *event,uint64_t token,char *out,size_t capacity) {
+    if(!event || !token || !out || !capacity || event->service!=PXA_FS_SERVICE || event->opcode!=PXA_FS_APP_MEDIA_PATH ||
+       event->token!=token || !event->payload || event->payload_size<6 || (int32_t)pxa_load_u32(event->payload)!=0)return 0;
+    size_t length=(size_t)event->payload[4]|((size_t)event->payload[5]<<8);
+    if(!length || length>255 || event->payload_size!=length+6 || length>=capacity)return 0;
+    for(size_t i=0;i<length;++i)if(!event->payload[6+i])return 0;
+    if(!pxa_fs_valid_utf8((const char *)event->payload+6,length))return 0;
+    for(size_t i=0;i<length;++i)out[i]=(char)event->payload[6+i];
+    out[length]=0;return 1;
+}
 
 /* Host-selected, app-identity-scoped fixed media root. No user picker or
  * transferable Permission/GrantId. Requires app-media-root feature. */

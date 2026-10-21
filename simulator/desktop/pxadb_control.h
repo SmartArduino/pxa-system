@@ -7,6 +7,7 @@
 #include "lvgl.h"
 
 enum {
+    PXSYS_PXADB_MAX_POINTERS = 5,
     PXSYS_PXADB_PACKAGE_RUN = 4,
     PXSYS_PXADB_PACKAGE_STOP = 5,
     PXSYS_PXADB_PACKAGE_ACTIVE = 6
@@ -31,7 +32,7 @@ typedef struct {
     int16_t tap_y;
     uint32_t tap_release_at;
     /* Debug-only contacts, allocated lazily; no firmware or Guest storage. */
-    pxsys_pxadb_touch_t touches[2];
+    pxsys_pxadb_touch_t touches[PXSYS_PXADB_MAX_POINTERS];
     void *catalog_context;
     pxsys_pxadb_catalog_refresh_fn refresh_catalog;
     pxsys_pxadb_package_action_fn package_action;

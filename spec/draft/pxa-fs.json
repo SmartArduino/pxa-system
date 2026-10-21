@@ -1,11 +1,11 @@
 {
-  "schema": "pxa-fs-spec-0.3",
+  "schema": "pxa-fs-spec-0.4",
   "status": "draft",
   "service": {
     "name": "fs",
     "id": 5,
     "major": 0,
-    "minor": 3,
+    "minor": 4,
     "patch": 0
   },
   "opcodes": [
@@ -113,6 +113,15 @@
       "payload": "directory:u64",
       "result": "RootInfo",
       "feature": "scoped-roots"
+    },
+    {
+      "id": 18,
+      "name": "app-media-path",
+      "direction": "bidirectional-result",
+      "request_token": "nonzero",
+      "payload": "",
+      "result": "display-path:utf8-u16 (1..255 bytes, display-only, no filesystem authority)",
+      "feature": "app-media-path"
     }
   ],
   "open_flags": [
@@ -218,7 +227,7 @@
     "max_segment_bytes": 64,
     "quota_unit": "logical-regular-file-bytes"
   },
-  "protocol_version": "0.3.0",
+  "protocol_version": "0.4.0",
   "features": [
     {
       "name": "scoped-roots",
@@ -235,6 +244,10 @@
     {
       "name": "app-media-root",
       "bit": 6
+    },
+    {
+      "name": "app-media-path",
+      "bit": 7
     }
   ],
   "root_info": {

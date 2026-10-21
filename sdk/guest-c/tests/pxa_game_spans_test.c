@@ -4,6 +4,7 @@
 #include <string.h>
 
 static uint8_t captured[1024];
+static uint32_t captured_operation;
 static int32_t failure;
 static int short_reply, reserved;
 int32_t pxa_test_control(const uint8_t *p, uint32_t n) {
@@ -11,8 +12,9 @@ int32_t pxa_test_control(const uint8_t *p, uint32_t n) {
 }
 int32_t pxa_io(uint64_t handle, uint32_t op, uint8_t *p, uint32_t n) {
     assert(handle == 77);
+    captured_operation = op;
     if (failure) return failure;
-    if (op == PXA_GAME_RENDER_IO_EXECUTE_SPANS || op == PXA_GAME_RENDER_IO_EXECUTE_PROJECTED_SPANS || op == PXA_GAME_RENDER_IO_EXECUTE_FRAME_SPANS || op == PXA_GAME_RENDER_IO_BLIT_INDEXED_FRAME) {
+    if (op == PXA_GAME_RENDER_IO_EXECUTE_SPANS || op == PXA_GAME_RENDER_IO_EXECUTE_PROJECTED_SPANS || op == PXA_GAME_RENDER_IO_EXECUTE_FRAME_SPANS || op == PXA_GAME_RENDER_IO_BLIT_INDEXED_FRAME || op == PXA_GAME_RENDER_IO_BLIT_INDEXED_RECT) {
         assert(n <= sizeof(captured)); memcpy(captured, p, n);
     } else {
         assert(op == PXA_GAME_RENDER_IO_SPAN_TELEMETRY && n == 64);
@@ -102,9 +104,16 @@ int main(void) {
     blit.source_offset = 1234; blit.target_width = 320; blit.target_height = 240;
     blit.cursor_x = -4;
     assert(pxa_game_render_blit_indexed_frame(77, &blit) == 64);
+    assert(captured_operation == 0x108);
+    assert(pxa_game_render_blit_indexed_rect(77, &blit) == 64);
+    assert(captured_operation == 0x109);
     assert(pxa_game_render_blit_decode(captured, 64, &blit_read));
     assert(blit_read.source_offset == 1234 && blit_read.cursor_x == -4);
     short_reply = 1;
     assert(pxa_game_render_blit_indexed_frame(77, &blit) == PXA_STATUS_PROTOCOL_ERROR);
+    assert(pxa_game_render_blit_indexed_rect(77, &blit) == PXA_STATUS_PROTOCOL_ERROR);
+    short_reply = 0;
+    failure = PXA_STATUS_WOULD_BLOCK;
+    assert(pxa_game_render_blit_indexed_rect(77, &blit) == failure);
     return 0;
 }

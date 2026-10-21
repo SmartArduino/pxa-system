@@ -105,6 +105,9 @@ struct pxa_posix_installer {
     uint32_t flags;
     pxa_package_signature_verify_fn verify;
     void *verify_context;
+    void *layout_context;
+    pxa_posix_installer_locator_fn resolve_locator;
+    pxa_posix_installer_incoming_fn incoming_ready;
     uint8_t *scratch;
     size_t scratch_size;
     pxa_package_limits_t scratch_limits;
@@ -1764,6 +1767,20 @@ static pxa_status_t slot_remove(void *context, pxa_package_slot_t slot) {
     return status;
 }
 
+static pxa_status_t current_parent(pxa_posix_slot_ctx_t *ctx,int create,int *output) {
+    char *path=(char *)malloc(strlen(ctx->root)+1);
+    if(!path)return PXA_STATUS_INTERNAL;
+    strcpy(path,ctx->root);char *slash=strrchr(path,'/');
+    if(!slash){free(path);return PXA_STATUS_DENIED;}
+    *slash=0;
+    size_t prefix=ctx->installer->storage_root_len;
+    if(strncmp(path,ctx->installer->storage_root,prefix) || path[prefix]!='/') {free(path);return PXA_STATUS_DENIED;}
+    int root=open(ctx->installer->storage_root,O_RDONLY|O_DIRECTORY|O_CLOEXEC|O_NOFOLLOW);
+    pxa_status_t status=root<0?PXA_STATUS_INTERNAL:open_tree_at(root,path+prefix+1,create,output);
+    if(root>=0)close(root);
+    free(path);return status;
+}
+
 static pxa_status_t slot_rename(void *context, pxa_package_slot_t from,
                                 pxa_package_slot_t to) {
     pxa_posix_slot_ctx_t *ctx = (pxa_posix_slot_ctx_t *)context;
@@ -1779,7 +1796,11 @@ static pxa_status_t slot_rename(void *context, pxa_package_slot_t from,
         free(to_path);
         return status;
     }
-    if (rename(from_path, to_path) != 0) status = PXA_STATUS_INTERNAL;
+    if(to==PXA_PACKAGE_SLOT_CURRENT) {
+        int parent=-1;status=current_parent(ctx,1,&parent);
+        if(parent>=0)close(parent);
+    }
+    if (status==PXA_STATUS_OK && rename(from_path, to_path) != 0) status = PXA_STATUS_INTERNAL;
     free(from_path);
     free(to_path);
     return status;
@@ -1800,6 +1821,13 @@ static pxa_status_t slot_barrier(void *context) {
     close(fd);
     free(packages);
     if (status != PXA_STATUS_OK) return status;
+    {   /* Nested PublisherDir also participates in the rename barrier. */
+        int parent=-1;
+        status=current_parent(ctx,0,&parent);
+        if(status==PXA_STATUS_NOT_FOUND)status=PXA_STATUS_OK;
+        if(parent>=0){status=fsync(parent)==0?PXA_STATUS_OK:PXA_STATUS_INTERNAL;close(parent);}
+        if(status!=PXA_STATUS_OK)return status;
+    }
     {
         struct stat metadata;
         if (lstat(ctx->session, &metadata) == 0 && S_ISDIR(metadata.st_mode)) {
@@ -1817,6 +1845,8 @@ static pxa_status_t recover_locked(pxa_posix_installer_t *installer,
                                    const pxa_posix_slot_ctx_t *ctx) {
     pxa_slot_storage_t storage;
     pxa_status_t status;
+    /* Core recovery rolls back or discards uncommitted incoming content.
+     * A layout claim is needed only on the normal commit path. */
     (void)installer;
     storage.struct_size = sizeof(storage);
     storage.context = (void *)ctx;
@@ -2308,6 +2338,25 @@ static pxa_status_t prepare_incoming_container(
     return status;
 }
 
+static pxa_status_t resolve_locator(pxa_posix_installer_t *installer,
+    const pxa_posix_installer_identity_t *identity,uint8_t kind,char out[130]) {
+    pxa_status_t status=PXA_STATUS_NOT_FOUND;
+    if(installer->resolve_locator)
+        status=installer->resolve_locator(installer->layout_context,identity,kind,out,130);
+    if(status==PXA_STATUS_NOT_FOUND)
+        return identity_storage_name(installer,identity,out,130)?PXA_STATUS_OK:PXA_STATUS_INVALID_ARGUMENT;
+    if(status!=PXA_STATUS_OK)return status;
+    if(!memchr(out,0,130) || !out[0])return PXA_STATUS_DENIED;
+    const char *part=out;unsigned components=0;
+    while(*part) {
+        const char *end=strchr(part,'/');size_t n=end?(size_t)(end-part):strlen(part);
+        if(++components>2 || n>64 || !safe_app_id((pxa_bytes_t){(const uint8_t *)part,n}))return PXA_STATUS_DENIED;
+        if(!end)break;
+        part=end+1;if(!*part)return PXA_STATUS_DENIED;
+    }
+    return PXA_STATUS_OK;
+}
+
 static char *identity_root_path(pxa_posix_installer_t *installer,
                                 const char *app_id) {
     char *packages = join_path(installer->storage_root, "packages");
@@ -2358,9 +2407,31 @@ static int setup_ctx(pxa_posix_installer_t *installer,
                                sizeof(ctx->identity_name))) {
         return 0;
     }
-    ctx->root = identity_root_path(installer, ctx->identity_name);
+    char locator[130];
+    if(resolve_locator(installer,identity,PXA_POSIX_INSTALLER_PATH_PACKAGE,locator)!=PXA_STATUS_OK)return 0;
+    ctx->root = identity_root_path(installer, locator);
     ctx->session = session_root_path(installer, ctx->identity_name);
     return ctx->root != NULL && ctx->session != NULL;
+}
+
+static pxa_status_t select_incoming_layout(pxa_posix_slot_ctx_t *ctx) {
+    pxa_posix_installer_t *installer=ctx->installer;
+    if(!installer->incoming_ready)return PXA_STATUS_OK;
+    pxa_posix_installer_identity_t identity={{ctx->publisher_key_id,32},{(const uint8_t *)ctx->app_id,ctx->app_id_size}};
+    char *incoming=join_path(ctx->session,"incoming");
+    pxa_status_t status=incoming?installer->incoming_ready(installer->layout_context,&identity,incoming):PXA_STATUS_INTERNAL;
+    free(incoming);if(status!=PXA_STATUS_OK)return status;
+    char locator[130];status=resolve_locator(installer,&identity,PXA_POSIX_INSTALLER_PATH_PACKAGE,locator);
+    if(status!=PXA_STATUS_OK)return status;
+    char *selected=identity_root_path(installer,locator);if(!selected)return PXA_STATUS_INTERNAL;
+    if(strcmp(selected,ctx->root)) {
+        struct stat metadata;
+        if(lstat(ctx->root,&metadata)==0 || errno!=ENOENT || lstat(selected,&metadata)==0 || errno!=ENOENT) {
+            free(selected);return PXA_STATUS_DENIED;
+        }
+        free(ctx->root);ctx->root=selected;
+    }else free(selected);
+    return PXA_STATUS_OK;
 }
 
 static pxa_status_t identity_owner_check_or_claim(
@@ -2449,7 +2520,12 @@ static pxa_status_t identity_owner_check_or_claim(
             status = PXA_STATUS_INTERNAL;
             goto done;
         }
-        data_path = join_path(data_root, ctx->identity_name);
+        char locator[130];
+        pxa_posix_installer_identity_t identity={
+            {ctx->publisher_key_id,32},{(const uint8_t *)ctx->app_id,ctx->app_id_size}};
+        status=resolve_locator(installer,&identity,PXA_POSIX_INSTALLER_PATH_DATA,locator);
+        if(status!=PXA_STATUS_OK)goto done;
+        data_path = join_path(data_root, locator);
         if (data_path == NULL) {
             status = PXA_STATUS_INTERNAL;
             goto done;
@@ -2497,7 +2573,7 @@ static pxa_slot_storage_t make_slot_storage(pxa_posix_slot_ctx_t *ctx) {
 }
 
 static int config_valid(const pxa_posix_installer_config_t *config) {
-    if (config == NULL || config->struct_size < sizeof(*config) ||
+    if (config == NULL || config->struct_size < offsetof(pxa_posix_installer_config_t, layout_context) ||
         config->storage_root == NULL || config->storage_root[0] == '\0' ||
         config->limits.struct_size < sizeof(config->limits) ||
         config->limits.max_components == 0 ||
@@ -2556,6 +2632,11 @@ pxa_status_t pxa_posix_installer_init(void *workspace, size_t workspace_size,
         installer->has_faults = 1;
     }
     installer->flags = config->flags;
+    if(config->struct_size>=sizeof(*config)) {
+        installer->layout_context=config->layout_context;
+        installer->resolve_locator=config->resolve_locator;
+        installer->incoming_ready=config->incoming_ready;
+    }
     installer->verify_context = config->verify_context != NULL
                                     ? config->verify_context
                                     : (void *)&installer->trust;
@@ -3007,6 +3088,13 @@ static pxa_status_t install_source(
         char *incoming = join_path(ctx.session, "incoming");
         (void)remove_tree(incoming);
         free(incoming);
+        (void)remove_tree(ctx.session);
+        goto done;
+    }
+    stage="select-verified-layout";
+    status=select_incoming_layout(&ctx);
+    if(status!=PXA_STATUS_OK) {
+        (void)slot_remove(&ctx,PXA_PACKAGE_SLOT_INCOMING);
         (void)remove_tree(ctx.session);
         goto done;
     }

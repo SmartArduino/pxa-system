@@ -62,6 +62,26 @@ int main(void) {
     assert(decoded.token == token);
     assert(decoded.payload_size == 0);
 
+    const char *full="17982acd08493944059713aee9a56135dd4a080ecaaf7aa77df11fdf3102d171:pxa-nes";
+    assert(pxa_store_manage(PXA_STORE_LAUNCH_IDENTITY_REQUEST,token,full,packet,sizeof(packet)));
+    assert(pxa_parse_event(captured,captured_length,&decoded));
+    assert(decoded.opcode==PXA_STORE_LAUNCH_IDENTITY_REQUEST && decoded.payload_size==strlen(full));
+    calls_before=control_calls;
+    assert(!pxa_store_manage(PXA_STORE_LAUNCH_IDENTITY_REQUEST,token,"pxa-nes",packet,sizeof(packet)));
+    assert(!pxa_store_manage(PXA_STORE_LAUNCH_REQUEST,token,full,packet,sizeof(packet)));
+    assert(control_calls==calls_before);
+
+    assert(pxa_store_install_identity_status(token,full,"/ticket",digest,123,packet,sizeof(packet))==PXA_STATUS_OK);
+    assert(pxa_parse_event(captured,captured_length,&decoded));
+    assert(decoded.opcode==PXA_STORE_INSTALL_IDENTITY_REQUEST && decoded.payload_size==32+43+7+7);
+    assert(decoded.payload[0]==0x17 && decoded.payload[1]==0x98 && decoded.payload[32]==7);
+    uint8_t binding[180]={0};
+    assert(pxa_store_register_namespace_status(token,binding,sizeof(binding),packet,sizeof(packet))==PXA_STATUS_OK);
+    assert(pxa_parse_event(captured,captured_length,&decoded) && decoded.opcode==PXA_STORE_REGISTER_NAMESPACE_REQUEST && decoded.payload_size==180);
+    calls_before=control_calls;
+    assert(pxa_store_install_identity_status(token,"pxa-nes","/ticket",digest,123,packet,sizeof(packet))==PXA_STATUS_INVALID_ARGUMENT);
+    assert(pxa_store_register_namespace_status(token,binding,179,packet,sizeof(packet))==PXA_STATUS_INVALID_ARGUMENT);
+    assert(control_calls==calls_before);
     event.service = PXA_SERVICE_STORE_INSTALLER;
     event.opcode = PXA_STORE_INSTALLED_LIST_REQUEST;
     event.token = token;

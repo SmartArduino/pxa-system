@@ -12,6 +12,7 @@ from pathlib import Path
 TOOL_DIR = Path(__file__).resolve().parent
 if str(TOOL_DIR) not in sys.path:
     sys.path.insert(0, str(TOOL_DIR))
+from publisher_profile import PROFILE_PATH, encode_publisher, PublisherProfileError
 from protocol_metadata import (  # noqa: E402
     DECLARABLE_SERVICE_IDS,
     SERVICE_FEATURES,
@@ -422,6 +423,23 @@ def main(argv):
     public_der = openssl(["pkey", "-in", private_key_path, "-pubout", "-outform", "DER"])
     validate_p256_public_key(public_der)
     publisher_id = hashlib.sha256(public_der).digest()
+    if "publisher" in metadata:
+        try:
+            profile = encode_publisher(metadata["publisher"])
+        except PublisherProfileError as error:
+            raise PackageError(str(error)) from error
+        destination = package_dir / PROFILE_PATH
+        require(not destination.is_symlink() and not destination.parent.is_symlink(), "publisher profile must not be a symlink")
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(profile)
+    elif not (package_source_dir / PROFILE_PATH).exists():
+        # Remove only the generator-owned stale output in a reused package dir.
+        stale = package_dir / PROFILE_PATH
+        if stale.is_file() and not stale.is_symlink():
+            stale.unlink()
+    if (package_dir / "assets/resources.pxi").is_file():
+        from compile_resources import build_index
+        build_index(package_dir)
     files = package_files(package_dir)
     file_paths = {path for path, _ in files}
     catalog_localizations = catalog_application_localizations(

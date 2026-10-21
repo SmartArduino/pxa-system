@@ -1039,12 +1039,11 @@ static pxa_status_t surface_create_with_raster_capacity(
         (!raster || raster_draw_capacity < PXA_RASTER_DRAW_HEADER_BYTES ||
          raster_draw_capacity > PXA_RASTER_MAX_DRAW_BYTES))
         return PXA_STATUS_UNSUPPORTED;
-    if (desc->width > host->width || desc->height > host->height)
-        return PXA_STATUS_UNSUPPORTED;
+    if ((uint64_t)desc->width * desc->height * 2u > UINT32_MAX)
+        return PXA_STATUS_LIMIT_EXCEEDED;
     scale = product_fit_scale(desc->width, desc->height, host->width,
                               host->height);
-    if (scale == 0)
-        return PXA_STATUS_UNSUPPORTED;
+    if (scale == 0) scale = 1; /* Larger surfaces are clipped to the display. */
     *surface = 1;
     *stride = (uint32_t)desc->width * 2u;
     host->surface_stride_bytes = *stride;
@@ -1643,8 +1642,8 @@ static int surface_process_pending(product_host_t *host) {
         if (host->surface_layer.y > 0) origin_y = (uint32_t)host->surface_layer.y;
         if (origin_x == 0 && origin_y == 0 &&
             (drawn_width < display_width || drawn_height < display_height)) {
-            origin_x = (display_width - drawn_width) / 2u;
-            origin_y = (display_height - drawn_height) / 2u;
+            origin_x = drawn_width < display_width ? (display_width - drawn_width) / 2u : 0;
+            origin_y = drawn_height < display_height ? (display_height - drawn_height) / 2u : 0;
         }
         if (origin_x >= display_width || origin_y >= display_height) {
             copy_width = 0;
@@ -3792,9 +3791,9 @@ static int run_product_simulator(const options_t *input,
     surface_config.struct_size = sizeof(surface_config);
     surface_config.max_surfaces = 1;
     surface_config.max_surfaces_per_component = 1;
-    surface_config.max_width = options.width;
-    surface_config.max_height = options.height;
-    surface_config.max_frame_bytes = options.width * options.height * 2u;
+    surface_config.max_width = UINT16_MAX;
+    surface_config.max_height = UINT16_MAX;
+    surface_config.max_frame_bytes = UINT32_MAX;
     surface_config.min_buffer_count = 2;
     surface_config.max_buffer_count = 3;
     surface_config.backend.struct_size = sizeof(surface_config.backend);
@@ -4084,7 +4083,7 @@ static int run_product_simulator(const options_t *input,
     capabilities[11].service = PXA_NET_SERVICE_ID; capabilities[11].version.major = PXA_NET_SERVICE_MAJOR; capabilities[11].version.minor = PXA_NET_SERVICE_MINOR;
     capabilities[12].service = PXA_FS_SERVICE_ID; capabilities[12].version.major = PXA_FS_SERVICE_MAJOR; capabilities[12].version.minor = PXA_FS_SERVICE_MINOR;
     capabilities[12].features = PXA_FS_FEATURE_SCOPED_ROOTS |
-        PXA_FS_FEATURE_APP_MEDIA_ROOT | PXA_FS_FEATURE_READ_AT;
+        PXA_FS_FEATURE_APP_MEDIA_ROOT | PXA_FS_FEATURE_APP_MEDIA_PATH | PXA_FS_FEATURE_READ_AT;
     capabilities[13].service = PXA_IPC_SERVICE_ID; capabilities[13].version.major = PXA_IPC_SERVICE_MAJOR; capabilities[13].version.minor = PXA_IPC_SERVICE_MINOR;
     capabilities[14].service = PXA_WASI_SERVICE_ID; capabilities[14].version.major = PXA_WASI_SERVICE_MAJOR; capabilities[14].version.minor = PXA_WASI_SERVICE_MINOR;
     capabilities[14].features = PXA_WASI_FEATURE_CLOCKS | PXA_WASI_FEATURE_RANDOM;

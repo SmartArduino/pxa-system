@@ -191,6 +191,16 @@ public:
         if (*result != bytes.size()) return std::unexpected(Error::protocol_error);
         return {};
     }
+    // Exact nearest-neighbour sampling, without the legacy 320x240 grid.
+    // Memory remains borrowed only until the call returns, including workers.
+    Result<void> blit_rect(const IndexedBlit& frame) noexcept {
+        std::array<std::byte, PXA_GAME_RENDER_BLIT_BYTES> bytes{};
+        wire_spans::pxa_game_render_blit_encode(bytes.data(), bytes.size(), &frame);
+        auto result = transport_.io(handle(), 0x109, bytes);
+        if (!result) return std::unexpected(result.error());
+        if (*result != bytes.size()) return std::unexpected(Error::protocol_error);
+        return {};
+    }
     Result<SpanTelemetry> telemetry() noexcept {
         std::array<std::byte, 64> bytes{};
         auto result = transport_.io(handle(), 0x105, bytes);

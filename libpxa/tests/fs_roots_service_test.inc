@@ -30,6 +30,10 @@ static pxa_status_t roots_test_info(void *c,void *d,pxa_fs_root_info_t *i) {
     i->rights=3; i->max_path_bytes=255; i->max_segment_bytes=255;
     i->naming=2; i->state=2; return 0;
 }
+static pxa_status_t roots_test_media_path(void *context,char *out,size_t capacity,size_t *size) {
+    (void)context;const char path[]="/PXA/media/lucinhu/pxa-nes/";
+    assert(capacity>=sizeof(path)-1);memcpy(out,path,sizeof(path)-1);*size=sizeof(path)-1;return PXA_STATUS_OK;
+}
 static void roots_test_close(void *c,void *r,uint8_t kind) {
     roots_test_t *t=c; (void)r;(void)kind; ++t->closes;
 }
@@ -87,7 +91,8 @@ static void test_fs_scoped_service(void) {
     roots.files.read_directory=roots_test_next;roots.files.close=roots_test_close;
     roots.open_root=roots_test_open;roots.open_at=roots_test_at;roots.query_root=roots_test_info;
     roots.request_access=roots_test_picker;roots.cancel_access=roots_test_cancel;
-    roots.features=PXA_FS_FEATURE_APP_MEDIA_ROOT;
+    roots.features=PXA_FS_FEATURE_APP_MEDIA_ROOT|PXA_FS_FEATURE_APP_MEDIA_PATH;
+    roots.app_media_path=roots_test_media_path;
     roots.read_at=roots_test_read_at;
     fc.struct_size=sizeof(fc);fc.max_open_resources=4;fc.roots=&roots;fc.permissions=permissions;
     fc.authorization_context=&state;fc.authorize=roots_test_authorize;
@@ -98,6 +103,17 @@ static void test_fs_scoped_service(void) {
     fw=malloc(pxa_fs_service_workspace_size(&fc));assert(fw);
     assert(!pxa_fs_service_init(fw,pxa_fs_service_workspace_size(&fc),test.runtime,&fc,&fs));
     assert(!pxa_fs_service_register(fs));
+    pxa_writer_init(&writer,command,sizeof(command));assert(!pxa_writer_message(&writer,5,PXA_FS_APP_MEDIA_PATH,99,NULL,0));
+    dispatch_control_completion(test.runtime,c,command,writer.size,event_bytes,sizeof(event_bytes),&event);
+    const char label[]="/PXA/media/lucinhu/pxa-nes/";
+    assert(event.payload.size==6+sizeof(label)-1 && !pxa_read_u32(event.payload.data));
+    assert(pxa_read_u16(event.payload.data+4)==sizeof(label)-1 && !memcmp(event.payload.data+6,label,sizeof(label)-1));
+    assert(!state.opens && !state.prompts); /* no card access or authority */
+    roots.struct_size=offsetof(pxa_fs_roots_backend_t,app_media_path);
+    assert(!pxa_component_begin_event(test.runtime,c));
+    assert(pxa_runtime_control(test.runtime,c,command,writer.size)==PXA_STATUS_UNSUPPORTED);
+    assert(!pxa_component_finish_event(test.runtime,c,0));
+    roots.struct_size=sizeof(roots);
     p[0]=4;pxa_write_u64(p+4,permission);memcpy(p+12,id,16);
     pxa_writer_init(&writer,command,sizeof(command));assert(!pxa_writer_message(&writer,5,9,2,p,28));
     dispatch_control_completion(test.runtime,c,command,writer.size,event_bytes,sizeof(event_bytes),&event);

@@ -28,6 +28,14 @@ template<class T> static Result<T> complete(Task<T> task,RequestTable& requests,
 }
 int main() {
     Transport t;t.phase(Phase::event);RequestTable requests;
+    const char label[]="/PXA/media/lucinhu/pxa-nes/";
+    std::array<std::byte,6+sizeof(label)-1> location{};
+    wire::put16(location.data()+4,sizeof(label)-1);std::memcpy(location.data()+6,label,sizeof(label)-1);
+    auto display=complete(FilesystemService(t,requests).app_media_path(),requests,location);
+    assert(display && display->view()==label && wire::get16(captured.data()+2)==18);
+    auto malformed_path=location;malformed_path[4]=std::byte{0};
+    auto bad_path=complete(FilesystemService(t,requests).app_media_path(),requests,malformed_path);
+    assert(!bad_path && bad_path.error()==Error::protocol_error);
     Permission permission(t,UINT64_C(0x100000003));
     std::array<std::byte,32> grant_result{};
     wire::put64(grant_result.data()+4,UINT64_C(0x100000001));

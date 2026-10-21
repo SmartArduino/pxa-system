@@ -48,6 +48,7 @@ typedef struct {
             uint32_t target_width, target_height, target_pitch;
             uint32_t cursor_width, cursor_height, cursor_pitch;
             int32_t cursor_x, cursor_y;
+            uint8_t exact_sampling;
         } blit;
     } state;
 } pxa_raster_spans_t;

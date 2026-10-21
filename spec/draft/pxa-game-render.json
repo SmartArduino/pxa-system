@@ -1,11 +1,11 @@
 {
-  "schema": "pxa-game-render-spec-1.2",
+  "schema": "pxa-game-render-spec-1.3",
   "status": "draft",
   "service": {
     "name": "game-render",
     "id": 18,
     "major": 1,
-    "minor": 2,
+    "minor": 3,
     "patch": 0
   },
   "opcodes": [
@@ -94,6 +94,13 @@
       "payload": "64-byte indexed-blit descriptor",
       "result": "accepted-bytes",
       "semantics": "Borrow INDEX8 image, RGB565LE palette, optional transparent-zero cursor and RGB565LE target. Preserve the legacy 320x240 logical sampling grid; no display allocation or present."
+    },
+    {
+      "name": "blit-indexed-rect",
+      "id": 265,
+      "payload": "64-byte indexed-blit descriptor",
+      "result": "accepted-bytes",
+      "semantics": "Synchronous borrowed INDEX8-to-RGB565LE rectangle. Exact nearest-neighbour sampling sx=floor(x*source-width/target-width), sy=floor(y*source-height/target-height), including 1:1. Same validation and transparent-zero cursor as 0x108; target offset/pitch allow a subrectangle. No writes on validation failure, no retained pointers. Disjoint target byte ranges may run concurrently and must join before return. The legacy 0x108 sampling is unchanged."
     }
   ],
   "features": [
@@ -116,6 +123,10 @@
     {
       "name": "borrowed-indexed-blit",
       "bit": 4
+    },
+    {
+      "name": "exact-indexed-blit",
+      "bit": 5
     }
   ],
   "create_flags": [
@@ -217,7 +228,7 @@
     "texture_dimension": 256,
     "palette_colors": 256
   },
-  "protocol_version": "1.2.0",
+  "protocol_version": "1.3.0",
   "indexed_spans": {
     "magic": 1347639376,
     "major": 1,

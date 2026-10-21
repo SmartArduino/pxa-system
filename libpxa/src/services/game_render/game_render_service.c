@@ -271,7 +271,8 @@ static int32_t span_context_io(pxa_game_render_resource_t *r,
     if (operation == PXA_GAME_RENDER_IO_EXECUTE_SPANS ||
         operation == PXA_GAME_RENDER_IO_EXECUTE_PROJECTED_SPANS ||
         operation == PXA_GAME_RENDER_IO_EXECUTE_FRAME_SPANS ||
-        operation == PXA_GAME_RENDER_IO_BLIT_INDEXED_FRAME) {
+        operation == PXA_GAME_RENDER_IO_BLIT_INDEXED_FRAME ||
+        operation == PXA_GAME_RENDER_IO_BLIT_INDEXED_RECT) {
         pxa_raster_spans_t batch;
         uint8_t *memory;
         size_t memory_size;
@@ -292,13 +293,16 @@ static int32_t span_context_io(pxa_game_render_resource_t *r,
                 data, size, memory, memory_size, r->max_spans,
                 r->span_prepare, service->span_prepare_bytes, &batch);
         } else if (status == PXA_STATUS_OK)
-            status = (operation == PXA_GAME_RENDER_IO_BLIT_INDEXED_FRAME ? pxa_raster_blit_validate :
+            status = ((operation == PXA_GAME_RENDER_IO_BLIT_INDEXED_FRAME ||
+                operation == PXA_GAME_RENDER_IO_BLIT_INDEXED_RECT) ? pxa_raster_blit_validate :
                 pxa_raster_spans_validate)(data, size, memory, memory_size,
                                               r->max_spans, &batch);
         validated = now_us(service);
         r->last_validation_us = (uint32_t)(validated - before);
         r->validation_us += validated - before;
         if (status != PXA_STATUS_OK) { ++r->rejected; return status; }
+        if (operation == PXA_GAME_RENDER_IO_BLIT_INDEXED_RECT)
+            batch.state.blit.exact_sampling = 1;
         if (service->execute_spans)
             status = service->execute_spans(service->execute_spans_context, &batch);
         else
@@ -612,7 +616,8 @@ pxa_status_t pxa_game_render_service_register(
     operations.features |= PXA_GAME_RENDER_FEATURE_BORROWED_INDEXED_SPANS |
         PXA_GAME_RENDER_FEATURE_PROJECTED_INDEXED_SPANS |
         PXA_GAME_RENDER_FEATURE_INDEXED_FRAME_BATCHES |
-        PXA_GAME_RENDER_FEATURE_BORROWED_INDEXED_BLIT;
+        PXA_GAME_RENDER_FEATURE_BORROWED_INDEXED_BLIT |
+        PXA_GAME_RENDER_FEATURE_EXACT_INDEXED_BLIT;
     operations.context = service;
     operations.control = game_render_control;
     status = pxa_service_register(service->runtime, &operations);

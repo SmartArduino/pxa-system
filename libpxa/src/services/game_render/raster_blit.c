@@ -79,7 +79,8 @@ static inline uint16_t palette_color(const pxa_raster_spans_t *b, uint8_t index)
 }
 static inline uint16_t color(const pxa_raster_spans_t *b, const uint8_t *row,
     uint32_t x, uint32_t sy) {
-    uint32_t sx = b->state.blit.target_width == 320 && b->state.blit.source_width == 320 ? x :
+    uint32_t sx = b->state.blit.exact_sampling ?
+        x * b->state.blit.source_width / b->state.blit.target_width :
         (x * 320u / b->state.blit.target_width) * b->state.blit.source_width / 320u;
     uint8_t index = row[sx];
     if (b->state.blit.cursor) {
@@ -105,13 +106,17 @@ void pxa_raster_blit_execute_range(const pxa_raster_spans_t *b, uint32_t begin, 
         uint32_t row_end = at + b->state.blit.target_width * 2u;
         uint32_t first = begin > at ? begin : at, last = end < row_end ? end : row_end;
         if (last <= first) continue;
-        uint32_t sy = (y * 240u / b->state.blit.target_height) * b->state.blit.source_height / 240u;
+        uint32_t sy = b->state.blit.exact_sampling ?
+            y * b->state.blit.source_height / b->state.blit.target_height :
+            (y * 240u / b->state.blit.target_height) * b->state.blit.source_height / 240u;
         const uint8_t *row = b->state.blit.pixels + (size_t)sy * b->state.blit.source_pitch;
         /* Arbitrary byte partitions may split a RGB565 pixel. Each partition
          * writes only its own byte; normal aligned worker splits use full words. */
         if (first & 1u) b->target[first] = (uint8_t)(color(b, row, (first - at)/2u, sy) >> 8);
         uint32_t x = (first - at + 1u)/2u, limit = (last - at)/2u;
-        if (b->state.blit.target_width == 320 && b->state.blit.source_width == 320 && !b->state.blit.cursor) {
+        if (b->state.blit.target_width == b->state.blit.source_width &&
+            (b->state.blit.exact_sampling || b->state.blit.target_width == 320) &&
+            !b->state.blit.cursor) {
 #if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
             if (x < limit && ((uintptr_t)(b->target + at + x*2u) & 3u)) {
                 store16(b->target + at + x*2u, palette_color(b, row[x])); ++x;

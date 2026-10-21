@@ -14,7 +14,7 @@ extern "C" {
 
 #define PXA_FS_SERVICE_ID UINT16_C(5)
 #define PXA_FS_SERVICE_MAJOR UINT16_C(0)
-#define PXA_FS_SERVICE_MINOR UINT16_C(3)
+#define PXA_FS_SERVICE_MINOR UINT16_C(4)
 #define PXA_FS_SERVICE_PATCH UINT16_C(0)
 
 #define PXA_FS_OPEN UINT16_C(1)
@@ -30,10 +30,13 @@ extern "C" {
 #define PXA_FS_OPEN_AT UINT16_C(11)
 #define PXA_FS_STAT_AT UINT16_C(16)
 #define PXA_FS_QUERY_ROOT UINT16_C(17)
+#define PXA_FS_APP_MEDIA_PATH UINT16_C(18)
+#define PXA_FS_DISPLAY_PATH_MAX 255u
 #define PXA_FS_FEATURE_SCOPED_ROOTS UINT64_C(1)
 #define PXA_FS_FEATURE_READ_AT UINT64_C(2)
 #define PXA_FS_FEATURE_USER_DIRECTORY_GRANTS UINT64_C(16)
 #define PXA_FS_FEATURE_APP_MEDIA_ROOT UINT64_C(64)
+#define PXA_FS_FEATURE_APP_MEDIA_PATH UINT64_C(128)
 #define PXA_FS_ROOT_PRIVATE UINT8_C(1)
 #define PXA_FS_ROOT_CACHE UINT8_C(2)
 #define PXA_FS_ROOT_TEMPORARY UINT8_C(3)
@@ -168,6 +171,9 @@ typedef struct {
     uint64_t features;
     /* Optional tail; context is files.context. Older providers omit it. */
     pxa_fs_read_at_fn read_at;
+    /* Optional 0.4 tail: display-only path for this app's fixed media root.
+     * No media mount, handle, filesystem access or transferable authority. */
+    pxa_status_t (*app_media_path)(void *,char *,size_t,size_t *);
 } pxa_fs_roots_backend_t;
 
 typedef pxa_status_t (*pxa_fs_authorize_fn)(

@@ -909,6 +909,27 @@ static pxa_status_t scoped_control(pxa_fs_service_t *s, pxa_component_t c,
     return complete == PXA_STATUS_OK ? PXA_STATUS_OK : complete;
 }
 
+static int has_media_path(const pxa_fs_roots_backend_t *roots) {
+    return roots && roots->struct_size>=offsetof(pxa_fs_roots_backend_t,app_media_path)+sizeof(roots->app_media_path) &&
+        (roots->features&PXA_FS_FEATURE_APP_MEDIA_PATH) && roots->app_media_path;
+}
+static pxa_status_t media_path_control(pxa_fs_service_t *service,pxa_component_t component,const pxa_message_view_t *message) {
+    if(message->payload.size)return PXA_STATUS_INVALID_ARGUMENT;
+    if(!has_media_path(service->roots))return PXA_STATUS_UNSUPPORTED;
+    uint8_t payload[2+PXA_FS_DISPLAY_PATH_MAX];size_t size=0;
+    pxa_status_t status=pxa_status_normalize(service->roots->app_media_path(service->roots->context,
+        (char *)payload+2,PXA_FS_DISPLAY_PATH_MAX,&size));
+    if(status==PXA_STATUS_OK && (!size || size>PXA_FS_DISPLAY_PATH_MAX || memchr(payload+2,0,size)))status=PXA_STATUS_PROTOCOL_ERROR;
+    pxa_status_t result=pxa_request_begin_reserved(service->runtime,component,message->request_token,
+        PXA_FS_SERVICE_ID,message->opcode,0,status==PXA_STATUS_OK?size+2:0);
+    if(result!=PXA_STATUS_OK)return result;
+    result=pxa_request_commit(service->runtime,component,message->request_token);
+    if(result!=PXA_STATUS_OK)return result;
+    if(status==PXA_STATUS_OK)pxa_write_u16(payload,(uint16_t)size);
+    return pxa_request_complete(service->runtime,component,message->request_token,status,
+        status==PXA_STATUS_OK?payload:NULL,status==PXA_STATUS_OK?size+2:0);
+}
+
 static pxa_status_t fs_control(void *context, pxa_runtime_t *runtime,
                                pxa_component_t component,
                                const pxa_message_view_t *message) {
@@ -924,6 +945,7 @@ static pxa_status_t fs_control(void *context, pxa_runtime_t *runtime,
     if (!service_valid(service) || message->request_token == 0) {
         return PXA_STATUS_INVALID_ARGUMENT;
     }
+    if(message->opcode==PXA_FS_APP_MEDIA_PATH)return media_path_control(service,component,message);
     if (message->opcode == PXA_FS_OPEN_ROOT ||
         message->opcode == PXA_FS_REQUEST_ACCESS ||
         message->opcode == PXA_FS_OPEN_AT || message->opcode == PXA_FS_STAT_AT ||
@@ -1017,6 +1039,7 @@ pxa_status_t pxa_fs_service_register(pxa_fs_service_t *service) {
     if (service->roots && service->roots->struct_size >= offsetof(pxa_fs_roots_backend_t,features)+sizeof(service->roots->features))
         operations.features |= service->roots->features & PXA_FS_FEATURE_APP_MEDIA_ROOT;
     operations.context = service;
+    if(has_media_path(service->roots))operations.features|=PXA_FS_FEATURE_APP_MEDIA_PATH;
     operations.control = fs_control;
     operations.component_stopped = fs_component_stopped;
     status = pxa_service_register(service->runtime, &operations);

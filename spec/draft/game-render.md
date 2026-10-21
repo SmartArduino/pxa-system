@@ -1,4 +1,25 @@
-# PXA GameRender Service 1.2.0
+# PXA GameRender Service 1.3.0
+
+GameRender 1.3 adds `exact-indexed-blit` (feature bit 5) and
+`BLIT_INDEXED_RECT` (Handle I/O `0x109`). It uses the same 64-byte descriptor
+and validation rules as `BLIT_INDEXED_FRAME` (`0x108`), but samples exactly
+`sx = floor(x * source_width / target_width)` and
+`sy = floor(y * source_height / target_height)`. Equal dimensions preserve
+every source pixel. The older operation retains its 320×240 logical grid.
+
+The target offset may point inside an acquired RGB565LE Surface; its pitch
+remains the pitch of the whole Surface. This permits letterboxing without a
+temporary framebuffer, full-screen conversion, or image upload. Only the
+specified rectangle is written. Palette and source bytes, optional cursor,
+and the descriptor must be disjoint from all written bytes. Validation failure
+writes nothing. No borrowed pointer survives the synchronous call: a parallel
+backend must finish all disjoint byte ranges before returning, including an
+odd byte boundary through a RGB565 pixel. Presentation is a separate Surface
+operation after completion.
+
+The C SDK exposes `pxa_game_render_blit_indexed_rect`, and C++ exposes
+`game::RasterContext::blit_rect`. Clients can require the feature or fall back
+on `UNSUPPORTED`; they must not silently use `0x108` as an exact sampler.
 
 GameRender 1.2 adds immutable multi-material packets and borrowed INDEX8
 image/cursor resolve. Both reuse a compute context and caller-owned memory.

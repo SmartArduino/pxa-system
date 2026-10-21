@@ -63,6 +63,17 @@ typedef enum {
  * hosts can recover from an interrupted first launch. */
 #define PXA_POSIX_INSTALLER_FLAG_CLAIM_EMPTY_UNOWNED_DATA ((uint32_t)1u << 3)
 
+#define PXA_POSIX_INSTALLER_PATH_PACKAGE 1u
+#define PXA_POSIX_INSTALLER_PATH_DATA 2u
+/* Host control-plane hooks. NOT_FOUND preserves the legacy path; every other
+ * failure denies access. A locator contains one or two safe components, and
+ * never grants ownership. incoming_ready sees only a fully verified directory.
+ * Hosts serialize these hooks with their durable identity registry. */
+typedef pxa_status_t (*pxa_posix_installer_locator_fn)(void *,
+    const pxa_posix_installer_identity_t *,uint8_t,char *,size_t);
+typedef pxa_status_t (*pxa_posix_installer_incoming_fn)(void *,
+    const pxa_posix_installer_identity_t *,const char *);
+
 typedef struct {
     uint32_t struct_size;
     const char *storage_root;   /* directory that contains packages/ */
@@ -78,6 +89,10 @@ typedef struct {
      * trust prefix above is used. ESP supplies this for per-install package
      * state such as Manifest 0.5's transient publisher SPKI. */
     void *verify_context;
+    /* Optional tail, guarded by struct_size for existing callers. */
+    void *layout_context;
+    pxa_posix_installer_locator_fn resolve_locator;
+    pxa_posix_installer_incoming_fn incoming_ready;
 } pxa_posix_installer_config_t;
 
 typedef struct pxa_posix_installer pxa_posix_installer_t;

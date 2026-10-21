@@ -23,6 +23,52 @@ static pxa_status_t execute(void *ctx, const pxa_raster_spans_t *b) {
     return PXA_STATUS_OK;
 }
 
+/* End-to-end exact/legacy sampling, padded/unaligned rows, cursor clipping,
+ * packet/source alias rejection, and reverse-order worker partitions. */
+static void indexed_rect_cases(pxa_runtime_t *runtime,pxa_component_t component,uint64_t handle) {
+    const size_t bytes=1000000;
+    uint8_t *m=malloc(bytes),*expected=malloc(bytes);assert(m && expected);
+    const unsigned widths[]={256,199,320,511,1};
+    const unsigned heights[]={240,153,240,301,1};
+    for(unsigned c=0;c<5;++c)for(unsigned exact=0;exact<2;++exact)
+    for(unsigned cursor=0;cursor<2;++cursor) {
+        memset(m,0x9d,bytes);
+        for(unsigned y=0;y<240;++y)for(unsigned x=0;x<256;++x)m[8+y*272+x]=(x*13+y*7)&255;
+        for(unsigned i=0;i<256;++i)pxa_write_u16(m+65536+i*2,(i*109)^0x55aa);
+        for(unsigned i=0;i<64;++i)m[66048+i]=i%3?i:0;
+        pxa_game_render_blit_wire_t b={0};
+        b.source_offset=8;b.source_bytes=239*272+256;b.source_width=256;b.source_height=240;b.source_pitch=272;
+        b.palette_offset=65536;b.palette_bytes=512;b.target_offset=66818;
+        b.target_width=widths[c];b.target_height=heights[c];b.target_pitch=2*(widths[c]+7);
+        b.target_bytes=(b.target_height-1)*b.target_pitch+b.target_width*2;
+        if(cursor){b.cursor_offset=66048;b.cursor_bytes=64;b.cursor_width=b.cursor_height=b.cursor_pitch=8;b.cursor_x=-2;b.cursor_y=7;}
+        uint8_t *packet=m+900000;pxa_game_render_blit_encode(packet,64,&b);
+        memcpy(expected,m,bytes);
+        for(unsigned y=0;y<b.target_height;++y)for(unsigned x=0;x<b.target_width;++x){
+            unsigned sx=exact?x*256/b.target_width:(x*320/b.target_width)*256/320;
+            unsigned sy=exact?y*240/b.target_height:(y*240/b.target_height)*240/240;
+            unsigned index=m[8+sy*272+sx];
+            int cx=(int)sx+2,cy=(int)sy-7;
+            if(cursor && cx>=0 && cx<8 && cy>=0 && cy<8 && m[66048+cy*8+cx])index=m[66048+cy*8+cx];
+            pxa_write_u16(expected+b.target_offset+y*b.target_pitch+x*2,pxa_read_u16(m+65536+index*2));
+        }
+        assert(pxa_runtime_io64_memory(runtime,component,handle,exact?0x109:0x108,packet,64,m,bytes)==64);
+        assert(!memcmp(m,expected,bytes));
+        pxa_raster_spans_t batch;
+        assert(pxa_raster_blit_validate(packet,64,m,bytes,256,&batch)==0);
+        batch.state.blit.exact_sampling=exact;
+        memset(m+b.target_offset,0x9d,b.target_bytes);
+        unsigned end=b.target_bytes;
+        while(end){unsigned begin=end>67?end-67:0;pxa_raster_spans_execute_range(&batch,begin,end);end=begin;}
+        assert(!memcmp(m,expected,bytes));
+        b.target_offset=b.source_offset;pxa_game_render_blit_encode(packet,64,&b);
+        memcpy(expected,m,bytes);
+        assert(pxa_runtime_io64_memory(runtime,component,handle,0x109,packet,64,m,bytes)==PXA_STATUS_INVALID_ARGUMENT);
+        assert(!memcmp(m,expected,bytes));
+    }
+    free(m);free(expected);
+}
+
 int main(void) {
     pxa_runtime_limits_t limits;
     pxa_runtime_t *runtime;
@@ -289,6 +335,7 @@ int main(void) {
     assert(pxa_runtime_io64_memory(runtime, component, handle, 0x108, p, 64, memory, 8192) == 64);
     for (unsigned i = 0; i < 16; ++i)
         assert(pxa_read_u16(memory + 4096 + i*2) == pxa_read_u16(memory + 3072 + 37*2));
+    indexed_rect_cases(runtime,component,handle);
     assert(pxa_handle_close64(runtime, component, handle) == 0);
     assert(arena_allocations == 1);
     if (getenv("PXA_TEST_PREPARE_FAIL")) assert(!prepared_batches && !arena_releases);

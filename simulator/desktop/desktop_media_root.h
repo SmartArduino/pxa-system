@@ -45,6 +45,12 @@ static pxa_status_t desktop_media_query(void *context, void *directory,
     desktop_media_root_t *r = context;
     return r->base.query_root(r->base.context, directory, info);
 }
+static pxa_status_t desktop_media_path(void *context,char *out,size_t capacity,size_t *size) {
+    desktop_media_root_t *r=context;
+    if(!r || !r->path || !out || !size)return PXA_STATUS_INVALID_ARGUMENT;
+    size_t n=strlen(r->path);if(n>capacity || n>PXA_FS_DISPLAY_PATH_MAX)return PXA_STATUS_RESOURCE_LIMIT;
+    memcpy(out,r->path,n);*size=n;return PXA_STATUS_OK;
+}
 static void desktop_media_deinit(desktop_media_root_t *r) {
     if (r->fs) pxa_scoped_fs_deinit(r->fs);
     free(r->fs_memory); free(r->volume_memory); free(r->path);
@@ -112,7 +118,8 @@ static int desktop_media_init(desktop_media_root_t *r, const char *state,
     r->api.open_at = desktop_media_open_at;
     r->api.stat_at = desktop_media_stat_at;
     r->api.query_root = desktop_media_query;
-    r->api.features = PXA_FS_FEATURE_APP_MEDIA_ROOT;
+    r->api.app_media_path=desktop_media_path;
+    r->api.features = PXA_FS_FEATURE_APP_MEDIA_ROOT|PXA_FS_FEATURE_APP_MEDIA_PATH;
     fprintf(stderr, "PXA SIM app-media-root=%s\n", r->path);
     return 1;
 }

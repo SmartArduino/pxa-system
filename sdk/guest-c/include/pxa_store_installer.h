@@ -17,6 +17,10 @@ typedef uint64_t pxa_store_token_t;
 #define PXA_STORE_DELETE_REQUEST 6u
 #define PXA_STORE_LAUNCH_REQUEST 7u
 #define PXA_STORE_UNINSTALL_REQUEST 8u
+#define PXA_STORE_LAUNCH_IDENTITY_REQUEST 9u
+#define PXA_STORE_UNINSTALL_IDENTITY_REQUEST 10u
+#define PXA_STORE_REGISTER_NAMESPACE_REQUEST 11u
+#define PXA_STORE_INSTALL_IDENTITY_REQUEST 12u
 #define PXA_STORE_DOWNLOAD_PROGRESS 0x8001u
 
 #define PXA_STORE_INSTALLED_MAX 12u
@@ -74,18 +78,27 @@ static inline int pxa_store_send(uint16_t opcode, pxa_store_token_t token,
 
 /* Preserves synchronous Host errors; acceptance still requires a completion
  * event, and installation always requires the Host's user confirmation. */
-static inline int32_t pxa_store_request_package_status(uint16_t opcode,
+static inline int32_t pxa_store_request_package_status_impl(uint16_t opcode,
                                              pxa_store_token_t request_id,
-                                             const char *app_id,
+                                             const char *app_id,const char *root,
                                              const char *ticket,
                                              const char *sha256,
                                              uint64_t size, uint8_t *packet,
                                              size_t packet_capacity) {
-    uint8_t payload[43u + 64u + 255u];
+    uint8_t storage[32u+43u+64u+255u];
+    size_t prefix=root?32u:0u;uint8_t *payload=storage+prefix;
+    if((opcode==PXA_STORE_INSTALL_IDENTITY_REQUEST)!=(root!=NULL))return PXA_STATUS_INVALID_ARGUMENT;
+    if(root)for(size_t i=0;i<32;++i) {
+        uint8_t value=0;
+        for(size_t j=0;j<2;++j){char c=root[2*i+j];int n=c>='0'&&c<='9'?c-'0':c>='a'&&c<='f'?c-'a'+10:-1;
+            if(n<0)return PXA_STATUS_INVALID_ARGUMENT;
+            value=(uint8_t)((value<<4)|n);}
+        storage[i]=value;
+    }
     size_t app_size = 0;
     size_t ticket_size = 0;
     if ((opcode != PXA_STORE_INSTALL_REQUEST &&
-         opcode != PXA_STORE_DOWNLOAD_REQUEST) || request_id == 0 ||
+         opcode != PXA_STORE_DOWNLOAD_REQUEST && opcode != PXA_STORE_INSTALL_IDENTITY_REQUEST) || request_id == 0 ||
         app_id == NULL || ticket == NULL || sha256 == NULL ||
         size == 0 || packet == NULL) return PXA_STATUS_INVALID_ARGUMENT;
     if (size > UINT64_C(4194304)) return PXA_STATUS_LIMIT_EXCEEDED;
@@ -116,9 +129,25 @@ static inline int32_t pxa_store_request_package_status(uint16_t opcode,
         payload[43u + index] = (uint8_t)app_id[index];
     for (size_t index = 0; index < ticket_size; ++index)
         payload[43u + app_size + index] = (uint8_t)ticket[index];
-    return pxa_store_send_status(opcode, request_id, payload,
-                          43u + app_size + ticket_size,
+    return pxa_store_send_status(opcode, request_id, storage,
+                          prefix+43u + app_size + ticket_size,
                           packet, packet_capacity);
+}
+
+static inline int pxa_store_identity_valid(const char *);
+static inline int32_t pxa_store_request_package_status(uint16_t opcode,pxa_store_token_t token,
+    const char *app_id,const char *ticket,const char *sha256,uint64_t size,uint8_t *packet,size_t capacity) {
+    return pxa_store_request_package_status_impl(opcode,token,app_id,NULL,ticket,sha256,size,packet,capacity);
+}
+static inline int32_t pxa_store_install_identity_status(pxa_store_token_t token,const char *identity,
+    const char *ticket,const char *sha256,uint64_t size,uint8_t *packet,size_t capacity) {
+    if(!pxa_store_identity_valid(identity))return PXA_STATUS_INVALID_ARGUMENT;
+    return pxa_store_request_package_status_impl(PXA_STORE_INSTALL_IDENTITY_REQUEST,token,identity+65,identity,ticket,sha256,size,packet,capacity);
+}
+static inline int32_t pxa_store_register_namespace_status(pxa_store_token_t token,const uint8_t *binding,
+    size_t size,uint8_t *packet,size_t capacity) {
+    if(!binding || size<180 || size>396 || !token)return PXA_STATUS_INVALID_ARGUMENT;
+    return pxa_store_send_status(PXA_STORE_REGISTER_NAMESPACE_REQUEST,token,binding,size,packet,capacity);
 }
 
 static inline int pxa_store_request_package(uint16_t opcode,
@@ -180,6 +209,17 @@ static inline int pxa_store_install_file(pxa_store_token_t request_id,
                           packet, packet_capacity);
 }
 
+/* Store Installer 0.6: exact signed identity, independent of directory/label. */
+static inline int pxa_store_identity_valid(const char *value) {
+    if(!value)return 0;
+    for(size_t i=0;i<64;++i)if(!value[i] || !((value[i]>='0'&&value[i]<='9') || (value[i]>='a'&&value[i]<='f')))return 0;
+    if(value[64]!=':' || value[65]<'a' || value[65]>'z')return 0;
+    size_t n=65;
+    for(;n<130 && value[n];++n)
+        if(!((value[n]>='a'&&value[n]<='z') || (value[n]>='0'&&value[n]<='9') || value[n]=='.' || value[n]=='_' || value[n]=='-'))return 0;
+    return n<=129 && value[n]==0;
+}
+
 static inline int pxa_store_manage(uint16_t opcode, pxa_store_token_t request_id,
                                    const char *value, uint8_t *packet,
                                    size_t capacity) {
@@ -189,10 +229,15 @@ static inline int pxa_store_manage(uint16_t opcode, pxa_store_token_t request_id
          opcode != PXA_STORE_DOWNLOAD_LIST_REQUEST &&
          opcode != PXA_STORE_DELETE_REQUEST &&
          opcode != PXA_STORE_LAUNCH_REQUEST &&
-         opcode != PXA_STORE_UNINSTALL_REQUEST)) return 0;
+         opcode != PXA_STORE_UNINSTALL_REQUEST &&
+         opcode != PXA_STORE_LAUNCH_IDENTITY_REQUEST &&
+         opcode != PXA_STORE_UNINSTALL_IDENTITY_REQUEST)) return 0;
     if (opcode == PXA_STORE_DELETE_REQUEST) {
         if (!pxa_store_filename_valid(value)) return 0;
         length = 19u;
+    } else if (opcode == PXA_STORE_LAUNCH_IDENTITY_REQUEST || opcode == PXA_STORE_UNINSTALL_IDENTITY_REQUEST) {
+        if(!pxa_store_identity_valid(value))return 0;
+        while(value[length])++length;
     } else if (opcode == PXA_STORE_LAUNCH_REQUEST ||
                opcode == PXA_STORE_UNINSTALL_REQUEST) {
         if (value == NULL) return 0;
@@ -287,7 +332,7 @@ static inline int pxa_store_install_result(const pxa_store_event_t *event,
     if (event == NULL || status == NULL ||
         event->service != PXA_SERVICE_STORE_INSTALLER ||
         (event->opcode != PXA_STORE_INSTALL_REQUEST &&
-         event->opcode != PXA_STORE_INSTALL_FILE_REQUEST) ||
+         event->opcode != PXA_STORE_INSTALL_FILE_REQUEST && event->opcode != PXA_STORE_INSTALL_IDENTITY_REQUEST) ||
         PXA_STORE_EVENT_TOKEN(event) == 0 || event->payload == NULL ||
         PXA_STORE_EVENT_SIZE(event) != 4u) return 0;
     *status = (int32_t)PXA_STORE_LOAD_U32(event->payload);
@@ -298,7 +343,7 @@ static inline int pxa_store_uninstall_result(const pxa_store_event_t *event,
                                               int32_t *status) {
     if (event == NULL || status == NULL ||
         event->service != PXA_SERVICE_STORE_INSTALLER ||
-        event->opcode != PXA_STORE_UNINSTALL_REQUEST ||
+        (event->opcode != PXA_STORE_UNINSTALL_REQUEST && event->opcode != PXA_STORE_UNINSTALL_IDENTITY_REQUEST) ||
         PXA_STORE_EVENT_TOKEN(event) == 0 || event->payload == NULL ||
         PXA_STORE_EVENT_SIZE(event) != 4u) return 0;
     *status = (int32_t)PXA_STORE_LOAD_U32(event->payload);

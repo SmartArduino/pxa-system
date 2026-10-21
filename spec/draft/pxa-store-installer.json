@@ -1,11 +1,11 @@
 {
-  "schema": "pxa-store-installer-spec-0.5",
+  "schema": "pxa-store-installer-spec-0.7",
   "status": "draft",
   "service": {
     "name": "store-installer",
     "id": 20,
     "major": 0,
-    "minor": 5,
+    "minor": 7,
     "patch": 0
   },
   "opcodes": [
@@ -74,11 +74,43 @@
       "result": "status:i32"
     },
     {
+      "name": "launch-identity",
+      "id": 9,
+      "direction": "bidirectional-result",
+      "request_token": "nonzero",
+      "payload": "identity:bytes[66..129] (64 lowercase hex lineage-root, colon, canonical app-id)",
+      "result": "status:i32"
+    },
+    {
+      "name": "uninstall-identity",
+      "id": 10,
+      "direction": "bidirectional-result",
+      "request_token": "nonzero",
+      "payload": "identity:bytes[66..129] (64 lowercase hex lineage-root, colon, canonical app-id)",
+      "result": "status:i32"
+    },
+    {
       "name": "download-progress",
       "id": 32769,
       "direction": "host-to-guest-event",
       "request_token": "zero",
       "payload": "download_request_token:u64|received_bytes:u64|total_bytes:u64 (little-endian; best-effort/coalescible; completion remains opcode 2 result)"
+    },
+    {
+      "name": "register-namespace",
+      "id": 11,
+      "direction": "bidirectional-result",
+      "request_token": "nonzero",
+      "payload": "publisher-binding-token:bytes[180..396] (PXPB binary v1, trusted issuer, current wall clock)",
+      "result": "status:i32"
+    },
+    {
+      "name": "install-identity",
+      "id": 12,
+      "direction": "bidirectional-result",
+      "request_token": "nonzero",
+      "payload": "lineage-root:bytes[32]|install-payload (opcode 1)",
+      "result": "status:i32"
     }
   ],
   "limits": {
@@ -86,12 +118,13 @@
     "ticket_bytes": 255,
     "package_bytes": 4194304,
     "download_slots": 8,
-    "installed_list_entries": 12
+    "installed_list_entries": 12,
+    "identity_bytes": 129
   },
   "core_v1_transport": {
-    "request_token": "u64 in the Core v1 envelope; nonzero for opcodes 1..8",
+    "request_token": "u64 in the Core v1 envelope; nonzero for opcodes 1..12",
     "download_progress_payload": "download_request_token:u64|received_bytes:u64|total_bytes:u64 (little-endian; event envelope token is zero)",
     "authorization": "Host grants this service only to the installed, enabled, built-in pxa-store package"
   },
-  "protocol_version": "0.5.0"
+  "protocol_version": "0.7.0"
 }

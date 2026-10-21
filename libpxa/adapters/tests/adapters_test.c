@@ -1645,6 +1645,73 @@ static void test_composite_installer_identity(void) {
     printf("test_composite_installer_identity OK\n");
 }
 
+typedef struct { int selected,deny,reject; } short_layout_t;
+static pxa_status_t short_locator(void *context,const pxa_posix_installer_identity_t *id,uint8_t kind,char *out,size_t capacity) {
+    short_layout_t *state=context;(void)id;(void)kind;
+    if(state->deny)return PXA_STATUS_DENIED;
+    if(!state->selected)return PXA_STATUS_NOT_FOUND;
+    return snprintf(out,capacity,"lucinhu/com.example.short")<(int)capacity?PXA_STATUS_OK:PXA_STATUS_RESOURCE_LIMIT;
+}
+static pxa_status_t short_incoming(void *context,const pxa_posix_installer_identity_t *id,const char *incoming) {
+    (void)id;struct stat st;CHECK(stat(incoming,&st)==0 && S_ISDIR(st.st_mode));
+    if(((short_layout_t *)context)->reject)return PXA_STATUS_DENIED;
+    ((short_layout_t *)context)->selected=1;return PXA_STATUS_OK;
+}
+static void test_short_installer_layout(void) {
+    test_signer_t signer;pxa_openssl_publisher_key_t key;uint8_t der[256],*cursor=der;
+    char *storage=make_temp_dir("pxa-short-storage"),*package=make_temp_dir("pxa-short-package");
+    generate_signer(&signer);
+    int n=i2d_PUBKEY(signer.key,&cursor);CHECK(n>0 && n<=(int)sizeof(der));key.spki=der;key.spki_size=(size_t)n;
+    static const uint8_t artifact[]="short package";
+    build_package(package,&signer,"com.example.short","1.0.0","artifacts/main.wasm",artifact,sizeof(artifact)-1);
+    short_layout_t layout={0};pxa_posix_installer_config_t config={0};
+    config.struct_size=sizeof(config);config.storage_root=storage;
+    config.trust=(pxa_openssl_trust_t){sizeof(config.trust),&key,1};
+    config.flags=PXA_POSIX_INSTALLER_FLAG_COMPOSITE_IDENTITY;
+    config.layout_context=&layout;config.resolve_locator=short_locator;config.incoming_ready=short_incoming;
+    pxa_package_limits_init(&config.limits);size_t size=pxa_posix_installer_workspace_size(&config);
+    void *workspace=malloc(size),*manifest_workspace=malloc(pxa_package_manifest_workspace_size(&config.limits));
+    pxa_posix_installer_t *installer=NULL;pxa_package_manifest_t *manifest=NULL;
+    CHECK(workspace && manifest_workspace);
+    check_status("short init",pxa_posix_installer_init(workspace,size,&config,&installer),PXA_STATUS_OK);
+    uint8_t encoded[PXA_PACKAGE_TEST_MANIFEST_BYTES];char path[512];
+    pxa_posix_installer_result_t result={0};result.struct_size=sizeof(result);result.manifest_workspace=manifest_workspace;
+    result.manifest_workspace_size=pxa_package_manifest_workspace_size(&config.limits);result.encoded=encoded;
+    result.encoded_capacity=sizeof(encoded);result.manifest=&manifest;result.root=path;result.root_capacity=sizeof(path);
+    pxa_posix_install_disposition_t disposition;
+    pxa_posix_installer_identity_t identity={{signer.key_id,32},{(const uint8_t *)"com.example.short",17}};
+    layout.reject=1;
+    check_status("reject prepared layout",pxa_posix_installer_install(installer,package,&result,&disposition),PXA_STATUS_DENIED);
+    check_status("rejected package is absent",pxa_posix_installer_load_current(installer,&identity,&result),PXA_STATUS_NOT_FOUND);
+    char key_hex[65],session[512],incoming[1024];
+    for(size_t i=0;i<32;++i)snprintf(key_hex+2*i,3,"%02x",signer.key_id[i]);
+    snprintf(session,sizeof(session),"%s/packages/.session-%s~com.example.short",storage,key_hex);
+    snprintf(incoming,sizeof(incoming),"%s/incoming",session);
+    make_dirs(incoming);
+    build_package(incoming,&signer,"com.example.short","1.0.0","artifacts/main.wasm",artifact,sizeof(artifact)-1);
+    check_status("recovery rejects prepared metadata",pxa_posix_installer_recover_pending(installer),PXA_STATUS_OK);
+    check_status("rejected recovery did not publish",pxa_posix_installer_load_current(installer,&identity,&result),PXA_STATUS_NOT_FOUND);
+    CHECK(access(incoming,F_OK)!=0);
+    make_dirs(incoming);
+    build_package(incoming,&signer,"com.example.short","1.0.0","artifacts/main.wasm",artifact,sizeof(artifact)-1);
+    layout.reject=0;
+    check_status("cold recovery discards uncommitted package",pxa_posix_installer_recover_pending(installer),PXA_STATUS_OK);
+    check_status("uncommitted input remains unpublished",pxa_posix_installer_load_current(installer,&identity,&result),PXA_STATUS_NOT_FOUND);
+    CHECK(!layout.selected && access(incoming,F_OK)!=0);
+    check_status("short install",pxa_posix_installer_install(installer,package,&result,&disposition),PXA_STATUS_OK);
+    CHECK(strstr(path,"/packages/lucinhu/com.example.short") && layout.selected);
+    check_status("short load",pxa_posix_installer_load_current(installer,&identity,&result),PXA_STATUS_OK);
+    build_package(package,&signer,"com.example.short","2.0.0","artifacts/main.wasm",artifact,sizeof(artifact)-1);
+    check_status("short update",pxa_posix_installer_install(installer,package,&result,&disposition),PXA_STATUS_OK);
+    CHECK(strstr(path,"/packages/lucinhu/com.example.short"));
+    layout.deny=1;
+    CHECK(pxa_posix_installer_load_current(installer,&identity,&result)!=PXA_STATUS_OK);
+    layout.deny=0;
+    check_status("short uninstall",pxa_posix_installer_uninstall(installer,&identity),PXA_STATUS_OK);
+    pxa_posix_installer_deinit(installer);free(workspace);free(manifest_workspace);free(storage);free(package);EVP_PKEY_free(signer.key);
+    puts("test_short_installer_layout OK");
+}
+
 int main(void) {
     test_openssl_sha256();
     test_fs_backend();
@@ -1654,6 +1721,7 @@ int main(void) {
     test_scheduler_store();
     test_installer();
     test_composite_installer_identity();
+    test_short_installer_layout();
     if (failures != 0) {
         fprintf(stderr, "%d failure(s)\n", failures);
         return 1;

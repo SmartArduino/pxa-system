@@ -346,6 +346,8 @@ public:
     }
     // Host binds this fixed root to the verified app identity and storage
     // placement. No filesystem permission dialog or directory picker.
+    // Filesystem 0.4. Display-only path, available even without mounted media.
+    Task<FixedText<255>> app_media_path() { return media_path_request(transport_,requests_); }
     Task<Directory> app_media() {
         fs_detail::Payload<28> p; p.bytes[0]=std::byte{5}; p.size=28;
         return grant_request(transport_,requests_,p);
@@ -402,6 +404,17 @@ public:
         return stat_request(transport_, requests_, payload);
     }
 private:
+    static Task<FixedText<255>> media_path_request(Transport& t,RequestTable& r) {
+        auto event=co_await Response(t,r,5,18,{});
+        if(!event)co_return std::unexpected(event.error());
+        auto body=wire::result_body(event->payload);
+        if(!body)co_return std::unexpected(body.error());
+        if(body->size()<3)co_return std::unexpected(Error::protocol_error);
+        auto length=wire::get16(body->data());FixedText<255> text;
+        if(!length || body->size()!=2u+length || !text.assign(body->subspan(2)))
+            co_return std::unexpected(Error::protocol_error);
+        co_return text;
+    }
     static Task<DirectoryGrant> directory_request(Transport& t,RequestTable& r,
         fs_detail::Payload<274> p) {
         auto event=co_await Response(t,r,5,10,p.packet());

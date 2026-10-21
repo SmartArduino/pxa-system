@@ -19,6 +19,11 @@ int main(void) {
     manifest.app_id = bytes("pxa-two");
     assert(desktop_media_init(&b, state, &manifest));
     assert(strcmp(a.path, b.path));
+    char label[256]; size_t label_size = 0;
+    assert(a.api.features & PXA_FS_FEATURE_APP_MEDIA_PATH);
+    assert(!a.api.app_media_path(a.api.context, label, sizeof(label), &label_size));
+    assert(label_size == strlen(a.path) && !memcmp(label, a.path, label_size));
+    assert(a.api.app_media_path(a.api.context, label, 2, &label_size) == PXA_STATUS_RESOURCE_LIMIT);
     snprintf(path, sizeof(path), "%s/level.pkd", a.path);
     FILE *output = fopen(path, "wb"); assert(output);
     assert(fwrite("LEVEL", 1, 5, output) == 5); assert(!fclose(output));

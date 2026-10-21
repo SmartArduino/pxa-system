@@ -310,9 +310,9 @@ int main(void) {
     config.struct_size = sizeof(config);
     config.max_surfaces = 1;
     config.max_surfaces_per_component = 1;
-    config.max_width = 256;
-    config.max_height = 240;
-    config.max_frame_bytes = 256u * 240u * 2u;
+    config.max_width = UINT16_MAX;
+    config.max_height = UINT16_MAX;
+    config.max_frame_bytes = UINT32_MAX;
     config.min_buffer_count = 2;
     config.max_buffer_count = 3;
     config.backend.struct_size = sizeof(config.backend);
@@ -342,6 +342,30 @@ int main(void) {
     assert(pxa_component_finish_start(runtime, component, PXA_STATUS_OK) ==
            PXA_STATUS_OK);
 
+    /* Full protocol dimensions are admitted, independent of panel size.
+     * The mock does not allocate pixels; arithmetic overflow still rejects
+     * a request before the backend sees it. */
+    const uint16_t dimensions[][2] = {{800,480},{1024,768},{65535,1},{1,65535}};
+    for (size_t i = 0; i < sizeof(dimensions)/sizeof(dimensions[0]); ++i) {
+        uint8_t large[8] = {0,0,0,0,1,0,2,0};
+        pxa_write_u16(large, dimensions[i][0]);
+        pxa_write_u16(large+2, dimensions[i][1]);
+        size = message(packet,sizeof(packet),PXA_SURFACE_CREATE,99,large,sizeof(large));
+        assert(dispatch(runtime,component,packet,size)==PXA_STATUS_OK);
+        completion(runtime,component,event_bytes,sizeof(event_bytes),&event);
+        assert((int32_t)pxa_read_u32(event.payload.data)==PXA_STATUS_OK);
+        assert(pxa_handle_close(runtime,component,pxa_read_u32(event.payload.data+4))==PXA_STATUS_OK);
+    }
+    {
+        uint8_t huge[8] = {255,255,255,255,1,0,2,0};
+        unsigned creates_before = backend.creates;
+        size = message(packet,sizeof(packet),PXA_SURFACE_CREATE,99,huge,sizeof(huge));
+        assert(dispatch(runtime,component,packet,size)==PXA_STATUS_OK);
+        completion(runtime,component,event_bytes,sizeof(event_bytes),&event);
+        assert((int32_t)pxa_read_u32(event.payload.data)==PXA_STATUS_LIMIT_EXCEEDED);
+        assert(backend.creates==creates_before);
+    }
+    backend.creates=backend.closes=0;
     size = message(packet, sizeof(packet), PXA_SURFACE_CREATE, 1,
                    create, sizeof(create));
     assert(dispatch(runtime, component, packet, size) == PXA_STATUS_OK);

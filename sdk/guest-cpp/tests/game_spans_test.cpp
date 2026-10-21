@@ -4,13 +4,15 @@
 #include <cstring>
 static std::array<std::byte, 1024> captured;
 static std::uint32_t captured_size;
+static std::uint32_t captured_operation;
 static int32_t io_error;
 static bool short_reply;
 extern "C" int32_t pxa_test_control(const uint8_t*, uint32_t) { return 0; }
 extern "C" int32_t pxa_io(uint64_t handle, uint32_t operation, uint8_t* data, uint32_t size) {
     assert(handle == 77);
+    captured_operation = operation;
     if (io_error) return io_error;
-    if (operation == 0x104 || operation == 0x106 || operation == 0x107 || operation == 0x108) {
+    if (operation == 0x104 || operation == 0x106 || operation == 0x107 || operation == 0x108 || operation == 0x109) {
         assert(size <= captured.size());
         std::memcpy(captured.data(), data, size); captured_size = size;
     } else {
@@ -81,7 +83,7 @@ int main() {
     assert(frame.append(header, projection, rows));
     assert(!frame.append(header, projection, rows));
     assert(context.execute(frame).error() == pxa::Error::limit_exceeded);
-    pxa::game::FrameBatch reserved_frame(std::span(frame_bytes).subspan(1));
+    pxa::game::FrameBatch reserved_frame{std::span(frame_bytes).subspan(1)};
     auto reserved_offset = reserved_frame.reserve_source(4);
     assert(reserved_offset && !((reinterpret_cast<std::uintptr_t>(frame_bytes.data() + 1) + *reserved_offset) & 3u));
     std::memset(frame_bytes.data() + 1 + *reserved_offset, 73, 4);
@@ -90,10 +92,17 @@ int main() {
     pxa::game::IndexedBlit blit{};
     blit.source_offset = 1234; blit.target_width = 320; blit.target_height = 240; blit.cursor_x = -4;
     assert(context.blit(blit) && captured_size == 64);
+    assert(captured_operation == 0x108);
+    assert(context.blit_rect(blit) && captured_size == 64);
+    assert(captured_operation == 0x109);
     pxa::game::IndexedBlit read_blit{};
     assert(pxa::game::wire_spans::pxa_game_render_blit_decode(captured.data(), 64, &read_blit));
     assert(read_blit.source_offset == 1234 && read_blit.cursor_x == -4);
     short_reply = true;
     assert(context.blit(blit).error() == pxa::Error::protocol_error);
+    assert(context.blit_rect(blit).error() == pxa::Error::protocol_error);
+    short_reply = false;
+    io_error = -7;
+    assert(context.blit_rect(blit).error() == pxa::Error::would_block);
     return 0;
 }

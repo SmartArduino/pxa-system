@@ -279,6 +279,14 @@ static void test_store(pxa::Transport& transport, pxa::RequestTable& requests) {
     expected=payload;
     assert(pxa_store_manage(PXA_STORE_UNINSTALL_IDENTITY_REQUEST,token,full.c_str(),c.data(),c.size()) && payload==expected);
     complete(requests,exact_remove,ok);assert(*exact_remove.result);
+    Pending bound_install(store.install_identity(full,{"pxa-nes","ticket",digest,2048}));
+    expected=payload;
+    assert(pxa_store_install_identity_status(token,full.c_str(),"ticket",digest,2048,c.data(),c.size())==PXA_STATUS_OK && payload==expected);
+    complete(requests,bound_install,ok);assert(*bound_install.result);
+    std::array<std::byte,180> proof{};
+    Pending bind(store.register_namespace(proof));expected=payload;
+    assert(pxa_store_register_namespace_status(token,reinterpret_cast<const uint8_t *>(proof.data()),proof.size(),c.data(),c.size())==PXA_STATUS_OK && payload==expected);
+    complete(requests,bind,ok);assert(*bind.result);
     Pending invalid_identity(store.launch_identity("pxa-nes"));
     assert(invalid_identity.result && invalid_identity.result->error()==pxa::Error::invalid_argument);
     Pending remove(store.remove_download(".store-1234abcd.pxa")); complete(requests, remove, ok); assert(*remove.result);

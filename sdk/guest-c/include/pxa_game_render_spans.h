@@ -254,6 +254,19 @@ static inline int32_t pxa_game_render_execute_frame_spans(uint64_t context,
 
 #define PXA_GAME_RENDER_IO_BLIT_INDEXED_FRAME 0x108u
 #define PXA_GAME_RENDER_FEATURE_BORROWED_INDEXED_BLIT UINT64_C(16)
+#define PXA_GAME_RENDER_IO_BLIT_INDEXED_RECT 0x109u
+#define PXA_GAME_RENDER_FEATURE_EXACT_INDEXED_BLIT UINT64_C(32)
+/* Exact nearest-neighbour rectangle: sx=x*source_width/target_width,
+ * sy=y*source_height/target_height. Offset the target into a larger Surface
+ * and retain its pitch for letterboxing. Borrows end before this returns. */
+static inline int32_t pxa_game_render_blit_indexed_rect(uint64_t context,
+    const pxa_game_render_blit_wire_t *frame) {
+    uint8_t bytes[PXA_GAME_RENDER_BLIT_BYTES];
+    if (!context || !frame) return PXA_STATUS_INVALID_ARGUMENT;
+    pxa_game_render_blit_encode(bytes, sizeof(bytes), frame);
+    int32_t result = pxa_io(context, PXA_GAME_RENDER_IO_BLIT_INDEXED_RECT, bytes, sizeof(bytes));
+    return result < 0 ? result : result == sizeof(bytes) ? result : PXA_STATUS_PROTOCOL_ERROR;
+}
 static inline int32_t pxa_game_render_blit_indexed_frame(uint64_t context,
     const pxa_game_render_blit_wire_t *frame) {
     uint8_t bytes[PXA_GAME_RENDER_BLIT_BYTES];
