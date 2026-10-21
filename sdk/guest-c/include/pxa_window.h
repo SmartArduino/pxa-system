@@ -8,6 +8,7 @@
 #define PXA_WINDOW_CONFIGURE 1u
 #define PXA_WINDOW_GET_SNAPSHOT 2u
 #define PXA_WINDOW_SHOW_TOAST 3u
+#define PXA_WINDOW_REQUEST_BACK 4u
 #define PXA_WINDOW_METRICS_CHANGED 0x8001u
 #define PXA_WINDOW_BACK_REQUESTED 0x8002u
 #define PXA_WINDOW_MAX_CONFIG_PACKET (PXA_HEADER_BYTES + 41u)
@@ -27,6 +28,10 @@ typedef struct {
 
 typedef pxa_window_wire_insets_t pxa_window_insets_t;
 typedef pxa_window_snapshot_wire_t pxa_window_snapshot_t;
+
+static inline int32_t pxa_window_request_back(void) {
+    return pxa_control_call(PXA_WINDOW_SERVICE, PXA_WINDOW_REQUEST_BACK, 0, NULL, 0);
+}
 
 static inline int pxa_window_build_configure(
     uint8_t *out, size_t capacity, const pxa_window_config_t *config,

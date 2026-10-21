@@ -14,6 +14,45 @@
 后续接口与性能优化以 C++ SDK 为主要维护方向。此 SDK 是独立的 C++26
 Guest 实现，不包含或调用 Guest C SDK。
 
+## C / C++ 服务接口对照
+
+两套 SDK 使用相同的 Core 和服务协议。C 保留显式 token、调用方缓冲区和
+事件解析；C++ 使用 `Task`、`Result` 和移动资源所有权。声明式 UI、状态绑定、
+协程及场景加载策略属于语言层辅助功能，不要求逐个同名移植。
+
+| 能力 | Guest C | Guest C++ |
+| --- | --- | --- |
+| Core 取消、就绪等待/通知 | `pxa_cancel`、`pxa_resource.h` | `pxa::cancel`、`ctx.resources()`、`resource.hpp` |
+| Lease 获取/撤销 | `pxa_lease.h` | `ctx.leases()`、`lease.hpp` |
+| Core 2.1 主循环事件端口 | `pxa_event_port.h` | `ctx.event_ports()`、`event_port.hpp` |
+| Window 完整配置/快照/返回/提示 | `pxa_window.h` | `ctx.window()`、`WindowConfig` |
+| Clock 单调时间/墙钟/时区偏移/定时 | `pxa_clock.h` | `ctx.clock()` |
+| Storage、FS、Permission、IPC | 对应 `pxa_*.h`，FS root 在 `pxa_fs_roots.h` | `ctx.storage()/fs()/permissions()/ipc()` |
+| Device、Sensor、Work | 对应 `pxa_*.h` | `ctx.device()/sensors()/work()` |
+| 普通 HTTP 与流式双向 HTTP | `pxa_net.h`、`pxa_http.h` | `ctx.net()/http()` |
+| Audio PCM、音调、分层音效及分类替换 | `pxa_audio.h` | `ctx.audio()`、`AudioSession::effect/stop_effect` |
+| Surface 映射/复制上传、透明度、不透明 UI 区域 | `pxa_surface.h` | `ctx.surface().create_mapped/create_stream`、`opaque_ui_regions` |
+| Assets 查询/加载/预取/缓存状态/blob 读取 | `pxa_assets.h` | `ctx.assets().query/load/prefetch/status/read` |
+| Host 图片解码及逐帧读取 | `pxa_image_decode.h` | `assets().decode_image/images()`、`image_frames.hpp` |
+| Store Installer 全部请求与下载进度 | `pxa_store_installer.h` | `ctx.store_installer()`、`store_installer.hpp` |
+| 输入法 Provider 输入与候选帧 | `pxa_ime.h` | `ime.hpp` |
+| 附加 UI Surface 与 Canvas 流 | `pxa_ui.h`、`pxa_ui_wire.h`、`pxa_canvas.h` | 可选 `ui_transport.hpp`，`ui::TransportService`、`ui::CanvasStream` |
+| UI 树/Canvas、GameRender/计算光栅 | `pxa_ui*.h`、`pxa_canvas.h`、`pxa_game_render*.h`、`pxa_raster.h` | `ui*.hpp`、`canvas.hpp`、`game*.hpp` |
+
+新增服务入口仅保存对现有 Transport/请求表的引用，不扩大 Context、请求表或
+协程池。Store 列表使用调用方数组；复制式 Surface 使用调用方帧缓冲；
+预取只返回描述符，缓存状态不提供驻留保证。`AssetKind::blob` 可查询和读取，
+不能通过 `load/prefetch` 获得纹理类资源句柄。
+
+事件端口仅用于已声明 Core 2.1 主循环模式的组件；`PXA_APPLICATION` 的事件
+分派模式继续使用回调。`EventPort::wait` 的事件借用传入缓冲，必须在复用前
+处理；错误保持 Host 队列语义。附加 UI Surface/Canvas 流使用协议内的 `u32`
+request ID，应用关联 ready 通知，并接管成功返回的流句柄；丢弃成功通知时也应关闭句柄。
+这些可选模块不添加后台线程、轮询器或隐藏重试。
+
+`tools/package/test_guest_sdk.sh` 与 `test_guest_cpp.sh` 包含两侧的服务补齐回归，
+并用相同输入对比请求字节，验证借用期、取消后的资源回收及边界错误。
+
 当前 SDK 采用 Core 2：只从 `pxa.core.v2` 导入 `pxa_call` 和 `pxa_io`。
 控制请求直接借用载荷，不构造请求信封；批量绘制和资源流使用 `pxa_io`。
 `Transport` 为 Wasm32 的 16 字节，无内部 scratch、兼容宏或双路径分支。

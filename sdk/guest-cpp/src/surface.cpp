@@ -243,6 +243,91 @@ Task<SurfaceState> Surface::query_request(Transport& transport, RequestTable& re
         .flags = wire::get32(bytes + 48)};
 }
 
+namespace {
+using RegionsPacket = wire::RequestPacket<76>;
+
+Result<void> encode_rects(wire::Writer& writer, std::span<const SurfaceRect> rects) noexcept {
+    for (auto rect : rects) {
+        if (!rect.width || !rect.height) return std::unexpected(Error::invalid_argument);
+        writer.u16(rect.x); writer.u16(rect.y); writer.u16(rect.width); writer.u16(rect.height);
+    }
+    return {};
+}
+
+Task<void> send_regions(Transport& transport, RequestTable& requests, RegionsPacket packet) {
+    auto event = co_await Response(transport, requests, 16, 5, packet.packet());
+    if (!event) co_return std::unexpected(event.error());
+    auto body = wire::result_body(event->payload);
+    if (!body) co_return std::unexpected(body.error());
+    if (!body->empty()) co_return std::unexpected(Error::protocol_error);
+    co_return Result<void>{};
+}
+} // namespace
+
+Task<void> Surface::opaque_ui_regions(std::span<const SurfaceRect> regions) {
+    if (!*this) return Task<void>::failed(Error::bad_state);
+    return regions_request(*control_->transport, *control_->requests, control_->handle, regions);
+}
+
+Task<void> Surface::regions_request(Transport& transport, RequestTable& requests,
+    std::uint64_t handle, std::span<const SurfaceRect> regions) {
+    if (regions.size() > 8) return Task<void>::failed(Error::invalid_argument);
+    RegionsPacket packet;
+    wire::Writer writer(packet.bytes);
+    writer.u64(handle); writer.u8(static_cast<std::uint8_t>(regions.size()));
+    writer.u8(0); writer.u16(0);
+    if (!encode_rects(writer, regions)) return Task<void>::failed(Error::invalid_argument);
+    packet.size = writer.size();
+    return send_regions(transport, requests, std::move(packet));
+}
+
+Result<void> SurfaceStream::write(std::span<const std::byte> pixels) noexcept {
+    if (!resource_) return std::unexpected(Error::bad_state);
+    if (pixels.size() != frame_bytes_) return std::unexpected(Error::invalid_argument);
+    auto amount = transport_->io(handle(), 2, {const_cast<std::byte*>(pixels.data()), pixels.size()});
+    if (!amount) return std::unexpected(amount.error());
+    if (*amount != pixels.size()) return std::unexpected(Error::protocol_error);
+    return {};
+}
+
+Result<void> SurfaceStream::present(std::uint64_t frame_id,
+    std::span<const SurfaceRect> damage) noexcept {
+    if (!resource_) return std::unexpected(Error::bad_state);
+    if (!frame_id || damage.size() > 8) return std::unexpected(Error::invalid_argument);
+    std::array<std::byte, 84> packet{};
+    wire::Writer writer(packet);
+    writer.u64(handle()); writer.u64(frame_id);
+    writer.u8(static_cast<std::uint8_t>(damage.size())); writer.u8(0); writer.u16(0);
+    auto encoded = encode_rects(writer, damage);
+    if (!encoded) return encoded;
+    return transport_->send(16, 3, 0, std::span{packet}.first(writer.size()));
+}
+
+Task<SurfaceStream> SurfaceService::create_stream(this SurfaceService self,
+    SurfaceStreamOptions options) {
+    const auto format = static_cast<std::uint16_t>(options.format);
+    if (!options.width || !options.height || options.buffers < 2 ||
+        (format != 1 && format != 2) || (format == 2 && options.direct_scanout))
+        co_return std::unexpected(Error::invalid_argument);
+    std::array<std::byte, 8> packet{};
+    wire::put16(packet.data(), options.width); wire::put16(packet.data() + 2, options.height);
+    wire::put16(packet.data() + 4, format); packet[6] = std::byte(options.buffers);
+    packet[7] = std::byte(format == 2 ? 1 : options.direct_scanout ? 2 : 0);
+    auto event = co_await Response(self.transport_, self.requests_, 16, 1, packet, true);
+    if (!event) co_return std::unexpected(event.error());
+    auto body = wire::result_body(event->payload);
+    if (!body) co_return std::unexpected(body.error());
+    auto pending = wire::result_resource<SurfaceStreamTag>(self.transport_, *body);
+    if (body->size() != 20 || !pending || (*body)[16] != std::byte(options.buffers) ||
+        (*body)[17] != std::byte{} || (*body)[18] != std::byte{} || (*body)[19] != std::byte{})
+        co_return std::unexpected(Error::protocol_error);
+    const auto stride = wire::get32(body->data() + 8), bytes = wire::get32(body->data() + 12);
+    if (stride < std::uint32_t(options.width) * (format == 1 ? 2u : 4u) ||
+        bytes < std::uint64_t(stride) * options.height)
+        co_return std::unexpected(Error::protocol_error);
+    co_return SurfaceStream(self.transport_, self.requests_, pending.release(), stride, bytes);
+}
+
 Task<Surface> SurfaceService::create_mapped(this SurfaceService self,
                                            SurfaceOptions options) {
     auto& [transport_, requests_] = self;

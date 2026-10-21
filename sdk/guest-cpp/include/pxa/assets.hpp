@@ -11,7 +11,13 @@
 namespace pxa {
 
 enum class AssetKind : std::uint8_t {
-    texture = 1, palette = 2, audio = 3, image = 4
+    texture = 1, palette = 2, audio = 3, image = 4, blob = 5
+};
+
+enum class AssetState : std::uint8_t { absent, queued, loading, ready, failed };
+struct AssetStatus {
+    AssetState state;
+    std::int32_t load_status;
 };
 
 struct AssetDescriptor {
@@ -105,7 +111,21 @@ public:
     Task<AssetDescriptor> query(std::string_view path) {
         if (!valid_path(path))
             return Task<AssetDescriptor>::failed(Error::invalid_argument);
-        return query_impl(transport_, requests_, path_packet(path, 4));
+        return query_impl(transport_, requests_, path_packet(path, 4), 1);
+    }
+
+    // Warms an evictable cache entry; load() is still required for ownership.
+    Task<AssetDescriptor> prefetch(AssetKind kind, std::string_view path) {
+        if (!valid_path(path) || !valid_kind(kind))
+            return Task<AssetDescriptor>::failed(Error::invalid_argument);
+        auto packet = path_packet(path, 4);
+        packet.bytes[2] = std::byte(kind);
+        return query_impl(transport_, requests_, std::move(packet), 3);
+    }
+
+    Task<AssetStatus> status(std::string_view path) {
+        if (!valid_path(path)) return Task<AssetStatus>::failed(Error::invalid_argument);
+        return status_impl(transport_, requests_, path_packet(path, 4));
     }
 
     Task<AssetRead> read(std::string_view path, std::uint32_t offset,
@@ -196,15 +216,33 @@ private:
     }
 
     static Task<AssetDescriptor> query_impl(Transport& transport,
-                                            RequestTable& requests, Packet packet) {
+        RequestTable& requests, Packet packet, std::uint16_t opcode) {
         auto event = co_await Response(
-            transport, requests, 21, 1, packet.packet());
+            transport, requests, 21, opcode, packet.packet());
         if (!event) co_return std::unexpected(event.error());
         auto body = wire::result_body(event->payload);
         if (!body) co_return std::unexpected(body.error());
         if (event->payload.size() != 24)
             co_return std::unexpected(Error::protocol_error);
-        co_return decode_descriptor(event->payload.subspan(4));
+        auto descriptor = decode_descriptor(*body);
+        if (descriptor && opcode == 3 &&
+            std::byte(descriptor->kind) != packet.bytes[2])
+            co_return std::unexpected(Error::protocol_error);
+        co_return descriptor;
+    }
+
+    static Task<AssetStatus> status_impl(Transport& transport,
+        RequestTable& requests, Packet packet) {
+        auto event = co_await Response(transport, requests, 21, 4, packet.packet());
+        if (!event) co_return std::unexpected(event.error());
+        auto body = wire::result_body(event->payload);
+        if (!body) co_return std::unexpected(body.error());
+        if (body->size() != 8 || std::to_integer<unsigned>((*body)[0]) > 4 ||
+            (*body)[1] != std::byte{} || (*body)[2] != std::byte{} ||
+            (*body)[3] != std::byte{})
+            co_return std::unexpected(Error::protocol_error);
+        co_return AssetStatus{static_cast<AssetState>((*body)[0]),
+            static_cast<std::int32_t>(wire::get32(body->data() + 4))};
     }
 
     static Task<AssetRead> read_impl(Transport& transport, RequestTable& requests,
@@ -245,7 +283,7 @@ private:
             return std::unexpected(Error::protocol_error);
         auto kind = static_cast<AssetKind>(
             std::to_integer<std::uint8_t>(payload[0]));
-        if (!valid_kind(kind))
+        if (!valid_kind(kind) && kind != AssetKind::blob)
             return std::unexpected(Error::protocol_error);
         return AssetDescriptor{
             kind,

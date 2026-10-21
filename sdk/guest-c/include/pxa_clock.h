@@ -6,6 +6,7 @@
 #define PXA_CLOCK_SERVICE 4u
 #define PXA_CLOCK_SET_PERIOD 1u
 #define PXA_CLOCK_NOW 2u
+#define PXA_CLOCK_WALL_TIME 3u
 #define PXA_CLOCK_TICK 0x8001u
 #define PXA_CLOCK_MIN_PERIOD_MS 16u
 #define PXA_CLOCK_MAX_PERIOD_MS 1000u
@@ -106,6 +107,48 @@ typedef struct {
     int32_t status;
     uint64_t timestamp_us;
 } pxa_clock_now_result_t;
+
+typedef struct {
+    int32_t status;
+    int64_t unix_us;
+    uint64_t monotonic_us;
+    int32_t utc_offset_seconds;
+    uint32_t flags; /* bit 0: daylight saving at this sampled instant. */
+} pxa_clock_wall_time_result_t;
+
+static inline int32_t pxa_clock_wall_time(uint64_t token) {
+    if (!token) return PXA_STATUS_INVALID_ARGUMENT;
+    return pxa_control_call(PXA_CLOCK_SERVICE, PXA_CLOCK_WALL_TIME, token, NULL, 0);
+}
+
+static inline int pxa_clock_parse_wall_time(const pxa_event_t *event,
+    uint64_t token, pxa_clock_wall_time_result_t *out) {
+    int64_t delta;
+    if (!out) return 0;
+    pxa_zero(out, sizeof(*out));
+    if (!event || !token || event->token != token ||
+        event->service != PXA_CLOCK_SERVICE || event->opcode != PXA_CLOCK_WALL_TIME ||
+        !event->payload || event->payload_size < 4) return 0;
+    out->status = (int32_t)pxa_load_u32(event->payload);
+    if (out->status) return event->payload_size == 4;
+    if (event->payload_size != 28) return 0;
+    /* Decode two's complement without out-of-range unsigned-to-signed casts. */
+    {
+        uint64_t value = pxa_load_u64(event->payload + 4);
+        out->unix_us = value <= INT64_MAX ? (int64_t)value : -1 - (int64_t)(~value);
+    }
+    out->monotonic_us = pxa_load_u64(event->payload + 12);
+    {
+        uint32_t value = pxa_load_u32(event->payload + 20);
+        out->utc_offset_seconds = value <= INT32_MAX ? (int32_t)value : -1 - (int32_t)(~value);
+    }
+    out->flags = pxa_load_u32(event->payload + 24);
+    if (out->utc_offset_seconds < -86400 || out->utc_offset_seconds > 86400 ||
+        (out->flags & ~1u)) return 0;
+    delta = (int64_t)out->utc_offset_seconds * 1000000;
+    return !((delta > 0 && out->unix_us > INT64_MAX - delta) ||
+             (delta < 0 && out->unix_us < INT64_MIN - delta));
+}
 
 static inline int pxa_clock_build_set_period(
     uint8_t *packet, size_t capacity, uint16_t period_ms,

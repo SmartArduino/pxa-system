@@ -141,6 +141,13 @@ inline Result<void> call(std::uint16_t service, std::uint16_t opcode,
     return {};
 }
 
+inline Result<void> cancel(std::uint64_t token) noexcept {
+    if (!token) return std::unexpected(Error::invalid_argument);
+    std::array<std::byte, 8> payload;
+    wire::put64(payload.data(), token);
+    return call(1, 1, 0, payload);
+}
+
 template<class T> struct EventTraits;
 
 struct Event {

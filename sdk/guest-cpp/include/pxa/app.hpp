@@ -21,6 +21,10 @@
 #include "ipc.hpp"
 #include "work.hpp"
 #include "surface.hpp"
+#include "lease.hpp"
+#include "resource.hpp"
+#include "event_port.hpp"
+#include "store_installer.hpp"
 
 #include <memory>
 #include <new>
@@ -58,6 +62,10 @@ public:
     IpcService ipc() noexcept { return {transport_, requests_}; }
     WorkService work() noexcept { return {transport_, requests_}; }
     SurfaceService surface() noexcept { return {transport_, requests_}; }
+    LeaseService leases() noexcept { return {transport_, requests_}; }
+    ResourceService resources() noexcept { return {transport_, requests_}; }
+    EventPortService event_ports() noexcept { return {transport_, requests_}; }
+    StoreInstallerService store_installer() noexcept { return {transport_, requests_}; }
     bool foreground() const noexcept { return foreground_; }
 
 private:

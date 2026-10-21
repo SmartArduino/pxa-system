@@ -1,5 +1,16 @@
 # PXA Guest SDK
 
+The [C / C++ service comparison](../guest-cpp/README.zh-CN.md#c--c-服务接口对照)
+maps the two language APIs. Optional C headers include `pxa_http.h` for streaming
+HTTP and upload/download backpressure, `pxa_resource.h` for readiness waits and
+notifications, `pxa_image_decode.h` for Host image decoding and animation frames,
+and `pxa_ime.h` for input-method providers. These use caller-owned buffers and
+the existing callback/token model, with no Guest heap or additional event loop.
+`pxa_clock_wall_time` returns UTC microseconds, the monotonic anchor and sampled
+zone offset; `pxa_audio_play_effect/stop_effect` add bounded layered effects and
+track replacement. C++ has corresponding typed services, including Lease,
+Store Installer, event ports, full window configuration and copied/alpha Surfaces.
+
 The Guest SDK has a single API surface. Include `pxa.h` for Core status codes
 and lifecycle events, then include only the service headers you use, such as
 `pxa_clock.h` or `pxa_ui.h`. Header, function and macro names carry no version

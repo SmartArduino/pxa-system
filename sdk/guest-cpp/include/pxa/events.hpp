@@ -13,12 +13,35 @@ struct PlaybackEvent;
 struct SurfaceRelease;
 struct WorkStopRequested;
 struct IpcRequest;
+struct LeaseRevoked;
+struct HandleReady;
+struct HandleClosed;
+struct StoreDownloadProgress;
+namespace ime { struct Input; }
 template<class Contract> struct TypedIpcRequest;
 namespace input { struct Pointer; struct ControllerState; struct VolumeKeyEvent; }
-namespace ui { struct DisplayMetrics; struct UiCapabilities; struct UiAppearance; }
+namespace ui {
+struct DisplayMetrics; struct UiCapabilities; struct UiAppearance;
+struct SurfaceReady; struct CanvasStreamReady;
+}
 
 template<> struct EventTraits<ClockTick> {
     static constexpr std::uint16_t service = 4, opcode = 0x8001;
+};
+template<> struct EventTraits<LeaseRevoked> {
+    static constexpr std::uint16_t service = 1, opcode = 0x8003;
+};
+template<> struct EventTraits<HandleReady> {
+    static constexpr std::uint16_t service = 1, opcode = 0x8001;
+};
+template<> struct EventTraits<HandleClosed> {
+    static constexpr std::uint16_t service = 1, opcode = 0x8002;
+};
+template<> struct EventTraits<StoreDownloadProgress> {
+    static constexpr std::uint16_t service = 20, opcode = 0x8001;
+};
+template<> struct EventTraits<ime::Input> {
+    static constexpr std::uint16_t service = 22, opcode = 0x8001;
 };
 template<> struct EventTraits<SystemEnvironment> {
     static constexpr std::uint16_t service = 17, opcode = 0x8004;
@@ -28,6 +51,12 @@ template<> struct EventTraits<ui::DisplayMetrics> {
 };
 template<> struct EventTraits<ui::UiAppearance> {
     static constexpr std::uint16_t service = 3, opcode = 0x8006;
+};
+template<> struct EventTraits<ui::SurfaceReady> {
+    static constexpr std::uint16_t service = 3, opcode = 0x8004;
+};
+template<> struct EventTraits<ui::CanvasStreamReady> {
+    static constexpr std::uint16_t service = 3, opcode = 0x8005;
 };
 template<> struct EventTraits<ui::UiCapabilities> : EventTraits<ui::DisplayMetrics> {};
 

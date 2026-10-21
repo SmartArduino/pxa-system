@@ -22,6 +22,11 @@
 #include "pxa_ui.h"
 #include "pxa_work.h"
 #include "pxa.h"
+#include "pxa_event_port.h"
+#include "pxa_http.h"
+#include "pxa_image_decode.h"
+#include "pxa_ime.h"
+#include "pxa_resource.h"
 
 _Static_assert(PXA_HEADER_BYTES == PXA_WIRE_SIZE, "Core header size drift");
 _Static_assert(PXA_MAX_CONTROL_BYTES == PXA_WIRE_MAX_CONTROL_MESSAGE,

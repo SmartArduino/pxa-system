@@ -31,6 +31,16 @@ struct WindowMetrics {
 
 enum class BackAction : std::uint8_t { close = 0, stay = 1 };
 enum class WindowBarMode : std::uint8_t { visible = 0, hidden = 1, transient = 2 };
+enum class WindowBarIcons : std::uint8_t { automatic = 0, light = 1, dark = 2 };
+struct WindowConfig {
+    bool edge_to_edge = false;
+    WindowBarMode status_bar_mode = WindowBarMode::visible;
+    WindowBarMode navigation_bar_mode = WindowBarMode::visible;
+    WindowBarIcons status_bar_icons = WindowBarIcons::automatic;
+    WindowBarIcons navigation_bar_icons = WindowBarIcons::automatic;
+    std::uint32_t status_bar_color = 0;
+    std::uint32_t navigation_bar_color = 0;
+};
 
 inline Result<WindowMetrics> decode_window_metrics(
     std::span<const std::byte> bytes) noexcept {
@@ -75,6 +85,25 @@ class WindowService {
 public:
     WindowService(Transport& transport, RequestTable& requests) noexcept
         : transport_(transport), requests_(requests) {}
+
+    Result<void> configure(const WindowConfig& config) noexcept {
+        const std::array<std::uint8_t, 5> values{
+            std::uint8_t(config.edge_to_edge), std::to_underlying(config.status_bar_mode),
+            std::to_underlying(config.navigation_bar_mode),
+            std::to_underlying(config.status_bar_icons),
+            std::to_underlying(config.navigation_bar_icons)};
+        for (auto value : values)
+            if (value > 2) return std::unexpected(Error::invalid_argument);
+        std::array<std::byte, 41> packet;
+        wire::Writer writer(packet);
+        for (std::uint16_t tag = 1; tag <= 7; ++tag) {
+            writer.u16(tag);
+            writer.u16(tag <= 5 ? 1 : 4);
+            if (tag <= 5) writer.u8(values[tag - 1]);
+            else writer.u32(tag == 6 ? config.status_bar_color : config.navigation_bar_color);
+        }
+        return transport_.send(2, 1, 0, packet);
+    }
 
     // Queue normal system navigation after the current callback returns.
     // on_back() decides whether to close the app or handle navigation locally.

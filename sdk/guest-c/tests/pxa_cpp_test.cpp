@@ -19,6 +19,11 @@
 #include "pxa_raster.h"
 #include "pxa_i18n.h"
 #include "pxa_canvas.h"
+#include "pxa_event_port.h"
+#include "pxa_http.h"
+#include "pxa_image_decode.h"
+#include "pxa_ime.h"
+#include "pxa_resource.h"
 
 static_assert(PXA_HEADER_BYTES == 20, "v1 envelope size");
 

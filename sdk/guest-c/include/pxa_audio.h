@@ -19,6 +19,11 @@
 #define PXA_AUDIO_IO_PLAY_MUSIC 0x104u
 #define PXA_AUDIO_IO_CONTROL_SOUND 0x105u
 #define PXA_AUDIO_IO_CONTROL_MUSIC 0x106u
+#define PXA_AUDIO_IO_PLAY_EFFECT 0x107u
+#define PXA_AUDIO_IO_STOP_EFFECT 0x108u
+#define PXA_AUDIO_EFFECT_MAX_LAYERS 8u
+#define PXA_AUDIO_EFFECT_TRACK_COUNT 6u
+#define PXA_AUDIO_EFFECT_INDEPENDENT 255u
 #define PXA_AUDIO_IO_MIX_PCM 0x109u
 #define PXA_AUDIO_PLAYBACK_EVENT 0x8001u
 #define PXA_AUDIO_PLAYBACK_READY 1u
@@ -48,6 +53,50 @@ typedef struct {
     const pxa_audio_eq_band_t *eq_bands;
     uint8_t eq_band_count;
 } pxa_audio_graph_t;
+
+typedef struct {
+    uint16_t frequency_hz, duration_ms;
+    int16_t gain_db_q8;
+    uint8_t waveform;
+    uint16_t attack_ms, release_ms, delay_ms;
+} pxa_audio_tone_t;
+
+static inline int pxa_audio_encode_tone(uint8_t command[14], pxa_audio_tone_t tone) {
+    if (!command || tone.waveform > PXA_AUDIO_TONE_NOISE ||
+        tone.frequency_hz < 40 || tone.frequency_hz > 8000 || tone.duration_ms < 10 ||
+        tone.duration_ms > 1000 || tone.gain_db_q8 < -60 * 256 || tone.gain_db_q8 > 0 ||
+        tone.attack_ms > tone.duration_ms || tone.release_ms > tone.duration_ms ||
+        tone.delay_ms > 1000) return 0;
+    pxa_store_u16(command, tone.frequency_hz);
+    pxa_store_u16(command + 2, tone.duration_ms);
+    pxa_store_u16(command + 4, (uint16_t)tone.gain_db_q8);
+    command[6] = tone.waveform; command[7] = 0;
+    pxa_store_u16(command + 8, tone.attack_ms);
+    pxa_store_u16(command + 10, tone.release_ms);
+    pxa_store_u16(command + 12, tone.delay_ms);
+    return 1;
+}
+
+/* Atomic admission. Independent effects do not queue; a numbered track
+ * replaces that category. WOULD_BLOCK leaves existing playback unchanged. */
+static inline int32_t pxa_audio_play_effect(uint64_t session,
+    const pxa_audio_tone_t *layers, size_t count, uint8_t track) {
+    uint8_t command[4u + 14u * PXA_AUDIO_EFFECT_MAX_LAYERS];
+    if (!(session >> 32) || !layers || !count || count > PXA_AUDIO_EFFECT_MAX_LAYERS ||
+        (track >= PXA_AUDIO_EFFECT_TRACK_COUNT && track != PXA_AUDIO_EFFECT_INDEPENDENT))
+        return PXA_STATUS_INVALID_ARGUMENT;
+    command[0] = (uint8_t)count; command[1] = track; command[2] = command[3] = 0;
+    for (size_t i = 0; i < count; ++i)
+        if (!pxa_audio_encode_tone(command + 4 + 14 * i, layers[i])) return PXA_STATUS_INVALID_ARGUMENT;
+    return pxa_io(session, PXA_AUDIO_IO_PLAY_EFFECT, command, (uint32_t)(4 + 14 * count));
+}
+
+static inline int32_t pxa_audio_stop_effect(uint64_t session, uint8_t track) {
+    uint8_t command[4] = {0};
+    if (!(session >> 32) || track >= PXA_AUDIO_EFFECT_TRACK_COUNT) return PXA_STATUS_INVALID_ARGUMENT;
+    command[0] = track;
+    return pxa_io(session, PXA_AUDIO_IO_STOP_EFFECT, command, sizeof(command));
+}
 
 typedef struct {
     int32_t status;
@@ -408,19 +457,9 @@ static inline int32_t pxa_audio_play_tone(
     uint16_t duration_ms, int16_t gain_db_q8,
     uint16_t attack_ms, uint16_t release_ms, uint16_t delay_ms) {
     uint8_t command[14];
-    if ((session >> 32) == 0 || waveform > PXA_AUDIO_TONE_NOISE ||
-        frequency_hz < 40 || frequency_hz > 8000 || duration_ms < 10 ||
-        duration_ms > 1000 || gain_db_q8 < -60 * 256 || gain_db_q8 > 0 ||
-        attack_ms > duration_ms || release_ms > duration_ms ||
-        delay_ms > 1000) return -1;
-    pxa_store_u16(command, frequency_hz);
-    pxa_store_u16(command + 2, duration_ms);
-    pxa_store_u16(command + 4, (uint16_t)gain_db_q8);
-    command[6] = waveform;
-    command[7] = 0;
-    pxa_store_u16(command + 8, attack_ms);
-    pxa_store_u16(command + 10, release_ms);
-    pxa_store_u16(command + 12, delay_ms);
+    pxa_audio_tone_t tone = {frequency_hz, duration_ms, gain_db_q8, waveform,
+        attack_ms, release_ms, delay_ms};
+    if ((session >> 32) == 0 || !pxa_audio_encode_tone(command, tone)) return -1;
     return pxa_io(session, PXA_AUDIO_IO_PLAY_TONE,
                      command, sizeof(command));
 }
