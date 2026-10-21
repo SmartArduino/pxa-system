@@ -37,6 +37,7 @@ function(pxa_collect_sources output root)
         src/services/game_render/raster_frame_spans.c
         src/services/game_render/raster_blit.c
         src/services/game_render/raster_projected_spans.c
+        src/services/game_render/raster_prepared.c
         src/services/log/log_service.c
         src/services/game_render/raster.c
         src/services/game_render/raster_assets.c

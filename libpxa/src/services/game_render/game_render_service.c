@@ -32,6 +32,8 @@ struct pxa_game_render_service {
     void *execute_spans_context;
     uint64_t (*now_us)(void *);
     void *clock_context;
+    const pxa_memory_allocator_t *span_prepare_allocator;
+    uint32_t span_prepare_bytes;
 };
 
 struct pxa_game_render_resource {
@@ -44,6 +46,8 @@ struct pxa_game_render_resource {
     uint32_t max_spans;
     uint64_t batches, rejected, spans, pixels, validation_us, execution_us;
     uint32_t last_validation_us, last_execution_us;
+    void *span_prepare;
+    uint8_t span_prepare_attempted;
 };
 
 static int scale_valid(uint8_t scale) {
@@ -95,6 +99,7 @@ static int config_valid(const pxa_game_render_config_t *config) {
         config->backend.submit || config->backend.query || config->backend.close ||
         config->backend.bind_assets;
     return config != NULL && config->struct_size >= sizeof(*config) &&
+           config->span_prepare_bytes <= 1024u * 1024u &&
            config->max_contexts != 0 &&
            config->max_contexts_per_component != 0 &&
            config->max_contexts_per_component <= config->max_contexts &&
@@ -155,6 +160,8 @@ pxa_status_t pxa_game_render_service_init(
     service->execute_spans_context = config->execute_spans_context;
     service->now_us = config->now_us;
     service->clock_context = config->clock_context;
+    service->span_prepare_allocator = config->span_prepare_allocator;
+    service->span_prepare_bytes = config->span_prepare_bytes;
     service->max_contexts = config->max_contexts;
     service->max_contexts_per_component = config->max_contexts_per_component;
     service->min_buffer_count = config->min_buffer_count;
@@ -162,6 +169,7 @@ pxa_status_t pxa_game_render_service_init(
     service->auto_target_profile = config->auto_target_profile;
     service->free_head = 0;
     service->active_head = PXA_GAME_RENDER_SLOT_NONE;
+    memset(service->contexts, 0, (size_t)config->max_contexts * sizeof(service->contexts[0]));
     for (index = 0; index < service->max_contexts; ++index) {
         service->contexts[index].magic = PXA_GAME_RENDER_SLOT_MAGIC;
         service->contexts[index].service = service;
@@ -207,6 +215,9 @@ static pxa_game_render_resource_t *allocate_context(
 static void release_context(pxa_game_render_resource_t *resource) {
     pxa_game_render_service_t *service = resource->service;
     uint16_t index = (uint16_t)(resource - service->contexts);
+    pxa_memory_release(resource->span_prepare);
+    resource->span_prepare = NULL;
+    resource->span_prepare_attempted = 0;
     if (resource->previous != PXA_GAME_RENDER_SLOT_NONE)
         service->contexts[resource->previous].next = resource->next;
     else
@@ -267,11 +278,22 @@ static int32_t span_context_io(pxa_game_render_resource_t *r,
         uint64_t before = now_us(service), validated, done;
         pxa_status_t status = pxa_runtime_borrow_memory(service->runtime,
             r->component, &memory, &memory_size);
-        if (status == PXA_STATUS_OK)
+        if (status == PXA_STATUS_OK &&
+            (operation == PXA_GAME_RENDER_IO_EXECUTE_FRAME_SPANS ||
+             operation == PXA_GAME_RENDER_IO_EXECUTE_PROJECTED_SPANS)) {
+            if (!r->span_prepare_attempted) {
+                r->span_prepare_attempted = 1;
+                if (service->span_prepare_allocator && service->span_prepare_bytes)
+                    r->span_prepare = pxa_memory_allocate(service->span_prepare_allocator,
+                                                          service->span_prepare_bytes);
+            }
+            status = (operation == PXA_GAME_RENDER_IO_EXECUTE_FRAME_SPANS ?
+                pxa_raster_frame_spans_prepare : pxa_raster_projected_spans_prepare)(
+                data, size, memory, memory_size, r->max_spans,
+                r->span_prepare, service->span_prepare_bytes, &batch);
+        } else if (status == PXA_STATUS_OK)
             status = (operation == PXA_GAME_RENDER_IO_BLIT_INDEXED_FRAME ? pxa_raster_blit_validate :
-                operation == PXA_GAME_RENDER_IO_EXECUTE_FRAME_SPANS ? pxa_raster_frame_spans_validate :
-                operation == PXA_GAME_RENDER_IO_EXECUTE_PROJECTED_SPANS ?
-                pxa_raster_projected_spans_validate : pxa_raster_spans_validate)(data, size, memory, memory_size,
+                pxa_raster_spans_validate)(data, size, memory, memory_size,
                                               r->max_spans, &batch);
         validated = now_us(service);
         r->last_validation_us = (uint32_t)(validated - before);

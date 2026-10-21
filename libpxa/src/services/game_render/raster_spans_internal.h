@@ -11,6 +11,15 @@ void pxa_raster_material_load(const pxa_game_render_spans_header_wire_t *,
     const uint8_t *, uint8_t *, const uint8_t *, pxa_raster_spans_t *);
 pxa_status_t pxa_raster_projected_validate_sources(const uint8_t *, size_t, uint8_t *, size_t,
     uint32_t, const uint8_t *, size_t, uint32_t, pxa_raster_spans_t *);
+pxa_status_t pxa_raster_projected_prepare_sources(const uint8_t *, size_t, uint8_t *, size_t,
+    uint32_t, const uint8_t *, size_t, uint32_t, pxa_raster_prepared_t *, pxa_raster_spans_t *);
+pxa_raster_prepared_t *pxa_raster_prepare_begin(void *, size_t);
+void pxa_raster_prepare_material(pxa_raster_prepared_t *, const pxa_raster_spans_t *);
+typedef struct { int16_t s, t, ds, dt; } pxa_raster_prepared_step_t;
+pxa_raster_prepared_step_t *pxa_raster_prepare_row(pxa_raster_prepared_t *,
+    uint32_t, uint32_t, uint32_t, uint32_t, uint32_t);
+void pxa_raster_prepare_finish(pxa_raster_prepared_t *, pxa_raster_spans_t *);
+void pxa_raster_prepared_execute_range(const pxa_raster_spans_t *, uint32_t, uint32_t);
 void pxa_raster_projected_load(const uint8_t *, uint8_t *, const uint8_t *, pxa_raster_spans_t *);
 void pxa_raster_frame_execute_range(const pxa_raster_spans_t *, uint32_t, uint32_t);
 void pxa_raster_blit_execute_range(const pxa_raster_spans_t *, uint32_t, uint32_t);

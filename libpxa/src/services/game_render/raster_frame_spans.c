@@ -13,6 +13,14 @@ static int disjoint(const uint8_t *a, size_t an, const uint8_t *b, size_t bn) {
 
 pxa_status_t pxa_raster_frame_spans_validate(const uint8_t *packet, size_t size,
     uint8_t *memory, size_t memory_size, uint32_t max_spans, pxa_raster_spans_t *b) {
+    return pxa_raster_frame_spans_prepare(packet, size, memory, memory_size,
+        max_spans, NULL, 0, b);
+}
+
+pxa_status_t pxa_raster_frame_spans_prepare(const uint8_t *packet, size_t size,
+    uint8_t *memory, size_t memory_size, uint32_t max_spans,
+    void *scratch, size_t scratch_bytes, pxa_raster_spans_t *b) {
+    pxa_raster_prepared_t *prepared = pxa_raster_prepare_begin(scratch, scratch_bytes);
     pxa_game_render_frame_header_wire_t h = {0};
     uint8_t *depth = NULL;
     uint32_t depth_bytes = 0, depth_pitch = 0, pitch = 0;
@@ -48,8 +56,8 @@ pxa_status_t pxa_raster_frame_spans_validate(const uint8_t *packet, size_t size,
             if (light_work > PXA_GAME_RENDER_FRAME_MAX_LIGHT_VALIDATION_BYTES)
                 return PXA_STATUS_LIMIT_EXCEEDED;
         }
-        pxa_status_t status = pxa_raster_projected_validate_sources(packet + position, (size_t)bytes,
-            memory, memory_size, max_spans, packet, size, PXA_GAME_RENDER_FRAME_MATERIAL_MAGIC, &child);
+        pxa_status_t status = pxa_raster_projected_prepare_sources(packet + position, (size_t)bytes,
+            memory, memory_size, max_spans, packet, size, PXA_GAME_RENDER_FRAME_MATERIAL_MAGIC, prepared, &child);
         if (status) return status;
         if (!i) { b->target = child.target; pitch = child.state.projection.pitch; }
         if (child.target != b->target || child.state.projection.pitch != pitch)
@@ -80,6 +88,7 @@ pxa_status_t pxa_raster_frame_spans_validate(const uint8_t *packet, size_t size,
     b->records = packet + PXA_GAME_RENDER_FRAME_HEADER_BYTES;
     b->state.frame.memory = memory; b->state.frame.packet = packet; b->state.frame.command_bytes = h.command_bytes;
     b->kind = PXA_RASTER_SPANS_FRAME;
+    pxa_raster_prepare_finish(prepared, b);
     return PXA_STATUS_OK;
 }
 

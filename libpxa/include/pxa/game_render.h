@@ -8,6 +8,7 @@
 #include "pxa/raster_assets.h"
 #include "pxa/raster_spans.h"
 #include "pxa/runtime.h"
+#include "pxa/resource_budget.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -156,6 +157,12 @@ typedef struct {
     void *execute_spans_context;
     uint64_t (*now_us)(void *context);
     void *clock_context;
+    /* Optional bounded projection arena per compute context. Allocated on
+     * its first projected/frame batch and released on close. Failure merely
+     * selects recomputation. NULL/zero disables preparation; maximum 1 MiB.
+     * The allocator and its owner must outlive every open context. */
+    const pxa_memory_allocator_t *span_prepare_allocator;
+    uint32_t span_prepare_bytes;
 } pxa_game_render_config_t;
 
 typedef struct pxa_game_render_service pxa_game_render_service_t;

@@ -4,8 +4,15 @@
 #include <string.h>
 
 static uint64_t clock_us(void *p) { return ++*(uint64_t *)p; }
+static unsigned prepared_batches, arena_allocations, arena_releases;
+static void *arena_allocate(void *p, size_t bytes) {
+    (void)p; ++arena_allocations;
+    return getenv("PXA_TEST_PREPARE_FAIL") ? NULL : malloc(bytes);
+}
+static void arena_release(void *p, void *memory) { (void)p; ++arena_releases; free(memory); }
 
 static pxa_status_t execute(void *ctx, const pxa_raster_spans_t *b) {
+    if (b->prepared) ++prepared_batches;
     pxa_runtime_t *r = ctx;
     uint8_t *m = NULL; size_t n = 0;
     assert(pxa_runtime_borrow_memory(r, PXA_COMPONENT_INVALID, &m, &n) == PXA_STATUS_BAD_STATE);
@@ -37,6 +44,15 @@ int main(void) {
     /* Compute contexts work with no display backend or surface buffers. */
     cfg.execute_spans = execute; cfg.execute_spans_context = runtime;
     cfg.now_us = clock_us; cfg.clock_context = &clock;
+    pxa_memory_budget_t budget;
+    pxa_memory_budget_config_t budget_config = {.limit = {0, 8192}};
+    pxa_memory_owner_t owner;
+    size_t arena_limits[2] = {0, 8192};
+    assert(pxa_memory_budget_init(&budget, &budget_config) == 0);
+    assert(pxa_memory_owner_open(&budget, arena_limits, &owner) == 0);
+    pxa_memory_allocator_t allocator = {&budget, owner, PXA_MEMORY_EXTERNAL,
+        PXA_MEMORY_RASTER, NULL, arena_allocate, arena_release};
+    cfg.span_prepare_allocator = &allocator; cfg.span_prepare_bytes = 4096;
     void *sw = malloc(pxa_game_render_service_workspace_size(&cfg));
     assert(sw);
     assert(pxa_game_render_service_init(sw, pxa_game_render_service_workspace_size(&cfg), runtime, &cfg, &service) == 0);
@@ -192,6 +208,31 @@ int main(void) {
         assert(pxa_read_u16(memory + 4200 + i*2) == (i < 4 ? 0x0800 : 0x1000));
     }
     assert(memory[4104] == 0xa5 && pxa_read_u16(memory + 4216) == 0x5a5a);
+    for (size_t skew = 0; skew < 16; ++skew)
+    for (size_t capacity = 0; capacity <= 4096; capacity += 16) {
+        uint8_t *storage = malloc(4096 + 16); assert(storage);
+        void *arena = storage + skew;
+        memset(storage, 0xc7, 4096 + 16);
+        memset(memory + 4096, 0xa5, 32); memset(memory + 4200, 0x5a, 64);
+        pxa_raster_spans_t batch;
+        /* Later materials may widen the target; coarsen prior work buckets. */
+        h.target_bytes = capacity & 32 ? 64 : 32;
+        pxa_game_render_spans_header_encode(p + 176, 72, &h);
+        assert(pxa_raster_frame_spans_prepare(p, 816, memory, 8192, 2,
+            arena, capacity, &batch) == 0);
+        if (capacity == 4096) assert(batch.prepared);
+        uint32_t split = capacity & 16 ? 3 : pxa_raster_spans_split_hint(&batch, 128);
+        assert(split <= batch.target_bytes);
+        pxa_raster_spans_execute_range(&batch, split, batch.target_bytes);
+        pxa_raster_spans_execute_range(&batch, 0, split);
+        for (unsigned i = 0; i < 8; ++i) {
+            assert(memory[4096 + i] == (i < 4 ? 37 : 89));
+            assert(pxa_read_u16(memory + 4200 + i*2) == (i < 4 ? 0x0800 : 0x1000));
+        }
+        for (size_t i = capacity; i < 4096; ++i) assert(((uint8_t *)arena)[i] == 0xc7);
+        for (size_t i = 0; i < skew; ++i) assert(storage[i] == 0xc7);
+        free(storage);
+    }
     memcpy(moved + 7000, p, 816); memset(moved + 4096, 0xa5, 32);
     assert(pxa_runtime_io64_memory(runtime, component, handle, 0x107,
         moved + 7000, 816, moved, 8192) == 816);
@@ -249,6 +290,10 @@ int main(void) {
     for (unsigned i = 0; i < 16; ++i)
         assert(pxa_read_u16(memory + 4096 + i*2) == pxa_read_u16(memory + 3072 + 37*2));
     assert(pxa_handle_close64(runtime, component, handle) == 0);
+    assert(arena_allocations == 1);
+    if (getenv("PXA_TEST_PREPARE_FAIL")) assert(!prepared_batches && !arena_releases);
+    else assert(prepared_batches && arena_releases == 1);
+    assert(pxa_memory_owner_close(&budget, owner) == 0);
     assert(pxa_runtime_io64(runtime, component, handle, 0x105, p, 64) < 0);
     assert(pxa_component_finish_event(runtime, component, 1) == 0);
     pxa_runtime_deinit(runtime);

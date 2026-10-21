@@ -43,11 +43,11 @@ static int32_t signed_bits(uint32_t bits) {
     return value;
 }
 
-/* Shared by preflight and execution, so accepted arithmetic is identical.
- * No projected span array, texture copy or depth allocation is necessary. */
+/* Preflight can retain its exact result in a bounded Host arena. Without an
+ * arena execution recomputes the same arithmetic, as before. */
 static pxa_status_t process_row(pxa_raster_spans_t *b,
     const pxa_game_render_row_wire_t *row, const uint8_t *packet, size_t size,
-    pxa_span_kernel_fn kernel, uint32_t begin, uint32_t end) {
+    pxa_span_kernel_fn kernel, uint32_t begin, uint32_t end, pxa_raster_prepared_t *prepared) {
     const int validate = packet != NULL;
     const float x = (float)row->x, y = (float)row->y;
     float sd = b->state.projection.s_origin + y * b->state.projection.s_dv + x * b->state.projection.s_du;
@@ -67,6 +67,9 @@ static pxa_status_t process_row(pxa_raster_spans_t *b,
             !to_int(b->state.projection.z_du * 32768.0f * 65536.0f, &izistep))
             return PXA_STATUS_INVALID_ARGUMENT;
     }
+    pxa_raster_prepared_step_t *steps = prepared ? pxa_raster_prepare_row(prepared,
+        destination, row->count, (uint32_t)row->y * b->state.projection.depth_pitch + 2u * row->x,
+        (uint32_t)izi, (uint32_t)izistep) : NULL;
     do {
         uint32_t count = remaining < 32u ? remaining : 32u;
         int32_t snext, tnext, ds = 0, dt = 0;
@@ -95,6 +98,13 @@ static pxa_status_t process_row(pxa_raster_spans_t *b,
         if (validate) {
             pxa_status_t status = pxa_raster_span_validate(b, &span, packet, size);
             if (status) return status;
+            if (steps) {
+                /* The sampler wraps 10.6 coordinates and increments at 16
+                 * bits. Retain exactly that representation, not the larger
+                 * wire descriptor or repeated destinations/depth values. */
+                *steps++ = (pxa_raster_prepared_step_t){(int16_t)(span.s >> 10),
+                    (int16_t)(span.t >> 10), (int16_t)(span.ds >> 10), (int16_t)(span.dt >> 10)};
+            }
         } else {
             pxa_raster_span_execute_clipped(b, kernel, &span, begin, end);
         }
@@ -157,9 +167,26 @@ pxa_status_t pxa_raster_projected_spans_validate(const uint8_t *packet, size_t s
         max_spans, memory, memory_size, PXA_GAME_RENDER_PROJECTED_MAGIC, b);
 }
 
+pxa_status_t pxa_raster_projected_spans_prepare(const uint8_t *packet, size_t size,
+    uint8_t *memory, size_t memory_size, uint32_t max_spans,
+    void *scratch, size_t scratch_bytes, pxa_raster_spans_t *b) {
+    pxa_raster_prepared_t *prepared = pxa_raster_prepare_begin(scratch, scratch_bytes);
+    pxa_status_t status = pxa_raster_projected_prepare_sources(packet, size, memory, memory_size,
+        max_spans, memory, memory_size, PXA_GAME_RENDER_PROJECTED_MAGIC, prepared, b);
+    if (!status) pxa_raster_prepare_finish(prepared, b);
+    return status;
+}
+
 pxa_status_t pxa_raster_projected_validate_sources(const uint8_t *packet, size_t size,
     uint8_t *memory, size_t memory_size, uint32_t max_spans, const uint8_t *sources, size_t source_size,
     uint32_t magic, pxa_raster_spans_t *b) {
+    return pxa_raster_projected_prepare_sources(packet, size, memory, memory_size,
+        max_spans, sources, source_size, magic, NULL, b);
+}
+
+pxa_status_t pxa_raster_projected_prepare_sources(const uint8_t *packet, size_t size,
+    uint8_t *memory, size_t memory_size, uint32_t max_spans, const uint8_t *sources, size_t source_size,
+    uint32_t magic, pxa_raster_prepared_t *prepared, pxa_raster_spans_t *b) {
     pxa_status_t status = pxa_raster_material_validate_sources(packet, size, memory, memory_size,
         max_spans, magic, PXA_GAME_RENDER_PROJECTED_PREFIX_BYTES,
         PXA_GAME_RENDER_ROW_BYTES, sources, source_size, b);
@@ -184,6 +211,7 @@ pxa_status_t pxa_raster_projected_validate_sources(const uint8_t *packet, size_t
         return PXA_STATUS_INVALID_ARGUMENT;
     }
     projection_load(&p, memory, b);
+    pxa_raster_prepare_material(prepared, b);
     uint64_t depth_first = UINT64_MAX, depth_end = 0;
     for (uint32_t i = 0; i < b->count; ++i) {
         pxa_game_render_row_wire_t row = {0};
@@ -202,7 +230,7 @@ pxa_status_t pxa_raster_projected_validate_sources(const uint8_t *packet, size_t
             if (at < depth_first) depth_first = at;
             if (at + bytes > depth_end) depth_end = at + bytes;
         }
-        status = process_row(b, &row, packet, size, NULL, 0, 0);
+        status = process_row(b, &row, packet, size, NULL, 0, 0, prepared);
         if (status) return status;
     }
     if (b->state.projection.depth) {
@@ -224,6 +252,6 @@ void pxa_raster_projected_execute_range(const pxa_raster_spans_t *b, uint32_t be
             PXA_GAME_RENDER_ROW_BYTES, &row);
         uint32_t at = (uint32_t)row.y * b->state.projection.pitch + row.x;
         if (at < end && at + row.count > begin)
-            (void)process_row((pxa_raster_spans_t *)b, &row, NULL, 0, kernel, begin, end);
+            (void)process_row((pxa_raster_spans_t *)b, &row, NULL, 0, kernel, begin, end, NULL);
     }
 }

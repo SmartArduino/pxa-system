@@ -291,6 +291,7 @@ void pxa_raster_span_execute_clipped(const pxa_raster_spans_t *b, pxa_span_kerne
 
 void pxa_raster_spans_execute_range(const pxa_raster_spans_t *b,
     uint32_t begin, uint32_t end) {
+    if (b->prepared) { pxa_raster_prepared_execute_range(b, begin, end); return; }
     if (b->kind == PXA_RASTER_SPANS_BLIT) { pxa_raster_blit_execute_range(b, begin, end); return; }
     if (b->kind == PXA_RASTER_SPANS_FRAME) { pxa_raster_frame_execute_range(b, begin, end); return; }
     if (b->kind == PXA_RASTER_SPANS_PROJECTED) { pxa_raster_projected_execute_range(b, begin, end); return; }

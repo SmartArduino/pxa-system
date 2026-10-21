@@ -10,9 +10,12 @@ enum {
     PXA_RASTER_SPANS_BLIT = 3
 };
 
+typedef struct pxa_raster_prepared pxa_raster_prepared_t;
+
 /* All pointers are borrowed for one synchronous execution. The validated
  * batch is Host-private and must never be serialized or retained. */
 typedef struct {
+    const pxa_raster_prepared_t *prepared;
     const uint8_t *records;
     uint8_t *target;
     const uint8_t *texture;
@@ -58,6 +61,16 @@ pxa_status_t pxa_raster_projected_spans_validate(const uint8_t *packet, size_t s
 pxa_status_t pxa_raster_frame_spans_validate(const uint8_t *packet, size_t size,
     uint8_t *memory, size_t memory_size, uint32_t max_spans,
     pxa_raster_spans_t *output);
+/* Optional Host-owned scratch (alignment padding is reserved internally). Preparation preserves the
+ * validation/no-partial-write contract. Insufficient scratch falls back to
+ * ordinary projection; it never rejects an otherwise valid batch. Scratch
+ * and borrowed inputs remain immutable until all execution ranges finish. */
+pxa_status_t pxa_raster_projected_spans_prepare(const uint8_t *packet, size_t size,
+    uint8_t *memory, size_t memory_size, uint32_t max_spans,
+    void *scratch, size_t scratch_bytes, pxa_raster_spans_t *output);
+pxa_status_t pxa_raster_frame_spans_prepare(const uint8_t *packet, size_t size,
+    uint8_t *memory, size_t memory_size, uint32_t max_spans,
+    void *scratch, size_t scratch_bytes, pxa_raster_spans_t *output);
 pxa_status_t pxa_raster_blit_validate(const uint8_t *packet, size_t size,
     uint8_t *memory, size_t memory_size, uint32_t max_spans,
     pxa_raster_spans_t *output);
@@ -65,6 +78,9 @@ pxa_status_t pxa_raster_blit_validate(const uint8_t *packet, size_t size,
  * is unchanged. No allocation, locks, runtime calls or retained pointers. */
 void pxa_raster_spans_execute_range(const pxa_raster_spans_t *batch,
     uint32_t begin, uint32_t end);
+/* Estimated work partition, in target bytes. primary_share is 1..255 out of
+ * 256. Backends still align the boundary for their cache/coherency needs. */
+uint32_t pxa_raster_spans_split_hint(const pxa_raster_spans_t *batch, uint8_t primary_share);
 typedef pxa_status_t (*pxa_raster_spans_execute_fn)(void *context,
     const pxa_raster_spans_t *batch);
 #endif
