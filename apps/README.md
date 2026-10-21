@@ -8,6 +8,10 @@ separate `pxa-apps` repository (clone it to the workspace's `local/pxa-apps`).
 Application-specific validation can be run with `PXA_APP_SOURCE_ROOT` set to
 that checkout.
 
+Internal ABI/IPC and resource regression fixtures live in
+[`simulator/desktop/tests/apps`](../simulator/desktop/tests/apps/README.md),
+separate from product applications.
+
 Application chrome, forms, status text and ordinary controls use semantic UI
 theme tokens. Canvas and raw surfaces are reserved for games, visualization and
 media; their content palette may be application-owned, while surrounding system

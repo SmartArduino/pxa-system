@@ -8,11 +8,10 @@ import json
 from pathlib import Path
 
 
-SEMANTIC_APPS = ("hello", "arcade", "lab", "store", "wasi-lab", "weather")
+SEMANTIC_APPS = ("hello", "arcade", "store", "weather")
 CANVAS_APPS = ("garden-guard", "plane-shooter")
-RASTER_SURFACE_APPS = ("maze-evil", "maze-spike")
-GAME_RENDER_APPS = ("game-render-bench", "jump-jump-3d",
-                    "plane-shooter-raster", "tomb-explorer", "voxel-craft")
+RASTER_SURFACE_APPS = ("maze-evil",)
+GAME_RENDER_APPS = ("jump-jump-3d", "voxel-craft")
 REQUIRED_THEME_TOKENS = (
     "PXA_UI_THEME_BACKGROUND",
     "PXA_UI_THEME_TEXT",

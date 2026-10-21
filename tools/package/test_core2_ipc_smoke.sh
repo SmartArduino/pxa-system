@@ -8,13 +8,16 @@ fi
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 system_dir="$(cd "$script_dir/../.." && pwd)"
-app_root="$(realpath -m -- "${PXA_APP_SOURCE_ROOT:-$system_dir/../../local/pxa-apps}")"
+app_root="$system_dir/simulator/desktop/tests/apps"
 simulator="$(realpath -- "$1")"
-publisher_key="$app_root/.dev-signing/publisher-public.der"
 work_dir="$(mktemp -d "${TMPDIR:-/tmp}/pxa-abi-v1-ipc.XXXXXX")"
 trap 'rm -rf "$work_dir"' EXIT
+signing_key="$work_dir/publisher-private.pem"
+publisher_key="$work_dir/publisher-public.der"
+openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -out "$signing_key"
+openssl pkey -in "$signing_key" -pubout -outform DER -out "$publisher_key"
 
-PXA_SIGNING_KEY="$app_root/.dev-signing/publisher-private.pem" \
+PXA_SIGNING_KEY="$signing_key" \
 PXA_APP_SOURCE_ROOT="$app_root" PXA_PACKAGE_OUTPUT_ROOT="$work_dir" \
   bash "$script_dir/package_app.sh" abi-v1-ipc-smoke simulator \
   "$work_dir/pxa-abi-v1-ipc-smoke" >"$work_dir/build.log" 2>&1 || {

@@ -165,7 +165,7 @@ EOF is an error. Use fresh full-width tokens and the existing Core cancel API;
 cancellation can lose to an already queued result. No extra file handle,
 worker, event loop or hidden map cache is required. Memory and queue pressure
 can fail a read; retry only through a bounded application policy after the
-cause is removed. `resource-scenes` verifies an 8193-byte map, short reads and
+cause is removed. The `resource-scenes` test fixture verifies an 8193-byte map, short reads and
 EOF while texture loading runs, using tokens above UINT32_MAX. Its maximum
 Guest event receive buffer is 4096 bytes, part of its linear memory.
 
@@ -224,8 +224,9 @@ binding through the lower-level SDK, as voxel-craft does.
 Only use release/cancel imports during start/event callbacks. At component
 stop, Core revokes requests, handles and contexts before `pxa_app_stop`; imports
 are forbidden there. See [resource protocol](../../spec/draft/assets.md) for
-wire formats, budgets and lifetime rules. The workspace's `resource-scenes`
-application demonstrates loading, optional prefetch, 100 scene switches and
+wire formats, budgets and lifetime rules. The
+[`resource-scenes` fixture](../../simulator/desktop/tests/apps/resource-scenes/README.md)
+demonstrates loading, optional prefetch, 100 scene switches and
 exit while loading through an actual signed AOT.
 
 ## Application lifecycle

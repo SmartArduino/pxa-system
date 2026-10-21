@@ -171,25 +171,19 @@ if(PXSYS_BUILD_TESTS OR BUILD_TESTING)
         $<TARGET_FILE:pxsys_desktop_http_stream_test>)
     find_program(PXSYS_GUEST_CLANG clang)
     find_program(PXSYS_TEST_TIMEOUT timeout)
-    set(PXSYS_V1_SMOKE_APP_ROOT
-        "${CMAKE_CURRENT_LIST_DIR}/../../../../local/pxa-apps")
-    if(PXSYS_GUEST_CLANG AND PXSYS_TEST_TIMEOUT AND
-       EXISTS "${PXSYS_V1_SMOKE_APP_ROOT}/abi-v1-smoke/package.json" AND
-       EXISTS "${PXSYS_V1_SMOKE_APP_ROOT}/.dev-signing/publisher-public.der")
+    if(PXSYS_GUEST_CLANG AND PXSYS_TEST_TIMEOUT)
         add_test(NAME pxsys_product_core2_pressure
             COMMAND bash
                 "${CMAKE_CURRENT_LIST_DIR}/../../tools/package/test_core2_smoke.sh"
                 $<TARGET_FILE:pxsys_product_simulator>)
         set_tests_properties(pxsys_product_core2_pressure PROPERTIES
             TIMEOUT 300)
-        if(EXISTS "${PXSYS_V1_SMOKE_APP_ROOT}/abi-v1-ipc-smoke/package.json")
-            add_test(NAME pxsys_product_core2_ipc
-                COMMAND bash
-                    "${CMAKE_CURRENT_LIST_DIR}/../../tools/package/test_core2_ipc_smoke.sh"
-                    $<TARGET_FILE:pxsys_product_simulator>)
-            set_tests_properties(pxsys_product_core2_ipc PROPERTIES
-                TIMEOUT 300)
-        endif()
+        add_test(NAME pxsys_product_core2_ipc
+            COMMAND bash
+                "${CMAKE_CURRENT_LIST_DIR}/../../tools/package/test_core2_ipc_smoke.sh"
+                $<TARGET_FILE:pxsys_product_simulator>)
+        set_tests_properties(pxsys_product_core2_ipc PROPERTIES
+            TIMEOUT 300)
     endif()
     add_test(NAME pxsys_desktop_simulator_smoke
              COMMAND pxsys_desktop_simulator --smoke-test)
@@ -320,6 +314,11 @@ foreach(_test ime audio audio_sdk audio_app i18n_app sdk_patterns declarative_ui
             set_tests_properties(pxsys_cpp_service_safety_test PROPERTIES TIMEOUT 420)
         elseif(_test STREQUAL "resource_budget")
             add_test(NAME pxsys_resource_budget_test COMMAND pxsys_resource_budget_test)
+        elseif(_test STREQUAL "resource_app")
+            add_test(NAME pxsys_resource_app_test COMMAND bash
+                "${CMAKE_CURRENT_LIST_DIR}/../../tools/package/test_resource_app.sh"
+                $<TARGET_FILE:pxsys_resource_app_test>)
+            set_tests_properties(pxsys_resource_app_test PROPERTIES TIMEOUT 300)
         elseif(_test STREQUAL "raster")
             add_test(NAME pxsys_raster_test COMMAND pxsys_raster_test)
         endif()

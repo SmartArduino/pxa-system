@@ -31,7 +31,7 @@ cmake --build build/desktop
 ./build/desktop/pxsys_desktop_simulator \
   --profile compact --locale zh-CN --launch pxa-weather
 ./build/desktop/pxsys_desktop_simulator \
-  --profile round --custom-theme --launch pxa-lab \
+  --profile round --custom-theme --launch pxa-weather \
   --duration-ms 500 --screenshot /tmp/pxa-round.png
 ```
 

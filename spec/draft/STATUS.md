@@ -321,8 +321,8 @@ wire path. A worker receives its Work ID, attempt, input and monotonic deadline;
 it reports success, retry or failure. Both Hosts send a deadline stop request,
 allow 500 ms for cooperative completion, then stop and retry within the attempt
 limit. Queued Work uses the per-App `work.v1` store. The simulator and ESP have
-matching resident-Package source integration and the two-Component
-`pxa-lab` includes the end-to-end Background Work module. Calendar scheduling, trusted
+matching resident-Package source integration. Earlier end-to-end Background Work
+validation used the now-retired two-Component `pxa-lab`. Calendar scheduling, trusted
 reboot recovery and concurrent background execution from multiple Packages are
 not claimed. ESP target build, flash and device timing validation remain
 pending explicit approval.

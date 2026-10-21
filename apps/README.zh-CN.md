@@ -7,10 +7,13 @@
 这些应用用于覆盖 Guest SDK、包元数据、
 i18n、语义主题、系统服务、Canvas 和多 Component 运行时。
 
+内部 ABI/IPC 与资源回归夹具位于
+[`simulator/desktop/tests/apps`](../simulator/desktop/tests/apps/README.md)，由系统测试独立构建。
+
 普通页面、表单、状态文本和控件必须使用 PXA UI 的语义主题 token。游戏、
 可视化与媒体可以使用 Canvas 或 raw surface，并维护自己的内容调色板；其
-外围系统栏仍由 PXA System 主题控制。`weather`、`lab`、`arcade` 与
-`wasi-lab` 的普通控件均遵循这一规则。
+外围系统栏仍由 PXA System 主题控制。`weather`、`store` 与 `arcade` 的
+普通控件均遵循这一规则。
 
 打包工具默认从 `apps/pxa` 读取测试应用。构建产品应用时将
 `PXA_APP_SOURCE_ROOT` 指向外部 `pxa-apps` 目录；系统库不依赖任何具体应用。

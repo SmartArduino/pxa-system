@@ -283,7 +283,7 @@ Guest C entry points are `pxa_assets_prefetch_texture/palette`,
 with `pxa_assets_parse_result(..., PXA_ASSETS_PREFETCH, ...)`; it transfers
 no handle. `pxa_cancel(token)` cancels either loading or prefetch. Declare
 Assets 2.0 (current package tooling selects 2.0).
-The `resource-scenes` app exercises STATUS at startup and optional prefetch
+The `resource-scenes` fixture in `simulator/desktop/tests/apps/` exercises STATUS at startup and optional prefetch
 between scenes, and still uses LOAD before binding. Under low budgets it
 accepts optional prefetch failure and retires the old scene before loading.
 `prefetch_failures` is the subset of `load_failures` with no foreground waiter
