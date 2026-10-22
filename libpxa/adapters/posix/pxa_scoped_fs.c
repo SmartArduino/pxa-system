@@ -114,6 +114,44 @@ static pxa_status_t open_below_fd(int parent,const char *path,int directory,
     return PXA_STATUS_OK;
 }
 #endif
+/* A tilde is legal in an LFN. Reject generated 8.3 aliases by requiring
+ * every tilde-bearing segment to exist in the parent's actual enumeration.
+ * This cold check never runs for normal paths or reads through an open file. */
+static int same_fat_name(const char *actual,const char *requested,size_t size) {
+    if(strlen(actual)!=size)return 0;
+    for(size_t i=0;i<size;++i) {
+        unsigned char a=(unsigned char)actual[i],b=(unsigned char)requested[i];
+        if(a>='A' && a<='Z')a+='a'-'A';
+        if(b>='A' && b<='Z')b+='a'-'A';
+        if(a!=b)return 0;
+    }
+    return 1;
+}
+static pxa_status_t literal_fat_path(pxa_scoped_fs_t *fs,
+    const pxa_scoped_fs_mount_t *mount,const char *path) {
+    char *full=fs->native_path;size_t used=strlen(mount->host_path);
+    if(used>=sizeof(fs->native_path))return PXA_STATUS_LIMIT_EXCEEDED;
+    memcpy(full,mount->host_path,used+1);
+    for(const char *part=path;*part;) {
+        size_t size=strcspn(part,"/");
+        if(memchr(part,'~',size)) {
+            DIR *parent=opendir(full);struct dirent *entry;int found=0,error=0;
+            if(!parent)return os_error();
+            for(;;) {
+                errno=0;entry=readdir(parent);
+                if(!entry){error=errno;break;}
+                if(same_fat_name(entry->d_name,part,size)){found=1;break;}
+            }
+            closedir(parent);
+            if(error){errno=error;return os_error();}
+            if(!found)return PXA_STATUS_DENIED;
+        }
+        if(size>=sizeof(fs->native_path)-used-1)return PXA_STATUS_LIMIT_EXCEEDED;
+        full[used++]='/';memcpy(full+used,part,size);used+=size;full[used]=0;
+        part+=size;if(*part)++part;
+    }
+    return PXA_STATUS_OK;
+}
 /* Open without a directory-fd emulation on FAT. Its mount is registered by
  * trusted Host code as a link-free filesystem with no nested mounts. */
 static pxa_status_t open_native(pxa_scoped_fs_t *fs,const pxa_scoped_fs_mount_t *m,const char *path,
@@ -123,9 +161,10 @@ static pxa_status_t open_native(pxa_scoped_fs_t *fs,const pxa_scoped_fs_mount_t 
     *fd=-1; *stream=NULL;
     if (!path_valid(path)) return PXA_STATUS_INVALID_ARGUMENT;
     if (m->native_fat) {
-        /* FAT's generated short aliases could otherwise expose .pxa-* under
-         * a different spelling. This first read-only profile excludes '~'. */
-        if (strchr(path,'~')) return PXA_STATUS_DENIED;
+        if (strchr(path,'~')) {
+            pxa_status_t status=literal_fat_path(fs,m,path);
+            if(status!=PXA_STATUS_OK)return status;
+        }
         n=snprintf(full,sizeof(fs->native_path),"%s%s%s",m->host_path,*path?"/":"",path);
         if (n<0 || (size_t)n>=sizeof(fs->native_path)) return PXA_STATUS_LIMIT_EXCEEDED;
         if (stat(full,info)!=0) return os_error();
@@ -331,7 +370,6 @@ static pxa_status_t read_directory(void *context,void *resource,
         if(length<0 || (size_t)length>=PXA_SCOPED_FS_PATH_BYTES)return PXA_STATUS_LIMIT_EXCEEDED;
         if (m->native_fat) {
             size_t prefix=strlen(m->host_path),bytes=(size_t)length;
-            if (strchr(item->d_name,'~')) continue;
             if (prefix>=sizeof(fs->native_path)-bytes-1) return PXA_STATUS_LIMIT_EXCEEDED;
             /* Reuse owner-serialized workspace, including overlap-safe prefix
              * insertion. Long names must not inflate the ESP task's stack. */

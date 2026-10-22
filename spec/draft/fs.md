@@ -42,7 +42,9 @@ Scoped paths are bounded UTF-8 relative paths. The protocol ceilings are
 1024 B total, without a separate segment-byte ceiling. Smaller filesystem
 limits are reported by QUERY_ROOT. Absolute paths, NUL, dot/parent segments, backslash, colon, trailing
 dot/space and case variants of `.pxa-*` segments are rejected. Native FAT also
-rejects short-alias `~` spellings. A Host may use that backend only on a link-free
+rejects generated short aliases by checking tilde-bearing segments against
+actual directory entries; literal `~` in a long filename remains valid.
+A Host may use that backend only on a link-free
 mount without nested mounts; POSIX instead opens directory descriptors with
 no-follow traversal and refuses non-regular or hard-linked files.
 
