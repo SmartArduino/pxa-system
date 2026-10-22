@@ -338,12 +338,37 @@ static int roots_read_at_enabled(const pxa_fs_roots_backend_t *roots) {
         roots->read_at;
 }
 
+/* Runtime-owned calls serialize access to a handle. Older private backends
+ * expose seek/read rather than pread; retain the cursor even on read errors. */
+static pxa_status_t legacy_read_at(pxa_fs_resource_slot_t *slot,uint64_t offset,
+    uint8_t *out,size_t size,size_t *transferred) {
+    const pxa_fs_backend_t *b=slot->backend;uint64_t saved=0,position=0;
+    pxa_status_t status,restore;
+    if(!b->seek || !b->read)return PXA_STATUS_UNSUPPORTED;
+    if(offset>INT64_MAX)return PXA_STATUS_INVALID_ARGUMENT;
+    status=pxa_status_normalize(b->seek(b->context,slot->backend_resource,0,
+                                     PXA_FS_SEEK_CURRENT,&saved));
+    if(status!=PXA_STATUS_OK)return status;
+    if(saved>INT64_MAX)return PXA_STATUS_INVALID_ARGUMENT;
+    status=pxa_status_normalize(b->seek(b->context,slot->backend_resource,
+                    (int64_t)offset,PXA_FS_SEEK_START,&position));
+    if(status==PXA_STATUS_OK && position!=offset)status=PXA_STATUS_INTERNAL;
+    if(status==PXA_STATUS_OK)status=pxa_status_normalize(b->read(b->context,
+                            slot->backend_resource,out,size,transferred));
+    restore=pxa_status_normalize(b->seek(b->context,slot->backend_resource,
+                      (int64_t)saved,PXA_FS_SEEK_START,&position));
+    if(restore!=PXA_STATUS_OK)return restore;
+    return position==saved?status:PXA_STATUS_INTERNAL;
+}
+
 static int32_t file_read_at(pxa_fs_resource_slot_t *slot,uint32_t operation,
     uint8_t *data,size_t size) {
     const pxa_fs_roots_backend_t *roots=slot->service->roots;
     uint64_t cookie,offset;uint32_t requested;size_t transferred=0;
     pxa_status_t status;
-    if(!roots_read_at_enabled(roots) || slot->backend!=&roots->files)
+    int scoped=roots && slot->backend==&roots->files;
+    if(scoped ? !roots_read_at_enabled(roots) :
+       (slot->backend!=&slot->service->backend || !slot->backend->read || !slot->backend->seek))
         return PXA_STATUS_UNSUPPORTED;
     if(operation==PXA_FS_IO_CANCEL_READ_AT) {
         if(size!=8 || !data || !(cookie=pxa_read_u64(data)))
@@ -360,9 +385,10 @@ static int32_t file_read_at(pxa_fs_resource_slot_t *slot,uint32_t operation,
         return PXA_STATUS_INVALID_ARGUMENT;
     if(cookie<=slot->retired_read_cookie) return PXA_STATUS_CANCELLED;
     slot->retired_read_cookie=cookie;
-    status=pxa_status_normalize(roots->read_at(roots->files.context,
+    status=scoped ? pxa_status_normalize(roots->read_at(roots->files.context,
         slot->backend_resource,offset,data+PXA_FS_READ_AT_HEADER_BYTES,
-        requested,&transferred));
+        requested,&transferred)) : legacy_read_at(slot,offset,
+        data+PXA_FS_READ_AT_HEADER_BYTES,requested,&transferred);
     if(status==PXA_STATUS_WOULD_BLOCK) return PXA_STATUS_INTERNAL;
     if(status!=PXA_STATUS_OK) return status;
     return transferred<=requested ? (int32_t)transferred : PXA_STATUS_INTERNAL;
@@ -1033,7 +1059,8 @@ pxa_status_t pxa_fs_service_register(pxa_fs_service_t *service) {
     operations.major = PXA_FS_SERVICE_MAJOR;
     operations.minor = PXA_FS_SERVICE_MINOR;
     if (service->roots) operations.features |= PXA_FS_FEATURE_SCOPED_ROOTS;
-    if(roots_read_at_enabled(service->roots)) operations.features |= PXA_FS_FEATURE_READ_AT;
+    if(roots_read_at_enabled(service->roots) || (service->backend.read && service->backend.seek))
+        operations.features |= PXA_FS_FEATURE_READ_AT;
     if (service->roots && service->roots->request_access)
         operations.features |= PXA_FS_FEATURE_USER_DIRECTORY_GRANTS;
     if (service->roots && service->roots->struct_size >= offsetof(pxa_fs_roots_backend_t,features)+sizeof(service->roots->features))

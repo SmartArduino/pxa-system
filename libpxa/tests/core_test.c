@@ -93,6 +93,7 @@ typedef struct {
     unsigned opens;
     unsigned closes;
     unsigned mutations;
+    pxa_status_t read_error;
 } test_fs_backend_t;
 
 typedef struct {
@@ -650,6 +651,7 @@ static pxa_status_t fs_read(void *context, void *resource, uint8_t *output,
     size_t available;
     size_t copied;
     assert(file == &backend->file);
+    if(backend->read_error)return backend->read_error;
     available = file->size - file->position;
     copied = capacity < available ? capacity : available;
     memcpy(output, file->bytes + file->position, copied);
@@ -3761,6 +3763,23 @@ static void test_fs_service(void) {
     assert(dispatch_io(test.runtime, component, file_handle, PXA_FS_IO_READ,
                        io, 5) == 5 &&
            memcmp(io, "hello", 5) == 0);
+
+    {
+        uint8_t packet[28]={0};
+        pxa_write_u64(packet,1);pxa_write_u64(packet+8,1);pxa_write_u32(packet+16,3);
+        assert(dispatch_io(test.runtime,component,file_handle,PXA_FS_IO_READ_AT,packet,27)==3);
+        assert(!memcmp(packet+24,"ell",3) && backend.file.position==5);
+        assert(dispatch_io(test.runtime,component,file_handle,PXA_FS_IO_READ_AT,packet,27)==PXA_STATUS_CANCELLED);
+        pxa_write_u64(packet,4);pxa_write_u64(packet+8,2);pxa_write_u32(packet+16,4);
+        assert(dispatch_io(test.runtime,component,file_handle,PXA_FS_IO_READ_AT,packet,28)==1);
+        assert(packet[24]=='o' && backend.file.position==5);
+        pxa_write_u64(packet,2);pxa_write_u64(packet+8,3);backend.read_error=PXA_STATUS_IO_ERROR;
+        assert(dispatch_io(test.runtime,component,file_handle,PXA_FS_IO_READ_AT,packet,28)==PXA_STATUS_IO_ERROR);
+        assert(backend.file.position==5);backend.read_error=0;
+        pxa_write_u64(packet,UINT64_MAX);pxa_write_u64(packet+8,4);
+        assert(dispatch_io(test.runtime,component,file_handle,PXA_FS_IO_READ_AT,packet,28)==PXA_STATUS_INVALID_ARGUMENT);
+        assert(backend.file.position==5);
+    }
 
     command_size = make_fs_path_request(command, sizeof(command), PXA_FS_STAT,
                                         23, "notes/today.txt", NULL);
