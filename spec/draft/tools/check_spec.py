@@ -269,7 +269,7 @@ def validate_specs() -> tuple[int, int]:
         "work": (13, "0.1.0"), "wasi": (14, "0.1.0"),
         "device": (15, "0.2.0"), "surface": (16, "0.2.0"),
         "game-render": (18, "1.3.0"), "log": (19, "0.1.0"),
-        "store-installer": (20, "0.7.0"), "assets": (21, "2.3.0"),
+        "store-installer": (20, "0.8.0"), "assets": (21, "2.3.0"),
         "ime": (22, "0.1.0"),
     }
     core_services = {item["name"]: item for item in core["services"]}
@@ -294,12 +294,12 @@ def validate_specs() -> tuple[int, int]:
 
     package = specs["package"]
     container = specs["container"]
-    require(package.get("protocol_version") == "0.7.0",
+    require(package.get("protocol_version") == "0.8.0",
             "Package manifest protocol version mismatch")
     require(container.get("protocol_version") == "0.1.0",
             "Container protocol version mismatch")
     require(package["manifest"] == {
-        "magic": "PXAM", "major": 0, "minor": 7, "patch": 0,
+        "magic": "PXAM", "major": 0, "minor": 8, "patch": 0,
         "header_size": 12, "max_size": 16384,
     }, "Package manifest constants mismatch")
     require(container["header"]["magic"] == "PXAC" and

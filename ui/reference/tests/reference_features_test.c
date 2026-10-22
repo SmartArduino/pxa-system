@@ -28,6 +28,54 @@ static void test_release(void* context, void* memory) {
 }
 
 #if PXSYS_REFERENCE_UI_BUILTIN_SETTINGS
+static void check_dialog_actions(pxsys_reference_lvgl_t* ui) {
+    const pxsys_theme_snapshot_t saved = ui->theme;
+    lv_obj_t* parent = lv_obj_create(ui->root);
+    lv_style_t board_focus;
+    lv_style_init(&board_focus);
+    lv_style_set_outline_color(&board_focus, lv_color_hex(0xffb74d));
+    lv_style_set_outline_width(&board_focus, 2);
+    for(unsigned scheme = 0; scheme < 2; ++scheme) {
+        for(unsigned palette = 0; palette < PXSYS_THEME_PALETTE_COUNT; ++palette) {
+            pxsys_theme_snapshot_init(&ui->theme, (pxsys_color_scheme_t)scheme);
+            assert(pxsys_theme_snapshot_apply_palette(&ui->theme,
+                (pxsys_theme_palette_t)palette) == PXSYS_STATUS_OK);
+            for(unsigned kind = 0; kind <= PXA_LVGL_ACTION_DANGER; ++kind) {
+                const bool primary = kind == PXA_LVGL_ACTION_PRIMARY;
+                const bool danger = kind == PXA_LVGL_ACTION_DANGER;
+                lv_obj_t* button = make_page_button(ui, parent, "Action",
+                    (pxa_lvgl_action_t)kind, NULL, NULL);
+                lv_obj_t* label = lv_obj_get_child(button, 0);
+                const lv_font_t* font = typography_font(ui, PXSYS_TYPOGRAPHY_LABEL);
+                assert(lv_obj_get_style_text_font(label, 0) == (font ? font : LV_FONT_DEFAULT));
+                assert(lv_obj_get_style_border_width(button, 0) == (!primary && !danger));
+                assert(lv_obj_get_style_radius(button, 0) == ui->theme.base_radius_px * 2);
+                lv_obj_add_style(button, &board_focus, LV_STATE_FOCUSED | LV_STATE_FOCUS_KEY);
+                lv_obj_add_state(button, LV_STATE_FOCUSED | LV_STATE_FOCUS_KEY | LV_STATE_PRESSED);
+                const pxsys_color_token_t pressed = danger ? PXSYS_COLOR_ON_ERROR_CONTAINER :
+                    PXSYS_COLOR_PRIMARY_CONTAINER;
+                const pxsys_color_token_t on_pressed = danger ? PXSYS_COLOR_ERROR_CONTAINER :
+                    PXSYS_COLOR_ON_PRIMARY_CONTAINER;
+                assert(lv_color_eq(lv_obj_get_style_bg_color(button, 0), color_token(ui, pressed)));
+                assert(lv_color_eq(lv_obj_get_style_text_color(label, 0), color_token(ui, on_pressed)));
+                assert(lv_color_eq(lv_obj_get_style_outline_color(button, 0), color_token(ui, on_pressed)));
+                lv_obj_add_state(button, LV_STATE_DISABLED);
+                assert(lv_obj_get_style_outline_width(button, 0) == 0);
+                assert(lv_color_eq(lv_obj_get_style_text_color(label, 0),
+                    color_token(ui, PXSYS_COLOR_TEXT_SECONDARY)));
+                lv_obj_remove_state(button, LV_STATE_DISABLED | LV_STATE_PRESSED);
+                assert(lv_color_eq(lv_obj_get_style_text_color(label, 0), color_token(ui,
+                    primary ? PXSYS_COLOR_ON_ACCENT : danger ? PXSYS_COLOR_ON_ERROR_CONTAINER :
+                    PXSYS_COLOR_TEXT_PRIMARY)));
+                lv_obj_delete(button);
+            }
+        }
+    }
+    lv_style_reset(&board_focus);
+    lv_obj_delete(parent);
+    ui->theme = saved;
+}
+
 static bool test_managed_input(void *context,void *textarea) {
     return textarea == context;
 }
@@ -141,6 +189,9 @@ static void check_features(uint32_t features) {
     ui_config.file_list = empty_file_list;
 #endif
     assert(pxsys_reference_lvgl_create(&ui_config, &ui) == PXSYS_STATUS_OK);
+#if PXSYS_REFERENCE_UI_BUILTIN_SETTINGS
+    if(features == PXSYS_REFERENCE_UI_ALL) check_dialog_actions(ui);
+#endif
     check_role(system, PXSYS_ROLE_HOME, (features & PXSYS_REFERENCE_UI_HOME) != 0);
     check_role(system, PXSYS_ROLE_SETTINGS, (features & PXSYS_REFERENCE_UI_SETTINGS) != 0);
     check_role(system, PXSYS_ROLE_STATUS_BAR, (features & PXSYS_REFERENCE_UI_STATUS_BAR) != 0);
@@ -194,6 +245,12 @@ static void check_features(uint32_t features) {
         assert(ui->file_path[0] == '\0');
         show_page_confirm(ui, "Confirm test");
         assert(ui->confirm_dialog != NULL);
+        lv_obj_t* panel = lv_obj_get_child(ui->confirm_dialog, 0);
+        lv_obj_t* question = lv_obj_get_child(panel, 0);
+        lv_obj_t* actions = lv_obj_get_child(panel, 1);
+        assert(lv_label_get_long_mode(question) == LV_LABEL_LONG_MODE_WRAP);
+        assert((uintptr_t)lv_obj_get_user_data(lv_obj_get_child(actions, 0)) == 0);
+        assert((uintptr_t)lv_obj_get_user_data(lv_obj_get_child(actions, 1)) == 1);
         assert(pxsys_reference_lvgl_key_navigation_scope(ui) == ui->confirm_dialog);
         assert(pxsys_reference_lvgl_back(ui) == PXSYS_STATUS_OK);
         assert(ui->confirm_dialog == NULL && ui->active_page == REFERENCE_PAGE_FILE_MANAGER);

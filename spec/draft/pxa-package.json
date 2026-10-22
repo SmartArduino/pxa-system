@@ -4,7 +4,7 @@
   "manifest": {
     "magic": "PXAM",
     "major": 0,
-    "minor": 7,
+    "minor": 8,
     "patch": 0,
     "header_size": 12,
     "max_size": 16384
@@ -86,6 +86,18 @@
       "id": 11,
       "cardinality": "one",
       "payload": "der-spki"
+    },
+    {
+      "name": "package-kind",
+      "id": 12,
+      "cardinality": "one-since-0.8",
+      "payload": "package-kind-u8"
+    },
+    {
+      "name": "resource-manifest-sha256",
+      "id": 13,
+      "cardinality": "application-zero-or-one",
+      "payload": "bytes32"
     },
     {
       "name": "component",
@@ -368,5 +380,23 @@
       "value": 128
     }
   ],
-  "protocol_version": "0.7.0"
+  "protocol_version": "0.8.0",
+  "package_kinds": [
+    {
+      "name": "application",
+      "id": 1
+    },
+    {
+      "name": "resources",
+      "id": 2
+    }
+  ],
+  "resource_packages": {
+    "since": "0.8.0",
+    "identity": "same publisher lineage root and App ID as the application",
+    "binding": "Application tag 13 is the SHA-256 of the exact signed resource manifest, independent of compression or container signature.",
+    "capabilities": "Resource packages require files and prohibit components, executable artifacts, services, permissions, IPC endpoints and further resource references.",
+    "storage": "PXA/media/<publisher-root>/<app-id>/<resource-manifest-sha256>/package; immutable generations are verified before code references them.",
+    "source_format": "pxa-package-source-0.2 with explicit package_type application or resources; source 0.1 continues to emit manifest 0.7."
+  }
 }

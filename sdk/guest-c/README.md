@@ -66,7 +66,12 @@ transactions.
 `pxa_surface.h`, `pxa_clock.h`, `pxa_ui_wire.h`,
 `pxa_store_installer.h`, `pxa_assets.h` and
 `pxa_game_render.h` provide typed
-builders and completion decoders. Permission also exposes a zero-copy
+builders and completion decoders. Store Installer 0.8 adds a typed capability
+query for signed resource installation, native volume selection and separately
+negotiated resource-cache support. Unsupported older Hosts retain their previous
+catalog baseline. Package requests allow up to 2 GiB minus one byte; actual
+filesystem and signed allocation admission may impose lower limits.
+Permission also exposes a zero-copy
 revocation-event view, valid during the callback. Window exposes typed metrics
 and back-request event helpers. GameRender, Permission acquire and FS open
 return native 64-bit Handles allocated from the Host resource table with a

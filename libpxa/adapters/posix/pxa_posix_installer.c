@@ -26,6 +26,10 @@
 #include "freertos/task.h"
 #include "pxa/esp/pxa_esp_posix_shim.h"
 #include "pxa/esp/pxa_esp_install_space.h"
+#define open(...) pxa_esp_open(__VA_ARGS__)
+#define close(fd) pxa_esp_close(fd)
+#define rename(from,to) pxa_esp_rename(from,to)
+#define rmdir(path) pxa_esp_rmdir(path)
 #define dup pxa_esp_dup
 #define fdopendir pxa_esp_fdopendir
 #define fstat pxa_esp_fstat
@@ -108,6 +112,11 @@ struct pxa_posix_installer {
     void *layout_context;
     pxa_posix_installer_locator_fn resolve_locator;
     pxa_posix_installer_incoming_fn incoming_ready;
+    void *space_context;
+    pxa_posix_installer_space_fn check_space;
+    uint8_t expected_manifest_sha256[32];
+    uint8_t has_expected_manifest;
+    uint8_t expected_package_kind;
     uint8_t *scratch;
     size_t scratch_size;
     pxa_package_limits_t scratch_limits;
@@ -308,6 +317,12 @@ static char *join_path(const char *first, const char *second) {
     output[first_len] = '/';
     memcpy(output + first_len + 1, second, second_len + 1);
     return output;
+}
+
+static char *installer_packages_root(const pxa_posix_installer_t *installer) {
+    if (installer->flags & PXA_POSIX_INSTALLER_FLAG_APP_HOME)
+        return strdup(installer->storage_root);
+    return join_path(installer->storage_root, "packages");
 }
 
 static int stat_same(const struct stat *left, const struct stat *right) {
@@ -1071,6 +1086,14 @@ static pxa_status_t verify_manifest_signature(
     pxa_openssl_trust_t embedded_trust;
     uint16_t index;
     pxa_status_t status;
+    if(installer->expected_package_kind &&
+        manifest->package_kind!=installer->expected_package_kind)return PXA_STATUS_DENIED;
+    if(installer->has_expected_manifest) {
+        uint8_t digest[32];
+        status=sha256_once(manifest->encoded.data,manifest->encoded.size,digest);
+        if(status!=PXA_STATUS_OK)return status;
+        if(memcmp(digest,installer->expected_manifest_sha256,32))return PXA_STATUS_DENIED;
+    }
     status = pxa_package_publisher_lineage_parse(manifest, &lineage);
     if (status != PXA_STATUS_OK) return status;
     if (lineage.link_count == 0) {
@@ -1623,7 +1646,7 @@ static pxa_status_t fill_result_encoded(
         result->root == NULL || strlen(root_path) >= result->root_capacity) {
         return PXA_STATUS_INVALID_ARGUMENT;
     }
-    memcpy(result->encoded, encoded, encoded_size);
+    memmove(result->encoded, encoded, encoded_size);
     status = pxa_package_manifest_measure(
         (pxa_bytes_t){result->encoded, encoded_size}, &installer->limits,
         &required_limits);
@@ -1662,7 +1685,9 @@ static pxa_status_t lock_identity(pxa_posix_installer_t *installer,
     root_fd = open(installer->storage_root,
                    O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
     if (root_fd < 0) goto done;
-    status = open_tree_at(root_fd, "packages", 1, &packages_fd);
+    status = open_tree_at(root_fd,
+        (installer->flags & PXA_POSIX_INSTALLER_FLAG_APP_HOME) ? "" : "packages",
+        1, &packages_fd);
     if (status != PXA_STATUS_OK) goto done;
     if (!identity_storage_name(installer, identity, identity_name,
                                sizeof(identity_name))) {
@@ -1778,9 +1803,11 @@ static pxa_status_t current_parent(pxa_posix_slot_ctx_t *ctx,int create,int *out
     if(!slash){free(path);return PXA_STATUS_DENIED;}
     *slash=0;
     size_t prefix=ctx->installer->storage_root_len;
-    if(strncmp(path,ctx->installer->storage_root,prefix) || path[prefix]!='/') {free(path);return PXA_STATUS_DENIED;}
+    if(strncmp(path,ctx->installer->storage_root,prefix) ||
+       (path[prefix]!='/' && path[prefix]!='\0')) {free(path);return PXA_STATUS_DENIED;}
     int root=open(ctx->installer->storage_root,O_RDONLY|O_DIRECTORY|O_CLOEXEC|O_NOFOLLOW);
-    pxa_status_t status=root<0?PXA_STATUS_INTERNAL:open_tree_at(root,path+prefix+1,create,output);
+    pxa_status_t status=root<0?PXA_STATUS_INTERNAL:open_tree_at(root,
+        path+prefix+(path[prefix]=='/'),create,output);
     if(root>=0)close(root);
     free(path);return status;
 }
@@ -1812,7 +1839,7 @@ static pxa_status_t slot_rename(void *context, pxa_package_slot_t from,
 
 static pxa_status_t slot_barrier(void *context) {
     pxa_posix_slot_ctx_t *ctx = (pxa_posix_slot_ctx_t *)context;
-    char *packages = join_path(ctx->installer->storage_root, "packages");
+    char *packages = installer_packages_root(ctx->installer);
     int fd;
     pxa_status_t status;
     if (packages == NULL) return PXA_STATUS_INTERNAL;
@@ -1860,6 +1887,8 @@ static pxa_status_t recover_locked(pxa_posix_installer_t *installer,
     storage.barrier = slot_barrier;
     status = pxa_slots_recover(&storage);
     if (status != PXA_STATUS_OK) return status;
+    if (installer->flags & PXA_POSIX_INSTALLER_FLAG_RETAIN_PREVIOUS)
+        return slot_barrier((void *)ctx);
     status = slot_remove((void *)ctx, PXA_PACKAGE_SLOT_PREVIOUS);
     if (status != PXA_STATUS_OK) return status;
     status = remove_tree(ctx->session);
@@ -1997,7 +2026,7 @@ static pxa_status_t prepare_incoming(pxa_posix_installer_t *installer,
         strcpy(incoming_relative, relative);
     }
     {
-        char *packages = join_path(installer->storage_root, "packages");
+        char *packages = installer_packages_root(installer);
         int packages_fd = -1;
         if (packages == NULL) {
             status = PXA_STATUS_INTERNAL;
@@ -2161,7 +2190,7 @@ static pxa_status_t prepare_incoming_container(
     memcpy(relative, ".session-", 9);
     strcpy(relative + 9, ctx->identity_name);
     memcpy(relative + 9 + strlen(ctx->identity_name), "/incoming", 10);
-    packages = join_path(installer->storage_root, "packages");
+    packages = installer_packages_root(installer);
     if (packages == NULL) return PXA_STATUS_INTERNAL;
     packages_fd = open(packages,
                        O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
@@ -2363,7 +2392,9 @@ static pxa_status_t resolve_locator(pxa_posix_installer_t *installer,
 
 static char *identity_root_path(pxa_posix_installer_t *installer,
                                 const char *app_id) {
-    char *packages = join_path(installer->storage_root, "packages");
+    if (installer->flags & PXA_POSIX_INSTALLER_FLAG_APP_HOME)
+        return join_path(installer->storage_root, "package");
+    char *packages = installer_packages_root(installer);
     char *root = NULL;
     if (packages != NULL) {
         root = join_path(packages, app_id);
@@ -2374,7 +2405,7 @@ static char *identity_root_path(pxa_posix_installer_t *installer,
 
 static char *session_root_path(pxa_posix_installer_t *installer,
                                const char *app_id) {
-    char *packages = join_path(installer->storage_root, "packages");
+    char *packages = installer_packages_root(installer);
     char name[PXA_POSIX_INSTALLER_MAX_IDENTITY_NAME + 10];
     char *session = NULL;
     if (strlen(app_id) > PXA_POSIX_INSTALLER_MAX_IDENTITY_NAME) return NULL;
@@ -2519,7 +2550,8 @@ static pxa_status_t identity_owner_check_or_claim(
     } else {
         /* Pre-owner-format retained data has no provable publisher. Never
          * let a newly trusted publisher claim it by reusing the App ID. */
-        data_root = join_path(installer->storage_root, "data");
+        data_root = join_path(installer->storage_root,
+            (installer->flags & PXA_POSIX_INSTALLER_FLAG_APP_HOME) ? "private" : "data");
         if (data_root == NULL) {
             status = PXA_STATUS_INTERNAL;
             goto done;
@@ -2529,7 +2561,8 @@ static pxa_status_t identity_owner_check_or_claim(
             {ctx->publisher_key_id,32},{(const uint8_t *)ctx->app_id,ctx->app_id_size}};
         status=resolve_locator(installer,&identity,PXA_POSIX_INSTALLER_PATH_DATA,locator);
         if(status!=PXA_STATUS_OK)goto done;
-        data_path = join_path(data_root, locator);
+        data_path = (installer->flags & PXA_POSIX_INSTALLER_FLAG_APP_HOME)
+            ? strdup(data_root) : join_path(data_root, locator);
         if (data_path == NULL) {
             status = PXA_STATUS_INTERNAL;
             goto done;
@@ -2586,6 +2619,11 @@ static int config_valid(const pxa_posix_installer_config_t *config) {
         (config->trust.key_count != 0 && config->trust.keys == NULL)) {
         return 0;
     }
+    if ((config->flags & PXA_POSIX_INSTALLER_FLAG_APP_HOME) &&
+        config->struct_size >= offsetof(pxa_posix_installer_config_t, space_context) &&
+        (config->resolve_locator || config->incoming_ready)) return 0;
+    if ((config->flags & PXA_POSIX_INSTALLER_FLAG_RETAIN_PREVIOUS) &&
+        !(config->flags & PXA_POSIX_INSTALLER_FLAG_APP_HOME)) return 0;
     return 1;
 }
 
@@ -2636,10 +2674,22 @@ pxa_status_t pxa_posix_installer_init(void *workspace, size_t workspace_size,
         installer->has_faults = 1;
     }
     installer->flags = config->flags;
-    if(config->struct_size>=sizeof(*config)) {
+    if(config->struct_size>=offsetof(pxa_posix_installer_config_t, space_context)) {
         installer->layout_context=config->layout_context;
         installer->resolve_locator=config->resolve_locator;
         installer->incoming_ready=config->incoming_ready;
+    }
+    if (config->struct_size >= offsetof(pxa_posix_installer_config_t,expected_manifest_sha256)) {
+        installer->space_context = config->space_context;
+        installer->check_space = config->check_space;
+    }
+    if(config->struct_size>=sizeof(*config)) {
+        if(config->expected_package_kind>PXA_PACKAGE_KIND_RESOURCES)return PXA_STATUS_INVALID_ARGUMENT;
+        installer->expected_package_kind=config->expected_package_kind;
+        if(config->expected_manifest_sha256) {
+            memcpy(installer->expected_manifest_sha256,config->expected_manifest_sha256,32);
+            installer->has_expected_manifest=1;
+        }
     }
     installer->verify_context = config->verify_context != NULL
                                     ? config->verify_context
@@ -2758,12 +2808,17 @@ static pxa_status_t validate_lineage_transition(
 
 static pxa_status_t installer_check_space(
     pxa_posix_installer_t *installer, int source_fd, int source_is_container,
-    const uint8_t *manifest_bytes, size_t manifest_size) {
-#ifdef ESP_PLATFORM
+    const uint8_t *manifest_bytes, size_t manifest_size, uint8_t already_staged) {
     uint8_t *directory_manifest = NULL;
     pxa_package_manifest_t *manifest = NULL;
-    size_t total = 0, used = 0;
     pxa_status_t status = PXA_STATUS_OK;
+#ifndef ESP_PLATFORM
+    if (!installer->check_space) return PXA_STATUS_OK;
+#else
+    if (!installer->check_space &&
+        (installer->flags & PXA_POSIX_INSTALLER_FLAG_APP_HOME))
+        return PXA_STATUS_UNSUPPORTED;
+#endif
     if (!source_is_container) {
         status = read_alloc_bounded(source_fd, "manifest.pxm", SIZE_MAX,
                                     &directory_manifest, &manifest_size);
@@ -2777,26 +2832,23 @@ static pxa_status_t installer_check_space(
             installer->scratch, installer->scratch_size,
             (pxa_bytes_t){manifest_bytes, manifest_size},
             &installer->scratch_limits, &manifest);
-    if (status == PXA_STATUS_OK) {
-        uint64_t needed = pxa_esp_install_space_required(manifest, manifest_size);
+    if (status == PXA_STATUS_OK && installer->check_space)
+        status = installer->check_space(installer->space_context,
+            installer->storage_root, manifest, manifest_size, already_staged);
+#ifdef ESP_PLATFORM
+    else if (status == PXA_STATUS_OK) {
+        size_t total = 0, used = 0;
+        uint64_t needed = already_staged ? UINT64_C(128) * 1024 :
+            pxa_esp_install_space_required(manifest, manifest_size);
         if (esp_littlefs_info(CONFIG_PXA_STORAGE_PARTITION_LABEL,
-                             &total, &used) != ESP_OK) {
+                             &total, &used) != ESP_OK)
             status = PXA_STATUS_UNAVAILABLE;
-        } else if (!pxa_esp_install_space_available(needed, total, used)) {
-            ESP_LOGW(PXA_POSIX_INSTALLER_TAG,
-                     "Insufficient install space: needed=%llu free=%u",
-                     (unsigned long long)needed,
-                     (unsigned)(used <= total ? total - used : 0));
+        else if (!pxa_esp_install_space_available(needed, total, used))
             status = PXA_STATUS_RESOURCE_LIMIT;
-        }
     }
+#endif
     free(directory_manifest);
     return status;
-#else
-    (void)installer; (void)source_fd; (void)source_is_container;
-    (void)manifest_bytes; (void)manifest_size;
-    return PXA_STATUS_OK;
-#endif
 }
 
 /* Only an inbox leaf can be consumed. Open both parents without following
@@ -3034,26 +3086,12 @@ static pxa_status_t install_source(
      * Admit the complete decoded transaction before creating/writing incoming.
      * Keep current package and private data intact on a rejected update. */
     stage = "check-install-space";
-    if (adopt_name == NULL) {
-        status = installer_check_space(installer, source_fd, source_is_container,
-                                       source_manifest, source_manifest_size);
-    } else {
-#ifdef ESP_PLATFORM
-        size_t total = 0, used = 0;
-        /* Payload is already on flash. Retain the same metadata/compaction
-         * reserve as copying installs, without admitting a second payload. */
-        status = esp_littlefs_info(CONFIG_PXA_STORAGE_PARTITION_LABEL,
-                                  &total, &used) == ESP_OK &&
-                 pxa_esp_install_space_available(UINT64_C(128) * 1024, total, used)
-                     ? PXA_STATUS_OK : PXA_STATUS_RESOURCE_LIMIT;
-#else
-        status = PXA_STATUS_OK;
-#endif
-    }
+    status = installer_check_space(installer, source_fd, source_is_container,
+        source_manifest, source_manifest_size, adopt_name != NULL);
     if (status != PXA_STATUS_OK) goto done;
 
     {
-        char *packages = join_path(installer->storage_root, "packages");
+        char *packages = installer_packages_root(installer);
         char session_name[PXA_POSIX_INSTALLER_MAX_IDENTITY_NAME + 10];
         int packages_fd = -1;
         if (packages == NULL) {
@@ -3107,10 +3145,12 @@ static pxa_status_t install_source(
         &storage, installer->has_faults ? &installer->faults : NULL);
     if (status != PXA_STATUS_OK) goto done;
     stage = "remove-previous";
-    status = slot_remove(&ctx, PXA_PACKAGE_SLOT_PREVIOUS);
+    status = (installer->flags & PXA_POSIX_INSTALLER_FLAG_RETAIN_PREVIOUS)
+        ? PXA_STATUS_OK : slot_remove(&ctx, PXA_PACKAGE_SLOT_PREVIOUS);
     if (status == PXA_STATUS_OK) {
         stage = "remove-session";
-        status = remove_tree(ctx.session);
+        if (!(installer->flags & PXA_POSIX_INSTALLER_FLAG_RETAIN_PREVIOUS))
+            status = remove_tree(ctx.session);
     }
     if (status == PXA_STATUS_OK) {
         stage = "final-barrier";
@@ -3398,6 +3438,46 @@ pxa_status_t pxa_posix_installer_read_signed_manifest(
     return read_source(installer, source, result, 0);
 }
 
+pxa_status_t pxa_posix_installer_read_install_metadata(pxa_posix_installer_t *installer,
+    pxa_bytes_t prefix,uint64_t container_bytes,pxa_posix_installer_result_t *result,
+    pxa_container_header_t *output) {
+    pxa_container_header_t header;pxa_container_signature_t container_signature;
+    pxa_package_signature_t signature;uint8_t signature_bytes[PXA_CONTAINER_SIGNATURE_ENVELOPE_BYTES],signer[32];
+    uint64_t unpacked=0;pxa_status_t status;
+    if(result && result->struct_size>=sizeof(*result) && result->manifest)*result->manifest=NULL;
+    if(output)memset(output,0,sizeof(*output));
+    if(!installer || installer->magic!=PXA_POSIX_INSTALLER_MAGIC || !output || !result || result->struct_size<sizeof(*result) ||
+        !prefix.data || prefix.size<PXA_CONTAINER_HEADER_BYTES)return PXA_STATUS_INVALID_ARGUMENT;
+    if(result->root && result->root_capacity)result->root[0]=0;
+    status=pxa_container_header_parse((pxa_bytes_t){prefix.data,PXA_CONTAINER_HEADER_BYTES},container_bytes,&header);
+    if(status!=PXA_STATUS_OK)return status;
+    if(header.payload_offset!=prefix.size ||
+        header.file_count>installer->limits.max_files)return PXA_STATUS_DENIED;
+    if(header.manifest_size>result->encoded_capacity)return PXA_STATUS_RESOURCE_LIMIT;
+    status=pxa_container_signature_parse((pxa_bytes_t){prefix.data+header.container_signature_offset,
+        header.container_signature_size},&container_signature);
+    if(status!=PXA_STATUS_OK)return status;
+    memcpy(signer,container_signature.publisher_key_id,32);
+    memcpy(signature_bytes,prefix.data+header.package_signature_offset,sizeof(signature_bytes));
+    status=pxa_package_signature_parse((pxa_bytes_t){signature_bytes,sizeof(signature_bytes)},&signature);
+    if(status==PXA_STATUS_OK)status=fill_result_encoded(installer,prefix.data+header.manifest_offset,
+        header.manifest_size,"",result);
+    if(status!=PXA_STATUS_OK)return status;
+    const pxa_package_manifest_t *manifest=*result->manifest;
+    if(manifest->file_count!=header.file_count || memcmp(manifest->publisher_key_id,signer,32)) {
+        status=PXA_STATUS_DENIED;goto failed;
+    }
+    for(uint16_t i=0;i<manifest->file_count;++i) {
+        if(unpacked>UINT64_MAX-manifest->files[i].size) {status=PXA_STATUS_DENIED;goto failed;}
+        unpacked+=manifest->files[i].size;
+    }
+    if(unpacked!=header.unpacked_size) {status=PXA_STATUS_DENIED;goto failed;}
+    status=verify_manifest_signature(installer,manifest,&signature,NULL);
+    if(status==PXA_STATUS_OK) {*output=header;return status;}
+failed:
+    *result->manifest=NULL;return status;
+}
+
 pxa_status_t pxa_posix_installer_load_directory(pxa_posix_installer_t *installer,
     const char *directory, pxa_posix_installer_result_t *result) {
     if (!installer || installer->magic != PXA_POSIX_INSTALLER_MAGIC || !directory)
@@ -3516,7 +3596,45 @@ pxa_status_t pxa_posix_installer_recover(
         goto done;
     }
     status = recover_locked(installer, &ctx);
-    if (status == PXA_STATUS_OK) status = slot_remove(&ctx, PXA_PACKAGE_SLOT_PREVIOUS);
+    if (!(installer->flags & PXA_POSIX_INSTALLER_FLAG_RETAIN_PREVIOUS)) {
+        if (status == PXA_STATUS_OK) status = slot_remove(&ctx, PXA_PACKAGE_SLOT_PREVIOUS);
+        if (status == PXA_STATUS_OK) status = remove_tree(ctx.session);
+    }
+    if (status == PXA_STATUS_OK) status = slot_barrier(&ctx);
+done:
+    if (lock_fd >= 0) close(lock_fd);
+    free_ctx(&ctx);
+    return status;
+}
+
+pxa_status_t pxa_posix_installer_finish(pxa_posix_installer_t *installer,
+    const pxa_posix_installer_identity_t *identity, uint8_t rollback) {
+    pxa_posix_slot_ctx_t ctx;
+    pxa_slot_state_t previous;
+    int lock_fd = -1;
+    pxa_status_t status;
+    memset(&ctx, 0, sizeof(ctx));
+    if (!installer || installer->magic != PXA_POSIX_INSTALLER_MAGIC || rollback > 1 ||
+        !(installer->flags & PXA_POSIX_INSTALLER_FLAG_RETAIN_PREVIOUS))
+        return PXA_STATUS_INVALID_ARGUMENT;
+    status = lock_identity(installer, identity, &lock_fd);
+    if (status != PXA_STATUS_OK) return status;
+    if (!setup_ctx(installer, identity, &ctx)) { status = PXA_STATUS_INTERNAL; goto done; }
+    if (rollback) {
+        status = slot_inspect(&ctx, PXA_PACKAGE_SLOT_PREVIOUS, &previous);
+        if (status != PXA_STATUS_OK) goto done;
+        if (previous == PXA_SLOT_CORRUPT) { status = PXA_STATUS_DENIED; goto done; }
+        status = slot_remove(&ctx, PXA_PACKAGE_SLOT_CURRENT);
+        if (status != PXA_STATUS_OK) goto done;
+        if (previous == PXA_SLOT_VERIFIED) {
+            status = slot_rename(&ctx, PXA_PACKAGE_SLOT_PREVIOUS, PXA_PACKAGE_SLOT_CURRENT);
+            if (status != PXA_STATUS_OK) goto done;
+        }
+        status = slot_barrier(&ctx);
+        if (status != PXA_STATUS_OK) goto done;
+    }
+    status = slot_remove(&ctx, PXA_PACKAGE_SLOT_PREVIOUS);
+    if (status == PXA_STATUS_OK) status = slot_remove(&ctx, PXA_PACKAGE_SLOT_INCOMING);
     if (status == PXA_STATUS_OK) status = remove_tree(ctx.session);
     if (status == PXA_STATUS_OK) status = slot_barrier(&ctx);
 done:
@@ -3531,7 +3649,7 @@ pxa_status_t pxa_posix_installer_recover_pending(pxa_posix_installer_t *installe
     pxa_status_t first_error = PXA_STATUS_OK;
     if (installer == NULL || installer->magic != PXA_POSIX_INSTALLER_MAGIC)
         return PXA_STATUS_INVALID_ARGUMENT;
-    packages = join_path(installer->storage_root, "packages");
+    packages = installer_packages_root(installer);
     if (packages == NULL) return PXA_STATUS_RESOURCE_LIMIT;
     for (;;) {
         DIR *directory = opendir(packages);
@@ -3613,6 +3731,21 @@ pxa_status_t pxa_posix_installer_load_current(
     if (root_fd < 0) {
         status = PXA_STATUS_NOT_FOUND;
         goto done;
+    }
+    if (installer->flags & PXA_POSIX_INSTALLER_FLAG_APP_HOME) {
+        uint8_t key_id[PXA_PACKAGE_DIGEST_BYTES];
+        char app_id[PXA_POSIX_INSTALLER_MAX_APP_ID + 1];
+        size_t app_id_size = 0;
+        /* An externally writable volume is not a trust boundary. Authenticate
+         * code on every activation; bulk media stays outside the code package. */
+        status = verify_opened_directory(installer, root_fd, 1, key_id,
+            app_id, &app_id_size);
+        if (status != PXA_STATUS_OK || app_id_size != ctx.app_id_size ||
+            memcmp(key_id, ctx.publisher_key_id, sizeof(key_id)) ||
+            memcmp(app_id, ctx.app_id, app_id_size)) {
+            status = PXA_STATUS_DENIED;
+            goto done;
+        }
     }
     /* The committed installation is the trust boundary. Do not reread or
      * rehash its assets at activation. Keep only the requested identity check. */

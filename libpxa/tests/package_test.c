@@ -858,7 +858,71 @@ static void test_main_loop_gate(void) {
     assert(pxa_package_requirements_validate(&manifest, &component, &host) == PXA_STATUS_OK);
 }
 
+/* Data-only packages share the signed inventory format without inventing a
+ * dummy executable. Transform the existing complete vector, retaining its
+ * file/link checks and adding explicit 0.8 kind/reference fields. */
+typedef struct { uint8_t data[8192];size_t size; } kind_fixture_t;
+static void kind_record(kind_fixture_t *out,uint16_t tag,pxa_bytes_t value) {
+    assert(value.size<=UINT16_MAX && out->size+4+value.size<=sizeof(out->data));
+    pxa_write_u16(out->data+out->size,tag);pxa_write_u16(out->data+out->size+2,(uint16_t)value.size);
+    memcpy(out->data+out->size+4,value.data,value.size);out->size+=4+value.size;
+}
+static void kind_fixture(kind_fixture_t *out,uint8_t kind,int components,int reference,int permissions,int duplicate) {
+    size_t size;uint8_t *original=load_golden_hex("manifest_hex",&size);
+    pxa_record_iterator_t it;pxa_record_view_t record,scalars[12]={{0}};
+    pxa_record_iterator_init(&it,(pxa_bytes_t){original+12,size-12});
+    while(pxa_record_next(&it,&record)==PXA_STATUS_OK)if(record.tag<=11)scalars[record.tag]=record;
+    memset(out,0,sizeof(*out));memcpy(out->data,"PXAM",4);pxa_write_u16(out->data+6,8);out->size=12;
+    uint8_t sdk[4]={2,0,0,0},sequence[8]={1},spki[1]={0x30},hash[32];memset(hash,0x5a,sizeof(hash));
+    for(unsigned i=1;i<=11;++i) {
+        pxa_bytes_t value=scalars[i].payload;
+        if(i==7 || i==8)value=(pxa_bytes_t){sdk,sizeof(sdk)};
+        if(i==9 && !value.size)value=(pxa_bytes_t){sequence,sizeof(sequence)};
+        if(i==11 && !value.size)value=(pxa_bytes_t){spki,sizeof(spki)};
+        if(value.data)kind_record(out,(uint16_t)i,value);
+    }
+    if(kind)kind_record(out,12,(pxa_bytes_t){&kind,1});
+    if(duplicate)kind_record(out,12,(pxa_bytes_t){&kind,1});
+    if(reference)kind_record(out,13,(pxa_bytes_t){hash,sizeof(hash)});
+    pxa_record_iterator_init(&it,(pxa_bytes_t){original+12,size-12});
+    while(pxa_record_next(&it,&record)==PXA_STATUS_OK) {
+        if(record.tag==16 && components) {
+            kind_fixture_t component={0};pxa_record_iterator_t nested;pxa_record_view_t item;uint8_t flags=0;int inserted=0;
+            pxa_record_iterator_init(&nested,record.payload);
+            while(pxa_record_next(&nested,&item)==PXA_STATUS_OK) {
+                if(item.tag>3 && !inserted) {kind_record(&component,3,(pxa_bytes_t){&flags,1});inserted=1;}
+                if(item.tag==3)inserted=1;
+                kind_record(&component,item.raw_tag,item.payload);
+            }
+            kind_record(out,16,(pxa_bytes_t){component.data,component.size});
+        } else if(record.tag==17 || (record.tag==18 && permissions))kind_record(out,record.raw_tag,record.payload);
+    }
+    pxa_write_u32(out->data+8,(uint32_t)(out->size-12));free(original);
+}
+static void test_resource_package_kind(void) {
+    kind_fixture_t bytes;pxa_package_limits_t limits,measured;pxa_package_manifest_t *manifest=NULL;
+    pxa_package_limits_init(&limits);
+    kind_fixture(&bytes,PXA_PACKAGE_KIND_RESOURCES,0,0,0,0);
+    assert(pxa_package_manifest_measure((pxa_bytes_t){bytes.data,bytes.size},&limits,&measured)==PXA_STATUS_OK);
+    size_t count=pxa_package_manifest_workspace_size(&measured);void *workspace=malloc(count);assert(workspace);
+    assert(pxa_package_manifest_parse(workspace,count,(pxa_bytes_t){bytes.data,bytes.size},&measured,&manifest)==PXA_STATUS_OK);
+    assert(manifest->package_kind==PXA_PACKAGE_KIND_RESOURCES && !manifest->component_count && !manifest->artifact_count && manifest->file_count==5);
+    free(workspace);
+    const uint8_t kinds[]={PXA_PACKAGE_KIND_APPLICATION,PXA_PACKAGE_KIND_RESOURCES,0,3,PXA_PACKAGE_KIND_RESOURCES,PXA_PACKAGE_KIND_RESOURCES,PXA_PACKAGE_KIND_RESOURCES};
+    const int components[]={1,1,0,0,0,0,0},reference[]={1,0,0,0,1,0,0},permissions[]={1,0,0,0,0,1,0},duplicate[]={0,0,0,0,0,0,1};
+    for(size_t i=0;i<sizeof(kinds);++i) {
+        kind_fixture(&bytes,kinds[i],components[i],reference[i],permissions[i],duplicate[i]);
+        assert(pxa_package_manifest_measure((pxa_bytes_t){bytes.data,bytes.size},&limits,&measured)==PXA_STATUS_OK);
+        count=pxa_package_manifest_workspace_size(&measured);workspace=malloc(count);assert(workspace);
+        pxa_status_t status=pxa_package_manifest_parse(workspace,count,(pxa_bytes_t){bytes.data,bytes.size},&measured,&manifest);
+        if(i==0) {assert(status==PXA_STATUS_OK && manifest->package_kind==PXA_PACKAGE_KIND_APPLICATION && manifest->resource_manifest_sha256 && manifest->resource_manifest_sha256[0]==0x5a);}
+        else assert(status!=PXA_STATUS_OK);
+        free(workspace);
+    }
+}
+
 int main(void) {
+    test_resource_package_kind();
     test_main_loop_gate();
     test_core_2_gate();
     test_recovery_states();

@@ -1,6 +1,7 @@
 #include "pxsys/reference_lvgl.h"
 #include "pxsys/reference_ime.h"
 #include "pxsys/lvgl_flags.h"
+#include "pxa/lvgl/pxa_lvgl_dialog_style.h"
 #include "src/indev/lv_indev_scroll.h"
 #include "src/misc/cache/instance/lv_image_cache.h"
 
@@ -186,9 +187,14 @@ static const pxsys_resource_entry_t reference_en_resources[] = {
     RESOURCE_ENTRY("settings.apps.system", "System app"),
     RESOURCE_ENTRY("settings.apps.user", "User app"),
     RESOURCE_ENTRY("settings.apps.disabled", "Disabled"),
+    RESOURCE_ENTRY("settings.apps.archived", "Archived"),
     RESOURCE_ENTRY("settings.apps.enable", "Enable"),
     RESOURCE_ENTRY("settings.apps.disable", "Disable"),
     RESOURCE_ENTRY("settings.apps.clear", "Clear data"),
+    RESOURCE_ENTRY("settings.apps.move", "Move app and data"),
+    RESOURCE_ENTRY("settings.apps.move_archive", "Move saved data"),
+    RESOURCE_ENTRY("settings.apps.upgrade_storage", "Upgrade storage layout"),
+    RESOURCE_ENTRY("settings.apps.move_resources", "Move game resources"),
     RESOURCE_ENTRY("settings.apps.uninstall", "Uninstall"),
     RESOURCE_ENTRY("settings.apps.failed", "App operation failed"),
     RESOURCE_ENTRY("settings.apps.close", "Close"),
@@ -354,9 +360,14 @@ static const pxsys_resource_entry_t reference_zh_resources[] = {
     RESOURCE_ENTRY("settings.apps.system", "系统应用"),
     RESOURCE_ENTRY("settings.apps.user", "用户应用"),
     RESOURCE_ENTRY("settings.apps.disabled", "已停用"),
+    RESOURCE_ENTRY("settings.apps.archived", "已归档"),
     RESOURCE_ENTRY("settings.apps.enable", "启用"),
     RESOURCE_ENTRY("settings.apps.disable", "停用"),
     RESOURCE_ENTRY("settings.apps.clear", "清除数据"),
+    RESOURCE_ENTRY("settings.apps.move", "移动应用与数据"),
+    RESOURCE_ENTRY("settings.apps.move_archive", "移动归档数据"),
+    RESOURCE_ENTRY("settings.apps.upgrade_storage", "升级存储布局"),
+    RESOURCE_ENTRY("settings.apps.move_resources", "移动游戏资源"),
     RESOURCE_ENTRY("settings.apps.uninstall", "卸载"),
     RESOURCE_ENTRY("settings.apps.failed", "应用操作失败，请重试"),
     RESOURCE_ENTRY("settings.apps.close", "关闭"),
@@ -678,6 +689,7 @@ struct pxsys_reference_lvgl {
     void* file_manager_context;
     pxsys_reference_lvgl_file_list_fn file_list;
     pxsys_reference_lvgl_file_action_fn file_action;
+    bool (*file_install)(void *context, const char *path);
     pxsys_reference_lvgl_file_size_fn file_size;
     pxsys_reference_idle_policy_t idle_policy;
     void* idle_context;
@@ -3000,12 +3012,6 @@ static lv_obj_t* make_launcher_tile(pxsys_reference_lvgl_t* ui,
     marker = lv_obj_create(tile);
     style_plain(marker);
     lv_obj_set_size(marker, icon_size, icon_size);
-    lv_obj_set_style_radius(marker, icon_size / 4, 0);
-    lv_obj_set_style_bg_color(marker, color_token(ui, icon_token), 0);
-    lv_obj_set_style_bg_opa(marker, LV_OPA_COVER, 0);
-    lv_obj_set_style_shadow_width(marker, ui->display.width <= 320 ? 0 : 8, 0);
-    lv_obj_set_style_shadow_opa(marker, LV_OPA_20, 0);
-    lv_obj_set_style_shadow_offset_y(marker, 3, 0);
     if (item != NULL && item->icon.source != NULL) {
         lv_obj_t* image = lv_image_create(marker);
         lv_obj_set_size(image, LV_PCT(100), LV_PCT(100));
@@ -3014,6 +3020,13 @@ static lv_obj_t* make_launcher_tile(pxsys_reference_lvgl_t* ui,
         lv_obj_center(image);
     } else {
         const char* app_id = item != NULL ? item->app_id : "";
+        /* Only fallback symbols need a launcher-provided icon background. */
+        lv_obj_set_style_radius(marker, icon_size / 4, 0);
+        lv_obj_set_style_bg_color(marker, color_token(ui, icon_token), 0);
+        lv_obj_set_style_bg_opa(marker, LV_OPA_COVER, 0);
+        lv_obj_set_style_shadow_width(marker, ui->display.width <= 320 ? 0 : 8, 0);
+        lv_obj_set_style_shadow_opa(marker, LV_OPA_20, 0);
+        lv_obj_set_style_shadow_offset_y(marker, 3, 0);
         if (strstr(app_id, "ai-chat") != NULL) symbol = LV_SYMBOL_AUDIO;
         else if (strstr(app_id, "camera") != NULL) symbol = LV_SYMBOL_IMAGE;
         else if (strstr(app_id, "weather") != NULL) symbol = LV_SYMBOL_TINT;
@@ -3715,6 +3728,8 @@ static void input_method_preference(pxsys_reference_lvgl_t *ui,lv_obj_t *list,
     lv_obj_set_width(dropdown,LV_PCT(100));
     lv_obj_set_style_text_font(dropdown,typography_font(ui,PXSYS_TYPOGRAPHY_BODY),0);
     lv_obj_set_style_bg_color(dropdown,color_token(ui,PXSYS_COLOR_SURFACE_CONTAINER_HIGHEST),0);
+    lv_obj_set_style_radius(dropdown,ui->theme.base_radius_px*2u,0);
+    lv_obj_set_style_shadow_width(dropdown,0,0);
     lv_obj_set_style_text_color(dropdown,color_token(ui,PXSYS_COLOR_TEXT_PRIMARY),0);
     lv_obj_set_style_border_width(dropdown,1,0);
     lv_obj_set_style_border_color(dropdown,color_token(ui,PXSYS_COLOR_OUTLINE_VARIANT),0);
@@ -3726,6 +3741,8 @@ static void input_method_preference(pxsys_reference_lvgl_t *ui,lv_obj_t *list,
     lv_obj_set_style_text_font(popup,typography_font(ui,PXSYS_TYPOGRAPHY_BODY),0);
     lv_obj_set_style_text_color(popup,color_token(ui,PXSYS_COLOR_TEXT_PRIMARY),0);
     lv_obj_set_style_bg_color(popup,color_token(ui,PXSYS_COLOR_SURFACE),0);
+    lv_obj_set_style_radius(popup,ui->theme.base_radius_px*2u,0);
+    lv_obj_set_style_shadow_width(popup,0,0);
     lv_obj_set_style_border_width(popup,1,0);
     lv_obj_set_style_border_color(popup,color_token(ui,PXSYS_COLOR_OUTLINE_VARIANT),0);
     /* LVGL's selected-row defaults include white. Theme both the resting
@@ -5741,22 +5758,39 @@ static void page_content_init(pxsys_reference_lvgl_t* ui,
     lv_obj_set_scrollbar_mode(ui->content, LV_SCROLLBAR_MODE_AUTO);
 }
 
+static pxa_lvgl_dialog_style_t dialog_style(const pxsys_reference_lvgl_t* ui) {
+    return (pxa_lvgl_dialog_style_t){
+        .surface = color_token(ui, PXSYS_COLOR_SURFACE),
+        .container = color_token(ui, PXSYS_COLOR_SURFACE_CONTAINER),
+        .panel = color_token(ui, PXSYS_COLOR_SURFACE_CONTAINER_HIGH),
+        .text = color_token(ui, PXSYS_COLOR_TEXT_PRIMARY),
+        .muted = color_token(ui, PXSYS_COLOR_TEXT_SECONDARY),
+        .outline = color_token(ui, PXSYS_COLOR_OUTLINE_VARIANT),
+        .primary = color_token(ui, PXSYS_COLOR_ACCENT),
+        .on_primary = color_token(ui, PXSYS_COLOR_ON_ACCENT),
+        .primary_container = color_token(ui, PXSYS_COLOR_PRIMARY_CONTAINER),
+        .on_primary_container = color_token(ui, PXSYS_COLOR_ON_PRIMARY_CONTAINER),
+        .error_container = color_token(ui, PXSYS_COLOR_ERROR_CONTAINER),
+        .on_error_container = color_token(ui, PXSYS_COLOR_ON_ERROR_CONTAINER),
+        .spacing = ui->theme.base_spacing_px,
+        .radius = ui->theme.base_radius_px,
+        .label_font = typography_font(ui, PXSYS_TYPOGRAPHY_LABEL),
+    };
+}
+
 static lv_obj_t* make_page_button(pxsys_reference_lvgl_t* ui, lv_obj_t* parent,
-                                  const char* text,
-                                  pxsys_color_token_t background,
-                                  pxsys_color_token_t foreground,
+                                  const char* text, pxa_lvgl_action_t action,
                                   lv_event_cb_t clicked, void* user_data) {
+    const pxa_lvgl_dialog_style_t style = dialog_style(ui);
     lv_obj_t* button = lv_button_create(parent);
-    lv_obj_t* label;
     lv_obj_set_width(button, LV_PCT(100));
     lv_obj_set_height(button, ui_px(ui, 42));
-    lv_obj_set_style_radius(button, ui->theme.base_radius_px * 2u, 0);
-    lv_obj_set_style_bg_color(button, color_token(ui, background), 0);
-    lv_obj_set_style_bg_opa(button, LV_OPA_COVER, 0);
-    lv_obj_set_style_shadow_width(button, 0, 0);
-    lv_obj_set_style_border_width(button, 0, 0);
-    label = make_label(button, text, typography_font(ui, PXSYS_TYPOGRAPHY_LABEL),
-                       color_token(ui, foreground));
+    pxa_lvgl_dialog_action_style(button, &style, action);
+    lv_obj_t* label = lv_label_create(button);
+    lv_label_set_text(label, text);
+    lv_label_set_long_mode(label, LV_LABEL_LONG_MODE_DOTS);
+    lv_obj_set_width(label, LV_PCT(100));
+    lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_center(label);
     if (clicked != NULL)
         lv_obj_add_event_cb(button, clicked, LV_EVENT_CLICKED, user_data);
@@ -6074,11 +6108,8 @@ static lv_obj_t* make_page_dialog(pxsys_reference_lvgl_t* ui,
     lv_obj_set_height(panel, LV_SIZE_CONTENT);
     lv_obj_set_style_max_height(panel, (lv_coord_t)layout->content.height, 0);
     lv_obj_align(panel, LV_ALIGN_CENTER, 0, 0);
-    lv_obj_set_style_bg_color(panel, color_token(ui, PXSYS_COLOR_SURFACE), 0);
-    lv_obj_set_style_bg_opa(panel, LV_OPA_COVER, 0);
-    lv_obj_set_style_radius(panel, ui->theme.base_radius_px * 3u, 0);
-    lv_obj_set_style_pad_all(panel, ui_px(ui, 12), 0);
-    lv_obj_set_style_pad_row(panel, ui_px(ui, 8), 0);
+    const pxa_lvgl_dialog_style_t style = dialog_style(ui);
+    pxa_lvgl_dialog_panel_style(panel, &style);
     lv_obj_set_layout(panel, LV_LAYOUT_FLEX);
     lv_obj_set_flex_flow(panel, LV_FLEX_FLOW_COLUMN);
     pxsys_lvgl_add_flags(panel, LV_OBJ_FLAG_CLICKABLE);
@@ -6695,7 +6726,7 @@ static void build_wifi_page(pxsys_reference_lvgl_t* ui,
             translated(ui, entering_ssid ? "settings.wifi.next" :
                                            "settings.wifi.connect",
                        entering_ssid ? "Next" : "Connect"),
-            PXSYS_COLOR_ACCENT, PXSYS_COLOR_ON_ACCENT, wifi_confirm_clicked, ui);
+            PXA_LVGL_ACTION_PRIMARY, wifi_confirm_clicked, ui);
         lv_obj_set_width(button, LV_PCT(100));
         lv_obj_add_state(ui->wifi_password_input, LV_STATE_FOCUSED);
         return;
@@ -6760,11 +6791,11 @@ static void build_wifi_page(pxsys_reference_lvgl_t* ui,
     lv_obj_set_width(label, LV_PCT(100));
     button = make_page_button(
         ui, ui->content, translated(ui, "settings.wifi.scan", "Refresh"),
-        PXSYS_COLOR_ACCENT, PXSYS_COLOR_ON_ACCENT, wifi_scan_clicked, ui);
+        PXA_LVGL_ACTION_PRIMARY, wifi_scan_clicked, ui);
     lv_obj_set_width(button, LV_PCT(100));
     button = make_page_button(
         ui, ui->content, translated(ui, "settings.wifi.add", "Add network manually"),
-        PXSYS_COLOR_ACCENT, PXSYS_COLOR_ON_ACCENT, wifi_add_clicked, ui);
+        PXA_LVGL_ACTION_PRIMARY, wifi_add_clicked, ui);
     lv_obj_set_width(button, LV_PCT(100));
     ui->wifi_network_list = lv_obj_create(ui->content);
     style_plain(ui->wifi_network_list);
@@ -6855,25 +6886,28 @@ static void show_page_confirm(pxsys_reference_lvgl_t* ui,
                        typography_font(ui, PXSYS_TYPOGRAPHY_BODY),
                        color_token(ui, PXSYS_COLOR_TEXT_PRIMARY));
     lv_obj_set_width(label, LV_PCT(100));
+    lv_label_set_long_mode(label, LV_LABEL_LONG_MODE_WRAP);
     row = lv_obj_create(panel);
     style_plain(row);
     lv_obj_set_width(row, LV_PCT(100));
     lv_obj_set_height(row, ui_px(ui, 42));
     lv_obj_set_layout(row, LV_LAYOUT_FLEX);
     lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
-    lv_obj_set_style_pad_column(row, 8, 0);
-    confirm = make_page_button(
-        ui, row, translated(ui, "settings.confirm", "Confirm"),
-        PXSYS_COLOR_ERROR, PXSYS_COLOR_ON_ACCENT, page_confirm_clicked, ui);
-    lv_obj_set_width(confirm, 0);
-    lv_obj_set_flex_grow(confirm, 1);
-    lv_obj_set_user_data(confirm, (void*)(uintptr_t)1);
+    lv_obj_set_style_pad_column(row, ui->theme.base_spacing_px * 2u, 0);
     cancel = make_page_button(
         ui, row, translated(ui, "settings.cancel", "Cancel"),
-        PXSYS_COLOR_BORDER, PXSYS_COLOR_TEXT_PRIMARY, page_confirm_clicked, ui);
+        PXA_LVGL_ACTION_SECONDARY, page_confirm_clicked, ui);
     lv_obj_set_width(cancel, 0);
     lv_obj_set_flex_grow(cancel, 1);
     lv_obj_set_user_data(cancel, (void*)0);
+    confirm = make_page_button(
+        ui, row, translated(ui, "settings.confirm", "Confirm"),
+        ui->pending_kind == 1 && ui->pending_action == PXSYS_REFERENCE_FILE_ACTION_INSTALL
+            ? PXA_LVGL_ACTION_PRIMARY : PXA_LVGL_ACTION_DANGER,
+        page_confirm_clicked, ui);
+    lv_obj_set_width(confirm, 0);
+    lv_obj_set_flex_grow(confirm, 1);
+    lv_obj_set_user_data(confirm, (void*)(uintptr_t)1);
 }
 
 /* ----------------------------------------------------------- App manager */
@@ -6888,6 +6922,14 @@ static void app_action_clicked(lv_event_t* event) {
                            ? 0
                            : (uintptr_t)lv_obj_get_user_data(button);
     if (!ui_valid(ui) || ui->app_action == NULL) return;
+    if (action == PXSYS_REFERENCE_APP_ACTION_MOVE || action == PXSYS_REFERENCE_APP_ACTION_MOVE_RESOURCES) {
+        if (!ui->app_action(ui->app_manager_context,ui->pending_identity,(pxsys_reference_app_action_t)action))
+            file_message(ui,translated(ui,"settings.apps.failed","App operation failed"),PXSYS_TOAST_ERROR);
+        /* Native storage planning owns its own asynchronous dialog. Do not
+         * synchronously reload signed metadata while that owner is preparing. */
+        page_close_dialogs(ui);
+        return;
+    }
     if (action == PXSYS_REFERENCE_APP_ACTION_CLEAR_DATA) {
         ui->pending_kind = 0;
         ui->pending_action = PXSYS_REFERENCE_APP_ACTION_CLEAR_DATA;
@@ -7004,6 +7046,11 @@ static void add_app_permissions(pxsys_reference_lvgl_t* ui,
     }
 }
 
+static const char *managed_app_state(pxsys_reference_lvgl_t *ui,
+                                      const pxsys_reference_managed_app_t *app) {
+    if (app->archived) return translated(ui,"settings.apps.archived","Archived");
+    return app->enabled?"":translated(ui,"settings.apps.disabled","Disabled");
+}
 static void show_app_detail(pxsys_reference_lvgl_t* ui,
                             const pxsys_reference_managed_app_t* app) {
     pxsys_reference_layout_t layout;
@@ -7049,50 +7096,62 @@ static void show_app_detail(pxsys_reference_lvgl_t* ui,
                        typography_font(ui, PXSYS_TYPOGRAPHY_CAPTION),
                        color_token(ui, PXSYS_COLOR_TEXT_SECONDARY));
     lv_obj_set_width(label, LV_PCT(100));
-    snprintf(buffer, sizeof(buffer), "%s%s",
+    const char *state=managed_app_state(ui,app);
+    snprintf(buffer, sizeof(buffer), "%s%s%s",
              translated(ui,
                         app->built_in ? "settings.apps.system"
                                       : "settings.apps.user",
                         app->built_in ? "System app" : "User app"),
-             app->enabled ? ""
-                          : translated(ui, "settings.apps.disabled",
-                                       "Disabled"));
+             *state?" · ":"",state);
     label = make_label(info, buffer,
                        typography_font(ui, PXSYS_TYPOGRAPHY_CAPTION),
                        color_token(ui, PXSYS_COLOR_TEXT_SECONDARY));
     lv_obj_set_width(label, LV_PCT(100));
 
+    if (app->movable && !app->active) {
+        button=make_page_button(ui,panel,translated(ui,
+            app->archived?"settings.apps.move_archive":app->legacy_storage?"settings.apps.upgrade_storage":"settings.apps.move",
+            app->archived?"Move saved data":app->legacy_storage?"Upgrade storage layout":"Move app and data"),
+            PXA_LVGL_ACTION_SECONDARY,app_action_clicked,ui);
+        lv_obj_set_user_data(button,(void*)(uintptr_t)PXSYS_REFERENCE_APP_ACTION_MOVE);
+    }
+    if (app->resources_movable && !app->active) {
+        button=make_page_button(ui,panel,translated(ui,"settings.apps.move_resources","Move game resources"),
+            PXA_LVGL_ACTION_SECONDARY,app_action_clicked,ui);
+        lv_obj_set_user_data(button,(void*)(uintptr_t)PXSYS_REFERENCE_APP_ACTION_MOVE_RESOURCES);
+    }
     add_app_permissions(ui, &layout, panel, app);
 
-    button = make_page_button(
-        ui, panel,
-        translated(ui,
-                   app->enabled ? "settings.apps.disable"
-                                : "settings.apps.enable",
-                   app->enabled ? "Disable" : "Enable"),
-        PXSYS_COLOR_ACCENT, PXSYS_COLOR_ON_ACCENT, app_action_clicked, ui);
-    lv_obj_set_user_data(
-        button, (void*)(uintptr_t)(app->enabled
-                                       ? PXSYS_REFERENCE_APP_ACTION_DISABLE
-                                       : PXSYS_REFERENCE_APP_ACTION_ENABLE));
+    if (!app->archived) {
+        button = make_page_button(
+            ui, panel,
+            translated(ui,
+                       app->enabled ? "settings.apps.disable"
+                                    : "settings.apps.enable",
+                       app->enabled ? "Disable" : "Enable"),
+            PXA_LVGL_ACTION_SECONDARY, app_action_clicked, ui);
+        lv_obj_set_user_data(
+            button, (void*)(uintptr_t)(app->enabled
+                                           ? PXSYS_REFERENCE_APP_ACTION_DISABLE
+                                           : PXSYS_REFERENCE_APP_ACTION_ENABLE));
+    }
     if (app->has_private_data) {
         button = make_page_button(
             ui, panel, translated(ui, "settings.apps.clear", "Clear data"),
-            PXSYS_COLOR_WARNING, PXSYS_COLOR_ON_ACCENT, app_action_clicked, ui);
+            PXA_LVGL_ACTION_DANGER, app_action_clicked, ui);
         lv_obj_set_user_data(
             button, (void*)(uintptr_t)PXSYS_REFERENCE_APP_ACTION_CLEAR_DATA);
     }
-    if (app->installed && !app->built_in) {
+    if ((app->installed || app->archived) && !app->built_in) {
         button = make_page_button(
             ui, panel, translated(ui, "settings.apps.uninstall", "Uninstall"),
-            PXSYS_COLOR_ERROR, PXSYS_COLOR_ON_ACCENT, app_action_clicked, ui);
+            PXA_LVGL_ACTION_DANGER, app_action_clicked, ui);
         lv_obj_set_user_data(
             button, (void*)(uintptr_t)PXSYS_REFERENCE_APP_ACTION_UNINSTALL);
     }
     button = make_page_button(ui, panel,
                               translated(ui, "settings.apps.close", "Close"),
-                              PXSYS_COLOR_BORDER,
-                              PXSYS_COLOR_TEXT_PRIMARY,
+                              PXA_LVGL_ACTION_SECONDARY,
                               page_dialog_scrim_clicked, ui);
     (void)button;
 }
@@ -7146,13 +7205,12 @@ static void build_app_manager(pxsys_reference_lvgl_t* ui,
         pxsys_reference_managed_app_t* app = &ui->managed_apps[index];
         char subtitle[128];
         lv_obj_t* row;
-        snprintf(subtitle, sizeof(subtitle), "%s%s%s", app->version,
+        const char *state=managed_app_state(ui,app);
+        snprintf(subtitle, sizeof(subtitle), "%s · %s%s%s", app->version,
                  app->built_in
                      ? translated(ui, "settings.apps.system", "System app")
                      : translated(ui, "settings.apps.user", "User app"),
-                 app->enabled
-                     ? ""
-                     : translated(ui, "settings.apps.disabled", "Disabled"));
+                 *state?" · ":"",state);
         row = make_settings_row(ui, layout, section, LV_SYMBOL_LIST,
                                 PXSYS_COLOR_ACCENT, app->name, subtitle,
                                 app_row_clicked, ui);
@@ -7340,8 +7398,8 @@ static void show_file_properties(pxsys_reference_lvgl_t* ui,
             lv_obj_t* button = make_page_button(
                 ui, panel, translated(ui, actions[index].key, actions[index].fallback),
                 actions[index].action == PXSYS_REFERENCE_FILE_ACTION_DELETE
-                    ? PXSYS_COLOR_ERROR : PXSYS_COLOR_ACCENT,
-                PXSYS_COLOR_ON_ACCENT, file_property_action, ui);
+                    ? PXA_LVGL_ACTION_DANGER : PXA_LVGL_ACTION_SECONDARY,
+                file_property_action, ui);
             lv_obj_set_width(button, LV_PCT(100));
             lv_obj_set_user_data(button, (void*)(uintptr_t)actions[index].action);
         }
@@ -7375,7 +7433,13 @@ static void file_entry_clicked(lv_event_t* event) {
     ui->pending_kind = 1;
     const char* extension = strrchr(entry->name, '.');
     if (extension != NULL && strcmp(extension, ".pxa") == 0 &&
-        ui->file_action != NULL) {
+        (ui->file_install != NULL || ui->file_action != NULL)) {
+        if(ui->file_install != NULL) {
+            ui->pending_kind = 0;
+            if(!ui->file_install(ui->file_manager_context, entry->path))
+                file_message(ui,translated(ui,"files.install.failed","Could not start installation"),PXSYS_TOAST_WARNING);
+            return;
+        }
         char prompt[PXSYS_REFERENCE_FILE_NAME_MAX + 80];
         ui->pending_action = PXSYS_REFERENCE_FILE_ACTION_INSTALL;
         snprintf(prompt, sizeof(prompt), "%s\n%s",
@@ -7492,11 +7556,8 @@ static void build_file_manager(pxsys_reference_lvgl_t* ui,
         lv_obj_t* button = make_page_button(
             ui, ui->content,
             translated(ui, "settings.files.up", "Up one level"),
-            PXSYS_COLOR_SURFACE, PXSYS_COLOR_TEXT_PRIMARY,
+            PXA_LVGL_ACTION_SECONDARY,
             file_manager_up_clicked, ui);
-        lv_obj_set_style_border_width(button, 1, 0);
-        lv_obj_set_style_border_color(button, color_token(ui, PXSYS_COLOR_BORDER),
-                                      0);
         (void)button;
     }
     label = make_label(ui->content, ui->file_path[0] == '\0' ? "/" : ui->file_path,
@@ -7508,7 +7569,7 @@ static void build_file_manager(pxsys_reference_lvgl_t* ui,
         if (ui->file_clipboard[0] != '\0') {
             button = make_page_button(
                 ui, ui->content, translated(ui, "files.paste", "Paste here"),
-                PXSYS_COLOR_SURFACE, PXSYS_COLOR_TEXT_PRIMARY,
+                PXA_LVGL_ACTION_SECONDARY,
                 file_paste_clicked, ui);
             lv_obj_set_width(button, LV_PCT(100));
         }
@@ -7535,11 +7596,11 @@ static void build_file_manager(pxsys_reference_lvgl_t* ui,
         pxsys_lvgl_add_flags(ui->file_edit_error, LV_OBJ_FLAG_HIDDEN);
         button = make_page_button(
             ui, ui->content, translated(ui, "settings.confirm", "Confirm"),
-            PXSYS_COLOR_ACCENT, PXSYS_COLOR_ON_ACCENT, file_edit_save, ui);
+            PXA_LVGL_ACTION_PRIMARY, file_edit_save, ui);
         lv_obj_set_width(button, LV_PCT(100));
         button = make_page_button(
             ui, ui->content, translated(ui, "settings.cancel", "Cancel"),
-            PXSYS_COLOR_SURFACE, PXSYS_COLOR_TEXT_PRIMARY,
+            PXA_LVGL_ACTION_SECONDARY,
             file_edit_cancel, ui);
         lv_obj_set_width(button, LV_PCT(100));
         return;
@@ -8845,6 +8906,7 @@ pxsys_status_t pxsys_reference_lvgl_create(
     ui->file_manager_context = config->file_manager_context;
     ui->file_list = config->file_list;
     ui->file_action = config->file_action;
+    ui->file_install = config->file_install;
     ui->file_size = config->file_size;
     ui->idle_policy = config->idle_policy;
     ui->idle_context = config->idle_context;

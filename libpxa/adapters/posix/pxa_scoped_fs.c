@@ -24,7 +24,8 @@ typedef struct {
 struct pxa_scoped_fs {
     uint32_t magic;
     pxa_scoped_fs_config_t config;
-    /* Runtime-owner scratch avoids long path arrays on the ESP task stack. */
+    /* Owner-serialized scratch follows the workspace's allocation policy,
+     * rather than consuming another kilobyte of an ESP task's SRAM stack. */
     char native_path[2*PXA_SCOPED_FS_PATH_BYTES+2];
     scoped_entry_t entries[];
 };
@@ -39,11 +40,22 @@ static pxa_status_t os_error(void) {
 }
 static int path_valid(const char *p) {
     size_t n = strnlen(p,PXA_SCOPED_FS_PATH_BYTES);
-    return n < PXA_SCOPED_FS_PATH_BYTES &&
-        (!n || pxa_fs_scoped_path_is_valid((pxa_bytes_t){(const uint8_t *)p,n}));
+    if(n>=PXA_SCOPED_FS_PATH_BYTES)return 0;
+    /* The wire limit applies to each Guest request, not to the Host-selected
+     * prefix plus that request. Preserve the exact scoped segment grammar. */
+    for(size_t offset=0;offset<n;) {
+        const char *slash=strchr(p+offset,'/');
+        size_t size=slash?(size_t)(slash-(p+offset)):n-offset;
+        if(!pxa_fs_scoped_path_is_valid((pxa_bytes_t){(const uint8_t *)p+offset,size}))return 0;
+        if(!slash)break;
+        offset+=size+1;
+        if(offset==n)return 0;
+    }
+    return 1;
 }
 static const pxa_scoped_fs_mount_t *mount_for(pxa_scoped_fs_t *fs,uint64_t epoch) {
     uint16_t i;
+    if (!epoch) return NULL;
     for (i=0;i<fs->config.mount_count;++i)
         if (fs->config.mounts[i].mount_epoch==epoch) return &fs->config.mounts[i];
     return NULL;
@@ -114,6 +126,30 @@ static pxa_status_t open_below_fd(int parent,const char *path,int directory,
     return PXA_STATUS_OK;
 }
 #endif
+static int path_prefix(const char *prefix,const char *path) {
+    size_t i=0;
+    for(;prefix[i];++i) {
+        unsigned char a=(unsigned char)prefix[i],b=(unsigned char)path[i];
+        if(a>='A' && a<='Z')a+='a'-'A';
+        if(b>='A' && b<='Z')b+='a'-'A';
+        if(a!=b)return 0;
+    }
+    return !path[i] || path[i]=='/';
+}
+static int location_allowed(pxa_scoped_fs_t *fs,const pxa_scoped_fs_mount_t *mount,
+    const char *relative) {
+    size_t root_size=strlen(mount->host_path);
+    for(uint16_t i=0;i<fs->config.protected_path_count;++i)
+        if(path_prefix(fs->config.protected_paths[i],relative))return 0;
+    for(uint16_t i=0;i<fs->config.mount_count;++i) {
+        const pxa_scoped_fs_mount_t *nested=&fs->config.mounts[i];
+        if(!nested->mount_epoch || nested->mount_epoch==mount->mount_epoch)continue;
+        if(path_prefix(mount->host_path,nested->host_path) &&
+            nested->host_path[root_size]=='/' &&
+            path_prefix(nested->host_path+root_size+1,relative))return 0;
+    }
+    return 1;
+}
 /* A tilde is legal in an LFN. Reject generated 8.3 aliases by requiring
  * every tilde-bearing segment to exist in the parent's actual enumeration.
  * This cold check never runs for normal paths or reads through an open file. */
@@ -152,14 +188,14 @@ static pxa_status_t literal_fat_path(pxa_scoped_fs_t *fs,
     }
     return PXA_STATUS_OK;
 }
-/* Open without a directory-fd emulation on FAT. Its mount is registered by
- * trusted Host code as a link-free filesystem with no nested mounts. */
+/* Open without directory descriptors on a registered link-free VFS. */
 static pxa_status_t open_native(pxa_scoped_fs_t *fs,const pxa_scoped_fs_mount_t *m,const char *path,
     int directory,int *fd,DIR **stream,struct stat *info) {
     char *full=fs->native_path;
     int n;
     *fd=-1; *stream=NULL;
     if (!path_valid(path)) return PXA_STATUS_INVALID_ARGUMENT;
+    if (!location_allowed(fs,m,path)) return PXA_STATUS_DENIED;
     if (m->native_fat) {
         if (strchr(path,'~')) {
             pxa_status_t status=literal_fat_path(fs,m,path);
@@ -202,7 +238,7 @@ static pxa_status_t grant_location(pxa_scoped_fs_t *fs,
     *mount=mount_for(fs,info->mount_epoch);
     return *mount ? PXA_STATUS_OK : PXA_STATUS_UNAVAILABLE;
 }
-pxa_status_t pxa_scoped_fs_validate_grant(pxa_scoped_fs_t *fs,
+static pxa_status_t validate_grant(pxa_scoped_fs_t *fs,
     const pxa_scoped_fs_grant_t *grant) {
     pxa_volume_info_t info; const pxa_scoped_fs_mount_t *m;
     struct stat stat_info; DIR *dir; int fd;
@@ -256,6 +292,7 @@ static pxa_status_t open_at(void *context,void *directory,pxa_bytes_t path,
     if (n<0 || (size_t)n>=sizeof(e->relative)) {
         close_entry(fs,e,0); return PXA_STATUS_LIMIT_EXCEEDED;
     }
+    if (!location_allowed(fs,m,e->relative)) {close_entry(fs,e,0);return PXA_STATUS_DENIED;}
     e->kind=flags & PXA_FS_OPEN_DIRECTORY ? PXA_FS_KIND_DIRECTORY : PXA_FS_KIND_REGULAR;
 #if !defined(ESP_PLATFORM)
     if (!m->native_fat) {
@@ -368,6 +405,7 @@ static pxa_status_t read_directory(void *context,void *resource,
             continue;
         length=snprintf(relative,PXA_SCOPED_FS_PATH_BYTES,"%s%s%s",e->relative,*e->relative?"/":"",item->d_name);
         if(length<0 || (size_t)length>=PXA_SCOPED_FS_PATH_BYTES)return PXA_STATUS_LIMIT_EXCEEDED;
+        if(!location_allowed(fs,m,relative))continue;
         if (m->native_fat) {
             size_t prefix=strlen(m->host_path),bytes=(size_t)length;
             if (prefix>=sizeof(fs->native_path)-bytes-1) return PXA_STATUS_LIMIT_EXCEEDED;
@@ -395,10 +433,53 @@ static pxa_status_t read_directory(void *context,void *resource,
     }
     return PXA_STATUS_LIMIT_EXCEEDED;
 }
+static void enter_inventory(pxa_scoped_fs_t *fs) {
+    if(fs->config.enter_inventory)fs->config.enter_inventory(fs->config.inventory_context);
+}
+static void leave_inventory(pxa_scoped_fs_t *fs) {
+    if(fs->config.leave_inventory)fs->config.leave_inventory(fs->config.inventory_context);
+}
+/* One guard covers validation and native I/O. A mount owner cannot free or
+ * replace the selected mount between those steps. */
+#define GUARDED_OPERATION(name, parameters, arguments) \
+    static pxa_status_t guarded_##name parameters { \
+        pxa_scoped_fs_t *fs=context;pxa_status_t status; \
+        enter_inventory(fs);status=name arguments;leave_inventory(fs);return status; \
+    }
+GUARDED_OPERATION(open_root,(void *context,uint8_t kind,const uint8_t id[16],
+    void **resource,uint32_t *rights),(context,kind,id,resource,rights))
+GUARDED_OPERATION(open_at,(void *context,void *directory,pxa_bytes_t path,
+    uint32_t flags,void **resource,pxa_fs_entry_t *info,uint64_t *features),
+    (context,directory,path,flags,resource,info,features))
+GUARDED_OPERATION(stat_at,(void *context,void *directory,pxa_bytes_t path,
+    pxa_fs_entry_t *info),(context,directory,path,info))
+GUARDED_OPERATION(query_root,(void *context,void *directory,pxa_fs_root_info_t *info),
+    (context,directory,info))
+GUARDED_OPERATION(read_file,(void *context,void *resource,uint8_t *output,
+    size_t capacity,size_t *size),(context,resource,output,capacity,size))
+GUARDED_OPERATION(read_at_file,(void *context,void *resource,uint64_t offset,
+    uint8_t *output,size_t capacity,size_t *size),(context,resource,offset,output,capacity,size))
+GUARDED_OPERATION(seek_file,(void *context,void *resource,int64_t offset,
+    uint8_t origin,uint64_t *position),(context,resource,offset,origin,position))
+GUARDED_OPERATION(read_directory,(void *context,void *resource,pxa_fs_entry_t *info,
+    uint8_t *end),(context,resource,info,end))
+#undef GUARDED_OPERATION
+static void guarded_close_entry(void *context,void *resource,uint8_t kind) {
+    pxa_scoped_fs_t *fs=context;
+    enter_inventory(fs);close_entry(context,resource,kind);leave_inventory(fs);
+}
+pxa_status_t pxa_scoped_fs_validate_grant(pxa_scoped_fs_t *fs,
+    const pxa_scoped_fs_grant_t *grant) {
+    pxa_status_t status;
+    if(!fs || fs->magic!=SCOPED_MAGIC || !grant)return PXA_STATUS_INVALID_ARGUMENT;
+    enter_inventory(fs);status=validate_grant(fs,grant);leave_inventory(fs);return status;
+}
 size_t pxa_scoped_fs_workspace_size(const pxa_scoped_fs_config_t *c) {
     size_t entries;
     if (!c || c->struct_size<sizeof(*c) || !c->volumes || !c->mounts ||
-        !c->grants || !c->grant_count || !c->max_open_resources)
+        !c->grants || !c->grant_count || !c->max_open_resources ||
+        (!!c->enter_inventory != !!c->leave_inventory) ||
+        (c->protected_path_count && !c->protected_paths))
         return 0;
     entries=(size_t)c->max_open_resources*sizeof(scoped_entry_t);
     if (entries>SIZE_MAX-sizeof(pxa_scoped_fs_t)-SCOPED_ALIGN) return 0;
@@ -411,7 +492,13 @@ pxa_status_t pxa_scoped_fs_init(void *workspace,size_t bytes,
     *out=NULL; memset(b,0,sizeof(*b));
     if (!workspace || !need || bytes<need || (uintptr_t)workspace>UINTPTR_MAX-bytes)
         return PXA_STATUS_INVALID_ARGUMENT;
+    for(i=0;i<c->protected_path_count;++i)
+        if(!c->protected_paths[i] || !*c->protected_paths[i] ||
+            strnlen(c->protected_paths[i],PXA_SCOPED_FS_PATH_BYTES)>=PXA_SCOPED_FS_PATH_BYTES)
+            return PXA_STATUS_INVALID_ARGUMENT;
     for (i=0;i<c->mount_count;++i) {
+        if (!c->mounts[i].mount_epoch && !c->mounts[i].host_path &&
+            !c->mounts[i].native_fat) continue;
         if (!c->mounts[i].mount_epoch || !c->mounts[i].host_path ||
             c->mounts[i].host_path[0]!='/' ||
             strnlen(c->mounts[i].host_path,PXA_SCOPED_FS_PATH_BYTES)>=PXA_SCOPED_FS_PATH_BYTES)
@@ -422,15 +509,18 @@ pxa_status_t pxa_scoped_fs_init(void *workspace,size_t bytes,
     fs->magic=SCOPED_MAGIC; fs->config=*c;
     b->struct_size=sizeof(*b); b->context=fs;
     b->files.struct_size=sizeof(b->files); b->files.context=fs;
-    b->files.read=read_file; b->files.seek=seek_file;
-    b->files.read_directory=read_directory; b->files.close=close_entry;
-    b->open_root=open_root; b->open_at=open_at; b->stat_at=stat_at; b->query_root=query_root;
-    b->read_at=read_at_file;
+    b->files.read=guarded_read_file; b->files.seek=guarded_seek_file;
+    b->files.read_directory=guarded_read_directory; b->files.close=guarded_close_entry;
+    b->open_root=guarded_open_root; b->open_at=guarded_open_at;
+    b->stat_at=guarded_stat_at; b->query_root=guarded_query_root;
+    b->read_at=guarded_read_at_file;
     *out=fs; return PXA_STATUS_OK;
 }
 void pxa_scoped_fs_deinit(pxa_scoped_fs_t *fs) {
     uint16_t i;
     if (!fs || fs->magic!=SCOPED_MAGIC) return;
+    enter_inventory(fs);
     for (i=0;i<fs->config.max_open_resources;++i) close_entry(fs,&fs->entries[i],0);
     fs->magic=0;
+    leave_inventory(fs);
 }

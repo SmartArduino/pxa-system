@@ -26,6 +26,7 @@ extern "C" {
 
 #define PXA_POSIX_FS_DEFAULT_QUOTA UINT64_C(0xffffffffffffffff)
 #define PXA_POSIX_FS_MAX_TREE_ENTRIES ((size_t)4096)
+#define PXA_POSIX_FS_TREE_MAX_PATH_BYTES PXA_FS_SCOPED_MAX_PATH_BYTES
 
 typedef struct {
     uint32_t struct_size;
@@ -44,7 +45,9 @@ pxa_status_t pxa_posix_fs_init(void *workspace, size_t workspace_size,
 void pxa_posix_fs_deinit(pxa_posix_fs_t *fs);
 
 /* Host-side clear-data helper. Removes one directory tree without following
- * symbolic links. The root itself is removed after all descendants. */
+ * symbolic links. The root itself is removed after all descendants. Traversal
+ * uses constant stack/descriptor space, with at most MAX_TREE_ENTRIES entries
+ * and TREE_MAX_PATH_BYTES relative directory bytes per call. No allocation. */
 pxa_status_t pxa_posix_fs_remove_tree(const char *root_path);
 
 #ifdef __cplusplus

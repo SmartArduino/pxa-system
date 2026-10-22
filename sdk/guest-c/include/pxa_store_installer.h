@@ -21,7 +21,37 @@ typedef uint64_t pxa_store_token_t;
 #define PXA_STORE_UNINSTALL_IDENTITY_REQUEST 10u
 #define PXA_STORE_REGISTER_NAMESPACE_REQUEST 11u
 #define PXA_STORE_INSTALL_IDENTITY_REQUEST 12u
+#define PXA_STORE_CAPABILITIES_REQUEST 13u
+#define PXA_STORE_CAP_RESOURCE_INSTALL UINT32_C(1)
+#define PXA_STORE_CAP_VOLUME_PLACEMENT UINT32_C(2)
+#define PXA_STORE_CAP_RESOURCE_CACHE UINT32_C(4)
 #define PXA_STORE_DOWNLOAD_PROGRESS 0x8001u
+
+typedef struct {
+    int32_t status;
+    uint16_t major, minor;
+    uint32_t features;
+    uint64_t max_container_bytes;
+} pxa_store_capabilities_t;
+
+/* Unsupported on Hosts older than 0.8; callers retain their old baseline. */
+static inline int32_t pxa_store_request_capabilities(uint64_t token) {
+    if (!token) return PXA_STATUS_INVALID_ARGUMENT;
+    return pxa_control_call(PXA_SERVICE_STORE_INSTALLER, PXA_STORE_CAPABILITIES_REQUEST, token, NULL, 0);
+}
+static inline int pxa_store_parse_capabilities(const pxa_event_t *event, uint64_t token,
+                                               pxa_store_capabilities_t *out) {
+    if (!event || !out || !token || event->service != PXA_SERVICE_STORE_INSTALLER ||
+        event->opcode != PXA_STORE_CAPABILITIES_REQUEST || event->token != token ||
+        !event->payload || event->payload_size < 4) return 0;
+    pxa_zero(out, sizeof(*out)); out->status = (int32_t)pxa_load_u32(event->payload);
+    if (out->status != PXA_STATUS_OK) return event->payload_size == 4;
+    if (event->payload_size != 20) return 0;
+    out->major = pxa_load_u16(event->payload + 4); out->minor = pxa_load_u16(event->payload + 6);
+    out->features = pxa_load_u32(event->payload + 8);
+    out->max_container_bytes = pxa_load_u64(event->payload + 12);
+    return out->max_container_bytes != 0;
+}
 
 #define PXA_STORE_INSTALLED_MAX 12u
 #define PXA_STORE_DOWNLOAD_MAX 8u
@@ -101,7 +131,7 @@ static inline int32_t pxa_store_request_package_status_impl(uint16_t opcode,
          opcode != PXA_STORE_DOWNLOAD_REQUEST && opcode != PXA_STORE_INSTALL_IDENTITY_REQUEST) || request_id == 0 ||
         app_id == NULL || ticket == NULL || sha256 == NULL ||
         size == 0 || packet == NULL) return PXA_STATUS_INVALID_ARGUMENT;
-    if (size > UINT64_C(4194304)) return PXA_STATUS_LIMIT_EXCEEDED;
+    if (size > UINT64_C(0x7fffffff)) return PXA_STATUS_LIMIT_EXCEEDED;
     while (app_size <= 64u && app_id[app_size] != '\0') ++app_size;
     while (ticket_size <= 255u && ticket[ticket_size] != '\0') ++ticket_size;
     if (app_size == 0 || app_size > 64u || ticket_size == 0 ||
@@ -141,8 +171,14 @@ static inline int32_t pxa_store_request_package_status(uint16_t opcode,pxa_store
 }
 static inline int32_t pxa_store_install_identity_status(pxa_store_token_t token,const char *identity,
     const char *ticket,const char *sha256,uint64_t size,uint8_t *packet,size_t capacity) {
+    const char *app = identity;
+    if (!app) return PXA_STATUS_INVALID_ARGUMENT;
+    for (size_t i = 0; i < 65; ++i) {
+        if (!*app) return PXA_STATUS_INVALID_ARGUMENT;
+        ++app;
+    }
     if(!pxa_store_identity_valid(identity))return PXA_STATUS_INVALID_ARGUMENT;
-    return pxa_store_request_package_status_impl(PXA_STORE_INSTALL_IDENTITY_REQUEST,token,identity+65,identity,ticket,sha256,size,packet,capacity);
+    return pxa_store_request_package_status_impl(PXA_STORE_INSTALL_IDENTITY_REQUEST,token,app,identity,ticket,sha256,size,packet,capacity);
 }
 static inline int32_t pxa_store_register_namespace_status(pxa_store_token_t token,const uint8_t *binding,
     size_t size,uint8_t *packet,size_t capacity) {

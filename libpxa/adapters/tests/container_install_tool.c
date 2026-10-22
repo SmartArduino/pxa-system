@@ -55,6 +55,17 @@ int main(int argc, char **argv) {
     config.trust.struct_size = sizeof(config.trust);
     config.trust.keys = &key;
     config.trust.key_count = 1;
+    const char *binding=getenv("PXA_TEST_RESOURCE_MANIFEST");uint8_t digest[32];
+    if(binding) {
+        if(strlen(binding)!=64)return 2;
+        for(unsigned i=0;i<32;++i) {
+            unsigned byte;
+            if(sscanf(binding+i*2,"%2x",&byte)!=1)return 2;
+            digest[i]=(uint8_t)byte;
+        }
+        config.expected_manifest_sha256=digest;
+        config.expected_package_kind=PXA_PACKAGE_KIND_RESOURCES;
+    }
     pxa_package_limits_init(&config.limits);
     installer_workspace_size = pxa_posix_installer_workspace_size(&config);
     manifest_workspace_size = pxa_package_manifest_workspace_size(&config.limits);

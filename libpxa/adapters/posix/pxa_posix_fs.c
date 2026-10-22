@@ -17,6 +17,10 @@
 
 #ifdef ESP_PLATFORM
 #include "pxa/esp/pxa_esp_posix_shim.h"
+#define open(...) pxa_esp_open(__VA_ARGS__)
+#define close(fd) pxa_esp_close(fd)
+#define rename(from,to) pxa_esp_rename(from,to)
+#define rmdir(path) pxa_esp_rmdir(path)
 #define dup pxa_esp_dup
 #define fdopendir pxa_esp_fdopendir
 #define fstat pxa_esp_fstat
@@ -29,6 +33,9 @@
 
 #define PXA_POSIX_FS_MAGIC UINT32_C(0x50504e46)
 #define PXA_POSIX_FS_ALIGNMENT ((size_t)16)
+#if defined(ESP_PLATFORM) && !defined(__linux__) && !defined(__APPLE__)
+#define PXA_POSIX_NATIVE_DIR_SCAN 1
+#endif
 
 typedef struct {
     char scratch[PXA_FS_MAX_PATH_BYTES + 1];
@@ -45,6 +52,19 @@ typedef struct {
     uint8_t occupied;
     char path[PXA_FS_MAX_PATH_BYTES];
 } pxa_posix_fs_entry_t;
+
+#define USAGE_SCAN_DEPTH ((PXA_FS_MAX_PATH_BYTES + 1u) / 2u + 1u)
+#define USAGE_OPEN_STREAMS 4u
+typedef struct {
+    DIR *stream;
+    long cookie;
+    uint16_t path_size;
+} usage_frame_t;
+typedef struct {
+    usage_frame_t frames[USAGE_SCAN_DEPTH];
+    char path[PXA_FS_MAX_PATH_BYTES + 1u];
+    size_t depth, open_streams;
+} usage_scan_t;
 
 struct pxa_posix_fs {
     uint32_t magic;
@@ -174,6 +194,26 @@ static pxa_status_t open_parent(pxa_posix_fs_t *fs,
     uint16_t index;
     *parent = -1;
     if (split->count == 0) return PXA_STATUS_INVALID_ARGUMENT;
+#if defined(ESP_PLATFORM) && !defined(__linux__) && !defined(__APPLE__)
+    /* FAT and LittleFS have no links. The ESP shim validates containment and
+     * the mount epoch for the complete relative path. Reopening every prefix
+     * would repeatedly walk the same on-disk directory chain. Keep the POSIX
+     * component walk below on systems where intermediate links can exist. */
+    char path[PXA_FS_MAX_PATH_BYTES + 1u];
+    size_t size = 0;
+    for (index = 0; index + 1 < split->count; ++index) {
+        if (size) path[size++] = '/';
+        memcpy(path + size, split->scratch + split->offset[index],
+               split->length[index]);
+        size += split->length[index];
+    }
+    path[size] = '\0';
+    current = openat(fs->root_fd, size ? path : ".", O_RDONLY | O_DIRECTORY |
+                                                          O_NOFOLLOW | O_CLOEXEC);
+    if (current < 0) return errno == ENOENT ? PXA_STATUS_NOT_FOUND : PXA_STATUS_DENIED;
+    *parent = current;
+    return PXA_STATUS_OK;
+#else
     current = dup(fs->root_fd);
     if (current < 0) return PXA_STATUS_INTERNAL;
     for (index = 0; index + 1 < split->count; ++index) {
@@ -195,6 +235,7 @@ static pxa_status_t open_parent(pxa_posix_fs_t *fs,
     }
     *parent = current;
     return PXA_STATUS_OK;
+#endif
 }
 
 static int safe_regular(const struct stat *metadata) {
@@ -202,40 +243,137 @@ static int safe_regular(const struct stat *metadata) {
            metadata->st_size >= 0;
 }
 
-static pxa_status_t count_usage(int directory, uint64_t *usage,
-                                size_t *entries) {
-    DIR *stream;
-    struct dirent *item;
-    pxa_status_t status = PXA_STATUS_OK;
-    {
-        /* Fresh open (not dup): the directory offset must not be shared. */
-        const int duplicate =
-            openat(directory, ".", O_RDONLY | O_DIRECTORY | O_NOFOLLOW |
-                                      O_CLOEXEC);
-        if (duplicate < 0) return PXA_STATUS_INTERNAL;
-        stream = fdopendir(duplicate);
-        if (stream == NULL) {
-            close(duplicate);
-            return PXA_STATUS_INTERNAL;
+/* Reopen a descendant without following any intermediate symlink. A fresh
+ * descriptor also avoids sharing a directory cursor with a cached stream.
+ * The caller owns path; restore each separator before returning, even on an
+ * error. Root + two walking descriptors is the maximum during resolution. */
+static int tree_open_directory(int root, char *path) {
+#if defined(ESP_PLATFORM) && !defined(__linux__) && !defined(__APPLE__)
+    /* Same link-free, epoch-checked fast path as open_parent(). */
+    return openat(root, *path ? path : ".", O_RDONLY | O_DIRECTORY |
+                                             O_NOFOLLOW | O_CLOEXEC);
+#else
+    int directory = openat(root, ".", O_RDONLY | O_DIRECTORY |
+                                          O_NOFOLLOW | O_CLOEXEC);
+    char *part = path;
+    if (directory < 0) return -1;
+    while (*part) {
+        char *slash = strchr(part, '/');
+        int child, error;
+        if (slash != NULL) *slash = '\0';
+        child = openat(directory, part, O_RDONLY | O_DIRECTORY |
+                                             O_NOFOLLOW | O_CLOEXEC);
+        error = errno;
+        if (slash != NULL) *slash = '/';
+        if (close(directory) != 0 && child >= 0) {
+            error = errno;
+            close(child);
+            child = -1;
         }
+        if (child < 0) { errno = error; return -1; }
+        directory = child;
+        if (slash == NULL) break;
+        part = slash + 1;
     }
-    while ((item = readdir(stream)) != NULL) {
+    return directory;
+#endif
+}
+
+static pxa_status_t count_usage(int root, usage_scan_t *scan,
+                                uint64_t *usage, size_t *entries) {
+    int directory = -1;
+    pxa_status_t status = PXA_STATUS_OK;
+#ifdef ESP_PLATFORM
+    uint32_t last_yield_tick = 0;
+#endif
+    memset(scan, 0, sizeof(*scan));
+    for (;;) {
+#ifdef ESP_PLATFORM
+        pxa_esp_posix_io_checkpoint(&last_yield_tick);
+#endif
+        usage_frame_t *frame = &scan->frames[scan->depth];
         struct stat metadata;
+        struct dirent *item;
+        size_t name_size, path_size;
+#ifndef PXA_POSIX_NATIVE_DIR_SCAN
+        if (directory < 0) {
+            directory = tree_open_directory(root, scan->path);
+            if (directory < 0) { status = PXA_STATUS_DENIED; break; }
+        }
+#endif
+        if (frame->stream == NULL) {
+#ifdef PXA_POSIX_NATIVE_DIR_SCAN
+            /* A native stream already owns its directory cursor. Avoid the
+             * two synthetic-handle verification opens before fdopendir(). */
+            frame->stream = pxa_esp_opendirat(root, *scan->path ? scan->path : ".");
+#else
+            int duplicate = openat(directory, ".", O_RDONLY | O_DIRECTORY |
+                                                      O_NOFOLLOW | O_CLOEXEC);
+            if (duplicate < 0) { status = PXA_STATUS_INTERNAL; break; }
+            frame->stream = fdopendir(duplicate);
+            if (frame->stream == NULL) {
+                close(duplicate); status = PXA_STATUS_INTERNAL; break;
+            }
+#endif
+            if (frame->stream == NULL) { status = PXA_STATUS_DENIED; break; }
+            ++scan->open_streams;
+            if (frame->cookie != 0) {
+                errno = 0;
+                seekdir(frame->stream, frame->cookie);
+                if (errno != 0 || telldir(frame->stream) != frame->cookie) {
+                    status = PXA_STATUS_INTERNAL; break;
+                }
+            }
+        }
+        errno = 0;
+        item = readdir(frame->stream);
+        if (item == NULL) {
+            if (errno != 0) { status = PXA_STATUS_INTERNAL; break; }
+            if (closedir(frame->stream) != 0) status = PXA_STATUS_INTERNAL;
+            frame->stream = NULL;
+            --scan->open_streams;
+            if (directory >= 0 && close(directory) != 0) status = PXA_STATUS_INTERNAL;
+            directory = -1;
+            if (status != PXA_STATUS_OK || scan->depth == 0) break;
+            --scan->depth;
+            scan->path[scan->frames[scan->depth].path_size] = '\0';
+            continue;
+        }
+        frame->cookie = telldir(frame->stream);
+        if (frame->cookie < 0) { status = PXA_STATUS_INTERNAL; break; }
         if (strcmp(item->d_name, ".") == 0 ||
             strcmp(item->d_name, "..") == 0) {
             continue;
         }
         if (strncmp(item->d_name, ".pxa-", 5) == 0) continue;
+        name_size = strlen(item->d_name);
         if (++*entries > PXA_POSIX_FS_MAX_TREE_ENTRIES ||
             !segment_is_valid(
                 (pxa_bytes_t){(const uint8_t *)item->d_name,
-                              strlen(item->d_name)})) {
+                              name_size})) {
             status = PXA_STATUS_RESOURCE_LIMIT;
             break;
         }
-        if (fstatat(directory, item->d_name, &metadata,
-                    AT_SYMLINK_NOFOLLOW) != 0 ||
-            S_ISLNK(metadata.st_mode)) {
+        path_size = frame->path_size + (frame->path_size != 0) + name_size;
+        if (path_size > PXA_FS_MAX_PATH_BYTES) {
+            status = PXA_STATUS_LIMIT_EXCEEDED; break;
+        }
+        size_t offset = frame->path_size;
+        if (offset != 0) scan->path[offset++] = '/';
+        memcpy(scan->path + offset, item->d_name, name_size + 1u);
+        int metadata_status;
+#ifdef PXA_POSIX_NATIVE_DIR_SCAN
+        /* LittleFS/FAT report directory types in readdir(), and have no
+         * links. Probe regular/unknown entries for their exact file sizes. */
+        if (item->d_type == DT_DIR) {
+            memset(&metadata, 0, sizeof(metadata));
+            metadata.st_mode = S_IFDIR;
+            metadata_status = 0;
+        } else metadata_status = fstatat(root, scan->path, &metadata, AT_SYMLINK_NOFOLLOW);
+#else
+        metadata_status = fstatat(directory, item->d_name, &metadata, AT_SYMLINK_NOFOLLOW);
+#endif
+        if (metadata_status != 0 || S_ISLNK(metadata.st_mode)) {
             status = PXA_STATUS_DENIED;
             break;
         }
@@ -245,23 +383,44 @@ static pxa_status_t count_usage(int directory, uint64_t *usage,
                 break;
             }
             *usage += (uint64_t)metadata.st_size;
+            scan->path[frame->path_size] = '\0';
         } else if (S_ISDIR(metadata.st_mode)) {
-            int child = openat(directory, item->d_name,
-                               O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
-            if (child < 0) {
-                status = PXA_STATUS_DENIED;
-                break;
+            if (scan->depth + 1u >= USAGE_SCAN_DEPTH) {
+                status = PXA_STATUS_LIMIT_EXCEEDED; break;
             }
-            status = count_usage(child, usage, entries);
-            close(child);
+            /* Keep shallow scans linear while bounding VFS resources at any
+             * depth. Only an evicted ancestor needs to reopen/seek later. */
+            if (scan->open_streams == USAGE_OPEN_STREAMS) {
+                size_t index;
+                for (index = 0; index <= scan->depth; ++index) {
+                    usage_frame_t *old = &scan->frames[index];
+                    if (old->stream == NULL) continue;
+                    if (closedir(old->stream) != 0) status = PXA_STATUS_INTERNAL;
+                    old->stream = NULL;
+                    --scan->open_streams;
+                    break;
+                }
+            }
+            if (directory >= 0 && close(directory) != 0) status = PXA_STATUS_INTERNAL;
+            directory = -1;
             if (status != PXA_STATUS_OK) break;
+            ++scan->depth;
+            frame = &scan->frames[scan->depth];
+            memset(frame, 0, sizeof(*frame));
+            frame->path_size = (uint16_t)path_size;
         } else {
             status = PXA_STATUS_DENIED;
             break;
         }
     }
-    if (closedir(stream) != 0 && status == PXA_STATUS_OK) {
+    if (directory >= 0 && close(directory) != 0 && status == PXA_STATUS_OK)
         status = PXA_STATUS_INTERNAL;
+    for (size_t index = 0; index < USAGE_SCAN_DEPTH; ++index) {
+        if (scan->frames[index].stream != NULL) {
+            if (closedir(scan->frames[index].stream) != 0 && status == PXA_STATUS_OK)
+                status = PXA_STATUS_INTERNAL;
+            scan->frames[index].stream = NULL;
+        }
     }
     return status;
 }
@@ -282,6 +441,9 @@ size_t pxa_posix_fs_workspace_size(const pxa_posix_fs_config_t *config) {
     }
     entries_size = (size_t)config->max_open_resources *
                    sizeof(pxa_posix_fs_entry_t);
+    /* Initialization precedes the first open handle. Reuse the resource table
+     * for the scan, rather than keeping another permanent traversal buffer. */
+    if (entries_size < sizeof(usage_scan_t)) entries_size = sizeof(usage_scan_t);
     size = PXA_POSIX_FS_ALIGNMENT - 1u;
     if (sizeof(pxa_posix_fs_t) > SIZE_MAX - size) return 0;
     size += sizeof(pxa_posix_fs_t);
@@ -817,6 +979,7 @@ pxa_status_t pxa_posix_fs_init(void *workspace, size_t workspace_size,
     pxa_posix_fs_t *fs;
     pxa_fs_backend_t *backend;
     size_t required;
+    size_t payload;
     uint64_t usage = 0;
     size_t entries = 0;
     struct stat metadata;
@@ -832,16 +995,13 @@ pxa_status_t pxa_posix_fs_init(void *workspace, size_t workspace_size,
     }
     fs = (pxa_posix_fs_t *)align_up((uintptr_t)workspace,
                                     PXA_POSIX_FS_ALIGNMENT);
-    if ((uintptr_t)fs + sizeof(*fs) +
-            (size_t)config->max_open_resources *
-                sizeof(pxa_posix_fs_entry_t) >
+    payload = (size_t)config->max_open_resources * sizeof(pxa_posix_fs_entry_t);
+    if (payload < sizeof(usage_scan_t)) payload = sizeof(usage_scan_t);
+    if ((uintptr_t)fs + sizeof(*fs) + payload >
         (uintptr_t)workspace + workspace_size) {
         return PXA_STATUS_INVALID_ARGUMENT;
     }
-    memset(fs, 0,
-           sizeof(*fs) +
-               (size_t)config->max_open_resources *
-                   sizeof(pxa_posix_fs_entry_t));
+    memset(fs, 0, sizeof(*fs) + payload);
     fs->magic = PXA_POSIX_FS_MAGIC;
     fs->quota = config->quota_bytes;
     fs->max_open_resources = config->max_open_resources;
@@ -857,7 +1017,9 @@ pxa_status_t pxa_posix_fs_init(void *workspace, size_t workspace_size,
         fs->root_fd = -1;
         return PXA_STATUS_DENIED;
     }
-    status = count_usage(fs->root_fd, &usage, &entries);
+    status = count_usage(fs->root_fd, (usage_scan_t *)(void *)fs->entries,
+                         &usage, &entries);
+    memset(fs->entries, 0, payload);
     if (status != PXA_STATUS_OK || usage > fs->quota) {
         close(fs->root_fd);
         fs->root_fd = -1;
@@ -901,76 +1063,102 @@ void pxa_posix_fs_deinit(pxa_posix_fs_t *fs) {
     fs->magic = 0;
 }
 
-static pxa_status_t remove_tree_contents(int directory, size_t *entries) {
-    DIR *stream;
-    int duplicate = openat(directory, ".", O_RDONLY | O_DIRECTORY |
-                                              O_NOFOLLOW | O_CLOEXEC);
-    if (duplicate < 0) return PXA_STATUS_INTERNAL;
-    stream = fdopendir(duplicate);
-    if (stream == NULL) {
-        close(duplicate);
-        return PXA_STATUS_INTERNAL;
-    }
+static pxa_status_t remove_tree_contents(int root, size_t *entries) {
+    char path[PXA_POSIX_FS_TREE_MAX_PATH_BYTES + 1u] = {0};
+    int directory = -1;
+    DIR *stream = NULL;
+    pxa_status_t status = PXA_STATUS_OK;
+#ifdef ESP_PLATFORM
+    uint32_t last_yield_tick = 0;
+#endif
     for (;;) {
+#ifdef ESP_PLATFORM
+        pxa_esp_posix_io_checkpoint(&last_yield_tick);
+#endif
         struct stat metadata;
-        char name[NAME_MAX + 1] = {0};
         struct dirent *item;
+        if (directory < 0) {
+            directory = tree_open_directory(root, path);
+            if (directory < 0) { status = PXA_STATUS_DENIED; break; }
+        }
+        if (stream == NULL) {
+            int duplicate = openat(directory, ".", O_RDONLY | O_DIRECTORY |
+                                                      O_NOFOLLOW | O_CLOEXEC);
+            if (duplicate < 0) { status = PXA_STATUS_INTERNAL; break; }
+            stream = fdopendir(duplicate);
+            if (stream == NULL) {
+                close(duplicate); status = PXA_STATUS_INTERNAL; break;
+            }
+        }
+        /* LittleFS can invalidate a live directory cursor when an entry is
+         * removed. Restart at each deletion, retaining only the current
+         * directory. Parent descriptors never accumulate with tree depth. */
+        errno = 0;
         rewinddir(stream);
+        if (errno != 0) { status = PXA_STATUS_INTERNAL; break; }
+        errno = 0;
         while ((item = readdir(stream)) != NULL) {
-            size_t name_size;
             if (strcmp(item->d_name, ".") == 0 ||
                 strcmp(item->d_name, "..") == 0) {
                 continue;
             }
-            name_size = strlen(item->d_name);
-            if (name_size > NAME_MAX) {
-                (void)closedir(stream);
-                return PXA_STATUS_LIMIT_EXCEEDED;
-            }
-            memcpy(name, item->d_name, name_size + 1);
             break;
         }
-        if (name[0] == '\0') {
-            return closedir(stream) == 0 ? PXA_STATUS_OK
-                                         : PXA_STATUS_INTERNAL;
+        if (item == NULL) {
+            char *slash, *name;
+            if (errno != 0) { status = PXA_STATUS_INTERNAL; break; }
+            if (closedir(stream) != 0) status = PXA_STATUS_INTERNAL;
+            stream = NULL;
+            if (close(directory) != 0) status = PXA_STATUS_INTERNAL;
+            directory = -1;
+            if (status != PXA_STATUS_OK || path[0] == '\0') break;
+            slash = strrchr(path, '/');
+            if (slash != NULL) {
+                *slash = '\0'; name = slash + 1;
+                directory = tree_open_directory(root, path);
+            } else {
+                name = path;
+                directory = openat(root, ".", O_RDONLY | O_DIRECTORY |
+                                                   O_NOFOLLOW | O_CLOEXEC);
+            }
+            if (directory < 0) { status = PXA_STATUS_DENIED; break; }
+            if (unlinkat(directory, name, AT_REMOVEDIR) != 0) {
+                status = status_from_errno(errno); break;
+            }
+            if (slash == NULL) path[0] = '\0';
+            continue;
         }
-
-        /* LittleFS can invalidate a live directory cursor when an entry is
-         * removed. Rewinding for each child is allocation-free and prevents
-         * skipped entries on embedded VFS implementations. */
         if (++*entries > PXA_POSIX_FS_MAX_TREE_ENTRIES) {
-            (void)closedir(stream);
-            return PXA_STATUS_RESOURCE_LIMIT;
+            status = PXA_STATUS_RESOURCE_LIMIT; break;
         }
-        if (fstatat(directory, name, &metadata,
+        if (strlen(item->d_name) > NAME_MAX) {
+            status = PXA_STATUS_LIMIT_EXCEEDED; break;
+        }
+        if (fstatat(directory, item->d_name, &metadata,
                     AT_SYMLINK_NOFOLLOW) != 0) {
-            (void)closedir(stream);
-            return PXA_STATUS_INTERNAL;
+            status = PXA_STATUS_INTERNAL; break;
         }
         if (S_ISDIR(metadata.st_mode)) {
-            pxa_status_t status;
-            int child = openat(directory, name,
-                               O_RDONLY | O_DIRECTORY | O_NOFOLLOW |
-                                   O_CLOEXEC);
-            if (child < 0) {
-                (void)closedir(stream);
-                return PXA_STATUS_DENIED;
+            size_t size = strlen(path), name_size = strlen(item->d_name);
+            if (size + (size != 0) + name_size > PXA_POSIX_FS_TREE_MAX_PATH_BYTES) {
+                status = PXA_STATUS_LIMIT_EXCEEDED; break;
             }
-            status = remove_tree_contents(child, entries);
-            close(child);
-            if (status != PXA_STATUS_OK) {
-                (void)closedir(stream);
-                return status;
-            }
-            if (unlinkat(directory, name, AT_REMOVEDIR) != 0) {
-                (void)closedir(stream);
-                return status_from_errno(errno);
-            }
-        } else if (unlinkat(directory, name, 0) != 0) {
-            (void)closedir(stream);
-            return status_from_errno(errno);
+            if (size != 0) path[size++] = '/';
+            memcpy(path + size, item->d_name, name_size + 1u);
+            if (closedir(stream) != 0) status = PXA_STATUS_INTERNAL;
+            stream = NULL;
+            if (close(directory) != 0) status = PXA_STATUS_INTERNAL;
+            directory = -1;
+            if (status != PXA_STATUS_OK) break;
+        } else if (unlinkat(directory, item->d_name, 0) != 0) {
+            status = status_from_errno(errno); break;
         }
     }
+    if (stream != NULL && closedir(stream) != 0 && status == PXA_STATUS_OK)
+        status = PXA_STATUS_INTERNAL;
+    if (directory >= 0 && close(directory) != 0 && status == PXA_STATUS_OK)
+        status = PXA_STATUS_INTERNAL;
+    return status;
 }
 
 pxa_status_t pxa_posix_fs_remove_tree(const char *root_path) {

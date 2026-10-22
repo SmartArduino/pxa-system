@@ -161,6 +161,7 @@ static void check_input_method_settings(pxsys_reference_lvgl_t *ui) {
 }
 
 static bool manager_enabled[]={true,false},manager_present[]={true,true};
+static unsigned manager_moves;
 static const char *const manager_ids[]={"test:enabled-ime","test:disabled-ime"};
 static size_t managed_apps(void *context,pxsys_reference_managed_app_t *output,size_t capacity,
     pxsys_reference_app_filter_t filter) {
@@ -182,6 +183,9 @@ static size_t managed_apps(void *context,pxsys_reference_managed_app_t *output,s
 }
 static bool managed_action(void *context,const char *identity,pxsys_reference_app_action_t action) {
     (void)context;
+    if(action==PXSYS_REFERENCE_APP_ACTION_MOVE) {
+        assert(!strcmp(identity,"test:game-0"));++manager_moves;return true;
+    }
     unsigned index=0; while (index<2 && strcmp(identity,manager_ids[index])) ++index;
     assert(index<2);
     if (action==PXSYS_REFERENCE_APP_ACTION_ENABLE) manager_enabled[index]=true;
@@ -221,6 +225,27 @@ static void check_input_method_app_manager(pxsys_reference_lvgl_t *ui) {
     assert(!open_role(ui,PXSYS_ROLE_APP_MANAGER));
     assert(ui->managed_app_count==PXSYS_REFERENCE_MANAGED_APP_MAX);
     assert(find_label(ui->content,"Ordinary game"));
+    ui->managed_apps[0].movable=1;
+    show_app_detail(ui,&ui->managed_apps[0]);
+    click_label(ui->app_dialog,translated(ui,"settings.apps.move","Move app and data"));
+    assert(manager_moves==1 && !ui->app_dialog && ui->managed_apps_loaded);
+    /* Active apps and unsupported legacy homes do not offer this action. */
+    ui->managed_apps[0].active=1;show_app_detail(ui,&ui->managed_apps[0]);
+    assert(!find_label(ui->app_dialog,translated(ui,"settings.apps.move","Move app and data")));
+    page_close_dialogs(ui);ui->managed_apps[0].active=0;ui->managed_apps[0].movable=0;
+    show_app_detail(ui,&ui->managed_apps[0]);
+    assert(!find_label(ui->app_dialog,translated(ui,"settings.apps.move","Move app and data")));
+    page_close_dialogs(ui);
+    ui->managed_apps[0].archived=1;ui->managed_apps[0].installed=0;
+    ui->managed_apps[0].enabled=0;ui->managed_apps[0].movable=1;ui->managed_apps[0].has_private_data=1;
+    show_app_detail(ui,&ui->managed_apps[0]);
+    assert(!find_label(ui->app_dialog,translated(ui,"settings.apps.enable","Enable")));
+    assert(!find_label(ui->app_dialog,translated(ui,"settings.apps.disable","Disable")));
+    assert(find_label(ui->app_dialog,translated(ui,"settings.apps.clear","Clear data")));
+    assert(find_label(ui->app_dialog,translated(ui,"settings.apps.uninstall","Uninstall")));
+    click_label(ui->app_dialog,translated(ui,"settings.apps.move_archive","Move saved data"));
+    assert(manager_moves==2 && !ui->app_dialog);
+    ui->managed_apps[0].archived=0;ui->managed_apps[0].installed=1;ui->managed_apps[0].enabled=1;
 }
 
 int main(void) {

@@ -5,9 +5,10 @@
 extern "C" {
 #endif
 
-/* Read-only data roots. No tree scan, write quota, private-FS migration or
- * package installation is performed. Native FAT mode is ONLY for filesystems
- * without links or nested mounts; POSIX mode always walks directory fds. */
+/* Read-only data roots. Native mode requires link-free filesystems; the Host
+ * must register all nested mounts. POSIX mode walks directory descriptors. */
+/* Host root plus the Guest's separately bounded relative path. Immutable
+ * publisher/app/digest roots must not reduce the usable Guest path length. */
 #define PXA_SCOPED_FS_PATH_BYTES (PXA_FS_SCOPED_MAX_PATH_BYTES + 1u)
 typedef struct {
     uint64_t mount_epoch;
@@ -25,11 +26,25 @@ typedef struct {
 typedef struct {
     uint32_t struct_size;
     pxa_volume_registry_t *volumes;
+    /* Stable owner-managed slot array. Zero-initialized unused slots permit
+     * registering/removing mounts after a Guest was activated. The owner must
+     * invalidate the old epoch before reusing a slot or releasing its path. */
     const pxa_scoped_fs_mount_t *mounts;
     uint16_t mount_count;
     const pxa_scoped_fs_grant_t *grants;
     uint16_t grant_count;
     uint16_t max_open_resources;
+    /* Optional owner guard, held for one backend operation. Serialize mount
+     * replacement with readers so a removed path can be freed safely. Enter
+     * and leave must either both be supplied or both be NULL. */
+    void *inventory_context;
+    void (*enter_inventory)(void *);
+    void (*leave_inventory)(void *);
+    /* Volume-relative private subtrees, hidden from grants and enumeration.
+     * Matching is ASCII case-insensitive, including on FAT. Owner retains
+     * this immutable array for the backend lifetime. */
+    const char *const *protected_paths;
+    uint16_t protected_path_count;
 } pxa_scoped_fs_config_t;
 typedef struct pxa_scoped_fs pxa_scoped_fs_t;
 size_t pxa_scoped_fs_workspace_size(const pxa_scoped_fs_config_t *config);

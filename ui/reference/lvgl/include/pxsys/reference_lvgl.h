@@ -175,6 +175,10 @@ typedef enum {
     PXSYS_REFERENCE_APP_ACTION_DISABLE,
     PXSYS_REFERENCE_APP_ACTION_CLEAR_DATA,
     PXSYS_REFERENCE_APP_ACTION_UNINSTALL,
+    /* Callback accepts a queued native placement flow; completion is shown
+     * by the platform UI. The reference detail closes without re-enumerating. */
+    PXSYS_REFERENCE_APP_ACTION_MOVE,
+    PXSYS_REFERENCE_APP_ACTION_MOVE_RESOURCES,
 } pxsys_reference_app_action_t;
 
 typedef struct {
@@ -186,6 +190,10 @@ typedef struct {
     uint8_t enabled;
     uint8_t has_private_data;
     uint8_t active;
+    uint8_t movable;
+    uint8_t resources_movable;
+    uint8_t legacy_storage;
+    uint8_t archived;
 } pxsys_reference_managed_app_t;
 
 typedef enum {
@@ -435,6 +443,9 @@ typedef struct {
     void* application_presentation_context;
     pxsys_reference_lvgl_capture_application_fn capture_application;
     pxsys_reference_lvgl_lock_changed_fn application_presentation_changed;
+    /* Optional system-owned asynchronous installer. It owns confirmation and
+     * completion; returning true accepts the request without doing file I/O. */
+    bool (*file_install)(void *context, const char *path);
 } pxsys_reference_lvgl_config_t;
 
 typedef struct pxsys_reference_lvgl pxsys_reference_lvgl_t;

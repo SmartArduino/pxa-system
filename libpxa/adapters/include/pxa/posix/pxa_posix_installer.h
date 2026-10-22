@@ -6,6 +6,7 @@
 
 #include "pxa/openssl/pxa_openssl.h"
 #include "pxa/package.h"
+#include "pxa/container.h"
 #include "pxa/slot_transaction.h"
 
 #ifdef __cplusplus
@@ -63,6 +64,16 @@ typedef enum {
  * hosts can recover from an interrupted first launch. */
 #define PXA_POSIX_INSTALLER_FLAG_CLAIM_EMPTY_UNOWNED_DATA ((uint32_t)1u << 3)
 
+/* One self-contained application home on the chosen volume. Current code is
+ * home/package, private files are home/private, owner/session/lock records are
+ * home-local. No shared locator registry is consulted. Hosts discover homes
+ * from volume-local install records. Mutable removable code is reverified on
+ * load. The home must already exist and is dedicated to one signed identity. */
+#define PXA_POSIX_INSTALLER_FLAG_APP_HOME ((uint32_t)1u << 4)
+/* The app-home coordinator commits its volume/media record before retiring
+ * previous code. finish() explicitly completes or rolls back that handoff. */
+#define PXA_POSIX_INSTALLER_FLAG_RETAIN_PREVIOUS ((uint32_t)1u << 5)
+
 #define PXA_POSIX_INSTALLER_PATH_PACKAGE 1u
 #define PXA_POSIX_INSTALLER_PATH_DATA 2u
 /* Host control-plane hooks. NOT_FOUND preserves the legacy path; every other
@@ -73,6 +84,12 @@ typedef pxa_status_t (*pxa_posix_installer_locator_fn)(void *,
     const pxa_posix_installer_identity_t *,uint8_t,char *,size_t);
 typedef pxa_status_t (*pxa_posix_installer_incoming_fn)(void *,
     const pxa_posix_installer_identity_t *,const char *);
+/* Runs after source authentication and before mutation. Host checks the
+ * selected filesystem's geometry and admission lease; adopted data needs
+ * metadata headroom rather than a second payload. APP_HOME on ESP requires
+ * this hook, so an external install never checks the default Flash partition. */
+typedef pxa_status_t (*pxa_posix_installer_space_fn)(void *, const char *home,
+    const pxa_package_manifest_t *, size_t manifest_bytes, uint8_t already_staged);
 
 typedef struct {
     uint32_t struct_size;
@@ -93,6 +110,14 @@ typedef struct {
     void *layout_context;
     pxa_posix_installer_locator_fn resolve_locator;
     pxa_posix_installer_incoming_fn incoming_ready;
+    void *space_context;
+    pxa_posix_installer_space_fn check_space;
+    /* Optional immutable-generation policy, checked together with EVERY
+     * authenticated manifest, including source inspection and recovery.
+     * Digest is copied at init. Zero kind accepts either kind. Dedicated
+     * resource homes bind both RESOURCES and the application's signed hash. */
+    const uint8_t *expected_manifest_sha256;
+    uint8_t expected_package_kind;
 } pxa_posix_installer_config_t;
 
 typedef struct pxa_posix_installer pxa_posix_installer_t;
@@ -170,6 +195,17 @@ pxa_status_t pxa_posix_installer_verify_source(
 pxa_status_t pxa_posix_installer_read_signed_manifest(
     pxa_posix_installer_t *installer, const char *source_path,
     pxa_posix_installer_result_t *result);
+/* Bounded in-memory prefix from the Store install-metadata endpoint: exactly
+ * header + manifest + both signature envelopes, without the payload. No I/O,
+ * directory creation or allocation. Validates publisher/lineage and logical
+ * file sizes for pre-download planning; raw compression/container bytes still
+ * require full install verification. Output root is empty. Result buffers
+ * own the returned manifest and may reuse the prefix buffer in place. As with
+ * other result APIs, root must name caller storage; one writable byte suffices
+ * for this metadata-only operation's empty root. */
+pxa_status_t pxa_posix_installer_read_install_metadata(pxa_posix_installer_t *,
+    pxa_bytes_t prefix,uint64_t expected_container_bytes,
+    pxa_posix_installer_result_t *,pxa_container_header_t *);
 /* Optional cooperative directory verification. begin reads/parses metadata;
  * successive steps authenticate that exact manifest, check the inventory,
  * then hash at most byte_budget bytes per call. Metadata stages each occupy
@@ -196,6 +232,8 @@ pxa_status_t pxa_posix_installer_recover(
  * Successful recovery removes obsolete incoming/previous/session storage.
  * Unrecoverable data is preserved and reported, rather than guessed away. */
 pxa_status_t pxa_posix_installer_recover_pending(pxa_posix_installer_t *);
+pxa_status_t pxa_posix_installer_finish(pxa_posix_installer_t *,
+    const pxa_posix_installer_identity_t *, uint8_t rollback);
 /* Read the committed manifest without revalidating installed contents. */
 pxa_status_t pxa_posix_installer_load_current(
     pxa_posix_installer_t *installer,

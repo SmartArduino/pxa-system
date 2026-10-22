@@ -28,6 +28,9 @@ extern "C" {
 #define PXA_VOLUME_CASE_INSENSITIVE UINT64_C(16)
 #define PXA_VOLUME_RANDOM_READ UINT64_C(32)
 #define PXA_VOLUME_INSTALLABLE UINT64_C(64)
+/* Directories already satisfy the PXA private FS naming and atomic-replace
+ * contract. Otherwise a private filesystem backend (e.g. image) is required. */
+#define PXA_VOLUME_PRIVATE_NATIVE UINT64_C(128)
 #define PXA_VOLUME_TOTAL_KNOWN UINT8_C(1)
 #define PXA_VOLUME_FREE_KNOWN UINT8_C(2)
 
@@ -73,6 +76,15 @@ pxa_status_t pxa_volume_get(const pxa_volume_registry_t *registry,
 pxa_status_t pxa_volume_next(const pxa_volume_registry_t *registry,
     uint64_t expected_revision, uint16_t *cursor, pxa_volume_info_t *output);
 uint64_t pxa_volume_revision(const pxa_volume_registry_t *registry);
+
+/* Host-owner admission accounting. Bytes are reservations against the latest
+ * free-space snapshot, not an on-disk allocation. A lease is tied to this
+ * mount instance; unregistering it never transfers reservations to a new one.
+ * Callers serialize reserve/release with filesystem space refreshes. */
+pxa_status_t pxa_volume_reserve(pxa_volume_registry_t *, uint64_t mount_epoch,
+    uint64_t bytes);
+pxa_status_t pxa_volume_release(pxa_volume_registry_t *, uint64_t mount_epoch,
+    uint64_t bytes);
 
 #ifdef __cplusplus
 }

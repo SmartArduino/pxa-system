@@ -25,6 +25,8 @@
 #include "pxa/package.h"
 #include "pxa/posix/pxa_posix_fs.h"
 #include "pxa/posix/pxa_posix_installer.h"
+#include "pxa/posix/pxa_posix_app_store.h"
+#include "record_test_auth.h"
 #include "pxa/posix/pxa_posix_scheduler_store.h"
 #include "pxa/posix/pxa_posix_storage.h"
 
@@ -1354,6 +1356,30 @@ static void test_installer(void) {
                  pxa_posix_installer_read_signed_manifest(installer, container_lz4,
                                                            &result),
                  PXA_STATUS_OK);
+    {
+        uint8_t prefix[PXA_PACKAGE_TEST_MANIFEST_BYTES+280];pxa_container_header_t header,verified;
+        size_t container_bytes=read_test_file(container_lz4,prefix,sizeof(prefix));
+        CHECK(pxa_container_header_parse((pxa_bytes_t){prefix,64},container_bytes,&header)==PXA_STATUS_OK);
+        pxa_bytes_t metadata={prefix,(size_t)header.payload_offset};
+        check_status("plan from a signed prefix without the payload",pxa_posix_installer_read_install_metadata(
+            installer,metadata,container_bytes,&result,&verified),PXA_STATUS_OK);
+        CHECK(manifest && !root_path[0] && verified.unpacked_size==sizeof(artifact_lz4));
+        check_status("truncated metadata prefix rejected",pxa_posix_installer_read_install_metadata(
+            installer,(pxa_bytes_t){prefix,metadata.size-1},container_bytes,&result,&verified),PXA_STATUS_DENIED);
+        CHECK(!manifest && !verified.container_size);
+        check_status("metadata transport size must match selected artifact",pxa_posix_installer_read_install_metadata(
+            installer,metadata,container_bytes+1,&result,&verified),PXA_STATUS_INVALID_ARGUMENT);
+        prefix[header.package_signature_offset+107]^=1;
+        CHECK(pxa_posix_installer_read_install_metadata(installer,metadata,container_bytes,&result,&verified)!=PXA_STATUS_OK);
+        CHECK(!manifest);
+        prefix[header.package_signature_offset+107]^=1;
+        uint8_t *original_encoded=result.encoded;size_t original_capacity=result.encoded_capacity;
+        result.encoded=prefix;result.encoded_capacity=sizeof(prefix);
+        check_status("metadata parser can reuse its bounded input buffer",pxa_posix_installer_read_install_metadata(
+            installer,metadata,container_bytes,&result,&verified),PXA_STATUS_OK);
+        CHECK(manifest && manifest->encoded.data==prefix && !memcmp(prefix,"PXAM",4));
+        result.encoded=original_encoded;result.encoded_capacity=original_capacity;manifest=NULL;
+    }
     check_status("reject tampered LZ4 container",
                  pxa_posix_installer_verify_source(installer, container_lz4,
                                                     &result),
@@ -1719,6 +1745,437 @@ static void test_short_installer_layout(void) {
     puts("test_short_installer_layout OK");
 }
 
+typedef struct {
+    const char *home;
+    unsigned calls;
+    int full;
+} home_space_t;
+
+static pxa_status_t home_space(void *context, const char *home,
+    const pxa_package_manifest_t *manifest, size_t bytes, uint8_t adopted) {
+    home_space_t *space = context;
+    CHECK(!strcmp(home, space->home));
+    CHECK(manifest && manifest->file_count == 1 && bytes > 0 && !adopted);
+    ++space->calls;
+    return space->full ? PXA_STATUS_QUOTA_EXCEEDED : PXA_STATUS_OK;
+}
+
+static void test_app_home_installer(void) {
+    test_signer_t signer;
+    pxa_openssl_publisher_key_t key;
+    uint8_t der[256], *cursor = der;
+    char *home = make_temp_dir("pxa-selected-volume-home");
+    char *package = make_temp_dir("pxa-home-package");
+    char path[512], artifact_path[1024];
+    static const uint8_t artifact[] = "self contained executable";
+    pxa_posix_installer_config_t config = {0};
+    pxa_posix_installer_t *installer = NULL;
+    pxa_package_manifest_t *manifest = NULL;
+    pxa_posix_install_disposition_t disposition;
+    home_space_t space = {home, 0, 0};
+    generate_signer(&signer);
+    int n = i2d_PUBKEY(signer.key, &cursor);
+    CHECK(n > 0 && n <= (int)sizeof(der));
+    key.spki = der; key.spki_size = (size_t)n;
+    build_package(package, &signer, "com.example.home", "1.0.0",
+        "artifacts/main.wasm", artifact, sizeof(artifact) - 1);
+    config.struct_size = sizeof(config);
+    config.storage_root = home;
+    config.trust = (pxa_openssl_trust_t){sizeof(config.trust), &key, 1};
+    config.flags = PXA_POSIX_INSTALLER_FLAG_APP_HOME |
+        PXA_POSIX_INSTALLER_FLAG_COMPOSITE_IDENTITY;
+    config.space_context = &space;
+    config.check_space = home_space;
+    pxa_package_limits_init(&config.limits);
+    size_t size = pxa_posix_installer_workspace_size(&config);
+    void *workspace = malloc(size);
+    void *manifest_workspace = malloc(pxa_package_manifest_workspace_size(&config.limits));
+    uint8_t encoded[PXA_PACKAGE_TEST_MANIFEST_BYTES];
+    CHECK(workspace && manifest_workspace);
+    check_status("home init", pxa_posix_installer_init(workspace, size, &config, &installer), PXA_STATUS_OK);
+    pxa_posix_installer_result_t result = {0};
+    result.struct_size = sizeof(result);
+    result.manifest_workspace = manifest_workspace;
+    result.manifest_workspace_size = pxa_package_manifest_workspace_size(&config.limits);
+    result.encoded = encoded; result.encoded_capacity = sizeof(encoded);
+    result.manifest = &manifest; result.root = path; result.root_capacity = sizeof(path);
+    pxa_posix_installer_identity_t identity = {
+        {signer.key_id, 32}, {(const uint8_t *)"com.example.home", 16}};
+    space.full = 1;
+    check_status("selected volume is full", pxa_posix_installer_install(installer,
+        package, &result, &disposition), PXA_STATUS_QUOTA_EXCEEDED);
+    CHECK(space.calls == 1);
+    space.full = 0;
+    check_status("home install", pxa_posix_installer_install(installer,
+        package, &result, &disposition), PXA_STATUS_OK);
+    snprintf(artifact_path, sizeof(artifact_path), "%s/package", home);
+    CHECK(!strcmp(path, artifact_path));
+    snprintf(artifact_path, sizeof(artifact_path), "%s/packages", home);
+    CHECK(access(artifact_path, F_OK) != 0);
+    check_status("home authenticated load", pxa_posix_installer_load_current(
+        installer, &identity, &result), PXA_STATUS_OK);
+    build_package(package, &signer, "com.example.home", "2.0.0",
+        "artifacts/main.wasm", artifact, sizeof(artifact) - 1);
+    check_status("home update", pxa_posix_installer_install(installer,
+        package, &result, &disposition), PXA_STATUS_OK);
+    check_status("home recovery without NVS", pxa_posix_installer_recover_pending(installer), PXA_STATUS_OK);
+    pxa_posix_installer_deinit(installer);
+    check_status("home reopen", pxa_posix_installer_init(workspace, size, &config, &installer), PXA_STATUS_OK);
+    check_status("home reopened load", pxa_posix_installer_load_current(
+        installer, &identity, &result), PXA_STATUS_OK);
+    CHECK(manifest->version.size == 5 && !memcmp(manifest->version.data, "2.0.0", 5));
+    snprintf(artifact_path, sizeof(artifact_path), "%s/package/artifacts/main.wasm", home);
+    FILE *changed = fopen(artifact_path, "wb"); CHECK(changed);
+    CHECK(fwrite("modified", 1, 8, changed) == 8); fclose(changed);
+    check_status("external code tampering rejected", pxa_posix_installer_load_current(
+        installer, &identity, &result), PXA_STATUS_DENIED);
+    pxa_posix_installer_deinit(installer);
+    free(manifest_workspace); free(workspace); free(home); free(package);
+    EVP_PKEY_free(signer.key);
+    puts("test_app_home_installer OK");
+}
+
+typedef struct { unsigned calls, unavailable_at; uint8_t unavailable_volume; } media_state_t;
+typedef struct { unsigned calls; pxa_status_t status; } prepare_state_t;
+typedef struct { unsigned calls; pxa_status_t status; media_state_t *media; uint8_t revoke; } commit_state_t;
+static pxa_status_t commit_ready(void *context, const pxa_posix_app_home_t *home) {
+    commit_state_t *state = context;
+    CHECK(home->record.generation && home->record.install_id[0]);
+    ++state->calls;
+    if (state->revoke) state->media->unavailable_at = state->media->calls + 1;
+    return state->status;
+}
+static pxa_status_t prepare_home(void *context,const pxa_posix_app_home_t *home) {
+    prepare_state_t *state=context;
+    CHECK(home->record.generation && home->record.install_id[0]);
+    char path[PXA_POSIX_APP_PATH_BYTES];struct stat st;
+    CHECK(pxa_posix_app_home_path(home,PXA_POSIX_APP_HOME_PACKAGE,path,sizeof(path))==PXA_STATUS_OK);
+    CHECK(stat(path,&st)==0 && S_ISDIR(st.st_mode));
+    ++state->calls;
+    if(state->status==PXA_STATUS_OK && home->record.data_generation) {
+        CHECK(pxa_posix_app_home_path(home,PXA_POSIX_APP_HOME_PRIVATE,path,sizeof(path))==PXA_STATUS_OK);
+        make_dirs(path);
+    }
+    return state->status;
+}
+static pxa_status_t media_ready(void *context, const pxa_install_record_t *record) {
+    media_state_t *state = context;
+    CHECK(record->flags & PXA_INSTALL_RECORD_HAS_MEDIA);
+    ++state->calls;
+    return state->calls == state->unavailable_at ||
+        (state->unavailable_volume && record->media_volume.bytes[0] == state->unavailable_volume)
+        ? PXA_STATUS_UNAVAILABLE : PXA_STATUS_OK;
+}
+static int count_home(void *context, const pxa_posix_app_home_t *home) {
+    unsigned *count = context;
+    CHECK(!strcmp(home->record.app_id, "com.example.volume"));
+    ++*count;
+    return 1;
+}
+static pxa_status_t volume_checkpoint(void *context, pxa_transaction_checkpoint_t checkpoint) {
+    return checkpoint == *(pxa_transaction_checkpoint_t *)context
+        ? PXA_STATUS_CANCELLED : PXA_STATUS_OK;
+}
+static void test_volume_local_app_store(int authenticated) {
+    test_signer_t signer;
+    pxa_openssl_publisher_key_t key;
+    uint8_t der[256], *cursor = der;
+    char *volume = make_temp_dir("pxa-external-volume");
+    char *other_volume = make_temp_dir("pxa-other-volume");
+    char *package = make_temp_dir("pxa-volume-source");
+    char path[512], expected_home[1024], private_file[1024],private_root[PXA_POSIX_APP_PATH_BYTES];
+    static const uint8_t artifact[] = "volume local application";
+    pxa_posix_app_store_config_t config = {0};
+    record_test_auth_context_t record_key={{1},1};
+    void *owned_installer_workspace=NULL;
+    pxa_install_record_t approved = {0};
+    pxa_posix_app_home_t home, reopened;
+    pxa_package_manifest_t *manifest = NULL;
+    media_state_t media = {0};
+    prepare_state_t prepared = {0};
+    commit_state_t commit = {0};
+    home_space_t space = {expected_home, 0, 0};
+    size_t invalid;
+    unsigned count = 0;
+    generate_signer(&signer);
+    int n = i2d_PUBKEY(signer.key, &cursor);
+    CHECK(n > 0 && n <= (int)sizeof(der));
+    key.spki = der; key.spki_size = (size_t)n;
+    build_package(package, &signer, "com.example.volume", "1.0.0",
+        "artifacts/main.wasm", artifact, sizeof(artifact) - 1);
+    config.root = volume; config.volume_id.bytes[0] = 3;
+    config.installer.struct_size = sizeof(config.installer);
+    config.installer.trust = (pxa_openssl_trust_t){sizeof(config.installer.trust), &key, 1};
+    config.installer.check_space = home_space;
+    config.installer.space_context = &space;
+    config.media_context = &media; config.media_ready = media_ready;
+    config.prepare_context=&prepared;config.prepare_home=prepare_home;
+    if(authenticated) {config.record_auth_context=&record_key;config.record_tag=record_test_tag;}
+    snprintf(expected_home, sizeof(expected_home), "%s/apps/lucinhu/com.example.volume", volume);
+    pxa_package_limits_init(&config.installer.limits);
+    if(authenticated) {
+        config.installer_workspace_bytes=pxa_posix_app_store_workspace_size(&config);
+        owned_installer_workspace=malloc(config.installer_workspace_bytes);CHECK(owned_installer_workspace);
+        config.installer_workspace=owned_installer_workspace;
+    }
+    void *workspace = malloc(pxa_package_manifest_workspace_size(&config.installer.limits));
+    uint8_t encoded[PXA_PACKAGE_TEST_MANIFEST_BYTES];
+    CHECK(workspace);
+    pxa_posix_installer_result_t result = {0};
+    result.struct_size = sizeof(result); result.manifest_workspace = workspace;
+    result.manifest_workspace_size = pxa_package_manifest_workspace_size(&config.installer.limits);
+    result.encoded = encoded; result.encoded_capacity = sizeof(encoded);
+    result.manifest = &manifest; result.root = path; result.root_capacity = sizeof(path);
+    approved.flags = PXA_INSTALL_RECORD_ENABLED | PXA_INSTALL_RECORD_HAS_MEDIA;
+    approved.install_id[0] = 8; approved.app_volume = config.volume_id;
+    approved.media_volume.bytes[0] = 4;
+    memcpy(approved.publisher_root, signer.key_id, 32);
+    strcpy(approved.app_id, "com.example.volume");
+    if(authenticated) {
+        --config.installer_workspace_bytes;
+        check_status("short borrowed installer workspace",pxa_posix_app_store_install(&config,
+            "lucinhu/com.example.volume",package,0,&approved,&result,&home),PXA_STATUS_RESOURCE_LIMIT);
+        ++config.installer_workspace_bytes;
+        CHECK(access(expected_home,F_OK)!=0);
+    }
+    uint8_t wrong_approval[32]={0};config.approved_manifest_sha256=wrong_approval;
+    check_status("changed preview cannot install a different signed manifest",pxa_posix_app_store_install(&config,
+        "lucinhu/com.example.volume",package,0,&approved,&result,&home),PXA_STATUS_DENIED);
+    CHECK(access(expected_home,F_OK)!=0 && prepared.calls==0);
+    config.approved_manifest_sha256=NULL;
+    check_status("volume-local initial install", pxa_posix_app_store_install(&config,
+        "lucinhu/com.example.volume", package, 0, &approved, &result, &home), PXA_STATUS_OK);
+    CHECK(home.record.generation == 1 && !strcmp(home.home, expected_home));
+    CHECK(prepared.calls==1);
+    CHECK(pxa_posix_app_home_path(&home,PXA_POSIX_APP_HOME_PRIVATE,private_root,sizeof(private_root))==PXA_STATUS_OK);
+    CHECK(mkdir(private_root, 0700) == 0);
+    snprintf(private_file, sizeof(private_file), "%s/save.bin", private_root);
+    FILE *save = fopen(private_file, "wb"); CHECK(save);
+    CHECK(fwrite("keep save", 1, 9, save) == 9); fclose(save);
+    check_status("discover without central database", pxa_posix_app_store_visit(&config,
+        count_home, &count, &invalid), PXA_STATUS_OK);
+    CHECK(count == 1 && invalid == 0);
+    if(authenticated) {
+        record_key.available=0;count=0;
+        check_status("missing device key is not an empty catalog",pxa_posix_app_store_visit(&config,
+            count_home,&count,&invalid),PXA_STATUS_UNAVAILABLE);
+        CHECK(count==0);
+        check_status("missing device key cannot activate a local record",pxa_posix_app_store_recover(&config,
+            "lucinhu/com.example.volume",&result,&reopened),PXA_STATUS_UNAVAILABLE);
+        record_key.available=1;
+        char foreign_parent[1024],foreign_home[1024];
+        snprintf(foreign_parent,sizeof(foreign_parent),"%s/apps/foreign",volume);
+        snprintf(foreign_home,sizeof(foreign_home),"%s/apps/foreign/com.example.volume",volume);
+        CHECK(mkdir(foreign_parent,0700)==0 && rename(expected_home,foreign_home)==0);count=0;
+        check_status("discovery rejects forged home binding",pxa_posix_app_store_visit(&config,
+            count_home,&count,&invalid),PXA_STATUS_OK);
+        CHECK(count==0 && invalid==1);
+        CHECK(rename(foreign_home,expected_home)==0 && rmdir(foreign_parent)==0);
+    }
+    check_status("cold volume-local recovery", pxa_posix_app_store_recover(&config,
+        "lucinhu/com.example.volume", &result, &reopened), PXA_STATUS_OK);
+    CHECK(!memcmp(home.record.install_id, reopened.record.install_id, 16));
+    CHECK(prepared.calls==1); /* Ordinary activation does not prepare an install. */
+    build_package(package, &signer, "com.example.volume", "2.0.0",
+        "artifacts/main.wasm", artifact, sizeof(artifact) - 1);
+    /* Resource volume disappears after code is committed but before the local
+     * installation record commits. Previous code must still be recoverable. */
+    media.unavailable_at = media.calls + 3;
+    check_status("resource removal rolls back code", pxa_posix_app_store_install(&config,
+        "lucinhu/com.example.volume", package, 1, &home.record, &result, &reopened), PXA_STATUS_UNAVAILABLE);
+    check_status("previous installation remains usable", pxa_posix_app_store_recover(&config,
+        "lucinhu/com.example.volume", &result, &reopened), PXA_STATUS_OK);
+    CHECK(reopened.record.generation == 1 && !memcmp(manifest->version.data, "1.0.0", 5));
+    uint8_t saved[16]; CHECK(read_test_file(private_file, saved, sizeof(saved)) == 9);
+    CHECK(!memcmp(saved, "keep save", 9));
+    media.unavailable_at = media.calls + 4;
+    check_status("resource removal during private preparation rolls back code", pxa_posix_app_store_install(&config,
+        "lucinhu/com.example.volume", package, 1, &home.record, &result, &reopened), PXA_STATUS_UNAVAILABLE);
+    CHECK(prepared.calls == 2);
+    check_status("post-prepare rollback retains old installation", pxa_posix_app_store_recover(&config,
+        "lucinhu/com.example.volume", &result, &reopened), PXA_STATUS_OK);
+    CHECK(reopened.record.generation == 1 && !memcmp(manifest->version.data, "1.0.0", 5));
+    media.unavailable_at = 0;
+    prepared.status=PXA_STATUS_QUOTA_EXCEEDED;
+    check_status("private preparation failure restores previous code",pxa_posix_app_store_install(&config,
+        "lucinhu/com.example.volume",package,1,&home.record,&result,&reopened),PXA_STATUS_QUOTA_EXCEEDED);
+    CHECK(prepared.calls==3);
+    check_status("private preparation rollback keeps old generation",pxa_posix_app_store_recover(&config,
+        "lucinhu/com.example.volume",&result,&reopened),PXA_STATUS_OK);
+    CHECK(reopened.record.generation==1 && !memcmp(manifest->version.data,"1.0.0",5));
+    CHECK(read_test_file(private_file,saved,sizeof(saved))==9 && !memcmp(saved,"keep save",9));
+    prepared.status=PXA_STATUS_OK;
+    config.commit_context = &commit; config.commit_ready = commit_ready;
+    commit.status = PXA_STATUS_UNAVAILABLE;
+    check_status("durable handoff gate failure preserves previous executable", pxa_posix_app_store_install(&config,
+        "lucinhu/com.example.volume", package, 1, &home.record, &result, &reopened), PXA_STATUS_UNAVAILABLE);
+    CHECK(commit.calls == 1);
+    check_status("handoff failure retains committed generation", pxa_posix_app_store_recover(&config,
+        "lucinhu/com.example.volume", &result, &reopened), PXA_STATUS_OK);
+    CHECK(reopened.record.generation == 1 && !memcmp(manifest->version.data, "1.0.0", 5));
+    commit.status = PXA_STATUS_OK; commit.media = &media; commit.revoke = 1;
+    check_status("resource loss during durable handoff cannot commit", pxa_posix_app_store_install(&config,
+        "lucinhu/com.example.volume", package, 1, &home.record, &result, &reopened), PXA_STATUS_UNAVAILABLE);
+    CHECK(commit.calls == 2);
+    check_status("handoff resource failure retains previous generation", pxa_posix_app_store_recover(&config,
+        "lucinhu/com.example.volume", &result, &reopened), PXA_STATUS_OK);
+    CHECK(reopened.record.generation == 1);
+    commit.revoke = 0; media.unavailable_at = 0;
+    approved = home.record; approved.media_volume.bytes[0] = 5; media.unavailable_volume = 4;
+    check_status("update replaces offline old resources with verified new binding", pxa_posix_app_store_install(&config,
+        "lucinhu/com.example.volume", package, 1, &approved, &result, &reopened), PXA_STATUS_OK);
+    CHECK(reopened.record.media_volume.bytes[0] == 5);
+    CHECK(commit.calls == 3);
+    media.unavailable_volume = 0;
+    CHECK(reopened.record.generation == 2 && !memcmp(manifest->version.data, "2.0.0", 5));
+    check_status("stale confirmation rejected", pxa_posix_app_store_install(&config,
+        "lucinhu/com.example.volume", package, 1, &home.record, &result, &reopened), PXA_STATUS_BAD_STATE);
+    check_status("load latest committed record", pxa_posix_app_store_recover(&config,
+        "lucinhu/com.example.volume", &result, &home), PXA_STATUS_OK);
+    build_package(package, &signer, "com.example.volume", "3.0.0",
+        "artifacts/main.wasm", artifact, sizeof(artifact) - 1);
+    pxa_transaction_checkpoint_t checkpoint = PXA_CHECKPOINT_CURRENT_MOVED;
+    pxa_slot_faults_t faults = {&checkpoint, volume_checkpoint};
+    config.installer.faults = &faults;
+    check_status("reset after previous code moved", pxa_posix_app_store_install(&config,
+        "lucinhu/com.example.volume", package, 2, &home.record, &result, &reopened), PXA_STATUS_CANCELLED);
+    config.installer.faults = NULL;
+    check_status("cold rollback after interrupted handoff", pxa_posix_app_store_recover(&config,
+        "lucinhu/com.example.volume", &result, &reopened), PXA_STATUS_OK);
+    CHECK(reopened.record.generation == 2 && !memcmp(manifest->version.data, "2.0.0", 5));
+    CHECK(read_test_file(private_file, saved, sizeof(saved)) == 9 && !memcmp(saved, "keep save", 9));
+    /* A truncated pending record before code mutation is safely retired once
+     * the old signed package still matches the committed installation. */
+    char pending[1024]; snprintf(pending, sizeof(pending), "%s/install.pending.pxi", home.home);
+    FILE *partial = fopen(pending, "wb"); CHECK(partial);
+    CHECK(fwrite("PXI", 1, 3, partial) == 3); fclose(partial);
+    check_status("torn pending write keeps committed code", pxa_posix_app_store_recover(&config,
+        "lucinhu/com.example.volume", &result, &reopened), PXA_STATUS_OK);
+    CHECK(reopened.record.generation == 2);
+    if(authenticated) {
+        pxa_install_record_t forged=home.record;uint8_t unsealed[PXA_INSTALL_RECORD_BYTES];
+        forged.generation=3;forged.flags^=PXA_INSTALL_RECORD_ENABLED;
+        CHECK(pxa_install_record_encode(&forged,unsealed)==PXA_STATUS_OK);
+        partial=fopen(pending,"wb");CHECK(partial);
+        CHECK(fwrite(unsealed,1,sizeof(unsealed),partial)==sizeof(unsealed));fclose(partial);
+        check_status("unsealed pending cannot change approved policy",pxa_posix_app_store_recover(&config,
+            "lucinhu/com.example.volume",&result,&reopened),PXA_STATUS_OK);
+        CHECK(reopened.record.generation==2 && (reopened.record.flags&PXA_INSTALL_RECORD_ENABLED));
+    }
+    check_status("traversal rejected", pxa_posix_app_store_recover(&config,
+        "../com.example.volume", &result, &reopened), PXA_STATUS_INVALID_ARGUMENT);
+    config.root = other_volume; config.volume_id.bytes[0] = 9; count = 0;
+    check_status("independent empty volume", pxa_posix_app_store_visit(&config,
+        count_home, &count, &invalid), PXA_STATUS_OK);
+    CHECK(count == 0 && invalid == 0);
+    /* No central registry is needed when the first install on another volume
+     * loses power before publishing its pending record. */
+    char first_home[512]; snprintf(first_home, sizeof(first_home), "%s/apps", other_volume);
+    CHECK(mkdir(first_home, 0700) == 0);
+    snprintf(first_home, sizeof(first_home), "%s/apps/012abc", other_volume);
+    CHECK(mkdir(first_home, 0700) == 0);
+    snprintf(first_home, sizeof(first_home), "%s/apps/012abc/com.example.volume", other_volume);
+    CHECK(mkdir(first_home, 0700) == 0);
+    snprintf(pending, sizeof(pending), "%s/install.pending.pxi", first_home);
+    partial = fopen(pending, "wb"); CHECK(partial);
+    CHECK(fwrite("PXI", 1, 3, partial) == 3); fclose(partial);
+    approved.app_volume = config.volume_id; approved.install_id[0] = 9;
+    space.home = first_home;
+    check_status("retry first install after torn pending write", pxa_posix_app_store_install(&config,
+        "012abc/com.example.volume", package, 0, &approved, &result, &reopened), PXA_STATUS_OK);
+    CHECK(reopened.record.generation == 1 && !memcmp(manifest->version.data, "3.0.0", 5));
+    check_status("stale local policy confirmation rejected",pxa_posix_app_store_set_enabled(&config,
+        "012abc/com.example.volume",0,0,&home),PXA_STATUS_BAD_STATE);
+    check_status("disable commits on the application's own volume",pxa_posix_app_store_set_enabled(&config,
+        "012abc/com.example.volume",1,0,&home),PXA_STATUS_OK);
+    CHECK(home.record.generation==2 && !(home.record.flags&PXA_INSTALL_RECORD_ENABLED) &&
+        !memcmp(home.record.manifest_sha256,reopened.record.manifest_sha256,32));
+    check_status("unchanged local policy is idempotent",pxa_posix_app_store_set_enabled(&config,
+        "012abc/com.example.volume",2,0,&home),PXA_STATUS_OK);
+    CHECK(home.record.generation==2);
+    if(authenticated) {
+        record_key.available=0;
+        check_status("missing device key cannot alter enabled policy",pxa_posix_app_store_set_enabled(&config,
+            "012abc/com.example.volume",2,1,&home),PXA_STATUS_UNAVAILABLE);
+        record_key.available=1;
+    }
+    partial=fopen(pending,"wb");CHECK(partial);
+    CHECK(fwrite("PXI",1,3,partial)==3);fclose(partial);
+    check_status("policy change cannot race a damaged handoff",pxa_posix_app_store_set_enabled(&config,
+        "012abc/com.example.volume",2,1,&home),PXA_STATUS_DENIED);
+    check_status("metadata maintenance refuses a damaged handoff",pxa_posix_app_store_lookup(&config,
+        "012abc/com.example.volume",&reopened),PXA_STATUS_DENIED);
+    CHECK(!reopened.record.generation);
+    check_status("recover keeps disabled policy and executable",pxa_posix_app_store_recover(&config,
+        "012abc/com.example.volume",&result,&home),PXA_STATUS_OK);
+    CHECK(home.record.generation==2 && !(home.record.flags&PXA_INSTALL_RECORD_ENABLED));
+    check_status("enable restores same local installation",pxa_posix_app_store_set_enabled(&config,
+        "012abc/com.example.volume",2,1,&home),PXA_STATUS_OK);
+    CHECK(home.record.generation==3 && (home.record.flags&PXA_INSTALL_RECORD_ENABLED));
+    char old_save[1024],fresh_save[1024];
+    CHECK(pxa_posix_app_home_path(&home,PXA_POSIX_APP_HOME_PRIVATE,private_root,sizeof(private_root))==PXA_STATUS_OK);
+    make_dirs(private_root);snprintf(old_save,sizeof(old_save),"%s/save.bin",private_root);
+    write_file(old_save,(const uint8_t *)"old data",8);
+    prepared.status=PXA_STATUS_QUOTA_EXCEEDED;
+    check_status("data reset preparation preserves old reference",pxa_posix_app_store_reset_data(&config,
+        "012abc/com.example.volume",3,0,&reopened),PXA_STATUS_QUOTA_EXCEEDED);
+    check_status("recover data after failed reset",pxa_posix_app_store_recover(&config,
+        "012abc/com.example.volume",&result,&home),PXA_STATUS_OK);
+    CHECK(home.record.generation==3 && !home.record.data_generation);
+    CHECK(read_test_file(old_save,saved,sizeof(saved))==8 && !memcmp(saved,"old data",8));
+    prepared.status=PXA_STATUS_OK;
+    check_status("data reset commits a separately prepared generation",pxa_posix_app_store_reset_data(&config,
+        "012abc/com.example.volume",3,0,&home),PXA_STATUS_OK);
+    CHECK(home.record.generation==4 && home.record.data_generation==1);
+    check_status("metadata lookup selects the committed private generation",pxa_posix_app_store_lookup(&config,
+        "012abc/com.example.volume",&reopened),PXA_STATUS_OK);
+    CHECK(reopened.record.generation==4 && reopened.record.data_generation==1 && !memcmp(reopened.record.install_id,home.record.install_id,16));
+    CHECK(pxa_posix_app_home_path(&home,PXA_POSIX_APP_HOME_PRIVATE,private_root,sizeof(private_root))==PXA_STATUS_OK);
+    snprintf(fresh_save,sizeof(fresh_save),"%s/save.bin",private_root);
+    CHECK(strstr(private_root,"/data/0000000000000001") && access(fresh_save,F_OK)!=0);
+    CHECK(read_test_file(old_save,saved,sizeof(saved))==8 && !memcmp(saved,"old data",8));
+    check_status("stale reset approval cannot clear fresh data again",pxa_posix_app_store_reset_data(&config,
+        "012abc/com.example.volume",4,0,&reopened),PXA_STATUS_BAD_STATE);
+    approved=home.record;approved.data_generation=0;
+    check_status("ordinary updates cannot replace the data generation",pxa_posix_app_store_install(&config,
+        "012abc/com.example.volume",package,4,&approved,&result,&reopened),PXA_STATUS_BAD_STATE);
+    write_file(fresh_save,(const uint8_t *)"new data",8);
+    check_status("archive commits before retiring code",pxa_posix_app_store_archive(&config,
+        "012abc/com.example.volume",4,&home),PXA_STATUS_OK);
+    CHECK(home.record.generation==5 && (home.record.flags&PXA_INSTALL_RECORD_ARCHIVED));
+    CHECK(read_test_file(fresh_save,saved,sizeof(saved))==8 && !memcmp(saved,"new data",8));
+    check_status("archived home can be recovered without executable",pxa_posix_app_store_recover(&config,
+        "012abc/com.example.volume",&result,&reopened),PXA_STATUS_OK);
+    CHECK(reopened.record.generation==5 && reopened.record.data_generation==1);
+    check_status("repeated archive repairs metadata without another generation",pxa_posix_app_store_archive(&config,
+        "012abc/com.example.volume",5,&reopened),PXA_STATUS_OK);
+    CHECK(reopened.record.generation==5);
+    approved=home.record;approved.flags&=~PXA_INSTALL_RECORD_ARCHIVED;
+    check_status("reinstall uses the retained install identity and data",pxa_posix_app_store_install(&config,
+        "012abc/com.example.volume",package,5,&approved,&result,&reopened),PXA_STATUS_OK);
+    CHECK(reopened.record.generation==6 && !(reopened.record.flags&PXA_INSTALL_RECORD_ARCHIVED));
+    CHECK(!memcmp(reopened.record.install_id,approved.install_id,16));
+    CHECK(read_test_file(fresh_save,saved,sizeof(saved))==8 && !memcmp(saved,"new data",8));
+    approved=reopened.record;unsigned before_prepare=prepared.calls, before_commit=commit.calls;
+    check_status("identical approved release is idempotent",pxa_posix_app_store_install(&config,
+        "012abc/com.example.volume",package,6,&approved,&result,&reopened),PXA_STATUS_OK);
+    CHECK(reopened.record.generation==6 && prepared.calls==before_prepare && commit.calls==before_commit);
+    char source_file[1024];snprintf(source_file,sizeof(source_file),"%s/artifacts/main.wasm",package);
+    write_file(source_file,(const uint8_t *)"tampered",8);
+    check_status("idempotence still rejects a tampered source",pxa_posix_app_store_install(&config,
+        "012abc/com.example.volume",package,6,&approved,&result,&reopened),PXA_STATUS_DENIED);
+    CHECK(!reopened.record.generation && prepared.calls==before_prepare);
+    write_file(source_file,artifact,sizeof(artifact)-1);
+    count = 0;
+    check_status("discover second independent volume", pxa_posix_app_store_visit(&config,
+        count_home, &count, &invalid), PXA_STATUS_OK);
+    CHECK(count == 1 && invalid == 0);
+    free(workspace); free(volume); free(other_volume); free(package);
+    free(owned_installer_workspace);
+    EVP_PKEY_free(signer.key);
+    printf("test_volume_local_app_store OK (authenticated=%d)\n",authenticated);
+}
+
 int main(void) {
     test_openssl_sha256();
     test_fs_backend();
@@ -1729,6 +2186,9 @@ int main(void) {
     test_installer();
     test_composite_installer_identity();
     test_short_installer_layout();
+    test_app_home_installer();
+    test_volume_local_app_store(0);
+    test_volume_local_app_store(1);
     if (failures != 0) {
         fprintf(stderr, "%d failure(s)\n", failures);
         return 1;

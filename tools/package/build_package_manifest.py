@@ -261,16 +261,24 @@ def openssl(arguments, input_bytes=None):
 def package_files(package_dir):
     files = []
     for path in package_dir.rglob("*"):
+        require(not path.is_symlink(), f"package symlink is not allowed: {path}")
         if not path.is_file():
             continue
         relative = path.relative_to(package_dir).as_posix()
         if relative in {"manifest.pxm", "signature.pxs"}:
             continue
-        require(PACKAGE_PATH.fullmatch(relative), f"invalid package path: {relative}")
-        content = path.read_bytes()
-        require(not (relative.startswith("artifacts/") and not content),
+        require(PACKAGE_PATH.fullmatch(relative) and len(relative) <= 255 and
+                all(part not in (".", "..") for part in relative.split("/")),
+                f"invalid package path: {relative}")
+        digest = hashlib.sha256()
+        size = 0
+        with path.open("rb") as source:
+            while block := source.read(64 * 1024):
+                digest.update(block)
+                size += len(block)
+        require(not (relative.startswith("artifacts/") and not size),
                 f"empty artifact: {relative}")
-        files.append((relative, content))
+        files.append((relative, size, digest.digest()))
     files.sort(key=lambda entry: entry[0])
     require(files, "package has no payload")
     return files
@@ -401,8 +409,28 @@ def main(argv):
         metadata = json.loads(Path(metadata_path).read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
         raise PackageError(f"unable to read package metadata: {error}") from error
-    require(isinstance(metadata, dict) and metadata.get("format") == "pxa-package-source-0.1",
+    require(isinstance(metadata, dict) and metadata.get("format") in
+            ("pxa-package-source-0.1", "pxa-package-source-0.2"),
             "unsupported source format")
+    resource_format = metadata["format"] == "pxa-package-source-0.2"
+    package_type = metadata.get("package_type", "application")
+    require(package_type in ("application", "resources"), "invalid package_type")
+    require(resource_format or
+            (package_type == "application" and "resources" not in metadata),
+            "package_type/resources require source format 0.2")
+    resources = metadata.get("resources")
+    require(resources is None or
+            (package_type == "application" and isinstance(resources, dict) and
+             set(resources) == {"manifest_sha256"} and
+             isinstance(resources["manifest_sha256"], str) and
+             re.fullmatch(r"[0-9a-f]{64}", resources["manifest_sha256"]) and
+             resources["manifest_sha256"] != "0" * 64),
+            "resources must bind a nonzero lowercase manifest_sha256")
+    data_only = package_type == "resources"
+    if data_only:
+        require(not any(metadata.get(field) for field in
+                        ("components", "permissions", "ipc_endpoints", "services", "build")),
+                "resource packages cannot declare executable components or capabilities")
 
     app_id = metadata.get("id")
     version = metadata.get("version")
@@ -441,7 +469,9 @@ def main(argv):
         from compile_resources import build_index
         build_index(package_dir)
     files = package_files(package_dir)
-    file_paths = {path for path, _ in files}
+    file_paths = {path for path, _, _ in files}
+    require(not data_only or not any(path.startswith("artifacts/") for path in file_paths),
+            "resource packages cannot contain executable artifacts")
     catalog_localizations = catalog_application_localizations(
         package_source_dir, app_id)
 
@@ -495,6 +525,10 @@ def main(argv):
         require(lineage.startswith(b"PXKL"), "invalid publisher_lineage")
         top.append((10, lineage))
     top.append((11, public_der))
+    if resource_format:
+        top.append((12, bytes([2 if data_only else 1])))
+    if resources is not None:
+        top.append((13, bytes.fromhex(resources["manifest_sha256"])))
 
     permissions = metadata.get("permissions", [])
     require(isinstance(permissions, list) and len(permissions) <= 64,
@@ -543,8 +577,9 @@ def main(argv):
         pinned_memory = linear_memory["pinned"]
 
     declared_services = parse_services(metadata.get("services", []), "services")
-    raw_components = metadata.get("components", [{"id": "main", "kind": "ui"}])
-    require(isinstance(raw_components, list) and 0 < len(raw_components) <= 32,
+    raw_components = metadata.get("components", [] if data_only else [{"id": "main", "kind": "ui"}])
+    require(isinstance(raw_components, list) and
+            (len(raw_components) == 0 if data_only else 0 < len(raw_components) <= 32),
             "components must be a non-empty array")
     components = []
     for item in raw_components:
@@ -580,7 +615,7 @@ def main(argv):
                            service_requirements, wasi_features, artifact_mode))
     require(all(left[0] < right[0] for left, right in zip(components, components[1:])),
             "components must be sorted uniquely")
-    require(sum(component_id == "main" and kind == COMPONENT_KINDS["ui"]
+    require(data_only or sum(component_id == "main" and kind == COMPONENT_KINDS["ui"]
                 for component_id, kind, _, _, _, _ in components) == 1,
             "Package requires exactly one main UI component")
     component_ids = {component_id for component_id, _, _, _, _, _ in components}
@@ -614,18 +649,18 @@ def main(argv):
         top.append((16, component(component_id, kind, flags, aot_targets, engine_abi,
                                   services, include_wasm=include_wasm)))
 
-    for path, content in files:
+    for path, size, digest in files:
         top.append((17, records([
             (1, path.encode("ascii")),
-            (2, struct.pack("<Q", len(content))),
-            (3, hashlib.sha256(content).digest()),
+            (2, struct.pack("<Q", size)),
+            (3, digest),
         ])))
     top.extend((18, entry[2]) for entry in permission_entries)
     top.extend((19, entry[2]) for entry in ipc_entries)
     top.extend((20, entry[1]) for entry in localization_entries)
 
     body = records(top)
-    manifest_minor = 7
+    manifest_minor = 8 if resource_format else 7
     manifest = b"PXAM" + struct.pack("<HHI", 0, manifest_minor, len(body)) + body
     require(len(manifest) <= 16 * 1024, "manifest exceeds Draft limit")
     signature_der = openssl(["dgst", "-sha256", "-sign", private_key_path],

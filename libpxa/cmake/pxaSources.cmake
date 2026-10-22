@@ -19,6 +19,10 @@ function(pxa_collect_sources output root)
         src/services/storage/storage_service.c
         src/services/fs/fs_service.c
         src/services/fs/volume.c
+        src/services/fs/volume_identity.c
+        src/package/install_plan.c
+        src/package/install_record.c
+        src/package/install_transfer.c
         src/services/sensor/sensor_service.c
         src/services/device/device_service.c
         src/services/scheduler/scheduler_service.c

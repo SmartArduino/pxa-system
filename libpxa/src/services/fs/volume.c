@@ -75,6 +75,7 @@ pxa_status_t pxa_volume_register(pxa_volume_registry_t *r,
     for (i = 0; i < r->capacity; ++i) if (!r->entries[i].mount_epoch) break;
     if (i == r->capacity) return PXA_STATUS_RESOURCE_LIMIT;
     r->entries[i] = *info;
+    r->entries[i].reserved_bytes = 0;
     r->entries[i].mount_epoch = r->next_epoch++;
     *mount_epoch = r->entries[i].mount_epoch;
     ++r->revision; refresh_ambiguity(r);
@@ -142,4 +143,43 @@ pxa_status_t pxa_volume_next(const pxa_volume_registry_t *r,
 }
 uint64_t pxa_volume_revision(const pxa_volume_registry_t *r) {
     return valid(r) ? r->revision : 0;
+}
+
+pxa_status_t pxa_volume_reserve(pxa_volume_registry_t *r, uint64_t epoch,
+                               uint64_t bytes) {
+    uint16_t i;
+    if (!valid(r) || !epoch || !bytes) return PXA_STATUS_INVALID_ARGUMENT;
+    if (r->revision == UINT64_MAX) return PXA_STATUS_RESOURCE_LIMIT;
+    for (i = 0; i < r->capacity; ++i) {
+        pxa_volume_info_t *v = &r->entries[i];
+        if (v->mount_epoch != epoch) continue;
+        if (v->ambiguous || v->state != PXA_VOLUME_READY)
+            return PXA_STATUS_UNAVAILABLE;
+        if (!(v->capabilities & PXA_VOLUME_WRITE)) return PXA_STATUS_DENIED;
+        if (!(v->space_known & PXA_VOLUME_FREE_KNOWN))
+            return PXA_STATUS_UNAVAILABLE;
+        if (v->reserved_bytes > v->free_bytes ||
+            bytes > v->free_bytes - v->reserved_bytes)
+            return PXA_STATUS_QUOTA_EXCEEDED;
+        v->reserved_bytes += bytes;
+        ++r->revision;
+        return PXA_STATUS_OK;
+    }
+    return PXA_STATUS_UNAVAILABLE;
+}
+
+pxa_status_t pxa_volume_release(pxa_volume_registry_t *r, uint64_t epoch,
+                               uint64_t bytes) {
+    uint16_t i;
+    if (!valid(r) || !epoch || !bytes) return PXA_STATUS_INVALID_ARGUMENT;
+    if (r->revision == UINT64_MAX) return PXA_STATUS_RESOURCE_LIMIT;
+    for (i = 0; i < r->capacity; ++i) {
+        pxa_volume_info_t *v = &r->entries[i];
+        if (v->mount_epoch != epoch) continue;
+        if (bytes > v->reserved_bytes) return PXA_STATUS_BAD_STATE;
+        v->reserved_bytes -= bytes;
+        ++r->revision;
+        return PXA_STATUS_OK;
+    }
+    return PXA_STATUS_UNAVAILABLE;
 }

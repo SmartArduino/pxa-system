@@ -32,7 +32,7 @@ extern "C" {
 #define PXA_PACKAGE_MAX_PUBLISHER_SPKI_BYTES UINT16_C(160)
 
 #define PXA_PACKAGE_MANIFEST_FORMAT_MAJOR UINT16_C(0)
-#define PXA_PACKAGE_MANIFEST_FORMAT_MINOR UINT16_C(7)
+#define PXA_PACKAGE_MANIFEST_FORMAT_MINOR UINT16_C(8)
 #define PXA_PACKAGE_MANIFEST_FORMAT_PATCH UINT16_C(0)
 #define PXA_PACKAGE_SIGNATURE_FORMAT_MAJOR UINT16_C(0)
 #define PXA_PACKAGE_SIGNATURE_FORMAT_MINOR UINT16_C(1)
@@ -51,6 +51,9 @@ typedef uint8_t pxa_component_kind_t;
 #define PXA_COMPONENT_KIND_UI ((pxa_component_kind_t)1)
 #define PXA_COMPONENT_KIND_SERVICE ((pxa_component_kind_t)2)
 #define PXA_COMPONENT_KIND_JOB ((pxa_component_kind_t)3)
+
+#define PXA_PACKAGE_KIND_APPLICATION UINT8_C(1)
+#define PXA_PACKAGE_KIND_RESOURCES UINT8_C(2)
 
 /* A pinned component may use APIs that retain translated Guest pointers, such
  * as GuestMapped Surface buffers. The declaration is part of the signed
@@ -191,6 +194,11 @@ typedef struct pxa_package_manifest {
     /* Manifest 0.6 fields are appended to preserve the original struct prefix. */
     pxa_package_localization_t *localizations;
     uint16_t localization_count;
+    /* Manifest 0.8: data-only sets have no executable components. Application
+     * references bind the signed logical resource manifest, independently of
+     * its container compression and physical storage location. */
+    uint8_t package_kind;
+    const uint8_t *resource_manifest_sha256;
 } pxa_package_manifest_t;
 
 typedef struct {

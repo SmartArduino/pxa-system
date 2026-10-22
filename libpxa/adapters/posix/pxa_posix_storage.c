@@ -15,6 +15,8 @@
 
 #ifdef ESP_PLATFORM
 #include "pxa/esp/pxa_esp_posix_shim.h"
+#define open(...) pxa_esp_open(__VA_ARGS__)
+#define close(fd) pxa_esp_close(fd)
 #define dup pxa_esp_dup
 #define fstat pxa_esp_fstat
 #define openat pxa_esp_openat

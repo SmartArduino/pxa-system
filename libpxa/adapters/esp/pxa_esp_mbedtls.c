@@ -330,6 +330,10 @@ pxa_status_t pxa_esp_mbedtls_p256_verify(void *context,
  * the C installer can hash in bounded chunks on ESP builds. */
 #include "pxa/openssl/pxa_openssl.h"
 
+pxa_status_t pxa_openssl_sha256(const uint8_t *data,size_t size,uint8_t *output) {
+    return pxa_esp_mbedtls_sha256(data,size,output);
+}
+
 pxa_status_t pxa_openssl_sha256_stream_begin(
     pxa_openssl_sha256_stream_t *stream) {
     pxa_esp_sha256_context_t *context;

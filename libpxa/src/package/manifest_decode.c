@@ -723,6 +723,14 @@ static pxa_status_t decode_scalar(pxa_package_manifest_t *manifest,
             return PXA_STATUS_INVALID_ARGUMENT;
         }
         manifest->publisher_spki = record->payload;
+    } else if(record->tag==12) {
+        if(manifest->format_minor<8 || record->payload.size!=1 ||
+            (record->payload.data[0]!=PXA_PACKAGE_KIND_APPLICATION && record->payload.data[0]!=PXA_PACKAGE_KIND_RESOURCES))
+            return PXA_STATUS_INVALID_ARGUMENT;
+        manifest->package_kind=record->payload.data[0];
+    } else if(record->tag==13) {
+        if(manifest->format_minor<8 || record->payload.size!=PXA_PACKAGE_DIGEST_BYTES)return PXA_STATUS_INVALID_ARGUMENT;
+        manifest->resource_manifest_sha256=record->payload.data;
     } else {
         return PXA_STATUS_UNSUPPORTED;
     }
@@ -740,11 +748,11 @@ pxa_status_t pxa_manifest_decode_record(
     }
     manifest = parser->manifest;
     if (record->optional &&
-        ((record->tag >= 1 && record->tag <= 11) ||
+        ((record->tag >= 1 && record->tag <= 13) ||
          (record->tag >= 16 && record->tag <= 20))) {
         return PXA_STATUS_INVALID_ARGUMENT;
     }
-    if (record->tag <= 11) {
+    if (record->tag <= 13) {
         uint32_t bit = UINT32_C(1) << record->tag;
         if ((*singleton_seen & bit) != 0) {
             return PXA_STATUS_INVALID_ARGUMENT;
@@ -859,11 +867,19 @@ pxa_status_t pxa_manifest_decode_finish(
     if ((singleton_seen & UINT32_C(0x018e)) != UINT32_C(0x018e) ||
         (manifest->format_minor >= 2 && !manifest->has_release_sequence) ||
         (manifest->format_minor >= 5 && manifest->publisher_spki.size == 0) ||
-        manifest->component_count == 0 || manifest->file_count == 0 ||
+        manifest->file_count == 0 ||
         manifest->min_sdk.major != manifest->target_sdk.major ||
         version_less(manifest->target_sdk, manifest->min_sdk)) {
         return PXA_STATUS_INVALID_ARGUMENT;
     }
+    if(manifest->format_minor<8)manifest->package_kind=PXA_PACKAGE_KIND_APPLICATION;
+    else if(!(singleton_seen&(UINT32_C(1)<<12)))return PXA_STATUS_INVALID_ARGUMENT;
+    if(manifest->package_kind==PXA_PACKAGE_KIND_RESOURCES) {
+        if(manifest->component_count || manifest->artifact_count || manifest->service_count ||
+            manifest->permission_count || manifest->ipc_endpoint_count || manifest->resource_manifest_sha256)
+            return PXA_STATUS_INVALID_ARGUMENT;
+    } else if(manifest->package_kind!=PXA_PACKAGE_KIND_APPLICATION || !manifest->component_count)
+        return PXA_STATUS_INVALID_ARGUMENT;
     for (uint16_t i = 0; i < manifest->component_count; ++i) {
         if ((manifest->components[i].flags & PXA_PACKAGE_COMPONENT_FLAG_MAIN_LOOP) &&
             (manifest->component_count != 1 ||

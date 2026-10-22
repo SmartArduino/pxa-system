@@ -19,6 +19,12 @@ struct StoreInstalledApp {
 };
 struct StoreDownloadEntry { FixedText<19> filename; FixedText<64> app_id; };
 struct StoreDownloadProgress { std::uint64_t request_id, received, total; };
+struct StoreCapabilities {
+    std::uint16_t major, minor;
+    std::uint32_t features;
+    std::uint64_t max_container_bytes;
+    static constexpr std::uint32_t resource_install = 1, volume_placement = 2, resource_cache = 4;
+};
 
 inline Result<StoreDownloadProgress> decode_store_download_progress(const Event& event) noexcept {
     if (event.service != 20 || event.opcode != 0x8001 || event.token || event.payload.size() != 24)
@@ -38,6 +44,8 @@ class StoreInstallerService {
 public:
     StoreInstallerService(Transport& transport, RequestTable& requests) noexcept
         : transport_(transport), requests_(requests) {}
+
+    Task<StoreCapabilities> capabilities() { return capabilities_impl(*this); }
 
     Task<void> install(const StorePackage& package) {
         auto packet = encode(package);
@@ -94,7 +102,7 @@ private:
         if (id.empty() || id.size() > 64 || ticket.empty() || ticket.size() > 255 ||
             id.find('\0') != std::string_view::npos || ticket.find('\0') != std::string_view::npos ||
             digest.size() != 64 || !size) return std::unexpected(Error::invalid_argument);
-        if (size > 4194304) return std::unexpected(Error::limit_exceeded);
+        if (size > UINT64_C(0x7fffffff)) return std::unexpected(Error::limit_exceeded);
         Packet packet;
         wire::Writer writer(packet.bytes);
         writer.u8(static_cast<std::uint8_t>(id.size()));
@@ -148,6 +156,17 @@ private:
         if (!body) co_return std::unexpected(body.error());
         if (!body->empty()) co_return std::unexpected(Error::protocol_error);
         co_return Result<void>{};
+    }
+    static Task<StoreCapabilities> capabilities_impl(StoreInstallerService self) {
+        auto event = co_await Response(self.transport_, self.requests_, 20, 13, {});
+        if (!event) co_return std::unexpected(event.error());
+        auto body = wire::result_body(event->payload);
+        if (!body) co_return std::unexpected(body.error());
+        if (body->size() != 16) co_return std::unexpected(Error::protocol_error);
+        const auto* p = body->data();
+        StoreCapabilities info{wire::get16(p), wire::get16(p + 2), wire::get32(p + 4), wire::get64(p + 8)};
+        if (!info.max_container_bytes) co_return std::unexpected(Error::protocol_error);
+        co_return info;
     }
     static Task<FixedText<19>> download_impl(StoreInstallerService self, Packet packet) {
         auto event = co_await Response(self.transport_, self.requests_, 20, 2, packet.packet());

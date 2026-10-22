@@ -39,6 +39,8 @@ Guest 实现，不包含或调用 Guest C SDK。
 | 附加 UI Surface 与 Canvas 流 | `pxa_ui.h`、`pxa_ui_wire.h`、`pxa_canvas.h` | 可选 `ui_transport.hpp`，`ui::TransportService`、`ui::CanvasStream` |
 | UI 树/Canvas、GameRender/计算光栅 | `pxa_ui*.h`、`pxa_canvas.h`、`pxa_game_render*.h`、`pxa_raster.h` | `ui*.hpp`、`canvas.hpp`、`game*.hpp` |
 
+Store Installer 0.8 的 `capabilities()` 返回协议版本、特性位及传输大小上限，C 接口使用 `pxa_store_request_capabilities()` / `pxa_store_parse_capabilities()`。资源安装与原生卷选择不代表支持资源离线缓存，应分别检查特性位。旧 Host 返回 `unsupported` 时继续使用旧兼容配置。包请求支持最多 2 GiB 减一字节，实际安装还需通过目标文件系统限制与签名空间计划。
+
 新增服务入口仅保存对现有 Transport/请求表的引用，不扩大 Context、请求表或
 协程池。Store 列表使用调用方数组；复制式 Surface 使用调用方帧缓冲；
 预取只返回描述符，缓存状态不提供驻留保证。`AssetKind::blob` 可查询和读取，

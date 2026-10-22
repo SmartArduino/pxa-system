@@ -44,7 +44,7 @@ int main(void) {
                               123, packet, sizeof(packet)));
     unsigned calls_before = control_calls;
     assert(pxa_store_request_package_status(PXA_STORE_INSTALL_REQUEST,
-        token, "test-app", "/ticket", digest, UINT64_C(4194305), packet,
+        token, "test-app", "/ticket", digest, UINT64_C(0x80000000), packet,
         sizeof(packet)) == PXA_STATUS_LIMIT_EXCEEDED);
     assert(pxa_store_request_package_status(PXA_STORE_INSTALL_REQUEST,
         token, "test-app", "/ticket", "bad digest", 123, packet,
@@ -52,6 +52,25 @@ int main(void) {
     assert(pxa_store_request_package_status(PXA_STORE_INSTALL_REQUEST,
         token, "test-app", "/ticket", digest, 123, packet, 4) == PXA_STATUS_INVALID_ARGUMENT);
     assert(control_calls == calls_before);
+
+    assert(pxa_store_request_package_status(PXA_STORE_INSTALL_REQUEST, token,
+        "test-app", "/ticket", digest, UINT64_C(0x7fffffff), packet, sizeof(packet)) == PXA_STATUS_OK);
+    assert(pxa_store_request_capabilities(token) == PXA_STATUS_OK);
+    assert(pxa_parse_event(captured, captured_length, &decoded));
+    assert(decoded.opcode == PXA_STORE_CAPABILITIES_REQUEST && decoded.payload_size == 0);
+    uint8_t capability_bytes[20] = {0};
+    pxa_store_u16(capability_bytes + 6, 8); pxa_store_u32(capability_bytes + 8, 3);
+    pxa_store_u64(capability_bytes + 12, UINT64_C(0x7fffffff));
+    pxa_store_capabilities_t capabilities;
+    pxa_event_t capability_event = {PXA_SERVICE_STORE_INSTALLER, PXA_STORE_CAPABILITIES_REQUEST,
+        token, capability_bytes, sizeof(capability_bytes)};
+    assert(pxa_store_parse_capabilities(&capability_event, token, &capabilities));
+    assert(capabilities.minor == 8 && capabilities.features == 3 && capabilities.max_container_bytes == UINT64_C(0x7fffffff));
+    capability_event.payload_size--;
+    assert(!pxa_store_parse_capabilities(&capability_event, token, &capabilities));
+    capability_event.payload_size = 4; pxa_store_u32(capability_bytes, PXA_STATUS_UNSUPPORTED);
+    assert(pxa_store_parse_capabilities(&capability_event, token, &capabilities) && capabilities.status == PXA_STATUS_UNSUPPORTED);
+    assert(!pxa_store_parse_capabilities(&capability_event, token + 1, &capabilities));
 
     assert(pxa_store_manage(PXA_STORE_INSTALLED_LIST_REQUEST, token, NULL,
                             packet, sizeof(packet)));

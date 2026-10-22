@@ -1,11 +1,11 @@
 {
-  "schema": "pxa-store-installer-spec-0.7",
+  "schema": "pxa-store-installer-spec-0.8",
   "status": "draft",
   "service": {
     "name": "store-installer",
     "id": 20,
     "major": 0,
-    "minor": 7,
+    "minor": 8,
     "patch": 0
   },
   "opcodes": [
@@ -111,20 +111,54 @@
       "request_token": "nonzero",
       "payload": "lineage-root:bytes[32]|install-payload (opcode 1)",
       "result": "status:i32"
+    },
+    {
+      "name": "capabilities",
+      "id": 13,
+      "direction": "bidirectional-result",
+      "request_token": "nonzero",
+      "payload": "",
+      "result": "status:i32|major:u16|minor:u16|features:u32|max_container_bytes:u64 (success only)"
     }
   ],
   "limits": {
     "app_id_bytes": 64,
     "ticket_bytes": 255,
-    "package_bytes": 4194304,
+    "package_bytes": 2147483647,
     "download_slots": 8,
     "installed_list_entries": 12,
-    "identity_bytes": 129
+    "identity_bytes": 129,
+    "package_bytes_policy": "Host profile ceiling; the selected filesystem max-file limit and authenticated allocation plan can impose a stricter ceiling."
   },
   "core_v1_transport": {
-    "request_token": "u64 in the Core v1 envelope; nonzero for opcodes 1..12",
+    "request_token": "u64 in the Core envelope; nonzero for opcodes 1..13",
     "download_progress_payload": "download_request_token:u64|received_bytes:u64|total_bytes:u64 (little-endian; event envelope token is zero)",
-    "authorization": "Host grants this service only to the installed, enabled, built-in pxa-store package"
+    "authorization": "Host product policy authorizes the active installed, enabled caller. Installation and removal always require native Host confirmation; caller identity never bypasses publisher verification."
   },
-  "protocol_version": "0.7.0"
+  "protocol_version": "0.8.0",
+  "placement": {
+    "authority": "Host only; Guest supplies no native paths or mount identities",
+    "preflight": "Authenticate a bounded signed manifest prefix before confirmation and transfer",
+    "selection": "Native application/data and resource volume choices with fixed managed directories; updates retain the existing application volume and prefer their current resource volume",
+    "admission": "Refresh capacity and reserve the exact selected mount through transfer and commit",
+    "approval": "Bind exact signed manifest and previous authenticated installation generation; never silently rebase after download",
+    "cache": "Completion descriptors and containers share the selected volume; no primary-Flash download registry",
+    "offline_retry": "Declined or failed cached installation retains its transport copy; successful installation consumes it",
+    "resources": "Authenticate the exact signed resource manifest referenced by code, reserve both volumes atomically, install and verify resources before committing code. Reuse existing immutable generations after full verification. Resource transport is removed before preparing application/private state; shared-volume admission reserves the greater phase peak.",
+    "resource_cache": "Resource-bundle DOWNLOAD is unsupported unless resource-cache is advertised. An offline code cache can reuse an already installed resource generation. RESOURCE_INSTALL and VOLUME_PLACEMENT are advertised by native multi-volume Hosts; RESOURCE_CACHE is currently absent."
+  },
+  "features": [
+    {
+      "name": "resource-install",
+      "bit": 0
+    },
+    {
+      "name": "volume-placement",
+      "bit": 1
+    },
+    {
+      "name": "resource-cache",
+      "bit": 2
+    }
+  ]
 }

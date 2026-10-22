@@ -141,6 +141,10 @@ if(PXA_BUILD_ADAPTERS)
         adapters/posix/pxa_posix_scheduler_store.c
         adapters/posix/pxa_posix_storage.c
         adapters/posix/pxa_posix_installer.c
+        adapters/posix/pxa_posix_install_record.c
+        adapters/posix/pxa_posix_app_store.c
+        adapters/posix/pxa_posix_app_home.c
+        adapters/posix/pxa_posix_volume.c
         ${_pxa_lz4_sources})
     add_library(pxa::adapters_posix ALIAS pxa_adapters_posix)
     set_target_properties(pxa_adapters_posix PROPERTIES
@@ -217,6 +221,18 @@ if(PXA_BUILD_ADAPTERS)
             target_compile_options(pxa_fat_name_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
         endif()
         add_test(NAME pxa_fat_name_test COMMAND pxa_fat_name_test)
+        add_executable(pxa_fs_tree_test adapters/tests/fs_tree_test.c)
+        target_link_libraries(pxa_fs_tree_test PRIVATE pxa_adapters_posix)
+        if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+            target_compile_options(pxa_fs_tree_test PRIVATE -Wall -Wextra -Wpedantic)
+            if(PXA_WARNINGS_AS_ERRORS)
+                target_compile_options(pxa_fs_tree_test PRIVATE -Werror)
+            endif()
+        endif()
+        add_test(NAME pxa_fs_tree_test COMMAND pxa_fs_tree_test)
+        add_executable(pxa_install_record_test adapters/tests/install_record_test.c)
+        target_link_libraries(pxa_install_record_test PRIVATE pxa_adapters_posix)
+        add_test(NAME pxa_install_record_test COMMAND pxa_install_record_test)
         if(Python3_Interpreter_FOUND AND PXA_PACKAGE_TOOLS_DIR)
             foreach(_pxa_package_tool build_package_manifest.py
                     build_publisher_lineage.py build_pxa_container.py)
@@ -233,6 +249,11 @@ if(PXA_BUILD_ADAPTERS)
             add_test(NAME pxa_container_tool_test
                 COMMAND ${Python3_EXECUTABLE}
                     ${CMAKE_CURRENT_SOURCE_DIR}/adapters/tests/container_tool_test.py
+                    $<TARGET_FILE:pxa_container_install_tool>
+                    ${PXA_PACKAGE_TOOLS_DIR})
+            add_test(NAME pxa_resource_tool_test
+                COMMAND ${Python3_EXECUTABLE}
+                    ${CMAKE_CURRENT_SOURCE_DIR}/adapters/tests/resource_tool_test.py
                     $<TARGET_FILE:pxa_container_install_tool>
                     ${PXA_PACKAGE_TOOLS_DIR})
         endif()
@@ -662,6 +683,12 @@ endif()
 
 if(PXA_BUILD_TESTS)
     enable_testing()
+    add_executable(pxa_install_plan_test tests/install_plan_test.c)
+    target_link_libraries(pxa_install_plan_test PRIVATE pxa)
+    add_test(NAME pxa_install_plan_test COMMAND pxa_install_plan_test)
+    add_executable(pxa_install_transfer_test tests/install_transfer_test.c)
+    target_link_libraries(pxa_install_transfer_test PRIVATE pxa)
+    add_test(NAME pxa_install_transfer_test COMMAND pxa_install_transfer_test)
     add_executable(pxa_asset_read_test tests/asset_read_test.c)
     target_link_libraries(pxa_asset_read_test PRIVATE pxa)
     add_test(NAME pxa_asset_read_test COMMAND pxa_asset_read_test)
