@@ -39,8 +39,8 @@ QUERY_ROOT uses one DIRECTORY u64; its 72-byte success layout is in the JSON.
 Success lengths exclude the common status. Errors have only status:i32.
 
 Scoped paths are bounded UTF-8 relative paths. The protocol ceilings are
-1024 B total and 255 B per segment, with smaller backend limits reported by
-QUERY_ROOT. Absolute paths, NUL, dot/parent segments, backslash, colon, trailing
+1024 B total, without a separate segment-byte ceiling. Smaller filesystem
+limits are reported by QUERY_ROOT. Absolute paths, NUL, dot/parent segments, backslash, colon, trailing
 dot/space and case variants of `.pxa-*` segments are rejected. Native FAT also
 rejects short-alias `~` spellings. A Host may use that backend only on a link-free
 mount without nested mounts; POSIX instead opens directory descriptors with
@@ -89,7 +89,7 @@ or normalization.
 ## Paths
 
 A path is valid UTF-8, between one and 255 bytes, and consists of `/`-joined
-segments. A segment is between one and 64 bytes, cannot be `.` or `..`, and
+segments. A segment is between one and 255 bytes, cannot be `.` or `..`, and
 cannot contain NUL, ASCII control characters, `\\` or `/`. Paths have no
 leading or trailing `/` and no empty segment. The byte form is canonical: two
 different UTF-8 byte sequences are two different names even if a UI happens to
@@ -134,6 +134,19 @@ only be combined with read. `read-directory` returns at most one entry from
 that Handle per request: `entry-name`, `entry-kind` and `entry-size`, or a
 zero-length `end-of-directory` record. Entry order is unspecified. This small
 page size keeps results bounded and does not expose a platform directory cursor.
+
+Directory entry names are length-delimited UTF-8 and are not constrained by the
+legacy private-root path limit. SDK decoders must preserve the complete name;
+owned results allocate storage from its actual byte length. The underlying
+volume and control-message envelope determine the usable range. Scoped open-at
+uses the scoped path profile, so a longer entry can be opened relative to its
+directory without passing through a legacy private-root path buffer.
+
+The Host reserves completion storage from the actual encoded directory entry
+size and writes its records directly into the Runtime event pool. A failed
+reservation retains that entry until a later request retries it, so transient
+backpressure cannot silently skip a file. A backend's borrowed entry name must
+remain valid until the next read-directory on the same resource or its close.
 
 For regular files, at least read or write is required; exclusive requires
 create; truncate and append require write.

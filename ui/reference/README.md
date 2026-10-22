@@ -70,6 +70,29 @@ Reference applications use ordinary canonical application identities and the
 same Intent/RPC/event protocol as third-party native and PXA applications.
 Nothing in the core gives a reference application a private navigation path.
 
+Gamepad products use `pxsys_reference_lvgl_handle_gamepad()` on every input
+poll, before shortcuts, keypad navigation or application controller delivery.
+The lock screen has no focus ring. Any fresh gamepad button press unlocks it;
+the entire sequence, including added buttons and its final release, is consumed
+so it cannot activate the resumed UI or game. Products first consume a sleeping
+screen's wake press and its full release, then call this policy for subsequent
+input; waking and unlocking require separate presses. A sequence already held
+when locking must first be released.
+When the function returns true, products clear keypad focus, hide their fallback
+cursor and suppress physical and injected controller reports. Pass the combined
+buttons from both input sources, including zero reports.
+
+Launcher focus selects the icon's current page before scrolling, so page snap
+and keyboard navigation stay in sync after icon reordering. Recent-task cards
+and list rows accept `LV_KEY_DEL` to close the focused task; GameKit maps native
+UI X presses to this key. Game-owned X input bypasses the keypad adapter.
+
+Settings and other scrolling system pages extend their viewport to the system
+display safe-area edge when there is no navigation bar. They reserve no height
+for a disabled navigation role. A product's bottom safe inset therefore controls
+the blank screen edge; a zero inset uses the full height. A visible button bar
+keeps its actual reservation, and gesture handles retain their scroll padding.
+
 ## System input method
 
 `reference_ime` is the nine key input method used on narrow panels. It binds to

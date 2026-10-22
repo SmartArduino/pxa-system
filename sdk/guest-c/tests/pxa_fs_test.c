@@ -39,6 +39,12 @@ static int make_event(uint8_t *packet, size_t capacity, uint16_t opcode,
 static void test_path_and_flag_validation(void) {
     assert(pxa_fs_valid_path("file", 4));
     assert(pxa_fs_valid_path("notes/today.txt", 15));
+    const char* rom = "最终幻想6 (简) (全剧情汉化) (英菜单)(Boco)(28Mb).sfc";
+    assert(strlen(rom) > 64 && pxa_fs_valid_path(rom, strlen(rom)));
+    char longest[256];
+    memset(longest, 'a', sizeof(longest));
+    assert(pxa_fs_valid_path(longest, 255));
+    assert(!pxa_fs_valid_path(longest, 256));
     assert(!pxa_fs_valid_path(NULL, 1));
     assert(!pxa_fs_valid_path("file", 0));
     assert(!pxa_fs_valid_path("/absolute", 9));

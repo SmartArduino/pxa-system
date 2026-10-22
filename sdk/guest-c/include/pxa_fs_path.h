@@ -58,9 +58,9 @@ static inline int pxa_fs_valid_utf8(const char *text, size_t length) {
     return 1;
 }
 
-static inline int pxa_fs_valid_path(const char *path, size_t length) {
+static inline int pxa_fs_valid_name_path(const char *path, size_t length) {
     size_t segment_start = 0;
-    if (path == NULL || length == 0 || length > 255 || path[0] == '/' ||
+    if (path == NULL || length == 0 || path[0] == '/' ||
         path[length - 1] == '/') return 0;
     for (size_t index = 0; index <= length; ++index) {
         if (index != length && path[index] != '/') {
@@ -70,7 +70,7 @@ static inline int pxa_fs_valid_path(const char *path, size_t length) {
             continue;
         }
         const size_t segment_length = index - segment_start;
-        if (segment_length == 0 || segment_length > 64 ||
+        if (segment_length == 0 ||
             (segment_length == 1 && path[segment_start] == '.') ||
             (segment_length == 2 && path[segment_start] == '.' &&
              path[segment_start + 1] == '.') ||
@@ -81,6 +81,12 @@ static inline int pxa_fs_valid_path(const char *path, size_t length) {
         segment_start = index + 1;
     }
     return pxa_fs_valid_utf8(path, length);
+}
+
+/* Legacy private-root requests retain their wire profile path limit. Directory
+ * entry decoding borrows the full name and applies no storage-size limit. */
+static inline int pxa_fs_valid_path(const char *path, size_t length) {
+    return length <= 255 && pxa_fs_valid_name_path(path,length);
 }
 
 #endif

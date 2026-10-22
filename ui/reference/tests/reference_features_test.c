@@ -52,6 +52,72 @@ static void check_role(pxsys_standard_system_t* system, const char* role,
     assert(status == (enabled ? PXSYS_STATUS_OK : PXSYS_STATUS_NOT_FOUND));
 }
 
+static void check_gamepad_lock(pxsys_reference_lvgl_t* ui) {
+    lv_style_t keypad_outline;
+    lv_style_init(&keypad_outline);
+    lv_style_set_outline_width(&keypad_outline, 2);
+    assert(!pxsys_reference_lvgl_handle_gamepad(NULL, 1));
+    for (unsigned bit = 0; bit < 14; ++bit) {
+        const uint32_t button = UINT32_C(1) << bit;
+        assert(pxsys_reference_lvgl_set_locked(ui, true) == PXSYS_STATUS_OK);
+        assert(pxsys_reference_lvgl_handle_gamepad(ui, 0) && ui->locked);
+        lv_obj_add_style(ui->lock_screen, &keypad_outline,
+                         LV_STATE_FOCUSED | LV_STATE_FOCUS_KEY);
+        lv_obj_add_state(ui->lock_screen, LV_STATE_FOCUSED | LV_STATE_FOCUS_KEY);
+        assert(lv_obj_get_style_outline_width(ui->lock_screen, LV_PART_MAIN) == 0);
+        /* Every direction, face, shoulder and system button unlocks on press.
+         * Holding or joining another button must not reach the resumed UI. */
+        assert(pxsys_reference_lvgl_handle_gamepad(ui, button) && !ui->locked);
+        assert(pxsys_reference_lvgl_handle_gamepad(ui, button));
+        assert(pxsys_reference_lvgl_handle_gamepad(ui, button | 1u));
+        assert(pxsys_reference_lvgl_handle_gamepad(ui, 0));
+        assert(!pxsys_reference_lvgl_handle_gamepad(ui, 0));
+    }
+    lv_style_reset(&keypad_outline);
+    /* Locking while playing must not immediately unlock on a held button. */
+    assert(!pxsys_reference_lvgl_handle_gamepad(ui, 1));
+    assert(pxsys_reference_lvgl_set_locked(ui, true) == PXSYS_STATUS_OK);
+    assert(pxsys_reference_lvgl_handle_gamepad(ui, 1) && ui->locked);
+    assert(pxsys_reference_lvgl_handle_gamepad(ui, 3) && ui->locked);
+    assert(pxsys_reference_lvgl_handle_gamepad(ui, 0) && ui->locked);
+    assert(pxsys_reference_lvgl_handle_gamepad(ui, 2) && !ui->locked);
+    assert(pxsys_reference_lvgl_handle_gamepad(ui, 0));
+    assert(!pxsys_reference_lvgl_handle_gamepad(ui, 0));
+    /* A touch/external unlock with an idle gamepad needs no extra key press. */
+    assert(pxsys_reference_lvgl_set_locked(ui, true) == PXSYS_STATUS_OK);
+    assert(pxsys_reference_lvgl_handle_gamepad(ui, 0));
+    assert(pxsys_reference_lvgl_set_locked(ui, false) == PXSYS_STATUS_OK);
+    assert(!pxsys_reference_lvgl_handle_gamepad(ui, 0));
+}
+
+static void check_settings_safe_area(pxsys_standard_system_t* system,
+                                      pxsys_reference_lvgl_t* ui) {
+    const pxsys_display_profile_t original = ui->display;
+    const pxsys_insets_t insets[] = {{0, 0, 0, 0}, {4, 6, 8, 10}, {12, 16, 24, 20}};
+    for (unsigned mode = 0; mode < 2; ++mode) {
+        assert(pxsys_reference_lvgl_set_navigation_mode(ui,
+            mode ? PXSYS_NAVIGATION_GESTURES : PXSYS_NAVIGATION_BUTTONS) == PXSYS_STATUS_OK);
+        for (size_t i = 0; i < sizeof(insets) / sizeof(insets[0]); ++i) {
+            pxsys_display_profile_t display = original;
+            display.safe_insets = insets[i];
+            assert(pxsys_display_service_update(pxsys_standard_system_display(system),
+                                                &display) == PXSYS_STATUS_OK);
+            lv_obj_update_layout(ui->root);
+            lv_area_t content;
+            lv_obj_get_coords(ui->content, &content);
+            /* No navigation role means the viewport ends exactly at the
+             * system safe edge, in both button and gesture modes. */
+            assert(content.x1 == display.safe_insets.left);
+            assert(content.x2 == (int32_t)display.width - display.safe_insets.right - 1);
+            assert(content.y2 == (int32_t)display.height - display.safe_insets.bottom - 1);
+        }
+    }
+    assert(pxsys_display_service_update(pxsys_standard_system_display(system),
+                                        &original) == PXSYS_STATUS_OK);
+    assert(pxsys_reference_lvgl_set_navigation_mode(ui,
+        PXSYS_NAVIGATION_BUTTONS) == PXSYS_STATUS_OK);
+}
+
 static void check_features(uint32_t features) {
     pxsys_standard_system_config_t system_config;
     pxsys_standard_system_t* system = NULL;
@@ -91,6 +157,8 @@ static void check_features(uint32_t features) {
     if (features & PXSYS_REFERENCE_UI_SETTINGS) {
         assert(open_role(ui, PXSYS_ROLE_SETTINGS) == PXSYS_STATUS_OK);
         assert(ui->active_page == REFERENCE_PAGE_SETTINGS && ui->content != NULL);
+        if (!(features & PXSYS_REFERENCE_UI_NAVIGATION_BAR))
+            check_settings_safe_area(system, ui);
     }
     pxsys_theme_snapshot_t theme;
     pxsys_theme_snapshot_init(&theme, PXSYS_COLOR_SCHEME_LIGHT);
@@ -108,6 +176,7 @@ static void check_features(uint32_t features) {
     uint32_t unlock_key = LV_KEY_ENTER;
     lv_obj_send_event(ui->lock_screen, LV_EVENT_KEY, &unlock_key);
     assert(!ui->locked);
+    check_gamepad_lock(ui);
     if (ui->status_bar && (features & PXSYS_REFERENCE_UI_NOTIFICATION_SHADE)) {
         lv_obj_send_event(ui->status_bar, LV_EVENT_KEY, &unlock_key);
         assert(ui->notification_shade_open);

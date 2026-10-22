@@ -44,6 +44,8 @@ struct pxa_fs_resource_slot {
     uint8_t kind;
     uint8_t occupied;
     uint64_t retired_read_cookie;
+    pxa_fs_entry_t pending_entry;
+    uint8_t directory_pending, directory_end;
 };
 
 typedef struct {
@@ -61,7 +63,6 @@ static const pxa_resource_ops_t k_directory_resource_ops;
 static int segment_is_valid(pxa_bytes_t segment) {
     size_t index;
     if (segment.data == NULL || segment.size == 0 ||
-        segment.size > PXA_FS_MAX_SEGMENT_BYTES ||
         (segment.size == 1 && segment.data[0] == '.') ||
         (segment.size == 2 && segment.data[0] == '.' &&
          segment.data[1] == '.') ||
@@ -110,7 +111,7 @@ int pxa_fs_scoped_path_is_valid(pxa_bytes_t path) {
             continue;
         }
         n = i - begin;
-        if (!n || n > PXA_FS_SCOPED_MAX_SEGMENT_BYTES ||
+        if (!n ||
             (n == 1 && path.data[begin] == '.') ||
             (n == 2 && path.data[begin] == '.' && path.data[begin+1] == '.') ||
             path.data[i-1] == '.' || path.data[i-1] == ' ') return 0;
@@ -306,6 +307,7 @@ static pxa_fs_resource_slot_t *allocate_resource(pxa_fs_service_t *service) {
     slot->backend_resource = NULL;
     slot->backend = &service->backend;
     slot->retired_read_cookie = 0;
+    slot->directory_pending = slot->directory_end = 0;
     slot->authority = 0;
     slot->kind = 0;
     slot->occupied = 1;
@@ -318,6 +320,7 @@ static void release_resource(pxa_fs_resource_slot_t *slot) {
     slot->backend_resource = NULL;
     slot->kind = 0;
     slot->occupied = 0;
+    slot->directory_pending = slot->directory_end = 0;
     slot->next_free = service->free_head;
     service->free_head = index;
 }
@@ -614,20 +617,14 @@ static pxa_status_t handle_seek(pxa_fs_service_t *service,
     return PXA_STATUS_OK;
 }
 
-static pxa_status_t handle_read_directory(
-    pxa_fs_service_t *service, pxa_component_t component,
-    uint16_t wire_profile,
-    const pxa_message_view_t *message, uint8_t *result, size_t capacity,
-    size_t *result_size) {
+static pxa_status_t directory_slot(pxa_fs_service_t *service,
+    pxa_component_t component,uint16_t wire_profile,const pxa_message_view_t *message,
+    pxa_fs_resource_slot_t **output) {
     pxa_resource_t resource;
     pxa_fs_resource_slot_t *slot;
-    pxa_fs_entry_t entry;
-    pxa_writer_t writer;
     pxa_handle64_t handle;
     size_t handle_bytes = wire_profile == 1 ? 8u : 4u;
     pxa_status_t status;
-    uint8_t end = 0;
-    uint8_t size_bytes[8];
     if (message->payload.size != handle_bytes)
         return PXA_STATUS_INVALID_ARGUMENT;
     handle = wire_profile == 1 ? pxa_read_u64(message->payload.data)
@@ -648,33 +645,75 @@ static pxa_status_t handle_read_directory(
         slot->service != service || slot->kind != PXA_FS_KIND_DIRECTORY) {
         return PXA_STATUS_INTERNAL;
     }
-    memset(&entry, 0, sizeof(entry));
-    status = pxa_status_normalize(slot->backend->read_directory(
-        slot->backend->context, slot->backend_resource, &entry, &end));
-    if (status != PXA_STATUS_OK) return status;
-    if (end > 1) return PXA_STATUS_INTERNAL;
-    pxa_writer_init(&writer, result, capacity);
-    if (end) {
-        status = pxa_writer_record(&writer, 7, NULL, 0);
-    } else {
-        if (!segment_is_valid(entry.name) ||
-            (entry.kind != PXA_FS_KIND_REGULAR &&
-             entry.kind != PXA_FS_KIND_DIRECTORY)) {
-            return PXA_STATUS_INTERNAL;
-        }
-        status = pxa_writer_record(&writer, 4, entry.name.data,
-                                   entry.name.size);
-        if (status == PXA_STATUS_OK) {
-            status = pxa_writer_record(&writer, 5, &entry.kind, 1);
-        }
-        if (status == PXA_STATUS_OK) {
-            pxa_write_u64(size_bytes, entry.size);
-            status = pxa_writer_record(&writer, 6, size_bytes, 8);
-        }
-    }
-    if (status != PXA_STATUS_OK) return status;
-    *result_size = writer.size;
+    *output=slot;
     return PXA_STATUS_OK;
+}
+
+static pxa_status_t directory_control(pxa_fs_service_t *service,
+    pxa_component_t component,const pxa_message_view_t *message) {
+    uint16_t wire_profile=0;
+    pxa_authority_t authority=0;
+    pxa_fs_resource_slot_t *slot=NULL;
+    pxa_status_t status=pxa_component_wire_profile(service->runtime,component,&wire_profile);
+    if (status!=PXA_STATUS_OK) return status;
+    status=authorize_request(service,component,&authority);
+    if (status==PXA_STATUS_OK) status=directory_slot(service,component,wire_profile,message,&slot);
+    pxa_status_t checked;
+    if (status==PXA_STATUS_OK && slot->directory_pending && service->roots &&
+        slot->backend==&service->roots->files) {
+        /* A retained name must not bypass a grant revision or mount change
+         * that occurred while completion storage was unavailable. */
+        pxa_fs_root_info_t info;
+        status=pxa_status_normalize(service->roots->query_root(
+            service->roots->context,slot->backend_resource,&info));
+        if (status==PXA_STATUS_OK && info.state!=PXA_VOLUME_READY)
+            status=PXA_STATUS_UNAVAILABLE;
+        if (status==PXA_STATUS_OK && !(info.rights&PXA_FS_RIGHT_ENUMERATE))
+            status=PXA_STATUS_DENIED;
+        if (status!=PXA_STATUS_OK) slot->directory_pending=0;
+    }
+    if (status==PXA_STATUS_OK && !slot->directory_pending) {
+        memset(&slot->pending_entry,0,sizeof(slot->pending_entry));
+        slot->directory_end=0;
+        status=pxa_status_normalize(slot->backend->read_directory(
+            slot->backend->context,slot->backend_resource,&slot->pending_entry,&slot->directory_end));
+        if (status==PXA_STATUS_OK) slot->directory_pending=1;
+    }
+    const pxa_fs_entry_t empty={0};
+    const pxa_fs_entry_t *entry=slot?&slot->pending_entry:&empty;
+    if (status==PXA_STATUS_OK && (slot->directory_end>1 ||
+        (!slot->directory_end && (!segment_is_valid(entry->name) ||
+        (entry->kind!=PXA_FS_KIND_REGULAR && entry->kind!=PXA_FS_KIND_DIRECTORY))))) {
+        slot->directory_pending=0;
+        status=PXA_STATUS_INTERNAL;
+    }
+    if (status==PXA_STATUS_OK && entry->name.size>PXA_MAX_CONTROL_MESSAGE-PXA_ENVELOPE_SIZE-4u-21u) {
+        slot->directory_pending=0;status=PXA_STATUS_LIMIT_EXCEEDED;
+    }
+    size_t bytes=status==PXA_STATUS_OK?(slot->directory_end?4u:21u+entry->name.size):0;
+    /* Reserve exactly the encoded name, retaining the borrowed entry for retry
+     * if the event pool is full. No next readdir may invalidate it meanwhile. */
+    checked=pxa_request_begin_reserved(service->runtime,component,message->request_token,
+        PXA_FS_SERVICE_ID,message->opcode,authority,status==PXA_STATUS_OK?bytes:0);
+    if (checked!=PXA_STATUS_OK) return checked;
+    checked=pxa_request_commit(service->runtime,component,message->request_token);
+    if (checked!=PXA_STATUS_OK) return checked;
+    uint8_t name_header[4],kind_record[5],size_record[12],end_record[4]={7,0,0,0};
+    pxa_bytes_t parts[4];size_t n=0;
+    if (status==PXA_STATUS_OK && slot->directory_end) {
+        parts[n++]=(pxa_bytes_t){end_record,sizeof(end_record)};
+    } else if (status==PXA_STATUS_OK) {
+        pxa_write_u16(name_header,4);pxa_write_u16(name_header+2,(uint16_t)entry->name.size);
+        pxa_write_u16(kind_record,5);pxa_write_u16(kind_record+2,1);kind_record[4]=entry->kind;
+        pxa_write_u16(size_record,6);pxa_write_u16(size_record+2,8);pxa_write_u64(size_record+4,entry->size);
+        parts[n++]=(pxa_bytes_t){name_header,sizeof(name_header)};
+        parts[n++]=entry->name;
+        parts[n++]=(pxa_bytes_t){kind_record,sizeof(kind_record)};
+        parts[n++]=(pxa_bytes_t){size_record,sizeof(size_record)};
+    }
+    checked=pxa_request_completev(service->runtime,component,message->request_token,status,parts,n);
+    if (checked==PXA_STATUS_OK && slot) slot->directory_pending=0;
+    return checked;
 }
 
 static pxa_status_t scoped_directory(pxa_fs_service_t *s, pxa_component_t c,
@@ -971,6 +1010,7 @@ static pxa_status_t fs_control(void *context, pxa_runtime_t *runtime,
     if (!service_valid(service) || message->request_token == 0) {
         return PXA_STATUS_INVALID_ARGUMENT;
     }
+    if(message->opcode==PXA_FS_READ_DIRECTORY) return directory_control(service,component,message);
     if(message->opcode==PXA_FS_APP_MEDIA_PATH)return media_path_control(service,component,message);
     if (message->opcode == PXA_FS_OPEN_ROOT ||
         message->opcode == PXA_FS_REQUEST_ACCESS ||
@@ -1016,10 +1056,6 @@ static pxa_status_t fs_control(void *context, pxa_runtime_t *runtime,
     } else if (status == PXA_STATUS_OK && message->opcode == PXA_FS_SEEK) {
         status = handle_seek(service, component, wire_profile, message,
                              result, &result_size);
-    } else if (status == PXA_STATUS_OK) {
-        status = handle_read_directory(service, component, wire_profile, message,
-                                       result,
-                                       sizeof(result), &result_size);
     }
     complete = pxa_request_complete(
         service->runtime, component, message->request_token, status,

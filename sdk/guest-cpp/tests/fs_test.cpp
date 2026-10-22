@@ -102,10 +102,12 @@ Task<void> exercise_directory(Context& ctx) {
     auto entry = co_await dir->next();
     assert(entry && *entry && (**entry).name() == "save.bin");
     retained = **entry;
-    auto end = co_await dir->next();
-    assert(end && !*end && retained->name() == "save.bin");
-    auto malformed = co_await dir->next();
-    assert(!malformed && malformed.error() == Error::protocol_error);
+    entry = co_await dir->next();
+    assert(entry && *entry && (**entry).name() == std::string(768, 'a'));
+    entry = co_await dir->next();
+    assert(entry && !*entry && retained->name() == "save.bin");
+    entry = co_await dir->next();
+    assert(!entry && entry.error() == Error::protocol_error);
     assert(dir->close());
     co_return Result<void>{};
 }
@@ -146,7 +148,7 @@ struct App {
 PXA_APPLICATION(App)
 
 static void deliver(std::span<const std::byte> payload) {
-    std::array<std::byte, 128> event{};
+    std::array<std::byte, 1100> event{};
     wire::put16(event.data(), 5);
     wire::put16(event.data() + 2, opcode);
     wire::put64(event.data() + 4, token);
@@ -162,6 +164,10 @@ static void opened(std::uint64_t handle) {
 }
 
 int main() {
+    const std::string long_rom = "最终幻想6 (简) (全剧情汉化) (英菜单)(Boco)(28Mb).sfc";
+    assert(long_rom.size() > 64 && fs_detail::valid_path(long_rom));
+    assert(fs_detail::valid_path(std::string(255, 'a')));
+    assert(!fs_detail::valid_path(std::string(256, 'a')));
     assert(pxa_app_start(nullptr, 0) == 0);
     assert(opcode == 1 && submitted_bytes == 40);
     assert(wire::get16(submitted.data() + 20) == 1);
@@ -197,6 +203,18 @@ int main() {
     wire::put64(entry.data() + 25, 3);
     deliver(entry);
     entry.fill(std::byte{0x55});
+    assert(retained && retained->name() == "save.bin");
+    std::array<std::byte, 793> long_entry{};
+    wire::put16(long_entry.data() + 4, 4);
+    wire::put16(long_entry.data() + 6, 768);
+    std::memset(long_entry.data() + 8, 'a', 768);
+    wire::put16(long_entry.data() + 776, 5);
+    wire::put16(long_entry.data() + 778, 1);
+    long_entry[780] = std::byte{1};
+    wire::put16(long_entry.data() + 781, 6);
+    wire::put16(long_entry.data() + 783, 8);
+    deliver(long_entry);
+    long_entry.fill(std::byte{0x55});
     assert(retained && retained->name() == "save.bin");
     std::array<std::byte, 8> end{};
     wire::put16(end.data() + 4, 7);

@@ -20,11 +20,12 @@ typedef struct {
     DIR *directory;
     uint8_t occupied, kind;
     char relative[PXA_SCOPED_FS_PATH_BYTES];
-    char name[PXA_SCOPED_FS_PATH_BYTES];
 } scoped_entry_t;
 struct pxa_scoped_fs {
     uint32_t magic;
     pxa_scoped_fs_config_t config;
+    /* Runtime-owner scratch avoids long path arrays on the ESP task stack. */
+    char native_path[2*PXA_SCOPED_FS_PATH_BYTES+2];
     scoped_entry_t entries[];
 };
 static pxa_status_t os_error(void) {
@@ -115,9 +116,9 @@ static pxa_status_t open_below_fd(int parent,const char *path,int directory,
 #endif
 /* Open without a directory-fd emulation on FAT. Its mount is registered by
  * trusted Host code as a link-free filesystem with no nested mounts. */
-static pxa_status_t open_native(const pxa_scoped_fs_mount_t *m,const char *path,
+static pxa_status_t open_native(pxa_scoped_fs_t *fs,const pxa_scoped_fs_mount_t *m,const char *path,
     int directory,int *fd,DIR **stream,struct stat *info) {
-    char full[2*PXA_SCOPED_FS_PATH_BYTES+2];
+    char *full=fs->native_path;
     int n;
     *fd=-1; *stream=NULL;
     if (!path_valid(path)) return PXA_STATUS_INVALID_ARGUMENT;
@@ -125,8 +126,8 @@ static pxa_status_t open_native(const pxa_scoped_fs_mount_t *m,const char *path,
         /* FAT's generated short aliases could otherwise expose .pxa-* under
          * a different spelling. This first read-only profile excludes '~'. */
         if (strchr(path,'~')) return PXA_STATUS_DENIED;
-        n=snprintf(full,sizeof(full),"%s%s%s",m->host_path,*path?"/":"",path);
-        if (n<0 || (size_t)n>=sizeof(full)) return PXA_STATUS_LIMIT_EXCEEDED;
+        n=snprintf(full,sizeof(fs->native_path),"%s%s%s",m->host_path,*path?"/":"",path);
+        if (n<0 || (size_t)n>=sizeof(fs->native_path)) return PXA_STATUS_LIMIT_EXCEEDED;
         if (stat(full,info)!=0) return os_error();
         if (directory) {
             if (!S_ISDIR(info->st_mode)) return PXA_STATUS_INVALID_ARGUMENT;
@@ -170,7 +171,7 @@ pxa_status_t pxa_scoped_fs_validate_grant(pxa_scoped_fs_t *fs,
     if (!fs || fs->magic!=SCOPED_MAGIC || !grant) return PXA_STATUS_INVALID_ARGUMENT;
     s=grant_location(fs,grant,&info,&m);
     if (s!=PXA_STATUS_OK) return s;
-    s=open_native(m,grant->relative_path,1,&fd,&dir,&stat_info);
+    s=open_native(fs,m,grant->relative_path,1,&fd,&dir,&stat_info);
     if (s==PXA_STATUS_OK) closedir(dir);
     return s;
 }
@@ -186,7 +187,7 @@ static pxa_status_t open_root(void *context,uint8_t kind,const uint8_t id[16],
         if (memcmp(g->id,id,16)!=0) continue;
         s=grant_location(fs,g,&info,&m); if (s!=PXA_STATUS_OK) return s;
         e=allocate_entry(fs); if (!e) return PXA_STATUS_RESOURCE_LIMIT;
-        s=open_native(m,g->relative_path,1,&e->fd,&e->directory,&st);
+        s=open_native(fs,m,g->relative_path,1,&e->fd,&e->directory,&st);
         if (s!=PXA_STATUS_OK) { close_entry(fs,e,0); return s; }
         e->kind=PXA_FS_KIND_DIRECTORY; e->epoch=info.mount_epoch;
         e->grant_index=i; e->grant_revision=g->revision;
@@ -226,7 +227,7 @@ static pxa_status_t open_at(void *context,void *directory,pxa_bytes_t path,
             e->kind==PXA_FS_KIND_DIRECTORY,&e->fd,&e->directory,&st);
     } else
 #endif
-    s=open_native(m,e->relative,e->kind==PXA_FS_KIND_DIRECTORY,
+    s=open_native(fs,m,e->relative,e->kind==PXA_FS_KIND_DIRECTORY,
         &e->fd,&e->directory,&st);
     if (s!=PXA_STATUS_OK) { close_entry(fs,e,0); return s; }
     e->epoch=parent->epoch; e->grant_index=parent->grant_index;
@@ -317,6 +318,7 @@ static pxa_status_t read_directory(void *context,void *resource,
     m=mount_for(fs,e->epoch); if (!m) return PXA_STATUS_UNAVAILABLE;
     while (scanned++<256) {
         size_t n; struct stat st;
+        char *relative=fs->native_path;int length;
         errno=0; item=readdir(e->directory);
         if (!item) {
             if (errno) return os_error();
@@ -325,13 +327,17 @@ static pxa_status_t read_directory(void *context,void *resource,
         n=strlen(item->d_name);
         if (!pxa_fs_scoped_path_is_valid((pxa_bytes_t){(const uint8_t *)item->d_name,n}))
             continue;
+        length=snprintf(relative,PXA_SCOPED_FS_PATH_BYTES,"%s%s%s",e->relative,*e->relative?"/":"",item->d_name);
+        if(length<0 || (size_t)length>=PXA_SCOPED_FS_PATH_BYTES)return PXA_STATUS_LIMIT_EXCEEDED;
         if (m->native_fat) {
-            char full[3*PXA_SCOPED_FS_PATH_BYTES+3]; int len;
+            size_t prefix=strlen(m->host_path),bytes=(size_t)length;
             if (strchr(item->d_name,'~')) continue;
-            len=snprintf(full,sizeof(full),"%s/%s%s%s",m->host_path,e->relative,
-                *e->relative?"/":"",item->d_name);
-            if (len<0 || (size_t)len>=sizeof(full)) return PXA_STATUS_LIMIT_EXCEEDED;
-            if (stat(full,&st)!=0) return os_error();
+            if (prefix>=sizeof(fs->native_path)-bytes-1) return PXA_STATUS_LIMIT_EXCEEDED;
+            /* Reuse owner-serialized workspace, including overlap-safe prefix
+             * insertion. Long names must not inflate the ESP task's stack. */
+            memmove(relative+prefix+1,relative,bytes+1);
+            memcpy(relative,m->host_path,prefix);relative[prefix]='/';
+            if (stat(relative,&st)!=0) return os_error();
         } else {
 #if !defined(ESP_PLATFORM)
             if (fstatat(dirfd(e->directory),item->d_name,&st,AT_SYMLINK_NOFOLLOW)!=0)
@@ -342,9 +348,9 @@ static pxa_status_t read_directory(void *context,void *resource,
 #endif
         }
         if (!S_ISREG(st.st_mode) && !S_ISDIR(st.st_mode)) continue;
-        if (n>PXA_FS_MAX_SEGMENT_BYTES) return PXA_STATUS_LIMIT_EXCEEDED;
-        memcpy(e->name,item->d_name,n+1);
-        info->name=(pxa_bytes_t){(const uint8_t *)e->name,n};
+        /* readdir storage belongs to this DIR until its next enumeration.
+         * The service serializes it before advancing this same directory. */
+        info->name=(pxa_bytes_t){(const uint8_t *)item->d_name,n};
         info->kind=S_ISDIR(st.st_mode)?PXA_FS_KIND_DIRECTORY:PXA_FS_KIND_REGULAR;
         info->size=S_ISREG(st.st_mode)?(uint64_t)st.st_size:0;
         return PXA_STATUS_OK;

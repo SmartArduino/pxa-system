@@ -6,6 +6,9 @@
 
 #include <optional>
 #include <string_view>
+#include <string>
+#include <memory>
+#include <new>
 
 namespace pxa {
 
@@ -20,16 +23,16 @@ constexpr OpenMode operator|(OpenMode a, OpenMode b) noexcept {
 enum class FileKind : std::uint8_t { regular = 1, directory = 2 };
 enum class SeekOrigin : std::uint8_t { start, current, end };
 struct FileInfo { FileKind kind; std::uint64_t size; };
+// Owns exactly the returned UTF-8 name; copies survive subsequent events.
 struct DirectoryEntry {
-    std::array<char, 64> bytes{};
-    std::uint8_t name_bytes = 0;
+    std::string bytes;
     FileInfo info{};
-    std::string_view name() const noexcept { return {bytes.data(), name_bytes}; }
+    std::string_view name() const noexcept { return bytes; }
 };
 
 namespace fs_detail {
-inline bool valid_path(std::string_view path) noexcept {
-    if (path.empty() || path.size() > 255 || path.front() == '/' ||
+inline bool valid_path(std::string_view path, bool legacy_limit = true) noexcept {
+    if (path.empty() || (legacy_limit && path.size() > 255) || path.front() == '/' ||
         path.back() == '/') return false;
     std::size_t start = 0;
     for (std::size_t i = 0; i <= path.size(); ++i) {
@@ -39,7 +42,7 @@ inline bool valid_path(std::string_view path) noexcept {
             continue;
         }
         const auto segment = path.substr(start, i - start);
-        if (segment.empty() || segment.size() > 64 || segment == "." ||
+        if (segment.empty() || segment == "." ||
             segment == ".." || segment.starts_with(".pxa-")) return false;
         start = i + 1;
     }
@@ -74,6 +77,11 @@ template<class T> Task<T> failure(Error error) {
     return Task<T>::failed(error);
 }
 template<std::size_t Capacity> using Payload = wire::RequestPacket<Capacity>;
+struct OwnedPayload {
+    std::unique_ptr<std::byte[]> bytes;
+    std::size_t size=0;
+    std::span<std::byte> packet() noexcept { return {bytes.get(),size}; }
+};
 struct BorrowedPayload {
     std::span<std::byte> bytes;
     std::span<std::byte> packet() noexcept { return bytes; }
@@ -129,17 +137,16 @@ inline Task<std::optional<DirectoryEntry>> next(
     auto name = records.take(4, name_size);
     auto kind = records.take(5, 1);
     auto size = records.take(6, 8);
-    if (!name || !kind || !size || !records.empty() || name_size > 64)
+    if (!name || !kind || !size || !records.empty())
         co_return std::unexpected(Error::protocol_error);
     std::string_view text(reinterpret_cast<const char*>(name->data()), name_size);
     const auto type = std::to_integer<unsigned>((*kind)[0]);
-    if (!valid_path(text) || text.find('/') != text.npos || (type != 1 && type != 2))
+    if (!valid_path(text, false) || text.find('/') != text.npos || (type != 1 && type != 2))
         co_return std::unexpected(Error::protocol_error);
     DirectoryEntry entry;
-    entry.name_bytes = static_cast<std::uint8_t>(name_size);
     entry.info = {static_cast<FileKind>(type), wire::get64(size->data())};
-    for (std::size_t i = 0; i < name_size; ++i) entry.bytes[i] = text[i];
-    co_return std::optional<DirectoryEntry>{entry};
+    entry.bytes.assign(text);
+    co_return std::optional<DirectoryEntry>{std::move(entry)};
 }
 } // namespace fs_detail
 
@@ -255,14 +262,16 @@ public:
     Task<File> open(std::string_view path,OpenMode mode=OpenMode::read) const {
         if(!file_ || path.empty() || path.find('\0')!=path.npos ||
             !fs_detail::valid_mode(mode)) return Task<File>::failed(Error::invalid_argument);
-        if(path.size()>255) return Task<File>::failed(Error::limit_exceeded);
-        fs_detail::Payload<269> payload;
-        wire::put64(payload.bytes.data(),handle());
-        wire::put32(payload.bytes.data()+8,static_cast<std::uint32_t>(mode));
-        wire::put16(payload.bytes.data()+12,static_cast<std::uint16_t>(path.size()));
+        if(path.size()>1024) return Task<File>::failed(Error::limit_exceeded);
+        fs_detail::OwnedPayload payload{std::unique_ptr<std::byte[]>(
+            new (std::nothrow) std::byte[14+path.size()]),14+path.size()};
+        if (!payload.bytes) return Task<File>::failed(Error::resource_limit);
+        wire::put64(payload.bytes.get(),handle());
+        wire::put32(payload.bytes.get()+8,static_cast<std::uint32_t>(mode));
+        wire::put16(payload.bytes.get()+12,static_cast<std::uint16_t>(path.size()));
         for(std::size_t i=0;i<path.size();++i) payload.bytes[14+i]=std::byte(path[i]);
         payload.size=14+path.size();
-        return open_impl(*transport_,*requests_,payload,
+        return open_impl(*transport_,*requests_,std::move(payload),
             (static_cast<std::uint32_t>(mode)&64)!=0);
     }
     Task<RootInfo> info() const {

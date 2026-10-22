@@ -51,7 +51,7 @@ extern "C" {
 #define PXA_FS_NAMING_CASE_INSENSITIVE UINT8_C(2)
 #define PXA_FS_ROOT_INFO_BYTES 72u
 #define PXA_FS_SCOPED_MAX_PATH_BYTES 1024u
-#define PXA_FS_SCOPED_MAX_SEGMENT_BYTES 255u
+#define PXA_FS_SCOPED_MAX_SEGMENT_BYTES PXA_FS_SCOPED_MAX_PATH_BYTES
 
 typedef struct {
     pxa_volume_id_t volume_id;
@@ -93,7 +93,7 @@ typedef struct {
 #define PXA_FS_READ_AT_MAX_BYTES 4096u
 
 #define PXA_FS_MAX_PATH_BYTES ((size_t)255)
-#define PXA_FS_MAX_SEGMENT_BYTES ((size_t)64)
+#define PXA_FS_MAX_SEGMENT_BYTES ((size_t)255)
 
 typedef struct {
     pxa_bytes_t name;
@@ -118,6 +118,9 @@ typedef pxa_status_t (*pxa_fs_write_fn)(
 typedef pxa_status_t (*pxa_fs_seek_fn)(
     void *context, void *resource, int64_t offset, uint8_t origin,
     uint64_t *position);
+/* Successful entry names remain borrowed until the next read_directory on
+ * that same resource or its close. The service may retain an entry while
+ * retrying completion reservation; unrelated operations must not alter it. */
 typedef pxa_status_t (*pxa_fs_read_directory_fn)(
     void *context, void *resource, pxa_fs_entry_t *entry, uint8_t *end);
 typedef void (*pxa_fs_close_fn)(

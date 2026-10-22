@@ -69,6 +69,12 @@ if(PXSYS_BUILD_TESTS OR BUILD_TESTING)
         endif()
         add_test(NAME ${name} COMMAND ${name})
     endfunction()
+    add_executable(pxsys_launcher_focus_test ../tests/launcher_focus_test.c)
+    target_link_libraries(pxsys_launcher_focus_test PRIVATE pxsys::reference_lvgl)
+    if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(pxsys_launcher_focus_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
+    endif()
+    add_test(NAME pxsys_launcher_focus_test COMMAND pxsys_launcher_focus_test)
     # Exercise independent switches: products may replace settings while
     # retaining radio chrome, or show battery text without either radio.
     foreach(settings RANGE 0 1)

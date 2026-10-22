@@ -326,7 +326,7 @@ static inline int pxa_fs_parse_directory(
         return 1;
     }
     if (record.raw_tag != 4 ||
-        !pxa_fs_valid_path((const char *)record.payload,
+        !pxa_fs_valid_name_path((const char *)record.payload,
                            record.payload_size) ||
         pxa_fs_contains_byte(record.payload, record.payload_size, '/'))
         return 0;

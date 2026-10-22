@@ -75,7 +75,12 @@ int main() {
     std::string long_path(300,'a');
     auto long_file=complete(root->open(long_path,OpenMode::read,external),requests,opened);
     assert(long_file && wire::get16(captured.data()+32)==300);
-    assert(long_file->close());assert(root->close());assert(permission.close());
+    assert(long_file->close());
+    auto owned_pending=[&]{std::string path(768,'z');return root->open(path);}();
+    auto owned_file=complete(std::move(owned_pending),requests,opened);
+    assert(owned_file && wire::get16(captured.data()+32)==768);
+    for(unsigned i=0;i<768;++i)assert(captured[34+i]==std::byte{'z'});
+    assert(owned_file->close());assert(root->close());assert(permission.close());
     auto media=complete(FilesystemService(t,requests).app_media(),requests,
         std::span{grant_result}.first(16));
     assert(media && captured[20]==std::byte{5});

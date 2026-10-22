@@ -224,7 +224,7 @@
   ],
   "limits": {
     "max_path_bytes": 255,
-    "max_segment_bytes": 64,
+    "max_segment_bytes": 255,
     "quota_unit": "logical-regular-file-bytes"
   },
   "protocol_version": "0.4.0",

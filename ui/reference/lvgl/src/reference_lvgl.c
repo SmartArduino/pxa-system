@@ -631,6 +631,8 @@ struct pxsys_reference_lvgl {
     uint8_t navigation_from_home;
     uint8_t task_switcher_handoff;
     uint8_t locked;
+    uint8_t gamepad_consuming;
+    uint32_t gamepad_buttons;
     uint8_t lock_dragging;
     int32_t lock_press_y;
     int32_t notification_press_x;
@@ -978,23 +980,30 @@ static uint32_t gesture_strip_height(const pxsys_reference_layout_t* layout) {
     return pxsys_reference_layout_gesture_strip_height(layout->size_class);
 }
 
+static bool has_navigation_bar(const pxsys_reference_lvgl_t* ui) {
+    return (ui->active_chrome & PXSYS_REFERENCE_UI_NAVIGATION_BAR) &&
+           navigation_bar_mode(ui) != PXSYS_WINDOW_BAR_HIDDEN;
+}
+
 static void expand_content_into_hidden_gesture_area(
     const pxsys_reference_lvgl_t* ui, pxsys_reference_layout_t* layout) {
-    if (ui->navigation_mode == PXSYS_NAVIGATION_GESTURES &&
-        navigation_bar_mode(ui) != PXSYS_WINDOW_BAR_HIDDEN) {
+    const bool no_navigation = !has_navigation_bar(ui);
+    if (no_navigation || ui->navigation_mode == PXSYS_NAVIGATION_GESTURES) {
         int32_t content_bottom = layout->content.y +
                                  (int32_t)layout->content.height;
         int32_t safe_bottom = layout->safe_area.y +
                               (int32_t)layout->safe_area.height;
         int32_t vertical_padding = (int32_t)layout->outer_padding / 2;
-#if PXSYS_REFERENCE_UI_GESTURE_HANDLE
-        int32_t wanted_bottom = (int32_t)ui->display.height -
-                                (int32_t)gesture_strip_height(layout) -
-                                vertical_padding;
-        if (wanted_bottom > safe_bottom - vertical_padding)
-            wanted_bottom = safe_bottom - vertical_padding;
-#else
+        /* An absent navigation role reserves no strip. The display service's
+         * safe area determines the page edge on every board. */
         int32_t wanted_bottom = safe_bottom - vertical_padding;
+#if PXSYS_REFERENCE_UI_GESTURE_HANDLE
+        if (!no_navigation) {
+            wanted_bottom = (int32_t)ui->display.height -
+                            (int32_t)gesture_strip_height(layout) - vertical_padding;
+            if (wanted_bottom > safe_bottom - vertical_padding)
+                wanted_bottom = safe_bottom - vertical_padding;
+        }
 #endif
         if (wanted_bottom > content_bottom)
             layout->content.height +=
@@ -1630,6 +1639,22 @@ static void launcher_scroll_event(lv_event_t* event) {
     if (scroll_x != target_x)
         lv_obj_scroll_to_x(ui->content, target_x,
                            ui->animations_enabled ? LV_ANIM_ON : LV_ANIM_OFF);
+}
+
+static void launcher_focused(lv_event_t* event) {
+    launcher_item_t* item = lv_event_get_user_data(event);
+    if (item == NULL || !ui_valid(item->ui)) return;
+    pxsys_reference_lvgl_t* ui = item->ui;
+    if (ui->content == NULL || lv_obj_get_parent(item->tile) != ui->content) return;
+    const int32_t width = lv_obj_get_width(ui->content);
+    if (width <= 0) return;
+    const size_t per_page = PXSYS_REFERENCE_UI_LAUNCHER_COLUMNS *
+                            PXSYS_REFERENCE_UI_LAUNCHER_ROWS;
+    /* Focus can cross pages without a pointer throw event. Set the snap page
+     * before scrolling, otherwise SCROLL_END restores the previous page. The
+     * current child slot also follows user-reordered launcher icons. */
+    ui->launcher_page = (uint16_t)(lv_obj_get_index(item->tile) / per_page);
+    lv_obj_scroll_to_x(ui->content, (int32_t)ui->launcher_page * width, LV_ANIM_OFF);
 }
 
 static void launcher_configure_paging(pxsys_reference_lvgl_t* ui) {
@@ -2412,6 +2437,14 @@ static void dismiss_recent_item(pxsys_reference_lvgl_t* ui,
         close_task_switcher(ui);
 }
 
+static void recent_key(lv_event_t* event) {
+    recent_item_t* item = lv_event_get_user_data(event);
+    if (item == NULL || !ui_valid(item->ui) || lv_event_get_key(event) != LV_KEY_DEL)
+        return;
+    item->suppress_click = 1;
+    dismiss_recent_item(item->ui, item);
+}
+
 #if !(PXSYS_REFERENCE_UI_TASK_SWITCHER == PXSYS_TASK_SWITCHER_CARDS && \
       LV_USE_SNAPSHOT)
 static void close_clicked(lv_event_t* event) {
@@ -2585,6 +2618,7 @@ static lv_obj_t* make_recent_card(pxsys_reference_lvgl_t* ui,
     lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_align(label, LV_ALIGN_BOTTOM_MID, 0, 0);
     lv_obj_add_event_cb(card, recent_clicked, LV_EVENT_CLICKED, item);
+    lv_obj_add_event_cb(card, recent_key, LV_EVENT_KEY, item);
     lv_obj_add_event_cb(card, recent_card_event, LV_EVENT_PRESSED, item);
     lv_obj_add_event_cb(card, recent_card_event, LV_EVENT_PRESSING, item);
     lv_obj_add_event_cb(card, recent_card_event, LV_EVENT_RELEASED, item);
@@ -2842,6 +2876,7 @@ static void build_task_switcher(pxsys_reference_lvgl_t* ui) {
                                       LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START);
                 lv_obj_set_style_pad_column(row, layout.item_gap, 0);
                 button = make_button(ui, row, item->label, recent_clicked, item);
+                lv_obj_add_event_cb(button, recent_key, LV_EVENT_KEY, item);
                 lv_obj_set_flex_grow(button, 1);
                 lv_obj_set_height(button, LV_PCT(100));
                 close = make_button(ui, row, "X", NULL, NULL);
@@ -3040,6 +3075,7 @@ static lv_obj_t* make_launcher_tile(pxsys_reference_lvgl_t* ui,
         lv_obj_add_event_cb(remove_button, launcher_gesture, LV_EVENT_ALL, item);
         lv_obj_add_event_cb(remove_button, launcher_remove_clicked,
                             LV_EVENT_CLICKED, item);
+        lv_obj_add_event_cb(remove_button, launcher_focused, LV_EVENT_FOCUSED, item);
         if (!ui->launcher_editing)
             pxsys_lvgl_add_flags(remove_button, LV_OBJ_FLAG_HIDDEN);
         item->remove_button = remove_button;
@@ -3050,6 +3086,7 @@ static lv_obj_t* make_launcher_tile(pxsys_reference_lvgl_t* ui,
     lv_obj_add_event_cb(tile, launcher_gesture, LV_EVENT_RELEASED, item);
     lv_obj_add_event_cb(tile, launcher_gesture, LV_EVENT_PRESS_LOST, item);
     lv_obj_add_event_cb(tile, launcher_clicked, LV_EVENT_CLICKED, item);
+    lv_obj_add_event_cb(tile, launcher_focused, LV_EVENT_FOCUSED, item);
     return tile;
 }
 
@@ -7699,7 +7736,8 @@ static void rebuild(pxsys_reference_lvgl_t* ui) {
             lv_obj_set_width(ui->content, (lv_coord_t)layout.safe_area.width);
             lv_obj_set_style_pad_left(ui->content, left_padding, 0);
             lv_obj_set_style_pad_right(ui->content, right_padding, 0);
-            if (ui->navigation_mode == PXSYS_NAVIGATION_GESTURES) {
+            if (!has_navigation_bar(ui) ||
+                ui->navigation_mode == PXSYS_NAVIGATION_GESTURES) {
                 const int32_t safe_bottom = layout.safe_area.y +
                                            (int32_t)layout.safe_area.height;
                 const int32_t bottom_padding = safe_bottom -
@@ -8095,6 +8133,10 @@ static int lock_screen_create(pxsys_reference_lvgl_t* ui) {
     ui->lock_screen = lv_obj_create(ui->parent);
     if (ui->lock_screen == NULL) return 0;
     style_plain(ui->lock_screen);
+    /* Lock screens never display a keypad focus ring, including products that
+     * temporarily retain a group during a lock transition. */
+    lv_obj_set_style_outline_width(ui->lock_screen, 0,
+                                  LV_STATE_FOCUSED | LV_STATE_FOCUS_KEY);
     lv_obj_set_pos(ui->lock_screen, 0, 0);
     lv_obj_set_style_bg_opa(ui->lock_screen, LV_OPA_COVER, 0);
     pxsys_lvgl_add_flags(ui->lock_screen,
@@ -9084,6 +9126,7 @@ pxsys_status_t pxsys_reference_lvgl_set_locked(pxsys_reference_lvgl_t* ui,
         close_notification_shade(ui);
         if (!lock_screen_create(ui)) return PXSYS_STATUS_NO_MEMORY;
         ui->locked = 1;
+        ui->gamepad_consuming = ui->gamepad_buttons != 0;
     } else {
         ui->locked = 0;
         lock_screen_destroy(ui);
@@ -9104,6 +9147,20 @@ pxsys_status_t pxsys_reference_lvgl_set_locked(pxsys_reference_lvgl_t* ui,
 
 bool pxsys_reference_lvgl_is_locked(const pxsys_reference_lvgl_t* ui) {
     return ui_valid(ui) && ui->locked;
+}
+
+bool pxsys_reference_lvgl_handle_gamepad(pxsys_reference_lvgl_t* ui,
+                                        uint32_t buttons) {
+    bool consumed;
+    if (!ui_valid(ui)) return false;
+    consumed = ui->locked || ui->gamepad_consuming;
+    ui->gamepad_buttons = buttons;
+    if (ui->locked && buttons != 0 && !ui->gamepad_consuming)
+        (void)pxsys_reference_lvgl_set_locked(ui, false);
+    /* Keep consuming when more buttons join the unlock sequence. The release
+     * report is consumed too, so START cannot open Recents after unlocking. */
+    ui->gamepad_consuming = consumed && buttons != 0;
+    return consumed;
 }
 
 pxsys_status_t pxsys_reference_lvgl_set_lock_changed_callback(

@@ -94,6 +94,8 @@ typedef struct {
     unsigned closes;
     unsigned mutations;
     pxa_status_t read_error;
+    pxa_bytes_t directory_name;
+    unsigned directory_reads;
 } test_fs_backend_t;
 
 typedef struct {
@@ -706,12 +708,13 @@ static pxa_status_t fs_read_directory(void *context, void *resource,
     test_fs_backend_t *backend = (test_fs_backend_t *)context;
     test_fs_directory_t *directory = (test_fs_directory_t *)resource;
     assert(directory == &backend->directory);
+    ++backend->directory_reads;
     if (directory->position != 0) {
         *end = 1;
         return PXA_STATUS_OK;
     }
     directory->position++;
-    entry->name = (pxa_bytes_t){name, sizeof(name) - 1};
+    entry->name = backend->directory_name.size ? backend->directory_name : (pxa_bytes_t){name, sizeof(name) - 1};
     entry->kind = PXA_FS_KIND_REGULAR;
     entry->size = backend->file.size;
     *end = 0;
@@ -1953,8 +1956,11 @@ static void test_reserved_completion_backpressure(void) {
                                       0, sizeof(payload)) == PXA_STATUS_OK);
     assert(pxa_event_post(test.runtime, component, event, event_size, 1, 0) ==
            PXA_STATUS_OK);
-    assert(pxa_request_complete(test.runtime, component, 33, PXA_STATUS_OK,
-                                payload, sizeof(payload)) == PXA_STATUS_OK);
+    const pxa_bytes_t invalid[]={{NULL,1}};
+    assert(pxa_request_completev(test.runtime,component,33,PXA_STATUS_OK,invalid,1)==PXA_STATUS_INVALID_ARGUMENT);
+    assert(pxa_request_is_active(test.runtime,component,33));
+    const pxa_bytes_t parts[]={{payload,2},{NULL,0},{payload+2,2}};
+    assert(pxa_request_completev(test.runtime,component,33,PXA_STATUS_OK,parts,3)==PXA_STATUS_OK);
     assert(!pxa_request_is_active(test.runtime, component, 33));
     event_size = read_head_event(test.runtime, component, event,
                                  sizeof(event), &view);
@@ -1976,8 +1982,7 @@ static void test_reserved_completion_backpressure(void) {
            PXA_STATUS_OK);
     assert(pxa_request_begin_reserved(test.runtime, component, 34, 9, 2,
                                       0, 0) == PXA_STATUS_OK);
-    assert(pxa_request_complete(test.runtime, component, 34, PXA_STATUS_OK,
-                                payload, sizeof(payload)) == PXA_STATUS_OK);
+    assert(pxa_request_completev(test.runtime,component,34,PXA_STATUS_OK,parts,3)==PXA_STATUS_OK);
     event_size = read_head_event(test.runtime, component, event,
                                  sizeof(event), &view);
     assert(pxa_message_decode(event, event_size, PXA_MAX_CONTROL_MESSAGE,
@@ -1987,6 +1992,16 @@ static void test_reserved_completion_backpressure(void) {
                PXA_STATUS_LIMIT_EXCEEDED);
     assert(pxa_event_consume(test.runtime, component, view.token) ==
            PXA_STATUS_OK);
+    assert(pxa_request_begin(test.runtime,component,35,9,2,0)==PXA_STATUS_OK);
+    const uint8_t too_large[3000]={0};
+    const pxa_bytes_t large[]={{too_large,sizeof(too_large)}};
+    assert(pxa_request_completev(test.runtime,component,35,PXA_STATUS_OK,large,1)==PXA_STATUS_RESOURCE_LIMIT);
+    assert(pxa_request_is_active(test.runtime,component,35));
+    assert(pxa_request_completev(test.runtime,component,35,PXA_STATUS_OK,parts,3)==PXA_STATUS_OK);
+    event_size=read_head_event(test.runtime,component,event,sizeof(event),&view);
+    assert(pxa_message_decode(event,event_size,PXA_MAX_CONTROL_MESSAGE,&completion)==PXA_STATUS_OK &&
+        completion.request_token==35 && completion.payload.size==8);
+    assert(pxa_event_consume(test.runtime,component,view.token)==PXA_STATUS_OK);
     destroy_runtime(&test);
 }
 
@@ -3691,7 +3706,7 @@ static void test_fs_service(void) {
     void *fs_workspace;
     pxa_fs_service_t *fs = NULL;
     uint8_t command[640];
-    uint8_t event_bytes[256];
+    uint8_t event_bytes[1700];
     uint8_t io[8];
     size_t command_size;
     pxa_message_view_t event;
@@ -3703,6 +3718,13 @@ static void test_fs_service(void) {
 
     assert(pxa_fs_path_is_valid(
         (pxa_bytes_t){valid_utf8_path, sizeof(valid_utf8_path)}));
+    const char* rom_name = "最终幻想6 (简) (全剧情汉化) (英菜单)(Boco)(28Mb).sfc";
+    assert(strlen(rom_name) > 64 && pxa_fs_path_is_valid(
+        (pxa_bytes_t){(const uint8_t*)rom_name, strlen(rom_name)}));
+    uint8_t longest_segment[256];
+    memset(longest_segment, 'a', sizeof(longest_segment));
+    assert(pxa_fs_path_is_valid((pxa_bytes_t){longest_segment, 255}));
+    assert(!pxa_fs_path_is_valid((pxa_bytes_t){longest_segment, 256}));
     assert(!pxa_fs_path_is_valid(
         (pxa_bytes_t){invalid_utf8_path, sizeof(invalid_utf8_path)}));
     assert(!pxa_fs_path_is_valid(
@@ -3850,9 +3872,51 @@ static void test_fs_service(void) {
         (pxa_bytes_t){event.payload.data + 4, event.payload.size - 4});
     assert(pxa_record_next(&iterator, &record) == PXA_STATUS_OK &&
            record.tag == 7 && record.payload.size == 0);
+    /* Long names span multiple event blocks. Exhaust the pool before the
+     * first response, then retry: enumeration must retain the same entry. */
+    uint8_t long_name[768];memset(long_name,'x',sizeof(long_name));
+    backend.directory_name=(pxa_bytes_t){long_name,sizeof(long_name)};
+    backend.directory.position=0;
+    uint8_t filler[1500]={0},filler_payload[1472]={0};
+    pxa_writer_t fill_writer;pxa_writer_init(&fill_writer,filler,sizeof(filler));
+    assert(pxa_writer_message(&fill_writer,2,1,0,filler_payload,sizeof(filler_payload))==PXA_STATUS_OK);
+    assert(pxa_event_post(test.runtime,component,filler,fill_writer.size,1,0)==PXA_STATUS_OK);
+    command_size=make_fs_handle_request(command,sizeof(command),PXA_FS_READ_DIRECTORY,126,directory_handle);
+    assert(pxa_component_begin_event(test.runtime,component)==PXA_STATUS_OK);
+    assert(pxa_runtime_control(test.runtime,component,command,command_size)==PXA_STATUS_RESOURCE_LIMIT);
+    assert(pxa_component_finish_event(test.runtime,component,1)==PXA_STATUS_OK);
+    unsigned reads_before_retry=backend.directory_reads;
+    pxa_event_view_t filler_view;
+    assert(pxa_event_peek(test.runtime,component,&filler_view)==PXA_STATUS_OK);
+    assert(pxa_event_consume(test.runtime,component,filler_view.token)==PXA_STATUS_OK);
+    (void)dispatch_control_completion(test.runtime,component,command,command_size,
+        event_bytes,sizeof(event_bytes),&event);
+    assert(backend.directory_reads==reads_before_retry);
+    assert((int32_t)pxa_read_u32(event.payload.data)==PXA_STATUS_OK);
+    pxa_record_iterator_init(&iterator,(pxa_bytes_t){event.payload.data+4,event.payload.size-4});
+    assert(pxa_record_next(&iterator,&record)==PXA_STATUS_OK && record.tag==4 &&
+        record.payload.size==sizeof(long_name) && !memcmp(record.payload.data,long_name,sizeof(long_name)));
+    /* Close while an unreservable entry is retained, then reuse the slot. */
+    backend.directory.position=0;
+    assert(pxa_event_post(test.runtime,component,filler,fill_writer.size,1,0)==PXA_STATUS_OK);
+    assert(pxa_component_begin_event(test.runtime,component)==PXA_STATUS_OK);
+    assert(pxa_runtime_control(test.runtime,component,command,command_size)==PXA_STATUS_RESOURCE_LIMIT);
+    assert(pxa_component_finish_event(test.runtime,component,1)==PXA_STATUS_OK);
     assert(pxa_handle_close(test.runtime, component, directory_handle) ==
            PXA_STATUS_OK &&
            backend.closes == 2);
+    assert(pxa_event_peek(test.runtime,component,&filler_view)==PXA_STATUS_OK);
+    assert(pxa_event_consume(test.runtime,component,filler_view.token)==PXA_STATUS_OK);
+    backend.directory_name=(pxa_bytes_t){NULL,0};
+    command_size=make_fs_open(command,sizeof(command),127,"notes",PXA_FS_OPEN_READ|PXA_FS_OPEN_DIRECTORY);
+    (void)dispatch_control_completion(test.runtime,component,command,command_size,event_bytes,sizeof(event_bytes),&event);
+    directory_handle=pxa_read_u32(event.payload.data+4);
+    command_size=make_fs_handle_request(command,sizeof(command),PXA_FS_READ_DIRECTORY,128,directory_handle);
+    (void)dispatch_control_completion(test.runtime,component,command,command_size,event_bytes,sizeof(event_bytes),&event);
+    pxa_record_iterator_init(&iterator,(pxa_bytes_t){event.payload.data+4,event.payload.size-4});
+    assert(pxa_record_next(&iterator,&record)==PXA_STATUS_OK && record.payload.size==9 &&
+        !memcmp(record.payload.data,"today.txt",9));
+    assert(pxa_handle_close(test.runtime,component,directory_handle)==PXA_STATUS_OK);
 
     command_size = make_fs_path_request(command, sizeof(command),
                                         PXA_FS_MAKE_DIRECTORY, 28,
@@ -3886,10 +3950,10 @@ static void test_fs_service(void) {
     assert((int32_t)pxa_read_u32(event.payload.data) == PXA_STATUS_OK);
     assert(pxa_component_abort(test.runtime, component, PXA_STOP_FAULT) ==
            PXA_STATUS_OK);
-    assert(backend.closes == 3);
+    assert(backend.closes == 4);
 
     destroy_runtime(&test);
-    assert(backend.closes == 3);
+    assert(backend.closes == 4);
     free(fs_workspace);
 }
 

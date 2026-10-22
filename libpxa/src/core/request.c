@@ -556,6 +556,65 @@ pxa_status_t pxa_request_complete(pxa_runtime_t *runtime,
         payload_size);
 }
 
+pxa_status_t pxa_request_completev(pxa_runtime_t *runtime,
+    pxa_component_t component_ref, pxa_request_token_t request_token,
+    pxa_status_t result, const pxa_bytes_t *parts, size_t part_count) {
+    size_t bytes=0;
+    uint32_t owner_index, request_index, event_index;
+    pxa_component_slot_t *component;
+    pxa_request_slot_t *request;
+    pxa_event_writer_t writer;
+    uint8_t header[PXA_ENVELOPE_SIZE+4u];
+    pxa_status_t status;
+    if (!request_token || !pxa_status_is_known(result) || (!parts && part_count))
+        return PXA_STATUS_INVALID_ARGUMENT;
+    for (size_t i=0;i<part_count;++i) {
+        if ((!parts[i].data && parts[i].size) ||
+            parts[i].size>PXA_MAX_CONTROL_MESSAGE-PXA_ENVELOPE_SIZE-4u-bytes)
+            return PXA_STATUS_INVALID_ARGUMENT;
+        bytes+=parts[i].size;
+    }
+    if (result!=PXA_STATUS_OK && bytes) return PXA_STATUS_INVALID_ARGUMENT;
+    component=pxa_runtime_find_component(runtime,component_ref,&owner_index);
+    if (!component) return PXA_STATUS_NOT_FOUND;
+    if (component->state!=PXA_COMPONENT_STARTING && component->state!=PXA_COMPONENT_RUNNING &&
+        component->state!=PXA_COMPONENT_STOP_REQUESTED) return PXA_STATUS_BAD_STATE;
+    request_index=find_request_index(&runtime->requests,owner_index,request_token);
+    if (request_index==PXA_REQUEST_INDEX_NONE) return PXA_STATUS_NOT_FOUND;
+    request=&runtime->requests.slots[request_index];
+    if (request->completion_queued || (request->completion_event!=PXA_REQUEST_INDEX_NONE &&
+        !request->completion_reserved)) return PXA_STATUS_NOT_FOUND;
+    if (request->completion_reserved && bytes>request->completion_payload_capacity)
+        return pxa_request_complete(runtime,component_ref,request_token,PXA_STATUS_LIMIT_EXCEEDED,NULL,0);
+    event_index=request->completion_event;
+    if (!request->completion_reserved) {
+        status=pxa_event_pool_allocate(&runtime->event_pool,owner_index,
+            PXA_ENVELOPE_SIZE+4u+bytes,1,0,&event_index);
+        if (status!=PXA_STATUS_OK) return status;
+    }
+    pxa_wire_generated_store_u16(header,request->service);
+    pxa_wire_generated_store_u16(header+2,request->opcode);
+    pxa_wire_generated_store_u64(header+PXA_WIRE_REQUEST_TOKEN_OFFSET,request_token);
+    pxa_wire_generated_store_u32(header+PXA_WIRE_PAYLOAD_LEN_OFFSET,(uint32_t)(4u+bytes));
+    pxa_wire_generated_store_u32(header+PXA_WIRE_FLAGS_OFFSET,0);
+    pxa_wire_generated_store_u32(header+PXA_ENVELOPE_SIZE,(uint32_t)result);
+    pxa_event_writer_init(&writer,&runtime->event_pool,event_index);
+    status=pxa_event_writer_write(&writer,header,sizeof(header));
+    for (size_t i=0;status==PXA_STATUS_OK && i<part_count;++i)
+        status=pxa_event_writer_write(&writer,parts[i].data,parts[i].size);
+    if (status!=PXA_STATUS_OK) {
+        if (!request->completion_reserved) pxa_event_pool_release(&runtime->event_pool,event_index);
+        return status;
+    }
+    runtime->event_pool.slots[event_index].size=(uint32_t)(sizeof(header)+bytes);
+    request->completion_event=event_index;
+    request->completion_reserved=0;
+    completion_enqueue(&runtime->requests,&component->requests,request_index);
+    pxa_request_table_flush(&runtime->requests,&component->requests,owner_index,
+        &runtime->event_pool,&component->mailbox,runtime->limits.mailbox_capacity);
+    return PXA_STATUS_OK;
+}
+
 pxa_status_t pxa_request_cancel(pxa_runtime_t *runtime,
                                 pxa_component_t component_ref,
                                 pxa_request_token_t request_token) {

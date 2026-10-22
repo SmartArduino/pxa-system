@@ -228,6 +228,11 @@ pxa_status_t pxa_request_complete(pxa_runtime_t *runtime,
                                   pxa_component_t component,
                                   pxa_request_token_t request_token, pxa_status_t result,
                                   const void *payload, size_t payload_size);
+/* Scatter completion: copy borrowed parts directly into the reserved event
+ * blocks, without a contiguous staging buffer. Same ownership/cancel rules. */
+pxa_status_t pxa_request_completev(pxa_runtime_t *runtime,
+    pxa_component_t component, pxa_request_token_t request_token,
+    pxa_status_t result, const pxa_bytes_t *parts, size_t part_count);
 pxa_status_t pxa_request_cancel(pxa_runtime_t *runtime,
                                 pxa_component_t component,
                                 pxa_request_token_t request_token);

@@ -1,5 +1,8 @@
 /* Included by core_test.c to reuse the real Core wire/pressure harness. */
-typedef struct { unsigned opens,closes,prompts,cancels; int directory,file,private_denied; } roots_test_t;
+typedef struct { unsigned opens,closes,prompts,cancels,directory_reads;
+    int directory,file,private_denied,grant_revoked,volume_unavailable;
+    pxa_bytes_t directory_name;
+} roots_test_t;
 static pxa_status_t roots_test_authorize(void *c,pxa_component_t component,pxa_authority_t *authority) {
     roots_test_t *r=c; (void)component;
     if(r->private_denied) return PXA_STATUS_DENIED;
@@ -26,9 +29,10 @@ static pxa_status_t roots_test_at(void *c,void *d,pxa_bytes_t path,uint32_t flag
 }
 static pxa_status_t roots_test_info(void *c,void *d,pxa_fs_root_info_t *i) {
     roots_test_t *r=c; assert(d==&r->directory);
+    if(r->grant_revoked)return PXA_STATUS_DENIED;
     memset(i,0,sizeof(*i)); i->volume_id.bytes[0]=1; i->mount_epoch=19;
     i->rights=3; i->max_path_bytes=255; i->max_segment_bytes=255;
-    i->naming=2; i->state=2; return 0;
+    i->naming=2; i->state=r->volume_unavailable?PXA_VOLUME_OFFLINE:PXA_VOLUME_READY; return 0;
 }
 static pxa_status_t roots_test_media_path(void *context,char *out,size_t capacity,size_t *size) {
     (void)context;const char path[]="/PXA/media/lucinhu/pxa-nes/";
@@ -48,7 +52,10 @@ static pxa_status_t roots_test_read_at(void *c,void *r,uint64_t offset,
     (void)c;(void)r;assert(offset==3 && n==4);memcpy(p,"test",4);*out=4;return 0;
 }
 static pxa_status_t roots_test_next(void *c,void *r,pxa_fs_entry_t *i,uint8_t *end) {
-    (void)c;(void)r;(void)i; *end=1; return 0;
+    roots_test_t *t=c;(void)r;++t->directory_reads;
+    if(t->directory_name.size) {*end=0;i->name=t->directory_name;i->kind=PXA_FS_KIND_REGULAR;i->size=0;}
+    else *end=1;
+    return 0;
 }
 static pxa_status_t roots_test_picker(void *c,pxa_component_t component,
     pxa_request_token_t token,pxa_bytes_t purpose,uint32_t rights,uint8_t persistent) {
@@ -184,6 +191,30 @@ static void test_fs_scoped_service(void) {
     dispatch_control_completion(test.runtime,c,command,writer.size,event_bytes,sizeof(event_bytes),&event);
     assert(event.payload.size==16 && !pxa_read_u32(event.payload.data));
     root=pxa_read_u64(event.payload.data+4);assert(state.prompts==1 && state.opens==3);
+    /* Cached entries are still subject to current grant and mount state. */
+    uint8_t long_name[768];memset(long_name,'n',sizeof(long_name));
+    state.directory_name=(pxa_bytes_t){long_name,sizeof(long_name)};
+    for(unsigned change=1;change<=2;++change) {
+        uint8_t filler[1500]={0},filler_payload[1472]={0};pxa_writer_t fill_writer;
+        pxa_writer_init(&fill_writer,filler,sizeof(filler));
+        assert(!pxa_writer_message(&fill_writer,2,1,0,filler_payload,sizeof(filler_payload)));
+        assert(!pxa_event_post(test.runtime,c,filler,fill_writer.size,1,0));
+        uint8_t handle[8];pxa_write_u64(handle,root);
+        pxa_writer_init(&writer,command,sizeof(command));
+        assert(!pxa_writer_message(&writer,5,PXA_FS_READ_DIRECTORY,200+change,handle,sizeof(handle)));
+        assert(!pxa_component_begin_event(test.runtime,c));
+        assert(pxa_runtime_control(test.runtime,c,command,writer.size)==PXA_STATUS_RESOURCE_LIMIT);
+        assert(!pxa_component_finish_event(test.runtime,c,1));
+        unsigned reads=state.directory_reads;
+        assert(!pxa_event_peek(test.runtime,c,&view));assert(!pxa_event_consume(test.runtime,c,view.token));
+        state.grant_revoked=change==1;state.volume_unavailable=change==2;
+        dispatch_control_completion(test.runtime,c,command,writer.size,event_bytes,sizeof(event_bytes),&event);
+        assert(event.payload.size==4 && (int32_t)pxa_read_u32(event.payload.data)==
+            (change==1?PXA_STATUS_DENIED:PXA_STATUS_UNAVAILABLE));
+        assert(state.directory_reads==reads);
+        state.grant_revoked=state.volume_unavailable=0;
+    }
+    state.directory_name=(pxa_bytes_t){NULL,0};
     assert(!pxa_handle_close64(test.runtime,c,root));
     p[12]=7;
     pxa_writer_init(&writer,command,sizeof(command));assert(!pxa_writer_message(&writer,5,9,9,p,28));

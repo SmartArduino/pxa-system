@@ -8,7 +8,7 @@ extern "C" {
 /* Read-only data roots. No tree scan, write quota, private-FS migration or
  * package installation is performed. Native FAT mode is ONLY for filesystems
  * without links or nested mounts; POSIX mode always walks directory fds. */
-#define PXA_SCOPED_FS_PATH_BYTES 256u
+#define PXA_SCOPED_FS_PATH_BYTES (PXA_FS_SCOPED_MAX_PATH_BYTES + 1u)
 typedef struct {
     uint64_t mount_epoch;
     const char *host_path;

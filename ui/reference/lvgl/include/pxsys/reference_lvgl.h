@@ -470,6 +470,14 @@ pxsys_status_t pxsys_reference_lvgl_key_activate(pxsys_reference_lvgl_t* ui,
 pxsys_status_t pxsys_reference_lvgl_set_locked(pxsys_reference_lvgl_t* ui,
                                                bool locked);
 bool pxsys_reference_lvgl_is_locked(const pxsys_reference_lvgl_t* ui);
+/* Shared policy for every gamepad product. Call each input poll, including zero,
+ * on the LVGL task before shortcuts, focus navigation or application delivery.
+ * Aggregate physical and injected buttons. Any fresh press unlocks; true means
+ * hide keypad focus/cursor and consume all buttons through their final release.
+ * A sequence already held when locking must be released before it can unlock.
+ * Products consume a sleeping screen's wake press/release before this call. */
+bool pxsys_reference_lvgl_handle_gamepad(pxsys_reference_lvgl_t* ui,
+                                        uint32_t buttons);
 pxsys_status_t pxsys_reference_lvgl_set_lock_changed_callback(
     pxsys_reference_lvgl_t* ui, void* context,
     pxsys_reference_lvgl_lock_changed_fn callback);
