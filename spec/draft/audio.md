@@ -78,9 +78,11 @@ value guarantees that physical hardware has played the samples.
 
 The sink describes the actual route. A mono speaker can accept stereo source
 PCM and combine both channels on the Host; this does not imply stereo hardware.
-The ESP pull provider rejects rates above its sink rate, uses continuous linear
-interpolation for upsampling and symmetric stereo averaging, and places its
-fixed 24,144-byte mixer workspace in charged external memory. Existing boards
+The ESP pull provider supports source and sink rates from 8 to 48 kHz, uses
+continuous linear interpolation for both rate directions and symmetric stereo
+averaging, and places its fixed mixer workspace in charged external memory.
+Short downsampling writes can produce no output yet; their fractional clock,
+last sample and source accounting carry into the next packet. Existing boards
 retain 16 kHz unless configured otherwise. A 48 kHz device still renders old
 prepared sounds and streamed music on their 16 kHz source clock.
 

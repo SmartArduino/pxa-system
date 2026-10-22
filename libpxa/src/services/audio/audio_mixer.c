@@ -15,18 +15,18 @@ static uint32_t frames_ms(uint32_t rate, uint32_t ms) {
 }
 pxa_status_t pxa_audio_mixer_configure(pxa_audio_mixer_voice_t *v,
     uint32_t source_rate, uint8_t channels, uint32_t output_rate) {
-    if (!v || source_rate < 8000 || output_rate > PXA_AUDIO_MIXER_MAX_RATE ||
-        source_rate > output_rate || (channels != 1 && channels != 2))
+    if (!v || source_rate < 8000 || source_rate > PXA_AUDIO_MIXER_MAX_RATE ||
+        output_rate < 8000 || output_rate > PXA_AUDIO_MIXER_MAX_RATE || (channels != 1 && channels != 2))
         return PXA_STATUS_INVALID_ARGUMENT;
     if (v->committed || v->count) return PXA_STATUS_BAD_STATE;
     v->source_rate = source_rate; v->output_rate = output_rate;
-    v->channels = channels; v->resample_phase = 0; v->previous_sample = 0;
+    v->channels = channels; v->resample_phase = 0; v->pending_source_frames = 0; v->previous_sample = 0;
     return PXA_STATUS_OK;
 }
 void pxa_audio_mixer_flush(pxa_audio_mixer_voice_t *v) {
     v->read = PXA_AUDIO_MIXER_PACKETS;
     v->count = 0;
-    v->resample_phase = 0; v->previous_sample = 0;
+    v->resample_phase = 0; v->pending_source_frames = 0; v->previous_sample = 0;
     for (unsigned i = 0; i < PXA_AUDIO_MIXER_PACKETS; ++i)
         v->packets[i].position = v->packets[i].length;
     v->state.queued_samples = 0;
@@ -42,7 +42,7 @@ pxa_status_t pxa_audio_mixer_commit(pxa_audio_mixer_voice_t *v,
     pxa_audio_biquad_t filters[PXA_AUDIO_MAX_EQ_BANDS] = {{0}};
     for (unsigned i = 0; i < g->eq_band_count; ++i) {
         const pxa_audio_eq_band_t *b = &g->eq_bands[i];
-        if (b->frequency_hz < 20 || b->frequency_hz * 2u >= v->source_rate ||
+        if (b->frequency_hz < 20 || b->frequency_hz * 2u >= (v->source_rate<v->output_rate?v->source_rate:v->output_rate) ||
             b->q_q8 < 64 || b->q_q8 > 4096 ||
             b->gain_db_q8 < -12 * 256 || b->gain_db_q8 > 12 * 256)
             return PXA_STATUS_INVALID_ARGUMENT;
@@ -67,11 +67,11 @@ static pxa_audio_mixer_packet_t *next_packet(pxa_audio_mixer_voice_t *v) {
         if (v->packets[i].position == v->packets[i].length) return &v->packets[i];
     return NULL;
 }
-static void publish(pxa_audio_mixer_voice_t *v, pxa_audio_mixer_packet_t *p) {
+static void publish(pxa_audio_mixer_voice_t *v, pxa_audio_mixer_packet_t *p, uint32_t credited_frames) {
     ++v->count;
     p->accounted_frames = p->source_phase = 0;
-    v->state.submitted_samples += p->source_frames;
-    v->state.queued_samples += p->source_frames;
+    v->state.submitted_samples += credited_frames;
+    v->state.queued_samples += credited_frames;
     if (p->kind == PXA_AUDIO_PACKET_EFFECT) return;
     const uint8_t index = (uint8_t)(p - v->packets);
     p->next = PXA_AUDIO_MIXER_PACKETS;
@@ -103,11 +103,34 @@ pxa_status_t pxa_audio_mixer_write(pxa_audio_mixer_voice_t *v,
     if (frames > frames_ms(v->source_rate, 20)) return PXA_STATUS_INVALID_ARGUMENT;
     if (!v->committed) return PXA_STATUS_BAD_STATE;
     if (v->count == PXA_AUDIO_MIXER_PACKETS) return PXA_STATUS_WOULD_BLOCK;
+    if(v->source_rate>v->output_rate){
+        uint32_t queued=v->pending_source_frames;
+        for(unsigned i=0;i<PXA_AUDIO_MIXER_PACKETS;++i){
+            const pxa_audio_mixer_packet_t *p=&v->packets[i];
+            if(p->kind==PXA_AUDIO_PACKET_PCM && p->position<p->length)
+                queued+=p->source_frames-p->accounted_frames;
+        }
+        if(queued+frames>PXA_AUDIO_MIXER_PACKETS*frames_ms(v->source_rate,20))
+            return PXA_STATUS_WOULD_BLOCK;
+    }
     const uint32_t length = (frames * v->output_rate + v->resample_phase) / v->source_rate;
-    if (!length || length > PXA_AUDIO_MIXER_MAX_FRAME) return PXA_STATUS_INVALID_ARGUMENT;
+    if (length > PXA_AUDIO_MIXER_MAX_FRAME) return PXA_STATUS_INVALID_ARGUMENT;
+    if (!length) {
+        /* A short downsampling write need not produce an output frame. Carry
+         * its fractional clock and last sample without publishing an empty
+         * packet; the next real packet accounts these source frames. */
+        int32_t last=pcm_sample(pcm+(frames-1)*v->channels*2u);
+        if(v->channels==2)last=(last+pcm_sample(pcm+(frames-1)*4u+2))/2;
+        v->previous_sample=(int16_t)last;
+        v->resample_phase+=frames*v->output_rate;
+        v->pending_source_frames+=(uint32_t)frames;
+        v->state.submitted_samples+=frames;v->state.queued_samples+=(uint32_t)frames;
+        return PXA_STATUS_OK;
+    }
     pxa_audio_mixer_packet_t *p = next_packet(v);
     p->kind = PXA_AUDIO_PACKET_PCM; p->length = length; p->position = 0;
-    p->source_frames = (uint32_t)frames;
+    p->source_frames = (uint32_t)frames+v->pending_source_frames;
+    v->pending_source_frames=0;
     /* Keep compact source-rate PCM in the existing packet storage. Expansion
      * belongs to the audio consumer, not the caller's game/render thread.
      * phase/noise reuse the oscillator state, including its existing
@@ -123,7 +146,7 @@ pxa_status_t pxa_audio_mixer_write(pxa_audio_mixer_voice_t *v,
     }
     v->resample_phase = (frames * v->output_rate + v->resample_phase) % v->source_rate;
     v->previous_sample = p->data.pcm[frames - 1];
-    publish(v, p);
+    publish(v, p, (uint32_t)frames);
     return PXA_STATUS_OK;
 }
 static int16_t interpolate_pcm(int32_t previous, int32_t current,
@@ -139,7 +162,7 @@ static int16_t render_pcm(pxa_audio_mixer_packet_t *p, uint32_t source_rate,
                          uint32_t output_rate) {
     if (source_rate == output_rate) return p->data.pcm[p->position];
     uint32_t source_index = p->noise;
-    if (p->phase < source_rate) {
+    while (p->phase < source_rate) {
         p->phase += output_rate;
         p->noise = ++source_index;
     }
@@ -159,7 +182,7 @@ pxa_status_t pxa_audio_mixer_tone(pxa_audio_mixer_voice_t *v,
     p->length = frames_ms(v->output_rate, t->duration_ms) + frames_ms(v->output_rate, t->delay_ms);
     p->source_frames = frames_ms(v->source_rate, t->duration_ms + t->delay_ms);
     p->data.oscillator.gain = powf(10.0f, t->gain_db_q8 / 5120.0f);
-    publish(v, p);
+    publish(v, p, p->source_frames);
     return PXA_STATUS_OK;
 }
 pxa_status_t pxa_audio_mixer_effect(pxa_audio_mixer_voice_t *v,
@@ -197,7 +220,7 @@ pxa_status_t pxa_audio_mixer_effect(pxa_audio_mixer_voice_t *v,
             p->source_frames = frames_ms(v->source_rate, t->duration_ms + t->delay_ms);
         }
     }
-    publish(v, p);
+    publish(v, p, p->source_frames);
     return PXA_STATUS_OK;
 }
 pxa_status_t pxa_audio_mixer_stop_effect(pxa_audio_mixer_voice_t *v, uint8_t track) {
@@ -311,7 +334,7 @@ static float effect_sample(const pxa_audio_mixer_packet_t *p, uint32_t rate) {
 }
 static void account_frame(pxa_audio_mixer_voice_t *v, pxa_audio_mixer_packet_t *p) {
     p->source_phase += p->source_frames;
-    if (p->source_phase >= p->length) {
+    while (p->source_phase >= p->length) {
         p->source_phase -= p->length;
         ++p->accounted_frames;
         --v->state.queued_samples;
@@ -344,7 +367,7 @@ static size_t render_pcm_prefix(pxa_audio_mixer_voice_t *v, int16_t *out, size_t
             int32_t current = p->data.pcm[index];
             int32_t previous = index ? p->data.pcm[index - 1] : p->meta.pcm.previous;
             for (size_t i = 0; i < count; ++i) {
-                if (phase < source_rate) {
+                while (phase < source_rate) {
                     phase += output_rate;
                     previous = current;
                     current = p->data.pcm[++index];

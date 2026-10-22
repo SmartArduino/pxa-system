@@ -219,7 +219,7 @@ static void format_test(void) {
     assert(!mixer.voices[0].state.queued_samples);
     pxa_audio_mixer_reset(&mixer.voices[0]);
     pxa_audio_mixer_voice_t saved = mixer.voices[0];
-    assert(pxa_audio_mixer_configure(&mixer.voices[0], 44100, 2, 16000) == PXA_STATUS_INVALID_ARGUMENT);
+    assert(pxa_audio_mixer_configure(&mixer.voices[0], 48001, 2, 16000) == PXA_STATUS_INVALID_ARGUMENT);
     assert(!memcmp(&saved, &mixer.voices[0], sizeof(saved)));
 }
 /* Queue several independent source buffers before rendering. This catches
@@ -329,7 +329,59 @@ static void pcm_fast_path_test(void) {
         }
     }
 }
+/* Independent eager interpolation reference, including zero-output writes. */
+static int16_t source_value(unsigned frame,unsigned channel) {
+    return (int16_t)((frame*(channel?239u:733u)+channel*17371u)&65535u);
+}
+static void downsample_test(void) {
+    static const uint32_t rates[][2]={{32768,16000},{44100,16000},{48000,8000},
+        {48000,44100},{32768,32768},{8000,48000},{11025,8000}};
+    static int16_t expected[48000];
+    for(unsigned c=0;c<sizeof(rates)/sizeof(*rates);++c)
+    for(unsigned channels=1;channels<=2;++channels)for(unsigned general=0;general<2;++general){
+        const uint32_t rate=rates[c][0],sink=rates[c][1];unsigned want=0,phase=0;
+        int32_t previous=0;
+        for(unsigned n=0;n<rate;++n){
+            int32_t current=source_value(n,0);
+            if(channels==2)current=(current+source_value(n,1))/2;
+            phase+=sink;
+            while(phase>=rate){phase-=rate;assert(phase<sink && want<48000);
+                expected[want++]=(int16_t)(previous+(int64_t)(current-previous)*(sink-phase)/sink);}
+            previous=current;
+        }
+        assert(want==sink && !phase);configure(rate,(uint8_t)channels,sink);
+        pxa_audio_mixer_voice_t *v=&mixer.voices[0];
+        if(general){v->eq_count=1;v->eq[0].b0=1;}
+        unsigned got=0,at=0,step=0,empty=0;
+        while(at<rate){
+            unsigned frames=(step++*17u)%97u+1u;if(frames>rate-at)frames=rate-at;
+            uint8_t input[97*4];
+            for(unsigned n=0;n<frames;++n)for(unsigned ch=0;ch<channels;++ch){
+                uint16_t value=(uint16_t)source_value(at+n,ch);unsigned p=(n*channels+ch)*2;
+                input[p]=(uint8_t)value;input[p+1]=(uint8_t)(value>>8);
+            }
+            assert(pxa_audio_mixer_write(v,input,frames*channels*2)==PXA_STATUS_OK);
+            memset(input,0,sizeof(input));at+=frames;if(!v->count)++empty;
+            while(v->count){
+                unsigned requested=(step*13u)%311u+1u;
+                size_t count=pxa_audio_mixer_render(&mixer,output,requested);assert(count && got+count<=want);
+                for(unsigned n=0;n<count;++n)assert(output[n]==expected[got+n]);
+                got+=(unsigned)count;
+            }
+            assert(v->state.submitted_samples==at);
+            assert(v->state.accepted_samples+v->state.queued_samples==at);
+            assert(v->state.queued_samples==v->pending_source_frames);
+        }
+        assert(got==want && !v->pending_source_frames && !v->state.queued_samples);
+        assert(v->state.accepted_samples==rate && !v->resample_phase);
+        if(rate>sink)assert(empty);
+        pxa_audio_mixer_flush(v);assert(!v->pending_source_frames);
+    }
+    puts("downsampling: 28 exact-reference streams, mono/stereo, arbitrary packets, general/fast paths");
+}
+
 int main(void) {
+    downsample_test();
     all_sink_rates_test();
     pcm_fast_path_test();
     queued_pcm_test();

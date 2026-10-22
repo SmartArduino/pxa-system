@@ -47,6 +47,7 @@ typedef struct {
     pxa_audio_biquad_t eq[PXA_AUDIO_MAX_EQ_BANDS];
     pxa_audio_state_t state;
     uint32_t source_rate, output_rate, resample_phase;
+    uint32_t pending_source_frames; /* Sub-output-period PCM, credited by the next packet. */
     int16_t previous_sample;
     uint8_t channels;
     float gain;
