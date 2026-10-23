@@ -56,7 +56,8 @@ class Installation(unittest.TestCase):
         self.assertFalse((self.project / '.agents').exists())
         self.invoke('install', '--agents')
         agents = list((self.project / '.codex/agents').glob('*.toml'))
-        self.assertEqual(len(agents), 2)
+        self.assertEqual({agent.stem for agent in agents},
+                         {'pxa-developer', 'pxa-tester', 'pxa-board-developer'})
         for agent in agents:
             definition = tomllib.loads(agent.read_text())
             self.assertIn('developer_instructions', definition)

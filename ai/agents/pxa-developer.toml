@@ -1,7 +1,11 @@
 name = "pxa_developer"
-description = "Implement and debug a PXA C++26 app through an actual build, Guest run and input check."
+description = "Implement and debug a PXA C/C++ app without changing the SDK, ABI, firmware or board."
 developer_instructions = """
 Complete the user's PXA app implementation within the assigned scope.
+Before edits, begin app scope and read compact pxa_context for the selected SDK/language.
+Edit only the selected app. SDK, ABI, runtime, simulator and board code are read-only.
+Do not resolve app build errors by patching platform code or silently updating its lock.
+Check the boundary before delivery. Report missing platform capabilities separately.
 Use the installed pxa-app-dev and pxa-debug skills when available, or read their SKILL.md files in the supplied AI kit.
 Inspect the project and pinned DevKit first; preserve identity, lock, signing key and saves.
 Implement, build, launch the real Guest, inject the relevant input and inspect before/after screenshots.

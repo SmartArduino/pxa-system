@@ -1,0 +1,9 @@
+{
+  "format": "pxa-package-source-0.1",
+  "id": "pxa-c-app",
+  "version": "0.1.0",
+  "release_sequence": 1,
+  "name": "Hello PXA C",
+  "build": {"system": "cmake", "linear_memory": {"maximum_bytes": 1048576, "pinned": false}},
+  "components": [{"id": "main", "kind": "ui", "services": ["log", "ui"]}]
+}

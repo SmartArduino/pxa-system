@@ -1,4 +1,4 @@
-# PXA Agent Kit 0.2.1
+# PXA Agent Kit 0.3.0
 
 [English](README.en.md) · [一句话上手](https://pxa.doit.am/docs/ai-development/) · [AI 入口](https://pxa.doit.am/ai.md)
 
@@ -22,7 +22,7 @@ uv run --python 3.12 https://pxa.doit.am/setup.py --workspace ./my-pxa
 uv run --python 3.12 --locked --project ./ai ./ai/agent.py --workspace ./my-pxa setup
 ```
 
-`setup` 自动选择官方 DevKit 0.5.0 或签名容器镜像，安装项目内的 skills、平台 MCP 配置、CLI 启动器，最后编译并运行真实 Guest、保存检查截图。失败时返回失败，不会把下载成功当成验收。`--sdk /path/to/devkit` 仅复用用户自己选择的完整 SDK，不宣称它经过下载签名校验。离线分发可以用 `setup.py --channel /path/to/ai-kit-0.2.1.json --manifest /path/to/distribution.json`，归档和签名放在各自清单旁。
+`setup` 自动选择官方 DevKit 0.5.0 或签名容器镜像，安装项目内的 skills、平台 MCP 配置、CLI 启动器，最后编译并运行真实 Guest、保存检查截图。失败时返回失败，不会把下载成功当成验收。`--sdk /path/to/devkit` 仅复用用户自己选择的完整 SDK，不宣称它经过下载签名校验。离线分发可以用 `setup.py --channel /path/to/ai-kit-0.3.0.json --manifest /path/to/distribution.json`，归档和签名放在各自清单旁。
 
 在 `my-pxa` 目录中使用以下命令（Windows 使用 `.pxa\pxa.cmd`）：
 
@@ -85,3 +85,37 @@ MCP 长操作返回 job_id，通过 `pxa_job_status` 获取结果，`pxa_screens
 AI Kit 独立版本，不修改已发布 DevKit。`setup.py` 内置发行公钥，先验证签名清单，再校验归档及逐文件摘要。`uv.lock` 固定 Python 依赖。源码中的 `install.py` 仍支持仅安装 skills：`install --project <dir> --platform codex --agents`，不需要第三方 Python 库；移除这些文件用 `remove --project <dir>`，遇到本地修改会保留。项目 MCP、规则和启动器由 setup 另行管理，不属于旧安装器的移除范围。
 
 模拟器结果不代表硬件 FPS、音频延迟或所有操作系统已实测。反馈问题时提供工具版本、操作系统、板型、复现步骤和去除秘密的日志。
+
+## 任务边界与更短的开发循环
+
+Agent Kit 0.3.0 可直接创建 C 或 C++ 项目。SDK、ABI、运行时与板子代码是应用任务的只读输入：
+
+```sh
+.pxa/pxa init apps/c-demo --id pxa-c-demo --language c
+.pxa/pxa context apps/c-demo --query ui --language c
+.pxa/pxa build apps/c-demo
+.pxa/pxa verify apps/c-demo --profiles pai-touch
+.pxa/pxa scope check
+```
+
+新建应用自动开始边界记录；修改已有应用前运行 `scope begin --mode app --project apps/name`。
+`context` 返回当前版本的头文件行号、片段与示例，避免重复读取全套文档。开发中保留锁与构建缓存，先检查相关屏幕，交付前再跑要求的完整屏幕组合。验收场景支持手柄步骤及自动松键。
+
+边界检查记录开始时的文件状态，检测之后的越界变更，包括原有脏文件再次被修改；不会还原文件。Git 工作区检查受版本控制及非忽略文件，独立 DevKit 检查 SDK、接口、配置与开发工具源码。发行工具链二进制由签名分发管理。它是修改审计，不是阻止任意 shell 写入的操作系统沙箱。构建/运行结果包含检查状态，越界时不能把 returncode 0 当成成功。任务结束可用 `scope end` 归档通过的检查，再开始其他工作；发现违规时不能清除记录。重复 setup 会先检查并归档原任务。
+
+## AI 适配新板
+
+把这句话交给 AI：
+
+> 请读取 https://pxa.doit.am/board-agent.md，按我提供的原理图把这块板适配到 PXA。只修改新板目录及对应 Profile，不修改 PXA 接口、SDK 或其他板子。请实际构建并按授权完成设备验收。
+
+在独立固件工作区配置板级工具（需要该工作区的 ESP-IDF；不会下载 App DevKit）：
+
+```sh
+uv run --python 3.12 https://pxa.doit.am/setup.py --workspace . --mode board
+.pxa/pxa board init my-board --target esp32s3 --reference pai-touch
+.pxa/pxa board check my-board
+.pxa/pxa board build my-board
+```
+
+脚手架包含现有 board-port 注册入口、待填写的硬件清单和构建阻断提示；没有猜测 GPIO、供电或 Flash 分区。完成真实驱动前检查不会通过。允许修改本板 BSP、模拟器 Profile 和依赖管理器生成的本板 lock；SDK、ABI、共享板级层与其他设备仍只读。提供 `pxa-board-port` skill、可选 `pxa-board-developer` 角色以及对应 MCP 工具。新 CPU 或缺失的平台接口应作为独立平台任务，不能在板适配中偷偷改接口。

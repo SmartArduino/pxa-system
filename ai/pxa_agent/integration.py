@@ -47,7 +47,7 @@ def replace_block(text, body, previous, *, markers=(START, END)):
     return text.rstrip() + ('\n\n' if text.strip() else '') + block + '\n', hashlib.sha256(block.encode()).hexdigest()
 
 
-def install(workspace, *, platforms='all', mcp=True):
+def install(workspace, *, platforms='all', mcp=True, mode='app'):
     workspace = Path(workspace).resolve()
     uv = shutil.which('uv')
     if not uv:
@@ -60,6 +60,14 @@ def install(workspace, *, platforms='all', mcp=True):
     instruction = f'''PXA development is configured in this workspace. No ESP-IDF or model API key is needed.
 Use the local launcher `.pxa/pxa` (Windows: `.pxa/pxa.cmd`) from this workspace.
 Start with `doctor`; read the installed pxa-app-dev and pxa-debug skills for implementation and verification.
+Before editing an existing app, use `scope begin --mode app --project apps/name`.
+Application work changes only that app: SDK, ABI, runtime, simulator and board source are read-only.
+Use `context apps/name --query SYMBOL --language c|cpp` for bounded excerpts from the pinned SDK.
+If a capability is missing, report it and use an app-level alternative; do not patch platform code to make the test pass.
+Board adaptation is a separate firmware workspace: use `board setup`, pxa-board-port and a board scope.
+Board work changes only the selected BSP, its simulator profile and generated board dependency lock.
+Never change PXA interfaces, SDK, shared runtime or other boards while adapting hardware.
+Run `scope check` before delivery; violations need review, never automatic reset or a new baseline to hide them.
 Create apps in `apps/<name>` with `init`; preserve existing app IDs, signing identity, SDK locks and saves.
 Implement the user's goal, build it, run the real Guest, exercise the relevant controls and inspect screenshots.
 Continue fixing observed failures and incorporate user feedback; a successful build alone does not complete the goal.
@@ -71,6 +79,11 @@ Full flashing erases data and requires explicit data-loss authorization. A gener
 Use `store authorize` for browser-assisted, app-scoped upload access. User-authorized publishing can proceed without asking again.
 `store publish` submits a signed package for review; it does not bypass store review or automatically make it public.
 Use existing user authorization for matching device tests, upgrades and publishing; do not add repeated confirmation steps.'''
+    if mode == 'board':
+        instruction = instruction.replace('No ESP-IDF or model API key is needed.',
+            'This is a firmware workspace; use its documented ESP-IDF toolchain. No model API key is needed.')
+        instruction = instruction.replace('read the installed pxa-app-dev and pxa-debug skills for implementation and verification.',
+            'read pxa-board-port for this BSP task. App commands below apply only in a separate app workspace.')
     targets = ['AGENTS.md']
     if platforms in ('claude', 'all'):
         targets.append('CLAUDE.md')

@@ -35,6 +35,8 @@ def create_server(env):
 
     server = MCPServer('pxa', version=VERSION, lifespan=lifespan,
         instructions='Implement the user goal, build, exercise real Guest input and inspect screenshots; iterate on failures. '
+        'Use pxa_context for bounded local SDK excerpts. App work must not change SDK, ABI, runtime or board code. '
+        'Board ports may edit only the selected BSP, profile and generated lock; keep SDK/API read-only. Use scope checks. '
         'Keep original app/signing identities and device saves. Use only user-authorized device changes, firmware updates and publishing. '
         'Long operations return a job_id: poll pxa_job_status, then inspect evidence. Runtime success is not visual or hardware acceptance. '
         'Browser store approval happens in the user browser; never ask for private keys, passwords or tokens in chat.')
@@ -81,9 +83,52 @@ def create_server(env):
         return env.doctor()
 
     @tool()
-    def pxa_init(project: str, app_id: str) -> dict:
-        """Create a new C++ app in an empty apps/name directory; never replace an existing app."""
-        return {'log': env.call(['init', env.project(project), '--id', app_id])}
+    def pxa_init(project: str, app_id: str | None = None, language: Literal['c', 'cpp'] = 'cpp') -> dict:
+        """Create a C/C++ app and start its change scope; never replace an existing app."""
+        from .projects import initialize
+        return initialize(env, project, app_id, language)
+
+    @tool(annotations=read)
+    def pxa_context(project: str, query: str = '', language: Literal['c', 'cpp'] = 'cpp', limit: int = 12) -> dict:
+        """Read compact app metadata, SDK lock, exact header lines and examples; no network or source edits."""
+        from .context import project_context
+        return project_context(env, project, query, language, limit)
+
+    @tool()
+    def pxa_scope_begin(mode: Literal['app', 'board'], project: str | None = None, board: str | None = None) -> dict:
+        """Record change boundaries before editing. Does not grant permission or discard existing changes."""
+        from .scope import begin
+        return begin(env.workspace, mode=mode, project=project, board=board,
+                     sdk=env.config.get('sdk') if mode == 'app' else None)
+
+    @tool(annotations=read)
+    def pxa_scope_check() -> dict:
+        """Check file changes outside the selected app/BSP. This audit is not an OS sandbox."""
+        from .scope import check
+        return check(env.workspace)
+
+    @tool()
+    def pxa_scope_end() -> dict:
+        """Archive a passing boundary check before unrelated work; violations cannot be discarded."""
+        from .scope import finish
+        return finish(env.workspace)
+
+    @tool()
+    def pxa_board_init(board: str, target: Literal['esp32s3', 'esp32s31'], reference: str | None = None) -> dict:
+        """Create board-local callback scaffolding with a bring-up gate; never guess GPIO or flash hardware."""
+        from .boards import initialize
+        return initialize(env.workspace, board, target=target, reference=reference)
+
+    @tool(annotations=read)
+    def pxa_board_check(board: str) -> dict:
+        """Inspect existing port API, missing hardware data and forbidden edits; not hardware acceptance."""
+        from .boards import inspect
+        return inspect(env.workspace, board)
+
+    @tool()
+    def pxa_board_build(board: str) -> dict:
+        """Build the selected board after boundary/static checks, using its installed ESP-IDF. Never flash."""
+        return host_job(['board', 'build', board], timeout=1900)
 
     @tool()
     def pxa_build(project: str, target: Literal['simulator', 'esp32s3', 'esp32s31'] = 'simulator') -> dict:
@@ -100,9 +145,9 @@ def create_server(env):
         return jobs.start(['run', path, '--offline', '--debug', '--profile', profile], timeout=3600, headless=headless)
 
     @tool(annotations=read)
-    def pxa_job_status(job_id: str) -> dict:
-        """Return completion, bounded logs and the exact simulator selector; poll long operations here."""
-        return jobs.status(job_id)
+    def pxa_job_status(job_id: str, wait_seconds: int = 0, include_log: bool = True) -> dict:
+        """Wait up to 20 seconds and return completion/scope. Poll with include_log=false; read logs on failure/completion."""
+        return jobs.status(job_id, wait_seconds=wait_seconds, include_log=include_log)
 
     @tool()
     def pxa_job_stop(job_id: str) -> dict:

@@ -163,6 +163,8 @@ class Environment:
 
     def ensure_identity(self, project, key=None):
         """Refuse an implicit publisher change for an existing development app."""
+        from .scope import app
+        app(self, project)
         from cryptography.hazmat.primitives import serialization
         project = self.project(project)
         expected = []
@@ -241,13 +243,21 @@ class Environment:
             invocation[image:image] = flags
         else:
             invocation = self.invocation(arguments)
-        return run(invocation, cwd=self.workspace, env={**self.variables(), **(extra_env or {})}, timeout=timeout)
+        result = run(invocation, cwd=self.workspace, env={**self.variables(), **(extra_env or {})}, timeout=timeout)
+        if arguments and str(arguments[0]) in ('build', 'run'):
+            from .scope import enforce
+            enforce(self.workspace)
+        return result
 
     def device(self, arguments, *, timeout=60):
         script = (Path(self.config['sdk']) / 'tools/pxadb/pxadb.py' if self.native else Path(self.config['host_tools']) / 'pxadb.py')
         return run([sys.executable, script, *arguments], cwd=self.workspace, env=self.variables(), timeout=timeout)
 
     def doctor(self):
+        if self.config.get('mode') == 'board':
+            return {'mode': 'board', 'kit_version': VERSION, 'workspace': str(self.workspace),
+                    'idf_path': os.environ.get('IDF_PATH'), 'firmware_workspace': True,
+                    'note': 'Board adaptation needs the workspace ESP-IDF toolchain; SDK/API are read-only'}
         from serial.tools.list_ports import comports
         return {'ready': True, 'kit_version': VERSION, 'workspace': str(self.workspace),
                 'sdk_version': self.config['sdk_version'], 'engine': self.config['engine'],

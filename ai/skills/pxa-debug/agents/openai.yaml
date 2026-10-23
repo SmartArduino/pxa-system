@@ -1,4 +1,4 @@
 interface:
   display_name: "PXA 调试与验收"
-  short_description: "运行真实 Guest、注入触摸并检查不同屏幕的截图与日志证据。"
+  short_description: "运行真实 Guest、注入触摸与手柄，检查截图、日志和修改边界。"
   default_prompt: "使用 $pxa-debug 重现当前问题，修复后检查截图和交互。"

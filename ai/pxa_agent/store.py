@@ -202,6 +202,8 @@ def upload(server, endpoint, credential, filename, *, field='package', extra=Non
 
 
 def publish(environment, project, package, *, reference=None, server='https://app.doit.am', icon=None, screenshots=(), changelog=''):
+    from .scope import enforce
+    enforce(environment.workspace)
     server = server_origin(server)
     project, package = environment.project(project), environment.project(package)
     identity = package_identity(environment, package)

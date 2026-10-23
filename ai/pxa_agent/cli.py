@@ -28,7 +28,34 @@ def parser():
     setup.add_argument('--no-smoke', action='store_true', help='skip the initial real Guest environment check')
     commands.add_parser('doctor')
     commands.add_parser('mcp', help='serve tools to an MCP client over stdio')
-    for name in ('init', 'build', 'run', 'sdk', 'device'):
+    init = commands.add_parser('init', help='create a C or C++ app without editing the SDK')
+    init.add_argument('project')
+    init.add_argument('--id')
+    init.add_argument('--language', choices=('c', 'cpp'), default='cpp')
+    context = commands.add_parser('context', help='read compact, version-matched app and SDK context')
+    context.add_argument('project')
+    context.add_argument('--query', default='')
+    context.add_argument('--language', choices=('c', 'cpp'), default='cpp')
+    context.add_argument('--limit', type=int, default=12)
+    scope = commands.add_parser('scope', help='audit app/board edit boundaries (not a sandbox)')
+    scope_sub = scope.add_subparsers(dest='action', required=True)
+    start = scope_sub.add_parser('begin')
+    start.add_argument('--mode', choices=('app', 'board'), required=True)
+    start.add_argument('--project')
+    start.add_argument('--board')
+    scope_sub.add_parser('check')
+    scope_sub.add_parser('end', help='archive a passing scope before unrelated work or tool updates')
+    board = commands.add_parser('board', help='adapt a board through the existing port API')
+    board_sub = board.add_subparsers(dest='action', required=True)
+    board_setup = board_sub.add_parser('setup', help='install board skills/MCP; does not install ESP-IDF')
+    board_setup.add_argument('--platform', choices=('all', 'codex', 'claude', 'dsh', 'generic'), default='all')
+    scaffold = board_sub.add_parser('init')
+    scaffold.add_argument('board')
+    scaffold.add_argument('--target', choices=('esp32s3', 'esp32s31'), required=True)
+    scaffold.add_argument('--reference')
+    for action in ('check', 'build'):
+        board_sub.add_parser(action).add_argument('board')
+    for name in ('build', 'run', 'sdk', 'device'):
         command = commands.add_parser(name)
         command.add_argument('arguments', nargs=argparse.REMAINDER)
     verify = commands.add_parser('verify')
@@ -79,7 +106,28 @@ def main():
     args = parser().parse_args()
     try:
         result = None
-        if args.command == 'setup':
+        if args.command == 'scope':
+            from . import scope
+            if args.action == 'begin':
+                sdk = Environment(args.workspace).config.get('sdk') if args.mode == 'app' else None
+                result = scope.begin(args.workspace, mode=args.mode, project=args.project, board=args.board, sdk=sdk)
+            elif args.action == 'end':
+                result = scope.finish(args.workspace)
+            else:
+                result = scope.check(args.workspace)
+        elif args.command == 'board':
+            from . import boards
+            if args.action == 'setup':
+                result = boards.setup(args.workspace, args.platform)
+            elif args.action == 'init':
+                result = boards.initialize(args.workspace, args.board, target=args.target, reference=args.reference)
+            elif args.action == 'build':
+                result = boards.build(args.workspace, args.board)
+            else:
+                result = boards.inspect(args.workspace, args.board)
+        elif args.command == 'setup':
+            from .scope import finish
+            finish(args.workspace)
             from .integration import install
             env = configure(args.workspace, engine=args.engine, sdk=args.sdk, version=args.sdk_version, manifest=args.manifest)
             result = {'environment': env.doctor(), 'integration': install(env.workspace, platforms=args.platform, mcp=not args.no_mcp)}
@@ -96,7 +144,13 @@ def main():
                 result['smoke'] = {'runtime_passed': True, 'screenshot': str(output / 'environment.png')}
         else:
             env = Environment(args.workspace)
-            if args.command == 'doctor':
+            if args.command == 'init':
+                from .projects import initialize
+                result = initialize(env, args.project, args.id, args.language)
+            elif args.command == 'context':
+                from .context import project_context
+                result = project_context(env, args.project, args.query, args.language, args.limit)
+            elif args.command == 'doctor':
                 result = env.doctor()
             elif args.command == 'mcp':
                 from .mcp_server import serve
@@ -136,11 +190,13 @@ def main():
                                 sys.stdout.write(data.decode(errors='replace'))
                                 sys.stdout.flush()
                             if not state['running']:
-                                return 0 if state['returncode'] == 0 else 1
+                                return 0 if state['returncode'] == 0 and not (state.get('scope') or {}).get('violations') else 1
                             time.sleep(.2)
                     finally:
                         jobs.close()
                 print(env.call([args.command, *arguments], timeout=900), end='')
+                from .scope import enforce
+                enforce(env.workspace)
                 return 0
             elif args.command == 'verify':
                 from .workbench import verification
@@ -177,7 +233,7 @@ def main():
                         reference=args.reference, icon=args.icon, screenshots=args.screenshot, changelog=args.changelog)
         if result is not None:
             print(json.dumps(result, ensure_ascii=False, indent=2))
-        return 1 if result and result.get('runtime_passed') is False else 0
+        return 1 if result and any(result.get(key) is False for key in ('runtime_passed', 'passed', 'static_ready')) else 0
     except (ToolError, OSError, ValueError, subprocess.TimeoutExpired) as error:
         print('pxa-agent: ' + str(error), file=sys.stderr)
         return 1

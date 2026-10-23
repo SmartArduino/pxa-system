@@ -1,4 +1,4 @@
-# PXA Agent Kit 0.2.1
+# PXA Agent Kit 0.3.0
 
 [中文](README.md) · [Tutorial](https://pxa.doit.am/docs/ai-development/)
 
@@ -32,3 +32,15 @@ Ask the AI to implement, build, run, exercise input and inspect screenshots, fix
 Official firmware: `firmware prepare --board <board>` downloads and verifies without opening USB. An authorized `firmware upgrade --board <board> --port <port>` defaults to app-only and checks the real installed partition table before writing. A layout mismatch stops. Full images erase apps, saves and settings and require explicit user data-loss authorization plus `--mode full --erase-data`. S31 may require manual BOOT/RESET and a changed port. Flash completion and successful boot are distinct results.
 
 Publishing: `store authorize <project> <package> --wait` opens browser login and one-app approval. Local P-256 signing proves key possession; private keys remain local. An app-scoped 30-day upload credential is stored privately outside the project, never printed in logs or command arguments. Existing listings are reused without overwriting metadata. `store publish <project> <package>` submits the exact signed bytes for review, optionally with `--icon` and `--screenshot`. It does not bypass store review. See the Chinese README for offline installation, integration locations and limitations.
+
+## Scoped workflows in 0.3.0
+
+Create real C projects with `init apps/demo --id pxa-demo --language c`; C++ remains the default.
+Use `context apps/demo --query ui --language c` for bounded declarations and examples from the pinned SDK. Keep incremental build caches; verify one affected screen during iteration and the required profile matrix before delivery. Scenarios now support controller holds and automatic input cancellation.
+
+Begin `scope begin --mode app --project apps/name` before editing an existing app; init begins it for new apps. Only that app may change. SDK, ABI, runtime, simulator and board source are read-only. Scope checks preserve prior dirty state and detect later changes; they are audits, not OS sandboxes. Git trees include tracked/non-ignored files; standalone SDK checks cover SDK/interface/configuration/developer-tool source, not distribution toolchain binaries. Inspect the job's scope/passed fields, not only its subprocess exit code. `scope end` archives only a passing scope; repeated setup checks and archives it before updating managed tools.
+
+For board work, read https://pxa.doit.am/board-agent.md and use a separate firmware checkout:
+`uv run --python 3.12 https://pxa.doit.am/setup.py --workspace . --mode board`.
+This installs skills/MCP without installing an app DevKit or ESP-IDF. Use that checkout's documented firmware toolchain.
+`board init my-board --target esp32s3 --reference pai-touch` generates board-local callbacks and an explicit bring-up gate. Complete schematic-backed hardware facts and real drivers/partitions before `board check` and `board build` can pass. The pxa-board-port skill and optional pxa-board-developer role restrict writes to the selected BSP/profile/generated dependency lock. Keep SDK, PXA interfaces and shared code unchanged; new CPU backends are separate platform work. Static readiness is not physical acceptance.

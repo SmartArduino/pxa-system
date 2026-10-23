@@ -1,6 +1,6 @@
 ---
 name: pxa-debug
-description: Reproduce and debug PXA application failures using the simulator, PXADB screenshots and scripted touch input; verify UI across DPI and screen profiles and collect bounded machine-readable evidence.
+description: Reproduce PXA app failures with the simulator, screenshots and scripted touch/controller input; verify UI across screen profiles within the app-only change boundary.
 ---
 
 # PXA debugging and verification
@@ -8,6 +8,11 @@ description: Reproduce and debug PXA application failures using the simulator, P
 When Agent Kit setup is present, use workspace `.pxa/pxa` (Windows `.pxa/pxa.cmd`) instead of bare `pxa`; MCP tools expose the same implementation. Apps belong in `apps/<name>`. Start with `doctor`; do not rebuild the firmware environment for an app task. Follow the user goal through actual runtime and visual checks, then iterate on feedback. Use `.pxa/pxa verify <app>` or `pxa_verify`, poll its job, and inspect resulting images. Keep evidence in ignored `local/artifacts/`.
 
 Identify the app, pinned DevKit, failing action and expected screen. Reproduce before editing. Use a separate checkout or test project when editing a live app would interfere with another developer. Keep the user's existing lock, signing identity and data.
+
+Use the app's active change scope. SDK, ABI, runtime and board sources are
+read-only during app debugging; a missing platform capability is a separate
+task. Run scope check before delivery. Poll long MCP jobs with a bounded wait
+and omit repeated logs; request the log when the job finishes or fails.
 
 For repeatable simulator checks, run the bundled [verification helper](scripts/verify_app.py):
 

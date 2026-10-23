@@ -43,7 +43,7 @@ def fetch(source, limit):
     if urlparse(source).scheme:
         if urlparse(source).scheme != 'https':
             raise ValueError('Release downloads require HTTPS')
-        stream = build_opener(HTTPSRedirect).open(Request(source, headers={'User-Agent': 'PXA-Agent-Setup/0.2.1'}), timeout=120)
+        stream = build_opener(HTTPSRedirect).open(Request(source, headers={'User-Agent': 'PXA-Agent-Setup/0.3.0'}), timeout=120)
     else:
         stream = Path(source).open('rb')
     with stream:
@@ -132,6 +132,8 @@ def main():
     parser.add_argument('--channel', default='https://pxa.doit.am/agent/stable.json', help='signed channel manifest or an explicit local offline manifest')
     parser.add_argument('--workspace', type=Path, default=Path.cwd())
     parser.add_argument('--platform', choices=['all', 'codex', 'claude', 'dsh', 'generic'], default='all')
+    parser.add_argument('--mode', choices=['app', 'board'], default='app',
+                        help='app DevKit setup, or board tools in an existing firmware workspace')
     parser.add_argument('--engine', choices=['auto', 'native', 'docker', 'podman'], default='auto')
     parser.add_argument('--sdk', type=Path)
     parser.add_argument('--manifest', help='signed SDK distribution manifest, for offline setup')
@@ -147,7 +149,13 @@ def main():
         os.environ['UV_PROJECT_ENVIRONMENT'] = str(environment)
         os.environ.pop('VIRTUAL_ENV', None)
         command = [uv, 'run', '--python', '3.12', '--locked', '--project', str(kit), str(kit / 'agent.py'),
-                   '--workspace', str(args.workspace.resolve()), 'setup', '--platform', args.platform, '--engine', args.engine]
+                   '--workspace', str(args.workspace.resolve())]
+        if args.mode == 'board':
+            if args.sdk or args.manifest or args.engine != 'auto' or args.no_smoke:
+                raise ValueError('Board setup uses the existing firmware toolchain; app SDK options do not apply')
+            command += ['board', 'setup', '--platform', args.platform]
+        else:
+            command += ['setup', '--platform', args.platform, '--engine', args.engine]
         if args.sdk:
             command += ['--sdk', str(args.sdk.resolve())]
         if args.manifest:

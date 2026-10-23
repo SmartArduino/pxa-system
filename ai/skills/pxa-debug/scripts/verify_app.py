@@ -15,6 +15,9 @@ import tempfile
 import time
 import tomllib
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
+from pxa_agent.simulator_input import inject as simulator_input
+
 PROFILES = ('pai-touch', 'sensecap-watcher', 'esp-mosaico', 'esp32s31-korvo-1', 'generic')
 NAME = re.compile(r'[a-z][a-z0-9-]{0,47}')
 
@@ -32,11 +35,15 @@ def validate_scenario(scenario, dimensions):
             names.add(step['name'])
             action = step.get('action')
             fields = {'tap': {'x', 'y'}, 'swipe': {'x', 'y', 'x2', 'y2', 'ms'},
+                      'controller': {'buttons', 'ms'}, 'cancel': set(),
                       'wait': {'ms'}, 'screenshot': set()}.get(action)
             if fields is None or set(step) != fields | {'name', 'action'}:
                 raise ValueError('Invalid scenario action/fields: ' + str(action))
             if 'ms' in fields and (type(step['ms']) is not int or not (1 if action == 'swipe' else 0) <= step['ms'] <= 5000):
                 raise ValueError('Step duration must be a bounded integer')
+            if action == 'controller' and (type(step['buttons']) is not int or not 0 <= step['buttons'] <= 4095
+                                           or not 1 <= step['ms'] <= 3000):
+                raise ValueError('Controller requires buttons 0..4095 and hold 1..3000 ms')
             width, height = dimensions[profile]
             for axis in fields & {'x', 'y', 'x2', 'y2'}:
                 if type(step[axis]) is not int or not 0 <= step[axis] < (width if axis.startswith('x') else height):
@@ -166,6 +173,12 @@ def main():
                         elif action == 'screenshot':
                             command(directory, step['name'], ['device', 'screenshot', directory / (step['name'] + '.png'),
                                                               '--simulator', selector])
+                        elif action == 'controller':
+                            message = simulator_input(selector, step['buttons'], step['ms'], socket_root=sockets.name)
+                            (directory / (step['name'] + '.log')).write_text(message + '\n')
+                        elif action == 'cancel':
+                            message = simulator_input(selector, socket_root=sockets.name)
+                            (directory / (step['name'] + '.log')).write_text(message + '\n')
                         else:
                             values = [step['x'], step['y']]
                             if action == 'swipe':

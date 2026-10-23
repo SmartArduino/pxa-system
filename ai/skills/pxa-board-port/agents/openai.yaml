@@ -1,0 +1,4 @@
+interface:
+  display_name: "PXA Board Port"
+  short_description: "Adapt hardware through the existing PXA board interface"
+  default_prompt: "Use $pxa-board-port to adapt the supplied board without changing PXA interfaces or SDK."

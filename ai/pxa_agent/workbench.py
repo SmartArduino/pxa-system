@@ -68,17 +68,34 @@ class Jobs:
             raise ToolError('Unknown job; use the job ID returned by this server')
         return self.jobs[identity]
 
-    def status(self, identity):
+    def status(self, identity, *, wait_seconds=0, include_log=True):
         job = self.get(identity)
+        if not 0 <= wait_seconds <= 20:
+            raise ToolError('Job wait must be 0..20 seconds')
+        if wait_seconds and job['process'].poll() is None:
+            try:
+                job['process'].wait(timeout=wait_seconds)
+            except subprocess.TimeoutExpired:
+                pass
         log = job['directory'] / 'run.log'
-        text = log.read_bytes()[-16000:].decode('utf-8', errors='replace') if log.exists() else ''
+        text = ''
+        if log.exists():
+            with log.open('rb') as stream:
+                stream.seek(max(0, log.stat().st_size - 16000))
+                text = stream.read(16000).decode('utf-8', errors='replace')
         selectors = re.findall(r'PXADB: pxa device info --simulator ([a-z0-9@-]+)', text)
         if selectors:
             job['selector'] = selectors[-1]
-        return {'job_id': identity, 'running': job['process'].poll() is None or not job['done'],
+        complete = job['process'].poll() is not None and job['done']
+        if complete and 'scope' not in job:
+            from .scope import check
+            job['scope'] = check(self.env.workspace)
+        return {'job_id': identity, 'running': not complete, 'scope': job.get('scope'),
+                'passed': (job['process'].returncode == 0 and not job['timed_out']
+                           and not job.get('scope', {}).get('violations')) if complete else None,
                 'returncode': job['process'].poll(), 'timed_out': job['timed_out'],
                 'elapsed_seconds': round(time.monotonic() - job['started'], 2),
-                'log': str(log), 'log_tail': text, 'simulator': job.get('selector')}
+                'log': str(log), 'log_tail': text if include_log else '', 'simulator': job.get('selector')}
 
     def stop(self, identity):
         job = self.get(identity)
@@ -125,6 +142,15 @@ class Jobs:
                     if time.monotonic() >= deadline or job['process'].poll() is not None:
                         raise
                     time.sleep(.2)
+        if arguments[:2] in (['input', 'controller'], ['input', 'cancel']):
+            values = [selector]
+            if arguments[1] == 'controller':
+                values += ['--buttons', arguments[2], '--hold-ms', arguments[4]]
+            helper = KIT / 'pxa_agent/simulator_input.py'
+            command = ([sys.executable, helper, *values] if self.env.native else
+                [self.env.config['engine'], 'exec', job['container'], '/opt/pxa/runtime/python/bin/python3',
+                 '/pxa-agent-kit/pxa_agent/simulator_input.py', *values])
+            return run(command, env=self.env.variables(), timeout=40)
         return invoke(arguments)
 
     def close(self):
@@ -165,6 +191,8 @@ def verification(environment, project, *, profiles=None, scenario=None, headless
     finally:
         jobs.close()
     path = output / 'result.json'
+    from .scope import enforce
+    enforce(environment.workspace)
     document = json.loads(path.read_text()) if path.is_file() else {'runtime_passed': False}
     return {'runtime_passed': returncode == 0 and document.get('runtime_passed', False),
             'visual_review_required': True, 'result': str(path), 'output': str(output),

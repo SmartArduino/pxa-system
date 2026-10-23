@@ -1,9 +1,32 @@
 ---
 name: pxa-app-dev
-description: Create or modify PXA C++26 applications using the standalone DevKit, including declarative UI, game loops, resources and service declarations. Use for PXA app implementation, not unrelated C++ or firmware builds.
+description: Implement and debug PXA C or C++ applications with a pinned DevKit, local SDK context and an app-only change boundary. Use for PXA apps/games, not SDK or board-port implementation.
 ---
 
 # PXA application development
+
+The edit boundary is the selected application. SDK, public ABI, host/runtime,
+simulator and board sources are read-only, including dependency checkouts.
+Start `scope begin --mode app --project apps/name` before editing an existing
+app; Agent Kit `init` starts it for a new app. Use `scope check` before delivery.
+These checks detect changes and preserve them; they are not a file-access sandbox.
+Do not erase violations or rebaseline to hide them. A missing SDK capability is a
+separate platform request: explain it and seek an app-level implementation.
+
+Use `context apps/name --query ui --language cpp` or `pxa_context` to get compact
+version-matched declarations/examples. Search by actual symbol or module, then
+read only the relevant headers. C apps use `--language c`; create them with
+`init apps/name --id unique-id --language c`. Both SDKs use the same platform
+contracts; do not substitute C++ calls into C source.
+
+During iteration, build incrementally and verify one relevant screen first;
+run the requested screen matrix before delivery. Keep the existing lock and
+build cache. Do not redownload/reinstall the SDK to fix an app compiler error.
+For long MCP jobs, use `pxa_job_status(wait_seconds=10, include_log=false)`
+instead of repeatedly emitting the same log; request logs when finished or failed.
+Use a reproducible scenario for touch/controller input and inspect its images.
+For FPS work, measure CPU, rendering, presentation and memory separately; a
+faster simulator is not evidence of a faster physical LCD.
 
 When Agent Kit setup is present, use workspace `.pxa/pxa` (Windows `.pxa/pxa.cmd`) instead of bare `pxa`; MCP tools expose the same implementation. Apps belong in `apps/<name>`. Start with `doctor`; do not rebuild the firmware environment for an app task. Follow the user goal through actual runtime and visual checks, then iterate on feedback.
 
