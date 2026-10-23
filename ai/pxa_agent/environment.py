@@ -135,7 +135,7 @@ def configure(workspace, *, engine='auto', sdk=None, version=None, manifest=None
             engine = previous.get('engine') or ('native' if native_supported() else ('docker' if shutil.which('docker') else 'podman'))
         if engine == 'native':
             selected = {'engine': 'native', 'sdk': str(install_native(version, manifest)), 'verified_distribution': True}
-        elif engine in ('docker', 'podman') or Path(engine).name in ('docker', 'podman'):
+        elif engine in ('docker', 'podman') or Path(engine).stem in ('docker', 'podman'):
             selected = install_container(version, engine, manifest)
             selected['verified_distribution'] = True
         else:

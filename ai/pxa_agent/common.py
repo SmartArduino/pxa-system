@@ -91,7 +91,7 @@ def request(url, *, data=None, headers=None, method=None, timeout=60):
     if urlparse(url).scheme != 'https':
         raise ToolError('Network access requires HTTPS')
     return build_opener(SecureRedirect).open(Request(url, data=data, method=method,
-        headers={'User-Agent': 'PXA-Agent-Kit/0.2.0', **(headers or {})}), timeout=timeout)
+        headers={'User-Agent': 'PXA-Agent-Kit/0.2.1', **(headers or {})}), timeout=timeout)
 
 
 def download(source, target, *, limit=1024 * 1024):

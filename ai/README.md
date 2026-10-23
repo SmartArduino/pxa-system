@@ -1,6 +1,6 @@
-# PXA Agent Kit 0.2.0
+# PXA Agent Kit 0.2.1
 
-[English](README.en.md) · [一分钟上手](https://pxa.doit.am/docs/ai-development/) · [AI 入口](https://pxa.doit.am/ai.md)
+[English](README.en.md) · [一句话上手](https://pxa.doit.am/docs/ai-development/) · [AI 入口](https://pxa.doit.am/ai.md)
 
 把这句话交给 Codex、Claude Code、DSH 或能读网页并执行命令的编程助手：
 
@@ -22,7 +22,7 @@ uv run --python 3.12 https://pxa.doit.am/setup.py --workspace ./my-pxa
 uv run --python 3.12 --locked --project ./ai ./ai/agent.py --workspace ./my-pxa setup
 ```
 
-`setup` 自动选择官方 DevKit 0.5.0 或签名容器镜像，安装项目内的 skills、平台 MCP 配置、CLI 启动器，最后编译并运行真实 Guest、保存检查截图。失败时返回失败，不会把下载成功当成验收。`--sdk /path/to/devkit` 仅复用用户自己选择的完整 SDK，不宣称它经过下载签名校验。离线分发可以用 `setup.py --channel /path/to/ai-kit-0.2.0.json --manifest /path/to/distribution.json`，归档和签名放在各自清单旁。
+`setup` 自动选择官方 DevKit 0.5.0 或签名容器镜像，安装项目内的 skills、平台 MCP 配置、CLI 启动器，最后编译并运行真实 Guest、保存检查截图。失败时返回失败，不会把下载成功当成验收。`--sdk /path/to/devkit` 仅复用用户自己选择的完整 SDK，不宣称它经过下载签名校验。离线分发可以用 `setup.py --channel /path/to/ai-kit-0.2.1.json --manifest /path/to/distribution.json`，归档和签名放在各自清单旁。
 
 在 `my-pxa` 目录中使用以下命令（Windows 使用 `.pxa\pxa.cmd`）：
 

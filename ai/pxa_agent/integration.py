@@ -18,6 +18,11 @@ START, END = '<!-- PXA AGENT KIT START -->', '<!-- PXA AGENT KIT END -->'
 TOML_START, TOML_END = '# PXA AGENT KIT START', '# PXA AGENT KIT END'
 
 
+def encoded(name, text):
+    # Windows PowerShell 5 reads scripts without a BOM using the ANSI codepage.
+    return text.encode('utf-8-sig' if name.endswith('.ps1') else 'utf-8')
+
+
 def checked(workspace, name):
     path = workspace / name
     current = path
@@ -104,13 +109,13 @@ Use existing user authorization for matching device tests, upgrades and publishi
                          + '\n    args: ' + json.dumps(command[1:] + ['mcp']) + '\n')
     posix = '#!/bin/sh\nexec ' + ' '.join(shlex.quote(arg) for arg in command) + ' "$@"\n'
     powershell = '& ' + ' '.join("'" + arg.replace("'", "''") + "'" for arg in command) + ' @args\nexit $LASTEXITCODE\n'
-    batch = '@echo off\r\nsetlocal DisableDelayedExpansion\r\n' + ' '.join('"' + arg.replace('%', '%%') + '"' for arg in command) + ' %*\r\nexit /b %ERRORLEVEL%\r\n'
+    batch = '@echo off\r\nsetlocal DisableDelayedExpansion\r\nchcp 65001 >nul\r\n' + ' '.join('"' + arg.replace('%', '%%') + '"' for arg in command) + ' %*\r\nexit /b %ERRORLEVEL%\r\n'
     changes.update({'.pxa/pxa': posix, '.pxa/pxa.ps1': powershell, '.pxa/pxa.cmd': batch})
     for name in ['.pxa/pxa', '.pxa/pxa.ps1', '.pxa/pxa.cmd', '.pxa/dsh-mcp.yaml']:
         if name not in changes:
             continue
         path = checked(workspace, name)
-        expected = hashlib.sha256(changes[name].encode()).hexdigest()
+        expected = hashlib.sha256(encoded(name, changes[name])).hexdigest()
         if path.exists() and hashlib.sha256(path.read_bytes()).hexdigest() not in (files.get(name), expected):
             raise ToolError('Locally edited PXA launcher retained: ' + name)
         files[name] = expected
@@ -131,11 +136,11 @@ Use existing user authorization for matching device tests, upgrades and publishi
     for name, text in changes.items():
         path = workspace / name
         path.parent.mkdir(parents=True, exist_ok=True)
-        if not path.exists() or path.read_bytes() != text.encode():
+        if not path.exists() or path.read_bytes() != encoded(name, text):
             descriptor, temporary = tempfile.mkstemp(prefix='.pxa-ai-', dir=path.parent)
             try:
                 with os.fdopen(descriptor, 'wb') as stream:
-                    stream.write(text.encode())
+                    stream.write(encoded(name, text))
                 os.chmod(temporary, 0o755 if name == '.pxa/pxa' else 0o644)
                 os.replace(temporary, path)
             finally:

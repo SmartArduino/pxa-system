@@ -43,7 +43,7 @@ def fetch(source, limit):
     if urlparse(source).scheme:
         if urlparse(source).scheme != 'https':
             raise ValueError('Release downloads require HTTPS')
-        stream = build_opener(HTTPSRedirect).open(Request(source, headers={'User-Agent': 'PXA-Agent-Setup/0.2.0'}), timeout=120)
+        stream = build_opener(HTTPSRedirect).open(Request(source, headers={'User-Agent': 'PXA-Agent-Setup/0.2.1'}), timeout=120)
     else:
         stream = Path(source).open('rb')
     with stream:
@@ -145,6 +145,7 @@ def main():
             raise ValueError('Run this bootstrap with uv: https://docs.astral.sh/uv/getting-started/installation/')
         environment = kit / '.venv'
         os.environ['UV_PROJECT_ENVIRONMENT'] = str(environment)
+        os.environ.pop('VIRTUAL_ENV', None)
         command = [uv, 'run', '--python', '3.12', '--locked', '--project', str(kit), str(kit / 'agent.py'),
                    '--workspace', str(args.workspace.resolve()), 'setup', '--platform', args.platform, '--engine', args.engine]
         if args.sdk:

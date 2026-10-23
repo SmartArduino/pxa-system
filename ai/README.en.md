@@ -1,4 +1,4 @@
-# PXA Agent Kit 0.2.0
+# PXA Agent Kit 0.2.1
 
 [中文](README.md) · [Tutorial](https://pxa.doit.am/docs/ai-development/)
 

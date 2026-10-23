@@ -99,6 +99,8 @@ class ToolTests(unittest.TestCase):
         (self.ws / '.mcp.json').write_text(json.dumps({'mcpServers': {'other': {'command': 'other'}}}))
         integration.install(self.ws)
         integration.install(self.ws)
+        self.assertTrue((self.ws / '.pxa/pxa.ps1').read_bytes().startswith(b'\xef\xbb\xbf'))
+        self.assertIn(b'chcp 65001', (self.ws / '.pxa/pxa.cmd').read_bytes())
         import tomllib
         config = tomllib.loads((self.ws / '.codex/config.toml').read_text())
         self.assertEqual(config['model'], 'user-model')
@@ -148,6 +150,16 @@ class ToolTests(unittest.TestCase):
         self.assertNotIn('PRIVATE-SECRET', json.dumps(state))
         if os.name != 'nt':
             self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+
+    def test_repeat_setup_accepts_windows_engine_executable_path(self):
+        engine = str(self.root / 'Docker Desktop/docker.exe')
+        config = {'schema': 'pxa-agent-workspace-1', 'sdk_version': '0.5.0', 'engine': engine}
+        common.atomic_json(self.ws / '.pxa/agent.json', config)
+        with patch.object(environment, 'install_container', return_value={'engine': engine, 'image': 'sha256:test'}) as installer:
+            result = environment.configure(self.ws)
+            self.assertEqual(result.config['engine'], engine)
+            installer.assert_called_once_with('0.5.0', engine, None)
+
 
     def test_renewing_browser_grant_drops_old_token_until_new_approval(self):
         env = environment.Environment(self.ws, {'engine': 'native', 'sdk': '/unused'})
