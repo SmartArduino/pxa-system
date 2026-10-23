@@ -302,6 +302,10 @@ typedef struct {
     pxa_raster_draw_list_view_t raster_draw_view;
     pxa_raster_telemetry_t raster_telemetry;
     pxa_wamr_engine_t *engine;
+    pxsys_pxadb_control_t *native_control;
+    desktop_controller_t *native_controller;
+    uint32_t *native_controller_previous;
+    uint64_t *native_controller_refreshed;
     pxa_component_engine_t engine_ops;
     pxa_activation_coordinator_t *coordinator;
     const pxa_package_manifest_t *manifest;
@@ -1990,6 +1994,7 @@ static void ime_editor_focus(void *context, void *textarea, bool focused) {
 static void dispatch_component_events(product_host_t *host) {
     pxa_wamr_event_result_t result;
     if (host == NULL || host->engine == NULL || host->runtime == NULL ||
+        host->exit_requested || SDL_AtomicGet(&host->home_requested) ||
         host->active_component == PXA_COMPONENT_INVALID || pxa_wamr_engine_busy(host->engine))
         return;
     ime_pump(host);
@@ -2028,6 +2033,10 @@ static void dispatch_component_events(product_host_t *host) {
                 &result) == PXA_STATUS_OK) delivered = 1;
         foreground_status=pxa_wamr_engine_deliver_event_result(
             host->engine,host->runtime,host->active_component,&result);
+        if (result.cooperative_cancelled) {
+            host->exit_requested = 1;
+            return;
+        }
         if (foreground_status == PXA_STATUS_OK) {
             delivered = 1;
             if (result.service == PXA_WINDOW_SERVICE_ID &&
@@ -2203,14 +2212,18 @@ static int drain_surface_updates(product_host_t *host) {
     uint8_t round;
     if (host == NULL || host->surfaces == NULL) return 0;
     for (round = 0; round < 4; ++round) {
+        const int presented = surface_process_pending(host);
         int32_t released;
-        if (!surface_process_pending(host)) return 0;
         released = pxa_surface_service_flush_releases(host->surfaces);
+        /* The current callback can still own the mailbox event. Keep the
+         * release queued until its event-port wait has consumed that event. */
+        if (released == PXA_STATUS_BUSY) return 0;
         if (released < 0) {
             fprintf(stderr, "PXA surface release status=%d\n", (int)released);
             return -1;
         }
         if (released > 0) dispatch_component_events(host);
+        if (!presented && released == 0) break;
     }
     return 0;
 }
@@ -2429,7 +2442,7 @@ static pxa_status_t store_installer_sim_control(
         (message->opcode == 4u || message->opcode == 5u);
     (void)context;
     if (message == NULL || message->request_token == 0 ||
-        message->opcode < 1u || message->opcode > 8u ||
+        message->opcode < 1u ||
         (list && message->payload.size != 0))
         return PXA_STATUS_INVALID_ARGUMENT;
     status = pxa_request_begin_reserved(runtime, component, message->request_token,
@@ -3246,6 +3259,49 @@ static void drain_net_completions(product_host_t *host) {
     }
 }
 
+/* Run only native maintenance while a Core 2.1 Guest owns the stack. The
+ * normal event dispatcher already refuses Guest re-entry while the engine is
+ * busy. Home cancels the call; instance teardown stays in the outer loop. */
+static pxa_status_t desktop_native_cooperate(void *context,
+    pxa_component_t component, uint64_t deadline_us) {
+    product_host_t *host = context;
+    pxa_component_t affected[PRODUCT_COMPONENTS];
+    size_t count = 0;
+    (void)component;
+    if (host == NULL || host->native_control == NULL ||
+        host->native_controller == NULL) return PXA_STATUS_BAD_STATE;
+    pxsys_pxadb_control_poll(host->native_control);
+    if (host->exit_requested || SDL_AtomicGet(&host->home_requested) ||
+        lv_display_get_default() == NULL) return PXA_STATUS_CANCELLED;
+    if (SDL_AtomicGet(&host->back_requested) &&
+        pxa_window_queue_back(host->window, host->active_component) == PXA_STATUS_OK)
+        SDL_AtomicSet(&host->back_requested, 0);
+    dispatch_controller(host, host->native_controller,
+        host->native_controller_previous, host->native_controller_refreshed);
+    dispatch_volume_keys(host);
+    if (host->assets) (void)pxa_assets_service_poll(host->assets);
+    if (host->audio) pxa_audio_service_poll(host->audio);
+    if (host->sensor && pxa_sensor_has_active_subscriptions(host->sensor))
+        (void)pxa_sensor_poll(host->sensor, now_us(NULL), affected,
+            PRODUCT_COMPONENTS, &count);
+    if (host->ipc) (void)pxa_ipc_flush(host->ipc);
+    drain_net_completions(host);
+    if (host->io_waits)
+        (void)pxa_lease_revoke_expired(host->io_waits, affected,
+            PRODUCT_COMPONENTS, &count);
+    dispatch_clock_tick(host);
+    if (drain_surface_updates(host) < 0) return PXA_STATUS_INTERNAL;
+    (void)lv_timer_handler();
+    if (host->exit_requested || SDL_AtomicGet(&host->home_requested) ||
+        lv_display_get_default() == NULL) return PXA_STATUS_CANCELLED;
+    if (drain_surface_updates(host) < 0) return PXA_STATUS_INTERNAL;
+    if (deadline_us != 0) {
+        if (now_us(NULL) >= deadline_us) return PXA_STATUS_WOULD_BLOCK;
+        SDL_Delay(1);
+    }
+    return PXA_STATUS_OK;
+}
+
 static int run_product_simulator(const options_t *input,
                                  lv_display_t *embedded_display,
                                  lv_obj_t *parent,
@@ -4058,6 +4114,8 @@ static int run_product_simulator(const options_t *input,
     engine_config.release_artifact = release_memory; engine_config.allocate_runtime = allocate_memory;
     engine_config.reallocate_runtime = reallocate_memory;
     engine_config.release_runtime = release_memory;
+    /* Embedded launchers keep ownership of their lifecycle pump. */
+    engine_config.cooperate = owns_display ? desktop_native_cooperate : NULL;
     engine_workspace = malloc(pxa_wamr_engine_workspace_size(&engine_config));
     if (engine_workspace == NULL || pxa_wamr_engine_init(engine_workspace,
         pxa_wamr_engine_workspace_size(&engine_config), &engine_config, &host.engine,
@@ -4089,9 +4147,13 @@ static int run_product_simulator(const options_t *input,
     capabilities[14].features = PXA_WASI_FEATURE_CLOCKS | PXA_WASI_FEATURE_RANDOM;
     capabilities[15].service = PXA_STORE_INSTALLER_SERVICE_ID;
     capabilities[15].version.major = 0;
-    capabilities[15].version.minor = 5;
+    /* Browsing supports the current identity-aware wire interface. Optional
+     * installation/namespace commands complete as unsupported, and no resource
+     * or placement features are advertised by this standalone browser. */
+    capabilities[15].version.minor = 7;
     activation.core_version.major = PXA_CORE_VERSION_MAJOR;
     activation.core_version.minor = PXA_CORE_VERSION_MINOR;
+    activation.execution_models = pxa_wamr_engine_execution_models(host.engine);
     capabilities[8].features |= PXA_GAME_RENDER_FEATURE_ASSET_BINDINGS |
         PXA_GAME_RENDER_FEATURE_BORROWED_INDEXED_SPANS |
         PXA_GAME_RENDER_FEATURE_PROJECTED_INDEXED_SPANS |
@@ -4155,14 +4217,6 @@ static int run_product_simulator(const options_t *input,
         fprintf(stderr, "PXA main component start status=%d\n", (int)status);
         goto done;
     }
-    /* Guest startup may fill the mailbox before initial window metrics fit.
-     * Drain completions regardless of the metrics result, then retry. */
-    status = pxa_window_flush_metrics(host.window, component);
-    dispatch_component_events(&host);
-    if (status == PXA_STATUS_RESOURCE_LIMIT) {
-        (void)pxa_window_flush_metrics(host.window, component);
-        dispatch_component_events(&host);
-    }
     /* An embedded system UI owns Home and Back; installing the standalone
      * strips would shadow its gesture handling. */
     if (owns_display) {
@@ -4183,6 +4237,18 @@ static int run_product_simulator(const options_t *input,
                                    options.pxadb_control_socket, display,
                                    NULL, NULL))
         goto done;
+    host.native_control = &pxadb_control;
+    host.native_controller = &controller;
+    host.native_controller_previous = &controller_previous;
+    host.native_controller_refreshed = &controller_refreshed;
+    /* A main-loop callback may run until Home; input and screenshot controls
+     * must be ready before delivering even the startup completion events. */
+    status = pxa_window_flush_metrics(host.window, component);
+    dispatch_component_events(&host);
+    if (status == PXA_STATUS_RESOURCE_LIMIT) {
+        (void)pxa_window_flush_metrics(host.window, component);
+        dispatch_component_events(&host);
+    }
     while (lv_display_get_default() != NULL) {
         const uint64_t loop_start_us = trace_loop ? now_us(NULL) : 0;
         uint64_t pre_end_us = 0, lvgl_end_us = 0, post_end_us = 0;

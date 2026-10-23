@@ -1557,6 +1557,10 @@ static void engine_stop(void *context, pxa_component_t component,
     if (entry == NULL) return;
     fn = entry->stop_fn;
     if (!has_signature(entry->module_instance, fn, 1, 0)) return;
+    /* A cooperative unwind leaves a deliberate exception in WAMR. Clear only
+     * that known cancellation before entering the separate stop callback. */
+    if (entry->cooperative_cancelled)
+        wasm_runtime_clear_exception(entry->module_instance);
     values[0] = (uint32_t)reason;
     (void)call(engine, entry, fn, 1, values);
 }
