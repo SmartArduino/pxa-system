@@ -1,0 +1,15 @@
+[project]
+name = "pxa-agent-kit"
+version = "0.2.0"
+description = "One-command PXA environment, AI tools, device debugging and publishing"
+requires-python = ">=3.12"
+dependencies = [
+  "cryptography==50.0.2",
+  "esptool==5.5.0",
+  "mcp==2.3.0",
+  "pillow==13.0.0",
+  "pyserial==3.5",
+]
+
+[tool.uv]
+package = false

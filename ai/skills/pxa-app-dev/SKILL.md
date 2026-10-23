@@ -5,7 +5,9 @@ description: Create or modify PXA C++26 applications using the standalone DevKit
 
 # PXA application development
 
-Read the existing project and `pxa.lock` before choosing the SDK. Use the user's selected DevKit; `pxa --version` and `pxa run --help` reveal its actual capabilities. PXA 0.3.0 requires Core 2.0; SDK release, Core ABI, service versions and CPU/AOT compatibility are separate concepts.
+When Agent Kit setup is present, use workspace `.pxa/pxa` (Windows `.pxa/pxa.cmd`) instead of bare `pxa`; MCP tools expose the same implementation. Apps belong in `apps/<name>`. Start with `doctor`; do not rebuild the firmware environment for an app task. Follow the user goal through actual runtime and visual checks, then iterate on feedback.
+
+Read the existing project and `pxa.lock` before choosing the SDK. Use the user's selected DevKit; `pxa --version` and `pxa run --help` reveal its actual capabilities. PXA 0.5.0 requires Core 2.1; SDK release, Core ABI, service versions and CPU/AOT compatibility are separate concepts.
 
 For a new app, `pxa init <directory> --id <unique-id>` generates the working C++26 template. Preserve existing source, identity, signing key and release sequence when editing an app. Do not recreate a populated directory or implicitly update its SDK lock. Work outside the firmware checkout when only building an app.
 

@@ -25,7 +25,7 @@ pxa publish hello/dist/pxa-hello.pxa --check-only
 
 Close the simulator before building the release. Project CMake is the single source graph, O3 is the default, and `pxa.lock` pins the release/toolchain inputs. Publisher private keys are generated outside the SDK. See the [C++ SDK guide](sdk/guest-cpp/README.zh-CN.md) and [website tutorials (Chinese)](https://pxa.doit.am/docs/first-app/). System maintainers can build from source below.
 
-The optional [AI kit](ai/README.en.md) provides four skills, two project-scoped Codex agents and a real-Guest verification helper. It is distributed as a small signed companion for DevKit 0.5.0 and included under `ai/` in future full DevKit builds. No global settings or device runtime overhead are added.
+The signed [PXA Agent Kit](ai/README.en.md) prepares DevKit 0.5.0 in one command and connects Codex, Claude Code, DSH and other assistants through local skills, CLI and MCP. It supports actual Guest debugging, USB installation, official firmware updates and browser-approved app-scoped store uploads. Start by asking your assistant to read https://pxa.doit.am/ai.md. Existing global settings and device runtime performance are preserved.
 
 ## Repository layout
 

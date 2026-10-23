@@ -29,16 +29,26 @@ def build(source: Path, output: Path, key: Path, *, allow_dirty=False):
         raise ValueError('AI-kit source must not contain symlinks')
     with tempfile.TemporaryDirectory(prefix='pxa-ai-kit-') as temporary:
         stage = Path(temporary) / f'pxa-ai-kit-{version}'
-        shutil.copytree(source / 'ai', stage, ignore=shutil.ignore_patterns('__pycache__', '*.pyc'))
+        if allow_dirty:
+            shutil.copytree(source / 'ai', stage, ignore=shutil.ignore_patterns(
+                '__pycache__', '*.pyc', '.venv', '.env', '.pytest_cache', '.ruff_cache'))
+        else:
+            # Official releases contain reviewed Git inputs only, never ignored
+            # virtual environments, machine configuration or local credentials.
+            for relative in run('git', '-C', source, 'ls-files', 'ai').splitlines():
+                original = source / relative
+                destination = stage / original.relative_to(source / 'ai')
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(original, destination)
         shutil.copy2(source / 'LICENSE', stage / 'LICENSE')
         files = {str(path.relative_to(stage)): sha(path) for path in sorted(stage.rglob('*')) if path.is_file()}
         (stage / 'manifest.json').write_text(json.dumps({'schema': 'pxa-ai-kit-files-1', 'version': version,
             'files': files}, sort_keys=True, indent=2) + '\n')
         archive(stage.parent, [stage.name], output / names[0], epoch)
     manifest = {'schema': 'pxa-ai-distribution-1', 'version': version,
-                'devkit': {'minimum_release': '0.3.0', 'tested_release': '0.3.0', 'core_major': 2},
+                'devkit': {'minimum_release': '0.5.0', 'tested_release': '0.5.0', 'core_major': 2},
                 'source': {'commit': commit, 'dirty': dirty},
-                'archive': {'file': names[0], 'size': (output / names[0]).stat().st_size, 'sha256': sha(output / names[0])}}
+                'archive': {'file': names[0], 'url': f'https://github.com/SmartArduino/pxa-system/releases/download/ai-kit-v{version}/{names[0]}', 'size': (output / names[0]).stat().st_size, 'sha256': sha(output / names[0])}}
     (output / names[1]).write_text(json.dumps(manifest, sort_keys=True, indent=2) + '\n')
     subprocess.run(['openssl', 'dgst', '-sha256', '-sign', str(key), '-out', str(output / names[2]),
                     str(output / names[1])], check=True)

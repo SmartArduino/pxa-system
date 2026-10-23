@@ -5,6 +5,8 @@ description: Reproduce and debug PXA application failures using the simulator, P
 
 # PXA debugging and verification
 
+When Agent Kit setup is present, use workspace `.pxa/pxa` (Windows `.pxa/pxa.cmd`) instead of bare `pxa`; MCP tools expose the same implementation. Apps belong in `apps/<name>`. Start with `doctor`; do not rebuild the firmware environment for an app task. Follow the user goal through actual runtime and visual checks, then iterate on feedback. Use `.pxa/pxa verify <app>` or `pxa_verify`, poll its job, and inspect resulting images. Keep evidence in ignored `local/artifacts/`.
+
 Identify the app, pinned DevKit, failing action and expected screen. Reproduce before editing. Use a separate checkout or test project when editing a live app would interfere with another developer. Keep the user's existing lock, signing identity and data.
 
 For repeatable simulator checks, run the bundled [verification helper](scripts/verify_app.py):
@@ -14,7 +16,7 @@ python3 <skill-directory>/scripts/verify_app.py <project> \
   --pxa /path/to/devkit/bin/pxa --output /path/to/new-evidence --headless
 ```
 
-The default covers all five DevKit 0.3.0 profiles. It builds offline, starts each real Guest with an owned debug bridge, checks active app identity, captures a screen, and stops its processes. Once execution starts, it writes `result.json` even on failure; exit 0 means runtime checks passed, not visual correctness. Review screenshots before accepting layout or interaction. Evidence directories must be new and outside the app; app build caches/lock and simulator saves persist normally. `--headless` uses SDL dummy; omit it for an actual desktop window. Use `--online` only when a pinned dependency needs downloading.
+The default covers all five DevKit 0.5.0 profiles. It builds offline, starts each real Guest with an owned debug bridge, checks active app identity, captures a screen, and stops its processes. Once execution starts, it writes `result.json` even on failure; exit 0 means runtime checks passed, not visual correctness. Review screenshots before accepting layout or interaction. Evidence directories must be new and outside the app; app build caches/lock and simulator saves persist normally. `--headless` uses SDL dummy; omit it for an actual desktop window. Use `--online` only when a pinned dependency needs downloading.
 
 For interaction, read [scenario format](references/scenarios.md), supply `--scenario`, then compare before/after images. Pixel coordinates are per profile, not dp. The helper does not guess control locations, OCR, infer game FPS or silently clear saves. A missing memory capability is recorded as unavailable, never as zero usage.
 

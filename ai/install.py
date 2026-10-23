@@ -9,6 +9,7 @@ from pathlib import Path, PurePosixPath
 import sys
 import tempfile
 import os
+import tomllib
 
 ROOT = Path(__file__).resolve().parent
 RECEIPT = '.agents/pxa-ai-kit.json'
@@ -24,8 +25,9 @@ def destination(project, name):
         raise ValueError('Invalid managed path: ' + name)
     parts = relative.parts
     valid = (name == RECEIPT or
-             (len(parts) >= 4 and parts[:2] == ('.agents', 'skills') and parts[2].startswith('pxa-')) or
-             (len(parts) == 3 and parts[:2] == ('.codex', 'agents') and parts[2].startswith('pxa-') and name.endswith('.toml')))
+             (len(parts) >= 4 and parts[0] in ('.agents', '.claude') and parts[1] == 'skills' and parts[2].startswith('pxa-')) or
+             (len(parts) == 3 and parts[1] == 'agents' and parts[2].startswith('pxa-') and
+              ((parts[0] == '.codex' and name.endswith('.toml')) or (parts[0] == '.claude' and name.endswith('.md')))))
     if not valid:
         raise ValueError('Invalid managed path: ' + name)
     path = project / relative
@@ -104,6 +106,7 @@ def main():
         command.add_argument('--project', type=Path, required=True)
         command.add_argument('--dry-run', action='store_true')
         if action == 'install':
+            command.add_argument('--platform', choices=('codex', 'claude', 'dsh', 'generic', 'all'), default='codex')
             command.add_argument('--skill', action='append', choices=sorted(p.name for p in (ROOT / 'skills').iterdir() if p.is_dir()))
             command.add_argument('--agents', action='store_true', help='also install project-scoped Codex agents')
             command.add_argument('--update', action='store_true', help='update only unmodified files owned by this kit')
@@ -135,9 +138,20 @@ def main():
             for name in selected:
                 for path in sorted((ROOT / 'skills' / name).rglob('*')):
                     if path.is_file() and '__pycache__' not in path.parts and path.suffix != '.pyc':
-                        sources['.agents/skills/' + str(path.relative_to(ROOT / 'skills'))] = path.read_bytes()
+                        roots = ['.claude'] if args.platform == 'claude' else ['.agents']
+                        if args.platform == 'all':
+                            roots.append('.claude')
+                        for skill_root in roots:
+                            sources[skill_root + '/skills/' + path.relative_to(ROOT / 'skills').as_posix()] = path.read_bytes()
             if args.agents:
-                sources.update({'.codex/agents/' + path.name: path.read_bytes() for path in sorted((ROOT / 'agents').glob('*.toml'))})
+                for path in sorted((ROOT / 'agents').glob('*.toml')):
+                    if args.platform in ('all', 'codex'):
+                        sources['.codex/agents/' + path.name] = path.read_bytes()
+                    if args.platform in ('all', 'claude'):
+                        role = tomllib.loads(path.read_text())
+                        content = ('---\nname: ' + path.stem + '\ndescription: ' + json.dumps(role['description'])
+                                   + '\n---\n\n' + role['developer_instructions'].strip() + '\n')
+                        sources['.claude/agents/' + path.stem + '.md'] = content.encode()
             for name, data in sources.items():
                 path = destination(project, name)
                 if path.exists():

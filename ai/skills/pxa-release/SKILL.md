@@ -5,6 +5,8 @@ description: Prepare and verify signed PXA app packages, publisher proofs and ap
 
 # PXA packaging and release
 
+When Agent Kit setup is present, use workspace `.pxa/pxa` (Windows `.pxa/pxa.cmd`) instead of bare `pxa`; MCP tools expose the same implementation. Apps belong in `apps/<name>`. Start with `doctor`; do not rebuild the firmware environment for an app task. Follow the user goal through actual runtime and visual checks, then iterate on feedback. Prefer `store authorize <project> <package>` for browser short-code approval, then `store publish`; app-scoped credentials stay private outside the project. Never request copied tokens or private keys in chat. Submission remains pending review.
+
 Determine whether the request concerns an app, the DevKit or this optional AI kit. App version/sequence, SDK release, Core ABI and AI-kit version are distinct. Preserve the app's signing identity and lineage; increment its release sequence for an update. Never overwrite an existing release asset or move a published tag to repair a release.
 
 For apps, build the requested targets using the locked DevKit, check each package with `pxa publish <package> --check-only`, then validate on the corresponding simulator/device. A valid signature does not prove every component has a matching AOT artifact, services or budget on a device. Keep signed original bytes and provenance. Do not hand-edit the final container.

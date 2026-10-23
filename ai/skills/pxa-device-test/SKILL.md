@@ -5,6 +5,8 @@ description: Validate a PXA app on an explicitly selected physical device using 
 
 # PXA physical-device validation
 
+When Agent Kit setup is present, use workspace `.pxa/pxa` (Windows `.pxa/pxa.cmd`) instead of bare `pxa`; MCP tools expose the same implementation. Apps belong in `apps/<name>`. Start with `doctor`; do not rebuild the firmware environment for an app task. Follow the user goal through actual runtime and visual checks, then iterate on feedback. Use `.pxa/pxa install <app> --port <port>` for host-side USB, including when compilation runs in a container. For an authorized official firmware update, use `firmware prepare` then `firmware upgrade`; app mode checks the real partition table, full mode requires explicit data-loss authorization.
+
 Use the port and baud requested by the user; query `pxa device info --port <port> --baud <baud>` before assuming the board, Core, services or memory capability. Device paths can change after a reconnect. If a port was not supplied, discover endpoints and identify the target before mutating a device. Do not hard-code a developer's /dev/ttyACM number into project configuration.
 
 Record `pxa device package list` and the visible screen first. Select the target from its actual CPU: ESP32-S3 and ESP32-S31 use different AOT; desktop screen profiles do not change that CPU. Build with `pxa build <project> --target <target>` and check the signed package with `pxa publish <package> --check-only`.

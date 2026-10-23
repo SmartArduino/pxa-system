@@ -21,7 +21,9 @@ pxa publish hello/dist/pxa-hello.pxa --check-only
 
 [入门教程](https://pxa.doit.am/docs/first-app/) · [C++ SDK](sdk/guest-cpp/README.zh-CN.md) · [架构与协议文档](docs/README.zh-CN.md)
 
-可选的 [AI 开发套件](ai/README.md) 提供四个按需加载的 skills、两个 Codex agent 和真实 Guest 自动验收脚本。支持现有 DevKit 0.5.0，单独分发签名小包；后续完整 DevKit 会携带 `ai/`。不修改全局配置或增加设备开销。
+[PXA Agent Kit](ai/README.md) 提供一句话环境准备、Codex/Claude Code/DSH 接入、MCP、真实 Guest 调试、USB 安装、官方固件升级与商城短码授权。支持 DevKit 0.5.0，独立签名发行，不增加设备运行开销。把这句话交给编程助手：
+
+> 请读取 https://pxa.doit.am/ai.md，在当前目录为我配置 PXA 开发环境，运行模拟器检查环境，然后等待我的应用需求。
 
 ## 目录与边界
 
