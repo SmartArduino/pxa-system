@@ -24,4 +24,11 @@ function(pxsys_prepare_desktop_lvgl desktop_source_dir)
         set_property(DIRECTORY "${lvgl_source_SOURCE_DIR}"
                      PROPERTY EXCLUDE_FROM_ALL TRUE)
     endif()
+    # LVGL 9.6 installs public headers under include/lvgl. Its upstream
+    # directory includes are not inherited by targets in the parent project;
+    # expose the legacy lvgl.h spelling to all simulator consumers as well.
+    get_target_property(_lvgl_source lvgl SOURCE_DIR)
+    if(EXISTS "${_lvgl_source}/include/lvgl/lvgl.h")
+        target_include_directories(lvgl SYSTEM PUBLIC "${_lvgl_source}/include/lvgl")
+    endif()
 endfunction()
