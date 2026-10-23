@@ -220,6 +220,8 @@ endif()
 # These targets exercise the actual product backend, including in normal
 # simulator build trees. Keep dependency configuration identical to the runner.
 add_executable(pxsys_system_gestures_test tests/system_gestures_test.c)
+target_include_directories(pxsys_system_gestures_test PRIVATE
+    "${CMAKE_CURRENT_LIST_DIR}/../../libpxa/adapters/include")
 target_link_libraries(pxsys_system_gestures_test PRIVATE
     pxsys::standard pxsys::reference_lvgl pxsys::renderer_lvgl lvgl)
 if(PXSYS_BUILD_TESTS OR BUILD_TESTING)

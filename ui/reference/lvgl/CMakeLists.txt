@@ -77,6 +77,13 @@ if(PXSYS_BUILD_TESTS OR BUILD_TESTING)
         target_compile_options(pxsys_launcher_focus_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
     endif()
     add_test(NAME pxsys_launcher_focus_test COMMAND pxsys_launcher_focus_test)
+    add_executable(pxsys_settings_navigation_test ../tests/settings_navigation_test.c)
+    target_link_libraries(pxsys_settings_navigation_test PRIVATE pxsys::reference_lvgl)
+    target_include_directories(pxsys_settings_navigation_test PRIVATE "${_ime_core_root}/adapters/include")
+    if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(pxsys_settings_navigation_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
+    endif()
+    add_test(NAME pxsys_settings_navigation_test COMMAND pxsys_settings_navigation_test)
     # Exercise independent switches: products may replace settings while
     # retaining radio chrome, or show battery text without either radio.
     foreach(settings RANGE 0 1)

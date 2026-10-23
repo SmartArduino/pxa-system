@@ -1,4 +1,41 @@
-# PXA GameRender Service 1.3.0
+# PXA GameRender Service 1.4.0
+
+GameRender 1.4 adds `priority-tile-batches` (feature bit 6) and
+`EXECUTE_PRIORITY_TILES` (Handle I/O `0x10a`). A compute context accepts a
+bounded batch of 8×8 INDEX8 tile and RGB565LE palette snapshots, writing
+borrowed RGB565LE color and 8-bit priority planes. Index zero is transparent.
+A pixel is written only when `compare_depth > priority`, then receives the
+command's `write_depth`. Flips and cropping preserve command order for each
+output pixel. This operation does not allocate a display or present a frame.
+
+The 32-byte header and 24-byte command layouts are generated from
+`pxa-game-render.json`. Sources use packet-relative offsets; both output
+planes use Guest linear-memory offsets and a common pitch in pixels.
+`destination` addresses the first cropped output pixel. Palettes contain
+4, 16, or 256 entries; every tile index must fit the palette. The entire
+packet and both output planes must be disjoint. All commands and source
+ranges are validated before any writes, including commands after a valid
+prefix. Any error leaves both planes unchanged: a backend rejects before
+starting, or finishes and joins all ranges successfully. This allows safe
+local fallback without copying the output planes. Borrowing ends on return.
+
+The C SDK provides `pxa_game_render_tiles.h`; C++ provides
+`game::PriorityTileBatch` and `RasterContext::execute`. Both builders use
+caller-owned bounded storage, with commands at the front and snapshots at
+the back. Reserve or copy sources, append commands, then execute. Snapshot
+mutable caches before reuse. On older Hosts, negotiate feature bit 6 or
+handle `UNSUPPORTED` by drawing the batch locally. Do not reorder fallback
+rendering across a queued batch.
+
+With Clang targeting Wasm, defining `PXA_GAME_RENDER_WASM_PACKED_CODEC=1`
+uses layout-checked bulk-memory copies for command encoding. Source
+snapshots retain `memmove` semantics. Other targets use the portable encoder.
+
+Host worker ranges use priority-plane bytes as pixel ownership units. Each
+range also owns the corresponding RGB565 pixels. A backend must align both
+output-plane boundaries for its cache/coherency requirements, or execute
+serially; `pxa_raster_spans_partition_safe` checks this additional constraint.
+
 
 GameRender 1.3 adds `exact-indexed-blit` (feature bit 5) and
 `BLIT_INDEXED_RECT` (Handle I/O `0x109`). It uses the same 64-byte descriptor

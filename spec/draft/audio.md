@@ -1,4 +1,4 @@
-# PXA Audio Draft 0.11
+# PXA Audio Draft 0.13
 
 Audio defines a permission-bound session and an atomic, App-owned playback
 graph control plane. `open-session` requires an `audio.playback` Permission
@@ -316,3 +316,180 @@ C: encode `pxa_audio_mix_span_t` entries with `pxa_audio_encode_mix_span`, then
 call `pxa_audio_mix_pcm` with their wasm32 offset. C++: `AudioMixSpan::encode`
 and `AudioSession::mix_pcm` expose the same explicit offsets. SDK wrappers
 check result length; a successful short response is a protocol error.
+
+## Synchronous PSG synthesis (0.12)
+
+`PSG_RENDER` (`0x10a`) extends an existing Media or PCM session. It shares
+`MIX_PCM`'s synchronous memory-borrow contract and playback permission. It
+performs deterministic integer synthesis; it does not queue playback, acquire a
+new resource, start a task or advance the session's audio counters. Old Hosts
+return `UNSUPPORTED`; keep the software synthesizer as a fallback.
+
+The 20-byte little-endian command is:
+
+| Offset | Field |
+| --- | --- |
+| 0 | output offset, u32; interleaved S32LE L/R accumulators |
+| 4 | output frames, u32 |
+| 8 | contiguous voice-state offset, u32 |
+| 12 | integer ticks per output sample, u32 |
+| 16 | voice count, u16 |
+| 18 | reserved, u16; zero |
+
+Each voice is a **40-byte encoded record**, not a native C/C++ struct:
+
+| Offset | Field |
+| --- | --- |
+| 0 | waveform u8: 1 pulse, 2 wave table, 3 LFSR noise |
+| 1 | noise feedback inversion u8: 0 XOR, 1 XNOR |
+| 2 | LFSR width u8: 7 or 15 |
+| 3 | LFSR tap u8: 1 through width − 1 |
+| 4 | oscillator step period in ticks, u32; 1..INT32_MAX |
+| 8 | elapsed oscillator phase, u32; less than period; updated on return |
+| 12 | cursor u32: pulse index, wave index or LFSR bits; updated on return |
+| 16 | envelope step period in ticks, u32; 0 disables; at most INT32_MAX |
+| 20 | elapsed envelope phase, u32; less than period, or zero when disabled; updated on return |
+| 24, 26 | left/right gain u16 Q8, 0..256 |
+| 28 | envelope level u8, 0..15; updated on return |
+| 29 | envelope direction i8, −1 decay, 0 hold, +1 attack |
+| 30 | pulse mask u8; bit `cursor` selects the high output |
+| 31 | wave table length u8, 1..32 |
+| 32 | wave table offset u32; signed 8-bit entries |
+| 36 | reserved u32; zero |
+
+Noise-only fields must be zero on other waveforms. Pulse mask must be zero on
+other waveforms. Table fields must be zero on other waveforms. Pulse cursor is
+0..7, wave cursor is less than table length, and noise cursor fits its width.
+Zero LFSR seeds are accepted: XOR then stays zero, whereas XNOR leaves zero.
+
+All clocks use caller-defined integer ticks. **For each output sample, advance
+oscillator and envelope by `ticks-per-sample`, then sample.** Pulse advances its
+8-position index; table synthesis advances modulo the table length. A noise
+step computes `(state ^ (state >> tap) ^ inversion) & 1`, shifts the state right
+and inserts this feedback bit at `width - 1`. Noise output follows bit 0 after
+the steps. Pulse and noise output +127 high and −128 low. Table values are S8.
+Envelope changes by one per step and saturates at 0 or 15; its phase continues
+at saturation. Zero envelope period freezes its phase and level.
+
+For each voice, add `wave_value * level * gain_q8 / 15` to each channel of the
+existing S32 output, truncating toward zero. Saturate each addition at S32
+limits, in voice order. The caller clears or seeds accumulators and applies
+final clipping/filtering/PCM quantization. A level of 15 and gain of 256 maps
+S8 to S16 exactly. There is no interpolation, oversampling or analog filter in
+this primitive. Synthesis is independent of the session's playback sample rate;
+convert to the negotiated output format before `WRITE`.
+
+The Host validates **all voices and ranges before writing any output or
+state**. Output must be 4-byte aligned. Output, the entire voice array and the
+command must be mutually disjoint; every wave table must be disjoint from
+output and the entire voice array. Read-only tables may overlap each other.
+The serialized memory borrow prevents Guest mutation during execution. No
+pointers or state are retained after return. Invalid input leaves output and
+voice state unchanged.
+
+Limits: 1..8 voices, 1..4096 frames, at most 16384 voice-frames per call,
+1..1048576 ticks per sample, and at most 262144 total LFSR steps. Noise work is
+calculated with 64-bit arithmetic before execution. This bounds synchronous
+Host work, including a maliciously tiny noise period. Limit violations return
+`LIMIT_EXCEEDED`; bad fields/ranges return `INVALID_ARGUMENT`; dispatch without
+a serialized memory borrow returns `BAD_STATE`. Success returns 20 bytes.
+
+C exposes `pxa_audio_psg_voice_t`, `pxa_audio_encode_psg_voice`,
+`pxa_audio_decode_psg_voice` and `pxa_audio_psg_render` through `pxa_audio.h`.
+C++ exposes `AudioPsgVoice::encode/decode` and `AudioSession::psg_render`.
+Encode once, retain the encoded state in Guest memory, render many batches, and
+decode only when inspecting its state. Neither SDK allocates memory or sends
+native struct padding across the ABI.
+
+For example, at a clock of 4194304 ticks/s, a pulse period of 1192 yields about
+440 Hz (`clock / (8 * period)`). 128 ticks/sample yields 32768 PCM frames/s;
+an envelope period of 65536 changes the level at 64 Hz. Pulse masks `0x01`,
+`0x03`, `0x0f`, `0xfc` provide 12.5%, 25%, 50%, 75% duty cycles; initial phase
+and polarity are explicitly controlled by the caller. These are building
+blocks, **not a complete GB APU model**. A GB adapter must preserve register
+quirks, length counters, sweep, wave RAM visibility, DAC bias and noise
+coalescing. Split batches at emulated register/frame-sequencer events and keep
+CPU-visible state synchronous. Hardware-specific correctness needs comparison
+with the reference APU before replacing it in an emulator.
+
+Output-device mixing and DMA can run on the Host audio task concurrently with
+Guest execution. `PSG_RENDER` itself is synchronous native computation; it does
+not claim to run synthesis in parallel or retain Guest memory on another core.
+An asynchronous synthesis API would require a separate owned event timeline
+and explicit synchronization for CPU-visible state.
+
+## GB PSG profile 1 (0.13)
+
+`GB_PSG_RENDER` (`0x10b`) batches the sample-dependent GB pulse, wave RAM,
+7/15-bit noise, stereo mixing and capacitor filter. The Guest retains all
+register reads/writes, length/envelope/sweep clocks, frame-sequencer quirks and
+timing events. It must render up to each control boundary before changing the
+configuration. This specialized profile preserves mGBA
+`fd9dc5c2cbf234365068855851107e762fc6211b`'s sampling arithmetic, including its
+five-step noise population aggregation. It is independent of native emulator
+structs and pointers; the kernel source retains MPL-2.0 attribution.
+
+The 16-byte LE command is `state-offset:u32 | output-offset:u32 | frames:u16 |
+profile:u16 | reserved:u32`. Profile must be 1, reserved zero, frames 1..128.
+State is 128 encoded bytes, output is `frames * 4` S16LE stereo bytes. Neither
+range may overlap the other or the command. Byte alignment is supported. The
+Host validates the complete state and worst-case noise work before changing
+state or output. Success returns 16; unknown profiles/state versions return
+`UNSUPPORTED`; invalid fields/ranges return `INVALID_ARGUMENT`; excessive work
+returns `LIMIT_EXCEEDED`; an absent serialized memory borrow returns `BAD_STATE`.
+
+| State offset | Field |
+| --- | --- |
+| 0, 2 | version u16 = 1; reserved u16 = 0 |
+| 4 | first sample timestamp u32; updated to the following sample on return |
+| 8, 12 | interval u32 = 64; timing factor u32 = 2 |
+| 16, 20 | left/right capacitor i32; updated |
+| 24 | master volume u16, 0..256 |
+| 26, 27 | left/right hardware volume u8, 0..7 |
+| 28 | enabled u8, 0/1 |
+| 29 | playing mask u8, bits 0..3 |
+| 30, 31 | left/right channel route masks u8, bits 0..3 |
+| 32 | force-disabled channel mask u8, bits 0..3 |
+| 33 | style u8: 0 DMG, 1 CGB, 2 AGB |
+| 34 | reserved u16 = 0 |
+| 36, 52 | two 16-byte square records, described below |
+| 68 | next wave update timestamp u32; updated |
+| 72 | wave step period u32, 4..8192, multiple of 4 |
+| 76..79 | wave index 0..31; volume code 0..3; held sample 0..15; readable 0/1. All except volume are updated. |
+| 80 | 16 packed wave bytes; high nibble precedes low nibble |
+| 96 | last noise update timestamp u32; updated |
+| 100 | noise period u32, 16..7340032, multiple of 16 |
+| 104 | 15-bit LFSR u32; updated, including mirrored short-mode bits |
+| 108, 112 | pending noise step count and amplitude sum u32; updated |
+| 116..119 | held noise sample 0..15; noise envelope volume 0..15; short mode 0/1; reserved zero. Held sample is updated. |
+| 120 | eight reserved bytes, zero |
+
+Each square record contains `last-update:u32 | step-period:u32 | index:u8 |
+duty:u8 | envelope-volume:u8 | held-sample:u8 | dead:u8 | reserved:3*u8`.
+Period is 8..16384, multiple of 8; index 0..7, duty 0..3, volume/sample 0..15,
+dead 0..2. Only last-update, index and held-sample are updated. Periods are
+already decoded by the Guest; no register or native structure interpretation
+occurs in the ABI.
+
+Timestamps use the GB scheduler's doubled clock (8388608 units/s), hence 64
+units/sample produces 131072 Hz. The first output is sampled **at the supplied
+timestamp**, then the timestamp advances. Differences use signed 32-bit modular
+clock arithmetic. Square/wave updates, DMG wave visibility, short-mode LFSR
+feedback, noise coalescing, hardware/DAC bias and 32-bit fixed-point filter wrap
+follow the pinned reference. This differs from the generic PSG primitive's
+advance-before-sampling contract. Output filtering is already done; the Guest
+only resamples/quantizes to its negotiated playback format before `WRITE`.
+
+The noise count/sum must fit signed 32 bits and satisfy `sum <= 18*count+15`.
+At most 262144 noise steps may be advanced; worst-case sum and count must stay
+within signed-arithmetic limits, including `sum * 8`. Validation accounts for
+an interval crossing the signed timestamp boundary. Work bounds apply even
+when the noise output is muted. No native pointer or asynchronous borrow is
+retained, no PCM staging buffer or task is allocated, and no audio playback
+counter is changed by synthesis itself.
+
+C: `pxa_audio_gb_psg_render`; C++: `AudioSession::gb_psg_render`. Preserve the
+software sample loop. On an old Host or a rejected batch, use that loop for the
+same timestamps without advancing or discarding samples. The application
+codec/differential tests must compare both PCM and all CPU-visible channel
+state; checking that some audible PCM was generated is insufficient.

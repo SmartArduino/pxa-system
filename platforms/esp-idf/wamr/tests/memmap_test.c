@@ -5,15 +5,16 @@
 #include <stdlib.h>
 #include <pthread.h>
 #include "../../../../libpxa/adapters/wamr/pxa_wamr_load_memory.h"
-static struct { void *pointer; size_t capacity; } allocations[8];
-static unsigned slow_calls,fail_next;
+static struct { void *pointer; void *origin; size_t capacity; } allocations[8];
+static unsigned slow_calls,fail_next,raw_residue;
 void *heap_caps_malloc(size_t bytes,unsigned caps) {
     (void)caps;
     if(fail_next) { fail_next=0; return NULL; }
     assert(bytes<1024*1024);
     for(unsigned i=0;i<8;++i) if(!allocations[i].pointer) {
-        void *p=malloc(bytes); assert(p);
-        allocations[i].pointer=p;allocations[i].capacity=bytes;return p;
+        void *origin=malloc(bytes+127); assert(origin);
+        void *p=(void *)((((uintptr_t)origin+63)&~(uintptr_t)63)+raw_residue);
+        allocations[i].origin=origin;allocations[i].pointer=p;allocations[i].capacity=bytes;return p;
     }
     assert(0);return NULL;
 }
@@ -25,7 +26,7 @@ void os_free(void *p) {
     if(!p) return;
     void *origin=(void *)*((uintptr_t *)p-1);
     for(unsigned i=0;i<8;++i) if(allocations[i].pointer==origin) {
-        free(origin);allocations[i].pointer=NULL;return;
+        free(allocations[i].origin);allocations[i].pointer=NULL;return;
     }
     assert(0);
 }
@@ -44,6 +45,27 @@ static void *other_owner(void *original) {
     pxa_wamr_load_memory_end();return NULL;
 }
 int main(void) {
+    /* ESP heap allocations may have any four-byte residue. Mapping alignment
+     * must survive growth, shrink and failure without losing old payload. */
+    for(raw_residue=0;raw_residue<64;raw_residue+=4) {
+        static const unsigned sizes[]={1,7,8,63,64,65,4095,4096};
+        for(unsigned trial=0;trial<sizeof(sizes)/sizeof(sizes[0]);++trial) {
+            unsigned n=sizes[trial];
+            uint8_t *a=os_mmap(NULL,n,MMAP_PROT_NONE,MMAP_MAP_NONE,0);
+            assert(a && !((uintptr_t)a&63));
+            for(unsigned i=0;i<n;++i){assert(a[i]==0);a[i]=(uint8_t)(i*23+91);}
+            fail_next=1;assert(!os_mremap(a,n,n+128));
+            for(unsigned i=0;i<n;++i)assert(a[i]==(uint8_t)(i*23+91));
+            uint8_t *grown=os_mremap(a,n,n+128);assert(grown && !((uintptr_t)grown&63));
+            for(unsigned i=0;i<n;++i)assert(grown[i]==(uint8_t)(i*23+91));
+            for(unsigned i=n;i<n+128;++i)assert(grown[i]==0);
+            uint8_t *small=os_mremap(grown,n+128,1);assert(small && !((uintptr_t)small&63) && small[0]==91);
+            os_munmap(small,1);
+        }
+    }
+    slow_calls=raw_residue=0;
+
+    assert(os_mmap(NULL, SIZE_MAX-64, MMAP_PROT_NONE, MMAP_MAP_NONE, 0)==NULL);
     assert(os_mmap(NULL, SIZE_MAX, MMAP_PROT_NONE, MMAP_MAP_NONE, 0)==NULL);
     assert(os_mmap(NULL, 0, MMAP_PROT_NONE, MMAP_MAP_NONE, 0)==NULL);
     uint8_t *p=os_mmap(NULL,65536,MMAP_PROT_NONE,MMAP_MAP_NONE,0);assert(p);
@@ -84,7 +106,7 @@ int main(void) {
     assert(pxa_wamr_load_memory_release(a) && pxa_wamr_load_memory_release(b));
     pxa_wamr_load_memory_ready();assert(!pxa_wamr_load_memory_scratch(1));
     uint8_t *adopted=os_mmap(NULL,65536,MMAP_PROT_NONE,MMAP_MAP_NONE,0);
-    assert(adopted<=a && (size_t)(a-adopted)<16);
+    assert(adopted<=a && (size_t)(a-adopted)<16 && !((uintptr_t)adopted&63));
     for(unsigned i=0;i<65536;++i)assert(adopted[i]==0);
     pxa_wamr_load_memory_end();adopted[0]=47;
     assert(adopted[0]==47);os_munmap(adopted,65536);

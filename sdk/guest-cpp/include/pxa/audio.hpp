@@ -2,6 +2,7 @@
 
 #include "assets.hpp"
 #include "audio_protocol_generated.hpp"
+#include "audio_psg.hpp"
 #include "permission.hpp"
 #include "service_wire.hpp"
 
@@ -191,6 +192,35 @@ public:
         wire::put32(command.data() + 8, spans_offset);
         wire::put16(command.data() + 12, count);
         return command_io(detail::audio_wire::io_mix_pcm, command);
+    }
+
+    // Audio 0.12. Synchronous waveform/envelope/LFSR rendering. Encoded voices
+    // and output are borrowed only until return. No playback is enqueued.
+    Result<void> psg_render(std::uint32_t target_offset, std::uint32_t frames,
+        std::uint32_t voices_offset, std::uint16_t count, std::uint32_t ticks_per_sample) noexcept {
+        if (!frames || frames > detail::audio_wire::psg_max_frames ||
+            !count || count > detail::audio_wire::psg_max_voices ||
+            frames * count > detail::audio_wire::psg_max_work ||
+            !ticks_per_sample || ticks_per_sample > detail::audio_wire::psg_max_ticks)
+            return std::unexpected(Error::invalid_argument);
+        std::array<std::byte, detail::audio_wire::psg_header_bytes> command{};
+        wire::put32(command.data(), target_offset); wire::put32(command.data() + 4, frames);
+        wire::put32(command.data() + 8, voices_offset);
+        wire::put32(command.data() + 12, ticks_per_sample);
+        wire::put16(command.data() + 16, count);
+        return command_io(detail::audio_wire::io_psg_render, command);
+    }
+
+    // Audio 0.13 GB profile 1. State is 128 encoded LE bytes. Output is
+    // interleaved S16LE stereo. Register/frame-sequencer logic stays in Guest.
+    Result<void> gb_psg_render(std::uint32_t state_offset, std::uint32_t output_offset,
+        std::uint16_t frames) noexcept {
+        if (!frames || frames > detail::audio_wire::gb_psg_max_frames)
+            return std::unexpected(Error::invalid_argument);
+        std::array<std::byte, detail::audio_wire::gb_psg_header_bytes> command{};
+        wire::put32(command.data(), state_offset); wire::put32(command.data() + 4, output_offset);
+        wire::put16(command.data() + 8, frames); wire::put16(command.data() + 10, 1);
+        return command_io(detail::audio_wire::io_gb_psg_render, command);
     }
 
     Result<void> sound(const Asset& asset,

@@ -464,6 +464,11 @@ auto independent = session.effect(layers); // 独立播放，不替换命名轨�
 接口取舍、编译器内存对比及模拟器验证见
 [音效接口迭代报告](docs/audio-effects-20261012.zh-CN.md)。
 
+Audio 0.12 增加 `AudioPsgVoice` 与 `AudioSession::psg_render`，批量合成
+可调占空比脉冲、波表、7/15 位 LFSR 和阶梯包络，直接累加到应用的 S32LE
+音频缓冲。状态由应用持有，调用期间同步借用，没有额外队列、任务或堆分配。
+使用方法及与模拟器 APU 的边界见 [PSG 合成接口](docs/audio-psg.zh-CN.md)。
+
 Assets 的 load/query/read 和 FS 路径在任务创建时复制到有界存储，源字符串
 可以立即销毁；Assets 直接提交协程内的最终包。读取的输出缓冲区仍为借用。
 

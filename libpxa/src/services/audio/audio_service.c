@@ -1,5 +1,7 @@
 #include "pxa/audio.h"
 #include "pxa/audio_mix.h"
+#include "pxa/audio_psg.h"
+#include "pxa/audio_gb_psg.h"
 #include "pxa/assets.h"
 #include "common/checked_math.h"
 #include "common/status_internal.h"
@@ -342,13 +344,18 @@ static int32_t audio_stream_io(void *context, uint32_t operation,
         session->provider_session == 0 || session->service == NULL) {
         return PXA_STATUS_NOT_FOUND;
     }
-    if (operation == PXA_AUDIO_IO_MIX_PCM) {
+    if (operation == PXA_AUDIO_IO_MIX_PCM || operation == PXA_AUDIO_IO_PSG_RENDER ||
+        operation == PXA_AUDIO_IO_GB_PSG_RENDER) {
         uint8_t *memory = NULL;
         size_t memory_size = 0;
         status = pxa_runtime_borrow_memory(session->service->runtime,
             session->component, &memory, &memory_size);
         if (status == PXA_STATUS_OK)
-            status = pxa_audio_mix_pcm(data, size, memory, memory_size);
+            status = operation == PXA_AUDIO_IO_MIX_PCM
+                ? pxa_audio_mix_pcm(data, size, memory, memory_size)
+                : operation == PXA_AUDIO_IO_PSG_RENDER
+                ? pxa_audio_psg_render(data, size, memory, memory_size)
+                : pxa_audio_gb_psg_render(data, size, memory, memory_size);
         return status ? status : (int32_t)size;
     }
     if (session->pcm_only && operation != PXA_IO_WRITE) return PXA_STATUS_UNSUPPORTED;

@@ -1,6 +1,7 @@
 #include "../../testing/pxa_control_capture.h"
 #include <pxa/app.hpp>
 #include <pxa/audio.h>
+#include "../../guest-c/include/pxa_audio_psg.h"
 
 #include <algorithm>
 #include <cassert>
@@ -29,6 +30,10 @@ static_assert(pxa::detail::audio_wire::io_stop_effect == PXA_AUDIO_IO_STOP_EFFEC
 static_assert(pxa::detail::audio_wire::io_play_sound == PXA_AUDIO_IO_PLAY_SOUND);
 static_assert(pxa::detail::audio_wire::io_control_sound == PXA_AUDIO_IO_CONTROL_SOUND);
 static_assert(pxa::detail::audio_wire::io_mix_pcm == PXA_AUDIO_IO_MIX_PCM);
+static_assert(pxa::detail::audio_wire::io_psg_render == PXA_AUDIO_IO_PSG_RENDER);
+static_assert(pxa::detail::audio_wire::psg_voice_bytes == PXA_AUDIO_PSG_VOICE_BYTES);
+static_assert(pxa::detail::audio_wire::io_gb_psg_render == PXA_AUDIO_IO_GB_PSG_RENDER);
+static_assert(pxa::detail::audio_wire::gb_psg_state_bytes == PXA_AUDIO_GB_PSG_STATE_BYTES);
 static_assert(pxa::detail::audio_wire::independent_effect == PXA_AUDIO_SOUND_APPEND);
 static_assert(pxa::detail::audio_wire::effect_header_bytes == 4);
 static_assert(pxa::detail::audio_wire::effect_tone_bytes == 14);
@@ -89,6 +94,18 @@ extern "C" std::int32_t pxa_io(std::uint64_t handle, std::uint32_t operation,
     assert(graph_ready);
     ++io_calls;
     auto* p = reinterpret_cast<std::byte*>(data);
+    if (operation == 0x10b) {
+        assert(size == 16 && pxa::wire::get32(p) == 256 && pxa::wire::get32(p + 4) == 1024 &&
+            pxa::wire::get16(p + 8) == 64 && pxa::wire::get16(p + 10) == 1 && !pxa::wire::get32(p + 12));
+        return effect_reply.value_or(size);
+    }
+    if (operation == 0x10a) {
+        assert(size == 20 && pxa::wire::get32(p) == 1024 &&
+            pxa::wire::get32(p + 4) == 64 && pxa::wire::get32(p + 8) == 512 &&
+            pxa::wire::get32(p + 12) == 128 &&
+            pxa::wire::get16(p + 16) == 2 && !pxa::wire::get16(p + 18));
+        return effect_reply.value_or(size);
+    }
     if (operation == 0x109) {
         assert(size == 16 && pxa::wire::get32(p) == 1024 &&
             pxa::wire::get32(p + 4) == 64 && pxa::wire::get32(p + 8) == 512 &&
@@ -364,6 +381,61 @@ int main() {
         pxa::AudioSession session(transport, requests, session_handle, {11025, 2, 20});
         effect_reply.reset();
         assert(session.mix_pcm(1024, 64, 512, 2));
+        assert(session.psg_render(1024, 64, 512, 2, 128));
+        assert(session.gb_psg_render(256, 1024, 64));
+        effect_reply = 15;
+        assert(session.gb_psg_render(256, 1024, 64).error() == pxa::Error::protocol_error);
+        effect_reply = PXA_STATUS_UNSUPPORTED;
+        assert(session.gb_psg_render(256, 1024, 64).error() == pxa::Error::unsupported);
+        auto gb_calls = io_calls;
+        assert(!session.gb_psg_render(256, 1024, 129) && io_calls == gb_calls);
+        effect_reply.reset();
+        pxa::AudioPsgVoice voice{.period = 1192, .phase = 17, .cursor = 3,
+            .envelope_period = 65536, .envelope_phase = 123,
+            .left_gain_q8 = 256, .right_gain_q8 = 128, .envelope_direction = -1};
+        std::array<std::byte, 40> state{};
+        assert(voice.encode(state));
+        auto decoded = pxa::AudioPsgVoice::decode(state);
+        assert(decoded && decoded->phase == 17 && decoded->envelope_direction == -1);
+        struct Alias { pxa::AudioPsgVoice voice; std::array<std::byte, 40> spare{}; } alias{voice};
+        std::array<std::byte, sizeof(Alias)> before;
+        std::memcpy(before.data(), &alias, sizeof(alias));
+        assert(!alias.voice.encode(std::as_writable_bytes(std::span(&alias, 1))));
+        assert(!std::memcmp(&alias, before.data(), sizeof(alias)));
+        // The two SDKs must produce the same bytes, not native struct layouts.
+        pxa_audio_psg_voice_t c_voice{};
+        c_voice.period = voice.period; c_voice.phase = voice.phase; c_voice.cursor = voice.cursor;
+        c_voice.envelope_period = voice.envelope_period; c_voice.envelope_phase = voice.envelope_phase;
+        c_voice.left_gain_q8 = voice.left_gain_q8; c_voice.right_gain_q8 = voice.right_gain_q8;
+        c_voice.waveform = 1; c_voice.level = 15; c_voice.pulse_mask = 15; c_voice.envelope_direction = -1;
+        std::array<std::uint8_t, 40> c_state{};
+        assert(pxa_audio_encode_psg_voice(c_state.data(), c_state.size(), &c_voice));
+        assert(std::equal(c_state.begin(), c_state.end(), state.begin(),
+            [](auto a, auto b) { return a == std::to_integer<unsigned>(b); }));
+        for (auto candidate : {pxa::AudioPsgVoice::pulse(67, 0x03),
+            pxa::AudioPsgVoice::wave(89, 2048, 31),
+            pxa::AudioPsgVoice::noise(37, 7, 1, true, 0),
+            pxa::AudioPsgVoice::noise(41, 15, 6, false, 32767)}) {
+            assert(candidate.encode(state));
+            assert(pxa_audio_decode_psg_voice(reinterpret_cast<const std::uint8_t*>(state.data()),
+                state.size(), &c_voice));
+            assert(pxa_audio_encode_psg_voice(c_state.data(), c_state.size(), &c_voice));
+            assert(std::equal(c_state.begin(), c_state.end(), state.begin(),
+                [](auto a, auto b) { return a == std::to_integer<unsigned>(b); }));
+            auto roundtrip = pxa::AudioPsgVoice::decode(state);
+            assert(roundtrip && roundtrip->waveform == candidate.waveform &&
+                roundtrip->cursor == candidate.cursor && roundtrip->period == candidate.period);
+        }
+        state[36] = std::byte{1};
+        assert(!pxa::AudioPsgVoice::decode(state));
+        voice.noise_width = 15;
+        assert(!voice.encode(state));
+        effect_reply = 19;
+        assert(session.psg_render(1024, 64, 512, 2, 128).error() == pxa::Error::protocol_error);
+        effect_reply = PXA_STATUS_UNSUPPORTED;
+        assert(session.psg_render(1024, 64, 512, 2, 128).error() == pxa::Error::unsupported);
+        const auto psg_calls = io_calls;
+        assert(!session.psg_render(1024, 4096, 512, 8, 128) && io_calls == psg_calls);
         effect_reply = 15;
         assert(session.mix_pcm(1024, 64, 512, 2).error() == pxa::Error::protocol_error);
         effect_reply = -5;

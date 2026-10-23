@@ -23,6 +23,7 @@ void pxa_raster_prepared_execute_range(const pxa_raster_spans_t *, uint32_t, uin
 void pxa_raster_projected_load(const uint8_t *, uint8_t *, const uint8_t *, pxa_raster_spans_t *);
 void pxa_raster_frame_execute_range(const pxa_raster_spans_t *, uint32_t, uint32_t);
 void pxa_raster_blit_execute_range(const pxa_raster_spans_t *, uint32_t, uint32_t);
+void pxa_raster_priority_tiles_execute_range(const pxa_raster_spans_t *, uint32_t, uint32_t);
 int pxa_raster_write_disjoint(const pxa_raster_spans_t *, const uint8_t *, uint32_t,
     const uint8_t *, size_t);
 pxa_status_t pxa_raster_span_validate(pxa_raster_spans_t *,

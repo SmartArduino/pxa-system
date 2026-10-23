@@ -1,5 +1,13 @@
 # Third-party arithmetic kernel
 
+`src/services/audio/audio_gb_psg.c` adapts the pulse/wave/LFSR synthesis,
+noise aggregation and fixed-point capacitor filter from mGBA `src/gb/audio.c`,
+commit `fd9dc5c2cbf234365068855851107e762fc6211b`.
+Copyright (c) 2013-2016 Jeffrey Pfau. This file is **MPL-2.0**;
+the surrounding MIT license does not replace its license. The state codec,
+service dispatch and Guest SDK are original PXA code. A copy is provided in
+[licenses/MPL-2.0.txt](licenses/MPL-2.0.txt).
+
 `src/services/game_render/raster_spans.c` and
 `src/services/game_render/raster_projected_spans.c`, with batch glue in
 `src/services/game_render/raster_frame_spans.c`, adapt the lit-span,

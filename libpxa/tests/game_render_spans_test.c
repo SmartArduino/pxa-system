@@ -69,6 +69,34 @@ static void indexed_rect_cases(pxa_runtime_t *runtime,pxa_component_t component,
     free(m);free(expected);
 }
 
+/* Exercise the actual borrowed-memory service, including atomic rejection
+ * of a malformed second command after a valid first command. */
+static void priority_tile_cases(pxa_runtime_t *runtime, pxa_component_t component, uint64_t handle) {
+    uint8_t *m=malloc(8192), *before=malloc(8192); assert(m && before);
+    memset(m,0xa5,8192); uint8_t *p=m+1024;
+    pxa_game_render_tiles_header_wire_t h={PXA_GAME_RENDER_TILES_MAGIC,1,0,2,80,4096,6144,64,8};
+    pxa_game_render_tiles_header_encode(p,32,&h);
+    memset(m+6144,0,64);memset(p+128,1,64);p[128]=0;
+    pxa_write_u16(p+194,0x07e0);pxa_write_u16(p+210,0xf800);
+    pxa_game_render_tile_wire_t t={0};
+    t.tile_offset=128;t.palette_offset=192;t.palette_entries=4;t.width=t.height=8;
+    t.compare_depth=5;t.write_depth=3;
+    pxa_game_render_tile_encode(p+32,24,&t);
+    t.palette_offset=208;t.compare_depth=3;t.write_depth=200;
+    pxa_game_render_tile_encode(p+56,24,&t);
+    memcpy(before,m,8192);
+    assert(pxa_runtime_io64_memory(runtime,component,handle,0x10a,p,1024,m,8192)==1024);
+    assert(pxa_read_u16(m+4096)==0xa5a5 && m[6144]==0);
+    for(unsigned i=1;i<64;++i)assert(pxa_read_u16(m+4096+i*2)==0x07e0 && m[6144+i]==3);
+    assert(!memcmp(p,before+1024,1024));
+    memcpy(m,before,8192);pxa_write_u32(p+56,UINT32_MAX);memcpy(before,m,8192);
+    assert(pxa_runtime_io64_memory(runtime,component,handle,0x10a,p,1024,m,8192)<0);
+    assert(!memcmp(m,before,8192));
+    uint8_t *borrowed=NULL;size_t bytes=0;
+    assert(pxa_runtime_borrow_memory(runtime,component,&borrowed,&bytes)==PXA_STATUS_BAD_STATE);
+    free(m);free(before);
+}
+
 int main(void) {
     pxa_runtime_limits_t limits;
     pxa_runtime_t *runtime;
@@ -336,6 +364,7 @@ int main(void) {
     for (unsigned i = 0; i < 16; ++i)
         assert(pxa_read_u16(memory + 4096 + i*2) == pxa_read_u16(memory + 3072 + 37*2));
     indexed_rect_cases(runtime,component,handle);
+    priority_tile_cases(runtime,component,handle);
     assert(pxa_handle_close64(runtime, component, handle) == 0);
     assert(arena_allocations == 1);
     if (getenv("PXA_TEST_PREPARE_FAIL")) assert(!prepared_batches && !arena_releases);

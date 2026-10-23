@@ -34,12 +34,15 @@ function(pxa_collect_sources output root)
         src/services/audio/audio_service.c
         src/services/audio/audio_mixer.c
         src/services/audio/audio_mix.c
+        src/services/audio/audio_psg.c
+        src/services/audio/audio_gb_psg.c
         src/services/audio/audio_buffer.c
         src/services/audio/audio_playback.c
         src/services/game_render/game_render_service.c
         src/services/game_render/raster_spans.c
         src/services/game_render/raster_frame_spans.c
         src/services/game_render/raster_blit.c
+        src/services/game_render/raster_priority_tiles.c
         src/services/game_render/raster_projected_spans.c
         src/services/game_render/raster_prepared.c
         src/services/log/log_service.c

@@ -38,6 +38,8 @@
 
 /* One transaction per runtime owner thread. Other Host/Guest threads cannot
  * consume the reserved mapping while the loader builds permanent AOT data. */
+#define PXA_WAMR_LINEAR_ALIGNMENT 64u
+
 static __thread struct {
     void *memory;
     size_t bytes, used;
@@ -48,7 +50,7 @@ static __thread struct {
 void *
 os_mmap(void *hint, size_t size, int prot, int flags, os_file_handle file)
 {
-    if (size == 0 || size > SIZE_MAX - 4 - sizeof(uintptr_t)) {
+    if (size == 0 || size > SIZE_MAX - (PXA_WAMR_LINEAR_ALIGNMENT - 1u) - sizeof(uintptr_t)) {
         return NULL;
     }
     if (!(prot & MMAP_PROT_EXEC) && load_memory.memory && load_memory.ready
@@ -138,7 +140,7 @@ os_mmap(void *hint, size_t size, int prot, int flags, os_file_handle file)
         uint32_t mem_caps = MALLOC_CAP_8BIT;
 #endif
         void *buf_origin =
-            heap_caps_malloc(size + 4 + sizeof(uintptr_t), mem_caps);
+            heap_caps_malloc(size + PXA_WAMR_LINEAR_ALIGNMENT - 1u + sizeof(uintptr_t), mem_caps);
         if (!buf_origin) {
 #ifdef ESP_PLATFORM
             ESP_LOGE("PxaWamrMap", "data allocation failed: bytes=%u free=%u largest=%u",
@@ -148,11 +150,11 @@ os_mmap(void *hint, size_t size, int prot, int flags, os_file_handle file)
             return NULL;
         }
 
-        void *buf_fixed = (uint8_t *)buf_origin + sizeof(void *);
-        if ((uintptr_t)buf_fixed & (uintptr_t)0x7) {
-            buf_fixed = (void *)((uintptr_t)((uint8_t *)buf_fixed + 4)
-                                 & ~(uintptr_t)7);
-        }
+        /* Host workers partition byte-priority and RGB565 planes together.
+         * Virtual alignment must survive translation to native cache lines. */
+        const uintptr_t first = (uintptr_t)buf_origin + sizeof(uintptr_t);
+        void *buf_fixed = (void *)((first + PXA_WAMR_LINEAR_ALIGNMENT - 1u)
+                                  & ~(uintptr_t)(PXA_WAMR_LINEAR_ALIGNMENT - 1u));
 
         uintptr_t *addr_field = (uintptr_t *)buf_fixed - 1;
         *addr_field = (uintptr_t)buf_origin;

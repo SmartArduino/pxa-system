@@ -411,6 +411,7 @@ if(PXA_BUILD_ADAPTERS AND PXA_WAMR_SOURCE_DIR)
                     DEPENDS ${source}
                             "${PXA_GUEST_SDK_INCLUDE}/pxa.h"
                             "${PXA_GUEST_SDK_INCLUDE}/pxa_audio.h"
+                            "${PXA_GUEST_SDK_INCLUDE}/pxa_audio_psg.h"
                             "${PXA_GUEST_SDK_INCLUDE}/pxa_canvas.h"
                             "${PXA_GUEST_SDK_INCLUDE}/pxa_net.h"
                             "${PXA_GUEST_SDK_INCLUDE}/pxa_core.h"
@@ -762,6 +763,12 @@ if(PXA_BUILD_TESTS)
     add_executable(pxa_audio_mix_test tests/audio_mix_test.c)
     target_link_libraries(pxa_audio_mix_test PRIVATE pxa)
     add_test(NAME pxa_audio_mix_test COMMAND pxa_audio_mix_test)
+    add_executable(pxa_audio_psg_test tests/audio_psg_test.c)
+    target_link_libraries(pxa_audio_psg_test PRIVATE pxa)
+    add_test(NAME pxa_audio_psg_test COMMAND pxa_audio_psg_test)
+    add_executable(pxa_audio_gb_psg_test tests/audio_gb_psg_test.c)
+    target_link_libraries(pxa_audio_gb_psg_test PRIVATE pxa)
+    add_test(NAME pxa_audio_gb_psg_test COMMAND pxa_audio_gb_psg_test)
     add_executable(pxa_audio_buffer_test tests/audio_buffer_test.c)
     target_link_libraries(pxa_audio_buffer_test PRIVATE pxa)
     add_test(NAME pxa_audio_buffer_test COMMAND pxa_audio_buffer_test)
@@ -835,6 +842,17 @@ if(PXA_BUILD_TESTS)
         target_compile_options(pxa_game_render_spans_test PRIVATE -UNDEBUG)
     endif()
     add_test(NAME pxa_game_render_spans_test COMMAND pxa_game_render_spans_test)
+    add_executable(pxa_priority_tiles_test tests/priority_tiles_test.c)
+    target_link_libraries(pxa_priority_tiles_test PRIVATE pxa)
+    find_package(Threads QUIET)
+    if(Threads_FOUND)
+        target_link_libraries(pxa_priority_tiles_test PRIVATE Threads::Threads)
+        target_compile_definitions(pxa_priority_tiles_test PRIVATE PXA_TILE_TEST_THREADS=1)
+    endif()
+    if(NOT MSVC)
+        target_compile_options(pxa_priority_tiles_test PRIVATE -UNDEBUG)
+    endif()
+    add_test(NAME pxa_priority_tiles_test COMMAND pxa_priority_tiles_test)
 
     add_executable(pxa_ime_test tests/ime_test.c)
     target_link_libraries(pxa_ime_test PRIVATE pxa)

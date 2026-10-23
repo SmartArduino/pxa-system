@@ -424,6 +424,15 @@ typedef enum {
     REFERENCE_PAGE_INPUT_METHOD_APPS,
 } reference_page_t;
 
+/* Only scalar bookmarks survive a rebuild, including a bounded set of file
+ * directories. No widget trees, screenshots or deleted object pointers. */
+#define REFERENCE_NAVIGATION_STATE_COUNT 24u
+typedef struct {
+    uint32_t view_key;
+    int32_t scroll_y;
+    uint32_t focus_key;
+} navigation_state_t;
+
 typedef enum {
     NAVIGATION_ICON_BACK = 0,
     NAVIGATION_ICON_HOME,
@@ -651,8 +660,8 @@ struct pxsys_reference_lvgl {
     int32_t notification_panel_height;
     int32_t notification_progress;
     int32_t notification_scroll_y;
-    int32_t settings_scroll_y;
-    int32_t appearance_scroll_y;
+    navigation_state_t navigation_states[REFERENCE_NAVIGATION_STATE_COUNT];
+    uint32_t rendered_view_key;
     int32_t navigation_press_x;
     int32_t navigation_press_y;
     int32_t navigation_last_x;
@@ -1059,6 +1068,140 @@ static pxsys_status_t open_role(pxsys_reference_lvgl_t* ui, const char* role) {
         pxsys_string_from_cstr(role), &intent, &instance);
 }
 
+static uint32_t navigation_hash(uint32_t hash, uint32_t value) {
+    return (hash ^ value) * UINT32_C(16777619);
+}
+
+static uint32_t navigation_text_key(const char* text) {
+    uint32_t hash = UINT32_C(2166136261);
+    for (const unsigned char* p = (const unsigned char*)text; *p; ++p)
+        hash = navigation_hash(hash, *p);
+    return hash != 0 ? hash : 1;
+}
+
+/* Store a scalar tag in an event descriptor rather than taking over the
+ * widget's user_data, which belongs to its action handler. */
+static void navigation_focus_tag(lv_event_t* event) { (void)event; }
+
+static void navigation_tag_focus(lv_obj_t* object, const char* key) {
+    lv_obj_remove_event_cb(object, navigation_focus_tag);
+    lv_obj_add_event_cb(object, navigation_focus_tag, LV_EVENT_FOCUSED,
+                        (void*)(uintptr_t)navigation_text_key(key));
+}
+
+static uint32_t navigation_object_key(lv_obj_t* content, lv_obj_t* object) {
+    uint32_t hash = UINT32_C(2166136261);
+    for (; object != NULL && object != content;
+         object = lv_obj_get_parent(object)) {
+        for (uint32_t i = 0; i < lv_obj_get_event_count(object); ++i) {
+            lv_event_dsc_t* event = lv_obj_get_event_dsc(object, i);
+            if (lv_event_dsc_get_cb(event) == navigation_focus_tag)
+                return navigation_hash(hash, (uint32_t)(uintptr_t)
+                    lv_event_dsc_get_user_data(event));
+        }
+        hash = navigation_hash(hash, (uint32_t)lv_obj_get_index(object) + 1u);
+    }
+    return object == content ? navigation_hash(hash, UINT32_C(0x70616765)) : 0;
+}
+
+static uint32_t navigation_view_key(pxsys_reference_lvgl_t* ui) {
+    if (ui->active_page == REFERENCE_PAGE_HOME) return 0;
+    uint32_t key = (uint32_t)ui->active_page + 1u;
+    if (ui->active_page == REFERENCE_PAGE_FILE_MANAGER) {
+        key = navigation_hash(key, navigation_text_key(ui->file_path));
+        key = navigation_hash(key, ui->file_edit_mode);
+    } else if (ui->active_page == REFERENCE_PAGE_WIFI) {
+        key = navigation_hash(key, ui->wifi_input_stage);
+    }
+    return key != 0 ? key : UINT32_MAX;
+}
+
+static const navigation_state_t* navigation_state_find(
+    pxsys_reference_lvgl_t* ui, uint32_t view_key) {
+    for (size_t i = 0; i < REFERENCE_NAVIGATION_STATE_COUNT; ++i)
+        if (ui->navigation_states[i].view_key == view_key)
+            return &ui->navigation_states[i];
+    return NULL;
+}
+
+static lv_group_t* navigation_keypad_group(pxsys_reference_lvgl_t* ui) {
+    for (lv_indev_t* device = lv_indev_get_next(NULL); device != NULL;
+         device = lv_indev_get_next(device)) {
+        const lv_indev_type_t type = lv_indev_get_type(device);
+        if ((type == LV_INDEV_TYPE_KEYPAD || type == LV_INDEV_TYPE_ENCODER) &&
+            lv_indev_get_display(device) == lv_obj_get_display(ui->root) &&
+            lv_indev_get_group(device) != NULL)
+            return lv_indev_get_group(device);
+    }
+    return NULL;
+}
+
+static void navigation_state_capture(pxsys_reference_lvgl_t* ui) {
+    if (ui->content == NULL || ui->rendered_view_key == 0) return;
+    size_t index;
+    for (index = 0; index + 1u < REFERENCE_NAVIGATION_STATE_COUNT; ++index)
+        if (ui->navigation_states[index].view_key == ui->rendered_view_key) break;
+    navigation_state_t state = ui->navigation_states[index];
+    if (state.view_key != ui->rendered_view_key)
+        state = (navigation_state_t){.view_key = ui->rendered_view_key};
+    state.scroll_y = lv_obj_get_scroll_y(ui->content);
+    lv_group_t* group = navigation_keypad_group(ui);
+    lv_obj_t* focused = group != NULL ? lv_group_get_focused(group) : NULL;
+    /* Modal focus must not replace the page's own bookmark. */
+    if (focused != NULL) {
+        for (lv_obj_t* parent = focused; parent != NULL;
+             parent = lv_obj_get_parent(parent)) {
+            if (parent == ui->content) {
+                state.focus_key = navigation_object_key(ui->content, focused);
+                break;
+            }
+        }
+    }
+    memmove(&ui->navigation_states[1], &ui->navigation_states[0],
+            index * sizeof(state));
+    ui->navigation_states[0] = state;
+}
+
+static lv_obj_t* navigation_find_focus(lv_obj_t* content, lv_obj_t* object,
+                                       uint32_t key) {
+    if (lv_obj_is_hidden(object) || lv_obj_has_state(object, LV_STATE_DISABLED))
+        return NULL;
+    if (lv_obj_is_clickable(object) &&
+        navigation_object_key(content, object) == key) return object;
+    for (uint32_t i = 0; i < lv_obj_get_child_count(object); ++i) {
+        lv_obj_t* found = navigation_find_focus(
+            content, lv_obj_get_child(object, i), key);
+        if (found != NULL) return found;
+    }
+    return NULL;
+}
+
+static void navigation_state_restore(pxsys_reference_lvgl_t* ui) {
+    const navigation_state_t* state =
+        navigation_state_find(ui, ui->rendered_view_key);
+    if (state == NULL) return;
+    lv_obj_update_layout(ui->content);
+    lv_group_t* group = navigation_keypad_group(ui);
+    if (state->focus_key != 0 && group != NULL && !ui->locked &&
+        ui->power_menu == NULL && !ui->notification_shade_open &&
+        !task_switcher_is_open(ui)) {
+        lv_obj_t* target = navigation_find_focus(
+            ui->content, ui->content, state->focus_key);
+        if (target != NULL) {
+            /* The product adapter will recollect the rest of the group. Giving
+             * it the resolved live target preserves focus across that refresh. */
+            const bool scroll_on_focus = lv_obj_is_scroll_on_focus(target);
+            lv_obj_set_scroll_on_focus(target, false);
+            lv_group_add_obj(group, target);
+            lv_group_focus_obj(target);
+            lv_obj_set_scroll_on_focus(target, scroll_on_focus);
+        }
+    }
+    /* Focus can scroll automatically. Apply the saved viewport last; LVGL
+     * clamps it when content has shrunk or display geometry has changed. */
+    lv_obj_scroll_to_y(ui->content, state->scroll_y, LV_ANIM_OFF);
+}
+
 static void back_clicked(lv_event_t* event) {
     pxsys_reference_lvgl_t* ui =
         (pxsys_reference_lvgl_t*)lv_event_get_user_data(event);
@@ -1357,7 +1500,6 @@ static void theme_clicked(lv_event_t* event) {
     pxsys_reference_lvgl_t* ui =
         (pxsys_reference_lvgl_t*)lv_event_get_user_data(event);
     if (!ui_valid(ui)) return;
-    ui->appearance_scroll_y = 0;
     ui->active_page = REFERENCE_PAGE_APPEARANCE;
     rebuild(ui);
 }
@@ -3309,6 +3451,7 @@ static lv_obj_t* make_settings_row(pxsys_reference_lvgl_t* ui,
     int32_t icon_size = pxsys_reference_display_scale_px(
         &ui->display, layout->size_class == PXSYS_UI_SIZE_COMPACT ? 30 : 32);
     lv_obj_t* row = lv_obj_create(section);
+    navigation_tag_focus(row, title);
     lv_obj_t* icon_background;
     lv_obj_t* text;
     lv_obj_t* label;
@@ -3401,6 +3544,7 @@ static int add_settings_role(pxsys_reference_lvgl_t* ui,
     action->role = role;
     row = make_settings_row(ui, layout, section, symbol, icon_color, title,
                             subtitle, settings_action_clicked, action);
+    navigation_tag_focus(row, role);
     add_settings_chevron(ui, row);
     return 1;
 }
@@ -4059,6 +4203,7 @@ static void build_settings(pxsys_reference_lvgl_t* ui,
         ui, layout, section, LV_SYMBOL_TINT, PXSYS_COLOR_WARNING,
         translated(ui, "settings.appearance", "Appearance"), appearance_detail,
         theme_clicked, ui);
+    navigation_tag_focus(row, "settings.appearance");
     add_settings_chevron(ui, row);
     selected_language = current_language(ui);
     language_detail = selected_language == NULL
@@ -4070,6 +4215,7 @@ static void build_settings(pxsys_reference_lvgl_t* ui,
         ui, layout, section, LV_SYMBOL_EDIT, PXSYS_COLOR_ACCENT,
         translated(ui, "settings.language", "Language"), language_detail,
         language_clicked, ui);
+    navigation_tag_focus(row, "settings.language");
     if (ui->input_method_list || ui->input_method_preferences)
         make_settings_row(ui,layout,section,LV_SYMBOL_KEYBOARD,PXSYS_COLOR_ACCENT,
             translated(ui,"input-method.title","Input method"),
@@ -4115,8 +4261,6 @@ static void build_settings(pxsys_reference_lvgl_t* ui,
             translated(ui, "settings.about.detail",
                         "Firmware, storage and hardware information"));
     }
-    lv_obj_update_layout(ui->content);
-    lv_obj_scroll_to_y(ui->content, ui->settings_scroll_y, LV_ANIM_OFF);
 }
 
 static void appearance_apply(pxsys_reference_lvgl_t* ui,
@@ -4229,6 +4373,7 @@ static void build_appearance_page(pxsys_reference_lvgl_t* ui,
         lv_obj_t* caption;
         pxsys_theme_snapshot_t palette;
         const char* name = pxsys_theme_palette_name(options[index].palette);
+        navigation_tag_focus(card, name);
         const int selected_card = strcmp(selected, name) == 0;
         lv_coord_t card_width = (lv_coord_t)((available_width -
             (card_columns - 1) * ui_px(ui, 8)) / card_columns);
@@ -4296,8 +4441,6 @@ static void build_appearance_page(pxsys_reference_lvgl_t* ui,
             lv_obj_align(check, LV_ALIGN_BOTTOM_RIGHT, -ui_px(ui, 9), -ui_px(ui, 8));
         }
     }
-    lv_obj_update_layout(ui->content);
-    lv_obj_scroll_to_y(ui->content, ui->appearance_scroll_y, LV_ANIM_OFF);
 }
 
 static void notification_shade_progress_set(void* object, int32_t progress) {
@@ -5783,6 +5926,7 @@ static lv_obj_t* make_page_button(pxsys_reference_lvgl_t* ui, lv_obj_t* parent,
                                   lv_event_cb_t clicked, void* user_data) {
     const pxa_lvgl_dialog_style_t style = dialog_style(ui);
     lv_obj_t* button = lv_button_create(parent);
+    navigation_tag_focus(button, text);
     lv_obj_set_width(button, LV_PCT(100));
     lv_obj_set_height(button, ui_px(ui, 42));
     pxa_lvgl_dialog_action_style(button, &style, action);
@@ -7214,6 +7358,7 @@ static void build_app_manager(pxsys_reference_lvgl_t* ui,
         row = make_settings_row(ui, layout, section, LV_SYMBOL_LIST,
                                 PXSYS_COLOR_ACCENT, app->name, subtitle,
                                 app_row_clicked, ui);
+        navigation_tag_focus(row, app->identity);
         lv_obj_set_user_data(row, (void*)(uintptr_t)index);
         add_settings_chevron(ui, row);
     }
@@ -7631,6 +7776,7 @@ static void build_file_manager(pxsys_reference_lvgl_t* ui,
             entry->is_directory ? LV_SYMBOL_DIRECTORY : LV_SYMBOL_FILE,
             entry->is_directory ? PXSYS_COLOR_WARNING : PXSYS_COLOR_ACCENT,
             entry->name, subtitle, file_entry_clicked, ui);
+        navigation_tag_focus(row, entry->path);
         lv_obj_set_user_data(row, (void*)(uintptr_t)index);
         lv_obj_remove_event_cb_with_user_data(row, file_entry_clicked, ui);
         lv_obj_add_event_cb(row, file_entry_clicked,
@@ -7675,12 +7821,9 @@ static void rebuild(pxsys_reference_lvgl_t* ui) {
     }
     application_scale_reset(ui);
     application_backdrop_apply(ui);
-    if (ui->content_active && ui->rendered_page == REFERENCE_PAGE_SETTINGS &&
-        ui->content != NULL)
-        ui->settings_scroll_y = lv_obj_get_scroll_y(ui->content);
-    if (ui->content_active && ui->rendered_page == REFERENCE_PAGE_APPEARANCE &&
-        ui->content != NULL)
-        ui->appearance_scroll_y = lv_obj_get_scroll_y(ui->content);
+    /* content_active/active_page may already describe the incoming task. The
+     * old tree still belongs to rendered_view_key until it is deleted. */
+    navigation_state_capture(ui);
     if (ui->file_edit_input != NULL) {
         snprintf(ui->file_edit_draft, sizeof(ui->file_edit_draft), "%s",
                  lv_textarea_get_text(ui->file_edit_input));
@@ -7772,6 +7915,7 @@ static void rebuild(pxsys_reference_lvgl_t* ui) {
     }
 
     ui->content = NULL;
+    ui->rendered_view_key = 0;
     ui->title = NULL;
     if (ui->content_active) {
         ui->content = lv_obj_create(ui->root);
@@ -7851,11 +7995,7 @@ static void rebuild(pxsys_reference_lvgl_t* ui) {
             if (title_height < minimum_title_height)
                 title_height = minimum_title_height;
             lv_obj_t* title_parent = ui->content;
-            if (ui->active_page == REFERENCE_PAGE_WIFI ||
-                ui->active_page == REFERENCE_PAGE_APPEARANCE ||
-                ui->active_page == REFERENCE_PAGE_INPUT_METHOD ||
-                ui->active_page == REFERENCE_PAGE_INPUT_METHOD_APPS ||
-                ui->active_page == REFERENCE_PAGE_FILE_MANAGER) {
+            if (ui->active_page != REFERENCE_PAGE_SETTINGS) {
                 lv_obj_t* header = lv_obj_create(ui->content);
                 style_plain(header);
                 lv_obj_set_size(header, LV_PCT(100), title_height + 4);
@@ -7864,21 +8004,19 @@ static void rebuild(pxsys_reference_lvgl_t* ui) {
                 lv_obj_set_flex_align(header, LV_FLEX_ALIGN_START,
                                       LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
                 lv_obj_set_style_pad_column(header, 6, 0);
-                if (ui->active_page != REFERENCE_PAGE_FILE_MANAGER) {
-                    lv_obj_t* back = lv_button_create(header);
-                    lv_obj_set_size(back, 38, 38);
-                    lv_obj_set_style_bg_opa(back, LV_OPA_TRANSP, 0);
-                    lv_obj_set_style_border_width(back, 0, 0);
-                    lv_obj_set_style_shadow_width(back, 0, 0);
-                    lv_obj_set_style_pad_all(back, 0, 0);
-                    lv_obj_t* arrow = make_label(
-                        back, LV_SYMBOL_LEFT,
-                        typography_font(ui, PXSYS_TYPOGRAPHY_TITLE),
-                        color_token(ui, PXSYS_COLOR_TEXT_PRIMARY));
-                    lv_obj_align(arrow, LV_ALIGN_LEFT_MID, 5, -3);
-                    lv_obj_add_event_cb(back, back_clicked,
-                                        LV_EVENT_CLICKED, ui);
-                }
+                lv_obj_t* back = lv_button_create(header);
+                navigation_tag_focus(back, "navigation.back");
+                lv_obj_set_size(back, 38, 38);
+                lv_obj_set_style_bg_opa(back, LV_OPA_TRANSP, 0);
+                lv_obj_set_style_border_width(back, 0, 0);
+                lv_obj_set_style_shadow_width(back, 0, 0);
+                lv_obj_set_style_pad_all(back, 0, 0);
+                lv_obj_t* arrow = make_label(
+                    back, LV_SYMBOL_LEFT,
+                    typography_font(ui, PXSYS_TYPOGRAPHY_TITLE),
+                    color_token(ui, PXSYS_COLOR_TEXT_PRIMARY));
+                lv_obj_align(arrow, LV_ALIGN_LEFT_MID, 5, -3);
+                lv_obj_add_event_cb(back, back_clicked, LV_EVENT_CLICKED, ui);
                 title_parent = header;
             }
             ui->title = make_label(title_parent,
@@ -7932,6 +8070,8 @@ static void rebuild(pxsys_reference_lvgl_t* ui) {
             build_file_manager(ui, &layout);
 #endif
         ui->rendered_page = ui->active_page;
+        ui->rendered_view_key = navigation_view_key(ui);
+        if (ui->rendered_view_key != 0) navigation_state_restore(ui);
     }
 
     if ((ui->active_chrome & PXSYS_REFERENCE_UI_NAVIGATION_BAR) &&

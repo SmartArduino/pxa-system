@@ -1,5 +1,6 @@
 #pragma once
 #include "game_spans_wire_generated.hpp"
+#include "game_tiles.hpp"
 #include <optional>
 #include <cstring>
 
@@ -147,6 +148,21 @@ public:
         : transport_(transport), handle_(transport, handle), max_spans_(max_spans) {}
     std::uint64_t handle() const noexcept { return handle_.handle(); }
     std::uint32_t max_spans() const noexcept { return max_spans_; }
+    Result<void> execute(PriorityTileBatch& batch) noexcept {
+        if (batch.error_) return std::unexpected(*batch.error_);
+        if (!batch.count_) return {};
+        if (batch.count_ > max_spans_) return std::unexpected(Error::limit_exceeded);
+        const wire_spans::pxa_game_render_tiles_header_wire_t header{
+            PXA_GAME_RENDER_TILES_MAGIC, 1, 0, batch.count_, static_cast<std::uint32_t>(batch.command_end_),
+            batch.target_.color_offset, batch.target_.priority_offset,
+            batch.target_.pixel_count, batch.target_.pitch};
+        wire_spans::pxa_game_render_tiles_header_encode(batch.storage_.data(),
+            PXA_GAME_RENDER_TILES_HEADER_BYTES, &header);
+        auto result = transport_.io(handle(), 0x10a, batch.storage_);
+        if (!result) return std::unexpected(result.error());
+        if (*result != batch.storage_.size()) return std::unexpected(Error::protocol_error);
+        return {};
+    }
     Result<void> execute(SpanBatch& batch) noexcept {
         if (batch.error_) return std::unexpected(*batch.error_);
         if (!batch.count_) return {};

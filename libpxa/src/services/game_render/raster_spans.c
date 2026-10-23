@@ -292,6 +292,7 @@ void pxa_raster_span_execute_clipped(const pxa_raster_spans_t *b, pxa_span_kerne
 void pxa_raster_spans_execute_range(const pxa_raster_spans_t *b,
     uint32_t begin, uint32_t end) {
     if (b->prepared) { pxa_raster_prepared_execute_range(b, begin, end); return; }
+    if (b->kind == PXA_RASTER_SPANS_PRIORITY_TILES) { pxa_raster_priority_tiles_execute_range(b, begin, end); return; }
     if (b->kind == PXA_RASTER_SPANS_BLIT) { pxa_raster_blit_execute_range(b, begin, end); return; }
     if (b->kind == PXA_RASTER_SPANS_FRAME) { pxa_raster_frame_execute_range(b, begin, end); return; }
     if (b->kind == PXA_RASTER_SPANS_PROJECTED) { pxa_raster_projected_execute_range(b, begin, end); return; }
@@ -303,4 +304,15 @@ void pxa_raster_spans_execute_range(const pxa_raster_spans_t *b,
             PXA_GAME_RENDER_SPAN_BYTES, &s);
         pxa_raster_span_execute_clipped(b, fn, &s, begin, end);
     }
+}
+
+int pxa_raster_spans_partition_safe(const pxa_raster_spans_t *b,
+    uint32_t split, uint32_t cache_line_bytes) {
+    if (!b || !cache_line_bytes || (cache_line_bytes & (cache_line_bytes - 1u)))
+        return 0;
+    if (b->kind != PXA_RASTER_SPANS_PRIORITY_TILES) return 1;
+    if (split > b->target_bytes) return 0;
+    return !(((uintptr_t)(b->target + split) |
+              (uintptr_t)(b->state.tiles.color + (size_t)split * 2u)) &
+             (cache_line_bytes - 1u));
 }

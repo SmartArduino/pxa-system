@@ -98,6 +98,11 @@ tick. Graph gain/EQ apply to PCM/tones; assets use their own play/control gain.
 The current ESP/desktop profile mixes three sessions at 16 kHz mono, streams
 Ogg Vorbis/Opus, and supports six short U8 PCM file effects. See
 [Audio profile](../../spec/draft/audio.md) for queue and playback semantics.
+Audio 0.12 adds `pxa_audio_psg_render`: synchronous integer pulse, wave-table,
+LFSR noise and stepped-envelope synthesis into caller-owned S32LE accumulators.
+Encode `pxa_audio_psg_voice_t` once and retain its 40-byte wire state across
+batches. This does not enqueue playback or retain Guest pointers; use `WRITE`
+after filtering/quantization. See the profile for clock units and work limits.
 Sensor returns native subscription Handles and reports them in coalescible
 sample events; the SDK decodes signed values by descriptor dimension.
 Core leases return native Handles and report full-width Handles on revocation.

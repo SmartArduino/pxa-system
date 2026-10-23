@@ -1,4 +1,5 @@
 #include <pxa/game_spans_wire_generated.hpp>
+#include <pxa/game_tiles.hpp>
 #include <array>
 #include <cassert>
 #include <cstring>
@@ -21,6 +22,25 @@ static void roundtrip(Decode decode, Encode encode) {
     }
 }
 int main() {
+    // Snapshot unaligned caller data with either codec selection, including
+    // sources that overlap the newly reserved area of the same packet.
+    for (unsigned alignment = 0; alignment < 8; ++alignment) {
+        std::array<std::byte, 1024> storage{};
+        auto bytes = std::span(storage).subspan(alignment);
+        pxa::game::PriorityTileBatch batch(bytes, {4096, 8192, 1024, 32});
+        std::array<std::byte, 64> expected;
+        for (unsigned i = 0; i < expected.size(); ++i) expected[i] = std::byte(i * 13);
+        // This source overlaps the first destination by 56..59 bytes.
+        auto source = bytes.subspan(bytes.size() - 72, 64);
+        std::memcpy(source.data(), expected.data(), expected.size());
+        auto offset = batch.copy_source(source);
+        assert(offset && !std::memcmp(bytes.data() + *offset, expected.data(), 64));
+        assert((reinterpret_cast<std::uintptr_t>(bytes.data() + *offset) & 3u) == 0);
+        auto second = batch.copy_source(bytes.subspan(*offset, 64));
+        assert(second && !std::memcmp(bytes.data() + *second, expected.data(), 64));
+    }
+    roundtrip<g::pxa_game_render_tiles_header_wire_t,32>(g::pxa_game_render_tiles_header_decode,g::pxa_game_render_tiles_header_encode);
+    roundtrip<g::pxa_game_render_tile_wire_t,24>(g::pxa_game_render_tile_decode,g::pxa_game_render_tile_encode);
     roundtrip<g::pxa_game_render_spans_header_wire_t,72>(g::pxa_game_render_spans_header_decode,g::pxa_game_render_spans_header_encode);
     roundtrip<g::pxa_game_render_projection_wire_t,80>(g::pxa_game_render_projection_decode,g::pxa_game_render_projection_encode);
     roundtrip<g::pxa_game_render_span_wire_t,24>(g::pxa_game_render_span_decode,g::pxa_game_render_span_encode);
@@ -38,5 +58,5 @@ int main() {
     assert(!std::memcmp(output.data()+1,expected.data(),56));
     assert(output[0]==std::byte{0xa5}&&output[57]==std::byte{0xa5});
     assert(g::pxa_game_render_rows_encode(nullptr,0,nullptr,0));
-    std::puts("PASS: WASM GameRender encoders preserve every wire byte, six records, odd offsets, short buffers and contiguous rows");
+    std::puts("PASS: WASM GameRender encoders preserve every wire byte, eight records, odd offsets, short buffers and contiguous rows");
 }

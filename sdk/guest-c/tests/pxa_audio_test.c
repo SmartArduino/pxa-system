@@ -8,6 +8,7 @@ static uint64_t last_io_handle;
 static uint32_t last_io_operation;
 static uint8_t last_io_data[12];
 static int32_t mix_reply = 16;
+static int32_t psg_reply = 20;
 
 int32_t pxa_test_control(const uint8_t *data, uint32_t size) {
     (void)data;
@@ -17,6 +18,18 @@ int32_t pxa_test_control(const uint8_t *data, uint32_t size) {
 
 int32_t pxa_io(uint64_t handle, uint32_t operation, uint8_t *data,
                   uint32_t size) {
+    if (operation == PXA_AUDIO_IO_PSG_RENDER) {
+        assert(handle == UINT64_C(0x2345678900000002) && size == 20);
+        assert(pxa_load_u32(data) == 1024 && pxa_load_u32(data + 4) == 64 &&
+            pxa_load_u32(data + 8) == 512 && pxa_load_u32(data + 12) == 128 &&
+            pxa_load_u16(data + 16) == 2 && !pxa_load_u16(data + 18));
+        return psg_reply;
+    }
+    if (operation == PXA_AUDIO_IO_GB_PSG_RENDER) {
+        assert(size == 16 && pxa_load_u32(data) == 256 && pxa_load_u32(data + 4) == 1024 &&
+            pxa_load_u16(data + 8) == 64 && pxa_load_u16(data + 10) == 1 && !pxa_load_u32(data + 12));
+        return mix_reply;
+    }
     if (operation == PXA_AUDIO_IO_MIX_PCM) {
         assert(handle == UINT64_C(0x2345678900000002) && size == 16);
         assert(pxa_load_u32(data) == 1024 && pxa_load_u32(data + 4) == 64 &&
@@ -38,7 +51,39 @@ int32_t pxa_io(uint64_t handle, uint32_t operation, uint8_t *data,
 int main(void) {
     const uint64_t permission = UINT64_C(0x1234567800000001);
     const uint64_t session = UINT64_C(0x2345678900000002);
+    pxa_audio_psg_voice_t psg = {.period = 1192, .phase = 17, .cursor = 3,
+        .envelope_period = 65536, .envelope_phase = 123,
+        .left_gain_q8 = 256, .right_gain_q8 = 128, .waveform = PXA_AUDIO_PSG_PULSE,
+        .level = 15, .pulse_mask = 15, .envelope_direction = -1};
+    uint8_t psg_record[40];
+    assert(pxa_audio_encode_psg_voice(psg_record, sizeof(psg_record), &psg));
+    assert(psg_record[0] == 1 && psg_record[29] == 255 && psg_record[30] == 15 &&
+        pxa_load_u32(psg_record + 4) == 1192 && pxa_load_u32(psg_record + 36) == 0);
+    pxa_audio_psg_voice_t decoded;
+    assert(pxa_audio_decode_psg_voice(psg_record, sizeof(psg_record), &decoded));
+    assert(decoded.phase == 17 && decoded.cursor == 3 && decoded.envelope_direction == -1);
+    struct { pxa_audio_psg_voice_t voice; uint8_t spare[40]; } alias = {0};
+    uint8_t before[sizeof(alias)];
+    alias.voice = psg; memcpy(before, &alias, sizeof(alias));
+    assert(!pxa_audio_encode_psg_voice((uint8_t *)&alias, sizeof(alias), &alias.voice));
+    assert(!memcmp(&alias, before, sizeof(alias)));
+    psg_record[36] = 1;
+    assert(!pxa_audio_decode_psg_voice(psg_record, sizeof(psg_record), &decoded));
+    psg.level = 16;
+    assert(!pxa_audio_encode_psg_voice(psg_record, sizeof(psg_record), &psg));
+    assert(!pxa_audio_psg_render(session, 1024, 64, 512, 2, 128));
+    psg_reply = 19;
+    assert(pxa_audio_psg_render(session, 1024, 64, 512, 2, 128) == PXA_STATUS_PROTOCOL_ERROR);
+    psg_reply = PXA_STATUS_UNSUPPORTED;
+    assert(pxa_audio_psg_render(session, 1024, 64, 512, 2, 128) == PXA_STATUS_UNSUPPORTED);
+    assert(pxa_audio_psg_render(session, 1024, 4096, 512, 8, 128) == PXA_STATUS_INVALID_ARGUMENT);
     uint8_t mix_record[32];
+    mix_reply = 16; assert(!pxa_audio_gb_psg_render(session, 256, 1024, 64));
+    mix_reply = 15; assert(pxa_audio_gb_psg_render(session, 256, 1024, 64) == PXA_STATUS_PROTOCOL_ERROR);
+    mix_reply = PXA_STATUS_UNSUPPORTED;
+    assert(pxa_audio_gb_psg_render(session, 256, 1024, 64) == PXA_STATUS_UNSUPPORTED);
+    assert(pxa_audio_gb_psg_render(session, 256, 1024, 129) == PXA_STATUS_INVALID_ARGUMENT);
+    mix_reply = 16;
     pxa_audio_mix_span_t mix = {.source_offset = 256, .source_bytes = 128,
         .position_q16 = 32768, .step_q16 = 65536, .target_first = 3, .frames = 64,
         .left_gain_q8 = 248, .right_gain_q8 = 8, .encoding = PXA_AUDIO_MIX_S8, .channels = 1};

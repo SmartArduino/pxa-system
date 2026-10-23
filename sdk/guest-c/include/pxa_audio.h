@@ -2,6 +2,7 @@
 #define PXA_GUEST_AUDIO_H
 
 #include "pxa_core.h"
+#include "pxa_audio_psg.h"
 
 #define PXA_AUDIO_SERVICE 10u
 #define PXA_AUDIO_OPEN_SESSION 1u

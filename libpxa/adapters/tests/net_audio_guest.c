@@ -15,6 +15,55 @@
 
 static uint64_t s_audio_session;
 static uint8_t s_audio_pcm[640];
+static _Alignas(4) int32_t s_psg_output[640];
+static uint8_t s_psg_voices[3 * PXA_AUDIO_PSG_VOICE_BYTES];
+static int8_t s_psg_wave[32];
+static uint8_t s_gb_psg[128];
+
+static int test_gb_psg(void) {
+    pxa_store_u16(s_gb_psg, 1); pxa_store_u32(s_gb_psg + 8, 64);
+    pxa_store_u32(s_gb_psg + 12, 2); pxa_store_u16(s_gb_psg + 24, 256);
+    s_gb_psg[26] = s_gb_psg[27] = 7;
+    pxa_store_u32(s_gb_psg + 40, 16384); pxa_store_u32(s_gb_psg + 56, 16384);
+    pxa_store_u32(s_gb_psg + 72, 8192); pxa_store_u32(s_gb_psg + 100, 16);
+    if (pxa_audio_gb_psg_render(s_audio_session, (uint32_t)(uintptr_t)s_gb_psg,
+        (uint32_t)(uintptr_t)s_psg_output, 128)) return 0;
+    return pxa_load_u16((const uint8_t *)s_psg_output) == (uint16_t)-6144 &&
+        pxa_load_u32(s_gb_psg + 4) == 8192;
+}
+
+/* Exercise real wasm offsets, not Host addresses, through WAMR's serialized
+ * pxa_io memory borrow. The output then uses the ordinary PCM playback path. */
+static int render_psg(void) {
+    pxa_audio_psg_voice_t v = {0};
+    v.waveform = PXA_AUDIO_PSG_PULSE; v.period = 1192;
+    v.left_gain_q8 = 32; v.right_gain_q8 = 32;
+    v.level = 15; v.pulse_mask = 15;
+    v.envelope_period = 65536; v.envelope_direction = -1;
+    if (!pxa_audio_encode_psg_voice(s_psg_voices, 40, &v)) return 0;
+    for (unsigned i = 0; i < 32; ++i) s_psg_wave[i] = (int8_t)((int)i * 8 - 128);
+    v.waveform = PXA_AUDIO_PSG_WAVE; v.period = 149;
+    v.pulse_mask = 0; v.table_offset = (uint32_t)(uintptr_t)s_psg_wave; v.table_length = 32;
+    if (!pxa_audio_encode_psg_voice(s_psg_voices + 40, 40, &v)) return 0;
+    v.waveform = PXA_AUDIO_PSG_NOISE; v.period = 64;
+    v.table_offset = 0; v.table_length = 0;
+    v.noise_width = 15; v.noise_tap = 1; v.cursor = 1;
+    if (!pxa_audio_encode_psg_voice(s_psg_voices + 80, 40, &v)) return 0;
+    if (pxa_audio_psg_render(s_audio_session, (uint32_t)(uintptr_t)s_psg_output,
+        320, (uint32_t)(uintptr_t)s_psg_voices, 3, 128)) return 0;
+    if (!pxa_audio_decode_psg_voice(s_psg_voices, 40, &v) ||
+        v.phase != 320u * 128 % 1192 || v.cursor != (320u * 128 / 1192) % 8 ||
+        v.envelope_phase != 320u * 128 || v.level != 15) return 0;
+    unsigned audible = 0;
+    for (unsigned i = 0; i < 320; ++i) {
+        int32_t sample = (s_psg_output[i * 2] + s_psg_output[i * 2 + 1]) / 2;
+        if (sample > 32767) sample = 32767;
+        if (sample < -32768) sample = -32768;
+        pxa_store_u16(s_audio_pcm + i * 2, (uint16_t)sample);
+        audible |= sample != 0;
+    }
+    return audible != 0;
+}
 
 static int32_t storage_set(uint64_t token, const char *key, size_t key_size) {
     uint8_t packet[96];
@@ -135,7 +184,7 @@ int32_t pxa_app_on_event(const uint8_t *event, uint32_t length) {
         int32_t status = 0;
         if (!pxa_audio_parse_status(&parsed, AUDIO_GRAPH_TOKEN,
                                      PXA_AUDIO_COMMIT_GRAPH, &status) ||
-            status != PXA_STATUS_OK ||
+            status != PXA_STATUS_OK || !render_psg() || !test_gb_psg() ||
             pxa_audio_write_pcm(s_audio_session, s_audio_pcm,
                                 sizeof(s_audio_pcm)) !=
                 (int32_t)sizeof(s_audio_pcm))

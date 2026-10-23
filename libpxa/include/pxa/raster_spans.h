@@ -7,7 +7,8 @@ enum {
     PXA_RASTER_SPANS_LINEAR = 0,
     PXA_RASTER_SPANS_PROJECTED = 1,
     PXA_RASTER_SPANS_FRAME = 2,
-    PXA_RASTER_SPANS_BLIT = 3
+    PXA_RASTER_SPANS_BLIT = 3,
+    PXA_RASTER_SPANS_PRIORITY_TILES = 4
 };
 
 typedef struct pxa_raster_prepared pxa_raster_prepared_t;
@@ -50,6 +51,11 @@ typedef struct {
             int32_t cursor_x, cursor_y;
             uint8_t exact_sampling;
         } blit;
+        struct {
+            const uint8_t *packet;
+            uint8_t *color;
+            uint32_t pitch;
+        } tiles;
     } state;
 } pxa_raster_spans_t;
 
@@ -75,13 +81,25 @@ pxa_status_t pxa_raster_frame_spans_prepare(const uint8_t *packet, size_t size,
 pxa_status_t pxa_raster_blit_validate(const uint8_t *packet, size_t size,
     uint8_t *memory, size_t memory_size, uint32_t max_spans,
     pxa_raster_spans_t *output);
+pxa_status_t pxa_raster_priority_tiles_validate(const uint8_t *packet, size_t size,
+    uint8_t *memory, size_t memory_size, uint32_t max_spans,
+    pxa_raster_spans_t *output);
 /* Disjoint byte ranges may execute concurrently; ordering inside each range
- * is unchanged. No allocation, locks, runtime calls or retained pointers. */
+ * is unchanged. For PRIORITY_TILES, target/target_bytes describe the priority
+ * plane; each byte owns its corresponding RGB565 pixel in state.tiles.color.
+ * No allocation, locks, runtime calls or retained pointers. */
 void pxa_raster_spans_execute_range(const pxa_raster_spans_t *batch,
     uint32_t begin, uint32_t end);
+/* Check additional output-plane alignment after the backend has aligned a
+ * split in target. A false result requires serial execution of this batch. */
+int pxa_raster_spans_partition_safe(const pxa_raster_spans_t *batch,
+    uint32_t split, uint32_t cache_line_bytes);
 /* Estimated work partition, in target bytes. primary_share is 1..255 out of
  * 256. Backends still align the boundary for their cache/coherency needs. */
 uint32_t pxa_raster_spans_split_hint(const pxa_raster_spans_t *batch, uint8_t primary_share);
+/* Priority-tile backends must return an error before executing any range.
+ * Once execution starts, finish/join every range and return OK. This permits
+ * callers to replay a rejected batch locally without saving both planes. */
 typedef pxa_status_t (*pxa_raster_spans_execute_fn)(void *context,
     const pxa_raster_spans_t *batch);
 #endif

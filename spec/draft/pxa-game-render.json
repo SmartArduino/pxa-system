@@ -1,11 +1,11 @@
 {
-  "schema": "pxa-game-render-spec-1.3",
+  "schema": "pxa-game-render-spec-1.4",
   "status": "draft",
   "service": {
     "name": "game-render",
     "id": 18,
     "major": 1,
-    "minor": 3,
+    "minor": 4,
     "patch": 0
   },
   "opcodes": [
@@ -101,6 +101,13 @@
       "payload": "64-byte indexed-blit descriptor",
       "result": "accepted-bytes",
       "semantics": "Synchronous borrowed INDEX8-to-RGB565LE rectangle. Exact nearest-neighbour sampling sx=floor(x*source-width/target-width), sy=floor(y*source-height/target-height), including 1:1. Same validation and transparent-zero cursor as 0x108; target offset/pitch allow a subrectangle. No writes on validation failure, no retained pointers. Disjoint target byte ranges may run concurrently and must join before return. The legacy 0x108 sampling is unchanged."
+    },
+    {
+      "name": "execute-priority-tiles",
+      "id": 266,
+      "payload": "priority-tiles-header|tile[count]|source-snapshots",
+      "result": "accepted-bytes",
+      "semantics": "Synchronous INDEX8 8x8 tile snapshots into RGB565LE color and u8 priority planes. Transparent index zero; write only when compare-depth exceeds destination priority, then store write-depth. Validate the entire packet before writes. Commands retain per-pixel order; disjoint priority byte ranges own the corresponding color pixels and may execute concurrently, joining before return. No display allocation or present."
     }
   ],
   "features": [
@@ -127,6 +134,10 @@
     {
       "name": "exact-indexed-blit",
       "bit": 5
+    },
+    {
+      "name": "priority-tile-batches",
+      "bit": 6
     }
   ],
   "create_flags": [
@@ -228,7 +239,7 @@
     "texture_dimension": 256,
     "palette_colors": 256
   },
-  "protocol_version": "1.3.0",
+  "protocol_version": "1.4.0",
   "indexed_spans": {
     "magic": 1347639376,
     "major": 1,
@@ -586,6 +597,118 @@
           "cursor_pitch",
           "u32"
         ]
+      ]
+    },
+    "tiles": {
+      "magic": 1280596048,
+      "header_bytes": 32,
+      "command_bytes": 24,
+      "max_packet_bytes": 262144,
+      "max_tiles": 4096,
+      "flags": {
+        "flip_x": 1,
+        "flip_y": 2
+      },
+      "header": [
+        [
+          "magic",
+          "u32"
+        ],
+        [
+          "major",
+          "u16"
+        ],
+        [
+          "minor",
+          "u16"
+        ],
+        [
+          "count",
+          "u32"
+        ],
+        [
+          "command_bytes",
+          "u32"
+        ],
+        [
+          "color_offset",
+          "u32"
+        ],
+        [
+          "priority_offset",
+          "u32"
+        ],
+        [
+          "pixel_count",
+          "u32"
+        ],
+        [
+          "pitch",
+          "u32"
+        ]
+      ],
+      "command": [
+        [
+          "destination",
+          "u32"
+        ],
+        [
+          "tile_offset",
+          "u32"
+        ],
+        [
+          "palette_offset",
+          "u32"
+        ],
+        [
+          "palette_entries",
+          "u16"
+        ],
+        [
+          "source_x",
+          "u8"
+        ],
+        [
+          "width",
+          "u8"
+        ],
+        [
+          "source_y",
+          "u8"
+        ],
+        [
+          "height",
+          "u8"
+        ],
+        [
+          "flags",
+          "u8"
+        ],
+        [
+          "compare_depth",
+          "u8"
+        ],
+        [
+          "write_depth",
+          "u8"
+        ],
+        [
+          "reserved0",
+          "u8"
+        ],
+        [
+          "reserved1",
+          "u16"
+        ]
+      ],
+      "semantics": [
+        "All fields little-endian. Version1.0; no reserved bits. Count1..min(context.max-spans,4096). Command-bytes equals32+count*24; source offsets are packet-relative and start at or after command-bytes. No implicit clipping or source masking.",
+        "Color and priority offsets address Guest linear memory, with pixel-count slots; color uses2bytes/slot, priority1byte/slot; pitch is slots/row. Both planes and the entire packet must be mutually disjoint. RGB565LE color is2-byte-aligned.",
+        "Each tile has64 INDEX8 bytes. Palette entries must be4,16,or256, each RGB565LE and2-byte-aligned. Every source index, including clipped pixels, must be smaller than palette-entries. Zero is transparent.",
+        "Source-x/y and width/height select a nonempty crop within8x8 in destination orientation. Flips apply to source coordinates after cropping: sx=flip-x?7-(source-x+x):source-x+x, similarly sy. Destination is the first cropped output pixel. Rows must fit the common pitch and both planes.",
+        "Borrowed command/source bytes remain immutable until return. The caller snapshots mutable cache/palette data before submission. Host writes neither source nor padding outside destination rectangles.",
+        "Parallel ranges use priority bytes as primary target units; color pixels follow the same indices. Each worker executes commands in order for its own pixels. Backends must satisfy cache/coherency alignment for both planes or use serial execution.",
+        "Any negative execution status leaves both output planes unchanged. A backend must reject before starting; after starting it must finish/join all ranges and return success. A caller may then render a rejected batch locally without an output-plane snapshot."
       ]
     }
   }

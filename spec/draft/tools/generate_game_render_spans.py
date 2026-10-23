@@ -37,7 +37,14 @@ def render(guest):
     blit = schema['blit']
     lines += ['#define PXA_GAME_RENDER_BLIT_BYTES %du' % blit['bytes'],
               '#define PXA_GAME_RENDER_BLIT_MAX_PIXELS UINT32_C(%d)' % blit['max_pixels']]
-    layouts = [(blit['fields'], 'blit', blit['bytes']),
+    tiles = schema['tiles']
+    for name in ['magic', 'header_bytes', 'command_bytes', 'max_packet_bytes', 'max_tiles']:
+        lines.append('#define PXA_GAME_RENDER_TILES_%s UINT32_C(%d)' % (name.upper(), tiles[name]))
+    for name, value in tiles['flags'].items():
+        lines.append('#define PXA_GAME_RENDER_TILES_%s %du' % (name.upper(), value))
+    layouts = [(tiles['header'], 'tiles_header', tiles['header_bytes']),
+               (tiles['command'], 'tile', tiles['command_bytes']),
+               (blit['fields'], 'blit', blit['bytes']),
                (frame['header'], 'frame_header', frame['header_bytes']),
                (schema['header'], 'spans_header', schema['header_bytes']),
                (schema['span'], 'span', schema['span_bytes']),
