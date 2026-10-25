@@ -227,6 +227,15 @@ int pxa_wamr_engine_poll_component_deadline(pxa_wamr_engine_t *engine,
 int pxa_wamr_engine_take_expired_deadline(pxa_wamr_engine_t *engine,
                                           uint64_t now_us);
 
+/* True until the reported call ends, reaches a valid event wait, or the Host
+ * resolves it. A later call does not keep an older timeout prompt alive. */
+int pxa_wamr_engine_expired_call_pending(const pxa_wamr_engine_t *engine);
+/* Atomically act only on the reported, still unresponsive call. Returns zero
+ * after recovery, preventing stale UI decisions from stopping a healthy call.
+ * wait != 0 grants another timeout interval; wait == 0 terminates that call. */
+int pxa_wamr_engine_resolve_expired_call(pxa_wamr_engine_t *engine,
+                                        int wait, uint64_t now_us);
+
 /* Extend an active call from now by its configured deadline. */
 int pxa_wamr_engine_extend_active_deadline(pxa_wamr_engine_t *engine,
                                            uint64_t now_us);
