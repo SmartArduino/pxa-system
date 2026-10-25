@@ -95,10 +95,25 @@ class Jobs:
         if complete and 'scope' not in job:
             from .scope import check
             job['scope'] = check(self.env.workspace)
+        batch = None
+        if complete and job.get('batch_output'):
+            result_path = job['batch_output'] / 'result.json'
+            try:
+                if result_path.stat().st_size <= 65536:
+                    batch = json.loads(result_path.read_text())
+                    if not isinstance(batch, dict):
+                        batch = None
+            except (OSError, ValueError):
+                pass
         return {'job_id': identity, 'running': not complete, 'scope': job.get('scope'),
                 'passed': (job['process'].returncode == 0 and not job['timed_out']
-                           and not job.get('scope', {}).get('violations')) if complete else None,
+                           and not job.get('cancel_requested') and not job.get('scope', {}).get('violations')
+                           and (not job.get('batch_output') or bool(batch and batch.get('runtime_passed')
+                                and batch.get('input_released') and not batch.get('cancelled')))) if complete else None,
                 'returncode': job['process'].poll(), 'timed_out': job['timed_out'],
+                'cancelled': bool(job.get('cancel_requested') or batch and batch.get('cancelled')),
+                **({'batch':batch} if complete and job.get('batch_output') else {}),
+                **({'cancellation_error':job['cancellation_error']} if job.get('cancellation_error') else {}),
                 'elapsed_seconds': round(time.monotonic() - job['started'], 2),
                 'log': str(log), 'log_tail': text if include_log else '', 'simulator': job.get('selector')}
 
@@ -106,6 +121,25 @@ class Jobs:
         job = self.get(identity)
         if job.get('interaction_job'):
             self.stop(job['interaction_job'])
+        process = job['process']
+        if job.get('cancel_file') and process.poll() is None:
+            # Killing docker/podman exec only disconnects the host client. Ask
+            # the worker inside the owned container to stop and release input.
+            job['cancel_requested'] = True
+            job['cancel_file'].touch()
+            try:
+                process.wait(timeout=35)
+            except subprocess.TimeoutExpired:
+                job['cancellation_error'] = 'Worker did not acknowledge cancellation; stopped its owned simulator'
+                owner = self.get(job['batch_owner'])
+                owner['cancel_requested'] = True
+                self._terminate(owner)
+                self._terminate(job)
+        else:
+            self._terminate(job)
+        return self.status(identity)
+
+    def _terminate(self, job):
         process = job['process']
         if process.poll() is None:
             if job['container']:
@@ -123,7 +157,6 @@ class Jobs:
                 else:
                     os.killpg(process.pid, signal.SIGKILL)
                 process.wait(timeout=6)
-        return self.status(identity)
 
     def simulator(self, identity, arguments):
         with self.input_locks.setdefault(identity, Lock()):
@@ -184,13 +217,16 @@ class Jobs:
         output = evidence(self.env.workspace, 'pxa-interact')
         output.rmdir()
         helper = KIT / 'pxa_agent/simulator_batch.py'
+        cancel_file = output.with_suffix('.cancel')
         sdk = self.env.config.get('sdk') if self.env.native else '/opt/pxa'
         arguments = ['--sdk', sdk, '--simulator', state['simulator'],
-                     '--steps', json.dumps(steps), '--output', self.env.mapped(output)]
+                     '--steps', json.dumps(steps), '--output', self.env.mapped(output),
+                     '--cancel-file', self.env.mapped(cancel_file)]
         command = ([sys.executable, helper, *arguments] if self.env.native else
             [self.env.config['engine'], 'exec', owner['container'], '/opt/pxa/runtime/python/bin/python3',
              '/pxa-agent-kit/pxa_agent/simulator_batch.py', *arguments])
         job = self.start(command, host=True, timeout=180)
+        self.get(job['job_id']).update(batch_output=output, cancel_file=cancel_file, batch_owner=identity)
         owner['interaction_job'] = job['job_id']
         return {**job, 'output':str(output), 'result':str(output / 'result.json'),
                 'screenshots':[str(output / (s['name']+'.png')) for s in steps if s['action']=='screenshot'],

@@ -1,4 +1,8 @@
 import json
+import signal
+import subprocess
+import threading
+import time
 from pathlib import Path
 import tempfile
 from types import SimpleNamespace
@@ -84,10 +88,87 @@ class BatchTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             batch.execute(self.root/'sdk', '/dev/ttyUSB0', self.steps, self.output)
 
+    def test_cancel_before_start_opens_no_session(self):
+        cancel = self.root/'cancel'
+        cancel.touch()
+        with patch.object(batch, 'load_sdk', return_value=self.module), patch.object(batch, 'inject') as release:
+            with self.assertRaises(batch.BatchCancelled):
+                batch.execute(self.root/'sdk','pai-touch@app-owned',self.steps,self.output,cancel_file=cancel)
+        self.module.open_client.assert_not_called()
+        release.assert_not_called()
+        result = json.loads((self.output/'result.json').read_text())
+        self.assertTrue(result['cancelled'])
+        self.assertFalse(result['runtime_passed'])
+
+    def test_cancel_interrupts_wait_and_never_executes_later_input(self):
+        cancel = self.root/'cancel'
+        timer = threading.Timer(.15, cancel.touch)
+        previous = signal.getsignal(signal.SIGINT)
+        timer.start()
+        started = time.monotonic()
+        try:
+            with patch.object(batch, 'load_sdk', return_value=self.module), patch.object(batch, 'inject') as release:
+                with self.assertRaises(batch.BatchCancelled):
+                    batch.execute(self.root/'sdk','pai-touch@app-owned',[
+                        {'name':'waiting','action':'wait','ms':5000}, *self.steps],self.output,cancel_file=cancel)
+            release.assert_called_once()
+        finally:
+            timer.join()
+        self.assertLess(time.monotonic()-started, 2)
+        self.assertEqual(signal.getsignal(signal.SIGINT), previous)
+        self.assertEqual([c.args[0] for c in self.client.request.call_args_list], ['INFO'])
+        result = json.loads((self.output/'result.json').read_text())
+        self.assertTrue(result['cancelled'])
+        self.assertTrue(result['input_released'])
+        self.assertFalse(result['runtime_passed'])
+
+    def test_cleanup_cannot_be_interrupted_by_late_cancellation(self):
+        cancel = self.root/'cancel'
+        def release(*args, **kwargs):
+            cancel.touch()
+            time.sleep(.1)
+        with patch.object(batch,'load_sdk',return_value=self.module), patch.object(batch,'inject',side_effect=release):
+            result = batch.execute(self.root/'sdk','pai-touch@app-owned',self.steps,self.output,cancel_file=cancel)
+        self.assertTrue(result['input_released'])
+
+    def test_unresponsive_worker_stops_only_its_owned_simulator(self):
+        jobs = Jobs(Environment(self.root, {'engine':'podman','image':'test'}))
+        process = MagicMock()
+        process.poll.return_value = None
+        process.wait.side_effect = subprocess.TimeoutExpired('exec',35)
+        owner = {'container':'owned-simulator'}
+        job = {'process':process,'cancel_file':self.root/'cancel','batch_owner':'owner'}
+        jobs.jobs.update(owner=owner,batch=job)
+        with patch.object(jobs,'_terminate') as terminate, patch.object(jobs,'status',return_value={}):
+            jobs.stop('batch')
+        self.assertTrue(job['cancel_file'].exists())
+        self.assertEqual([c.args[0] for c in terminate.call_args_list], [owner,job])
+        self.assertTrue(owner['cancel_requested'])
+        self.assertIn('cancellation_error',job)
+
+    def test_finished_status_includes_batch_and_cancellation_never_passes(self):
+        jobs = Jobs(Environment(self.root, {'engine':'podman','image':'test'}))
+        self.output.mkdir()
+        result = {'runtime_passed':True,'input_released':True,'cancelled':False,'steps':[]}
+        (self.output/'result.json').write_text(json.dumps(result))
+        process = MagicMock(returncode=0)
+        process.poll.return_value = 0
+        job = {'process':process,'done':True,'directory':self.output,'batch_output':self.output,
+               'started':time.monotonic(),'timed_out':False,'scope':{'violations':[]}}
+        jobs.jobs['batch'] = job
+        state = jobs.status('batch')
+        self.assertTrue(state['passed'])
+        self.assertEqual(state['batch'],result)
+        job['cancel_requested'] = True
+        state = jobs.status('batch')
+        self.assertFalse(state['passed'])
+        self.assertTrue(state['cancelled'])
+
     def test_overlapping_input_is_rejected_and_only_owned_container_is_used(self):
         env = Environment(self.root, {'engine':'podman','image':'test'})
         jobs = Jobs(env)
         jobs.jobs['owner'] = {'container':'owned-container'}
+        jobs.jobs['batch'] = {}
         def status(identity, **kwargs):
             return {'running':True,'simulator':'pai-touch@app-owned'}
         with patch.object(jobs,'status',side_effect=status), patch.object(jobs,'start',return_value={'job_id':'batch'}) as start:

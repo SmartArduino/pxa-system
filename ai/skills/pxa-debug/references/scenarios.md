@@ -36,3 +36,11 @@ already exist. Runtime success is not visual approval. Pause between batches
 whenever the next action depends on what appeared. Other commands to the same
 simulator are rejected until the batch finishes. The live batch tool only
 targets this server's owned simulator, never physical USB devices.
+
+`pxa_job_status` includes the completed `batch` result, so an extra file read
+is optional. Check `passed`, `cancelled` and `batch.input_released`; a cancelled
+job is never a passing test. Use `pxa_job_stop` with the batch job ID to cancel
+without closing the simulator. It waits for the actual worker to release input;
+if that worker does not respond, it stops only its owned simulator. Inspect the
+current screen before issuing new steps, and never replay an entire cancelled
+batch: earlier actions may already have taken effect.

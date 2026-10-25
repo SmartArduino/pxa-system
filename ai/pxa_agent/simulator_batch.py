@@ -2,13 +2,16 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
 import hashlib
 import importlib.util
 import json
 import os
 from pathlib import Path
 import re
+import signal
 import sys
+import threading
 import time
 import tomllib
 
@@ -16,6 +19,58 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from pxa_agent.simulator_input import inject
 
 NAME = re.compile(r'[a-z][a-z0-9-]{0,47}')
+
+
+class BatchCancelled(RuntimeError):
+    pass
+
+
+@contextmanager
+def cancellation(path):
+    """Interrupt the actual worker, including container exec, via its shared file."""
+    if path is None:
+        yield (lambda: None), (lambda: None)
+        return
+    path = Path(path)
+    if path.exists():
+        raise BatchCancelled('Interaction cancelled before execution')
+    finished = threading.Event()
+    previous = {sig: signal.getsignal(sig) for sig in (signal.SIGINT, signal.SIGTERM)}
+
+    def interrupted(signum, frame):
+        # Let the finally blocks finish releasing input without a second signal.
+        finished.set()
+        for sig in previous:
+            signal.signal(sig, signal.SIG_IGN)
+        raise BatchCancelled('Interaction cancelled')
+
+    def watch():
+        while not finished.wait(.05):
+            if path.exists():
+                os.kill(os.getpid(), signal.SIGINT)
+                return
+
+    for sig in previous:
+        signal.signal(sig, interrupted)
+    watcher = threading.Thread(target=watch, daemon=True)
+    watcher.start()
+
+    def check():
+        if path.exists():
+            interrupted(None, None)
+
+    def stop():
+        finished.set()
+        for sig in previous:
+            signal.signal(sig, signal.SIG_IGN)
+        watcher.join()
+
+    try:
+        yield check, stop
+    finally:
+        stop()
+        for sig, handler in previous.items():
+            signal.signal(sig, handler)
 
 
 def validate(steps, width, height):
@@ -59,7 +114,7 @@ def load_sdk(root):
     return module
 
 
-def execute(sdk, selector, steps, output, *, socket_root=None):
+def execute(sdk, selector, steps, output, *, socket_root=None, cancel_file=None):
     if not re.fullmatch(r'[a-z0-9-]+@[a-z0-9-]+', selector):
         raise ValueError('Use an explicit owned simulator selector, never a device port')
     profile = selector.split('@', 1)[0]
@@ -69,18 +124,20 @@ def execute(sdk, selector, steps, output, *, socket_root=None):
     sockets = Path(socket_root or os.environ.get('PXA_SIMULATOR_SOCKET_ROOT', f'/tmp/pxa-simulator-{os.getuid()}'))
     output = Path(output)
     output.mkdir(parents=True, exist_ok=False)
-    result = {'schema':'pxa-simulator-batch-1', 'runtime_passed':False,
+    result = {'schema':'pxa-simulator-batch-1', 'runtime_passed':False, 'cancelled':False,
               'visual_review_required':True, 'physical_device_tested':False,
               'selector':selector, 'steps':[], 'screenshots':[], 'input_released':False}
     connected = False
     started = time.monotonic()
     try:
         # Reuse the SDK implementation and one HELLO/session for the whole batch.
-        with module.open_client('unix:' + str(sockets / (selector + '.sock')), 5) as client:
+        with cancellation(cancel_file) as (check_cancel, stop_monitor), \
+                module.open_client('unix:' + str(sockets / (selector + '.sock')), 5) as client:
             connected = True
             try:
                 result['info'] = client.request('INFO')[-1].payload
                 for step in steps:
+                    check_cancel()
                     action, before = step['action'], time.monotonic()
                     if action == 'tap':
                         client.request(f"INPUT TAP {step['x']} {step['y']}")
@@ -103,11 +160,13 @@ def execute(sdk, selector, steps, output, *, socket_root=None):
                                             'elapsed_ms':round((time.monotonic()-before)*1000, 2)})
             finally:
                 # Never replay a failed write. Release every input, even on errors.
+                stop_monitor()
                 inject(selector, socket_root=sockets)
                 result['input_released'] = True
         result['runtime_passed'] = True
         return result
     except BaseException as error:
+        result['cancelled'] = isinstance(error, BatchCancelled)
         result['error'] = str(error) or type(error).__name__
         result['connected'] = connected
         raise
@@ -122,9 +181,10 @@ def main():
     parser.add_argument('--simulator', required=True)
     parser.add_argument('--steps', required=True)
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--cancel-file', type=Path)
     args = parser.parse_args()
     try:
-        result = execute(args.sdk, args.simulator, json.loads(args.steps), args.output)
+        result = execute(args.sdk, args.simulator, json.loads(args.steps), args.output, cancel_file=args.cancel_file)
         print(json.dumps(result, ensure_ascii=False))
         return 0
     except (ValueError, RuntimeError, OSError) as error:

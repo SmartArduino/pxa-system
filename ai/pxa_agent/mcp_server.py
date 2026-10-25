@@ -151,7 +151,9 @@ def create_server(env):
 
     @tool()
     def pxa_job_stop(job_id: str) -> dict:
-        """Stop only this server's job and its owned Guest/container."""
+        """Stop this server's job. Batch cancellation releases input and keeps its simulator available;
+        an unresponsive worker forces its owned simulator to stop. Never replay cancelled steps.
+        """
         return jobs.stop(job_id)
 
     @tool()
@@ -160,7 +162,8 @@ def create_server(env):
 
         Each step has unique name and action. Tap: x,y; swipe: x,y,x2,y2,ms;
         controller: buttons,ms; wait: ms. Up to 8 screenshots and 15 seconds of
-        holds/waits. Returns a job and evidence paths; inspect images afterward.
+        holds/waits. Returns a job and evidence paths. Poll pxa_job_status for the
+        final batch result, then inspect images. Use pxa_job_stop to cancel.
         """
         return jobs.interact(job_id, steps)
 

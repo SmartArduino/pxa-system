@@ -1,4 +1,4 @@
-# PXA Agent Kit 0.3.2
+# PXA Agent Kit 0.3.3
 
 [中文](README.md) · [Tutorial](https://pxa.doit.am/docs/ai-development/)
 
@@ -33,7 +33,7 @@ Official firmware: `firmware prepare --board <board>` downloads and verifies wit
 
 Publishing: `store authorize <project> <package> --wait` opens browser login and one-app approval. Local P-256 signing proves key possession; private keys remain local. An app-scoped 30-day upload credential is stored privately outside the project, never printed in logs or command arguments. Existing listings are reused without overwriting metadata. `store publish <project> <package>` submits the exact signed bytes for review, optionally with `--icon` and `--screenshot`. It does not bypass store review. See the Chinese README for offline installation, integration locations and limitations.
 
-## Scoped workflows in 0.3.2
+## Scoped workflows in 0.3.3
 
 Create real C projects with `init apps/demo --id pxa-demo --language c`; C++ remains the default.
 Use `context apps/demo --query ui --language c` for bounded declarations and examples from the pinned SDK. Keep incremental build caches; verify one affected screen during iteration and the required profile matrix before delivery. Scenarios now support controller holds and automatic input cancellation.
@@ -63,3 +63,10 @@ A batch permits 1–32 ordered steps, 8 screenshots and 15 seconds of holds/wait
 Poll its returned job before reading evidence, then inspect original images.
 Do not overlap inputs on the same simulator; split a batch whenever the next
 action depends on a visual result. CLI users can use `verify --scenario`.
+
+Completed batch jobs include their `batch` result in `pxa_job_status`.
+Use `pxa_job_stop` to cancel the actual worker and release input, including
+inside containers. Normal cancellation keeps the simulator available; an
+unresponsive worker forces only its owned simulator to stop. Cancellation
+never passes verification. Inspect current state before continuing instead
+of replaying steps that may already have taken effect.
