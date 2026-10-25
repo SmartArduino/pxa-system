@@ -32,6 +32,14 @@ int32_t pxa_app_on_event(const uint8_t *data, uint32_t size) {
         return PXA_EVENT_HANDLED;
     }
     REQUIRE(event.token == 1);
+    if (mode == 5 || mode == 6) {
+        REQUIRE(control(6) == 0); // Report a timeout while this call is live.
+        if (mode == 6) {
+            REQUIRE(pxa_event_port_wait(port, bytes, sizeof(bytes), 0) == PXA_STATUS_WOULD_BLOCK);
+            REQUIRE(control(7) == 0); // A cooperative loop has recovered too.
+        }
+        return PXA_EVENT_HANDLED;
+    }
     if (mode == 1 || mode == 4) {
         REQUIRE(control(mode == 1 ? 3 : 5) == 0);
         (void)pxa_event_port_wait(port, bytes, sizeof(bytes), 1000000);

@@ -132,6 +132,7 @@ struct pxa_wamr_engine {
     wasm_module_inst_t executing_module;
     uint8_t busy;
     uint8_t terminate_requested;
+    uint8_t expired_call_pending;
     uint8_t wasi_enabled;
     uint8_t seekable_artifacts;
     uint8_t *pool;
@@ -766,11 +767,17 @@ static int32_t wait_event(pxa_wamr_entry_t *entry, uint64_t handle,
     entered = engine->now_us(engine->host_context);
     if (entered > UINT64_MAX - timeout) return PXA_STATUS_INVALID_ARGUMENT;
     until = entered + timeout;
-    /* A wait is a cooperative execution boundary, like returning a callback.
-     * Never erase an already overdue deadline or an operator decision. While
+    /* A valid event wait is a cooperative execution boundary. Reaching it
+     * recovers a reported timeout, even in a main loop that never returns.
+     * An unreported overdue deadline still belongs to the watchdog. While
      * native maintenance owns the thread, UINT64_MAX suspends the deadline;
      * an external terminate sets it to zero and wins over restoration. */
     engine_enter_critical(engine);
+    if (engine->expired_call_pending && !engine->terminate_requested) {
+        engine->expired_call_pending = 0;
+        engine->executing_deadline_us = UINT64_MAX;
+        paused = 1;
+    }
     if (engine->executing_deadline_us > entered && engine->executing_deadline_us != UINT64_MAX) {
         engine->executing_deadline_us = UINT64_MAX;
         paused = 1;
@@ -912,6 +919,7 @@ static int call(pxa_wamr_engine_t *engine, pxa_wamr_entry_t *entry,
     }
     engine->busy = 1;
     engine->terminate_requested = 0;
+    engine->expired_call_pending = 0;
     entry->cooperative_cancelled = 0;
     engine->executing_module = entry->module_instance;
     engine->executing_deadline_us = deadline;
@@ -926,6 +934,7 @@ static int call(pxa_wamr_engine_t *engine, pxa_wamr_entry_t *entry,
         }
         engine->executing_module = NULL;
         engine->executing_deadline_us = 0;
+        engine->expired_call_pending = 0;
         engine->busy = 0;
     }
     engine_leave_critical(engine);
@@ -1297,10 +1306,41 @@ int pxa_wamr_engine_take_expired_deadline(pxa_wamr_engine_t *engine,
         engine->executing_deadline_us != 0 &&
         now_us >= engine->executing_deadline_us) {
         engine->executing_deadline_us = 0;
+        engine->expired_call_pending = 1;
         expired = 1;
     }
     engine_leave_critical(engine);
     return expired;
+}
+
+int pxa_wamr_engine_expired_call_pending(const pxa_wamr_engine_t *engine) {
+    int pending;
+    if (!engine || engine->magic != PXA_WAMR_ENGINE_MAGIC) return 0;
+    engine_enter_critical(engine);
+    pending = engine->expired_call_pending != 0;
+    engine_leave_critical(engine);
+    return pending;
+}
+
+int pxa_wamr_engine_resolve_expired_call(pxa_wamr_engine_t *engine,
+                                        int wait, uint64_t now_us) {
+    int handled = 0;
+    if (!engine || engine->magic != PXA_WAMR_ENGINE_MAGIC ||
+        (wait && now_us > UINT64_MAX - engine->call_timeout_us)) return 0;
+    engine_enter_critical(engine);
+    // A late dialog click must not stop a new, healthy call or another app.
+    if (engine->executing_module && engine->expired_call_pending) {
+        engine->expired_call_pending = 0;
+        if (wait) engine->executing_deadline_us = now_us + engine->call_timeout_us;
+        else {
+            engine->executing_deadline_us = 0;
+            engine->terminate_requested = 1;
+            wasm_runtime_terminate(engine->executing_module);
+        }
+        handled = 1;
+    }
+    engine_leave_critical(engine);
+    return handled;
 }
 
 int pxa_wamr_engine_poll_component_deadline(pxa_wamr_engine_t *engine,
@@ -1336,6 +1376,7 @@ int pxa_wamr_engine_extend_active_deadline(pxa_wamr_engine_t *engine,
     if (engine->executing_module != NULL && engine->call_timeout_us != 0 &&
         engine->executing_deadline_us == 0) {
         engine->executing_deadline_us = now_us + engine->call_timeout_us;
+        engine->expired_call_pending = 0;
         extended = 1;
     }
     engine_leave_critical(engine);

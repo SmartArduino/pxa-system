@@ -36,7 +36,9 @@ static pxa_status_t cooperate(void *opaque, pxa_component_t component, uint64_t 
     }
     if (ctx->phase == 4) {
         assert(pxa_wamr_engine_take_expired_deadline(ctx->engine, ctx->now));
-        assert(pxa_wamr_engine_extend_active_deadline(ctx->engine, ctx->now));
+        assert(pxa_wamr_engine_expired_call_pending(ctx->engine));
+        assert(pxa_wamr_engine_resolve_expired_call(ctx->engine, 1, ctx->now));
+        assert(!pxa_wamr_engine_expired_call_pending(ctx->engine));
         ++ctx->overdue_decisions; ctx->phase = 0;
     }
     if (ctx->phase == 1 || ctx->phase == 2) {
@@ -61,6 +63,15 @@ static pxa_status_t control(void *opaque, pxa_runtime_t *runtime,
     if (message->opcode >= 1000) fprintf(stderr, "Guest requirement failed at line %u\n", message->opcode - 1000);
     else if (message->opcode == 100) ++ctx->done;
     else if (message->opcode == 101) ++ctx->unexpected;
+    else if (message->opcode == 6) {
+        ctx->now += 2000;
+        assert(pxa_wamr_engine_take_expired_deadline(ctx->engine, ctx->now));
+        assert(pxa_wamr_engine_expired_call_pending(ctx->engine));
+    } else if (message->opcode == 7) {
+        assert(pxa_wamr_engine_busy(ctx->engine));
+        assert(!pxa_wamr_engine_expired_call_pending(ctx->engine));
+        assert(!pxa_wamr_engine_resolve_expired_call(ctx->engine, 0, ctx->now));
+    }
     else {
         ctx->phase = message->opcode;
         if (ctx->phase == 4) ctx->now += 2000;
@@ -131,7 +142,12 @@ static void run(unsigned mode, unsigned minor, unsigned flags, int has_backend,
             pxa_wamr_event_result_t result;
             status = pxa_wamr_engine_deliver_event_result(engine, runtime, component, &result);
             if (mode == 2) assert(status == PXA_STATUS_INTERNAL && !result.cooperative_cancelled);
-            else {
+            else if (mode == 5 || mode == 6) {
+                assert(status == PXA_STATUS_OK && !result.cooperative_cancelled);
+                assert(!pxa_wamr_engine_expired_call_pending(engine));
+                assert(!pxa_wamr_engine_resolve_expired_call(engine, 0, context.now));
+                assert(!pxa_wamr_engine_resolve_expired_call(engine, 1, context.now));
+            } else {
                 assert(status == PXA_STATUS_OK);
                 assert(result.cooperative_cancelled == (mode == 1 || mode == 4));
                 assert(context.checkpoints && context.checkpoints == context.reentries_rejected);
@@ -161,6 +177,8 @@ int main(int argc, char **argv) {
     run(1, 1, PXA_PACKAGE_COMPONENT_FLAG_MAIN_LOOP, 1, PXA_STATUS_OK);
     run(2, 1, PXA_PACKAGE_COMPONENT_FLAG_MAIN_LOOP, 1, PXA_STATUS_OK);
     run(4, 1, PXA_PACKAGE_COMPONENT_FLAG_MAIN_LOOP, 1, PXA_STATUS_OK);
+    run(5, 1, PXA_PACKAGE_COMPONENT_FLAG_MAIN_LOOP, 1, PXA_STATUS_OK);
+    run(6, 1, PXA_PACKAGE_COMPONENT_FLAG_MAIN_LOOP, 1, PXA_STATUS_OK);
     run(3, 0, 0, 1, PXA_STATUS_OK);
     run(3, 1, 0, 1, PXA_STATUS_OK);
     run(0, 0, PXA_PACKAGE_COMPONENT_FLAG_MAIN_LOOP, 1, PXA_STATUS_UNSUPPORTED);
