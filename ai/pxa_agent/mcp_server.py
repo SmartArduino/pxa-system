@@ -155,8 +155,9 @@ def create_server(env):
         return jobs.stop(job_id)
 
     @tool()
-    def pxa_verify(project: str, profiles: list[Profile] | None = None, scenario: str | None = None) -> dict:
-        """Run repeatable multi-screen Guest checks. Read result.json and inspect screenshots after the job finishes."""
+    def pxa_verify(project: str, profiles: list[Profile] | None = None, scenario: str | None = None,
+                   store_screenshots: bool = False) -> dict:
+        """Run real Guest checks. For store images hide navigation at capture time; inspect every original PNG."""
         path = env.project(project)
         env.ensure_identity(path)
         arguments = ['verify', str(path)]
@@ -164,6 +165,8 @@ def create_server(env):
             arguments += ['--profiles', *profiles]
         if scenario:
             arguments += ['--scenario', str(env.project(scenario))]
+        if store_screenshots:
+            arguments.append('--store-screenshots')
         return host_job(arguments)
 
     @tool(annotations=read)

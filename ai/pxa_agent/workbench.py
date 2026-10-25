@@ -34,6 +34,9 @@ class Jobs:
         env = {**self.env.variables(), 'PYTHONUNBUFFERED': '1'}
         if headless:
             env.update(SDL_VIDEODRIVER='dummy', SDL_AUDIODRIVER='dummy')
+            if name:
+                image = command.index(self.env.config['image'])
+                command[image:image] = ['-e', 'SDL_VIDEODRIVER=dummy', '-e', 'SDL_AUDIODRIVER=dummy']
         process = subprocess.Popen(command, cwd=self.env.workspace, env=env, stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT, start_new_session=os.name != 'nt',
             **({'creationflags': subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == 'nt' else {}))
@@ -158,7 +161,7 @@ class Jobs:
             self.stop(identity)
 
 
-def verification(environment, project, *, profiles=None, scenario=None, headless=True):
+def verification(environment, project, *, profiles=None, scenario=None, headless=True, store_screenshots=False):
     project = environment.project(project)
     # Evidence must stay outside the app; keeping apps in apps/<name> also keeps
     # screenshots out of source/resource discovery and signing inputs.
@@ -177,6 +180,8 @@ def verification(environment, project, *, profiles=None, scenario=None, headless
         arguments += ['--scenario', environment.project(scenario)]
     if headless:
         arguments.append('--headless')
+    if store_screenshots:
+        arguments.append('--store-screenshots')
     if not environment.native:
         arguments[0] = '/pxa-agent-kit/skills/pxa-debug/scripts/verify_app.py'
     log = output.with_suffix('.log')
@@ -195,6 +200,7 @@ def verification(environment, project, *, profiles=None, scenario=None, headless
     enforce(environment.workspace)
     document = json.loads(path.read_text()) if path.is_file() else {'runtime_passed': False}
     return {'runtime_passed': returncode == 0 and document.get('runtime_passed', False),
+            'capture': document.get('capture'),
             'visual_review_required': True, 'result': str(path), 'output': str(output),
             'log': str(log), 'returncode': returncode,
             'screenshots': [str(path) for path in sorted(output.rglob('*.png'))]}

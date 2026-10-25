@@ -63,6 +63,7 @@ def parser():
     verify.add_argument('--profiles', nargs='+')
     verify.add_argument('--scenario')
     verify.add_argument('--window', action='store_true')
+    verify.add_argument('--store-screenshots', action='store_true')
     install = commands.add_parser('install', help='build for the connected CPU, install and start the app')
     install.add_argument('project')
     install.add_argument('--port', required=True)
@@ -200,7 +201,8 @@ def main():
                 return 0
             elif args.command == 'verify':
                 from .workbench import verification
-                result = verification(env, args.project, profiles=args.profiles, scenario=args.scenario, headless=not args.window)
+                result = verification(env, args.project, profiles=args.profiles, scenario=args.scenario,
+                                      headless=not args.window, store_screenshots=args.store_screenshots)
             elif args.command == 'install':
                 from .workbench import install_app
                 result = install_app(env, args.project, port=args.port, baud=args.baud)

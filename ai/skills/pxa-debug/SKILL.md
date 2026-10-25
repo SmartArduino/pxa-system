@@ -28,3 +28,17 @@ For interaction, read [scenario format](references/scenarios.md), supply `--scen
 For manual live debugging, run `pxa run <project> --debug --watch` and use the exact emitted selector with `pxa device info`, `input`, `screenshot`, `package list` or `memory`. A failed watch rebuild should retain the previous running Guest. Inspect build diagnostics for compiler errors, actual INFO/Core/CPU/AOT capabilities for incompatibility, and package/public-key identity for verification errors. Do not conceal errors by restarting forever or changing ABI/budgets without evidence.
 
 Use [measurement notes](references/measurements.md) when profiling games or device memory. After a fix, repeat the failing action and relevant screen profiles; broader checks are needed only if a new failure or cross-cutting change warrants them. Report what was actually displayed and changed, not just command exit codes. Hardware validation belongs to `$pxa-device-test` if installed.
+
+## Store screenshots
+
+Use `.pxa/pxa verify apps/<name> --profiles pai-touch --store-screenshots`
+(or MCP `pxa_verify(store_screenshots=true)`) to capture the real PXA Guest
+with system navigation hidden at startup. Disable any performance overlay
+before capture, including app-owned debug UI. Inspect every original PNG
+before upload: no performance overlay, bottom gesture bar or three-button
+navigation. Never crop or edit an image to conceal these elements.
+The result records capture settings and original SHA-256 hashes;
+runtime success does not imply visual approval.
+
+For environment, build, device or publishing failures, use the
+[troubleshooting guide](https://pxa.doit.am/docs/ai-troubleshooting/).

@@ -1,4 +1,4 @@
-# PXA Agent Kit 0.3.0
+# PXA Agent Kit 0.3.1
 
 [中文](README.md) · [Tutorial](https://pxa.doit.am/docs/ai-development/)
 
@@ -33,7 +33,7 @@ Official firmware: `firmware prepare --board <board>` downloads and verifies wit
 
 Publishing: `store authorize <project> <package> --wait` opens browser login and one-app approval. Local P-256 signing proves key possession; private keys remain local. An app-scoped 30-day upload credential is stored privately outside the project, never printed in logs or command arguments. Existing listings are reused without overwriting metadata. `store publish <project> <package>` submits the exact signed bytes for review, optionally with `--icon` and `--screenshot`. It does not bypass store review. See the Chinese README for offline installation, integration locations and limitations.
 
-## Scoped workflows in 0.3.0
+## Scoped workflows in 0.3.1
 
 Create real C projects with `init apps/demo --id pxa-demo --language c`; C++ remains the default.
 Use `context apps/demo --query ui --language c` for bounded declarations and examples from the pinned SDK. Keep incremental build caches; verify one affected screen during iteration and the required profile matrix before delivery. Scenarios now support controller holds and automatic input cancellation.
@@ -44,3 +44,15 @@ For board work, read https://pxa.doit.am/board-agent.md and use a separate firmw
 `uv run --python 3.12 https://pxa.doit.am/setup.py --workspace . --mode board`.
 This installs skills/MCP without installing an app DevKit or ESP-IDF. Use that checkout's documented firmware toolchain.
 `board init my-board --target esp32s3 --reference pai-touch` generates board-local callbacks and an explicit bring-up gate. Complete schematic-backed hardware facts and real drivers/partitions before `board check` and `board build` can pass. The pxa-board-port skill and optional pxa-board-developer role restrict writes to the selected BSP/profile/generated dependency lock. Keep SDK, PXA interfaces and shared code unchanged; new CPU backends are separate platform work. Static readiness is not physical acceptance.
+
+## Context and store captures
+
+Context lookup prioritizes exact symbols and declarations, combines nearby excerpts,
+and lists headers for an empty query. Verification uses the pinned SDK's PXADB
+directly when available. Headless live jobs pass SDL settings into the container.
+
+Use `verify apps/name --profiles pai-touch --store-screenshots` or MCP
+`pxa_verify(store_screenshots=true)`. Navigation is hidden before capture.
+Disable performance overlays, inspect every original image, and never crop or
+retouch system controls away. Evidence records capture settings and image hashes;
+runtime success is not visual approval.

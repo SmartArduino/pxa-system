@@ -12,30 +12,51 @@ def sdk_context(root, query='', language='cpp', limit=12):
     if language not in ('c', 'cpp') or not 1 <= limit <= 30 or len(query) > 160:
         raise ValueError('Choose c/cpp, limit 1..30 and a query up to 160 characters')
     sdk = root / 'sdk' / ('guest-c' if language == 'c' else 'guest-cpp')
-    terms = [t.casefold() for t in re.split(r'\s+', query.strip()) if t]
-    matches, examples = [], []
+    terms = [t.casefold() for t in re.split(r'\s+|::', query.strip()) if t]
+    candidates, examples, headers = [], [], []
     for path in sorted((sdk / 'include').rglob('*')):
         if not path.is_file() or path.is_symlink() or path.stat().st_size > 1024**2:
             continue
         relative = path.relative_to(root).as_posix()
+        if path.suffix not in ('.h', '.hpp', '.hh', '.hxx'):
+            continue
+        headers.append(relative)
+        if not terms:
+            continue
         lines = path.read_text(errors='replace').splitlines()
         for index, line in enumerate(lines):
-            if not terms or not all(t in (relative + ' ' + line).casefold() for t in terms):
+            if not all(t in (relative + ' ' + line).casefold() for t in terms):
                 continue
-            # Prefer declarations and definitions over repeated comments.
-            if not line.strip() or line.lstrip().startswith(('//', '*', '/*')):
+            stripped = line.strip()
+            if not stripped or stripped.startswith(('//', '*', '/*', '#include', '#ifndef', '#endif', '#pragma')):
                 continue
-            matches.append({'path': relative, 'line': index + 1,
-                            'excerpt': '\n'.join(lines[max(0, index - 1):index + 4])[:1000]})
-            if len(matches) >= limit:
-                break
-        if len(matches) >= limit:
+            tokens = set(re.findall(r'[a-z_][a-z_0-9]*', line.casefold()))
+            # Exact symbols beat substrings; declarations beat callers. Path
+            # matches still make queries like "ui Button" useful in C++ headers.
+            exact = sum(term in tokens for term in terms)
+            declaration = bool(re.search(r'\b(class|struct|enum|using|typedef)\b|#define|\)\s*(?:const\s*)?(?:\{|;)', stripped))
+            score = 100 * exact + 20 * declaration + 5 * sum(term in line.casefold() for term in terms)
+            if 'generated' in relative or '/detail/' in relative:
+                score -= 10
+            candidates.append((score, relative, index, lines))
+    matches = []
+    for score, relative, index, lines in sorted(candidates, key=lambda item: (-item[0], item[1], item[2])):
+        # One excerpt already includes adjacent declarations; do not waste the
+        # context budget returning the same lines several times.
+        if any(item['path'] == relative and abs(item['line'] - index - 1) < 4 for item in matches):
+            continue
+        start = max(0, index - 1)
+        matches.append({'path': relative, 'line': index + 1, 'excerpt_start_line': start + 1,
+                        'excerpt': '\n'.join(lines[start:index + 5])[:1000]})
+        if len(matches) == limit:
             break
     for path in sorted((sdk / 'examples').glob('*/main.*')):
         if not terms or any(t in path.parent.name.casefold() for t in terms):
             examples.append(path.relative_to(root).as_posix())
     return {'sdk_root': str(root), 'release': (root / 'VERSION').read_text().strip(),
             'language': language, 'query': query, 'matches': matches, 'examples': examples[:12],
+            'headers': [name for name in headers if not terms or any(term in name.casefold() for term in terms)][:limit],
+            'header_count': len(headers),
             'include_root': str(sdk / 'include'), 'read_only': True,
             'next': 'Read the matched declaration and nearby usage before editing the app. No match is not proof of an unsupported API.'}
 
