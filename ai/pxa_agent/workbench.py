@@ -10,6 +10,7 @@ import sys
 import threading
 import time
 import uuid
+from threading import Lock
 
 from .common import KIT, ToolError, evidence, run
 
@@ -23,6 +24,7 @@ class Jobs:
     def __init__(self, environment):
         self.env = environment
         self.jobs = {}
+        self.input_locks = {}
 
     def start(self, arguments, *, timeout=900, entrypoint=None, host=False, headless=False):
         identity = uuid.uuid4().hex[:16]
@@ -102,6 +104,8 @@ class Jobs:
 
     def stop(self, identity):
         job = self.get(identity)
+        if job.get('interaction_job'):
+            self.stop(job['interaction_job'])
         process = job['process']
         if process.poll() is None:
             if job['container']:
@@ -122,7 +126,13 @@ class Jobs:
         return self.status(identity)
 
     def simulator(self, identity, arguments):
+        with self.input_locks.setdefault(identity, Lock()):
+            return self._simulator(identity, arguments)
+
+    def _simulator(self, identity, arguments):
         job = self.get(identity)
+        if job.get('interaction_job') and self.status(job['interaction_job'])['running']:
+            raise ToolError('Wait for the interaction batch before sending other simulator commands')
         status = self.status(identity)
         selector = status['simulator']
         if not status['running'] or not selector:
@@ -155,6 +165,36 @@ class Jobs:
                  '/pxa-agent-kit/pxa_agent/simulator_input.py', *values])
             return run(command, env=self.env.variables(), timeout=40)
         return invoke(arguments)
+
+    def interact(self, identity, steps):
+        """Keep a batch ordered and reject overlapping input on its owner."""
+        with self.input_locks.setdefault(identity, Lock()):
+            return self._interact(identity, steps)
+
+    def _interact(self, identity, steps):
+        from .simulator_batch import validate
+        # Exact profile bounds are checked inside the selected DevKit before input.
+        validate(steps, 16384, 16384)
+        state = self.status(identity)
+        if not state['running'] or not state['simulator']:
+            raise ToolError('Wait for the owned simulator before running a batch')
+        owner = self.get(identity)
+        if owner.get('interaction_job') and self.status(owner['interaction_job'])['running']:
+            raise ToolError('An interaction batch is still running on this simulator')
+        output = evidence(self.env.workspace, 'pxa-interact')
+        output.rmdir()
+        helper = KIT / 'pxa_agent/simulator_batch.py'
+        sdk = self.env.config.get('sdk') if self.env.native else '/opt/pxa'
+        arguments = ['--sdk', sdk, '--simulator', state['simulator'],
+                     '--steps', json.dumps(steps), '--output', self.env.mapped(output)]
+        command = ([sys.executable, helper, *arguments] if self.env.native else
+            [self.env.config['engine'], 'exec', owner['container'], '/opt/pxa/runtime/python/bin/python3',
+             '/pxa-agent-kit/pxa_agent/simulator_batch.py', *arguments])
+        job = self.start(command, host=True, timeout=180)
+        owner['interaction_job'] = job['job_id']
+        return {**job, 'output':str(output), 'result':str(output / 'result.json'),
+                'screenshots':[str(output / (s['name']+'.png')) for s in steps if s['action']=='screenshot'],
+                'visual_review_required':True}
 
     def close(self):
         for identity in list(self.jobs):

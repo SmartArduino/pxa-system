@@ -155,6 +155,16 @@ def create_server(env):
         return jobs.stop(job_id)
 
     @tool()
+    def pxa_interact(job_id: str, steps: list[dict]) -> dict:
+        """Run 1..32 ordered tap/swipe/controller/wait/screenshot/cancel steps on this owned simulator.
+
+        Each step has unique name and action. Tap: x,y; swipe: x,y,x2,y2,ms;
+        controller: buttons,ms; wait: ms. Up to 8 screenshots and 15 seconds of
+        holds/waits. Returns a job and evidence paths; inspect images afterward.
+        """
+        return jobs.interact(job_id, steps)
+
+    @tool()
     def pxa_verify(project: str, profiles: list[Profile] | None = None, scenario: str | None = None,
                    store_screenshots: bool = False) -> dict:
         """Run real Guest checks. For store images hide navigation at capture time; inspect every original PNG."""

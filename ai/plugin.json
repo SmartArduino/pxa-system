@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "pxa",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "Prepare PXA in one command; build, debug, test devices, upgrade official firmware and submit apps with your AI assistant.",
   "homepage": "https://pxa.doit.am/docs/ai-development/",
   "repository": "https://github.com/SmartArduino/pxa-system"
