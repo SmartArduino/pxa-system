@@ -5,4 +5,4 @@ if(NOT PXA_RELEASE_VERSION MATCHES "^([0-9]+)\\.([0-9]+)\\.([0-9]+)([-+].*)?$")
 endif()
 set(PXA_RELEASE_NUMERIC "${CMAKE_MATCH_1}.${CMAKE_MATCH_2}.${CMAKE_MATCH_3}")
 # Native Host linkage is independent of the Guest Core and SDK release numbers.
-set(PXA_HOST_C_ABI 0)
+set(PXA_HOST_C_ABI 1)

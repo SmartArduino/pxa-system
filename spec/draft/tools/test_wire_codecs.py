@@ -277,7 +277,7 @@ def source(header: str, service_header: str, window_header: str,
 
 
 def main() -> int:
-    subprocess.run([sys.executable, str(SPEC / "tools/generate_game_render_spans.py"),
+    subprocess.run([sys.executable, str(SPEC / "tools/generate_game_render_compute.py"),
                     "--check"], check=True)
     compiler = sys.argv[1] if len(sys.argv) > 1 else "cc"
     with tempfile.TemporaryDirectory(prefix="pxa-wire-codec-test-") as temp:

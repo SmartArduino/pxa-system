@@ -432,8 +432,6 @@ def render_cpp_audio_protocol() -> str:
           for name in ("header_bytes", "span_bytes", "max_spans", "max_frames", "max_work")),
         *(f"inline constexpr std::size_t psg_{name} = {document['psg_render'][name]};"
           for name in ("header_bytes", "voice_bytes", "max_voices", "max_frames", "max_work", "max_noise_steps", "max_ticks")),
-        *(f"inline constexpr std::size_t gb_psg_{name} = {document['gb_psg_render'][name]};"
-          for name in ("header_bytes", "state_bytes", "max_frames", "max_noise_steps")),
         "} // namespace pxa::detail::audio_wire",
         "",
     ]

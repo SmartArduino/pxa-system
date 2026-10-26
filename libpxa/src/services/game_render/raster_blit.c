@@ -2,7 +2,7 @@
  * Copyright (C) 2026 PXA System contributors.
  * Indexed image/cursor resolve into borrowed RGB565LE memory. Preserve the
  * 320x240 logical sampling grid used by existing PXA game adapters. */
-#include "raster_spans_internal.h"
+#include "raster_compute_internal.h"
 #include <string.h>
 
 static int range(uint32_t at, uint32_t bytes, size_t size) {
@@ -12,9 +12,9 @@ static int disjoint(const uint8_t *a, size_t an, const uint8_t *b, size_t bn) {
     return (uintptr_t)a >= (uintptr_t)b + bn || (uintptr_t)b >= (uintptr_t)a + an;
 }
 pxa_status_t pxa_raster_blit_validate(const uint8_t *packet, size_t size,
-    uint8_t *memory, size_t memory_size, uint32_t max_spans, pxa_raster_spans_t *b) {
+    uint8_t *memory, size_t memory_size, uint32_t max_commands, pxa_raster_compute_t *b) {
     pxa_game_render_blit_wire_t h = {0};
-    (void)max_spans;
+    (void)max_commands;
     if (!b) return PXA_STATUS_INVALID_ARGUMENT;
     memset(b, 0, sizeof(*b));
     if (!packet || !memory || (uintptr_t)packet > UINTPTR_MAX - size ||
@@ -63,11 +63,11 @@ pxa_status_t pxa_raster_blit_validate(const uint8_t *packet, size_t size,
     b->count = h.target_height;
     b->first_pixel = 0;
     b->end_pixel = (uint32_t)((uint64_t)(h.target_height - 1u) * h.target_pitch + h.target_width * 2u);
-    b->kind = PXA_RASTER_SPANS_BLIT;
+    b->kind = PXA_RASTER_COMPUTE_BLIT;
     return PXA_STATUS_OK;
 }
 
-static inline uint16_t palette_color(const pxa_raster_spans_t *b, uint8_t index) {
+static inline uint16_t palette_color(const pxa_raster_compute_t *b, uint8_t index) {
     const uint8_t *at = b->state.blit.palette + (uint32_t)index * 2u;
 #if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
     uint16_t value;
@@ -77,7 +77,7 @@ static inline uint16_t palette_color(const pxa_raster_spans_t *b, uint8_t index)
     return pxa_wire_generated_load_u16(at);
 #endif
 }
-static inline uint16_t color(const pxa_raster_spans_t *b, const uint8_t *row,
+static inline uint16_t color(const pxa_raster_compute_t *b, const uint8_t *row,
     uint32_t x, uint32_t sy) {
     uint32_t sx = b->state.blit.exact_sampling ?
         x * b->state.blit.source_width / b->state.blit.target_width :
@@ -99,7 +99,7 @@ static inline void store16(uint8_t *at, uint16_t value) {
     at[0] = (uint8_t)value; at[1] = (uint8_t)(value >> 8);
 #endif
 }
-void pxa_raster_blit_execute_range(const pxa_raster_spans_t *b, uint32_t begin, uint32_t end) {
+void pxa_raster_blit_execute_range(const pxa_raster_compute_t *b, uint32_t begin, uint32_t end) {
     if (end > b->target_bytes) end = b->target_bytes;
     for (uint32_t y = 0; y < b->state.blit.target_height; ++y) {
         uint32_t at = y * b->state.blit.target_pitch;

@@ -1,11 +1,11 @@
 #pragma once
-#include "game_spans_wire_generated.hpp"
+#include "game_compute_wire_generated.hpp"
 #include <optional>
 #include <cstring>
 
 namespace pxa::game {
 inline constexpr std::uint64_t priority_tile_batches_feature = 64;
-using PriorityTile = wire_spans::pxa_game_render_tile_wire_t;
+using PriorityTile = wire_compute::pxa_game_render_tile_wire_t;
 struct PriorityTileTarget {
     std::uint32_t color_offset, priority_offset, pixel_count, pitch;
 };
@@ -47,7 +47,7 @@ public:
             return fail(Error::invalid_argument);
         if (count_ == PXA_GAME_RENDER_TILES_MAX_TILES || remaining() < PXA_GAME_RENDER_TILES_COMMAND_BYTES)
             return fail(Error::limit_exceeded);
-        wire_spans::pxa_game_render_tile_encode(storage_.data() + command_end_,
+        wire_compute::pxa_game_render_tile_encode(storage_.data() + command_end_,
             PXA_GAME_RENDER_TILES_COMMAND_BYTES, &t);
         command_end_ += PXA_GAME_RENDER_TILES_COMMAND_BYTES; ++count_;
         return {};

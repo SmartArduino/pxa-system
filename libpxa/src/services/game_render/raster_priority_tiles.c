@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: MIT
  * Copyright (C) 2026 PXA System contributors.
  * Ordered palette/priority tile batches over borrowed Guest memory. */
-#include "raster_spans_internal.h"
+#include "raster_compute_internal.h"
 #include <string.h>
 
 static int range(uint32_t at, uint64_t bytes, size_t size) {
@@ -11,9 +11,9 @@ static int disjoint(const uint8_t *a, size_t an, const uint8_t *b, size_t bn) {
     return (uintptr_t)a >= (uintptr_t)b + bn || (uintptr_t)b >= (uintptr_t)a + an;
 }
 pxa_status_t pxa_raster_priority_tiles_validate(const uint8_t *packet, size_t size,
-    uint8_t *memory, size_t memory_size, uint32_t max_spans, pxa_raster_spans_t *out) {
+    uint8_t *memory, size_t memory_size, uint32_t max_commands, pxa_raster_compute_t *out) {
     pxa_game_render_tiles_header_wire_t h = {0};
-    pxa_raster_spans_t b = {0};
+    pxa_raster_compute_t b = {0};
     if (!out) return PXA_STATUS_INVALID_ARGUMENT;
     memset(out, 0, sizeof(*out));
     if (!packet || !memory || (uintptr_t)packet > UINTPTR_MAX - size ||
@@ -22,7 +22,7 @@ pxa_status_t pxa_raster_priority_tiles_validate(const uint8_t *packet, size_t si
         h.magic != PXA_GAME_RENDER_TILES_MAGIC || h.major != 1 || h.minor ||
         !h.count || !h.pixel_count || !h.pitch || h.pitch > h.pixel_count)
         return PXA_STATUS_INVALID_ARGUMENT;
-    if (size > PXA_GAME_RENDER_TILES_MAX_PACKET_BYTES || h.count > max_spans ||
+    if (size > PXA_GAME_RENDER_TILES_MAX_PACKET_BYTES || h.count > max_commands ||
         h.count > PXA_GAME_RENDER_TILES_MAX_TILES) return PXA_STATUS_LIMIT_EXCEEDED;
     uint64_t command_bytes = PXA_GAME_RENDER_TILES_HEADER_BYTES +
         (uint64_t)h.count * PXA_GAME_RENDER_TILES_COMMAND_BYTES;
@@ -69,7 +69,7 @@ pxa_status_t pxa_raster_priority_tiles_validate(const uint8_t *packet, size_t si
     b.state.tiles.packet = packet;
     b.state.tiles.pitch = h.pitch;
     b.count = h.count;
-    b.kind = PXA_RASTER_SPANS_PRIORITY_TILES;
+    b.kind = PXA_RASTER_COMPUTE_PRIORITY_TILES;
     *out = b;
     return PXA_STATUS_OK;
 }
@@ -90,7 +90,7 @@ static inline void store_color(uint8_t *p, uint16_t value) {
     pxa_wire_generated_store_u16(p, value);
 #endif
 }
-void pxa_raster_priority_tiles_execute_range(const pxa_raster_spans_t *b,
+void pxa_raster_priority_tiles_execute_range(const pxa_raster_compute_t *b,
     uint32_t begin, uint32_t end) {
     if (end > b->target_bytes) end = b->target_bytes;
     if (begin >= end) return;

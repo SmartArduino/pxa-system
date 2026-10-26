@@ -4,10 +4,6 @@
 #include "pxa_core.h"
 
 #define PXA_AUDIO_IO_PSG_RENDER UINT32_C(0x10a)
-#define PXA_AUDIO_IO_GB_PSG_RENDER UINT32_C(0x10b)
-#define PXA_AUDIO_GB_PSG_HEADER_BYTES 16u
-#define PXA_AUDIO_GB_PSG_STATE_BYTES 128u
-#define PXA_AUDIO_GB_PSG_MAX_FRAMES 128u
 #define PXA_AUDIO_PSG_HEADER_BYTES 20u
 #define PXA_AUDIO_PSG_VOICE_BYTES 40u
 #define PXA_AUDIO_PSG_MAX_VOICES 8u
@@ -99,20 +95,6 @@ static inline int32_t pxa_audio_psg_render(uint64_t session, uint32_t target_off
     pxa_store_u16(header + 16, count);
     int32_t result = pxa_io(session, PXA_AUDIO_IO_PSG_RENDER, header, sizeof(header));
     return result < 0 ? result : result == sizeof(header) ? 0 : PXA_STATUS_PROTOCOL_ERROR;
-}
-
-/* Profile 1: GB synthesis/analog filter, preserving CPU-visible channel state.
- * Encoded 128-byte state and S16LE stereo output are updated atomically after
- * validation. No playback is enqueued. Old Hosts return UNSUPPORTED. */
-static inline int32_t pxa_audio_gb_psg_render(uint64_t session, uint32_t state_offset,
-    uint32_t output_offset, uint16_t frames) {
-    if (!(session >> 32) || !frames || frames > PXA_AUDIO_GB_PSG_MAX_FRAMES)
-        return PXA_STATUS_INVALID_ARGUMENT;
-    uint8_t command[PXA_AUDIO_GB_PSG_HEADER_BYTES] = {0};
-    pxa_store_u32(command, state_offset); pxa_store_u32(command + 4, output_offset);
-    pxa_store_u16(command + 8, frames); pxa_store_u16(command + 10, 1);
-    int32_t result = pxa_io(session, PXA_AUDIO_IO_GB_PSG_RENDER, command, sizeof(command));
-    return result < 0 ? result : result == sizeof(command) ? 0 : PXA_STATUS_PROTOCOL_ERROR;
 }
 
 #endif

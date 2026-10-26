@@ -6,7 +6,7 @@
 
 #include "pxa/raster.h"
 #include "pxa/raster_assets.h"
-#include "pxa/raster_spans.h"
+#include "pxa/raster_compute.h"
 #include "pxa/runtime.h"
 #include "pxa/resource_budget.h"
 
@@ -16,7 +16,7 @@ extern "C" {
 
 #define PXA_GAME_RENDER_SERVICE_ID UINT16_C(18)
 #define PXA_GAME_RENDER_SERVICE_MAJOR UINT16_C(1)
-#define PXA_GAME_RENDER_SERVICE_MINOR UINT16_C(4)
+#define PXA_GAME_RENDER_SERVICE_MINOR UINT16_C(5)
 #define PXA_GAME_RENDER_SERVICE_PATCH UINT16_C(0)
 
 #define PXA_GAME_RENDER_CREATE_CONTEXT UINT16_C(1)
@@ -61,20 +61,14 @@ extern "C" {
 #define PXA_GAME_RENDER_IO_TELEMETRY UINT32_C(0x102)
 #define PXA_GAME_RENDER_IO_BIND_ASSETS UINT32_C(0x103)
 #define PXA_GAME_RENDER_FEATURE_ASSET_BINDINGS UINT64_C(1)
-#define PXA_GAME_RENDER_FEATURE_BORROWED_INDEXED_SPANS UINT64_C(2)
-#define PXA_GAME_RENDER_FEATURE_PROJECTED_INDEXED_SPANS UINT64_C(4)
 #define PXA_GAME_RENDER_IO_BLIT_INDEXED_FRAME UINT32_C(0x108)
 #define PXA_GAME_RENDER_FEATURE_BORROWED_INDEXED_BLIT UINT64_C(16)
 #define PXA_GAME_RENDER_IO_EXECUTE_PRIORITY_TILES UINT32_C(0x10a)
 #define PXA_GAME_RENDER_FEATURE_PRIORITY_TILE_BATCHES UINT64_C(64)
 #define PXA_GAME_RENDER_IO_BLIT_INDEXED_RECT UINT32_C(0x109)
 #define PXA_GAME_RENDER_FEATURE_EXACT_INDEXED_BLIT UINT64_C(32)
-#define PXA_GAME_RENDER_IO_EXECUTE_FRAME_SPANS UINT32_C(0x107)
-#define PXA_GAME_RENDER_FEATURE_INDEXED_FRAME_BATCHES UINT64_C(8)
-#define PXA_GAME_RENDER_IO_EXECUTE_PROJECTED_SPANS UINT32_C(0x106)
-#define PXA_GAME_RENDER_IO_EXECUTE_SPANS UINT32_C(0x104)
-#define PXA_GAME_RENDER_IO_SPAN_TELEMETRY UINT32_C(0x105)
-#define PXA_GAME_RENDER_SPAN_TELEMETRY_BYTES 64u
+#define PXA_GAME_RENDER_IO_COMPUTE_TELEMETRY UINT32_C(0x10c)
+#define PXA_GAME_RENDER_COMPUTE_TELEMETRY_BYTES 64u
 #define PXA_GAME_RENDER_TELEMETRY_BYTES ((size_t)104)
 
 typedef struct {
@@ -157,16 +151,10 @@ typedef struct {
     pxa_game_render_backend_t backend;
     /* Compute contexts have no backend Surface and no persistent pixels.
      * NULL executes portable kernels on the calling thread. */
-    pxa_raster_spans_execute_fn execute_spans;
-    void *execute_spans_context;
+    pxa_raster_compute_execute_fn execute_compute;
+    void *execute_compute_context;
     uint64_t (*now_us)(void *context);
     void *clock_context;
-    /* Optional bounded projection arena per compute context. Allocated on
-     * its first projected/frame batch and released on close. Failure merely
-     * selects recomputation. NULL/zero disables preparation; maximum 1 MiB.
-     * The allocator and its owner must outlive every open context. */
-    const pxa_memory_allocator_t *span_prepare_allocator;
-    uint32_t span_prepare_bytes;
 } pxa_game_render_config_t;
 
 typedef struct pxa_game_render_service pxa_game_render_service_t;

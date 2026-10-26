@@ -18,19 +18,7 @@ static uint8_t s_audio_pcm[640];
 static _Alignas(4) int32_t s_psg_output[640];
 static uint8_t s_psg_voices[3 * PXA_AUDIO_PSG_VOICE_BYTES];
 static int8_t s_psg_wave[32];
-static uint8_t s_gb_psg[128];
 
-static int test_gb_psg(void) {
-    pxa_store_u16(s_gb_psg, 1); pxa_store_u32(s_gb_psg + 8, 64);
-    pxa_store_u32(s_gb_psg + 12, 2); pxa_store_u16(s_gb_psg + 24, 256);
-    s_gb_psg[26] = s_gb_psg[27] = 7;
-    pxa_store_u32(s_gb_psg + 40, 16384); pxa_store_u32(s_gb_psg + 56, 16384);
-    pxa_store_u32(s_gb_psg + 72, 8192); pxa_store_u32(s_gb_psg + 100, 16);
-    if (pxa_audio_gb_psg_render(s_audio_session, (uint32_t)(uintptr_t)s_gb_psg,
-        (uint32_t)(uintptr_t)s_psg_output, 128)) return 0;
-    return pxa_load_u16((const uint8_t *)s_psg_output) == (uint16_t)-6144 &&
-        pxa_load_u32(s_gb_psg + 4) == 8192;
-}
 
 /* Exercise real wasm offsets, not Host addresses, through WAMR's serialized
  * pxa_io memory borrow. The output then uses the ordinary PCM playback path. */
@@ -184,7 +172,7 @@ int32_t pxa_app_on_event(const uint8_t *event, uint32_t length) {
         int32_t status = 0;
         if (!pxa_audio_parse_status(&parsed, AUDIO_GRAPH_TOKEN,
                                      PXA_AUDIO_COMMIT_GRAPH, &status) ||
-            status != PXA_STATUS_OK || !render_psg() || !test_gb_psg() ||
+            status != PXA_STATUS_OK || !render_psg() ||
             pxa_audio_write_pcm(s_audio_session, s_audio_pcm,
                                 sizeof(s_audio_pcm)) !=
                 (int32_t)sizeof(s_audio_pcm))

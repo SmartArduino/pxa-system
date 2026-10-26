@@ -4013,7 +4013,6 @@ static void build_home(pxsys_reference_lvgl_t* ui,
     uint32_t column_width;
     size_t page_count;
     uint32_t gap = layout->size_class == PXSYS_UI_SIZE_COMPACT ? 4u : 8u;
-    release_launcher_icons(ui);
     if (ui->app_action != NULL && ui->app_list != NULL) {
         managed_count = ui->app_list(ui->app_manager_context,
                                      ui->managed_apps,
@@ -7874,6 +7873,10 @@ static void rebuild(pxsys_reference_lvgl_t* ui) {
     if (ui->file_size != NULL)
         (void)ui->file_size(ui->file_manager_context, NULL, NULL, NULL);
     lv_obj_clean(ui->root);
+    /* The old launcher images no longer have widgets borrowing them. Release
+     * their decoded caches even when the next view is an app or Settings;
+     * retaining them until home is rebuilt fragments the next app's heap. */
+    release_launcher_icons(ui);
     ui->status_bar = NULL;
     ui->navigation_bar = NULL;
     ui->navigation_handle = NULL;

@@ -1,27 +1,15 @@
-# Third-party arithmetic kernel
+# Third-party notices
 
-`src/services/audio/audio_gb_psg.c` adapts the pulse/wave/LFSR synthesis,
-noise aggregation and fixed-point capacitor filter from mGBA `src/gb/audio.c`,
-commit `fd9dc5c2cbf234365068855851107e762fc6211b`.
-Copyright (c) 2013-2016 Jeffrey Pfau. This file is **MPL-2.0**;
-the surrounding MIT license does not replace its license. The state codec,
-service dispatch and Guest SDK are original PXA code. A copy is provided in
-[licenses/MPL-2.0.txt](licenses/MPL-2.0.txt).
+The PXA rendering compute kernels and generic PSG implementation are original
+PXA code under the repository's MIT license. Game projection, engine-specific
+lighting encodings and emulated hardware behavior remain application code.
 
-`src/services/game_render/raster_spans.c` and
-`src/services/game_render/raster_projected_spans.c`, with batch glue in
-`src/services/game_render/raster_frame_spans.c`, adapt the lit-span,
-perspective subdivision and inverse-depth arithmetic from
-recrof/Quake-ESP32S3 (commit `b4c8c22bae3298b98c02166116eaeb91a34ffc24`),
-`QuakeESP32S3/quake/d_scan.c`, based on MG24Quake.
+Image adapters retain their upstream notices in `adapters/image/vendor/`:
+`pngle.c` is MIT, and `miniz.c` retains its permissive upstream dedication and
+license text. Optional platform adapters link dependencies under their own
+licenses; the repository MIT license does not replace those terms.
 
-Original copyright: id Software, Inc. (1996–1997), Nicola Wrachien
-(2023–2024), and contributors. The derived kernel is licensed under
-**GPL-2.0-or-later**, as marked in its source; the surrounding MIT license does
-not replace those files' licenses. A copy of GPL version 2 is provided in
-[licenses/GPL-2.0.txt](licenses/GPL-2.0.txt).
-
-The Guest SDK helpers, ABI codecs and service ownership implementation are
-original PXA code. The differential test in pxa-apps extracts its reference
-macro and scanline/depth functions from the user's current vendored engine rather than distributing a
-second copy inside this SDK.
+The system's dependency selections, runtime exceptions and review requirements
+are maintained in [the system license policy](../docs/zh-CN/system-license-policy.md).
+Distributions using FreeType must include its required attribution and FTL
+license. Espressif-specific binary components retain their vendor restrictions.

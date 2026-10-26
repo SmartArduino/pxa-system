@@ -4,6 +4,7 @@ import hashlib
 import struct
 import tempfile
 import unittest
+import tarfile
 from pathlib import Path
 
 from compile_resources import (FILE_HEADER, RECORD, ResourceError,
@@ -163,6 +164,50 @@ class ResourcesTest(unittest.TestCase):
         offset += RECORD.size + (len(b"assets/map.bin") + 3) // 4 * 4
         self.assertEqual(result[offset:], b"")
         self.assertEqual(build_index(self.package), result)
+
+    def test_archive_is_deterministic_and_seekable_blob(self):
+        source=self.app / "media"
+        (source / "levels").mkdir(parents=True)
+        (source / "levels/one.txt").write_bytes(b"level one")
+        (source / "sound track.ogg").write_bytes(b"raw encoded audio")
+        self.declare([{"path":"assets/game.tar","kind":"archive","source":"media"}])
+        index=compile_resources(self.app,self.package)
+        path=self.package / "assets/game.tar"
+        first=path.read_bytes()
+        with tarfile.open(path) as archive:
+            self.assertEqual(archive.getnames(),["levels/one.txt","sound track.ogg"])
+            for entry in archive:
+                self.assertEqual(first[entry.offset_data:entry.offset_data+entry.size],
+                                 (source / entry.name).read_bytes())
+                self.assertEqual(entry.mtime,0)
+        self.assertEqual(RECORD.unpack_from(index,16)[1:8],(5,0,0,0,len(first),len(first),0))
+        path.unlink()
+        (source / "levels/one.txt").touch()
+        compile_resources(self.app,self.package)
+        self.assertEqual(path.read_bytes(),first)
+
+    def test_archive_utf8_uses_one_seekable_ustar_header(self):
+        source = self.app / "media"
+        source.mkdir()
+        name = "章节 一.txt"
+        payload = "任意 UTF-8 文件名".encode("utf-8")
+        (source / name).write_bytes(payload)
+        self.declare([{"path": "assets/game.tar", "kind": "archive", "source": "media"}])
+        compile_resources(self.app, self.package)
+        path = self.package / "assets/game.tar"
+        with tarfile.open(path) as archive:
+            entry = archive.getmember(name)
+            self.assertEqual(entry.offset_data, entry.offset + 512)
+            self.assertEqual(path.read_bytes()[entry.offset_data:entry.offset_data + entry.size], payload)
+
+    def test_archive_rejects_symlink_sources(self):
+        source=self.app / "media"
+        source.mkdir()
+        (self.root / "secret").write_bytes(b"not a resource")
+        (source / "link").symlink_to(self.root / "secret")
+        self.declare([{"path":"assets/game.tar","kind":"archive","source":"media"}])
+        with self.assertRaisesRegex(ResourceError,"symlink"):
+            compile_resources(self.app,self.package)
 
 
 if __name__ == "__main__":

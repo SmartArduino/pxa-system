@@ -7,7 +7,7 @@
 #include "pxa_fs.h"
 #include "pxa_fs_roots.h"
 #include "pxa_game_render.h"
-#include "pxa_game_render_spans.h"
+#include "pxa_game_render_compute.h"
 #include "pxa_ipc.h"
 #include "pxa_lease.h"
 #include "pxa_log.h"

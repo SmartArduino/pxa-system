@@ -1,4 +1,4 @@
-# PXA GameRender Service 1.4.0
+# PXA GameRender Service 1.5.0
 
 GameRender 1.4 adds `priority-tile-batches` (feature bit 6) and
 `EXECUTE_PRIORITY_TILES` (Handle I/O `0x10a`). A compute context accepts a
@@ -34,7 +34,7 @@ snapshots retain `memmove` semantics. Other targets use the portable encoder.
 Host worker ranges use priority-plane bytes as pixel ownership units. Each
 range also owns the corresponding RGB565 pixels. A backend must align both
 output-plane boundaries for its cache/coherency requirements, or execute
-serially; `pxa_raster_spans_partition_safe` checks this additional constraint.
+serially; `pxa_raster_compute_partition_safe` checks this additional constraint.
 
 
 GameRender 1.3 adds `exact-indexed-blit` (feature bit 5) and
@@ -58,22 +58,11 @@ The C SDK exposes `pxa_game_render_blit_indexed_rect`, and C++ exposes
 `game::RasterContext::blit_rect`. Clients can require the feature or fall back
 on `UNSUPPORTED`; they must not silently use `0x108` as an exact sampler.
 
-GameRender 1.2 adds immutable multi-material packets and borrowed INDEX8
-image/cursor resolve. Both reuse a compute context and caller-owned memory.
-
-GameRender 1.1 adds projected scanlines and optional inverse-depth writes,
-with unchanged 1.0 requests and no additional persistent raster storage.
-
-GameRender 1.0 separates a compute-only raster context from a display context.
-`CREATE_RASTER_CONTEXT` (3) allocates only a resource slot and bounded counters;
-it owns no Surface, framebuffer, depth buffer, texture copy or command mailbox.
-Its synchronous indexed-span execution path borrows the calling Component's
-linear memory until the import returns. See [indexed spans](game-render-indexed-spans.md)
-for the normative layouts, arithmetic and ownership rules.
-
-Service major 1 replaces major 0. Installed major-0 clients must be rebuilt;
-the screen-context requests and Raster DrawList 1.7 layouts below remain
-available in major 1. Render computation and display completion are distinct.
+Compute contexts are created by `CREATE_RASTER_CONTEXT` (3), with no Surface,
+framebuffer or persistent texture allocation. Generic sampled texture runs and
+compute telemetry use the [compute protocol](game-render-compute.md).
+Applications must be rebuilt against the current SDK; engine projection,
+depth conversion and hardware-specific audio models belong to applications.
 
 GameRender is the low-overhead 2D and software-3D path. It owns persistent
 palettes and textures, validates compact draw lists, and rasterizes into

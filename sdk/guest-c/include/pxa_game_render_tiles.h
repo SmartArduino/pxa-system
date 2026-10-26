@@ -1,6 +1,6 @@
 #ifndef PXA_GUEST_GAME_RENDER_TILES_H
 #define PXA_GUEST_GAME_RENDER_TILES_H
-#include "pxa_game_render_spans.h"
+#include "pxa_game_render_compute.h"
 
 #define PXA_GAME_RENDER_IO_EXECUTE_PRIORITY_TILES 0x10au
 #define PXA_GAME_RENDER_FEATURE_PRIORITY_TILE_BATCHES UINT64_C(64)

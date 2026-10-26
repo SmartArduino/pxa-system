@@ -213,15 +213,7 @@ public:
 
     // Audio 0.13 GB profile 1. State is 128 encoded LE bytes. Output is
     // interleaved S16LE stereo. Register/frame-sequencer logic stays in Guest.
-    Result<void> gb_psg_render(std::uint32_t state_offset, std::uint32_t output_offset,
-        std::uint16_t frames) noexcept {
-        if (!frames || frames > detail::audio_wire::gb_psg_max_frames)
-            return std::unexpected(Error::invalid_argument);
-        std::array<std::byte, detail::audio_wire::gb_psg_header_bytes> command{};
-        wire::put32(command.data(), state_offset); wire::put32(command.data() + 4, output_offset);
-        wire::put16(command.data() + 8, frames); wire::put16(command.data() + 10, 1);
-        return command_io(detail::audio_wire::io_gb_psg_render, command);
-    }
+
 
     Result<void> sound(const Asset& asset,
                         std::int16_t gain_db_q8 = -12 * 256) noexcept {

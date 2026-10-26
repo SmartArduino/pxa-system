@@ -27,7 +27,7 @@ extern "C" std::int32_t pxa_io(std::uint64_t, std::uint32_t, std::uint8_t*, std:
 static pxa::Task<void> create(pxa::Context& context) {
     auto result = co_await context.game().create_raster(requested);
     if (result) {
-        assert(result->handle() == 77 && result->max_spans() == requested);
+        assert(result->handle() == 77 && result->max_commands() == requested);
         created = true;
     } else error = result.error();
     co_return pxa::Result<void>{};

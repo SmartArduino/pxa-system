@@ -30,6 +30,8 @@ endif()
 
 include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/PxaDesktopLvgl.cmake")
 pxsys_prepare_desktop_lvgl("${CMAKE_CURRENT_LIST_DIR}")
+include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/PxaLicensePolicy.cmake")
+pxa_restrict_lvgl(lvgl)
 
 target_include_directories(lvgl PUBLIC "${CMAKE_CURRENT_LIST_DIR}")
 target_link_libraries(lvgl PUBLIC SDL2::SDL2 Freetype::Freetype)

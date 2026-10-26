@@ -1,11 +1,11 @@
 {
-  "schema": "pxa-game-render-spec-1.4",
+  "schema": "pxa-game-render-spec-1.5",
   "status": "draft",
   "service": {
     "name": "game-render",
     "id": 18,
     "major": 1,
-    "minor": 4,
+    "minor": 5,
     "patch": 0
   },
   "opcodes": [
@@ -30,8 +30,8 @@
       "id": 3,
       "direction": "bidirectional-result",
       "request_token": "nonzero",
-      "payload": "max-spans:u32|reserved:u32",
-      "result": "handle:u64|max-spans:u32|reserved:u32",
+      "payload": "max-commands:u32|reserved:u32",
+      "result": "handle:u64|max-commands:u32|reserved:u32",
       "semantics": "Compute-only context: no display, framebuffer, texture copies or scratch allocation."
     }
   ],
@@ -62,33 +62,6 @@
       "atomic": true
     },
     {
-      "name": "execute-spans",
-      "id": 260,
-      "payload": "spans-header|span[count]",
-      "result": "accepted-bytes",
-      "semantics": "Synchronous; prevalidate complete batch, borrow memory only until return. No pixels written on validation error."
-    },
-    {
-      "name": "span-telemetry",
-      "id": 261,
-      "payload": "zeroed-64-byte-buffer",
-      "result": "batches:u64|rejected:u64|spans:u64|pixels:u64|validation-us:u64|execute-us:u64|last-validation-us:u32|last-execute-us:u32|max-spans:u32|reserved:u32"
-    },
-    {
-      "name": "execute-projected-spans",
-      "id": 262,
-      "payload": "spans-header|projection|scanline[count]",
-      "result": "accepted-bytes",
-      "semantics": "Synchronous strict f32 projection, indexed lighting and optional inverse-depth writes; preflight complete batch before writes."
-    },
-    {
-      "name": "execute-frame-spans",
-      "id": 263,
-      "payload": "frame-header|materials|source-snapshots",
-      "result": "accepted-bytes",
-      "semantics": "Atomic multi-material indexed projection. Sources are packet-relative snapshots; target/depth are Guest linear offsets. Synchronous borrowed execution."
-    },
-    {
       "name": "blit-indexed-frame",
       "id": 264,
       "payload": "64-byte indexed-blit descriptor",
@@ -108,24 +81,18 @@
       "payload": "priority-tiles-header|tile[count]|source-snapshots",
       "result": "accepted-bytes",
       "semantics": "Synchronous INDEX8 8x8 tile snapshots into RGB565LE color and u8 priority planes. Transparent index zero; write only when compare-depth exceeds destination priority, then store write-depth. Validate the entire packet before writes. Commands retain per-pixel order; disjoint priority byte ranges own the corresponding color pixels and may execute concurrently, joining before return. No display allocation or present."
+    },
+    {
+      "name": "compute-telemetry",
+      "id": 268,
+      "payload": "zeroed-64-byte-buffer",
+      "result": "compute-telemetry-record"
     }
   ],
   "features": [
     {
       "name": "asset-bindings",
       "bit": 0
-    },
-    {
-      "name": "borrowed-indexed-spans",
-      "bit": 1
-    },
-    {
-      "name": "projected-indexed-spans",
-      "bit": 2
-    },
-    {
-      "name": "indexed-frame-batches",
-      "bit": 3
     },
     {
       "name": "borrowed-indexed-blit",
@@ -239,284 +206,8 @@
     "texture_dimension": 256,
     "palette_colors": 256
   },
-  "protocol_version": "1.4.0",
-  "indexed_spans": {
-    "magic": 1347639376,
-    "major": 1,
-    "minor": 0,
-    "header_bytes": 72,
-    "span_bytes": 24,
-    "flags": {
-      "pow2": 1,
-      "fullbright": 2
-    },
-    "header": [
-      [
-        "magic",
-        "u32"
-      ],
-      [
-        "major",
-        "u16"
-      ],
-      [
-        "minor",
-        "u16"
-      ],
-      [
-        "count",
-        "u32"
-      ],
-      [
-        "reserved",
-        "u32"
-      ],
-      [
-        "target_offset",
-        "u32"
-      ],
-      [
-        "target_bytes",
-        "u32"
-      ],
-      [
-        "texture_offset",
-        "u32"
-      ],
-      [
-        "texture_bytes",
-        "u32"
-      ],
-      [
-        "texture_width",
-        "u16"
-      ],
-      [
-        "texture_height",
-        "u16"
-      ],
-      [
-        "light_offset",
-        "u32"
-      ],
-      [
-        "light_bytes",
-        "u32"
-      ],
-      [
-        "light_width",
-        "u16"
-      ],
-      [
-        "light_height",
-        "u16"
-      ],
-      [
-        "light_origin_s",
-        "i16"
-      ],
-      [
-        "light_origin_t",
-        "i16"
-      ],
-      [
-        "colormap_offset",
-        "u32"
-      ],
-      [
-        "colormap_bytes",
-        "u32"
-      ],
-      [
-        "colormap_levels",
-        "u16"
-      ],
-      [
-        "light_shift",
-        "u8"
-      ],
-      [
-        "flags",
-        "u8"
-      ],
-      [
-        "wrap_s",
-        "u32"
-      ],
-      [
-        "wrap_t",
-        "u32"
-      ]
-    ],
-    "span": [
-      [
-        "destination",
-        "u32"
-      ],
-      [
-        "count",
-        "u32"
-      ],
-      [
-        "s",
-        "i32"
-      ],
-      [
-        "t",
-        "i32"
-      ],
-      [
-        "ds",
-        "i32"
-      ],
-      [
-        "dt",
-        "i32"
-      ]
-    ],
-    "projected": {
-      "magic": 1347442768,
-      "projection_bytes": 80,
-      "row_bytes": 8,
-      "segment_pixels": 32,
-      "flags": {
-        "write_depth": 1
-      },
-      "projection": [
-        [
-          "s_origin_bits",
-          "u32"
-        ],
-        [
-          "s_du_bits",
-          "u32"
-        ],
-        [
-          "s_dv_bits",
-          "u32"
-        ],
-        [
-          "t_origin_bits",
-          "u32"
-        ],
-        [
-          "t_du_bits",
-          "u32"
-        ],
-        [
-          "t_dv_bits",
-          "u32"
-        ],
-        [
-          "z_origin_bits",
-          "u32"
-        ],
-        [
-          "z_du_bits",
-          "u32"
-        ],
-        [
-          "z_dv_bits",
-          "u32"
-        ],
-        [
-          "s_adjust",
-          "i32"
-        ],
-        [
-          "t_adjust",
-          "i32"
-        ],
-        [
-          "s_max",
-          "i32"
-        ],
-        [
-          "t_max",
-          "i32"
-        ],
-        [
-          "s_offset",
-          "i32"
-        ],
-        [
-          "t_offset",
-          "i32"
-        ],
-        [
-          "pitch",
-          "u32"
-        ],
-        [
-          "depth_offset",
-          "u32"
-        ],
-        [
-          "depth_bytes",
-          "u32"
-        ],
-        [
-          "depth_pitch",
-          "u32"
-        ],
-        [
-          "flags",
-          "u16"
-        ],
-        [
-          "reserved",
-          "u16"
-        ]
-      ],
-      "row": [
-        [
-          "x",
-          "u16"
-        ],
-        [
-          "y",
-          "u16"
-        ],
-        [
-          "count",
-          "u16"
-        ],
-        [
-          "reserved",
-          "u16"
-        ]
-      ]
-    },
-    "frames": {
-      "magic": 1179211856,
-      "material_magic": 1296652368,
-      "header_bytes": 16,
-      "max_packet_bytes": 262144,
-      "max_materials": 1024,
-      "header": [
-        [
-          "magic",
-          "u32"
-        ],
-        [
-          "major",
-          "u16"
-        ],
-        [
-          "minor",
-          "u16"
-        ],
-        [
-          "count",
-          "u32"
-        ],
-        [
-          "command_bytes",
-          "u32"
-        ]
-      ],
-      "max_light_validation_bytes": 2097152
-    },
+  "protocol_version": "1.5.0",
+  "compute": {
     "blit": {
       "bytes": 64,
       "max_pixels": 262144,
@@ -702,7 +393,7 @@
         ]
       ],
       "semantics": [
-        "All fields little-endian. Version1.0; no reserved bits. Count1..min(context.max-spans,4096). Command-bytes equals32+count*24; source offsets are packet-relative and start at or after command-bytes. No implicit clipping or source masking.",
+        "All fields little-endian. Version1.0; no reserved bits. Count1..min(context.max-commands,4096). Command-bytes equals32+count*24; source offsets are packet-relative and start at or after command-bytes. No implicit clipping or source masking.",
         "Color and priority offsets address Guest linear memory, with pixel-count slots; color uses2bytes/slot, priority1byte/slot; pitch is slots/row. Both planes and the entire packet must be mutually disjoint. RGB565LE color is2-byte-aligned.",
         "Each tile has64 INDEX8 bytes. Palette entries must be4,16,or256, each RGB565LE and2-byte-aligned. Every source index, including clipped pixels, must be smaller than palette-entries. Zero is transparent.",
         "Source-x/y and width/height select a nonempty crop within8x8 in destination orientation. Flips apply to source coordinates after cropping: sx=flip-x?7-(source-x+x):source-x+x, similarly sy. Destination is the first cropped output pixel. Rows must fit the common pitch and both planes.",

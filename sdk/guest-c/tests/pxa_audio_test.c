@@ -25,11 +25,6 @@ int32_t pxa_io(uint64_t handle, uint32_t operation, uint8_t *data,
             pxa_load_u16(data + 16) == 2 && !pxa_load_u16(data + 18));
         return psg_reply;
     }
-    if (operation == PXA_AUDIO_IO_GB_PSG_RENDER) {
-        assert(size == 16 && pxa_load_u32(data) == 256 && pxa_load_u32(data + 4) == 1024 &&
-            pxa_load_u16(data + 8) == 64 && pxa_load_u16(data + 10) == 1 && !pxa_load_u32(data + 12));
-        return mix_reply;
-    }
     if (operation == PXA_AUDIO_IO_MIX_PCM) {
         assert(handle == UINT64_C(0x2345678900000002) && size == 16);
         assert(pxa_load_u32(data) == 1024 && pxa_load_u32(data + 4) == 64 &&
@@ -78,11 +73,6 @@ int main(void) {
     assert(pxa_audio_psg_render(session, 1024, 64, 512, 2, 128) == PXA_STATUS_UNSUPPORTED);
     assert(pxa_audio_psg_render(session, 1024, 4096, 512, 8, 128) == PXA_STATUS_INVALID_ARGUMENT);
     uint8_t mix_record[32];
-    mix_reply = 16; assert(!pxa_audio_gb_psg_render(session, 256, 1024, 64));
-    mix_reply = 15; assert(pxa_audio_gb_psg_render(session, 256, 1024, 64) == PXA_STATUS_PROTOCOL_ERROR);
-    mix_reply = PXA_STATUS_UNSUPPORTED;
-    assert(pxa_audio_gb_psg_render(session, 256, 1024, 64) == PXA_STATUS_UNSUPPORTED);
-    assert(pxa_audio_gb_psg_render(session, 256, 1024, 129) == PXA_STATUS_INVALID_ARGUMENT);
     mix_reply = 16;
     pxa_audio_mix_span_t mix = {.source_offset = 256, .source_bytes = 128,
         .position_q16 = 32768, .step_q16 = 65536, .target_first = 3, .frames = 64,

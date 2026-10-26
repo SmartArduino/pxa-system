@@ -21,7 +21,6 @@ inline constexpr std::uint32_t io_play_effect = 263;
 inline constexpr std::uint32_t io_stop_effect = 264;
 inline constexpr std::uint32_t io_mix_pcm = 265;
 inline constexpr std::uint32_t io_psg_render = 266;
-inline constexpr std::uint32_t io_gb_psg_render = 267;
 inline constexpr std::uint16_t playback_event = 32769;
 inline constexpr std::size_t sound_tracks = 6;
 inline constexpr std::size_t effect_max_layers = 8;
@@ -42,8 +41,4 @@ inline constexpr std::size_t psg_max_frames = 4096;
 inline constexpr std::size_t psg_max_work = 16384;
 inline constexpr std::size_t psg_max_noise_steps = 262144;
 inline constexpr std::size_t psg_max_ticks = 1048576;
-inline constexpr std::size_t gb_psg_header_bytes = 16;
-inline constexpr std::size_t gb_psg_state_bytes = 128;
-inline constexpr std::size_t gb_psg_max_frames = 128;
-inline constexpr std::size_t gb_psg_max_noise_steps = 262144;
 } // namespace pxa::detail::audio_wire

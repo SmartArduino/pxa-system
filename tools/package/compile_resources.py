@@ -9,6 +9,7 @@ import argparse
 import json
 import re
 import struct
+import tarfile
 from pathlib import Path
 
 INDEX_PATH = "assets/resources.pxi"
@@ -70,6 +71,37 @@ def compile_declared(app, package):
                 set(item) <= {"path", "kind", "source", "palette", "width", "height", "encoding"},
                 "invalid resource declaration")
         output = checked_path(package, item.get("path"), asset=True)
+        if item.get("kind") == "archive":
+            require(set(item) == {"path", "kind", "source"} and
+                    output.suffix == ".tar" and not output.exists() and
+                    str(output) not in outputs, "invalid or colliding archive resource")
+            source = checked_path(app, item.get("source"))
+            require(source.is_dir(), "archive source must be a directory")
+            output.parent.mkdir(parents=True, exist_ok=True)
+            outputs.add(str(output))
+            # Deterministic, uncompressed USTAR permits bounded random reads;
+            # the package/container codec handles transport compression.
+            with tarfile.open(output, "w", format=tarfile.USTAR_FORMAT) as archive:
+                for path in sorted(source.rglob("*")):
+                    require(not path.is_symlink(), "archive resource symlink rejected")
+                    if path.is_dir():
+                        continue
+                    require(path.is_file(), "archive resources must be regular files")
+                    relative = path.relative_to(source).as_posix()
+                    # Archive entry names are a guest filesystem namespace,
+                    # not manifest asset paths. Spaces and UTF-8 are valid.
+                    require(len(relative.encode("utf-8")) <= 255 and
+                            "\\" not in relative and
+                            all(ord(c) >= 32 and ord(c) != 127 for c in relative) and
+                            all(p not in ("", ".", "..") for p in relative.split("/")),
+                            "invalid archive entry path")
+                    info = tarfile.TarInfo(relative)
+                    info.size = path.stat().st_size
+                    info.mode = 0o444
+                    with path.open("rb") as stream:
+                        archive.addfile(info, stream)
+            require(output.stat().st_size <= 0xffffffff, "resource archive exceeds format limit")
+            continue
         require(output.suffix == ".pxr" and str(output) not in outputs and
                 not output.exists(), "duplicate or colliding compiled resource")
         outputs.add(str(output))

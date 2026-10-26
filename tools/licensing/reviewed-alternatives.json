@@ -1,0 +1,110 @@
+[
+  {
+    "source": "ESP-IDF/components/wpa_supplicant/port/os_xtensa.c",
+    "sha256": "a27e9e2bc0169c4c6fa6ea86457a911b409bb0c974042f44143522344f89a9bc",
+    "selected": "BSD-3-Clause",
+    "evidence": "File header explicitly offers alternative BSD license; retain upstream BSD notices."
+  },
+  {
+    "source": "ESP-IDF/components/wpa_supplicant/src/rsn_supp/wpa.c",
+    "sha256": "0d4becbdebceccfdcc887af6b5609aff8f91d7ca8617cb6cde14b223a171e324",
+    "selected": "BSD-3-Clause",
+    "evidence": "File header explicitly offers alternative BSD license; retain upstream BSD notices."
+  },
+  {
+    "source": "ESP-IDF/components/wpa_supplicant/src/rsn_supp/wpa_ie.c",
+    "sha256": "f7b1faad98a1e5e43c8da57958a3c7ba3aa5834d1b2618ef974031e7f819b9b3",
+    "selected": "BSD-3-Clause",
+    "evidence": "File header explicitly offers alternative BSD license; retain upstream BSD notices."
+  },
+  {
+    "source": "ESP-IDF/components/wpa_supplicant/src/utils/wpabuf.c",
+    "sha256": "a0e993857735bf33e6c9fada3b048dab797d7804da409ffb73623d890d803a24",
+    "selected": "BSD-3-Clause",
+    "evidence": "File header explicitly offers alternative BSD license; retain upstream BSD notices."
+  },
+  {
+    "source": "LVGL/src/libs/vg_lite_driver/VGLiteKernel/vg_lite_hal.h",
+    "sha256": "ac35e13290c4551c95fc746cfcbddb1388b9d1f6cf04a667051b882e7f9f337c",
+    "selected": "MIT",
+    "evidence": "Header explicitly permits recipient to choose MIT or GPL; MIT selected, notices retained."
+  },
+  {
+    "source": "LVGL/src/libs/vg_lite_driver/VGLiteKernel/vg_lite_hw.h",
+    "sha256": "fade67a90d9a27fa09ea2a6f56190084a919dd77cddc8e1e6341d0f147645be9",
+    "selected": "MIT",
+    "evidence": "Header explicitly permits recipient to choose MIT or GPL; MIT selected, notices retained."
+  },
+  {
+    "source": "LVGL/src/libs/vg_lite_driver/VGLiteKernel/vg_lite_kernel.c",
+    "sha256": "0c4152a8f2507263195b3c2f1c8a85cfbf8443e145e76c0a023b6e8f9bbae442",
+    "selected": "MIT",
+    "evidence": "Header explicitly permits recipient to choose MIT or GPL; MIT selected, notices retained."
+  },
+  {
+    "source": "LVGL/src/libs/vg_lite_driver/VGLiteKernel/vg_lite_kernel.h",
+    "sha256": "f90caf8720f3531a826db6f23c33a560f16b043101e2bd321156124cce24e521",
+    "selected": "MIT",
+    "evidence": "Header explicitly permits recipient to choose MIT or GPL; MIT selected, notices retained."
+  },
+  {
+    "source": "LVGL/src/libs/vg_lite_driver/VGLiteKernel/vg_lite_option.h",
+    "sha256": "a94cde5ca71ccbbe4714eaa51ff513d044fee5c15edcf1c45d2960492cab7b34",
+    "selected": "MIT",
+    "evidence": "Header explicitly permits recipient to choose MIT or GPL; MIT selected, notices retained."
+  },
+  {
+    "source": "LVGL/src/stdlib/builtin/lv_tlsf.h",
+    "sha256": "2041da6d0a038e7cfe01f75aa7551f8dc3e4df6a7512b4652afb53d52f41d594",
+    "selected": "BSD-3-Clause",
+    "evidence": "Complete BSD-3-Clause grant from Matthew Conte; GPL appears only in statement that this implementation has no GPL restrictions."
+  },
+  {
+    "source": "MbedTLS/tf-psa-crypto/include/psa/crypto_config.h",
+    "sha256": "dc4753d99690d2584ab33edd46aa09c6562f3193ac49a171916ae513937357f2",
+    "selected": "Apache-2.0",
+    "evidence": "SPDX offers Apache-2.0 OR GPL; later comment says Everest is Apache-only, consistent with selected Apache branch."
+  },
+  {
+    "source": "ESP-IDF/components/wpa_supplicant/include/utils/wpa_debug.h",
+    "sha256": "e67a4a3d2973e4062d1511cf7e364ed272831e58de3cf5df52811bf1df7bd489",
+    "selected": "BSD-3-Clause",
+    "evidence": "Header explicitly offers the alternative BSD license; preserve BSD notices."
+  },
+  {
+    "source": "ESP-IDF/components/wpa_supplicant/include/utils/wpabuf.h",
+    "sha256": "a50ae98509d1bfe3ee384063064823f2c44e0350cd25521780870a53db3b9874",
+    "selected": "BSD-3-Clause",
+    "evidence": "Header explicitly offers the alternative BSD license; preserve BSD notices."
+  },
+  {
+    "source": "ESP-IDF/components/wpa_supplicant/port/include/os.h",
+    "sha256": "0d79eb5a6f84354317b9b871500ca4869b2056797cec2b16867da009ffb43665",
+    "selected": "BSD-3-Clause",
+    "evidence": "Header explicitly offers the alternative BSD license; preserve BSD notices."
+  },
+  {
+    "source": "ESP-IDF/components/wpa_supplicant/src/common/eapol_common.h",
+    "sha256": "3d9a004efb010dde1b87da4c019ad4c05370afb8a054616d637828d1d7f169b3",
+    "selected": "BSD-3-Clause",
+    "evidence": "Header explicitly offers the alternative BSD license; preserve BSD notices."
+  },
+  {
+    "source": "ESP-IDF/components/wpa_supplicant/src/rsn_supp/wpa_ie.h",
+    "sha256": "5e8124e15ce566f5772628816913c453b608ae4c111ce3d7e7ed27be7978a558",
+    "selected": "BSD-3-Clause",
+    "evidence": "Header explicitly offers the alternative BSD license; preserve BSD notices."
+  },
+  {
+    "source": "ESP-IDF/components/wpa_supplicant/src/utils/includes.h",
+    "sha256": "3c5774d8a24c8c63ed50ec0ad54acc356d034ec9a88a09f09606569e8446efbf",
+    "selected": "BSD-3-Clause",
+    "evidence": "Header explicitly offers the alternative BSD license; preserve BSD notices."
+  },
+  {
+    "source": "ESP-IDF/components/wpa_supplicant/src/utils/list.h",
+    "sha256": "9f81d0f91a32e35742cf7745ad78f1ef575f4f3893cd7f1f130954ddd51db085",
+    "selected": "BSD-3-Clause",
+    "evidence": "Header explicitly offers the alternative BSD license; preserve BSD notices."
+  }
+]

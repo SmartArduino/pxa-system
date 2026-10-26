@@ -5930,20 +5930,7 @@ static void test_audio_service(void) {
             memset(mix_memory, 0, sizeof(mix_memory));
             pxa_write_u32(mix_header, 256); pxa_write_u32(mix_header + 4, 512);
             pxa_write_u16(mix_header + 8, 2); pxa_write_u16(mix_header + 10, 1);
-            uint8_t *gb_psg = mix_memory + 256;
-            pxa_write_u16(gb_psg, 1); pxa_write_u32(gb_psg + 8, 64);
-            pxa_write_u32(gb_psg + 12, 2); pxa_write_u16(gb_psg + 24, 256);
-            gb_psg[26] = gb_psg[27] = 7;
-            pxa_write_u32(gb_psg + 40, 16384); pxa_write_u32(gb_psg + 56, 16384);
-            pxa_write_u32(gb_psg + 72, 8192); pxa_write_u32(gb_psg + 100, 16);
-            assert(!pxa_component_begin_event(test.runtime, v1_component));
-            assert(pxa_runtime_io64_memory(test.runtime, v1_component, pcm_session,
-                PXA_AUDIO_IO_GB_PSG_RENDER, mix_header, 16, mix_memory, sizeof(mix_memory)) == 16);
-            assert(!pxa_component_finish_event(test.runtime, v1_component, 1));
-            assert(pxa_read_u16(mix_memory + 512) == (uint16_t)-6144 &&
-                pxa_read_u32(gb_psg + 4) == 128 && backend.submits == submits_before_psg);
-            assert(dispatch_io64(test.runtime, v1_component, pcm_session,
-                PXA_AUDIO_IO_GB_PSG_RENDER, mix_header, 16) == PXA_STATUS_BAD_STATE);
+
             assert(!pxa_handle_close64(test.runtime, v1_component, pcm_session));
             assert(!pxa_component_begin_event(test.runtime, v1_component));
             assert(pxa_runtime_io64_memory(test.runtime, v1_component, pcm_session,

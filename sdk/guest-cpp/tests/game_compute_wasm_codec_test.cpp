@@ -1,10 +1,10 @@
-#include <pxa/game_spans_wire_generated.hpp>
+#include <pxa/game_compute_wire_generated.hpp>
 #include <pxa/game_tiles.hpp>
 #include <array>
 #include <cassert>
 #include <cstring>
 #include <cstdio>
-namespace g = pxa::game::wire_spans;
+namespace g = pxa::game::wire_compute;
 template<class T, std::size_t N, class Decode, class Encode>
 static void roundtrip(Decode decode, Encode encode) {
     for (unsigned alignment=0;alignment<8;++alignment) {
@@ -41,22 +41,6 @@ int main() {
     }
     roundtrip<g::pxa_game_render_tiles_header_wire_t,32>(g::pxa_game_render_tiles_header_decode,g::pxa_game_render_tiles_header_encode);
     roundtrip<g::pxa_game_render_tile_wire_t,24>(g::pxa_game_render_tile_decode,g::pxa_game_render_tile_encode);
-    roundtrip<g::pxa_game_render_spans_header_wire_t,72>(g::pxa_game_render_spans_header_decode,g::pxa_game_render_spans_header_encode);
-    roundtrip<g::pxa_game_render_projection_wire_t,80>(g::pxa_game_render_projection_decode,g::pxa_game_render_projection_encode);
-    roundtrip<g::pxa_game_render_span_wire_t,24>(g::pxa_game_render_span_decode,g::pxa_game_render_span_encode);
     roundtrip<g::pxa_game_render_blit_wire_t,64>(g::pxa_game_render_blit_decode,g::pxa_game_render_blit_encode);
-    roundtrip<g::pxa_game_render_frame_header_wire_t,16>(g::pxa_game_render_frame_header_decode,g::pxa_game_render_frame_header_encode);
-    roundtrip<g::pxa_game_render_row_wire_t,8>(g::pxa_game_render_row_decode,g::pxa_game_render_row_encode);
-    std::array<std::byte,56> expected;
-    std::array<g::pxa_game_render_row_wire_t,7> rows;
-    for(std::size_t i=0;i<expected.size();++i)expected[i]=std::byte((i*37+159)&255);
-    for(unsigned i=0;i<rows.size();++i)assert(g::pxa_game_render_row_decode(expected.data()+i*8,8,&rows[i]));
-    std::array<std::byte,72> output;output.fill(std::byte{0xa5});
-    assert(!g::pxa_game_render_rows_encode(output.data()+1,55,rows.data(),rows.size()));
-    for(auto b:output)assert(b==std::byte{0xa5});
-    assert(g::pxa_game_render_rows_encode(output.data()+1,56,rows.data(),rows.size()));
-    assert(!std::memcmp(output.data()+1,expected.data(),56));
-    assert(output[0]==std::byte{0xa5}&&output[57]==std::byte{0xa5});
-    assert(g::pxa_game_render_rows_encode(nullptr,0,nullptr,0));
-    std::puts("PASS: WASM GameRender encoders preserve every wire byte, eight records, odd offsets, short buffers and contiguous rows");
+    std::puts("PASS: WASM compute codecs preserve wire bytes, odd offsets and short buffers");
 }

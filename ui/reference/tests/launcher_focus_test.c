@@ -19,6 +19,41 @@ static void flush(lv_display_t* display, const lv_area_t* area, uint8_t* pixels)
     lv_display_flush_ready(display);
 }
 
+typedef struct { size_t live, acquired, released; } icon_counts_t;
+typedef struct {
+    lv_image_dsc_t image;
+    icon_counts_t* counts;
+    uint32_t pixels[4];
+} owned_icon_t;
+
+static void release_icon(void* context) {
+    owned_icon_t* icon = context;
+    assert(icon->counts->live > 0);
+    --icon->counts->live;
+    ++icon->counts->released;
+    lv_image_cache_drop(&icon->image);
+    free(icon);
+}
+
+static bool resolve_icon(void* context, const pxsys_app_descriptor_t* app,
+                         pxsys_reference_lvgl_app_icon_t* output) {
+    (void)app;
+    owned_icon_t* icon = calloc(1, sizeof(*icon));
+    assert(icon != NULL);
+    icon->counts = context;
+    ++icon->counts->live;
+    ++icon->counts->acquired;
+    icon->image.header.magic = LV_IMAGE_HEADER_MAGIC;
+    icon->image.header.cf = LV_COLOR_FORMAT_ARGB8888;
+    icon->image.header.w = icon->image.header.h = 2;
+    icon->image.header.stride = 2 * sizeof(uint32_t);
+    icon->image.data_size = sizeof(icon->pixels);
+    icon->image.data = (const uint8_t*)icon->pixels;
+    *output = (pxsys_reference_lvgl_app_icon_t){
+        &icon->image, release_icon, icon};
+    return true;
+}
+
 static void focus_tile(pxsys_reference_lvgl_t* ui, lv_obj_t* tile,
                        uint16_t page) {
     lv_group_focus_obj(tile);
@@ -71,11 +106,15 @@ static void check_paging(lv_display_t* display, bool animations) {
     config.parent = lv_display_get_layer_top(display);
     config.features = PXSYS_REFERENCE_UI_HOME;
     config.max_launcher_apps = count;
+    icon_counts_t icons = {0};
+    config.app_icon_context = &icons;
+    config.resolve_app_icon = resolve_icon;
     pxsys_reference_lvgl_t* ui = NULL;
     assert(pxsys_reference_lvgl_create(&config, &ui) == PXSYS_STATUS_OK);
     assert(pxsys_reference_lvgl_set_animations_enabled(ui, animations) == PXSYS_STATUS_OK);
     assert(pxsys_reference_lvgl_start(ui) == PXSYS_STATUS_OK);
     assert(ui->launcher_count == count);
+    assert(icons.live == count);
     lv_group_t* group = lv_group_create();
     for (size_t i = 0; i < count; ++i)
         lv_group_add_obj(group, lv_obj_get_child(ui->content, (int32_t)i));
@@ -96,9 +135,25 @@ static void check_paging(lv_display_t* display, bool animations) {
     rebuild(ui);
     assert(ui->launcher_page == 1);
     assert(lv_obj_get_scroll_x(ui->content) == lv_obj_get_width(ui->content));
+    /* Leaving home must retire icons immediately, including when another
+     * app owns the screen. Repeated background/rebuild must not double free. */
+    app_context_t home = {ui, REFERENCE_PAGE_HOME};
+    for (unsigned round = 0; round < 3; ++round) {
+        assert(app_background(NULL, &home) == PXSYS_STATUS_OK);
+        assert(icons.live == 0);
+        assert(icons.acquired == icons.released);
+        rebuild(ui);
+        assert(icons.live == 0);
+        assert(app_foreground(NULL, &home) == PXSYS_STATUS_OK);
+        assert(ui->launcher_count == count && icons.live == count);
+        lv_tick_inc(500);
+        (void)lv_timer_handler();
+        assert(ui->launcher_page == 1);
+    }
     assert(pxsys_task_manager_finish_all(pxsys_standard_system_tasks(system),
         PXSYS_STOP_SHUTDOWN) == PXSYS_STATUS_OK);
     assert(pxsys_reference_lvgl_destroy(ui) == PXSYS_STATUS_OK);
+    assert(icons.live == 0 && icons.acquired == icons.released);
     assert(pxsys_standard_system_destroy(system) == PXSYS_STATUS_OK);
 }
 

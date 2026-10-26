@@ -1,11 +1,11 @@
 {
-  "schema": "pxa-audio-spec-0.13",
+  "schema": "pxa-audio-spec-0.14",
   "status": "draft",
   "service": {
     "name": "audio",
     "id": 10,
     "major": 0,
-    "minor": 13,
+    "minor": 14,
     "patch": 0
   },
   "opcodes": [
@@ -134,13 +134,6 @@
       "id": 266,
       "since": "0.12",
       "payload": "target:u32|frames:u32|voices:u32|ticks-per-sample:u32|count:u16|reserved:u16",
-      "result": "payload-size-or-status"
-    },
-    {
-      "name": "gb-psg-render",
-      "id": 267,
-      "since": "0.13",
-      "payload": "state:u32|output:u32|frames:u16|profile:u16|reserved:u32",
       "result": "payload-size-or-status"
     }
   ],
@@ -275,7 +268,7 @@
     "min_frame_ms": 5,
     "max_frame_ms": 120
   },
-  "protocol_version": "0.13.0",
+  "protocol_version": "0.14.0",
   "playback_event": {
     "id": 32769,
     "since": "0.7",
@@ -321,7 +314,7 @@
     "queue_frames": "bounded maximum in source frames; 1..floor(source_rate * 120 / 1000)",
     "sink_format": "reported physical route; stereo source can be mixed to a mono speaker by the Host",
     "state_counters": "source sample frames, independent of channels; accepted means renderer consumption unless flags specify sink-submitted",
-    "operations": "WRITE, MIX_PCM (since 0.11), PSG_RENDER (since 0.12), GB_PSG_RENDER (since 0.13), commit-graph, query-state, flush and close; other resource I/O returns UNSUPPORTED",
+    "operations": "WRITE, MIX_PCM (since 0.11), PSG_RENDER (since 0.12), commit-graph, query-state, flush and close; other resource I/O returns UNSUPPORTED",
     "permission": "audio.playback media; authority, quotas and close rules match open-session",
     "reserved": "all request reserved bytes must be zero; unknown flags rejected"
   },
@@ -366,16 +359,5 @@
       "wave": 2,
       "noise": 3
     }
-  },
-  "gb_psg_render": {
-    "header_bytes": 16,
-    "state_bytes": 128,
-    "max_frames": 128,
-    "max_noise_steps": 262144,
-    "profile": 1,
-    "clock": "GB master timestamp units, 64 ticks/sample; timing factor 2; output 131072 Hz stereo S16LE",
-    "ownership": "synchronous serialized borrowed state and output; disjoint from each other and command; atomic rejection",
-    "control": "registers, frame sequencer, sweep, length, envelope clocks and wave RAM access remain in Guest",
-    "reference": "mGBA fd9dc5c2cbf234365068855851107e762fc6211b sample loop including noise aggregation and defined 32-bit filter wrap; MPL-2.0"
   }
 }

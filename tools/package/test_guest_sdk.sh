@@ -8,7 +8,7 @@ flags=(-std=c11 -O2 -Wall -Wextra -Werror -Wno-attributes
        -I"$system/sdk/guest-c/include" -I"$system/sdk/testing")
 # SDK checks are independent of the product app checkout. Gameplay/Canvas and
 # audio regressions live in pxa-apps/tests/native and common/cpp/tests.
-for unit in headers net store_installer canvas ui_builder fs lease sensor work audio surface raster game_spans log core clock ui ui_wire_transport i18n service_parity; do
+for unit in headers net store_installer canvas ui_builder fs lease sensor work audio surface raster game_compute log core clock ui ui_wire_transport i18n service_parity; do
     "${CC:-cc}" "${flags[@]}" "$system/sdk/guest-c/tests/pxa_${unit}_test.c" \
         -o "$work_dir/$unit"
     "$work_dir/$unit"

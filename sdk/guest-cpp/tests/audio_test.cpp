@@ -32,8 +32,6 @@ static_assert(pxa::detail::audio_wire::io_control_sound == PXA_AUDIO_IO_CONTROL_
 static_assert(pxa::detail::audio_wire::io_mix_pcm == PXA_AUDIO_IO_MIX_PCM);
 static_assert(pxa::detail::audio_wire::io_psg_render == PXA_AUDIO_IO_PSG_RENDER);
 static_assert(pxa::detail::audio_wire::psg_voice_bytes == PXA_AUDIO_PSG_VOICE_BYTES);
-static_assert(pxa::detail::audio_wire::io_gb_psg_render == PXA_AUDIO_IO_GB_PSG_RENDER);
-static_assert(pxa::detail::audio_wire::gb_psg_state_bytes == PXA_AUDIO_GB_PSG_STATE_BYTES);
 static_assert(pxa::detail::audio_wire::independent_effect == PXA_AUDIO_SOUND_APPEND);
 static_assert(pxa::detail::audio_wire::effect_header_bytes == 4);
 static_assert(pxa::detail::audio_wire::effect_tone_bytes == 14);
@@ -382,13 +380,6 @@ int main() {
         effect_reply.reset();
         assert(session.mix_pcm(1024, 64, 512, 2));
         assert(session.psg_render(1024, 64, 512, 2, 128));
-        assert(session.gb_psg_render(256, 1024, 64));
-        effect_reply = 15;
-        assert(session.gb_psg_render(256, 1024, 64).error() == pxa::Error::protocol_error);
-        effect_reply = PXA_STATUS_UNSUPPORTED;
-        assert(session.gb_psg_render(256, 1024, 64).error() == pxa::Error::unsupported);
-        auto gb_calls = io_calls;
-        assert(!session.gb_psg_render(256, 1024, 129) && io_calls == gb_calls);
         effect_reply.reset();
         pxa::AudioPsgVoice voice{.period = 1192, .phase = 17, .cursor = 3,
             .envelope_period = 65536, .envelope_phase = 123,

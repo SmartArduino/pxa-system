@@ -1,14 +1,14 @@
-#include "pxa/raster_spans.h"
+#include "pxa/raster_compute.h"
 #include <assert.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
 #ifdef PXA_TILE_TEST_THREADS
 #include <pthread.h>
-typedef struct { const pxa_raster_spans_t *batch; unsigned split; } worker_job;
+typedef struct { const pxa_raster_compute_t *batch; unsigned split; } worker_job;
 static void *worker(void *arg) {
     const worker_job *j = arg;
-    pxa_raster_spans_execute_range(j->batch, j->split, j->batch->target_bytes);
+    pxa_raster_compute_execute_range(j->batch, j->split, j->batch->target_bytes);
     return NULL;
 }
 #endif
@@ -62,7 +62,7 @@ static void reference(void) {
     }
 }
 static void reject(void) {
-    pxa_raster_spans_t b;
+    pxa_raster_compute_t b;
     memcpy(expected, actual, MEMORY);
     assert(pxa_raster_priority_tiles_validate(actual + PACKET, PACKET_BYTES,
         actual, MEMORY, 24, &b) < 0);
@@ -74,22 +74,22 @@ int main(void) {
     assert(actual && expected && initial);
     for (unsigned trial = 0; trial < 1000; ++trial) {
         make_packet(1 + pick(20)); reference();
-        pxa_raster_spans_t b;
+        pxa_raster_compute_t b;
         assert(pxa_raster_priority_tiles_validate(actual + PACKET, PACKET_BYTES,
             actual, MEMORY, 24, &b) == 0);
         unsigned split = trial < PIXELS ? trial : pick(PIXELS + 1);
-        pxa_raster_spans_execute_range(&b, split, UINT32_MAX);
-        pxa_raster_spans_execute_range(&b, 0, split);
+        pxa_raster_compute_execute_range(&b, split, UINT32_MAX);
+        pxa_raster_compute_execute_range(&b, 0, split);
         assert(!memcmp(actual, expected, MEMORY));
         memcpy(actual, initial, MEMORY);
-        pxa_raster_spans_execute_range(&b, 0, PIXELS);
+        pxa_raster_compute_execute_range(&b, 0, PIXELS);
         assert(!memcmp(actual, expected, MEMORY));
 #ifdef PXA_TILE_TEST_THREADS
         if (trial % 5 == 0) {
             memcpy(actual, initial, MEMORY);
             worker_job job = {&b, split}; pthread_t thread;
             assert(pthread_create(&thread, NULL, worker, &job) == 0);
-            pxa_raster_spans_execute_range(&b, 0, split);
+            pxa_raster_compute_execute_range(&b, 0, split);
             assert(pthread_join(thread, NULL) == 0);
             assert(!memcmp(actual, expected, MEMORY));
         }
@@ -118,29 +118,29 @@ int main(void) {
     memcpy(actual, initial, MEMORY);
     pxa_wire_generated_store_u32(actual+PACKET+20,PACKET); reject();
     memcpy(actual, initial, MEMORY);
-    pxa_raster_spans_t b;
+    pxa_raster_compute_t b;
     assert(pxa_raster_priority_tiles_validate(actual+PACKET,31,actual,MEMORY,24,&b)<0);
     assert(pxa_raster_priority_tiles_validate(actual+PACKET,PACKET_BYTES,actual,MEMORY,1,&b)==PXA_STATUS_LIMIT_EXCEEDED);
     assert(pxa_raster_priority_tiles_validate(actual+PACKET,PACKET_BYTES,actual,MEMORY,24,&b)==0);
-    assert(!pxa_raster_spans_partition_safe(&b, PIXELS+1,64));
-    assert(!pxa_raster_spans_partition_safe(&b,0,3));
+    assert(!pxa_raster_compute_partition_safe(&b, PIXELS+1,64));
+    assert(!pxa_raster_compute_partition_safe(&b,0,3));
     /* Check both output planes, not just the priority-plane split. */
     unsigned aligned=(unsigned)(-(uintptr_t)b.target)&63u;
     int expected_safe=!(((uintptr_t)b.state.tiles.color+2u*aligned)&63u);
-    assert(pxa_raster_spans_partition_safe(&b,aligned,64)==expected_safe);
+    assert(pxa_raster_compute_partition_safe(&b,aligned,64)==expected_safe);
     ++b.state.tiles.color;
-    assert(!pxa_raster_spans_partition_safe(&b,aligned,64));
+    assert(!pxa_raster_compute_partition_safe(&b,aligned,64));
     /* Virtual 64-byte alignment is insufficient when a runtime promises
      * only an 8-byte-aligned linear-memory base. Test every such residue. */
     _Alignas(64) uint8_t planes[2048];
     for (unsigned residue=0;residue<64;residue+=8) {
         b.state.tiles.color=planes+residue;
         b.target=planes+1024+residue;
-        assert(pxa_raster_spans_partition_safe(&b,64-residue,64)==(residue==0));
+        assert(pxa_raster_compute_partition_safe(&b,64-residue,64)==(residue==0));
     }
     /* Different virtual residues can compensate for the two pixel sizes. */
     b.state.tiles.color=planes+16;b.target=planes+1024+8;
-    assert(pxa_raster_spans_partition_safe(&b,56,64));
+    assert(pxa_raster_compute_partition_safe(&b,56,64));
     free(actual); free(expected); free(initial);
     puts("priority tile reference/partitions, bounds, aliases and late failure passed");
 }
