@@ -129,7 +129,7 @@ access uses the PXA FS service, not WASI preopened directories.
 The Host follows the [system license policy](../../docs/zh-CN/system-license-policy.md).
 Retired engine-specific span kernels are not linked; LVGL's optional FrogFS and
 ThorVG implementations are excluded from compilation. Browser bundles retain
-PXA, LVGL, font licenses and `THIRD_PARTY_NOTICES.md`. Application modules have
+PXA, LVGL, font and toolchain licenses plus `THIRD_PARTY_NOTICES.md`. Application modules have
 independent licenses. The repository's top-level MIT text does not replace
 individual third-party file licenses.
 

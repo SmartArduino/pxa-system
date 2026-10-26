@@ -59,6 +59,7 @@ def main():
     (out / 'manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
     shutil.copy2(ROOT / 'LICENSE', out / 'LICENSE-PXA')
     shutil.copy2(ROOT / 'libpxa/THIRD_PARTY_NOTICES.md', out / 'THIRD_PARTY_NOTICES.md')
+    # Reusing an output directory must not retain retired Host notices.
     for filename in ('LICENSE-GPL-2.0', 'LICENSE-MPL-2.0'):
         (out / filename).unlink(missing_ok=True)
     (out / 'NOTICE').write_text(
