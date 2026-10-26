@@ -34,6 +34,7 @@ def main():
     apps = []
     for name, source in [('paddle', ROOT / 'simulator/browser/demo'),
                          ('notes', ROOT / 'simulator/browser/services-demo'),
+                         ('mainloop-test', ROOT / 'simulator/browser/main-loop-test'),
                          ('counter', ROOT / 'ai/templates/c-app'),
                          ('cpp', ROOT / 'sdk/templates/hello')]:
         target = build / name
@@ -44,11 +45,11 @@ def main():
         run('cmake', '--build', target, '-j', args.jobs)
         apps.append((name, target / 'artifacts/main.wasm'))
     out.mkdir(parents=True, exist_ok=True)
-    for filename in ['pxa-browser.mjs', 'pxa-browser.wasm']:
+    for filename in ['pxa-browser.mjs', 'pxa-browser.wasm', 'LICENSE-Emscripten', 'LICENSE-musl', 'LICENSE-compiler-rt']:
         shutil.copy2(host / filename, out / filename)
-    for filename in ['runtime.mjs', 'worker.mjs', 'fonts.mjs', 'storage.mjs', 'network.mjs', 'borrow.mjs', 'audio-worklet.mjs', 'capabilities.json']:
+    for filename in ['runtime.mjs', 'worker.mjs', 'fonts.mjs', 'storage.mjs', 'network.mjs', 'borrow.mjs', 'wasm-policy.mjs', 'audio-worklet.mjs', 'capabilities.json']:
         shutil.copy2(ROOT / 'simulator/browser' / filename, out / filename)
-    manifest = {'version': '0.2.0', 'apps': []}
+    manifest = {'version': '0.3.0', 'apps': []}
     for name, source in apps:
         filename = f'{name}.wasm'
         shutil.copy2(source, out / filename)
@@ -57,14 +58,18 @@ def main():
                                  'sha256': hashlib.sha256(data).hexdigest()})
     (out / 'manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
     shutil.copy2(ROOT / 'LICENSE', out / 'LICENSE-PXA')
-    shutil.copy2(ROOT / 'libpxa/licenses/GPL-2.0.txt', out / 'LICENSE-GPL-2.0')
-    shutil.copy2(ROOT / 'libpxa/licenses/MPL-2.0.txt', out / 'LICENSE-MPL-2.0')
+    shutil.copy2(ROOT / 'libpxa/THIRD_PARTY_NOTICES.md', out / 'THIRD_PARTY_NOTICES.md')
+    for filename in ('LICENSE-GPL-2.0', 'LICENSE-MPL-2.0'):
+        (out / filename).unlink(missing_ok=True)
     (out / 'NOTICE').write_text(
-        'PXA Browser Host includes libpxa and LVGL. GameRender includes GPL-2.0-or-later '
-        'indexed/projected span kernels derived from id Software Quake and recrof/Quake-ESP32S3; '
-        'copyright id Software (1996-1997), Nicola Wrachien and contributors (2023-2024), '
-        'and PXA System contributors (2026). Sources, build instructions and attribution: '
-        'https://github.com/SmartArduino/pxa-system/tree/browser-v0.2.0/simulator/browser\n')
+        'PXA Browser Host: PXA Core, generic raster/compute kernels and PSG (MIT), '
+        'LVGL (MIT), Montserrat and symbols fonts (SIL OFL; see included licenses). '
+        'The LVGL FrogFS and internal ThorVG sources are excluded from compilation. '
+        'Toolchain runtime: Emscripten (MIT selected), musl (MIT and retained permissive notices), '
+        'compiler-rt (Apache-2.0 WITH LLVM-exception). Included license files retain upstream terms. '
+        'Engine-specific rendering and emulation remain in separately licensed applications. '
+        'Sources and build instructions: '
+        'https://github.com/SmartArduino/pxa-system/tree/browser-v0.3.0/simulator/browser\n')
     # Keep third-party license text with the deployed runtime.
     lvgl = args.lvgl.resolve() if args.lvgl else host / '_deps/lvgl_source-src'
     shutil.copy2(lvgl / 'LICENCE.txt', out / 'LICENSE-LVGL')

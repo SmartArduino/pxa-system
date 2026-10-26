@@ -8,7 +8,7 @@ application host, not the complete device firmware, launcher or installer.
 ## Build and test
 
 Prerequisites: Python 3, CMake, Emscripten 4.0.6 (`emcmake` on PATH), a WASI SDK
-(the PXA 0.5.0 DevKit includes one), and Node 22+ for integration tests. LVGL is
+(the PXA 0.5.0 DevKit includes one), and Node 24+ (JSPI) for integration tests. LVGL is
 pinned to 9.6.0. Supply `--lvgl` to reuse an existing checkout offline.
 
 ```sh
@@ -20,10 +20,11 @@ PXA_BROWSER_BUNDLE="$PWD/local/artifacts/browser-bundle" \
 ```
 
 `--host-build` reuses a separately compiled Host (useful with Emscripten in a
-container). It must contain `pxa-browser.mjs` and `pxa-browser.wasm`; also supply
+container). It must contain the Host files and toolchain license copies emitted by CMake; also supply
 `--lvgl` for the matching license. Build outputs stay outside the source tree.
 The bundle includes a C Canvas game, a native-input/persistence/audio notes app,
-the unchanged C counter template and the unchanged C++ Hello template. The last is an SDK interoperability test fixture.
+the unchanged C counter template and the unchanged C++ Hello template. The last is an SDK interoperability test fixture. An allocator-free main-loop
+fixture exercises suspension, lifecycle, input and cancellation.
 
 Serve over HTTPS or localhost. The website accepts `PXA_BROWSER_BUNDLE` during
 its build and provides the controller UI. Never open modules with `file://`.
@@ -39,9 +40,19 @@ required. Runtime downloads are lazy, after the user starts a demo.
 - Copy validated import payloads only, reusing scratch space. Core control
   messages are bounded by the existing wire limit; I/O is capped at 4 MiB.
   Drain at most 128 events per turn. Never reenter a Guest during an import.
-- Require exported `memory`, `malloc`, `free` and PXA callback entry points.
-  Default SDK components provide these; `NO_ALLOCATOR` builds are not supported.
+- Require exported `memory` and PXA callback entry points. Allocator-free SDK
+  builds work by preserving LLVM's `__stack_pointer` name. The loader exposes
+  that global and reserves a callback event on the Guest stack; function bodies
+  are unchanged. Otherwise `malloc`/`free` exports are required. Memory and table
+  maxima are bounded before instantiation (64 MiB, 65,536 table entries).
   Chip-specific AOT artifacts cannot run here; retain the original Wasm.
+- Core 2.1 main-loop components use WebAssembly JSPI, detected before startup.
+  Event-port waits suspend the Guest while Host timers, graphics and input keep
+  running. No Guest callback is entered on top of a suspended callback. Initial
+  foreground and focus changes follow the same lifecycle protocol as desktop.
+  Unsupported browsers show an explicit error; callback applications do not
+  require JSPI. Pause retains queued events; cooperative stop unwinds a pending
+  wait before invoking the stop callback.
 - Supply the real display environment as standard startup configuration. Browser
   system fonts supply CJK glyphs through a bounded alpha-glyph cache; glyph
   metrics use the browser alphabetic baseline. Without OffscreenCanvas, use the
@@ -70,7 +81,7 @@ required. Runtime downloads are lazy, after the user starts a demo.
 - Audio mixes/resamples in the Host Worker; an AudioWorklet consumes a bounded
   60 ms PCM queue. Start/resume requires a browser user gesture. Output uses the
   system default audio device. Page mute controls this app only: browsers do not
-  expose OS master-volume control. PCM/tone/effects and borrowed PCM/PSG/GB-PSG
+  expose OS master-volume control. PCM/tone/effects and borrowed PCM/PSG
   computation are implemented. Asset-based music/sound playback is not yet wired.
 - Network requests use Fetch with exact-origin PXA permissions, CORS, omitted
   cookies and rejected redirects. The loader supplies approved `networkOrigins`;
@@ -83,7 +94,8 @@ required. Runtime downloads are lazy, after the user starts a demo.
   composition. GameRender reuses the portable rasterizer, uploads, bindings and
   compute kernels. Guest-mapped persistent buffers and direct hardware scanout
   are unavailable. Surface scaling follows the current Core contract (same-size
-  layers); GameRender fits its output within the display with aspect preserved.
+  layers). RGB565 Surface presentation follows the desktop 1×/2×/4× integer
+  fit and centering contract; GameRender preserves aspect ratio within the display.
 - Borrowed compute operations use a reusable sparse memory mirror, preserving
   original offsets and aliasing for the existing C validators. Only referenced
   ranges are copied, and only validated output ranges are written back. Mirror
@@ -100,17 +112,26 @@ IPC broker. Not every optional operation is available; consult the inventory
 and normal service errors. Hardware MAC access is unavailable. Assets, Sensor,
 Lease, Work, PXA IME-provider registration and StoreInstaller are not wired.
 Native text entry replaces the device input method; it is not a fake IME provider.
-Only curated Wasm modules are loaded publicly, not arbitrary `.pxa` archives.
+The store also serves verified Wasm from public, published PXA packages. It
+rechecks both package signatures, inventory digests and published hashes. The
+page verifies each response hash before transferring code to the Worker. PNG
+UI assets under `assets/` use the same verified delivery, capped at 1 MiB and
+1024×1024 per image. This legacy UI image path does not implement Assets service.
+The store gates entry on required services, features, permissions and SDK version;
+multi-component apps and separate resource packs remain unavailable. Private
+storage identity derives from publisher lineage plus app ID, independent of slug
+or release version. Uploading arbitrary archives in the browser is not supported.
 WASI exposes basic clocks, randomness, arguments and stdout/stderr; filesystem
 access uses the PXA FS service, not WASI preopened directories.
 
 ## Distribution
 
-GameRender links GPL-2.0-or-later span kernels derived from Quake and
-recrof/Quake-ESP32S3; retain their source notices and the bundled GPL license.
-Browser releases include the corresponding full source archive and build scripts,
-in addition to PXA/LVGL/font notices. The repository's top-level MIT text does
-not replace individual third-party file licenses.
+The Host follows the [system license policy](../../docs/zh-CN/system-license-policy.md).
+Retired engine-specific span kernels are not linked; LVGL's optional FrogFS and
+ThorVG implementations are excluded from compilation. Browser bundles retain
+PXA, LVGL, font licenses and `THIRD_PARTY_NOTICES.md`. Application modules have
+independent licenses. The repository's top-level MIT text does not replace
+individual third-party file licenses.
 
 ## AI development boundary
 

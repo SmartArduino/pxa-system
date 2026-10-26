@@ -39,6 +39,7 @@ static void close_layer(void *c,uint64_t id){
     pxa_raster_bindings_release(&l->bindings);
     release(NULL,l->front);release(NULL,l->back);release(NULL,l->scratch);memset(l,0,sizeof(*l));
 }
+static pxa_status_t configure(void *c,uint64_t id,const pxa_surface_layer_t *v);
 static pxa_status_t create(void *c,const pxa_surface_desc_t *d,uint64_t *id,uint32_t *stride){
     (void)c;if(d->flags&PXA_SURFACE_FLAG_GUEST_MAPPED)return PXA_STATUS_UNSUPPORTED;
     uint64_t bytes=(uint64_t)d->width*d->height*(d->format==PXA_SURFACE_FORMAT_RGB565?2:4);
@@ -58,7 +59,7 @@ static pxa_status_t create(void *c,const pxa_surface_desc_t *d,uint64_t *id,uint
     l->descriptor.data_size=l->bytes;l->descriptor.data=l->front;
     lv_image_set_src(l->image,&l->descriptor);lv_image_set_antialias(l->image,false);lv_image_set_pivot(l->image,0,0);
     l->layer=(pxa_surface_layer_t){.width=d->width,.height=d->height,.visible=1};
-    lv_obj_move_background(l->image);*id=l->id;*stride=l->stride;return PXA_STATUS_OK;
+    configure(c,l->id,&l->layer);lv_obj_move_background(l->image);*id=l->id;*stride=l->stride;return PXA_STATUS_OK;
 }
 static pxa_status_t write_frame(void *c,uint64_t id,const uint8_t *data,size_t size){
     (void)c;layer_t *l=find(id);if(!l)return PXA_STATUS_NOT_FOUND;if(size!=l->bytes)return PXA_STATUS_INVALID_ARGUMENT;
@@ -74,16 +75,26 @@ static pxa_status_t queue_frame(void *c,uint64_t id,uint64_t frame,const pxa_sur
 }
 static pxa_status_t configure(void *c,uint64_t id,const pxa_surface_layer_t *v){
     (void)c;layer_t *l=find(id);if(!l)return PXA_STATUS_NOT_FOUND;l->layer=*v;
-    lv_obj_set_pos(l->image,v->x,v->y);
-    lv_image_set_scale_x(l->image,(uint32_t)v->width*256/l->descriptor.header.w);
-    lv_image_set_scale_y(l->image,(uint32_t)v->height*256/l->descriptor.header.h);
+    int32_t x=v->x,y=v->y;uint32_t w=v->width,h=v->height;
+    if(!l->raster&&l->descriptor.header.cf==LV_COLOR_FORMAT_RGB565){
+        // Match the desktop/device Surface presenter and its input geometry.
+        unsigned scale=1;
+        for(unsigned next=2;next<=4;next*=2)
+            if(w*next<=display_width&&h*next<=display_height)scale=next;
+        w*=scale;h*=scale;
+        if(!x&&!y){x=w<display_width?(display_width-w)/2:0;y=h<display_height?(display_height-h)/2:0;}
+    }
+    lv_obj_set_pos(l->image,x,y);
+    lv_image_set_scale_x(l->image,w*256/l->descriptor.header.w);
+    lv_image_set_scale_y(l->image,h*256/l->descriptor.header.h);
     if(v->visible)lv_obj_remove_flag(l->image,LV_OBJ_FLAG_HIDDEN);else lv_obj_add_flag(l->image,LV_OBJ_FLAG_HIDDEN);
     if(v->z>=0)lv_obj_move_foreground(l->image);else lv_obj_move_background(l->image);
     return PXA_STATUS_OK;
 }
 static pxa_status_t query(void *c,uint64_t id,pxa_surface_state_t *out){
     (void)c;layer_t *l=find(id);if(!l)return PXA_STATUS_NOT_FOUND;*out=l->state;
-    out->free_buffers=l->buffer_count-1;out->flags=PXA_SURFACE_STATE_FLAG_SUPPORTS_ALPHA_COMPOSITING;return PXA_STATUS_OK;
+    /* Two physical buffers. A pending front buffer does not occupy the writable back. */
+    out->free_buffers=1;out->flags=PXA_SURFACE_STATE_FLAG_SUPPORTS_ALPHA_COMPOSITING;return PXA_STATUS_OK;
 }
 static pxa_status_t raster_create(void *c,const pxa_game_render_desc_t *d,uint64_t *id,uint32_t *caps){
     pxa_surface_desc_t surface={d->width,d->height,PXA_SURFACE_FORMAT_RGB565,d->buffer_count,0};uint32_t stride;

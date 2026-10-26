@@ -63,3 +63,20 @@ test('ordinary SDK notes app: UTF-8 editor, KV, private file, wall clock and aud
   assert.ok(pcm.some(x=>Math.abs(x)>0.01),'Host tone must produce non-silent PCM');
   await rt.stop();
 });
+
+test('JSPI event loop: allocator-free startup, foreground, input, pause and stop',async()=>{
+  const messages=[];
+  const rt=await createRuntime(await createHost(),await fs.readFile(path.join(directory,'mainloop-test.wasm')),
+    {mainLoop:true,log:value=>messages.push(value)});
+  const turn=()=>new Promise(resolve=>setTimeout(resolve,20));
+  await turn();rt.tick(performance.now());
+  assert.ok(messages.some(s=>s.includes('focus:1')),'startup delivers foreground');
+  const before=hash(rt);rt.controller(16);await turn();rt.controller(0);rt.tick(performance.now());
+  assert.notEqual(hash(rt),before,'suspended Guest must receive controller events');
+  rt.focus(false);await turn();rt.pause(true);
+  assert.ok(messages.some(s=>s.includes('focus:0')));
+  const paused=hash(rt);rt.controller(32);await turn();rt.tick(performance.now());
+  assert.equal(hash(rt),paused,'paused Guest must not consume inputs');
+  rt.controller(0);rt.focus(true);rt.pause(false);await turn();
+  await rt.stop();assert.ok(messages.some(s=>s.includes('stopped')));
+});

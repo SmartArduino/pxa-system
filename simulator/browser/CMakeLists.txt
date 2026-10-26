@@ -3,11 +3,22 @@ project(pxa_browser C)
 if(NOT EMSCRIPTEN)
   message(FATAL_ERROR "Configure with emcmake cmake")
 endif()
+get_filename_component(emscripten_root "${CMAKE_C_COMPILER}" DIRECTORY)
+configure_file("${emscripten_root}/LICENSE" "${CMAKE_BINARY_DIR}/LICENSE-Emscripten" COPYONLY)
+configure_file("${emscripten_root}/system/lib/libc/musl/COPYRIGHT" "${CMAKE_BINARY_DIR}/LICENSE-musl" COPYONLY)
+configure_file("${emscripten_root}/system/lib/compiler-rt/LICENSE.TXT" "${CMAKE_BINARY_DIR}/LICENSE-compiler-rt" COPYONLY)
 set(PXA_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(PXA_BUILD_ADAPTERS OFF CACHE BOOL "" FORCE)
 add_subdirectory(../../libpxa pxa)
 include(../../cmake/PxaDesktopLvgl.cmake)
 pxsys_prepare_desktop_lvgl("${CMAKE_CURRENT_SOURCE_DIR}")
+pxa_restrict_lvgl(lvgl)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+add_custom_target(browser_license_gate
+  COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/../../tools/licensing/check_system_licenses.py"
+    --compile-commands "${CMAKE_BINARY_DIR}/compile_commands.json"
+  VERBATIM)
 set(adapter ../../libpxa/adapters)
 add_executable(pxa-browser host.c fonts.c services.c audio.c network.c graphics.c
   ${adapter}/posix/pxa_posix_fs.c
@@ -18,6 +29,7 @@ add_executable(pxa-browser host.c fonts.c services.c audio.c network.c graphics.
   ${adapter}/lvgl/pxa_lvgl_gif_native.c)
 target_include_directories(pxa-browser PRIVATE ${adapter}/include)
 target_link_libraries(pxa-browser PRIVATE pxa lvgl)
+add_dependencies(pxa-browser browser_license_gate)
 target_compile_options(pxa-browser PRIVATE -Wall -Wextra)
 target_link_options(pxa-browser PRIVATE
   --no-entry -sMODULARIZE=1 -sEXPORT_ES6=1 -sENVIRONMENT=web,worker,node
