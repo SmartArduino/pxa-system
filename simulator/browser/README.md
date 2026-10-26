@@ -94,7 +94,9 @@ required. Runtime downloads are lazy, after the user starts a demo.
   composition. GameRender reuses the portable rasterizer, uploads, bindings and
   compute kernels. Guest-mapped persistent buffers and direct hardware scanout
   are unavailable. Surface scaling follows the current Core contract (same-size
-  layers). RGB565 Surface presentation follows the desktop 1×/2×/4× integer
+  layers). RGB565 frames are expanded into a reusable presentation buffer on
+  submission, so pixel edges are exact and UI redraws do not repeat scaling.
+  RGB565 Surface presentation follows the desktop 1×/2×/4× integer
   fit and centering contract; GameRender preserves aspect ratio within the display.
 - Borrowed compute operations use a reusable sparse memory mirror, preserving
   original offsets and aliasing for the existing C validators. Only referenced

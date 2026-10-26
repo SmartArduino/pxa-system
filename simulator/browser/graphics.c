@@ -13,9 +13,9 @@
 #define BUDGET (24u*1024u*1024u)
 typedef struct {
     uint32_t id,bytes,stride;
-    uint8_t *front,*back,*scratch;
+    uint8_t *front,*back,*scratch,*presentation_pixels;
     lv_obj_t *image;
-    lv_image_dsc_t descriptor;
+    lv_image_dsc_t descriptor,presentation;
     pxa_surface_layer_t layer;
     pxa_surface_state_t state;
     pxa_raster_bindings_t bindings;
@@ -37,7 +37,7 @@ static void close_layer(void *c,uint64_t id){
     (void)c;layer_t *l=find(id);if(!l)return;
     if(l->image)lv_obj_delete(l->image);
     pxa_raster_bindings_release(&l->bindings);
-    release(NULL,l->front);release(NULL,l->back);release(NULL,l->scratch);memset(l,0,sizeof(*l));
+    release(NULL,l->front);release(NULL,l->back);release(NULL,l->scratch);release(NULL,l->presentation_pixels);memset(l,0,sizeof(*l));
 }
 static pxa_status_t configure(void *c,uint64_t id,const pxa_surface_layer_t *v);
 static pxa_status_t create(void *c,const pxa_surface_desc_t *d,uint64_t *id,uint32_t *stride){
@@ -51,7 +51,7 @@ static pxa_status_t create(void *c,const pxa_surface_desc_t *d,uint64_t *id,uint
     l->front=allocate(NULL,l->bytes);l->back=allocate(NULL,l->bytes);
     if(!l->front||!l->back){close_layer(NULL,l->id);return PXA_STATUS_RESOURCE_LIMIT;}
     l->image=lv_image_create(lv_screen_active());if(!l->image){close_layer(NULL,l->id);return PXA_STATUS_RESOURCE_LIMIT;}
-    lv_obj_remove_flag(l->image,LV_OBJ_FLAG_CLICKABLE|LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_clickable(l->image,false);lv_obj_set_scrollable(l->image,false);
     l->descriptor.header.magic=LV_IMAGE_HEADER_MAGIC;
     l->descriptor.header.cf=d->format==PXA_SURFACE_FORMAT_RGB565?LV_COLOR_FORMAT_RGB565:LV_COLOR_FORMAT_ARGB8888;
     l->descriptor.header.flags=d->format==PXA_SURFACE_FORMAT_ARGB8888_PREMULTIPLIED?LV_IMAGE_FLAGS_PREMULTIPLIED:0;
@@ -59,7 +59,24 @@ static pxa_status_t create(void *c,const pxa_surface_desc_t *d,uint64_t *id,uint
     l->descriptor.data_size=l->bytes;l->descriptor.data=l->front;
     lv_image_set_src(l->image,&l->descriptor);lv_image_set_antialias(l->image,false);lv_image_set_pivot(l->image,0,0);
     l->layer=(pxa_surface_layer_t){.width=d->width,.height=d->height,.visible=1};
-    configure(c,l->id,&l->layer);lv_obj_move_background(l->image);*id=l->id;*stride=l->stride;return PXA_STATUS_OK;
+    pxa_status_t configured=configure(c,l->id,&l->layer);
+    if(configured){close_layer(c,l->id);return configured;}
+    lv_obj_move_background(l->image);*id=l->id;*stride=l->stride;return PXA_STATUS_OK;
+}
+static void update_image(layer_t *l){
+    if(l->presentation_pixels){
+        const uint32_t w=l->presentation.header.w,h=l->presentation.header.h;
+        const uint32_t sw=l->descriptor.header.w,sh=l->descriptor.header.h;
+        uint16_t *out=(uint16_t *)l->presentation_pixels;
+        const uint16_t *in=(const uint16_t *)l->front;
+        for(uint32_t y=0;y<h;y++){
+            const uint32_t source_y=y*sh/h;
+            if(y&&source_y==(y-1)*sh/h){memcpy(out+y*w,out+(y-1)*w,w*2u);continue;}
+            for(uint32_t x=0;x<w;x++)out[y*w+x]=in[source_y*sw+x*sw/w];
+        }
+        lv_image_set_src(l->image,&l->presentation);
+    }else lv_image_set_src(l->image,&l->descriptor);
+    lv_obj_invalidate(l->image);
 }
 static pxa_status_t write_frame(void *c,uint64_t id,const uint8_t *data,size_t size){
     (void)c;layer_t *l=find(id);if(!l)return PXA_STATUS_NOT_FOUND;if(size!=l->bytes)return PXA_STATUS_INVALID_ARGUMENT;
@@ -70,7 +87,7 @@ static pxa_status_t queue_frame(void *c,uint64_t id,uint64_t frame,const pxa_sur
     if(frame<=l->frame_id)return PXA_STATUS_BAD_STATE;
     if(l->pending){l->state.dropped_frames++;l->state.replaced_frames++;}
     uint8_t *old=l->front;l->front=l->back;l->back=old;l->descriptor.data=l->front;
-    lv_image_set_src(l->image,&l->descriptor);lv_obj_invalidate(l->image);
+    update_image(l);
     l->state.submitted_frames++;l->frame_id=frame;l->pending=1;return PXA_STATUS_OK;
 }
 static pxa_status_t configure(void *c,uint64_t id,const pxa_surface_layer_t *v){
@@ -85,9 +102,23 @@ static pxa_status_t configure(void *c,uint64_t id,const pxa_surface_layer_t *v){
         if(!x&&!y){x=w<display_width?(display_width-w)/2:0;y=h<display_height?(display_height-h)/2:0;}
     }
     lv_obj_set_pos(l->image,x,y);
-    lv_image_set_scale_x(l->image,w*256/l->descriptor.header.w);
-    lv_image_set_scale_y(l->image,h*256/l->descriptor.header.h);
-    if(v->visible)lv_obj_remove_flag(l->image,LV_OBJ_FLAG_HIDDEN);else lv_obj_add_flag(l->image,LV_OBJ_FLAG_HIDDEN);
+    if(l->descriptor.header.cf==LV_COLOR_FORMAT_RGB565){
+        // Scale exact pixel cells once on frame submission. LVGL's geometric
+        // image transform clips the final source cell at integer zoom factors.
+        // A reusable buffer also avoids transforming again on UI redraws.
+        const int scaled=w!=l->descriptor.header.w||h!=l->descriptor.header.h;
+        if(scaled&&(!l->presentation_pixels||l->presentation.header.w!=w||l->presentation.header.h!=h)){
+            uint8_t *pixels=allocate(NULL,(size_t)w*h*2u);if(!pixels)return PXA_STATUS_RESOURCE_LIMIT;
+            release(NULL,l->presentation_pixels);l->presentation_pixels=pixels;
+            l->presentation=l->descriptor;l->presentation.header.w=w;l->presentation.header.h=h;
+            l->presentation.header.stride=w*2u;l->presentation.data_size=w*h*2u;l->presentation.data=pixels;
+        }else if(!scaled){release(NULL,l->presentation_pixels);l->presentation_pixels=NULL;}
+        lv_image_set_scale(l->image,256);update_image(l);
+    }else{
+        lv_image_set_scale_x(l->image,w*256/l->descriptor.header.w);
+        lv_image_set_scale_y(l->image,h*256/l->descriptor.header.h);
+    }
+    lv_obj_set_hidden(l->image,!v->visible);
     if(v->z>=0)lv_obj_move_foreground(l->image);else lv_obj_move_background(l->image);
     return PXA_STATUS_OK;
 }
@@ -105,7 +136,8 @@ static pxa_status_t raster_create(void *c,const pxa_game_render_desc_t *d,uint64
     uint32_t scale_x=(uint32_t)display_width*256/d->width,scale_y=(uint32_t)display_height*256/d->height;
     uint32_t scale=scale_x<scale_y?scale_x:scale_y;
     pxa_surface_layer_t v={.width=d->width*scale/256,.height=d->height*scale/256,.visible=1};
-    v.x=(display_width-v.width)/2;v.y=(display_height-v.height)/2;configure(c,*id,&v);
+    v.x=(display_width-v.width)/2;v.y=(display_height-v.height)/2;s=configure(c,*id,&v);
+    if(s){close_layer(c,*id);return s;}
     *caps=PXA_RASTER_CAP_KNOWN_MASK;return PXA_STATUS_OK;
 }
 static pxa_status_t upload(void *c,uint64_t id,const uint8_t *data,size_t size){
