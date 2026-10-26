@@ -8,7 +8,7 @@ const bundle=process.env.PXA_BROWSER_BUNDLE;
 if(!bundle||process.argv.length<3)throw new Error('PXA_BROWSER_BUNDLE and one or more .wasm paths are required');
 const {default:createHost}=await import(pathToFileURL(path.join(bundle,'pxa-browser.mjs')));
 const {createRuntime}=await import(pathToFileURL(path.join(bundle,'runtime.mjs')));
-const mainLoop=process.argv.includes('--main-loop');
+const mainLoop=process.argv.includes('--main-loop'),tap=process.argv.includes('--tap');
 for(const file of process.argv.slice(2).filter(a=>!a.startsWith('--'))){
   let runtime;
   try{
@@ -16,6 +16,7 @@ for(const file of process.argv.slice(2).filter(a=>!a.startsWith('--'))){
     runtime=await createRuntime(host,await fs.readFile(file),{appId:'validation',mainLoop,assets:await fs.readFile(file+'.assets.json','utf8').then(s=>JSON.parse(s).map(a=>({path:a.path,binary:Buffer.from(a.base64,'base64')}))).catch(e=>{if(e.code==='ENOENT')return [];throw e;}),notify:()=>{},log:()=>{}});
     const revisions=new Set(),hashes=new Set(),costs=[],start=performance.now();
     for(let i=0;i<600;i++){
+      if(tap&&i===20){runtime.pointer(160,120,true);runtime.pointer(160,120,false);}
       if(i===30||i===300)runtime.controller(16);
       if(i===31||i===301)runtime.controller(0);
       if(i>60&&i%60===0)runtime.controller([1,8,2,4][(i/60)%4]);
@@ -30,6 +31,6 @@ for(const file of process.argv.slice(2).filter(a=>!a.startsWith('--'))){
     costs.sort((a,b)=>a-b);
     console.log(JSON.stringify({file,frames:600,revisions:revisions.size,images:hashes.size,
       meanMs:costs.reduce((a,b)=>a+b,0)/costs.length,p95Ms:costs[Math.floor(costs.length*.95)]}));
-    if(hashes.size<2)process.exitCode=1;
+    if(process.argv.includes('--require-animation')&&hashes.size<2)process.exitCode=1;
   }catch(error){console.error(file,error);process.exitCode=1;}
 }

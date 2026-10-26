@@ -40,7 +40,10 @@ test('Surface RGB565 composition and frame accounting',async()=>{
   call(16,2,layer);assert.equal(io(handle,2,Buffer.from([0,248,0,248,0,248,0,248])).result,8);
   const queue=Buffer.alloc(20);queue.writeBigUInt64LE(handle);queue.writeBigUInt64LE(1n,8);call(16,3,queue,false);
   host._browser_tick(performance.now()+40);host._browser_render();
-  assert.deepEqual([...rt.pixels().slice(0,3)],[0,0,255]);
+  const pixels=rt.pixels(),at=(x,y)=>[...pixels.slice((y*320+x)*4,(y*320+x)*4+3)];
+  // A 2×2 RGB565 Surface fits at 4×, centered exactly like desktop/device.
+  assert.deepEqual(at(156,116),[0,0,255]);assert.deepEqual(at(163,123),[0,0,255]);
+  assert.notDeepEqual(at(155,116),[0,0,255]);assert.notDeepEqual(at(164,123),[0,0,255]);
   const state=call(16,4,num(handle,8));assert.equal(state.readBigUInt64LE(4),1n);assert.equal(state.readBigUInt64LE(12),1n);
   await rt.stop();
 });
