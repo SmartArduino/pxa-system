@@ -8,6 +8,7 @@ set(PXA_BUILD_ADAPTERS OFF CACHE BOOL "" FORCE)
 add_subdirectory(../../libpxa pxa)
 include(../../cmake/PxaDesktopLvgl.cmake)
 pxsys_prepare_desktop_lvgl("${CMAKE_CURRENT_SOURCE_DIR}")
+pxa_restrict_lvgl(lvgl)
 set(adapter ../../libpxa/adapters)
 add_executable(pxa-browser host.c fonts.c services.c audio.c network.c graphics.c
   ${adapter}/posix/pxa_posix_fs.c

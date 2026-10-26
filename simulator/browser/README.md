@@ -106,11 +106,12 @@ access uses the PXA FS service, not WASI preopened directories.
 
 ## Distribution
 
-GameRender links GPL-2.0-or-later span kernels derived from Quake and
-recrof/Quake-ESP32S3; retain their source notices and the bundled GPL license.
-Browser releases include the corresponding full source archive and build scripts,
-in addition to PXA/LVGL/font notices. The repository's top-level MIT text does
-not replace individual third-party file licenses.
+The Host follows the [system license policy](../../docs/zh-CN/system-license-policy.md).
+Retired engine-specific span kernels are not linked; LVGL's optional FrogFS and
+ThorVG implementations are excluded from compilation. Browser bundles retain
+PXA, LVGL, font licenses and `THIRD_PARTY_NOTICES.md`. Application modules have
+independent licenses. The repository's top-level MIT text does not replace
+individual third-party file licenses.
 
 ## AI development boundary
 

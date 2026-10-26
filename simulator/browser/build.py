@@ -57,14 +57,18 @@ def main():
                                  'sha256': hashlib.sha256(data).hexdigest()})
     (out / 'manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
     shutil.copy2(ROOT / 'LICENSE', out / 'LICENSE-PXA')
-    shutil.copy2(ROOT / 'libpxa/licenses/GPL-2.0.txt', out / 'LICENSE-GPL-2.0')
-    shutil.copy2(ROOT / 'libpxa/licenses/MPL-2.0.txt', out / 'LICENSE-MPL-2.0')
+    shutil.copy2(ROOT / 'libpxa/THIRD_PARTY_NOTICES.md', out / 'THIRD_PARTY_NOTICES.md')
+    # These names belonged to retired Host implementations. Reusing an output
+    # directory must not carry their obsolete distribution notices forward.
+    for filename in ('LICENSE-GPL-2.0', 'LICENSE-MPL-2.0'):
+        (out / filename).unlink(missing_ok=True)
     (out / 'NOTICE').write_text(
-        'PXA Browser Host includes libpxa and LVGL. GameRender includes GPL-2.0-or-later '
-        'indexed/projected span kernels derived from id Software Quake and recrof/Quake-ESP32S3; '
-        'copyright id Software (1996-1997), Nicola Wrachien and contributors (2023-2024), '
-        'and PXA System contributors (2026). Sources, build instructions and attribution: '
-        'https://github.com/SmartArduino/pxa-system/tree/browser-v0.2.0/simulator/browser\n')
+        'PXA Browser Host includes libpxa, LVGL and the listed fonts. '
+        'The system license policy excludes copyleft Host implementations; '
+        'application modules retain their independent licenses. '
+        'See LICENSE-PXA, LICENSE-LVGL, the font licenses and THIRD_PARTY_NOTICES.md. '
+        'Source and build instructions: '
+        'https://github.com/SmartArduino/pxa-system/tree/main/simulator/browser\n')
     # Keep third-party license text with the deployed runtime.
     lvgl = args.lvgl.resolve() if args.lvgl else host / '_deps/lvgl_source-src'
     shutil.copy2(lvgl / 'LICENCE.txt', out / 'LICENSE-LVGL')
