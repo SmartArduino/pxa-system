@@ -1,4 +1,4 @@
-# PXA Agent Kit 0.3.0
+# PXA Agent Kit 0.3.3
 
 [English](README.en.md) · [一句话上手](https://pxa.doit.am/docs/ai-development/) · [AI 入口](https://pxa.doit.am/ai.md)
 
@@ -22,7 +22,7 @@ uv run --python 3.12 https://pxa.doit.am/setup.py --workspace ./my-pxa
 uv run --python 3.12 --locked --project ./ai ./ai/agent.py --workspace ./my-pxa setup
 ```
 
-`setup` 自动选择官方 DevKit 0.5.0 或签名容器镜像，安装项目内的 skills、平台 MCP 配置、CLI 启动器，最后编译并运行真实 Guest、保存检查截图。失败时返回失败，不会把下载成功当成验收。`--sdk /path/to/devkit` 仅复用用户自己选择的完整 SDK，不宣称它经过下载签名校验。离线分发可以用 `setup.py --channel /path/to/ai-kit-0.3.0.json --manifest /path/to/distribution.json`，归档和签名放在各自清单旁。
+`setup` 自动选择官方 DevKit 0.5.0 或签名容器镜像，安装项目内的 skills、平台 MCP 配置、CLI 启动器，最后编译并运行真实 Guest、保存检查截图。失败时返回失败，不会把下载成功当成验收。`--sdk /path/to/devkit` 仅复用用户自己选择的完整 SDK，不宣称它经过下载签名校验。离线分发可以用 `setup.py --channel /path/to/ai-kit-0.3.3.json --manifest /path/to/distribution.json`，归档和签名放在各自清单旁。
 
 在 `my-pxa` 目录中使用以下命令（Windows 使用 `.pxa\pxa.cmd`）：
 
@@ -52,6 +52,10 @@ uv run --python 3.12 --locked --project ./ai ./ai/agent.py --workspace ./my-pxa 
 > 做一个番茄钟，支持开始、暂停、重置，适配圆屏和横屏。请实现、编译、运行模拟器，实际点击并查看截图，发现问题继续修复。
 
 AI 先读 `pxa-app-dev`、`pxa-debug`，按现有 SDK 头文件实现；构建后用真实 Guest、截图、触摸或控制器输入验证。反馈时描述预期，例如“按钮再大一些，手柄 B 返回后保留倒计时”。继续修改同一个应用，保留原 app ID、签名身份、SDK 锁及存档。
+
+一组已知的连续操作可用 MCP `pxa_interact(job_id, steps)`：复用同一个模拟器调试连接，依次点击、滑动、按手柄、等待或截图。最多 32 步、8 张截图、累计等待/按住 15 秒；完整检查通过后才操作。返回批次 job_id 和证据路径，等任务结束再用 `pxa_view_image` 检查原图。需要观察中间结果时拆成短批次，同一模拟器不并发输入。CLI 可用 `verify --scenario`。
+
+批次结束后，`pxa_job_status` 直接附带 `batch` 结果。停止批次用 `pxa_job_stop`：等待执行进程取消并松键，正常取消后模拟器可继续使用；执行进程无响应时才停止它所属的模拟器。取消不算验收通过，继续前先检查当前画面，不重放整批操作。
 
 MCP 长操作返回 job_id，通过 `pxa_job_status` 获取结果，`pxa_screenshot`/`pxa_view_image` 返回可供 AI 直接查看的图片。关闭 server 时清理它自己启动的进程/容器。CLI 是同一实现的后备入口，不依赖 MCP 是否启用。
 
@@ -88,7 +92,7 @@ AI Kit 独立版本，不修改已发布 DevKit。`setup.py` 内置发行公钥�
 
 ## 任务边界与更短的开发循环
 
-Agent Kit 0.3.0 可直接创建 C 或 C++ 项目。SDK、ABI、运行时与板子代码是应用任务的只读输入：
+Agent Kit 0.3.3 可直接创建 C 或 C++ 项目。SDK、ABI、运行时与板子代码是应用任务的只读输入：
 
 ```sh
 .pxa/pxa init apps/c-demo --id pxa-c-demo --language c
@@ -119,3 +123,13 @@ uv run --python 3.12 https://pxa.doit.am/setup.py --workspace . --mode board
 ```
 
 脚手架包含现有 board-port 注册入口、待填写的硬件清单和构建阻断提示；没有猜测 GPIO、供电或 Flash 分区。完成真实驱动前检查不会通过。允许修改本板 BSP、模拟器 Profile 和依赖管理器生成的本板 lock；SDK、ABI、共享板级层与其他设备仍只读。提供 `pxa-board-port` skill、可选 `pxa-board-developer` 角色以及对应 MCP 工具。新 CPU 或缺失的平台接口应作为独立平台任务，不能在板适配中偷偷改接口。
+
+## 更直接的查询与商城截图
+
+`context` 优先返回准确符号和声明，合并相邻重复片段；不指定查询时列出当前 SDK 头文件。调试直接使用同一 DevKit 的 PXADB，避免每次输入都加载构建 CLI。原生与容器使用同一验收流程。
+
+```sh
+.pxa/pxa verify apps/counter --profiles pai-touch --store-screenshots
+```
+
+商城截图模式在启动模拟器前隐藏手势条和三按键导航，记录原始图片摘要。先关闭所有性能浮层，再逐张检查原图；不能裁剪或修图代替关闭系统界面。MCP 对应参数为 `pxa_verify(store_screenshots=true)`。故障排查见 [AI 开发排障](https://pxa.doit.am/docs/ai-troubleshooting/)。

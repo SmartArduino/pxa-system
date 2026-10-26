@@ -43,7 +43,7 @@ def fetch(source, limit):
     if urlparse(source).scheme:
         if urlparse(source).scheme != 'https':
             raise ValueError('Release downloads require HTTPS')
-        stream = build_opener(HTTPSRedirect).open(Request(source, headers={'User-Agent': 'PXA-Agent-Setup/0.3.0'}), timeout=120)
+        stream = build_opener(HTTPSRedirect).open(Request(source, headers={'User-Agent': 'PXA-Agent-Setup/0.3.3'}), timeout=120)
     else:
         stream = Path(source).open('rb')
     with stream:

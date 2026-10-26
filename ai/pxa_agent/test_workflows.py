@@ -171,6 +171,60 @@ class WorkflowTests(unittest.TestCase):
                 module.validate_scenario({'pai-touch':[{'name':'bad','action':'controller',
                                           'buttons':buttons,'ms':duration}]}, dimensions)
 
+    def test_context_prioritizes_exact_symbol_and_reads_current_headers(self):
+        headers = self.sdk / 'sdk/guest-c/include'
+        (headers / 'aaa.h').write_text('int pxa_ui_show_legacy(void);\n' * 20)
+        value = context.sdk_context(self.sdk, 'pxa_ui_show', language='c', limit=1)
+        self.assertTrue(value['matches'][0]['path'].endswith('/pxa_ui.h'))
+        (headers / 'pxa_ui.h').write_text('int pxa_ui_show(int flags);\n')
+        self.assertIn('int flags', context.sdk_context(self.sdk, 'pxa_ui_show', 'c', 1)['matches'][0]['excerpt'])
+        inventory = context.sdk_context(self.sdk, language='c')
+        self.assertEqual(inventory['matches'], [])
+        self.assertEqual(inventory['header_count'], 2)
+        self.assertEqual(len(inventory['headers']), 2)
+
+    def test_qualified_cpp_query_deduplicates_adjacent_declarations(self):
+        header = self.sdk / 'sdk/guest-cpp/include/pxa/ui.hpp'
+        header.parent.mkdir(parents=True)
+        header.write_text('class Button {\n Button();\n Button(int);\n};\n')
+        result = context.sdk_context(self.sdk, 'pxa::ui::Button')
+        self.assertEqual(len(result['matches']), 1)
+        self.assertEqual(result['matches'][0]['line'], 1)
+        self.assertEqual(result['matches'][0]['excerpt_start_line'], 1)
+
+    def test_device_entrypoint_reuses_bundled_runtime_and_falls_back(self):
+        spec = importlib.util.spec_from_file_location('verify_app', KIT / 'skills/pxa-debug/scripts/verify_app.py')
+        helper = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(helper)
+        pxa = self.sdk / 'bin/pxa'
+        env = {'PXA_SIMULATOR_SOCKET_ROOT': '/tmp/owned', 'PYTHONPATH': '/extra'}
+        args, variables = helper.device_command(pxa, ['device', 'info'], env)
+        self.assertEqual(args, [str(pxa), 'device', 'info'])
+        for name in ('runtime/python/bin/python3', 'tools/pxadb/pxadb.py'):
+            file = self.sdk / name
+            file.parent.mkdir(parents=True, exist_ok=True)
+            file.touch()
+        args, variables = helper.device_command(pxa, ['device', 'info'], env)
+        self.assertTrue(args[0].endswith('/runtime/python/bin/python3'))
+        self.assertTrue(args[1].endswith('/tools/pxadb/pxadb.py'))
+        self.assertEqual(args[2:], ['info'])
+        self.assertEqual(variables['PXA_SIMULATOR_SOCKET_ROOT'], '/tmp/owned')
+        self.assertNotIn('PYTHONHOME', env)
+        self.assertEqual(helper.device_command(pxa, ['build', 'app'], env)[0], [str(pxa), 'build', 'app'])
+
+    def test_headless_container_job_passes_environment_inside_container(self):
+        from .environment import Environment
+        from .workbench import Jobs
+        env = Environment(self.ws, {'engine': 'docker', 'image': 'sha256:test'})
+        with patch.object(env, 'invocation', return_value=['docker', 'run', '--rm', 'sha256:test', 'run']), \
+             patch('pxa_agent.workbench.subprocess.Popen') as popen, \
+             patch('pxa_agent.workbench.threading.Thread'), \
+             patch.object(Jobs, 'status', return_value={}):
+            Jobs(env).start(['run'], headless=True)
+        command = popen.call_args.args[0]
+        self.assertLess(command.index('SDL_VIDEODRIVER=dummy'), command.index('sha256:test'))
+        self.assertLess(command.index('SDL_AUDIODRIVER=dummy'), command.index('sha256:test'))
+
     def test_controller_adapter_releases_all_keys_after_partial_failure(self):
         from . import simulator_input
         commands = []

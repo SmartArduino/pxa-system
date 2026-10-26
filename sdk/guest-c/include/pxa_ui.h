@@ -130,6 +130,9 @@ typedef uint64_t pxa_ui_token_t;
 #define PXA_UI_PROPERTY_ITEM_EXTENT 779u
 #define PXA_UI_PROPERTY_SCROLL_POSITION 780u
 #define PXA_UI_PROPERTY_IMAGE_HANDLE 781u
+#define PXA_UI_PROPERTY_TEXT_MAX_BYTES 782u
+#define PXA_UI_PROPERTY_TEXT_SINGLE_LINE 783u
+#define PXA_UI_PROPERTY_TEXT_PASSWORD 784u
 
 /* Grid layout: a node becomes a grid once it has both a column and a row
  * template. Track kinds describe one track; alignments reuse PXA_UI_ALIGN_*. */

@@ -151,12 +151,26 @@ def create_server(env):
 
     @tool()
     def pxa_job_stop(job_id: str) -> dict:
-        """Stop only this server's job and its owned Guest/container."""
+        """Stop this server's job. Batch cancellation releases input and keeps its simulator available;
+        an unresponsive worker forces its owned simulator to stop. Never replay cancelled steps.
+        """
         return jobs.stop(job_id)
 
     @tool()
-    def pxa_verify(project: str, profiles: list[Profile] | None = None, scenario: str | None = None) -> dict:
-        """Run repeatable multi-screen Guest checks. Read result.json and inspect screenshots after the job finishes."""
+    def pxa_interact(job_id: str, steps: list[dict]) -> dict:
+        """Run 1..32 ordered tap/swipe/controller/wait/screenshot/cancel steps on this owned simulator.
+
+        Each step has unique name and action. Tap: x,y; swipe: x,y,x2,y2,ms;
+        controller: buttons,ms; wait: ms. Up to 8 screenshots and 15 seconds of
+        holds/waits. Returns a job and evidence paths. Poll pxa_job_status for the
+        final batch result, then inspect images. Use pxa_job_stop to cancel.
+        """
+        return jobs.interact(job_id, steps)
+
+    @tool()
+    def pxa_verify(project: str, profiles: list[Profile] | None = None, scenario: str | None = None,
+                   store_screenshots: bool = False) -> dict:
+        """Run real Guest checks. For store images hide navigation at capture time; inspect every original PNG."""
         path = env.project(project)
         env.ensure_identity(path)
         arguments = ['verify', str(path)]
@@ -164,6 +178,8 @@ def create_server(env):
             arguments += ['--profiles', *profiles]
         if scenario:
             arguments += ['--scenario', str(env.project(scenario))]
+        if store_screenshots:
+            arguments.append('--store-screenshots')
         return host_job(arguments)
 
     @tool(annotations=read)

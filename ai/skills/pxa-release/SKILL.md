@@ -16,3 +16,17 @@ Read the current [store tutorial](https://pxa.doit.am/docs/store-publishing/) wh
 Prepare the concrete package, checks and Chinese-first / English-second release description before the final publication step. Publishing, pushing tags and production deployment require the user's applicable authorization; an existing instruction to publish authorizes the matching step and is not a reason to ask again. A generic instruction to develop an app does not authorize production publishing. Do not turn a rejected upload into an unbounded retry or weaken server quotas/signatures.
 
 For DevKit/AI-kit maintainers, inspect `tools/release/assemble.py`, `build_ai_kit.py` and the current release manifest rather than assuming new CLI commands exist in an older binary. Use committed source, fixed tool versions, reproducible archives and a signed manifest; never package private keys, upload tokens, app saves or machine-specific paths. After release, download the actual assets, verify hashes/signatures and execute the documented install/use flow in a clean project. Describe hardware and platform limits explicitly.
+
+## Store screenshots
+
+Use `.pxa/pxa verify apps/<name> --profiles pai-touch --store-screenshots`
+(or MCP `pxa_verify(store_screenshots=true)`) to capture the real PXA Guest
+with system navigation hidden at startup. Disable any performance overlay
+before capture, including app-owned debug UI. Inspect every original PNG
+before upload: no performance overlay, bottom gesture bar or three-button
+navigation. Never crop or edit an image to conceal these elements.
+The result records capture settings and original SHA-256 hashes;
+runtime success does not imply visual approval.
+
+For environment, build, device or publishing failures, use the
+[troubleshooting guide](https://pxa.doit.am/docs/ai-troubleshooting/).

@@ -207,6 +207,8 @@ typedef struct {
     const char *sized_text_font_path;
     void (*text_input_focus)(void *, void *, bool);
     void *text_input_context;
+    const void *(*sized_text_font)(void *, uint16_t);
+    void *sized_text_font_context;
 } pxa_lvgl_ui_runtime_config_t;
 
 struct pxa_lvgl_ui {
@@ -530,6 +532,8 @@ static const lv_font_t *font_for_role(const pxa_lvgl_ui_t *ui,
 }
 
 static const lv_font_t *sized_font(pxa_lvgl_ui_t *ui, uint16_t size, int create) {
+    if (ui->config.sized_text_font)
+        return ui->config.sized_text_font(ui->config.sized_text_font_context, size);
 #if LV_USE_FREETYPE
     int32_t pixels = size;
     unsigned count = 0;
@@ -2835,7 +2839,7 @@ static void execute_canvas_swap(void *data) {
         }
         if (data[at]==PXA_UI_CANVAS_TEXT_SIZED &&
             (length<24 || !sized_font(swap->node->ui,pxa_read_u16(data+at+24),1))) {
-            swap->status=swap->node->ui->config.sized_text_font_path
+            swap->status=(swap->node->ui->config.sized_text_font_path || swap->node->ui->config.sized_text_font)
                 ? PXA_STATUS_RESOURCE_LIMIT : PXA_STATUS_UNSUPPORTED;
             return;
         }
@@ -3525,7 +3529,7 @@ pxa_status_t pxa_lvgl_ui_init(void *workspace, size_t workspace_size,
     *output = NULL;
     memset(backend, 0, sizeof(*backend));
     if (workspace == NULL || workspace_size < pxa_lvgl_ui_workspace_size() ||
-        config == NULL || config->struct_size < sizeof(*config) ||
+        config == NULL || config->struct_size < offsetof(pxa_lvgl_ui_config_t, sized_text_font) ||
         config->allocate == NULL || config->release == NULL ||
         config->execute == NULL ||
         ((config->resolve_asset == NULL) != (config->release_asset == NULL)))
@@ -3552,6 +3556,8 @@ pxa_status_t pxa_lvgl_ui_init(void *workspace, size_t workspace_size,
         .snapshot_limit_bytes=config->snapshot_limit_bytes,
         .alpha_limit_bytes=config->alpha_limit_bytes,
         .sized_text_font_path=config->sized_text_font_path,
+        .sized_text_font=config->struct_size >= sizeof(*config) ? config->sized_text_font : NULL,
+        .sized_text_font_context=config->struct_size >= sizeof(*config) ? config->sized_text_font_context : NULL,
         .text_input_focus=config->text_input_focus,
         .text_input_context=config->text_input_context,
     };
@@ -3643,6 +3649,14 @@ uint64_t pxa_lvgl_ui_event_timestamp_us(const pxa_lvgl_ui_t *ui) {
     return ui != NULL && ui->magic == PXA_LVGL_UI_MAGIC
                ? ui->event_timestamp_us
                : 0;
+}
+
+uint32_t pxa_lvgl_ui_text_input_max_bytes(const pxa_lvgl_ui_t *ui, const void *textarea) {
+    if (!ui || ui->magic != PXA_LVGL_UI_MAGIC || !textarea) return 0;
+    for (const pxa_lvgl_ui_node_t *node=ui->nodes; node; node=node->next)
+        if (node->object==textarea && node->type==PXA_UI_NODE_CONTROL &&
+            node->subtype==PXA_UI_CONTROL_TEXT_INPUT) return (uint32_t)node->maximum;
+    return 0;
 }
 
 void pxa_lvgl_ui_deinit(pxa_lvgl_ui_t *ui) {

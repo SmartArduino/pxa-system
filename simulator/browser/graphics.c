@@ -1,0 +1,159 @@
+/* SPDX-License-Identifier: MIT
+ * Host-owned double buffering; the LVGL image points at the current frame.
+ * Rendering never retains Guest pointers or copies an entire Guest heap. */
+#include <emscripten.h>
+#include <stdlib.h>
+#include <string.h>
+#include "lvgl.h"
+#include "services.h"
+#include "pxa/surface.h"
+#include "pxa/game_render.h"
+
+#define LAYERS 4
+#define BUDGET (24u*1024u*1024u)
+typedef struct {
+    uint32_t id,bytes,stride;
+    uint8_t *front,*back,*scratch;
+    lv_obj_t *image;
+    lv_image_dsc_t descriptor;
+    pxa_surface_layer_t layer;
+    pxa_surface_state_t state;
+    pxa_raster_bindings_t bindings;
+    pxa_raster_telemetry_t telemetry;
+    uint64_t frame_id;
+    uint8_t scratch_mode,pending,buffer_count,raster;
+} layer_t;
+static layer_t layers[LAYERS];
+static uint32_t serial;
+static size_t allocated;
+static uint16_t display_width,display_height;
+static void *allocate(void *c,size_t size){
+    (void)c;if(size>BUDGET-allocated)return NULL;
+    size_t *p=calloc(1,16+size);if(!p)return NULL;*p=size;allocated+=size;return (uint8_t *)p+16;
+}
+static void release(void *c,void *memory){(void)c;if(memory){size_t *p=(size_t *)((uint8_t *)memory-16);allocated-=*p;free(p);}}
+static layer_t *find(uint64_t id){for(unsigned i=0;i<LAYERS;i++)if(layers[i].id&&layers[i].id==id)return &layers[i];return NULL;}
+static void close_layer(void *c,uint64_t id){
+    (void)c;layer_t *l=find(id);if(!l)return;
+    if(l->image)lv_obj_delete(l->image);
+    pxa_raster_bindings_release(&l->bindings);
+    release(NULL,l->front);release(NULL,l->back);release(NULL,l->scratch);memset(l,0,sizeof(*l));
+}
+static pxa_status_t create(void *c,const pxa_surface_desc_t *d,uint64_t *id,uint32_t *stride){
+    (void)c;if(d->flags&PXA_SURFACE_FLAG_GUEST_MAPPED)return PXA_STATUS_UNSUPPORTED;
+    uint64_t bytes=(uint64_t)d->width*d->height*(d->format==PXA_SURFACE_FORMAT_RGB565?2:4);
+    if(!bytes||bytes>BUDGET/2)return PXA_STATUS_RESOURCE_LIMIT;
+    layer_t *l=NULL;for(unsigned i=0;i<LAYERS;i++)if(!layers[i].id){l=&layers[i];break;}
+    if(!l)return PXA_STATUS_RESOURCE_LIMIT;
+    memset(l,0,sizeof(*l));do{l->id=++serial;}while(!l->id);
+    l->bytes=(uint32_t)bytes;l->stride=l->bytes/d->height;l->buffer_count=d->buffer_count;
+    l->front=allocate(NULL,l->bytes);l->back=allocate(NULL,l->bytes);
+    if(!l->front||!l->back){close_layer(NULL,l->id);return PXA_STATUS_RESOURCE_LIMIT;}
+    l->image=lv_image_create(lv_screen_active());if(!l->image){close_layer(NULL,l->id);return PXA_STATUS_RESOURCE_LIMIT;}
+    lv_obj_remove_flag(l->image,LV_OBJ_FLAG_CLICKABLE|LV_OBJ_FLAG_SCROLLABLE);
+    l->descriptor.header.magic=LV_IMAGE_HEADER_MAGIC;
+    l->descriptor.header.cf=d->format==PXA_SURFACE_FORMAT_RGB565?LV_COLOR_FORMAT_RGB565:LV_COLOR_FORMAT_ARGB8888;
+    l->descriptor.header.flags=d->format==PXA_SURFACE_FORMAT_ARGB8888_PREMULTIPLIED?LV_IMAGE_FLAGS_PREMULTIPLIED:0;
+    l->descriptor.header.w=d->width;l->descriptor.header.h=d->height;l->descriptor.header.stride=l->stride;
+    l->descriptor.data_size=l->bytes;l->descriptor.data=l->front;
+    lv_image_set_src(l->image,&l->descriptor);lv_image_set_antialias(l->image,false);lv_image_set_pivot(l->image,0,0);
+    l->layer=(pxa_surface_layer_t){.width=d->width,.height=d->height,.visible=1};
+    lv_obj_move_background(l->image);*id=l->id;*stride=l->stride;return PXA_STATUS_OK;
+}
+static pxa_status_t write_frame(void *c,uint64_t id,const uint8_t *data,size_t size){
+    (void)c;layer_t *l=find(id);if(!l)return PXA_STATUS_NOT_FOUND;if(size!=l->bytes)return PXA_STATUS_INVALID_ARGUMENT;
+    memcpy(l->back,data,size);return PXA_STATUS_OK;
+}
+static pxa_status_t queue_frame(void *c,uint64_t id,uint64_t frame,const pxa_surface_damage_rect_t *damage,uint8_t count){
+    (void)c;(void)damage;(void)count;layer_t *l=find(id);if(!l)return PXA_STATUS_NOT_FOUND;
+    if(frame<=l->frame_id)return PXA_STATUS_BAD_STATE;
+    if(l->pending){l->state.dropped_frames++;l->state.replaced_frames++;}
+    uint8_t *old=l->front;l->front=l->back;l->back=old;l->descriptor.data=l->front;
+    lv_image_set_src(l->image,&l->descriptor);lv_obj_invalidate(l->image);
+    l->state.submitted_frames++;l->frame_id=frame;l->pending=1;return PXA_STATUS_OK;
+}
+static pxa_status_t configure(void *c,uint64_t id,const pxa_surface_layer_t *v){
+    (void)c;layer_t *l=find(id);if(!l)return PXA_STATUS_NOT_FOUND;l->layer=*v;
+    lv_obj_set_pos(l->image,v->x,v->y);
+    lv_image_set_scale_x(l->image,(uint32_t)v->width*256/l->descriptor.header.w);
+    lv_image_set_scale_y(l->image,(uint32_t)v->height*256/l->descriptor.header.h);
+    if(v->visible)lv_obj_remove_flag(l->image,LV_OBJ_FLAG_HIDDEN);else lv_obj_add_flag(l->image,LV_OBJ_FLAG_HIDDEN);
+    if(v->z>=0)lv_obj_move_foreground(l->image);else lv_obj_move_background(l->image);
+    return PXA_STATUS_OK;
+}
+static pxa_status_t query(void *c,uint64_t id,pxa_surface_state_t *out){
+    (void)c;layer_t *l=find(id);if(!l)return PXA_STATUS_NOT_FOUND;*out=l->state;
+    out->free_buffers=l->buffer_count-1;out->flags=PXA_SURFACE_STATE_FLAG_SUPPORTS_ALPHA_COMPOSITING;return PXA_STATUS_OK;
+}
+static pxa_status_t raster_create(void *c,const pxa_game_render_desc_t *d,uint64_t *id,uint32_t *caps){
+    pxa_surface_desc_t surface={d->width,d->height,PXA_SURFACE_FORMAT_RGB565,d->buffer_count,0};uint32_t stride;
+    pxa_status_t s=create(c,&surface,id,&stride);if(s)return s;layer_t *l=find(*id);l->raster=1;l->scratch_mode=d->scratch_mode;
+    size_t bytes=d->scratch_mode==PXA_RASTER_SCRATCH_DEPTH16?l->bytes:
+        d->scratch_mode==PXA_RASTER_SCRATCH_COVERAGE_2BIT?((d->width+7u)/8)*d->height*2u:0;
+    if(bytes&&!(l->scratch=allocate(NULL,bytes))){close_layer(c,*id);return PXA_STATUS_RESOURCE_LIMIT;}
+    uint32_t scale_x=(uint32_t)display_width*256/d->width,scale_y=(uint32_t)display_height*256/d->height;
+    uint32_t scale=scale_x<scale_y?scale_x:scale_y;
+    pxa_surface_layer_t v={.width=d->width*scale/256,.height=d->height*scale/256,.visible=1};
+    v.x=(display_width-v.width)/2;v.y=(display_height-v.height)/2;configure(c,*id,&v);
+    *caps=PXA_RASTER_CAP_KNOWN_MASK;return PXA_STATUS_OK;
+}
+static pxa_status_t upload(void *c,uint64_t id,const uint8_t *data,size_t size){
+    (void)c;layer_t *l=find(id);if(!l)return PXA_STATUS_NOT_FOUND;
+    pxa_raster_asset_t *asset;pxa_status_t s=pxa_raster_asset_from_upload(data,size,allocate,release,NULL,&asset);
+    if(s)return s;pxa_raster_asset_release(pxa_raster_bindings_replace(&l->bindings,data[9],asset));
+    pxa_raster_asset_release(asset);return PXA_STATUS_OK;
+}
+static pxa_status_t bind_assets(void *c,uint64_t id,const pxa_raster_bindings_t *replacement,uint64_t mask,uint8_t palette){
+    (void)c;layer_t *l=find(id);if(!l)return PXA_STATUS_NOT_FOUND;pxa_raster_bindings_t old={0};
+    pxa_raster_bindings_update(&l->bindings,replacement,mask,palette,&old);pxa_raster_bindings_release(&old);return PXA_STATUS_OK;
+}
+static pxa_status_t submit(void *c,uint64_t id,const uint8_t *data,size_t size){
+    layer_t *l=find(id);if(!l)return PXA_STATUS_NOT_FOUND;
+    pxa_raster_resources_t resources;pxa_raster_bindings_view(&l->bindings,PXA_RASTER_CAP_KNOWN_MASK,&resources);
+    pxa_raster_target_t target={.pixels=(uint16_t *)l->back,.depth_pixels=(uint16_t *)l->scratch,
+        .stride_pixels=l->stride/2,.depth_stride_pixels=l->descriptor.header.w,
+        .width=l->descriptor.header.w,.height=l->descriptor.header.h,.scratch_mode=l->scratch_mode};
+    pxa_raster_draw_list_view_t list;pxa_status_t s=pxa_raster_validate_draw_list(data,size,&target,&resources,&list);
+    if(s||list.frame_id<=l->frame_id){l->telemetry.rejected_lists++;return s?s:PXA_STATUS_BAD_STATE;}
+    double begin=emscripten_get_now();pxa_raster_execute_draw_list(data,&list,&target,&resources,&l->telemetry);
+    l->telemetry.last_host_raster_us=(uint32_t)((emscripten_get_now()-begin)*1000);
+    l->telemetry.host_raster_us+=l->telemetry.last_host_raster_us;l->telemetry.submitted_frames++;l->telemetry.rendered_frames++;
+    return queue_frame(c,id,list.frame_id,NULL,0);
+}
+static pxa_status_t raster_query(void *c,uint64_t id,pxa_raster_telemetry_t *out){
+    (void)c;layer_t *l=find(id);if(!l)return PXA_STATUS_NOT_FOUND;*out=l->telemetry;
+    out->dropped_frames=l->state.dropped_frames;return PXA_STATUS_OK;
+}
+static uint64_t now(void *c){(void)c;return (uint64_t)(emscripten_get_now()*1000);}
+void browser_graphics_presented(void){
+    for(unsigned i=0;i<LAYERS;i++){layer_t *l=&layers[i];if(l->id&&l->pending&&l->layer.visible){l->state.presented_frames++;l->pending=0;}}
+}
+void browser_graphics_order(void){
+    layer_t *ordered[LAYERS];unsigned count=0,negative=0;
+    for(unsigned i=0;i<LAYERS;i++)if(layers[i].id){
+        unsigned at=count++;while(at&&ordered[at-1]->layer.z>layers[i].layer.z){ordered[at]=ordered[at-1];at--;}
+        ordered[at]=&layers[i];if(layers[i].layer.z<0)negative++;
+    }
+    unsigned children=lv_obj_get_child_count(lv_screen_active());
+    for(unsigned i=0;i<count;i++){
+        int32_t at=i<negative?i:children-(count-i);
+        if(lv_obj_get_index(ordered[i]->image)!=at)lv_obj_move_to_index(ordered[i]->image,at);
+    }
+}
+pxa_status_t browser_graphics_init(pxa_runtime_t *rt,uint16_t width,uint16_t height){
+    display_width=width;display_height=height;
+    pxa_surface_config_t c={.struct_size=sizeof(c),.max_surfaces=4,.max_surfaces_per_component=4,
+        .max_width=UINT16_MAX,.max_height=UINT16_MAX,
+        .max_frame_bytes=BUDGET/2,.min_buffer_count=2,.max_buffer_count=3,
+        .backend={.struct_size=sizeof(pxa_surface_backend_t),.create=create,.write=write_frame,
+            .queue=queue_frame,.configure=configure,.query=query,.close=close_layer}};
+    pxa_surface_service_t *surface;size_t bytes=pxa_surface_service_workspace_size(&c);
+    pxa_status_t s=pxa_surface_service_init(calloc(1,bytes),bytes,rt,&c,&surface);if(s)return s;
+    s=pxa_surface_service_register(surface);if(s)return s;
+    pxa_game_render_config_t g={.struct_size=sizeof(g),.max_contexts=4,.max_contexts_per_component=4,
+        .min_buffer_count=2,.max_buffer_count=3,.auto_target_profile={width,height,15,1},.now_us=now,
+        .backend={.struct_size=sizeof(pxa_game_render_backend_t),.create=raster_create,.upload=upload,
+            .submit=submit,.query=raster_query,.close=close_layer,.bind_assets=bind_assets}};
+    pxa_game_render_service_t *game;bytes=pxa_game_render_service_workspace_size(&g);
+    s=pxa_game_render_service_init(calloc(1,bytes),bytes,rt,&g,&game);return s?s:pxa_game_render_service_register(game);
+}

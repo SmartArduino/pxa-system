@@ -77,6 +77,10 @@ typedef struct {
      * never receives these native objects. NULL leaves native polling intact. */
     void (*text_input_focus)(void *context, void *textarea, bool focused);
     void *text_input_context;
+    /* Optional platform font resolver (e.g. browser system fonts). Returned
+     * fonts are borrowed and must remain alive until adapter deinitialization. */
+    const void *(*sized_text_font)(void *context, uint16_t pixels);
+    void *sized_text_font_context;
 } pxa_lvgl_ui_config_t;
 
 typedef struct pxa_lvgl_ui pxa_lvgl_ui_t;
@@ -113,6 +117,8 @@ bool pxa_lvgl_ui_alpha_plane(const pxa_lvgl_ui_t *ui,
 /* Valid only while event_callback is running. Pointer events preserve the
  * LVGL input sample time instead of replacing it at the Host boundary. */
 uint64_t pxa_lvgl_ui_event_timestamp_us(const pxa_lvgl_ui_t *ui);
+/* Trusted text-input bridge: configured UTF-8 byte budget for a native editor. */
+uint32_t pxa_lvgl_ui_text_input_max_bytes(const pxa_lvgl_ui_t *ui, const void *textarea);
 
 #ifdef __cplusplus
 }

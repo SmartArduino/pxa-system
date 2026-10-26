@@ -563,3 +563,18 @@ uint32_t pxa_ui_event_target_generation(pxa_ui_service_t *service,
         pxa_ui_find_entry_const(service, component), surface);
     return target ? target->generation : 0;
 }
+
+uint32_t pxa_ui_event_root(pxa_ui_service_t *service,
+    pxa_component_t component,uint32_t surface,uint16_t kind) {
+    if(!service_valid(service)||kind<PXA_UI_EVENT_ACTION||kind>PXA_UI_EVENT_CONTROLLER_STATE)return 0;
+    const pxa_ui_entry_t *entry=pxa_ui_find_entry_const(service,component);
+    if(!entry)return 0;
+    uint32_t result=0;
+    for(const pxa_ui_node_chunk_t *chunk=entry->chunks;chunk;chunk=chunk->next)
+        for(size_t i=0;i<PXA_UI_NODE_CHUNK_COUNT;i++) {
+            const pxa_ui_node_t *n=&chunk->nodes[i];
+            if(n->occupied&&!n->parent&&n->surface==surface&&(!result||n->id<result)&&
+                pxa_ui_accepts_event(service,component,surface,n->id,kind))result=n->id;
+        }
+    return result;
+}

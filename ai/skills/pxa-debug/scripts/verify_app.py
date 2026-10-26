@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -20,6 +21,20 @@ from pxa_agent.simulator_input import inject as simulator_input
 
 PROFILES = ('pai-touch', 'sensecap-watcher', 'esp-mosaico', 'esp32s31-korvo-1', 'generic')
 NAME = re.compile(r'[a-z][a-z0-9-]{0,47}')
+
+
+def device_command(pxa, arguments, env):
+    """Use the SDK's own PXADB entrypoint without importing its build CLI."""
+    root = pxa.parent.parent
+    python = root / 'runtime/python/bin/python3'
+    script = root / 'tools/pxadb/pxadb.py'
+    if arguments[:1] == ['device'] and python.is_file() and script.is_file():
+        variables = dict(env, PYTHONHOME=str(root / 'runtime/python'))
+        variables['PYTHONPATH'] = os.pathsep.join(filter(None, [
+            str(root / 'tools'), str(root / 'runtime/python/lib/python3.12/site-packages'),
+            env.get('PYTHONPATH', '')]))
+        return [str(python), str(script), *map(str, arguments[1:])], variables
+    return [str(pxa), *map(str, arguments)], env
 
 
 def validate_scenario(scenario, dimensions):
@@ -73,6 +88,8 @@ def main():
     parser.add_argument('--profiles', nargs='+', choices=PROFILES, default=list(PROFILES))
     parser.add_argument('--scenario', type=Path)
     parser.add_argument('--headless', action='store_true')
+    parser.add_argument('--store-screenshots', action='store_true',
+                        help='Hide simulator system navigation before capturing original store screenshots')
     parser.add_argument('--online', action='store_true')
     parser.add_argument('--timeout', type=int, default=120, help='bounded startup time per profile (10..600 seconds)')
     args = parser.parse_args()
@@ -110,10 +127,19 @@ def main():
         env['PXA_SIMULATOR_SOCKET_ROOT'] = sockets.name
         if args.headless:
             env.update(SDL_VIDEODRIVER='dummy', SDL_AUDIODRIVER='dummy')
+        if args.store_screenshots:
+            env['PXA_SIM_NAV_MODE'] = 'gesture-no-bar'
         result.update(project=str(project), app_id=app_id, headless=args.headless, ipc_isolated=True)
+        result['capture'] = {
+            'purpose': 'store' if args.store_screenshots else 'debug',
+            'source': 'real-pxa-simulator', 'post_processed': False,
+            'navigation_mode': env.get('PXA_SIM_NAV_MODE', 'default'),
+            'visual_review': 'Inspect every original PNG: no performance overlay, gesture bar or three-button navigation.',
+        }
 
         def command(directory, name, arguments, *, required=True, timeout=15):
-            completed = subprocess.run([str(pxa), *map(str, arguments)], env=env, capture_output=True,
+            invocation, variables = device_command(pxa, arguments, env)
+            completed = subprocess.run(invocation, env=variables, capture_output=True,
                                        text=True, timeout=timeout)
             text = completed.stdout + completed.stderr
             (directory / (name + '.log')).write_text(text)
@@ -199,6 +225,10 @@ def main():
         if sockets is not None:
             sockets.cleanup()
         if output is not None:
+            result['screenshots'] = [
+                {'path': path.relative_to(output).as_posix(),
+                 'sha256': hashlib.sha256(path.read_bytes()).hexdigest(), 'bytes': path.stat().st_size}
+                for path in sorted(output.rglob('*.png'))]
             (output / 'result.json').write_text(json.dumps(result, ensure_ascii=False, indent=2) + '\n')
 
 
