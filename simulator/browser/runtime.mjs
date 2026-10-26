@@ -1,5 +1,9 @@
 // SPDX-License-Identifier: MIT
 // No JavaScript/DOM/network imports are exposed to guest applications.
+import {installBrowserFonts} from './fonts.mjs';
+import {prepareStorage} from './storage.mjs';
+import {installBrowserNetwork} from './network.mjs';
+import {createBorrowBridge} from './borrow.mjs';
 export const MAX_IO = 4 * 1024 * 1024;
 export const EVENT_BYTES = 4096;
 export function memoryRange(memory, pointer, size) {
@@ -9,10 +13,18 @@ export function memoryRange(memory, pointer, size) {
   return new Uint8Array(memory.buffer, pointer, size);
 }
 
-export async function createRuntime(host, binary, {width=320, height=240, log=()=>{}}={}) {
+export async function createRuntime(host, binary, {width=320, height=240, log=()=>{}, notify=()=>{}, locale='en-US',appId='local',networkOrigins=[]}={}) {
   const check = (value, operation) => { if (value < 0) throw new Error(`${operation}: ${value}`); return value; };
+  host.browserNotify=notify;
+  host.browserLocale=locale;
+  const network=installBrowserNetwork(host,networkOrigins);
+  installBrowserFonts(host);
+  const storage=await prepareStorage(host,appId,notify);
+  host.browserStorageChanged=storage.changed;
+  try {
   check(host._browser_init(width, height), 'Host initialization');
   let guest, scratch = 0, capacity = 0, callbacks = 0, copiedBytes = 0;
+  const borrow=createBorrowBridge(host,()=>guest.memory,n=>{copiedBytes+=n;});
   const reserve = size => {
     if (size > MAX_IO) throw new RangeError('PXA import exceeds the browser I/O limit');
     if (size > capacity) {
@@ -70,7 +82,10 @@ export async function createRuntime(host, binary, {width=320, height=240, log=()
   };
   const imports = {'pxa.core.v2': {
     pxa_call:(route,token,p,n)=>bridge('control',n,p,(ptr,len)=>host._browser_call(route,token,ptr,len)),
-    pxa_io:(handle,op,p,n)=>bridge('io',n,p,(ptr,len)=>host._browser_io(handle,op,ptr,len),true),
+    pxa_io:(handle,op,p,n)=>{
+      const kind=host._browser_io_memory_kind(handle,op);
+      return kind?borrow(handle,op,p>>>0,n>>>0,kind):bridge('io',n,p,(ptr,len)=>host._browser_io(handle,op,ptr,len),true);
+    },
   }, wasi_snapshot_preview1:wasi};
   const module = await WebAssembly.compile(binary);
   for (const item of WebAssembly.Module.imports(module)) {
@@ -111,7 +126,29 @@ export async function createRuntime(host, binary, {width=320, height=240, log=()
     tick(ms){host._browser_tick(ms);drain();return host._browser_render();},
     pointer(x,y,down){host._browser_pointer(x,y,down?1:0);drain();},
     controller(buttons){check(host._browser_controller(buttons),'Controller');drain();},
+    back(){check(host._browser_back(),'Back');drain();},
+    volumeKey(key){check(host._browser_volume_key(key),'Volume key');drain();},
+    focus(value){host._browser_focus(value?1:0);drain();},
+    edit({session,text,cursor=0,action=0}){
+      const encoded=new TextEncoder().encode(String(text));
+      if(encoded.length>EVENT_BYTES-44 || encoded.includes(0))return -1;
+      reserve(encoded.length+1);host.HEAPU8.set(encoded,scratch);host.HEAPU8[scratch+encoded.length]=0;
+      const result=host._browser_edit(session,scratch,encoded.length,cursor,action);drain();return result;
+    },
+    audio(){
+      const p=host._browser_audio_render(960),source=host.HEAP16.subarray(p>>>1,(p>>>1)+960);
+      const samples=new Float32Array(960);for(let i=0;i<samples.length;i++)samples[i]=source[i]/32768;
+      return samples;
+    },
+    flush:storage.flush,
+    async stop(){
+      check(host._browser_begin_stop(),'Begin stop');guest.pxa_app_stop(0);check(host._browser_finish_stop(),'Complete stop');
+      network.close();storage.changed();await storage.close();
+    },
     pixels(){return host.HEAPU8.subarray(host._browser_pixels(),host._browser_pixels()+width*height*4);},
     stats(){return {callbacks,copiedBytes,guestBytes:guest.memory.buffer.byteLength,hostBytes:host.HEAPU8.length};},
   };
+  }catch(error){
+    network.close();await storage.close().catch(()=>{});throw error;
+  }
 }

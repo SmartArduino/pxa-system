@@ -547,6 +547,11 @@ bool pxa_ui_accepts_event(pxa_ui_service_t *service,
                           uint32_t surface, uint32_t node,
                           uint16_t kind);
 
+/* Deterministic subscribed root for Host-level input. Zero means no root
+ * accepts this event. Serialize with the UI service owner. */
+uint32_t pxa_ui_event_root(pxa_ui_service_t *service,
+    pxa_component_t component,uint32_t surface,uint16_t kind);
+
 #ifdef __cplusplus
 }
 #endif

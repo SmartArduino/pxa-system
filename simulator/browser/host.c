@@ -10,16 +10,48 @@
 #include "pxa/clock.h"
 #include "pxa/window.h"
 #include "pxa/lvgl/pxa_lvgl_ui.h"
+#include "fonts.h"
+#include "services.h"
+#include "pxa/audio.h"
+#include "pxa/game_render.h"
 
 static pxa_runtime_t *runtime;
 static pxa_component_t component;
 static pxa_ui_service_t *ui;
+static pxa_lvgl_ui_t *adapter;
+static pxa_window_service_t *window;
+static lv_obj_t *editor;
+static uint32_t editor_session;
 static lv_display_t *display;
 static lv_indev_t *pointer;
 static uint8_t *frame;
 static uint32_t width, height, revision, clock_period;
 static uint64_t current_us, next_tick;
 static int pointer_x, pointer_y, pointer_down;
+EM_JS(int, native_fonts, (), {return typeof Module.browserFontMetrics==='function';});
+EM_JS(int, chinese_locale, (), {return String(Module.browserLocale||"en").toLowerCase().startsWith("zh");});
+EM_JS(void, notify_editor, (uint32_t session, const char *text, int password,
+                           int multiline, int cursor, int max_bytes), {
+    Module.browserNotify?.({type:'ime',session,text:text?UTF8ToString(text):null,
+        password:!!password,multiline:!!multiline,cursor,maxBytes:max_bytes});
+});
+EM_JS(void, notify_toast, (const char *text, uint32_t ms), {
+    Module.browserNotify?.({type:'toast',text:UTF8ToString(text),duration:ms});
+});
+static void text_focus(void *context, void *textarea, bool focused) {
+    (void)context;
+    if (!focused && editor != textarea) return;
+    editor=focused ? textarea : NULL;
+    if (!++editor_session) ++editor_session;
+    notify_editor(editor_session,editor ? lv_textarea_get_text(editor) : NULL,
+        editor && lv_textarea_get_password_mode(editor),
+        editor && !lv_textarea_get_one_line(editor),
+        editor ? lv_textarea_get_cursor_pos(editor) : 0,
+        editor ? pxa_lvgl_ui_text_input_max_bytes(adapter,editor) : 0);
+}
+static pxa_status_t window_toast(void *context, const char *text, uint32_t ms) {
+    (void)context; notify_toast(text,ms); return PXA_STATUS_OK;
+}
 static void *allocate(void *c, size_t n) { (void)c; return malloc(n); }
 static void release(void *c, void *p) { (void)c; free(p); }
 static uint64_t now_us(void *c) { (void)c; return current_us; }
@@ -27,7 +59,7 @@ static pxa_status_t execute(pxa_lvgl_ui_execute_callback_fn fn, void *data, void
     (void)c; fn(data); return PXA_STATUS_OK;
 }
 static void flush(lv_display_t *d, const lv_area_t *area, uint8_t *pixels) {
-    (void)area; (void)pixels; ++revision; lv_display_flush_ready(d);
+    (void)area; (void)pixels; ++revision; browser_graphics_presented();lv_display_flush_ready(d);
 }
 static void read_pointer(lv_indev_t *i, lv_indev_data_t *data) {
     (void)i; data->point.x = pointer_x; data->point.y = pointer_y;
@@ -43,9 +75,24 @@ static pxa_status_t configure_clock(void *c, pxa_component_t id, uint32_t period
     (void)c; (void)id; clock_period = period; next_tick = current_us + period;
     return PXA_STATUS_OK;
 }
+EM_JS(void, wall_time, (uint8_t *out), {
+    const now=new Date(),year=now.getFullYear();
+    const standard=Math.max(new Date(year,0,1).getTimezoneOffset(),new Date(year,6,1).getTimezoneOffset());
+    const view=new DataView(HEAPU8.buffer);
+    view.setBigInt64(out,BigInt(now.getTime())*1000n,true);
+    view.setInt32(out+16,-now.getTimezoneOffset()*60,true);
+    view.setUint32(out+20,now.getTimezoneOffset()<standard?1:0,true);
+});
 static pxa_status_t clock_call(void *c, pxa_runtime_t *rt, pxa_component_t id,
                                const pxa_message_view_t *m) {
     (void)c;
+    if (m->opcode==PXA_CLOCK_WALL_TIME) {
+        if (m->payload.size || !m->request_token) return PXA_STATUS_INVALID_ARGUMENT;
+        uint8_t bytes[24]={0};wall_time(bytes);pxa_write_u64(bytes+8,current_us);
+        pxa_status_t s=pxa_request_begin_reserved(rt,id,m->request_token,4,m->opcode,0,sizeof(bytes));
+        if(s)return s;s=pxa_request_commit(rt,id,m->request_token);
+        return s ? s : pxa_request_complete(rt,id,m->request_token,PXA_STATUS_OK,bytes,sizeof(bytes));
+    }
     if (m->opcode == PXA_CLOCK_CONFIGURE || m->opcode == PXA_CLOCK_LIMITS) {
         pxa_clock_timing_backend_t backend = {
             {1000, 60000000, 1, 1000, PXA_CLOCK_TIMING_COALESCED | PXA_CLOCK_TIMING_FOREGROUND},
@@ -99,7 +146,10 @@ EMSCRIPTEN_KEEPALIVE int browser_init(uint32_t w, uint32_t h) {
     cfg.primary_width = w; cfg.primary_height = h;
     cfg.features = PXA_UI_FEATURE_CANVAS | PXA_UI_FEATURE_GRID |
         PXA_UI_FEATURE_CONTROLLER_INPUT | PXA_UI_FEATURE_RGB565_BITMAP |
-        PXA_UI_FEATURE_CANVAS_STREAM_IO | PXA_UI_FEATURE_DYNAMIC_TEXT;
+        PXA_UI_FEATURE_CANVAS_STREAM_IO | PXA_UI_FEATURE_DYNAMIC_TEXT |
+        PXA_UI_FEATURE_TEXT_INPUT_CONTROL | PXA_UI_FEATURE_PASSWORD_INPUT |
+        PXA_UI_FEATURE_VIRTUAL_LIST | PXA_UI_FEATURE_MULTIPLE_SURFACES;
+    if (native_fonts()) cfg.features |= PXA_UI_FEATURE_SIZED_TEXT;
     CHECK(pxa_ui_service_init(WORKSPACE(ui_service), pxa_ui_service_workspace_size(), runtime, &cfg, &ui));
     CHECK(pxa_ui_service_register(ui));
     pxa_lvgl_ui_config_t lc = {0};
@@ -110,14 +160,15 @@ EMSCRIPTEN_KEEPALIVE int browser_init(uint32_t w, uint32_t h) {
     lc.primary_environment.width = w; lc.primary_environment.height = h;
     lc.primary_environment.density_q16 = lc.primary_environment.font_scale_q16 = 65536;
     pxa_lvgl_ui_theme_init(&lc.theme);
-    pxa_lvgl_ui_t *adapter; pxa_ui_backend_t backend;
+    browser_fonts_init(&lc);
+    lc.text_input_focus=text_focus;
+    pxa_ui_backend_t backend;
     CHECK(pxa_lvgl_ui_init(WORKSPACE(lvgl_ui), pxa_lvgl_ui_workspace_size(), &lc, &adapter, &backend));
     CHECK(pxa_ui_bind(ui, component, &backend));
-    pxa_window_service_t *window;
     size = pxa_window_service_workspace_size(1);
     CHECK(pxa_window_service_init(calloc(1, size), size, runtime, 1, &window));
     CHECK(pxa_window_service_register(window));
-    pxa_window_backend_t wb = {.struct_size=sizeof(wb), .apply=window_apply};
+    pxa_window_backend_t wb = {.struct_size=sizeof(wb), .apply=window_apply,.show_toast=window_toast};
     CHECK(pxa_window_bind(window, component, &wb));
     pxa_window_snapshot_t snapshot = {.logical_width=w,.logical_height=h,
         .pixel_width=w,.pixel_height=h,.density_numerator=1,.density_denominator=1,.focused=1};
@@ -126,6 +177,8 @@ EMSCRIPTEN_KEEPALIVE int browser_init(uint32_t w, uint32_t h) {
         .major=PXA_CLOCK_SERVICE_MAJOR,.minor=PXA_CLOCK_SERVICE_MINOR,
         .features=PXA_CLOCK_FEATURE_TIMING,.control=clock_call};
     CHECK(pxa_service_register(runtime, &clock));
+    CHECK(browser_services_init(runtime));
+    CHECK(browser_graphics_init(runtime,w,h));
     return 0;
 }
 EMSCRIPTEN_KEEPALIVE int browser_begin(int event) {
@@ -138,8 +191,8 @@ EMSCRIPTEN_KEEPALIVE int browser_configuration(uint8_t *data, uint32_t capacity)
     CHECK(pxa_ui_encode_environment(&environment, encoded, sizeof(encoded), &size));
     pxa_writer_t writer; pxa_writer_init(&writer, data, capacity);
     CHECK(pxa_writer_record(&writer, PXA_UI_CONFIG_ENVIRONMENT, encoded, size));
-    /* Locale reflects the Latin font bundle provided by this first port. */
-    const uint8_t locale[] = {1,0,5,0,'e','n','-','U','S',2,128,1,0,0};
+    uint8_t locale[] = {1,0,5,0,'e','n','-','U','S',2,128,1,0,0};
+    if (native_fonts() && chinese_locale()) memcpy(locale+4,"zh-CN",5);
     CHECK(pxa_writer_record(&writer, 12, locale, sizeof(locale)));
     return (int)writer.size;
 }
@@ -153,6 +206,17 @@ EMSCRIPTEN_KEEPALIVE int browser_call(uint32_t route, uint64_t token, uint8_t *d
 EMSCRIPTEN_KEEPALIVE int browser_io(uint64_t handle, uint32_t op, uint8_t *data, uint32_t size) {
     return pxa_runtime_io64(runtime, component, handle, op, data, size);
 }
+EMSCRIPTEN_KEEPALIVE int browser_io_memory_kind(uint64_t handle,uint32_t op){
+    pxa_resource_t r;
+    if(op>=PXA_AUDIO_IO_MIX_PCM&&op<=PXA_AUDIO_IO_GB_PSG_RENDER&&
+        !pxa_handle_get64(runtime,component,handle,PXA_RESOURCE_AUDIO_GRAPH,&r))return 1;
+    if((op==PXA_GAME_RENDER_IO_EXECUTE_SPANS||(op>=PXA_GAME_RENDER_IO_EXECUTE_PROJECTED_SPANS&&op<=PXA_GAME_RENDER_IO_EXECUTE_PRIORITY_TILES))&&
+        !pxa_handle_get64(runtime,component,handle,PXA_RESOURCE_GAME_RENDER_CONTEXT,&r))return 2;
+    return 0;
+}
+EMSCRIPTEN_KEEPALIVE int browser_io_memory(uint64_t handle,uint32_t op,uint8_t *data,uint32_t size,uint8_t *memory,uint32_t bytes){
+    return pxa_runtime_io64_memory(runtime,component,handle,op,data,size,memory,bytes);
+}
 EMSCRIPTEN_KEEPALIVE int browser_event(uint8_t *data, uint32_t capacity) {
     pxa_event_view_t view;
     if (pxa_event_peek(runtime, component, &view) != PXA_STATUS_OK) return 0;
@@ -164,6 +228,7 @@ EMSCRIPTEN_KEEPALIVE void browser_tick(double milliseconds) {
     uint64_t us = (uint64_t)(milliseconds * 1000);
     if (us < current_us) return;
     lv_tick_inc((uint32_t)(us / 1000 - current_us / 1000)); current_us = us;
+    browser_net_tick();
     if (clock_period && current_us >= next_tick) {
         next_tick += ((current_us - next_tick) / clock_period + 1) * clock_period;
         uint8_t bytes[8]; pxa_write_u64(bytes, current_us);
@@ -171,7 +236,7 @@ EMSCRIPTEN_KEEPALIVE void browser_tick(double milliseconds) {
             (pxa_bytes_t){bytes, 8}, 0, UINT64_C(0x000400008001));
     }
 }
-EMSCRIPTEN_KEEPALIVE uint32_t browser_render(void) { lv_timer_handler(); return revision; }
+EMSCRIPTEN_KEEPALIVE uint32_t browser_render(void) { browser_graphics_order();lv_timer_handler();return revision; }
 EMSCRIPTEN_KEEPALIVE uint8_t *browser_pixels(void) { return frame; }
 EMSCRIPTEN_KEEPALIVE void browser_pointer(int x, int y, int down) {
     pointer_x = x < 0 ? 0 : x >= (int)width ? (int)width - 1 : x;
@@ -179,7 +244,54 @@ EMSCRIPTEN_KEEPALIVE void browser_pointer(int x, int y, int down) {
     pointer_down = !!down; lv_indev_read(pointer);
 }
 EMSCRIPTEN_KEEPALIVE int browser_controller(uint32_t buttons) {
+    uint32_t node=pxa_ui_event_root(ui,component,1,PXA_UI_EVENT_CONTROLLER_STATE);
+    if (!node) return 0;
     uint8_t data[8] = {0, 1}; pxa_write_u32(data + 4, buttons & 4095);
-    return pxa_ui_queue_event(ui, component, 1, 1, PXA_UI_EVENT_CONTROLLER_STATE,
+    return pxa_ui_queue_event(ui, component, 1, node, PXA_UI_EVENT_CONTROLLER_STATE,
         0, current_us, data, sizeof(data));
+}
+
+EMSCRIPTEN_KEEPALIVE int browser_back(void) {
+    return pxa_window_queue_back(window,component);
+}
+EMSCRIPTEN_KEEPALIVE int browser_volume_key(uint32_t key) {
+    if(key<1||key>4)return PXA_STATUS_INVALID_ARGUMENT;
+    uint32_t node=pxa_ui_event_root(ui,component,1,PXA_UI_EVENT_KEY);
+    if(!node)return 0;
+    uint8_t value[4];pxa_write_u32(value,key);
+    return pxa_ui_queue_event(ui,component,1,node,PXA_UI_EVENT_KEY,
+        PXA_UI_EVENT_FLAG_RELIABLE,current_us,value,sizeof(value));
+}
+EMSCRIPTEN_KEEPALIVE int browser_begin_stop(void) {
+    CHECK(pxa_component_request_stop(runtime,component,PXA_STOP_NORMAL));
+    return pxa_component_begin_stop(runtime,component);
+}
+EMSCRIPTEN_KEEPALIVE int browser_finish_stop(void) {
+    return pxa_component_finish_stop(runtime,component);
+}
+EMSCRIPTEN_KEEPALIVE void browser_focus(int focused) {
+    pxa_window_snapshot_t snapshot;
+    if (!pxa_window_get_snapshot(window,component,&snapshot)) {
+        snapshot.focused=!!focused;
+        pxa_window_update_snapshot(window,component,&snapshot);
+        pxa_window_flush_metrics(window,component);
+    }
+}
+EMSCRIPTEN_KEEPALIVE int browser_edit(uint32_t session, const char *text,
+                                      uint32_t bytes, uint32_t cursor, int action) {
+    if (!editor || session!=editor_session) return PXA_STATUS_CANCELLED;
+    uint32_t maximum=pxa_lvgl_ui_text_input_max_bytes(adapter,editor);
+    if (bytes>maximum || bytes>PXA_UI_EVENT_TEXT_MAX_BYTES || strlen(text)!=bytes)
+        return PXA_STATUS_LIMIT_EXCEEDED;
+    /* The trusted bridge supplies valid, complete UTF-8; the UI service also
+     * validates the event before it can reach Guest memory. */
+    if (strcmp(lv_textarea_get_text(editor),text)) lv_textarea_set_text(editor,text);
+    lv_textarea_set_cursor_pos(editor,(int32_t)cursor);
+    if (action) {
+        lv_obj_t *target=editor;
+        lv_obj_remove_state(target,LV_STATE_FOCUSED);
+        text_focus(NULL,target,false);
+        if (action==1) lv_obj_send_event(target,LV_EVENT_READY,NULL);
+    }
+    return PXA_STATUS_OK;
 }

@@ -1,7 +1,7 @@
 # PXA Browser Host (experimental)
 
 Runs standard PXA Core 2 WebAssembly applications in the browser VM. A separate
-Emscripten module builds the existing libpxa Core, UI/Window/Clock services and
+Emscripten module builds the existing libpxa Core, platform services and
 LVGL renderer. The Guest C and C++ SDKs and wire ABI are unchanged. This is an
 application host, not the complete device firmware, launcher or installer.
 
@@ -16,14 +16,14 @@ python3 simulator/browser/build.py \
   --build-dir local/artifacts/browser-build --out local/artifacts/browser-bundle \
   --wasi-sdk /path/to/pxa-devkit/toolchains/wasi-sdk
 PXA_BROWSER_BUNDLE="$PWD/local/artifacts/browser-bundle" \
-  node --test simulator/browser/runtime.test.mjs
+  node --test simulator/browser/*.test.mjs
 ```
 
 `--host-build` reuses a separately compiled Host (useful with Emscripten in a
 container). It must contain `pxa-browser.mjs` and `pxa-browser.wasm`; also supply
 `--lvgl` for the matching license. Build outputs stay outside the source tree.
-The bundle includes a C Canvas game, the unchanged C counter template and the
-unchanged C++ Hello template. The last is an SDK interoperability test fixture.
+The bundle includes a C Canvas game, a native-input/persistence/audio notes app,
+the unchanged C counter template and the unchanged C++ Hello template. The last is an SDK interoperability test fixture.
 
 Serve over HTTPS or localhost. The website accepts `PXA_BROWSER_BUNDLE` during
 its build and provides the controller UI. Never open modules with `file://`.
@@ -42,31 +42,75 @@ required. Runtime downloads are lazy, after the user starts a demo.
 - Require exported `memory`, `malloc`, `free` and PXA callback entry points.
   Default SDK components provide these; `NO_ALLOCATOR` builds are not supported.
   Chip-specific AOT artifacts cannot run here; retain the original Wasm.
-- Supply the real display environment as the standard startup configuration.
-  The initial font/locale bundle is Latin/en-US; CJK fonts and IME remain future
-  Host work. Physical resolution is 320×240 in the demo; CSS scales with aspect
-  ratio preserved. The Host accepts bounded sizes 64–1024 for future profiles.
-- LVGL paints XRGB8888; the Worker converts BGRA bytes to Canvas RGBA only on
-  changed frames. OffscreenCanvas keeps presentation in the Worker, with a
-  transferable-buffer fallback. The Worker owns the 60 Hz
-  clock with anchored deadlines, without a per-frame main-thread round trip.
-  Only statistics (once per second) and user input cross to the page. The
-  fallback permits one frame in flight. The page pauses on hidden tabs,
-  releases held inputs, and terminates a stalled Worker.
-- Standard digital gamepads and keyboard map to PXA controller bits. The initial
-  controller target is primary surface root node 1 (used by included demos).
-  Applications with other roots need a Host routing extension; pointer input
-  follows the native LVGL hit test. Canvas pointer input currently has one contact.
-- `stop` terminates the Worker and frees both memories. There is no persistent
-  state to flush in this version. A future storage adapter must add a bounded
-  cooperative shutdown/flush before termination, with a watchdog fallback.
+- Supply the real display environment as standard startup configuration. Browser
+  system fonts supply CJK glyphs through a bounded alpha-glyph cache; glyph
+  metrics use the browser alphabetic baseline. Without OffscreenCanvas, use the
+  bundled Latin fonts. The demo canvas is 320×240 and CSS preserves aspect ratio;
+  the Host accepts display sizes 64–1024. Surface dimensions follow their ABI
+  fields and allocation budget, not the display dimensions.
+- Text fields open a trusted DOM input/textarea. Native composition, clipboard
+  paste and mobile keyboards work without a PXA candidate keyboard. UTF-8 byte
+  limits and Unicode cursor positions are preserved. Focus sessions reject stale
+  replies; password fields are cleared on close and never logged.
+- LVGL paints XRGB8888. The Worker converts BGRA to RGBA only on changed frames.
+  OffscreenCanvas presents without a page round trip; the fallback allows one
+  transferred frame in flight. The Worker owns the 60 Hz clock. Only input,
+  native-service notifications and once-per-second statistics reach the page.
+- Standard gamepads and keyboard map to digital controller bits. Routing finds
+  the subscribed root, regardless of its ID. Escape sends Window Back. Volume
+  keys retain their OS action; a PXA key event is also sent if the browser exposes
+  the key and the application subscribes. Pointer input uses LVGL hit testing and
+  currently supports one contact. Hidden tabs pause and release held buttons.
+- Each app identity has an IndexedDB-backed private filesystem and an exclusive
+  Web Lock to prevent concurrent writers. KV and filesystem quotas are 256 KiB
+  and 8 MiB. Writes complete against MEMFS; persistence is debounced 150 ms and
+  flushed on pause/cooperative stop. A tab crash/forced close can lose unflushed
+  writes. Storage errors are visible; unsupported browsers explicitly report
+  volatile mode. App IDs must be assigned by the trusted loader, never Guest code.
+- Audio mixes/resamples in the Host Worker; an AudioWorklet consumes a bounded
+  60 ms PCM queue. Start/resume requires a browser user gesture. Output uses the
+  system default audio device. Page mute controls this app only: browsers do not
+  expose OS master-volume control. PCM/tone/effects and borrowed PCM/PSG/GB-PSG
+  computation are implemented. Asset-based music/sound playback is not yet wired.
+- Network requests use Fetch with exact-origin PXA permissions, CORS, omitted
+  cookies and rejected redirects. The loader supplies approved `networkOrigins`;
+  default is none. CSP must separately permit each origin. Legacy Fetch/HTTP
+  requests work with bounded bodies; HTTP_OPEN is enabled when request streaming
+  is available. Its rings are 512–65536 bytes, independent of transfer size.
+  Streaming uploads also depend on browser/server protocol support. Cancellation,
+  timeouts and quota failures propagate; no CORS bypass proxy is provided.
+- Surface supports copied RGB565 and premultiplied ARGB8888 buffers with LVGL
+  composition. GameRender reuses the portable rasterizer, uploads, bindings and
+  compute kernels. Guest-mapped persistent buffers and direct hardware scanout
+  are unavailable. Surface scaling follows the current Core contract (same-size
+  layers); GameRender fits its output within the display with aspect preserved.
+- Borrowed compute operations use a reusable sparse memory mirror, preserving
+  original offsets and aliasing for the existing C validators. Only referenced
+  ranges are copied, and only validated output ranges are written back. Mirror
+  reservation is capped at 64 MiB, transfer at 4 MiB per call. This avoids copying
+  the whole Guest heap but is not zero-copy and increases peak Host memory.
+- Stop runs the Guest stop callback, releases resources and flushes storage before
+  terminating. A three-second watchdog can force termination; the page reports
+  that persistence was not confirmed. No background execution survives tab close.
 
-Supported services: UI (including Canvas commands/RGB565 streams), Window,
-Clock (period, timing limits/configuration, monotonic time). Unsupported imports
-or services fail explicitly. No Surface/Game Render borrowed-memory operations,
-audio, durable storage, package installation, external files, sensors or network.
-Only curated demo modules are offered publicly; this is not a universal `.pxa`
-loader. Do not advertise unimplemented services to an application.
+`capabilities.json` is the machine-readable support inventory distributed with
+this Host. Registered services are UI, Window, Clock, Storage, FS, Audio, Net,
+Surface, GameRender, Device runtime information, Log, Permission and an isolated
+IPC broker. Not every optional operation is available; consult the inventory
+and normal service errors. Hardware MAC access is unavailable. Assets, Sensor,
+Lease, Work, PXA IME-provider registration and StoreInstaller are not wired.
+Native text entry replaces the device input method; it is not a fake IME provider.
+Only curated Wasm modules are loaded publicly, not arbitrary `.pxa` archives.
+WASI exposes basic clocks, randomness, arguments and stdout/stderr; filesystem
+access uses the PXA FS service, not WASI preopened directories.
+
+## Distribution
+
+GameRender links GPL-2.0-or-later span kernels derived from Quake and
+recrof/Quake-ESP32S3; retain their source notices and the bundled GPL license.
+Browser releases include the corresponding full source archive and build scripts,
+in addition to PXA/LVGL/font notices. The repository's top-level MIT text does
+not replace individual third-party file licenses.
 
 ## AI development boundary
 

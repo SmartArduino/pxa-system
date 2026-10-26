@@ -857,6 +857,8 @@ static void test_text_input_focus(void) {
     assert(!backend.commit(backend.context,transaction));
     lv_obj_t *root=lv_obj_get_child(lv_screen_active(),0);
     lv_obj_t *a=lv_obj_get_child(root,0), *b=lv_obj_get_child(root,1);
+    assert(pxa_lvgl_ui_text_input_max_bytes(adapter,a)>0);
+    assert(pxa_lvgl_ui_text_input_max_bytes(adapter,root)==0);
     size_t resident=allocator.current;
     assert(!backend.text_input_focus(backend.context,handles[1],true));
     assert(lv_obj_has_state(a,LV_STATE_FOCUSED));

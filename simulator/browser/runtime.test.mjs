@@ -44,3 +44,22 @@ test('PXA clock drives animated Canvas with bounded control copies',async t=>{
   costs.sort((a,b)=>a-b);
   t.diagnostic(JSON.stringify({frames,p50Ms:costs[300],p95Ms:costs[570],...rt.stats()}));
 });
+test('ordinary SDK notes app: UTF-8 editor, KV, private file, wall clock and audible PCM',async()=>{
+  const host=await createHost(),messages=[],logs=[];
+  const rt=await createRuntime(host,await fs.readFile(path.join(directory,'notes.wasm')),
+    {appId:'notes-test',notify:m=>messages.push(m),log:m=>logs.push(m)});
+  rt.tick(performance.now()+30);
+  assert.ok(logs.some(x=>x.includes('Audio ready: 1')),logs.join('\n'));
+  assert.ok(logs.some(x=>x.includes('Wall clock status: 0')));
+  rt.pointer(100,75,true);rt.pointer(100,75,false);
+  const input=messages.find(m=>m.type==='ime'&&m.text!==null);
+  assert.ok(input,'click must focus the native editor bridge');
+  assert.equal(rt.edit({session:input.session,text:'中文一行 🎮',cursor:7}),0);
+  assert.equal(rt.edit({session:input.session-1,text:'stale'}),-10,'stale editor reply must not edit another field');
+  rt.controller(16);rt.controller(0);rt.tick(performance.now()+50);
+  assert.equal(host.FS.readFile('/data/files/note.txt',{encoding:'utf8'}),'中文一行 🎮');
+  assert.ok(logs.some(x=>x.includes('Storage status: 0')));
+  const pcm=rt.audio();assert.equal(pcm.length,960);
+  assert.ok(pcm.some(x=>Math.abs(x)>0.01),'Host tone must produce non-silent PCM');
+  await rt.stop();
+});

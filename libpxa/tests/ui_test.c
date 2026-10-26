@@ -755,6 +755,8 @@ static void test_events(pxa_runtime_t *runtime, pxa_component_t component,
                                  PXA_UI_EVENT_ACTION));
     assert(pxa_ui_accepts_event(service, component, 1, 1,
                                 PXA_UI_EVENT_CONTROLLER_STATE));
+    assert(pxa_ui_event_root(service,component,1,PXA_UI_EVENT_CONTROLLER_STATE)==1);
+    assert(!pxa_ui_event_root(service,component,1,PXA_UI_EVENT_KEY));
     assert(pxa_ui_queue_event(service, component, 1, 1,
                               PXA_UI_EVENT_CONTROLLER_STATE,
                               PXA_UI_EVENT_FLAG_COALESCIBLE, 120,
@@ -891,6 +893,8 @@ static void test_large_deep_tree(pxa_runtime_t *runtime,
     pxa_ui_memory_snapshot_t memory;
     uint32_t id;
     create_node(&stream, 10000, 0, PXA_UI_NODE_ROOT, 0);
+    uint8_t event_mask[8];pxa_write_u64(event_mask,PXA_UI_EVENT_MASK_CONTROLLER_STATE);
+    set_property(&stream,10000,PXA_UI_PROPERTY_EVENT_MASK,event_mask,sizeof(event_mask));
     for (id = 10001; id < 15000; ++id)
         create_node(&stream, id, id - 1u, PXA_UI_NODE_BOX, 0);
     assert(begin(runtime, component, 11, 4, 0,
@@ -899,6 +903,7 @@ static void test_large_deep_tree(pxa_runtime_t *runtime,
     assert(commit(runtime, component, 11) == PXA_STATUS_OK);
     assert(pxa_ui_find_node(service, component, 1, 14999, &node) ==
            PXA_STATUS_OK && node.parent == 14998);
+    assert(pxa_ui_event_root(service,component,1,PXA_UI_EVENT_CONTROLLER_STATE)==10000);
     assert(pxa_ui_memory_snapshot(service, component, &memory) ==
            PXA_STATUS_OK);
     assert(memory.node_count == 5000 && memory.transaction_bytes == 0 &&
