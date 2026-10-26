@@ -1,4 +1,5 @@
-/* SPDX-License-Identifier: MIT — ordinary PXA C SDK game, no browser APIs. */
+/* SPDX-License-Identifier: MIT
+ * Ordinary PXA C SDK game, no browser APIs. */
 #include "pxa_canvas.h"
 #include "pxa_clock.h"
 #include <math.h>
