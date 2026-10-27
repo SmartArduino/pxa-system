@@ -32,6 +32,43 @@ static inline int32_t pxa_fs_cancel_read_at(uint64_t handle,uint64_t cookie) {
 #define PXA_FS_STAT_AT 16u
 #define PXA_FS_QUERY_ROOT 17u
 #define PXA_FS_APP_MEDIA_PATH 18u
+#define PXA_FS_IMPORT_FILES 19u
+#define PXA_FS_IMPORT_MULTIPLE 1u
+typedef struct {
+    int32_t status;
+    uint32_t imported,failed,skipped;
+    int32_t first_error;
+} pxa_fs_import_result_t;
+/* Trusted single/multi file picker and bounded Host copy into the app's
+ * system-selected media directory. Empty extensions accepts all files;
+ * otherwise pass comma-separated suffixes without dots ("gb,gbc"). */
+static inline int32_t pxa_fs_request_import(uint64_t token,int multiple,
+    const char *extensions,size_t extensions_size,const char *purpose,size_t purpose_size) {
+    uint8_t p[8+128+256];
+    if(!token || !purpose || !purpose_size || purpose_size>256 || extensions_size>128 ||
+        (!extensions && extensions_size) || !pxa_fs_valid_utf8(purpose,purpose_size))return PXA_STATUS_INVALID_ARGUMENT;
+    for(size_t i=0;i<purpose_size;++i)if(!purpose[i])return PXA_STATUS_INVALID_ARGUMENT;
+    for(size_t i=0;i<extensions_size;++i) {
+        unsigned char c=(unsigned char)extensions[i];
+        if(c==',') {if(!i || i+1==extensions_size || extensions[i-1]==',')return PXA_STATUS_INVALID_ARGUMENT;}
+        else if(!((c>='a'&&c<='z')||(c>='A'&&c<='Z')||(c>='0'&&c<='9')))return PXA_STATUS_INVALID_ARGUMENT;
+        p[8+i]=c;
+    }
+    for(size_t i=0;i<purpose_size;++i)p[8+extensions_size+i]=(uint8_t)purpose[i];
+    pxa_store_u32(p,multiple?PXA_FS_IMPORT_MULTIPLE:0);
+    pxa_store_u16(p+4,(uint16_t)extensions_size);pxa_store_u16(p+6,(uint16_t)purpose_size);
+    return pxa_control_call(PXA_FS_SERVICE,PXA_FS_IMPORT_FILES,token,p,(uint32_t)(8+extensions_size+purpose_size));
+}
+static inline int pxa_fs_parse_import(const pxa_event_t *event,uint64_t token,pxa_fs_import_result_t *out) {
+    if(!event || !out || !token || event->token!=token || event->service!=PXA_FS_SERVICE ||
+        event->opcode!=PXA_FS_IMPORT_FILES || !event->payload || event->payload_size<4)return 0;
+    pxa_zero(out,sizeof(*out));out->status=(int32_t)pxa_load_u32(event->payload);
+    if(out->status)return event->payload_size==4;
+    if(event->payload_size!=20)return 0;
+    out->imported=pxa_load_u32(event->payload+4);out->failed=pxa_load_u32(event->payload+8);
+    out->skipped=pxa_load_u32(event->payload+12);out->first_error=(int32_t)pxa_load_u32(event->payload+16);
+    return out->first_error<=0 && (!!out->failed==!!out->first_error);
+}
 #define PXA_FS_ROOT_APP_MEDIA 5u
 #define PXA_FS_RIGHT_READ 1u
 #define PXA_FS_RIGHT_ENUMERATE 2u

@@ -8,6 +8,11 @@
 #include <sys/stat.h>
 #include "pxa/posix/pxa_scoped_fs.h"
 #include "pxa/openssl/pxa_openssl.h"
+#ifdef PXA_FS_IMPORT_LVGL
+#include "pxa/posix/pxa_import_destination.h"
+#include "pxa/posix/pxa_file_browser.h"
+#include "pxa/lvgl/pxa_lvgl_file_picker.h"
+#endif
 
 /* A read-only, app-scoped removable-media stand-in. Keep private files on
  * their existing backend. The POSIX scoped adapter rejects links/traversal. */
@@ -18,6 +23,13 @@ typedef struct {
     pxa_scoped_fs_grant_t grant;
     void *volume_memory, *fs_memory;
     char *path;
+    pxa_fs_service_t *service;
+#ifdef PXA_FS_IMPORT_LVGL
+    pxa_lvgl_file_picker_config_t picker_config;
+    struct desktop_file_import *import;
+    uint8_t import_input_release;
+#endif
+    char app_name[65];
 } desktop_media_root_t;
 
 static pxa_status_t desktop_media_open(void *context, uint8_t kind,
@@ -51,7 +63,15 @@ static pxa_status_t desktop_media_path(void *context,char *out,size_t capacity,s
     size_t n=strlen(r->path);if(n>capacity || n>PXA_FS_DISPLAY_PATH_MAX)return PXA_STATUS_RESOURCE_LIMIT;
     memcpy(out,r->path,n);*size=n;return PXA_STATUS_OK;
 }
+#ifdef PXA_FS_IMPORT_LVGL
+static void desktop_media_cancel_import(void *,pxa_component_t,pxa_request_token_t);
+static void desktop_media_import_cleanup(desktop_media_root_t *);
+static pxa_status_t desktop_media_request_import(void *,pxa_component_t,pxa_request_token_t,uint32_t,pxa_bytes_t,pxa_bytes_t);
+#endif
 static void desktop_media_deinit(desktop_media_root_t *r) {
+#ifdef PXA_FS_IMPORT_LVGL
+    desktop_media_import_cleanup(r);
+#endif
     if (r->fs) pxa_scoped_fs_deinit(r->fs);
     free(r->fs_memory); free(r->volume_memory); free(r->path);
     memset(r, 0, sizeof(*r));
@@ -62,7 +82,7 @@ static int desktop_media_directory(const char *path) {
            lstat(path, &s) == 0 && S_ISDIR(s.st_mode);
 }
 static int desktop_media_init(desktop_media_root_t *r, const char *state,
-    const pxa_package_manifest_t *manifest) {
+    const pxa_package_manifest_t *manifest,const char *locale) {
     static const char hex[] = "0123456789abcdef";
     static const uint8_t domain[] = "PXA-APPKEY-1";
     uint8_t input[sizeof(domain)-1 + 32 + 2 + 64], digest[32];
@@ -119,8 +139,23 @@ static int desktop_media_init(desktop_media_root_t *r, const char *state,
     r->api.stat_at = desktop_media_stat_at;
     r->api.query_root = desktop_media_query;
     r->api.app_media_path=desktop_media_path;
+#ifdef PXA_FS_IMPORT_LVGL
+    r->api.request_import=desktop_media_request_import;
+    r->api.cancel_import=desktop_media_cancel_import;
+#endif
+    pxa_package_metadata_t metadata;
+    pxa_bytes_t name=manifest->name.size?manifest->name:manifest->app_id;
+    if(locale && pxa_package_metadata_resolve(manifest,
+        (pxa_bytes_t){(const uint8_t *)locale,strlen(locale)},&metadata)==PXA_STATUS_OK && metadata.name.size)name=metadata.name;
+    size_t length=name.size<sizeof(r->app_name)?name.size:sizeof(r->app_name)-1;
+    while(length<name.size && length && (name.data[length]&0xc0)==0x80)--length;
+    memcpy(r->app_name,name.data,length);r->app_name[length]=0;
     r->api.features = PXA_FS_FEATURE_APP_MEDIA_ROOT|PXA_FS_FEATURE_APP_MEDIA_PATH;
+    if(r->api.request_import)r->api.features|=PXA_FS_FEATURE_FILE_IMPORT;
     fprintf(stderr, "PXA SIM app-media-root=%s\n", r->path);
     return 1;
 }
+#ifdef PXA_FS_IMPORT_LVGL
+#include "desktop_file_import.h"
+#endif
 #endif

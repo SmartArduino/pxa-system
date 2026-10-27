@@ -207,6 +207,100 @@ static void check_recent_delete(lv_display_t* display) {
     assert(pxsys_standard_system_destroy(system) == PXSYS_STATUS_OK);
 }
 
+#if PXSYS_REFERENCE_UI_TASK_SWITCHER == PXSYS_TASK_SWITCHER_CARDS && LV_USE_SNAPSHOT
+static size_t preview_color_count(const lv_draw_buf_t* image, uint32_t color) {
+    size_t count = 0;
+    uint16_t pixel = lv_color_to_u16(lv_color_hex(color));
+    for (uint32_t y = 0; y < image->header.h; ++y) {
+        const uint16_t* row = (const uint16_t*)(image->data + y * image->header.stride);
+        for (uint32_t x = 0; x < image->header.w; ++x)
+            if (row[x] == pixel) ++count;
+    }
+    return count;
+}
+
+static void check_hardware_navigation_previews(lv_display_t* display) {
+    pxsys_standard_system_config_t system_config;
+    pxsys_standard_system_config_init(&system_config);
+    system_config.allocator.allocate = allocate;
+    system_config.allocator.release = release;
+    pxsys_display_profile_init(&system_config.initial_display, 320, 240);
+    pxsys_standard_system_t* system = NULL;
+    assert(pxsys_standard_system_create(&system_config, &system) == PXSYS_STATUS_OK);
+    pxsys_reference_lvgl_config_t config;
+    pxsys_reference_lvgl_config_init(&config);
+    config.system = system;
+    config.allocator = system_config.allocator;
+    config.parent = lv_display_get_layer_top(display);
+    config.features = PXSYS_REFERENCE_UI_HOME | PXSYS_REFERENCE_UI_SETTINGS;
+    pxsys_reference_lvgl_t* ui = NULL;
+    assert(pxsys_reference_lvgl_create(&config, &ui) == PXSYS_STATUS_OK);
+    assert(pxsys_reference_lvgl_set_animations_enabled(ui, false) == PXSYS_STATUS_OK);
+    assert(pxsys_reference_lvgl_start(ui) == PXSYS_STATUS_OK);
+    assert(open_role(ui, PXSYS_ROLE_SETTINGS) == PXSYS_STATUS_OK);
+    pxsys_instance_ref_t current;
+    pxsys_instance_snapshot_t instance = {.struct_size = sizeof(instance)};
+    pxsys_task_manager_t* tasks = pxsys_standard_system_tasks(system);
+    assert(pxsys_task_manager_task(tasks, 0, &current, &instance) == PXSYS_STATUS_OK);
+    lv_obj_t* swatch = lv_obj_create(application_root(ui));
+    lv_obj_remove_style_all(swatch);
+    lv_obj_set_pos(swatch, 20, 20);
+    lv_obj_set_size(swatch, 80, 40);
+    lv_obj_set_style_bg_opa(swatch, LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_color(swatch, lv_color_hex(0xff0000), 0);
+    assert(find_task_preview(ui, current) == NULL);
+    /* The public entry is used by physical MENU/START and desktop keys. */
+    assert(pxsys_reference_lvgl_show_recents(ui) == PXSYS_STATUS_OK);
+    task_preview_t* preview = find_task_preview(ui, current);
+    assert(preview != NULL && preview->image != NULL);
+    assert(preview_color_count(preview->image, 0xff0000) >= 3000);
+    assert(task_switcher_is_open(ui));
+    /* Closing and reopening refreshes content instead of reusing a stale image. */
+    assert(pxsys_reference_lvgl_show_recents(ui) == PXSYS_STATUS_OK);
+    assert(!task_switcher_is_open(ui));
+    lv_obj_set_style_bg_color(swatch, lv_color_hex(0x0000ff), 0);
+    assert(pxsys_reference_lvgl_show_recents(ui) == PXSYS_STATUS_OK);
+    preview = find_task_preview(ui, current);
+    assert(preview != NULL && preview_color_count(preview->image, 0x0000ff) >= 3000);
+    assert(pxsys_reference_lvgl_show_recents(ui) == PXSYS_STATUS_OK);
+    /* Physical Home must retain the leaving app before the launcher takes over. */
+    lv_obj_set_style_bg_color(swatch, lv_color_hex(0x00ff00), 0);
+    assert(pxsys_reference_lvgl_home(ui) == PXSYS_STATUS_OK);
+    preview = find_task_preview(ui, current);
+    assert(preview != NULL && preview_color_count(preview->image, 0x00ff00) >= 3000);
+    assert(pxsys_reference_lvgl_show_recents(ui) == PXSYS_STATUS_OK);
+    preview = find_task_preview(ui, current);
+    assert(preview != NULL && preview_color_count(preview->image, 0x00ff00) >= 3000);
+    /* A physical keypad has no pointer coordinates. ENTER must activate the
+     * selected preview even though (0,0) is outside its letterboxed image. */
+    lv_indev_t* keypad = lv_indev_create();
+    lv_indev_set_type(keypad, LV_INDEV_TYPE_KEYPAD);
+    lv_indev_set_display(keypad, display);
+    lv_obj_t* card = recent_control(ui->task_switcher);
+    assert(card != NULL);
+    lv_indev_t* pointer = lv_indev_create();
+    lv_indev_set_type(pointer, LV_INDEV_TYPE_POINTER);
+    lv_indev_set_display(pointer, display);
+    lv_obj_send_event(card, LV_EVENT_CLICKED, pointer);
+    pxsys_instance_ref_t active;
+    assert(pxsys_task_manager_current(tasks, &active) == PXSYS_STATUS_OK);
+    assert(!instance_equal(active, current));
+    assert(!task_switcher_is_open(ui));
+    lv_indev_delete(pointer);
+    assert(pxsys_reference_lvgl_show_recents(ui) == PXSYS_STATUS_OK);
+    card = recent_control(ui->task_switcher);
+    assert(card != NULL);
+    lv_obj_send_event(card, LV_EVENT_CLICKED, keypad);
+    assert(pxsys_task_manager_current(tasks, &active) == PXSYS_STATUS_OK);
+    assert(instance_equal(active, current));
+    assert(!task_switcher_is_open(ui));
+    lv_indev_delete(keypad);
+    assert(pxsys_task_manager_finish_all(tasks, PXSYS_STOP_SHUTDOWN) == PXSYS_STATUS_OK);
+    assert(pxsys_reference_lvgl_destroy(ui) == PXSYS_STATUS_OK);
+    assert(pxsys_standard_system_destroy(system) == PXSYS_STATUS_OK);
+}
+#endif
+
 int main(void) {
     static uint32_t buffer[320 * 240];
     lv_init();
@@ -221,7 +315,10 @@ int main(void) {
     }
     lv_display_set_resolution(display, 320, 240);
     check_recent_delete(display);
+#if PXSYS_REFERENCE_UI_TASK_SWITCHER == PXSYS_TASK_SWITCHER_CARDS && LV_USE_SNAPSHOT
+    check_hardware_navigation_previews(display);
+#endif
     lv_deinit();
-    puts("Launcher focus: page edges, sparse page, reorder and selected task deletion passed");
+    puts("Launcher focus: paging, task deletion and hardware navigation previews passed");
     return 0;
 }

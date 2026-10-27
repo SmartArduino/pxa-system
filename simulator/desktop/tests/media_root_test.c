@@ -15,9 +15,11 @@ int main(void) {
     pxa_fs_entry_t entry;
     assert(mkdtemp(state));
     manifest.publisher_key_id = publisher; manifest.app_id = bytes("pxa-one");
-    assert(desktop_media_init(&a, state, &manifest));
+    assert(desktop_media_init(&a, state, &manifest,NULL));
     manifest.app_id = bytes("pxa-two");
-    assert(desktop_media_init(&b, state, &manifest));
+    assert(desktop_media_init(&b, state, &manifest,NULL));
+    assert(!(a.api.features&PXA_FS_FEATURE_FILE_IMPORT));
+    assert(!a.api.request_import && !a.api.cancel_import);
     assert(strcmp(a.path, b.path));
     char label[256]; size_t label_size = 0;
     assert(a.api.features & PXA_FS_FEATURE_APP_MEDIA_PATH);

@@ -66,7 +66,10 @@ static void download(pxa_net_backend_t *b, const char *base, int chunked, int sl
     size_t total = 0;
     snprintf(url, sizeof(url), "%s/%s", base, chunked ? "chunked" : "large");
     pxa_net_request_t r = request(url);
+    r.timeout_ms = PXA_NET_MAX_STREAM_TIMEOUT_MS;
     assert(b->open_exchange(b->context, &r, &exchange) == PXA_STATUS_OK);
+    assert(((desktop_net_slot_t *)exchange)->timeout_ms == PXA_NET_MAX_STREAM_TIMEOUT_MS);
+    assert(((desktop_net_slot_t *)exchange)->deadline_ms >= begin + 86400000u);
     assert(wait_io(b, exchange, PXA_HTTP_IO_RESPONSE, head, sizeof(head)) > 16);
     head_ms = desktop_net_now_ms() - begin;
     assert(pxa_read_u16(head) == 200);

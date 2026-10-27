@@ -233,6 +233,7 @@ static pxa_status_t exchange_open(void *context, const pxa_net_request_t *reques
     assert(request->abi_minor == 2 && request->buffer_bytes == 512 &&
            request->response_header_bytes == 4096);
     assert(request->max_body_bytes == 1024 * 1024); /* independent of legacy cap */
+    assert(request->timeout_ms == PXA_NET_MAX_STREAM_TIMEOUT_MS);
     ++b->opens;
     pxa_http_stream_init(&b->stream, b->storage, 512, 4096, request->max_body_bytes, 0,
                          PXA_NET_METHOD_GET);
@@ -285,7 +286,7 @@ static pxa_status_t send_net(pxa_runtime_t *runtime, pxa_component_t owner,
         if (opcode == PXA_NET_HTTP_OPEN) {
             pxa_write_u64(value, 1024 * 1024);
             assert(pxa_writer_record(&writer, 4, value, 8) == PXA_STATUS_OK);
-            pxa_write_u32(value, 1000);
+            pxa_write_u32(value, PXA_NET_MAX_STREAM_TIMEOUT_MS);
             assert(pxa_writer_record(&writer, 8, value, 4) == PXA_STATUS_OK);
             pxa_write_u32(value, 512);
             assert(pxa_writer_record(&writer, 14, value, 4) == PXA_STATUS_OK);
@@ -355,7 +356,7 @@ static void test_exchange_service(int streaming) {
     nc.max_response_header_bytes = 128;
     nc.min_timeout_ms = 1;
     nc.default_timeout_ms = 1000;
-    nc.max_timeout_ms = 60000;
+    nc.max_timeout_ms = PXA_NET_MAX_STREAM_TIMEOUT_MS;
     nc.permissions = permissions;
     nc.backend.struct_size = sizeof(nc.backend);
     nc.backend.context = &backend;
@@ -390,7 +391,7 @@ static void test_exchange_service(int streaming) {
     assert(permission >> 32);
     assert(send_net(runtime, owner, PXA_NET_CAPABILITIES, 2, 0) == PXA_STATUS_OK);
     assert((reply(runtime, owner, 2, PXA_STATUS_OK) & UINT32_MAX) ==
-           (streaming ? 7u : 0u));
+           (streaming ? 15u : 0u));
     assert(send_net(runtime, owner, PXA_NET_HTTP_OPEN, 3, permission) == PXA_STATUS_OK);
     handle =
         reply(runtime, owner, 3, streaming ? PXA_STATUS_OK : PXA_STATUS_UNSUPPORTED);

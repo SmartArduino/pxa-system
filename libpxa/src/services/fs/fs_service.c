@@ -32,6 +32,9 @@ struct pxa_fs_service {
     pxa_authority_t picker_authority;
     uint32_t picker_rights;
     uint8_t picker_persistent;
+    pxa_component_t import_component;
+    pxa_request_token_t import_token;
+    uint64_t import_identity;
 };
 
 struct pxa_fs_resource_slot {
@@ -789,7 +792,21 @@ static void clear_picker(pxa_fs_service_t *s) {
     s->picker_authority = 0; s->picker_rights = 0;
     s->picker_persistent = 0;
 }
+static int has_import(const pxa_fs_roots_backend_t *r) {
+    return r && r->struct_size >= offsetof(pxa_fs_roots_backend_t,cancel_import)+sizeof(r->cancel_import)
+        && r->request_import && r->cancel_import;
+}
+static void cancel_import(pxa_fs_service_t *s) {
+    pxa_request_token_t token=s->import_token;
+    pxa_component_t component=s->import_component;
+    s->import_token=0;s->import_identity=0;
+    if(token && has_import(s->roots))s->roots->cancel_import(s->roots->context,component,token);
+}
 void pxa_fs_service_poll(pxa_fs_service_t *s) {
+    if(service_valid(s) && s->import_token &&
+        (!pxa_request_is_active(s->runtime,s->import_component,s->import_token) ||
+         pxa_request_identity(s->runtime,s->import_component,s->import_token)!=s->import_identity))
+        cancel_import(s);
     if (service_valid(s) && s->picker_token &&
         (!pxa_request_is_active(s->runtime,s->picker_component,s->picker_token) ||
          pxa_request_identity(s->runtime,s->picker_component,s->picker_token) !=
@@ -799,6 +816,60 @@ void pxa_fs_service_poll(pxa_fs_service_t *s) {
         clear_picker(s);
         s->roots->cancel_access(s->roots->context,c,t);
     }
+}
+pxa_status_t pxa_fs_import_complete(pxa_fs_service_t *s,pxa_component_t c,
+    pxa_request_token_t token,pxa_status_t status,const pxa_fs_import_summary_t *result) {
+    uint8_t body[16];
+    if(!service_valid(s))return PXA_STATUS_INVALID_ARGUMENT;
+    pxa_fs_service_poll(s);
+    if(!token || token!=s->import_token || c!=s->import_component)return PXA_STATUS_NOT_FOUND;
+    status=pxa_status_normalize(status);
+    if(status==PXA_STATUS_OK && (!result || result->first_error>0 ||
+        (!!result->failed!=!!result->first_error)))return PXA_STATUS_INVALID_ARGUMENT;
+    s->import_token=0;s->import_identity=0;
+    pxa_status_t complete=pxa_request_commit(s->runtime,c,token);
+    if(complete!=PXA_STATUS_OK)return complete;
+    if(status==PXA_STATUS_OK) {
+        pxa_write_u32(body,result->imported);pxa_write_u32(body+4,result->failed);
+        pxa_write_u32(body+8,result->skipped);pxa_write_u32(body+12,(uint32_t)result->first_error);
+    }
+    return pxa_request_complete(s->runtime,c,token,status,status==PXA_STATUS_OK?body:NULL,
+        status==PXA_STATUS_OK?sizeof(body):0);
+}
+static pxa_status_t import_control(pxa_fs_service_t *s,pxa_component_t c,const pxa_message_view_t *m) {
+    const uint8_t *p=m->payload.data;uint16_t profile=0;
+    pxa_authority_t authority=0;
+    if(!has_import(s->roots))return PXA_STATUS_UNSUPPORTED;
+    if(pxa_component_wire_profile(s->runtime,c,&profile)!=PXA_STATUS_OK || profile!=1)
+        return PXA_STATUS_UNSUPPORTED;
+    if(m->payload.size<8 || !p || (pxa_read_u32(p)&~PXA_FS_IMPORT_MULTIPLE))return PXA_STATUS_INVALID_ARGUMENT;
+    size_t filters=pxa_read_u16(p+4),purpose=pxa_read_u16(p+6);
+    if(filters>PXA_FS_IMPORT_FILTER_MAX || !purpose || purpose>PXA_FS_IMPORT_PURPOSE_MAX ||
+        m->payload.size!=8+filters+purpose || !pxa_utf8_validate(p+8+filters,purpose,PXA_UTF8_REJECT_C0|PXA_UTF8_REJECT_DEL))
+        return PXA_STATUS_INVALID_ARGUMENT;
+    /* Comma-separated ASCII extensions, without dots or wildcards. Empty
+     * selects all regular files. Reject empty segments and NUL explicitly. */
+    for(size_t i=0;i<filters;++i) {
+        uint8_t ch=p[8+i];
+        if(ch==',') {if(!i || i+1==filters || p[8+i-1]==',')return PXA_STATUS_INVALID_ARGUMENT;}
+        else if(!((ch>='a'&&ch<='z')||(ch>='A'&&ch<='Z')||(ch>='0'&&ch<='9')))
+            return PXA_STATUS_INVALID_ARGUMENT;
+    }
+    pxa_fs_service_poll(s);
+    if(s->import_token || s->picker_token)return PXA_STATUS_BUSY;
+    pxa_status_t status=authorize_request(s,c,&authority);
+    pxa_status_t begun=pxa_request_begin_reserved(s->runtime,c,m->request_token,
+        PXA_FS_SERVICE_ID,PXA_FS_IMPORT_FILES,status==PXA_STATUS_OK?authority:0,16);
+    if(begun!=PXA_STATUS_OK)return begun;
+    if(status==PXA_STATUS_OK) {
+        s->import_component=c;s->import_token=m->request_token;
+        s->import_identity=pxa_request_identity(s->runtime,c,m->request_token);
+        status=pxa_status_normalize(s->roots->request_import(s->roots->context,c,m->request_token,
+            pxa_read_u32(p),(pxa_bytes_t){p+8,filters},(pxa_bytes_t){p+8+filters,purpose}));
+        if(status==PXA_STATUS_OK)return status;
+        s->import_token=0;s->import_identity=0;
+    }
+    return pxa_request_complete(s->runtime,c,m->request_token,status,NULL,0);
 }
 pxa_status_t pxa_fs_access_complete(pxa_fs_service_t *s, pxa_component_t c,
     pxa_request_token_t token, pxa_status_t status, const uint8_t id[16]) {
@@ -868,7 +939,7 @@ static pxa_status_t scoped_control(pxa_fs_service_t *s, pxa_component_t c,
             !pxa_utf8_validate(p+18,m->payload.size-18,0) ||
             !(pxa_read_u32(p+8) & 3u) || (pxa_read_u32(p+8) & ~31u))
             return PXA_STATUS_INVALID_ARGUMENT;
-        if (s->picker_token) return PXA_STATUS_BUSY;
+        if (s->picker_token || s->import_token) return PXA_STATUS_BUSY;
         status = directory_permission(s,c,pxa_read_u64(p),&authority,&allowed);
         if (status == PXA_STATUS_OK && (pxa_read_u32(p+8) & ~allowed))
             status = PXA_STATUS_DENIED;
@@ -1012,6 +1083,7 @@ static pxa_status_t fs_control(void *context, pxa_runtime_t *runtime,
     }
     if(message->opcode==PXA_FS_READ_DIRECTORY) return directory_control(service,component,message);
     if(message->opcode==PXA_FS_APP_MEDIA_PATH)return media_path_control(service,component,message);
+    if(message->opcode==PXA_FS_IMPORT_FILES)return import_control(service,component,message);
     if (message->opcode == PXA_FS_OPEN_ROOT ||
         message->opcode == PXA_FS_REQUEST_ACCESS ||
         message->opcode == PXA_FS_OPEN_AT || message->opcode == PXA_FS_STAT_AT ||
@@ -1079,6 +1151,7 @@ static pxa_status_t fs_control(void *context, pxa_runtime_t *runtime,
 static void fs_component_stopped(void *context,pxa_runtime_t *runtime,
     pxa_component_t component) {
     pxa_fs_service_t *s=context; (void)runtime;
+    if(s->import_token && s->import_component==component)cancel_import(s);
     if(s->picker_token && s->picker_component==component) {
         pxa_request_token_t token=s->picker_token;
         clear_picker(s); s->roots->cancel_access(s->roots->context,component,token);
@@ -1103,6 +1176,7 @@ pxa_status_t pxa_fs_service_register(pxa_fs_service_t *service) {
         operations.features |= service->roots->features & PXA_FS_FEATURE_APP_MEDIA_ROOT;
     operations.context = service;
     if(has_media_path(service->roots))operations.features|=PXA_FS_FEATURE_APP_MEDIA_PATH;
+    if(has_import(service->roots))operations.features|=PXA_FS_FEATURE_FILE_IMPORT;
     operations.control = fs_control;
     operations.component_stopped = fs_component_stopped;
     status = pxa_service_register(service->runtime, &operations);

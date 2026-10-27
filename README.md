@@ -2,6 +2,10 @@
 
 [English](README.en.md)
 
+<picture><source media="(prefers-color-scheme: dark)" srcset="branding/dist/pxa-horizontal-dark.svg"><img src="branding/dist/pxa-horizontal-light.svg" alt="PXA" width="192" height="64"></picture>
+
+系统、设备开机与网页统一使用 [PXA 正式标识 v1](branding/README.md)。
+
 PXA（Portable eXecutable Application，可移植可执行应用）是面向嵌入式产品的应用系统。应用以签名 `.pxa` 包独立开发、安装和更新；系统为原生应用与 PXA 应用提供统一的身份、生命周期、界面、权限和服务契约。核心不依赖 LVGL，产品可以选择自己的渲染器和驱动。
 
 ## 开发 C++26 应用
@@ -91,3 +95,9 @@ ESP 运行时只为清单明确声明 pinned memory 的组件保留固定线性�
 当前维护的 Guest ABI 是 Core 2.0，导入接口为 `pxa.core.v2::pxa_call` 和 `pxa_io`。C++ 源码 API 仍处于 1.0 之前，允许演进；使用 `pxa.lock` 固定输入，显式升级后重新编译和测试。Host 结构携带 `struct_size`，线协议使用明确版本。
 
 AOT 引擎 ABI 与 Guest Core 版本分别管理：引擎标签中的 `core-1` 不是 Guest Core 1。旧 Core 1 包不能直接在 Core 2 Host 运行；设备还须满足应用声明的服务、功能与目标架构要求。
+
+## 关于 DOIT
+
+公司：**深圳四博智联科技有限公司（DOIT）**。
+
+[公司官网](https://doit.am/) · [关于 PXA 与 DOIT](https://pxa.doit.am/about/)

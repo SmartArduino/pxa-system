@@ -1,11 +1,11 @@
 {
-  "schema": "pxa-net-spec-0.4",
+  "schema": "pxa-net-spec-0.5",
   "status": "draft",
   "service": {
     "name": "net",
     "id": 9,
     "major": 0,
-    "minor": 4,
+    "minor": 5,
     "patch": 0
   },
   "opcodes": [
@@ -204,9 +204,10 @@
     "max_inline_body_bytes": 2048,
     "min_timeout_ms": 100,
     "default_timeout_ms": 15000,
-    "max_timeout_ms": 60000
+    "max_timeout_ms": 60000,
+    "max_stream_timeout_ms": 86400000
   },
-  "protocol_version": "0.4.0",
+  "protocol_version": "0.5.0",
   "exchange_io": [
     {
       "name": "read",
@@ -249,5 +250,6 @@
     "max_body_bytes": "caller-u64-budget-independent-of-buffer",
     "upload_buffer_partition": "half-send-half-receive",
     "sdk_default_header_bytes": 1024
-  }
+  },
+  "stream_timeout_note": "Net 0.5 HTTP exchanges may use total deadlines up to 24 hours when configured by the Host. Buffered requests remain capped at 60000ms. Long exchanges retain a 15000ms connection timeout; applications should enforce a shorter no-data timeout and close inactive streams."
 }

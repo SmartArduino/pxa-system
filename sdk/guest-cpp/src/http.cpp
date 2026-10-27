@@ -34,7 +34,7 @@ Result<HttpRequestPacket> encode_http_request(const HttpRequest &r,
         method < 1 || method > 6 || o.buffer_bytes < 512 || o.buffer_bytes > 65536 ||
         (o.buffer_bytes & (o.buffer_bytes - 1)) || o.header_bytes < 16 ||
         o.header_bytes > 4096 || !o.max_body_bytes || o.timeout_ms < 100 ||
-        o.timeout_ms > 60000 || r.headers.size() > 8 || r.wanted_headers.size() > 8 ||
+        o.timeout_ms > 86400000u || r.headers.size() > 8 || r.wanted_headers.size() > 8 ||
         upload > INT32_MAX ||
         r.body.size() > 2048 || r.body.size() > o.buffer_bytes / 2 ||
         (!r.body.empty() && r.upload_bytes && r.upload_bytes != upload) ||

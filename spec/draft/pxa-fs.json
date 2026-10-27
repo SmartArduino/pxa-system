@@ -1,11 +1,11 @@
 {
-  "schema": "pxa-fs-spec-0.4",
+  "schema": "pxa-fs-spec-0.5",
   "status": "draft",
   "service": {
     "name": "fs",
     "id": 5,
     "major": 0,
-    "minor": 4,
+    "minor": 5,
     "patch": 0
   },
   "opcodes": [
@@ -122,6 +122,15 @@
       "payload": "",
       "result": "display-path:utf8-u16 (1..255 bytes, display-only, no filesystem authority)",
       "feature": "app-media-path"
+    },
+    {
+      "id": 19,
+      "name": "import-files",
+      "direction": "bidirectional-result",
+      "request_token": "nonzero",
+      "payload": "flags:u32|extensions-length:u16|purpose-length:u16|extensions:ascii|purpose:utf8",
+      "result": "imported:u32|failed:u32|skipped:u32|first-error:i32",
+      "feature": "file-import"
     }
   ],
   "open_flags": [
@@ -227,7 +236,7 @@
     "max_segment_bytes": 255,
     "quota_unit": "logical-regular-file-bytes"
   },
-  "protocol_version": "0.4.0",
+  "protocol_version": "0.5.0",
   "features": [
     {
       "name": "scoped-roots",
@@ -248,6 +257,10 @@
     {
       "name": "app-media-path",
       "bit": 7
+    },
+    {
+      "name": "file-import",
+      "bit": 8
     }
   ],
   "root_info": {

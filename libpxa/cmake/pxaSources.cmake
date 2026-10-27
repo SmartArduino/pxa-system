@@ -18,6 +18,7 @@ function(pxa_collect_sources output root)
         src/services/ime/ime_service.c
         src/services/storage/storage_service.c
         src/services/fs/fs_service.c
+        src/services/fs/file_import.c
         src/services/fs/volume.c
         src/services/fs/volume_identity.c
         src/package/install_plan.c

@@ -427,7 +427,9 @@ static pxa_status_t net_control(void *context, pxa_runtime_t *runtime,
         status = pxa_request_begin_reserved(service->runtime, component,
             message->request_token, PXA_NET_SERVICE_ID, message->opcode, 0, sizeof(caps));
         if (status != PXA_STATUS_OK) return status;
-        pxa_write_u32(caps, exchanges_supported(service) ? 7 : 0);
+        pxa_write_u32(caps, exchanges_supported(service)
+            ? 7u | (service->request_limits.max_timeout_ms >= PXA_NET_MAX_STREAM_TIMEOUT_MS
+                ? PXA_NET_FEATURE_LONG_STREAM_TIMEOUT : 0u) : 0u);
         pxa_write_u32(caps + 4, PXA_HTTP_MAX_BUFFER_BYTES);
         pxa_write_u32(caps + 8, PXA_HTTP_MAX_HEAD_BYTES);
         pxa_write_u32(caps + 12, service->request_limits.max_request_header_bytes);

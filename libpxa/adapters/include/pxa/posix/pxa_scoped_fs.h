@@ -56,6 +56,12 @@ void pxa_scoped_fs_deinit(pxa_scoped_fs_t *fs);
  * means the volume root. Does not create or modify the directory. */
 pxa_status_t pxa_scoped_fs_validate_grant(pxa_scoped_fs_t *fs,
     const pxa_scoped_fs_grant_t *grant);
+/* Trusted Host browser/import only. This never accepts a Guest request or
+ * creates a persistent grant. The resource retains the exact mount epoch,
+ * uses the same no-link/protected-path checks, and is closed through files.
+ * Empty relative path is permitted only for a directory (volume browser). */
+pxa_status_t pxa_scoped_fs_open_trusted(pxa_scoped_fs_t *,uint64_t epoch,
+    const char *relative,uint8_t kind,void **resource,pxa_fs_entry_t *info);
 #ifdef __cplusplus
 }
 #endif

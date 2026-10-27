@@ -1,5 +1,6 @@
 /* Included by core_test.c to reuse the real Core wire/pressure harness. */
 typedef struct { unsigned opens,closes,prompts,cancels,directory_reads;
+    unsigned imports,import_cancels;
     int directory,file,private_denied,grant_revoked,volume_unavailable;
     pxa_bytes_t directory_name;
 } roots_test_t;
@@ -65,6 +66,15 @@ static pxa_status_t roots_test_picker(void *c,pxa_component_t component,
 static void roots_test_cancel(void *c,pxa_component_t component,pxa_request_token_t token) {
     roots_test_t *r=c; (void)component;(void)token; ++r->cancels;
 }
+static pxa_status_t roots_test_import(void *context,pxa_component_t c,pxa_request_token_t token,
+    uint32_t flags,pxa_bytes_t filter,pxa_bytes_t purpose) {
+    roots_test_t *state=context;(void)c;(void)token;
+    assert(flags==PXA_FS_IMPORT_MULTIPLE && filter.size==6 && !memcmp(filter.data,"gb,gbc",6));
+    assert(purpose.size==4);++state->imports;return PXA_STATUS_OK;
+}
+static void roots_test_cancel_import(void *context,pxa_component_t c,pxa_request_token_t token) {
+    (void)c;(void)token;++((roots_test_t *)context)->import_cancels;
+}
 static void test_fs_scoped_service(void) {
     test_runtime_t test=make_runtime(1,12,12,12,16,10,2);
     roots_test_t state={0}; test_fs_backend_t legacy={0};
@@ -101,6 +111,7 @@ static void test_fs_scoped_service(void) {
     roots.features=PXA_FS_FEATURE_APP_MEDIA_ROOT|PXA_FS_FEATURE_APP_MEDIA_PATH;
     roots.app_media_path=roots_test_media_path;
     roots.read_at=roots_test_read_at;
+    roots.request_import=roots_test_import;roots.cancel_import=roots_test_cancel_import;
     fc.struct_size=sizeof(fc);fc.max_open_resources=4;fc.roots=&roots;fc.permissions=permissions;
     fc.authorization_context=&state;fc.authorize=roots_test_authorize;
     fc.backend.struct_size=sizeof(fc.backend);fc.backend.context=&legacy;
@@ -222,5 +233,38 @@ static void test_fs_scoped_service(void) {
     assert(pxa_runtime_control(test.runtime,c,command,writer.size)==PXA_STATUS_INVALID_ARGUMENT);
     assert(!pxa_component_finish_event(test.runtime,c,0));
     assert(state.opens==3 && state.closes==3);
+    /* Trusted file import returns counts, never native paths or writable roots. */
+    roots.struct_size=sizeof(roots);
+    memset(p,0,sizeof(p));pxa_write_u32(p,1);pxa_write_u16(p+4,6);pxa_write_u16(p+6,4);memcpy(p+8,"gb,gbcROMs",10);
+    for(unsigned pass=0;pass<2;++pass) {
+        pxa_writer_init(&writer,command,sizeof(command));
+        assert(!pxa_writer_message(&writer,5,PXA_FS_IMPORT_FILES,300+pass,p,18));
+        assert(!pxa_component_begin_event(test.runtime,c));
+        assert(!pxa_runtime_control(test.runtime,c,command,writer.size));
+        assert(!pxa_component_finish_event(test.runtime,c,0));
+        assert(state.imports==pass+1);
+        pxa_fs_import_summary_t summary={2,1,3,PXA_STATUS_DENIED};
+        if(pass) {
+            assert(!pxa_request_cancel(test.runtime,c,301));pxa_fs_service_poll(fs);
+            assert(state.import_cancels==1);
+            assert(pxa_fs_import_complete(fs,c,301,0,&summary)==PXA_STATUS_NOT_FOUND);
+        } else assert(!pxa_fs_import_complete(fs,c,300,0,&summary));
+        n=read_head_event(test.runtime,c,event_bytes,sizeof(event_bytes),&view);
+        assert(!pxa_message_decode(event_bytes,n,PXA_MAX_CONTROL_MESSAGE,&event));
+        assert(event.request_token==300+pass);
+        if(pass)assert(event.payload.size==4 && (int32_t)pxa_read_u32(event.payload.data)==PXA_STATUS_CANCELLED);
+        else assert(event.payload.size==20 && !pxa_read_u32(event.payload.data) && pxa_read_u32(event.payload.data+4)==2 &&
+            pxa_read_u32(event.payload.data+8)==1 && pxa_read_u32(event.payload.data+12)==3 && (int32_t)pxa_read_u32(event.payload.data+16)==PXA_STATUS_DENIED);
+        assert(!pxa_event_consume(test.runtime,c,view.token));
+    }
+    p[8]='.';
+    pxa_writer_init(&writer,command,sizeof(command));assert(!pxa_writer_message(&writer,5,PXA_FS_IMPORT_FILES,302,p,18));
+    assert(!pxa_component_begin_event(test.runtime,c));
+    assert(pxa_runtime_control(test.runtime,c,command,writer.size)==PXA_STATUS_INVALID_ARGUMENT);
+    assert(!pxa_component_finish_event(test.runtime,c,0));
+    roots.struct_size=offsetof(pxa_fs_roots_backend_t,request_import);
+    assert(!pxa_component_begin_event(test.runtime,c));
+    assert(pxa_runtime_control(test.runtime,c,command,writer.size)==PXA_STATUS_UNSUPPORTED);
+    assert(!pxa_component_finish_event(test.runtime,c,0));
     (void)view;destroy_runtime(&test);free(fw);free(pw);
 }

@@ -1,0 +1,10 @@
+<?xml version='1.0' encoding='utf-8'?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="128 32 392 392" role="img" aria-label="PXA"><rect x="128" y="32" width="392" height="392" fill="#f8faf7" /><g id="pxa-mark" transform="translate(-410 -212)">
+    <path fill="#111827" d="M600 300H662L715 356H605L706 459H613L556 399V345Q556 300 600 300Z" />
+    <path fill="#568144" d="M720 396L779 340H820V380H860V340H892V395L841 442H720Z" />
+    <path fill="#568144" d="M820 300H860V340H820Z" />
+    <path fill="#b6f568" d="M860 260H904V304H860Z" />
+    <path fill="#568144" d="M614 478H706V521L616 613H600Q558 613 558 568V531Z" />
+    <path fill="#111827" d="M740 459H831L890 519V567Q890 615 846 615H768L713 560H839Z" />
+  </g>
+  </svg>

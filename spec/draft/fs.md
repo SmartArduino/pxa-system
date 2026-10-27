@@ -1,4 +1,4 @@
-# PXA Files Draft 0.3
+# PXA Files Draft 0.5
 
 FS 0.3 preserves private-file operations 1–8 and adds optional scoped directory
 roots. The existing private path and quota rules below remain unchanged.
@@ -31,6 +31,57 @@ enumerate. Its success data is `directory:u64|rights:u32`. REQUEST_ACCESS uses
 `directory:u64|rights:u32|grant-id:16`. Flag 1 requests persistence. Session-only
 access returns a zero GrantId. The picker is trusted Host UI; Core cancellation,
 revocation or stop prevents a late UI decision from publishing a handle.
+
+## Import selected files (0.5)
+
+`file-import` (feature bit 8) enables `IMPORT_FILES` (19). This opens the trusted
+system file picker in single-selection or multiple-selection mode and copies
+regular files into the requesting app's system-assigned media directory. The
+Host selects internal storage or SD according to the app's storage binding.
+The operation does not expose native source paths, issue directory grants, or
+make the media root writable by the Guest. Source files are left intact.
+Private save quotas and read-only authenticated package generations are not
+used for these copies. Hosts with immutable media bindings do not advertise
+this feature; an unavailable bound volume never silently selects another one.
+
+The Core 2.x request payload is
+`flags:u32 | extensions-length:u16 | purpose-length:u16 | extensions:ascii | purpose:utf8`.
+Flag 1 permits multiple selection; zero permits exactly one file. Other flag
+bits are invalid. Extensions are a case-insensitive, comma-separated list such
+as `nes` or `gb,gbc`, without dots, wildcards or empty segments (maximum 128
+bytes). An empty list accepts all regular files. Purpose is 1–256 UTF-8 bytes,
+without NUL or ASCII controls; the system displays it alongside the app name.
+The C helper is `pxa_fs_request_import`; the C++ API is
+`co_await FilesystemService::import_files(extensions, purpose, multiple)`.
+Both copy request text before returning; neither retains borrowed arguments.
+
+Successful completion has the normal status prefix followed by
+`imported:u32 | failed:u32 | skipped:u32 | first-error:i32` (16 body bytes).
+Per-file errors do not abort the remaining batch. `first-error` is zero exactly
+when `failed` is zero. Selecting a file already in the destination skips it.
+Occupied names receive a numbered suffix, preserving the extension and UTF-8
+boundaries. Publication never replaces an existing file. Names are kept at their
+actual length subject to the destination filesystem's own naming limits.
+
+Copies stream through a 4 KiB buffer and publish only after a complete write and
+flush. A cancelled request, application stop, or invalidated mount epoch stops
+the current copy and removes its temporary file while that volume is still
+available. Already-published files remain. After removal or power loss, a
+hidden `.import-*.part` may remain on the original volume; it is never reported
+as an imported ROM. Clients refresh their media listing after cancellation as
+well as success. No upper selection count is imposed beyond allocation and
+wire-count limits; the picker pages directory entries and only retains selected
+paths. Import code runs only while the user is in the picker, not on game frames.
+Host Back navigation is consumed by the active picker before a Guest Window
+Back event is dispatched: it ascends directories while browsing and cancels an
+active copy. Native shells keep ownership of their existing controller focus.
+The fixed location bar provides an explicit Up action; at a volume root it
+returns to the storage list. Back from the storage list closes the picker.
+Returning to a parent restores the directory page, focused entry and visible
+scroll position, without clearing selections from other folders. Cancel and
+Import (with the selected count) remain in the footer. The panel, list, actions
+and selection/focus states use system semantic colors, spacing and radius;
+title, body, caption and action text use the corresponding system fonts.
 
 OPEN_AT uses `directory:u64|flags:u32|path-length:u16|path:utf8`; success is
 `handle:u64|kind:u8|reserved:3=0|file-features:u64|size:u64` (28 B). STAT_AT uses

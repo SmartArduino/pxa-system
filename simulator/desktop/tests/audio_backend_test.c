@@ -190,6 +190,27 @@ int main(int argc, char **argv) {
     expect_music_event(h,first,PXA_AUDIO_PLAYBACK_ERROR,PXA_STATUS_NOT_FOUND);
     audio_close(h,a); assert(h->audio_device);
     audio_close(h,b); assert(!h->audio_device && !h->music_thread);
+    /* Native radio PCM keeps the source clock, stereo downmix and backpressure. */
+    f = (pxa_audio_format_t){48000, 2, 20};
+    pxa_audio_pcm_info_t native;
+    assert(!audio_open_pcm(h, &f, &native, &a));
+    assert(native.sink_rate == 16000 && native.sink_channels == 1 && native.queue_frames == 3840);
+    SDL_PauseAudioDevice(h->audio_device, 1);
+    assert(!audio_commit(h, a, &g));
+    uint8_t stereo[480 * 4];
+    for (unsigned i = 0; i < 480; ++i) {
+        stereo[i*4] = 0xe8; stereo[i*4+1] = 3;
+        stereo[i*4+2] = 0xb8; stereo[i*4+3] = 11;
+    }
+    for (unsigned i = 0; i < PXA_AUDIO_MIXER_PACKETS; ++i)
+        assert(!audio_submit(h, a, stereo, sizeof(stereo)));
+    assert(audio_submit(h, a, stereo, sizeof(stereo)) == PXA_STATUS_WOULD_BLOCK);
+    audio_callback(h, (uint8_t *)output, sizeof(output));
+    assert(output[80] == 2000);
+    assert(!audio_query(h, a, &state) && state.accepted_samples == 960);
+    assert(!audio_flush(h, a));
+    audio_close(h, a);
+    assert(!h->audio_device);
     assert(h->music_read_bytes && h->music_read_calls);
     assert(!pxa_posix_asset_worker_stack_bytes(h->asset_worker));
     while(pxa_posix_asset_worker_destroy(h->asset_worker)==PXA_STATUS_WOULD_BLOCK) SDL_Delay(1);

@@ -14,7 +14,7 @@ extern "C" {
 
 #define PXA_FS_SERVICE_ID UINT16_C(5)
 #define PXA_FS_SERVICE_MAJOR UINT16_C(0)
-#define PXA_FS_SERVICE_MINOR UINT16_C(4)
+#define PXA_FS_SERVICE_MINOR UINT16_C(5)
 #define PXA_FS_SERVICE_PATCH UINT16_C(0)
 
 #define PXA_FS_OPEN UINT16_C(1)
@@ -31,6 +31,15 @@ extern "C" {
 #define PXA_FS_STAT_AT UINT16_C(16)
 #define PXA_FS_QUERY_ROOT UINT16_C(17)
 #define PXA_FS_APP_MEDIA_PATH UINT16_C(18)
+#define PXA_FS_IMPORT_FILES UINT16_C(19)
+#define PXA_FS_IMPORT_MULTIPLE UINT32_C(1)
+#define PXA_FS_FEATURE_FILE_IMPORT UINT64_C(256)
+#define PXA_FS_IMPORT_FILTER_MAX 128u
+#define PXA_FS_IMPORT_PURPOSE_MAX 256u
+typedef struct {
+    uint32_t imported, failed, skipped;
+    pxa_status_t first_error;
+} pxa_fs_import_summary_t;
 #define PXA_FS_DISPLAY_PATH_MAX 255u
 #define PXA_FS_FEATURE_SCOPED_ROOTS UINT64_C(1)
 #define PXA_FS_FEATURE_READ_AT UINT64_C(2)
@@ -177,6 +186,13 @@ typedef struct {
     /* Optional 0.4 tail: display-only path for this app's fixed media root.
      * No media mount, handle, filesystem access or transferable authority. */
     pxa_status_t (*app_media_path)(void *,char *,size_t,size_t *);
+    /* Optional 0.5 tail. Trusted UI selects source files; Host streams them
+     * into this app's policy-selected media directory. No native path or
+     * arbitrary directory authority is returned to the Guest. Borrowed text
+     * is valid only during request_import; copy it before queuing UI. */
+    pxa_status_t (*request_import)(void *,pxa_component_t,pxa_request_token_t,
+        uint32_t flags,pxa_bytes_t extensions,pxa_bytes_t purpose);
+    void (*cancel_import)(void *,pxa_component_t,pxa_request_token_t);
 } pxa_fs_roots_backend_t;
 
 typedef pxa_status_t (*pxa_fs_authorize_fn)(
@@ -208,6 +224,10 @@ pxa_status_t pxa_fs_access_complete(pxa_fs_service_t *service,
     pxa_component_t component, pxa_request_token_t token,
     pxa_status_t status, const uint8_t grant_id[16]);
 void pxa_fs_service_poll(pxa_fs_service_t *service);
+/* Runtime-owner completion. A cancelled/stopped request cannot publish a
+ * late result; the provider must stop copying and remove its partial file. */
+pxa_status_t pxa_fs_import_complete(pxa_fs_service_t *,pxa_component_t,
+    pxa_request_token_t,pxa_status_t,const pxa_fs_import_summary_t *);
 
 #ifdef __cplusplus
 }

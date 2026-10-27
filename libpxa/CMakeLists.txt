@@ -142,6 +142,8 @@ if(PXA_BUILD_ADAPTERS)
         adapters/posix/pxa_posix_asset_worker.c
         adapters/posix/pxa_posix_fs.c
         adapters/posix/pxa_scoped_fs.c
+        adapters/posix/pxa_file_browser.c
+        adapters/posix/pxa_import_destination.c
         adapters/posix/pxa_posix_scheduler_store.c
         adapters/posix/pxa_posix_storage.c
         adapters/posix/pxa_posix_installer.c
@@ -225,6 +227,10 @@ if(PXA_BUILD_ADAPTERS)
             target_compile_options(pxa_fat_name_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
         endif()
         add_test(NAME pxa_fat_name_test COMMAND pxa_fat_name_test)
+        add_executable(pxa_file_import_test adapters/tests/file_import_test.c)
+        target_link_libraries(pxa_file_import_test PRIVATE pxa_adapters_posix)
+        target_compile_options(pxa_file_import_test PRIVATE -UNDEBUG)
+        add_test(NAME pxa_file_import_test COMMAND pxa_file_import_test)
         add_executable(pxa_fs_tree_test adapters/tests/fs_tree_test.c)
         target_link_libraries(pxa_fs_tree_test PRIVATE pxa_adapters_posix)
         if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
@@ -287,6 +293,7 @@ if(PXA_BUILD_ADAPTERS AND (PXA_LVGL_TARGET OR PXA_LVGL_SOURCE_DIR))
 
     add_library(pxa_adapters_lvgl
         adapters/lvgl/pxa_lvgl_ui.c
+        adapters/lvgl/pxa_lvgl_file_picker.c
         adapters/lvgl/pxa_lvgl_ui_symbols.c
         adapters/lvgl/pxa_lvgl_image.c
         adapters/lvgl/pxa_lvgl_gif.c
@@ -316,6 +323,10 @@ if(PXA_BUILD_ADAPTERS AND (PXA_LVGL_TARGET OR PXA_LVGL_SOURCE_DIR))
     endif()
 
     if(PXA_BUILD_TESTS)
+        add_executable(pxa_file_picker_test adapters/tests/file_picker_test.c)
+        target_link_libraries(pxa_file_picker_test PRIVATE pxa_adapters_lvgl ${_pxa_lvgl_target})
+        target_compile_options(pxa_file_picker_test PRIVATE -UNDEBUG)
+        add_test(NAME pxa_file_picker_test COMMAND pxa_file_picker_test)
         add_executable(pxa_lvgl_ui_test
             adapters/tests/lvgl_ui_test.c)
         target_link_libraries(pxa_lvgl_ui_test PRIVATE

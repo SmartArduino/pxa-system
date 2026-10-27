@@ -72,8 +72,11 @@ static pxa_status_t check_entry(pxa_scoped_fs_t *fs,scoped_entry_t *e) {
     const pxa_scoped_fs_grant_t *g;
     if (!e || e<fs->entries || e>=fs->entries+fs->config.max_open_resources ||
         !e->occupied) return PXA_STATUS_NOT_FOUND;
-    g=&fs->config.grants[e->grant_index];
-    if (!g->active || g->revision!=e->grant_revision) return PXA_STATUS_DENIED;
+    if(e->grant_index!=UINT16_MAX) {
+        if(e->grant_index>=fs->config.grant_count)return PXA_STATUS_DENIED;
+        g=&fs->config.grants[e->grant_index];
+        if (!g->active || g->revision!=e->grant_revision) return PXA_STATUS_DENIED;
+    }
     return ready(fs,e->epoch,&info);
 }
 static scoped_entry_t *allocate_entry(pxa_scoped_fs_t *fs) {
@@ -283,7 +286,7 @@ static pxa_status_t open_at(void *context,void *directory,pxa_bytes_t path,
         !pxa_fs_scoped_path_is_valid(path)) return PXA_STATUS_INVALID_ARGUMENT;
     if (flags!=PXA_FS_OPEN_READ && flags!=(PXA_FS_OPEN_READ|PXA_FS_OPEN_DIRECTORY))
         return PXA_STATUS_DENIED;
-    if (!(fs->config.grants[parent->grant_index].rights & PXA_FS_RIGHT_READ))
+    if (parent->grant_index!=UINT16_MAX && !(fs->config.grants[parent->grant_index].rights & PXA_FS_RIGHT_READ))
         return PXA_STATUS_DENIED;
     m=mount_for(fs,parent->epoch); if (!m) return PXA_STATUS_UNAVAILABLE;
     e=allocate_entry(fs); if (!e) return PXA_STATUS_RESOURCE_LIMIT;
@@ -366,13 +369,17 @@ static pxa_status_t query_root(void *context,void *directory,pxa_fs_root_info_t 
     pxa_status_t s=check_entry(fs,e);
     if (s!=PXA_STATUS_OK && s!=PXA_STATUS_UNAVAILABLE) return s;
     if (e->kind!=PXA_FS_KIND_DIRECTORY) return PXA_STATUS_INVALID_ARGUMENT;
-    g=&fs->config.grants[e->grant_index]; memset(out,0,sizeof(*out));
-    out->volume_id=g->volume_id; out->mount_epoch=e->epoch; out->rights=g->rights;
+    memset(out,0,sizeof(*out));
+    if(e->grant_index!=UINT16_MAX) {
+        g=&fs->config.grants[e->grant_index];out->volume_id=g->volume_id;out->rights=g->rights;
+    } else out->rights=PXA_FS_RIGHT_READ|PXA_FS_RIGHT_ENUMERATE;
+    out->mount_epoch=e->epoch;
     out->max_path_bytes=PXA_SCOPED_FS_PATH_BYTES-1;
     out->max_segment_bytes=PXA_SCOPED_FS_PATH_BYTES-1;
     out->capabilities=PXA_FS_FILE_FEATURE_READ_AT;
     out->max_read_at_bytes=PXA_FS_READ_AT_MAX_BYTES;
     if (pxa_volume_get(fs->config.volumes,e->epoch,&v)==PXA_STATUS_OK) {
+        out->volume_id=v.id;
         out->naming=v.capabilities & PXA_VOLUME_CASE_INSENSITIVE ?
             PXA_FS_NAMING_CASE_INSENSITIVE : PXA_FS_NAMING_BYTE_EXACT;
         out->state=v.ambiguous ? PXA_VOLUME_FAILED : v.state;
@@ -389,7 +396,7 @@ static pxa_status_t read_directory(void *context,void *resource,
     *end=0;
     if (s!=PXA_STATUS_OK) return s;
     if (e->kind!=PXA_FS_KIND_DIRECTORY) return PXA_STATUS_INVALID_ARGUMENT;
-    if (!(fs->config.grants[e->grant_index].rights & PXA_FS_RIGHT_ENUMERATE))
+    if (e->grant_index!=UINT16_MAX && !(fs->config.grants[e->grant_index].rights & PXA_FS_RIGHT_ENUMERATE))
         return PXA_STATUS_DENIED;
     m=mount_for(fs,e->epoch); if (!m) return PXA_STATUS_UNAVAILABLE;
     while (scanned++<256) {
@@ -438,6 +445,28 @@ static void enter_inventory(pxa_scoped_fs_t *fs) {
 }
 static void leave_inventory(pxa_scoped_fs_t *fs) {
     if(fs->config.leave_inventory)fs->config.leave_inventory(fs->config.inventory_context);
+}
+pxa_status_t pxa_scoped_fs_open_trusted(pxa_scoped_fs_t *fs,uint64_t epoch,
+    const char *relative,uint8_t kind,void **resource,pxa_fs_entry_t *info) {
+    if(!fs || fs->magic!=SCOPED_MAGIC || !relative || !resource || !info ||
+        (kind!=PXA_FS_KIND_REGULAR && kind!=PXA_FS_KIND_DIRECTORY) ||
+        (!*relative && kind!=PXA_FS_KIND_DIRECTORY) || !path_valid(relative))
+        return PXA_STATUS_INVALID_ARGUMENT;
+    *resource=NULL;memset(info,0,sizeof(*info));enter_inventory(fs);
+    pxa_volume_info_t volume;pxa_status_t status=ready(fs,epoch,&volume);
+    const pxa_scoped_fs_mount_t *mount=mount_for(fs,epoch);
+    scoped_entry_t *entry=NULL;struct stat st;
+    if(status==PXA_STATUS_OK && !mount)status=PXA_STATUS_UNAVAILABLE;
+    if(status==PXA_STATUS_OK && !(entry=allocate_entry(fs)))status=PXA_STATUS_RESOURCE_LIMIT;
+    if(status==PXA_STATUS_OK) {
+        status=open_native(fs,mount,relative,kind==PXA_FS_KIND_DIRECTORY,&entry->fd,&entry->directory,&st);
+        if(status==PXA_STATUS_OK) {
+            entry->kind=kind;entry->epoch=epoch;entry->grant_index=UINT16_MAX;
+            strcpy(entry->relative,relative);*resource=entry;
+            info->kind=kind;info->size=kind==PXA_FS_KIND_REGULAR?(uint64_t)st.st_size:0;
+        } else close_entry(fs,entry,0);
+    }
+    leave_inventory(fs);return status;
 }
 /* One guard covers validation and native I/O. A mount owner cannot free or
  * replace the selected mount between those steps. */

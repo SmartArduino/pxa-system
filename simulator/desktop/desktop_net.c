@@ -49,7 +49,7 @@ struct desktop_net_slot {
     /* Request copy. */
     char url[DESKTOP_NET_MAX_URL_BYTES];
     uint16_t method;
-    uint16_t timeout_ms;
+    uint32_t timeout_ms;
     uint32_t max_response_bytes;
     struct curl_slist *request_headers;
     uint8_t *request_body;
@@ -371,7 +371,8 @@ static pxa_status_t desktop_net_start(void *context,
         request->method < PXA_NET_METHOD_GET ||
         request->method > PXA_NET_METHOD_DELETE || request->max_response_bytes == 0 ||
         (request->abi_minor < 2 && request->max_response_bytes > DESKTOP_NET_MAX_RESPONSE_BYTES) ||
-        request->timeout_ms < 100 || request->timeout_ms > 60000 ||
+        request->timeout_ms < 100 || request->timeout_ms >
+            (request->abi_minor >= 2 ? PXA_NET_MAX_STREAM_TIMEOUT_MS : 60000u) ||
         request->header_count > PXA_NET_MAX_HEADERS ||
         request->wanted_response_header_count > PXA_NET_MAX_HEADERS ||
         request->body.size > DESKTOP_NET_MAX_INLINE_BODY_BYTES ||
@@ -407,7 +408,7 @@ static pxa_status_t desktop_net_start(void *context,
     snprintf(slot->url, sizeof(slot->url), "%.*s", (int)request->url.size,
              (const char *)request->url.data);
     slot->method = request->method;
-    slot->timeout_ms = (uint16_t)request->timeout_ms;
+    slot->timeout_ms = request->timeout_ms;
     slot->max_response_bytes = request->max_response_bytes;
     slot->deadline_ms = desktop_net_now_ms() + request->timeout_ms;
     for (index = 0; index < request->header_count; ++index) {

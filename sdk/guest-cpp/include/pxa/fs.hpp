@@ -334,11 +334,37 @@ struct DirectoryGrant {
     std::array<std::byte,16> id{};
     std::uint32_t rights=0;
 };
+struct FileImportResult {
+    std::uint32_t imported=0,failed=0,skipped=0;
+    std::int32_t first_error=0;
+};
 
 class FilesystemService {
 public:
     FilesystemService(Transport& transport, RequestTable& requests) noexcept
         : transport_(transport), requests_(requests) {}
+
+    // FS 0.5: system single/multi picker, followed by Host streaming copies.
+    // The Host chooses storage. No native paths or broad directory grant.
+    Task<FileImportResult> import_files(std::string_view extensions,
+        std::string_view purpose,bool multiple=true) {
+        if(extensions.size()>128 || purpose.empty() || purpose.size()>256 ||
+            purpose.find('\0')!=purpose.npos)return Task<FileImportResult>::failed(Error::invalid_argument);
+        for(std::size_t i=0;i<extensions.size();++i) {
+            const auto ch=static_cast<unsigned char>(extensions[i]);
+            if(ch==',') {
+                if(!i || i+1==extensions.size() || extensions[i-1]==',')return Task<FileImportResult>::failed(Error::invalid_argument);
+            } else if(!((ch>='a'&&ch<='z')||(ch>='A'&&ch<='Z')||(ch>='0'&&ch<='9')))
+                return Task<FileImportResult>::failed(Error::invalid_argument);
+        }
+        fs_detail::Payload<392> payload;
+        wire::put32(payload.bytes.data(),multiple?1:0);
+        wire::put16(payload.bytes.data()+4,extensions.size());wire::put16(payload.bytes.data()+6,purpose.size());
+        for(std::size_t i=0;i<extensions.size();++i)payload.bytes[8+i]=std::byte(extensions[i]);
+        for(std::size_t i=0;i<purpose.size();++i)payload.bytes[8+extensions.size()+i]=std::byte(purpose[i]);
+        payload.size=8+extensions.size()+purpose.size();
+        return import_request(transport_,requests_,payload);
+    }
 
     // As with other service resources, keep permission alive until ALL derived
     // directories/files close. Persistent IDs are safe to store; handles are not.
@@ -423,6 +449,17 @@ private:
         if(!length || body->size()!=2u+length || !text.assign(body->subspan(2)))
             co_return std::unexpected(Error::protocol_error);
         co_return text;
+    }
+    static Task<FileImportResult> import_request(Transport& t,RequestTable& r,fs_detail::Payload<392> p) {
+        auto event=co_await Response(t,r,5,19,p.packet());
+        if(!event)co_return std::unexpected(event.error());
+        auto body=wire::result_body(event->payload);
+        if(!body)co_return std::unexpected(body.error());
+        if(body->size()!=16)co_return std::unexpected(Error::protocol_error);
+        FileImportResult result{wire::get32(body->data()),wire::get32(body->data()+4),
+            wire::get32(body->data()+8),static_cast<std::int32_t>(wire::get32(body->data()+12))};
+        if(result.first_error>0 || (!!result.failed!=!!result.first_error))co_return std::unexpected(Error::protocol_error);
+        co_return result;
     }
     static Task<DirectoryGrant> directory_request(Transport& t,RequestTable& r,
         fs_detail::Payload<274> p) {

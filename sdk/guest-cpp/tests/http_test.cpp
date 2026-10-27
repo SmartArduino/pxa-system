@@ -35,6 +35,7 @@ extern "C" std::int32_t pxa_test_control(const std::uint8_t *input,
         assert(std::string_view(reinterpret_cast<const char *>(url->data()),
                                 url->size()) == "https://example.test/stream");
         assert(pxa::wire::get64(budget->data()) == 2 * 1024 * 1024);
+        assert(pxa::wire::get32(timeout->data()) == 86400000u);
     } else {
         assert(service == 1);
         if (op == 4) {
@@ -81,7 +82,8 @@ struct HttpApp {
         auto pending = [&] {
             std::string temporary = "https://example.test/stream";
             return context.http().get(temporary, permission,
-                                      {.max_body_bytes = 2 * 1024 * 1024});
+                                      {.max_body_bytes = 2 * 1024 * 1024,
+                                       .timeout_ms = 86400000u});
         }();
         auto response = co_await std::move(pending);
         assert(response && response->status_code == 200 && !response->body_length);

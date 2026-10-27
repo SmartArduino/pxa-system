@@ -198,7 +198,8 @@ pxa_status_t pxa_net_request_parse(
         output->request.max_response_bytes == 0 ||
         ((opcode == PXA_NET_HTTP_REQUEST || streaming) &&
          (output->request.timeout_ms < limits->min_timeout_ms ||
-          output->request.timeout_ms > limits->max_timeout_ms)) ||
+          output->request.timeout_ms > limits->max_timeout_ms ||
+          output->request.timeout_ms > (streaming ? PXA_NET_MAX_STREAM_TIMEOUT_MS : 60000u))) ||
         ((output->request.method == PXA_NET_METHOD_GET ||
           output->request.method == PXA_NET_METHOD_HEAD) &&
          output->request.body.size != 0)) {

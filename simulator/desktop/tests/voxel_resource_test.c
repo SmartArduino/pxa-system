@@ -1,4 +1,7 @@
 /* Capture signed voxel AOT menus and optional real gameplay frames. */
+/* Feature selection must precede every system header, including malloc.h;
+ * the included product runner uses POSIX realpath for trusted file browsing. */
+#define _XOPEN_SOURCE 700
 #define _POSIX_C_SOURCE 200809L
 #include <stdint.h>
 #include <malloc.h>

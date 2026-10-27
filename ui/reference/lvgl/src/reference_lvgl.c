@@ -2481,7 +2481,8 @@ static void recent_clicked(lv_event_t* event) {
         lv_obj_t* card = lv_event_get_current_target(event);
         lv_area_t area;
         lv_point_t point;
-        if (indev != NULL && card != NULL) {
+        if (indev != NULL && lv_indev_get_type(indev) == LV_INDEV_TYPE_POINTER &&
+            card != NULL) {
             lv_indev_get_point(indev, &point);
             lv_obj_get_coords(card, &area);
             point.x -= area.x1;
@@ -2618,14 +2619,16 @@ static void home_clicked(lv_event_t* event) {
                         home_animation_completed);
 }
 
-static void recents_clicked(lv_event_t* event) {
-    pxsys_reference_lvgl_t* ui =
-        (pxsys_reference_lvgl_t*)lv_event_get_user_data(event);
+static void open_task_switcher(pxsys_reference_lvgl_t* ui) {
     if (!ui_valid(ui)) return;
     if (ui->notification_shade_open) close_notification_shade(ui);
     capture_current_task(ui, 0);
     build_task_switcher(ui);
     animate_application(ui, 232, 0, -18, NULL);
+}
+
+static void recents_clicked(lv_event_t* event) {
+    open_task_switcher((pxsys_reference_lvgl_t*)lv_event_get_user_data(event));
 }
 
 static void task_switcher_background_clicked(lv_event_t* event) {
@@ -9199,6 +9202,9 @@ pxsys_status_t pxsys_reference_lvgl_home(pxsys_reference_lvgl_t* ui) {
     if (ui->locked) return PXSYS_STATUS_DENIED;
     if (!(ui->features & PXSYS_REFERENCE_UI_HOME))
         return PXSYS_STATUS_NOT_FOUND;
+    if (task_switcher_is_open(ui)) close_task_switcher(ui);
+    if (ui->notification_shade_open) close_notification_shade(ui);
+    capture_current_task(ui, 0);
     ui->launcher_editing = 0;
     ui->launcher_long_pressed = 0;
     return open_role(ui, PXSYS_ROLE_HOME);
@@ -9288,7 +9294,7 @@ pxsys_status_t pxsys_reference_lvgl_show_recents(pxsys_reference_lvgl_t* ui) {
     if (!ui_valid(ui)) return PXSYS_STATUS_INVALID_ARGUMENT;
     if (ui->locked) return PXSYS_STATUS_DENIED;
     if (task_switcher_is_open(ui)) close_task_switcher(ui);
-    else build_task_switcher(ui);
+    else open_task_switcher(ui);
     return PXSYS_STATUS_OK;
 }
 

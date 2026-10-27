@@ -36,6 +36,8 @@
 #include "pxa/lease.h"
 #include "pxa/lvgl/pxa_lvgl_ui.h"
 #include "pxa/openssl/pxa_openssl.h"
+/* This runner owns LVGL; the media backend also supports headless users. */
+#define PXA_FS_IMPORT_LVGL 1
 #include "desktop_media_root.h"
 #include "desktop_controller.h"
 #include "pxa/package.h"
@@ -204,6 +206,7 @@ typedef struct {
     lv_display_t *display;
     lv_obj_t *content_parent;
     pxa_runtime_t *runtime;
+    desktop_media_root_t *media_root;
     pxa_assets_service_t *assets;
     pxa_posix_asset_worker_t *asset_worker;
     pxa_posix_storage_gate_t *storage_gate;
@@ -2195,6 +2198,9 @@ static void dispatch_controller(product_host_t *host, desktop_controller_t *inpu
     const uint32_t buttons = desktop_controller_poll(input, host->focused);
     const uint64_t now = now_us(NULL);
     uint8_t value[8] = {0, 1, 0, 0};
+    if (host->media_root && desktop_media_import_controller(host->media_root,buttons,now)) {
+        *previous=buttons; *refreshed=now; return;
+    }
     if (buttons == *previous && now-*refreshed < 50000) return;
     if (!pxa_ui_accepts_event(host->ui, host->active_component,
             PXA_UI_PRIMARY_SURFACE, 1, PXA_UI_EVENT_CONTROLLER_STATE)) return;
@@ -2563,6 +2569,27 @@ static pxa_status_t audio_open(void *context, uint16_t usage,
     SDL_UnlockAudioDevice(host->audio_device);
     return PXA_STATUS_RESOURCE_LIMIT;
     return PXA_STATUS_OK;
+}
+
+/* PCM uses the source clock; the shared mixer converts to the SDL mono sink. */
+static pxa_status_t audio_open_pcm(void *context, const pxa_audio_format_t *source,
+    pxa_audio_pcm_info_t *info, uint64_t *session) {
+    if (!source || !info || !session || source->frame_ms != 20 ||
+        source->sample_rate < 8000 || source->sample_rate > 48000 ||
+        (source->channels != 1 && source->channels != 2))
+        return PXA_STATUS_INVALID_ARGUMENT;
+    pxa_audio_format_t sink;
+    pxa_status_t status = audio_open(context, PXA_AUDIO_USAGE_MEDIA, &sink, session);
+    if (status) return status;
+    product_host_t *host = context;
+    int voice = audio_voice(host, *session);
+    SDL_LockAudioDevice(host->audio_device);
+    status = pxa_audio_mixer_configure(&host->audio_mixer.voices[voice],
+        source->sample_rate, source->channels, sink.sample_rate);
+    if (!status) *info = (pxa_audio_pcm_info_t){sink.sample_rate,
+        PXA_AUDIO_MIXER_PACKETS * (source->sample_rate / 50u), sink.channels};
+    SDL_UnlockAudioDevice(host->audio_device);
+    return status;
 }
 
 static pxa_status_t audio_commit(void *context, uint64_t session,
@@ -3274,11 +3301,13 @@ static pxa_status_t desktop_native_cooperate(void *context,
     if (host->exit_requested || SDL_AtomicGet(&host->home_requested) ||
         lv_display_get_default() == NULL) return PXA_STATUS_CANCELLED;
     if (SDL_AtomicGet(&host->back_requested) &&
-        pxa_window_queue_back(host->window, host->active_component) == PXA_STATUS_OK)
+        (desktop_media_import_back(host->media_root) ||
+         pxa_window_queue_back(host->window, host->active_component) == PXA_STATUS_OK))
         SDL_AtomicSet(&host->back_requested, 0);
     dispatch_controller(host, host->native_controller,
         host->native_controller_previous, host->native_controller_refreshed);
     dispatch_volume_keys(host);
+    if (host->media_root) desktop_media_import_poll(host->media_root);
     if (host->assets) (void)pxa_assets_service_poll(host->assets);
     if (host->audio) pxa_audio_service_poll(host->audio);
     if (host->sensor && pxa_sensor_has_active_subscriptions(host->sensor))
@@ -3713,7 +3742,7 @@ static int run_product_simulator(const options_t *input,
     fs_config.backend = fs_backend;
     stage = "app media FS service";
     if (!desktop_media_init(&media_root, options.state_root != NULL
-            ? options.state_root : default_state_root, manifest)) goto done;
+            ? options.state_root : default_state_root, manifest,host.locale)) goto done;
     fs_config.roots = &media_root.api;
     fs_service_workspace = malloc(pxa_fs_service_workspace_size(&fs_config));
     if (fs_service_workspace == NULL ||
@@ -3721,6 +3750,7 @@ static int run_product_simulator(const options_t *input,
                             pxa_fs_service_workspace_size(&fs_config),
                             host.runtime, &fs_config, &fs) != PXA_STATUS_OK ||
         pxa_fs_service_register(fs) != PXA_STATUS_OK) goto done;
+    media_root.service=fs; host.media_root=&media_root;
     stage = "IPC broker";
     pxa_ipc_limits_init(&ipc_limits);
     ipc_limits.max_endpoints = manifest->ipc_endpoint_count == 0
@@ -3738,7 +3768,8 @@ static int run_product_simulator(const options_t *input,
     audio_backend.struct_size = sizeof(audio_backend);
     audio_backend.context = &host;
     stage = "audio service";
-    audio_backend.open = audio_open; audio_backend.commit = audio_commit;
+    audio_backend.open = audio_open; audio_backend.open_pcm = audio_open_pcm;
+    audio_backend.commit = audio_commit;
     audio_backend.submit = audio_submit; audio_backend.close = audio_close;
     audio_backend.query = audio_query; audio_backend.flush = audio_flush;
     audio_backend.play_tone = audio_play_tone;
@@ -3843,6 +3874,7 @@ static int run_product_simulator(const options_t *input,
     host.ui_backend = ui_backend;
     host.ui_adapter = lvgl_ui;
     sync_host_theme(&host, lvgl_ui, &lvgl_config.theme);
+    desktop_media_import_theme(&media_root,&lvgl_config.theme,host.host_theme,host.locale);
     stage = "surface service";
     surface_config.struct_size = sizeof(surface_config);
     surface_config.max_surfaces = 1;
@@ -4055,7 +4087,7 @@ static int run_product_simulator(const options_t *input,
     net_config.max_response_header_bytes = 1024;
     net_config.min_timeout_ms = 100;
     net_config.default_timeout_ms = 15000;
-    net_config.max_timeout_ms = 60000;
+    net_config.max_timeout_ms = PXA_NET_MAX_STREAM_TIMEOUT_MS;
     net_config.backend = net_backend;
     net_config.permissions = host.permissions;
     net_workspace = malloc(pxa_net_service_workspace_size(&net_config));
@@ -4141,7 +4173,7 @@ static int run_product_simulator(const options_t *input,
     capabilities[11].service = PXA_NET_SERVICE_ID; capabilities[11].version.major = PXA_NET_SERVICE_MAJOR; capabilities[11].version.minor = PXA_NET_SERVICE_MINOR;
     capabilities[12].service = PXA_FS_SERVICE_ID; capabilities[12].version.major = PXA_FS_SERVICE_MAJOR; capabilities[12].version.minor = PXA_FS_SERVICE_MINOR;
     capabilities[12].features = PXA_FS_FEATURE_SCOPED_ROOTS |
-        PXA_FS_FEATURE_APP_MEDIA_ROOT | PXA_FS_FEATURE_APP_MEDIA_PATH | PXA_FS_FEATURE_READ_AT;
+        PXA_FS_FEATURE_APP_MEDIA_ROOT | PXA_FS_FEATURE_APP_MEDIA_PATH | PXA_FS_FEATURE_READ_AT | PXA_FS_FEATURE_FILE_IMPORT;
     capabilities[13].service = PXA_IPC_SERVICE_ID; capabilities[13].version.major = PXA_IPC_SERVICE_MAJOR; capabilities[13].version.minor = PXA_IPC_SERVICE_MINOR;
     capabilities[14].service = PXA_WASI_SERVICE_ID; capabilities[14].version.major = PXA_WASI_SERVICE_MAJOR; capabilities[14].version.minor = PXA_WASI_SERVICE_MINOR;
     capabilities[14].features = PXA_WASI_FEATURE_CLOCKS | PXA_WASI_FEATURE_RANDOM;
@@ -4265,10 +4297,13 @@ static int run_product_simulator(const options_t *input,
         if (SDL_AtomicGet(&host.home_requested)) host.exit_requested = 1;
         if (host.exit_requested) break;
         if (SDL_AtomicGet(&host.back_requested) &&
-            pxa_window_queue_back(host.window, host.active_component) == PXA_STATUS_OK)
+            (desktop_media_import_back(host.media_root) ||
+             pxa_window_queue_back(host.window, host.active_component) == PXA_STATUS_OK))
             SDL_AtomicSet(&host.back_requested, 0);
         sync_host_theme(&host, lvgl_ui, &lvgl_config.theme);
         dispatch_lifecycle(&host);
+        desktop_media_import_theme(&media_root,&lvgl_config.theme,host.host_theme,host.locale);
+        desktop_media_import_poll(&media_root);
         dispatch_controller(&host, &controller, &controller_previous, &controller_refreshed);
         dispatch_volume_keys(&host);
         /* Services can complete without producing a UI or clock event. */
@@ -4363,6 +4398,7 @@ static int run_product_simulator(const options_t *input,
     }
     result = 0;
 done:
+    desktop_media_import_cleanup(&media_root);
     if (controller_started) desktop_controller_deinit(&controller);
     if (key_event_watch_added) SDL_DelEventWatch(product_key_event_watch, &host);
     if (control_bind != NULL) control_bind(window_context, NULL, NULL, NULL);

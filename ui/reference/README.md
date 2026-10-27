@@ -37,6 +37,9 @@ Home still permits `pxsys_reference_lvgl_start()` to start enabled chrome roles;
 calling `pxsys_reference_lvgl_home()` explicitly then returns `NOT_FOUND`.
 Card recents fall back to a list when LVGL snapshots are disabled. Disabling
 pinyin or K9 mode retains the full keyboard fallback.
+Native button integrations use `pxsys_reference_lvgl_show_recents()` and
+`pxsys_reference_lvgl_home()`. Both retain the leaving application's preview;
+the recents entry captures before its overlay and animation cover the app.
 
 Native test builds compile all four radio combinations with built-in settings
 enabled and disabled. Feature tests exercise all 16 combinations of Home,

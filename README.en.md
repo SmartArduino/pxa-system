@@ -1,5 +1,9 @@
 # PXA System
 
+<picture><source media="(prefers-color-scheme: dark)" srcset="branding/dist/pxa-horizontal-dark.svg"><img src="branding/dist/pxa-horizontal-light.svg" alt="PXA" width="192" height="64"></picture>
+
+The system, boot screens and websites share the [official PXA v1 identity](branding/README.md).
+
 [简体中文](README.md)
 
 PXA System is a portable application system for embedded products. This tree
@@ -147,3 +151,9 @@ The complete bilingual document map is in [`docs/`](docs/README.md).
 ## Compatibility policy
 
 The maintained Guest ABI is Core 2.0 (`pxa.core.v2::pxa_call` and `pxa_io`). C++ source APIs remain pre-1.0 and may change; lock the SDK with `pxa.lock`, explicitly upgrade, then rebuild and test. Host structures carry `struct_size`, and wire formats have explicit versions. AOT engine compatibility is separately pinned in `config/wamr.json`; the `core-1` suffix of that engine tag is not the Guest Core version. Old Core 1 packages are not compatible with Core 2.
+
+## About DOIT
+
+Company: **深圳四博智联科技有限公司 (DOIT)**.
+
+[Company website](https://doit.am/) · [About PXA and DOIT](https://pxa.doit.am/about/)

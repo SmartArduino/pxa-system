@@ -6,6 +6,8 @@
 
 #define PXA_HTTP_OPEN 3u
 #define PXA_HTTP_CAPABILITIES 4u
+#define PXA_HTTP_MAX_TIMEOUT_MS UINT32_C(86400000)
+#define PXA_HTTP_FEATURE_LONG_STREAM_TIMEOUT UINT32_C(8)
 #define PXA_HTTP_IO_RESPONSE UINT32_C(4)
 #define PXA_HTTP_IO_RESPONSE_SIZE UINT32_C(5)
 #define PXA_HTTP_IO_FINISH_UPLOAD UINT32_C(6)
@@ -92,7 +94,7 @@ static inline int pxa_http_build_open(uint8_t *packet, size_t capacity,
         r->url_size > 512 || !(r->permission_handle >> 32) || r->method < 1 || r->method > 6 ||
         r->buffer_bytes < 512 || r->buffer_bytes > 65536 ||
         (r->buffer_bytes & (r->buffer_bytes - 1)) || r->header_bytes < 16 ||
-        r->header_bytes > 4096 || !r->max_body_bytes || r->timeout_ms < 100 || r->timeout_ms > 60000 ||
+        r->header_bytes > 4096 || !r->max_body_bytes || r->timeout_ms < 100 || r->timeout_ms > PXA_HTTP_MAX_TIMEOUT_MS ||
         r->header_count > 8 || r->wanted_header_count > 8 || r->body_size > 2048 ||
         r->body_size > r->buffer_bytes / 2 || (r->body_size && !r->body) ||
         (r->header_count && !r->headers) ||

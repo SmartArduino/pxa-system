@@ -268,6 +268,8 @@ static void *desktop_http_worker(void *context) {
         curl_easy_setopt(curl, CURLOPT_URL, slot->url);
         curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
         curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, (long)slot->timeout_ms);
+        curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT_MS,
+            (long)(slot->timeout_ms > 60000u ? 15000u : slot->timeout_ms));
         /* Redirects must return to the Guest for a new permission check. */
         curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 0L);
         curl_easy_setopt(curl, CURLOPT_SUPPRESS_CONNECT_HEADERS, 1L);
