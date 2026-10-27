@@ -188,7 +188,9 @@ int main(int argc, char **argv) {
     ui_requirement = main_component == NULL ? NULL : find_service(main_component, 3);
     net_requirement = main_component == NULL ? NULL : find_service(main_component, 9);
     wasi_requirement = main_component == NULL ? NULL : find_service(main_component, 14);
-    if (manifest->format_minor != PXA_PACKAGE_MANIFEST_FORMAT_MINOR ||
+    /* The ordinary application fixture uses format 0.7. Format 0.8 is
+     * reserved for packages with resource sets/references. */
+    if (manifest->format_minor != 7 ||
         manifest->component_count != 2 || manifest->permission_count != 1 ||
         manifest->ipc_endpoint_count != 1 || main_component == NULL ||
         responder_component == NULL || core_requirement != NULL || fs_requirement == NULL ||
