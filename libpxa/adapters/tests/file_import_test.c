@@ -106,6 +106,9 @@ int main(void) {
     size_t count;uint8_t more;unsigned emitted=0;
     assert(!pxa_file_browser_page(f.source,&source.files,f.epoch,"","gba",0,12,&count,&more,emit,&emitted));
     assert(count==3 && emitted==3 && !more); /* two ROMs and the output directory */
+    emitted=0;
+    assert(!pxa_file_browser_page(f.source,&source.files,f.epoch,"",NULL,0,12,&count,&more,emit,&emitted));
+    assert(count==1 && emitted==1 && !more); /* directory mode hides regular/protected files */
     /* A duplicate at NAME_MAX must shorten only its stem, preserving the
      * extension and UTF-8 boundary rather than failing or overwriting. */
     config.destination=f.original;config.maximum_name_bytes=255;

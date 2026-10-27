@@ -20,6 +20,7 @@ struct pxa_lvgl_file_picker {
     uint32_t progress_at;
     size_t progress_done;
     unsigned state;
+    uint8_t directory_ready;
     int32_t unit,row_height,action_height;
     char path[PXA_FS_SCOPED_MAX_PATH_BYTES+1];
     char extensions[PXA_FS_IMPORT_FILTER_MAX+1];
@@ -83,6 +84,12 @@ static lv_obj_t *button(pxa_lvgl_file_picker_t *p,lv_obj_t *parent,const char *t
 }
 static void selected_text(pxa_lvgl_file_picker_t *p) {
     lv_obj_t *text=lv_obj_get_child(p->use,0);
+    if(p->config.mode==PXA_FILE_PICKER_DIRECTORY) {
+        lv_label_set_text(text,tr(p,"选择此文件夹","Select folder"));
+        if(p->directory_ready)lv_obj_remove_state(p->use,LV_STATE_DISABLED);
+        else lv_obj_add_state(p->use,LV_STATE_DISABLED);
+        lv_label_set_text(p->status,p->purpose);return;
+    }
     if(p->count) {
         lv_label_set_text_fmt(text,tr(p,"导入 (%u)","Import (%u)"),(unsigned)p->count);
         lv_obj_remove_state(p->use,LV_STATE_DISABLED);
@@ -93,7 +100,7 @@ static void selected_text(pxa_lvgl_file_picker_t *p) {
 }
 static int full_path(pxa_lvgl_file_picker_t *p,const char *name,char *out,size_t capacity) {
     int n=snprintf(out,capacity,"%s%s%s",p->path,p->path[0]?"/":"",name);
-    return n>=0 && (size_t)n<capacity;
+    return n>=0 && (size_t)n<capacity && (!p->config.max_path_bytes || n<=p->config.max_path_bytes);
 }
 static size_t selection_index(pxa_lvgl_file_picker_t *p,const char *path) {
     size_t i;
@@ -137,6 +144,7 @@ static void open_entry(lv_event_t *e) {
         if(!remember(p,index))return;
         strcpy(p->path,path);p->skip=0;render(p,NULL);return;
     }
+    if(p->config.mode==PXA_FILE_PICKER_DIRECTORY)return;
     size_t i=selection_index(p,path);
     if(i<p->count) {free(p->choices[i].path);p->choices[i]=p->choices[--p->count];}
     else {
@@ -168,6 +176,20 @@ static void previous_page(lv_event_t *e) {
 static void refresh_scroll(lv_event_t *e) {refresh_overlay(lv_event_get_user_data(e));}
 static void confirm(lv_event_t *e) {
     pxa_lvgl_file_picker_t *p=lv_event_get_user_data(e);
+    if(p->config.mode==PXA_FILE_PICKER_DIRECTORY) {
+        if(p->state || !p->epoch || !p->directory_ready)return;
+        if(p->config.check_directory && p->config.check_directory(p->config.context,p->epoch,p->path)!=PXA_STATUS_OK) {
+            p->directory_ready=0;selected_text(p);
+            notice(p,tr(p,"此文件夹已不可用，请返回重选","Folder unavailable. Go up and choose again."));return;
+        }
+        char *path=malloc(strlen(p->path)+1);
+        pxa_file_choice_t *choice=malloc(sizeof(*choice));
+        if(!path || !choice) {free(path);free(choice);notice(p,tr(p,"内存不足","Not enough memory"));return;}
+        strcpy(path,p->path);*choice=(pxa_file_choice_t){p->epoch,path};
+        p->choices=choice;p->capacity=p->count=1;p->state=1;
+        lv_obj_add_state(p->up,LV_STATE_DISABLED);lv_obj_add_state(p->use,LV_STATE_DISABLED);
+        changed(p);return;
+    }
     if(p->state || !p->count)return;
     p->state=1;lv_obj_clean(p->list);
     p->current_name=label(p->list,p->config.body_font);lv_obj_set_width(p->current_name,LV_PCT(100));
@@ -228,7 +250,7 @@ static void render(pxa_lvgl_file_picker_t *p,const picker_location_t *restore) {
     if(p->group)lv_group_remove_all_objs(p->group);
     lv_obj_clean(p->list);
     for(size_t i=0;i<p->entry_count;++i) {free(p->entries[i].name);p->entries[i].name=NULL;}
-    p->entry_count=0;selected_text(p);
+    p->entry_count=0;p->directory_ready=0;selected_text(p);
     const char *leaf=strrchr(p->path,'/');
     lv_label_set_text(p->folder_label,!p->epoch?tr(p,"选择存储设备","Choose storage"):
         p->path[0]?(leaf?leaf+1:p->path):p->volume_name);
@@ -243,7 +265,20 @@ static void render(pxa_lvgl_file_picker_t *p,const picker_location_t *restore) {
         for(size_t i=0;i<p->entry_count;++i) {free(p->entries[i].name);p->entries[i].name=NULL;}
         p->entry_count=0;empty(p,tr(p,"目录不可用\n请返回上一级重新选择","Folder unavailable.\nGo up and choose again."));
     } else {
-        if(!p->entry_count)empty(p,tr(p,"没有匹配的文件\n可以返回上一级继续查找","No matching files.\nGo up to another folder."));
+        if(p->config.mode==PXA_FILE_PICKER_DIRECTORY && p->epoch) {
+            p->directory_ready=!p->config.check_directory ||
+                p->config.check_directory(p->config.context,p->epoch,p->path)==PXA_STATUS_OK;
+            selected_text(p);
+            if(!p->directory_ready)lv_label_set_text(p->status,tr(p,"此位置不可授权，请选择其他文件夹","This location cannot be shared. Choose another folder."));
+        }
+        if(!p->entry_count) {
+            const char *message=!p->epoch?tr(p,"没有可用的存储设备","No storage available."):
+                p->config.mode!=PXA_FILE_PICKER_DIRECTORY?
+                tr(p,"没有匹配的文件\n可以返回上一级继续查找","No matching files.\nGo up to another folder."):
+                p->directory_ready?tr(p,"没有子文件夹\n可选择当前文件夹","No subfolders.\nYou can select this folder."):
+                tr(p,"没有子文件夹\n请返回上一级重新选择","No subfolders.\nGo up and choose again.");
+            empty(p,message);
+        }
         for(size_t i=0;i<p->entry_count;++i)row(p,i);
         if(p->skip) {
             lv_obj_t *b=button(p,p->list,tr(p,"上一页","Previous page"),previous_page);
@@ -271,7 +306,10 @@ static void render(pxa_lvgl_file_picker_t *p,const picker_location_t *restore) {
 }
 pxa_lvgl_file_picker_t *pxa_lvgl_file_picker_create(const pxa_lvgl_file_picker_config_t *c) {
     if(!c || !c->browse || !c->extensions || strlen(c->extensions)>PXA_FS_IMPORT_FILTER_MAX ||
-        (c->purpose && strlen(c->purpose)>PXA_FS_IMPORT_PURPOSE_MAX))return NULL;
+        (c->purpose && strlen(c->purpose)>PXA_FS_IMPORT_PURPOSE_MAX) ||
+        (c->mode!=PXA_FILE_PICKER_IMPORT && c->mode!=PXA_FILE_PICKER_DIRECTORY) ||
+        (c->mode==PXA_FILE_PICKER_DIRECTORY && c->multiple) ||
+        c->max_path_bytes>PXA_FS_SCOPED_MAX_PATH_BYTES)return NULL;
     pxa_lvgl_file_picker_t *p=calloc(1,sizeof(*p));if(!p)return NULL;
     p->config=*c;strcpy(p->extensions,c->extensions);strcpy(p->purpose,c->purpose?c->purpose:"");
     p->unit=c->style.spacing>0?c->style.spacing:4;
@@ -297,7 +335,8 @@ pxa_lvgl_file_picker_t *pxa_lvgl_file_picker_create(const pxa_lvgl_file_picker_c
     lv_obj_set_style_text_font(p->panel,p->config.body_font,0);
     lv_obj_t *header=box(p->panel,LV_FLEX_FLOW_ROW,p->unit*2);
     lv_obj_set_flex_align(header,LV_FLEX_ALIGN_START,LV_FLEX_ALIGN_CENTER,LV_FLEX_ALIGN_CENTER);
-    lv_obj_t *title=label(header,p->config.title_font);lv_label_set_text(title,tr(p,"导入文件","Import files"));
+    lv_obj_t *title=label(header,p->config.title_font);lv_label_set_text(title,
+        c->mode==PXA_FILE_PICKER_DIRECTORY?tr(p,"选择文件夹","Choose folder"):tr(p,"导入文件","Import files"));
     lv_obj_t *app=label(header,p->config.caption_font);lv_obj_set_width(app,0);lv_obj_set_flex_grow(app,1);
     lv_obj_set_style_text_align(app,LV_TEXT_ALIGN_RIGHT,0);lv_obj_set_style_text_color(app,c->style.muted,0);
     lv_label_set_text(app,c->app_name?c->app_name:"");
@@ -344,7 +383,7 @@ const pxa_file_choice_t *pxa_lvgl_file_picker_selection(const pxa_lvgl_file_pick
     *count=p->count;return p->choices;
 }
 void pxa_lvgl_file_picker_progress(pxa_lvgl_file_picker_t *p,size_t done,size_t total,uint64_t bytes) {
-    if(!p || p->state!=1)return;
+    if(!p || p->state!=1 || p->config.mode!=PXA_FILE_PICKER_IMPORT)return;
     if(done<p->count) {const char *name=strrchr(p->choices[done].path,'/');
         lv_label_set_text(p->current_name,name?name+1:p->choices[done].path);}
     lv_label_set_text_fmt(p->status,tr(p,"已完成 %u/%u · %llu KiB","Copied %u/%u · %llu KiB"),

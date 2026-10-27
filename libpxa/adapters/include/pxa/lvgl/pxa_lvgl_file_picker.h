@@ -7,27 +7,39 @@
 #define PXA_FILE_PICKER_PAGE 12u
 typedef struct { uint64_t epoch; uint8_t kind; char *name; } pxa_file_picker_entry_t;
 typedef struct pxa_lvgl_file_picker pxa_lvgl_file_picker_t;
+typedef enum {
+    PXA_FILE_PICKER_IMPORT = 0,
+    PXA_FILE_PICKER_DIRECTORY = 1,
+} pxa_file_picker_mode_t;
 typedef struct {
     void *context;
     /* epoch 0 enumerates volumes; otherwise enumerate a volume-relative path.
-     * Return only matching files and directories. Each name is malloc-owned
+     * Return matching files and directories in import mode, only directories
+     * in directory mode. Each name is malloc-owned
      * and transferred to the picker, including partial results on error.
      * All paths stay Host-side. */
     pxa_status_t (*browse)(void *,uint64_t,const char *,const char *,size_t,
         pxa_file_picker_entry_t *,size_t,size_t *,uint8_t *);
     void (*changed)(void *); /* wake owner; never destroys the picker inline */
     void (*overlay)(lv_obj_t *,int); /* 1 add, 0 refresh, -1 remove; optional */
+    /* Optional authoritative directory check. Never creates a grant. Called
+     * after browsing and again on confirmation; errors disable selection. */
+    pxa_status_t (*check_directory)(void *,uint64_t,const char *);
     pxa_lvgl_dialog_style_t style;
     const lv_font_t *body_font,*title_font,*caption_font;
     const char *app_name,*purpose,*extensions;
     uint8_t multiple,chinese;
+    pxa_file_picker_mode_t mode;
+    /* Zero uses the scoped FS path limit. Hosts with a smaller persisted
+     * grant format provide its limit; names are never silently truncated. */
+    uint16_t max_path_bytes;
 } pxa_lvgl_file_picker_config_t;
 /* All calls, including destruction/state reads, require the LVGL owner lock.
  * Selection memory is owned by the picker until destroy. No fixed file-count
  * limit; allocation failure leaves the existing selection intact. */
 pxa_lvgl_file_picker_t *pxa_lvgl_file_picker_create(const pxa_lvgl_file_picker_config_t *);
 void pxa_lvgl_file_picker_destroy(pxa_lvgl_file_picker_t *);
-/* 0 browsing, 1 confirmed/copying, 2 cancelled. */
+/* 0 browsing, 1 confirmed (copying only for import mode), 2 cancelled. */
 unsigned pxa_lvgl_file_picker_state(const pxa_lvgl_file_picker_t *);
 const pxa_file_choice_t *pxa_lvgl_file_picker_selection(const pxa_lvgl_file_picker_t *,size_t *);
 void pxa_lvgl_file_picker_progress(pxa_lvgl_file_picker_t *,size_t,size_t,uint64_t);

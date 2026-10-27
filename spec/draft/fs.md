@@ -32,6 +32,26 @@ enumerate. Its success data is `directory:u64|rights:u32`. REQUEST_ACCESS uses
 access returns a zero GrantId. The picker is trusted Host UI; Core cancellation,
 revocation or stop prevents a late UI decision from publishing a handle.
 
+### Choosing a directory
+
+The C helper `pxa_fs_request_directory` and C++
+`FilesystemService::request_directory` use REQUEST_ACCESS, independently of
+file import. The native picker uses the same system theme, fonts, spacing,
+paged list and parent navigation as the file picker. Directory mode lists
+only folders; entering a folder does not select it. **Select folder** confirms
+the current location, including an empty folder or an allowed volume root.
+The storage list itself is not a selectable directory. Back ascends to the
+parent, then returns to the storage list, then cancels the request.
+
+The Host checks the path's grant eligibility after browsing and again on
+confirmation. Removed media, protected paths, invalid mount epochs and
+unsupported persistence disable confirmation or fail the request without
+granting access. The ESP implementation currently supports read/enumerate
+rights and enforces its persisted grant record's 255-byte relative-path limit
+without truncating names. Directory selection grants access in place; it does
+not recursively import or copy the folder. Hosts must advertise
+`user-directory-grants` to offer this operation.
+
 ## Import selected files (0.5)
 
 `file-import` (feature bit 8) enables `IMPORT_FILES` (19). This opens the trusted
@@ -54,6 +74,9 @@ without NUL or ASCII controls; the system displays it alongside the app name.
 The C helper is `pxa_fs_request_import`; the C++ API is
 `co_await FilesystemService::import_files(extensions, purpose, multiple)`.
 Both copy request text before returning; neither retains borrowed arguments.
+Pass `multiple=false` to the C++ helper (or zero to the C helper) to select one
+file. Selecting a different file replaces the previous selection in this mode;
+the user still confirms with the Import button.
 
 Successful completion has the normal status prefix followed by
 `imported:u32 | failed:u32 | skipped:u32 | first-error:i32` (16 body bytes).

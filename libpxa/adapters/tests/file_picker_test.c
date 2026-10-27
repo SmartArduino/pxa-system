@@ -126,6 +126,61 @@ static void test_geometry(lv_display_t *display,int width,int height,unsigned ch
     assert(lv_color_eq(lv_obj_get_style_bg_color(button,0),c.style.primary));
     pxa_lvgl_file_picker_destroy(p);
 }
+static unsigned directory_available=1;
+static pxa_status_t directory_check(void *context,uint64_t epoch,const char *path) {
+    (void)context;assert(epoch==42);
+    return !directory_available?PXA_STATUS_UNAVAILABLE:!strcmp(path,"Protected")?PXA_STATUS_DENIED:PXA_STATUS_OK;
+}
+static pxa_status_t directories(void *context,uint64_t epoch,const char *path,const char *filter,size_t skip,
+    pxa_file_picker_entry_t *entries,size_t capacity,size_t *count,uint8_t *more) {
+    (void)context;(void)filter;(void)capacity;assert(!skip);*count=0;*more=0;
+    if(!epoch) {entries[0]=(pxa_file_picker_entry_t){42,2,strdup("Storage")};*count=1;return 0;}
+    if(!*path) {
+        entries[0]=(pxa_file_picker_entry_t){0,2,strdup("Empty")};
+        entries[1]=(pxa_file_picker_entry_t){0,2,strdup("Protected")};*count=2;
+    }
+    return 0;
+}
+static void test_directory(void) {
+    pxa_lvgl_file_picker_config_t c={.browse=directories,.check_directory=directory_check,
+        .app_name="Reader",.purpose="Choose a library folder",.extensions="",.mode=PXA_FILE_PICKER_DIRECTORY};
+    pxa_lvgl_file_picker_t *p=pxa_lvgl_file_picker_create(&c);assert(p);
+    lv_obj_t *choose=find_text(lv_layer_top(),"Select folder");assert(choose);
+    assert(lv_obj_has_state(lv_obj_get_parent(choose),LV_STATE_DISABLED));
+    press(p,PXA_UI_CONTROLLER_A);click_text("Protected");press(p,PXA_UI_CONTROLLER_START);
+    assert(pxa_lvgl_file_picker_state(p)==0); /* denied directory cannot confirm */
+    pxa_lvgl_file_picker_back(p);click_text("Empty");
+    directory_available=0;press(p,PXA_UI_CONTROLLER_START);assert(pxa_lvgl_file_picker_state(p)==0);
+    directory_available=1;pxa_lvgl_file_picker_back(p);click_text("Empty");
+    assert(find_text(lv_layer_top(),"No subfolders.\nYou can select this folder."));
+    press(p,PXA_UI_CONTROLLER_START);assert(pxa_lvgl_file_picker_state(p)==1);
+    size_t count;const pxa_file_choice_t *choice=pxa_lvgl_file_picker_selection(p,&count);
+    assert(count==1 && choice[0].epoch==42 && !strcmp(choice[0].path,"Empty"));
+    pxa_lvgl_file_picker_destroy(p);
+    p=pxa_lvgl_file_picker_create(&c);press(p,PXA_UI_CONTROLLER_A);press(p,PXA_UI_CONTROLLER_START);
+    choice=pxa_lvgl_file_picker_selection(p,&count);assert(count==1 && choice[0].epoch==42 && !choice[0].path[0]);
+    pxa_lvgl_file_picker_destroy(p);
+    c.max_path_bytes=4;p=pxa_lvgl_file_picker_create(&c);assert(p);
+    press(p,PXA_UI_CONTROLLER_A);click_text("Empty");press(p,PXA_UI_CONTROLLER_START);
+    choice=pxa_lvgl_file_picker_selection(p,&count);assert(count==1 && !choice[0].path[0]);
+    pxa_lvgl_file_picker_destroy(p); /* overlong child was rejected, never truncated */
+    c.multiple=1;assert(!pxa_lvgl_file_picker_create(&c));
+}
+static void test_directory_geometry(lv_display_t *display,int width,int height,int chinese) {
+    lv_display_set_resolution(display,width,height);
+    pxa_lvgl_file_picker_config_t c={.browse=directories,.extensions="",
+        .body_font=&lv_font_montserrat_16,.title_font=&lv_font_montserrat_20,
+        .caption_font=&lv_font_montserrat_14,.mode=PXA_FILE_PICKER_DIRECTORY,.chinese=chinese};
+    c.style.spacing=c.style.radius=4;c.style.label_font=&lv_font_montserrat_16;
+    pxa_lvgl_file_picker_t *p=pxa_lvgl_file_picker_create(&c);assert(p);
+    lv_obj_t *title=find_text(lv_layer_top(),chinese?"选择文件夹":"Choose folder");assert(title);
+    lv_obj_t *panel=lv_obj_get_parent(lv_obj_get_parent(title));lv_obj_update_layout(panel);
+    lv_obj_t *action=find_text(panel,chinese?"选择此文件夹":"Select folder");assert(action);
+    lv_area_t bounds,button;lv_obj_get_coords(panel,&bounds);lv_obj_get_coords(lv_obj_get_parent(action),&button);
+    assert(bounds.x1>0 && bounds.y1>0 && bounds.x2<width-1 && bounds.y2<height-1);
+    assert(button.x1>bounds.x1 && button.x2<bounds.x2 && button.y2<bounds.y2);
+    pxa_lvgl_file_picker_destroy(p);
+}
 int main(void) {
     lv_init();lv_display_t *display=lv_display_create(320,240);assert(display);
     static uint8_t pixels[320*40*4];lv_display_set_buffers(display,pixels,NULL,sizeof(pixels),LV_DISPLAY_RENDER_MODE_PARTIAL);
@@ -140,6 +195,9 @@ int main(void) {
     test_paging();
     test_geometry(display,320,240,1,0,4);test_geometry(display,240,320,0,1,4);
     test_geometry(display,480,320,0,1,4);test_geometry(display,800,480,1,0,6);
+    test_directory();
+    test_directory_geometry(display,320,240,1);test_directory_geometry(display,240,320,0);
+    test_directory_geometry(display,480,320,0);test_directory_geometry(display,800,480,1);
     lv_display_delete(display);lv_deinit();
-    puts("PASS: single/multi, parent navigation, restored page/focus, errors, native Back, system theme/fonts and four display geometries");
+    puts("PASS: single/multi/directory, empty/root folders, grant recheck, parent navigation, page/focus, errors, Back, theme/fonts and four display geometries");
 }
