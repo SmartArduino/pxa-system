@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "lvgl.h"
+#include "src/misc/cache/instance/lv_image_cache.h"
 #include "pxa/runtime.h"
 #include "pxa/service.h"
 #include "pxa/clock.h"
@@ -14,6 +15,7 @@
 #include "services.h"
 #include "pxa/audio.h"
 #include "pxa/game_render.h"
+#include "pxa/event_port.h"
 
 static pxa_runtime_t *runtime;
 static pxa_component_t component;
@@ -28,6 +30,39 @@ static uint8_t *frame;
 static uint32_t width, height, revision, clock_period;
 static uint64_t current_us, next_tick;
 static int pointer_x, pointer_y, pointer_down;
+static pxa_handle64_t event_port;
+EM_JS(int, main_loop_enabled, (), {return !!Module.browserMainLoop;});
+static void close_event_port(void *context) {(void)context;event_port=0;}
+static int open_event_port(uint64_t token,uint32_t size) {
+    if(!main_loop_enabled())return PXA_STATUS_UNSUPPORTED;
+    pxa_status_t s=pxa_component_validate_import(runtime,component);
+    if(s)return s;
+    if(!token||size)return PXA_STATUS_INVALID_ARGUMENT;
+    if(event_port)return PXA_STATUS_BAD_STATE;
+    s=pxa_request_begin_reserved(runtime,component,token,PXA_SERVICE_CORE,PXA_CORE_OPEN_EVENT_PORT,0,8);
+    if(s)return s;
+    pxa_resource_t resource={NULL,NULL,close_event_port};
+    s=pxa_handle_open64(runtime,component,PXA_RESOURCE_EVENT_PORT,0,&resource,&event_port);
+    uint8_t result[8];pxa_write_u64(result,event_port);
+    int completed=pxa_request_complete(runtime,component,token,s,s?NULL:result,s?0:8);
+    if(completed&&event_port)pxa_handle_close64(runtime,component,event_port);
+    return completed;
+}
+EMSCRIPTEN_KEEPALIVE int browser_event_wait(uint64_t handle,uint8_t *data,uint32_t size) {
+    pxa_resource_t resource;
+    pxa_status_t s=pxa_handle_get64(runtime,component,handle,PXA_RESOURCE_EVENT_PORT,&resource);
+    if(s)return s;
+    if(handle!=event_port)return PXA_STATUS_BAD_STATE;
+    pxa_component_snapshot_t state;
+    s=pxa_component_snapshot(runtime,component,&state);if(s)return s;
+    if(state.state!=PXA_COMPONENT_RUNNING||state.callback!=PXA_GUEST_CALLBACK_EVENT)return PXA_STATUS_BAD_STATE;
+    if(size<PXA_ENVELOPE_SIZE||size>PXA_MAX_CONTROL_MESSAGE)return PXA_STATUS_INVALID_ARGUMENT;
+    if(pxa_read_u64(data)>PXA_EVENT_PORT_MAX_WAIT_US)return PXA_STATUS_LIMIT_EXCEEDED;
+    pxa_event_view_t view;s=pxa_event_peek(runtime,component,&view);if(s)return s;
+    if(view.size>size)return PXA_STATUS_RESOURCE_LIMIT;
+    size_t written=0;s=pxa_event_pop(runtime,component,data,size,&written);
+    return s?s:(int)written;
+}
 EM_JS(int, native_fonts, (), {return typeof Module.browserFontMetrics==='function';});
 EM_JS(int, chinese_locale, (), {return String(Module.browserLocale||"en").toLowerCase().startsWith("zh");});
 EM_JS(void, notify_editor, (uint32_t session, const char *text, int password,
@@ -51,6 +86,34 @@ static void text_focus(void *context, void *textarea, bool focused) {
 }
 static pxa_status_t window_toast(void *context, const char *text, uint32_t ms) {
     (void)context; notify_toast(text,ms); return PXA_STATUS_OK;
+}
+EM_JS(uint8_t *, read_image, (const uint8_t *path, size_t size, uint32_t *length), {
+    const key=new TextDecoder('utf-8',{fatal:true}).decode(HEAPU8.subarray(path,path+size));
+    const bytes=Module.browserAssets?.get(key);
+    if(!bytes||bytes.byteLength<24||bytes.byteLength>1048576)return 0;
+    const p=_malloc(bytes.byteLength);if(!p)return 0;
+    HEAPU8.set(bytes,p);HEAPU32[length>>>2]=bytes.byteLength;return p;
+});
+static uint32_t big_u32(const uint8_t *p) {
+    return ((uint32_t)p[0]<<24)|((uint32_t)p[1]<<16)|((uint32_t)p[2]<<8)|p[3];
+}
+static const void *resolve_image(const uint8_t *path,size_t size,void *context) {
+    (void)context;
+    if(!path||size>512)return NULL;
+    uint32_t length=0;uint8_t *bytes=read_image(path,size,&length);
+    if(!bytes)return NULL;
+    uint32_t w=big_u32(bytes+16),h=big_u32(bytes+20);
+    if(memcmp(bytes,"\x89PNG\r\n\x1a\n",8)||memcmp(bytes+12,"IHDR",4)||!w||!h||w>1024||h>1024){free(bytes);return NULL;}
+    lv_image_dsc_t *image=calloc(1,sizeof(*image));
+    if(!image){free(bytes);return NULL;}
+    image->header.magic=LV_IMAGE_HEADER_MAGIC;image->header.cf=LV_COLOR_FORMAT_RAW_ALPHA;
+    image->header.w=w;image->header.h=h;image->data_size=length;image->data=bytes;
+    return image;
+}
+static void release_image(const void *source,void *context) {
+    (void)context;
+    const lv_image_dsc_t *image=source;if(!image)return;
+    lv_image_cache_drop(image);free((void *)image->data);free((void *)image);
 }
 static void *allocate(void *c, size_t n) { (void)c; return malloc(n); }
 static void release(void *c, void *p) { (void)c; free(p); }
@@ -131,6 +194,7 @@ EMSCRIPTEN_KEEPALIVE int browser_init(uint32_t w, uint32_t h) {
     CHECK(pxa_component_set_wire_profile(runtime, component, PXA_WIRE_PROFILE_HANDLE64));
     lv_init();
     display = lv_display_create(w, h);
+    if(display)lv_obj_set_style_bg_color(lv_screen_active(),lv_color_black(),0);
     frame = calloc(w * h, 4);
     if (!display || !frame) return PXA_STATUS_RESOURCE_LIMIT;
     lv_display_set_color_format(display, LV_COLOR_FORMAT_XRGB8888);
@@ -161,7 +225,7 @@ EMSCRIPTEN_KEEPALIVE int browser_init(uint32_t w, uint32_t h) {
     lc.primary_environment.density_q16 = lc.primary_environment.font_scale_q16 = 65536;
     pxa_lvgl_ui_theme_init(&lc.theme);
     browser_fonts_init(&lc);
-    lc.text_input_focus=text_focus;
+    lc.text_input_focus=text_focus;lc.resolve_asset=resolve_image;lc.release_asset=release_image;
     pxa_ui_backend_t backend;
     CHECK(pxa_lvgl_ui_init(WORKSPACE(lvgl_ui), pxa_lvgl_ui_workspace_size(), &lc, &adapter, &backend));
     CHECK(pxa_ui_bind(ui, component, &backend));
@@ -197,9 +261,16 @@ EMSCRIPTEN_KEEPALIVE int browser_configuration(uint8_t *data, uint32_t capacity)
     return (int)writer.size;
 }
 EMSCRIPTEN_KEEPALIVE int browser_finish(int event, int result) {
-    return event ? pxa_component_finish_event(runtime, component, result) : pxa_component_finish_start(runtime, component, result);
+    int status=event ? pxa_component_finish_event(runtime, component, result) : pxa_component_finish_start(runtime, component, result);
+    if(!status&&!event&&!result){
+        const uint8_t foreground=1;
+        status=pxa_event_post_message(runtime,component,17,0x8005,0,(pxa_bytes_t){&foreground,1},0,UINT64_C(0x001100008005));
+    }
+    return status;
 }
 EMSCRIPTEN_KEEPALIVE int browser_call(uint32_t route, uint64_t token, uint8_t *data, uint32_t size) {
+    if((uint16_t)route==PXA_SERVICE_CORE&&(route>>16)==PXA_CORE_OPEN_EVENT_PORT)
+        return open_event_port(token,size);
     pxa_message_view_t m = {(uint16_t)route, (uint16_t)(route >> 16), token, {data, size}};
     return pxa_runtime_control_view(runtime, component, &m);
 }
@@ -208,9 +279,9 @@ EMSCRIPTEN_KEEPALIVE int browser_io(uint64_t handle, uint32_t op, uint8_t *data,
 }
 EMSCRIPTEN_KEEPALIVE int browser_io_memory_kind(uint64_t handle,uint32_t op){
     pxa_resource_t r;
-    if(op>=PXA_AUDIO_IO_MIX_PCM&&op<=PXA_AUDIO_IO_GB_PSG_RENDER&&
+    if(op>=PXA_AUDIO_IO_MIX_PCM&&op<=PXA_AUDIO_IO_PSG_RENDER&&
         !pxa_handle_get64(runtime,component,handle,PXA_RESOURCE_AUDIO_GRAPH,&r))return 1;
-    if((op==PXA_GAME_RENDER_IO_EXECUTE_SPANS||(op>=PXA_GAME_RENDER_IO_EXECUTE_PROJECTED_SPANS&&op<=PXA_GAME_RENDER_IO_EXECUTE_PRIORITY_TILES))&&
+    if((op>=PXA_GAME_RENDER_IO_BLIT_INDEXED_FRAME&&op<=PXA_GAME_RENDER_IO_EXECUTE_PRIORITY_TILES)&&
         !pxa_handle_get64(runtime,component,handle,PXA_RESOURCE_GAME_RENDER_CONTEXT,&r))return 2;
     return 0;
 }
@@ -272,6 +343,10 @@ EMSCRIPTEN_KEEPALIVE int browser_finish_stop(void) {
 EMSCRIPTEN_KEEPALIVE void browser_focus(int focused) {
     pxa_window_snapshot_t snapshot;
     if (!pxa_window_get_snapshot(window,component,&snapshot)) {
+        if(snapshot.focused!=!!focused){
+            const uint8_t life=!!focused;
+            pxa_event_post_message(runtime,component,17,0x8005,0,(pxa_bytes_t){&life,1},0,UINT64_C(0x001100008005));
+        }
         snapshot.focused=!!focused;
         pxa_window_update_snapshot(window,component,&snapshot);
         pxa_window_flush_metrics(window,component);

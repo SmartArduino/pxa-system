@@ -1,25 +1,215 @@
 {
-  "version": "0.2.0",
+  "version": "0.3.0",
   "target": "browser",
   "engine": "webassembly",
   "core": "pxa.core.v2",
   "services": {
-    "ui": {"backend": "LVGL", "nativeFonts": "OffscreenCanvas", "textInput": "DOM composition", "pointerContacts": 1},
-    "window": {"back": true, "focus": true, "toast": true, "systemChrome": false},
-    "clock": {"monotonic": true, "wall": true, "foregroundTimers": true},
-    "storage": {"backend": "IndexedDB", "quotaBytes": 262144, "requires": ["indexedDB", "navigator.locks"]},
-    "fs": {"backend": "private MEMFS + IDBFS", "quotaBytes": 8388608, "externalFiles": false},
-    "audio": {"backend": "AudioWorklet + PXA mixer", "pcm": true, "tone": true, "effects": true, "mix": true, "psg": true, "gbPsg": true, "assetPlayback": false, "systemMasterVolumeControl": false},
-    "net": {"backend": "Fetch", "credentials": "omit", "redirects": "error", "permission": "exact origin", "httpOpenRequires": "streaming request support", "maxBufferBytes": 65536},
-    "surface": {"formats": ["RGB565", "ARGB8888_PREMULTIPLIED"], "guestMapped": false, "opaqueUiRegions": false},
-    "gameRender": {"raster": true, "indexedSpans": true, "projectedSpans": true, "frameSpans": true, "indexedBlit": true, "priorityTiles": true},
-    "device": {"runtimeInfo": true, "hardwareMac": false},
-    "log": {"backend": "bounded page log"},
-    "permission": {"declarations": ["audio.playback", "net.client"]},
-    "ipc": {"scope": "one isolated application", "externalPeers": false}
+    "ui": {
+      "backend": "LVGL",
+      "nativeFonts": "OffscreenCanvas",
+      "textInput": "DOM composition",
+      "pointerContacts": 1,
+      "packageImages": {
+        "format": "PNG",
+        "maxBytes": 1048576,
+        "maxDimension": 1024
+      }
+    },
+    "window": {
+      "back": true,
+      "focus": true,
+      "toast": true,
+      "systemChrome": false
+    },
+    "clock": {
+      "monotonic": true,
+      "wall": true,
+      "foregroundTimers": true
+    },
+    "storage": {
+      "backend": "IndexedDB",
+      "quotaBytes": 262144,
+      "requires": [
+        "indexedDB",
+        "navigator.locks"
+      ]
+    },
+    "fs": {
+      "backend": "private MEMFS + IDBFS",
+      "quotaBytes": 8388608,
+      "externalFiles": false
+    },
+    "audio": {
+      "backend": "AudioWorklet + PXA mixer",
+      "pcm": true,
+      "tone": true,
+      "effects": true,
+      "mix": true,
+      "psg": true,
+      "assetPlayback": false,
+      "systemMasterVolumeControl": false
+    },
+    "net": {
+      "backend": "Fetch",
+      "credentials": "omit",
+      "redirects": "error",
+      "permission": "exact origin",
+      "httpOpenRequires": "streaming request support",
+      "maxBufferBytes": 65536
+    },
+    "surface": {
+      "formats": [
+        "RGB565",
+        "ARGB8888_PREMULTIPLIED"
+      ],
+      "guestMapped": false,
+      "opaqueUiRegions": false
+    },
+    "gameRender": {
+      "raster": true,
+      "indexedBlit": true,
+      "priorityTiles": true
+    },
+    "device": {
+      "runtimeInfo": true,
+      "hardwareMac": false
+    },
+    "log": {
+      "backend": "bounded page log"
+    },
+    "permission": {
+      "declarations": [
+        "audio.playback",
+        "net.client"
+      ]
+    },
+    "ipc": {
+      "scope": "one isolated application",
+      "externalPeers": false
+    }
   },
-  "unavailableServices": ["assets", "sensor", "lease", "work", "imeProvider", "storeInstaller"],
-  "limits": {"controlBytes": 4096, "ioBytes": 4194304, "hostMemoryBytes": 134217728, "borrowMirrorBytes": 67108864},
-  "packageLoader": "curated Wasm modules",
-  "aot": false
+  "unavailableServices": [
+    "assets",
+    "sensor",
+    "lease",
+    "work",
+    "imeProvider",
+    "storeInstaller"
+  ],
+  "limits": {
+    "controlBytes": 4096,
+    "ioBytes": 4194304,
+    "hostMemoryBytes": 134217728,
+    "borrowMirrorBytes": 67108864,
+    "guestMemoryBytes": 67108864
+  },
+  "packageLoader": "reviewed store Wasm modules",
+  "aot": false,
+  "compatibility": {
+    "core": [
+      2,
+      1
+    ],
+    "maxWasmBytes": 8388608,
+    "maxGuestBytes": 67108864,
+    "services": [
+      {
+        "service_id": 1,
+        "major": 2,
+        "minor": 2,
+        "features": 0
+      },
+      {
+        "service_id": 2,
+        "major": 0,
+        "minor": 3,
+        "features": 0
+      },
+      {
+        "service_id": 3,
+        "major": 0,
+        "minor": 9,
+        "features": 32583
+      },
+      {
+        "service_id": 4,
+        "major": 0,
+        "minor": 3,
+        "features": 1
+      },
+      {
+        "service_id": 5,
+        "major": 0,
+        "minor": 4,
+        "features": 0
+      },
+      {
+        "service_id": 6,
+        "major": 0,
+        "minor": 1,
+        "features": 0
+      },
+      {
+        "service_id": 7,
+        "major": 0,
+        "minor": 1,
+        "features": 0
+      },
+      {
+        "service_id": 9,
+        "major": 0,
+        "minor": 4,
+        "features": 0
+      },
+      {
+        "service_id": 10,
+        "major": 0,
+        "minor": 14,
+        "features": 0
+      },
+      {
+        "service_id": 11,
+        "major": 0,
+        "minor": 1,
+        "features": 0
+      },
+      {
+        "service_id": 14,
+        "major": 0,
+        "minor": 1,
+        "features": 63
+      },
+      {
+        "service_id": 15,
+        "major": 0,
+        "minor": 2,
+        "features": 0
+      },
+      {
+        "service_id": 16,
+        "major": 0,
+        "minor": 2,
+        "features": 0
+      },
+      {
+        "service_id": 18,
+        "major": 1,
+        "minor": 5,
+        "features": 113
+      },
+      {
+        "service_id": 19,
+        "major": 0,
+        "minor": 1,
+        "features": 0
+      }
+    ]
+  },
+  "mainLoop": {
+    "backend": "WebAssembly JSPI",
+    "requires": [
+      "WebAssembly.Suspending",
+      "WebAssembly.promising"
+    ]
+  }
 }

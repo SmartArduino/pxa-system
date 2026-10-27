@@ -1,4 +1,5 @@
-/* SPDX-License-Identifier: MIT — the ordinary PXA C SDK, no browser imports. */
+/* SPDX-License-Identifier: MIT
+ * The ordinary PXA C SDK, no browser imports. */
 #include "pxa_ui_components.h"
 #include "pxa_storage.h"
 #include "pxa_permission.h"

@@ -7,6 +7,8 @@
 #include "pxa/device.h"
 #include "pxa/log.h"
 #include "pxa/ipc.h"
+#include "pxa/wasi.h"
+#include "pxa/service.h"
 #include "pxa/posix/pxa_posix_fs.h"
 #include "pxa/posix/pxa_posix_storage.h"
 
@@ -75,7 +77,15 @@ static pxa_status_t log_write(void *c,pxa_component_t component,pxa_bytes_t app,
 }
 static void *allocate(void *c,size_t size) {(void)c;return malloc(size);}
 static void release(void *c,void *p) {(void)c;free(p);}
+static pxa_status_t wasi_control(void *c,pxa_runtime_t *r,pxa_component_t id,const pxa_message_view_t *m) {
+    (void)c;(void)r;(void)id;(void)m;return PXA_STATUS_UNSUPPORTED;
+}
 pxa_status_t browser_services_init(pxa_runtime_t *runtime) {
+    pxa_service_ops_t wasi={.struct_size=sizeof(wasi),.service_id=PXA_WASI_SERVICE_ID,
+        .major=PXA_WASI_SERVICE_MAJOR,.minor=PXA_WASI_SERVICE_MINOR,
+        .features=PXA_WASI_FEATURE_STDIO|PXA_WASI_FEATURE_CLOCKS|PXA_WASI_FEATURE_RANDOM|
+                  PXA_WASI_FEATURE_ARGUMENTS|PXA_WASI_FEATURE_ENVIRONMENT,.control=wasi_control};
+    CHECK(pxa_service_register(runtime,&wasi));
     unsigned declaration_count=1;
     for(unsigned i=0;i<8;i++){
         int n=network_origin(i,origins[i],sizeof(origins[i]));if(!n)break;

@@ -24,24 +24,12 @@ export function borrowedRanges(memory,kind,operation,pointer,size){
         if(psg){if(view.getUint8(at)===2)range(view.getUint32(at+32,true),view.getUint8(at+31));}
         else range(view.getUint32(at,true),view.getUint32(at+4,true));
       }
-    }else if(operation===0x10b){range(u32(pointer),128,true);range(u32(pointer+4),u16(pointer+8)*4,true);}
+    }
     else throw new RangeError('Unknown audio borrow profile');
   }else if(kind===2){
     if(operation===0x108||operation===0x109){pair(pointer);pair(pointer+8);pair(pointer+16,true);pair(pointer+40);}
     else if(operation===0x10a){const count=u32(pointer+24);range(u32(pointer+16),count*2,true);range(u32(pointer+20),count,true);}
-    else {
-      const material=(at,projected,inlineSources)=>{
-        pair(at+16,true);
-        if(!inlineSources){pair(at+24);pair(at+36);pair(at+52);}
-        if(projected)pair(at+136,true);
-      };
-      if(operation===0x104||operation===0x106)material(pointer,operation===0x106,false);
-      else if(operation===0x107){
-        const count=u32(pointer+8);if(count>1024)throw new RangeError('Material limit');
-        let at=pointer+16;
-        for(let i=0;i<count;i++){material(at,true,true);at+=152+u32(at+8)*8;if(at>end)throw new RangeError('Truncated material rows');}
-      }else throw new RangeError('Unknown raster borrow profile');
-    }
+    else throw new RangeError('Unknown raster borrow profile');
   }else throw new RangeError('Unknown borrow kind');
   ranges.sort((a,b)=>a.at-b.at);
   const merged=[];

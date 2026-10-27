@@ -34,6 +34,7 @@ def main():
     apps = []
     for name, source in [('paddle', ROOT / 'simulator/browser/demo'),
                          ('notes', ROOT / 'simulator/browser/services-demo'),
+                         ('mainloop-test', ROOT / 'simulator/browser/main-loop-test'),
                          ('counter', ROOT / 'ai/templates/c-app'),
                          ('cpp', ROOT / 'sdk/templates/hello')]:
         target = build / name
@@ -44,11 +45,11 @@ def main():
         run('cmake', '--build', target, '-j', args.jobs)
         apps.append((name, target / 'artifacts/main.wasm'))
     out.mkdir(parents=True, exist_ok=True)
-    for filename in ['pxa-browser.mjs', 'pxa-browser.wasm']:
+    for filename in ['pxa-browser.mjs', 'pxa-browser.wasm', 'LICENSE-Emscripten', 'LICENSE-musl', 'LICENSE-compiler-rt']:
         shutil.copy2(host / filename, out / filename)
-    for filename in ['runtime.mjs', 'worker.mjs', 'fonts.mjs', 'storage.mjs', 'network.mjs', 'borrow.mjs', 'audio-worklet.mjs', 'capabilities.json']:
+    for filename in ['runtime.mjs', 'worker.mjs', 'fonts.mjs', 'storage.mjs', 'network.mjs', 'borrow.mjs', 'wasm-policy.mjs', 'audio-worklet.mjs', 'capabilities.json']:
         shutil.copy2(ROOT / 'simulator/browser' / filename, out / filename)
-    manifest = {'version': '0.2.0', 'apps': []}
+    manifest = {'version': '0.3.0', 'apps': []}
     for name, source in apps:
         filename = f'{name}.wasm'
         shutil.copy2(source, out / filename)
@@ -58,17 +59,18 @@ def main():
     (out / 'manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
     shutil.copy2(ROOT / 'LICENSE', out / 'LICENSE-PXA')
     shutil.copy2(ROOT / 'libpxa/THIRD_PARTY_NOTICES.md', out / 'THIRD_PARTY_NOTICES.md')
-    # These names belonged to retired Host implementations. Reusing an output
-    # directory must not carry their obsolete distribution notices forward.
+    # Reusing an output directory must not retain retired Host notices.
     for filename in ('LICENSE-GPL-2.0', 'LICENSE-MPL-2.0'):
         (out / filename).unlink(missing_ok=True)
     (out / 'NOTICE').write_text(
-        'PXA Browser Host includes libpxa, LVGL and the listed fonts. '
-        'The system license policy excludes copyleft Host implementations; '
-        'application modules retain their independent licenses. '
-        'See LICENSE-PXA, LICENSE-LVGL, the font licenses and THIRD_PARTY_NOTICES.md. '
-        'Source and build instructions: '
-        'https://github.com/SmartArduino/pxa-system/tree/main/simulator/browser\n')
+        'PXA Browser Host: PXA Core, generic raster/compute kernels and PSG (MIT), '
+        'LVGL (MIT), Montserrat and symbols fonts (SIL OFL; see included licenses). '
+        'The LVGL FrogFS and internal ThorVG sources are excluded from compilation. '
+        'Toolchain runtime: Emscripten (MIT selected), musl (MIT and retained permissive notices), '
+        'compiler-rt (Apache-2.0 WITH LLVM-exception). Included license files retain upstream terms. '
+        'Engine-specific rendering and emulation remain in separately licensed applications. '
+        'Sources and build instructions: '
+        'https://github.com/SmartArduino/pxa-system/tree/browser-v0.3.0/simulator/browser\n')
     # Keep third-party license text with the deployed runtime.
     lvgl = args.lvgl.resolve() if args.lvgl else host / '_deps/lvgl_source-src'
     shutil.copy2(lvgl / 'LICENCE.txt', out / 'LICENSE-LVGL')
