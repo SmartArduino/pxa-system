@@ -155,3 +155,9 @@ means their loader writes directly to the final raster allocation, not that
 OpenSSL, stacks or the whole resource subsystem consume no temporary memory.
 The [resource protocol](../../spec/draft/assets.md) defines accounting and
 ownership. Simulator limits do not emulate ESP CPU speed or memory bandwidth.
+
+The desktop and product simulators hide their bottom navigation bars by default.
+The CMake option `PXSYS_SIMULATOR_NAVIGATION_BAR` defaults to `OFF`; set it to `ON` to restore the compiled default.
+The desktop CLI can override this with `--navigation-bar` / `--no-navigation-bar`.
+The product runner accepts `PXA_SIM_NAV_MODE=gesture`, `gesture-no-bar`, or `buttons`.
+An explicit `desktop.navigation_bar` value in a workspace profile overrides the desktop compiled default.

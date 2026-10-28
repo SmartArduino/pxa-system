@@ -9,6 +9,8 @@ else()
     set(PXSYS_DESKTOP_STANDALONE OFF)
 endif()
 
+option(PXSYS_SIMULATOR_NAVIGATION_BAR "Show simulator navigation bars by default" OFF)
+
 find_package(SDL2 REQUIRED)
 find_package(JPEG REQUIRED)
 find_package(PNG REQUIRED)
@@ -82,6 +84,7 @@ target_include_directories(pxsys_desktop_simulator PRIVATE
     "${CMAKE_CURRENT_BINARY_DIR}/generated")
 target_compile_definitions(pxsys_desktop_simulator PRIVATE
     PXSYS_PRODUCT_RUNNER_LIBRARY
+    PXSYS_SIMULATOR_NAVIGATION_BAR=$<BOOL:${PXSYS_SIMULATOR_NAVIGATION_BAR}>
     PXSYS_DESKTOP_APP_SOURCE_ROOT="${PXSYS_DESKTOP_APP_SOURCE_ROOT}"
     PXSYS_DESKTOP_TEXT_FONT="${PXSYS_DESKTOP_TEXT_FONT}")
 target_link_libraries(pxsys_desktop_simulator PRIVATE
@@ -95,6 +98,7 @@ add_executable(pxsys_product_simulator product_runner.c desktop_net.c
 target_compile_features(pxsys_product_simulator PRIVATE c_std_99)
 pxsys_apply_wamr_metadata(pxsys_product_simulator)
 target_compile_definitions(pxsys_product_simulator PRIVATE
+    PXSYS_SIMULATOR_NAVIGATION_BAR=$<BOOL:${PXSYS_SIMULATOR_NAVIGATION_BAR}>
     PXSYS_DESKTOP_TEXT_FONT="${PXSYS_DESKTOP_TEXT_FONT}")
 target_link_libraries(pxsys_product_simulator PRIVATE
     pxsys::core pxa::pxa pxa_adapters_openssl pxa_adapters_posix pxa_adapters_lvgl

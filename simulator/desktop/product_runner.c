@@ -1,5 +1,6 @@
 #define _XOPEN_SOURCE 700
 #define _POSIX_C_SOURCE 200809L
+#include "simulator_defaults.h"
 #include "pxa/image/codecs.h"
 
 #include <errno.h>
@@ -3532,8 +3533,7 @@ static int run_product_simulator(const options_t *input,
     host.height = options.height;
     {
         const char *mode = getenv("PXA_SIM_NAV_MODE");
-        host.navigation_mode = mode != NULL && strcmp(mode, "gesture-no-bar") == 0 ? 1u :
-                               mode != NULL && strcmp(mode, "buttons") == 0 ? 2u : 0u;
+        host.navigation_mode = (uint8_t)pxsys_simulator_navigation_mode(mode);
     }
     memcpy(host.safe_insets, options.safe_insets, sizeof(host.safe_insets));
     host.display_shape = options.display_shape;

@@ -1,4 +1,5 @@
 #define _POSIX_C_SOURCE 200809L
+#include "simulator_defaults.h"
 
 #include <dirent.h>
 #include <errno.h>
@@ -1520,7 +1521,7 @@ static int parse_options(int argc, char** argv, simulator_options_t* options) {
         PXSYS_DISPLAY_SHAPE_RECTANGLE, 0, 160, SIMULATOR_SHAPE_BACKGROUND_MATTE,
         {0, 0, 0, 0}, 0, 0,
         9, 41, 82, 4, PXSYS_NETWORK_WIFI, 1, 0, 24u * 1024u,
-        NULL, NULL, NULL, NULL, NULL, 0,
+        NULL, NULL, NULL, NULL, NULL, !PXSYS_SIMULATOR_NAVIGATION_BAR,
     };
     for (index = 1; index < argc; ++index) {
         if (strcmp(argv[index], "--dark") == 0) {
@@ -1529,6 +1530,8 @@ static int parse_options(int argc, char** argv, simulator_options_t* options) {
             options->scheme = PXSYS_COLOR_SCHEME_LIGHT;
         } else if (strcmp(argv[index], "--gestures") == 0) {
             options->navigation = PXSYS_NAVIGATION_GESTURES;
+        } else if (strcmp(argv[index], "--navigation-bar") == 0) {
+            options->no_navigation_bar = 0;
         } else if (strcmp(argv[index], "--no-navigation-bar") == 0) {
             options->no_navigation_bar = 1;
         } else if (strcmp(argv[index], "--smoke-test") == 0) {
@@ -1675,7 +1678,7 @@ static int parse_options(int argc, char** argv, simulator_options_t* options) {
 
 static void print_usage(const char* program) {
     fprintf(stderr,
-            "Usage: %s [--light|--dark] [--gestures|--no-navigation-bar] [--locale TAG] "
+            "Usage: %s [--light|--dark] [--gestures] [--navigation-bar|--no-navigation-bar] [--locale TAG] "
             "[--profile compact|phone|round] [--width PX] [--height PX] "
             "[--round|--corner-radius PX] [--shape-background matte|black] "
             "[--safe-insets T,R,B,L] [--custom-theme] "
