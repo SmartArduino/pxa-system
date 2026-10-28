@@ -49,7 +49,7 @@ void pxa_audio_service_poll(pxa_audio_service_t *service) {
         if (service->backend.playback_peek(service->backend.context,&event)!=PXA_STATUS_OK) return;
         pxa_audio_session_t *session=NULL;
         for (uint16_t i=service->active_head; i!=PXA_AUDIO_SLOT_NONE; i=service->sessions[i].next)
-            if (service->sessions[i].provider_session==event.provider_session) { session=&service->sessions[i]; break; }
+            if (service->sessions[i].pcm_only != 2 && service->sessions[i].provider_session==event.provider_session) { session=&service->sessions[i]; break; }
         if (session) {
             uint8_t payload[24]={0};
             pxa_write_u64(payload,session->handle);
@@ -328,7 +328,9 @@ static void close_session(void *context) {
         session->provider_session == 0) {
         return;
     }
-    session->service->backend.close(session->service->backend.context,
+    if (session->pcm_only == 2)
+        session->service->backend.close_capture(session->service->backend.context, session->provider_session);
+    else session->service->backend.close(session->service->backend.context,
                                     session->provider_session);
     release_session(session);
 }
@@ -343,6 +345,9 @@ static int32_t audio_stream_io(void *context, uint32_t operation,
         session->provider_session == 0 || session->service == NULL) {
         return PXA_STATUS_NOT_FOUND;
     }
+    if (session->pcm_only == 2)
+        return session->service->backend.capture_io(session->service->backend.context,
+            session->provider_session, operation, data, size);
     if (operation == PXA_AUDIO_IO_MIX_PCM || operation == PXA_AUDIO_IO_PSG_RENDER) {
         uint8_t *memory = NULL;
         size_t memory_size = 0;
@@ -719,7 +724,7 @@ static pxa_status_t commit_graph(pxa_audio_service_t *service,
     session = (pxa_audio_session_t *)resource.context;
     if (session == NULL || session->magic != PXA_AUDIO_SLOT_MAGIC ||
         session->provider_session == 0 || session->service != service ||
-        session->component != component || session->handle != handle) {
+        session->component != component || session->handle != handle || session->pcm_only == 2) {
         return PXA_STATUS_INTERNAL;
     }
     return pxa_status_normalize(service->backend.commit(
@@ -828,6 +833,76 @@ static pxa_status_t flush_session(pxa_audio_service_t *service,
         service->backend.context, session->provider_session));
 }
 
+static pxa_status_t open_capture(pxa_audio_service_t *s, pxa_component_t component,
+                                 const pxa_message_view_t *message) {
+    static const uint8_t name[] = "audio.capture", scope[] = "microphone";
+    pxa_authority_t authority = 0;
+    pxa_status_t status = PXA_STATUS_INVALID_ARGUMENT;
+    pxa_audio_session_t *session = NULL;
+    pxa_handle64_t handle = 0;
+    uint8_t result[20] = {0};
+    uint16_t profile = 0;
+    uint16_t frame_ms = s->backend.capture_frame_ms
+        ? s->backend.capture_frame_ms(s->backend.context) : 20;
+    if (message->payload.size == 8 &&
+        pxa_component_wire_profile(s->runtime, component, &profile) == PXA_STATUS_OK &&
+        profile == 1)
+        status =
+            pxa_permission_resolve64(s->permissions, component, pxa_read_u64(message->payload.data),
+                                     (pxa_bytes_t){name, sizeof(name) - 1},
+                                     (pxa_bytes_t){scope, sizeof(scope) - 1}, &authority);
+    pxa_status_t begin = pxa_request_begin_reserved(
+        s->runtime, component, message->request_token, PXA_AUDIO_SERVICE_ID, PXA_AUDIO_OPEN_CAPTURE,
+        status == PXA_STATUS_OK ? authority : 0, sizeof(result));
+    if (begin)
+        return begin;
+    if (!status && !(s->backend.open_capture && s->backend.capture_io && s->backend.close_capture))
+        status = PXA_STATUS_UNSUPPORTED;
+    if (!status && frame_ms != 20 && frame_ms != 40 && frame_ms != 60)
+        status = PXA_STATUS_PROTOCOL_ERROR;
+    if (!status && sessions_for_component(s, component) >= s->max_sessions_per_component)
+        status = PXA_STATUS_RESOURCE_LIMIT;
+    if (!status)
+        status = pxa_request_commit(s->runtime, component, message->request_token);
+    if (!status) {
+        session = allocate_session(s);
+        if (!session)
+            status = PXA_STATUS_RESOURCE_LIMIT;
+    }
+    if (!status) {
+        session->pcm_only = 2;
+        session->component = component;
+        session->provider_session = 0;
+        status = s->backend.open_capture(s->backend.context, &session->provider_session);
+        if (!status && !session->provider_session)
+            status = PXA_STATUS_PROTOCOL_ERROR;
+        if (!status) {
+            pxa_resource_t resource = {session, &k_audio_resource_ops, close_session};
+            status = pxa_handle_open64(s->runtime, component, PXA_RESOURCE_AUDIO_STREAM, authority,
+                                       &resource, &handle);
+            session->handle = handle;
+        }
+        if (status) {
+            if (session->provider_session)
+                s->backend.close_capture(s->backend.context, session->provider_session);
+            release_session(session);
+        }
+    }
+    pxa_write_u64(result, handle);
+    pxa_write_u32(result + 8, 16000);
+    result[12] = 1;
+    result[13] = 1; /* channels=1, encoding=1 (raw Opus) */
+    pxa_write_u16(result + 14, frame_ms);
+    pxa_write_u32(result + 16, PXA_AUDIO_CAPTURE_MAX_PACKET);
+    if (pxa_request_complete(s->runtime, component, message->request_token, status,
+                             status ? NULL : result, status ? 0 : sizeof(result))) {
+        if (handle)
+            (void)pxa_handle_close64(s->runtime, component, handle);
+        (void)pxa_request_cancel(s->runtime, component, message->request_token);
+    }
+    return PXA_STATUS_OK;
+}
+
 static pxa_status_t audio_control(void *context, pxa_runtime_t *runtime,
                                   pxa_component_t component,
                                   const pxa_message_view_t *message) {
@@ -845,6 +920,7 @@ static pxa_status_t audio_control(void *context, pxa_runtime_t *runtime,
     if (!service_valid(service) || message->request_token == 0) {
         return PXA_STATUS_INVALID_ARGUMENT;
     }
+    if (message->opcode == PXA_AUDIO_OPEN_CAPTURE) return open_capture(service,component,message);
     if (message->opcode != PXA_AUDIO_OPEN_SESSION &&
         message->opcode != PXA_AUDIO_OPEN_PCM &&
         message->opcode != PXA_AUDIO_COMMIT_GRAPH &&

@@ -28,6 +28,7 @@ typedef struct {
     uint32_t struct_size;
     uint64_t generation;
     uint8_t edge_to_edge;
+    uint8_t keep_screen_on;
     pxsys_window_bar_mode_t status_bar_mode;
     pxsys_window_bar_mode_t navigation_bar_mode;
     pxsys_window_icon_style_t status_bar_icons;

@@ -22,6 +22,39 @@ static void* test_allocate(void* context, size_t bytes) {
     return malloc(bytes);
 }
 
+static void check_idle_inhibition(pxsys_reference_lvgl_t* ui) {
+    pxsys_reference_idle_policy_t saved = ui->idle_policy;
+    ui->idle_policy.dim_after_seconds = 2;
+    ui->idle_policy.lock_after_seconds = 4;
+    ui->idle_policy.dim_percent = 20;
+    if (!ui->idle_timer) ui->idle_timer = lv_timer_create(idle_policy_poll, 500, ui);
+    assert(ui->idle_timer);
+    pxsys_window_snapshot_t next = ui->window;
+    next.keep_screen_on = 1;
+    window_changed(ui, &next);
+    lv_tick_inc(6000);
+    ui->idle_dimmed = 1;
+    idle_policy_poll(ui->idle_timer);
+    assert(!ui->locked && !ui->idle_dimmed);
+    assert(pxsys_reference_lvgl_set_locked(ui, true) == PXSYS_STATUS_OK);
+    idle_policy_poll(ui->idle_timer);
+    assert(ui->locked); /* Explicit Lock must win over the app's request. */
+    assert(pxsys_reference_lvgl_set_locked(ui, false) == PXSYS_STATUS_OK);
+    next.keep_screen_on = 0;
+    window_changed(ui, &next);
+    lv_tick_inc(1500);
+    idle_policy_poll(ui->idle_timer);
+    assert(!ui->locked && !ui->idle_dimmed);
+    lv_tick_inc(1000);
+    idle_policy_poll(ui->idle_timer);
+    assert(!ui->locked && ui->idle_dimmed);
+    lv_tick_inc(2000);
+    idle_policy_poll(ui->idle_timer);
+    assert(ui->locked);
+    assert(pxsys_reference_lvgl_set_locked(ui, false) == PXSYS_STATUS_OK);
+    ui->idle_policy = saved;
+}
+
 static void test_release(void* context, void* memory) {
     (void)context;
     free(memory);
@@ -308,6 +341,7 @@ static void check_features(uint32_t features) {
     pxsys_toast_message_init(&toast, pxsys_string_from_cstr("Immediate toast"));
     assert(pxsys_toast_service_post(pxsys_standard_system_toasts(system), &toast) == PXSYS_STATUS_OK);
     assert(ui->toast_visible && lv_obj_get_style_opa(ui->toast, 0) == LV_OPA_COVER);
+    check_idle_inhibition(ui);
     assert(pxsys_task_manager_finish_all(pxsys_standard_system_tasks(system), PXSYS_STOP_SHUTDOWN) == PXSYS_STATUS_OK);
     assert(pxsys_reference_lvgl_destroy(ui) == PXSYS_STATUS_OK);
     assert(pxsys_standard_system_destroy(system) == PXSYS_STATUS_OK);

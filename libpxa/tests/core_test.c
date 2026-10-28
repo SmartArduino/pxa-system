@@ -2455,8 +2455,8 @@ static void test_window_service(void) {
 
     assert(pxa_window_negotiate_version((pxa_version_range_t){0, 1, 0, 9},
                                         &selected) == PXA_STATUS_OK);
-    assert(selected.major == 0 && selected.minor == 3);
-    assert(pxa_window_negotiate_version((pxa_version_range_t){0, 4, 1, 0},
+    assert(selected.major == 0 && selected.minor == 4);
+    assert(pxa_window_negotiate_version((pxa_version_range_t){0, 5, 1, 0},
                                         &selected) == PXA_STATUS_UNSUPPORTED);
     assert(pxa_window_negotiate_version((pxa_version_range_t){1, 0, 1, 9},
                                         &selected) == PXA_STATUS_UNSUPPORTED);
@@ -2534,6 +2534,25 @@ static void test_window_service(void) {
     assert(pxa_window_get_configuration(window, component, &configuration) ==
            PXA_STATUS_OK);
     assert(configuration.edge_to_edge);
+
+    /* Keep-awake is per component, validated and transactionally applied. */
+    for (unsigned invalid = 0; invalid < 3; ++invalid) {
+        unsigned calls = backend_state.apply_count;
+        pxa_writer_init(&records, record_bytes, sizeof(record_bytes));
+        value = invalid == 1 ? 2 : 1;
+        assert(!pxa_writer_record(&records, 8, &value, 1));
+        if (invalid == 2) assert(!pxa_writer_record(&records, 8, &value, 1));
+        pxa_writer_init(&message_writer, message, sizeof(message));
+        assert(!pxa_writer_message(&message_writer, PXA_WINDOW_SERVICE_ID,
+            PXA_WINDOW_CONFIGURE, 0, record_bytes, records.size));
+        assert(!pxa_component_begin_event(test.runtime, component));
+        assert(pxa_runtime_control(test.runtime, component, message, message_writer.size) ==
+            (invalid ? PXA_STATUS_INVALID_ARGUMENT : PXA_STATUS_OK));
+        assert(!pxa_component_finish_event(test.runtime, component, 0));
+        assert(backend_state.apply_count == calls + !invalid);
+        assert(!pxa_window_get_configuration(window, component, &configuration) && configuration.keep_screen_on);
+        assert(!pxa_window_get_configuration(window, other, &configuration) && !configuration.keep_screen_on);
+    }
 
     pxa_writer_init(&records, record_bytes, sizeof(record_bytes));
     value = 0;
@@ -6012,7 +6031,12 @@ static void test_clock_timing(void) {
     destroy_runtime(&test);
 }
 
+#include "socket_capture_service_test.inc"
+
 int main(void) {
+    test_socket_capture_services(0);
+    test_socket_capture_services(1);
+    test_socket_capture_services(2);
     test_clock_timing();
     test_runtime_workspace_contract();
     test_runtime_usage();

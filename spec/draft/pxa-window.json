@@ -1,11 +1,11 @@
 {
-  "schema": "pxa-window-spec-0.3",
+  "schema": "pxa-window-spec-0.4",
   "status": "draft",
   "service": {
     "name": "window",
     "id": 2,
     "major": 0,
-    "minor": 3,
+    "minor": 4,
     "patch": 0
   },
   "opcodes": [
@@ -98,6 +98,14 @@
       "id": 7,
       "payload": "rgba8888-u32",
       "cardinality": "zero-or-one"
+    },
+    {
+      "name": "keep-screen-on",
+      "id": 8,
+      "payload": "bool-u8",
+      "cardinality": "zero-or-one",
+      "since": "0.4",
+      "scope": "foreground window; inhibits automatic dim/lock only; explicit Lock wins"
     }
   ],
   "snapshot_tags": [
@@ -192,5 +200,5 @@
       "value": 2
     }
   ],
-  "protocol_version": "0.3.0"
+  "protocol_version": "0.4.0"
 }

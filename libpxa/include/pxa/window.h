@@ -11,7 +11,7 @@ extern "C" {
 #endif
 #define PXA_WINDOW_SERVICE_ID UINT16_C(2)
 #define PXA_WINDOW_SERVICE_MAJOR UINT16_C(0)
-#define PXA_WINDOW_SERVICE_MINOR UINT16_C(3)
+#define PXA_WINDOW_SERVICE_MINOR UINT16_C(4)
 #define PXA_WINDOW_SERVICE_PATCH UINT16_C(0)
 
 #define PXA_WINDOW_CONFIGURE UINT16_C(1)
@@ -63,6 +63,8 @@ typedef struct {
     pxa_window_bar_mode_t navigation_bar_mode;
     pxa_window_icon_style_t status_bar_icons;
     pxa_window_icon_style_t navigation_bar_icons;
+    /* Foreground-only automatic idle inhibition; explicit Lock still wins. */
+    uint8_t keep_screen_on;
     uint32_t status_bar_color;
     uint32_t navigation_bar_color;
 } pxa_window_configuration_t;

@@ -32,6 +32,16 @@ typedef pxa_window_snapshot_wire_t pxa_window_snapshot_t;
 static inline int32_t pxa_window_request_back(void) {
     return pxa_control_call(PXA_WINDOW_SERVICE, PXA_WINDOW_REQUEST_BACK, 0, NULL, 0);
 }
+/* Window 0.4: automatic idle inhibition while this window is foreground. */
+static inline int32_t pxa_window_keep_screen_on(uint8_t enabled) {
+    uint8_t payload[5];
+    if (enabled > 1) return -1;
+    pxa_store_u16(payload, 8);
+    pxa_store_u16(payload + 2, 1);
+    payload[4] = enabled;
+    return pxa_control_call(PXA_WINDOW_SERVICE, PXA_WINDOW_CONFIGURE, 0,
+                            payload, sizeof(payload));
+}
 
 static inline int pxa_window_build_configure(
     uint8_t *out, size_t capacity, const pxa_window_config_t *config,

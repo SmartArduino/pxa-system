@@ -340,6 +340,15 @@ static void test_surface_window(pxa::Transport& transport, pxa::RequestTable& re
         .status_bar_color = 0xff112233}));
     pxa_window_config_t config{1, 2, 0, 0, 0, 0xff112233, 0};
     assert(pxa_window_build_configure(c.data(), c.size(), &config, &size)); compare(c.data(), size);
+    for (bool enabled : {false, true}) {
+        assert(window.keep_screen_on(enabled));
+        auto wanted = payload;
+        assert(service == 2 && opcode == 1 && !token && payload.size() == 5);
+        assert(pxa::wire::get16(payload.data()) == 8 && pxa::wire::get16(payload.data() + 2) == 1);
+        assert(payload[4] == std::byte(enabled));
+        assert(pxa_window_keep_screen_on(enabled) == 0 && payload == wanted);
+    }
+    assert(pxa_window_keep_screen_on(2) < 0);
     assert(window.request_back()); assert(pxa_window_request_back() == 0);
     pxa::ui::TransportService ui(transport);
     assert(ui.open_surface(7, pxa::ui::SurfaceRole::overlay));

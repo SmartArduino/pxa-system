@@ -65,6 +65,7 @@ static void publish_window(simulator_instance_t* instance) {
     pxsys_window_snapshot_init(&snapshot);
     if (instance->foreground && instance->window_configuration_set) {
         snapshot.edge_to_edge = config->edge_to_edge;
+        snapshot.keep_screen_on = config->keep_screen_on;
         snapshot.status_bar_mode =
             (pxsys_window_bar_mode_t)config->status_bar_mode;
         snapshot.navigation_bar_mode =

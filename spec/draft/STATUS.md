@@ -150,7 +150,7 @@ compatibility and failure scenarios. The ESP Provider uses `esp_http_client`
 with the ESP CA bundle and
 active default route, or the board NetworkInterface when only an AT HTTP
 transport is available. Hardware validation remains required for each
-supported transport. Sockets and WebSocket remain reserved; redirects are
+supported transport. Outbound TCP/TLS streams are available in Net 0.6; WebSocket runs in the Guest SDK. Redirects are
 surfaced as HTTP responses rather than followed automatically.
 
 ## Decisions made in this milestone

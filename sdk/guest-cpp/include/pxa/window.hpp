@@ -105,6 +105,16 @@ public:
         return transport_.send(2, 1, 0, packet);
     }
 
+    // Window 0.4: only the foreground window can inhibit automatic idle.
+    // Losing the foreground or stopping restores the system's normal policy.
+    Result<void> keep_screen_on(bool enabled) noexcept {
+        std::array<std::byte, 5> payload{};
+        wire::put16(payload.data(), 8);
+        wire::put16(payload.data() + 2, 1);
+        payload[4] = std::byte(enabled);
+        return transport_.send(2, 1, 0, payload);
+    }
+
     // Queue normal system navigation after the current callback returns.
     // on_back() decides whether to close the app or handle navigation locally.
     Result<void> request_back() noexcept {

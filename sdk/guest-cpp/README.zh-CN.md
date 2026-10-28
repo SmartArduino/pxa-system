@@ -1011,3 +1011,31 @@ WASI SDK 34 链接 libc++ 后，当前最小应用也会导入 `clock_time_get`�
 Host 在写入响应头缓冲之前筛选，避免无用的大型 CSP、Cookie 等字段耗尽预算；
 HTTP 长度与传输格式仍由 Host 完整检查。名称不区分大小写，重复或无效名称会被拒绝，
 请求返回 Task 前即复制名称，调用方无需维持数组或字符串的生命周期。
+
+### 通用 TCP/TLS Socket 与 WebSocket
+
+`co_await context.net().connectivity()` 查询本地网络接口/IP 状态，返回
+`Connectivity::unknown / offline / online`，不需要联网权限，也不探测远端服务器。
+
+
+Net 0.6 的 `context.sockets().open("tls://example.com:443", permission)` 返回
+独立的 Socket。权限声明为 `net.socket`，scope 使用完整端点；接收用户输入服务器
+的应用可声明 `outbound`，并在连接前请求授权。
+
+`read` / `write` 是非阻塞的短读短写；`read_some` / `write_some` 可 `co_await`，
+会通过 Core 等待可读或可写。返回的 Socket 可能仍在连接，`state()` 返回
+`would_block`、已连接的 `1`、干净结束的 `0` 或负错误。
+TLS 使用 Host 的证书信任和主机名校验。每个 Socket 默认共用 32 KiB 收发缓冲，
+各占一半，可在 `SocketOptions` 中调整到 512–65536 字节的 2 次幂。
+权限关闭、撤销和 Component 退出都会取消相关连接。当前支持出站 TCP/TLS。
+
+`context.websockets().open(url, permission, headers)` 在 Guest SDK 内实现
+WebSocket。`read` / `write` 的第一个字节是消息类型（1 文本、2 二进制），
+后面是一条完整消息；默认上限 4096 字节。写满返回 `would_block` 且不接受本次
+消息，读缓冲不足保留完整消息。调用 `read` 也会推进部分发送及 Ping/Pong；
+应用应定期处理读写。应用需要声明 WASI `random`，供握手 nonce 和帧掩码使用。
+
+Audio 0.15 的 `context.capture().open(permission)` 使用
+`audio.capture/microphone` 授权。`AudioCapture::read` 每次返回一条单声道、
+16 kHz、20 ms 的原始 Opus 包，缓冲至少 1275 字节；没有数据返回 `would_block`。
+没有板级录音后端时返回 `unsupported`。后台与锁屏停止录音数据交付，恢复后重新打开。

@@ -1,6 +1,6 @@
-# PXA Window Service Draft 0.3
+# PXA Window Service Draft 0.4
 
-Window service ID is `2`; service version is `0.3.0`. Numeric assignments in this
+Window service ID is `2`; service version is `0.4.0`. Numeric assignments in this
 document are explanatory. `pxa-window.json` is authoritative.
 
 ## Ownership boundary
@@ -37,8 +37,10 @@ temporarily; it is the platform-neutral equivalent of Android immersive system
 bar behavior.
 
 The Core v1 preview accepts `configure` with a zero 64-bit request token and
-at most 41 payload bytes. Its Guest SDK builder emits all seven records in
-ascending order from a typed configuration, using exactly 41 bytes.
+a record-list payload. Its legacy Guest SDK builder emits seven records in
+ascending order using exactly 41 bytes. The optional eighth record adds five
+bytes; `WindowService::keep_screen_on(bool)` and `pxa_window_keep_screen_on`
+can update it separately without changing system-bar settings.
 
 `get-snapshot` (`opcode=2`) is asynchronous and requires a nonzero request ID.
 Its success data is the snapshot record list described below.

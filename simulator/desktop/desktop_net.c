@@ -17,6 +17,9 @@
 #include <time.h>
 
 #include <curl/curl.h>
+#include <ifaddrs.h>
+#include <net/if.h>
+#include <sys/socket.h>
 
 #define DESKTOP_NET_MAX_PENDING UINT16_C(4)
 #define DESKTOP_NET_MAX_RESPONSE_BYTES UINT32_C(262144)
@@ -36,6 +39,7 @@ typedef struct {
     pxsys_desktop_net_notify_fn notify;
     void *notify_context;
     desktop_net_slot_t *slots[DESKTOP_NET_MAX_PENDING];
+    struct desktop_socket *sockets;
 } desktop_net_t;
 
 struct desktop_net_slot {
@@ -618,6 +622,37 @@ static void desktop_http_close(void *context, void *exchange) {
     pthread_mutex_unlock(&net->lock);
 }
 
+static pxa_status_t desktop_connectivity(void *context,uint32_t *state) {
+    (void)context;
+    /* Host-controlled state file permits repeatable link-loss/recovery tests. */
+    const char *fixture = getenv("PXA_SIM_NETWORK_STATE_FILE");
+    if (fixture && *fixture) {
+        FILE *file = fopen(fixture, "rb");
+        int value = file ? fgetc(file) : EOF;
+        if (file) fclose(file);
+        *state = value == '0' ? PXA_NET_CONNECTIVITY_OFFLINE :
+                 value == '1' ? PXA_NET_CONNECTIVITY_ONLINE : PXA_NET_CONNECTIVITY_UNKNOWN;
+        return PXA_STATUS_OK;
+    }
+    const char *override = getenv("PXA_SIM_NETWORK_CONNECTED");
+    if (override && (!strcmp(override,"0") || !strcmp(override,"1"))) {
+        *state = override[0]=='1' ? PXA_NET_CONNECTIVITY_ONLINE : PXA_NET_CONNECTIVITY_OFFLINE;
+        return PXA_STATUS_OK;
+    }
+    struct ifaddrs *addresses=NULL;
+    *state=PXA_NET_CONNECTIVITY_UNKNOWN;
+    if (getifaddrs(&addresses)) return PXA_STATUS_OK;
+    *state=PXA_NET_CONNECTIVITY_OFFLINE;
+    for (struct ifaddrs *a=addresses;a;a=a->ifa_next)
+        if (a->ifa_addr && (a->ifa_flags & IFF_UP) && !(a->ifa_flags & IFF_LOOPBACK) &&
+            (a->ifa_addr->sa_family==AF_INET || a->ifa_addr->sa_family==AF_INET6)) {
+            *state=PXA_NET_CONNECTIVITY_ONLINE;break;
+        }
+    freeifaddrs(addresses);return PXA_STATUS_OK;
+}
+
+#include "desktop_socket.inc"
+
 int pxsys_desktop_net_backend(pxa_net_backend_t *output,
                               pxsys_desktop_net_notify_fn notify,
                               void *notify_context) {
@@ -643,6 +678,10 @@ int pxsys_desktop_net_backend(pxa_net_backend_t *output,
     output->open_exchange = desktop_http_open;
     output->exchange_io = desktop_http_io;
     output->close_exchange = desktop_http_close;
+    output->open_socket = desktop_socket_open;
+    output->socket_io = desktop_socket_io;
+    output->close_socket = desktop_socket_close;
+    output->connectivity = desktop_connectivity;
     return 1;
 }
 
@@ -650,6 +689,8 @@ void pxsys_desktop_net_shutdown(pxa_net_backend_t *backend) {
     desktop_net_t *net;
     if (!backend || !(net=backend->context)) return;
     pthread_mutex_lock(&net->lock);
+    for(struct desktop_socket *s=net->sockets;s;s=s->next)
+        __atomic_fetch_or(&s->stream.state,PXA_SOCKET_CLOSED,__ATOMIC_RELEASE);
     net->notify=NULL;
     net->notify_context=NULL;
     for (unsigned i=0;i<DESKTOP_NET_MAX_PENDING;++i) {

@@ -21,6 +21,7 @@ find_package(Python3 COMPONENTS Interpreter REQUIRED)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(VORBISFILE REQUIRED IMPORTED_TARGET vorbisfile)
 pkg_check_modules(OPUSFILE REQUIRED IMPORTED_TARGET opusfile)
+pkg_check_modules(OPUS REQUIRED IMPORTED_TARGET opus)
 include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/PxaWamrMetadata.cmake")
 
 set(PXSYS_DESKTOP_TEXT_FONT
@@ -91,7 +92,7 @@ target_link_libraries(pxsys_desktop_simulator PRIVATE
     pxsys::standard pxsys::pxa pxsys::renderer_lvgl pxsys::reference_lvgl
     pxa_adapters_openssl pxa_adapters_posix pxa_adapters_lvgl
     pxa_adapters_wamr lvgl SDL2::SDL2 PNG::PNG CURL::libcurl Threads::Threads
-    PkgConfig::VORBISFILE PkgConfig::OPUSFILE m)
+    PkgConfig::VORBISFILE PkgConfig::OPUSFILE PkgConfig::OPUS m)
 
 add_executable(pxsys_product_simulator product_runner.c desktop_net.c
     pxadb_control.c)
@@ -103,7 +104,7 @@ target_compile_definitions(pxsys_product_simulator PRIVATE
 target_link_libraries(pxsys_product_simulator PRIVATE
     pxsys::core pxa::pxa pxa_adapters_openssl pxa_adapters_posix pxa_adapters_lvgl
     pxa_adapters_wamr lvgl SDL2::SDL2 PNG::PNG CURL::libcurl Threads::Threads
-    PkgConfig::VORBISFILE PkgConfig::OPUSFILE m)
+    PkgConfig::VORBISFILE PkgConfig::OPUSFILE PkgConfig::OPUS m)
 if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(pxsys_product_simulator PRIVATE
         -Wall -Wextra -Wpedantic)
@@ -159,6 +160,8 @@ if(PXSYS_BUILD_TESTS OR BUILD_TESTING)
         target_compile_options(pxsys_desktop_package_store_test PRIVATE -UNDEBUG)
     endif()
     add_test(NAME pxsys_desktop_package_store_test COMMAND pxsys_desktop_package_store_test)
+    add_executable(pxsys_desktop_socket_test tests/socket_test.c)
+    target_link_libraries(pxsys_desktop_socket_test PRIVATE pxa::pxa CURL::libcurl Threads::Threads)
     add_executable(pxsys_desktop_net_headers_test tests/net_headers_test.c)
     target_compile_features(pxsys_desktop_net_headers_test PRIVATE c_std_99)
     target_link_libraries(pxsys_desktop_net_headers_test PRIVATE
@@ -282,7 +285,7 @@ foreach(_test ime audio audio_sdk audio_app i18n_app sdk_patterns declarative_ui
     target_link_libraries(pxsys_${_test}_test PRIVATE
         pxsys::core pxa::pxa pxa_adapters_openssl pxa_adapters_posix pxa_adapters_lvgl
         pxa_adapters_wamr lvgl SDL2::SDL2 PNG::PNG CURL::libcurl Threads::Threads
-        PkgConfig::VORBISFILE PkgConfig::OPUSFILE m)
+        PkgConfig::VORBISFILE PkgConfig::OPUSFILE PkgConfig::OPUS m)
     target_link_libraries(pxsys_${_test}_test PRIVATE pxa_adapters_image_posix)
     if(PXSYS_BUILD_TESTS OR BUILD_TESTING)
         if(_test STREQUAL "ime" AND PXA_TEST_IME_PACKAGE AND PXA_TEST_IME_SIGNING_KEY)
@@ -345,7 +348,7 @@ target_compile_definitions(pxsys_app_matrix_test PRIVATE
 target_link_libraries(pxsys_app_matrix_test PRIVATE
     pxsys::core pxa::pxa pxa_adapters_openssl pxa_adapters_posix pxa_adapters_lvgl
     pxa_adapters_wamr lvgl SDL2::SDL2 PNG::PNG CURL::libcurl Threads::Threads
-    PkgConfig::VORBISFILE PkgConfig::OPUSFILE m)
+    PkgConfig::VORBISFILE PkgConfig::OPUSFILE PkgConfig::OPUS m)
 foreach(_bench current baseline)
     if(_bench STREQUAL "baseline" AND NOT PXSYS_RASTER_BASELINE_SOURCE)
         continue()
@@ -370,7 +373,7 @@ foreach(_bench current baseline)
     target_link_libraries(pxsys_raster_bench_${_bench} PRIVATE
         pxsys::core pxa::pxa pxa_adapters_openssl pxa_adapters_posix pxa_adapters_lvgl
         pxa_adapters_wamr lvgl SDL2::SDL2 PNG::PNG CURL::libcurl Threads::Threads
-        PkgConfig::VORBISFILE PkgConfig::OPUSFILE m)
+        PkgConfig::VORBISFILE PkgConfig::OPUSFILE PkgConfig::OPUS m)
     target_link_libraries(pxsys_raster_bench_${_bench} PRIVATE pxa_adapters_image_posix)
 endforeach()
 

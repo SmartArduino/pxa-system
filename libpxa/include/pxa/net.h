@@ -12,12 +12,18 @@ extern "C" {
 
 #define PXA_NET_SERVICE_ID UINT16_C(9)
 #define PXA_NET_SERVICE_MAJOR UINT16_C(0)
-#define PXA_NET_SERVICE_MINOR UINT16_C(5)
+#define PXA_NET_SERVICE_MINOR UINT16_C(6)
 #define PXA_NET_SERVICE_PATCH UINT16_C(0)
 #define PXA_NET_FETCH UINT16_C(1)
 #define PXA_NET_HTTP_REQUEST UINT16_C(2)
 #define PXA_NET_HTTP_OPEN UINT16_C(3)
 #define PXA_NET_CAPABILITIES UINT16_C(4)
+#define PXA_NET_SOCKET_OPEN UINT16_C(5)
+#define PXA_NET_CONNECTIVITY UINT16_C(6)
+#define PXA_NET_CONNECTIVITY_UNKNOWN UINT32_C(0)
+#define PXA_NET_CONNECTIVITY_OFFLINE UINT32_C(1)
+#define PXA_NET_CONNECTIVITY_ONLINE UINT32_C(2)
+#define PXA_NET_FEATURE_SOCKET UINT32_C(16)
 #define PXA_NET_FEATURE_STREAM_DOWNLOAD UINT32_C(1)
 #define PXA_NET_FEATURE_STREAM_UPLOAD UINT32_C(2)
 #define PXA_NET_FEATURE_RESPONSE_HEADERS UINT32_C(4)
@@ -89,6 +95,15 @@ typedef pxa_status_t (*pxa_net_read_body_fn)(
 typedef void (*pxa_net_close_body_fn)(void *context, void *body_stream);
 
 typedef struct {
+    pxa_bytes_t endpoint; /* tcp://host:port or tls://host:port; exact permission scope */
+    pxa_bytes_t host; /* no brackets for IPv6 */
+    uint32_t buffer_bytes; /* combined RX/TX, power of two, 512..65536 */
+    uint32_t connect_timeout_ms;
+    uint16_t port;
+    uint8_t tls;
+} pxa_socket_request_t;
+
+typedef struct {
     uint32_t struct_size;
     void *context;
     pxa_net_start_fn start;
@@ -104,6 +119,14 @@ typedef struct {
     int32_t (*exchange_io)(void *context, void *exchange, uint32_t operation,
                            uint8_t *data, size_t size);
     void (*close_exchange)(void *context, void *exchange);
+    /* Outbound byte-stream TCP/TLS. OPEN copies retained input and returns
+     * immediately; I/O never blocks. CLOSE transfers cleanup to the worker.
+     * TLS always verifies the peer name and certificate; no insecure mode. */
+    pxa_status_t (*open_socket)(void *, const pxa_socket_request_t *, void **);
+    int32_t (*socket_io)(void *, void *, uint32_t, uint8_t *, size_t);
+    void (*close_socket)(void *, void *);
+    /* Local link/IP state only; no remote probe, DNS or private identifiers. */
+    pxa_status_t (*connectivity)(void *, uint32_t *state);
 } pxa_net_backend_t;
 
 typedef struct {

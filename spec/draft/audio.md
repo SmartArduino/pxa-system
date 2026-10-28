@@ -21,7 +21,7 @@ an error; `would-block` means the bounded Host queue is full and the Guest must
 retry from a later clock event rather than spin in the current callback.
 
 The Host audio thread must never enter Wasm. The Host copies PCM out of Guest
-memory before queuing it to its renderer. Encoded framing, microphone capture,
+memory before queuing it to its renderer. Encoded playback framing,
 decoder/encoder selection and direct hardware endpoints remain outside this
 minor. Hosts own resampling, mixing and focus policy.
 
@@ -112,7 +112,7 @@ Both products preload U8 mono 16 kHz `.pcm` effects of 1..16,000 bytes through
 Assets 1.3, then play their handles without file I/O or a second PCM cache.
 They stream Ogg music through an 8,192-sample PCM ring. Both ESP and desktop decode
 Vorbis/Opus. Use mono 16 kHz Vorbis for shared
-assets. MP3, WAV, capture and arbitrary decoder selection are not exposed.
+assets. MP3, WAV and arbitrary decoder selection are not exposed.
 
 ## Prepared sound I/O (minor 6)
 
@@ -417,3 +417,24 @@ Guest execution. `PSG_RENDER` itself is synchronous native computation; it does
 not claim to run synthesis in parallel or retain Guest memory on another core.
 An asynchronous synthesis API would require a separate owned event timeline
 and explicit synchronization for CPU-visible state.
+
+## Microphone capture (0.15)
+
+`OPEN_CAPTURE` (6) accepts a raw u64 permission handle for
+`audio.capture/microphone`, using Core wire profile 1. It returns a u64 owned
+`AUDIO_STREAM` handle, rate/u32=16000, channels/u8=1, encoding/u8=1 (raw Opus),
+frame duration/u16 (20, 40 or 60 ms), and maximum packet bytes/u32=1275.
+Applications must use the returned duration when negotiating a remote audio session.
+
+READ returns one complete Opus packet or `WOULD_BLOCK`; callers supply at least
+1275 bytes. WRITE is unsupported. Closing the handle or its permission, and
+component termination, close the capture backend. Background/lock immediately
+stops delivery; reopening is required. Physical coprocessor microphone sampling
+and power control remain board-owned. Opening flushes queued previous input.
+
+Capture is optional. Hosts without a capture source return `UNSUPPORTED`;
+applications can retain text interaction. One board capture source is active
+at a time. Desktop SDL capture uses a fixed 200 ms PCM ring and Opus encoder;
+pai-touch reports the JL701 firmware's actual 60 ms Opus packets, without
+re-encoding or discarding subframes. Falling behind may
+drop complete old input frames to bound latency. It never expands the buffer.

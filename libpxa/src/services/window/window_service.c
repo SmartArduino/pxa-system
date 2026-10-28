@@ -168,7 +168,7 @@ static pxa_status_t configure(pxa_window_entry_t *entry,
     pxa_window_configuration_t candidate = entry->configuration;
     pxa_record_iterator_t iterator;
     pxa_record_view_t record;
-    uint8_t seen[8] = {0};
+    uint8_t seen[9] = {0};
     pxa_status_t status;
     pxa_record_iterator_init(&iterator, records);
     for (;;) {
@@ -176,13 +176,13 @@ static pxa_status_t configure(pxa_window_entry_t *entry,
         status = pxa_record_next(&iterator, &record);
         if (status == PXA_STATUS_WOULD_BLOCK) break;
         if (status != PXA_STATUS_OK) return status;
-        if (record.tag > 7) {
+        if (record.tag > 8) {
             if (record.optional) continue;
             return PXA_STATUS_UNSUPPORTED;
         }
         if (seen[record.tag]) return PXA_STATUS_INVALID_ARGUMENT;
         seen[record.tag] = 1;
-        if (record.tag <= 5) {
+        if (record.tag <= 5 || record.tag == 8) {
             if (record.payload.size != 1) return PXA_STATUS_INVALID_ARGUMENT;
             value = record.payload.data[0];
         } else if (record.payload.size != 4) {
@@ -215,6 +215,10 @@ static pxa_status_t configure(pxa_window_entry_t *entry,
             case 7:
                 candidate.navigation_bar_color =
                     pxa_read_u32(record.payload.data);
+                break;
+            case 8:
+                if (value > 1) return PXA_STATUS_INVALID_ARGUMENT;
+                candidate.keep_screen_on = value;
                 break;
             default:
                 return PXA_STATUS_INTERNAL;

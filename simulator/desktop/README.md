@@ -161,3 +161,13 @@ The CMake option `PXSYS_SIMULATOR_NAVIGATION_BAR` defaults to `OFF`; set it to `
 The desktop CLI can override this with `--navigation-bar` / `--no-navigation-bar`.
 The product runner accepts `PXA_SIM_NAV_MODE=gesture`, `gesture-no-bar`, or `buttons`.
 An explicit `desktop.navigation_bar` value in a workspace profile overrides the desktop compiled default.
+
+The WAMR product runner can override its local link query with
+`PXA_SIM_NETWORK_CONNECTED=0|1`. For dynamic loss/recovery tests, set
+`PXA_SIM_NETWORK_STATE_FILE` to a Host-owned file containing `0` or `1`; it
+is reread on each query. A missing or invalid file reports unknown. This
+controls reported connectivity only; it does not disable the Host network.
+
+`PXA_SIM_CAPTURE_START_DELAY_MS`（1–30000）让采集后端从首次打开开始暂时返回
+`UNAVAILABLE`，用于验证应用的麦克风启动重试。该开关仅作用于桌面模拟器，
+不改变采集格式或设备权限。录音可独立初始化，不要求先创建播放会话。

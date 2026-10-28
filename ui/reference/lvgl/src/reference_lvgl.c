@@ -8668,7 +8668,8 @@ static void idle_policy_poll(lv_timer_t* timer) {
         lv_obj_get_display(ui->root));
     const uint32_t dim_at = (uint32_t)ui->idle_policy.dim_after_seconds * 1000u;
     const uint32_t lock_at = (uint32_t)ui->idle_policy.lock_after_seconds * 1000u;
-    if (inactive < dim_at) {
+    /* Only automatic idle is inhibited. Explicit Lock/Power remains effective. */
+    if (inactive < dim_at || (ui->window.keep_screen_on && !ui->locked)) {
         ui->idle_lock_triggered = 0;
         if (ui->idle_dimmed) {
             ui->idle_dimmed = 0;
@@ -8696,8 +8697,24 @@ static void window_changed(void* context,
     pxsys_reference_lvgl_t* ui = (pxsys_reference_lvgl_t*)context;
     int task_switcher_open;
     if (!ui_valid(ui) || window == NULL) return;
+    const int chrome_unchanged =
+        ui->window.edge_to_edge == window->edge_to_edge &&
+        ui->window.status_bar_mode == window->status_bar_mode &&
+        ui->window.navigation_bar_mode == window->navigation_bar_mode &&
+        ui->window.status_bar_icons == window->status_bar_icons &&
+        ui->window.navigation_bar_icons == window->navigation_bar_icons &&
+        ui->window.status_bar_color == window->status_bar_color &&
+        ui->window.navigation_bar_color == window->navigation_bar_color;
+    const int power_changed = ui->window.keep_screen_on != window->keep_screen_on;
+    if (ui->window.keep_screen_on && !window->keep_screen_on && !ui->locked)
+        lv_display_trigger_activity(lv_obj_get_display(ui->root));
     task_switcher_open = task_switcher_is_open(ui);
     ui->window = *window;
+    /* A power-policy update must not rebuild chrome or cancel an active drag. */
+    if (chrome_unchanged && power_changed) {
+        if (ui->idle_timer != NULL) idle_policy_poll(ui->idle_timer);
+        return;
+    }
     ui->transient_revealed = 0;
     if (ui->transient_timer != NULL) lv_timer_pause(ui->transient_timer);
     if (!task_switcher_open) close_task_switcher(ui);

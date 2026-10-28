@@ -14,13 +14,15 @@ extern "C" {
 
 #define PXA_AUDIO_SERVICE_ID UINT16_C(10)
 #define PXA_AUDIO_SERVICE_MAJOR UINT16_C(0)
-#define PXA_AUDIO_SERVICE_MINOR UINT16_C(14)
+#define PXA_AUDIO_SERVICE_MINOR UINT16_C(15)
 #define PXA_AUDIO_SERVICE_PATCH UINT16_C(0)
 #define PXA_AUDIO_OPEN_SESSION UINT16_C(1)
 #define PXA_AUDIO_COMMIT_GRAPH UINT16_C(2)
 #define PXA_AUDIO_QUERY_STATE UINT16_C(3)
 #define PXA_AUDIO_FLUSH UINT16_C(4)
 #define PXA_AUDIO_OPEN_PCM UINT16_C(5)
+#define PXA_AUDIO_OPEN_CAPTURE UINT16_C(6)
+#define PXA_AUDIO_CAPTURE_MAX_PACKET 1275u
 #define PXA_AUDIO_USAGE_MEDIA UINT16_C(1)
 #define PXA_AUDIO_ROUTE_SPEAKER UINT16_C(1)
 #define PXA_AUDIO_MAX_EQ_BANDS UINT8_C(5)
@@ -175,6 +177,14 @@ typedef struct {
      * frame_ms is 20; WRITE/commit/query/flush/close share the existing hooks. */
     pxa_status_t (*open_pcm)(void *, const pxa_audio_format_t *,
         pxa_audio_pcm_info_t *, uint64_t *provider_session);
+    /* Optional mono 16 kHz raw Opus capture. OPEN flushes stale
+     * input; READ returns one complete packet or WOULD_BLOCK; CLOSE stops
+     * capture synchronously. Implementations must not block the runtime. */
+    pxa_status_t (*open_capture)(void *, uint64_t *);
+    int32_t (*capture_io)(void *, uint64_t, uint32_t, uint8_t *, size_t);
+    void (*close_capture)(void *, uint64_t);
+    /* Packet duration: 20, 40 or 60 ms. NULL defaults to 20 ms. */
+    uint16_t (*capture_frame_ms)(void *);
 } pxa_audio_backend_t;
 
 typedef struct {

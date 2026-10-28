@@ -227,6 +227,8 @@ typedef struct {
     pxa_lvgl_ui_t *ui_adapter;
     pxa_audio_service_t *audio;
     SDL_AudioDeviceID audio_device;
+    struct desktop_capture *capture;
+    uint64_t capture_sequence, capture_ready_us;
     uint8_t focused;
     uint8_t pending_lifecycle;
     pxa_audio_mixer_t audio_mixer;
@@ -2130,10 +2132,13 @@ static void sync_host_theme(product_host_t *host, pxa_lvgl_ui_t *adapter,
     dispatch_component_events(host);
 }
 
+#include "desktop_capture.inc"
+
 static void product_focus_changed(void *context, bool focused) {
     product_host_t *host = context;
     if (host == NULL || host->focused == (uint8_t)focused) return;
     host->focused = focused ? 1u : 0u;
+    if (!focused && host->capture) desktop_capture_close(host,host->capture->id);
     if (!focused && host->ime_keyboard) pxa_lvgl_ime_close(host->ime_keyboard);
     host->pending_lifecycle = host->focused;
     if (host->clock_period_us != 0)
@@ -3768,6 +3773,9 @@ static int run_product_simulator(const options_t *input,
     audio_backend.struct_size = sizeof(audio_backend);
     audio_backend.context = &host;
     stage = "audio service";
+    audio_backend.open_capture = desktop_capture_open;
+    audio_backend.capture_io = desktop_capture_io;
+    audio_backend.close_capture = desktop_capture_close;
     audio_backend.open = audio_open; audio_backend.open_pcm = audio_open_pcm;
     audio_backend.commit = audio_commit;
     audio_backend.submit = audio_submit; audio_backend.close = audio_close;

@@ -27,6 +27,7 @@ function(pxa_collect_sources output root)
         src/services/sensor/sensor_service.c
         src/services/device/device_service.c
         src/services/scheduler/scheduler_service.c
+        src/services/net/socket_stream.c
         src/services/net/http_stream.c
         src/services/net/net_service.c
         src/services/net/net_request.c

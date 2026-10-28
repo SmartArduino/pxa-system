@@ -261,11 +261,11 @@ def validate_specs() -> tuple[int, int]:
     validate_named_registries(core, "Core")
 
     expected_services = {
-        "window": (2, "0.3.0"), "ui": (3, "0.9.0"),
+        "window": (2, "0.4.0"), "ui": (3, "0.9.0"),
         "clock": (4, "0.3.0"), "fs": (5, "0.5.0"),
         "storage": (6, "0.1.0"), "ipc": (7, "0.1.0"),
-        "sensor": (8, "0.1.0"), "net": (9, "0.5.0"),
-        "audio": (10, "0.14.0"), "permission": (11, "0.1.0"),
+        "sensor": (8, "0.1.0"), "net": (9, "0.6.0"),
+        "audio": (10, "0.15.0"), "permission": (11, "0.1.0"),
         "work": (13, "0.1.0"), "wasi": (14, "0.1.0"),
         "device": (15, "0.2.0"), "surface": (16, "0.2.0"),
         "game-render": (18, "1.5.0"), "log": (19, "0.1.0"),

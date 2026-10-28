@@ -1,11 +1,11 @@
 {
-  "schema": "pxa-net-spec-0.5",
+  "schema": "pxa-net-spec-0.6",
   "status": "draft",
   "service": {
     "name": "net",
     "id": 9,
     "major": 0,
-    "minor": 5,
+    "minor": 6,
     "patch": 0
   },
   "opcodes": [
@@ -44,6 +44,24 @@
       "request_token": "nonzero",
       "payload": "empty",
       "result": "status:i32|features:u32|max-buffer:u32|max-headers:u32|max-request-headers:u32|max-url:u32|max-upload:u64|max-concurrent:u32"
+    },
+    {
+      "name": "socket-open",
+      "id": 5,
+      "since": "0.6",
+      "direction": "bidirectional-result",
+      "request_token": "nonzero",
+      "payload": "TLV 1=endpoint (tcp://host:port or tls://host:port), 3=permission:u64, 8=connect-timeout-ms:u32, 14=combined-buffer-bytes:u32",
+      "result": "status:i32|stream-handle:u64"
+    },
+    {
+      "name": "connectivity",
+      "id": 6,
+      "since": "0.6",
+      "direction": "bidirectional-result",
+      "request_token": "nonzero",
+      "payload": "empty",
+      "result": "status:i32|state:u32 (0 unknown, 1 no link/IP, 2 link with IP; no Internet reachability guarantee)"
     }
   ],
   "record_tags": [
@@ -207,7 +225,7 @@
     "max_timeout_ms": 60000,
     "max_stream_timeout_ms": 86400000
   },
-  "protocol_version": "0.5.0",
+  "protocol_version": "0.6.0",
   "exchange_io": [
     {
       "name": "read",

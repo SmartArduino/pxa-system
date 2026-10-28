@@ -48,6 +48,15 @@ int main(void) {
     assert(observer.calls == 2 && observer.last.generation == 2);
     assert(pxsys_window_service_update(service, &next) == PXSYS_STATUS_OK);
     assert(observer.calls == 2);
+    next.keep_screen_on = 1;
+    assert(pxsys_window_service_update(service, &next) == PXSYS_STATUS_OK);
+    assert(observer.calls == 3 && observer.last.keep_screen_on);
+    next.keep_screen_on = 2;
+    assert(pxsys_window_service_update(service, &next) == PXSYS_STATUS_INVALID_ARGUMENT);
+    assert(observer.calls == 3 && observer.last.keep_screen_on);
+    next.keep_screen_on = 0;
+    assert(pxsys_window_service_update(service, &next) == PXSYS_STATUS_OK);
+    assert(observer.calls == 4 && !observer.last.keep_screen_on);
     assert(pxsys_window_service_unsubscribe(service, &observer, changed) ==
            PXSYS_STATUS_OK);
     assert(pxsys_window_service_destroy(service) == PXSYS_STATUS_OK);

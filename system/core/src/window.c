@@ -26,6 +26,7 @@ static int service_valid(const pxsys_window_service_t* service) {
 static int snapshot_valid(const pxsys_window_snapshot_t* snapshot) {
     return snapshot != NULL && snapshot->struct_size >= sizeof(*snapshot) &&
            snapshot->edge_to_edge <= 1 &&
+           snapshot->keep_screen_on <= 1 &&
            snapshot->status_bar_mode <= PXSYS_WINDOW_BAR_TRANSIENT &&
            snapshot->navigation_bar_mode <= PXSYS_WINDOW_BAR_TRANSIENT &&
            snapshot->status_bar_icons <= PXSYS_WINDOW_ICON_DARK &&
@@ -35,6 +36,7 @@ static int snapshot_valid(const pxsys_window_snapshot_t* snapshot) {
 static int snapshot_equal(const pxsys_window_snapshot_t* left,
                           const pxsys_window_snapshot_t* right) {
     return left->edge_to_edge == right->edge_to_edge &&
+           left->keep_screen_on == right->keep_screen_on &&
            left->status_bar_mode == right->status_bar_mode &&
            left->navigation_bar_mode == right->navigation_bar_mode &&
            left->status_bar_icons == right->status_bar_icons &&

@@ -92,10 +92,14 @@ Result<NetResponse> decode_net_response(Transport& transport,
     std::span<const std::byte> payload, std::span<NetHeader> headers,
     std::uint32_t max_response_bytes) noexcept;
 
+enum class Connectivity : std::uint32_t { unknown=0, offline=1, online=2 };
+
 class NetService {
 public:
     NetService(Transport& transport, RequestTable& requests) noexcept
         : transport_(transport), requests_(requests) {}
+
+    Task<Connectivity> connectivity() {return connectivity_impl(*this);}
 
     // The packet and header storage must remain alive until this task completes.
     Task<NetResponse> request(const NetRequest& request,
@@ -108,6 +112,15 @@ public:
     }
 
 private:
+    static Task<Connectivity> connectivity_impl(NetService self) {
+        auto event=co_await Response(self.transport_,self.requests_,9,6,{});
+        if(!event)co_return std::unexpected(event.error());
+        auto b=wire::result_body(event->payload);
+        if(!b)co_return std::unexpected(b.error());
+        if(b->size()!=4 || wire::get32(b->data())>2)co_return std::unexpected(Error::protocol_error);
+        co_return static_cast<Connectivity>(wire::get32(b->data()));
+    }
+
     static Task<NetResponse> request_impl(Transport& transport,
         RequestTable& requests, std::span<std::byte> packet,
         std::span<NetHeader> headers, std::uint32_t max_response_bytes) {

@@ -1,11 +1,11 @@
 {
-  "schema": "pxa-audio-spec-0.14",
+  "schema": "pxa-audio-spec-0.15",
   "status": "draft",
   "service": {
     "name": "audio",
     "id": 10,
     "major": 0,
-    "minor": 14,
+    "minor": 15,
     "patch": 0
   },
   "opcodes": [
@@ -51,6 +51,15 @@
       "since": "0.10",
       "payload": "permission-handle:u64|source-rate:u32|source-channels:u8|reserved:3*u8",
       "result": "status|session-handle|source-format|sink-rate|sink-channels|queue-source-frames"
+    },
+    {
+      "name": "open-capture",
+      "id": 6,
+      "since": "0.15",
+      "direction": "bidirectional-result",
+      "request_token": "nonzero",
+      "payload": "permission-handle:u64 (audio.capture/microphone)",
+      "result": "status:i32|handle:u64|rate:u32=16000|channels:u8=1|encoding:u8=1 (raw Opus)|frame-ms:u16 (20,40,60)|max-packet:u32=1275"
     }
   ],
   "resource_io": [
@@ -268,7 +277,7 @@
     "min_frame_ms": 5,
     "max_frame_ms": 120
   },
-  "protocol_version": "0.14.0",
+  "protocol_version": "0.15.0",
   "playback_event": {
     "id": 32769,
     "since": "0.7",

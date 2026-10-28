@@ -143,7 +143,7 @@ limits and report `resource-limit`, `invalid-argument` or `limit-exceeded` as
 appropriate. Core uses fixed Host-provided workspaces and bounded slot tables;
 the ABI does not require allocation on the request path.
 
-WebSocket, TCP, UDP, listening sockets, multipart construction, cookie jars,
+UDP, listening sockets, multipart construction, cookie jars,
 automatic decompression, redirects and streaming request bodies are outside
 Network 0.2.
 
@@ -156,3 +156,45 @@ The exchange uses IO READ=1, WRITE=2, POLL=3, RESPONSE=4, RESPONSE_SIZE=5, FINIS
 Core service 0.2 WAIT_RESOURCE (4) accepts handle/u64 and interests/u32, and reliably completes with status/i32 followed by ready/u32. Masks are READ=1, WRITE=2, HEADERS=4, END=8. Completion does not consume data; callers retry and rearm after advisory readiness. Cancellation removes the wait, while exchange ownership determines transport cancellation. Each direction allows one concurrent producer/consumer.
 
 Buffers are 512..65536 power-of-two bytes; upload and download split that total when uploading. Heads are 16..4096 bytes, subject to the product cap. Known upload length is limited to INT32_MAX by the ESP client API. Download budget is an independent u64; a response is never accumulated in memory just because its total limit is large. Redirects return to the Guest for another permission check; content-encoding is not automatically decoded. See [C++ API and implementation](../../docs/zh-CN/http-streaming.md).
+
+## Outbound Socket streams (0.6)
+
+`SOCKET_OPEN` (5) opens an owned, connecting TCP/TLS byte stream. Its ordered
+required TLVs are endpoint (tag 1), permission/u64 (3), connection timeout/u32
+milliseconds (8, 100–60000), and combined RX/TX buffer bytes/u32 (14, a power
+of two from 512 to 65536). Core wire profile 1 is required.
+
+Endpoints are `tcp://host:port` or `tls://host:port`, with an explicit nonzero
+port, lowercase ASCII DNS/IPv4 or bracketed IPv6, and no userinfo, path, query,
+fragment or leading zero port. The permission is `net.socket` scoped to the
+exact endpoint, or `outbound` for an application with user-configured servers.
+HTTP's `net.client/web` does not authorize raw sockets. Capabilities bit 16
+indicates backend support; unavailable backends return `UNSUPPORTED`.
+
+The result body is a u64 stream handle. Opening returns before DNS/connect/TLS
+finish. READ (1) and WRITE (2) return a partial byte count or `WOULD_BLOCK`;
+zero READ is clean EOF after draining buffered bytes. Errors are reported after
+received bytes have been drained. POLL (3) uses READ/WRITE/END readiness flags.
+STATE (4, empty input) returns `WOULD_BLOCK` while connecting, 1 when connected,
+0 after clean closure, or the terminal negative status. TLS verifies both
+certificate trust and peer name; there is no insecure fallback or redirect.
+
+Each direction owns half the requested memory. Full RX stops network reads;
+full TX returns `WOULD_BLOCK`. Closing, component termination or permission
+revocation cancels the socket and releases its authority immediately. A worker
+may retain bounded storage until an in-progress connection operation returns;
+these workers still count toward the backend limit. WRITE acceptance means
+queued locally, not delivered to the peer. The initial interface is outbound
+TCP/TLS only; UDP, bind/listen/accept and half-close are reserved.
+
+The C++ SDK exposes `Context::sockets().open`, `Socket::read/write`,
+`read_some/write_some`, `state` and `close`. Its `WebSocketClient` implements
+RFC 6455 in Guest code on the same sockets, including handshake verification,
+masking, fragmented messages, control frames, bounded messages and partial I/O.
+WebSocket applications declare WASI `random` for handshake nonces and masks.
+
+`CONNECTIVITY` (6, empty request) reports local interface/IP state without a
+permission prompt: its u32 body is 0 unknown, 1 offline, or 2 online. This does
+not probe the Internet or imply that a particular server is reachable. The
+optional backend callback performs no remote I/O and exposes no MAC/IP details.
+C++ callers use `co_await context.net().connectivity()`.
