@@ -22,8 +22,8 @@
 #define LV_DRAW_SW_COMPLEX 1
 #define LV_USE_LOG 0
 #define LV_USE_FONT_COMPRESSED 1
-/* Missing glyphs continue to the configured symbol-font fallback. */
-#define LV_USE_FONT_PLACEHOLDER 0
+/* Try configured fallbacks first, then display a box for a missing glyph. */
+#define LV_USE_FONT_PLACEHOLDER 1
 #define LV_USE_FREETYPE 1
 #define LV_FREETYPE_USE_LVGL_PORT 0
 #define LV_USE_LODEPNG 1
