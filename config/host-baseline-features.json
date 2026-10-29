@@ -13,7 +13,8 @@
   ],
   "assets": [
     "image-decode",
-    "image-frames"
+    "image-frames",
+    "large-images"
   ],
   "wasi": [
     "monotonic-clock",

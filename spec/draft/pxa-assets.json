@@ -1,15 +1,15 @@
 {
-  "schema": "pxa-assets-spec-2.5",
+  "schema": "pxa-assets-spec-2.6",
   "status": "draft",
   "service": {
     "name": "assets",
     "id": 21,
     "major": 2,
-    "minor": 5,
+    "minor": 6,
     "patch": 0
   },
   "core_major": 2,
-  "protocol_version": "2.5.0",
+  "protocol_version": "2.6.0",
   "opcodes": [
     {
       "name": "query",
@@ -121,14 +121,15 @@
     "preparation": "Offline PXR pixels or, since Assets 2.4, catalogued package PNG (RGBA or indexed). Async LOAD/PREFETCH decodes PNG on the asset worker into premultiplied BGRA8888, with the same bounded/coalescing resident cache, cancellation, pixel and temporary budgets. PNG limits: dimensions <=1024, pixels <=65536, encoded bytes <=524288. QUERY describes the original PNG; successful LOAD/PREFETCH returns the native prepared descriptor. Decoding retains no compressed file copy and preserves the catalog/manifest identity.",
     "streaming": "Optional image-decode feature. DECODE_IMAGE borrows a component-owned FILE(3) or STREAM(2), reading from its current position until EOF. Host reads at most 4096 bytes per poll in 1024-byte stack chunks; WOULD_BLOCK yields. No encoded data passes through Guest memory. Caller keeps source exclusively readable until completion/cancel; the service never closes it. Pending codec state is reclaimed on error/cancel/stop. Success returns an immutable IMAGE handle with independent lifetime. Formats and native/hardware decoder choice belong to optional Host adapters, not this ABI.",
     "limits": {
-      "max_width": 1024,
-      "max_height": 1024,
-      "max_pixels": 65536,
+      "max_width": 2048,
+      "max_height": 2048,
+      "max_pixels": 1048576,
       "max_encoded_bytes": 524288,
       "source_pixels": 1048576,
       "source_dimension": 4096
     },
-    "frames": "Optional image-frames feature. Decode options PNG=1 JPEG=2 GIF=4 (zero accepts any supported format) filter the signature before codec allocation. WITH_FRAMES=256 extends the request from 24 to 32 bytes and result from 36 to 48 bytes. Unknown bits or lengths are invalid. Animation ceilings are zero for ordinary limits, otherwise clamped to ordinary ceilings only for sequence codecs; they do not reduce PNG/JPEG quality. NEXT_IMAGE_FRAME returns the same 48-byte result, flags LAST=1 (all other bits reserved zero). Static images yield one LAST frame. Delays are unsigned milliseconds, iterations start at zero. No timer, automatic decoding or queue is created. NEXT on an image without state is BAD_STATE. An extra resource slot is needed while old and new immutable images coexist."
+    "frames": "Optional image-frames feature. Decode options PNG=1 JPEG=2 GIF=4 (zero accepts any supported format) filter the signature before codec allocation. WITH_FRAMES=256 extends the request from 24 to 32 bytes and result from 36 to 48 bytes. Unknown bits or lengths are invalid. Animation pixel ceiling defaults to 65536 and cannot exceed 65536; zero encoded ceiling uses the ordinary limit. Explicit smaller ceilings are clamped to ordinary ceilings only for sequence codecs; they do not reduce PNG/JPEG quality. NEXT_IMAGE_FRAME returns the same 48-byte result, flags LAST=1 (all other bits reserved zero). Static images yield one LAST frame. Delays are unsigned milliseconds, iterations start at zero. No timer, automatic decoding or queue is created. NEXT on an image without state is BAD_STATE. An extra resource slot is needed while old and new immutable images coexist.",
+    "large_images": "Since Assets 2.6 or feature bit 2 backport, static output may use up to 2048 pixels per side and 1048576 pixels total. Existing Host/owner pixel and temporary memory budgets still apply; no startup reservation. Older Hosts may reject larger requests; reopen the source and retry <=1024 per side, <=65536 pixels. Sequence frame limits remain unchanged."
   },
   "features": [
     {
@@ -138,6 +139,10 @@
     {
       "name": "image-frames",
       "bit": 1
+    },
+    {
+      "name": "large-images",
+      "bit": 2
     }
   ],
   "prepared_rgb565_png": "Since Assets 2.5: image encoding 10 is a PXR1 header plus PNG payload. Width/height describe the PNG and decoded-bytes is width*height*2. Limits: dimensions <=1024, pixels <=131072, PNG payload <=524288 bytes. LOAD/PREFETCH decodes directly into RGB565 using the shared cache/pixel budget; no full BGRA intermediate exists. Any non-opaque pixel rejects the load. QUERY describes the stored encoding; successful LOAD/PREFETCH describes prepared RGB565 pixels. Raw PXR encodings and ordinary alpha PNG remain unchanged."
