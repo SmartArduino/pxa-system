@@ -44,8 +44,10 @@ public:
     TaskScope& tasks() noexcept { return tasks_; }
     TaskScope& foreground_tasks() noexcept { return foreground_tasks_; }
     Response request(std::uint16_t service, std::uint16_t opcode,
-                     std::span<const std::byte> payload = {}) noexcept {
-        return Response(transport_, requests_, service, opcode, payload);
+                     std::span<const std::byte> payload = {},
+                     bool close_late_handle = false) noexcept {
+        return Response(transport_, requests_, service, opcode, payload,
+                        close_late_handle);
     }
     game::Service game() noexcept { return {transport_, requests_}; }
     WindowService window() noexcept { return {transport_, requests_}; }
