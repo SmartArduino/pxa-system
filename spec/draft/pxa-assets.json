@@ -1,15 +1,15 @@
 {
-  "schema": "pxa-assets-spec-2.3",
+  "schema": "pxa-assets-spec-2.5",
   "status": "draft",
   "service": {
     "name": "assets",
     "id": 21,
     "major": 2,
-    "minor": 3,
+    "minor": 5,
     "patch": 0
   },
   "core_major": 2,
-  "protocol_version": "2.3.0",
+  "protocol_version": "2.5.0",
   "opcodes": [
     {
       "name": "query",
@@ -116,9 +116,9 @@
   },
   "errors": "Immediate rejection has no completion; accepted requests reserve exactly one status-prefixed completion, errors have no trailing result payload",
   "images": {
-    "formats": "PXR1 kind=4, RGB565=2 (little-endian words) or BGRA8888=7 (straight alpha bytes)",
+    "formats": "PXR1 kind=4, RGB565=2 (little-endian words), BGRA8888=7 (straight alpha bytes), BGRA8888_PREMULTIPLIED=8, or PNG_RGB565=10 (PNG payload, prepared as RGB565 since Assets 2.5); ordinary package PNG encoding=6 is prepared as premultiplied BGRA8888 since Assets 2.4",
     "max_dimension": 4096,
-    "preparation": "Offline decode; async LOAD reads directly into budgeted final pixels. PNG metadata may be queried but raw PNG LOAD is unsupported.",
+    "preparation": "Offline PXR pixels or, since Assets 2.4, catalogued package PNG (RGBA or indexed). Async LOAD/PREFETCH decodes PNG on the asset worker into premultiplied BGRA8888, with the same bounded/coalescing resident cache, cancellation, pixel and temporary budgets. PNG limits: dimensions <=1024, pixels <=65536, encoded bytes <=524288. QUERY describes the original PNG; successful LOAD/PREFETCH returns the native prepared descriptor. Decoding retains no compressed file copy and preserves the catalog/manifest identity.",
     "streaming": "Optional image-decode feature. DECODE_IMAGE borrows a component-owned FILE(3) or STREAM(2), reading from its current position until EOF. Host reads at most 4096 bytes per poll in 1024-byte stack chunks; WOULD_BLOCK yields. No encoded data passes through Guest memory. Caller keeps source exclusively readable until completion/cancel; the service never closes it. Pending codec state is reclaimed on error/cancel/stop. Success returns an immutable IMAGE handle with independent lifetime. Formats and native/hardware decoder choice belong to optional Host adapters, not this ABI.",
     "limits": {
       "max_width": 1024,
@@ -139,5 +139,6 @@
       "name": "image-frames",
       "bit": 1
     }
-  ]
+  ],
+  "prepared_rgb565_png": "Since Assets 2.5: image encoding 10 is a PXR1 header plus PNG payload. Width/height describe the PNG and decoded-bytes is width*height*2. Limits: dimensions <=1024, pixels <=131072, PNG payload <=524288 bytes. LOAD/PREFETCH decodes directly into RGB565 using the shared cache/pixel budget; no full BGRA intermediate exists. Any non-opaque pixel rejects the load. QUERY describes the stored encoding; successful LOAD/PREFETCH describes prepared RGB565 pixels. Raw PXR encodings and ordinary alpha PNG remain unchanged."
 }

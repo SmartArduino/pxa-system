@@ -89,6 +89,47 @@ class ResourcesTest(unittest.TestCase):
         with self.assertRaisesRegex(ResourceError, "channels exceed alpha"):
             compile_resources(self.app, self.package)
 
+    def test_png_image_preserves_encoded_file(self):
+        from PIL import Image
+        source = self.app / "source.png"
+        Image.new("RGBA", (3, 2), (120, 60, 30, 80)).save(source)
+        self.declare([{"path": "assets/pose.png", "kind": "image",
+                       "source": source.name, "encoding": "png"}])
+        index = compile_resources(self.app, self.package)
+        self.assertEqual((self.package / "assets/pose.png").read_bytes(), source.read_bytes())
+        self.assertEqual(RECORD.unpack_from(index, 16)[1:5], (4, 6, 3, 2))
+
+    def test_png_rgb565_exact_words_and_header(self):
+        from PIL import Image
+        from io import BytesIO
+        image = Image.new('RGB', (256, 256))
+        image.putdata([((word>>11)*255//31, ((word>>5)&63)*255//63, (word&31)*255//31)
+                       for word in range(65536)])
+        image.save(self.app/'source.png')
+        self.declare([{'path':'assets/room.pxr','kind':'image',
+                       'source':'source.png','encoding':'png-rgb565'}])
+        index = compile_resources(self.app,self.package)
+        data = (self.package/'assets/room.pxr').read_bytes()
+        self.assertEqual(FILE_HEADER.unpack_from(data), (b'PXR1',1,0,4,10,256,256,131072,32,0))
+        self.assertEqual(RECORD.unpack_from(index,16)[1:5], (4,10,256,256))
+        output = Image.open(BytesIO(data[32:])).convert('RGB')
+        words = lambda im: [((r>>3)<<11)|((g>>2)<<5)|(b>>3) for r,g,b in im.getdata()]
+        self.assertEqual(words(image),words(output))
+        # Indexing must reject header/PNG dimension disagreement.
+        broken = bytearray(data);struct.pack_into('<H',broken,12,255)
+        struct.pack_into('<I',broken,16,255*256*2)
+        (self.package/'assets/room.pxr').write_bytes(broken)
+        with self.assertRaises(ResourceError):
+            build_index(self.package)
+
+    def test_png_rgb565_rejects_transparency(self):
+        from PIL import Image
+        Image.new('RGBA',(2,2),(20,40,60,254)).save(self.app/'source.png')
+        self.declare([{'path':'assets/room.pxr','kind':'image',
+                       'source':'source.png','encoding':'png-rgb565'}])
+        with self.assertRaisesRegex(ResourceError,'opaque'):
+            compile_resources(self.app,self.package)
+
     def test_sources_and_outputs_cannot_escape(self):
         (self.app / "data").write_bytes(b"x")
         for field, value in [("source", "../data"), ("path", "assets/../bad.pxr"),

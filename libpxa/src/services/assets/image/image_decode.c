@@ -201,7 +201,9 @@ pxa_status_t pxa_image_decoder_create(const pxa_image_decode_options_t *options,
     *out = NULL;
     if (!options || !pixels || !temporary || !backend || !backend->codecs || !backend->count ||
         !options->max_width || !options->max_height || options->max_width > 1024 ||
-        options->max_height > 1024 || !options->max_pixels || options->max_pixels > 65536 ||
+        options->max_height > 1024 || !options->max_pixels ||
+        options->opaque_rgb565 > 1 ||
+        options->max_pixels > (options->opaque_rgb565 ? 131072u : 65536u) ||
         !options->max_encoded_bytes || options->max_encoded_bytes > 524288)
         return PXA_STATUS_INVALID_ARGUMENT;
     if ((options->formats & ~7u) || options->max_animation_pixels > 65536 ||

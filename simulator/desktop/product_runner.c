@@ -3957,6 +3957,10 @@ static int run_product_simulator(const options_t *input,
             wc.max_catalog_bytes = 64u * 1024u;
             wc.metadata_allocator = &host.resource_allocators[PXA_MEMORY_EXTERNAL][PXA_MEMORY_METADATA];
             wc.temporary_allocator = &host.resource_allocators[PXA_MEMORY_EXTERNAL][PXA_MEMORY_TEMPORARY];
+            static const pxa_image_codec_t *const cached_image_codecs[] = {&pxa_stream_png_codec};
+            static const pxa_image_backend_t cached_image_backend = {cached_image_codecs, 1};
+            wc.image_allocator = &host.resource_allocators[PXA_MEMORY_EXTERNAL][PXA_MEMORY_IMAGE];
+            wc.image_backend = &cached_image_backend;
             wc.allocator_context = &host;
             wc.allocate = asset_allocate;
             wc.release = raster_asset_free;

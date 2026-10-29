@@ -138,7 +138,7 @@ static pxa_status_t request_asset(pxa_asset_cache_t *cache, uint64_t owner,
     *ticket = 0;
     if (!valid(cache) || owner == 0 || package_key == NULL ||
         memory_class >= PXA_ASSET_MEMORY_CLASSES ||
-        pxa_asset_object_required_bytes(info) == 0 ||
+        pxa_asset_resident_required_bytes(info) == 0 ||
         !pxa_asset_path_valid(info->path) || info->file == NULL ||
         info->file->sha256 == NULL || info->file->size != info->stored_bytes)
         return PXA_STATUS_INVALID_ARGUMENT;
@@ -209,7 +209,7 @@ pxa_status_t pxa_asset_cache_inspect(pxa_asset_cache_t *cache, uint64_t owner,
     if (!state) return PXA_STATUS_INVALID_ARGUMENT;
     memset(state, 0, sizeof(*state));
     if (!valid(cache) || !owner || !package_key || memory_class >= PXA_ASSET_MEMORY_CLASSES ||
-        !pxa_asset_object_required_bytes(info) || !pxa_asset_path_valid(info->path) ||
+        !pxa_asset_resident_required_bytes(info) || !pxa_asset_path_valid(info->path) ||
         !info->file || !info->file->sha256 || info->file->size != info->stored_bytes)
         return PXA_STATUS_INVALID_ARGUMENT;
     if (cache->closing) return PXA_STATUS_BAD_STATE;
@@ -394,7 +394,7 @@ pxa_status_t pxa_asset_cache_next_job(pxa_asset_cache_t *cache, pxa_asset_job_t 
     }
     cache_entry_t *e = &cache->entries[next];
     cls = e->memory_class;
-    need = pxa_asset_object_required_bytes(&e->info);
+    need = pxa_asset_resident_required_bytes(&e->info);
     owner_used = owner_charge(cache, e->owner, cls);
     owner_full = need > cache->config.owner_limit[cls] ||
         owner_used > cache->config.owner_limit[cls] - need;

@@ -32,6 +32,9 @@ typedef struct {
     void (*before_read)(void *context);
     uint32_t read_delay_us; /* Simulator/test storage latency per read. */
     const pxa_memory_allocator_t *temporary_allocator; /* Required for blob reads. */
+    /* Optional cached PNG LOAD. Descriptors remain alive through destroy(). */
+    const pxa_memory_allocator_t *image_allocator;
+    const pxa_image_backend_t *image_backend;
 } pxa_posix_asset_worker_config_t;
 
 /* Activation-only: verifies/loads the bounded catalog. The single worker starts

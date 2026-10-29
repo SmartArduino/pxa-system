@@ -71,10 +71,17 @@ static pxa_status_t validate_info(const pxa_asset_info_t *info) {
     } else if (info->kind == PXA_ASSET_IMAGE) {
         if (!info->width || !info->height) return PXA_STATUS_PROTOCOL_ERROR;
         if (info->encoding == PXA_ASSET_ENCODING_PNG) {
-            /* Metadata discovery only. PNG is not a resident LOAD format. */
+            /* PNG source metadata; the resident descriptor is prepared later. */
             expected = (uint64_t)info->width * info->height * 4;
             if (info->format_version || info->payload_offset || info->stored_bytes < 33 ||
                 expected > UINT32_MAX || info->decoded_bytes != expected)
+                return PXA_STATUS_PROTOCOL_ERROR;
+        } else if (info->encoding == PXA_ASSET_ENCODING_PNG_RGB565) {
+            expected = (uint64_t)info->width * info->height * 2;
+            if (info->format_version != 1 || info->payload_offset != PXA_ASSET_FILE_HEADER_BYTES ||
+                info->width > 1024 || info->height > 1024 || expected > 262144 ||
+                info->decoded_bytes != expected || info->stored_bytes < 65 ||
+                info->stored_bytes > PXA_ASSET_FILE_HEADER_BYTES + 524288u)
                 return PXA_STATUS_PROTOCOL_ERROR;
         } else {
             if (info->format_version != 1 || info->payload_offset != PXA_ASSET_FILE_HEADER_BYTES ||

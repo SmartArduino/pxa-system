@@ -141,8 +141,13 @@ static void *run_worker(void *context) {
                 file.gate=w->config.storage_gate; file.cancel_context=&wrapped; file.cancelled=load_cancelled;
                 pxa_asset_input_t input = {&wrapped, load_read, load_cancelled, NULL};
                 w->allocation_class = job.memory_class; w->allocation_kind = job.info.kind;
-                status = pxa_asset_load_resident(&job.info, &input, pixel_allocate,
-                                                pixel_release, w, &asset);
+                if (job.info.encoding == PXA_ASSET_ENCODING_PNG ||
+                    job.info.encoding == PXA_ASSET_ENCODING_PNG_RGB565)
+                    status = pxa_asset_load_png(&job.info, &input, w->config.image_allocator,
+                        w->config.temporary_allocator, w->config.image_backend, &asset);
+                else
+                    status = pxa_asset_load_resident(&job.info, &input, pixel_allocate,
+                                                    pixel_release, w, &asset);
                 pxa_posix_asset_close(&file);
             }
             pthread_mutex_lock(&w->mutex);
@@ -315,7 +320,7 @@ pxa_status_t pxa_posix_asset_worker_inspect(pxa_posix_asset_worker_t *w,
     memset(state, 0, sizeof(*state));
     pxa_status_t status = pxa_asset_catalog_find(&w->catalog, path, &info);
     if (status != PXA_STATUS_OK) return status;
-    if (!pxa_asset_object_required_bytes(&info)) return PXA_STATUS_UNSUPPORTED;
+    if (!pxa_asset_resident_required_bytes(&info)) return PXA_STATUS_UNSUPPORTED;
     pthread_mutex_lock(&w->mutex);
     status = pxa_asset_cache_inspect(w->cache, owner, w->package_key, &info,
         pxa_asset_default_memory_class(&info), state);

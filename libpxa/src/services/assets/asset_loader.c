@@ -1,4 +1,118 @@
 #include "pxa/asset_loader.h"
+#include "asset_object_internal.h"
+#include <string.h>
+static pxa_status_t read_exact(const pxa_asset_input_t *, uint8_t *, size_t);
+
+pxa_status_t pxa_asset_resident_info(const pxa_asset_info_t *source, pxa_asset_info_t *out) {
+    if (!source || !out) return PXA_STATUS_INVALID_ARGUMENT;
+    *out = *source;
+    if (source->kind == PXA_ASSET_IMAGE && (source->encoding == PXA_ASSET_ENCODING_PNG ||
+        source->encoding == PXA_ASSET_ENCODING_PNG_RGB565)) {
+        const int opaque = source->encoding == PXA_ASSET_ENCODING_PNG_RGB565;
+        const uint32_t offset = opaque ? PXA_ASSET_FILE_HEADER_BYTES : 0;
+        if (source->format_version != (opaque ? 1 : 0) || source->payload_offset != offset ||
+            source->stored_bytes < offset+33 || source->stored_bytes > offset+524288 ||
+            !source->width || !source->height ||
+            source->width > 1024 || source->height > 1024 ||
+            (uint32_t)source->width * source->height > (opaque ? 131072u : 65536u) ||
+            source->decoded_bytes != (uint32_t)source->width * source->height * (opaque ? 2u : 4u))
+            return PXA_STATUS_UNSUPPORTED;
+        out->encoding = opaque ? PXA_ASSET_ENCODING_RGB565 : PXA_ASSET_ENCODING_BGRA8888_PREMULTIPLIED;
+        out->format_version = 1;
+        out->payload_offset = PXA_ASSET_FILE_HEADER_BYTES;
+        out->stored_bytes = out->decoded_bytes + PXA_ASSET_FILE_HEADER_BYTES;
+    }
+    return pxa_asset_object_required_bytes(out) ? PXA_STATUS_OK : PXA_STATUS_UNSUPPORTED;
+}
+
+size_t pxa_asset_resident_required_bytes(const pxa_asset_info_t *info) {
+    pxa_asset_info_t resident;
+    return pxa_asset_resident_info(info, &resident) ? 0 : pxa_asset_object_required_bytes(&resident);
+}
+
+pxa_status_t pxa_asset_load_png(const pxa_asset_info_t *info, const pxa_asset_input_t *input,
+    const pxa_memory_allocator_t *pixels, const pxa_memory_allocator_t *temporary,
+    const pxa_image_backend_t *backend, pxa_asset_object_t **output) {
+    if (!output) return PXA_STATUS_INVALID_ARGUMENT;
+    *output = NULL;
+    pxa_asset_info_t resident;
+    if (!info || (info->encoding != PXA_ASSET_ENCODING_PNG && info->encoding != PXA_ASSET_ENCODING_PNG_RGB565) ||
+        pxa_asset_resident_info(info, &resident) || !input || !input->read)
+        return PXA_STATUS_INVALID_ARGUMENT;
+    if (!pixels || !temporary || !backend) return PXA_STATUS_UNSUPPORTED;
+    const int opaque = info->encoding == PXA_ASSET_ENCODING_PNG_RGB565;
+    uint32_t consumed = 0;
+    if (opaque) {
+        uint8_t header[PXA_ASSET_FILE_HEADER_BYTES];
+        pxa_asset_info_t checked;
+        pxa_status_t checked_status = read_exact(input, header, sizeof(header));
+        if (!checked_status) checked_status = pxa_asset_file_header(header, sizeof(header), info->stored_bytes, &checked);
+        if (checked_status) return checked_status;
+        if (!pxa_asset_info_equal(info, &checked)) return PXA_STATUS_PROTOCOL_ERROR;
+        consumed = sizeof(header);
+    }
+    pxa_image_decode_options_t options = {
+        .max_width=info->width, .max_height=info->height,
+        .max_pixels=(uint32_t)info->width * info->height,
+        .max_encoded_bytes=info->stored_bytes-consumed, .formats=1,
+        .opaque_rgb565=(uint8_t)opaque};
+    pxa_image_decoder_t *decoder = NULL;
+    pxa_status_t status = pxa_image_decoder_create(&options, pixels, temporary, backend, &decoder);
+    uint8_t buffer[1024];
+    while (!status) {
+        if (input->cancelled && input->cancelled(input->context)) {
+            status = PXA_STATUS_CANCELLED; break;
+        }
+        size_t count = 0, capacity = info->stored_bytes - consumed;
+        if (capacity > sizeof(buffer)) capacity = sizeof(buffer);
+        /* One final bounded read proves EOF, including exact-size inputs. */
+        status = input->read(input->context, buffer, capacity ? capacity : 1, &count);
+        if (status) break;
+        if (count > capacity) { status = PXA_STATUS_PROTOCOL_ERROR; break; }
+        if (!count) {
+            if (consumed != info->stored_bytes) status = PXA_STATUS_IO_ERROR;
+            break;
+        }
+        consumed += (uint32_t)count;
+        size_t at = 0;
+        while (!status && at < count) {
+            if (input->cancelled && input->cancelled(input->context)) {
+                status = PXA_STATUS_CANCELLED; break;
+            }
+            size_t n = pxa_image_decoder_input_budget(decoder);
+            if (n > count-at) n = count-at;
+            status = pxa_image_decoder_write(decoder, (pxa_bytes_t){buffer+at,n});
+            at += n;
+            if (input->yield) input->yield(input->context);
+        }
+    }
+    pxa_decoded_image_t decoded = {0};
+    if (!status) status = pxa_image_decoder_finish(decoder, &decoded);
+    if (!status && (!decoded.image || decoded.source_width != info->width ||
+        decoded.source_height != info->height || decoded.info.width != info->width ||
+        decoded.info.height != info->height ||
+        decoded.info.encoding != (opaque ? PXA_ASSET_ENCODING_RGB565 : PXA_ASSET_ENCODING_BGRA8888)))
+        status = PXA_STATUS_PROTOCOL_ERROR;
+    if (!status && input->cancelled && input->cancelled(input->context)) status = PXA_STATUS_CANCELLED;
+    if (!status) {
+        /* Private decoder output has no published consumers yet. Match the
+         * offline PXR conversion exactly, including transparent edge pixels. */
+        if (!opaque) {
+            pxa_asset_object_view_t view;
+            pxa_asset_object_view(decoded.image, &view);
+            uint8_t *data = (uint8_t *)view.data;
+            for (size_t at=0; at<view.bytes; at+=4)
+                for (unsigned c=0;c<3;++c)
+                    data[at+c]=(uint8_t)(((unsigned)data[at+c]*data[at+3]+127)/255);
+            decoded.image->encoding = PXA_ASSET_ENCODING_BGRA8888_PREMULTIPLIED;
+        }
+        *output = decoded.image;
+        decoded.image = NULL;
+    }
+    pxa_asset_object_release(decoded.image);
+    pxa_image_decoder_destroy(decoder);
+    return status;
+}
 
 static pxa_status_t read_exact(const pxa_asset_input_t *input,
                                 uint8_t *buffer, size_t bytes) {

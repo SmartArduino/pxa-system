@@ -27,7 +27,8 @@ static void begin(pngle_t *png, uint32_t w, uint32_t h) {
      * not source area; retain an area limit to bound decompression work. */
     s->status = !w || !h || w > PNGLE_MAX_DIMENSION || h > PNGLE_MAX_DIMENSION || w > PNGLE_MAX_PIXELS / h
                     ? PXA_STATUS_LIMIT_EXCEEDED
-                    : pxa_image_target_begin(s->target, w, h, 1);
+                    : pxa_image_target_begin(s->target, w, h,
+                        !pxa_image_target_options(s->target)->opaque_rgb565);
     pxa_image_target_dimensions(s->target, &s->output_width, &s->output_height);
 }
 static void done(pngle_t *png) {
@@ -42,6 +43,10 @@ static void pixel(pngle_t *png, uint32_t x, uint32_t y, uint32_t w, uint32_t h,
     if (s->status)
         return;
     ++s->pixels_seen;
+    if (pxa_image_target_options(s->target)->opaque_rgb565 && rgba[3] != 255) {
+        s->status = PXA_STATUS_PROTOCOL_ERROR;
+        return;
+    }
     if (y != s->row_y || h != s->row_h) {
         s->row_y = y;
         s->row_h = h;

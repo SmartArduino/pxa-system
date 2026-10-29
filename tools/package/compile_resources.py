@@ -102,7 +102,8 @@ def compile_declared(app, package):
                         archive.addfile(info, stream)
             require(output.stat().st_size <= 0xffffffff, "resource archive exceeds format limit")
             continue
-        require(output.suffix == ".pxr" and str(output) not in outputs and
+        png_image = item.get("kind") == "image" and item.get("encoding") == "png"
+        require(output.suffix == (".png" if png_image else ".pxr") and str(output) not in outputs and
                 not output.exists(), "duplicate or colliding compiled resource")
         outputs.add(str(output))
         source = checked_path(app, item.get("source"))
@@ -125,9 +126,21 @@ def compile_declared(app, package):
             require(set(item) <= {"path", "kind", "source", "encoding", "width", "height"},
                     "invalid image fields")
             encoding = item.get("encoding", "bgra8888")
-            require(encoding in ("rgb565", "bgra8888", "bgra8888-premultiplied"),
+            require(encoding in ("png", "png-rgb565", "rgb565", "bgra8888", "bgra8888-premultiplied"),
                     "unsupported UI image encoding")
-            if encoding == "bgra8888-premultiplied":
+            if encoding == "png":
+                require(set(item) == {"path", "kind", "source", "encoding"} and
+                        source.suffix.lower() == ".png", "invalid PNG image fields")
+                from PIL import Image
+                with Image.open(source) as image:
+                    require(image.format == "PNG" and 0 < image.width <= 1024 and
+                            0 < image.height <= 1024 and image.width * image.height <= 65536 and
+                            source.stat().st_size <= 524288, "PNG image exceeds resident limits")
+                    image.verify()
+                output.parent.mkdir(parents=True, exist_ok=True)
+                output.write_bytes(source.read_bytes())
+                continue
+            elif encoding == "bgra8888-premultiplied":
                 require(set(item) == {"path", "kind", "source", "encoding", "width", "height"},
                         "premultiplied UI image requires explicit dimensions")
                 width, height = item["width"], item["height"]
@@ -150,18 +163,34 @@ def compile_declared(app, package):
                             "UI image dimensions exceed 4096x4096")
                     rgba = image.convert("RGBA")
                     width, height = image.width, image.height
-                    if encoding == "rgb565":
+                    if encoding in ("rgb565", "png-rgb565"):
                         require(rgba.getchannel("A").getextrema() == (255, 255),
                                 "RGB565 UI images must be opaque; use bgra8888 for alpha")
                         payload = bytearray()
                         for r, g, b, _ in struct.iter_unpack("4B", rgba.tobytes()):
                             payload += struct.pack("<H", ((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3))
                         encoded = 2
+                        if encoding == "png-rgb565":
+                            require(width <= 1024 and height <= 1024 and width * height <= 131072,
+                                    "PNG RGB565 image exceeds resident limits")
+                            from io import BytesIO
+                            # Expand already-selected RGB565 words for PNG storage.
+                            # Decoding RGB888 -> RGB565 recovers every word exactly.
+                            rgb = bytes(c for (word,) in struct.iter_unpack("<H", payload)
+                                        for c in (((word >> 11) * 255 + 15) // 31,
+                                                  (((word >> 5) & 63) * 255 + 31) // 63,
+                                                  ((word & 31) * 255 + 15) // 31))
+                            stream = BytesIO()
+                            Image.frombytes("RGB", (width, height), rgb).save(stream, format="PNG", optimize=True)
+                            payload = stream.getvalue()
+                            require(len(payload) <= 524288, "PNG RGB565 data exceeds encoded limit")
+                            encoded = 10
                     else:
                         payload = rgba.tobytes("raw", "BGRA")
                         encoded = 7
+            decoded_bytes = width * height * 2 if encoded == 10 else len(payload)
             data = FILE_HEADER.pack(b"PXR1", 1, 0, 4, encoded,
-                width, height, len(payload), FILE_HEADER.size, 0) + payload
+                width, height, decoded_bytes, FILE_HEADER.size, 0) + payload
         elif kind == "texture":
             require(set(item) == {"path", "kind", "source", "palette"},
                     "image texture requires an explicit shared RGB565 palette")
@@ -209,9 +238,16 @@ def describe(path):
         require(offset == 32 and kind in (1, 2, 4), "invalid PXR1 kind/offset")
         require((kind == 1 and enc == 1 and 0 < width <= 256 and 0 < height <= 256) or
                 (kind == 2 and enc == 2 and width == 256 and 0 < height <= 256) or
-                (kind == 4 and enc in (2, 7, 8) and 0 < width <= 4096 and 0 < height <= 4096),
+                (kind == 4 and enc in (2, 7, 8, 10) and 0 < width <= 4096 and 0 < height <= 4096),
                 "invalid PXR1 encoding or dimensions")
-        pixel_bytes = 1 if enc == 1 else 2 if enc == 2 else 4
+        pixel_bytes = 1 if enc == 1 else 2 if enc in (2, 10) else 4
+        if enc == 10:
+            png = header[offset:]
+            require(width <= 1024 and height <= 1024 and width * height <= 131072 and
+                    decoded == width * height * 2 and 65 <= size <= 524288 + offset and
+                    png[:8] == b"\x89PNG\r\n\x1a\n" and png[8:16] == b"\x00\x00\x00\rIHDR" and
+                    struct.unpack_from(">II", png, 16) == (width, height), "invalid PNG RGB565 image")
+            return kind, enc, width, height, size, decoded, 1, offset
         require(decoded == width * height * pixel_bytes and
                 size == decoded + offset, "PXR1 size mismatch")
         return kind, enc, width, height, size, decoded, 1, offset

@@ -389,7 +389,7 @@ static void encode_info(uint8_t output[PXA_ASSETS_INFO_BYTES], const pxa_asset_i
     pxa_write_u16(output + 6, info->height);
     pxa_write_u32(output + 8, info->stored_bytes);
     pxa_write_u32(output + 12, info->decoded_bytes);
-    pxa_write_u32(output + 16, (uint32_t)pxa_asset_object_required_bytes(info));
+    pxa_write_u32(output + 16, (uint32_t)pxa_asset_resident_required_bytes(info));
 }
 
 static pxa_status_t image_control(pxa_assets_service_t *s, pxa_component_t component,
@@ -582,13 +582,14 @@ static pxa_status_t control(void *context, pxa_runtime_t *runtime, pxa_component
     }
     if (status == PXA_STATUS_OK) encode_info(encoded, &info);
     if (status == PXA_STATUS_OK && (message->opcode == PXA_ASSETS_LOAD || message->opcode == PXA_ASSETS_PREFETCH)) {
-        if (info.kind != data[2] || !pxa_asset_object_required_bytes(&info)) status = PXA_STATUS_UNSUPPORTED;
+        pxa_asset_info_t resident;
+        if (info.kind != data[2] || pxa_asset_resident_info(&info, &resident)) status = PXA_STATUS_UNSUPPORTED;
         else {
             p->component = component;
             p->request_token = message->request_token;
             p->operation = (uint8_t)message->opcode;
             p->identity = pxa_request_identity(runtime, component, message->request_token);
-            memcpy(p->data.info, encoded, sizeof(encoded));
+            encode_info(p->data.info, &resident);
             status = pxa_status_normalize((p->operation == PXA_ASSETS_PREFETCH ? s->config.backend.prefetch : s->config.backend.request)(s->config.backend.context,
                 component, path, pxa_asset_default_memory_class(&info),
                 &p->ticket));

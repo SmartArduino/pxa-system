@@ -427,6 +427,21 @@ packaging; the resulting PXR file contains directly usable pixels. These files
 can be larger than PNG, but loading does not retain compressed and decoded
 copies or need a runtime PNG workspace.
 
+Assets 2.4 also accepts `encoding: "png"` with an output path ending in `.png`.
+The packager preserves the source PNG bytes. `LOAD` and `PREFETCH` decode the
+installed PNG on the resource worker into premultiplied BGRA8888 and reuse the
+same resident cache, cancellation and memory budgets as PXR. Limits are 1024
+pixels per dimension, 65536 pixels total and 512 KiB encoded data. `QUERY`
+describes the compressed PNG; successful `LOAD`/`PREFETCH` describes the native
+prepared image. Apps using this path must require Assets 2.4. Keep opaque
+backgrounds as RGB565 when their smaller resident pixel footprint matters.
+Assets 2.5 adds `encoding: "png-rgb565"` with a `.pxr` output path: a PXR1
+header (encoding 10) wraps losslessly PNG-compressed RGB565 colors. The worker
+decodes directly into RGB565, with no full BGRA intermediate. Limits are 1024
+per dimension, 131072 pixels, and 524288 PNG payload bytes. Transparent pixels
+are rejected. Apps must require Assets 2.5; QUERY describes the stored encoding,
+and LOAD/PREFETCH returns the prepared RGB565 descriptor.
+
 Submit `pxa_assets_load_image(token, "assets/icon.pxr")`, then parse the usual
 Assets LOAD completion. On success, add
 `pxa_ui_set_image(&transaction, image_node, result.handle)` to a UI transaction.

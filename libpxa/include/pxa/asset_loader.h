@@ -2,6 +2,7 @@
 #define PXA_ASSET_LOADER_H
 
 #include "pxa/raster_assets.h"
+#include "pxa/image_decode.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -20,6 +21,18 @@ typedef struct {
     /* Optional cooperative scheduling point after each bounded read. */
     void (*yield)(void *context);
 } pxa_asset_input_t;
+
+/* Prepared metadata/allocation for resident LOAD. PNG sources become native
+ * premultiplied BGRA or opaque RGB565; catalog/source metadata is unchanged. */
+pxa_status_t pxa_asset_resident_info(const pxa_asset_info_t *, pxa_asset_info_t *);
+size_t pxa_asset_resident_required_bytes(const pxa_asset_info_t *);
+
+/* Worker-only PNG decode, bounded source reads and temporary workspace. Uses
+ * the existing optional codec backend and the shared pixel/temporary budgets.
+ * The final image joins the same cache as PXR; no compressed copy is retained. */
+pxa_status_t pxa_asset_load_png(const pxa_asset_info_t *, const pxa_asset_input_t *,
+    const pxa_memory_allocator_t *pixels, const pxa_memory_allocator_t *temporary,
+    const pxa_image_backend_t *, pxa_asset_object_t **);
 
 /* Header lives on the stack; all payload reads go directly into the final
  * allocation. No whole-file compressed/input copy or Guest buffer exists.

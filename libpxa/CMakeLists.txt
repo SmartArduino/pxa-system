@@ -725,6 +725,12 @@ if(PXA_BUILD_TESTS)
     endif()
     target_link_libraries(pxa_assets_service_test PRIVATE pxa)
     add_test(NAME pxa_assets_service_test COMMAND pxa_assets_service_test)
+    if(Python3_Interpreter_FOUND AND TARGET pxa_adapters_image)
+        add_executable(pxa_png_asset_test tests/png_asset_test.c)
+        target_link_libraries(pxa_png_asset_test PRIVATE pxa_adapters_image)
+        add_test(NAME pxa_png_asset_test COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_png_asset.py $<TARGET_FILE:pxa_png_asset_test>)
+    endif()
     if(Python3_Interpreter_FOUND AND TARGET pxa_adapters_image_posix AND TARGET pxa_adapters_lvgl)
         # Optional microbenchmark; never linked into a product or run as a
         # timing assertion in CI. Input generation lives in tests/.

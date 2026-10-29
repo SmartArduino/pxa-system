@@ -39,6 +39,8 @@ extern "C" {
 /* B,G,R channels already multiplied by A; LVGL consumes them without a
  * per-frame conversion or a second alpha multiplication. */
 #define PXA_ASSET_ENCODING_BGRA8888_PREMULTIPLIED 8u
+/* PXR1 header followed by PNG, decoded directly into native opaque RGB565. */
+#define PXA_ASSET_ENCODING_PNG_RGB565 10u
 #define PXA_ASSET_IMAGE_MAX_DIMENSION 4096u
 
 typedef struct {

@@ -14,6 +14,9 @@ typedef struct {
     /* Zero preserves the ordinary limits. Applied only to sequence codecs. */
     uint32_t max_animation_pixels, max_animation_encoded_bytes;
     uint8_t formats; /* zero=any; otherwise PNG=1, JPEG=2, GIF=4 */
+    /* Host-only prepared-image hint. No Guest wire flag enables this mode.
+     * PNG must be fully opaque; direct RGB565 output avoids a BGRA copy. */
+    uint8_t opaque_rgb565;
 } pxa_image_decode_options_t;
 typedef struct {
     pxa_asset_object_t *image;
