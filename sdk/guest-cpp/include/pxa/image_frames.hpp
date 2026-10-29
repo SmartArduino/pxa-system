@@ -5,8 +5,8 @@
 namespace pxa {
 
 struct ImageAnimationLimits {
-    // Zero uses the ordinary decode ceiling. Only sequence codecs apply these
-    // limits, so a smaller GIF budget does not reduce PNG/JPEG resolution.
+    // Zero preserves the 65536-pixel frame ceiling and ordinary encoded limit.
+    // Only sequence codecs apply these; GIF limits do not reduce PNG/JPEG detail.
     std::uint32_t max_pixels = 0, max_encoded_bytes = 0;
 };
 struct ImageFrameInfo {

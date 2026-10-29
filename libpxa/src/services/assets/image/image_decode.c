@@ -95,7 +95,7 @@ pxa_status_t pxa_image_target_begin(pxa_image_target_t *d, uint32_t width, uint3
     }
     if (!w)
         w = 1;
-    /* Integer rescaling preserves aspect; this loop is at most 1024 steps. */
+    /* Integer rescaling preserves aspect; this loop is at most 2048 steps. */
     while (w * h > d->options.max_pixels) {
         if (w >= h && w > 1) {
             --w;
@@ -200,10 +200,10 @@ pxa_status_t pxa_image_decoder_create(const pxa_image_decode_options_t *options,
         return PXA_STATUS_INVALID_ARGUMENT;
     *out = NULL;
     if (!options || !pixels || !temporary || !backend || !backend->codecs || !backend->count ||
-        !options->max_width || !options->max_height || options->max_width > 1024 ||
-        options->max_height > 1024 || !options->max_pixels ||
+        !options->max_width || !options->max_height || options->max_width > 2048 ||
+        options->max_height > 2048 || !options->max_pixels ||
         options->opaque_rgb565 > 1 ||
-        options->max_pixels > (options->opaque_rgb565 ? 131072u : 65536u) ||
+        options->max_pixels > 1048576u ||
         !options->max_encoded_bytes || options->max_encoded_bytes > 524288)
         return PXA_STATUS_INVALID_ARGUMENT;
     if ((options->formats & ~7u) || options->max_animation_pixels > 65536 ||
@@ -264,7 +264,8 @@ pxa_status_t pxa_image_decoder_write(pxa_image_decoder_t *d, pxa_bytes_t input) 
             d->input_budget = 0;
             pxa_image_decode_options_t ordinary = d->target.options;
             if (c->next) {
-                uint32_t pixels = ordinary.max_animation_pixels, bytes = ordinary.max_animation_encoded_bytes;
+                uint32_t pixels = ordinary.max_animation_pixels ? ordinary.max_animation_pixels : 65536u;
+                uint32_t bytes = ordinary.max_animation_encoded_bytes;
                 if (pixels && pixels < d->target.options.max_pixels) d->target.options.max_pixels = pixels;
                 if (bytes && bytes < d->target.options.max_encoded_bytes) d->target.options.max_encoded_bytes = bytes;
             }

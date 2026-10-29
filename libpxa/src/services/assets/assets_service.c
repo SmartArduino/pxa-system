@@ -620,7 +620,8 @@ pxa_status_t pxa_assets_service_register(pxa_assets_service_t *s) {
     ops.major = PXA_ASSETS_SERVICE_MAJOR;
     ops.minor = PXA_ASSETS_SERVICE_MINOR;
     if (s->config.image_allocator && s->config.image_temporary_allocator && s->config.image_backend)
-        ops.features |= PXA_ASSETS_FEATURE_IMAGE_DECODE | PXA_ASSETS_FEATURE_IMAGE_FRAMES;
+        ops.features |= PXA_ASSETS_FEATURE_IMAGE_DECODE | PXA_ASSETS_FEATURE_IMAGE_FRAMES |
+                        PXA_ASSETS_FEATURE_LARGE_IMAGES;
     ops.context = s;
     ops.control = control;
     ops.component_stopped = component_stopped;

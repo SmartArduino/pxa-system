@@ -11,7 +11,8 @@ typedef struct pxa_image_target pxa_image_target_t;
 typedef struct {
     uint16_t max_width, max_height;
     uint32_t max_pixels, max_encoded_bytes;
-    /* Zero preserves the ordinary limits. Applied only to sequence codecs. */
+    /* Sequence-only: zero preserves the 65536-pixel frame ceiling and the
+     * ordinary encoded limit, independently of the larger static budget. */
     uint32_t max_animation_pixels, max_animation_encoded_bytes;
     uint8_t formats; /* zero=any; otherwise PNG=1, JPEG=2, GIF=4 */
     /* Host-only prepared-image hint. No Guest wire flag enables this mode.

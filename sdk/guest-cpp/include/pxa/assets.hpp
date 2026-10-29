@@ -143,8 +143,8 @@ private:
     friend class ImageDecodeService;
     friend class DecodedImage;
     static bool valid_image_options(ImageDecodeOptions options) noexcept {
-        return options.max_width && options.max_width <= 1024 && options.max_height &&
-            options.max_height <= 1024 && options.max_pixels && options.max_pixels <= 65536 &&
+        return options.max_width && options.max_width <= 2048 && options.max_height &&
+            options.max_height <= 2048 && options.max_pixels && options.max_pixels <= 1048576 &&
             options.max_encoded_bytes && options.max_encoded_bytes <= 524288 &&
             !(std::to_underlying(options.formats) & ~7u);
     }

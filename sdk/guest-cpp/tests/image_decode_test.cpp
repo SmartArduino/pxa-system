@@ -16,8 +16,8 @@ extern "C" std::int32_t pxa_test_control(const std::uint8_t *data, std::uint32_t
         token = pxa::wire::get64(p + 4);
         assert(pxa::wire::get16(p + 2) == 6 && length == 44);
         assert(pxa::wire::get64(p + 20) == 700 && pxa::wire::get16(p + 28) == 2);
-        assert(pxa::wire::get16(p + 30) == 0 && pxa::wire::get16(p + 32) == 320);
-        assert(pxa::wire::get32(p + 36) == 32768 && pxa::wire::get32(p + 40) == 131072);
+        assert(pxa::wire::get16(p + 30) == 0 && pxa::wire::get16(p + 32) == (mode == 5 ? 2048 : 320));
+        assert(pxa::wire::get32(p + 36) == (mode == 5 ? 1048576 : 32768) && pxa::wire::get32(p + 40) == 131072);
     } else {
         assert(pxa::wire::get16(p) == 1);
         if (pxa::wire::get16(p + 2) == 1)
@@ -38,17 +38,25 @@ struct ImageApp {
         pxa::HttpExchange invalid(context.transport(), source_requests, 701);
         auto bad = co_await context.assets().decode_image(std::move(invalid), {.max_width = 0});
         assert(!bad && bad.error() == pxa::Error::invalid_argument && !invalid);
+        pxa::HttpExchange too_wide(context.transport(), source_requests, 702);
+        auto width_error = co_await context.assets().decode_image(std::move(too_wide), {.max_width=2049});
+        assert(!width_error && width_error.error()==pxa::Error::invalid_argument && !too_wide);
+        pxa::HttpExchange too_many(context.transport(), source_requests, 703);
+        auto pixel_error = co_await context.assets().decode_image(std::move(too_many), {.max_pixels=1048577});
+        assert(!pixel_error && pixel_error.error()==pxa::Error::invalid_argument && !too_many);
         pxa::HttpExchange source(context.transport(), source_requests, 700);
-        auto pending = context.assets().decode_image(std::move(source));
+        auto pending = context.assets().decode_image(std::move(source),
+            mode == 5 ? pxa::ImageDecodeOptions{.max_width=2048,.max_height=2048,.max_pixels=1048576}
+                      : pxa::ImageDecodeOptions{});
         assert(!source); // Captured immediately, even before starting the lazy task.
         auto image = co_await std::move(pending);
-        if (mode >= 2)
+        if (mode >= 2 && mode < 5)
             assert(!image);
         else {
             assert(image && image->handle() == 800);
             const auto &info = image->descriptor();
-            assert(info.kind == pxa::AssetKind::image && info.width == 64 && info.height == 36);
-            assert(info.source_width == 320 && info.source_height == 180 &&
+            assert(info.kind == pxa::AssetKind::image && info.width == (mode == 5 ? 680 : 64) && info.height == (mode == 5 ? 1274 : 36));
+            assert(info.source_width == (mode == 5 ? 680 : 320) && info.source_height == (mode == 5 ? 1274 : 180) &&
                    info.source_bytes == 1234);
         }
         finished = true;
@@ -77,7 +85,7 @@ static void background() {
     assert(pxa_app_on_event(reinterpret_cast<const std::uint8_t *>(p.data()), p.size()) == 1);
 }
 int main() {
-    for (mode = 0; mode < 5; ++mode) {
+    for (mode = 0; mode < 6; ++mode) {
         closed.clear();
         requests = cancellations = 0;
         finished = false;
@@ -95,6 +103,15 @@ int main() {
         pxa::wire::put16(decoded.data() + 32, 320);
         pxa::wire::put16(decoded.data() + 34, 180);
         pxa::wire::put32(decoded.data() + 36, 1234);
+        if (mode == 5) {
+            pxa::wire::put16(decoded.data() + 16, 680);
+            pxa::wire::put16(decoded.data() + 18, 1274);
+            pxa::wire::put32(decoded.data() + 20, 680u*1274u*2u+32u);
+            pxa::wire::put32(decoded.data() + 24, 680u*1274u*2u);
+            pxa::wire::put32(decoded.data() + 28, 680u*1274u*2u+128u);
+            pxa::wire::put16(decoded.data() + 32, 680);
+            pxa::wire::put16(decoded.data() + 34, 1274);
+        }
         if (mode == 1)
             background();
         if (mode == 2)
@@ -110,6 +127,8 @@ int main() {
         assert(finished == (mode != 1) && cancellations == (mode == 1));
         assert(std::count(closed.begin(), closed.end(), 700) == 1);
         assert(std::count(closed.begin(), closed.end(), 701) == 1);
+        assert(std::count(closed.begin(), closed.end(), 702) == 1);
+        assert(std::count(closed.begin(), closed.end(), 703) == 1);
         assert(std::count(closed.begin(), closed.end(), 800) == (mode != 4));
         const auto count = closed.size();
         pxa_app_stop(0);

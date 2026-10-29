@@ -12,7 +12,7 @@ extern "C" {
 
 #define PXA_ASSETS_SERVICE_ID UINT16_C(21)
 #define PXA_ASSETS_SERVICE_MAJOR UINT16_C(2)
-#define PXA_ASSETS_SERVICE_MINOR UINT16_C(5)
+#define PXA_ASSETS_SERVICE_MINOR UINT16_C(6)
 #define PXA_ASSETS_QUERY UINT16_C(1)
 #define PXA_ASSETS_LOAD UINT16_C(2)
 #define PXA_ASSETS_PREFETCH UINT16_C(3)
@@ -29,6 +29,11 @@ extern "C" {
  * image-frames extension below attaches state to the current image. */
 #define PXA_ASSETS_FEATURE_IMAGE_DECODE UINT64_C(1)
 #define PXA_ASSETS_FEATURE_IMAGE_FRAMES UINT64_C(2)
+/* 2.6, also available as a backport feature: static decode accepts sides up to
+ * 2048 and up to 1048576 pixels. Allocations still obey the Host/owner budget;
+ * no storage is reserved at startup. Sequence frames remain <=65536 pixels.
+ * Older Hosts reject the larger options; clients may retry with legacy limits. */
+#define PXA_ASSETS_FEATURE_LARGE_IMAGES UINT64_C(4)
 #define PXA_ASSETS_IMAGE_FORMATS_MASK UINT16_C(7)
 #define PXA_ASSETS_IMAGE_WITH_FRAMES UINT16_C(256)
 #define PXA_ASSETS_DECODE_IMAGE UINT16_C(6)
