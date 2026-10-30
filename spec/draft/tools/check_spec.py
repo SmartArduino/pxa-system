@@ -221,6 +221,38 @@ def validate_core_envelope(document: dict[str, object]) -> None:
             "v1 envelope golden vector is stale")
 
 
+def validate_haptics_contract(document: dict[str, object]) -> None:
+    source_root = ROOT.parent.parent
+    host = (source_root / "libpxa/include/pxa/haptics.h").read_text()
+    guest = (source_root / "sdk/guest-c/include/pxa_haptics.h").read_text()
+    require(document["resource_type"] == 16 and
+            document["permission"] == {"name": "haptics.play", "scope": "device.default"},
+            "Haptics resource or permission mismatch")
+    require(document["features"] == [] and
+            document["capabilities"] == [{"name": "vibrate", "bit": 0},
+                                         {"name": "amplitude", "bit": 1}],
+            "Haptics device capabilities must not become activation features")
+    expected = {"capabilities": 1, "open": 2, "vibrate": 3, "stop": 4}
+    require({item["name"]: item["id"] for item in document["opcodes"]} == expected,
+            "Haptics opcode registry mismatch")
+    for name, opcode in expected.items():
+        require(f"PXA_HAPTICS_{name.upper()} UINT16_C({opcode})" in host and
+                f"PXA_HAPTICS_{name.upper()} {opcode}u" in guest,
+                "Haptics Host/Guest opcode mismatch")
+    golden = load_json(GOLDEN / "haptics-vectors.json")
+    require(golden["schema"] == "pxa-haptics-golden-0.1", "Haptics golden schema mismatch")
+    require(len(golden["vectors"]) == 4, "Haptics golden inventory mismatch")
+    for vector in golden["vectors"]:
+        payload = parse_hex(vector["payload_hex"], "Haptics payload")
+        wire = struct.pack("<HHQII", 23, expected[vector["name"]],
+                           vector["request_token"], len(payload), 0) + payload
+        require(wire == parse_hex(vector["wire_hex"], "Haptics envelope"),
+                "Haptics golden wire mismatch")
+    pulse = parse_hex(golden["vectors"][2]["payload_hex"], "Haptics pulse")
+    require(struct.unpack("<QIHH", pulse) == (0x100000006, 100, 1000, 0),
+            "Haptics pulse layout mismatch")
+
+
 def validate_specs() -> tuple[int, int]:
     for output, renderer in RENDERERS:
         require(output.is_file() and
@@ -236,7 +268,7 @@ def validate_specs() -> tuple[int, int]:
             "machine specifications must use the .json extension")
     specs = {path.stem.removeprefix("pxa-"): load_json(path) for path in paths}
     require(set(specs) == {
-        "assets", "audio", "clock", "container", "core", "device", "fs", "ime", "ipc",
+        "assets", "audio", "clock", "container", "core", "device", "fs", "haptics", "ime", "ipc",
         "game-render", "log", "net", "package", "permission", "sensor", "storage", "surface", "ui",
         "wasi", "window", "work", "store-installer",
     }, "machine specification inventory mismatch")
@@ -269,8 +301,8 @@ def validate_specs() -> tuple[int, int]:
         "work": (13, "0.1.0"), "wasi": (14, "0.1.0"),
         "device": (15, "0.2.0"), "surface": (16, "0.2.0"),
         "game-render": (18, "1.5.0"), "log": (19, "0.1.0"),
-        "store-installer": (20, "0.8.0"), "assets": (21, "2.3.0"),
-        "ime": (22, "0.1.0"),
+        "store-installer": (20, "0.8.0"), "assets": (21, "2.6.0"),
+        "ime": (22, "0.1.0"), "haptics": (23, "0.1.0"),
     }
     core_services = {item["name"]: item for item in core["services"]}
     for name, (service_id, version) in expected_services.items():
@@ -290,6 +322,7 @@ def validate_specs() -> tuple[int, int]:
                 f"Core and {name} service versions differ")
         validate_named_registries(document, name)
 
+    validate_haptics_contract(specs["haptics"])
     validate_render_contract(specs["game-render"])
 
     package = specs["package"]

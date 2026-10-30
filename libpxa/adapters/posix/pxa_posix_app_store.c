@@ -64,13 +64,23 @@ static pxa_status_t paths(const pxa_posix_app_store_config_t *config,
     if (!slash || strchr(slash + 1, '/') ||
         !safe_publisher(locator, (size_t)(slash - locator)) ||
         !safe_component(slash + 1, strlen(slash + 1))) return PXA_STATUS_INVALID_ARGUMENT;
-    root_size = strlen(config->root); locator_size = strlen(locator);
+    char physical[PXA_POSIX_APP_LOCATOR_BYTES];
+    const char *disk_locator=locator;
+    if(config->map_locator) {
+        pxa_status_t status=config->map_locator(config->locator_context,locator,0,physical,sizeof(physical));
+        if(status!=PXA_STATUS_OK)return status;
+        slash=strchr(physical,'/');
+        if(!slash || strchr(slash+1,'/') || !safe_publisher(physical,(size_t)(slash-physical)) ||
+            !safe_component(slash+1,strlen(slash+1)))return PXA_STATUS_DENIED;
+        disk_locator=physical;
+    }
+    root_size = strlen(config->root); locator_size = strlen(disk_locator);
     if (!root_size || config->root[0] != '/' || config->root[root_size - 1] == '/' ||
         root_size + locator_size + sizeof("/apps//private") > sizeof(home->home))
         return PXA_STATUS_LIMIT_EXCEEDED;
     memset(home, 0, sizeof(*home));
     strcpy(home->locator, locator);
-    snprintf(home->home, sizeof(home->home), "%s/apps/%s", config->root, locator);
+    snprintf(home->home, sizeof(home->home), "%s/apps/%s", config->root, disk_locator);
     return PXA_STATUS_OK;
 }
 
@@ -82,7 +92,15 @@ static int child_directory(int parent, const char *name, int create) {
 static pxa_status_t open_home(const pxa_posix_app_store_config_t *config,
     const char *locator, int create, int *output) {
     char publisher[65];
+    char physical[PXA_POSIX_APP_LOCATOR_BYTES];
+    if(config->map_locator) {
+        pxa_status_t status=config->map_locator(config->locator_context,locator,0,physical,sizeof(physical));
+        if(status!=PXA_STATUS_OK)return status;
+        locator=physical;
+    }
     const char *slash = strchr(locator, '/');
+    if(!slash || strchr(slash+1,'/') || !safe_publisher(locator,(size_t)(slash-locator)) ||
+        !safe_component(slash+1,strlen(slash+1)))return PXA_STATUS_DENIED;
     int root, apps, directory, home;
     *output = -1;
     memcpy(publisher, locator, (size_t)(slash - locator));
@@ -688,6 +706,12 @@ pxa_status_t pxa_posix_app_store_visit(const pxa_posix_app_store_config_t *confi
             int directory;
             if (!safe_component(app->d_name, strlen(app->d_name))) continue;
             snprintf(locator, sizeof(locator), "%.64s/%.64s", name, app->d_name);
+            if(config->map_locator) {
+                char logical[PXA_POSIX_APP_LOCATOR_BYTES];
+                status=config->map_locator(config->locator_context,locator,1,logical,sizeof(logical));
+                if(status!=PXA_STATUS_OK) {++*invalid;continue;}
+                strcpy(locator,logical);
+            }
             status = paths(config, locator, &home);
             if (status != PXA_STATUS_OK) { ++*invalid; continue; }
             directory = child_directory(publisher_fd, app->d_name, 0);

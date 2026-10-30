@@ -5,6 +5,11 @@
  * thread per request. curl owns HTTP framing, redirects and TLS, while the
  * service keeps validation, permissions and body streaming. */
 
+/* getifaddrs interface flags are a BSD extension on glibc. Keep them visible
+ * when a consumer selects the POSIX.1-2008 namespace before including us. */
+#ifndef _DEFAULT_SOURCE
+#define _DEFAULT_SOURCE 1
+#endif
 #include "desktop_net.h"
 
 #include <errno.h>

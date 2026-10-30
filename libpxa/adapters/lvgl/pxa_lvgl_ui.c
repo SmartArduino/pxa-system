@@ -1899,7 +1899,15 @@ static int prepare_alpha_plane(pxa_lvgl_ui_t *ui, const lv_area_t *area, int sta
 static void alpha_plane_blend_pixel(pxa_lvgl_ui_t *ui, size_t index,
                                     lv_color32_t source) {
     const uint8_t source_alpha = source.alpha;
+    if (source_alpha == 0) return;
     const uint8_t destination_alpha = ui->alpha.values[index];
+    /* A cleared pixel and an opaque source require no source-over divisions.
+     * Preserve straight color/alpha exactly, including antialiased glyphs. */
+    if (destination_alpha == 0 || source_alpha == 255) {
+        ui->alpha.pixels[index] = pack565(source.red, source.green, source.blue);
+        ui->alpha.values[index] = source_alpha;
+        return;
+    }
     const uint16_t destination = ui->alpha.pixels[index];
     const uint16_t inverse = (uint16_t)(255u - source_alpha);
     const uint16_t output_alpha = (uint16_t)(source_alpha +
@@ -1907,7 +1915,6 @@ static void alpha_plane_blend_pixel(pxa_lvgl_ui_t *ui, size_t index,
     uint32_t red;
     uint32_t green;
     uint32_t blue;
-    if (source_alpha == 0) return;
     if (output_alpha == 0) return;
     red = (uint32_t)source.red * source_alpha +
           ((uint32_t)expand5(destination >> 11) * destination_alpha *
@@ -2009,26 +2016,33 @@ static int render_alpha_plane(pxa_lvgl_ui_t *ui, int staging, int *created_plane
             break;
         }
         lv_obj_get_coords(node->object, &area);
-        for (uint32_t y = 0; y < snapshot->header.h; ++y) {
+        /* Clip once, rather than recomputing four bounds for every pixel of
+         * a full-screen transparent Canvas. Snapshot extents may exceed the
+         * object's area (shadows), so retain the existing plane clipping. */
+        const int32_t offset_x = area.x1 - ui->alpha.x;
+        const int32_t offset_y = area.y1 - ui->alpha.y;
+        const int32_t first_x = LV_MAX(0, -offset_x);
+        const int32_t first_y = LV_MAX(0, -offset_y);
+        const int32_t end_x = LV_MIN((int32_t)snapshot->header.w,
+                                     (int32_t)ui->alpha.width - offset_x);
+        const int32_t end_y = LV_MIN((int32_t)snapshot->header.h,
+                                     (int32_t)ui->alpha.height - offset_y);
+        for (int32_t y = first_y; y < end_y; ++y) {
             const lv_color32_t *source = (const lv_color32_t *)(
                 (const uint8_t *)snapshot->data +
                 (size_t)y * snapshot->header.stride);
-            for (uint32_t x = 0; x < snapshot->header.w; ++x) {
-                const int32_t plane_x = area.x1 + (int32_t)x - ui->alpha.x;
-                const int32_t plane_y = area.y1 + (int32_t)y - ui->alpha.y;
-                if (plane_x >= 0 && plane_y >= 0 &&
-                    plane_x < ui->alpha.width && plane_y < ui->alpha.height) {
+            const size_t row = (size_t)(offset_y + y) * ui->alpha.width;
+            for (int32_t x = first_x; x < end_x; ++x) {
+                if (source[x].alpha != 0) {
+                    const uint16_t plane_x = (uint16_t)(offset_x + x);
+                    const uint16_t plane_y = (uint16_t)(offset_y + y);
                     alpha_plane_blend_pixel(
-                        ui, (size_t)plane_y * ui->alpha.width + plane_x,
+                        ui, row + plane_x,
                         source[x]);
-                    if (source[x].alpha != 0) {
-                        const uint16_t px = (uint16_t)plane_x;
-                        const uint16_t py = (uint16_t)plane_y;
-                        if (px < content_min_x) content_min_x = px;
-                        if (py < content_min_y) content_min_y = py;
-                        if (px > content_max_x) content_max_x = px;
-                        if (py > content_max_y) content_max_y = py;
-                    }
+                    if (plane_x < content_min_x) content_min_x = plane_x;
+                    if (plane_y < content_min_y) content_min_y = plane_y;
+                    if (plane_x > content_max_x) content_max_x = plane_x;
+                    if (plane_y > content_max_y) content_max_y = plane_y;
                 }
             }
         }

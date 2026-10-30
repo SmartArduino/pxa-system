@@ -36,6 +36,37 @@ value with unit `milli-celsius`, for example, is signed degrees Celsius times
 by coalescing is permitted. Results, revocations and all
 permission state remain reliable under the Core mailbox rules.
 
+The unit registry also assigns `nano-tesla` value 5 for magnetic field vectors:
+1000 represents 1 microtesla. Accelerometers use unit 2 (micrometres/s²),
+gyroscopes unit 3 (microradians/s). Dimensions follow the descriptor's axis
+order; three-axis samples are ordered X, Y, Z. Canonical motion semantics use
+the device frame below; other vector semantics document their own frame.
+`micro-volts` (6) and `micro-amperes` (7) represent electrical measurements.
+Battery current is signed; the board documents its charge/discharge polarity.
+A battery temperature channel uses the existing `milli-celsius` (1).
+
+## Device axes for semantic motion
+
+`motion.acceleration` and `motion.angular-velocity` describe the device, not
+the sensor chip's mounting. With an integrated display in its native
+orientation, +X points toward the top edge, +Y toward the left edge and +Z
+out of the screen. These axes form a right-handed frame. Devices without a
+display document equivalent housing reference edges. The reference remains
+fixed when an App changes its view or rotates its measurement interface.
+
+The Host's board provider converts chip axes into this frame before publishing
+either channel. Acceleration and angular velocity use the same proper rotation;
+changing a single sign to compensate one App's display is not a mounting
+rotation. Units, timestamps and vector lengths are preserved by this conversion.
+Angular velocity follows the right-hand rule: rotation viewed from the +Z
+screen side is positive when counterclockwise. A stationary device with its
+screen facing upward reports approximately +9,806,650 micrometres/s² on Z;
+screen-down reports the negative value. Stationary angular velocity is near zero.
+
+UI pixel Y increasing downward is a presentation convention and does not
+change this physical frame. Apps may project to screen coordinates or apply a
+user-selected measurement rotation, without chip- or board-specific remapping.
+
 ## Core 1.0 binding
 
 Under `pxa.core.v1`, Subscribe request tag 3 holds a native 64-bit Permission

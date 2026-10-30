@@ -3712,6 +3712,8 @@ static void test_storage_service(void) {
     free(storage_workspace);
 }
 
+#include "storage_async_test.inc"
+
 static void test_fs_service(void) {
     static const uint8_t valid_utf8_path[] = {
         'n', 'o', 't', 'e', 's', '/', 0xe6, 0x97, 0xa5, 0xe8, 0xae, 0xb0,
@@ -6062,6 +6064,7 @@ int main(void) {
     test_permission_v1_handle();
     test_ipc_service();
     test_storage_service();
+    test_storage_async();
     test_fs_service();
     test_fs_scoped_service();
     test_fs_v1_native_handles();

@@ -1,0 +1,54 @@
+{
+  "schema": "pxa-haptics-spec-0.1",
+  "status": "draft",
+  "service": {
+    "name": "haptics",
+    "id": 23,
+    "major": 0,
+    "minor": 1,
+    "patch": 0
+  },
+  "opcodes": [
+    {
+      "name": "capabilities",
+      "id": 1,
+      "request": "empty",
+      "result": "flags:u32|max-duration-ms:u32"
+    },
+    {
+      "name": "open",
+      "id": 2,
+      "request": "permission-handle:u64",
+      "result": "actuator:u64"
+    },
+    {
+      "name": "vibrate",
+      "id": 3,
+      "request": "actuator:u64|duration-ms:u32|amplitude:u16|reserved:u16=0",
+      "result": "empty"
+    },
+    {
+      "name": "stop",
+      "id": 4,
+      "request": "actuator:u64",
+      "result": "empty"
+    }
+  ],
+  "permission": {
+    "name": "haptics.play",
+    "scope": "device.default"
+  },
+  "resource_type": 16,
+  "protocol_version": "0.1.0",
+  "capabilities": [
+    {
+      "name": "vibrate",
+      "bit": 0
+    },
+    {
+      "name": "amplitude",
+      "bit": 1
+    }
+  ],
+  "features": []
+}

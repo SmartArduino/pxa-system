@@ -46,7 +46,7 @@ def build(source: Path, output: Path, key: Path, *, allow_dirty=False):
             'files': files}, sort_keys=True, indent=2) + '\n')
         archive(stage.parent, [stage.name], output / names[0], epoch)
     manifest = {'schema': 'pxa-ai-distribution-1', 'version': version,
-                'devkit': {'minimum_release': '0.5.0', 'tested_release': '0.5.0', 'core_major': 2},
+                'devkit': {'minimum_release': '0.5.0', 'tested_release': (source / 'VERSION').read_text().strip(), 'core_major': 2},
                 'source': {'commit': commit, 'dirty': dirty},
                 'archive': {'file': names[0], 'url': f'https://github.com/SmartArduino/pxa-system/releases/download/ai-kit-v{version}/{names[0]}', 'size': (output / names[0]).stat().st_size, 'sha256': sha(output / names[0])}}
     (output / names[1]).write_text(json.dumps(manifest, sort_keys=True, indent=2) + '\n')

@@ -11,6 +11,8 @@ import re
 import struct
 import sys
 import time
+import unicodedata
+import warnings
 from urllib.error import HTTPError
 from urllib.parse import urlparse
 import uuid
@@ -36,18 +38,115 @@ def server_origin(server):
     return server.rstrip('/')
 
 
-def api(server, path, value=None):
+def api(server, path, value=None, *, method=None, credential=None):
     data = json.dumps(value).encode() if value is not None else None
     try:
-        with request(server + path, data=data, method='POST' if data else 'GET',
-                     headers={'Accept': 'application/json', **({'Content-Type': 'application/json'} if data else {})}) as response:
+        with request(server + path, data=data, method=method or ('POST' if data else 'GET'),
+                     headers={'Accept': 'application/json', **({'Content-Type': 'application/json'} if data else {}),
+                              **({'Authorization': 'Bearer ' + credential['token']} if credential else {})}) as response:
             return json.load(response)
     except HTTPError as error:
+        if error.code == 401 and credential:
+            raise CredentialRejected('Upload authorization expired or was revoked. Run store authorize again.') from error
         if error.code in (400, 429):
             result = json.load(error)
             if result.get('error') in ('authorization_pending', 'slow_down', 'expired_token', 'access_denied', 'rate_limited'):
                 return result
         raise ToolError(f'Store request failed ({error.code}); check account permissions and the server response') from error
+
+
+def listing(project):
+    path = project / 'store.json'
+    value = json.loads(path.read_text()) if path.is_file() else {}
+    if not isinstance(value, dict):
+        raise ToolError('store.json must be an object')
+    if 'tags' in value:
+        if not isinstance(value['tags'], list) or not all(isinstance(tag, str) for tag in value['tags']):
+            raise ToolError('store.json tags must be a list of labels')
+        labels = []
+        for raw in value['tags']:
+            tag = unicodedata.normalize('NFKC', raw).strip().removeprefix('#').strip()
+            if any(unicodedata.category(c) in ('Cc', 'Cf', 'Cs') for c in tag) or re.search('[,，、;；]', tag):
+                raise ToolError('Tags cannot contain separators or control characters')
+            tag = ' '.join(tag.split())
+            if len(tag) > 24:
+                raise ToolError('Each tag must have at most 24 characters')
+            if tag and tag.casefold() not in [v.casefold() for v in labels]:
+                labels.append(tag)
+        if len(labels) > 10:
+            raise ToolError('Use at most 10 tags')
+        value['tags'] = labels
+    for field in ('kind', 'category'):
+        if field in value:
+            if not isinstance(value[field], str):
+                raise ToolError(f'store.json {field} must be a string')
+            value[field] = value[field].strip().lower()
+    for field in ('icon', 'cover'):
+        if field in value and value[field] is not None and (not isinstance(value[field], str) or not value[field]):
+            raise ToolError(f'store.json {field} must be a nonempty image path or null to skip upload')
+    return value
+
+
+def prepare(environment, project, *, server='https://app.doit.am', icon=None, cover=None,
+            screenshots=(), skip_icon=False, skip_cover=False):
+    """Read-only listing/media preflight. All files are checked before any upload."""
+    from PIL import Image, ImageOps
+    server = server_origin(server)
+    project = environment.project(project)
+    metadata = listing(project)
+    spec = api(server, '/api/v2/creator/publishing-spec')
+    if spec.get('schema') != 'pxa-publishing-spec-1':
+        raise ToolError('The store did not return a supported publishing specification')
+    taxonomy = spec['taxonomy']
+    kind = metadata.get('kind')
+    category = metadata.get('category', '')
+    if (kind is not None and kind not in [v['value'] for v in taxonomy['kinds']]) or (category and not any(
+            (kind is None or v['kind'] == kind) and v['value'] == category for v in taxonomy['categories'])):
+        raise ToolError('Choose a valid kind and category from the store publishing specification')
+    selected = {'icon': icon, 'cover': cover}
+    omitted, needs_choice, notes, images = [], [], [], []
+    for name, skip in [('icon', skip_icon), ('cover', skip_cover)]:
+        if skip and selected[name]:
+            raise ToolError(f'Cannot both upload and skip {name}')
+        if skip:
+            selected[name] = None
+            omitted.append(name)
+        elif selected[name] is None:
+            if name in metadata and metadata[name] is None:
+                omitted.append(name)
+            elif metadata.get(name):
+                selected[name] = project / metadata[name]
+            else:
+                needs_choice.append(name)
+    files = [(kind, value) for kind, value in selected.items() if value]
+    files += [('screenshot', filename) for filename in screenshots]
+    if len(screenshots) > spec['media']['screenshot']['max_count']:
+        raise ToolError('Too many store screenshots')
+    for media_kind, filename in files:
+        path = environment.project(filename)
+        policy = spec['media'][media_kind]
+        if not path.is_file() or not 0 < path.stat().st_size <= policy['max_bytes']:
+            raise ToolError(f'{media_kind} file is missing, empty or exceeds the store upload limit')
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter('error', Image.DecompressionBombWarning)
+                with Image.open(path) as opened:
+                    if opened.format not in spec['media']['formats']:
+                        raise ToolError('Store images must be PNG, JPEG or WebP')
+                    if opened.width * opened.height > spec['media']['max_pixels']:
+                        raise ToolError('Store image exceeds the decoded pixel limit')
+                    opened.verify()
+                with Image.open(path) as opened:
+                    dimensions = ImageOps.exif_transpose(opened).size
+        except (OSError, ValueError, Image.DecompressionBombError, Image.DecompressionBombWarning) as error:
+            raise ToolError(f'Cannot decode {media_kind} image: {path.name}') from error
+        if media_kind in ('icon', 'cover'):
+            width, height = policy['recommended_width'], policy['recommended_height']
+            if dimensions[0] * height != dimensions[1] * width:
+                notes.append(f'{media_kind}: recommended {width}x{height}; current {dimensions[0]}x{dimensions[1]}')
+        images.append({'kind': media_kind, 'path': str(path), 'width': dimensions[0], 'height': dimensions[1]})
+    return {'listing': metadata, 'specification': spec, 'images': images,
+            'omitted': omitted, 'needs_choice': needs_choice, 'warnings': notes}
 
 
 def package_identity(environment, package):
@@ -103,14 +202,13 @@ def authorize(environment, project, package, *, server='https://app.doit.am', ke
     metadata = json.loads((project / 'package.json').read_text())
     if metadata['id'] != identity['app_id']:
         raise ToolError('The project and signed package have different app identities')
-    listing_path = project / 'store.json'
-    listing = json.loads(listing_path.read_text()) if listing_path.is_file() else {}
+    listing_data = listing(project)
     payload = {'client_name': 'PXA Agent Kit', 'app_id': identity['app_id'],
                'lineage_root_key_id': identity['root'], 'publisher_spki': base64.b64encode(public).decode(),
-               'name': listing.get('name') or metadata.get('name') or identity['app_id'],
-               'summary': listing.get('summary') or (metadata.get('description') or '使用 PXA 创作的应用')[:200],
-               'description': listing.get('description', ''), 'kind': listing.get('kind', 'app'),
-               'category': listing.get('category', '')}
+               'name': listing_data.get('name') or metadata.get('name') or identity['app_id'],
+               'summary': listing_data.get('summary') or (metadata.get('description') or '使用 PXA 创作的应用')[:200],
+               'description': listing_data.get('description', ''), 'kind': listing_data.get('kind', 'app'),
+               'category': listing_data.get('category', ''), 'tags': listing_data.get('tags', [])}
     grant = api(server, '/api/v2/creator/authorize', payload)
     if 'error' in grant:
         raise ToolError('Creator authorization could not start: ' + grant['error'])
@@ -201,7 +299,8 @@ def upload(server, endpoint, credential, filename, *, field='package', extra=Non
     return result, before
 
 
-def publish(environment, project, package, *, reference=None, server='https://app.doit.am', icon=None, screenshots=(), changelog=''):
+def publish(environment, project, package, *, reference=None, server='https://app.doit.am', icon=None,
+            cover=None, screenshots=(), skip_icon=False, skip_cover=False, changelog=''):
     from .scope import enforce
     enforce(environment.workspace)
     server = server_origin(server)
@@ -214,12 +313,18 @@ def publish(environment, project, package, *, reference=None, server='https://ap
         raise ToolError('Authorize this app with store authorize first; no token is needed in the prompt or command line')
     credential = json.loads(path.read_text())
     environment.call(['publish', package, '--check-only'])
+    prepared = prepare(environment, project, server=server, icon=icon, cover=cover, screenshots=screenshots,
+                       skip_icon=skip_icon, skip_cover=skip_cover)
+    if prepared['needs_choice']:
+        raise ToolError('Choose images or explicitly skip upload for: ' + ', '.join(prepared['needs_choice']) +
+                        '. Run store prepare for the specifications; use --skip-icon/--skip-cover to keep existing media.')
     app_id = credential['app_id']
     try:
-        for kind, filename in [('icon', icon), *[('screenshot', path) for path in screenshots]]:
-            if filename:
-                image = environment.project(filename)
-                upload(server, f'/api/v2/apps/{app_id}/media', credential, image, field='image', extra={'kind': kind})
+        changes = {key: value for key, value in prepared['listing'].items() if key in ('kind', 'category', 'tags')}
+        if changes:
+            api(server, f'/api/v2/apps/{app_id}/listing', changes, method='PATCH', credential=credential)
+        for item in prepared['images']:
+            upload(server, f'/api/v2/apps/{app_id}/media', credential, item['path'], field='image', extra={'kind': item['kind']})
         result, sha = upload(server, f'/api/v2/apps/{app_id}/releases', credential, package, extra={'changelog': changelog})
     except CredentialRejected:
         credential.pop('token', None)
@@ -229,4 +334,6 @@ def publish(environment, project, package, *, reference=None, server='https://ap
     if result.get('sha256') != sha or result.get('status') != 'pending':
         raise ToolError('The store did not acknowledge the exact signed package as pending review')
     return {'app_id': app_id, 'status': 'pending_review', 'sha256': sha,
-            'dashboard_url': credential['dashboard_url'], 'publicly_listed': False}
+            'dashboard_url': credential['dashboard_url'], 'publicly_listed': False,
+            'media_uploaded': [item['kind'] for item in prepared['images']], 'media_omitted': prepared['omitted'],
+            'media_needs_choice': prepared['needs_choice'], 'warnings': prepared['warnings']}

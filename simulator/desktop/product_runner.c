@@ -70,6 +70,7 @@
 #include "desktop_net.h"
 #include "pxa/device.h"
 #include "pxa/sensor.h"
+#include "pxa/haptics.h"
 #include "src/misc/cache/instance/lv_image_cache.h"
 
 #define PRODUCT_CLOCK_SERVICE PXA_CLOCK_SERVICE_ID
@@ -260,6 +261,7 @@ typedef struct {
     pxa_game_render_service_t *game_render;
     pxa_device_service_t *device;
     pxa_sensor_service_t *sensor;
+    pxa_haptics_service_t *haptics;
     int32_t sensor_temperature_milli_celsius;
     pxa_net_service_t *net;
     pxa_lease_service_t *io_waits;
@@ -308,6 +310,10 @@ typedef struct {
     pxa_raster_draw_list_view_t raster_draw_view;
     pxa_raster_telemetry_t raster_telemetry;
     pxa_wamr_engine_t *engine;
+    pxsys_product_simulator_pump_fn native_pump;
+    void *native_pump_context;
+    pxa_lvgl_ui_t *native_ui;
+    pxa_lvgl_ui_theme_t *native_theme;
     pxsys_pxadb_control_t *native_control;
     desktop_controller_t *native_controller;
     uint32_t *native_controller_previous;
@@ -3304,8 +3310,11 @@ static pxa_status_t desktop_native_cooperate(void *context,
     if (host == NULL || host->native_control == NULL ||
         host->native_controller == NULL) return PXA_STATUS_BAD_STATE;
     pxsys_pxadb_control_poll(host->native_control);
+    if (host->native_pump != NULL) host->native_pump(host->native_pump_context);
     if (host->exit_requested || SDL_AtomicGet(&host->home_requested) ||
         lv_display_get_default() == NULL) return PXA_STATUS_CANCELLED;
+    sync_host_theme(host, host->native_ui, host->native_theme);
+    dispatch_lifecycle(host);
     if (SDL_AtomicGet(&host->back_requested) &&
         (desktop_media_import_back(host->media_root) ||
          pxa_window_queue_back(host->window, host->active_component) == PXA_STATUS_OK))
@@ -3394,7 +3403,7 @@ static int run_product_simulator(const options_t *input,
     pxa_service_ops_t clock_service = {0};
     pxa_service_ops_t store_installer_service = {0};
     pxa_wamr_engine_config_t engine_config = {0};
-    pxa_package_service_capability_t capabilities[20] = {0};
+    pxa_package_service_capability_t capabilities[21] = {0};
     pxa_package_activation_profile_t activation = {0};
     pxa_package_host_profile_t profile = {0};
     pxa_activation_plan_t *plan = NULL;
@@ -3410,6 +3419,7 @@ static int run_product_simulator(const options_t *input,
     void *device_workspace = NULL, *net_workspace = NULL;
     void *io_wait_workspace = NULL;
     void *sensor_workspace = NULL;
+    void *haptics_workspace = NULL;
     void *log_workspace = NULL, *assets_workspace = NULL;
     void *plan_workspace = NULL, *coordinator_workspace = NULL;
     uint8_t *encoded = NULL, *public_key = NULL;
@@ -4073,6 +4083,14 @@ static int run_product_simulator(const options_t *input,
                                     &sensor_config, &host.sensor) != PXA_STATUS_OK ||
             pxa_sensor_service_register(host.sensor) != PXA_STATUS_OK) goto done;
     }
+    // The simulator reports the standard service with no physical actuator.
+    {
+        size_t workspace_size = pxa_haptics_service_workspace_size();
+        haptics_workspace = malloc(workspace_size);
+        if (!haptics_workspace || pxa_haptics_service_init(haptics_workspace, workspace_size,
+            host.runtime, host.permissions, NULL, &host.haptics) != PXA_STATUS_OK ||
+            pxa_haptics_service_register(host.haptics) != PXA_STATUS_OK) goto done;
+    }
     if (manifest_uses_service(manifest, PXA_NET_SERVICE_ID)) {
         pxa_lease_limits_t wait_limits;
         pxa_lease_limits_init(&wait_limits);
@@ -4158,8 +4176,9 @@ static int run_product_simulator(const options_t *input,
     engine_config.release_artifact = release_memory; engine_config.allocate_runtime = allocate_memory;
     engine_config.reallocate_runtime = reallocate_memory;
     engine_config.release_runtime = release_memory;
-    /* Embedded launchers keep ownership of their lifecycle pump. */
-    engine_config.cooperate = owns_display ? desktop_native_cooperate : NULL;
+    /* Main-loop Guests also run inside the system shell. Their event waits
+     * must service the shell's controls and lifecycle while owning the stack. */
+    engine_config.cooperate = desktop_native_cooperate;
     engine_workspace = malloc(pxa_wamr_engine_workspace_size(&engine_config));
     if (engine_workspace == NULL || pxa_wamr_engine_init(engine_workspace,
         pxa_wamr_engine_workspace_size(&engine_config), &engine_config, &host.engine,
@@ -4215,7 +4234,9 @@ static int run_product_simulator(const options_t *input,
     capabilities[19].service = PXA_IME_SERVICE_ID;
     capabilities[19].version = (pxa_package_version_t){PXA_IME_SERVICE_MAJOR, PXA_IME_SERVICE_MINOR};
     capabilities[19].features = PXA_IME_FEATURE_ALL;
-    activation.services = capabilities; activation.service_count = 20;
+    capabilities[20].service = PXA_HAPTICS_SERVICE_ID;
+    capabilities[20].version = (pxa_package_version_t){PXA_HAPTICS_SERVICE_MAJOR, PXA_HAPTICS_SERVICE_MINOR};
+    activation.services = capabilities; activation.service_count = 21;
     host.ime_capabilities = &activation; host.ime_profile = &profile;
     profile.target = (pxa_bytes_t){(const uint8_t *)"linux-x86_64", sizeof("linux-x86_64") - 1u};
     profile.engine = (pxa_bytes_t){(const uint8_t *)"wamr", 4};
@@ -4281,6 +4302,10 @@ static int run_product_simulator(const options_t *input,
                                    NULL, NULL))
         goto done;
     host.native_control = &pxadb_control;
+    host.native_pump = pump;
+    host.native_pump_context = pump_context;
+    host.native_ui = lvgl_ui;
+    host.native_theme = &lvgl_config.theme;
     host.native_controller = &controller;
     host.native_controller_previous = &controller_previous;
     host.native_controller_refreshed = &controller_refreshed;
@@ -4496,6 +4521,7 @@ done:
     free(log_workspace); free(game_render_workspace); free(surface_workspace);
     free(device_workspace); free(net_workspace); free(io_wait_workspace);
     free(sensor_workspace);
+    free(haptics_workspace);
     free(ui_workspace); free(window_workspace); free(permission_workspace); free(runtime_workspace); free(manifest_workspace);
     free(fs_service_workspace); free(fs_backend_workspace); free(fs_path); free(fs_parent);
     free(ipc_workspace);

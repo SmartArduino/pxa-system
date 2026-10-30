@@ -37,6 +37,9 @@ def sdk_identity(root: Path) -> dict:
                     *root.glob('tools/package/*.py'), *root.glob('config/*.json'), *root.glob('sdk/guest-c/include/*.h')])
     files = sorted(set(files) | {p for p in (root / 'tools/i18n').rglob('*')
                                 if p.is_file() and '__pycache__' not in p.parts}
+                   | {p for p in (root / 'extensions').rglob('*')
+                      if p.is_file() and '__pycache__' not in p.parts
+                      and p.suffix in ('.h', '.hpp', '.cmake', '.json')}
                    | set(root.glob('config/*.pem')) | set(root.glob('bin/pxa*')))
     return {'release': (root / 'VERSION').read_text().strip(),
             'digest': identity([(str(p.relative_to(root)), digest(p)) for p in files])}

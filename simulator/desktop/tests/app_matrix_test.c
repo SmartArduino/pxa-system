@@ -9,7 +9,7 @@ typedef struct {
     product_host_t *host;
     const char *output;
     uint64_t started, paused_at, visible_before, submitted_before;
-    unsigned stage, density_dpi;
+    unsigned stage, density_dpi, cooperative_pumps;
 } matrix_probe_t;
 
 static void capture_display(const matrix_probe_t *probe) {
@@ -51,29 +51,38 @@ static void pump_probe(void *context) {
     pxa_component_snapshot_t component = {0};
     assert(pxa_component_snapshot(host->runtime, host->active_component, &component) == 0);
     assert(component.state == PXA_COMPONENT_RUNNING);
+    if (pxa_wamr_engine_busy(host->engine)) ++probe->cooperative_pumps;
     const uint64_t now = now_us(NULL);
     assert(now - probe->started < UINT64_C(45000000));
     if (probe->stage == 0 && now - probe->started > UINT64_C(2500000)) {
         probe->visible_before = host->raster_telemetry.visible_frames;
         product_focus_changed(host, false);
-        dispatch_lifecycle(host);
         probe->submitted_before = host->surface_submitted_frames;
         probe->paused_at = now;
         probe->stage = 1;
     } else if (probe->stage == 1 && now - probe->paused_at > UINT64_C(200000)) {
+        assert(host->pending_lifecycle == 2u);
         assert(host->raster_telemetry.visible_frames == probe->visible_before);
         assert(host->surface_submitted_frames == probe->submitted_before);
         product_focus_changed(host, true);
-        dispatch_lifecycle(host);
+        // Back is an application action and may legitimately exit from a
+        // main menu. Keep this generic probe focused on pause/resume; input
+        // actions belong to the application's own interaction scenarios.
         probe->stage = 2;
     } else if (probe->stage == 2 && now - probe->paused_at > UINT64_C(1000000)) {
+        assert(host->pending_lifecycle == 2u);
+        if (host->manifest->components[0].flags & PXA_PACKAGE_COMPONENT_FLAG_MAIN_LOOP)
+            assert(probe->cooperative_pumps != 0);
         pxa_wamr_memory_snapshot_t memory = {0};
         assert(pxa_wamr_engine_memory_snapshot(host->engine, &memory) == 0);
         char path[2048];
         assert(snprintf(path, sizeof(path), "%s.json", probe->output) < (int)sizeof(path));
         FILE *file = fopen(path, "w");
         assert(file != NULL);
-        if (host->surface_registered)
+        // Some apps reserve a gameplay Surface at startup but keep it hidden
+        // while their native UI library/menu is visible (e.g. an empty ROM
+        // library). A registered buffer alone does not imply a submitted frame.
+        if (host->surface_registered && host->surface_layer.visible)
             assert(host->surface_presented_frames != 0);
         fprintf(file, "{\"width\":%u,\"height\":%u,\"density_dpi\":%u,"
                       "\"surface_submitted\":%llu,\"surface_presented\":%llu,"

@@ -59,6 +59,24 @@ pxa_status_t pxa_storage_service_init(
     const pxa_storage_config_t *config, pxa_storage_service_t **output);
 pxa_status_t pxa_storage_service_register(pxa_storage_service_t *service);
 
+/* Optional Host executor. submit must enqueue work in FIFO order on one
+ * serialized worker, without running it on the runtime owner. An accepted
+ * callback runs exactly once; a rejected callback must never run. The Host
+ * wakes its runtime owner after callbacks finish, then calls poll there.
+ * Drain all accepted callbacks before releasing the backend or either
+ * workspace. Workers never call runtime/Guest APIs. The default is synchronous.
+ */
+typedef void (*pxa_storage_work_fn)(void *context);
+typedef pxa_status_t (*pxa_storage_submit_fn)(
+    void *context, pxa_storage_work_fn work, void *work_context);
+size_t pxa_storage_service_async_workspace_size(uint16_t capacity);
+pxa_status_t pxa_storage_service_enable_async(
+    pxa_storage_service_t *service, void *workspace, size_t workspace_size,
+    uint16_t capacity, pxa_storage_submit_fn submit, void *context);
+/* Runtime-owner only. Completion is published only for the original request
+ * identity, including when a component reuses its request token. */
+int pxa_storage_service_poll(pxa_storage_service_t *service);
+
 #ifdef __cplusplus
 }
 #endif

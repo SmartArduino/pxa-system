@@ -277,15 +277,33 @@ def create_server(env):
     @tool()
     def pxa_store_publish(project: str, package: str, icon: str | None = None,
                           screenshots: list[str] | None = None, changelog: str = '',
-                          server_origin: str = 'https://app.doit.am') -> dict:
+                          server_origin: str = 'https://app.doit.am', cover: str | None = None,
+                          skip_icon: bool = False, skip_cover: bool = False) -> dict:
         """Submit the user's authorized signed release and optional images for store review. Does not bypass review."""
         arguments = ['store', 'publish', str(env.project(project)), str(env.project(package)),
                      '--server', server_origin, '--changelog', changelog]
         if icon:
             arguments += ['--icon', str(env.project(icon))]
+        if cover:
+            arguments += ['--cover', str(env.project(cover))]
+        if skip_icon:
+            arguments += ['--skip-icon']
+        if skip_cover:
+            arguments += ['--skip-cover']
         for path in screenshots or []:
             arguments += ['--screenshot', str(env.project(path))]
         return host_job(arguments, timeout=600)
+
+    @tool(annotations=read)
+    def pxa_store_prepare(project: str, icon: str | None = None, cover: str | None = None,
+                          screenshots: list[str] | None = None, skip_icon: bool = False,
+                          skip_cover: bool = False, server_origin: str = 'https://app.doit.am') -> dict:
+        """Read current media specs, categories and tags; validate local images without uploading.
+        For needs_choice, offer generation if available, user-supplied files, or explicit skip.
+        """
+        from .store import prepare
+        return prepare(env, project, server=server_origin, icon=icon, cover=cover,
+                       screenshots=screenshots or (), skip_icon=skip_icon, skip_cover=skip_cover)
 
     return server
 

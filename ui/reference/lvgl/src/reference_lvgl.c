@@ -186,6 +186,8 @@ static const pxsys_resource_entry_t reference_en_resources[] = {
     RESOURCE_ENTRY("settings.apps.empty", "No installed apps"),
     RESOURCE_ENTRY("settings.apps.system", "System app"),
     RESOURCE_ENTRY("settings.apps.user", "User app"),
+    RESOURCE_ENTRY("settings.apps.app_id", "App ID"),
+    RESOURCE_ENTRY("settings.apps.signer", "Signing key"),
     RESOURCE_ENTRY("settings.apps.disabled", "Disabled"),
     RESOURCE_ENTRY("settings.apps.archived", "Archived"),
     RESOURCE_ENTRY("settings.apps.enable", "Enable"),
@@ -359,6 +361,8 @@ static const pxsys_resource_entry_t reference_zh_resources[] = {
     RESOURCE_ENTRY("settings.apps.empty", "没有已安装的应用"),
     RESOURCE_ENTRY("settings.apps.system", "系统应用"),
     RESOURCE_ENTRY("settings.apps.user", "用户应用"),
+    RESOURCE_ENTRY("settings.apps.app_id", "应用 ID"),
+    RESOURCE_ENTRY("settings.apps.signer", "签名指纹"),
     RESOURCE_ENTRY("settings.apps.disabled", "已停用"),
     RESOURCE_ENTRY("settings.apps.archived", "已归档"),
     RESOURCE_ENTRY("settings.apps.enable", "启用"),
@@ -545,6 +549,8 @@ struct pxsys_reference_lvgl {
     lv_timer_t* status_refresh_timer;
     uint8_t status_refresh_pending;
     uint8_t status_rebuild_pending;
+    uint8_t rebuild_suspended;
+    uint8_t rebuild_requested;
     lv_obj_t* navigation_bar;
     lv_obj_t* toast;
     lv_obj_t* toast_label;
@@ -661,6 +667,7 @@ struct pxsys_reference_lvgl {
     int32_t notification_progress;
     int32_t notification_scroll_y;
     navigation_state_t navigation_states[REFERENCE_NAVIGATION_STATE_COUNT];
+    uint32_t launcher_focus_key;
     uint32_t rendered_view_key;
     int32_t navigation_press_x;
     int32_t navigation_press_y;
@@ -1105,7 +1112,6 @@ static uint32_t navigation_object_key(lv_obj_t* content, lv_obj_t* object) {
 }
 
 static uint32_t navigation_view_key(pxsys_reference_lvgl_t* ui) {
-    if (ui->active_page == REFERENCE_PAGE_HOME) return 0;
     uint32_t key = (uint32_t)ui->active_page + 1u;
     if (ui->active_page == REFERENCE_PAGE_FILE_MANAGER) {
         key = navigation_hash(key, navigation_text_key(ui->file_path));
@@ -1177,9 +1183,14 @@ static lv_obj_t* navigation_find_focus(lv_obj_t* content, lv_obj_t* object,
 }
 
 static void navigation_state_restore(pxsys_reference_lvgl_t* ui) {
-    const navigation_state_t* state =
-        navigation_state_find(ui, ui->rendered_view_key);
-    if (state == NULL) return;
+    const navigation_state_t home_state = {
+        .view_key = (uint32_t)REFERENCE_PAGE_HOME + 1u,
+        .focus_key = ui->launcher_focus_key};
+    /* Home is a persistent bookmark, not one of the evictable folder/page
+     * entries. A long visit to Files must not reset the launcher selection. */
+    const navigation_state_t* state = ui->active_page == REFERENCE_PAGE_HOME
+        ? &home_state : navigation_state_find(ui, ui->rendered_view_key);
+    if (state == NULL || (ui->active_page == REFERENCE_PAGE_HOME && !state->focus_key)) return;
     lv_obj_update_layout(ui->content);
     lv_group_t* group = navigation_keypad_group(ui);
     if (state->focus_key != 0 && group != NULL && !ui->locked &&
@@ -1187,6 +1198,13 @@ static void navigation_state_restore(pxsys_reference_lvgl_t* ui) {
         !task_switcher_is_open(ui)) {
         lv_obj_t* target = navigation_find_focus(
             ui->content, ui->content, state->focus_key);
+        if (target == NULL && ui->active_page == REFERENCE_PAGE_HOME &&
+            ui->launcher_count != 0) {
+            size_t index = (size_t)ui->launcher_page *
+                PXSYS_REFERENCE_UI_LAUNCHER_COLUMNS * PXSYS_REFERENCE_UI_LAUNCHER_ROWS;
+            if (index >= ui->launcher_count) index = ui->launcher_count - 1u;
+            target = lv_obj_get_child(ui->content, (int32_t)index);
+        }
         if (target != NULL) {
             /* The product adapter will recollect the rest of the group. Giving
              * it the resolved live target preserves focus across that refresh. */
@@ -1799,7 +1817,8 @@ static void launcher_focused(lv_event_t* event) {
     launcher_item_t* item = lv_event_get_user_data(event);
     if (item == NULL || !ui_valid(item->ui)) return;
     pxsys_reference_lvgl_t* ui = item->ui;
-    if (ui->content == NULL || lv_obj_get_parent(item->tile) != ui->content) return;
+    if (ui->content == NULL || lv_obj_get_parent(item->tile) != ui->content ||
+        ui->rendered_view_key != (uint32_t)REFERENCE_PAGE_HOME + 1u) return;
     const int32_t width = lv_obj_get_width(ui->content);
     if (width <= 0) return;
     const size_t per_page = PXSYS_REFERENCE_UI_LAUNCHER_COLUMNS *
@@ -1808,6 +1827,7 @@ static void launcher_focused(lv_event_t* event) {
      * before scrolling, otherwise SCROLL_END restores the previous page. The
      * current child slot also follows user-reordered launcher icons. */
     ui->launcher_page = (uint16_t)(lv_obj_get_index(item->tile) / per_page);
+    ui->launcher_focus_key = navigation_object_key(ui->content, item->tile);
     lv_obj_scroll_to_x(ui->content, (int32_t)ui->launcher_page * width, LV_ANIM_OFF);
 }
 
@@ -3245,6 +3265,17 @@ static lv_obj_t* make_launcher_tile(pxsys_reference_lvgl_t* ui,
     lv_obj_add_event_cb(tile, launcher_gesture, LV_EVENT_PRESS_LOST, item);
     lv_obj_add_event_cb(tile, launcher_clicked, LV_EVENT_CLICKED, item);
     lv_obj_add_event_cb(tile, launcher_focused, LV_EVENT_FOCUSED, item);
+    /* A stable full-identity bookmark survives app reordering and rejects a
+     * different publisher with the same App ID. This is never display text. */
+    char focus_identity[PXSYS_REFERENCE_MANAGED_APP_IDENTITY_MAX];
+    static const char hex[] = "0123456789abcdef";
+    for (size_t i = 0; i < PXSYS_PUBLISHER_ROOT_BYTES; ++i) {
+        focus_identity[i * 2] = hex[item->identity.publisher_root[i] >> 4];
+        focus_identity[i * 2 + 1] = hex[item->identity.publisher_root[i] & 15];
+    }
+    snprintf(focus_identity + PXSYS_PUBLISHER_ROOT_BYTES * 2,
+             sizeof(focus_identity) - PXSYS_PUBLISHER_ROOT_BYTES * 2, ":%s", item->app_id);
+    navigation_tag_focus(tile, focus_identity);
     return tile;
 }
 
@@ -7235,13 +7266,29 @@ static void show_app_detail(pxsys_reference_lvgl_t* ui,
                        typography_font(ui, PXSYS_TYPOGRAPHY_CAPTION),
                        color_token(ui, PXSYS_COLOR_TEXT_SECONDARY));
     lv_obj_set_width(label, LV_PCT(100));
+    const char *app_id = strchr(app->identity, ':');
+    bool signed_identity = app_id == app->identity + 64 && app_id[1] != '\0';
+    for (size_t i = 0; signed_identity && i < 64; ++i) {
+        const char c = app->identity[i];
+        if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')))
+            signed_identity = false;
+    }
     snprintf(buffer, sizeof(buffer), "%s: %s",
-             translated(ui, "settings.apps.identifier", "Identifier"),
-             app->identity);
+             translated(ui, "settings.apps.app_id", "App ID"),
+             signed_identity ? app_id + 1 : app->identity);
     label = make_label(info, buffer,
                        typography_font(ui, PXSYS_TYPOGRAPHY_CAPTION),
                        color_token(ui, PXSYS_COLOR_TEXT_SECONDARY));
     lv_obj_set_width(label, LV_PCT(100));
+    if (signed_identity) {
+        snprintf(buffer, sizeof(buffer), "%s: %.8s…%.8s",
+                 translated(ui, "settings.apps.signer", "Signing key"),
+                 app->identity, app->identity + 56);
+        label = make_label(info, buffer,
+                           typography_font(ui, PXSYS_TYPOGRAPHY_CAPTION),
+                           color_token(ui, PXSYS_COLOR_TEXT_SECONDARY));
+        lv_obj_set_width(label, LV_PCT(100));
+    }
     const char *state=managed_app_state(ui,app);
     snprintf(buffer, sizeof(buffer), "%s%s%s",
              translated(ui,
@@ -7796,8 +7843,13 @@ static void rebuild(pxsys_reference_lvgl_t* ui) {
     lv_obj_t* navigation;
     lv_obj_t* action;
     lv_obj_t* back_gesture = NULL;
-    if (!ui_valid(ui) || ui->root == NULL ||
-        pxsys_reference_layout_compute(&ui->display, &layout) != PXSYS_STATUS_OK)
+    if (!ui_valid(ui) || ui->root == NULL) return;
+    if (ui->rebuild_suspended) {
+        ui->rebuild_requested = 1;
+        return;
+    }
+    ui->rebuild_requested = 0;
+    if (pxsys_reference_layout_compute(&ui->display, &layout) != PXSYS_STATUS_OK)
         return;
     /* The touch target overlays content. Only a visible gesture handle needs
      * an exclusive strip; otherwise return the reservation to the page. */
@@ -7826,6 +7878,9 @@ static void rebuild(pxsys_reference_lvgl_t* ui) {
     /* content_active/active_page may already describe the incoming task. The
      * old tree still belongs to rendered_view_key until it is deleted. */
     navigation_state_capture(ui);
+    /* Deleting focused widgets can focus a remaining sibling. Those transient
+     * events must not replace the bookmark captured from the outgoing page. */
+    ui->rendered_view_key = 0;
     if (ui->file_edit_input != NULL) {
         snprintf(ui->file_edit_draft, sizeof(ui->file_edit_draft), "%s",
                  lv_textarea_get_text(ui->file_edit_input));
@@ -9190,10 +9245,14 @@ pxsys_status_t pxsys_reference_lvgl_start(pxsys_reference_lvgl_t* ui) {
     pxsys_instance_ref_t instance;
     pxsys_status_t status;
     if (!ui_valid(ui)) return PXSYS_STATUS_INVALID_ARGUMENT;
+    /* All three roles are started synchronously before the first frame.
+     * Build their combined tree once instead of reopening every launcher
+     * icon for the intermediate home/status/navigation configurations. */
+    ++ui->rebuild_suspended;
     if (ui->features & PXSYS_REFERENCE_UI_HOME) {
         status = pxsys_reference_lvgl_home(ui);
         if (status != PXSYS_STATUS_OK && status != PXSYS_STATUS_PENDING)
-            return status;
+            goto finished;
     }
     intent.struct_size = sizeof(intent);
     intent.action = pxsys_string_from_cstr("system.intent.main");
@@ -9202,16 +9261,20 @@ pxsys_status_t pxsys_reference_lvgl_start(pxsys_reference_lvgl_t* ui) {
             pxsys_standard_system_role_host(ui->system), NULL,
             pxsys_string_from_cstr(PXSYS_ROLE_STATUS_BAR), &intent, &instance);
         if (status != PXSYS_STATUS_OK && status != PXSYS_STATUS_PENDING)
-            return status;
+            goto finished;
     }
     if (ui->features & PXSYS_REFERENCE_UI_NAVIGATION_BAR) {
         status = pxsys_role_host_start(
             pxsys_standard_system_role_host(ui->system), NULL,
             pxsys_string_from_cstr(PXSYS_ROLE_NAVIGATION_BAR), &intent, &instance);
         if (status != PXSYS_STATUS_OK && status != PXSYS_STATUS_PENDING)
-            return status;
+            goto finished;
     }
-    return PXSYS_STATUS_OK;
+    status = PXSYS_STATUS_OK;
+finished:
+    --ui->rebuild_suspended;
+    if (!ui->rebuild_suspended && ui->rebuild_requested) rebuild(ui);
+    return status;
 }
 
 pxsys_status_t pxsys_reference_lvgl_home(pxsys_reference_lvgl_t* ui) {
@@ -9325,6 +9388,16 @@ lv_obj_t* pxsys_reference_lvgl_key_navigation_scope(pxsys_reference_lvgl_t* ui) 
     if (ui->confirm_dialog != NULL) return ui->confirm_dialog;
     if (ui->app_dialog != NULL) return ui->app_dialog;
     if (ui->language_dialog != NULL) return ui->language_dialog;
+    /* Input adapters can detach their group while consuming the held Back or
+     * Home key after the page has already returned. Reattach its remembered
+     * target before the adapter recollects controls; never override live focus. */
+    if (ui->content_active && ui->active_page == REFERENCE_PAGE_HOME &&
+        ui->rendered_view_key == (uint32_t)REFERENCE_PAGE_HOME + 1u &&
+        ui->launcher_focus_key != 0) {
+        lv_group_t* group = navigation_keypad_group(ui);
+        if (group != NULL && lv_group_get_obj_count(group) == 0)
+            navigation_state_restore(ui);
+    }
     return NULL;
 }
 

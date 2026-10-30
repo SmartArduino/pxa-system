@@ -16,6 +16,7 @@
 #include "log.hpp"
 #include "device.hpp"
 #include "sensor.hpp"
+#include "haptics.hpp"
 #include "net.hpp"
 #include "http.hpp"
 #include "websocket.hpp"
@@ -61,6 +62,7 @@ public:
     LogService log() noexcept { return LogService(transport_); }
     DeviceService device() noexcept { return {transport_, requests_}; }
     SensorService sensors() noexcept { return {transport_, requests_}; }
+    HapticsService haptics() noexcept { return {transport_, requests_}; }
     NetService net() noexcept { return {transport_, requests_}; }
     HttpClient http() noexcept { return {transport_, requests_}; }
     SocketClient sockets() noexcept { return {transport_, requests_}; }

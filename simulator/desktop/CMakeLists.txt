@@ -347,8 +347,16 @@ target_compile_definitions(pxsys_app_matrix_test PRIVATE
     PXSYS_DESKTOP_TEXT_FONT="${PXSYS_DESKTOP_TEXT_FONT}")
 target_link_libraries(pxsys_app_matrix_test PRIVATE
     pxsys::core pxa::pxa pxa_adapters_openssl pxa_adapters_posix pxa_adapters_lvgl
+    pxa_adapters_image_posix
     pxa_adapters_wamr lvgl SDL2::SDL2 PNG::PNG CURL::libcurl Threads::Threads
     PkgConfig::VORBISFILE PkgConfig::OPUSFILE PkgConfig::OPUS m)
+if(PXSYS_BUILD_TESTS OR BUILD_TESTING)
+    set_target_properties(pxsys_app_matrix_test PROPERTIES EXCLUDE_FROM_ALL FALSE)
+    add_test(NAME pxsys_embedded_main_loop_test COMMAND bash
+        "${CMAKE_CURRENT_LIST_DIR}/../../tools/package/test_embedded_main_loop.sh"
+        $<TARGET_FILE:pxsys_app_matrix_test>)
+    set_tests_properties(pxsys_embedded_main_loop_test PROPERTIES TIMEOUT 120)
+endif()
 foreach(_bench current baseline)
     if(_bench STREQUAL "baseline" AND NOT PXSYS_RASTER_BASELINE_SOURCE)
         continue()

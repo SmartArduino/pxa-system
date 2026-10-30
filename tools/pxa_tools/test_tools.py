@@ -15,10 +15,21 @@ import unittest
 from .build import resource_inputs
 from .common import ToolError, digest, identity
 from .distribution import extract, fetch, verify_manifest
-from .project import Project, SDK_ROOT, TARGETS, aot_flags
+from .project import Project, SDK_ROOT, TARGETS, aot_flags, sdk_identity
 
 
 class DevelopmentToolsTest(unittest.TestCase):
+    def test_extension_sdk_change_invalidates_sdk_identity(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / 'VERSION').write_text('0.6.0')
+            header = root / 'extensions/peripherals/sdk/include/pxa-ext/peripherals.hpp'
+            header.parent.mkdir(parents=True)
+            header.write_text('// first contract')
+            before = sdk_identity(root)
+            header.write_text('// updated contract')
+            self.assertNotEqual(before['digest'], sdk_identity(root)['digest'])
+
     def test_native_stack_checks_are_opt_in_and_part_of_the_aot_recipe(self):
         for target in ('esp32s3', 'esp32s31', 'simulator'):
             self.assertEqual(aot_flags({}, target), TARGETS[target][2])

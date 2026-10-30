@@ -26,6 +26,7 @@ function(pxa_collect_sources output root)
         src/package/install_transfer.c
         src/services/sensor/sensor_service.c
         src/services/device/device_service.c
+        src/services/haptics/haptics_service.c
         src/services/scheduler/scheduler_service.c
         src/services/net/socket_stream.c
         src/services/net/http_stream.c

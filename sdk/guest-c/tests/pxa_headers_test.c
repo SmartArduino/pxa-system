@@ -2,6 +2,7 @@
 #include <assert.h>
 
 #include "pxa_audio.h"
+#include "pxa_haptics.h"
 #include "pxa_canvas.h"
 #include "pxa_device.h"
 #include "pxa_fs.h"
@@ -31,6 +32,7 @@
 _Static_assert(PXA_HEADER_BYTES == PXA_WIRE_SIZE, "Core header size drift");
 _Static_assert(PXA_MAX_CONTROL_BYTES == PXA_WIRE_MAX_CONTROL_MESSAGE,
                "Core control limit drift");
+_Static_assert(PXA_HAPTICS_SERVICE == 23, "Haptics service drift");
 _Static_assert(sizeof(pxa_event_t) > 0, "Core event view is incomplete");
 
 int main(void) {

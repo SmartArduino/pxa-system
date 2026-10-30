@@ -63,7 +63,7 @@
 /* The streaming buffer is part of the caller-provided installer workspace.
  * ESP hosts allocate that workspace in PSRAM when available, keeping the main
  * task stack small while reducing LittleFS I/O calls during package sync. */
-#define PXA_POSIX_INSTALLER_IO_BYTES ((size_t)4096)
+#define PXA_POSIX_INSTALLER_IO_BYTES ((size_t)32768)
 #define PXA_POSIX_INSTALLER_MAX_APP_ID ((size_t)64)
 #define PXA_POSIX_INSTALLER_MAX_IDENTITY_NAME \
     (PXA_PACKAGE_DIGEST_BYTES * 2u + 1u + PXA_POSIX_INSTALLER_MAX_APP_ID)

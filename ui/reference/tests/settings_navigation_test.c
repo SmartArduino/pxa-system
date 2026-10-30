@@ -332,6 +332,40 @@ static void check_dynamic_apps(fixture_t* f) {
     }
     click(header_back(ui));
 }
+static bool has_label(lv_obj_t* root, const char* text) {
+    if (root == NULL) return false;
+    if (lv_obj_has_class(root, &lv_label_class) && !strcmp(lv_label_get_text(root), text))
+        return true;
+    for (uint32_t i = 0; i < lv_obj_get_child_count(root); ++i)
+        if (has_label(lv_obj_get_child(root, (int32_t)i), text)) return true;
+    return false;
+}
+static void check_app_identity_display(fixture_t* f) {
+    pxsys_reference_managed_app_t app = {0};
+    const char* identity = "f51ae392de0ca33cf8721d850d313d00911125b7796f3a456bde9ada789917fa:game-boy-emulator";
+    snprintf(app.identity, sizeof(app.identity), "%s", identity);
+    snprintf(app.name, sizeof(app.name), "GB/GBC emulator");
+    snprintf(app.version, sizeof(app.version), "1.0");
+    app.installed = app.enabled = 1;
+    show_app_detail(f->ui, &app);
+    assert(f->ui->app_dialog != NULL && !strcmp(f->ui->pending_identity, identity));
+    char expected[160];
+    snprintf(expected, sizeof(expected), "%s: game-boy-emulator",
+        translated(f->ui, "settings.apps.app_id", "App ID"));
+    assert(has_label(f->ui->app_dialog, expected));
+    snprintf(expected, sizeof(expected), "%s: f51ae392…789917fa",
+        translated(f->ui, "settings.apps.signer", "Signing key"));
+    assert(has_label(f->ui->app_dialog, expected));
+    assert(!has_label(f->ui->app_dialog, identity));
+    page_close_dialogs(f->ui);
+    snprintf(app.identity, sizeof(app.identity), "system.settings");
+    show_app_detail(f->ui, &app);
+    snprintf(expected, sizeof(expected), "%s: system.settings",
+        translated(f->ui, "settings.apps.app_id", "App ID"));
+    assert(has_label(f->ui->app_dialog, expected));
+    assert(!strcmp(f->ui->pending_identity, "system.settings"));
+    page_close_dialogs(f->ui);
+}
 int main(void) {
     static uint32_t pixels[480 * 16];
     lv_init();
@@ -349,6 +383,7 @@ int main(void) {
             check_subpages(&f);
             check_files_and_cache(&f);
             check_dynamic_apps(&f);
+            check_app_identity_display(&f);
             destroy(&f);
         }
     }

@@ -1,0 +1,24 @@
+{
+  "format": "pxa-package-source-0.2",
+  "min_sdk": [2, 1],
+  "target_sdk": [2, 1],
+  "compile_sdk": [2, 1],
+  "id": "pxa-main-loop-smoke",
+  "version": "1.0.0",
+  "release_sequence": 1,
+  "name": "Embedded main loop regression",
+  "description": "Checks cooperative Guest execution inside the desktop system shell.",
+  "build": {
+    "system": "cmake",
+    "source_dir": ".",
+    "linear_memory": {"maximum_bytes": 131072, "pinned": true}
+  },
+  "components": [{
+    "id": "main",
+    "kind": "ui",
+    "cmake_target": "pxa_main",
+    "execution_model": "main-loop",
+    "services": ["ui", "window", "log"],
+    "wasi": {"version": "preview1", "libc": "wasi-libc", "features": []}
+  }]
+}

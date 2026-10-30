@@ -48,6 +48,11 @@ typedef struct {
      * authorizes execution or replaces record CAS/resource revalidation. */
     void *commit_context;
     pxa_status_t (*commit_ready)(void *, const struct pxa_posix_app_home *);
+    /* Optional volume-local publisher names. Logical locators remain stable
+     * record-authentication bindings; only filesystem paths are translated.
+     * reverse=0 maps logical to physical, reverse=1 maps discovery back. */
+    void *locator_context;
+    pxa_status_t (*map_locator)(void *,const char *,uint8_t reverse,char *,size_t);
 } pxa_posix_app_store_config_t;
 size_t pxa_posix_app_store_workspace_size(const pxa_posix_app_store_config_t *);
 

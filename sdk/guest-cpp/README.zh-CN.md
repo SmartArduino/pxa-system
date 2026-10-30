@@ -1043,5 +1043,10 @@ WebSocket。`read` / `write` 的第一个字节是消息类型（1 文本、2 �
 
 Audio 0.15 的 `context.capture().open(permission)` 使用
 `audio.capture/microphone` 授权。`AudioCapture::read` 每次返回一条单声道、
-16 kHz、20 ms 的原始 Opus 包，缓冲至少 1275 字节；没有数据返回 `would_block`。
+16 kHz 的原始 Opus 包，帧时长通过 `frame_ms()` 查询（20/40/60 ms），缓冲至少 1275 字节；没有数据返回 `would_block`。
 没有板级录音后端时返回 `unsupported`。后台与锁屏停止录音数据交付，恢复后重新打开。
+
+`examples/capture` 演示用户授权后采集 30 个包并原子保存到私有文件 `capture.pxac`。
+格式为 ASCII `PXAC`、小端 u16 帧毫秒数、u16 包数，随后每包 u16 长度及原始 Opus
+字节；它是示例的本地容器，不是 Ogg，也不是标准音频文件格式。后台停止采集，
+无网络上传；文件可通过 PXADB 应用数据工具导出。

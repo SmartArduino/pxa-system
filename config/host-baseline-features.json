@@ -29,5 +29,11 @@
     "pinyin",
     "latin",
     "t9"
+  ],
+  "fs": [
+    "scoped-roots",
+    "read-at",
+    "app-media-root",
+    "app-media-path"
   ]
 }

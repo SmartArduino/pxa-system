@@ -72,6 +72,20 @@ static void focus_tile(pxsys_reference_lvgl_t* ui, lv_obj_t* tile,
     assert(bounds.y1 >= viewport.y1 && bounds.y2 <= viewport.y2);
 }
 
+/* Match the board adapter: rebuilding its ordered group must suppress LVGL's
+ * first-item autofocus while the restored target is still alive. */
+static void collect_launcher(pxsys_reference_lvgl_t* ui, lv_group_t* group) {
+    lv_obj_t* previous = lv_group_get_focused(group);
+    lv_group_remove_all_objs(group);
+    if (previous != NULL) lv_group_focus_freeze(group, true);
+    for (size_t i = 0; i < ui->launcher_count; ++i)
+        lv_group_add_obj(group, lv_obj_get_child(ui->content, (int32_t)i));
+    if (previous != NULL) {
+        lv_group_focus_freeze(group, false);
+        lv_group_focus_obj(previous);
+    }
+}
+
 static void check_paging(lv_display_t* display, bool animations) {
     const size_t per_page = PXSYS_REFERENCE_UI_LAUNCHER_COLUMNS *
                             PXSYS_REFERENCE_UI_LAUNCHER_ROWS;
@@ -104,7 +118,8 @@ static void check_paging(lv_display_t* display, bool animations) {
     config.system = system;
     config.allocator = system_config.allocator;
     config.parent = lv_display_get_layer_top(display);
-    config.features = PXSYS_REFERENCE_UI_HOME;
+    config.features = PXSYS_REFERENCE_UI_HOME | PXSYS_REFERENCE_UI_STATUS_BAR |
+                      PXSYS_REFERENCE_UI_NAVIGATION_BAR;
     config.max_launcher_apps = count;
     icon_counts_t icons = {0};
     config.app_icon_context = &icons;
@@ -115,9 +130,14 @@ static void check_paging(lv_display_t* display, bool animations) {
     assert(pxsys_reference_lvgl_start(ui) == PXSYS_STATUS_OK);
     assert(ui->launcher_count == count);
     assert(icons.live == count);
+    /* Starting the chrome must not reload all icons for intermediate trees. */
+    assert(icons.acquired == count);
     lv_group_t* group = lv_group_create();
-    for (size_t i = 0; i < count; ++i)
-        lv_group_add_obj(group, lv_obj_get_child(ui->content, (int32_t)i));
+    lv_indev_t* keypad = lv_indev_create();
+    lv_indev_set_type(keypad, LV_INDEV_TYPE_KEYPAD);
+    lv_indev_set_display(keypad, display);
+    lv_indev_set_group(keypad, group);
+    collect_launcher(ui, group);
     /* Forward/backward, both edge columns, and a last page with one icon. */
     const size_t indices[] = {per_page - 1u, per_page, per_page * 2u,
                              per_page * 2u - 1u, 0u, count - 1u, 0u};
@@ -130,11 +150,15 @@ static void check_paging(lv_display_t* display, bool animations) {
     launcher_position_tiles(ui);
     focus_tile(ui, lv_obj_get_child(ui->content, 1), 0);
     focus_tile(ui, moved, 1);
-    /* Rebuilding the launcher preserves the selected page. */
-    lv_group_delete(group);
+    /* Reordering/rebuilding follows the signed application identity, even
+     * when the same tile's new slot belongs to another page. */
+    const uint32_t moved_key = navigation_object_key(ui->content, moved);
     rebuild(ui);
-    assert(ui->launcher_page == 1);
-    assert(lv_obj_get_scroll_x(ui->content) == lv_obj_get_width(ui->content));
+    assert(navigation_object_key(ui->content, lv_group_get_focused(group)) == moved_key);
+    assert(ui->launcher_page == 0);
+    collect_launcher(ui, group);
+    focus_tile(ui, lv_obj_get_child(ui->content, (int32_t)(per_page + 1u)), 1);
+    const uint32_t selected_key = navigation_object_key(ui->content, lv_group_get_focused(group));
     /* Leaving home must retire icons immediately, including when another
      * app owns the screen. Repeated background/rebuild must not double free. */
     app_context_t home = {ui, REFERENCE_PAGE_HOME};
@@ -149,7 +173,30 @@ static void check_paging(lv_display_t* display, bool animations) {
         lv_tick_inc(500);
         (void)lv_timer_handler();
         assert(ui->launcher_page == 1);
+        assert(navigation_object_key(ui->content, lv_group_get_focused(group)) == selected_key);
+        /* GameKit consumes a held Back/Home key after foreground() and clears
+         * its group until release. The next scope query precedes collection. */
+        lv_group_remove_all_objs(group);
+        assert(lv_group_get_obj_count(group) == 0);
+        assert(pxsys_reference_lvgl_key_navigation_scope(ui) == NULL);
+        assert(navigation_object_key(ui->content, lv_group_get_focused(group)) == selected_key);
+        collect_launcher(ui, group);
+        assert(navigation_object_key(ui->content, lv_group_get_focused(group)) == selected_key);
     }
+    /* Desktop selection survives eviction of the bounded page/folder cache. */
+    memset(ui->navigation_states, 0, sizeof(ui->navigation_states));
+    lv_group_remove_all_objs(group);
+    (void)pxsys_reference_lvgl_key_navigation_scope(ui);
+    assert(navigation_object_key(ui->content, lv_group_get_focused(group)) == selected_key);
+    /* Removing that application falls back to a remaining tile on the same
+     * page. The removed identity must never remain as a dangling LVGL object. */
+    pxsys_app_identity_t removed = ui->launcher_items[per_page + 1u].identity;
+    assert(pxsys_app_registry_unregister(pxsys_standard_system_apps(system), &removed) == PXSYS_STATUS_OK);
+    rebuild(ui);
+    assert(ui->launcher_count == count - 1u && ui->launcher_page == 1);
+    assert(lv_group_get_focused(group) == lv_obj_get_child(ui->content, (int32_t)per_page));
+    lv_indev_delete(keypad);
+    lv_group_delete(group);
     assert(pxsys_task_manager_finish_all(pxsys_standard_system_tasks(system),
         PXSYS_STOP_SHUTDOWN) == PXSYS_STATUS_OK);
     assert(pxsys_reference_lvgl_destroy(ui) == PXSYS_STATUS_OK);

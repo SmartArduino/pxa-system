@@ -128,6 +128,9 @@ def main():
     for name in ('VERSION', 'LICENSE', 'sdk', 'config', 'docs'):
         copy(source / name, root / name, ignore=ignore)
     copy(source / 'ai', root / 'ai', ignore=ignore)
+    # Workspace extensions retain their own identities and SDK namespaces;
+    # publishing them alongside the SDK does not make them standard services.
+    copy(args.workspace / 'extensions', root / 'extensions', ignore=ignore)
     copy(source / 'spec/draft', root / 'spec/draft', ignore=ignore)
     for name in ('pxa_tools', 'package', 'i18n'):
         copy(source / 'tools' / name, root / 'tools' / name, ignore=ignore)
@@ -181,7 +184,7 @@ Guides: https://pxa.doit.am/docs/setup/
 Optional AI skills/agents: ai/README.md; install into a project with ai/install.py.
 ''')
     epoch = int(os.environ.get('SOURCE_DATE_EPOCH', '1791849600'))
-    groups = {'sdk': ['VERSION', 'LICENSE', 'sdk', 'config', 'spec', 'docs'],
+    groups = {'sdk': ['VERSION', 'LICENSE', 'sdk', 'config', 'spec', 'docs', 'extensions'],
               'devtools': ['bin/pxa', 'bin/pxadb', 'tools', 'ai', 'README.md'],
               'runtime': ['runtime', 'build-environment-packages.txt', 'licenses'],
               'toolchain': ['bin/wamrc', 'toolchains'],

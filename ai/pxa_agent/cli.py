@@ -85,10 +85,11 @@ def parser():
     sub = store.add_subparsers(dest='action', required=True)
     status = sub.add_parser('status')
     status.add_argument('reference')
-    for name in ('authorize', 'publish'):
+    for name in ('authorize', 'publish', 'prepare'):
         cmd = sub.add_parser(name)
         cmd.add_argument('project')
-        cmd.add_argument('package')
+        if name != 'prepare':
+            cmd.add_argument('package')
         cmd.add_argument('--server', default='https://app.doit.am')
         if name == 'authorize':
             cmd.add_argument('--signing-key', type=Path)
@@ -96,8 +97,12 @@ def parser():
             cmd.add_argument('--wait', action='store_true')
             cmd.add_argument('--renew', action='store_true', help='replace a revoked or unwanted cached authorization')
         else:
-            cmd.add_argument('--reference')
+            if name == 'publish':
+                cmd.add_argument('--reference')
             cmd.add_argument('--icon')
+            cmd.add_argument('--cover')
+            cmd.add_argument('--skip-icon', action='store_true')
+            cmd.add_argument('--skip-cover', action='store_true')
             cmd.add_argument('--screenshot', action='append', default=[])
             cmd.add_argument('--changelog', default='')
     return result
@@ -214,7 +219,7 @@ def main():
                     result = flash(env, args.board, port=args.port, baud=args.baud, version=args.release,
                                    mode=args.mode, erase_data=args.erase_data, manifest=args.manifest)
             elif args.command == 'store':
-                from .store import authorize, status, publish
+                from .store import authorize, status, publish, prepare
                 if args.action == 'authorize':
                     result = authorize(env, args.project, args.package, server=args.server,
                         key=args.signing_key, open_browser=not args.no_open, renew=args.renew)
@@ -230,9 +235,13 @@ def main():
                         return 0
                 elif args.action == 'status':
                     result = status(args.reference)
+                elif args.action == 'prepare':
+                    result = prepare(env, args.project, server=args.server, icon=args.icon, cover=args.cover,
+                        screenshots=args.screenshot, skip_icon=args.skip_icon, skip_cover=args.skip_cover)
                 else:
                     result = publish(env, args.project, args.package, server=args.server,
-                        reference=args.reference, icon=args.icon, screenshots=args.screenshot, changelog=args.changelog)
+                        reference=args.reference, icon=args.icon, cover=args.cover, screenshots=args.screenshot,
+                        skip_icon=args.skip_icon, skip_cover=args.skip_cover, changelog=args.changelog)
         if result is not None:
             print(json.dumps(result, ensure_ascii=False, indent=2))
         return 1 if result and any(result.get(key) is False for key in ('runtime_passed', 'passed', 'static_ready')) else 0

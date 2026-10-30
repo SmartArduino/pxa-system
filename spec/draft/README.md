@@ -98,6 +98,7 @@ not the same as publishing that service ABI.
 | 20 | `store-installer` | Host-owned signed package download, confirmation and installation |
 | 21 | `assets` | Host-owned asynchronous resource loading and bounded caching |
 | 22 | `ime` | Registered input methods, composition and text-input sessions |
+| 23 | `haptics` | Foreground, permission-bound vibration actuators |
 
 Canvas is not a top-level service. It is a UI node plus a length-delimited
 display-list subprotocol, so a UI transaction can atomically create and update

@@ -382,6 +382,14 @@
       "major": 0,
       "minor": 1,
       "patch": 0
+    },
+    {
+      "name": "haptics",
+      "id": 23,
+      "state": "defined",
+      "major": 0,
+      "minor": 1,
+      "patch": 0
     }
   ],
   "core_opcodes": [

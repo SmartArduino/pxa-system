@@ -112,9 +112,18 @@ static void pump_test(void *context) {
     assert(!memcmp(&paused, &host->audio_mixer, sizeof(paused)));
     product_focus_changed(host, true); dispatch_lifecycle(host);
     assert(SDL_GetAudioDeviceStatus(host->audio_device) == SDL_AUDIO_PLAYING);
-    SDL_Delay(40);
+    /* Wait for a real device callback, rather than assuming the scheduler
+     * always runs the audio thread inside one 40 ms wall-clock interval. */
+    const uint64_t resume_started = now_us(NULL);
+    bool resumed = false;
+    while (!resumed && now_us(NULL) - resume_started < UINT64_C(2000000)) {
+        SDL_Delay(5);
+        SDL_LockAudioDevice(host->audio_device);
+        resumed = voice->state.accepted_samples > paused.voices[index].state.accepted_samples;
+        SDL_UnlockAudioDevice(host->audio_device);
+    }
     SDL_PauseAudioDevice(host->audio_device, 1);
-    assert(voice->state.accepted_samples > paused.voices[index].state.accepted_samples);
+    assert(resumed);
     for (unsigned i = 0; i < 30; ++i) audio_callback(host, (uint8_t *)output, sizeof(output));
     assert(!voice->count);
 

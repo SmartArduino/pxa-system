@@ -17,6 +17,34 @@ Prepare the concrete package, checks and Chinese-first / English-second release 
 
 For DevKit/AI-kit maintainers, inspect `tools/release/assemble.py`, `build_ai_kit.py` and the current release manifest rather than assuming new CLI commands exist in an older binary. Use committed source, fixed tool versions, reproducible archives and a signed manifest; never package private keys, upload tokens, app saves or machine-specific paths. After release, download the actual assets, verify hashes/signatures and execute the documented install/use flow in a clean project. Describe hardware and platform limits explicitly.
 
+## Listing artwork, taxonomy and extensions
+
+Run `store prepare <project>` (MCP `pxa_store_prepare`) before authorization or
+submission. It reads the current store publishing specification and reports
+available categories, tag limits, image formats/limits and `needs_choice`.
+Prefer a 512×512 icon and a 1280×960 (4:3) illustrated cover. When an image tool
+is available, offer to generate artwork that matches the application. Otherwise
+ask the user to provide images or choose to skip either upload. Do not block
+publishing on access to an image-generation service. Record explicit choices
+using `--skip-icon` / `--skip-cover`, or `"icon": null` / `"cover": null` in
+`store.json`; skipping preserves existing store artwork and does not delete it.
+Artwork paths in store.json are relative to the project; CLI paths are relative
+to the workspace. Do not claim a generated cover is a real runtime screenshot.
+
+Set `kind` (`app` or `game`), its category and descriptive tags in `store.json`.
+Use the server's category list, at most ten labels of 24 characters each.
+`store publish` uploads `--icon`, `--cover` and `--screenshot`, and applies
+explicit taxonomy/tag fields to existing listings using the app-scoped token.
+An empty tags list clears tags; absent fields retain the existing values.
+Changes follow the existing listing review process. Preflight all images before
+any upload and do not interpret pending review as publicly listed.
+
+Use standard SDK services when they implement the feature. Otherwise reuse the
+workspace's pxa-ext extension and its matching SDK, or define an identified,
+version-negotiated extension with bounded messages, permissions and teardown.
+Document nonstandard contracts as extensions; do not invent standard service
+IDs. If a future standard covers it, document migration to that standard.
+
 ## Store screenshots
 
 Use `.pxa/pxa verify apps/<name> --profiles pai-touch --store-screenshots`

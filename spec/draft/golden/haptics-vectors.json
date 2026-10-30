@@ -1,0 +1,33 @@
+{
+  "schema": "pxa-haptics-golden-0.1",
+  "vectors": [
+    {
+      "name": "capabilities",
+      "opcode": 1,
+      "request_token": 1,
+      "payload_hex": "",
+      "wire_hex": "1700010001000000000000000000000000000000"
+    },
+    {
+      "name": "open",
+      "opcode": 2,
+      "request_token": 1,
+      "payload_hex": "0500000001000000",
+      "wire_hex": "17000200010000000000000008000000000000000500000001000000"
+    },
+    {
+      "name": "vibrate",
+      "opcode": 3,
+      "request_token": 1,
+      "payload_hex": "060000000100000064000000e8030000",
+      "wire_hex": "1700030001000000000000001000000000000000060000000100000064000000e8030000"
+    },
+    {
+      "name": "stop",
+      "opcode": 4,
+      "request_token": 1,
+      "payload_hex": "0600000001000000",
+      "wire_hex": "17000400010000000000000008000000000000000600000001000000"
+    }
+  ]
+}

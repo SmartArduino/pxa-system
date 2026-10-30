@@ -10,6 +10,8 @@
     (PXA_STORAGE_MAX_LIST_ENTRIES * (PXA_RECORD_HEADER_SIZE + \
                                      PXA_STORAGE_MAX_KEY_BYTES))
 
+typedef struct pxa_storage_async pxa_storage_async_t;
+
 struct pxa_storage_service {
     uint32_t magic;
     pxa_runtime_t *runtime;
@@ -19,6 +21,7 @@ struct pxa_storage_service {
     size_t max_value_bytes;
     size_t result_capacity;
     uint8_t registered;
+    pxa_storage_async_t *async;
 };
 
 typedef struct {
@@ -191,15 +194,173 @@ static pxa_status_t emit_list_key(void *context, pxa_bytes_t key) {
     return PXA_STATUS_OK;
 }
 
+static pxa_status_t execute_request(pxa_storage_service_t *service,
+    uint16_t opcode, const pxa_storage_request_t *request,
+    uint8_t *value_scratch, uint8_t *result_scratch, size_t result_capacity,
+    size_t *result_size) {
+    pxa_writer_t result_writer;
+    pxa_status_t result = PXA_STATUS_OK;
+    size_t value_size = 0;
+    pxa_writer_init(&result_writer, result_scratch,
+                    result_capacity);
+    if (result == PXA_STATUS_OK && opcode == PXA_STORAGE_GET) {
+        result = service->backend.get(
+            service->backend.context, request->key, value_scratch,
+            service->max_value_bytes, &value_size);
+        if (result == PXA_STATUS_OK && value_size > service->max_value_bytes) {
+            result = PXA_STATUS_INTERNAL;
+        }
+        if (result == PXA_STATUS_OK) {
+            result = pxa_writer_record(&result_writer, 2,
+                                       value_scratch, value_size);
+        }
+    } else if (result == PXA_STATUS_OK &&
+               opcode == PXA_STORAGE_SET) {
+        result = service->backend.set(service->backend.context,
+                                      request->key, request->value);
+    } else if (result == PXA_STATUS_OK &&
+               opcode == PXA_STORAGE_REMOVE) {
+        result = service->backend.remove(service->backend.context, request->key);
+    } else if (result == PXA_STATUS_OK) {
+        pxa_storage_list_encoder_t encoder;
+        memset(&encoder, 0, sizeof(encoder));
+        encoder.writer = &result_writer;
+        if (request->has_key) encoder.previous = request->key;
+        result = service->backend.list(
+            service->backend.context,
+            request->has_key ? request->key : (pxa_bytes_t){NULL, 0},
+            emit_list_key, &encoder);
+        if (result == PXA_STATUS_WOULD_BLOCK &&
+            encoder.count == PXA_STORAGE_MAX_LIST_ENTRIES) {
+            result = PXA_STATUS_OK;
+        }
+    }
+    *result_size = result == PXA_STATUS_OK ? result_writer.size : 0;
+    return result;
+}
+
+/* Only state crosses threads. The executor serializes backend access; an
+ * acquire of DONE publishes the result and all of its scratch bytes. */
+typedef struct {
+    uint32_t state;
+    pxa_storage_service_t *service;
+    pxa_component_t component;
+    pxa_request_token_t token;
+    uint64_t identity;
+    uint16_t opcode;
+    size_t key_size, value_size, result_size;
+    pxa_status_t result;
+    uint8_t key[PXA_STORAGE_MAX_KEY_BYTES];
+    uint8_t value[PXA_STORAGE_MAX_VALUE_BYTES];
+    uint8_t output[PXA_STORAGE_MAX_VALUE_BYTES + PXA_RECORD_HEADER_SIZE];
+} pxa_storage_job_t;
+
+struct pxa_storage_async {
+    pxa_storage_submit_fn submit;
+    void *context;
+    uint16_t capacity, next;
+    pxa_storage_job_t jobs[];
+};
+
+size_t pxa_storage_service_async_workspace_size(uint16_t capacity) {
+    if (!capacity || capacity > 16) return 0;
+    return PXA_INTERNAL_WORKSPACE_ALIGNMENT - 1u + sizeof(pxa_storage_async_t) +
+        capacity * sizeof(pxa_storage_job_t);
+}
+
+pxa_status_t pxa_storage_service_enable_async(pxa_storage_service_t *service,
+    void *workspace, size_t workspace_size, uint16_t capacity,
+    pxa_storage_submit_fn submit, void *context) {
+    size_t size = pxa_storage_service_async_workspace_size(capacity);
+    pxa_storage_async_t *async;
+    if (!service_valid(service) || !workspace || !size || !submit ||
+        workspace_size < size || (uintptr_t)workspace > UINTPTR_MAX - workspace_size)
+        return PXA_STATUS_INVALID_ARGUMENT;
+    if (service->async) return PXA_STATUS_BAD_STATE;
+    async = (pxa_storage_async_t *)pxa_internal_align_pointer(
+        (uintptr_t)workspace, PXA_INTERNAL_WORKSPACE_ALIGNMENT);
+    memset(async, 0, sizeof(*async) + capacity * sizeof(pxa_storage_job_t));
+    async->submit = submit;
+    async->context = context;
+    async->capacity = capacity;
+    service->async = async;
+    return PXA_STATUS_OK;
+}
+
+static void run_storage_job(void *context) {
+    pxa_storage_job_t *job = context;
+    pxa_storage_request_t request;
+    memset(&request, 0, sizeof(request));
+    request.key = (pxa_bytes_t){job->key, job->key_size};
+    request.value = (pxa_bytes_t){job->value, job->value_size};
+    request.has_key = job->key_size != 0;
+    request.has_value = job->opcode == PXA_STORAGE_SET;
+    job->result = execute_request(job->service, job->opcode, &request,
+        job->value, job->output, sizeof(job->output), &job->result_size);
+    __atomic_store_n(&job->state, 2u, __ATOMIC_RELEASE);
+}
+
+int pxa_storage_service_poll(pxa_storage_service_t *service) {
+    unsigned i;
+    int completed = 0;
+    if (!service_valid(service) || !service->async) return 0;
+    for (i = 0; i < service->async->capacity; ++i) {
+        pxa_storage_job_t *job = &service->async->jobs[i];
+        if (__atomic_load_n(&job->state, __ATOMIC_ACQUIRE) != 2u) continue;
+        if (pxa_request_identity(service->runtime, job->component, job->token) == job->identity) {
+            if (pxa_request_complete(service->runtime, job->component, job->token,
+                    job->result, job->result == PXA_STATUS_OK ? job->output : NULL,
+                    job->result_size) != PXA_STATUS_OK)
+                (void)pxa_request_cancel(service->runtime, job->component, job->token);
+            completed = 1;
+        }
+        __atomic_store_n(&job->state, 0u, __ATOMIC_RELEASE);
+    }
+    return completed;
+}
+
+static pxa_status_t enqueue_request(pxa_storage_service_t *service,
+    pxa_component_t component, const pxa_message_view_t *message,
+    const pxa_storage_request_t *request) {
+    pxa_storage_async_t *async = service->async;
+    pxa_storage_job_t *job = NULL;
+    unsigned i;
+    pxa_status_t result;
+    for (i = 0; i < async->capacity; ++i) {
+        unsigned index = (async->next + i) % async->capacity;
+        if (__atomic_load_n(&async->jobs[index].state, __ATOMIC_ACQUIRE) == 0u) {
+            job = &async->jobs[index];
+            async->next = (uint16_t)((index + 1u) % async->capacity);
+            break;
+        }
+    }
+    if (!job) return PXA_STATUS_WOULD_BLOCK;
+    result = pxa_request_commit(service->runtime, component, message->request_token);
+    if (result != PXA_STATUS_OK) return result;
+    job->service = service;
+    job->component = component;
+    job->token = message->request_token;
+    job->identity = pxa_request_identity(service->runtime, component, job->token);
+    job->opcode = message->opcode;
+    job->key_size = request->key.size;
+    job->value_size = request->value.size;
+    if (job->key_size) memcpy(job->key, request->key.data, job->key_size);
+    if (job->value_size) memcpy(job->value, request->value.data, job->value_size);
+    job->result_size = 0;
+    __atomic_store_n(&job->state, 1u, __ATOMIC_RELEASE);
+    result = async->submit(async->context, run_storage_job, job);
+    if (result != PXA_STATUS_OK) __atomic_store_n(&job->state, 0u, __ATOMIC_RELEASE);
+    return result;
+}
+
 static pxa_status_t storage_control(void *context, pxa_runtime_t *runtime,
                                     pxa_component_t component,
                                     const pxa_message_view_t *message) {
     pxa_storage_service_t *service = (pxa_storage_service_t *)context;
     pxa_storage_request_t request;
-    pxa_writer_t result_writer;
     pxa_status_t result;
     pxa_status_t complete;
-    size_t value_size = 0;
+    size_t result_size = 0;
     (void)runtime;
     if (message->request_token == 0) return PXA_STATUS_INVALID_ARGUMENT;
     if (message->opcode < PXA_STORAGE_GET ||
@@ -222,48 +383,20 @@ static pxa_status_t storage_control(void *context, pxa_runtime_t *runtime,
                            message->opcode != PXA_STORAGE_LIST,
                            message->opcode == PXA_STORAGE_SET,
                            service->max_value_bytes, &request);
-    if (result == PXA_STATUS_OK) {
-        result = pxa_request_commit(service->runtime, component,
-                                    message->request_token);
-    }
-    pxa_writer_init(&result_writer, service->result_scratch,
-                    service->result_capacity);
-    if (result == PXA_STATUS_OK && message->opcode == PXA_STORAGE_GET) {
-        result = service->backend.get(
-            service->backend.context, request.key, service->value_scratch,
-            service->max_value_bytes, &value_size);
-        if (result == PXA_STATUS_OK && value_size > service->max_value_bytes) {
-            result = PXA_STATUS_INTERNAL;
-        }
-        if (result == PXA_STATUS_OK) {
-            result = pxa_writer_record(&result_writer, 2,
-                                       service->value_scratch, value_size);
-        }
-    } else if (result == PXA_STATUS_OK &&
-               message->opcode == PXA_STORAGE_SET) {
-        result = service->backend.set(service->backend.context,
-                                      request.key, request.value);
-    } else if (result == PXA_STATUS_OK &&
-               message->opcode == PXA_STORAGE_REMOVE) {
-        result = service->backend.remove(service->backend.context, request.key);
+    if (result == PXA_STATUS_OK && service->async) {
+        result = enqueue_request(service, component, message, &request);
+        if (result == PXA_STATUS_OK) return PXA_STATUS_OK;
     } else if (result == PXA_STATUS_OK) {
-        pxa_storage_list_encoder_t encoder;
-        memset(&encoder, 0, sizeof(encoder));
-        encoder.writer = &result_writer;
-        if (request.has_key) encoder.previous = request.key;
-        result = service->backend.list(
-            service->backend.context,
-            request.has_key ? request.key : (pxa_bytes_t){NULL, 0},
-            emit_list_key, &encoder);
-        if (result == PXA_STATUS_WOULD_BLOCK &&
-            encoder.count == PXA_STORAGE_MAX_LIST_ENTRIES) {
-            result = PXA_STATUS_OK;
-        }
+        result = pxa_request_commit(service->runtime, component, message->request_token);
+        if (result == PXA_STATUS_OK)
+            result = execute_request(service, message->opcode, &request,
+                service->value_scratch, service->result_scratch,
+                service->result_capacity, &result_size);
     }
     complete = pxa_request_complete(
         service->runtime, component, message->request_token, result,
         result == PXA_STATUS_OK ? service->result_scratch : NULL,
-        result == PXA_STATUS_OK ? result_writer.size : 0);
+        result == PXA_STATUS_OK ? result_size : 0);
     if (complete != PXA_STATUS_OK) {
         (void)pxa_request_cancel(service->runtime, component,
                                  message->request_token);

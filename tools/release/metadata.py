@@ -47,6 +47,17 @@ def outputs(workspace=None, backend=None):
                 f"DEFAULT_IMAGE = 'pxa-devkit:{version}-linux-amd64'",
                 portable.read_text(), count=1, flags=re.M)
     if backend:
+        current = backend / 'app/pxa-capabilities.json'
+        if current.is_file():
+            previous = json.loads(current.read_text())
+            previous_release = previous['release']
+            if previous_release != version:
+                if not re.fullmatch(r'[0-9A-Za-z][0-9A-Za-z.+-]*', previous_release):
+                    raise ValueError('Invalid previous Host baseline release')
+                snapshot = backend / 'app/pxa-host-baselines' / (previous_release + '.json')
+                if snapshot.is_file() and json.loads(snapshot.read_text()) != previous:
+                    raise ValueError(f'Refusing to overwrite historical Host capabilities: {snapshot}')
+                result[snapshot] = json.dumps(previous, indent=2) + '\n'
         declared = json.loads((ROOT / 'config/host-baseline-features.json').read_text())
         services = []
         for name, service_id in sorted(SERVICE_IDS.items(), key=lambda entry: entry[1]):
@@ -59,7 +70,8 @@ def outputs(workspace=None, backend=None):
         core = read_spec('core')['abi']
         wamr = json.loads((ROOT / 'config/wamr.json').read_text())
         document = {'schema': 'pxa-host-baseline-1', 'release': version,
-                    'core': [core['major'], core['minor']], 'engine_abi': wamr['engine_abi'], 'services': services}
+                    'core': [core['major'], core['minor']], 'engine_abi': wamr['engine_abi'],
+                    'package_manifest_minor': read_spec('package')['manifest']['minor'], 'services': services}
         result[backend / 'app/pxa-capabilities.json'] = json.dumps(document, indent=2) + '\n'
     return result
 
@@ -76,6 +88,7 @@ def main():
             if not path.is_file() or path.read_text() != expected:
                 mismatches.append(str(path))
         else:
+            path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(expected)
     if mismatches:
         parser.exit(1, 'Release metadata differs: ' + ', '.join(mismatches) + '\n')

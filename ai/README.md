@@ -82,7 +82,21 @@ MCP 长操作返回 job_id，通过 `pxa_job_status` 获取结果，`pxa_screens
 
 首次打开浏览器，登录并确认该应用的短码授权。工具在本地证明持有签名私钥，服务器登记公钥、创建/复用你的应用资料，并发放仅限该应用、有效 30 天、可在后台撤销的上传权限。私钥不上传，令牌不进入聊天、参数或源码；后续自动复用。`store.json` 可设置 name/summary/description/kind/category；已有商店资料不会被自动覆盖。
 
-`store publish --icon icon.png --screenshot screen.png` 可同时上传素材。最终确认本地包摘要与服务器接收摘要一致，状态为 pending_review；审核通过后才公开。准备多目标设备包时先按实际受支持目标构建，再上传，不用桌面包冒充真机包。
+先运行 `.pxa/pxa store prepare apps/counter` 读取商城当前图片规格、分类与标签规则，并预检本地素材。推荐 512×512 图标和 1280×960（4:3）封面。可使用图片工具生成图标和封面；没有图片工具时，由用户提供图片或明确选择跳过上传。
+
+在项目内 `store.json` 设置 `kind`、`category` 和 `tags`，例如：
+
+```json
+{
+  "kind": "app",
+  "category": "tools",
+  "tags": ["计数", "工具"],
+  "icon": "store/icon.png",
+  "cover": "store/cover.png"
+}
+```
+
+路径相对于应用项目。标签最多十个，每个最多 24 个字符。`icon` / `cover` 设置为 `null` 表示明确跳过该项上传；也可传 `--skip-icon` / `--skip-cover`。跳过保留商城现有图片，不会删除。没有素材且尚未选择跳过时，预检返回 `needs_choice`，发布前应完成选择。`store publish --icon icon.png --cover cover.png --screenshot screen.png` 可同时上传素材，命令行路径相对于工作区。分类与标签按 `store.json` 的显式字段更新，未提供的字段保留原值，空标签数组清空标签。资料改动沿用商城审核流程。最终确认本地包摘要与服务器接收摘要一致，状态为 pending_review；审核通过后才公开。准备多目标设备包时先按实际受支持目标构建，再上传，不用桌面包冒充真机包。
 
 ## 维护与兼容
 

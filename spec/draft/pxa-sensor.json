@@ -87,6 +87,18 @@
     {
       "name": "milli-lux",
       "value": 4
+    },
+    {
+      "name": "nano-tesla",
+      "value": 5
+    },
+    {
+      "name": "micro-volts",
+      "value": 6
+    },
+    {
+      "name": "micro-amperes",
+      "value": 7
     }
   ],
   "limits": {

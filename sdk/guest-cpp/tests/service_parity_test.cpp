@@ -4,6 +4,7 @@
 #include <pxa/ui_transport.hpp>
 #include <pxa/events.hpp>
 #include "../../guest-c/include/pxa_audio.h"
+#include "../../guest-c/include/pxa_haptics.h"
 #include "../../guest-c/include/pxa_canvas.h"
 #include "../../guest-c/include/pxa_clock.h"
 #include "../../guest-c/include/pxa_http.h"
@@ -81,6 +82,43 @@ static auto error_payload(pxa::Error error) {
     std::array<std::byte, 4> bytes;
     pxa::wire::put32(bytes.data(), static_cast<std::uint32_t>(error));
     return bytes;
+}
+
+static void test_haptics(pxa::Transport& transport, pxa::RequestTable& requests) {
+    pxa::HapticsService haptics(transport, requests);
+    Pending caps(haptics.capabilities());
+    assert(service == 23 && opcode == 1 && payload.empty());
+    assert(pxa_haptics_request_capabilities(token) == 0);
+    std::array<std::byte, 12> result{};
+    pxa::wire::put32(result.data()+4, 1); pxa::wire::put32(result.data()+8, 1000);
+    pxa_event_t event{23, 1, token, reinterpret_cast<const std::uint8_t*>(result.data()), 12};
+    pxa_haptics_capabilities_t ccaps;
+    assert(pxa_haptics_parse_capabilities(&event, token, &ccaps) && ccaps.max_duration_ms == 1000);
+    complete(requests, caps, result); assert(*caps.result && (**caps.result).supported());
+    pxa::Permission permission(transport, handle);
+    Pending opened(haptics.open(permission));
+    const auto cpp_open = payload;
+    assert(pxa_haptics_request_open(token, handle) == 0 && cpp_open == payload);
+    pxa::wire::put64(result.data()+4, handle); complete(requests, opened, result); assert(*opened.result);
+    auto& actuator = **opened.result;
+    Pending vibrate(actuator.vibrate(100)); const auto cpp_vibrate = payload;
+    assert(pxa_haptics_request_vibrate(token, handle, 100, 1000) == 0 && cpp_vibrate == payload);
+    assert(pxa::wire::get16(payload.data()+14) == 0);
+    std::array<std::byte, 4> success{}; complete(requests, vibrate, success); assert(*vibrate.result);
+    Pending stopped(actuator.stop()); const auto cpp_stop = payload;
+    assert(pxa_haptics_request_stop(token, handle) == 0 && cpp_stop == payload);
+    complete(requests, stopped, success); assert(*stopped.result);
+    assert(actuator.close());
+    Pending abandoned(haptics.open(permission)); const auto late_token = token;
+    abandoned.scope.cancel(); const auto before = closed.size();
+    assert(requests.dispatch({23, 2, late_token, result}));
+    assert(closed.size() == before+1 && closed.back() == handle);
+    Pending malformed(haptics.capabilities());
+    pxa::wire::put32(result.data()+4, 2); pxa::wire::put32(result.data()+8, 0);
+    complete(requests, malformed, result);
+    assert(!*malformed.result && malformed.result->error() == pxa::Error::protocol_error);
+    event.opcode = 1; event.token = 10;
+    assert(!pxa_haptics_parse_capabilities(&event, 10, &ccaps));
 }
 
 static void test_lease(pxa::Transport& transport, pxa::RequestTable& requests) {
@@ -363,6 +401,7 @@ int main() {
     assert(pxa::cancel(0x1122334455667788ull));
     assert(service == 1 && opcode == 1 && !token && pxa::wire::get64(payload.data()) == 0x1122334455667788ull);
     // Exercise native full-width handles without allocating a Context.
+    test_haptics(transport, requests);
     test_lease(transport, requests); test_resources(transport, requests);
     test_assets(transport, requests); test_http_ime(transport, requests);
     test_store(transport, requests); test_surface_window(transport, requests);
