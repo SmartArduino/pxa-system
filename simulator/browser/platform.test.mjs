@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import http from 'node:http';
 import {pathToFileURL} from 'node:url';
+import {createSurfaceBridge} from './surface.mjs';
+import {importMediaFiles,installPackageFiles} from './package.mjs';
 import {createRuntime} from './runtime.mjs';
 import {createBorrowBridge,borrowedRanges} from './borrow.mjs';
 const bundle=process.env.PXA_BROWSER_BUNDLE;
@@ -109,4 +111,67 @@ test('Fetch exchange enforces origins, streams beyond ring size and accepts stre
     assert.deepEqual((await read(upload)).body,data);
     assert.equal((await read(open('/redirect'))).status,-14,'redirect must not escape permission origin');
   }finally{if(rt)await rt.stop();await new Promise(resolve=>server.close(resolve));}
+});
+
+test('Mapped Surface copies the submitted bank, survives memory growth and rejects stale presents',async()=>{
+  const {host,rt,call,io,active}=await platform();
+  const handle=call(16,1,Buffer.from([2,0,2,0,1,0,2,4])).readBigUInt64LE(4);
+  const layer=Buffer.alloc(24);layer.writeBigUInt64LE(handle);layer.writeUInt16LE(2,16);layer.writeUInt16LE(2,18);layer[22]=1;call(16,2,layer);
+  const memory=new WebAssembly.Memory({initial:2,maximum:4});let copied=0;
+  const bridge=createSurfaceBridge(host,()=>memory,(h,op,p,n)=>{const scratch=host._malloc(Math.max(1,n));try{host.HEAPU8.set(new Uint8Array(memory.buffer,p,n),scratch);const result=host._browser_io(h,op,scratch,n);new Uint8Array(memory.buffer,p,n).set(host.HEAPU8.subarray(scratch,scratch+n));return result;}finally{host._free(scratch);}},n=>copied+=n);
+  assert.equal(active(()=>bridge.call(handle,0x100,65,16)),-1);
+  assert.equal(active(()=>bridge.call(handle,0x100,64,16)),16);
+  assert.equal(active(()=>bridge.call(handle,0x101,128,4)),4);
+  const bank=new Uint8Array(memory.buffer)[128];assert.equal(bank,0);
+  memory.grow(1);
+  new Uint8Array(memory.buffer,64,8).set([0,248,0,248,0,248,0,248]);
+  const packet=new DataView(memory.buffer,128,16);new Uint8Array(memory.buffer,128,16).fill(0);packet.setBigUint64(8,1n,true);
+  assert.equal(active(()=>bridge.call(handle,0x102,128,16)),16);
+  host._browser_tick(performance.now()+40);host._browser_render();
+  const at=(116*320+156)*4;assert.deepEqual([...rt.pixels().slice(at,at+3)],[0,0,255]);
+  const total=copied;assert.ok(active(()=>bridge.call(handle,0x102,128,16))<0);assert.equal(copied,total);
+  assert.equal(total,24,'registration + one 8-byte bank, no full heap mirror');
+  await rt.stop();bridge.collect();bridge.close();
+});
+test('Verified resources stay read-only; imported media persists and cancels before publication',async()=>{
+  const {host,rt}=await platform();let changed=0,flushed=0;
+  const storage={changed(){changed++;},async flush(){flushed++;}};
+  installPackageFiles(host,[{path:'media/demo.nes',binary:new Uint8Array([1,2])},{path:'assets/table.dat',binary:new Uint8Array([3])}]);
+  assert.deepEqual([...host.FS.readFile('/media/demo.nes')],[1,2]);
+  assert.equal(host.FS.analyzePath('/data/media/demo.nes').exists,false,'bundle is never persisted as user data');
+  const file={name:'测试.nes',size:3,slice:()=>({async arrayBuffer(){return new Uint8Array([4,5,6]).buffer;}})};
+  const result=await importMediaFiles(host,{files:[file]},storage,()=>{});
+  assert.equal(result.imported,1);assert.deepEqual([...host.FS.readFile('/media/测试.nes')],[4,5,6]);
+  assert.equal((await importMediaFiles(host,{files:[file]},storage,()=>{})).skipped,1);
+  let valid=true;const cancelled={...file,name:'cancelled.nes',slice:()=>({async arrayBuffer(){valid=false;return new Uint8Array(3).buffer;}})};
+  assert.equal((await importMediaFiles(host,{files:[cancelled]},storage,()=>{},()=>valid)).imported,0);
+  assert.equal(host.FS.analyzePath('/data/media/cancelled.nes').exists,false);assert.equal(changed,1);assert.ok(flushed>=2);
+  await rt.stop();
+});
+
+test('Socket relay preserves C ring backpressure and grants only declared outbound authority',async t=>{
+  const sockets=[];
+  class Socket{
+    constructor(url){this.url=String(url);this.readyState=0;this.sent=[];sockets.push(this);}
+    send(data){this.sent.push(data);}
+    close(){this.readyState=3;}
+  }
+  t.mock.property(globalThis,'WebSocket',Socket);
+  const {host,rt,call,io,permission}=await platform({permissions:[{name:'net.socket',scope:'outbound'}],networkProxy:{url:'https://store.test/fetch',socketUrl:'https://store.test/socket',csrf:'csrf-test'}});
+  try{
+    const auth=permission('net.socket','outbound');
+    const handle=call(9,5,Buffer.concat([tlv(1,Buffer.from('tls://example.com:443')),tlv(3,num(auth,8)),tlv(8,num(5000)),tlv(14,num(512))])).readBigUInt64LE(4);
+    const socket=sockets[0];assert.equal(socket.url,'wss://store.test/socket');
+    socket.readyState=1;socket.onopen();assert.deepEqual(JSON.parse(socket.sent[0]),{csrf:'csrf-test',endpoint:'tls://example.com:443'});
+    socket.onmessage({data:JSON.stringify({type:'connected'})});
+    socket.onmessage({data:new Uint8Array(1024).fill(19).buffer});
+    assert.equal(socket.sent.filter(m=>m==='ack').length,0,'no receiver credit while the PXA ring is full');
+    let read=0;
+    while(read<1024){const r=io(handle,1,Buffer.alloc(128));assert.equal(r.result,128);assert.ok(r.data.every(v=>v===19));read+=r.result;}
+    assert.equal(socket.sent.filter(m=>m==='ack').length,1);
+    assert.equal(io(handle,2,Buffer.from([1,2,3])).result,3);
+    assert.deepEqual([...socket.sent.find(x=>x instanceof Uint8Array)],[1,2,3]);
+    socket.onmessage({data:JSON.stringify({type:'sent'})});
+    socket.onclose({code:1000});assert.equal(io(handle,1,Buffer.alloc(16)).result,0);
+  }finally{await rt.stop();}
 });

@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: MIT
 // Only the trusted host gets Fetch. Requests are checked by PXA permissions
 // and again here; redirects never escape the approved origin.
-export function installBrowserNetwork(host, origins=[]) {
-  if(!Array.isArray(origins)||origins.length>8)throw new Error('Invalid network declarations');
+export function installBrowserNetwork(host, origins=[],proxy=null) {
+  if(!Array.isArray(origins)||origins.length>64)throw new Error('Invalid network declarations');
   host.browserNetworkOrigins=origins.map(value=>{
+    if(value==='web')return value;
     const url=new URL(value);
-    if(url.origin!==value||!(url.protocol==='https:'||(url.protocol==='http:'&&['localhost','127.0.0.1','[::1]'].includes(url.hostname))))
+    if(url.origin!==value||!(url.protocol==='https:'||(url.protocol==='http:'&&(proxy||['localhost','127.0.0.1','[::1]'].includes(url.hostname)))))
       throw new Error('Network permissions must be exact HTTPS origins');
     return value;
   });
@@ -36,7 +37,7 @@ export function installBrowserNetwork(host, origins=[]) {
     },options.timeout);
     (async()=>{
       const url=new URL(options.url);
-      if(!host.browserNetworkOrigins.includes(url.origin)||url.username||url.password)throw new Error('Origin denied');
+      if(!(host.browserNetworkOrigins.includes(url.origin)||(host.browserNetworkOrigins.includes('web')&&url.protocol==='https:'))||url.username||url.password)throw new Error('Origin denied');
       let body=options.body?.length?options.body:undefined;
       if(options.upload){
         body=new ReadableStream({async pull(controller){
@@ -53,19 +54,40 @@ export function installBrowserNetwork(host, origins=[]) {
           controller.error(new Error('Upload cancelled'));
         }},{highWaterMark:0});
       }
-      const response=await fetch(url,{method:options.method,headers:options.headers,body,
+      let response,proxyHeaders,proxyStatus;
+      if(proxy){
+        if(!proxy.url||typeof proxy.csrf!=='string')throw new Error('Invalid network transport');
+        let bytes=body;
+        if(options.upload){
+          const reader=body.getReader(),chunks=[];let size=0;
+          try{for(;;){const {value,done}=await reader.read();if(done)break;
+            size+=value.length;if(size>2*1024*1024)throw new Error('Upload budget exceeded');chunks.push(value);}}
+          finally{reader.releaseLock();}
+          bytes=new Uint8Array(size);let offset=0;for(const chunk of chunks){bytes.set(chunk,offset);offset+=chunk.length;}
+        }
+        let encoded='';
+        if(bytes?.length){if(bytes.length>2*1024*1024)throw new Error('Upload budget exceeded');
+          for(let i=0;i<bytes.length;i+=8192)encoded+=String.fromCharCode(...bytes.subarray(i,i+8192));encoded=btoa(encoded);}
+        response=await fetch(proxy.url,{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':proxy.csrf},
+          body:JSON.stringify({url:url.href,method:options.method,headers:options.headers,body:encoded,wanted:options.wanted,timeout:options.timeout}),
+          credentials:'same-origin',redirect:'error',cache:'no-store',signal:state.abort.signal});
+        if(!response.ok||!response.headers.has('x-pxa-status'))throw new Error('Network transport rejected');
+        proxyHeaders=new Map(JSON.parse(atob(response.headers.get('x-pxa-headers'))).map(([n,v])=>[n.toLowerCase(),v]));
+        proxyStatus=Number(response.headers.get('x-pxa-status'));
+        if(!Number.isInteger(proxyStatus)||proxyStatus<100||proxyStatus>599)throw new Error('Invalid HTTP status');
+      }else response=await fetch(url,{method:options.method,headers:options.headers,body,
         ...(options.upload?{duplex:'half'}:{}),credentials:'omit',redirect:'error',cache:'no-store',signal:state.abort.signal});
       if(!valid(state)||state.abort.signal.aborted)return;
       // Unknown length is deliberate: Fetch can decompress a response without
       // rewriting Content-Length. The byte budget counts decoded body bytes.
       const names=new Set(['content-type',...options.wanted]);
       for(const name of names){
-        const value=response.headers.get(name);if(value===null)continue;
+        const value=proxyHeaders?proxyHeaders.get(name.toLowerCase()):response.headers.get(name);if(value==null)continue;
         const n=encoder.encode(name),v=encoder.encode(value);
         if(n.length>64||v.length>256||(name==='content-type'&&v.length>96))throw new Error('Response header exceeds PXA limits');
         bytes(n,p=>bytes(v,(q,size)=>{if(!host._browser_net_header(state.id,p,n.length,q,size))throw new Error('Response headers exceed budget');}));
       }
-      host._browser_net_headers(state.id,response.status);
+      host._browser_net_headers(state.id,proxyStatus??response.status);
       const reader=response.body?.getReader();
       if(reader)while(valid(state)&&!state.abort.signal.aborted){
         const {value,done}=await reader.read();if(done)break;

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Bound Guest allocations before instantiation. Expose the LLVM-named stack
 // global for callback-only event buffers; executable function bodies are intact.
-const LIMIT_PAGES=1024, LIMIT_TABLE=65536;
+const LIMIT_PAGES=8192, LIMIT_TABLE=65536;
 const utf8=new TextDecoder('utf-8',{fatal:true}), encoder=new TextEncoder();
 function reader(bytes){
   let p=0;
@@ -22,7 +22,7 @@ function limits(r,ceiling){
 }
 export function prepareGuestModule(binary){
   const bytes=new Uint8Array(binary);
-  if(bytes.length>8*1024*1024||bytes.length<8||!bytes.subarray(0,8).every((v,i)=>v===[0,97,115,109,1,0,0,0][i]))
+  if(bytes.length>16*1024*1024||bytes.length<8||!bytes.subarray(0,8).every((v,i)=>v===[0,97,115,109,1,0,0,0][i]))
     throw new Error('Invalid Wasm application');
   const r=reader(bytes.subarray(8)),sections=[];let stackIndex,exportSection,memoryCount=0;
   while(r.remaining){

@@ -16,6 +16,8 @@ typedef struct {
 static exchange_t exchanges[SLOTS];
 static uint32_t sequence;
 static pxa_net_service_t *net;
+EM_JS(int,connection_state,(),{return typeof navigator==='undefined'||typeof navigator.onLine!=='boolean'?0:navigator.onLine?2:1;});
+static pxa_status_t connectivity(void *c,uint32_t *state){(void)c;*state=connection_state();return PXA_STATUS_OK;}
 static exchange_t *find(uint32_t id){
     for(unsigned i=0;i<SLOTS;i++)if(exchanges[i].id==id&&id)return &exchanges[i];
     return NULL;
@@ -88,6 +90,7 @@ static pxa_status_t read_body(void *c,void *value,uint8_t *out,size_t capacity,s
     if(n>=0){*size=(size_t)n;js_wake(e->id);return PXA_STATUS_OK;}return n;
 }
 static pxa_status_t open_exchange(void *c,const pxa_net_request_t *r,void **out){
+    if(r->upload_bytes&&!streaming_upload())return PXA_STATUS_UNSUPPORTED;
     (void)c;exchange_t *e;pxa_status_t s=create(r,&e,1);if(!s)*out=e;return s;
 }
 static int32_t exchange_io(void *c,void *value,uint32_t op,uint8_t *data,size_t size){
@@ -120,10 +123,11 @@ pxa_status_t browser_net_init(pxa_runtime_t *runtime,pxa_permission_service_t *p
     pxa_net_config_t c={.struct_size=sizeof(c),.max_pending_requests=4,.max_requests_per_component=4,
         .max_response_streams=4,.max_headers=8,.max_response_bytes=16*1024*1024,.max_inline_body_bytes=2048,
         .max_request_header_bytes=2048,.max_response_header_bytes=2048,.min_timeout_ms=100,
-        .default_timeout_ms=30000,.max_timeout_ms=120000,.permissions=permissions,
+        .default_timeout_ms=30000,.max_timeout_ms=86400000,.permissions=permissions,
         .backend={.struct_size=sizeof(pxa_net_backend_t),.start=start,.poll=poll,.cancel=cancel,
-            .read_body=read_body,.close_body=close_exchange}};
-    if(streaming_upload()){c.backend.open_exchange=open_exchange;c.backend.exchange_io=exchange_io;c.backend.close_exchange=close_exchange;}
+            .read_body=read_body,.close_body=close_exchange,.connectivity=connectivity}};
+    c.backend.open_socket=browser_socket_open;c.backend.socket_io=browser_socket_io;c.backend.close_socket=browser_socket_close;
+    c.backend.open_exchange=open_exchange;c.backend.exchange_io=exchange_io;c.backend.close_exchange=close_exchange;
     size_t size=pxa_net_service_workspace_size(&c);
     pxa_status_t s=pxa_net_service_init(calloc(1,size),size,runtime,&c,&net);
     return s?s:pxa_net_service_register(net);

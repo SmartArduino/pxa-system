@@ -22,8 +22,13 @@ typedef struct {
     pxa_raster_telemetry_t telemetry;
     uint64_t frame_id;
     uint8_t scratch_mode,pending,buffer_count,raster;
+    uint8_t *registered;
+    uint32_t registered_bytes;
+    uint8_t owned[3],release_head,release_count;
+    pxa_surface_release_t releases[3];
 } layer_t;
 static layer_t layers[LAYERS];
+static pxa_surface_service_t *surface_service;
 static uint32_t serial;
 static size_t allocated;
 static uint16_t display_width,display_height;
@@ -33,15 +38,17 @@ static void *allocate(void *c,size_t size){
 }
 static void release(void *c,void *memory){(void)c;if(memory){size_t *p=(size_t *)((uint8_t *)memory-16);allocated-=*p;free(p);}}
 static layer_t *find(uint64_t id){for(unsigned i=0;i<LAYERS;i++)if(layers[i].id&&layers[i].id==id)return &layers[i];return NULL;}
+EM_JS(void,retire_buffers,(uint8_t *p),{(Module.browserSurfaceRetired||(Module.browserSurfaceRetired=[])).push(p);});
 static void close_layer(void *c,uint64_t id){
     (void)c;layer_t *l=find(id);if(!l)return;
     if(l->image)lv_obj_delete(l->image);
     pxa_raster_bindings_release(&l->bindings);
+    if(l->registered){allocated-=l->registered_bytes;retire_buffers(l->registered);}
     release(NULL,l->front);release(NULL,l->back);release(NULL,l->scratch);release(NULL,l->presentation_pixels);memset(l,0,sizeof(*l));
 }
 static pxa_status_t configure(void *c,uint64_t id,const pxa_surface_layer_t *v);
 static pxa_status_t create(void *c,const pxa_surface_desc_t *d,uint64_t *id,uint32_t *stride){
-    (void)c;if(d->flags&PXA_SURFACE_FLAG_GUEST_MAPPED)return PXA_STATUS_UNSUPPORTED;
+    (void)c;
     uint64_t bytes=(uint64_t)d->width*d->height*(d->format==PXA_SURFACE_FORMAT_RGB565?2:4);
     if(!bytes||bytes>BUDGET/2)return PXA_STATUS_RESOURCE_LIMIT;
     layer_t *l=NULL;for(unsigned i=0;i<LAYERS;i++)if(!layers[i].id){l=&layers[i];break;}
@@ -68,7 +75,7 @@ static void update_image(layer_t *l){
         const uint32_t w=l->presentation.header.w,h=l->presentation.header.h;
         const uint32_t sw=l->descriptor.header.w,sh=l->descriptor.header.h;
         uint16_t *out=(uint16_t *)l->presentation_pixels;
-        const uint16_t *in=(const uint16_t *)l->front;
+        const uint16_t *in=(const uint16_t *)l->descriptor.data;
         for(uint32_t y=0;y<h;y++){
             const uint32_t source_y=y*sh/h;
             if(y&&source_y==(y-1)*sh/h){memcpy(out+y*w,out+(y-1)*w,w*2u);continue;}
@@ -125,8 +132,52 @@ static pxa_status_t configure(void *c,uint64_t id,const pxa_surface_layer_t *v){
 static pxa_status_t query(void *c,uint64_t id,pxa_surface_state_t *out){
     (void)c;layer_t *l=find(id);if(!l)return PXA_STATUS_NOT_FOUND;*out=l->state;
     /* Two physical buffers. A pending front buffer does not occupy the writable back. */
-    out->free_buffers=1;out->flags=PXA_SURFACE_STATE_FLAG_SUPPORTS_ALPHA_COMPOSITING;return PXA_STATUS_OK;
+    out->free_buffers=1;
+    if(l->registered){out->free_buffers=0;for(unsigned i=0;i<l->buffer_count;i++)out->free_buffers+=!l->owned[i];}
+    out->flags=PXA_SURFACE_STATE_FLAG_SUPPORTS_ALPHA_COMPOSITING|PXA_SURFACE_STATE_FLAG_SUPPORTS_GUEST_MAPPED;return PXA_STATUS_OK;
 }
+static pxa_status_t register_buffers(void *c,uint64_t id,uint8_t *data,size_t bytes){
+    (void)c;layer_t *l=find(id);if(!l)return PXA_STATUS_NOT_FOUND;
+    if(l->registered)return PXA_STATUS_BAD_STATE;
+    if(bytes!=(size_t)l->bytes*l->buffer_count||bytes>BUDGET-allocated)return PXA_STATUS_RESOURCE_LIMIT;
+    l->registered=data;l->registered_bytes=bytes;allocated+=bytes;return PXA_STATUS_OK;
+}
+EMSCRIPTEN_KEEPALIVE uint32_t browser_surface_frame_bytes(uint8_t *registered){
+    for(unsigned i=0;i<LAYERS;i++)if(layers[i].registered==registered&&registered)return layers[i].bytes;
+    return 0;
+}
+EMSCRIPTEN_KEEPALIVE int browser_surface_can_present(uint8_t *registered,uint32_t index,uint64_t frame){
+    for(unsigned i=0;i<LAYERS;i++){
+        layer_t *l=&layers[i];
+        if(l->registered==registered&&registered)return index<l->buffer_count&&l->owned[index]==1&&frame>l->frame_id&&l->release_count<3;
+    }
+    return 0;
+}
+static pxa_status_t acquire_buffer(void *c,uint64_t id,uint8_t *index){
+    (void)c;layer_t *l=find(id);if(!l||!l->registered)return PXA_STATUS_BAD_STATE;
+    for(unsigned i=0;i<l->buffer_count;i++)if(!l->owned[i]){l->owned[i]=1;*index=i;return PXA_STATUS_OK;}
+    return PXA_STATUS_WOULD_BLOCK;
+}
+static pxa_status_t present_buffer(void *c,uint64_t id,uint8_t index,uint64_t frame){
+    (void)c;layer_t *l=find(id);if(!l||!l->registered)return PXA_STATUS_BAD_STATE;
+    if(index>=l->buffer_count||l->owned[index]!=1||frame<=l->frame_id||l->release_count>=3)return PXA_STATUS_BAD_STATE;
+    if(l->pending){l->state.dropped_frames++;l->state.replaced_frames++;}
+    l->descriptor.data=l->registered+(size_t)index*l->bytes;update_image(l);
+    l->pending=1;l->frame_id=frame;l->state.submitted_frames++;l->owned[index]=2;
+    l->releases[(l->release_head+l->release_count)%3]=(pxa_surface_release_t){.buffer_index=index,.frame_id=frame};
+    l->release_count++;return PXA_STATUS_OK;
+}
+static pxa_status_t peek_release(void *c,uint64_t id,pxa_surface_release_t *out){
+    (void)c;layer_t *l=find(id);if(!l)return PXA_STATUS_NOT_FOUND;
+    if(!l->release_count)return PXA_STATUS_WOULD_BLOCK;
+    *out=l->releases[l->release_head];return PXA_STATUS_OK;
+}
+static void consume_release(void *c,uint64_t id){
+    (void)c;layer_t *l=find(id);if(!l||!l->release_count)return;
+    l->owned[l->releases[l->release_head].buffer_index]=0;l->release_head=(l->release_head+1)%3;
+    l->release_count--;l->state.released_frames++;
+}
+void browser_graphics_poll(void){if(surface_service)pxa_surface_service_flush_releases(surface_service);}
 static pxa_status_t raster_create(void *c,const pxa_game_render_desc_t *d,uint64_t *id,uint32_t *caps){
     pxa_surface_desc_t surface={d->width,d->height,PXA_SURFACE_FORMAT_RGB565,d->buffer_count,0};uint32_t stride;
     pxa_status_t s=create(c,&surface,id,&stride);if(s)return s;layer_t *l=find(*id);l->raster=1;l->scratch_mode=d->scratch_mode;
@@ -189,9 +240,12 @@ pxa_status_t browser_graphics_init(pxa_runtime_t *rt,uint16_t width,uint16_t hei
         .max_width=UINT16_MAX,.max_height=UINT16_MAX,
         .max_frame_bytes=BUDGET/2,.min_buffer_count=2,.max_buffer_count=3,
         .backend={.struct_size=sizeof(pxa_surface_backend_t),.create=create,.write=write_frame,
-            .queue=queue_frame,.configure=configure,.query=query,.close=close_layer}};
+            .queue=queue_frame,.configure=configure,.query=query,.close=close_layer,
+            .register_buffers=register_buffers,.acquire_buffer=acquire_buffer,.present_buffer=present_buffer,
+            .peek_release=peek_release,.consume_release=consume_release}};
     pxa_surface_service_t *surface;size_t bytes=pxa_surface_service_workspace_size(&c);
     pxa_status_t s=pxa_surface_service_init(calloc(1,bytes),bytes,rt,&c,&surface);if(s)return s;
+    surface_service=surface;
     s=pxa_surface_service_register(surface);if(s)return s;
     pxa_game_render_config_t g={.struct_size=sizeof(g),.max_contexts=4,.max_contexts_per_component=4,
         .min_buffer_count=2,.max_buffer_count=3,.auto_target_profile={width,height,15,1},.now_us=now,

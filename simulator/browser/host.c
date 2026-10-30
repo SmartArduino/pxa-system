@@ -16,6 +16,8 @@
 #include "pxa/audio.h"
 #include "pxa/game_render.h"
 #include "pxa/event_port.h"
+#include "pxa/assets.h"
+#include "pxa/surface.h"
 
 static pxa_runtime_t *runtime;
 static pxa_component_t component;
@@ -48,6 +50,7 @@ static int open_event_port(uint64_t token,uint32_t size) {
     if(completed&&event_port)pxa_handle_close64(runtime,component,event_port);
     return completed;
 }
+EMSCRIPTEN_KEEPALIVE void browser_pump(void){browser_assets_poll();browser_audio_poll();browser_net_tick();}
 EMSCRIPTEN_KEEPALIVE int browser_event_wait(uint64_t handle,uint8_t *data,uint32_t size) {
     pxa_resource_t resource;
     pxa_status_t s=pxa_handle_get64(runtime,component,handle,PXA_RESOURCE_EVENT_PORT,&resource);
@@ -114,6 +117,10 @@ static void release_image(const void *source,void *context) {
     (void)context;
     const lv_image_dsc_t *image=source;if(!image)return;
     lv_image_cache_drop(image);free((void *)image->data);free((void *)image);
+}
+static pxa_status_t acquire_image(pxa_component_t owner,pxa_handle64_t handle,
+                                  pxa_asset_object_t **out,void *context){
+    (void)context;return pxa_assets_acquire_handle(runtime,owner,handle,PXA_ASSET_IMAGE,out);
 }
 static void *allocate(void *c, size_t n) { (void)c; return malloc(n); }
 static void release(void *c, void *p) { (void)c; free(p); }
@@ -226,6 +233,7 @@ EMSCRIPTEN_KEEPALIVE int browser_init(uint32_t w, uint32_t h) {
     pxa_lvgl_ui_theme_init(&lc.theme);
     browser_fonts_init(&lc);
     lc.text_input_focus=text_focus;lc.resolve_asset=resolve_image;lc.release_asset=release_image;
+    lc.acquire_image=acquire_image;
     pxa_ui_backend_t backend;
     CHECK(pxa_lvgl_ui_init(WORKSPACE(lvgl_ui), pxa_lvgl_ui_workspace_size(), &lc, &adapter, &backend));
     CHECK(pxa_ui_bind(ui, component, &backend));
@@ -242,6 +250,7 @@ EMSCRIPTEN_KEEPALIVE int browser_init(uint32_t w, uint32_t h) {
         .features=PXA_CLOCK_FEATURE_TIMING,.control=clock_call};
     CHECK(pxa_service_register(runtime, &clock));
     CHECK(browser_services_init(runtime));
+    CHECK(browser_assets_init(runtime));
     CHECK(browser_graphics_init(runtime,w,h));
     return 0;
 }
@@ -279,6 +288,8 @@ EMSCRIPTEN_KEEPALIVE int browser_io(uint64_t handle, uint32_t op, uint8_t *data,
 }
 EMSCRIPTEN_KEEPALIVE int browser_io_memory_kind(uint64_t handle,uint32_t op){
     pxa_resource_t r;
+    if(op>=PXA_SURFACE_IO_REGISTER_BUFFERS&&op<=PXA_SURFACE_IO_PRESENT&&
+        !pxa_handle_get64(runtime,component,handle,PXA_RESOURCE_SURFACE,&r))return 3;
     if(op>=PXA_AUDIO_IO_MIX_PCM&&op<=PXA_AUDIO_IO_PSG_RENDER&&
         !pxa_handle_get64(runtime,component,handle,PXA_RESOURCE_AUDIO_GRAPH,&r))return 1;
     if((op>=PXA_GAME_RENDER_IO_BLIT_INDEXED_FRAME&&op<=PXA_GAME_RENDER_IO_EXECUTE_PRIORITY_TILES)&&
@@ -300,6 +311,10 @@ EMSCRIPTEN_KEEPALIVE void browser_tick(double milliseconds) {
     if (us < current_us) return;
     lv_tick_inc((uint32_t)(us / 1000 - current_us / 1000)); current_us = us;
     browser_net_tick();
+    browser_audio_poll();
+    browser_services_tick();
+    browser_assets_poll();
+    browser_graphics_poll();
     if (clock_period && current_us >= next_tick) {
         next_tick += ((current_us - next_tick) / clock_period + 1) * clock_period;
         uint8_t bytes[8]; pxa_write_u64(bytes, current_us);

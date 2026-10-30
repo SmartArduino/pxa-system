@@ -47,9 +47,9 @@ def main():
     out.mkdir(parents=True, exist_ok=True)
     for filename in ['pxa-browser.mjs', 'pxa-browser.wasm', 'LICENSE-Emscripten', 'LICENSE-musl', 'LICENSE-compiler-rt']:
         shutil.copy2(host / filename, out / filename)
-    for filename in ['runtime.mjs', 'worker.mjs', 'fonts.mjs', 'storage.mjs', 'network.mjs', 'borrow.mjs', 'wasm-policy.mjs', 'audio-worklet.mjs', 'capabilities.json']:
+    for filename in ['runtime.mjs', 'worker.mjs', 'fonts.mjs', 'storage.mjs', 'network.mjs', 'borrow.mjs', 'wasm-policy.mjs', 'package.mjs', 'surface.mjs', 'capture.mjs', 'sockets.mjs', 'microphone-worklet.mjs', 'audio-worklet.mjs', 'capabilities.json']:
         shutil.copy2(ROOT / 'simulator/browser' / filename, out / filename)
-    manifest = {'version': '0.3.0', 'apps': []}
+    manifest = {'version': '0.6.0', 'apps': []}
     for name, source in apps:
         filename = f'{name}.wasm'
         shutil.copy2(source, out / filename)
@@ -64,20 +64,27 @@ def main():
         (out / filename).unlink(missing_ok=True)
     (out / 'NOTICE').write_text(
         'PXA Browser Host: PXA Core, generic raster/compute kernels and PSG (MIT), '
-        'LVGL (MIT), Montserrat and symbols fonts (SIL OFL; see included licenses). '
+        'LVGL (MIT), AnimatedGIF (Apache-2.0), pngle (MIT), miniz (public domain), TJpgDec (ChaN permissive), Montserrat and symbols fonts (SIL OFL; see included licenses). '
         'The LVGL FrogFS and internal ThorVG sources are excluded from compilation. '
         'Toolchain runtime: Emscripten (MIT selected), musl (MIT and retained permissive notices), '
         'compiler-rt (Apache-2.0 WITH LLVM-exception). Included license files retain upstream terms. '
         'Engine-specific rendering and emulation remain in separately licensed applications. '
         'Sources and build instructions: '
-        'https://github.com/SmartArduino/pxa-system/tree/browser-v0.3.0/simulator/browser\n')
+        'https://github.com/SmartArduino/pxa-system/tree/browser-v0.6.0/simulator/browser\n')
     # Keep third-party license text with the deployed runtime.
     lvgl = args.lvgl.resolve() if args.lvgl else host / '_deps/lvgl_source-src'
     shutil.copy2(lvgl / 'LICENCE.txt', out / 'LICENSE-LVGL')
-    for source, name in [(ROOT / 'ui/reference/lvgl/fonts/Montserrat-OFL.txt', 'LICENSE-Montserrat'),
+    for source, name in [(lvgl / 'src/libs/gif/LICENSE', 'LICENSE-AnimatedGIF'), (ROOT / 'ui/reference/lvgl/fonts/Montserrat-OFL.txt', 'LICENSE-Montserrat'),
                          (ROOT / 'libpxa/adapters/lvgl/fonts/symbols-LICENSE.txt', 'LICENSE-symbols'),
                          (ROOT / 'libpxa/adapters/lvgl/fonts/OFL.txt', 'LICENSE-OFL')]:
         shutil.copy2(source, out / name)
+    pngle = (ROOT / 'libpxa/adapters/image/vendor/pngle.c').read_text()
+    miniz = (ROOT / 'libpxa/adapters/image/vendor/miniz.c').read_text()
+    jpeg = (lvgl / 'src/libs/tjpgd/tjpgd.c').read_text()
+    (out / 'LICENSE-image-codecs').write_text(
+        'pngle (MIT)\n' + pngle[pngle.index('/*-'):pngle.index('*/')+2] +
+        '\n\nminiz (public domain dedication)\n' + miniz[miniz.rindex('/*'):] +
+        '\n\nTJpgDec (ChaN)\n' + jpeg[:jpeg.index('*/')+2])
     print(f'Browser bundle: {out}')
 
 

@@ -1,5 +1,5 @@
 {
-  "version": "0.3.0",
+  "version": "0.6.0",
   "target": "browser",
   "engine": "webassembly",
   "core": "pxa.core.v2",
@@ -12,7 +12,8 @@
       "packageImages": {
         "format": "PNG",
         "maxBytes": 1048576,
-        "maxDimension": 1024
+        "maxDimension": 1024,
+        "assetHandles": true
       }
     },
     "window": {
@@ -36,8 +37,9 @@
     },
     "fs": {
       "backend": "private MEMFS + IDBFS",
-      "quotaBytes": 8388608,
-      "externalFiles": false
+      "quotaBytes": 268435456,
+      "externalFiles": true,
+      "appMediaRoot": true
     },
     "audio": {
       "backend": "AudioWorklet + PXA mixer",
@@ -46,24 +48,29 @@
       "effects": true,
       "mix": true,
       "psg": true,
-      "assetPlayback": false,
-      "systemMasterVolumeControl": false
+      "assetPlayback": true,
+      "systemMasterVolumeControl": false,
+      "residentSound": true,
+      "capture": "native microphone with explicit consent; raw Opus via WebCodecs"
     },
     "net": {
-      "backend": "Fetch",
+      "backend": "Fetch + authenticated public HTTP/TLS relay",
       "credentials": "omit",
       "redirects": "error",
-      "permission": "exact origin",
-      "httpOpenRequires": "streaming request support",
-      "maxBufferBytes": 65536
+      "permission": "signed exact origin or web; outbound sockets on public ports 80/443",
+      "httpOpenRequires": "streaming request support only for streaming uploads",
+      "maxBufferBytes": 65536,
+      "connectivity": "browser link state",
+      "sockets": "bounded authenticated relay"
     },
     "surface": {
       "formats": [
         "RGB565",
         "ARGB8888_PREMULTIPLIED"
       ],
-      "guestMapped": false,
-      "opaqueUiRegions": false
+      "guestMapped": true,
+      "opaqueUiRegions": false,
+      "mapping": "pinned Host shadow, submitted bank copy"
     },
     "gameRender": {
       "raster": true,
@@ -80,18 +87,29 @@
     "permission": {
       "declarations": [
         "audio.playback",
-        "net.client"
+        "audio.capture",
+        "net.client",
+        "net.socket"
       ]
     },
     "ipc": {
       "scope": "one isolated application",
       "externalPeers": false
+    },
+    "assets": {
+      "backend": "shared PXA cache and loaders",
+      "imageDecode": true,
+      "png": true,
+      "jpeg": true,
+      "gifFrames": true,
+      "resourcePacks": true
+    },
+    "sensor": {
+      "physicalSensors": false,
+      "enumeration": true
     }
   },
   "unavailableServices": [
-    "assets",
-    "sensor",
-    "lease",
     "work",
     "imeProvider",
     "storeInstaller"
@@ -99,9 +117,9 @@
   "limits": {
     "controlBytes": 4096,
     "ioBytes": 4194304,
-    "hostMemoryBytes": 134217728,
+    "hostMemoryBytes": 536870912,
     "borrowMirrorBytes": 67108864,
-    "guestMemoryBytes": 67108864
+    "guestMemoryBytes": 536870912
   },
   "packageLoader": "reviewed store Wasm modules",
   "aot": false,
@@ -110,8 +128,8 @@
       2,
       1
     ],
-    "maxWasmBytes": 8388608,
-    "maxGuestBytes": 67108864,
+    "maxWasmBytes": 16777216,
+    "maxGuestBytes": 536870912,
     "services": [
       {
         "service_id": 1,
@@ -122,7 +140,7 @@
       {
         "service_id": 2,
         "major": 0,
-        "minor": 3,
+        "minor": 4,
         "features": 0
       },
       {
@@ -140,8 +158,8 @@
       {
         "service_id": 5,
         "major": 0,
-        "minor": 4,
-        "features": 0
+        "minor": 5,
+        "features": 451
       },
       {
         "service_id": 6,
@@ -158,13 +176,13 @@
       {
         "service_id": 9,
         "major": 0,
-        "minor": 4,
+        "minor": 6,
         "features": 0
       },
       {
         "service_id": 10,
         "major": 0,
-        "minor": 14,
+        "minor": 15,
         "features": 0
       },
       {
@@ -202,8 +220,28 @@
         "major": 0,
         "minor": 1,
         "features": 0
+      },
+      {
+        "service_id": 8,
+        "major": 0,
+        "minor": 1,
+        "features": 0
+      },
+      {
+        "service_id": 21,
+        "major": 2,
+        "minor": 6,
+        "features": 7
       }
-    ]
+    ],
+    "resourcePacks": true,
+    "permissions": [
+      "audio.playback",
+      "audio.capture",
+      "net.client",
+      "net.socket"
+    ],
+    "primaryUiEntry": true
   },
   "mainLoop": {
     "backend": "WebAssembly JSPI",
