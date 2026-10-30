@@ -122,7 +122,7 @@ def configure(workspace, *, engine='auto', sdk=None, version=None, manifest=None
     previous = json.loads(path.read_text()) if path.exists() else {}
     version = version or previous.get('sdk_version') or SDK_VERSION
     if not re.fullmatch(r'\d+\.\d+\.\d+', version):
-        raise ToolError('Choose an explicit SDK release, for example 0.5.0')
+        raise ToolError('Choose an explicit SDK release, for example 0.6.0')
     if previous and previous.get('sdk_version') != version:
         raise ToolError('This workspace pins another SDK; use a new workspace or an explicit SDK migration')
     if sdk:

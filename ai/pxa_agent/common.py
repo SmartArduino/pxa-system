@@ -9,6 +9,8 @@ from pathlib import Path, PurePosixPath
 import subprocess
 import tarfile
 import tempfile
+import time
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
@@ -90,8 +92,21 @@ class SecureRedirect(HTTPRedirectHandler):
 def request(url, *, data=None, headers=None, method=None, timeout=60):
     if urlparse(url).scheme != 'https':
         raise ToolError('Network access requires HTTPS')
-    return build_opener(SecureRedirect).open(Request(url, data=data, method=method,
-        headers={'User-Agent': 'PXA-Agent-Kit/0.2.1', **(headers or {})}), timeout=timeout)
+    from . import VERSION
+    attempts = 3 if data is None and method in (None, 'GET', 'HEAD') else 1
+    opener = build_opener(SecureRedirect)
+    for attempt in range(attempts):
+        try:
+            return opener.open(Request(url, data=data, method=method,
+                headers={'User-Agent': 'PXA-Agent-Kit/' + VERSION, **(headers or {})}), timeout=timeout)
+        except HTTPError as error:
+            if error.code not in (502, 503, 504) or attempt == attempts - 1:
+                raise
+            error.close()
+        except (URLError, TimeoutError) as error:
+            if attempt == attempts - 1:
+                raise ToolError(f'Network request to {urlparse(url).hostname} failed; check the connection and retry the current command. Existing project files and credentials were retained.') from error
+        time.sleep(.5 * (attempt + 1))
 
 
 def download(source, target, *, limit=1024 * 1024):

@@ -158,6 +158,38 @@ class WorkflowTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             context.sdk_context(self.sdk, 'ui', limit=1000)
 
+    def test_context_uses_project_locked_release_and_refuses_missing_sdk(self):
+        (self.app / 'pxa.lock').write_text('{"sdk":{"release":"0.4.0"}}')
+        releases = self.root / 'releases'
+        with self.assertRaisesRegex(ValueError, 'Locked SDK 0.4.0 is missing'):
+            context.locked_sdk(self.sdk, self.app, releases)
+        selected = releases / '0.4.0'
+        (selected / 'bin').mkdir(parents=True)
+        (selected / 'bin/pxa').touch()
+        (selected / 'VERSION').write_text('0.4.0')
+        self.assertEqual(context.locked_sdk(self.sdk, self.app, releases), selected)
+        (selected / 'VERSION').write_text('0.3.0')
+        with self.assertRaisesRegex(ValueError, 'missing'):
+            context.locked_sdk(self.sdk, self.app, releases)
+        (self.app / 'pxa.lock').write_text('{"sdk":{"release":"../../outside"}}')
+        with self.assertRaisesRegex(ValueError, 'Invalid SDK release'):
+            context.locked_sdk(self.sdk, self.app, releases)
+
+    def test_extensions_are_searchable_and_protected_by_app_scope(self):
+        header = self.sdk / 'extensions/peripherals/sdk/include/pxa-ext/vision.hpp'
+        header.parent.mkdir(parents=True)
+        header.write_text('struct FrameReader {};\n')
+        example = self.sdk / 'extensions/peripherals/examples/camera/main.cpp'
+        example.parent.mkdir(parents=True)
+        example.write_text('// Camera example')
+        value = context.sdk_context(self.sdk, 'FrameReader')
+        self.assertEqual(value['matches'][0]['path'], 'extensions/peripherals/sdk/include/pxa-ext/vision.hpp')
+        self.assertIn('extensions/peripherals/examples/camera/main.cpp', context.sdk_context(self.sdk, 'camera')['examples'])
+        self.assertEqual(context.sdk_context(self.sdk, 'FrameReader', language='c')['matches'], [])
+        self.start()
+        header.write_text('struct ChangedContract {};\n')
+        self.assertIn(str(header), scope.check(self.ws)['violations'])
+
     def test_controller_scenario_validation(self):
         spec = importlib.util.spec_from_file_location('verify_app', KIT / 'skills/pxa-debug/scripts/verify_app.py')
         module = importlib.util.module_from_spec(spec)

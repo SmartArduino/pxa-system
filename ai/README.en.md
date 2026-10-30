@@ -1,4 +1,4 @@
-# PXA Agent Kit 0.3.3
+# PXA Agent Kit 0.4.1
 
 [中文](README.md) · [Tutorial](https://pxa.doit.am/docs/ai-development/)
 
@@ -12,7 +12,7 @@ With [uv](https://docs.astral.sh/uv/getting-started/installation/) installed:
 uv run --python 3.12 https://pxa.doit.am/setup.py --workspace ./my-pxa
 ```
 
-The bootstrap verifies the release signature, archive hash and file manifest. Setup installs the signed DevKit 0.5.0, project-local skills/MCP adapters and launchers, then builds and runs an actual Guest. No ESP-IDF, LLVM build or additional model API key is needed. Native Linux x86_64 requires glibc 2.39+; macOS, Windows and older Linux use Docker Desktop or Podman with Linux amd64 support. OS administration, virtualization and user login may require normal user interaction.
+The bootstrap verifies the release signature, archive hash and file manifest. Setup installs the signed DevKit 0.6.0, project-local skills/MCP adapters and launchers, then builds and runs an actual Guest. No ESP-IDF, LLVM build or additional model API key is needed. Native Linux x86_64 requires glibc 2.39+; macOS, Windows and older Linux use Docker Desktop or Podman with Linux amd64 support. OS administration, virtualization and user login may require normal user interaction.
 
 Codex and Claude Code receive local skills, optional roles and MCP entries. DSH discovers shared `.agents/skills` and can use the CLI directly; `.pxa/dsh-mcp.yaml` is an optional official Cordis composition snippet. Other agents can use the standard stdio MCP server or CLI. Existing global settings, models, permissions, unrelated MCP servers and edited files are preserved. Reopen the project if the client has not discovered the new tools.
 
@@ -21,8 +21,7 @@ From the workspace (Windows: `.pxa\pxa.cmd`):
 ```sh
 .pxa/pxa doctor
 .pxa/pxa init apps/game --id pxa-my-game
-.pxa/pxa build apps/game
-.pxa/pxa run apps/game --profile pai-touch
+.pxa/pxa run apps/game --profile pai-touch --watch
 .pxa/pxa verify apps/game
 .pxa/pxa install apps/game --port /dev/ttyACM0
 ```
@@ -70,3 +69,5 @@ inside containers. Normal cancellation keeps the simulator available; an
 unresponsive worker forces only its owned simulator to stop. Cancellation
 never passes verification. Inspect current state before continuing instead
 of replaying steps that may already have taken effect.
+
+Context follows the project SDK lock, fails if that release is missing, and searches bundled C++ extension headers/examples. App scope also protects extension SDK sources. Stop watch before verify; run already builds incrementally. Only read-only GET/HEAD requests retry transient network failures; uploads and authorization writes are never replayed.

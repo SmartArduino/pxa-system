@@ -118,7 +118,7 @@ def begin(workspace, *, mode, project=None, board=None, sdk=None):
         if inside(sdk, Path(allowed[0])) or inside(Path(allowed[0]), sdk):
             raise ToolError('The app and SDK must be separate')
         # Runtime/toolchain binaries are distribution inputs, not source edits.
-        roots += [str(sdk / p) for p in ('sdk', 'spec', 'tools', 'config', 'VERSION', 'bin/pxa', 'bin/pxadb')]
+        roots += [str(sdk / p) for p in ('sdk', 'extensions', 'spec', 'tools', 'config', 'VERSION', 'bin/pxa', 'bin/pxadb')]
     value = {'schema': SCHEMA, 'mode': mode, 'allowed': allowed, 'roots': roots,
              'board': board, 'project': str(path) if mode == 'app' else None}
     value['baseline'] = snapshot(workspace, roots, allowed)

@@ -3,8 +3,25 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 import re
+
+
+def locked_sdk(root, project, releases=None):
+    """Use the same installed release that the SDK launcher selects for builds."""
+    root, project = Path(root), Path(project)
+    lock = project / 'pxa.lock'
+    release = json.loads(lock.read_text()).get('sdk', {}).get('release') if lock.is_file() else None
+    if not release or release == (root / 'VERSION').read_text().strip():
+        return root
+    if not isinstance(release, str) or not re.fullmatch(r'\d+\.\d+\.\d+(?:-[a-zA-Z0-9.-]+)?', release):
+        raise ValueError('Invalid SDK release in pxa.lock; preserve the lock for inspection')
+    releases = Path(releases) if releases is not None else Path(os.environ.get('XDG_DATA_HOME', Path.home() / '.local/share')) / 'pxa/releases'
+    selected = releases / release
+    if not (selected / 'bin/pxa').is_file() or not (selected / 'VERSION').is_file() or (selected / 'VERSION').read_text().strip() != release:
+        raise ValueError(f'Locked SDK {release} is missing; run sdk install {release} before requesting context. The project lock was retained.')
+    return selected
 
 
 def sdk_context(root, query='', language='cpp', limit=12):
@@ -14,7 +31,10 @@ def sdk_context(root, query='', language='cpp', limit=12):
     sdk = root / 'sdk' / ('guest-c' if language == 'c' else 'guest-cpp')
     terms = [t.casefold() for t in re.split(r'\s+|::', query.strip()) if t]
     candidates, examples, headers = [], [], []
-    for path in sorted((sdk / 'include').rglob('*')):
+    roots = [sdk / 'include']
+    if language == 'cpp':
+        roots.extend(sorted((root / 'extensions').glob('*/sdk/include')))
+    for path in sorted(path for folder in roots for path in folder.rglob('*')):
         if not path.is_file() or path.is_symlink() or path.stat().st_size > 1024**2:
             continue
         relative = path.relative_to(root).as_posix()
@@ -53,6 +73,10 @@ def sdk_context(root, query='', language='cpp', limit=12):
     for path in sorted((sdk / 'examples').glob('*/main.*')):
         if not terms or any(t in path.parent.name.casefold() for t in terms):
             examples.append(path.relative_to(root).as_posix())
+    if language == 'cpp':
+        for path in sorted((root / 'extensions').glob('*/examples/*/main.cpp')):
+            if not terms or any(t in path.as_posix().casefold() for t in terms):
+                examples.append(path.relative_to(root).as_posix())
     return {'sdk_root': str(root), 'release': (root / 'VERSION').read_text().strip(),
             'language': language, 'query': query, 'matches': matches, 'examples': examples[:12],
             'headers': [name for name in headers if not terms or any(term in name.casefold() for term in terms)][:limit],
@@ -66,10 +90,12 @@ def project_context(env, project, query='', language='cpp', limit=12):
     path = env.project(project)
     package = json.loads((path / 'package.json').read_text())
     if env.native:
-        sdk = sdk_context(env.config['sdk'], query, language, limit)
+        from .environment import sdk_data
+        sdk = sdk_context(locked_sdk(env.config['sdk'], path, sdk_data() / 'releases'), query, language, limit)
     else:
         command = env.invocation(['/pxa-agent-kit/pxa_agent/context.py', '/opt/pxa',
-                                  '--query', query, '--language', language, '--limit', str(limit)],
+                                  '--query', query, '--language', language, '--limit', str(limit),
+                                  '--project', str(env.mapped(path))],
                                  entrypoint='/opt/pxa/runtime/python/bin/python3')
         sdk = json.loads(run(command, cwd=env.workspace))
     lock = path / 'pxa.lock'
@@ -86,5 +112,7 @@ if __name__ == '__main__':
     parser.add_argument('--query', default='')
     parser.add_argument('--language', choices=('c', 'cpp'), default='cpp')
     parser.add_argument('--limit', type=int, default=12)
+    parser.add_argument('--project', type=Path)
     args = parser.parse_args()
-    print(json.dumps(sdk_context(args.root, args.query, args.language, args.limit), ensure_ascii=False))
+    root = locked_sdk(args.root, args.project) if args.project else args.root
+    print(json.dumps(sdk_context(root, args.query, args.language, args.limit), ensure_ascii=False))

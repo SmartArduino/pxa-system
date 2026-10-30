@@ -1,4 +1,4 @@
-# PXA Agent Kit 0.3.3
+# PXA Agent Kit 0.4.1
 
 [English](README.en.md) · [一句话上手](https://pxa.doit.am/docs/ai-development/) · [AI 入口](https://pxa.doit.am/ai.md)
 
@@ -22,19 +22,18 @@ uv run --python 3.12 https://pxa.doit.am/setup.py --workspace ./my-pxa
 uv run --python 3.12 --locked --project ./ai ./ai/agent.py --workspace ./my-pxa setup
 ```
 
-`setup` 自动选择官方 DevKit 0.5.0 或签名容器镜像，安装项目内的 skills、平台 MCP 配置、CLI 启动器，最后编译并运行真实 Guest、保存检查截图。失败时返回失败，不会把下载成功当成验收。`--sdk /path/to/devkit` 仅复用用户自己选择的完整 SDK，不宣称它经过下载签名校验。离线分发可以用 `setup.py --channel /path/to/ai-kit-0.3.3.json --manifest /path/to/distribution.json`，归档和签名放在各自清单旁。
+`setup` 自动选择官方 DevKit 0.6.0 或签名容器镜像，安装项目内的 skills、平台 MCP 配置、CLI 启动器，最后编译并运行真实 Guest、保存检查截图。失败时返回失败，不会把下载成功当成验收。`--sdk /path/to/devkit` 仅复用用户自己选择的完整 SDK，不宣称它经过下载签名校验。离线分发可以用 `setup.py --channel /path/to/ai-kit-0.4.1.json --manifest /path/to/distribution.json`，归档和签名放在各自清单旁。
 
 在 `my-pxa` 目录中使用以下命令（Windows 使用 `.pxa\pxa.cmd`）：
 
 ```sh
 .pxa/pxa doctor
 .pxa/pxa init apps/counter --id pxa-counter
-.pxa/pxa build apps/counter
-.pxa/pxa run apps/counter --profile pai-touch
+.pxa/pxa run apps/counter --profile pai-touch --watch
 .pxa/pxa verify apps/counter
 ```
 
-`run` 启动实际桌面 Guest；容器在后台运行，用 MCP 截图与输入工具交互。`verify` 默认覆盖五种屏幕，返回日志、截图与 `result.json` 的路径。检查截图后再判定 UI 正确。测试数据写入工作区被忽略的 `local/artifacts/`，不会进入应用资源包。应用保存在 `apps/<name>`。
+先停止 watch 再运行 verify；run 已包含构建，不必为每次保存重复执行 build。`run` 启动实际桌面 Guest；容器在后台运行，用 MCP 截图与输入工具交互。`verify` 默认覆盖五种屏幕，返回日志、截图与 `result.json` 的路径。检查截图后再判定 UI 正确。测试数据写入工作区被忽略的 `local/artifacts/`，不会进入应用资源包。应用保存在 `apps/<name>`。
 
 ## AI 平台
 
@@ -80,7 +79,7 @@ MCP 长操作返回 job_id，通过 `pxa_job_status` 获取结果，`pxa_screens
 .pxa/pxa store publish apps/counter apps/counter/dist/pxa-counter.pxa --changelog '首次发布'
 ```
 
-首次打开浏览器，登录并确认该应用的短码授权。工具在本地证明持有签名私钥，服务器登记公钥、创建/复用你的应用资料，并发放仅限该应用、有效 30 天、可在后台撤销的上传权限。私钥不上传，令牌不进入聊天、参数或源码；后续自动复用。`store.json` 可设置 name/summary/description/kind/category；已有商店资料不会被自动覆盖。
+首次打开浏览器，登录并确认该应用的短码授权。工具在本地证明持有签名私钥，服务器登记公钥、创建/复用你的应用资料，并发放仅限该应用、有效 30 天、可在后台撤销的上传权限。私钥不上传，令牌不进入聊天、参数或源码；后续自动复用。`store.json` 可设置 name/summary/description/kind/category/tags；未提供的既有字段保留，显式分类/标签更新遵循商城资料审核。
 
 先运行 `.pxa/pxa store prepare apps/counter` 读取商城当前图片规格、分类与标签规则，并预检本地素材。推荐 512×512 图标和 1280×960（4:3）封面。可使用图片工具生成图标和封面；没有图片工具时，由用户提供图片或明确选择跳过上传。
 
@@ -147,3 +146,7 @@ uv run --python 3.12 https://pxa.doit.am/setup.py --workspace . --mode board
 ```
 
 商城截图模式在启动模拟器前隐藏手势条和三按键导航，记录原始图片摘要。先关闭所有性能浮层，再逐张检查原图；不能裁剪或修图代替关闭系统界面。MCP 对应参数为 `pxa_verify(store_screenshots=true)`。故障排查见 [AI 开发排障](https://pxa.doit.am/docs/ai-troubleshooting/)。
+
+## 按锁定版本查接口
+
+`context` 与构建使用相同的已安装锁定 SDK；版本缺失时明确提示安装，不回退到其他版本。C++ 检索包含随该 SDK 发行的 `extensions/*/sdk/include` 与扩展示例，例如 `context apps/counter --query FrameReader`。应用边界审计也保护扩展 SDK。网络短暂失败时只重试 GET/HEAD 读取，不自动重放上传、授权或资料修改。

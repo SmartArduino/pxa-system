@@ -1,23 +1,25 @@
 # 独立 C++26 DevKit
 
-PXA 0.4.0 提供 Linux x86_64（glibc ≥ 2.39）开发套件。Guest SDK、CLI 和模拟器
-共用发行号；Core 2.0、服务版本、Manifest/Container 版本及 AOT engine ABI
+PXA 0.6.0 提供 Linux x86_64（glibc ≥ 2.39）开发套件。Guest SDK、CLI 和模拟器
+共用发行号；Core 2.1、服务版本、Manifest/Container 版本及 AOT engine ABI
 各自独立。0.2 系列的旧 Core 应用需要重新编译，不承诺直接二进制兼容。
 
 ## 开发入口
 
-解压 `pxa-devkit-0.4.0-linux-x86_64.tar.gz`，将其 `bin` 加入 PATH：
+解压 `pxa-devkit-0.6.0-linux-x86_64.tar.gz`，将其 `bin` 加入 PATH：
 
 ```sh
 pxa init hello
 pxa run hello
-pxa run hello --watch
+pxa run hello --debug --watch
 pxa run hello --profile sensecap-watcher
 pxa build hello --target esp32s3,esp32s31,simulator --offline
 pxa run hello --device /dev/ttyACM1 --baud 2000000
 pxa publish hello/dist/pxa-hello.pxa --check-only
 pxa publish hello/dist/pxa-hello.pxa --token-file /path/to/pxa-upload-token.json
 ```
+
+每条 run 命令分别执行，关闭窗口或按 Ctrl+C 停止后再执行下一条。上传前先准备发布者身份及应用授权，不要直接照抄占位令牌路径。
 
 `init` 创建普通 CMake C++26 工程，使用 `find_package(Pxa CONFIG REQUIRED)`。
 设备命令读取真实 CPU 目标、安装签名包并核对实际激活状态。开发工具不替代
@@ -57,13 +59,13 @@ Host/Guest；应用自己的文件存档保留，内存中的游戏状态不会�
 ## 在线与离线发行
 
 ```sh
-pxa sdk install 0.4.0
-pxa sdk install 0.4.0 --offline --manifest /media/0.4.0/distribution.json
+pxa sdk install 0.6.0
+pxa sdk install 0.6.0 --offline --manifest /media/0.6.0/distribution.json
 ```
 
 两者读取同一份清单、签名及五个组件：sdk、devtools、runtime、toolchain、
 simulator。内置分发公钥校验清单，再校验每个组件大小/SHA-256、安全解包并
-原子安装到用户数据目录 `pxa/releases/0.4.0`。已安装版本不可覆盖。
+原子安装到用户数据目录 `pxa/releases/0.6.0`。已安装版本不可覆盖。
 首次完整包仍需通过可信官网/发行页取得，之后安装以其内置公钥为信任根。
 App 发布者密钥和 DevKit 分发密钥是不同用途的身份，不随 SDK 分发私钥。
 
@@ -77,3 +79,5 @@ App 发布者密钥和 DevKit 分发密钥是不同用途的身份，不随 SDK 
 模拟器实际画面、真机激活以及商城迁移。所有文件上传完整后才公开发行；
 正式版本和同名资产不覆盖。Linux ARM、Windows、macOS 不属于本次二进制
 认证范围，需分别构建、封装并通过相同验收后发布。
+
+应用使用 AI 工具时，从工作区 `.pxa/pxa` 启动；C 项目用 `init apps/demo --language c`。裸 DevKit 的 init 只创建 C++ 模板。迭代时保留 watch、锁与构建缓存，先测相关屏幕；交付时再做多目标构建和所需布局矩阵。详见[日常开发教程](https://pxa.doit.am/docs/dev-workflow/)。

@@ -14,6 +14,7 @@ import tarfile
 import tempfile
 import unittest
 from unittest.mock import patch
+from urllib.error import URLError
 
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
@@ -48,6 +49,20 @@ class ToolTests(unittest.TestCase):
             document.write_text('{"schema":"test","version":"2"}')
             with self.assertRaisesRegex(common.ToolError, 'signature'):
                 common.signed_document(document)
+
+    def test_transient_reads_retry_but_writes_never_replay(self):
+        from unittest.mock import Mock
+        opener = Mock()
+        response = object()
+        opener.open.side_effect = [URLError('temporary'), response]
+        with patch.object(common, 'build_opener', return_value=opener), patch.object(common.time, 'sleep'):
+            self.assertIs(common.request('https://example.test/spec'), response)
+        self.assertEqual(opener.open.call_count, 2)
+        opener.open.reset_mock()
+        opener.open.side_effect = URLError('temporary')
+        with patch.object(common, 'build_opener', return_value=opener), self.assertRaises(common.ToolError):
+            common.request('https://example.test/upload', data=b'original signed package', method='POST')
+        self.assertEqual(opener.open.call_count, 1)
 
     def test_artifact_hash_mismatch_and_bad_size(self):
         archive = self.root / 'payload'
