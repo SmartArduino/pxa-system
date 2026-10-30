@@ -10,6 +10,7 @@ typedef struct {
     const char *output;
     uint64_t started, paused_at, visible_before, submitted_before;
     unsigned stage, density_dpi, cooperative_pumps;
+    bool send_back;
 } matrix_probe_t;
 
 static void capture_display(const matrix_probe_t *probe) {
@@ -68,6 +69,7 @@ static void pump_probe(void *context) {
         // Back is an application action and may legitimately exit from a
         // main menu. Keep this generic probe focused on pause/resume; input
         // actions belong to the application's own interaction scenarios.
+        if (probe->send_back) SDL_AtomicSet(&host->back_requested, 1);
         probe->stage = 2;
     } else if (probe->stage == 2 && now - probe->paused_at > UINT64_C(1000000)) {
         assert(host->pending_lifecycle == 2u);
@@ -136,7 +138,8 @@ int main(int argc, char **argv) {
             options.safe_insets[i] = (uint16_t)strtoul(argv[10 + i], NULL, 10);
     }
     matrix_probe_t probe = {.output = argv[8], .started = now_us(NULL),
-                             .density_dpi = options.density_dpi};
+                             .density_dpi = options.density_dpi,
+                             .send_back = getenv("PXA_MATRIX_SEND_BACK") != NULL};
     // Exercise the embedded product Host used by the system shell. Standalone
     // mode intentionally lacks system text-input control and cannot activate
     // applications which require that capability (Reader / system-input).

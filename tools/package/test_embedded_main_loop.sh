@@ -19,7 +19,7 @@ PXA_APP_SOURCE_ROOT="$system_dir/simulator/desktop/tests/apps" \
 PXA_PACKAGE_OUTPUT_ROOT="$work_dir" \
   bash "$script_dir/package_app.sh" main-loop-smoke simulator "$work_dir/pxa-main-loop-smoke" \
   >"$work_dir/build.log" 2>&1 || { cat "$work_dir/build.log" >&2; exit 1; }
-"$1" "$work_dir/pxa-main-loop-smoke" "$work_dir/publisher.der" "$work_dir/state" \
+PXA_MATRIX_SEND_BACK=1 "$1" "$work_dir/pxa-main-loop-smoke" "$work_dir/publisher.der" "$work_dir/state" \
   480 480 305 1 "$work_dir/frame" >"$work_dir/run.log" 2>&1 || {
     cat "$work_dir/run.log" >&2; exit 1;
   }
