@@ -76,12 +76,13 @@ struct CaptureApp {
         }
     }
     pxa::Result<void> on_start(pxa::Context& ctx,std::span<const std::byte> config) { context=&ctx;return environment.initialize(config); }
+    void on_foreground(pxa::Context& ctx) { (void)ctx.window().fullscreen(pxa::WindowBarMode::hidden,pxa::WindowBarMode::hidden); }
     pxa::Result<bool> on_event(pxa::Context&,const pxa::Event& event) { auto result=environment.update(event);pump();return result; }
     void on_background(pxa::Context&) { (void)capture.close();permission.reset();busy=false;status.set("Paused; microphone released"); }
     void on_stop(pxa::StopReason) { (void)capture.close();permission.reset(); }
     auto view() { return SafeArea(environment.display(),Scroll(Column(Text("Microphone").font(Font::caption),
         Button("Start recording").on_click([this]{if(!busy){busy=true;status.set("Opening...");if(!context->foreground_tasks().start(start()))fail("Task limit",pxa::Error::resource_limit);}}),
         Text(status).font(Font::caption).fill(),
-        Text("Mono 16 kHz Opus. Local files only.").font(Font::caption).fill()).gap(8_dp).padding(8_dp).fill()).fill()); }
+        Text("Mono 16 kHz Opus. Local files only.").font(Font::caption).fill()).gap(4_dp).padding(8_dp).fill()).fill()); }
 };
 PXA_APPLICATION(CaptureApp)

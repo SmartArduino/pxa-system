@@ -1,8 +1,8 @@
 {
   "format": "pxa-package-source-0.1",
   "id": "pxa-cpp-capture",
-  "version": "1.0.0",
-  "release_sequence": 1,
+  "version": "1.0.1",
+  "release_sequence": 2,
   "name": "Microphone capture",
   "description": "Permission-controlled standard Audio capture with bounded local Opus packet storage.",
   "min_sdk": [
@@ -43,7 +43,8 @@
         "permission",
         "clock",
         "fs",
-        "log"
+        "log",
+        "window"
       ],
       "wasi": {
         "version": "preview1",
