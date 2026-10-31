@@ -26,7 +26,7 @@ export async function createRuntime(host, binary, {width=320, height=240, log=()
   if(mainLoop&&(typeof WebAssembly.Suspending!=='function'||typeof WebAssembly.promising!=='function'))
     throw new Error('此游戏需要支持 JSPI 的浏览器，请使用新版 Chrome、Edge 或 Firefox');
   host.browserMainLoop=mainLoop;
-  host.browserAssets=new Map(assets.map(asset=>[asset.path,new Uint8Array(asset.binary)]));
+  host.browserAssets=new Map(assets.map(asset=>[asset.path,asset.binary instanceof Uint8Array?asset.binary:new Uint8Array(asset.binary)]));
   const network=installBrowserNetwork(host,networkOrigins,networkProxy);
   installBrowserFonts(host);
   const sockets=installBrowserSockets(host,networkProxy,permissions);

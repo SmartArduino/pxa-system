@@ -49,7 +49,8 @@ def main():
         shutil.copy2(host / filename, out / filename)
     for filename in ['runtime.mjs', 'worker.mjs', 'fonts.mjs', 'storage.mjs', 'network.mjs', 'borrow.mjs', 'wasm-policy.mjs', 'package.mjs', 'surface.mjs', 'capture.mjs', 'sockets.mjs', 'microphone-worklet.mjs', 'audio-worklet.mjs', 'capabilities.json']:
         shutil.copy2(ROOT / 'simulator/browser' / filename, out / filename)
-    manifest = {'version': '0.6.0', 'apps': []}
+    version = json.loads((ROOT / 'simulator/browser/capabilities.json').read_text())['version']
+    manifest = {'version': version, 'apps': []}
     for name, source in apps:
         filename = f'{name}.wasm'
         shutil.copy2(source, out / filename)
@@ -70,7 +71,7 @@ def main():
         'compiler-rt (Apache-2.0 WITH LLVM-exception). Included license files retain upstream terms. '
         'Engine-specific rendering and emulation remain in separately licensed applications. '
         'Sources and build instructions: '
-        'https://github.com/SmartArduino/pxa-system/tree/browser-v0.6.0/simulator/browser\n')
+        f'https://github.com/SmartArduino/pxa-system/tree/browser-v{version}/simulator/browser\n')
     # Keep third-party license text with the deployed runtime.
     lvgl = args.lvgl.resolve() if args.lvgl else host / '_deps/lvgl_source-src'
     shutil.copy2(lvgl / 'LICENCE.txt', out / 'LICENSE-LVGL')

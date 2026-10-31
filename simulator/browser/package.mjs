@@ -12,7 +12,7 @@ export function installPackageFiles(host,assets=[]){
   const write=(path,data)=>{fs.mkdirTree(path.slice(0,path.lastIndexOf('/')));fs.writeFile(path,data,{canOwn:true});};
   for(const asset of assets){
     if(!packagePath(asset.path)||paths.has(asset.path))throw new Error('Invalid package resource path');
-    const data=new Uint8Array(asset.binary);total+=data.byteLength;
+    const data=asset.binary instanceof Uint8Array?asset.binary:new Uint8Array(asset.binary);total+=data.byteLength;
     if(total>MAX_BYTES)throw new Error('Package resource budget exceeded');
     paths.add(asset.path);
     write(asset.path.startsWith('media/')?'/'+asset.path:'/package/'+asset.path,data);

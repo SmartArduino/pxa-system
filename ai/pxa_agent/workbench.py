@@ -43,7 +43,8 @@ class Jobs:
             stderr=subprocess.STDOUT, start_new_session=os.name != 'nt',
             **({'creationflags': subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == 'nt' else {}))
         job = {'process': process, 'directory': output, 'container': name,
-               'started': time.monotonic(), 'timeout': timeout, 'done': False, 'timed_out': False}
+               'started': time.monotonic(), 'timeout': timeout, 'done': False, 'timed_out': False,
+               'discover_selector': not host and bool(arguments) and str(arguments[0]) == 'run'}
         self.jobs[identity] = job
 
         def capture():
@@ -55,6 +56,8 @@ class Jobs:
                     log.write(data)
                     log.flush()
             process.wait()
+            process.stdout.close()
+            job['finished'] = time.monotonic()
             job['done'] = True
 
         def deadline():
@@ -84,10 +87,15 @@ class Jobs:
                 pass
         log = job['directory'] / 'run.log'
         text = ''
-        if log.exists():
-            with log.open('rb') as stream:
-                stream.seek(max(0, log.stat().st_size - 16000))
-                text = stream.read(16000).decode('utf-8', errors='replace')
+        if log.exists() and (include_log or job.get('discover_selector', True) and not job.get('selector')):
+            stat = log.stat()
+            fingerprint = (stat.st_ino, stat.st_size, stat.st_mtime_ns)
+            if job.get('log_fingerprint') != fingerprint:
+                with log.open('rb') as stream:
+                    stream.seek(max(0, stat.st_size - 16000))
+                    job['log_tail'] = stream.read(16000).decode('utf-8', errors='replace')
+                job['log_fingerprint'] = fingerprint
+            text = job.get('log_tail', '')
         selectors = re.findall(r'PXADB: pxa device info --simulator ([a-z0-9@-]+)', text)
         if selectors:
             job['selector'] = selectors[-1]
@@ -114,7 +122,7 @@ class Jobs:
                 'cancelled': bool(job.get('cancel_requested') or batch and batch.get('cancelled')),
                 **({'batch':batch} if complete and job.get('batch_output') else {}),
                 **({'cancellation_error':job['cancellation_error']} if job.get('cancellation_error') else {}),
-                'elapsed_seconds': round(time.monotonic() - job['started'], 2),
+                'elapsed_seconds': round(job.get('finished', time.monotonic()) - job['started'], 2),
                 'log': str(log), 'log_tail': text if include_log else '', 'simulator': job.get('selector')}
 
     def stop(self, identity):

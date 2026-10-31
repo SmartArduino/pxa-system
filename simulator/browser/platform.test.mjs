@@ -149,6 +149,23 @@ test('Verified resources stay read-only; imported media persists and cancels bef
   await rt.stop();
 });
 
+test('Verified asset views retain offsets and share the downloaded buffer through MEMFS',async()=>{
+  const bundle=new Uint8Array([99,1,2,88,3,4,77]);
+  const {host,rt}=await platform({assets:[
+    {path:'assets/first.bin',binary:bundle.subarray(1,3)},
+    {path:'media/second.bin',binary:bundle.subarray(4,6)}
+  ]});
+  try{
+    for(const [path,offset,bytes] of [['/package/assets/first.bin',1,[1,2]],['/media/second.bin',4,[3,4]]]){
+      assert.deepEqual([...host.FS.readFile(path)],bytes);
+      const contents=host.FS.analyzePath(path).object.contents;
+      assert.equal(contents.buffer,bundle.buffer);
+      assert.equal(contents.byteOffset,bundle.byteOffset+offset);
+      assert.equal(contents.byteLength,bytes.length);
+    }
+  }finally{await rt.stop();}
+});
+
 test('Socket relay preserves C ring backpressure and grants only declared outbound authority',async t=>{
   const sockets=[];
   class Socket{

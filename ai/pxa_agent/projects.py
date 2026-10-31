@@ -6,6 +6,14 @@ from .common import KIT, ToolError, atomic_json
 from . import scope
 
 
+def build_targets(target='simulator', targets=None):
+    values = [target] if targets is None else targets
+    if not isinstance(values, list) or not 1 <= len(values) <= 4 or any(
+            value not in ('simulator', 'esp32s3', 'esp32s31', 'wasm') for value in values):
+        raise ToolError('Choose 1..4 PXA build targets')
+    return ','.join(dict.fromkeys(values))
+
+
 def initialize(env, project, app_id=None, language='cpp'):
     path = env.project(project)
     if language not in ('c', 'cpp'):

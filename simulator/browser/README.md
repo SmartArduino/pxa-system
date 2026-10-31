@@ -8,7 +8,7 @@ application host, not the complete device firmware, launcher or installer.
 ## Build and test
 
 Prerequisites: Python 3, CMake, Emscripten 4.0.6 (`emcmake` on PATH), a WASI SDK
-(the PXA 0.5.0 DevKit includes one), and Node 24+ (JSPI) for integration tests. LVGL is
+(the PXA 0.7.0 DevKit includes one), and Node 24+ (JSPI) for integration tests. LVGL is
 pinned to 9.6.0. Supply `--lvgl` to reuse an existing checkout offline.
 
 ```sh
@@ -157,3 +157,11 @@ Browser frame counters measure changed frames completed by the renderer, not
 physical display refresh or device throughput. Report scheduling and processing
 cost separately; verify actual device performance with the normal simulator and
 hardware tools.
+
+## Resource delivery in Browser Host 0.7
+
+Verified resource descriptors may reference `Uint8Array` views into one downloaded
+bundle. The runtime preserves their offsets and mounts those views in private MEMFS
+without copying the entire bundle for each file. Deduplicate transferable buffers
+before sending them to the Worker. Guest package files remain read-only; imported
+media and saved data retain their separate persistence lifecycle.

@@ -131,11 +131,16 @@ def create_server(env):
         return host_job(['board', 'build', board], timeout=1900)
 
     @tool()
-    def pxa_build(project: str, target: Literal['simulator', 'esp32s3', 'esp32s31'] = 'simulator') -> dict:
-        """Build offline with the pinned SDK and original signing identity; returns a job."""
+    def pxa_build(project: str, target: Literal['simulator', 'esp32s3', 'esp32s31', 'wasm'] = 'simulator',
+                  targets: list[Literal['simulator', 'esp32s3', 'esp32s31', 'wasm']] | None = None) -> dict:
+        """Build offline with the pinned SDK/signing identity. Use targets for one shared
+        Wasm/resource build across CPUs; target remains the single-target shortcut. Returns a job.
+        """
+        from .projects import build_targets
+        selected_targets = build_targets(target, targets)
         path = env.project(project)
         env.ensure_identity(path)
-        return jobs.start(['build', path, '--target', target, '--offline'])
+        return jobs.start(['build', path, '--target', selected_targets, '--offline'])
 
     @tool()
     def pxa_run(project: str, profile: Profile = 'pai-touch', headless: bool = True) -> dict:

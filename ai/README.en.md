@@ -1,4 +1,4 @@
-# PXA Agent Kit 0.4.2
+# PXA Agent Kit 0.4.3
 
 [中文](README.md) · [Tutorial](https://pxa.doit.am/docs/ai-development/)
 
@@ -71,3 +71,5 @@ never passes verification. Inspect current state before continuing instead
 of replaying steps that may already have taken effect.
 
 Context follows the project SDK lock, fails if that release is missing, and searches bundled C++ extension headers/examples. App scope also protects extension SDK sources. Stop watch before verify; run already builds incrementally. Only read-only GET/HEAD requests retry transient network failures; uploads and authorization writes are never replayed.
+
+For delivery, `pxa_build` accepts `targets=["esp32s3", "esp32s31", "simulator", "wasm"]` in one shared build. Keep the default simulator target during iteration. Poll jobs with `include_log=false` unless diagnostics are needed; completed elapsed times remain stable.
