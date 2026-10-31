@@ -1237,7 +1237,9 @@ static pxa_status_t verify_opened_container(
     char app_id_out[PXA_POSIX_INSTALLER_MAX_APP_ID + 1],
     size_t *app_id_size_out, pxa_container_header_t *header_out,
     int verify_payload) {
+#if PXA_ENABLE_LEGACY_CONTAINER
     static const uint8_t domain[] = "PXA-PACKAGE-CONTAINER-DIGEST\0";
+#endif
     static const uint8_t indexed_domain[] = "PXA-PACKAGE-STREAM-INDEX\0";
     uint8_t header_bytes[PXA_CONTAINER_HEADER_BYTES];
     uint8_t package_signature_bytes[PXA_POSIX_INSTALLER_SIGNATURE_ENVELOPE_BYTES];
@@ -1255,8 +1257,10 @@ static pxa_status_t verify_opened_container(
     struct stat before;
     struct stat after;
     uint64_t unpacked_size = 0;
+#if PXA_ENABLE_LEGACY_CONTAINER
     uint64_t payload_position;
     uint64_t payload_end;
+#endif
     size_t index;
     pxa_status_t status;
 
@@ -1373,6 +1377,7 @@ static pxa_status_t verify_opened_container(
         }
         goto verify_container_signature;
     }
+#if PXA_ENABLE_LEGACY_CONTAINER
     payload_position = header.payload_offset;
     payload_end = header.payload_offset + header.payload_size;
     for (index = 0; index < manifest->file_count; ++index) {
@@ -1469,6 +1474,10 @@ static pxa_status_t verify_opened_container(
         status = PXA_STATUS_DENIED;
         goto digest_done;
     }
+#else
+    status = PXA_STATUS_DENIED;
+    goto digest_done;
+#endif
 verify_container_signature:
     status = pxa_openssl_sha256_stream_finish(&stream, digest);
     if (status != PXA_STATUS_OK) return status;
@@ -1481,9 +1490,10 @@ verify_container_signature:
                                 : (void *)&embedded_trust,
         (pxa_bytes_t){container_signature.publisher_key_id,
                       PXA_PACKAGE_DIGEST_BYTES},
-        header.format_minor==2
-            ? (pxa_bytes_t){indexed_domain,sizeof(indexed_domain)-1}
-            : (pxa_bytes_t){domain, sizeof(domain) - 1},
+#if PXA_ENABLE_LEGACY_CONTAINER
+        header.format_minor == 1 ? (pxa_bytes_t){domain, sizeof(domain) - 1} :
+#endif
+        (pxa_bytes_t){indexed_domain, sizeof(indexed_domain) - 1},
         (pxa_bytes_t){digest, sizeof(digest)},
         (pxa_bytes_t){container_signature.signature,
                       PXA_PACKAGE_SIGNATURE_BYTES});
@@ -2484,18 +2494,27 @@ static pxa_status_t prepare_incoming_container(
     pxa_posix_installer_t *installer, int source_fd,
     const pxa_container_header_t *header, const uint8_t *manifest_bytes,
     size_t manifest_size, const pxa_posix_slot_ctx_t *ctx) {
+#if PXA_ENABLE_LEGACY_CONTAINER
     uint8_t package_signature[PXA_POSIX_INSTALLER_SIGNATURE_ENVELOPE_BYTES];
+#endif
     uint8_t header_bytes[PXA_CONTAINER_HEADER_BYTES];
     pxa_container_header_t parsed_header;
+#if PXA_ENABLE_LEGACY_CONTAINER
     pxa_package_manifest_t *manifest = NULL;
     char relative[PXA_POSIX_INSTALLER_SESSION_INCOMING_BYTES];
     char *packages = NULL;
     uint64_t payload_position;
     size_t index;
+#endif
     struct stat before;
     struct stat after;
+#if PXA_ENABLE_LEGACY_CONTAINER
     int packages_fd = -1;
     int incoming_fd = -1;
+#else
+    (void)manifest_bytes;
+    (void)manifest_size;
+#endif
     pxa_status_t status;
 
     if (fstat(source_fd, &before) != 0 || !S_ISREG(before.st_mode) ||
@@ -2539,6 +2558,7 @@ static pxa_status_t prepare_incoming_container(
             status=PXA_STATUS_DENIED;
         return status;
     }
+#if PXA_ENABLE_LEGACY_CONTAINER
     status = ensure_manifest_workspace(
         installer, (pxa_bytes_t){manifest_bytes, manifest_size});
     if (status != PXA_STATUS_OK) {
@@ -2748,6 +2768,9 @@ static pxa_status_t prepare_incoming_container(
     if (status == PXA_STATUS_OK) status = sync_tree(incoming_fd);
     close(incoming_fd);
     return status;
+#else
+    return PXA_STATUS_DENIED;
+#endif
 }
 
 static pxa_status_t resolve_locator(pxa_posix_installer_t *installer,

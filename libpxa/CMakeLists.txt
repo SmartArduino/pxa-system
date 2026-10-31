@@ -16,6 +16,7 @@ option(PXA_WARNINGS_AS_ERRORS "Treat libpxa warnings as errors"
        ${PXA_TOP_LEVEL})
 option(PXA_BUILD_ADAPTERS "Build Layer 2 POSIX/OpenSSL adapters"
        ${PXA_TOP_LEVEL})
+option(PXA_ENABLE_LEGACY_CONTAINER "Accept legacy Container 0.1 installation" OFF)
 if(PXA_BUILD_TESTS)
     find_package(Python3 COMPONENTS Interpreter QUIET)
 endif()
@@ -48,6 +49,8 @@ include(cmake/pxaSources.cmake)
 pxa_collect_sources(PXA_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}")
 add_library(pxa ${PXA_SOURCES})
 add_library(pxa::pxa ALIAS pxa)
+target_compile_definitions(pxa PUBLIC
+    PXA_ENABLE_LEGACY_CONTAINER=$<BOOL:${PXA_ENABLE_LEGACY_CONTAINER}>)
 include("${CMAKE_CURRENT_LIST_DIR}/../cmake/PxaLicensePolicy.cmake")
 pxa_add_system_license_gate(pxa_license_gate "${CMAKE_CURRENT_LIST_DIR}/..")
 add_dependencies(pxa pxa_license_gate)
@@ -264,12 +267,12 @@ if(PXA_BUILD_ADAPTERS)
                 COMMAND ${Python3_EXECUTABLE}
                     ${CMAKE_CURRENT_SOURCE_DIR}/adapters/tests/container_tool_test.py
                     $<TARGET_FILE:pxa_container_install_tool>
-                    ${PXA_PACKAGE_TOOLS_DIR})
+                    ${PXA_PACKAGE_TOOLS_DIR} $<BOOL:${PXA_ENABLE_LEGACY_CONTAINER}>)
             add_test(NAME pxa_resource_tool_test
                 COMMAND ${Python3_EXECUTABLE}
                     ${CMAKE_CURRENT_SOURCE_DIR}/adapters/tests/resource_tool_test.py
                     $<TARGET_FILE:pxa_container_install_tool>
-                    ${PXA_PACKAGE_TOOLS_DIR})
+                    ${PXA_PACKAGE_TOOLS_DIR} $<BOOL:${PXA_ENABLE_LEGACY_CONTAINER}>)
         endif()
     endif()
 endif()

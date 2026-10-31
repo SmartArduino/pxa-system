@@ -32,7 +32,8 @@ pxa_status_t pxa_container_header_parse(
     if (encoded.data == NULL || encoded.size != PXA_CONTAINER_HEADER_BYTES ||
         memcmp(encoded.data, magic, sizeof(magic)) != 0 ||
         pxa_read_u16(encoded.data + 4) != PXA_CONTAINER_FORMAT_MAJOR ||
-        (pxa_read_u16(encoded.data + 6) != 1 && pxa_read_u16(encoded.data + 6) != 2) ||
+        (pxa_read_u16(encoded.data + 6) != 2 &&
+         !(PXA_ENABLE_LEGACY_CONTAINER && pxa_read_u16(encoded.data + 6) == 1)) ||
         pxa_read_u16(encoded.data + 8) != PXA_CONTAINER_HEADER_BYTES ||
         pxa_read_u16(encoded.data + 10) != 0 ||
         (pxa_read_u16(encoded.data + 12) != PXA_CONTAINER_CODEC_STORE &&

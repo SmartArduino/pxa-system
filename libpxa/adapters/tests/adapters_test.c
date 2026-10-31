@@ -865,13 +865,15 @@ static void build_test_container(const char *container_path,
                                  const test_signer_t *signer,
                                  const uint8_t *artifact,
                                  size_t artifact_size, uint16_t codec) {
-    static const uint8_t domain[] = "PXA-PACKAGE-CONTAINER-DIGEST";
+    static const uint8_t domain[] = "PXA-PACKAGE-STREAM-INDEX";
     uint8_t manifest[PXA_PACKAGE_TEST_MANIFEST_BYTES];
     uint8_t package_signature[108];
     uint8_t container_signature[108];
     uint8_t header[64];
     uint8_t file_record[16];
     uint8_t chunk_header[4];
+    uint8_t block_index[48] = {0};
+    size_t index_size = artifact_size == 0 ? 0 : sizeof(block_index);
     uint8_t compressed[PXA_CONTAINER_CHUNK_BYTES];
     uint8_t digest[32];
     char path[512];
@@ -913,7 +915,8 @@ static void build_test_container(const char *container_path,
     pxa_write_u64(header + 32, payload_size);
     pxa_write_u64(header + 40, artifact_size);
     pxa_write_u64(header + 48,
-                  64 + manifest_size + 108 + 108 + payload_size);
+                  64 + manifest_size + 108 + 108 + index_size + payload_size);
+    pxa_write_u32(header + 56, (uint32_t)index_size);
     pxa_write_u32(header + 60, pxa_container_crc32(header, 60));
     memset(file_record, 0, sizeof(file_record));
     pxa_write_u32(file_record + 4, artifact_size == 0 ? 0 : 1);
@@ -929,14 +932,16 @@ static void build_test_container(const char *container_path,
     CHECK(pxa_openssl_sha256_stream_update(
               &sha, package_signature, sizeof(package_signature)) ==
           PXA_STATUS_OK);
-    CHECK(pxa_openssl_sha256_stream_update(
-              &sha, file_record, sizeof(file_record)) == PXA_STATUS_OK);
     if (artifact_size != 0) {
-        CHECK(pxa_openssl_sha256_stream_update(
-                  &sha, chunk_header, sizeof(chunk_header)) == PXA_STATUS_OK);
-        CHECK(pxa_openssl_sha256_stream_update(&sha, stored,
-                                               stored_size) ==
-              PXA_STATUS_OK);
+        pxa_openssl_sha256_stream_t block_hash;
+        memset(&block_hash, 0, sizeof(block_hash));
+        pxa_write_u64(block_index, 16);
+        pxa_write_u32(block_index + 8, (uint32_t)(4 + stored_size));
+        CHECK(pxa_openssl_sha256_stream_begin(&block_hash) == PXA_STATUS_OK);
+        CHECK(pxa_openssl_sha256_stream_update(&block_hash, chunk_header, 4) == PXA_STATUS_OK);
+        CHECK(pxa_openssl_sha256_stream_update(&block_hash, stored, stored_size) == PXA_STATUS_OK);
+        CHECK(pxa_openssl_sha256_stream_finish(&block_hash, block_index + 16) == PXA_STATUS_OK);
+        CHECK(pxa_openssl_sha256_stream_update(&sha, block_index, index_size) == PXA_STATUS_OK);
     }
     CHECK(pxa_openssl_sha256_stream_finish(&sha, digest) == PXA_STATUS_OK);
     memset(container_signature, 0, sizeof(container_signature));
@@ -957,6 +962,7 @@ static void build_test_container(const char *container_path,
               (ssize_t)sizeof(package_signature));
         CHECK(write(output, container_signature, sizeof(container_signature)) ==
               (ssize_t)sizeof(container_signature));
+        CHECK(write(output, block_index, index_size) == (ssize_t)index_size);
         CHECK(write(output, file_record, sizeof(file_record)) ==
               (ssize_t)sizeof(file_record));
         if (artifact_size != 0) {
@@ -1360,7 +1366,7 @@ static void test_installer(void) {
         uint8_t prefix[PXA_PACKAGE_TEST_MANIFEST_BYTES+280];pxa_container_header_t header,verified;
         size_t container_bytes=read_test_file(container_lz4,prefix,sizeof(prefix));
         CHECK(pxa_container_header_parse((pxa_bytes_t){prefix,64},container_bytes,&header)==PXA_STATUS_OK);
-        pxa_bytes_t metadata={prefix,(size_t)header.payload_offset};
+        pxa_bytes_t metadata={prefix,(size_t)(header.container_signature_offset + header.container_signature_size)};
         check_status("plan from a signed prefix without the payload",pxa_posix_installer_read_install_metadata(
             installer,metadata,container_bytes,&result,&verified),PXA_STATUS_OK);
         CHECK(manifest && !root_path[0] && verified.unpacked_size==sizeof(artifact_lz4));

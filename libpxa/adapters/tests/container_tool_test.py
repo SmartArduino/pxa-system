@@ -63,6 +63,7 @@ def signed_package(root: Path, tools: Path, key: Path, meta: Path,
 def main() -> None:
     verifier = Path(sys.argv[1]).resolve()
     tools = Path(sys.argv[2]).resolve()
+    legacy_enabled = len(sys.argv) > 3 and sys.argv[3] == "1"
     sys.path.insert(0, str(tools))
     from build_pxa_container import p1363_signature, STREAM_DOMAIN
     with tempfile.TemporaryDirectory(prefix="pxa-lineage-test-") as temporary:
@@ -97,7 +98,9 @@ def main() -> None:
         assert struct.unpack_from("<HH", legacy.read_bytes(), 4) == (0, 1)
         assert struct.unpack_from("<HH", legacy.read_bytes(), 12) == (1, 12)
         legacy_storage = root / "storage-legacy"; legacy_storage.mkdir()
-        run(verifier, old_public, legacy_storage, legacy)
+        run(verifier, old_public, legacy_storage, legacy, ok=legacy_enabled)
+        if not legacy_enabled:
+            assert not any(legacy_storage.rglob("current")), "rejected legacy package installed files"
         for args in (("--legacy", "--codec", "deflate"), ("--legacy", "--chunk-size", "32768")):
             invalid = root / "invalid-options.pxa"
             run(sys.executable, tools / "build_pxa_container.py", rotated.with_suffix(""),

@@ -6,6 +6,15 @@
 
 #include "pxa/package.h"
 
+/* Container 0.1 installation is optional; installed directory packages are
+ * independent of this switch. Define consistently for the core and adapters. */
+#ifndef PXA_ENABLE_LEGACY_CONTAINER
+#define PXA_ENABLE_LEGACY_CONTAINER 0
+#endif
+#if PXA_ENABLE_LEGACY_CONTAINER != 0 && PXA_ENABLE_LEGACY_CONTAINER != 1
+#error "PXA_ENABLE_LEGACY_CONTAINER must be 0 or 1"
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -14,7 +23,7 @@ extern "C" {
 #define PXA_CONTAINER_SIGNATURE_ENVELOPE_BYTES ((size_t)108)
 #define PXA_CONTAINER_CHUNK_BYTES ((size_t)4096)
 #define PXA_CONTAINER_FORMAT_MAJOR UINT16_C(0)
-#define PXA_CONTAINER_FORMAT_MINOR UINT16_C(1)
+#define PXA_CONTAINER_FORMAT_MINOR UINT16_C(2)
 #define PXA_CONTAINER_FORMAT_PATCH UINT16_C(0)
 #define PXA_CONTAINER_SIGNATURE_FORMAT_MAJOR UINT16_C(0)
 #define PXA_CONTAINER_SIGNATURE_FORMAT_MINOR UINT16_C(1)

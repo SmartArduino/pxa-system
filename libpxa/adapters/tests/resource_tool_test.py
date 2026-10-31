@@ -21,7 +21,8 @@ def run(*arguments, binding=None, ok=True):
 
 
 def main():
-    verifier, tools = map(Path, sys.argv[1:])
+    verifier, tools = map(Path, sys.argv[1:3])
+    legacy_enabled = len(sys.argv) > 3 and sys.argv[3] == "1"
     with tempfile.TemporaryDirectory(prefix="pxa-resource-tool-") as temporary:
         root = Path(temporary)
         key, public = root / "key.pem", root / "key.der"
@@ -55,7 +56,9 @@ def main():
         run(sys.executable, tools / "build_resource_package.py", meta, package, key, legacy, "--legacy")
         assert struct.unpack_from("<HH", legacy.read_bytes(), 4) == (0, 1)
         assert struct.unpack_from("<HH", legacy.read_bytes(), 12) == (1, 12)
-        run(verifier, public, storage, legacy, binding=digest)
+        run(verifier, public, storage, legacy, binding=digest, ok=legacy_enabled)
+        # Disabling the transport does not prevent loading/reusing installed resources.
+        run(verifier, public, storage, archive, binding=digest)
         streamed = root / "deflate.pxa"
         run(sys.executable, tools / "build_resource_package.py", meta, package, key, streamed,
             "--streamable", "--codec", "deflate")

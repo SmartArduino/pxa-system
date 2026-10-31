@@ -59,3 +59,14 @@ Guest 默认私有 FS 配额仍为 65536 字节。下载和暂存仍在 Host 完
 SDK 的 `pxa_store_request_package_status()` 保留同步返回的 `DENIED`、`BUSY`、
 `RESOURCE_LIMIT`、`UNSUPPORTED` 等状态；返回 OK 仅表示接受请求，最终结果仍由
 完成事件给出。原布尔返回辅助函数保留。商城不得把所有提交失败都解释成网络不可用。
+
+## 容器安装兼容开关（PXA 0.7）
+
+当前容器为 Container 0.2，支持分块认证和流式解压。旧 Container 0.1 安装由
+`PXA_ENABLE_LEGACY_CONTAINER` 控制，C 宏默认 `0`，原生 Host 的 CMake 选项默认
+`OFF`。ESP 产品通过 `CONFIG_PXA_ENABLE_LEGACY_CONTAINER=y` 开启，统一传给
+Core、安装适配器和 PXADB。关闭时会裁掉旧容器的完整载荷校验与展开路径，
+但保留已安装目录、旧私有存储及存档的正常读取，也保留新容器的 LZ4 支持。
+
+标准 0.7 商城目录只提供 Container 0.2；开启兼容的自定义固件可手动安装旧容器。
+旧版 Host 的目录和历史发行保持不变。关闭兼容不改变包签名、文件摘要或安装事务要求。
