@@ -340,6 +340,12 @@ def validate_specs() -> tuple[int, int]:
             "Container header constants mismatch")
     validate_named_registries(package, "Package")
     validate_named_registries(container, "Container")
+    stream = container["streaming_extension"]
+    require(stream["version"] == "0.2.0" and stream["header_minor"] == 2 and
+            stream["index_size_offset"] == 56 and stream["index_entry_size"] == 48 and
+            stream["chunk_size_log2"] == [12, 14, 15] and
+            stream["domain"] == "PXA-PACKAGE-STREAM-INDEX" and stream["domain_nul_terminated"],
+            "Streaming container constants mismatch")
 
     ui = specs["ui"]
     require(len(ui["opcodes"]) == 18 and

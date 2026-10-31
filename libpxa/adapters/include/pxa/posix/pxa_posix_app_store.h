@@ -53,6 +53,8 @@ typedef struct {
      * reverse=0 maps logical to physical, reverse=1 maps discovery back. */
     void *locator_context;
     pxa_status_t (*map_locator)(void *,const char *,uint8_t reverse,char *,size_t);
+    /* Transfer an exclusively owned staging directory by same-volume rename. */
+    uint8_t adopt_source_directory;
 } pxa_posix_app_store_config_t;
 size_t pxa_posix_app_store_workspace_size(const pxa_posix_app_store_config_t *);
 

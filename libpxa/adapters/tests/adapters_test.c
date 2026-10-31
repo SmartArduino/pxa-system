@@ -1749,13 +1749,14 @@ typedef struct {
     const char *home;
     unsigned calls;
     int full;
+    int adopted;
 } home_space_t;
 
 static pxa_status_t home_space(void *context, const char *home,
     const pxa_package_manifest_t *manifest, size_t bytes, uint8_t adopted) {
     home_space_t *space = context;
     CHECK(!strcmp(home, space->home));
-    CHECK(manifest && manifest->file_count == 1 && bytes > 0 && !adopted);
+    CHECK(manifest && manifest->file_count == 1 && bytes > 0 && adopted==space->adopted);
     ++space->calls;
     return space->full ? PXA_STATUS_QUOTA_EXCEEDED : PXA_STATUS_OK;
 }
@@ -1772,7 +1773,7 @@ static void test_app_home_installer(void) {
     pxa_posix_installer_t *installer = NULL;
     pxa_package_manifest_t *manifest = NULL;
     pxa_posix_install_disposition_t disposition;
-    home_space_t space = {home, 0, 0};
+    home_space_t space = {home, 0, 0, 0};
     generate_signer(&signer);
     int n = i2d_PUBKEY(signer.key, &cursor);
     CHECK(n > 0 && n <= (int)sizeof(der));
@@ -1827,7 +1828,22 @@ static void test_app_home_installer(void) {
     snprintf(artifact_path, sizeof(artifact_path), "%s/package/artifacts/main.wasm", home);
     FILE *changed = fopen(artifact_path, "wb"); CHECK(changed);
     CHECK(fwrite("modified", 1, 8, changed) == 8); fclose(changed);
-    check_status("external code tampering rejected", pxa_posix_installer_load_current(
+    check_status("committed load does not rescan modified payload", pxa_posix_installer_load_current(
+        installer, &identity, &result), PXA_STATUS_OK);
+    char installed[1024];snprintf(installed,sizeof(installed),"%s/package",home);
+    check_status("explicit verification still rejects modified payload",
+        pxa_posix_installer_verify_source(installer,installed,&result),PXA_STATUS_DENIED);
+    CHECK(!unlink(artifact_path));
+    check_status("committed load does not open missing payload", pxa_posix_installer_load_current(
+        installer, &identity, &result), PXA_STATUS_OK);
+    write_file(artifact_path,artifact,sizeof(artifact)-1);
+    check_status("restored payload passes explicit verification",
+        pxa_posix_installer_verify_source(installer,installed,&result),PXA_STATUS_OK);
+    snprintf(artifact_path,sizeof(artifact_path),"%s/package/signature.pxs",home);
+    changed=fopen(artifact_path,"r+b");CHECK(changed && !fseek(changed,-1,SEEK_END));
+    int last=fgetc(changed);CHECK(last!=EOF && !fseek(changed,-1,SEEK_END));
+    CHECK(fputc(last^1,changed)!=EOF && !fclose(changed));
+    check_status("committed load still authenticates the manifest", pxa_posix_installer_load_current(
         installer, &identity, &result), PXA_STATUS_DENIED);
     pxa_posix_installer_deinit(installer);
     free(manifest_workspace); free(workspace); free(home); free(package);
@@ -1894,7 +1910,7 @@ static void test_volume_local_app_store(int authenticated) {
     media_state_t media = {0};
     prepare_state_t prepared = {0};
     commit_state_t commit = {0};
-    home_space_t space = {expected_home, 0, 0};
+    home_space_t space = {expected_home, 0, 0, 0};
     size_t invalid;
     unsigned count = 0;
     generate_signer(&signer);
@@ -1943,8 +1959,16 @@ static void test_volume_local_app_store(int authenticated) {
         "lucinhu/com.example.volume",package,0,&approved,&result,&home),PXA_STATUS_DENIED);
     CHECK(access(expected_home,F_OK)!=0 && prepared.calls==0);
     config.approved_manifest_sha256=NULL;
+    config.adopt_source_directory=authenticated;space.adopted=authenticated;
     check_status("volume-local initial install", pxa_posix_app_store_install(&config,
         "lucinhu/com.example.volume", package, 0, &approved, &result, &home), PXA_STATUS_OK);
+    if(authenticated) {
+        CHECK(access(package,F_OK)!=0);
+        CHECK(mkdir(package,0700)==0);
+        build_package(package,&signer,"com.example.volume","1.0.0",
+            "artifacts/main.wasm",artifact,sizeof(artifact)-1);
+    }
+    config.adopt_source_directory=0;space.adopted=0;
     CHECK(home.record.generation == 1 && !strcmp(home.home, expected_home));
     CHECK(prepared.calls==1);
     CHECK(pxa_posix_app_home_path(&home,PXA_POSIX_APP_HOME_PRIVATE,private_root,sizeof(private_root))==PXA_STATUS_OK);

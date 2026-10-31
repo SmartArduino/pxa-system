@@ -164,7 +164,7 @@ if(PXA_BUILD_ADAPTERS)
     target_include_directories(pxa_adapters_posix PRIVATE
         ${_pxa_lz4_include_dir})
     target_link_libraries(pxa_adapters_posix PUBLIC pxa_adapters_openssl Threads::Threads
-        PRIVATE ${_pxa_lz4_libraries})
+        PRIVATE ${_pxa_lz4_libraries} pxa_adapters_image)
 
     if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
         foreach(adapter pxa_adapters_openssl pxa_adapters_posix)
@@ -256,6 +256,10 @@ if(PXA_BUILD_ADAPTERS)
                 adapters/tests/container_install_tool.c)
             target_link_libraries(pxa_container_install_tool PRIVATE
                 pxa_adapters_posix)
+            if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+                target_compile_definitions(pxa_container_install_tool PRIVATE PXA_TEST_WRAP_ALLOC=1)
+                target_link_options(pxa_container_install_tool PRIVATE "-Wl,--wrap=malloc" "-Wl,--wrap=realloc")
+            endif()
             add_test(NAME pxa_container_tool_test
                 COMMAND ${Python3_EXECUTABLE}
                     ${CMAKE_CURRENT_SOURCE_DIR}/adapters/tests/container_tool_test.py

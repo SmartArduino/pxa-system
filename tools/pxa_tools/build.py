@@ -174,6 +174,7 @@ def build(project: Project, *, root=SDK_ROOT, targets=('simulator',), output=Non
             content = identity({'metadata': project.metadata, 'files': tree_digest(package),
                                 'publisher': public, 'sdk': lock['sdk'], 'targets': sorted(targets),
                                 'aot_only': aot_only,
+                                'container': {'version': '0.2', 'codec': 'deflate', 'chunk_bytes': 4096},
                                 'i18n': tree_digest(project.path / 'i18n') if (project.path / 'i18n').is_dir() else []})
             release = state / 'cache/packages' / content
             cached_container = release / (project.app_id + '.pxa')
@@ -186,7 +187,8 @@ def build(project: Project, *, root=SDK_ROOT, targets=('simulator',), output=Non
                     staged = Path(td) / 'complete'
                     staged.mkdir()
                     command([sys.executable, tools / 'build_pxa_container.py', package, private,
-                             staged / cached_container.name])
+                             staged / cached_container.name, '--streamable', '--codec', 'deflate',
+                             '--chunk-size', '4096'])
                     shutil.copytree(package, staged / 'package')
                     os.replace(staged, release)
             output = (Path(output).absolute().parent.resolve() / Path(output).name) if output else project.path / 'dist' / project.app_id

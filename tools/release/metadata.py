@@ -71,7 +71,9 @@ def outputs(workspace=None, backend=None):
         wamr = json.loads((ROOT / 'config/wamr.json').read_text())
         document = {'schema': 'pxa-host-baseline-1', 'release': version,
                     'core': [core['major'], core['minor']], 'engine_abi': wamr['engine_abi'],
-                    'package_manifest_minor': read_spec('package')['manifest']['minor'], 'services': services}
+                    'package_manifest_minor': read_spec('package')['manifest']['minor'],
+                    'container': {'minor': 2, 'codecs': [0, 1, 2], 'chunk_bytes': 32768},
+                    'services': services}
         result[backend / 'app/pxa-capabilities.json'] = json.dumps(document, indent=2) + '\n'
     return result
 

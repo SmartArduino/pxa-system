@@ -527,8 +527,9 @@ pxa_status_t pxa_posix_app_store_install(const pxa_posix_app_store_config_t *con
     pxa_posix_installer_identity_t identity = {
         {next.publisher_root, 32}, {(const uint8_t *)next.app_id, strlen(next.app_id)}};
     pxa_posix_install_disposition_t disposition;
-    status = pxa_posix_installer_install_for_identity(installer, source,
-        &identity, result, &disposition);
+    status = config->adopt_source_directory
+        ? pxa_posix_installer_adopt_directory(installer, source, &identity, result, &disposition)
+        : pxa_posix_installer_install_for_identity(installer, source, &identity, result, &disposition);
     if (status != PXA_STATUS_OK) goto done;
     end_installer(config,installer,workspace); installer = NULL; workspace = NULL;
     status = pxa_posix_app_store_recover(config, locator, result, output);

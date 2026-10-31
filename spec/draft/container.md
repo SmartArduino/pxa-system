@@ -546,3 +546,116 @@ must cover at least:
 - decoded file size and digest mismatch;
 - mutable-source detection;
 - every installer power-loss checkpoint before and after activation.
+
+## Streaming extension 0.2
+
+Version 0.2 retains the 64-byte header and both 108-byte signature envelopes.
+It changes `minor` to 2, permits `chunk_size_log2` 12, 14 or 15, and assigns
+header offset 56 to `index_size:u32`. Codec IDs and the decoded Package are
+unchanged. Builders may use LZ4 HC; the bounded LZ4 decoder is unchanged.
+Version 0.1 remains the default builder output for older Hosts.
+
+The sections are `header || manifest || package_signature || PXCS || index ||
+payload`. `container_size` includes `index_size`. Install-metadata endpoints
+return exactly the header, manifest and both signatures, excluding the index.
+This prefix authenticates the logical manifest for admission; it does not
+permit decoding the payload.
+
+The index has one 48-byte entry for every chunk, in Manifest file/chunk order:
+
+| Offset | Bytes | Value |
+| --- | --- | --- |
+| 0 | 8 | Payload-relative offset of the chunk header |
+| 8 | 4 | Encoded length, including the 4-byte chunk header |
+| 12 | 4 | Reserved, zero |
+| 16 | 32 | SHA-256 of the chunk header and stored bytes |
+
+`index_size` must be exactly 48 times the sum of
+`ceil(file_size / chunk_size)` for all signed files. Empty files have no index
+entry, but retain their canonical 16-byte file record. Index offsets must
+match the next canonical payload position, lengths must match the bounded
+chunk header, and file records must match the signed inventory. No gaps,
+overlap, padding, extra chunks or trailing bytes are allowed.
+
+The 0.2 PXCS signature uses the existing P-256 envelope and signs:
+
+```text
+"PXA-PACKAGE-STREAM-INDEX\0" ||
+    SHA256(header || manifest || package_signature || index)
+```
+
+The explicit NUL is part of the domain. Both publisher signatures and the
+complete index must authenticate before any decoder call. For each chunk,
+verify its encoded hash against that index before bounded decompression;
+then check every decoded file's size and signed SHA-256. Canonical file
+framing is derived from the signed inventory and index, rather than trusted
+from unsigned file-record bytes.
+
+A receiver spools only the prefix/index in a new private staging directory,
+keeps at most one encoded and one decoded chunk in RAM, and writes decoded
+files directly there. The POSIX streaming adapter bounds the manifest to
+1 MiB and the index to 16 MiB, in addition to Host transfer/admission limits.
+After complete verification and sync it removes the index and hands the
+ordinary directory to the existing transactional installer by same-volume
+rename. Incomplete output is discarded on cancellation or startup recovery.
+Execution and resource reads retain their existing filesystem behavior.
+Updates still retain the old installed generation until commit.
+
+Build the default streaming artifact with:
+
+```sh
+python3 tools/package/build_pxa_container.py PACKAGE_DIR PRIVATE_KEY OUTPUT.pxa
+```
+
+Older Hosts must use a 0.1 artifact. The signature domains are distinct and
+must never be treated as interchangeable. Streaming acknowledgement confirms
+accepted transfer bytes within the active session; persistent resumable
+checkpoints across device reset are not part of this extension.
+
+The application packaging script and both Python builders default to Container
+0.2, DEFLATE and 4 KiB blocks. `PXA_CONTAINER_STREAM=0` selects 0.1/LZ4 for
+`package_app.sh`; `--legacy` does so for `build_pxa_container.py` and
+`build_resource_package.py`. Explicit `--streamable` remains accepted.
+Keep both artifact variants while
+older installed Hosts remain supported. Repackaging changes the transport
+signature and container hash, but leaves the logical manifest/resource binding
+unchanged.
+
+### Independent DEFLATE blocks and decoder memory
+
+Container 0.2 additionally assigns codec 2 to raw RFC 1951 DEFLATE. Each
+compressed chunk is one complete stream with no zlib/gzip wrapper, preset
+dictionary, cross-chunk history or concatenated streams. Equal stored and
+decoded lengths still mean verbatim bytes. A decoder must reach end-of-stream,
+consume exactly `stored_size` input bytes and produce exactly `decoded_size`
+output bytes; trailing bytes, output overflow and incomplete streams reject
+the package. Signed-index verification precedes decompression as for codec 1.
+
+Select `--streamable --codec deflate --chunk-size 4096` for a small working
+set, or 16384/32768 for better compression. The application packaging script
+accepts `PXA_CONTAINER_STREAM=1 PXA_CONTAINER_CODEC=deflate` and
+`PXA_CONTAINER_CHUNK_SIZE=4096`. These are now the normal build defaults;
+LZ4 remains the explicit legacy profile's default. The standalone SDK build
+cache includes the container profile so it does not reuse an older LZ4 artifact.
+Codec 2 requires explicit receiver support; support for 0.2 alone is
+insufficient. PXADB advertises `package_codecs=0,1,2` and `package_max_block`.
+
+The streaming adapter begins with a 64-byte header buffer. After authentication
+it partitions the installer's existing 32 KiB I/O workspace into a disjoint
+3 KiB signed-index cache, aligned miniz state (about 11 KiB), decoded output
+and compressed input. The 4 KiB DEFLATE profile fits all four regions without
+additional block/state allocations. With 16 KiB blocks the input spills to
+the heap; with 32 KiB blocks both input and output spill. Required spill buffers
+are reserved before accepting payload and allocation failure returns
+`PXA_STATUS_RESOURCE_LIMIT`; closing the failed stream removes its staging tree.
+The output block supplies DEFLATE history, so no separate 32 KiB dictionary is
+needed. Manifest/trust, filesystem and transport remain separate costs. A signed
+block size cannot be renegotiated mid-transfer; use a smaller-block build when
+a device cannot accommodate a larger profile. The existing
+vendored miniz implementation is Unlicense/public-domain, with its original
+license retained; no new runtime compression dependency is introduced.
+
+The signed compression block size is fixed for an artifact. Transfer packet
+size is negotiated independently and can be smaller than a compression block.
+Receivers cannot silently recompress a signed container or change its block
+size. Installed files remain ordinary files, without a runtime decoder.

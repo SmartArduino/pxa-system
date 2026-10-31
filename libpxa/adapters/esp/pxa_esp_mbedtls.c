@@ -61,9 +61,10 @@ static int constant_time_equal(const uint8_t *left, const uint8_t *right,
 
 static int is_container_digest_domain(pxa_bytes_t domain) {
     static const uint8_t expected[] = "PXA-PACKAGE-CONTAINER-DIGEST\0";
-    return domain.size == sizeof(expected) - 1 &&
-           domain.data != NULL &&
-           memcmp(domain.data, expected, sizeof(expected) - 1) == 0;
+    static const uint8_t indexed[] = "PXA-PACKAGE-STREAM-INDEX\0";
+    return domain.data != NULL &&
+        ((domain.size == sizeof(expected)-1 && !memcmp(domain.data,expected,sizeof(expected)-1)) ||
+         (domain.size == sizeof(indexed)-1 && !memcmp(domain.data,indexed,sizeof(indexed)-1)));
 }
 
 static int signature_scalar_is_valid(const uint8_t *scalar,

@@ -32,24 +32,32 @@ pxa_status_t pxa_container_header_parse(
     if (encoded.data == NULL || encoded.size != PXA_CONTAINER_HEADER_BYTES ||
         memcmp(encoded.data, magic, sizeof(magic)) != 0 ||
         pxa_read_u16(encoded.data + 4) != PXA_CONTAINER_FORMAT_MAJOR ||
-        pxa_read_u16(encoded.data + 6) != PXA_CONTAINER_FORMAT_MINOR ||
+        (pxa_read_u16(encoded.data + 6) != 1 && pxa_read_u16(encoded.data + 6) != 2) ||
         pxa_read_u16(encoded.data + 8) != PXA_CONTAINER_HEADER_BYTES ||
         pxa_read_u16(encoded.data + 10) != 0 ||
         (pxa_read_u16(encoded.data + 12) != PXA_CONTAINER_CODEC_STORE &&
-         pxa_read_u16(encoded.data + 12) != PXA_CONTAINER_CODEC_LZ4) ||
-        pxa_read_u16(encoded.data + 14) != 12 ||
+         pxa_read_u16(encoded.data + 12) != PXA_CONTAINER_CODEC_LZ4 &&
+         !(pxa_read_u16(encoded.data + 6) == 2 &&
+           pxa_read_u16(encoded.data + 12) == PXA_CONTAINER_CODEC_DEFLATE)) ||
+        (pxa_read_u16(encoded.data + 14) != 12 &&
+         (pxa_read_u16(encoded.data + 6) != 2 ||
+          (pxa_read_u16(encoded.data + 14) != 14 && pxa_read_u16(encoded.data + 14) != 15))) ||
         pxa_read_u32(encoded.data + 16) < 12 ||
         pxa_read_u32(encoded.data + 20) !=
             PXA_CONTAINER_SIGNATURE_ENVELOPE_BYTES ||
         pxa_read_u32(encoded.data + 24) !=
             PXA_CONTAINER_SIGNATURE_ENVELOPE_BYTES ||
         pxa_read_u32(encoded.data + 28) > PXA_PACKAGE_MAX_FILES ||
-        pxa_read_u32(encoded.data + 56) != 0 ||
+        (pxa_read_u16(encoded.data + 6) == 1 ? pxa_read_u32(encoded.data + 56) != 0 :
+         pxa_read_u32(encoded.data + 56) % PXA_CONTAINER_STREAM_INDEX_ENTRY_BYTES != 0) ||
         pxa_read_u32(encoded.data + 60) !=
             pxa_container_crc32(encoded.data, 60)) {
         return PXA_STATUS_INVALID_ARGUMENT;
     }
     output->codec = pxa_read_u16(encoded.data + 12);
+    output->format_minor = pxa_read_u16(encoded.data + 6);
+    output->chunk_bytes = UINT32_C(1) << pxa_read_u16(encoded.data + 14);
+    output->index_size = pxa_read_u32(encoded.data + 56);
     output->manifest_size = pxa_read_u32(encoded.data + 16);
     output->package_signature_size = pxa_read_u32(encoded.data + 20);
     output->container_signature_size = pxa_read_u32(encoded.data + 24);
@@ -66,6 +74,8 @@ pxa_status_t pxa_container_header_parse(
     output->container_signature_offset = offset;
     if (!add_u64(offset, output->container_signature_size, &offset))
         return PXA_STATUS_INVALID_ARGUMENT;
+    output->index_offset = offset;
+    if (!add_u64(offset, output->index_size, &offset)) return PXA_STATUS_INVALID_ARGUMENT;
     output->payload_offset = offset;
     if (!add_u64(offset, output->payload_size, &offset) ||
         offset != output->container_size || offset != source_size) {

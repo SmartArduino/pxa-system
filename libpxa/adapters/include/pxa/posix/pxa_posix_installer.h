@@ -67,8 +67,9 @@ typedef enum {
 /* One self-contained application home on the chosen volume. Current code is
  * home/package, private files are home/private, owner/session/lock records are
  * home-local. No shared locator registry is consulted. Hosts discover homes
- * from volume-local install records. Mutable removable code is reverified on
- * load. The home must already exist and is dedicated to one signed identity. */
+ * from volume-local install records. Load authenticates the signed manifest
+ * and identity without rescanning committed payloads. The home must already
+ * exist and is dedicated to one signed identity. */
 #define PXA_POSIX_INSTALLER_FLAG_APP_HOME ((uint32_t)1u << 4)
 /* The app-home coordinator commits its volume/media record before retiring
  * previous code. finish() explicitly completes or rolls back that handoff. */
@@ -144,6 +145,22 @@ pxa_status_t pxa_posix_installer_init(void *workspace, size_t workspace_size,
                                       pxa_posix_installer_t **output);
 void pxa_posix_installer_deinit(pxa_posix_installer_t *installer);
 
+/* Container 0.2 streaming extraction into a NEW, private directory. No payload
+ * container is retained. The signed index is authenticated before decoding;
+ * every encoded block and decoded file is verified before finish succeeds.
+ * Keep installer alive and exclusively owned until close. Feed accepts arbitrary
+ * fragments; errors are sticky. finish rejects truncation/trailing bytes and
+ * syncs the directory. close removes incomplete output, retains finished output.
+ * The caller owns/serializes the parent directory and must never expose this
+ * staging source to execution before the normal installer commit. */
+typedef struct pxa_posix_container_stream pxa_posix_container_stream_t;
+pxa_status_t pxa_posix_container_stream_begin(pxa_posix_installer_t *,
+    const char *directory, pxa_posix_container_stream_t **);
+pxa_status_t pxa_posix_container_stream_feed(pxa_posix_container_stream_t *,
+    const uint8_t *, size_t);
+pxa_status_t pxa_posix_container_stream_finish(pxa_posix_container_stream_t *);
+void pxa_posix_container_stream_close(pxa_posix_container_stream_t *);
+
 /* Advisory bounded manifest size for a directory or `.pxa` source. The
  * subsequent verify/install operation reopens and revalidates the source. */
 pxa_status_t pxa_posix_installer_source_manifest_size(
@@ -173,6 +190,13 @@ pxa_status_t pxa_posix_installer_adopt_staged_directory(
     const pxa_posix_installer_identity_t *expected,
     pxa_posix_installer_result_t *result,
     pxa_posix_install_disposition_t *disposition);
+/* Same adoption semantics for a caller-owned absolute staging directory.
+ * Requires a stable, exclusively owned parent and the same filesystem as the
+ * install root. Explicit ownership transfer; never pass arbitrary user files. */
+pxa_status_t pxa_posix_installer_adopt_directory(
+    pxa_posix_installer_t *, const char *source,
+    const pxa_posix_installer_identity_t *, pxa_posix_installer_result_t *,
+    pxa_posix_install_disposition_t *);
 /* Upload into inbox/.receiving-<app-id>[.pxa], then fully authenticate and
  * publish by rename. Only the matching App ID is accepted. A failed publish
  * discards its uncommitted source; installed packages/private data are untouched.
@@ -234,7 +258,10 @@ pxa_status_t pxa_posix_installer_recover(
 pxa_status_t pxa_posix_installer_recover_pending(pxa_posix_installer_t *);
 pxa_status_t pxa_posix_installer_finish(pxa_posix_installer_t *,
     const pxa_posix_installer_identity_t *, uint8_t rollback);
-/* Read the committed manifest without revalidating installed contents. */
+/* Read the committed manifest without revalidating installed contents.
+ * APP_HOME still authenticates its signature and expected identity. Later
+ * external payload changes are not detected by this operation; callers can
+ * explicitly use verify_source for a full inventory and digest check. */
 pxa_status_t pxa_posix_installer_load_current(
     pxa_posix_installer_t *installer,
     const pxa_posix_installer_identity_t *identity,

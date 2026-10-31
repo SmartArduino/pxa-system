@@ -4,6 +4,7 @@
 #include "pxa/posix/pxa_posix_installer.h"
 #include "pxa/container.h"
 #include "lz4.h"
+#include "../image/vendor/miniz.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -1172,6 +1173,62 @@ static pxa_status_t verify_manifest_signature(
     return status;
 }
 
+/* Container 0.2 authenticates the bounded index before inspecting encoded
+ * blocks. Index entries refer to the exact legacy-style chunk header + bytes;
+ * file framing is checked against the signed logical inventory. */
+static pxa_status_t verify_indexed_payload(pxa_posix_installer_t *installer, int fd,
+    const pxa_container_header_t *header, const pxa_package_manifest_t *manifest) {
+    uint64_t position=0, entry=0;
+    for(uint16_t file=0;file<manifest->file_count;++file) {
+        uint8_t record[16];
+        if(position>header->payload_size || sizeof(record)>header->payload_size-position)
+            return PXA_STATUS_DENIED;
+        pxa_status_t status=read_exact_at(fd,header->payload_offset+position,record,sizeof(record));
+        if(status!=PXA_STATUS_OK)return status;
+        position+=sizeof(record);
+        uint64_t size=manifest->files[file].size;
+        uint64_t chunks=size/header->chunk_bytes+(size%header->chunk_bytes!=0);
+        if(chunks>UINT32_MAX || pxa_read_u16(record)!=file || pxa_read_u16(record+2) ||
+            pxa_read_u32(record+4)!=chunks)return PXA_STATUS_DENIED;
+        uint64_t encoded=0,decoded=0;
+        for(uint64_t chunk=0;chunk<chunks;++chunk,++entry) {
+            uint8_t index[48],frame[4],digest[32];
+            if(entry>=header->index_size/48)return PXA_STATUS_DENIED;
+            status=read_exact_at(fd,header->index_offset+entry*48,index,sizeof(index));
+            if(status!=PXA_STATUS_OK)return status;
+            uint32_t bytes=pxa_read_u32(index+8);
+            if(pxa_read_u64(index)!=position || pxa_read_u32(index+12) || bytes<5 ||
+                bytes>header->chunk_bytes+4 || position>header->payload_size ||
+                bytes>header->payload_size-position)return PXA_STATUS_DENIED;
+            status=read_exact_at(fd,header->payload_offset+position,frame,sizeof(frame));
+            if(status!=PXA_STATUS_OK)return status;
+            uint16_t stored=pxa_read_u16(frame),raw=pxa_read_u16(frame+2);
+            uint64_t remaining=size-decoded;
+            if(stored+4u!=bytes || !stored || stored>raw ||
+                raw!=(remaining>header->chunk_bytes?header->chunk_bytes:remaining) ||
+                (header->codec==PXA_CONTAINER_CODEC_STORE && stored!=raw))return PXA_STATUS_DENIED;
+            pxa_openssl_sha256_stream_t hash={0};
+            status=pxa_openssl_sha256_stream_begin(&hash);
+            for(uint32_t at=0;status==PXA_STATUS_OK && at<bytes;) {
+                size_t amount=bytes-at;
+                if(amount>installer->io_buffer_size)amount=installer->io_buffer_size;
+                status=read_exact_at(fd,header->payload_offset+position+at,installer->io_buffer,amount);
+                if(status==PXA_STATUS_OK)status=pxa_openssl_sha256_stream_update(&hash,installer->io_buffer,amount);
+                at+=(uint32_t)amount;
+            }
+            if(status==PXA_STATUS_OK)status=pxa_openssl_sha256_stream_finish(&hash,digest);
+            else pxa_openssl_sha256_stream_abort(&hash);
+            if(status!=PXA_STATUS_OK)return status;
+            if(memcmp(digest,index+16,32))return PXA_STATUS_DENIED;
+            position+=bytes;encoded+=bytes;decoded+=raw;
+            installer_yield();
+        }
+        if(encoded!=pxa_read_u64(record+8) || decoded!=size)return PXA_STATUS_DENIED;
+    }
+    return position==header->payload_size && entry==header->index_size/48
+        ? PXA_STATUS_OK:PXA_STATUS_DENIED;
+}
+
 static pxa_status_t verify_opened_container(
     pxa_posix_installer_t *installer, int source_fd,
     uint8_t **manifest_bytes_io,
@@ -1181,6 +1238,7 @@ static pxa_status_t verify_opened_container(
     size_t *app_id_size_out, pxa_container_header_t *header_out,
     int verify_payload) {
     static const uint8_t domain[] = "PXA-PACKAGE-CONTAINER-DIGEST\0";
+    static const uint8_t indexed_domain[] = "PXA-PACKAGE-STREAM-INDEX\0";
     uint8_t header_bytes[PXA_CONTAINER_HEADER_BYTES];
     uint8_t package_signature_bytes[PXA_POSIX_INSTALLER_SIGNATURE_ENVELOPE_BYTES];
     uint8_t container_signature_bytes[PXA_CONTAINER_SIGNATURE_ENVELOPE_BYTES];
@@ -1217,12 +1275,14 @@ static pxa_status_t verify_opened_container(
     if (status != PXA_STATUS_OK) return status;
     status = pxa_container_header_parse(
         (pxa_bytes_t){header_bytes, sizeof(header_bytes)},
-        (uint64_t)before.st_size, &header);
+        verify_payload==2?pxa_read_u64(header_bytes+48):(uint64_t)before.st_size, &header);
     if (status != PXA_STATUS_OK ||
         header.file_count > installer->limits.max_files ||
         header.manifest_size == 0) {
         return PXA_STATUS_DENIED;
     }
+    if(verify_payload==2 && (header.format_minor!=2 ||
+        (uint64_t)before.st_size!=header.payload_offset))return PXA_STATUS_DENIED;
     manifest_bytes = *manifest_bytes_io;
     if (*manifest_capacity_io < header.manifest_size) {
         uint8_t *resized =
@@ -1293,6 +1353,25 @@ static pxa_status_t verify_opened_container(
             sizeof(package_signature_bytes)) != PXA_STATUS_OK) {
         status = PXA_STATUS_INTERNAL;
         goto digest_done;
+    }
+    if(header.format_minor==2) {
+        uint64_t count=0;
+        for(size_t i=0;i<manifest->file_count;++i) {
+            uint64_t size=manifest->files[i].size;
+            uint64_t chunks=size/header.chunk_bytes+(size%header.chunk_bytes!=0);
+            if(chunks>(UINT32_MAX/48)-count) {status=PXA_STATUS_DENIED;goto digest_done;}
+            count+=chunks;
+        }
+        if(count*48!=header.index_size) {status=PXA_STATUS_DENIED;goto digest_done;}
+        for(uint64_t at=0;at<header.index_size;) {
+            size_t amount=header.index_size-at;
+            if(amount>installer->io_buffer_size)amount=installer->io_buffer_size;
+            status=read_exact_at(source_fd,header.index_offset+at,installer->io_buffer,amount);
+            if(status==PXA_STATUS_OK)status=pxa_openssl_sha256_stream_update(&stream,installer->io_buffer,amount);
+            if(status!=PXA_STATUS_OK)goto digest_done;
+            at+=amount;
+        }
+        goto verify_container_signature;
     }
     payload_position = header.payload_offset;
     payload_end = header.payload_offset + header.payload_size;
@@ -1390,6 +1469,7 @@ static pxa_status_t verify_opened_container(
         status = PXA_STATUS_DENIED;
         goto digest_done;
     }
+verify_container_signature:
     status = pxa_openssl_sha256_stream_finish(&stream, digest);
     if (status != PXA_STATUS_OK) return status;
     if (lineage.link_count != 0) {
@@ -1401,11 +1481,17 @@ static pxa_status_t verify_opened_container(
                                 : (void *)&embedded_trust,
         (pxa_bytes_t){container_signature.publisher_key_id,
                       PXA_PACKAGE_DIGEST_BYTES},
-        (pxa_bytes_t){domain, sizeof(domain) - 1},
+        header.format_minor==2
+            ? (pxa_bytes_t){indexed_domain,sizeof(indexed_domain)-1}
+            : (pxa_bytes_t){domain, sizeof(domain) - 1},
         (pxa_bytes_t){digest, sizeof(digest)},
         (pxa_bytes_t){container_signature.signature,
                       PXA_PACKAGE_SIGNATURE_BYTES});
     if (status != PXA_STATUS_OK) return status;
+    if(header.format_minor==2 && verify_payload==1) {
+        status=verify_indexed_payload(installer,source_fd,&header,manifest);
+        if(status!=PXA_STATUS_OK)return status;
+    }
 authenticated_manifest:
     if (fstat(source_fd, &after) != 0 || !stat_same(&before, &after))
         return PXA_STATUS_DENIED;
@@ -2121,6 +2207,279 @@ static pxa_status_t write_all(int file, const uint8_t *bytes, size_t size) {
     return PXA_STATUS_OK;
 }
 
+#define STREAM_PREFIX_NAME ".pxa-stream-index"
+enum { STREAM_HEADER, STREAM_PREFIX, STREAM_FILE, STREAM_CHUNK, STREAM_DATA, STREAM_DONE };
+enum { STREAM_OWNS_BLOCK = 1, STREAM_OWNS_DECODED = 2, STREAM_OWNS_INFLATE = 4 };
+struct pxa_posix_container_stream {
+    pxa_posix_installer_t *installer;
+    pxa_container_header_t header;
+    pxa_package_manifest_t *manifest;
+    uint8_t *manifest_bytes, *block, *decoded;
+    tinfl_decompressor *inflate;
+    size_t manifest_capacity, have, need;
+    size_t index_cached, index_cursor;
+    size_t index_capacity;
+    unsigned owned_buffers;
+    uint64_t received, payload_position, entry, file_encoded, file_decoded, encoded_size;
+    uint32_t chunk, chunk_count;
+    uint16_t file;
+    int state, root, prefix, target, finished;
+    char *directory;
+    pxa_status_t status;
+    pxa_openssl_sha256_stream_t hash;
+};
+
+static void *stream_workspace_take(pxa_posix_container_stream_t *s,
+                                   size_t *used, size_t size) {
+    uintptr_t base=(uintptr_t)s->installer->io_buffer;
+    size_t offset=(size_t)(align_up(base+*used,PXA_POSIX_INSTALLER_ALIGNMENT)-base);
+    if(offset>s->installer->io_buffer_size || size>s->installer->io_buffer_size-offset)
+        return NULL;
+    *used=offset+size;
+    return s->installer->io_buffer+offset;
+}
+
+static pxa_status_t stream_prepare_buffers(pxa_posix_container_stream_t *s) {
+    /* Prefix authentication has finished using the full I/O workspace. Keep
+     * the signed-index cache separate from the decoder and its input/output;
+     * none of these regions may overlap while a payload block is processed.
+     * The default 4-KiB format fits all four regions in the existing 32 KiB. */
+    s->index_capacity=s->installer->io_buffer_size/48*48;
+    if(s->index_capacity>48u*64u)s->index_capacity=48u*64u;
+    if(!s->index_capacity)return PXA_STATUS_RESOURCE_LIMIT;
+    size_t used=s->index_capacity;
+    if(s->header.codec==PXA_CONTAINER_CODEC_DEFLATE) {
+        s->inflate=stream_workspace_take(s,&used,sizeof(*s->inflate));
+        if(!s->inflate) {
+            s->inflate=malloc(sizeof(*s->inflate));
+            s->owned_buffers|=STREAM_OWNS_INFLATE;
+            if(!s->inflate)return PXA_STATUS_RESOURCE_LIMIT;
+        }
+    }
+    if(s->header.codec!=PXA_CONTAINER_CODEC_STORE) {
+        s->decoded=stream_workspace_take(s,&used,s->header.chunk_bytes);
+        if(!s->decoded) {
+            s->decoded=malloc(s->header.chunk_bytes);
+            s->owned_buffers|=STREAM_OWNS_DECODED;
+            if(!s->decoded)return PXA_STATUS_RESOURCE_LIMIT;
+        }
+    }
+    uint8_t *block=stream_workspace_take(s,&used,s->header.chunk_bytes+4u);
+    if(block) {
+        free(s->block);
+        s->owned_buffers&=~STREAM_OWNS_BLOCK;
+    } else {
+        block=realloc(s->block,s->header.chunk_bytes+4u);
+        if(!block)return PXA_STATUS_RESOURCE_LIMIT;
+    }
+    s->block=block;
+    return PXA_STATUS_OK;
+}
+
+static pxa_status_t stream_file_done(pxa_posix_container_stream_t *s) {
+    uint8_t digest[32];
+    const pxa_package_file_t *file=&s->manifest->files[s->file];
+    if(s->file_encoded!=s->encoded_size || s->file_decoded!=file->size)
+        return PXA_STATUS_DENIED;
+    pxa_status_t status=pxa_openssl_sha256_stream_finish(&s->hash,digest);
+    if(status==PXA_STATUS_OK && memcmp(digest,file->sha256,32))status=PXA_STATUS_DENIED;
+#ifndef ESP_PLATFORM
+    if(status==PXA_STATUS_OK && fsync(s->target))status=PXA_STATUS_IO_ERROR;
+#endif
+    if(close(s->target) && status==PXA_STATUS_OK)status=PXA_STATUS_IO_ERROR;
+    s->target=-1;
+    if(status!=PXA_STATUS_OK)return status;
+    ++s->file;s->have=0;s->need=16;
+    s->state=s->file==s->manifest->file_count?STREAM_DONE:STREAM_FILE;
+    return PXA_STATUS_OK;
+}
+
+static pxa_status_t stream_prefix_done(pxa_posix_container_stream_t *s) {
+    uint8_t publisher[32],signature[108];char app[65];size_t app_size,manifest_size;
+    /* LittleFS fstat reads the committed directory entry, not the writer's
+     * cached file length. Publish the private prefix's size before verification. */
+    if(fsync(s->prefix))return PXA_STATUS_IO_ERROR;
+    pxa_status_t status=verify_opened_container(s->installer,s->prefix,
+        &s->manifest_bytes,&s->manifest_capacity,&manifest_size,publisher,app,&app_size,&s->header,2);
+    if(status!=PXA_STATUS_OK)return status;
+    /* Reserve every decoder buffer before accepting payload, so allocation
+     * failures cannot first occur halfway through a large package. */
+    status=stream_prepare_buffers(s);
+    if(status!=PXA_STATUS_OK)return status;
+    status=pxa_package_manifest_parse(s->installer->scratch,s->installer->scratch_size,
+        (pxa_bytes_t){s->manifest_bytes,manifest_size},&s->installer->scratch_limits,&s->manifest);
+    if(status!=PXA_STATUS_OK)return status;
+    status=read_exact_at(s->prefix,s->header.package_signature_offset,signature,sizeof(signature));
+    if(status==PXA_STATUS_OK)status=write_file_excl(s->root,"manifest.pxm",s->manifest_bytes,manifest_size);
+    if(status==PXA_STATUS_OK)status=write_file_excl(s->root,"signature.pxs",signature,sizeof(signature));
+    s->have=0;s->need=16;s->state=s->manifest->file_count?STREAM_FILE:STREAM_DONE;
+    return status;
+}
+
+static pxa_status_t stream_record(pxa_posix_container_stream_t *s) {
+    if(s->state==STREAM_HEADER) {
+        pxa_status_t status=pxa_container_header_parse((pxa_bytes_t){s->block,64},pxa_read_u64(s->block+48),&s->header);
+        if(status!=PXA_STATUS_OK || s->header.format_minor!=2 ||
+            s->header.file_count>s->installer->limits.max_files ||
+            s->header.manifest_size>1024u*1024u || s->header.index_size>16u*1024u*1024u)
+            return PXA_STATUS_DENIED;
+        status=write_all(s->prefix,s->block,64);
+        s->have=0;s->state=STREAM_PREFIX;
+        return status;
+    }
+    if(s->state==STREAM_FILE) {
+        const pxa_package_file_t *file=&s->manifest->files[s->file];
+        uint64_t chunks=file->size/s->header.chunk_bytes+(file->size%s->header.chunk_bytes!=0);
+        if(chunks>UINT32_MAX || pxa_read_u16(s->block)!=s->file ||
+            pxa_read_u16(s->block+2) || pxa_read_u32(s->block+4)!=chunks)return PXA_STATUS_DENIED;
+        s->chunk_count=(uint32_t)chunks;s->chunk=0;
+        s->encoded_size=pxa_read_u64(s->block+8);s->file_encoded=s->file_decoded=0;
+        s->payload_position+=16;
+        pxa_status_t status=open_output_excl(s->root,file->path,&s->target);
+        if(status==PXA_STATUS_OK)status=pxa_openssl_sha256_stream_begin(&s->hash);
+        if(status!=PXA_STATUS_OK)return status;
+        s->have=0;s->need=4;s->state=STREAM_CHUNK;
+        return chunks?PXA_STATUS_OK:stream_file_done(s);
+    }
+    if(s->state==STREAM_CHUNK) {
+        uint16_t stored=pxa_read_u16(s->block),raw=pxa_read_u16(s->block+2);
+        uint64_t remaining=s->manifest->files[s->file].size-s->file_decoded;
+        if(!stored || stored>raw || raw!=(remaining>s->header.chunk_bytes?s->header.chunk_bytes:remaining) ||
+            (s->header.codec==PXA_CONTAINER_CODEC_STORE && stored!=raw))return PXA_STATUS_DENIED;
+        s->need=4u+stored;s->state=STREAM_DATA;
+        return PXA_STATUS_OK;
+    }
+    if(s->state==STREAM_DATA) {
+        uint8_t digest[32];
+        if(s->entry>=s->header.index_size/48)return PXA_STATUS_DENIED;
+        /* The stream exclusively owns the installer's workspace (including
+         * its parsed manifest). After prefix authentication, reuse its idle
+         * I/O buffer for consecutive signed entries: no extra block buffer or
+         * a tiny FAT seek/read/restore cycle for every compressed chunk. */
+        pxa_status_t status=PXA_STATUS_OK;
+        if(s->index_cursor==s->index_cached) {
+            size_t amount=s->index_capacity;
+            uint64_t left=s->header.index_size-s->entry*48;
+            if(!amount)return PXA_STATUS_RESOURCE_LIMIT;
+            if(amount>left)amount=(size_t)left;
+            status=read_exact_at(s->prefix,s->header.index_offset+s->entry*48,
+                s->installer->io_buffer,amount);
+            if(status!=PXA_STATUS_OK)return status;
+            s->index_cached=amount;s->index_cursor=0;
+        }
+        const uint8_t *index=s->installer->io_buffer+s->index_cursor;
+        if(pxa_read_u64(index)!=s->payload_position || pxa_read_u32(index+8)!=s->need || pxa_read_u32(index+12))
+            return PXA_STATUS_DENIED;
+        status=sha256_once(s->block,s->need,digest);
+        if(status!=PXA_STATUS_OK || memcmp(index+16,digest,32))return PXA_STATUS_DENIED;
+        uint16_t stored=pxa_read_u16(s->block),raw=pxa_read_u16(s->block+2);
+        const uint8_t *decoded=s->block+4;
+        if(stored!=raw) {
+            if(s->header.codec==PXA_CONTAINER_CODEC_DEFLATE) {
+                tinfl_init(s->inflate);
+                size_t consumed=stored,produced=raw;
+                tinfl_status result=tinfl_decompress(s->inflate,decoded,&consumed,
+                    s->decoded,s->decoded,&produced,TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF);
+                if(result!=TINFL_STATUS_DONE || consumed!=stored || produced!=raw)
+                    return PXA_STATUS_DENIED;
+            } else if(s->header.codec!=PXA_CONTAINER_CODEC_LZ4 ||
+                LZ4_decompress_safe((const char *)decoded,(char *)s->decoded,stored,raw)!=raw)
+                    return PXA_STATUS_DENIED;
+            decoded=s->decoded;
+        }
+        status=pxa_openssl_sha256_stream_update(&s->hash,decoded,raw);
+        if(status==PXA_STATUS_OK)status=write_all(s->target,decoded,raw);
+        if(status!=PXA_STATUS_OK)return status;
+        s->payload_position+=s->need;s->file_encoded+=s->need;s->file_decoded+=raw;
+        s->index_cursor+=48;
+        ++s->entry;++s->chunk;s->have=0;s->need=4;s->state=STREAM_CHUNK;
+        return s->chunk==s->chunk_count?stream_file_done(s):PXA_STATUS_OK;
+    }
+    return PXA_STATUS_DENIED;
+}
+
+pxa_status_t pxa_posix_container_stream_begin(pxa_posix_installer_t *installer,
+    const char *directory,pxa_posix_container_stream_t **output) {
+    if(!installer || installer->magic!=PXA_POSIX_INSTALLER_MAGIC || !directory || !output)
+        return PXA_STATUS_INVALID_ARGUMENT;
+    *output=NULL;
+    pxa_posix_container_stream_t *s=calloc(1,sizeof(*s));
+    if(!s)return PXA_STATUS_RESOURCE_LIMIT;
+    s->root=s->prefix=s->target=-1;s->installer=installer;
+    s->block=malloc(PXA_CONTAINER_HEADER_BYTES);
+    s->owned_buffers=STREAM_OWNS_BLOCK;
+    s->directory=strdup(directory);
+    if(!s->block || !s->directory) {s->status=PXA_STATUS_RESOURCE_LIMIT;goto fail;}
+    if(mkdir(directory,0700)) {s->status=PXA_STATUS_IO_ERROR;goto fail;}
+    s->root=open(directory,O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC);
+    if(s->root<0) {rmdir(directory);s->status=PXA_STATUS_IO_ERROR;goto fail;}
+    s->prefix=openat(s->root,STREAM_PREFIX_NAME,O_RDWR|O_CREAT|O_EXCL|O_NOFOLLOW|O_CLOEXEC,0600);
+    if(s->prefix<0) {s->status=PXA_STATUS_IO_ERROR;goto fail;}
+    s->need=64;s->state=STREAM_HEADER;*output=s;return PXA_STATUS_OK;
+fail:;
+    pxa_status_t status=s->status;
+    pxa_posix_container_stream_close(s);return status;
+}
+
+pxa_status_t pxa_posix_container_stream_feed(pxa_posix_container_stream_t *s,const uint8_t *data,size_t size) {
+    if(!s || (!data && size))return PXA_STATUS_INVALID_ARGUMENT;
+    if(s->status!=PXA_STATUS_OK)return s->status;
+    if(s->finished)return PXA_STATUS_BAD_STATE;
+    while(size && s->status==PXA_STATUS_OK) {
+        if(s->state==STREAM_DONE) {s->status=PXA_STATUS_DENIED;break;}
+        if(s->state==STREAM_PREFIX) {
+            uint64_t left=s->header.payload_offset-s->received;
+            size_t amount=left<size?(size_t)left:size;
+            s->status=write_all(s->prefix,data,amount);
+            s->received+=amount;data+=amount;size-=amount;
+            if(s->status==PXA_STATUS_OK && s->received==s->header.payload_offset)
+                s->status=stream_prefix_done(s);
+        } else {
+            size_t amount=s->need-s->have;if(amount>size)amount=size;
+            memcpy(s->block+s->have,data,amount);s->have+=amount;
+            s->received+=amount;data+=amount;size-=amount;
+            if(s->have==s->need)s->status=stream_record(s);
+        }
+        if(s->state!=STREAM_HEADER && s->received>s->header.container_size)s->status=PXA_STATUS_DENIED;
+    }
+    if(s->status!=PXA_STATUS_OK)
+        PXA_POSIX_INSTALLER_LOG_FAILURE("stream",s->state<=STREAM_PREFIX?"authenticate-index":"decode-file",s->status);
+    return s->status;
+}
+
+pxa_status_t pxa_posix_container_stream_finish(pxa_posix_container_stream_t *s) {
+    if(!s)return PXA_STATUS_INVALID_ARGUMENT;
+    if(s->status!=PXA_STATUS_OK)return s->status;
+    if(s->finished)return PXA_STATUS_OK;
+    if(s->state!=STREAM_DONE || s->received!=s->header.container_size ||
+        s->payload_position!=s->header.payload_size || s->entry!=s->header.index_size/48)
+        return s->status=PXA_STATUS_DENIED;
+    if(close(s->prefix)) {s->prefix=-1;return s->status=PXA_STATUS_IO_ERROR;}
+    s->prefix=-1;
+    if(unlinkat(s->root,STREAM_PREFIX_NAME,0))return s->status=PXA_STATUS_IO_ERROR;
+    s->status=sync_tree(s->root);
+    if(s->status==PXA_STATUS_OK)s->finished=1;
+    return s->status;
+}
+
+void pxa_posix_container_stream_close(pxa_posix_container_stream_t *s) {
+    if(!s)return;
+    pxa_openssl_sha256_stream_abort(&s->hash);
+    if(s->target>=0)close(s->target);
+    if(s->prefix>=0)close(s->prefix);
+    if(s->root>=0) {
+        struct stat opened,current;
+        int owned=fstat(s->root,&opened)==0 && lstat(s->directory,&current)==0 &&
+            S_ISDIR(current.st_mode) && opened.st_dev==current.st_dev && opened.st_ino==current.st_ino;
+        close(s->root);
+        if(!s->finished && owned)(void)remove_tree(s->directory);
+    }
+    if(s->owned_buffers&STREAM_OWNS_BLOCK)free(s->block);
+    if(s->owned_buffers&STREAM_OWNS_DECODED)free(s->decoded);
+    if(s->owned_buffers&STREAM_OWNS_INFLATE)free(s->inflate);
+    free(s->directory);free(s->manifest_bytes);free(s);
+}
+
 static pxa_status_t prepare_incoming_container(
     pxa_posix_installer_t *installer, int source_fd,
     const pxa_container_header_t *header, const uint8_t *manifest_bytes,
@@ -2160,6 +2519,26 @@ static pxa_status_t prepare_incoming_container(
         return PXA_STATUS_DENIED;
     }
     header = &parsed_header;
+    if (header->format_minor == 2) {
+        char *destination=join_path(ctx->session,"incoming");
+        pxa_posix_container_stream_t *stream=NULL;
+        uint8_t *buffer=malloc(4096);
+        if(!destination || !buffer) {free(destination);free(buffer);return PXA_STATUS_RESOURCE_LIMIT;}
+        status=pxa_posix_container_stream_begin(installer,destination,&stream);
+        for(uint64_t at=0;status==PXA_STATUS_OK && at<header->container_size;) {
+            size_t amount=header->container_size-at;
+            if(amount>4096)amount=4096;
+            status=read_exact_at(source_fd,at,buffer,amount);
+            if(status==PXA_STATUS_OK)status=pxa_posix_container_stream_feed(stream,buffer,amount);
+            at+=amount;
+        }
+        if(status==PXA_STATUS_OK)status=pxa_posix_container_stream_finish(stream);
+        pxa_posix_container_stream_close(stream);
+        free(destination);free(buffer);
+        if(status==PXA_STATUS_OK && (fstat(source_fd,&after) || !stat_same(&before,&after)))
+            status=PXA_STATUS_DENIED;
+        return status;
+    }
     status = ensure_manifest_workspace(
         installer, (pxa_bytes_t){manifest_bytes, manifest_size});
     if (status != PXA_STATUS_OK) {
@@ -2851,21 +3230,27 @@ static pxa_status_t installer_check_space(
     return status;
 }
 
-/* Only an inbox leaf can be consumed. Open both parents without following
- * links and compare the source inode immediately before the ownership move.
+/* Consume a caller-owned private staging leaf. Open both parents without
+ * following links and compare the source inode before the ownership move.
  * The slot transaction authenticates the adopted incoming tree before it can
  * move current, including on recovery after a reset. */
 static pxa_status_t adopt_incoming_directory(
-    pxa_posix_installer_t *installer, int *source_fd, const char *name,
+    pxa_posix_installer_t *installer, int *source_fd, const char *source,
     const pxa_posix_slot_ctx_t *ctx) {
     struct stat opened, named;
     int root_fd = -1, inbox_fd = -1, session_fd = -1;
     pxa_status_t status = PXA_STATUS_IO_ERROR;
-    root_fd = open(installer->storage_root,
+    (void)installer;
+    char *parent=strdup(source);
+    if(!parent)return PXA_STATUS_RESOURCE_LIMIT;
+    char *separator=strrchr(parent,'/');
+    if(!separator || !separator[1]) {free(parent);return PXA_STATUS_INVALID_ARGUMENT;}
+    const char *name=separator+1;
+    *separator=0;
+    root_fd = open(parent[0]?parent:"/",
                    O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
     if (root_fd < 0) goto done;
-    inbox_fd = openat(root_fd, "inbox",
-                      O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+    inbox_fd = dup(root_fd);
     session_fd = open(ctx->session,
                       O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
     if (inbox_fd < 0 || session_fd < 0) goto done;
@@ -2906,6 +3291,7 @@ done:
     if (session_fd >= 0) close(session_fd);
     if (inbox_fd >= 0) close(inbox_fd);
     if (root_fd >= 0) close(root_fd);
+    free(parent);
     return status;
 }
 
@@ -3189,6 +3575,13 @@ pxa_status_t pxa_posix_installer_install_for_identity(
     return install_source(installer, source_dir, expected, result, disposition, NULL);
 }
 
+pxa_status_t pxa_posix_installer_adopt_directory(pxa_posix_installer_t *installer,
+    const char *source,const pxa_posix_installer_identity_t *expected,
+    pxa_posix_installer_result_t *result,pxa_posix_install_disposition_t *disposition) {
+    if(!source || source[0]!='/')return PXA_STATUS_INVALID_ARGUMENT;
+    return install_source(installer,source,expected,result,disposition,source);
+}
+
 pxa_status_t pxa_posix_installer_adopt_staged_directory(
     pxa_posix_installer_t *installer, const char *name,
     const pxa_posix_installer_identity_t *expected,
@@ -3211,7 +3604,7 @@ pxa_status_t pxa_posix_installer_adopt_staged_directory(
     if (inbox != NULL) source = join_path(inbox, name);
     free(inbox);
     if (source == NULL) return PXA_STATUS_RESOURCE_LIMIT;
-    status = install_source(installer, source, expected, result, disposition, name);
+    status = install_source(installer, source, expected, result, disposition, source);
     free(source);
     return status;
 }
@@ -3451,7 +3844,7 @@ pxa_status_t pxa_posix_installer_read_install_metadata(pxa_posix_installer_t *in
     if(result->root && result->root_capacity)result->root[0]=0;
     status=pxa_container_header_parse((pxa_bytes_t){prefix.data,PXA_CONTAINER_HEADER_BYTES},container_bytes,&header);
     if(status!=PXA_STATUS_OK)return status;
-    if(header.payload_offset!=prefix.size ||
+    if(header.index_offset!=prefix.size ||
         header.file_count>installer->limits.max_files)return PXA_STATUS_DENIED;
     if(header.manifest_size>result->encoded_capacity)return PXA_STATUS_RESOURCE_LIMIT;
     status=pxa_container_signature_parse((pxa_bytes_t){prefix.data+header.container_signature_offset,
@@ -3736,9 +4129,10 @@ pxa_status_t pxa_posix_installer_load_current(
         uint8_t key_id[PXA_PACKAGE_DIGEST_BYTES];
         char app_id[PXA_POSIX_INSTALLER_MAX_APP_ID + 1];
         size_t app_id_size = 0;
-        /* An externally writable volume is not a trust boundary. Authenticate
-         * code on every activation; bulk media stays outside the code package. */
-        status = verify_opened_directory(installer, root_fd, 1, key_id,
+        /* Installation and pending-slot recovery authenticate payloads.
+         * Ordinary activation authenticates only the signed manifest and
+         * identity; it does not rescan already committed files. */
+        status = verify_opened_directory(installer, root_fd, 0, key_id,
             app_id, &app_id_size);
         if (status != PXA_STATUS_OK || app_id_size != ctx.app_id_size ||
             memcmp(key_id, ctx.publisher_key_id, sizeof(key_id)) ||

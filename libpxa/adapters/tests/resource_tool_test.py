@@ -4,6 +4,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import struct
 from pathlib import Path
 import subprocess
 import sys
@@ -40,6 +41,7 @@ def main():
         archive, descriptor = root / "resources.pxa", root / "binding.json"
         run(sys.executable, tools / "build_resource_package.py", meta, package, key, archive,
             "--descriptor", descriptor)
+        assert struct.unpack_from("<HH", archive.read_bytes(), 12) == (2, 12)
         digest = json.loads(descriptor.read_text())["resources"]["manifest_sha256"]
         assert hashlib.sha256((package / "manifest.pxm").read_bytes()).hexdigest() == digest
         storage = root / "storage"
@@ -49,6 +51,16 @@ def main():
         stored = root / "stored.pxa"
         run(sys.executable, tools / "build_pxa_container.py", package, key, stored, "--codec", "store")
         run(verifier, public, storage, stored, binding=digest)
+        legacy = root / "legacy.pxa"
+        run(sys.executable, tools / "build_resource_package.py", meta, package, key, legacy, "--legacy")
+        assert struct.unpack_from("<HH", legacy.read_bytes(), 4) == (0, 1)
+        assert struct.unpack_from("<HH", legacy.read_bytes(), 12) == (1, 12)
+        run(verifier, public, storage, legacy, binding=digest)
+        streamed = root / "deflate.pxa"
+        run(sys.executable, tools / "build_resource_package.py", meta, package, key, streamed,
+            "--streamable", "--codec", "deflate")
+        stream_storage = root / "stream-storage"; stream_storage.mkdir()
+        run(verifier, public, stream_storage, streamed, binding=digest)
         run(verifier, public, storage, archive, binding="0" * 64, ok=False)
         metadata["version"] = "2"
         meta.write_text(json.dumps(metadata))

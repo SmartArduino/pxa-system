@@ -12,6 +12,29 @@ pxa_system_dir="$(cd "$script_dir/../.." && pwd)"
 app_name="$1"
 package_target="$2"
 output_dir="$3"
+container_args=()
+case "${PXA_CONTAINER_STREAM:-1}" in
+  0) container_args+=(--legacy) ;;
+  1) container_args+=(--streamable) ;;
+  *) echo "PXA_CONTAINER_STREAM must be 0 or 1" >&2; exit 2 ;;
+esac
+if [[ -n "${PXA_CONTAINER_CODEC:-}" ]]; then
+  container_args+=(--codec "$PXA_CONTAINER_CODEC")
+fi
+container_args+=(--chunk-size "${PXA_CONTAINER_CHUNK_SIZE:-4096}")
+# Reject incompatible profiles before compiling or replacing existing output.
+"${PYTHON:-python3}" - "$script_dir" "${container_args[@]}" <<'PYCONTAINER'
+import argparse, sys
+sys.path.insert(0, sys.argv[1])
+from build_pxa_container import add_container_arguments, container_codec
+from build_package_manifest import PackageError
+parser = argparse.ArgumentParser()
+add_container_arguments(parser)
+try:
+    container_codec(parser.parse_args(sys.argv[2:]))
+except PackageError as error:
+    parser.error(str(error))
+PYCONTAINER
 if [[ ! "$app_name" =~ ^[a-z][a-z0-9._-]{0,63}$ ]]; then
   echo "Invalid PXA App directory name: $app_name" >&2
   exit 2
@@ -481,7 +504,7 @@ cp -R "$package_dir"/. "$output_dir"/
 
 container_output="${PXA_CONTAINER_OUTPUT:-${output_dir}.pxa}"
 "${PYTHON:-python3}" "$script_dir/build_pxa_container.py" \
-  "$package_dir" "$private_key" "$container_output" --codec lz4
+  "$package_dir" "$private_key" "$container_output" "${container_args[@]}"
 
 provenance_output="${PXA_PROVENANCE_OUTPUT:-${container_output}.provenance.json}"
 PXA_RESOLVED_CLANG="$clang_bin" PXA_RESOLVED_WAMRC="$wamrc_bin" \

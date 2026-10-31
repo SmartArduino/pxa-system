@@ -135,6 +135,12 @@
     {
       "name": "lz4-block-independent",
       "value": 1
+    },
+    {
+      "name": "deflate-raw-independent",
+      "value": 2,
+      "minimum_container_minor": 2,
+      "preset_dictionary": false
     }
   ],
   "chunk_size_log2": 12,
@@ -287,5 +293,33 @@
     "portable_max_files": 128,
     "esp_product_max_files": 32
   },
-  "protocol_version": "0.1.0"
+  "protocol_version": "0.1.0",
+  "streaming_extension": {
+    "version": "0.2.0",
+    "header_minor": 2,
+    "index_size_offset": 56,
+    "chunk_size_log2": [
+      12,
+      14,
+      15
+    ],
+    "index_entry_size": 48,
+    "index_entry_fields": {
+      "payload_offset": 0,
+      "encoded_length": 8,
+      "reserved": 12,
+      "sha256": 16
+    },
+    "domain": "PXA-PACKAGE-STREAM-INDEX",
+    "domain_nul_terminated": true,
+    "signed_digest": "sha256(header || manifest || package_signature || index)",
+    "section_order": [
+      "header",
+      "manifest",
+      "package_signature",
+      "container_signature",
+      "index",
+      "payload"
+    ]
+  }
 }

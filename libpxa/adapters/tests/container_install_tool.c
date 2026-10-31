@@ -3,8 +3,25 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <signal.h>
+#include <sys/resource.h>
 
 #include "pxa/posix/pxa_posix_installer.h"
+#include "../image/vendor/miniz.h"
+
+#ifdef PXA_TEST_WRAP_ALLOC
+void *__real_malloc(size_t size);
+void *__real_realloc(void *ptr, size_t size);
+static size_t denied_allocation_size;
+void *__wrap_malloc(size_t size) {
+    if(denied_allocation_size && size==denied_allocation_size)return NULL;
+    return __real_malloc(size);
+}
+void *__wrap_realloc(void *ptr, size_t size) {
+    if(denied_allocation_size && size==denied_allocation_size)return NULL;
+    return __real_realloc(ptr,size);
+}
+#endif
 
 static uint8_t *read_file(const char *path, size_t *size) {
     FILE *file = fopen(path, "rb");
@@ -89,8 +106,41 @@ int main(int argc, char **argv) {
     result.root = installed_root;
     result.root_capacity = sizeof(installed_root);
     for (index = 3; index < argc; ++index) {
-        pxa_status_t status = pxa_posix_installer_install(
-            installer, argv[index], &result, &disposition);
+        pxa_status_t status=PXA_STATUS_OK;
+        const char *fragment=getenv("PXA_TEST_STREAM_FRAGMENT");
+        char staged[512];const char *source=argv[index];
+        if(fragment) {
+            pxa_posix_container_stream_t *stream=NULL;
+            size_t chunk=(size_t)strtoul(fragment,NULL,10);
+            if(!chunk || chunk>65536)goto done;
+            uint8_t *buffer=malloc(chunk);FILE *input=fopen(source,"rb");
+            snprintf(staged,sizeof(staged),"%s/stream-%d",argv[2],index);
+            if(!buffer || !input) {free(buffer);if(input)fclose(input);goto done;}
+            const char *write_limit=getenv("PXA_TEST_STREAM_WRITE_LIMIT");
+            if(write_limit) {
+                struct rlimit limit={(rlim_t)strtoul(write_limit,NULL,10),(rlim_t)strtoul(write_limit,NULL,10)};
+                signal(SIGXFSZ,SIG_IGN);if(setrlimit(RLIMIT_FSIZE,&limit))goto done;
+            }
+            status=pxa_posix_container_stream_begin(installer,staged,&stream);
+#ifdef PXA_TEST_WRAP_ALLOC
+            const char *deny_size=getenv("PXA_TEST_STREAM_DENY_ALLOC");
+            denied_allocation_size=deny_size
+                ?(!strcmp(deny_size,"inflate")?sizeof(tinfl_decompressor):(size_t)strtoul(deny_size,NULL,10)):0;
+#endif
+            size_t amount;
+            while(status==PXA_STATUS_OK && (amount=fread(buffer,1,chunk,input)))
+                status=pxa_posix_container_stream_feed(stream,buffer,amount);
+            if(ferror(input))status=PXA_STATUS_IO_ERROR;
+            if(status==PXA_STATUS_OK)status=pxa_posix_container_stream_finish(stream);
+            pxa_posix_container_stream_close(stream);free(buffer);fclose(input);
+#ifdef PXA_TEST_WRAP_ALLOC
+            denied_allocation_size=0;
+#endif
+            source=staged;
+        }
+        if(status==PXA_STATUS_OK)status=getenv("PXA_TEST_STREAM_ADOPT")
+            ?pxa_posix_installer_adopt_directory(installer,source,NULL,&result,&disposition)
+            :pxa_posix_installer_install(installer,source,&result,&disposition);
         if (status != PXA_STATUS_OK) {
             fprintf(stderr, "install failed: %s status=%d\n", argv[index],
                     (int)status);
