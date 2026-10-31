@@ -66,7 +66,7 @@ SDK 的 `pxa_store_request_package_status()` 保留同步返回的 `DENIED`、`B
 `PXA_ENABLE_LEGACY_CONTAINER` 控制，C 宏默认 `0`，原生 Host 的 CMake 选项默认
 `OFF`。ESP 产品通过 `CONFIG_PXA_ENABLE_LEGACY_CONTAINER=y` 开启，统一传给
 Core、安装适配器和 PXADB。关闭时会裁掉旧容器的完整载荷校验与展开路径，
-但保留已安装目录、旧私有存储及存档的正常读取，也保留新容器的 LZ4 支持。
+并省去旧格式专用的 4 KiB 工作缓冲区，但保留已安装目录、旧私有存储及存档的正常读取，也保留新容器的 LZ4 支持。
 
 标准 0.7 商城目录只提供 Container 0.2；开启兼容的自定义固件可手动安装旧容器。
 旧版 Host 的目录和历史发行保持不变。关闭兼容不改变包签名、文件摘要或安装事务要求。

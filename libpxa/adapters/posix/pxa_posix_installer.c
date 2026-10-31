@@ -125,8 +125,10 @@ struct pxa_posix_installer {
     size_t inventory_capacity;
     uint8_t *io_buffer;
     size_t io_buffer_size;
+#if PXA_ENABLE_LEGACY_CONTAINER
     uint8_t *compressed_buffer;
     size_t compressed_buffer_size;
+#endif
 };
 
 static uintptr_t align_up(uintptr_t value, size_t alignment) {
@@ -3040,8 +3042,11 @@ size_t pxa_posix_installer_workspace_size(
     size += sizeof(pxa_posix_installer_t);
     if (PXA_POSIX_INSTALLER_IO_BYTES > SIZE_MAX - size) return 0;
     size += PXA_POSIX_INSTALLER_IO_BYTES;
+#if PXA_ENABLE_LEGACY_CONTAINER
     if (PXA_CONTAINER_CHUNK_BYTES > SIZE_MAX - size) return 0;
-    return size + PXA_CONTAINER_CHUNK_BYTES;
+    size += PXA_CONTAINER_CHUNK_BYTES;
+#endif
+    return size;
 }
 
 pxa_status_t pxa_posix_installer_init(void *workspace, size_t workspace_size,
@@ -3114,6 +3119,7 @@ pxa_status_t pxa_posix_installer_init(void *workspace, size_t workspace_size,
     }
     installer->io_buffer = cursor;
     installer->io_buffer_size = PXA_POSIX_INSTALLER_IO_BYTES;
+#if PXA_ENABLE_LEGACY_CONTAINER
     cursor += PXA_POSIX_INSTALLER_IO_BYTES;
     if ((uintptr_t)cursor > (uintptr_t)workspace_end ||
         PXA_CONTAINER_CHUNK_BYTES > (size_t)(workspace_end - cursor)) {
@@ -3121,6 +3127,7 @@ pxa_status_t pxa_posix_installer_init(void *workspace, size_t workspace_size,
     }
     installer->compressed_buffer = cursor;
     installer->compressed_buffer_size = PXA_CONTAINER_CHUNK_BYTES;
+#endif
     *output = installer;
     return PXA_STATUS_OK;
 }

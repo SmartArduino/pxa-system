@@ -1,5 +1,8 @@
 #define _GNU_SOURCE
 
+#include <assert.h>
+#include "pxa/container.h"
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -85,6 +88,11 @@ int main(int argc, char **argv) {
     }
     pxa_package_limits_init(&config.limits);
     installer_workspace_size = pxa_posix_installer_workspace_size(&config);
+#if !PXA_ENABLE_LEGACY_CONTAINER
+    /* A default installer must fit the constrained Host's 33 KiB workspace
+     * budget, including control state. Manifest/inventory remain dynamic. */
+    assert(installer_workspace_size <= 33u * 1024u);
+#endif
     manifest_workspace_size = pxa_package_manifest_workspace_size(&config.limits);
     installer_workspace = malloc(installer_workspace_size);
     manifest_workspace = malloc(manifest_workspace_size);
