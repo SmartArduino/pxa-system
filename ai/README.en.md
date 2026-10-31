@@ -1,4 +1,4 @@
-# PXA Agent Kit 0.4.1
+# PXA Agent Kit 0.4.2
 
 [中文](README.md) · [Tutorial](https://pxa.doit.am/docs/ai-development/)
 
@@ -12,7 +12,7 @@ With [uv](https://docs.astral.sh/uv/getting-started/installation/) installed:
 uv run --python 3.12 https://pxa.doit.am/setup.py --workspace ./my-pxa
 ```
 
-The bootstrap verifies the release signature, archive hash and file manifest. Setup installs the signed DevKit 0.6.0, project-local skills/MCP adapters and launchers, then builds and runs an actual Guest. No ESP-IDF, LLVM build or additional model API key is needed. Native Linux x86_64 requires glibc 2.39+; macOS, Windows and older Linux use Docker Desktop or Podman with Linux amd64 support. OS administration, virtualization and user login may require normal user interaction.
+The bootstrap verifies the release signature, archive hash and file manifest. Setup installs the signed DevKit 0.7.0, project-local skills/MCP adapters and launchers, then builds and runs an actual Guest. No ESP-IDF, LLVM build or additional model API key is needed. Native Linux x86_64 requires glibc 2.39+; macOS, Windows and older Linux use Docker Desktop or Podman with Linux amd64 support. OS administration, virtualization and user login may require normal user interaction.
 
 Codex and Claude Code receive local skills, optional roles and MCP entries. DSH discovers shared `.agents/skills` and can use the CLI directly; `.pxa/dsh-mcp.yaml` is an optional official Cordis composition snippet. Other agents can use the standard stdio MCP server or CLI. Existing global settings, models, permissions, unrelated MCP servers and edited files are preserved. Reopen the project if the client has not discovered the new tools.
 

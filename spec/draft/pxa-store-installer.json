@@ -159,6 +159,11 @@
     {
       "name": "resource-cache",
       "bit": 2
+    },
+    {
+      "name": "indexed-container",
+      "bit": 3,
+      "meaning": "Container 0.2 application and resource installation; STORE, LZ4 and raw DEFLATE codecs; decoded blocks 4096, 16384 and 32768 bytes. Container 0.1 remains supported."
     }
   ]
 }

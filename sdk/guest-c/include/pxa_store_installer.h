@@ -25,6 +25,8 @@ typedef uint64_t pxa_store_token_t;
 #define PXA_STORE_CAP_RESOURCE_INSTALL UINT32_C(1)
 #define PXA_STORE_CAP_VOLUME_PLACEMENT UINT32_C(2)
 #define PXA_STORE_CAP_RESOURCE_CACHE UINT32_C(4)
+/* Container 0.2: STORE/LZ4/DEFLATE, decoded blocks up to 32768 bytes. */
+#define PXA_STORE_CAP_INDEXED_CONTAINER UINT32_C(8)
 #define PXA_STORE_DOWNLOAD_PROGRESS 0x8001u
 
 typedef struct {
