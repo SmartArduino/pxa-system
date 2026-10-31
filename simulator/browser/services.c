@@ -8,6 +8,8 @@
 #include "pxa/log.h"
 #include "pxa/ipc.h"
 #include "pxa/wasi.h"
+#include "pxa/sensor.h"
+#include "pxa/lease.h"
 #include "pxa/service.h"
 #include "pxa/posix/pxa_posix_fs.h"
 #include "pxa/posix/pxa_posix_storage.h"
@@ -15,6 +17,19 @@
 #define CHECK(call) do {pxa_status_t status=(call);if(status)return status;} while(0)
 #define BYTES(text) {(const uint8_t *)text,sizeof(text)-1}
 static pxa_permission_service_t *permissions;
+static pxa_lease_service_t *leases;
+static pxa_status_t no_sensor_subscribe(void *c,uint16_t id,uint32_t period,void **out){
+    (void)c;(void)id;(void)period;(void)out;return PXA_STATUS_NOT_FOUND;
+}
+static pxa_status_t no_sensor_read(void *c,void *subscription,uint16_t id,int32_t values[3]){
+    (void)c;(void)subscription;(void)id;(void)values;return PXA_STATUS_NOT_FOUND;
+}
+static void no_sensor_close(void *c,void *subscription,uint16_t id){(void)c;(void)subscription;(void)id;}
+static uint64_t now_ms(void *c){(void)c;return (uint64_t)emscripten_get_now();}
+void browser_services_tick(void){
+    pxa_component_t affected[4];size_t count;
+    if(leases)pxa_lease_revoke_expired(leases,affected,4,&count);
+}
 static pxa_fs_backend_t native_fs;
 static pxa_storage_backend_t native_kv;
 EM_JS(void, storage_changed, (), {Module.browserStorageChanged?.();});
@@ -43,9 +58,11 @@ static pxa_status_t file_rename(void *c,pxa_bytes_t from,pxa_bytes_t to) {
 static pxa_status_t file_replace(void *c,pxa_bytes_t from,pxa_bytes_t to) {
     pxa_status_t s=native_fs.replace(c,from,to);if(!s)storage_changed();return s;
 }
-static pxa_permission_declaration_t declarations[9]={
+static pxa_permission_declaration_t declarations[67]={
     {BYTES("audio.playback"),BYTES("media"),0}};
-static uint8_t origins[8][512];
+static uint8_t origins[64][512];
+EM_JS(int,socket_declared,(),{return !!Module.browserSocketAvailable;});
+EM_JS(int,capture_declared,(),{return !!(Module.browserCaptureAvailable&&Module.browserCaptureDeclared);});
 EM_JS(int, network_origin, (unsigned i,uint8_t *out,size_t capacity), {
     const text=Module.browserNetworkOrigins?.[i];if(!text)return 0;
     const data=new TextEncoder().encode(text);if(data.length>capacity)return 0;
@@ -57,8 +74,11 @@ static pxa_status_t permission_load(void *c,pxa_bytes_t identity,pxa_bytes_t nam
     /* AudioContext still enforces browser user activation; no hardware or
      * network authority is granted by this local playback declaration. */
     *decision=(name.size==14 && !memcmp(name.data,"audio.playback",14)) ? PXA_PERMISSION_ALLOW : PXA_PERMISSION_DENY;
+    if(name.size==13&&!memcmp(name.data,"audio.capture",13)&&scope.size==10&&!memcmp(scope.data,"microphone",10)&&capture_declared())
+        *decision=PXA_PERMISSION_ALLOW;
+    if(name.size==10&&!memcmp(name.data,"net.socket",10)&&scope.size==8&&!memcmp(scope.data,"outbound",8)&&socket_declared())*decision=PXA_PERMISSION_ALLOW;
     if(name.size==10&&!memcmp(name.data,"net.client",10))
-        for(unsigned i=1;i<9;i++)if(declarations[i].scope.size==scope.size&&scope.size&&
+        for(unsigned i=1;i<67;i++)if(declarations[i].name.size==10&&!memcmp(declarations[i].name.data,"net.client",10)&&declarations[i].scope.size==scope.size&&scope.size&&
             !memcmp(declarations[i].scope.data,scope.data,scope.size))*decision=PXA_PERMISSION_ALLOW;
     return PXA_STATUS_OK;
 }
@@ -87,7 +107,9 @@ pxa_status_t browser_services_init(pxa_runtime_t *runtime) {
                   PXA_WASI_FEATURE_ARGUMENTS|PXA_WASI_FEATURE_ENVIRONMENT,.control=wasi_control};
     CHECK(pxa_service_register(runtime,&wasi));
     unsigned declaration_count=1;
-    for(unsigned i=0;i<8;i++){
+    if(socket_declared())declarations[declaration_count++]=(pxa_permission_declaration_t){BYTES("net.socket"),BYTES("outbound"),0};
+    if(capture_declared())declarations[declaration_count++]=(pxa_permission_declaration_t){BYTES("audio.capture"),BYTES("microphone"),0};
+    for(unsigned i=0;i<64;i++){
         int n=network_origin(i,origins[i],sizeof(origins[i]));if(!n)break;
         declarations[declaration_count++]=(pxa_permission_declaration_t){BYTES("net.client"),{origins[i],(size_t)n},0};
     }
@@ -97,6 +119,16 @@ pxa_status_t browser_services_init(pxa_runtime_t *runtime) {
     size_t size=pxa_permission_service_workspace_size(&pc);
     CHECK(pxa_permission_service_init(calloc(1,size),size,runtime,&pc,&permissions));
     CHECK(pxa_permission_policy_load(permissions));CHECK(pxa_permission_service_register(permissions));
+    pxa_sensor_config_t sensor_config={.struct_size=sizeof(sensor_config),.permissions=permissions,
+        .max_subscriptions=4,.max_subscriptions_per_component=4,
+        .subscribe=no_sensor_subscribe,.read=no_sensor_read,.unsubscribe=no_sensor_close};
+    pxa_sensor_service_t *sensors;size=pxa_sensor_service_workspace_size(&sensor_config);
+    CHECK(pxa_sensor_service_init(calloc(1,size),size,runtime,&sensor_config,&sensors));
+    CHECK(pxa_sensor_service_register(sensors));
+    pxa_lease_limits_t lease_limits;pxa_lease_limits_init(&lease_limits);lease_limits.clock=now_ms;
+    size=pxa_lease_service_workspace_size(&lease_limits);
+    CHECK(pxa_lease_service_init(calloc(1,size),size,runtime,&lease_limits,&leases));
+    CHECK(pxa_lease_service_register(leases));
     pxa_device_config_t dc={.struct_size=sizeof(dc),.permissions=permissions,.get_mac=get_mac,
         .target="browser",.architecture="wasm32",.engine="webassembly",.engine_abi="pxa.core.v2",.formats=PXA_DEVICE_FORMAT_WASM};
     pxa_device_service_t *device;size=pxa_device_service_workspace_size(&dc);
@@ -120,8 +152,9 @@ pxa_status_t browser_services_init(pxa_runtime_t *runtime) {
     native_kv=sc.backend;sc.backend.set=kv_set;sc.backend.remove=kv_remove;
     pxa_storage_service_t *storage;size=pxa_storage_service_workspace_size(&sc);
     CHECK(pxa_storage_service_init(calloc(1,size),size,runtime,&sc,&storage));CHECK(pxa_storage_service_register(storage));
-    pxa_posix_fs_config_t pfc={.struct_size=sizeof(pfc),.root_path="/data/files",.quota_bytes=8*1024*1024,.max_open_resources=16};
-    pxa_posix_fs_t *posix_fs;pxa_fs_config_t fc={.struct_size=sizeof(fc),.max_open_resources=16};
+    pxa_posix_fs_config_t pfc={.struct_size=sizeof(pfc),.root_path="/data/files",.quota_bytes=256*1024*1024,.max_open_resources=64};
+    pxa_posix_fs_t *posix_fs;pxa_fs_config_t fc={.struct_size=sizeof(fc),.max_open_resources=64};
+    CHECK(browser_files_init(&fc.roots));
     size=pxa_posix_fs_workspace_size(&pfc);
     CHECK(pxa_posix_fs_init(calloc(1,size),size,&pfc,&posix_fs,&fc.backend));
     native_fs=fc.backend;fc.backend.write=file_write;fc.backend.open=file_open;
@@ -129,6 +162,7 @@ pxa_status_t browser_services_init(pxa_runtime_t *runtime) {
     fc.backend.rename=file_rename;fc.backend.replace=file_replace;
     pxa_fs_service_t *fs;size=pxa_fs_service_workspace_size(&fc);
     CHECK(pxa_fs_service_init(calloc(1,size),size,runtime,&fc,&fs));CHECK(pxa_fs_service_register(fs));
+    browser_files_bind(fs);
     CHECK(browser_net_init(runtime,permissions));
     return browser_audio_init(runtime,permissions);
 }
