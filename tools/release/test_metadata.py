@@ -7,6 +7,14 @@ from metadata import outputs
 
 
 class MetadataTests(unittest.TestCase):
+    def test_common_game_capabilities_include_shipped_borrowed_blit(self):
+        with tempfile.TemporaryDirectory() as td:
+            backend=Path(td)
+            result=outputs(backend=backend)
+            document=json.loads(result[backend/'app/pxa-capabilities.json'])
+            game=next(service for service in document['services'] if service['service_id']==18)
+            self.assertEqual(game['features'],17)
+
     def test_previous_baseline_is_archived_unchanged(self):
         with tempfile.TemporaryDirectory() as td:
             backend = Path(td)

@@ -22,7 +22,8 @@
     "random"
   ],
   "game-render": [
-    "asset-bindings"
+    "asset-bindings",
+    "borrowed-indexed-blit"
   ],
   "ime": [
     "provider",
