@@ -7,9 +7,14 @@ export function installBrowserSensors(host,notify,permissions=[],available=0,clo
   const update=()=>{
     const next=paused?0:refs.reduce((m,n,i)=>m|(n?1<<i:0),0);
     if(next===mask)return;
-    if(mask)notify({type:'sensors-stop',id:epoch});
-    epoch++;mask=next;latest.fill(null);
-    if(mask)notify({type:'sensors-request',id:epoch,mask});
+    if(!next){
+      if(mask)notify({type:'sensors-stop',id:epoch});
+      mask=0;latest.fill(null);return;
+    }
+    // A new channel must not tear down an existing native stream or its grant.
+    if(!mask){epoch++;latest.fill(null);}
+    else for(let i=0;i<2;i++)if(!(next&(1<<i)))latest[i]=null;
+    mask=next;notify({type:'sensors-request',id:epoch,mask});
   };
   host.browserSensorSubscribe=id=>{
     if(id<1||id>2||!(host.browserSensorMask&(1<<(id-1))))return -3;

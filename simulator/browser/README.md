@@ -135,16 +135,24 @@ Surface, GameRender, Device runtime information, Log, Permission and an isolated
 IPC broker. Not every optional operation is available; consult the inventory
 and normal service errors. Assets and Lease are registered. The Sensor service bridges signed
 `motion.acceleration` and `motion.angular-velocity` subscriptions to native
-browser sensors after the player’s explicit enable action. Acceleration includes
-gravity (µm/s²); angular velocity uses µrad/s. Both use device axes (X right,
-Y up, Z out of the screen), independent of screen rotation. Generic Sensor
+browser sensors automatically while subscriptions are active. Where native
+consent requires a gesture, it joins Start/Continue or the next screen/control
+interaction; there is no separate enable button. Consent persists across
+channel changes, pause/resume and app restarts on the same page. Acceleration
+includes gravity (µm/s²); angular velocity uses µrad/s. Browser device vectors
+(X right, Y up, Z out) rotate to the PXA device frame (X top, Y left, Z out):
+`(x,y,z) -> (y,-x,z)` for both channels. This proper rotation preserves lengths
+and handedness; screen/view changes do not remap this physical native frame. Generic Sensor
 APIs are preferred; DeviceMotion falls back to its accelerationIncludingGravity
 and rotationRate (alpha X, beta Y, gamma Z, degrees converted to radians).
 See the [Device Motion standard](https://www.w3.org/TR/orientation-event/).
 API discovery does not guarantee physical hardware: absent, invalid or stale
 readings produce no samples. Transport is bounded to 50 Hz per channel, with
 normal PXA subscription periods and coalescing. Pause, unsubscribe and exit
-release native listeners and clear cached samples. Hardware MAC access, Work, PXA IME-provider registration and
+release native listeners and clear cached samples. Updating the active channel
+mask preserves the stream session and unaffected channel. Transient Generic
+Sensor failures/stalls can fall back to fresh DeviceMotion samples; denied
+permissions never trigger a bypass. Hardware MAC access, Work, PXA IME-provider registration and
 StoreInstaller are unavailable. Native text entry replaces the device keyboard.
 The store serves only authenticated, reviewed public releases, verifies both
 package signatures and inventories, and checks per-file SHA-256 in the page.

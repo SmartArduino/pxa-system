@@ -1,5 +1,5 @@
 {
-  "version": "0.7.3",
+  "version": "0.7.4",
   "target": "browser",
   "engine": "webassembly",
   "core": "pxa.core.v2",
@@ -107,14 +107,16 @@
       "resourcePacks": true
     },
     "sensor": {
-      "backend": "native browser motion sensors with explicit consent",
+      "backend": "native browser motion sensors; automatic subscription lifecycle",
       "semantics": [
         "motion.acceleration",
         "motion.angular-velocity"
       ],
       "minimumPeriodMs": 20,
       "staleAfterMs": 250,
-      "missingHardware": "no samples; never synthetic zeros"
+      "missingHardware": "no samples; never synthetic zeros",
+      "axes": "PXA native device frame: X top, Y left, Z screen-out",
+      "authorization": "automatic where supported; native consent joined to Start/Continue or screen interaction"
     }
   },
   "unavailableServices": [
