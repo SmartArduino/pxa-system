@@ -16,7 +16,7 @@ async function platform(options={},fixture='counter'){
   const host=await createHost(),rt=await createRuntime(host,await fs.readFile(`${bundle}/${fixture}.wasm`),options);
   const scratch=host._malloc(1024*1024);let token=100n;
   const active=fn=>{assert.equal(host._browser_begin(1),0);try{return fn();}finally{assert.equal(host._browser_finish(1,0),0);}};
-  const call=(service,opcode,payload,request=true)=>{
+  const call=(service,opcode,payload,request=true,success=true)=>{
     host.HEAPU8.set(payload,scratch);
     const id=request?++token:0n;
     assert.equal(active(()=>host._browser_call(service|(opcode<<16),id,scratch,payload.length)),0,`service ${service} opcode ${opcode}`);
@@ -24,7 +24,7 @@ async function platform(options={},fixture='counter'){
     for(let i=0;i<128;i++){
       const n=host._browser_event(scratch,4096);assert.ok(n>0,'completion');
       const event=Buffer.from(host.HEAPU8.slice(scratch,scratch+n));
-      if(event.readBigUInt64LE(4)===id){const out=event.subarray(20);assert.equal(out.readInt32LE(),0,`completion ${service}/${opcode}`);return out;}
+      if(event.readBigUInt64LE(4)===id){const out=event.subarray(20);if(success)assert.equal(out.readInt32LE(),0,`completion ${service}/${opcode}`);return out;}
     }
     throw new Error('Missing completion');
   };
@@ -216,4 +216,42 @@ test('Alpha Canvas stays above Surface; clearing and overlay-only updates do not
   rt.controller(16);rt.controller(0);render();assert.ok(at(45,15)[1]>120,'overlay-only updates appear without a Surface submission');
   present(0x001f);assert.deepEqual(at(45,15),blended,'later frames blend once against their new base');
   await rt.stop();
+});
+
+test('signed microphone permission survives absent encoder, capture open reports UNSUPPORTED',async()=>{
+  const {rt,call,permission}=await platform({permissions:[{name:'audio.capture',scope:'microphone'}]});
+  try{
+    const p=permission('audio.capture','microphone');assert.ok(p);
+    const result=call(10,6,num(p,8),true,false);
+    assert.equal(result.readInt32LE(),-3,'unsupported capture is not an authorization denial');
+  }finally{await rt.stop();}
+});
+test('real Sensor Core discovers signed channels, authorizes subscriptions and delivers native values',async()=>{
+  const messages=[];
+  const {host,rt,call,permission}=await platform({sensorMask:3,notify:m=>messages.push(m),permissions:[{name:'sensor.read',scope:'motion.acceleration'},{name:'sensor.read',scope:'motion.angular-velocity'}]});
+  try{
+    const list=call(8,1,Buffer.alloc(0));assert.ok(list.includes(Buffer.from('motion.acceleration')));assert.ok(list.includes(Buffer.from('motion.angular-velocity')));
+    for(const [id,scope] of [[1,'motion.acceleration'],[2,'motion.angular-velocity']]){
+      const p=permission('sensor.read',scope);
+      const result=call(8,2,Buffer.concat([tlv(1,num(id,2)),tlv(2,num(20)),tlv(3,num(p,8))]));assert.ok(result.readBigUInt64LE(4));
+    }
+    const request=messages.filter(m=>m.type==='sensors-request').at(-1);assert.equal(request.mask,3);
+    rt.sensorSample(request.id,[{id:1,values:[1,-2,9800000]},{id:2,values:[1000000,2000000,-3000000]}]);
+    const scratch=host._malloc(4096);host._browser_tick(performance.now()+30);
+    const samples=[];for(let i=0;i<30;i++){const n=host._browser_event(scratch,4096);if(!n)break;const b=Buffer.from(host.HEAPU8.slice(scratch,scratch+n));if(b.readUInt16LE(0)===8&&b.readUInt16LE(2)===0x8001)samples.push(b);}
+    assert.equal(samples.length,2,'Core publishes both actual sample events');
+    assert.ok(samples.some(b=>b.includes(Buffer.concat([num(1),num(0xfffffffe),num(9800000)]))));host._free(scratch);
+    rt.pause(true);assert.equal(messages.at(-1).type,'sensors-stop');
+  }finally{await rt.stop();}
+});
+
+test('unsigned microphone and sensor scopes cannot acquire authority or start native prompts',async()=>{
+  const messages=[],{rt,call}=await platform({sensorMask:3,notify:m=>messages.push(m)});
+  try{
+    for(const [name,scope] of [['audio.capture','microphone'],['sensor.read','motion.acceleration']]){
+      const result=call(11,2,Buffer.concat([tlv(1,Buffer.from(name)),tlv(2,Buffer.from(scope))]),true,false);assert.equal(result.readInt32LE(),-4);
+    }
+    assert.equal(call(8,1,Buffer.alloc(0)).length,4,'no unsigned native inventory');
+    assert.equal(messages.some(m=>m.type==='sensors-request'||m.type==='microphone-request'),false);
+  }finally{await rt.stop();}
 });

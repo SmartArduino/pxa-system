@@ -3,6 +3,7 @@
 export function installBrowserSockets(host,proxy,permissions=[]){
   const enabled=!!proxy?.socketUrl&&permissions.some(p=>p.name==='net.socket'&&p.scope==='outbound');
   host.browserSocketAvailable=enabled;
+  host.browserSocketDeclared=permissions.some(p=>p.name==='net.socket'&&p.scope==='outbound');
   const pending=new Map();
   const bytes=(data,fn)=>{const p=host._malloc(Math.max(1,data.length));if(!p)throw new Error('Socket allocation failed');try{host.HEAPU8.set(data,p);return fn(p,data.length);}finally{host._free(p);}};
   host.browserSocketStart=({id,endpoint,timeout})=>{

@@ -18,17 +18,25 @@
 #define BYTES(text) {(const uint8_t *)text,sizeof(text)-1}
 static pxa_permission_service_t *permissions;
 static pxa_lease_service_t *leases;
-static pxa_status_t no_sensor_subscribe(void *c,uint16_t id,uint32_t period,void **out){
-    (void)c;(void)id;(void)period;(void)out;return PXA_STATUS_NOT_FOUND;
+static pxa_sensor_service_t *sensors;
+EM_JS(int, sensor_mask, (), {return Module.browserSensorMask||0;});
+EM_JS(int, sensor_start, (unsigned id), {return Module.browserSensorSubscribe?.(id) ?? -3;});
+EM_JS(int, sensor_read, (unsigned id,int32_t *values), {return Module.browserSensorRead?.(id,values) ?? -7;});
+EM_JS(void, sensor_stop, (unsigned id), {Module.browserSensorUnsubscribe?.(id);});
+static pxa_status_t sensor_subscribe(void *c,uint16_t id,uint32_t period,void **out){
+    (void)c;(void)period;pxa_status_t status=sensor_start(id);
+    if(!status)*out=(void *)(uintptr_t)id;return status;
 }
-static pxa_status_t no_sensor_read(void *c,void *subscription,uint16_t id,int32_t values[3]){
-    (void)c;(void)subscription;(void)id;(void)values;return PXA_STATUS_NOT_FOUND;
+static pxa_status_t sensor_values(void *c,void *subscription,uint16_t id,int32_t values[3]){
+    (void)c;(void)subscription;return sensor_read(id,values);
 }
-static void no_sensor_close(void *c,void *subscription,uint16_t id){(void)c;(void)subscription;(void)id;}
+static void sensor_close(void *c,void *subscription,uint16_t id){(void)c;(void)subscription;sensor_stop(id);}
 static uint64_t now_ms(void *c){(void)c;return (uint64_t)emscripten_get_now();}
 void browser_services_tick(void){
     pxa_component_t affected[4];size_t count;
     if(leases)pxa_lease_revoke_expired(leases,affected,4,&count);
+    if(sensors&&pxa_sensor_has_active_subscriptions(sensors))
+        pxa_sensor_poll(sensors,(uint64_t)(emscripten_get_now()*1000),affected,4,&count);
 }
 static pxa_fs_backend_t native_fs;
 static pxa_storage_backend_t native_kv;
@@ -58,11 +66,11 @@ static pxa_status_t file_rename(void *c,pxa_bytes_t from,pxa_bytes_t to) {
 static pxa_status_t file_replace(void *c,pxa_bytes_t from,pxa_bytes_t to) {
     pxa_status_t s=native_fs.replace(c,from,to);if(!s)storage_changed();return s;
 }
-static pxa_permission_declaration_t declarations[67]={
+static pxa_permission_declaration_t declarations[69]={
     {BYTES("audio.playback"),BYTES("media"),0}};
 static uint8_t origins[64][512];
-EM_JS(int,socket_declared,(),{return !!Module.browserSocketAvailable;});
-EM_JS(int,capture_declared,(),{return !!(Module.browserCaptureAvailable&&Module.browserCaptureDeclared);});
+EM_JS(int,socket_declared,(),{return !!Module.browserSocketDeclared;});
+EM_JS(int,capture_declared,(),{return !!(Module.browserCaptureDeclared);});
 EM_JS(int, network_origin, (unsigned i,uint8_t *out,size_t capacity), {
     const text=Module.browserNetworkOrigins?.[i];if(!text)return 0;
     const data=new TextEncoder().encode(text);if(data.length>capacity)return 0;
@@ -73,13 +81,13 @@ static pxa_status_t permission_load(void *c,pxa_bytes_t identity,pxa_bytes_t nam
     (void)c;(void)identity;
     /* AudioContext still enforces browser user activation; no hardware or
      * network authority is granted by this local playback declaration. */
-    *decision=(name.size==14 && !memcmp(name.data,"audio.playback",14)) ? PXA_PERMISSION_ALLOW : PXA_PERMISSION_DENY;
-    if(name.size==13&&!memcmp(name.data,"audio.capture",13)&&scope.size==10&&!memcmp(scope.data,"microphone",10)&&capture_declared())
-        *decision=PXA_PERMISSION_ALLOW;
-    if(name.size==10&&!memcmp(name.data,"net.socket",10)&&scope.size==8&&!memcmp(scope.data,"outbound",8)&&socket_declared())*decision=PXA_PERMISSION_ALLOW;
-    if(name.size==10&&!memcmp(name.data,"net.client",10))
-        for(unsigned i=1;i<67;i++)if(declarations[i].name.size==10&&!memcmp(declarations[i].name.data,"net.client",10)&&declarations[i].scope.size==scope.size&&scope.size&&
-            !memcmp(declarations[i].scope.data,scope.data,scope.size))*decision=PXA_PERMISSION_ALLOW;
+    *decision=PXA_PERMISSION_DENY;
+    for(unsigned i=0;i<69;i++)
+        if(declarations[i].name.size!=0&&declarations[i].name.size==name.size&&declarations[i].scope.size==scope.size&&
+           !memcmp(declarations[i].name.data,name.data,name.size)&&
+           !memcmp(declarations[i].scope.data,scope.data,scope.size)){
+            *decision=PXA_PERMISSION_ALLOW;break;
+        }
     return PXA_STATUS_OK;
 }
 static pxa_status_t permission_save(void *c,pxa_bytes_t i,pxa_bytes_t n,pxa_bytes_t s,pxa_permission_decision_t d) {
@@ -109,6 +117,8 @@ pxa_status_t browser_services_init(pxa_runtime_t *runtime) {
     unsigned declaration_count=1;
     if(socket_declared())declarations[declaration_count++]=(pxa_permission_declaration_t){BYTES("net.socket"),BYTES("outbound"),0};
     if(capture_declared())declarations[declaration_count++]=(pxa_permission_declaration_t){BYTES("audio.capture"),BYTES("microphone"),0};
+    if(sensor_mask()&1)declarations[declaration_count++]=(pxa_permission_declaration_t){BYTES("sensor.read"),BYTES("motion.acceleration"),0};
+    if(sensor_mask()&2)declarations[declaration_count++]=(pxa_permission_declaration_t){BYTES("sensor.read"),BYTES("motion.angular-velocity"),0};
     for(unsigned i=0;i<64;i++){
         int n=network_origin(i,origins[i],sizeof(origins[i]));if(!n)break;
         declarations[declaration_count++]=(pxa_permission_declaration_t){BYTES("net.client"),{origins[i],(size_t)n},0};
@@ -119,10 +129,14 @@ pxa_status_t browser_services_init(pxa_runtime_t *runtime) {
     size_t size=pxa_permission_service_workspace_size(&pc);
     CHECK(pxa_permission_service_init(calloc(1,size),size,runtime,&pc,&permissions));
     CHECK(pxa_permission_policy_load(permissions));CHECK(pxa_permission_service_register(permissions));
+    pxa_sensor_descriptor_t descriptors[2];uint16_t sensor_count=0;
+    if(sensor_mask()&1)descriptors[sensor_count++]=(pxa_sensor_descriptor_t){1,BYTES("motion.acceleration"),PXA_SENSOR_UNIT_MICRO_METERS_PER_SECOND_SQUARED,3,20,60000};
+    if(sensor_mask()&2)descriptors[sensor_count++]=(pxa_sensor_descriptor_t){2,BYTES("motion.angular-velocity"),PXA_SENSOR_UNIT_MICRO_RADIANS_PER_SECOND,3,20,60000};
     pxa_sensor_config_t sensor_config={.struct_size=sizeof(sensor_config),.permissions=permissions,
+        .descriptors=descriptors,.descriptor_count=sensor_count,
         .max_subscriptions=4,.max_subscriptions_per_component=4,
-        .subscribe=no_sensor_subscribe,.read=no_sensor_read,.unsubscribe=no_sensor_close};
-    pxa_sensor_service_t *sensors;size=pxa_sensor_service_workspace_size(&sensor_config);
+        .subscribe=sensor_subscribe,.read=sensor_values,.unsubscribe=sensor_close};
+    size=pxa_sensor_service_workspace_size(&sensor_config);
     CHECK(pxa_sensor_service_init(calloc(1,size),size,runtime,&sensor_config,&sensors));
     CHECK(pxa_sensor_service_register(sensors));
     pxa_lease_limits_t lease_limits;pxa_lease_limits_init(&lease_limits);lease_limits.clock=now_ms;

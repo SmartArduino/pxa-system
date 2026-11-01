@@ -1,5 +1,5 @@
 {
-  "version": "0.7.1",
+  "version": "0.7.2",
   "target": "browser",
   "engine": "webassembly",
   "core": "pxa.core.v2",
@@ -106,8 +106,14 @@
       "resourcePacks": true
     },
     "sensor": {
-      "physicalSensors": false,
-      "enumeration": true
+      "backend": "native browser motion sensors with explicit consent",
+      "semantics": [
+        "motion.acceleration",
+        "motion.angular-velocity"
+      ],
+      "minimumPeriodMs": 20,
+      "staleAfterMs": 250,
+      "missingHardware": "no samples; never synthetic zeros"
     }
   },
   "unavailableServices": [
@@ -240,7 +246,8 @@
       "audio.playback",
       "audio.capture",
       "net.client",
-      "net.socket"
+      "net.socket",
+      "sensor.read"
     ],
     "primaryUiEntry": true
   },

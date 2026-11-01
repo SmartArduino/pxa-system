@@ -128,8 +128,18 @@ required. Runtime downloads are lazy, after the user starts a demo.
 this Host. Registered services are UI, Window, Clock, Storage, FS, Audio, Net,
 Surface, GameRender, Device runtime information, Log, Permission and an isolated
 IPC broker. Not every optional operation is available; consult the inventory
-and normal service errors. Assets, Lease and an empty physical Sensor inventory
-are registered. Hardware MAC access, Work, PXA IME-provider registration and
+and normal service errors. Assets and Lease are registered. The Sensor service bridges signed
+`motion.acceleration` and `motion.angular-velocity` subscriptions to native
+browser sensors after the player’s explicit enable action. Acceleration includes
+gravity (µm/s²); angular velocity uses µrad/s. Both use device axes (X right,
+Y up, Z out of the screen), independent of screen rotation. Generic Sensor
+APIs are preferred; DeviceMotion falls back to its accelerationIncludingGravity
+and rotationRate (alpha X, beta Y, gamma Z, degrees converted to radians).
+See the [Device Motion standard](https://www.w3.org/TR/orientation-event/).
+API discovery does not guarantee physical hardware: absent, invalid or stale
+readings produce no samples. Transport is bounded to 50 Hz per channel, with
+normal PXA subscription periods and coalescing. Pause, unsubscribe and exit
+release native listeners and clear cached samples. Hardware MAC access, Work, PXA IME-provider registration and
 StoreInstaller are unavailable. Native text entry replaces the device keyboard.
 The store serves only authenticated, reviewed public releases, verifies both
 package signatures and inventories, and checks per-file SHA-256 in the page.

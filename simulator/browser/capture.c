@@ -7,13 +7,18 @@ static uint32_t sequence,session;
 static uint16_t sizes[16];
 static uint8_t packets[16][PXA_AUDIO_CAPTURE_MAX_PACKET],head,count;
 static pxa_status_t failure;
-EM_JS(int,available,(),{return !!Module.browserCaptureAvailable;});
-EM_JS(void,start,(uint32_t id),{Module.browserCaptureStart?.(id);});
+EM_JS(int,available,(),{
+    if(Module.browserCaptureAvailable)return 1;
+    Module.browserNotify?.({type:'media-status',text:Module.browserCaptureUnavailableReason||'当前浏览器无法使用语音采集，可使用文字聊天。'});return 0;
+});
+EM_JS(int,start,(uint32_t id),{return Module.browserCaptureStart?.(id) ?? -3;});
 EM_JS(void,stop,(uint32_t id),{Module.browserCaptureStop?.(id);});
 pxa_status_t browser_capture_open(void *c,uint64_t *id){
     (void)c;if(!available())return PXA_STATUS_UNSUPPORTED;
     if(session)return PXA_STATUS_BUSY;
-    do{session=++sequence;}while(!session);head=count=0;failure=0;*id=session;start(session);return PXA_STATUS_OK;
+    do{session=++sequence;}while(!session);head=count=0;failure=0;
+    pxa_status_t status=start(session);if(status){session=0;return status;}
+    *id=session;return PXA_STATUS_OK;
 }
 int32_t browser_capture_io(void *c,uint64_t id,uint32_t op,uint8_t *out,size_t bytes){
     (void)c;if(id!=session||!session)return PXA_STATUS_NOT_FOUND;

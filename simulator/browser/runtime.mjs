@@ -9,6 +9,7 @@ import {installPackageFiles,importMediaFiles} from './package.mjs';
 import {createSurfaceBridge} from './surface.mjs';
 import {installBrowserSockets} from './sockets.mjs';
 import {installBrowserCapture} from './capture.mjs';
+import {installBrowserSensors} from './sensors.mjs';
 export const MAX_IO = 4 * 1024 * 1024;
 export const EVENT_BYTES = 4096;
 export function memoryRange(memory, pointer, size) {
@@ -18,7 +19,7 @@ export function memoryRange(memory, pointer, size) {
   return new Uint8Array(memory.buffer, pointer, size);
 }
 
-export async function createRuntime(host, binary, {width=320, height=240, log=()=>{}, notify=()=>{}, locale='en-US',appId='local',networkOrigins=[],networkProxy=null,permissions=[],audioAvailable=false,mainLoop=false,assets=[]}={}) {
+export async function createRuntime(host, binary, {width=320, height=240, log=()=>{}, notify=()=>{}, locale='en-US',appId='local',networkOrigins=[],networkProxy=null,permissions=[],audioAvailable=false,sensorMask=0,mainLoop=false,assets=[]}={}) {
   const check = (value, operation) => { if (value < 0) throw new Error(`${operation}: ${value}`); return value; };
   host.browserNotify=notify;
   host.browserMusicAvailable=!!audioAvailable;
@@ -29,8 +30,12 @@ export async function createRuntime(host, binary, {width=320, height=240, log=()
   host.browserAssets=new Map(assets.map(asset=>[asset.path,asset.binary instanceof Uint8Array?asset.binary:new Uint8Array(asset.binary)]));
   const network=installBrowserNetwork(host,networkOrigins,networkProxy);
   installBrowserFonts(host);
+  const sensors=installBrowserSensors(host,notify,permissions,sensorMask);
   const sockets=installBrowserSockets(host,networkProxy,permissions);
   const capture=await installBrowserCapture(host,notify);
+  host.browserCaptureUnavailableReason=!host.browserCaptureAvailable?
+    '此浏览器不支持 Opus 语音编码，请升级 Chrome/Edge，或在小智设置中输入文字聊天。':
+    !audioAvailable?'浏览器音频引擎未启动，请刷新页面重试；也可使用文字聊天。':'';
   host.browserCaptureAvailable=host.browserCaptureAvailable&&!!audioAvailable;
   host.browserCaptureDeclared=permissions.some(p=>p.name==='audio.capture'&&p.scope==='microphone');
   const storage=await prepareStorage(host,appId,notify);
@@ -212,7 +217,7 @@ export async function createRuntime(host, binary, {width=320, height=240, log=()
     back(){check(host._browser_back(),'Back');drain();},
     volumeKey(key){check(host._browser_volume_key(key),'Volume key');drain();},
     focus(value){host._browser_focus(value?1:0);drain();},
-    pause(value){suspended=!!value;wake();},
+    pause(value){suspended=!!value;sensors.pause(value);wake();},
     edit({session,text,cursor=0,action=0}){
       const encoded=new TextEncoder().encode(String(text));
       if(encoded.length>EVENT_BYTES-44 || encoded.includes(0))return -1;
@@ -227,6 +232,8 @@ export async function createRuntime(host, binary, {width=320, height=240, log=()
     },
     cancelImport(id){host._browser_import_finish(id,-10,0,0,0,0);drain();},
     musicEvent(id,state,status){host._browser_music_event(id,state,status);},
+    sensorSample(id,values){sensors.sample(id,values);},
+    sensorClear(id){sensors.clear(id);},
     capturePcm(id,samples){capture.pcm(id,samples);},
     captureError(id,status){capture.error(id,status);},
     audio(){
@@ -248,14 +255,14 @@ export async function createRuntime(host, binary, {width=320, height=240, log=()
       if(callbackError)throw callbackError;
       check(host._browser_begin_stop(),'Begin stop');guest.pxa_app_stop(0);check(host._browser_finish_stop(),'Complete stop');
       surface.close();
-      capture.close();
+      sensors.close();capture.close();
       sockets.close();network.close();storage.changed();await storage.close();
     },
     pixels(){return host.HEAPU8.subarray(host._browser_pixels(),host._browser_pixels()+width*height*4);},
     stats(){return {callbacks,copiedBytes,guestWorkMs,guestBytes:guest.memory.buffer.byteLength,hostBytes:host.HEAPU8.length};},
   };
   }catch(error){
-    capture.close();
+    sensors.close();capture.close();
     sockets.close();network.close();await storage.close().catch(()=>{});throw error;
   }
 }

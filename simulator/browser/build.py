@@ -48,7 +48,7 @@ def main():
     out.mkdir(parents=True, exist_ok=True)
     for filename in ['pxa-browser.mjs', 'pxa-browser.wasm', 'LICENSE-Emscripten', 'LICENSE-musl', 'LICENSE-compiler-rt']:
         shutil.copy2(host / filename, out / filename)
-    for filename in ['runtime.mjs', 'worker.mjs', 'fonts.mjs', 'storage.mjs', 'network.mjs', 'borrow.mjs', 'wasm-policy.mjs', 'package.mjs', 'surface.mjs', 'capture.mjs', 'sockets.mjs', 'microphone-worklet.mjs', 'audio-worklet.mjs', 'capabilities.json']:
+    for filename in ['runtime.mjs', 'worker.mjs', 'fonts.mjs', 'storage.mjs', 'network.mjs', 'borrow.mjs', 'wasm-policy.mjs', 'package.mjs', 'surface.mjs', 'capture.mjs', 'sensors.mjs', 'sockets.mjs', 'microphone-worklet.mjs', 'audio-worklet.mjs', 'capabilities.json']:
         shutil.copy2(ROOT / 'simulator/browser' / filename, out / filename)
     version = json.loads((ROOT / 'simulator/browser/capabilities.json').read_text())['version']
     manifest = {'version': version, 'apps': []}
