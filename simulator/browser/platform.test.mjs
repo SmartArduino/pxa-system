@@ -255,3 +255,20 @@ test('unsigned microphone and sensor scopes cannot acquire authority or start na
     assert.equal(messages.some(m=>m.type==='sensors-request'||m.type==='microphone-request'),false);
   }finally{await rt.stop();}
 });
+
+test('real Net Core opens a signed web HTTP exchange via the authenticated relay',async()=>{
+  const requests=[];const server=http.createServer(async(req,res)=>{
+    const chunks=[];for await(const c of req)chunks.push(c);requests.push(JSON.parse(Buffer.concat(chunks)));
+    assert.equal(req.headers['x-csrf-token'],'test-core-relay');
+    res.writeHead(200,{'x-pxa-status':'200','x-pxa-headers':Buffer.from(JSON.stringify([['content-type','application/json']])).toString('base64')});res.end('{"code":200,"result":[{"name":"real-http-contract"}]}');
+  });
+  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));let rt;
+  try{
+    const p=await platform({networkOrigins:['web'],networkProxy:{url:`http://127.0.0.1:${server.address().port}/relay`,csrf:'test-core-relay'}});rt=p.rt;
+    const permission=p.permission('net.client','web');
+    const h=p.call(9,3,Buffer.concat([tlv(1,Buffer.from('http://music.163.com/api/personalized/newsong?limit=12')),tlv(2,num(1,2)),tlv(3,num(permission,8)),tlv(4,num(64*1024*1024,8)),tlv(8,num(5000)),tlv(14,num(8192)),tlv(15,num(0,8)),tlv(16,num(4096))])).readBigUInt64LE(4);
+    const chunks=[];const deadline=Date.now()+5000;
+    while(Date.now()<deadline){const r=p.io(h,1,Buffer.alloc(1024));if(r.result===-7){await new Promise(r=>setTimeout(r,1));continue;}assert.ok(r.result>=0,`body read ${r.result}`);if(!r.result)break;chunks.push(r.data.subarray(0,r.result));}
+    assert.equal(JSON.parse(Buffer.concat(chunks)).code,200);assert.equal(requests.length,1);assert.equal(requests[0].url,'http://music.163.com/api/personalized/newsong?limit=12');
+  }finally{await rt?.stop();await new Promise(resolve=>server.close(resolve));}
+});

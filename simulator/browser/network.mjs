@@ -37,7 +37,7 @@ export function installBrowserNetwork(host, origins=[],proxy=null) {
     },options.timeout);
     (async()=>{
       const url=new URL(options.url);
-      if(!(host.browserNetworkOrigins.includes(url.origin)||(host.browserNetworkOrigins.includes('web')&&url.protocol==='https:'))||url.username||url.password)throw new Error('Origin denied');
+      if(!(host.browserNetworkOrigins.includes(url.origin)||(host.browserNetworkOrigins.includes('web')&&(url.protocol==='https:'||(proxy&&url.protocol==='http:'))))||url.username||url.password)throw new Error('Origin denied');
       let body=options.body?.length?options.body:undefined;
       if(options.upload){
         body=new ReadableStream({async pull(controller){

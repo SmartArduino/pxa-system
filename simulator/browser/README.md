@@ -95,7 +95,9 @@ required. Runtime downloads are lazy, after the user starts a demo.
   explicit microphone click; unsupported browsers return UNSUPPORTED.
 - Network declarations come from the verified package. Standalone demos use
   Fetch/CORS with omitted cookies. The store offers an authenticated same-origin
-  HTTP relay and an outbound TCP/TLS WebSocket relay. Both validate authority,
+  HTTP/HTTPS relay and an outbound TCP/TLS WebSocket relay. A signed `web`
+  scope includes public HTTP URLs through that relay; direct browser requests
+  remain subject to HTTPS and CORS. Both relays validate authority,
   reject private/multicast/mixed DNS results, pin the resolved public address and
   verify TLS hostnames. Only public ports 80/443 are exposed; no LAN, raw UDP or
   arbitrary-port access. Store cookies/CSRF are never sent upstream. Ring buffers,
