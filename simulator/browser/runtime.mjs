@@ -19,7 +19,7 @@ export function memoryRange(memory, pointer, size) {
   return new Uint8Array(memory.buffer, pointer, size);
 }
 
-export async function createRuntime(host, binary, {width=320, height=240, log=()=>{}, notify=()=>{}, locale='en-US',appId='local',networkOrigins=[],networkProxy=null,permissions=[],audioAvailable=false,sensorMask=0,mainLoop=false,assets=[]}={}) {
+export async function createRuntime(host, binary, {width=320, height=240, log=()=>{}, notify=()=>{}, locale='en-US',appId='local',networkOrigins=[],permissions=[],audioAvailable=false,sensorMask=0,mainLoop=false,assets=[]}={}) {
   const check = (value, operation) => { if (value < 0) throw new Error(`${operation}: ${value}`); return value; };
   host.browserNotify=notify;
   host.browserMusicAvailable=!!audioAvailable;
@@ -28,10 +28,10 @@ export async function createRuntime(host, binary, {width=320, height=240, log=()
     throw new Error('此游戏需要支持 JSPI 的浏览器，请使用新版 Chrome、Edge 或 Firefox');
   host.browserMainLoop=mainLoop;
   host.browserAssets=new Map(assets.map(asset=>[asset.path,asset.binary instanceof Uint8Array?asset.binary:new Uint8Array(asset.binary)]));
-  const network=installBrowserNetwork(host,networkOrigins,networkProxy);
+  const network=installBrowserNetwork(host,networkOrigins);
   installBrowserFonts(host);
   const sensors=installBrowserSensors(host,notify,permissions,sensorMask);
-  const sockets=installBrowserSockets(host,networkProxy,permissions);
+  const sockets=installBrowserSockets(host,permissions);
   const capture=await installBrowserCapture(host,notify);
   host.browserCaptureUnavailableReason=!host.browserCaptureAvailable?
     '此浏览器不支持 Opus 语音编码，请升级 Chrome/Edge，或在小智设置中输入文字聊天。':

@@ -166,30 +166,13 @@ test('Verified asset views retain offsets and share the downloaded buffer throug
   }finally{await rt.stop();}
 });
 
-test('Socket relay preserves C ring backpressure and grants only declared outbound authority',async t=>{
-  const sockets=[];
-  class Socket{
-    constructor(url){this.url=String(url);this.readyState=0;this.sent=[];sockets.push(this);}
-    send(data){this.sent.push(data);}
-    close(){this.readyState=3;}
-  }
-  t.mock.property(globalThis,'WebSocket',Socket);
-  const {host,rt,call,io,permission}=await platform({permissions:[{name:'net.socket',scope:'outbound'}],networkProxy:{url:'https://store.test/fetch',socketUrl:'https://store.test/socket',csrf:'csrf-test'}});
+test('direct browser mode reports raw sockets unsupported and ignores legacy tunnel config',async t=>{
+  t.mock.property(globalThis,'WebSocket',class{constructor(){assert.fail('No server socket tunnel may open');}});
+  const {rt,call,permission}=await platform({permissions:[{name:'net.socket',scope:'outbound'}],networkProxy:{url:'https://store.test/fetch',socketUrl:'https://store.test/socket',csrf:'legacy'}});
   try{
     const auth=permission('net.socket','outbound');
-    const handle=call(9,5,Buffer.concat([tlv(1,Buffer.from('tls://example.com:443')),tlv(3,num(auth,8)),tlv(8,num(5000)),tlv(14,num(512))])).readBigUInt64LE(4);
-    const socket=sockets[0];assert.equal(socket.url,'wss://store.test/socket');
-    socket.readyState=1;socket.onopen();assert.deepEqual(JSON.parse(socket.sent[0]),{csrf:'csrf-test',endpoint:'tls://example.com:443'});
-    socket.onmessage({data:JSON.stringify({type:'connected'})});
-    socket.onmessage({data:new Uint8Array(1024).fill(19).buffer});
-    assert.equal(socket.sent.filter(m=>m==='ack').length,0,'no receiver credit while the PXA ring is full');
-    let read=0;
-    while(read<1024){const r=io(handle,1,Buffer.alloc(128));assert.equal(r.result,128);assert.ok(r.data.every(v=>v===19));read+=r.result;}
-    assert.equal(socket.sent.filter(m=>m==='ack').length,1);
-    assert.equal(io(handle,2,Buffer.from([1,2,3])).result,3);
-    assert.deepEqual([...socket.sent.find(x=>x instanceof Uint8Array)],[1,2,3]);
-    socket.onmessage({data:JSON.stringify({type:'sent'})});
-    socket.onclose({code:1000});assert.equal(io(handle,1,Buffer.alloc(16)).result,0);
+    const result=call(9,5,Buffer.concat([tlv(1,Buffer.from('tls://example.com:443')),tlv(3,num(auth,8)),tlv(8,num(5000)),tlv(14,num(512))]),true,false);
+    assert.equal(result.readInt32LE(),-3,'operation support differs from signed permission');
   }finally{await rt.stop();}
 });
 
@@ -254,4 +237,18 @@ test('unsigned microphone and sensor scopes cannot acquire authority or start na
     assert.equal(call(8,1,Buffer.alloc(0)).length,4,'no unsigned native inventory');
     assert.equal(messages.some(m=>m.type==='sensors-request'||m.type==='microphone-request'),false);
   }finally{await rt.stop();}
+});
+
+test('web authority fetches directly and never contacts a legacy proxy URL',async()=>{
+  const paths=[];const server=http.createServer((req,res)=>{paths.push(req.url);res.end('native-direct');});
+  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));let rt;
+  try{
+    const origin=`http://127.0.0.1:${server.address().port}`;
+    const p=await platform({networkOrigins:['web'],networkProxy:{url:origin+'/must-not-forward',csrf:'legacy'}});rt=p.rt;
+    const permission=p.permission('net.client','web');
+    const h=p.call(9,3,Buffer.concat([tlv(1,Buffer.from(origin+'/native')),tlv(2,num(1,2)),tlv(3,num(permission,8)),tlv(4,num(1024,8)),tlv(8,num(5000)),tlv(14,num(512)),tlv(15,num(0,8)),tlv(16,num(1024))])).readBigUInt64LE(4);
+    const chunks=[];const deadline=Date.now()+5000;
+    while(Date.now()<deadline){const r=p.io(h,1,Buffer.alloc(1024));if(r.result===-7){await new Promise(r=>setTimeout(r,1));continue;}assert.ok(r.result>=0);if(!r.result)break;chunks.push(r.data.subarray(0,r.result));}
+    assert.equal(Buffer.concat(chunks).toString(),'native-direct');assert.deepEqual(paths,['/native']);
+  }finally{await rt?.stop();await new Promise(resolve=>server.close(resolve));}
 });

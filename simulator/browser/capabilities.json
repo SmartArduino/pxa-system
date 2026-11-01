@@ -1,5 +1,5 @@
 {
-  "version": "0.7.2",
+  "version": "0.7.3",
   "target": "browser",
   "engine": "webassembly",
   "core": "pxa.core.v2",
@@ -55,14 +55,15 @@
       "capture": "native microphone with explicit consent; raw Opus via WebCodecs"
     },
     "net": {
-      "backend": "Fetch + authenticated public HTTP/TLS relay",
+      "backend": "Native browser Fetch (CORS); no server relay",
       "credentials": "omit",
       "redirects": "error",
-      "permission": "signed exact origin or web; outbound sockets on public ports 80/443",
+      "permission": "signed HTTP/HTTPS origins or web; browser security policies apply",
       "httpOpenRequires": "streaming request support only for streaming uploads",
       "maxBufferBytes": 65536,
       "connectivity": "browser link state",
-      "sockets": "bounded authenticated relay"
+      "sockets": "unsupported: browser has no raw TCP/TLS socket API",
+      "httpUpgrade": "HTTPS on secure pages when signed scope permits"
     },
     "surface": {
       "formats": [
@@ -246,7 +247,6 @@
       "audio.playback",
       "audio.capture",
       "net.client",
-      "net.socket",
       "sensor.read"
     ],
     "primaryUiEntry": true

@@ -37,7 +37,7 @@ onmessage=async({data})=>{
       if(!Number.isInteger(width)||!Number.isInteger(height)||width<64||height<64||width>1024||height>1024)throw new Error('Invalid display size');
       if(data.canvas){context=data.canvas.getContext('2d',{alpha:false});if(!context)throw new Error('Canvas initialization failed');image=new ImageData(width,height);}
       const host=await createHost({print:()=>{},printErr:()=>{}});
-      runtime=await createRuntime(host,data.binary,{width,height,locale:data.locale,appId:data.appId,networkOrigins:data.networkOrigins,networkProxy:data.networkProxy,permissions:data.permissions,audioAvailable:!!data.audioPort,sensorMask:data.sensorMask,mainLoop:data.mainLoop,assets:data.assets,
+      runtime=await createRuntime(host,data.binary,{width,height,locale:data.locale,appId:data.appId,networkOrigins:data.networkOrigins,permissions:data.permissions,audioAvailable:!!data.audioPort,sensorMask:data.sensorMask,mainLoop:data.mainLoop,assets:data.assets,
         notify:message=>postMessage(message),log:message=>postMessage({type:'log',message})});
       if(data.audioPort){
         audioPort=data.audioPort;

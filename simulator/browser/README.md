@@ -93,14 +93,19 @@ required. Runtime downloads are lazy, after the user starts a demo.
   browser media decoding and the same AudioContext, with PXA playback events.
   Optional mono 16 kHz raw Opus capture uses AudioWorklet and WebCodecs after an
   explicit microphone click; unsupported browsers return UNSUPPORTED.
-- Network declarations come from the verified package. Standalone demos use
-  Fetch/CORS with omitted cookies. The store offers an authenticated same-origin
-  HTTP relay and an outbound TCP/TLS WebSocket relay. Both validate authority,
-  reject private/multicast/mixed DNS results, pin the resolved public address and
-  verify TLS hostnames. Only public ports 80/443 are exposed; no LAN, raw UDP or
-  arbitrary-port access. Store cookies/CSRF are never sent upstream. Ring buffers,
-  quotas, timeouts and receiver credit bound each connection; streaming uploads
-  are capped at 2 MiB. Browser link-state queries do not probe a remote server.
+- Network declarations come from the verified package. All HTTP requests and
+  media downloads use native browser Fetch with omitted cookies. There is no
+  store server relay or fallback. Target servers must allow browser CORS;
+  HTTPS pages also enforce mixed-content restrictions. Public HTTP URLs upgrade
+  to HTTPS when a signed `web` or matching HTTPS origin authority permits it;
+  concrete HTTP-only declarations do not acquire a new authority. Restricted
+  browser request headers are omitted. `web` permits browser-managed redirects;
+  concrete-origin requests reject redirects. Streaming uploads depend on browser
+  support. Native link-state queries do not test upstream reachability. Raw
+  TCP/TLS sockets are UNSUPPORTED because browsers expose no such native API;
+  applications needing them must adapt to browser-native protocols. Native
+  WebSocket is not exposed through the raw TCP/TLS ABI. Bounds and ring-buffer
+  backpressure remain enforced in the Host.
 - Retained transparent UI planes compose above Surface/GameRender and base UI.
   The shared adapter retains glyphs/images; the Host blends RGB565+A8 into the
   fresh FULL-mode frame, without another framebuffer or per-frame glyph work.
