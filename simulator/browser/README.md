@@ -209,14 +209,16 @@ without copying the entire bundle for each file. Deduplicate transferable buffer
 before sending them to the Worker. Guest package files remain read-only; imported
 media and saved data retain their separate persistence lifecycle.
 
-## Browser Host 0.7.6 absolute heading
+## Browser Host absolute heading
 
 Apps may optionally declare `sensor.read` / `orientation.heading` and consume
 a single micro-degree value (unit 8) when raw Magnetometer is unavailable.
 The page uses absolute DeviceOrientation events or AbsoluteOrientationSensor,
 with the same three sensor Permissions-Policy grants. DeviceOrientation
 permission, when needed, joins the existing user gesture with `absolute=true`.
-Relative events are rejected. The physical top edge is projected onto the
-earth East/North plane; near-vertical or stale samples are discarded. Screen
+Relative events are rejected. From Host 0.7.7, the forward reference transitions from the top edge when
+flat to the back of the display when upright, using the smooth 45°–70°
+blend documented in Sensor. Its horizontal projection remains usable at 90°;
+undefined, invalid or stale samples are discarded. Screen
 rotation does not change this reference. This does not synthesize magnetic
 field strength, provide a second magnetometer, or require experimental flags.

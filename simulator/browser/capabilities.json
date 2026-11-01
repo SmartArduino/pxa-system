@@ -1,5 +1,5 @@
 {
-  "version": "0.7.6",
+  "version": "0.7.7",
   "target": "browser",
   "engine": "webassembly",
   "core": "pxa.core.v2",
@@ -137,7 +137,7 @@
         "dimensions": 1,
         "minimumPeriodMs": 50,
         "source": "absolute DeviceOrientation or AbsoluteOrientationSensor",
-        "reference": "magnetic north; physical device top edge",
+        "reference": "magnetic north; top edge when flat, back of display upright; smooth 45–70 degree transition",
         "relativeOrientation": false
       }
     }

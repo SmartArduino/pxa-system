@@ -48,11 +48,17 @@ A battery temperature channel uses the existing `milli-celsius` (1).
 ## Absolute heading
 
 `orientation.heading` is a one-dimensional, clockwise magnetic-north bearing
-of the physical device top edge projected onto the horizontal plane. Unit
+of the device forward reference projected onto the horizontal plane. The
+reference is the physical top edge when flat, easing toward the back of the
+display as its top edge rises. Browser Host 0.7.7 and Compass 1.0.2 use
+`w = smoothstep(sin(45°), sin(70°), abs(top · up))` and project
+`(1-w) * top - w * screen_normal`. Upright, the display faces the user and
+the back points forward. This avoids the top-edge singularity at 90°. Unit
 `micro-degrees` (8) represents degrees times 1,000,000 in [0, 360,000,000).
 The Host must use an absolute north-referenced source; relative yaw is not a
-compass. No sample is emitted when the top edge is too nearly vertical to
-define a reliable projection. This optional semantic has its own exact
+compass. No sample is emitted when the blended reference has horizontal magnitude
+below 0.26. Inverted transition poses can be ambiguous; missing/stale
+absolute data must never be replaced by relative yaw. This optional semantic has its own exact
 `sensor.read` scope and does not expose a magnetic vector or field strength.
 Apps discover it independently; it requires no wire or Core version change.
 
