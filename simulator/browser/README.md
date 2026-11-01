@@ -101,6 +101,10 @@ required. Runtime downloads are lazy, after the user starts a demo.
   arbitrary-port access. Store cookies/CSRF are never sent upstream. Ring buffers,
   quotas, timeouts and receiver credit bound each connection; streaming uploads
   are capped at 2 MiB. Browser link-state queries do not probe a remote server.
+- Retained transparent UI planes compose above Surface/GameRender and base UI.
+  The shared adapter retains glyphs/images; the Host blends RGB565+A8 into the
+  fresh FULL-mode frame, without another framebuffer or per-frame glyph work.
+  Overlay-only changes and clearing invalidate the base to prevent ghost text.
 - Surface supports copied RGB565 and premultiplied ARGB8888 buffers with LVGL
   composition. GameRender reuses the portable rasterizer, uploads, bindings and
   compute kernels. Mapped Surface registers a pinned Host shadow and copies only

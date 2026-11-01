@@ -12,9 +12,9 @@ assert.ok(bundle);
 const {default:createHost}=await import(pathToFileURL(`${bundle}/pxa-browser.mjs`));
 const num=(value,size=4)=>{const b=Buffer.alloc(size);if(size===8)b.writeBigUInt64LE(BigInt(value));else b.writeUIntLE(value,0,size);return b;};
 const tlv=(tag,value)=>Buffer.concat([num(tag,2),num(value.length,2),value]);
-async function platform(options={}){
-  const host=await createHost(),rt=await createRuntime(host,await fs.readFile(`${bundle}/counter.wasm`),options);
-  const scratch=host._malloc(65536);let token=100n;
+async function platform(options={},fixture='counter'){
+  const host=await createHost(),rt=await createRuntime(host,await fs.readFile(`${bundle}/${fixture}.wasm`),options);
+  const scratch=host._malloc(1024*1024);let token=100n;
   const active=fn=>{assert.equal(host._browser_begin(1),0);try{return fn();}finally{assert.equal(host._browser_finish(1,0),0);}};
   const call=(service,opcode,payload,request=true)=>{
     host.HEAPU8.set(payload,scratch);
@@ -191,4 +191,29 @@ test('Socket relay preserves C ring backpressure and grants only declared outbou
     socket.onmessage({data:JSON.stringify({type:'sent'})});
     socket.onclose({code:1000});assert.equal(io(handle,1,Buffer.alloc(16)).result,0);
   }finally{await rt.stop();}
+});
+
+test('Alpha Canvas stays above Surface; clearing and overlay-only updates do not leave ghosts',async()=>{
+  const {host,rt,call,io}=await platform({},'alpha-overlay-test');
+  const handle=call(16,1,Buffer.from([64,1,240,0,1,0,2,0])).readBigUInt64LE(4);
+  const layer=Buffer.alloc(24);layer.writeBigUInt64LE(handle);layer.writeUInt16LE(320,16);layer.writeUInt16LE(240,18);layer.writeInt16LE(2,20);layer[22]=1;call(16,2,layer);
+  let frame=0,time=performance.now();
+  const render=()=>{host._browser_tick(time+=40);host._browser_render();return rt.pixels();};
+  const present=color=>{
+    const pixels=Buffer.alloc(320*240*2);for(let i=0;i<pixels.length;i+=2)pixels.writeUInt16LE(color,i);
+    assert.equal(io(handle,2,pixels).result,pixels.length);
+    const queue=Buffer.alloc(20);queue.writeBigUInt64LE(handle);queue.writeBigUInt64LE(BigInt(++frame),8);call(16,3,queue,false);return render();
+  };
+  const at=(x,y)=>[...rt.pixels().slice((y*320+x)*4,(y*320+x)*4+3)];
+  present(0x001f);
+  assert.deepEqual(at(15,15),[0,0,255],'opaque foreground over a positive-z Surface');
+  const blended=at(45,15);assert.ok(blended[0]>=120&&blended[0]<=130&&blended[1]>=125&&blended[1]<=135&&blended[2]===0,JSON.stringify(blended));
+  assert.deepEqual(at(70,15),[255,0,0],'zero alpha preserves the frame');
+  assert.deepEqual(at(0,45),[255,255,255]);assert.deepEqual(at(319,45),[255,255,255]);
+  const saved=Buffer.from(rt.pixels());for(let i=0;i<10;i++)render();assert.deepEqual(Buffer.from(rt.pixels()),saved,'idle rendering never reblends retained pixels');
+  present(0xf800);assert.deepEqual(at(70,15),[0,0,255]);assert.deepEqual(at(15,15),[0,0,255]);
+  rt.controller(32);rt.controller(0);render();assert.deepEqual(at(45,15),[0,0,255],'clearing only the overlay repaints its former bounds');
+  rt.controller(16);rt.controller(0);render();assert.ok(at(45,15)[1]>120,'overlay-only updates appear without a Surface submission');
+  present(0x001f);assert.deepEqual(at(45,15),blended,'later frames blend once against their new base');
+  await rt.stop();
 });

@@ -134,7 +134,9 @@ static pxa_status_t query(void *c,uint64_t id,pxa_surface_state_t *out){
     /* Two physical buffers. A pending front buffer does not occupy the writable back. */
     out->free_buffers=1;
     if(l->registered){out->free_buffers=0;for(unsigned i=0;i<l->buffer_count;i++)out->free_buffers+=!l->owned[i];}
-    out->flags=PXA_SURFACE_STATE_FLAG_SUPPORTS_ALPHA_COMPOSITING|PXA_SURFACE_STATE_FLAG_SUPPORTS_GUEST_MAPPED;return PXA_STATUS_OK;
+    out->flags=PXA_SURFACE_STATE_FLAG_SUPPORTS_ALPHA_COMPOSITING|PXA_SURFACE_STATE_FLAG_SUPPORTS_GUEST_MAPPED;
+    if(browser_ui_overlay_active())out->flags|=PXA_SURFACE_STATE_FLAG_UI_ALPHA_PLANE_ACTIVE;
+    return PXA_STATUS_OK;
 }
 static pxa_status_t register_buffers(void *c,uint64_t id,uint8_t *data,size_t bytes){
     (void)c;layer_t *l=find(id);if(!l)return PXA_STATUS_NOT_FOUND;

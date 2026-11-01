@@ -1,5 +1,5 @@
 {
-  "version": "0.7.0",
+  "version": "0.7.1",
   "target": "browser",
   "engine": "webassembly",
   "core": "pxa.core.v2",
@@ -14,7 +14,8 @@
         "maxBytes": 1048576,
         "maxDimension": 1024,
         "assetHandles": true
-      }
+      },
+      "alphaOverlay": true
     },
     "window": {
       "back": true,

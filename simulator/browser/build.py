@@ -35,6 +35,7 @@ def main():
     for name, source in [('paddle', ROOT / 'simulator/browser/demo'),
                          ('notes', ROOT / 'simulator/browser/services-demo'),
                          ('mainloop-test', ROOT / 'simulator/browser/main-loop-test'),
+                         ('alpha-overlay-test', ROOT / 'simulator/browser/alpha-overlay-test'),
                          ('counter', ROOT / 'ai/templates/c-app'),
                          ('cpp', ROOT / 'sdk/templates/hello')]:
         target = build / name

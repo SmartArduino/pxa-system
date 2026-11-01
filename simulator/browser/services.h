@@ -32,5 +32,6 @@ void browser_net_tick(void);
 pxa_status_t browser_graphics_init(pxa_runtime_t *,uint16_t,uint16_t);
 void browser_graphics_presented(void);
 void browser_graphics_order(void);
+int browser_ui_overlay_active(void);
 void browser_graphics_poll(void);
 #endif

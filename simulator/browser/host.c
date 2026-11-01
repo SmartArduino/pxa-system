@@ -128,8 +128,40 @@ static uint64_t now_us(void *c) { (void)c; return current_us; }
 static pxa_status_t execute(pxa_lvgl_ui_execute_callback_fn fn, void *data, void *c) {
     (void)c; fn(data); return PXA_STATUS_OK;
 }
+/* The LVGL adapter deliberately hides ALPHA_OVERLAY nodes from its base
+ * scene and retains them as RGB565+A8. Compose that plane after FULL-mode
+ * rendering, exactly once over freshly drawn pixels. No second framebuffer,
+ * glyph rasterization or Guest-memory copy is needed here. */
+int browser_ui_overlay_active(void) {
+    pxa_lvgl_ui_alpha_plane_t plane;
+    return pxa_lvgl_ui_alpha_plane(adapter,&plane);
+}
+static void composite_overlay(void) {
+    pxa_lvgl_ui_alpha_plane_t plane;
+    if (!pxa_lvgl_ui_alpha_plane(adapter, &plane)) return;
+    int32_t x1=plane.x<0?0:plane.x, y1=plane.y<0?0:plane.y;
+    const int64_t right=(int64_t)plane.x+plane.width,bottom=(int64_t)plane.y+plane.height;
+    int32_t x2=right<width?(int32_t)right:(int32_t)width;
+    int32_t y2=bottom<height?(int32_t)bottom:(int32_t)height;
+    if (x1>=x2 || y1>=y2) return;
+    for (int32_t y=y1;y<y2;y++) {
+        const uint16_t *colors=(const uint16_t *)((const uint8_t *)plane.pixels+
+            (size_t)(y-plane.y)*plane.pixel_stride_bytes)+(x1-plane.x);
+        const uint8_t *alpha=plane.alpha+(size_t)(y-plane.y)*plane.alpha_stride_bytes+(x1-plane.x);
+        uint8_t *out=frame+((size_t)y*width+x1)*4;
+        for (int32_t x=x1;x<x2;x++,colors++,alpha++,out+=4) {
+            if (!*alpha) continue;
+            const uint8_t bgra[3]={(*colors&31)*255/31,((*colors>>5)&63)*255/63,(*colors>>11)*255/31};
+            if (*alpha==255) {memcpy(out,bgra,3);continue;}
+            for (unsigned channel=0;channel<3;channel++)
+                out[channel]=(bgra[channel]*(*alpha)+out[channel]*(255-*alpha)+127)/255;
+        }
+    }
+}
 static void flush(lv_display_t *d, const lv_area_t *area, uint8_t *pixels) {
-    (void)area; (void)pixels; ++revision; browser_graphics_presented();lv_display_flush_ready(d);
+    (void)area; (void)pixels;
+    composite_overlay();
+    ++revision; browser_graphics_presented();lv_display_flush_ready(d);
 }
 static void read_pointer(lv_indev_t *i, lv_indev_data_t *data) {
     (void)i; data->point.x = pointer_x; data->point.y = pointer_y;
@@ -322,7 +354,19 @@ EMSCRIPTEN_KEEPALIVE void browser_tick(double milliseconds) {
             (pxa_bytes_t){bytes, 8}, 0, UINT64_C(0x000400008001));
     }
 }
-EMSCRIPTEN_KEEPALIVE uint32_t browser_render(void) { browser_graphics_order();lv_timer_handler();return revision; }
+EMSCRIPTEN_KEEPALIVE uint32_t browser_render(void) {
+    static uint64_t overlay_revision;
+    static int overlay_visible;
+    pxa_lvgl_ui_alpha_plane_t plane;
+    const int visible=pxa_lvgl_ui_alpha_plane(adapter,&plane);
+    if (visible!=overlay_visible || (visible && plane.revision!=overlay_revision)) {
+        overlay_visible=visible;overlay_revision=visible?plane.revision:0;
+        /* Overlay-only changes and clearing the final glyph must repaint the
+         * base too, otherwise blending accumulates or leaves old text behind. */
+        lv_obj_invalidate(lv_screen_active());
+    }
+    browser_graphics_order();lv_timer_handler();return revision;
+}
 EMSCRIPTEN_KEEPALIVE uint8_t *browser_pixels(void) { return frame; }
 EMSCRIPTEN_KEEPALIVE void browser_pointer(int x, int y, int down) {
     pointer_x = x < 0 ? 0 : x >= (int)width ? (int)width - 1 : x;
