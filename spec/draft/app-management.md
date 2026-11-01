@@ -5,9 +5,12 @@ The Host keeps independent ownership domains for product-owned built-in
 sources, user staging inboxes, verified executable slots, enable policy and
 identity-scoped private data.
 
-An App is launchable only when a verified `current` slot exists and its full
-publisher/App identity is enabled. Catalog listing and activation both recheck
-this rule.
+An App is launchable only when an installation verified at commit time exists
+and its full publisher/App identity is enabled. Catalog listing and activation
+both check this policy. Normal activation parses committed metadata without
+rechecking package signatures, manifest digests or file contents. Installation,
+updates and interrupted transaction recovery retain verification; format,
+identity, permission and volume checks still apply at runtime.
 
 | Operation | Built-in App | User App | Private data |
 | --- | --- | --- | --- |

@@ -1898,6 +1898,12 @@ static pxa_status_t volume_checkpoint(void *context, pxa_transaction_checkpoint_
     return checkpoint == *(pxa_transaction_checkpoint_t *)context
         ? PXA_STATUS_CANCELLED : PXA_STATUS_OK;
 }
+static unsigned activation_verifications;
+static pxa_status_t count_activation_verify(void *context,pxa_bytes_t key,
+    pxa_bytes_t domain,pxa_bytes_t manifest,pxa_bytes_t signature) {
+    ++activation_verifications;
+    return pxa_openssl_p256_verify(context,key,domain,manifest,signature);
+}
 static void test_volume_local_app_store(int authenticated) {
     test_signer_t signer;
     pxa_openssl_publisher_key_t key;
@@ -1927,6 +1933,7 @@ static void test_volume_local_app_store(int authenticated) {
         "artifacts/main.wasm", artifact, sizeof(artifact) - 1);
     config.root = volume; config.volume_id.bytes[0] = 3;
     config.installer.struct_size = sizeof(config.installer);
+    config.installer.verify = count_activation_verify;
     config.installer.trust = (pxa_openssl_trust_t){sizeof(config.installer.trust), &key, 1};
     config.installer.check_space = home_space;
     config.installer.space_context = &space;
@@ -1977,6 +1984,35 @@ static void test_volume_local_app_store(int authenticated) {
     config.adopt_source_directory=0;space.adopted=0;
     CHECK(home.record.generation == 1 && !strcmp(home.home, expected_home));
     CHECK(prepared.calls==1);
+    {
+        /* A normal launch must never authenticate package bytes again. The
+         * explicit recovery path still rejects a missing signature. */
+        char signature[2048],saved_signature[2048],manifest_path[2048];
+        snprintf(signature,sizeof(signature),"%s/package/signature.pxs",expected_home);
+        snprintf(saved_signature,sizeof(saved_signature),"%s/signature.kept",expected_home);
+        snprintf(manifest_path,sizeof(manifest_path),"%s/package/manifest.pxm",expected_home);
+        size_t version_offset=(size_t)(manifest->version.data-manifest->encoded.data)+4;
+        size_t manifest_bytes=manifest->encoded.size;
+        uint8_t *original=malloc(manifest_bytes);CHECK(original);
+        memcpy(original,manifest->encoded.data,manifest_bytes);
+        CHECK(original[version_offset]=='0');
+        encoded[version_offset]='1';write_file(manifest_path,encoded,manifest_bytes);
+        CHECK(rename(signature,saved_signature)==0);
+        activation_verifications=0;
+        for(unsigned launch=0;launch<5;++launch) {
+            check_status("launch loads committed metadata without rechecking signatures or hashes",
+                pxa_posix_app_store_load(&config,"lucinhu/com.example.volume",&result,&reopened),PXA_STATUS_OK);
+            CHECK(manifest->version.size==5 && !memcmp(manifest->version.data,"1.0.1",5));
+            CHECK(activation_verifications==0 && prepared.calls==1);
+        }
+        check_status("explicit recovery still requires the signature",
+            pxa_posix_app_store_recover(&config,"lucinhu/com.example.volume",&result,&reopened),PXA_STATUS_DENIED);
+        write_file(manifest_path,original,manifest_bytes);free(original);
+        CHECK(rename(saved_signature,signature)==0);
+        check_status("restored generation recovers with signature verification",
+            pxa_posix_app_store_recover(&config,"lucinhu/com.example.volume",&result,&reopened),PXA_STATUS_OK);
+        CHECK(activation_verifications>0);
+    }
     CHECK(pxa_posix_app_home_path(&home,PXA_POSIX_APP_HOME_PRIVATE,private_root,sizeof(private_root))==PXA_STATUS_OK);
     CHECK(mkdir(private_root, 0700) == 0);
     snprintf(private_file, sizeof(private_file), "%s/save.bin", private_root);
@@ -1992,6 +2028,9 @@ static void test_volume_local_app_store(int authenticated) {
         CHECK(count==0);
         check_status("missing device key cannot activate a local record",pxa_posix_app_store_recover(&config,
             "lucinhu/com.example.volume",&result,&reopened),PXA_STATUS_UNAVAILABLE);
+        check_status("ordinary load still requires device record authentication",pxa_posix_app_store_load(&config,
+            "lucinhu/com.example.volume",&result,&reopened),PXA_STATUS_UNAVAILABLE);
+        CHECK(!manifest && !reopened.record.generation);
         record_key.available=1;
         char foreign_parent[1024],foreign_home[1024];
         snprintf(foreign_parent,sizeof(foreign_parent),"%s/apps/foreign",volume);
@@ -2070,6 +2109,10 @@ static void test_volume_local_app_store(int authenticated) {
     check_status("reset after previous code moved", pxa_posix_app_store_install(&config,
         "lucinhu/com.example.volume", package, 2, &home.record, &result, &reopened), PXA_STATUS_CANCELLED);
     config.installer.faults = NULL;
+    activation_verifications=0;
+    check_status("normal load refuses an interrupted transaction",pxa_posix_app_store_load(&config,
+        "lucinhu/com.example.volume",&result,&reopened),PXA_STATUS_BUSY);
+    CHECK(!manifest && !reopened.record.generation && !activation_verifications);
     check_status("cold rollback after interrupted handoff", pxa_posix_app_store_recover(&config,
         "lucinhu/com.example.volume", &result, &reopened), PXA_STATUS_OK);
     CHECK(reopened.record.generation == 2 && !memcmp(manifest->version.data, "2.0.0", 5));
@@ -2079,6 +2122,11 @@ static void test_volume_local_app_store(int authenticated) {
     char pending[1024]; snprintf(pending, sizeof(pending), "%s/install.pending.pxi", home.home);
     FILE *partial = fopen(pending, "wb"); CHECK(partial);
     CHECK(fwrite("PXI", 1, 3, partial) == 3); fclose(partial);
+    activation_verifications=0;
+    check_status("normal load refuses a torn handoff without repair",pxa_posix_app_store_load(&config,
+        "lucinhu/com.example.volume",&result,&reopened),PXA_STATUS_DENIED);
+    CHECK(!manifest && !reopened.record.generation && !activation_verifications);
+    CHECK(read_test_file(pending,saved,sizeof(saved))==3 && !memcmp(saved,"PXI",3));
     check_status("torn pending write keeps committed code", pxa_posix_app_store_recover(&config,
         "lucinhu/com.example.volume", &result, &reopened), PXA_STATUS_OK);
     CHECK(reopened.record.generation == 2);

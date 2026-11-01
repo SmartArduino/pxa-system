@@ -4159,9 +4159,9 @@ pxa_status_t pxa_posix_installer_load_current(
         uint8_t key_id[PXA_PACKAGE_DIGEST_BYTES];
         char app_id[PXA_POSIX_INSTALLER_MAX_APP_ID + 1];
         size_t app_id_size = 0;
-        /* Installation and pending-slot recovery authenticate payloads.
-         * Ordinary activation authenticates only the signed manifest and
-         * identity; it does not rescan already committed files. */
+        /* This verified load is used by recovery. Normal committed App
+         * activation uses app_store_load/load_directory instead. Installation
+         * and pending-slot recovery also authenticate payloads. */
         status = verify_opened_directory(installer, root_fd, 0, key_id,
             app_id, &app_id_size);
         if (status != PXA_STATUS_OK || app_id_size != ctx.app_id_size ||

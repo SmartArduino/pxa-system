@@ -242,20 +242,25 @@ static pxa_status_t manifest_digest(pxa_posix_installer_result_t *result, uint8_
     return pxa_openssl_sha256(result->encoded, (size_t)size, digest);
 }
 
-static pxa_status_t matches_manifest(const pxa_install_record_t *record,
+static pxa_status_t matches_manifest_identity(const pxa_install_record_t *record,
     pxa_posix_installer_result_t *result) {
-    uint8_t digest[32];
     pxa_package_publisher_lineage_t lineage;
     const pxa_package_manifest_t *manifest = *result->manifest;
-    pxa_status_t status = manifest_digest(result, digest);
+    pxa_status_t status = pxa_package_publisher_lineage_parse(manifest, &lineage);
     if (status != PXA_STATUS_OK) return status;
-    status = pxa_package_publisher_lineage_parse(manifest, &lineage);
-    if (status != PXA_STATUS_OK) return status;
-    return !memcmp(record->manifest_sha256, digest, sizeof(digest)) &&
-        !memcmp(record->publisher_root, lineage.root_key_id, 32) &&
+    return !memcmp(record->publisher_root, lineage.root_key_id, 32) &&
         strlen(record->app_id) == manifest->app_id.size &&
         !memcmp(record->app_id, manifest->app_id.data, manifest->app_id.size)
         ? PXA_STATUS_OK : PXA_STATUS_DENIED;
+}
+
+static pxa_status_t matches_manifest(const pxa_install_record_t *record,
+    pxa_posix_installer_result_t *result) {
+    uint8_t digest[32];
+    pxa_status_t status = manifest_digest(result, digest);
+    if (status != PXA_STATUS_OK) return status;
+    if (memcmp(record->manifest_sha256, digest, sizeof(digest))) return PXA_STATUS_DENIED;
+    return matches_manifest_identity(record, result);
 }
 
 static pxa_status_t resources_ready(const pxa_posix_app_store_config_t *config,
@@ -579,6 +584,30 @@ pxa_status_t pxa_posix_app_store_lookup(const pxa_posix_app_store_config_t *conf
     pxa_status_t status=read_maintenance_home(config,locator,UINT64_MAX,output,&auth_storage,&directory);
     if(status==PXA_STATUS_OK)close(directory);
     else memset(output,0,sizeof(*output));
+    return status;
+}
+
+pxa_status_t pxa_posix_app_store_load(const pxa_posix_app_store_config_t *config,
+    const char *locator,pxa_posix_installer_result_t *result,pxa_posix_app_home_t *output) {
+    pxa_posix_installer_t *installer=NULL;
+    void *workspace=NULL;
+    char package[PXA_POSIX_APP_PATH_BYTES];
+    if(!result || result->struct_size<sizeof(*result) || !result->manifest || !output)
+        return PXA_STATUS_INVALID_ARGUMENT;
+    *result->manifest=NULL;
+    /* The committed local record selects the installed generation. Ordinary
+     * activation neither repairs transactions nor authenticates code again.
+     * Pending/invalid records are returned to the Host's recovery path. */
+    pxa_status_t status=pxa_posix_app_store_lookup(config,locator,output);
+    if(status!=PXA_STATUS_OK)return status;
+    if(output->record.flags&PXA_INSTALL_RECORD_ARCHIVED)return PXA_STATUS_OK;
+    status=pxa_posix_app_home_path(output,PXA_POSIX_APP_HOME_PACKAGE,package,sizeof(package));
+    if(status==PXA_STATUS_OK)status=begin_installer(config,output->home,&installer,&workspace);
+    if(status==PXA_STATUS_OK)status=pxa_posix_installer_load_directory(installer,package,result);
+    if(status==PXA_STATUS_OK)status=matches_manifest_identity(&output->record,result);
+    if(status==PXA_STATUS_OK)status=resources_ready(config,&output->record);
+    end_installer(config,installer,workspace);
+    if(status!=PXA_STATUS_OK) {*result->manifest=NULL;memset(output,0,sizeof(*output));}
     return status;
 }
 pxa_status_t pxa_posix_app_store_set_enabled(const pxa_posix_app_store_config_t *config,

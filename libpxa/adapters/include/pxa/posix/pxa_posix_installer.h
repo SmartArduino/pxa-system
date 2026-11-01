@@ -245,7 +245,8 @@ pxa_status_t pxa_posix_installer_verify_step(pxa_posix_verification_t *, size_t 
 void pxa_posix_installer_verify_close(pxa_posix_verification_t *);
 /* Parse an already installed/prepared directory. No signature or file SHA
  * verification. Caller owns its trust decision; raw incoming packages must
- * first use install/verify_source. Used by the simulator's prepared app path. */
+ * first use install/verify_source. Used by committed app_store activation and
+ * the simulator's prepared app path. */
 pxa_status_t pxa_posix_installer_load_directory(pxa_posix_installer_t *,
     const char *directory, pxa_posix_installer_result_t *);
 pxa_status_t pxa_posix_installer_recover(
@@ -258,10 +259,12 @@ pxa_status_t pxa_posix_installer_recover(
 pxa_status_t pxa_posix_installer_recover_pending(pxa_posix_installer_t *);
 pxa_status_t pxa_posix_installer_finish(pxa_posix_installer_t *,
     const pxa_posix_installer_identity_t *, uint8_t rollback);
-/* Read the committed manifest without revalidating installed contents.
+/* Read the committed manifest for recovery without rescanning file contents.
  * APP_HOME still authenticates its signature and expected identity. Later
  * external payload changes are not detected by this operation; callers can
- * explicitly use verify_source for a full inventory and digest check. */
+ * explicitly use verify_source for a full inventory and digest check.
+ * Normal activation uses app_store_load/load_directory without rechecking
+ * package signatures or digests. */
 pxa_status_t pxa_posix_installer_load_current(
     pxa_posix_installer_t *installer,
     const pxa_posix_installer_identity_t *identity,
