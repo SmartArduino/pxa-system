@@ -211,19 +211,21 @@ test('signed microphone permission survives absent encoder, capture open reports
 });
 test('real Sensor Core discovers signed channels, authorizes subscriptions and delivers native values',async()=>{
   const messages=[];
-  const {host,rt,call,permission}=await platform({sensorMask:7,notify:m=>messages.push(m),permissions:[{name:'sensor.read',scope:'motion.acceleration'},{name:'sensor.read',scope:'motion.angular-velocity'},{name:'sensor.read',scope:'magnetic-field.0'}]});
+  const {host,rt,call,permission}=await platform({sensorMask:15,notify:m=>messages.push(m),permissions:[{name:'sensor.read',scope:'motion.acceleration'},{name:'sensor.read',scope:'motion.angular-velocity'},{name:'sensor.read',scope:'magnetic-field.0'},{name:'sensor.read',scope:'orientation.heading'}]});
   try{
     const list=call(8,1,Buffer.alloc(0));assert.ok(list.includes(Buffer.from('motion.acceleration')));assert.ok(list.includes(Buffer.from('motion.angular-velocity')));
-    for(const [id,scope] of [[1,'motion.acceleration'],[2,'motion.angular-velocity'],[3,'magnetic-field.0']]){
+    for(const [id,scope] of [[1,'motion.acceleration'],[2,'motion.angular-velocity'],[3,'magnetic-field.0'],[4,'orientation.heading']]){
       const p=permission('sensor.read',scope);
-      const result=call(8,2,Buffer.concat([tlv(1,num(id,2)),tlv(2,num(id===3?100:20)),tlv(3,num(p,8))]));assert.ok(result.readBigUInt64LE(4));
+      const result=call(8,2,Buffer.concat([tlv(1,num(id,2)),tlv(2,num(id===3?100:id===4?50:20)),tlv(3,num(p,8))]));assert.ok(result.readBigUInt64LE(4));
     }
-    const request=messages.filter(m=>m.type==='sensors-request').at(-1);assert.equal(request.mask,7);
-    rt.sensorSample(request.id,[{id:1,values:[1,-2,9800000]},{id:2,values:[1000000,2000000,-3000000]},{id:3,values:[22500,-1750,42800]}]);
+    const request=messages.filter(m=>m.type==='sensors-request').at(-1);assert.equal(request.mask,15);
+    rt.sensorSample(request.id,[{id:1,values:[1,-2,9800000]},{id:2,values:[1000000,2000000,-3000000]},{id:3,values:[22500,-1750,42800]},{id:4,values:[42000000]}]);
     const scratch=host._malloc(4096);host._browser_tick(performance.now()+30);
     const samples=[];for(let i=0;i<30;i++){const n=host._browser_event(scratch,4096);if(!n)break;const b=Buffer.from(host.HEAPU8.slice(scratch,scratch+n));if(b.readUInt16LE(0)===8&&b.readUInt16LE(2)===0x8001)samples.push(b);}
-    assert.equal(samples.length,3,'Core publishes all three actual sample events');
+    assert.equal(samples.length,4,'Core publishes all four actual sample events');
     assert.ok(list.includes(Buffer.from('magnetic-field.0')));
+    assert.ok(list.includes(Buffer.from('orientation.heading')));
+    assert.ok(samples.some(b=>b.includes(num(42000000))),'scalar heading reaches Core');
     assert.ok(samples.some(b=>b.includes(Buffer.concat([num(22500),num(0xfffff92a),num(42800)]))),'magnetic nT values reach the Core event queue unchanged');
     assert.ok(samples.some(b=>b.includes(Buffer.concat([num(1),num(0xfffffffe),num(9800000)]))));host._free(scratch);
     rt.pause(true);assert.equal(messages.at(-1).type,'sensors-stop');
@@ -231,9 +233,9 @@ test('real Sensor Core discovers signed channels, authorizes subscriptions and d
 });
 
 test('unsigned microphone and sensor scopes cannot acquire authority or start native prompts',async()=>{
-  const messages=[],{rt,call}=await platform({sensorMask:7,notify:m=>messages.push(m)});
+  const messages=[],{rt,call}=await platform({sensorMask:15,notify:m=>messages.push(m)});
   try{
-    for(const [name,scope] of [['audio.capture','microphone'],['sensor.read','motion.acceleration'],['sensor.read','magnetic-field.0'],['sensor.read','magnetic-field.1']]){
+    for(const [name,scope] of [['audio.capture','microphone'],['sensor.read','motion.acceleration'],['sensor.read','magnetic-field.0'],['sensor.read','magnetic-field.1'],['sensor.read','orientation.heading']]){
       const result=call(11,2,Buffer.concat([tlv(1,Buffer.from(name)),tlv(2,Buffer.from(scope))]),true,false);assert.equal(result.readInt32LE(),-4);
     }
     assert.equal(call(8,1,Buffer.alloc(0)).length,4,'no unsigned native inventory');
@@ -255,12 +257,12 @@ test('web authority fetches directly and never contacts a legacy proxy URL',asyn
   }finally{await rt?.stop();await new Promise(resolve=>server.close(resolve));}
 });
 
-test('full network declaration inventory keeps the third sensor and last origin authorized',async()=>{
+test('full network declaration inventory keeps the fourth sensor and last origin authorized',async()=>{
   const origins=Array.from({length:64},(_,i)=>`https://sensor-test-${i}.example.com`);
-  const {rt,permission}=await platform({networkOrigins:origins,sensorMask:7,permissions:[
+  const {rt,permission}=await platform({networkOrigins:origins,sensorMask:15,permissions:[
     {name:'net.socket',scope:'outbound'},{name:'audio.capture',scope:'microphone'},
-    ...['motion.acceleration','motion.angular-velocity','magnetic-field.0'].map(scope=>({name:'sensor.read',scope})),
+    ...['motion.acceleration','motion.angular-velocity','magnetic-field.0','orientation.heading'].map(scope=>({name:'sensor.read',scope})),
   ]});
-  try{assert.ok(permission('sensor.read','magnetic-field.0'));assert.ok(permission('net.client',origins.at(-1)));}
+  try{assert.ok(permission('sensor.read','magnetic-field.0'));assert.ok(permission('sensor.read','orientation.heading'));assert.ok(permission('net.client',origins.at(-1)));}
   finally{await rt.stop();}
 });

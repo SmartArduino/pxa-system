@@ -7,7 +7,8 @@ namespace pxa {
 enum class SensorUnit : std::uint16_t {
     milli_celsius = 1, micro_meters_per_second_squared = 2,
     micro_radians_per_second = 3, milli_lux = 4, nano_tesla = 5,
-    micro_volts = 6, micro_amperes = 7
+    micro_volts = 6, micro_amperes = 7,
+  micro_degrees = 8
 };
 struct SensorDescriptor {
     std::uint16_t id = 0;

@@ -208,3 +208,15 @@ bundle. The runtime preserves their offsets and mounts those views in private ME
 without copying the entire bundle for each file. Deduplicate transferable buffers
 before sending them to the Worker. Guest package files remain read-only; imported
 media and saved data retain their separate persistence lifecycle.
+
+## Browser Host 0.7.6 absolute heading
+
+Apps may optionally declare `sensor.read` / `orientation.heading` and consume
+a single micro-degree value (unit 8) when raw Magnetometer is unavailable.
+The page uses absolute DeviceOrientation events or AbsoluteOrientationSensor,
+with the same three sensor Permissions-Policy grants. DeviceOrientation
+permission, when needed, joins the existing user gesture with `absolute=true`.
+Relative events are rejected. The physical top edge is projected onto the
+earth East/North plane; near-vertical or stale samples are discarded. Screen
+rotation does not change this reference. This does not synthesize magnetic
+field strength, provide a second magnetometer, or require experimental flags.

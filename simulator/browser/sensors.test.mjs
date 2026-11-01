@@ -68,3 +68,15 @@ test('cross-realm acquisition time includes time spent queued before Worker deli
   s.sample(id,[{id:3,values:[4,5,6],timestampMs:10701}]);assert.equal(host.browserSensorRead(3,0),-7,'future time rejected');
   s.close();
 });
+test('absolute heading is independent, scalar, bounded and authorized separately',()=>{
+  let now=100;const messages=[],host={HEAP32:new Int32Array(4).fill(77)};
+  const s=installBrowserSensors(host,m=>messages.push(m),[{name:'sensor.read',scope:'orientation.heading'}],15,()=>now,10000);
+  assert.equal(host.browserSensorMask,8);assert.equal(host.browserSensorSubscribe(3),-3);
+  assert.equal(host.browserSensorSubscribe(4),0);const id=messages.at(-1).id;
+  s.sample(id,[{id:4,values:[90000000],timestampMs:10100}]);
+  assert.equal(host.browserSensorRead(4,0),0);assert.deepEqual([...host.HEAP32],[90000000,77,77,77]);
+  now=200;
+  for(const values of [[-1],[360000000],[90.5],[1,2,3]])s.sample(id,[{id:4,values}]);
+  assert.equal(host.browserSensorTimestamp(4),100);
+  now=351;assert.equal(host.browserSensorRead(4,0),-7);s.close();
+});

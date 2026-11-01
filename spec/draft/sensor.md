@@ -45,6 +45,17 @@ the device frame below; other vector semantics document their own frame.
 Battery current is signed; the board documents its charge/discharge polarity.
 A battery temperature channel uses the existing `milli-celsius` (1).
 
+## Absolute heading
+
+`orientation.heading` is a one-dimensional, clockwise magnetic-north bearing
+of the physical device top edge projected onto the horizontal plane. Unit
+`micro-degrees` (8) represents degrees times 1,000,000 in [0, 360,000,000).
+The Host must use an absolute north-referenced source; relative yaw is not a
+compass. No sample is emitted when the top edge is too nearly vertical to
+define a reliable projection. This optional semantic has its own exact
+`sensor.read` scope and does not expose a magnetic vector or field strength.
+Apps discover it independently; it requires no wire or Core version change.
+
 ## Device axes for semantic motion
 
 `motion.acceleration` and `motion.angular-velocity` describe the device, not

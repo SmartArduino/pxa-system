@@ -72,7 +72,7 @@ static pxa_status_t file_rename(void *c,pxa_bytes_t from,pxa_bytes_t to) {
 static pxa_status_t file_replace(void *c,pxa_bytes_t from,pxa_bytes_t to) {
     pxa_status_t s=native_fs.replace(c,from,to);if(!s)storage_changed();return s;
 }
-static pxa_permission_declaration_t declarations[70]={
+static pxa_permission_declaration_t declarations[71]={
     {BYTES("audio.playback"),BYTES("media"),0}};
 static uint8_t origins[64][512];
 EM_JS(int,socket_declared,(),{return !!Module.browserSocketDeclared;});
@@ -126,6 +126,7 @@ pxa_status_t browser_services_init(pxa_runtime_t *runtime) {
     if(sensor_mask()&1)declarations[declaration_count++]=(pxa_permission_declaration_t){BYTES("sensor.read"),BYTES("motion.acceleration"),0};
     if(sensor_mask()&2)declarations[declaration_count++]=(pxa_permission_declaration_t){BYTES("sensor.read"),BYTES("motion.angular-velocity"),0};
     if(sensor_mask()&4)declarations[declaration_count++]=(pxa_permission_declaration_t){BYTES("sensor.read"),BYTES("magnetic-field.0"),0};
+    if(sensor_mask()&8)declarations[declaration_count++]=(pxa_permission_declaration_t){BYTES("sensor.read"),BYTES("orientation.heading"),0};
     for(unsigned i=0;i<64;i++){
         int n=network_origin(i,origins[i],sizeof(origins[i]));if(!n)break;
         declarations[declaration_count++]=(pxa_permission_declaration_t){BYTES("net.client"),{origins[i],(size_t)n},0};
@@ -136,10 +137,11 @@ pxa_status_t browser_services_init(pxa_runtime_t *runtime) {
     size_t size=pxa_permission_service_workspace_size(&pc);
     CHECK(pxa_permission_service_init(calloc(1,size),size,runtime,&pc,&permissions));
     CHECK(pxa_permission_policy_load(permissions));CHECK(pxa_permission_service_register(permissions));
-    pxa_sensor_descriptor_t descriptors[3];uint16_t sensor_count=0;
+    pxa_sensor_descriptor_t descriptors[4];uint16_t sensor_count=0;
     if(sensor_mask()&1)descriptors[sensor_count++]=(pxa_sensor_descriptor_t){1,BYTES("motion.acceleration"),PXA_SENSOR_UNIT_MICRO_METERS_PER_SECOND_SQUARED,3,20,60000};
     if(sensor_mask()&2)descriptors[sensor_count++]=(pxa_sensor_descriptor_t){2,BYTES("motion.angular-velocity"),PXA_SENSOR_UNIT_MICRO_RADIANS_PER_SECOND,3,20,60000};
     if(sensor_mask()&4)descriptors[sensor_count++]=(pxa_sensor_descriptor_t){3,BYTES("magnetic-field.0"),PXA_SENSOR_UNIT_NANO_TESLA,3,100,60000};
+    if(sensor_mask()&8)descriptors[sensor_count++]=(pxa_sensor_descriptor_t){4,BYTES("orientation.heading"),PXA_SENSOR_UNIT_MICRO_DEGREES,1,50,60000};
     pxa_sensor_config_t sensor_config={.struct_size=sizeof(sensor_config),.permissions=permissions,
         .descriptors=descriptors,.descriptor_count=sensor_count,
         .max_subscriptions=4,.max_subscriptions_per_component=4,

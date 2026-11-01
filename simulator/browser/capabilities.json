@@ -1,5 +1,5 @@
 {
-  "version": "0.7.5",
+  "version": "0.7.6",
   "target": "browser",
   "engine": "webassembly",
   "core": "pxa.core.v2",
@@ -112,7 +112,8 @@
       "semantics": [
         "motion.acceleration",
         "motion.angular-velocity",
-        "magnetic-field.0"
+        "magnetic-field.0",
+        "orientation.heading"
       ],
       "minimumPeriodMs": 20,
       "staleAfterMs": 250,
@@ -130,7 +131,15 @@
         ],
         "fallback": false
       },
-      "timestamps": "native acquisition time across page/Worker clock origins; duplicate and stale samples suppressed"
+      "timestamps": "native acquisition time across page/Worker clock origins; duplicate and stale samples suppressed",
+      "heading": {
+        "unit": "micro-degrees",
+        "dimensions": 1,
+        "minimumPeriodMs": 50,
+        "source": "absolute DeviceOrientation or AbsoluteOrientationSensor",
+        "reference": "magnetic north; physical device top edge",
+        "relativeOrientation": false
+      }
     }
   },
   "unavailableServices": [

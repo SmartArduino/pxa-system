@@ -99,6 +99,10 @@
     {
       "name": "micro-amperes",
       "value": 7
+    },
+    {
+      "name": "micro-degrees",
+      "value": 8
     }
   ],
   "limits": {

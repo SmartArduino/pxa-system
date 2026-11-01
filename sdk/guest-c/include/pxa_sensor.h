@@ -17,6 +17,7 @@
 #define PXA_SENSOR_UNIT_NANO_TESLA 5u
 #define PXA_SENSOR_UNIT_MICRO_VOLTS 6u
 #define PXA_SENSOR_UNIT_MICRO_AMPERES 7u
+#define PXA_SENSOR_UNIT_MICRO_DEGREES 8u
 
 typedef struct {
     int32_t status;
