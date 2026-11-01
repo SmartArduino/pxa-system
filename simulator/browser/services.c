@@ -22,6 +22,7 @@ static pxa_sensor_service_t *sensors;
 EM_JS(int, sensor_mask, (), {return Module.browserSensorMask||0;});
 EM_JS(int, sensor_start, (unsigned id), {return Module.browserSensorSubscribe?.(id) ?? -3;});
 EM_JS(int, sensor_read, (unsigned id,int32_t *values), {return Module.browserSensorRead?.(id,values) ?? -7;});
+EM_JS(double, sensor_timestamp, (unsigned id), {return Module.browserSensorTimestamp?.(id) ?? 0;});
 EM_JS(void, sensor_stop, (unsigned id), {Module.browserSensorUnsubscribe?.(id);});
 static pxa_status_t sensor_subscribe(void *c,uint16_t id,uint32_t period,void **out){
     (void)c;(void)period;pxa_status_t status=sensor_start(id);
@@ -29,6 +30,11 @@ static pxa_status_t sensor_subscribe(void *c,uint16_t id,uint32_t period,void **
 }
 static pxa_status_t sensor_values(void *c,void *subscription,uint16_t id,int32_t values[3]){
     (void)c;(void)subscription;return sensor_read(id,values);
+}
+static pxa_status_t sensor_sample(void *c,void *subscription,uint16_t id,int32_t values[3],uint64_t *stamp){
+    pxa_status_t status=sensor_values(c,subscription,id,values);
+    if(!status)*stamp=(uint64_t)(sensor_timestamp(id)*1000);
+    return status;
 }
 static void sensor_close(void *c,void *subscription,uint16_t id){(void)c;(void)subscription;sensor_stop(id);}
 static uint64_t now_ms(void *c){(void)c;return (uint64_t)emscripten_get_now();}
@@ -66,7 +72,7 @@ static pxa_status_t file_rename(void *c,pxa_bytes_t from,pxa_bytes_t to) {
 static pxa_status_t file_replace(void *c,pxa_bytes_t from,pxa_bytes_t to) {
     pxa_status_t s=native_fs.replace(c,from,to);if(!s)storage_changed();return s;
 }
-static pxa_permission_declaration_t declarations[69]={
+static pxa_permission_declaration_t declarations[70]={
     {BYTES("audio.playback"),BYTES("media"),0}};
 static uint8_t origins[64][512];
 EM_JS(int,socket_declared,(),{return !!Module.browserSocketDeclared;});
@@ -82,7 +88,7 @@ static pxa_status_t permission_load(void *c,pxa_bytes_t identity,pxa_bytes_t nam
     /* AudioContext still enforces browser user activation; no hardware or
      * network authority is granted by this local playback declaration. */
     *decision=PXA_PERMISSION_DENY;
-    for(unsigned i=0;i<69;i++)
+    for(unsigned i=0;i<sizeof(declarations)/sizeof(declarations[0]);i++)
         if(declarations[i].name.size!=0&&declarations[i].name.size==name.size&&declarations[i].scope.size==scope.size&&
            !memcmp(declarations[i].name.data,name.data,name.size)&&
            !memcmp(declarations[i].scope.data,scope.data,scope.size)){
@@ -119,6 +125,7 @@ pxa_status_t browser_services_init(pxa_runtime_t *runtime) {
     if(capture_declared())declarations[declaration_count++]=(pxa_permission_declaration_t){BYTES("audio.capture"),BYTES("microphone"),0};
     if(sensor_mask()&1)declarations[declaration_count++]=(pxa_permission_declaration_t){BYTES("sensor.read"),BYTES("motion.acceleration"),0};
     if(sensor_mask()&2)declarations[declaration_count++]=(pxa_permission_declaration_t){BYTES("sensor.read"),BYTES("motion.angular-velocity"),0};
+    if(sensor_mask()&4)declarations[declaration_count++]=(pxa_permission_declaration_t){BYTES("sensor.read"),BYTES("magnetic-field.0"),0};
     for(unsigned i=0;i<64;i++){
         int n=network_origin(i,origins[i],sizeof(origins[i]));if(!n)break;
         declarations[declaration_count++]=(pxa_permission_declaration_t){BYTES("net.client"),{origins[i],(size_t)n},0};
@@ -129,13 +136,14 @@ pxa_status_t browser_services_init(pxa_runtime_t *runtime) {
     size_t size=pxa_permission_service_workspace_size(&pc);
     CHECK(pxa_permission_service_init(calloc(1,size),size,runtime,&pc,&permissions));
     CHECK(pxa_permission_policy_load(permissions));CHECK(pxa_permission_service_register(permissions));
-    pxa_sensor_descriptor_t descriptors[2];uint16_t sensor_count=0;
+    pxa_sensor_descriptor_t descriptors[3];uint16_t sensor_count=0;
     if(sensor_mask()&1)descriptors[sensor_count++]=(pxa_sensor_descriptor_t){1,BYTES("motion.acceleration"),PXA_SENSOR_UNIT_MICRO_METERS_PER_SECOND_SQUARED,3,20,60000};
     if(sensor_mask()&2)descriptors[sensor_count++]=(pxa_sensor_descriptor_t){2,BYTES("motion.angular-velocity"),PXA_SENSOR_UNIT_MICRO_RADIANS_PER_SECOND,3,20,60000};
+    if(sensor_mask()&4)descriptors[sensor_count++]=(pxa_sensor_descriptor_t){3,BYTES("magnetic-field.0"),PXA_SENSOR_UNIT_NANO_TESLA,3,100,60000};
     pxa_sensor_config_t sensor_config={.struct_size=sizeof(sensor_config),.permissions=permissions,
         .descriptors=descriptors,.descriptor_count=sensor_count,
         .max_subscriptions=4,.max_subscriptions_per_component=4,
-        .subscribe=sensor_subscribe,.read=sensor_values,.unsubscribe=sensor_close};
+        .subscribe=sensor_subscribe,.read=sensor_values,.unsubscribe=sensor_close,.read_sample=sensor_sample};
     size=pxa_sensor_service_workspace_size(&sensor_config);
     CHECK(pxa_sensor_service_init(calloc(1,size),size,runtime,&sensor_config,&sensors));
     CHECK(pxa_sensor_service_register(sensors));

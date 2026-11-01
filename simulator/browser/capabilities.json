@@ -1,5 +1,5 @@
 {
-  "version": "0.7.4",
+  "version": "0.7.5",
   "target": "browser",
   "engine": "webassembly",
   "core": "pxa.core.v2",
@@ -91,7 +91,8 @@
         "audio.playback",
         "audio.capture",
         "net.client",
-        "net.socket"
+        "net.socket",
+        "sensor.read"
       ]
     },
     "ipc": {
@@ -107,16 +108,29 @@
       "resourcePacks": true
     },
     "sensor": {
-      "backend": "native browser motion sensors; automatic subscription lifecycle",
+      "backend": "native browser motion sensors and Magnetometer; automatic subscription lifecycle",
       "semantics": [
         "motion.acceleration",
-        "motion.angular-velocity"
+        "motion.angular-velocity",
+        "magnetic-field.0"
       ],
       "minimumPeriodMs": 20,
       "staleAfterMs": 250,
       "missingHardware": "no samples; never synthetic zeros",
       "axes": "PXA native device frame: X top, Y left, Z screen-out",
-      "authorization": "automatic where supported; native consent joined to Start/Continue or screen interaction"
+      "authorization": "automatic where supported; native consent joined to Start/Continue or screen interaction",
+      "magnetometer": {
+        "unit": "nT",
+        "nativeUnit": "µT",
+        "minimumPeriodMs": 100,
+        "requires": [
+          "secure context",
+          "native Magnetometer API",
+          "magnetometer permission policy"
+        ],
+        "fallback": false
+      },
+      "timestamps": "native acquisition time across page/Worker clock origins; duplicate and stale samples suppressed"
     }
   },
   "unavailableServices": [

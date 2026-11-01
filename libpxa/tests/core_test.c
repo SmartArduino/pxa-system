@@ -103,6 +103,7 @@ typedef struct {
     unsigned unsubscribes;
     unsigned reads;
     int token;
+    uint64_t timestamp_us;
 } test_sensor_provider_t;
 
 typedef struct {
@@ -766,6 +767,13 @@ static pxa_status_t sensor_read(
     provider->reads++;
     values[0] = 21500;
     return PXA_STATUS_OK;
+}
+
+static pxa_status_t sensor_read_sample(
+    void *context, void *subscription, uint16_t descriptor_id,
+    int32_t values[PXA_SENSOR_MAX_DIMENSIONS], uint64_t *timestamp_us) {
+    *timestamp_us = ((test_sensor_provider_t *)context)->timestamp_us;
+    return sensor_read(context, subscription, descriptor_id, values);
 }
 
 static void sensor_unsubscribe(void *context, void *subscription,
@@ -4161,7 +4169,7 @@ static void test_fs_completion_reservation(void) {
     free(fs_workspace);
 }
 
-static void test_sensor_service(void) {
+static void test_sensor_service(int timestamped) {
     static const uint8_t identity[] = "sensor.app";
     static const uint8_t permission_name[] = "sensor.read";
     static const uint8_t semantic[] = "ambient.temperature";
@@ -4239,7 +4247,10 @@ static void test_sensor_service(void) {
     sensor_config.max_subscriptions = 2;
     sensor_config.max_subscriptions_per_component = 1;
     sensor_config.subscribe = sensor_subscribe;
-    sensor_config.read = sensor_read;
+    sensor_config.read = timestamped > 0 ? NULL : sensor_read;
+    sensor_config.read_sample = timestamped > 0 ? sensor_read_sample : NULL;
+    if (timestamped < 0)
+        sensor_config.struct_size = offsetof(pxa_sensor_config_t, read_sample);
     sensor_config.unsubscribe = sensor_unsubscribe;
     sensor_config.permissions = permission;
     sensor_size = pxa_sensor_service_workspace_size(&sensor_config);
@@ -4267,7 +4278,10 @@ static void test_sensor_service(void) {
     sensor_config.max_subscriptions_per_component = 2;
     sensor_config.provider_context = &provider;
     sensor_config.subscribe = sensor_subscribe;
-    sensor_config.read = sensor_read;
+    sensor_config.read = timestamped > 0 ? NULL : sensor_read;
+    sensor_config.read_sample = timestamped > 0 ? sensor_read_sample : NULL;
+    if (timestamped < 0)
+        sensor_config.struct_size = offsetof(pxa_sensor_config_t, read_sample);
     sensor_config.unsubscribe = sensor_unsubscribe;
     sensor_config.permissions = permission;
     sensor_size = pxa_sensor_service_workspace_size(&sensor_config);
@@ -4357,12 +4371,14 @@ static void test_sensor_service(void) {
     reused_sensor_handle = pxa_read_u32(event.payload.data + 4);
     assert(reused_sensor_handle != sensor_handle);
 
+    provider.timestamp_us = 900;
     assert(pxa_sensor_poll(sensor, 1000, affected, 1, &affected_count) ==
                PXA_STATUS_OK &&
            affected_count == 1 && affected[0] == component);
     assert(pxa_sensor_poll(sensor, 50000, affected, 1, &affected_count) ==
                PXA_STATUS_OK &&
            affected_count == 0);
+    provider.timestamp_us = 100900;
     assert(pxa_sensor_poll(sensor, 101000, affected, 1, &affected_count) ==
                PXA_STATUS_OK &&
            affected_count == 1 && provider.reads == 4);
@@ -4378,7 +4394,7 @@ static void test_sensor_service(void) {
            pxa_read_u32(record.payload.data) == reused_sensor_handle);
     assert(pxa_record_next(&iterator, &record) == PXA_STATUS_OK &&
            record.tag == 2 && record.payload.size == 8 &&
-           pxa_read_u64(record.payload.data) == 101000);
+           pxa_read_u64(record.payload.data) == (timestamped > 0 ? 100900u : 101000u));
     assert(pxa_record_next(&iterator, &record) == PXA_STATUS_OK &&
            record.tag == 3 && pxa_read_u16(record.payload.data) == 1);
     assert(pxa_record_next(&iterator, &record) == PXA_STATUS_OK &&
@@ -4399,9 +4415,23 @@ static void test_sensor_service(void) {
            pxa_read_u32(record.payload.data) == second_sensor_handle);
     assert(pxa_record_next(&iterator, &record) == PXA_STATUS_OK &&
            record.tag == 2 && record.payload.size == 8 &&
-           pxa_read_u64(record.payload.data) == 101000);
+           pxa_read_u64(record.payload.data) == (timestamped > 0 ? 100900u : 101000u));
     assert(pxa_event_consume(test.runtime, component, view.token) ==
            PXA_STATUS_OK);
+
+    if (timestamped > 0) {
+        assert(pxa_sensor_poll(sensor, 201000, affected, 1, &affected_count) == PXA_STATUS_OK && affected_count == 0);
+        provider.timestamp_us = 500001; /* A provider cannot invent future data. */
+        assert(pxa_sensor_poll(sensor, 301000, affected, 1, &affected_count) == PXA_STATUS_OK && affected_count == 0);
+        provider.timestamp_us = 100899; /* Reordered samples stay behind the watermark. */
+        assert(pxa_sensor_poll(sensor, 401000, affected, 1, &affected_count) == PXA_STATUS_OK && affected_count == 0);
+        provider.timestamp_us = 500900;
+        assert(pxa_sensor_poll(sensor, 501000, affected, 1, &affected_count) == PXA_STATUS_OK && affected_count == 1);
+        for (unsigned i = 0; i < 2; ++i) {
+            (void)read_head_event(test.runtime, component, event_bytes, sizeof(event_bytes), &view);
+            assert(pxa_event_consume(test.runtime, component, view.token) == PXA_STATUS_OK);
+        }
+    }
 
     assert(pxa_authority_revoke(test.runtime, component, authority) ==
            PXA_STATUS_OK);
@@ -4459,6 +4489,7 @@ static void test_sensor_service(void) {
                provider.subscribes == 4);
         sensor64 = pxa_read_u64(event.payload.data + 4);
         assert((sensor64 >> 32) != 0);
+        provider.timestamp_us = 300900;
         assert(pxa_sensor_poll(sensor, 301000, affected, 1,
                                &affected_count) == PXA_STATUS_OK &&
                affected_count == 1 && affected[0] == v1_component);
@@ -6069,7 +6100,9 @@ int main(void) {
     test_fs_scoped_service();
     test_fs_v1_native_handles();
     test_fs_completion_reservation();
-    test_sensor_service();
+    test_sensor_service(0);
+    test_sensor_service(1);
+    test_sensor_service(-1);
     test_device_service();
     test_scheduler_service();
     test_empty_scheduler_service();

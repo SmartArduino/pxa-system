@@ -16,7 +16,7 @@ python3 simulator/browser/build.py \
   --build-dir local/artifacts/browser-build --out local/artifacts/browser-bundle \
   --wasi-sdk /path/to/pxa-devkit/toolchains/wasi-sdk
 PXA_BROWSER_BUNDLE="$PWD/local/artifacts/browser-bundle" \
-  node --test simulator/browser/*.test.mjs
+  node --experimental-wasm-jspi --test simulator/browser/*.test.mjs
 ```
 
 `--host-build` reuses a separately compiled Host (useful with Emscripten in a
@@ -134,25 +134,41 @@ this Host. Registered services are UI, Window, Clock, Storage, FS, Audio, Net,
 Surface, GameRender, Device runtime information, Log, Permission and an isolated
 IPC broker. Not every optional operation is available; consult the inventory
 and normal service errors. Assets and Lease are registered. The Sensor service bridges signed
-`motion.acceleration` and `motion.angular-velocity` subscriptions to native
+`motion.acceleration`, `motion.angular-velocity` and `magnetic-field.0` subscriptions to native
 browser sensors automatically while subscriptions are active. Where native
 consent requires a gesture, it joins Start/Continue or the next screen/control
 interaction; there is no separate enable button. Consent persists across
 channel changes, pause/resume and app restarts on the same page. Acceleration
-includes gravity (µm/s²); angular velocity uses µrad/s. Browser device vectors
+includes gravity (µm/s²); angular velocity uses µrad/s. Native `Magnetometer`
+readings (µT) become signed nT values on `magnetic-field.0` (10 Hz maximum). Browser device vectors
 (X right, Y up, Z out) rotate to the PXA device frame (X top, Y left, Z out):
-`(x,y,z) -> (y,-x,z)` for both channels. This proper rotation preserves lengths
+`(x,y,z) -> (y,-x,z)` for all three channels. This proper rotation preserves lengths
 and handedness; screen/view changes do not remap this physical native frame. Generic Sensor
 APIs are preferred; DeviceMotion falls back to its accelerationIncludingGravity
 and rotationRate (alpha X, beta Y, gamma Z, degrees converted to radians).
 See the [Device Motion standard](https://www.w3.org/TR/orientation-event/).
 API discovery does not guarantee physical hardware: absent, invalid or stale
 readings produce no samples. Transport is bounded to 50 Hz per channel, with
-normal PXA subscription periods and coalescing. Pause, unsubscribe and exit
+normal PXA subscription periods and coalescing. Generic Sensor acquisition times
+are normalized across page/Worker time origins, including delivery delay. The
+asynchronous Host provider preserves these times in Sensor events and suppresses
+repeated/older samples; polling must not make an old magnetic reading appear to
+match fresh acceleration. Legacy synchronous providers retain poll-time behavior. Pause, unsubscribe and exit
 release native listeners and clear cached samples. Updating the active channel
 mask preserves the stream session and unaffected channel. Transient Generic
 Sensor failures/stalls can fall back to fresh DeviceMotion samples; denied
-permissions never trigger a bypass. Hardware MAC access, Work, PXA IME-provider registration and
+permissions never trigger a bypass. Magnetic data has no DeviceMotion or heading
+fallback: DeviceOrientation is not a three-axis magnetic field. The browser exposes
+one logical magnetic channel; an uncalibrated view of the same chip is not `.1`.
+Serve on HTTPS and allow `magnetometer=(self)` in Permissions-Policy, alongside
+`accelerometer=(self)` and `gyroscope=(self)`. See the
+[Magnetometer standard](https://www.w3.org/TR/magnetometer/). Native availability is
+limited; [Chromium documentation](https://developer.chrome.com/docs/capabilities/web-apis/generic-sensor)
+currently places Magnetometer behind the Generic Sensor extra-classes flag.
+An exposed constructor does not prove a sensor exists: asynchronous device and
+permission errors must be handled without manufacturing measurements. Sensors
+belong to the device running the browser, not a USB-connected PXA device.
+Hardware MAC access, Work, PXA IME-provider registration and
 StoreInstaller are unavailable. Native text entry replaces the device keyboard.
 The store serves only authenticated, reviewed public releases, verifies both
 package signatures and inventories, and checks per-file SHA-256 in the page.

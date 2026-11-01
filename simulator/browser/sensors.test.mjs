@@ -28,3 +28,43 @@ test('motion bridge uses signed scopes, bounded int32 samples, freshness and sub
   host.browserSensorUnsubscribe(2);assert.equal(messages.at(-1).type,'sensors-stop');sensors.close();
   const denied={};installBrowserSensors(denied,()=>{},[],3);assert.equal(denied.browserSensorMask,0);assert.equal(denied.browserSensorSubscribe(1),-3);
 });
+test('magnetic-field.0 requires its own signed scope and preserves other active channels',()=>{
+  const host={HEAP32:new Int32Array(16)},messages=[];let now=0;
+  const bridge=installBrowserSensors(host,m=>messages.push(m),[
+    {name:'sensor.read',scope:'motion.acceleration'},{name:'sensor.read',scope:'magnetic-field.0'},
+  ],7,()=>now);
+  assert.equal(host.browserSensorMask,5);assert.equal(host.browserSensorSubscribe(2),-3);
+  assert.equal(host.browserSensorSubscribe(1.5),-3);assert.equal(host.browserSensorSubscribe(4),-3);
+  host.browserSensorSubscribe(1);host.browserSensorSubscribe(3);
+  const id=messages.at(-1).id;assert.equal(messages.at(-1).mask,5);
+  bridge.sample(id,[{id:1,values:[0,0,9800000]},{id:3,values:[25000,-1500,42000]}]);
+  assert.equal(host.browserSensorRead(3,0),0);assert.deepEqual([...host.HEAP32.slice(0,3)],[25000,-1500,42000]);
+  host.browserSensorUnsubscribe(1);assert.equal(host.browserSensorRead(3,0),0);
+  now=251;bridge.sample(id,[{id:3,values:[2147483648,0,0]},{id:3,values:[1.1,0,0]}]);
+  assert.equal(host.browserSensorRead(3,0),-7);
+  bridge.pause(true);bridge.pause(false);bridge.sample(id,[{id:3,values:[1,2,3]}]);assert.equal(host.browserSensorRead(3,0),-7);
+  bridge.sample(messages.at(-1).id,[{id:3,values:[1,2,3]}]);assert.equal(host.browserSensorRead(3,0),0);
+  host.browserSensorUnsubscribe(3);host.browserSensorSubscribe(3);assert.equal(host.browserSensorRead(3,0),-7);
+  bridge.close();assert.equal(messages.at(-1).type,'sensors-stop');
+  const other={};installBrowserSensors(other,()=>{},[{name:'sensor.read',scope:'magnetic-field.1'}],7);
+  assert.equal(other.browserSensorMask,0,'an uncalibrated API must not masquerade as a second physical sensor');
+});
+test('sample age survives delivery; stale, future and reordered timestamps are rejected',()=>{
+  let now=500;const host={HEAP32:new Int32Array(8)},messages=[];
+  const s=installBrowserSensors(host,m=>messages.push(m),[{name:'sensor.read',scope:'magnetic-field.0'}],4,()=>now);
+  host.browserSensorSubscribe(3);const id=messages.at(-1).id;
+  s.sample(id,[{id:3,values:[1,2,3],ageMs:120}]);assert.equal(host.browserSensorTimestamp(3),380);
+  for(const ageMs of [251,-1,NaN,Infinity,121])s.sample(id,[{id:3,values:[4,5,6],ageMs}]);
+  assert.equal(host.browserSensorTimestamp(3),380);host.browserSensorRead(3,0);assert.equal(host.HEAP32[0],1);
+  now=631;assert.equal(host.browserSensorRead(3,0),-7);
+  s.close();
+});
+test('cross-realm acquisition time includes time spent queued before Worker delivery',()=>{
+  let now=500;const host={HEAP32:new Int32Array(8)},messages=[];
+  const s=installBrowserSensors(host,m=>messages.push(m),[{name:'sensor.read',scope:'magnetic-field.0'}],4,()=>now,10000);
+  host.browserSensorSubscribe(3);const id=messages.at(-1).id;
+  s.sample(id,[{id:3,values:[1,2,3],timestampMs:10380}]);assert.equal(host.browserSensorTimestamp(3),380);
+  now=700;s.sample(id,[{id:3,values:[4,5,6],timestampMs:10400}]);assert.equal(host.browserSensorRead(3,0),-7,'delayed delivery is not a fresh sample');
+  s.sample(id,[{id:3,values:[4,5,6],timestampMs:10701}]);assert.equal(host.browserSensorRead(3,0),-7,'future time rejected');
+  s.close();
+});

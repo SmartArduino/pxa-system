@@ -45,6 +45,12 @@ typedef pxa_status_t (*pxa_sensor_subscribe_fn)(
 typedef pxa_status_t (*pxa_sensor_read_fn)(
     void *context, void *subscription, uint16_t descriptor_id,
     int32_t values[PXA_SENSOR_MAX_DIMENSIONS]);
+/* For asynchronous providers, return the acquisition time in the same
+ * monotonic clock as pxa_sensor_poll. Repeated/older and future samples are
+ * ignored. Synchronous providers may continue using read and the poll time. */
+typedef pxa_status_t (*pxa_sensor_read_sample_fn)(
+    void *context, void *subscription, uint16_t descriptor_id,
+    int32_t values[PXA_SENSOR_MAX_DIMENSIONS], uint64_t *timestamp_us);
 typedef void (*pxa_sensor_unsubscribe_fn)(
     void *context, void *subscription, uint16_t descriptor_id);
 
@@ -62,6 +68,7 @@ typedef struct {
     pxa_sensor_read_fn read;
     pxa_sensor_unsubscribe_fn unsubscribe;
     pxa_permission_service_t *permissions;
+    pxa_sensor_read_sample_fn read_sample;
 } pxa_sensor_config_t;
 
 typedef struct pxa_sensor_service pxa_sensor_service_t;

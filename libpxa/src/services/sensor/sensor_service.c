@@ -23,6 +23,7 @@ struct pxa_sensor_service {
     void *provider_context;
     pxa_sensor_subscribe_fn subscribe;
     pxa_sensor_read_fn read;
+    pxa_sensor_read_sample_fn read_sample;
     pxa_sensor_unsubscribe_fn unsubscribe;
     size_t list_capacity;
     uint16_t descriptor_count;
@@ -41,9 +42,11 @@ struct pxa_sensor_subscription {
     pxa_component_t component;
     pxa_handle64_t handle;
     uint64_t next_due_us;
+    uint64_t last_sample_us;
     uint32_t period_ms;
     uint16_t next;
     uint8_t active;
+    uint8_t has_sample;
 };
 
 typedef struct {
@@ -85,13 +88,17 @@ static int config_valid(const pxa_sensor_config_t *config,
     size_t list_total = 0;
     uint16_t index;
     uint16_t other;
-    if (config == NULL || config->struct_size < sizeof(*config) ||
+    if (config == NULL ||
+        (config->struct_size != offsetof(pxa_sensor_config_t, read_sample) &&
+         config->struct_size < sizeof(*config)) ||
         (config->descriptor_count != 0 && config->descriptors == NULL) ||
         config->descriptor_count > PXA_SENSOR_MAX_DESCRIPTORS ||
         config->max_subscriptions == 0 ||
         config->max_subscriptions_per_component == 0 ||
         config->max_subscriptions_per_component > config->max_subscriptions ||
-        config->subscribe == NULL || config->read == NULL ||
+        config->subscribe == NULL ||
+        (config->read == NULL &&
+         (config->struct_size < sizeof(*config) || config->read_sample == NULL)) ||
         config->unsubscribe == NULL || config->permissions == NULL) {
         return 0;
     }
@@ -192,6 +199,8 @@ pxa_status_t pxa_sensor_service_init(
     service->provider_context = config->provider_context;
     service->subscribe = config->subscribe;
     service->read = config->read;
+    service->read_sample = config->struct_size >= sizeof(*config)
+        ? config->read_sample : NULL;
     service->unsubscribe = config->unsubscribe;
     service->descriptor_count = config->descriptor_count;
     service->max_subscriptions = config->max_subscriptions;
@@ -368,6 +377,8 @@ static void release_subscription(pxa_sensor_subscription_t *subscription) {
     subscription->component = PXA_COMPONENT_INVALID;
     subscription->handle = PXA_HANDLE_INVALID;
     subscription->next_due_us = 0;
+    subscription->last_sample_us = 0;
+    subscription->has_sample = 0;
     subscription->period_ms = 0;
     subscription->active = 0;
     subscription->next = service->free_head;
@@ -597,6 +608,7 @@ pxa_status_t pxa_sensor_poll(
             &service->subscriptions[index];
         uint16_t next = subscription->next;
         uint64_t period_us;
+        uint64_t sample_us = timestamp_us;
         int32_t values[PXA_SENSOR_MAX_DIMENSIONS] = {0, 0, 0};
         uint8_t payload_bytes[46];
         uint8_t encoded[12];
@@ -614,10 +626,16 @@ pxa_status_t pxa_sensor_poll(
             timestamp_us > UINT64_MAX - period_us
                 ? UINT64_MAX
                 : timestamp_us + period_us;
-        status = pxa_status_normalize(service->read(
-            service->provider_context, subscription->provider_subscription,
-            subscription->descriptor->id, values));
-        if (status != PXA_STATUS_OK) {
+        status = pxa_status_normalize(service->read_sample
+            ? service->read_sample(service->provider_context,
+                subscription->provider_subscription,
+                subscription->descriptor->id, values, &sample_us)
+            : service->read(service->provider_context,
+                subscription->provider_subscription,
+                subscription->descriptor->id, values));
+        if (status != PXA_STATUS_OK || sample_us > timestamp_us ||
+            (service->read_sample && subscription->has_sample &&
+             sample_us <= subscription->last_sample_us)) {
             index = next;
             continue;
         }
@@ -629,7 +647,7 @@ pxa_status_t pxa_sensor_poll(
         status = pxa_writer_record(&payload, 4, encoded,
                                     (subscription->handle >> 32) != 0 ? 8 : 4);
         if (status == PXA_STATUS_OK) {
-            pxa_write_u64(encoded, timestamp_us);
+            pxa_write_u64(encoded, sample_us);
             status = pxa_writer_record(&payload, 2, encoded, 8);
         }
         if (status == PXA_STATUS_OK) {
@@ -662,6 +680,8 @@ pxa_status_t pxa_sensor_poll(
                 (pxa_bytes_t){payload.data, payload.size}, 0, coalesce_key);
         }
         if (status == PXA_STATUS_OK) {
+            subscription->last_sample_us = sample_us;
+            subscription->has_sample = 1;
             append_affected(subscription->component, affected, capacity, count);
         }
         index = next;
