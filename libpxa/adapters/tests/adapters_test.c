@@ -1348,6 +1348,32 @@ static void test_installer(void) {
     CHECK(fd >= 0 && write(fd, buffer, 40) == 40);
     close(fd);
 
+    /* A factory application can own nonempty private data before a writable
+     * package/owner slot exists. Only its authenticated identity can claim it. */
+    {
+        char *overlay_root=make_temp_dir("pxa-builtin-overlay");
+        char data[600],save[640];
+        snprintf(data,sizeof(data),"%s/data",overlay_root);CHECK(mkdir(data,0700)==0);
+        snprintf(data,sizeof(data),"%s/data/com.example.testapp",overlay_root);CHECK(mkdir(data,0700)==0);
+        snprintf(save,sizeof(save),"%s/save",data);fd=open(save,O_CREAT|O_EXCL|O_WRONLY,0600);
+        CHECK(fd>=0 && write(fd,"retained",8)==8);close(fd);
+        pxa_posix_installer_config_t overlay=config;
+        overlay.storage_root=overlay_root;overlay.faults=NULL;
+        overlay.retained_owner_source=package_v1;
+        for(unsigned old_abi=1;;--old_abi) {
+            overlay.struct_size=old_abi?offsetof(pxa_posix_installer_config_t,retained_owner_source):sizeof(overlay);
+            size_t bytes=pxa_posix_installer_workspace_size(&overlay);void *memory=malloc(bytes);
+            pxa_posix_installer_t *instance=NULL;CHECK(memory!=NULL);
+            check_status("builtin overlay init",pxa_posix_installer_init(memory,bytes,&overlay,&instance),PXA_STATUS_OK);
+            check_status("signed builtin owns retained data",pxa_posix_installer_install(instance,package_v3,&result,&disposition),
+                         old_abi?PXA_STATUS_DENIED:PXA_STATUS_OK);
+            pxa_posix_installer_deinit(instance);free(memory);
+            fd=open(save,O_RDONLY);CHECK(fd>=0 && read(fd,buffer,8)==8 && !memcmp(buffer,"retained",8));close(fd);
+            if(!old_abi)break;
+        }
+        check_status("remove overlay fixture",pxa_posix_fs_remove_tree(overlay_root),PXA_STATUS_OK);free(overlay_root);
+    }
+
     check_status("verify LZ4 container",
                  pxa_posix_installer_verify_source(installer, container_lz4,
                                                     &result),

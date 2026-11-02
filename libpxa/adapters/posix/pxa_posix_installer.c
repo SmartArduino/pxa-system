@@ -118,6 +118,7 @@ struct pxa_posix_installer {
     uint8_t expected_manifest_sha256[32];
     uint8_t has_expected_manifest;
     uint8_t expected_package_kind;
+    const char *retained_owner_source;
     uint8_t *scratch;
     size_t scratch_size;
     pxa_package_limits_t scratch_limits;
@@ -2936,6 +2937,9 @@ static pxa_status_t identity_owner_check_or_claim(
 
     current_fd = open(ctx->root,
                       O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+    if(current_fd<0 && errno==ENOENT && installer->retained_owner_source)
+        current_fd=open(installer->retained_owner_source,
+                        O_RDONLY|O_DIRECTORY|O_CLOEXEC|O_NOFOLLOW);
     if (current_fd >= 0) {
         status = verify_opened_directory(
             installer, current_fd, 0, current_key_id, current_app_id,
@@ -3090,7 +3094,7 @@ pxa_status_t pxa_posix_installer_init(void *workspace, size_t workspace_size,
         installer->space_context = config->space_context;
         installer->check_space = config->check_space;
     }
-    if(config->struct_size>=sizeof(*config)) {
+    if(config->struct_size>=offsetof(pxa_posix_installer_config_t,expected_package_kind)+sizeof(config->expected_package_kind)) {
         if(config->expected_package_kind>PXA_PACKAGE_KIND_RESOURCES)return PXA_STATUS_INVALID_ARGUMENT;
         installer->expected_package_kind=config->expected_package_kind;
         if(config->expected_manifest_sha256) {
@@ -3098,6 +3102,8 @@ pxa_status_t pxa_posix_installer_init(void *workspace, size_t workspace_size,
             installer->has_expected_manifest=1;
         }
     }
+    if(config->struct_size>=offsetof(pxa_posix_installer_config_t,retained_owner_source)+sizeof(config->retained_owner_source))
+        installer->retained_owner_source=config->retained_owner_source;
     installer->verify_context = config->verify_context != NULL
                                     ? config->verify_context
                                     : (void *)&installer->trust;

@@ -119,6 +119,12 @@ typedef struct {
      * resource homes bind both RESOURCES and the application's signed hash. */
     const uint8_t *expected_manifest_sha256;
     uint8_t expected_package_kind;
+    /* Optional Host-owned built-in directory whose signed identity proves
+     * ownership of retained private data when no writable current slot or
+     * owner record exists. Never Guest-supplied. The directory remains in
+     * place; this is an overlay install, not permission to claim by App ID.
+     * Like storage_root, the string must outlive the installer. */
+    const char *retained_owner_source;
 } pxa_posix_installer_config_t;
 
 typedef struct pxa_posix_installer pxa_posix_installer_t;
