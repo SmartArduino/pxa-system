@@ -79,6 +79,17 @@ typedef struct {
 static directory_handle_t g_directories[PXA_ESP_POSIX_DIRECTORY_HANDLES];
 static pthread_mutex_t g_directory_lock = PTHREAD_MUTEX_INITIALIZER;
 static pxa_esp_posix_directory_hooks_t g_directory_hooks;
+/* Stack-owned reservations protect pathname references while VFS callbacks
+ * run without the directory-table lock. A private LittleFS callback can
+ * reenter this adapter to access its backing files on another filesystem.
+ * Conflicts fail rather than waiting on a thread holding a filesystem lock. */
+typedef struct directory_operation {
+    const char *source;
+    const char *target;
+    int mutation;
+    struct directory_operation *next;
+} directory_operation_t;
+static directory_operation_t *g_directory_operations;
 
 static void *directory_allocate(size_t bytes) {
     void *memory = heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
@@ -133,11 +144,50 @@ static int path_contains(const char *parent, const char *path) {
         (length == 1 || path[length] == 0 || path[length] == '/');
 }
 
+static int paths_overlap(const char *a, const char *b) {
+    return a && b && (path_contains(a, b) || path_contains(b, a));
+}
+
+/* All operation-list and directory-table access is under g_directory_lock. */
+static int directory_operation_begin(directory_operation_t *operation) {
+    const directory_operation_t *active;
+    for (active = g_directory_operations; active; active = active->next) {
+        if (!(operation->mutation || active->mutation)) continue;
+        if (paths_overlap(operation->source, active->source) ||
+            paths_overlap(operation->source, active->target) ||
+            paths_overlap(operation->target, active->source) ||
+            paths_overlap(operation->target, active->target)) {
+            errno = EBUSY; return -1;
+        }
+    }
+    operation->next = g_directory_operations;
+    g_directory_operations = operation;
+    return 0;
+}
+
+static void directory_operation_end(directory_operation_t *operation) {
+    directory_operation_t **link = &g_directory_operations;
+    while (*link && *link != operation) link = &(*link)->next;
+    if (*link) *link = operation->next;
+}
+
+static int directory_path_busy(const char *path) {
+    const directory_operation_t *active;
+    for (active = g_directory_operations; active; active = active->next) {
+        if (active->mutation && (path_contains(active->source, path) ||
+            (active->target && path_contains(active->target, path)))) return 1;
+    }
+    return 0;
+}
+
 int pxa_esp_posix_set_directory_hooks(const pxa_esp_posix_directory_hooks_t *hooks) {
     unsigned i;
     pxa_esp_posix_directory_hooks_t next = {0};
     if (hooks) next = *hooks;
     pthread_mutex_lock(&g_directory_lock);
+    if (g_directory_operations) {
+        pthread_mutex_unlock(&g_directory_lock); errno = EBUSY; return -1;
+    }
     for (i = 0; i < PXA_ESP_POSIX_DIRECTORY_HANDLES; ++i) {
         if (g_directories[i].path) {
             pthread_mutex_unlock(&g_directory_lock); errno = EBUSY; return -1;
@@ -157,6 +207,9 @@ static int directory_path(int fd, char *path, size_t capacity, uint64_t *epoch) 
     if (!handle || handle->invalid) {
         pthread_mutex_unlock(&g_directory_lock); errno = EBADF; return -1;
     }
+    if (directory_path_busy(handle->path)) {
+        pthread_mutex_unlock(&g_directory_lock); errno = EBUSY; return -1;
+    }
     size = strlen(handle->path);
     if (size >= capacity) {
         pthread_mutex_unlock(&g_directory_lock); errno = ENAMETOOLONG; return -1;
@@ -170,12 +223,14 @@ static int directory_path(int fd, char *path, size_t capacity, uint64_t *epoch) 
 
 int pxa_esp_open(const char *path, int flags, ...) {
     mode_t mode = 0;
-    char *owned;
+    char *owned = NULL;
     uint64_t epoch;
     unsigned i;
     DIR *check;
     size_t length;
     char normalized[PXA_ESP_POSIX_PATH_MAX];
+    directory_operation_t operation = {normalized, NULL, 0, NULL};
+    int result = -1, saved_errno;
     if ((flags & O_CREAT) != 0) {
         va_list arguments; va_start(arguments, flags);
         mode = (mode_t)va_arg(arguments, int); va_end(arguments);
@@ -187,23 +242,28 @@ int pxa_esp_open(const char *path, int flags, ...) {
     if (canonical_path(path, normalized, sizeof(normalized)) != 0) return -1;
     path = normalized;
     length = strlen(path);
+    pthread_mutex_lock(&g_directory_lock);
+    result = directory_operation_begin(&operation);
+    pthread_mutex_unlock(&g_directory_lock);
+    if (result != 0) return -1;
+    result = -1;
     epoch = path_epoch(path);
-    if (epoch == UINT64_MAX) { errno = EIO; return -1; }
+    if (epoch == UINT64_MAX) { errno = EIO; goto failed; }
 #if defined(__linux__) || defined(__APPLE__)
     /* Host tests can contain links even though the deployed FAT/LittleFS
      * backends are link-free. Preserve the caller's no-follow contract. */
     if(flags&O_NOFOLLOW) {
         struct stat metadata;
-        if(lstat(path,&metadata)!=0)return -1;
-        if(S_ISLNK(metadata.st_mode)) {errno=ELOOP;return -1;}
+        if(lstat(path,&metadata)!=0)goto failed;
+        if(S_ISLNK(metadata.st_mode)) {errno=ELOOP;goto failed;}
     }
 #endif
     check = opendir(path);
-    if (!check) return -1;
-    if (closedir(check) != 0) return -1;
-    if (epoch != path_epoch(path)) { errno = EIO; return -1; }
+    if (!check) goto failed;
+    if (closedir(check) != 0) goto failed;
+    if (epoch != path_epoch(path)) { errno = EIO; goto failed; }
     owned = directory_allocate(length + 1);
-    if (!owned) { errno = ENOMEM; return -1; }
+    if (!owned) { errno = ENOMEM; goto failed; }
     memcpy(owned, path, length + 1);
     while (length > 1 && owned[length - 1] == '/') owned[--length] = 0;
     pthread_mutex_lock(&g_directory_lock);
@@ -213,15 +273,28 @@ int pxa_esp_open(const char *path, int flags, ...) {
         if (!++handle->generation) ++handle->generation;
         handle->path = owned; handle->epoch = epoch; handle->invalid = 0;
         int fd = DIRECTORY_FD_BASE + ((int)handle->generation << 5) + (int)i;
+        directory_operation_end(&operation);
         pthread_mutex_unlock(&g_directory_lock);
         return fd;
     }
+    errno = EMFILE;
+    saved_errno = errno;
+    directory_operation_end(&operation);
     pthread_mutex_unlock(&g_directory_lock);
-    heap_caps_free(owned); errno = EMFILE; return -1;
+    heap_caps_free(owned); errno = saved_errno; return -1;
+failed:
+    saved_errno = errno;
+    pthread_mutex_lock(&g_directory_lock);
+    directory_operation_end(&operation);
+    pthread_mutex_unlock(&g_directory_lock);
+    errno = saved_errno;
+    return -1;
 }
 
 static __attribute__((noinline)) int rename_canonical(const char *source,const char *target) {
     char *updated[PXA_ESP_POSIX_DIRECTORY_HANDLES] = {0};
+    uint16_t generations[PXA_ESP_POSIX_DIRECTORY_HANDLES] = {0};
+    directory_operation_t operation = {source, target, 1, NULL};
     uint64_t source_epoch, target_epoch;
     size_t source_size, target_size;
     unsigned i;
@@ -231,6 +304,9 @@ static __attribute__((noinline)) int rename_canonical(const char *source,const c
     if (source_epoch != target_epoch) { errno = EXDEV; return -1; }
     source_size = strlen(source); target_size = strlen(target);
     pthread_mutex_lock(&g_directory_lock);
+    if (directory_operation_begin(&operation) != 0) {
+        pthread_mutex_unlock(&g_directory_lock); return -1;
+    }
     for (i = 0; i < PXA_ESP_POSIX_DIRECTORY_HANDLES; ++i) {
         directory_handle_t *handle = &g_directories[i];
         size_t length;
@@ -247,17 +323,26 @@ static __attribute__((noinline)) int rename_canonical(const char *source,const c
         if (!updated[i]) { errno = ENOMEM; goto done; }
         memcpy(updated[i], target, target_size);
         strcpy(updated[i] + target_size, handle->path + source_size);
+        generations[i] = handle->generation;
     }
+    pthread_mutex_unlock(&g_directory_lock);
     result = rename(source, target);
+    saved_errno = errno;
+    pthread_mutex_lock(&g_directory_lock);
     if (result == 0) {
         for (i = 0; i < PXA_ESP_POSIX_DIRECTORY_HANDLES; ++i) {
-            if (!updated[i]) continue;
+            /* Closing a reference is allowed during I/O. A reused slot
+             * belongs to another directory and must not receive its path. */
+            if (!updated[i] || !g_directories[i].path ||
+                g_directories[i].generation != generations[i]) continue;
             heap_caps_free(g_directories[i].path);
             g_directories[i].path = updated[i]; updated[i] = NULL;
         }
     }
+    errno = saved_errno;
 done:
     saved_errno = errno;
+    directory_operation_end(&operation);
     for (i = 0; i < PXA_ESP_POSIX_DIRECTORY_HANDLES; ++i) heap_caps_free(updated[i]);
     pthread_mutex_unlock(&g_directory_lock);
     errno = saved_errno;
@@ -272,19 +357,27 @@ int pxa_esp_rename(const char *oldpath,const char *newpath) {
 
 int pxa_esp_rmdir(const char *path) {
     char normalized[PXA_ESP_POSIX_PATH_MAX];
+    directory_operation_t operation = {normalized, NULL, 1, NULL};
     unsigned i;
-    int result;
+    int result, saved_errno;
     if (canonical_path(path, normalized, sizeof(normalized)) != 0) return -1;
     if (path_epoch(normalized) == UINT64_MAX) { errno = EIO; return -1; }
     pthread_mutex_lock(&g_directory_lock);
+    result = directory_operation_begin(&operation);
+    pthread_mutex_unlock(&g_directory_lock);
+    if (result != 0) return -1;
     result = rmdir(normalized);
+    saved_errno = errno;
+    pthread_mutex_lock(&g_directory_lock);
     if (result == 0) {
         for (i = 0; i < PXA_ESP_POSIX_DIRECTORY_HANDLES; ++i) {
             if (g_directories[i].path && path_contains(normalized, g_directories[i].path))
                 g_directories[i].invalid = 1;
         }
     }
+    directory_operation_end(&operation);
     pthread_mutex_unlock(&g_directory_lock);
+    errno = saved_errno;
     return result;
 }
 
