@@ -1986,6 +1986,13 @@ static void ime_pump(product_host_t *host) {
 }
 static void ime_editor_focus(void *context, void *textarea, bool focused) {
     product_host_t *host = context;
+    // A failed provider can leave the native fallback keyboard open. Closing
+    // an editor must still dismiss it; only opening requires a working provider.
+    if (!focused) {
+        if (host->ime_keyboard && pxa_lvgl_ime_owns_textarea(textarea))
+            pxa_lvgl_ime_close(host->ime_keyboard);
+        return;
+    }
     if (!host->ime_directory || host->ime_failed) return;
     if (focused) {
         char path[1536];
@@ -1998,8 +2005,6 @@ static void ime_editor_focus(void *context, void *textarea, bool focused) {
         if (host->ime_keyboard) pxa_lvgl_ime_set_preferences(host->ime_keyboard,host->ime_config.preferences);
         if (!host->ime_keyboard) host->ime_keyboard = pxa_lvgl_ime_create(&host->ime_config);
         if (host->ime_keyboard) (void)pxa_lvgl_ime_focus(host->ime_keyboard,textarea);
-    } else if (host->ime_keyboard && pxa_lvgl_ime_owns_textarea(textarea)) {
-        pxa_lvgl_ime_close(host->ime_keyboard);
     }
 }
 

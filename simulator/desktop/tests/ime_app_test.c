@@ -698,7 +698,9 @@ static void pump_test(void *context) {
         assert(pxa_component_abort(host->runtime,host->ime_component,PXA_STOP_FAULT)==PXA_STATUS_OK);
         settle_ime(host); assert(!host->ime_provider && host->ime_keyboard);
         assert(find_matrix(lv_layer_top(),"2 ABC") || find_matrix(lv_layer_top(),"q")); capture(test,"fallback");
-        pxa_lvgl_ime_close(host->ime_keyboard); settle_ime(host);
+        assert(host->ime_failed);
+        ime_editor_focus(host,target,false); settle_ime(host);
+        assert(!host->ime_keyboard || !pxa_lvgl_ime_active(host->ime_keyboard));
         // An expired provider call cannot terminate the foreground component.
         pxa_component_snapshot_t before_expiration;
         assert(pxa_component_snapshot(host->runtime,host->active_component,&before_expiration)==PXA_STATUS_OK);
