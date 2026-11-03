@@ -13,7 +13,7 @@ extern "C" {
 
 #define PXA_UI_SERVICE_ID UINT16_C(3)
 #define PXA_UI_SERVICE_MAJOR UINT16_C(0)
-#define PXA_UI_SERVICE_MINOR UINT16_C(9)
+#define PXA_UI_SERVICE_MINOR UINT16_C(10)
 #define PXA_UI_SERVICE_PATCH UINT16_C(0)
 
 #define PXA_UI_TX_BEGIN UINT16_C(1)
@@ -28,6 +28,8 @@ extern "C" {
 #define PXA_UI_CANVAS_STREAM_OPEN UINT16_C(10)
 #define PXA_UI_THEME_GET UINT16_C(11)
 #define PXA_UI_TEXT_INPUT_FOCUS UINT16_C(12)
+#define PXA_UI_FONT_GLYPH UINT16_C(13)
+#define PXA_UI_FONT_GLYPH_MAX_BYTES 3072u
 #define PXA_UI_EVENT UINT16_C(0x8001)
 #define PXA_UI_ENVIRONMENT_CHANGED UINT16_C(0x8002)
 #define PXA_UI_RESOURCE_PRESSURE UINT16_C(0x8003)
@@ -292,6 +294,7 @@ typedef uint64_t pxa_ui_features_t;
 #define PXA_UI_FEATURE_TEXT_INPUT_CONTROL (UINT64_C(1) << 12)
 #define PXA_UI_FEATURE_DYNAMIC_TEXT (UINT64_C(1) << 13)
 #define PXA_UI_FEATURE_PASSWORD_INPUT (UINT64_C(1) << 14)
+#define PXA_UI_FEATURE_FONT_GLYPH (UINT64_C(1) << 15)
 
 #define PXA_UI_CONTROLLER_UP (UINT32_C(1) << 0)
 #define PXA_UI_CONTROLLER_DOWN (UINT32_C(1) << 1)
@@ -445,6 +448,19 @@ typedef pxa_status_t (*pxa_ui_backend_environment_fn)(
 typedef pxa_status_t (*pxa_ui_backend_text_input_focus_fn)(
     void *context, void *node_handle, bool focused);
 
+/* One system-font glyph, with tightly packed A8 coverage in caller storage.
+ * Offsets follow the usual baseline convention: ink starts at
+ * (pen_x + offset_x, line_top + line_height - baseline - height - offset_y).
+ * No font path, native handle or borrowed bitmap crosses the Guest boundary. */
+typedef struct {
+    uint16_t line_height, baseline, advance, width, height;
+    int16_t offset_x, offset_y;
+    uint16_t flags; /* bit 0: missing-glyph placeholder */
+} pxa_ui_font_glyph_t;
+typedef pxa_status_t (*pxa_ui_backend_font_glyph_fn)(void *context,
+    uint32_t codepoint, uint16_t pixels, pxa_ui_font_glyph_t *glyph,
+    uint8_t *coverage, size_t capacity);
+
 typedef struct {
     uint32_t struct_size;
     void *context;
@@ -459,6 +475,8 @@ typedef struct {
     pxa_ui_backend_environment_fn environment_changed;
     /* Optional, enabled by TEXT_INPUT_CONTROL. Runs on the UI executor. */
     pxa_ui_backend_text_input_focus_fn text_input_focus;
+    /* Optional FONT_GLYPH. The adapter synchronizes its font/UI executor. */
+    pxa_ui_backend_font_glyph_fn font_glyph;
 } pxa_ui_backend_t;
 
 typedef struct {

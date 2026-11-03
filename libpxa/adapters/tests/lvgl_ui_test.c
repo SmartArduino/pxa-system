@@ -1187,6 +1187,22 @@ int main(void) {
                                &backend) == PXA_STATUS_OK);
     g_adapter = adapter;
 
+    /* Rasterize through the public backend, on its executor, and verify an
+     * actual decoded A8 glyph, whitespace metrics and bounded destination. */
+    {
+        uint8_t coverage[PXA_UI_FONT_GLYPH_MAX_BYTES];
+        pxa_ui_font_glyph_t glyph;
+        assert(backend.font_glyph);
+        assert(!backend.font_glyph(backend.context, 'A', 14, &glyph, coverage, sizeof(coverage)));
+        assert(glyph.line_height == lv_font_montserrat_14.line_height && glyph.advance > 0);
+        unsigned ink = 0;
+        for (unsigned i = 0; i < (unsigned)glyph.width * glyph.height; ++i) ink += coverage[i];
+        assert(ink > 0);
+        assert(backend.font_glyph(backend.context, 'A', 14, &glyph, coverage, 1) == PXA_STATUS_UNSUPPORTED);
+        assert(!backend.font_glyph(backend.context, ' ', 14, &glyph, coverage, sizeof(coverage)));
+        assert(glyph.advance > 0 && (!glyph.width || !glyph.height));
+    }
+
     assert(pxa_component_create(g_runtime, 1, &g_component) == PXA_STATUS_OK);
     assert(pxa_ui_bind(service, g_component, &backend) == PXA_STATUS_OK);
     assert(pxa_component_begin_start(g_runtime, g_component) == PXA_STATUS_OK);

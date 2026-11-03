@@ -35,6 +35,8 @@ typedef struct {
     unsigned input_focus_changes;
     void *focused_handle;
     bool focused;
+    unsigned glyph_calls;
+    int invalid_glyph;
     int reject_commit;
     int reject_canvas;
     pxa_ui_transaction_info_t transaction;
@@ -42,6 +44,49 @@ typedef struct {
     pxa_ui_release_fn canvas_release;
     void *canvas_release_context;
 } backend_state_t;
+
+static pxa_status_t backend_font_glyph(void *context, uint32_t cp, uint16_t pixels,
+    pxa_ui_font_glyph_t *glyph, uint8_t *coverage, size_t capacity) {
+    backend_state_t *state = context;
+    ++state->glyph_calls;
+    assert(cp == 'A' && pixels == 12 && capacity >= 6);
+    *glyph = (pxa_ui_font_glyph_t){12, 3, 5, state->invalid_glyph ? 65 : 2, 3, -1, 2, 0};
+    for (unsigned i = 0; i < 6; ++i) coverage[i] = (uint8_t)(i * 40);
+    return PXA_STATUS_OK;
+}
+
+static void test_font_glyph(pxa_runtime_t *runtime, pxa_component_t component, backend_state_t *backend) {
+    uint8_t request[64], payload[8] = {0}, event[128];
+    pxa_writer_t writer;
+    pxa_message_view_t decoded;
+    size_t bytes;
+    unsigned before = backend->glyph_calls;
+    for (unsigned test = 0; test < 5; ++test) {
+        pxa_write_u32(payload, test == 2 ? 0xd800 : 'A');
+        pxa_write_u16(payload + 4, test == 3 ? 49 : 12);
+        pxa_write_u16(payload + 6, test == 4 ? 1 : 0);
+        backend->invalid_glyph = test == 1;
+        pxa_writer_init(&writer, request, sizeof(request));
+        assert(!pxa_writer_message(&writer, PXA_UI_SERVICE_ID, PXA_UI_FONT_GLYPH, 900 + test, payload, sizeof(payload)));
+        assert(!pxa_component_begin_event(runtime, component));
+        pxa_status_t status = pxa_runtime_control(runtime, component, request, writer.size);
+        assert(status == (test >= 2 ? PXA_STATUS_INVALID_ARGUMENT : PXA_STATUS_OK));
+        assert(!pxa_component_finish_event(runtime, component, 1));
+        if (test >= 2) continue;
+        assert(!pxa_event_pop(runtime, component, event, sizeof(event), &bytes));
+        assert(!pxa_message_decode(event, bytes, sizeof(event), &decoded));
+        assert(decoded.opcode == PXA_UI_FONT_GLYPH && decoded.request_token == 900 + test);
+        if (test == 1) assert(decoded.payload.size == 4 && (int32_t)pxa_read_u32(decoded.payload.data) == PXA_STATUS_PROTOCOL_ERROR);
+        else {
+            assert(decoded.payload.size == 26 && !pxa_read_u32(decoded.payload.data));
+            assert(pxa_read_u16(decoded.payload.data + 4) == 12);
+            assert((int16_t)pxa_read_u16(decoded.payload.data + 14) == -1);
+            assert(decoded.payload.data[25] == 200);
+        }
+    }
+    assert(backend->glyph_calls == before + 2);
+    backend->invalid_glyph = 0;
+}
 
 static pxa_status_t backend_input_focus(void *context, void *node, bool focused) {
     backend_state_t *state = context;
@@ -1133,7 +1178,7 @@ int main(void) {
                       PXA_UI_FEATURE_CONTROLLER_INPUT |
                       PXA_UI_FEATURE_MULTIPLE_SURFACES |
                       PXA_UI_FEATURE_CANVAS_STREAM_IO |
-                      PXA_UI_FEATURE_TEXT_INPUT_CONTROL | PXA_UI_FEATURE_DYNAMIC_TEXT;
+                      PXA_UI_FEATURE_TEXT_INPUT_CONTROL | PXA_UI_FEATURE_DYNAMIC_TEXT | PXA_UI_FEATURE_FONT_GLYPH;
     config.allocator_context = &allocator;
     config.allocate = test_allocate;
     config.release = test_release;
@@ -1173,6 +1218,7 @@ int main(void) {
     backend.surface_close = backend_surface_close;
     backend.environment_changed = backend_environment_changed;
     backend.text_input_focus = backend_input_focus;
+    backend.font_glyph = backend_font_glyph;
     assert(pxa_ui_bind(service, component, &backend) == PXA_STATUS_OK);
     assert(pxa_ui_get_environment(service, component, PXA_UI_PRIMARY_SURFACE,
                                   &primary_environment) == PXA_STATUS_OK);
@@ -1236,6 +1282,7 @@ int main(void) {
                    pxa_read_u32(decoded.payload.data + 4) == 2);
         }
     }
+    test_font_glyph(runtime, component, &backend_state);
     test_canvas_stream(runtime, component, &backend_state);
     test_events(runtime, component, service);
     test_controller_edges(runtime, component, service, &allocator);

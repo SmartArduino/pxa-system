@@ -3630,7 +3630,7 @@ static int run_product_simulator(const options_t *input,
         PXA_UI_FEATURE_CONTROLLER_INPUT | PXA_UI_FEATURE_MULTIPLE_SURFACES |
         PXA_UI_FEATURE_CANVAS_STREAM_IO;
     if (!owns_display || host.ime_directory) ui_config.features |= PXA_UI_FEATURE_TEXT_INPUT_CONTROL;
-    ui_config.features |= PXA_UI_FEATURE_DYNAMIC_TEXT | PXA_UI_FEATURE_PASSWORD_INPUT;
+    ui_config.features |= PXA_UI_FEATURE_DYNAMIC_TEXT | PXA_UI_FEATURE_PASSWORD_INPUT | PXA_UI_FEATURE_FONT_GLYPH;
 #ifdef PXSYS_DESKTOP_TEXT_FONT
     ui_config.features |= PXA_UI_FEATURE_SIZED_TEXT;
 #endif

@@ -281,6 +281,52 @@ static pxa_status_t ui_control(void *context, pxa_runtime_t *runtime,
                                                     node->backend_handle,
                                                     data[8] != 0);
         }
+        case PXA_UI_FONT_GLYPH: {
+            const uint8_t *data = message->payload.data;
+            uint32_t codepoint;
+            uint16_t pixels;
+            pxa_ui_font_glyph_t glyph = {0};
+            pxa_status_t status;
+            uint8_t *out;
+            size_t bytes = 0;
+            if (!message->request_token || message->payload.size != 8)
+                return PXA_STATUS_INVALID_ARGUMENT;
+            codepoint = pxa_read_u32(data); pixels = pxa_read_u16(data + 4);
+            if (codepoint > 0x10ffff || (codepoint >= 0xd800 && codepoint <= 0xdfff) ||
+                pixels < 8 || pixels > 48 || pxa_read_u16(data + 6))
+                return PXA_STATUS_INVALID_ARGUMENT;
+            if (!(service->config.features & PXA_UI_FEATURE_FONT_GLYPH) || !entry->backend.font_glyph)
+                return PXA_STATUS_UNSUPPORTED;
+            status = pxa_request_begin_reserved(runtime, component, message->request_token,
+                PXA_UI_SERVICE_ID, PXA_UI_FONT_GLYPH, 0, 16 + PXA_UI_FONT_GLYPH_MAX_BYTES);
+            if (status != PXA_STATUS_OK) return status;
+            status = pxa_request_commit(runtime, component, message->request_token);
+            if (status != PXA_STATUS_OK) return status;
+            out = pxa_ui_alloc(service, 16 + PXA_UI_FONT_GLYPH_MAX_BYTES);
+            if (!out) return pxa_request_complete(runtime, component, message->request_token,
+                PXA_STATUS_RESOURCE_LIMIT, NULL, 0);
+            status = entry->backend.font_glyph(entry->backend.context, codepoint, pixels,
+                &glyph, out + 16, PXA_UI_FONT_GLYPH_MAX_BYTES);
+            if (!pxa_status_is_known(status)) status = PXA_STATUS_IO_ERROR;
+            if (status == PXA_STATUS_OK) {
+                bytes = (size_t)glyph.width * glyph.height;
+                if (!glyph.line_height || glyph.line_height > 128 || glyph.baseline > glyph.line_height ||
+                    glyph.advance > 128 || glyph.width > 64 || glyph.height > 64 ||
+                    bytes > PXA_UI_FONT_GLYPH_MAX_BYTES || glyph.offset_x < -128 || glyph.offset_x > 128 ||
+                    glyph.offset_y < -128 || glyph.offset_y > 128 || (glyph.flags & ~1u))
+                    status = PXA_STATUS_PROTOCOL_ERROR;
+            }
+            if (status == PXA_STATUS_OK) {
+                pxa_write_u16(out, glyph.line_height); pxa_write_u16(out + 2, glyph.baseline);
+                pxa_write_u16(out + 4, glyph.advance); pxa_write_u16(out + 6, glyph.width);
+                pxa_write_u16(out + 8, glyph.height); pxa_write_u16(out + 10, (uint16_t)glyph.offset_x);
+                pxa_write_u16(out + 12, (uint16_t)glyph.offset_y); pxa_write_u16(out + 14, glyph.flags);
+            }
+            pxa_status_t completed = pxa_request_complete(runtime, component, message->request_token,
+                status, status == PXA_STATUS_OK ? out : NULL, status == PXA_STATUS_OK ? 16 + bytes : 0);
+            pxa_ui_free(service, out);
+            return completed;
+        }
         case PXA_UI_THEME_GET: {
             uint8_t payload[PXA_UI_THEME_WIRE_BYTES];
             pxa_status_t status;
@@ -348,8 +394,10 @@ pxa_status_t pxa_ui_bind(pxa_ui_service_t *service,
     entry->component = component;
     /* Accept the pre-0.7 backend prefix; the new hook remains null. */
     memcpy(&entry->backend, backend, offsetof(pxa_ui_backend_t, text_input_focus));
-    if (backend->struct_size >= sizeof(*backend))
+    if (backend->struct_size >= offsetof(pxa_ui_backend_t, font_glyph))
         entry->backend.text_input_focus = backend->text_input_focus;
+    if (backend->struct_size >= sizeof(*backend))
+        entry->backend.font_glyph = backend->font_glyph;
     entry->primary.id = PXA_UI_PRIMARY_SURFACE;
     entry->primary.occupied = 1;
     entry->primary.environment.surface = PXA_UI_PRIMARY_SURFACE;

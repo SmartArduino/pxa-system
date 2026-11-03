@@ -1,11 +1,11 @@
 {
-  "schema": "pxa-ui-spec-0.9",
+  "schema": "pxa-ui-spec-0.10",
   "status": "draft",
   "service": {
     "name": "ui",
     "id": 3,
     "major": 0,
-    "minor": 9,
+    "minor": 10,
     "patch": 0
   },
   "byte_order": "little-endian",
@@ -78,6 +78,10 @@
     {
       "name": "password-input",
       "bit": 14
+    },
+    {
+      "name": "font-glyph",
+      "bit": 15
     }
   ],
   "opcodes": [
@@ -189,6 +193,16 @@
       "direction": "guest-to-host",
       "payload": "surface:u32|node:u32|focused:u8|reserved:zero[3]; envelope request_token zero",
       "rule": "Requires text-input-control. Node must be a committed text-input owned by the caller. Focus is denied for hidden or disabled inputs. Host system IME opens/closes asynchronously, with system theme and input settings. No application dictionary is required."
+    },
+    {
+      "name": "font-glyph",
+      "id": 13,
+      "direction": "guest-to-host",
+      "feature": "font-glyph",
+      "since": "0.10",
+      "payload": "codepoint:u32|native-size-pixels:u16|reserved-zero:u16",
+      "result": "status:i32|line-height:u16|baseline-from-bottom:u16|advance:u16|width:u16|height:u16|offset-x:i16|offset-y:i16|flags:u16|coverage:A8[width*height]",
+      "rules": "Nonzero request token. Unicode scalar, pixels 8..48. Result dimensions <=64, coverage <=3072 bytes, line-height 1..128, baseline <= line-height, advance <=128, offsets -128..128, flags bit 0 means placeholder. On error only status is returned. No native handle or path. Independent glyph advances without kerning; backend chooses a system-font fallback when the requested size is unavailable. Glyph bitmap is copied, tightly packed, with no Guest pointer retention."
     }
   ],
   "theme_snapshot": {
@@ -803,7 +817,7 @@
     }
   ],
   "resource_policy": "Hosts enforce private byte budgets and queue policy. Node, canvas, property, and text counts are not ABI limits and are never advertised as fixed quotas.",
-  "protocol_version": "0.9.0",
+  "protocol_version": "0.10.0",
   "events": [
     {
       "name": "text",

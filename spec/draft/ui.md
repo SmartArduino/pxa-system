@@ -1,4 +1,4 @@
-# PXA UI Service 0.9.0
+# PXA UI Service 0.10.0
 
 UI is a backend-neutral command protocol. The Host owns the rendered tree;
 the service does not retain a second property-complete scene. A Component has a
@@ -96,6 +96,28 @@ scroll it emits `VISIBLE_RANGE(first, count)`, including a Host-selected
 overscan window. The Guest materializes only that range using stable item node
 IDs and `PATCH` or `REPLACE_SUBTREE`; the overscan size is policy rather than an
 ABI constant.
+
+## System glyphs
+
+`font-glyph` (UI 0.10, bit 15) lets raster applications use the system font in
+their own buffers. `FONT_GLYPH` (13) takes a nonzero request token and
+`codepoint:u32 | native-size-pixels:u16 | reserved-zero:u16`. The Unicode scalar
+must be valid and size is 8..48 native pixels, independent of display density.
+The result is a status followed by line height, baseline distance from the
+bottom, advance, ink width/height, signed ink offsets and placeholder flags,
+then tightly packed A8 coverage. Exact field sizes and bounds are normative in
+`pxa-ui.json`. A whitespace glyph may have no ink and a nonzero advance.
+Position ink at `(pen_x + offset_x, line_top + line_height - baseline - height - offset_y)`.
+Advances are independent glyph metrics without kerning.
+
+The Host reserves a bounded reply before invoking the backend. Font lookup,
+rasterization, bitmap copy and release all run on the backend UI executor; no
+native font or cache pointer crosses the ABI. The LVGL adapter reuses its
+bounded sized-font registry and system source, falling back to its semantic
+body font when that source/size is unavailable. Guests own their copied glyphs
+and should use a bounded cache. Font files remain Host resources. C uses
+`pxa_font.h`; C++ uses `ctx.fonts().glyph(codepoint, pixels)` and receives an
+owned `FontGlyph` whose coverage survives later events.
 
 ## Feature profiles
 

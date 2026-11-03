@@ -293,7 +293,7 @@ def validate_specs() -> tuple[int, int]:
     validate_named_registries(core, "Core")
 
     expected_services = {
-        "window": (2, "0.4.0"), "ui": (3, "0.9.0"),
+        "window": (2, "0.4.0"), "ui": (3, "0.10.0"),
         "clock": (4, "0.3.0"), "fs": (5, "0.5.0"),
         "storage": (6, "0.1.0"), "ipc": (7, "0.1.0"),
         "sensor": (8, "0.1.0"), "net": (9, "0.6.0"),
@@ -348,7 +348,7 @@ def validate_specs() -> tuple[int, int]:
             "Streaming container constants mismatch")
 
     ui = specs["ui"]
-    require(len(ui["opcodes"]) == 18 and
+    require(len(ui["opcodes"]) == 19 and
             any(op["name"] == "text-input-focus" and op["id"] == 12
                 for op in ui["opcodes"]), "UI opcode inventory mismatch")
     require(len(ui["commands"]) == 5, "UI command inventory mismatch")

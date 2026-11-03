@@ -10,6 +10,7 @@
 #include "assets.hpp"
 #include "storage.hpp"
 #include "fs.hpp"
+#include "font.hpp"
 #include "permission.hpp"
 #include "audio.hpp"
 #include "clock.hpp"
@@ -55,6 +56,7 @@ public:
     AssetService assets() noexcept { return {transport_, requests_}; }
     StorageService storage() noexcept { return {transport_, requests_}; }
     FilesystemService fs() noexcept { return {transport_, requests_}; }
+    FontService fonts() noexcept { return {transport_, requests_}; }
     PermissionService permissions() noexcept { return {transport_, requests_}; }
     AudioService audio() noexcept { return {transport_, requests_}; }
     ui::ThemeService theme() noexcept { return {transport_, requests_}; }

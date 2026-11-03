@@ -3092,6 +3092,62 @@ static pxa_status_t backend_text_input_focus(void *context, void *node_handle,
 
 typedef struct {
     pxa_lvgl_ui_t *ui;
+    uint32_t codepoint;
+    uint16_t pixels;
+    pxa_ui_font_glyph_t *glyph;
+    uint8_t *coverage;
+    size_t capacity;
+    pxa_status_t status;
+} font_glyph_request_t;
+
+static void execute_font_glyph(void *data) {
+    font_glyph_request_t *r = data;
+    const lv_font_t *font = sized_font(r->ui, r->pixels, 1);
+    lv_font_glyph_dsc_t dsc = {0};
+    if (!font) font = font_for_role(r->ui, PXA_UI_FONT_ROLE_BODY);
+    if (!font || !lv_font_get_glyph_dsc(font, &dsc, r->codepoint, 0)) {
+        r->status = PXA_STATUS_NOT_FOUND; return;
+    }
+    if (font->line_height <= 0 || font->line_height > 128 || font->base_line < 0 ||
+        font->base_line > font->line_height || dsc.adv_w > 128 || dsc.box_w > 64 ||
+        dsc.box_h > 64 || (size_t)dsc.box_w * dsc.box_h > r->capacity ||
+        dsc.format < LV_FONT_GLYPH_FORMAT_A1 || dsc.format > LV_FONT_GLYPH_FORMAT_A8) {
+        r->status = PXA_STATUS_UNSUPPORTED; lv_font_glyph_release_draw_data(&dsc); return;
+    }
+    *r->glyph = (pxa_ui_font_glyph_t){(uint16_t)font->line_height, (uint16_t)font->base_line,
+        dsc.adv_w, dsc.box_w, dsc.box_h, dsc.ofs_x, dsc.ofs_y, dsc.is_placeholder ? 1u : 0u};
+    r->status = PXA_STATUS_OK;
+    if (dsc.box_w && dsc.box_h) {
+        lv_draw_buf_t *scratch = lv_draw_buf_create(dsc.box_w, dsc.box_h, LV_COLOR_FORMAT_A8, LV_STRIDE_AUTO);
+        if (!scratch) r->status = PXA_STATUS_RESOURCE_LIMIT;
+        else {
+            const lv_draw_buf_t *bitmap = lv_font_get_glyph_bitmap(&dsc, scratch);
+            if (!bitmap || bitmap->header.cf != LV_COLOR_FORMAT_A8 || !bitmap->data ||
+                bitmap->header.w < dsc.box_w || bitmap->header.h < dsc.box_h ||
+                bitmap->header.stride < dsc.box_w ||
+                (size_t)(dsc.box_h - 1) * bitmap->header.stride + dsc.box_w > bitmap->data_size)
+                r->status = PXA_STATUS_IO_ERROR;
+            else for (uint16_t y = 0; y < dsc.box_h; ++y)
+                memcpy(r->coverage + (size_t)y * dsc.box_w,
+                    bitmap->data + (size_t)y * bitmap->header.stride, dsc.box_w);
+            lv_font_glyph_release_draw_data(&dsc);
+            lv_draw_buf_destroy(scratch);
+            return;
+        }
+    }
+    lv_font_glyph_release_draw_data(&dsc);
+}
+
+static pxa_status_t backend_font_glyph(void *context, uint32_t codepoint, uint16_t pixels,
+    pxa_ui_font_glyph_t *glyph, uint8_t *coverage, size_t capacity) {
+    pxa_lvgl_ui_t *ui = context;
+    font_glyph_request_t request = {ui, codepoint, pixels, glyph, coverage, capacity, PXA_STATUS_BAD_STATE};
+    pxa_status_t status = ui->config.execute(execute_font_glyph, &request, ui->config.execute_user_data);
+    return status == PXA_STATUS_OK ? request.status : status;
+}
+
+typedef struct {
+    pxa_lvgl_ui_t *ui;
     pxa_ui_environment_t environment;
 } environment_change_t;
 
@@ -3594,6 +3650,7 @@ pxa_status_t pxa_lvgl_ui_init(void *workspace, size_t workspace_size,
     backend->reset = backend_reset;
     backend->environment_changed = backend_environment;
     backend->text_input_focus = backend_text_input_focus;
+    backend->font_glyph = backend_font_glyph;
     *output = ui;
     return PXA_STATUS_OK;
 }
