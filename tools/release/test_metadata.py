@@ -7,6 +7,14 @@ from metadata import outputs
 
 
 class MetadataTests(unittest.TestCase):
+    def test_common_ui_capabilities_include_shipped_system_glyphs(self):
+        with tempfile.TemporaryDirectory() as td:
+            backend = Path(td)
+            document = json.loads(outputs(backend=backend)[backend/'app/pxa-capabilities.json'])
+            ui = next(service for service in document['services'] if service['service_id'] == 3)
+            self.assertGreaterEqual((ui['major'], ui['minor']), (0, 10))
+            self.assertTrue(ui['features'] & (1 << 15))
+
     def test_common_game_capabilities_include_shipped_borrowed_blit(self):
         with tempfile.TemporaryDirectory() as td:
             backend=Path(td)

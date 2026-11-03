@@ -9,7 +9,8 @@
     "sized-text",
     "text-input-control",
     "dynamic-text",
-    "password-input"
+    "password-input",
+    "font-glyph"
   ],
   "assets": [
     "image-decode",
