@@ -136,7 +136,9 @@ def main():
             'source': 'real-pxa-simulator', 'post_processed': False,
             'navigation_mode': env.get('PXA_SIM_NAV_MODE', 'default'),
             'display_shape': 'rectangle' if args.store_screenshots else 'profile',
-            'visual_review': 'Inspect every original PNG for a complete rectangular frame without performance overlays, gesture bars or three-button navigation.',
+            'visual_review': ('Inspect every original PNG for a complete rectangular frame without performance overlays, gesture bars or three-button navigation.'
+                              if args.store_screenshots else
+                              'Inspect every original PNG for layout, clipping and input feedback.'),
         }
 
         def command(directory, name, arguments, *, required=True, timeout=15):
