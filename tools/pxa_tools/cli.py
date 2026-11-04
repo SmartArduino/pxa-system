@@ -39,6 +39,8 @@ def parser():
             cmd.add_argument('--watch', action='store_true')
             cmd.add_argument('--duration-ms', type=int)
             cmd.add_argument('--screenshot', type=Path)
+            cmd.add_argument('--store-screenshots', action='store_true',
+                             help='Use a rectangular simulator viewport with system navigation hidden')
     sdk = commands.add_parser('sdk')
     sub = sdk.add_subparsers(dest='sdk_command', required=True)
     update = sub.add_parser('update')

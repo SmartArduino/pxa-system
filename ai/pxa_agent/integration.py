@@ -72,6 +72,8 @@ Create apps in `apps/<name>` with `init`; preserve existing app IDs, signing ide
 Implement the user's goal, build it, run the real Guest, exercise the relevant controls and inspect screenshots.
 Continue fixing observed failures and incorporate user feedback; a successful build alone does not complete the goal.
 Use `verify <app>` for repeatable multi-screen checks. Runtime checks do not replace visual review or prove hardware FPS.
+For store screenshots use `verify <app> --store-screenshots` with the real PXA simulator and a rectangular viewport without rounded or circular masks.
+Disable performance overlays and bottom gesture/three-button navigation before capture, including app-owned debug UI. Inspect every original PNG before upload. Never crop, edit or generate replacement screenshots.
 Write test evidence under ignored `local/artifacts/`. Keep private signing keys and store tokens outside the project.
 For a connected device, discover ports and read INFO before selecting its CPU, board or package. Keep existing device data.
 Use `firmware prepare` before an authorized firmware upgrade. App-only flashing requires the actual partition layout to match.

@@ -49,10 +49,12 @@ IDs. If a future standard covers it, document migration to that standard.
 
 Use `.pxa/pxa verify apps/<name> --profiles pai-touch --store-screenshots`
 (or MCP `pxa_verify(store_screenshots=true)`) to capture the real PXA Guest
-with system navigation hidden at startup. Disable any performance overlay
-before capture, including app-owned debug UI. Inspect every original PNG
-before upload: no performance overlay, bottom gesture bar or three-button
-navigation. Never crop or edit an image to conceal these elements.
+in a rectangular viewport with rounded/circular masks, safe insets and system
+navigation disabled at startup. Disable any performance overlay before capture,
+including app-owned debug UI. Inspect every original PNG before upload and
+check the complete rectangular frame for performance overlays, bottom gesture
+bars or three-button navigation. Use the captured originals directly.
+Never crop, retouch or generate replacement screenshots.
 The result records capture settings and original SHA-256 hashes;
 runtime success does not imply visual approval.
 

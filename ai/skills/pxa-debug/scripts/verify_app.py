@@ -89,7 +89,7 @@ def main():
     parser.add_argument('--scenario', type=Path)
     parser.add_argument('--headless', action='store_true')
     parser.add_argument('--store-screenshots', action='store_true',
-                        help='Hide simulator system navigation before capturing original store screenshots')
+                        help='Capture rectangular simulator images with profiling and system navigation disabled')
     parser.add_argument('--online', action='store_true')
     parser.add_argument('--timeout', type=int, default=120, help='bounded startup time per profile (10..600 seconds)')
     args = parser.parse_args()
@@ -129,12 +129,14 @@ def main():
             env.update(SDL_VIDEODRIVER='dummy', SDL_AUDIODRIVER='dummy')
         if args.store_screenshots:
             env['PXA_SIM_NAV_MODE'] = 'gesture-no-bar'
+            env.pop('PXA_SIMULATOR_PERF', None)
         result.update(project=str(project), app_id=app_id, headless=args.headless, ipc_isolated=True)
         result['capture'] = {
             'purpose': 'store' if args.store_screenshots else 'debug',
             'source': 'real-pxa-simulator', 'post_processed': False,
             'navigation_mode': env.get('PXA_SIM_NAV_MODE', 'default'),
-            'visual_review': 'Inspect every original PNG: no performance overlay, gesture bar or three-button navigation.',
+            'display_shape': 'rectangle' if args.store_screenshots else 'profile',
+            'visual_review': 'Inspect every original PNG for a complete rectangular frame without performance overlays, gesture bars or three-button navigation.',
         }
 
         def command(directory, name, arguments, *, required=True, timeout=15):
@@ -156,6 +158,8 @@ def main():
             log_path = directory / 'run.log'
             arguments = [str(pxa), 'run', str(project), '--debug', '--profile', profile,
                          '--duration-ms', str(args.timeout * 1000)]
+            if args.store_screenshots:
+                arguments.append('--store-screenshots')
             if not args.online:
                 arguments.append('--offline')
             started = time.monotonic()

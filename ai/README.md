@@ -145,7 +145,7 @@ uv run --python 3.12 https://pxa.doit.am/setup.py --workspace . --mode board
 .pxa/pxa verify apps/counter --profiles pai-touch --store-screenshots
 ```
 
-商城截图模式在启动模拟器前隐藏手势条和三按键导航，记录原始图片摘要。先关闭所有性能浮层，再逐张检查原图；不能裁剪或修图代替关闭系统界面。MCP 对应参数为 `pxa_verify(store_screenshots=true)`。故障排查见 [AI 开发排障](https://pxa.doit.am/docs/ai-troubleshooting/)。
+商城截图模式通过 DevKit 的 `run --store-screenshots` 启动真实模拟器，使用无圆角矩形视口，关闭圆屏遮罩及安全边距，隐藏手势条和三按键导航，并关闭模拟器性能采样。应用自身绘制的性能浮层须在拍摄前关闭。逐张检查原始图片，确认完整矩形画面及浮层状态后上传，保留工具记录的原始图片摘要。禁止裁剪、修图或生成图替代实际截图及上述设置。MCP 对应参数为 `pxa_verify(store_screenshots=true)`。故障排查见 [AI 开发排障](https://pxa.doit.am/docs/ai-troubleshooting/)。
 
 ## 按锁定版本查接口
 

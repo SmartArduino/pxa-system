@@ -39,6 +39,7 @@ def create_server(env):
         'Board ports may edit only the selected BSP, profile and generated lock; keep SDK/API read-only. Use scope checks. '
         'Keep original app/signing identities and device saves. Use only user-authorized device changes, firmware updates and publishing. '
         'Long operations return a job_id: poll pxa_job_status, then inspect evidence. Runtime success is not visual or hardware acceptance. '
+        'Store screenshots use the real simulator, rectangular frames without rounded masks, and hidden performance overlays and bottom navigation. Inspect originals before upload. '
         'Browser store approval happens in the user browser; never ask for private keys, passwords or tokens in chat.')
     read = ToolAnnotations(readOnlyHint=True, destructiveHint=False)
 
@@ -175,7 +176,7 @@ def create_server(env):
     @tool()
     def pxa_verify(project: str, profiles: list[Profile] | None = None, scenario: str | None = None,
                    store_screenshots: bool = False) -> dict:
-        """Run real Guest checks. For store images hide navigation at capture time; inspect every original PNG."""
+        """Run real Guest checks. Store mode captures rectangular frames with navigation hidden. Disable app-owned performance overlays and inspect every original PNG."""
         path = env.project(project)
         env.ensure_identity(path)
         arguments = ['verify', str(path)]

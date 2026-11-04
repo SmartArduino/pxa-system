@@ -51,10 +51,13 @@ and lists headers for an empty query. Verification uses the pinned SDK's PXADB
 directly when available. Headless live jobs pass SDL settings into the container.
 
 Use `verify apps/name --profiles pai-touch --store-screenshots` or MCP
-`pxa_verify(store_screenshots=true)`. Navigation is hidden before capture.
-Disable performance overlays, inspect every original image, and never crop or
-retouch system controls away. Evidence records capture settings and image hashes;
-runtime success is not visual approval.
+`pxa_verify(store_screenshots=true)`. This uses the DevKit's
+`run --store-screenshots` with a rectangular simulator viewport, zero corner
+radius and safe insets, hidden navigation and simulator profiling disabled.
+Disable app-owned performance overlays before capture. Inspect every original
+image for a complete rectangular frame and hidden overlays/navigation before
+upload. Never crop, retouch or generate replacement screenshots. Evidence records
+capture settings and original image hashes. Visual review remains required.
 
 For related live simulator actions, use MCP `pxa_interact(job_id, steps)`
 to reuse one SDK session: tap, swipe, controller, wait, screenshot or cancel.

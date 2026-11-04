@@ -37,13 +37,15 @@ def simulator_bin(name: str):
     return native
 
 
-def profile_options(name: str):
+def profile_options(name: str, *, store_screenshots=False):
     if not name or any(c not in 'abcdefghijklmnopqrstuvwxyz0123456789-' for c in name):
         raise ToolError('Invalid screen profile')
     path = SDK_ROOT / 'share/pxa/profiles' / (name + '.toml')
     if not path.is_file():
         path = workspace_root() / 'simulator/profiles' / (name + '.toml')
     profile = tomllib.loads(path.read_text())['desktop']
+    if store_screenshots:
+        profile.update(corner_radius=0, round=False, safe_insets=[0, 0, 0, 0], gestures=False)
     result = ['--width', str(profile['width']), '--height', str(profile['height']),
               '--density-dpi', str(profile.get('density_dpi', 160))]
     for source, option in [('corner_radius', '--corner-radius'), ('locale', '--locale'),
@@ -58,6 +60,8 @@ def profile_options(name: str):
         result += ['--gestures']
     if profile.get('theme') == 'dark':
         result += ['--dark']
+    if store_screenshots:
+        result += ['--no-navigation-bar']
     return result
 
 
@@ -101,6 +105,9 @@ def run(project: Project, args):
     debug_service = None
     last_digest = None
     target = args.target
+    store_screenshots = getattr(args, 'store_screenshots', False)
+    if store_screenshots and args.device:
+        raise ToolError('Store screenshots require the real PXA simulator')
     if args.device:
         info = command([sys.executable, pxadb_path(), 'info', '--port', args.device,
                         '--baud', args.baud], capture=True)
@@ -159,7 +166,8 @@ def run(project: Project, args):
                                '--installed-packages-root', str(state / 'packages'),
                                '--state-root', str(state), '--publisher-key', str(public),
                                '--product-runner', str(simulator_bin('pxsys_product_simulator')),
-                               '--launch', project.app_id, *profile_options(args.profile)]
+                               '--launch', project.app_id,
+                               *profile_options(args.profile, store_screenshots=store_screenshots)]
                         if args.debug:
                             # Optional desktop debug bridge; ordinary runs have
                             # no extra process or polling service.
@@ -183,6 +191,9 @@ def run(project: Project, args):
                         if args.screenshot:
                             cmd += ['--screenshot', str(args.screenshot.resolve())]
                         env = os.environ.copy()
+                        if store_screenshots:
+                            env.pop('PXA_SIMULATOR_PERF', None)
+                            env['PXA_SIM_NAV_MODE'] = 'gesture-no-bar'
                         font = SDK_ROOT / 'share/pxa/fonts/noto_sans_cjk_common.ttf'
                         if font.is_file():
                             env['PXA_SIMULATOR_FONT'] = str(font)

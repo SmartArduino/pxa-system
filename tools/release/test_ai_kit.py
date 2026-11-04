@@ -4,6 +4,7 @@ from __future__ import annotations
 import importlib.util
 import hashlib
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -159,6 +160,73 @@ class Scenarios(unittest.TestCase):
 
 
 class ScreenProfile(unittest.TestCase):
+    def test_store_capture_uses_rectangle_without_changing_profile(self):
+        sys.path.insert(0, str(SYSTEM / 'tools'))
+        from pxa_tools import run
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            profiles = root / 'share/pxa/profiles'
+            profiles.mkdir(parents=True)
+            path = profiles / 'test.toml'
+            for shape in ('corner_radius=58', 'round=true'):
+                with self.subTest(shape=shape):
+                    original = ('[desktop]\nwidth=296\nheight=240\ndensity_dpi=240\n'
+                                'safe_insets=[8,10,8,10]\ngestures=true\n' + shape + '\n')
+                    path.write_text(original)
+                    with patch.object(run, 'SDK_ROOT', root):
+                        normal = run.profile_options('test')
+                        capture = run.profile_options('test', store_screenshots=True)
+                    self.assertIn('--gestures', normal)
+                    self.assertNotIn('--no-navigation-bar', normal)
+                    self.assertNotIn('--round', capture)
+                    self.assertNotIn('--gestures', capture)
+                    self.assertIn('--no-navigation-bar', capture)
+                    for option, value in (('--width', '296'), ('--height', '240'),
+                                          ('--density-dpi', '240'), ('--corner-radius', '0'),
+                                          ('--safe-insets', '0,0,0,0')):
+                        self.assertEqual(capture[capture.index(option) + 1], value)
+                    self.assertEqual(path.read_text(), original)
+
+    def test_store_capture_flag_and_device_rejection(self):
+        sys.path.insert(0, str(SYSTEM / 'tools'))
+        from pxa_tools.cli import parser
+        from pxa_tools.common import ToolError
+        from pxa_tools.run import run
+        from types import SimpleNamespace
+        self.assertTrue(parser().parse_args(['run', '--store-screenshots']).store_screenshots)
+        self.assertFalse(parser().parse_args(['run']).store_screenshots)
+        with self.assertRaisesRegex(ToolError, 'real PXA simulator'):
+            run(None, SimpleNamespace(target='simulator', device='/dev/test', store_screenshots=True))
+
+    def test_verifier_forwards_store_flag_and_disables_profiling(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            project = root / 'app'
+            project.mkdir()
+            (project / 'package.json').write_text('{"id":"example"}')
+            pxa = root / 'sdk/bin/pxa'
+            pxa.parent.mkdir(parents=True)
+            pxa.touch()
+            profiles = root / 'sdk/share/pxa/profiles'
+            profiles.mkdir(parents=True)
+            for profile in debug.PROFILES:
+                (profiles / (profile + '.toml')).write_text('[desktop]\nwidth=296\nheight=240\n')
+            output = root / 'evidence'
+            args = ['verify_app.py', str(project), '--pxa', str(pxa), '--output', str(output),
+                    '--profiles', 'pai-touch', '--store-screenshots']
+            completed = subprocess.CompletedProcess([], 0, 'PXA test', '')
+            with patch.object(sys, 'argv', args), patch.dict(os.environ, PXA_SIMULATOR_PERF='1'), \
+                 patch.object(debug.subprocess, 'run', return_value=completed), \
+                 patch.object(debug.subprocess, 'Popen', side_effect=RuntimeError('test launch boundary')) as launch:
+                self.assertEqual(debug.main(), 1)
+            self.assertIn('--store-screenshots', launch.call_args.args[0])
+            self.assertNotIn('PXA_SIMULATOR_PERF', launch.call_args.kwargs['env'])
+            self.assertEqual(launch.call_args.kwargs['env']['PXA_SIM_NAV_MODE'], 'gesture-no-bar')
+            result = json.loads((output / 'result.json').read_text())
+            self.assertEqual(result['capture']['display_shape'], 'rectangle')
+            self.assertEqual(result['capture']['source'], 'real-pxa-simulator')
+            self.assertFalse(result['capture']['post_processed'])
+
     def test_theme_is_passed_to_native_simulator(self):
         sys.path.insert(0, str(SYSTEM / 'tools'))
         from pxa_tools.run import profile_options
