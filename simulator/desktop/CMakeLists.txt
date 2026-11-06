@@ -387,3 +387,17 @@ endforeach()
 
 target_link_libraries(pxsys_product_simulator PRIVATE pxa_adapters_image_posix)
 target_link_libraries(pxsys_desktop_simulator PRIVATE pxa_adapters_image_posix)
+
+# Optional native Host composition supplied by the embedding workspace.
+set(PXSYS_DESKTOP_HOST_EXTENSIONS_DIR "" CACHE PATH "Native Host extension provider")
+if(PXSYS_DESKTOP_HOST_EXTENSIONS_DIR)
+    set(PXSYS_DESKTOP_HOST_EXTENSION_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
+    add_subdirectory("${PXSYS_DESKTOP_HOST_EXTENSIONS_DIR}" host-extensions)
+    if(NOT TARGET pxsys_desktop_host_extensions)
+        message(FATAL_ERROR "Host extension provider must define pxsys_desktop_host_extensions")
+    endif()
+    foreach(product pxsys_desktop_simulator pxsys_product_simulator)
+        target_link_libraries(${product} PRIVATE pxsys_desktop_host_extensions)
+        target_compile_definitions(${product} PRIVATE PXSYS_DESKTOP_HOST_EXTENSIONS=1)
+    endforeach()
+endif()

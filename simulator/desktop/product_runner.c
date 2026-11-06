@@ -12,6 +12,7 @@
 #include <limits.h>
 #include <math.h>
 #include "desktop_resources.h"
+#include "host_extensions.h"
 
 #include <SDL2/SDL.h>
 #include <vorbis/vorbisfile.h>
@@ -258,6 +259,7 @@ typedef struct {
     uint8_t music_paused;
     product_sound_voice_t sound_voices[PRODUCT_AUDIO_SOUND_VOICES];
     pxa_permission_service_t *permissions;
+    void *host_extensions;
     pxa_surface_service_t *surfaces;
     pxa_game_render_service_t *game_render;
     pxa_device_service_t *device;
@@ -2059,6 +2061,7 @@ static void dispatch_component_events(product_host_t *host) {
                 !(ime_status==PXA_STATUS_RESOURCE_LIMIT && !result.event_consumed))
                 (void)ime_present(host,NULL);
         }
+        pxsys_desktop_host_extensions_poll(host->host_extensions);
         SDL_AtomicSet(&host->asset_ready, 0);
         if (host->assets != NULL && pxa_assets_service_poll(host->assets))
             SDL_AtomicSet(&host->asset_ready, 1);
@@ -2183,6 +2186,8 @@ static void product_focus_changed(void *context, bool focused) {
     product_host_t *host = context;
     if (host == NULL || host->focused == (uint8_t)focused) return;
     host->focused = focused ? 1u : 0u;
+    pxsys_desktop_host_extensions_foreground(host->host_extensions,
+        focused ? host->active_component : PXA_COMPONENT_INVALID);
     if (!focused && host->capture) desktop_capture_close(host,host->capture->id);
     if (!focused && host->ime_keyboard) pxa_lvgl_ime_close(host->ime_keyboard);
     host->pending_lifecycle = host->focused;
@@ -3362,6 +3367,7 @@ static pxa_status_t desktop_native_cooperate(void *context,
         host->native_controller_previous, host->native_controller_refreshed);
     dispatch_volume_keys(host);
     if (host->media_root) desktop_media_import_poll(host->media_root);
+    pxsys_desktop_host_extensions_poll(host->host_extensions);
     if (host->assets) (void)pxa_assets_service_poll(host->assets);
     if (host->audio) pxa_audio_service_poll(host->audio);
     if(host->fs)pxa_fs_service_poll(host->fs);
@@ -3785,8 +3791,10 @@ static int run_product_simulator(const options_t *input,
     }
     posix_fs_config.struct_size = sizeof(posix_fs_config);
     posix_fs_config.root_path = fs_path;
-    /* Match pai-touch's logical disk quota; this does not reserve memory. */
-    posix_fs_config.quota_bytes = 8u * 1024u * 1024u;
+    /* Desktop cameras produce much larger files than embedded test fixtures.
+     * This is a disk quota, not a memory reservation. Keep it configurable. */
+    posix_fs_config.quota_bytes = asset_setting("PXA_SIM_PRIVATE_FS_BYTES",
+        256u * 1024u * 1024u, 2u * 1024u * 1024u * 1024u);
     posix_fs_config.max_open_resources = 16;
     fs_backend_workspace = malloc(pxa_posix_fs_workspace_size(&posix_fs_config));
     if (fs_backend_workspace == NULL ||
@@ -4064,6 +4072,10 @@ static int run_product_simulator(const options_t *input,
             pxa_assets_service_workspace_size(&assets_config), host.runtime, &assets_config, &host.assets) != PXA_STATUS_OK ||
             pxa_assets_service_register(host.assets) != PXA_STATUS_OK) goto done;
     }
+    const pxsys_desktop_host_extensions_config_t extension_config = {
+        host.runtime, host.permissions, host.assets,
+        &host.resource_allocators[PXA_MEMORY_EXTERNAL][PXA_MEMORY_FRAME]};
+    host.host_extensions = pxsys_desktop_host_extensions_create(&extension_config);
     stage = "log service";
     log_config.struct_size = sizeof(log_config);
     log_config.write = simulator_log_write;
@@ -4332,6 +4344,8 @@ static int run_product_simulator(const options_t *input,
         fprintf(stderr, "PXA main component start status=%d\n", (int)status);
         goto done;
     }
+    pxsys_desktop_host_extensions_foreground(host.host_extensions,
+        host.focused ? component : PXA_COMPONENT_INVALID);
     /* An embedded system UI owns Home and Back; installing the standalone
      * strips would shadow its gesture handling. */
     if (owns_display) {
@@ -4514,6 +4528,8 @@ done:
     if (host.label_font != NULL) lv_freetype_font_delete(host.label_font);
     if (host.caption_font != NULL) lv_freetype_font_delete(host.caption_font);
     if (host.runtime != NULL) pxa_runtime_deinit(host.runtime);
+    pxsys_desktop_host_extensions_destroy(host.host_extensions);
+    host.host_extensions = NULL;
     pxa_fs_service_atomic_shutdown_begin(fs);
     if(fs_executor.thread) {
         SDL_LockMutex(fs_executor.queue_mutex);fs_executor.stopping=1;
