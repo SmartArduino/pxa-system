@@ -110,6 +110,12 @@ int pxa_assets_service_poll(pxa_assets_service_t *service);
 pxa_status_t pxa_assets_acquire_handle(pxa_runtime_t *runtime,
     pxa_component_t component, pxa_handle64_t handle, uint8_t expected_kind,
     pxa_raster_asset_t **output);
+/* Host-only producer bridge. Publishes immutable, fully initialized IMAGE
+ * pixels with the same owner/resource limits as decoded images. Consumes one
+ * reference only on success. Caller charges its allocation to the Host budget.
+ * Call on the serialized runtime thread. */
+pxa_status_t pxa_assets_publish_image(pxa_assets_service_t *,
+    pxa_component_t, pxa_raster_asset_t *, pxa_handle64_t *output);
 
 #ifdef __cplusplus
 }

@@ -169,6 +169,23 @@ static pxa_status_t publish_image(pxa_assets_service_t *s, pxa_component_t compo
     else decoded->image = NULL;
     return status;
 }
+pxa_status_t pxa_assets_publish_image(pxa_assets_service_t *s,
+    pxa_component_t component, pxa_raster_asset_t *asset, pxa_handle64_t *output) {
+    pxa_asset_object_view_t view;
+    if (!output) return PXA_STATUS_INVALID_ARGUMENT;
+    *output = 0;
+    if (!s || s->magic != ASSETS_MAGIC || !component || !asset)
+        return PXA_STATUS_INVALID_ARGUMENT;
+    pxa_asset_object_view(asset, &view);
+    if (view.kind != PXA_ASSET_IMAGE || !view.width || !view.height ||
+        (view.encoding != PXA_ASSET_ENCODING_RGB565 &&
+         view.encoding != PXA_ASSET_ENCODING_BGRA8888 &&
+         view.encoding != PXA_ASSET_ENCODING_BGRA8888_PREMULTIPLIED))
+        return PXA_STATUS_INVALID_ARGUMENT;
+    pxa_decoded_image_t decoded = {0};
+    decoded.image = asset;
+    return publish_image(s, component, &decoded, NULL, output);
+}
 static void encode_frame(uint8_t output[PXA_ASSETS_FRAME_RESULT_BYTES], pxa_handle64_t handle,
                           const pxa_decoded_image_t *decoded, uint32_t bytes,
                           const pxa_image_frame_info_t *frame) {
