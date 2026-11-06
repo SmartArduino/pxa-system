@@ -1,14 +1,20 @@
-# PXA Browser Host (experimental)
+# PXA Browser Host 0.8.0 (experimental)
 
 Runs standard PXA Core 2 WebAssembly applications in the browser VM. A separate
 Emscripten module builds the existing libpxa Core, platform services and
 LVGL renderer. The Guest C and C++ SDKs and wire ABI are unchanged. This is an
 application host, not the complete device firmware, launcher or installer.
 
+Version 0.8.0 rebuilds the Host against PXA 0.8.0 / Core 2.1 and exposes
+UI 0.10 system glyph reads through the existing Guest C/C++ font API. The
+font result includes baseline, metrics and at most 3072 bytes of A8 coverage
+for sizes 8–48; no font paths or native pointers are exposed. Browser system
+fonts and device fonts can differ. Existing 0.7.x applications remain supported.
+
 ## Build and test
 
 Prerequisites: Python 3, CMake, Emscripten 4.0.6 (`emcmake` on PATH), a WASI SDK
-(the PXA 0.7.0 DevKit includes one), and Node 24+ (JSPI) for integration tests. LVGL is
+(the PXA 0.8.0 DevKit includes one), and Node 24+ (JSPI) for integration tests. LVGL is
 pinned to 9.6.0. Supply `--lvgl` to reuse an existing checkout offline.
 
 ```sh

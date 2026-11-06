@@ -36,6 +36,7 @@ def main():
                          ('notes', ROOT / 'simulator/browser/services-demo'),
                          ('mainloop-test', ROOT / 'simulator/browser/main-loop-test'),
                          ('alpha-overlay-test', ROOT / 'simulator/browser/alpha-overlay-test'),
+                         ('font-test', ROOT / 'simulator/browser/font-test'),
                          ('counter', ROOT / 'ai/templates/c-app'),
                          ('cpp', ROOT / 'sdk/templates/hello')]:
         target = build / name

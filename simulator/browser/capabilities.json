@@ -1,5 +1,5 @@
 {
-  "version": "0.7.7",
+  "version": "0.8.0",
   "target": "browser",
   "engine": "webassembly",
   "core": "pxa.core.v2",
@@ -15,7 +15,14 @@
         "maxDimension": 1024,
         "assetHandles": true
       },
-      "alphaOverlay": true
+      "alphaOverlay": true,
+      "fontGlyph": {
+        "maxBitmapBytes": 3072,
+        "format": "A8",
+        "metrics": true,
+        "minPixelSize": 8,
+        "maxPixelSize": 48
+      }
     },
     "window": {
       "back": true,
@@ -122,7 +129,7 @@
       "authorization": "automatic where supported; native consent joined to Start/Continue or screen interaction",
       "magnetometer": {
         "unit": "nT",
-        "nativeUnit": "µT",
+        "nativeUnit": "\u00b5T",
         "minimumPeriodMs": 100,
         "requires": [
           "secure context",
@@ -137,7 +144,7 @@
         "dimensions": 1,
         "minimumPeriodMs": 50,
         "source": "absolute DeviceOrientation or AbsoluteOrientationSensor",
-        "reference": "magnetic north; top edge when flat, back of display upright; smooth 45–70 degree transition",
+        "reference": "magnetic north; top edge when flat, back of display upright; smooth 45\u201370 degree transition",
         "relativeOrientation": false
       }
     }
@@ -179,8 +186,8 @@
       {
         "service_id": 3,
         "major": 0,
-        "minor": 9,
-        "features": 32583
+        "minor": 10,
+        "features": 65351
       },
       {
         "service_id": 4,

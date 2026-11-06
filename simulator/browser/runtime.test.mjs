@@ -80,3 +80,14 @@ test('JSPI event loop: allocator-free startup, foreground, input, pause and stop
   rt.controller(0);rt.focus(true);rt.pause(false);await turn();
   await rt.stop();assert.ok(messages.some(s=>s.includes('stopped')));
 });
+
+test('UI 0.10 bounded font read returns baseline, coverage and whitespace',async()=>{
+  const messages=[];
+  const rt=await createRuntime(await createHost(),await fs.readFile(path.join(directory,'font-test.wasm')),
+    {notify:message=>{if(message.type==='log')messages.push(message.message);}});
+  try {
+    rt.tick(performance.now()+30);
+    assert.ok(messages.some(message=>message.includes('glyph:A')),messages.join('\n'));
+    assert.ok(messages.some(message=>message.includes('glyph:space')),messages.join('\n'));
+  } finally { await rt.stop(); }
+});
