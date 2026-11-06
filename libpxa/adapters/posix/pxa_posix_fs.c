@@ -747,22 +747,29 @@ static pxa_status_t read_directory_backend(void* context, void* resource, pxa_fs
     return PXA_STATUS_DENIED;
 }
 
-static void close_backend(void *context, void *resource, uint8_t kind) {
-    pxa_posix_fs_t *fs = (pxa_posix_fs_t *)context;
-    pxa_posix_fs_entry_t *entry;
+static pxa_status_t close_backend_impl(void *context, void *resource, uint8_t kind, int durable) {
+    pxa_posix_fs_t *fs = context;
     uintptr_t value = (uintptr_t)resource;
-    uint16_t index;
     (void)kind;
-    if (value == 0 || value > fs->max_open_resources) return;
-    index = (uint16_t)(value - 1);
-    entry = &fs->entries[index];
-    if (!entry->occupied) return;
-    if (entry->kind == PXA_FS_KIND_REGULAR && entry->fd >= 0) close(entry->fd);
-    if (entry->kind == PXA_FS_KIND_DIRECTORY && entry->stream != NULL) {
-        closedir(entry->stream);
+    if (!value || value > fs->max_open_resources) return PXA_STATUS_NOT_FOUND;
+    pxa_posix_fs_entry_t *entry = &fs->entries[value-1];
+    if (!entry->occupied) return PXA_STATUS_NOT_FOUND;
+    pxa_status_t status = PXA_STATUS_OK;
+    if (entry->kind == PXA_FS_KIND_REGULAR && entry->fd >= 0) {
+        if (durable && fsync(entry->fd) != 0) status = status_from_errno(errno);
+        if (close(entry->fd) != 0 && status == PXA_STATUS_OK) status = status_from_errno(errno);
     }
+    if (entry->kind == PXA_FS_KIND_DIRECTORY && entry->stream && closedir(entry->stream) != 0)
+        status = status_from_errno(errno);
     memset(entry, 0, sizeof(*entry));
     --fs->open_count;
+    return status;
+}
+static void close_backend(void *context, void *resource, uint8_t kind) {
+    (void)close_backend_impl(context, resource, kind, 0);
+}
+pxa_status_t pxa_posix_fs_close_checked(void *context, void *resource, uint8_t kind) {
+    return close_backend_impl(context, resource, kind, 1);
 }
 
 static pxa_status_t make_directory_backend(void *context, pxa_bytes_t path) {

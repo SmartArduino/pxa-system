@@ -1485,7 +1485,41 @@ static void test_sprite_and_triangle_batches(void) {
     assert(memcmp(split_depth, depth, sizeof(depth)) == 0);
 }
 
+/* A hardware color clear must preserve depth reset and accounting when the
+ * remaining commands are split between two CPU workers. */
+static void test_prefilled_clear(void) {
+    uint8_t bytes[PXA_RASTER_DRAW_HEADER_BYTES + PXA_RASTER_CLEAR_BYTES];
+    uint32_t offset = begin_list(bytes, 0, 1, 27, sizeof(bytes));
+    bytes[offset] = PXA_RASTER_RECORD_CLEAR_RGB565;
+    put_u16(bytes + offset + 2, PXA_RASTER_CLEAR_BYTES);
+    put_u16(bytes + offset + 4, 0x17bc);
+    uint16_t cpu[10 * 8], accelerated[10 * 8], depth_cpu[10 * 8], depth_hw[10 * 8];
+    for (unsigned i = 0; i < 80; ++i) {
+        cpu[i] = accelerated[i] = 0xa55a;
+        depth_cpu[i] = depth_hw[i] = 0xbeef;
+    }
+    pxa_raster_target_t target = {0};
+    target.pixels = cpu; target.depth_pixels = depth_cpu;
+    target.width = 8; target.height = 8; target.stride_pixels = 10; target.depth_stride_pixels = 10;
+    pxa_raster_resources_t resources = {0};
+    pxa_raster_draw_list_view_t list;
+    assert(pxa_raster_validate_draw_list(bytes, sizeof(bytes), &target, &resources, &list) == PXA_STATUS_OK);
+    list.uses_depth = 1;
+    pxa_raster_telemetry_t a = {0}, b = {0};
+    pxa_raster_execute_draw_list_rows(bytes, &list, &target, &resources, 0, 3, &a);
+    pxa_raster_execute_draw_list_rows(bytes, &list, &target, &resources, 3, 8, &a);
+    for (unsigned y = 0; y < 8; ++y)
+        for (unsigned x = 0; x < 8; ++x) accelerated[y*10+x] = 0x17bc;
+    target.pixels = accelerated; target.depth_pixels = depth_hw; target.prefilled_commands = 1;
+    pxa_raster_execute_draw_list_rows(bytes, &list, &target, &resources, 0, 3, &b);
+    pxa_raster_execute_draw_list_rows(bytes, &list, &target, &resources, 3, 8, &b);
+    assert(memcmp(cpu, accelerated, sizeof(cpu)) == 0);
+    assert(memcmp(depth_cpu, depth_hw, sizeof(depth_cpu)) == 0);
+    assert(a.covered_pixels == b.covered_pixels && a.clear_commands == b.clear_commands);
+}
+
 int main(void) {
+    test_prefilled_clear();
     test_upload_validation();
     test_painter_lit_palette_and_transparency();
     test_painter_triangle();

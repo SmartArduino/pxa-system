@@ -65,7 +65,15 @@ static uint16_t light_rgb565(uint16_t color, uint8_t light) {
     return (uint16_t)((red << 11) | (green << 5) | blue);
 }
 
+#ifdef PXA_RASTER_FILL_RGB565
+/* Host build hook; portable builds retain the scalar implementation. The
+ * platform implementation must finish its writes before returning. */
+extern void PXA_RASTER_FILL_RGB565(uint16_t *, uint32_t, uint16_t);
+#endif
 static void fill_rgb565(uint16_t *pixels, uint32_t count, uint16_t color) {
+#ifdef PXA_RASTER_FILL_RGB565
+    PXA_RASTER_FILL_RGB565(pixels, count, color);
+#else
     const uint32_t pair = (uint32_t)color | ((uint32_t)color << 16);
     /* Rows are only guaranteed 2-byte aligned, so peel the leading pixel before
      * switching to 32-bit stores: one PSRAM transaction per two pixels instead
@@ -82,6 +90,7 @@ static void fill_rgb565(uint16_t *pixels, uint32_t count, uint16_t color) {
         }
         if (count != 0u) *(uint16_t *)(void *)wide = color;
     }
+#endif
 }
 
 pxa_status_t pxa_raster_decode_upload(const uint8_t *bytes, size_t size,
@@ -2504,6 +2513,19 @@ void pxa_raster_execute_draw_list_rows(
         const uint8_t *record = bytes + offset;
         const uint16_t size = read_u16(record + 2);
         if (index < target->prefilled_commands) {
+            /* Accelerated color writes still count as rendered work. Depth
+             * was initialized above before either worker enters this loop. */
+            if (record[0] == PXA_RASTER_RECORD_CLEAR_RGB565) {
+                covered += (uint32_t)target->width * (row_end - row_begin);
+                if (telemetry != NULL) ++telemetry->clear_commands;
+            } else if (record[0] == PXA_RASTER_RECORD_FLAT_QUAD) {
+                int top = (int16_t)read_u16(record + 10) / 16;
+                int bottom = (int16_t)read_u16(record + 18) / 16;
+                if (top < row_begin) top = row_begin;
+                if (bottom > row_end) bottom = row_end;
+                if (bottom > top) covered += (uint32_t)target->width * (bottom - top);
+                if (telemetry != NULL) ++telemetry->flat_quad_commands;
+            }
             offset += size;
             continue;
         }

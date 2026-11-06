@@ -42,6 +42,9 @@ pxa_status_t pxa_posix_fs_init(void *workspace, size_t workspace_size,
                                const pxa_posix_fs_config_t *config,
                                pxa_posix_fs_t **output,
                                pxa_fs_backend_t *backend_output);
+/* Flush and close, always consuming resource even on failure. */
+pxa_status_t pxa_posix_fs_close_checked(void *, void *, uint8_t);
+
 void pxa_posix_fs_deinit(pxa_posix_fs_t *fs);
 
 /* Host-side clear-data helper. Removes one directory tree without following

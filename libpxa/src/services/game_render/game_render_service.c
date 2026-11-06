@@ -260,6 +260,7 @@ static int32_t compute_context_io(pxa_game_render_resource_t *r,
     }
     if (operation == PXA_GAME_RENDER_IO_BLIT_INDEXED_FRAME ||
         operation == PXA_GAME_RENDER_IO_BLIT_INDEXED_RECT ||
+        operation == PXA_GAME_RENDER_IO_EXECUTE_RGB565 ||
         operation == PXA_GAME_RENDER_IO_EXECUTE_PRIORITY_TILES) {
         pxa_raster_compute_t batch;
         uint8_t *memory;
@@ -268,7 +269,8 @@ static int32_t compute_context_io(pxa_game_render_resource_t *r,
         pxa_status_t status = pxa_runtime_borrow_memory(service->runtime,
             r->component, &memory, &memory_size);
         if (status == PXA_STATUS_OK)
-            status = (operation == PXA_GAME_RENDER_IO_EXECUTE_PRIORITY_TILES ?
+            status = (operation == PXA_GAME_RENDER_IO_EXECUTE_RGB565 ? pxa_raster_rgb565_validate :
+                operation == PXA_GAME_RENDER_IO_EXECUTE_PRIORITY_TILES ?
                 pxa_raster_priority_tiles_validate :
                 pxa_raster_blit_validate)(
                     data, size, memory, memory_size, r->max_commands, &batch);
@@ -590,7 +592,8 @@ pxa_status_t pxa_game_render_service_register(
     if (service->backend.bind_assets) operations.features = PXA_GAME_RENDER_FEATURE_ASSET_BINDINGS;
     operations.features |= PXA_GAME_RENDER_FEATURE_BORROWED_INDEXED_BLIT |
         PXA_GAME_RENDER_FEATURE_EXACT_INDEXED_BLIT |
-        PXA_GAME_RENDER_FEATURE_PRIORITY_TILE_BATCHES;
+        PXA_GAME_RENDER_FEATURE_PRIORITY_TILE_BATCHES |
+        PXA_GAME_RENDER_FEATURE_RGB565_BATCHES;
     operations.context = service;
     operations.control = game_render_control;
     status = pxa_service_register(service->runtime, &operations);

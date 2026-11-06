@@ -208,6 +208,7 @@ typedef struct {
     lv_display_t *display;
     lv_obj_t *content_parent;
     pxa_runtime_t *runtime;
+    pxa_fs_service_t *fs;
     desktop_media_root_t *media_root;
     pxa_assets_service_t *assets;
     pxa_posix_asset_worker_t *asset_worker;
@@ -1872,6 +1873,38 @@ static void *asset_allocate(void *context, size_t bytes, uint8_t cls, uint8_t ki
     return resource_allocate(context, cls, kind == PXA_ASSET_AUDIO ? PXA_MEMORY_AUDIO :
         kind == PXA_ASSET_IMAGE ? PXA_MEMORY_IMAGE : PXA_MEMORY_RASTER, bytes);
 }
+typedef struct {
+    SDL_mutex *queue_mutex, *backend_mutex;
+    SDL_cond *condition;
+    SDL_Thread *thread;
+    pxa_fs_async_work_fn work[2];void *context[2];
+    unsigned head,count;int stopping;
+    product_host_t *host;
+} desktop_fs_executor_t;
+static int desktop_fs_worker(void *context) {
+    desktop_fs_executor_t *e=context;
+    for(;;) {
+        SDL_LockMutex(e->queue_mutex);
+        while(!e->count && !e->stopping)SDL_CondWait(e->condition,e->queue_mutex);
+        if(!e->count && e->stopping){SDL_UnlockMutex(e->queue_mutex);return 0;}
+        pxa_fs_async_work_fn work=e->work[e->head];void *arg=e->context[e->head];
+        e->head=(e->head+1)%2;--e->count;
+        SDL_UnlockMutex(e->queue_mutex);
+        work(arg);SDL_AtomicSet(&e->host->asset_ready,1);
+    }
+}
+static pxa_status_t desktop_fs_submit(void *context,pxa_fs_async_work_fn work,void *arg) {
+    desktop_fs_executor_t *e=context;pxa_status_t status=PXA_STATUS_WOULD_BLOCK;
+    SDL_LockMutex(e->queue_mutex);
+    if(!e->stopping && e->count<2) {
+        unsigned tail=(e->head+e->count)%2;e->work[tail]=work;e->context[tail]=arg;
+        ++e->count;SDL_CondSignal(e->condition);status=PXA_STATUS_OK;
+    }
+    SDL_UnlockMutex(e->queue_mutex);return status;
+}
+static void desktop_fs_enter(void *context) {SDL_LockMutex(((desktop_fs_executor_t *)context)->backend_mutex);}
+static void desktop_fs_leave(void *context) {SDL_UnlockMutex(((desktop_fs_executor_t *)context)->backend_mutex);}
+
 static void asset_notify(void *context) {
     product_host_t *host = context;
     SDL_AtomicSet(&host->asset_ready, 1);
@@ -2030,6 +2063,7 @@ static void dispatch_component_events(product_host_t *host) {
         if (host->assets != NULL && pxa_assets_service_poll(host->assets))
             SDL_AtomicSet(&host->asset_ready, 1);
         if (host->audio != NULL) pxa_audio_service_poll(host->audio);
+        if(host->fs)pxa_fs_service_poll(host->fs);
         if (host->sensor != NULL && pxa_sensor_has_active_subscriptions(host->sensor)) {
             pxa_component_t affected[PRODUCT_COMPONENTS];
             size_t count = 0;
@@ -3330,6 +3364,7 @@ static pxa_status_t desktop_native_cooperate(void *context,
     if (host->media_root) desktop_media_import_poll(host->media_root);
     if (host->assets) (void)pxa_assets_service_poll(host->assets);
     if (host->audio) pxa_audio_service_poll(host->audio);
+    if(host->fs)pxa_fs_service_poll(host->fs);
     if (host->sensor && pxa_sensor_has_active_subscriptions(host->sensor))
         (void)pxa_sensor_poll(host->sensor, now_us(NULL), affected,
             PRODUCT_COMPONENTS, &count);
@@ -3388,6 +3423,8 @@ static int run_product_simulator(const options_t *input,
     pxa_fs_backend_t fs_backend = {0};
     pxa_posix_fs_t *posix_fs = NULL;
     pxa_fs_service_t *fs = NULL;
+    desktop_fs_executor_t fs_executor={0};
+    void *fs_atomic_workspace=NULL;
     desktop_media_root_t media_root = {0};
     pxa_ipc_limits_t ipc_limits;
     pxa_surface_config_t surface_config = {0};
@@ -3768,8 +3805,17 @@ static int run_product_simulator(const options_t *input,
     if (fs_service_workspace == NULL ||
         pxa_fs_service_init(fs_service_workspace,
                             pxa_fs_service_workspace_size(&fs_config),
-                            host.runtime, &fs_config, &fs) != PXA_STATUS_OK ||
-        pxa_fs_service_register(fs) != PXA_STATUS_OK) goto done;
+                            host.runtime, &fs_config, &fs) != PXA_STATUS_OK) goto done;
+    fs_atomic_workspace=malloc(pxa_fs_service_atomic_workspace_size(2));
+    fs_executor.queue_mutex=SDL_CreateMutex();fs_executor.backend_mutex=SDL_CreateMutex();
+    fs_executor.condition=SDL_CreateCond();fs_executor.host=&host;
+    if(!fs_atomic_workspace || !fs_executor.queue_mutex || !fs_executor.backend_mutex || !fs_executor.condition)goto done;
+    fs_executor.thread=SDL_CreateThread(desktop_fs_worker,"pxa-fs",&fs_executor);
+    if(!fs_executor.thread || pxa_fs_service_enable_async_atomic(fs,fs_atomic_workspace,
+        pxa_fs_service_atomic_workspace_size(2),2,pxa_posix_fs_close_checked,desktop_fs_submit,&fs_executor,
+        desktop_fs_enter,desktop_fs_leave,&fs_executor)!=PXA_STATUS_OK ||
+        pxa_fs_service_register(fs)!=PXA_STATUS_OK)goto done;
+    host.fs=fs;
     media_root.service=fs; host.media_root=&media_root;
     stage = "IPC broker";
     pxa_ipc_limits_init(&ipc_limits);
@@ -4209,7 +4255,7 @@ static int run_product_simulator(const options_t *input,
     capabilities[11].service = PXA_NET_SERVICE_ID; capabilities[11].version.major = PXA_NET_SERVICE_MAJOR; capabilities[11].version.minor = PXA_NET_SERVICE_MINOR;
     capabilities[12].service = PXA_FS_SERVICE_ID; capabilities[12].version.major = PXA_FS_SERVICE_MAJOR; capabilities[12].version.minor = PXA_FS_SERVICE_MINOR;
     capabilities[12].features = PXA_FS_FEATURE_SCOPED_ROOTS |
-        PXA_FS_FEATURE_APP_MEDIA_ROOT | PXA_FS_FEATURE_APP_MEDIA_PATH | PXA_FS_FEATURE_READ_AT | PXA_FS_FEATURE_FILE_IMPORT;
+        PXA_FS_FEATURE_APP_MEDIA_ROOT | PXA_FS_FEATURE_APP_MEDIA_PATH | PXA_FS_FEATURE_READ_AT | PXA_FS_FEATURE_FILE_IMPORT | PXA_FS_FEATURE_ASYNC_ATOMIC_WRITE;
     capabilities[13].service = PXA_IPC_SERVICE_ID; capabilities[13].version.major = PXA_IPC_SERVICE_MAJOR; capabilities[13].version.minor = PXA_IPC_SERVICE_MINOR;
     capabilities[14].service = PXA_WASI_SERVICE_ID; capabilities[14].version.major = PXA_WASI_SERVICE_MAJOR; capabilities[14].version.minor = PXA_WASI_SERVICE_MINOR;
     capabilities[14].features = PXA_WASI_FEATURE_CLOCKS | PXA_WASI_FEATURE_RANDOM;
@@ -4468,6 +4514,17 @@ done:
     if (host.label_font != NULL) lv_freetype_font_delete(host.label_font);
     if (host.caption_font != NULL) lv_freetype_font_delete(host.caption_font);
     if (host.runtime != NULL) pxa_runtime_deinit(host.runtime);
+    pxa_fs_service_atomic_shutdown_begin(fs);
+    if(fs_executor.thread) {
+        SDL_LockMutex(fs_executor.queue_mutex);fs_executor.stopping=1;
+        SDL_CondSignal(fs_executor.condition);SDL_UnlockMutex(fs_executor.queue_mutex);
+        SDL_WaitThread(fs_executor.thread,NULL);
+    }
+    pxa_fs_service_atomic_shutdown_finish(fs);
+    if(fs_executor.condition)SDL_DestroyCond(fs_executor.condition);
+    if(fs_executor.backend_mutex)SDL_DestroyMutex(fs_executor.backend_mutex);
+    if(fs_executor.queue_mutex)SDL_DestroyMutex(fs_executor.queue_mutex);
+    free(fs_atomic_workspace);
     pxsys_desktop_net_shutdown(&net_backend);
     if (host.asset_worker != NULL) {
         pxa_asset_cache_stats_t stats;

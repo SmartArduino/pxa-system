@@ -1,4 +1,4 @@
-# PXA Files Draft 0.5
+# PXA Files Draft 0.6
 
 FS 0.3 preserves private-file operations 1–8 and adds optional scoped directory
 roots. The existing private path and quota rules below remain unchanged.
@@ -252,3 +252,20 @@ open source/destination files are rejected. Failure leaves the old destination
 intact. A backend without replacement support returns `unsupported`. The POSIX
 and ESP LittleFS adapters use the filesystem rename operation and subtract the
 replaced file from disk quota usage after success. No body buffer is allocated.
+
+### FS 0.6：后台原子写入（可选）
+
+`async-atomic-write`（feature bit 9）将私有文件的打开、写入、关闭与原子替换交给原生后台执行器。普通 `FILE` 读写接口继续同步。Guest 必须检查能力或处理 `UNSUPPORTED`，不能把事件式请求等同于后台 I/O。
+
+- `atomic-begin (20)`：`temporary_len:u16 | destination_len:u16 | reserved:u32=0 | expected:u64 | temporary:utf8 | destination:utf8`，成功返回 `session:u64`。路径使用既有私有相对路径规则，两者必须不同。
+- `atomic-write (21)`：`session:u64 | data:bytes[1..2048]`，成功返回 `written:u32`。Host 在请求返回前复制数据，每个会话最多一个未完成操作，收到结果后再发送下一块。
+- `atomic-commit (22)`：`session:u64`，要求已写字节数等于声明值。后台检查关闭结果后原子替换目标，完成结果表示发布完成。失败保留原目标并清理临时文件。
+- `atomic-abort (23)`：`session:u64`，关闭并移除临时文件，结束会话；关闭或删除失败会返回错误。
+
+结果沿用 Core 的 `status:i32` 前缀。会话只属于创建它的 Component，使用带代数的标识符，不能传入 `pxa_io`，也不能跨 Component 共享。文件上限为 16 MiB；临时文件和旧文件共同占用私有存储配额。会话数、复制缓冲和执行队列均有界，队列忙时返回 `WOULD_BLOCK`。同一应用的活跃会话不能复用或交叉占用临时、目标路径。
+
+会话占用与普通文件共用的资源预算；Host 可以只提供一个会话。应用不能假设至少能并发保存两个文件。写入或提交因队列忙而未被接受时，会话和已完成字节数保持不变，可在稍后重试同一操作。后台返回零进展或超出本次请求长度的写入结果会作为 I/O 错误终止会话，不能发布不完整文件。
+
+普通同步 FS 操作与后台写入共享后端保护锁，同一应用在保存期间调用同步打开、读取、关闭或目录操作仍可能等待后台 I/O。需要保持前台响应的应用应等待异步完成事件，避免在等待期间使用同步 FS 轮询保存状态。请求被接受后遵循 Core 的提交语义，取消请求不保证撤销已接受的操作；需要放弃一个空闲会话时使用 `atomic-abort`。
+
+Host 只在 Runtime 所在线程提交完成事件；工作线程不访问 Guest 内存、Runtime 或 Core 句柄表。取消、Component 停止后不交付迟到结果，尚未发布的数据会尝试清理；介质断开等原因可能保留临时文件，后续新会话可覆盖其临时路径；原子替换已经发生时，取消不能撤回它。激活销毁按“标记取消 → 排空执行器 → 关闭和清理 → 释放后端及工作区”执行。掉电时的介质持久性取决于底层文件系统，原子替换不等于跨文件系统事务。

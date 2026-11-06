@@ -3721,6 +3721,7 @@ static void test_storage_service(void) {
 }
 
 #include "storage_async_test.inc"
+#include "fs_atomic_async_test.inc"
 
 static void test_fs_service(void) {
     static const uint8_t valid_utf8_path[] = {
@@ -6096,6 +6097,7 @@ int main(void) {
     test_ipc_service();
     test_storage_service();
     test_storage_async();
+    test_fs_atomic_async();
     test_fs_service();
     test_fs_scoped_service();
     test_fs_v1_native_handles();

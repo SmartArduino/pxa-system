@@ -43,6 +43,7 @@ function(pxa_collect_sources output root)
         src/services/game_render/game_render_service.c
         src/services/game_render/raster_dispatch.c
         src/services/game_render/raster_blit.c
+        src/services/game_render/raster_rgb565.c
         src/services/game_render/raster_priority_tiles.c
         src/services/log/log_service.c
         src/services/game_render/raster.c

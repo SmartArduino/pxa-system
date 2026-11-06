@@ -42,5 +42,7 @@ int main() {
     roundtrip<g::pxa_game_render_tiles_header_wire_t,32>(g::pxa_game_render_tiles_header_decode,g::pxa_game_render_tiles_header_encode);
     roundtrip<g::pxa_game_render_tile_wire_t,24>(g::pxa_game_render_tile_decode,g::pxa_game_render_tile_encode);
     roundtrip<g::pxa_game_render_blit_wire_t,64>(g::pxa_game_render_blit_decode,g::pxa_game_render_blit_encode);
+    roundtrip<g::pxa_game_render_rgb565_header_wire_t,32>(g::pxa_game_render_rgb565_header_decode,g::pxa_game_render_rgb565_header_encode);
+    roundtrip<g::pxa_game_render_rgb565_command_wire_t,32>(g::pxa_game_render_rgb565_command_decode,g::pxa_game_render_rgb565_command_encode);
     std::puts("PASS: WASM compute codecs preserve wire bytes, odd offsets and short buffers");
 }

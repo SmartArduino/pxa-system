@@ -1,4 +1,13 @@
-# PXA GameRender Service 1.5.0
+# PXA GameRender Service 1.6.0
+
+GameRender 1.6 adds `rgb565-batches` (feature bit 7) and
+`EXECUTE_RGB565` (Handle I/O `0x10d`) on compute contexts. Ordered fills and
+RGB565LE blits can draw directly into application-owned logical frames or an
+acquired Surface. Blits support exact nearest-neighbour scaling, horizontal
+flip, transparent zero and per-command channel brightness. See the
+[compute protocol](game-render-compute.md#rgb565-batches) for memory ownership,
+sampling and validation rules. No palette conversion or extra framebuffer is
+required; presentation remains a separate Surface operation.
 
 GameRender 1.4 adds `priority-tile-batches` (feature bit 6) and
 `EXECUTE_PRIORITY_TILES` (Handle I/O `0x10a`). A compute context accepts a

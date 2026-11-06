@@ -27,6 +27,13 @@ def render(guest):
     layouts = [(tiles['header'], 'tiles_header', tiles['header_bytes']),
                (tiles['command'], 'tile', tiles['command_bytes']),
                (blit['fields'], 'blit', blit['bytes'])]
+    rgb = schema['rgb565']
+    for name in ['magic', 'header_bytes', 'command_bytes', 'max_commands', 'max_pixels']:
+        lines.append('#define PXA_GAME_RENDER_RGB565_%s UINT32_C(%d)' % (name.upper(), rgb[name]))
+    for name, value in rgb['flags'].items():
+        lines.append('#define PXA_GAME_RENDER_RGB565_%s %du' % (name.upper(), value))
+    layouts += [(rgb['header'], 'rgb565_header', rgb['header_bytes']),
+                (rgb['command'], 'rgb565_command', rgb['command_bytes'])]
     fast_guard = 'defined(PXA_GAME_RENDER_WASM_PACKED_CODEC) && PXA_GAME_RENDER_WASM_PACKED_CODEC && defined(__wasm__) && defined(__clang__) && (defined(__cplusplus) || (defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L))'
     if guest:
         lines += ['#if ' + fast_guard,

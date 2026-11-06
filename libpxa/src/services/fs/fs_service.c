@@ -24,6 +24,8 @@ struct pxa_fs_service {
     uint16_t slot_count;
     uint16_t free_head;
     uint8_t registered;
+    struct fs_atomic_state *atomic;
+    uint16_t atomic_reserved;
     const pxa_fs_roots_backend_t *roots;
     pxa_permission_service_t *permissions;
     pxa_component_t picker_component;
@@ -60,6 +62,10 @@ typedef struct {
     uint8_t has_flags;
 } pxa_fs_paths_t;
 
+static void fs_backend_lock(pxa_fs_service_t *);
+static void fs_backend_unlock(pxa_fs_service_t *);
+static void fs_atomic_poll(pxa_fs_service_t *);
+static void fs_atomic_stop(pxa_fs_service_t *, pxa_component_t);
 static const pxa_resource_ops_t k_file_resource_ops;
 static const pxa_resource_ops_t k_directory_resource_ops;
 
@@ -200,7 +206,7 @@ pxa_status_t pxa_fs_service_init(
     memset(service, 0, sizeof(*service));
     service->runtime = runtime;
     memcpy(&service->backend, &config->backend, offsetof(pxa_fs_backend_t, replace));
-    if (config->backend.struct_size >= sizeof(config->backend))
+    if (config->backend.struct_size >= offsetof(pxa_fs_backend_t, replace) + sizeof(config->backend.replace))
         service->backend.replace = config->backend.replace;
     service->authorization_context = config->authorization_context;
     service->authorize = config->authorize;
@@ -303,7 +309,9 @@ static pxa_status_t parse_paths(pxa_bytes_t payload,
 static pxa_fs_resource_slot_t *allocate_resource(pxa_fs_service_t *service) {
     pxa_fs_resource_slot_t *slot;
     uint16_t index = service->free_head;
-    if (index == PXA_FS_SLOT_NONE) return NULL;
+    unsigned occupied = service->atomic_reserved;
+    for (uint16_t i=0;i<service->slot_count;++i) occupied += service->slots[i].occupied != 0;
+    if (index == PXA_FS_SLOT_NONE || occupied >= service->slot_count) return NULL;
     slot = &service->slots[index];
     service->free_head = slot->next_free;
     slot->next_free = PXA_FS_SLOT_NONE;
@@ -333,9 +341,11 @@ static void close_resource(void *context) {
     if (slot == NULL || slot->magic != PXA_FS_SLOT_MAGIC || !slot->occupied) {
         return;
     }
+    fs_backend_lock(slot->service);
     slot->backend->close(slot->backend->context,
                                  slot->backend_resource, slot->kind);
     release_resource(slot);
+    fs_backend_unlock(slot->service);
 }
 
 static int roots_read_at_enabled(const pxa_fs_roots_backend_t *roots) {
@@ -400,7 +410,7 @@ static int32_t file_read_at(pxa_fs_resource_slot_t *slot,uint32_t operation,
     return transferred<=requested ? (int32_t)transferred : PXA_STATUS_INTERNAL;
 }
 
-static int32_t file_io(void *context, uint32_t operation, uint8_t *data,
+static int32_t file_io_sync(void *context, uint32_t operation, uint8_t *data,
                        size_t size) {
     pxa_fs_resource_slot_t *slot = (pxa_fs_resource_slot_t *)context;
     pxa_status_t status;
@@ -429,6 +439,15 @@ static int32_t file_io(void *context, uint32_t operation, uint8_t *data,
         return PXA_STATUS_INTERNAL;
     }
     return (int32_t)transferred;
+}
+
+static int32_t file_io(void *context, uint32_t operation, uint8_t *data, size_t size) {
+    pxa_fs_resource_slot_t *slot = context;
+    if (!slot || slot->magic != PXA_FS_SLOT_MAGIC) return PXA_STATUS_NOT_FOUND;
+    fs_backend_lock(slot->service);
+    int32_t status = file_io_sync(context, operation, data, size);
+    fs_backend_unlock(slot->service);
+    return status;
 }
 
 static int32_t directory_io(void *context, uint32_t operation, uint8_t *data,
@@ -803,6 +822,7 @@ static void cancel_import(pxa_fs_service_t *s) {
     if(token && has_import(s->roots))s->roots->cancel_import(s->roots->context,component,token);
 }
 void pxa_fs_service_poll(pxa_fs_service_t *s) {
+    if(service_valid(s))fs_atomic_poll(s);
     if(service_valid(s) && s->import_token &&
         (!pxa_request_is_active(s->runtime,s->import_component,s->import_token) ||
          pxa_request_identity(s->runtime,s->import_component,s->import_token)!=s->import_identity))
@@ -1066,7 +1086,9 @@ static pxa_status_t media_path_control(pxa_fs_service_t *service,pxa_component_t
         status==PXA_STATUS_OK?payload:NULL,status==PXA_STATUS_OK?size+2:0);
 }
 
-static pxa_status_t fs_control(void *context, pxa_runtime_t *runtime,
+#include "fs_atomic_async.inc"
+
+static pxa_status_t fs_control_sync(void *context, pxa_runtime_t *runtime,
                                pxa_component_t component,
                                const pxa_message_view_t *message) {
     pxa_fs_service_t *service = (pxa_fs_service_t *)context;
@@ -1148,9 +1170,22 @@ static pxa_status_t fs_control(void *context, pxa_runtime_t *runtime,
     return PXA_STATUS_OK;
 }
 
+static pxa_status_t fs_control(void *context, pxa_runtime_t *runtime,
+    pxa_component_t component, const pxa_message_view_t *message) {
+    pxa_fs_service_t *s = context;
+    if (!service_valid(s) || !message || !message->request_token) return PXA_STATUS_INVALID_ARGUMENT;
+    if (message->opcode >= PXA_FS_ATOMIC_BEGIN && message->opcode <= PXA_FS_ATOMIC_ABORT)
+        return fs_atomic_control(s, component, message);
+    fs_backend_lock(s);
+    pxa_status_t status = fs_control_sync(context, runtime, component, message);
+    fs_backend_unlock(s);
+    return status;
+}
+
 static void fs_component_stopped(void *context,pxa_runtime_t *runtime,
     pxa_component_t component) {
     pxa_fs_service_t *s=context; (void)runtime;
+    fs_atomic_stop(s,component);
     if(s->import_token && s->import_component==component)cancel_import(s);
     if(s->picker_token && s->picker_component==component) {
         pxa_request_token_t token=s->picker_token;
@@ -1174,6 +1209,7 @@ pxa_status_t pxa_fs_service_register(pxa_fs_service_t *service) {
         operations.features |= PXA_FS_FEATURE_USER_DIRECTORY_GRANTS;
     if (service->roots && service->roots->struct_size >= offsetof(pxa_fs_roots_backend_t,features)+sizeof(service->roots->features))
         operations.features |= service->roots->features & PXA_FS_FEATURE_APP_MEDIA_ROOT;
+    if(service->atomic)operations.features |= PXA_FS_FEATURE_ASYNC_ATOMIC_WRITE;
     operations.context = service;
     if(has_media_path(service->roots))operations.features|=PXA_FS_FEATURE_APP_MEDIA_PATH;
     if(has_import(service->roots))operations.features|=PXA_FS_FEATURE_FILE_IMPORT;

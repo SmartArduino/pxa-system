@@ -12,7 +12,7 @@ extern "C" int32_t pxa_io(uint64_t handle, uint32_t operation, uint8_t* data, ui
     assert(handle == 77);
     captured_operation = operation;
     if (io_error) return io_error;
-    if (operation == 0x108 || operation == 0x109 || operation == 0x10a) {
+    if (operation == 0x108 || operation == 0x109 || operation == 0x10a || operation == 0x10d) {
         assert(size <= captured.size());
         std::memcpy(captured.data(), data, size); captured_size = size;
     } else {
@@ -42,6 +42,14 @@ int main() {
     io_error = -7;
     assert(context.blit_rect(blit).error() == pxa::Error::would_block);
     io_error=0;
+    std::array<std::byte,64> rgb{};
+    assert(context.execute_rgb565(rgb) && captured_operation == 0x10d && captured_size == 64);
+    short_reply = true;
+    assert(context.execute_rgb565(rgb).error() == pxa::Error::protocol_error);
+    short_reply = false; io_error = static_cast<int32_t>(pxa::Error::unsupported);
+    assert(context.execute_rgb565(rgb).error() == pxa::Error::unsupported);
+    io_error = 0;
+    assert(context.execute_rgb565(std::span(rgb).first(31)).error() == pxa::Error::invalid_argument);
     std::array<std::byte,1024> tile_storage{};
     std::array<std::byte,64> pixels;pixels.fill(std::byte{1});
     std::array<std::byte,32> palette;palette.fill(std::byte{7});

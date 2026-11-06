@@ -89,6 +89,92 @@ static void priority_tile_cases(pxa_runtime_t *runtime, pxa_component_t componen
     free(m);free(before);
 }
 
+
+/* Compare exact RGB565 sampling, brightness, flip, clipping and ordered
+ * overlapping commands against an independent scalar reference. Include row
+ * padding, byte-sized worker boundaries and full 288 -> 480 frame resolve. */
+static void rgb565_cases(pxa_runtime_t *runtime, pxa_component_t component, uint64_t handle) {
+    const size_t bytes = 1500000;
+    uint8_t *m = malloc(bytes), *expected = malloc(bytes), *before = malloc(bytes);
+    assert(m && expected && before);
+    uint32_t random = 173;
+    for (unsigned pass = 0; pass < 260; ++pass) {
+        memset(m, 0x59, bytes);
+        unsigned sw = pass < 256 ? 19 : 288, sh = pass < 256 ? 13 : 288;
+        unsigned w = pass < 256 ? 47 : 480, hgt = pass < 256 ? 31 : 480;
+        unsigned sp = (sw + 3) * 2, tp = (w + (pass == 257 ? 0 : 5)) * 2;
+        for (unsigned y = 0; y < sh; ++y) for (unsigned x = 0; x < sw; ++x) {
+            random = random * 1664525u + 1013904223u;
+            pxa_write_u16(m + 64 + y * sp + x * 2, x % 7 ? random >> 16 : 0);
+        }
+        uint8_t *packet = m + 1200000;
+        pxa_game_render_rgb565_header_wire_t head = {0};
+        head.magic = PXA_GAME_RENDER_RGB565_MAGIC; head.version = 1; head.count = 2;
+        head.target_offset = 300000; head.target_bytes = (hgt - 1) * tp + w * 2;
+        head.target_width = w; head.target_height = hgt; head.target_pitch = tp;
+        pxa_game_render_rgb565_header_encode(packet, 32, &head);
+        pxa_game_render_rgb565_command_wire_t cmds[2] = {{0}};
+        cmds[0].light = 255; cmds[0].color = 0xf35a;
+        cmds[0].width = w; cmds[0].height = hgt;
+        cmds[1].kind = 1; cmds[1].light = pass < 256 ? pass : 255;
+        cmds[1].flags = pass < 256 ? pass % 4 : 0;
+        cmds[1].x = pass < 256 ? (int)(pass % 13) - 6 : pass == 258 ? -7 : pass == 259 ? 3 : 0;
+        cmds[1].y = pass < 256 ? (int)(pass % 9) - 4 : pass == 258 ? -2 : pass == 259 ? 5 : 0;
+        cmds[1].width = w; cmds[1].height = hgt;
+        cmds[1].source_offset = 64; cmds[1].source_bytes = (sh - 1) * sp + sw * 2;
+        cmds[1].source_width = sw; cmds[1].source_height = sh; cmds[1].source_pitch = sp;
+        for (unsigned i = 0; i < 2; ++i) pxa_game_render_rgb565_command_encode(packet + 32 + i * 32, 32, &cmds[i]);
+        memcpy(before, m, bytes); memcpy(expected, m, bytes);
+        for (unsigned i = 0; i < 2; ++i) {
+            const pxa_game_render_rgb565_command_wire_t *c = &cmds[i];
+            for (unsigned y = 0; y < hgt; ++y) for (unsigned x = 0; x < w; ++x) {
+                int dx = (int)x - c->x, dy = (int)y - c->y;
+                if (dx < 0 || dy < 0 || dx >= c->width || dy >= c->height) continue;
+                unsigned color = c->color;
+                if (c->kind) {
+                    unsigned sx = (unsigned)dx * sw / c->width, sy = (unsigned)dy * sh / c->height;
+                    if (c->flags & 2) sx = sw - 1 - sx;
+                    color = pxa_read_u16(m + c->source_offset + sy * sp + sx * 2);
+                    if ((c->flags & 1) && !color) continue;
+                    color = (((color >> 11) * c->light / 255) << 11) |
+                            ((((color >> 5) & 63) * c->light / 255) << 5) |
+                            ((color & 31) * c->light / 255);
+                }
+                pxa_write_u16(expected + head.target_offset + y * tp + x * 2, color);
+            }
+        }
+        assert(pxa_runtime_io64_memory(runtime, component, handle, 0x10d, packet, 96, m, bytes) == 96);
+        assert(!memcmp(m, expected, bytes));
+        memcpy(m, before, bytes);
+        pxa_raster_compute_t batch;
+        assert(pxa_raster_rgb565_validate(packet, 96, m, bytes, 2, &batch) == 0);
+        /* Execute backwards in odd-sized chunks; no reads from another worker. */
+        unsigned end = batch.target_bytes, step = pass < 256 ? 67 : 8191;
+        while (end) {
+            unsigned begin = end > step ? end - step : 0;
+            pxa_raster_compute_execute_range(&batch, begin, end); end = begin;
+        }
+        assert(!memcmp(m, expected, bytes));
+        /* An invalid second command must not apply the valid first fill. */
+        for (unsigned bad = 0; bad < 7; ++bad) {
+            memcpy(m, before, bytes);
+            pxa_game_render_rgb565_command_wire_t c = cmds[1];
+            if (bad == 0) c.source_offset = head.target_offset;
+            if (bad == 1) c.source_offset = UINT32_MAX - 2;
+            if (bad == 2) c.source_bytes = 2;
+            if (bad == 3) c.source_pitch |= 1;
+            if (bad == 4) c.flags = 4;
+            if (bad == 5) c.width = 0;
+            if (bad == 6) c.reserved2 = 1;
+            pxa_game_render_rgb565_command_encode(packet + 64, 32, &c);
+            memcpy(expected, m, bytes);
+            assert(pxa_runtime_io64_memory(runtime, component, handle, 0x10d, packet, 96, m, bytes) < 0);
+            assert(!memcmp(m, expected, bytes));
+        }
+    }
+    free(m); free(expected); free(before);
+}
+
 int main(void) {
     pxa_runtime_limits_t limits;
     pxa_runtime_t *runtime;
@@ -132,6 +218,7 @@ int main(void) {
     assert(pxa_component_begin_event(runtime, component) == 0);
     indexed_rect_cases(runtime,component,handle);
     priority_tile_cases(runtime,component,handle);
+    rgb565_cases(runtime,component,handle);
     /* Retired numeric operations are unrecognized, with no compatibility dispatch. */
     for (unsigned op=0x104;op<=0x107;++op)
         assert(pxa_runtime_io64_memory(runtime,component,handle,op,memory,64,memory,8192)==PXA_STATUS_UNSUPPORTED);

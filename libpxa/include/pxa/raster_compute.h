@@ -6,7 +6,8 @@
 
 enum {
     PXA_RASTER_COMPUTE_BLIT = 1,
-    PXA_RASTER_COMPUTE_PRIORITY_TILES = 2
+    PXA_RASTER_COMPUTE_PRIORITY_TILES = 2,
+    PXA_RASTER_COMPUTE_RGB565 = 3
 };
 
 /* Borrowed, validated state for one synchronous call. No retained Guest
@@ -18,6 +19,10 @@ typedef struct {
     uint64_t pixels;
     uint8_t kind;
     union {
+        struct {
+            const uint8_t *memory;
+            uint32_t width, height, pitch;
+        } rgb565;
         struct {
             const uint8_t *pixels, *palette, *cursor;
             uint32_t source_width, source_height, source_pitch;
@@ -37,6 +42,8 @@ typedef struct {
 pxa_status_t pxa_raster_blit_validate(const uint8_t *, size_t, uint8_t *, size_t,
     uint32_t, pxa_raster_compute_t *);
 pxa_status_t pxa_raster_priority_tiles_validate(const uint8_t *, size_t, uint8_t *, size_t,
+    uint32_t, pxa_raster_compute_t *);
+pxa_status_t pxa_raster_rgb565_validate(const uint8_t *, size_t, uint8_t *, size_t,
     uint32_t, pxa_raster_compute_t *);
 /* Ranges own target bytes; priority bytes also own their corresponding RGB565
  * pixels. Commands within each range execute in their original order. */

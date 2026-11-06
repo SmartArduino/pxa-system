@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: MIT
  * Copyright (c) 2026 PXA System contributors.
- * Dispatch and cache boundaries for the system's indexed image/tile paths.
+ * Dispatch and cache boundaries for the system's RGB565 and indexed paths.
  * Engine-specific lighting and projection are implemented by applications.
  */
 #include "raster_compute_internal.h"
@@ -14,6 +14,9 @@ void pxa_raster_compute_execute_range(const pxa_raster_compute_t *batch,
         break;
     case PXA_RASTER_COMPUTE_PRIORITY_TILES:
         pxa_raster_priority_tiles_execute_range(batch, begin, end);
+        break;
+    case PXA_RASTER_COMPUTE_RGB565:
+        pxa_raster_rgb565_execute_range(batch, begin, end);
         break;
     default:
         break;
@@ -34,7 +37,7 @@ int pxa_raster_compute_partition_safe(const pxa_raster_compute_t *batch,
         !cache_line_bytes || (cache_line_bytes & (cache_line_bytes - 1u))) return 0;
     uintptr_t mask = cache_line_bytes - 1u;
     if (((uintptr_t)batch->target + split) & mask) return 0;
-    if (batch->kind == PXA_RASTER_COMPUTE_BLIT) return 1;
+    if (batch->kind == PXA_RASTER_COMPUTE_BLIT || batch->kind == PXA_RASTER_COMPUTE_RGB565) return 1;
     if (batch->kind == PXA_RASTER_COMPUTE_PRIORITY_TILES && batch->state.tiles.color)
         return (((uintptr_t)batch->state.tiles.color + (uintptr_t)split * 2u) & mask) == 0;
     return 0;

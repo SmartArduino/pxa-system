@@ -14,7 +14,7 @@ extern "C" {
 
 #define PXA_FS_SERVICE_ID UINT16_C(5)
 #define PXA_FS_SERVICE_MAJOR UINT16_C(0)
-#define PXA_FS_SERVICE_MINOR UINT16_C(5)
+#define PXA_FS_SERVICE_MINOR UINT16_C(6)
 #define PXA_FS_SERVICE_PATCH UINT16_C(0)
 
 #define PXA_FS_OPEN UINT16_C(1)
@@ -32,6 +32,13 @@ extern "C" {
 #define PXA_FS_QUERY_ROOT UINT16_C(17)
 #define PXA_FS_APP_MEDIA_PATH UINT16_C(18)
 #define PXA_FS_IMPORT_FILES UINT16_C(19)
+#define PXA_FS_ATOMIC_BEGIN UINT16_C(20)
+#define PXA_FS_ATOMIC_WRITE UINT16_C(21)
+#define PXA_FS_ATOMIC_COMMIT UINT16_C(22)
+#define PXA_FS_ATOMIC_ABORT UINT16_C(23)
+#define PXA_FS_FEATURE_ASYNC_ATOMIC_WRITE UINT64_C(512)
+#define PXA_FS_ATOMIC_MAX_CHUNK 2048u
+#define PXA_FS_ATOMIC_MAX_FILE_BYTES (16u * 1024u * 1024u)
 #define PXA_FS_IMPORT_MULTIPLE UINT32_C(1)
 #define PXA_FS_FEATURE_FILE_IMPORT UINT64_C(256)
 #define PXA_FS_IMPORT_FILTER_MAX 128u
@@ -224,6 +231,22 @@ pxa_status_t pxa_fs_access_complete(pxa_fs_service_t *service,
     pxa_component_t component, pxa_request_token_t token,
     pxa_status_t status, const uint8_t grant_id[16]);
 void pxa_fs_service_poll(pxa_fs_service_t *service);
+/* Executor must accept exactly-once only on OK. Backend gates must be
+ * recursive and shared by owner-thread FS calls and executor jobs. Jobs never
+ * call Runtime APIs or retain Guest memory. Enable before registration. */
+/* Checked close consumes its resource even on failure. */
+typedef pxa_status_t (*pxa_fs_close_checked_fn)(void *, void *, uint8_t);
+typedef void (*pxa_fs_async_work_fn)(void *);
+typedef pxa_status_t (*pxa_fs_async_submit_fn)(void *, pxa_fs_async_work_fn, void *);
+typedef void (*pxa_fs_backend_gate_fn)(void *);
+size_t pxa_fs_service_atomic_workspace_size(uint16_t capacity);
+pxa_status_t pxa_fs_service_enable_async_atomic(pxa_fs_service_t *,
+    void *, size_t, uint16_t, pxa_fs_close_checked_fn, pxa_fs_async_submit_fn, void *,
+    pxa_fs_backend_gate_fn, pxa_fs_backend_gate_fn, void *);
+/* Teardown: mark shutdown, drain the executor, then finish shutdown before
+ * releasing backend/arena storage. finish performs no Runtime calls. */
+void pxa_fs_service_atomic_shutdown_begin(pxa_fs_service_t *);
+void pxa_fs_service_atomic_shutdown_finish(pxa_fs_service_t *);
 /* Runtime-owner completion. A cancelled/stopped request cannot publish a
  * late result; the provider must stop copying and remove its partial file. */
 pxa_status_t pxa_fs_import_complete(pxa_fs_service_t *,pxa_component_t,

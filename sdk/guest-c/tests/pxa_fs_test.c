@@ -247,6 +247,28 @@ static void test_scoped_roots(void) {
     assert(pxa_fs_parse_root_info(&event,33,&info) && info.mount_epoch==99 && info.volume_id[0]==9);
     assert(!pxa_fs_parse_root_info(&event,34,&info));
 }
+static void test_atomic_write(void) {
+    uint8_t packet[2200],payload[12]={0};uint32_t n=0;pxa_event_t e;pxa_fs_atomic_result_t r;
+    assert(pxa_fs_build_atomic_begin(packet,sizeof(packet),50,"world.tmp",9,"world.bin",9,123,&n));
+    assert(pxa_parse_event(packet,n,&e) && e.opcode==20 && e.payload_size==34);
+    assert(pxa_load_u16(e.payload)==9 && pxa_load_u64(e.payload+8)==123);
+    assert(!pxa_fs_build_atomic_begin(packet,20,50,"x",1,"y",1,0,&n));
+    assert(!pxa_fs_build_atomic_begin(packet,sizeof(packet),50,"x",1,"x",1,0,&n));
+    assert(!pxa_fs_build_atomic_begin(packet,sizeof(packet),50,"../x",4,"y",1,0,&n));
+    const uint64_t session=UINT64_C(0x100000001);
+    assert(pxa_fs_build_atomic_operation(packet,sizeof(packet),21,51,session,(const uint8_t *)"data",4,&n));
+    assert(pxa_parse_event(packet,n,&e) && e.payload_size==12 && pxa_load_u64(e.payload)==session && !memcmp(e.payload+8,"data",4));
+    assert(!pxa_fs_build_atomic_operation(packet,sizeof(packet),21,51,session,payload,2049,&n));
+    assert(!pxa_fs_build_atomic_operation(packet,sizeof(packet),22,51,session,payload,1,&n));
+    pxa_store_u64(payload+4,session);
+    assert(make_event(packet,sizeof(packet),20,50,payload,12,&e));
+    assert(pxa_fs_parse_atomic(&e,50,20,&r) && r.session==session);
+    e.payload_size--;assert(!pxa_fs_parse_atomic(&e,50,20,&r));
+    pxa_store_u32(payload+4,2048);assert(make_event(packet,sizeof(packet),21,51,payload,8,&e));
+    assert(pxa_fs_parse_atomic(&e,51,21,&r) && r.written==2048);
+    pxa_store_u32(payload,(uint32_t)PXA_STATUS_IO_ERROR);assert(make_event(packet,sizeof(packet),22,52,payload,4,&e));
+    assert(pxa_fs_parse_atomic(&e,52,22,&r) && r.status==PXA_STATUS_IO_ERROR);
+}
 int main(void) {
     assert(pxa_fs_request_app_media(1)==0 && captured_length==48);
     assert(captured[20]==5);
@@ -257,5 +279,6 @@ int main(void) {
     test_build_path_and_rename();
     test_parse_results();
     test_scoped_roots();
+    test_atomic_write();
     return 0;
 }

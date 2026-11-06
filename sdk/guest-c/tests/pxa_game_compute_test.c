@@ -1,6 +1,7 @@
 #include "../../testing/pxa_control_capture.h"
 #include "pxa_game_render_compute.h"
 #include "pxa_game_render_tiles.h"
+#include "pxa_game_render_rgb565.h"
 #include <assert.h>
 #include <string.h>
 
@@ -15,7 +16,7 @@ int32_t pxa_io(uint64_t handle, uint32_t op, uint8_t *p, uint32_t n) {
     assert(handle == 77);
     captured_operation = op;
     if (failure) return failure;
-    if (op == PXA_GAME_RENDER_IO_BLIT_INDEXED_FRAME || op == PXA_GAME_RENDER_IO_BLIT_INDEXED_RECT || op == PXA_GAME_RENDER_IO_EXECUTE_PRIORITY_TILES) {
+    if (op == PXA_GAME_RENDER_IO_BLIT_INDEXED_FRAME || op == PXA_GAME_RENDER_IO_BLIT_INDEXED_RECT || op == PXA_GAME_RENDER_IO_EXECUTE_PRIORITY_TILES || op == PXA_GAME_RENDER_IO_EXECUTE_RGB565) {
         assert(n <= sizeof(captured)); memcpy(captured, p, n);
     } else {
         assert(op == PXA_GAME_RENDER_IO_COMPUTE_TELEMETRY && n == 64);
@@ -51,6 +52,28 @@ int main(void) {
     failure = PXA_STATUS_WOULD_BLOCK;
     assert(pxa_game_render_blit_indexed_rect(77, &blit) == failure);
     failure=0;
+    uint8_t rgb[64] = {0};
+    pxa_game_render_rgb565_header_wire_t rh = {0}, decoded_rh;
+    pxa_game_render_rgb565_command_wire_t rc = {0}, decoded_rc;
+    rh.magic = PXA_GAME_RENDER_RGB565_MAGIC; rh.version = 1; rh.count = 1;
+    rh.target_offset = 4096; rh.target_width = rh.target_height = 16;
+    rh.target_bytes = 512; rh.target_pitch = 32;
+    rc.kind = PXA_GAME_RENDER_RGB565_FILL; rc.light = 255;
+    rc.x = -2; rc.width = rc.height = 16; rc.color = 0x1234;
+    assert(pxa_game_render_rgb565_header_encode(rgb, 32, &rh));
+    assert(pxa_game_render_rgb565_command_encode(rgb + 32, 32, &rc));
+    assert(pxa_game_render_execute_rgb565(77, rgb, 64) == 64);
+    assert(captured_operation == 0x10d);
+    assert(pxa_game_render_rgb565_header_decode(captured, 32, &decoded_rh));
+    assert(pxa_game_render_rgb565_command_decode(captured + 32, 32, &decoded_rc));
+    assert(decoded_rh.target_offset == 4096 && decoded_rc.x == -2 && decoded_rc.color == 0x1234);
+    short_reply = 1;
+    assert(pxa_game_render_execute_rgb565(77, rgb, 64) == PXA_STATUS_PROTOCOL_ERROR);
+    short_reply = 0; failure = PXA_STATUS_UNSUPPORTED;
+    assert(pxa_game_render_execute_rgb565(77, rgb, 64) == failure);
+    failure = 0;
+    assert(pxa_game_render_execute_rgb565(0, rgb, 64) == PXA_STATUS_INVALID_ARGUMENT);
+    assert(pxa_game_render_execute_rgb565(77, NULL, 64) == PXA_STATUS_INVALID_ARGUMENT);
     uint8_t tile_storage[1024], pixels[64], palette[32];
     memset(pixels,1,sizeof(pixels));memset(palette,7,sizeof(palette));
     pxa_game_render_tile_batch_t tiles;

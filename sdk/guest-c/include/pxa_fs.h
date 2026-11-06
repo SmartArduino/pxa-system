@@ -350,4 +350,58 @@ static inline int pxa_fs_parse_directory(
     return 1;
 }
 
+/* FS 0.6, optional async-atomic-write feature (bit 9). Session IDs are opaque
+ * and component-local; they are not FILE handles and cannot be passed to IO.
+ * Every chunk is copied by Host before control returns. Wait for each result
+ * before sending another operation to the same session. */
+#define PXA_FS_ATOMIC_BEGIN 20u
+#define PXA_FS_ATOMIC_WRITE 21u
+#define PXA_FS_ATOMIC_COMMIT 22u
+#define PXA_FS_ATOMIC_ABORT 23u
+#define PXA_FS_FEATURE_ASYNC_ATOMIC_WRITE UINT64_C(512)
+#define PXA_FS_ATOMIC_MAX_CHUNK 2048u
+#define PXA_FS_ATOMIC_MAX_FILE_BYTES (16u * 1024u * 1024u)
+typedef struct { int32_t status; uint64_t session; uint32_t written; } pxa_fs_atomic_result_t;
+static inline int pxa_fs_build_atomic_begin(uint8_t *out,size_t capacity,uint64_t token,
+    const char *temporary,size_t tn,const char *destination,size_t dn,uint64_t expected,uint32_t *written) {
+    if(written)*written=0;
+    if(!out || !written || !token || !pxa_fs_valid_path(temporary,tn) ||
+        !pxa_fs_valid_path(destination,dn) || expected>PXA_FS_ATOMIC_MAX_FILE_BYTES ||
+        (tn==dn && pxa_fs_equal_bytes(temporary,destination,tn)) ||
+        capacity<PXA_HEADER_BYTES+16+tn+dn)return 0;
+    uint8_t *p=out+PXA_HEADER_BYTES;
+    pxa_store_u16(p,(uint16_t)tn);pxa_store_u16(p+2,(uint16_t)dn);pxa_store_u32(p+4,0);
+    pxa_store_u64(p+8,expected);
+    for(size_t i=0;i<tn;++i)p[16+i]=(uint8_t)temporary[i];
+    for(size_t i=0;i<dn;++i)p[16+tn+i]=(uint8_t)destination[i];
+    return pxa_build_message(out,capacity,PXA_FS_SERVICE,PXA_FS_ATOMIC_BEGIN,token,p,16+tn+dn,written);
+}
+static inline int pxa_fs_build_atomic_operation(uint8_t *out,size_t capacity,uint16_t opcode,
+    uint64_t token,uint64_t session,const uint8_t *data,size_t size,uint32_t *written) {
+    if(written)*written=0;
+    if(!out || !written || !token || !session || opcode<PXA_FS_ATOMIC_WRITE || opcode>PXA_FS_ATOMIC_ABORT ||
+        (opcode==PXA_FS_ATOMIC_WRITE ? (!data || !size || size>PXA_FS_ATOMIC_MAX_CHUNK) : size!=0) ||
+        capacity<PXA_HEADER_BYTES+8+size)return 0;
+    uint8_t *p=out+PXA_HEADER_BYTES;pxa_store_u64(p,session);
+    for(size_t i=0;i<size;++i)p[8+i]=data[i];
+    return pxa_build_message(out,capacity,PXA_FS_SERVICE,opcode,token,p,8+size,written);
+}
+static inline int pxa_fs_parse_atomic(const pxa_event_t *e,uint64_t token,uint16_t opcode,pxa_fs_atomic_result_t *r) {
+    if(!r)return 0;
+    pxa_zero(r,sizeof(*r));
+    if(!e || !token || e->service!=PXA_FS_SERVICE || e->token!=token || e->opcode!=opcode ||
+        opcode<PXA_FS_ATOMIC_BEGIN || opcode>PXA_FS_ATOMIC_ABORT || !e->payload || e->payload_size<4)return 0;
+    r->status=(int32_t)pxa_load_u32(e->payload);
+    if(r->status)return e->payload_size==4;
+    if(opcode==PXA_FS_ATOMIC_BEGIN) {
+        if(e->payload_size!=12)return 0;
+        r->session=pxa_load_u64(e->payload+4);return (r->session>>32)!=0 && (uint32_t)r->session!=0;
+    }
+    if(opcode==PXA_FS_ATOMIC_WRITE) {
+        if(e->payload_size!=8)return 0;
+        r->written=pxa_load_u32(e->payload+4);return r->written && r->written<=PXA_FS_ATOMIC_MAX_CHUNK;
+    }
+    return e->payload_size==4;
+}
+
 #endif

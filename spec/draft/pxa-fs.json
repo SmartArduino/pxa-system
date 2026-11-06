@@ -1,11 +1,11 @@
 {
-  "schema": "pxa-fs-spec-0.5",
+  "schema": "pxa-fs-spec-0.6",
   "status": "draft",
   "service": {
     "name": "fs",
     "id": 5,
     "major": 0,
-    "minor": 5,
+    "minor": 6,
     "patch": 0
   },
   "opcodes": [
@@ -131,6 +131,38 @@
       "payload": "flags:u32|extensions-length:u16|purpose-length:u16|extensions:ascii|purpose:utf8",
       "result": "imported:u32|failed:u32|skipped:u32|first-error:i32",
       "feature": "file-import"
+    },
+    {
+      "name": "atomic-begin",
+      "id": 20,
+      "direction": "bidirectional-result",
+      "request_token": "nonzero",
+      "payload": "temporary-bytes:u16|destination-bytes:u16|reserved:u32=0|expected-bytes:u64|temporary:utf8|destination:utf8",
+      "result": "session:u64"
+    },
+    {
+      "name": "atomic-write",
+      "id": 21,
+      "direction": "bidirectional-result",
+      "request_token": "nonzero",
+      "payload": "session:u64|data:bytes[1..2048]",
+      "result": "written:u32"
+    },
+    {
+      "name": "atomic-commit",
+      "id": 22,
+      "direction": "bidirectional-result",
+      "request_token": "nonzero",
+      "payload": "session:u64",
+      "result": "empty"
+    },
+    {
+      "name": "atomic-abort",
+      "id": 23,
+      "direction": "bidirectional-result",
+      "request_token": "nonzero",
+      "payload": "session:u64",
+      "result": "empty"
     }
   ],
   "open_flags": [
@@ -234,9 +266,11 @@
   "limits": {
     "max_path_bytes": 255,
     "max_segment_bytes": 255,
-    "quota_unit": "logical-regular-file-bytes"
+    "quota_unit": "logical-regular-file-bytes",
+    "atomic_max_chunk_bytes": 2048,
+    "atomic_max_file_bytes": 16777216
   },
-  "protocol_version": "0.5.0",
+  "protocol_version": "0.6.0",
   "features": [
     {
       "name": "scoped-roots",
@@ -261,6 +295,10 @@
     {
       "name": "file-import",
       "bit": 8
+    },
+    {
+      "name": "async-atomic-write",
+      "bit": 9
     }
   ],
   "root_info": {
@@ -303,5 +341,15 @@
     "file_features": {
       "read-at": 0
     }
-  }
+  },
+  "async_atomic_rules": [
+    "Optional native executor; synchronous FILE IO and existing operations remain unchanged.",
+    "Private relative paths only; temporary and destination differ; live sessions cannot overlap either path.",
+    "Session is component-local and generation-tagged, consumes one file resource budget, and permits one outstanding operation.",
+    "Host copies paths and chunks before returning; completion is delivered only by Runtime owner after native work.",
+    "Commit requires exactly expected bytes; successful checked close precedes atomic replacement; errors retain the old destination and retire session.",
+    "Core cancellation and component stop cancel unpublished work and close/remove temporary files. Cancellation after atomic publication cannot undo publication.",
+    "On activation shutdown, cancel sessions, drain executor, finalize cleanup before releasing backend/arena; workers never call Runtime.",
+    "Persistent quota counts both temporary and committed files until replacement. Queue and session capacity are bounded; WOULD_BLOCK may be retried after completion."
+  ]
 }

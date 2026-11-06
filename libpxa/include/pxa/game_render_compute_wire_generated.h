@@ -13,6 +13,13 @@
 #define PXA_GAME_RENDER_TILES_MAX_TILES UINT32_C(4096)
 #define PXA_GAME_RENDER_TILES_FLIP_X 1u
 #define PXA_GAME_RENDER_TILES_FLIP_Y 2u
+#define PXA_GAME_RENDER_RGB565_MAGIC UINT32_C(910313298)
+#define PXA_GAME_RENDER_RGB565_HEADER_BYTES UINT32_C(32)
+#define PXA_GAME_RENDER_RGB565_COMMAND_BYTES UINT32_C(32)
+#define PXA_GAME_RENDER_RGB565_MAX_COMMANDS UINT32_C(4096)
+#define PXA_GAME_RENDER_RGB565_MAX_PIXELS UINT32_C(4194304)
+#define PXA_GAME_RENDER_RGB565_TRANSPARENT_ZERO 1u
+#define PXA_GAME_RENDER_RGB565_FLIP_X 2u
 typedef struct {
     uint32_t magic;
     uint16_t major;
@@ -170,6 +177,105 @@ static inline int pxa_game_render_blit_encode(uint8_t *p, size_t n,
     pxa_wire_generated_store_u16(p + 56, (uint16_t)v->cursor_width);
     pxa_wire_generated_store_u16(p + 58, (uint16_t)v->cursor_height);
     pxa_wire_generated_store_u32(p + 60, (uint32_t)v->cursor_pitch);
+    return 1;
+}
+typedef struct {
+    uint32_t magic;
+    uint16_t version;
+    uint16_t reserved;
+    uint32_t count;
+    uint32_t target_offset;
+    uint32_t target_bytes;
+    uint16_t target_width;
+    uint16_t target_height;
+    uint32_t target_pitch;
+    uint32_t reserved2;
+} pxa_game_render_rgb565_header_wire_t;
+static inline int pxa_game_render_rgb565_header_decode(const uint8_t *p, size_t n,
+    pxa_game_render_rgb565_header_wire_t *v) {
+    if (!p || !v || n < 32u) return 0;
+    v->magic = (uint32_t)pxa_wire_generated_load_u32(p + 0);
+    v->version = (uint16_t)pxa_wire_generated_load_u16(p + 4);
+    v->reserved = (uint16_t)pxa_wire_generated_load_u16(p + 6);
+    v->count = (uint32_t)pxa_wire_generated_load_u32(p + 8);
+    v->target_offset = (uint32_t)pxa_wire_generated_load_u32(p + 12);
+    v->target_bytes = (uint32_t)pxa_wire_generated_load_u32(p + 16);
+    v->target_width = (uint16_t)pxa_wire_generated_load_u16(p + 20);
+    v->target_height = (uint16_t)pxa_wire_generated_load_u16(p + 22);
+    v->target_pitch = (uint32_t)pxa_wire_generated_load_u32(p + 24);
+    v->reserved2 = (uint32_t)pxa_wire_generated_load_u32(p + 28);
+    return 1;
+}
+static inline int pxa_game_render_rgb565_header_encode(uint8_t *p, size_t n,
+    const pxa_game_render_rgb565_header_wire_t *v) {
+    if (!p || !v || n < 32u) return 0;
+    pxa_wire_generated_store_u32(p + 0, (uint32_t)v->magic);
+    pxa_wire_generated_store_u16(p + 4, (uint16_t)v->version);
+    pxa_wire_generated_store_u16(p + 6, (uint16_t)v->reserved);
+    pxa_wire_generated_store_u32(p + 8, (uint32_t)v->count);
+    pxa_wire_generated_store_u32(p + 12, (uint32_t)v->target_offset);
+    pxa_wire_generated_store_u32(p + 16, (uint32_t)v->target_bytes);
+    pxa_wire_generated_store_u16(p + 20, (uint16_t)v->target_width);
+    pxa_wire_generated_store_u16(p + 22, (uint16_t)v->target_height);
+    pxa_wire_generated_store_u32(p + 24, (uint32_t)v->target_pitch);
+    pxa_wire_generated_store_u32(p + 28, (uint32_t)v->reserved2);
+    return 1;
+}
+typedef struct {
+    uint8_t kind;
+    uint8_t flags;
+    uint8_t light;
+    uint8_t reserved;
+    int16_t x;
+    int16_t y;
+    uint16_t width;
+    uint16_t height;
+    uint32_t source_offset;
+    uint32_t source_bytes;
+    uint16_t source_width;
+    uint16_t source_height;
+    uint32_t source_pitch;
+    uint16_t color;
+    uint16_t reserved2;
+} pxa_game_render_rgb565_command_wire_t;
+static inline int pxa_game_render_rgb565_command_decode(const uint8_t *p, size_t n,
+    pxa_game_render_rgb565_command_wire_t *v) {
+    if (!p || !v || n < 32u) return 0;
+    v->kind = (uint8_t)p[0];
+    v->flags = (uint8_t)p[1];
+    v->light = (uint8_t)p[2];
+    v->reserved = (uint8_t)p[3];
+    v->x = (int16_t)pxa_wire_generated_load_u16(p + 4);
+    v->y = (int16_t)pxa_wire_generated_load_u16(p + 6);
+    v->width = (uint16_t)pxa_wire_generated_load_u16(p + 8);
+    v->height = (uint16_t)pxa_wire_generated_load_u16(p + 10);
+    v->source_offset = (uint32_t)pxa_wire_generated_load_u32(p + 12);
+    v->source_bytes = (uint32_t)pxa_wire_generated_load_u32(p + 16);
+    v->source_width = (uint16_t)pxa_wire_generated_load_u16(p + 20);
+    v->source_height = (uint16_t)pxa_wire_generated_load_u16(p + 22);
+    v->source_pitch = (uint32_t)pxa_wire_generated_load_u32(p + 24);
+    v->color = (uint16_t)pxa_wire_generated_load_u16(p + 28);
+    v->reserved2 = (uint16_t)pxa_wire_generated_load_u16(p + 30);
+    return 1;
+}
+static inline int pxa_game_render_rgb565_command_encode(uint8_t *p, size_t n,
+    const pxa_game_render_rgb565_command_wire_t *v) {
+    if (!p || !v || n < 32u) return 0;
+    p[0] = v->kind;
+    p[1] = v->flags;
+    p[2] = v->light;
+    p[3] = v->reserved;
+    pxa_wire_generated_store_u16(p + 4, (uint16_t)v->x);
+    pxa_wire_generated_store_u16(p + 6, (uint16_t)v->y);
+    pxa_wire_generated_store_u16(p + 8, (uint16_t)v->width);
+    pxa_wire_generated_store_u16(p + 10, (uint16_t)v->height);
+    pxa_wire_generated_store_u32(p + 12, (uint32_t)v->source_offset);
+    pxa_wire_generated_store_u32(p + 16, (uint32_t)v->source_bytes);
+    pxa_wire_generated_store_u16(p + 20, (uint16_t)v->source_width);
+    pxa_wire_generated_store_u16(p + 22, (uint16_t)v->source_height);
+    pxa_wire_generated_store_u32(p + 24, (uint32_t)v->source_pitch);
+    pxa_wire_generated_store_u16(p + 28, (uint16_t)v->color);
+    pxa_wire_generated_store_u16(p + 30, (uint16_t)v->reserved2);
     return 1;
 }
 #endif /* shared Host/Guest definitions */

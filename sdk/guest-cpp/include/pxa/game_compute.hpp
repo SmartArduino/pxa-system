@@ -5,6 +5,9 @@
 #include <cstring>
 namespace pxa::game {
 using IndexedBlit = wire_compute::pxa_game_render_blit_wire_t;
+using Rgb565Header = wire_compute::pxa_game_render_rgb565_header_wire_t;
+using Rgb565Command = wire_compute::pxa_game_render_rgb565_command_wire_t;
+inline constexpr std::uint64_t rgb565_batches_feature = 128;
 struct ComputeTelemetry {
     std::uint64_t batches, rejected, commands, pixels, validation_us, execute_us;
     std::uint32_t last_validation_us, last_execute_us, max_commands;
@@ -15,6 +18,16 @@ public:
         : transport_(transport), handle_(transport, handle), max_commands_(max_commands) {}
     std::uint64_t handle() const noexcept { return handle_.handle(); }
     std::uint32_t max_commands() const noexcept { return max_commands_; }
+    // Caller encodes a header and ordered commands using wire_compute.
+    // Sources and packet stay immutable until synchronous execution returns.
+    Result<void> execute_rgb565(std::span<std::byte> packet) noexcept {
+        if (packet.size() < PXA_GAME_RENDER_RGB565_HEADER_BYTES)
+            return std::unexpected(Error::invalid_argument);
+        auto result = transport_.io(handle(), 0x10d, packet);
+        if (!result) return std::unexpected(result.error());
+        if (*result != packet.size()) return std::unexpected(Error::protocol_error);
+        return {};
+    }
     Result<void> execute(PriorityTileBatch& batch) noexcept {
         if (batch.error_) return std::unexpected(*batch.error_);
         if (!batch.count_) return {};

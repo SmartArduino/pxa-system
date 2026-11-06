@@ -1,11 +1,11 @@
 {
-  "schema": "pxa-game-render-spec-1.5",
+  "schema": "pxa-game-render-spec-1.6",
   "status": "draft",
   "service": {
     "name": "game-render",
     "id": 18,
     "major": 1,
-    "minor": 5,
+    "minor": 6,
     "patch": 0
   },
   "opcodes": [
@@ -87,6 +87,12 @@
       "id": 268,
       "payload": "zeroed-64-byte-buffer",
       "result": "compute-telemetry-record"
+    },
+    {
+      "name": "execute-rgb565",
+      "id": 269,
+      "payload": "rgb565-header|rgb565-command[count]",
+      "result": "accepted-bytes"
     }
   ],
   "features": [
@@ -105,6 +111,10 @@
     {
       "name": "priority-tile-batches",
       "bit": 6
+    },
+    {
+      "name": "rgb565-batches",
+      "bit": 7
     }
   ],
   "create_flags": [
@@ -206,7 +216,7 @@
     "texture_dimension": 256,
     "palette_colors": 256
   },
-  "protocol_version": "1.5.0",
+  "protocol_version": "1.6.0",
   "compute": {
     "blit": {
       "bytes": 64,
@@ -400,6 +410,121 @@
         "Borrowed command/source bytes remain immutable until return. The caller snapshots mutable cache/palette data before submission. Host writes neither source nor padding outside destination rectangles.",
         "Parallel ranges use priority bytes as primary target units; color pixels follow the same indices. Each worker executes commands in order for its own pixels. Backends must satisfy cache/coherency alignment for both planes or use serial execution.",
         "Any negative execution status leaves both output planes unchanged. A backend must reject before starting; after starting it must finish/join all ranges and return success. A caller may then render a rejected batch locally without an output-plane snapshot."
+      ]
+    },
+    "rgb565": {
+      "magic": 910313298,
+      "header_bytes": 32,
+      "command_bytes": 32,
+      "max_commands": 4096,
+      "max_pixels": 4194304,
+      "flags": {
+        "transparent_zero": 1,
+        "flip_x": 2
+      },
+      "header": [
+        [
+          "magic",
+          "u32"
+        ],
+        [
+          "version",
+          "u16"
+        ],
+        [
+          "reserved",
+          "u16"
+        ],
+        [
+          "count",
+          "u32"
+        ],
+        [
+          "target_offset",
+          "u32"
+        ],
+        [
+          "target_bytes",
+          "u32"
+        ],
+        [
+          "target_width",
+          "u16"
+        ],
+        [
+          "target_height",
+          "u16"
+        ],
+        [
+          "target_pitch",
+          "u32"
+        ],
+        [
+          "reserved2",
+          "u32"
+        ]
+      ],
+      "command": [
+        [
+          "kind",
+          "u8"
+        ],
+        [
+          "flags",
+          "u8"
+        ],
+        [
+          "light",
+          "u8"
+        ],
+        [
+          "reserved",
+          "u8"
+        ],
+        [
+          "x",
+          "i16"
+        ],
+        [
+          "y",
+          "i16"
+        ],
+        [
+          "width",
+          "u16"
+        ],
+        [
+          "height",
+          "u16"
+        ],
+        [
+          "source_offset",
+          "u32"
+        ],
+        [
+          "source_bytes",
+          "u32"
+        ],
+        [
+          "source_width",
+          "u16"
+        ],
+        [
+          "source_height",
+          "u16"
+        ],
+        [
+          "source_pitch",
+          "u32"
+        ],
+        [
+          "color",
+          "u16"
+        ],
+        [
+          "reserved2",
+          "u16"
+        ]
       ]
     }
   }

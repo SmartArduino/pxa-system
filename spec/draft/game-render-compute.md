@@ -1,4 +1,4 @@
-# GameRender compute protocol 1.5
+# GameRender compute protocol 1.6
 
 `CREATE_RASTER_CONTEXT` (3) takes `max_commands:u32, reserved:u32=0`.
 The limit is 1–4096. Its successful reply is `status:i32=0, handle:u64,
@@ -10,6 +10,7 @@ it allocates no display, image, projection workspace or depth buffer.
 | BLIT_INDEXED_FRAME | 0x108 | 4 | INDEX8/palette/cursor resolve on the established 320×240 sampling grid |
 | BLIT_INDEXED_RECT | 0x109 | 5 | Exact nearest-neighbour rectangle resolve |
 | EXECUTE_PRIORITY_TILES | 0x10a | 6 | Ordered INDEX8 tiles with RGB565 and priority outputs |
+| EXECUTE_RGB565 | 0x10d | 7 | Ordered fills, RGB565 blits and exact nearest-neighbour scaling |
 | COMPUTE_TELEMETRY | 0x10c | — | Synchronous compute counters |
 
 The machine-readable layouts are in `pxa-game-render.json`. Host, C and C++
@@ -34,6 +35,40 @@ The schemas in `pxa-game-render.json` define the layouts and bounds.
 C uses `pxa_game_render_compute.h` and `pxa_game_render_tiles.h`; C++ uses
 `RasterContext` and `PriorityTileBatch`. Projection, lighting and texture
 sampling stay in applications. Short positive I/O replies are protocol errors.
+
+## RGB565 batches
+
+`pxa_game_render_rgb565.h` provides the C codec and synchronous I/O helper.
+C++ exposes `Rgb565Header`, `Rgb565Command` and
+`RasterContext::execute_rgb565` for caller-encoded packets.
+The 32-byte header describes a RGB565LE target rectangle and its byte pitch;
+up to 4096 ordered 32-byte commands follow, with no trailing bytes. Offsets
+refer to Guest linear memory, including source offsets. The target is limited
+to 262144 pixels and a batch to 4194304 clipped destination pixel visits.
+
+Kind 0 fills a clipped rectangle with `color`; its source fields and flags
+must be zero and `light` must be 255. Kind 1 blits a source rectangle and
+requires `color=0`. Sampling uses the unclipped destination-relative coordinates:
+`sx=floor(dx*source_width/width)` and `sy=floor(dy*source_height/height)`.
+Flag 2 flips the sampled source X. Flag 1 skips an original source value of
+zero; brightness then computes `floor(channel*light/255)` independently for
+5-, 6- and 5-bit channels. A nonzero source dimmed to zero still overwrites
+the target. There is no filtering or alpha blending.
+
+Dimensions must be nonzero, pitches even and at least twice their width,
+and source/target bases aligned to two bytes. Supplied byte ranges must cover
+the final row and fit linear memory. Every source and the packet must be
+disjoint from the complete target range, including padding; sources may
+share immutable bytes. Reserved fields and unknown flags are rejected.
+
+All commands are validated before any write. A backend either rejects before
+writing or completes all work successfully; `WOULD_BLOCK` leaves output
+untouched. Workers own disjoint destination byte ranges and preserve command
+order within each range. All workers join before return, and no Guest pointer
+is retained. Keep source and packet bytes immutable until return. Callers can
+fall back locally on an unsupported operation or unavailable compute context;
+do not replay an already completed batch. Hosts without a worker run the same
+scalar implementation. Hardware acceleration is a backend choice.
 
 ## Telemetry
 
