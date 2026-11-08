@@ -3,27 +3,36 @@ from __future__ import annotations
 
 import json
 import os
-from pathlib import Path, PurePosixPath
+from pathlib import Path, PurePosixPath, PureWindowsPath
 import re
 import platform
 import shutil
 import subprocess
+import sys
 import tarfile
 import tempfile
 from urllib.parse import urljoin, urlparse
 from urllib.request import urlopen
 
-from .common import ToolError, digest, locked
+from .common import ToolError, digest, executable, locked
 from .project import SDK_ROOT
 
 
 def data_root():
-    return Path(os.environ.get('XDG_DATA_HOME', Path.home() / '.local/share')) / 'pxa'
+    return Path(os.environ.get('XDG_DATA_HOME') or
+                (os.environ.get('LOCALAPPDATA') if os.name == 'nt' else None) or
+                Path.home() / '.local/share') / 'pxa'
+
+
+def remote_source(source: str) -> bool:
+    # urlparse interprets the drive letter in C:\\sdk\\manifest.json as a
+    # scheme. Local native paths must remain usable in offline mode.
+    return bool(urlparse(source).scheme) and not PureWindowsPath(source).drive
 
 
 def fetch(source: str, destination: Path, *, offline=False, limit=2 * 1024**3):
     parsed = urlparse(source)
-    if parsed.scheme:
+    if remote_source(source):
         if offline or parsed.scheme != 'https':
             raise ToolError('Downloads require HTTPS; offline mode never accesses the network')
         stream = urlopen(source, timeout=60)
@@ -45,7 +54,7 @@ def verify_manifest(path: Path, signature: Path, *, root=SDK_ROOT):
     public = root / 'config/release-public.pem'
     if not public.is_file():
         raise ToolError('This SDK has no trusted distribution public key')
-    openssl = root / 'runtime/bin/openssl'
+    openssl = executable(root / 'runtime/bin/openssl')
     result = subprocess.run([str(openssl) if openssl.is_file() else 'openssl', 'dgst',
                              '-sha256', '-verify', str(public), '-signature', str(signature), str(path)],
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -80,12 +89,15 @@ def extract(archive: Path, destination: Path, *, maximum=6 * 1024**3):
 
 
 def install(release: str, manifest: str | None, *, offline=False):
-    if platform.system() != 'Linux' or platform.machine() != 'x86_64':
-        raise ToolError('This release supports Linux x86_64')
+    host = platform.system()
+    if host not in ('Linux', 'Windows') or platform.machine().lower() not in ('x86_64', 'amd64'):
+        raise ToolError('Native releases require Linux or Windows x64')
+    target_platform = 'windows-x86_64' if host == 'Windows' else 'linux-x86_64'
     if not re.fullmatch(r'\d+\.\d+\.\d+(?:-[a-zA-Z0-9.-]+)?', release):
         raise ToolError('Expected an explicit release version')
-    manifest = manifest or f'https://pxa.doit.am/downloads/{release}/distribution.json'
-    if urlparse(manifest).scheme:
+    filename = 'distribution-windows-x86_64.json' if host == 'Windows' else 'distribution.json'
+    manifest = manifest or f'https://pxa.doit.am/downloads/{release}/{filename}'
+    if remote_source(manifest):
         base = manifest
         locate = lambda name: urljoin(base, name)
     else:
@@ -100,12 +112,15 @@ def install(release: str, manifest: str | None, *, offline=False):
             fetch(manifest, local_manifest, offline=offline, limit=1024**2)
             fetch(manifest + '.sig', signature, offline=offline, limit=4096)
             document = verify_manifest(local_manifest, signature)
-            if document.get('version') != release or document.get('platform') != 'linux-x86_64':
+            if document.get('version') != release or document.get('platform') != target_platform:
                 raise ToolError('Distribution version/platform mismatch')
-            required_glibc = tuple(int(part) for part in document['minimum_glibc'].split('.'))
-            libc, libc_version = platform.libc_ver()
-            if libc != 'glibc' or tuple(int(part) for part in libc_version.split('.')) < required_glibc:
-                raise ToolError(f"This release requires glibc >= {document['minimum_glibc']}")
+            if host == 'Linux':
+                required_glibc = tuple(int(part) for part in document['minimum_glibc'].split('.'))
+                libc, libc_version = platform.libc_ver()
+                if libc != 'glibc' or tuple(int(part) for part in libc_version.split('.')) < required_glibc:
+                    raise ToolError(f"This release requires glibc >= {document['minimum_glibc']}")
+            elif sys.getwindowsversion().build < document.get('minimum_windows_build', 18362):
+                raise ToolError('This release requires a newer Windows build')
             if destination.is_dir():
                 receipt = destination / 'distribution.json'
                 if not receipt.is_file() or digest(receipt) != digest(local_manifest):
@@ -129,7 +144,7 @@ def install(release: str, manifest: str | None, *, offline=False):
                     extract(archive, stage)
                 shutil.copy2(local_manifest, stage / 'distribution.json')
                 shutil.copy2(signature, stage / 'distribution.json.sig')
-                if not (stage / 'bin/pxa').is_file():
+                if not (stage / ('bin/pxa.cmd' if host == 'Windows' else 'bin/pxa')).is_file():
                     raise ToolError('Distribution launcher is missing')
                 os.replace(stage, destination)
     return destination

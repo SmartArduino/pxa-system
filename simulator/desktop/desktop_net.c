@@ -22,9 +22,13 @@
 #include <time.h>
 
 #include <curl/curl.h>
+#ifdef _WIN32
+#include <iphlpapi.h>
+#else
 #include <ifaddrs.h>
 #include <net/if.h>
 #include <sys/socket.h>
+#endif
 
 #define DESKTOP_NET_MAX_PENDING UINT16_C(4)
 #define DESKTOP_NET_MAX_RESPONSE_BYTES UINT32_C(262144)
@@ -644,6 +648,27 @@ static pxa_status_t desktop_connectivity(void *context,uint32_t *state) {
         *state = override[0]=='1' ? PXA_NET_CONNECTIVITY_ONLINE : PXA_NET_CONNECTIVITY_OFFLINE;
         return PXA_STATUS_OK;
     }
+#ifdef _WIN32
+    ULONG size=16384;
+    IP_ADAPTER_ADDRESSES *addresses=malloc(size);
+    *state=PXA_NET_CONNECTIVITY_UNKNOWN;
+    if(!addresses)return PXA_STATUS_OK;
+    ULONG result=GetAdaptersAddresses(AF_UNSPEC,GAA_FLAG_SKIP_ANYCAST|GAA_FLAG_SKIP_MULTICAST|
+        GAA_FLAG_SKIP_DNS_SERVER,NULL,addresses,&size);
+    if(result==ERROR_BUFFER_OVERFLOW) {
+        free(addresses);addresses=malloc(size);if(!addresses)return PXA_STATUS_OK;
+        result=GetAdaptersAddresses(AF_UNSPEC,GAA_FLAG_SKIP_ANYCAST|GAA_FLAG_SKIP_MULTICAST|
+            GAA_FLAG_SKIP_DNS_SERVER,NULL,addresses,&size);
+    }
+    if(result==NO_ERROR) {
+        *state=PXA_NET_CONNECTIVITY_OFFLINE;
+        for(IP_ADAPTER_ADDRESSES *a=addresses;a;a=a->Next)
+            if(a->OperStatus==IfOperStatusUp && a->IfType!=IF_TYPE_SOFTWARE_LOOPBACK && a->FirstUnicastAddress) {
+                *state=PXA_NET_CONNECTIVITY_ONLINE;break;
+            }
+    }
+    free(addresses);return PXA_STATUS_OK;
+#else
     struct ifaddrs *addresses=NULL;
     *state=PXA_NET_CONNECTIVITY_UNKNOWN;
     if (getifaddrs(&addresses)) return PXA_STATUS_OK;
@@ -654,6 +679,7 @@ static pxa_status_t desktop_connectivity(void *context,uint32_t *state) {
             *state=PXA_NET_CONNECTIVITY_ONLINE;break;
         }
     freeifaddrs(addresses);return PXA_STATUS_OK;
+#endif
 }
 
 #include "desktop_socket.inc"

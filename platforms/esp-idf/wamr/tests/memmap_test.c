@@ -110,6 +110,17 @@ int main(void) {
     for(unsigned i=0;i<65536;++i)assert(adopted[i]==0);
     pxa_wamr_load_memory_end();adopted[0]=47;
     assert(adopted[0]==47);os_munmap(adopted,65536);
+    /* A fixed AOT memory may export malloc/free, omitting the optional Host
+     * heap. Adopt the smaller mapping without freeing/reallocating its block,
+     * and clear all temporary loader data in the retained capacity. */
+    assert(pxa_wamr_load_memory_begin(65536+16384));
+    uint8_t *scratch=pxa_wamr_load_memory_scratch(65536+16384);
+    assert(scratch);memset(scratch,0xa5,65536+16384);
+    assert(pxa_wamr_load_memory_release(scratch));pxa_wamr_load_memory_ready();
+    adopted=os_mmap(NULL,65536,MMAP_PROT_NONE,MMAP_MAP_NONE,0);
+    assert(adopted==scratch);
+    for(unsigned i=0;i<65536+16384;++i)assert(adopted[i]==0);
+    pxa_wamr_load_memory_end();os_munmap(adopted,65536);
     assert(pxa_wamr_load_memory_begin(4096));
     assert(pxa_wamr_load_memory_scratch(32));
     pxa_wamr_load_memory_end(); // Failed loader abandons scratch and mapping.

@@ -5,7 +5,7 @@ from datetime import datetime
 import hashlib
 import json
 import os
-from pathlib import Path, PurePosixPath
+from pathlib import Path, PurePosixPath, PureWindowsPath
 import subprocess
 import tarfile
 import tempfile
@@ -109,9 +109,13 @@ def request(url, *, data=None, headers=None, method=None, timeout=60):
         time.sleep(.5 * (attempt + 1))
 
 
+def remote_source(source):
+    return bool(urlparse(str(source)).scheme) and not PureWindowsPath(str(source)).drive
+
+
 def download(source, target, *, limit=1024 * 1024):
     source = str(source)
-    stream = request(source) if urlparse(source).scheme else Path(source).open('rb')
+    stream = request(source) if remote_source(source) else Path(source).open('rb')
     total = 0
     with stream, Path(target).open('wb') as output:
         while block := stream.read(1024 * 1024):

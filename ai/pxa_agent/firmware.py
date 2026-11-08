@@ -14,7 +14,7 @@ import re
 from .common import ToolError, artifact, atomic_json, data_root, evidence, digest, request, signed_document
 from .workbench import info_fields
 
-BOARDS = ('pai-touch', 'doit-gamekit', 'doit-gamekit-1', 'esp32s31-korvo-1', 'esp-mosaico', 'sensecap-watcher')
+BOARDS = ('pai-touch', 'doit-gamekit', 'doit-gamekit-1', 'esp32s31-korvo-1', 'esp-mosaico', 'sensecap-watcher', 'doit-esp32s31-devkit', 'espp4-a')
 
 
 def partition_table(data):
@@ -64,7 +64,7 @@ def prepare(board, *, version='latest', mode='app', manifest=None):
     if len(matches) != 1:
         raise ToolError('This release has no unique signed firmware for the selected board')
     row = matches[0]
-    if row['chip'] != ('esp32s3' if board in ('pai-touch', 'sensecap-watcher') else 'esp32s31'):
+    if row['chip'] != ('esp32p4' if board == 'espp4-a' else 'esp32s3' if board in ('pai-touch', 'sensecap-watcher') else 'esp32s31'):
         raise ToolError('Firmware board/CPU mismatch')
     from .environment import locate
     item = row['application' if mode == 'app' else 'merged']

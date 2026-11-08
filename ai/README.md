@@ -1,4 +1,4 @@
-# PXA Agent Kit 0.4.4
+# PXA Agent Kit 0.5.0
 
 [English](README.en.md) · [一句话上手](https://pxa.doit.am/docs/ai-development/) · [AI 入口](https://pxa.doit.am/ai.md)
 
@@ -22,7 +22,7 @@ uv run --python 3.12 https://pxa.doit.am/setup.py --workspace ./my-pxa
 uv run --python 3.12 --locked --project ./ai ./ai/agent.py --workspace ./my-pxa setup
 ```
 
-`setup` 自动选择官方 DevKit 0.8.0 或签名容器镜像，安装项目内的 skills、平台 MCP 配置、CLI 启动器，最后编译并运行真实 Guest、保存检查截图。失败时返回失败，不会把下载成功当成验收。`--sdk /path/to/devkit` 仅复用用户自己选择的完整 SDK，不宣称它经过下载签名校验。离线分发可以用 `setup.py --channel /path/to/ai-kit-0.4.4.json --manifest /path/to/distribution.json`，归档和签名放在各自清单旁。
+`setup` 自动选择官方 DevKit 0.9.0 或签名容器镜像，安装项目内的 skills、平台 MCP 配置、CLI 启动器，最后编译并运行真实 Guest、保存检查截图。失败时返回失败，不会把下载成功当成验收。`--sdk /path/to/devkit` 仅复用用户自己选择的完整 SDK，不宣称它经过下载签名校验。离线分发可以用 `setup.py --channel /path/to/ai-kit-0.5.0.json --manifest /path/to/distribution.json`，归档和签名放在各自清单旁。
 
 在 `my-pxa` 目录中使用以下命令（Windows 使用 `.pxa\pxa.cmd`）：
 
@@ -152,3 +152,9 @@ uv run --python 3.12 https://pxa.doit.am/setup.py --workspace . --mode board
 `context` 与构建使用相同的已安装锁定 SDK；版本缺失时明确提示安装，不回退到其他版本。C++ 检索包含随该 SDK 发行的 `extensions/*/sdk/include` 与扩展示例，例如 `context apps/counter --query FrameReader`。应用边界审计也保护扩展 SDK。网络短暂失败时只重试 GET/HEAD 读取，不自动重放上传、授权或资料修改。
 
 多平台交付可用 `pxa_build(project="apps/demo", targets=["esp32s3", "esp32s31", "simulator", "wasm"])` 一次构建，共享公共编译结果。日常使用默认的模拟器目标即可。任务轮询可用 `include_log=false`，需要诊断时再读取日志；已完成任务的耗时不会随轮询继续增长。
+
+## 按设备设计与一句话上架
+
+运行 `.pxa/pxa device-profile` 查看端口与 PXADB 开启指引，再用 `--port` 读取实际 CPU、分辨率、调试输入和传感器。请补充物理操作方式和自适应屏幕要求。MCP 使用 `pxa_device_profile`。像素游戏实现建议见随包 pxa-app-dev 的 pixel-games 参考：Z Labs 中文像素字体、整数缩放、输入换算、图块复用与异步存档。
+
+上架时告诉 AI 公开名称、简介、目标用户、素材授权及是否已有图标，运行 `store prepare` 检查缺项。有生图能力则制作匹配图标和可选封面；没有则制作简单图标并跳过封面。截图必须使用 `verify --store-screenshots` 实际运行并逐张检查原图，最后使用浏览器授权提交审核。

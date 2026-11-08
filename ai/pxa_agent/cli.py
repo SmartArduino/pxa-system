@@ -27,6 +27,9 @@ def parser():
     setup.add_argument('--no-mcp', action='store_true')
     setup.add_argument('--no-smoke', action='store_true', help='skip the initial real Guest environment check')
     commands.add_parser('doctor')
+    profile = commands.add_parser('device-profile', help='read device design constraints or explain USB/PXADB setup')
+    profile.add_argument('--port')
+    profile.add_argument('--baud', type=int, default=2000000)
     commands.add_parser('mcp', help='serve tools to an MCP client over stdio')
     init = commands.add_parser('init', help='create a C or C++ app without editing the SDK')
     init.add_argument('project')
@@ -112,7 +115,10 @@ def main():
     args = parser().parse_args()
     try:
         result = None
-        if args.command == 'scope':
+        if args.command == 'device-profile':
+            from .device_profile import inspect
+            result = inspect(Environment(args.workspace), args.port, args.baud)
+        elif args.command == 'scope':
             from . import scope
             if args.action == 'begin':
                 sdk = Environment(args.workspace).config.get('sdk') if args.mode == 'app' else None

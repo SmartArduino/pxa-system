@@ -1,4 +1,4 @@
-# PXA Agent Kit 0.4.4
+# PXA Agent Kit 0.5.0
 
 [中文](README.md) · [Tutorial](https://pxa.doit.am/docs/ai-development/)
 
@@ -12,7 +12,7 @@ With [uv](https://docs.astral.sh/uv/getting-started/installation/) installed:
 uv run --python 3.12 https://pxa.doit.am/setup.py --workspace ./my-pxa
 ```
 
-The bootstrap verifies the release signature, archive hash and file manifest. Setup installs the signed DevKit 0.8.0, project-local skills/MCP adapters and launchers, then builds and runs an actual Guest. No ESP-IDF, LLVM build or additional model API key is needed. Native Linux x86_64 requires glibc 2.39+; macOS, Windows and older Linux use Docker Desktop or Podman with Linux amd64 support. OS administration, virtualization and user login may require normal user interaction.
+The bootstrap verifies the release signature, archive hash and file manifest. Setup installs the signed DevKit 0.9.0, project-local skills/MCP adapters and launchers, then builds and runs an actual Guest. No ESP-IDF, LLVM build or additional model API key is needed. Native Linux x86_64 requires glibc 2.39+; Windows x64 can use the signed native DevKit (Wine-validated preview); macOS and older Linux use Docker Desktop or Podman with Linux amd64 support. OS administration, virtualization and user login may require normal user interaction.
 
 Codex and Claude Code receive local skills, optional roles and MCP entries. DSH discovers shared `.agents/skills` and can use the CLI directly; `.pxa/dsh-mcp.yaml` is an optional official Cordis composition snippet. Other agents can use the standard stdio MCP server or CLI. Existing global settings, models, permissions, unrelated MCP servers and edited files are preserved. Reopen the project if the client has not discovered the new tools.
 
@@ -76,3 +76,5 @@ of replaying steps that may already have taken effect.
 Context follows the project SDK lock, fails if that release is missing, and searches bundled C++ extension headers/examples. App scope also protects extension SDK sources. Stop watch before verify; run already builds incrementally. Only read-only GET/HEAD requests retry transient network failures; uploads and authorization writes are never replayed.
 
 For delivery, `pxa_build` accepts `targets=["esp32s3", "esp32s31", "simulator", "wasm"]` in one shared build. Keep the default simulator target during iteration. Poll jobs with `include_log=false` unless diagnostics are needed; completed elapsed times remain stable.
+
+`device-profile` / MCP `pxa_device_profile` reads actual CPU, resolution, debug inputs and sensor descriptors, with actionable USB/PXADB setup guidance. Confirm physical controls and adaptive screen requirements. Pixel-game guidance covers Z Labs Chinese fonts, integer nearest-neighbor scaling and input mapping. `store prepare` returns a publishing checklist; generate matching icons/artwork when available, skip optional covers without image generation, and capture original rectangular simulator screenshots. Native Windows x64 signed component installation is supported alongside Linux and the container route.

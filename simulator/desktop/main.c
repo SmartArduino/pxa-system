@@ -832,6 +832,14 @@ static void simulator_device_info(
 
 static bool simulator_memory_info(void* context, uint64_t* available_bytes,
                                   uint64_t* total_bytes) {
+#ifdef _WIN32
+    (void)context;
+    if(available_bytes==NULL || total_bytes==NULL)return false;
+    MEMORYSTATUSEX status;memset(&status,0,sizeof(status));status.dwLength=sizeof(status);
+    if(!GlobalMemoryStatusEx(&status))return false;
+    *available_bytes=status.ullAvailPhys;*total_bytes=status.ullTotalPhys;
+    return true;
+#else
     long available_pages;
     long total_pages;
     long page_size;
@@ -844,6 +852,7 @@ static bool simulator_memory_info(void* context, uint64_t* available_bytes,
     *available_bytes = (uint64_t)available_pages * (uint64_t)page_size;
     *total_bytes = (uint64_t)total_pages * (uint64_t)page_size;
     return true;
+#endif
 }
 
 static size_t simulator_wifi_scan(void* context,
@@ -2157,6 +2166,7 @@ done:
 }
 
 int main(int argc, char** argv) {
+    SDL_SetMainReady();
     simulator_options_t options;
     if (argc == 2 && strcmp(argv[1], "--version") == 0) {
         printf("PXA desktop simulator %s\n", PXA_VERSION_STRING);

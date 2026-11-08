@@ -12,7 +12,7 @@ static int test_pinned=1;
 int pxa_wamr_load_memory_begin(size_t bytes) {
     assert(!load_arena);
     if(fail_reservation){fail_reservation=0;return 0;}
-    if(!bytes || bytes>1024*1024)return 0;
+    if(!bytes || bytes>2*1024*1024)return 0;
     load_arena=malloc(bytes);assert(load_arena);
     load_capacity=bytes;load_used=load_leases=0;++load_begins;return 1;
 }
@@ -115,7 +115,7 @@ static wasm_module_t load(Source *source, pxa_status_t *status, int *buffered) {
 #ifdef PXA_WAMR_TEST_LOAD_MEMORY
     pinned=test_pinned;
 #endif
-    *status = pxa_wamr_read_aot(&reader, &module, buffered, pinned, error, sizeof(error));
+    *status = pxa_wamr_read_aot(&reader, &module, buffered, pinned, 16384, error, sizeof(error));
 #ifdef PXA_WAMR_TEST_LOAD_MEMORY
     pxa_wamr_load_memory_ready();
     pxa_wamr_load_memory_end(); /* Poison scratch before executing the module. */
@@ -182,6 +182,24 @@ int main(void) {
     }
 #ifdef PXA_WAMR_TEST_LOAD_MEMORY
     assert(load_begins);
+    /* wamrc can collapse a fixed memory to one non-64-KiB page. Its data
+     * remains valid; reserving only ordinary pages misses the largest block
+     * on constrained devices after a warm restart. */
+    memcpy(input,original,length);
+    size_t memory=8;
+    while(u32(input+memory)!=1) memory=(memory+8+u32(input+memory+4)+3)&~(size_t)3;
+    uint8_t *declaration=input+memory+8;
+    assert(u32(declaration)==0 && u32(declaration+4)==1);
+    put32(declaration+8,1);put32(declaration+12,900000);
+    put32(declaration+16,1);put32(declaration+20,1);
+    unsigned before_reservations=load_begins;
+    fail_reservation=fail_scratch=0;
+    Source collapsed={.bytes=input,.size=length};
+    pxa_status_t collapsed_status;int collapsed_buffered;
+    wasm_module_t collapsed_module=load(&collapsed,&collapsed_status,&collapsed_buffered);
+    assert(collapsed_status==PXA_STATUS_OK && collapsed_module && !collapsed_buffered);
+    assert(load_begins==before_reservations+1 && load_capacity==900000+16384);
+    run(collapsed_module);
     /* At the same additional-heap budget, loading with a future linear
      * mapping available must succeed where ordinary metadata allocation
      * cannot. Scratch is poisoned before executing either loaded module. */

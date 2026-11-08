@@ -53,6 +53,15 @@ static int path_valid(const char *p) {
     }
     return 1;
 }
+static int host_path_absolute(const char *path) {
+#ifdef _WIN32
+    return (((path[0]>='A' && path[0]<='Z') || (path[0]>='a' && path[0]<='z')) &&
+            path[1]==':' && (path[2]=='/' || path[2]=='\\')) ||
+           (path[0]=='/' && path[1]=='/') || (path[0]=='\\' && path[1]=='\\');
+#else
+    return path[0]=='/';
+#endif
+}
 static const pxa_scoped_fs_mount_t *mount_for(pxa_scoped_fs_t *fs,uint64_t epoch) {
     uint16_t i;
     if (!epoch) return NULL;
@@ -529,7 +538,7 @@ pxa_status_t pxa_scoped_fs_init(void *workspace,size_t bytes,
         if (!c->mounts[i].mount_epoch && !c->mounts[i].host_path &&
             !c->mounts[i].native_fat) continue;
         if (!c->mounts[i].mount_epoch || !c->mounts[i].host_path ||
-            c->mounts[i].host_path[0]!='/' ||
+            !host_path_absolute(c->mounts[i].host_path) ||
             strnlen(c->mounts[i].host_path,PXA_SCOPED_FS_PATH_BYTES)>=PXA_SCOPED_FS_PATH_BYTES)
             return PXA_STATUS_INVALID_ARGUMENT;
     }

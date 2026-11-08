@@ -75,7 +75,10 @@ Use `verify <app>` for repeatable multi-screen checks. Runtime checks do not rep
 For store screenshots use `verify <app> --store-screenshots` with the real PXA simulator and a rectangular viewport without rounded or circular masks.
 Disable performance overlays and bottom gesture/three-button navigation before capture, including app-owned debug UI. Inspect every original PNG before upload. Never crop, edit or generate replacement screenshots.
 Write test evidence under ignored `local/artifacts/`. Keep private signing keys and store tokens outside the project.
-For a connected device, discover ports and read INFO before selecting its CPU, board or package. Keep existing device data.
+Use `device-profile` (MCP pxa_device_profile) to discover ports, then read the selected device's CPU, resolution, debug inputs and sensors. Confirm physical controls and whether other resolutions, physical screen sizes, rounded corners or round screens must work. Unknown capabilities need confirmation, not guesses.
+If PXADB is unavailable, explain USB data cable, Settings / PXADB debugging and serial permissions. BOOT/RESET download mode is different from normal USB debugging. Keep existing device data.
+For pixel games read the pxa-app-dev pixel-game reference: consider Z Labs Pixel 12px with its license, integer nearest-neighbor scaling, input coordinate mapping and bounded rendering budgets.
+For user-requested store submission, run store prepare, generate a matching icon with available image tools or an app-level vector design, and capture original runtime screenshots using verify --store-screenshots. Generate a cover only when image generation is available; otherwise skip the optional cover. Ask only for missing listing/account/asset-rights details; use browser authorization and never ask for copied secrets.
 Use `firmware prepare` before an authorized firmware upgrade. App-only flashing requires the actual partition layout to match.
 Full flashing erases data and requires explicit data-loss authorization. A generic app-development request does not authorize it.
 Use `store authorize` for browser-assisted, app-scoped upload access. User-authorized publishing can proceed without asking again.

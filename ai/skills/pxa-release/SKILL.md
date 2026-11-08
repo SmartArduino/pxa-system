@@ -23,8 +23,9 @@ Run `store prepare <project>` (MCP `pxa_store_prepare`) before authorization or
 submission. It reads the current store publishing specification and reports
 available categories, tag limits, image formats/limits and `needs_choice`.
 Prefer a 512×512 icon and a 1280×960 (4:3) illustrated cover. When an image tool
-is available, offer to generate artwork that matches the application. Otherwise
-ask the user to provide images or choose to skip either upload. Do not block
+is available and listing artwork is requested, generate artwork that matches the
+application. Without image generation, create a simple app-level vector icon or
+use user-provided artwork; skip the optional cover and explain that choice. Do not block
 publishing on access to an image-generation service. Record explicit choices
 using `--skip-icon` / `--skip-cover`, or `"icon": null` / `"cover": null` in
 `store.json`; skipping preserves existing store artwork and does not delete it.
@@ -60,3 +61,10 @@ runtime success does not imply visual approval.
 
 For environment, build, device or publishing failures, use the
 [troubleshooting guide](https://pxa.doit.am/docs/ai-troubleshooting/).
+
+For a one-sentence publishing request, infer the listing draft from the app and
+ask only for missing public name/description, intended audience/category, asset
+rights and publisher-account approval. Report a concrete checklist from
+`store prepare`: signed target packages, icon, original simulator screenshots,
+optional generated cover, changelog and browser authorization. Do not ask users
+to supply screenshots the tools can capture or to paste private credentials.

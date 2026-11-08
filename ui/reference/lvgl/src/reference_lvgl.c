@@ -456,6 +456,8 @@ typedef struct {
     pxsys_reference_lvgl_app_icon_t icon;
     lv_obj_t* tile;
     lv_obj_t* remove_button;
+    lv_obj_t* icon_marker;
+    uint8_t icon_attempted;
     uint8_t uninstallable;
     uint8_t tap_cancelled;
     int32_t drag_start_x;
@@ -808,6 +810,11 @@ struct pxsys_reference_lvgl {
 };
 
 static void rebuild(pxsys_reference_lvgl_t* ui);
+static void launcher_load_visible_icons(pxsys_reference_lvgl_t* ui);
+static void rebuild_resume(pxsys_reference_lvgl_t* ui) {
+    --ui->rebuild_suspended;
+    if (!ui->rebuild_suspended && ui->rebuild_requested) rebuild(ui);
+}
 static int idle_policy_valid(const pxsys_reference_idle_policy_t* policy);
 #if PXSYS_REFERENCE_UI_BUILTIN_SETTINGS
 static void show_page_confirm(pxsys_reference_lvgl_t* ui,
@@ -1069,10 +1076,15 @@ static pxsys_status_t open_role(pxsys_reference_lvgl_t* ui, const char* role) {
     /* Bring the role to the front without clearing the tasks above it: the
      * running applications stay alive and keep their place in recents. */
     intent.flags = PXSYS_INTENT_FLAG_SINGLE_TOP;
-    return pxsys_task_manager_start_role(
+    /* Background/foreground/window notifications belong to one transition.
+     * Build only its final tree, preserving the outgoing navigation bookmark. */
+    ++ui->rebuild_suspended;
+    pxsys_status_t status = pxsys_task_manager_start_role(
         pxsys_standard_system_tasks(ui->system),
         pxsys_standard_system_roles(ui->system), NULL,
         pxsys_string_from_cstr(role), &intent, &instance);
+    rebuild_resume(ui);
+    return status;
 }
 
 static uint32_t navigation_hash(uint32_t hash, uint32_t value) {
@@ -1390,8 +1402,10 @@ static void navigation_back(pxsys_reference_lvgl_t* ui) {
         rebuild(ui);
         return;
     }
+    ++ui->rebuild_suspended;
     (void)pxsys_task_manager_back(pxsys_standard_system_tasks(ui->system),
                                   &result);
+    rebuild_resume(ui);
 }
 
 static void navigation_back_gesture_event(lv_event_t* event) {
@@ -1537,7 +1551,8 @@ static void launcher_clicked(lv_event_t* event) {
         rebuild(item->ui);
         return;
     }
-    pxsys_task_manager_t* tasks = pxsys_standard_system_tasks(item->ui->system);
+    pxsys_reference_lvgl_t* ui = item->ui;
+    pxsys_task_manager_t* tasks = pxsys_standard_system_tasks(ui->system);
     /* Resume an existing task without clearing the launcher or other apps
      * above it. Otherwise its next exit can leave no Home task to restore. */
     for (size_t index = 0; index < pxsys_task_manager_count(tasks); ++index) {
@@ -1545,7 +1560,9 @@ static void launcher_clicked(lv_event_t* event) {
         if (pxsys_task_manager_task(tasks, index, &instance, &snapshot) ==
                 PXSYS_STATUS_OK &&
             pxsys_app_identity_equal(&snapshot.app->identity, &item->identity)) {
+            ++ui->rebuild_suspended;
             (void)pxsys_task_manager_activate(tasks, instance);
+            rebuild_resume(ui);
             return;
         }
     }
@@ -1553,7 +1570,9 @@ static void launcher_clicked(lv_event_t* event) {
     intent.target = &item->identity;
     intent.action = pxsys_string_from_cstr("system.intent.main");
     intent.flags = PXSYS_INTENT_FLAG_SINGLE_TOP;
+    ++ui->rebuild_suspended;
     (void)pxsys_task_manager_start(tasks, &intent, &instance);
+    rebuild_resume(ui);
 }
 
 static void launcher_position_tiles(pxsys_reference_lvgl_t* ui) {
@@ -1781,6 +1800,10 @@ static void launcher_scroll_event(lv_event_t* event) {
         lv_event_get_current_target(event) != ui->content ||
         ui->launcher_count == 0) return;
     const lv_event_code_t code = lv_event_get_code(event);
+    if (code == LV_EVENT_SCROLL) {
+        launcher_load_visible_icons(ui);
+        return;
+    }
     if (code == LV_EVENT_SCROLL_BEGIN) {
         lv_anim_t* animation = lv_event_get_param(event);
         if (animation != NULL)
@@ -1836,6 +1859,8 @@ static void launcher_configure_paging(pxsys_reference_lvgl_t* ui) {
     lv_obj_set_scroll_momentum(ui->content, false);
     lv_obj_set_scroll_elastic(ui->content, false);
     lv_obj_set_scrollbar_mode(ui->content, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_add_event_cb(ui->content, launcher_scroll_event,
+                        LV_EVENT_SCROLL, ui);
     lv_obj_add_event_cb(ui->content, launcher_scroll_event,
                         LV_EVENT_SCROLL_BEGIN, ui);
     lv_obj_add_event_cb(ui->content, launcher_scroll_event,
@@ -3175,6 +3200,7 @@ static lv_obj_t* make_launcher_tile(pxsys_reference_lvgl_t* ui,
     pxsys_lvgl_add_flags(tile, LV_OBJ_FLAG_PRESS_LOCK);
     pxsys_lvgl_remove_flags(tile, LV_OBJ_FLAG_SCROLL_ON_FOCUS);
     marker = lv_obj_create(tile);
+    item->icon_marker = marker;
     style_plain(marker);
     lv_obj_set_size(marker, icon_size, icon_size);
     if (item != NULL && item->icon.source != NULL) {
@@ -3277,6 +3303,41 @@ static lv_obj_t* make_launcher_tile(pxsys_reference_lvgl_t* ui,
              sizeof(focus_identity) - PXSYS_PUBLISHER_ROOT_BYTES * 2, ":%s", item->app_id);
     navigation_tag_focus(tile, focus_identity);
     return tile;
+}
+
+/* Loading every off-screen PNG delays Home and holds the LVGL lock while
+ * apps are stopping. Resolve only tiles intersecting the current viewport.
+ * Scrolling/focus loads newly visible tiles before the next draw; all acquired
+ * icons still retire with the tree so no cache fragments the next guest heap. */
+static void launcher_load_visible_icons(pxsys_reference_lvgl_t* ui) {
+    if (ui->content == NULL || !ui->content_active ||
+        ui->rendered_view_key != (uint32_t)REFERENCE_PAGE_HOME + 1u ||
+        ui->resolve_app_icon == NULL) return;
+    const int32_t left = lv_obj_get_scroll_x(ui->content);
+    const int32_t right = left + lv_obj_get_width(ui->content);
+    pxsys_app_registry_t* registry = pxsys_standard_system_apps(ui->system);
+    for (size_t i = 0; i < ui->launcher_count; ++i) {
+        launcher_item_t* item = &ui->launcher_items[i];
+        if (item->icon_attempted || item->tile == NULL) continue;
+        const int32_t x = lv_obj_get_x(item->tile);
+        if (x >= right || x + lv_obj_get_width(item->tile) <= left) continue;
+        item->icon_attempted = 1;
+        const pxsys_app_descriptor_t* app = pxsys_app_registry_find(registry, &item->identity);
+        if (app == NULL || !ui->resolve_app_icon(ui->app_icon_context, app, &item->icon)) {
+            memset(&item->icon, 0, sizeof(item->icon));
+            continue;
+        }
+        if (item->icon.source == NULL) continue;
+        lv_obj_t* marker = item->icon_marker;
+        lv_obj_clean(marker);
+        lv_obj_set_style_bg_opa(marker, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_shadow_width(marker, 0, 0);
+        lv_obj_t* image = lv_image_create(marker);
+        lv_obj_set_size(image, LV_PCT(100), LV_PCT(100));
+        lv_image_set_src(image, item->icon.source);
+        lv_image_set_inner_align(image, LV_IMAGE_ALIGN_CONTAIN);
+        lv_obj_center(image);
+    }
 }
 
 static void release_launcher_icons(pxsys_reference_lvgl_t* ui) {
@@ -4114,9 +4175,6 @@ static void build_home(pxsys_reference_lvgl_t* ui,
                         ? display_name.size : sizeof(name) - 1u;
         memcpy(name, display_name.data, name_size);
         name[name_size] = '\0';
-        if (ui->resolve_app_icon != NULL &&
-            !ui->resolve_app_icon(ui->app_icon_context, app, &item->icon))
-            memset(&item->icon, 0, sizeof(item->icon));
         tile = make_launcher_tile(ui, name, item);
         lv_obj_set_size(tile, (lv_coord_t)column_width, (lv_coord_t)row_height);
         ui->launcher_count++;
@@ -7849,6 +7907,8 @@ static void rebuild(pxsys_reference_lvgl_t* ui) {
         return;
     }
     ui->rebuild_requested = 0;
+    const uint32_t rebuild_started = lv_tick_get();
+    (void)rebuild_started; /* LV_LOG_USER may be compiled out. */
     if (pxsys_reference_layout_compute(&ui->display, &layout) != PXSYS_STATUS_OK)
         return;
     /* The touch target overlays content. Only a visible gesture handle needs
@@ -8276,8 +8336,15 @@ static void rebuild(pxsys_reference_lvgl_t* ui) {
     if (ui->notification_shade_open)
         build_notification_shade(ui, ui->notification_dragging
                                          ? ui->notification_progress : 256);
+    launcher_load_visible_icons(ui);
     lock_screen_refresh(ui);
     update_system_overlay(ui);
+    if (ui->performance_get && ui->performance_get(ui->performance_context,
+                                                  PXSYS_REFERENCE_PERFORMANCE_LOG))
+        LV_LOG_USER("PXA_PAGE page=%u content=%u start_ms=%lu elapsed_ms=%lu",
+                    (unsigned)ui->active_page, (unsigned)ui->content_active,
+                    (unsigned long)rebuild_started,
+                    (unsigned long)lv_tick_elaps(rebuild_started));
 }
 
 static void lock_screen_refresh(pxsys_reference_lvgl_t* ui) {
@@ -9272,8 +9339,7 @@ pxsys_status_t pxsys_reference_lvgl_start(pxsys_reference_lvgl_t* ui) {
     }
     status = PXSYS_STATUS_OK;
 finished:
-    --ui->rebuild_suspended;
-    if (!ui->rebuild_suspended && ui->rebuild_requested) rebuild(ui);
+    rebuild_resume(ui);
     return status;
 }
 

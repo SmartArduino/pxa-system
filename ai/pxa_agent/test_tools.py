@@ -23,6 +23,21 @@ from . import common, environment, firmware, integration, store
 
 
 class ToolTests(unittest.TestCase):
+    def test_offline_windows_drive_is_not_a_network_scheme(self):
+        self.assertFalse(common.remote_source(r'C:\pxa kit\distribution.json'))
+        self.assertFalse(common.remote_source(r'\\server\pxa\distribution.json'))
+        self.assertTrue(common.remote_source('https://pxa.doit.am/downloads/distribution.json'))
+
+    def test_native_windows_minimum_build(self):
+        from types import SimpleNamespace
+        with patch.object(environment.platform, 'system', return_value='Windows'), \
+                patch.object(environment.platform, 'machine', return_value='AMD64'), \
+                patch.object(environment.sys, 'getwindowsversion', create=True, return_value=SimpleNamespace(build=18362)):
+            self.assertTrue(environment.native_supported())
+        with patch.object(environment.platform, 'system', return_value='Windows'), \
+                patch.object(environment.platform, 'machine', return_value='ARM64'):
+            self.assertFalse(environment.native_supported())
+
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.root = Path(self.temporary.name)

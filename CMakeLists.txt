@@ -24,6 +24,9 @@ endif()
 
 include("${CMAKE_CURRENT_LIST_DIR}/cmake/PxaVersion.cmake")
 project(pxa_system VERSION ${PXA_RELEASE_NUMERIC} LANGUAGES C)
+if(WIN32 AND MINGW)
+    enable_language(CXX ASM RC)
+endif()
 
 if(CMAKE_SOURCE_DIR STREQUAL PROJECT_SOURCE_DIR)
     set(PXSYS_TOP_LEVEL ON)

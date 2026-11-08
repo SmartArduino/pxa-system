@@ -20,7 +20,8 @@ from . import VERSION
 from .common import KIT, ToolError, evidence
 from .workbench import Jobs, verification
 
-Profile = Literal['pai-touch', 'sensecap-watcher', 'esp-mosaico', 'esp32s31-korvo-1', 'generic']
+Profile = Literal['pai-touch', 'sensecap-watcher', 'esp-mosaico', 'esp32s31-korvo-1',
+                  'doit-gamekit', 'doit-gamekit-1', 'doit-esp32s31-devkit', 'espp4-a', 'generic']
 
 
 def create_server(env):
@@ -82,6 +83,12 @@ def create_server(env):
     def pxa_doctor() -> dict:
         """Verify installed SDK/engine and list serial ports without opening them."""
         return env.doctor()
+
+    @tool(annotations=read)
+    def pxa_device_profile(port: str | None = None, baud: int = 2000000) -> dict:
+        """Read device resolution, CPU, debug inputs and sensor descriptors; without a port list candidates and PXADB setup steps. Confirm physical controls and adaptive layout with the user."""
+        from .device_profile import inspect
+        return inspect(env, port, baud)
 
     @tool()
     def pxa_init(project: str, app_id: str | None = None, language: Literal['c', 'cpp'] = 'cpp') -> dict:

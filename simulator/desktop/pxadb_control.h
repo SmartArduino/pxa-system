@@ -6,6 +6,9 @@
 
 #include "lvgl.h"
 
+/* WinSock SOCKET is pointer-sized, including on 64-bit Windows. */
+typedef intptr_t pxsys_control_socket_t;
+
 enum {
     PXSYS_PXADB_MAX_POINTERS = 5,
     PXSYS_PXADB_PACKAGE_RUN = 4,
@@ -24,7 +27,7 @@ typedef struct {
 } pxsys_pxadb_touch_t;
 
 typedef struct {
-    int listener;
+    pxsys_control_socket_t listener;
     lv_display_t *display;
     uint32_t window_id;
     uint8_t tap_pending;

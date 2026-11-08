@@ -1,0 +1,23 @@
+# Attach PXA's UTF-8/long-path manifest without editing pinned upstream trees.
+# Loaded through CMAKE_PROJECT_INCLUDE after the upstream project() call.
+if(WIN32)
+    if(CMAKE_VERSION VERSION_LESS 3.19)
+        message(FATAL_ERROR "The Windows wamrc recipe requires CMake 3.19 or newer")
+    endif()
+    enable_language(RC)
+    function(pxa_windows_wamrc_manifest)
+        set(_resources "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/../libpxa/adapters/windows")
+        foreach(_tool wamrc llvm-tblgen llvm-min-tblgen)
+            if(TARGET ${_tool})
+                get_target_property(_imported ${_tool} IMPORTED)
+                if(NOT _imported)
+                    # Windows installations must not need symlink privileges.
+                    set_property(TARGET ${_tool} PROPERTY VERSION)
+                    target_sources(${_tool} PRIVATE "${_resources}/pxa_utf8.rc")
+                    target_include_directories(${_tool} PRIVATE "${_resources}")
+                endif()
+            endif()
+        endforeach()
+    endfunction()
+    cmake_language(DEFER CALL pxa_windows_wamrc_manifest)
+endif()

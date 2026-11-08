@@ -7,7 +7,7 @@ from pathlib import Path
 import re
 import sys
 
-from .common import ToolError, atomic_json, command, digest, identity
+from .common import ToolError, atomic_json, command, digest, executable, identity
 
 
 SDK_ROOT = Path(__file__).resolve().parents[2]
@@ -80,21 +80,25 @@ class Project:
 
 
 def resolve_tools(root: Path, *, offline=False) -> tuple[Path, Path]:
-    bundled = root / 'toolchains/wasi-sdk'
+    bundled = Path(os.environ.get('WASI_SDK_DIR', root / 'toolchains/wasi-sdk'))
     if bundled.is_dir():
         wasi = bundled
     else:
+        if os.name == 'nt':
+            raise ToolError('Set WASI_SDK_DIR to the extracted Windows WASI SDK, or install the Windows DevKit')
         env = os.environ.copy()
         env['PYTHON'] = sys.executable
         if offline:
             env['PXA_WASI_SDK_AUTO_DOWNLOAD'] = '0'
         wasi = Path(command(['bash', root / 'tools/package/resolve_wasi_sdk.sh'], env=env, capture=True))
-    wamrc = Path(os.environ.get('WAMRC', root / 'bin/wamrc'))
+    wamrc = Path(os.environ['WAMRC']) if 'WAMRC' in os.environ else executable(root / 'bin/wamrc')
     if not wamrc.is_file():
         if offline:
             raise ToolError('Offline: wamrc is not installed')
-        wamrc = Path(command(['bash', root / 'tools/package/build_wamrc.sh'], capture=True))
-    if not (wasi / 'bin/clang++').is_file() or not wamrc.is_file():
+        bootstrap = ([sys.executable, root / 'tools/package/build_wamrc.py'] if os.name == 'nt'
+                     else ['bash', root / 'tools/package/build_wamrc.sh'])
+        wamrc = Path(command(bootstrap, capture=True))
+    if not executable(wasi / 'bin/clang++').is_file() or not wamrc.is_file():
         raise ToolError('Incomplete PXA toolchain')
     return wasi.resolve(), wamrc.resolve()
 
@@ -103,7 +107,7 @@ def lock_project(project: Project, root: Path, wasi: Path, wamrc: Path, *, updat
     wamr = json.loads((root / 'config/wamr.json').read_text())
     current = {'schema': 'pxa-lock-1', 'sdk': sdk_identity(root),
                'toolchain': {'wasi_version': (wasi / 'VERSION').read_text().strip(),
-                             'clang_sha256': digest(wasi / 'bin/clang'),
+                             'clang_sha256': digest(executable(wasi / 'bin/clang')),
                              'wamrc_sha256': digest(wamrc), 'recipe': wamr},
                'core': project.metadata.get('min_core', project.metadata.get('min_sdk', [2, 0]))}
     path = project.path / 'pxa.lock'

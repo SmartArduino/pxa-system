@@ -55,17 +55,17 @@ os_mmap(void *hint, size_t size, int prot, int flags, os_file_handle file)
     }
     if (!(prot & MMAP_PROT_EXEC) && load_memory.memory && load_memory.ready
         && !load_memory.adopted) {
-        if (size == load_memory.bytes) {
+        if (size <= load_memory.bytes) {
             load_memory.adopted = true;
-            memset(load_memory.memory, 0, size);
+            memset(load_memory.memory, 0, load_memory.bytes);
 #ifdef ESP_PLATFORM
             ESP_LOGI("PxaWamrMap", "pinned mapping adopted: bytes=%u scratch=%u",
                      (unsigned)size, (unsigned)load_memory.used);
 #endif
             return load_memory.memory;
         }
-        /* An inserted Host heap can change WAMR's effective maximum. Give
-         * the space back before using the normal mapping path in that case. */
+        /* A validated mapping larger than the placement hint must use the
+         * normal path. A smaller one can retain the bounded reservation. */
         pxa_wamr_load_memory_end();
     }
     if (prot & MMAP_PROT_EXEC) {

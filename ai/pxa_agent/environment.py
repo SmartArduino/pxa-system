@@ -13,7 +13,7 @@ import tempfile
 from urllib.parse import urljoin, urlparse
 
 from . import SDK_VERSION, VERSION
-from .common import KIT, ToolError, artifact, atomic_json, data_root, digest, extract, locked, run, signed_document
+from .common import KIT, ToolError, artifact, atomic_json, data_root, digest, extract, locked, remote_source, run, signed_document
 
 
 def sdk_data():
@@ -26,24 +26,29 @@ def sdk_data():
 
 
 def locate(manifest, filename):
-    if urlparse(str(manifest)).scheme:
+    if remote_source(manifest):
         return urljoin(str(manifest), filename)
     return str(Path(manifest).resolve().parent / filename)
 
 
 def native_supported():
+    if platform.system() == 'Windows':
+        return platform.machine().lower() in ('x86_64', 'amd64') and sys.getwindowsversion().build >= 18362
     libc, version = platform.libc_ver()
     return (platform.system() == 'Linux' and platform.machine().lower() in ('x86_64', 'amd64')
             and libc == 'glibc' and tuple(map(int, version.split('.'))) >= (2, 39))
 
 
 def install_native(version, manifest=None):
-    source = manifest or f'https://pxa.doit.am/downloads/{version}/distribution.json'
+    windows = platform.system() == 'Windows'
+    target = 'windows-x86_64' if windows else 'linux-x86_64'
+    filename = 'distribution-windows-x86_64.json' if windows else 'distribution.json'
+    source = manifest or f'https://pxa.doit.am/downloads/{version}/{filename}'
     document, raw, signature = signed_document(source, schema='pxa-distribution-1')
-    if document.get('version') != version or document.get('platform') != 'linux-x86_64':
+    if document.get('version') != version or document.get('platform') != target:
         raise ToolError('SDK version/platform does not match the signed manifest')
     if not native_supported():
-        raise ToolError('Native DevKit needs Linux x86_64 and glibc 2.39+; use a container engine')
+        raise ToolError('Native DevKit needs Linux x64/glibc 2.39+ or Windows x64/build 18362+; use a container engine otherwise')
     destination = data_root() / 'sdks' / version
     with locked(destination.with_suffix('.lock')):
         receipt = destination / 'distribution.json'
@@ -62,7 +67,7 @@ def install_native(version, manifest=None):
                 print(f"PXA: installing signed {item['name']} {version} ({item['size'] // 1048576} MiB)", file=sys.stderr, flush=True)
                 archive = artifact(locate(source, item['file']), item)
                 extract(archive, stage)
-            if (stage / 'VERSION').read_text().strip() != version or not (stage / 'bin/pxa').is_file():
+            if (stage / 'VERSION').read_text().strip() != version or not (stage / ('bin/pxa.cmd' if windows else 'bin/pxa')).is_file():
                 raise ToolError('SDK contents do not match the requested release')
             (stage / 'distribution.json').write_bytes(raw)
             (stage / 'distribution.json.sig').write_bytes(signature)
@@ -127,7 +132,7 @@ def configure(workspace, *, engine='auto', sdk=None, version=None, manifest=None
         raise ToolError('This workspace pins another SDK; use a new workspace or an explicit SDK migration')
     if sdk:
         sdk = Path(sdk).expanduser().resolve()
-        if not (sdk / 'bin/pxa').is_file() or (sdk / 'VERSION').read_text().strip() != version:
+        if not (sdk / ('bin/pxa.cmd' if os.name == 'nt' else 'bin/pxa')).is_file() or (sdk / 'VERSION').read_text().strip() != version:
             raise ToolError('The selected DevKit is missing or has a different version')
         selected = {'engine': 'native', 'sdk': str(sdk), 'verified_distribution': False}
     else:
@@ -206,12 +211,20 @@ class Environment:
         # Its image already defines guest XDG paths; do not change engine storage.
         if not self.native:
             return dict(os.environ)
+        root = Path(self.config['sdk'])
         return {**os.environ, 'XDG_DATA_HOME': str(sdk_data().parent),
-                'XDG_CACHE_HOME': str(data_root() / 'cache')}
+                'XDG_CACHE_HOME': str(data_root() / 'cache'),
+                'PYTHONPATH': str(root / 'tools') + os.pathsep + os.environ.get('PYTHONPATH', ''),
+                'PATH': str(root / 'runtime/bin') + os.pathsep + os.environ.get('PATH', ''),
+                'PYTHONUTF8': '1'}
 
     def invocation(self, arguments, *, container_name=None, entrypoint=None):
         arguments = [self.mapped(arg) for arg in arguments]
         if self.native:
+            if os.name == 'nt':
+                # Invoke Python directly: CreateProcess does not execute .cmd,
+                # and shell=True would reinterpret app paths as shell syntax.
+                return [sys.executable, '-m', 'pxa_tools', *arguments]
             return [str(Path(self.config['sdk']) / 'bin/pxa'), *arguments]
         sdk_data().mkdir(parents=True, exist_ok=True)
         (data_root() / 'cache').mkdir(parents=True, exist_ok=True)

@@ -56,7 +56,7 @@ static uint32_t u32(const uint8_t *p) {
 
 pxa_status_t pxa_wamr_read_aot(pxa_wamr_artifact_reader_t *reader,
                               wasm_module_t *module, int *buffered,
-                              int pinned, char *error, uint32_t error_size) {
+                              int pinned, uint32_t host_heap_size, char *error, uint32_t error_size) {
     aot_section_t sections[6] = {{0}};
     uint32_t offsets[6] = {0};
     uint8_t header[64];
@@ -64,7 +64,7 @@ pxa_status_t pxa_wamr_read_aot(pxa_wamr_artifact_reader_t *reader,
     unsigned count = 0;
     pxa_status_t status = PXA_STATUS_UNSUPPORTED;
     int reserved = 0;
-    (void)pinned;(void)reserved;
+    (void)pinned;(void)host_heap_size;(void)reserved;
 #if defined(__APPLE__)
     bool code_writable = false;
 #endif
@@ -114,10 +114,22 @@ pxa_status_t pxa_wamr_read_aot(pxa_wamr_artifact_reader_t *reader,
     if (pinned && sections[1].section_body_size >= 24) {
         status = pxa_wamr_read_exact(reader, offsets[1], header, 24);
         if (status != PXA_STATUS_OK) goto done;
+        uint32_t page_bytes = u32(header + 12);
+        uint32_t initial = u32(header + 16), maximum = u32(header + 20);
+        int fixed_page = initial == 1 && maximum == 1;
         if (u32(header) == 0 && u32(header + 4) == 1 && u32(header + 8) == 1
-            && u32(header + 12) == 65536 && u32(header + 16) <= u32(header + 20)) {
-            uint64_t bytes = (uint64_t)u32(header + 20) * 65536;
-            if (bytes && bytes <= SIZE_MAX)
+            && page_bytes && (page_bytes == 65536 || fixed_page) && initial <= maximum) {
+            uint64_t bytes = (uint64_t)maximum * page_bytes;
+            if (fixed_page) {
+                /* WAMR may collapse fixed memory into one byte-sized page.
+                 * Instantiation appends its aligned Host heap to that page,
+                 * unless the module exports malloc/free. Reserve the bounded
+                 * upper size; the mapper can adopt a smaller validated size. */
+                uint64_t heap = ((uint64_t)host_heap_size + 7) & ~(uint64_t)7;
+                if (heap > APP_HEAP_SIZE_MAX) heap = APP_HEAP_SIZE_MAX;
+                bytes += heap;
+            }
+            if (bytes && bytes <= UINT32_MAX && bytes <= SIZE_MAX)
                 reserved = pxa_wamr_load_memory_begin((size_t)bytes);
         }
     }
@@ -192,8 +204,8 @@ done:
 #else
 pxa_status_t pxa_wamr_read_aot(pxa_wamr_artifact_reader_t *reader,
                               wasm_module_t *module, int *buffered,
-                              int pinned, char *error, uint32_t error_size) {
-    (void)reader;(void)pinned;
+                              int pinned, uint32_t host_heap_size, char *error, uint32_t error_size) {
+    (void)reader;(void)pinned;(void)host_heap_size;
     *module = NULL; *buffered = 0;
     if (error_size) snprintf(error, error_size, "AOT support is disabled");
     return PXA_STATUS_UNSUPPORTED;

@@ -12,7 +12,13 @@ typedef struct {
     lv_group_t* group;
     unsigned order[TEST_ITEMS];
     size_t app_count;
+    unsigned retired_trees;
 } fixture_t;
+
+static void child_deleted(lv_event_t* event) {
+    fixture_t* f = lv_event_get_user_data(event);
+    if (lv_event_get_target(event) == f->ui->root) ++f->retired_trees;
+}
 
 static void* allocate(void* context, size_t bytes) {
     (void)context;
@@ -182,6 +188,7 @@ static void create(fixture_t* f, lv_display_t* display, bool animations, lv_inde
     assert(control(f->ui->content, back_clicked, NULL) == NULL);
     assert(open_role(f->ui, PXSYS_ROLE_SETTINGS) == PXSYS_STATUS_OK);
     assert(control(f->ui->content, back_clicked, NULL) == NULL);
+    lv_obj_add_event_cb(f->ui->root, child_deleted, LV_EVENT_CHILD_DELETED, f);
 }
 static void destroy(fixture_t* f) {
     lv_indev_delete(f->device);
@@ -204,14 +211,19 @@ static void check_roles(fixture_t* f) {
         int32_t saved_y = scroll_to(f, row, 100 + (int32_t)i * 11);
         assert(saved_y > 0);
         size_t tasks = pxsys_task_manager_count(pxsys_standard_system_tasks(f->system));
-        click(row); /* Includes background -> empty chrome -> foreground rebuilds. */
+        unsigned deleted = f->retired_trees;
+        click(row);
+        /* Delete only the outgoing tree, with no intermediate chrome trees. */
+        assert(f->retired_trees == deleted + 1);
         assert(ui->active_page == pages[i] && ui->content_active);
         assert(pxsys_task_manager_count(pxsys_standard_system_tasks(f->system)) == tasks + 1);
         if (pages[i] == REFERENCE_PAGE_FILE_MANAGER) {
             lv_obj_t* plus = control(ui->content, file_new_folder_clicked, NULL);
             assert(plus != NULL && lv_obj_get_parent(plus) == lv_obj_get_parent(ui->title));
         }
+        deleted = f->retired_trees;
         click(header_back(ui));
+        assert(f->retired_trees == deleted + 1);
         settle(ui);
         assert(ui->active_page == REFERENCE_PAGE_SETTINGS);
         assert(pxsys_task_manager_count(pxsys_standard_system_tasks(f->system)) == tasks);

@@ -70,6 +70,14 @@ static void focus_tile(pxsys_reference_lvgl_t* ui, lv_obj_t* tile,
     lv_obj_get_coords(tile, &bounds);
     assert(bounds.x1 >= viewport.x1 && bounds.x2 <= viewport.x2);
     assert(bounds.y1 >= viewport.y1 && bounds.y2 <= viewport.y2);
+    for (size_t i = 0; i < ui->launcher_count; ++i) {
+        launcher_item_t* item = &ui->launcher_items[i];
+        if (lv_obj_get_index(item->tile) / (PXSYS_REFERENCE_UI_LAUNCHER_COLUMNS *
+                PXSYS_REFERENCE_UI_LAUNCHER_ROWS) == page) {
+            assert(item->icon.source != NULL);
+            assert(lv_obj_has_class(lv_obj_get_child(item->icon_marker, 0), &lv_image_class));
+        }
+    }
 }
 
 /* Match the board adapter: rebuilding its ordered group must suppress LVGL's
@@ -129,15 +137,24 @@ static void check_paging(lv_display_t* display, bool animations) {
     assert(pxsys_reference_lvgl_set_animations_enabled(ui, animations) == PXSYS_STATUS_OK);
     assert(pxsys_reference_lvgl_start(ui) == PXSYS_STATUS_OK);
     assert(ui->launcher_count == count);
-    assert(icons.live == count);
-    /* Starting the chrome must not reload all icons for intermediate trees. */
-    assert(icons.acquired == count);
+    assert(icons.live == per_page);
+    /* Home resolves its visible page, not PNGs on every off-screen page. */
+    assert(icons.acquired == per_page);
     lv_group_t* group = lv_group_create();
     lv_indev_t* keypad = lv_indev_create();
     lv_indev_set_type(keypad, LV_INDEV_TYPE_KEYPAD);
     lv_indev_set_display(keypad, display);
     lv_indev_set_group(keypad, group);
     collect_launcher(ui, group);
+    /* A pointer drag exposes the neighboring page before focus changes. It
+     * must load those icons once, including while the snap returns to Home. */
+    lv_obj_scroll_to_x(ui->content, lv_obj_get_width(ui->content) / 2, LV_ANIM_OFF);
+    lv_tick_inc(500);
+    (void)lv_timer_handler();
+    const size_t acquired = icons.acquired;
+    assert(acquired > per_page && acquired <= 2u * per_page);
+    lv_obj_scroll_to_x(ui->content, 0, LV_ANIM_OFF);
+    assert(icons.acquired == acquired);
     /* Forward/backward, both edge columns, and a last page with one icon. */
     const size_t indices[] = {per_page - 1u, per_page, per_page * 2u,
                              per_page * 2u - 1u, 0u, count - 1u, 0u};
@@ -169,7 +186,7 @@ static void check_paging(lv_display_t* display, bool animations) {
         rebuild(ui);
         assert(icons.live == 0);
         assert(app_foreground(NULL, &home) == PXSYS_STATUS_OK);
-        assert(ui->launcher_count == count && icons.live == count);
+        assert(ui->launcher_count == count && icons.live == per_page);
         lv_tick_inc(500);
         (void)lv_timer_handler();
         assert(ui->launcher_page == 1);

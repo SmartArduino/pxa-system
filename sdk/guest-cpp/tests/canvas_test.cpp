@@ -29,6 +29,14 @@ int main() {
         assert(page.mount() && canvas.mounted());
         const auto before = packets.size();
         assert(canvas.present(commands));
+        const auto presented = commands;
+        CanvasCommands<> identical;
+        identical.rect(-1, 2, 40, 30, 0xff0000ff).line(0, 0, 10, 10, 0xffffffff)
+            .clip({0, 0, 30, 30}).text(2, 2, 28, 0xffffffff, "Canvas").pop_clip();
+        assert(commands.same_commands(identical));
+        identical.rect(0, 0, 1, 1, 0xffffffff);
+        assert(!commands.same_commands(identical));
+        assert(commands.same_commands(presented));
         assert(packets.size() == before + 3);
         const auto& write = packets[before + 1];
         assert(pxa::wire::get16(write.data() + 2) == 8);

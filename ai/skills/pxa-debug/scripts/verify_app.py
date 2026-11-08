@@ -20,6 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 from pxa_agent.simulator_input import inject as simulator_input
 
 PROFILES = ('pai-touch', 'sensecap-watcher', 'esp-mosaico', 'esp32s31-korvo-1', 'generic')
+ALL_PROFILES = (*PROFILES, 'doit-gamekit', 'doit-gamekit-1', 'doit-esp32s31-devkit', 'espp4-a')
 NAME = re.compile(r'[a-z][a-z0-9-]{0,47}')
 
 
@@ -38,7 +39,7 @@ def device_command(pxa, arguments, env):
 
 
 def validate_scenario(scenario, dimensions):
-    if not isinstance(scenario, dict) or set(scenario) - set(PROFILES):
+    if not isinstance(scenario, dict) or set(scenario) - set(ALL_PROFILES):
         raise ValueError('Scenario must be an object keyed by built-in profile names')
     for profile, steps in scenario.items():
         if not isinstance(steps, list) or len(steps) > 100:
@@ -85,7 +86,7 @@ def main():
     parser.add_argument('project', type=Path)
     parser.add_argument('--pxa', type=Path, default=shutil.which('pxa'))
     parser.add_argument('--output', type=Path, required=True)
-    parser.add_argument('--profiles', nargs='+', choices=PROFILES, default=list(PROFILES))
+    parser.add_argument('--profiles', nargs='+', choices=ALL_PROFILES, default=list(PROFILES))
     parser.add_argument('--scenario', type=Path)
     parser.add_argument('--headless', action='store_true')
     parser.add_argument('--store-screenshots', action='store_true',
@@ -113,9 +114,11 @@ def main():
         profiles = root / 'share/pxa/profiles'
         if not profiles.is_dir():
             profiles = root.parents[1] / 'simulator/profiles'
-        dimensions = {name: tuple(tomllib.loads((profiles / (name + '.toml')).read_text())['desktop'][axis]
-                                   for axis in ('width', 'height')) for name in PROFILES}
         scenario = json.loads(args.scenario.read_text()) if args.scenario else {}
+        if not isinstance(scenario, dict) or set(scenario) - set(ALL_PROFILES):
+            raise ValueError('Unknown scenario profile')
+        dimensions = {name: tuple(tomllib.loads((profiles / (name + '.toml')).read_text())['desktop'][axis]
+                                   for axis in ('width', 'height')) for name in set(args.profiles) | set(scenario)}
         validate_scenario(scenario, dimensions)
         planned.mkdir(parents=True, exist_ok=False)
         output = planned

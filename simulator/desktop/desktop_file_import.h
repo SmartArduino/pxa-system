@@ -1,7 +1,9 @@
 /* SPDX-License-Identifier: MIT
  * Included after desktop_media_root_t. All calls belong to the LVGL/runtime
  * owner thread, including Core's native-cooperate pump. */
+#ifndef _WIN32
 #include <mntent.h>
+#endif
 #include "pxsys/theme.h"
 #define DESKTOP_IMPORT_VOLUMES 64u
 typedef struct desktop_file_import {
@@ -102,6 +104,17 @@ static pxa_status_t desktop_media_request_import(void *context,pxa_component_t c
     pxa_status_t status=PXA_STATUS_RESOURCE_LIMIT;
     if(!f->volumes_memory)goto fail;
     status=pxa_volume_registry_init(f->volumes_memory,bytes,DESKTOP_IMPORT_VOLUMES,1,&volumes);if(status)goto fail;
+#ifdef _WIN32
+    status=desktop_import_mount(f,volumes,getenv("USERPROFILE"));if(status)goto fail;
+    /* Each drive keeps its own volume identity and no-cross-device check. */
+    DWORD drives=GetLogicalDrives();
+    for(unsigned letter=0;letter<26;++letter)if(drives&(1u<<letter)) {
+        char path[]="A:/";path[0]=(char)('A'+letter);
+        UINT kind=GetDriveTypeA(path);
+        if(kind==DRIVE_NO_ROOT_DIR || kind==DRIVE_UNKNOWN)continue;
+        status=desktop_import_mount(f,volumes,path);if(status)goto fail;
+    }
+#else
     status=desktop_import_mount(f,volumes,getenv("HOME"));if(status)goto fail;
     status=desktop_import_mount(f,volumes,"/");if(status)goto fail;
     /* Register separate mounts instead of weakening the scoped adapter's
@@ -116,6 +129,7 @@ static pxa_status_t desktop_media_request_import(void *context,pxa_component_t c
         }
         endmntent(mounts);if(status)goto fail;
     }
+#endif
     pxa_scoped_fs_config_t config={.struct_size=sizeof(config),.volumes=volumes,.mounts=f->mounts,.mount_count=f->mount_count,
         .grants=&f->unused_grant,.grant_count=1,.max_open_resources=2};
     bytes=pxa_scoped_fs_workspace_size(&config);f->source_memory=malloc(bytes);

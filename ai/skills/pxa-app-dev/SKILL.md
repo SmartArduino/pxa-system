@@ -41,3 +41,14 @@ For SDK code, read [C++ implementation notes](references/cpp.md) only for the re
 If `$pxa-debug` is installed, use its verification helper for screen profiles and scripted interaction. Otherwise use the CLI directly. Keep app service declarations aligned with the APIs actually used, handle `Result` failures, and use optional modules rather than default caches. For games, measure displayed frames, input response and current/peak memory with a reproducible workload before claiming a performance benefit.
 
 Finish with the implemented behavior, commands executed, screenshot evidence and any unverified device requirements. Continue routine edits/builds/testing within the user's scope; installation on hardware, publishing and firmware updates use the authorization already provided by the user.
+
+For a new game/app, first identify the target device with `device-profile` /
+`pxa_device_profile`, or ask for its resolution, physical controls and required
+sensors if disconnected. Confirm whether multiple screen sizes, orientations,
+rounded corners or round screens are delivery requirements. Read actual Window
+metrics and Sensor descriptors at runtime; an emulator profile or debug input
+support does not prove physical hardware. Keep optional sensors degradable.
+
+For pixel art games, read [pixel game implementation](references/pixel-games.md)
+for Z Labs Chinese fonts, integer scaling, layout/input mapping and rendering
+choices. Prefer a small complete playable loop before adding content.

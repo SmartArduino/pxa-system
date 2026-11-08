@@ -22,6 +22,18 @@ class PolicyTest(unittest.TestCase):
                 path.write_text(text);self.assertIsNotNone(gate.inspect(path,{},[]))
             path.write_text('/* SPDX-License-Identifier: Apache-2.0 OR GPL-2.0-or-later */\nint x;')
             self.assertIsNone(gate.inspect(path,{},[]))
+    def test_llvm_banner_does_not_hide_other_notices(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path=Path(directory)/'llvm.h'
+            banner='|* SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception        *|\n'
+            path.write_text(banner)
+            self.assertIsNone(gate.inspect(path,{},[]))
+            path.write_text(banner+'/* Mozilla Public License v2 */')
+            self.assertIsNotNone(gate.inspect(path,{},[]))
+            path.write_text('|* SPDX-License-Identifier: GPL-3.0-only        *|\n')
+            self.assertIsNotNone(gate.inspect(path,{},[]))
+            path.write_text('|* SPDX-License-Identifier: MIT *| unknown\n')
+            self.assertIsNotNone(gate.inspect(path,{},[]))
     def test_review_requires_unchanged_hash(self):
         import hashlib
         with tempfile.TemporaryDirectory() as directory:
@@ -30,4 +42,16 @@ class PolicyTest(unittest.TestCase):
             self.assertIsNone(gate.inspect(path,review,[]))
             path.write_text(path.read_text()+'\n/* changed upstream */')
             self.assertIsNotNone(gate.inspect(path,review,[]))
+    def test_reviewed_gcc_header_requires_hash_and_toolchain_scope(self):
+        import hashlib
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);path=root/'stdarg.h'
+            path.write_text('/* GNU General Public License; special header exception */')
+            review={hashlib.sha256(path.read_bytes()).hexdigest():{'selected':'LicenseRef-GCC-Header-Exception'}}
+            self.assertIsNotNone(gate.inspect(path,review,[]))
+            self.assertIsNone(gate.inspect(path,review,[root]))
+            path.write_text(path.read_text()+'\n/* changed */')
+            self.assertIsNotNone(gate.inspect(path,review,[root]))
+        self.assertFalse(gate.allowed_expression('GPL-2.0-or-later WITH LicenseRef-GCC-Header-Exception',True))
+        self.assertTrue(gate.allowed_expression('curl AND ISC AND BSD-3-Clause'))
 if __name__=='__main__':unittest.main()

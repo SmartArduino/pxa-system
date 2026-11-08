@@ -17,7 +17,7 @@ import subprocess
 ALLOWED = frozenset({'MIT','MIT-0','BSD-2-Clause','BSD-2-Clause-FreeBSD','BSD-3-Clause','BSD-4-Clause',
     'Apache-2.0','ISC','Zlib','BSL-1.0','CC0-1.0','Unlicense','WTFPL','FTL',
     'libpng-2.0','Libpng','IJG','OpenSSL','SSLeay','Unicode-DFS-2016',
-    'Unicode-3.0','LicenseRef-Espressif-Modified-MIT'})
+    'Unicode-3.0','LicenseRef-Espressif-Modified-MIT','curl'})
 # Exact combinations only. GCC approval additionally requires a trusted
 # toolchain path; an arbitrary GPL implementation cannot claim this exception.
 EXCEPTIONS = {('Apache-2.0','LLVM-exception')}
@@ -67,7 +67,9 @@ def allowed_expression(expression: str, runtime: bool = False) -> bool:
 def inspect(path: Path, reviewed: dict, toolchain_roots: list[Path]) -> str | None:
     text=path.read_text(errors='replace')
     runtime=any(path.is_relative_to(root) for root in toolchain_roots)
-    expressions=[s.strip().removesuffix('*/').strip() for s in SPDX.findall(text)]
+    # LLVM's C headers use an ASCII-art comment border ending in *|.
+    expressions=[re.sub(r'\s+\*\|$', '', s.strip()).removesuffix('*/').strip()
+                 for s in SPDX.findall(text)]
     if expressions and not all(allowed_expression(s,runtime) for s in expressions):
         return 'prohibited or unreviewed SPDX expression: '+', '.join(expressions)
     # Only an explicit SPDX OR selection permits a copyleft alternative.
@@ -76,6 +78,9 @@ def inspect(path: Path, reviewed: dict, toolchain_roots: list[Path]) -> str | No
     if COPYLEFT.search(without_spdx):
         digest=hashlib.sha256(path.read_bytes()).hexdigest()
         entry=reviewed.get(digest)
+        # These are hash-bound file reviews, not blanket SPDX exceptions.
+        if entry and entry['selected']=='LicenseRef-GCC-Header-Exception' and runtime:return None
+        if entry and entry['selected']=='LicenseRef-Public-Domain':return None
         if entry and allowed_expression(entry['selected']):return None
         normalized=re.sub(r'(?m)^\s*(?://|\*+)\s*','',text)
         if runtime and re.search(r'GCC Runtime Library Exception, version\s+3\.1',normalized):return None

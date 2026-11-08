@@ -2,6 +2,7 @@
 #include "../png_writer.h"
 #include <assert.h>
 
+#ifndef _WIN32
 static int write_image(FILE *stream) {
     png_structp png=png_create_write_struct(PNG_LIBPNG_VER_STRING,NULL,NULL,NULL);
     assert(png);
@@ -11,7 +12,21 @@ static int write_image(FILE *stream) {
     png_destroy_write_struct(&png,&info);
     return result;
 }
+#endif
 int main(void) {
+    png_structp png=png_create_write_struct(PNG_LIBPNG_VER_STRING,NULL,NULL,NULL);assert(png);
+    png_infop info=png_create_info_struct(png);assert(info);
+    png_byte pixel[]={255,128,0,255},decoded[4];png_bytep rows[]={pixel};
+    pxsys_png_memory_t buffer={0};
+    assert(pxsys_png_write_memory(png,info,&buffer,1,1,rows));
+    png_destroy_write_struct(&png,&info);
+    png_image image={0};image.version=PNG_IMAGE_VERSION;
+    assert(png_image_begin_read_from_memory(&image,buffer.data,buffer.size));
+    image.format=PNG_FORMAT_RGBA;
+    assert(png_image_finish_read(&image,NULL,decoded,0,NULL));
+    assert(image.width==1 && image.height==1 && !memcmp(pixel,decoded,4));
+    png_image_free(&image);free(buffer.data);
+#ifndef _WIN32
     FILE *stream=tmpfile(); assert(stream);
     assert(write_image(stream)); rewind(stream);
     png_byte signature[8]; assert(fread(signature,1,sizeof(signature),stream)==sizeof(signature));
@@ -22,5 +37,10 @@ int main(void) {
     assert(!write_image(stream)); (void)fclose(stream);
     // Error handling leaves later captures usable.
     stream=tmpfile(); assert(stream); assert(write_image(stream)); assert(!fclose(stream));
-    puts("PNG capture: valid output, write failure and recovery passed");
+#endif
+#ifdef _WIN32
+    puts("PNG capture: memory round trip passed");
+#else
+    puts("PNG capture: memory round trip, file write failure and recovery passed");
+#endif
 }

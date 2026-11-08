@@ -14,6 +14,11 @@ GPL-3.0 WITH GCC-exception-3.1，限工具链运行库及其必要头文件，�
 例外要求的正常编译过程。该例外不能用于任意 GPL 库。WAMR 的
 Apache-2.0 WITH LLVM-exception 也保留原有声明。
 
+Windows GCC 工具链中的旧版 `stdarg.h` 仅按其明示的头文件例外逐项准入：
+该文件明确允许被 GCC 编译的源文件包含，且不会仅因此要求可执行文件采用 GPL。
+准入以 `reviewed-alternatives.json` 的具体文件哈希和可信工具链路径约束，
+不扩展到其他 GPL 头文件或其他编译条件。保留原始许可与例外文字。
+
 依赖选择：
 
 | 依赖 | 系统采用的许可 | 要求 |

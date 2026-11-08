@@ -106,5 +106,41 @@
     "sha256": "9f81d0f91a32e35742cf7745ad78f1ef575f4f3893cd7f1f130954ddd51db085",
     "selected": "BSD-3-Clause",
     "evidence": "Header explicitly offers the alternative BSD license; preserve BSD notices."
+  },
+  {
+    "source": "MinGW-w64/include/stdarg.h",
+    "sha256": "a8d9a1579cba5e022684e5b01b6a210a3939a6513f3a5edb7590bd3fb5b18f4b",
+    "selected": "LicenseRef-GCC-Header-Exception",
+    "evidence": "MinGW-w64 GCC stdarg.h explicitly says that including this header in source files compiled by GCC does not itself cause the resulting executable to be covered by the GNU GPL. This review covers only this exact header used with GCC, within a trusted toolchain root; retain its full copyright and special exception notice."
+  },
+  {
+    "source": "MinGW-w64/include/wingdi.h",
+    "sha256": "db2faa700bab930bab000bf1ed6282abbacda608c8c9140f60cacca0ffe6aaac",
+    "selected": "LicenseRef-Public-Domain",
+    "evidence": "MinGW-w64 header explicitly places the file in the Public Domain and references DISCLAIMER.PD. The only copyleft-pattern match is the LOGPALETTE field named lgpl, not a license notice. Retain the original header and runtime disclaimer."
+  },
+  {
+    "source": "Espressif LLVM 344b928e67bfc1d07cb150609c55548e86a9bf19/TableGen/MipsGenAsmMatcher.inc",
+    "sha256": "1d26b493b86671994582e370424b0d63c7b42e8c96761afbe7bbcf9ecce8bcc6",
+    "selected": "Apache-2.0 WITH LLVM-exception",
+    "evidence": "Generated from the pinned LLVM Mips target definitions using its pinned llvm-tblgen. Reviewed every copyleft-pattern match: all refer only to the OCTEON multiplier registers MPL0, MPL1 or MPL2 (including lowercase assembly names), not a license notice. LLVM target definitions and generator retain their Apache-2.0 WITH LLVM-exception notices. This review applies only to this exact generated content."
+  },
+  {
+    "source": "Espressif LLVM 344b928e67bfc1d07cb150609c55548e86a9bf19/TableGen/MipsGenAsmWriter.inc",
+    "sha256": "ce9a94de60a6f41e125821934e34b55cc2c1dc6e638126f011ccbd5e100111b9",
+    "selected": "Apache-2.0 WITH LLVM-exception",
+    "evidence": "Generated from the pinned LLVM Mips target definitions using its pinned llvm-tblgen. Reviewed every copyleft-pattern match: all refer only to the OCTEON multiplier registers MPL0, MPL1 or MPL2 (including lowercase assembly names), not a license notice. LLVM target definitions and generator retain their Apache-2.0 WITH LLVM-exception notices. This review applies only to this exact generated content."
+  },
+  {
+    "source": "Espressif LLVM 344b928e67bfc1d07cb150609c55548e86a9bf19/TableGen/MipsGenInstrInfo.inc",
+    "sha256": "c8efd6dc435cac8288ae075d118fcfa9b5dbef1aa0493843d5da4bb6caaa60e8",
+    "selected": "Apache-2.0 WITH LLVM-exception",
+    "evidence": "Generated from the pinned LLVM Mips target definitions using its pinned llvm-tblgen. Reviewed every copyleft-pattern match: all refer only to the OCTEON multiplier registers MPL0, MPL1 or MPL2 (including lowercase assembly names), not a license notice. LLVM target definitions and generator retain their Apache-2.0 WITH LLVM-exception notices. This review applies only to this exact generated content."
+  },
+  {
+    "source": "Espressif LLVM 344b928e67bfc1d07cb150609c55548e86a9bf19/TableGen/MipsGenRegisterInfo.inc",
+    "sha256": "0f222df635a381636385326ae601ed29110c1736ae98d5607d17d229f0436ede",
+    "selected": "Apache-2.0 WITH LLVM-exception",
+    "evidence": "Generated from the pinned LLVM Mips target definitions using its pinned llvm-tblgen. Reviewed every copyleft-pattern match: all refer only to the OCTEON multiplier registers MPL0, MPL1 or MPL2 (including lowercase assembly names), not a license notice. LLVM target definitions and generator retain their Apache-2.0 WITH LLVM-exception notices. This review applies only to this exact generated content."
   }
 ]

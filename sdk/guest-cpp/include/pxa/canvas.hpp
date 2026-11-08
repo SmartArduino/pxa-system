@@ -25,6 +25,10 @@ class CanvasCommands {
 public:
     void reset() noexcept { used_ = 12; error_.reset(); clip_depth_ = 0; }
     std::size_t bytes_used() const noexcept { return used_ - 12; }
+    bool same_commands(const CanvasCommands& other) const noexcept {
+        return used_ == other.used_ && error_ == other.error_ && clip_depth_ == other.clip_depth_ &&
+            std::equal(packet_.begin() + 12, packet_.begin() + used_, other.packet_.begin() + 12);
+    }
     CanvasCommands& rect(std::int32_t x, std::int32_t y, std::uint32_t width,
                          std::uint32_t height, std::uint32_t rgba,
                          std::uint16_t radius = 0) noexcept {

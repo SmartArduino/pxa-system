@@ -4093,7 +4093,12 @@ static int run_product_simulator(const options_t *input,
     device_config.struct_size = sizeof(device_config);
     device_config.get_mac = desktop_get_mac;
     device_config.permissions = host.permissions;
-    device_config.target = "linux-x86_64";
+    device_config.target =
+#ifdef _WIN32
+        "windows-x86_64";
+#else
+        "linux-x86_64";
+#endif
     device_config.architecture = "x86_64";
     device_config.engine = "wamr";
     device_config.engine_abi = PXSYS_WAMR_ENGINE_ABI;
@@ -4301,7 +4306,11 @@ static int run_product_simulator(const options_t *input,
     capabilities[20].version = (pxa_package_version_t){PXA_HAPTICS_SERVICE_MAJOR, PXA_HAPTICS_SERVICE_MINOR};
     activation.services = capabilities; activation.service_count = 21;
     host.ime_capabilities = &activation; host.ime_profile = &profile;
+#ifdef _WIN32
+    profile.target = (pxa_bytes_t){(const uint8_t *)"windows-x86_64", sizeof("windows-x86_64") - 1u};
+#else
     profile.target = (pxa_bytes_t){(const uint8_t *)"linux-x86_64", sizeof("linux-x86_64") - 1u};
+#endif
     profile.engine = (pxa_bytes_t){(const uint8_t *)"wamr", 4};
     profile.engine_abi = (pxa_bytes_t){(const uint8_t *)PXSYS_WAMR_ENGINE_ABI,
                                        sizeof(PXSYS_WAMR_ENGINE_ABI) - 1u};
@@ -4684,6 +4693,7 @@ int pxsys_product_simulator_run_embedded(const char *package_path,
 
 #ifndef PXSYS_PRODUCT_RUNNER_LIBRARY
 int main(int argc, char **argv) {
+    SDL_SetMainReady();
     options_t options;
     if (argc == 2 && strcmp(argv[1], "--version") == 0) {
         printf("PXA product simulator %s\n", PXA_VERSION_STRING);

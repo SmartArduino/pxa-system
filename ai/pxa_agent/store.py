@@ -146,7 +146,15 @@ def prepare(environment, project, *, server='https://app.doit.am', icon=None, co
                 notes.append(f'{media_kind}: recommended {width}x{height}; current {dimensions[0]}x{dimensions[1]}')
         images.append({'kind': media_kind, 'path': str(path), 'width': dimensions[0], 'height': dimensions[1]})
     return {'listing': metadata, 'specification': spec, 'images': images,
-            'omitted': omitted, 'needs_choice': needs_choice, 'warnings': notes}
+            'omitted': omitted, 'needs_choice': needs_choice, 'warnings': notes,
+            'workflow': spec.get('workflow', {}),
+            'checklist': {'listing': ['name', 'summary', 'kind', 'category', 'tags', 'changelog'],
+                          'package': 'Build and verify signed packages for the requested device CPUs',
+                          'icon': 'Generate matching artwork or a simple app-level vector icon; preserve asset rights',
+                          'cover': 'Generate only if image generation is available; otherwise skip the optional cover',
+                          'screenshots': 'verify --store-screenshots; inspect each original rectangular simulator capture',
+                          'authorization': 'Browser approval; never paste passwords, tokens or signing keys',
+                          'result': 'Submission remains pending review'}}
 
 
 def package_identity(environment, package):

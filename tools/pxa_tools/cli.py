@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import subprocess
 import sys
 
 from .build import build
@@ -86,7 +87,8 @@ def main():
                 current = (SDK_ROOT / 'VERSION').read_text().strip()
                 if locked_version and locked_version != current:
                     from .distribution import data_root
-                    launcher = data_root() / 'releases' / locked_version / 'bin/pxa'
+                    release = data_root() / 'releases' / locked_version
+                    launcher = release / ('bin/pxa.cmd' if os.name == 'nt' else 'bin/pxa')
                     if not launcher.is_file():
                         raise ToolError(f'Locked SDK {locked_version} is missing; run pxa sdk install {locked_version}')
                     if os.environ.get('PXA_SDK_REDIRECT') == locked_version:
@@ -94,6 +96,9 @@ def main():
                     env = os.environ.copy()
                     env['PXA_SDK_REDIRECT'] = locked_version
                     env.pop('PYTHONHOME', None)
+                    if os.name == 'nt':
+                        env['PYTHONPATH'] = str(release / 'tools') + os.pathsep + env.get('PYTHONPATH', '')
+                        return subprocess.call([sys.executable, '-m', 'pxa_tools', *sys.argv[1:]], env=env)
                     os.execve(launcher, [str(launcher), *sys.argv[1:]], env)
         if args.command == 'init':
             init_project(args.directory, args.id)

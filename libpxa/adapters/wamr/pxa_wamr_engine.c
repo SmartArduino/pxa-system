@@ -543,7 +543,7 @@ static pxa_status_t load_artifact(pxa_wamr_engine_t *engine,
         if (kind == PXA_ARTIFACT_AOT && get_package_type(header, sizeof(header)) == Wasm_Module_AoT) {
             status = pxa_wamr_read_aot(&reader, &slot->module, &buffered,
                 (slot->package_component->flags & PXA_PACKAGE_COMPONENT_FLAG_PINNED_MEMORY) != 0,
-                error, error_size);
+                engine->host_managed_heap_size, error, error_size);
 #if defined(ESP_PLATFORM)
             if (status == PXA_STATUS_OK && slot->module)
                 ESP_LOGI(PXA_WAMR_LOG_TAG, "AOT streamed: file=%u source_buffer=0",
@@ -1469,14 +1469,26 @@ static pxa_status_t engine_instantiate(void *context, pxa_bytes_t package_root,
 #if defined(ESP_PLATFORM)
         slot->wasi_null_fd = pxa_esp_wasi_null_fd();
 #else
-        slot->wasi_null_fd = open("/dev/null", O_RDWR);
+        slot->wasi_null_fd = open(
+#ifdef _WIN32
+            "NUL",
+#else
+            "/dev/null",
+#endif
+            O_RDWR);
 #endif
         if (slot->wasi_null_fd < 0) {
             return discard_entry(engine, slot, PXA_STATUS_UNAVAILABLE);
         }
+        int64_t wasi_null_handle =
+#ifdef _WIN32
+            (int64_t)_get_osfhandle(slot->wasi_null_fd);
+#else
+            slot->wasi_null_fd;
+#endif
         wasm_runtime_set_wasi_args_ex(slot->module, NULL, 0, NULL, 0, NULL, 0,
-                                      NULL, 0, slot->wasi_null_fd,
-                                      slot->wasi_null_fd, slot->wasi_null_fd);
+                                      NULL, 0, wasi_null_handle,
+                                      wasi_null_handle, wasi_null_handle);
 #endif
     }
 #if defined(WASM_LINEAR_MEMORY_RESERVE_MAX) && \

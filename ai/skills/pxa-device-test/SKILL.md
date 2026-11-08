@@ -16,3 +16,11 @@ Within device-test authorization, `pxa run <project> --device <port> --baud <bau
 Do not format storage, clear data or update firmware as a routine app retry. Existing user authorization for a required firmware update applies; otherwise explain the specific compatibility blocker before requesting that separate action. Use the board's application-only update procedure when available, preserve data partitions and restore temporary display/audio/power settings.
 
 For a unique test app, stop and uninstall only that test identity after collecting evidence. For an existing app, preserve its saves and installed identity; do not uninstall it as cleanup. Report the final device state, screenshots, current/peak memory boundaries and any latency that was not physically measured. Failed package checks are not fixed by disabling signature verification.
+
+Use `device-profile --port PORT` / MCP `pxa_device_profile` for design constraints.
+Without a port it lists candidates without opening them. If the device is not
+responding, ask the user to connect a USB **data** cable, power on normally,
+open Settings → PXADB debugging (设置 → PXADB 调试) and enable it where present.
+Close competing serial monitors; check COM drivers/Linux permissions and rediscover
+after reconnect. BOOT/RESET is firmware download mode, not enabling PXADB.
+Do not flash firmware or reset user settings just to discover a device.

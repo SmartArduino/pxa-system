@@ -4,29 +4,47 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include "png_writer.h"
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifdef _WIN32
+#include <afunix.h>
+#define MSG_NOSIGNAL 0
+#define socket_close(s) closesocket((SOCKET)(s))
+#else
 #include <sys/socket.h>
 #include <sys/un.h>
+#define socket_close(s) close((int)(s))
+#endif
 #include <unistd.h>
 
 #include <SDL2/SDL.h>
 
 #include "include/lvgl/drivers/sdl/lv_sdl_window.h"
 
-static int set_nonblocking(int descriptor) {
+static int set_nonblocking(pxsys_control_socket_t descriptor) {
+#ifdef _WIN32
+    u_long enabled=1;
+    return ioctlsocket((SOCKET)descriptor,FIONBIO,&enabled)==0 &&
+           SetHandleInformation((HANDLE)descriptor,HANDLE_FLAG_INHERIT,0);
+#else
     const int flags = fcntl(descriptor, F_GETFL, 0);
     return flags >= 0 && fcntl(descriptor, F_SETFL, flags | O_NONBLOCK) == 0 &&
            fcntl(descriptor, F_SETFD, FD_CLOEXEC) == 0;
+#endif
 }
 
 static int bind_listener(pxsys_pxadb_control_t *control) {
     struct sockaddr_un address;
     if (control == NULL || control->path[0] == '\0') return 0;
-    if (control->listener >= 0) close(control->listener);
+    if (control->listener >= 0) socket_close(control->listener);
+#ifdef _WIN32
+    WSADATA data;
+    if(WSAStartup(MAKEWORD(2,2),&data)!=0)return 0;
+#endif
     control->listener = socket(AF_UNIX, SOCK_STREAM, 0);
     if (control->listener < 0) return 0;
     memset(&address, 0, sizeof(address));
@@ -36,17 +54,18 @@ static int bind_listener(pxsys_pxadb_control_t *control) {
     if (bind(control->listener, (const struct sockaddr *)&address,
              sizeof(address)) != 0 || listen(control->listener, 4) != 0 ||
         !set_nonblocking(control->listener)) {
-        close(control->listener);
+        socket_close(control->listener);
         control->listener = -1;
         return 0;
     }
     return 1;
 }
 
-static int send_all(int descriptor, const void *data, size_t size) {
+static int send_all(pxsys_control_socket_t descriptor, const void *data, size_t size) {
     const uint8_t *cursor = data;
     while (size != 0) {
-        const ssize_t sent = send(descriptor, cursor, size, MSG_NOSIGNAL);
+        const ssize_t sent = send(descriptor, (const char *)cursor,
+                                 (int)(size>INT_MAX?INT_MAX:size), MSG_NOSIGNAL);
         if (sent <= 0) return 0;
         cursor += (size_t)sent;
         size -= (size_t)sent;
@@ -54,14 +73,13 @@ static int send_all(int descriptor, const void *data, size_t size) {
     return 1;
 }
 
-static int send_text(int descriptor, const char *text) {
+static int send_text(pxsys_control_socket_t descriptor, const char *text) {
     return send_all(descriptor, text, strlen(text));
 }
 
 static int capture_png(lv_display_t *display, uint8_t **output,
                        size_t *output_size) {
     lv_draw_buf_t *draw_buffer;
-    FILE *stream = NULL;
     png_structp png = NULL;
     png_infop info = NULL;
     uint8_t *pixels = NULL;
@@ -93,26 +111,21 @@ static int capture_png(lv_display_t *display, uint8_t **output,
                           draw_buffer->data, (int)source_stride,
                           SDL_PIXELFORMAT_RGBA32, pixels, width * 4) != 0)
         goto done;
-    stream = open_memstream(&encoded, &encoded_size);
-    if (stream == NULL) goto done;
     png = png_create_write_struct(PNG_LIBPNG_VER_STRING, NULL, NULL, NULL);
     if (png == NULL) goto done;
     info = png_create_info_struct(png);
     if (info == NULL) goto done;
     for (y = 0; y < height; ++y)
         rows[y] = pixels + (size_t)y * (size_t)width * 4u;
-    if (!pxsys_png_write(png,info,stream,(png_uint_32)width,(png_uint_32)height,rows)) goto done;
-    if (fclose(stream) != 0) {
-        stream = NULL;
-        goto done;
-    }
-    stream = NULL;
+    pxsys_png_memory_t memory={0};
+    int written=pxsys_png_write_memory(png,info,&memory,(png_uint_32)width,(png_uint_32)height,rows);
+    encoded=(char *)memory.data;encoded_size=memory.size;
+    if(!written)goto done;
     *output = (uint8_t *)encoded;
     *output_size = encoded_size;
     encoded = NULL;
     ok = 1;
 done:
-    if (stream != NULL) fclose(stream);
     if (png != NULL) png_destroy_write_struct(&png, &info);
     free(encoded);
     free(rows);
@@ -238,7 +251,7 @@ static int inject_touch(pxsys_pxadb_control_t *control, const char *action,
     return 1;
 }
 
-static void handle_client(pxsys_pxadb_control_t *control, int client) {
+static void handle_client(pxsys_pxadb_control_t *control, pxsys_control_socket_t client) {
     char command[128] = {0};
     char action[16] = {0};
     char key[24] = {0};
@@ -359,7 +372,7 @@ int pxsys_pxadb_control_start(pxsys_pxadb_control_t *control,
 }
 
 void pxsys_pxadb_control_poll(pxsys_pxadb_control_t *control) {
-    int client;
+    pxsys_control_socket_t client;
     if (control == NULL || control->listener < 0 ||
         (control->path[0] != '\0' && access(control->path, F_OK) != 0 &&
          !bind_listener(control)))
@@ -377,7 +390,7 @@ void pxsys_pxadb_control_poll(pxsys_pxadb_control_t *control) {
             return;
         }
         handle_client(control, client);
-        close(client);
+        socket_close(client);
     }
 }
 
@@ -391,7 +404,7 @@ void pxsys_pxadb_control_stop(pxsys_pxadb_control_t *control) {
             control->touches[id].indev = NULL;
         }
     }
-    if (control->listener >= 0) close(control->listener);
+    if (control->listener >= 0) socket_close(control->listener);
     if (control->path[0] != '\0') unlink(control->path);
     control->listener = -1;
     control->path[0] = '\0';

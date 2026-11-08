@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import contextlib
-import fcntl
 import hashlib
 import json
 import os
 from pathlib import Path
 import subprocess
 import tempfile
+import time
 
 
 class ToolError(RuntimeError):
@@ -43,9 +43,43 @@ def atomic_json(path: Path, value: object) -> None:
 @contextlib.contextmanager
 def locked(path: Path):
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open('a') as stream:
-        fcntl.flock(stream, fcntl.LOCK_EX)
-        yield
+    with path.open('a+b') as stream:
+        if os.name == 'nt':
+            import msvcrt
+            if not stream.tell():
+                stream.write(b'\0')
+                stream.flush()
+            # LK_LOCK gives up after ten retries; LLVM builds can take hours.
+            while True:
+                stream.seek(0)
+                try:
+                    msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)
+                    break
+                except OSError as error:
+                    if error.errno not in (13, 11, 36):
+                        raise
+                    time.sleep(0.1)
+        else:
+            import fcntl
+            fcntl.flock(stream, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            if os.name == 'nt':
+                stream.seek(0)
+                msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                fcntl.flock(stream, fcntl.LOCK_UN)
+
+
+def executable(path: Path) -> Path:
+    """Resolve native Windows executables without changing POSIX filenames."""
+    return path.with_name(path.name + '.exe') if os.name == 'nt' and path.suffix != '.exe' else path
+
+
+def process_options() -> dict:
+    return ({'creationflags': subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == 'nt'
+            else {'start_new_session': True})
 
 
 def command(args, *, env=None, capture=False, cwd=None):

@@ -1103,7 +1103,7 @@ public:
         if (!node ||
             !page.transaction().fill(node, protocol::width) ||
             !page.transaction().fill(node, protocol::height) ||
-            !page.transaction().u8(node, protocol::scroll_axis, 1))
+            !page.transaction().u8(node, protocol::scroll_axis, 2))
             return false;
         return std::apply([&](auto&... child) {
             return (child.render(page, node) && ...);

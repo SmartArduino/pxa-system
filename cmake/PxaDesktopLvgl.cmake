@@ -19,6 +19,7 @@ function(pxsys_prepare_desktop_lvgl desktop_source_dir)
         FetchContent_Declare(lvgl_source
             GIT_REPOSITORY https://github.com/lvgl/lvgl.git
             GIT_TAG v9.6.0
+            GIT_CONFIG core.longpaths=true
             GIT_SHALLOW TRUE)
         FetchContent_MakeAvailable(lvgl_source)
         set_property(DIRECTORY "${lvgl_source_SOURCE_DIR}"

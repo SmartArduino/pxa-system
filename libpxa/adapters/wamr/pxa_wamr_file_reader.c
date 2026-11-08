@@ -2,27 +2,43 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
+typedef struct {
+    int fd;
+    uint64_t position;
+} artifact_file_t;
+
 static pxa_status_t read_at(void *context, uint64_t offset, uint8_t *output,
                             size_t capacity, size_t *size) {
-    int fd = (int)((intptr_t)context - 1);
+    artifact_file_t *file = context;
     off_t position = (off_t)offset;
     ssize_t count;
     *size = 0;
     if (position < 0 || (uint64_t)position != offset)
         return PXA_STATUS_RESOURCE_LIMIT;
-    if (lseek(fd, position, SEEK_SET) != position) return PXA_STATUS_IO_ERROR;
-    do { count = read(fd, output, capacity); } while (count < 0 && errno == EINTR);
-    if (count < 0) return PXA_STATUS_IO_ERROR;
+    /* FAT seeks may walk the cluster chain from the beginning. AOT sections
+     * are streamed in chunks; keep the cursor for consecutive reads. This
+     * descriptor is owned exclusively by the artifact reader. */
+    if (file->position != offset) {
+        file->position = UINT64_MAX;
+        if (lseek(file->fd, position, SEEK_SET) != position) return PXA_STATUS_IO_ERROR;
+        file->position = offset;
+    }
+    do { count = read(file->fd, output, capacity); } while (count < 0 && errno == EINTR);
+    if (count < 0) { file->position = UINT64_MAX; return PXA_STATUS_IO_ERROR; }
+    file->position += (uint64_t)count;
     *size = (size_t)count;
     return PXA_STATUS_OK;
 }
 
 static void close_file(void *context) {
-    close((int)((intptr_t)context - 1));
+    artifact_file_t *file = context;
+    close(file->fd);
+    free(file);
 }
 
 pxa_status_t pxa_wamr_open_artifact_file(
@@ -43,7 +59,10 @@ pxa_status_t pxa_wamr_open_artifact_file(
         close(fd);
         return PXA_STATUS_IO_ERROR;
     }
-    output->context = (void *)((intptr_t)fd + 1);
+    artifact_file_t *file = malloc(sizeof(*file));
+    if (!file) { close(fd); return PXA_STATUS_RESOURCE_LIMIT; }
+    *file = (artifact_file_t){.fd = fd, .position = 0};
+    output->context = file;
     output->size = (uint64_t)metadata.st_size;
     output->read_at = read_at;
     output->close = close_file;

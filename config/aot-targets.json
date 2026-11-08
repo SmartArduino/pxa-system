@@ -3,6 +3,7 @@
     "cpu": "xtensa",
     "flags": [
       "--cpu=esp32s3",
+      "--target-abi=gnu",
       "--stack-bounds-checks=0",
       "--opt-level=3",
       "--size-level=0",
@@ -24,13 +25,35 @@
   "simulator": {
     "cpu": "x86_64",
     "flags": [
-      "--opt-level=3"
+      "--opt-level=3",
+      "--target-abi=gnu"
     ],
     "target": "linux-x86_64"
+  },
+  "windows-simulator": {
+    "cpu": "x86_64",
+    "flags": [
+      "--opt-level=3",
+      "--target-abi=msvc",
+      "--bounds-checks=1",
+      "--stack-bounds-checks=1"
+    ],
+    "target": "windows-x86_64"
   },
   "wasm": {
     "cpu": "",
     "flags": [],
     "target": "linux-x86_64"
+  },
+  "esp32p4": {
+    "cpu": "riscv32",
+    "flags": [
+      "--target-abi=ilp32f",
+      "--cpu=generic-rv32",
+      "--cpu-features=+m,+a,+f,+c",
+      "--opt-level=3",
+      "--size-level=3"
+    ],
+    "target": "esp32-p4"
   }
 }

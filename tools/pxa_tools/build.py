@@ -10,7 +10,7 @@ import sys
 import tempfile
 import time
 
-from .common import ToolError, atomic_json, command, digest, identity, locked
+from .common import ToolError, atomic_json, command, digest, executable, identity, locked
 from .project import Project, SDK_ROOT, TARGETS, aot_flags, lock_project, resolve_tools
 
 
@@ -41,7 +41,7 @@ def resource_inputs(project: Path):
 
 
 def tool(root: Path, name: str) -> Path:
-    private = root / 'runtime/bin' / name
+    private = executable(root / 'runtime/bin' / name)
     return private if private.is_file() else Path(name)
 
 
@@ -51,7 +51,9 @@ def signing_key(root: Path, supplied: str | None) -> Path:
         if not key.is_file():
             raise ToolError(f'Signing key is missing: {key}')
         return key
-    data = Path(os.environ.get('XDG_DATA_HOME', Path.home() / '.local/share'))
+    data = Path(os.environ.get('XDG_DATA_HOME') or
+                (os.environ.get('LOCALAPPDATA') if os.name == 'nt' else None) or
+                Path.home() / '.local/share')
     key = data / 'pxa/identities/development.pem'
     with locked(key.with_suffix('.lock')):
         if not key.exists():
@@ -66,6 +68,8 @@ def build(project: Project, *, root=SDK_ROOT, targets=('simulator',), output=Non
           key=None, offline=False, update_lock=False, definitions=(), aot_only=False,
           jobs=None, build_type='Release') -> Path:
     started = time.monotonic()
+    if os.name == 'nt':
+        targets = tuple('windows-simulator' if t == 'simulator' else t for t in targets)
     targets = tuple(dict.fromkeys(targets))
     if not targets or any(t not in TARGETS for t in targets):
         raise ToolError('Targets: ' + ', '.join(TARGETS))
@@ -195,22 +199,26 @@ def build(project: Project, *, root=SDK_ROOT, targets=('simulator',), output=Non
             if output == project.path or project.path.is_relative_to(output):
                 raise ToolError('Output cannot replace the source directory')
             output.parent.mkdir(parents=True, exist_ok=True)
-            # Publish a complete generation, then switch the directory atomically.
-            generation = output.parent / ('.' + output.name + '-' + content[:20])
-            if not generation.exists():
-                shutil.copytree(release / 'package', generation)
-            if output.exists() and not output.is_symlink():
-                raise ToolError(f'Output already exists as a directory: {output}; choose a new output')
-            link = output.with_name('.' + output.name + '.next')
-            link.unlink(missing_ok=True)
-            link.symlink_to(generation.name, target_is_directory=True)
-            os.replace(link, output)
+            if os.name != 'nt':
+                # Publish a complete generation, then switch the directory atomically.
+                generation = output.parent / ('.' + output.name + '-' + content[:20])
+                if not generation.exists():
+                    shutil.copytree(release / 'package', generation)
+                if output.exists() and not output.is_symlink():
+                    raise ToolError(f'Output already exists as a directory: {output}; choose a new output')
+                link = output.with_name('.' + output.name + '.next')
+                link.unlink(missing_ok=True)
+                link.symlink_to(generation.name, target_is_directory=True)
+                os.replace(link, output)
+            # Windows users need no symlink privilege. The immutable unpacked
+            # generation stays in the cache; the signed .pxa is published below
+            # with the same atomic replace used on every platform.
             container = Path(str(output) + '.pxa')
             temporary_output = container.with_name('.' + container.name + '.next')
             shutil.copy2(cached_container, temporary_output)
             os.replace(temporary_output, container)
             env = os.environ.copy()
-            env.update(PXA_RESOLVED_CLANG=str(wasi / 'bin/clang'), PXA_RESOLVED_WAMRC=str(wamrc),
+            env.update(PXA_RESOLVED_CLANG=str(executable(wasi / 'bin/clang')), PXA_RESOLVED_WAMRC=str(wamrc),
                        PXA_RESOLVED_WASI_SDK=str(wasi))
             command([sys.executable, tools / 'build_pxa_provenance.py', release / 'package',
                      container, project.path / 'package.json', ','.join(targets),

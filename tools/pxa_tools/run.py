@@ -9,7 +9,7 @@ import time
 import tomllib
 
 from .build import build, signing_key, tool
-from .common import ToolError, command, digest, identity
+from .common import ToolError, command, digest, executable, identity, process_options
 from .project import Project, SDK_ROOT
 
 
@@ -23,6 +23,7 @@ def pxadb_path():
 
 
 def simulator_bin(name: str):
+    name = executable(Path(name)).name
     if directory := os.environ.get('PXA_SIMULATOR_DIR'):
         custom = Path(directory) / name
         if not custom.is_file():
@@ -92,11 +93,19 @@ def snapshot(project: Project):
 
 def stop(process):
     if process is not None and process.poll() is None:
-        os.killpg(process.pid, signal.SIGTERM)
+        if os.name == 'nt':
+            subprocess.run([str(Path(os.environ.get('SystemRoot', 'C:/Windows')) / 'System32/taskkill.exe'),
+                            '/PID', str(process.pid), '/T', '/F'],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        else:
+            os.killpg(process.pid, signal.SIGTERM)
         try:
             process.wait(timeout=5)
         except subprocess.TimeoutExpired:
-            os.killpg(process.pid, signal.SIGKILL)
+            if os.name == 'nt':
+                process.kill()
+            else:
+                os.killpg(process.pid, signal.SIGKILL)
             process.wait()
 
 
@@ -115,7 +124,8 @@ def run(project: Project, args):
         if 'pxa_core' in values and values['pxa_core'].split('.')[0] != '2':
             raise ToolError('This SDK requires a Core 2 Host; update the correct board application firmware first')
         target = {'esp32s3': 'esp32s3', 'esp32-s3': 'esp32s3',
-                  'esp32s31': 'esp32s31', 'esp32-s31': 'esp32s31'}.get(values.get('target'))
+                  'esp32s31': 'esp32s31', 'esp32-s31': 'esp32s31',
+                  'esp32p4': 'esp32p4', 'esp32-p4': 'esp32p4'}.get(values.get('target'))
         if target is None:
             raise ToolError('Device reports an unsupported execution target')
     previous = snapshot(project)
@@ -171,11 +181,17 @@ def run(project: Project, args):
                         if args.debug:
                             # Optional desktop debug bridge; ordinary runs have
                             # no extra process or polling service.
-                            instance = ''.join(c if c.isalnum() else '-' for c in project.app_id[:24]) + '-' + identity(str(project.path))[:12]
+                            slug_size = 8 if os.name == 'nt' else 24
+                            instance = ''.join(c if c.isalnum() else '-' for c in project.app_id[:slug_size]) + '-' + identity(str(project.path))[:12]
                             selector = args.profile + '@' + instance
-                            sockets = Path(os.environ.get('PXA_SIMULATOR_SOCKET_ROOT', f'/tmp/pxa-simulator-{os.getuid()}'))
+                            from tempfile import gettempdir
+                            default_sockets = Path(gettempdir()) / (
+                                'pxa' if os.name == 'nt' else 'pxa-simulator-' + str(os.getuid()))
+                            sockets = Path(os.environ.get('PXA_SIMULATOR_SOCKET_ROOT', default_sockets))
                             sockets.mkdir(mode=0o700, parents=True, exist_ok=True)
                             control = sockets / (selector + '.control.sock')
+                            if os.name == 'nt' and len(os.fsencode(str(control))) >= 108:
+                                raise ToolError('Simulator socket path is too long; set PXA_SIMULATOR_SOCKET_ROOT to a shorter user-owned directory')
                             cmd += ['--pxadb-control-socket', str(control)]
                             if debug_service is None:
                                 bridge = SDK_ROOT / 'tools/simulator_pxadb.py'
@@ -184,7 +200,7 @@ def run(project: Project, args):
                                 debug_service = subprocess.Popen([sys.executable, str(bridge),
                                     '--state-root', str(state), '--socket', str(sockets / (selector + '.sock')),
                                     '--control-socket', str(control), '--installer', str(simulator_bin('pxsys_package_installer')),
-                                    '--publisher-key', str(public)], start_new_session=True)
+                                    '--publisher-key', str(public)], **process_options())
                                 print(f'PXADB: pxa device info --simulator {selector}', flush=True)
                         if args.duration_ms is not None:
                             cmd += ['--duration-ms', str(args.duration_ms)]
@@ -197,7 +213,7 @@ def run(project: Project, args):
                         font = SDK_ROOT / 'share/pxa/fonts/noto_sans_cjk_common.ttf'
                         if font.is_file():
                             env['PXA_SIMULATOR_FONT'] = str(font)
-                        process = subprocess.Popen(cmd, env=env, start_new_session=True)
+                        process = subprocess.Popen(cmd, env=env, **process_options())
                     last_digest = current_digest
             except ToolError as error:
                 if not args.watch:

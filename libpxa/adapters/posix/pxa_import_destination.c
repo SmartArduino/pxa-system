@@ -94,6 +94,8 @@ static pxa_status_t publish(void *context,pxa_bytes_t from,pxa_bytes_t to) {
     if(!name(from,source) || !name(to,destination))return PXA_STATUS_INVALID_ARGUMENT;
 #if defined(__linux__) && !defined(ESP_PLATFORM)
     return syscall(SYS_renameat2,d->root_fd,source,d->root_fd,destination,1u)==0?PXA_STATUS_OK:error();
+#elif defined(_WIN32)
+    return pxa_win_rename_noreplace(d->root_fd,source,d->root_fd,destination)==0?PXA_STATUS_OK:error();
 #elif defined(ESP_PLATFORM) && !defined(CONFIG_FATFS_VFS_RENAME_REPLACES_DESTINATION)
     /* The firmware profile uses FAT's atomic no-replace rename. */
     struct stat info;char *a=native_path(d,source),*b=native_path(d,destination);
