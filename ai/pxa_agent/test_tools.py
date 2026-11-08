@@ -171,6 +171,34 @@ class ToolTests(unittest.TestCase):
         with self.assertRaisesRegex(common.ToolError, 'explicit --erase-data'):
             firmware.flash(env, 'pai-touch', port='test', mode='full')
 
+    def test_p4_app_update_checks_layout_and_verifies_boot(self):
+        entry = struct.pack('<HBBII16sI', 0x50aa, 0, 0, 0x10000, 0x500000, b'factory', 0)
+        table = entry + b'\xff' * 32
+        image = self.root / 'app.bin'
+        image.write_bytes(b'new-firmware')
+        prepared = dict(chip='esp32p4', mode='app', version='0.9.0', offset=0x10000,
+                        image=str(image), sha256=common.digest(image),
+                        partitions=firmware.partition_table(table))
+        env = environment.Environment(self.ws, {'engine': 'native', 'sdk': '/unused'})
+        calls = []
+        def transport(command, **kwargs):
+            calls.append(command)
+            if 'read-flash' in command:
+                Path(command[-1]).write_bytes(table)
+            return type('Status', (), {'returncode': 0})()
+        reports = ['board=espp4-a;target=esp32p4;pxa_version=0.8.0',
+                   'board=espp4-a;target=esp32p4;pxa_version=0.9.0']
+        with patch.object(firmware, 'prepare', return_value=prepared), \
+                patch.object(env, 'device', side_effect=reports) as device, \
+                patch.object(firmware.subprocess, 'run', side_effect=transport), \
+                patch.object(firmware.time, 'sleep'):
+            result = firmware.flash(env, 'espp4-a', port='test')
+        self.assertTrue(result['flash_completed'])
+        self.assertTrue(result['boot_verified'])
+        self.assertEqual(device.call_count, 2)
+        self.assertEqual([c[c.index('write-flash') + 1] for c in calls if 'write-flash' in c], ['0x10000'])
+        self.assertFalse(any('erase-flash' in c for c in calls))
+
     def test_private_upload_credentials_never_enter_status_output(self):
         path = store.cache_path('https://app.doit.am', {'app_id': 'test', 'root': 'a' * 64})
         common.atomic_json(path, {'token': 'PRIVATE-SECRET', 'token_expires_at': 9999999999,

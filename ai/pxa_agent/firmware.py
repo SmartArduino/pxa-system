@@ -156,7 +156,7 @@ def flash(environment, board, *, port, baud=2000000, version='latest', mode='app
     if result.returncode:
         raise ToolError('Firmware programming did not complete; inspect ' + str(output / 'flash.log'))
     boot = None
-    if chip == 'esp32s3':
+    if chip in ('esp32s3', 'esp32p4'):
         for _ in range(8):
             time.sleep(1)
             try:
@@ -165,6 +165,7 @@ def flash(environment, board, *, port, baud=2000000, version='latest', mode='app
                     break
             except ToolError:
                 continue
-    return {**prepared, 'flash_completed': True, 'boot_verified': bool(boot and boot.get('pxa_version') == prepared['version']),
+    verified = bool(boot and boot.get('pxa_version') == prepared['version'])
+    return {**prepared, 'flash_completed': True, 'boot_verified': verified,
             'port': port, 'evidence': str(output),
-            'next_step': 'Press RESET and run device info to verify the installed version.' if chip == 'esp32s31' else None}
+            'next_step': None if verified else 'Boot normally, enable Settings / PXADB debugging where available, then run device-profile to verify the installed version.'}
