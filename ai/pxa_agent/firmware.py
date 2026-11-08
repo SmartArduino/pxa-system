@@ -105,6 +105,32 @@ def flash(environment, board, *, port, baud=2000000, version='latest', mode='app
         raise ToolError('The connected CPU does not match the selected board')
     output = evidence(environment.workspace, 'pxa-firmware')
     chip = prepared['chip']
+    if chip == 'esp32s31':
+        from contextlib import redirect_stderr, redirect_stdout
+        from .firmware_session import write
+        with (output / 'flash.log').open('w') as log, redirect_stdout(log), redirect_stderr(log):
+            port, serial_id = write(prepared, board, port, baud, output,
+                                    info.get('serial') if info else None)
+        boot = None
+        for _ in range(8):
+            time.sleep(1)
+            if serial_id:
+                from serial.tools.list_ports import comports
+                matches = [p for p in comports() if p.product == 'ESP-Mosaico'
+                           and (p.serial_number or '').lower() == serial_id]
+                if len(matches) != 1:
+                    continue
+                port = matches[0].device
+            try:
+                boot = info_fields(environment.device(['info', '--port', port, '--baud', str(baud)], timeout=3))
+                if boot.get('pxa_version') == prepared['version']:
+                    break
+            except ToolError:
+                continue
+        verified = bool(boot and boot.get('pxa_version') == prepared['version'])
+        return {**prepared, 'flash_completed': True, 'boot_verified': verified,
+                'port': port, 'evidence': str(output),
+                'next_step': None if verified else 'Press RESET and run device-profile to verify the installed version.'}
     base = [sys.executable, '-m', 'esptool', '--chip', chip, '--port', port, '--baud', str(baud)]
     before = 'no-reset' if chip == 'esp32s31' else 'default-reset'
     stub = ['--no-stub'] if chip == 'esp32s31' else []
