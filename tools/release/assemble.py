@@ -143,8 +143,9 @@ def main():
     for name in ('pxsys_desktop_simulator', 'pxsys_product_simulator', 'pxsys_package_installer'):
         copy(args.simulator / name, root / 'simulator/bin' / name)
     copy(args.workspace / 'simulator/profiles', root / 'share/pxa/profiles', ignore=ignore)
-    copy(args.workspace / 'factory/base/system/fonts/noto_sans_cjk_common.ttf',
-         root / 'share/pxa/fonts/noto_sans_cjk_common.ttf')
+    for name in ('noto_sans_cjk_common.ttf', 'NOTICE', 'OFL.txt', 'OFL-Latin.txt'):
+        copy(args.workspace / 'factory/base/system/fonts' / name,
+             root / 'share/pxa/fonts' / name)
     for name in ('cmake', 'ninja', 'openssl'):
         copy(Path(shutil.which(name)), root / 'runtime/bin' / name)
     copy(Path('/usr/share/cmake-3.28'), root / 'runtime/share/cmake-3.28', ignore=ignore)
@@ -167,6 +168,7 @@ def main():
     for path in Path('/usr/share/doc').glob('*/copyright'):
         copy(path, licenses / (path.parent.name + '.txt'))
     copy(args.workspace / 'factory/base/system/fonts/OFL.txt', licenses / 'font-OFL.txt')
+    copy(args.workspace / 'factory/base/system/fonts/OFL-Latin.txt', licenses / 'font-OFL-Latin.txt')
     copy(args.workspace / 'factory/base/system/fonts/NOTICE', licenses / 'font-NOTICE.txt')
     copy(source / 'wamr/LICENSE', licenses / 'WAMR.txt')
     copy(Path('/build/cache/llvm-344b928e67bfc1d07cb150609c55548e86a9bf19/llvm/LICENSE.TXT'), licenses / 'LLVM.txt')
