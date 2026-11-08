@@ -42,7 +42,7 @@ def sdk_identity(root: Path) -> dict:
                       and p.suffix in ('.h', '.hpp', '.cmake', '.json')}
                    | set(root.glob('config/*.pem')) | set(root.glob('bin/pxa*')))
     return {'release': (root / 'VERSION').read_text().strip(),
-            'digest': identity([(str(p.relative_to(root)), digest(p)) for p in files])}
+            'digest': identity(sorted((p.relative_to(root).as_posix(), digest(p)) for p in files))}
 
 
 @dataclass(frozen=True)
