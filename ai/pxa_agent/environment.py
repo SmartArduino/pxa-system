@@ -41,6 +41,14 @@ def native_supported():
 
 def install_native(version, manifest=None):
     windows = platform.system() == 'Windows'
+    if windows:
+        import ctypes
+        try:
+            ctypes.WinDLL('msvcp140.dll')
+        except OSError as error:
+            raise ToolError('Install the Microsoft Visual C++ 2015-2022 x64 runtime from '
+                            'https://aka.ms/vs/17/release/vc_redist.x64.exe, then repeat setup. '
+                            'The precompiled Windows WASI SDK requires this runtime; no compiler build is needed.') from error
     target = 'windows-x86_64' if windows else 'linux-x86_64'
     filename = 'distribution-windows-x86_64.json' if windows else 'distribution.json'
     source = manifest or f'https://pxa.doit.am/downloads/{version}/{filename}'
