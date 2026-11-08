@@ -122,7 +122,7 @@ def create_server(env):
         return finish(env.workspace)
 
     @tool()
-    def pxa_board_init(board: str, target: Literal['esp32s3', 'esp32s31'], reference: str | None = None) -> dict:
+    def pxa_board_init(board: str, target: Literal['esp32s3', 'esp32s31', 'esp32p4'], reference: str | None = None) -> dict:
         """Create board-local callback scaffolding with a bring-up gate; never guess GPIO or flash hardware."""
         from .boards import initialize
         return initialize(env.workspace, board, target=target, reference=reference)
@@ -139,8 +139,8 @@ def create_server(env):
         return host_job(['board', 'build', board], timeout=1900)
 
     @tool()
-    def pxa_build(project: str, target: Literal['simulator', 'esp32s3', 'esp32s31', 'wasm'] = 'simulator',
-                  targets: list[Literal['simulator', 'esp32s3', 'esp32s31', 'wasm']] | None = None) -> dict:
+    def pxa_build(project: str, target: Literal['simulator', 'windows-simulator', 'esp32s3', 'esp32s31', 'esp32p4', 'wasm'] = 'simulator',
+                  targets: list[Literal['simulator', 'windows-simulator', 'esp32s3', 'esp32s31', 'esp32p4', 'wasm']] | None = None) -> dict:
         """Build offline with the pinned SDK/signing identity. Use targets for one shared
         Wasm/resource build across CPUs; target remains the single-target shortcut. Returns a job.
         """

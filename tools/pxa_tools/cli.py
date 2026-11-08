@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -65,6 +66,9 @@ def init_project(directory: Path, app_id: str | None):
     if directory.exists() and any(directory.iterdir()):
         raise ToolError('init requires an empty directory')
     slug = re.sub(r'[^a-z0-9._-]+', '-', directory.name.lower()).strip('.-_')[:60]
+    if not slug or not directory.name.isascii():
+        suffix = hashlib.sha256(directory.name.lower().encode('utf-8')).hexdigest()[:12]
+        slug = (slug[:47] or 'app') + '-' + suffix
     app_id = app_id or ('pxa-' + (slug or 'app'))
     if not ID_PATTERN.fullmatch(app_id):
         raise ToolError('Invalid application id; use a lowercase letter followed by letters, digits, dots, hyphens or underscores (at most 64 characters)')

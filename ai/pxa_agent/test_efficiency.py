@@ -15,8 +15,11 @@ class EfficiencyTests(unittest.TestCase):
         self.assertEqual(build_targets(targets=['esp32s3','esp32s31','simulator','wasm']),
                          'esp32s3,esp32s31,simulator,wasm')
         self.assertEqual(build_targets('wasm'), 'wasm')
+        self.assertEqual(build_targets('esp32p4'), 'esp32p4')
+        self.assertEqual(build_targets(targets=['simulator', 'windows-simulator', 'esp32s3', 'esp32s31', 'esp32p4', 'wasm']),
+                         'simulator,windows-simulator,esp32s3,esp32s31,esp32p4,wasm')
         self.assertEqual(build_targets(targets=['wasm','wasm']), 'wasm')
-        for targets in [[], ['--bad'], 'wasm', ['wasm']*5]:
+        for targets in [[], ['--bad'], 'wasm', ['wasm']*7]:
             with self.subTest(targets=targets), self.assertRaises(ToolError):
                 build_targets(targets=targets)
 

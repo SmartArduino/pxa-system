@@ -151,7 +151,7 @@ uv run --python 3.12 https://pxa.doit.am/setup.py --workspace . --mode board
 
 `context` 与构建使用相同的已安装锁定 SDK；版本缺失时明确提示安装，不回退到其他版本。C++ 检索包含随该 SDK 发行的 `extensions/*/sdk/include` 与扩展示例，例如 `context apps/counter --query FrameReader`。应用边界审计也保护扩展 SDK。网络短暂失败时只重试 GET/HEAD 读取，不自动重放上传、授权或资料修改。
 
-多平台交付可用 `pxa_build(project="apps/demo", targets=["esp32s3", "esp32s31", "simulator", "wasm"])` 一次构建，共享公共编译结果。日常使用默认的模拟器目标即可。任务轮询可用 `include_log=false`，需要诊断时再读取日志；已完成任务的耗时不会随轮询继续增长。
+多平台交付可用 `pxa_build(project="apps/demo", targets=["esp32s3", "esp32s31", "esp32p4", "simulator", "windows-simulator", "wasm"])` 一次构建，共享公共编译结果。日常使用默认的模拟器目标即可。任务轮询可用 `include_log=false`，需要诊断时再读取日志；已完成任务的耗时不会随轮询继续增长。
 
 ## 按设备设计与一句话上架
 

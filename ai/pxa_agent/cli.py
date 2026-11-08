@@ -54,7 +54,7 @@ def parser():
     board_setup.add_argument('--platform', choices=('all', 'codex', 'claude', 'dsh', 'generic'), default='all')
     scaffold = board_sub.add_parser('init')
     scaffold.add_argument('board')
-    scaffold.add_argument('--target', choices=('esp32s3', 'esp32s31'), required=True)
+    scaffold.add_argument('--target', choices=('esp32s3', 'esp32s31', 'esp32p4'), required=True)
     scaffold.add_argument('--reference')
     for action in ('check', 'build'):
         board_sub.add_parser(action).add_argument('board')

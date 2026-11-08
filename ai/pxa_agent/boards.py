@@ -64,8 +64,8 @@ def initialize(workspace, name, *, target, reference=None):
     from .scope import begin
     root, api = contract(workspace)
     name = board_id(name)
-    if target not in ('esp32s3', 'esp32s31'):
-        raise ToolError('This scaffold supports esp32s3 and esp32s31; a new CPU backend is separate platform work')
+    if target not in ('esp32s3', 'esp32s31', 'esp32p4'):
+        raise ToolError('This scaffold supports esp32s3, esp32s31 and esp32p4; a new CPU backend is separate platform work')
     destination = root / 'firmware/boards' / name
     if destination.exists() or destination.is_symlink():
         raise ToolError('The board directory already exists; inspect it instead of replacing it')

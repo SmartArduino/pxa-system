@@ -19,6 +19,26 @@ from .project import Project, SDK_ROOT, TARGETS, aot_flags, sdk_identity
 
 
 class DevelopmentToolsTest(unittest.TestCase):
+    def test_unicode_project_names_do_not_share_an_implicit_application_id(self):
+        from .cli import init_project
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            ids = []
+            for name in ['贪吃蛇', '俄罗斯方块', '猫咪game', '狗狗game']:
+                project = root / name
+                init_project(project, None)
+                metadata = json.loads((project / 'package.json').read_text())
+                self.assertEqual(metadata['name'], name)
+                self.assertLessEqual(len(metadata['id']), 64)
+                ids.append(metadata['id'])
+            self.assertEqual(len(set(ids)), 4)
+            clone = root / 'another-folder/贪吃蛇'
+            init_project(clone, None)
+            self.assertEqual(json.loads((clone / 'package.json').read_text())['id'], ids[0])
+            explicit = root / '自定义'
+            init_project(explicit, 'existing-game')
+            self.assertEqual(json.loads((explicit / 'package.json').read_text())['id'], 'existing-game')
+
     def test_extension_sdk_change_invalidates_sdk_identity(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)

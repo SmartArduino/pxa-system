@@ -120,6 +120,29 @@ class WorkflowTests(unittest.TestCase):
         (self.ws / 'tools/firmware.sh').write_text('#!/bin/sh\nexit 0\n')
         return api
 
+    def test_unicode_app_names_keep_distinct_publisher_scoped_ids(self):
+        from .environment import Environment
+        from .projects import initialize
+        env = Environment(self.ws, {'engine': 'native', 'sdk': str(self.sdk)})
+        ids = []
+        for name in ['贪吃蛇', '俄罗斯方块', '猫咪game', '狗狗game']:
+            result = initialize(env, 'apps/' + name, language='c')
+            metadata = json.loads((Path(result['project']) / 'package.json').read_text())
+            self.assertEqual(metadata['name'], name)
+            ids.append(metadata['id'])
+            self.assertTrue(scope.check(self.ws)['passed'])
+        self.assertEqual(len(set(ids)), 4)
+
+    def test_p4_board_scaffold_uses_existing_backend_and_preserves_bringup_gate(self):
+        api = self.board_workspace()
+        before = (api / 'pxa_board_api.h').read_bytes()
+        result = boards.initialize(self.ws, 'p4-custom', target='esp32p4')
+        self.assertFalse(result['buildable'])
+        folder = self.ws / 'firmware/boards/p4-custom'
+        self.assertIn('PXA_BOARD_TARGET "esp32p4"', (folder / 'board.cmake').read_text())
+        self.assertFalse(boards.inspect(self.ws, 'p4-custom')['static_ready'])
+        self.assertEqual((api / 'pxa_board_api.h').read_bytes(), before)
+
     def test_board_scaffold_keeps_api_and_is_not_falsely_buildable(self):
         api = self.board_workspace()
         original = (api / 'pxa_board_api.h').read_bytes()

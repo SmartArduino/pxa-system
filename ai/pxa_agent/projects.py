@@ -1,5 +1,6 @@
 """Language selection without changing the installed SDK."""
 import json
+import hashlib
 import re
 
 from .common import KIT, ToolError, atomic_json
@@ -8,9 +9,9 @@ from . import scope
 
 def build_targets(target='simulator', targets=None):
     values = [target] if targets is None else targets
-    if not isinstance(values, list) or not 1 <= len(values) <= 4 or any(
-            value not in ('simulator', 'esp32s3', 'esp32s31', 'wasm') for value in values):
-        raise ToolError('Choose 1..4 PXA build targets')
+    if not isinstance(values, list) or not 1 <= len(values) <= 6 or any(
+            value not in ('simulator', 'windows-simulator', 'esp32s3', 'esp32s31', 'esp32p4', 'wasm') for value in values):
+        raise ToolError('Choose 1..6 PXA build targets')
     return ','.join(dict.fromkeys(values))
 
 
@@ -20,6 +21,9 @@ def initialize(env, project, app_id=None, language='cpp'):
         raise ToolError('Choose c or cpp')
     if app_id is None:
         slug = re.sub(r'[^a-z0-9._-]+', '-', path.name.lower()).strip('.-_')[:60]
+        if not slug or not path.name.isascii():
+            suffix = hashlib.sha256(path.name.lower().encode('utf-8')).hexdigest()[:12]
+            slug = (slug[:47] or 'app') + '-' + suffix
         app_id = 'pxa-' + (slug or 'app')
     if not re.fullmatch(r'[a-z][a-z0-9._-]{0,63}', app_id):
         raise ToolError('Choose a valid lowercase PXA application ID')
