@@ -22,6 +22,224 @@ static void* test_allocate(void* context, size_t bytes) {
     return malloc(bytes);
 }
 
+static void check_bar_background(lv_obj_t* bar, uint32_t rgba) {
+    assert(bar != NULL);
+    assert(lv_color_eq(lv_obj_get_style_bg_color(bar, 0), lv_color_hex(rgba >> 8)));
+    assert(lv_obj_get_style_bg_opa(bar, 0) == (rgba & 255u));
+#if LV_USE_SNAPSHOT
+    lv_draw_buf_t* image = lv_snapshot_take(bar, LV_COLOR_FORMAT_ARGB8888);
+    assert(image != NULL);
+    lv_color32_t corner;
+    memcpy(&corner, image->data, sizeof(corner));
+    /* The first pixel is outside every glyph. Inspect rendered alpha as well
+     * as styles; a set color on an invisible object would otherwise pass. */
+    assert(abs((int)corner.alpha - (int)(rgba & 255u)) <= 1);
+    if ((rgba & 255u) == 255u) {
+        assert(corner.red == (rgba >> 24));
+        assert(corner.green == ((rgba >> 16) & 255u));
+        assert(corner.blue == ((rgba >> 8) & 255u));
+    }
+    lv_draw_buf_destroy(image);
+#endif
+}
+
+static void check_status_foreground(pxsys_reference_lvgl_t* ui, uint32_t rgb) {
+    lv_obj_t* time_label = lv_obj_get_child(ui->status_bar, 0);
+    assert(lv_color_eq(lv_obj_get_style_text_color(time_label, 0), lv_color_hex(rgb)));
+    int battery_found = 0;
+    for (uint32_t i = 0; i < lv_obj_get_child_count(ui->status_bar); ++i) {
+        lv_obj_t* child = lv_obj_get_child(ui->status_bar, (int32_t)i);
+        if (lv_obj_get_style_border_width(child, 0) == 1) {
+            battery_found = 1;
+            assert(lv_color_eq(lv_obj_get_style_border_color(child, 0), lv_color_hex(rgb)));
+        }
+    }
+    assert(battery_found);
+}
+
+static void check_window_chrome(pxsys_reference_lvgl_t* ui) {
+    const pxsys_window_snapshot_t saved_window = ui->window;
+    const pxsys_theme_snapshot_t saved_theme = ui->theme;
+    const uint8_t saved_content = ui->content_active;
+    const pxsys_navigation_mode_t saved_mode = ui->navigation_mode;
+    pxsys_window_snapshot_t next = saved_window;
+    ui->content_active = 0; /* The foreground task is a Guest. */
+    next.status_bar_mode = next.navigation_bar_mode = PXSYS_WINDOW_BAR_VISIBLE;
+    assert(pxsys_reference_lvgl_set_navigation_mode(ui, PXSYS_NAVIGATION_BUTTONS) == PXSYS_STATUS_OK);
+    for (unsigned scheme = 0; scheme < 2; ++scheme) {
+        pxsys_theme_snapshot_t theme;
+        pxsys_theme_snapshot_init(&theme, (pxsys_color_scheme_t)scheme);
+        assert(pxsys_theme_service_update(pxsys_standard_system_theme(ui->system), &theme) == PXSYS_STATUS_OK);
+        next.status_bar_color = UINT32_C(0xeeddbbff);
+        next.navigation_bar_color = UINT32_C(0x123456ff);
+        next.status_bar_icons = PXSYS_WINDOW_ICON_DARK;
+        next.navigation_bar_icons = PXSYS_WINDOW_ICON_LIGHT;
+        window_changed(ui, &next);
+        check_bar_background(ui->status_bar, next.status_bar_color);
+        check_bar_background(ui->navigation_bar, next.navigation_bar_color);
+        check_status_foreground(ui, 0);
+        for (int i = 0; i < 3; ++i) {
+            lv_obj_t* glyph = lv_obj_get_child(lv_obj_get_child(ui->navigation_bar, i), 0);
+            assert(lv_color_eq(i == 0 ? lv_obj_get_style_line_color(glyph, 0) :
+                lv_obj_get_style_border_color(glyph, 0), lv_color_hex(0xffffff)));
+        }
+        next.status_bar_icons = next.navigation_bar_icons = PXSYS_WINDOW_ICON_AUTO;
+        window_changed(ui, &next);
+        check_status_foreground(ui, 0); /* Light background, dark AUTO icons. */
+        next.status_bar_color = UINT32_C(0x123456ff);
+        window_changed(ui, &next);
+        check_status_foreground(ui, 0xffffff);
+        next.status_bar_color = UINT32_C(0x12345680);
+        next.navigation_bar_color = UINT32_C(0xeeddbb80);
+        window_changed(ui, &next);
+        check_bar_background(ui->status_bar, next.status_bar_color);
+        check_bar_background(ui->navigation_bar, next.navigation_bar_color);
+        next.status_bar_color = next.navigation_bar_color = 0;
+        next.status_bar_icons = PXSYS_WINDOW_ICON_LIGHT;
+        next.navigation_bar_icons = PXSYS_WINDOW_ICON_DARK;
+        window_changed(ui, &next);
+        check_bar_background(ui->status_bar, 0);
+        check_bar_background(ui->navigation_bar, 0);
+        check_status_foreground(ui, 0xffffff);
+        assert(pxsys_reference_lvgl_set_navigation_mode(ui, PXSYS_NAVIGATION_GESTURES) == PXSYS_STATUS_OK);
+#if PXSYS_REFERENCE_UI_GESTURE_HANDLE
+        assert(ui->navigation_handle != NULL);
+        assert(lv_obj_get_style_bg_opa(ui->navigation_handle, 0) == LV_OPA_COVER);
+        assert(lv_color_eq(lv_obj_get_style_bg_color(ui->navigation_handle, 0), lv_color_hex(0)));
+#if LV_USE_SNAPSHOT
+        lv_draw_buf_t* handle = lv_snapshot_take(ui->navigation_handle, LV_COLOR_FORMAT_ARGB8888);
+        assert(handle != NULL);
+        lv_color32_t center;
+        memcpy(&center, handle->data + (handle->header.h / 2) * handle->header.stride +
+            (handle->header.w / 2) * sizeof(center), sizeof(center));
+        assert(center.alpha == 255 && center.red == 0 && center.green == 0 && center.blue == 0);
+        lv_draw_buf_destroy(handle);
+#endif
+        next.navigation_bar_icons = PXSYS_WINDOW_ICON_LIGHT;
+        window_changed(ui, &next);
+        assert(lv_color_eq(lv_obj_get_style_bg_color(ui->navigation_handle, 0), lv_color_hex(0xffffff)));
+#endif
+        next.status_bar_mode = next.navigation_bar_mode = PXSYS_WINDOW_BAR_TRANSIENT;
+        next.status_bar_color = UINT32_C(0x12345680);
+        next.navigation_bar_color = UINT32_C(0xeeddbb80);
+        window_changed(ui, &next);
+        assert(!status_bar_is_visible(ui) && ui->navigation_handle == NULL);
+        if (ui->status_bar != NULL) {
+            assert(lv_obj_get_child_count(ui->status_bar) == 0); /* Input catcher only. */
+            assert(lv_obj_get_style_bg_opa(ui->status_bar, 0) == LV_OPA_TRANSP);
+        }
+        assert(lv_obj_get_style_bg_opa(ui->navigation_bar, 0) == LV_OPA_TRANSP);
+        reveal_transient_chrome(ui);
+        (void)lv_timer_handler();
+        check_bar_background(ui->status_bar, next.status_bar_color);
+        check_bar_background(ui->navigation_bar, next.navigation_bar_color);
+        /* Native Home must use the theme, not the previous Guest's style. */
+        ui->content_active = 1;
+        rebuild(ui);
+        assert(lv_color_eq(lv_obj_get_style_text_color(lv_obj_get_child(ui->status_bar, 0), 0),
+            color_token(ui, PXSYS_COLOR_TEXT_PRIMARY)));
+        assert(lv_obj_get_style_bg_opa(ui->status_bar, 0) == LV_OPA_TRANSP);
+        ui->content_active = 0;
+        next.status_bar_mode = next.navigation_bar_mode = PXSYS_WINDOW_BAR_VISIBLE;
+        assert(pxsys_reference_lvgl_set_navigation_mode(ui, PXSYS_NAVIGATION_BUTTONS) == PXSYS_STATUS_OK);
+    }
+    ui->content_active = saved_content;
+    window_changed(ui, &saved_window);
+    assert(pxsys_reference_lvgl_set_navigation_mode(ui, saved_mode) == PXSYS_STATUS_OK);
+    assert(pxsys_theme_service_update(pxsys_standard_system_theme(ui->system), &saved_theme) == PXSYS_STATUS_OK);
+}
+
+#if PXSYS_REFERENCE_UI_WIFI && LV_USE_SNAPSHOT
+static lv_obj_t* status_wifi_icon(pxsys_reference_lvgl_t* ui) {
+    for (uint32_t i = 0; i < lv_obj_get_child_count(ui->status_bar); ++i) {
+        lv_obj_t* child = lv_obj_get_child(ui->status_bar, (int32_t)i);
+        for (uint32_t e = 0; e < lv_obj_get_event_count(child); ++e)
+            if (lv_event_dsc_get_cb(lv_obj_get_event_dsc(child, e)) == wifi_icon_draw)
+                return child;
+    }
+    return NULL;
+}
+
+static uint64_t wifi_pixels(pxsys_reference_lvgl_t* ui, uint8_t* pixels) {
+    lv_obj_t* icon = status_wifi_icon(ui);
+    assert(icon != NULL);
+    lv_draw_buf_t* image = lv_snapshot_take(icon, LV_COLOR_FORMAT_RGB888);
+    assert(image && image->header.w == 16 && image->header.h == 16);
+    uint64_t hash = UINT64_C(14695981039346656037);
+    for (uint32_t y = 0; y < image->header.h; ++y)
+        for (uint32_t x = 0; x < image->header.w * 3; ++x) {
+            if (pixels) pixels[y * image->header.w * 3 + x] = image->data[y * image->header.stride + x];
+            hash ^= image->data[y * image->header.stride + x];
+            hash *= UINT64_C(1099511628211);
+        }
+    lv_draw_buf_destroy(image);
+    return hash;
+}
+
+static void check_wifi_signal(pxsys_standard_system_t* system, pxsys_reference_lvgl_t* ui) {
+    pxsys_system_status_snapshot_t saved, next;
+    pxsys_system_status_snapshot_init(&saved);
+    assert(pxsys_system_status_service_get(pxsys_standard_system_status(system), &saved) == PXSYS_STATUS_OK);
+    next = saved;
+    next.wifi_supported = next.wifi_enabled = next.wifi_connected = 1;
+    uint64_t levels[5];
+    uint8_t pixels[5][16 * 16 * 3];
+    for (uint8_t level = 0; level <= 4; ++level) {
+        next.wifi_signal_level = level;
+        assert(pxsys_system_status_service_update(pxsys_standard_system_status(system), &next) == PXSYS_STATUS_OK);
+        levels[level] = wifi_pixels(ui, pixels[level]);
+        for (uint8_t previous = 0; previous < level; ++previous)
+            assert(levels[previous] != levels[level]);
+        if (level) {
+            int left = 16, right = -1;
+            for (int y = 0; y < 16; ++y) for (int x = 0; x < 16; ++x) {
+                const int at = (y * 16 + x) * 3;
+                if (memcmp(pixels[level] + at, pixels[level - 1] + at, 3) != 0) {
+                    if (x < left) left = x;
+                    if (x > right) right = x;
+                }
+            }
+            assert(right >= left && left + right == 15); /* Dot and arcs share x=7.5. */
+        }
+    }
+    const pxsys_window_snapshot_t saved_window = ui->window;
+    const uint8_t saved_content = ui->content_active;
+    pxsys_window_snapshot_t window = saved_window;
+    ui->content_active = 0;
+    window.status_bar_color = UINT32_C(0x7f7f7fff);
+    window.status_bar_icons = PXSYS_WINDOW_ICON_LIGHT;
+    window_changed(ui, &window);
+    uint8_t light_pixels[16 * 16 * 3], dark_pixels[16 * 16 * 3];
+    const uint64_t light = wifi_pixels(ui, light_pixels);
+    window.status_bar_icons = PXSYS_WINDOW_ICON_DARK;
+    window_changed(ui, &window);
+    assert(light != wifi_pixels(ui, dark_pixels));
+    for (int channel = 0; channel < 3; ++channel) {
+        const int at = (12 * 16 + 7) * 3 + channel;
+        assert(light_pixels[at] > dark_pixels[at] + 64); /* Antialiased 2x2 dot. */
+    }
+    ui->content_active = saved_content;
+    window_changed(ui, &saved_window);
+    next.wifi_connected = 0; /* Stale strong RSSI must not look connected. */
+    assert(pxsys_system_status_service_update(pxsys_standard_system_status(system), &next) == PXSYS_STATUS_OK);
+    const uint64_t disconnected = wifi_pixels(ui, NULL);
+    for (uint8_t level = 0; level <= 4; ++level) assert(disconnected != levels[level]);
+    next.wifi_signal_level = 0;
+    assert(pxsys_system_status_service_update(pxsys_standard_system_status(system), &next) == PXSYS_STATUS_OK);
+    assert(disconnected == wifi_pixels(ui, NULL));
+    next.wifi_enabled = 0;
+    assert(pxsys_system_status_service_update(pxsys_standard_system_status(system), &next) == PXSYS_STATUS_OK);
+    assert(status_wifi_icon(ui) == NULL);
+    next.wifi_supported = next.cellular_supported = 0;
+    next.network_type = PXSYS_NETWORK_WIFI;
+    next.network_connected = 1;
+    next.network_signal_level = 2;
+    assert(pxsys_system_status_service_update(pxsys_standard_system_status(system), &next) == PXSYS_STATUS_OK);
+    assert(levels[2] == wifi_pixels(ui, NULL)); /* Legacy providers still drive the icon. */
+    assert(pxsys_system_status_service_update(pxsys_standard_system_status(system), &saved) == PXSYS_STATUS_OK);
+}
+#endif
+
 static void check_idle_inhibition(pxsys_reference_lvgl_t* ui) {
     pxsys_reference_idle_policy_t saved = ui->idle_policy;
     ui->idle_policy.dim_after_seconds = 2;
@@ -234,8 +452,12 @@ static void check_features(uint32_t features) {
     assert((ui->app_ime_timer != NULL) == !!PXSYS_REFERENCE_UI_BUILTIN_SETTINGS);
     assert(pxsys_reference_lvgl_start(ui) == PXSYS_STATUS_OK);
     assert((ui->status_bar != NULL) == !!(features & PXSYS_REFERENCE_UI_STATUS_BAR));
+#if PXSYS_REFERENCE_UI_WIFI && LV_USE_SNAPSHOT
+    if (features == PXSYS_REFERENCE_UI_ALL) check_wifi_signal(system, ui);
+#endif
     assert((ui->navigation_bar != NULL) == !!(features & PXSYS_REFERENCE_UI_NAVIGATION_BAR));
     assert(!!ui->content_active == !!(features & PXSYS_REFERENCE_UI_HOME));
+    if (features == PXSYS_REFERENCE_UI_ALL) check_window_chrome(ui);
     if (!(features & PXSYS_REFERENCE_UI_HOME))
         assert(pxsys_reference_lvgl_home(ui) == PXSYS_STATUS_NOT_FOUND);
     if (features & PXSYS_REFERENCE_UI_SETTINGS) {

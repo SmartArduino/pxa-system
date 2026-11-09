@@ -56,6 +56,35 @@ class WorkflowTests(unittest.TestCase):
         self.assertTrue(Path(result['archive']).is_file())
         self.assertFalse(scope.check(self.ws)['active'])
 
+    def test_adopt_resumes_original_app_and_retains_failed_audit(self):
+        self.start()
+        probe = self.ws / 'apps/probe'
+        probe.mkdir()
+        scope.begin(self.ws, mode='app', project='apps/probe', sdk=self.sdk)
+        source = self.app / 'main.c'
+        source.write_text('resumed edits')
+        with self.assertRaises(ToolError):
+            self.start()
+        result = scope.begin(self.ws, mode='app', project='apps/game', sdk=self.sdk, adopt=True)
+        audit = json.loads(Path(result['previous_archive']).with_name('check.json').read_text())
+        self.assertFalse(audit['passed'])
+        self.assertIn(str(source), audit['violations'])
+        self.assertTrue(scope.check(self.ws)['passed'])
+        self.assertEqual(source.read_text(), 'resumed edits')
+
+    def test_adopt_cannot_hide_sdk_changes_and_archive_keeps_violations(self):
+        self.start()
+        source = self.sdk / 'sdk/guest-c/include/pxa_ui.h'
+        source.write_text('platform edit')
+        with self.assertRaises(ToolError):
+            scope.begin(self.ws, mode='app', project='apps/game', sdk=self.sdk, adopt=True)
+        result = scope.finish(self.ws, allow_violations=True)
+        self.assertTrue(result['ended'])
+        self.assertFalse(result['passed'])
+        self.assertIn(str(source), result['violations'])
+        self.assertTrue(Path(result['archive']).is_file())
+        self.assertEqual(source.read_text(), 'platform edit')
+
     def test_dirty_baseline_is_preserved_and_later_edit_detected(self):
         subprocess.run(['git', 'init', '-q', self.ws], check=True)
         subprocess.run(['git', '-C', self.ws, 'add', '.'], check=True)
@@ -238,6 +267,85 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(inventory['header_count'], 2)
         self.assertEqual(len(inventory['headers']), 2)
 
+    def test_context_finds_symbol_uses_in_unrelated_example_directory(self):
+        example = self.sdk / 'sdk/guest-cpp/examples/timer/main.cpp'
+        example.parent.mkdir(parents=True)
+        example.write_text('// Button is a comment\nButton("Start").on_click(start);\n')
+        result = context.sdk_context(self.sdk, 'pxa::ui::Button')
+        self.assertIn(example.relative_to(self.sdk).as_posix(), result['examples'])
+        self.assertEqual(result['example_matches'][0]['line'], 2)
+
+    def test_verify_diagnostics_and_explicit_blank_viewport_check(self):
+        spec = importlib.util.spec_from_file_location('verify_app', KIT / 'skills/pxa-debug/scripts/verify_app.py')
+        helper = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(helper)
+        tree = {'schema': 'pxa-ui-inspection-1', 'complete': True, 'nodes': []}
+        self.assertFalse(helper.ui_health(tree)['passed'])
+        tree['nodes'] = [{'surface': 1, 'id': 2, 'type': 'text', 'text': 'Top-only app',
+                          'visible': True, 'clip': {'width': 30, 'height': 10}}]
+        self.assertTrue(helper.ui_health(tree)['passed'])
+        tree['nodes'][0]['visible'] = False
+        self.assertFalse(helper.ui_health(tree)['passed'])
+        tree['nodes'][0].update(type='canvas', text=None, visible=True)
+        self.assertTrue(helper.ui_health(tree)['passed'])
+        self.assertFalse(helper.ui_health(tree)['heuristic'])
+        self.assertEqual(helper.ui_diagnostics('guest PXA_UI_ERROR phase=mount code=-3\n'),
+                         [{'phase': 'mount', 'code': -3}])
+        record = {'steps': []}
+        with self.assertRaisesRegex(RuntimeError, 'transport failure'):
+            with helper.recorded_step(record, {'name': 'tap-start', 'action': 'tap'}):
+                raise RuntimeError('transport failure')
+        self.assertFalse(record['steps'][0]['passed'])
+        self.assertEqual(record['steps'][0]['error'], 'transport failure')
+        self.assertGreaterEqual(record['steps'][0]['elapsed_ms'], 0)
+
+    def test_semantic_ui_query_flags_and_scenario_validation(self):
+        from .ui import query_arguments
+        self.assertIn('--text=-1 中文', query_arguments('tap', {'type': 'button', 'text': '-1 中文'}))
+        values = query_arguments('wait-for', {'id': 4}, {'value': 0, 'enabled': False}, 1000)
+        self.assertIn('false', values)
+        self.assertIn('1000', values)
+        for args in [('tap', {}, {}), ('expect', {'id': True}, {}),
+                     ('expect', {'text': 'x'}, {'enabled': 'false'}),
+                     ('expect', {'type': 'button'}, {'count': -1})]:
+            with self.assertRaises(ToolError):
+                query_arguments(*args)
+        spec = importlib.util.spec_from_file_location('verify_ui_steps', KIT / 'skills/pxa-debug/scripts/verify_app.py')
+        helper = importlib.util.module_from_spec(spec); spec.loader.exec_module(helper)
+        helper.validate_scenario({'pai-touch': [
+            {'name': 'start', 'action': 'tap-node', 'selector': {'type': 'button', 'text': 'Start'}},
+            {'name': 'done', 'action': 'wait-for', 'selector': {'text': 'Done'}, 'expected': {}, 'timeout_ms': 2000},
+            {'name': 'zero', 'action': 'expect', 'selector': {'type': 'progress'}, 'expected': {'value': 0}}
+        ]}, {'pai-touch': (296, 240)})
+
+    def test_ui_inspection_pages_keep_the_complete_snapshot(self):
+        from .ui import inspection_page
+        tree = {'schema': 'pxa-ui-inspection-1', 'complete': True, 'renderer': 'lvgl',
+                'viewport': {'width': 296, 'height': 240}, 'nodes': [{'id': n} for n in range(70)]}
+        path = self.root / 'tree.json'
+        first = inspection_page(tree, path)
+        self.assertEqual(len(first['nodes']), 64)
+        self.assertFalse(first['view_complete'])
+        self.assertEqual(len(json.loads(path.read_text())['nodes']), 70)
+        last = inspection_page(tree, path, offset=64)
+        self.assertEqual(len(last['nodes']), 6)
+        self.assertEqual(first['sha256'], last['sha256'])
+
+    def test_verify_flags_preserve_definitions(self):
+        from .cli import parser
+        args = parser().parse_args(['verify', 'apps/timer', '--define', 'ACCELERATED=8', '--require-ui'])
+        self.assertEqual(args.define, ['ACCELERATED=8'])
+        self.assertTrue(args.require_ui)
+
+    def test_doctor_distinguishes_simulator_from_hardware_validation(self):
+        from .environment import Environment
+        env = Environment(self.ws, {'engine': 'native', 'sdk': str(self.sdk), 'sdk_version': '0.9.0'})
+        with patch('serial.tools.list_ports.comports', return_value=[]), patch.object(env, 'call', return_value='PXA 0.9.0'):
+            result = env.doctor()
+        self.assertEqual(result['devices'], [])
+        self.assertFalse(result['physical_device_tested'])
+        self.assertIn('simulator-only', result['device_guidance'])
+
     def test_qualified_cpp_query_deduplicates_adjacent_declarations(self):
         header = self.sdk / 'sdk/guest-cpp/include/pxa/ui.hpp'
         header.parent.mkdir(parents=True)
@@ -247,25 +355,28 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(result['matches'][0]['line'], 1)
         self.assertEqual(result['matches'][0]['excerpt_start_line'], 1)
 
-    def test_device_entrypoint_reuses_bundled_runtime_and_falls_back(self):
+    def test_device_tools_use_current_kit_while_builds_keep_sdk_runtime(self):
         spec = importlib.util.spec_from_file_location('verify_app', KIT / 'skills/pxa-debug/scripts/verify_app.py')
         helper = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(helper)
         pxa = self.sdk / 'bin/pxa'
         env = {'PXA_SIMULATOR_SOCKET_ROOT': '/tmp/owned', 'PYTHONPATH': '/extra'}
         args, variables = helper.device_command(pxa, ['device', 'info'], env)
-        self.assertEqual(args, [str(pxa), 'device', 'info'])
+        self.assertTrue(args[1].endswith('/pxadb.py'))
+        self.assertEqual(args[2:], ['info'])
+        current_client=args[1]
         for name in ('runtime/python/bin/python3', 'tools/pxadb/pxadb.py'):
             file = self.sdk / name
             file.parent.mkdir(parents=True, exist_ok=True)
             file.touch()
         args, variables = helper.device_command(pxa, ['device', 'info'], env)
-        self.assertTrue(args[0].endswith('/runtime/python/bin/python3'))
-        self.assertTrue(args[1].endswith('/tools/pxadb/pxadb.py'))
+        self.assertEqual(args[1],current_client)
+        self.assertNotEqual(args[0],str(self.sdk/'runtime/python/bin/python3'))
         self.assertEqual(args[2:], ['info'])
         self.assertEqual(variables['PXA_SIMULATOR_SOCKET_ROOT'], '/tmp/owned')
         self.assertNotIn('PYTHONHOME', env)
-        self.assertEqual(helper.device_command(pxa, ['build', 'app'], env)[0], [str(pxa), 'build', 'app'])
+        self.assertEqual(helper.device_command(pxa, ['build', 'app'], env)[0],
+                         [str(self.sdk/'runtime/python/bin/python3'), '-m', 'pxa_tools', 'build', 'app'])
 
     def test_headless_container_job_passes_environment_inside_container(self):
         from .environment import Environment

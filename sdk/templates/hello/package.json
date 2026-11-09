@@ -5,6 +5,6 @@
   "release_sequence": 1,
   "name": "Hello PXA",
   "build": {"system": "cmake", "linear_memory": {"maximum_bytes": 1048576, "pinned": false}},
-  "components": [{"id": "main", "kind": "ui", "services": ["clock", "ui"],
+  "components": [{"id": "main", "kind": "ui", "services": ["clock", "window", "ui", "log"],
     "wasi": {"version": "preview1", "libc": "wasi-libc", "features": ["monotonic-clock", "wall-clock"]}}]
 }

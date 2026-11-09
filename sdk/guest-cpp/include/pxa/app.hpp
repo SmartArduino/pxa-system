@@ -282,6 +282,9 @@ public:
         auto mounted = ui_.mount(*app_, context_.transport_);
         if (!mounted) {
             auto error = mounted.error();
+            detail::report_error(context_.transport_, "PXA_UI_ERROR phase=mount code=", error);
+            if constexpr (requires(App& app, Context& ctx, Error value) { app.on_error(ctx, value); })
+                app_->on_error(context_, error);
             context_.transport_.phase(Phase::stopped);
             context_.tasks_.cancel();
             context_.foreground_tasks_.cancel();
@@ -524,11 +527,12 @@ private:
                 gesture_period_=period;
             }
         }
-        if (result || result.error() == Error::protocol_error) return result;
+        if (result) return result;
+        detail::report_error(context_.transport_, "PXA_UI_ERROR phase=flush code=", result.error());
         if constexpr (requires(App& app, Context& ctx, Error error) {
                           app.on_error(ctx, error);
                       }) app_->on_error(context_, result.error());
-        else detail::report_error("PXA UI update failed: ", result.error());
+        if (result.error() == Error::protocol_error) return result;
         return {};
     }
 

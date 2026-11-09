@@ -8,7 +8,7 @@ import sys
 import time
 import tomllib
 
-from .build import build, signing_key, tool
+from .build import build, existing_build, signing_key, tool
 from .common import ToolError, command, digest, executable, identity, process_options
 from .project import Project, SDK_ROOT
 
@@ -114,6 +114,13 @@ def run(project: Project, args):
     debug_service = None
     last_digest = None
     target = args.target
+    no_build = getattr(args, 'no_build', False)
+    if no_build and (args.watch or args.update_lock):
+        raise ToolError('--no-build cannot be combined with --watch or --update-lock')
+    expected_package = getattr(args, 'expected_package_sha256', None)
+    if expected_package and (not no_build or len(expected_package) != 64 or
+                             any(c not in '0123456789abcdef' for c in expected_package)):
+        raise ToolError('--expected-package-sha256 requires --no-build and a lowercase SHA-256')
     store_screenshots = getattr(args, 'store_screenshots', False)
     if store_screenshots and args.device:
         raise ToolError('Store screenshots require the real PXA simulator')
@@ -121,27 +128,32 @@ def run(project: Project, args):
         info = command([sys.executable, pxadb_path(), 'info', '--port', args.device,
                         '--baud', args.baud], capture=True)
         values = dict(v.split('=', 1) for v in info.split(';') if '=' in v)
-        if 'pxa_core' in values and values['pxa_core'].split('.')[0] != '2':
-            raise ToolError('This SDK requires a Core 2 Host; update the correct board application firmware first')
         target = {'esp32s3': 'esp32s3', 'esp32-s3': 'esp32s3',
                   'esp32s31': 'esp32s31', 'esp32-s31': 'esp32s31',
                   'esp32p4': 'esp32p4', 'esp32-p4': 'esp32p4'}.get(values.get('target'))
         if target is None:
             raise ToolError('Device reports an unsupported execution target')
-    previous = snapshot(project)
+    previous = snapshot(project) if args.watch else None
     try:
         while True:
             try:
-                package = build(project, targets=target.split(','), output=args.output,
-                                key=args.signing_key, offline=args.offline,
-                                update_lock=args.update_lock, definitions=args.define,
-                                aot_only=True, jobs=args.jobs,
-                                build_type='Debug' if args.debug else 'Release')
+                if no_build:
+                    package = existing_build(project, targets=target.split(','), output=args.output,
+                                             key=args.signing_key, definitions=args.define)
+                else:
+                    package = build(project, targets=target.split(','), output=args.output,
+                                    key=args.signing_key, offline=args.offline,
+                                    update_lock=args.update_lock, definitions=args.define,
+                                    aot_only=True, jobs=args.jobs,
+                                    build_type='Debug' if args.debug else 'Release')
                 current_digest = digest(package)
+                if expected_package and current_digest != expected_package:
+                    raise ToolError('Prepared package changed during verification; stop concurrent builds and retry')
                 if current_digest != last_digest:
                     if args.device:
                         command([sys.executable, pxadb_path(), 'package', 'install', package,
-                                 '--yes', '--port', args.device, '--baud', args.baud])
+                                 '--yes', '--port', args.device, '--baud', args.baud,
+                                 *(['--strict-compatibility'] if getattr(args,'strict_compatibility',False) else [])])
                         for attempt in range(10):
                             try:
                                 command([sys.executable, pxadb_path(), 'package', 'run', project.app_id,
@@ -162,11 +174,12 @@ def run(project: Project, args):
                             time.sleep(0.25)
                     else:
                         private = signing_key(SDK_ROOT, args.signing_key)
-                        public = project.path / '.pxa/publisher.der'
+                        state_override = getattr(args, 'simulator_state', None)
+                        state = state_override.resolve() if state_override else project.path / '.pxa/simulator' / args.profile
+                        state.mkdir(parents=True, exist_ok=True)
+                        public = state / 'publisher.der' if state_override else project.path / '.pxa/publisher.der'
                         command([tool(SDK_ROOT, 'openssl'), 'pkey', '-in', private,
                                  '-pubout', '-outform', 'DER', '-out', public])
-                        state = project.path / '.pxa/simulator' / args.profile
-                        state.mkdir(parents=True, exist_ok=True)
                         command([simulator_bin('pxsys_package_installer'), '--storage-root', state,
                                  '--publisher-key', public, '--source', package,
                                  '--expected-id', project.app_id])

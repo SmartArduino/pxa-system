@@ -2463,8 +2463,8 @@ static void test_window_service(void) {
 
     assert(pxa_window_negotiate_version((pxa_version_range_t){0, 1, 0, 9},
                                         &selected) == PXA_STATUS_OK);
-    assert(selected.major == 0 && selected.minor == 4);
-    assert(pxa_window_negotiate_version((pxa_version_range_t){0, 5, 1, 0},
+    assert(selected.major == 0 && selected.minor == 5);
+    assert(pxa_window_negotiate_version((pxa_version_range_t){0, 6, 1, 0},
                                         &selected) == PXA_STATUS_UNSUPPORTED);
     assert(pxa_window_negotiate_version((pxa_version_range_t){1, 0, 1, 9},
                                         &selected) == PXA_STATUS_UNSUPPORTED);
@@ -2503,6 +2503,10 @@ static void test_window_service(void) {
     same_snapshot.system_bar_insets = snapshot.system_bar_insets;
     same_snapshot.orientation = snapshot.orientation;
     same_snapshot.focused = snapshot.focused;
+    same_snapshot.rotation = snapshot.rotation;
+    same_snapshot.native_width = snapshot.native_width;
+    same_snapshot.native_height = snapshot.native_height;
+    same_snapshot.supported_rotations = snapshot.supported_rotations;
     assert(pxa_window_update_snapshot(window, component, &same_snapshot) ==
            PXA_STATUS_OK);
     assert(pxa_window_get_snapshot(window, component, &observed_snapshot) ==
@@ -2649,7 +2653,33 @@ static void test_window_service(void) {
     assert(pxa_window_resolve_event_result(&event, 1, &close_requested) ==
                PXA_STATUS_OK && !close_requested);
 
+    /* Lock captures an angle once; invalid transactions never reach the
+     * backend, and releasing the Window restores system direction. */
+    assert(pxa_window_get_snapshot(window, component, &snapshot) == PXA_STATUS_OK);
+    snapshot.rotation = 2;
+    snapshot.supported_rotations = 15;
+    snapshot.native_width = snapshot.logical_width;
+    snapshot.native_height = snapshot.logical_height;
+    assert(pxa_window_update_snapshot(window, component, &snapshot) == PXA_STATUS_OK);
+    for (unsigned invalid = 0; invalid < 2; ++invalid) {
+        unsigned calls = backend_state.apply_count;
+        pxa_writer_init(&records, record_bytes, sizeof(record_bytes));
+        value = PXA_ORIENTATION_LOCKED;
+        assert(!pxa_writer_record(&records, 9, &value, 1));
+        if (invalid) assert(!pxa_writer_record(&records, 9, &value, 1));
+        pxa_writer_init(&message_writer, message, sizeof(message));
+        assert(!pxa_writer_message(&message_writer, PXA_WINDOW_SERVICE_ID,
+            PXA_WINDOW_CONFIGURE, 0, record_bytes, records.size));
+        assert(!pxa_component_begin_event(test.runtime, component));
+        assert(pxa_runtime_control(test.runtime, component, message, message_writer.size) ==
+            (invalid ? PXA_STATUS_INVALID_ARGUMENT : PXA_STATUS_OK));
+        assert(!pxa_component_finish_event(test.runtime, component, 0));
+        assert(backend_state.apply_count == calls + !invalid);
+        assert(!pxa_window_get_configuration(window, component, &configuration));
+        assert(configuration.orientation_preference == PXA_ORIENTATION_ROTATION_180);
+    }
     assert(pxa_window_unbind(window, component) == PXA_STATUS_OK);
+    assert(backend_state.last.orientation_preference == PXA_ORIENTATION_SYSTEM);
     assert(pxa_window_get_configuration(window, component, &configuration) ==
            PXA_STATUS_NOT_FOUND);
     assert(pxa_window_get_configuration(window, other, &configuration) ==

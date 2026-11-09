@@ -1,5 +1,5 @@
 {
-  "version": "0.8.0",
+  "version": "0.10.0",
   "target": "browser",
   "engine": "webassembly",
   "core": "pxa.core.v2",
@@ -28,7 +28,11 @@
       "back": true,
       "focus": true,
       "toast": true,
-      "systemChrome": false
+      "systemChrome": false,
+      "version": "0.5",
+      "orientationPreferences": true,
+      "supportedRotations": 15,
+      "squareOrientation": true
     },
     "clock": {
       "monotonic": true,
@@ -134,11 +138,11 @@
       "minimumPeriodMs": 20,
       "staleAfterMs": 250,
       "missingHardware": "no samples; never synthetic zeros",
-      "axes": "PXA native device frame: X top, Y left, Z screen-out",
+      "axes": "Android native device frame: X right, Y top, Z screen-out; fixed across display rotations",
       "authorization": "automatic where supported; native consent joined to Start/Continue or screen interaction",
       "magnetometer": {
         "unit": "nT",
-        "nativeUnit": "\u00b5T",
+        "nativeUnit": "µT",
         "minimumPeriodMs": 100,
         "requires": [
           "secure context",
@@ -153,7 +157,7 @@
         "dimensions": 1,
         "minimumPeriodMs": 50,
         "source": "absolute DeviceOrientation or AbsoluteOrientationSensor",
-        "reference": "magnetic north; top edge when flat, back of display upright; smooth 45\u201370 degree transition",
+        "reference": "magnetic north; top edge when flat, back of display upright; smooth 45–70 degree transition",
         "relativeOrientation": false
       }
     }

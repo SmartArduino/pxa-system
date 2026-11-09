@@ -7,6 +7,7 @@
 #include "canvas.hpp"
 #include "text_input.hpp"
 #include "text.hpp"
+#include "diagnostics.hpp"
 
 #include <algorithm>
 #include <bit>
@@ -186,6 +187,7 @@ consteval Dp operator""_dp(unsigned long long value) noexcept {
 } // namespace literals
 
 namespace detail {
+template<std::uint16_t Key, class Child, class Value> class ModifiedButtonBuilder;
 template<std::uint16_t Key, class View, class Value>
 constexpr auto modify(View&& view, Value value);
 struct ViewProbe {};
@@ -338,6 +340,18 @@ public:
     template<class Self> requires std::constructible_from<std::remove_cvref_t<Self>, Self>
     constexpr auto enabled(this Self&& self, State<bool>& value) {
         return detail::modify<protocol::enabled>(std::forward<Self>(self), &value);
+    }
+};
+
+// Button builders retain modifiers until an action completes the view. The
+// completed type is identical to binding first and then applying the styles.
+class ButtonBuilderModifiers : public ViewModifiers {
+public:
+    template<std::uint16_t Key, class Self, class Value>
+        requires std::constructible_from<std::remove_cvref_t<Self>, Self>
+    constexpr auto apply_modifier(this Self&& self, Value value) {
+        return detail::ModifiedButtonBuilder<Key, std::remove_cvref_t<Self>, Value>(
+            std::forward<Self>(self), std::move(value));
     }
 };
 
@@ -609,6 +623,7 @@ private:
         auto node = page.create(parent, protocol::control, protocol::button);
         if (!node || !page.transaction().u8(node, protocol::layout,
                                               protocol::row) ||
+            !page.transaction().u8(node, protocol::align, std::uint8_t(Align::center)) ||
             !page.transaction().u64(node, protocol::event_mask, Pointer ? protocol::event_mask_pointer : 1) ||
             !page.theme(node, protocol::background, Color::primary) ||
             ![&] {
@@ -639,6 +654,7 @@ public:
         auto node = page.create(parent, protocol::control, protocol::button);
         if (!node || !page.transaction().u8(node, protocol::layout,
                                               protocol::row) ||
+            !page.transaction().u8(node, protocol::align, std::uint8_t(Align::center)) ||
             !page.transaction().u64(node, protocol::event_mask, protocol::event_mask_pointer) ||
             !page.theme(node, protocol::background, Color::primary) ||
             !page.on_pointer(node, callback_)) return false;
@@ -653,7 +669,7 @@ private:
     [[no_unique_address]] F callback_;
 };
 
-class ButtonBuilder {
+class ButtonBuilder : public ButtonBuilderModifiers {
 public:
     explicit ButtonBuilder(std::string label) : label_(std::move(label)) {}
     template<ClickCallback Hold>
@@ -774,7 +790,7 @@ public:
         return node &&
                page.transaction().fill(node, protocol::width) &&
                page.transaction().logical_px(node, protocol::height, 8) &&
-               page.theme(node, protocol::background, Color::surface) &&
+               page.theme(node, protocol::background, Color::surface_container_high) &&
                page.transaction().i32(node, protocol::min_value, minimum_) &&
                page.transaction().i32(node, protocol::max_value, maximum_) &&
                write_int_value(page.transaction(), node, value_.get()) &&
@@ -1008,6 +1024,7 @@ public:
         self.fill_height_ = true;
         return std::forward<Self>(self);
     }
+    constexpr bool fills_height() const noexcept { return fill_height_; }
 
     void reset_mount() noexcept requires (detail::ResettableView<Children> || ...) {
         std::apply([](auto&... child) { (detail::reset_view(child), ...); }, children_);
@@ -1734,6 +1751,8 @@ public:
           then_factory_(std::move(other.then_factory_)),
           else_factory_(std::move(other.else_factory_)) {
         if (other.anchor_ || other.attached_) std::abort();
+        fill_height_ = other.fill_height_;
+        height_ = other.height_;
     }
     ~WhenView() {
         if (attached_) condition_.unsubscribe(subscription_);
@@ -1744,14 +1763,28 @@ public:
         anchor_ = root_ = candidate_root_ = 0;
         pending_ = 0; prepared_ = switching_ = false;
     }
+    template<std::uint16_t Key, class Self, class Value>
+        requires (Key == protocol::height && (std::same_as<Value, Dp> || std::same_as<Value, detail::FillLength>) &&
+                  std::constructible_from<std::remove_cvref_t<Self>, Self>)
+    constexpr auto apply_modifier(this Self&& self, Value value) {
+        auto view = std::forward<Self>(self);
+        view.fill_height_ = std::same_as<Value, detail::FillLength>;
+        if constexpr (std::same_as<Value, Dp>) view.height_ = value.value < 0 ? -2 : value.value;
+        else view.height_ = -1;
+        return view;
+    }
+    constexpr bool fills_height() const noexcept { return fill_height_; }
 
     template<class Owner> bool render(Owner& owner, std::uint32_t parent) {
         if (anchor_) return owner.fail(Error::bad_state);
+        if (height_ < -1) return owner.fail(Error::invalid_argument);
         anchor_ = owner.create(parent, protocol::box);
         return anchor_ && owner.dynamic(*this) &&
                owner.transaction().u8(anchor_, protocol::layout,
                                       protocol::column) &&
-               owner.transaction().fill(anchor_, protocol::width);
+               owner.transaction().fill(anchor_, protocol::width) &&
+               (!fill_height_ || owner.transaction().fill(anchor_, protocol::height)) &&
+               (height_ < 0 || owner.transaction().logical_px(anchor_, protocol::height, height_));
     }
 
     bool dirty() const noexcept {
@@ -1774,14 +1807,20 @@ public:
         if (!ids) return std::unexpected(Error::limit_exceeded);
         candidate_root_ = ids++;
         if (!tx.create(candidate_root_, anchor_, protocol::box) ||
-            !tx.u8(candidate_root_, protocol::layout, protocol::column))
+            !tx.u8(candidate_root_, protocol::layout, protocol::column) ||
+            !tx.fill(candidate_root_, protocol::width) ||
+            ((fill_height_ || height_ >= 0) && !tx.fill(candidate_root_, protocol::height)))
             return std::unexpected(tx.error());
         Result<void> built;
         if (pending_ == 1) {
-            then_page_.emplace(transport, std::invoke(then_factory_));
+            auto view = std::invoke(then_factory_);
+            if (!valid_branch_height(view, transport)) return std::unexpected(Error::invalid_argument);
+            then_page_.emplace(transport, std::move(view));
             built = then_page_->build_fragment(tx, candidate_root_, ids);
         } else {
-            else_page_.emplace(transport, std::invoke(else_factory_));
+            auto view = std::invoke(else_factory_);
+            if (!valid_branch_height(view, transport)) return std::unexpected(Error::invalid_argument);
+            else_page_.emplace(transport, std::move(view));
             built = else_page_->build_fragment(tx, candidate_root_, ids);
         }
         if (!built) return built;
@@ -1841,6 +1880,16 @@ public:
         if(active_==2)else_page_->gesture_rebase(generation);
     }
 private:
+    template<class Branch> bool valid_branch_height(const Branch& view, Transport& transport) const noexcept {
+        if constexpr (requires { view.fills_height(); }) {
+            if (!fill_height_ && height_ < 0 && view.fills_height()) {
+                pxa::detail::report_error(transport, "PXA_UI_LAYOUT auto-height When with fill-height branch; set When(...).height(...) or .fill_height(); code=",
+                                          Error::invalid_argument);
+                return false;
+            }
+        }
+        return true;
+    }
     std::uint8_t selected() const noexcept { return condition_.get() ? 1 : 2; }
 
     State<bool>& condition_;
@@ -1858,6 +1907,8 @@ private:
     bool attached_ = false;
     bool prepared_ = false;
     bool switching_ = false;
+    bool fill_height_ = false;
+    std::int32_t height_ = -1;
 };
 
 template<class ThenFactory, class ElseFactory>

@@ -111,5 +111,13 @@
     "max_subscriptions_per_component": 2,
     "max_samples_per_event": 1
   },
+  "motion_coordinate_system": {
+    "frame": "native-device",
+    "handedness": "right",
+    "x": "right",
+    "y": "top",
+    "z": "screen-out",
+    "follows_display_rotation": false
+  },
   "protocol_version": "0.1.0"
 }

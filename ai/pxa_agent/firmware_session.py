@@ -36,13 +36,20 @@ def download_port(board, port, expected_serial=None):
     except (OSError, serial.SerialException):
         pass  # USB can disappear while acknowledging its reboot control.
     deadline = time.monotonic() + 15
+    inaccessible = None
     while time.monotonic() < deadline:
         rows = [p for p in comports() if p.vid == 0x303a and p.product == 'ESP32-S31'
                 and (p.serial_number or '').lower() == identity]
         if len(rows) == 1:
-            time.sleep(.2)
-            return rows[0].device, identity
+            endpoint = rows[0].device
+            if os.name != 'posix' or os.access(endpoint, os.R_OK | os.W_OK):
+                time.sleep(.2)
+                return endpoint, identity
+            inaccessible = endpoint
         time.sleep(.1)
+    if inaccessible:
+        raise ToolError('Mosaico ROM is present but serial port permissions are not ready: '+inaccessible+
+                        '; no firmware was written.')
     raise ToolError('Mosaico did not enter ROM. Press RESET and reconnect; no firmware was written.')
 
 
@@ -55,9 +62,18 @@ def write(prepared, board, port, baud, output, expected_serial=None):
     esp = None
     phase = 'connect'
     try:
-        esp = esptool.detect_chip(port, baud=baud, connect_mode='no-reset')
+        # UART ROMs start at 115200; the requested transfer rate is negotiated
+        # only after sync. Native USB ignores the line rate, which previously
+        # hid this failure on Mosaico while UART-connected S31 boards failed.
+        initial_baud = min(115200, baud)
+        esp = esptool.detect_chip(port, baud=initial_baud, connect_mode='no-reset')
         if esp.CHIP_NAME.lower().replace('-', '') != prepared['chip']:
             raise ToolError('Connected ROM CPU does not match the signed firmware')
+        if baud > initial_baud:
+            try:
+                esp.change_baud(baud)
+            except esptool.NotImplementedInROMError:
+                pass  # Keep the synchronized ROM rate, as esptool CLI does.
         # The CLI performs this before its read/write commands; API consumers
         # must also initialize the actual SPI flash connection explicitly.
         cmds.attach_flash(esp)

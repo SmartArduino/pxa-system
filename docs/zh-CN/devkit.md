@@ -1,12 +1,12 @@
 # 独立 C++26 DevKit
 
-PXA 0.6.0 提供 Linux x86_64（glibc ≥ 2.39）开发套件。Guest SDK、CLI 和模拟器
+PXA 0.10.0 提供 Linux x86_64（glibc ≥ 2.39）与 Windows x64 原生开发套件。Guest SDK、CLI 和模拟器
 共用发行号；Core 2.1、服务版本、Manifest/Container 版本及 AOT engine ABI
 各自独立。0.2 系列的旧 Core 应用需要重新编译，不承诺直接二进制兼容。
 
 ## 开发入口
 
-解压 `pxa-devkit-0.6.0-linux-x86_64.tar.gz`，将其 `bin` 加入 PATH：
+解压 `pxa-devkit-0.10.0-linux-x86_64.tar.gz`，将其 `bin` 加入 PATH：
 
 ```sh
 pxa init hello
@@ -56,18 +56,30 @@ Host/Guest；应用自己的文件存档保留，内存中的游戏状态不会�
 可撤销、30 天过期，并随账户会话版本失效。发布命令验证包后逐块上传原文件，
 不重签、不改 AOT、不重写清单；商城仍完成独立签名与发布身份审核。
 
+`pxa clean hello --keep 2 --dry-run` 预览旧构建/包缓存，去掉 `--dry-run` 才清理；
+`--aot` 可额外释放可重新生成的 AOT 缓存。它与构建共用锁，保留当前构建记录或
+输出链接引用的目录、发布包、源码、锁、身份和模拟器数据。`--keep 0` 仍保留这些
+引用项。缓存根目录是链接或构建记录损坏时会停止，避免误删待检查的数据。
+
 ## 在线与离线发行
 
 ```sh
-pxa sdk install 0.6.0
-pxa sdk install 0.6.0 --offline --manifest /media/0.6.0/distribution.json
+pxa sdk install 0.10.0
+pxa sdk install 0.10.0 --offline --manifest /media/0.10.0/distribution.json
 ```
 
 两者读取同一份清单、签名及五个组件：sdk、devtools、runtime、toolchain、
 simulator。内置分发公钥校验清单，再校验每个组件大小/SHA-256、安全解包并
-原子安装到用户数据目录 `pxa/releases/0.6.0`。已安装版本不可覆盖。
+原子安装到用户数据目录 `pxa/releases/0.10.0`。已安装版本不可覆盖。
 首次完整包仍需通过可信官网/发行页取得，之后安装以其内置公钥为信任根。
 App 发布者密钥和 DevKit 分发密钥是不同用途的身份，不随 SDK 分发私钥。
+
+发行组装默认采用 `--toolchain-profile pxa`：保留 `wasm32-wasip1` 的 C/C++
+头文件、库、编译/链接/归档及二进制检查工具，根据实际 ELF/PE 依赖保留所需库，
+省去其他 WASI 目标、Clang C API 和独立调试器。`--toolchain-profile full` 保留
+完整的上游工具链。裁剪只针对新组装的副本，保留许可证；Python 运行时只移除
+构建期静态归档，保留编码、动态扩展和 sysconfig 信息。AOT 编译器移除不参与加载的
+符号，编译器源码与维护者构建不受影响。不可在安装目录中手工裁剪来伪装同一发行版。
 
 维护者使用产品工作区 `tools/release.py`，在固定 Ubuntu 24.04 镜像内构建、
 测试和组装。普通 App 开发不编译 LLVM。`tools/release/metadata.py --check`
@@ -77,7 +89,9 @@ App 发布者密钥和 DevKit 分发密钥是不同用途的身份，不随 SDK 
 
 发布前验证空白环境、移动目录、带空格路径、只读安装、离线构建、缓存失效、
 模拟器实际画面、真机激活以及商城迁移。所有文件上传完整后才公开发行；
-正式版本和同名资产不覆盖。Linux ARM、Windows、macOS 不属于本次二进制
-认证范围，需分别构建、封装并通过相同验收后发布。
+正式版本和同名资产不覆盖。Linux x64 与 Windows x64 分别提供原生包；Windows
+构建/组装入口在产品工作区的 `tools/portable/windows/`，发行清单标明 Windows
+或 Wine 验证，Wine 检查不能声称为真实 Windows 实测。Linux ARM 与 macOS 可使用
+受支持的容器开发流程；原生包需单独构建、封装并通过相同验收后发布。
 
 应用使用 AI 工具时，从工作区 `.pxa/pxa` 启动；C 项目用 `init apps/demo --language c`。裸 DevKit 的 init 只创建 C++ 模板。迭代时保留 watch、锁与构建缓存，先测相关屏幕；交付时再做多目标构建和所需布局矩阵。详见[日常开发教程](https://pxa.doit.am/docs/dev-workflow/)。

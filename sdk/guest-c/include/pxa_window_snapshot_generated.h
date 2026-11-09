@@ -10,6 +10,8 @@
 #endif
 
 #define PXA_WINDOW_SNAPSHOT_RECORD_BYTES ((size_t)98)
+#define PXA_WINDOW_DISPLAY_SNAPSHOT_RECORD_BYTES ((size_t)120)
+#define PXA_WINDOW_LEGACY_SNAPSHOT_RECORD_BYTES ((size_t)98)
 
 typedef struct {
     uint32_t left, top, right, bottom;
@@ -24,6 +26,8 @@ typedef struct {
     pxa_window_wire_insets_t safe_insets;
     pxa_window_wire_insets_t system_bar_insets;
     uint8_t orientation, focused;
+    uint8_t rotation, supported_rotations;
+    uint32_t native_width, native_height;
 } pxa_window_snapshot_wire_t;
 
 static inline int pxa_window_snapshot_wire_valid(
@@ -33,15 +37,16 @@ static inline int pxa_window_snapshot_wire_valid(
            value->pixel_width != 0 && value->pixel_height != 0 &&
            value->density_numerator != 0 &&
            value->density_denominator != 0 &&
-           value->orientation <= 2 && value->focused <= 1;
+           value->orientation <= 3 && value->focused <= 1 &&
+           value->rotation <= 3 && value->supported_rotations <= 15;
 }
 
-static inline int pxa_window_snapshot_records_encode(
+static inline int pxa_window_display_snapshot_records_encode(
     uint8_t *out, size_t capacity,
     const pxa_window_snapshot_wire_t *value, size_t *written) {
     if (written != NULL) *written = 0;
     if (out == NULL || written == NULL ||
-        capacity < PXA_WINDOW_SNAPSHOT_RECORD_BYTES ||
+        capacity < PXA_WINDOW_DISPLAY_SNAPSHOT_RECORD_BYTES ||
         !pxa_window_snapshot_wire_valid(value)) return 0;
     pxa_wire_generated_store_u16(out + 0, 1);
     pxa_wire_generated_store_u16(out + 2, 8);
@@ -76,6 +81,29 @@ static inline int pxa_window_snapshot_records_encode(
     pxa_wire_generated_store_u16(out + 93, 8);
     pxa_wire_generated_store_u16(out + 95, 1);
     out[97] = value->focused;
+    pxa_wire_generated_store_u16(out + 98, 9);
+    pxa_wire_generated_store_u16(out + 100, 1);
+    out[102] = value->rotation;
+    pxa_wire_generated_store_u16(out + 103, 10);
+    pxa_wire_generated_store_u16(out + 105, 8);
+    pxa_wire_generated_store_u32(out + 107, value->native_width);
+    pxa_wire_generated_store_u32(out + 111, value->native_height);
+    pxa_wire_generated_store_u16(out + 115, 11);
+    pxa_wire_generated_store_u16(out + 117, 1);
+    out[119] = value->supported_rotations;
+    *written = PXA_WINDOW_DISPLAY_SNAPSHOT_RECORD_BYTES;
+    return 1;
+}
+
+static inline int pxa_window_snapshot_records_encode(
+    uint8_t *out, size_t capacity,
+    const pxa_window_snapshot_wire_t *value, size_t *written) {
+    uint8_t extended[PXA_WINDOW_DISPLAY_SNAPSHOT_RECORD_BYTES];
+    size_t size;
+    if (written) *written = 0;
+    if (!out || !written || capacity < PXA_WINDOW_SNAPSHOT_RECORD_BYTES ||
+        !pxa_window_display_snapshot_records_encode(extended, sizeof(extended), value, &size)) return 0;
+    for (size_t i = 0; i < PXA_WINDOW_SNAPSHOT_RECORD_BYTES; ++i) out[i] = extended[i];
     *written = PXA_WINDOW_SNAPSHOT_RECORD_BYTES;
     return 1;
 }
@@ -86,7 +114,8 @@ static inline int pxa_window_snapshot_records_decode(
     if (output == NULL) return 0;
     for (size_t i = 0; i < sizeof(*output); ++i)
         ((uint8_t *)output)[i] = 0;
-    if (data == NULL || size != PXA_WINDOW_SNAPSHOT_RECORD_BYTES)
+    if (data == NULL || (size != PXA_WINDOW_DISPLAY_SNAPSHOT_RECORD_BYTES &&
+        size != PXA_WINDOW_LEGACY_SNAPSHOT_RECORD_BYTES))
         return 0;
     if (pxa_wire_generated_load_u16(data + 0) != 1 ||
         pxa_wire_generated_load_u16(data + 2) != 8) return 0;
@@ -104,6 +133,14 @@ static inline int pxa_window_snapshot_records_decode(
         pxa_wire_generated_load_u16(data + 90) != 1) return 0;
     if (pxa_wire_generated_load_u16(data + 93) != 8 ||
         pxa_wire_generated_load_u16(data + 95) != 1) return 0;
+    if (size != PXA_WINDOW_LEGACY_SNAPSHOT_RECORD_BYTES) {
+    if (pxa_wire_generated_load_u16(data + 98) != 9 ||
+        pxa_wire_generated_load_u16(data + 100) != 1) return 0;
+    if (pxa_wire_generated_load_u16(data + 103) != 10 ||
+        pxa_wire_generated_load_u16(data + 105) != 8) return 0;
+    if (pxa_wire_generated_load_u16(data + 115) != 11 ||
+        pxa_wire_generated_load_u16(data + 117) != 1) return 0;
+    }
     output->revision = pxa_wire_generated_load_u64(data + 4);
     output->logical_width = pxa_wire_generated_load_u32(data + 16);
     output->logical_height = pxa_wire_generated_load_u32(data + 20);
@@ -121,6 +158,16 @@ static inline int pxa_window_snapshot_records_decode(
     output->system_bar_insets.bottom = pxa_wire_generated_load_u32(data + 84);
     output->orientation = data[92];
     output->focused = data[97];
+    if (size == PXA_WINDOW_LEGACY_SNAPSHOT_RECORD_BYTES) {
+        output->native_width = output->logical_width;
+        output->native_height = output->logical_height;
+        output->supported_rotations = 1;
+        return pxa_window_snapshot_wire_valid(output);
+    }
+    output->rotation = data[102];
+    output->native_width = pxa_wire_generated_load_u32(data + 107);
+    output->native_height = pxa_wire_generated_load_u32(data + 111);
+    output->supported_rotations = data[119];
     return pxa_window_snapshot_wire_valid(output);
 }
 

@@ -158,8 +158,8 @@ def prepare(environment, project, *, server='https://app.doit.am', icon=None, co
 
 
 def package_identity(environment, package):
-    script = (Path(environment.config['sdk']) / 'tools/pxadb/pxadb.py' if environment.native
-              else Path(environment.config['host_tools']) / 'pxadb.py')
+    from .host_tools import client
+    script = client(environment=environment)
     spec = spec_from_file_location('pxa_agent_package_reader', script)
     module = module_from_spec(spec)
     sys.modules[spec.name] = module

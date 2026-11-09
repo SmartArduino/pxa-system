@@ -10,9 +10,9 @@ import shutil
 import subprocess
 import sys
 
-from .build import build
+from .build import build, existing_build
 from .common import ToolError, atomic_json, command
-from .project import Project, SDK_ROOT, ID_PATTERN, lock_project, resolve_tools
+from .project import Project, SDK_ROOT, ID_PATTERN, lock_project, resolve_tools, installed_sdk
 
 
 def parser():
@@ -22,6 +22,11 @@ def parser():
     init = commands.add_parser('init', help='create a C++ application')
     init.add_argument('directory', type=Path)
     init.add_argument('--id')
+    clean = commands.add_parser('clean', help='remove old project build/package caches, preserving published outputs and saves')
+    clean.add_argument('project', nargs='?', type=Path, default=Path.cwd())
+    clean.add_argument('--keep', type=int, default=2)
+    clean.add_argument('--dry-run', action='store_true')
+    clean.add_argument('--aot', action='store_true', help='also discard rebuildable AOT cache files')
     for name in ('build', 'run'):
         cmd = commands.add_parser(name)
         cmd.add_argument('project', type=Path, nargs='?', default=Path.cwd())
@@ -34,9 +39,15 @@ def parser():
         cmd.add_argument('--define', action='append', default=[])
         cmd.add_argument('--jobs', type=int)
         cmd.add_argument('--debug', action='store_true')
+        if name == 'build':
+            cmd.add_argument('--check-existing', action='store_true', help='validate an existing build without compiling or packaging')
         if name == 'run':
+            cmd.add_argument('--no-build', action='store_true', help='reuse a prepared package after validating inputs, parameters, identity and hash')
+            cmd.add_argument('--expected-package-sha256', help='require this exact prepared package when using --no-build')
+            cmd.add_argument('--simulator-state', type=Path, help='separate simulator state directory for an isolated test run')
             cmd.add_argument('--profile', default='pai-touch')
             cmd.add_argument('--device')
+            cmd.add_argument('--strict-compatibility',action='store_true',help='block unknown package requirements before device upload')
             cmd.add_argument('--baud', type=int, default=2000000)
             cmd.add_argument('--watch', action='store_true')
             cmd.add_argument('--duration-ms', type=int)
@@ -90,11 +101,8 @@ def main():
                 locked_version = json.loads(path.read_text()).get('sdk', {}).get('release')
                 current = (SDK_ROOT / 'VERSION').read_text().strip()
                 if locked_version and locked_version != current:
-                    from .distribution import data_root
-                    release = data_root() / 'releases' / locked_version
+                    release = installed_sdk(locked_version)
                     launcher = release / ('bin/pxa.cmd' if os.name == 'nt' else 'bin/pxa')
-                    if not launcher.is_file():
-                        raise ToolError(f'Locked SDK {locked_version} is missing; run pxa sdk install {locked_version}')
                     if os.environ.get('PXA_SDK_REDIRECT') == locked_version:
                         raise ToolError('Installed locked SDK version is inconsistent')
                     env = os.environ.copy()
@@ -111,6 +119,11 @@ def main():
             if args.command == 'run':
                 from .run import run
                 run(project, args)
+            elif args.check_existing:
+                if args.update_lock:
+                    raise ToolError('--check-existing cannot update the SDK lock')
+                existing_build(project, targets=args.target.split(','), output=args.output,
+                               key=args.signing_key, definitions=args.define)
             else:
                 build(project, targets=args.target.split(','), output=args.output,
                       key=args.signing_key, offline=args.offline, update_lock=args.update_lock,
@@ -126,6 +139,9 @@ def main():
             else:
                 from .distribution import install
                 print(install(args.release, args.manifest, offline=args.offline))
+        elif args.command == 'clean':
+            from .clean import clean
+            print(json.dumps(clean(Project.open(args.project), keep=args.keep, dry_run=args.dry_run, aot=args.aot), indent=2))
         elif args.command == 'device':
             from .run import pxadb_path
             command([sys.executable, pxadb_path(), *args.arguments])

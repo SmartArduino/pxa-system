@@ -90,6 +90,63 @@ int main() {
     retry(transport, When(selected, [] { return Component<Counter>(MoveOnly{9}); },
                                   [] { return Text("No"); }));
     assert(Counter::constructed == 4 && Counter::destroyed == 4);
+    State<bool> branch_selected{true};
+    {
+        Page page(transport, When(branch_selected, [] { return Text("A"); },
+                                  [] { return Text("B"); }).height(Dp{-1}));
+        auto result = page.mount();
+        assert(!result && result.error() == Error::invalid_argument);
+    }
+    {
+        unsigned clicked = 0;
+        auto action = [&] { ++clicked; };
+        State<bool> enabled{true};
+        auto a = Button("Start").height(44_dp).enabled(enabled).height(48_dp).on_click(action);
+        auto b = Button("Start").on_click(action).height(44_dp).enabled(enabled).height(48_dp);
+        static_assert(std::same_as<decltype(a), decltype(b)>);
+        Page page(transport, std::move(a));
+        assert(page.mount());
+        assert(wire::get32(property(2, protocol::height).data() + 4) == 48 * 64);
+        assert(flag(2, protocol::align) == 1);
+        std::array<std::byte, 24> bytes{};
+        wire::put32(bytes.data(), 1); wire::put32(bytes.data() + 4, 2);
+        wire::put32(bytes.data() + 8, page.generation()); wire::put16(bytes.data() + 12, 1);
+        assert(page.handle({3, 0x8001, 0, bytes}) && clicked == 1);
+        enabled.set(false);
+        assert(page.flush() && flag(2, protocol::enabled) == 0);
+    }
+    {
+        Page page(transport, Button("Start").height(44_dp).align(Align::start).on_click([] {}));
+        assert(page.mount() && flag(2, protocol::align) == 0);
+    }
+    {
+        Page page(transport, When(branch_selected, [] { return Column(Text("A")).fill(); },
+                                  [] { return Column(Text("B")).fill(); }));
+        assert(page.mount());
+        assert(property(3, protocol::width)[0] == std::byte{4});
+    }
+    {
+        Page page(transport, When(branch_selected, [] { return Column(Text("A")).fill_height(); },
+                                  [] { return Column(Text("B")).fill_height(); }));
+        auto result = page.mount();
+        assert(!result && result.error() == Error::invalid_argument);
+    }
+    {
+        Page page(transport, When(branch_selected, [] { return Column(Text("A")).fill_height(); },
+                                  [] { return Column(Text("B")).fill_height(); }).height(64_dp));
+        assert(page.mount());
+        assert(wire::get32(property(2, protocol::height).data() + 4) == 64 * 64);
+        assert(property(3, protocol::height)[0] == std::byte{4});
+        branch_selected.set(false);
+        assert(page.flush());
+    }
+    {
+        Page page(transport, When(branch_selected, [] { return Text("A").fill_height(); },
+                                  [] { return Text("B").fill_height(); }).visible(true).fill_height());
+        assert(page.mount());
+        assert(property(2, protocol::height)[0] == std::byte{4});
+        assert(property(3, protocol::height)[0] == std::byte{4});
+    }
     ListState items{2};
     retry(transport, KeyedList<2>(items, [](unsigned i) { return i; },
                 [](unsigned) { return Component<Counter>(MoveOnly{8}); }).width(100_dp));
@@ -150,6 +207,22 @@ int main() {
         shown.set(true); reject_commit = true;
         assert(page.flush().error() == Error::busy && page.dirty());
         reject_commit = false; assert(page.flush() && flag(2, protocol::visible) == 1);
+    }
+    {
+        d.system_gestures={24,0,0,16}; display.set(d);
+        Page page(transport,SafeArea(display,Text("Centered")).padding(4_dp));
+        assert(page.mount());
+        auto p=property(2,268);
+        assert(wire::get32(p.data())==4*64 && wire::get32(p.data()+8)==4*64);
+        assert(wire::get32(p.data()+12)==20*64);
+    }
+    {
+        Page page(transport,SafeArea(display,Text("Edge controls"),GestureAvoidance::all)
+            .visible(true).padding(4_dp));
+        assert(page.mount());
+        assert(wire::get32(property(2,268).data())==28*64);
+        d.system_gestures={};display.set(d);assert(page.flush());
+        assert(wire::get32(property(2,268).data())==4*64);
     }
     display.set(d); shown.set(false); // No dangling combined subscriptions.
     {

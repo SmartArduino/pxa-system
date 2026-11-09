@@ -40,6 +40,10 @@ typedef struct {
     uint64_t handle;
 } pxa_sensor_subscribe_result_t;
 
+/* Motion XYZ uses Android native device axes: right, top, screen-out.
+ * Axes stay fixed across display rotation; UI pixel Y-down is separate.
+ * Other vector semantics, including chip-native magnetometers, define their
+ * own frame. Unit scales remain those declared by each descriptor. */
 typedef struct {
     uint64_t handle;
     uint64_t timestamp_us;

@@ -40,6 +40,14 @@ static pxa_status_t encode_environment(pxa_writer_t *writer,
                       value->corner_radii[index]);
     if (pxa_writer_record(writer, 12, geometry, sizeof(geometry)) != PXA_STATUS_OK)
         return writer->status;
+    for (index = 0; index < 4; ++index)
+        pxa_write_u32(insets + (size_t)index * 4u, value->system_bar_insets[index]);
+    if (pxa_writer_record(writer, 13, insets, sizeof(insets)) != PXA_STATUS_OK)
+        return writer->status;
+    for (index = 0; index < 4; ++index)
+        pxa_write_u32(insets + (size_t)index * 4u, value->system_gesture_insets[index]);
+    if (pxa_writer_record(writer, 14, insets, sizeof(insets)) != PXA_STATUS_OK)
+        return writer->status;
 #undef RECORD_U32
     return PXA_STATUS_OK;
 }

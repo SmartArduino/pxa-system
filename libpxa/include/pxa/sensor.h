@@ -43,6 +43,9 @@ typedef struct {
 typedef pxa_status_t (*pxa_sensor_subscribe_fn)(
     void *context, uint16_t descriptor_id, uint32_t period_ms,
     void **subscription);
+/* Motion providers publish Android native device axes (+X right, +Y top,
+ * +Z screen-out), independent of UI rotation. Apply chip mounting to both
+ * acceleration and angular velocity before publishing. */
 typedef pxa_status_t (*pxa_sensor_read_fn)(
     void *context, void *subscription, uint16_t descriptor_id,
     int32_t values[PXA_SENSOR_MAX_DIMENSIONS]);

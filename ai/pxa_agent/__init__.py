@@ -1,4 +1,4 @@
 """Agent-neutral PXA developer tools; no model API key or device runtime."""
 
-VERSION = '0.5.0'
-SDK_VERSION = '0.9.0'
+VERSION = '0.6.0'
+SDK_VERSION = '0.10.0'

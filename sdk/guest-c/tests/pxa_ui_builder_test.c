@@ -75,8 +75,8 @@ int32_t pxa_io(uint64_t handle, uint32_t operation, uint8_t* data,
 int main(void) {
     pxa_ui_builder_t builder = {0};
     uint8_t scratch[64];
-    uint8_t environment_records[128];
-    uint8_t config[160];
+    uint8_t environment_records[256];
+    uint8_t config[300];
     uint8_t encoded[20] = {0};
     uint32_t ancestors[4];
     uint32_t generation = 0;
@@ -136,6 +136,24 @@ int main(void) {
     assert(pxa_ui_parse_start_environment(config_writer.data,
                                           config_writer.length, &environment));
     assert(environment.display_shape == 1 && environment.corner_radii[1] == 48);
+    assert(!environment.system_bar_insets_known);
+    for (uint32_t edge = 0; edge < 4; ++edge) pxa_ui_write_u32(encoded + edge * 4, 20 + edge);
+    assert(record(&environment_writer, 13, encoded, 16));
+    assert(pxa_ui_parse_environment_records(environment_writer.data, environment_writer.length, &environment));
+    assert(environment.system_bar_insets_known && environment.system_bar_insets[0] == 20 &&
+           environment.system_bar_insets[3] == 23 && environment.safe_insets[0] == 1);
+    assert(!environment.system_gesture_insets_known);
+    assert(record(&environment_writer,14,encoded,16));
+    assert(pxa_ui_parse_environment_records(environment_writer.data,environment_writer.length,&environment));
+    assert(environment.system_gesture_insets_known && environment.system_gesture_insets[3]==23);
+    const size_t valid_environment = environment_writer.length;
+    assert(record(&environment_writer, 13, encoded, 16));
+    assert(!pxa_ui_parse_environment_records(environment_writer.data, environment_writer.length, &environment));
+    assert(!pxa_ui_parse_environment_records(environment_writer.data, valid_environment - 1, &environment));
+    environment_writer.length=valid_environment;
+    assert(record(&environment_writer,14,encoded,16));
+    assert(!pxa_ui_parse_environment_records(environment_writer.data,environment_writer.length,&environment));
+
 
     {
         pxa_ui_transaction_t transaction = {0};

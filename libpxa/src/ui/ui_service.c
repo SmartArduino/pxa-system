@@ -415,6 +415,12 @@ pxa_status_t pxa_ui_bind(pxa_ui_service_t *service,
     for (uint8_t index = 0; index < 4; ++index)
         entry->primary.environment.corner_radii[index] =
             service->config.corner_radii[index];
+    for (uint8_t index = 0; index < 4; ++index)
+        entry->primary.environment.system_bar_insets[index] =
+            service->config.system_bar_insets[index];
+    for (uint8_t index = 0; index < 4; ++index)
+        entry->primary.environment.system_gesture_insets[index] =
+            service->config.system_gesture_insets[index];
     entry->surfaces = &entry->primary;
     entry->next_surface = PXA_UI_PRIMARY_SURFACE;
     entry->surface_count = 1;

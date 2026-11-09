@@ -613,6 +613,9 @@ static pxa_status_t storage_get_value(const pxa_storage_backend_t *backend,
 }
 
 int main(void) {
+    const uint32_t build_artifacts = pxa_wamr_engine_build_artifact_kinds();
+    CHECK(build_artifacts != 0);
+    CHECK(pxa_wamr_engine_artifact_kinds(NULL) == 0);
     char *package_dir = make_temp_dir("pxa-wamr-package");
     char *storage_root = make_temp_dir("pxa-wamr-storage");
     char *fs_root = make_temp_dir("pxa-wamr-fs");
@@ -791,6 +794,7 @@ int main(void) {
                                           &engine, &engine_ops),
                      PXA_STATUS_OK);
         CHECK(engine != NULL);
+        CHECK(pxa_wamr_engine_artifact_kinds(engine) == build_artifacts);
         check_status("engine memory snapshot",
                      pxa_wamr_engine_memory_snapshot(engine, &usage),
                      PXA_STATUS_OK);
@@ -1468,6 +1472,8 @@ int main(void) {
 
     /* 10. Teardown. */
     pxa_wamr_engine_deinit(engine);
+    CHECK(pxa_wamr_engine_build_artifact_kinds() == build_artifacts);
+    CHECK(pxa_wamr_engine_artifact_kinds(engine) == 0);
     CHECK(runtime_probe.allocate_count == runtime_probe.release_count);
     CHECK(reader_opens == reader_closes);
     CHECK(artifact_probe.current_bytes == 0);

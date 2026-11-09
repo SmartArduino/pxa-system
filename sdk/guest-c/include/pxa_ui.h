@@ -381,6 +381,12 @@ typedef struct {
      * rectangular screen. Radii are TL, TR, BR, BL in logical pixels. */
     uint32_t display_shape;
     uint32_t corner_radii[4];
+    /* Optional tag 13. Missing on older Hosts means unknown, not zero bars. */
+    uint32_t system_bar_insets[4];
+    uint8_t system_bar_insets_known;
+    /* Optional tag 14: active input strips, not page layout margins. */
+    uint32_t system_gesture_insets[4];
+    uint8_t system_gesture_insets_known;
 } pxa_ui_environment_t;
 
 static inline void pxa_ui_write_u16(uint8_t* output, uint16_t value) {
@@ -995,6 +1001,20 @@ static inline int pxa_ui_parse_environment_records(
                 for (uint8_t index = 0; index < 4; ++index)
                     value.corner_radii[index] = pxa_read_u32(record + 4 + index * 4);
                 seen = (uint16_t)(seen | UINT16_C(0x0800));
+                break;
+            case 13:
+                if (length != 16 || (seen & UINT16_C(0x1000)) != 0) return 0;
+                for (uint8_t index = 0; index < 4; ++index)
+                    value.system_bar_insets[index] = pxa_read_u32(record + index * 4);
+                value.system_bar_insets_known = 1;
+                seen = (uint16_t)(seen | UINT16_C(0x1000));
+                break;
+            case 14:
+                if (length != 16 || (seen & UINT16_C(0x2000)) != 0) return 0;
+                for (uint8_t index = 0; index < 4; ++index)
+                    value.system_gesture_insets[index] = pxa_read_u32(record + index * 4);
+                value.system_gesture_insets_known = 1;
+                seen = (uint16_t)(seen | UINT16_C(0x2000));
                 break;
             default:
                 offset += length;

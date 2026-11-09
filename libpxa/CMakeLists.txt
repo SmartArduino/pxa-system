@@ -156,6 +156,9 @@ if(PXA_BUILD_ADAPTERS)
         adapters/posix/pxa_posix_volume.c
         ${_pxa_lz4_sources})
     add_library(pxa::adapters_posix ALIAS pxa_adapters_posix)
+    if(NOT WIN32)
+        target_sources(pxa_adapters_posix PRIVATE adapters/network/pxa_lan_native.c)
+    endif()
     set_target_properties(pxa_adapters_posix PROPERTIES
         EXPORT_NAME adapters_posix
         VERSION ${PROJECT_VERSION}
@@ -429,7 +432,8 @@ if(PXA_BUILD_ADAPTERS AND PXA_WAMR_SOURCE_DIR)
     if(WIN32)
         target_link_libraries(pxa_adapters_wamr PUBLIC pxa_windows_port)
     endif()
-    target_compile_definitions(pxa_adapters_wamr PRIVATE PXA_WAMR_LIBC_WASI=1)
+    target_compile_definitions(pxa_adapters_wamr PRIVATE PXA_WAMR_LIBC_WASI=1
+        WASM_ENABLE_AOT=$<BOOL:${WAMR_BUILD_AOT}>)
     if(WAMR_BUILD_ALLOC_WITH_USER_DATA EQUAL 1)
         target_compile_definitions(pxa_adapters_wamr PRIVATE
             WASM_MEM_ALLOC_WITH_USER_DATA=1)
@@ -871,6 +875,9 @@ if(PXA_BUILD_TESTS)
         endif()
     endif()
     add_test(NAME pxa_core_test COMMAND pxa_core_test)
+    add_executable(pxa_display_rotation_test tests/display_rotation_test.c)
+    target_link_libraries(pxa_display_rotation_test PRIVATE pxa)
+    add_test(NAME pxa_display_rotation_test COMMAND pxa_display_rotation_test)
     if(UNIX)
         add_executable(pxa_scoped_fs_test tests/scoped_fs_test.c
             adapters/posix/pxa_scoped_fs.c)

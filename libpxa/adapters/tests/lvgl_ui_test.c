@@ -1236,6 +1236,36 @@ int main(void) {
         assert(!lv_obj_is_clickable(button_label));
     }
     assert(lv_obj_get_child_count(button) == 1);
+    {
+        size_t bytes = 0;
+        assert(pxa_lvgl_ui_inspect_json(adapter, NULL, 0, &bytes) == PXA_STATUS_OK && bytes > 100);
+        char *snapshot = malloc(bytes + 1);
+        size_t allocations = allocator.allocations;
+        assert(pxa_lvgl_ui_inspect_json(adapter, snapshot, bytes + 1, &bytes) == PXA_STATUS_OK);
+        assert(strstr(snapshot, "\"schema\":\"pxa-ui-inspection-1\"") && strstr(snapshot, "UI ABI 0.3"));
+        assert(strstr(snapshot, "\"type\":\"button\"") && strstr(snapshot, "Apply"));
+        assert(strstr(snapshot, "\"bounds\":{") && strstr(snapshot, "\"clip\":{") && strstr(snapshot, "\"parent\":"));
+        lv_obj_set_disabled(button, true);
+        assert(pxa_lvgl_ui_inspect_json(adapter, snapshot, bytes + 1, &bytes) == PXA_STATUS_RESOURCE_LIMIT);
+        /* "false" is one byte longer than "true"; refresh the exact-size query
+         * rather than assuming a tree's serialized size never changes. */
+        free(snapshot);
+        assert(pxa_lvgl_ui_inspect_json(adapter, NULL, 0, &bytes) == PXA_STATUS_OK);
+        snapshot = malloc(bytes + 1);
+        assert(pxa_lvgl_ui_inspect_json(adapter, snapshot, bytes + 1, &bytes) == PXA_STATUS_OK);
+        assert(strstr(snapshot, "\"enabled\":false"));
+        lv_obj_set_disabled(button, false);
+        lv_obj_set_hidden(root, true);
+        assert(pxa_lvgl_ui_inspect_json(adapter, NULL, 0, &bytes) == PXA_STATUS_OK);
+        free(snapshot); snapshot = malloc(bytes + 1);
+        assert(pxa_lvgl_ui_inspect_json(adapter, snapshot, bytes + 1, &bytes) == PXA_STATUS_OK);
+        assert(!strstr(snapshot, "\"visible\":true"));
+        lv_obj_set_hidden(root, false);
+        assert(pxa_lvgl_ui_inspect_json(adapter, snapshot, 10, &bytes) == PXA_STATUS_RESOURCE_LIMIT && !snapshot[0]);
+        assert(allocator.allocations == allocations);
+        free(snapshot);
+    }
+
     assert(find_label(button, "Apply") != NULL);
     direct_button = lv_obj_get_child(box, 4);
     assert(lv_obj_check_type(direct_button, &lv_button_class));
@@ -2566,6 +2596,13 @@ int main(void) {
         lv_textarea_set_text(input, longer);
         assert(g_event_value_size == 511 && !memcmp(g_event_value, longer, 511));
         assert(strcmp(lv_label_get_text(lv_textarea_get_label(input)), lv_textarea_get_text(input)));
+        {
+            char snapshot[4096]; size_t bytes;
+            assert(pxa_lvgl_ui_inspect_json(adapter,snapshot,sizeof(snapshot),&bytes)==PXA_STATUS_OK);
+            assert(strstr(snapshot,"\"text_redacted\":true,\"text\":null"));
+            assert(!strstr(snapshot,"xxxxxxxx") && !strstr(snapshot,"中文"));
+        }
+
         lv_textarea_set_text(input, "");
         assert(g_event_value_size == 0);
         commands.size = 0;

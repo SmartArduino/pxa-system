@@ -30,6 +30,12 @@ static lv_display_t *display;
 static lv_indev_t *pointer;
 static uint8_t *frame;
 static uint32_t width, height, revision, clock_period;
+static uint32_t native_width, native_height;
+static uint8_t display_rotation;
+EM_JS(void, notify_display, (uint32_t w, uint32_t h, uint8_t rotation), {
+    Module.browserDisplay = {width:w,height:h,rotation};
+    Module.browserNotify?.({type:'display-metrics',width:w,height:h,rotation});
+});
 static uint64_t current_us, next_tick;
 static int pointer_x, pointer_y, pointer_down;
 static pxa_handle64_t event_port;
@@ -216,14 +222,37 @@ static pxa_status_t clock_call(void *c, pxa_runtime_t *rt, pxa_component_t id,
     return PXA_STATUS_UNSUPPORTED;
 }
 static pxa_status_t window_apply(void *c, const pxa_window_configuration_t *v) {
-    (void)c; (void)v; return PXA_STATUS_OK;
+    (void)c;
+    uint8_t rotation;
+    if (!v || !pxa_display_resolve_rotation(native_width,native_height,0,
+        display_rotation,v->orientation_preference,15,&rotation)) return PXA_STATUS_UNSUPPORTED;
+    if (rotation != display_rotation) {
+        pointer_down=0;
+        lv_indev_reset(pointer,NULL);
+        width=pxa_display_logical_width(native_width,native_height,rotation);
+        height=pxa_display_logical_height(native_width,native_height,rotation);
+        display_rotation=rotation;
+        lv_display_set_resolution(display,(int32_t)width,(int32_t)height);
+        browser_graphics_resize(width,height);
+        pxa_ui_environment_t environment;
+        if (pxa_ui_get_environment(ui,component,PXA_UI_PRIMARY_SURFACE,&environment)==PXA_STATUS_OK) {
+            environment.width=width;environment.height=height;
+            (void)pxa_ui_update_environment(ui,component,&environment);
+        }
+        notify_display(width,height,rotation);
+    }
+    pxa_window_snapshot_t snapshot={.logical_width=width,.logical_height=height,
+        .pixel_width=width,.pixel_height=height,.density_numerator=1,.density_denominator=1,
+        .orientation=pxa_display_shape(width,height),.focused=1,.rotation=display_rotation,
+        .supported_rotations=15,.native_width=native_width,.native_height=native_height};
+    return pxa_window_update_snapshot(window,component,&snapshot);
 }
 #define CHECK(call) do { int s = (call); if (s) return s; } while (0)
 #define WORKSPACE(type) calloc(1, pxa_##type##_workspace_size())
 
 EMSCRIPTEN_KEEPALIVE int browser_init(uint32_t w, uint32_t h) {
     if (runtime || w < 64 || h < 64 || w > 1024 || h > 1024) return PXA_STATUS_INVALID_ARGUMENT;
-    width = w; height = h;
+    width = native_width = w; height = native_height = h;
     pxa_runtime_limits_t limits; pxa_runtime_limits_init(&limits);
     limits.max_components = 1;
     size_t size = pxa_runtime_workspace_size(&limits);
@@ -276,7 +305,8 @@ EMSCRIPTEN_KEEPALIVE int browser_init(uint32_t w, uint32_t h) {
     pxa_window_backend_t wb = {.struct_size=sizeof(wb), .apply=window_apply,.show_toast=window_toast};
     CHECK(pxa_window_bind(window, component, &wb));
     pxa_window_snapshot_t snapshot = {.logical_width=w,.logical_height=h,
-        .pixel_width=w,.pixel_height=h,.density_numerator=1,.density_denominator=1,.focused=1};
+        .pixel_width=w,.pixel_height=h,.density_numerator=1,.density_denominator=1,.focused=1,
+        .orientation=pxa_display_shape(w,h),.supported_rotations=15,.native_width=w,.native_height=h};
     CHECK(pxa_window_update_snapshot(window, component, &snapshot));
     pxa_service_ops_t clock = {.struct_size=sizeof(clock),.service_id=4,
         .major=PXA_CLOCK_SERVICE_MAJOR,.minor=PXA_CLOCK_SERVICE_MINOR,
@@ -292,7 +322,7 @@ EMSCRIPTEN_KEEPALIVE int browser_begin(int event) {
 }
 EMSCRIPTEN_KEEPALIVE int browser_configuration(uint8_t *data, uint32_t capacity) {
     pxa_ui_environment_t environment;
-    uint8_t encoded[128]; size_t size;
+    uint8_t encoded[PXA_UI_ENVIRONMENT_WIRE_BYTES]; size_t size;
     CHECK(pxa_ui_get_environment(ui, component, PXA_UI_PRIMARY_SURFACE, &environment));
     CHECK(pxa_ui_encode_environment(&environment, encoded, sizeof(encoded), &size));
     pxa_writer_t writer; pxa_writer_init(&writer, data, capacity);

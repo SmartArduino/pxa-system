@@ -14,6 +14,7 @@ typedef struct {
     const char *publisher_key;
     const char *state_root;
     uint8_t navigation_gestures;
+    uint8_t navigation_bar_enabled;
     void *pump_context;
     void (*pump)(void *context);
 } pxsys_desktop_runtime_fixture_t;
@@ -28,6 +29,10 @@ void pxsys_desktop_runtime_update_input_method(pxsys_desktop_runtime_t *runtime,
 void pxsys_desktop_runtime_poll(pxsys_desktop_runtime_t* runtime);
 void pxsys_desktop_runtime_request_exit(pxsys_desktop_runtime_t* runtime);
 bool pxsys_desktop_runtime_volume_key(pxsys_desktop_runtime_t* runtime, uint32_t key);
+int pxsys_desktop_runtime_inspect_ui(void *runtime, char *output,
+    size_t capacity, size_t *size);
+int pxsys_desktop_runtime_runtime_info(void *runtime, char *output,
+    size_t capacity, size_t *size);
 pxsys_status_t pxsys_desktop_runtime_destroy(pxsys_desktop_runtime_t* runtime);
 
 #endif

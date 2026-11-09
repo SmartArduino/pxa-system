@@ -1,0 +1,12 @@
+{
+  "format": "pxa-package-source-0.1",
+  "min_sdk": [2, 1], "target_sdk": [2, 1], "compile_sdk": [2, 1],
+  "id": "pxa-cpp-orientation", "version": "1.0.0",
+  "name": "Display Orientation", "description": "Live App orientation preferences and explicit rotation",
+  "build": {"system": "cmake", "source_dir": "."},
+  "components": [{
+    "id": "main", "kind": "ui", "services": ["ui", "window", "log"],
+    "cmake_target": "pxa_main",
+    "wasi": {"version": "preview1", "libc": "wasi-libc", "features": ["monotonic-clock", "wall-clock"]}
+  }]
+}

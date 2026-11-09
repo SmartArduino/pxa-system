@@ -148,10 +148,16 @@ typedef struct {
     pxa_permission_service_t *permissions;
     /* Optional Net 0.7 endpoint/discovery provider. Same offset and size as
      * the initial local-only config; old source and binary callers still work. */
+    /* C99 keeps the original portable spelling; C11/C++ also expose the new
+     * alias without changing the offset, alignment or sizeof this config. */
+#if defined(__cplusplus) || (defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L)
     union {
         const struct pxa_lan_backend *network;
         const struct pxa_lan_backend *local;
     };
+#else
+    const struct pxa_lan_backend *local;
+#endif
 } pxa_net_config_t;
 
 typedef struct pxa_net_service pxa_net_service_t;

@@ -1,4 +1,4 @@
-# PXA Agent Kit 0.5.0
+# PXA Agent Kit 0.6.0
 
 [English](README.en.md) · [一句话上手](https://pxa.doit.am/docs/ai-development/) · [AI 入口](https://pxa.doit.am/ai.md)
 
@@ -6,7 +6,7 @@
 
 > 请读取 https://pxa.doit.am/ai.md，在当前目录为我配置 PXA 开发环境，运行模拟器检查环境，然后等待我的应用需求。
 
-工具在电脑上运行。已有 AI 账号/客户端可直接使用，无需另配模型 API Key、ESP-IDF、CMake 或 LLVM。SDK、工具链、模拟器按官方签名与 SHA-256 校验。首次下载较大，之后离线构建。Linux x86_64/glibc 2.39+ 可原生运行；macOS、Windows、较旧 Linux 使用 Docker Desktop 或 Podman 的 Linux amd64 容器。首次安装容器引擎可能需要操作系统权限或启用虚拟化，登录 AI 和浏览器商店账号仍由用户完成。
+工具在电脑上运行。已有 AI 账号/客户端可直接使用，无需另配模型 API Key、ESP-IDF、CMake 或 LLVM。SDK、工具链、模拟器按官方签名与 SHA-256 校验。首次下载后可离线构建。Linux x86_64/glibc 2.39+ 和 Windows x64 可使用原生包；Windows 包目前以 Wine 验证，首次运行按提示安装微软 VC++ x64 运行库。macOS、较旧 Linux 使用 Docker Desktop 或 Podman 的 Linux amd64 容器。首次安装容器引擎可能需要操作系统权限或启用虚拟化，登录 AI 和浏览器商店账号仍由用户完成。
 
 ## 命令入口
 
@@ -22,7 +22,7 @@ uv run --python 3.12 https://pxa.doit.am/setup.py --workspace ./my-pxa
 uv run --python 3.12 --locked --project ./ai ./ai/agent.py --workspace ./my-pxa setup
 ```
 
-`setup` 自动选择官方 DevKit 0.9.0 或签名容器镜像，安装项目内的 skills、平台 MCP 配置、CLI 启动器，最后编译并运行真实 Guest、保存检查截图。失败时返回失败，不会把下载成功当成验收。`--sdk /path/to/devkit` 仅复用用户自己选择的完整 SDK，不宣称它经过下载签名校验。离线分发可以用 `setup.py --channel /path/to/ai-kit-0.5.0.json --manifest /path/to/distribution.json`，归档和签名放在各自清单旁。
+`setup` 自动选择官方 DevKit 0.10.0 或签名容器镜像，安装项目内的 skills、平台 MCP 配置、CLI 启动器，最后编译并运行真实 Guest、保存检查截图。失败时返回失败，不会把下载成功当成验收。`--sdk /path/to/devkit` 仅复用用户自己选择的完整 SDK，不宣称它经过下载签名校验。离线分发可以用 `setup.py --channel /path/to/ai-kit-0.6.0.json --manifest /path/to/distribution.json`，归档和签名放在各自清单旁。
 
 在 `my-pxa` 目录中使用以下命令（Windows 使用 `.pxa\pxa.cmd`）：
 
@@ -52,6 +52,22 @@ uv run --python 3.12 --locked --project ./ai ./ai/agent.py --workspace ./my-pxa 
 
 AI 先读 `pxa-app-dev`、`pxa-debug`，按现有 SDK 头文件实现；构建后用真实 Guest、截图、触摸或控制器输入验证。反馈时描述预期，例如“按钮再大一些，手柄 B 返回后保留倒计时”。继续修改同一个应用，保留原 app ID、签名身份、SDK 锁及存档。
 
+选用 DevKit 0.10.0+ 时，新的计时器或计数器可直接从可运行配方开始：
+
+```sh
+.pxa/pxa recipes
+.pxa/pxa new apps/tomato --recipe timer --title 番茄钟 --minutes 25 --break-minutes 5
+.pxa/pxa verify apps/tomato --scenario apps/tomato/tests/journey.json --require-ui
+.pxa/pxa new apps/counter --recipe counter --title 计数器
+```
+
+MCP 对应 `pxa_recipes`、`pxa_new`。配方带动态安全区、触摸/手柄、异步检查点存档和
+真实节点验收，不覆盖已有目录、不自动迁移 SDK。计时器支持开始、暂停、重置和手动
+专注/短休切换，使用单调时间；重新打开按最后检查点恢复为暂停，并非关机后运行的闹钟。
+完成态可用 `--define PXA_RECIPE_TIMER_SECONDS=6 --scenario apps/tomato/tests/complete.json` 验收；
+测试键与正常存档分开，交付前重新构建不带宏的包。其他需求可从当前 SDK 的虚拟列表、
+设备/传感器、game-input 示例开始，再让 AI 按需求完善，不把骨架生成为成功验收。
+
 一组已知的连续操作可用 MCP `pxa_interact(job_id, steps)`：复用同一个模拟器调试连接，依次点击、滑动、按手柄、等待或截图。最多 32 步、8 张截图、累计等待/按住 15 秒；完整检查通过后才操作。返回批次 job_id 和证据路径，等任务结束再用 `pxa_view_image` 检查原图。需要观察中间结果时拆成短批次，同一模拟器不并发输入。CLI 可用 `verify --scenario`。
 
 批次结束后，`pxa_job_status` 直接附带 `batch` 结果。停止批次用 `pxa_job_stop`：等待执行进程取消并松键，正常取消后模拟器可继续使用；执行进程无响应时才停止它所属的模拟器。取消不算验收通过，继续前先检查当前画面，不重放整批操作。
@@ -64,13 +80,99 @@ MCP 长操作返回 job_id，通过 `pxa_job_status` 获取结果，`pxa_screens
 .pxa/pxa doctor
 .pxa/pxa device info --port /dev/ttyACM0 --baud 2000000
 .pxa/pxa install apps/counter --port /dev/ttyACM0
+.pxa/pxa firmware status --port /dev/ttyACM0
 .pxa/pxa firmware prepare --board doit-gamekit-1
 .pxa/pxa firmware upgrade --board doit-gamekit-1 --port /dev/ttyACM0
 ```
 
-先发现串口并核对 INFO 的板型、CPU，再构建匹配的 S3/S31 AOT；安装保留已有应用数据。截图、按键、内存使用 host 端 PXADB，无需给容器转发 USB。控制器注入在操作后自动 `INPUT CANCEL`，模拟按键不声称为机械按压。
+先发现串口并核对 INFO 的板型、CPU，再构建匹配的 S3/S31/P4 AOT；安装保留已有应用数据。截图、按键、内存使用 host 端 PXADB，无需给容器转发 USB。控制器注入在操作后自动 `INPUT CANCEL`，模拟按键不声称为机械按压。
+
+设备无响应时先确认正常开机、USB 数据线、正确端口和 PXADB 开关。参考系统界面中，
+进入「设置 → 设备信息」，快速连续点击「系统版本」7 次，再下滑到「开发者」打开
+「PXADB 调试」；不同产品界面可能不同。BOOT/RESET 是固件下载操作，不能代替打开
+运行中的 PXADB。ESPP4-A 的 UART-DEBUG Type-C 使用 UART0，默认 2000000 波特率。
+
+`device-profile --port PORT --package apps/counter/dist/pxa-counter.pxa` 或 MCP
+`pxa_check_compatibility(package=..., port=...)` 在上传前比较实际包的 Core、服务/功能位、执行模式、
+CPU/AOT ABI 和容器要求。SDK 的 `device compatibility PACKAGE --port PORT` 使用同一检查。
+固件与 SDK 发行号不同不等于不兼容；已知不兼容会阻止上传，旧固件缺失字段标为 `unknown` 并提示。
+需要未知项也阻止上传时，使用 AI Kit 的 `install --strict-compatibility`
+或 MCP `pxa_install(strict_compatibility=true)`；直接运行 SDK 时，先确认其 `run --help`
+支持 `run --device PORT --strict-compatibility`。安装成功后仍检查实际激活状态。
+
+`firmware status` / MCP `pxa_firmware_status` 只读 INFO 和已验签的发行清单，
+不下载镜像、不复位或刷写；未读真实分区表前，app-only 是否匹配保持未知。
+板型名称和发行号也不证明当前镜像来自官方。无法识别时先确认硬件，选择支持板的网页烧录或板级适配流程。
+
+设备客户端随 AI Kit 更新，不要求为使用新设备命令修改项目 SDK。编译器、头文件和模拟器按
+项目锁定的 SDK 使用；直接运行 DevKit CLI 时，以它的 `--help` 支持的参数为准。
 
 固件默认 app-only，校验官方签名、镜像摘要与设备实际分区表后才写入，不碰数据分区。分区变化会停止，例如旧版 Mosaico 升级到 0.5.0。备份并获得用户明确清数据授权后，才使用 `--mode full --erase-data`。S31 可能需要按住 BOOT、按 RESET、松 BOOT 进入 ROM，写完按 RESET；端口可能变化。写入完成和重启后 INFO 验收分别报告。
+
+## 显式迁移 SDK
+
+先停止开发中的 watch、构建和模拟器。工作区选择与项目锁各自保留：
+
+```sh
+.pxa/pxa workspace migrate --sdk-version 0.9.0
+.pxa/pxa context apps/counter --query Button
+# 仅在也要迁移该应用时，再显式更新它的锁：
+.pxa/pxa sdk update apps/counter --offline
+.pxa/pxa verify apps/counter --profiles pai-touch espp4-a
+```
+
+将示例版本替换为已选定的目标发行版。`--sdk PATH` 可选择现有 DevKit，`--manifest PATH`
+可指定离线签名清单。迁移保留应用源码、`pxa.lock`、签名身份和存档，归档旧审计并继续保护新 SDK；
+下载或验证失败时保留原配置。已有项目仍使用自己的锁定版本，工具会查找独立 DevKit 与 Agent
+缓存中的版本；缺失时明确提示安装。`sdk update APP` 才会改变该项目的锁，之后须重新构建、
+运行和验收，不能靠修改版本号伪造兼容。
+
+MCP 对应 `pxa_workspace_migrate(sdk_version=...)`，它会先停止本服务拥有的会话，完成后轮询
+`pxa_job_status` 会刷新服务环境。从 CLI 迁移后，请重启已经连接的 MCP 服务以读取新配置。
+普通重复 setup 会保留工作区已有 SDK 选择。
+
+## 安装体积、下载缓存与修复
+
+原生发行包默认提供 PXA 使用的 `wasm32-wasip1` 工具链，保留 C/C++ 编译器、
+链接器、归档与二进制检查工具，不附带其他 WASI 目标和独立 LLDB/Clang 工具。
+裁剪仅发生在发行包组装阶段，已安装的 SDK 内容不随 AI Kit 更新而变化；
+所有必要许可证继续随包提供。维护者可用 `--toolchain-profile full` 组装完整工具链。
+
+成功安装原生 SDK 后，默认释放它的下载归档，保留已验签的清单和签名。
+需要离线复装时，在 `setup.py` 或 Agent Kit `setup` 后加 `--keep-archives`，
+也可保留完整的离线发行目录。清理下载缓存与删除 SDK 版本是不同的操作：
+
+```sh
+.pxa/pxa doctor --usage
+.pxa/pxa sdk cache
+.pxa/pxa sdk prune --dry-run
+.pxa/pxa sdk prune
+.pxa/pxa sdk repair --keep-archives
+# 已保留归档时，可离线按已安装的签名清单修复：
+.pxa/pxa sdk repair --offline --keep-archives
+```
+
+`prune` 只删除已安装 SDK 的有效签名清单能识别的归档，等待正在解包的读取者；
+保留安装目录、其他用途的下载、项目锁、私钥及存档。`repair` 显式重新验签、下载/复用
+并替换相同版本，失败时保留原安装；操作前停止正在使用该 SDK 的构建、watch 和模拟器。
+离线归档不足时提供 `--manifest /media/release/distribution.json` 及同目录完整组件。
+工作区自选 SDK 路径不会被自动替换，`--sdk-version` 可明确指定要修复的托管版本，
+并不切换工作区或项目锁。MCP 对应 `pxa_doctor(include_usage=true)`、
+`pxa_sdk_cache` 和 `pxa_sdk_repair`；MCP 清理默认只预览，实际删除需 `dry_run=false`。
+
+支持 `clean` 的 DevKit 还可回收项目中的旧构建目录和旧包缓存：
+
+```sh
+.pxa/pxa clean apps/counter --keep 2 --dry-run
+.pxa/pxa clean apps/counter --keep 2
+# 需要连可重新生成的 AOT 缓存也释放时，再加 --aot：
+.pxa/pxa clean apps/counter --keep 0 --aot
+```
+
+清理与构建共用锁；保留已发布包、当前构建记录及输出链接引用的配置/代次、源码、
+签名身份和模拟器存档，不追随缓存目录链接。`--keep` 指定最近缓存的保留数量，
+`0` 也不会删除被当前输出引用的内容。MCP 使用 `pxa_clean`，默认只预览。
+旧的锁定 DevKit 不支持该命令时，先按显式迁移流程选择支持版本；不要修改安装目录。
 
 ## 上架 app.doit.am
 
@@ -158,3 +260,62 @@ uv run --python 3.12 https://pxa.doit.am/setup.py --workspace . --mode board
 运行 `.pxa/pxa device-profile` 查看端口与 PXADB 开启指引，再用 `--port` 读取实际 CPU、分辨率、调试输入和传感器。请补充物理操作方式和自适应屏幕要求。MCP 使用 `pxa_device_profile`。像素游戏实现建议见随包 pxa-app-dev 的 pixel-games 参考：Z Labs 中文像素字体、整数缩放、输入换算、图块复用与异步存档。
 
 上架时告诉 AI 公开名称、简介、目标用户、素材授权及是否已有图标，运行 `store prepare` 检查缺项。有生图能力则制作匹配图标和可选封面；没有则制作简单图标并跳过封面。截图必须使用 `verify --store-screenshots` 实际运行并逐张检查原图，最后使用浏览器授权提交审核。
+
+## 测试构建、UI 诊断与 scope 恢复
+
+```sh
+.pxa/pxa verify apps/timer --profiles pai-touch --define TIMER_TEST_SECONDS=8 --require-ui
+.pxa/pxa scope begin --mode app --project apps/timer --adopt
+.pxa/pxa scope end --archive --allow-violations
+```
+
+`--define NAME[=VALUE]` 可重复，传给本次验收的每个 profile；测试宏只用于调试构建，
+交付前重新构建无测试宏的正式包。MCP 使用 `pxa_verify(definitions=["TIMER_TEST_SECONDS=8"], require_ui=true)`。
+`--require-ui` 检查 Host 导出的真实保留式节点树，不再用屏幕中央颜色变化推测内容。
+顶部布局不会误判为空白；Canvas 节点也计入结构检查。Surface-only 应用不使用该开关，
+需要核对真实画面和操作结果。结构检查不能代替视觉检查。
+
+新增 `pxa_ui_inspect`、`pxa_tap_node` 和 `pxa_ui_expect`；CLI 对应
+`device ui inspect|tap|expect|wait-for`。可读节点、父子关系、文字、值、可见/启用状态及
+实际像素矩形；密码框内容被隐藏。`verify --scenario` 与 `pxa_interact` 均支持
+`tap-node`（selector）、`expect`（selector、expected）和 `wait-for`（再加 timeout_ms）。
+按类型/文字找到唯一按钮后点击，再断言显示状态；重名、隐藏、禁用或超时会失败。
+详细字段和示例见 pxa-debug 的 scenarios 参考。旧 Host 没有该能力时明确失败，
+需通过正常的显式 SDK/固件更新使用匹配版本，不修改安装目录或偷偷变更锁。
+
+`result.json` 保留运行日志尾部、UI 错误、场景步骤耗时、语义检查结果及本次测试宏。已报告的 UI
+挂载/更新错误会使验收失败；应用须声明 `log` 服务才能将 Guest 诊断输出到 Host 日志。旧版 SDK 没有完整的错误日志，需使用匹配的新 SDK 验证。
+
+切换应用会提示新的 scope，并归档原来的基线。返回原应用时，`--adopt` 仅允许采纳
+目标应用目录中的改动，保留之前失败的审计；SDK/平台改动仍阻断。若确需结束失败审计，
+`end --archive --allow-violations` 保留原基线和违规列表，返回 `passed: false`，不修改源码。
+无需手工编辑 `.pxa/change-scope.json`。`context --query Button` 也会按示例源码查找实际引用，
+返回 `example_matches` 的文件、行号及代码片段，原有 `examples` 路径列表继续保留。
+
+## 构建复用与多屏验证
+
+`verify --jobs 1..4` 控制同时运行的屏幕数量，默认 2；每次先构建一次，再让各屏幕
+校验并运行同一个包。测试状态、发布者公钥输出和调试接口逐屏隔离，不清除日常模拟器存档。
+一屏失败后仍完成其他屏幕，并分别记录失败步骤。新建 C++ 应用附带 `tests/basic.json`，
+可直接验证计数器；修改作品后同步替换为相应行为断言。
+
+```sh
+.pxa/pxa verify apps/counter --profiles pai-touch generic --scenario apps/counter/tests/basic.json --require-ui --jobs 2
+.pxa/pxa verify apps/counter --profiles pai-touch generic --scenario apps/counter/tests/basic.json --require-ui --jobs 2 --no-build
+```
+
+`--no-build` 不编译、打包或更新锁；它检查源码/common 目录输入、实际 CMake/编译依赖、声明的生成器输入、资源、
+SDK/工具链锁、CPU、测试宏、签名身份和包摘要。过期或缺少新格式构建记录时明确失败。
+输入清单采用保守检查，应用目录内的输入文件变化后应先构建；测试宏须重复相同 `--define`。
+可复用准备好的 Debug 或 Release 包，实际模式写入结果。MCP 对应 `pxa_verify(no_build=true,
+profile_jobs=2)`。SDK 提供 `build --check-existing` 单独校验，以及 `run --no-build` 复用运行。
+
+结果包含构建记录、所请求的屏幕参数、Host 实际指标（可获得时）、步骤耗时和原图摘要。
+`contact-sheet.png` 只供快速检查，按实际操作顺序选择最后一张截图；它不是商城截图，
+不进入原图清单。商城上传仍逐张核对并使用 `result.json` 的 `screenshots` 中的真实矩形原图。
+大批次的完整语义诊断保留在本地，状态查询返回摘要，不因结果超过 64 KiB 而误判失败。
+
+旧 SDK 没有受校验的 `--no-build` 时，普通 `verify` 仍先构建一次，再固定该包的字节和摘要，
+通过它自己的原生模拟器并行运行，使用独立状态和当前设备客户端。结果会标明缺少源码输入清单，
+不接受旧 SDK 的 `verify --no-build`；重新执行普通验证即可。实际 Host 未提供 UI 检查时，
+语义断言或 `--require-ui` 明确失败，坐标操作与原始截图仍可用于视觉验收。

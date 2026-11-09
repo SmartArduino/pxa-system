@@ -40,6 +40,10 @@ extern "C" std::int32_t pxa_test_control(const std::uint8_t* bytes,
     } else if (service == 4) {
         assert(opcode == 2);
         token = pxa::wire::get64(p + 4);
+    } else if (service == 19) {
+        assert(opcode == 1 && size > 21 && bytes[20] == std::uint8_t(pxa::LogLevel::error));
+        assert(std::string_view(reinterpret_cast<const char*>(bytes + 21), size - 21)
+                   .starts_with("PXA_UI_ERROR phase="));
     } else {
         assert(service == 1 && opcode == 1);
         ++cancelled;

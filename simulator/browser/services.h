@@ -34,4 +34,5 @@ void browser_graphics_presented(void);
 void browser_graphics_order(void);
 int browser_ui_overlay_active(void);
 void browser_graphics_poll(void);
+void browser_graphics_resize(uint16_t width,uint16_t height);
 #endif

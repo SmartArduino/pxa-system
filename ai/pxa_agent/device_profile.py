@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+import json
 
 from .common import ToolError
 from .workbench import info_fields
@@ -11,13 +12,14 @@ def connection_help():
     return [
         'Connect the powered-on device with a USB data cable, then run doctor to find its port.',
         'On the device open Settings / PXADB debugging (设置 / PXADB 调试) and enable it if that switch exists.',
+        'In the reference UI, if the switch is hidden: 设置 → 设备信息, quickly tap 系统版本 7 times, then scroll to 开发者 → PXADB 调试. Other product UIs may differ.',
         'Close serial monitors and other PXADB clients; select the newly detected port and retry device-profile --port PORT.',
         'On Linux check serial-port permissions; on Windows check Device Manager for the COM port and USB driver.',
         'BOOT/RESET enters firmware download mode, not PXADB. Boot normally for app installation and debugging.',
     ]
 
 
-def inspect(environment, port=None, baud=2000000):
+def inspect(environment, port=None, baud=2000000, package=None):
     result = {'connected': False, 'port': port, 'connection_steps': connection_help(),
               'questions': ['Which controls should the app support: touch, buttons, rotary encoder or gamepad?',
                             'Should it adapt to other resolutions, physical sizes, rounded corners or round screens?',
@@ -38,6 +40,15 @@ def inspect(environment, port=None, baud=2000000):
         result['error'] = str(error)
         return result
     result.update(connected=True, info=fields)
+    try:
+        result['runtime'] = json.loads(environment.device(['runtime-info',*args],timeout=12))
+    except (ToolError,ValueError) as error:
+        result['runtime_error'] = str(error)
+    result['compatibility'] = {'status':'unknown',
+        'reason':'Compatibility is relative to a package; supply --package after building for this device.'}
+    if package is not None:
+        from .compatibility import inspect as compare
+        result['compatibility'] = compare(environment,package,port=port,baud=baud)
     try:
         result['debug_input'] = info_fields(environment.device(['input', 'capabilities', *args], timeout=12))
     except ToolError as error:

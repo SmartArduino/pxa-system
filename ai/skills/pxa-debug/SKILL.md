@@ -21,9 +21,59 @@ python3 <skill-directory>/scripts/verify_app.py <project> \
   --pxa /path/to/devkit/bin/pxa --output /path/to/new-evidence --headless
 ```
 
-The default covers all five DevKit 0.6.0 profiles. It builds offline, starts each real Guest with an owned debug bridge, checks active app identity, captures a screen, and stops its processes. Once execution starts, it writes `result.json` even on failure; exit 0 means runtime checks passed, not visual correctness. Review screenshots before accepting layout or interaction. Evidence directories must be new and outside the app; app build caches/lock and simulator saves persist normally. `--headless` uses SDL dummy; omit it for an actual desktop window. Use `--online` only when a pinned dependency needs downloading.
+The default covers the five common profiles; `--profiles` selects the requested target matrix. It builds once offline, then starts each real Guest with an owned debug bridge, checks active app identity, captures a screen, and stops its processes. Once execution starts, it writes `result.json` even on failure; exit 0 means runtime checks passed, not visual correctness. Review screenshots before accepting layout or interaction. Evidence directories must be new and outside the app; app build caches/lock and daily simulator saves are preserved; each verification profile gets its own fresh test state. `--headless` uses SDL dummy; omit it for an actual desktop window. Use `--online` only when a pinned dependency needs downloading.
+
+Use `--jobs 1..4` (default 2) for bounded profile workers. Each gets separate
+state, publisher output and debug sockets; a failure keeps its diagnostics while
+the other requested profiles finish. All workers validate and run the same package
+hash. The result includes requested geometry, actual Host metrics when available,
+step times, build receipt and original capture dimensions/hashes. `contact-sheet.png`
+is a labelled review preview of the last captured state; it is excluded from the
+original screenshot manifest and must never be uploaded as a store screenshot.
+
+Use `--no-build` only for a prepared local build. Validation checks source/common
+inventory, compiler/CMake dependencies and declared generator inputs, resources, SDK/toolchain lock, target,
+exact `--define` values, signing identity and package hash. Stale/missing inputs or
+old receipts fail before simulator launch; they never trigger an implicit rebuild
+or lock update. Prepare once with `verify` or SDK `build`, then reuse for another
+profile/scenario. SDK `build --check-existing` validates only; SDK `run --no-build`
+also supports explicit `--simulator-state` for isolated manual checks. The prepared
+build's Debug/Release mode is reported; enabling the debug bridge does not recompile
+it. Repeat accelerated test definitions, and build the final package without them.
+
+When the locked SDK lacks checked reuse, normal `verify` builds once and runs
+those frozen package bytes in fresh profile states through the legacy native
+launcher. It preserves the lock, signing identity and daily saves; it does not
+claim a dependency inventory for the old receipt. `--no-build` fails before
+launch in this case. Missing UI inspection on an old Host still fails semantic
+assertions; use supported input/screenshots and review them, or explicitly migrate
+the workspace and then the app with `sdk update`. Never patch an installed SDK.
+
+New C++ apps include `tests/basic.json`: it checks 0, taps the +1 button and waits
+for 1 on each selected profile. Replace those assertions with the requested app's
+actual behavior as you replace the template UI.
 
 For interaction, read [scenario format](references/scenarios.md), supply `--scenario`, then compare before/after images. Pixel coordinates are per profile, not dp. The helper does not guess control locations, OCR, infer game FPS or silently clear saves. A missing memory capability is recorded as unavailable, never as zero usage.
+
+Use `pxa_ui_inspect` (CLI `pxa device ui inspect --simulator PROFILE@INSTANCE`)
+to read the actual Guest node IDs, parents, text, values, visibility, enabled state
+and resolved pixel rectangles. MCP returns a bounded page (64 nodes by default)
+and saves the complete snapshot; `limit` / `offset` select fresh observations,
+whose hashes may change while the app runs. Use `pxa_tap_node(selector=...)` for a uniquely
+identified control, then `pxa_ui_expect(selector=..., expected=..., timeout_ms=...)`
+to verify the resulting state. Exact labels and typed controls are preferable to
+guessed coordinates for ordinary UI. Passwords are redacted; hidden/disabled and
+ambiguous matches cannot be clicked. Node IDs belong to the current tree and may
+change after rebuilding a subtree. Bounds/clip rectangles do not prove a node is
+unobscured by overlays or physical masks; inspect screenshots and input effects.
+Older Hosts/DevKits lacking this debugger fail explicitly; select a matching
+release through the normal explicit SDK workflow, never patch its installed code.
+
+`--require-ui` now checks visible retained content, including Canvas, without a
+central-pixel heuristic. It detects a missing/hidden tree but does not prove that
+a Canvas drew the right pixels. Surface-only apps should omit this flag and check
+actual frames and interactions. Add `expect` / `wait-for` scenario steps to assert
+specific behavior; a successful input acknowledgement alone is insufficient.
 
 For live MCP debugging, prefer `pxa_interact(job_id, steps)` for a short, known sequence on an owned `pxa_run` job. It reuses one SDK debug session. Poll the returned batch job, check its scope and runtime result, then inspect every relevant image with `pxa_view_image`. Evidence paths are planned until the job finishes. Read the [batch format and limits](references/scenarios.md). Do not send concurrent input to that simulator or batch steps that require seeing an intermediate result first. Use CLI `verify --scenario` when MCP is unavailable.
 

@@ -160,6 +160,7 @@ private:
     bool render_events(Owner& owner, std::uint32_t parent, F& callback) {
         const auto node = owner.create(parent, protocol::control, protocol::button);
         if (!node || !owner.transaction().u8(node, protocol::layout, protocol::row) ||
+            !owner.transaction().u8(node, protocol::align, std::uint8_t(Align::center)) ||
             !owner.transaction().u64(node, protocol::event_mask,
                                     Kind ? protocol::event_mask_pointer : 1) ||
             !owner.theme(node, protocol::background, Color::primary)) return false;
@@ -181,7 +182,7 @@ private:
     Source source_;
     [[no_unique_address]] Callback callback_;
 };
-template<class Source> class SourceButtonBuilder {
+template<class Source> class SourceButtonBuilder : public ButtonBuilderModifiers {
 public:
     explicit SourceButtonBuilder(Source source) : source_(std::move(source)) {}
     template<ClickCallback Hold> auto on_long_press(Hold hold, PressOptions options = {}) && {

@@ -18,6 +18,7 @@ import subprocess
 import sys
 import tarfile
 
+from compact import compact_python, compact_toolchain, strip_compiler
 
 def run(*args):
     return subprocess.check_output([str(a) for a in args], text=True).strip()
@@ -29,6 +30,15 @@ def sha(path):
         while block := stream.read(1024**2):
             result.update(block)
     return result.hexdigest()
+
+
+def host_c_abi(source):
+    """Read the native ABI authority independently of Guest protocol versions."""
+    values = re.findall(r'^set\(PXA_HOST_C_ABI ([1-9][0-9]*)\)\s*$',
+                        (source / 'cmake/PxaVersion.cmake').read_text(), re.M)
+    if len(values) != 1:
+        raise ValueError('Expected one native Host C ABI in cmake/PxaVersion.cmake')
+    return int(values[0])
 
 
 def copy(source, destination, *, ignore=None):
@@ -109,6 +119,7 @@ def main():
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--signing-key', type=Path, required=True)
     parser.add_argument('--allow-dirty', action='store_true', help='local validation only; never publish this result')
+    parser.add_argument('--toolchain-profile', choices=('pxa', 'full'), default='pxa')
     args = parser.parse_args()
     source = args.workspace / 'deps/pxa-system'
     version = (source / 'VERSION').read_text().strip()
@@ -121,8 +132,12 @@ def main():
     output = args.output
     output.mkdir(parents=True, exist_ok=True)
     root = output / f'pxa-devkit-{version}-linux-x86_64'
-    if root.exists():
-        shutil.rmtree(root)
+    assets = [root, output / (root.name + '.tar.gz'), output / 'distribution.json',
+              output / 'distribution.json.sig', output / 'SHA256SUMS',
+              *(output / f'pxa-{name}-{version}-linux-x86_64.tar.gz' for name in
+                ('sdk', 'devtools', 'runtime', 'toolchain', 'simulator'))]
+    if any(path.exists() for path in assets):
+        raise RuntimeError('Release assets already exist; choose an empty output directory')
     root.mkdir()
     ignore = shutil.ignore_patterns('__pycache__', '*.pyc', '.git', '.pxa', 'dist', 'build')
     for name in ('VERSION', 'LICENSE', 'sdk', 'config', 'docs'):
@@ -140,6 +155,8 @@ def main():
     copy(source / 'bin/pxadb', root / 'bin/pxadb')
     copy(args.wamrc, root / 'bin/wamrc')
     copy(args.wasi, root / 'toolchains/wasi-sdk', ignore=ignore)
+    compact = {'toolchain': compact_toolchain(root / 'toolchains/wasi-sdk', profile=args.toolchain_profile),
+               'wamrc': strip_compiler(root / 'bin/wamrc')}
     for name in ('pxsys_desktop_simulator', 'pxsys_product_simulator', 'pxsys_package_installer'):
         copy(args.simulator / name, root / 'simulator/bin' / name)
     copy(args.workspace / 'simulator/profiles', root / 'share/pxa/profiles', ignore=ignore)
@@ -156,6 +173,7 @@ def main():
     for name in ('serial', 'PIL'):
         copy(Path('/usr/lib/python3/dist-packages') / name,
              root / 'runtime/python/lib/python3.12/site-packages' / name, ignore=ignore)
+    compact['python'] = compact_python(root / 'runtime/python')
     copy(Path('/usr/lib/x86_64-linux-gnu/liblz4.so.1').resolve(), root / 'runtime/lib/liblz4.so.1')
     # Native PXA shared libraries are not installed on the builder's system.
     for path in args.simulator.rglob('*.so*'):
@@ -184,6 +202,9 @@ SDK/tool versions are locked in pxa.lock. Updates require `pxa sdk update`.
 Project build caches and development identities are outside this directory.
 Guides: https://pxa.doit.am/docs/setup/
 Optional AI skills/agents: ai/README.md; install into a project with ai/install.py.
+Toolchain profile: {args.toolchain_profile}. The default PXA profile targets
+wasm32-wasip1 and includes compiler/linker/archive and binary inspection tools.
+All required notices are retained. Full upstream tools are an optional release build.
 ''')
     epoch = int(os.environ.get('SOURCE_DATE_EPOCH', '1791849600'))
     groups = {'sdk': ['VERSION', 'LICENSE', 'sdk', 'config', 'spec', 'docs', 'extensions'],
@@ -201,7 +222,9 @@ Optional AI skills/agents: ai/README.md; install into a project with ai/install.
     sys.path.insert(0, str(root / 'tools'))
     from pxa_tools.project import sdk_identity
     manifest = {'schema': 'pxa-distribution-1', 'version': version, 'platform': 'linux-x86_64',
+                'host_c_abi': host_c_abi(source),
                 'source': provenance,
+                'payload': compact,
                 'minimum_glibc': '2.39', 'sdk': sdk_identity(root), 'components': components,
                 'devkit': {'file': aggregate.name, 'size': aggregate.stat().st_size, 'sha256': sha(aggregate)},
                 'toolchain': json.loads((source / 'config/wamr.json').read_text()),

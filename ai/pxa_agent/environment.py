@@ -13,7 +13,7 @@ import tempfile
 from urllib.parse import urljoin, urlparse
 
 from . import SDK_VERSION, VERSION
-from .common import KIT, ToolError, artifact, atomic_json, data_root, digest, extract, locked, remote_source, run, signed_document
+from .common import KIT, ToolError, artifact, artifact_reader, atomic_json, data_root, digest, extract, locked, remote_source, run, signed_document
 
 
 def sdk_data():
@@ -39,7 +39,9 @@ def native_supported():
             and libc == 'glibc' and tuple(map(int, version.split('.'))) >= (2, 39))
 
 
-def install_native(version, manifest=None):
+def install_native(version, manifest=None, *, keep_archives=False, repair=False, offline=False):
+    if not isinstance(version, str) or not re.fullmatch(r'\d+\.\d+\.\d+(?:-[a-zA-Z0-9.-]+)?', version):
+        raise ToolError('Choose an explicit SDK release')
     windows = platform.system() == 'Windows'
     if windows:
         import ctypes
@@ -51,35 +53,77 @@ def install_native(version, manifest=None):
                             'The precompiled Windows WASI SDK requires this runtime; no compiler build is needed.') from error
     target = 'windows-x86_64' if windows else 'linux-x86_64'
     filename = 'distribution-windows-x86_64.json' if windows else 'distribution.json'
-    source = manifest or f'https://pxa.doit.am/downloads/{version}/{filename}'
+    destination = data_root() / 'sdks' / version
+    source = manifest or (str(destination / 'distribution.json') if offline else
+                          f'https://pxa.doit.am/downloads/{version}/{filename}')
+    if offline and remote_source(source):
+        raise ToolError('Offline repair requires a local signed manifest and retained archives')
     document, raw, signature = signed_document(source, schema='pxa-distribution-1')
     if document.get('version') != version or document.get('platform') != target:
         raise ToolError('SDK version/platform does not match the signed manifest')
     if not native_supported():
         raise ToolError('Native DevKit needs Linux x64/glibc 2.39+ or Windows x64/build 18362+; use a container engine otherwise')
-    destination = data_root() / 'sdks' / version
+    components = document.get('components')
+    if (not isinstance(components, list) or len(components) != 5 or
+            {item.get('name') for item in components} != {'sdk', 'devtools', 'runtime', 'toolchain', 'simulator'}):
+        raise ToolError('Incomplete SDK component manifest')
+    from .sdk_cache import discard_archives
     with locked(destination.with_suffix('.lock')):
         receipt = destination / 'distribution.json'
+        if destination.is_symlink():
+            raise ToolError('Refusing to replace a linked SDK installation')
         if destination.exists():
-            if not receipt.is_file() or receipt.read_bytes() != raw:
+            if not repair and (not receipt.is_file() or receipt.read_bytes() != raw):
                 raise ToolError('The installed SDK differs from this immutable release')
-            return destination
+            if repair and receipt.is_file() and receipt.read_bytes() != raw:
+                try:
+                    _, previous, _ = signed_document(receipt, schema='pxa-distribution-1')
+                except (ToolError, OSError, ValueError):
+                    pass # Explicit repair can replace corrupt installation metadata.
+                else:
+                    if previous != raw:
+                        raise ToolError('Two signed manifests disagree for this immutable SDK release')
+            if not repair:
+                return destination
         destination.parent.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(prefix='.sdk-', dir=destination.parent) as temporary:
             stage = Path(temporary) / 'sdk'
             stage.mkdir()
-            components = document.get('components')
-            if not isinstance(components, list) or {item.get('name') for item in components} != {'sdk', 'devtools', 'runtime', 'toolchain', 'simulator'}:
-                raise ToolError('Incomplete SDK component manifest')
             for item in components:
                 print(f"PXA: installing signed {item['name']} {version} ({item['size'] // 1048576} MiB)", file=sys.stderr, flush=True)
-                archive = artifact(locate(source, item['file']), item)
-                extract(archive, stage)
+                with artifact_reader(locate(source, item['file']), item) as archive:
+                    extract(archive, stage)
             if (stage / 'VERSION').read_text().strip() != version or not (stage / ('bin/pxa.cmd' if windows else 'bin/pxa')).is_file():
                 raise ToolError('SDK contents do not match the requested release')
             (stage / 'distribution.json').write_bytes(raw)
             (stage / 'distribution.json.sig').write_bytes(signature)
-            os.replace(stage, destination)
+            if destination.exists():
+                # Outside the auto-cleaned staging directory: if rollback
+                # itself fails, retain the previous complete SDK for recovery.
+                previous = Path(tempfile.mkdtemp(prefix='.previous-sdk-', dir=destination.parent))
+                try:
+                    os.replace(destination, previous / 'sdk')
+                except BaseException:
+                    previous.rmdir()
+                    raise
+                try:
+                    os.replace(stage, destination)
+                except BaseException:
+                    try:
+                        os.replace(previous / 'sdk', destination)
+                    except OSError as rollback_error:
+                        raise ToolError('SDK replacement failed; previous SDK retained at ' +
+                                        str(previous / 'sdk')) from rollback_error
+                    previous.rmdir()
+                    raise
+                try:
+                    shutil.rmtree(previous)
+                except OSError:
+                    print('PXA: SDK repaired; previous files still in ' + str(previous), file=sys.stderr)
+            else:
+                os.replace(stage, destination)
+        if not keep_archives:
+            discard_archives(item['sha256'] for item in components)
     return destination
 
 
@@ -126,18 +170,7 @@ def install_container(version, engine, manifest=None):
     return {'engine': str(Path(binary).resolve()), 'image': 'sha256:' + identity, 'host_tools': str(destination)}
 
 
-def configure(workspace, *, engine='auto', sdk=None, version=None, manifest=None):
-    workspace = Path(workspace).expanduser().resolve()
-    workspace.mkdir(parents=True, exist_ok=True)
-    path = workspace / '.pxa/agent.json'
-    if (workspace / '.pxa').is_symlink() or path.is_symlink():
-        raise ToolError('Refusing a symlink workspace configuration')
-    previous = json.loads(path.read_text()) if path.exists() else {}
-    version = version or previous.get('sdk_version') or SDK_VERSION
-    if not re.fullmatch(r'\d+\.\d+\.\d+', version):
-        raise ToolError('Choose an explicit SDK release, for example 0.6.0')
-    if previous and previous.get('sdk_version') != version:
-        raise ToolError('This workspace pins another SDK; use a new workspace or an explicit SDK migration')
+def select_sdk(previous, *, engine, sdk, version, manifest, keep_archives=False):
     if sdk:
         sdk = Path(sdk).expanduser().resolve()
         if not (sdk / ('bin/pxa.cmd' if os.name == 'nt' else 'bin/pxa')).is_file() or (sdk / 'VERSION').read_text().strip() != version:
@@ -147,12 +180,28 @@ def configure(workspace, *, engine='auto', sdk=None, version=None, manifest=None
         if engine == 'auto':
             engine = previous.get('engine') or ('native' if native_supported() else ('docker' if shutil.which('docker') else 'podman'))
         if engine == 'native':
-            selected = {'engine': 'native', 'sdk': str(install_native(version, manifest)), 'verified_distribution': True}
+            selected = {'engine': 'native', 'sdk': str(install_native(version, manifest, keep_archives=keep_archives)), 'verified_distribution': True}
         elif engine in ('docker', 'podman') or Path(engine).stem in ('docker', 'podman'):
             selected = install_container(version, engine, manifest)
             selected['verified_distribution'] = True
         else:
             raise ToolError('Engine must be auto, native, docker or podman')
+    return selected
+
+
+def configure(workspace, *, engine='auto', sdk=None, version=None, manifest=None, keep_archives=False):
+    workspace = Path(workspace).expanduser().resolve()
+    workspace.mkdir(parents=True, exist_ok=True)
+    path = workspace / '.pxa/agent.json'
+    if (workspace / '.pxa').is_symlink() or path.is_symlink():
+        raise ToolError('Refusing a symlink workspace configuration')
+    previous = json.loads(path.read_text()) if path.exists() else {}
+    version = version or previous.get('sdk_version') or SDK_VERSION
+    if not re.fullmatch(r'\d+\.\d+\.\d+(?:-[a-zA-Z0-9.-]+)?', version):
+        raise ToolError('Choose an explicit SDK release, for example 0.6.0')
+    if previous and previous.get('sdk_version') != version:
+        raise ToolError('This workspace pins another SDK; use a new workspace or an explicit SDK migration')
+    selected = select_sdk(previous,engine=engine,sdk=sdk,version=version,manifest=manifest,keep_archives=keep_archives)
     print('PXA: preparing project-local AI tools', file=sys.stderr, flush=True)
     config = {'schema': 'pxa-agent-workspace-1', 'kit_version': VERSION, 'sdk_version': version, **selected}
     atomic_json(path, config)
@@ -217,7 +266,7 @@ class Environment:
     def variables(self):
         # A rootless container engine uses host XDG paths for its image store.
         # Its image already defines guest XDG paths; do not change engine storage.
-        if not self.native:
+        if not self.native or not self.config.get('sdk'):
             return dict(os.environ)
         root = Path(self.config['sdk'])
         return {**os.environ, 'XDG_DATA_HOME': str(sdk_data().parent),
@@ -246,7 +295,13 @@ class Environment:
                 cmd += ['--userns=keep-id']
         if container_name:
             cmd += ['--name', container_name]
-        cmd += ['--mount', f'type=bind,source={self.workspace},target=/workspace',
+        from .host_tools import directory
+        host_tools = directory(environment=self)
+        if ',' in str(host_tools):
+            raise ToolError('Container mount paths cannot contain commas')
+        cmd += ['--mount', f'type=bind,source={host_tools},target=/pxa-host-tools,readonly',
+                '-e','PXA_AGENT_HOST_TOOLS=/pxa-host-tools',
+                '--mount', f'type=bind,source={self.workspace},target=/workspace',
                 '--mount', f'type=bind,source={sdk_data()},target=/pxa-data/pxa',
                 '--mount', f'type=bind,source={data_root() / "cache"},target=/pxa-cache',
                 '--mount', f'type=bind,source={KIT},target=/pxa-agent-kit,readonly',
@@ -271,7 +326,8 @@ class Environment:
         return result
 
     def device(self, arguments, *, timeout=60):
-        script = (Path(self.config['sdk']) / 'tools/pxadb/pxadb.py' if self.native else Path(self.config['host_tools']) / 'pxadb.py')
+        from .host_tools import client
+        script = client(environment=self)
         return run([sys.executable, script, *arguments], cwd=self.workspace, env=self.variables(), timeout=timeout)
 
     def doctor(self):
@@ -280,9 +336,13 @@ class Environment:
                     'idf_path': os.environ.get('IDF_PATH'), 'firmware_workspace': True,
                     'note': 'Board adaptation needs the workspace ESP-IDF toolchain; SDK/API are read-only'}
         from serial.tools.list_ports import comports
+        devices = [{'port': p.device, 'description': p.description, 'serial': p.serial_number,
+                    'vid': p.vid, 'pid': p.pid} for p in comports() if p.vid or p.description != 'n/a']
         return {'ready': True, 'kit_version': VERSION, 'workspace': str(self.workspace),
                 'sdk_version': self.config['sdk_version'], 'engine': self.config['engine'],
                 'verified_distribution': self.config.get('verified_distribution', False),
                 'pxa': self.call(['--version']).strip(), 'python': platform.python_version(),
-                'devices': [{'port': p.device, 'description': p.description, 'serial': p.serial_number,
-                             'vid': p.vid, 'pid': p.pid} for p in comports() if p.vid or p.description != 'n/a']}
+                'devices': devices, 'physical_device_tested': False,
+                'device_guidance': ('No device port found: simulator-only. Physical touch, panel and performance are unverified.'
+                                    if not devices else
+                                    'Ports found; identify the PXA device with device-profile --port PORT. Port discovery does not verify hardware.')}

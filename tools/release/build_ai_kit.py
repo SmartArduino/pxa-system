@@ -12,9 +12,17 @@ import tempfile
 from assemble import archive, run, sha
 
 
-def build(source: Path, output: Path, key: Path, *, allow_dirty=False):
+def build(source: Path, output: Path, key: Path, *, allow_dirty=False, workspace=None):
+    workspace = Path(workspace).resolve() if workspace else source.parents[1]
+    host_files = {name:workspace/'tools/pxadb'/name for name in
+                  ('pxadb.py','pxa_local_socket.py','ui_query.py','package_compatibility.py')}
+    host_files['simulator_pxadb.py'] = workspace/'tools/simulator_pxadb.py'
+    if any(not path.is_file() or path.is_symlink() for path in host_files.values()):
+        raise ValueError('AI Kit needs canonical host clients; use --workspace with the PXA workspace root')
+    host_dirty = bool(run('git','-C',workspace,'status','--porcelain','--',
+                         'tools/pxadb','tools/simulator_pxadb.py'))
     dirty = bool(run('git', '-C', source, 'status', '--porcelain'))
-    if dirty and not allow_dirty:
+    if (dirty or host_dirty) and not allow_dirty:
         raise ValueError('Official AI-kit releases require committed source')
     metadata = json.loads((source / 'ai/plugin.json').read_text())
     version = metadata['version']
@@ -41,13 +49,18 @@ def build(source: Path, output: Path, key: Path, *, allow_dirty=False):
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(original, destination)
         shutil.copy2(source / 'LICENSE', stage / 'LICENSE')
+        (stage/'host_tools').mkdir()
+        for name,path in host_files.items():
+            shutil.copy2(path,stage/'host_tools'/name)
         files = {str(path.relative_to(stage)): sha(path) for path in sorted(stage.rglob('*')) if path.is_file()}
         (stage / 'manifest.json').write_text(json.dumps({'schema': 'pxa-ai-kit-files-1', 'version': version,
             'files': files}, sort_keys=True, indent=2) + '\n')
         archive(stage.parent, [stage.name], output / names[0], epoch)
     manifest = {'schema': 'pxa-ai-distribution-1', 'version': version,
                 'devkit': {'minimum_release': '0.5.0', 'tested_release': (source / 'VERSION').read_text().strip(), 'core_major': 2},
-                'source': {'commit': commit, 'dirty': dirty},
+                'source': {'commit': commit, 'dirty': dirty,
+                           'host_tools_commit':run('git','-C',workspace,'rev-parse','HEAD'),
+                           'host_tools_dirty':host_dirty},
                 'archive': {'file': names[0], 'url': f'https://github.com/SmartArduino/pxa-system/releases/download/ai-kit-v{version}/{names[0]}', 'size': (output / names[0]).stat().st_size, 'sha256': sha(output / names[0])}}
     (output / names[1]).write_text(json.dumps(manifest, sort_keys=True, indent=2) + '\n')
     subprocess.run(['openssl', 'dgst', '-sha256', '-sign', str(key), '-out', str(output / names[2]),
@@ -62,9 +75,10 @@ def main():
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--signing-key', type=Path, required=True)
     parser.add_argument('--allow-dirty', action='store_true', help='local validation only; do not publish')
+    parser.add_argument('--workspace',type=Path,help='PXA workspace providing current Python host clients')
     args = parser.parse_args()
     print(json.dumps(build(args.source.resolve(), args.output.resolve(), args.signing_key.resolve(strict=True),
-                           allow_dirty=args.allow_dirty), indent=2))
+                           allow_dirty=args.allow_dirty,workspace=args.workspace), indent=2))
 
 
 if __name__ == '__main__':

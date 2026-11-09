@@ -51,12 +51,19 @@ pxa_status_t pxa_posix_clock_control(pxa_runtime_t *runtime,
     if (status != PXA_STATUS_OK) return status;
     status = pxa_request_commit(runtime, component, message->request_token);
     if (status != PXA_STATUS_OK) return status;
-    if (gettimeofday(&now, NULL) != 0 ||
-        now.tv_sec > INT64_MAX / 1000000 || now.tv_sec < INT64_MIN / 1000000) {
+    if (gettimeofday(&now, NULL) != 0) {
         status = PXA_STATUS_UNAVAILABLE;
     } else {
-        status = pxa_posix_clock_wall_time((int64_t)now.tv_sec * 1000000 + now.tv_usec,
-                                          monotonic_us, payload);
+        /* timeval.tv_sec can be 32-bit on Windows. Widen before checking the
+         * microsecond wire range, including the fractional part at INT64_MAX. */
+        const int64_t seconds = now.tv_sec;
+        if (seconds > INT64_MAX / 1000000 || seconds < INT64_MIN / 1000000 ||
+            now.tv_usec < 0 || now.tv_usec >= 1000000 ||
+            (seconds == INT64_MAX / 1000000 && now.tv_usec > INT64_MAX % 1000000))
+            status = PXA_STATUS_UNAVAILABLE;
+        else
+            status = pxa_posix_clock_wall_time(seconds * 1000000 + now.tv_usec,
+                                              monotonic_us, payload);
     }
     return pxa_request_complete(runtime, component, message->request_token, status,
         status == PXA_STATUS_OK ? payload : NULL,

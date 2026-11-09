@@ -2,6 +2,7 @@
 #define PXA_GUEST_WINDOW_H
 
 #include "pxa_core.h"
+#include "pxa_display_rotation.h"
 #include "pxa_window_snapshot_generated.h"
 
 #define PXA_WINDOW_SERVICE 2u
@@ -9,6 +10,7 @@
 #define PXA_WINDOW_GET_SNAPSHOT 2u
 #define PXA_WINDOW_SHOW_TOAST 3u
 #define PXA_WINDOW_REQUEST_BACK 4u
+#define PXA_WINDOW_GET_DISPLAY_SNAPSHOT 5u
 #define PXA_WINDOW_METRICS_CHANGED 0x8001u
 #define PXA_WINDOW_BACK_REQUESTED 0x8002u
 #define PXA_WINDOW_MAX_CONFIG_PACKET (PXA_HEADER_BYTES + 41u)
@@ -28,6 +30,25 @@ typedef struct {
 
 typedef pxa_window_wire_insets_t pxa_window_insets_t;
 typedef pxa_window_snapshot_wire_t pxa_window_snapshot_t;
+
+/* Window 0.5. May be called again from an App's own settings screen. */
+static inline int32_t pxa_window_set_orientation(uint8_t preference) {
+    uint8_t payload[5];
+    if (preference > PXA_ORIENTATION_LOCKED) return -1;
+    pxa_store_u16(payload, 9);
+    pxa_store_u16(payload + 2, 1);
+    payload[4] = preference;
+    return pxa_control_call(PXA_WINDOW_SERVICE, PXA_WINDOW_CONFIGURE, 0,
+                            payload, sizeof(payload));
+}
+static inline int32_t pxa_window_set_rotation(uint8_t quarter_turns) {
+    return quarter_turns > 3 ? -1 : pxa_window_set_orientation(
+        (uint8_t)(PXA_ORIENTATION_ROTATION_0 + quarter_turns));
+}
+static inline int32_t pxa_window_request_display_snapshot(uint64_t token) {
+    return token == 0 ? -1 : pxa_control_call(PXA_WINDOW_SERVICE,
+        PXA_WINDOW_GET_DISPLAY_SNAPSHOT, token, NULL, 0);
+}
 
 static inline int32_t pxa_window_request_back(void) {
     return pxa_control_call(PXA_WINDOW_SERVICE, PXA_WINDOW_REQUEST_BACK, 0, NULL, 0);
@@ -157,7 +178,8 @@ static inline int pxa_window_parse_snapshot(
     if (output == NULL) return 0;
     pxa_zero(output, sizeof(*output));
     if (event == NULL || event->service != PXA_WINDOW_SERVICE ||
-        event->opcode != PXA_WINDOW_GET_SNAPSHOT ||
+        (event->opcode != PXA_WINDOW_GET_SNAPSHOT &&
+         event->opcode != PXA_WINDOW_GET_DISPLAY_SNAPSHOT) ||
         expected_token == 0 || event->token != expected_token ||
         event->payload == NULL || event->payload_size < 4)
         return 0;

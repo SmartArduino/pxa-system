@@ -12,7 +12,7 @@ import time
 import uuid
 from threading import Lock
 
-from .common import KIT, ToolError, evidence, run
+from .common import KIT, ToolError, digest, evidence, run
 
 
 def info_fields(text):
@@ -26,7 +26,7 @@ class Jobs:
         self.jobs = {}
         self.input_locks = {}
 
-    def start(self, arguments, *, timeout=900, entrypoint=None, host=False, headless=False):
+    def start(self, arguments, *, timeout=900, entrypoint=None, host=False, headless=False, reload_environment=False):
         identity = uuid.uuid4().hex[:16]
         output = evidence(self.env.workspace)
         name = None if self.env.native or host else 'pxa-ai-' + identity
@@ -43,6 +43,7 @@ class Jobs:
             stderr=subprocess.STDOUT, start_new_session=os.name != 'nt',
             **({'creationflags': subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == 'nt' else {}))
         job = {'process': process, 'directory': output, 'container': name,
+               'reload_environment':reload_environment,
                'started': time.monotonic(), 'timeout': timeout, 'done': False, 'timed_out': False,
                'discover_selector': not host and bool(arguments) and str(arguments[0]) == 'run'}
         self.jobs[identity] = job
@@ -103,14 +104,33 @@ class Jobs:
         if complete and 'scope' not in job:
             from .scope import check
             job['scope'] = check(self.env.workspace)
+        if complete and job.get('reload_environment') and not job.get('environment_reloaded') and (
+                job['process'].returncode == 0 and not job['timed_out'] and not job.get('cancel_requested')
+                and not job.get('scope',{}).get('violations')):
+            from .environment import Environment
+            current=Environment(self.env.workspace)
+            self.env.config,self.env.native=current.config,current.native
+            job['environment_reloaded']=True
         batch = None
         if complete and job.get('batch_output'):
             result_path = job['batch_output'] / 'result.json'
             try:
-                if result_path.stat().st_size <= 65536:
+                if result_path.stat().st_size <= 2 * 1024**2:
                     batch = json.loads(result_path.read_text())
                     if not isinstance(batch, dict):
                         batch = None
+                    elif result_path.stat().st_size > 65536:
+                        # A valid semantic batch may contain many matching
+                        # nodes. Keep its status truthful without sending the
+                        # complete diagnostic tree back to the model.
+                        batch = {**batch, 'details_file': str(result_path), 'details_summarized': True}
+                        batch['steps'] = [{**{k: step[k] for k in
+                            ('name', 'action', 'passed', 'elapsed_ms') if k in step},
+                            **({'error': str(step['error'])[:2000]} if 'error' in step else {}),
+                            **({'result': {k: step['result'][k] for k in
+                               ('passed', 'matched_count', 'x', 'y') if k in step['result']}}
+                               if isinstance(step.get('result'), dict) else {})}
+                            for step in batch.get('steps', [])]
             except (OSError, ValueError):
                 pass
         return {'job_id': identity, 'running': not complete, 'scope': job.get('scope'),
@@ -120,6 +140,7 @@ class Jobs:
                                 and batch.get('input_released') and not batch.get('cancelled')))) if complete else None,
                 'returncode': job['process'].poll(), 'timed_out': job['timed_out'],
                 'cancelled': bool(job.get('cancel_requested') or batch and batch.get('cancelled')),
+                **({'environment_reloaded':bool(job.get('environment_reloaded'))} if job.get('reload_environment') else {}),
                 **({'batch':batch} if complete and job.get('batch_output') else {}),
                 **({'cancellation_error':job['cancellation_error']} if job.get('cancellation_error') else {}),
                 'elapsed_seconds': round(job.get('finished', time.monotonic()) - job['started'], 2),
@@ -166,11 +187,11 @@ class Jobs:
                     os.killpg(process.pid, signal.SIGKILL)
                 process.wait(timeout=6)
 
-    def simulator(self, identity, arguments):
+    def simulator(self, identity, arguments, *, timeout=60):
         with self.input_locks.setdefault(identity, Lock()):
-            return self._simulator(identity, arguments)
+            return self._simulator(identity, arguments, timeout=timeout)
 
-    def _simulator(self, identity, arguments):
+    def _simulator(self, identity, arguments, *, timeout=60):
         job = self.get(identity)
         if job.get('interaction_job') and self.status(job['interaction_job'])['running']:
             raise ToolError('Wait for the interaction batch before sending other simulator commands')
@@ -181,8 +202,8 @@ class Jobs:
         arguments = [*map(self.env.mapped, arguments), '--simulator', selector]
         def invoke(values):
             if self.env.native:
-                return self.env.device(values)
-            return run([self.env.config['engine'], 'exec', job['container'], '/opt/pxa/bin/pxa', 'device', *values], timeout=60)
+                return self.env.device(values, **({'timeout': timeout} if timeout != 60 else {}))
+            return run([self.env.config['engine'], 'exec', job['container'], '/opt/pxa/bin/pxa', 'device', *values], timeout=timeout)
         # The SDK announces its selector just before the bridge binds. Wait by
         # reading INFO; never retry a potentially applied input/write operation.
         if not job.get('bridge_ready'):
@@ -245,7 +266,8 @@ class Jobs:
             self.stop(identity)
 
 
-def verification(environment, project, *, profiles=None, scenario=None, headless=True, store_screenshots=False):
+def verification(environment, project, *, profiles=None, scenario=None, headless=True, store_screenshots=False,
+                 definitions=(), require_ui=False, no_build=False, profile_jobs=2):
     project = environment.project(project)
     # Evidence must stay outside the app; keeping apps in apps/<name> also keeps
     # screenshots out of source/resource discovery and signing inputs.
@@ -256,8 +278,10 @@ def verification(environment, project, *, profiles=None, scenario=None, headless
     output.rmdir()  # The verification helper requires a new destination.
     helper = KIT / 'skills/pxa-debug/scripts/verify_app.py'
     arguments = [helper, project, '--pxa',
-        str(Path(environment.config['sdk']) / 'bin/pxa') if environment.native else '/opt/pxa/bin/pxa',
-        '--output', output, '--timeout', '600']
+        str(Path(environment.config['sdk']) / ('bin/pxa.cmd' if os.name == 'nt' else 'bin/pxa')) if environment.native else '/opt/pxa/bin/pxa',
+        '--output', output, '--timeout', '600', '--jobs', str(profile_jobs)]
+    if no_build:
+        arguments.append('--no-build')
     if profiles:
         arguments += ['--profiles', *profiles]
     if scenario:
@@ -266,6 +290,10 @@ def verification(environment, project, *, profiles=None, scenario=None, headless
         arguments.append('--headless')
     if store_screenshots:
         arguments.append('--store-screenshots')
+    for definition in definitions:
+        arguments += ['--define', definition]
+    if require_ui:
+        arguments.append('--require-ui')
     if not environment.native:
         arguments[0] = '/pxa-agent-kit/skills/pxa-debug/scripts/verify_app.py'
     log = output.with_suffix('.log')
@@ -287,33 +315,85 @@ def verification(environment, project, *, profiles=None, scenario=None, headless
             'capture': document.get('capture'),
             'visual_review_required': True, 'result': str(path), 'output': str(output),
             'log': str(log), 'returncode': returncode,
-            'screenshots': [str(path) for path in sorted(output.rglob('*.png'))]}
+            'build': document.get('build'), 'preview': document.get('preview'),
+            'screenshots': [str(output / item['path']) for item in document.get('screenshots', [])]}
 
 
-def install_app(environment, project, *, port, baud=2000000):
+def install_app(environment, project, *, port, baud=2000000, strict_compatibility=False):
     if not port:
         raise ToolError('Choose the target device port explicitly after discovery')
     project = environment.project(project)
     environment.ensure_identity(project)
     info = info_fields(environment.device(['info', '--port', port, '--baud', str(baud)]))
-    target = info.get('target')
-    if target not in ('esp32s3', 'esp32s31'):
+    target = {'esp32-s3':'esp32s3','esp32-s31':'esp32s31','esp32-p4':'esp32p4'}.get(info.get('target'),info.get('target'))
+    if target not in ('esp32s3', 'esp32s31', 'esp32p4'):
         raise ToolError('The device did not report a supported CPU target')
     environment.call(['build', project, '--offline', '--target', target, '--aot-only'], timeout=600)
     metadata = json.loads((project / 'package.json').read_text())
     package = project / 'dist' / (metadata['id'] + '.pxa')
+    package_digest = digest(package)
     environment.call(['publish', package, '--check-only'])
-    inventory = environment.device(['package', 'list', '--port', port, '--baud', str(baud)])
-    output = environment.device(['package', 'install', package, '--yes', '--port', port, '--baud', str(baud)], timeout=300)
-    output += environment.device(['package', 'run', metadata['id'], '--port', port, '--baud', str(baud)])
-    active = False
-    for _ in range(30):
-        inventory_after = environment.device(['package', 'list', '--port', port, '--baud', str(baud)])
-        if any(f":{metadata['id']}\t" in line and 'active=1' in line for line in inventory_after.splitlines()):
-            active = True
-            break
-        time.sleep(.25)
-    if not active:
-        raise ToolError('Installation completed but the requested app did not become active; inspect device logs, Core and service compatibility')
+    from .compatibility import inspect, admit
+    compatibility = inspect(environment,package,port=port,baud=baud)
+    admit(compatibility,strict=strict_compatibility)
+    from .host_tools import reader
+    identity = reader(environment=environment).package_composite_identity(package)
+    if identity.rsplit(':',1)[-1] != metadata['id'] or digest(package) != package_digest:
+        raise ToolError('Verified package changed; nothing was stopped or uploaded')
+    connection = ['--port', port, '--baud', str(baud), '--timeout', '10']
+
+    def device(*arguments, timeout=60):
+        return environment.device([*arguments, *connection], timeout=timeout)
+
+    def target_state(text):
+        rows = [line.split('\t') for line in text.splitlines() if line.split('\t')[0] == identity]
+        if len(rows)>1:
+            raise ToolError('Multiple target installations; select its original volume before updating')
+        if not rows:
+            return False
+        if len(rows[0]) != 4:
+            raise ToolError('Malformed target inventory; nothing was uploaded')
+        flags = set(rows[0][3].split(';'))
+        if 'ambiguous=1' in flags:
+            raise ToolError('Ambiguous target installation; select its original volume before updating')
+        return 'active=1' in flags
+
+    def wait_active(expected):
+        for _ in range(30):
+            if target_state(device('package','list')) == expected:
+                return True
+            time.sleep(.25)
+        return False
+
+    inventory = device('package','list')
+    was_active = target_state(inventory)
+    output = ''
+    try:
+        if was_active:
+            output += device('package','stop',identity)
+            if not wait_active(False):
+                raise ToolError('Target did not stop; no package was uploaded')
+        if digest(package) != package_digest:
+            raise ToolError('Verified package changed; no package was uploaded')
+        output += device('package','install',package,'--yes',
+                         *(['--strict-compatibility'] if strict_compatibility else []),timeout=300)
+        output += device('package','run',identity)
+        if not wait_active(True):
+            raise ToolError('Installation completed but the requested app did not become active; inspect device logs, Core and service compatibility')
+    except Exception as error:
+        # Never retry an uncertain installation. Restore only the exact
+        # originally active identity, and do not claim old bytes were retained
+        # when an install response could have been lost after commit.
+        if was_active:
+            try:
+                if not target_state(device('package','list')):
+                    device('package','run',identity)
+                    if not wait_active(True):
+                        raise ToolError('Target activation was not confirmed')
+            except Exception as restore_error:
+                raise ToolError(str(error)+'; target reactivation also failed: '+str(restore_error)) from error
+        raise
     return {'app_id': metadata['id'], 'target': target, 'board': info.get('board'),
-            'package': str(package), 'device': port, 'active_verified': active, 'inventory_before': inventory, 'log': output}
+            'identity':identity,'package_sha256':package_digest,'stopped_running_target':was_active,
+            'package': str(package), 'device': port, 'active_verified': True,
+            'compatibility':compatibility, 'inventory_before': inventory, 'log': output}

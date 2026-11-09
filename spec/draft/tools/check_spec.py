@@ -293,7 +293,7 @@ def validate_specs() -> tuple[int, int]:
     validate_named_registries(core, "Core")
 
     expected_services = {
-        "window": (2, "0.4.0"), "ui": (3, "0.10.0"),
+        "window": (2, "0.5.0"), "ui": (3, "0.10.0"),
         "clock": (4, "0.3.0"), "fs": (5, "0.6.0"),
         "storage": (6, "0.1.0"), "ipc": (7, "0.1.0"),
         "sensor": (8, "0.1.0"), "net": (9, "0.8.0"),

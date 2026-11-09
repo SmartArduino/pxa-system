@@ -24,6 +24,10 @@ bool pxsys_product_simulator_request_back(void *runner);
 /* Main/LVGL thread only. True means the focused Guest captures volume keys;
  * false leaves the key to the system volume control. key is PXA_UI_KEY_*. */
 bool pxsys_product_simulator_volume_key(void *runner, uint32_t key);
+int pxsys_product_simulator_inspect_ui(void *runner, char *output,
+    size_t capacity, size_t *size);
+int pxsys_product_simulator_runtime_info(void *runner, char *output,
+    size_t capacity, size_t *size);
 
 /* Deliver the standard System configuration-changed notification to the live
  * Guest. The event owns its payload; no locale cache or allocation is added. */

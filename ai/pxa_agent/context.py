@@ -17,11 +17,17 @@ def locked_sdk(root, project, releases=None):
         return root
     if not isinstance(release, str) or not re.fullmatch(r'\d+\.\d+\.\d+(?:-[a-zA-Z0-9.-]+)?', release):
         raise ValueError('Invalid SDK release in pxa.lock; preserve the lock for inspection')
-    releases = Path(releases) if releases is not None else Path(os.environ.get('XDG_DATA_HOME', Path.home() / '.local/share')) / 'pxa/releases'
-    selected = releases / release
-    if not (selected / 'bin/pxa').is_file() or not (selected / 'VERSION').is_file() or (selected / 'VERSION').read_text().strip() != release:
-        raise ValueError(f'Locked SDK {release} is missing; run sdk install {release} before requesting context. The project lock was retained.')
-    return selected
+    data = Path(os.environ.get('XDG_DATA_HOME') or
+                (os.environ.get('LOCALAPPDATA') if os.name == 'nt' else None) or Path.home()/'.local/share')
+    releases = Path(releases) if releases is not None else data/'pxa/releases'
+    agent_data = (os.environ.get('LOCALAPPDATA') if os.name == 'nt' else os.environ.get('XDG_DATA_HOME')) or Path.home()/'.local/share'
+    agent = Path(os.environ.get('PXA_AGENT_HOME') or Path(agent_data)/'pxa-agent').expanduser()
+    launcher = 'bin/pxa.cmd' if os.name == 'nt' else 'bin/pxa'
+    for selected in (releases/release,root.parent/release,agent/'sdks'/release):
+        version = selected/'VERSION'
+        if (selected/launcher).is_file() and version.is_file() and version.read_text().strip() == release:
+            return selected
+    raise ValueError(f'Locked SDK {release} is missing; run sdk install {release} before requesting context. The project lock was retained.')
 
 
 def sdk_context(root, query='', language='cpp', limit=12):
@@ -70,15 +76,25 @@ def sdk_context(root, query='', language='cpp', limit=12):
                         'excerpt': '\n'.join(lines[start:index + 5])[:1000]})
         if len(matches) == limit:
             break
-    for path in sorted((sdk / 'examples').glob('*/main.*')):
-        if not terms or any(t in path.parent.name.casefold() for t in terms):
-            examples.append(path.relative_to(root).as_posix())
+    example_paths = list((sdk / 'examples').glob('*/main.*'))
     if language == 'cpp':
-        for path in sorted((root / 'extensions').glob('*/examples/*/main.cpp')):
-            if not terms or any(t in path.as_posix().casefold() for t in terms):
-                examples.append(path.relative_to(root).as_posix())
+        example_paths.extend((root / 'extensions').glob('*/examples/*/main.cpp'))
+    example_matches = []
+    # Search actual symbol uses while retaining the existing path-only list.
+    symbol = terms[-1] if terms else ''
+    for path in sorted(example_paths):
+        if path.is_symlink() or path.stat().st_size > 1024**2:
+            continue
+        relative = path.relative_to(root).as_posix()
+        uses = [(i + 1, line) for i, line in enumerate(path.read_text(errors='replace').splitlines())
+                if symbol and re.search(r'(?<![\w])' + re.escape(symbol) + r'(?![\w])', line.casefold())
+                and not line.lstrip().startswith(('//', '#include'))]
+        if not terms or uses or any(t in relative.casefold() for t in terms):
+            examples.append(relative)
+            example_matches.extend({'path': relative, 'line': i, 'excerpt': line[:500]} for i, line in uses[:3])
     return {'sdk_root': str(root), 'release': (root / 'VERSION').read_text().strip(),
             'language': language, 'query': query, 'matches': matches, 'examples': examples[:12],
+            'example_matches': example_matches[:limit],
             'headers': [name for name in headers if not terms or any(term in name.casefold() for term in terms)][:limit],
             'header_count': len(headers),
             'include_root': str(sdk / 'include'), 'read_only': True,

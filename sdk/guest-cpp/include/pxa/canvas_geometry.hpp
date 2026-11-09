@@ -5,8 +5,9 @@
 #include <limits>
 
 namespace pxa::ui {
-// Both insets are absolute distances from the panel edge. Backgrounds may
-// fill the panel; interactive controls must also avoid system input strips.
+// Explicit exclusions for a group of edge controls, measured from the panel
+// edge. Do not pass legacy combined gesture insets for whole-page centering;
+// safe_rectangle(metrics) keeps side Back gestures out of page padding.
 inline PixelRect interactive_rectangle(const DisplayMetrics &metrics, Insets occupied) noexcept {
     auto display = metrics;
     display.safe.left = std::max(display.safe.left, occupied.left);

@@ -417,10 +417,12 @@ if(PXSYS_DESKTOP_HOST_EXTENSIONS_DIR)
     endforeach()
 endif()
 
-# Native LAN provider: bounded shared worker; browser/unsupported targets keep
-# capabilities disabled rather than introducing an implicit network tunnel.
+# Consumers embedding desktop_net.c need the same native provider as the
+# product runner. The POSIX adapter owns its implementation once for all users.
 if(NOT WIN32)
-    foreach(_pxa_lan_target pxsys_desktop_simulator pxsys_product_simulator)
-        target_sources(${_pxa_lan_target} PRIVATE ../../libpxa/adapters/network/pxa_lan_native.c)
+    foreach(_pxa_lan_target pxsys_desktop_socket_test pxsys_desktop_net_headers_test pxsys_desktop_http_stream_test)
+        if(TARGET ${_pxa_lan_target})
+            target_link_libraries(${_pxa_lan_target} PRIVATE pxa::adapters_posix)
+        endif()
     endforeach()
 endif()

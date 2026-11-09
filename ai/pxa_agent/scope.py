@@ -5,6 +5,8 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
+import shlex
 
 from .common import ToolError, atomic_json, digest, evidence
 
@@ -84,11 +86,9 @@ def snapshot(workspace, roots, allowed, previous=None):
     return result
 
 
-def begin(workspace, *, mode, project=None, board=None, sdk=None):
+def begin(workspace, *, mode, project=None, board=None, sdk=None, adopt=False):
     workspace = Path(workspace).resolve()
     destination = state_path(workspace)
-    if destination.exists():
-        enforce(workspace)
     allowed = []
     if mode == 'app':
         if not project:
@@ -122,9 +122,20 @@ def begin(workspace, *, mode, project=None, board=None, sdk=None):
     value = {'schema': SCHEMA, 'mode': mode, 'allowed': allowed, 'roots': roots,
              'board': board, 'project': str(path) if mode == 'app' else None}
     value['baseline'] = snapshot(workspace, roots, allowed)
+    previous_archive = None
+    if destination.exists():
+        previous = check(workspace)
+        # Adoption is deliberately limited to the selected app. Platform edits
+        # and replaced symlink destinations remain violations, never rebased.
+        if not previous['passed'] and not (adopt and mode == 'app' and all(
+                inside(Path(p), path) and Path(p).resolve() == Path(p)
+                for p in previous['violations'])):
+            enforce(workspace)
+        previous_archive = _archive(workspace, previous)
     atomic_json(destination, value)
     return {'mode': mode, 'allowed': allowed, 'protected_files': len(value['baseline']),
-            'boundary': 'change audit; not a sandbox', 'baseline': str(destination)}
+            'boundary': 'change audit; not a sandbox', 'baseline': str(destination),
+            'previous_archive': previous_archive, 'adopted': bool(adopt)}
 
 
 def check(workspace):
@@ -153,18 +164,27 @@ def enforce(workspace):
     result = check(workspace)
     if result['active'] and not result['passed']:
         raise ToolError('Out-of-scope changes detected; retain and review them before continuing:\n' +
-                        '\n'.join(result['violations'][:40]))
+                        '\n'.join(result['violations'][:40]) +
+                        '\nTo resume edits in another app: pxa scope begin --mode app --project apps/NAME --adopt'
+                        '\nTo archive the audit without changing files: pxa scope end --archive --allow-violations')
     return result
 
 
-def finish(workspace):
+def _archive(workspace, result):
+    archive = evidence(workspace, 'pxa-scope') / 'scope.json'
+    atomic_json(archive.with_name('check.json'), result)
+    state_path(workspace).replace(archive)
+    return str(archive)
+
+
+def finish(workspace, *, allow_violations=False):
     workspace = Path(workspace).resolve()
-    result = enforce(workspace)
+    result = check(workspace) if allow_violations else enforce(workspace)
     if not result['active']:
         return {'active': False, 'ended': False}
-    archive = evidence(workspace, 'pxa-scope') / 'scope.json'
-    state_path(workspace).replace(archive)
-    return {'active': False, 'ended': True, 'passed': True, 'archive': str(archive)}
+    archive = _archive(workspace, result)
+    return {'active': False, 'ended': True, 'passed': result['passed'], 'archive': archive,
+            'violations': result['violations']}
 
 
 def app(environment, project):
@@ -179,5 +199,8 @@ def app(environment, project):
             raise ToolError('Board scope is active; finish its check before beginning app work')
         if current['project'] == str(project):
             return
+        print('PXA scope switching from ' + current['project'] + ' to ' + str(project) +
+              '. To return with app edits: pxa scope begin --mode app --project ' +
+              shlex.quote(str(Path(current['project']).relative_to(environment.workspace))) + ' --adopt', file=sys.stderr)
     begin(environment.workspace, mode='app', project=project,
           sdk=environment.config.get('sdk'))

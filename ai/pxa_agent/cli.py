@@ -26,15 +26,32 @@ def parser():
     setup.add_argument('--platform', choices=('all', 'codex', 'claude', 'dsh', 'generic'), default='all')
     setup.add_argument('--no-mcp', action='store_true')
     setup.add_argument('--no-smoke', action='store_true', help='skip the initial real Guest environment check')
-    commands.add_parser('doctor')
+    setup.add_argument('--keep-archives', action='store_true', help='retain downloaded SDK archives for offline reuse')
+    commands.add_parser('doctor').add_argument('--usage', action='store_true', help='include download cache usage')
+    workspace=commands.add_parser('workspace',help='explicit workspace SDK migration')
+    workspace_commands=workspace.add_subparsers(dest='action',required=True)
+    migrate=workspace_commands.add_parser('migrate',help='select a new SDK, keeping app locks and signing identities')
+    migrate.add_argument('--sdk-version',required=True)
+    migrate.add_argument('--sdk',type=Path)
+    migrate.add_argument('--engine',choices=('auto','native','docker','podman'),default='auto')
+    migrate.add_argument('--manifest')
     profile = commands.add_parser('device-profile', help='read device design constraints or explain USB/PXADB setup')
     profile.add_argument('--port')
     profile.add_argument('--baud', type=int, default=2000000)
+    profile.add_argument('--package',help='compare this prepared package with the device without uploading')
     commands.add_parser('mcp', help='serve tools to an MCP client over stdio')
     init = commands.add_parser('init', help='create a C or C++ app without editing the SDK')
     init.add_argument('project')
     init.add_argument('--id')
     init.add_argument('--language', choices=('c', 'cpp'), default='cpp')
+    commands.add_parser('recipes', help='list runnable app starters')
+    new = commands.add_parser('new', help='create a new app from a runnable recipe without changing the SDK')
+    new.add_argument('project')
+    new.add_argument('--recipe', choices=('timer', 'counter'), required=True)
+    new.add_argument('--id')
+    new.add_argument('--title')
+    new.add_argument('--minutes', type=int)
+    new.add_argument('--break-minutes', type=int)
     context = commands.add_parser('context', help='read compact, version-matched app and SDK context')
     context.add_argument('project')
     context.add_argument('--query', default='')
@@ -46,8 +63,11 @@ def parser():
     start.add_argument('--mode', choices=('app', 'board'), required=True)
     start.add_argument('--project')
     start.add_argument('--board')
+    start.add_argument('--adopt', action='store_true', help='adopt edits only inside the selected app; retain the previous audit')
     scope_sub.add_parser('check')
-    scope_sub.add_parser('end', help='archive a passing scope before unrelated work or tool updates')
+    end = scope_sub.add_parser('end', help='archive the scope without modifying source files')
+    end.add_argument('--archive', action='store_true')
+    end.add_argument('--allow-violations', action='store_true', help='requires --archive; retain violations in the audit')
     board = commands.add_parser('board', help='adapt a board through the existing port API')
     board_sub = board.add_subparsers(dest='action', required=True)
     board_setup = board_sub.add_parser('setup', help='install board skills/MCP; does not install ESP-IDF')
@@ -58,7 +78,7 @@ def parser():
     scaffold.add_argument('--reference')
     for action in ('check', 'build'):
         board_sub.add_parser(action).add_argument('board')
-    for name in ('build', 'run', 'sdk', 'device'):
+    for name in ('build', 'run', 'clean', 'sdk', 'device'):
         command = commands.add_parser(name)
         command.add_argument('arguments', nargs=argparse.REMAINDER)
     verify = commands.add_parser('verify')
@@ -67,13 +87,24 @@ def parser():
     verify.add_argument('--scenario')
     verify.add_argument('--window', action='store_true')
     verify.add_argument('--store-screenshots', action='store_true')
+    verify.add_argument('--define', action='append', default=[], help='test-build definition NAME[=VALUE], repeatable')
+    verify.add_argument('--require-ui', action='store_true', help='require visible content in the actual retained UI tree')
+    verify.add_argument('--no-build', action='store_true', help='reuse validated build outputs; repeat their --define values')
+    verify.add_argument('--jobs', type=int, default=2, help='concurrent screen profiles, 1..4')
     install = commands.add_parser('install', help='build for the connected CPU, install and start the app')
     install.add_argument('project')
     install.add_argument('--port', required=True)
     install.add_argument('--baud', type=int, default=2000000)
+    install.add_argument('--strict-compatibility',action='store_true',help='block unknown package requirements before uploading')
     firmware = commands.add_parser('firmware')
     sub = firmware.add_subparsers(dest='action', required=True)
     from .firmware import BOARDS
+    firmware_status = sub.add_parser('status',help='compare device INFO with signed release metadata without flashing')
+    firmware_status.add_argument('--port',required=True)
+    firmware_status.add_argument('--baud',type=int,default=2000000)
+    firmware_status.add_argument('--board',choices=BOARDS)
+    firmware_status.add_argument('--release',default='latest')
+    firmware_status.add_argument('--manifest')
     for name in ('prepare', 'upgrade'):
         cmd = sub.add_parser(name)
         cmd.add_argument('--board', choices=BOARDS, required=True)
@@ -115,16 +146,22 @@ def main():
     args = parser().parse_args()
     try:
         result = None
-        if args.command == 'device-profile':
+        if args.command == 'workspace':
+            from .migration import migrate
+            result=migrate(args.workspace,version=args.sdk_version,sdk=args.sdk,
+                           engine=args.engine,manifest=args.manifest)
+        elif args.command == 'device-profile':
             from .device_profile import inspect
-            result = inspect(Environment(args.workspace), args.port, args.baud)
+            result = inspect(Environment(args.workspace), args.port, args.baud, args.package)
         elif args.command == 'scope':
             from . import scope
             if args.action == 'begin':
                 sdk = Environment(args.workspace).config.get('sdk') if args.mode == 'app' else None
-                result = scope.begin(args.workspace, mode=args.mode, project=args.project, board=args.board, sdk=sdk)
+                result = scope.begin(args.workspace, mode=args.mode, project=args.project, board=args.board, sdk=sdk, adopt=args.adopt)
             elif args.action == 'end':
-                result = scope.finish(args.workspace)
+                if args.allow_violations and not args.archive:
+                    raise ToolError('--allow-violations requires --archive to preserve the audit')
+                result = scope.finish(args.workspace, allow_violations=args.allow_violations)
             else:
                 result = scope.check(args.workspace)
         elif args.command == 'board':
@@ -141,7 +178,7 @@ def main():
             from .scope import finish
             finish(args.workspace)
             from .integration import install
-            env = configure(args.workspace, engine=args.engine, sdk=args.sdk, version=args.sdk_version, manifest=args.manifest)
+            env = configure(args.workspace, engine=args.engine, sdk=args.sdk, version=args.sdk_version, manifest=args.manifest, keep_archives=args.keep_archives)
             result = {'environment': env.doctor(), 'integration': install(env.workspace, platforms=args.platform, mcp=not args.no_mcp)}
             if not args.no_smoke:
                 print('PXA: compiling and running the real Guest environment check', file=sys.stderr, flush=True)
@@ -159,11 +196,21 @@ def main():
             if args.command == 'init':
                 from .projects import initialize
                 result = initialize(env, args.project, args.id, args.language)
+            elif args.command == 'recipes':
+                from .recipes import catalog
+                result = catalog()
+            elif args.command == 'new':
+                from .recipes import create
+                result = create(env, args.project, args.recipe, app_id=args.id, title=args.title,
+                                minutes=args.minutes, break_minutes=args.break_minutes)
             elif args.command == 'context':
                 from .context import project_context
                 result = project_context(env, args.project, args.query, args.language, args.limit)
             elif args.command == 'doctor':
                 result = env.doctor()
+                if args.usage:
+                    from .sdk_cache import usage
+                    result['storage'] = usage()
             elif args.command == 'mcp':
                 from .mcp_server import serve
                 serve(env)
@@ -171,12 +218,15 @@ def main():
             elif args.command == 'device':
                 print(env.device(args.arguments), end='')
                 return 0
-            elif args.command in ('init', 'build', 'run', 'sdk'):
+            elif args.command == 'sdk' and args.arguments[:1] in (['cache'], ['prune'], ['repair']):
+                from .sdk_cache import command
+                result = command(env, args.arguments)
+            elif args.command in ('init', 'build', 'run', 'clean', 'sdk'):
                 arguments = args.arguments
                 if args.command in ('build', 'run') and '--online' not in arguments and '--offline' not in arguments:
                     arguments = [*arguments, '--offline']
                 arguments = [arg for arg in arguments if arg != '--online']
-                if args.command in ('init', 'build', 'run'):
+                if args.command in ('init', 'build', 'run', 'clean'):
                     if not arguments or arguments[0].startswith('-'):
                         raise ToolError('Specify the app directory inside this workspace')
                     arguments[0] = env.project(arguments[0])
@@ -213,13 +263,19 @@ def main():
             elif args.command == 'verify':
                 from .workbench import verification
                 result = verification(env, args.project, profiles=args.profiles, scenario=args.scenario,
-                                      headless=not args.window, store_screenshots=args.store_screenshots)
+                                      headless=not args.window, store_screenshots=args.store_screenshots,
+                                      definitions=args.define, require_ui=args.require_ui,
+                                      no_build=args.no_build, profile_jobs=args.jobs)
             elif args.command == 'install':
                 from .workbench import install_app
-                result = install_app(env, args.project, port=args.port, baud=args.baud)
+                result = install_app(env, args.project, port=args.port, baud=args.baud,
+                                     strict_compatibility=args.strict_compatibility)
             elif args.command == 'firmware':
-                from .firmware import prepare, flash
-                if args.action == 'prepare':
+                from .firmware import prepare, flash, status
+                if args.action == 'status':
+                    result = status(env,port=args.port,board=args.board,baud=args.baud,
+                                    version=args.release,manifest=args.manifest)
+                elif args.action == 'prepare':
                     result = prepare(args.board, version=args.release, mode=args.mode, manifest=args.manifest)
                 else:
                     result = flash(env, args.board, port=args.port, baud=args.baud, version=args.release,

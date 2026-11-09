@@ -144,7 +144,8 @@ def signed_document(source, *, schema=None):
         return document, payload, Path(str(path) + '.sig').read_bytes()
 
 
-def artifact(source, expected, *, maximum=2 * 1024**3):
+@contextmanager
+def artifact_reader(source, expected, *, maximum=2 * 1024**3):
     name, size, sha = expected.get('file'), expected.get('size', expected.get('bytes')), expected.get('sha256')
     if (not isinstance(name, str) or Path(name).name != name or '\\' in name
             or not isinstance(size, int) or not 0 < size <= maximum
@@ -152,19 +153,25 @@ def artifact(source, expected, *, maximum=2 * 1024**3):
         raise ToolError('Invalid signed artifact metadata')
     cache = data_root() / 'downloads' / sha
     with locked(cache.with_suffix('.lock')):
-        if cache.is_file() and cache.stat().st_size == size and digest(cache) == sha:
-            return cache
-        cache.parent.mkdir(parents=True, exist_ok=True)
-        descriptor, temporary = tempfile.mkstemp(prefix='.download-', dir=cache.parent)
-        os.close(descriptor)
-        try:
-            download(source, temporary, limit=size)
-            if Path(temporary).stat().st_size != size or digest(temporary) != sha:
-                raise ToolError('Downloaded artifact does not match its signed hash: ' + name)
-            os.replace(temporary, cache)
-        finally:
-            Path(temporary).unlink(missing_ok=True)
-    return cache
+        if not (cache.is_file() and cache.stat().st_size == size and digest(cache) == sha):
+            cache.parent.mkdir(parents=True, exist_ok=True)
+            descriptor, temporary = tempfile.mkstemp(prefix='.download-', dir=cache.parent)
+            os.close(descriptor)
+            try:
+                download(source, temporary, limit=size)
+                if Path(temporary).stat().st_size != size or digest(temporary) != sha:
+                    raise ToolError('Downloaded artifact does not match its signed hash: ' + name)
+                os.replace(temporary, cache)
+            finally:
+                Path(temporary).unlink(missing_ok=True)
+        # SDK extraction and cache pruning use this same lock, so an archive
+        # cannot be removed while another installer is still consuming it.
+        yield cache
+
+
+def artifact(source, expected, *, maximum=2 * 1024**3):
+    with artifact_reader(source, expected, maximum=maximum) as path:
+        return path
 
 
 def extract(archive, destination):

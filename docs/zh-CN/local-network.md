@@ -171,7 +171,8 @@ PXA_LAN_DEMO_ROLE=client PXA_LAN_DEMO_ENDPOINT= tools/app.sh build local-network
 Host 的设备上运行；旧固件仅更新应用不会获得这些能力。设备和路由器应允许
 局域网 UDP 5353 多播及应用端口；访客 Wi-Fi 或客户端隔离会影响发现/连接。
 
-新 Host 将 `pxa_network_backend_t` 填入 `pxa_net_config_t.network`（原 `local` 字段同址兼容），旧配置结构
+新 Host 将 `pxa_network_backend_t` 填入 `pxa_net_config_t.network`（C11/C++，与原 `local` 字段同址兼容）。
+严格 C99 使用 `.local`，不依赖匿名 union 扩展；结构的大小、对齐和字段位置相同。旧配置结构
 和旧 Net 操作保持兼容。可复用
 `libpxa/adapters/network/pxa_lan_native.c`，提供活动接口和唤醒回调；Host 负责在
 组件/运行时释放句柄后停止后端。协议及完整字段见

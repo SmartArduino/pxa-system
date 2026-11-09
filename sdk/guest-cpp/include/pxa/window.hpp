@@ -1,6 +1,7 @@
 #pragma once
 
 #include "task.hpp"
+#include "display_rotation.h"
 
 #include <array>
 #include <string_view>
@@ -27,9 +28,17 @@ struct WindowMetrics {
     Insets system_bar_insets;
     std::uint8_t orientation = 0;
     bool focused = false;
+    std::uint8_t rotation = 0, supported_rotations = 1;
+    std::uint32_t native_width = 0, native_height = 0;
 };
 
 enum class BackAction : std::uint8_t { close = 0, stay = 1 };
+enum class OrientationPreference : std::uint8_t {
+    system = 0, portrait = 1, landscape = 2, reverse_portrait = 3,
+    reverse_landscape = 4, native = 5, rotation_0 = 6, rotation_90 = 7,
+    rotation_180 = 8, rotation_270 = 9, locked = 10
+};
+enum class DisplayRotation : std::uint8_t { deg0 = 0, deg90 = 1, deg180 = 2, deg270 = 3 };
 enum class WindowBarMode : std::uint8_t { visible = 0, hidden = 1, transient = 2 };
 enum class WindowBarIcons : std::uint8_t { automatic = 0, light = 1, dark = 2 };
 struct WindowConfig {
@@ -44,7 +53,8 @@ struct WindowConfig {
 
 inline Result<WindowMetrics> decode_window_metrics(
     std::span<const std::byte> bytes) noexcept {
-    if (bytes.size() != 98) return std::unexpected(Error::protocol_error);
+    if (bytes.size() != 98 && bytes.size() != 120)
+        return std::unexpected(Error::protocol_error);
     constexpr std::array<std::uint16_t, 8> offsets{0, 12, 24, 36,
                                                     48, 68, 88, 93};
     constexpr std::array<std::uint16_t, 8> lengths{8, 8, 8, 8,
@@ -75,9 +85,23 @@ inline Result<WindowMetrics> decode_window_metrics(
     if (!result.revision || !result.logical_width || !result.logical_height ||
         !result.pixel_width || !result.pixel_height ||
         !result.density_numerator || !result.density_denominator ||
-        result.orientation > 2 || focused > 1)
+        result.orientation > 3 || focused > 1)
         return std::unexpected(Error::protocol_error);
     result.focused = focused != 0;
+    result.native_width = result.logical_width;
+    result.native_height = result.logical_height;
+    if (bytes.size() == 120) {
+        if (wire::get16(bytes.data() + 98) != 9 || wire::get16(bytes.data() + 100) != 1 ||
+            wire::get16(bytes.data() + 103) != 10 || wire::get16(bytes.data() + 105) != 8 ||
+            wire::get16(bytes.data() + 115) != 11 || wire::get16(bytes.data() + 117) != 1)
+            return std::unexpected(Error::protocol_error);
+        result.rotation = std::to_integer<std::uint8_t>(bytes[102]);
+        result.native_width = wire::get32(bytes.data() + 107);
+        result.native_height = wire::get32(bytes.data() + 111);
+        result.supported_rotations = std::to_integer<std::uint8_t>(bytes[119]);
+        if (result.rotation > 3 || result.supported_rotations > 15)
+            return std::unexpected(Error::protocol_error);
+    }
     return result;
 }
 
@@ -85,6 +109,22 @@ class WindowService {
 public:
     WindowService(Transport& transport, RequestTable& requests) noexcept
         : transport_(transport), requests_(requests) {}
+
+    Result<void> request_orientation(OrientationPreference preference) noexcept {
+        if (std::to_underlying(preference) > 10)
+            return std::unexpected(Error::invalid_argument);
+        std::array<std::byte, 5> payload{};
+        wire::put16(payload.data(), 9);
+        wire::put16(payload.data() + 2, 1);
+        payload[4] = std::byte(std::to_underlying(preference));
+        return transport_.send(2, 1, 0, payload);
+    }
+    Result<void> set_rotation(DisplayRotation rotation) noexcept {
+        if (std::to_underlying(rotation) > 3)
+            return std::unexpected(Error::invalid_argument);
+        return request_orientation(static_cast<OrientationPreference>(
+            6 + std::to_underlying(rotation)));
+    }
 
     Result<void> configure(const WindowConfig& config) noexcept {
         const std::array<std::uint8_t, 5> values{
@@ -151,9 +191,9 @@ public:
         return transport_.send(2, 1, 0, payload);
     }
 
-    Task<WindowMetrics> snapshot(this WindowService self) {
+    Task<WindowMetrics> snapshot(this WindowService self, bool display_metrics = false) {
         auto& [transport_, requests_] = self;
-        auto response = co_await Response(transport_, requests_, 2, 2, {});
+        auto response = co_await Response(transport_, requests_, 2, display_metrics ? 5 : 2, {});
         if (!response) co_return std::unexpected(response.error());
         if (response->payload.size() < 4)
             co_return std::unexpected(Error::protocol_error);

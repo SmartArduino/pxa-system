@@ -248,6 +248,11 @@ int pxa_wamr_engine_busy(const pxa_wamr_engine_t *engine);
 /* Optional execution modes backed by this configured engine. Use this when
  * building package activation profiles; version numbers alone are insufficient. */
 uint32_t pxa_wamr_engine_execution_models(const pxa_wamr_engine_t *engine);
+/* Bit (1u << PXA_ARTIFACT_*) for formats supported by the actual engine build. */
+uint32_t pxa_wamr_engine_artifact_kinds(const pxa_wamr_engine_t *engine);
+/* Build-only admission inventory, safe before initialization and after teardown.
+ * It does not allocate an engine or promise that a future load will succeed. */
+uint32_t pxa_wamr_engine_build_artifact_kinds(void);
 
 #ifdef __cplusplus
 }

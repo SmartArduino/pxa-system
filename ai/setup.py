@@ -43,7 +43,7 @@ def fetch(source, limit):
     if urlparse(source).scheme:
         if urlparse(source).scheme != 'https':
             raise ValueError('Release downloads require HTTPS')
-        stream = build_opener(HTTPSRedirect).open(Request(source, headers={'User-Agent': 'PXA-Agent-Setup/0.5.0'}), timeout=120)
+        stream = build_opener(HTTPSRedirect).open(Request(source, headers={'User-Agent': 'PXA-Agent-Setup/0.6.0'}), timeout=120)
     else:
         stream = Path(source).open('rb')
     with stream:
@@ -138,6 +138,7 @@ def main():
     parser.add_argument('--sdk', type=Path)
     parser.add_argument('--manifest', help='signed SDK distribution manifest, for offline setup')
     parser.add_argument('--no-smoke', action='store_true')
+    parser.add_argument('--keep-archives', action='store_true', help='retain SDK downloads for offline reuse')
     args = parser.parse_args()
     try:
         print('PXA: verifying the signed Agent Kit release', file=sys.stderr, flush=True)
@@ -151,7 +152,7 @@ def main():
         command = [uv, 'run', '--python', '3.12', '--locked', '--project', str(kit), str(kit / 'agent.py'),
                    '--workspace', str(args.workspace.resolve())]
         if args.mode == 'board':
-            if args.sdk or args.manifest or args.engine != 'auto' or args.no_smoke:
+            if args.sdk or args.manifest or args.engine != 'auto' or args.no_smoke or args.keep_archives:
                 raise ValueError('Board setup uses the existing firmware toolchain; app SDK options do not apply')
             command += ['board', 'setup', '--platform', args.platform]
         else:
@@ -162,6 +163,8 @@ def main():
             command += ['--manifest', args.manifest]
         if args.no_smoke:
             command += ['--no-smoke']
+        if args.keep_archives:
+            command += ['--keep-archives']
         sys.stdout.flush()
         os.execv(uv, command)
     except Exception as error:

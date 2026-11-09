@@ -926,6 +926,54 @@ static lv_color_t color_token(const pxsys_reference_lvgl_t* ui,
     return lv_color_hex(ui->theme.colors[token] & UINT32_C(0x00ffffff));
 }
 
+static uint32_t blend_bar_rgb(uint32_t foreground, uint32_t background,
+                              uint32_t alpha) {
+    uint32_t result = 0;
+    for (unsigned shift = 0; shift < 24; shift += 8) {
+        uint32_t channel = (((foreground >> shift) & 255u) * alpha +
+            ((background >> shift) & 255u) * (255u - alpha) + 127u) / 255u;
+        result |= channel << shift;
+    }
+    return result;
+}
+
+static lv_color_t bar_icon_color(const pxsys_reference_lvgl_t* ui, int navigation,
+                                 pxsys_color_token_t token) {
+    const pxsys_window_icon_style_t icons = navigation
+        ? ui->window.navigation_bar_icons : ui->window.status_bar_icons;
+    const uint32_t rgba = navigation
+        ? ui->window.navigation_bar_color : ui->window.status_bar_color;
+    if (ui->content_active || (icons == PXSYS_WINDOW_ICON_AUTO && !(rgba & 255u)))
+        return color_token(ui, token);
+    /* Transparent pixels may contain arbitrary Guest imagery. AUTO uses the
+     * declared color over the theme background, without sampling app frames;
+     * apps can choose LIGHT/DARK for a known scene or photograph. */
+    const uint32_t backdrop = blend_bar_rgb(rgba >> 8,
+        ui->theme.colors[PXSYS_COLOR_BACKGROUND] & UINT32_C(0xffffff), rgba & 255u);
+    const uint32_t brightness = (((backdrop >> 16) & 255u) * 77u +
+        ((backdrop >> 8) & 255u) * 150u + (backdrop & 255u) * 29u) >> 8;
+    const uint32_t foreground = icons == PXSYS_WINDOW_ICON_LIGHT ||
+        (icons == PXSYS_WINDOW_ICON_AUTO && brightness < 128u)
+        ? UINT32_C(0xffffff) : 0u;
+    const uint32_t alpha = token == PXSYS_COLOR_BORDER ? 77u :
+        token == PXSYS_COLOR_TEXT_SECONDARY ? 204u : 255u;
+    return lv_color_hex(blend_bar_rgb(foreground, backdrop, alpha));
+}
+
+static void style_bar_background(const pxsys_reference_lvgl_t* ui,
+                                  lv_obj_t* object, int navigation) {
+    if (ui->content_active) {
+        lv_obj_set_style_bg_color(object, color_token(ui,
+            navigation ? PXSYS_COLOR_SURFACE : PXSYS_COLOR_BACKGROUND), 0);
+        lv_obj_set_style_bg_opa(object, LV_OPA_TRANSP, 0);
+    } else {
+        const uint32_t rgba = navigation
+            ? ui->window.navigation_bar_color : ui->window.status_bar_color;
+        lv_obj_set_style_bg_color(object, lv_color_hex(rgba >> 8), 0);
+        lv_obj_set_style_bg_opa(object, (lv_opa_t)(rgba & 255u), 0);
+    }
+}
+
 static int32_t ui_px(const pxsys_reference_lvgl_t* ui, uint16_t pixels) {
     return pxsys_reference_display_scale_px(&ui->display, pixels);
 }
@@ -1914,7 +1962,7 @@ static lv_obj_t* make_navigation_action(pxsys_reference_lvgl_t* ui,
     lv_obj_t* button = lv_button_create(parent);
     lv_obj_t* glyph;
     lv_obj_set_style_bg_opa(button, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_bg_color(button, color_token(ui, PXSYS_COLOR_BORDER),
+    lv_obj_set_style_bg_color(button, bar_icon_color(ui, 1, PXSYS_COLOR_BORDER),
                               LV_STATE_PRESSED);
     lv_obj_set_style_bg_opa(button, LV_OPA_40, LV_STATE_PRESSED);
     lv_obj_set_style_border_width(button, 0, 0);
@@ -1929,7 +1977,7 @@ static lv_obj_t* make_navigation_action(pxsys_reference_lvgl_t* ui,
         lv_obj_set_style_line_width(glyph, 2, 0);
         lv_obj_set_style_line_rounded(glyph, true, 0);
         lv_obj_set_style_line_color(
-            glyph, color_token(ui, PXSYS_COLOR_TEXT_PRIMARY), 0);
+            glyph, bar_icon_color(ui, 1, PXSYS_COLOR_TEXT_PRIMARY), 0);
     } else {
         glyph = lv_obj_create(button);
         style_plain(glyph);
@@ -1938,7 +1986,7 @@ static lv_obj_t* make_navigation_action(pxsys_reference_lvgl_t* ui,
         lv_obj_set_style_bg_opa(glyph, LV_OPA_TRANSP, 0);
         lv_obj_set_style_border_width(glyph, 2, 0);
         lv_obj_set_style_border_color(
-            glyph, color_token(ui, PXSYS_COLOR_TEXT_PRIMARY), 0);
+            glyph, bar_icon_color(ui, 1, PXSYS_COLOR_TEXT_PRIMARY), 0);
         lv_obj_set_style_radius(
             glyph, icon == NAVIGATION_ICON_HOME ? LV_RADIUS_CIRCLE : 2, 0);
     }
@@ -5578,7 +5626,7 @@ static void make_signal_icon(pxsys_reference_lvgl_t* ui, lv_obj_t* parent,
         lv_obj_set_style_radius(bar, LV_RADIUS_CIRCLE, 0);
         lv_obj_set_style_bg_color(
             bar,
-            color_token(ui,
+            bar_icon_color(ui, 0,
                         radio_connected(ui, PXSYS_NETWORK_CELLULAR) &&
                                 index < level
                             ? PXSYS_COLOR_TEXT_PRIMARY : PXSYS_COLOR_BORDER),
@@ -5589,18 +5637,59 @@ static void make_signal_icon(pxsys_reference_lvgl_t* ui, lv_obj_t* parent,
 #endif
 
 #if PXSYS_REFERENCE_UI_WIFI
+static void wifi_icon_draw(lv_event_t* event) {
+    pxsys_reference_lvgl_t* ui = lv_event_get_user_data(event);
+    lv_obj_t* icon = lv_event_get_target(event);
+    lv_layer_t* layer = lv_event_get_layer(event);
+    lv_area_t area;
+    lv_obj_get_coords(icon, &area);
+    const int connected = radio_connected(ui, PXSYS_NETWORK_WIFI);
+    const uint8_t level = connected ? radio_signal_level(ui, PXSYS_NETWORK_WIFI) : 0;
+    const lv_color_t active = bar_icon_color(ui, 0, PXSYS_COLOR_TEXT_PRIMARY);
+    const lv_color_t inactive = bar_icon_color(ui, 0, PXSYS_COLOR_BORDER);
+    lv_draw_arc_dsc_t arc;
+    lv_draw_arc_dsc_init(&arc);
+    arc.center.x = area.x1 + 8;
+    arc.center.y = area.y1 + 13;
+    arc.start_angle = 225;
+    arc.end_angle = 315;
+    arc.width = 2;
+    arc.rounded = 1;
+    /* A dot and three arcs give four distinct connected signal levels.
+     * Unlit arcs retain the icon outline instead of fading the whole symbol. */
+    for (uint8_t index = 0; index < 3; ++index) {
+        arc.radius = (uint16_t)(4 + index * 3);
+        arc.color = level >= index + 2 ? active : inactive;
+        lv_draw_arc(layer, &arc);
+    }
+    lv_draw_rect_dsc_t dot;
+    lv_draw_rect_dsc_init(&dot);
+    dot.bg_color = level ? active : inactive;
+    dot.bg_opa = LV_OPA_COVER;
+    dot.radius = LV_RADIUS_CIRCLE;
+    /* Arc rasterization is centered between pixels on this even-sized canvas.
+     * A 2x2 dot shares that center; an odd 3x3 dot drifts half a pixel right. */
+    const lv_area_t dot_area = {area.x1 + 7, area.y1 + 12, area.x1 + 8, area.y1 + 13};
+    lv_draw_rect(layer, &dot, &dot_area);
+    if (!connected) {
+        lv_draw_line_dsc_t slash;
+        lv_draw_line_dsc_init(&slash);
+        slash.p1.x = area.x1 + 2; slash.p1.y = area.y1 + 2;
+        slash.p2.x = area.x1 + 14; slash.p2.y = area.y1 + 14;
+        slash.width = 2;
+        slash.round_start = slash.round_end = 1;
+        slash.color = bar_icon_color(ui, 0, PXSYS_COLOR_TEXT_SECONDARY);
+        lv_draw_line(layer, &slash);
+    }
+}
+
 static void make_wifi_icon(pxsys_reference_lvgl_t* ui, lv_obj_t* parent,
                            int32_t x, int32_t center_y) {
-    lv_obj_t* icon = make_label(
-        parent, LV_SYMBOL_WIFI, NULL,
-        color_token(ui, radio_connected(ui, PXSYS_NETWORK_WIFI)
-                            ? PXSYS_COLOR_TEXT_PRIMARY : PXSYS_COLOR_BORDER));
-    uint8_t level = radio_signal_level(ui, PXSYS_NETWORK_WIFI);
+    lv_obj_t* icon = lv_obj_create(parent);
+    style_plain(icon);
+    lv_obj_set_size(icon, 16, 16);
     lv_obj_set_pos(icon, x, center_y - 8);
-    lv_obj_set_style_opa(icon,
-                         level >= 3 ? LV_OPA_COVER :
-                         level == 2 ? LV_OPA_80 :
-                         level == 1 ? LV_OPA_60 : LV_OPA_40, 0);
+    lv_obj_add_event_cb(icon, wifi_icon_draw, LV_EVENT_DRAW_MAIN, ui);
 }
 #endif
 
@@ -5618,7 +5707,7 @@ static void make_battery_icon(pxsys_reference_lvgl_t* ui, lv_obj_t* parent,
     lv_obj_set_style_bg_opa(body, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(body, 1, 0);
     lv_obj_set_style_border_color(body,
-                                  color_token(ui, PXSYS_COLOR_TEXT_PRIMARY), 0);
+                                  bar_icon_color(ui, 0, PXSYS_COLOR_TEXT_PRIMARY), 0);
     lv_obj_set_style_radius(body, 3, 0);
     fill = lv_obj_create(body);
     style_plain(fill);
@@ -5627,11 +5716,11 @@ static void make_battery_icon(pxsys_reference_lvgl_t* ui, lv_obj_t* parent,
     lv_obj_align(fill, LV_ALIGN_LEFT_MID, 2, 0);
     lv_obj_set_style_radius(fill, 1, 0);
     lv_obj_set_style_bg_color(
-        fill, color_token(ui, ui->system_status.charging
-                                 ? PXSYS_COLOR_SUCCESS
-                                 : percent <= 15 && ui->system_status.battery_valid
-                                       ? PXSYS_COLOR_ERROR
-                                       : PXSYS_COLOR_TEXT_PRIMARY), 0);
+        fill, ui->system_status.charging
+            ? color_token(ui, PXSYS_COLOR_SUCCESS)
+            : percent <= 15 && ui->system_status.battery_valid
+                ? color_token(ui, PXSYS_COLOR_ERROR)
+                : bar_icon_color(ui, 0, PXSYS_COLOR_TEXT_PRIMARY), 0);
     lv_obj_set_style_bg_opa(fill, LV_OPA_COVER, 0);
     cap = lv_obj_create(parent);
     style_plain(cap);
@@ -5639,7 +5728,7 @@ static void make_battery_icon(pxsys_reference_lvgl_t* ui, lv_obj_t* parent,
     lv_obj_set_size(cap, 2, 6);
     lv_obj_set_style_radius(cap, 1, 0);
     lv_obj_set_style_bg_color(cap,
-                              color_token(ui, PXSYS_COLOR_TEXT_PRIMARY), 0);
+                              bar_icon_color(ui, 0, PXSYS_COLOR_TEXT_PRIMARY), 0);
     lv_obj_set_style_bg_opa(cap, LV_OPA_COVER, 0);
 }
 
@@ -5685,10 +5774,7 @@ static void build_status_bar(pxsys_reference_lvgl_t* ui,
     lv_obj_set_pos(status, layout->status_bar.x, layout->status_bar.y);
     lv_obj_set_size(status, (lv_coord_t)layout->status_bar.width,
                     (lv_coord_t)layout->status_bar.height);
-    lv_obj_set_style_bg_color(status,
-                              color_token(ui, PXSYS_COLOR_BACKGROUND), 0);
-    if (status_bar_mode(ui) != PXSYS_WINDOW_BAR_VISIBLE)
-        lv_obj_set_style_bg_opa(status, (lv_opa_t)224, 0);
+    style_bar_background(ui, status, 0);
     if (ui->features & PXSYS_REFERENCE_UI_NOTIFICATION_SHADE) {
         pxsys_lvgl_add_flags(status, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_PRESS_LOCK);
         if (!reuse) {
@@ -5704,7 +5790,7 @@ static void build_status_bar(pxsys_reference_lvgl_t* ui,
              (unsigned)ui->system_status.hour,
              (unsigned)ui->system_status.minute);
     time_label = make_label(status, time_text, ui->text_font,
-                            color_token(ui, PXSYS_COLOR_TEXT_PRIMARY));
+                            bar_icon_color(ui, 0, PXSYS_COLOR_TEXT_PRIMARY));
     lv_obj_align(time_label, LV_ALIGN_LEFT_MID,
                  content_area.x + (int32_t)layout->outer_padding,
                  align_y);
@@ -5717,7 +5803,7 @@ static void build_status_bar(pxsys_reference_lvgl_t* ui,
                  (unsigned)ui->system_status.battery_percent);
         percent_font = typography_font(ui, PXSYS_TYPOGRAPHY_CAPTION);
         percent_label = make_label(status, percent_text, percent_font,
-                                   color_token(ui, PXSYS_COLOR_TEXT_SECONDARY));
+                                   bar_icon_color(ui, 0, PXSYS_COLOR_TEXT_SECONDARY));
         lv_label_set_long_mode(percent_label, LV_LABEL_LONG_MODE_CLIP);
         lv_obj_set_width(percent_label, LV_SIZE_CONTENT);
         lv_obj_set_height(percent_label,
@@ -8209,6 +8295,7 @@ static void rebuild(pxsys_reference_lvgl_t* ui) {
             lv_obj_set_size(navigation, (lv_coord_t)ui->display.width,
                             gesture_height);
             lv_obj_set_style_bg_opa(navigation, LV_OPA_TRANSP, 0);
+            if (visible) style_bar_background(ui, navigation, 1);
 #if PXSYS_REFERENCE_UI_GESTURE_HANDLE
             if (visible) {
                 action = lv_obj_create(navigation);
@@ -8218,7 +8305,8 @@ static void rebuild(pxsys_reference_lvgl_t* ui) {
                     layout.size_class == PXSYS_UI_SIZE_COMPACT ? 56 : 84, 4);
                 lv_obj_set_style_radius(action, LV_RADIUS_CIRCLE, 0);
                 lv_obj_set_style_bg_color(
-                    action, color_token(ui, PXSYS_COLOR_TEXT_PRIMARY), 0);
+                    action, bar_icon_color(ui, 1, PXSYS_COLOR_TEXT_PRIMARY), 0);
+                lv_obj_set_style_bg_opa(action, LV_OPA_COVER, 0);
                 lv_obj_align(action, LV_ALIGN_BOTTOM_MID, 0, -5);
                 ui->navigation_handle = action;
                 ui->navigation_handle_width =
@@ -8256,10 +8344,7 @@ static void rebuild(pxsys_reference_lvgl_t* ui) {
                            layout.navigation_bar.y);
             lv_obj_set_size(navigation, (lv_coord_t)layout.navigation_bar.width,
                             (lv_coord_t)layout.navigation_bar.height);
-            lv_obj_set_style_bg_color(navigation,
-                                      color_token(ui, PXSYS_COLOR_SURFACE), 0);
-            if (navigation_bar_mode(ui) == PXSYS_WINDOW_BAR_TRANSIENT)
-                lv_obj_set_style_bg_opa(navigation, (lv_opa_t)224, 0);
+            style_bar_background(ui, navigation, 1);
             action_width = (int32_t)layout.navigation_bar.width / 3;
             action_height = layout.navigation_bar.height > 8
                                 ? (int32_t)layout.navigation_bar.height - 8 : 1;

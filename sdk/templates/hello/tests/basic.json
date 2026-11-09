@@ -1,0 +1,299 @@
+{
+  "pai-touch": [
+    {
+      "name": "initial-zero",
+      "action": "expect",
+      "selector": {
+        "type": "text",
+        "text": "0"
+      },
+      "expected": {}
+    },
+    {
+      "name": "increment",
+      "action": "tap-node",
+      "selector": {
+        "type": "button",
+        "text": "+1"
+      }
+    },
+    {
+      "name": "count-one",
+      "action": "wait-for",
+      "selector": {
+        "type": "text",
+        "text": "1"
+      },
+      "expected": {},
+      "timeout_ms": 3000
+    },
+    {
+      "name": "after-input",
+      "action": "screenshot"
+    }
+  ],
+  "sensecap-watcher": [
+    {
+      "name": "initial-zero",
+      "action": "expect",
+      "selector": {
+        "type": "text",
+        "text": "0"
+      },
+      "expected": {}
+    },
+    {
+      "name": "increment",
+      "action": "tap-node",
+      "selector": {
+        "type": "button",
+        "text": "+1"
+      }
+    },
+    {
+      "name": "count-one",
+      "action": "wait-for",
+      "selector": {
+        "type": "text",
+        "text": "1"
+      },
+      "expected": {},
+      "timeout_ms": 3000
+    },
+    {
+      "name": "after-input",
+      "action": "screenshot"
+    }
+  ],
+  "esp-mosaico": [
+    {
+      "name": "initial-zero",
+      "action": "expect",
+      "selector": {
+        "type": "text",
+        "text": "0"
+      },
+      "expected": {}
+    },
+    {
+      "name": "increment",
+      "action": "tap-node",
+      "selector": {
+        "type": "button",
+        "text": "+1"
+      }
+    },
+    {
+      "name": "count-one",
+      "action": "wait-for",
+      "selector": {
+        "type": "text",
+        "text": "1"
+      },
+      "expected": {},
+      "timeout_ms": 3000
+    },
+    {
+      "name": "after-input",
+      "action": "screenshot"
+    }
+  ],
+  "esp32s31-korvo-1": [
+    {
+      "name": "initial-zero",
+      "action": "expect",
+      "selector": {
+        "type": "text",
+        "text": "0"
+      },
+      "expected": {}
+    },
+    {
+      "name": "increment",
+      "action": "tap-node",
+      "selector": {
+        "type": "button",
+        "text": "+1"
+      }
+    },
+    {
+      "name": "count-one",
+      "action": "wait-for",
+      "selector": {
+        "type": "text",
+        "text": "1"
+      },
+      "expected": {},
+      "timeout_ms": 3000
+    },
+    {
+      "name": "after-input",
+      "action": "screenshot"
+    }
+  ],
+  "generic": [
+    {
+      "name": "initial-zero",
+      "action": "expect",
+      "selector": {
+        "type": "text",
+        "text": "0"
+      },
+      "expected": {}
+    },
+    {
+      "name": "increment",
+      "action": "tap-node",
+      "selector": {
+        "type": "button",
+        "text": "+1"
+      }
+    },
+    {
+      "name": "count-one",
+      "action": "wait-for",
+      "selector": {
+        "type": "text",
+        "text": "1"
+      },
+      "expected": {},
+      "timeout_ms": 3000
+    },
+    {
+      "name": "after-input",
+      "action": "screenshot"
+    }
+  ],
+  "doit-gamekit": [
+    {
+      "name": "initial-zero",
+      "action": "expect",
+      "selector": {
+        "type": "text",
+        "text": "0"
+      },
+      "expected": {}
+    },
+    {
+      "name": "increment",
+      "action": "tap-node",
+      "selector": {
+        "type": "button",
+        "text": "+1"
+      }
+    },
+    {
+      "name": "count-one",
+      "action": "wait-for",
+      "selector": {
+        "type": "text",
+        "text": "1"
+      },
+      "expected": {},
+      "timeout_ms": 3000
+    },
+    {
+      "name": "after-input",
+      "action": "screenshot"
+    }
+  ],
+  "doit-gamekit-1": [
+    {
+      "name": "initial-zero",
+      "action": "expect",
+      "selector": {
+        "type": "text",
+        "text": "0"
+      },
+      "expected": {}
+    },
+    {
+      "name": "increment",
+      "action": "tap-node",
+      "selector": {
+        "type": "button",
+        "text": "+1"
+      }
+    },
+    {
+      "name": "count-one",
+      "action": "wait-for",
+      "selector": {
+        "type": "text",
+        "text": "1"
+      },
+      "expected": {},
+      "timeout_ms": 3000
+    },
+    {
+      "name": "after-input",
+      "action": "screenshot"
+    }
+  ],
+  "doit-esp32s31-devkit": [
+    {
+      "name": "initial-zero",
+      "action": "expect",
+      "selector": {
+        "type": "text",
+        "text": "0"
+      },
+      "expected": {}
+    },
+    {
+      "name": "increment",
+      "action": "tap-node",
+      "selector": {
+        "type": "button",
+        "text": "+1"
+      }
+    },
+    {
+      "name": "count-one",
+      "action": "wait-for",
+      "selector": {
+        "type": "text",
+        "text": "1"
+      },
+      "expected": {},
+      "timeout_ms": 3000
+    },
+    {
+      "name": "after-input",
+      "action": "screenshot"
+    }
+  ],
+  "espp4-a": [
+    {
+      "name": "initial-zero",
+      "action": "expect",
+      "selector": {
+        "type": "text",
+        "text": "0"
+      },
+      "expected": {}
+    },
+    {
+      "name": "increment",
+      "action": "tap-node",
+      "selector": {
+        "type": "button",
+        "text": "+1"
+      }
+    },
+    {
+      "name": "count-one",
+      "action": "wait-for",
+      "selector": {
+        "type": "text",
+        "text": "1"
+      },
+      "expected": {},
+      "timeout_ms": 3000
+    },
+    {
+      "name": "after-input",
+      "action": "screenshot"
+    }
+  ]
+}

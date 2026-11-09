@@ -17,6 +17,8 @@ struct SensorDescriptor {
     std::uint8_t dimensions = 0;
     std::uint32_t min_period_ms = 0, max_period_ms = 0;
 };
+// Motion XYZ: Android native device axes (right, top, screen-out), fixed
+// across display rotations. Other vector semantics document their own frame.
 struct SensorSample {
     std::uint64_t handle = 0, timestamp_us = 0;
     std::uint8_t dimensions = 0;

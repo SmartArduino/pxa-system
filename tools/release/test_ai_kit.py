@@ -212,9 +212,14 @@ class ScreenProfile(unittest.TestCase):
             for profile in debug.PROFILES:
                 (profiles / (profile + '.toml')).write_text('[desktop]\nwidth=296\nheight=240\n')
             output = root / 'evidence'
+            prepared=project/'dist/example.pxa';prepared.parent.mkdir()
+            prepared.write_bytes(b'prepared-package')
+            (project/'dist/example.pxa.build.json').write_text(json.dumps({
+                'schema':'pxa-build-2','sha256':hashlib.sha256(prepared.read_bytes()).hexdigest(),
+                'configuration':{'type':'Debug','definitions':[]},'targets':['simulator']}))
             args = ['verify_app.py', str(project), '--pxa', str(pxa), '--output', str(output),
                     '--profiles', 'pai-touch', '--store-screenshots']
-            completed = subprocess.CompletedProcess([], 0, 'PXA test', '')
+            completed = subprocess.CompletedProcess([], 0, 'PXA test --no-build --simulator-state --expected-package-sha256', '')
             with patch.object(sys, 'argv', args), patch.dict(os.environ, PXA_SIMULATOR_PERF='1'), \
                  patch.object(debug.subprocess, 'run', return_value=completed), \
                  patch.object(debug.subprocess, 'Popen', side_effect=RuntimeError('test launch boundary')) as launch:

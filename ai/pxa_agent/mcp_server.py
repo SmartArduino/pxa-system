@@ -55,18 +55,20 @@ def create_server(env):
             return server.tool(**options)(invoke)
         return register
 
-    def host_job(arguments, timeout=1200):
-        return jobs.start([sys.executable, KIT / 'agent.py', '--workspace', env.workspace, *arguments], host=True, timeout=timeout)
+    def host_job(arguments, timeout=1200, reload_environment=False):
+        return jobs.start([sys.executable, KIT / 'agent.py', '--workspace', env.workspace, *arguments], host=True, timeout=timeout,
+                          **({'reload_environment':True} if reload_environment else {}))
 
     def selected(port, job_id):
         if bool(port) == bool(job_id):
             raise ToolError('Specify exactly one physical port or owned simulator job_id')
 
-    def control(arguments, port, job_id, baud):
+    def control(arguments, port, job_id, baud, *, timeout=60):
         selected(port, job_id)
         if job_id:
-            return jobs.simulator(job_id, arguments)
-        return env.device([*arguments, '--port', port, '--baud', str(baud)])
+            return jobs.simulator(job_id, arguments, **({'timeout': timeout} if timeout != 60 else {}))
+        return env.device([*arguments, '--port', port, '--baud', str(baud)],
+                          **({'timeout': timeout} if timeout != 60 else {}))
 
     def image_content(path):
         path = env.project(path)
@@ -80,15 +82,82 @@ def create_server(env):
                 ImageContent(type='image', mimeType='image/png', data=base64.b64encode(output.getvalue()).decode())]
 
     @tool(annotations=read)
-    def pxa_doctor() -> dict:
+    def pxa_doctor(include_usage: bool = False) -> dict:
         """Verify installed SDK/engine and list serial ports without opening them."""
-        return env.doctor()
+        result = env.doctor()
+        if include_usage:
+            from .sdk_cache import usage
+            result['storage'] = usage()
+        return result
+
+    @tool()
+    def pxa_sdk_cache(action: Literal['usage', 'prune'] = 'usage', dry_run: bool = True) -> dict:
+        """Inspect downloads or prune archives identified by verified installed SDK
+        receipts. Pruning defaults to dry-run, keeps installed SDKs, firmware and
+        application data, and waits for active SDK archive readers.
+        """
+        from .sdk_cache import command
+        return command(env, ['cache'] if action == 'usage' else
+                       ['prune', *(['--dry-run'] if dry_run else [])])
+
+    @tool()
+    def pxa_sdk_repair(sdk_version: str | None = None, manifest: str | None = None,
+                       offline: bool = False, keep_archives: bool = False) -> dict:
+        """Explicitly reinstall a signed native SDK without migrating project locks
+        or changing signing keys/saves. Stops this server's owned sessions first.
+        Offline repair requires retained archives and a local signed receipt.
+        A custom selected SDK is retained. Returns a job; poll for completion.
+        """
+        arguments = ['sdk', 'repair']
+        if sdk_version: arguments += ['--sdk-version', sdk_version]
+        if manifest: arguments += ['--manifest', manifest]
+        if offline: arguments += ['--offline']
+        if keep_archives: arguments += ['--keep-archives']
+        jobs.close()
+        return host_job(arguments, timeout=1800)
+
+    @tool()
+    def pxa_clean(project: str, keep: int = 2, dry_run: bool = True, aot: bool = False) -> dict:
+        """Clean old app build/package caches with the SDK's build lock. Keeps
+        published packages, referenced generations/configurations, keys and saves.
+        Defaults to a preview; requires a DevKit whose clean command is supported.
+        """
+        if type(keep) is not int or not 0 <= keep <= 100:
+            raise ToolError('Keep must be in 0..100')
+        arguments = ['clean', env.project(project), '--keep', str(keep)]
+        if dry_run: arguments += ['--dry-run']
+        if aot: arguments += ['--aot']
+        return jobs.start(arguments)
+
+    @tool()
+    def pxa_workspace_migrate(sdk_version: str, sdk: str | None = None,
+                              engine: Literal['auto','native','docker','podman'] = 'auto',
+                              manifest: str | None = None) -> dict:
+        """Explicitly select another SDK, retaining app locks/signing identities and
+        scope audit history. Downloads only verified distributions unless selecting
+        an explicit local DevKit. Existing apps stay pinned until sdk update APP.
+        Returns a job; completion reloads this server's environment.
+        """
+        arguments=['workspace','migrate','--sdk-version',sdk_version,'--engine',engine]
+        if sdk:arguments += ['--sdk',str(Path(sdk).expanduser().resolve())]
+        if manifest:arguments += ['--manifest',manifest]
+        jobs.close()  # Finish owned SDK sessions before changing their environment.
+        return host_job(arguments,timeout=1800,reload_environment=True)
 
     @tool(annotations=read)
-    def pxa_device_profile(port: str | None = None, baud: int = 2000000) -> dict:
+    def pxa_device_profile(port: str | None = None, baud: int = 2000000, package: str | None = None) -> dict:
         """Read device resolution, CPU, debug inputs and sensor descriptors; without a port list candidates and PXADB setup steps. Confirm physical controls and adaptive layout with the user."""
         from .device_profile import inspect
-        return inspect(env, port, baud)
+        return inspect(env, port, baud, package)
+
+    @tool(annotations=read)
+    def pxa_check_compatibility(package: str, port: str, baud: int = 2000000) -> dict:
+        """Compare a prepared binary package with actual Host Core, services/features,
+        CPU, AOT ABI and container support without uploading. Unknown telemetry stays
+        unknown; device signature/permissions/activation remain authoritative.
+        """
+        from .compatibility import inspect
+        return inspect(env,package,port=port,baud=baud)
 
     @tool()
     def pxa_init(project: str, app_id: str | None = None, language: Literal['c', 'cpp'] = 'cpp') -> dict:
@@ -97,17 +166,36 @@ def create_server(env):
         return initialize(env, project, app_id, language)
 
     @tool(annotations=read)
+    def pxa_recipes() -> dict:
+        """List tested app starters and their minimum compiler SDK; no migration."""
+        from .recipes import catalog
+        return catalog()
+
+    @tool()
+    def pxa_new(project: str, recipe: Literal['timer','counter'], title: str | None = None,
+                app_id: str | None = None, minutes: int | None = None,
+                break_minutes: int | None = None) -> dict:
+        """Create a new recipe app with adaptive safe layout, controller/touch,
+        checkpoint storage and semantic journey. Requires selected DevKit0.10+;
+        never replaces an existing app or changes SDK locks implicitly.
+        Creation is not runtime acceptance: verify its journey and inspect images.
+        """
+        from .recipes import create
+        return create(env,project,recipe,title=title,app_id=app_id,minutes=minutes,break_minutes=break_minutes)
+
+    @tool(annotations=read)
     def pxa_context(project: str, query: str = '', language: Literal['c', 'cpp'] = 'cpp', limit: int = 12) -> dict:
         """Read compact app metadata, SDK lock, exact header lines and examples; no network or source edits."""
         from .context import project_context
         return project_context(env, project, query, language, limit)
 
     @tool()
-    def pxa_scope_begin(mode: Literal['app', 'board'], project: str | None = None, board: str | None = None) -> dict:
+    def pxa_scope_begin(mode: Literal['app', 'board'], project: str | None = None, board: str | None = None,
+                        adopt: bool = False) -> dict:
         """Record change boundaries before editing. Does not grant permission or discard existing changes."""
         from .scope import begin
         return begin(env.workspace, mode=mode, project=project, board=board,
-                     sdk=env.config.get('sdk') if mode == 'app' else None)
+                     sdk=env.config.get('sdk') if mode == 'app' else None, adopt=adopt)
 
     @tool(annotations=read)
     def pxa_scope_check() -> dict:
@@ -116,10 +204,10 @@ def create_server(env):
         return check(env.workspace)
 
     @tool()
-    def pxa_scope_end() -> dict:
-        """Archive a passing boundary check before unrelated work; violations cannot be discarded."""
+    def pxa_scope_end(allow_violations: bool = False) -> dict:
+        """Archive the state and audit without changing source; failed audits retain passed=false and violations."""
         from .scope import finish
-        return finish(env.workspace)
+        return finish(env.workspace, allow_violations=allow_violations)
 
     @tool()
     def pxa_board_init(board: str, target: Literal['esp32s3', 'esp32s31', 'esp32p4'], reference: str | None = None) -> dict:
@@ -171,28 +259,44 @@ def create_server(env):
 
     @tool()
     def pxa_interact(job_id: str, steps: list[dict]) -> dict:
-        """Run 1..32 ordered tap/swipe/controller/wait/screenshot/cancel steps on this owned simulator.
+        """Run 1..32 ordered input, semantic UI assertions and screenshots on this owned simulator.
 
         Each step has unique name and action. Tap: x,y; swipe: x,y,x2,y2,ms;
         controller: buttons,ms; wait: ms. Up to 8 screenshots and 15 seconds of
-        holds/waits. Returns a job and evidence paths. Poll pxa_job_status for the
+        holds/waits. Semantic actions: tap-node {selector}, expect {selector,expected},
+        wait-for {selector,expected,timeout_ms}; selector uses id/surface/type/text.
+        Wait timeouts count toward the 15-second budget. Returns a job and evidence paths. Poll pxa_job_status for the
         final batch result, then inspect images. Use pxa_job_stop to cancel.
         """
         return jobs.interact(job_id, steps)
 
     @tool()
     def pxa_verify(project: str, profiles: list[Profile] | None = None, scenario: str | None = None,
-                   store_screenshots: bool = False) -> dict:
-        """Run real Guest checks. Store mode captures rectangular frames with navigation hidden. Disable app-owned performance overlays and inspect every original PNG."""
+                   store_screenshots: bool = False, definitions: list[str] | None = None,
+                   require_ui: bool = False, no_build: bool = False, profile_jobs: int = 2) -> dict:
+        """Run real Guest checks. Use require_ui=true for retained-UI apps and scenario
+        expect/wait-for steps for behavior; Surface-only apps verify actual frames separately.
+        Store mode captures rectangular frames with navigation hidden. Disable app-owned
+        performance overlays and inspect every original PNG.
+        """
         path = env.project(project)
         env.ensure_identity(path)
         arguments = ['verify', str(path)]
+        if not 1 <= profile_jobs <= 4:
+            raise ToolError('profile_jobs must be 1..4')
+        arguments += ['--jobs', str(profile_jobs)]
+        if no_build:
+            arguments.append('--no-build')
         if profiles:
             arguments += ['--profiles', *profiles]
         if scenario:
             arguments += ['--scenario', str(env.project(scenario))]
         if store_screenshots:
             arguments.append('--store-screenshots')
+        for definition in definitions or []:
+            arguments += ['--define', definition]
+        if require_ui:
+            arguments.append('--require-ui')
         return host_job(arguments)
 
     @tool(annotations=read)
@@ -204,6 +308,41 @@ def create_server(env):
     def pxa_info(port: str | None = None, job_id: str | None = None, baud: int = 2000000) -> dict:
         """Read INFO from one selected device or owned simulator; identify board and CPU before installation."""
         return {'log': control(['info'], port, job_id, baud)}
+
+    @tool(annotations=read)
+    def pxa_ui_inspect(port: str | None = None, job_id: str | None = None, baud: int = 2000000,
+                       limit: int = 64, offset: int = 0) -> dict:
+        """Read the actual retained Guest UI: node IDs, parents, text, values and pixel bounds.
+        Password inputs are redacted. Geometry does not prove a node is unobscured;
+        inspect screenshots too. Returns up to 64 nodes by default (max 256), with
+        the full snapshot saved locally. Offset pages are fresh observations;
+        compare snapshot hashes. Unsupported older Hosts fail explicitly.
+        """
+        from .ui import inspection_page
+        if type(limit) is not int or not 1 <= limit <= 256 or type(offset) is not int or not 0 <= offset <= 4096:
+            raise ToolError('UI inspection accepts limit 1..256 and offset 0..4096')
+        tree = json.loads(control(['ui', 'inspect'], port, job_id, baud))
+        return inspection_page(tree, evidence(env.workspace, 'pxa-ui') / 'tree.json', limit=limit, offset=offset)
+
+    @tool(annotations=read)
+    def pxa_ui_expect(selector: dict, expected: dict | None = None, timeout_ms: int = 0,
+                      port: str | None = None, job_id: str | None = None, baud: int = 2000000) -> dict:
+        """Assert real UI state, optionally waiting up to 60000 ms. Selector: id/surface/type/exact text.
+        Expected: visible (default true), enabled, value, count (default one), within [x,y,w,h].
+        Ambiguous matches and failed conditions are errors, never implicit passes.
+        """
+        from .ui import query_arguments
+        arguments = query_arguments('wait-for' if timeout_ms else 'expect', selector, expected, timeout_ms)
+        return json.loads(control(arguments, port, job_id, baud, timeout=max(60, timeout_ms / 1000 + 10)))
+
+    @tool()
+    def pxa_tap_node(selector: dict, port: str | None = None, job_id: str | None = None, baud: int = 2000000) -> dict:
+        """Resolve exactly one visible enabled control and inject a real pointer tap.
+        A text selector can resolve its clickable ancestor. Verify the resulting state with
+        pxa_ui_expect; overlays may intercept pointer input. Never chooses an arbitrary match.
+        """
+        from .ui import query_arguments
+        return json.loads(control(query_arguments('tap', selector), port, job_id, baud))
 
     @tool(annotations=read)
     def pxa_packages(port: str, baud: int = 2000000) -> dict:
@@ -251,9 +390,21 @@ def create_server(env):
         return {'log': control(['memory'], port, job_id, baud)}
 
     @tool()
-    def pxa_install(project: str, port: str, baud: int = 2000000) -> dict:
+    def pxa_install(project: str, port: str, baud: int = 2000000, strict_compatibility: bool = False) -> dict:
         """Build for the INFO CPU, verify signature, install and run an authorized app update; preserve private data."""
-        return host_job(['install', str(env.project(project)), '--port', port, '--baud', str(baud)], timeout=900)
+        return host_job(['install', str(env.project(project)), '--port', port, '--baud', str(baud),
+                         *(['--strict-compatibility'] if strict_compatibility else [])], timeout=900)
+
+    @tool(annotations=read)
+    def pxa_firmware_status(port: str, board: str | None = None, release: str = 'latest', baud: int = 2000000) -> dict:
+        """Read device INFO and signed release metadata without downloading an image,
+        resetting or flashing. Partition match and running image origin remain unverified.
+        Returns a job; poll pxa_job_status for the report.
+        """
+        arguments = ['firmware','status','--port',port,'--release',release,'--baud',str(baud)]
+        if board:
+            arguments += ['--board',board]
+        return host_job(arguments,timeout=180)
 
     @tool(annotations=read)
     def pxa_firmware_prepare(board: str, release: str = 'latest', mode: Literal['app', 'full'] = 'app') -> dict:

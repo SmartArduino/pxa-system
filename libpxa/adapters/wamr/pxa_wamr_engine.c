@@ -1281,6 +1281,23 @@ uint32_t pxa_wamr_engine_execution_models(const pxa_wamr_engine_t *engine) {
         ? PXA_EXECUTION_MODEL_MAIN_LOOP : 0;
 }
 
+uint32_t pxa_wamr_engine_artifact_kinds(const pxa_wamr_engine_t *engine) {
+    if (!engine || engine->magic != PXA_WAMR_ENGINE_MAGIC) return 0;
+    return pxa_wamr_engine_build_artifact_kinds();
+}
+
+uint32_t pxa_wamr_engine_build_artifact_kinds(void) {
+    uint32_t kinds = 0;
+#if WASM_ENABLE_AOT != 0
+    kinds |= UINT32_C(1) << PXA_ARTIFACT_AOT;
+#endif
+    if (wasm_runtime_is_running_mode_supported(Mode_Interp) ||
+        wasm_runtime_is_running_mode_supported(Mode_Fast_JIT) ||
+        wasm_runtime_is_running_mode_supported(Mode_LLVM_JIT))
+        kinds |= UINT32_C(1) << PXA_ARTIFACT_WASM;
+    return kinds;
+}
+
 int pxa_wamr_engine_poll_deadlines(pxa_wamr_engine_t *engine, uint64_t now_us) {
     int terminated = 0;
     if (engine == NULL || engine->magic != PXA_WAMR_ENGINE_MAGIC) return 0;

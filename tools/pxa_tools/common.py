@@ -82,7 +82,7 @@ def process_options() -> dict:
             else {'start_new_session': True})
 
 
-def command(args, *, env=None, capture=False, cwd=None):
+def command(args, *, env=None, capture=False, cwd=None, strip=True):
     args = [str(value) for value in args]
     result = subprocess.run(args, env=env, cwd=cwd, text=True,
                             stdout=subprocess.PIPE if capture else None,
@@ -90,4 +90,4 @@ def command(args, *, env=None, capture=False, cwd=None):
     if result.returncode:
         raise ToolError(f'{Path(args[0]).name} failed ({result.returncode})' +
                         (': ' + result.stderr.strip() if capture else ''))
-    return result.stdout.strip() if capture else ''
+    return (result.stdout.strip() if strip else result.stdout) if capture else ''

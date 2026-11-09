@@ -30,6 +30,22 @@ def aot_flags(metadata: dict, target: str) -> list[str]:
 
 
 
+def installed_sdk(release, *, root=SDK_ROOT):
+    """Find pinned SDKs installed by either the standalone CLI or Agent Kit."""
+    if not isinstance(release,str) or not re.fullmatch(r'\d+\.\d+\.\d+(?:-[a-zA-Z0-9.-]+)?',release):
+        raise ToolError('Invalid SDK release in pxa.lock; preserve the lock for inspection')
+    from .distribution import data_root
+    agent_data = (os.environ.get('LOCALAPPDATA') if os.name == 'nt' else os.environ.get('XDG_DATA_HOME')) or Path.home()/'.local/share'
+    agent = Path(os.environ.get('PXA_AGENT_HOME') or Path(agent_data)/'pxa-agent').expanduser()
+    candidates = [data_root()/'releases'/release,root.parent/release,agent/'sdks'/release]
+    launcher = 'bin/pxa.cmd' if os.name == 'nt' else 'bin/pxa'
+    for selected in candidates:
+        version = selected/'VERSION'
+        if (selected/launcher).is_file() and version.is_file() and version.read_text().strip() == release:
+            return selected.resolve()
+    raise ToolError(f'Locked SDK {release} is missing; run pxa sdk install {release}. The project lock was retained.')
+
+
 def sdk_identity(root: Path) -> dict:
     files = sorted([*root.glob('sdk/guest-cpp/include/**/*.hpp'),
                     *root.glob('sdk/guest-cpp/src/*.cpp'), *root.glob('sdk/cmake/*.cmake'),

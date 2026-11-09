@@ -1682,6 +1682,20 @@ static int parse_options(int argc, char** argv, simulator_options_t* options) {
             return 0;
         }
     }
+    /* The embedded runner reads this override too. Apply it to system chrome
+     * and its reported metrics so button mode cannot inherit a Back strip
+     * from a gesture profile. */
+    const char* navigation_override = getenv("PXA_SIM_NAV_MODE");
+    if (navigation_override &&
+        (!strcmp(navigation_override, "buttons") ||
+         !strcmp(navigation_override, "gesture") ||
+         !strcmp(navigation_override, "gestures") ||
+         !strcmp(navigation_override, "gesture-no-bar"))) {
+        const unsigned mode = pxsys_simulator_navigation_mode(navigation_override);
+        options->navigation = mode == 2u ? PXSYS_NAVIGATION_BUTTONS
+                                         : PXSYS_NAVIGATION_GESTURES;
+        options->no_navigation_bar = mode == 1u;
+    }
     return 1;
 }
 
@@ -1948,6 +1962,7 @@ static int run_simulator(const simulator_options_t* options) {
     runtime_fixture.state_root = options->state_root;
     runtime_fixture.navigation_gestures =
         options->navigation == PXSYS_NAVIGATION_GESTURES;
+    runtime_fixture.navigation_bar_enabled = !options->no_navigation_bar;
     pump.control = &pxadb_control;
     pump.power = &power_state;
     pump.display = display;
@@ -2061,6 +2076,9 @@ static int run_simulator(const simulator_options_t* options) {
         goto done;
 
     pxadb_control.package_action = control_app_action;
+    pxadb_control.inspect_context = simulator_runtime;
+    pxadb_control.inspect_ui = pxsys_desktop_runtime_inspect_ui;
+    pxadb_control.runtime_info = pxsys_desktop_runtime_runtime_info;
 
     if (options->launch_app != NULL &&
         launch_app(system, options->launch_app) !=

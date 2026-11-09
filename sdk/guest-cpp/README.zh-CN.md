@@ -14,6 +14,22 @@
 后续接口与性能优化以 C++ SDK 为主要维护方向。此 SDK 是独立的 C++26
 Guest 实现，不包含或调用 Guest C SDK。
 
+## 按任务阅读
+
+| 要做的事 | 说明 |
+| --- | --- |
+| 页面、状态绑定、fill、安全区和响应式布局 | [声明式 UI](DECLARATIVE_UI.zh-CN.md) |
+| 控件与样式 | [声明式控件](DECLARATIVE_WIDGETS.zh-CN.md) |
+| 单调计时、暂停与定时回调 | [时钟](CLOCK.zh-CN.md) |
+| 中文与多语言 | [国际化](I18N.zh-CN.md) |
+| 长按、滑动与取消 | [手势](GESTURES.zh-CN.md) |
+| 多指触摸与触点身份 | [多点触摸](MULTITOUCH.zh-CN.md) |
+| 编译器与标准库的实际支持范围 | [语言特性](FEATURES.zh-CN.md) |
+
+使用 `min_sdk: [2,0]` 的应用必须在 `package.json` 列全实际使用的服务；
+包含 `log.hpp`、`storage.hpp` 或 `window.hpp` 不会自动授予相应服务。
+从模板扩展计时或存档功能时，同时检查 `clock`、`log`、`storage`、`window` 的声明。
+
 ## C / C++ 服务接口对照
 
 两套 SDK 使用相同的 Core 和服务协议。C 保留显式 token、调用方缓冲区和
@@ -151,9 +167,20 @@ Canvas 绘图命令的坐标同样使用逻辑像素；`text_sized` 的字号单
 `surface_to_canvas_length(value, metrics)` 转换线宽和半径。矩形按边缘向外取整，
 正长度向上取整，避免分数 DPI 下少画一列像素或把细线缩成零像素；
 这些函数没有状态、缓存或动态分配。
-Canvas 自行排版交互控件时，可用 `interactive_rectangle(metrics, window.system_bar_insets)`
-同时避开屏幕安全区和系统输入手势条。`window` 来自 `WindowService::snapshot()` 或
-`on_window_changed`，系统栏 inset 是从屏幕边缘量起的绝对距离；不要重复相加。
+页面排版使用 `safe_rectangle(metrics)`，声明式页面使用 `SafeArea(metrics, content)`；
+默认保留物理安全边距、实际系统栏和底部 Home 手势区，不为侧边返回手势整体右移。
+只有贴边按钮或横向拖动区域需要避让时，才对该组控件使用
+`safe_rectangle(metrics, GestureAvoidance::all)` 或
+`SafeArea(metrics, controls, GestureAvoidance::all)`。没有手势的设备不额外留白。
+应用可用 `GestureAvoidance::none` 取消手势避让；物理安全边距和实际系统栏仍然保留，
+系统返回和 Home 手势也仍然有效。背景可以铺满整个视口。
+
+`interactive_rectangle(metrics, occupied)` 用于显式指定需要避开的区域。
+旧 Host 的 `WindowMetrics.system_bar_insets` 合并了系统栏和手势区，
+不要把它直接用于整页的左侧内边距，否则内容可能偏离视觉中心。
+各 inset 都是从屏幕边缘量起的绝对距离，逐边取最大值，不重复相加。
+新 Host 的独立指标、旧 Host 的未知信息处理和动态布局见
+[安全区说明](DECLARATIVE_UI.zh-CN.md#通用修饰与安全区)。
 `density_q16` 是 DPI 相对 160 的比例，不能替换为 Window 的像素尺寸比例。
 缺省圆角扩展按矩形处理；重复、截断及无效尺寸返回协议错误。此可选头文件
 只提供小值结构和解码函数，不注册服务、不分配缓存、不增加其他应用的默认开销。
@@ -1062,3 +1089,15 @@ Audio 0.15 的 `context.capture().open(permission)` 使用
 scope 允许任意可达 IPv4 对端；发现仍限局域网。先查询 capabilities，网页/Windows
 Host 暂不支持新增的监听/UDP/发现。
 内存预算、权限、跨端示例和平台限制见[IP 通信接入说明](../../docs/zh-CN/local-network.md)。
+
+## 复用已构建的包
+
+`pxa build <app> --check-existing --offline` 检查准备好的本地构建，不执行 CMake、编译或打包。
+`pxa run <app> --no-build --debug --profile pai-touch` 校验后复用运行，并开启调试接口。
+工具核对源码/common 输入、实际编译及 CMake 依赖、声明的生成器输入、资源、SDK/工具链锁、CPU、测试宏、签名身份和包摘要；
+旧格式记录或过期输入必须先重新构建，不能删锁来绕过。清理 CMake 生成缓存后仍可复用自包含包，
+但记录中的源依赖和工具链须保持可校验。用测试宏构建的包须传相同的 `--define`，正式交付前重新构建无测试宏的包。
+
+`--no-build` 使用准备好的 Debug 或 Release 模式，开启调试接口不会改变编译模式；实际模式会显示出来。
+它不能与 `--watch`、`--update-lock` 合用。`--simulator-state <directory>` 可为手工测试指定独立状态目录。
+Agent Kit 的 `verify` 自动只构建一次再并行运行多个屏幕，且隔离测试状态；具体入口见新建应用的 README 和 `tests/basic.json`。

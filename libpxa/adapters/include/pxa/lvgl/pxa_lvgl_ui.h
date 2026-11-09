@@ -120,6 +120,16 @@ uint64_t pxa_lvgl_ui_event_timestamp_us(const pxa_lvgl_ui_t *ui);
 /* Trusted text-input bridge: configured UTF-8 byte budget for a native editor. */
 uint32_t pxa_lvgl_ui_text_input_max_bytes(const pxa_lvgl_ui_t *ui, const void *textarea);
 
+/* Trusted Host diagnostics, not a Guest service. Runs through execute to read
+ * the committed tree and resolved Surface-pixel geometry. Uses the caller's
+ * buffer without a retained inspection cache; (NULL, 0) queries the required
+ * byte count excluding the final NUL. Standard layout resolution still runs.
+ * Password values are redacted. Strings are bounded and mark truncation; more
+ * than 4096 nodes or 1 MiB of JSON fails explicitly. Rectangular clipping does not prove that a
+ * node is unobscured by other windows or physical display masks. */
+pxa_status_t pxa_lvgl_ui_inspect_json(pxa_lvgl_ui_t *ui, char *output,
+    size_t capacity, size_t *size);
+
 #ifdef __cplusplus
 }
 #endif

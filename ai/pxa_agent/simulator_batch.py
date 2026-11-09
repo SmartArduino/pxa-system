@@ -17,6 +17,8 @@ import tomllib
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from pxa_agent.simulator_input import inject
+from pxa_agent.ui import query_arguments
+from pxa_agent.common import ToolError
 
 NAME = re.compile(r'[a-z][a-z0-9-]{0,47}')
 
@@ -84,6 +86,17 @@ def validate(steps, width, height):
         if not isinstance(name, str) or not NAME.fullmatch(name) or name in names:
             raise ValueError('Use unique lowercase step names')
         names.add(name)
+        if action in ('expect', 'wait-for', 'tap-node'):
+            fields = {'selector'} | ({'expected'} if action != 'tap-node' else set()) | (
+                {'timeout_ms'} if action == 'wait-for' else set())
+            if set(step) != fields | {'name', 'action'}:
+                raise ValueError('Invalid semantic UI step fields')
+            query_arguments('tap' if action == 'tap-node' else action, step['selector'],
+                            step.get('expected'), step.get('timeout_ms', 0))
+            duration += step.get('timeout_ms', 0)
+            continue
+        if not isinstance(action, str):
+            raise ValueError('Action must be a string')
         fields = {'tap': {'x','y'}, 'swipe': {'x','y','x2','y2','ms'},
                   'controller': {'buttons','ms'}, 'wait': {'ms'},
                   'screenshot': set(), 'cancel': set()}.get(action)
@@ -114,6 +127,16 @@ def load_sdk(root):
     return module
 
 
+def load_ui_query(root):
+    path = Path(root) / 'tools/pxadb/ui_query.py'
+    if not path.is_file():
+        raise ValueError('Pinned SDK lacks semantic UI debugging; select a matching DevKit explicitly')
+    spec = importlib.util.spec_from_file_location('_pxa_batch_ui_query', path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def execute(sdk, selector, steps, output, *, socket_root=None, cancel_file=None):
     if not re.fullmatch(r'[a-z0-9-]+@[a-z0-9-]+', selector):
         raise ValueError('Use an explicit owned simulator selector, never a device port')
@@ -121,6 +144,7 @@ def execute(sdk, selector, steps, output, *, socket_root=None, cancel_file=None)
     desktop = tomllib.loads((Path(sdk) / 'share/pxa/profiles' / (profile + '.toml')).read_text())['desktop']
     validate(steps, desktop['width'], desktop['height'])
     module = load_sdk(sdk)
+    ui = load_ui_query(sdk) if any(step['action'] in ('expect', 'wait-for', 'tap-node') for step in steps) else None
     sockets = Path(socket_root or os.environ.get('PXA_SIMULATOR_SOCKET_ROOT', f'/tmp/pxa-simulator-{os.getuid()}'))
     output = Path(output)
     output.mkdir(parents=True, exist_ok=False)
@@ -139,6 +163,25 @@ def execute(sdk, selector, steps, output, *, socket_root=None, cancel_file=None)
                 for step in steps:
                     check_cancel()
                     action, before = step['action'], time.monotonic()
+                    item = {'name': step['name'], 'action': action, 'passed': False}
+                    result['steps'].append(item)
+                    def semantic_step():
+                        deadline = time.monotonic() + step.get('timeout_ms', 0) / 1000
+                        while True:
+                            check_cancel()
+                            tree = ui.decode_snapshot(client.request('UI INSPECT'))
+                            if action == 'tap-node':
+                                target = ui.tap_target(tree, step['selector'])
+                                frames = client.request(f"INPUT TAP {target['x']} {target['y']}")
+                                if any('status=rejected' in frame.payload for frame in frames):
+                                    raise RuntimeError('UI tap rejected by Host')
+                                return target
+                            try:
+                                return ui.expect(tree, step['selector'], step['expected'])
+                            except ui.UiQueryError:
+                                if action != 'wait-for' or time.monotonic() >= deadline:
+                                    raise
+                                time.sleep(min(.1, max(0, deadline-time.monotonic())))
                     if action == 'tap':
                         client.request(f"INPUT TAP {step['x']} {step['y']}")
                     elif action == 'swipe':
@@ -156,8 +199,9 @@ def execute(sdk, selector, steps, output, *, socket_root=None, cancel_file=None)
                         module.write_screenshot(capture, path)
                         result['screenshots'].append({'path':path.name,
                             'sha256':hashlib.sha256(path.read_bytes()).hexdigest(), 'post_processed':False})
-                    result['steps'].append({'name':step['name'], 'action':action,
-                                            'elapsed_ms':round((time.monotonic()-before)*1000, 2)})
+                    elif action in ('expect', 'wait-for', 'tap-node'):
+                        item['result'] = semantic_step()
+                    item.update(passed=True, elapsed_ms=round((time.monotonic()-before)*1000, 2))
             finally:
                 # Never replay a failed write. Release every input, even on errors.
                 stop_monitor()
@@ -169,6 +213,8 @@ def execute(sdk, selector, steps, output, *, socket_root=None, cancel_file=None)
         result['cancelled'] = isinstance(error, BatchCancelled)
         result['error'] = str(error) or type(error).__name__
         result['connected'] = connected
+        if result['steps'] and not result['steps'][-1]['passed']:
+            result['steps'][-1].update(error=str(error), elapsed_ms=round((time.monotonic()-before)*1000, 2))
         raise
     finally:
         result['elapsed_ms'] = round((time.monotonic()-started)*1000, 2)
@@ -187,7 +233,7 @@ def main():
         result = execute(args.sdk, args.simulator, json.loads(args.steps), args.output, cancel_file=args.cancel_file)
         print(json.dumps(result, ensure_ascii=False))
         return 0
-    except (ValueError, RuntimeError, OSError) as error:
+    except (ValueError, RuntimeError, OSError, ToolError) as error:
         print('pxa-batch: ' + str(error), file=sys.stderr)
         return 1
 

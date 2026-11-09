@@ -21,6 +21,11 @@ Use `device-profile --port PORT` / MCP `pxa_device_profile` for design constrain
 Without a port it lists candidates without opening them. If the device is not
 responding, ask the user to connect a USB **data** cable, power on normally,
 open Settings → PXADB debugging (设置 → PXADB 调试) and enable it where present.
+In the reference UI the switch is in Settings → Device information → Developer:
+if hidden, rapidly tap System version seven times, then scroll to PXADB debugging
+(设置 → 设备信息，快速连续点击「系统版本」7 次，下滑到「开发者 → PXADB 调试」).
+Use the actual product's UI when it differs; firmware download mode does not
+enable this runtime switch.
 Close competing serial monitors; check COM drivers/Linux permissions and rediscover
 after reconnect. BOOT/RESET is firmware download mode, not enabling PXADB.
 Do not flash firmware or reset user settings just to discover a device.

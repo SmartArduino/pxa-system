@@ -48,9 +48,9 @@ def partition_table(data):
     return result
 
 
-def prepare(board, *, version='latest', mode='app', manifest=None):
-    if board not in BOARDS or mode not in ('app', 'full'):
-        raise ToolError('Choose a supported board and app/full mode')
+def release_descriptor(board, *, version='latest', manifest=None):
+    if board not in BOARDS:
+        raise ToolError('Choose a supported firmware board')
     if version == 'latest':
         with request('https://api.github.com/repos/SmartArduino/pxa-workspace/releases/latest') as response:
             version = json.load(response)['tag_name'].removeprefix('v')
@@ -58,7 +58,7 @@ def prepare(board, *, version='latest', mode='app', manifest=None):
         raise ToolError('Invalid official firmware release version')
     source = manifest or f'https://github.com/SmartArduino/pxa-workspace/releases/download/v{version}/firmware-manifest.json'
     rows, raw, signature = signed_document(source)
-    if not isinstance(rows, list):
+    if not isinstance(rows, list) or any(not isinstance(row,dict) for row in rows):
         raise ToolError('Invalid official firmware manifest')
     matches = [row for row in rows if row.get('board') == board and row.get('version') == version]
     if len(matches) != 1:
@@ -66,6 +66,14 @@ def prepare(board, *, version='latest', mode='app', manifest=None):
     row = matches[0]
     if row['chip'] != ('esp32p4' if board == 'espp4-a' else 'esp32s3' if board in ('pai-touch', 'sensecap-watcher') else 'esp32s31'):
         raise ToolError('Firmware board/CPU mismatch')
+    return row, source
+
+
+def prepare(board, *, version='latest', mode='app', manifest=None):
+    if board not in BOARDS or mode not in ('app', 'full'):
+        raise ToolError('Choose a supported board and app/full mode')
+    row, source = release_descriptor(board,version=version,manifest=manifest)
+    version = row['version']
     from .environment import locate
     item = row['application' if mode == 'app' else 'merged']
     image = artifact(locate(source, item['file']), item, maximum=64 * 1024**2)
@@ -86,6 +94,44 @@ def prepare(board, *, version='latest', mode='app', manifest=None):
             'preserves_data': mode == 'app', 'requires_matching_partition_table': mode == 'app',
             'full_flash_erases_apps_saves_settings': mode == 'full',
             'bootloader_hint': 'Hold BOOT, press RESET, release BOOT; the port may change.' if row['chip'] == 'esp32s31' else None}
+
+
+def status(environment, *, port, board=None, baud=2000000, version='latest', manifest=None):
+    """Read INFO and signed release metadata; never enter ROM or download an image."""
+    if not port:
+        raise ToolError('Firmware status needs an explicit device port')
+    from .device_profile import connection_help
+    try:
+        info = info_fields(environment.device(['info','--port',port,'--baud',str(baud)],timeout=12))
+    except ToolError as error:
+        return {'connected':False,'port':port,'error':str(error),'connection_steps':connection_help()}
+    reported = info.get('board')
+    if board is not None and reported and board != reported:
+        raise ToolError('The device reports board '+reported+'; requested '+board+'. No firmware was written.')
+    board = board or reported
+    if board not in BOARDS:
+        return {'connected':True,'port':port,'device':info,'recognized_board':False,
+                'firmware_origin':'unverified','status':'unknown',
+                'next_steps':['Confirm the exact board and CPU before choosing firmware.',
+                              'Use https://pxa.doit.am/flash/ for supported hardware, or the board adaptation workflow for a custom board.']}
+    row,source = release_descriptor(board,version=version,manifest=manifest)
+    target = {'esp32-s3':'esp32s3','esp32-s31':'esp32s31','esp32-p4':'esp32p4'}.get(info.get('target'),info.get('target'))
+    if target is not None and target != row['chip']:
+        raise ToolError('The reported board and CPU disagree; no firmware was written')
+    current, selected = info.get('pxa_version'), row['version']
+    comparison = 'unknown'
+    if current and re.fullmatch(r'\d+\.\d+\.\d+',current):
+        left,right = tuple(map(int,current.split('.'))),tuple(map(int,selected.split('.')))
+        comparison = 'same_release' if left == right else 'update_available' if left < right else 'device_newer'
+    return {'connected':True,'port':port,'board':board,'recognized_board':True,'device':info,
+            'firmware_origin':'unverified','status':comparison,
+            'selected_release':selected,'selected_chip':row['chip'],'signature_verified':True,
+            'manifest':str(source),'image_downloaded':False,'flash_completed':False,
+            'app_only':{'partition_match':'unknown','preserves_data_when_layout_matches':True,
+                        'note':'The real partition table is checked only during an explicitly requested upgrade. Release numbers do not prove a matching layout or official running image.'},
+            'commands':{'prepare':['firmware','prepare','--board',board,'--release',selected],
+                        'upgrade':['firmware','upgrade','--board',board,'--release',selected,'--port',port]},
+            'note':'Firmware release, Core ABI, service versions and AOT ABI are separate. Compare the intended package before installation; status never upgrades automatically.'}
 
 
 def flash(environment, board, *, port, baud=2000000, version='latest', mode='app', erase_data=False, manifest=None):

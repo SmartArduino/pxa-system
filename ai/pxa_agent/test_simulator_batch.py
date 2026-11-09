@@ -159,6 +159,16 @@ class BatchTests(unittest.TestCase):
         state = jobs.status('batch')
         self.assertTrue(state['passed'])
         self.assertEqual(state['batch'],result)
+        result['steps'] = [{'name': 'many-nodes', 'action': 'expect', 'passed': True,
+                            'result': {'passed': True, 'matched_count': 300,
+                                       'nodes': [{'text': 'x' * 300} for _ in range(300)]}}]
+        (self.output/'result.json').write_text(json.dumps(result))
+        state = jobs.status('batch')
+        self.assertTrue(state['passed'])
+        self.assertTrue(state['batch']['details_summarized'])
+        self.assertEqual(state['batch']['steps'][0]['result']['matched_count'], 300)
+        self.assertLess(len(json.dumps(state)), 6000)
+        self.assertEqual(len(json.loads((self.output/'result.json').read_text())['steps'][0]['result']['nodes']), 300)
         job['cancel_requested'] = True
         state = jobs.status('batch')
         self.assertFalse(state['passed'])

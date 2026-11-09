@@ -84,6 +84,10 @@ typedef struct pxsys_display_service pxsys_display_service_t;
 void pxsys_display_profile_init(pxsys_display_profile_t* profile,
                                 uint32_t width, uint32_t height);
 pxsys_status_t pxsys_display_profile_validate(const pxsys_display_profile_t* profile);
+/* Rotate physical geometry into the logical reading view. Angle is clockwise
+ * graphics rotation into the native panel, encoded as 0..3 quarter turns. */
+pxsys_status_t pxsys_display_profile_rotated(const pxsys_display_profile_t* native,
+    uint8_t rotation, pxsys_display_profile_t* output);
 pxsys_status_t pxsys_display_safe_rect(const pxsys_display_profile_t* profile,
                                        pxsys_rect_t* output);
 /* Safe insets merged with per-side cutout (notch, punch-hole) coverage. Apps

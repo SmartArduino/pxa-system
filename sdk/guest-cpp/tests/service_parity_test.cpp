@@ -387,6 +387,28 @@ static void test_surface_window(pxa::Transport& transport, pxa::RequestTable& re
         assert(pxa_window_keep_screen_on(enabled) == 0 && payload == wanted);
     }
     assert(pxa_window_keep_screen_on(2) < 0);
+    for (std::uint8_t r = 0; r < 4; ++r) {
+        assert(window.set_rotation(static_cast<pxa::DisplayRotation>(r)));
+        auto wanted = payload;
+        assert(pxa_window_set_rotation(r) == 0 && payload == wanted);
+        assert(payload[4] == std::byte(6 + r));
+    }
+    assert(pxa_window_set_rotation(4) < 0);
+    Pending display(window.snapshot(true));
+    assert(service == 2 && opcode == 5 && payload.empty());
+    pxa_window_snapshot_wire_t wire{};
+    wire.revision = 7; wire.logical_width = wire.pixel_width = 854;
+    wire.logical_height = wire.pixel_height = 480;
+    wire.density_numerator = wire.density_denominator = 1;
+    wire.rotation = 1; wire.native_width = 480; wire.native_height = 854;
+    wire.orientation = 2; wire.supported_rotations = 15;
+    std::array<std::byte, 124> reply{};
+    std::size_t written;
+    assert(pxa_window_display_snapshot_records_encode(
+        reinterpret_cast<std::uint8_t*>(reply.data() + 4), 120, &wire, &written) && written == 120);
+    complete(requests, display, reply);
+    assert(*display.result && (**display.result).rotation == 1 &&
+        (**display.result).native_width == 480 && (**display.result).logical_width == 854);
     assert(window.request_back()); assert(pxa_window_request_back() == 0);
     pxa::ui::TransportService ui(transport);
     assert(ui.open_surface(7, pxa::ui::SurfaceRole::overlay));

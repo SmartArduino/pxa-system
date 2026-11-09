@@ -122,7 +122,7 @@ private:
     WidgetStyle style_;
     [[no_unique_address]] F callback_;
 };
-class StyledButtonBuilder {
+class StyledButtonBuilder : public ButtonBuilderModifiers {
 public:
     StyledButtonBuilder(std::string_view label, WidgetStyle style)
         : label_(label), style_(style) {}

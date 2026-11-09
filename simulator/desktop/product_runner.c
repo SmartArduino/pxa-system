@@ -4,6 +4,8 @@
 #include "pxa/image/codecs.h"
 
 #include <errno.h>
+#include <stdarg.h>
+#include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -225,6 +227,7 @@ typedef struct {
     const pxsys_theme_snapshot_t *host_theme;
     uint64_t theme_generation;
     pxsys_insets_t host_bar_insets;
+    uint8_t ui_insets_pending;
     pxa_ui_service_t *ui;
     pxa_ui_backend_t ui_backend;
     pxa_lvgl_ui_t *ui_adapter;
@@ -362,6 +365,9 @@ typedef struct {
     lv_font_t *display_font;
     uint32_t width;
     uint32_t height;
+    uint32_t native_width, native_height;
+    uint32_t native_safe_insets[4], native_corner_radii[4];
+    uint8_t display_rotation;
     uint32_t safe_insets[4];
     uint32_t display_shape;
     uint32_t corner_radius;
@@ -382,6 +388,82 @@ typedef struct {
     pxsys_volume_key_input_t volume_events;
     uint32_t input_window_id;
 } product_host_t;
+
+int pxsys_product_simulator_inspect_ui(void *runner, char *output,
+    size_t capacity, size_t *size) {
+    product_host_t *host = runner;
+    if (!host || !host->focused || !host->ui_adapter) return PXA_STATUS_NOT_FOUND;
+    return pxa_lvgl_ui_inspect_json(host->ui_adapter, output, capacity, size);
+}
+
+typedef struct { char *output; size_t capacity, used; int failed; } runtime_info_writer_t;
+static void runtime_info_append(runtime_info_writer_t *writer, const char *format, ...) {
+    const size_t available = writer->output && writer->used < writer->capacity ? writer->capacity-writer->used : 0;
+    va_list args; va_start(args,format);
+    const int count = vsnprintf(available ? writer->output+writer->used : NULL,available,format,args);
+    va_end(args);
+    if (count < 0) writer->failed=1;
+    else writer->used+=(size_t)count;
+}
+static void runtime_info_string(runtime_info_writer_t *writer, pxa_bytes_t value) {
+    runtime_info_append(writer,"\"");
+    for (size_t i=0;i<value.size;++i) {
+        const unsigned c=value.data[i];
+        if(c < 32 || c >= 127 || c == '"' || c == '\\') runtime_info_append(writer,"\\u%04x",c);
+        else runtime_info_append(writer,"%c",c);
+    }
+    runtime_info_append(writer,"\"");
+}
+int pxsys_product_simulator_runtime_info(void *runner, char *output,
+    size_t capacity, size_t *size) {
+    product_host_t *host=runner;
+    if (!size || (!output && capacity)) return PXA_STATUS_INVALID_ARGUMENT;
+    *size=0;
+    if(output && capacity) output[0]='\0';
+    if(!host || !host->ime_profile || !host->ime_capabilities || !host->engine) return PXA_STATUS_NOT_FOUND;
+    const pxa_package_host_profile_t *profile=host->ime_profile;
+    const pxa_package_activation_profile_t *caps=host->ime_capabilities;
+    runtime_info_writer_t writer={output,capacity,0,0};
+    const uint32_t kinds=pxa_wamr_engine_artifact_kinds(host->engine);
+    if (!kinds) return PXA_STATUS_UNSUPPORTED;
+    const char *formats=(kinds & (1u << PXA_ARTIFACT_WASM)) ?
+        ((kinds & (1u << PXA_ARTIFACT_AOT)) ? "1,2" : "1") : "2";
+    runtime_info_append(&writer,"{\"schema\":\"1\",\"core\":\"%u.%u\",\"target\":",caps->core_version.major,caps->core_version.minor);
+    runtime_info_string(&writer,profile->target);
+    runtime_info_append(&writer,",\"engine\":"); runtime_info_string(&writer,profile->engine);
+    runtime_info_append(&writer,",\"engine_abi\":"); runtime_info_string(&writer,profile->engine_abi);
+    runtime_info_append(&writer,",\"memory_model\":\"%u\",\"artifact_kinds\":\"%s\",\"artifact_features\":\"%" PRIu64 "\",\"execution_models\":\"%" PRIu32 "\",\"manifest_max\":\"%u.%u\",\"service_count\":\"%zu\",\"services\":[",
+        profile->memory_model,formats,profile->supported_features,caps->execution_models,
+        PXA_PACKAGE_MANIFEST_FORMAT_MAJOR,PXA_PACKAGE_MANIFEST_FORMAT_MINOR,caps->service_count);
+    for(size_t i=0;i<caps->service_count;++i) {
+        const pxa_package_service_capability_t *service=&caps->services[i];
+        runtime_info_append(&writer,"%s{\"id\":\"%u\",\"version\":\"%u.%u\",\"features\":\"",i ? "," : "",service->service,service->version.major,service->version.minor);
+        if(service->service == PXA_FS_SERVICE_ID) runtime_info_append(&writer,"unknown");
+        else runtime_info_append(&writer,"%" PRIu64,service->features);
+        runtime_info_append(&writer,"\"}");
+    }
+    runtime_info_append(&writer,"]}");
+    *size=writer.used;
+    if(writer.failed || writer.used > 16384u) return PXA_STATUS_RESOURCE_LIMIT;
+    if(output && capacity <= writer.used) {
+        if(capacity) output[0]='\0';
+        return PXA_STATUS_RESOURCE_LIMIT;
+    }
+    return PXA_STATUS_OK;
+}
+
+/* Window 0.4 retains combined input exclusions for existing Guests. The UI
+ * environment separates side gestures from page layout margins. */
+static void split_ui_insets(uint8_t navigation_mode,
+    const pxa_window_insets_t *combined, uint32_t bars[4], uint32_t gestures[4]) {
+    const int buttons = navigation_mode == 2u;
+    bars[0] = combined->top; bars[1] = combined->right;
+    bars[2] = buttons ? combined->bottom : 0;
+    bars[3] = buttons ? combined->left : 0;
+    gestures[0] = gestures[1] = 0;
+    gestures[2] = buttons ? 0 : combined->bottom;
+    gestures[3] = buttons ? 0 : combined->left;
+}
 
 /* The allocator descriptors outlive every asset and are immutable after init.
  * File assets and dynamic uploads use the same class/category; no fallback to
@@ -513,7 +595,7 @@ static pxa_status_t configure_start_locale(product_host_t *host,
                                            uint64_t instance_id,
                                            const pxa_ui_config_t *ui_config) {
     uint8_t environment[9u + PRODUCT_LOCALE_MAX_BYTES];
-    uint8_t ui_environment[128];
+    uint8_t ui_environment[PXA_UI_ENVIRONMENT_WIRE_BYTES];
     uint8_t config[8u + sizeof(ui_environment) + sizeof(environment)];
     pxa_ui_environment_t ui_environment_value;
     pxa_writer_t environment_writer;
@@ -542,6 +624,10 @@ static pxa_status_t configure_start_locale(product_host_t *host,
     ui_environment_value.display_shape = host->display_shape;
     for (size_t index = 0; index < 4; ++index)
         ui_environment_value.corner_radii[index] = host->corner_radii[index];
+    memcpy(ui_environment_value.system_bar_insets, ui_config->system_bar_insets,
+           sizeof(ui_environment_value.system_bar_insets));
+    memcpy(ui_environment_value.system_gesture_insets, ui_config->system_gesture_insets,
+           sizeof(ui_environment_value.system_gesture_insets));
     status = pxa_ui_encode_environment(&ui_environment_value, ui_environment,
                                        sizeof(ui_environment),
                                        &ui_environment_size);
@@ -2049,6 +2135,21 @@ static void dispatch_component_events(product_host_t *host) {
         host->exit_requested || SDL_AtomicGet(&host->home_requested) ||
         host->active_component == PXA_COMPONENT_INVALID || pxa_wamr_engine_busy(host->engine))
         return;
+    if (host->ui_insets_pending) {
+        pxa_ui_environment_t environment;
+        pxa_window_snapshot_t snapshot;
+        if (pxa_window_get_snapshot(host->window, host->active_component, &snapshot) == PXA_STATUS_OK &&
+            pxa_ui_get_environment(host->ui, host->active_component, PXA_UI_PRIMARY_SURFACE, &environment) == PXA_STATUS_OK) {
+            environment.width = host->width;
+            environment.height = host->height;
+            memcpy(environment.safe_insets, host->safe_insets, sizeof(host->safe_insets));
+            memcpy(environment.corner_radii, host->corner_radii, sizeof(host->corner_radii));
+            split_ui_insets(host->navigation_mode, &snapshot.system_bar_insets,
+                environment.system_bar_insets, environment.system_gesture_insets);
+            if (pxa_ui_update_environment(host->ui, host->active_component, &environment) == PXA_STATUS_OK)
+                host->ui_insets_pending = 0;
+        }
+    }
     ime_pump(host);
     for (unsigned round = 0; round < 64; ++round) {
         int delivered = 0;
@@ -2182,10 +2283,17 @@ static void sync_host_theme(product_host_t *host, pxa_lvgl_ui_t *adapter,
 
 #include "desktop_capture.inc"
 
+static pxa_status_t window_apply(void *context, const pxa_window_configuration_t *config);
+
 static void product_focus_changed(void *context, bool focused) {
     product_host_t *host = context;
     if (host == NULL || host->focused == (uint8_t)focused) return;
     host->focused = focused ? 1u : 0u;
+    pxa_window_configuration_t configuration;
+    if (host->window && host->active_component != PXA_COMPONENT_INVALID &&
+        pxa_window_get_configuration(host->window, host->active_component,
+                                    &configuration) == PXA_STATUS_OK)
+        (void)window_apply(host, &configuration);
     pxsys_desktop_host_extensions_foreground(host->host_extensions,
         focused ? host->active_component : PXA_COMPONENT_INVALID);
     if (!focused && host->capture) desktop_capture_close(host,host->capture->id);
@@ -2350,22 +2458,59 @@ static pxa_status_t window_apply(void *context,
                                  const pxa_window_configuration_t *config) {
     product_host_t *host = context;
     if (host == NULL || config == NULL) return PXA_STATUS_INVALID_ARGUMENT;
+    uint8_t rotation;
+    if (!pxa_display_resolve_rotation(host->native_width, host->native_height,
+            0, host->display_rotation,
+            host->focused ? config->orientation_preference : PXA_ORIENTATION_SYSTEM,
+            15, &rotation))
+        return PXA_STATUS_UNSUPPORTED;
+    if (rotation != host->display_rotation) {
+        pxsys_pxadb_control_cancel_pointers(host->native_control);
+        /* Cancel every old pointer before changing its coordinate space. SDL
+         * presents the logical viewport, just as a turned handheld emulator. */
+        for (lv_indev_t *input = lv_indev_get_next(NULL); input; input = lv_indev_get_next(input))
+            if (lv_indev_get_display(input) == host->display)
+                lv_indev_reset(input, NULL);
+        host->width = pxa_display_logical_width(host->native_width, host->native_height, rotation);
+        host->height = pxa_display_logical_height(host->native_width, host->native_height, rotation);
+        for (unsigned i = 0; i < 4; ++i) {
+            host->safe_insets[i] = host->native_safe_insets[(i + rotation) % 4];
+            host->corner_radii[i] = host->native_corner_radii[(i + rotation) % 4];
+        }
+        host->display_rotation = rotation;
+        lv_display_set_resolution(host->display, (int32_t)host->width, (int32_t)host->height);
+        lv_obj_invalidate(lv_display_get_screen_active(host->display));
+    }
     if (host->active_component != PXA_COMPONENT_INVALID) {
         pxa_window_snapshot_t snapshot;
         if (pxa_window_get_snapshot(host->window, host->active_component,
                                     &snapshot) == PXA_STATUS_OK) {
+            snapshot.logical_width = snapshot.pixel_width = host->width;
+            snapshot.logical_height = snapshot.pixel_height = host->height;
+            snapshot.native_width = host->native_width;
+            snapshot.native_height = host->native_height;
+            snapshot.rotation = host->display_rotation;
+            snapshot.supported_rotations = 15;
+            snapshot.orientation = pxa_display_shape(host->width, host->height);
+            snapshot.safe_insets = (pxa_window_insets_t){
+                host->safe_insets[3], host->safe_insets[0],
+                host->safe_insets[1], host->safe_insets[2]};
             snapshot.system_bar_insets.top =
-                config->status_bar_mode == PXA_WINDOW_BAR_HIDDEN
+                config->status_bar_mode != PXA_WINDOW_BAR_VISIBLE
                     ? 0u : host->host_bar_insets.top;
             snapshot.system_bar_insets.bottom =
-                config->navigation_bar_mode == PXA_WINDOW_BAR_HIDDEN
+                host->navigation_mode == 2u && config->navigation_bar_mode != PXA_WINDOW_BAR_VISIBLE
                     ? 0u : host->host_bar_insets.bottom;
             (void)pxa_window_update_snapshot(host->window,
                                               host->active_component, &snapshot);
+            host->ui_insets_pending = 1;
         }
     }
-    if (host->window_changed != NULL)
-        host->window_changed(host->window_context, config);
+    if (host->window_changed != NULL) {
+        pxa_window_configuration_t visible = *config;
+        if (!host->focused) visible.orientation_preference = PXA_ORIENTATION_SYSTEM;
+        host->window_changed(host->window_context, &visible);
+    }
     return PXA_STATUS_OK;
 }
 
@@ -2397,6 +2542,11 @@ static pxa_status_t prepare_start(void *context, pxa_component_t component,
     snapshot.logical_height = host->height;
     snapshot.pixel_width = host->width;
     snapshot.pixel_height = host->height;
+    snapshot.native_width = host->native_width;
+    snapshot.native_height = host->native_height;
+    snapshot.rotation = host->display_rotation;
+    snapshot.supported_rotations = 15;
+    snapshot.orientation = pxa_display_shape(host->width, host->height);
     snapshot.density_numerator = 1;
     snapshot.density_denominator = 1;
     snapshot.safe_insets.left = host->safe_insets[3];
@@ -3594,6 +3744,8 @@ static int run_product_simulator(const options_t *input,
     strcpy(host.locale, options.locale);
     host.width = options.width;
     host.height = options.height;
+    host.native_width = options.width;
+    host.native_height = options.height;
     {
         const char *mode = getenv("PXA_SIM_NAV_MODE");
         host.navigation_mode = (uint8_t)pxsys_simulator_navigation_mode(mode);
@@ -3607,7 +3759,7 @@ static int run_product_simulator(const options_t *input,
         host.corner_radii[index] = host.corner_radius;
     host.host_bar_insets.left = host.navigation_mode == 2u ? 0u :
                                 PRODUCT_SYSTEM_GESTURE_EDGE_WIDTH;
-    host.host_bar_insets.bottom = host.navigation_mode == 1u ? 0u :
+    host.host_bar_insets.bottom = host.navigation_mode == 1u ? 2u :
         host.navigation_mode == 2u ? 36u : PRODUCT_SYSTEM_GESTURE_HOME_HEIGHT;
     if (host_display != NULL) {
         pxsys_insets_t safe;
@@ -3625,6 +3777,8 @@ static int run_product_simulator(const options_t *input,
         host.corner_radii[3] = host_display->corner_radii.bottom_left;
     }
     if (host_bar_insets != NULL) host.host_bar_insets = *host_bar_insets;
+    memcpy(host.native_safe_insets, host.safe_insets, sizeof(host.safe_insets));
+    memcpy(host.native_corner_radii, host.corner_radii, sizeof(host.corner_radii));
     if (owns_display) {
         lv_init();
         display = lv_sdl_window_create((int32_t)options.width,
@@ -3690,6 +3844,11 @@ static int run_product_simulator(const options_t *input,
     ui_config.display_shape = host.display_shape;
     for (size_t index = 0; index < 4; ++index)
         ui_config.corner_radii[index] = host.corner_radii[index];
+    const pxa_window_insets_t combined_insets = {
+        .top = host.host_bar_insets.top, .right = host.host_bar_insets.right,
+        .bottom = host.host_bar_insets.bottom, .left = host.host_bar_insets.left};
+    split_ui_insets(host.navigation_mode, &combined_insets,
+        ui_config.system_bar_insets, ui_config.system_gesture_insets);
     ui_workspace = malloc(pxa_ui_service_workspace_size());
     if (ui_workspace == NULL || pxa_ui_service_init(ui_workspace,
         pxa_ui_service_workspace_size(), host.runtime, &ui_config, &host.ui) != PXA_STATUS_OK ||
@@ -3904,6 +4063,8 @@ static int run_product_simulator(const options_t *input,
     for (size_t index = 0; index < 4; ++index) {
         lvgl_config.primary_environment.corner_radii[index] = host.corner_radii[index];
         lvgl_config.primary_environment.safe_insets[index] = host.safe_insets[index];
+        lvgl_config.primary_environment.system_bar_insets[index] = ui_config.system_bar_insets[index];
+        lvgl_config.primary_environment.system_gesture_insets[index] = ui_config.system_gesture_insets[index];
     }
     pxa_lvgl_ui_theme_init(&lvgl_config.theme);
     if (host_theme != NULL)
@@ -4370,7 +4531,7 @@ static int run_product_simulator(const options_t *input,
     stage = "shape mask";
     if (owns_display && !install_shape_mask(display, &options, &shape_mask))
         goto done;
-    stage = "event loop";
+    stage = "PXADB control socket";
     if (owns_display && options.pxadb_control_socket != NULL &&
         !pxsys_pxadb_control_start(&pxadb_control,
                                    options.pxadb_control_socket, display,
@@ -4380,10 +4541,14 @@ static int run_product_simulator(const options_t *input,
     host.native_pump = pump;
     host.native_pump_context = pump_context;
     host.native_ui = lvgl_ui;
+    pxadb_control.inspect_context = &host;
+    pxadb_control.inspect_ui = pxsys_product_simulator_inspect_ui;
+    pxadb_control.runtime_info = pxsys_product_simulator_runtime_info;
     host.native_theme = &lvgl_config.theme;
     host.native_controller = &controller;
     host.native_controller_previous = &controller_previous;
     host.native_controller_refreshed = &controller_refreshed;
+    stage = "event loop";
     /* A main-loop callback may run until Home; input and screenshot controls
      * must be ready before delivering even the startup completion events. */
     status = pxa_window_flush_metrics(host.window, component);

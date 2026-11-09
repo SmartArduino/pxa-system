@@ -336,7 +336,10 @@ int main(void) {
     advance(50);
     assert(status_bar_is_visible(ui) && !ui->notification_shade_open);
     assert(ui->transient_revealed == CHROME_REVEALED_HIDDEN_STATUS);
-    assert(lv_obj_get_style_bg_opa(ui->status_bar, 0) != LV_OPA_TRANSP);
+    /* The revealed bar has glyphs, unlike its empty input catcher. Its
+     * background still honors the Guest's RGBA, including transparent. */
+    assert(lv_obj_get_child_count(ui->status_bar) > 0);
+    assert(lv_obj_get_style_bg_opa(ui->status_bar, 0) == (ui->window.status_bar_color & 255u));
     assert(!bar_is_visible(ui, navigation_bar_mode(ui)));
     assert(!ui->navigation_handle);
     assert(ui->content_inset_top == 0 && ui->content_inset_bottom == 0);

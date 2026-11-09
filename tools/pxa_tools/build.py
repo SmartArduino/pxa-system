@@ -12,6 +12,7 @@ import time
 
 from .common import ToolError, atomic_json, command, digest, executable, identity, locked
 from .project import Project, SDK_ROOT, TARGETS, aot_flags, lock_project, resolve_tools
+from .build_state import output_prefix, source_snapshot, dependency_snapshot, check_inputs
 
 
 def tree_digest(root: Path):
@@ -45,7 +46,7 @@ def tool(root: Path, name: str) -> Path:
     return private if private.is_file() else Path(name)
 
 
-def signing_key(root: Path, supplied: str | None) -> Path:
+def signing_key(root: Path, supplied: str | None, *, create=True) -> Path:
     if supplied or os.environ.get('PXA_SIGNING_KEY'):
         key = Path(supplied or os.environ['PXA_SIGNING_KEY']).expanduser().resolve()
         if not key.is_file():
@@ -57,11 +58,49 @@ def signing_key(root: Path, supplied: str | None) -> Path:
     key = data / 'pxa/identities/development.pem'
     with locked(key.with_suffix('.lock')):
         if not key.exists():
+            if not create:
+                raise ToolError('Signing identity is missing; restore the original key before reusing this build')
             key.parent.mkdir(parents=True, exist_ok=True)
             command([tool(root, 'openssl'), 'genpkey', '-algorithm', 'EC',
                      '-pkeyopt', 'ec_paramgen_curve:P-256', '-out', key])
             key.chmod(0o600)
     return key
+
+
+def existing_build(project: Project, *, root=SDK_ROOT, targets=('simulator',), output=None,
+                   key=None, definitions=()):
+    """Validate an existing local package without CMake, compilation or signing."""
+    targets = tuple('windows-simulator' if os.name == 'nt' and t == 'simulator' else t for t in targets)
+    container = Path(str(output_prefix(project, output)) + '.pxa')
+    receipt_path = Path(str(container) + '.build.json')
+    if not container.is_file() or not receipt_path.is_file():
+        raise ToolError('No prepared package/build receipt; run pxa build before --no-build')
+    receipt = json.loads(receipt_path.read_text())
+    if not isinstance(receipt, dict) or receipt.get('schema') != 'pxa-build-2':
+        raise ToolError('This build has no reusable input inventory; build it once with this SDK')
+    if any(not isinstance(receipt.get(key), str) or not re.fullmatch('[a-f0-9]{64}', receipt[key])
+           for key in ('content_id', 'sha256')):
+        raise ToolError('Malformed package build receipt')
+    if not (project.path / 'pxa.lock').is_file():
+        raise ToolError('Original pxa.lock is missing; restore it or rebuild explicitly')
+    wasi, wamrc = resolve_tools(root, offline=True)
+    lock = lock_project(project, root, wasi, wamrc)
+    if lock != receipt.get('lock'):
+        raise ToolError('SDK/toolchain lock differs from this build; rebuild before --no-build')
+    if any(target not in receipt.get('targets', []) for target in targets):
+        raise ToolError('Prepared package does not contain the requested execution target')
+    if list(definitions) != receipt.get('configuration', {}).get('definitions'):
+        raise ToolError('Build definitions differ; repeat the original --define values or rebuild')
+    check_inputs(project, receipt, output)
+    if digest(container) != receipt.get('sha256'):
+        raise ToolError('Prepared package hash differs from its build receipt')
+    private = signing_key(root, key, create=False)
+    public = command([tool(root, 'openssl'), 'pkey', '-in', private, '-pubout'], capture=True)
+    if public != receipt.get('publisher'):
+        raise ToolError('Signing identity differs from the prepared package; use the original key')
+    print(f'Reusing {container} ({receipt["configuration"]["type"]}, definitions={list(definitions)})')
+    immutable = project.path / '.pxa/cache/packages' / receipt['content_id'] / (project.app_id + '.pxa')
+    return immutable if immutable.is_file() and digest(immutable) == receipt['sha256'] else container
 
 
 def build(project: Project, *, root=SDK_ROOT, targets=('simulator',), output=None,
@@ -95,6 +134,10 @@ def build(project: Project, *, root=SDK_ROOT, targets=('simulator',), output=Non
     artifacts = build_dir / 'artifacts'
     cmake = tool(root, 'cmake')
     with locked(state / 'build.lock'):
+        source_before = source_snapshot(project, output)
+        query = build_dir / '.cmake/api/v1/query/cmakeFiles-v1'
+        query.parent.mkdir(parents=True, exist_ok=True)
+        query.touch()
         command([cmake, '-S', source, '-B', build_dir, '-G', 'Ninja',
                  f'-DCMAKE_MAKE_PROGRAM={shutil.which(str(tool(root, "ninja"))) or tool(root, "ninja")}',
                  f'-DCMAKE_BUILD_TYPE={build_type}',
@@ -107,8 +150,8 @@ def build(project: Project, *, root=SDK_ROOT, targets=('simulator',), output=Non
                  f'-DPython3_EXECUTABLE={sys.executable}',
                  f'-DPXA_LINEAR_MEMORY_MAXIMUM={maximum}',
                  '-DPXA_APP_DEFINITIONS=' + ';'.join(definitions)])
-        command([cmake, '--build', build_dir, '--parallel', jobs, '--target',
-                 *[c.get('cmake_target', c['id']) for c in project.components]])
+        cmake_targets = [c.get('cmake_target', c['id']) for c in project.components]
+        command([cmake, '--build', build_dir, '--parallel', jobs, '--target', *cmake_targets])
         with tempfile.TemporaryDirectory(prefix='package-', dir=state) as temporary:
             package = Path(temporary)
             (package / 'artifacts').mkdir()
@@ -195,7 +238,11 @@ def build(project: Project, *, root=SDK_ROOT, targets=('simulator',), output=Non
                              '--chunk-size', '4096'])
                     shutil.copytree(package, staged / 'package')
                     os.replace(staged, release)
-            output = (Path(output).absolute().parent.resolve() / Path(output).name) if output else project.path / 'dist' / project.app_id
+            inputs = {'source': source_snapshot(project, output),
+                      'dependencies': dependency_snapshot(build_dir, tool(root, 'ninja'), cmake_targets)}
+            if inputs['source'] != source_before:
+                raise ToolError('Source/resources changed during build; retry after the edit finishes')
+            output = output_prefix(project, output)
             if output == project.path or project.path.is_relative_to(output):
                 raise ToolError('Output cannot replace the source directory')
             output.parent.mkdir(parents=True, exist_ok=True)
@@ -223,8 +270,9 @@ def build(project: Project, *, root=SDK_ROOT, targets=('simulator',), output=Non
             command([sys.executable, tools / 'build_pxa_provenance.py', release / 'package',
                      container, project.path / 'package.json', ','.join(targets),
                      lock['toolchain']['recipe']['engine_abi'], str(container) + '.provenance.json'], env=env)
-            atomic_json(Path(str(container) + '.build.json'), {'schema': 'pxa-build-1', 'content_id': content,
+            atomic_json(Path(str(container) + '.build.json'), {'schema': 'pxa-build-2', 'content_id': content,
                         'lock': lock, 'targets': list(targets), 'configuration': config,
+                        'inputs': inputs, 'publisher': public,
                         'seconds': round(time.monotonic() - started, 3), 'sha256': digest(container)})
             print(f'Built {container} ({time.monotonic() - started:.2f}s)')
             return container
