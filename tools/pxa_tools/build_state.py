@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 from pathlib import Path
 
 from .common import ToolError, command, digest
@@ -56,6 +57,38 @@ def source_snapshot(project, output=None):
     return {'roots': sorted(str(p) for p in roots), 'files': files, 'directory_links': links}
 
 
+def _ninja_input_paths(graph, *, windows):
+    # Ninja 1.11/1.12 only emit shell-escaped paths, without -0 or -E.
+    # POSIX quoting can contain newlines, so parse the entire output. Never
+    # execute this output: resource names can contain shell metacharacters.
+    if not windows:
+        try:
+            return shlex.split(graph, posix=True)
+        except ValueError as error:
+            raise ToolError('Invalid Ninja input inventory: ' + str(error)) from error
+    paths = []
+    for line in graph.split('\n'):
+        line = line.removesuffix('\r')
+        if not line:
+            continue
+        if line.startswith('"') and line.endswith('"'):
+            name = line[1:-1]
+            # Windows filenames cannot contain double quotes. Ninja doubles
+            # trailing backslashes before the closing quote; interior native
+            # path separators must remain untouched.
+            trailing = len(name) - len(name.rstrip('\\'))
+            if '"' in name or trailing % 2:
+                raise ToolError('Invalid quoted Windows path in Ninja input inventory')
+            if trailing:
+                name = name[:-trailing] + '\\' * (trailing // 2)
+        elif '"' in line:
+            raise ToolError('Invalid Windows path in Ninja input inventory')
+        else:
+            name = line
+        paths.append(name)
+    return paths
+
+
 def dependency_snapshot(build_dir, ninja, targets):
     """Read CMake scripts, declared build inputs and discovered compiler headers."""
     reply = build_dir / '.cmake/api/v1/reply'
@@ -68,10 +101,11 @@ def dependency_snapshot(build_dir, ninja, targets):
     source = Path(document['paths']['source'])
     paths = {(source / item['path']).resolve() for item in document['inputs'] if not item.get('isGenerated')}
     # Compiler depfiles alone omit external inputs of custom generators. Ask
-    # Ninja for the transitive graph of exactly the targets we built. Raw NUL
-    # delimiters preserve spaces and native Windows paths without shell parsing.
-    graph = command([ninja, '-C', build_dir, '-t', 'inputs', '-0', '-E', *targets], capture=True, strip=False)
-    paths.update((build_dir / name).resolve() for name in graph.split('\0') if name)
+    # Ninja for the transitive graph of exactly the targets we built. Decode
+    # its platform quoting, including spaces and native Windows separators.
+    graph = command([ninja, '-C', build_dir, '-t', 'inputs', *targets], capture=True, strip=False)
+    paths.update((build_dir / name).resolve()
+                 for name in _ninja_input_paths(graph, windows=os.name == 'nt'))
     database = json.loads(command([ninja, '-C', build_dir, '-t', 'compdb'], capture=True))
     objects = sorted({item['output'] for item in database if item.get('output', '').endswith(('.o', '.obj'))})
     # Query only objects still in the current build graph. Ninja's persistent

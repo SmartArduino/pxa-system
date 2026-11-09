@@ -63,7 +63,7 @@ def clean(project, *, keep=2, dry_run=False, aot=False):
         if aot:
             candidates += [path for path in (state / 'cache/aot').glob('*.aot')
                            if path.is_file() and not path.is_symlink() and
-                           re.fullmatch('[0-9a-f]{64}\.aot', path.name)]
+                           re.fullmatch(r'[0-9a-f]{64}\.aot', path.name)]
         for path in candidates:
             size = cache_bytes(path)
             if not dry_run:

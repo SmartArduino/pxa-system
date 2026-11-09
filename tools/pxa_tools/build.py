@@ -181,7 +181,11 @@ def build(project: Project, *, root=SDK_ROOT, targets=('simulator',), output=Non
                 with locked(cached.with_suffix('.lock')):
                     if not cached.exists():
                         temporary_aot = cached.with_suffix('.tmp')
-                        command([wamrc, '--target=' + cpu, *flags, '-o', temporary_aot, wasm])
+                        # WAMR creates intermediate files in its working
+                        # directory. The caller may be in a read-only SDK or
+                        # container root; keep those files in this app's cache.
+                        command([wamrc, '--target=' + cpu, *flags, '-o', temporary_aot, wasm],
+                                cwd=cached.parent)
                         os.replace(temporary_aot, cached)
                 shutil.copy2(cached, destination)
 
