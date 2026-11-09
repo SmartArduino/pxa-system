@@ -180,6 +180,21 @@ static void consume_release(void *c,uint64_t id){
     l->release_count--;l->state.released_frames++;
 }
 void browser_graphics_poll(void){if(surface_service)pxa_surface_service_flush_releases(surface_service);}
+void browser_graphics_resize(uint16_t width,uint16_t height){
+    display_width=width;display_height=height;
+    for(unsigned i=0;i<LAYERS;i++){
+        layer_t *l=&layers[i];if(!l->id)continue;
+        pxa_surface_layer_t view=l->layer;
+        if(l->raster){
+            const uint32_t w=l->descriptor.header.w,h=l->descriptor.header.h;
+            uint32_t sx=(uint32_t)width*256/w,sy=(uint32_t)height*256/h;
+            uint32_t scale=sx<sy?sx:sy;
+            view.width=w*scale/256;view.height=h*scale/256;
+            view.x=(width-view.width)/2;view.y=(height-view.height)/2;
+        }
+        (void)configure(NULL,l->id,&view);
+    }
+}
 static pxa_status_t raster_create(void *c,const pxa_game_render_desc_t *d,uint64_t *id,uint32_t *caps){
     pxa_surface_desc_t surface={d->width,d->height,PXA_SURFACE_FORMAT_RGB565,d->buffer_count,0};uint32_t stride;
     pxa_status_t s=create(c,&surface,id,&stride);if(s)return s;layer_t *l=find(*id);l->raster=1;l->scratch_mode=d->scratch_mode;

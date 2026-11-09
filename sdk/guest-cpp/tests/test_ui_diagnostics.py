@@ -34,6 +34,22 @@ class UiDiagnostics(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("ViewLike", result.stderr)
 
+    def test_button_modifiers_before_actions(self):
+        result = self.compile('''
+void test(State<std::string>& label, State<bool>& enabled) {
+    auto action=[]{};
+    auto a=Button("Start").height(44_dp).enabled(enabled).height(48_dp).on_click(action);
+    auto b=Button("Start").on_click(action).height(44_dp).enabled(enabled).height(48_dp);
+    static_assert(std::same_as<decltype(a),decltype(b)>);
+    auto bound=Button(label).height(44_dp).on_click_ref(action);
+    auto styled=Button("Start",WidgetStyle{{0,0,80,30}}).height(44_dp).on_click(action);
+    auto pointer=[](const CanvasPointer&){};
+    auto p=Button("Drag").fill().on_pointer_ref(pointer);
+    auto hold=Button("Hold").height(44_dp).on_long_press(action);
+}
+''')
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_model_needs_component(self):
         result = self.compile('struct Model{auto view(){return Text("Hi");}}; '
                               'void test(){auto view=Column(Model{});}')

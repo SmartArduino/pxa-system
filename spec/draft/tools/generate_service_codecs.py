@@ -42,6 +42,9 @@ WINDOW_LAYOUT = (
       "system_bar_insets.right", "system_bar_insets.bottom")),
     ("orientation", "orientation-u8", ("orientation",)),
     ("focused", "bool-u8", ("focused",)),
+    ("rotation", "rotation-u8", ("rotation",)),
+    ("native-size", "u32-u32", ("native_width", "native_height")),
+    ("supported-rotations", "rotation-mask-u8", ("supported_rotations",)),
 )
 
 
@@ -49,7 +52,7 @@ def window_fields() -> list[tuple[dict, tuple[str, ...], int, int]]:
     document = json.loads((SPEC / "pxa-window.json").read_text(encoding="utf-8"))
     if [(item["name"], item["value"]) for item in
             document["orientations"]] != [
-                ("unspecified", 0), ("portrait", 1), ("landscape", 2)]:
+                ("unspecified", 0), ("portrait", 1), ("landscape", 2), ("square", 3)]:
         raise ValueError("Window orientation domain changed")
     fields = document["snapshot_tags"]
     result = []
@@ -83,7 +86,9 @@ def render_window_header(*, guest: bool = False) -> str:
         '#error "include the generated PXA wire codec first"',
         "#endif",
         "",
-        f"#define PXA_WINDOW_SNAPSHOT_RECORD_BYTES ((size_t){record_size})",
+        "#define PXA_WINDOW_SNAPSHOT_RECORD_BYTES ((size_t)98)",
+        f"#define PXA_WINDOW_DISPLAY_SNAPSHOT_RECORD_BYTES ((size_t){record_size})",
+        "#define PXA_WINDOW_LEGACY_SNAPSHOT_RECORD_BYTES ((size_t)98)",
         "",
         "typedef struct {",
         "    uint32_t left, top, right, bottom;",
@@ -98,6 +103,8 @@ def render_window_header(*, guest: bool = False) -> str:
         "    pxa_window_wire_insets_t safe_insets;",
         "    pxa_window_wire_insets_t system_bar_insets;",
         "    uint8_t orientation, focused;",
+        "    uint8_t rotation, supported_rotations;",
+        "    uint32_t native_width, native_height;",
         "} pxa_window_snapshot_wire_t;",
         "",
         "static inline int pxa_window_snapshot_wire_valid(",
@@ -107,15 +114,16 @@ def render_window_header(*, guest: bool = False) -> str:
         "           value->pixel_width != 0 && value->pixel_height != 0 &&",
         "           value->density_numerator != 0 &&",
         "           value->density_denominator != 0 &&",
-        "           value->orientation <= 2 && value->focused <= 1;",
+        "           value->orientation <= 3 && value->focused <= 1 &&",
+        "           value->rotation <= 3 && value->supported_rotations <= 15;",
         "}",
         "",
-        "static inline int pxa_window_snapshot_records_encode(",
+        "static inline int pxa_window_display_snapshot_records_encode(",
         "    uint8_t *out, size_t capacity,",
         "    const pxa_window_snapshot_wire_t *value, size_t *written) {",
         "    if (written != NULL) *written = 0;",
         "    if (out == NULL || written == NULL ||",
-        "        capacity < PXA_WINDOW_SNAPSHOT_RECORD_BYTES ||",
+        "        capacity < PXA_WINDOW_DISPLAY_SNAPSHOT_RECORD_BYTES ||",
         "        !pxa_window_snapshot_wire_valid(value)) return 0;",
     ]
     for field, members, offset, size in fields:
@@ -133,6 +141,19 @@ def render_window_header(*, guest: bool = False) -> str:
                     f"    pxa_wire_generated_store_u{width * 8}"
                     f"(out + {position}, value->{member});")
     lines += [
+        "    *written = PXA_WINDOW_DISPLAY_SNAPSHOT_RECORD_BYTES;",
+        "    return 1;",
+        "}",
+        "",
+        "static inline int pxa_window_snapshot_records_encode(",
+        "    uint8_t *out, size_t capacity,",
+        "    const pxa_window_snapshot_wire_t *value, size_t *written) {",
+        "    uint8_t extended[PXA_WINDOW_DISPLAY_SNAPSHOT_RECORD_BYTES];",
+        "    size_t size;",
+        "    if (written) *written = 0;",
+        "    if (!out || !written || capacity < PXA_WINDOW_SNAPSHOT_RECORD_BYTES ||",
+        "        !pxa_window_display_snapshot_records_encode(extended, sizeof(extended), value, &size)) return 0;",
+        "    for (size_t i = 0; i < PXA_WINDOW_SNAPSHOT_RECORD_BYTES; ++i) out[i] = extended[i];",
         "    *written = PXA_WINDOW_SNAPSHOT_RECORD_BYTES;",
         "    return 1;",
         "}",
@@ -143,17 +164,28 @@ def render_window_header(*, guest: bool = False) -> str:
         "    if (output == NULL) return 0;",
         "    for (size_t i = 0; i < sizeof(*output); ++i)",
         "        ((uint8_t *)output)[i] = 0;",
-        "    if (data == NULL || size != PXA_WINDOW_SNAPSHOT_RECORD_BYTES)",
+        "    if (data == NULL || (size != PXA_WINDOW_DISPLAY_SNAPSHOT_RECORD_BYTES &&",
+        "        size != PXA_WINDOW_LEGACY_SNAPSHOT_RECORD_BYTES))",
         "        return 0;",
     ]
     for field, _, offset, size in fields:
+        if field["id"] == 9:
+            lines += ["    if (size != PXA_WINDOW_LEGACY_SNAPSHOT_RECORD_BYTES) {"]
         lines += [
             f"    if (pxa_wire_generated_load_u16(data + {offset}) != "
             f"{field['id']} ||",
             f"        pxa_wire_generated_load_u16(data + {offset + 2}) != "
             f"{size}) return 0;",
         ]
-    for _, members, offset, size in fields:
+    lines += ["    }"]
+    for field, members, offset, size in fields:
+        if field["id"] == 9:
+            lines += ["    if (size == PXA_WINDOW_LEGACY_SNAPSHOT_RECORD_BYTES) {",
+                      "        output->native_width = output->logical_width;",
+                      "        output->native_height = output->logical_height;",
+                      "        output->supported_rotations = 1;",
+                      "        return pxa_window_snapshot_wire_valid(output);",
+                      "    }"]
         width = size // len(members)
         for part, member in enumerate(members):
             position = offset + 4 + part * width
@@ -439,6 +471,12 @@ def render_cpp_audio_protocol() -> str:
 
 
 RENDERERS = (
+    (SYSTEM / "sdk/guest-c/include/pxa_display_rotation.h",
+     lambda: "/* Generated from libpxa/include/pxa/display_rotation.h. */\n" +
+         (SYSTEM / "libpxa/include/pxa/display_rotation.h").read_text()),
+    (SYSTEM / "sdk/guest-cpp/include/pxa/display_rotation.h",
+     lambda: "/* Generated from libpxa/include/pxa/display_rotation.h. */\n" +
+         (SYSTEM / "libpxa/include/pxa/display_rotation.h").read_text()),
     (OUTPUTS[0], render_header),
     (OUTPUTS[1], lambda: render_header(guest=True)),
     (WINDOW_OUTPUTS[0], render_window_header),

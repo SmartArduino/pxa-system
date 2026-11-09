@@ -45,6 +45,21 @@ pixels. Logical lengths (dp) apply the density factor once. Viewport lengths
 (`vw`/`vh`) use fractions of the corresponding native pixel extent without
 applying density again.
 
+Environment record 13 (`system-bar-insets`) optionally reports top/right/bottom/left
+visual system chrome in Surface pixels, including the initial startup snapshot.
+Record 14 (`system-gesture-insets`) independently reports active system input strips
+in the same order and units. Both are separate from physical safe-insets (6) and
+display geometry (12). Compose overlapping margins with per-edge maxima, not sums.
+Hidden or transient overlay status bars reserve no fixed top height. Hidden button
+navigation releases its height; active Home/Back gestures remain input regions even
+without visible handles. A side Back strip must not shift the whole page: readable
+content uses physical and system bar margins, with bottom Home avoidance by default;
+edge controls can separately avoid conflicting side gestures. A Host without those
+gestures reports zero input strips. Changes use the complete `ENVIRONMENT_CHANGED`
+snapshot. Missing optional records mean unknown, not a known zero set. Older Guest
+decoders may ignore complete new records. Window 0.4 snapshots retain their legacy
+combined bar/input insets; use these separate UI fields for new declarative layouts.
+
 `composition=alpha-overlay` marks a complete UI subtree for the transparent
 UI plane. The Host snapshots that subtree before it is flattened into the
 primary RGB565 framebuffer, retains its color and alpha, and composites it

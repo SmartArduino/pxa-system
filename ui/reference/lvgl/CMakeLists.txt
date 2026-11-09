@@ -121,6 +121,8 @@ if(PXSYS_BUILD_TESTS OR BUILD_TESTING)
     pxsys_add_reference_feature_test(pxsys_reference_k26_test PXSYS_TEST_PINYIN=1)
     pxsys_add_reference_feature_test(pxsys_reference_no_animations_test
         PXSYS_REFERENCE_UI_ENABLE_ANIMATIONS=0)
+    pxsys_add_reference_feature_test(pxsys_reference_gesture_handle_test
+        PXSYS_REFERENCE_UI_GESTURE_HANDLE=1)
 endif()
 if(DEFINED PXSYS_REFERENCE_UI_LAUNCHER_COLUMNS AND
    DEFINED PXSYS_REFERENCE_UI_LAUNCHER_ROWS)

@@ -22,8 +22,9 @@ public:
         return result;
     }();
     using Metrics = std::conditional_t<Bound, State<DisplayMetrics>*, DisplayMetrics>;
-    SafeAreaView(Metrics metrics, Child child, Visibility visible = {}, Inset inset = {})
-        : metrics_(metrics), child_(std::move(child)), inset_(inset), visible_(visible) {}
+    SafeAreaView(Metrics metrics, Child child, Visibility visible = {}, Inset inset = {},
+                 GestureAvoidance gestures = GestureAvoidance::bottom)
+        : metrics_(metrics), child_(std::move(child)), inset_(inset), visible_(visible), gestures_(gestures) {}
     template<std::uint16_t Key, class Self, class Value>
         requires ((Key == protocol::visible && (std::same_as<Value, bool> ||
                   std::same_as<Value, State<bool>*>)) ||
@@ -31,9 +32,9 @@ public:
     constexpr auto apply_modifier(this Self&& self, Value value) {
         if constexpr (Key == protocol::visible)
             return SafeAreaView<Child, Bound, Value, Inset>(self.metrics_,
-                std::forward<Self>(self).child_, value, self.inset_);
+                std::forward<Self>(self).child_, value, self.inset_, self.gestures_);
         else return SafeAreaView<Child, Bound, Visibility, Value>(self.metrics_,
-                std::forward<Self>(self).child_, self.visible_, value);
+                std::forward<Self>(self).child_, self.visible_, value, self.gestures_);
     }
     void reset_mount() noexcept requires detail::ResettableView<Child> { detail::reset_view(child_); }
     template<class Owner> bool render(Owner& owner, std::uint32_t parent) {
@@ -72,7 +73,7 @@ private:
         const auto& d = view.metrics();
         if (!d.width || !d.height || d.width > 65535 || d.height > 65535 ||
             !d.density_q16 || d.shape > 2) return tx.fail(Error::invalid_argument);
-        const auto rect = safe_rectangle(d);
+        const auto rect = safe_rectangle(d, view.gestures_);
         const std::array<std::uint32_t, 4> pixels{std::uint32_t(rect.x), std::uint32_t(rect.y),
             d.width - std::uint32_t(rect.x + rect.width),
             d.height - std::uint32_t(rect.y + rect.height)};
@@ -112,15 +113,18 @@ private:
     Child child_;
     Inset inset_{};
     [[no_unique_address]] Visibility visible_{};
+    GestureAvoidance gestures_;
     [[no_unique_address]] detail::VisibilitySubscription<Bound && state_visibility> visibility_subscription_{};
 };
 
 template<class Child> requires ViewLike<std::decay_t<Child>>
-auto SafeArea(DisplayMetrics metrics, Child&& child) {
-    return SafeAreaView<std::decay_t<Child>, false>(metrics, std::forward<Child>(child));
+auto SafeArea(DisplayMetrics metrics, Child&& child, GestureAvoidance gestures=GestureAvoidance::bottom) {
+    return SafeAreaView<std::decay_t<Child>, false>(metrics, std::forward<Child>(child),
+        detail::DefaultVisibility{}, Dp{}, gestures);
 }
 template<class Child> requires ViewLike<std::decay_t<Child>>
-auto SafeArea(State<DisplayMetrics>& metrics, Child&& child) {
-    return SafeAreaView<std::decay_t<Child>, true>(&metrics, std::forward<Child>(child));
+auto SafeArea(State<DisplayMetrics>& metrics, Child&& child, GestureAvoidance gestures=GestureAvoidance::bottom) {
+    return SafeAreaView<std::decay_t<Child>, true>(&metrics, std::forward<Child>(child),
+        detail::DefaultVisibility{}, Dp{}, gestures);
 }
 } // namespace pxa::ui

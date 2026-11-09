@@ -31,6 +31,10 @@ struct DisplayMetrics {
     Insets safe;
     std::array<std::uint32_t,4> corners{}; // TL, TR, BR, BL
     std::uint32_t shape=0;
+    Insets system_bars{};
+    bool system_bars_known=false;
+    Insets system_gestures{};
+    bool system_gestures_known=false;
     constexpr bool operator==(const DisplayMetrics&) const = default;
 };
 inline std::int32_t canvas_to_surface_coordinate(std::int32_t value,
@@ -47,10 +51,10 @@ inline Result<DisplayMetrics> decode_display_metrics(std::span<const std::byte> 
         auto tag=wire::get16(data.data()+at), n=wire::get16(data.data()+at+2);at+=4;
         if(n>data.size()-at) return std::unexpected(Error::protocol_error);
         auto* p=data.data()+at;at+=n;
-        if(tag<1 || tag>12) continue;
+        if(tag<1 || tag>14) continue;
         if(seen&(1u<<tag)) return std::unexpected(Error::protocol_error);
         seen|=1u<<tag;
-        const unsigned expected=tag<=5||tag==11?4:tag==6?16:tag==7||tag==8?1:tag==12?20:8;
+        const unsigned expected=tag<=5||tag==11?4:tag==6||tag==13||tag==14?16:tag==7||tag==8?1:tag==12?20:8;
         if(n!=expected) return std::unexpected(Error::protocol_error);
         switch(tag) {
         case 1:surface=wire::get32(p);break;
@@ -60,6 +64,10 @@ inline Result<DisplayMetrics> decode_display_metrics(std::span<const std::byte> 
         case 5:out.font_scale_q16=wire::get32(p);break;
         case 6:out.safe={wire::get32(p+12),wire::get32(p),wire::get32(p+4),wire::get32(p+8)};break;
         case 12:out.shape=wire::get32(p);for(unsigned i=0;i<4;++i)out.corners[i]=wire::get32(p+4+i*4);break;
+        case 13:out.system_bars={wire::get32(p+12),wire::get32(p),wire::get32(p+4),wire::get32(p+8)};
+            out.system_bars_known=true;break;
+        case 14:out.system_gestures={wire::get32(p+12),wire::get32(p),wire::get32(p+4),wire::get32(p+8)};
+            out.system_gestures_known=true;break;
         default:break;
         }
     }

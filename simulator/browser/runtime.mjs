@@ -50,6 +50,7 @@ export async function createRuntime(host, binary, {width=320, height=240, log=()
   let guestWorkMs=0,guestSince=0;
   const accountGuest=()=>{if(guestSince){guestWorkMs+=performance.now()-guestSince;guestSince=0;}};
   const wake=()=>waiter?.();
+  host.browserNetworkWake=wake;
   const borrow=createBorrowBridge(host,()=>guest.memory,n=>{copiedBytes+=n;});
   const reserve = size => {
     if (size > MAX_IO) throw new RangeError('PXA import exceeds the browser I/O limit');
@@ -259,6 +260,7 @@ export async function createRuntime(host, binary, {width=320, height=240, log=()
       sockets.close();network.close();storage.changed();await storage.close();
     },
     pixels(){return host.HEAPU8.subarray(host._browser_pixels(),host._browser_pixels()+width*height*4);},
+    display(){return host.browserDisplay||{width,height,rotation:0};},
     stats(){return {callbacks,copiedBytes,guestWorkMs,guestBytes:guest.memory.buffer.byteLength,hostBytes:host.HEAPU8.length};},
   };
   }catch(error){

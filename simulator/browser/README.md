@@ -38,6 +38,11 @@ Allow `script-src 'self' 'wasm-unsafe-eval'; worker-src 'self'` in CSP. No
 `unsafe-eval`, SharedArrayBuffer, cross-origin isolation or browser extension is
 required. Runtime downloads are lazy, after the user starts a demo.
 
+Window 0.5 supports live shape preferences and explicit quarter turns. The Worker
+resizes the logical viewport and emits `display-metrics` before the next frame;
+the embedding page must update its aspect ratio and pointer mapping. Square
+views remain square and shape preferences retain their angle.
+
 ## Runtime contract
 
 - Each app runs in a fresh Worker with its own Guest and Host linear memory.
@@ -147,8 +152,8 @@ interaction; there is no separate enable button. Consent persists across
 channel changes, pause/resume and app restarts on the same page. Acceleration
 includes gravity (µm/s²); angular velocity uses µrad/s. Native `Magnetometer`
 readings (µT) become signed nT values on `magnetic-field.0` (10 Hz maximum). Browser device vectors
-(X right, Y up, Z out) rotate to the PXA device frame (X top, Y left, Z out):
-`(x,y,z) -> (y,-x,z)` for all three channels. This proper rotation preserves lengths
+already use the PXA/Android native device frame (X right, Y up, Z out):
+`(x,y,z) -> (x,y,z)` for all three channels, independent of UI rotation. This preserves lengths
 and handedness; screen/view changes do not remap this physical native frame. Generic Sensor
 APIs are preferred; DeviceMotion falls back to its accelerationIncludingGravity
 and rotationRate (alpha X, beta Y, gamma Z, degrees converted to radians).

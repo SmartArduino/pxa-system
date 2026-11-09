@@ -1,11 +1,11 @@
 {
-  "schema": "pxa-window-spec-0.4",
+  "schema": "pxa-window-spec-0.5",
   "status": "draft",
   "service": {
     "name": "window",
     "id": 2,
     "major": 0,
-    "minor": 4,
+    "minor": 5,
     "patch": 0
   },
   "opcodes": [
@@ -37,6 +37,14 @@
       "request_token": "zero",
       "payload": "empty",
       "delivery": "queues-reliable-back-requested"
+    },
+    {
+      "name": "get-display-snapshot",
+      "id": 5,
+      "direction": "bidirectional-result",
+      "request_token": "nonzero",
+      "payload": "empty",
+      "delivery": "opts-in-to-complete-display-metrics"
     },
     {
       "name": "metrics-changed",
@@ -106,6 +114,13 @@
       "cardinality": "zero-or-one",
       "since": "0.4",
       "scope": "foreground window; inhibits automatic dim/lock only; explicit Lock wins"
+    },
+    {
+      "name": "orientation-preference",
+      "id": 9,
+      "payload": "orientation-preference-u8",
+      "cardinality": "zero-or-one",
+      "since": "0.5"
     }
   ],
   "snapshot_tags": [
@@ -156,6 +171,24 @@
       "id": 8,
       "payload": "bool-u8",
       "cardinality": "one"
+    },
+    {
+      "name": "rotation",
+      "id": 9,
+      "payload": "rotation-u8",
+      "cardinality": "one"
+    },
+    {
+      "name": "native-size",
+      "id": 10,
+      "payload": "u32-u32",
+      "cardinality": "one"
+    },
+    {
+      "name": "supported-rotations",
+      "id": 11,
+      "payload": "rotation-mask-u8",
+      "cardinality": "one"
     }
   ],
   "bar_modes": [
@@ -198,7 +231,58 @@
     {
       "name": "landscape",
       "value": 2
+    },
+    {
+      "name": "square",
+      "value": 3
     }
   ],
-  "protocol_version": "0.4.0"
+  "protocol_version": "0.5.0",
+  "orientation_preferences": [
+    {
+      "name": "system",
+      "value": 0
+    },
+    {
+      "name": "portrait",
+      "value": 1
+    },
+    {
+      "name": "landscape",
+      "value": 2
+    },
+    {
+      "name": "reverse-portrait",
+      "value": 3
+    },
+    {
+      "name": "reverse-landscape",
+      "value": 4
+    },
+    {
+      "name": "native",
+      "value": 5
+    },
+    {
+      "name": "rotation-0",
+      "value": 6
+    },
+    {
+      "name": "rotation-90",
+      "value": 7
+    },
+    {
+      "name": "rotation-180",
+      "value": 8
+    },
+    {
+      "name": "rotation-270",
+      "value": 9
+    },
+    {
+      "name": "locked",
+      "value": 10
+    }
+  ],
+  "rotation_semantics": "Clockwise graphics rotation relative to native reading orientation, encoded as quarter turns 0..3; bit N in supported-rotations enables rotation N. Square displays satisfy either aspect preference without changing their current rotation."
 }

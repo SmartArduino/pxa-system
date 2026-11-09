@@ -2,6 +2,8 @@
 
 #include <limits.h>
 #include <stdint.h>
+#include <stdarg.h>
+#include <stdio.h>
 #include <string.h>
 
 #include "lvgl.h"
@@ -3728,6 +3730,190 @@ uint32_t pxa_lvgl_ui_text_input_max_bytes(const pxa_lvgl_ui_t *ui, const void *t
         if (node->object==textarea && node->type==PXA_UI_NODE_CONTROL &&
             node->subtype==PXA_UI_CONTROL_TEXT_INPUT) return (uint32_t)node->maximum;
     return 0;
+}
+
+typedef struct {
+    pxa_lvgl_ui_t *ui;
+    char *output;
+    size_t capacity, size;
+    pxa_status_t status;
+} ui_inspection_t;
+
+static void inspect_bytes(ui_inspection_t *out, const char *text, size_t size) {
+    if (out->status != PXA_STATUS_OK) return;
+    if (size > 1024u * 1024u - out->size) {
+        out->status = PXA_STATUS_RESOURCE_LIMIT;
+        return;
+    }
+    if (out->output && out->size < out->capacity) {
+        size_t available = out->capacity - out->size;
+        memcpy(out->output + out->size, text, size < available ? size : available);
+    }
+    out->size += size;
+}
+
+static void inspect_format(ui_inspection_t *out, const char *format, ...) {
+    char buffer[256];
+    va_list arguments;
+    va_start(arguments, format);
+    int length = vsnprintf(buffer, sizeof(buffer), format, arguments);
+    va_end(arguments);
+    if (length < 0 || (size_t)length >= sizeof(buffer)) {
+        out->status = PXA_STATUS_RESOURCE_LIMIT;
+        return;
+    }
+    inspect_bytes(out, buffer, (size_t)length);
+}
+
+/* Cut before a partial UTF-8 codepoint. The command validator already checked
+ * incoming text; native widgets also return NUL-terminated UTF-8. */
+static void inspect_text(ui_inspection_t *out, const char *text) {
+    if (!text) { inspect_bytes(out, "null,\"text_truncated\":false", 27); return; }
+    size_t length = 0;
+    while (length < 4096 && text[length]) ++length;
+    int truncated = length == 4096 && text[length] != 0;
+    if (truncated)
+        while (length && ((uint8_t)text[length] & 0xc0u) == 0x80u) --length;
+    inspect_bytes(out, "\"", 1);
+    for (size_t index = 0; index < length; ++index) {
+        unsigned char value = (unsigned char)text[index];
+        if (value == '"' || value == '\\') {
+            char escaped[2] = {'\\', (char)value};
+            inspect_bytes(out, escaped, 2);
+        } else if (value < 0x20u) inspect_format(out, "\\u%04x", (unsigned)value);
+        else inspect_bytes(out, text + index, 1);
+    }
+    inspect_format(out, "\",\"text_truncated\":%s", truncated ? "true" : "false");
+}
+
+static const char *inspect_type(const pxa_lvgl_ui_node_t *node) {
+    switch (node->type) {
+        case PXA_UI_NODE_ROOT: return "root";
+        case PXA_UI_NODE_BOX: return "box";
+        case PXA_UI_NODE_TEXT: return "text";
+        case PXA_UI_NODE_IMAGE: return "image";
+        case PXA_UI_NODE_SCROLL: return "scroll";
+        case PXA_UI_NODE_VIRTUAL_LIST: return "list";
+        case PXA_UI_NODE_MEDIA_SURFACE: return "media-surface";
+        case PXA_UI_NODE_PROGRESS: return "progress";
+        case PXA_UI_NODE_CANVAS: return "canvas";
+        case PXA_UI_NODE_CONTROL:
+            switch (node->subtype) {
+                case PXA_UI_CONTROL_BUTTON: return "button";
+                case PXA_UI_CONTROL_TOGGLE: return "toggle";
+                case PXA_UI_CONTROL_SLIDER: return "slider";
+                case PXA_UI_CONTROL_TEXT_INPUT: return "text-input";
+                default: return "select";
+            }
+        default: return "unknown";
+    }
+}
+
+static void inspect_rect(ui_inspection_t *out, const char *key, const lv_area_t *area) {
+    inspect_format(out, ",\"%s\":{\"x\":%d,\"y\":%d,\"width\":%d,\"height\":%d}",
+        key, (int)area->x1, (int)area->y1,
+        area->x2 < area->x1 ? 0 : (int)(area->x2 - area->x1 + 1),
+        area->y2 < area->y1 ? 0 : (int)(area->y2 - area->y1 + 1));
+}
+
+static void execute_inspection(void *data) {
+    ui_inspection_t *out = data;
+    pxa_lvgl_ui_t *ui = out->ui;
+    size_t count = 0;
+    inspect_format(out, "{\"schema\":\"pxa-ui-inspection-1\",\"renderer\":\"lvgl\","
+        "\"complete\":true,\"viewport\":{\"width\":%u,\"height\":%u}",
+        (unsigned)ui->primary_environment.width, (unsigned)ui->primary_environment.height);
+    const pxa_ui_environment_t *environment = &ui->primary_environment;
+    inspect_format(out, ",\"environment\":{\"units\":\"surface-px\",\"density_q16\":%u,\"font_scale_q16\":%u,\"shape\":%u",
+        (unsigned)environment->density_q16, (unsigned)environment->font_scale_q16,
+        (unsigned)environment->display_shape);
+    const uint32_t *sets[] = {environment->safe_insets, environment->system_bar_insets,
+        environment->system_gesture_insets, environment->corner_radii};
+    const char *names[] = {"physical_safe_trbl", "system_bars_trbl", "system_gestures_trbl", "corners_tl_tr_br_bl"};
+    for (unsigned i = 0; i < 4; ++i)
+        inspect_format(out, ",\"%s\":[%u,%u,%u,%u]", names[i], (unsigned)sets[i][0],
+            (unsigned)sets[i][1], (unsigned)sets[i][2], (unsigned)sets[i][3]);
+    inspect_bytes(out, "},\"nodes\":[", 11);
+    if (ui->config.parent_object) lv_obj_update_layout(ui->config.parent_object);
+    for (pxa_lvgl_ui_node_t *node = ui->nodes; node; node = node->next) {
+        if (out->status != PXA_STATUS_OK) return;
+        if (!node->object || node->removal_state) continue;
+        if (++count > 4096) { out->status = PXA_STATUS_RESOURCE_LIMIT; return; }
+        lv_obj_update_layout(node->object);
+        lv_area_t bounds, clip, panel = {0, 0,
+            (int32_t)ui->primary_environment.width - 1,
+            (int32_t)ui->primary_environment.height - 1};
+        lv_obj_get_coords(node->object, &bounds);
+        clip = bounds;
+        intersect_clip(&clip, &panel);
+        bool visible = node->visible && node->opacity != 0;
+        bool enabled = !lv_obj_has_state(node->object, LV_STATE_DISABLED);
+        uint32_t parent_id = 0;
+        for (lv_obj_t *object = node->object; object; object = lv_obj_get_parent(object)) {
+            pxa_lvgl_ui_node_t *ancestor = node_for_object(object);
+            if (object != node->object && ancestor && ancestor->ui == ui &&
+                ancestor->surface == node->surface && !parent_id) parent_id = ancestor->id;
+            if (lv_obj_is_hidden(object) ||
+                (ancestor && ancestor->ui == ui && (!ancestor->visible || !ancestor->opacity))) visible = false;
+            if (lv_obj_has_state(object, LV_STATE_DISABLED)) enabled = false;
+            if (object != node->object && !lv_obj_is_overflow_visible(object)) {
+                lv_area_t parent_bounds;
+                lv_obj_get_coords(object, &parent_bounds);
+                intersect_clip(&clip, &parent_bounds);
+            }
+        }
+        int in_clip = clip.x1 <= clip.x2 && clip.y1 <= clip.y2;
+        if (!in_clip) clip = (lv_area_t){bounds.x1, bounds.y1, bounds.x1 - 1, bounds.y1 - 1};
+        visible = visible && in_clip;
+        if (count != 1) inspect_bytes(out, ",", 1);
+        inspect_format(out, "{\"surface\":%u,\"id\":%u,\"parent\":%u,\"type\":\"%s\","
+            "\"visible\":%s,\"enabled\":%s,\"clickable\":%s",
+            (unsigned)node->surface, (unsigned)node->id, (unsigned)parent_id, inspect_type(node),
+            visible ? "true" : "false", enabled ? "true" : "false",
+            lv_obj_is_clickable(node->object) ? "true" : "false");
+        inspect_rect(out, "bounds", &bounds);
+        inspect_rect(out, "clip", &clip);
+        const char *text = NULL;
+        bool password = false;
+        if (node->type == PXA_UI_NODE_TEXT) text = lv_label_get_text(node->object);
+        else if (node->type == PXA_UI_NODE_CONTROL && node->subtype == PXA_UI_CONTROL_TEXT_INPUT) {
+            password = lv_textarea_get_password_mode(node->object);
+            if (!password) text = lv_textarea_get_text(node->object);
+        } else if (node->content && lv_obj_check_type(node->content, &lv_label_class))
+            text = lv_label_get_text(node->content);
+        inspect_format(out, ",\"text_redacted\":%s,\"text\":", password ? "true" : "false");
+        inspect_text(out, text);
+        if (node->type == PXA_UI_NODE_PROGRESS)
+            inspect_format(out, ",\"value\":%d,\"minimum\":%d,\"maximum\":%d",
+                (int)lv_bar_get_value(node->object), (int)lv_bar_get_min_value(node->object), (int)lv_bar_get_max_value(node->object));
+        else if (node->type == PXA_UI_NODE_CONTROL && node->subtype == PXA_UI_CONTROL_SLIDER)
+            inspect_format(out, ",\"value\":%d,\"minimum\":%d,\"maximum\":%d",
+                (int)lv_slider_get_value(node->object), (int)lv_slider_get_min_value(node->object), (int)lv_slider_get_max_value(node->object));
+        else if (node->type == PXA_UI_NODE_CONTROL && node->subtype == PXA_UI_CONTROL_TOGGLE)
+            inspect_format(out, ",\"value\":%d", lv_obj_has_state(node->object, LV_STATE_CHECKED) ? 1 : 0);
+        else if (node->type == PXA_UI_NODE_CONTROL && node->subtype == PXA_UI_CONTROL_SELECTION)
+            inspect_format(out, ",\"value\":%u", (unsigned)lv_dropdown_get_selected(node->object));
+        inspect_bytes(out, "}", 1);
+    }
+    inspect_bytes(out, "]}", 2);
+}
+
+pxa_status_t pxa_lvgl_ui_inspect_json(pxa_lvgl_ui_t *ui, char *output,
+    size_t capacity, size_t *size) {
+    if (!ui || ui->magic != PXA_LVGL_UI_MAGIC || !size || (!output && capacity))
+        return PXA_STATUS_INVALID_ARGUMENT;
+    *size = 0;
+    ui_inspection_t inspection = {.ui = ui, .output = output, .capacity = capacity,
+        .status = PXA_STATUS_OK};
+    pxa_status_t status = ui->config.execute(execute_inspection, &inspection,
+        ui->config.execute_user_data);
+    *size = inspection.size;
+    if (status == PXA_STATUS_OK) status = inspection.status;
+    if (output) {
+        if (inspection.size >= capacity) status = PXA_STATUS_RESOURCE_LIMIT;
+        if (capacity) output[status == PXA_STATUS_OK ? inspection.size : 0] = 0;
+    }
+    return status;
 }
 
 void pxa_lvgl_ui_deinit(pxa_lvgl_ui_t *ui) {

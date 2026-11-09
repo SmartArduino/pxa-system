@@ -502,3 +502,7 @@ preparation or alpha-plane allocation keeps the previous Canvas frame.
 
 The existing path-based image and Canvas APIs still require application
 migration; the handle helpers do not redirect those calls automatically.
+
+## Native WebSocket transport (Net 0.8)
+
+`pxa_websocket.h` provides `pxa_websocket_open` for Hosts with Net feature bit `512`. Declare Net and Permission, then acquire `net.socket/outbound` or an exact `ws://` / `wss://` URL grant. The asynchronous open returns a Core stream handle; QUERY (IO 4) returns `WOULD_BLOCK` while connecting and `1` when ready. READ and WRITE carry one opcode byte (`1` text, `2` binary) followed by a complete message. A short read leaves the message queued; a blocked write consumes no bytes. Close the resource on exit. Native browser WebSocket is separate from raw TCP and does not provide listening or mDNS. See [network integration](../../docs/zh-CN/local-network.md) and [Net protocol](../../spec/draft/net.md).

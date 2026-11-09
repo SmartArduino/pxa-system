@@ -420,7 +420,11 @@ endif()
 # Native LAN provider: bounded shared worker; browser/unsupported targets keep
 # capabilities disabled rather than introducing an implicit network tunnel.
 if(NOT WIN32)
-    foreach(_pxa_lan_target pxsys_desktop_simulator pxsys_product_simulator)
-        target_sources(${_pxa_lan_target} PRIVATE ../../libpxa/adapters/network/pxa_lan_native.c)
+    foreach(_pxa_lan_target pxsys_desktop_simulator pxsys_product_simulator
+            pxsys_desktop_socket_test pxsys_desktop_net_headers_test pxsys_desktop_http_stream_test)
+        if(TARGET ${_pxa_lan_target})
+            target_sources(${_pxa_lan_target} PRIVATE ../../libpxa/adapters/network/pxa_lan_native.c)
+            target_link_libraries(${_pxa_lan_target} PRIVATE Threads::Threads)
+        endif()
     endforeach()
 endif()

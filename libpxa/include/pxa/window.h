@@ -5,13 +5,14 @@
 #include <stdint.h>
 
 #include "pxa/service.h"
+#include "pxa/display_rotation.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 #define PXA_WINDOW_SERVICE_ID UINT16_C(2)
 #define PXA_WINDOW_SERVICE_MAJOR UINT16_C(0)
-#define PXA_WINDOW_SERVICE_MINOR UINT16_C(4)
+#define PXA_WINDOW_SERVICE_MINOR UINT16_C(5)
 #define PXA_WINDOW_SERVICE_PATCH UINT16_C(0)
 
 #define PXA_WINDOW_CONFIGURE UINT16_C(1)
@@ -19,6 +20,8 @@ extern "C" {
 #define PXA_WINDOW_SHOW_TOAST UINT16_C(3)
 /* Request ordinary system Back asynchronously; the Guest may handle it. */
 #define PXA_WINDOW_REQUEST_BACK UINT16_C(4)
+/* Opt in to complete display metrics, including native size and rotation. */
+#define PXA_WINDOW_GET_DISPLAY_SNAPSHOT UINT16_C(5)
 #define PXA_WINDOW_TOAST_MAX_BYTES 240u
 #define PXA_WINDOW_METRICS_CHANGED UINT16_C(0x8001)
 #define PXA_WINDOW_BACK_REQUESTED UINT16_C(0x8002)
@@ -37,6 +40,7 @@ typedef uint8_t pxa_window_orientation_t;
 #define PXA_WINDOW_ORIENTATION_UNSPECIFIED ((pxa_window_orientation_t)0)
 #define PXA_WINDOW_ORIENTATION_PORTRAIT ((pxa_window_orientation_t)1)
 #define PXA_WINDOW_ORIENTATION_LANDSCAPE ((pxa_window_orientation_t)2)
+#define PXA_WINDOW_ORIENTATION_SQUARE ((pxa_window_orientation_t)3)
 
 typedef struct {
     uint16_t min_major;
@@ -67,6 +71,7 @@ typedef struct {
     uint8_t keep_screen_on;
     uint32_t status_bar_color;
     uint32_t navigation_bar_color;
+    uint8_t orientation_preference;
 } pxa_window_configuration_t;
 
 typedef struct {
@@ -83,6 +88,10 @@ typedef struct {
     pxa_window_insets_t system_bar_insets;
     pxa_window_orientation_t orientation;
     uint8_t focused;
+    uint8_t rotation;
+    uint8_t supported_rotations;
+    uint32_t native_width;
+    uint32_t native_height;
 } pxa_window_snapshot_t;
 
 typedef pxa_status_t (*pxa_window_apply_fn)(

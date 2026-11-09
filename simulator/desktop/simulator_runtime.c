@@ -44,8 +44,30 @@ struct pxsys_desktop_runtime {
     simulator_instance_t* instances;
     pxsys_theme_snapshot_t theme;
     pxsys_locale_snapshot_t locale;
+    pxsys_display_profile_t native_display;
+    uint8_t native_display_valid, display_rotation;
     pxsys_desktop_runtime_fixture_t fixture;
 };
+
+int pxsys_desktop_runtime_inspect_ui(void *context, char *output,
+    size_t capacity, size_t *size) {
+    pxsys_desktop_runtime_t *runtime = context;
+    if (!runtime || runtime->magic != PXSYS_DESKTOP_RUNTIME_MAGIC) return PXA_STATUS_NOT_FOUND;
+    for (simulator_instance_t *instance = runtime->instances; instance; instance = instance->next)
+        if (instance->foreground && instance->product_runner)
+            return pxsys_product_simulator_inspect_ui(instance->product_runner, output, capacity, size);
+    return PXA_STATUS_NOT_FOUND;
+}
+
+int pxsys_desktop_runtime_runtime_info(void *context, char *output,
+    size_t capacity, size_t *size) {
+    pxsys_desktop_runtime_t *runtime = context;
+    if (!runtime || runtime->magic != PXSYS_DESKTOP_RUNTIME_MAGIC) return PXA_STATUS_NOT_FOUND;
+    for (simulator_instance_t *instance = runtime->instances; instance; instance = instance->next)
+        if (instance->foreground && instance->product_runner)
+            return pxsys_product_simulator_runtime_info(instance->product_runner, output, capacity, size);
+    return PXA_STATUS_NOT_FOUND;
+}
 
 bool pxsys_desktop_runtime_volume_key(pxsys_desktop_runtime_t* runtime, uint32_t key) {
     if (runtime == NULL) return false;
@@ -87,6 +109,22 @@ static void product_window_changed(
     if (instance == NULL || configuration == NULL) return;
     instance->window_configuration = *configuration;
     instance->window_configuration_set = 1;
+    pxsys_desktop_runtime_t* runtime = instance->runtime;
+    if (!runtime->native_display_valid &&
+        pxsys_display_service_get(pxsys_standard_system_display(runtime->system),
+            &runtime->native_display) == PXSYS_STATUS_OK)
+        runtime->native_display_valid = 1;
+    uint8_t rotation;
+    if (runtime->native_display_valid && pxa_display_resolve_rotation(
+        runtime->native_display.width, runtime->native_display.height, 0,
+        runtime->display_rotation, configuration->orientation_preference, 15, &rotation) &&
+        rotation != runtime->display_rotation) {
+        pxsys_display_profile_t profile;
+        if (pxsys_display_profile_rotated(&runtime->native_display, rotation, &profile) == PXSYS_STATUS_OK) {
+            runtime->display_rotation = rotation;
+            (void)pxsys_display_service_update(pxsys_standard_system_display(runtime->system), &profile);
+        }
+    }
     if (instance->foreground) publish_window(instance);
 }
 
@@ -422,14 +460,15 @@ void pxsys_desktop_runtime_poll(pxsys_desktop_runtime_t* runtime) {
             }
             if (pxsys_reference_layout_compute(&display, &layout) ==
                 PXSYS_STATUS_OK) {
-                bars.top = (uint16_t)layout.status_bar.height;
+                bars.top = (uint16_t)(layout.status_bar.y + layout.status_bar.height);
                 if (fixture->navigation_gestures) {
-                    bars.left = (uint16_t)
-                        pxsys_reference_layout_back_gesture_width();
-                    bars.bottom = (uint16_t)
-                        pxsys_reference_layout_gesture_strip_height(
-                            layout.size_class);
-                } else {
+                    bars.left = (uint16_t)(layout.safe_area.x +
+                        pxsys_reference_layout_back_gesture_width());
+                    if (fixture->navigation_bar_enabled)
+                        bars.bottom = (uint16_t)
+                            pxsys_reference_layout_gesture_strip_height(
+                                layout.size_class);
+                } else if (fixture->navigation_bar_enabled) {
                     bars.bottom = (uint16_t)
                         (display.height - layout.navigation_bar.y);
                 }

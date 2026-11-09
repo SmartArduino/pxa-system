@@ -88,6 +88,11 @@ public:
     }();
     constexpr ModifiedView(Child child, Value value)
         : child_(std::move(child)), value_(std::move(value)) {}
+    constexpr bool fills_height() const noexcept {
+        if constexpr (Key == protocol::height) return std::same_as<Value, FillLength>;
+        else if constexpr (requires { child_.fills_height(); }) return child_.fills_height();
+        else return false;
+    }
     void reset_mount() noexcept requires ResettableView<Child> { reset_view(child_); }
 
     template<std::uint16_t Remove, class Self>
@@ -131,14 +136,43 @@ private:
 
 template<std::uint16_t Key, class View, class Value>
 constexpr auto modify(View&& view, Value value) {
-    static_assert(ViewLike<std::decay_t<View>>,
-        "UI modifiers require a view; finish Button.on_click() or use Component(model)");
     if constexpr (requires { std::forward<View>(view).template apply_modifier<Key>(value); })
         return std::forward<View>(view).template apply_modifier<Key>(value);
     else {
+        static_assert(ViewLike<std::decay_t<View>>,
+            "UI modifiers require a view; finish Button.on_click() or use Component(model)");
         auto child = without_modifier<Key>(std::forward<View>(view));
         return ModifiedView<Key, decltype(child), Value>(std::move(child), std::move(value));
     }
 }
+
+template<std::uint16_t Key, class Child, class Value>
+class ModifiedButtonBuilder : public ButtonBuilderModifiers {
+public:
+    constexpr ModifiedButtonBuilder(Child child, Value value)
+        : child_(std::move(child)), value_(std::move(value)) {}
+    template<class F> requires requires(Child&& child, F&& fn) { std::move(child).on_click(std::forward<F>(fn)); }
+    auto on_click(F&& fn) && {
+        return modify<Key>(std::move(child_).on_click(std::forward<F>(fn)), std::move(value_));
+    }
+    template<class F> requires requires(Child&& child, F& fn) { std::move(child).on_click_ref(fn); }
+    auto on_click_ref(F& fn) && {
+        return modify<Key>(std::move(child_).on_click_ref(fn), std::move(value_));
+    }
+    template<class F> requires requires(Child&& child, F&& fn) { std::move(child).on_pointer(std::forward<F>(fn)); }
+    auto on_pointer(F&& fn) && {
+        return modify<Key>(std::move(child_).on_pointer(std::forward<F>(fn)), std::move(value_));
+    }
+    template<class F> requires requires(Child&& child, F& fn) { std::move(child).on_pointer_ref(fn); }
+    auto on_pointer_ref(F& fn) && {
+        return modify<Key>(std::move(child_).on_pointer_ref(fn), std::move(value_));
+    }
+    template<ClickCallback F> auto on_long_press(F fn, PressOptions options = {}) && {
+        return modify<Key>(std::move(child_).on_long_press(std::move(fn), options), std::move(value_));
+    }
+private:
+    Child child_;
+    [[no_unique_address]] Value value_;
+};
 
 } // namespace pxa::ui::detail

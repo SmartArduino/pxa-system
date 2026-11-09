@@ -1,6 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
 
 #include "pxadb_control.h"
+#include "pxa/status.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -251,6 +252,17 @@ static int inject_touch(pxsys_pxadb_control_t *control, const char *action,
     return 1;
 }
 
+void pxsys_pxadb_control_cancel_pointers(pxsys_pxadb_control_t *control) {
+    if (!control || !control->display) return;
+    for (unsigned id = 0; id < PXSYS_PXADB_MAX_POINTERS; ++id) {
+        pxsys_pxadb_touch_t *touch = &control->touches[id];
+        touch->pressed = 0;
+        if (touch->indev) lv_indev_reset(touch->indev, NULL);
+    }
+    control->tap_pending = 0;
+    (void)push_pointer(control->window_id, "UP", 0, 0);
+}
+
 static void handle_client(pxsys_pxadb_control_t *control, pxsys_control_socket_t client) {
     char command[128] = {0};
     char action[16] = {0};
@@ -276,6 +288,42 @@ static void handle_client(pxsys_pxadb_control_t *control, pxsys_control_socket_t
             !send_text(client, header) || !send_all(client, png, png_size))
             (void)send_text(client, "ERR screenshot_failed\n");
         free(png);
+    } else if (strcmp(command,"RUNTIME INFO\n") == 0) {
+        size_t bytes = 0;
+        char *json = NULL;
+        const int status = control->runtime_info ?
+            control->runtime_info(control->inspect_context,NULL,0,&bytes) : PXA_STATUS_UNSUPPORTED;
+        if (status != PXA_STATUS_OK || !bytes)
+            (void)send_text(client,"ERR runtime_info_unavailable\n");
+        else if (bytes > 16384u)
+            (void)send_text(client,"ERR runtime_info_too_large\n");
+        else if (!(json=malloc(bytes+1u)))
+            (void)send_text(client,"ERR no_memory\n");
+        else if (control->runtime_info(control->inspect_context,json,bytes+1u,&bytes) != PXA_STATUS_OK)
+            (void)send_text(client,"ERR runtime_info_changed\n");
+        else {
+            snprintf(header,sizeof(header),"JSON %zu\n",bytes);
+            if (send_text(client,header)) (void)send_all(client,json,bytes);
+        }
+        free(json);
+    } else if (strcmp(command, "UI INSPECT\n") == 0) {
+        size_t bytes = 0;
+        char *json = NULL;
+        const int status = control->inspect_ui ?
+            control->inspect_ui(control->inspect_context, NULL, 0, &bytes) : PXA_STATUS_UNSUPPORTED;
+        if (status == PXA_STATUS_RESOURCE_LIMIT || bytes > 1024u * 1024u)
+            (void)send_text(client, "ERR ui_inspection_too_large\n");
+        else if (status != PXA_STATUS_OK || !bytes)
+            (void)send_text(client, "ERR ui_inspection_unavailable\n");
+        else if (!(json = malloc(bytes + 1u)))
+            (void)send_text(client, "ERR no_memory\n");
+        else if (control->inspect_ui(control->inspect_context, json, bytes + 1u, &bytes) != PXA_STATUS_OK)
+            (void)send_text(client, "ERR ui_inspection_changed\n");
+        else {
+            snprintf(header, sizeof(header), "JSON %zu\n", bytes);
+            if (send_text(client, header)) (void)send_all(client, json, bytes);
+        }
+        free(json);
     } else if (strcmp(command, "TOUCH CANCEL_ALL\n") == 0) {
         for (unsigned id = 0; id < PXSYS_PXADB_MAX_POINTERS; ++id)
             if (control->touches[id].pressed)
@@ -411,4 +459,7 @@ void pxsys_pxadb_control_stop(pxsys_pxadb_control_t *control) {
     control->display = NULL;
     control->catalog_context = NULL;
     control->refresh_catalog = NULL;
+    control->inspect_context = NULL;
+    control->inspect_ui = NULL;
+    control->runtime_info = NULL;
 }

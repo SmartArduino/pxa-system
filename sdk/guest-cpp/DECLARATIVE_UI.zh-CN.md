@@ -97,6 +97,15 @@ State 本身存活并不保证它指向的字符串存活。直接 `Text(std::st
 | `visible/enabled(bool 或 State<bool>&)` | 固定值或绑定的显示/交互标志 |
 | `frame(CanvasRegion)` | 显式绝对布局，坐标与大小为逻辑像素 |
 
+`Column` / `Row` 默认按内容收缩；需要撑满可用宽度时显式调用 `.fill()`。
+`.fill_height()` 要求父布局有确定的可用高度，不能用它为自动高度父容器反推尺寸。
+按钮的尺寸、样式和可见性可放在动作之前或之后，例如
+`Button("开始").height(44_dp).on_click(start)` 与
+`Button("开始").on_click(start).height(44_dp)`。动态标签和 WidgetStyle 按钮同样支持。
+最终仍需绑定点击、指针或长按动作；未完成的 builder 不能作为页面视图。
+按钮标签默认垂直居中；显式 `.align(...)` 可覆盖该设置。
+`Progress` 的默认轨道使用 `surface_container_high`，0% 时仍显示轨道。
+
 修饰器直接给控件根节点写属性，没有新增 Host 包装节点。按钮的文字属性写到
 其文字节点；容器修饰不强制覆盖所有后代已经明确指定的字体和颜色。
 重复设置同一属性时以最后一次为准；被覆盖的通用修饰器及其 State 绑定在编译期
@@ -120,6 +129,78 @@ SafeArea(display, Scroll(Column(
 隐藏内容。`.visible(bool 或 State<bool>&)` 与这个条件共同决定可见性，指标恢复不能
 覆盖应用指定的隐藏状态。指标与可见性两个来源合用一个 Page 输出绑定；只有同时
 订阅两者时才保存额外订阅。组件 State 和输入节点不因调整安全区而重建。
+
+`DisplayMetrics.safe` 表示屏幕物理安全边距，`system_bars` 记录实际系统栏，
+`system_gestures` 单独记录仍工作的 Home/返回手势触发区，单位均为 Surface 像素。
+`SafeArea` 和 `safe_rectangle()` 逐边取屏幕形状、物理边距、系统栏的最大值，
+默认还避让底部 Home 手势；不把重叠边距相加，也不因侧边返回手势让整页向右偏。
+有真实非对称缺口或物理安全边距时仍按实际形状避让，不强制抹平。
+新 Host 的 START 快照及 `ENVIRONMENT_CHANGED` 都携带这些信息，无需等待异步
+Window 查询才能布局首帧。状态栏隐藏或采用临时覆盖模式时，不预留固定顶部高度；
+按钮导航隐藏后释放其占用空间。显隐切换保留组件状态和输入绑定。
+
+侧边贴靠的按钮、滑块或横向拖动区需要单独检查是否与返回手势冲突。对相应控件组
+可使用 `SafeArea(metrics, controls, GestureAvoidance::all)` 或
+`safe_rectangle(metrics, GestureAvoidance::all)`；不要因此把整页内容统一右移。
+默认 `GestureAvoidance::bottom` 保持页面视觉居中；`none` 仅取消手势避让，仍保留
+物理边距和系统栏避让，适合由应用自行处理系统输入冲突的场景。没有这些手势的
+Host 上报零值，应用不得按设备名称硬编码一段空白。
+不要为了补偿左侧手势区再给右侧增加相同留白；只为需要避让的控件组处理冲突。
+选择 `none` 只改变布局，系统返回和 Home 输入仍由 Host 处理，并未被应用关闭。
+
+`system_bars_known` / `system_gestures_known == false` 表示旧 Host 没有上报对应信息，
+不表示系统栏或手势不存在。旧 Host 的 `WindowMetrics.system_bar_insets` 是合并的
+栏/手势边距，可作保守回退；不要把其中的侧边输入区直接当作整页边距。升级匹配
+固件可获得分离数据，未知状态不能当作已验证的全面屏适配。`.padding()` 是上述
+避让之外额外的应用内边距。
+
+### 连续背景与沉浸式页面
+
+安全区约束可读内容和交互目标，页面背景可以铺满整个 Surface。
+SafeArea 自身是全尺寸容器，背景会覆盖内边距，因此纯色页面不需要额外包装节点：
+
+```cpp
+return SafeArea(environment.display(), Column(
+    Text("番茄钟").font(Font::title),
+    Button("开始").height(44_dp).on_click([this] { start(); })
+).gap(8_dp).fill()).padding(12_dp).background(Color::background);
+```
+
+保持安全区内外背景连续，按钮和卡片按需要使用独立表面色。背景图、场景和装饰可
+通过全尺寸父层或 Surface 铺满，再叠加安全区内的文字和控件；Surface 游戏的 HUD
+保持透明，避免不透明的安全区背景遮住场景。圆角和圆屏外的物理遮罩仍由 Host 处理。
+沉浸式页面可保留清晰的状态信息，也可按应用需要隐藏系统栏；不要用隐藏系统栏
+代替正确的安全区适配。新建应用模板已采用连续的主题背景，并声明 `log` 以保留 UI 错误。
+
+在已实现系统栏样式的 Host 上，可用 `WindowConfig` 的 `status_bar_color` /
+`navigation_bar_color` 设置 `0xRRGGBBAA` 背景，`0` 表示全透明；`status_bar_icons` /
+`navigation_bar_icons` 选择 `light`、`dark` 或 `automatic`。透明栏下若是自绘浅色页面、
+图片或游戏场景，显式选择合适的明暗样式并检查截图。参考 Host 的自动模式按主题或
+声明背景估计明暗，不逐帧读取应用画面。临时唤出的系统栏也使用应用样式，回到系统
+主页或设置时恢复系统主题。旧 Host 可能没有绘制这些字段，应核对实际运行效果。
+
+### 同页响应式布局
+
+同一页面仅按尺寸增减内容时，优先绑定 `.visible(State<bool>&)`；隐藏节点不占布局空间，
+恢复显示时保留原来的状态和绑定。在 `on_start` 初始化屏幕状态，并在显示指标变化时
+按可用宽高、DPI 和安全区域更新紧凑模式；不要只判断横屏或竖屏。
+
+```cpp
+State<bool> show_details{true};
+// 在应用字段中持有 State，尺寸变化时调用 show_details.set(...)
+auto view() {
+    return Column(Text("番茄钟"), Text("下一轮：短休").visible(show_details),
+        Button("开始").on_click([this] { start(); }).height(44_dp)).fill();
+}
+```
+
+`When` 用于切换结构不同、需要分别管理生命周期的子树。分支根可以 `.fill()`。
+分支根需要 `.fill_height()` 时，必须先给条件容器确定高度，例如
+`When(flag, make_a, make_b).height(120_dp)`；或在高度已确定的父容器中使用
+`When(flag, make_a, make_b).fill_height()`。自动高度条件容器中的根高度填充会被拒绝为
+`invalid_argument`，避免百分比高度依赖自身内容而使分支消失。
+声明 `log` 服务后，UI 挂载和更新失败会通过日志服务输出 `PXA_UI_ERROR phase=mount|flush code=...`，并调用应用的
+`on_error(Context&, Error)`（若定义）。错误回调不能让失败事务变成验证通过。
 
 普通可复制视图可以在局部变量上继续修饰；拥有候选页面的 Component、When、List、
 Refresh 等视图需要 `std::move(view).width(...)`，或直接串联返回的临时视图。

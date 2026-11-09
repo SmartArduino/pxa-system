@@ -8,9 +8,12 @@ struct PixelRect {
     bool contains(int px,int py)const noexcept{return width>0&&height>0&&px>=x&&py>=y&&
         int64_t(px)-x<width&&int64_t(py)-y<height;}
 };
+// Side gestures constrain edge controls, not the centering of a whole page.
+enum class GestureAvoidance : std::uint8_t { bottom, all, none };
 // A conservative rectangle entirely inside the safe region and panel outline.
 // Use for fixed HUD groups; the world/background can still fill the panel.
-inline PixelRect safe_rectangle(const DisplayMetrics& d) noexcept {
+inline PixelRect safe_rectangle(const DisplayMetrics& d,
+    GestureAvoidance gestures=GestureAvoidance::bottom) noexcept {
     const int w=int(std::min(d.width,65535u)),h=int(std::min(d.height,65535u));
     auto inset=[&](unsigned corner){float radius=std::min(float(d.corners[corner]),float(std::min(w,h))/2);
         if(d.shape==2)radius=float(std::min(w,h))/2;
@@ -26,12 +29,25 @@ inline PixelRect safe_rectangle(const DisplayMetrics& d) noexcept {
     r=std::max(r,int(std::min(d.safe.right,uint32_t(w))));
     t=std::max(t,int(std::min(d.safe.top,uint32_t(h))));
     b=std::max(b,int(std::min(d.safe.bottom,uint32_t(h))));
+    l=std::max(l,int(std::min(d.system_bars.left,uint32_t(w))));
+    r=std::max(r,int(std::min(d.system_bars.right,uint32_t(w))));
+    t=std::max(t,int(std::min(d.system_bars.top,uint32_t(h))));
+    b=std::max(b,int(std::min(d.system_bars.bottom,uint32_t(h))));
+    if(gestures!=GestureAvoidance::none)
+        b=std::max(b,int(std::min(d.system_gestures.bottom,uint32_t(h))));
+    if(gestures==GestureAvoidance::all) {
+        l=std::max(l,int(std::min(d.system_gestures.left,uint32_t(w))));
+        r=std::max(r,int(std::min(d.system_gestures.right,uint32_t(w))));
+        t=std::max(t,int(std::min(d.system_gestures.top,uint32_t(h))));
+    }
     return {l,t,std::max(0,w-l-r),std::max(0,h-t-b)};
 }
 inline DisplayMetrics scale_display(DisplayMetrics d,uint32_t width,uint32_t height) noexcept {
     const auto x=[&](uint32_t n){return d.width?uint32_t(uint64_t(n)*width/d.width):0;};
     const auto y=[&](uint32_t n){return d.height?uint32_t(uint64_t(n)*height/d.height):0;};
     d.safe={x(d.safe.left),y(d.safe.top),x(d.safe.right),y(d.safe.bottom)};
+    d.system_bars={x(d.system_bars.left),y(d.system_bars.top),x(d.system_bars.right),y(d.system_bars.bottom)};
+    d.system_gestures={x(d.system_gestures.left),y(d.system_gestures.top),x(d.system_gestures.right),y(d.system_gestures.bottom)};
     for(auto& radius:d.corners)radius=std::min(x(radius),y(radius));
     d.density_q16=d.height?uint32_t(std::min(uint64_t(UINT32_MAX),
         uint64_t(d.density_q16)*height/d.height)):65536;

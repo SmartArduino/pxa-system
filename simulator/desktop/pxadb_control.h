@@ -39,6 +39,10 @@ typedef struct {
     void *catalog_context;
     pxsys_pxadb_catalog_refresh_fn refresh_catalog;
     pxsys_pxadb_package_action_fn package_action;
+    void *inspect_context;
+    /* Returns a PXA status (0 = success); NULL/0 queries required size. */
+    int (*inspect_ui)(void *context, char *output, size_t capacity, size_t *size);
+    int (*runtime_info)(void *context, char *output, size_t capacity, size_t *size);
     char path[108];
 } pxsys_pxadb_control_t;
 
@@ -47,6 +51,7 @@ int pxsys_pxadb_control_start(pxsys_pxadb_control_t *control,
                               lv_display_t *display, void *catalog_context,
                               pxsys_pxadb_catalog_refresh_fn refresh_catalog);
 void pxsys_pxadb_control_poll(pxsys_pxadb_control_t *control);
+void pxsys_pxadb_control_cancel_pointers(pxsys_pxadb_control_t *control);
 void pxsys_pxadb_control_stop(pxsys_pxadb_control_t *control);
 
 #endif

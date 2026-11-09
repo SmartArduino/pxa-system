@@ -78,6 +78,8 @@ extern "C" {
 
 /* Core startup-configuration record containing UI environment records. */
 #define PXA_UI_CONFIG_ENVIRONMENT UINT16_C(8)
+/* Encoded environment including optional geometry and system-bar records. */
+#define PXA_UI_ENVIRONMENT_WIRE_BYTES 166u
 
 #define PXA_UI_PRIMARY_SURFACE UINT32_C(1)
 #define PXA_UI_DISPLAY_SHAPE_RECTANGLE UINT32_C(0)
@@ -329,7 +331,7 @@ typedef struct {
     uint32_t font_scale_q16;
     /* Safe-area insets in logical pixels, ordered top, right, bottom, left.
      * Includes cutout coverage and physical safe margins but not system
-     * chrome; use the window service snapshot for system bar insets. */
+     * chrome; system_bar_insets below reports those independently. */
     uint32_t safe_insets[4];
     uint64_t input_capabilities;
     pxa_ui_features_t features;
@@ -340,6 +342,12 @@ typedef struct {
      * custom=3. Corner radii are logical pixels, TL, TR, BR, BL. */
     uint32_t display_shape;
     uint32_t corner_radii[4];
+    /* System chrome in Surface pixels, top/right/bottom/left; separate from
+     * physical safe insets. Compose per-edge maxima, never add the margins. */
+    uint32_t system_bar_insets[4];
+    /* Active system gesture input strips, independently of visible chrome.
+     * A side Back strip is not a page margin. Same TRBL pixel order. */
+    uint32_t system_gesture_insets[4];
 } pxa_ui_environment_t;
 
 typedef struct {
@@ -381,6 +389,8 @@ typedef struct {
     /* Optional; avoids a second live UI buffer during growth when the
      * allocator can resize in place. Uses allocator_context. */
     pxa_ui_resize_fn resize;
+    uint32_t system_bar_insets[4];
+    uint32_t system_gesture_insets[4];
 } pxa_ui_config_t;
 
 typedef struct {

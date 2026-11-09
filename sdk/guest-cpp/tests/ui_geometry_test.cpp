@@ -13,6 +13,26 @@ int main() {
     auto r=safe_rectangle(d); assert(r.x==150 && r.width==130 && r.y==10 && r.height==200);
     r=interactive_rectangle(d,{16,20,0,36});
     assert(r.x==150 && r.y==20 && r.width==130 && r.height==184);
+    d.system_bars={16,28,0,36};d.system_bars_known=true;
+    r=safe_rectangle(d);assert(r.x==150 && r.y==28 && r.width==130 && r.height==176);
+    auto scaled_bars=scale_display(d,600,480);
+    assert(scaled_bars.system_bars.top==56 && scaled_bars.system_bars.bottom==72);
+    DisplayMetrics centered;centered.width=296;centered.height=240;
+    centered.safe={8,8,8,8};centered.system_bars={0,28,0,0};
+    centered.system_gestures={26,0,0,20};
+    auto page=safe_rectangle(centered);
+    assert(page.x==8 && page.width==280 && 2*page.x+page.width==296);
+    assert(page.y==28 && page.height==192);
+    auto edge_controls=safe_rectangle(centered,GestureAvoidance::all);
+    assert(edge_controls.x==26 && edge_controls.width==262);
+    auto no_gestures=safe_rectangle(centered,GestureAvoidance::none);
+    assert(no_gestures.y+no_gestures.height==232);
+    auto scaled_gestures=scale_display(centered,592,480);
+    assert(scaled_gestures.system_gestures.left==52 && scaled_gestures.system_gestures.bottom==40);
+    centered.system_gestures={}; // No gesture support means no synthetic edge gap.
+    assert(safe_rectangle(centered,GestureAvoidance::all).x==8);
+    d.system_bars={}; // Hidden chrome gives space back; physical safe margins remain.
+    r=safe_rectangle(d);assert(r.y==10 && r.height==200);
     r=interactive_rectangle(d,{UINT32_MAX,0,0,0});
     assert(r.width==0);
     d.safe.right=200; r=safe_rectangle(d); assert(r.width==0 && !r.contains(r.x,r.y));

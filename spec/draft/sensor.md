@@ -66,8 +66,10 @@ Apps discover it independently; it requires no wire or Core version change.
 
 `motion.acceleration` and `motion.angular-velocity` describe the device, not
 the sensor chip's mounting. With an integrated display in its native
-orientation, +X points toward the top edge, +Y toward the left edge and +Z
-out of the screen. These axes form a right-handed frame. Devices without a
+orientation, +X points toward the right edge, +Y toward the top edge and +Z
+out of the screen, matching Android's device axes. These axes form a
+right-handed frame. Native orientation need not be portrait, and square
+displays still have a fixed native top edge. Devices without a
 display document equivalent housing reference edges. The reference remains
 fixed when an App changes its view or rotates its measurement interface.
 
@@ -83,6 +85,11 @@ screen-down reports the negative value. Stationary angular velocity is near zero
 UI pixel Y increasing downward is a presentation convention and does not
 change this physical frame. Apps may project to screen coordinates or apply a
 user-selected measurement rotation, without chip- or board-specific remapping.
+Device axes remain fixed for all display rotations, including 180 degrees and
+rotations of square displays. Screen-relative controls transform these vectors
+using the actual display rotation, never by inferring it from width and height.
+Magnetic channels document their frame separately: an unaligned chip-native
+magnetic vector requires mounting calibration before fusion with device motion.
 
 ## Core 1.0 binding
 

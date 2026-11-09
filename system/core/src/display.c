@@ -47,6 +47,35 @@ static int rect_valid(const pxsys_display_profile_t* profile,
     return right <= profile->width && bottom <= profile->height;
 }
 
+pxsys_status_t pxsys_display_profile_rotated(const pxsys_display_profile_t* native,
+    uint8_t rotation, pxsys_display_profile_t* output) {
+    if (!output || rotation > 3 || pxsys_display_profile_validate(native) != PXSYS_STATUS_OK)
+        return PXSYS_STATUS_INVALID_ARGUMENT;
+    pxsys_display_profile_t result = *native;
+    if (rotation & 1u) { result.width = native->height; result.height = native->width; }
+    for (uint8_t i = 0; i < rotation; ++i) {
+        const pxsys_insets_t s = result.safe_insets;
+        const pxsys_corner_radii_t c = result.corner_radii;
+        result.safe_insets = (pxsys_insets_t){s.right, s.bottom, s.left, s.top};
+        result.corner_radii = (pxsys_corner_radii_t){c.top_right, c.bottom_right, c.bottom_left, c.top_left};
+    }
+    for (uint8_t i = 0; i < result.cutout_count; ++i) {
+        const pxsys_rect_t b = native->cutouts[i].bounds;
+        switch (rotation) {
+            case 1: result.cutouts[i].bounds = (pxsys_rect_t){b.y,
+                (int32_t)(native->width - (uint32_t)b.x - b.width), b.height, b.width}; break;
+            case 2: result.cutouts[i].bounds = (pxsys_rect_t){
+                (int32_t)(native->width - (uint32_t)b.x - b.width),
+                (int32_t)(native->height - (uint32_t)b.y - b.height), b.width, b.height}; break;
+            case 3: result.cutouts[i].bounds = (pxsys_rect_t){
+                (int32_t)(native->height - (uint32_t)b.y - b.height), b.x, b.height, b.width}; break;
+            default: break;
+        }
+    }
+    *output = result;
+    return PXSYS_STATUS_OK;
+}
+
 pxsys_status_t pxsys_display_profile_validate(const pxsys_display_profile_t* profile) {
     size_t index;
     uint32_t maximum_radius;

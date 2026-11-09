@@ -17,6 +17,11 @@ function tick(){
     // only one transferred frame in flight; slow consumers skip presentation.
     if(next!==revision&&!presentPending){
       revision=next;
+      const size=runtime.display();
+      if(context && (image.width!==size.width || image.height!==size.height)) {
+        context.canvas.width=size.width;context.canvas.height=size.height;
+        image=new ImageData(size.width,size.height);
+      }
       const bgra=runtime.pixels(),rgba=image?.data||new Uint8ClampedArray(bgra.length);
       for(let i=0;i<bgra.length;i+=4){rgba[i]=bgra[i+2];rgba[i+1]=bgra[i+1];rgba[i+2]=bgra[i];rgba[i+3]=255;}
       if(context){context.putImageData(image,0,0);frames++;}

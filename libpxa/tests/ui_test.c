@@ -1067,6 +1067,9 @@ static void test_surfaces(pxa_runtime_t *runtime, pxa_component_t component,
     environment.width = 640;
     environment.display_shape = PXA_UI_DISPLAY_SHAPE_CIRCLE;
     environment.corner_radii[1] = 120;
+    environment.system_bar_insets[0] = 28;
+    environment.system_bar_insets[2] = 36;
+    environment.system_gesture_insets[3] = 26;
     assert(pxa_ui_update_environment(service, component, &environment) ==
            PXA_STATUS_OK);
     assert(backend->environment_changes == 1);
@@ -1077,10 +1080,15 @@ static void test_surfaces(pxa_runtime_t *runtime, pxa_component_t component,
            decoded.opcode == PXA_UI_ENVIRONMENT_CHANGED &&
            decoded.payload.size == PXA_UI_ENVIRONMENT_WIRE_BYTES);
     assert(pxa_read_u16(decoded.payload.data +
-                            PXA_UI_ENVIRONMENT_WIRE_BYTES - 24u) == 12u);
+                            PXA_UI_ENVIRONMENT_WIRE_BYTES - 64u) == 12u);
     assert(pxa_read_u32(decoded.payload.data +
-                            PXA_UI_ENVIRONMENT_WIRE_BYTES - 20u) ==
+                            PXA_UI_ENVIRONMENT_WIRE_BYTES - 60u) ==
            PXA_UI_DISPLAY_SHAPE_CIRCLE);
+    assert(pxa_read_u16(decoded.payload.data + PXA_UI_ENVIRONMENT_WIRE_BYTES - 40u) == 13u);
+    assert(pxa_read_u32(decoded.payload.data + PXA_UI_ENVIRONMENT_WIRE_BYTES - 36u) == 28u);
+    assert(pxa_read_u32(decoded.payload.data + PXA_UI_ENVIRONMENT_WIRE_BYTES - 28u) == 36u);
+    assert(pxa_read_u16(decoded.payload.data + PXA_UI_ENVIRONMENT_WIRE_BYTES - 20u) == 14u);
+    assert(pxa_read_u32(decoded.payload.data + PXA_UI_ENVIRONMENT_WIRE_BYTES - 4u) == 26u);
     pxa_write_u32(close_payload, surface);
     assert(pxa_component_begin_event(runtime, component) == PXA_STATUS_OK);
     assert(control(runtime, component, PXA_UI_SURFACE_CLOSE,

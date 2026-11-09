@@ -46,8 +46,34 @@ test('Surface RGB565 composition and frame accounting',async()=>{
   // A 2×2 RGB565 Surface fits at 4×, centered exactly like desktop/device.
   assert.deepEqual(at(156,116),[0,0,255]);assert.deepEqual(at(163,123),[0,0,255]);
   assert.notDeepEqual(at(155,116),[0,0,255]);assert.notDeepEqual(at(164,123),[0,0,255]);
+  call(2,1,tlv(9,num(7,1)),false);
+  host._browser_tick(performance.now()+80);host._browser_render();
+  const turned=rt.pixels(),point=(x,y)=>[...turned.slice((y*240+x)*4,(y*240+x)*4+3)];
+  assert.deepEqual(point(116,156),[0,0,255]);assert.deepEqual(point(123,163),[0,0,255]);
+  assert.notDeepEqual(point(115,156),[0,0,255]);
   const state=call(16,4,num(handle,8));assert.equal(state.readBigUInt64LE(4),1n);assert.equal(state.readBigUInt64LE(12),1n);
   await rt.stop();
+});
+test('Window preferences rotate tall/wide views, retain square shape, and expose native metrics',async()=>{
+  for(const [width,height]of [[240,320],[320,240],[240,240]]){
+    const {host,rt,call}=await platform({width,height});
+    const snapshot=()=>call(2,5,Buffer.alloc(0)).subarray(4);
+    let initial=snapshot();assert.equal(initial.length,120);
+    assert.equal(initial.readUInt32LE(107),width);assert.equal(initial.readUInt32LE(111),height);
+    assert.equal(initial[119],15);
+    for(const preference of [1,2,3,4,6,7,8,9,10,0]){
+      call(2,1,tlv(9,num(preference,1)),false);
+      const value=snapshot(),r=value[102],w=value.readUInt32LE(16),h=value.readUInt32LE(20);
+      assert.equal(w,(r&1)?height:width);assert.equal(h,(r&1)?width:height);
+      assert.equal(value[92],width===height?3:w>h?2:1);
+      if(width===height&&preference>=1&&preference<=4)assert.equal(r,0);
+      if(preference===1&&width!==height)assert.ok(h>w);
+      if(preference===2&&width!==height)assert.ok(w>h);
+      host._browser_tick(performance.now()+40);host._browser_render();
+      assert.equal(rt.pixels().length,width*height*4);
+    }
+    await rt.stop();
+  }
 });
 test('Sparse borrow runs real raster and PCM kernels, preserves guard bytes, rejects aliasing',async()=>{
   const {host,rt,call,active,permission}=await platform();

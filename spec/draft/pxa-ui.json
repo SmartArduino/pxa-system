@@ -800,6 +800,38 @@
       "name": "recommended-write-bytes",
       "id": 11,
       "type": "u32"
+    },
+    {
+      "name": "display-geometry",
+      "id": 12,
+      "type": "shape:u32|corner-radii:u32[4]-logical-px",
+      "optional": true
+    },
+    {
+      "name": "system-bar-insets",
+      "id": 13,
+      "type": "u32[4]-logical-px",
+      "optional": true,
+      "order": [
+        "top",
+        "right",
+        "bottom",
+        "left"
+      ],
+      "rule": "Visual system chrome only, independent of physical safe and system gesture insets; combine per-edge maxima. Missing means unknown. Hidden or transient status bars and hidden button navigation reserve no fixed height."
+    },
+    {
+      "name": "system-gesture-insets",
+      "id": 14,
+      "type": "u32[4]-logical-px",
+      "optional": true,
+      "order": [
+        "top",
+        "right",
+        "bottom",
+        "left"
+      ],
+      "rule": "Active system input strips, independently of bar visibility. Do not shift a whole page for a side Back gesture. Avoid side strips for conflicting edge controls; default SafeArea protects bottom Home gestures. Missing means unknown."
     }
   ],
   "pressure_levels": [

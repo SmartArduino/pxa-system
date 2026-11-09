@@ -20,6 +20,7 @@ typedef struct {
     uint16_t next;
     uint8_t has_snapshot;
     uint8_t metrics_dirty;
+    uint8_t display_metrics;
 } pxa_window_entry_t;
 
 struct pxa_window_service {
@@ -154,13 +155,22 @@ static pxa_status_t encode_snapshot(const pxa_window_entry_t *entry,
     wire.system_bar_insets.right = snapshot->system_bar_insets.right;
     wire.system_bar_insets.bottom = snapshot->system_bar_insets.bottom;
     wire.orientation = snapshot->orientation;
+    if (!entry->display_metrics && wire.orientation == PXA_WINDOW_ORIENTATION_SQUARE)
+        wire.orientation = PXA_WINDOW_ORIENTATION_UNSPECIFIED;
     wire.focused = snapshot->focused != 0;
+    wire.rotation = snapshot->rotation;
+    wire.native_width = snapshot->native_width ? snapshot->native_width
+        : pxa_display_logical_width(snapshot->logical_width, snapshot->logical_height, snapshot->rotation);
+    wire.native_height = snapshot->native_height ? snapshot->native_height
+        : pxa_display_logical_height(snapshot->logical_width, snapshot->logical_height, snapshot->rotation);
+    wire.supported_rotations = snapshot->supported_rotations ? snapshot->supported_rotations : 1;
     if (!pxa_window_snapshot_wire_valid(&wire)) return PXA_STATUS_BAD_STATE;
-    if (capacity < PXA_WINDOW_SNAPSHOT_RECORD_BYTES)
+    if (capacity < PXA_WINDOW_DISPLAY_SNAPSHOT_RECORD_BYTES)
         return PXA_STATUS_LIMIT_EXCEEDED;
-    return pxa_window_snapshot_records_encode(output, capacity, &wire,
-                                              output_size)
-               ? PXA_STATUS_OK : PXA_STATUS_INTERNAL;
+    if (!pxa_window_display_snapshot_records_encode(output, capacity, &wire, output_size))
+        return PXA_STATUS_INTERNAL;
+    if (!entry->display_metrics) *output_size = PXA_WINDOW_LEGACY_SNAPSHOT_RECORD_BYTES;
+    return PXA_STATUS_OK;
 }
 
 static pxa_status_t configure(pxa_window_entry_t *entry,
@@ -168,7 +178,7 @@ static pxa_status_t configure(pxa_window_entry_t *entry,
     pxa_window_configuration_t candidate = entry->configuration;
     pxa_record_iterator_t iterator;
     pxa_record_view_t record;
-    uint8_t seen[9] = {0};
+    uint8_t seen[10] = {0};
     pxa_status_t status;
     pxa_record_iterator_init(&iterator, records);
     for (;;) {
@@ -176,13 +186,13 @@ static pxa_status_t configure(pxa_window_entry_t *entry,
         status = pxa_record_next(&iterator, &record);
         if (status == PXA_STATUS_WOULD_BLOCK) break;
         if (status != PXA_STATUS_OK) return status;
-        if (record.tag > 8) {
+        if (record.tag > 9) {
             if (record.optional) continue;
             return PXA_STATUS_UNSUPPORTED;
         }
         if (seen[record.tag]) return PXA_STATUS_INVALID_ARGUMENT;
         seen[record.tag] = 1;
-        if (record.tag <= 5 || record.tag == 8) {
+        if (record.tag <= 5 || record.tag >= 8) {
             if (record.payload.size != 1) return PXA_STATUS_INVALID_ARGUMENT;
             value = record.payload.data[0];
         } else if (record.payload.size != 4) {
@@ -220,12 +230,27 @@ static pxa_status_t configure(pxa_window_entry_t *entry,
                 if (value > 1) return PXA_STATUS_INVALID_ARGUMENT;
                 candidate.keep_screen_on = value;
                 break;
+            case 9:
+                if (value > PXA_ORIENTATION_LOCKED) return PXA_STATUS_INVALID_ARGUMENT;
+                /* Lock the angle at request time, so Home/resume cannot
+                 * reinterpret "locked" using the system's restored angle. */
+                candidate.orientation_preference = value == PXA_ORIENTATION_LOCKED
+                    ? (uint8_t)(PXA_ORIENTATION_ROTATION_0 + entry->snapshot.rotation) : value;
+                break;
             default:
                 return PXA_STATUS_INTERNAL;
         }
     }
-    status = entry->backend.apply(entry->backend.context, &candidate);
-    if (status != PXA_STATUS_OK) return status;
+    {
+        const uint8_t previous = entry->display_metrics;
+        if (seen[9]) entry->display_metrics = 1;
+        status = entry->backend.apply(entry->backend.context, &candidate);
+        if (status != PXA_STATUS_OK) {
+            entry->display_metrics = previous;
+            return status;
+        }
+        if (seen[9]) entry->metrics_dirty = 1;
+    }
     entry->configuration = candidate;
     return PXA_STATUS_OK;
 }
@@ -235,7 +260,7 @@ static pxa_status_t window_control(void *context, pxa_runtime_t *runtime,
                                    const pxa_message_view_t *message) {
     pxa_window_service_t *service = (pxa_window_service_t *)context;
     pxa_window_entry_t *entry = find_entry(service, component);
-    uint8_t payload[PXA_WINDOW_SNAPSHOT_RECORD_BYTES];
+    uint8_t payload[PXA_WINDOW_DISPLAY_SNAPSHOT_RECORD_BYTES];
     size_t payload_size = 0;
     pxa_status_t status;
     (void)runtime;
@@ -267,17 +292,19 @@ static pxa_status_t window_control(void *context, pxa_runtime_t *runtime,
             text[length - 2u] = '\0';
             return entry->backend.show_toast(entry->backend.context, text, duration);
         }
+        case PXA_WINDOW_GET_DISPLAY_SNAPSHOT:
         case PXA_WINDOW_GET_SNAPSHOT:
             if (message->request_token == 0 || message->payload.size != 0) {
                 return PXA_STATUS_INVALID_ARGUMENT;
             }
+            if (message->opcode == PXA_WINDOW_GET_DISPLAY_SNAPSHOT) entry->display_metrics = 1;
             status = encode_snapshot(entry, payload, sizeof(payload),
                                      &payload_size);
             if (status != PXA_STATUS_OK) return status;
             status = pxa_request_begin_reserved(service->runtime, component,
                                                 message->request_token,
                                                 PXA_WINDOW_SERVICE_ID,
-                                                PXA_WINDOW_GET_SNAPSHOT, 0,
+                                                message->opcode, 0,
                                                 payload_size);
             if (status != PXA_STATUS_OK) return status;
             return pxa_request_complete(service->runtime, component,
@@ -291,6 +318,12 @@ static pxa_status_t window_control(void *context, pxa_runtime_t *runtime,
 static void release_entry(pxa_window_service_t *service, uint16_t index,
                           uint16_t previous) {
     pxa_window_entry_t *entry = &service->entries[index];
+    /* A foreground App's direction must not leak into the next App/home. */
+    if (entry->configuration.orientation_preference != PXA_ORIENTATION_SYSTEM) {
+        pxa_window_configuration_t reset = entry->configuration;
+        reset.orientation_preference = PXA_ORIENTATION_SYSTEM;
+        (void)entry->backend.apply(entry->backend.context, &reset);
+    }
     if (previous == PXA_WINDOW_SLOT_NONE) {
         service->active_head = entry->next;
     } else {
@@ -408,13 +441,17 @@ static int snapshot_same(const pxa_window_snapshot_t *left,
            insets_same(&left->system_bar_insets,
                        &right->system_bar_insets) &&
            left->orientation == right->orientation &&
+           left->rotation == right->rotation &&
+           left->native_width == right->native_width &&
+           left->native_height == right->native_height &&
+           left->supported_rotations == right->supported_rotations &&
            left->focused == right->focused;
 }
 
 static pxa_status_t flush_metrics_entry(pxa_window_service_t *service,
                                         pxa_component_t component,
                                         pxa_window_entry_t *entry) {
-    uint8_t payload[PXA_WINDOW_SNAPSHOT_RECORD_BYTES];
+    uint8_t payload[PXA_WINDOW_DISPLAY_SNAPSHOT_RECORD_BYTES];
     size_t payload_size = 0;
     pxa_status_t status;
     if (!entry->metrics_dirty) return PXA_STATUS_OK;
@@ -437,7 +474,8 @@ pxa_status_t pxa_window_update_snapshot(pxa_window_service_t *service,
     if (snapshot == NULL || snapshot->logical_width == 0 ||
         snapshot->logical_height == 0 || snapshot->pixel_width == 0 ||
         snapshot->pixel_height == 0 || snapshot->density_numerator == 0 ||
-        snapshot->density_denominator == 0 || snapshot->orientation > 2 ||
+        snapshot->density_denominator == 0 || snapshot->orientation > 3 ||
+        snapshot->rotation > 3 || snapshot->supported_rotations > 15 ||
         snapshot->focused > 1 ||
         (entry->has_snapshot && entry->snapshot.revision == UINT64_MAX)) {
         return PXA_STATUS_INVALID_ARGUMENT;
