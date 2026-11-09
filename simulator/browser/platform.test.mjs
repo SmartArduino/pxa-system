@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import http from 'node:http';
+import {createHash} from 'node:crypto';
 import {pathToFileURL} from 'node:url';
 import {createSurfaceBridge} from './surface.mjs';
 import {importMediaFiles,installPackageFiles} from './package.mjs';
@@ -200,6 +201,59 @@ test('direct browser mode reports raw sockets unsupported and ignores legacy tun
     const result=call(9,5,Buffer.concat([tlv(1,Buffer.from('tls://example.com:443')),tlv(3,num(auth,8)),tlv(8,num(5000)),tlv(14,num(512))]),true,false);
     assert.equal(result.readInt32LE(),-3,'operation support differs from signed permission');
   }finally{await rt.stop();}
+});
+
+test('real Net 0.8 WebSocket exchanges preserve message boundaries and clean up Core resources',async()=>{
+  const peers=new Set();let messages=0;
+  const server=http.createServer((request,response)=>response.writeHead(404).end());
+  server.on('upgrade',(request,socket,head)=>{
+    assert.equal(request.url,'/pxa-echo');peers.add(socket);socket.on('close',()=>peers.delete(socket));
+    const accept=createHash('sha1').update(request.headers['sec-websocket-key']+'258EAFA5-E914-47DA-95CA-C5AB0DC85B11').digest('base64');
+    socket.write('HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: '+accept+'\r\n\r\n');
+    let pending=head;
+    const receive=chunk=>{
+      pending=Buffer.concat([pending,chunk]);
+      while(pending.length>=2){
+        const opcode=pending[0]&15;let length=pending[1]&127,offset=2;
+        assert.ok(pending[0]&128);assert.ok(pending[1]&128);
+        if(length===126){if(pending.length<4)return;length=pending.readUInt16BE(2);offset=4;}
+        assert.ok(length<8192);if(pending.length<offset+4+length)return;
+        const mask=pending.subarray(offset,offset+4),payload=Buffer.from(pending.subarray(offset+4,offset+4+length));
+        for(let i=0;i<payload.length;i++)payload[i]^=mask[i&3];
+        pending=pending.subarray(offset+4+length);
+        if(opcode===8){socket.end(Buffer.from([0x88,0]));return;}
+        assert.ok(opcode===1||opcode===2);messages++;
+        const prefix=Buffer.alloc(length<126?2:4);prefix[0]=128|opcode;
+        if(length<126)prefix[1]=length;else{prefix[1]=126;prefix.writeUInt16BE(length,2);}
+        socket.write(Buffer.concat([prefix,payload]));
+      }
+    };
+    socket.on('data',receive);if(head.length)receive(Buffer.alloc(0));
+  });
+  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+  let runtime;
+  try{
+    const {host,rt,call,io,permission}=await platform({permissions:[{name:'net.socket',scope:'outbound'}]});runtime=rt;
+    const until=async predicate=>{
+      const deadline=Date.now()+10000;
+      while(!predicate()){assert.ok(Date.now()<deadline,'WebSocket resource timed out');await new Promise(resolve=>setTimeout(resolve,10));host._browser_pump();}
+    };
+    const capabilities=call(9,8,Buffer.alloc(0));assert.equal(capabilities.readUInt32LE(4),512);
+    const grant=permission('net.socket','outbound'),url=Buffer.from(`ws://127.0.0.1:${server.address().port}/pxa-echo`);
+    const header=Buffer.alloc(24);header.writeBigUInt64LE(grant);header.writeUInt16LE(url.length,8);
+    header.writeUInt32LE(8192,12);header.writeUInt32LE(2048,16);header.writeUInt32LE(5000,20);
+    const handle=call(9,9,Buffer.concat([header,url])).readBigUInt64LE(4);
+    await until(()=>io(handle,4,Buffer.alloc(0)).result===1);
+    for(const [opcode,payload]of [[1,Buffer.from('PXA 中文联机')],[2,Buffer.from([0,1,127,255])],[2,Buffer.alloc(0)],[2,Buffer.alloc(1024,37)]]){
+      const message=Buffer.concat([Buffer.from([opcode]),payload]);assert.equal(io(handle,2,message).result,message.length);
+      await until(()=>io(handle,3,Buffer.alloc(0)).result&1);
+      if(message.length>1)assert.equal(io(handle,1,Buffer.alloc(message.length-1)).result,-16);
+      const reply=io(handle,1,Buffer.alloc(message.length));assert.equal(reply.result,message.length);assert.deepEqual(reply.data,message);
+    }
+    call(1,2,num(handle,8),false);await until(()=>peers.size===0);assert.equal(messages,4);
+  }finally{
+    if(runtime)await runtime.stop();for(const peer of peers)peer.destroy();await new Promise(resolve=>server.close(resolve));
+  }
 });
 
 test('Alpha Canvas stays above Surface; clearing and overlay-only updates do not leave ghosts',async()=>{

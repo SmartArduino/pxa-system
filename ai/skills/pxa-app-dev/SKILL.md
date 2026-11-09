@@ -59,6 +59,12 @@ Use `pxa run <project> --offline --debug --watch` for the development loop; it b
 
 For SDK code, read [C++ implementation notes](references/cpp.md) only for the relevant module. Prefer the installed SDK's headers and examples to guessed APIs or historical ABI directory names. A firmware workspace's `tools/app.sh` and `tools/dev.sh` are a separate workflow; they are not shipped in the standalone DevKit.
 
+For multiplayer, remote control or shared state, read
+[network transport choices](references/networking.md). Query the actual Host:
+browser WebSocket, native TCP/UDP and service discovery are independent capabilities.
+For screen rotation, use the Window 0.5 guidance in the C++ notes and verify
+the actual dimensions, input and square-screen behavior on each target Host.
+
 For immersive layouts, draw a continuous viewport background and place readable
 content and controls inside SafeArea. Keep status/navigation bars aligned with the
 user's intended experience. Side Back gesture zones must not shift the whole page;

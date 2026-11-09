@@ -1,4 +1,10 @@
-# PXA Agent Kit 0.6.0
+# PXA Agent Kit 0.6.1
+
+Pairs with DevKit, firmware and Browser Host 0.10.0. Networking guidance selects
+actual Host capabilities, distinguishes native browser WebSockets from TCP,
+listeners, UDP and DNS-SD, and covers permission lifetime and real peer tests.
+Hardware verification accounts for native lock screens intercepting app input.
+Screen rotation uses the existing Window 0.5 interface.
 
 [中文](README.md) · [Tutorial](https://pxa.doit.am/docs/ai-development/)
 

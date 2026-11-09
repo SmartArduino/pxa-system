@@ -66,6 +66,10 @@ guessed coordinates for ordinary UI. Passwords are redacted; hidden/disabled and
 ambiguous matches cannot be clicked. Node IDs belong to the current tree and may
 change after rebuilding a subtree. Bounds/clip rectangles do not prove a node is
 unobscured by overlays or physical masks; inspect screenshots and input effects.
+On hardware, also confirm the display is awake, the lock screen is dismissed
+and the intended app is in front. A hidden Guest tree can remain inspectable
+while native lock screens or permission dialogs intercept its input. Use the
+visible system controls and verify the resulting screenshot before retrying.
 Older Hosts/DevKits lacking this debugger fail explicitly; select a matching
 release through the normal explicit SDK workflow, never patch its installed code.
 
