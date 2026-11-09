@@ -333,67 +333,64 @@ def install_app(environment, project, *, port, baud=2000000, strict_compatibilit
     package = project / 'dist' / (metadata['id'] + '.pxa')
     package_digest = digest(package)
     environment.call(['publish', package, '--check-only'])
-    from .compatibility import inspect, admit
-    compatibility = inspect(environment,package,port=port,baud=baud)
-    admit(compatibility,strict=strict_compatibility)
-    from .host_tools import reader
-    identity = reader(environment=environment).package_composite_identity(package)
-    if identity.rsplit(':',1)[-1] != metadata['id'] or digest(package) != package_digest:
-        raise ToolError('Verified package changed; nothing was stopped or uploaded')
-    connection = ['--port', port, '--baud', str(baud), '--timeout', '10']
+    from .device_session import install_connection
+    with install_connection(environment, port, baud, info) as device:
+        from .compatibility import inspect, admit
+        compatibility = inspect(environment,package,port=port,baud=baud,device=device)
+        admit(compatibility,strict=strict_compatibility)
+        from .host_tools import reader
+        identity = reader(environment=environment).package_composite_identity(package)
+        if identity.rsplit(':',1)[-1] != metadata['id'] or digest(package) != package_digest:
+            raise ToolError('Verified package changed; nothing was stopped or uploaded')
+        def target_state(text):
+            rows = [line.split('\t') for line in text.splitlines() if line.split('\t')[0] == identity]
+            if len(rows)>1:
+                raise ToolError('Multiple target installations; select its original volume before updating')
+            if not rows:
+                return False
+            if len(rows[0]) != 4:
+                raise ToolError('Malformed target inventory; nothing was uploaded')
+            flags = set(rows[0][3].split(';'))
+            if 'ambiguous=1' in flags:
+                raise ToolError('Ambiguous target installation; select its original volume before updating')
+            return 'active=1' in flags
 
-    def device(*arguments, timeout=60):
-        return environment.device([*arguments, *connection], timeout=timeout)
-
-    def target_state(text):
-        rows = [line.split('\t') for line in text.splitlines() if line.split('\t')[0] == identity]
-        if len(rows)>1:
-            raise ToolError('Multiple target installations; select its original volume before updating')
-        if not rows:
+        def wait_active(expected):
+            for _ in range(30):
+                if target_state(device('package','list')) == expected:
+                    return True
+                time.sleep(.25)
             return False
-        if len(rows[0]) != 4:
-            raise ToolError('Malformed target inventory; nothing was uploaded')
-        flags = set(rows[0][3].split(';'))
-        if 'ambiguous=1' in flags:
-            raise ToolError('Ambiguous target installation; select its original volume before updating')
-        return 'active=1' in flags
 
-    def wait_active(expected):
-        for _ in range(30):
-            if target_state(device('package','list')) == expected:
-                return True
-            time.sleep(.25)
-        return False
-
-    inventory = device('package','list')
-    was_active = target_state(inventory)
-    output = ''
-    try:
-        if was_active:
-            output += device('package','stop',identity)
-            if not wait_active(False):
-                raise ToolError('Target did not stop; no package was uploaded')
-        if digest(package) != package_digest:
-            raise ToolError('Verified package changed; no package was uploaded')
-        output += device('package','install',package,'--yes',
-                         *(['--strict-compatibility'] if strict_compatibility else []),timeout=300)
-        output += device('package','run',identity)
-        if not wait_active(True):
-            raise ToolError('Installation completed but the requested app did not become active; inspect device logs, Core and service compatibility')
-    except Exception as error:
-        # Never retry an uncertain installation. Restore only the exact
-        # originally active identity, and do not claim old bytes were retained
-        # when an install response could have been lost after commit.
-        if was_active:
-            try:
-                if not target_state(device('package','list')):
-                    device('package','run',identity)
-                    if not wait_active(True):
-                        raise ToolError('Target activation was not confirmed')
-            except Exception as restore_error:
-                raise ToolError(str(error)+'; target reactivation also failed: '+str(restore_error)) from error
-        raise
-    return {'app_id': metadata['id'], 'target': target, 'board': info.get('board'),
-            'identity':identity,'package_sha256':package_digest,'stopped_running_target':was_active,
-            'package': str(package), 'device': port, 'active_verified': True,
-            'compatibility':compatibility, 'inventory_before': inventory, 'log': output}
+        inventory = device('package','list')
+        was_active = target_state(inventory)
+        output = ''
+        try:
+            if was_active:
+                output += device('package','stop',identity)
+                if not wait_active(False):
+                    raise ToolError('Target did not stop; no package was uploaded')
+            if digest(package) != package_digest:
+                raise ToolError('Verified package changed; no package was uploaded')
+            output += device('package','install',package,'--yes',
+                             *(['--strict-compatibility'] if strict_compatibility else []),timeout=300)
+            output += device('package','run',identity)
+            if not wait_active(True):
+                raise ToolError('Installation completed but the requested app did not become active; inspect device logs, Core and service compatibility')
+        except Exception as error:
+            # Never retry an uncertain installation. Restore only the exact
+            # originally active identity, and do not claim old bytes were retained
+            # when an install response could have been lost after commit.
+            if was_active:
+                try:
+                    if not target_state(device('package','list')):
+                        device('package','run',identity)
+                        if not wait_active(True):
+                            raise ToolError('Target activation was not confirmed')
+                except Exception as restore_error:
+                    raise ToolError(str(error)+'; target reactivation also failed: '+str(restore_error)) from error
+            raise
+        return {'app_id': metadata['id'], 'target': target, 'board': info.get('board'),
+                'identity':identity,'package_sha256':package_digest,'stopped_running_target':was_active,
+                'package': str(package), 'device': port, 'active_verified': True,
+                'compatibility':compatibility, 'inventory_before': inventory, 'log': output}

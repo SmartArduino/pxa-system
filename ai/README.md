@@ -100,6 +100,10 @@ CPU/AOT ABI 和容器要求。SDK 的 `device compatibility PACKAGE --port PORT`
 或 MCP `pxa_install(strict_compatibility=true)`；直接运行 SDK 时，先确认其 `run --help`
 支持 `run --device PORT --strict-compatibility`。安装成功后仍检查实际激活状态。
 
+AI 安装在完成构建与签名检查后，保持同一条主机串口连接完成设备复核、兼容性检查、
+停止目标、更新与激活确认，避免 UART 桥接设备在反复打开串口时复位。编译期间若
+设备的 CPU、板型或可识别序列号变化，会在写入前停止。启动排队不等于已运行。
+
 `firmware status` / MCP `pxa_firmware_status` 只读 INFO 和已验签的发行清单，
 不下载镜像、不复位或刷写；未读真实分区表前，app-only 是否匹配保持未知。
 板型名称和发行号也不证明当前镜像来自官方。无法识别时先确认硬件，选择支持板的网页烧录或板级适配流程。

@@ -1,5 +1,6 @@
 """Actual install ordering: preflight before writes, including ESP32-P4."""
 import json
+from contextlib import nullcontext
 from pathlib import Path
 import tempfile
 import unittest
@@ -21,6 +22,10 @@ class CompatibilityWorkflowTest(unittest.TestCase):
         self.host_reader=patch('pxa_agent.host_tools.reader',return_value=SimpleNamespace(
             package_composite_identity=lambda _:self.identity))
         self.host_reader.start();self.addCleanup(self.host_reader.stop)
+        def device(*arguments, timeout=60):
+            return self.env.device([*arguments, '--port', '/dev/P4', '--baud', '2000000', '--timeout', '10'], timeout=timeout)
+        session=patch('pxa_agent.device_session.install_connection',side_effect=lambda *args:nullcontext(device))
+        session.start();self.addCleanup(session.stop)
         self.report={'schema':'pxa-package-compatibility-1','status':'compatible','checks':[]}
 
     def tearDown(self):self.temp.cleanup()

@@ -4,14 +4,15 @@ import json
 from .common import ToolError
 
 
-def inspect(environment, package, *, port, baud=2000000):
+def inspect(environment, package, *, port, baud=2000000, device=None):
     package = environment.project(package)
     if not package.exists():
         raise ToolError('Build the intended device package before checking compatibility')
     if not port:
         raise ToolError('Select an explicit device port after discovery')
-    result = json.loads(environment.device(['compatibility',package,'--report-only',
-        '--port',port,'--baud',str(baud)]))
+    arguments = ['compatibility', package, '--report-only']
+    result = json.loads(device(*arguments) if device is not None else environment.device([
+        *arguments, '--port', port, '--baud', str(baud)]))
     if result.get('schema') != 'pxa-package-compatibility-1' or result.get('status') not in (
             'compatible','incompatible','unknown'):
         raise ToolError('The selected SDK did not return a supported compatibility report')
