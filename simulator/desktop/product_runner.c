@@ -4176,8 +4176,8 @@ static int run_product_simulator(const options_t *input,
         goto done;
     net_config.struct_size = sizeof(net_config);
     net_config.max_pending_requests = 4;
-    net_config.max_requests_per_component = 2;
-    net_config.max_response_streams = 4;
+    net_config.max_requests_per_component = 12;
+    net_config.max_response_streams = 16;
     net_config.max_headers = PXA_NET_MAX_HEADERS;
     net_config.max_response_bytes = 262144;
     net_config.max_inline_body_bytes = 65536;
@@ -4188,6 +4188,7 @@ static int run_product_simulator(const options_t *input,
     net_config.max_timeout_ms = PXA_NET_MAX_STREAM_TIMEOUT_MS;
     net_config.backend = net_backend;
     net_config.permissions = host.permissions;
+    net_config.local = pxsys_desktop_lan_backend();
     net_workspace = malloc(pxa_net_service_workspace_size(&net_config));
     if (net_workspace == NULL ||
         pxa_net_service_init(net_workspace,

@@ -416,3 +416,11 @@ if(PXSYS_DESKTOP_HOST_EXTENSIONS_DIR)
         target_compile_definitions(${product} PRIVATE PXSYS_DESKTOP_HOST_EXTENSIONS=1)
     endforeach()
 endif()
+
+# Native LAN provider: bounded shared worker; browser/unsupported targets keep
+# capabilities disabled rather than introducing an implicit network tunnel.
+if(NOT WIN32)
+    foreach(_pxa_lan_target pxsys_desktop_simulator pxsys_product_simulator)
+        target_sources(${_pxa_lan_target} PRIVATE ../../libpxa/adapters/network/pxa_lan_native.c)
+    endforeach()
+endif()

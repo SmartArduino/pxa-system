@@ -12,7 +12,7 @@ extern "C" {
 
 #define PXA_NET_SERVICE_ID UINT16_C(9)
 #define PXA_NET_SERVICE_MAJOR UINT16_C(0)
-#define PXA_NET_SERVICE_MINOR UINT16_C(6)
+#define PXA_NET_SERVICE_MINOR UINT16_C(7)
 #define PXA_NET_SERVICE_PATCH UINT16_C(0)
 #define PXA_NET_FETCH UINT16_C(1)
 #define PXA_NET_HTTP_REQUEST UINT16_C(2)
@@ -129,6 +129,8 @@ typedef struct {
     pxa_status_t (*connectivity)(void *, uint32_t *state);
 } pxa_net_backend_t;
 
+struct pxa_lan_backend;
+
 typedef struct {
     uint32_t struct_size;
     uint16_t max_pending_requests;
@@ -144,6 +146,12 @@ typedef struct {
     uint32_t max_timeout_ms;
     pxa_net_backend_t backend;
     pxa_permission_service_t *permissions;
+    /* Optional Net 0.7 endpoint/discovery provider. Same offset and size as
+     * the initial local-only config; old source and binary callers still work. */
+    union {
+        const struct pxa_lan_backend *network;
+        const struct pxa_lan_backend *local;
+    };
 } pxa_net_config_t;
 
 typedef struct pxa_net_service pxa_net_service_t;

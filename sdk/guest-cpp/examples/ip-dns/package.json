@@ -1,0 +1,13 @@
+{
+  "format": "pxa-package-source-0.1",
+  "min_sdk": [2, 0], "target_sdk": [2, 0], "compile_sdk": [2, 0],
+  "id": "pxa-ip-dns", "version": "1.0.0", "name": "IP 直连示例",
+  "description": "不依赖服务发现，通过固定公网 IPv4 地址分别使用 UDP 与 TCP 查询 DNS",
+  "build": {"system": "cmake", "source_dir": ".", "linear_memory": {"maximum_bytes": 131072, "pinned": true}},
+  "permissions": [
+    {"name": "net.datagram", "scope": "network", "required": false},
+    {"name": "net.socket", "scope": "tcp://1.1.1.1:53", "required": false}
+  ],
+  "components": [{"id": "main", "kind": "ui", "cmake_target": "pxa_main", "services": ["ui", "clock", "net", "log"],
+    "wasi": {"version": "preview1", "libc": "wasi-libc", "features": ["monotonic-clock", "wall-clock"]}}]
+}

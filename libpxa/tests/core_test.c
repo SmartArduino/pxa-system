@@ -6066,8 +6066,10 @@ static void test_clock_timing(void) {
 }
 
 #include "socket_capture_service_test.inc"
+#include "lan_service_test.inc"
 
 int main(void) {
+    test_lan_services();
     test_socket_capture_services(0);
     test_socket_capture_services(1);
     test_socket_capture_services(2);

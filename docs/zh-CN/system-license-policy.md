@@ -31,6 +31,7 @@ Windows GCC 工具链中的旧版 `stdarg.h` 仅按其明示的头文件例外�
 | littlefs、LZ4、lwIP | BSD 系列 | 保留各组件声明 |
 | zlib、libpng、JPEG 解码器 | 各自的 Zlib/libpng/IJG 或供应商许可 | 保留上游许可，不统一标为 MIT |
 | Espressif 音频/JPEG 等专用二进制组件 | Espressif Modified MIT 或组件原许可 | 仅用于许可覆盖的 Espressif 产品；不得当成无平台限制的 MIT |
+| mjansson/mdns（本地发现编解码） | Unlicense | 固定提交；保留原始头、LICENSE 与 SOURCE.json 哈希，无额外链接依赖 |
 | GCC 运行库 | GCC 运行时例外 3.1 | 核实工具链来源与例外适用范围 |
 
 LVGL 附带的 FrogFS 和 ThorVG 内部实现包含 MPL 代码，系统构建排除其源文件；

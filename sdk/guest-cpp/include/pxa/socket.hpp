@@ -2,6 +2,7 @@
 #pragma once
 #include "async_io.hpp"
 #include "permission.hpp"
+#include "network_endpoint.hpp"
 namespace pxa {
 struct SocketTag {};
 struct SocketOptions {
@@ -20,6 +21,17 @@ public:
   Socket &operator=(Socket &&) noexcept = default;
   explicit operator bool() const noexcept { return bool(resource_); }
   Result<void> close() noexcept { return resource_.close(); }
+  // Net 0.7 accepted streams support these queries. Older/outbound providers
+  // may return unsupported; callers should retain their configured endpoint.
+  Result<NetworkEndpoint> local_endpoint() {
+    return detail::network_endpoint(transport_, resource_.handle(), 5);
+  }
+  Result<NetworkEndpoint> peer_endpoint() {
+    return detail::network_endpoint(transport_, resource_.handle(), 6);
+  }
+  Result<NetworkStats> stats() {
+    return detail::network_stats(transport_, resource_.handle());
+  }
   Result<std::uint32_t> state() noexcept {
     if (!resource_)
       return std::unexpected(Error::bad_state);

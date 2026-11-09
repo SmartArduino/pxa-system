@@ -21,6 +21,7 @@
 #include "net.hpp"
 #include "http.hpp"
 #include "websocket.hpp"
+#include "network.hpp"
 #include "audio_capture.hpp"
 #include "ipc.hpp"
 #include "work.hpp"
@@ -67,6 +68,8 @@ public:
     HapticsService haptics() noexcept { return {transport_, requests_}; }
     NetService net() noexcept { return {transport_, requests_}; }
     HttpClient http() noexcept { return {transport_, requests_}; }
+    Network network() noexcept { return {transport_, requests_}; }
+    LocalNetwork local_network() noexcept { return {transport_, requests_}; }
     SocketClient sockets() noexcept { return {transport_, requests_}; }
     WebSocketClient websockets() noexcept { return {transport_, requests_}; }
     AudioCaptureService capture() noexcept { return {transport_, requests_}; }

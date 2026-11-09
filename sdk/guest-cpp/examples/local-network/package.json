@@ -1,0 +1,80 @@
+{
+  "format": "pxa-package-source-0.1",
+  "min_sdk": [
+    2,
+    0
+  ],
+  "target_sdk": [
+    2,
+    0
+  ],
+  "compile_sdk": [
+    2,
+    0
+  ],
+  "id": "pxa-local-network",
+  "version": "1.0.0",
+  "name": "IP 网络通信示例",
+  "description": "IP 直连、标准服务发现、TCP 与 UDP 回声通信",
+  "build": {
+    "system": "cmake",
+    "source_dir": ".",
+    "linear_memory": {
+      "maximum_bytes": 131072,
+      "pinned": true
+    }
+  },
+  "permissions": [
+    {
+      "name": "net.datagram",
+      "scope": "local-network",
+      "required": false
+    },
+    {
+      "name": "net.datagram",
+      "scope": "network",
+      "required": false
+    },
+    {
+      "name": "net.discovery",
+      "scope": "local-network",
+      "required": false
+    },
+    {
+      "name": "net.listen",
+      "scope": "local-network",
+      "required": false
+    },
+    {
+      "name": "net.listen",
+      "scope": "network",
+      "required": false
+    },
+    {
+      "name": "net.socket",
+      "scope": "outbound",
+      "required": false
+    }
+  ],
+  "components": [
+    {
+      "id": "main",
+      "kind": "ui",
+      "cmake_target": "pxa_main",
+      "services": [
+        "ui",
+        "clock",
+        "net",
+        "log"
+      ],
+      "wasi": {
+        "version": "preview1",
+        "libc": "wasi-libc",
+        "features": [
+          "monotonic-clock",
+          "wall-clock"
+        ]
+      }
+    }
+  ]
+}

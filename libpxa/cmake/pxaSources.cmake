@@ -28,6 +28,7 @@ function(pxa_collect_sources output root)
         src/services/device/device_service.c
         src/services/haptics/haptics_service.c
         src/services/scheduler/scheduler_service.c
+        src/services/net/lan_wire.c
         src/services/net/socket_stream.c
         src/services/net/http_stream.c
         src/services/net/net_service.c

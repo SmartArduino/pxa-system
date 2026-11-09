@@ -1,4 +1,5 @@
 #include "pxa/net.h"
+#include "pxa/lan.h"
 #include "pxa/http_stream.h"
 #include "pxa/socket_stream.h"
 #include "common/checked_math.h"
@@ -22,6 +23,7 @@ struct pxa_net_service {
     pxa_runtime_t *runtime;
     pxa_permission_service_t *permissions;
     pxa_net_backend_t backend;
+    pxa_lan_backend_t local;
     pxa_net_pending_t *pending;
     pxa_net_stream_t *streams;
     uint32_t max_response_bytes;
@@ -62,6 +64,7 @@ struct pxa_net_stream {
     pxa_net_service_t *service;
     void *body_stream;
     union { uint32_t remaining; pxa_component_t owner; } cursor;
+    pxa_authority_t authority;
     uint16_t next_free;
     uint8_t active;
 };
@@ -79,10 +82,11 @@ static uint8_t *result_buffer(pxa_net_service_t *s) {
 
 static int config_valid(const pxa_net_config_t *config) {
     const pxa_net_backend_t *backend;
-    if (config == NULL || config->struct_size < sizeof(*config) ||
+    if (config == NULL || config->struct_size < offsetof(pxa_net_config_t, local) ||
         config->max_pending_requests == 0 ||
         config->max_requests_per_component == 0 ||
-        config->max_requests_per_component > config->max_pending_requests ||
+        (config->max_requests_per_component > config->max_pending_requests &&
+         config->max_requests_per_component > config->max_response_streams) ||
         config->max_response_streams == 0 || config->max_response_bytes == 0 ||
         config->max_headers == 0 || config->max_headers > PXA_NET_MAX_HEADERS ||
         config->max_inline_body_bytes == 0 ||
@@ -164,6 +168,10 @@ pxa_status_t pxa_net_service_init(
     service->runtime = runtime;
     service->permissions = config->permissions;
     service->backend = config->backend;
+    if(config->struct_size >= sizeof(*config) && config->local &&
+       config->local->struct_size >= sizeof(pxa_lan_backend_t) &&
+       config->local->open && config->local->io && config->local->close && config->local->poll)
+        service->local = *config->local;
     service->max_response_bytes = config->max_response_bytes;
     service->max_response_header_bytes = config->max_response_header_bytes;
     service->request_limits.max_inline_body_bytes =
@@ -279,6 +287,7 @@ static pxa_net_stream_t *allocate_stream(pxa_net_service_t *service) {
     service->stream_free_head = stream->next_free;
     stream->next_free = PXA_NET_SLOT_NONE;
     stream->body_stream = NULL;
+    stream->authority = 0;
     stream->cursor.remaining = 0;
     stream->active = 1;
     return stream;
@@ -300,7 +309,9 @@ static void close_stream(void *context) {
         !stream->active) {
         return;
     }
-    if (stream->active == 3)
+    if (stream->active == 4)
+        stream->service->local.close(stream->service->local.context,stream->body_stream);
+    else if (stream->active == 3)
         stream->service->backend.close_socket(stream->service->backend.context, stream->body_stream);
     else if (stream->active == 2)
         stream->service->backend.close_exchange(stream->service->backend.context,
@@ -309,6 +320,8 @@ static void close_stream(void *context) {
                                              stream->body_stream);
     release_stream(stream);
 }
+
+static int32_t local_accept(pxa_net_stream_t *,uint8_t *,size_t);
 
 static int32_t stream_io(void *context, uint32_t operation, uint8_t *data,
                          size_t size) {
@@ -319,6 +332,10 @@ static int32_t stream_io(void *context, uint32_t operation, uint8_t *data,
     if (stream == NULL || stream->magic != PXA_NET_STREAM_MAGIC ||
         !stream->active) {
         return PXA_STATUS_NOT_FOUND;
+    }
+    if (stream->active == 4) {
+        if(operation==PXA_LAN_IO_ACCEPT)return local_accept(stream,data,size);
+        return stream->service->local.io(stream->service->local.context,stream->body_stream,operation,data,size);
     }
     if (stream->active == 3)
         return stream->service->backend.socket_io(stream->service->backend.context, stream->body_stream, operation, data, size);
@@ -343,6 +360,129 @@ static int32_t stream_io(void *context, uint32_t operation, uint8_t *data,
 static const pxa_resource_ops_t k_stream_resource_ops = {
     sizeof(pxa_resource_ops_t), stream_io,
 };
+
+static int32_t local_accept(pxa_net_stream_t *parent, uint8_t *data,
+                            size_t size) {
+    pxa_net_service_t *s = parent->service;
+    if (size < 8 || !data)
+        return PXA_STATUS_INVALID_ARGUMENT;
+    if (!s->local.accept)
+        return PXA_STATUS_UNSUPPORTED;
+    if (requests_for_component(s, parent->cursor.owner) >=
+        s->max_requests_per_component)
+        return PXA_STATUS_RESOURCE_LIMIT;
+    pxa_net_stream_t *child = allocate_stream(s);
+    if (!child)
+        return PXA_STATUS_RESOURCE_LIMIT;
+    pxa_status_t status = s->local.accept(s->local.context, parent->body_stream,
+                                          &child->body_stream);
+    if (!status && !child->body_stream)
+        status = PXA_STATUS_PROTOCOL_ERROR;
+    pxa_handle64_t handle = 0;
+    if (!status) {
+        child->active = 4;
+        child->cursor.owner = parent->cursor.owner;
+        child->authority = parent->authority;
+        pxa_resource_t resource = {child, &k_stream_resource_ops, close_stream};
+        status = pxa_handle_open64(s->runtime, child->cursor.owner,
+                                   PXA_RESOURCE_STREAM, child->authority,
+                                   &resource, &handle);
+    }
+    if (status) {
+        if (child->body_stream)
+            s->local.close(s->local.context, child->body_stream);
+        release_stream(child);
+        return status;
+    }
+    pxa_write_u64(data, handle);
+    return 8;
+}
+static pxa_status_t local_control(pxa_net_service_t *s,
+                                  pxa_component_t component,
+                                  const pxa_message_view_t *m) {
+    static const char *names[] = {"", "net.listen", "net.datagram",
+                                  "net.discovery", "net.discovery"};
+    static const uint8_t scope[] = "local-network";
+    pxa_lan_request_t request;
+    pxa_handle64_t permission = 0, handle = 0;
+    pxa_authority_t authority = 0;
+    uint16_t profile = 0;
+    pxa_status_t status =
+        pxa_component_wire_profile(s->runtime, component, &profile);
+    if (!status)
+        status = profile == 1
+                     ? pxa_lan_request_parse(m->payload, &request, &permission)
+                     : PXA_STATUS_UNSUPPORTED;
+    int parsed = status == PXA_STATUS_OK;
+    if (!status)
+        status = pxa_permission_resolve64(
+            s->permissions, component, permission,
+            (pxa_bytes_t){(const uint8_t *)names[request.kind],
+                          strlen(names[request.kind])},
+            (pxa_bytes_t){scope, sizeof(scope) - 1}, &authority);
+    if (parsed && status == PXA_STATUS_DENIED && request.kind <= PXA_LAN_DATAGRAM) {
+        static const uint8_t network[] = "network";
+        status = pxa_permission_resolve64(
+            s->permissions, component, permission,
+            (pxa_bytes_t){(const uint8_t *)names[request.kind], strlen(names[request.kind])},
+            (pxa_bytes_t){network, sizeof(network) - 1}, &authority);
+        if (!status) request.network_scope = 1;
+    }
+    pxa_status_t begin = pxa_request_begin_reserved(
+        s->runtime, component, m->request_token, PXA_NET_SERVICE_ID,
+        PXA_NET_LOCAL_OPEN, status ? 0 : authority, 8);
+    if (begin)
+        return begin;
+    if (!status) {
+        uint32_t feature =
+            request.kind == PXA_LAN_LISTENER   ? PXA_NET_FEATURE_LISTEN
+            : request.kind == PXA_LAN_DATAGRAM ? PXA_NET_FEATURE_DATAGRAM
+                                               : PXA_NET_FEATURE_DISCOVERY;
+        if (!(s->local.features & feature))
+            status = PXA_STATUS_UNSUPPORTED;
+    }
+    if (!status &&
+        requests_for_component(s, component) >= s->max_requests_per_component)
+        status = PXA_STATUS_RESOURCE_LIMIT;
+    if (!status)
+        status = pxa_request_commit(s->runtime, component, m->request_token);
+    pxa_net_stream_t *stream = NULL;
+    if (!status) {
+        stream = allocate_stream(s);
+        if (!stream)
+            status = PXA_STATUS_RESOURCE_LIMIT;
+    }
+    if (!status) {
+        stream->active = 4;
+        stream->cursor.owner = component;
+        stream->authority = authority;
+        status =
+            s->local.open(s->local.context, &request, &stream->body_stream);
+        if (!status && !stream->body_stream)
+            status = PXA_STATUS_PROTOCOL_ERROR;
+        if (!status) {
+            pxa_resource_t resource = {stream, &k_stream_resource_ops,
+                                       close_stream};
+            status =
+                pxa_handle_open64(s->runtime, component, PXA_RESOURCE_STREAM,
+                                  authority, &resource, &handle);
+        }
+        if (status) {
+            if (stream->body_stream)
+                s->local.close(s->local.context, stream->body_stream);
+            release_stream(stream);
+        }
+    }
+    uint8_t result[8];
+    pxa_write_u64(result, handle);
+    if (pxa_request_complete(s->runtime, component, m->request_token, status,
+                             status ? NULL : result, status ? 0 : 8)) {
+        if (handle)
+            (void)pxa_handle_close64(s->runtime, component, handle);
+        (void)pxa_request_cancel(s->runtime, component, m->request_token);
+    }
+    return PXA_STATUS_OK;
+}
 
 static pxa_status_t complete_immediate(pxa_net_service_t *service,
                                        pxa_component_t component,
@@ -505,6 +645,24 @@ static pxa_status_t net_control(void *context, pxa_runtime_t *runtime,
         return pxa_request_complete(service->runtime,component,message->request_token,status,
             status ? NULL : result,status ? 0 : sizeof(result));
     }
+    if(message->opcode==PXA_NET_LOCAL_CAPABILITIES) {
+        uint8_t out[32]={0};
+        if(message->payload.size)return PXA_STATUS_INVALID_ARGUMENT;
+        status=pxa_request_begin_reserved(service->runtime,component,message->request_token,9,8,0,sizeof(out));
+        if(status)return status;
+        if(service->local.features) {
+            pxa_write_u32(out,service->local.features);
+            pxa_write_u16(out+4,service->local.max_resources<service->max_response_streams?service->local.max_resources:service->max_response_streams);
+            pxa_write_u16(out+6,service->max_requests_per_component);
+            pxa_write_u32(out+8,512);pxa_write_u32(out+12,service->local.max_buffer_bytes);
+            pxa_write_u32(out+16,1200);pxa_write_u16(out+20,8);pxa_write_u16(out+22,54);
+            pxa_write_u16(out+24,256);pxa_write_u16(out+26,21);
+        }
+        if (service->backend.open_socket && service->backend.socket_io && service->backend.close_socket)
+            pxa_write_u32(out, pxa_read_u32(out) | PXA_NET_FEATURE_SOCKET);
+        return pxa_request_complete(service->runtime,component,message->request_token,0,out,sizeof(out));
+    }
+    if (message->opcode == PXA_NET_LOCAL_OPEN) return local_control(service,component,message);
     if (message->opcode == PXA_NET_SOCKET_OPEN) return socket_control(service,component,message);
     if (message->opcode == PXA_NET_CAPABILITIES) {
         uint8_t caps[32] = {0};
@@ -517,12 +675,17 @@ static pxa_status_t net_control(void *context, pxa_runtime_t *runtime,
                 ? PXA_NET_FEATURE_LONG_STREAM_TIMEOUT : 0u) : 0u);
         if (service->backend.open_socket && service->backend.socket_io && service->backend.close_socket)
             pxa_write_u32(caps, pxa_read_u32(caps) | PXA_NET_FEATURE_SOCKET);
+        pxa_write_u32(caps,pxa_read_u32(caps)|service->local.features);
         pxa_write_u32(caps + 4, PXA_HTTP_MAX_BUFFER_BYTES);
         pxa_write_u32(caps + 8, PXA_HTTP_MAX_HEAD_BYTES);
         pxa_write_u32(caps + 12, service->request_limits.max_request_header_bytes);
         pxa_write_u32(caps + 16, PXA_NET_MAX_URL_BYTES);
         pxa_write_u64(caps + 20, INT32_MAX);
-        pxa_write_u32(caps + 28, service->max_requests_per_component);
+        /* The larger shared handle quota does not create more HTTP workers. */
+        uint32_t http_concurrent = service->max_requests_per_component;
+        if (http_concurrent > service->max_pending_requests)
+            http_concurrent = service->max_pending_requests;
+        pxa_write_u32(caps + 28, http_concurrent);
         return pxa_request_complete(service->runtime, component,
             message->request_token, PXA_STATUS_OK, caps, sizeof(caps));
     }
@@ -680,6 +843,10 @@ pxa_status_t pxa_net_poll(
         return PXA_STATUS_INVALID_ARGUMENT;
     }
     *count = 0;
+    if(service->local.poll && service->local.poll(service->local.context))
+        for(uint16_t i=0;i<service->max_response_streams;++i)
+            if(service->streams[i].active==4)
+                append_affected(service->streams[i].cursor.owner,affected,capacity,count);
     index = service->pending_active_head;
     while (index != PXA_NET_SLOT_NONE) {
         pxa_net_pending_t *pending = &service->pending[index];

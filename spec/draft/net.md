@@ -1,6 +1,6 @@
-# PXA Network Draft 0.4
+# PXA Network Draft 0.7
 
-Network service 0.4.0 provides bounded, Host-managed HTTP(S) requests. Opcode 1 is
+Network service 0.7.0 provides bounded, Host-managed HTTP(S) requests. Opcode 1 is
 the frozen v1.0 GET operation. Opcode 2 adds GET, HEAD, POST, PUT, PATCH and
 DELETE, bounded request headers and inline bodies, per-request timeouts,
 selected response headers, response length metadata and optional response
@@ -187,7 +187,7 @@ these workers still count toward the backend limit. WRITE acceptance means
 queued locally, not delivered to the peer. The initial interface is outbound
 TCP/TLS only; UDP, bind/listen/accept and half-close are reserved.
 
-The C++ SDK exposes `Context::sockets().open`, `Socket::read/write`,
+The C++ SDK exposes `Context::sockets().open` (also `Context::network().connect`), `Socket::read/write`,
 `read_some/write_some`, `state` and `close`. Its `WebSocketClient` implements
 RFC 6455 in Guest code on the same sockets, including handshake verification,
 masking, fragmented messages, control frames, bounded messages and partial I/O.
@@ -198,3 +198,133 @@ permission prompt: its u32 body is 0 unknown, 1 offline, or 2 online. This does
 not probe the Internet or imply that a particular server is reachable. The
 optional backend callback performs no remote I/O and exposes no MAC/IP details.
 C++ callers use `co_await context.net().connectivity()`.
+
+## Local network resources (0.7)
+
+The additive `LOCAL_OPEN` (7) and `LOCAL_CAPABILITIES` (8) require Core wire
+profile 1. Opcodes 1–6 and the 32-byte CAPABILITIES (4) response remain unchanged.
+New capability bits are LISTEN=32, DATAGRAM=64, DISCOVERY=128, LOCAL_IPV4=256.
+An absent provider reports zero local features; opening returns `UNSUPPORTED`.
+
+### Endpoint and open request
+
+All scalar fields are little endian. A 24-byte endpoint has family/u16 at 0
+(4=IPv4, 6=IPv6), port/u16 at 2, interface scope/u32 at 4, and 16 raw network
+address bytes at 8. IPv4 uses the first four bytes; scope and the remaining
+12 bytes must be zero. Family support is independently reported by the Host.
+
+LOCAL_OPEN has this fixed 48-byte prefix, followed by its three byte strings:
+
+| Offset | Field |
+| --- | --- |
+| 0 | permission handle/u64 |
+| 8 | kind/u16: listener=1, datagram=2, advertisement=3, browser=4 |
+| 10 | flags/u16: listener NO_DELAY=1; datagram BROADCAST=2; others zero |
+| 12 | bind/advertised endpoint, 24 bytes |
+| 36 | combined buffer bytes/u32, power of two in 512..16384 |
+| 40 | max items/u16 in 1..8: listener children or visible browser services |
+| 42 | service type byte length/u16 |
+| 44 | instance byte length/u16 |
+| 46 | DNS TXT byte length/u16 |
+| 48 | service type, instance, TXT (without terminators) |
+
+Listeners require a `net.listen` grant; datagrams require `net.datagram`.
+Scope `local-network` restricts peers to the selected subnet and loopback;
+scope `network` permits any reachable IPv4 peer. The Core derives this access
+from the live grant, never a Guest-controlled flag. Browsing and advertisements require
+`net.discovery/local-network`. These are independent authorities. HTTP/web or
+outbound socket grants do not grant permission to receive LAN connections.
+Wrong-component, stale, revoked or wrong-name/scope handles are rejected before
+provider allocation. Closing a permission revokes its dependent handles, including
+accepted streams; closing only a listener preserves already accepted streams.
+Component shutdown closes all its resources. A canceled/undeliverable open result
+also closes the new handle.
+
+Listeners/datagrams have empty strings; port zero asks for an ephemeral port.
+Zero bind address selects the Host's active interface. Discovery uses a service
+type `_name._tcp` or `_name._udp`: lowercase letters, digits and interior hyphens,
+1..15 name bytes, total at most 21 bytes. Host appends `.local.`. Advertisements
+require a nonzero port and 1..54 UTF-8 instance bytes, without controls, dots or
+backslashes. Native provider appends a unique nine-byte suffix to fit a 63-byte
+DNS label. TXT is at most 256 bytes of length-prefixed DNS-SD strings; key bytes
+are printable ASCII, nonempty and separated from an optional binary value by
+`=`. Empty metadata may be omitted or encoded as a single zero byte. Browser
+requests have no instance, TXT, flags or port. Native browser caches are shared
+and bounded to eight services; max-items further limits each browser's visible
+set. Discovery describes endpoints; it does not define application messages.
+
+Successful open completion contains the owned stream handle/u64. Creation is
+asynchronous: STATE (IO 4) returns `WOULD_BLOCK`, then 1, or a terminal status.
+Callers can wait for WRITE readiness during initialization. LOCAL_ENDPOINT
+(IO 5) returns the bound 24-byte endpoint once ready. An interface/address change
+terminates current native resources with `UNAVAILABLE`; callers reopen them.
+
+### IO and backpressure
+
+Listener ACCEPT (IO 7) returns exactly eight bytes containing a new Socket
+handle, or `WOULD_BLOCK`. READ readiness indicates a queued connection. Accepted
+streams use existing Socket READ/WRITE/POLL/STATE semantics, support endpoint
+queries LOCAL (5) and PEER (6), and inherit the listener's authority. The service
+reserves a stream slot before consuming a pending connection, and enforces both
+component and global limits. Accepted streams' buffer budgets are per child.
+
+Datagram WRITE (2) accepts endpoint:24 followed by one payload of 0..1200 bytes.
+It admits the entire message or returns `WOULD_BLOCK`; it never admits a prefix.
+READ (1) returns one source endpoint and payload with the same framing. A small
+output buffer returns `LIMIT_EXCEEDED` and leaves the packet queued. The combined
+budget is split equally into RX and TX rings; each queued packet consumes 26
+bytes in addition to payload, so small rings impose a smaller effective packet
+limit. Oversized incoming datagrams are dropped whole. Without BROADCAST flag,
+broadcast destinations are denied. The provider enforces local-subnet/loopback bounds for `local-network`, allows
+any reachable IPv4 peer for `network`, and does not offer multicast memberships.
+
+Browser READ returns exactly one event with a 32-byte prefix: change/u8 at 0
+(1 added, 2 updated, 3 removed), reserved/u8 zero at 1, instance/type/TXT lengths
+as u16 at 2/4/6, endpoint:24 at 8, followed by instance, type (without `.local.`),
+and raw TXT. Events are deduplicated. Full queues retain pending revisions for
+retry; cache entries cannot be recycled before visible removals are queued.
+TTL expiry and goodbye records produce removals. Output strings/views borrow
+the caller's buffer. Treat discovery data as untrusted and validate the
+application protocol/version before exchanging application state.
+
+Native local resources additionally support STATS (IO 8), a 32-byte snapshot:
+received payload bytes/u64 at 0, sent payload bytes/u64 at 8, dropped packet or
+queue admission count/u32 at 16, RX queued bytes/u32 at 20, TX queued bytes/u32 at
+24, configured combined buffer bytes/u32 at 28. WRITE success means queued;
+closing can discard unsent bytes. No delivery or durability guarantee is added.
+
+LOCAL_CAPABILITIES has empty input and a fixed 32-byte result body: features/u32
+at 0; global/component resource ceilings/u16 at 4/6; minimum/maximum combined
+buffer bytes/u32 at 8/12; maximum datagram payload/u32 at 16; maximum cached
+services, instance bytes, TXT bytes and type bytes/u16 at 20/22/24/26; reserved
+four zero bytes at 28. These are ceilings, not currently free slots. HTTP,
+outbound sockets and local handles share the service's component/stream limits.
+
+### Native discovery profile
+
+Linux/macOS and ESP use the same bounded IPv4 backend, a shared Host worker and
+one lazily created mDNS socket. Native network work and DNS parsing run outside
+Guest imports. Work per iteration, cache size, packet sizes and resource count
+are bounded. Unused workers stop, and discovery memory is freed when its last
+resource closes. No worker or native stack is created per accepted connection.
+
+Discovery uses [mDNS (RFC 6762)](https://www.rfc-editor.org/rfc/rfc6762) and
+[DNS-SD (RFC 6763)](https://www.rfc-editor.org/rfc/rfc6763), with PTR, SRV, A and
+raw TXT records, multicast IP TTL 255, cache expiry, goodbye, QU and legacy
+unicast responses. This profile uses one selected interface and unique instance suffixes, with
+three ANY probes at 250 ms intervals after 0..250 ms random jitter, including
+all proposed A/SRV/TXT data in the Authority Section. Received Authority data
+is compared as a sorted set using uncompressed canonical RDATA. Simultaneous
+losers defer one second; live conflicting responses during probing cause rename and a five-
+second retry delay. Established owners answer probes and restart probing when
+conflicting responses arrive. Startup announcements occur twice one second
+apart, with no unsolicited periodic announcements. Browsing backs off from
+two seconds to one minute; complete cache entries do not send repeated address
+queries. Shared hostname records remain live when one of several advertisements
+closes. This is a bounded interoperable profile, not a full Bonjour replacement;
+it does not yet implement full Known-Answer suppression, subtypes, service-type enumeration,
+IPv6/multi-interface discovery or an OS discovery-daemon bridge. Windows and
+web Hosts currently return no listener/datagram/discovery features. Existing
+outbound socket support, when present, is reported independently as bit 16. Inbound TLS, half-close,
+Internet matchmaking, NAT traversal and game-state replication are separate
+future layers. See the [C++ integration guide](../../docs/zh-CN/local-network.md).

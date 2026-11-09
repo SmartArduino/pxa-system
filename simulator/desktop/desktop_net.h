@@ -2,6 +2,7 @@
 #define PXSYS_DESKTOP_NET_H
 
 #include "pxa/net.h"
+#include "pxa/lan.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -15,6 +16,8 @@ typedef void (*pxsys_desktop_net_notify_fn)(void *context);
 int pxsys_desktop_net_backend(pxa_net_backend_t *output,
                               pxsys_desktop_net_notify_fn notify,
                               void *notify_context);
+
+const pxa_lan_backend_t *pxsys_desktop_lan_backend(void);
 
 /* Cancel in-flight work and detach callbacks before destroying the Host. */
 void pxsys_desktop_net_shutdown(pxa_net_backend_t *backend);

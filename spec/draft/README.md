@@ -33,7 +33,8 @@ Status: **design draft; no compatibility guarantee**.
 - [ipc.md](ipc.md) defines asynchronous intra-App Component calls and replies.
 - [sensor.md](sensor.md) defines semantic, permission-bound sensor subscriptions.
 - [device.md](device.md) defines permission-bound interface MAC identifiers.
-- [net.md](net.md) defines permission-bound asynchronous HTTP(S) fetches.
+- [net.md](net.md) defines bounded HTTP(S), TCP/TLS streams, local TCP listeners,
+  UDP datagrams and mDNS/DNS-SD discovery.
 - [audio.md](audio.md) defines permission-bound media sessions and atomic graph control.
 - [work.md](work.md) defines bounded, retryable background Work.
 - [permission.md](permission.md) defines signed declarations, policy grants,

@@ -1050,3 +1050,13 @@ Audio 0.15 的 `context.capture().open(permission)` 使用
 格式为 ASCII `PXAC`、小端 u16 帧毫秒数、u16 包数，随后每包 u16 长度及原始 Opus
 字节；它是示例的本地容器，不是 Ogg，也不是标准音频文件格式。后台停止采集，
 无网络上传；文件可通过 PXADB 应用数据工具导出。
+
+
+### 通用 IP 通信与服务发现（Net 0.7）
+
+`context.network()` 提供 IP 直连、TCP 监听/accept、UDP、mDNS/DNS-SD 发布与发现，
+接受的连接继续使用 `pxa::Socket`。`net.listen`、`net.datagram` 和
+`net.discovery` 分别授权。`local-network` 限定本地子网，监听/UDP 的 `network`
+scope 允许任意可达 IPv4 对端；发现仍限局域网。先查询 capabilities，网页/Windows
+Host 暂不支持新增的监听/UDP/发现。
+内存预算、权限、跨端示例和平台限制见[IP 通信接入说明](../../docs/zh-CN/local-network.md)。

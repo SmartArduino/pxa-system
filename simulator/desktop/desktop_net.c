@@ -28,6 +28,7 @@
 #include <ifaddrs.h>
 #include <net/if.h>
 #include <sys/socket.h>
+#include <netinet/in.h>
 #endif
 
 #define DESKTOP_NET_MAX_PENDING UINT16_C(4)
@@ -716,8 +717,49 @@ int pxsys_desktop_net_backend(pxa_net_backend_t *output,
     return 1;
 }
 
+#ifndef _WIN32
+#include "../../libpxa/adapters/network/pxa_lan_native.h"
+static pxa_lan_backend_t desktop_lan;
+static int desktop_lan_interface(void *context, uint32_t *address,
+                                 uint32_t *mask) {
+    (void)context;
+    struct ifaddrs *list = NULL;
+    if (getifaddrs(&list))
+        return 0;
+    int found = 0;
+    for (struct ifaddrs *i = list; i; i = i->ifa_next) {
+        if (!i->ifa_addr || !i->ifa_netmask ||
+            i->ifa_addr->sa_family != AF_INET || !(i->ifa_flags & IFF_UP))
+            continue;
+        if (!found || !(i->ifa_flags & IFF_LOOPBACK)) {
+            *address = ((struct sockaddr_in *)i->ifa_addr)->sin_addr.s_addr;
+            *mask = ((struct sockaddr_in *)i->ifa_netmask)->sin_addr.s_addr;
+            found = 1;
+            if (!(i->ifa_flags & IFF_LOOPBACK))
+                break;
+        }
+    }
+    freeifaddrs(list);
+    return found;
+}
+static void desktop_lan_notify(void *context) { desktop_net_notify(context); }
+const pxa_lan_backend_t *pxsys_desktop_lan_backend(void) {
+    if (!desktop_lan.struct_size) {
+        pxa_lan_native_config_t c = {g_desktop_net, desktop_lan_interface,
+                                     desktop_lan_notify, 16, 16384};
+        if (!pxa_lan_native_create(&c, &desktop_lan))
+            return NULL;
+    }
+    return &desktop_lan;
+}
+#else
+const pxa_lan_backend_t *pxsys_desktop_lan_backend(void) { return NULL; }
+#endif
 void pxsys_desktop_net_shutdown(pxa_net_backend_t *backend) {
     desktop_net_t *net;
+#ifndef _WIN32
+    pxa_lan_native_destroy(&desktop_lan);
+#endif
     if (!backend || !(net=backend->context)) return;
     pthread_mutex_lock(&net->lock);
     for(struct desktop_socket *s=net->sockets;s;s=s->next)

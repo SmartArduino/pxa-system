@@ -1,0 +1,10 @@
+{
+  "repository": "https://github.com/mjansson/mdns",
+  "commit": "a569c4759bd47e0f2a7bfc4d4c19620445782806",
+  "license": "Unlicense",
+  "review": "Original upstream header and license, unchanged; only C library and native socket APIs. No linked third-party implementation.",
+  "files": {
+    "mdns.h": "e4ea21d627178f6b5501a608aceccd0cd6ac4e9f20922d42c0de140468479405",
+    "LICENSE": "88d9b4eb60579c191ec391ca04c16130572d7eedc4a86daa58bf28c6e14c9bcd"
+  }
+}

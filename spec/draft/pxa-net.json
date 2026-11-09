@@ -1,11 +1,11 @@
 {
-  "schema": "pxa-net-spec-0.6",
+  "schema": "pxa-net-spec-0.7",
   "status": "draft",
   "service": {
     "name": "net",
     "id": 9,
     "major": 0,
-    "minor": 6,
+    "minor": 7,
     "patch": 0
   },
   "opcodes": [
@@ -62,6 +62,24 @@
       "request_token": "nonzero",
       "payload": "empty",
       "result": "status:i32|state:u32 (0 unknown, 1 no link/IP, 2 link with IP; no Internet reachability guarantee)"
+    },
+    {
+      "name": "local-open",
+      "id": 7,
+      "since": "0.7",
+      "direction": "bidirectional-result",
+      "request_token": "nonzero",
+      "payload": "permission:u64|kind:u16|flags:u16|endpoint:24|buffer-bytes:u32|max-items:u16|type-size:u16|name-size:u16|txt-size:u16|type|name|txt",
+      "result": "status:i32|stream-handle:u64"
+    },
+    {
+      "name": "local-capabilities",
+      "id": 8,
+      "since": "0.7",
+      "direction": "bidirectional-result",
+      "request_token": "nonzero",
+      "payload": "empty",
+      "result": "status:i32|local-capabilities:32"
     }
   ],
   "record_tags": [
@@ -225,7 +243,7 @@
     "max_timeout_ms": 60000,
     "max_stream_timeout_ms": 86400000
   },
-  "protocol_version": "0.6.0",
+  "protocol_version": "0.7.0",
   "exchange_io": [
     {
       "name": "read",
@@ -269,5 +287,90 @@
     "upload_buffer_partition": "half-send-half-receive",
     "sdk_default_header_bytes": 1024
   },
-  "stream_timeout_note": "Net 0.5 HTTP exchanges may use total deadlines up to 24 hours when configured by the Host. Buffered requests remain capped at 60000ms. Long exchanges retain a 15000ms connection timeout; applications should enforce a shorter no-data timeout and close inactive streams."
+  "stream_timeout_note": "Net 0.5 HTTP exchanges may use total deadlines up to 24 hours when configured by the Host. Buffered requests remain capped at 60000ms. Long exchanges retain a 15000ms connection timeout; applications should enforce a shorter no-data timeout and close inactive streams.",
+  "local_network": {
+    "endpoint": {
+      "bytes": 24,
+      "fields": [
+        {
+          "name": "family",
+          "type": "u16",
+          "offset": 0
+        },
+        {
+          "name": "port",
+          "type": "u16",
+          "offset": 2
+        },
+        {
+          "name": "scope",
+          "type": "u32",
+          "offset": 4
+        },
+        {
+          "name": "address",
+          "type": "bytes[16]",
+          "offset": 8
+        }
+      ],
+      "family_values": {
+        "ipv4": 4,
+        "ipv6": 6
+      },
+      "ipv4_layout": "first four network-order address bytes; remaining bytes and scope zero"
+    },
+    "kinds": [
+      {
+        "name": "listener",
+        "id": 1
+      },
+      {
+        "name": "datagram",
+        "id": 2
+      },
+      {
+        "name": "advertisement",
+        "id": 3
+      },
+      {
+        "name": "browser",
+        "id": 4
+      }
+    ],
+    "permissions": {
+      "listener": "net.listen/local-network or net.listen/network",
+      "datagram": "net.datagram/local-network or net.datagram/network",
+      "advertisement": "net.discovery/local-network",
+      "browser": "net.discovery/local-network"
+    },
+    "features": {
+      "listen": 32,
+      "datagram": 64,
+      "discovery": 128,
+      "ipv4": 256,
+      "connect": 16
+    },
+    "limits": {
+      "min_buffer_bytes": 512,
+      "max_buffer_bytes": 16384,
+      "max_datagram_bytes": 1200,
+      "max_discovered_services": 8,
+      "max_type_bytes": 21,
+      "max_instance_bytes": 54,
+      "max_txt_bytes": 256,
+      "max_items": 8
+    },
+    "io": {
+      "read": 1,
+      "write": 2,
+      "poll": 3,
+      "state": 4,
+      "local_endpoint": 5,
+      "peer_endpoint": 6,
+      "accept": 7,
+      "stats": 8
+    },
+    "discovery": "mDNS/DNS-SD .local; PTR/SRV/TXT/A, three probes, sorted canonical RDATA tiebreak, conflict reprobe/rename with backoff, two startup announcements, no periodic announcements",
+    "native_profile": "selected IPv4 interface; permission scopes local-network (subnet and loopback) or network (any routable peer); discovery remains local; one bounded shared worker; no browser/Windows listener/UDP/discovery provider"
+  }
 }
