@@ -3,10 +3,34 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
+import metadata
 from metadata import outputs
 
 
 class MetadataTests(unittest.TestCase):
+    def test_browser_admission_uses_registered_versions_and_keeps_backend_features(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root/'VERSION').write_text('0.10.0\n')
+            (root/'idf_component.yml').write_text('version: "0.10.0"\n')
+            browser = root/'simulator/browser/capabilities.json'
+            browser.parent.mkdir(parents=True)
+            browser.write_text(json.dumps({'version': '0.10.1', 'compatibility': {
+                'services': [{'service_id': 1, 'major': 2, 'minor': 2, 'features': 0},
+                             {'service_id': 2, 'major': 0, 'minor': 4, 'features': 0},
+                             {'service_id': 9, 'major': 0, 'minor': 6, 'features': 512}],
+                'permissions': ['net.socket']}}))
+            with patch.object(metadata, 'ROOT', root):
+                generated = json.loads(outputs()[browser])
+            self.assertEqual(generated['version'], '0.10.1')
+            services = {s['service_id']: s for s in generated['compatibility']['services']}
+            self.assertEqual((services[1]['major'], services[1]['minor']), (0, 2))
+            self.assertEqual((services[2]['major'], services[2]['minor']), (0, 5))
+            self.assertEqual((services[9]['major'], services[9]['minor']), (0, 8))
+            self.assertEqual(services[9]['features'], 512)
+            self.assertEqual(generated['compatibility']['permissions'], ['net.socket'])
+
     def test_common_ui_capabilities_include_shipped_system_glyphs(self):
         with tempfile.TemporaryDirectory() as td:
             backend = Path(td)

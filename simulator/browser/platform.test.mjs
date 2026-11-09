@@ -251,6 +251,13 @@ test('real Net 0.8 WebSocket exchanges preserve message boundaries and clean up 
       const reply=io(handle,1,Buffer.alloc(message.length));assert.equal(reply.result,message.length);assert.deepEqual(reply.data,message);
     }
     call(1,2,num(handle,8),false);await until(()=>peers.size===0);assert.equal(messages,4);
+    // The store consumes this profile before exposing the same working Guest.
+    const admission=JSON.parse(await fs.readFile(`${bundle}/capabilities.json`,'utf8')).compatibility;
+    const advertised=admission.services.find(service=>service.service_id===9);
+    assert.ok(advertised.major===0&&advertised.minor>=8,'store profile must admit the working Net 0.8 client');
+    assert.equal(advertised.features&512,512,'store profile must advertise native WebSocket messages');
+    assert.equal(advertised.features&~call(9,4,Buffer.alloc(0)).readUInt32LE(4),0,'store profile must not invent network features');
+    assert.ok(admission.permissions.includes('net.socket'),'store profile must admit the actual socket permission');
   }finally{
     if(runtime)await runtime.stop();for(const peer of peers)peer.destroy();await new Promise(resolve=>server.close(resolve));
   }

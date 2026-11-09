@@ -37,6 +37,21 @@ def outputs(workspace=None, backend=None):
 '''}
     idf = ROOT / 'idf_component.yml'
     result[idf] = re.sub(r'^version:.*$', f'version: "{version}"', idf.read_text(), count=1, flags=re.M)
+    browser = ROOT / 'simulator/browser/capabilities.json'
+    if browser.is_file():
+        # Browser release numbers and backend feature subsets are independent.
+        # Its registered service versions still come from the same registry as
+        # the compiled Host, not a second handwritten store-admission table.
+        document = json.loads(browser.read_text())
+        services = document['compatibility']['services']
+        seen = set()
+        for service in services:
+            service_id = service['service_id']
+            if service_id in seen or service_id not in SERVICE_VERSIONS:
+                raise ValueError(f'Invalid browser Host service: {service_id}')
+            seen.add(service_id)
+            service['major'], service['minor'] = SERVICE_VERSIONS[service_id]
+        result[browser] = json.dumps(document, indent=2) + '\n'
     if workspace:
         for name in ('pxadb', 'pxadb-gui'):
             path = workspace / 'tools' / name / 'pyproject.toml'

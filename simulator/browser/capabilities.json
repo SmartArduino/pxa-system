@@ -1,5 +1,5 @@
 {
-  "version": "0.10.0",
+  "version": "0.10.1",
   "target": "browser",
   "engine": "webassembly",
   "core": "pxa.core.v2",
@@ -142,7 +142,7 @@
       "authorization": "automatic where supported; native consent joined to Start/Continue or screen interaction",
       "magnetometer": {
         "unit": "nT",
-        "nativeUnit": "µT",
+        "nativeUnit": "\u00b5T",
         "minimumPeriodMs": 100,
         "requires": [
           "secure context",
@@ -157,7 +157,7 @@
         "dimensions": 1,
         "minimumPeriodMs": 50,
         "source": "absolute DeviceOrientation or AbsoluteOrientationSensor",
-        "reference": "magnetic north; top edge when flat, back of display upright; smooth 45–70 degree transition",
+        "reference": "magnetic north; top edge when flat, back of display upright; smooth 45\u201370 degree transition",
         "relativeOrientation": false
       }
     }
@@ -186,14 +186,14 @@
     "services": [
       {
         "service_id": 1,
-        "major": 2,
+        "major": 0,
         "minor": 2,
         "features": 0
       },
       {
         "service_id": 2,
         "major": 0,
-        "minor": 4,
+        "minor": 5,
         "features": 0
       },
       {
@@ -211,7 +211,7 @@
       {
         "service_id": 5,
         "major": 0,
-        "minor": 5,
+        "minor": 6,
         "features": 451
       },
       {
@@ -229,8 +229,8 @@
       {
         "service_id": 9,
         "major": 0,
-        "minor": 6,
-        "features": 0
+        "minor": 8,
+        "features": 512
       },
       {
         "service_id": 10,
@@ -265,7 +265,7 @@
       {
         "service_id": 18,
         "major": 1,
-        "minor": 5,
+        "minor": 6,
         "features": 113
       },
       {
@@ -292,7 +292,8 @@
       "audio.playback",
       "audio.capture",
       "net.client",
-      "sensor.read"
+      "sensor.read",
+      "net.socket"
     ],
     "primaryUiEntry": true
   },

@@ -1,4 +1,4 @@
 cmake_minimum_required(VERSION 3.20)
 project(pxa_browser_font C)
-find_package(Pxa CONFIG REQUIRED)
+find_package(Pxa CONFIG REQUIRED NO_CMAKE_FIND_ROOT_PATH)
 pxa_add_component(main COMPONENT_ID main SOURCES main.c)
