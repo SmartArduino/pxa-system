@@ -140,6 +140,7 @@ struct NetworkCapabilities {
   bool datagrams() const { return features & 64; }
   bool discovery() const { return features & 128; }
   bool ipv4() const { return features & 256; }
+  bool native_websockets() const { return features & 512; }
 };
 class Network {
   Transport &transport_;

@@ -1041,6 +1041,8 @@ WebSocket。`read` / `write` 的第一个字节是消息类型（1 文本、2 �
 消息，读缓冲不足保留完整消息。调用 `read` 也会推进部分发送及 Ping/Pong；
 应用应定期处理读写。应用需要声明 WASI `random`，供握手 nonce 和帧掩码使用。
 
+Net 0.8 另提供 `context.websockets().open_native(url, permission, options)`，通过 Host 的原生消息后端连接，适用于网页没有原始 TCP 的环境。先通过 `context.network().capabilities()` 检查 `native_websockets()`；此入口不自动回退到 Guest TCP。权限仍是 `net.socket/outbound` 或精确 WebSocket URL，读写保持整条消息和背压语义，无需 Guest 声明 `random`。浏览器不会因此获得监听、UDP 或服务发现能力。请求布局、连接状态、大小限制及 HTTPS/WSS 接入见 [通用网络说明](../../docs/zh-CN/local-network.md#浏览器原生-websocketnet-08)。
+
 Audio 0.15 的 `context.capture().open(permission)` 使用
 `audio.capture/microphone` 授权。`AudioCapture::read` 每次返回一条单声道、
 16 kHz 的原始 Opus 包，帧时长通过 `frame_ms()` 查询（20/40/60 ms），缓冲至少 1275 字节；没有数据返回 `would_block`。

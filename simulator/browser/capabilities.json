@@ -70,7 +70,16 @@
       "maxBufferBytes": 65536,
       "connectivity": "browser link state",
       "sockets": "unsupported: browser has no raw TCP/TLS socket API",
-      "httpUpgrade": "HTTPS on secure pages when signed scope permits"
+      "httpUpgrade": "HTTPS on secure pages when signed scope permits",
+      "version": "0.8",
+      "websocket": {
+        "backend": "native WebSocket API",
+        "feature": 512,
+        "maxResources": 8,
+        "maxMessageBytes": 16384,
+        "permission": "net.socket/outbound or exact ws[s] URL",
+        "rawSocketTunnel": false
+      }
     },
     "surface": {
       "formats": [

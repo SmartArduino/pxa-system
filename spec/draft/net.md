@@ -1,6 +1,6 @@
-# PXA Network Draft 0.7
+# PXA Network Draft 0.8
 
-Network service 0.7.0 provides bounded, Host-managed HTTP(S) requests. Opcode 1 is
+Network service 0.8.0 provides bounded, Host-managed HTTP(S) requests. Opcode 1 is
 the frozen v1.0 GET operation. Opcode 2 adds GET, HEAD, POST, PUT, PATCH and
 DELETE, bounded request headers and inline bodies, per-request timeouts,
 selected response headers, response length metadata and optional response
@@ -328,3 +328,35 @@ web Hosts currently return no listener/datagram/discovery features. Existing
 outbound socket support, when present, is reported independently as bit 16. Inbound TLS, half-close,
 Internet matchmaking, NAT traversal and game-state replication are separate
 future layers. See the [C++ integration guide](../../docs/zh-CN/local-network.md).
+
+
+## Native WebSocket clients (0.8)
+
+Opcode 9 opens a native WebSocket message resource, independently of raw TCP
+and TLS sockets. Browser Hosts use the WebSocket API directly. It is a generic
+transport and contains no room, player or game-specific messages.
+
+The fixed 24-byte request contains little-endian permission u64, URL length
+u16, reserved u16=0, combined buffer u32, max-message u32, connect timeout u32,
+then the ASCII ws:// or wss:// URL (1..512 bytes). Buffer size is a power of two
+512..65536. Max-message is 1..16384 and max-message+3 must fit half the buffer.
+Connect timeout is 100..60000 milliseconds. Fragments, credentials and control
+characters in the URL are rejected. Grant must be net.socket/outbound or the
+exact URL. The result is the usual status plus owned u64 handle. Revocation,
+stop and cancellation close it through Core authority and resource cleanup.
+
+Capability bit 512 in opcodes 4 and 8 indicates native WebSocket support.
+It does not imply raw TCP (bit 16), server listening, UDP or DNS-SD.
+READ/WRITE (IO 1/2) operate on one whole message: opcode byte (1 UTF-8 text,
+2 binary) followed by payload. Empty payload is legal. WRITE admits the entire
+message or returns WOULD_BLOCK without consuming it. A short READ returns
+LIMIT_EXCEEDED and preserves the queued message. POLL/STATE retain the existing
+resource readiness and connection conventions. The provider owns RFC6455
+framing and ping/pong. Custom HTTP headers and arbitrary extension negotiation
+are not exposed by this profile. Browser CORS/mixed-content/CSP and native
+WebSocket restrictions remain in effect; there is no raw socket tunnel.
+
+The browser adapter bounds its own queued bytes and message count, closes a
+flooded connection, and wakes writers when native bufferedAmount drains.
+The browser's internal receive allocation is managed by the user agent and
+cannot be strictly capped through the WebSocket API.

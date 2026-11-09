@@ -110,6 +110,9 @@ required. Runtime downloads are lazy, after the user starts a demo.
   support. Native link-state queries do not test upstream reachability. Raw
   TCP/TLS sockets are UNSUPPORTED because browsers expose no such native API;
   applications needing them must adapt to browser-native protocols. Native
+  WebSocket clients use the separate Net 0.8 opcode 9 with capability bit 512,
+  `net.socket/outbound` (or an exact URL), and bounded whole-message IO.
+  C uses `<pxa_websocket.h>`; C++ uses `context.websockets().open_native()`.
   WebSocket is not exposed through the raw TCP/TLS ABI. Bounds and ring-buffer
   backpressure remain enforced in the Host.
 - Retained transparent UI planes compose above Surface/GameRender and base UI.

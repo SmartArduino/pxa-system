@@ -1,4 +1,4 @@
-# 通用 IP 通信与服务发现（Net 0.7）
+# 通用 IP 通信、服务发现与网页消息连接（Net 0.8）
 
 Net 0.7 增加通用 TCP 监听/接受连接、UDP 数据报以及 mDNS/DNS-SD 服务发布与发现。
 传输可以使用内网或公网 IP；局域网发现是可选的独立能力。
@@ -180,3 +180,13 @@ Host 的设备上运行；旧固件仅更新应用不会获得这些能力。设
 
 mDNS 编解码依赖固定版本 `mjansson/mdns`，采用 Unlicense，保留原始头文件、
 LICENSE 和来源/哈希；没有链接 Avahi 等受限许可实现。
+
+## 浏览器原生 WebSocket（Net 0.8）
+
+浏览器没有原始 TCP、UDP、监听或 mDNS 权限。需要跨网页与设备连接的应用可在原生主持端实现标准 WebSocket 协议，在网页通过通用 `WebSocketClient::open_native` 或 C 的 `pxa_websocket_open`（`pxa_websocket.h`）连接。此接口也适用于聊天、设备控制和状态订阅；服务不解析应用消息。
+
+先通过 `network_capabilities()` 检查 `native_websockets()` / feature 位 `512`，再申请 `net.socket/outbound` 或精确 `ws://`、`wss://` URL 的权限。操作 9 由 Host 原生后端实现，与现有 `WebSocketClient::open()` 在 Guest 内通过 TCP 握手的实现独立；不支持原生后端时返回 `UNSUPPORTED`。URL 不能含凭据或片段。原有 TCP、UDP 和服务发现操作及后端 ABI 前缀保持兼容。
+
+连接返回的 Core 资源采用完整消息 IO：READ/WRITE 为一个 opcode 字节（1 文本、2 二进制）和整条消息；缓冲不足不会弹出消息，写入遇到背压返回 `WOULD_BLOCK` 且不消耗数据。文本需为有效 UTF-8。QUERY 使用操作 4，连接中返回 `WOULD_BLOCK`、就绪返回 1；失败返回错误。C++ `WebSocket` 包装器隐藏 opcode 前缀并沿用异步收发接口。资源计入每组件网络配额，权限撤销、关闭或组件退出会清理连接。
+
+网页 Host 每组件最多八个网络流，最多四个待处理 HTTP 请求；单条 WebSocket 消息最大 16 KiB，接收队列与发送背压都受请求缓冲上限约束。生产网页需按浏览器策略处理混合内容、本地网络权限和 TLS 信任：HTTPS 页面使用受信任的 WSS 端点，设备明文 WebSocket 可通过 TLS 代理接入。应用不应把网页 WebSocket 的可用性解释成原始 TCP 能力。

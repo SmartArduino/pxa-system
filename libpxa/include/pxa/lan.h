@@ -8,6 +8,8 @@ extern "C" {
 /* Net 0.7 LOCAL_OPEN. Addresses are bytes, never native sockaddr structures. */
 #define PXA_NET_LOCAL_OPEN 7u
 #define PXA_NET_LOCAL_CAPABILITIES 8u
+#define PXA_NET_WEBSOCKET_OPEN 9u
+#define PXA_NET_FEATURE_WEBSOCKET 512u
 #define PXA_NET_FEATURE_LOCAL_IPV4 256u
 #define PXA_NET_FEATURE_LISTEN 32u
 #define PXA_NET_FEATURE_DATAGRAM 64u
@@ -17,6 +19,7 @@ extern "C" {
 #define PXA_LAN_ADVERTISE 3u
 #define PXA_LAN_BROWSE 4u
 #define PXA_LAN_STREAM 5u
+#define PXA_NETWORK_WEBSOCKET 6u
 #define PXA_LAN_NO_DELAY 1u
 #define PXA_LAN_BROADCAST 2u
 #define PXA_LAN_ENDPOINT_BYTES 24u
@@ -40,6 +43,9 @@ typedef struct pxa_lan_request {
   /* Host-derived permission scope; never read from Guest flags. */
   uint8_t network_scope;
   pxa_bytes_t service_type, instance, txt;
+  /* Net 0.8 WebSocket client. OPEN uses a separate fixed wire header. */
+  pxa_bytes_t url;
+  uint32_t max_message_bytes, connect_timeout_ms;
 } pxa_lan_request_t;
 /* All callbacks run on the runtime owner. OPEN only allocates bounded state;
  * Native work belongs to a provider worker; POLL snapshots readiness changes.
@@ -57,6 +63,8 @@ typedef struct pxa_lan_backend {
 } pxa_lan_backend_t;
 pxa_status_t pxa_lan_request_parse(pxa_bytes_t, pxa_lan_request_t *,
                                    pxa_handle64_t *);
+pxa_status_t pxa_websocket_request_parse(pxa_bytes_t, pxa_lan_request_t *,
+                                         pxa_handle64_t *);
 void pxa_net_endpoint_encode(uint8_t *, const pxa_net_endpoint_t *);
 pxa_status_t pxa_net_endpoint_decode(const uint8_t *, size_t,
                                      pxa_net_endpoint_t *);

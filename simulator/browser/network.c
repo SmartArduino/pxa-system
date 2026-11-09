@@ -4,6 +4,8 @@
 #include <string.h>
 #include "services.h"
 #include "pxa/http_stream.h"
+#include "pxa/lan.h"
+const pxa_lan_backend_t *browser_websocket_backend(void);
 
 #define SLOTS 8
 typedef struct {
@@ -120,13 +122,13 @@ EMSCRIPTEN_KEEPALIVE int browser_net_upload(uint32_t id,uint8_t *out,size_t capa
     return pxa_http_stream_state(s)&PXA_HTTP_STREAM_UPLOAD_DONE?0:PXA_STATUS_WOULD_BLOCK;
 }
 pxa_status_t browser_net_init(pxa_runtime_t *runtime,pxa_permission_service_t *permissions){
-    pxa_net_config_t c={.struct_size=sizeof(c),.max_pending_requests=4,.max_requests_per_component=4,
-        .max_response_streams=4,.max_headers=8,.max_response_bytes=16*1024*1024,.max_inline_body_bytes=2048,
+    pxa_net_config_t c={.struct_size=sizeof(c),.max_pending_requests=4,.max_requests_per_component=8,
+        .max_response_streams=8,.max_headers=8,.max_response_bytes=16*1024*1024,.max_inline_body_bytes=2048,
         .max_request_header_bytes=2048,.max_response_header_bytes=2048,.min_timeout_ms=100,
         .default_timeout_ms=30000,.max_timeout_ms=86400000,.permissions=permissions,
         .backend={.struct_size=sizeof(pxa_net_backend_t),.start=start,.poll=poll,.cancel=cancel,
             .read_body=read_body,.close_body=close_exchange,.connectivity=connectivity}};
-    c.backend.open_socket=browser_socket_open;c.backend.socket_io=browser_socket_io;c.backend.close_socket=browser_socket_close;
+    c.network=browser_websocket_backend();
     c.backend.open_exchange=open_exchange;c.backend.exchange_io=exchange_io;c.backend.close_exchange=close_exchange;
     size_t size=pxa_net_service_workspace_size(&c);
     pxa_status_t s=pxa_net_service_init(calloc(1,size),size,runtime,&c,&net);

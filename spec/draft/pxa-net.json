@@ -1,11 +1,11 @@
 {
-  "schema": "pxa-net-spec-0.7",
+  "schema": "pxa-net-spec-0.8",
   "status": "draft",
   "service": {
     "name": "net",
     "id": 9,
     "major": 0,
-    "minor": 7,
+    "minor": 8,
     "patch": 0
   },
   "opcodes": [
@@ -80,6 +80,15 @@
       "request_token": "nonzero",
       "payload": "empty",
       "result": "status:i32|local-capabilities:32"
+    },
+    {
+      "name": "websocket-open",
+      "id": 9,
+      "since": "0.8",
+      "direction": "bidirectional-result",
+      "request_token": "nonzero",
+      "payload": "permission:u64|url-length:u16|reserved:u16=0|combined-buffer-bytes:u32|max-message-bytes:u32|connect-timeout-ms:u32|ws-or-wss-url",
+      "result": "status:i32|owned-message-stream:u64"
     }
   ],
   "record_tags": [
@@ -243,7 +252,7 @@
     "max_timeout_ms": 60000,
     "max_stream_timeout_ms": 86400000
   },
-  "protocol_version": "0.7.0",
+  "protocol_version": "0.8.0",
   "exchange_io": [
     {
       "name": "read",
@@ -372,5 +381,17 @@
     },
     "discovery": "mDNS/DNS-SD .local; PTR/SRV/TXT/A, three probes, sorted canonical RDATA tiebreak, conflict reprobe/rename with backoff, two startup announcements, no periodic announcements",
     "native_profile": "selected IPv4 interface; permission scopes local-network (subnet and loopback) or network (any routable peer); discovery remains local; one bounded shared worker; no browser/Windows listener/UDP/discovery provider"
+  },
+  "native_websocket": {
+    "feature_bit": 512,
+    "permission": "net.socket/outbound or exact ws[s] URL",
+    "kind": 6,
+    "wire_header_bytes": 24,
+    "url_max_bytes": 512,
+    "buffer_bytes": "power of two 512..65536; half for receive and half for send; native browser internal buffering is outside this application queue budget",
+    "max_message_bytes": "1..16384 and max_message_bytes+3 <= buffer_bytes/2",
+    "io": "READ/WRITE opcode:u8 (1 text, 2 binary) + one complete message; short READ retains queue head; WRITE atomically accepts the message or WOULD_BLOCK",
+    "state": "operation4: WOULD_BLOCK connecting,1 connected,0 clean EOF,negative terminal error",
+    "capabilities": "Net opcode8 feature512; raw TCP bit16 remains independent; no browser listener, UDP or discovery"
   }
 }

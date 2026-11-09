@@ -4,6 +4,7 @@
 #include "socket.hpp"
 #include "websocket_codec.hpp"
 #include <memory>
+#include <cstring>
 #include <unistd.h>
 namespace pxa {
 struct WebSocketOptions {
@@ -18,15 +19,15 @@ class WebSocket {
     std::vector<std::byte> input, message, output, control;
     std::size_t limit = 0, sent = 0;
     unsigned opcode = 0;
-    bool complete = false, closed = false;
+    bool complete = false, closed = false, native = false;
   };
   std::unique_ptr<State> state_;
-  explicit WebSocket(Socket socket, std::uint32_t limit)
+  explicit WebSocket(Socket socket, std::uint32_t limit, bool native=false)
       : state_(std::make_unique<State>()) {
     state_->socket = std::move(socket);
     state_->limit = limit;
-    state_->input.reserve(limit + 14);
-    state_->message.reserve(limit);
+    state_->native = native;
+    if(!native){state_->input.reserve(limit + 14);state_->message.reserve(limit);}
   }
   Result<void> flush() {
     auto &s = *state_;
@@ -78,6 +79,7 @@ public:
     if (in.empty() || in.size() > s.limit + 1 ||
         (in[0] != std::byte{1} && in[0] != std::byte{2}))
       return std::unexpected(Error::invalid_argument);
+    if(s.native)return s.socket.write(in);
     auto progress = flush();
     if (!progress)
       return std::unexpected(progress.error());
@@ -94,6 +96,7 @@ public:
     if (!state_)
       return std::unexpected(Error::bad_state);
     auto &s = *state_;
+    if(s.native)return s.socket.read(out);
     auto progress = flush();
     if (!progress && progress.error() != Error::would_block)
       return std::unexpected(progress.error());
@@ -213,6 +216,21 @@ public:
 class WebSocketClient {
   Transport &transport_;
   RequestTable &requests_;
+  static Task<WebSocket> native_open(WebSocketClient self,
+      wire::RequestPacket<536> packet,std::uint32_t limit){
+    auto event=co_await Response(self.transport_,self.requests_,9,9,packet.view(),true,4);
+    if(!event)co_return std::unexpected(event.error());
+    auto body=wire::result_body(event->payload);
+    if(!body)co_return std::unexpected(body.error());
+    if(body->size()!=8||!(wire::get64(body->data())>>32))
+      co_return std::unexpected(Error::protocol_error);
+    auto handle=wire::get64(body->data());
+    Socket socket(self.transport_,self.requests_,handle);
+    auto state=co_await AsyncIo(&self.transport_,&self.requests_,handle,4,2,{});
+    if(!state)co_return std::unexpected(state.error());
+    if(*state!=1)co_return std::unexpected(Error::unavailable);
+    co_return WebSocket(std::move(socket),limit,true);
+  }
   static Task<WebSocket> handshake(Task<Socket> pending, std::string request,
                                    std::string key, WebSocketOptions options) {
     auto opened = co_await std::move(pending);
@@ -257,6 +275,26 @@ class WebSocketClient {
 public:
   WebSocketClient(Transport &t, RequestTable &r)
       : transport_(t), requests_(r) {}
+  // Net 0.8 native message provider, including browsers. Query the Network
+  // native_websockets() capability first. Custom HTTP headers are unavailable.
+  Task<WebSocket> open_native(std::string_view url,const Permission&p,
+                             WebSocketOptions options={}){
+    if(!p||url.empty()||url.size()>512||
+       !(url.starts_with("ws://")||url.starts_with("wss://"))||
+       options.buffer_bytes<512||options.buffer_bytes>65536||
+       (options.buffer_bytes&(options.buffer_bytes-1))||
+       !options.max_message_bytes||options.max_message_bytes>16384||
+       options.max_message_bytes+3>options.buffer_bytes/2||
+       options.connect_timeout_ms<100||options.connect_timeout_ms>60000)
+      return Task<WebSocket>::failed(Error::invalid_argument);
+    wire::RequestPacket<536> packet;packet.size=24+url.size();
+    wire::put64(packet.bytes.data(),p.handle());wire::put16(packet.bytes.data()+8,url.size());
+    wire::put16(packet.bytes.data()+10,0);wire::put32(packet.bytes.data()+12,options.buffer_bytes);
+    wire::put32(packet.bytes.data()+16,options.max_message_bytes);
+    wire::put32(packet.bytes.data()+20,options.connect_timeout_ms);
+    std::memcpy(packet.bytes.data()+24,url.data(),url.size());
+    return native_open(*this,std::move(packet),options.max_message_bytes);
+  }
   Task<WebSocket> open(std::string_view url, const Permission &permission,
                        std::span<const NetHeaderView> headers = {},
                        WebSocketOptions options = {}) {

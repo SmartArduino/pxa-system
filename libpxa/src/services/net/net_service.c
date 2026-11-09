@@ -407,20 +407,26 @@ static pxa_status_t local_control(pxa_net_service_t *s,
     pxa_handle64_t permission = 0, handle = 0;
     pxa_authority_t authority = 0;
     uint16_t profile = 0;
+    const int websocket = m->opcode == PXA_NET_WEBSOCKET_OPEN;
     pxa_status_t status =
         pxa_component_wire_profile(s->runtime, component, &profile);
     if (!status)
-        status = profile == 1
-                     ? pxa_lan_request_parse(m->payload, &request, &permission)
-                     : PXA_STATUS_UNSUPPORTED;
+        status = profile != 1 ? PXA_STATUS_UNSUPPORTED : websocket
+            ? pxa_websocket_request_parse(m->payload, &request, &permission)
+            : pxa_lan_request_parse(m->payload, &request, &permission);
     int parsed = status == PXA_STATUS_OK;
-    if (!status)
-        status = pxa_permission_resolve64(
-            s->permissions, component, permission,
-            (pxa_bytes_t){(const uint8_t *)names[request.kind],
-                          strlen(names[request.kind])},
-            (pxa_bytes_t){scope, sizeof(scope) - 1}, &authority);
-    if (parsed && status == PXA_STATUS_DENIED && request.kind <= PXA_LAN_DATAGRAM) {
+    if (!status) {
+        const char *name = websocket ? "net.socket" : names[request.kind];
+        const uint8_t *wanted = websocket ? (const uint8_t *)"outbound" : scope;
+        size_t wanted_size = websocket ? 8 : sizeof(scope) - 1;
+        status = pxa_permission_resolve64(s->permissions, component, permission,
+            (pxa_bytes_t){(const uint8_t *)name, strlen(name)},
+            (pxa_bytes_t){wanted, wanted_size}, &authority);
+    }
+    if (parsed && status == PXA_STATUS_DENIED && websocket)
+        status = pxa_permission_resolve64(s->permissions, component, permission,
+            (pxa_bytes_t){(const uint8_t *)"net.socket", 10}, request.url, &authority);
+    if (parsed && status == PXA_STATUS_DENIED && !websocket && request.kind <= PXA_LAN_DATAGRAM) {
         static const uint8_t network[] = "network";
         status = pxa_permission_resolve64(
             s->permissions, component, permission,
@@ -430,16 +436,14 @@ static pxa_status_t local_control(pxa_net_service_t *s,
     }
     pxa_status_t begin = pxa_request_begin_reserved(
         s->runtime, component, m->request_token, PXA_NET_SERVICE_ID,
-        PXA_NET_LOCAL_OPEN, status ? 0 : authority, 8);
-    if (begin)
-        return begin;
+        m->opcode, status ? 0 : authority, 8);
+    if (begin) return begin;
     if (!status) {
-        uint32_t feature =
-            request.kind == PXA_LAN_LISTENER   ? PXA_NET_FEATURE_LISTEN
+        uint32_t feature = websocket ? PXA_NET_FEATURE_WEBSOCKET
+            : request.kind == PXA_LAN_LISTENER ? PXA_NET_FEATURE_LISTEN
             : request.kind == PXA_LAN_DATAGRAM ? PXA_NET_FEATURE_DATAGRAM
                                                : PXA_NET_FEATURE_DISCOVERY;
-        if (!(s->local.features & feature))
-            status = PXA_STATUS_UNSUPPORTED;
+        if (!(s->local.features & feature)) status = PXA_STATUS_UNSUPPORTED;
     }
     if (!status &&
         requests_for_component(s, component) >= s->max_requests_per_component)
@@ -662,7 +666,8 @@ static pxa_status_t net_control(void *context, pxa_runtime_t *runtime,
             pxa_write_u32(out, pxa_read_u32(out) | PXA_NET_FEATURE_SOCKET);
         return pxa_request_complete(service->runtime,component,message->request_token,0,out,sizeof(out));
     }
-    if (message->opcode == PXA_NET_LOCAL_OPEN) return local_control(service,component,message);
+    if (message->opcode == PXA_NET_LOCAL_OPEN || message->opcode == PXA_NET_WEBSOCKET_OPEN)
+        return local_control(service,component,message);
     if (message->opcode == PXA_NET_SOCKET_OPEN) return socket_control(service,component,message);
     if (message->opcode == PXA_NET_CAPABILITIES) {
         uint8_t caps[32] = {0};

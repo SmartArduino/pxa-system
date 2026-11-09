@@ -41,6 +41,37 @@ static int service_type(pxa_bytes_t t) {
       return 0;
   return t.data[1] != '-' && t.data[n - 1] != '-';
 }
+pxa_status_t pxa_websocket_request_parse(pxa_bytes_t b, pxa_lan_request_t *r,
+                                         pxa_handle64_t *permission) {
+  if (!r || !permission || !b.data || b.size < 24)
+    return PXA_STATUS_INVALID_ARGUMENT;
+  memset(r, 0, sizeof(*r));
+  *permission = pxa_read_u64(b.data);
+  size_t n = pxa_read_u16(b.data + 8);
+  if (!(*permission >> 32) || pxa_read_u16(b.data + 10) ||
+      n < 6 || n > 512 || b.size != 24 + n)
+    return PXA_STATUS_INVALID_ARGUMENT;
+  r->kind = PXA_NETWORK_WEBSOCKET;
+  r->buffer_bytes = pxa_read_u32(b.data + 12);
+  r->max_message_bytes = pxa_read_u32(b.data + 16);
+  r->connect_timeout_ms = pxa_read_u32(b.data + 20);
+  r->url = (pxa_bytes_t){b.data + 24, n};
+  if (r->buffer_bytes < 512 || r->buffer_bytes > 65536 ||
+      (r->buffer_bytes & (r->buffer_bytes - 1)) ||
+      !r->max_message_bytes || r->max_message_bytes > 16384 ||
+      r->max_message_bytes + 3 > r->buffer_bytes / 2 ||
+      r->connect_timeout_ms < 100 || r->connect_timeout_ms > 60000)
+    return PXA_STATUS_INVALID_ARGUMENT;
+  size_t start = !memcmp(r->url.data, "ws://", 5) ? 5 :
+      n >= 7 && !memcmp(r->url.data, "wss://", 6) ? 6 : 0;
+  if (!start || n <= start || r->url.data[start] == '/' || r->url.data[start] == '?')
+    return PXA_STATUS_INVALID_ARGUMENT;
+  for (size_t i = start; i < n; ++i)
+    if (r->url.data[i] <= 32 || r->url.data[i] >= 127 ||
+        r->url.data[i] == '#' || r->url.data[i] == '@' || r->url.data[i] == '\\')
+      return PXA_STATUS_INVALID_ARGUMENT;
+  return PXA_STATUS_OK;
+}
 pxa_status_t pxa_lan_request_parse(pxa_bytes_t b, pxa_lan_request_t *r,
                                    pxa_handle64_t *permission) {
   if (!r || !permission || !b.data || b.size < 48)

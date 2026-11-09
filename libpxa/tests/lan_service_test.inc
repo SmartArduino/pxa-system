@@ -3,8 +3,10 @@
 static int probe_network_scope;
 static pxa_status_t probe_local_open(void *context, const pxa_lan_request_t *r,
                                      void **out) {
-  assert(r->kind == PXA_LAN_LISTENER && r->bind.family == 4 &&
-         r->buffer_bytes == 4096);
+  assert(r->buffer_bytes == 4096);
+  if(r->kind==PXA_NETWORK_WEBSOCKET){
+    assert(r->max_message_bytes==512&&r->url.size==strlen("ws://127.0.0.1:31889/dewfield"));
+  }else assert(r->kind==PXA_LAN_LISTENER&&r->bind.family==4);
   ((stream_probe_t *)context)->opens++;
   probe_network_scope = r->network_scope;
   *out = context;
@@ -81,14 +83,15 @@ static void test_lan_services(void) {
        1},
       {{(const uint8_t *)"net.listen", 10},
        {(const uint8_t *)"network", 7},
-       1}};
+       1},
+      {{(const uint8_t *)"net.socket",10},{(const uint8_t *)"outbound",8},1}};
   unsigned loads = 0;
   pxa_permission_config_t pc = {0};
   pc.struct_size = sizeof(pc);
   pc.app_identity = (pxa_bytes_t){(const uint8_t *)"lan.app", 7};
   pc.declarations = declaration;
-  pc.declaration_count = 2;
-  pc.max_authorities = 2;
+  pc.declaration_count = 3;
+  pc.max_authorities = 3;
   pc.store.struct_size = sizeof(pc.store);
   pc.store.context = &loads;
   pc.store.load = sensor_permission_load;
@@ -101,7 +104,7 @@ static void test_lan_services(void) {
   assert(!pxa_permission_service_register(permissions));
   stream_probe_t probe = {0};
   pxa_lan_backend_t local = {sizeof(local),
-                             PXA_NET_FEATURE_LISTEN,
+                             PXA_NET_FEATURE_LISTEN | PXA_NET_FEATURE_WEBSOCKET,
                              &probe,
                              probe_local_open,
                              probe_socket_io,
@@ -221,8 +224,38 @@ static void test_lan_services(void) {
                               &event);
   assert(!pxa_read_u32(event.payload.data) && probe_network_scope == 1 &&
          probe.opens == 3);
+  uint64_t listen_grant=pxa_read_u64(body);
+  n=make_permission_request(command,sizeof command,PXA_PERMISSION_ACQUIRE,820,
+      (const uint8_t*)"net.socket",10,(const uint8_t*)"outbound",8);
+  dispatch_control_completion(t.runtime,component,command,n,bytes,sizeof bytes,&event);
+  assert(!pxa_read_u32(event.payload.data));
+  uint64_t websocket_grant=pxa_read_u64(event.payload.data+4);
+  const char *url="ws://127.0.0.1:31889/dewfield";
+  uint8_t websocket_body[96]={0};
+  pxa_write_u16(websocket_body+8,(uint16_t)strlen(url));
+  pxa_write_u32(websocket_body+12,4096);pxa_write_u32(websocket_body+16,512);
+  pxa_write_u32(websocket_body+20,10000);memcpy(websocket_body+24,url,strlen(url));
+  for(unsigned mode=0;mode<2;++mode){
+    pxa_write_u64(websocket_body,mode?websocket_grant:listen_grant);
+    pxa_writer_init(&network_writer,command,sizeof command);
+    assert(!pxa_writer_message(&network_writer,9,9,821+mode,websocket_body,24+strlen(url)));
+    dispatch_control_completion(t.runtime,component,command,network_writer.size,bytes,sizeof bytes,&event);
+    assert((int32_t)pxa_read_u32(event.payload.data)==(mode?0:PXA_STATUS_DENIED));
+  }
+  assert(probe.opens==4);
+  uint64_t websocket_handle=pxa_read_u64(event.payload.data+4);
+  assert(!pxa_handle_close64(t.runtime,component,websocket_grant));
+  assert(pxa_handle_get64(t.runtime,component,websocket_handle,PXA_RESOURCE_STREAM,&resource)==PXA_STATUS_NOT_FOUND);
+  assert(probe.closes==3);
+  pxa_lan_request_t parsed_ws;uint64_t parsed_grant;
+  for(unsigned cut=0;cut<24+strlen(url);++cut)
+    assert(pxa_websocket_request_parse((pxa_bytes_t){websocket_body,cut},&parsed_ws,&parsed_grant));
+  websocket_body[10]=1;
+  assert(pxa_websocket_request_parse((pxa_bytes_t){websocket_body,24+strlen(url)},&parsed_ws,&parsed_grant));
+  websocket_body[10]=0;websocket_body[24+5]='\r';
+  assert(pxa_websocket_request_parse((pxa_bytes_t){websocket_body,24+strlen(url)},&parsed_ws,&parsed_grant));
   pxa_runtime_deinit(t.runtime);
-  assert(probe.closes == 3);
+  assert(probe.closes == 4);
   free(nw);
   free(pw);
   free(t.workspace);

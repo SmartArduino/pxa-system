@@ -72,10 +72,14 @@ static pxa_status_t file_rename(void *c,pxa_bytes_t from,pxa_bytes_t to) {
 static pxa_status_t file_replace(void *c,pxa_bytes_t from,pxa_bytes_t to) {
     pxa_status_t s=native_fs.replace(c,from,to);if(!s)storage_changed();return s;
 }
-static pxa_permission_declaration_t declarations[71]={
+static pxa_permission_declaration_t declarations[135]={
     {BYTES("audio.playback"),BYTES("media"),0}};
-static uint8_t origins[64][512];
-EM_JS(int,socket_declared,(),{return !!Module.browserSocketDeclared;});
+static uint8_t origins[64][512],socket_scopes[64][512];
+EM_JS(int,socket_scope,(unsigned i,uint8_t *out,size_t capacity),{
+    const text=Module.browserSocketScopes?.[i];if(!text)return 0;
+    const data=new TextEncoder().encode(text);if(data.length>capacity)return 0;
+    HEAPU8.set(data,out);return data.length;
+});
 EM_JS(int,capture_declared,(),{return !!(Module.browserCaptureDeclared);});
 EM_JS(int, network_origin, (unsigned i,uint8_t *out,size_t capacity), {
     const text=Module.browserNetworkOrigins?.[i];if(!text)return 0;
@@ -121,7 +125,10 @@ pxa_status_t browser_services_init(pxa_runtime_t *runtime) {
                   PXA_WASI_FEATURE_ARGUMENTS|PXA_WASI_FEATURE_ENVIRONMENT,.control=wasi_control};
     CHECK(pxa_service_register(runtime,&wasi));
     unsigned declaration_count=1;
-    if(socket_declared())declarations[declaration_count++]=(pxa_permission_declaration_t){BYTES("net.socket"),BYTES("outbound"),0};
+    for(unsigned i=0;i<64;++i){
+        int n=socket_scope(i,socket_scopes[i],sizeof(socket_scopes[i]));if(!n)break;
+        declarations[declaration_count++]=(pxa_permission_declaration_t){BYTES("net.socket"),{socket_scopes[i],(size_t)n},0};
+    }
     if(capture_declared())declarations[declaration_count++]=(pxa_permission_declaration_t){BYTES("audio.capture"),BYTES("microphone"),0};
     if(sensor_mask()&1)declarations[declaration_count++]=(pxa_permission_declaration_t){BYTES("sensor.read"),BYTES("motion.acceleration"),0};
     if(sensor_mask()&2)declarations[declaration_count++]=(pxa_permission_declaration_t){BYTES("sensor.read"),BYTES("motion.angular-velocity"),0};

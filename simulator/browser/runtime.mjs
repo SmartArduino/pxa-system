@@ -50,6 +50,7 @@ export async function createRuntime(host, binary, {width=320, height=240, log=()
   let guestWorkMs=0,guestSince=0;
   const accountGuest=()=>{if(guestSince){guestWorkMs+=performance.now()-guestSince;guestSince=0;}};
   const wake=()=>waiter?.();
+  host.browserNetworkWake=wake;
   const borrow=createBorrowBridge(host,()=>guest.memory,n=>{copiedBytes+=n;});
   const reserve = size => {
     if (size > MAX_IO) throw new RangeError('PXA import exceeds the browser I/O limit');
