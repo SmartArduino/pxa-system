@@ -1141,7 +1141,7 @@ int main(void) {
 
     pxa_ui_config_init(&service_config);
     service_config.features = PXA_UI_FEATURE_CANVAS | PXA_UI_FEATURE_GRID |
-                              PXA_UI_FEATURE_RGB565_BITMAP |
+                              PXA_UI_FEATURE_RGB565_BITMAP | PXA_UI_FEATURE_IMAGE_SAMPLING |
                               PXA_UI_FEATURE_VIRTUAL_LIST | PXA_UI_FEATURE_DYNAMIC_TEXT | PXA_UI_FEATURE_PASSWORD_INPUT;
     service_config.allocator_context = &allocator;
     service_config.allocate = test_allocate;
@@ -1768,9 +1768,41 @@ int main(void) {
         g_test_rgb565_x=area.x1; g_test_rgb565_y=area.y1; g_test_rgb565_pixels=0;
         lv_obj_invalidate(object); test_lvgl_tick();
         assert(g_test_rgb565_pixels==15);
+        /* Sampling is per command: nearest retains the four source colors;
+         * restoring the default restores the exact filtered snapshot. */
+        bytes_t scaled=frame;
+        pxa_write_u32(scaled.data+4,0);
+        pxa_write_u32(scaled.data+12,12); pxa_write_u32(scaled.data+16,12);
+        pxa_write_u32(scaled.data+34,5000); pxa_write_u32(scaled.data+64,5000);
+        assert(!submit_native_canvas(2,&scaled));
+        uint64_t smooth_hash=snapshot_hash(object);
+        lv_draw_buf_t *smooth=lv_snapshot_take(object,LV_COLOR_FORMAT_ARGB8888);
+        scaled.data[1]=PXA_UI_CANVAS_IMAGE_NEAREST;
+        assert(!submit_native_canvas(3,&scaled));
+        lv_draw_buf_t *nearest=lv_snapshot_take(object,LV_COLOR_FORMAT_ARGB8888);
+        assert(smooth && nearest && smooth_hash!=snapshot_hash(object));
+        uint32_t palette[4];
+        for(unsigned i=0;i<4;++i)
+            memcpy(&palette[i],nearest->data+(i/2 ? 6 : 1)*nearest->header.stride+
+                   (i%2 ? 6 : 1)*4,4);
+        for(unsigned i=0;i<4;++i) for(unsigned j=i+1;j<4;++j) assert(palette[i]!=palette[j]);
+        unsigned blended=0;
+        for(unsigned y=1;y<7;++y) for(unsigned x=1;x<7;++x) {
+            uint32_t a,b; unsigned matches_a=0,matches_b=0;
+            memcpy(&a,nearest->data+y*nearest->header.stride+x*4,4);
+            memcpy(&b,smooth->data+y*smooth->header.stride+x*4,4);
+            for(unsigned i=0;i<4;++i) { matches_a+=a==palette[i]; matches_b+=b==palette[i]; }
+            assert(matches_a==1); blended+=!matches_b;
+        }
+        assert(blended>0);
+        lv_draw_buf_destroy(smooth); lv_draw_buf_destroy(nearest);
+        scaled.data[1]=0;
+        assert(!submit_native_canvas(4,&scaled));
+        assert(snapshot_hash(object)==smooth_hash);
+        assert(!submit_native_canvas(5,&frame));
         /* Partial preparation and a foreign submitter must preserve the frame. */
         bytes_t bad=native_canvas_frame(image_handle,1);
-        assert(submit_native_canvas(2,&bad)==PXA_STATUS_NOT_FOUND);
+        assert(submit_native_canvas(6,&bad)==PXA_STATUS_NOT_FOUND);
         assert(pxa_asset_object_reference_count(g_prepared_image)==2);
         pxa_ui_canvas_view_t view={0};
         view.node=4; view.node_handle=snapshot.backend_handle; view.component=g_component+1;
@@ -1829,7 +1861,7 @@ int main(void) {
         assert(pxa_lvgl_ui_alpha_plane(adapter,&after));
         assert(before.pixels==after.pixels && before.revision==after.revision);
         assert(alpha_plane_hash(&after,&visible_after)==before_hash && visible_after==visible_before);
-        uint32_t generation=3;
+        uint32_t generation=7;
         if (!getenv("PXA_CANVAS_MEASURE")) {
             /* Both transactional planes have warmed; keep submitting the same
              * visible frame without new Core/adapter storage. */

@@ -375,8 +375,12 @@ pxa_status_t pxa_ui_validate_canvas(pxa_ui_features_t features,
         flags = data[offset + 1u];
         length = pxa_read_u16(data + offset + 2u);
         offset += 4;
-        if (flags != 0 || length > size - offset)
+        if (length > size - offset ||
+            (flags & ~PXA_UI_CANVAS_IMAGE_NEAREST) ||
+            (flags && type != PXA_UI_CANVAS_IMAGE && type != PXA_UI_CANVAS_IMAGE_HANDLE))
             return PXA_STATUS_INVALID_ARGUMENT;
+        if (flags && !(features & PXA_UI_FEATURE_IMAGE_SAMPLING))
+            return PXA_STATUS_UNSUPPORTED;
         value = data + offset;
         switch (type) {
             case PXA_UI_CANVAS_RECT:

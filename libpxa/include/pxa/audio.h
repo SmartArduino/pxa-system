@@ -14,7 +14,7 @@ extern "C" {
 
 #define PXA_AUDIO_SERVICE_ID UINT16_C(10)
 #define PXA_AUDIO_SERVICE_MAJOR UINT16_C(0)
-#define PXA_AUDIO_SERVICE_MINOR UINT16_C(15)
+#define PXA_AUDIO_SERVICE_MINOR UINT16_C(16)
 #define PXA_AUDIO_SERVICE_PATCH UINT16_C(0)
 #define PXA_AUDIO_OPEN_SESSION UINT16_C(1)
 #define PXA_AUDIO_COMMIT_GRAPH UINT16_C(2)
@@ -22,6 +22,8 @@ extern "C" {
 #define PXA_AUDIO_FLUSH UINT16_C(4)
 #define PXA_AUDIO_OPEN_PCM UINT16_C(5)
 #define PXA_AUDIO_OPEN_CAPTURE UINT16_C(6)
+/* OPEN_PCM byte 13: opt-in bounded speech buffering, Audio 0.16. */
+#define PXA_AUDIO_PCM_BUFFERED UINT8_C(1)
 #define PXA_AUDIO_CAPTURE_MAX_PACKET 1275u
 #define PXA_AUDIO_USAGE_MEDIA UINT16_C(1)
 #define PXA_AUDIO_ROUTE_SPEAKER UINT16_C(1)
@@ -185,6 +187,10 @@ typedef struct {
     void (*close_capture)(void *, uint64_t);
     /* Packet duration: 20, 40 or 60 ms. NULL defaults to 20 ms. */
     uint16_t (*capture_frame_ms)(void *);
+    /* Optional buffered PCM route; at most 480 ms in source frames.
+     * Default OPEN_PCM continues to use its low latency queue. */
+    pxa_status_t (*open_pcm_buffered)(void *, const pxa_audio_format_t *,
+        pxa_audio_pcm_info_t *, uint64_t *provider_session);
 } pxa_audio_backend_t;
 
 typedef struct {

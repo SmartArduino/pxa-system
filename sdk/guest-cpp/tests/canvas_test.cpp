@@ -79,6 +79,16 @@ int main() {
         assert(pxa::wire::get32(image.data()+36)==std::uint32_t(-2));
         assert(image[52]==std::byte{128} && image[53]==std::byte{2});
         assert(pxa::wire::get64(image.data()+54)==77);
+        assert(image[33] == std::byte{0});
+        commands.reset();commands.image({0,0,64,36},77,ImageFit::cover,128,ImageSampling::nearest);
+        auto nearest_begin=packets.size();assert(canvas.present(commands));
+        assert(packets[nearest_begin+1][33]==std::byte{1});
+        commands.reset();commands.image({0,0,64,36},77,ImageFit::cover,128,ImageSampling{2});
+        auto invalid_sampling=packets.size();assert(!canvas.present(commands));
+        assert(packets.size()==invalid_sampling);
+        commands.reset();commands.image({0,0,64,36},77);
+        auto default_begin=packets.size();assert(canvas.present(commands));
+        assert(packets[default_begin+1][33]==std::byte{0});
         for (auto fit : {ImageFit::contain,ImageFit{3}}) {
             commands.reset();commands.image({0,0,10,10},fit==ImageFit::contain?0:77,fit);
             const auto count=packets.size();assert(!canvas.present(commands));

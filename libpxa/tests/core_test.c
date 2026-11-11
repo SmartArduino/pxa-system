@@ -5945,7 +5945,7 @@ static void test_audio_service(void) {
         pxa_write_u64(pcm_request, permission64);
         pxa_write_u32(pcm_request+8, 22050); pcm_request[12] = 2;
         for (unsigned trial = 0; trial < 5; ++trial) {
-            pcm_request[13] = trial == 0 ? 1 : 0;
+            pcm_request[13] = trial == 0 ? 2 : 0;
             audio_pcm_behavior = trial == 1 ? 1 : trial == 2 ? 2 : 0;
             if (trial == 4) pxa_write_u64(pcm_request, (uint32_t)permission64);
             pxa_writer_t writer; pxa_writer_init(&writer, command, sizeof(command));

@@ -13,7 +13,7 @@ extern "C" {
 
 #define PXA_UI_SERVICE_ID UINT16_C(3)
 #define PXA_UI_SERVICE_MAJOR UINT16_C(0)
-#define PXA_UI_SERVICE_MINOR UINT16_C(10)
+#define PXA_UI_SERVICE_MINOR UINT16_C(11)
 #define PXA_UI_SERVICE_PATCH UINT16_C(0)
 
 #define PXA_UI_TX_BEGIN UINT16_C(1)
@@ -242,6 +242,8 @@ pxa_status_t pxa_ui_validate_grid_tracks(pxa_bytes_t value);
 #define PXA_UI_CANVAS_TEXT_SIZED UINT8_C(12)
 #define PXA_UI_CANVAS_BITMAP_RGB565 UINT8_C(10)
 #define PXA_UI_CANVAS_IMAGE_HANDLE UINT8_C(11)
+/* IMAGE/IMAGE_HANDLE record flag; other primitives still require zero flags. */
+#define PXA_UI_CANVAS_IMAGE_NEAREST UINT8_C(1)
 
 #define PXA_UI_CANVAS_TEXT_ALIGN_TOP UINT8_C(0)
 #define PXA_UI_CANVAS_TEXT_ALIGN_MIDDLE UINT8_C(1)
@@ -297,6 +299,7 @@ typedef uint64_t pxa_ui_features_t;
 #define PXA_UI_FEATURE_DYNAMIC_TEXT (UINT64_C(1) << 13)
 #define PXA_UI_FEATURE_PASSWORD_INPUT (UINT64_C(1) << 14)
 #define PXA_UI_FEATURE_FONT_GLYPH (UINT64_C(1) << 15)
+#define PXA_UI_FEATURE_IMAGE_SAMPLING (UINT64_C(1) << 16)
 
 #define PXA_UI_CONTROLLER_UP (UINT32_C(1) << 0)
 #define PXA_UI_CONTROLLER_DOWN (UINT32_C(1) << 1)

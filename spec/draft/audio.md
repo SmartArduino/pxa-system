@@ -1,4 +1,4 @@
-# PXA Audio Draft 0.13
+# PXA Audio Draft 0.16
 
 Audio defines a permission-bound session and an atomic, App-owned playback
 graph control plane. `open-session` requires an `audio.playback` Permission
@@ -56,8 +56,8 @@ Apps' streams.
 `open-pcm` (opcode 5) uses wire profile 1 and a nonzero request token. It
 requires the same `audio.playback` / `media` permission and session quotas as
 `open-session`. The fixed 16-byte request contains a permission Handle (`u64`),
-source sample rate (`u32`, 8000..48000), channel count (`u8`, 1 or 2), and three
-zero reserved bytes. PCM is interleaved S16LE. An unsupported source format
+source sample rate (`u32`, 8000..48000), channel count (`u8`, 1 or 2), flags
+(`u8`), and two zero reserved bytes. PCM is interleaved S16LE. An unsupported source format
 returns `unsupported`; the Host never substitutes another source format.
 
 The success result is 56 bytes including status: the existing session/format
@@ -75,6 +75,15 @@ measure source sample frames, independent of channel count. The queue capacity
 is bounded to 1..`floor(source_rate * 120 / 1000)` source frames. `accepted`
 counts renderer consumption unless the sink-submitted flag is set; neither
 value guarantees that physical hardware has played the samples.
+
+Audio 0.16 adds optional buffered PCM: request byte 13 bit 0 selects this route;
+all other flag bits remain invalid. Without it, the existing low latency route
+and 120-ms queue bound apply. Buffered requests allow at most 480 ms in source
+frames and return `unsupported` if the backend cannot provide it. Guests may
+then explicitly reopen the default route. The shared mixer uses a bounded
+400-ms initial fill or startup deadline, including short replies, and flush
+resets both queued PCM and startup state. Default sessions retain four-packet
+backpressure even when the Host allocates a larger packet pool.
 
 The sink describes the actual route. A mono speaker can accept stereo source
 PCM and combine both channels on the Host; this does not imply stereo hardware.

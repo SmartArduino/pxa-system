@@ -8,7 +8,12 @@ extern "C" {
  * legacy tones share a FIFO per voice. Effects run in parallel on the same
  * sample clock, using free FIFO slots rather than allocating another pool. */
 #define PXA_AUDIO_MIXER_VOICES 3
+#ifndef PXA_AUDIO_MIXER_PACKETS
 #define PXA_AUDIO_MIXER_PACKETS 4
+#endif
+#if PXA_AUDIO_MIXER_PACKETS < 4 || PXA_AUDIO_MIXER_PACKETS > 24
+#error "PCM packet pool must hold 4..24 packets"
+#endif
 #define PXA_AUDIO_MIXER_FRAME 320
 #define PXA_AUDIO_MIXER_RATE 16000
 #define PXA_AUDIO_MIXER_MAX_RATE 48000
@@ -52,6 +57,8 @@ typedef struct {
     uint8_t channels;
     float gain;
     uint8_t read, count, committed, eq_count;
+    uint8_t queue_limit, buffered, started;
+    uint32_t startup_waited;
 } pxa_audio_mixer_voice_t;
 typedef struct {
     pxa_audio_mixer_voice_t voices[PXA_AUDIO_MIXER_VOICES];
@@ -63,6 +70,9 @@ void pxa_audio_mixer_reset(pxa_audio_mixer_voice_t *voice);
  * State counters measure source frames, independent of channel count. */
 pxa_status_t pxa_audio_mixer_configure(pxa_audio_mixer_voice_t *voice,
     uint32_t source_rate, uint8_t channels, uint32_t output_rate);
+/* Opt in before graph commit. Requires a pool of at least 24 packets.
+ * Buffers at most 480 ms, starts at 400 ms or after a 400-ms deadline. */
+pxa_status_t pxa_audio_mixer_buffered(pxa_audio_mixer_voice_t *voice);
 void pxa_audio_mixer_flush(pxa_audio_mixer_voice_t *voice);
 pxa_status_t pxa_audio_mixer_commit(pxa_audio_mixer_voice_t *voice,
                                    const pxa_audio_graph_t *graph);
@@ -73,7 +83,8 @@ pxa_status_t pxa_audio_mixer_tone(pxa_audio_mixer_voice_t *voice,
 pxa_status_t pxa_audio_mixer_effect(pxa_audio_mixer_voice_t *voice,
     const pxa_audio_tone_t *tones, size_t count, uint8_t track);
 pxa_status_t pxa_audio_mixer_stop_effect(pxa_audio_mixer_voice_t *voice, uint8_t track);
-/* Always writes capacity samples (zero padded); returns non-padding extent.
+/* Always writes capacity samples (zero padded); returns active extent.
+ * Buffered startup silence is active, so pull sinks advance its deadline.
  * accepted_samples counts renderer consumption, not physical DAC playback. */
 size_t pxa_audio_mixer_render(pxa_audio_mixer_t *mixer, int16_t *out,
                              size_t capacity);

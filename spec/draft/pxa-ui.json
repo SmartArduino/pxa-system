@@ -1,11 +1,11 @@
 {
-  "schema": "pxa-ui-spec-0.10",
+  "schema": "pxa-ui-spec-0.11",
   "status": "draft",
   "service": {
     "name": "ui",
     "id": 3,
     "major": 0,
-    "minor": 10,
+    "minor": 11,
     "patch": 0
   },
   "byte_order": "little-endian",
@@ -82,6 +82,10 @@
     {
       "name": "font-glyph",
       "bit": 15
+    },
+    {
+      "name": "image-sampling",
+      "bit": 16
     }
   ],
   "opcodes": [
@@ -743,7 +747,8 @@
       }
     ],
     "nesting": "clip records must balance; depth is governed by the Host byte budget, not a protocol count limit",
-    "lifetime": "a successful present transfers list ownership to the backend; failure preserves the previous frame"
+    "lifetime": "a successful present transfers list ownership to the backend; failure preserves the previous frame",
+    "flags": "0 for existing default rendering; bit 0 on image/image-handle selects nearest-neighbor sampling and requires image-sampling. Unknown bits and nonzero flags on other primitives are invalid. The per-command choice never changes text, alpha blending, fitting or other images."
   },
   "environment_records": [
     {
@@ -849,7 +854,7 @@
     }
   ],
   "resource_policy": "Hosts enforce private byte budgets and queue policy. Node, canvas, property, and text counts are not ABI limits and are never advertised as fixed quotas.",
-  "protocol_version": "0.10.0",
+  "protocol_version": "0.11.0",
   "events": [
     {
       "name": "text",

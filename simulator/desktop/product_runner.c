@@ -2793,7 +2793,22 @@ static pxa_status_t audio_open_pcm(void *context, const pxa_audio_format_t *sour
     status = pxa_audio_mixer_configure(&host->audio_mixer.voices[voice],
         source->sample_rate, source->channels, sink.sample_rate);
     if (!status) *info = (pxa_audio_pcm_info_t){sink.sample_rate,
-        PXA_AUDIO_MIXER_PACKETS * (source->sample_rate / 50u), sink.channels};
+        4u * (source->sample_rate / 50u), sink.channels};
+    SDL_UnlockAudioDevice(host->audio_device);
+    return status;
+}
+
+static pxa_status_t audio_open_pcm_buffered(void *context, const pxa_audio_format_t *format,
+    pxa_audio_pcm_info_t *info, uint64_t *session) {
+    pxa_status_t status = audio_open_pcm(context, format, info, session);
+    if (status) return status;
+    product_host_t *host = context;
+    SDL_LockAudioDevice(host->audio_device);
+    for (unsigned i=0; i<PXA_AUDIO_MIXER_VOICES; ++i) if(host->audio_sessions[i]==*session) {
+        status=pxa_audio_mixer_buffered(&host->audio_mixer.voices[i]);
+        info->queue_frames=host->audio_mixer.voices[i].queue_limit*(format->sample_rate/50u);
+        break;
+    }
     SDL_UnlockAudioDevice(host->audio_device);
     return status;
 }
@@ -3832,7 +3847,7 @@ static int run_product_simulator(const options_t *input,
         PXA_UI_FEATURE_CONTROLLER_INPUT | PXA_UI_FEATURE_MULTIPLE_SURFACES |
         PXA_UI_FEATURE_CANVAS_STREAM_IO;
     if (!owns_display || host.ime_directory) ui_config.features |= PXA_UI_FEATURE_TEXT_INPUT_CONTROL;
-    ui_config.features |= PXA_UI_FEATURE_DYNAMIC_TEXT | PXA_UI_FEATURE_PASSWORD_INPUT | PXA_UI_FEATURE_FONT_GLYPH;
+    ui_config.features |= PXA_UI_FEATURE_DYNAMIC_TEXT | PXA_UI_FEATURE_PASSWORD_INPUT | PXA_UI_FEATURE_FONT_GLYPH | PXA_UI_FEATURE_IMAGE_SAMPLING;
 #ifdef PXSYS_DESKTOP_TEXT_FONT
     ui_config.features |= PXA_UI_FEATURE_SIZED_TEXT;
 #endif
@@ -4004,7 +4019,7 @@ static int run_product_simulator(const options_t *input,
     audio_backend.open_capture = desktop_capture_open;
     audio_backend.capture_io = desktop_capture_io;
     audio_backend.close_capture = desktop_capture_close;
-    audio_backend.open = audio_open; audio_backend.open_pcm = audio_open_pcm;
+    audio_backend.open = audio_open; audio_backend.open_pcm = audio_open_pcm; audio_backend.open_pcm_buffered = audio_open_pcm_buffered;
     audio_backend.commit = audio_commit;
     audio_backend.submit = audio_submit; audio_backend.close = audio_close;
     audio_backend.query = audio_query; audio_backend.flush = audio_flush;

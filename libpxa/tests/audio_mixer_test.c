@@ -190,7 +190,7 @@ static void format_test(void) {
             pxa_audio_mixer_voice_t saved = *v;
             assert(pxa_audio_mixer_configure(v, 16000, 1, 48000) == PXA_STATUS_BAD_STATE);
             assert(!memcmp(&saved, v, sizeof(saved)));
-            for (unsigned slot = 0; slot < PXA_AUDIO_MIXER_PACKETS; ++slot)
+            for (unsigned slot = 0; slot < v->queue_limit; ++slot)
                 assert(pxa_audio_mixer_write(v, input, channels*2) == PXA_STATUS_OK);
             saved = *v;
             assert(pxa_audio_mixer_write(v, input, channels*2) == PXA_STATUS_WOULD_BLOCK);
@@ -380,7 +380,56 @@ static void downsample_test(void) {
     puts("downsampling: 28 exact-reference streams, mono/stereo, arbitrary packets, general/fast paths");
 }
 
+static void buffered_pcm_test(void) {
+    reset();
+    pxa_audio_mixer_voice_t *v=&mixer.voices[0];
+    pxa_audio_mixer_reset(v);
+    if (PXA_AUDIO_MIXER_PACKETS < 24) {
+        assert(pxa_audio_mixer_buffered(v)==PXA_STATUS_UNSUPPORTED);
+        assert(v->queue_limit==4);
+        return;
+    }
+    assert(!pxa_audio_mixer_buffered(v) && v->queue_limit==24);
+    pxa_audio_graph_t graph={.route=PXA_AUDIO_ROUTE_SPEAKER};
+    assert(!pxa_audio_mixer_commit(v,&graph));
+    assert(pxa_audio_mixer_buffered(v)==PXA_STATUS_BAD_STATE);
+    /* Startup is bounded even when a sentence contains only one packet. */
+    fill(0,17,320);
+    for(unsigned i=0;i<20;++i) {
+        assert(pxa_audio_mixer_render(&mixer,output,320)==320);
+        for(unsigned j=0;j<320;++j) assert(!output[j]);
+        assert(!v->state.accepted_samples);
+    }
+    assert(pxa_audio_mixer_render(&mixer,output,320)==320);
+    assert(v->state.accepted_samples==320 && !v->state.queued_samples);
+    assert(!pxa_audio_mixer_render(&mixer,output,320) && !v->started);
+    /* A new utterance in the same session also receives startup protection. */
+    fill(0,19,320);
+    assert(pxa_audio_mixer_render(&mixer,output,320)==320 && !v->started);
+    for(unsigned i=0;i<320;++i) assert(!output[i]);
+    pxa_audio_mixer_flush(v);
+    assert(!v->started && !v->startup_waited && v->queue_limit==24);
+    /* Render continuously while the producer periodically stalls for 220 ms. */
+    unsigned submitted=0, consumed=0;
+    for(unsigned tick=0;consumed<100;++tick) {
+        if(tick%22<11) while(submitted<100 && v->count<v->queue_limit) {
+            fill(0,(int16_t)(submitted+1),320); ++submitted;
+        }
+        size_t count=pxa_audio_mixer_render(&mixer,output,320);
+        assert(count==320);
+        for(unsigned i=0;i<320;++i) assert(output[i]==(int16_t)(consumed+1));
+        ++consumed;
+    }
+    assert(v->state.submitted_samples==32640 && v->state.accepted_samples==32320);
+    assert(!v->count && !v->state.queued_samples);
+    /* The default route keeps four-packet backpressure in the larger pool. */
+    reset(); for(unsigned i=0;i<4;++i) fill(0,1,320);
+    uint8_t pcm[640]={0};
+    assert(pxa_audio_mixer_write(&mixer.voices[0],pcm,sizeof(pcm))==PXA_STATUS_WOULD_BLOCK);
+    puts("Buffered PCM: bounded startup, 220-ms producer stalls, exact samples, flush and low-latency default passed");
+}
 int main(void) {
+    buffered_pcm_test();
     downsample_test();
     all_sink_rates_test();
     pcm_fast_path_test();

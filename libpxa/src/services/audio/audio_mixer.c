@@ -7,7 +7,7 @@ void pxa_audio_mixer_reset(pxa_audio_mixer_voice_t *v) {
     v->read = PXA_AUDIO_MIXER_PACKETS;
     v->gain = 1.0f;
     v->source_rate = v->output_rate = PXA_AUDIO_MIXER_RATE;
-    v->channels = 1;
+    v->channels = 1; v->queue_limit = 4;
     v->state.flags = PXA_AUDIO_STATE_ACCEPTED_IS_SINK_SUBMITTED;
 }
 static uint32_t frames_ms(uint32_t rate, uint32_t ms) {
@@ -23,9 +23,16 @@ pxa_status_t pxa_audio_mixer_configure(pxa_audio_mixer_voice_t *v,
     v->channels = channels; v->resample_phase = 0; v->pending_source_frames = 0; v->previous_sample = 0;
     return PXA_STATUS_OK;
 }
+pxa_status_t pxa_audio_mixer_buffered(pxa_audio_mixer_voice_t *v) {
+    if (!v) return PXA_STATUS_INVALID_ARGUMENT;
+    if (v->committed || v->count) return PXA_STATUS_BAD_STATE;
+    if (PXA_AUDIO_MIXER_PACKETS < 24) return PXA_STATUS_UNSUPPORTED;
+    v->queue_limit = 24; v->buffered = 1;
+    return PXA_STATUS_OK;
+}
 void pxa_audio_mixer_flush(pxa_audio_mixer_voice_t *v) {
     v->read = PXA_AUDIO_MIXER_PACKETS;
-    v->count = 0;
+    v->count = 0; v->started = 0; v->startup_waited = 0;
     v->resample_phase = 0; v->pending_source_frames = 0; v->previous_sample = 0;
     for (unsigned i = 0; i < PXA_AUDIO_MIXER_PACKETS; ++i)
         v->packets[i].position = v->packets[i].length;
@@ -63,6 +70,7 @@ pxa_status_t pxa_audio_mixer_commit(pxa_audio_mixer_voice_t *v,
     return PXA_STATUS_OK;
 }
 static pxa_audio_mixer_packet_t *next_packet(pxa_audio_mixer_voice_t *v) {
+    if (v->count >= v->queue_limit) return NULL;
     for (unsigned i = 0; i < PXA_AUDIO_MIXER_PACKETS; ++i)
         if (v->packets[i].position == v->packets[i].length) return &v->packets[i];
     return NULL;
@@ -102,7 +110,7 @@ pxa_status_t pxa_audio_mixer_write(pxa_audio_mixer_voice_t *v,
     const size_t frames = bytes / (v->channels * 2u);
     if (frames > frames_ms(v->source_rate, 20)) return PXA_STATUS_INVALID_ARGUMENT;
     if (!v->committed) return PXA_STATUS_BAD_STATE;
-    if (v->count == PXA_AUDIO_MIXER_PACKETS) return PXA_STATUS_WOULD_BLOCK;
+    if (v->count == v->queue_limit) return PXA_STATUS_WOULD_BLOCK;
     if(v->source_rate>v->output_rate){
         uint32_t queued=v->pending_source_frames;
         for(unsigned i=0;i<PXA_AUDIO_MIXER_PACKETS;++i){
@@ -110,7 +118,7 @@ pxa_status_t pxa_audio_mixer_write(pxa_audio_mixer_voice_t *v,
             if(p->kind==PXA_AUDIO_PACKET_PCM && p->position<p->length)
                 queued+=p->source_frames-p->accounted_frames;
         }
-        if(queued+frames>PXA_AUDIO_MIXER_PACKETS*frames_ms(v->source_rate,20))
+        if(queued+frames>v->queue_limit*frames_ms(v->source_rate,20))
             return PXA_STATUS_WOULD_BLOCK;
     }
     const uint32_t length = (frames * v->output_rate + v->resample_phase) / v->source_rate;
@@ -174,7 +182,7 @@ pxa_status_t pxa_audio_mixer_tone(pxa_audio_mixer_voice_t *v,
                                  const pxa_audio_tone_t *t) {
     if (!v || !valid_tone(t)) return PXA_STATUS_INVALID_ARGUMENT;
     if (!v->committed) return PXA_STATUS_BAD_STATE;
-    if (v->count == PXA_AUDIO_MIXER_PACKETS) return PXA_STATUS_WOULD_BLOCK;
+    if (v->count == v->queue_limit) return PXA_STATUS_WOULD_BLOCK;
     pxa_audio_mixer_packet_t *p = next_packet(v);
     p->kind = PXA_AUDIO_PACKET_TONE; p->meta.tone = *t; p->position = p->phase = 0;
     p->noise = 0x9e3779b9u;
@@ -237,7 +245,7 @@ pxa_status_t pxa_audio_mixer_stop_effect(pxa_audio_mixer_voice_t *v, uint8_t tra
     return PXA_STATUS_OK;
 }
 /* Caller places this bounded PCM workspace in external memory on ESP. */
-typedef char mixer_memory_is_bounded[sizeof(pxa_audio_mixer_t) <= 24576 ? 1 : -1];
+typedef char mixer_memory_is_bounded[sizeof(pxa_audio_mixer_t) <= PXA_AUDIO_MIXER_PACKETS * 6144u ? 1 : -1];
 typedef char effects_reuse_pcm_storage[sizeof(((pxa_audio_mixer_packet_t *)0)->data.layers) <=
     sizeof(((pxa_audio_mixer_packet_t *)0)->data.pcm) ? 1 : -1];
 /* Linear interpolation avoids a transcendental call for every sample. */
@@ -393,11 +401,19 @@ static size_t render_pcm_prefix(pxa_audio_mixer_voice_t *v, int16_t *out, size_t
 }
 size_t pxa_audio_mixer_render(pxa_audio_mixer_t *m, int16_t *out, size_t n) {
     size_t extent = 0;
-    uint8_t effects[PXA_AUDIO_MIXER_VOICES] = {0};
+    uint32_t effects[PXA_AUDIO_MIXER_VOICES] = {0};
     pxa_audio_mixer_voice_t *active[PXA_AUDIO_MIXER_VOICES];
     unsigned active_count = 0;
     for (unsigned j = 0; j < PXA_AUDIO_MIXER_VOICES; ++j) {
         pxa_audio_mixer_voice_t *v = &m->voices[j];
+        if (v->buffered && !v->state.queued_samples) {
+            v->started = 0; v->startup_waited = 0; continue;
+        }
+        if (v->buffered && !v->started) {
+            if (v->state.queued_samples >= frames_ms(v->source_rate, 400) ||
+                v->startup_waited >= frames_ms(v->output_rate, 400)) v->started = 1;
+            else { v->startup_waited += (uint32_t)n; extent = n; continue; }
+        }
         int live = v->count != 0;
         for (unsigned k = 0; k < v->eq_count; ++k)
             live |= v->eq[k].z1 != 0 || v->eq[k].z2 != 0;
@@ -410,11 +426,11 @@ size_t pxa_audio_mixer_render(pxa_audio_mixer_t *m, int16_t *out, size_t n) {
         }
         ++active_count;
     }
-    if (!active_count) { memset(out, 0, n * sizeof(*out)); return 0; }
+    if (!active_count) { memset(out, 0, n * sizeof(*out)); return extent; }
     size_t start = 0;
     if (active_count == 1 && !effects[0] && !active[0]->eq_count) {
         start = render_pcm_prefix(active[0], out, n);
-        extent = start;
+        if (extent < start) extent = start;
         if (!active[0]->count) {
             memset(out + start, 0, (n - start) * sizeof(*out));
             return extent;
@@ -434,7 +450,7 @@ size_t pxa_audio_mixer_render(pxa_audio_mixer_t *m, int16_t *out, size_t n) {
                     --v->count;
                 }
                 account_frame(v, p);
-                extent = i + 1;
+                if (extent < i + 1) extent = i + 1;
             }
             if (effects[j]) for (unsigned slot = 0; slot < PXA_AUDIO_MIXER_PACKETS; ++slot) {
                 pxa_audio_mixer_packet_t *p = &v->packets[slot];
@@ -445,7 +461,7 @@ size_t pxa_audio_mixer_render(pxa_audio_mixer_t *m, int16_t *out, size_t n) {
                     effects[j] &= ~(1u << slot);
                 }
                 account_frame(v, p);
-                extent = i + 1;
+                if (extent < i + 1) extent = i + 1;
             }
             for (unsigned k = 0; k < v->eq_count; ++k) {
                 pxa_audio_biquad_t *b = &v->eq[k];
@@ -460,7 +476,7 @@ size_t pxa_audio_mixer_render(pxa_audio_mixer_t *m, int16_t *out, size_t n) {
             mixed += sample * v->gain;
         }
         out[i] = mixed > 32767 ? 32767 : mixed < -32768 ? -32768 : (int16_t)mixed;
-        if (out[i]) extent = i + 1;
+        if (out[i] && extent < i + 1) extent = i + 1;
     }
     return extent;
 }

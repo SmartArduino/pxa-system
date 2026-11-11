@@ -1,4 +1,4 @@
-# PXA UI Service 0.10.0
+# PXA UI Service 0.11.0
 
 UI is a backend-neutral command protocol. The Host owns the rendered tree;
 the service does not retain a second property-complete scene. A Component has a
@@ -105,6 +105,13 @@ RGBA8888. `CANVAS_WRITE` may split any header or payload. Clip depth and
 primitive count have no ABI limits; their storage is charged to the Host's
 private byte budget. The normative payload layouts are listed in
 `pxa-ui.json`.
+
+`image-sampling` (UI 0.11, bit 16) enables per-image nearest-neighbor sampling.
+For IMAGE and IMAGE_HANDLE only, display-list header flag bit 0 disables image
+antialiasing; zero retains the default filtered rendering. Other flag bits and
+flags on other primitives are invalid. Hosts reject nearest sampling without
+the advertised feature. C++ Guests use `ImageSampling::nearest` as the final
+argument to `CanvasCommands::image`, for example for pixel art.
 
 VirtualList owns the full logical scroll extent but not one node per item. On
 scroll it emits `VISIBLE_RANGE(first, count)`, including a Host-selected

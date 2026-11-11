@@ -26,6 +26,7 @@ extern const lv_font_t pxsys_reference_lock_digits_72;
 #define TRANSIENT_BAR_TIMEOUT_MS 2500u
 #define CHROME_REVEALED_TRANSIENT 1u
 #define CHROME_REVEALED_HIDDEN_STATUS 2u
+#define CHROME_REVEALED_HIDDEN_NAVIGATION 4u
 #define NAVIGATION_GESTURE_COMMIT_DISTANCE 32
 #define NAVIGATION_GESTURE_HOLD_MS 180u
 #define NAVIGATION_GESTURE_MOTION_SLOP 4
@@ -839,6 +840,7 @@ static void lock_screen_refresh(pxsys_reference_lvgl_t* ui);
 static int bar_is_visible(const pxsys_reference_lvgl_t* ui,
                           pxsys_window_bar_mode_t mode);
 static int status_bar_is_visible(const pxsys_reference_lvgl_t* ui);
+static int navigation_bar_is_visible(const pxsys_reference_lvgl_t* ui);
 
 static void rebuild_async(void* context) {
     rebuild((pxsys_reference_lvgl_t*)context);
@@ -869,7 +871,7 @@ static void update_system_overlay(pxsys_reference_lvgl_t* ui) {
             !lv_obj_is_hidden(ui->status_bar))
             objects[count++] = ui->status_bar;
         if (ui->navigation_bar != NULL &&
-            bar_is_visible(ui, navigation_bar_mode(ui)) &&
+            navigation_bar_is_visible(ui) &&
             !lv_obj_is_hidden(ui->navigation_bar))
             objects[count++] = ui->navigation_bar;
         if (ui->volume_osd != NULL && !lv_obj_is_hidden(ui->volume_osd))
@@ -4672,6 +4674,12 @@ static int status_bar_is_visible(const pxsys_reference_lvgl_t* ui) {
             (ui->transient_revealed & CHROME_REVEALED_HIDDEN_STATUS));
 }
 
+static int navigation_bar_is_visible(const pxsys_reference_lvgl_t* ui) {
+    return bar_is_visible(ui, navigation_bar_mode(ui)) ||
+           (navigation_bar_mode(ui) == PXSYS_WINDOW_BAR_HIDDEN &&
+            (ui->transient_revealed & CHROME_REVEALED_HIDDEN_NAVIGATION));
+}
+
 static void transient_timeout(lv_timer_t* timer) {
     pxsys_reference_lvgl_t* ui =
         (pxsys_reference_lvgl_t*)lv_timer_get_user_data(timer);
@@ -5112,7 +5120,7 @@ static void build_notification_shade(pxsys_reference_lvgl_t* ui,
     panel_height = ui->display.height;
     if (ui->navigation_mode == PXSYS_NAVIGATION_BUTTONS &&
         ui->navigation_bar != NULL &&
-        bar_is_visible(ui, navigation_bar_mode(ui)))
+        navigation_bar_is_visible(ui))
         panel_height = (uint32_t)layout.navigation_bar.y;
     ui->notification_panel_height = (int32_t)panel_height;
     ui->notification_panel = lv_obj_create(ui->notification_shade);
@@ -5605,7 +5613,12 @@ static void transient_navigation_reveal_event(lv_event_t* event) {
     if (code == LV_EVENT_RELEASED) {
         int32_t distance = ui->navigation_press_y - point.y;
         ui->navigation_dragging = 0;
-        if (distance >= 8) reveal_transient_chrome(ui);
+        if (distance >= 8) {
+            /* App chrome policy cannot remove the system's Home escape. */
+            if (navigation_bar_mode(ui) == PXSYS_WINDOW_BAR_HIDDEN)
+                reveal_chrome(ui, CHROME_REVEALED_HIDDEN_NAVIGATION);
+            else reveal_transient_chrome(ui);
+        }
     } else if (code == LV_EVENT_PRESS_LOST) {
         ui->navigation_dragging = 0;
     }
@@ -5877,7 +5890,7 @@ static void toast_reposition(pxsys_reference_lvgl_t* ui) {
     lv_obj_set_style_max_width(ui->toast, max_width, 0);
     lv_obj_set_style_max_width(ui->toast_label, max_width - 24, 0);
     if (!(ui->active_chrome & PXSYS_REFERENCE_UI_NAVIGATION_BAR) ||
-        !bar_is_visible(ui, navigation_bar_mode(ui))) {
+        !navigation_bar_is_visible(ui)) {
         bottom_offset = 16;
     } else if (ui->navigation_mode == PXSYS_NAVIGATION_GESTURES) {
         bottom_offset = layout.size_class == PXSYS_UI_SIZE_COMPACT ? 26 : 34;
@@ -8010,7 +8023,7 @@ static void rebuild(pxsys_reference_lvgl_t* ui) {
         if ((ui->active_chrome & PXSYS_REFERENCE_UI_NAVIGATION_BAR) &&
             ui->navigation_mode == PXSYS_NAVIGATION_BUTTONS &&
             navigation_bar_mode(ui) != PXSYS_WINDOW_BAR_HIDDEN &&
-            bar_is_visible(ui, navigation_bar_mode(ui)))
+            navigation_bar_is_visible(ui))
             bottom = (uint16_t)layout.navigation_bar.height;
         if (top != ui->content_inset_top ||
             bottom != ui->content_inset_bottom) {
@@ -8281,10 +8294,9 @@ static void rebuild(pxsys_reference_lvgl_t* ui) {
         if (ui->rendered_view_key != 0) navigation_state_restore(ui);
     }
 
-    if ((ui->active_chrome & PXSYS_REFERENCE_UI_NAVIGATION_BAR) &&
-        (navigation_bar_mode(ui) != PXSYS_WINDOW_BAR_HIDDEN ||
-         ui->navigation_mode == PXSYS_NAVIGATION_GESTURES)) {
-        int visible = bar_is_visible(ui, navigation_bar_mode(ui));
+    /* Keep a trusted edge target even when an App requests hidden chrome. */
+    if (ui->active_chrome & PXSYS_REFERENCE_UI_NAVIGATION_BAR) {
+        int visible = navigation_bar_is_visible(ui);
         int gesture_height = (int)gesture_strip_height(&layout);
         navigation = lv_obj_create(ui->root);
         ui->navigation_bar = navigation;

@@ -281,7 +281,7 @@ EMSCRIPTEN_KEEPALIVE int browser_init(uint32_t w, uint32_t h) {
         PXA_UI_FEATURE_CANVAS_STREAM_IO | PXA_UI_FEATURE_DYNAMIC_TEXT |
         PXA_UI_FEATURE_TEXT_INPUT_CONTROL | PXA_UI_FEATURE_PASSWORD_INPUT |
         PXA_UI_FEATURE_VIRTUAL_LIST | PXA_UI_FEATURE_MULTIPLE_SURFACES |
-        PXA_UI_FEATURE_FONT_GLYPH;
+        PXA_UI_FEATURE_FONT_GLYPH | PXA_UI_FEATURE_IMAGE_SAMPLING;
     if (native_fonts()) cfg.features |= PXA_UI_FEATURE_SIZED_TEXT;
     CHECK(pxa_ui_service_init(WORKSPACE(ui_service), pxa_ui_service_workspace_size(), runtime, &cfg, &ui));
     CHECK(pxa_ui_service_register(ui));

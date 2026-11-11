@@ -67,6 +67,8 @@ else()
     endif()
 endif()
 
+target_compile_definitions(pxa PUBLIC PXA_AUDIO_MIXER_PACKETS=24)
+
 set(PXSYS_DESKTOP_APP_SOURCE_ROOT "${CMAKE_CURRENT_LIST_DIR}/../../apps/pxa"
     CACHE PATH "PXA application source root used for the built-in simulator catalog")
 file(GLOB PXSYS_DESKTOP_APP_MANIFESTS CONFIGURE_DEPENDS

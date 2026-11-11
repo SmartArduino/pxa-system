@@ -565,6 +565,15 @@ static void test_canvas_image_validation(void) {
     pxa_write_u32(image + 16, 2);
     pxa_write_u64(image + 22, UINT64_C(0x1234567800000042));
     assert(!pxa_ui_validate_canvas(PXA_UI_FEATURE_CANVAS, image, sizeof(image)));
+    image[1] = PXA_UI_CANVAS_IMAGE_NEAREST;
+    assert(pxa_ui_validate_canvas(PXA_UI_FEATURE_CANVAS,image,sizeof(image)) == PXA_STATUS_UNSUPPORTED);
+    const pxa_ui_features_t sampling = PXA_UI_FEATURE_CANVAS | PXA_UI_FEATURE_IMAGE_SAMPLING;
+    assert(!pxa_ui_validate_canvas(sampling,image,sizeof(image)));
+    image[1] = 2;
+    assert(pxa_ui_validate_canvas(sampling,image,sizeof(image)) == PXA_STATUS_INVALID_ARGUMENT);
+    image[1] = PXA_UI_CANVAS_IMAGE_NEAREST; image[0] = PXA_UI_CANVAS_RECT;
+    assert(pxa_ui_validate_canvas(sampling,image,sizeof(image)) == PXA_STATUS_INVALID_ARGUMENT);
+    image[0] = PXA_UI_CANVAS_IMAGE_HANDLE; image[1] = 0;
     assert(pxa_ui_validate_canvas(0,image,sizeof(image)) == PXA_STATUS_UNSUPPORTED);
     assert(pxa_ui_validate_canvas(PXA_UI_FEATURE_CANVAS,image,sizeof(image)-1) == PXA_STATUS_INVALID_ARGUMENT);
     image[21] = 3;

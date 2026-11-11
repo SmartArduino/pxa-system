@@ -3201,6 +3201,7 @@ static void on_canvas_draw(lv_event_t *event) {
     saved_clip = layer->_clip_area;
     while (offset + 4u <= size) {
         uint8_t type = data[offset];
+        uint8_t flags = data[offset + 1u];
         uint16_t length = pxa_read_u16(data + offset + 2u);
         const uint8_t *value;
         offset += 4;
@@ -3457,6 +3458,7 @@ static void on_canvas_draw(lv_event_t *event) {
                 lv_draw_image_dsc_init(&descriptor);
                 descriptor.src = source;
                 descriptor.opa = value[16];
+                descriptor.antialias = !(flags & PXA_UI_CANVAS_IMAGE_NEAREST);
                 target_width = lv_area_get_width(&area);
                 target_height = lv_area_get_height(&area);
                 lv_result_t info_status = LV_RESULT_OK;

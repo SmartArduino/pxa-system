@@ -10,6 +10,8 @@
 namespace pxa::ui {
 
 enum class ImageFit : std::uint8_t { contain, stretch, cover };
+// UI 0.11 image-sampling. Default retains filtered rendering.
+enum class ImageSampling : std::uint8_t { smooth, nearest };
 
 struct CanvasRegion {
     std::int32_t x, y, width, height;
@@ -116,10 +118,11 @@ public:
     }
     // Retained immutable IMAGE handle. No pixel data is copied into commands.
     CanvasCommands& image(CanvasRegion box, std::uint64_t handle,
-                          ImageFit fit = ImageFit::contain, std::uint8_t opacity = 255) noexcept {
-        if (!handle || box.width <= 0 || box.height <= 0 || std::uint8_t(fit) > 2)
+                          ImageFit fit = ImageFit::contain, std::uint8_t opacity = 255,
+                          ImageSampling sampling = ImageSampling::smooth) noexcept {
+        if (!handle || box.width <= 0 || box.height <= 0 || std::uint8_t(fit) > 2 || std::uint8_t(sampling) > 1)
             return fail(Error::invalid_argument);
-        auto out = record(11, 26);
+        auto out = record(11, 26, sampling == ImageSampling::nearest ? 1 : 0);
         if (!out.empty()) {
             coordinates(out.data(), box.x, box.y, box.width, box.height);
             out[16] = std::byte(opacity); out[17] = std::byte(fit);
@@ -128,9 +131,10 @@ public:
         return *this;
     }
     CanvasCommands& image(CanvasRegion box, const Asset& asset,
-                          ImageFit fit = ImageFit::contain, std::uint8_t opacity = 255) noexcept {
+                          ImageFit fit = ImageFit::contain, std::uint8_t opacity = 255,
+                          ImageSampling sampling = ImageSampling::smooth) noexcept {
         if (asset.descriptor().kind != AssetKind::image) return fail(Error::invalid_argument);
-        return image(box, asset.handle(), fit, opacity);
+        return image(box, asset.handle(), fit, opacity, sampling);
     }
     CanvasCommands& pop_clip() noexcept {
         if (!clip_depth_) return fail(Error::bad_state);
@@ -146,13 +150,13 @@ private:
         wire::put32(out + 4, static_cast<std::uint32_t>(y));
         wire::put32(out + 8, width); wire::put32(out + 12, height);
     }
-    std::span<std::byte> record(std::uint8_t type, std::uint16_t payload) noexcept {
+    std::span<std::byte> record(std::uint8_t type, std::uint16_t payload, std::uint8_t flags = 0) noexcept {
         if (error_) return {};
         const auto size = std::size_t(payload) + 4;
         if (size > packet_.size() - used_) { fail(Error::limit_exceeded); return {}; }
         auto* out = packet_.data() + used_;
         std::fill_n(out, size, std::byte{});
-        out[0] = std::byte(type); wire::put16(out + 2, payload);
+        out[0] = std::byte(type); out[1] = std::byte(flags); wire::put16(out + 2, payload);
         used_ += size;
         return {out + 4, std::size_t(payload)};
     }

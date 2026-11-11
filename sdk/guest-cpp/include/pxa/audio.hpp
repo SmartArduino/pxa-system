@@ -445,15 +445,15 @@ public:
         return open_request(self, permission.handle());
     }
     Task<AudioSession> open_pcm(this AudioService self, const Permission& permission,
-                               std::uint32_t rate, std::uint8_t channels) {
+                               std::uint32_t rate, std::uint8_t channels, bool buffered = false) {
         if (!(permission.handle() >> 32) || rate < 8000 || rate > 48000 ||
             (channels != 1 && channels != 2))
             return Task<AudioSession>::failed(Error::invalid_argument);
-        return open_request(self, permission.handle(), AudioFormat{rate, channels, 20});
+        return open_request(self, permission.handle(), AudioFormat{rate, channels, 20}, buffered);
     }
 private:
     static Task<AudioSession> open_request(AudioService self, std::uint64_t permission,
-                                         AudioFormat requested = {}) {
+                                         AudioFormat requested = {}, bool buffered = false) {
         auto& [transport_, requests_] = self;
         std::array<std::byte, 18> payload{};
         const bool pcm = requested.sample_rate != 0;
@@ -461,6 +461,7 @@ private:
             wire::put64(payload.data(), permission);
             wire::put32(payload.data() + 8, requested.sample_rate);
             payload[12] = std::byte(requested.channels);
+            payload[13] = std::byte(buffered ? 1 : 0);
         } else {
             wire::put16(payload.data(), 1);
             wire::put16(payload.data() + 2, 8);
@@ -505,7 +506,7 @@ private:
                 format.channels != requested.channels || format.frame_ms != 20 ||
                 sink.sample_rate < 8000 || sink.sample_rate > 48000 ||
                 (sink.channels != 1 && sink.channels != 2) ||
-                !sink.queue_frames || sink.queue_frames > format.sample_rate*120u/1000u)
+                !sink.queue_frames || sink.queue_frames > format.sample_rate*(buffered ? 480u : 120u)/1000u)
                 co_return std::unexpected(Error::protocol_error);
         }
         if (!records.empty()) co_return std::unexpected(Error::protocol_error);

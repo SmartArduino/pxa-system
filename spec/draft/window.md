@@ -36,7 +36,12 @@ ignored. Invalid, unsupported or duplicate records reject the entire command.
 The backend applies either the full candidate configuration or none of it.
 `transient` means hidden by default while a system gesture may reveal the bar
 temporarily; it is the platform-neutral equivalent of Android immersive system
-bar behavior.
+bar behavior. App-requested `hidden` does not disable trusted system escape
+navigation: the reference Host retains the bottom-edge gesture. In button
+navigation mode, swiping up temporarily reveals Home/Back/Recents over the app;
+Home is a system action and is not delivered to the app as Back. Gesture
+navigation retains its usual Home gesture. User-revealed hidden bars overlay
+content without changing its reserved insets.
 
 Bar colors use `0xRRGGBBAA`; alpha zero is transparent, including the default
 zero value. Color and icon policy affect foreground App chrome and also apply

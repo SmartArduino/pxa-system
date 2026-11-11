@@ -67,7 +67,7 @@ void pxa_audio_service_poll(pxa_audio_service_t *service) {
 typedef struct {
     pxa_handle64_t permission;
     uint16_t usage;
-    uint8_t seen, pcm_only;
+    uint8_t seen, pcm_only, buffered;
     pxa_audio_format_t format;
 } pxa_audio_open_request_t;
 
@@ -601,10 +601,12 @@ static pxa_status_t prepare_open(pxa_audio_service_t *service,
             pxa_read_u32(payload.data + 8), payload.data[12], 20};
         request->usage = PXA_AUDIO_USAGE_MEDIA;
         request->pcm_only = 1;
+        request->buffered = payload.data[13] & PXA_AUDIO_PCM_BUFFERED;
         if (!(request->permission >> 32) || !format_valid(&request->format) ||
-            payload.data[13] || payload.data[14] || payload.data[15])
+            (payload.data[13] & ~PXA_AUDIO_PCM_BUFFERED) || payload.data[14] || payload.data[15])
             return PXA_STATUS_INVALID_ARGUMENT;
-        if (!service->backend.open_pcm) return PXA_STATUS_UNSUPPORTED;
+        if (request->buffered ? !service->backend.open_pcm_buffered : !service->backend.open_pcm)
+            return PXA_STATUS_UNSUPPORTED;
         status = PXA_STATUS_OK;
     } else status = parse_open(payload, wire_profile, request);
     if (status != PXA_STATUS_OK) return status;
@@ -642,8 +644,8 @@ static pxa_status_t open_session(pxa_audio_service_t *service,
     memset(&format, 0, sizeof(format));
     if (request->pcm_only) {
         format = request->format;
-        status = pxa_status_normalize(service->backend.open_pcm(
-            service->backend.context, &format, &pcm, &provider_session));
+        status = pxa_status_normalize((request->buffered ? service->backend.open_pcm_buffered :
+            service->backend.open_pcm)(service->backend.context, &format, &pcm, &provider_session));
     } else status = pxa_status_normalize(service->backend.open(
         service->backend.context, request->usage, &format, &provider_session));
     if (status != PXA_STATUS_OK) {
@@ -657,7 +659,7 @@ static pxa_status_t open_session(pxa_audio_service_t *service,
     if (!format_valid(&format) || provider_session == 0 ||
         (request->pcm_only && (pcm.sink_rate < 8000 || pcm.sink_rate > 48000 ||
          (pcm.sink_channels != 1 && pcm.sink_channels != 2) ||
-         !pcm.queue_frames || pcm.queue_frames > format.sample_rate * 120u / 1000u))) {
+         !pcm.queue_frames || pcm.queue_frames > format.sample_rate * (request->buffered ? 480u : 120u) / 1000u))) {
         if (provider_session != 0) {
             service->backend.close(service->backend.context,
                                    provider_session);
