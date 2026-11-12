@@ -197,12 +197,13 @@ int main(int argc, char **argv) {
     assert(native.sink_rate == 16000 && native.sink_channels == 1 && native.queue_frames == 3840);
     SDL_PauseAudioDevice(h->audio_device, 1);
     assert(!audio_commit(h, a, &g));
-    uint8_t stereo[480 * 4];
-    for (unsigned i = 0; i < 480; ++i) {
+    const unsigned source_frames = f.sample_rate * f.frame_ms / 1000u;
+    uint8_t stereo[source_frames * 4];
+    for (unsigned i = 0; i < source_frames; ++i) {
         stereo[i*4] = 0xe8; stereo[i*4+1] = 3;
         stereo[i*4+2] = 0xb8; stereo[i*4+3] = 11;
     }
-    for (unsigned i = 0; i < PXA_AUDIO_MIXER_PACKETS; ++i)
+    for (unsigned i = 0; i < native.queue_frames / source_frames; ++i)
         assert(!audio_submit(h, a, stereo, sizeof(stereo)));
     assert(audio_submit(h, a, stereo, sizeof(stereo)) == PXA_STATUS_WOULD_BLOCK);
     audio_callback(h, (uint8_t *)output, sizeof(output));

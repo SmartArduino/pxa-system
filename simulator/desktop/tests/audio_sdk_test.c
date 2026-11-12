@@ -128,16 +128,16 @@ static void pump_test(void *context) {
     assert(!voice->count);
 
     click(test, "Replace");
-    for (unsigned i = 1; i < PXA_AUDIO_MIXER_PACKETS; ++i) click(test, "One-shot");
-    assert(voice->count == PXA_AUDIO_MIXER_PACKETS);
+    for (unsigned i = 1; i < voice->queue_limit; ++i) click(test, "One-shot");
+    assert(voice->count == voice->queue_limit);
     pxa_audio_mixer_t full = host->audio_mixer;
     click(test, "One-shot");
     assert(!memcmp(&full, &host->audio_mixer, sizeof(full)));
     assert(find_label(lv_screen_active(), "Audio busy"));
     click(test, "Replace");
-    assert(voice->count == PXA_AUDIO_MIXER_PACKETS && find_label(lv_screen_active(), "Track replaced"));
+    assert(voice->count == voice->queue_limit && find_label(lv_screen_active(), "Track replaced"));
     click(test, "Stop track");
-    assert(voice->count == PXA_AUDIO_MIXER_PACKETS - 1);
+    assert(voice->count == voice->queue_limit - 1);
     test->completed = 1;
     host->exit_requested = 1;
 }
