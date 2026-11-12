@@ -4,6 +4,7 @@ import hashlib
 import re
 
 from .common import KIT, ToolError, atomic_json
+from .authoring import authoring_context
 from . import scope
 
 
@@ -42,4 +43,4 @@ def initialize(env, project, app_id=None, language='cpp'):
         atomic_json(path / 'package.json', metadata)
         log = 'Created C application with the installed guest-c SDK'
     scope.enforce(env.workspace)
-    return {'project': str(path), 'language': language, 'log': log}
+    return {'project': str(path), 'language': language, 'log': log, 'authoring': authoring_context()}

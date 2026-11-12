@@ -11,7 +11,7 @@ struct Counter {
     Environment<> environment;
     Context* context = nullptr;
     State<int> count{0};
-    State<bool> ready{false};
+    State<bool> ready{false}, storage_notice{true};
     State<std::string> storage_status{"读取存档"};
     input::Controller controller;
     bool writable = true, saving = false, dirty = false;
@@ -22,8 +22,10 @@ struct Counter {
         if (stored && *stored >= -limit && *stored <= limit) {
             count.set(*stored);
             storage_status.set("已载入");
+            storage_notice.set(false);
         } else if (!stored && stored.error() == Error::not_found) {
             storage_status.set("新存档");
+            storage_notice.set(false);
         } else {
             writable = false; // Preserve unreadable data; don't overwrite it with zero.
             storage_status.set("仅本次会话");
@@ -37,12 +39,14 @@ struct Counter {
             auto result = co_await context->storage().set_value("counter.value.v1", std::int32_t(count.get()));
             if (!result) {
                 storage_status.set("保存失败");
+                storage_notice.set(true);
                 saving = false;
                 co_return Result<void>{};
             }
         }
         saving = false;
         storage_status.set("已保存");
+        storage_notice.set(false);
         co_return Result<void>{};
     }
     void change(int delta, bool reset = false) {
@@ -56,6 +60,7 @@ struct Counter {
         if (auto result = context->tasks().start(save()); !result) {
             saving = false;
             storage_status.set("保存失败");
+            storage_notice.set(true);
         }
     }
     Result<void> on_start(Context& ctx, std::span<const std::byte> config) {
@@ -75,10 +80,10 @@ struct Counter {
         if (controller.pressed(input::controller_x)) change(0, true);
     }
     void on_background(Context&) { controller.reset(); }
-    void on_error(Context&, Error) { ready.set(true); storage_status.set("操作失败"); }
+    void on_error(Context&, Error) { ready.set(true); storage_status.set("操作失败"); storage_notice.set(true); }
     auto view() {
         return SafeArea(environment.display(), Column(
-            Row(Text(@PXA_TITLE@).font(Font::title), Text(storage_status).font(Font::caption))
+            Row(Text(@PXA_TITLE@).font(Font::title), Text(storage_status).font(Font::caption).visible(storage_notice))
                 .justify(Justify::space_between).fill(),
             Text(count).font(Font::headline).fill().text_align(TextAlign::center),
             Row(Button("−1").on_click([this] { change(-1); }).enabled(ready).height(44_dp).grow().justify(Justify::center),

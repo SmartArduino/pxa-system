@@ -13,6 +13,7 @@ import tempfile
 import tomllib
 
 from .common import KIT, ToolError, atomic_json, run
+from .authoring import AUTHORING_BRIEF
 
 START, END = '<!-- PXA AGENT KIT START -->', '<!-- PXA AGENT KIT END -->'
 TOML_START, TOML_END = '# PXA AGENT KIT START', '# PXA AGENT KIT END'
@@ -71,6 +72,8 @@ Run `scope check` before delivery; violations need review, never automatic reset
 Create apps in `apps/<name>` with `init`; preserve existing app IDs, signing identity, SDK locks and saves.
 Implement the user's goal, build it, run the real Guest, exercise the relevant controls and inspect screenshots.
 Continue fixing observed failures and incorporate user feedback; a successful build alone does not complete the goal.
+{AUTHORING_BRIEF}
+Read pxa-app-dev's interface-content reference for UI work and game-development reference for games; use their relevant checks during visual review.
 Use `verify <app>` for repeatable multi-screen checks. Runtime checks do not replace visual review or prove hardware FPS.
 For store screenshots use `verify <app> --store-screenshots` with the real PXA simulator and a rectangular viewport without rounded or circular masks.
 Disable performance overlays and bottom gesture/three-button navigation before capture, including app-owned debug UI. Inspect every original PNG before upload. Never crop, edit or generate replacement screenshots.

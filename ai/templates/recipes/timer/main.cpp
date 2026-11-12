@@ -15,7 +15,7 @@ struct Timer {
     Environment<> environment;
     Context* context = nullptr;
     input::Controller controller;
-    State<bool> ready{false};
+    State<bool> ready{false}, storage_notice{true};
     State<int> progress{0};
     State<std::string> time_text{"--:--"}, phase_text{"读取存档"}, start_text{"开始"};
     State<std::string> mode_text{"短休"}, storage_status{"读取存档"};
@@ -56,10 +56,11 @@ struct Timer {
                 remaining = value;
                 phase = value == 0 ? Phase::done : value == duration() ? Phase::idle : Phase::paused;
                 storage_status.set("已载入");
+                storage_notice.set(false);
             } else {
                 remaining = duration(); writable = false; storage_status.set("存档不匹配");
             }
-        } else if (stored.error() == Error::not_found) storage_status.set("新存档");
+        } else if (stored.error() == Error::not_found) { storage_status.set("新存档"); storage_notice.set(false); }
         else { writable = false; storage_status.set("仅本次会话"); }
         update_labels(); ready.set(true);
         co_return Result<void>{};
@@ -69,9 +70,10 @@ struct Timer {
             dirty = false;
             const auto value = remaining | (std::uint64_t(rest) << 63);
             auto result = co_await context->storage().set_value(save_key, value);
-            if (!result) { saving = false; storage_status.set("保存失败"); co_return Result<void>{}; }
+            if (!result) { saving = false; storage_status.set("保存失败"); storage_notice.set(true); co_return Result<void>{}; }
         }
         saving = false; storage_status.set("已保存");
+        storage_notice.set(false);
         co_return Result<void>{};
     }
     void checkpoint() {
@@ -81,6 +83,7 @@ struct Timer {
         saving = true;
         if (auto result = context->tasks().start(save()); !result) {
             saving = false; storage_status.set("保存失败");
+            storage_notice.set(true);
         }
     }
     void sample(std::uint64_t now) {
@@ -172,10 +175,11 @@ struct Timer {
         (void)context->clock().set_period(0);
         phase = Phase::paused; ready.set(true);
         update_labels(); storage_status.set("操作失败");
+        storage_notice.set(true);
     }
     auto view() {
         return SafeArea(environment.display(), Column(
-            Row(Text(@PXA_TITLE@).font(Font::title), Text(storage_status).font(Font::caption))
+            Row(Text(@PXA_TITLE@).font(Font::title), Text(storage_status).font(Font::caption).visible(storage_notice))
                 .justify(Justify::space_between).fill(),
             Text(time_text).font(Font::headline).fill().text_align(TextAlign::center),
             Text(phase_text).font(Font::caption).fill().text_align(TextAlign::center),

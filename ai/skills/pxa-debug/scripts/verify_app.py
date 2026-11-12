@@ -24,7 +24,7 @@ from pxa_agent.simulator_input import inject as simulator_input
 from pxa_agent.ui import query_arguments
 
 PROFILES = ('pai-touch', 'sensecap-watcher', 'esp-mosaico', 'esp32s31-korvo-1', 'generic')
-ALL_PROFILES = (*PROFILES, 'doit-gamekit', 'doit-gamekit-1', 'doit-esp32s31-devkit', 'espp4-a')
+ALL_PROFILES = (*PROFILES, 'doit-gamekit', 'doit-gamekit-1', 'doit-gamekit-2', 'doit-esp32s31-devkit', 'espp4-a')
 NAME = re.compile(r'[a-z][a-z0-9-]{0,47}')
 
 
@@ -106,7 +106,7 @@ def validate_scenario(scenario, dimensions):
                 continue
             fields = {'tap': {'x', 'y'}, 'swipe': {'x', 'y', 'x2', 'y2', 'ms'},
                       'controller': {'buttons', 'ms'}, 'cancel': set(),
-                      'wait': {'ms'}, 'screenshot': set()}.get(action)
+                      'wait': {'ms'}, 'screenshot': set(), 'relaunch': set()}.get(action)
             if fields is None or set(step) != fields | {'name', 'action'}:
                 raise ValueError('Invalid scenario action/fields: ' + str(action))
             if 'ms' in fields and (type(step['ms']) is not int or not (1 if action == 'swipe' else 0) <= step['ms'] <= 5000):
@@ -118,6 +118,27 @@ def validate_scenario(scenario, dimensions):
             for axis in fields & {'x', 'y', 'x2', 'y2'}:
                 if type(step[axis]) is not int or not 0 <= step[axis] < (width if axis.startswith('x') else height):
                     raise ValueError('Input coordinate is outside ' + profile)
+
+
+def active_identity(packages, app_id):
+    identities = [line.split('\t', 1)[0] for line in packages.splitlines()
+                  if line.split('\t', 1)[0].rsplit(':', 1)[-1] == app_id
+                  and re.search(r'(?:^|[;\t])active=1(?:$|[;\t])', line)]
+    if len(identities) != 1:
+        raise RuntimeError('Requested Guest has no unique active identity; inspect package logs')
+    return identities[0]
+
+
+def relaunch_guest(command, directory, selector, identity, *, variables):
+    """Restart only the verified app in the same isolated Host and storage."""
+    directory.mkdir()
+    for action in ('stop', 'run'):
+        command(directory, action, ['device', 'package', action, identity, '--simulator', selector], variables=variables)
+    _, packages = command(directory, 'packages', ['device', 'package', 'list', '--simulator', selector], variables=variables)
+    if active_identity(packages, identity.rsplit(':', 1)[-1]) != identity:
+        raise RuntimeError('Relaunch changed the active package identity')
+    return {'identity': identity, 'data_cleared': False, 'package_reinstalled': False,
+            'host_restarted': False}
 
 
 def stop(process):
@@ -359,8 +380,8 @@ def main():
                     _, info = command(directory, 'info', ['device', 'info', '--simulator', selector], variables=variables)
                     record['info'] = info.strip()
                     _, packages = command(directory, 'packages', ['device', 'package', 'list', '--simulator', selector], variables=variables)
-                    if not any(line.split('\t',1)[0].rsplit(':',1)[-1] == app_id and 'active=1' in line for line in packages.splitlines()):
-                        raise RuntimeError('Requested Guest is not active; see packages.log')
+                    identity = active_identity(packages, app_id)
+                    record['identity'] = identity
                     code, memory = command(directory, 'memory', ['device', 'memory', '--simulator', selector], variables=variables, required=False)
                     if code == 0:
                         record['memory'] = {'available': True, 'snapshot': json.loads(memory)}
@@ -379,6 +400,10 @@ def main():
                             elif action == 'screenshot':
                                 command(directory, step['name'], ['device', 'screenshot', directory / (step['name']+'.png'),
                                                                  '--simulator', selector], variables=variables)
+                            elif action == 'relaunch':
+                                simulator_input(selector, socket_root=sockets.name)
+                                step_record['result'] = relaunch_guest(command, directory / (step['name']+'-relaunch'),
+                                                                      selector, identity, variables=variables)
                             elif action in ('controller', 'cancel'):
                                 message = simulator_input(selector, step.get('buttons'), step.get('ms',100), socket_root=sockets.name)
                                 (directory / (step['name']+'.log')).write_text(message+'\n', encoding='utf-8')

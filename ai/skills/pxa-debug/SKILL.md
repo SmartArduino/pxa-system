@@ -53,6 +53,14 @@ New C++ apps include `tests/basic.json`: it checks 0, taps the +1 button and wai
 for 1 on each selected profile. Replace those assertions with the requested app's
 actual behavior as you replace the template UI.
 
+For teaching/help changes, exercise first use, dismissal/completion, sustained
+normal use, `relaunch` with the same isolated test save and reopening Help.
+Wait for the app's persistence completion before relaunching. Check the ordinary
+post-tutorial screen for unnecessary copy and HUD obstruction, alongside clear
+labels, recovery feedback and accessibility. Use pxa-app-dev's interface-content
+reference when available. Absence assertions only cover real retained text;
+Surface/Canvas content requires actual interaction and image review.
+
 For interaction, read [scenario format](references/scenarios.md), supply `--scenario`, then compare before/after images. Pixel coordinates are per profile, not dp. The helper does not guess control locations, OCR, infer game FPS or silently clear saves. A missing memory capability is recorded as unavailable, never as zero usage.
 
 Use `pxa_ui_inspect` (CLI `pxa device ui inspect --simulator PROFILE@INSTANCE`)

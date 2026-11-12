@@ -19,9 +19,10 @@ from PIL import Image
 from . import VERSION
 from .common import KIT, ToolError, evidence
 from .workbench import Jobs, verification
+from .authoring import AUTHORING_BRIEF
 
 Profile = Literal['pai-touch', 'sensecap-watcher', 'esp-mosaico', 'esp32s31-korvo-1',
-                  'doit-gamekit', 'doit-gamekit-1', 'doit-esp32s31-devkit', 'espp4-a', 'generic']
+                  'doit-gamekit', 'doit-gamekit-1', 'doit-gamekit-2', 'doit-esp32s31-devkit', 'espp4-a', 'generic']
 
 
 def create_server(env):
@@ -41,7 +42,8 @@ def create_server(env):
         'Keep original app/signing identities and device saves. Use only user-authorized device changes, firmware updates and publishing. '
         'Long operations return a job_id: poll pxa_job_status, then inspect evidence. Runtime success is not visual or hardware acceptance. '
         'Store screenshots use the real simulator, rectangular frames without rounded masks, and hidden performance overlays and bottom navigation. Inspect originals before upload. '
-        'Browser store approval happens in the user browser; never ask for private keys, passwords or tokens in chat.')
+        'Browser store approval happens in the user browser; never ask for private keys, passwords or tokens in chat. '
+        + AUTHORING_BRIEF)
     read = ToolAnnotations(readOnlyHint=True, destructiveHint=False)
 
     def tool(**options):

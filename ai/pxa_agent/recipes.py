@@ -11,7 +11,7 @@ from .projects import initialize
 from . import scope
 
 PROFILES = ('pai-touch', 'sensecap-watcher', 'esp-mosaico', 'esp32s31-korvo-1',
-            'generic', 'doit-gamekit', 'doit-gamekit-1', 'doit-esp32s31-devkit', 'espp4-a')
+            'generic', 'doit-gamekit', 'doit-gamekit-1', 'doit-gamekit-2', 'doit-esp32s31-devkit', 'espp4-a')
 RECIPES = {'timer': '单调时钟计时、开始/暂停/重置、专注/短休、检查点存档',
            'counter': '加减/重置、触摸与手柄、合并异步存档'}
 
@@ -21,9 +21,9 @@ def catalog():
             'other_starters': 'Use version-matched SDK virtual-list, device-sensor and game-input examples via context.'}
 
 
-def expect(name, text, *, button=False):
+def expect(name, text, *, button=False, visible=True):
     return {'name': name, 'action': 'wait-for', 'selector': {'type': 'button' if button else 'text', 'text': text},
-            'expected': {'visible': True, 'count': 1, **({'enabled': True} if button else {})}, 'timeout_ms': 3000}
+            'expected': {'visible': visible, 'count': 1, **({'enabled': True} if button else {})}, 'timeout_ms': 3000}
 
 
 def tap(name, text):
@@ -62,13 +62,16 @@ def create(env, project, recipe, *, app_id=None, title=None, minutes=None, break
     (tests / 'basic.json').unlink(missing_ok=True)
     if recipe == 'counter':
         steps = [expect('ready-to-add', '+1', button=True), expect('initial-zero', '0'), tap('add', '+1'), expect('count-one', '1'),
-                 expect('saved-one', '已保存'), tap('subtract', '−1'), expect('count-zero', '0'),
+                 expect('saved-one', '已保存', visible=False), {'name': 'reopen', 'action': 'relaunch'},
+                 expect('restored-one', '1'), tap('subtract', '−1'), expect('count-zero', '0'),
                  tap('reset', '重置'), expect('reset-zero', '0')]
         complete = None
     else:
         steps = [expect('ready', '就绪 · 专注'), tap('start', '开始'), expect('running', '专注中'),
                  tap('pause', '暂停'), expect('paused', '已暂停'), tap('reset', '重置'),
                  expect('reset-ready', '就绪 · 专注'), tap('rest', '短休'), expect('rest-ready', '就绪 · 短休'),
+                 expect('rest-saved', '已保存', visible=False), {'name': 'reopen', 'action': 'relaunch'},
+                 expect('rest-restored', '就绪 · 短休'),
                  tap('focus', '专注'), expect('focus-ready', '就绪 · 专注')]
         complete = [expect('ready', '就绪 · 专注'), tap('start', '开始'),
                     {'name': 'complete', 'action': 'wait-for', 'selector': {'type': 'text', 'text': '已完成'},
@@ -93,8 +96,11 @@ def create(env, project, recipe, *, app_id=None, title=None, minutes=None, break
 ```
 
 先停止 watch，再验收。场景使用真实节点文字，不依赖固定坐标；检查每张原始截图。
+验收等待保存成功后重新打开应用，验证同一份隔离测试存档；不清除日常存档。
+界面围绕实际数据与操作，不自动添加标语、装饰性副标题或常驻操作说明。
+若后续功能需要教学，设置完成/关闭条件、持久化状态和帮助入口，并检查教学结束后的正常界面。
 存储读取失败时只保留本次会话数据，不用默认值覆盖旧存档。快速连续修改合并为
-一个异步写入任务，界面显示存档状态；不在渲染帧或每秒 tick 上写 Flash。
+一个异步写入任务；正常自动保存不常驻提示，读取或保存失败仍显示必要反馈，不在渲染帧或每秒 tick 上写 Flash。
 设备交付前核对分辨率、物理控件、传感器及 PXADB，再运行对应目标和真实设备测试。
 '''
     if recipe == 'timer':

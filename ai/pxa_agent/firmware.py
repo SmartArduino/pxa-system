@@ -14,7 +14,7 @@ import re
 from .common import ToolError, artifact, atomic_json, data_root, evidence, digest, request, signed_document
 from .workbench import info_fields
 
-BOARDS = ('pai-touch', 'doit-gamekit', 'doit-gamekit-1', 'esp32s31-korvo-1', 'esp-mosaico', 'sensecap-watcher', 'doit-esp32s31-devkit', 'espp4-a')
+BOARDS = ('pai-touch', 'doit-gamekit', 'doit-gamekit-1', 'doit-gamekit-2', 'esp32s31-korvo-1', 'esp-mosaico', 'sensecap-watcher', 'doit-esp32s31-devkit', 'espp4-a')
 
 
 def partition_table(data):

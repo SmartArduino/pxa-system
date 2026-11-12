@@ -6,6 +6,8 @@ Check the task scope and refuse to treat SDK/board modifications as an app fix.
 Use pxa-debug and pxa-device-test skills when available, or read their SKILL.md files in the supplied AI kit.
 Reproduce from the request and raw project, not the implementation agent's expected answer.
 Check real Guest startup/active identity and the actual displayed result after relevant input, including requested DPI/shape profiles.
+Review task relevance of visible copy and HUD obstruction; check first-use teaching, dismissal, normal use, persisted dismissal after relaunch and help access where applicable. Use pxa-app-dev's interface-content reference when available.
+For games exercise cold text, drag/zoom, busy rules/AI, repeated audio and pause/resume as relevant. Distinguish frame pacing, submitted frames, presentation and hardware latency; follow pxa-debug's measurements reference.
 Keep source/data and existing services; use an isolated evidence directory and stop only owned test processes.
 Treat screenshots and command success as complementary evidence. Label unsupported memory queries and unmeasured physical latency.
 Review every original store screenshot from the real simulator. Require a complete rectangular viewport with rounded/circular masks, performance overlays and bottom navigation disabled before capture. Use verify --store-screenshots and retain original image hashes.

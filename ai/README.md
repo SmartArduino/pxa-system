@@ -56,6 +56,10 @@ uv run --python 3.12 --locked --project ./ai ./ai/agent.py --workspace ./my-pxa 
 
 AI 先读 `pxa-app-dev`、`pxa-debug`，按现有 SDK 头文件实现；构建后用真实 Guest、截图、触摸或控制器输入验证。反馈时描述预期，例如“按钮再大一些，手柄 B 返回后保留倒计时”。继续修改同一个应用，保留原 app ID、签名身份、SDK 锁及存档。
 
+默认界面围绕实际任务组织，省去未经要求的标语、装饰性副标题和重复说明；保留必要反馈、清晰标签、无障碍及用户指定的剧情和风格。操作教学按需出现，完成或关闭后保存状态，并能从帮助重新查看。相关规则见 [界面内容](skills/pxa-app-dev/references/interface-content.md)，摘要随 `init` / `new` / `context` 返回，也接入项目指引和 MCP。
+
+制作游戏时先运行完整的核心玩法，再扩展到请求范围；尽早根据实际 SDK 选择渲染、字模和音频路径，复用增量构建，并验证冷启动文字、拖动缩放、繁忙玩法和帧节奏。具体取舍见 [游戏开发](skills/pxa-app-dev/references/game-development.md)。`verify --scenario` 支持 `relaunch`：在同一隔离测试存档中重新打开已验证应用，用于检查教学状态和游戏进度；不清除日常存档。等待实际保存成功后再重开，并检查重开后的状态及正常使用画面。
+
 选用 DevKit 0.10.0+ 时，新的计时器或计数器可直接从可运行配方开始：
 
 ```sh

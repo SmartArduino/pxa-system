@@ -1,5 +1,8 @@
 # Pixel games on PXA
 
+Use `game-development.md` for the playable-loop workflow and rendering/text/audio
+tradeoffs, and `interface-content.md` for HUD copy, conditional teaching and help.
+
 Start from the locked SDK's game, surface and game-input examples; query the
 installed `context` for their real declarations. Prefer retained tiles/sprites,
 texture atlases and dirty regions for a tile game. Use a bounded RGB565 Surface

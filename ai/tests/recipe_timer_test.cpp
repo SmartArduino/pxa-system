@@ -46,7 +46,11 @@ struct Probe : Timer {
     }
     auto view() { return Text("Recipe lifecycle"); }
     Result<bool> on_event(Context& ctx, const Event& event) {
-        if (event.service == 0x8001) { request(phase != Phase::running); return true; }
+        if (event.service == 0x8001) {
+            if (event.opcode == 2) checkpoint();
+            else request(phase != Phase::running);
+            return true;
+        }
         return Timer::on_event(ctx, event);
     }
 };
@@ -92,6 +96,18 @@ int main() {
     assert(writes == 2 && saved_value == 3000000);
     deliver(6, 2, storage_token, success);
     assert(timer.storage_status.get() == "已保存");
+    assert(!timer.storage_notice.get());
+    // Routine autosave stays quiet; a failed write remains visible until a
+    // later confirmed save recovers, without changing the running game state.
+    deliver(0x8001, 2, 0);
+    std::array<std::byte, 4> failure{};
+    wire::put32(failure.data(), static_cast<std::uint32_t>(Error::not_found));
+    deliver(6, 2, storage_token, failure);
+    assert(timer.storage_notice.get() && timer.storage_status.get() == "保存失败");
+    assert(timer.phase == Timer::Phase::paused && timer.remaining == 3000000);
+    deliver(0x8001, 2, 0);
+    deliver(6, 2, storage_token, success);
+    assert(!timer.storage_notice.get() && timer.storage_status.get() == "已保存");
     Runtime::stop(0);
     assert(task_pool_stats().active_slots == 0);
     std::puts("Timer recipe: immediate background pause, stale Clock replies, coalesced checkpoint passed");

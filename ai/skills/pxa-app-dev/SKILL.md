@@ -25,6 +25,11 @@ build cache. Do not redownload/reinstall the SDK to fix an app compiler error.
 For long MCP jobs, use `pxa_job_status(wait_seconds=10, include_log=false)`
 instead of repeatedly emitting the same log; request logs when finished or failed.
 Use a reproducible scenario for touch/controller input and inspect its images.
+For new screens or UI changes, read [interface content](references/interface-content.md).
+Keep task-relevant content and clear controls; omit unsolicited slogans, filler
+panels and repeated explanations. Give teaching a trigger, completion/dismissal,
+persisted progress and help access; inspect normal use and relaunch as well as
+first use. Preserve the user's requested story, style and accessibility.
 For ordinary retained UI, inspect real nodes and use tap-node plus expect/wait-for
 to verify visible state changes; see pxa-debug for the supported semantic actions.
 For FPS work, measure CPU, rendering, presentation and memory separately; a
@@ -85,6 +90,12 @@ sensors if disconnected. Confirm whether multiple screen sizes, orientations,
 rounded corners or round screens are delivery requirements. Read actual Window
 metrics and Sensor descriptors at runtime; an emulator profile or debug input
 support does not prove physical hardware. Keep optional sensors degradable.
+
+For games, read [game development](references/game-development.md) before choosing
+the rendering, font and audio path. Reach a complete playable loop early, then
+continue to the requested scope. Reuse incremental builds and representative
+journeys; measure cold start, busy interaction and frame pacing before broad
+content expansion or renderer rewrites.
 
 For pixel art games, read [pixel game implementation](references/pixel-games.md)
 for Z Labs Chinese fonts, integer scaling, layout/input mapping and rendering

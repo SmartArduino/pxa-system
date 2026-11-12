@@ -1,6 +1,6 @@
 # Scripted input
 
-The helper accepts a JSON object keyed by screen profile. Missing profiles receive only a launch/screenshot check. Unknown profiles, malformed actions and out-of-screen coordinates are rejected before building. Every step has a safe filename `name`; supported actions are `tap`, `swipe`, `controller`, `cancel`, `wait`, `screenshot`, `tap-node`, `expect` and `wait-for`.
+The helper accepts a JSON object keyed by screen profile. Missing profiles receive only a launch/screenshot check. Unknown profiles, malformed actions and out-of-screen coordinates are rejected before building. Every step has a safe filename `name`; supported actions are `tap`, `swipe`, `controller`, `cancel`, `wait`, `screenshot`, `tap-node`, `expect`, `wait-for` and `relaunch`.
 
 For the unchanged Hello template on pai-touch:
 
@@ -20,6 +20,24 @@ Run with `--profiles pai-touch --scenario hello.json`. Inspect `pai-touch/before
 A swipe adds `x2`, `y2` and `ms` (1–5000); a wait permits 0–5000 ms. Example: `{"name":"turn","action":"swipe","x":220,"y":120,"x2":180,"y2":110,"ms":200}`. No shell commands, file paths or executable expressions are accepted in a scenario. Command transcripts and screenshots are evidence; the agent still judges the actual expected behavior.
 
 Controller example: `{"name":"confirm","action":"controller","buttons":16,"ms":100}`. Use the current C/C++ controller enum for masks. Holds are 1–3000 ms and masks 0–4095. The simulator adapter sends phased SDL keys through the existing UI control socket and releases all controller keys even on failure; it does not modify the installed SDK. `{"name":"release","action":"cancel"}` also releases controller and touch input. Physical-device MCP input uses PXADB with INPUT CANCEL. Input injection is not a mechanical press.
+
+## Teaching and saved-state journeys
+
+`{"name":"reopen","action":"relaunch"}` is available in `verify --scenario`
+(including MCP `pxa_verify`), not live `pxa_interact` batches. It releases input,
+stops and runs only the verified package in the same owned simulator and isolated
+profile state. It does not rebuild, reinstall or clear data, restart the Host,
+or affect daily simulator saves. Package-control support is required; transport
+errors or changed/ambiguous identity fail the check.
+
+Before relaunch, wait for a real persistence-completion signal from the app.
+Then assert the restored state: an acknowledged close in memory alone does not
+prove a tutorial flag reached storage. For teaching, exercise the actual trigger,
+completion/close, absence during normal play, persisted absence after relaunch,
+and Help/Controls reopening. Capture the normal gameplay screen as well as the
+teaching screen. Use actual app labels; Surface/Canvas text needs interaction and
+original image review because absence from the retained tree is insufficient.
+This checks app-restart persistence, not a cold Host boot or power-loss durability.
 
 ## Semantic UI checks
 

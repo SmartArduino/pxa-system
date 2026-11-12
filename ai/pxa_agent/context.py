@@ -103,6 +103,7 @@ def sdk_context(root, query='', language='cpp', limit=12):
 
 def project_context(env, project, query='', language='cpp', limit=12):
     from .common import run
+    from .authoring import authoring_context
     path = env.project(project)
     package = json.loads((path / 'package.json').read_text())
     if env.native:
@@ -117,6 +118,7 @@ def project_context(env, project, query='', language='cpp', limit=12):
     lock = path / 'pxa.lock'
     return {'project': str(path), 'app_id': package.get('id'), 'version': package.get('version'),
             'components': package.get('components'), 'build': package.get('build'),
+            'authoring': authoring_context(),
             'lock': json.loads(lock.read_text()) if lock.exists() else None, 'sdk': sdk,
             'workflow': ['scope check', 'build ' + str(path), 'verify ' + str(path) + ' --profiles pai-touch'],
             'boundaries': 'Edit this app only. SDK, ABI, runtime and board sources are read-only.'}
