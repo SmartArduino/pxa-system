@@ -9,6 +9,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import tarfile
 import tomllib
 import unittest
 from unittest.mock import patch
@@ -25,6 +26,54 @@ def load(name, path):
 
 installer = load('pxa_ai_install', SYSTEM / 'ai/install.py')
 debug = load('pxa_ai_debug', SYSTEM / 'ai/skills/pxa-debug/scripts/verify_app.py')
+sys.path.insert(0, str(SYSTEM / 'tools/release'))
+release = load('pxa_ai_release', SYSTEM / 'tools/release/build_ai_kit.py')
+
+
+class ReleaseInputs(unittest.TestCase):
+    def test_ignored_virtualenv_is_excluded_and_tracked_symlinks_are_rejected(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            source = root / 'system'
+            (source / 'ai').mkdir(parents=True)
+            (source / 'ai/plugin.json').write_text('{"version":"0.7.0"}')
+            (source / 'ai/agent.py').write_text('# public source\n')
+            (source / 'VERSION').write_text('0.11.0\n')
+            (source / 'LICENSE').write_text('MIT\n')
+            (source / '.gitignore').write_text('/ai/.venv/\n')
+            tools = root / 'tools/pxadb'
+            tools.mkdir(parents=True)
+            for name in ('pxadb.py', 'pxa_local_socket.py', 'ui_query.py', 'package_compatibility.py'):
+                (tools / name).write_text('# host client\n')
+            (root / 'tools/simulator_pxadb.py').write_text('# simulator client\n')
+            (root / '.gitignore').write_text('/system/\n')
+            def git(repo, *args):
+                subprocess.run(['git', '-C', str(repo), *args], check=True, capture_output=True)
+            for repo in (root, source):
+                git(repo, 'init', '-q')
+                git(repo, 'add', '.')
+                git(repo, '-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', 'commit', '-qm', 'fixture')
+            outside = root / 'private-python'
+            outside.write_text('private environment content')
+            virtualenv = source / 'ai/.venv/bin'
+            virtualenv.mkdir(parents=True)
+            (virtualenv / 'python').symlink_to(outside)
+            key = root / 'distribution.pem'
+            subprocess.run(['openssl', 'genpkey', '-algorithm', 'EC', '-pkeyopt',
+                            'ec_paramgen_curve:P-256', '-out', str(key)], check=True, capture_output=True)
+            output = root / 'release'
+            manifest = release.build(source, output, key, workspace=root)
+            self.assertFalse(manifest['source']['dirty'])
+            with tarfile.open(output / manifest['archive']['file']) as archive:
+                names = archive.getnames()
+                self.assertTrue(any(name.endswith('/agent.py') for name in names))
+                self.assertFalse(any('.venv' in name or 'private-python' in name for name in names))
+                self.assertFalse(any(member.issym() or member.islnk() for member in archive.getmembers()))
+            (source / 'ai/shortcut').symlink_to(outside)
+            git(source, 'add', 'ai/shortcut')
+            git(source, '-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', 'commit', '-qm', 'tracked link')
+            with self.assertRaisesRegex(ValueError, 'symlinks'):
+                release.build(source, root / 'rejected', key, workspace=root)
 
 
 class Installation(unittest.TestCase):

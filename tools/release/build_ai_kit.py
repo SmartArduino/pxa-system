@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from fnmatch import fnmatch
 import json
 from pathlib import Path
 import shutil
@@ -33,18 +34,22 @@ def build(source: Path, output: Path, key: Path, *, allow_dirty=False, workspace
              f'ai-kit-{version}.json.sig', f'pxa-ai-kit-{version}.SHA256SUMS']
     if any((output / name).exists() for name in names):
         raise ValueError('Release assets already exist; use a new output directory')
-    if any(p.is_symlink() for p in (source / 'ai').rglob('*')):
+    ignored = ('__pycache__', '*.pyc', '.venv', '.env', '.pytest_cache', '.ruff_cache')
+    tracked = [source / name for name in run('git', '-C', source, 'ls-files', '-z', 'ai').split('\0') if name]
+    candidates = (p for p in (source / 'ai').rglob('*')
+                  if not any(fnmatch(part, pattern) for part in p.relative_to(source / 'ai').parts
+                             for pattern in ignored)) if allow_dirty else tracked
+    if any(p.is_symlink() or any(parent.is_symlink() for parent in p.parents
+                                  if parent.is_relative_to(source / 'ai')) for p in candidates):
         raise ValueError('AI-kit source must not contain symlinks')
     with tempfile.TemporaryDirectory(prefix='pxa-ai-kit-') as temporary:
         stage = Path(temporary) / f'pxa-ai-kit-{version}'
         if allow_dirty:
-            shutil.copytree(source / 'ai', stage, ignore=shutil.ignore_patterns(
-                '__pycache__', '*.pyc', '.venv', '.env', '.pytest_cache', '.ruff_cache'))
+            shutil.copytree(source / 'ai', stage, ignore=shutil.ignore_patterns(*ignored))
         else:
             # Official releases contain reviewed Git inputs only, never ignored
             # virtual environments, machine configuration or local credentials.
-            for relative in run('git', '-C', source, 'ls-files', 'ai').splitlines():
-                original = source / relative
+            for original in tracked:
                 destination = stage / original.relative_to(source / 'ai')
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(original, destination)
