@@ -63,6 +63,22 @@ class DevelopmentToolsTest(unittest.TestCase):
             with self.assertRaises(ToolError):
                 aot_flags({'build': {'native_stack_checks': invalid}}, 'esp32s3')
 
+    def test_debug_aot_keeps_abi_and_safety_with_a_separate_cache_recipe(self):
+        for target in TARGETS:
+            if target == 'wasm':
+                continue
+            for checks in (False, True):
+                metadata = {'build': {'native_stack_checks': checks}}
+                release = aot_flags(metadata, target)
+                debug = aot_flags(metadata, target, debug=True)
+                self.assertEqual([f for f in debug if not f.startswith('--opt-level=')],
+                                 [f for f in release if not f.startswith('--opt-level=')])
+                if target in ('simulator', 'windows-simulator'):
+                    self.assertIn('--opt-level=0', debug)
+                    self.assertNotEqual(identity(debug), identity(release))
+                else:
+                    self.assertEqual(debug, release)
+
     def test_resource_cache_tracks_sources_outside_resource_directories(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)

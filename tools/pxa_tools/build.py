@@ -172,7 +172,7 @@ def build(project: Project, *, root=SDK_ROOT, targets=('simulator',), output=Non
                 if target == 'wasm' or c.get('artifact') == 'wasm':
                     return
                 manifest_target, cpu, _ = TARGETS[target]
-                flags = aot_flags(project.metadata, target)
+                flags = aot_flags(project.metadata, target, debug=build_type == 'Debug')
                 wasm = package / 'artifacts' / (c['id'] + '.wasm')
                 recipe = identity({'wasm': digest(wasm), 'compiler': lock['toolchain']['wamrc_sha256'],
                                    'cpu': cpu, 'flags': flags})

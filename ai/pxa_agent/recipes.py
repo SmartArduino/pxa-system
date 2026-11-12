@@ -10,8 +10,6 @@ from .common import KIT, ToolError, atomic_json
 from .projects import initialize
 from . import scope
 
-PROFILES = ('pai-touch', 'sensecap-watcher', 'esp-mosaico', 'esp32s31-korvo-1',
-            'generic', 'doit-gamekit', 'doit-gamekit-1', 'doit-gamekit-2', 'doit-esp32s31-devkit', 'espp4-a')
 RECIPES = {'timer': '单调时钟计时、开始/暂停/重置、专注/短休、检查点存档',
            'counter': '加减/重置、触摸与手柄、合并异步存档'}
 
@@ -51,6 +49,10 @@ def create(env, project, recipe, *, app_id=None, title=None, minutes=None, break
     # initialize performs scope/empty-directory/ID checks before writing anything.
     created = initialize(env, project, app_id, 'cpp')
     path = env.project(project)
+    # init belongs to the selected, immutable SDK. Reuse its profile set so
+    # a newer Agent Kit cannot emit scenarios referring to unavailable boards.
+    basic = path / 'tests/basic.json'
+    profiles = tuple(json.loads(basic.read_text()))
     (path / 'main.cpp').write_text(source)
     metadata = json.loads((path / 'package.json').read_text())
     metadata.update(name=title, description=RECIPES[recipe])
@@ -59,7 +61,7 @@ def create(env, project, recipe, *, app_id=None, title=None, minutes=None, break
     tests = path / 'tests'
     tests.mkdir(exist_ok=True)
     # Replace the init template's unrelated counter scenario with this journey.
-    (tests / 'basic.json').unlink(missing_ok=True)
+    basic.unlink()
     if recipe == 'counter':
         steps = [expect('ready-to-add', '+1', button=True), expect('initial-zero', '0'), tap('add', '+1'), expect('count-one', '1'),
                  expect('saved-one', '已保存', visible=False), {'name': 'reopen', 'action': 'relaunch'},
@@ -78,9 +80,9 @@ def create(env, project, recipe, *, app_id=None, title=None, minutes=None, break
                      'expected': {'visible': True, 'count': 1}, 'timeout_ms': 15000}, expect('zero', '0:00'),
                     {'name': 'completed-screen', 'action': 'screenshot'}]
     steps.append({'name': 'journey-screen', 'action': 'screenshot'})
-    atomic_json(tests / 'journey.json', {profile: steps for profile in PROFILES})
+    atomic_json(tests / 'journey.json', {profile: steps for profile in profiles})
     if complete:
-        atomic_json(tests / 'complete.json', {profile: complete for profile in PROFILES})
+        atomic_json(tests / 'complete.json', {profile: complete for profile in profiles})
     project_command = shlex.quote(str(project))
     journey_command = shlex.quote(str(Path(project) / 'tests/journey.json'))
     complete_command = shlex.quote(str(Path(project) / 'tests/complete.json'))

@@ -27,6 +27,8 @@ class RecipeEnvironment:
         path.mkdir(parents=True, exist_ok=True)
         (path / 'package.json').write_text(json.dumps({'id': arguments[3], 'components': [{}]}))
         (path / 'main.cpp').write_text('base template')
+        (path / 'tests').mkdir()
+        (path / 'tests/basic.json').write_text(json.dumps({'pai-touch': [], 'espp4-a': []}))
         return 'created'
 
 
@@ -71,6 +73,9 @@ class RecipeTest(unittest.TestCase):
         self.assertIn('storage', metadata['components'][0]['services'])
         scenario = json.loads((path / 'tests/journey.json').read_text())
         self.assertIn('espp4-a', scenario)
+        self.assertEqual(set(scenario), {'pai-touch', 'espp4-a'})
+        self.assertEqual(set(json.loads((path / 'tests/complete.json').read_text())), set(scenario))
+        self.assertFalse((path / 'tests/basic.json').exists())
         self.assertFalse(result['runtime_verified'])
         self.assertEqual(metadata['name'], title)
         self.assertNotIn('clock-scale', json.dumps(scenario))

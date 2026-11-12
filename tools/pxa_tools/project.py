@@ -16,9 +16,14 @@ TARGETS = {name: (value['target'], value['cpu'], value['flags'])
            for name, value in json.loads((SDK_ROOT / 'config/aot-targets.json').read_text()).items()}
 
 
-def aot_flags(metadata: dict, target: str) -> list[str]:
+def aot_flags(metadata: dict, target: str, *, debug=False) -> list[str]:
     """Apply optional per-app safety instrumentation to the target recipe."""
     flags = list(TARGETS[target][2])
+    if debug and target in ('simulator', 'windows-simulator'):
+        # Desktop iteration can trade native code size for compilation time.
+        # Keep device recipes and every ABI/safety/code-model flag intact.
+        flags = [flag for flag in flags if not flag.startswith('--opt-level=')]
+        flags.append('--opt-level=0')
     build = metadata.get('build', {})
     if 'native_stack_checks' in build:
         checks = build['native_stack_checks']
