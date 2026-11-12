@@ -91,6 +91,24 @@ int main(void) {
     assert(pxsys_system_status_service_set_toggle(
                service, PXSYS_TOGGLE_BLUETOOTH, 1) == PXSYS_STATUS_OK);
     assert(control_calls == 3);
+    snapshot.external_power_supported = 1;
+    snapshot.external_power_connected = 1;
+    assert(pxsys_system_status_service_update(service, &snapshot) == PXSYS_STATUS_OK);
+    assert(notifications == 3);
+    assert(pxsys_system_status_service_get(service, &snapshot) == PXSYS_STATUS_OK);
+    assert(snapshot.external_power_connected && !snapshot.charging);
+    assert(pxsys_system_status_service_update(service, &snapshot) == PXSYS_STATUS_OK);
+    assert(notifications == 3);
+    snapshot.external_power_connected = 0;
+    assert(pxsys_system_status_service_update(service, &snapshot) == PXSYS_STATUS_OK);
+    assert(notifications == 4);
+    snapshot.external_power_supported = 0;
+    snapshot.external_power_connected = 1;
+    assert(pxsys_system_status_service_update(service, &snapshot) == PXSYS_STATUS_INVALID_ARGUMENT);
+    snapshot.external_power_connected = 0;
+    snapshot.external_power_supported = 2;
+    assert(pxsys_system_status_service_update(service, &snapshot) == PXSYS_STATUS_INVALID_ARGUMENT);
+    snapshot.external_power_supported = 0;
     snapshot.battery_percent = 101;
     assert(pxsys_system_status_service_update(service, &snapshot) ==
            PXSYS_STATUS_INVALID_ARGUMENT);

@@ -72,6 +72,10 @@ typedef struct {
     uint8_t flashlight_enabled;
     uint8_t airplane_mode_supported;
     uint8_t airplane_mode_enabled;
+    /* Supply presence is independent of charge current/completion. A product
+     * may also map it to charging for its user-facing power indicator. */
+    uint8_t external_power_supported;
+    uint8_t external_power_connected;
 } pxsys_system_status_snapshot_t;
 
 typedef void (*pxsys_system_status_changed_fn)(

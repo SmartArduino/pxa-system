@@ -240,6 +240,45 @@ static void check_wifi_signal(pxsys_standard_system_t* system, pxsys_reference_l
 }
 #endif
 
+static int status_has_power_icon(pxsys_reference_lvgl_t* ui, const char* symbol) {
+    for (uint32_t i = 0; i < lv_obj_get_child_count(ui->status_bar); ++i) {
+        lv_obj_t* child = lv_obj_get_child(ui->status_bar, (int32_t)i);
+        if (lv_obj_check_type(child, &lv_label_class) &&
+            strcmp(lv_label_get_text(child), symbol) == 0) return 1;
+    }
+    return 0;
+}
+
+static void check_external_power(pxsys_standard_system_t* system, pxsys_reference_lvgl_t* ui) {
+    pxsys_system_status_snapshot_t saved, next;
+    pxsys_system_status_snapshot_init(&saved);
+    assert(pxsys_system_status_service_get(pxsys_standard_system_status(system), &saved) == PXSYS_STATUS_OK);
+    next = saved;
+    next.external_power_supported = next.external_power_connected = 1;
+    next.charging = 0;
+    assert(pxsys_system_status_service_update(pxsys_standard_system_status(system), &next) == PXSYS_STATUS_OK);
+    assert(status_has_power_icon(ui, LV_SYMBOL_USB));
+    next.battery_valid = 0;
+    assert(pxsys_system_status_service_update(pxsys_standard_system_status(system), &next) == PXSYS_STATUS_OK);
+    assert(status_has_power_icon(ui, LV_SYMBOL_USB)); /* Supply presence survives unavailable ADC. */
+    next.external_power_connected = 0;
+    assert(pxsys_system_status_service_update(pxsys_standard_system_status(system), &next) == PXSYS_STATUS_OK);
+    assert(!status_has_power_icon(ui, LV_SYMBOL_USB));
+    next.battery_valid = 1;
+    next.external_power_connected = 1;
+    next.charging = 1;
+    assert(pxsys_system_status_service_update(pxsys_standard_system_status(system), &next) == PXSYS_STATUS_OK);
+    assert(!status_has_power_icon(ui, LV_SYMBOL_USB));
+    assert(status_has_power_icon(ui, LV_SYMBOL_CHARGE));
+    assert(!status_has_power_icon(ui, "42%"));
+    for (uint32_t i = 0; i < lv_obj_get_child_count(ui->status_bar); ++i)
+        assert(lv_obj_get_style_border_width(lv_obj_get_child(ui->status_bar, (int32_t)i), 0) != 1);
+    next.battery_valid = 0;
+    assert(pxsys_system_status_service_update(pxsys_standard_system_status(system), &next) == PXSYS_STATUS_OK);
+    assert(status_has_power_icon(ui, LV_SYMBOL_CHARGE));
+    assert(pxsys_system_status_service_update(pxsys_standard_system_status(system), &saved) == PXSYS_STATUS_OK);
+}
+
 static void check_idle_inhibition(pxsys_reference_lvgl_t* ui) {
     pxsys_reference_idle_policy_t saved = ui->idle_policy;
     ui->idle_policy.dim_after_seconds = 2;
@@ -452,6 +491,7 @@ static void check_features(uint32_t features) {
     assert((ui->app_ime_timer != NULL) == !!PXSYS_REFERENCE_UI_BUILTIN_SETTINGS);
     assert(pxsys_reference_lvgl_start(ui) == PXSYS_STATUS_OK);
     assert((ui->status_bar != NULL) == !!(features & PXSYS_REFERENCE_UI_STATUS_BAR));
+    if (features == PXSYS_REFERENCE_UI_ALL) check_external_power(system, ui);
 #if PXSYS_REFERENCE_UI_WIFI && LV_USE_SNAPSHOT
     if (features == PXSYS_REFERENCE_UI_ALL) check_wifi_signal(system, ui);
 #endif

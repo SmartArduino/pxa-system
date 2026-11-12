@@ -59,7 +59,9 @@ static int snapshot_valid(const pxsys_system_status_snapshot_t* snapshot) {
            snapshot->flashlight_supported <= 1 &&
            snapshot->flashlight_enabled <= 1 &&
            snapshot->airplane_mode_supported <= 1 &&
-           snapshot->airplane_mode_enabled <= 1;
+           snapshot->airplane_mode_enabled <= 1 &&
+           snapshot->external_power_supported <= 1 &&
+           snapshot->external_power_connected <= snapshot->external_power_supported;
 }
 
 static int snapshot_equal(const pxsys_system_status_snapshot_t* left,
@@ -94,7 +96,9 @@ static int snapshot_equal(const pxsys_system_status_snapshot_t* left,
            left->flashlight_supported == right->flashlight_supported &&
            left->flashlight_enabled == right->flashlight_enabled &&
            left->airplane_mode_supported == right->airplane_mode_supported &&
-           left->airplane_mode_enabled == right->airplane_mode_enabled;
+           left->airplane_mode_enabled == right->airplane_mode_enabled &&
+           left->external_power_supported == right->external_power_supported &&
+           left->external_power_connected == right->external_power_connected;
 }
 
 void pxsys_system_status_snapshot_init(pxsys_system_status_snapshot_t* snapshot) {

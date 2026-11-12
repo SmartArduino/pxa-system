@@ -5708,6 +5708,15 @@ static void make_wifi_icon(pxsys_reference_lvgl_t* ui, lv_obj_t* parent,
 
 static void make_battery_icon(pxsys_reference_lvgl_t* ui, lv_obj_t* parent,
                               int32_t x, int32_t center_y) {
+    if (ui->system_status.external_power_supported &&
+        ui->system_status.external_power_connected) {
+        const lv_font_t* font = LV_FONT_DEFAULT;
+        lv_obj_t* icon = make_label(parent,
+                                    ui->system_status.charging ? LV_SYMBOL_CHARGE : LV_SYMBOL_USB, font,
+                                    bar_icon_color(ui, 0, PXSYS_COLOR_TEXT_PRIMARY));
+        lv_obj_set_pos(icon, x + 7, center_y - font->line_height / 2);
+        return;
+    }
     lv_obj_t* body = lv_obj_create(parent);
     lv_obj_t* fill;
     lv_obj_t* cap;
@@ -5753,6 +5762,8 @@ static void build_status_bar(pxsys_reference_lvgl_t* ui,
     else status = lv_obj_create(ui->root);
     lv_obj_t* time_label;
     pxsys_rect_t content_area = layout->safe_area;
+    const int show_battery = ui->system_status.battery_valid ||
+        (ui->system_status.external_power_supported && ui->system_status.external_power_connected);
     uint32_t content_height =
         ui->text_font != NULL && ui->text_font->line_height > 0
             ? (uint32_t)ui->text_font->line_height : 16u;
@@ -5811,7 +5822,9 @@ static void build_status_bar(pxsys_reference_lvgl_t* ui,
 #if PXSYS_REFERENCE_UI_WIFI || PXSYS_REFERENCE_UI_CELLULAR
     percent_width = 0;
 #endif
-    if (ui->system_status.battery_valid) {
+    if (ui->system_status.battery_valid &&
+        !(ui->system_status.external_power_supported &&
+          ui->system_status.external_power_connected && ui->system_status.charging)) {
         snprintf(percent_text, sizeof(percent_text), "%u%%",
                  (unsigned)ui->system_status.battery_percent);
         percent_font = typography_font(ui, PXSYS_TYPOGRAPHY_CAPTION);
@@ -5835,11 +5848,11 @@ static void build_status_bar(pxsys_reference_lvgl_t* ui,
 #endif
 #if PXSYS_REFERENCE_UI_WIFI || PXSYS_REFERENCE_UI_CELLULAR
 #if PXSYS_REFERENCE_UI_BATTERY_PERCENT
-    indicator_x = ui->system_status.battery_valid
+    indicator_x = show_battery
                       ? battery_x - 4 - percent_width - 8 - 16
                       : safe_right - (int32_t)layout->outer_padding - 16;
 #else
-    indicator_x = ui->system_status.battery_valid
+    indicator_x = show_battery
                       ? safe_right - (int32_t)layout->outer_padding - 45
                       : safe_right - (int32_t)layout->outer_padding - 16;
 #endif
@@ -5856,7 +5869,7 @@ static void build_status_bar(pxsys_reference_lvgl_t* ui,
         radio_enabled(ui, PXSYS_NETWORK_WIFI))
         make_wifi_icon(ui, status, indicator_x, center_y);
 #endif
-    if (ui->system_status.battery_valid)
+    if (show_battery)
         make_battery_icon(ui, status, battery_x, center_y);
 }
 
