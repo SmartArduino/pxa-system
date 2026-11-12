@@ -1,13 +1,13 @@
-# PXA Browser Host 0.10.0 (experimental)
+# PXA Browser Host 0.11.0 (experimental)
 
 Runs standard PXA Core 2 WebAssembly applications in the browser VM. A separate
 Emscripten module builds the existing libpxa Core, platform services and
 LVGL renderer. The Guest C and C++ SDKs and wire ABI are unchanged. This is an
 application host, not the complete device firmware, launcher or installer.
 
-Version 0.10.0 rebuilds the Host against PXA 0.10.0 / Core 2.1 and adds Window
+Version 0.11.0 rebuilds the Host against PXA 0.11.0 / Core 2.1, retaining Window
 0.5 orientation changes and linear acceleration descriptors. System glyph
-reads use UI 0.10 through the existing Guest C/C++ font API. The
+reads use the standard UI glyph API through the existing Guest C/C++ font API. The
 font result includes baseline, metrics and at most 3072 bytes of A8 coverage
 for sizes 8–48; no font paths or native pointers are exposed. Browser system
 fonts and device fonts can differ. Existing 0.7.x applications remain supported.
