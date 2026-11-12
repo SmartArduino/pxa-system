@@ -65,6 +65,11 @@ pxa_status_t pxa_asset_object_create(const pxa_asset_info_t *info,
 }
 void pxa_asset_object_finish_loading(pxa_asset_object_t *asset) {
     if (asset->encoding != PXA_ASSET_ENCODING_RGB565) return;
+    /* RGB565 wire bytes already have native order on little-endian Hosts.
+     * Avoid reading and rewriting every pixel, including DMA-produced images.
+     * Keep the normalization pass for big-endian Hosts. */
+    const uint16_t native_one = 1;
+    if (*(const uint8_t *)&native_one) return;
     uint8_t *payload = object_payload(asset);
     for (uint32_t i=0;i<asset->payload_bytes/2;++i)
         ((uint16_t *)payload)[i] = pxa_read_u16(payload+2*i);
