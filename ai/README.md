@@ -1,6 +1,6 @@
-# PXA Agent Kit 0.6.1
+# PXA Agent Kit 0.7.0
 
-配合 DevKit、固件及 Browser Host 0.10.0。联机指引根据实际能力区分浏览器
+配合 DevKit 与固件 0.11.0；Browser Host 独立编号。联机指引根据实际能力区分浏览器
 原生 WebSocket、桌面/固件 TCP 客户端、监听、UDP 与 DNS-SD；补充权限生命周期、
 跨公网条件、真实消息验收以及真机锁屏对点按测试的影响。屏幕旋转沿用 Window 0.5。
 
@@ -26,7 +26,7 @@ uv run --python 3.12 https://pxa.doit.am/setup.py --workspace ./my-pxa
 uv run --python 3.12 --locked --project ./ai ./ai/agent.py --workspace ./my-pxa setup
 ```
 
-`setup` 自动选择官方 DevKit 0.10.0 或签名容器镜像，安装项目内的 skills、平台 MCP 配置、CLI 启动器，最后编译并运行真实 Guest、保存检查截图。失败时返回失败，不会把下载成功当成验收。`--sdk /path/to/devkit` 仅复用用户自己选择的完整 SDK，不宣称它经过下载签名校验。离线分发可以用 `setup.py --channel /path/to/ai-kit-0.6.1.json --manifest /path/to/distribution.json`，归档和签名放在各自清单旁。
+`setup` 自动选择官方 DevKit 0.11.0 或签名容器镜像，安装项目内的 skills、平台 MCP 配置、CLI 启动器，最后编译并运行真实 Guest、保存检查截图。失败时返回失败，不会把下载成功当成验收。`--sdk /path/to/devkit` 仅复用用户自己选择的完整 SDK，不宣称它经过下载签名校验。离线分发可以用 `setup.py --channel /path/to/ai-kit-0.7.0.json --manifest /path/to/distribution.json`，归档和签名放在各自清单旁。
 
 在 `my-pxa` 目录中使用以下命令（Windows 使用 `.pxa\pxa.cmd`）：
 
@@ -60,7 +60,7 @@ AI 先读 `pxa-app-dev`、`pxa-debug`，按现有 SDK 头文件实现；构建�
 
 制作游戏时先运行完整的核心玩法，再扩展到请求范围；尽早根据实际 SDK 选择渲染、字模和音频路径，复用增量构建，并验证冷启动文字、拖动缩放、繁忙玩法和帧节奏。具体取舍见 [游戏开发](skills/pxa-app-dev/references/game-development.md)。`verify --scenario` 支持 `relaunch`：在同一隔离测试存档中重新打开已验证应用，用于检查教学状态和游戏进度；不清除日常存档。等待实际保存成功后再重开，并检查重开后的状态及正常使用画面。
 
-选用 DevKit 0.10.0+ 时，新的计时器或计数器可直接从可运行配方开始：
+选用 DevKit 0.11.0+ 时，新的计时器或计数器可直接从可运行配方开始：
 
 ```sh
 .pxa/pxa recipes

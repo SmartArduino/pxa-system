@@ -10,10 +10,10 @@ PXA（Portable eXecutable Application，可移植可执行应用）是面向嵌�
 
 ## 开发 C++26 应用
 
-下载 [DevKit 0.10.0](https://github.com/SmartArduino/pxa-system/releases/tag/v0.10.0)。完整包包含 SDK、WASI/AOT 工具链、Python、CMake/Ninja、PXADB 与预编译模拟器，无需先构建固件。Linux 原生包要求 x86_64、glibc 2.39+；Windows x64 提供预编译包，并在发行清单标明 Windows/Wine 验证范围。
+下载 [DevKit 0.11.0](https://github.com/SmartArduino/pxa-system/releases/tag/v0.11.0)。完整包包含 SDK、WASI/AOT 工具链、Python、CMake/Ninja、PXADB 与预编译模拟器，无需先构建固件。Linux 原生包要求 x86_64、glibc 2.39+；Windows x64 提供预编译包，并在发行清单标明 Windows/Wine 验证范围。
 
 ```sh
-export PATH="$PWD/pxa-devkit-0.10.0-linux-x86_64/bin:$PATH"
+export PATH="$PWD/pxa-devkit-0.11.0-linux-x86_64/bin:$PATH"
 pxa init hello
 pxa run hello
 # 关闭模拟器后再打包：
@@ -25,7 +25,7 @@ pxa publish hello/dist/pxa-hello.pxa --check-only
 
 [入门教程](https://pxa.doit.am/docs/first-app/) · [C++ SDK](sdk/guest-cpp/README.zh-CN.md) · [架构与协议文档](docs/README.zh-CN.md)
 
-[PXA Agent Kit](ai/README.md) 提供一句话环境准备、Codex/Claude Code/DSH 接入、MCP、真实 Guest 调试、USB 安装、官方固件升级与商城短码授权。支持 DevKit 0.10.0，独立签名发行，不增加设备运行开销。把这句话交给编程助手：
+[PXA Agent Kit](ai/README.md) 提供一句话环境准备、Codex/Claude Code/DSH 接入、MCP、真实 Guest 调试、USB 安装、官方固件升级与商城短码授权。支持 DevKit 0.11.0，独立签名发行，不增加设备运行开销。把这句话交给编程助手：
 
 > 请读取 https://pxa.doit.am/ai.md，在当前目录为我配置 PXA 开发环境，运行模拟器检查环境，然后等待我的应用需求。
 
