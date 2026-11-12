@@ -524,11 +524,16 @@ def publish(environment, project, package, *, reference=None, server='https://ap
             raise ToolError('Choose images or explicitly skip upload for: ' + ', '.join(prepared['needs_choice']) +
                             '. Run store prepare for the specifications; use --skip-icon/--skip-cover to keep existing media.')
         app_id = credential['app_id']
-        changes = {key: value for key, value in prepared['listing'].items() if key in ('kind', 'category', 'tags')}
+        changes = {key: value for key, value in prepared['listing'].items()
+                   if key in ('name', 'summary', 'description', 'kind', 'category', 'tags')}
+        listing_update = None
+        media_updates = []
         if changes and update_listing:
-            api(server, f'/api/v2/apps/{app_id}/listing', changes, method='PATCH', credential=credential)
+            listing_update = api(server, f'/api/v2/apps/{app_id}/listing', changes, method='PATCH', credential=credential)
         for item in prepared['images']:
-            upload(server, f'/api/v2/apps/{app_id}/media', credential, item['path'], field='image', extra={'kind': item['kind']})
+            media_result, _ = upload(server, f'/api/v2/apps/{app_id}/media', credential, item['path'], field='image', extra={'kind': item['kind']})
+            media_updates.append({key: media_result[key] for key in ('kind', 'review_status', 'public_listing_retained')
+                                  if key in media_result})
         result, sha = upload(server, f'/api/v2/apps/{app_id}/releases', credential, package, extra={'changelog': changelog})
     except CredentialRejected:
         credential.pop('token', None)
@@ -538,6 +543,8 @@ def publish(environment, project, package, *, reference=None, server='https://ap
     if result.get('sha256') != sha or result.get('status') != 'pending':
         raise ToolError('The store did not acknowledge the exact signed package as pending review')
     return {'app_id': app_id, 'status': 'pending_review', 'sha256': sha,
+            'listing_update': listing_update,
+            'media_updates': media_updates,
             'dashboard_url': credential['dashboard_url'], 'publicly_listed': False,
             'media_uploaded': [item['kind'] for item in prepared['images']], 'media_omitted': prepared['omitted'],
             'media_needs_choice': prepared['needs_choice'], 'warnings': prepared['warnings']}

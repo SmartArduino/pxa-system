@@ -72,9 +72,15 @@ Use one factual sentence for the summary, describing the real task or core gamep
 the product before authorizing; do not use generic placeholder copy or invent features.
 Use the server's category list, at most ten labels of 24 characters each.
 `store publish` uploads `--icon`, `--cover` and `--screenshot`, and applies
-explicit taxonomy/tag fields to existing listings using the app-scoped token.
+explicit name/summary/description/taxonomy/tag fields to existing listings using the app-scoped token.
 An empty tags list clears tags; absent fields retain the existing values.
-Changes follow the existing listing review process. Preflight all images before
+For published apps, edits create a private listing/media draft while the approved
+listing, images and published packages remain visible. Approval promotes the
+draft; rejection keeps the approved content live. Inspect `listing_update` for
+review status and `public_listing_retained`; do not withdraw, delete/recreate an
+app, bump its package sequence or repeatedly upload to "restore" a pending listing.
+Admin/developer suspension still controls visibility independently.
+Preflight all images before
 any upload and do not interpret pending review as publicly listed.
 
 Use standard SDK services when they implement the feature. Otherwise reuse the

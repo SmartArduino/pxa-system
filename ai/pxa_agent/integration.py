@@ -86,6 +86,7 @@ Use `firmware prepare` before an authorized firmware upgrade. App-only flashing 
 Full flashing erases data and requires explicit data-loss authorization. A generic app-development request does not authorize it.
 Use `store account` to inspect the remembered publishing account. First use needs `store login --wait` in the browser; then `store publish` automatically proves signing-key possession and obtains/renews short-lived app upload authority. Do not repeat browser approval for each app. `store logout` revokes this computer; `store login --renew` switches accounts. User-authorized publishing can proceed without asking again.
 `store publish` submits a signed package for review; it does not bypass store review or automatically make it public.
+For an already published app, listing/media edits create a private review draft while the approved listing and packages remain live. Read listing_update/media_updates; do not withdraw or recreate the app to recover a pending or rejected draft.
 Use existing user authorization for matching device tests, upgrades and publishing; do not add repeated confirmation steps.'''
     if mode == 'board':
         instruction = instruction.replace('No ESP-IDF or model API key is needed.',

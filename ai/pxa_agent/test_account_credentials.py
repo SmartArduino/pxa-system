@@ -196,6 +196,27 @@ class AccountCredentialsTests(unittest.TestCase):
         upload.assert_not_called()
         self.assertNotIn('token', json.loads(store.cache_path(SERVER, value).read_text()))
 
+    def test_publish_only_updates_explicit_listing_fields_and_returns_draft_review_state(self):
+        self.remember()
+        env, app, package, _, value = self.app()
+        atomic_json(store.cache_path(SERVER, value), {**UPLOAD, 'server': SERVER,
+            'token_expires_at': time.time() + 1800, 'creator_session_id': ACCOUNT['session_id']}, private=True)
+        changes = {'summary': 'Dodge obstacles to score points.', 'description': '', 'tags': []}
+        prepared = {'listing': changes, 'images': [{'kind': 'screenshot', 'path': 'runtime.png'}],
+                    'needs_choice': [], 'omitted': [], 'warnings': []}
+        reviewed = {'review_status': 'pending', 'public_listing_retained': True, 'draft_revision': 'revision'}
+        with patch.object(store, 'package_identity', return_value=value), patch('pxa_agent.scope.enforce'), \
+             patch.object(store, 'prepare', return_value=prepared), patch.object(store, 'api', return_value=reviewed) as api, \
+             patch.object(store, 'upload', side_effect=[({'kind': 'screenshot', **reviewed}, 'image-digest'),
+                 ({'status': 'pending', 'sha256': 'package-digest'}, 'package-digest')]) as upload:
+            result = store.publish(env, app, package, server=SERVER)
+        self.assertEqual(api.call_args.args[2], changes)
+        self.assertEqual(api.call_args.kwargs['method'], 'PATCH')
+        self.assertEqual(upload.call_count, 2)
+        self.assertEqual(result['listing_update'], reviewed)
+        self.assertEqual(result['media_updates'], [{'kind': 'screenshot', 'review_status': 'pending', 'public_listing_retained': True}])
+        self.assertEqual(result['status'], 'pending_review')
+
     @unittest.skipIf(os.name == 'nt', 'POSIX credential modes')
     def test_unsafe_modes_and_symlinked_metadata_are_rejected(self):
         self.remember()

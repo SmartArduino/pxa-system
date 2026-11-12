@@ -503,6 +503,8 @@ def create_server(env):
         """Submit an authorized single-target release and optional media for review. Multi-target
         packages require explicit allow_universal. Native uploads require a separate Wasm package already
         uploaded for the same version/sequence/signer; prefer pxa_store_build/publish_targets.
+        Explicit listing text/taxonomy/media edits create a review draft; approved listings stay live.
+        Inspect listing_update/media_updates for review status; pending does not request withdrawal.
         """
         arguments = ['store', 'publish', str(env.project(project)), str(env.project(package)),
                      '--server', server_origin, '--changelog', changelog]
