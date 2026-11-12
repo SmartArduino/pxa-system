@@ -223,7 +223,7 @@ class ToolTests(unittest.TestCase):
         env = environment.Environment(self.ws, {'engine': 'native', 'sdk': '/unused'})
         project = self.ws / 'apps/game'
         project.mkdir(parents=True)
-        (project / 'package.json').write_text('{"id":"pxa-game","name":"Game"}')
+        (project / 'package.json').write_text('{"id":"pxa-game","name":"Game","description":"Dodge obstacles to score points."}')
         package = project / 'dist.pxa'
         package.write_bytes(b'test-package')
         private = ec.generate_private_key(ec.SECP256R1())

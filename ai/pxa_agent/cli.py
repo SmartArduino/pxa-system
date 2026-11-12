@@ -119,20 +119,37 @@ def parser():
     sub = store.add_subparsers(dest='action', required=True)
     status = sub.add_parser('status')
     status.add_argument('reference')
-    for name in ('authorize', 'publish', 'prepare'):
+    for name in ('login', 'account', 'logout'):
+        cmd = sub.add_parser(name)
+        cmd.add_argument('--server', default='https://app.doit.am')
+        if name == 'login':
+            cmd.add_argument('--no-open', action='store_true')
+            cmd.add_argument('--wait', action='store_true')
+            cmd.add_argument('--renew', action='store_true', help='sign out this computer, then choose an account again')
+        elif name == 'account':
+            cmd.add_argument('--refresh', action='store_true', help='check and renew the remembered computer authorization')
+    build_store = sub.add_parser('build', help='build a mandatory separate Wasm .pxa plus the requested store targets')
+    build_store.add_argument('project')
+    build_store.add_argument('--targets', nargs='+', required=True,
+        choices=('esp32s3', 'esp32s31', 'esp32p4', 'simulator', 'windows-simulator', 'wasm'))
+    for name in ('authorize', 'publish', 'publish-targets', 'prepare'):
         cmd = sub.add_parser(name)
         cmd.add_argument('project')
-        if name != 'prepare':
+        if name in ('authorize', 'publish'):
             cmd.add_argument('package')
+        elif name == 'publish-targets':
+            cmd.add_argument('manifest', help='packages.json returned by store build')
         cmd.add_argument('--server', default='https://app.doit.am')
         if name == 'authorize':
             cmd.add_argument('--signing-key', type=Path)
             cmd.add_argument('--no-open', action='store_true')
             cmd.add_argument('--wait', action='store_true')
             cmd.add_argument('--renew', action='store_true', help='replace a revoked or unwanted cached authorization')
+            cmd.add_argument('--app-only', action='store_true', help='request legacy one-app approval without remembering the account')
         else:
             if name == 'publish':
                 cmd.add_argument('--reference')
+                cmd.add_argument('--allow-universal', action='store_true', help='explicitly allow a multi-target container')
             cmd.add_argument('--icon')
             cmd.add_argument('--cover')
             cmd.add_argument('--skip-icon', action='store_true')
@@ -191,6 +208,22 @@ def main():
                 if not (output / 'environment.png').is_file():
                     raise ToolError('The simulator did not produce its environment-check screenshot')
                 result['smoke'] = {'runtime_passed': True, 'screenshot': str(output / 'environment.png')}
+        elif args.command == 'store' and args.action in ('login', 'account', 'logout'):
+            from .store import login, account_status, logout, status
+            if args.action == 'account':
+                result = account_status(args.server, refresh=args.refresh)
+            elif args.action == 'logout':
+                result = logout(server=args.server)
+            else:
+                result = login(server=args.server, open_browser=not args.no_open, renew=args.renew)
+                if args.wait and not result.get('authorized'):
+                    print(json.dumps(result, ensure_ascii=False), flush=True)
+                    while True:
+                        checked = status(result['credential_ref'])
+                        if checked.get('authorized') or checked.get('error') not in ('authorization_pending', 'slow_down'):
+                            result = checked
+                            break
+                        time.sleep(checked.get('poll_after_seconds', 5))
         else:
             env = Environment(args.workspace)
             if args.command == 'init':
@@ -282,9 +315,17 @@ def main():
                                    mode=args.mode, erase_data=args.erase_data, manifest=args.manifest)
             elif args.command == 'store':
                 from .store import authorize, status, publish, prepare
-                if args.action == 'authorize':
+                if args.action == 'build':
+                    from .store_packages import build
+                    result = build(env, args.project, args.targets)
+                elif args.action == 'publish-targets':
+                    from .store_packages import publish as publish_targets
+                    result = publish_targets(env, args.project, args.manifest, server=args.server,
+                        icon=args.icon, cover=args.cover, screenshots=args.screenshot,
+                        skip_icon=args.skip_icon, skip_cover=args.skip_cover, changelog=args.changelog)
+                elif args.action == 'authorize':
                     result = authorize(env, args.project, args.package, server=args.server,
-                        key=args.signing_key, open_browser=not args.no_open, renew=args.renew)
+                        key=args.signing_key, open_browser=not args.no_open, renew=args.renew, remember=not args.app_only)
                     print(json.dumps(result, ensure_ascii=False), flush=True)
                     if args.wait:
                         reference = result['credential_ref']
@@ -303,7 +344,8 @@ def main():
                 else:
                     result = publish(env, args.project, args.package, server=args.server,
                         reference=args.reference, icon=args.icon, cover=args.cover, screenshots=args.screenshot,
-                        skip_icon=args.skip_icon, skip_cover=args.skip_cover, changelog=args.changelog)
+                        skip_icon=args.skip_icon, skip_cover=args.skip_cover, changelog=args.changelog,
+                        allow_universal=args.allow_universal)
         if result is not None:
             print(json.dumps(result, ensure_ascii=False, indent=2))
         return 1 if result and any(result.get(key) is False for key in ('runtime_passed', 'passed', 'static_ready')) else 0

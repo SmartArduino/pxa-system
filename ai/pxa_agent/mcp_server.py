@@ -231,8 +231,9 @@ def create_server(env):
     @tool()
     def pxa_build(project: str, target: Literal['simulator', 'windows-simulator', 'esp32s3', 'esp32s31', 'esp32p4', 'wasm'] = 'simulator',
                   targets: list[Literal['simulator', 'windows-simulator', 'esp32s3', 'esp32s31', 'esp32p4', 'wasm']] | None = None) -> dict:
-        """Build offline with the pinned SDK/signing identity. Use targets for one shared
-        Wasm/resource build across CPUs; target remains the single-target shortcut. Returns a job.
+        """Build offline with the pinned SDK/signing identity. Multiple targets produce a universal
+        container; use pxa_store_build for separate per-target store packages sharing build caches.
+        Target remains the single-target shortcut. Returns a job.
         """
         from .projects import build_targets
         selected_targets = build_targets(target, targets)
@@ -428,11 +429,65 @@ def create_server(env):
         return host_job(arguments, timeout=1200)
 
     @tool()
-    def pxa_store_authorize(project: str, package: str, server_origin: str = 'https://app.doit.am', renew: bool = False) -> dict:
-        """Verify local signing-key possession and open browser app-scoped approval. Read job output for credential_ref.
-        User login/approval occurs only in the browser; keys, login cookies and upload tokens never enter tool output.
+    def pxa_store_build(project: str,
+                        targets: list[Literal['esp32s3', 'esp32s31', 'esp32p4', 'simulator', 'windows-simulator', 'wasm']]) -> dict:
+        """Build separate signed store packages; always adds portable Wasm to requested native targets. Reuses pinned SDK
+        compilation/resource caches, retains app identity and returns a checked packages.json.
+        Verify requested runtime behavior before pxa_store_publish_targets. Never merges architectures.
         """
-        return host_job(['store', 'authorize', str(env.project(project)), str(env.project(package)), '--server', server_origin, *(['--renew'] if renew else [])])
+        from .projects import build_targets
+        selected = build_targets(targets=targets).split(',')
+        return host_job(['store', 'build', str(env.project(project)), '--targets', *selected], timeout=1500)
+
+    @tool()
+    def pxa_store_publish_targets(project: str, manifest: str, server_origin: str = 'https://app.doit.am',
+                                  icon: str | None = None, cover: str | None = None,
+                                  screenshots: list[str] | None = None, skip_icon: bool = False,
+                                  skip_cover: bool = False, changelog: str = '') -> dict:
+        """Submit separate target variants of one authorized app/version for review. Validates all
+        signed packages first, requires and uploads the separate Wasm package first, uploads media once and reuses the remembered account. Partial failure
+        lists completed and unfinished targets; inspect store state instead of replaying the batch.
+        """
+        arguments = ['store', 'publish-targets', str(env.project(project)), str(env.project(manifest)),
+                     '--server', server_origin, '--changelog', changelog]
+        for flag, value in (('--icon', icon), ('--cover', cover)):
+            if value:
+                arguments += [flag, str(env.project(value))]
+        if skip_icon:
+            arguments.append('--skip-icon')
+        if skip_cover:
+            arguments.append('--skip-cover')
+        for value in screenshots or []:
+            arguments += ['--screenshot', str(env.project(value))]
+        return host_job(arguments, timeout=1500)
+
+    @tool()
+    def pxa_store_authorize(project: str, package: str, server_origin: str = 'https://app.doit.am', renew: bool = False,
+                            app_only: bool = False) -> dict:
+        """Verify signing-key possession and reuse the remembered store account for this app.
+        First use opens browser approval; app_only requests legacy one-app approval.
+        Read credential_ref; private keys and account/upload credentials never enter output.
+        """
+        return host_job(['store', 'authorize', str(env.project(project)), str(env.project(package)), '--server', server_origin,
+                         *(['--renew'] if renew else []), *(['--app-only'] if app_only else [])])
+
+    @tool()
+    def pxa_store_login(server_origin: str = 'https://app.doit.am', switch_account: bool = False) -> dict:
+        """Remember this computer's publishing account after one browser approval. Poll credential_ref.
+        Reuses an existing account; switch_account signs out first. Returns no credentials.
+        """
+        return host_job(['store', 'login', '--server', server_origin, *(['--renew'] if switch_account else [])])
+
+    @tool(annotations=read)
+    def pxa_store_account(server_origin: str = 'https://app.doit.am') -> dict:
+        """Show the remembered publishing account and local credential storage, without secrets."""
+        from .store import account_status
+        return account_status(server_origin)
+
+    @tool()
+    def pxa_store_logout(server_origin: str = 'https://app.doit.am') -> dict:
+        """Revoke this computer's publishing authority and remove its local store credentials."""
+        return host_job(['store', 'logout', '--server', server_origin])
 
     @tool(annotations=read)
     def pxa_store_status(credential_ref: str) -> dict:
@@ -444,8 +499,11 @@ def create_server(env):
     def pxa_store_publish(project: str, package: str, icon: str | None = None,
                           screenshots: list[str] | None = None, changelog: str = '',
                           server_origin: str = 'https://app.doit.am', cover: str | None = None,
-                          skip_icon: bool = False, skip_cover: bool = False) -> dict:
-        """Submit the user's authorized signed release and optional images for store review. Does not bypass review."""
+                          skip_icon: bool = False, skip_cover: bool = False, allow_universal: bool = False) -> dict:
+        """Submit an authorized single-target release and optional media for review. Multi-target
+        packages require explicit allow_universal. Native uploads require a separate Wasm package already
+        uploaded for the same version/sequence/signer; prefer pxa_store_build/publish_targets.
+        """
         arguments = ['store', 'publish', str(env.project(project)), str(env.project(package)),
                      '--server', server_origin, '--changelog', changelog]
         if icon:
@@ -456,6 +514,8 @@ def create_server(env):
             arguments += ['--skip-icon']
         if skip_cover:
             arguments += ['--skip-cover']
+        if allow_universal:
+            arguments += ['--allow-universal']
         for path in screenshots or []:
             arguments += ['--screenshot', str(env.project(path))]
         return host_job(arguments, timeout=600)

@@ -24,6 +24,7 @@ class StoreTests(unittest.TestCase):
         self.root = Path(self.tmp.name)
         self.project = self.root / 'game'
         self.project.mkdir()
+        (self.project / 'package.json').write_text('{"id":"pxa-game","name":"Game"}')
         self.env = environment.Environment(self.root, {'engine': 'native', 'sdk': '/unused'})
 
     def tearDown(self):
@@ -80,6 +81,20 @@ class StoreTests(unittest.TestCase):
         self.metadata({'category': 'puzzle'})
         prepared = store.prepare(self.env, self.project, skip_icon=True, skip_cover=True)
         self.assertEqual(prepared['listing'], {'category': 'puzzle'})
+
+    @patch.object(store, 'api', return_value=SPEC)
+    def test_listing_preflight_reports_missing_text_without_inventing_or_truncating_copy(self, api):
+        result = store.prepare(self.env, self.project, skip_icon=True, skip_cover=True)
+        self.assertEqual(result['listing_text']['needs_text'], ['summary'])
+        self.assertEqual(result['listing_text']['draft']['summary'], '')
+        self.assertIn('summary', result['listing_guidance'])
+        for summary in ('x' * 201, None, 123, ''):
+            self.metadata({'summary': summary})
+            text = store.listing_text(self.project, store.listing(self.project))
+            self.assertIn('summary', text['needs_text'])
+            self.assertEqual(text['draft']['summary'], summary)
+        self.metadata({'summary': '移动挡板接住小球，击碎所有砖块后进入下一关。'})
+        self.assertEqual(store.listing_text(self.project, store.listing(self.project))['needs_text'], [])
 
 
 if __name__ == '__main__':

@@ -188,12 +188,29 @@ MCP 对应 `pxa_workspace_migrate(sdk_version=...)`，它会先停止本服务�
 
 ## 上架 app.doit.am
 
+生成商城简介时，用一句话说明实际用途或核心玩法，通常 20–60 个中文字，最多 200 字符。应用写清用户能做什么，游戏写清主要操作与目标；详情只补充已实现的特色和必要限制。不写宣传口号、空泛赞美、AI/PXA 制作说明或按键教程，不虚构离线、存档、联机、兼容性和性能。将文案写入 `store.json`，运行 `store prepare` 查看 `listing_guidance` 与 `listing_text.needs_text`；缺失时先检查实际产品再补写，工具不会生成通用兜底简介或静默截断超长文本。 完整规则见 pxa-release 的 `references/store-listing.md`。
+
 ```sh
-.pxa/pxa store authorize apps/counter apps/counter/dist/pxa-counter.pxa --wait
+.pxa/pxa store login --wait
+.pxa/pxa store build apps/counter --targets esp32s3 esp32s31 esp32p4
+.pxa/pxa store publish-targets apps/counter MANIFEST --changelog '首次发布'
+```
+
+以上账号记住与分目标流程需要 Agent Kit 0.7.0。将 `MANIFEST` 替换为构建结果返回的 `manifest` 路径；产物保存在工作区被忽略的 `local/artifacts/pxa-store-build/<run>/`，避免多份输出互相影响 SDK 源码输入校验。每个目标一个 `.pxa`，共享编译和资源缓存；S31、P4 即便同为 RISC-V 也独立打包。只选择实际交付的原生目标；工具始终自动补上独立 Wasm `.pxa`，即使只面向设备也必须上传，模拟器目标通常用于验证。所有变体保持同一 app ID、签名身份、版本与发布序号，上传后归入同一待审核版本。整组文件和构建输入先校验，再上传资料与素材一次；部分失败会返回已完成和剩余目标，先检查商城状态，再仅补交未完成目标。
+
+整组校验后先上传 Wasm，再上传原生包。缺少独立 Wasm 版本会阻止提交；补交单个原生目标时，工具会先确认商城已有同版本、同发布序号、同签名者的独立 Wasm 包：
+
+```sh
 .pxa/pxa store publish apps/counter apps/counter/dist/pxa-counter.pxa --changelog '首次发布'
 ```
 
-首次打开浏览器，登录并确认该应用的短码授权。工具在本地证明持有签名私钥，服务器登记公钥、创建/复用你的应用资料，并发放仅限该应用、有效 30 天、可在后台撤销的上传权限。私钥不上传，令牌不进入聊天、参数或源码；后续自动复用。`store.json` 可设置 name/summary/description/kind/category/tags；未提供的既有字段保留，显式分类/标签更新遵循商城资料审核。
+首次在浏览器登录并选择“授权并记住这台电脑”，之后新应用和更新都复用该账号。工具自动证明本机持有应用签名私钥，登记公钥、创建/复用作品资料，并获取 30 分钟有效的单应用上传权限；过期后自动重新获取，正常上架不再逐个应用点击授权。电脑发布凭证在活跃使用时自动续期，连续 365 天未使用需重新登录。私钥不上传，凭证不进入聊天、命令参数或源码。`store.json` 可设置 name/summary/description/kind/category/tags；未提供的既有字段保留，显式分类/标签更新遵循商城资料审核。
+
+`store account` 查看当前账号，`store account --refresh` 检查并续期，`store logout` 撤销此电脑并清除本地商城凭据，`store login --renew --wait` 退出后切换账号。商城“发布授权”页也可撤销电脑，立即使其已获取的上传权限失效。支持的 Python `keyring` 系统后端可用时优先存入系统凭据库，否则使用源码目录外、目录权限 0700 / 文件权限 0600 的私有存储；Windows 使用用户应用数据目录。密钥库暂不可用时保留原登录信息，恢复后重试。账号凭证只用于发布授权，不提供账号管理或管理员权限。
+
+`store authorize <project> <package>` 仍可使用：已有账号时自动授权应用，首次也可直接确认并记住电脑；`--app-only` 保留旧版单应用、30 天的授权方式。低层 SDK `pxa publish --token-file` 仍只接受单应用上传凭据。
+
+默认拒绝将多个 AOT 目标合在一个商城包中；明确需要通用包时可用 `store publish --allow-universal`。普通 `build --target a,b` / MCP `pxa_build(targets=[...])` 仍是合包构建，上架优先使用 `store build`。
 
 先运行 `.pxa/pxa store prepare apps/counter` 读取商城当前图片规格、分类与标签规则，并预检本地素材。推荐 512×512 图标和 1280×960（4:3）封面。可使用图片工具生成图标和封面；没有图片工具时，由用户提供图片或明确选择跳过上传。
 
@@ -265,13 +282,13 @@ uv run --python 3.12 https://pxa.doit.am/setup.py --workspace . --mode board
 
 `context` 与构建使用相同的已安装锁定 SDK；版本缺失时明确提示安装，不回退到其他版本。C++ 检索包含随该 SDK 发行的 `extensions/*/sdk/include` 与扩展示例，例如 `context apps/counter --query FrameReader`。应用边界审计也保护扩展 SDK。网络短暂失败时只重试 GET/HEAD 读取，不自动重放上传、授权或资料修改。
 
-多平台交付可用 `pxa_build(project="apps/demo", targets=["esp32s3", "esp32s31", "esp32p4", "simulator", "windows-simulator", "wasm"])` 一次构建，共享公共编译结果。日常使用默认的模拟器目标即可。任务轮询可用 `include_log=false`，需要诊断时再读取日志；已完成任务的耗时不会随轮询继续增长。
+开发期明确需要通用包时，可用 `pxa_build(project="apps/demo", targets=["esp32s3", "esp32s31", "esp32p4", "simulator", "windows-simulator", "wasm"])` 合包构建并复用公共编译结果；商城交付使用 `pxa_store_build` 分目标生成独立包。日常使用默认模拟器目标即可。任务轮询可用 `include_log=false`，需要诊断时再读取日志；已完成任务的耗时不会随轮询继续增长。
 
 ## 按设备设计与一句话上架
 
 运行 `.pxa/pxa device-profile` 查看端口与 PXADB 开启指引，再用 `--port` 读取实际 CPU、分辨率、调试输入和传感器。请补充物理操作方式和自适应屏幕要求。MCP 使用 `pxa_device_profile`。像素游戏实现建议见随包 pxa-app-dev 的 pixel-games 参考：Z Labs 中文像素字体、整数缩放、输入换算、图块复用与异步存档。
 
-上架时告诉 AI 公开名称、简介、目标用户、素材授权及是否已有图标，运行 `store prepare` 检查缺项。有生图能力则制作匹配图标和可选封面；没有则制作简单图标并跳过封面。截图必须使用 `verify --store-screenshots` 实际运行并逐张检查原图，最后使用浏览器授权提交审核。
+上架时 AI 先根据实际产品起草名称和简介，补充无法确定的目标用户、素材授权及已有图标信息，再运行 `store prepare` 检查缺项。有生图能力则制作匹配图标和可选封面；没有则制作简单图标并跳过封面。截图必须使用 `verify --store-screenshots` 实际运行并逐张检查原图；首次浏览器登录后，后续提交自动复用账号授权。
 
 ## 测试构建、UI 诊断与 scope 恢复
 

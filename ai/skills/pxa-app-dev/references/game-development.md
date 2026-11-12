@@ -31,6 +31,13 @@ before delivery. Reuse watch/incremental builds and checked `--no-build`; build
 additional CPU targets when needed for delivery/device testing. Avoid rebuilding
 every target or running a full simulation suite after every layout adjustment.
 
+For store delivery, use Agent Kit `store build` / `pxa_store_build` for separately
+signed target packages with shared compilation/resource caches. Keep one app ID,
+signer, version and sequence, then submit the returned matrix with `publish-targets`.
+S31 and P4 need separate packages even though both use RISC-V. A separate portable
+Wasm package is mandatory for every store release and is added automatically;
+upload it first. Avoid uploading simulator binaries by default.
+
 ## Select a rendering path from the workload
 
 For tile/sprite-heavy games, evaluate the SDK's GameRender batching before writing
