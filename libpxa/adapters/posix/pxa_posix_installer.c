@@ -1041,14 +1041,18 @@ static pxa_status_t remove_tree(const char *path) {
                 status = PXA_STATUS_INTERNAL;
                 break;
             }
-            /* unlink never follows a symlink and cannot remove a directory.
+#if defined(DT_REG) && defined(DT_LNK)
+            /* Directory hints are optional; Windows uses the checked path.
+             * unlink never follows a symlink and cannot remove a directory.
              * A regular-file hint therefore needs no separate stat (which
              * repeats the entire pathname walk on flash-backed VFS). Unknown
              * entries and directories retain the checked recursive path. */
             if (item->d_type == DT_REG || item->d_type == DT_LNK) {
                 status = unlink(child) == 0 || errno == ENOENT
                     ? PXA_STATUS_OK : PXA_STATUS_INTERNAL;
-            } else status = remove_tree(child);
+            } else
+#endif
+                status = remove_tree(child);
             free(child);
             if (status != PXA_STATUS_OK) break;
         }

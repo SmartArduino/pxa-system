@@ -1141,7 +1141,9 @@ static pxa_status_t remove_tree_contents(int root, size_t *entries) {
         if (strlen(item->d_name) > NAME_MAX) {
             status = PXA_STATUS_LIMIT_EXCEEDED; break;
         }
-        /* A non-directory unlink is safe even if this directory hint goes
+#if defined(DT_REG) && defined(DT_LNK)
+        /* dirent types are optional (the Windows adapter has only d_name).
+         * A non-directory unlink is safe even if this directory hint goes
          * stale: it never follows links and refuses to remove a directory. */
         if (item->d_type == DT_REG || item->d_type == DT_LNK) {
             if (unlinkat(directory, item->d_name, 0) != 0) {
@@ -1149,6 +1151,7 @@ static pxa_status_t remove_tree_contents(int root, size_t *entries) {
             }
             continue;
         }
+#endif
         if (fstatat(directory, item->d_name, &metadata,
                     AT_SYMLINK_NOFOLLOW) != 0) {
             status = PXA_STATUS_INTERNAL; break;
