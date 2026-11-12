@@ -49,6 +49,20 @@ def copy(source, destination, *, ignore=None):
         shutil.copy2(source, destination)
 
 
+def tracked_tree_files(source, directory):
+    tree = source / directory
+    paths = [source / name for name in run('git', '-C', source, 'ls-files', '-z', directory).split('\0') if name]
+    if any(path.is_symlink() or any(parent.is_symlink() for parent in path.parents
+                                     if parent.is_relative_to(tree)) for path in paths):
+        raise ValueError('Versioned release source must not contain symlinks')
+    return paths
+
+
+def copy_tracked_tree(source, directory, destination):
+    for path in tracked_tree_files(source, directory):
+        copy(path, destination / path.relative_to(source / directory))
+
+
 def private_dependencies(root):
     """Keep the system loader/glibc; bundle transitive userspace dependencies."""
     library_dir = root / 'runtime/lib'
@@ -139,10 +153,14 @@ def main():
     if any(path.exists() for path in assets):
         raise RuntimeError('Release assets already exist; choose an empty output directory')
     root.mkdir()
-    ignore = shutil.ignore_patterns('__pycache__', '*.pyc', '.git', '.pxa', 'dist', 'build')
+    ignore = shutil.ignore_patterns('__pycache__', '*.pyc', '.git', '.pxa', 'dist', 'build',
+                                    '.venv', '.env', '.pytest_cache', '.ruff_cache')
     for name in ('VERSION', 'LICENSE', 'sdk', 'config', 'docs'):
         copy(source / name, root / name, ignore=ignore)
-    copy(source / 'ai', root / 'ai', ignore=ignore)
+    if args.allow_dirty:
+        copy(source / 'ai', root / 'ai', ignore=ignore)
+    else:
+        copy_tracked_tree(source, 'ai', root / 'ai')
     # Workspace extensions retain their own identities and SDK namespaces;
     # publishing them alongside the SDK does not make them standard services.
     copy(args.workspace / 'extensions', root / 'extensions', ignore=ignore)

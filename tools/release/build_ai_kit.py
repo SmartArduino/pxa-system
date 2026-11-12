@@ -10,7 +10,7 @@ import shutil
 import subprocess
 import tempfile
 
-from assemble import archive, run, sha
+from assemble import archive, run, sha, tracked_tree_files
 
 
 def build(source: Path, output: Path, key: Path, *, allow_dirty=False, workspace=None):
@@ -35,7 +35,7 @@ def build(source: Path, output: Path, key: Path, *, allow_dirty=False, workspace
     if any((output / name).exists() for name in names):
         raise ValueError('Release assets already exist; use a new output directory')
     ignored = ('__pycache__', '*.pyc', '.venv', '.env', '.pytest_cache', '.ruff_cache')
-    tracked = [source / name for name in run('git', '-C', source, 'ls-files', '-z', 'ai').split('\0') if name]
+    tracked = tracked_tree_files(source, 'ai') if not allow_dirty else []
     candidates = (p for p in (source / 'ai').rglob('*')
                   if not any(fnmatch(part, pattern) for part in p.relative_to(source / 'ai').parts
                              for pattern in ignored)) if allow_dirty else tracked

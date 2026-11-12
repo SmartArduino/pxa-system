@@ -69,11 +69,17 @@ class ReleaseInputs(unittest.TestCase):
                 self.assertTrue(any(name.endswith('/agent.py') for name in names))
                 self.assertFalse(any('.venv' in name or 'private-python' in name for name in names))
                 self.assertFalse(any(member.issym() or member.islnk() for member in archive.getmembers()))
+            from assemble import copy_tracked_tree
+            sdk_ai = root / 'sdk-ai'
+            copy_tracked_tree(source, 'ai', sdk_ai)
+            self.assertEqual({p.name for p in sdk_ai.iterdir()}, {'plugin.json', 'agent.py'})
             (source / 'ai/shortcut').symlink_to(outside)
             git(source, 'add', 'ai/shortcut')
             git(source, '-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', 'commit', '-qm', 'tracked link')
             with self.assertRaisesRegex(ValueError, 'symlinks'):
                 release.build(source, root / 'rejected', key, workspace=root)
+            with self.assertRaisesRegex(ValueError, 'symlinks'):
+                copy_tracked_tree(source, 'ai', root / 'rejected-sdk')
 
 
 class Installation(unittest.TestCase):
