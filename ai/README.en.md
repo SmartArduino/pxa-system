@@ -1,4 +1,6 @@
-# PXA Agent Kit 0.7.0
+# PXA Agent Kit 0.7.1
+
+0.7.1 adds signed-resource game verification: `verify APP --resource-package local/artifacts/game/resources.pxa --store-screenshots` (MCP: `pxa_verify(resource_package=...)`). The verifier checks the exact resource binding, signing identity and file digests, then mounts verified assets in the isolated Host’s read-only media root. Use scenario input to enter a level and inspect original screenshots; launch success alone does not prove playability. Code and resources currently require the same signing key.
 
 Pairs with DevKit and firmware 0.11.0; Browser Host has its own version. Networking guidance selects
 actual Host capabilities, distinguishes native browser WebSockets from TCP,

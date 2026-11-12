@@ -276,11 +276,14 @@ def create_server(env):
     @tool()
     def pxa_verify(project: str, profiles: list[Profile] | None = None, scenario: str | None = None,
                    store_screenshots: bool = False, definitions: list[str] | None = None,
-                   require_ui: bool = False, no_build: bool = False, profile_jobs: int = 2) -> dict:
+                   require_ui: bool = False, no_build: bool = False, profile_jobs: int = 2,
+                   resource_package: str | None = None) -> dict:
         """Run real Guest checks. Use require_ui=true for retained-UI apps and scenario
         expect/wait-for steps for behavior; Surface-only apps verify actual frames separately.
         Store mode captures rectangular frames with navigation hidden. Disable app-owned
         performance overlays and inspect every original PNG.
+        resource_package preloads the exact signed resource generation bound by the app
+        into its isolated read-only media root; code and resources need the same signer.
         """
         path = env.project(project)
         env.ensure_identity(path)
@@ -294,6 +297,8 @@ def create_server(env):
             arguments += ['--profiles', *profiles]
         if scenario:
             arguments += ['--scenario', str(env.project(scenario))]
+        if resource_package:
+            arguments += ['--resource-package', str(env.project(resource_package))]
         if store_screenshots:
             arguments.append('--store-screenshots')
         for definition in definitions or []:

@@ -106,5 +106,16 @@ Never crop, retouch or generate replacement screenshots.
 The result records capture settings and original SHA-256 hashes;
 runtime success does not imply visual approval.
 
+For apps with a signed resource binding, pass
+`--resource-package local/artifacts/game/resources.pxa` to `verify` (MCP
+`resource_package`). The verifier hashes that file, checks the exact App ID,
+lineage and resource-manifest binding. Native installers verify signatures and
+file digests in separate resource and code trees. Verified resource files are
+exposed through the Host's read-only, app-scoped media root in each isolated
+simulator; installing code cannot overwrite them.
+The current isolated flow requires the same signing key for both containers.
+Keep the resource binding intact; do not replace a resource-backed game with
+an empty package just to obtain a passing launch check.
+
 For environment, build, device or publishing failures, use the
 [troubleshooting guide](https://pxa.doit.am/docs/ai-troubleshooting/).

@@ -85,6 +85,7 @@ def parser():
     verify.add_argument('project')
     verify.add_argument('--profiles', nargs='+')
     verify.add_argument('--scenario')
+    verify.add_argument('--resource-package', help='preload the signed resource generation bound by this app')
     verify.add_argument('--window', action='store_true')
     verify.add_argument('--store-screenshots', action='store_true')
     verify.add_argument('--define', action='append', default=[], help='test-build definition NAME[=VALUE], repeatable')
@@ -298,7 +299,8 @@ def main():
                 result = verification(env, args.project, profiles=args.profiles, scenario=args.scenario,
                                       headless=not args.window, store_screenshots=args.store_screenshots,
                                       definitions=args.define, require_ui=args.require_ui,
-                                      no_build=args.no_build, profile_jobs=args.jobs)
+                                      no_build=args.no_build, profile_jobs=args.jobs,
+                                      resource_package=args.resource_package)
             elif args.command == 'install':
                 from .workbench import install_app
                 result = install_app(env, args.project, port=args.port, baud=args.baud,

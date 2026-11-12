@@ -267,7 +267,7 @@ class Jobs:
 
 
 def verification(environment, project, *, profiles=None, scenario=None, headless=True, store_screenshots=False,
-                 definitions=(), require_ui=False, no_build=False, profile_jobs=2):
+                 definitions=(), require_ui=False, no_build=False, profile_jobs=2, resource_package=None):
     project = environment.project(project)
     # Evidence must stay outside the app; keeping apps in apps/<name> also keeps
     # screenshots out of source/resource discovery and signing inputs.
@@ -286,6 +286,8 @@ def verification(environment, project, *, profiles=None, scenario=None, headless
         arguments += ['--profiles', *profiles]
     if scenario:
         arguments += ['--scenario', environment.project(scenario)]
+    if resource_package:
+        arguments += ['--resource-package', environment.project(resource_package)]
     if headless:
         arguments.append('--headless')
     if store_screenshots:
@@ -316,6 +318,7 @@ def verification(environment, project, *, profiles=None, scenario=None, headless
             'visual_review_required': True, 'result': str(path), 'output': str(output),
             'log': str(log), 'returncode': returncode,
             'build': document.get('build'), 'preview': document.get('preview'),
+            **({'resource_package': document['resource_package']} if 'resource_package' in document else {}),
             'screenshots': [str(output / item['path']) for item in document.get('screenshots', [])]}
 
 

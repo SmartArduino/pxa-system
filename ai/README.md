@@ -1,4 +1,6 @@
-# PXA Agent Kit 0.7.0
+# PXA Agent Kit 0.7.1
+
+0.7.1 新增带签名资源包的游戏验收：`verify APP --resource-package local/artifacts/game/resources.pxa --store-screenshots`（MCP：`pxa_verify(resource_package=...)`）。工具检查资源代次与应用绑定、签名身份及文件摘要，将素材接入隔离模拟器的只读媒体目录。再用场景输入进入关卡并检查原始截图；运行成功本身不代表游戏可玩。当前要求代码与资源使用同一签名密钥。
 
 配合 DevKit 与固件 0.11.0；Browser Host 独立编号。联机指引根据实际能力区分浏览器
 原生 WebSocket、桌面/固件 TCP 客户端、监听、UDP 与 DNS-SD；补充权限生命周期、
@@ -26,7 +28,7 @@ uv run --python 3.12 https://pxa.doit.am/setup.py --workspace ./my-pxa
 uv run --python 3.12 --locked --project ./ai ./ai/agent.py --workspace ./my-pxa setup
 ```
 
-`setup` 自动选择官方 DevKit 0.11.0 或签名容器镜像，安装项目内的 skills、平台 MCP 配置、CLI 启动器，最后编译并运行真实 Guest、保存检查截图。失败时返回失败，不会把下载成功当成验收。`--sdk /path/to/devkit` 仅复用用户自己选择的完整 SDK，不宣称它经过下载签名校验。离线分发可以用 `setup.py --channel /path/to/ai-kit-0.7.0.json --manifest /path/to/distribution.json`，归档和签名放在各自清单旁。
+`setup` 自动选择官方 DevKit 0.11.0 或签名容器镜像，安装项目内的 skills、平台 MCP 配置、CLI 启动器，最后编译并运行真实 Guest、保存检查截图。失败时返回失败，不会把下载成功当成验收。`--sdk /path/to/devkit` 仅复用用户自己选择的完整 SDK，不宣称它经过下载签名校验。离线分发可以用 `setup.py --channel /path/to/ai-kit-0.7.1.json --manifest /path/to/distribution.json`，归档和签名放在各自清单旁。
 
 在 `my-pxa` 目录中使用以下命令（Windows 使用 `.pxa\pxa.cmd`）：
 

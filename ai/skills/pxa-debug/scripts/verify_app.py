@@ -203,6 +203,7 @@ def main():
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--profiles', nargs='+', choices=ALL_PROFILES, default=list(PROFILES))
     parser.add_argument('--scenario', type=Path)
+    parser.add_argument('--resource-package', type=Path, help='signed resource package to install before the app')
     parser.add_argument('--headless', action='store_true')
     parser.add_argument('--store-screenshots', action='store_true', help='Use a rectangular viewport with navigation/performance overlays hidden')
     parser.add_argument('--online', action='store_true')
@@ -275,6 +276,15 @@ def main():
         _, run_help = command(output,'run-help',['run','--help'])
         checked_reuse = all(flag in run_help for flag in
                             ('--no-build','--simulator-state','--expected-package-sha256'))
+        resource_hash = None
+        if args.resource_package is not None:
+            args.resource_package = args.resource_package.resolve(strict=True)
+            if not args.resource_package.is_file():
+                raise ValueError('The resource package must be a regular file')
+            with args.resource_package.open('rb') as stream:
+                resource_hash = hashlib.file_digest(stream, 'sha256').hexdigest()
+            result['resource_package'] = {'source': str(args.resource_package), 'sha256': resource_hash,
+                                          'bytes': args.resource_package.stat().st_size}
         result['checked_reuse_supported'] = checked_reuse
         if args.no_build and not checked_reuse:
             raise ValueError('The locked SDK lacks checked --no-build support. Run verify without --no-build for a fresh build, or explicitly migrate the SDK; the lock was retained.')
@@ -337,7 +347,7 @@ def main():
                 # worker. Validation is read-only; no profile rebuilds it.
                 budget_ms = sum(step.get('ms', step.get('timeout_ms', 0)) for step in scenario.get(profile, []))
                 duration = str(args.timeout * 1000 + budget_ms + 30000)
-                if checked_reuse:
+                if checked_reuse and args.resource_package is None:
                     arguments = ['run', str(project), '--no-build', '--debug', '--profile', profile,
                                  '--expected-package-sha256', receipt['sha256'],
                                  '--simulator-state', str(directory / 'state'), '--duration-ms', duration]
@@ -354,6 +364,9 @@ def main():
                     child_env=dict(variables)
                     child_env.pop('PYTHONHOME',None)
                     child_env['PATH']=str(root/'runtime/bin')+os.pathsep+variables.get('PATH','')
+                    if args.resource_package is not None:
+                        invocation += ['--resource-package', str(args.resource_package),
+                                       '--resource-sha256', resource_hash]
                 with log_path.open('w', encoding='utf-8') as log:
                     options = {'creationflags': subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == 'nt' else {'start_new_session': True}
                     process = subprocess.Popen(invocation, env=child_env, stdout=log, stderr=subprocess.STDOUT, **options)
