@@ -435,14 +435,21 @@ def create_server(env):
 
     @tool()
     def pxa_store_build(project: str,
-                        targets: list[Literal['esp32s3', 'esp32s31', 'esp32p4', 'simulator', 'windows-simulator', 'wasm']]) -> dict:
+                        targets: list[Literal['esp32s3', 'esp32s31', 'esp32p4', 'simulator', 'windows-simulator', 'wasm']],
+                        target_timeout_seconds: int = 1800) -> dict:
         """Build separate signed store packages; always adds portable Wasm to requested native targets. Reuses pinned SDK
         compilation/resource caches, retains app identity and returns a checked packages.json.
+        Each target has a bounded 1..3600-second deadline; the job budget covers the full matrix.
         Verify requested runtime behavior before pxa_store_publish_targets. Never merges architectures.
         """
         from .projects import build_targets
+        if type(target_timeout_seconds) is not int or not 1 <= target_timeout_seconds <= 3600:
+            raise ToolError('target_timeout_seconds must be 1..3600')
         selected = build_targets(targets=targets).split(',')
-        return host_job(['store', 'build', str(env.project(project)), '--targets', *selected], timeout=1500)
+        count = len(set(selected) | {'wasm'})
+        return host_job(['store', 'build', str(env.project(project)), '--targets', *selected,
+                         '--target-timeout-seconds', str(target_timeout_seconds)],
+                        timeout=count * target_timeout_seconds + 300)
 
     @tool()
     def pxa_store_publish_targets(project: str, manifest: str, server_origin: str = 'https://app.doit.am',

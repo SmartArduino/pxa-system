@@ -56,6 +56,13 @@ class StorePackagesTests(unittest.TestCase):
         result = store_packages.build(self.env, self.env.app, ['esp32s3', 'esp32s31', 'wasm'])
         return result, Path(result['manifest'])
 
+    def test_invalid_target_deadline_fails_before_any_build_or_identity_change(self):
+        for invalid in (0, 3601, True, 1.5):
+            with self.subTest(value=invalid), self.assertRaises(ToolError):
+                store_packages.build(self.env, self.env.app, ['esp32s3'],
+                                     target_timeout_seconds=invalid)
+        self.assertEqual(self.env.calls, [])
+
     def test_build_retains_separate_outputs_and_never_requests_a_combined_target(self):
         result, manifest = self.matrix()
         self.assertFalse(result['combined_package'])

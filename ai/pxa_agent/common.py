@@ -5,6 +5,7 @@ from datetime import datetime
 import hashlib
 import json
 import os
+import signal
 from pathlib import Path, PurePosixPath, PureWindowsPath
 import subprocess
 import tarfile
@@ -194,11 +195,37 @@ def extract(archive, destination):
 
 
 def run(arguments, *, cwd=None, env=None, timeout=300):
-    result = subprocess.run([str(arg) for arg in arguments], cwd=cwd, env=env,
-        text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=timeout)
-    if result.returncode:
-        raise ToolError(f'Command failed ({result.returncode}):\n' + result.stdout[-16000:])
-    return result.stdout
+    process = subprocess.Popen([str(arg) for arg in arguments], cwd=cwd, env=env,
+        text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        start_new_session=os.name != 'nt',
+        **({'creationflags': subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == 'nt' else {}))
+    try:
+        output, _ = process.communicate(timeout=timeout)
+    except BaseException:
+        # A compiler driver can exit before its compiler or linker. Terminate
+        # the entire owned group even if the immediate child already exited.
+        if os.name == 'nt':
+            subprocess.run(['taskkill', '/PID', str(process.pid), '/T', '/F'],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=15)
+        else:
+            try:
+                os.killpg(process.pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+        try:
+            process.communicate(timeout=5)
+        except subprocess.TimeoutExpired:
+            if os.name != 'nt':
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+            process.kill()
+            process.communicate(timeout=5)
+        raise
+    if process.returncode:
+        raise ToolError(f'Command failed ({process.returncode}):\n' + output[-16000:])
+    return output
 
 
 def evidence(workspace, topic='pxa-agent'):

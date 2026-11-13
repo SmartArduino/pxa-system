@@ -1,4 +1,6 @@
-# PXA Agent Kit 0.7.1
+# PXA Agent Kit 0.7.2
+
+0.7.2 adds `store build --target-timeout-seconds` (default 1800 per target, range 1–3600; same MCP parameter). The matrix job budget covers all targets plus mandatory Wasm. Timed-out or cancelled commands terminate their owned compiler process group, preserving unrelated jobs, pinned SDKs and optimization settings.
 
 0.7.1 adds signed-resource game verification: `verify APP --resource-package local/artifacts/game/resources.pxa --store-screenshots` (MCP: `pxa_verify(resource_package=...)`). The verifier checks the exact resource binding, signing identity and file digests, then mounts verified assets in the isolated Host’s read-only media root. Use scenario input to enter a level and inspect original screenshots; launch success alone does not prove playability. Code and resources currently require the same signing key.
 

@@ -23,7 +23,9 @@ def release_identity(identity):
     return tuple(identity.get(key) for key in ('app_id', 'root', 'spki', 'version', 'release_sequence'))
 
 
-def build(environment, project, targets):
+def build(environment, project, targets, *, target_timeout_seconds=1800):
+    if type(target_timeout_seconds) is not int or not 1 <= target_timeout_seconds <= 3600:
+        raise ToolError('target_timeout_seconds must be 1..3600')
     selected = build_targets(targets=targets).split(',')
     selected = ['wasm', *(target for target in selected if target != 'wasm')]
     project = environment.project(project)
@@ -42,7 +44,7 @@ def build(environment, project, targets):
             arguments.append('--aot-only')
         # The pinned SDK shares its Wasm/resource/AOT caches across these calls.
         # Distinct output prefixes retain every variant instead of overwriting.
-        environment.call(arguments, timeout=600)
+        environment.call(arguments, timeout=target_timeout_seconds)
         identity = store.package_identity(environment, package)
         check_variant(identity, target)
         expected = release_identity(identity)

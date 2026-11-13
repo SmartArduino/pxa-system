@@ -131,6 +131,8 @@ def parser():
             cmd.add_argument('--refresh', action='store_true', help='check and renew the remembered computer authorization')
     build_store = sub.add_parser('build', help='build a mandatory separate Wasm .pxa plus the requested store targets')
     build_store.add_argument('project')
+    build_store.add_argument('--target-timeout-seconds', type=int, default=1800,
+                             help='per-target build deadline, 1..3600 seconds (default 1800)')
     build_store.add_argument('--targets', nargs='+', required=True,
         choices=('esp32s3', 'esp32s31', 'esp32p4', 'simulator', 'windows-simulator', 'wasm'))
     for name in ('authorize', 'publish', 'publish-targets', 'prepare'):
@@ -319,7 +321,8 @@ def main():
                 from .store import authorize, status, publish, prepare
                 if args.action == 'build':
                     from .store_packages import build
-                    result = build(env, args.project, args.targets)
+                    result = build(env, args.project, args.targets,
+                                   target_timeout_seconds=args.target_timeout_seconds)
                 elif args.action == 'publish-targets':
                     from .store_packages import publish as publish_targets
                     result = publish_targets(env, args.project, args.manifest, server=args.server,
