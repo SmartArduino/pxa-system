@@ -10,7 +10,8 @@
     "text-input-control",
     "dynamic-text",
     "password-input",
-    "font-glyph"
+    "font-glyph",
+    "image-sampling"
   ],
   "assets": [
     "image-decode",
