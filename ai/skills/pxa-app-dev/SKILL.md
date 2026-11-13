@@ -47,6 +47,12 @@ upload. Missing legacy fields remain unknown, not compatible or absent;
 declared requirements to bypass this. `firmware status` reads device/release
 metadata without flashing; firmware updates use existing user authorization.
 
+An installation denial (`install_status=-4`) may involve device-bound storage
+records as well as trust policy. A valid package and an empty application list
+do not prove that a removable card has no old saves. Preserve existing files,
+diagnose the selected device/volume, and keep storage recovery separate from app
+implementation; re-signing or erasing records is not a generic fix.
+
 For a new app, `pxa init <directory> --id <unique-id>` generates the working C++26 template. Preserve existing source, identity, signing key and release sequence when editing an app. Do not recreate a populated directory or implicitly update its SDK lock. Work outside the firmware checkout when only building an app.
 
 For a new timer or counter on selected DevKit0.10+, use `recipes` / `pxa_recipes`

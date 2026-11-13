@@ -84,3 +84,19 @@ class DeviceSessionTest(unittest.TestCase):
                         device(*arguments)
         client.request.assert_called_once_with('INFO')
         self.assertEqual(state, {'open': 1, 'closed': 1})
+
+    def test_denied_install_preserves_diagnostic_and_never_retries_or_runs(self):
+        for diagnostic in ('install_status=-4', 'install_status=-4;stage=publisher'):
+            tools, client, state = self.fixture()
+            tools.command_package_install.side_effect = tools.PxaDbError(diagnostic)
+            with self.subTest(diagnostic=diagnostic), patch('pxa_agent.device_session.reader', return_value=tools):
+                with self.assertRaises(ToolError) as caught:
+                    with install_connection(None, 'COM7', 2000000, {}) as device:
+                        device('package', 'install', Path('app.pxa'), '--yes', timeout=300)
+                        device('package', 'run', 'root:app')
+                self.assertIn('device-bound', str(caught.exception))
+                self.assertIn('Preserve existing code and saves', str(caught.exception))
+                self.assertEqual(str(caught.exception.__cause__), diagnostic)
+                tools.command_package_install.assert_called_once()
+                client.request.assert_called_once_with('INFO')
+                self.assertEqual(state, {'open': 1, 'closed': 1})

@@ -46,4 +46,11 @@ def install_connection(environment, port, baud, expected_info):
 
             yield device
     except (tools.PxaDbError, OSError) as error:
+        if str(error).split(';', 1)[0] == 'install_status=-4':
+            raise ToolError(
+                'Device refused installation (install_status=-4). Check trust policy '
+                'and device-bound installation/publisher records on the selected volume. '
+                'Preserve existing code and saves; obtain a verified diagnosis before '
+                'changing signatures or storage records. Installation was not retried.'
+            ) from error
         raise ToolError(str(error)) from error
