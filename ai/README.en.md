@@ -1,10 +1,12 @@
-# PXA Agent Kit 0.7.2
+# PXA Agent Kit 0.7.3
+
+0.7.3 pairs with DevKit 0.11.1 and bundles the updated PXADB client. Congested POSIX serial writes preserve command deadlines and cancellation, allowing an AI tool to report an unresponsive device and continue diagnosis.
 
 0.7.2 adds `store build --target-timeout-seconds` (default 1800 per target, range 1–3600; same MCP parameter). The matrix job budget covers all targets plus mandatory Wasm. Timed-out or cancelled commands terminate their owned compiler process group, preserving unrelated jobs, pinned SDKs and optimization settings.
 
 0.7.1 adds signed-resource game verification: `verify APP --resource-package local/artifacts/game/resources.pxa --store-screenshots` (MCP: `pxa_verify(resource_package=...)`). The verifier checks the exact resource binding, signing identity and file digests, then mounts verified assets in the isolated Host’s read-only media root. Use scenario input to enter a level and inspect original screenshots; launch success alone does not prove playability. Code and resources currently require the same signing key.
 
-Pairs with DevKit and firmware 0.11.0; Browser Host has its own version. Networking guidance selects
+Pairs with DevKit and firmware 0.11.1; Browser Host has its own version. Networking guidance selects
 actual Host capabilities, distinguishes native browser WebSockets from TCP,
 listeners, UDP and DNS-SD, and covers permission lifetime and real peer tests.
 Hardware verification accounts for native lock screens intercepting app input.
@@ -22,7 +24,7 @@ With [uv](https://docs.astral.sh/uv/getting-started/installation/) installed:
 uv run --python 3.12 https://pxa.doit.am/setup.py --workspace ./my-pxa
 ```
 
-The bootstrap verifies the release signature, archive hash and file manifest. Setup installs the signed DevKit 0.11.0, project-local skills/MCP adapters and launchers, then builds and runs an actual Guest. No ESP-IDF, LLVM build or additional model API key is needed. Native Linux x86_64 requires glibc 2.39+; Windows x64 can use the signed native DevKit (Wine-validated preview); macOS and older Linux use Docker Desktop or Podman with Linux amd64 support. OS administration, virtualization and user login may require normal user interaction.
+The bootstrap verifies the release signature, archive hash and file manifest. Setup installs the signed DevKit 0.11.1, project-local skills/MCP adapters and launchers, then builds and runs an actual Guest. No ESP-IDF, LLVM build or additional model API key is needed. Native Linux x86_64 requires glibc 2.39+; Windows x64 can use the signed native DevKit (Wine-validated preview); macOS and older Linux use Docker Desktop or Podman with Linux amd64 support. OS administration, virtualization and user login may require normal user interaction.
 
 Codex and Claude Code receive local skills, optional roles and MCP entries. DSH discovers shared `.agents/skills` and can use the CLI directly; `.pxa/dsh-mcp.yaml` is an optional official Cordis composition snippet. Other agents can use the standard stdio MCP server or CLI. Existing global settings, models, permissions, unrelated MCP servers and edited files are preserved. Reopen the project if the client has not discovered the new tools.
 
