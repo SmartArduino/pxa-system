@@ -309,7 +309,10 @@ foreach(_test ime audio audio_sdk audio_app i18n_app sdk_patterns declarative_ui
             add_test(NAME pxsys_ime_app_test COMMAND bash
                 "${CMAKE_CURRENT_LIST_DIR}/../../tools/package/test_cpp_ime_app.sh"
                 $<TARGET_FILE:pxsys_ime_test> "${PXA_TEST_IME_PACKAGE}" "${PXA_TEST_IME_SIGNING_KEY}")
-            set_tests_properties(pxsys_ime_app_test PROPERTIES TIMEOUT 300)
+            # Includes a cold C++/AOT build, 14 display profiles, and all six
+            # rejected-provider variants. Each profile retains its own 15 s
+            # assertion; allow the complete matrix to finish before CTest kills it.
+            set_tests_properties(pxsys_ime_app_test PROPERTIES TIMEOUT 900)
         elseif(_test STREQUAL "audio")
             add_test(NAME pxsys_audio_test COMMAND ${Python3_EXECUTABLE}
                 "${CMAKE_CURRENT_LIST_DIR}/../../tools/package/test_audio_backend.py"
