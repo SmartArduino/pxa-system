@@ -63,6 +63,16 @@ class StorePackagesTests(unittest.TestCase):
                                      target_timeout_seconds=invalid)
         self.assertEqual(self.env.calls, [])
 
+    def test_old_sdk_cannot_silently_drop_signed_operation_requirements(self):
+        source=self.env.app/'package.json'
+        metadata=json.loads(source.read_text())
+        metadata['interaction']={'schema':'pxa-app-interaction-1','profiles':[{
+            'id':'focus','kind':'focus','complete':True,'requires':{'confirm':'tap'}}]}
+        source.write_text(json.dumps(metadata))
+        with self.assertRaisesRegex(ToolError, 'did not sign the declared interaction'):
+            self.matrix()
+        self.assertFalse(any(args[0]=='publish' for args in self.env.calls))
+
     def test_build_retains_separate_outputs_and_never_requests_a_combined_target(self):
         result, manifest = self.matrix()
         self.assertFalse(result['combined_package'])

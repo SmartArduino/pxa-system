@@ -20,7 +20,8 @@ def check_variant(identity, target):
 
 
 def release_identity(identity):
-    return tuple(identity.get(key) for key in ('app_id', 'root', 'spki', 'version', 'release_sequence'))
+    return tuple(identity.get(key) for key in ('app_id', 'root', 'spki', 'version', 'release_sequence')) + (
+        json.dumps(identity.get('interaction'), sort_keys=True),)
 
 
 def build(environment, project, targets, *, target_timeout_seconds=1800):
@@ -46,6 +47,8 @@ def build(environment, project, targets, *, target_timeout_seconds=1800):
         # Distinct output prefixes retain every variant instead of overwriting.
         environment.call(arguments, timeout=target_timeout_seconds)
         identity = store.package_identity(environment, package)
+        if identity.get('interaction') != metadata.get('interaction'):
+            raise ToolError('The pinned SDK did not sign the declared interaction profiles; use a DevKit supporting interaction contracts. Do not edit signed packages.')
         check_variant(identity, target)
         expected = release_identity(identity)
         if identity_before is None:

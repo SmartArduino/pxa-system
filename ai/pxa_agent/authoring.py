@@ -7,6 +7,10 @@ AUTHORING_BRIEF = (
     "omit unsolicited slogans, decorative subtitles, repeated instructions and filler panels. "
     "Give teaching hints a trigger, dismissal/completion condition, persisted progress and a help/replay entry; "
     "match the actual input device. Preserve requested narrative, branding, accessibility and necessary feedback. "
+    "Read firmware-declared physical modes and system reservations before choosing controls; "
+    "debug input injection does not establish physical touch or buttons. For multiple input styles, "
+    "implement one complete menu/play/settings/error/exit path per declared interaction profile and sign "
+    "it in package.json; a declaration match is not hardware verification. "
     "For games, read pxa-app-dev's game-development reference: build a playable loop early, select rendering, "
     "text and audio paths from the pinned SDK, then measure cold start and representative interaction. "
     "Review the normal post-tutorial screen as well as first use and relaunch; build success is insufficient."
@@ -30,5 +34,6 @@ def authoring_context():
     return {'principles': AUTHORING_BRIEF, 'references': {
         'interface_content': str(KIT / 'skills/pxa-app-dev/references/interface-content.md'),
         'game_development': str(KIT / 'skills/pxa-app-dev/references/game-development.md'),
+        'interaction': str(KIT / 'skills/pxa-app-dev/references/interaction.md'),
         'store_listing': str(KIT / 'skills/pxa-release/references/store-listing.md'),
     }}

@@ -29,3 +29,11 @@ enable this runtime switch.
 Close competing serial monitors; check COM drivers/Linux permissions and rediscover
 after reconnect. BOOT/RESET is firmware download mode, not enabling PXADB.
 Do not flash firmware or reset user settings just to discover a device.
+
+Read `device interaction-info` for firmware-declared controls and reservations.
+A declaration match is not physical verification. Exercise each claimed complete
+operation path, including pause/settings, errors and exit, with the intended
+physical controls when hardware testing is authorized. Do not infer physical
+capabilities from INPUT injection masks. Legacy omissions stay unknown.
+Use the explicit `--serial-profile mz79` policy for MZ79 product firmware rather
+than probing or resetting it to identify controls.

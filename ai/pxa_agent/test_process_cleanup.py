@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import time
 import tempfile
 import unittest
 
@@ -31,8 +32,20 @@ class ProcessCleanupTests(unittest.TestCase):
                 run([sys.executable, '-c', parent], timeout=2)
             self.assertTrue(pidfile.is_file(), 'The compiler descendant must actually start')
             process = Path('/proc') / pidfile.read_text() / 'stat'
-            if process.exists():
-                self.assertEqual(process.read_text().rsplit(')', 1)[1].split()[0], 'Z')
+            # SIGKILL delivery and /proc reaping are asynchronous. Observe the
+            # real descendant until it is gone or a zombie, including the race
+            # where it disappears between stat() and read().
+            deadline = time.monotonic() + 2
+            while True:
+                try:
+                    state = process.read_text().rsplit(')', 1)[1].split()[0]
+                except (FileNotFoundError, ProcessLookupError):
+                    break
+                if state == 'Z':
+                    break
+                if time.monotonic() >= deadline:
+                    self.fail('Owned compiler descendant remains active: ' + state)
+                time.sleep(0.01)
             self.assertIsNone(unrelated.poll(), 'Only the owned process group may be terminated')
 
 

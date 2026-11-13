@@ -19,8 +19,8 @@ def connection_help():
     ]
 
 
-def inspect(environment, port=None, baud=2000000, package=None):
-    result = {'connected': False, 'port': port, 'connection_steps': connection_help(),
+def inspect(environment, port=None, baud=2000000, package=None, serial_profile=None):
+    result = {'connected': False, 'port': port, 'serial_profile': serial_profile, 'connection_steps': connection_help(),
               'questions': ['Which controls should the app support: touch, buttons, rotary encoder or gamepad?',
                             'Should it adapt to other resolutions, physical sizes, rounded corners or round screens?',
                             'Which sensors or peripherals are required? Unreported capabilities need confirmation.']}
@@ -32,6 +32,10 @@ def inspect(environment, port=None, baud=2000000, package=None):
     if not 1200 <= baud <= 4000000:
         raise ToolError('Baud must be 1200..4000000')
     args = ['--port', port, '--baud', str(baud)]
+    if serial_profile is not None:
+        if serial_profile not in ('default', 'mz79'):
+            raise ToolError('Unknown serial profile')
+        args += ['--serial-profile', serial_profile]
     try:
         fields = info_fields(environment.device(['info', *args], timeout=12))
         if not fields.get('target'):
@@ -44,11 +48,15 @@ def inspect(environment, port=None, baud=2000000, package=None):
         result['runtime'] = json.loads(environment.device(['runtime-info',*args],timeout=12))
     except (ToolError,ValueError) as error:
         result['runtime_error'] = str(error)
+    try:
+        result['interaction'] = json.loads(environment.device(['interaction-info', *args], timeout=12))
+    except (ToolError, ValueError) as error:
+        result['interaction'] = {'status': 'unknown', 'descriptor': None, 'error': str(error)}
     result['compatibility'] = {'status':'unknown',
         'reason':'Compatibility is relative to a package; supply --package after building for this device.'}
     if package is not None:
         from .compatibility import inspect as compare
-        result['compatibility'] = compare(environment,package,port=port,baud=baud)
+        result['compatibility'] = compare(environment,package,port=port,baud=baud,serial_profile=serial_profile)
     try:
         result['debug_input'] = info_fields(environment.device(['input', 'capabilities', *args], timeout=12))
     except ToolError as error:
@@ -65,4 +73,11 @@ def inspect(environment, port=None, baud=2000000, package=None):
                          'semantics': fields.get('sensors', '').split(',') if fields.get('sensors') else [],
                          'note': 'Reported descriptors only; absence on older firmware means unknown. Query the Sensor service in the app for the complete list and permissions.'}
     result['physical_controls_confirmed'] = False
+    description = result['interaction'].get('descriptor')
+    result['physical_controls_declared'] = bool(description)
+    if description:
+        result['display'].update(description['display'])
+        result['physical_controls'] = description['physical']
+        result['operation_modes'] = description['modes']
+        result['system_reservations'] = description.get('reserved', [])
     return result

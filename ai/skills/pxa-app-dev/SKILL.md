@@ -91,6 +91,11 @@ rounded corners or round screens are delivery requirements. Read actual Window
 metrics and Sensor descriptors at runtime; an emulator profile or debug input
 support does not prove physical hardware. Keep optional sensors degradable.
 
+For constrained devices or multiple operation styles, read
+[complete operation paths](references/interaction.md). Use firmware-declared modes
+and system reservations; put each implemented complete path in signed
+`package.json` interaction profiles. Keep unknown hardware facts unknown.
+
 For games, read [game development](references/game-development.md) before choosing
 the rendering, font and audio path. Reach a complete playable loop early, then
 continue to the requested scope. Reuse incremental builds and representative

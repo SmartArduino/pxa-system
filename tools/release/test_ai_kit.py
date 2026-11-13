@@ -43,7 +43,7 @@ class ReleaseInputs(unittest.TestCase):
             (source / '.gitignore').write_text('/ai/.venv/\n')
             tools = root / 'tools/pxadb'
             tools.mkdir(parents=True)
-            for name in ('pxadb.py', 'pxa_local_socket.py', 'ui_query.py', 'package_compatibility.py'):
+            for name in ('pxadb.py', 'pxa_local_socket.py', 'ui_query.py', 'package_compatibility.py', 'interaction_contract.py'):
                 (tools / name).write_text('# host client\n')
             (root / 'tools/simulator_pxadb.py').write_text('# simulator client\n')
             (root / '.gitignore').write_text('/system/\n')

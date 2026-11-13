@@ -106,8 +106,9 @@ magic:"PXAM" | major:u16=0 | minor:u16=7 | body_len:u32
 
 The body is a Core-style record list (`tag:u16 | length:u16 | payload`). Records
 must be in ascending encoded-tag order. Repeated records are contiguous and
-sorted by their identity key. Known fields must use their required tag encoding;
-setting the optional bit on a known field is non-canonical. Unknown required
+sorted by their identity key. Known fields use their specified required/optional tag encoding. Unless a field
+explicitly defines an optional extension encoding (such as operation record
+`0x8015`), setting its optional bit is non-canonical. Unknown required
 records reject the manifest; unknown optional records may be skipped but still
 participate in the signature.
 
@@ -324,3 +325,16 @@ validator before instantiation.
 Draft 0.1 bounds one Package to 32 Components, 16 Artifacts and 32 Service
 requirements per Component, 128 payload files and 64 permissions. A Host may
 apply smaller advertised installation limits but cannot silently truncate.
+
+### Optional operation requirements
+
+An application may append optional top-level record `0x8015` (logical tag 21)
+containing one UTF-8 JSON `pxa-app-interaction-1` declaration, at most 4096 bytes.
+It is a singleton covered by the manifest and delivery signatures. Resource-only
+packages cannot carry it. Its optional wire bit is required: older Hosts skip the
+record, while operation-aware admission tools evaluate its complete alternative
+profiles against product firmware declarations. Missing declarations remain
+unknown and do not imply universal input compatibility. This record adds no
+Guest ABI or service dependency and does not change the manifest format version.
+See the [interaction contract](../../docs/zh-CN/device-interaction.md) for field
+semantics and the distinction between declared matching and physical validation.

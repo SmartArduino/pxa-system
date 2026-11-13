@@ -111,3 +111,8 @@ rights and first-use publisher-account approval. Reuse an existing account. Repo
 `store prepare`: signed target packages, icon, original simulator screenshots,
 optional generated cover, changelog and first-use browser authorization. Do not ask users
 to supply screenshots the tools can capture or to paste private credentials.
+
+Operation requirements belong in the signed application manifest, not listing
+copy. Keep identical complete interaction profiles across Wasm/native variants.
+Missing declarations on legacy packages mean unknown; do not claim universal
+compatibility or hardware verification from a declaration match.

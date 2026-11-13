@@ -658,6 +658,13 @@ def main(argv):
     top.extend((18, entry[2]) for entry in permission_entries)
     top.extend((19, entry[2]) for entry in ipc_entries)
     top.extend((20, entry[1]) for entry in localization_entries)
+    if 'interaction' in metadata:
+        require(not data_only, 'Resource packages cannot declare interaction profiles')
+        from interaction_contract import validate_app, canonical, MANIFEST_TAG
+        try:
+            top.append((MANIFEST_TAG, canonical(validate_app(metadata['interaction']))))
+        except ValueError as error:
+            raise PackageError(str(error)) from error
 
     body = records(top)
     manifest_minor = 8 if resource_format else 7

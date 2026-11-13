@@ -37,6 +37,7 @@ def parser():
     migrate.add_argument('--manifest')
     profile = commands.add_parser('device-profile', help='read device design constraints or explain USB/PXADB setup')
     profile.add_argument('--port')
+    profile.add_argument('--serial-profile', choices=('default', 'mz79'))
     profile.add_argument('--baud', type=int, default=2000000)
     profile.add_argument('--package',help='compare this prepared package with the device without uploading')
     commands.add_parser('mcp', help='serve tools to an MCP client over stdio')
@@ -172,7 +173,7 @@ def main():
                            engine=args.engine,manifest=args.manifest)
         elif args.command == 'device-profile':
             from .device_profile import inspect
-            result = inspect(Environment(args.workspace), args.port, args.baud, args.package)
+            result = inspect(Environment(args.workspace), args.port, args.baud, args.package, args.serial_profile)
         elif args.command == 'scope':
             from . import scope
             if args.action == 'begin':

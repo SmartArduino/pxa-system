@@ -215,9 +215,16 @@ def package_identity(environment, package):
     sequence = fields.get(9, b'')
     if len(sequence) != 8:
         raise ToolError('Invalid release sequence in the signed manifest')
+    interaction_records = [value for tag, value in records if tag & 0x7fff == 21]
+    interaction = None
+    if interaction_records:
+        from interaction_contract import decode, validate_app, MAX_APP_BYTES
+        if len(interaction_records) != 1 or 0x8015 not in fields:
+            raise ToolError('Invalid signed interaction declaration')
+        interaction = validate_app(decode(interaction_records[0], MAX_APP_BYTES))
     return {'app_id': module.package_manifest_identity(package), 'spki': public, 'root': root,
             'version': fields.get(3, b'').decode('ascii'), 'release_sequence': struct.unpack('<Q', sequence)[0],
-            'aot_targets': sorted(targets), 'contains_wasm': contains_wasm}
+            'aot_targets': sorted(targets), 'contains_wasm': contains_wasm, 'interaction': interaction}
 
 
 def cache_path(server, identity):

@@ -43,6 +43,16 @@ uv run --python 3.12 --locked --project ./ai ./ai/agent.py --workspace ./my-pxa 
 
 先停止 watch 再运行 verify；run 已包含构建，不必为每次保存重复执行 build。`run` 启动实际桌面 Guest；容器在后台运行，用 MCP 截图与输入工具交互。`verify` 默认覆盖五种屏幕，返回日志、截图与 `result.json` 的路径。检查截图后再判定 UI 正确。测试数据写入工作区被忽略的 `local/artifacts/`，不会进入应用资源包。应用保存在 `apps/<name>`。
 
+## 设备操作适配
+
+`device-profile --port PORT` 读取固件的交互描述；MZ79 使用
+`--serial-profile mz79` 明确选择串口控制线规则。旧固件不支持查询时保留未知，
+不把 INPUT 调试注入能力当成实体触摸或手柄。应用在 `package.json` 的
+`interaction` 中声明完整操作方案，构建后签入 manifest；`compatibility`
+检查动作、触摸点数、组合键冲突、长按和系统保留手势。多套方案任选一套完整可用。
+具体字段和创作流程见 [操作适配](skills/pxa-app-dev/references/interaction.md)。
+这是一致性判断，不能代替真机操作验收；旧项目没有声明时仍显示未知。
+
 ## AI 平台
 
 | 平台 | 自动安装到项目内 | 使用方式 |

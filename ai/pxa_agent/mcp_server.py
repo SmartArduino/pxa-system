@@ -147,10 +147,10 @@ def create_server(env):
         return host_job(arguments,timeout=1800,reload_environment=True)
 
     @tool(annotations=read)
-    def pxa_device_profile(port: str | None = None, baud: int = 2000000, package: str | None = None) -> dict:
+    def pxa_device_profile(port: str | None = None, baud: int = 2000000, package: str | None = None, serial_profile: str | None = None) -> dict:
         """Read device resolution, CPU, debug inputs and sensor descriptors; without a port list candidates and PXADB setup steps. Confirm physical controls and adaptive layout with the user."""
         from .device_profile import inspect
-        return inspect(env, port, baud, package)
+        return inspect(env, port, baud, package, serial_profile)
 
     @tool(annotations=read)
     def pxa_check_compatibility(package: str, port: str, baud: int = 2000000) -> dict:

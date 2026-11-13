@@ -16,7 +16,7 @@ from assemble import archive, run, sha, tracked_tree_files
 def build(source: Path, output: Path, key: Path, *, allow_dirty=False, workspace=None):
     workspace = Path(workspace).resolve() if workspace else source.parents[1]
     host_files = {name:workspace/'tools/pxadb'/name for name in
-                  ('pxadb.py','pxa_local_socket.py','ui_query.py','package_compatibility.py')}
+                  ('pxadb.py','pxa_local_socket.py','ui_query.py','package_compatibility.py','interaction_contract.py')}
     host_files['simulator_pxadb.py'] = workspace/'tools/simulator_pxadb.py'
     if any(not path.is_file() or path.is_symlink() for path in host_files.values()):
         raise ValueError('AI Kit needs canonical host clients; use --workspace with the PXA workspace root')
