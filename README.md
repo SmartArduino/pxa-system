@@ -1,103 +1,86 @@
 # PXA System
 
-[English](README.en.md)
+[English](README.en.md) · [开发文档](docs/README.zh-CN.md) · [下载 DevKit](https://pxa.doit.am/docs/downloads/)
 
 <picture><source media="(prefers-color-scheme: dark)" srcset="branding/dist/pxa-horizontal-dark.svg"><img src="branding/dist/pxa-horizontal-light.svg" alt="PXA" width="192" height="64"></picture>
 
-系统、设备开机与网页统一使用 [PXA 正式标识 v1](branding/README.md)。
+PXA（Portable eXecutable Application）是面向嵌入式设备的可移植应用系统。应用以签名 `.pxa` 包交付，在设备上独立安装和更新；系统提供统一的应用生命周期、界面、权限与服务接口。
 
-PXA（Portable eXecutable Application，可移植可执行应用）是面向嵌入式产品的应用系统。应用以签名 `.pxa` 包独立开发、安装和更新；系统为原生应用与 PXA 应用提供统一的身份、生命周期、界面、权限和服务契约。核心不依赖 LVGL，产品可以选择自己的渲染器和驱动。
+- **应用运行环境**：原生应用与沙箱 PXA 应用共用身份、生命周期和系统服务契约。
+- **标准系统界面**：桌面、设置、主题、本地化与显示配置，适配不同屏幕和输入方式。
+- **C++ 开发工具**：C++26 Guest SDK、应用模板、WASI/AOT 工具链、签名打包与桌面模拟器。
+- **产品集成接口**：核心与具体板型、驱动及渲染器分离；LVGL 后端可按产品需要选用。
 
-## 开发 C++26 应用
+## 界面预览
 
-下载 [DevKit 0.11.0](https://github.com/SmartArduino/pxa-system/releases/tag/v0.11.0)。完整包包含 SDK、WASI/AOT 工具链、Python、CMake/Ninja、PXADB 与预编译模拟器，无需先构建固件。Linux 原生包要求 x86_64、glibc 2.39+；Windows x64 提供预编译包，并在发行清单标明 Windows/Wine 验证范围。
+| 应用桌面 | 系统设置 |
+| :---: | :---: |
+| <img src="docs/images/desktop.zh-CN.png" width="300" alt="PXA 桌面与独立安装的应用"> | <img src="docs/images/settings.zh-CN.png" width="300" alt="PXA 深色设置界面"> |
+
+真实标准 UI 模拟器画面。图中的应用来自 [pxa-apps](https://github.com/SmartArduino/pxa-apps)，独立于系统安装。
+
+## 创建第一个应用
+
+从[下载页](https://pxa.doit.am/docs/downloads/)选择适合主机的 DevKit，按[安装说明](https://pxa.doit.am/docs/setup/)将其 `bin` 加入 `PATH`，然后运行：
 
 ```sh
-export PATH="$PWD/pxa-devkit-0.11.0-linux-x86_64/bin:$PATH"
+pxa --version
 pxa init hello
 pxa run hello
-# 关闭模拟器后再打包：
-pxa build hello --target esp32s3,esp32s31,simulator --offline
+```
+
+DevKit 包含 SDK、编译工具、打包工具和预编译模拟器。项目通过 CMake 描述源码与依赖，通过 `pxa.lock` 固定 SDK 和工具链输入。
+
+关闭模拟器后，可构建应用包并检查发布条件：
+
+```sh
+pxa build hello --target esp32s3,esp32s31,simulator
 pxa publish hello/dist/pxa-hello.pxa --check-only
 ```
 
-默认 C++26、O3，CMake 是唯一的源文件与依赖描述；`pxa.lock` 固定发行版本和工具链输入。开发私钥在 SDK 外的用户数据目录生成。正式发布使用自己保存的长期密钥。
+实际部署时，设备固件须满足应用声明的架构、服务与能力要求。完整流程见 [第一个应用](https://pxa.doit.am/docs/first-app/) · [C++ SDK](sdk/guest-cpp/README.zh-CN.md) · [DevKit 与版本锁定](docs/zh-CN/devkit.md)。
 
-[入门教程](https://pxa.doit.am/docs/first-app/) · [C++ SDK](sdk/guest-cpp/README.zh-CN.md) · [架构与协议文档](docs/README.zh-CN.md)
+### 使用编程助手
 
-[PXA Agent Kit](ai/README.md) 提供一句话环境准备、Codex/Claude Code/DSH 接入、MCP、真实 Guest 调试、USB 安装、官方固件升级与商城短码授权。支持 DevKit 0.11.0，独立签名发行，不增加设备运行开销。把这句话交给编程助手：
+[PXA Agent Kit](ai/README.md) 提供环境准备、应用开发、模拟器验证与设备调试入口。可将下面这句话交给编程助手：
 
 > 请读取 https://pxa.doit.am/ai.md，在当前目录为我配置 PXA 开发环境，运行模拟器检查环境，然后等待我的应用需求。
 
-## 目录与边界
-
-```text
-libpxa/                    可移植 Host 运行库
-system/core/               身份、生命周期、Intent、RPC、角色与主题
-system/runtimes/           原生与 PXA 应用运行时
-system/standard/           标准系统组合入口
-ui/                        系统界面、渲染器与可选 LVGL 后端
-services/                  系统与产品服务接口
-sdk/guest-cpp/             持续维护的 C++26 Guest SDK
-tools/pxa_tools/                   独立 DevKit 命令行与分发工具
-sdk/templates/             pxa init 使用的应用模板
-sdk/cmake/                 WASI 工具链与应用 CMake 支持
-sdk/guest-c/                旧绑定与协议参考，新应用使用 C++ SDK
-wamr/                      固定提交的运行时子模块
-config/                    运行时与编译器版本约束
-platforms/esp-idf/          ESP-IDF 集成支持
-simulator/                 无界面及 SDL2/LVGL 桌面模拟器
-spec/                      协议、服务规格与测试向量
-tools/package/             清单、签名与打包工具
-scripts/                   Host 构建、测试与 SDK 发布入口
-```
-
-板级驱动与产品业务不放入可移植核心。产品通过服务、渲染器和角色接口接入自己的实现。原生应用链接原生绑定，PXA 应用使用 Guest SDK。
-
 ## 从源码构建系统
 
-以下命令面向系统维护者，与上面的独立应用开发二选一：
+系统维护者可以独立构建 Host 运行库、模拟器与测试：
 
 ```sh
 git clone --recurse-submodules https://github.com/SmartArduino/pxa-system.git
 cd pxa-system
-cmake -S . -B /tmp/pxa-system-build
-cmake --build /tmp/pxa-system-build
-ctest --test-dir /tmp/pxa-system-build --output-on-failure
+cmake -S . -B build
+cmake --build build --parallel
+ctest --test-dir build --output-on-failure
 ```
 
-Host 构建需要 C/C++ 编译器、CMake、OpenSSL、LZ4、SDL2 与 libpng 开发包。桌面模拟器默认获取固定版本 LVGL 9.5；离线构建可设置 `PXSYS_LVGL_SOURCE_DIR` 指向已有的 LVGL 9.5 源码。详见[桌面模拟器](simulator/desktop/README.md)。
+主机需安装 C/C++ 编译器、CMake，以及 OpenSSL、LZ4、SDL2、libpng 开发包。桌面模拟器的依赖和离线配置见 [构建说明](simulator/desktop/README.md)。
 
-`scripts/test-host.sh` 提供相同的默认构建与测试流程。`scripts/package-sdk.sh` 生成可安装的原生系统 SDK；它与面向 Guest 应用的 DevKit 是不同交付物。
+ESP 固件与板级驱动在 [pxa-workspace](https://github.com/SmartArduino/pxa-workspace) 维护。接入自己的产品见 [产品集成](docs/zh-CN/product-integration.md) 和 [显示与系统 UI](docs/zh-CN/display-and-system-ui.md)。
 
-## 运行时与工具链
+## 源码导航
 
-`config/wamr.json` 固定 WAMR 提交（当前标识 `78-wamr-6a54186a`）、AOT 引擎 ABI 和 Espressif LLVM 提交。更新运行时需核对 ESP 补丁、更新元数据并重新生成 AOT，不应只替换某个编译器二进制。
+| 目录 | 内容 |
+| --- | --- |
+| `libpxa/` | 可移植 Host 运行库与平台适配 |
+| `system/` | 系统核心、应用运行时与标准组合 |
+| `ui/` | 系统界面、渲染器与 LVGL 后端 |
+| `services/` | 系统服务与产品扩展接口 |
+| `sdk/guest-cpp/`、`sdk/templates/` | C++ SDK 与应用模板 |
+| `tools/pxa_tools/`、`tools/package/` | DevKit 命令行、打包与签名 |
+| `ai/` | Agent Kit 与编程助手接入 |
+| `simulator/` | 无界面、桌面与浏览器模拟器 |
+| `spec/`、`config/` | 协议规格与运行时版本约束 |
 
-`tools/package/build_wamrc.sh` 使用本仓库的 `wamr/`；生成源码与编译缓存在 `.pxa/`，可用 `PXA_WAMR_CACHE_DIR` 重定位。缓存键包含 WAMR 与 LLVM 提交。工具保留 X86、Xtensa、ARM、AArch64、Mips 与 RISC-V 后端；新增目标仍须补齐打包和设备支持。
+## 文档与反馈
 
-Guest 编译使用 WASI SDK 34.0（Clang 23）。源码打包工具依次读取 `PXA_WASI_SDK_DIR`、`WASI_SDK_DIR`、`WASI_SDK_PATH`，再检查 `/opt/wasi-sdk` 和缓存。`PXA_WASI_SDK_AUTO_DOWNLOAD=0` 禁止自动下载，`PXA_WASI_SDK_CACHE_DIR` 改变缓存目录。DevKit 自带工具链，不需要另行下载。
+- [架构与接口文档](docs/README.zh-CN.md)
+- [应用与协议模型](docs/zh-CN/app-protocol.md) · [可移植性与扩展](docs/zh-CN/portability.md)
+- [发行版与发布说明](https://github.com/SmartArduino/pxa-system/releases)
+- [缺陷反馈、功能建议与使用咨询](https://github.com/SmartArduino/pxa-system/issues/new/choose)，提供独立中文、英文表单
 
-ESP 运行时只为清单明确声明 pinned memory 的组件保留固定线性内存；普通组件保持可增长内存行为。
-
-普通 AOT 支持从 Flash／SD 的文件后端分段读入最终代码区，降低启动峰值；也可显式选择 Wasm 解释执行。接入、内存边界与验证方式见 [AOT 加载说明](docs/zh-CN/aot-loading.md)。当前不支持 XIP。
-
-## ESP-IDF 集成
-
-将本目录作为 ESP-IDF component，或将父目录加入 `EXTRA_COMPONENT_DIRS`。根 `CMakeLists.txt` 自动识别 IDF；核心组件不要求 LVGL。
-
-需要 LVGL 渲染器时，将 `platforms/esp-idf/components` 加入组件搜索路径，并依赖 `pxa_system_renderer_lvgl`。执行 PXA 时还需引入 `wamr/`。ESP 兼容配置集中在 `platforms/esp-idf`，产品代码调用该入口。
-
-[产品集成](docs/zh-CN/product-integration.md) · [显示与系统 UI](docs/zh-CN/display-and-system-ui.md) · [ESP 产品工作区](https://github.com/SmartArduino/pxa-workspace)
-
-## 兼容性
-
-当前维护的 Guest ABI 是 Core 2.0，导入接口为 `pxa.core.v2::pxa_call` 和 `pxa_io`。C++ 源码 API 仍处于 1.0 之前，允许演进；使用 `pxa.lock` 固定输入，显式升级后重新编译和测试。Host 结构携带 `struct_size`，线协议使用明确版本。
-
-AOT 引擎 ABI 与 Guest Core 版本分别管理：引擎标签中的 `core-1` 不是 Guest Core 1。旧 Core 1 包不能直接在 Core 2 Host 运行；设备还须满足应用声明的服务、功能与目标架构要求。
-
-## 关于 DOIT
-
-公司：**深圳四博智联科技有限公司（DOIT）**。
-
-[公司官网](https://doit.am/) · [关于 PXA 与 DOIT](https://pxa.doit.am/about/)
+本仓库采用 [MIT 许可证](LICENSE)；第三方组件保留各自的许可声明。依赖变更遵循[系统许可证策略](docs/zh-CN/system-license-policy.md)。
