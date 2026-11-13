@@ -1,11 +1,8 @@
 blank_issues_enabled: false
 contact_links:
-  - name: PXA 文档 / Documentation
+  - name: PXA 使用说明（中文）
     url: https://pxa.doit.am/docs/
-    about: 开发入门、安装与使用说明 / Getting started, installation and usage guides.
-  - name: pxa-workspace
-    url: https://github.com/SmartArduino/pxa-workspace/issues/new/choose
-    about: ESP 固件、板级驱动、烧录、工作区脚本与显示配置 / ESP firmware, board drivers, flashing, workspace scripts and display profiles
-  - name: pxa-apps
-    url: https://github.com/SmartArduino/pxa-apps/issues/new/choose
-    about: PXA 应用、游戏、商城客户端与 common 共享应用代码 / PXA apps, games, store client and shared application code
+    about: 阅读开发入门、安装与使用说明。
+  - name: PXA Documentation (English)
+    url: https://github.com/SmartArduino/pxa-system/blob/main/README.en.md
+    about: Read setup, development and usage instructions in English.

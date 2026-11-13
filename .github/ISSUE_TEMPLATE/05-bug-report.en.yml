@@ -1,0 +1,107 @@
+name: English | Bug report
+description: Report a bug, crash or unexpected behavior.
+title: '[Bug] '
+body:
+  - type: markdown
+    attributes:
+      value: |-
+        This repository covers: System runtime, services, UI, SDK, DevKit, Agent Kit, packaging tools and simulator implementation.
+
+        - [pxa-workspace](https://github.com/SmartArduino/pxa-workspace/issues/new?template=05-bug-report.en.yml): ESP firmware, board drivers, flashing, workspace scripts and display profiles.
+        - [pxa-apps](https://github.com/SmartArduino/pxa-apps/issues/new?template=05-bug-report.en.yml): PXA apps, games, store client and shared application code.
+
+        If unsure, report what you observed and link related issues. Please avoid duplicate reports.
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched [existing issues](https://github.com/SmartArduino/pxa-system/issues?q=is%3Aissue) and
+            found no duplicate.
+          required: true
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      options:
+        - Host runtime and ABI
+        - System core and services
+        - System UI and renderers
+        - Guest SDK and app templates
+        - DevKit, packaging and signing tools
+        - Agent Kit and MCP
+        - Simulator implementation
+        - Unsure or other
+    validations:
+      required: true
+  - type: textarea
+    id: version
+    attributes:
+      label: Versions
+      description: Include the DevKit/SDK version or system commit, plus device firmware and locked SDK versions
+        when relevant; use unknown if unavailable.
+      placeholder: |-
+        DevKit / SDK version (pxa --version):
+        pxa-system commit (source builds only):
+        Device firmware version (if relevant):
+        SDK release from pxa.lock (if relevant):
+        Agent Kit version (if relevant):
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Include host OS, runtime target and execution mode, with board/chip for devices or display profile
+        for UI issues; use N/A where appropriate.
+      placeholder: |-
+        Host OS / architecture:
+        Device / desktop simulator / headless simulator / browser:
+        Board / chip / display profile (if relevant):
+        Execution mode / package target (if known):
+        Compiler / CMake / Python / browser versions (if relevant):
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: Actual behavior
+      description: Describe the error and its impact; report one problem per issue.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Include exact commands, configuration or a minimal example; describe triggers and frequency for
+        intermittent issues.
+      placeholder: |-
+        1. Prepare versions, target and minimal project
+        2. Run the command or call the API
+        3. Observe the result
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: Describe what should happen with the same steps.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Paste relevant logs with surrounding context, without code fences; remove private keys, tokens
+        and personal data.
+      render: text
+    validations:
+      required: false
+  - type: textarea
+    id: additional
+    attributes:
+      label: Attachments and context
+      description: Attach screenshots, recordings or a minimal reproducer; include known working versions, workarounds
+        and related issues if available.
+    validations:
+      required: false
