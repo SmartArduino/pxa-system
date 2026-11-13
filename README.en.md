@@ -1,159 +1,86 @@
 # PXA System
 
+[简体中文](README.md) · [Documentation](docs/README.md) · [Download DevKit](https://pxa.doit.am/docs/downloads/)
+
 <picture><source media="(prefers-color-scheme: dark)" srcset="branding/dist/pxa-horizontal-dark.svg"><img src="branding/dist/pxa-horizontal-light.svg" alt="PXA" width="192" height="64"></picture>
 
-The system, boot screens and websites share the [official PXA v1 identity](branding/README.md).
+PXA (Portable eXecutable Application) is a portable application system for embedded devices. Apps ship as signed `.pxa` packages and can be installed or updated independently. The system provides shared application lifecycle, UI, permission and service interfaces.
 
-[简体中文](README.md)
+- **Application environment**: native apps and sandboxed PXA apps share identity, lifecycle and system service contracts.
+- **Standard system UI**: desktop, settings, themes, localization and display profiles for different screens and input methods.
+- **C++ development tools**: a C++26 Guest SDK, app templates, WASI/AOT toolchains, signed packaging and a desktop simulator.
+- **Product integration**: a core separated from specific boards, drivers and renderers, with an optional LVGL backend.
 
-PXA System is a portable application system for embedded products. This tree
-is intentionally self-contained so it can become its own Git repository or be
-embedded directly in a product repository.
+## Preview
 
-The system gives native and PXA applications the same identity, lifecycle,
-Intent, RPC, event, role and service contracts. Native applications link the
-native C binding and do not use the PXA Guest SDK. LVGL is an optional renderer,
-not a dependency of the system core.
+| Application desktop | System settings |
+| :---: | :---: |
+| <img src="docs/images/desktop.en.png" width="300" alt="PXA desktop with independently installed apps"> | <img src="docs/images/settings.en.png" width="300" alt="PXA settings in light mode"> |
 
-## Develop a C++26 app
+Captured from the real standard UI simulator. The apps shown come from [pxa-apps](https://github.com/SmartArduino/pxa-apps) and are installed separately from the system.
 
-Download [DevKit 0.5.0](https://github.com/SmartArduino/pxa-system/releases/tag/v0.5.0). The full Linux x86_64 archive contains the SDK, WASI/AOT toolchains, Python, CMake/Ninja, PXADB and a prebuilt simulator; glibc 2.39+ is required.
+## Create your first app
+
+Choose a DevKit for your host from the [downloads page](https://pxa.doit.am/docs/downloads/) and follow the [setup guide](https://pxa.doit.am/docs/setup/) to add its `bin` directory to `PATH`. Then run:
 
 ```sh
-export PATH="$PWD/pxa-devkit-0.5.0-linux-x86_64/bin:$PATH"
+pxa --version
 pxa init hello
 pxa run hello
-pxa build hello --target esp32s3,esp32s31,simulator --offline
+```
+
+DevKit includes the SDK, compilers, packaging tools and a prebuilt simulator. CMake describes project sources and dependencies; `pxa.lock` pins the SDK and toolchain inputs.
+
+Close the simulator, then build a package and check it for publishing:
+
+```sh
+pxa build hello --target esp32s3,esp32s31,simulator
 pxa publish hello/dist/pxa-hello.pxa --check-only
 ```
 
-Close the simulator before building the release. Project CMake is the single source graph, O3 is the default, and `pxa.lock` pins the release/toolchain inputs. Publisher private keys are generated outside the SDK. See the [C++ SDK guide](sdk/guest-cpp/README.zh-CN.md) and [website tutorials (Chinese)](https://pxa.doit.am/docs/first-app/). System maintainers can build from source below.
+Device firmware must support the app's declared architecture, services and capabilities. See [Your first app](https://pxa.doit.am/docs/first-app/), the [C++ SDK guide (Chinese)](sdk/guest-cpp/README.zh-CN.md) and [DevKit and project locking (Chinese)](docs/zh-CN/devkit.md).
 
-The signed [PXA Agent Kit](ai/README.en.md) prepares DevKit 0.5.0 in one command and connects Codex, Claude Code, DSH and other assistants through local skills, CLI and MCP. It supports actual Guest debugging, USB installation, official firmware updates and browser-approved app-scoped store uploads. Start by asking your assistant to read https://pxa.doit.am/ai.md. Existing global settings and device runtime performance are preserved.
+### Work with a coding assistant
 
-## Repository layout
+[PXA Agent Kit](ai/README.en.md) provides environment setup, app development, simulator verification and device debugging. Give your assistant this request:
 
-```text
-pxa-system/
-  CMakeLists.txt              standalone CMake and ESP component entry
-  apps/pxa/                   legacy examples and signing fixtures
-  cmake/                      shared source manifests and package helpers
-  wamr/                        upstream WAMR runtime submodule
-  libpxa/                     platform-neutral PXA Host library
-  system/core/                identity, lifecycle, Intent, RPC, roles, themes
-  system/runtimes/native/     native-static application runtime
-  system/runtimes/pxa/        libpxa-backed application runtime binding
-  system/standard/            standard composition root
-  ui/reference/               reference shell and standard Native App boundary
-  ui/renderers/               backend-neutral renderer implementations
-  ui/backends/lvgl/           optional LVGL-only helpers, including page_manager
-  services/                   standard and vendor service provider boundary
-  sdk/guest-cpp/              maintained C++26 Guest SDK
-  tools/pxa_tools/                    independent DevKit CLI and distribution
-  sdk/guest-c/                legacy binding and protocol reference
-  sdk/cmake/                  WASI toolchain and PXA App CMake helpers
-  tools/package/              manifest, signing and package tools
-  tools/wamr/                 WAMR metadata and patch verification
-  scripts/                    host build, test and SDK release scripts
-  platforms/esp-idf/          ESP-IDF integration helpers
-  simulator/                  backend-neutral smoke simulator
-  examples/                   installed SDK and integration examples
-  spec/                       wire/service specifications and golden vectors
-  docs/                       architecture, protocol and porting documents
-```
+> Read https://pxa.doit.am/ai.md, set up the PXA development environment in the current directory, run the simulator to check the environment, then wait for my app requirements.
 
-Product-specific hardware services and UI implementations are not part of the
-portable core. A product registers them through service, renderer and system
-role provider interfaces. The current firmware's `app_pages` and ESP PXA host
-bridges are examples of such external product adapters.
+## Build the system from source
 
-Clone this tree with its runtime and UI dependencies:
+System maintainers can build the Host runtime, simulators and tests independently:
 
 ```sh
 git clone --recurse-submodules https://github.com/SmartArduino/pxa-system.git
 cd pxa-system
+cmake -S . -B build
+cmake --build build --parallel
+ctest --test-dir build --output-on-failure
 ```
 
-The checked-in WAMR submodule is detached at the exact commit declared in
-`config/wamr.json`; it currently identifies as `78-wamr-6a54186a`. The same metadata
-file owns the AOT engine ABI and Espressif LLVM pin. Updating WAMR is an
-ABI-impacting operation: rebase and verify the ordered ESP patches, update the
-metadata, and regenerate packages with `tools/package/build_wamrc.sh` before
-deployment.
+Install a C/C++ compiler, CMake, and development packages for OpenSSL, LZ4, SDL2 and libpng. See the [desktop simulator guide](simulator/desktop/README.md) for dependencies and offline configuration.
 
-Its ESP runtime uses the pinned WAMR API to reserve linear memory only for
-Components whose signed package manifest declares pinned memory; ordinary
-Components keep WAMR's normal growable-memory behavior.
+ESP firmware and board drivers live in [pxa-workspace](https://github.com/SmartArduino/pxa-workspace). For your own product, see [Product integration](docs/product-integration.md) and [Display profiles and system UI](docs/display-and-system-ui.md).
 
-`build_wamrc.sh` uses `wamr/` as its only WAMR source checkout. It stores the
-host LLVM checkout, the out-of-tree `wamrc` build and compiler cache under
-`.pxa/`; those generated files can be relocated with
-`PXA_WAMR_CACHE_DIR`. Its Xtensa backend is pinned to Espressif LLVM 18.1.2
-revision declared in `config/wamr.json`. The `wamrc` cache key includes both the WAMR and LLVM
-commits so switching toolchains cannot reuse an incompatible compiler binary.
-The host compiler retains the AArch64, ARM, Mips, RISC-V, X86 and Xtensa
-backends, so the same toolchain can generate AOT artifacts for ESP32-P4 and
-other supported devices as targets are added to the package flow. ESP32-P4
-uses `--target=riscv32 --target-abi=ilp32f --cpu=esp32p4`; the explicit ABI is
-required because WAMR otherwise defaults RISC-V 32-bit output to `ilp32d`.
+## Source map
 
-CMake/WASI Apps additionally need wasi-sdk 34.0 (Clang 23). Packaging first honors
-`PXA_WASI_SDK_DIR`, `WASI_SDK_DIR` and `WASI_SDK_PATH`, then `/opt/wasi-sdk`,
-and finally the cached SDK under `.pxa`. If none exists, it downloads
-the pinned, checksum-verified SDK to that cache. Set
-`PXA_WASI_SDK_AUTO_DOWNLOAD=0` to prohibit downloads in an offline build.
-Set `PXA_WASI_SDK_CACHE_DIR` to relocate the cache.
+| Directory | Contents |
+| --- | --- |
+| `libpxa/` | Portable Host runtime and platform adapters |
+| `system/` | System core, app runtimes and standard composition |
+| `ui/` | System UI, renderers and LVGL backend |
+| `services/` | System services and product extension interfaces |
+| `sdk/guest-cpp/`, `sdk/templates/` | C++ SDK and app templates |
+| `tools/pxa_tools/`, `tools/package/` | DevKit CLI, packaging and signing |
+| `ai/` | Agent Kit and coding assistant integration |
+| `simulator/` | Headless, desktop and browser simulators |
+| `spec/`, `config/` | Protocol specifications and runtime version constraints |
 
-## Standalone build
+## Documentation and feedback
 
-```sh
-cmake -S . -B /tmp/pxa-system-build
-cmake --build /tmp/pxa-system-build
-ctest --test-dir /tmp/pxa-system-build --output-on-failure
-```
+- [Architecture and interface documentation](docs/README.md)
+- [Application and protocol model](docs/app-protocol.md) · [Portability and extensions](docs/portability.md)
+- [Releases and release notes](https://github.com/SmartArduino/pxa-system/releases)
+- [Bug reports, feature requests and questions](https://github.com/SmartArduino/pxa-system/issues/new/choose), with separate English and Chinese forms
 
-The default build includes libpxa with the bundled WAMR adapter, native and
-PXA runtime bindings, the standard composition, headless renderer, tests and
-the headless and SDL2/LVGL standard-UI simulators. It needs OpenSSL, `liblz4`
-and SDL2 development packages for
-the host installer adapter. The desktop simulator additionally needs libpng.
-The desktop simulator downloads pinned LVGL 9.5 by default. For offline builds,
-set `PXSYS_LVGL_SOURCE_DIR` to an existing LVGL 9.5 checkout. See
-[`simulator/desktop`](simulator/desktop/README.md).
-
-`scripts/test-host.sh` provides the same default build and test flow.
-`scripts/package-sdk.sh` creates an installable SDK archive containing libpxa,
-PXA System headers, libraries and CMake package metadata.
-
-## ESP-IDF component
-
-Place this directory at `components/pxa_system`, use it through a Git component,
-or add its parent to `EXTRA_COMPONENT_DIRS`. Its root `CMakeLists.txt` detects
-ESP-IDF and registers the portable foundation as one component named after the
-directory. The component deliberately does not require LVGL.
-
-For the optional LVGL renderer, add
-`platforms/esp-idf/components` to `EXTRA_COMPONENT_DIRS` and require
-`pxa_system_renderer_lvgl`. A product may instead provide another renderer.
-
-For PXA execution, add `wamr/` to `EXTRA_COMPONENT_DIRS` and require `wamr`.
-The ESP32-S3 WAMR compatibility setup lives under `platforms/esp-idf`; product
-components call it rather than referring to a Component Manager installation.
-`ui/backends/lvgl/page_manager` is the canonical LVGL page stack; the parent
-firmware keeps `components/page_manager` only as a compatibility component.
-
-See [Product integration](docs/product-integration.md) for system UI, service
-and driver overrides.
-See [Display profiles and standard UI](docs/display-and-system-ui.md) for
-responsive layout, shape simulation, role replacement, and UI backend ports.
-The complete bilingual document map is in [`docs/`](docs/README.md).
-
-## Compatibility policy
-
-The maintained Guest ABI is Core 2.0 (`pxa.core.v2::pxa_call` and `pxa_io`). C++ source APIs remain pre-1.0 and may change; lock the SDK with `pxa.lock`, explicitly upgrade, then rebuild and test. Host structures carry `struct_size`, and wire formats have explicit versions. AOT engine compatibility is separately pinned in `config/wamr.json`; the `core-1` suffix of that engine tag is not the Guest Core version. Old Core 1 packages are not compatible with Core 2.
-
-## About DOIT
-
-Company: **深圳四博智联科技有限公司 (DOIT)**.
-
-[Company website](https://doit.am/) · [About PXA and DOIT](https://pxa.doit.am/about/)
+This repository uses the [MIT license](LICENSE). Third-party components retain their own notices. Dependency changes follow the [system license policy](docs/zh-CN/system-license-policy.md).
