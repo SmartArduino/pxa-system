@@ -1,5 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 project(pxa_browser C)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 if(NOT EMSCRIPTEN)
   message(FATAL_ERROR "Configure with emcmake cmake")
 endif()
@@ -13,7 +14,6 @@ add_subdirectory(../../libpxa pxa)
 include(../../cmake/PxaDesktopLvgl.cmake)
 pxsys_prepare_desktop_lvgl("${CMAKE_CURRENT_SOURCE_DIR}")
 pxa_restrict_lvgl(lvgl)
-set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 add_custom_target(browser_license_gate
   COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/../../tools/licensing/check_system_licenses.py"

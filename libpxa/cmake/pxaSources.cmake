@@ -11,8 +11,6 @@ function(pxa_collect_sources output root)
         src/services/window/window_service.c
         src/services/clock/clock_timing.c
         src/services/lease/lease_service.c
-        src/services/permission/permission_service.c
-        src/services/permission/permission_policy.c
         src/services/ipc/ipc_service.c
         src/services/ipc/ipc_codec.c
         src/services/ime/ime_service.c
@@ -74,6 +72,13 @@ function(pxa_collect_sources output root)
         src/package/container.c
         src/package/activation.c
         src/package/slot_transaction.c)
+    if(DEFINED PXA_ENABLE_PERMISSIONS AND NOT PXA_ENABLE_PERMISSIONS)
+        list(APPEND relative_sources src/services/permission/permission_allow_all.c)
+    else()
+        list(APPEND relative_sources
+            src/services/permission/permission_service.c
+            src/services/permission/permission_policy.c)
+    endif()
     set(sources)
     foreach(source IN LISTS relative_sources)
         list(APPEND sources "${root}/${source}")

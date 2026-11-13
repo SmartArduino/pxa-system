@@ -72,6 +72,7 @@ static pxa_status_t file_rename(void *c,pxa_bytes_t from,pxa_bytes_t to) {
 static pxa_status_t file_replace(void *c,pxa_bytes_t from,pxa_bytes_t to) {
     pxa_status_t s=native_fs.replace(c,from,to);if(!s)storage_changed();return s;
 }
+#if PXA_ENABLE_PERMISSIONS
 static pxa_permission_declaration_t declarations[135]={
     {BYTES("audio.playback"),BYTES("media"),0}};
 static uint8_t origins[64][512],socket_scopes[64][512];
@@ -103,6 +104,8 @@ static pxa_status_t permission_load(void *c,pxa_bytes_t identity,pxa_bytes_t nam
 static pxa_status_t permission_save(void *c,pxa_bytes_t i,pxa_bytes_t n,pxa_bytes_t s,pxa_permission_decision_t d) {
     (void)c;(void)i;(void)n;(void)s;(void)d;return PXA_STATUS_UNSUPPORTED;
 }
+#endif
+
 static pxa_status_t get_mac(void *c,uint16_t kind,uint8_t out[6],uint32_t *flags) {
     (void)c;(void)kind;(void)out;(void)flags;return PXA_STATUS_UNSUPPORTED;
 }
@@ -124,6 +127,7 @@ pxa_status_t browser_services_init(pxa_runtime_t *runtime) {
         .features=PXA_WASI_FEATURE_STDIO|PXA_WASI_FEATURE_CLOCKS|PXA_WASI_FEATURE_RANDOM|
                   PXA_WASI_FEATURE_ARGUMENTS|PXA_WASI_FEATURE_ENVIRONMENT,.control=wasi_control};
     CHECK(pxa_service_register(runtime,&wasi));
+#if PXA_ENABLE_PERMISSIONS
     unsigned declaration_count=1;
     for(unsigned i=0;i<64;++i){
         int n=socket_scope(i,socket_scopes[i],sizeof(socket_scopes[i]));if(!n)break;
@@ -141,6 +145,9 @@ pxa_status_t browser_services_init(pxa_runtime_t *runtime) {
     pxa_permission_config_t pc={.struct_size=sizeof(pc),.app_identity=BYTES("browser.app"),
         .declarations=declarations,.declaration_count=declaration_count,.max_authorities=16,
         .store={.struct_size=sizeof(pxa_permission_store_t),.load=permission_load,.save=permission_save}};
+#else
+    pxa_permission_config_t pc={.struct_size=sizeof(pc),.max_authorities=16};
+#endif
     size_t size=pxa_permission_service_workspace_size(&pc);
     CHECK(pxa_permission_service_init(calloc(1,size),size,runtime,&pc,&permissions));
     CHECK(pxa_permission_policy_load(permissions));CHECK(pxa_permission_service_register(permissions));

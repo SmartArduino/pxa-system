@@ -19,6 +19,7 @@
 
 #include "lvgl.h"
 #include "pxa/package.h"
+#include "pxa/permission.h"
 #include "pxa/version.h"
 #include "pxa/posix/pxa_posix_ime.h"
 #include "pxa/lvgl/pxa_lvgl_ime.h"
@@ -1161,6 +1162,7 @@ static void simulator_launcher_save(void* context, const char* order) {
 /* Permissions. The desktop adapter reads declared permissions from the
  * installed package manifest and keeps toggle decisions in memory: the UI
  * simulator does not own a persistent permission store. */
+#if PXA_ENABLE_PERMISSIONS
 #define SIMULATOR_PERMISSION_OVERRIDE_MAX 48
 
 typedef struct {
@@ -1197,6 +1199,8 @@ static int simulator_permission_decision(const char* app_id,
     }
     return 0;
 }
+
+#endif
 
 /* Parses the installed manifest. Callers release *encoded and *workspace. */
 static int simulator_load_manifest(const simulator_catalog_t* catalog,
@@ -1249,6 +1253,7 @@ static int simulator_load_manifest(const simulator_catalog_t* catalog,
     return 1;
 }
 
+#if PXA_ENABLE_PERMISSIONS
 static size_t simulator_list_app_permissions(
     void* context, const char* identity,
     pxsys_reference_app_permission_t* output, size_t capacity) {
@@ -1330,6 +1335,8 @@ static bool simulator_set_app_permission(void* context, const char* identity,
     target->used = 1;
     return true;
 }
+
+#endif
 
 typedef struct {
     pxsys_pxadb_control_t* control;
@@ -2039,9 +2046,11 @@ static int run_simulator(const simulator_options_t* options) {
     ui_config.launcher_order_context = (void*)options->state_root;
     ui_config.launcher_order_load = simulator_launcher_load;
     ui_config.launcher_order_save = simulator_launcher_save;
+#if PXA_ENABLE_PERMISSIONS
     ui_config.app_permission_context = &catalog;
     ui_config.app_permission_list = simulator_list_app_permissions;
     ui_config.app_permission_set = simulator_set_app_permission;
+#endif
     memcpy(ui_config.publisher_root, publisher_root,
            sizeof(ui_config.publisher_root));
     if (pxsys_reference_lvgl_create(&ui_config, &ui) != PXSYS_STATUS_OK)

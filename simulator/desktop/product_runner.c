@@ -3343,6 +3343,7 @@ static pxa_status_t audio_query(void *context, uint64_t session,
     return PXA_STATUS_OK;
 }
 
+#if PXA_ENABLE_PERMISSIONS
 static pxa_status_t permission_load(void *context, pxa_bytes_t identity,
                                     pxa_bytes_t name, pxa_bytes_t scope,
                                     pxa_permission_decision_t *decision) {
@@ -3368,6 +3369,8 @@ static pxa_status_t permission_save(void *context, pxa_bytes_t identity,
     (void)decision;
     return PXA_STATUS_OK;
 }
+
+#endif
 
 #ifndef PXSYS_PRODUCT_RUNNER_LIBRARY
 static void print_usage(const char *program) {
@@ -3876,9 +3879,11 @@ static int run_product_simulator(const options_t *input,
     permission_config.declaration_count = manifest->permission_count;
     permission_config.max_authorities = 8;
     permission_config.max_pending_prompts = 0;
+#if PXA_ENABLE_PERMISSIONS
     permission_config.store.struct_size = sizeof(permission_config.store);
     permission_config.store.load = permission_load;
     permission_config.store.save = permission_save;
+#endif
     permission_workspace = malloc(pxa_permission_service_workspace_size(&permission_config));
     if (permission_workspace == NULL || pxa_permission_service_init(permission_workspace,
         pxa_permission_service_workspace_size(&permission_config), host.runtime,

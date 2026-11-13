@@ -1,6 +1,7 @@
 cmake_minimum_required(VERSION 3.16)
 
 include("${CMAKE_CURRENT_LIST_DIR}/cmake/PxaSystemSources.cmake")
+option(PXA_ENABLE_PERMISSIONS "Build permission policy, persistence and prompts" ON)
 
 if(COMMAND idf_component_register)
     include("${PXSYS_ROOT}/libpxa/cmake/pxaSources.cmake")
@@ -19,6 +20,8 @@ if(COMMAND idf_component_register)
             "${PXSYS_ROOT}/libpxa/include"
         PRIV_INCLUDE_DIRS "${PXSYS_ROOT}/libpxa/src")
     target_compile_features(${COMPONENT_LIB} PUBLIC c_std_99)
+    target_compile_definitions(${COMPONENT_LIB} PUBLIC
+        PXA_ENABLE_PERMISSIONS=$<BOOL:${PXA_ENABLE_PERMISSIONS}>)
     return()
 endif()
 

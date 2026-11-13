@@ -5,6 +5,10 @@
 #include "src/indev/lv_indev_scroll.h"
 #include "src/misc/cache/instance/lv_image_cache.h"
 
+#ifndef PXA_ENABLE_PERMISSIONS
+#define PXA_ENABLE_PERMISSIONS 1
+#endif
+
 /* Temporary bring-up switch: open the input method for the first application
  * text input even before it is focused. */
 #ifndef PXSYS_REFERENCE_UI_DEBUG_INPUT_METHOD
@@ -507,10 +511,12 @@ typedef struct {
     size_t index;
 } wifi_network_control_t;
 
+#if PXA_ENABLE_PERMISSIONS
 typedef struct {
     struct pxsys_reference_lvgl* ui;
     size_t index;
 } app_permission_control_t;
+#endif
 
 typedef struct {
     struct pxsys_reference_lvgl* ui;
@@ -745,16 +751,20 @@ struct pxsys_reference_lvgl {
     pxsys_reference_lvgl_wifi_current_fn wifi_current;
     pxsys_reference_lvgl_wifi_saved_list_fn wifi_saved_list;
     pxsys_reference_lvgl_wifi_forget_fn wifi_forget;
+#if PXA_ENABLE_PERMISSIONS
     void* app_permission_context;
     pxsys_reference_lvgl_app_permission_list_fn app_permission_list;
     pxsys_reference_lvgl_app_permission_set_fn app_permission_set;
+#endif
     pxsys_reference_wifi_network_t wifi_networks[PXSYS_REFERENCE_WIFI_NETWORK_MAX];
     pxsys_reference_wifi_saved_t wifi_saved[PXSYS_REFERENCE_WIFI_NETWORK_MAX];
+#if PXA_ENABLE_PERMISSIONS
     app_permission_control_t
         app_permission_controls[PXSYS_REFERENCE_APP_PERMISSION_MAX];
     pxsys_reference_app_permission_t
         app_permissions[PXSYS_REFERENCE_APP_PERMISSION_MAX];
     size_t app_permission_count;
+#endif
     size_t wifi_network_count;
     size_t wifi_saved_count;
     size_t wifi_scan_state;
@@ -7301,6 +7311,7 @@ static void app_action_clicked(lv_event_t* event) {
     rebuild(ui);
 }
 
+#if PXA_ENABLE_PERMISSIONS
 static void app_permission_changed(lv_event_t* event) {
     app_permission_control_t* control =
         (app_permission_control_t*)lv_event_get_user_data(event);
@@ -7393,6 +7404,8 @@ static void add_app_permissions(pxsys_reference_lvgl_t* ui,
     }
 }
 
+#endif
+
 static const char *managed_app_state(pxsys_reference_lvgl_t *ui,
                                       const pxsys_reference_managed_app_t *app) {
     if (app->archived) return translated(ui,"settings.apps.archived","Archived");
@@ -7483,7 +7496,9 @@ static void show_app_detail(pxsys_reference_lvgl_t* ui,
             PXA_LVGL_ACTION_SECONDARY,app_action_clicked,ui);
         lv_obj_set_user_data(button,(void*)(uintptr_t)PXSYS_REFERENCE_APP_ACTION_MOVE_RESOURCES);
     }
+#if PXA_ENABLE_PERMISSIONS
     add_app_permissions(ui, &layout, panel, app);
+#endif
 
     if (!app->archived) {
         button = make_page_button(
@@ -9329,9 +9344,11 @@ pxsys_status_t pxsys_reference_lvgl_create(
     ui->wifi_current = config->wifi_current;
     ui->wifi_saved_list = config->wifi_saved_list;
     ui->wifi_forget = config->wifi_forget;
+#if PXA_ENABLE_PERMISSIONS
     ui->app_permission_context = config->app_permission_context;
     ui->app_permission_list = config->app_permission_list;
     ui->app_permission_set = config->app_permission_set;
+#endif
     ui->animations_enabled =
         PXSYS_REFERENCE_UI_ENABLE_ANIMATIONS && config->animations_enabled;
     memcpy(ui->publisher_root, config->publisher_root,

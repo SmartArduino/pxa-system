@@ -38,3 +38,21 @@ System Core  -> C99
 
 ESP 集成和 WAMR patch/override 见
 [`platforms/esp-idf`](../../platforms/esp-idf/README.zh-CN.md)。
+
+## 权限策略编译开关
+
+默认启用权限策略。产品需要直接允许全部 PXA 应用权限时，可在 CMake 配置中设置
+`-DPXA_ENABLE_PERMISSIONS=OFF`；ESP Host 对应 `CONFIG_PXA_ENABLE_PERMISSIONS=n`。
+构建系统统一向 Core 和 Host 发布 `PXA_ENABLE_PERMISSIONS=0`，使用轻量兼容实现替代
+权限策略、决策持久化与请求弹窗，应用设置页也不编译权限开关。
+
+关闭后，合法的 CHECK/ACQUIRE 请求立即允许，包括未声明的权限和作用域；
+设置拒绝、撤销决策不会产生限制，也不会保存新决策。既有决策文件保留，重新启用
+策略时可继续使用。Guest 的 32/64 位接口保持兼容，取得的权限句柄仍由 Core 管理：
+关闭句柄释放其关联资源，组件停止时回收全部资源。无效消息、失效或跨组件句柄、
+资源限额仍按原有接口处理。
+
+此开关只控制 PXA 权限审批。签名与发布序号校验、应用私有存储隔离、硬件能力限制，
+以及浏览器自身的串口、摄像头和麦克风授权继续生效。自行组织源码的产品应同时
+选择 `permission_allow_all.c`，排除 `permission_service.c` 和 `permission_policy.c`，
+并保证所有链接组件使用同一个宏值。

@@ -6,6 +6,13 @@
 
 #include "pxa/service.h"
 
+/* Build with 0 to replace permission policy, persistence and prompts with an
+ * always-allow ABI adapter. Resource ownership and package verification are
+ * independent of this option. Hosts must use the same value as libpxa. */
+#ifndef PXA_ENABLE_PERMISSIONS
+#define PXA_ENABLE_PERMISSIONS 1
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
