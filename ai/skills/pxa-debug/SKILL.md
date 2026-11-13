@@ -81,6 +81,16 @@ visible system controls and verify the resulting screenshot before retrying.
 Older Hosts/DevKits lacking this debugger fail explicitly; select a matching
 release through the normal explicit SDK workflow, never patch its installed code.
 
+Check visible text and controls whose `clip` is smaller than their `bounds`;
+successful text assertions and taps can still leave a title or button partly cut
+off. Inspect the original image and correct the layout within the actual safe
+area. Run round and rounded profiles with their ordinary display settings for
+this check. Store capture settings disable those masks and insets, so a passing
+rectangular Store capture does not establish that the ordinary device layout fits.
+Check the recorded steps for each requested profile: an empty step list proves
+launch only. Add the intended journey for that profile before claiming its controls
+or persistence were verified; SDK templates need not cover every supported profile.
+
 `--require-ui` now checks visible retained content, including Canvas, without a
 central-pixel heuristic. It detects a missing/hidden tree but does not prove that
 a Canvas drew the right pixels. Surface-only apps should omit this flag and check

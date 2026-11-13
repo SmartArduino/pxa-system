@@ -189,8 +189,8 @@ struct Timer {
                 Button("重置").on_click([this] { reset(); }).enabled(ready).height(44_dp).grow().justify(Justify::center),
                 Button(mode_text).on_click([this] { reset(true); }).enabled(ready).height(44_dp).grow().justify(Justify::center))
                 .gap(6_dp).fill()
-        ).gap(4_dp).fill().fill_height().justify(Justify::center))
-            .padding(6_dp).background(Color::background);
+        ).gap(2_dp).fill().fill_height().justify(Justify::center))
+            .padding(4_dp).background(Color::background);
     }
 };
 

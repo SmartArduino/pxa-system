@@ -25,6 +25,8 @@ Host 原生工作任务可使用双核。应用兼容性继续以服务和特性
 DevKit 0.11.1 与 Agent Kit 0.7.3 带入最新 PXADB 客户端。POSIX 串口写入遇到
 `EAGAIN` 时交还控制权，命令与上传沿用已有超时和取消路径。AI Kit 默认使用
 DevKit 0.11.1，继续支持签名离线清单、项目 SDK 锁、真实 Guest 验证和矩形商城截图。
+计时器配方收紧间距与外边距，给圆屏安全区域中的标题与完整按钮留出空间。
+调试技能补充部分裁切检查，并区分设备默认布局与关闭遮罩、边距后的商城截图。
 
 Linux x64、Windows x64 与 Linux amd64 容器分别提供独立制品。Linux 原生包要求
 glibc 2.39+；Windows 的 Wine 验证范围不包含原生 Windows 串口、音频与窗口验收。
@@ -50,3 +52,7 @@ backend update. Linux, Windows and container distributions remain separately sig
 Linux requires glibc 2.39+. Wine validation does not establish native Windows hardware
 coverage. Browser Host uses its own version; firmware retains the published 0.11.0
 Store capability snapshot.
+
+The timer recipe uses tighter spacing to fit its title and complete controls inside
+round-screen safe areas. Debugging guidance checks partially clipped content and
+separates ordinary device geometry from rectangular Store captures.
