@@ -1,4 +1,6 @@
-# PXA Agent Kit 0.7.3
+# PXA Agent Kit 0.7.4
+
+0.7.4 新增 `reaction` 游戏配方：30 秒内点中 10 个目标，支持触摸、手柄、暂停/继续、点错或超时结束与重开。生成完整玩法与超时验收场景，帮助 AI 从可玩的循环继续扩展需求；不写存档或申请额外权限。
 
 0.7.3 配合 DevKit 0.11.1，附带更新后的 PXADB 客户端。POSIX 串口写入拥塞时保留命令的超时与取消控制，便于 AI 在设备暂时无响应时报告失败并继续诊断。
 
@@ -32,7 +34,7 @@ uv run --python 3.12 https://pxa.doit.am/setup.py --workspace ./my-pxa
 uv run --python 3.12 --locked --project ./ai ./ai/agent.py --workspace ./my-pxa setup
 ```
 
-`setup` 自动选择官方 DevKit 0.11.1 或签名容器镜像，安装项目内的 skills、平台 MCP 配置、CLI 启动器，最后编译并运行真实 Guest、保存检查截图。失败时返回失败，不会把下载成功当成验收。`--sdk /path/to/devkit` 仅复用用户自己选择的完整 SDK，不宣称它经过下载签名校验。离线分发可以用 `setup.py --channel /path/to/ai-kit-0.7.3.json --manifest /path/to/distribution.json`，归档和签名放在各自清单旁。
+`setup` 自动选择官方 DevKit 0.11.1 或签名容器镜像，安装项目内的 skills、平台 MCP 配置、CLI 启动器，最后编译并运行真实 Guest、保存检查截图。失败时返回失败，不会把下载成功当成验收。`--sdk /path/to/devkit` 仅复用用户自己选择的完整 SDK，不宣称它经过下载签名校验。离线分发可以用 `setup.py --channel /path/to/ai-kit-0.7.4.json --manifest /path/to/distribution.json`，归档和签名放在各自清单旁。
 
 在 `my-pxa` 目录中使用以下命令（Windows 使用 `.pxa\pxa.cmd`）：
 
@@ -83,13 +85,16 @@ AI 先读 `pxa-app-dev`、`pxa-debug`，按现有 SDK 头文件实现；构建�
 .pxa/pxa new apps/tomato --recipe timer --title 番茄钟 --minutes 25 --break-minutes 5
 .pxa/pxa verify apps/tomato --scenario apps/tomato/tests/journey.json --require-ui
 .pxa/pxa new apps/counter --recipe counter --title 计数器
+.pxa/pxa new apps/reaction --recipe reaction --title 反应挑战
+.pxa/pxa verify apps/reaction --scenario apps/reaction/tests/journey.json --require-ui
 ```
 
-MCP 对应 `pxa_recipes`、`pxa_new`。配方带动态安全区、触摸/手柄、异步检查点存档和
-真实节点验收，不覆盖已有目录、不自动迁移 SDK。计时器支持开始、暂停、重置和手动
+MCP 对应 `pxa_recipes`、`pxa_new`。配方带动态安全区、触摸/手柄和真实节点验收；
+计时器和计数器提供异步检查点存档，反应游戏仅保留本次会话。配方不覆盖已有目录、不自动迁移 SDK。计时器支持开始、暂停、重置和手动
 专注/短休切换，使用单调时间；重新打开按最后检查点恢复为暂停，并非关机后运行的闹钟。
 完成态可用 `--define PXA_RECIPE_TIMER_SECONDS=6 --scenario apps/tomato/tests/complete.json` 验收；
-测试键与正常存档分开，交付前重新构建不带宏的包。其他需求可从当前 SDK 的虚拟列表、
+测试键与正常存档分开，交付前重新构建不带宏的包。反应游戏的超时分支使用 `--define PXA_RECIPE_REACTION_SECONDS=1 --scenario apps/reaction/tests/timeout.json`。
+其他需求可从当前 SDK 的虚拟列表、
 设备/传感器、game-input 示例开始，再让 AI 按需求完善，不把骨架生成为成功验收。
 
 一组已知的连续操作可用 MCP `pxa_interact(job_id, steps)`：复用同一个模拟器调试连接，依次点击、滑动、按手柄、等待或截图。最多 32 步、8 张截图、累计等待/按住 15 秒；完整检查通过后才操作。返回批次 job_id 和证据路径，等任务结束再用 `pxa_view_image` 检查原图。需要观察中间结果时拆成短批次，同一模拟器不并发输入。CLI 可用 `verify --scenario`。

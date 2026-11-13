@@ -106,7 +106,7 @@ class AuthoringTest(unittest.TestCase):
         from .test_recipes import RecipeEnvironment
         with tempfile.TemporaryDirectory() as folder:
             env = RecipeEnvironment(Path(folder))
-            for recipe in ('counter', 'timer'):
+            for recipe in ('counter', 'timer', 'reaction'):
                 created = create(env, 'apps/' + recipe, recipe)
                 journey = json.loads(Path(created['scenario']).read_text())
                 debug.validate_scenario(journey, {profile: (480, 480) for profile in journey})

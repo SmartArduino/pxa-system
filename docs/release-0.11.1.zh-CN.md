@@ -1,4 +1,4 @@
-# PXA 0.11.1 与 Agent Kit 0.7.3
+# PXA 0.11.1 与 Agent Kit 0.7.4
 
 状态：发布准备中。公共安装入口保持已发布版本，候选制品等待发布授权。
 
@@ -22,11 +22,14 @@ Host 原生工作任务可使用双核。应用兼容性继续以服务和特性
 
 ## 工具与创作
 
-DevKit 0.11.1 与 Agent Kit 0.7.3 带入最新 PXADB 客户端。POSIX 串口写入遇到
+DevKit 0.11.1 与 Agent Kit 0.7.4 带入最新 PXADB 客户端。POSIX 串口写入遇到
 `EAGAIN` 时交还控制权，命令与上传沿用已有超时和取消路径。AI Kit 默认使用
 DevKit 0.11.1，继续支持签名离线清单、项目 SDK 锁、真实 Guest 验证和矩形商城截图。
 计时器配方收紧间距与外边距，给圆屏安全区域中的标题与完整按钮留出空间。
 调试技能补充部分裁切检查，并区分设备默认布局与关闭遮罩、边距后的商城截图。
+
+新增 `reaction` 游戏配方：30 秒内选择 10 个目标，含触摸与手柄、暂停/继续、胜负与重开。
+生成真实节点的完整玩法和超时场景，不写入存档；测试宏与正常 30 秒版本分开构建。
 
 Linux x64、Windows x64 与 Linux amd64 容器分别提供独立制品。Linux 原生包要求
 glibc 2.39+；Windows 的 Wine 验证范围不包含原生 Windows 串口、音频与窗口验收。
@@ -35,7 +38,7 @@ Browser Host 独立编号，固件的商城能力快照保持 `0.11.0`。
 ## English
 
 Preparation only; public installation channels retain their published versions.
-PXA 0.11.1 and Agent Kit 0.7.3 update the bundled PXADB client, preserve serial
+PXA 0.11.1 and Agent Kit 0.7.4 update the bundled PXADB client, preserve serial
 command deadlines under POSIX backpressure, and improve device integration.
 Guest Core remains 2.1 and native Host C ABI remains 2. Guest execution remains
 cooperative, while native Host workers can use both cores.
@@ -56,3 +59,7 @@ Store capability snapshot.
 The timer recipe uses tighter spacing to fit its title and complete controls inside
 round-screen safe areas. Debugging guidance checks partially clipped content and
 separates ordinary device geometry from rectangular Store captures.
+
+The reaction recipe provides a complete 30-second target game with touch/controller
+input, pause/resume, win/loss and restart. Generated winning and timeout scenarios
+exercise the actual Guest; final builds omit the accelerated timeout macro.

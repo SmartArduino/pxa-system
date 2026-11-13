@@ -48,7 +48,7 @@ def parser():
     commands.add_parser('recipes', help='list runnable app starters')
     new = commands.add_parser('new', help='create a new app from a runnable recipe without changing the SDK')
     new.add_argument('project')
-    new.add_argument('--recipe', choices=('timer', 'counter'), required=True)
+    new.add_argument('--recipe', choices=('timer', 'counter', 'reaction'), required=True)
     new.add_argument('--id')
     new.add_argument('--title')
     new.add_argument('--minutes', type=int)

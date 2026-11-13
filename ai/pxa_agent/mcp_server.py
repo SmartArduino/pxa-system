@@ -174,11 +174,13 @@ def create_server(env):
         return catalog()
 
     @tool()
-    def pxa_new(project: str, recipe: Literal['timer','counter'], title: str | None = None,
+    def pxa_new(project: str, recipe: Literal['timer','counter','reaction'], title: str | None = None,
                 app_id: str | None = None, minutes: int | None = None,
                 break_minutes: int | None = None) -> dict:
         """Create a new recipe app with adaptive safe layout, controller/touch,
-        checkpoint storage and semantic journey. Requires selected DevKit0.10+;
+        semantic journey, and checkpoint storage for timer/counter. Reaction is
+        a playable 30-second game with pause, win/loss and restart, no persistence.
+        Requires selected DevKit0.10+;
         never replaces an existing app or changes SDK locks implicitly.
         Creation is not runtime acceptance: verify its journey and inspect images.
         """

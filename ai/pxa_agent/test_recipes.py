@@ -80,6 +80,24 @@ class RecipeTest(unittest.TestCase):
         self.assertEqual(metadata['name'], title)
         self.assertNotIn('clock-scale', json.dumps(scenario))
 
+    def test_reaction_game_journey_wins_restarts_and_checks_real_timeout(self):
+        result = create(self.env, 'apps/game', 'reaction', title='目标挑战')
+        path = self.env.project('apps/game')
+        metadata = json.loads((path / 'package.json').read_text())
+        self.assertEqual(metadata['name'], '目标挑战')
+        self.assertEqual(metadata['components'][0]['services'], ['ui', 'window', 'clock', 'log'])
+        journey = json.loads((path / 'tests/journey.json').read_text())
+        self.assertEqual(set(journey), {'pai-touch', 'espp4-a'})
+        for steps in journey.values():
+            self.assertEqual(sum(step.get('selector', {}).get('text') == '点我' for step in steps), 10)
+            self.assertTrue(any(step.get('selector', {}).get('text') == '完成' for step in steps))
+            self.assertTrue(any(step.get('selector', {}).get('text') == '重开' for step in steps))
+        timeout = json.loads((path / 'tests/timeout.json').read_text())
+        self.assertEqual(set(timeout), set(journey))
+        self.assertIn('PXA_RECIPE_REACTION_SECONDS=1', (path / 'README.md').read_text())
+        self.assertFalse((path / 'tests/basic.json').exists())
+        self.assertFalse(result['runtime_verified'])
+
 
 if __name__ == '__main__':
     unittest.main()

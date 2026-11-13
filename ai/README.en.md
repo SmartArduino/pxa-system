@@ -1,4 +1,6 @@
-# PXA Agent Kit 0.7.3
+# PXA Agent Kit 0.7.4
+
+0.7.4 adds the `reaction` game recipe: hit ten targets within 30 seconds, with touch/controller input, pause/resume, wrong-hit and timeout endings, and restart. Generated winning and timeout journeys let an AI extend a playable loop. The game writes no saves and requests no extra permissions.
 
 0.7.3 pairs with DevKit 0.11.1 and bundles the updated PXADB client. Congested POSIX serial writes preserve command deadlines and cancellation, allowing an AI tool to report an unresponsive device and continue diagnosis.
 
@@ -41,6 +43,10 @@ From the workspace (Windows: `.pxa\pxa.cmd`):
 DevKit0.10+ also supports `new apps/timer --recipe timer --title Timer --minutes 25`
 and `--recipe counter`. Each starter includes touch/controller handling,
 checkpoint storage and `tests/journey.json`; run it with `verify --scenario`.
+`new apps/reaction --recipe reaction` creates a game with no persistence or extra
+permissions. Its `tests/journey.json` wins and restarts a round; `tests/controller.json`
+checks controller navigation/pause/restart. `tests/timeout.json` uses
+`--define PXA_RECIPE_REACTION_SECONDS=1` to exercise timeout in isolated state.
 Timer completion uses an isolated test key with `--define PXA_RECIPE_TIMER_SECONDS=6`
 and `tests/complete.json`. Creation is not acceptance; inspect the real captures,
 then build the delivered package without test macros. Existing apps/SDK locks stay intact.

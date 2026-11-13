@@ -55,15 +55,20 @@ implementation; re-signing or erasing records is not a generic fix.
 
 For a new app, `pxa init <directory> --id <unique-id>` generates the working C++26 template. Preserve existing source, identity, signing key and release sequence when editing an app. Do not recreate a populated directory or implicitly update its SDK lock. Work outside the firmware checkout when only building an app.
 
-For a new timer or counter on selected DevKit0.10+, use `recipes` / `pxa_recipes`
-then `new apps/name --recipe timer|counter` / `pxa_new`. Timer accepts `--minutes`
-and `--break-minutes`; both accept `--title` and an explicit app ID. The recipe
-includes a semantic `tests/journey.json`, touch/controller controls and coalesced
-checkpoint storage. Run that journey, inspect the actual smallest/round/portrait
+For a new timer, counter or small reaction game on selected DevKit0.10+, use
+`recipes` / `pxa_recipes` then `new apps/name --recipe timer|counter|reaction` /
+`pxa_new`. Timer accepts `--minutes` and `--break-minutes`; all accept `--title`
+and an explicit app ID. Recipes include a semantic `tests/journey.json` and
+touch/controller controls; timer/counter coalesce checkpoint storage. Reaction
+has a complete ten-hit, 30-second game, pause/resume, loss and restart, with no
+storage or extra permissions. Run its generated winning journey and the one-second
+`PXA_RECIPE_REACTION_SECONDS=1` timeout scenario, then rebuild without the test
+macro. Use this game only when it fits the request; extend the requested mechanics.
+Run the relevant journey, inspect the actual smallest/round/portrait
 captures and adapt it to the user's requirements. Timer completion can be tested
 with `--define PXA_RECIPE_TIMER_SECONDS=6` and `tests/complete.json`; rebuild without
 that macro for delivery. These are starters, not proof of runtime acceptance.
-For a list, device dashboard or game use the locked SDK's virtual-list,
+For a list, device dashboard or other game use the locked SDK's virtual-list,
 device-sensor or game-input examples via `context`; do not invent unsupported recipe names.
 
 Use `pxa run <project> --offline --debug --watch` for the development loop; it builds incrementally. Do not precede every run with a separate build or compile every CPU for a text/layout edit. Stop watch before verification, check the affected profile first, then the delivery matrix and target packages. Omit `--offline` if downloading the pinned toolchain is needed and authorized. Build first, then verify real Guest readiness, take a screenshot, inject the relevant input and inspect the resulting screen; a successful build is not a working UI. Read the `PXADB: ... --simulator PROFILE@INSTANCE` line emitted by this run and use that exact selector. Stop the CLI you started when finished; it owns its simulator and debug bridge.
