@@ -659,6 +659,21 @@ static void on_widget_event(lv_event_t *event) {
     lv_event_code_t code = lv_event_get_code(event);
     int32_t value;
     if (node == NULL) return;
+    if (code == LV_EVENT_INSERT) {
+        if (node->suppress_events || node->ui->transaction_active) return;
+        const char *inserted = (const char *)lv_event_get_param(event);
+        /* LVGL also sends INSERT for deletion. Always permit recovery from
+         * text set by the Guest, even when that text exceeds the input limit. */
+        if (inserted == NULL ||
+            ((uint8_t)inserted[0] == LV_KEY_DEL && inserted[1] == '\0'))
+            return;
+        const char *current = lv_textarea_get_text(node->object);
+        size_t length = current == NULL ? 0u : strlen(current);
+        size_t maximum = (size_t)node->maximum;
+        if (length > maximum || strlen(inserted) > maximum - length)
+            lv_textarea_set_insert_replace(node->object, "");
+        return;
+    }
     if (code == LV_EVENT_SIZE_CHANGED) {
         schedule_visible_range(node);
         return;
@@ -879,8 +894,10 @@ static lv_obj_t *create_object(pxa_lvgl_ui_node_t *node,
     lv_obj_add_event_cb(object, on_widget_event, LV_EVENT_VALUE_CHANGED, node);
     lv_obj_add_event_cb(object, on_widget_event, LV_EVENT_SCROLL, node);
     if (node->type == PXA_UI_NODE_CONTROL &&
-        node->subtype == PXA_UI_CONTROL_TEXT_INPUT)
+        node->subtype == PXA_UI_CONTROL_TEXT_INPUT) {
         lv_obj_add_event_cb(object, on_widget_event, LV_EVENT_READY, node);
+        lv_obj_add_event_cb(object, on_widget_event, LV_EVENT_INSERT, node);
+    }
     lv_obj_add_event_cb(object, on_alpha_overlay_state_changed,
                         LV_EVENT_STATE_CHANGED, node);
     if (node->type == PXA_UI_NODE_CANVAS) {

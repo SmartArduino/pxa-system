@@ -735,11 +735,21 @@ static void pump_test(void *context) {
         // A fixed multi-line editor cannot scroll out from under the keyboard.
         form=lv_obj_create(lv_screen_active()); lv_obj_set_size(form,host->width,host->height);
         lv_obj_set_scrollable(form,false);
-        bottom_editor=lv_textarea_create(form); lv_obj_set_floating(bottom_editor,true);
+        bottom_editor=lv_textarea_create(form);
         lv_obj_set_size(bottom_editor,host->width-30,60);
         lv_obj_set_pos(bottom_editor,15,host->height-70);
         lv_textarea_set_text(bottom_editor,"前面的内容\n这里是正在输入的这一行，测试光标与键盘。\n后面的内容");
         lv_textarea_set_cursor_pos(bottom_editor,12);
+        // Absolute editors in a fixed app can be non-floating. The display
+        // screen is not an application scroll container: keep headers in view.
+        int32_t screen_scroll=lv_obj_get_scroll_y(lv_screen_active());
+        ime_editor_focus(host,bottom_editor,true); lv_refr_now(NULL); settle_ime(host);
+        assert(lv_obj_get_scroll_y(lv_screen_active())==screen_scroll);
+        assert(pxa_lvgl_ime_editor_view(host->ime_keyboard));
+        capture(test,"fixed-nonfloating-multiline");
+        pxa_lvgl_ime_close(host->ime_keyboard); settle_ime(host);
+        assert(lv_obj_get_scroll_y(lv_screen_active())==screen_scroll);
+        lv_obj_set_floating(bottom_editor,true);
         // A full-screen overlay parent may itself have padding. Display-safe
         // coordinates must remain absolute instead of inheriting that offset.
         lv_obj_t *keyboard_parent=lv_obj_create(lv_layer_top());

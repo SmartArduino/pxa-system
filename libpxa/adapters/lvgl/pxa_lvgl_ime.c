@@ -1433,7 +1433,9 @@ static void refresh_editor(pxa_lvgl_ime_t *ime, bool reveal) {
         if (editor.y2-editor.y1<=(line.y2-line.y1+1)*2) bottom=editor.y2;
         int delta=keyboard.y1-4-bottom;
         bool floating=lv_obj_is_floating(ime->target);
-        for (lv_obj_t *parent=lv_obj_get_parent(ime->target);parent;parent=lv_obj_get_parent(parent)) {
+        /* Only move application scroll containers. Scrolling the display
+         * screen also moves fixed headers and their keyboard-close actions. */
+        for (lv_obj_t *parent=lv_obj_get_parent(ime->target);parent && lv_obj_get_parent(parent);parent=lv_obj_get_parent(parent)) {
             if (!floating && lv_obj_is_scrollable(parent) && (!ime->scroll_parent || ime->scroll_parent==parent)) {
                 lv_area_t box; lv_obj_get_coords(parent,&box);
                 if (box.y1+ime->font.line_height+4<keyboard.y1 && delta<0) {

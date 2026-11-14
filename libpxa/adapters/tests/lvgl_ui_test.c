@@ -2635,6 +2635,38 @@ int main(void) {
             assert(!strstr(snapshot,"xxxxxxxx") && !strstr(snapshot,"中文"));
         }
 
+        /* Reject an entire oversized insertion in the widget, rather than
+         * hiding its suffix only in emitted events. Later valid text must fit. */
+        char boundary[511]; memset(boundary, 'x', 510); boundary[510] = 0;
+        lv_textarea_set_text(input, boundary);
+        unsigned before_insert = g_events;
+        lv_textarea_add_text(input, "中");
+        assert(g_events == before_insert && strlen(lv_textarea_get_text(input)) == 510);
+        lv_textarea_add_text(input, "ab");
+        assert(strlen(lv_textarea_get_text(input)) == 512 && g_event_value_size == 512);
+        assert(!memcmp(g_event_value + 510, "ab", 2));
+        lv_textarea_set_cursor_pos(input, 0);
+        before_insert = g_events;
+        lv_textarea_add_char(input, 'z');
+        assert(g_events == before_insert && lv_textarea_get_cursor_pos(input) == 0);
+        lv_textarea_delete_char_forward(input);
+        lv_textarea_add_char(input, 'z');
+        assert(strlen(lv_textarea_get_text(input)) == 512 && g_event_value[0] == 'z');
+
+        /* Guest text may already exceed the byte limit. Backspace must still
+         * remove complete code points until user insertion can resume. */
+        lv_textarea_set_text(input, longer);
+        lv_textarea_set_cursor_pos(input, LV_TEXTAREA_CURSOR_LAST);
+        lv_textarea_delete_char(input);
+        assert(strlen(lv_textarea_get_text(input)) == 514);
+        before_insert = g_events;
+        lv_textarea_add_text(input, "a");
+        assert(g_events == before_insert && strlen(lv_textarea_get_text(input)) == 514);
+        lv_textarea_delete_char(input);
+        lv_textarea_add_text(input, "a");
+        assert(strlen(lv_textarea_get_text(input)) == 512 && g_event_value_size == 512);
+        assert(!memcmp(g_event_value + 508, "中a", 4));
+
         lv_textarea_set_text(input, "");
         assert(g_event_value_size == 0);
         commands.size = 0;
