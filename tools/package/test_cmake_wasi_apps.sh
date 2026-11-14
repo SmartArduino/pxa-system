@@ -29,6 +29,10 @@ trap 'rm -rf "$work_dir"' EXIT
 # outside the WASI sysroot without editing the user's manifest or CMake graph.
 mkdir -p "$work_dir/template-apps"
 cp -a "$pxa_system_dir/sdk/templates/hello" "$work_dir/template-apps/hello"
+# Match standalone builds: normal workspace packages compile out C/C++ asserts.
+# Check the compiler's actual mode, including when CMake defaults to no type.
+sed -i '1i#ifndef NDEBUG\n#error "Workspace packaging must select Release"\n#endif' \
+  "$work_dir/template-apps/hello/main.cpp"
 PXA_APP_SOURCE_ROOT="$work_dir/template-apps" \
 PXA_PACKAGE_OUTPUT_ROOT="$work_dir" \
 PXA_CONTAINER_OUTPUT="$work_dir/pxa-hello.pxa" \

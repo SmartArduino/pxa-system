@@ -371,6 +371,7 @@ if [[ "$build_system" == "cmake" ]]; then
   joined_definitions="$(IFS=';'; printf '%s' "${app_definitions[*]}")"
   "$cmake_bin" "${cmake_generator_args[@]}" -S "$cmake_source_dir" \
     -B "$cmake_build_dir" \
+    -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_TOOLCHAIN_FILE="$pxa_system_dir/sdk/cmake/pxa-wasi-toolchain.cmake" \
     -DWASI_SDK_DIR="$wasi_sdk_dir" \
     -DPXA_GUEST_SDK_DIR="$pxa_system_dir/sdk/guest-c" \

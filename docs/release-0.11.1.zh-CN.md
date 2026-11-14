@@ -31,6 +31,9 @@ DevKit 0.11.1，继续支持签名离线清单、项目 SDK 锁、真实 Guest �
 新增 `reaction` 游戏配方：30 秒内选择 10 个目标，含触摸与手柄、暂停/继续、胜负与重开。
 生成真实节点的完整玩法和超时场景，不写入存档；测试宏与正常 30 秒版本分开构建。
 
+源码工作区的应用打包器显式选择 Release，与独立 DevKit 默认一致；增量缓存重新
+配置后采用相同的优化与断言策略。`PXA_KEEP_WASM_DEBUG=ON` 仍可保留调试信息。
+
 Linux x64、Windows x64 与 Linux amd64 容器分别提供独立制品。Linux 原生包要求
 glibc 2.39+；Windows 的 Wine 验证范围不包含原生 Windows 串口、音频与窗口验收。
 Browser Host 独立编号，固件的商城能力快照保持 `0.11.0`。
@@ -63,3 +66,7 @@ separates ordinary device geometry from rectangular Store captures.
 The reaction recipe provides a complete 30-second target game with touch/controller
 input, pause/resume, win/loss and restart. Generated winning and timeout scenarios
 exercise the actual Guest; final builds omit the accelerated timeout macro.
+
+Workspace application packaging explicitly selects Release to match the standalone
+DevKit defaults, including optimization and assertion settings. Incremental caches
+are reconfigured, and `PXA_KEEP_WASM_DEBUG=ON` still retains debug information.
