@@ -125,6 +125,7 @@ class HttpHeaders : public std::ranges::view_interface<HttpHeaders> {
 };
 
 struct HttpResponse;
+enum class HttpLimitReason : std::uint8_t { unknown, headers, body };
 struct HttpExchangeTag {};
 class HttpExchange {
   public:
@@ -165,12 +166,15 @@ class HttpExchange {
     }
     // Consume ownership: the response keeps the same exchange alive.
     Task<HttpResponse> response() &&;
+    // Optional diagnostics, reset immediately. The caller keeps reason alive
+    // until this task completes or is cancelled. Old Hosts report unknown.
+    Task<HttpResponse> response(HttpLimitReason &reason) &&;
     Result<void> close() noexcept {
         return resource_.close();
     }
 
   private:
-    static Task<HttpResponse> response_impl(HttpExchange self);
+    static Task<HttpResponse> response_impl(HttpExchange self, HttpLimitReason *reason);
     Transport *transport_ = nullptr;
     RequestTable *requests_ = nullptr;
     Resource<HttpExchangeTag> resource_;

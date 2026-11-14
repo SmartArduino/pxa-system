@@ -93,6 +93,7 @@ static size_t desktop_http_write(char *data, size_t size, size_t count, void *co
         return 0;
     bytes = size * count;
     if (bytes > s->max_body_bytes - s->received_bytes) {
+        pxa_http_stream_limit(s, PXA_HTTP_LIMIT_BODY);
         s->error = PXA_STATUS_LIMIT_EXCEEDED;
         return 0;
     }
@@ -188,6 +189,7 @@ static size_t desktop_http_header(char *data, size_t size, size_t count,
                                   ? 0
                                   : h->length;
             if (length != UINT64_MAX && length > s->max_body_bytes) {
+                pxa_http_stream_limit(s, PXA_HTTP_LIMIT_BODY);
                 s->error = PXA_STATUS_LIMIT_EXCEEDED;
                 return 0;
             }
@@ -241,6 +243,7 @@ static size_t desktop_http_header(char *data, size_t size, size_t count,
         return bytes;
     if (!pxa_http_stream_header(s, (const uint8_t *)data, name_size,
                                 (const uint8_t *)value, value_size)) {
+        pxa_http_stream_limit(s, PXA_HTTP_LIMIT_HEADERS);
         s->error = PXA_STATUS_LIMIT_EXCEEDED;
         return 0;
     }

@@ -14,6 +14,12 @@ extern "C" {
 #define PXA_HTTP_IO_RESPONSE UINT32_C(4)
 #define PXA_HTTP_IO_RESPONSE_SIZE UINT32_C(5)
 #define PXA_HTTP_IO_FINISH_UPLOAD UINT32_C(6)
+/* Optional terminal limit classification. Empty input, nonnegative reason;
+ * older backends may return UNSUPPORTED. Existing error codes are unchanged. */
+#define PXA_HTTP_IO_LIMIT_REASON UINT32_C(7)
+#define PXA_HTTP_LIMIT_UNKNOWN UINT32_C(0)
+#define PXA_HTTP_LIMIT_HEADERS UINT32_C(1)
+#define PXA_HTTP_LIMIT_BODY UINT32_C(2)
 #define PXA_HTTP_HEAD_BYTES ((size_t)16)
 #define PXA_HTTP_MAX_BUFFER_BYTES UINT32_C(65536)
 #define PXA_HTTP_MAX_HEAD_BYTES UINT32_C(4096)
@@ -60,6 +66,7 @@ uint32_t pxa_http_ring_writable(const pxa_http_ring_t *ring);
 size_t pxa_http_ring_peek(pxa_http_ring_t *ring, uint8_t **data, int writing);
 void pxa_http_ring_advance(pxa_http_ring_t *ring, size_t count, int writing);
 uint32_t pxa_http_stream_state(const pxa_http_stream_t *stream);
+void pxa_http_stream_limit(pxa_http_stream_t *stream, uint32_t reason);
 int pxa_http_stream_header(pxa_http_stream_t *stream, const uint8_t *name,
                            size_t name_size, const uint8_t *value, size_t value_size);
 void pxa_http_stream_headers(pxa_http_stream_t *stream, uint16_t status,

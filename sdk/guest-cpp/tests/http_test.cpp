@@ -12,6 +12,9 @@ static unsigned waits, closes, cancels, reads;
 static bool headers_ready, body_ready, finished;
 static std::vector<std::byte> head;
 static std::uint32_t wait_interest;
+static int test_mode, response_error, diagnostic_result;
+static unsigned diagnostic_queries;
+static pxa::HttpLimitReason observed_reason, expected_reason;
 
 extern "C" std::int32_t pxa_test_control(const std::uint8_t *input,
                                          std::uint32_t size) {
@@ -57,7 +60,8 @@ extern "C" std::int32_t pxa_io(std::uint64_t handle, std::uint32_t op,
                                std::uint8_t *out, std::uint32_t size) {
     assert(handle == exchange_handle);
     if (op == 5)
-        return headers_ready ? static_cast<std::int32_t>(head.size()) : -7;
+        return headers_ready ? (response_error ? response_error : static_cast<std::int32_t>(head.size())) : -7;
+    if (op == 7) { assert(!size); ++diagnostic_queries; return diagnostic_result; }
     if (op == 4) {
         assert(size >= head.size());
         std::memcpy(out, head.data(), head.size());
@@ -79,6 +83,25 @@ struct HttpApp {
     pxa::Permission permission;
     std::array<std::byte, 128> buffer;
     pxa::Task<void> run(pxa::Context &context) {
+        if (test_mode) {
+            auto exchange = co_await context.http().open({.url="https://example.test/stream",
+                .options={.max_body_bytes=2*1024*1024, .timeout_ms=86400000u}}, permission);
+            assert(exchange);
+            observed_reason = pxa::HttpLimitReason::body;
+            auto pending = test_mode != 2 ? std::move(*exchange).response(observed_reason)
+                                          : std::move(*exchange).response();
+            if (test_mode != 2) assert(observed_reason == pxa::HttpLimitReason::unknown);
+            auto response = co_await std::move(pending);
+            if (test_mode == 3) {
+                assert(response && response->status_code == 200 && observed_reason == pxa::HttpLimitReason::unknown);
+                finished = true;
+                co_return pxa::Result<void>{};
+            }
+            assert(!response && int(response.error()) == response_error);
+            assert(observed_reason == expected_reason);
+            finished = true;
+            co_return pxa::Result<void>{};
+        }
         auto pending = [&] {
             std::string temporary = "https://example.test/stream";
             return context.http().get(temporary, permission,
@@ -165,6 +188,31 @@ int main() {
     assert(finished && closes == 1 && pxa::task_pool_stats().active_slots == 0);
     pxa_app_stop(0);
 
+    for (auto detail : {0, 1, 2, -3, -2, 99}) {
+        test_mode = 1; response_error = -16; diagnostic_result = detail;
+        expected_reason = detail == 1 ? pxa::HttpLimitReason::headers :
+                          detail == 2 ? pxa::HttpLimitReason::body : pxa::HttpLimitReason::unknown;
+        headers_ready = finished = false; diagnostic_queries = 0;
+        const auto previous_closes = closes;
+        assert(pxa_app_start(nullptr, 0) == 0); open_reply();
+        headers_ready = true; wake(4);
+        assert(finished && diagnostic_queries == 1 && closes == previous_closes + 1);
+        assert(pxa::task_pool_stats().active_slots == 0); pxa_app_stop(0);
+    }
+    for (int mode : {1, 2}) {
+        test_mode = mode; response_error = mode == 1 ? -14 : -16;
+        diagnostic_result = 2; diagnostic_queries = 0; headers_ready = finished = false;
+        expected_reason = mode == 1 ? pxa::HttpLimitReason::unknown : pxa::HttpLimitReason::body;
+        assert(pxa_app_start(nullptr, 0) == 0); open_reply(); headers_ready = true; wake(4);
+        assert(finished && diagnostic_queries == 0 && pxa::task_pool_stats().active_slots == 0);
+        pxa_app_stop(0);
+    }
+    test_mode = 3; response_error = 0; diagnostic_queries = 0; headers_ready = finished = false;
+    assert(pxa_app_start(nullptr, 0) == 0); open_reply(); headers_ready = true; wake(4);
+    assert(finished && diagnostic_queries == 0 && pxa::task_pool_stats().active_slots == 0);
+    pxa_app_stop(0); test_mode = 0;
+
+    const auto cancellation_closes = closes;
     headers_ready = false;
     body_ready = false;
     finished = false;
@@ -180,10 +228,20 @@ int main() {
     pxa::wire::put32(background.data() + 12, 1);
     assert(pxa_app_on_event(reinterpret_cast<const std::uint8_t *>(background.data()),
                             background.size()) == 1);
-    assert(cancels == 1 && closes == 2 && pxa::task_pool_stats().active_slots == 0);
+    assert(cancels == 1 && closes == cancellation_closes + 1 && pxa::task_pool_stats().active_slots == 0);
     wake(9);
-    assert(!finished && closes == 2);
+    assert(!finished && closes == cancellation_closes + 1);
     pxa_app_stop(0);
+
+    test_mode = 1; response_error = -16; headers_ready = finished = false; diagnostic_queries = 0;
+    const auto diagnostic_cancel_closes = closes;
+    assert(pxa_app_start(nullptr, 0) == 0); open_reply();
+    assert(observed_reason == pxa::HttpLimitReason::unknown);
+    assert(pxa_app_on_event(reinterpret_cast<const std::uint8_t *>(background.data()), background.size()) == 1);
+    headers_ready = true; wake(9);
+    assert(!finished && diagnostic_queries == 0 && closes == diagnostic_cancel_closes + 1);
+    assert(observed_reason == pxa::HttpLimitReason::unknown && pxa::task_pool_stats().active_slots == 0);
+    pxa_app_stop(0); test_mode = 0; response_error = 0;
 
     pxa::HttpExchange empty;
     auto invalid = empty.read_some({});

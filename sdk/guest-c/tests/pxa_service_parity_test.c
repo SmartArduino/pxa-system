@@ -93,6 +93,11 @@ static void test_http(void) {
     assert(pxa_resource_wait(0, handle, 1) == PXA_STATUS_INVALID_ARGUMENT);
     assert(pxa_resource_wait(token, handle, 16) == PXA_STATUS_INVALID_ARGUMENT);
     io_status = 0; assert(pxa_http_finish_upload(handle) == 0 && operation == PXA_HTTP_IO_FINISH_UPLOAD);
+    for (io_status = 0; io_status <= 2; ++io_status)
+        assert(pxa_http_limit_reason(handle) == io_status && operation == PXA_HTTP_IO_LIMIT_REASON && !sent_size);
+    io_status = PXA_STATUS_UNSUPPORTED; assert(pxa_http_limit_reason(handle) == io_status);
+    io_status = 99; assert(pxa_http_limit_reason(handle) == PXA_HTTP_LIMIT_UNKNOWN);
+    assert(pxa_http_limit_reason(0) == PXA_STATUS_INVALID_ARGUMENT);
 }
 
 static void test_ime(void) {

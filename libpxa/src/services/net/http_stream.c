@@ -9,6 +9,9 @@ static uint32_t load(const uint32_t *value) {
 static void store(uint32_t *value, uint32_t input) {
     __atomic_store_n(value, input, __ATOMIC_RELEASE);
 }
+/* Reuse unused state bits: diagnostics add no per-exchange allocation/field. */
+#define LIMIT_SHIFT 4u
+#define LIMIT_MASK (UINT32_C(3) << LIMIT_SHIFT)
 
 size_t pxa_http_stream_storage_size(uint32_t buffer_bytes, uint32_t header_bytes) {
     if (buffer_bytes < 512 || buffer_bytes > PXA_HTTP_MAX_BUFFER_BYTES ||
@@ -63,7 +66,18 @@ void pxa_http_ring_advance(pxa_http_ring_t *r, size_t count, int writing) {
     store(position, load(position) + (uint32_t)count);
 }
 uint32_t pxa_http_stream_state(const pxa_http_stream_t *s) {
-    return load(&s->state);
+    /* Internal diagnostic bits must not change the public lifecycle flags. */
+    return load(&s->state) & (PXA_HTTP_STREAM_HEADERS | PXA_HTTP_STREAM_DONE |
+                             PXA_HTTP_STREAM_CLOSED | PXA_HTTP_STREAM_UPLOAD_DONE);
+}
+void pxa_http_stream_limit(pxa_http_stream_t *s, uint32_t reason) {
+    uint32_t state = load(&s->state);
+    /* Only annotate. The producer still owns terminal error publication. */
+    if (state & PXA_HTTP_STREAM_DONE) return;
+    if (reason != PXA_HTTP_LIMIT_HEADERS && reason != PXA_HTTP_LIMIT_BODY) return;
+    while (!(state & LIMIT_MASK) &&
+           !__atomic_compare_exchange_n(&s->state, &state,
+               state | (reason << LIMIT_SHIFT), 0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {}
 }
 
 int pxa_http_stream_header(pxa_http_stream_t *s, const uint8_t *name, size_t name_size,
@@ -125,13 +139,18 @@ static size_t transfer(pxa_http_ring_t *ring, uint8_t *data, size_t size, int wr
 
 int32_t pxa_http_stream_io(pxa_http_stream_t *s, uint32_t operation, uint8_t *data,
                            size_t size) {
-    uint32_t state = pxa_http_stream_state(s);
+    uint32_t state = load(&s->state);
     size_t count;
     if ((size && !data) || size > INT32_MAX)
         return PXA_STATUS_INVALID_ARGUMENT;
     if (state & PXA_HTTP_STREAM_CLOSED)
         return PXA_STATUS_CANCELLED;
     switch (operation) {
+    case PXA_HTTP_IO_LIMIT_REASON:
+        if (size) return PXA_STATUS_INVALID_ARGUMENT;
+        if (!(state & PXA_HTTP_STREAM_DONE)) return PXA_STATUS_WOULD_BLOCK;
+        return s->error == PXA_STATUS_LIMIT_EXCEEDED
+            ? (int32_t)((state & LIMIT_MASK) >> LIMIT_SHIFT) : (int32_t)PXA_HTTP_LIMIT_UNKNOWN;
     case PXA_IO_POLL: {
         uint32_t ready = 0;
         if (size)

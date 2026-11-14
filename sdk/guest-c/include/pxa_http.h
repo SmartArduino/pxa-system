@@ -11,6 +11,10 @@
 #define PXA_HTTP_IO_RESPONSE UINT32_C(4)
 #define PXA_HTTP_IO_RESPONSE_SIZE UINT32_C(5)
 #define PXA_HTTP_IO_FINISH_UPLOAD UINT32_C(6)
+#define PXA_HTTP_IO_LIMIT_REASON UINT32_C(7)
+#define PXA_HTTP_LIMIT_UNKNOWN UINT32_C(0)
+#define PXA_HTTP_LIMIT_HEADERS UINT32_C(1)
+#define PXA_HTTP_LIMIT_BODY UINT32_C(2)
 
 typedef struct {
     const char *url;
@@ -257,6 +261,13 @@ static inline int32_t pxa_http_finish_upload(uint64_t handle) {
     if (!handle) return PXA_STATUS_INVALID_ARGUMENT;
     status = pxa_io(handle, PXA_HTTP_IO_FINISH_UPLOAD, NULL, 0);
     return status > 0 ? PXA_STATUS_PROTOCOL_ERROR : status;
+}
+/* Optional terminal diagnostic. Older Hosts may return UNSUPPORTED. */
+static inline int32_t pxa_http_limit_reason(uint64_t handle) {
+    int32_t reason;
+    if (!handle) return PXA_STATUS_INVALID_ARGUMENT;
+    reason = pxa_io(handle, PXA_HTTP_IO_LIMIT_REASON, NULL, 0);
+    return reason > (int32_t)PXA_HTTP_LIMIT_BODY ? (int32_t)PXA_HTTP_LIMIT_UNKNOWN : reason;
 }
 
 #endif

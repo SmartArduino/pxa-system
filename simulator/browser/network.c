@@ -100,7 +100,10 @@ static int32_t exchange_io(void *c,void *value,uint32_t op,uint8_t *data,size_t 
     if(n>=0)js_wake(e->id);return n;
 }
 EMSCRIPTEN_KEEPALIVE int browser_net_header(uint32_t id,const uint8_t *n,size_t ns,const uint8_t *v,size_t vs){
-    exchange_t *e=find(id);return e&&pxa_http_stream_header(&e->stream,n,ns,v,vs);
+    exchange_t *e=find(id);if(!e)return 0;
+    int accepted=pxa_http_stream_header(&e->stream,n,ns,v,vs);
+    if(!accepted)pxa_http_stream_limit(&e->stream,PXA_HTTP_LIMIT_HEADERS);
+    return accepted;
 }
 EMSCRIPTEN_KEEPALIVE void browser_net_headers(uint32_t id,uint16_t status){
     exchange_t *e=find(id);if(e)pxa_http_stream_headers(&e->stream,status,UINT64_MAX);
@@ -110,7 +113,7 @@ EMSCRIPTEN_KEEPALIVE void browser_net_done(uint32_t id,int status){
 }
 EMSCRIPTEN_KEEPALIVE int browser_net_receive(uint32_t id,const uint8_t *data,size_t size){
     exchange_t *e=find(id);if(!e)return PXA_STATUS_CANCELLED;pxa_http_stream_t *s=&e->stream;
-    if(size>s->max_body_bytes-s->received_bytes){browser_net_done(id,PXA_STATUS_LIMIT_EXCEEDED);return PXA_STATUS_LIMIT_EXCEEDED;}
+    if(size>s->max_body_bytes-s->received_bytes){pxa_http_stream_limit(s,PXA_HTTP_LIMIT_BODY);browser_net_done(id,PXA_STATUS_LIMIT_EXCEEDED);return PXA_STATUS_LIMIT_EXCEEDED;}
     size_t total=0;while(total<size){uint8_t *block;size_t n=pxa_http_ring_peek(&s->receive,&block,1);
         if(n>size-total)n=size-total;if(!n)break;memcpy(block,data+total,n);pxa_http_ring_advance(&s->receive,n,1);total+=n;}
     s->received_bytes+=total;return (int)total;

@@ -440,6 +440,31 @@ static void test_exchange_service(int streaming) {
 }
 int main(void) {
     test_ring();
+    {
+        pxa_http_stream_t s;
+        uint8_t storage[512 + 1024];
+        for (uint32_t reason = PXA_HTTP_LIMIT_UNKNOWN; reason <= PXA_HTTP_LIMIT_BODY; ++reason) {
+            pxa_http_stream_init(&s, storage, 512, 1024, 100, 0, PXA_NET_METHOD_GET);
+            assert(pxa_http_stream_io(&s, PXA_HTTP_IO_LIMIT_REASON, NULL, 0) == PXA_STATUS_WOULD_BLOCK);
+            pxa_http_stream_limit(&s, reason);
+            assert(s.error == 0); /* annotation never publishes/replaces an error */
+            pxa_http_stream_done(&s, PXA_STATUS_LIMIT_EXCEEDED);
+            assert(pxa_http_stream_state(&s) == (PXA_HTTP_STREAM_DONE | PXA_HTTP_STREAM_UPLOAD_DONE));
+            assert(pxa_http_stream_io(&s, PXA_HTTP_IO_RESPONSE_SIZE, NULL, 0) == PXA_STATUS_LIMIT_EXCEEDED);
+            assert(pxa_http_stream_io(&s, PXA_HTTP_IO_LIMIT_REASON, NULL, 0) == (int32_t)reason);
+            assert(pxa_http_stream_io(&s, PXA_HTTP_IO_LIMIT_REASON, storage, 1) == PXA_STATUS_INVALID_ARGUMENT);
+            pxa_http_stream_limit(&s, PXA_HTTP_LIMIT_BODY);
+            assert(pxa_http_stream_io(&s, PXA_HTTP_IO_LIMIT_REASON, NULL, 0) == (int32_t)reason);
+        }
+        pxa_http_stream_init(&s, storage, 512, 1024, 100, 0, PXA_NET_METHOD_GET);
+        pxa_http_stream_limit(&s, PXA_HTTP_LIMIT_HEADERS);
+        pxa_http_stream_limit(&s, PXA_HTTP_LIMIT_BODY);
+        pxa_http_stream_done(&s, PXA_STATUS_LIMIT_EXCEEDED);
+        assert(pxa_http_stream_io(&s, PXA_HTTP_IO_LIMIT_REASON, NULL, 0) == PXA_HTTP_LIMIT_HEADERS);
+        pxa_http_stream_init(&s, storage, 512, 1024, 100, 0, PXA_NET_METHOD_GET);
+        pxa_http_stream_done(&s, PXA_STATUS_IO_ERROR);
+        assert(pxa_http_stream_io(&s, PXA_HTTP_IO_LIMIT_REASON, NULL, 0) == PXA_HTTP_LIMIT_UNKNOWN);
+    }
     test_waits();
     test_exchange_service(0);
     test_exchange_service(1);

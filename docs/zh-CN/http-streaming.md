@@ -67,6 +67,10 @@ auto filtered_reply = co_await std::move(*exchange).response();
 
 readiness 位为 read=1、write=2、headers=4、end=8。IO `would-block` 是暂时不可用；读取 0 是成功 EOF。已有数据先被读完，再返回终端错误。传输失败不会伪装成 EOF。
 
+HTTP 交换可选支持 IO 7 `LIMIT_REASON`：无输入，终端 `limit_exceeded` 时返回 0（未知）、1（响应头）或 2（正文）；未结束时返回 `would-block`，其他终端结果返回 0。旧 Host 或自定义后端可返回 `unsupported`。原有 IO 4/5、错误码与预算行为保持兼容；分类复用交换的内部状态位，不增加连接字段或缓冲；`pxa_http_stream_state()` 仍只报告原有生命周期标志。
+
+C++ 可用 `std::move(exchange).response(reason)`，其中 `reason` 为 `HttpLimitReason`。它会在返回 Task 前重置为 `unknown`，只在响应头等待以 `limit_exceeded` 失败时查询分类；调用者须保持该引用存活至 Task 完成或取消。未知、旧 Host 和无法识别的分类仍为 `unknown`。无参数的 `response()` 不查询诊断。C 接口提供 `pxa_http_limit_reason(handle)`。只在确认 `body` 时才可省略针对响应头大小的回退请求；不能把未知分类当成正文超限，也不能因此重放 POST。
+
 缓冲支持 512..65536 的 2 次幂；响应头支持 16..4096 字节，默认只请求 1024 字节；需要更大响应头时显式提高预算，不受旧控制完成工作区大小限制。响应头按总字节预算限制，不再把所有字段值硬性截到 256 字节。上传上限受 ESP HTTP API 的有符号 int 长度限制，为 2 GiB−1；下载总预算采用 u64，与驻留内存无关。控制包本身继续受 Core 的 4076 字节载荷上限约束。
 
 重定向返回 3xx，由 Guest 决定下一次请求并重新检查权限。传输不自动解压 Content-Encoding；内容编码和 Cookie 策略属于更高层能力。TLS、DNS、证书验证和网络连接仍由 Host 管理。矛盾的 Content-Length / Transfer-Encoding 或互相矛盾的重复长度被拒绝。

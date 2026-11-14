@@ -146,15 +146,25 @@ Task<HttpCapabilities> HttpClient::capabilities_impl(HttpClient self) {
                                wire::get32(b->data() + 28)};
 }
 Task<HttpResponse> HttpExchange::response() && {
-    return response_impl(std::move(*this));
+    return response_impl(std::move(*this), nullptr);
 }
-Task<HttpResponse> HttpExchange::response_impl(HttpExchange self) {
+Task<HttpResponse> HttpExchange::response(HttpLimitReason &reason) && {
+    reason = HttpLimitReason::unknown;
+    return response_impl(std::move(*this), &reason);
+}
+Task<HttpResponse> HttpExchange::response_impl(HttpExchange self, HttpLimitReason *reason) {
     if (!self)
         co_return std::unexpected(Error::bad_state);
     auto size = co_await AsyncIo(*self.transport_, *self.requests_,
                                  self.resource_.handle(), 5, 4);
-    if (!size)
+    if (!size) {
+        if (reason && size.error() == Error::limit_exceeded) {
+            auto detail = self.transport_->io(self.resource_.handle(), 7, {});
+            if (detail && *detail <= std::uint32_t(HttpLimitReason::body))
+                *reason = static_cast<HttpLimitReason>(*detail);
+        }
         co_return std::unexpected(size.error());
+    }
     if (*size < 16 || *size > 4096)
         co_return std::unexpected(Error::protocol_error);
     auto storage = std::unique_ptr<std::byte[]>(new (std::nothrow) std::byte[*size]);

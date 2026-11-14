@@ -215,9 +215,18 @@ int main(int argc, char **argv) {
     assert(b.open_exchange(b.context, &r, &exchange) == PXA_STATUS_OK);
     assert(wait_io(&b, exchange, PXA_HTTP_IO_RESPONSE, head, sizeof(head)) ==
            PXA_STATUS_LIMIT_EXCEEDED);
+    assert(b.exchange_io(b.context, exchange, PXA_HTTP_IO_LIMIT_REASON, NULL, 0) == PXA_HTTP_LIMIT_BODY);
     b.close_exchange(b.context, exchange);
     wait_cleanup();
     puts("response-budget PASS");
+    r = request(url);
+    r.response_header_bytes = 16;
+    assert(b.open_exchange(b.context, &r, &exchange) == PXA_STATUS_OK);
+    assert(wait_io(&b, exchange, PXA_HTTP_IO_RESPONSE_SIZE, NULL, 0) == PXA_STATUS_LIMIT_EXCEEDED);
+    assert(b.exchange_io(b.context, exchange, PXA_HTTP_IO_LIMIT_REASON, NULL, 0) == PXA_HTTP_LIMIT_HEADERS);
+    b.close_exchange(b.context, exchange);
+    wait_cleanup();
+    puts("header-budget reason PASS");
     snprintf(url, sizeof(url), "%s/redirect", argv[1]);
     r = request(url);
     assert(b.open_exchange(b.context, &r, &exchange) == PXA_STATUS_OK);
