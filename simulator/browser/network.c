@@ -30,14 +30,14 @@ EM_JS(int, streaming_upload, (), {return !!Module.browserStreamingUpload;});
 _Static_assert(sizeof(pxa_bytes_t)==8 && sizeof(pxa_net_header_t)==16,"Wasm32 network records");
 EM_JS(void, js_start, (uint32_t id,const char *url,size_t url_size,int method,
     const pxa_net_header_t *headers,int header_count,const uint8_t *body,size_t body_size,
-    const pxa_bytes_t *wanted,int wanted_count,uint32_t timeout,int upload), {
+    const pxa_bytes_t *wanted,int wanted_count,uint32_t timeout,int upload,int streaming), {
     const text=(p,n)=>UTF8ToString(p,n),h=[],w=[];
     for(let i=0;i<header_count;i++){
         const p=(headers+i*16)>>>2;h.push([text(HEAPU32[p],HEAPU32[p+1]),text(HEAPU32[p+2],HEAPU32[p+3])]);
     }
     for(let i=0;i<wanted_count;i++){const p=(wanted+i*8)>>>2;w.push(text(HEAPU32[p],HEAPU32[p+1]));}
     Module.browserNetStart({id,url:text(url,url_size),method:["",'GET','HEAD','POST','PUT','PATCH','DELETE'][method],
-        headers:h,body:HEAPU8.slice(body,body+body_size),wanted:w,timeout,upload:!!upload});
+        headers:h,body:HEAPU8.slice(body,body+body_size),wanted:w,timeout,upload:!!upload,streaming:!!streaming});
 });
 static pxa_status_t create(const pxa_net_request_t *r,exchange_t **out,int streaming){
     exchange_t *e=NULL;for(unsigned i=0;i<SLOTS;i++)if(!exchanges[i].id){e=&exchanges[i];break;}
@@ -59,7 +59,7 @@ static pxa_status_t create(const pxa_net_request_t *r,exchange_t **out,int strea
     }
     js_start(e->id,(const char *)r->url.data,r->url.size,r->method,r->headers,r->header_count,
         r->body.data,r->body.size,r->wanted_response_headers,r->wanted_response_header_count,r->timeout_ms,
-        streaming&&r->upload_bytes);
+        streaming&&r->upload_bytes,streaming);
     *out=e;return PXA_STATUS_OK;
 }
 static pxa_status_t start(void *c,const pxa_net_request_t *r,uint64_t *operation){
@@ -102,8 +102,18 @@ static int32_t exchange_io(void *c,void *value,uint32_t op,uint8_t *data,size_t 
 EMSCRIPTEN_KEEPALIVE int browser_net_header(uint32_t id,const uint8_t *n,size_t ns,const uint8_t *v,size_t vs){
     exchange_t *e=find(id);if(!e)return 0;
     int accepted=pxa_http_stream_header(&e->stream,n,ns,v,vs);
-    if(!accepted)pxa_http_stream_limit(&e->stream,PXA_HTTP_LIMIT_HEADERS);
-    return accepted;
+    if(accepted)return 1;
+    /* The shared writer also rejects malformed or already published headers.
+     * Only a valid header exceeding the remaining byte budget is a limit. */
+    pxa_http_stream_t *s=&e->stream;
+    if((pxa_http_stream_state(s)&(PXA_HTTP_STREAM_HEADERS|PXA_HTTP_STREAM_DONE))||
+       !pxa_net_header_name_valid((pxa_bytes_t){n,ns},0)||(vs&&!v))return 0;
+    for(size_t i=0;i<vs;i++)if(v[i]!='\t'&&(v[i]<0x20||v[i]==0x7f))return 0;
+    size_t remaining=s->head_capacity-s->head_size;
+    if(4u+ns<=remaining&&vs<=remaining-4u-ns)return 0;
+    pxa_http_stream_limit(s,PXA_HTTP_LIMIT_HEADERS);
+    pxa_http_stream_done(s,PXA_STATUS_LIMIT_EXCEEDED);
+    return PXA_STATUS_LIMIT_EXCEEDED;
 }
 EMSCRIPTEN_KEEPALIVE void browser_net_headers(uint32_t id,uint16_t status){
     exchange_t *e=find(id);if(e)pxa_http_stream_headers(&e->stream,status,UINT64_MAX);

@@ -283,6 +283,14 @@
       "name": "finish-upload",
       "id": 6,
       "result": "zero|status"
+    },
+    {
+      "name": "limit-reason",
+      "id": 7,
+      "optional": true,
+      "input": "empty",
+      "result": "unknown:0|response-headers:1|response-body:2|would-block|unsupported|status",
+      "semantics": "Only a terminal limit-exceeded outcome may report a known reason. Pending exchanges return would-block; other terminal outcomes return unknown. Older Hosts may return unsupported. This query preserves the original error, byte budgets, buffered data and exchange lifetime."
     }
   ],
   "stream_limits": {

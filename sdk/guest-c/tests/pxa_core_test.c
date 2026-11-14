@@ -192,7 +192,12 @@ int main(void) {
         assert(!pxa_window_parse_snapshot(
             &event, UINT64_C(0x100000002), &snapshot));
         event.payload_size++;
+        /* Window includes square (3); only values beyond that enum are invalid. */
         packet_window[PXA_HEADER_BYTES + orientation_offset] = 3;
+        assert(pxa_window_parse_snapshot(
+            &event, UINT64_C(0x100000002), &snapshot));
+        assert(snapshot.orientation == 3);
+        packet_window[PXA_HEADER_BYTES + orientation_offset] = 4;
         assert(!pxa_window_parse_snapshot(
             &event, UINT64_C(0x100000002), &snapshot));
         packet_window[PXA_HEADER_BYTES + orientation_offset] = 1;

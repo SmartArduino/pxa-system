@@ -153,6 +153,15 @@ HTTP_OPEN (3) returns an owned exchange immediately. CAPABILITIES (4) queries ba
 
 The exchange uses IO READ=1, WRITE=2, POLL=3, RESPONSE=4, RESPONSE_SIZE=5, FINISH_UPLOAD=6. READ zero means successful EOF; would-block is temporary. Buffered data drains before a terminal error. RESPONSE returns a 16-byte prefix (status/u16, flags/u16, header byte count/u32, body length/u64) followed by repeated name-size/u16, value-size/u16, name, value records. Flag 1 means known length; otherwise length is UINT64_MAX. Names are compared case-insensitively; duplicates remain separate and values are bounded by the total response-head budget. Both HEAD and no-body final responses have known length zero.
 
+An exchange may optionally implement IO LIMIT_REASON=7 with no input. It returns
+0 (unknown), 1 (response headers), or 2 (response body) only after a terminal
+`limit-exceeded`; other terminal outcomes return unknown, and pending exchanges
+return `would-block`. Older Hosts and custom backends may return `unsupported`.
+This diagnostic does not replace the original error, alter byte budgets, consume
+buffered data, or extend the exchange lifetime. Unknown or unsupported results
+must not be interpreted as a body limit or used to replay a request. Existing
+IO operations and service versions remain compatible.
+
 Core service 0.2 WAIT_RESOURCE (4) accepts handle/u64 and interests/u32, and reliably completes with status/i32 followed by ready/u32. Masks are READ=1, WRITE=2, HEADERS=4, END=8. Completion does not consume data; callers retry and rearm after advisory readiness. Cancellation removes the wait, while exchange ownership determines transport cancellation. Each direction allows one concurrent producer/consumer.
 
 Buffers are 512..65536 power-of-two bytes; upload and download split that total when uploading. Heads are 16..4096 bytes, subject to the product cap. Known upload length is limited to INT32_MAX by the ESP client API. Download budget is an independent u64; a response is never accumulated in memory just because its total limit is large. Redirects return to the Guest for another permission check; content-encoding is not automatically decoded. See [C++ API and implementation](../../docs/zh-CN/http-streaming.md).

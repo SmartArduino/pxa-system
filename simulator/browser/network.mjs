@@ -78,8 +78,10 @@ export function installBrowserNetwork(host, origins=[]) {
       for(const name of names){
         const value=response.headers.get(name);if(value==null)continue;
         const n=encoder.encode(name),v=encoder.encode(value);
-        if(n.length>64||v.length>256||(name==='content-type'&&v.length>96))throw new Error('Response header exceeds PXA limits');
-        bytes(n,p=>bytes(v,(q,size)=>{if(!host._browser_net_header(state.id,p,n.length,q,size))throw new Error('Response headers exceed budget');}));
+        // Buffered Net replies retain their legacy field limits. HTTP_OPEN
+        // delegates the total encoded head budget to the bounded C writer.
+        if(n.length>64||(!options.streaming&&(v.length>256||(name==='content-type'&&v.length>96))))throw new Error('Response header exceeds PXA limits');
+        bytes(n,p=>bytes(v,(q,size)=>{if(host._browser_net_header(state.id,p,n.length,q,size)!==1)throw new Error('Response header rejected');}));
       }
       host._browser_net_headers(state.id,response.status);
       const reader=response.body?.getReader();
