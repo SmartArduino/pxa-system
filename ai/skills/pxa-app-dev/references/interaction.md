@@ -40,8 +40,10 @@ Keep a device × operation-path checklist with a separate scenario for each path
 For example, run `verify APP --profiles pai-touch doit-gamekit-2 --scenario tests/touch.json`,
 then a button-only scenario on the same screens with `--no-build` to reuse validated
 output (repeat any test-build `--define` flags). Test ADC/focus paths separately
-from a full gamepad. Retained-UI node taps do not prove physical key navigation:
-inject controller events and assert focus/action results. Report declaration
+from a full gamepad. Retained-UI node taps do not prove key navigation. Use the
+SDK's supported events for the selected mode and assert focus/action results;
+controller injection alone cannot prove focus-mode behavior. If that mode cannot
+be injected, leave its simulator coverage unverified and test the actual device. Report declaration
 matches, simulator journeys, hardware checks and missing targets separately.
 Do not declare a path `complete` until it is implemented and exercised.
 Avoid requiring a chord on ADC/exclusive buttons. Avoid a continuous power-key
