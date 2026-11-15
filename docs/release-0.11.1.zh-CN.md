@@ -1,6 +1,6 @@
 # PXA 0.11.1 与 Agent Kit 0.7.4
 
-状态：发布准备中。公共安装入口保持已发布版本，候选制品等待发布授权。
+状态：已正式发布。DevKit 与官方固件为 0.11.1，Agent Kit 为 0.7.4，Browser Host 为 0.11.2。
 
 本版完善设备调试、权限配置和语言保存，并更新独立 DevKit 与 AI Kit。
 Guest Core 保持 2.1，原生 Host C ABI 保持 2；Guest 主循环仍按原有协作模型执行，
@@ -45,7 +45,7 @@ Browser Host 独立编号，固件的商城能力快照保持 `0.11.0`。
 
 ## English
 
-Preparation only; public installation channels retain their published versions.
+Released: DevKit and official firmware 0.11.1, Agent Kit 0.7.4, and Browser Host 0.11.2.
 PXA 0.11.1 and Agent Kit 0.7.4 update the bundled PXADB client, preserve serial
 command deadlines under POSIX backpressure, and improve device integration.
 AI Store packaging accepts valid optional interaction declarations while retaining
