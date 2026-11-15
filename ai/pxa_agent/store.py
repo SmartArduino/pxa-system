@@ -185,7 +185,8 @@ def package_identity(environment, package):
     module = module_from_spec(spec)
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
-    records = list(module.manifest_records(module.read_package_manifest(package)[12:]))
+    manifest = module.read_package_manifest(package)
+    records = list(module.manifest_records(manifest[12:]))
     fields = dict(records)
     public = fields.get(11)
     if not public:
@@ -218,8 +219,12 @@ def package_identity(environment, package):
     interaction_records = [value for tag, value in records if tag & 0x7fff == 21]
     interaction = None
     if interaction_records:
-        from interaction_contract import decode, validate_app, MAX_APP_BYTES
-        if len(interaction_records) != 1 or 0x8015 not in fields:
+        from interaction_contract import decode, validate_app, MANIFEST_TAG, MAX_APP_BYTES
+        from package_compatibility import records as wire_records
+        # The Host reader normalizes away the optional bit. Check the original
+        # wire tags separately, retaining the normalized metadata API above.
+        wire_tags = [tag for tag, _ in wire_records(manifest[12:]) if tag & 0x7fff == 21]
+        if len(interaction_records) != 1 or wire_tags != [MANIFEST_TAG]:
             raise ToolError('Invalid signed interaction declaration')
         interaction = validate_app(decode(interaction_records[0], MAX_APP_BYTES))
     return {'app_id': module.package_manifest_identity(package), 'spki': public, 'root': root,

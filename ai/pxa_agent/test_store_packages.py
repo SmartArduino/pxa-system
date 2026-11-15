@@ -195,3 +195,54 @@ class PackageArchitectureParserTests(unittest.TestCase):
             value = store.package_identity(None, path)
             self.assertEqual(value['aot_targets'], ['esp32-s3', 'esp32-s31'])
             self.assertEqual(value['release_sequence'], 3)
+
+
+class PackageInteractionParserTests(unittest.TestCase):
+    """Exercise the real Host reader's normalized tags, not signature validation."""
+
+    declaration = {'schema': 'pxa-app-interaction-1', 'profiles': [{
+        'id': 'touch', 'kind': 'touch', 'complete': True,
+        'requires': {'select': 'tap'}, 'contacts': 1}]}
+
+    def read_identity(self, interaction_records=()):
+        def tlv(tag, value):
+            return struct.pack('<HH', tag, len(value)) + value
+        body = (tlv(2, b'pxa-game') + tlv(3, b'1.0.0')
+                + tlv(9, struct.pack('<Q', 3)) + tlv(11, b'public-key')
+                + b''.join(tlv(tag, value) for tag, value in interaction_records))
+        manifest = b'PXAM' + struct.pack('<HHI', 0, 8, len(body)) + body
+        header = bytearray(64)
+        header[:4] = b'PXAC'
+        struct.pack_into('<H', header, 8, 64)
+        struct.pack_into('<I', header, 16, len(manifest))
+        with tempfile.TemporaryDirectory() as folder:
+            package = Path(folder) / 'interaction.pxa'
+            package.write_bytes(header + manifest)
+            return store.package_identity(None, package)
+
+    def test_optional_wire_tag_survives_normalized_host_reader(self):
+        value = self.read_identity([(0x8015, json.dumps(self.declaration).encode())])
+        self.assertEqual(value['interaction'], self.declaration)
+        self.assertEqual(value['app_id'], 'pxa-game')
+        self.assertEqual(value['release_sequence'], 3)
+
+    def test_legacy_package_without_interaction_remains_unknown(self):
+        self.assertIsNone(self.read_identity()['interaction'])
+
+    def test_required_wire_tag_is_rejected(self):
+        with self.assertRaisesRegex(ToolError, 'Invalid signed interaction declaration'):
+            self.read_identity([(21, json.dumps(self.declaration).encode())])
+
+    def test_duplicate_and_colliding_wire_tags_are_rejected(self):
+        payload = json.dumps(self.declaration).encode()
+        for tags in ((0x8015, 0x8015), (21, 0x8015), (0x8015, 21)):
+            with self.subTest(tags=tags), self.assertRaisesRegex(
+                    ToolError, 'Invalid signed interaction declaration'):
+                self.read_identity([(tag, payload) for tag in tags])
+
+    def test_json_validation_and_byte_limit_remain_enforced(self):
+        for payload in (b'{', b'[]', b'{"schema":"a","schema":"b"}',
+                        b'{"schema":"pxa-app-interaction-1","profiles":[]}',
+                        json.dumps(self.declaration).encode() + b' ' * 4096):
+            with self.subTest(payload=payload[:60]), self.assertRaises(ValueError):
+                self.read_identity([(0x8015, payload)])

@@ -28,6 +28,8 @@ Host 原生工作任务可使用双核。应用兼容性继续以服务和特性
 DevKit 0.11.1 与 Agent Kit 0.7.4 带入最新 PXADB 客户端。POSIX 串口写入遇到
 `EAGAIN` 时交还控制权，命令与上传沿用已有超时和取消路径。AI Kit 默认使用
 DevKit 0.11.1，继续支持签名离线清单、项目 SDK 锁、真实 Guest 验证和矩形商城截图。
+AI 商城打包正确读取带可选标记的交互声明，避免误拒绝合法触控应用；重复声明、
+错误标记、格式和大小限制仍按原有规则校验，签名预检保持启用。
 计时器配方收紧间距与外边距，给圆屏安全区域中的标题与完整按钮留出空间。
 调试技能补充部分裁切检查，并区分设备默认布局与关闭遮罩、边距后的商城截图。
 
@@ -46,6 +48,8 @@ Browser Host 独立编号，固件的商城能力快照保持 `0.11.0`。
 Preparation only; public installation channels retain their published versions.
 PXA 0.11.1 and Agent Kit 0.7.4 update the bundled PXADB client, preserve serial
 command deadlines under POSIX backpressure, and improve device integration.
+AI Store packaging accepts valid optional interaction declarations while retaining
+wire-tag, duplicate, format and size checks and signature preflight.
 Guest Core remains 2.1 and native Host C ABI remains 2. Guest execution remains
 cooperative, while native Host workers can use both cores.
 
