@@ -153,6 +153,25 @@ def create_server(env):
         return inspect(env, port, baud, package, serial_profile)
 
     @tool(annotations=read)
+    def pxa_device_profiles(devices: list[dict], package: str | None = None) -> dict:
+        """Read 1..8 devices as separate input/layout profiles, without installing,
+        rebooting or flashing. Each connection has port, optional baud (2000000),
+        serial_profile (default/mz79) and label. A package is checked independently
+        on each device; this does not build per-CPU variants. Returns a job; poll
+        pxa_job_status. Missing data stays unknown. Firmware declarations and
+        injected input are not physical-operation verification.
+        """
+        from .device_matrix import connections
+        selected = connections(devices)
+        arguments = ['device-profiles', '--devices-json', json.dumps(selected)]
+        if package:
+            path = env.project(package)
+            if not path.exists():
+                raise ToolError('Build the intended device package before checking compatibility')
+            arguments += ['--package', str(path)]
+        return host_job(arguments, timeout=900)
+
+    @tool(annotations=read)
     def pxa_check_compatibility(package: str, port: str, baud: int = 2000000) -> dict:
         """Compare a prepared binary package with actual Host Core, services/features,
         CPU, AOT ABI and container support without uploading. Unknown telemetry stays

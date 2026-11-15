@@ -40,6 +40,13 @@ def parser():
     profile.add_argument('--serial-profile', choices=('default', 'mz79'))
     profile.add_argument('--baud', type=int, default=2000000)
     profile.add_argument('--package',help='compare this prepared package with the device without uploading')
+    matrix = commands.add_parser('device-profiles', help='read a multi-device input/layout matrix without installing or flashing')
+    targets = matrix.add_mutually_exclusive_group(required=True)
+    targets.add_argument('--port', action='append', help='explicit device port; repeat for multiple devices')
+    targets.add_argument('--devices-json', help='connections with individual port, baud and serial_profile values')
+    matrix.add_argument('--baud', type=int, default=2000000)
+    matrix.add_argument('--serial-profile', choices=('default', 'mz79'))
+    matrix.add_argument('--package', help='check this same prepared package independently on each device')
     commands.add_parser('mcp', help='serve tools to an MCP client over stdio')
     init = commands.add_parser('init', help='create a C or C++ app without editing the SDK')
     init.add_argument('project')
@@ -174,6 +181,15 @@ def main():
         elif args.command == 'device-profile':
             from .device_profile import inspect
             result = inspect(Environment(args.workspace), args.port, args.baud, args.package, args.serial_profile)
+        elif args.command == 'device-profiles':
+            from .device_matrix import inspect_many, parse_connections
+            if args.devices_json is not None:
+                if args.baud != 2000000 or args.serial_profile is not None:
+                    raise ToolError('Put each baud and serial_profile inside --devices-json')
+                selected = parse_connections(args.devices_json)
+            else:
+                selected = [dict(port=port, baud=args.baud, serial_profile=args.serial_profile) for port in args.port]
+            result = inspect_many(Environment(args.workspace), selected, args.package)
         elif args.command == 'scope':
             from . import scope
             if args.action == 'begin':

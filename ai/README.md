@@ -57,6 +57,14 @@ uv run --python 3.12 --locked --project ./ai ./ai/agent.py --workspace ./my-pxa 
 具体字段和创作流程见 [操作适配](skills/pxa-app-dev/references/interaction.md)。
 这是一致性判断，不能代替真机操作验收；旧项目没有声明时仍显示未知。
 
+同时适配多台设备可用 `device-profiles --port PORT_A --port PORT_B` 批量读取。
+MCP 为 `pxa_device_profiles(devices=[{"port":"PORT_A"},{"port":"PORT_B","serial_profile":"mz79","baud":115200}])`，
+返回任务后用 `pxa_job_status` 等待完成；CLI 的混合串口参数写入 `--devices-json`。
+工具逐台保留完整操作模式、互斥按键、长按限制与屏幕信息，不拼接不存在的组合能力。
+没有设备时可先按目标型号和明确操作需求开发，实际硬件能力保持待确认。
+共用核心逻辑与动作层，为触摸、手柄、三键焦点路径分别编写验收场景；
+`verify --profiles` 只改变屏幕配置，不等于这些操作路径都通过了验证。
+
 ## AI 平台
 
 | 平台 | 自动安装到项目内 | 使用方式 |
