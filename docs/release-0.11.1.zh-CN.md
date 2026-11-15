@@ -16,6 +16,9 @@ Host 原生工作任务可使用双核。应用兼容性继续以服务和特性
 界面并全部允许；ESP-IDF 固件使用 `CONFIG_PXA_ENABLE_PERMISSIONS=n`。
 默认启用权限系统。设置语言时及时保存，避免首次语言修改尚未落盘便关机。
 
+原生输入法创建辅助编辑条时保留输入框的光标位置，布局和样式事件不再被当作
+文本点击。辅助条的文字定位、左右箭头和长按重复沿用原有行为。
+
 设备商城的完整版与轻量版改为精选优先；相应应用与商城后端随协调发布启用。
 完整固件包含系统字体与商城。已有设备使用应用镜像升级前须核对分区表，保留
 原有应用、私有数据和设置；完整镜像用于首次安装或经过备份的布局迁移。
@@ -50,6 +53,9 @@ Firmware supports independent native USB and UART PXADB sessions with coordinate
 installation operations. Permission policy, persistence and prompts can be compiled
 out with `PXA_ENABLE_PERMISSIONS=OFF`, or `CONFIG_PXA_ENABLE_PERMISSIONS=n` on ESP-IDF;
 the default keeps permission enforcement enabled. Language changes are saved promptly.
+The native input method preserves the caret when creating its auxiliary editor;
+layout and style events no longer reposition text. Label hit testing and arrow
+keys, including held repeats, retain their existing behavior.
 Factory images include a font and Store. Compare partition maps before updating only
 the application; merged provisioning images replace device data.
 

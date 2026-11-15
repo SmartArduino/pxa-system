@@ -1310,7 +1310,8 @@ static void editor_view_event(lv_event_t *event) {
         if (lv_event_get_code(event)!=LV_EVENT_VALUE_CHANGED) return;
         request_switch(ime,lv_buttonmatrix_get_selected_button(ime->editor_navigation)==0?MOVE_LEFT:MOVE_RIGHT);
         return;
-    } else {
+    } else if (lv_event_get_current_target(event)==ime->editor_text &&
+               lv_event_get_code(event)==LV_EVENT_CLICKED) {
         lv_indev_t *pointer=lv_indev_active(); if (!pointer) return;
         lv_point_t point; lv_indev_get_point(pointer,&point);
         lv_area_t box; lv_obj_get_coords(ime->editor_text,&box);
@@ -1320,7 +1321,7 @@ static void editor_view_event(lv_event_t *event) {
         uint32_t position=ime->editor_start+index;
         if (position>ime->editor_end) position=ime->editor_end;
         lv_textarea_set_cursor_pos(ime->target,(int32_t)position);
-    }
+    } else return; /* Construction/layout events are not text clicks. */
     restart_session(ime); refresh_editor(ime,false);
 }
 static bool create_editor_view(pxa_lvgl_ime_t *ime) {

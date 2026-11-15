@@ -1,6 +1,8 @@
 /* Assertions also execute fixture setup; keep them in Release test builds. */
 #undef NDEBUG
 #include "pxa/lvgl/pxa_lvgl_ui.h"
+#include "pxa/lvgl/pxa_lvgl_ime.h"
+#include "src/widgets/buttonmatrix/lv_buttonmatrix_private.h"
 
 #include <assert.h>
 #include <stdint.h>
@@ -878,6 +880,132 @@ static void test_text_input_focus(void) {
     puts("LVGL input focus: ownership, single focus, hide, hidden/disabled denial, no adapter allocation OK");
 }
 
+typedef struct {
+    pxa_lvgl_ime_t *ime;
+    lv_obj_t *editor;
+    unsigned opened;
+} ime_editor_test_t;
+
+static void ime_test_focus(void *context,uint64_t generation,bool active,bool provider) {
+    (void)context; (void)generation; (void)active; (void)provider;
+}
+
+static void ime_test_open(lv_event_t *event) {
+    ime_editor_test_t *test=lv_event_get_user_data(event);
+    assert(lv_indev_active());
+    uint32_t cursor=lv_textarea_get_cursor_pos(test->editor);
+    assert(!pxa_lvgl_ime_focus(test->ime,test->editor));
+    /* Creating the auxiliary editor sends non-click layout events while the
+     * real pointer is active. They must not reposition the original caret. */
+    assert(lv_textarea_get_cursor_pos(test->editor)==cursor);
+    lv_obj_t *view=pxa_lvgl_ime_editor_view(test->ime); assert(view);
+    lv_obj_t *navigation=lv_obj_get_child(view,2);
+    assert(lv_obj_has_class(navigation,&lv_buttonmatrix_class));
+    /* Keep the pointer active while unrelated layout/parent/delete events
+     * run, so an accidental event-to-caret conversion cannot hide behind a
+     * NULL active input device. */
+    lv_obj_refresh_ext_draw_size(navigation);
+    lv_obj_send_event(navigation,LV_EVENT_STYLE_CHANGED,NULL);
+    lv_obj_send_event(view,LV_EVENT_CHILD_CHANGED,NULL);
+    lv_obj_t *unrelated=lv_obj_create(navigation); lv_obj_delete(unrelated);
+    assert(lv_textarea_get_cursor_pos(test->editor)==cursor);
+    ++test->opened;
+}
+
+static void ime_test_pointer(lv_indev_t *pointer,pointer_input_t *state,
+                             lv_point_t point,unsigned hold_ms) {
+    state->point=point; state->pressed=1; state->timestamp_ms=lv_tick_get();
+    lv_indev_read(pointer);
+    for(unsigned elapsed=0;elapsed<hold_ms;elapsed+=20) {
+        lv_tick_inc(20); state->timestamp_ms=lv_tick_get(); lv_indev_read(pointer);
+    }
+    state->pressed=0; state->timestamp_ms=lv_tick_get(); lv_indev_read(pointer);
+}
+
+static lv_obj_t *ime_test_matrix(lv_obj_t *root,const char *key) {
+    if(lv_obj_is_hidden(root)) return NULL;
+    if(lv_obj_has_class(root,&lv_buttonmatrix_class)) {
+        for(unsigned i=0;lv_buttonmatrix_get_button_text(root,i);++i)
+            if(!strcmp(lv_buttonmatrix_get_button_text(root,i),key)) return root;
+    }
+    for(unsigned i=0;i<lv_obj_get_child_count(root);++i) {
+        lv_obj_t *found=ime_test_matrix(lv_obj_get_child(root,i),key);
+        if(found) return found;
+    }
+    return NULL;
+}
+
+static void ime_test_key(lv_indev_t *pointer,pointer_input_t *state,
+                         lv_obj_t *root,const char *key,unsigned hold_ms) {
+    lv_obj_t *matrix=ime_test_matrix(root,key); assert(matrix);
+    unsigned index=0;
+    while(strcmp(lv_buttonmatrix_get_button_text(matrix,index),key)) ++index;
+    lv_obj_update_layout(matrix);
+    lv_area_t box; lv_obj_get_coords(matrix,&box);
+    /* Use rendered cell geometry and real LVGL hit testing, including repeat. */
+    lv_area_t cell=((lv_buttonmatrix_t *)matrix)->button_areas[index];
+    ime_test_pointer(pointer,state,(lv_point_t){box.x1+(cell.x1+cell.x2)/2,
+        box.y1+(cell.y1+cell.y2)/2},hold_ms);
+}
+
+static void test_ime_editor_pointer_events(void) {
+    ime_editor_test_t test={0};
+    pxa_lvgl_ime_config_t config={0};
+    config.struct_size=sizeof(config); config.focus=ime_test_focus;
+    config.preferences=(pxa_ime_preferences_t){PXA_IME_LAYOUT_FULL,PXA_IME_ENGLISH};
+    config.environment=(pxa_ui_environment_t){.width=320,.height=240,
+        .density_q16=65536,.font_scale_q16=65536};
+    pxa_lvgl_ui_theme_init(&config.theme);
+    test.ime=pxa_lvgl_ime_create(&config); assert(test.ime);
+    lv_obj_t *button=lv_button_create(lv_screen_active());
+    lv_obj_set_pos(button,10,10); lv_obj_set_size(button,80,32);
+    lv_obj_add_event_cb(button,ime_test_open,LV_EVENT_CLICKED,&test);
+    test.editor=lv_textarea_create(lv_screen_active());
+    lv_textarea_set_one_line(test.editor,true);
+    lv_obj_set_pos(test.editor,20,185); lv_obj_set_size(test.editor,180,32);
+    const char *original="nonempty generic input";
+    lv_textarea_set_text(test.editor,original);
+    lv_textarea_set_cursor_pos(test.editor,LV_TEXTAREA_CURSOR_LAST);
+    assert(lv_textarea_get_cursor_pos(test.editor)==22);
+    lv_obj_update_layout(lv_screen_active());
+    pointer_input_t state={{0,0},0,0};
+    lv_indev_t *pointer=lv_indev_create(); assert(pointer);
+    lv_indev_set_type(pointer,LV_INDEV_TYPE_POINTER);
+    lv_indev_set_display(pointer,g_test_display);
+    lv_indev_set_user_data(pointer,&state); lv_indev_set_read_cb(pointer,read_pointer);
+    lv_indev_set_long_press_time(pointer,60); lv_indev_set_long_press_repeat_time(pointer,25);
+    ime_test_pointer(pointer,&state,(lv_point_t){40,25},0);
+    assert(test.opened==1 && !strcmp(lv_textarea_get_text(test.editor),original));
+    lv_obj_t *view=pxa_lvgl_ime_editor_view(test.ime); assert(view);
+    lv_obj_t *label=lv_obj_get_child(view,0);
+    lv_obj_t *navigation=ime_test_matrix(view,LV_SYMBOL_LEFT); assert(navigation);
+    /* Append still uses the original caret rather than a caret reset to zero. */
+    ime_test_key(pointer,&state,pxa_lvgl_ime_root(test.ime),"q",0);
+    assert(!strcmp(lv_textarea_get_text(test.editor),"nonempty generic inputq"));
+    assert(lv_textarea_get_cursor_pos(test.editor)==23);
+
+    /* A real auxiliary-label click must still move the caret. */
+    lv_obj_update_layout(view);
+    lv_area_t box; lv_obj_get_coords(label,&box);
+    ime_test_pointer(pointer,&state,(lv_point_t){box.x1+8,(box.y1+box.y2)/2},0);
+    uint32_t cursor=lv_textarea_get_cursor_pos(test.editor);
+    assert(cursor>0 && cursor<23);
+    ime_test_key(pointer,&state,view,LV_SYMBOL_LEFT,0);
+    assert(lv_textarea_get_cursor_pos(test.editor)==cursor-1);
+    ime_test_key(pointer,&state,view,LV_SYMBOL_RIGHT,0);
+    assert(lv_textarea_get_cursor_pos(test.editor)==cursor);
+    lv_textarea_set_cursor_pos(test.editor,LV_TEXTAREA_CURSOR_LAST);
+    ime_test_key(pointer,&state,view,LV_SYMBOL_LEFT,180);
+    uint32_t repeated=lv_textarea_get_cursor_pos(test.editor);
+    assert(repeated<22 && repeated>0);
+    ime_test_key(pointer,&state,view,LV_SYMBOL_RIGHT,180);
+    assert(lv_textarea_get_cursor_pos(test.editor)>repeated);
+    lv_obj_delete(test.editor);
+    assert(!pxa_lvgl_ime_active(test.ime));
+    pxa_lvgl_ime_destroy(test.ime); lv_indev_delete(pointer); lv_obj_delete(button);
+    puts("LVGL IME editor: pointer focus preserves caret; append, label hit, arrows/repeat and unrelated events OK");
+}
+
 static void test_enabled_inheritance(void) {
     allocator_state_t allocator={0}; pxa_lvgl_ui_config_t config={0};
     config.struct_size=sizeof(config); config.allocate=test_allocate; config.release=test_release;
@@ -1129,6 +1257,7 @@ int main(void) {
     size_t alpha_visible;
 
     test_lvgl_init();
+    test_ime_editor_pointer_events();
     test_density_icon_fonts();
     if (!getenv("PXA_CANVAS_MEASURE")) test_reentrant_page_removal();
     pxa_runtime_limits_init(&runtime_limits);
