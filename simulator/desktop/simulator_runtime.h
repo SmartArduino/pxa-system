@@ -27,6 +27,8 @@ pxsys_status_t pxsys_desktop_runtime_provider(
     pxsys_desktop_runtime_t* runtime, pxsys_runtime_provider_t* output);
 void pxsys_desktop_runtime_update_input_method(pxsys_desktop_runtime_t *runtime, const char *directory);
 void pxsys_desktop_runtime_poll(pxsys_desktop_runtime_t* runtime);
+/* Sticky failure state for command-driven --launch runs. */
+bool pxsys_desktop_runtime_product_failed(const pxsys_desktop_runtime_t* runtime);
 void pxsys_desktop_runtime_request_exit(pxsys_desktop_runtime_t* runtime);
 bool pxsys_desktop_runtime_volume_key(pxsys_desktop_runtime_t* runtime, uint32_t key);
 int pxsys_desktop_runtime_inspect_ui(void *runtime, char *output,

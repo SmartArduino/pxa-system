@@ -198,6 +198,12 @@ if(PXSYS_BUILD_TESTS OR BUILD_TESTING)
     find_program(PXSYS_GUEST_CLANG clang)
     find_program(PXSYS_TEST_TIMEOUT timeout)
     if(PXSYS_GUEST_CLANG AND PXSYS_TEST_TIMEOUT)
+        add_test(NAME pxsys_desktop_launch_outcome
+            COMMAND bash
+                "${CMAKE_CURRENT_LIST_DIR}/../../tools/package/test_launch_outcome.sh"
+                $<TARGET_FILE:pxsys_desktop_simulator>
+                $<TARGET_FILE:pxsys_package_installer>)
+        set_tests_properties(pxsys_desktop_launch_outcome PROPERTIES TIMEOUT 300)
         add_test(NAME pxsys_product_core2_pressure
             COMMAND bash
                 "${CMAKE_CURRENT_LIST_DIR}/../../tools/package/test_core2_smoke.sh"

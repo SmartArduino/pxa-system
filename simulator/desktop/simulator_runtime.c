@@ -46,8 +46,14 @@ struct pxsys_desktop_runtime {
     pxsys_locale_snapshot_t locale;
     pxsys_display_profile_t native_display;
     uint8_t native_display_valid, display_rotation;
+    uint8_t product_failed;
     pxsys_desktop_runtime_fixture_t fixture;
 };
+
+bool pxsys_desktop_runtime_product_failed(const pxsys_desktop_runtime_t* runtime) {
+    return runtime != NULL && runtime->magic == PXSYS_DESKTOP_RUNTIME_MAGIC &&
+        runtime->product_failed != 0;
+}
 
 int pxsys_desktop_runtime_inspect_ui(void *context, char *output,
     size_t capacity, size_t *size) {
@@ -456,6 +462,7 @@ void pxsys_desktop_runtime_poll(pxsys_desktop_runtime_t* runtime) {
                     pxsys_standard_system_display(runtime->system),
                     &display) != PXSYS_STATUS_OK) {
                 instance->product_completed = 1;
+                runtime->product_failed = 1;
                 continue;
             }
             if (pxsys_reference_layout_compute(&display, &layout) ==
@@ -486,6 +493,7 @@ void pxsys_desktop_runtime_poll(pxsys_desktop_runtime_t* runtime) {
                 fixture->pump, fixture->pump_context,
                 product_window_changed, instance, product_control_bind,
                 &display, &bars, &runtime->theme, ime_path);
+            if (status != 0) runtime->product_failed = 1;
             /* SDL window close destroys the display while the embedded
              * Guest loop is running. The outer loop owns process shutdown;
              * avoid stop notifications touching its deleted UI objects. */

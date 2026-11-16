@@ -2136,13 +2136,15 @@ static int run_simulator(const simulator_options_t* options) {
                 options->screenshot);
         goto done;
     }
+    const int launch_failed = options->launch_app != NULL &&
+        pxsys_desktop_runtime_product_failed(simulator_runtime);
     if (lv_display_get_default() == NULL) {
         /* SDL has already destroyed the display and every LVGL object below
          * it. Do not run App-stop or UI-destroy callbacks against those stale
          * objects; this desktop process is terminating immediately. */
-        return 0;
+        return launch_failed ? 1 : 0;
     }
-    result = 0;
+    result = launch_failed ? 1 : 0;
 
 done:
     if (power_event_watch_added)
