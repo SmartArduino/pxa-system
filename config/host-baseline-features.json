@@ -16,7 +16,8 @@
   "assets": [
     "image-decode",
     "image-frames",
-    "large-images"
+    "large-images",
+    "image-input-limits"
   ],
   "wasi": [
     "monotonic-clock",

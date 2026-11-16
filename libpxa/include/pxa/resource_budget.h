@@ -86,6 +86,10 @@ pxa_status_t pxa_memory_owner_close(pxa_memory_budget_t *budget,
     pxa_memory_owner_t owner);
 pxa_status_t pxa_memory_budget_stats(pxa_memory_budget_t *budget,
     pxa_memory_owner_t owner, pxa_memory_stats_t *stats); /* owner 0 = global */
+/* Nonallocating snapshot of the allocator's remaining global/owner/kind quota.
+ * Includes pending reservations and retiring blocks. Not a reservation or a
+ * promise about the native heap; every allocation still performs all checks. */
+pxa_status_t pxa_memory_allocator_available(const pxa_memory_allocator_t *, size_t *bytes);
 
 /* Allocator descriptors must remain immutable and allocator/budget storage
  * alive until every block allocated through them has been freed. Maximum fundamental C alignment is

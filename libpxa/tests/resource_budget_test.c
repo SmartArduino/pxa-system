@@ -71,6 +71,7 @@ static void *parallel_allocate(void *context) {
     return NULL;
 }
 static void test_temporary_limit(void) {
+    size_t available;
     const size_t small = pxa_memory_allocation_bytes(97);
     const size_t limits[2] = {1024, 10 * small};
     pxa_memory_budget_config_t config = {
@@ -84,10 +85,12 @@ static void test_temporary_limit(void) {
     assert(!pxa_memory_owner_open(&budget, limits, &second));
     init_allocator(0, first, PXA_MEMORY_TEMPORARY);
     init_allocator(1, second, PXA_MEMORY_TEMPORARY);
+    assert(!pxa_memory_allocator_available(&allocators[0], &available) && available == 2 * small);
     inspect_callbacks = 1; release_bytes = small;
     unsigned char *p = pxa_memory_allocate(&allocators[0], 97);
     void *q = pxa_memory_allocate(&allocators[1], 97);
     assert(p && q); memset(p, 0x39, 97);
+    assert(!pxa_memory_allocator_available(&allocators[0], &available) && !available);
     unsigned before = pressure_calls;
     assert(!pxa_memory_allocate(&allocators[0], 1));
     assert(!pxa_memory_resize(&allocators[0], p, 98));
@@ -103,10 +106,12 @@ static void test_temporary_limit(void) {
     assert(!pxa_memory_allocate(&internal, 1)); /* Explicit zero forbids this class. */
     assert(pressure_calls == before);
     assert(pxa_memory_owner_close(&budget, second) == PXA_STATUS_WOULD_BLOCK);
+    assert(pxa_memory_allocator_available(&allocators[1], &available) == PXA_STATUS_NOT_FOUND && !available);
     assert(!pxa_memory_allocate(&allocators[1], 1));
     /* Retiring owner's blocks continue to consume the global temporary cap. */
     assert(!pxa_memory_allocate(&allocators[0], 1));
     pxa_memory_release(q);
+    assert(!pxa_memory_allocator_available(&allocators[0], &available) && available == small);
     assert(!pxa_memory_owner_close(&budget, second));
     assert(!pxa_memory_owner_open(&budget, limits, &second));
     init_allocator(1, second, PXA_MEMORY_TEMPORARY);

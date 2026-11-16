@@ -72,6 +72,10 @@ struct ImageDecodeOptions {
     std::uint32_t max_pixels = 32768, max_encoded_bytes = 131072;
     ImageFormats formats = ImageFormats::any;
 };
+struct ImageInputLimits {
+    std::uint32_t max_encoded_bytes = 0, available_encoded_bytes = 0,
+                  max_animation_encoded_bytes = 0;
+};
 class ImageDecodeService;
 class DecodedImage;
 class AssetService {
@@ -145,7 +149,7 @@ private:
     static bool valid_image_options(ImageDecodeOptions options) noexcept {
         return options.max_width && options.max_width <= 2048 && options.max_height &&
             options.max_height <= 2048 && options.max_pixels && options.max_pixels <= 1048576 &&
-            options.max_encoded_bytes && options.max_encoded_bytes <= 524288 &&
+            options.max_encoded_bytes && options.max_encoded_bytes <= 16777216 &&
             !(std::to_underlying(options.formats) & ~7u);
     }
     static Result<Asset> decode_image_result(Transport &transport,

@@ -77,6 +77,28 @@ pxa_status_t pxa_memory_budget_stats(pxa_memory_budget_t *b,
     unlock(b);
     return PXA_STATUS_OK;
 }
+pxa_status_t pxa_memory_allocator_available(const pxa_memory_allocator_t *a, size_t *bytes) {
+    if (!bytes) return PXA_STATUS_INVALID_ARGUMENT;
+    *bytes = 0;
+    if (!a || !valid(a->budget) || a->memory_class >= PXA_MEMORY_CLASSES ||
+        a->kind >= PXA_MEMORY_KINDS) return PXA_STATUS_INVALID_ARGUMENT;
+    pxa_memory_budget_t *b = a->budget;
+    const unsigned cls = a->memory_class;
+    lock(b);
+    int i = owner_index(b, a->owner);
+    if (i < 0 || b->owners[i].closing) { unlock(b); return PXA_STATUS_NOT_FOUND; }
+    size_t n = b->config.limit[cls] - b->stats.charged[cls];
+    size_t own = b->owners[i].limit[cls] - b->owners[i].stats.charged[cls];
+    if (own < n) n = own;
+    if (a->kind == PXA_MEMORY_TEMPORARY) {
+        size_t temporary = b->config.temporary_limit[cls] -
+            b->stats.by_kind[PXA_MEMORY_TEMPORARY][cls];
+        if (temporary < n) n = temporary;
+    }
+    *bytes = n;
+    unlock(b);
+    return PXA_STATUS_OK;
+}
 size_t pxa_memory_allocation_bytes(size_t bytes) {
     return !bytes || bytes > SIZE_MAX - sizeof(prefix_t) ? 0 : sizeof(prefix_t) + bytes;
 }

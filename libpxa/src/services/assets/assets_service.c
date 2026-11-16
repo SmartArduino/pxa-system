@@ -56,14 +56,17 @@ struct pxa_assets_service {
 };
 
 static int valid_config(const pxa_assets_config_t *c) {
-    if (!c || c->struct_size < sizeof(*c)) return 0;
+    const size_t legacy_size = offsetof(pxa_assets_config_t, image_max_encoded_bytes);
+    if (!c || (c->struct_size != legacy_size && c->struct_size < sizeof(*c))) return 0;
+    if (c->struct_size >= sizeof(*c) && c->image_max_encoded_bytes > PXA_IMAGE_ENCODED_MAX_BYTES)
+        return 0;
     int package_backend = c->backend.find && c->backend.request && c->backend.query &&
         c->backend.acquire && c->backend.release && c->backend.prefetch && c->backend.inspect &&
         c->backend.read && c->backend.read_result && c->backend.read_release;
     int empty_backend = !c->backend.find && !c->backend.request && !c->backend.query &&
         !c->backend.acquire && !c->backend.release && !c->backend.prefetch && !c->backend.inspect &&
         !c->backend.read && !c->backend.read_result && !c->backend.read_release;
-    return c && c->struct_size >= sizeof(*c) && c->max_pending &&
+    return c->max_pending &&
         c->max_pending_per_component && c->max_pending_per_component <= c->max_pending &&
         c->max_resources && c->max_resources_per_component &&
         c->max_resources_per_component <= c->max_resources &&
@@ -91,7 +94,8 @@ pxa_status_t pxa_assets_service_init(void *workspace, size_t bytes,
     memset(s, 0, sizeof(*s));
     s->magic = ASSETS_MAGIC;
     s->runtime = runtime;
-    s->config = *config;
+    memcpy(&s->config, config, config->struct_size < sizeof(*config) ?
+        config->struct_size : sizeof(*config));
     s->pending = (void *)(s + 1);
     s->resources = (void *)(s->pending + config->max_pending);
     memset(s->pending, 0, config->max_pending * sizeof(pending_t));
@@ -409,6 +413,59 @@ static void encode_info(uint8_t output[PXA_ASSETS_INFO_BYTES], const pxa_asset_i
     pxa_write_u32(output + 16, (uint32_t)pxa_asset_resident_required_bytes(info));
 }
 
+static uint32_t image_input_max(const pxa_assets_service_t *s) {
+    return s->config.image_max_encoded_bytes ? s->config.image_max_encoded_bytes :
+        PXA_IMAGE_ENCODED_LEGACY_BYTES;
+}
+static pxa_status_t image_input_limits(pxa_assets_service_t *s, pxa_component_t component,
+                                       const pxa_message_view_t *message) {
+    if (!message->request_token || !message->payload.data || message->payload.size != 4)
+        return PXA_STATUS_INVALID_ARGUMENT;
+    const uint32_t pixels = pxa_read_u32(message->payload.data);
+    if (!pixels || pixels > 1048576u) return PXA_STATUS_INVALID_ARGUMENT;
+    const pxa_memory_allocator_t *image = s->config.image_allocator;
+    const pxa_memory_allocator_t *temporary = s->config.image_temporary_allocator;
+    if (!image || !temporary || !s->config.image_backend) return PXA_STATUS_UNSUPPORTED;
+    size_t image_available = 0, temporary_available = 0;
+    pxa_status_t status = pxa_memory_allocator_available(image, &image_available);
+    if (!status) status = pxa_memory_allocator_available(temporary, &temporary_available);
+    if (status) return status;
+    /* BGRA is the conservative output bound, including allocation metadata.
+     * Leave workspace for codec state; source chunks have bounded overhead.
+     * This is a snapshot. No allocation, eviction or quota reservation here. */
+    const size_t output = pxa_memory_allocation_bytes((size_t)pixels * 4u + 512u);
+    const size_t workspace = 128u * 1024u;
+    size_t available = temporary_available > workspace ? temporary_available - workspace : 0;
+    if (!output || image_available < output) available = 0;
+    if (image->budget == temporary->budget && image->memory_class == temporary->memory_class) {
+        const size_t shared = image_available > output + workspace ?
+            image_available - output - workspace : 0;
+        if (shared < available) available = shared;
+    }
+    if (s->config.image_memory_available) {
+        size_t native = 0, largest = 0;
+        status = s->config.image_memory_available(s->config.image_memory_context, &native, &largest);
+        if (status) return status;
+        const size_t usable = native > output + workspace ? native - output - workspace : 0;
+        if (usable < available) available = usable;
+        if (largest < output) available = 0;
+    }
+    /* 4096-byte chunks plus links and allocation prefixes: round down, never
+     * grow an input buffer to the advertised maximum merely to query it. */
+    available = available / 4352u * 4096u;
+    if (available > image_input_max(s)) available = image_input_max(s);
+    uint8_t result[PXA_ASSETS_IMAGE_INPUT_LIMITS_BYTES];
+    pxa_write_u32(result, image_input_max(s));
+    pxa_write_u32(result + 4, (uint32_t)available);
+    pxa_write_u32(result + 8, image_input_max(s) < PXA_IMAGE_ENCODED_LEGACY_BYTES ?
+        image_input_max(s) : PXA_IMAGE_ENCODED_LEGACY_BYTES);
+    status = pxa_request_begin_reserved(s->runtime, component, message->request_token,
+        PXA_ASSETS_SERVICE_ID, message->opcode, 0, sizeof(result));
+    if (status) return status;
+    return pxa_request_complete(s->runtime, component, message->request_token,
+        PXA_STATUS_OK, result, sizeof(result));
+}
+
 static pxa_status_t image_control(pxa_assets_service_t *s, pxa_component_t component,
                                   const pxa_message_view_t *message) {
     const uint8_t *data = message->payload.data;
@@ -422,6 +479,7 @@ static pxa_status_t image_control(pxa_assets_service_t *s, pxa_component_t compo
     if (!s->config.image_allocator || !s->config.image_temporary_allocator ||
         !s->config.image_backend)
         return PXA_STATUS_UNSUPPORTED;
+    if (pxa_read_u32(data + 20) > image_input_max(s)) return PXA_STATUS_LIMIT_EXCEEDED;
     uint16_t type = pxa_read_u16(data + 8);
     if (type != PXA_RESOURCE_FILE && type != PXA_RESOURCE_STREAM)
         return PXA_STATUS_INVALID_ARGUMENT;
@@ -537,6 +595,8 @@ static pxa_status_t control(void *context, pxa_runtime_t *runtime, pxa_component
         return image_control(s,component,message);
     if(message->opcode==PXA_ASSETS_NEXT_IMAGE_FRAME)
         return frame_control(s,component,message);
+    if(message->opcode==PXA_ASSETS_IMAGE_INPUT_LIMITS)
+        return image_input_limits(s,component,message);
     if(!s->config.backend.find) return PXA_STATUS_UNSUPPORTED;
     if (message->opcode != PXA_ASSETS_QUERY && message->opcode != PXA_ASSETS_LOAD &&
         message->opcode != PXA_ASSETS_PREFETCH && message->opcode != PXA_ASSETS_STATUS &&
@@ -638,7 +698,7 @@ pxa_status_t pxa_assets_service_register(pxa_assets_service_t *s) {
     ops.minor = PXA_ASSETS_SERVICE_MINOR;
     if (s->config.image_allocator && s->config.image_temporary_allocator && s->config.image_backend)
         ops.features |= PXA_ASSETS_FEATURE_IMAGE_DECODE | PXA_ASSETS_FEATURE_IMAGE_FRAMES |
-                        PXA_ASSETS_FEATURE_LARGE_IMAGES;
+                        PXA_ASSETS_FEATURE_LARGE_IMAGES | PXA_ASSETS_FEATURE_IMAGE_INPUT_LIMITS;
     ops.context = s;
     ops.control = control;
     ops.component_stopped = component_stopped;

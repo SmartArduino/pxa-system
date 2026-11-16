@@ -400,3 +400,19 @@ Prepared Audio 0.8 sounds also accept encoding 9 (`.s16`): signed 16-bit
 little-endian mono at 16 kHz, nonempty even byte count, at most 960000 bytes.
 They are loaded as resident budgeted assets. Ogg background music remains
 streamed rather than loaded as a resident sound.
+
+## Image input budgets (Assets 2.7)
+
+Optional feature `image-input-limits` (mask 8) adds opcode 8. Request: desired
+output `max_pixels:u32` (1..1048576). Result after status: Host maximum encoded
+bytes, currently available encoded bytes, and animation maximum encoded bytes
+(three little-endian u32 values). Available can be zero. The query allocates
+no image state and reserves no memory; quotas, retiring allocations, output and
+workspace costs, and optional native heap pressure constrain the snapshot.
+Actual allocations remain authoritative. Old Hosts return unsupported and
+clients retain an encoded ceiling of 524288 bytes. SDK defaults remain 131072.
+
+The Host configuration defaults to 524288 and can opt audited backends into
+a larger input ceiling, never above 16777216. Decoding may still fail on
+pressure or codec limitations. GIF/sequence input remains <=524288 even when
+the ordinary decode request has a larger ceiling. Pixel limits are unchanged.

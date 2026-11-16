@@ -12,7 +12,7 @@ extern "C" {
 
 #define PXA_ASSETS_SERVICE_ID UINT16_C(21)
 #define PXA_ASSETS_SERVICE_MAJOR UINT16_C(2)
-#define PXA_ASSETS_SERVICE_MINOR UINT16_C(6)
+#define PXA_ASSETS_SERVICE_MINOR UINT16_C(7)
 #define PXA_ASSETS_QUERY UINT16_C(1)
 #define PXA_ASSETS_LOAD UINT16_C(2)
 #define PXA_ASSETS_PREFETCH UINT16_C(3)
@@ -34,6 +34,14 @@ extern "C" {
  * no storage is reserved at startup. Sequence frames remain <=65536 pixels.
  * Older Hosts reject the larger options; clients may retry with legacy limits. */
 #define PXA_ASSETS_FEATURE_LARGE_IMAGES UINT64_C(4)
+/* 2.7: IMAGE_INPUT_LIMITS(max_pixels:u32) returns max_encoded_bytes:u32 |
+ * available_encoded_bytes:u32 | max_animation_encoded_bytes:u32 (12 bytes).
+ * Available input accounts for the requested output pixels, current allocator
+ * quotas and an optional native-heap pressure snapshot. It may be zero and is
+ * advice, not reserved memory. Older Hosts return UNSUPPORTED. */
+#define PXA_ASSETS_FEATURE_IMAGE_INPUT_LIMITS UINT64_C(8)
+#define PXA_ASSETS_IMAGE_INPUT_LIMITS UINT16_C(8)
+#define PXA_ASSETS_IMAGE_INPUT_LIMITS_BYTES 12u
 #define PXA_ASSETS_IMAGE_FORMATS_MASK UINT16_C(7)
 #define PXA_ASSETS_IMAGE_WITH_FRAMES UINT16_C(256)
 #define PXA_ASSETS_DECODE_IMAGE UINT16_C(6)
@@ -91,6 +99,13 @@ typedef struct {
     const pxa_memory_allocator_t *image_allocator;
     const pxa_memory_allocator_t *image_temporary_allocator;
     const pxa_image_backend_t *image_backend;
+    /* Optional 2.7 tail. Zero keeps the legacy 512 KiB input ceiling. Only
+     * audited, budgeted backends should opt in to larger encoded input. */
+    uint32_t image_max_encoded_bytes;
+    void *image_memory_context;
+    /* Nonblocking heap snapshot after platform headroom, outside budget locks.
+     * Does not allocate, evict or reserve. largest concerns a single block. */
+    pxa_status_t (*image_memory_available)(void *, size_t *available, size_t *largest);
 } pxa_assets_config_t;
 typedef struct pxa_assets_service pxa_assets_service_t;
 

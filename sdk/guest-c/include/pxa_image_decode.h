@@ -5,6 +5,8 @@
 
 #define PXA_ASSETS_DECODE_IMAGE 6u
 #define PXA_ASSETS_NEXT_IMAGE_FRAME 7u
+#define PXA_ASSETS_IMAGE_INPUT_LIMITS 8u
+#define PXA_IMAGE_ENCODED_MAX_BYTES 16777216u
 #define PXA_IMAGE_FORMAT_PNG 1u
 #define PXA_IMAGE_FORMAT_JPEG 2u
 #define PXA_IMAGE_FORMAT_GIF 4u
@@ -22,6 +24,37 @@ typedef struct {
 typedef struct {
     uint32_t max_pixels, max_encoded_bytes; /* zero uses ordinary ceilings. */
 } pxa_image_animation_limits_t;
+typedef struct {
+    int32_t status;
+    uint32_t max_encoded_bytes, available_encoded_bytes, max_animation_encoded_bytes;
+} pxa_image_input_limits_t;
+
+/* Optional Assets 2.7 query. A successful zero available value is pressure;
+ * unsupported on an old Host must retain the caller's legacy <=512KiB limit. */
+static inline int32_t pxa_image_input_limits(uint64_t token, uint32_t max_pixels) {
+    uint8_t payload[4];
+    if (!token || !max_pixels || max_pixels > 1048576u) return PXA_STATUS_INVALID_ARGUMENT;
+    pxa_store_u32(payload,max_pixels);
+    return pxa_control_call(PXA_ASSETS_SERVICE,PXA_ASSETS_IMAGE_INPUT_LIMITS,token,payload,4);
+}
+static inline int pxa_image_input_limits_parse(const pxa_event_t *event, uint64_t token,
+    pxa_image_input_limits_t *out) {
+    if (!out) return 0;
+    pxa_zero(out,sizeof(*out));
+    if (!event || !token || event->token != token || event->service != PXA_ASSETS_SERVICE ||
+        event->opcode != PXA_ASSETS_IMAGE_INPUT_LIMITS || !event->payload || event->payload_size < 4)
+        return 0;
+    out->status = (int32_t)pxa_load_u32(event->payload);
+    if (out->status) return event->payload_size == 4;
+    if (event->payload_size != 16) return 0;
+    out->max_encoded_bytes = pxa_load_u32(event->payload+4);
+    out->available_encoded_bytes = pxa_load_u32(event->payload+8);
+    out->max_animation_encoded_bytes = pxa_load_u32(event->payload+12);
+    return out->max_encoded_bytes && out->max_encoded_bytes <= PXA_IMAGE_ENCODED_MAX_BYTES &&
+        out->available_encoded_bytes <= out->max_encoded_bytes &&
+        out->max_animation_encoded_bytes && out->max_animation_encoded_bytes <= 524288u &&
+        out->max_animation_encoded_bytes <= out->max_encoded_bytes;
+}
 
 typedef struct {
     int32_t status;
@@ -40,7 +73,7 @@ static inline pxa_image_decode_options_t pxa_image_decode_defaults(void) {
 static inline int pxa_image_decode_options_valid(pxa_image_decode_options_t options) {
     return options.max_width && options.max_width <= 1024 && options.max_height &&
         options.max_height <= 1024 && options.max_pixels && options.max_pixels <= 65536 &&
-        options.max_encoded_bytes && options.max_encoded_bytes <= 524288 && !(options.formats & ~7u);
+        options.max_encoded_bytes && options.max_encoded_bytes <= PXA_IMAGE_ENCODED_MAX_BYTES && !(options.formats & ~7u);
 }
 
 /* Borrows source exclusively until completion/cancel. The Host reads directly

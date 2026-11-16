@@ -8,11 +8,13 @@ extern "C" {
 
 typedef struct pxa_image_decoder pxa_image_decoder_t;
 typedef struct pxa_image_target pxa_image_target_t;
+#define PXA_IMAGE_ENCODED_LEGACY_BYTES UINT32_C(524288)
+#define PXA_IMAGE_ENCODED_MAX_BYTES UINT32_C(16777216)
 typedef struct {
     uint16_t max_width, max_height;
     uint32_t max_pixels, max_encoded_bytes;
-    /* Sequence-only: zero preserves the 65536-pixel frame ceiling and the
-     * ordinary encoded limit, independently of the larger static budget. */
+    /* Sequence-only: zero preserves <=65536 pixels and <=512KiB encoded
+     * input, independently of a larger static budget. */
     uint32_t max_animation_pixels, max_animation_encoded_bytes;
     uint8_t formats; /* zero=any; otherwise PNG=1, JPEG=2, GIF=4 */
     /* Host-only prepared-image hint. No Guest wire flag enables this mode.

@@ -3705,9 +3705,9 @@ static int run_product_simulator(const options_t *input,
     stage = "resource budget";
     if (resource_memory_init(&host,
         asset_setting("PXA_RESOURCE_INTERNAL_BYTES", 128u * 1024u, 1024u * 1024u),
-        asset_setting("PXA_RESOURCE_EXTERNAL_BYTES", 2u * 1024u * 1024u, 16u * 1024u * 1024u),
+        asset_setting("PXA_RESOURCE_EXTERNAL_BYTES", 4u * 1024u * 1024u, 32u * 1024u * 1024u),
         asset_setting("PXA_RESOURCE_TEMPORARY_INTERNAL_BYTES", 16u * 1024u, 1024u * 1024u),
-        asset_setting("PXA_RESOURCE_TEMPORARY_EXTERNAL_BYTES", 512u * 1024u, 16u * 1024u * 1024u)) != PXA_STATUS_OK)
+        asset_setting("PXA_RESOURCE_TEMPORARY_EXTERNAL_BYTES", 2u * 1024u * 1024u, 32u * 1024u * 1024u)) != PXA_STATUS_OK)
         goto done;
     stage = "publisher key";
     {
@@ -4246,6 +4246,9 @@ static int run_product_simulator(const options_t *input,
         assets_config.image_backend = &image_backend;
         assets_config.image_allocator = &host.resource_allocators[PXA_MEMORY_EXTERNAL][PXA_MEMORY_IMAGE];
         assets_config.image_temporary_allocator = &host.resource_allocators[PXA_MEMORY_EXTERNAL][PXA_MEMORY_TEMPORARY];
+        /* POSIX JPEG retains charged source chunks, PNG decodes incrementally;
+         * GIF's independent ordinary/animation ceiling remains unchanged. */
+        assets_config.image_max_encoded_bytes = PXA_IMAGE_ENCODED_MAX_BYTES;
         assets_config.backend = (pxa_assets_backend_t){&host, asset_find, asset_request, asset_query, asset_acquire, asset_release, asset_prefetch, asset_inspect,
             asset_read,asset_read_result,asset_read_release};
         assets_workspace = malloc(pxa_assets_service_workspace_size(&assets_config));

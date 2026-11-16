@@ -81,6 +81,14 @@ class ImageDecodeService {
 public:
     ImageDecodeService(Transport &transport, RequestTable &requests) noexcept
         : transport_(transport), requests_(requests) {}
+    // Assets 2.7, optional image-input-limits. A zero available value means
+    // pressure, not unsupported. The snapshot reserves no memory. Query before
+    // opening a source; older Hosts return Error::unsupported.
+    Task<ImageInputLimits> input_limits(std::uint32_t max_pixels = 32768) const {
+        if (!max_pixels || max_pixels > 1048576)
+            return Task<ImageInputLimits>::failed(Error::invalid_argument);
+        return input_limits_impl(transport_, requests_, max_pixels);
+    }
     template<class Source>
         requires requires(const Source &source) {
             { source.readable() } -> std::same_as<ReadableResource>;
@@ -96,6 +104,24 @@ public:
         return decode_impl(transport_, requests_, std::move(source), options, animation);
     }
 private:
+    static Task<ImageInputLimits> input_limits_impl(Transport& transport,
+        RequestTable& requests, std::uint32_t pixels) {
+        std::array<std::byte,4> packet{};
+        wire::put32(packet.data(),pixels);
+        auto event = co_await Response(transport, requests, 21, 8, packet);
+        if (!event) co_return std::unexpected(event.error());
+        auto body = wire::result_body(event->payload);
+        if (!body) co_return std::unexpected(body.error());
+        if (body->size() != 12) co_return std::unexpected(Error::protocol_error);
+        ImageInputLimits limits{wire::get32(body->data()),wire::get32(body->data()+4),
+                                wire::get32(body->data()+8)};
+        if (!limits.max_encoded_bytes || limits.max_encoded_bytes > 16777216 ||
+            limits.available_encoded_bytes > limits.max_encoded_bytes ||
+            !limits.max_animation_encoded_bytes || limits.max_animation_encoded_bytes > 524288 ||
+            limits.max_animation_encoded_bytes > limits.max_encoded_bytes)
+            co_return std::unexpected(Error::protocol_error);
+        co_return limits;
+    }
     template<class Source>
     static Task<DecodedImage> decode_impl(Transport &transport, RequestTable &requests,
         Source source, ImageDecodeOptions options, ImageAnimationLimits animation) {
