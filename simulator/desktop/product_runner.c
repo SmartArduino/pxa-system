@@ -4477,7 +4477,8 @@ static int run_product_simulator(const options_t *input,
     capabilities[16].service = PXA_ASSETS_SERVICE_ID;
     capabilities[16].version.major = PXA_ASSETS_SERVICE_MAJOR;
     capabilities[16].version.minor = PXA_ASSETS_SERVICE_MINOR;
-    capabilities[16].features = PXA_ASSETS_FEATURE_IMAGE_DECODE | PXA_ASSETS_FEATURE_IMAGE_FRAMES;
+    capabilities[16].features = PXA_ASSETS_FEATURE_IMAGE_DECODE | PXA_ASSETS_FEATURE_IMAGE_FRAMES |
+        PXA_ASSETS_FEATURE_LARGE_IMAGES | PXA_ASSETS_FEATURE_IMAGE_INPUT_LIMITS;
     capabilities[17].service = PXA_SENSOR_SERVICE_ID;
     capabilities[17].version.major = PXA_SENSOR_SERVICE_MAJOR;
     capabilities[17].version.minor = PXA_SENSOR_SERVICE_MINOR;
