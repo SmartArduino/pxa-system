@@ -1,6 +1,6 @@
 [project]
 name = "pxa-agent-kit"
-version = "0.7.4"
+version = "0.7.5"
 description = "One-command PXA environment, AI tools, device debugging and publishing"
 requires-python = ">=3.12"
 dependencies = [

@@ -1,5 +1,5 @@
 {
-  "version": "0.11.2",
+  "version": "0.11.3",
   "target": "browser",
   "engine": "webassembly",
   "core": "pxa.core.v2",
@@ -283,7 +283,7 @@
       {
         "service_id": 21,
         "major": 2,
-        "minor": 6,
+        "minor": 7,
         "features": 7
       }
     ],
