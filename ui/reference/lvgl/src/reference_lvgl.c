@@ -6398,13 +6398,14 @@ static void build_device_info_page(pxsys_reference_lvgl_t* ui,
                 ui, translated(ui, row->section_key, row->section_default));
             section_key = row->section_key;
         }
+        const bool unlock_row = !ui->developer_unlocked &&
+            ui->performance_get != NULL && ui->performance_set != NULL &&
+            row->field == PXSYS_REFERENCE_DEVICE_SYSTEM_VERSION;
         (void)make_settings_row(
             ui, layout, section, row->symbol, PXSYS_COLOR_ACCENT,
             translated(ui, row->label_key, row->label_default),
             values[row->field],
-            row->field == PXSYS_REFERENCE_DEVICE_SYSTEM_VERSION
-                ? system_version_clicked : NULL,
-            row->field == PXSYS_REFERENCE_DEVICE_SYSTEM_VERSION ? ui : NULL);
+            unlock_row ? system_version_clicked : NULL, unlock_row ? ui : NULL);
     }
     if (!ui->developer_unlocked || ui->performance_get == NULL ||
         ui->performance_set == NULL)
@@ -9337,6 +9338,7 @@ pxsys_status_t pxsys_reference_lvgl_create(
     ui->performance_context = config->performance_context;
     ui->performance_get = config->performance_get;
     ui->performance_set = config->performance_set;
+    ui->developer_unlocked = !PXSYS_REFERENCE_UI_HIDE_DEVELOPER_OPTIONS;
     ui->wifi_context = config->wifi_context;
     ui->wifi_scan = config->wifi_scan;
     ui->wifi_scan_start = config->wifi_scan_start;

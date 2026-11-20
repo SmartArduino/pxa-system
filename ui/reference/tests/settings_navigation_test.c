@@ -85,6 +85,15 @@ static void device_info(void* context,
     for (size_t i = 0; i < PXSYS_REFERENCE_DEVICE_FIELD_COUNT; ++i)
         snprintf(values[i], PXSYS_REFERENCE_DEVICE_VALUE_MAX, "Navigation test");
 }
+static bool performance_get(void* context, pxsys_reference_performance_option_t option) {
+    (void)context;
+    return option == PXSYS_REFERENCE_PXADB;
+}
+static bool performance_set(void* context, pxsys_reference_performance_option_t option,
+                            bool enabled) {
+    (void)context; (void)option; (void)enabled;
+    return true;
+}
 static void methods(void* context, pxsys_reference_input_method_emit_fn emit, void* output) {
     (void)context;
     emit(output, "", pxsys_string_from_cstr("System keyboard"), true);
@@ -180,6 +189,8 @@ static void create(fixture_t* f, lv_display_t* display, bool animations, lv_inde
     config.app_list = apps; config.app_action = app_action;
     config.file_list = files; config.file_action = file_action;
     config.device_info = device_info; config.input_method_list = methods;
+    config.performance_get = performance_get;
+    config.performance_set = performance_set;
     config.wifi_scan = wifi_scan; config.wifi_connect = wifi_connect;
     assert(pxsys_reference_lvgl_create(&config, &f->ui) == PXSYS_STATUS_OK);
     assert(pxsys_reference_lvgl_set_animations_enabled(f->ui, animations) == PXSYS_STATUS_OK);
@@ -352,6 +363,24 @@ static bool has_label(lv_obj_t* root, const char* text) {
         if (has_label(lv_obj_get_child(root, (int32_t)i), text)) return true;
     return false;
 }
+static void check_developer_options(fixture_t* f) {
+    pxsys_reference_lvgl_t* ui = f->ui;
+    assert(open_role(ui, PXSYS_ROLE_DEVICE_INFO) == PXSYS_STATUS_OK);
+    lv_obj_t* version = control(ui->content, system_version_clicked, NULL);
+    if (PXSYS_REFERENCE_UI_HIDE_DEVELOPER_OPTIONS) {
+        assert(version != NULL && !has_label(ui->content, translated(ui, "settings.pxadb", "PXADB")));
+        for (unsigned i = 0; i < 6; ++i) {
+            lv_tick_inc(20);
+            click(version);
+        }
+        assert(!has_label(ui->content, translated(ui, "settings.pxadb", "PXADB")));
+        click(version);
+    } else {
+        assert(version == NULL);
+    }
+    assert(has_label(ui->content, translated(ui, "settings.pxadb", "PXADB")));
+    click(header_back(ui));
+}
 static void check_app_identity_display(fixture_t* f) {
     pxsys_reference_managed_app_t app = {0};
     const char* identity = "f51ae392de0ca33cf8721d850d313d00911125b7796f3a456bde9ada789917fa:game-boy-emulator";
@@ -396,6 +425,7 @@ int main(void) {
             check_files_and_cache(&f);
             check_dynamic_apps(&f);
             check_app_identity_display(&f);
+            check_developer_options(&f);
             destroy(&f);
         }
     }

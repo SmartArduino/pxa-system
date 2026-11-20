@@ -315,6 +315,9 @@ typedef void (*pxsys_reference_lvgl_idle_lock_fn)(void* context);
 #ifndef PXSYS_REFERENCE_UI_BUILTIN_SETTINGS
 #define PXSYS_REFERENCE_UI_BUILTIN_SETTINGS 1
 #endif
+#ifndef PXSYS_REFERENCE_UI_HIDE_DEVELOPER_OPTIONS
+#define PXSYS_REFERENCE_UI_HIDE_DEVELOPER_OPTIONS 0
+#endif
 
 typedef void (*pxsys_reference_input_method_emit_fn)(void *context,
     const char *identity, pxsys_string_t name, bool selected);

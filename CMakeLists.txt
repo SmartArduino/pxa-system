@@ -58,6 +58,8 @@ option(PXSYS_REFERENCE_UI_BACK_GESTURE
        "Enable the built-in left-edge back gesture" ON)
 option(PXSYS_REFERENCE_UI_BUILTIN_SETTINGS
        "Enable the built-in Sound, About, Apps and Files settings pages" ON)
+option(PXSYS_REFERENCE_UI_HIDE_DEVELOPER_OPTIONS
+       "Hide Developer options until System version is tapped seven times" OFF)
 option(PXSYS_REFERENCE_UI_WALLPAPER
        "Compile the standard Home wallpaper" ON)
 set(PXSYS_REFERENCE_UI_TASK_SWITCHER "cards" CACHE STRING
