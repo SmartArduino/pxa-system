@@ -112,7 +112,8 @@ static void test_geometry(lv_display_t *display,int width,int height,unsigned ch
     lv_obj_t *panel=lv_obj_get_parent(lv_obj_get_parent(title));lv_obj_update_layout(panel);
     lv_area_t bounds;lv_obj_get_coords(panel,&bounds);
     assert(bounds.x1>0 && bounds.y1>0 && bounds.x2<width-1 && bounds.y2<height-1);
-    assert(lv_obj_get_style_radius(panel,0)==unit*3);
+    assert(lv_obj_get_style_radius(panel,0)==unit*4);
+    assert(lv_obj_get_style_border_width(panel,0)==0);
     assert(lv_color_eq(lv_obj_get_style_bg_color(panel,0),c.style.panel));
     assert(lv_obj_get_style_text_font(title,0)==c.title_font);
     lv_obj_t *action=find_text(panel,chinese?"导入":"Import");assert(action);
