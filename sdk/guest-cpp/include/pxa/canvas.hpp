@@ -33,15 +33,44 @@ public:
     }
     CanvasCommands& rect(std::int32_t x, std::int32_t y, std::uint32_t width,
                          std::uint32_t height, std::uint32_t rgba,
-                         std::uint16_t radius = 0) noexcept {
+                         std::uint16_t radius = 0, std::uint16_t border_width = 0,
+                         std::uint32_t border_rgba = 0) noexcept {
         if (!width || !height) return fail(Error::invalid_argument);
         auto out = record(1, 28);
         if (!out.empty()) {
             coordinates(out.data(), x, y, width, height);
             wire::put32(out.data() + 16, rgba);
             wire::put16(out.data() + 20, radius);
+            wire::put16(out.data() + 22, border_width);
+            wire::put32(out.data() + 24, border_rgba);
         }
         return *this;
+    }
+    CanvasCommands& ellipse(std::int32_t x, std::int32_t y, std::uint32_t width,
+                            std::uint32_t height, std::uint32_t rgba,
+                            std::uint16_t border_width = 0,
+                            std::uint32_t border_rgba = 0) noexcept {
+        if (!width || !height) return fail(Error::invalid_argument);
+        auto out = record(2, 26);
+        if (!out.empty()) {
+            coordinates(out.data(), x, y, width, height);
+            wire::put32(out.data() + 16, rgba);
+            wire::put16(out.data() + 20, border_width);
+            wire::put32(out.data() + 22, border_rgba);
+        }
+        return *this;
+    }
+    CanvasCommands& circle(std::int32_t center_x, std::int32_t center_y,
+                           std::uint32_t radius, std::uint32_t rgba,
+                           std::uint16_t border_width = 0,
+                           std::uint32_t border_rgba = 0) noexcept {
+        // Encode the existing ellipse primitive; reject unrepresentable bounds.
+        const auto x = std::int64_t(center_x) - radius;
+        const auto y = std::int64_t(center_y) - radius;
+        if (!radius || radius > UINT32_MAX / 2 || x < INT32_MIN || y < INT32_MIN)
+            return fail(Error::invalid_argument);
+        return ellipse(static_cast<std::int32_t>(x), static_cast<std::int32_t>(y),
+                       radius * 2, radius * 2, rgba, border_width, border_rgba);
     }
     CanvasCommands& line(std::int32_t x1, std::int32_t y1, std::int32_t x2,
                          std::int32_t y2, std::uint32_t rgba,
@@ -88,6 +117,25 @@ public:
             wire::put32(out.data() + 12, rgba);
             out[16] = std::byte(font); out[17] = std::byte(align);
             std::copy(value.begin(), value.end(), reinterpret_cast<char*>(out.data() + 18));
+        }
+        return *this;
+    }
+    // Font roles and alignment values match text(); vertical alignment is
+    // 0=top, 1=middle, 2=bottom. Colors are always 0xRRGGBBAA.
+    CanvasCommands& text_box(CanvasRegion box, std::uint32_t rgba,
+                              std::string_view value, std::uint8_t font = 1,
+                              std::uint8_t align = 0,
+                              std::uint8_t vertical_align = 0) noexcept {
+        if (box.width <= 0 || box.height <= 0 || font > 3 || align > 2 ||
+            vertical_align > 2 || value.size() > UINT16_MAX - 24)
+            return fail(Error::invalid_argument);
+        auto out = record(9, static_cast<std::uint16_t>(24 + value.size()));
+        if (!out.empty()) {
+            coordinates(out.data(), box.x, box.y, box.width, box.height);
+            wire::put32(out.data() + 16, rgba);
+            out[20] = std::byte(font); out[21] = std::byte(align);
+            out[22] = std::byte(vertical_align);
+            std::copy(value.begin(), value.end(), reinterpret_cast<char*>(out.data() + 24));
         }
         return *this;
     }

@@ -71,7 +71,7 @@ Result<std::size_t> encode_net_request(const NetRequest& request,
     const Permission& permission, std::span<std::byte> packet) noexcept {
     const auto method = static_cast<std::uint16_t>(request.method);
     if (!permission || !(permission.handle() >> 32) ||
-        request.url.empty() || request.url.size() > 512 ||
+        request.url.empty() || request.url.size() > 2048 ||
         !(request.url.starts_with("http://") ||
           request.url.starts_with("https://")) ||
         method < 1 || method > 6 ||

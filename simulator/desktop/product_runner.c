@@ -39,6 +39,8 @@
 #include "pxa/log.h"
 #include "pxa/lease.h"
 #include "pxa/lvgl/pxa_lvgl_ui.h"
+#include "pxa/lvgl/pxa_lvgl_back_indicator.h"
+#include "pxa/lvgl/pxa_lvgl_dialog_style.h"
 #include "pxa/openssl/pxa_openssl.h"
 /* This runner owns LVGL; the media backend also supports headless users. */
 #define PXA_FS_IMPORT_LVGL 1
@@ -74,6 +76,7 @@
 #include "pxa/device.h"
 #include "pxa/sensor.h"
 #include "pxa/haptics.h"
+#include "pxa/video.h"
 #include "src/misc/cache/instance/lv_image_cache.h"
 
 #define PRODUCT_CLOCK_SERVICE PXA_CLOCK_SERVICE_ID
@@ -268,6 +271,7 @@ typedef struct {
     pxa_device_service_t *device;
     pxa_sensor_service_t *sensor;
     pxa_haptics_service_t *haptics;
+    pxa_video_service_t *video;
     int32_t sensor_temperature_milli_celsius;
     pxa_net_service_t *net;
     pxa_lease_service_t *io_waits;
@@ -852,38 +856,24 @@ static void system_back_indicator_reset(product_host_t *host) {
     host->system_back_indicator = NULL;
 }
 
-static void system_back_indicator_update(product_host_t *host, int32_t x,
-                                         int32_t y) {
-    lv_obj_t *label;
-    int32_t distance = x - host->system_gesture_press_x;
-    int32_t indicator_x;
-    int32_t indicator_y;
-    if (host->display == NULL || distance <= 0) return;
-    if (host->system_back_indicator == NULL) {
-        host->system_back_indicator =
-            lv_obj_create(lv_display_get_layer_top(host->display));
-        lv_obj_set_size(host->system_back_indicator, 32, 32);
-        lv_obj_set_style_bg_color(host->system_back_indicator,
-                                  lv_color_hex(0x3e526d), 0);
-        lv_obj_set_style_bg_opa(host->system_back_indicator, LV_OPA_COVER, 0);
-        lv_obj_set_style_border_width(host->system_back_indicator, 0, 0);
-        lv_obj_set_style_radius(host->system_back_indicator, LV_RADIUS_CIRCLE,
-                                0);
-        lv_obj_set_style_pad_all(host->system_back_indicator, 0, 0);
-        label = lv_label_create(host->system_back_indicator);
-        lv_label_set_text(label, "<");
-        lv_obj_set_style_text_font(label, &lv_font_montserrat_20, 0);
-        lv_obj_set_style_text_color(label, lv_color_hex(0xffffff), 0);
-        lv_obj_center(label);
+static void system_back_indicator_update(product_host_t *host, int32_t x) {
+    const int32_t distance = x - host->system_gesture_press_x;
+    if (host->display == NULL) return;
+    if (distance <= 0) {
+        system_back_indicator_reset(host);
+        return;
     }
-    if (distance > PRODUCT_SYSTEM_GESTURE_COMMIT_DISTANCE)
-        distance = PRODUCT_SYSTEM_GESTURE_COMMIT_DISTANCE;
-    indicator_x = -22 + distance * 22 / PRODUCT_SYSTEM_GESTURE_COMMIT_DISTANCE;
-    indicator_y = y - 16;
-    if (indicator_y < 0) indicator_y = 0;
-    if (indicator_y > (int32_t)host->height - 32)
-        indicator_y = (int32_t)host->height - 32;
-    lv_obj_set_pos(host->system_back_indicator, indicator_x, indicator_y);
+    if (host->system_back_indicator == NULL) {
+        const bool round = host->display_shape == PXSYS_DISPLAY_SHAPE_CIRCLE;
+        const int32_t radius = (int32_t)LV_MIN(host->width, host->height) / 2;
+        host->system_back_indicator = pxa_lvgl_back_indicator_create(
+            lv_display_get_layer_top(host->display), host->system_gesture_press_y,
+            (int32_t)host->height, 52,
+            round ? radius : (int32_t)host->corner_radii[0],
+            round ? radius : (int32_t)host->corner_radii[3]);
+    }
+    pxa_lvgl_back_indicator_move(host->system_back_indicator, distance,
+                                distance >= PRODUCT_SYSTEM_GESTURE_COMMIT_DISTANCE);
 }
 
 static int SDLCALL product_key_event_watch(void *context, SDL_Event *event) {
@@ -917,7 +907,7 @@ static void system_back_gesture_event(lv_event_t *event) {
         return;
     }
     if (lv_event_get_code(event) == LV_EVENT_PRESSING) {
-        system_back_indicator_update(host, point.x, point.y);
+        system_back_indicator_update(host, point.x);
         return;
     }
     if (lv_event_get_code(event) == LV_EVENT_PRESS_LOST) {
@@ -995,10 +985,11 @@ static void install_system_gestures(product_host_t *host) {
         return;
     }
     host->system_back_gesture = lv_obj_create(layer);
-    lv_obj_set_pos(host->system_back_gesture, 0, 0);
+    lv_obj_set_pos(host->system_back_gesture, 0, (int32_t)host->safe_insets[0]);
     lv_obj_set_size(host->system_back_gesture,
-                    PRODUCT_SYSTEM_GESTURE_EDGE_WIDTH,
-                    (int32_t)host->height - home_height);
+                    (int32_t)host->host_bar_insets.left,
+                    LV_MAX(0, (int32_t)host->height - home_height -
+                                  (int32_t)host->safe_insets[0]));
     lv_obj_set_style_bg_opa(host->system_back_gesture, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(host->system_back_gesture, 0, 0);
     lv_obj_set_style_pad_all(host->system_back_gesture, 0, 0);
@@ -1057,15 +1048,36 @@ static pxa_status_t window_toast(void *context, const char *text,
     if (host->toast != NULL) lv_obj_delete(host->toast);
     host->toast = lv_label_create(lv_display_get_layer_top(host->display));
     lv_label_set_text(host->toast, text);
-    lv_label_set_long_mode(host->toast, LV_LABEL_LONG_WRAP);
-    lv_obj_set_width(host->toast, LV_PCT(75));
-    lv_obj_set_style_bg_color(host->toast, lv_color_hex(0x303134), 0);
-    lv_obj_set_style_bg_opa(host->toast, LV_OPA_COVER, 0);
-    lv_obj_set_style_text_color(host->toast, lv_color_hex(0xffffff), 0);
-    lv_obj_set_style_pad_all(host->toast, 9, 0);
-    lv_obj_set_style_radius(host->toast, 14, 0);
-    lv_obj_align(host->toast, LV_ALIGN_BOTTOM_MID, 0,
-                 -(host->navigation_mode == 2u ? 48 : 36));
+    pxa_lvgl_ui_theme_t theme;
+    pxa_lvgl_ui_theme_init(&theme);
+    if (host->host_theme != NULL) map_host_theme(host->host_theme, theme.rgba);
+    const int32_t unit = LV_MAX(1, lv_display_dpx(host->display, 4));
+    const pxa_lvgl_dialog_style_t style = {
+        .container = lv_color_hex(theme.rgba[PXA_UI_THEME_SURFACE_CONTAINER_HIGH] >> 8),
+        .text = lv_color_hex(theme.rgba[PXA_UI_THEME_TEXT] >> 8),
+        .outline = lv_color_hex(theme.rgba[PXA_UI_THEME_OUTLINE_VARIANT] >> 8),
+        .spacing = unit, .radius = unit, .label_font = host->label_font,
+    };
+    pxa_lvgl_toast_style(host->toast, &style);
+    const int32_t left = (int32_t)host->safe_insets[3];
+    const int32_t right = (int32_t)host->safe_insets[1];
+    const int32_t width = lv_display_get_horizontal_resolution(host->display);
+    lv_obj_set_style_max_width(host->toast, LV_MAX(1, LV_MIN(width - left - right - 6 * unit,
+                               lv_display_dpx(host->display, 388))), 0);
+    int32_t bottom = LV_MAX((int32_t)host->safe_insets[2],
+                            host->navigation_mode == 2u ? 48 : 36);
+    int32_t top = 0;
+    if (pxa_lvgl_ime_active(host->ime_keyboard)) {
+        lv_area_t keyboard;
+        lv_obj_get_coords(pxa_lvgl_ime_root(host->ime_keyboard), &keyboard);
+        const int32_t height = lv_display_get_vertical_resolution(host->display);
+        if (width >= lv_display_dpx(host->display, 450) && keyboard.y1 < height * 3 / 5)
+            top = (int32_t)host->safe_insets[0] + 8 * unit;
+        else
+            bottom = LV_MAX(bottom, height - keyboard.y1 + 3 * unit);
+    }
+    lv_obj_align(host->toast, top ? LV_ALIGN_TOP_MID : LV_ALIGN_BOTTOM_MID,
+                 (left - right) / 2, top ? top : -bottom);
     host->toast_timer = lv_timer_create(product_toast_hide, duration_ms, host);
     if (host->toast_timer != NULL) lv_timer_set_repeat_count(host->toast_timer, 1);
     return PXA_STATUS_OK;
@@ -3619,7 +3631,7 @@ static int run_product_simulator(const options_t *input,
     pxa_service_ops_t clock_service = {0};
     pxa_service_ops_t store_installer_service = {0};
     pxa_wamr_engine_config_t engine_config = {0};
-    pxa_package_service_capability_t capabilities[21] = {0};
+    pxa_package_service_capability_t capabilities[22] = {0};
     pxa_package_activation_profile_t activation = {0};
     pxa_package_host_profile_t profile = {0};
     pxa_activation_plan_t *plan = NULL;
@@ -3636,6 +3648,7 @@ static int run_product_simulator(const options_t *input,
     void *io_wait_workspace = NULL;
     void *sensor_workspace = NULL;
     void *haptics_workspace = NULL;
+    void *video_workspace = NULL;
     void *log_workspace = NULL, *assets_workspace = NULL;
     void *plan_workspace = NULL, *coordinator_workspace = NULL;
     uint8_t *encoded = NULL, *public_key = NULL;
@@ -3775,8 +3788,6 @@ static int run_product_simulator(const options_t *input,
         : options.corner_radius;
     for (size_t index = 0; index < 4; ++index)
         host.corner_radii[index] = host.corner_radius;
-    host.host_bar_insets.left = host.navigation_mode == 2u ? 0u :
-                                PRODUCT_SYSTEM_GESTURE_EDGE_WIDTH;
     host.host_bar_insets.bottom = host.navigation_mode == 1u ? 2u :
         host.navigation_mode == 2u ? 36u : PRODUCT_SYSTEM_GESTURE_HOME_HEIGHT;
     if (host_display != NULL) {
@@ -3794,6 +3805,8 @@ static int run_product_simulator(const options_t *input,
         host.corner_radii[2] = host_display->corner_radii.bottom_right;
         host.corner_radii[3] = host_display->corner_radii.bottom_left;
     }
+    host.host_bar_insets.left = host.navigation_mode == 2u ? 0u :
+        host.safe_insets[3] + PRODUCT_SYSTEM_GESTURE_EDGE_WIDTH;
     if (host_bar_insets != NULL) host.host_bar_insets = *host_bar_insets;
     memcpy(host.native_safe_insets, host.safe_insets, sizeof(host.safe_insets));
     memcpy(host.native_corner_radii, host.corner_radii, sizeof(host.corner_radii));
@@ -4335,6 +4348,11 @@ static int run_product_simulator(const options_t *input,
                                     &sensor_config, &host.sensor) != PXA_STATUS_OK ||
             pxa_sensor_service_register(host.sensor) != PXA_STATUS_OK) goto done;
     }
+    {
+        size_t bytes=pxa_video_service_workspace_size(); video_workspace=malloc(bytes);
+        if (!video_workspace || pxa_video_service_init(video_workspace,bytes,host.runtime,NULL,&host.video) ||
+            pxa_video_service_register(host.video)) goto done;
+    }
     // The simulator reports the standard service with no physical actuator.
     {
         size_t workspace_size = pxa_haptics_service_workspace_size();
@@ -4490,7 +4508,9 @@ static int run_product_simulator(const options_t *input,
     capabilities[19].features = PXA_IME_FEATURE_ALL;
     capabilities[20].service = PXA_HAPTICS_SERVICE_ID;
     capabilities[20].version = (pxa_package_version_t){PXA_HAPTICS_SERVICE_MAJOR, PXA_HAPTICS_SERVICE_MINOR};
-    activation.services = capabilities; activation.service_count = 21;
+    capabilities[21].service = PXA_VIDEO_SERVICE_ID;
+    capabilities[21].version = (pxa_package_version_t){PXA_VIDEO_SERVICE_MAJOR,PXA_VIDEO_SERVICE_MINOR};
+    activation.services = capabilities; activation.service_count = 22;
     host.ime_capabilities = &activation; host.ime_profile = &profile;
 #ifdef _WIN32
     profile.target = (pxa_bytes_t){(const uint8_t *)"windows-x86_64", sizeof("windows-x86_64") - 1u};
@@ -4798,7 +4818,7 @@ done:
     free(log_workspace); free(game_render_workspace); free(surface_workspace);
     free(device_workspace); free(net_workspace); free(io_wait_workspace);
     free(sensor_workspace);
-    free(haptics_workspace);
+    free(haptics_workspace); free(video_workspace);
     free(ui_workspace); free(window_workspace); free(permission_workspace); free(runtime_workspace); free(manifest_workspace);
     free(fs_service_workspace); free(fs_backend_workspace); free(fs_path); free(fs_parent);
     free(ipc_workspace);

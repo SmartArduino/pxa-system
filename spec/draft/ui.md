@@ -106,6 +106,11 @@ primitive count have no ABI limits; their storage is charged to the Host's
 private byte budget. The normative payload layouts are listed in
 `pxa-ui.json`.
 
+An ellipse is inscribed in its bounding rectangle. On a noncircular ellipse,
+the border overlays the fill between the outer ellipse and an inner ellipse
+inset by the border width. An inset that consumes either dimension leaves only
+the border over the fill. Renderers may differ in antialiasing.
+
 `image-sampling` (UI 0.11, bit 16) enables per-image nearest-neighbor sampling.
 For IMAGE and IMAGE_HANDLE only, display-list header flag bit 0 disables image
 antialiasing; zero retains the default filtered rendering. Other flag bits and

@@ -66,6 +66,7 @@ typedef uint16_t pxa_resource_type_t;
 #define PXA_RESOURCE_ASSET ((pxa_resource_type_t)14)
 #define PXA_RESOURCE_EVENT_PORT ((pxa_resource_type_t)15)
 #define PXA_RESOURCE_HAPTICS ((pxa_resource_type_t)16)
+#define PXA_RESOURCE_VIDEO_DECODER ((pxa_resource_type_t)17)
 
 /* Operations shared by byte-oriented resource streams. */
 #define PXA_IO_READ UINT32_C(1)

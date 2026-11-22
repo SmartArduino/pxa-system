@@ -111,6 +111,6 @@ int main(void) {
                PXSYS_UI_SIZE_REGULAR) == 24);
     assert(pxsys_reference_layout_gesture_strip_height(
                PXSYS_UI_SIZE_EXPANDED) == 28);
-    assert(pxsys_reference_layout_back_gesture_width() == 16);
+    assert(pxsys_reference_layout_back_gesture_width() == 8);
     return 0;
 }

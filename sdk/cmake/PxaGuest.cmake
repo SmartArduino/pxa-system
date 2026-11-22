@@ -52,12 +52,19 @@ if(NOT DEFINED PXA_ARTIFACT_DIR OR PXA_ARTIFACT_DIR STREQUAL "")
     message(FATAL_ERROR "PXA_ARTIFACT_DIR is required")
 endif()
 
-function(_pxa_guest_target_defaults target)
+function(_pxa_guest_target_defaults target enable_builtins)
     if(DEFINED PXA_GUEST_SDK_DIR AND IS_DIRECTORY "${PXA_GUEST_SDK_DIR}/include")
         target_include_directories(${target} PUBLIC "${PXA_GUEST_SDK_DIR}/include")
     endif()
     target_compile_options(${target} PRIVATE
-        -O3 -fno-builtin -ffunction-sections -fdata-sections)
+        -O3 -ffunction-sections -fdata-sections)
+    # BUILTINS lets WASI libc users inline small standard-library operations.
+    # Removing calls can also enable WAMR memory-base/bounds hoisting. Keep
+    # this per target: code layout and scheduling can make other workloads
+    # slower, and custom libc implementations may require -fno-builtin.
+    if(NOT enable_builtins)
+        target_compile_options(${target} PRIVATE -fno-builtin)
+    endif()
     if(PXA_APP_DEFINITIONS)
         target_compile_definitions(${target} PRIVATE ${PXA_APP_DEFINITIONS})
     endif()
@@ -116,7 +123,7 @@ endfunction()
 # A module is an object library so several source folders can be composed into
 # one Component without creating an additional Wasm module or ambient imports.
 function(pxa_add_module target)
-    cmake_parse_arguments(PXA "CPP" ""
+    cmake_parse_arguments(PXA "CPP;BUILTINS" ""
         "SOURCES;SOURCE_DIRS;INCLUDE_DIRS;DEFINITIONS" ${ARGN})
     _pxa_collect_c_sources(_pxa_sources SOURCES ${PXA_SOURCES}
         SOURCE_DIRS ${PXA_SOURCE_DIRS})
@@ -125,7 +132,7 @@ function(pxa_add_module target)
             "pxa_add_module(${target}) requires SOURCES or SOURCE_DIRS")
     endif()
     add_library(${target} OBJECT ${_pxa_sources})
-    _pxa_guest_target_defaults(${target})
+    _pxa_guest_target_defaults(${target} "${PXA_BUILTINS}")
     target_compile_features(${target} PRIVATE c_std_11)
     if(PXA_CPP)
         if(NOT TARGET Pxa::Cpp)
@@ -205,7 +212,7 @@ function(pxa_add_translations target)
 endfunction()
 
 function(pxa_add_component target)
-    cmake_parse_arguments(PXA "CPP;NO_TRANSLATIONS;NO_ALLOCATOR" "COMPONENT_ID"
+    cmake_parse_arguments(PXA "CPP;BUILTINS;NO_TRANSLATIONS;NO_ALLOCATOR" "COMPONENT_ID"
         "SOURCES;SOURCE_DIRS;MODULES;LIBRARIES;INCLUDE_DIRS;DEFINITIONS" ${ARGN})
     string(LENGTH "${PXA_COMPONENT_ID}" _pxa_component_id_length)
     if(_pxa_component_id_length LESS 1 OR _pxa_component_id_length GREATER 64 OR
@@ -219,7 +226,7 @@ function(pxa_add_component target)
             "pxa_add_component(${target}) requires SOURCES, SOURCE_DIRS or MODULES")
     endif()
     add_executable(${target} ${_pxa_sources})
-    _pxa_guest_target_defaults(${target})
+    _pxa_guest_target_defaults(${target} "${PXA_BUILTINS}")
     if(PXA_CPP)
         if(NOT TARGET Pxa::Cpp)
             message(FATAL_ERROR "PXA_CPP_SDK_DIR must point to the PXA C++ SDK")

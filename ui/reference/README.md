@@ -69,6 +69,13 @@ hides it again, deferring expiry while a chrome gesture or shade is active.
 Window-policy changes clear the temporary reveal. Transient status bars keep
 the same reveal-first policy; permanently visible bars open the shade directly.
 
+The default Back strip extends eight physical pixels beyond the display's left
+safe inset. A short stationary tap (at most 450 ms and eight pixels of movement)
+is delivered to the original underlying widget after release. Real Back swipes,
+vertical drags, long holds and cancelled sequences never become application
+clicks. Deleting/replacing the widget or rebuilding the system chrome cancels
+the pending tap. Foreground Native and PXA applications share this policy.
+
 Reference applications use ordinary canonical application identities and the
 same Intent/RPC/event protocol as third-party native and PXA applications.
 Nothing in the core gives a reference application a private navigation path.

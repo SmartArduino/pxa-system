@@ -18,6 +18,7 @@
 #include "device.hpp"
 #include "sensor.hpp"
 #include "haptics.hpp"
+#include "video.hpp"
 #include "net.hpp"
 #include "http.hpp"
 #include "websocket.hpp"
@@ -60,6 +61,7 @@ public:
     FontService fonts() noexcept { return {transport_, requests_}; }
     PermissionService permissions() noexcept { return {transport_, requests_}; }
     AudioService audio() noexcept { return {transport_, requests_}; }
+    VideoService video() noexcept { return {transport_, requests_}; }
     ui::ThemeService theme() noexcept { return {transport_, requests_}; }
     ClockService clock() noexcept { return {transport_, requests_}; }
     LogService log() noexcept { return LogService(transport_); }

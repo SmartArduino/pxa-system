@@ -1,0 +1,95 @@
+diff --git a/core/iwasm/compilation/aot_emit_memory.c b/core/iwasm/compilation/aot_emit_memory.c
+--- a/core/iwasm/compilation/aot_emit_memory.c
++++ b/core/iwasm/compilation/aot_emit_memory.c
+@@ -9,6 +9,38 @@
+ #include "../aot/aot_runtime.h"
+ #include "aot_intrinsic.h"
+ #include "aot_emit_control.h"
++
++/* The instantiated memory cannot be smaller than the module's initial
++ * memory, and memory.grow never shrinks it. Express this existing runtime
++ * contract on bound loads so LLVM can prove static array accesses safe.
++ * This does not declare arbitrary guest addresses to be in bounds. */
++void
++aot_annotate_memory_bound(AOTCompContext *comp_ctx, LLVMValueRef instruction,
++                           uint32 bytes)
++{
++    WASMModule *module = comp_ctx->comp_data->wasm_module;
++    uint64 initial_bytes;
++    LLVMMetadataRef limits[2], range;
++    LLVMTypeRef type;
++    if (!comp_ctx->enable_bound_check || !LLVMIsALoadInst(instruction)
++        || module->import_memory_count != 0 || module->memory_count != 1
++        || (comp_ctx->comp_data->memories[0].flags
++            & (SHARED_MEMORY_FLAG | MEMORY64_FLAG)))
++        return;
++    initial_bytes =
++        (uint64)comp_ctx->comp_data->memories[0].num_bytes_per_page
++        * comp_ctx->comp_data->memories[0].init_page_count;
++    if (initial_bytes <= bytes || initial_bytes > (UINT64_C(1) << 32))
++        return;
++    type = LLVMTypeOf(instruction);
++    limits[0] = LLVMValueAsMetadata(
++        LLVMConstInt(type, initial_bytes - bytes, false));
++    limits[1] = LLVMValueAsMetadata(LLVMConstInt(type, 0, false));
++    range = LLVMMDNodeInContext2(comp_ctx->context, limits, 2);
++    LLVMSetMetadata(instruction,
++                    LLVMGetMDKindIDInContext(comp_ctx->context, "range", 5),
++                    LLVMMetadataAsValue(comp_ctx->context, range));
++}
+ 
+ /* A valid guest access cannot overwrite its runtime memory descriptor.
+  * Keep all guest scalar types in one alias class so Wasm type punning remains
+@@ -156,6 +188,7 @@
+         return NULL;
+     }
+     set_memory_alias(comp_ctx, mem_check_bound, false);
++    aot_annotate_memory_bound(comp_ctx, mem_check_bound, bytes);
+     return mem_check_bound;
+ }
+ 
+diff --git a/core/iwasm/compilation/aot_emit_memory.h b/core/iwasm/compilation/aot_emit_memory.h
+--- a/core/iwasm/compilation/aot_emit_memory.h
++++ b/core/iwasm/compilation/aot_emit_memory.h
+@@ -14,6 +14,10 @@
+ #ifdef __cplusplus
+ extern "C" {
+ #endif
++
++void
++aot_annotate_memory_bound(AOTCompContext *comp_ctx, LLVMValueRef instruction,
++                           uint32 bytes);
+ 
+ bool
+ aot_compile_op_i32_load(AOTCompContext *comp_ctx, AOTFuncContext *func_ctx,
+diff --git a/core/iwasm/compilation/aot_llvm.c b/core/iwasm/compilation/aot_llvm.c
+--- a/core/iwasm/compilation/aot_llvm.c
++++ b/core/iwasm/compilation/aot_llvm.c
+@@ -7,6 +7,7 @@
+ #include "aot_llvm_extra2.h"
+ #include "aot_compiler.h"
+ #include "aot_emit_exception.h"
++#include "aot_emit_memory.h"
+ #include "aot_emit_table.h"
+ #include "../aot/aot_runtime.h"
+ #include "../aot/aot_intrinsic.h"
+@@ -1512,6 +1513,19 @@
+             aot_set_last_error("llvm build load failed");
+             return false;
+         }
++    }
++
++    if (mem_space_unchanged) {
++        aot_annotate_memory_bound(comp_ctx,
++                                  func_ctx->mem_info[0].mem_bound_check_1byte, 1);
++        aot_annotate_memory_bound(comp_ctx,
++                                  func_ctx->mem_info[0].mem_bound_check_2bytes, 2);
++        aot_annotate_memory_bound(comp_ctx,
++                                  func_ctx->mem_info[0].mem_bound_check_4bytes, 4);
++        aot_annotate_memory_bound(comp_ctx,
++                                  func_ctx->mem_info[0].mem_bound_check_8bytes, 8);
++        aot_annotate_memory_bound(comp_ctx,
++                                  func_ctx->mem_info[0].mem_bound_check_16bytes, 16);
+     }
+ 
+     return true;

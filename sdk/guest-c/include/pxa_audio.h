@@ -248,6 +248,16 @@ static inline int32_t pxa_audio_open_pcm(uint64_t token, uint64_t permission,
     return pxa_control_packet(packet, size);
 }
 
+/* Audio 0.16: opt-in 480 ms PCM queue with bounded prebuffering. */
+static inline int32_t pxa_audio_open_pcm_buffered(uint64_t token, uint64_t permission,
+    uint32_t rate, uint8_t channels) {
+    uint8_t packet[PXA_HEADER_BYTES + 16]; uint32_t size;
+    if (!pxa_audio_build_open_pcm(packet, sizeof(packet), token, permission,
+        rate, channels, &size)) return PXA_STATUS_INVALID_ARGUMENT;
+    packet[PXA_HEADER_BYTES + 13] = 1;
+    return pxa_control_packet(packet, size);
+}
+
 static inline int pxa_audio_build_graph(
     uint8_t *packet, size_t capacity, uint64_t token, uint64_t session,
     const pxa_audio_graph_t *graph, uint32_t *written) {
@@ -374,8 +384,8 @@ static inline int pxa_audio_parse_open(const pxa_event_t *event,
            out->frame_ms >= 5 && out->frame_ms <= 120;
 }
 
-static inline int pxa_audio_parse_pcm(const pxa_event_t *event, uint64_t token,
-    pxa_audio_pcm_result_t *out) {
+static inline int pxa_audio_parse_pcm_mode(const pxa_event_t *event, uint64_t token,
+    int buffered, pxa_audio_pcm_result_t *out) {
     if (!out) return 0;
     pxa_zero(out, sizeof(*out));
     if (!event || event->opcode != PXA_AUDIO_OPEN_PCM || !event->payload ||
@@ -400,7 +410,16 @@ static inline int pxa_audio_parse_pcm(const pxa_event_t *event, uint64_t token,
     out->queue_frames = pxa_load_u32(r.payload);
     return out->sink_rate >= 8000 && out->sink_rate <= 48000 &&
         (out->sink_channels == 1 || out->sink_channels == 2) &&
-        out->queue_frames && out->queue_frames <= out->source.sample_rate*120u/1000u;
+        out->queue_frames && out->queue_frames <= out->source.sample_rate*(buffered ? 480u : 120u)/1000u;
+}
+
+static inline int pxa_audio_parse_pcm(const pxa_event_t *event, uint64_t token,
+    pxa_audio_pcm_result_t *out) {
+    return pxa_audio_parse_pcm_mode(event, token, 0, out);
+}
+static inline int pxa_audio_parse_pcm_buffered(const pxa_event_t *event, uint64_t token,
+    pxa_audio_pcm_result_t *out) {
+    return pxa_audio_parse_pcm_mode(event, token, 1, out);
 }
 
 static inline int pxa_audio_parse_state(

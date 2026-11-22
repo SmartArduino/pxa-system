@@ -1,0 +1,44 @@
+{
+  "schema": "pxa-video-spec-0.3",
+  "service": {
+    "name": "video",
+    "id": 24,
+    "major": 0,
+    "minor": 3,
+    "patch": 0
+  },
+  "features": [],
+  "wire_profile": 1,
+  "opcodes": [
+    {
+      "name": "capabilities",
+      "id": 1,
+      "request": "index:u16",
+      "response": "count:u16,index:u16,codec:u16,implementation:u16,profiles:u32,recommended_width:u16,recommended_height:u16,max_width:u16,max_height:u16,max_pixels:u32,max_packet_bytes:u32,recommended_fps:u16,max_level:u16,implementation_id:u32,pixel_format:u16,audio_codecs:u16"
+    },
+    {
+      "name": "open",
+      "id": 2,
+      "request": "index:u16,width:u16,height:u16,reserved:u16",
+      "response": "decoder:handle64"
+    }
+  ],
+  "resources": [
+    {
+      "name": "video-decoder",
+      "id": 17
+    }
+  ],
+  "io": {
+    "read": 1,
+    "decode": 256,
+    "frame-info": 257,
+    "reset": 258,
+    "audio-decode": 272,
+    "audio-info": 273,
+    "audio-read": 274,
+    "read-scaled": 259,
+    "configure-scaled": 260,
+    "read-scaled-pixels": 261
+  }
+}

@@ -9,7 +9,29 @@
 static lv_point_t pointer;
 static lv_indev_state_t pointer_state;
 static unsigned back_calls, background_calls;
+static unsigned edge_presses, edge_releases, edge_clicks;
+static void edge_input(lv_event_t* event) {
+    switch(lv_event_get_code(event)) {
+    case LV_EVENT_PRESSED: ++edge_presses;break;
+    case LV_EVENT_RELEASED: ++edge_releases;break;
+    case LV_EVENT_CLICKED: ++edge_clicks;break;
+    default:break;
+    }
+}
 static pxsys_standard_system_t *system_under_test;
+static unsigned level_writes;
+
+static pxsys_status_t set_test_level(void *context, pxsys_level_control_t level,
+                                     uint8_t percent) {
+    (void)context;
+    pxsys_system_status_service_t *service = pxsys_standard_system_status(system_under_test);
+    pxsys_system_status_snapshot_t status = {.struct_size = sizeof(status)};
+    assert(pxsys_system_status_service_get(service, &status) == PXSYS_STATUS_OK);
+    if (level == PXSYS_LEVEL_CONTROL_VOLUME) status.volume_percent = percent;
+    else status.brightness_percent = percent;
+    ++level_writes;
+    return pxsys_system_status_service_update(service, &status);
+}
 
 static void *test_allocate(void *context, size_t bytes) {
     (void)context;
@@ -47,6 +69,112 @@ static void swipe(lv_indev_t *indev, int x1, int y1, int x2, int y2) {
               LV_INDEV_STATE_PRESSED);
     touch(indev, x2, y2, LV_INDEV_STATE_RELEASED);
     advance(350);
+}
+
+typedef struct {
+    unsigned count;
+    lv_area_t regions[4];
+} shade_damage_t;
+
+static void record_shade_damage(lv_event_t *event) {
+    shade_damage_t *damage = lv_event_get_user_data(event);
+    assert(damage->count < sizeof(damage->regions) / sizeof(damage->regions[0]));
+    damage->regions[damage->count] = *(const lv_area_t *)lv_event_get_param(event);
+    ++damage->count;
+}
+
+static void check_shade_damage(pxsys_reference_lvgl_t *ui, lv_display_t *display) {
+    const int32_t height = ui->notification_shade_height;
+    const int32_t travel = ui->notification_panel_height;
+    const int32_t mid_progress = travel * 128 / height;
+    const int32_t mid_height = height * mid_progress / 256;
+    lv_area_t before, after, time_before, time_after, viewport;
+    lv_obj_get_coords(ui->notification_viewport, &viewport);
+    assert(viewport.y1 == 0 && viewport.y2 == height - 1);
+    assert(viewport.x1 == 0 && viewport.x2 == (int32_t)ui->display.width - 1);
+    lv_obj_get_coords(ui->notification_panel, &before);
+    lv_obj_get_coords(ui->notification_time, &time_before);
+    lv_refr_now(display);
+    shade_damage_t damage = {0};
+    lv_display_add_event_cb(display, record_shade_damage,
+                            LV_EVENT_INVALIDATE_AREA, &damage);
+    notification_shade_progress_set(ui, mid_progress);
+    lv_obj_get_coords(ui->notification_panel, &after);
+    lv_obj_get_coords(ui->notification_time, &time_after);
+    assert(after.y1 == before.y1 + mid_height - travel &&
+           after.y2 == before.y2 + mid_height - travel);
+    assert(time_after.y1 == time_before.y1 + mid_height - travel);
+    assert(damage.count >= 2 && damage.regions[0].x1 == viewport.x1 &&
+           damage.regions[0].x2 == viewport.x2 &&
+           damage.regions[0].y1 == mid_height &&
+           damage.regions[0].y2 == height - 1);
+    assert(damage.regions[1].x1 == before.x1 &&
+           damage.regions[1].x2 == before.x2 &&
+           damage.regions[1].y2 == mid_height - 1);
+    lv_display_remove_event_cb_with_user_data(display, record_shade_damage, &damage);
+    const int32_t docked_progress = (travel * 256 + height - 1) / height;
+    const int32_t docked_height = height * docked_progress / 256;
+    notification_shade_progress_set(ui, docked_progress);
+    lv_obj_get_coords(ui->notification_panel, &after);
+    assert(after.y1 == before.y1);
+    lv_refr_now(display);
+    damage.count = 0;
+    lv_display_add_event_cb(display, record_shade_damage,
+                            LV_EVENT_INVALIDATE_AREA, &damage);
+    notification_shade_progress_set(ui, 256);
+    assert(damage.count >= 1 && damage.count <= 3 &&
+           damage.regions[0].y1 == docked_height &&
+           damage.regions[0].y2 == height - 1);
+    lv_obj_get_coords(ui->notification_panel, &after);
+    assert(after.y1 == before.y1);
+    lv_display_remove_event_cb_with_user_data(display, record_shade_damage, &damage);
+
+    /* Several input samples should produce one layout at the latest position. */
+    assert(ui->notification_refresh_hook);
+    notification_drag_progress(ui, mid_progress / 2);
+    notification_drag_progress(ui, mid_progress);
+    lv_obj_get_coords(ui->notification_panel, &after);
+    assert(ui->notification_motion_pending && after.y1 == before.y1);
+    lv_refr_now(display);
+    lv_obj_get_coords(ui->notification_panel, &after);
+    assert(!ui->notification_motion_pending &&
+           after.y1 == before.y1 + mid_height - travel);
+    notification_shade_progress_set(ui, 256);
+}
+
+static void check_shade_levels(pxsys_reference_lvgl_t *ui, lv_indev_t *indev) {
+    lv_obj_t *shade = ui->notification_shade;
+    lv_obj_t *volume = ui->notification_volume;
+    lv_obj_t *brightness = ui->notification_brightness;
+    assert(volume && brightness);
+    lv_area_t track;
+    lv_obj_get_coords(volume, &track);
+    const int y = (track.y1 + track.y2) / 2;
+    touch(indev, track.x1 + 1, y, LV_INDEV_STATE_PRESSED);
+    assert(lv_slider_get_value(volume) <= 1 && level_writes == 0);
+    touch(indev, track.x2, y + 3, LV_INDEV_STATE_PRESSED);
+    assert(lv_slider_get_value(volume) >= 99 && level_writes == 0);
+    assert(ui->notification_shade == shade && ui->notification_progress == 256);
+    touch(indev, track.x2, y + 3, LV_INDEV_STATE_RELEASED);
+    assert(lv_slider_get_value(volume) == 100 && level_writes == 1);
+    assert(strcmp(lv_label_get_text(ui->shade_levels[0].readout), "100%") == 0);
+
+    lv_obj_get_coords(brightness, &track);
+    const int brightness_y = (track.y1 + track.y2) / 2;
+    touch(indev, track.x1 + 1, brightness_y, LV_INDEV_STATE_PRESSED);
+    assert(lv_slider_get_value(brightness) <= 3 && level_writes == 1);
+    lv_indev_wait_release(indev);
+    touch(indev, track.x1, brightness_y, LV_INDEV_STATE_RELEASED);
+    assert(lv_slider_get_value(brightness) == 70 && level_writes == 1);
+
+    touch(indev, track.x1, brightness_y, LV_INDEV_STATE_PRESSED);
+    touch(indev, track.x1, brightness_y, LV_INDEV_STATE_RELEASED);
+    assert(lv_slider_get_value(brightness) == 2 && level_writes == 2);
+    const uint32_t key = LV_KEY_RIGHT;
+    lv_obj_send_event(brightness, LV_EVENT_KEY, (void *)&key);
+    assert(lv_slider_get_value(brightness) == 3 && level_writes == 3);
+    assert(strcmp(lv_label_get_text(ui->shade_levels[1].readout), "3%") == 0);
+    assert(ui->notification_shade_open && !ui->volume_osd_visible);
 }
 
 static pxsys_status_t game_create(void *context, const pxsys_app_descriptor_t *app,
@@ -116,19 +244,25 @@ static lv_obj_t *find_label(lv_obj_t *root,const char *text) {
     }
     return NULL;
 }
+static lv_obj_t *find_ime_dropdown(lv_obj_t *root, bool language) {
+    if (lv_obj_has_class(root, &lv_dropdown_class) &&
+        (lv_obj_get_user_data(root) != NULL) == language) return root;
+    for (uint32_t index = 0; index < lv_obj_get_child_count(root); ++index) {
+        lv_obj_t *child = find_ime_dropdown(lv_obj_get_child(root, index), language);
+        if (child != NULL) return child;
+    }
+    return NULL;
+}
+static void click_label(lv_obj_t *root, const char *text);
+
 static void check_input_method_settings(pxsys_reference_lvgl_t *ui) {
     ui->input_method_list=ime_list; ui->input_method_select=ime_select;
     ui->input_method_preferences=ime_preferences_control;
     assert(open_role(ui,PXSYS_ROLE_SETTINGS)==PXSYS_STATUS_OK);
     input_method_open(ui); assert(!ui->language_dialog && ui->active_page==REFERENCE_PAGE_INPUT_METHOD && ime_lists==1);
     lv_obj_t *list=ui->content;
-    lv_obj_t *layout=NULL,*language=NULL;
-    for (unsigned i=0;i<lv_obj_get_child_count(list);++i) {
-        lv_obj_t *child=lv_obj_get_child(list,i);
-        if (lv_obj_has_class(child,&lv_dropdown_class)) {
-            if (lv_obj_get_user_data(child)) language=child; else layout=child;
-        }
-    }
+    lv_obj_t *layout = find_ime_dropdown(list, false);
+    lv_obj_t *language = find_ime_dropdown(list, true);
     assert(layout && language);
     lv_obj_update_layout(ui->content);
     lv_dropdown_open(layout); input_method_popup_fit(ui,layout);
@@ -138,7 +272,8 @@ static void check_input_method_settings(pxsys_reference_lvgl_t *ui) {
     lv_obj_get_coords(ui->content,&panel_area);
     assert(popup_area.x1>=panel_area.x1 && popup_area.x2<=panel_area.x2);
     assert(popup_area.y1>=panel_area.y1 && popup_area.y2<=panel_area.y2);
-    lv_dropdown_close(layout);
+    navigation_back(ui);
+    assert(ui->active_page==REFERENCE_PAGE_INPUT_METHOD && !lv_dropdown_is_open(layout));
 
     lv_dropdown_set_selected(layout,PXSYS_INPUT_LAYOUT_NINE); lv_obj_send_event(layout,LV_EVENT_VALUE_CHANGED,NULL);
     lv_dropdown_set_selected(language,PXSYS_INPUT_ENGLISH); lv_obj_send_event(language,LV_EVENT_VALUE_CHANGED,NULL);
@@ -147,10 +282,7 @@ static void check_input_method_settings(pxsys_reference_lvgl_t *ui) {
     lv_dropdown_set_selected(layout,PXSYS_INPUT_LAYOUT_FULL); lv_obj_send_event(layout,LV_EVENT_VALUE_CHANGED,NULL);
     assert(ime_preferences.layout==PXSYS_INPUT_LAYOUT_NINE && lv_dropdown_get_selected(layout)==PXSYS_INPUT_LAYOUT_NINE);
     ime_save_fails=false;
-    lv_obj_t *label=find_label(list,"Pinyin IME"); assert(label);
-    lv_obj_t *row=lv_obj_get_parent(label);
-    while (lv_obj_get_parent(row)!=list) row=lv_obj_get_parent(row);
-    lv_obj_send_event(row,LV_EVENT_CLICKED,NULL);
+    click_label(list, "Pinyin IME");
     assert(ime_selections==1 && !ui->language_dialog && ui->active_page==REFERENCE_PAGE_INPUT_METHOD && ime_lists==2);
     navigation_back(ui); assert(ui->active_page==REFERENCE_PAGE_SETTINGS);
     input_method_open(ui); assert(ime_lists==3 && !ui->language_dialog && ui->active_page==REFERENCE_PAGE_INPUT_METHOD);
@@ -279,6 +411,11 @@ int main(void) {
     system_config.initial_display.safe_insets = (pxsys_insets_t){12, 12, 12, 12};
     system_config.initial_display.shape = PXSYS_DISPLAY_SHAPE_ROUNDED_RECTANGLE;
     system_config.initial_display.corner_radii = (pxsys_corner_radii_t){58, 58, 58, 58};
+    system_config.initial_system_status.volume_supported = 1;
+    system_config.initial_system_status.volume_percent = 40;
+    system_config.initial_system_status.brightness_supported = 1;
+    system_config.initial_system_status.brightness_percent = 70;
+    system_config.set_level = set_test_level;
     assert(!pxsys_standard_system_create(&system_config, &system_under_test));
 
     pxsys_reference_lvgl_config_t ui_config;
@@ -316,11 +453,62 @@ int main(void) {
     assert(ui->status_bar && ui->navigation_bar && !ui->navigation_handle);
     assert(lv_obj_get_style_bg_opa(ui->status_bar, 0) == LV_OPA_TRANSP);
     assert(lv_obj_get_style_bg_opa(ui->navigation_bar, 0) == LV_OPA_TRANSP);
+    assert(pxsys_reference_layout_back_gesture_width() == 8);
+    lv_obj_t* edge_button = lv_obj_create(lv_screen_active());
+    lv_obj_set_pos(edge_button, 0, 220);
+    lv_obj_set_size(edge_button, 60, 80);
+    lv_obj_add_event_cb(edge_button, edge_input, LV_EVENT_ALL, NULL);
+    lv_obj_update_layout(edge_button);
+    touch(indev, 4, 250, LV_INDEV_STATE_PRESSED);
+    assert(!edge_presses && !edge_releases && !edge_clicks);
+    touch(indev, 4, 250, LV_INDEV_STATE_RELEASED);
+    assert(edge_presses == 1 && edge_releases == 1 && edge_clicks == 1);
+    assert(!back_calls);
+    swipe(indev, 4, 250, 6, 290);
+    assert(edge_clicks == 1 && !back_calls);
+    touch(indev, 4, 250, LV_INDEV_STATE_PRESSED);
+    advance(500);
+    touch(indev, 4, 250, LV_INDEV_STATE_RELEASED);
+    assert(edge_clicks == 1 && !back_calls);
+    lv_obj_add_state(edge_button, LV_STATE_DISABLED);
+    touch(indev, 4, 250, LV_INDEV_STATE_PRESSED);
+    touch(indev, 4, 250, LV_INDEV_STATE_RELEASED);
+    assert(edge_clicks == 1);
+    lv_obj_remove_state(edge_button, LV_STATE_DISABLED);
+    touch(indev, 4, 250, LV_INDEV_STATE_PRESSED);
+    lv_obj_delete(edge_button);
+    assert(!ui->navigation_back_tap_armed && !ui->navigation_back_tap_target);
+    edge_button = lv_obj_create(lv_screen_active());
+    lv_obj_set_pos(edge_button, 0, 220);lv_obj_set_size(edge_button, 60, 80);
+    lv_obj_add_event_cb(edge_button, edge_input, LV_EVENT_ALL, NULL);
+    lv_obj_update_layout(edge_button);
+    touch(indev, 4, 250, LV_INDEV_STATE_RELEASED);
+    assert(edge_clicks == 1); /* Never replay into a replacement object. */
+    /* Outside the narrowed strip, ordinary native input is immediate. */
+    touch(indev, 24, 250, LV_INDEV_STATE_PRESSED);
+    assert(edge_presses == 2);
+    touch(indev, 24, 250, LV_INDEV_STATE_RELEASED);
+    assert(edge_clicks == 2 && edge_releases == 2);
     /* Fullscreen target edges must remain touchable at the physical x=0. */
     swipe(indev, 0, 240, 9, 240);
     assert(!back_calls);
-    swipe(indev, 0, 240, 110, 240);
+    touch(indev, 0, 240, LV_INDEV_STATE_PRESSED);
+    touch(indev, 18, 240, LV_INDEV_STATE_PRESSED);
+    lv_area_t indicator_start, indicator_move;
+    assert(ui->navigation_back_indicator != NULL);
+    lv_obj_get_coords(ui->navigation_back_indicator, &indicator_start);
+    touch(indev, 60, 261, LV_INDEV_STATE_PRESSED);
+    lv_obj_get_coords(ui->navigation_back_indicator, &indicator_move);
+    assert(indicator_move.y1 == indicator_start.y1 &&
+           indicator_move.y2 == indicator_start.y2);
+    assert(indicator_start.x1 == 0 && indicator_move.x1 == 0 &&
+           indicator_move.x2 > indicator_start.x2);
+    touch(indev, 110, 219, LV_INDEV_STATE_PRESSED);
+    touch(indev, 110, 219, LV_INDEV_STATE_RELEASED);
+    advance(350);
     assert(back_calls == 1 && !background_calls && !ui->content_active);
+    assert(edge_clicks == 2);
+    lv_obj_delete(edge_button);
     touch(indev, 240, 3, LV_INDEV_STATE_PRESSED);
     touch(indev, 240, 3, LV_INDEV_STATE_RELEASED);
     assert(!ui->notification_shade_open);
@@ -345,19 +533,49 @@ int main(void) {
     assert(ui->content_inset_top == 0 && ui->content_inset_bottom == 0);
     assert(!ui->content_active && !background_calls);
     /* Status samples must update the temporarily shown bar as well. */
+    lv_obj_t *clock = ui->status_clock;
     ui->system_status.time_valid = 1;
     ui->system_status.hour = 12;
     ui->system_status.minute = 34;
     ui->status_refresh_pending = 1;
     status_refresh_poll(ui->status_refresh_timer);
+    assert(clock == ui->status_clock);
     assert(strcmp(lv_label_get_text(lv_obj_get_child(ui->status_bar, 0)),
                   "12:34") == 0);
-    swipe(indev, 240, 3, 240, 280);
+    touch(indev, 240, 3, LV_INDEV_STATE_PRESSED);
+    touch(indev, 240, 100, LV_INDEV_STATE_PRESSED);
+    lv_area_t panel;
+    lv_obj_get_coords(ui->notification_viewport, &panel);
+    assert(panel.y2 >= 97 && panel.y2 <= 101);
+    assert(pxsys_reference_lvgl_covered_top(ui) == panel.y2 + 1);
+    touch(indev, 240, 70, LV_INDEV_STATE_PRESSED);
+    lv_obj_get_coords(ui->notification_viewport, &panel);
+    assert(panel.y2 >= 67 && panel.y2 <= 71);
+    touch(indev, 240, 280, LV_INDEV_STATE_PRESSED);
+    touch(indev, 240, 280, LV_INDEV_STATE_RELEASED);
+    advance(350);
     assert(ui->notification_shade_open && ui->notification_progress == 256);
+    assert(pxsys_reference_lvgl_covered_top(ui) == ui->notification_shade_height);
+#if !PXSYS_REFERENCE_UI_GESTURE_HANDLE
+    assert(ui->notification_grip == NULL);
+#endif
+    check_shade_damage(ui, display);
+    check_shade_levels(ui, indev);
+    const int grip_y = ui->notification_shade_height - 15;
+    touch(indev, 240, grip_y, LV_INDEV_STATE_PRESSED);
+    touch(indev, 240, grip_y - 55, LV_INDEV_STATE_PRESSED);
+    lv_obj_get_coords(ui->notification_viewport, &panel);
+    assert(panel.y2 >= grip_y + 13 - 55 && panel.y2 <= grip_y + 14 - 55);
+    touch(indev, 240, grip_y, LV_INDEV_STATE_PRESSED);
+    lv_obj_get_coords(ui->notification_viewport, &panel);
+    assert(panel.y2 == ui->notification_shade_height - 1);
+    touch(indev, 240, grip_y, LV_INDEV_STATE_RELEASED);
+    assert(ui->notification_shade_open);
     advance(TRANSIENT_BAR_TIMEOUT_MS + 100);
     assert(ui->notification_shade_open && status_bar_is_visible(ui));
     swipe(indev, 0, 240, 110, 240);
     assert(!ui->notification_shade_open && back_calls == 1);
+    assert(pxsys_reference_lvgl_covered_top(ui) == 0);
     assert(ui->window.status_bar_mode == PXSYS_WINDOW_BAR_HIDDEN);
     assert(ui->window.navigation_bar_mode == PXSYS_WINDOW_BAR_HIDDEN);
     advance(TRANSIENT_BAR_TIMEOUT_MS + 100);
@@ -440,6 +658,44 @@ int main(void) {
     advance(50);
     assert(ui->content_active && ui->active_page == REFERENCE_PAGE_HOME);
     assert(pxsys_task_manager_count(pxsys_standard_system_tasks(system_under_test)) == 1);
+
+    ui->system_status.volume_supported = 1;
+    build_notification_shade(ui, 256);
+    pxsys_system_status_snapshot_t volume = ui->system_status;
+    volume.volume_percent = (uint8_t)(volume.volume_percent == 65 ? 66 : 65);
+    system_status_changed(ui, &volume);
+    assert(lv_slider_get_value(ui->notification_volume) == volume.volume_percent);
+    assert(!ui->volume_osd_visible);
+    close_notification_shade(ui);
+    volume.volume_percent = 50;
+    system_status_changed(ui, &volume);
+    assert(ui->volume_osd_visible && lv_bar_get_value(ui->volume_osd_bar) == 50);
+    assert(strcmp(lv_label_get_text(ui->volume_osd_value), "50%") == 0);
+    assert(lv_obj_get_style_shadow_width(ui->volume_osd, 0) == 0);
+    advance(1900);
+    assert(!ui->volume_osd_visible);
+
+    assert(pxsys_reference_lvgl_set_locked(ui, true) == PXSYS_STATUS_OK);
+    lv_obj_update_layout(ui->lock_screen);
+    lv_area_t clock_card_before, clock_card_after;
+    lv_obj_get_coords(ui->lock_clock_card, &clock_card_before);
+    pxsys_system_status_snapshot_t locked_status = ui->system_status;
+    locked_status.time_valid = locked_status.date_valid = 1;
+    locked_status.hour = 14;
+    locked_status.minute = 52;
+    locked_status.year = 2026;
+    locked_status.month = 11;
+    locked_status.day = 20;
+    system_status_changed(ui, &locked_status);
+    assert(strcmp(lv_label_get_text(ui->lock_time), "14:52") == 0);
+    assert(strcmp(lv_label_get_text(ui->lock_date), "2026-11-20") == 0);
+    lv_obj_update_layout(ui->lock_screen);
+    lv_obj_get_coords(ui->lock_clock_card, &clock_card_after);
+    assert(memcmp(&clock_card_before, &clock_card_after, sizeof(clock_card_before)) == 0);
+    swipe(indev, 240, 460, 240, 430);
+    assert(ui->locked);
+    swipe(indev, 240, 460, 240, 282);
+    assert(!ui->locked && ui->lock_screen == NULL);
 
     assert(!pxsys_task_manager_finish_all(
         pxsys_standard_system_tasks(system_under_test), PXSYS_STOP_SHUTDOWN));

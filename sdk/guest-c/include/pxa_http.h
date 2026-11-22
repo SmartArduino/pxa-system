@@ -95,7 +95,7 @@ static inline int pxa_http_build_open(uint8_t *packet, size_t capacity,
     uint64_t upload;
     if (written) *written = 0;
     if (!packet || !written || !r || !token || !r->url || !r->url_size ||
-        r->url_size > 512 || !(r->permission_handle >> 32) || r->method < 1 || r->method > 6 ||
+        r->url_size > PXA_NET_MAX_URL || !(r->permission_handle >> 32) || r->method < 1 || r->method > 6 ||
         r->buffer_bytes < 512 || r->buffer_bytes > 65536 ||
         (r->buffer_bytes & (r->buffer_bytes - 1)) || r->header_bytes < 16 ||
         r->header_bytes > 4096 || !r->max_body_bytes || r->timeout_ms < 100 || r->timeout_ms > PXA_HTTP_MAX_TIMEOUT_MS ||

@@ -50,6 +50,7 @@ struct pxa_lvgl_ime {
  * Row views avoid per-instance pointer tables; no Latin alphabet paging. */
 enum { PANEL_LETTERS, PANEL_NUMBERS, PANEL_SYMBOLS, PANEL_TOOLS };
 enum { SWITCH_NONE, SWITCH_LANGUAGE, SWITCH_LAYOUT, SWITCH_CLOSE, SWITCH_SCRIPT, MOVE_LEFT, MOVE_RIGHT };
+enum { MAX_VISIBLE_CANDIDATES = 12, MAX_VISIBLE_SPELLINGS = 32 };
 typedef struct {
     const char *const *map;
     const char *const *row[4];
@@ -860,6 +861,7 @@ static lv_obj_t *matrix(lv_obj_t *root, lv_event_cb_t callback, pxa_lvgl_ime_t *
     lv_obj_add_style(object,&ime->matrix_style,0);
     lv_obj_add_style(object,&ime->item_style,LV_PART_ITEMS);
     lv_obj_add_style(object,&ime->pressed_style,LV_PART_ITEMS|LV_STATE_PRESSED);
+    lv_obj_add_style(object,&ime->pressed_style,LV_PART_ITEMS|LV_STATE_CHECKED);
     lv_obj_add_style(object,&disabled_style,LV_PART_ITEMS|LV_STATE_DISABLED);
     if (callback) lv_obj_add_event_cb(object, callback, LV_EVENT_ALL, ime);
     lv_buttonmatrix_set_map(object, empty_map);
@@ -988,17 +990,24 @@ void pxa_lvgl_ime_set_theme(pxa_lvgl_ime_t *ime, const pxa_lvgl_ui_theme_t *them
         if (latin) ime->font.fallback=&ime->label_font;
         else ime->font=ime->label_font;
     }
+    const uint32_t panel = theme->rgba[PXA_UI_THEME_SURFACE_CONTAINER_LOW]
+        ? theme->rgba[PXA_UI_THEME_SURFACE_CONTAINER_LOW]
+        : theme->rgba[PXA_UI_THEME_SURFACE_CONTAINER];
+    const uint32_t key = theme->rgba[PXA_UI_THEME_SURFACE_CONTAINER_HIGH]
+        ? theme->rgba[PXA_UI_THEME_SURFACE_CONTAINER_HIGH]
+        : theme->rgba[PXA_UI_THEME_SURFACE_CONTAINER_HIGHEST];
     lv_obj_set_style_text_font(ime->root, &ime->font, 0);
     lv_obj_set_style_text_color(ime->root, lv_color_hex(theme->rgba[PXA_UI_THEME_TEXT] >> 8), 0);
-    lv_obj_set_style_bg_color(ime->root, lv_color_hex(theme->rgba[PXA_UI_THEME_SURFACE_CONTAINER] >> 8), 0);
+    lv_obj_set_style_bg_color(ime->root, lv_color_hex(panel >> 8), 0);
     lv_obj_set_style_border_color(ime->root,lv_color_hex(theme->rgba[PXA_UI_THEME_OUTLINE_VARIANT]>>8),0);
     /* Only theme/environment updates change these panel properties. Setting
      * them during each candidate layout invalidates the whole keyboard. */
     lv_obj_set_style_pad_all(ime->root,ime->config.environment.display_shape==2?2:4,0);
     lv_obj_set_style_border_width(ime->root,ime->config.environment.display_shape?0:1,0);
+    lv_obj_set_style_radius(ime->root,ime->config.environment.display_shape?0:px(ime,12),0);
     lv_obj_set_style_bg_opa(ime->root,LV_OPA_COVER,0);
     if (ime->preedit) {
-        lv_obj_set_style_bg_color(ime->preedit,lv_color_hex(theme->rgba[PXA_UI_THEME_SURFACE_CONTAINER]>>8),0);
+        lv_obj_set_style_bg_color(ime->preedit,lv_color_hex(panel>>8),0);
         lv_obj_set_style_bg_opa(ime->preedit,LV_OPA_COVER,0);
         lv_obj_set_style_radius(ime->preedit,2,0);
     }
@@ -1008,7 +1017,8 @@ void pxa_lvgl_ime_set_theme(pxa_lvgl_ime_t *ime, const pxa_lvgl_ui_theme_t *them
         lv_obj_set_style_text_color(ime->editor_text,lv_color_hex(theme->rgba[PXA_UI_THEME_TEXT]>>8),0);
         lv_obj_set_style_bg_color(ime->editor_caret,lv_color_hex(theme->rgba[PXA_UI_THEME_TEXT]>>8),0);
     }
-    lv_style_set_bg_color(&ime->item_style,lv_color_hex(theme->rgba[PXA_UI_THEME_SURFACE_CONTAINER_HIGHEST]>>8));
+    lv_style_set_radius(&ime->item_style,px(ime,6));
+    lv_style_set_bg_color(&ime->item_style,lv_color_hex(key>>8));
     lv_style_set_text_color(&ime->item_style,lv_color_hex(theme->rgba[PXA_UI_THEME_TEXT]>>8));
     lv_style_set_border_color(&ime->item_style,lv_color_hex(theme->rgba[PXA_UI_THEME_OUTLINE_VARIANT]>>8));
     lv_style_set_bg_color(&ime->pressed_style,lv_color_hex(theme->rgba[PXA_UI_THEME_PRIMARY_CONTAINER]>>8));
@@ -1021,8 +1031,13 @@ void pxa_lvgl_ime_set_preferences(pxa_lvgl_ime_t *ime,pxa_ime_preferences_t pref
 }
 void pxa_lvgl_ime_set_environment(pxa_lvgl_ime_t *ime,const pxa_ui_environment_t *environment) {
     if (!ime || !environment) return;
+    pxa_lvgl_ime_set_appearance(ime,environment,&ime->config.theme);
+}
+void pxa_lvgl_ime_set_appearance(pxa_lvgl_ime_t *ime,const pxa_ui_environment_t *environment,
+                                 const pxa_lvgl_ui_theme_t *theme) {
+    if (!ime || !environment || !theme) return;
     ime->config.environment=*environment;
-    pxa_lvgl_ime_set_theme(ime,&ime->config.theme);
+    pxa_lvgl_ime_set_theme(ime,theme);
 }
 pxa_lvgl_ime_t *pxa_lvgl_ime_create(const pxa_lvgl_ime_config_t *config) {
     if (!config || config->struct_size < sizeof(*config) || !config->focus || !pxa_ime_preferences_valid(config->preferences)) return NULL;
@@ -1034,7 +1049,6 @@ pxa_lvgl_ime_t *pxa_lvgl_ime_create(const pxa_lvgl_ime_config_t *config) {
     lv_style_set_pad_all(&ime->matrix_style,2);
     lv_style_set_pad_row(&ime->matrix_style,3); lv_style_set_pad_column(&ime->matrix_style,3);
     lv_style_set_bg_opa(&ime->matrix_style,LV_OPA_TRANSP);
-    lv_style_set_radius(&ime->item_style,4);
     lv_style_set_bg_opa(&ime->item_style,LV_OPA_COVER);
     lv_style_set_bg_opa(&ime->pressed_style,LV_OPA_COVER);
     ime->root = lv_obj_create(config->parent ? config->parent : lv_layer_top());
@@ -1050,12 +1064,10 @@ pxa_lvgl_ime_t *pxa_lvgl_ime_create(const pxa_lvgl_ime_config_t *config) {
     if (ime->candidates) {
         lv_obj_add_style(ime->candidates,&rail_style,LV_PART_ITEMS);
         lv_obj_add_style(ime->candidates,&rail_style,LV_PART_ITEMS|LV_STATE_DISABLED);
-        lv_obj_add_style(ime->candidates,&ime->pressed_style,LV_PART_ITEMS|LV_STATE_CHECKED);
     }
     ime->keys = matrix(ime->root, keys_event, ime);
     ime->toolbar = matrix(ime->root, NULL, ime);
     if (ime->toolbar) {
-        lv_obj_add_style(ime->toolbar,&ime->pressed_style,LV_PART_ITEMS|LV_STATE_CHECKED);
         lv_obj_add_event_cb(ime->toolbar,toolbar_event,LV_EVENT_ALL|LV_EVENT_PREPROCESS,ime);
     }
     if (!ime->candidates || !ime->keys || !ime->toolbar) goto failed;
@@ -1481,16 +1493,22 @@ pxa_status_t pxa_lvgl_ime_focus(pxa_lvgl_ime_t *ime, void *textarea) {
 static int text_width(const pxa_lvgl_ime_t *ime, const char *text) {
     lv_point_t size; lv_text_get_size(&size,text,&ime->font,0,0,INT32_MAX,LV_TEXT_FLAG_NONE); return size.x;
 }
+static lv_buttonmatrix_ctrl_t candidate_control(unsigned width) {
+    return LV_BUTTONMATRIX_CTRL_CLICK_TRIG | LV_BUTTONMATRIX_CTRL_NO_REPEAT |
+        LV_CLAMP(1u, width, 15u);
+}
+
 static void pack_spellings(pxa_lvgl_ime_t *ime) {
     const char *preedit=composition(ime);
     if (!*preedit && !ime->candidate_count) {
         const char *const *map=ime->sensitive?idle_password:ime->language?idle_english:
             !ime->ready?idle_loading:ime->layout==PXA_IME_K9?idle_nine:idle_full;
         if (lv_buttonmatrix_get_map(ime->candidates)!=map) {
-            lv_buttonmatrix_set_map(ime->candidates,map); map_controls(ime->candidates);
-            lv_buttonmatrix_set_button_ctrl(ime->candidates,1,LV_BUTTONMATRIX_CTRL_DISABLED);
-            lv_buttonmatrix_set_button_width(ime->candidates,0,1);
-            lv_buttonmatrix_set_button_width(ime->candidates,1,8);
+            const lv_buttonmatrix_ctrl_t controls[] = {
+                candidate_control(1), candidate_control(8) | LV_BUTTONMATRIX_CTRL_DISABLED,
+            };
+            lv_buttonmatrix_set_map(ime->candidates,map);
+            lv_buttonmatrix_set_ctrl_map(ime->candidates,controls);
         }
         ime->visible=ime->spelling_visible=0; return;
     }
@@ -1538,11 +1556,13 @@ static void pack_spellings(pxa_lvgl_ime_t *ime) {
     int word_unit=(toggle_width+14)/15;
     if (word_unit<8) word_unit=8;
     available=row_width-toggle_width;
+    int word_widths[MAX_VISIBLE_CANDIDATES];
     for (unsigned i=0;i<ime->candidate_count && i<maximum;++i) {
         int cell=text_width(ime,text)+padding;
         if (cell<word_minimum) cell=word_minimum;
         if (!ime->expanded && ime->visible && cell+gap>available) break;
         if (ime->expanded && i && i%columns==0) ime->candidate_map[used++]="\n";
+        word_widths[ime->visible] = cell;
         ime->candidate_map[used++]=text; ++ime->visible;
         available-=cell+gap; text+=strlen(text)+1;
     }
@@ -1551,24 +1571,22 @@ static void pack_spellings(pxa_lvgl_ime_t *ime) {
         ime->candidate_map[used++]=ime->page_depth || !ime->page?"<":"首页"; ime->candidate_map[used++]="键盘"; ime->candidate_map[used++]=">";
     } else ime->candidate_map[used++]=LV_SYMBOL_UP;
     ime->candidate_map[used]="";
-    lv_buttonmatrix_set_map(ime->candidates,ime->candidate_map); map_controls(ime->candidates);
-    lv_buttonmatrix_clear_button_ctrl_all(ime->candidates,
-        LV_BUTTONMATRIX_CTRL_CHECKED | LV_BUTTONMATRIX_CTRL_DISABLED | LV_BUTTONMATRIX_CTRL_HIDDEN);
-    lv_buttonmatrix_set_button_width(ime->candidates,0,1);
+    /* Apply one control map: each single-button width setter recalculates
+     * all key rectangles, even when only one candidate changed. */
+    lv_buttonmatrix_ctrl_t controls[MAX_VISIBLE_SPELLINGS + MAX_VISIBLE_CANDIDATES + 5];
+    controls[0] = candidate_control((unsigned)(tool + 7) / 8);
     for (unsigned i=1;i<reading_buttons;++i) {
         unsigned weight=(unsigned)((i==1?composition_width:text_width(ime,ime->candidate_map[i])+padding)/8);
-        lv_buttonmatrix_set_button_width(ime->candidates,i,weight>15?15:weight?weight:1);
+        controls[i] = candidate_control(weight);
     }
-    if (*preedit && ime->spelling_count) lv_buttonmatrix_set_button_ctrl(ime->candidates,1,LV_BUTTONMATRIX_CTRL_CHECKED);
-    else lv_buttonmatrix_set_button_ctrl(ime->candidates,1,LV_BUTTONMATRIX_CTRL_DISABLED);
+    controls[1] |= *preedit && ime->spelling_count
+        ? LV_BUTTONMATRIX_CTRL_CHECKED : LV_BUTTONMATRIX_CTRL_DISABLED;
     unsigned word_units=0;
     for (unsigned i=0;i<ime->visible;++i) {
-        const char *word=lv_buttonmatrix_get_button_text(ime->candidates,reading_buttons+i);
-        unsigned weight=ime->expanded?1:(unsigned)((text_width(ime,word)+padding)/word_unit);
-        if (!ime->expanded && weight<(unsigned)word_minimum/word_unit) weight=(unsigned)word_minimum/word_unit;
+        unsigned weight=ime->expanded?1:(unsigned)(word_widths[i]/word_unit);
         weight=weight>15?15:weight?weight:1;
         word_units+=weight;
-        lv_buttonmatrix_set_button_width(ime->candidates,reading_buttons+i,weight);
+        controls[reading_buttons+i] = candidate_control(weight);
     }
     unsigned control=reading_buttons+ime->visible;
     unsigned control_weight=1;
@@ -1579,14 +1597,16 @@ static void pack_spellings(pxa_lvgl_ime_t *ime) {
         if (control_weight<1) control_weight=1;
         if (control_weight>15) control_weight=15;
     }
-    lv_buttonmatrix_set_button_width(ime->candidates,control,control_weight);
+    controls[control] = candidate_control(control_weight);
     if (ime->expanded) {
-        if (!ime->page) lv_buttonmatrix_set_button_ctrl(ime->candidates,control,LV_BUTTONMATRIX_CTRL_DISABLED);
-        lv_buttonmatrix_set_button_width(ime->candidates,control+1,3);
-        lv_buttonmatrix_set_button_width(ime->candidates,control+2,1);
+        if (!ime->page) controls[control] |= LV_BUTTONMATRIX_CTRL_DISABLED;
+        controls[control+1] = candidate_control(3);
+        controls[control+2] = candidate_control(1);
         if (!ime->more && ime->visible>=ime->candidate_count)
-            lv_buttonmatrix_set_button_ctrl(ime->candidates,control+2,LV_BUTTONMATRIX_CTRL_DISABLED);
-    } else if (!ime->candidate_count) lv_buttonmatrix_set_button_ctrl(ime->candidates,control,LV_BUTTONMATRIX_CTRL_HIDDEN);
+            controls[control+2] |= LV_BUTTONMATRIX_CTRL_DISABLED;
+    } else if (!ime->candidate_count) controls[control] |= LV_BUTTONMATRIX_CTRL_HIDDEN;
+    lv_buttonmatrix_set_map(ime->candidates,ime->candidate_map);
+    lv_buttonmatrix_set_ctrl_map(ime->candidates,controls);
 }
 static pxa_status_t fallback(pxa_lvgl_ime_t *ime) {
     if (ime->local) return PXA_STATUS_OK;
@@ -1608,8 +1628,8 @@ pxa_status_t pxa_lvgl_ime_present(pxa_lvgl_ime_t *ime, uint64_t generation, cons
     if (!frame) return fallback(ime);
     if (frame->sequence == 1 && !ime->local) { ime->ready=ime->provider_ready=true; ime->ready_ms=lv_tick_elaps(ime->opened_since); }
     if (frame->sequence > 1) ime->awaiting = false; // sequence 1 acknowledges Host RESET
-    unsigned count=frame->candidate_count<12?frame->candidate_count:12;
-    unsigned spellings=frame->pinyin_count<32?frame->pinyin_count:32;
+    unsigned count=LV_MIN(frame->candidate_count,MAX_VISIBLE_CANDIDATES);
+    unsigned spellings=LV_MIN(frame->pinyin_count,MAX_VISIBLE_SPELLINGS);
     if ((frame->preedit.size && !frame->preedit.data) ||
         (frame->commit.size && !frame->commit.data)) return PXA_STATUS_INVALID_ARGUMENT;
     /* Pointer tables share the presentation allocation and only reserve the

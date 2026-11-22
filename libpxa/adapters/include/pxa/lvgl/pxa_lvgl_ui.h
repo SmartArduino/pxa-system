@@ -81,6 +81,9 @@ typedef struct {
      * fonts are borrowed and must remain alive until adapter deinitialization. */
     const void *(*sized_text_font)(void *context, uint16_t pixels);
     void *sized_text_font_context;
+    /* Optional executor for the final Canvas swap. WOULD_BLOCK leaves the
+     * current frame installed and lets the Guest retry its submission. */
+    pxa_lvgl_ui_execute_fn execute_canvas;
 } pxa_lvgl_ui_config_t;
 
 typedef struct pxa_lvgl_ui pxa_lvgl_ui_t;
@@ -110,10 +113,23 @@ pxa_status_t pxa_lvgl_ui_init(void *workspace, size_t workspace_size,
                                  pxa_ui_backend_t *backend);
 pxa_status_t pxa_lvgl_ui_set_theme(
     pxa_lvgl_ui_t *ui, const pxa_lvgl_ui_theme_t *theme);
+/* Full-width opaque shell coverage from the top of the active display.
+ * Call under the LVGL lock. The shell also invalidates rows it uncovers. */
+void pxa_lvgl_ui_set_canvas_covered_top(pxa_lvgl_ui_t *ui, int32_t height);
 void pxa_lvgl_ui_reset(pxa_lvgl_ui_t *ui);
 void pxa_lvgl_ui_deinit(pxa_lvgl_ui_t *ui);
 bool pxa_lvgl_ui_alpha_plane(const pxa_lvgl_ui_t *ui,
                               pxa_lvgl_ui_alpha_plane_t *output);
+typedef struct {
+    size_t current_bytes, peak_bytes;
+    uint64_t builds, reuses, allocation_fallbacks;
+    uint64_t indexed_draws, streaming_draws, candidate_commands, skipped_commands;
+} pxa_lvgl_ui_canvas_index_stats_t;
+
+/* Host diagnostics sampled on the UI executor. Cumulative since init.
+ * Candidate and skipped counts cover the vertical-band filter only. */
+pxa_status_t pxa_lvgl_ui_canvas_index_stats(pxa_lvgl_ui_t *ui,
+    pxa_lvgl_ui_canvas_index_stats_t *output);
 /* Valid only while event_callback is running. Pointer events preserve the
  * LVGL input sample time instead of replacing it at the Host boundary. */
 uint64_t pxa_lvgl_ui_event_timestamp_us(const pxa_lvgl_ui_t *ui);

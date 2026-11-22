@@ -12,6 +12,7 @@ typedef struct {
     lv_group_t* group;
     unsigned order[TEST_ITEMS];
     size_t app_count;
+    unsigned app_list_calls;
     unsigned retired_trees;
 } fixture_t;
 
@@ -45,6 +46,7 @@ static size_t apps(void* context, pxsys_reference_managed_app_t* output,
                    size_t capacity, pxsys_reference_app_filter_t filter) {
     fixture_t* f = context;
     (void)filter;
+    ++f->app_list_calls;
     if (output == NULL) return f->app_count;
     size_t count = f->app_count < capacity ? f->app_count : capacity;
     for (size_t i = 0; i < count; ++i) {
@@ -106,6 +108,11 @@ static bool wifi_connect(void* context, const char* ssid, const char* password) 
     (void)context; (void)ssid; (void)password;
     return true;
 }
+static bool wifi_current(void* context, char* ssid, size_t capacity) {
+    (void)context;
+    snprintf(ssid, capacity, "%s", "Studio LAN");
+    return true;
+}
 /* Locate controls by their real action, independently of display language. */
 static lv_obj_t* control(lv_obj_t* root, lv_event_cb_t callback, const char* identity) {
     if (root == NULL) return NULL;
@@ -142,11 +149,11 @@ static void click(lv_obj_t* object) {
     lv_obj_send_event(object, LV_EVENT_CLICKED, NULL);
 }
 static lv_obj_t* header_back(pxsys_reference_lvgl_t* ui) {
-    lv_obj_t* button = control(ui->content, back_clicked, NULL);
+    lv_obj_t* button = control(navigation_page_root(ui), back_clicked, NULL);
     assert(button != NULL && lv_obj_is_clickable(button));
     assert(lv_obj_get_parent(button) == lv_obj_get_parent(ui->title));
     assert(lv_obj_get_child_count(button) == 1);
-    assert(!strcmp(lv_label_get_text(lv_obj_get_child(button, 0)), LV_SYMBOL_LEFT));
+    assert(lv_obj_has_class(lv_obj_get_child(button, 0), &lv_line_class));
     return button;
 }
 static int32_t scroll_to(fixture_t* f, lv_obj_t* focused, int32_t y) {
@@ -179,6 +186,8 @@ static void create(fixture_t* f, lv_display_t* display, bool animations, lv_inde
         lv_display_get_horizontal_resolution(display), lv_display_get_vertical_resolution(display));
     system_config.initial_system_status.wifi_supported = 1;
     system_config.initial_system_status.wifi_enabled = 1;
+    system_config.initial_system_status.volume_supported = 1;
+    system_config.initial_system_status.brightness_supported = 1;
     assert(pxsys_standard_system_create(&system_config, &f->system) == PXSYS_STATUS_OK);
     pxsys_reference_lvgl_config_t config;
     pxsys_reference_lvgl_config_init(&config);
@@ -192,6 +201,7 @@ static void create(fixture_t* f, lv_display_t* display, bool animations, lv_inde
     config.performance_get = performance_get;
     config.performance_set = performance_set;
     config.wifi_scan = wifi_scan; config.wifi_connect = wifi_connect;
+    config.wifi_current = wifi_current;
     assert(pxsys_reference_lvgl_create(&config, &f->ui) == PXSYS_STATUS_OK);
     assert(pxsys_reference_lvgl_set_animations_enabled(f->ui, animations) == PXSYS_STATUS_OK);
     assert(pxsys_reference_lvgl_start(f->ui) == PXSYS_STATUS_OK);
@@ -209,6 +219,24 @@ static void destroy(fixture_t* f) {
     assert(pxsys_reference_lvgl_destroy(f->ui) == PXSYS_STATUS_OK);
     assert(pxsys_standard_system_destroy(f->system) == PXSYS_STATUS_OK);
 }
+static void check_toast(fixture_t* f) {
+    pxsys_reference_lvgl_t* ui = f->ui;
+    pxsys_toast_service_t* service = pxsys_standard_system_toasts(f->system);
+    pxsys_toast_message_t message;
+    pxsys_toast_message_init(&message, pxsys_string_from_cstr("Saved"));
+    message.tone = PXSYS_TOAST_SUCCESS;
+    assert(pxsys_toast_service_post(service, &message) == PXSYS_STATUS_OK);
+    lv_obj_t* label = ui->toast;
+    lv_timer_t* timer = ui->toast_timer;
+    assert(label != NULL && timer != NULL && ui->toast_visible);
+    assert(!strcmp(lv_label_get_text(label), LV_SYMBOL_OK "  Saved"));
+    toast_hide(timer);
+    assert(lv_obj_is_hidden(label) && lv_timer_get_paused(timer));
+    assert(pxsys_toast_service_post(service, &message) == PXSYS_STATUS_OK);
+    assert(ui->toast == label && ui->toast_timer == timer);
+    assert(!lv_obj_is_hidden(label) && !lv_timer_get_paused(timer));
+    toast_hide(timer);
+}
 static void check_roles(fixture_t* f) {
     static const char* const roles[] = {PXSYS_ROLE_SOUND_SETTINGS, PXSYS_ROLE_DEVICE_INFO,
         PXSYS_ROLE_APP_MANAGER, PXSYS_ROLE_FILE_MANAGER};
@@ -223,13 +251,55 @@ static void check_roles(fixture_t* f) {
         assert(saved_y > 0);
         size_t tasks = pxsys_task_manager_count(pxsys_standard_system_tasks(f->system));
         unsigned deleted = f->retired_trees;
+        const unsigned app_list_calls = f->app_list_calls;
         click(row);
         /* Delete only the outgoing tree, with no intermediate chrome trees. */
         assert(f->retired_trees == deleted + 1);
         assert(ui->active_page == pages[i] && ui->content_active);
         assert(pxsys_task_manager_count(pxsys_standard_system_tasks(f->system)) == tasks + 1);
+        if (pages[i] == REFERENCE_PAGE_SOUND_SETTINGS) {
+            lv_obj_t* volume = ui->settings_volume;
+            lv_obj_t* brightness = ui->settings_brightness;
+            pxsys_system_status_snapshot_t status = ui->system_status;
+            assert(volume != NULL && brightness != NULL);
+            status.volume_percent = 46;
+            status.brightness_percent = 52;
+            system_status_changed(ui, &status);
+            settle(ui);
+            assert(f->retired_trees == deleted + 1);
+            assert(ui->settings_volume == volume && lv_slider_get_value(volume) == 46);
+            assert(ui->settings_brightness == brightness && lv_slider_get_value(brightness) == 52);
+        }
+        if (pages[i] == REFERENCE_PAGE_APP_MANAGER) {
+            assert(f->app_list_calls == app_list_calls + 1);
+            click(control(ui->content, app_row_clicked, NULL));
+            lv_obj_t* dialog = ui->app_dialog;
+            assert(dialog != NULL);
+            if (ui->display.width == 480) {
+                lv_obj_t* first = control(dialog, app_action_clicked, NULL);
+                lv_obj_t* next = lv_obj_get_child(lv_obj_get_parent(first), 1);
+                lv_obj_update_layout(dialog);
+                lv_area_t first_area, next_area;
+                lv_obj_get_coords(first, &first_area);
+                lv_obj_get_coords(next, &next_area);
+                assert(first_area.y1 == next_area.y1 && first_area.x2 < next_area.x1);
+            }
+            pxsys_system_status_snapshot_t status = ui->system_status;
+            status.wifi_connected = !status.wifi_connected;
+            system_status_changed(ui, &status);
+            settle(ui);
+            assert(f->retired_trees == deleted + 1 && ui->app_dialog == dialog);
+            lv_obj_t* page = ui->content;
+            show_page_confirm(ui, "Confirm?");
+            assert(ui->confirm_dialog != NULL && lv_obj_is_hidden(dialog));
+            click(control(ui->confirm_dialog, page_confirm_clicked, NULL));
+            assert(ui->confirm_dialog == NULL && ui->app_dialog == dialog);
+            assert(!lv_obj_is_hidden(dialog));
+            click(dialog);
+            assert(ui->app_dialog == NULL && ui->content == page);
+        }
         if (pages[i] == REFERENCE_PAGE_FILE_MANAGER) {
-            lv_obj_t* plus = control(ui->content, file_new_folder_clicked, NULL);
+            lv_obj_t* plus = control(navigation_page_root(ui), file_new_folder_clicked, NULL);
             assert(plus != NULL && lv_obj_get_parent(plus) == lv_obj_get_parent(ui->title));
         }
         deleted = f->retired_trees;
@@ -272,6 +342,7 @@ static void check_subpages(fixture_t* f) {
             uint32_t list_key = ui->rendered_view_key;
             click(control(ui->content, wifi_add_clicked, NULL));
             assert(ui->wifi_input_stage == 1 && ui->rendered_view_key != list_key);
+            assert(ui->page_frame == NULL);
             click(header_back(ui));
             assert(ui->wifi_input_stage == 0 && ui->rendered_view_key == list_key);
         }
@@ -284,10 +355,36 @@ static void check_subpages(fixture_t* f) {
 static void check_files_and_cache(fixture_t* f) {
     pxsys_reference_lvgl_t* ui = f->ui;
     assert(open_role(ui, PXSYS_ROLE_FILE_MANAGER) == PXSYS_STATUS_OK);
+    settle(ui);
+    lv_area_t header_area, viewport, scrolled_header;
+    assert(ui->page_frame != NULL);
+    lv_obj_get_coords(lv_obj_get_parent(ui->title), &header_area);
+    lv_obj_get_coords(ui->content, &viewport);
+    assert(header_area.y2 < viewport.y1);
     lv_obj_t* directory = control(ui->content, file_entry_clicked, NULL);
     int32_t parent_y = scroll_to(f, directory, 143);
     uint32_t parent_key = ui->rendered_view_key;
     assert(parent_y > 0);
+#if LV_USE_SNAPSHOT
+    lv_obj_t* section = ui->page_opaque_section;
+    assert(section != NULL);
+    lv_draw_buf_t* optimized = lv_snapshot_take(ui->root, LV_COLOR_FORMAT_RGB565);
+    ui->page_opaque_section = NULL;
+    lv_draw_buf_t* full_background = lv_snapshot_take(ui->root, LV_COLOR_FORMAT_RGB565);
+    ui->page_opaque_section = section;
+    assert(optimized != NULL && full_background != NULL);
+    assert(optimized->header.w == full_background->header.w &&
+           optimized->header.h == full_background->header.h);
+    for (uint32_t y = 0; y < optimized->header.h; ++y)
+        assert(memcmp(lv_draw_buf_goto_xy(optimized, 0, y),
+                      lv_draw_buf_goto_xy(full_background, 0, y),
+                      optimized->header.w * sizeof(uint16_t)) == 0);
+    lv_draw_buf_destroy(optimized);
+    lv_draw_buf_destroy(full_background);
+#endif
+    lv_obj_get_coords(lv_obj_get_parent(ui->title), &scrolled_header);
+    assert(header_area.x1 == scrolled_header.x1 && header_area.x2 == scrolled_header.x2 &&
+           header_area.y1 == scrolled_header.y1 && header_area.y2 == scrolled_header.y2);
     lv_obj_send_event(directory, LV_EVENT_SHORT_CLICKED, NULL);
     assert(!strcmp(ui->file_path, "/item-00") && ui->rendered_view_key != parent_key);
     assert(lv_obj_get_scroll_y(ui->content) == 0);
@@ -298,10 +395,19 @@ static void check_files_and_cache(fixture_t* f) {
     lv_obj_send_event(control(ui->content, file_entry_clicked, NULL), LV_EVENT_SHORT_CLICKED, NULL);
     assert(lv_obj_get_scroll_y(ui->content) == child_y);
     uint32_t child_key = ui->rendered_view_key;
-    click(control(ui->content, file_new_folder_clicked, NULL));
+    click(control(navigation_page_root(ui), file_new_folder_clicked, NULL));
     assert(ui->file_edit_mode != 0 && ui->rendered_view_key != child_key);
+    assert(ui->page_frame == NULL);
     click(header_back(ui));
     assert(ui->file_edit_mode == 0 && lv_obj_get_scroll_y(ui->content) == child_y);
+    if (f->group != NULL) {
+        lv_obj_t* back = header_back(ui);
+        lv_group_add_obj(f->group, back);
+        lv_group_focus_obj(back);
+        rebuild(ui);
+        assert(lv_group_get_focused(f->group) == header_back(ui));
+        assert(lv_obj_get_scroll_y(ui->content) == child_y);
+    }
     /* A bounded scalar cache is independent of the number of visited folders. */
     assert(REFERENCE_NAVIGATION_STATE_COUNT == 24);
     assert(sizeof(navigation_state_t) == 12 && sizeof(ui->navigation_states) == 288);
@@ -351,7 +457,8 @@ static void check_dynamic_apps(fixture_t* f) {
     assert(scroll_y >= 0 && scroll_y == LV_MIN(saved_y, max_scroll_y));
     if (f->group != NULL) {
         lv_obj_t* focused = lv_group_get_focused(f->group);
-        assert(focused == NULL || (lv_obj_is_valid(focused) && object_is_within(focused, ui->content)));
+        assert(focused == NULL || (lv_obj_is_valid(focused) &&
+               object_is_within(focused, navigation_page_root(ui))));
     }
     click(header_back(ui));
 }
@@ -362,6 +469,33 @@ static bool has_label(lv_obj_t* root, const char* text) {
     for (uint32_t i = 0; i < lv_obj_get_child_count(root); ++i)
         if (has_label(lv_obj_get_child(root, (int32_t)i), text)) return true;
     return false;
+}
+static void check_connected_wifi(fixture_t* f) {
+    pxsys_reference_lvgl_t* ui = f->ui;
+    pxsys_system_status_service_t* service = pxsys_standard_system_status(f->system);
+    pxsys_system_status_snapshot_t before = {.struct_size = sizeof(before)};
+    assert(pxsys_system_status_service_get(service, &before) == PXSYS_STATUS_OK);
+    pxsys_system_status_snapshot_t connected = before;
+    connected.wifi_connected = 1;
+    assert(pxsys_system_status_service_update(service, &connected) == PXSYS_STATUS_OK);
+    settle(ui);
+    lv_obj_t* wifi_row = control(ui->content, wifi_settings_clicked, NULL);
+    assert(wifi_row != NULL && has_label(wifi_row, "Studio LAN"));
+    lv_obj_t* icon = lv_obj_get_child(wifi_row, 0);
+    const lv_font_t* font = lv_obj_get_style_text_font(icon, 0);
+    lv_font_glyph_dsc_t glyph;
+    assert(lv_font_get_glyph_dsc(font, &glyph, 0xF1EB, 0));
+    const int32_t ink_top = lv_obj_get_style_pad_top(icon, 0) +
+        font->line_height - font->base_line - glyph.box_h - glyph.ofs_y;
+    lv_obj_update_layout(icon);
+    assert(abs(2 * ink_top + glyph.box_h - lv_obj_get_height(icon)) <= 1);
+    build_notification_shade(ui, 256);
+    assert(has_label(ui->notification_content, "Studio LAN"));
+    close_notification_shade(ui);
+    assert(pxsys_system_status_service_update(service, &before) == PXSYS_STATUS_OK);
+    settle(ui);
+    wifi_row = control(ui->content, wifi_settings_clicked, NULL);
+    assert(wifi_row != NULL && has_label(wifi_row, translated(ui, "settings.wifi", "Wi-Fi")));
 }
 static void check_developer_options(fixture_t* f) {
     pxsys_reference_lvgl_t* ui = f->ui;
@@ -420,8 +554,10 @@ int main(void) {
             fixture_t f;
             create(&f, display, mode == 1, mode == 0 ? LV_INDEV_TYPE_KEYPAD :
                 mode == 1 ? LV_INDEV_TYPE_ENCODER : LV_INDEV_TYPE_POINTER);
+            check_toast(&f);
             check_roles(&f);
             check_subpages(&f);
+            check_connected_wifi(&f);
             check_files_and_cache(&f);
             check_dynamic_apps(&f);
             check_app_identity_display(&f);

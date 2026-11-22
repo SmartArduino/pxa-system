@@ -62,6 +62,8 @@ void pxa_lvgl_ime_provider_released(pxa_lvgl_ime_t *ime,uint64_t generation);
 void pxa_lvgl_ime_set_preferences(pxa_lvgl_ime_t *ime,pxa_ime_preferences_t preferences);
 void pxa_lvgl_ime_set_environment(pxa_lvgl_ime_t *ime, const pxa_ui_environment_t *environment);
 void pxa_lvgl_ime_set_theme(pxa_lvgl_ime_t *ime, const pxa_lvgl_ui_theme_t *theme);
+void pxa_lvgl_ime_set_appearance(pxa_lvgl_ime_t *ime, const pxa_ui_environment_t *environment,
+                                const pxa_lvgl_ui_theme_t *theme);
 #ifdef __cplusplus
 }
 #endif

@@ -19,18 +19,43 @@ typedef enum {
     PXA_LVGL_ACTION_DANGER,
 } pxa_lvgl_action_t;
 
+static inline void pxa_lvgl_dialog_scrim_style(lv_obj_t *scrim, lv_color_t color) {
+    lv_obj_set_style_bg_color(scrim, color, 0);
+    lv_obj_set_style_bg_opa(scrim, LV_OPA_60, 0);
+    lv_obj_set_clickable(scrim, true);
+    lv_obj_set_click_focusable(scrim, false);
+    lv_obj_set_scrollable(scrim, false);
+}
+
 static inline void pxa_lvgl_dialog_panel_style(
     lv_obj_t *panel, const pxa_lvgl_dialog_style_t *style) {
     lv_obj_set_style_bg_color(panel, style->panel, 0);
     lv_obj_set_style_bg_opa(panel, LV_OPA_COVER, 0);
     lv_obj_set_style_text_color(panel, style->text, 0);
-    lv_obj_set_style_radius(panel, style->radius * 3, 0);
-    lv_obj_set_style_border_color(panel, style->outline, 0);
-    lv_obj_set_style_border_width(panel, 1, 0);
+    lv_obj_set_style_radius(panel, style->radius * 4, 0);
+    lv_obj_set_style_border_width(panel, 0, 0);
     lv_obj_set_style_shadow_width(panel, 0, 0);
     lv_obj_set_style_outline_width(panel, 0, 0);
+    lv_obj_set_style_clip_corner(panel, false, 0);
     lv_obj_set_style_pad_all(panel, style->spacing * 3, 0);
     lv_obj_set_style_pad_row(panel, style->spacing * 2, 0);
+}
+
+static inline void pxa_lvgl_toast_style(
+    lv_obj_t *label, const pxa_lvgl_dialog_style_t *style) {
+    lv_label_set_long_mode(label, LV_LABEL_LONG_MODE_WRAP);
+    lv_obj_set_style_bg_color(label, style->container, 0);
+    lv_obj_set_style_bg_opa(label, LV_OPA_COVER, 0);
+    lv_obj_set_style_text_color(label, style->text, 0);
+    lv_obj_set_style_border_color(label, style->outline, 0);
+    lv_obj_set_style_border_width(label, 1, 0);
+    lv_obj_set_style_pad_hor(label, style->spacing * 3, 0);
+    lv_obj_set_style_pad_ver(label, style->spacing * 2, 0);
+    lv_obj_set_style_radius(label, style->radius * 3, 0);
+    lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
+    if (style->label_font != NULL) lv_obj_set_style_text_font(label, style->label_font, 0);
+    lv_obj_set_clickable(label, false);
+    lv_obj_set_scrollable(label, false);
 }
 
 static inline void pxa_lvgl_dialog_focus_style(
@@ -76,11 +101,10 @@ static inline void pxa_lvgl_dialog_action_style(
     lv_obj_set_style_pad_all(button, style->spacing, 0);
     lv_obj_set_style_text_align(button, LV_TEXT_ALIGN_CENTER, 0);
     if(style->label_font) lv_obj_set_style_text_font(button, style->label_font, 0);
-    lv_obj_set_style_bg_opa(button, secondary ? LV_OPA_TRANSP : LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_opa(button, LV_OPA_COVER, 0);
     lv_obj_set_style_bg_color(button, background, 0);
     lv_obj_set_style_text_color(button, foreground, 0);
-    lv_obj_set_style_border_width(button, secondary ? 1 : 0, 0);
-    lv_obj_set_style_border_width(button, secondary ? 1 : 0, LV_STATE_FOCUSED);
+    lv_obj_set_style_border_width(button, 0, 0);
     lv_obj_set_style_border_color(button, style->outline, 0);
     lv_obj_set_style_bg_opa(button, LV_OPA_COVER, LV_STATE_PRESSED);
     lv_obj_set_style_bg_color(button, pressed_background, LV_STATE_PRESSED);
@@ -102,6 +126,14 @@ static inline void pxa_lvgl_dialog_action_style(
         lv_obj_set_style_outline_color(button, pressed_text, focus[i] | LV_STATE_PRESSED);
         lv_obj_set_style_outline_width(button, 0, focus[i] | LV_STATE_DISABLED);
     }
+}
+
+static inline void pxa_lvgl_dialog_center_action_label(lv_obj_t *label) {
+    lv_obj_set_width(label, LV_PCT(100));
+    lv_obj_set_height(label, LV_SIZE_CONTENT);
+    lv_obj_set_style_pad_all(label, 0, 0);
+    lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_center(label);
 }
 
 #endif

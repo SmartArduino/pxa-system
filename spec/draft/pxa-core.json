@@ -390,6 +390,14 @@
       "major": 0,
       "minor": 1,
       "patch": 0
+    },
+    {
+      "name": "video",
+      "id": 24,
+      "state": "defined",
+      "major": 0,
+      "minor": 3,
+      "patch": 0
     }
   ],
   "core_opcodes": [

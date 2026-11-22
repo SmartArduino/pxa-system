@@ -1,8 +1,12 @@
 #include "pxsys/reference_lvgl.h"
 #include "pxsys/reference_ime.h"
 #include "pxsys/lvgl_flags.h"
+#include "pxa/lvgl/pxa_lvgl_back_indicator.h"
 #include "pxa/lvgl/pxa_lvgl_dialog_style.h"
+#include "reference_launcher_gear.h"
 #include "src/indev/lv_indev_scroll.h"
+#include "src/misc/lv_area_private.h"
+#include "src/misc/lv_text_private.h"
 #include "src/misc/cache/instance/lv_image_cache.h"
 
 #ifndef PXA_ENABLE_PERMISSIONS
@@ -34,6 +38,8 @@ extern const lv_font_t pxsys_reference_lock_digits_72;
 #define NAVIGATION_GESTURE_COMMIT_DISTANCE 32
 #define NAVIGATION_GESTURE_HOLD_MS 180u
 #define NAVIGATION_GESTURE_MOTION_SLOP 4
+#define NAVIGATION_BACK_TAP_SLOP 8
+#define NAVIGATION_BACK_TAP_MS 450u
 #define REFERENCE_RESOURCE_NAMESPACE "system.ui"
 #define REFERENCE_TRANSLATION_SCRATCH_COUNT 12u
 #define REFERENCE_TRANSLATION_SCRATCH_BYTES 96u
@@ -170,7 +176,7 @@ static const pxsys_resource_entry_t reference_en_resources[] = {
     RESOURCE_ENTRY("control.bluetooth", "Bluetooth"),
     RESOURCE_ENTRY("control.focus", "Focus"),
     RESOURCE_ENTRY("control.light", "Flashlight"),
-    RESOURCE_ENTRY("control.theme", "Theme"),
+    RESOURCE_ENTRY("control.theme", "Dark mode"),
     RESOURCE_ENTRY("app.system-home.name", "System Home"),
     RESOURCE_ENTRY("app.system-home.description", "Standard system launcher"),
     RESOURCE_ENTRY("app.system-settings.name", "Settings"),
@@ -205,6 +211,7 @@ static const pxsys_resource_entry_t reference_en_resources[] = {
     RESOURCE_ENTRY("settings.apps.uninstall", "Uninstall"),
     RESOURCE_ENTRY("settings.apps.failed", "App operation failed"),
     RESOURCE_ENTRY("settings.apps.close", "Close"),
+    RESOURCE_ENTRY("settings.apps.version", "Version"),
     RESOURCE_ENTRY("settings.apps.confirm.clear", "Clear all app data?"),
     RESOURCE_ENTRY("settings.apps.confirm.uninstall", "Uninstall this app?"),
     RESOURCE_ENTRY("settings.apps.permissions", "Permissions"),
@@ -345,7 +352,7 @@ static const pxsys_resource_entry_t reference_zh_resources[] = {
     RESOURCE_ENTRY("control.bluetooth", "蓝牙"),
     RESOURCE_ENTRY("control.focus", "勿扰"),
     RESOURCE_ENTRY("control.light", "手电筒"),
-    RESOURCE_ENTRY("control.theme", "主题"),
+    RESOURCE_ENTRY("control.theme", "深色模式"),
     RESOURCE_ENTRY("app.system-home.name", "系统桌面"),
     RESOURCE_ENTRY("app.system-home.description", "标准系统桌面"),
     RESOURCE_ENTRY("app.system-settings.name", "设置"),
@@ -380,6 +387,7 @@ static const pxsys_resource_entry_t reference_zh_resources[] = {
     RESOURCE_ENTRY("settings.apps.uninstall", "卸载"),
     RESOURCE_ENTRY("settings.apps.failed", "应用操作失败，请重试"),
     RESOURCE_ENTRY("settings.apps.close", "关闭"),
+    RESOURCE_ENTRY("settings.apps.version", "版本"),
     RESOURCE_ENTRY("settings.apps.confirm.clear", "确认清除应用数据？"),
     RESOURCE_ENTRY("settings.apps.confirm.uninstall", "确认卸载该应用？"),
     RESOURCE_ENTRY("settings.apps.permissions", "权限"),
@@ -433,6 +441,11 @@ typedef enum {
     REFERENCE_PAGE_INPUT_METHOD_APPS,
 } reference_page_t;
 
+enum {
+    REFERENCE_SETTINGS_STATUS_NETWORK = 1u,
+    REFERENCE_SETTINGS_STATUS_LEVEL_SUPPORT = 2u,
+};
+
 /* Only scalar bookmarks survive a rebuild, including a bounded set of file
  * directories. No widget trees, screenshots or deleted object pointers. */
 #define REFERENCE_NAVIGATION_STATE_COUNT 24u
@@ -463,6 +476,9 @@ typedef struct {
     lv_obj_t* remove_button;
     lv_obj_t* icon_marker;
     uint8_t icon_attempted;
+#if LV_USE_SNAPSHOT
+    uint8_t icon_rasterized;
+#endif
     uint8_t uninstallable;
     uint8_t tap_cancelled;
     int32_t drag_start_x;
@@ -495,6 +511,14 @@ typedef struct {
     struct pxsys_reference_lvgl* ui;
     pxsys_level_control_t control;
 } level_control_t;
+
+typedef struct {
+    level_control_t level;
+    lv_obj_t* readout;
+    lv_obj_t* speaker;
+    int32_t displayed_value;
+    char text[5];
+} shade_level_control_t;
 
 typedef struct {
     struct pxsys_reference_lvgl* ui;
@@ -551,36 +575,45 @@ struct pxsys_reference_lvgl {
     pxsys_allocator_t allocator;
     lv_obj_t* parent;
     lv_obj_t* root;
+    lv_obj_t* page_frame;
+    lv_obj_t* page_opaque_section;
     lv_obj_t* content;
     lv_obj_t* title;
     lv_obj_t* page_indicator;
     lv_obj_t* status_bar;
+    lv_obj_t* status_clock;
     lv_timer_t* status_refresh_timer;
     uint8_t status_refresh_pending;
     uint8_t status_rebuild_pending;
+    uint8_t status_bar_rebuild_pending;
+    uint8_t status_settings_pending;
     uint8_t rebuild_suspended;
     uint8_t rebuild_requested;
     lv_obj_t* navigation_bar;
     lv_obj_t* toast;
-    lv_obj_t* toast_label;
     lv_obj_t* volume_osd;
     lv_obj_t* volume_osd_icon;
     lv_obj_t* volume_osd_bar;
     lv_obj_t* volume_osd_value;
     lv_obj_t* notification_shade;
+    lv_obj_t* notification_viewport;
     lv_obj_t* notification_panel;
+    lv_obj_t* notification_grip;
     lv_obj_t* notification_content;
     lv_obj_t* notification_time;
     lv_obj_t* notification_date;
     lv_obj_t* notification_volume;
     lv_obj_t* notification_brightness;
+    lv_obj_t* settings_volume;
+    lv_obj_t* settings_brightness;
     lv_obj_t* task_switcher;
     lv_obj_t* task_switcher_memory;
     lv_obj_t* lock_screen;
+    lv_obj_t* lock_clock_card;
+    lv_obj_t* lock_badge;
     lv_obj_t* lock_time;
     lv_obj_t* lock_date;
     lv_obj_t* lock_hint;
-    lv_obj_t* lock_indicator;
     lv_obj_t* power_menu;
 #if PXSYS_REFERENCE_UI_TASK_SWITCHER == PXSYS_TASK_SWITCHER_CARDS && LV_USE_SNAPSHOT
     lv_obj_t* task_switcher_empty;
@@ -617,6 +650,8 @@ struct pxsys_reference_lvgl {
     size_t max_launcher_apps;
     size_t launcher_count;
     launcher_item_t* launcher_items;
+    lv_draw_buf_t* launcher_gear;
+    lv_timer_t* launcher_icon_timer;
     uint16_t launcher_page;
     uint8_t launcher_gap;
     char launcher_order[4096];
@@ -624,6 +659,11 @@ struct pxsys_reference_lvgl {
     pxsys_reference_lvgl_launcher_save_fn launcher_order_save;
     uint8_t launcher_editing;
     uint8_t launcher_long_pressed;
+    launcher_item_t* launcher_drag_item;
+    lv_obj_t* launcher_drag_icon;
+    lv_timer_t* launcher_edge_timer;
+    uint16_t launcher_drag_start_page;
+    int8_t launcher_drag_edge;
     recent_item_t recent_items[12];
     recent_app_t recent_history[REFERENCE_RECENT_HISTORY];
     size_t recent_history_count;
@@ -659,6 +699,9 @@ struct pxsys_reference_lvgl {
     uint8_t notification_dragging;
     uint8_t notification_drag_moved;
     uint8_t notification_close_armed;
+    uint8_t notification_refresh_hook;
+    uint8_t notification_motion_pending;
+    uint8_t notification_fixed_viewport;
     uint8_t transient_revealed; /* CHROME_REVEALED_* bits; no extra state. */
     uint8_t navigation_dragging;
     uint8_t navigation_back_ready;
@@ -672,6 +715,7 @@ struct pxsys_reference_lvgl {
     int32_t lock_press_y;
     int32_t notification_press_x;
     int32_t status_press_y;
+    int32_t notification_shade_height;
     int32_t notification_panel_height;
     int32_t notification_progress;
     int32_t notification_scroll_y;
@@ -683,9 +727,15 @@ struct pxsys_reference_lvgl {
     int32_t navigation_last_x;
     int32_t navigation_last_y;
     int32_t navigation_back_press_x;
+    int32_t navigation_back_press_y;
+    uint32_t navigation_back_press_tick;
+    lv_obj_t* navigation_back_tap_target;
+    uint8_t navigation_back_tap_armed;
+    uint8_t navigation_back_cancelled;
     uint32_t navigation_last_motion_tick;
     network_control_t network_controls[2];
     level_control_t level_controls[2];
+    shade_level_control_t shade_levels[2];
     toggle_control_t toggle_controls[4];
     performance_control_t performance_controls[3];
     wifi_network_control_t wifi_network_controls[PXSYS_REFERENCE_WIFI_NETWORK_MAX];
@@ -821,6 +871,7 @@ struct pxsys_reference_lvgl {
 };
 
 static void rebuild(pxsys_reference_lvgl_t* ui);
+static int status_interaction_active(pxsys_reference_lvgl_t* ui);
 static void launcher_load_visible_icons(pxsys_reference_lvgl_t* ui);
 static void rebuild_resume(pxsys_reference_lvgl_t* ui) {
     --ui->rebuild_suspended;
@@ -838,6 +889,7 @@ static int task_switcher_is_open(const pxsys_reference_lvgl_t* ui);
 static void close_language_dialog(pxsys_reference_lvgl_t* ui);
 #if PXSYS_REFERENCE_UI_BUILTIN_SETTINGS
 static void page_close_dialogs(pxsys_reference_lvgl_t* ui);
+static void page_dismiss_dialog(pxsys_reference_lvgl_t* ui);
 #endif
 static void close_notification_shade(pxsys_reference_lvgl_t* ui);
 static void toast_restack(pxsys_reference_lvgl_t* ui);
@@ -847,6 +899,8 @@ static void capture_current_task(pxsys_reference_lvgl_t* ui,
 static void dismiss_recent_item(pxsys_reference_lvgl_t* ui,
                                 recent_item_t* item);
 static void lock_screen_refresh(pxsys_reference_lvgl_t* ui);
+static void lock_screen_layout(pxsys_reference_lvgl_t* ui);
+static void lock_screen_destroy(pxsys_reference_lvgl_t* ui);
 static int bar_is_visible(const pxsys_reference_lvgl_t* ui,
                           pxsys_window_bar_mode_t mode);
 static int status_bar_is_visible(const pxsys_reference_lvgl_t* ui);
@@ -858,6 +912,23 @@ static void rebuild_async(void* context) {
 
 static int ui_valid(const pxsys_reference_lvgl_t* ui) {
     return ui != NULL && ui->magic == REFERENCE_MAGIC;
+}
+
+int32_t pxsys_reference_lvgl_covered_top(const pxsys_reference_lvgl_t* ui) {
+    if (!ui_valid(ui) || ui->notification_viewport == NULL ||
+        ui->notification_progress <= 0 || lv_obj_is_hidden(ui->notification_shade))
+        return 0;
+    lv_obj_t* viewport = ui->notification_viewport;
+    lv_display_t* display = lv_obj_get_display(viewport);
+    lv_area_t area;
+    lv_obj_get_coords(viewport, &area);
+    if (lv_obj_get_screen(viewport) != lv_display_get_layer_top(display) ||
+        area.x1 != 0 || area.y1 > 0 ||
+        area.x2 != lv_display_get_horizontal_resolution(display) - 1)
+        return 0;
+    if (ui->notification_fixed_viewport)
+        return ui->notification_shade_height + lv_obj_get_style_y(viewport, 0);
+    return area.y2 + 1;
 }
 
 static pxsys_window_bar_mode_t status_bar_mode(const pxsys_reference_lvgl_t* ui) {
@@ -891,9 +962,11 @@ static void update_system_overlay(pxsys_reference_lvgl_t* ui) {
             objects[count++] = ui->toast;
         if (ui->app_ime != NULL && !lv_obj_is_hidden(ui->app_ime))
             objects[count++] = ui->app_ime;
-        if (ui->notification_shade != NULL &&
+        if (ui->notification_viewport != NULL && ui->notification_progress > 0 &&
+            (!ui->notification_fixed_viewport || ui->notification_progress == 256) &&
+            ui->notification_shade != NULL &&
             !lv_obj_is_hidden(ui->notification_shade))
-            objects[count++] = ui->notification_shade;
+            objects[count++] = ui->notification_viewport;
         if (ui->navigation_back_indicator != NULL &&
             !lv_obj_is_hidden(ui->navigation_back_indicator))
             objects[count++] = ui->navigation_back_indicator;
@@ -1008,6 +1081,13 @@ static const lv_font_t* typography_font(const pxsys_reference_lvgl_t* ui,
     return ui->text_font;
 }
 
+static int32_t text_width(const char* text, const lv_font_t* font) {
+    lv_point_t size;
+    lv_text_get_size(&size, text, font ? font : LV_FONT_DEFAULT,
+                     0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+    return size.x;
+}
+
 static const char* translated(pxsys_reference_lvgl_t* ui, const char* key,
                               const char* fallback) {
     pxsys_string_t value;
@@ -1115,6 +1195,42 @@ static void style_plain(lv_obj_t* object) {
                        LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
 }
 
+static void page_background_draw(lv_event_t* event) {
+    pxsys_reference_lvgl_t* ui = lv_event_get_user_data(event);
+    lv_obj_t* section = ui->page_opaque_section;
+    if (section == NULL || !ui->content_active ||
+        lv_obj_is_hidden(section) || lv_obj_is_hidden(ui->content) ||
+        lv_obj_get_style_transform_scale_x(ui->content, LV_PART_MAIN) != LV_SCALE_NONE ||
+        lv_obj_get_style_transform_scale_y(ui->content, LV_PART_MAIN) != LV_SCALE_NONE)
+        return;
+
+    lv_layer_t* layer = lv_event_get_layer(event);
+    lv_area_t opaque, viewport, strips[4];
+    lv_obj_get_coords(section, &opaque);
+    lv_obj_get_coords(ui->content, &viewport);
+    const int32_t radius = LV_MIN(lv_obj_get_style_radius(section, LV_PART_MAIN),
+        LV_MIN(lv_area_get_width(&opaque), lv_area_get_height(&opaque)) / 2);
+    /* Only the solid middle of the list covers the page, and only where the
+     * scroll viewport is visible. Keep the original paint behind its corners. */
+    opaque.y1 += radius;
+    opaque.y2 -= radius;
+    if (!lv_area_intersect(&opaque, &opaque, &viewport)) return;
+    if (ui->page_frame != NULL) {
+        lv_obj_get_coords(ui->page_frame, &viewport);
+        if (!lv_area_intersect(&opaque, &opaque, &viewport)) return;
+    }
+    if (!lv_area_intersect(&opaque, &opaque, &layer->_clip_area)) return;
+
+    const int8_t count = lv_area_diff(strips, &layer->_clip_area, &opaque);
+    if (count < 0) return;
+    lv_event_stop_processing(event);
+    lv_draw_rect_dsc_t background;
+    lv_draw_rect_dsc_init(&background);
+    lv_obj_init_draw_rect_dsc(ui->root, LV_PART_MAIN, &background);
+    for (int8_t i = 0; i < count; ++i)
+        lv_draw_rect(layer, &background, &strips[i]);
+}
+
 static void style_scrollbar(pxsys_reference_lvgl_t* ui, lv_obj_t* object) {
     /* Position the indicator against the viewport, independently of the
      * padding used to keep text and cards away from its edges. */
@@ -1214,6 +1330,10 @@ static lv_group_t* navigation_keypad_group(pxsys_reference_lvgl_t* ui) {
     return NULL;
 }
 
+static lv_obj_t* navigation_page_root(const pxsys_reference_lvgl_t* ui) {
+    return ui->page_frame != NULL ? ui->page_frame : ui->content;
+}
+
 static void navigation_state_capture(pxsys_reference_lvgl_t* ui) {
     if (ui->content == NULL || ui->rendered_view_key == 0) return;
     size_t index;
@@ -1227,10 +1347,11 @@ static void navigation_state_capture(pxsys_reference_lvgl_t* ui) {
     lv_obj_t* focused = group != NULL ? lv_group_get_focused(group) : NULL;
     /* Modal focus must not replace the page's own bookmark. */
     if (focused != NULL) {
+        lv_obj_t* page = navigation_page_root(ui);
         for (lv_obj_t* parent = focused; parent != NULL;
              parent = lv_obj_get_parent(parent)) {
-            if (parent == ui->content) {
-                state.focus_key = navigation_object_key(ui->content, focused);
+            if (parent == page) {
+                state.focus_key = navigation_object_key(page, focused);
                 break;
             }
         }
@@ -1268,8 +1389,8 @@ static void navigation_state_restore(pxsys_reference_lvgl_t* ui) {
     if (state->focus_key != 0 && group != NULL && !ui->locked &&
         ui->power_menu == NULL && !ui->notification_shade_open &&
         !task_switcher_is_open(ui)) {
-        lv_obj_t* target = navigation_find_focus(
-            ui->content, ui->content, state->focus_key);
+        lv_obj_t* page = navigation_page_root(ui);
+        lv_obj_t* target = navigation_find_focus(page, page, state->focus_key);
         if (target == NULL && ui->active_page == REFERENCE_PAGE_HOME &&
             ui->launcher_count != 0) {
             size_t index = (size_t)ui->launcher_page *
@@ -1307,82 +1428,38 @@ static void navigation_back_indicator_reset(pxsys_reference_lvgl_t* ui) {
     update_system_overlay(ui);
 }
 
-/* Left-edge drag pill: grows and rounds as the pointer travels, switching to
- * the accent color once the release would navigate back. */
 static int navigation_back_indicator_update(pxsys_reference_lvgl_t* ui,
-                                            int32_t edge_x, int32_t press_x,
-                                            int32_t x, int32_t y) {
-    static const lv_point_precise_t kChevronPoints[] = {
-        {8, 1}, {1, 9}, {8, 17},
-    };
-    lv_obj_t* indicator;
-    lv_obj_t* chevron;
-    int32_t distance = x - press_x;
-    int32_t progress;
-    int32_t width;
-    int32_t height;
-    int32_t radius;
-    int32_t indicator_x;
-    int32_t indicator_y;
-    int ready;
-    if (distance < 4) {
+                                            int32_t press_x,
+                                            int32_t x, int32_t start_y) {
+    const int32_t distance = x - press_x;
+    if (distance <= 0) {
         navigation_back_indicator_reset(ui);
         return 0;
     }
+    const bool ready = distance >= NAVIGATION_GESTURE_COMMIT_DISTANCE;
     if (ui->navigation_back_indicator == NULL) {
-        ui->navigation_back_indicator = lv_obj_create(ui->root);
-        pxsys_lvgl_add_flags(ui->navigation_back_indicator, LV_OBJ_FLAG_HIDDEN);
-        style_plain(ui->navigation_back_indicator);
-        lv_obj_set_size(ui->navigation_back_indicator, 28, 68);
-        lv_obj_set_style_radius(ui->navigation_back_indicator, 5, 0);
-        lv_obj_set_style_shadow_width(ui->navigation_back_indicator, 6, 0);
-        lv_obj_set_style_shadow_opa(ui->navigation_back_indicator, LV_OPA_30,
-                                    0);
-        chevron = lv_line_create(ui->navigation_back_indicator);
-        lv_line_set_points(chevron, kChevronPoints, 3);
-        lv_obj_set_style_line_width(chevron, 3, 0);
-        lv_obj_set_style_line_rounded(chevron, true, 0);
-        lv_obj_set_size(chevron, 10, 18);
-        lv_obj_align(chevron, LV_ALIGN_CENTER, 0, 0);
+        const int32_t height = (int32_t)ui->display.height;
+        const int32_t circle_radius = LV_MIN(height, (int32_t)ui->display.width) / 2;
+        const bool round = ui->display.shape == PXSYS_DISPLAY_SHAPE_CIRCLE;
+        ui->navigation_back_indicator = pxa_lvgl_back_indicator_create(
+            ui->root, start_y, height, ui_px(ui, 52),
+            round ? circle_radius : ui->display.corner_radii.top_left,
+            round ? circle_radius : ui->display.corner_radii.bottom_left);
     }
-    indicator = ui->navigation_back_indicator;
-    chevron = lv_obj_get_child(indicator, 0);
-    progress = distance > 72 ? 72 : distance;
-    // Keep the chevron and rounded shape visible from the first drag sample;
-    // the old 18px pill hid the arrow until 36px of travel, looking like a
-    // blank dark rectangle before the actual Back affordance appeared.
-    width = 28 + progress * 10 / 72;
-    height = 68 - progress * 16 / 72;
-    radius = width / 2;
-    ready = distance >= NAVIGATION_GESTURE_COMMIT_DISTANCE;
-    indicator_x = edge_x + distance - width;
-    if (indicator_x > edge_x + 8) indicator_x = edge_x + 8;
-    if (indicator_x < edge_x) indicator_x = edge_x;
-    indicator_y = y - height / 2;
-    if (indicator_y < 0) indicator_y = 0;
-    if (indicator_y > (int32_t)ui->display.height - height)
-        indicator_y = (int32_t)ui->display.height - height;
-    lv_obj_set_size(indicator, width, height);
-    lv_obj_set_pos(indicator, indicator_x, indicator_y);
-    lv_obj_set_style_radius(indicator, radius, 0);
-    lv_obj_set_style_bg_color(
-        indicator,
-        color_token(ui, ready ? PXSYS_COLOR_ACCENT : PXSYS_COLOR_SURFACE), 0);
-    lv_obj_set_style_bg_opa(indicator, (lv_opa_t)242, 0);
-    lv_obj_set_style_shadow_color(indicator, color_token(ui, PXSYS_COLOR_SCRIM),
-                                  0);
-    if (chevron != NULL) {
-        pxsys_lvgl_remove_flags(chevron, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_set_style_line_color(
-            chevron,
-            color_token(ui, ready ? PXSYS_COLOR_ON_ACCENT
-                                  : PXSYS_COLOR_TEXT_PRIMARY),
-            0);
-    }
-    pxsys_lvgl_remove_flags(indicator, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_move_foreground(indicator);
-    update_system_overlay(ui);
+    if (pxa_lvgl_back_indicator_move(ui->navigation_back_indicator, distance, ready))
+        update_system_overlay(ui);
     return ready;
+}
+
+static bool close_open_dropdown(lv_obj_t* parent) {
+    if (parent == NULL) return false;
+    if (lv_obj_has_class(parent, &lv_dropdown_class) && lv_dropdown_is_open(parent)) {
+        lv_dropdown_close(parent);
+        return true;
+    }
+    for (uint32_t index = 0; index < lv_obj_get_child_count(parent); ++index)
+        if (close_open_dropdown(lv_obj_get_child(parent, index))) return true;
+    return false;
 }
 
 static void navigation_back(pxsys_reference_lvgl_t* ui) {
@@ -1409,8 +1486,7 @@ static void navigation_back(pxsys_reference_lvgl_t* ui) {
     }
 #if PXSYS_REFERENCE_UI_BUILTIN_SETTINGS
     if (ui->confirm_dialog != NULL || ui->app_dialog != NULL) {
-        page_close_dialogs(ui);
-        update_system_overlay(ui);
+        page_dismiss_dialog(ui);
         return;
     }
     if (ui->active_page == REFERENCE_PAGE_FILE_MANAGER) {
@@ -1441,12 +1517,7 @@ static void navigation_back(pxsys_reference_lvgl_t* ui) {
         return;
     }
     if (ui->active_page == REFERENCE_PAGE_INPUT_METHOD) {
-        for (unsigned i=0;i<lv_obj_get_child_count(ui->content);++i) {
-            lv_obj_t *child=lv_obj_get_child(ui->content,i);
-            if (lv_obj_has_class(child,&lv_dropdown_class) && lv_dropdown_is_open(child)) {
-                lv_dropdown_close(child); return;
-            }
-        }
+        if (close_open_dropdown(ui->content)) return;
         ui->active_page=REFERENCE_PAGE_SETTINGS;
         rebuild(ui); return;
     }
@@ -1468,6 +1539,60 @@ static void navigation_back(pxsys_reference_lvgl_t* ui) {
     rebuild_resume(ui);
 }
 
+static void navigation_back_tap_deleted(lv_event_t* event) {
+    pxsys_reference_lvgl_t* ui = lv_event_get_user_data(event);
+    ui->navigation_back_tap_target = NULL;
+    ui->navigation_back_tap_armed = 0;
+}
+static void navigation_back_tap_clear(pxsys_reference_lvgl_t* ui) {
+    lv_obj_t* target = ui->navigation_back_tap_target;
+    ui->navigation_back_tap_target = NULL;
+    ui->navigation_back_tap_armed = 0;
+    if (target != NULL && lv_obj_is_valid(target))
+        lv_obj_remove_event_cb_with_user_data(target, navigation_back_tap_deleted, ui);
+}
+static void navigation_back_replay_deleted(lv_event_t* event) {
+    bool* alive = lv_event_get_user_data(event);
+    *alive = false;
+}
+
+/* Use LVGL's normal hit-testing order while excluding only the Back catcher.
+ * Capture a target at press, but replay a short tap only after release. A Back
+ * swipe never sends a speculative press/click into the foreground application. */
+static lv_obj_t* navigation_back_tap_target(lv_obj_t* catcher, lv_indev_t* indev,
+                                          lv_point_t point) {
+    lv_display_t* display = lv_indev_get_display(indev);
+    lv_obj_t* layers[] = {lv_display_get_layer_sys(display),
+        lv_display_get_layer_top(display), lv_display_get_screen_active(display),
+        lv_display_get_layer_bottom(display)};
+    lv_obj_t* target = NULL;
+    pxsys_lvgl_remove_flags(catcher, LV_OBJ_FLAG_CLICKABLE);
+    for (unsigned i = 0; i < sizeof(layers)/sizeof(layers[0]) && target == NULL; ++i)
+        if (layers[i] != NULL) target = lv_indev_search_obj(layers[i], &point);
+    pxsys_lvgl_add_flags(catcher, LV_OBJ_FLAG_CLICKABLE);
+    return target;
+}
+static void navigation_back_tap_replay(pxsys_reference_lvgl_t* ui,
+    lv_obj_t* catcher, lv_indev_t* indev, lv_point_t point) {
+    lv_obj_t* target = ui->navigation_back_tap_target;
+    navigation_back_tap_clear(ui);
+    if (target == NULL || !lv_obj_is_valid(target) ||
+        lv_obj_has_state(target, LV_STATE_DISABLED) ||
+        navigation_back_tap_target(catcher, indev, point) != target) return;
+    bool alive = true;
+    if (lv_obj_add_event_cb(target, navigation_back_replay_deleted,
+                           LV_EVENT_DELETE, &alive) == NULL) return;
+    if (lv_obj_get_group(target) != NULL &&
+        lv_obj_is_click_focusable(target)) lv_group_focus_obj(target);
+    const lv_event_code_t events[] = {LV_EVENT_PRESSED, LV_EVENT_RELEASED,
+        LV_EVENT_SHORT_CLICKED, LV_EVENT_CLICKED};
+    for (unsigned i = 0; i < sizeof(events)/sizeof(events[0]); ++i) {
+        if (!alive || !lv_obj_is_valid(target) || lv_obj_has_state(target, LV_STATE_DISABLED)) break;
+        if (lv_obj_send_event(target, events[i], indev) == LV_RESULT_INVALID) break;
+    }
+    if (alive) lv_obj_remove_event_cb_with_user_data(target, navigation_back_replay_deleted, &alive);
+}
+
 static void navigation_back_gesture_event(lv_event_t* event) {
     pxsys_reference_lvgl_t* ui =
         (pxsys_reference_lvgl_t*)lv_event_get_user_data(event);
@@ -1475,11 +1600,26 @@ static void navigation_back_gesture_event(lv_event_t* event) {
     lv_point_t point;
     lv_event_code_t code;
     int32_t horizontal;
-    int32_t edge_x;
     if (!ui_valid(ui) || indev == NULL) return;
     lv_indev_get_point(indev, &point);
     code = lv_event_get_code(event);
-    edge_x = (int32_t)ui->display.safe_insets.left;
+    lv_obj_t* catcher = lv_event_get_target(event);
+    if (code == LV_EVENT_PRESSED) {
+        navigation_back_tap_clear(ui);
+        ui->navigation_back_press_x = point.x;
+        ui->navigation_back_press_y = point.y;
+        ui->navigation_back_press_tick = lv_tick_get();
+        ui->navigation_back_tap_target = navigation_back_tap_target(catcher, indev, point);
+        ui->navigation_back_tap_armed = ui->navigation_back_tap_target != NULL &&
+            lv_obj_add_event_cb(ui->navigation_back_tap_target,
+                navigation_back_tap_deleted, LV_EVENT_DELETE, ui) != NULL;
+        ui->navigation_back_cancelled = 0;
+    } else if (code == LV_EVENT_PRESS_LOST ||
+        abs(point.x-ui->navigation_back_press_x) > NAVIGATION_BACK_TAP_SLOP ||
+        abs(point.y-ui->navigation_back_press_y) > NAVIGATION_BACK_TAP_SLOP) {
+        navigation_back_tap_clear(ui);
+    }
+
     if (ui->back_gesture != NULL) {
         pxsys_reference_back_gesture_phase_t phase;
         bool commit = false;
@@ -1505,7 +1645,7 @@ static void navigation_back_gesture_event(lv_event_t* event) {
                                  point.y, &commit)) {
                 ui->back_gesture_override = 1;
             }
-            if (ui->back_gesture_override) return;
+            if (ui->back_gesture_override) {navigation_back_tap_clear(ui);return;}
         } else {
             (void)ui->back_gesture(ui->back_gesture_context, phase, point.x,
                                    point.y, &commit);
@@ -1519,7 +1659,6 @@ static void navigation_back_gesture_event(lv_event_t* event) {
         }
     }
 #if !PXSYS_REFERENCE_UI_BACK_GESTURE
-    (void)edge_x;
     return;
 #endif
     if (code == LV_EVENT_PRESSED) {
@@ -1527,9 +1666,19 @@ static void navigation_back_gesture_event(lv_event_t* event) {
         ui->navigation_back_ready = 0;
         return;
     }
+    if ((code == LV_EVENT_PRESSING || code == LV_EVENT_RELEASED) &&
+        abs(point.y-ui->navigation_back_press_y) > NAVIGATION_BACK_TAP_SLOP &&
+        abs(point.y-ui->navigation_back_press_y) > abs(point.x-ui->navigation_back_press_x))
+        ui->navigation_back_cancelled = 1;
+    if (ui->navigation_back_cancelled) {
+        ui->navigation_back_ready = 0;
+        navigation_back_indicator_reset(ui);
+        return;
+    }
     if (code == LV_EVENT_PRESSING) {
         ui->navigation_back_ready = (uint8_t)navigation_back_indicator_update(
-            ui, edge_x, ui->navigation_back_press_x, point.x, point.y);
+            ui, ui->navigation_back_press_x, point.x,
+            ui->navigation_back_press_y);
         return;
     }
     if (code == LV_EVENT_PRESS_LOST) {
@@ -1545,7 +1694,15 @@ static void navigation_back_gesture_event(lv_event_t* event) {
     if (horizontal >= NAVIGATION_GESTURE_COMMIT_DISTANCE)
         ui->navigation_back_ready = 1;
     navigation_back_indicator_reset(ui);
-    if (!ui->navigation_back_ready) return;
+    if (!ui->navigation_back_ready) {
+        const bool tap = ui->navigation_back_tap_armed &&
+            lv_tick_elaps(ui->navigation_back_press_tick) <= NAVIGATION_BACK_TAP_MS;
+        ui->navigation_back_tap_armed = 0;
+        if (tap) navigation_back_tap_replay(ui, catcher, indev, point);
+        else navigation_back_tap_clear(ui);
+        return;
+    }
+    navigation_back_tap_clear(ui);
     ui->navigation_back_ready = 0;
     navigation_back(ui);
 }
@@ -1601,7 +1758,7 @@ static void launcher_clicked(lv_event_t* event) {
     pxsys_intent_t intent = {0};
     pxsys_instance_ref_t instance;
     if (item == NULL || !ui_valid(item->ui)) return;
-    if (item->tap_cancelled) return;
+    if (item->tap_cancelled || item->ui->launcher_drag_item != NULL) return;
     if (item->ui->launcher_long_pressed) {
         item->ui->launcher_long_pressed = 0;
         return;
@@ -1747,6 +1904,98 @@ static void launcher_remove_clicked(lv_event_t* event) {
 #endif
 }
 
+static void launcher_fill_icon(pxsys_reference_lvgl_t* ui, lv_obj_t* marker,
+                               const launcher_item_t* item, int32_t size);
+
+static void launcher_edge_tick(lv_timer_t* timer) {
+    pxsys_reference_lvgl_t* ui = lv_timer_get_user_data(timer);
+    if (ui->launcher_drag_item == NULL || ui->launcher_count == 0) {
+        lv_timer_pause(timer);
+        return;
+    }
+    const size_t per_page = PXSYS_REFERENCE_UI_LAUNCHER_COLUMNS * PXSYS_REFERENCE_UI_LAUNCHER_ROWS;
+    const int32_t page = (int32_t)ui->launcher_page + ui->launcher_drag_edge;
+    const int32_t last = (int32_t)((ui->launcher_count - 1u) / per_page);
+    if (page < 0 || page > last) {
+        lv_timer_pause(timer);
+        return;
+    }
+    ui->launcher_page = (uint16_t)page;
+    lv_obj_scroll_to_x(ui->content, page * lv_obj_get_width(ui->content), LV_ANIM_OFF);
+}
+
+static void launcher_drag_move(pxsys_reference_lvgl_t* ui, lv_point_t point) {
+    lv_area_t root, viewport;
+    lv_obj_get_coords(ui->root, &root);
+    lv_obj_get_coords(ui->content, &viewport);
+    const int32_t size = lv_obj_get_style_width(ui->launcher_drag_icon, 0);
+    const int32_t x = LV_CLAMP(0, point.x - root.x1 - size / 2,
+                              LV_MAX(0, lv_area_get_width(&root) - size));
+    const int32_t y = LV_CLAMP(0, point.y - root.y1 - size / 2,
+                              LV_MAX(0, lv_area_get_height(&root) - size));
+    if (x != lv_obj_get_style_x(ui->launcher_drag_icon, 0) ||
+        y != lv_obj_get_style_y(ui->launcher_drag_icon, 0))
+        lv_obj_set_pos(ui->launcher_drag_icon, x, y);
+    const int32_t edge_width = ui_px(ui, 24);
+    int8_t edge = 0;
+    if (point.y >= viewport.y1 && point.y <= viewport.y2) {
+        if (point.x < viewport.x1 + edge_width) edge = -1;
+        else if (point.x > viewport.x2 - edge_width) edge = 1;
+    }
+    if (edge == ui->launcher_drag_edge) return;
+    ui->launcher_drag_edge = edge;
+    if (ui->launcher_edge_timer == NULL) return;
+    if (edge == 0) lv_timer_pause(ui->launcher_edge_timer);
+    else {
+        lv_timer_reset(ui->launcher_edge_timer);
+        lv_timer_resume(ui->launcher_edge_timer);
+    }
+}
+
+static void launcher_drag_finish(pxsys_reference_lvgl_t* ui, const lv_point_t* drop) {
+    launcher_item_t* item = ui->launcher_drag_item;
+    if (item == NULL) return;
+    const int32_t columns = PXSYS_REFERENCE_UI_LAUNCHER_COLUMNS;
+    const int32_t rows = PXSYS_REFERENCE_UI_LAUNCHER_ROWS;
+    const int32_t per_page = columns * rows;
+    lv_area_t viewport;
+    lv_obj_get_coords(ui->content, &viewport);
+    const bool inside = drop != NULL && drop->x >= viewport.x1 && drop->x <= viewport.x2 &&
+        drop->y >= viewport.y1 && drop->y <= viewport.y2;
+    int32_t destination = (int32_t)lv_obj_get_index(item->tile);
+    if (inside) {
+        const int32_t column = LV_MIN(columns - 1, (drop->x - viewport.x1 + ui->launcher_gap / 2) /
+            (lv_obj_get_width(item->tile) + ui->launcher_gap));
+        const int32_t row = LV_MIN(rows - 1, (drop->y - viewport.y1 + ui->launcher_gap / 2) /
+            (lv_obj_get_height(item->tile) + ui->launcher_gap));
+        destination = LV_MIN((int32_t)ui->launcher_count - 1,
+                             ui->launcher_page * per_page + row * columns + column);
+    } else {
+        ui->launcher_page = ui->launcher_drag_start_page;
+    }
+    if (ui->launcher_edge_timer != NULL) {
+        lv_timer_delete(ui->launcher_edge_timer);
+        ui->launcher_edge_timer = NULL;
+    }
+    ui->launcher_drag_edge = 0;
+    lv_obj_delete(ui->launcher_drag_icon);
+    ui->launcher_drag_icon = NULL;
+    ui->launcher_drag_item = NULL;
+    lv_obj_set_hidden(item->icon_marker, false);
+    lv_obj_set_hidden(lv_obj_get_child(item->tile, 1), false);
+    lv_obj_set_scrollable(ui->content, ui->launcher_count > (size_t)per_page);
+    if (destination != (int32_t)lv_obj_get_index(item->tile)) {
+        lv_obj_move_to_index(item->tile, destination);
+        launcher_position_tiles(ui);
+        lv_obj_update_layout(ui->content);
+        launcher_save_order(ui);
+    }
+    /* Keep the release from launching the tile or letting a scroll snap
+     * overwrite the selected destination page. */
+    ui->launcher_long_pressed = 1;
+    lv_obj_scroll_to_x(ui->content, ui->launcher_page * lv_obj_get_width(ui->content), LV_ANIM_OFF);
+}
+
 static void launcher_gesture(lv_event_t* event) {
     launcher_item_t* item = lv_event_get_user_data(event);
     pxsys_reference_lvgl_t* ui;
@@ -1758,6 +2007,7 @@ static void launcher_gesture(lv_event_t* event) {
     ui = item->ui;
     code = lv_event_get_code(event);
     if (code == LV_EVENT_PRESSED) {
+        if (ui->launcher_drag_item != NULL) return;
         ui->launcher_long_pressed = 0;
         item->tap_cancelled = ui->content != NULL &&
                               lv_obj_is_scrolling(ui->content);
@@ -1771,6 +2021,8 @@ static void launcher_gesture(lv_event_t* event) {
     }
     if (code == LV_EVENT_PRESS_LOST) {
         item->tap_cancelled = 1;
+        if (ui->launcher_drag_item == item && lv_event_get_current_target(event) == item->tile)
+            launcher_drag_finish(ui, NULL);
         return;
     }
     if (code == LV_EVENT_PRESSING || code == LV_EVENT_RELEASED ||
@@ -1792,9 +2044,9 @@ static void launcher_gesture(lv_event_t* event) {
      * or changes the editing mode on a long press. */
     if (lv_event_get_current_target(event) == item->remove_button) return;
     if (code == LV_EVENT_LONG_PRESSED) {
-        if (item->tap_cancelled) return;
+        if (item->tap_cancelled || ui->launcher_drag_item != NULL) return;
         indev = lv_event_get_indev(event);
-        if (indev == NULL) return;
+        if (indev == NULL || lv_indev_get_type(indev) != LV_INDEV_TYPE_POINTER) return;
         lv_indev_get_point(indev, &point);
         item->drag_start_x = point.x;
         item->drag_start_y = point.y;
@@ -1811,43 +2063,33 @@ static void launcher_gesture(lv_event_t* event) {
             if (other->remove_button != NULL)
                 pxsys_lvgl_remove_flags(other->remove_button, LV_OBJ_FLAG_HIDDEN);
         }
+        ui->launcher_drag_item = item;
+        ui->launcher_drag_start_page = ui->launcher_page;
+        lv_obj_set_scrollable(ui->content, false);
+        const int32_t size = lv_obj_get_style_width(item->icon_marker, 0);
+        ui->launcher_drag_icon = lv_obj_create(ui->root);
+        style_plain(ui->launcher_drag_icon);
+        lv_obj_set_size(ui->launcher_drag_icon, size, size);
+        launcher_fill_icon(ui, ui->launcher_drag_icon, item, size);
+        lv_obj_set_hidden(item->icon_marker, true);
+        lv_obj_set_hidden(lv_obj_get_child(item->tile, 1), true);
+        ui->launcher_edge_timer = lv_timer_create(launcher_edge_tick, 420, ui);
+        if (ui->launcher_edge_timer != NULL) lv_timer_pause(ui->launcher_edge_timer);
+        launcher_drag_move(ui, point);
         return;
     }
-    if (code == LV_EVENT_PRESSING && ui->launcher_editing &&
-        ui->launcher_long_pressed) {
-        indev = lv_event_get_indev(event);
-        if (indev == NULL) return;
-        lv_indev_get_point(indev, &point);
-        lv_obj_set_style_translate_x(item->tile,
-                                      point.x - item->drag_start_x, 0);
-        lv_obj_set_style_translate_y(item->tile,
-                                      point.y - item->drag_start_y, 0);
-        return;
-    }
-    if (code != LV_EVENT_RELEASED || !ui->launcher_editing) return;
+    if (ui->launcher_drag_item != item ||
+        (code != LV_EVENT_PRESSING && code != LV_EVENT_RELEASED)) return;
     indev = lv_event_get_indev(event);
     if (indev == NULL) return;
     lv_indev_get_point(indev, &point);
-    lv_obj_set_style_translate_x(item->tile, 0, 0);
-    lv_obj_set_style_translate_y(item->tile, 0, 0);
-    for (index = 0; index < ui->launcher_count; ++index) {
-        lv_area_t area;
-        launcher_item_t* target = &ui->launcher_items[index];
-        if (target == item || target->tile == NULL) continue;
-        lv_obj_get_coords(target->tile, &area);
-        if (point.x < area.x1 || point.x > area.x2 ||
-            point.y < area.y1 || point.y > area.y2) continue;
-        lv_obj_move_to_index(item->tile, lv_obj_get_index(target->tile));
-        launcher_position_tiles(ui);
-        launcher_save_order(ui);
-        ui->launcher_long_pressed = 1;
-        return;
-    }
+    if (code == LV_EVENT_PRESSING) launcher_drag_move(ui, point);
+    else launcher_drag_finish(ui, &point);
 }
 
 static void launcher_background_clicked(lv_event_t* event) {
     pxsys_reference_lvgl_t* ui = lv_event_get_user_data(event);
-    if (!ui_valid(ui) || !ui->launcher_editing ||
+    if (!ui_valid(ui) || !ui->launcher_editing || ui->launcher_drag_item != NULL ||
         lv_event_get_target(event) != ui->content) return;
     ui->launcher_editing = 0;
     ui->launcher_long_pressed = 0;
@@ -1858,16 +2100,19 @@ static void launcher_scroll_event(lv_event_t* event) {
     pxsys_reference_lvgl_t* ui = lv_event_get_user_data(event);
     if (!ui_valid(ui) || ui->content == NULL ||
         lv_event_get_current_target(event) != ui->content ||
-        ui->launcher_count == 0) return;
+        ui->launcher_count == 0 || ui->launcher_drag_item != NULL) return;
     const lv_event_code_t code = lv_event_get_code(event);
     if (code == LV_EVENT_SCROLL) {
-        launcher_load_visible_icons(ui);
+        if (ui->launcher_icon_timer != NULL) {
+            lv_timer_reset(ui->launcher_icon_timer);
+            lv_timer_resume(ui->launcher_icon_timer);
+        }
         return;
     }
     if (code == LV_EVENT_SCROLL_BEGIN) {
         lv_anim_t* animation = lv_event_get_param(event);
         if (animation != NULL)
-            lv_anim_set_duration(animation, ui->animations_enabled ? 160 : 0);
+            lv_anim_set_duration(animation, ui->animations_enabled ? 130 : 0);
         return;
     }
     const int32_t width = lv_obj_get_width(ui->content);
@@ -1900,7 +2145,8 @@ static void launcher_focused(lv_event_t* event) {
     launcher_item_t* item = lv_event_get_user_data(event);
     if (item == NULL || !ui_valid(item->ui)) return;
     pxsys_reference_lvgl_t* ui = item->ui;
-    if (ui->content == NULL || lv_obj_get_parent(item->tile) != ui->content ||
+    if (ui->content == NULL || ui->launcher_drag_item != NULL ||
+        lv_obj_get_parent(item->tile) != ui->content ||
         ui->rendered_view_key != (uint32_t)REFERENCE_PAGE_HOME + 1u) return;
     const int32_t width = lv_obj_get_width(ui->content);
     if (width <= 0) return;
@@ -1939,6 +2185,41 @@ static lv_obj_t* make_label(lv_obj_t* parent, const char* text,
     return label;
 }
 
+static void center_symbol(lv_obj_t* label, uint32_t codepoint) {
+    const lv_font_t* font = lv_obj_get_style_text_font(label, 0);
+    lv_font_glyph_dsc_t glyph;
+    if (!lv_font_get_glyph_dsc(font, &glyph, codepoint, 0)) {
+        lv_obj_center(label);
+        return;
+    }
+    /* Center the painted glyph rather than its advance and line box. */
+    const int32_t width = text_width(lv_label_get_text(label), font);
+    const int32_t glyph_top = (int32_t)font->line_height - font->base_line -
+                              glyph.box_h - glyph.ofs_y;
+    lv_obj_align(label, LV_ALIGN_CENTER,
+                 (width - glyph.box_w) / 2 - glyph.ofs_x,
+                 ((int32_t)font->line_height - glyph.box_h) / 2 - glyph_top);
+}
+
+static void center_settings_symbol(lv_obj_t* label, const char* symbol,
+                                   int32_t size) {
+    const lv_font_t* font = lv_obj_get_style_text_font(label, 0);
+    lv_font_glyph_dsc_t glyph;
+    const uint32_t codepoint = lv_text_encoded_next(symbol, NULL);
+    const bool found = lv_font_get_glyph_dsc(font, &glyph, codepoint, 0);
+    const int32_t top = found ? font->line_height - font->base_line - glyph.box_h - glyph.ofs_y : 0;
+    const int32_t height = found ? glyph.box_h : font->line_height;
+    lv_label_set_long_mode(label, LV_LABEL_LONG_MODE_CLIP);
+    lv_obj_set_style_pad_top(label, LV_MAX(0, (size - height) / 2 - top), 0);
+    if (found) {
+        const int32_t left = (size - (int32_t)glyph.box_w) / 2 - glyph.ofs_x;
+        lv_obj_set_style_pad_left(label, LV_MAX(0, left), 0);
+        lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_LEFT, 0);
+    } else {
+        lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
+    }
+}
+
 #if !(PXSYS_REFERENCE_UI_TASK_SWITCHER == PXSYS_TASK_SWITCHER_CARDS && \
       LV_USE_SNAPSHOT)
 static lv_obj_t* make_button(pxsys_reference_lvgl_t* ui, lv_obj_t* parent,
@@ -1954,11 +2235,9 @@ static lv_obj_t* make_button(pxsys_reference_lvgl_t* ui, lv_obj_t* parent,
     lv_obj_set_style_border_color(button, color_token(ui, PXSYS_COLOR_BORDER), 0);
     lv_obj_set_style_pad_all(button, 8, 0);
     pxsys_lvgl_remove_flags(button, LV_OBJ_FLAG_SCROLLABLE);
-    make_label(button, text, ui->text_font,
-               color_token(ui, PXSYS_COLOR_TEXT_PRIMARY));
-    lv_obj_set_width(lv_obj_get_child(button, 0), LV_PCT(100));
-    lv_obj_set_style_text_align(lv_obj_get_child(button, 0), LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_center(lv_obj_get_child(button, 0));
+    lv_obj_t* label = make_label(button, text, ui->text_font,
+                                 color_token(ui, PXSYS_COLOR_TEXT_PRIMARY));
+    pxa_lvgl_dialog_center_action_label(label);
     if (clicked != NULL)
         lv_obj_add_event_cb(button, clicked, LV_EVENT_CLICKED, user_data);
     return button;
@@ -2019,14 +2298,22 @@ static void application_backdrop_apply(pxsys_reference_lvgl_t* ui) {
         display == NULL ? NULL : lv_display_get_screen_active(display);
     lv_obj_t* backdrop;
     if (app == NULL) return;
+    /* LVGL draws the active screen before layer_top, so the covered
+     * background fills would still run on every native scroll frame. A
+     * centered product viewport can expose those backgrounds at its edges. */
+    const bool native_covers_display = ui->content_active &&
+        lv_obj_get_parent(ui->root) == lv_display_get_layer_top(display) &&
+        ui->display.width == (uint32_t)lv_display_get_horizontal_resolution(display) &&
+        ui->display.height == (uint32_t)lv_display_get_vertical_resolution(display);
+    const lv_opa_t opacity = native_covers_display ? LV_OPA_TRANSP : LV_OPA_COVER;
     backdrop = lv_display_get_layer_bottom(display);
     if (backdrop != NULL) {
         lv_obj_set_style_bg_color(
             backdrop, color_token(ui, PXSYS_COLOR_BACKGROUND), 0);
-        lv_obj_set_style_bg_opa(backdrop, LV_OPA_COVER, 0);
+        lv_obj_set_style_bg_opa(backdrop, opacity, 0);
     }
     lv_obj_set_style_bg_color(app, color_token(ui, PXSYS_COLOR_BACKGROUND), 0);
-    lv_obj_set_style_bg_opa(app, LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_opa(app, opacity, 0);
 }
 
 static void application_scale_set(void* object, int32_t value) {
@@ -2169,22 +2456,17 @@ static void application_restore_completed(lv_anim_t* animation) {
 }
 #endif
 
-static void home_animation_completed(lv_anim_t* animation) {
-    pxsys_reference_lvgl_t* ui =
-        (pxsys_reference_lvgl_t*)lv_anim_get_user_data(animation);
-    if (!ui_valid(ui)) return;
-    /* Reset while the leaving application's screen is still the active root;
-     * after open_role the root points at the launcher content and the app
-     * screen would keep the fly-away transform for its next launch. */
+static void return_to_home(pxsys_reference_lvgl_t* ui) {
+    capture_current_task(ui, 0);
+    /* Reset the departing root before switching tasks so an app can reopen
+     * without carrying over the transform from the drag. */
     application_scale_reset(ui);
     (void)open_role(ui, PXSYS_ROLE_HOME);
-    application_scale_reset(ui);
 }
 
 static void animate_application(pxsys_reference_lvgl_t* ui,
                                 int32_t target_scale, int32_t target_x,
-                                int32_t target_y,
-                                lv_anim_completed_cb_t completed) {
+                                int32_t target_y) {
     lv_obj_t* app = application_root(ui);
     if (app == NULL) return;
 #if PXSYS_REFERENCE_UI_ENABLE_ANIMATIONS
@@ -2199,7 +2481,7 @@ static void animate_application(pxsys_reference_lvgl_t* ui,
         lv_anim_set_duration(&animation, 180);
         lv_anim_set_path_cb(&animation, lv_anim_path_ease_out);
         lv_anim_set_user_data(&animation, ui);
-        lv_anim_set_completed_cb(&animation, completed != NULL ? completed : application_restore_completed);
+        lv_anim_set_completed_cb(&animation, application_restore_completed);
         lv_anim_start(&animation);
         lv_anim_set_exec_cb(&animation, application_x_set);
         lv_anim_set_values(&animation, application_x_get(app), target_x);
@@ -2216,12 +2498,7 @@ static void animate_application(pxsys_reference_lvgl_t* ui,
     (void)target_x;
     (void)target_y;
 #endif
-    if (completed == home_animation_completed) {
-        application_scale_reset(ui);
-        (void)open_role(ui, PXSYS_ROLE_HOME);
-    } else {
-        application_scale_reset(ui);
-    }
+    application_scale_reset(ui);
 }
 
 static int app_is_system_home(
@@ -2278,8 +2555,9 @@ static lv_draw_buf_t* capture_transformed_application(
     lv_area_t transformed;
     lv_area_t display_area;
     lv_area_t clipped;
-    lv_area_t untransformed;
-    lv_draw_buf_t* source;
+    lv_area_t untransformed = {0};
+    lv_draw_buf_t* source = ui->application_motion_snapshot;
+    const bool borrowed = source != NULL;
     lv_draw_buf_t* result;
     int32_t scale;
     int32_t translate_x;
@@ -2318,17 +2596,19 @@ static lv_draw_buf_t* capture_transformed_application(
     source_width = lv_obj_get_width(app);
     source_height = lv_obj_get_height(app);
 
-    /* Snapshot rendering is synchronous. Resetting only for the off-screen
-     * draw and restoring before returning means the live display never sees
-     * an untransformed frame. */
-    application_motion_set(ui, 256, 0, 0, 0);
-    lv_obj_get_coords(app, &untransformed);
-    source = lv_snapshot_take(app, LV_COLOR_FORMAT_RGB565);
-    application_motion_set(ui, scale, translate_x, translate_y, radius);
-    if (source == NULL || source_width <= 0 || source_height <= 0) return NULL;
+    if (source_width <= 0 || source_height <= 0) return NULL;
+    /* A Surface app may already have a clean frame from the drag. Reuse it
+     * for the card instead of rendering the whole app off-screen again. */
+    if (!borrowed) {
+        application_motion_set(ui, 256, 0, 0, 0);
+        lv_obj_get_coords(app, &untransformed);
+        source = lv_snapshot_take(app, LV_COLOR_FORMAT_RGB565);
+        application_motion_set(ui, scale, translate_x, translate_y, radius);
+    }
+    if (source == NULL) return NULL;
     ext = ((int32_t)source->header.w - source_width) / 2;
     if (ext < 0) ext = 0;
-    if (ui->preview_overlay != NULL)
+    if (!borrowed && ui->preview_overlay != NULL)
         ui->preview_overlay(ui->preview_overlay_context, source,
                             untransformed.x1, untransformed.y1,
                             (uint32_t)source_width, (uint32_t)source_height,
@@ -2339,14 +2619,26 @@ static lv_draw_buf_t* capture_transformed_application(
     transformed_height = lv_area_get_height(&transformed);
     result_width = lv_area_get_width(&clipped);
     result_height = lv_area_get_height(&clipped);
+    capture_bounds->x = clipped.x1;
+    capture_bounds->y = clipped.y1;
+    capture_bounds->width = (uint32_t)result_width;
+    capture_bounds->height = (uint32_t)result_height;
+    if (!borrowed && ext == 0 && source->header.w == (uint32_t)result_width &&
+        source->header.h == (uint32_t)result_height && scale == LV_SCALE_NONE)
+        return source;
     result = lv_draw_buf_create((uint32_t)result_width,
                                 (uint32_t)result_height,
                                 LV_COLOR_FORMAT_RGB565, LV_STRIDE_AUTO);
     if (result == NULL) {
-        lv_draw_buf_destroy(source);
+        if (!borrowed) lv_draw_buf_destroy(source);
         return NULL;
     }
 
+    const int64_t first_x = (int64_t)(clipped.x1 - transformed.x1) * source_width;
+    const int32_t start_x = ext + (int32_t)(first_x / transformed_width);
+    const int32_t start_remainder = (int32_t)(first_x % transformed_width);
+    const int32_t pixel_step = source_width / transformed_width;
+    const int32_t remainder_step = source_width % transformed_width;
     for (y = 0; y < result_height; ++y) {
         int32_t source_y = ext +
             (int32_t)(((int64_t)(clipped.y1 + y - transformed.y1) *
@@ -2359,21 +2651,24 @@ static lv_draw_buf_t* capture_transformed_application(
             source_y = ext + source_height - 1;
         source_row = (const uint16_t*)lv_draw_buf_goto_xy(
             source, 0, (uint32_t)source_y);
+        if (transformed_width == source_width) {
+            memcpy(destination_row, source_row + start_x,
+                   (size_t)result_width * sizeof(*destination_row));
+            continue;
+        }
+        int32_t source_x = start_x;
+        int32_t remainder = start_remainder;
         for (x = 0; x < result_width; ++x) {
-            int32_t source_x = ext +
-                (int32_t)(((int64_t)(clipped.x1 + x - transformed.x1) *
-                           source_width) / transformed_width);
-            if (source_x < ext) source_x = ext;
-            if (source_x >= ext + source_width)
-                source_x = ext + source_width - 1;
-            destination_row[x] = source_row[source_x];
+            destination_row[x] = source_row[LV_CLAMP(ext, source_x, ext + source_width - 1)];
+            source_x += pixel_step;
+            remainder += remainder_step;
+            if (remainder >= transformed_width) {
+                remainder -= transformed_width;
+                ++source_x;
+            }
         }
     }
-    lv_draw_buf_destroy(source);
-    capture_bounds->x = clipped.x1;
-    capture_bounds->y = clipped.y1;
-    capture_bounds->width = (uint32_t)result_width;
-    capture_bounds->height = (uint32_t)result_height;
+    if (!borrowed) lv_draw_buf_destroy(source);
     return result;
 }
 #endif
@@ -2719,9 +3014,7 @@ static void home_clicked(lv_event_t* event) {
         (pxsys_reference_lvgl_t*)lv_event_get_user_data(event);
     if (!ui_valid(ui)) return;
     if (ui->notification_shade_open) close_notification_shade(ui);
-    capture_current_task(ui, 0);
-    animate_application(ui, 212, 0, -(int32_t)ui->display.height / 3,
-                        home_animation_completed);
+    return_to_home(ui);
 }
 
 static void open_task_switcher(pxsys_reference_lvgl_t* ui) {
@@ -2729,7 +3022,7 @@ static void open_task_switcher(pxsys_reference_lvgl_t* ui) {
     if (ui->notification_shade_open) close_notification_shade(ui);
     capture_current_task(ui, 0);
     build_task_switcher(ui);
-    animate_application(ui, 232, 0, -18, NULL);
+    animate_application(ui, 232, 0, -18);
 }
 
 static void recents_clicked(lv_event_t* event) {
@@ -3207,39 +3500,91 @@ static void build_task_switcher(pxsys_reference_lvgl_t* ui) {
 #endif
 }
 
+static void launcher_fallback_draw(lv_event_t* event) {
+    lv_obj_t* icon = lv_event_get_current_target(event);
+    lv_layer_t* layer = lv_event_get_layer(event);
+    lv_area_t area;
+    lv_obj_get_coords(icon, &area);
+    const int32_t size = lv_area_get_width(&area);
+    const int32_t x = (area.x1 + area.x2) / 2;
+    const int32_t y = (area.y1 + area.y2) / 2;
+    const lv_color_t background = lv_obj_get_style_bg_color(icon, 0);
+    const lv_color_t ink = lv_obj_get_style_text_color(icon, 0);
+    lv_draw_rect_dsc_t rect;
+    lv_draw_rect_dsc_init(&rect);
+    rect.bg_color = ink;
+    rect.bg_opa = LV_OPA_COVER;
+    const int32_t half_w = size * 27 / 100;
+    const int32_t half_h = size * 33 / 100;
+    const int32_t inset = LV_MAX(2, size / 10);
+    const int32_t left = x - half_w + inset;
+    const int32_t right = x + half_w - inset;
+    const int32_t header = y - half_h + inset;
+    const int32_t dot = LV_MAX(2, size / 12);
+    const int32_t line = LV_MAX(1, size / 24);
+    const lv_area_t window = {x - half_w, y - half_h, x + half_w, y + half_h};
+    const lv_area_t avatar = {left, header, left + dot, header + dot};
+    const lv_area_t title = {left + dot + line + 1, header + 1, right, header + 1 + line};
+    const lv_area_t card = {left, y - line, right, y + size / 9};
+    const lv_area_t caption = {left, y + size / 6, x + line, y + size / 6 + line};
+    rect.radius = size / 8;
+    lv_draw_rect(layer, &rect, &window);
+    rect.bg_color = background;
+    rect.radius = LV_RADIUS_CIRCLE;
+    lv_draw_rect(layer, &rect, &avatar);
+    lv_draw_rect(layer, &rect, &title);
+    lv_draw_rect(layer, &rect, &caption);
+    rect.bg_color = lv_color_mix(background, ink, LV_OPA_50);
+    rect.radius = dot / 2;
+    lv_draw_rect(layer, &rect, &card);
+}
+
+static void launcher_fill_icon(pxsys_reference_lvgl_t* ui, lv_obj_t* marker,
+                               const launcher_item_t* item, int32_t size) {
+    if (item->icon.source != NULL) {
+        lv_obj_t* image = lv_image_create(marker);
+        lv_obj_set_size(image, LV_PCT(100), LV_PCT(100));
+        lv_image_set_src(image, item->icon.source);
+        lv_image_set_inner_align(image, LV_IMAGE_ALIGN_CONTAIN);
+        lv_obj_center(image);
+        return;
+    }
+    const bool settings = strcmp(item->app_id, "system.settings") == 0;
+    lv_obj_t* icon = lv_obj_create(marker);
+    style_plain(icon);
+    lv_obj_set_size(icon, size, size);
+    lv_obj_set_style_radius(icon, settings ? LV_RADIUS_CIRCLE : size / 3, 0);
+    lv_obj_set_style_bg_color(icon, color_token(ui, settings
+        ? PXSYS_COLOR_PRIMARY_CONTAINER : PXSYS_COLOR_TERTIARY_CONTAINER), 0);
+    lv_obj_set_style_bg_opa(icon, LV_OPA_COVER, 0);
+    if (settings) {
+        lv_obj_t* gear = lv_image_create(icon);
+        /* Fit the 32 px artwork at native size on the 42 px compact tile. */
+        const int32_t gear_size = 2 * (size * 2 / 5);
+        const void* source = &launcher_gear_image;
+        if (gear_size > (int32_t)launcher_gear_image.header.w) {
+            if (ui->launcher_gear == NULL)
+                ui->launcher_gear = launcher_gear_rasterize((uint32_t)gear_size);
+            if (ui->launcher_gear != NULL) source = ui->launcher_gear;
+        }
+        lv_image_set_src(gear, source);
+        lv_obj_set_style_image_recolor(gear, color_token(ui, PXSYS_COLOR_ON_PRIMARY_CONTAINER), 0);
+        lv_obj_set_style_image_recolor_opa(gear, LV_OPA_COVER, 0);
+        lv_obj_center(gear);
+        return;
+    }
+    lv_obj_set_style_text_color(icon, color_token(ui, PXSYS_COLOR_ON_TERTIARY_CONTAINER), 0);
+    lv_obj_add_event_cb(icon, launcher_fallback_draw, LV_EVENT_DRAW_MAIN, NULL);
+}
+
 static lv_obj_t* make_launcher_tile(pxsys_reference_lvgl_t* ui,
                                     const char* name,
                                     launcher_item_t* item) {
     lv_obj_t* tile = lv_button_create(ui->content);
     lv_obj_t* marker;
     lv_obj_t* label;
-    pxsys_color_token_t icon_token;
-    uint32_t hash = UINT32_C(2166136261);
-    size_t index;
-    int32_t icon_size = pxsys_reference_display_scale_px(
-        &ui->display, ui->display.width < 360 ? 42 : 50);
-    int32_t label_gap = ui->display.width < 360 ? 5 : 6;
-    const char* symbol = LV_SYMBOL_LIST;
-    if (item != NULL) {
-        for (index = 0; item->app_id[index] != '\0'; ++index) {
-            hash ^= (uint8_t)item->app_id[index];
-            hash *= UINT32_C(16777619);
-        }
-    }
-    switch (hash % 4u) {
-    case 1:
-        icon_token = PXSYS_COLOR_SUCCESS;
-        break;
-    case 2:
-        icon_token = PXSYS_COLOR_WARNING;
-        break;
-    case 3:
-        icon_token = PXSYS_COLOR_ERROR;
-        break;
-    default:
-        icon_token = PXSYS_COLOR_ACCENT;
-        break;
-    }
+    const int32_t icon_size = ui_px(ui, ui->display.width < 360 ? 42 : 50);
+    const int32_t label_gap = ui->display.width < 360 ? 5 : 6;
     lv_obj_set_style_radius(tile, ui->theme.base_radius_px * 2u, 0);
     lv_obj_set_style_bg_opa(tile, LV_OPA_TRANSP, 0);
     lv_obj_set_style_bg_color(tile, color_token(ui, PXSYS_COLOR_SURFACE),
@@ -3263,36 +3608,7 @@ static lv_obj_t* make_launcher_tile(pxsys_reference_lvgl_t* ui,
     item->icon_marker = marker;
     style_plain(marker);
     lv_obj_set_size(marker, icon_size, icon_size);
-    if (item != NULL && item->icon.source != NULL) {
-        lv_obj_t* image = lv_image_create(marker);
-        lv_obj_set_size(image, LV_PCT(100), LV_PCT(100));
-        lv_image_set_src(image, item->icon.source);
-        lv_image_set_inner_align(image, LV_IMAGE_ALIGN_CONTAIN);
-        lv_obj_center(image);
-    } else {
-        const char* app_id = item != NULL ? item->app_id : "";
-        /* Only fallback symbols need a launcher-provided icon background. */
-        lv_obj_set_style_radius(marker, icon_size / 4, 0);
-        lv_obj_set_style_bg_color(marker, color_token(ui, icon_token), 0);
-        lv_obj_set_style_bg_opa(marker, LV_OPA_COVER, 0);
-        lv_obj_set_style_shadow_width(marker, ui->display.width <= 320 ? 0 : 8, 0);
-        lv_obj_set_style_shadow_opa(marker, LV_OPA_20, 0);
-        lv_obj_set_style_shadow_offset_y(marker, 3, 0);
-        if (strstr(app_id, "ai-chat") != NULL) symbol = LV_SYMBOL_AUDIO;
-        else if (strstr(app_id, "camera") != NULL) symbol = LV_SYMBOL_IMAGE;
-        else if (strstr(app_id, "weather") != NULL) symbol = LV_SYMBOL_TINT;
-        else if (strstr(app_id, "garden") != NULL) symbol = LV_SYMBOL_EYE_OPEN;
-        else if (strstr(app_id, "arcade") != NULL) symbol = LV_SYMBOL_PLAY;
-        else if (strstr(app_id, "lab") != NULL) symbol = LV_SYMBOL_SETTINGS;
-        else if (strstr(app_id, "plane") != NULL) symbol = LV_SYMBOL_GPS;
-        else if (strstr(app_id, "settings") != NULL) symbol = LV_SYMBOL_SETTINGS;
-        else if (strstr(app_id, "file") != NULL) symbol = LV_SYMBOL_DIRECTORY;
-        else if (strstr(app_id, "alarm") != NULL) symbol = LV_SYMBOL_BELL;
-        else if (strstr(app_id, "bluetooth") != NULL) symbol = LV_SYMBOL_BLUETOOTH;
-        make_label(marker, symbol, typography_font(ui, PXSYS_TYPOGRAPHY_BODY),
-                   color_token(ui, PXSYS_COLOR_ON_ACCENT));
-        lv_obj_center(lv_obj_get_child(marker, 0));
-    }
+    launcher_fill_icon(ui, marker, item, icon_size);
     label = make_label(tile, name, typography_font(ui, PXSYS_TYPOGRAPHY_CAPTION),
                        color_token(ui, PXSYS_COLOR_TEXT_PRIMARY));
     lv_obj_set_width(label, LV_PCT(100));
@@ -3365,23 +3681,18 @@ static lv_obj_t* make_launcher_tile(pxsys_reference_lvgl_t* ui,
     return tile;
 }
 
-/* Loading every off-screen PNG delays Home and holds the LVGL lock while
- * apps are stopping. Resolve only tiles intersecting the current viewport.
- * Scrolling/focus loads newly visible tiles before the next draw; all acquired
- * icons still retire with the tree so no cache fragments the next guest heap. */
-static void launcher_load_visible_icons(pxsys_reference_lvgl_t* ui) {
-    if (ui->content == NULL || !ui->content_active ||
-        ui->rendered_view_key != (uint32_t)REFERENCE_PAGE_HOME + 1u ||
-        ui->resolve_app_icon == NULL) return;
-    const int32_t left = lv_obj_get_scroll_x(ui->content);
-    const int32_t right = left + lv_obj_get_width(ui->content);
+static size_t launcher_load_icons(pxsys_reference_lvgl_t* ui, size_t page,
+                                  size_t distance, size_t remaining) {
+    const size_t per_page = PXSYS_REFERENCE_UI_LAUNCHER_COLUMNS *
+                            PXSYS_REFERENCE_UI_LAUNCHER_ROWS;
     pxsys_app_registry_t* registry = pxsys_standard_system_apps(ui->system);
-    for (size_t i = 0; i < ui->launcher_count; ++i) {
+    for (size_t i = 0; i < ui->launcher_count && remaining != 0; ++i) {
         launcher_item_t* item = &ui->launcher_items[i];
         if (item->icon_attempted || item->tile == NULL) continue;
-        const int32_t x = lv_obj_get_x(item->tile);
-        if (x >= right || x + lv_obj_get_width(item->tile) <= left) continue;
+        const size_t item_page = (size_t)lv_obj_get_index(item->tile) / per_page;
+        if (item_page + distance < page || item_page > page + distance) continue;
         item->icon_attempted = 1;
+        --remaining;
         const pxsys_app_descriptor_t* app = pxsys_app_registry_find(registry, &item->identity);
         if (app == NULL || !ui->resolve_app_icon(ui->app_icon_context, app, &item->icon)) {
             memset(&item->icon, 0, sizeof(item->icon));
@@ -3390,19 +3701,87 @@ static void launcher_load_visible_icons(pxsys_reference_lvgl_t* ui) {
         if (item->icon.source == NULL) continue;
         lv_obj_t* marker = item->icon_marker;
         lv_obj_clean(marker);
-        lv_obj_set_style_bg_opa(marker, LV_OPA_TRANSP, 0);
-        lv_obj_set_style_shadow_width(marker, 0, 0);
-        lv_obj_t* image = lv_image_create(marker);
-        lv_obj_set_size(image, LV_PCT(100), LV_PCT(100));
-        lv_image_set_src(image, item->icon.source);
-        lv_image_set_inner_align(image, LV_IMAGE_ALIGN_CONTAIN);
-        lv_obj_center(image);
+        launcher_fill_icon(ui, marker, item, lv_obj_get_style_width(marker, 0));
     }
+    return remaining;
+}
+
+#if LV_USE_SNAPSHOT
+static void release_launcher_raster(void* data) {
+    lv_image_cache_drop(data);
+    lv_draw_buf_destroy(data);
+}
+
+static void launcher_rasterize_icon(launcher_item_t* item) {
+    lv_obj_t* image = lv_obj_get_child(item->icon_marker, 0);
+    item->icon_rasterized = 1;
+    lv_obj_update_layout(image);
+    const int32_t width = lv_obj_get_width(image);
+    const int32_t height = lv_obj_get_height(image);
+    if (width <= 0 || height <= 0 || width > 128 || height > 128 ||
+        lv_image_get_scale(image) > LV_SCALE_NONE / 2)
+        return;
+    /* Icons use CONTAIN and an alpha background. Rasterize at their desktop
+     * size once so paging can blend native pixels without resampling a PNG. */
+    lv_draw_buf_t* raster = lv_snapshot_take(image, LV_COLOR_FORMAT_ARGB8888);
+    if (raster == NULL) return;
+    if (raster->header.w != (uint32_t)width || raster->header.h != (uint32_t)height) {
+        lv_draw_buf_destroy(raster);
+        return;
+    }
+    lv_image_set_src(image, raster);
+    if (item->icon.release != NULL)
+        item->icon.release(item->icon.release_context);
+    item->icon = (pxsys_reference_lvgl_app_icon_t){
+        .source = raster, .release = release_launcher_raster,
+        .release_context = raster};
+}
+#endif
+
+static void launcher_icons_idle(lv_timer_t* timer) {
+    pxsys_reference_lvgl_t* ui = lv_timer_get_user_data(timer);
+    if (ui->launcher_drag_item != NULL || lv_obj_is_scrolling(ui->content)) return;
+    const size_t per_page = PXSYS_REFERENCE_UI_LAUNCHER_COLUMNS *
+                            PXSYS_REFERENCE_UI_LAUNCHER_ROWS;
+    /* Fill the settled page after a focus jump or a quick swipe. Preload one
+     * nearby icon per idle tick before the next drag. */
+    launcher_load_icons(ui, ui->launcher_page, 0, per_page);
+    if (launcher_load_icons(ui, ui->launcher_page, 1, 1) == 0)
+        return;
+#if LV_USE_SNAPSHOT
+    for (size_t i = 0; i < ui->launcher_count; ++i) {
+        launcher_item_t* item = &ui->launcher_items[i];
+        if (item->icon.source == NULL || item->icon_rasterized) continue;
+        launcher_rasterize_icon(item);
+        return;
+    }
+#endif
+    lv_timer_pause(timer);
+}
+
+static void launcher_load_visible_icons(pxsys_reference_lvgl_t* ui) {
+    if (ui->content == NULL || !ui->content_active ||
+        ui->rendered_view_key != (uint32_t)REFERENCE_PAGE_HOME + 1u ||
+        ui->resolve_app_icon == NULL) return;
+    const size_t per_page = PXSYS_REFERENCE_UI_LAUNCHER_COLUMNS *
+                            PXSYS_REFERENCE_UI_LAUNCHER_ROWS;
+    launcher_load_icons(ui, ui->launcher_page, 0, per_page);
+    if (ui->launcher_count > per_page)
+        ui->launcher_icon_timer = lv_timer_create(launcher_icons_idle, 64, ui);
 }
 
 static void release_launcher_icons(pxsys_reference_lvgl_t* ui) {
     size_t index;
     if (ui == NULL || ui->launcher_items == NULL) return;
+    if (ui->launcher_icon_timer != NULL) {
+        lv_timer_delete(ui->launcher_icon_timer);
+        ui->launcher_icon_timer = NULL;
+    }
+    if (ui->launcher_gear != NULL) {
+        lv_image_cache_drop(ui->launcher_gear);
+        lv_draw_buf_destroy(ui->launcher_gear);
+        ui->launcher_gear = NULL;
+    }
     for (index = 0; index < ui->launcher_count; ++index) {
         pxsys_reference_lvgl_app_icon_t* icon = &ui->launcher_items[index].icon;
         if (icon->release != NULL) icon->release(icon->release_context);
@@ -3535,37 +3914,84 @@ static void make_performance_setting(
 
 #endif
 
+static int32_t page_row_gap(const pxsys_reference_lvgl_t* ui,
+                            const pxsys_reference_layout_t* layout) {
+    return ui_px(ui, layout->size_class == PXSYS_UI_SIZE_COMPACT ? 8 : 12);
+}
+
+static void page_content_init(pxsys_reference_lvgl_t* ui,
+                              const pxsys_reference_layout_t* layout) {
+    lv_obj_set_layout(ui->content, LV_LAYOUT_FLEX);
+    lv_obj_set_flex_flow(ui->content, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_row(ui->content, page_row_gap(ui, layout), 0);
+    lv_obj_set_style_pad_bottom(ui->content,
+        LV_MAX(ui_px(ui, 10), lv_obj_get_style_pad_bottom(ui->content, 0)), 0);
+    pxsys_lvgl_add_flags(ui->content,
+                    LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_scroll_dir(ui->content, LV_DIR_VER);
+    lv_obj_set_scroll_elastic(ui->content, false);
+    lv_obj_set_scrollbar_mode(ui->content, LV_SCROLLBAR_MODE_AUTO);
+}
+
+static lv_obj_t* make_settings_header_button(pxsys_reference_lvgl_t* ui,
+        lv_obj_t* parent, const char* symbol, uint32_t codepoint,
+        lv_event_cb_t clicked) {
+    lv_obj_t* button = lv_button_create(parent);
+    lv_obj_set_size(button, ui_px(ui, 38), ui_px(ui, 38));
+    lv_obj_set_style_radius(button, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_bg_color(button, color_token(ui, PXSYS_COLOR_SURFACE_CONTAINER_HIGH), 0);
+    lv_obj_set_style_bg_color(button, color_token(ui, PXSYS_COLOR_PRIMARY_CONTAINER),
+                             LV_STATE_PRESSED);
+    lv_obj_set_style_border_width(button, 0, 0);
+    lv_obj_set_style_shadow_width(button, 0, 0);
+    lv_obj_set_style_pad_all(button, 0, 0);
+    const lv_color_t foreground = color_token(ui, PXSYS_COLOR_TEXT_PRIMARY);
+    if (codepoint == 0xF053) {
+        lv_obj_t* chevron = pxa_lvgl_back_chevron_create(button);
+        lv_obj_set_style_line_color(chevron, foreground, 0);
+    } else {
+        lv_obj_t* label = make_label(button, symbol, typography_font(ui, PXSYS_TYPOGRAPHY_BODY),
+                                    foreground);
+        center_symbol(label, codepoint);
+    }
+    lv_obj_add_event_cb(button, clicked, LV_EVENT_CLICKED, ui);
+    return button;
+}
+
 static lv_obj_t* make_settings_section(pxsys_reference_lvgl_t* ui,
-                                       const char* title) {
-    lv_obj_t* group = lv_obj_create(ui->content);
-    lv_obj_t* label = make_label(
-        group, title, typography_font(ui, PXSYS_TYPOGRAPHY_CAPTION),
-        color_token(ui, PXSYS_COLOR_TEXT_SECONDARY));
-    lv_obj_t* section = lv_obj_create(group);
-    style_plain(group);
-    lv_obj_set_width(group, LV_PCT(100));
-    lv_obj_set_height(group, LV_SIZE_CONTENT);
-    lv_obj_set_layout(group, LV_LAYOUT_FLEX);
-    lv_obj_set_flex_flow(group, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_style_pad_row(group, 4, 0);
-    lv_obj_set_width(label, LV_PCT(100));
-    lv_obj_set_style_pad_left(label, ui_px(ui, 8), 0);
+                                       lv_obj_t* parent, const char* title) {
+    if (title != NULL) {
+        lv_obj_t* group = lv_obj_create(parent);
+        style_plain(group);
+        lv_obj_set_width(group, LV_PCT(100));
+        lv_obj_set_height(group, LV_SIZE_CONTENT);
+        lv_obj_set_flex_flow(group, LV_FLEX_FLOW_COLUMN);
+        lv_obj_set_style_pad_row(group, ui_px(ui, 5), 0);
+        lv_obj_t* label = make_label(
+            group, title, typography_font(ui, PXSYS_TYPOGRAPHY_LABEL),
+            color_token(ui, PXSYS_COLOR_TEXT_SECONDARY));
+        lv_obj_set_width(label, LV_PCT(100));
+        lv_obj_set_style_pad_left(label, ui_px(ui, 9), 0);
+        parent = group;
+    }
+    lv_obj_t* section = lv_obj_create(parent);
     style_plain(section);
     lv_obj_set_width(section, LV_PCT(100));
     lv_obj_set_height(section, LV_SIZE_CONTENT);
     lv_obj_set_style_bg_color(section, color_token(ui, PXSYS_COLOR_SURFACE_CONTAINER_LOW), 0);
     lv_obj_set_style_bg_opa(section, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_width(section, 1, 0);
-    lv_obj_set_style_border_color(section, color_token(ui, PXSYS_COLOR_BORDER),
-                                  0);
-    lv_obj_set_style_border_opa(section, LV_OPA_70, 0);
-    lv_obj_set_style_radius(section, 8, 0);
+    lv_obj_set_style_radius(section, ui_px(ui, 8), 0);
+    lv_obj_set_style_pad_all(section, ui_px(ui, 3), 0);
     /* Rows stay inside the section bounds, so clipping every child through a
      * rounded mask only adds software blending work while the list scrolls. */
     lv_obj_set_style_clip_corner(section, false, 0);
-    lv_obj_set_layout(section, LV_LAYOUT_FLEX);
     lv_obj_set_flex_flow(section, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_style_pad_row(section, 0, 0);
+    if (parent == ui->content &&
+        (ui->active_page == REFERENCE_PAGE_FILE_MANAGER ||
+         ui->active_page == REFERENCE_PAGE_APP_MANAGER ||
+         ui->active_page == REFERENCE_PAGE_INPUT_METHOD_APPS))
+        ui->page_opaque_section = section;
     return section;
 }
 
@@ -3591,41 +4017,49 @@ static lv_obj_t* make_settings_row(pxsys_reference_lvgl_t* ui,
                                    const char* title, const char* subtitle,
                                    lv_event_cb_t clicked, void* user_data) {
     const lv_font_t* title_font =
-        typography_font(ui, PXSYS_TYPOGRAPHY_LABEL);
+        typography_font(ui, PXSYS_TYPOGRAPHY_BODY);
     const lv_font_t* subtitle_font =
         typography_font(ui, PXSYS_TYPOGRAPHY_CAPTION);
-    int32_t title_height = title_font != NULL ? title_font->line_height + 2 : 18;
+    int32_t title_height = (title_font ? title_font : LV_FONT_DEFAULT)->line_height;
     int32_t subtitle_height =
-        subtitle_font != NULL ? subtitle_font->line_height + 2 : 16;
+        (subtitle_font ? subtitle_font : LV_FONT_DEFAULT)->line_height;
+    const int32_t text_gap = ui_px(ui, 3);
     int32_t text_height =
-        subtitle == NULL ? title_height : title_height + subtitle_height;
+        subtitle == NULL ? title_height : title_height + text_gap + subtitle_height;
     int32_t minimum_height = pxsys_reference_display_scale_px(
-        &ui->display, layout->size_class == PXSYS_UI_SIZE_COMPACT ? 50 : 56);
-    int32_t height = text_height + ui_px(ui, 10) > minimum_height ? text_height + ui_px(ui, 10)
-                                                     : minimum_height;
+        &ui->display, layout->size_class == PXSYS_UI_SIZE_COMPACT ? 46 : 50);
+    int32_t height = LV_MAX(minimum_height, text_height + ui_px(ui, 12));
+    const bool wrap_subtitle =
+        ui->active_page == REFERENCE_PAGE_DEVICE_INFO && subtitle != NULL;
     int32_t icon_size = pxsys_reference_display_scale_px(
-        &ui->display, layout->size_class == PXSYS_UI_SIZE_COMPACT ? 30 : 32);
+        &ui->display, layout->size_class == PXSYS_UI_SIZE_COMPACT ? 28 : 30);
     lv_obj_t* row = lv_obj_create(section);
     navigation_tag_focus(row, title);
-    lv_obj_t* icon_background;
+    lv_obj_t* icon_background = NULL;
     lv_obj_t* text;
     lv_obj_t* label;
     style_plain(row);
     lv_obj_set_width(row, LV_PCT(100));
-    lv_obj_set_height(row, LV_SIZE_CONTENT);
-    lv_obj_set_style_min_height(row, height, 0);
-    lv_obj_set_style_pad_ver(row, ui_px(ui, 5), 0);
+    lv_obj_set_height(row, height);
+    if (wrap_subtitle) {
+        lv_obj_set_height(row, LV_SIZE_CONTENT);
+        lv_obj_set_style_min_height(row, height, 0);
+        lv_obj_set_style_pad_ver(row, ui_px(ui, 6), 0);
+    }
     lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_bg_color(row, color_token(ui, PXSYS_COLOR_BORDER),
+    lv_obj_set_style_bg_color(row, color_token(ui, PXSYS_COLOR_SURFACE_CONTAINER_HIGH),
                               LV_STATE_PRESSED);
-    lv_obj_set_style_bg_opa(row, LV_OPA_30, LV_STATE_PRESSED);
+    lv_obj_set_style_bg_opa(row, LV_OPA_COVER, LV_STATE_PRESSED);
+    /* A straight separator avoids rounded-border blending on every
+     * visible row while scrolling. Only the pressed fill needs a radius. */
+    lv_obj_set_style_radius(row, ui_px(ui, 8), LV_STATE_PRESSED);
+    lv_obj_set_style_border_width(row, 0, LV_STATE_PRESSED);
     lv_obj_set_style_border_width(row, 1, 0);
     lv_obj_set_style_border_side(
         row, lv_obj_get_child_count(section) > 1 ? LV_BORDER_SIDE_TOP
                                                  : LV_BORDER_SIDE_NONE,
         0);
-    lv_obj_set_style_border_color(row, color_token(ui, PXSYS_COLOR_BORDER), 0);
-    lv_obj_set_layout(row, LV_LAYOUT_FLEX);
+    lv_obj_set_style_border_color(row, color_token(ui, PXSYS_COLOR_OUTLINE_VARIANT), 0);
     lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER,
                           LV_FLEX_ALIGN_CENTER);
@@ -3635,43 +4069,46 @@ static lv_obj_t* make_settings_row(pxsys_reference_lvgl_t* ui,
         pxsys_lvgl_add_flags(row, LV_OBJ_FLAG_CLICKABLE);
         lv_obj_add_event_cb(row, clicked, LV_EVENT_CLICKED, user_data);
     }
-    icon_background = lv_obj_create(row);
-    style_plain(icon_background);
-    lv_obj_set_size(icon_background, icon_size, icon_size);
-    lv_obj_set_style_min_width(icon_background, icon_size, 0);
-    lv_obj_set_style_radius(icon_background, ui_px(ui, 8), 0);
-    lv_obj_set_style_bg_color(icon_background, color_token(ui, icon_color), 0);
-    lv_obj_set_style_bg_opa(icon_background, LV_OPA_30, 0);
     if (symbol != NULL) {
-        label = make_label(icon_background, symbol, typography_font(ui, PXSYS_TYPOGRAPHY_BODY),
-                           color_token(ui, icon_color));
-        lv_obj_center(label);
-    } else {
+        const lv_font_t* font = title_font ? title_font : LV_FONT_DEFAULT;
+        icon_background = make_label(row, symbol, font, color_token(ui, icon_color));
+        center_settings_symbol(icon_background, symbol, icon_size);
+    } else if (ui->active_page != REFERENCE_PAGE_DEVICE_INFO) {
+        icon_background = lv_obj_create(row);
+        style_plain(icon_background);
         make_cellular_glyph(icon_background, (icon_size - 15) / 2,
-                            (icon_size - 14) / 2,
-                            color_token(ui, icon_color));
+                            (icon_size - 14) / 2, color_token(ui, icon_color));
+    }
+    if (icon_background != NULL) {
+        lv_obj_set_size(icon_background, icon_size, icon_size);
+        lv_obj_set_style_min_width(icon_background, icon_size, 0);
+        if (ui->active_page != REFERENCE_PAGE_FILE_MANAGER &&
+            ui->active_page != REFERENCE_PAGE_APP_MANAGER &&
+            ui->active_page != REFERENCE_PAGE_INPUT_METHOD_APPS) {
+            lv_obj_set_style_radius(icon_background, ui_px(ui, 8), 0);
+            lv_obj_set_style_bg_color(icon_background,
+                lv_color_mix(color_token(ui, icon_color),
+                             color_token(ui, PXSYS_COLOR_SURFACE_CONTAINER_LOW), LV_OPA_20), 0);
+            lv_obj_set_style_bg_opa(icon_background, LV_OPA_COVER, 0);
+        }
     }
     text = lv_obj_create(row);
     style_plain(text);
     lv_obj_set_width(text, 0);
-    lv_obj_set_height(text, LV_SIZE_CONTENT);
-    lv_obj_set_layout(text, LV_LAYOUT_FLEX);
-    lv_obj_set_flex_flow(text, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_style_pad_row(text, ui_px(ui, 2), 0);
+    lv_obj_set_height(text, wrap_subtitle ? LV_SIZE_CONTENT : text_height);
     lv_obj_set_flex_grow(text, 1);
     label = make_label(text, title, title_font,
                        color_token(ui, PXSYS_COLOR_TEXT_PRIMARY));
-    lv_obj_set_width(label, LV_PCT(100));
-    lv_obj_set_height(label, LV_SIZE_CONTENT);
-    lv_obj_align(label, subtitle == NULL ? LV_ALIGN_LEFT_MID
-                                         : LV_ALIGN_TOP_LEFT,
-                 0, 0);
+    lv_obj_set_size(label, LV_PCT(100), title_height);
     if (subtitle != NULL) {
         label = make_label(text, subtitle, subtitle_font,
                            color_token(ui, PXSYS_COLOR_TEXT_SECONDARY));
-        lv_obj_set_width(label, LV_PCT(100));
-        lv_obj_set_height(label, LV_SIZE_CONTENT);
-        lv_obj_align(label, LV_ALIGN_BOTTOM_LEFT, 0, 0);
+        lv_obj_set_size(label, LV_PCT(100), subtitle_height);
+        lv_obj_set_y(label, title_height + text_gap);
+        if (wrap_subtitle) {
+            lv_label_set_long_mode(label, LV_LABEL_LONG_MODE_WRAP);
+            lv_obj_set_height(label, LV_SIZE_CONTENT);
+        }
     }
     return row;
 }
@@ -3680,7 +4117,9 @@ static void add_settings_chevron(pxsys_reference_lvgl_t* ui, lv_obj_t* row) {
     lv_obj_t* chevron = make_label(
         row, LV_SYMBOL_RIGHT, NULL,
         color_token(ui, PXSYS_COLOR_TEXT_SECONDARY));
-    lv_obj_set_style_min_width(chevron, 10, 0);
+    const int32_t size = ui_px(ui, 16);
+    lv_obj_set_size(chevron, size, size);
+    center_settings_symbol(chevron, LV_SYMBOL_RIGHT, size);
 }
 
 static int add_settings_role(pxsys_reference_lvgl_t* ui,
@@ -3705,6 +4144,16 @@ static int add_settings_role(pxsys_reference_lvgl_t* ui,
 }
 
 #if PXSYS_REFERENCE_UI_WIFI || PXSYS_REFERENCE_UI_CELLULAR
+#if PXSYS_REFERENCE_UI_WIFI
+static const char* wifi_control_title(pxsys_reference_lvgl_t* ui,
+                                     char ssid[PXSYS_REFERENCE_WIFI_SSID_MAX]) {
+    if (radio_connected(ui, PXSYS_NETWORK_WIFI) && ui->wifi_current != NULL &&
+        ui->wifi_current(ui->wifi_context, ssid, PXSYS_REFERENCE_WIFI_SSID_MAX) && ssid[0] != '\0')
+        return ssid;
+    return translated(ui, "settings.wifi", "Wi-Fi");
+}
+#endif
+
 static void network_switch_changed(lv_event_t* event) {
     network_control_t* control =
         (network_control_t*)lv_event_get_user_data(event);
@@ -3737,9 +4186,12 @@ static void make_network_setting(pxsys_reference_lvgl_t* ui,
     lv_event_cb_t clicked = details == NULL ? NULL : settings_action_clicked;
     void* clicked_context = details;
     int connected = radio_connected(ui, network);
-    title = network == PXSYS_NETWORK_WIFI
-                ? translated(ui, "settings.wifi", "Wi-Fi")
-                : translated(ui, "settings.mobile", "Mobile network");
+    title = translated(ui, "settings.mobile", "Mobile network");
+#if PXSYS_REFERENCE_UI_WIFI
+    char ssid[PXSYS_REFERENCE_WIFI_SSID_MAX] = {0};
+    if (network == PXSYS_NETWORK_WIFI)
+        title = wifi_control_title(ui, ssid);
+#endif
     state = connected ? translated(ui, "state.connected", "Connected")
                       : radio_enabled(ui, network)
                             ? translated(ui, "state.on", "On")
@@ -3755,6 +4207,7 @@ static void make_network_setting(pxsys_reference_lvgl_t* ui,
         ui, layout, section,
         network == PXSYS_NETWORK_WIFI ? LV_SYMBOL_WIFI : NULL,
         PXSYS_COLOR_ACCENT, title, state, clicked, clicked_context);
+    navigation_tag_focus(row, network == PXSYS_NETWORK_WIFI ? "settings.wifi" : "settings.mobile");
     toggle = lv_switch_create(row);
     lv_obj_set_size(toggle, ui_px(ui, 42), ui_px(ui, 24));
     lv_obj_align(toggle, LV_ALIGN_RIGHT_MID, -10, 0);
@@ -3841,9 +4294,11 @@ static void input_method_emit(void *context, const char *identity, pxsys_string_
     if (!data) return;
     data->ui=list->ui; memcpy(data->identity,identity,bytes+1);
     lv_obj_t *row = make_settings_row(list->ui,list->layout,list->list,LV_SYMBOL_KEYBOARD,
-        PXSYS_COLOR_ACCENT,borrowed_text(list->ui,name),selected ? "✓" : "",input_method_selected,data);
+        PXSYS_COLOR_ACCENT,borrowed_text(list->ui,name),NULL,input_method_selected,data);
     if (!row) { lv_free(data); return; }
-    lv_obj_set_style_border_color(row,color_token(list->ui,PXSYS_COLOR_OUTLINE_VARIANT),0);
+    if (selected)
+        make_label(row, LV_SYMBOL_OK, NULL,
+                   color_token(list->ui, PXSYS_COLOR_ACCENT));
     lv_obj_add_event_cb(row,input_method_row_deleted,LV_EVENT_DELETE,data);
 }
 static lv_obj_t *selection_dialog(pxsys_reference_lvgl_t *ui,const char *title,pxsys_reference_layout_t *output) {
@@ -3852,7 +4307,6 @@ static lv_obj_t *selection_dialog(pxsys_reference_lvgl_t *ui,const char *title,p
     lv_obj_t* header;
     lv_obj_t* list;
     lv_obj_t* action;
-    int32_t panel_height;
     if (!ui_valid(ui) || ui->language_dialog != NULL ||
         pxsys_reference_layout_compute(&ui->display, &layout) !=
             PXSYS_STATUS_OK)
@@ -3862,48 +4316,38 @@ static lv_obj_t *selection_dialog(pxsys_reference_lvgl_t *ui,const char *title,p
     ui->language_dialog = lv_obj_create(ui->root);
     style_plain(ui->language_dialog);
     lv_obj_set_size(ui->language_dialog, LV_PCT(100), LV_PCT(100));
-    lv_obj_set_style_bg_color(ui->language_dialog,
-                              color_token(ui, PXSYS_COLOR_SCRIM), 0);
-    lv_obj_set_style_bg_opa(ui->language_dialog, LV_OPA_60, 0);
-    pxsys_lvgl_add_flags(ui->language_dialog, LV_OBJ_FLAG_CLICKABLE);
+    pxa_lvgl_dialog_scrim_style(ui->language_dialog, color_token(ui, PXSYS_COLOR_SCRIM));
     lv_obj_add_event_cb(ui->language_dialog, language_dialog_close_clicked,
                         LV_EVENT_CLICKED, ui);
 
-    panel_height = (int32_t)layout.content.height;
+    const lv_font_t* title_font = typography_font(ui, PXSYS_TYPOGRAPHY_TITLE);
+    const int32_t header_height = LV_MAX(ui_px(ui, 48),
+        (title_font ? title_font : LV_FONT_DEFAULT)->line_height + ui_px(ui, 14));
+    const int32_t rows = (int32_t)LV_MIN(ui->language_count, 5u);
+    const int32_t panel_height = LV_MIN((int32_t)layout.content.height,
+        header_height + rows * ui_px(ui, 64) + ui_px(ui, 14));
     panel = lv_obj_create(ui->language_dialog);
     style_plain(panel);
-    lv_obj_set_pos(panel, layout.content.x, layout.content.y);
-    lv_obj_set_size(panel, (lv_coord_t)layout.content.width, panel_height);
-    lv_obj_set_style_bg_color(panel, color_token(ui, PXSYS_COLOR_SURFACE), 0);
+    const int32_t panel_width = LV_MIN((int32_t)layout.content.width, ui_px(ui, 424));
+    lv_obj_set_pos(panel, layout.content.x + ((int32_t)layout.content.width - panel_width) / 2,
+                   layout.content.y + ((int32_t)layout.content.height - panel_height) / 2);
+    lv_obj_set_size(panel, panel_width, panel_height);
+    lv_obj_set_style_bg_color(panel, color_token(ui, PXSYS_COLOR_SURFACE_CONTAINER_LOW), 0);
     lv_obj_set_style_bg_opa(panel, LV_OPA_COVER, 0);
-    lv_obj_set_style_radius(panel, ui->theme.base_radius_px * 3u, 0);
-    lv_obj_set_style_clip_corner(panel, true, 0);
+    lv_obj_set_style_radius(panel, ui_px(ui, 20), 0);
     pxsys_lvgl_add_flags(panel, LV_OBJ_FLAG_CLICKABLE);
 
     header = lv_obj_create(panel);
     style_plain(header);
-    const lv_font_t *title_font=typography_font(ui,PXSYS_TYPOGRAPHY_TITLE);
-    int header_height=(title_font?title_font:LV_FONT_DEFAULT)->line_height+ui_px(ui,16);
     lv_obj_set_size(header, LV_PCT(100), header_height);
-    lv_obj_set_style_pad_hor(header, 12, 0);
+    lv_obj_set_style_pad_hor(header, ui_px(ui, 10), 0);
+    lv_obj_set_style_pad_column(header, ui_px(ui, 10), 0);
     lv_obj_set_layout(header, LV_LAYOUT_FLEX);
     lv_obj_set_flex_flow(header, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(header, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER,
                           LV_FLEX_ALIGN_CENTER);
-    action = lv_button_create(header);
-    lv_obj_set_size(action, header_height-ui_px(ui,8), header_height-ui_px(ui,8));
-    lv_obj_set_style_radius(action, LV_RADIUS_CIRCLE, 0);
-    lv_obj_set_style_bg_opa(action, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_bg_color(action, color_token(ui, PXSYS_COLOR_BORDER),
-                              LV_STATE_PRESSED);
-    lv_obj_set_style_bg_opa(action, LV_OPA_40, LV_STATE_PRESSED);
-    lv_obj_set_style_shadow_width(action, 0, 0);
-    lv_obj_set_style_border_width(action, 0, 0);
-    make_label(action, LV_SYMBOL_LEFT, NULL,
-               color_token(ui, PXSYS_COLOR_TEXT_PRIMARY));
-    lv_obj_center(lv_obj_get_child(action, 0));
-    lv_obj_add_event_cb(action, language_dialog_close_clicked,
-                        LV_EVENT_CLICKED, ui);
+    make_settings_header_button(ui, header, LV_SYMBOL_LEFT, 0xF053,
+                                language_dialog_close_clicked);
     action = make_label(header,
                         title,
                         typography_font(ui, PXSYS_TYPOGRAPHY_TITLE),
@@ -3920,6 +4364,7 @@ static lv_obj_t *selection_dialog(pxsys_reference_lvgl_t *ui,const char *title,p
     lv_obj_set_flex_flow(list, LV_FLEX_FLOW_COLUMN);
     pxsys_lvgl_add_flags(list, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
     lv_obj_set_scroll_dir(list, LV_DIR_VER);
+    lv_obj_set_scroll_elastic(list, false);
     lv_obj_set_scrollbar_mode(list, LV_SCROLLBAR_MODE_AUTO);
     style_scrollbar(ui, list);
     lv_obj_move_foreground(ui->language_dialog);
@@ -3944,9 +4389,9 @@ static void language_clicked(lv_event_t *event) {
             borrowed_text(ui, language->display_name),
             borrowed_text(ui, language->locale), language_selected, ui);
         lv_obj_set_user_data(row, (void*)(uintptr_t)index);
-        lv_obj_set_style_bg_color(row, color_token(ui, PXSYS_COLOR_ACCENT), 0);
-        lv_obj_set_style_bg_opa(row, selected ? LV_OPA_30 : LV_OPA_TRANSP, 0);
-        lv_obj_set_style_radius(row, ui->theme.base_radius_px * 2u, 0);
+        lv_obj_set_style_bg_color(row, color_token(ui, PXSYS_COLOR_PRIMARY_CONTAINER), 0);
+        lv_obj_set_style_bg_opa(row, selected ? LV_OPA_COVER : LV_OPA_TRANSP, 0);
+        lv_obj_set_style_radius(row, ui_px(ui, 12), 0);
         lv_obj_set_style_border_width(row, 0, 0);
         if (selected) {
             action = make_label(row, LV_SYMBOL_OK, NULL,
@@ -4062,21 +4507,18 @@ static void input_method_open(pxsys_reference_lvgl_t *ui) {
     rebuild(ui);
 }
 static void build_input_method_page(pxsys_reference_lvgl_t *ui,const pxsys_reference_layout_t *layout) {
-    lv_obj_t *list=ui->content;
-    lv_obj_set_layout(list,LV_LAYOUT_FLEX);
-    lv_obj_set_flex_flow(list,LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_style_pad_row(list,ui_px(ui,8),0);
-    lv_obj_set_style_pad_bottom(list,ui_px(ui,8),0);
-    pxsys_lvgl_add_flags(list,LV_OBJ_FLAG_SCROLLABLE|LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_set_scroll_dir(list,LV_DIR_VER);
-    make_label(list,translated(ui,"input-method.default","Default input method"),
-        typography_font(ui,PXSYS_TYPOGRAPHY_LABEL),color_token(ui,PXSYS_COLOR_TEXT_PRIMARY));
+    page_content_init(ui, layout);
     if (ui->input_method_list) {
+        lv_obj_t* list = make_settings_section(ui, ui->content,
+            translated(ui, "input-method.default", "Default input method"));
         input_method_list_t methods={ui,layout,list};
         ui->input_method_list(ui->input_method_context,input_method_emit,&methods);
     }
     pxsys_reference_input_method_preferences_t value={0};
     if (ui->input_method_preferences && ui->input_method_preferences(ui->input_method_context,&value,false) && pxsys_reference_input_method_preferences_valid(value)) {
+        lv_obj_t* list = make_settings_section(ui, ui->content, NULL);
+        lv_obj_set_style_pad_all(list, ui_px(ui, 10), 0);
+        lv_obj_set_style_pad_row(list, ui_px(ui, 7), 0);
         char options[128];
         snprintf(options,sizeof(options),"%s\n%s\n%s",
             translated(ui,"input-method.layout.auto","Automatic"),
@@ -4089,11 +4531,12 @@ static void build_input_method_page(pxsys_reference_lvgl_t *ui,const pxsys_refer
         input_method_preference(ui,list,translated(ui,"input-method.language","Starting language"),options,value.language,true);
     }
     if (ui->app_list && ui->app_action) {
+        lv_obj_t* list = make_settings_section(ui, ui->content, NULL);
         lv_obj_t *manage=make_settings_row(ui,layout,list,LV_SYMBOL_LIST,PXSYS_COLOR_ACCENT,
             translated(ui,"input-method.manage","Manage installed input methods"),
             translated(ui,"input-method.manage.detail","Enable, disable or uninstall input methods"),
             input_method_manage_clicked,ui);
-        if (manage) lv_obj_set_style_border_color(manage,color_token(ui,PXSYS_COLOR_OUTLINE_VARIANT),0);
+        add_settings_chevron(ui, manage);
     }
 }
 static void input_method_clicked(lv_event_t *event) {
@@ -4185,9 +4628,7 @@ static void build_home(pxsys_reference_lvgl_t* ui,
         ? (layout->content.width - (columns - 1u) * gap) / columns : 1u;
     row_height = layout->content.height > (rows - 1u) * gap
         ? (layout->content.height - (rows - 1u) * gap) / rows : 1u;
-    pxsys_lvgl_add_flags(ui->content,
-                    LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
-    launcher_configure_paging(ui);
+    pxsys_lvgl_add_flags(ui->content, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(ui->content, launcher_background_clicked,
                         LV_EVENT_CLICKED, ui);
 
@@ -4261,6 +4702,8 @@ static void build_home(pxsys_reference_lvgl_t* ui,
     page_count = ui->launcher_count == 0 ? 1u :
         (ui->launcher_count + columns * rows - 1u) / (columns * rows);
     if (page_count > 1u) {
+        pxsys_lvgl_add_flags(ui->content, LV_OBJ_FLAG_SCROLLABLE);
+        launcher_configure_paging(ui);
         /* Keep the last page scrollable even when it has only one icon. */
         lv_obj_t* end = lv_obj_create(ui->content);
         style_plain(end);
@@ -4282,6 +4725,27 @@ static void build_home(pxsys_reference_lvgl_t* ui,
         LV_ANIM_OFF);
 }
 
+static void make_settings_columns(pxsys_reference_lvgl_t* ui,
+                                  const pxsys_reference_layout_t* layout,
+                                  bool split, lv_obj_t* columns[2]) {
+    columns[0] = columns[1] = ui->content;
+    if (!split || layout->content.width < (uint32_t)ui_px(ui, 520)) return;
+    lv_obj_t* grid = lv_obj_create(ui->content);
+    style_plain(grid);
+    lv_obj_set_size(grid, LV_PCT(100), LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(grid, LV_FLEX_FLOW_ROW);
+    lv_obj_set_style_pad_column(grid, ui_px(ui, 12), 0);
+    for (size_t index = 0; index < 2; ++index) {
+        lv_obj_t* column = lv_obj_create(grid);
+        style_plain(column);
+        lv_obj_set_size(column, 0, LV_SIZE_CONTENT);
+        lv_obj_set_flex_grow(column, 1);
+        lv_obj_set_flex_flow(column, LV_FLEX_FLOW_COLUMN);
+        lv_obj_set_style_pad_row(column, ui_px(ui, 12), 0);
+        columns[index] = column;
+    }
+}
+
 static void build_settings(pxsys_reference_lvgl_t* ui,
                            const pxsys_reference_layout_t* layout) {
     lv_obj_t* section;
@@ -4298,18 +4762,11 @@ static void build_settings(pxsys_reference_lvgl_t* ui,
     int has_apps = settings_role_available(ui, PXSYS_ROLE_APP_MANAGER);
     int has_files = settings_role_available(ui, PXSYS_ROLE_FILE_MANAGER);
     int has_about = settings_role_available(ui, PXSYS_ROLE_DEVICE_INFO);
-    lv_obj_set_layout(ui->content, LV_LAYOUT_FLEX);
-    lv_obj_set_flex_flow(ui->content, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_style_pad_row(
-        ui->content,
-        layout->size_class == PXSYS_UI_SIZE_COMPACT ? 8 : 10, 0);
-    lv_obj_set_style_pad_bottom(ui->content, 8, 0);
-    /* Keep the scroll container itself hit-testable. Non-interactive rows and
-     * gaps otherwise fall through to the root, so scrolling only starts when
-     * the pointer happens to land on a button or switch. */
-    pxsys_lvgl_add_flags(ui->content,
-                    LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_set_scroll_dir(ui->content, LV_DIR_VER);
+    page_content_init(ui, layout);
+    lv_obj_t* columns[2];
+    make_settings_columns(ui, layout,
+                          has_sound || has_alarm || has_apps || has_files || has_about,
+                          columns);
 #if PXSYS_REFERENCE_UI_WIFI
     has_wifi = radio_supported(ui, PXSYS_NETWORK_WIFI);
 #endif
@@ -4324,7 +4781,7 @@ static void build_settings(pxsys_reference_lvgl_t* ui,
     }
     if (has_wifi || has_cellular || has_bluetooth) {
         section = make_settings_section(
-            ui, translated(ui, "settings.section.connections", "Connections"));
+            ui, columns[0], translated(ui, "settings.section.connections", "Connections"));
 #if PXSYS_REFERENCE_UI_WIFI
         if (has_wifi)
             make_network_setting(ui, layout, section, PXSYS_NETWORK_WIFI,
@@ -4344,7 +4801,7 @@ static void build_settings(pxsys_reference_lvgl_t* ui,
     }
 
     section = make_settings_section(
-        ui, translated(ui, "settings.section.personalization",
+        ui, columns[0], translated(ui, "settings.section.personalization",
                        "Personalization"));
     appearance_detail =
         ui->theme.effective_scheme == PXSYS_COLOR_SCHEME_DARK
@@ -4367,16 +4824,18 @@ static void build_settings(pxsys_reference_lvgl_t* ui,
         translated(ui, "settings.language", "Language"), language_detail,
         language_clicked, ui);
     navigation_tag_focus(row, "settings.language");
-    if (ui->input_method_list || ui->input_method_preferences)
-        make_settings_row(ui,layout,section,LV_SYMBOL_KEYBOARD,PXSYS_COLOR_ACCENT,
-            translated(ui,"input-method.title","Input method"),
-            translated(ui,"input-method.detail","Keyboard, language and installed input methods"),
-            input_method_clicked,ui);
     add_settings_chevron(ui, row);
+    if (ui->input_method_list || ui->input_method_preferences) {
+        row = make_settings_row(ui, layout, section, LV_SYMBOL_KEYBOARD, PXSYS_COLOR_ACCENT,
+            translated(ui, "input-method.title", "Input method"),
+            translated(ui, "input-method.detail", "Keyboard, language and installed input methods"),
+            input_method_clicked, ui);
+        add_settings_chevron(ui, row);
+    }
 
     if (has_sound || has_alarm) {
         section = make_settings_section(
-            ui, translated(ui, "settings.section.device", "Device"));
+            ui, columns[1], translated(ui, "settings.section.device", "Device"));
         (void)add_settings_role(
             ui, layout, section, 2, PXSYS_ROLE_SOUND_SETTINGS,
             LV_SYMBOL_VOLUME_MAX, PXSYS_COLOR_SUCCESS,
@@ -4393,7 +4852,7 @@ static void build_settings(pxsys_reference_lvgl_t* ui,
 
     if (has_apps || has_files || has_about) {
         section = make_settings_section(
-            ui, translated(ui, "settings.section.system", "System"));
+            ui, columns[1], translated(ui, "settings.section.system", "System"));
         (void)add_settings_role(
             ui, layout, section, 4, PXSYS_ROLE_APP_MANAGER, LV_SYMBOL_LIST,
             PXSYS_COLOR_ACCENT, translated(ui, "settings.apps", "Apps"),
@@ -4468,21 +4927,16 @@ static void build_appearance_page(pxsys_reference_lvgl_t* ui,
         {PXSYS_THEME_PALETTE_GRAPHITE, "theme.graphite", "Graphite"},
     };
     static const pxsys_color_token_t preview_tokens[] = {
-        PXSYS_COLOR_PRIMARY, PXSYS_COLOR_SECONDARY,
-        PXSYS_COLOR_TERTIARY, PXSYS_COLOR_SURFACE_CONTAINER_HIGH,
+        PXSYS_COLOR_PRIMARY, PXSYS_COLOR_SECONDARY, PXSYS_COLOR_TERTIARY,
     };
     lv_obj_t* section;
     lv_obj_t* row;
     lv_obj_t* cards;
     const char* selected = accent_name(&ui->theme);
     const size_t dark = ui->theme.effective_scheme == PXSYS_COLOR_SCHEME_DARK;
-    lv_obj_set_layout(ui->content, LV_LAYOUT_FLEX);
-    lv_obj_set_flex_flow(ui->content, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_style_pad_row(ui->content, ui_px(ui, 10), 0);
-    lv_obj_set_scroll_dir(ui->content, LV_DIR_VER);
-    pxsys_lvgl_add_flags(ui->content, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+    page_content_init(ui, layout);
     section = make_settings_section(
-        ui, translated(ui, "settings.appearance.mode", "Display mode"));
+        ui, ui->content, translated(ui, "settings.appearance.mode", "Display mode"));
     for (size_t index = 0; index < 2; ++index) {
         row = make_settings_row(
             ui, layout, section, index ? LV_SYMBOL_EYE_OPEN : LV_SYMBOL_TINT,
@@ -4515,68 +4969,44 @@ static void build_appearance_page(pxsys_reference_lvgl_t* ui,
     lv_obj_set_flex_flow(cards, LV_FLEX_FLOW_ROW_WRAP);
     lv_obj_set_style_pad_row(cards, ui_px(ui, 8), 0);
     lv_obj_set_style_pad_column(cards, ui_px(ui, 8), 0);
-    lv_obj_update_layout(cards);
-    const int32_t available_width = lv_obj_get_content_width(cards);
-    const int32_t card_columns = available_width >= ui_px(ui, 240) + ui_px(ui, 8) ? 2 : 1;
+    const int32_t available_width = (int32_t)layout->content.width;
+    const int32_t gap = ui_px(ui, 8);
+    const int32_t card_columns = LV_CLAMP(1, (available_width + gap) /
+                                            (ui_px(ui, 104) + gap), 4);
+    const int32_t card_width = (available_width - (card_columns - 1) * gap) / card_columns;
+    const int32_t swatch_width = LV_MAX(1, (card_width - ui_px(ui, 26)) / 3);
     for (size_t index = 0; index < sizeof(options) / sizeof(options[0]); ++index) {
         lv_obj_t* card = lv_button_create(cards);
-        lv_obj_t* preview = lv_obj_create(card);
         lv_obj_t* caption;
         pxsys_theme_snapshot_t palette;
         const char* name = pxsys_theme_palette_name(options[index].palette);
         navigation_tag_focus(card, name);
         const int selected_card = strcmp(selected, name) == 0;
-        lv_coord_t card_width = (lv_coord_t)((available_width -
-            (card_columns - 1) * ui_px(ui, 8)) / card_columns);
-        if (card_width > ui_px(ui, 160)) card_width = ui_px(ui, 160);
         pxsys_theme_snapshot_init(&palette, ui->theme.effective_scheme);
         (void)pxsys_theme_snapshot_apply_palette(&palette, options[index].palette);
-        lv_obj_set_size(card, card_width, ui_px(ui, 78));
+        lv_obj_set_size(card, card_width, ui_px(ui, 70));
         lv_obj_set_style_pad_all(card, 0, 0);
         lv_obj_set_style_bg_color(card, color_token(ui, PXSYS_COLOR_SURFACE_CONTAINER_LOW), 0);
         lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
-        lv_obj_set_style_radius(card, ui->theme.base_radius_px * 2u, 0);
+        lv_obj_set_style_radius(card, ui_px(ui, 12), 0);
         lv_obj_set_style_shadow_width(card, 0, 0);
-        lv_obj_set_style_border_width(card, selected_card ? 2 : 1, 0);
+        lv_obj_set_style_border_width(card, selected_card ? 2 : 0, 0);
         lv_obj_set_style_border_color(
             card, selected_card ? color_token(ui, PXSYS_COLOR_ACCENT) :
                                    color_token(ui, PXSYS_COLOR_BORDER), 0);
         lv_obj_set_user_data(card, (void*)name);
         lv_obj_add_event_cb(card, appearance_accent_selected, LV_EVENT_CLICKED, ui);
-        style_plain(preview);
-        lv_coord_t preview_width = card_width - ui_px(ui, 16);
-        lv_coord_t swatch_width = (preview_width - ui_px(ui, 9)) / 4;
-        lv_obj_set_size(preview, preview_width, ui_px(ui, 34));
-        lv_obj_align(preview, LV_ALIGN_TOP_MID, 0, ui_px(ui, 9));
-        lv_obj_set_layout(preview, LV_LAYOUT_FLEX);
-        lv_obj_set_flex_flow(preview, LV_FLEX_FLOW_ROW);
-        lv_obj_set_style_pad_column(preview, ui_px(ui, 3), 0);
-        for (size_t color_index = 0; color_index < 4; ++color_index) {
-            lv_obj_t* swatch = lv_obj_create(preview);
+        for (size_t color_index = 0; color_index < sizeof(preview_tokens) / sizeof(preview_tokens[0]); ++color_index) {
+            lv_obj_t* swatch = lv_obj_create(card);
             style_plain(swatch);
-            lv_obj_set_size(swatch,
-                            color_index == 0 ? preview_width - ui_px(ui, 9) - 3 * swatch_width :
-                                               swatch_width, ui_px(ui, 34));
-            lv_obj_set_style_radius(swatch, ui_px(ui, 5), 0);
+            lv_obj_set_pos(swatch, ui_px(ui, 9) + (int32_t)color_index *
+                           (swatch_width + ui_px(ui, 4)), ui_px(ui, 11));
+            lv_obj_set_size(swatch, swatch_width, ui_px(ui, 22));
+            lv_obj_set_style_radius(swatch, LV_RADIUS_CIRCLE, 0);
             lv_obj_set_style_bg_color(
                 swatch, lv_color_hex(palette.colors[preview_tokens[color_index]] &
                                      0xffffffu), 0);
             lv_obj_set_style_bg_opa(swatch, LV_OPA_COVER, 0);
-            lv_obj_set_style_border_width(swatch, 1, 0);
-            lv_obj_set_style_border_color(
-                swatch, lv_color_hex(palette.colors[PXSYS_COLOR_BORDER] &
-                                     0xffffffu), 0);
-            if (color_index == 0) {
-                lv_obj_t* on_accent = lv_obj_create(swatch);
-                style_plain(on_accent);
-                lv_obj_set_size(on_accent, ui_px(ui, 11), ui_px(ui, 11));
-                lv_obj_set_style_radius(on_accent, LV_RADIUS_CIRCLE, 0);
-                lv_obj_set_style_bg_color(
-                    on_accent, lv_color_hex(palette.colors[PXSYS_COLOR_ON_ACCENT] &
-                                            0xffffffu), 0);
-                lv_obj_set_style_bg_opa(on_accent, LV_OPA_COVER, 0);
-                lv_obj_center(on_accent);
-            }
         }
         caption = make_label(card, translated(ui, options[index].label,
                                                options[index].fallback),
@@ -4594,24 +5024,110 @@ static void build_appearance_page(pxsys_reference_lvgl_t* ui,
     }
 }
 
+static void notification_invalidate_overlap(lv_obj_t* shade, lv_area_t area,
+                                            int32_t overlap_bottom) {
+    if (area.y2 > overlap_bottom) area.y2 = overlap_bottom;
+    if (area.y1 <= area.y2) lv_obj_invalidate_area(shade, &area);
+}
+
+static void notification_drawer_set(pxsys_reference_lvgl_t* ui,
+                                    int32_t progress) {
+    lv_obj_t* shade = ui->notification_shade;
+    lv_obj_t* viewport = ui->notification_viewport;
+    lv_obj_t* panel = ui->notification_panel;
+    lv_obj_t* grip = ui->notification_grip;
+    lv_display_t* display = lv_obj_get_display(shade);
+    lv_area_t reveal, old_panel, old_grip, moved;
+    const int32_t height = (int32_t)((int64_t)ui->notification_shade_height *
+                                    progress / 256);
+    if (ui->notification_fixed_viewport) {
+        const int32_t old_y = lv_obj_get_style_y(viewport, 0);
+        const int32_t y = height - ui->notification_shade_height;
+        if (y == old_y) return;
+        lv_obj_get_coords(shade, &reveal);
+        lv_display_enable_invalidation(display, false);
+        lv_obj_set_y(viewport, y);
+        lv_display_enable_invalidation(display, true);
+        /* Let LVGL lay out the moved subtree during its regular refresh. */
+        reveal.y2 = reveal.y1 + LV_MAX(height, ui->notification_shade_height + old_y) - 1;
+        lv_obj_invalidate_area(shade, &reveal);
+        return;
+    }
+    /* Follow the leading edge until the controls reach their resting
+     * position. The remaining pull only extends the backdrop. */
+    const int32_t y = LV_MIN(0, height - ui->notification_panel_height);
+    lv_obj_update_layout(shade);
+    const int32_t previous = lv_obj_get_height(viewport);
+    const int32_t previous_y = lv_obj_get_y(panel);
+    if (height == previous && y == previous_y) return;
+    lv_obj_get_coords(shade, &reveal);
+    lv_obj_get_coords(panel, &old_panel);
+    if (grip != NULL) lv_obj_get_coords(grip, &old_grip);
+
+    /* The full-width backdrop only needs the strip that changed coverage.
+     * Restrict movement damage inside the overlap to the controls and grip. */
+    lv_display_enable_invalidation(display, false);
+    lv_obj_set_height(viewport, height);
+    lv_obj_set_y(panel, y);
+    lv_obj_update_layout(shade);
+    lv_display_enable_invalidation(display, true);
+
+    const int32_t overlap = height < previous ? height : previous;
+    const int32_t top = reveal.y1;
+    const int32_t overlap_bottom = top + overlap - 1;
+    if (height != previous) {
+        reveal.y1 += overlap;
+        reveal.y2 = top + LV_MAX(height, previous) - 1;
+        lv_obj_invalidate_area(shade, &reveal);
+    }
+    if (overlap == 0) return;
+    if (y != previous_y) {
+        lv_obj_get_coords(panel, &moved);
+        if (old_panel.y1 < moved.y1) moved.y1 = old_panel.y1;
+        if (old_panel.y2 > moved.y2) moved.y2 = old_panel.y2;
+        notification_invalidate_overlap(shade, moved, overlap_bottom);
+    }
+    if (height != previous && grip != NULL) {
+        lv_obj_get_coords(grip, &moved);
+        notification_invalidate_overlap(shade, old_grip, overlap_bottom);
+        notification_invalidate_overlap(shade, moved, overlap_bottom);
+    }
+}
+
 static void notification_shade_progress_set(void* object, int32_t progress) {
     pxsys_reference_lvgl_t* ui = (pxsys_reference_lvgl_t*)object;
-    int32_t previous_progress;
     if (!ui_valid(ui) || ui->notification_shade == NULL ||
         ui->notification_panel == NULL || ui->notification_panel_height <= 0)
         return;
     if (progress < 0) progress = 0;
     if (progress > 256) progress = 256;
-    previous_progress = ui->notification_progress;
+    if (progress == ui->notification_progress && !ui->notification_motion_pending)
+        return;
+    ui->notification_motion_pending = 0;
     ui->notification_progress = progress;
-    lv_obj_set_y(ui->notification_panel,
-                 (lv_coord_t)(-ui->notification_panel_height +
-                              (int64_t)ui->notification_panel_height *
-                                  progress / 256));
-    /* No dimming scrim: a translucent full-screen overlay made every drag
-     * frame repaint the whole display underneath it. Without it the drag
-     * only repaints the moving panel. */
-    if (previous_progress != progress) update_system_overlay(ui);
+    notification_drawer_set(ui, progress);
+    update_system_overlay(ui);
+}
+
+static void notification_refresh_event(lv_event_t* event) {
+    pxsys_reference_lvgl_t* ui = lv_event_get_user_data(event);
+    if (ui->notification_motion_pending)
+        notification_shade_progress_set(ui, ui->notification_progress);
+}
+
+static void notification_drag_progress(pxsys_reference_lvgl_t* ui, int32_t progress) {
+    if (!ui->notification_refresh_hook) {
+        notification_shade_progress_set(ui, progress);
+        return;
+    }
+    progress = LV_CLAMP(0, progress, 256);
+    if (progress == ui->notification_progress) return;
+    /* Touch can arrive several times between frames. Only lay out and
+     * composite the most recent position before LVGL renders. */
+    ui->notification_progress = progress;
+    if (ui->notification_motion_pending) return;
+    ui->notification_motion_pending = 1;
+    lv_display_send_event(lv_obj_get_display(ui->root), LV_EVENT_REFR_REQUEST, NULL);
 }
 
 static void close_notification_shade(pxsys_reference_lvgl_t* ui) {
@@ -4619,13 +5135,21 @@ static void close_notification_shade(pxsys_reference_lvgl_t* ui) {
 #if PXSYS_REFERENCE_UI_ENABLE_ANIMATIONS
     lv_anim_delete(ui, notification_shade_progress_set);
 #endif
+    if (ui->notification_panel != NULL)
+        notification_drawer_set(ui, 0);
     ui->notification_shade_open = 0;
     ui->notification_dragging = 0;
     ui->notification_drag_moved = 0;
     ui->notification_close_armed = 0;
+    ui->notification_motion_pending = 0;
     ui->notification_progress = 0;
     ui->notification_scroll_y = 0;
+    /* Only the empty transparent input catcher remains. Hiding it has
+     * no pixel effect and should not invalidate the whole screen. */
+    lv_display_t* display = lv_obj_get_display(ui->notification_shade);
+    lv_display_enable_invalidation(display, false);
     pxsys_lvgl_add_flags(ui->notification_shade, LV_OBJ_FLAG_HIDDEN);
+    lv_display_enable_invalidation(display, true);
     update_system_overlay(ui);
 }
 
@@ -4748,12 +5272,12 @@ static void shade_panel_event(lv_event_t* event) {
     } else if (lv_event_get_code(event) == LV_EVENT_PRESSING) {
         int32_t distance = point.y - ui->status_press_y;
         int32_t progress;
-        if (distance > -4) return;
+        if (distance > -4 && !ui->notification_drag_moved) return;
         ui->notification_drag_moved = 1;
         progress = 256 +
             (int32_t)((int64_t)distance * 256 /
-                      ui->notification_panel_height);
-        notification_shade_progress_set(ui, progress);
+                      ui->notification_shade_height);
+        notification_drag_progress(ui, progress);
     } else if (lv_event_get_code(event) == LV_EVENT_RELEASED ||
                lv_event_get_code(event) == LV_EVENT_PRESS_LOST) {
         int32_t target = ui->notification_drag_moved &&
@@ -4780,7 +5304,10 @@ static void shade_body_event(lv_event_t* event) {
     if (indev == NULL) return;
     lv_indev_get_point(indev, &point);
     if (code == LV_EVENT_PRESSED) {
+        lv_obj_t* target = lv_event_get_target(event);
         ui->notification_close_armed =
+            target != ui->notification_volume &&
+            target != ui->notification_brightness &&
             lv_obj_get_scroll_bottom(body) <= 1;
         ui->notification_dragging = 0;
         ui->notification_drag_moved = 0;
@@ -4794,14 +5321,16 @@ static void shade_body_event(lv_event_t* event) {
         int32_t horizontal = point.x - ui->notification_press_x;
         int32_t progress;
         if (horizontal < 0) horizontal = -horizontal;
-        if (distance <= 6 || distance <= horizontal) return;
+        if (!ui->notification_drag_moved &&
+            (distance <= 6 || distance <= horizontal)) return;
         ui->notification_dragging = 1;
         ui->notification_drag_moved = 1;
-        lv_obj_scroll_to_y(body, ui->notification_scroll_y, LV_ANIM_OFF);
+        if (lv_obj_get_scroll_y(body) != ui->notification_scroll_y)
+            lv_obj_scroll_to_y(body, ui->notification_scroll_y, LV_ANIM_OFF);
         progress = 256 -
             (int32_t)((int64_t)distance * 256 /
-                      ui->notification_panel_height);
-        notification_shade_progress_set(ui, progress);
+                      ui->notification_shade_height);
+        notification_drag_progress(ui, progress);
         return;
     }
     if (code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST) {
@@ -4825,39 +5354,6 @@ static void shade_enable_pointer_bubble(lv_obj_t* parent) {
         lv_obj_t* child = lv_obj_get_child(parent, (int32_t)index);
         pxsys_lvgl_add_flags(child, LV_OBJ_FLAG_EVENT_BUBBLE);
         shade_enable_pointer_bubble(child);
-    }
-}
-
-static void shade_home_gesture_event(lv_event_t* event) {
-    pxsys_reference_lvgl_t* ui =
-        (pxsys_reference_lvgl_t*)lv_event_get_user_data(event);
-    lv_indev_t* indev = lv_event_get_indev(event);
-    lv_point_t point;
-    lv_event_code_t code = lv_event_get_code(event);
-    int32_t distance;
-    if (!ui_valid(ui) || indev == NULL) return;
-    lv_indev_get_point(indev, &point);
-    if (code == LV_EVENT_PRESSED) {
-        ui->status_press_y = point.y;
-        ui->notification_dragging = 1;
-        ui->notification_drag_moved = 0;
-        return;
-    }
-    distance = ui->status_press_y - point.y;
-    if (code == LV_EVENT_PRESSING) {
-        if (distance <= 0) return;
-        ui->notification_drag_moved = distance > 4;
-        notification_shade_progress_set(
-            ui, 256 - (int32_t)((int64_t)distance * 256 /
-                                ui->notification_panel_height));
-        return;
-    }
-    if (code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST) {
-        int close = code == LV_EVENT_RELEASED &&
-                    distance > NAVIGATION_GESTURE_COMMIT_DISTANCE;
-        ui->notification_dragging = 0;
-        ui->notification_drag_moved = 0;
-        settle_notification_shade(ui, close ? 0 : 256);
     }
 }
 
@@ -4919,13 +5415,12 @@ static lv_obj_t* make_control_tile(pxsys_reference_lvgl_t* ui,
                                    const char* state, int active,
                                    lv_event_cb_t clicked, void* user_data) {
     lv_obj_t* tile = lv_button_create(parent);
-    lv_obj_t* icon_background;
     lv_obj_t* icon;
     lv_obj_t* label;
     lv_color_t foreground = color_token(
-        ui, active ? PXSYS_COLOR_ON_ACCENT : PXSYS_COLOR_TEXT_PRIMARY);
+        ui, active ? PXSYS_COLOR_ON_PRIMARY_CONTAINER : PXSYS_COLOR_TEXT_PRIMARY);
     lv_color_t icon_foreground = color_token(
-        ui, active ? PXSYS_COLOR_ON_ACCENT : PXSYS_COLOR_ACCENT);
+        ui, active ? PXSYS_COLOR_ON_PRIMARY_CONTAINER : PXSYS_COLOR_ACCENT);
     const lv_font_t* title_font = typography_font(ui, PXSYS_TYPOGRAPHY_BODY);
     const lv_font_t* state_font = typography_font(ui, PXSYS_TYPOGRAPHY_CAPTION);
     const int32_t title_height = title_font ? title_font->line_height : ui_px(ui, 18);
@@ -4935,162 +5430,323 @@ static lv_obj_t* make_control_tile(pxsys_reference_lvgl_t* ui,
     lv_obj_set_pos(tile, x, y);
     lv_obj_set_size(tile, width, height);
     lv_obj_set_style_bg_color(
-        tile, color_token(ui, active ? PXSYS_COLOR_ACCENT
-                                    : PXSYS_COLOR_SURFACE), 0);
+        tile, color_token(ui, active ? PXSYS_COLOR_PRIMARY_CONTAINER
+                                    : PXSYS_COLOR_SURFACE_CONTAINER_HIGH), 0);
     lv_obj_set_style_bg_color(tile, color_token(ui, PXSYS_COLOR_BORDER),
                               LV_STATE_PRESSED);
-    lv_obj_set_style_border_width(tile, active ? 0 : 1, 0);
-    lv_obj_set_style_border_color(tile, color_token(ui, PXSYS_COLOR_BORDER), 0);
-    lv_obj_set_style_border_opa(tile, LV_OPA_70, 0);
+    lv_obj_set_style_border_width(tile, 0, 0);
     lv_obj_set_style_shadow_width(tile, 0, 0);
-    lv_obj_set_style_radius(tile, ui_px(ui, 8), 0);
+    lv_obj_set_style_radius(tile, ui_px(ui, 12), 0);
     lv_obj_set_style_pad_all(tile, 0, 0);
-    lv_obj_set_style_opa(tile, LV_OPA_80, LV_STATE_PRESSED);
     pxsys_lvgl_remove_flags(tile, LV_OBJ_FLAG_SCROLLABLE);
-    icon_background = lv_obj_create(tile);
-    style_plain(icon_background);
-    lv_obj_set_pos(icon_background, ui_px(ui, 10), (height - ui_px(ui, 30)) / 2);
-    lv_obj_set_size(icon_background, ui_px(ui, 30), ui_px(ui, 30));
-    lv_obj_set_style_radius(icon_background, ui_px(ui, 8), 0);
-    lv_obj_set_style_bg_color(icon_background, icon_foreground, 0);
-    lv_obj_set_style_bg_opa(icon_background, active ? LV_OPA_20 : LV_OPA_10,
-                            0);
     if (symbol != NULL) {
-        icon = make_label(icon_background, symbol, typography_font(ui, PXSYS_TYPOGRAPHY_BODY), icon_foreground);
-        lv_obj_center(icon);
+        icon = make_label(tile, symbol, title_font, icon_foreground);
+        lv_obj_align(icon, LV_ALIGN_LEFT_MID, ui_px(ui, 12), 0);
     } else {
+        lv_obj_t* icon_background = lv_obj_create(tile);
+        style_plain(icon_background);
+        lv_obj_set_pos(icon_background, ui_px(ui, 6), (height - ui_px(ui, 30)) / 2);
+        lv_obj_set_size(icon_background, ui_px(ui, 30), ui_px(ui, 30));
         make_cellular_glyph(icon_background, 7, 8, icon_foreground);
     }
     label = make_label(tile, title,
                        typography_font(ui, PXSYS_TYPOGRAPHY_BODY), foreground);
-    lv_obj_set_pos(label, ui_px(ui, 50), title_y);
-    lv_obj_set_width(label, width - ui_px(ui, 60));
+    lv_obj_set_pos(label, ui_px(ui, 38), title_y);
+    lv_obj_set_size(label, width - ui_px(ui, 46), title_height);
     label = make_label(tile, state,
                        typography_font(ui, PXSYS_TYPOGRAPHY_CAPTION),
                        active ? foreground
                               : color_token(ui, PXSYS_COLOR_TEXT_SECONDARY));
-    lv_obj_set_pos(label, ui_px(ui, 50), state_y);
-    lv_obj_set_width(label, width - ui_px(ui, 60));
+    lv_obj_set_pos(label, ui_px(ui, 38), state_y);
+    lv_obj_set_size(label, width - ui_px(ui, 46), state_height);
     lv_obj_add_event_cb(tile, clicked, LV_EVENT_CLICKED, user_data);
     return tile;
 }
 
+static void shade_level_readout(lv_obj_t* slider, shade_level_control_t* control) {
+    const int32_t value = lv_slider_get_value(slider);
+    if (control->displayed_value == value) return;
+    const int32_t previous = control->displayed_value;
+    control->displayed_value = value;
+    snprintf(control->text, sizeof(control->text), "%u%%", (unsigned)value);
+    lv_label_set_text_static(control->readout, control->text);
+    if (control->speaker != NULL && (previous < 0 || (previous == 0) != (value == 0))) {
+        lv_label_set_text_static(control->speaker, value == 0 ? LV_SYMBOL_MUTE : LV_SYMBOL_VOLUME_MAX);
+        center_symbol(control->speaker, value == 0 ? 0xF026 : 0xF028);
+    }
+}
+
+static void shade_level_draw(lv_event_t* event) {
+    lv_obj_t* slider = lv_event_get_current_target(event);
+    const pxsys_reference_lvgl_t* ui = lv_event_get_user_data(event);
+    lv_layer_t* layer = lv_event_get_layer(event);
+    lv_area_t track;
+    lv_obj_get_coords(slider, &track);
+    const lv_color_t accent = color_token(ui, PXSYS_COLOR_ACCENT);
+    lv_draw_rect_dsc_t rect;
+    lv_draw_rect_dsc_init(&rect);
+    rect.radius = LV_RADIUS_CIRCLE;
+    rect.bg_opa = LV_OPA_COVER;
+    rect.bg_color = color_token(ui, PXSYS_COLOR_SURFACE_CONTAINER_HIGH);
+    lv_draw_rect(layer, &rect, &track);
+
+    const int32_t minimum = lv_slider_get_min_value(slider);
+    const int32_t range = lv_slider_get_max_value(slider) - minimum;
+    const int32_t value = lv_slider_get_value(slider) - minimum;
+    const int32_t width = (lv_area_get_width(&track) * value + range / 2) / range;
+    if (width > 0) {
+        lv_area_t fill = track;
+        const int32_t shrink = LV_MAX(0, lv_area_get_height(&fill) - width);
+        /* Start with a small circle fully inside the track, then extend it
+         * into a pill. Both shapes draw directly without an LVGL mask layer. */
+        fill.y1 += shrink / 2;
+        fill.y2 -= (shrink + 1) / 2;
+        if (lv_obj_get_style_base_dir(slider, 0) == LV_BASE_DIR_RTL)
+            fill.x1 = fill.x2 - width + 1;
+        else
+            fill.x2 = fill.x1 + width - 1;
+        rect.bg_color = lv_color_mix(accent, rect.bg_color,
+            lv_obj_has_state(slider, LV_STATE_PRESSED) ? LV_OPA_40 : LV_OPA_30);
+        lv_draw_rect(layer, &rect, &fill);
+    }
+    if (lv_obj_has_state(slider, LV_STATE_FOCUS_KEY) || lv_obj_has_state(slider, LV_STATE_EDITED)) {
+        rect.bg_opa = LV_OPA_TRANSP;
+        rect.border_opa = LV_OPA_COVER;
+        rect.border_color = accent;
+        rect.border_width = 2;
+        lv_draw_rect(layer, &rect, &track);
+    }
+}
+
+static void shade_sun_draw(lv_event_t* event) {
+    static const int8_t rays[][4] = {
+        {0, -6, 0, -9}, {4, -4, 6, -6}, {6, 0, 9, 0}, {4, 4, 6, 6},
+        {0, 6, 0, 9}, {-4, 4, -6, 6}, {-6, 0, -9, 0}, {-4, -4, -6, -6},
+    };
+    lv_obj_t* icon = lv_event_get_current_target(event);
+    lv_layer_t* layer = lv_event_get_layer(event);
+    lv_area_t box;
+    lv_obj_get_coords(icon, &box);
+    const int32_t size = lv_area_get_width(&box);
+    const int32_t x = (box.x1 + box.x2) / 2;
+    const int32_t y = (box.y1 + box.y2) / 2;
+    const int32_t radius = size / 5;
+    const lv_color_t color = lv_obj_get_style_text_color(icon, 0);
+    lv_draw_rect_dsc_t sun;
+    lv_draw_rect_dsc_init(&sun);
+    sun.radius = LV_RADIUS_CIRCLE;
+    sun.bg_color = color;
+    sun.bg_opa = LV_OPA_COVER;
+    const lv_area_t disc = {x - radius, y - radius, x + radius, y + radius};
+    lv_draw_rect(layer, &sun, &disc);
+    lv_draw_line_dsc_t ray;
+    lv_draw_line_dsc_init(&ray);
+    ray.color = color;
+    ray.width = size / 10;
+    ray.round_start = ray.round_end = true;
+    for (size_t i = 0; i < sizeof(rays) / sizeof(rays[0]); ++i) {
+        ray.p1 = (lv_point_precise_t){x + rays[i][0] * size / 20, y + rays[i][1] * size / 20};
+        ray.p2 = (lv_point_precise_t){x + rays[i][2] * size / 20, y + rays[i][3] * size / 20};
+        lv_draw_line(layer, &ray);
+    }
+}
+
+static void shade_level_input(lv_event_t* event) {
+    shade_level_control_t* control = lv_event_get_user_data(event);
+    pxsys_reference_lvgl_t* ui = control->level.ui;
+    lv_obj_t* slider = lv_event_get_current_target(event);
+    const lv_event_code_t code = lv_event_get_code(event);
+    if (code == LV_EVENT_VALUE_CHANGED) {
+        shade_level_readout(slider, control);
+        return;
+    }
+    if (code == LV_EVENT_KEY) {
+        const uint32_t key = lv_event_get_key(event);
+        if (key != LV_KEY_LEFT && key != LV_KEY_RIGHT && key != LV_KEY_UP && key != LV_KEY_DOWN)
+            return;
+    }
+    lv_indev_t* indev = (code == LV_EVENT_PRESSED || code == LV_EVENT_RELEASED)
+        ? lv_event_get_indev(event) : NULL;
+    const bool pointer = indev != NULL && lv_indev_get_type(indev) == LV_INDEV_TYPE_POINTER;
+    const bool scrolling = pointer && lv_indev_get_scroll_obj(indev) != NULL;
+    const uint8_t applied = control->level.control == PXSYS_LEVEL_CONTROL_VOLUME
+        ? ui->system_status.volume_percent : ui->system_status.brightness_percent;
+    if (code == LV_EVENT_PRESS_LOST || (code == LV_EVENT_RELEASED && scrolling)) {
+        lv_slider_set_value(slider, applied, LV_ANIM_OFF);
+    } else if (pointer && (code == LV_EVENT_PRESSED || code == LV_EVENT_RELEASED)) {
+        lv_point_t point;
+        lv_area_t track;
+        lv_indev_get_point(indev, &point);
+        lv_obj_transform_point(slider, &point, LV_OBJ_POINT_TRANSFORM_FLAG_INVERSE_RECURSIVE);
+        lv_obj_get_coords(slider, &track);
+        const int32_t minimum = lv_slider_get_min_value(slider);
+        const int32_t range = lv_slider_get_max_value(slider) - minimum;
+        const int32_t length = LV_MAX(1, track.x2 - track.x1);
+        const int32_t offset = lv_obj_get_style_base_dir(slider, 0) == LV_BASE_DIR_RTL
+            ? track.x2 - point.x : point.x - track.x1;
+        lv_slider_set_value(slider, minimum +
+            (LV_CLAMP(0, offset, length) * range + length / 2) / length, LV_ANIM_OFF);
+    }
+    shade_level_readout(slider, control);
+    if ((code == LV_EVENT_RELEASED && pointer && !scrolling) ||
+        code == LV_EVENT_KEY || code == LV_EVENT_ROTARY) {
+        /* The board reports its new value asynchronously. Commit each completed
+         * input once, even if the latest snapshot still has the same value. */
+        const uint8_t value = (uint8_t)lv_slider_get_value(slider);
+        if (pxsys_system_status_service_set_level(
+                pxsys_standard_system_status(ui->system), control->level.control, value) != PXSYS_STATUS_OK) {
+            lv_slider_set_value(slider, applied, LV_ANIM_OFF);
+            shade_level_readout(slider, control);
+        }
+    }
+}
+
 static lv_obj_t* make_control_slider(pxsys_reference_lvgl_t* ui, lv_obj_t* parent,
-                                int32_t x, int32_t y, int32_t width,
-                                const char* symbol, const char* title,
-                                uint8_t value,
-                                pxsys_level_control_t control,
-                                level_control_t* context) {
-    lv_obj_t* row = lv_obj_create(parent);
-    lv_obj_t* icon;
-    lv_obj_t* slider;
-    style_plain(row);
-    lv_obj_set_pos(row, x, y);
-    lv_obj_set_size(row, width, ui_px(ui, 48));
-    lv_obj_set_style_bg_color(row, color_token(ui, PXSYS_COLOR_SURFACE), 0);
-    lv_obj_set_style_bg_opa(row, LV_OPA_COVER, 0);
-    lv_obj_set_style_radius(row, ui_px(ui, 8), 0);
-    icon = make_label(row, symbol, typography_font(ui, PXSYS_TYPOGRAPHY_BODY),
-                      color_token(ui, PXSYS_COLOR_TEXT_SECONDARY));
-    lv_obj_set_pos(icon, ui_px(ui, 12), ui_px(ui, 8));
-    icon = make_label(row, title,
-                      typography_font(ui, PXSYS_TYPOGRAPHY_LABEL),
-                      color_token(ui, PXSYS_COLOR_TEXT_PRIMARY));
-    lv_obj_set_pos(icon, ui_px(ui, 38), ui_px(ui, 5));
-    slider = lv_slider_create(row);
-    lv_obj_set_pos(slider, ui_px(ui, 38), ui_px(ui, 30));
-    lv_obj_set_size(slider, width - ui_px(ui, 52), ui_px(ui, 7));
-    lv_slider_set_range(slider,
-                        control == PXSYS_LEVEL_CONTROL_BRIGHTNESS ? 2 : 0,
-                        100);
+                                    int32_t x, int32_t y, int32_t width, int32_t height,
+                                    const char* title, uint8_t value,
+                                    pxsys_level_control_t level, shade_level_control_t* control) {
+    const bool volume = level == PXSYS_LEVEL_CONTROL_VOLUME;
+    const bool compact = width < ui_px(ui, 148);
+    const lv_font_t* font = typography_font(ui, PXSYS_TYPOGRAPHY_LABEL);
+    const lv_color_t foreground = color_token(ui, PXSYS_COLOR_TEXT_PRIMARY);
+    const int32_t inset = ui_px(ui, compact ? 10 : 14);
+    const int32_t icon_size = ui_px(ui, compact ? 18 : 20);
+    const int32_t gap = ui_px(ui, compact ? 6 : 8);
+    const int32_t title_x = inset + icon_size + gap;
+    const int32_t percent_width = text_width("100%", font) + 2;
+    const int32_t title_width = width - title_x - percent_width - inset - gap;
+
+    lv_obj_t* slider = lv_slider_create(parent);
+    lv_obj_remove_theme(slider, LV_PART_ANY | LV_STATE_ANY);
+    lv_obj_set_pos(slider, x, y);
+    lv_obj_set_size(slider, width, height);
+    lv_obj_set_ext_click_area(slider, 0);
+    lv_obj_set_press_lock(slider, true);
+    lv_obj_set_style_anim_duration(slider, 0, LV_PART_MAIN);
+    lv_slider_set_range(slider, volume ? 0 : 2, 100);
     lv_slider_set_value(slider, value, LV_ANIM_OFF);
-    lv_obj_set_style_bg_color(slider, color_token(ui, PXSYS_COLOR_BORDER),
-                              LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(slider, LV_OPA_50, LV_PART_MAIN);
-    lv_obj_set_style_bg_color(slider, color_token(ui, PXSYS_COLOR_ACCENT),
-                              LV_PART_INDICATOR);
-    lv_obj_set_style_bg_opa(slider, LV_OPA_COVER, LV_PART_INDICATOR);
-    lv_obj_set_style_bg_color(slider, color_token(ui, PXSYS_COLOR_ACCENT),
-                              LV_PART_KNOB);
-    lv_obj_set_style_bg_opa(slider, LV_OPA_COVER, LV_PART_KNOB);
-    lv_obj_set_style_radius(slider, LV_RADIUS_CIRCLE, LV_PART_MAIN);
-    lv_obj_set_style_radius(slider, LV_RADIUS_CIRCLE, LV_PART_INDICATOR);
-    lv_obj_set_style_radius(slider, LV_RADIUS_CIRCLE, LV_PART_KNOB);
-    lv_obj_set_style_width(slider, ui_px(ui, 15), LV_PART_KNOB);
-    lv_obj_set_style_height(slider, ui_px(ui, 15), LV_PART_KNOB);
-    lv_obj_set_style_border_width(slider, 2, LV_PART_KNOB);
-    lv_obj_set_style_border_color(slider, color_token(ui, PXSYS_COLOR_SURFACE),
-                                  LV_PART_KNOB);
-    lv_obj_set_style_shadow_width(slider, 3, LV_PART_KNOB);
-    lv_obj_set_style_shadow_opa(slider, LV_OPA_20, LV_PART_KNOB);
-    context->ui = ui;
-    context->control = control;
-    lv_obj_add_event_cb(slider, control_level_released, LV_EVENT_RELEASED,
-                        context);
+    lv_obj_add_event_cb(slider, shade_level_draw, LV_EVENT_DRAW_MAIN, ui);
+
+    control->level = (level_control_t){ui, level};
+    control->displayed_value = -1;
+    control->speaker = NULL;
+    if (volume) {
+        lv_obj_t* icon_box = lv_obj_create(slider);
+        style_plain(icon_box);
+        lv_obj_set_size(icon_box, icon_size, icon_size);
+        lv_obj_align(icon_box, LV_ALIGN_LEFT_MID, inset, 0);
+        control->speaker = make_label(icon_box, LV_SYMBOL_VOLUME_MAX,
+            typography_font(ui, PXSYS_TYPOGRAPHY_BODY), foreground);
+    } else {
+        lv_obj_t* sun = lv_obj_create(slider);
+        style_plain(sun);
+        lv_obj_set_size(sun, icon_size, icon_size);
+        lv_obj_align(sun, LV_ALIGN_LEFT_MID, inset, 0);
+        lv_obj_set_style_text_color(sun, foreground, 0);
+        lv_obj_add_event_cb(sun, shade_sun_draw, LV_EVENT_DRAW_MAIN, NULL);
+    }
+    if (title_width >= LV_MAX(ui_px(ui, 24), text_width(title, font))) {
+        lv_obj_t* label = make_label(slider, title, font, foreground);
+        lv_obj_set_width(label, title_width);
+        lv_obj_align(label, LV_ALIGN_LEFT_MID, title_x, 0);
+    }
+    control->readout = make_label(slider, "", font, foreground);
+    lv_obj_set_width(control->readout, percent_width);
+    lv_obj_set_style_text_align(control->readout, LV_TEXT_ALIGN_RIGHT, 0);
+    lv_obj_align(control->readout, LV_ALIGN_RIGHT_MID, -inset, 0);
+    shade_level_readout(slider, control);
+    static const lv_event_code_t events[] = {LV_EVENT_PRESSED, LV_EVENT_VALUE_CHANGED,
+        LV_EVENT_RELEASED, LV_EVENT_PRESS_LOST, LV_EVENT_KEY, LV_EVENT_ROTARY};
+    for (size_t i = 0; i < sizeof(events) / sizeof(events[0]); ++i)
+        lv_obj_add_event_cb(slider, shade_level_input, events[i], control);
     return slider;
 }
 
-static void make_round_control(pxsys_reference_lvgl_t* ui, lv_obj_t* parent,
-                               int32_t slot_x, int32_t y, int32_t slot_width,
-                               int32_t diameter, const char* symbol,
+static void make_quick_control(pxsys_reference_lvgl_t* ui, lv_obj_t* parent,
+                               int32_t x, int32_t y, int32_t width,
+                               int32_t height, const char* symbol,
                                const char* title, int active,
                                lv_event_cb_t clicked, void* user_data) {
     lv_obj_t* button = lv_button_create(parent);
     lv_obj_t* icon;
     lv_obj_t* label;
-    int32_t x = slot_x + (slot_width - diameter) / 2;
+    lv_color_t foreground = color_token(
+        ui, active ? PXSYS_COLOR_ON_PRIMARY_CONTAINER : PXSYS_COLOR_TEXT_PRIMARY);
     lv_obj_set_pos(button, x, y);
-    lv_obj_set_size(button, diameter, diameter);
+    lv_obj_set_size(button, width, height);
     lv_obj_set_style_bg_color(
-        button, color_token(ui, active ? PXSYS_COLOR_ACCENT
-                                      : PXSYS_COLOR_SURFACE), 0);
+        button, color_token(ui, active ? PXSYS_COLOR_PRIMARY_CONTAINER
+                                      : PXSYS_COLOR_SURFACE_CONTAINER_HIGH), 0);
     lv_obj_set_style_bg_color(button, color_token(ui, PXSYS_COLOR_BORDER),
                               LV_STATE_PRESSED);
-    lv_obj_set_style_border_width(button, active ? 0 : 1, 0);
-    lv_obj_set_style_border_color(button,
-                                  color_token(ui, PXSYS_COLOR_BORDER), 0);
-    lv_obj_set_style_border_opa(button, LV_OPA_70, 0);
+    lv_obj_set_style_border_width(button, 0, 0);
     lv_obj_set_style_shadow_width(button, 0, 0);
-    lv_obj_set_style_radius(button, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_radius(button, ui_px(ui, 12), 0);
     lv_obj_set_style_pad_all(button, 0, 0);
-    lv_obj_set_style_opa(button, LV_OPA_80, LV_STATE_PRESSED);
     icon = make_label(button, symbol, typography_font(ui, PXSYS_TYPOGRAPHY_BODY),
-                      color_token(ui, active ? PXSYS_COLOR_ON_ACCENT
-                                             : PXSYS_COLOR_TEXT_PRIMARY));
-    lv_obj_center(icon);
+                      foreground);
+    lv_obj_align(icon, LV_ALIGN_LEFT_MID, ui_px(ui, 9), 0);
     lv_obj_add_event_cb(button, clicked, LV_EVENT_CLICKED, user_data);
-    label = make_label(parent, title,
-                       typography_font(ui, PXSYS_TYPOGRAPHY_CAPTION),
-                       color_token(ui, PXSYS_COLOR_TEXT_SECONDARY));
-    lv_obj_set_pos(label, slot_x, y + diameter + ui_px(ui, 6));
-    lv_obj_set_width(label, slot_width);
-    lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
+    label = make_label(button, title,
+                       typography_font(ui, PXSYS_TYPOGRAPHY_LABEL),
+                       foreground);
+    lv_obj_set_width(label, width - ui_px(ui, 34));
+    lv_label_set_long_mode(label, LV_LABEL_LONG_DOT);
+    lv_obj_align(label, LV_ALIGN_LEFT_MID, ui_px(ui, 28), 0);
+}
+
+static void notification_refresh_values(pxsys_reference_lvgl_t* ui);
+
+static void show_notification_shade(pxsys_reference_lvgl_t* ui,
+                                    int32_t progress) {
+    /* The input catcher is transparent and the drawer starts offscreen. */
+    lv_display_t* display = lv_obj_get_display(ui->notification_shade);
+    lv_display_enable_invalidation(display, false);
+    lv_obj_set_hidden(ui->notification_shade, false);
+    lv_obj_move_foreground(ui->notification_shade);
+    navigation_back_restack(ui);
+    if (ui->navigation_mode == PXSYS_NAVIGATION_BUTTONS &&
+        ui->navigation_bar != NULL)
+        lv_obj_move_foreground(ui->navigation_bar);
+    lv_display_enable_invalidation(display, true);
+    ui->notification_shade_open = 1;
+    notification_shade_progress_set(ui, progress);
+    if (progress == 0) update_system_overlay(ui);
+    if (ui->toast_visible && ui->toast != NULL) toast_restack(ui);
 }
 
 static void build_notification_shade(pxsys_reference_lvgl_t* ui,
                                      int32_t initial_progress) {
     pxsys_reference_layout_t layout;
+    lv_obj_t* viewport;
     lv_obj_t* body;
-    lv_obj_t* home_catcher;
-    lv_obj_t* scroll_mask;
     lv_obj_t* settings;
     lv_obj_t* time;
     lv_obj_t* label;
     char time_text[16];
     char date_text[40];
-    uint32_t panel_height;
+    int32_t panel_height;
+    int32_t panel_limit;
+    int32_t panel_width;
+    int32_t panel_x;
     int32_t content_x;
     int32_t content_width;
     int32_t header_y;
     int32_t time_height;
+    int32_t time_width;
     int32_t date_height;
     int32_t body_y;
-    int32_t body_bottom;
-    int32_t tile_y;
-    int32_t tile_gap;
+    int32_t gap;
     int32_t tile_width;
     int32_t tile_height;
     int32_t slider_y;
+    int32_t slider_x;
+    int32_t slider_width;
+    int32_t slider_height;
+    int32_t level_index = 0;
+    int32_t level_count;
+    int split_controls;
+    int slider_columns;
     int32_t quick_y;
     int32_t quick_size;
     int32_t quick_count = 0;
@@ -5101,7 +5757,9 @@ static void build_notification_shade(pxsys_reference_lvgl_t* ui,
     int32_t network_index = 0;
     int wifi_visible = 0;
     int cellular_visible = 0;
-    int32_t right_inset;
+    int32_t body_height;
+    int32_t grip_height;
+    int inline_date;
     const lv_font_t* time_font;
     const lv_font_t* date_font;
     if (!ui_valid(ui) ||
@@ -5117,91 +5775,111 @@ static void build_notification_shade(pxsys_reference_lvgl_t* ui,
     ui->notification_date = NULL;
     ui->notification_volume = NULL;
     ui->notification_brightness = NULL;
+    ui->notification_grip = NULL;
     ui->notification_shade = lv_obj_create(ui->root);
+    pxsys_lvgl_add_flags(ui->notification_shade, LV_OBJ_FLAG_HIDDEN);
     style_plain(ui->notification_shade);
     lv_obj_set_pos(ui->notification_shade, 0, 0);
     lv_obj_set_size(ui->notification_shade, (lv_coord_t)ui->display.width,
                     (lv_coord_t)ui->display.height);
-    /* Intentionally transparent: no dimming scrim over the content behind. */
+    /* The input catcher covers the part of the app still visible while pulling. */
     pxsys_lvgl_add_flags(ui->notification_shade, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(ui->notification_shade, shade_close_clicked,
                         LV_EVENT_CLICKED, ui);
 
-    panel_height = ui->display.height;
+    ui->notification_shade_height = (int32_t)ui->display.height;
     if (ui->navigation_mode == PXSYS_NAVIGATION_BUTTONS &&
-        ui->navigation_bar != NULL &&
-        navigation_bar_is_visible(ui))
-        panel_height = (uint32_t)layout.navigation_bar.y;
-    ui->notification_panel_height = (int32_t)panel_height;
-    ui->notification_panel = lv_obj_create(ui->notification_shade);
+        ui->navigation_bar != NULL && navigation_bar_is_visible(ui))
+        ui->notification_shade_height = layout.navigation_bar.y;
+    panel_limit = (int32_t)layout.safe_area.height + layout.safe_area.y;
+    if (panel_limit > ui->notification_shade_height)
+        panel_limit = ui->notification_shade_height;
+    viewport = lv_obj_create(ui->notification_shade);
+    ui->notification_viewport = viewport;
+    style_plain(viewport);
+    /* Native pages draw their chrome directly. Surface apps still need a
+     * viewport cropped to the visible area for the alpha-plane compositor. */
+    ui->notification_fixed_viewport = ui->content_active;
+    lv_obj_set_size(viewport, (int32_t)ui->display.width,
+                    ui->notification_fixed_viewport ? ui->notification_shade_height : 0);
+    if (ui->notification_fixed_viewport)
+        lv_obj_set_y(viewport, -ui->notification_shade_height);
+    lv_obj_set_style_bg_color(
+        viewport, color_token(ui, PXSYS_COLOR_SURFACE_CONTAINER_LOW), 0);
+    lv_obj_set_style_bg_opa(viewport, LV_OPA_COVER, 0);
+    pxsys_lvgl_add_flags(viewport, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_PRESS_LOCK);
+    lv_obj_add_event_cb(viewport, shade_panel_event, LV_EVENT_PRESSED, ui);
+    lv_obj_add_event_cb(viewport, shade_panel_event, LV_EVENT_PRESSING, ui);
+    lv_obj_add_event_cb(viewport, shade_panel_event, LV_EVENT_RELEASED, ui);
+    lv_obj_add_event_cb(viewport, shade_panel_event, LV_EVENT_PRESS_LOST, ui);
+    panel_width = (int32_t)ui->display.width;
+    panel_x = 0;
+    if ((int32_t)layout.safe_area.width >= ui_px(ui, 568)) {
+        panel_width = ui_px(ui, 520);
+        panel_x = layout.safe_area.x +
+                  ((int32_t)layout.safe_area.width - panel_width) / 2;
+    }
+    ui->notification_panel = lv_obj_create(viewport);
     style_plain(ui->notification_panel);
-    lv_obj_set_pos(ui->notification_panel, 0, 0);
-    lv_obj_set_size(ui->notification_panel,
-                    (lv_coord_t)ui->display.width,
-                    (lv_coord_t)panel_height);
-    lv_obj_set_style_bg_color(ui->notification_panel,
-                              color_token(ui, PXSYS_COLOR_BACKGROUND), 0);
-    lv_obj_set_style_bg_opa(ui->notification_panel, LV_OPA_COVER, 0);
-    lv_obj_set_style_radius(ui->notification_panel,
-                            ui->theme.base_radius_px * 3u, 0);
-    /* The panel background keeps its rounded corners, but the children are
-     * not clipped to them: the mask pass costs a lot per child in software
-     * rendering and the panel is screen sized, so its corners are at the
-     * display corners where no child sits. */
-    lv_obj_set_style_clip_corner(ui->notification_panel, false, 0);
-    pxsys_lvgl_remove_flags(ui->notification_panel, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_x(ui->notification_panel, panel_x);
+    lv_obj_set_width(ui->notification_panel, panel_width);
     pxsys_lvgl_add_flags(ui->notification_panel,
-                    LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_PRESS_LOCK);
-    lv_obj_add_event_cb(ui->notification_panel, shade_panel_event,
-                        LV_EVENT_PRESSED, ui);
-    lv_obj_add_event_cb(ui->notification_panel, shade_panel_event,
-                        LV_EVENT_PRESSING, ui);
-    lv_obj_add_event_cb(ui->notification_panel, shade_panel_event,
-                        LV_EVENT_RELEASED, ui);
-    lv_obj_add_event_cb(ui->notification_panel, shade_panel_event,
-                        LV_EVENT_PRESS_LOST, ui);
+                         LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_PRESS_LOCK |
+                             LV_OBJ_FLAG_EVENT_BUBBLE);
 
-    content_x = layout.safe_area.x + (int32_t)layout.outer_padding;
-    content_width = (int32_t)layout.safe_area.width -
-                    (int32_t)layout.outer_padding * 2;
-    if (content_width < 80) {
-        content_x = (int32_t)layout.outer_padding;
-        content_width = (int32_t)ui->display.width -
+    content_x = (int32_t)layout.outer_padding;
+    content_width = panel_width - content_x * 2;
+    if (panel_x == 0) {
+        content_x += layout.safe_area.x;
+        content_width = (int32_t)layout.safe_area.width -
                         (int32_t)layout.outer_padding * 2;
     }
-    header_y = layout.safe_area.y + (int32_t)layout.outer_padding;
-    right_inset = (int32_t)ui->display.width - content_x - content_width;
+    if (content_width < 80) {
+        content_x = (int32_t)layout.outer_padding;
+        content_width = panel_width - content_x * 2;
+    }
+    const bool compact_panel = panel_limit - layout.safe_area.y <= ui_px(ui, 248);
+    header_y = layout.safe_area.y + ui_px(ui, compact_panel ? 12 : 16);
     snprintf(time_text, sizeof(time_text),
              ui->system_status.time_valid ? "%02u:%02u" : "--:--",
              (unsigned)ui->system_status.hour,
              (unsigned)ui->system_status.minute);
     time_font = typography_font(ui, PXSYS_TYPOGRAPHY_DISPLAY);
     date_font = typography_font(ui, PXSYS_TYPOGRAPHY_LABEL);
+    const int32_t inline_time_width = text_width("00:00", time_font) + ui_px(ui, 12);
+    inline_date = content_width >= inline_time_width + text_width("0000-00-00", date_font) + ui_px(ui, 52);
     time_height = time_font != NULL ? time_font->line_height + 2 : 32;
     date_height = date_font != NULL ? date_font->line_height + 2 : 16;
     time = make_label(ui->notification_panel, time_text, time_font,
                       color_token(ui, PXSYS_COLOR_TEXT_PRIMARY));
     ui->notification_time = time;
     lv_obj_set_pos(time, content_x, header_y);
-    lv_obj_set_size(time, content_width - ui_px(ui, 48), time_height);
+    time_width = inline_date
+        ? inline_time_width
+        : content_width - ui_px(ui, 48);
+    lv_obj_set_size(time, time_width, time_height);
     if (ui->system_status.date_valid)
         snprintf(date_text, sizeof(date_text), "%04u-%02u-%02u",
                  (unsigned)ui->system_status.year,
                  (unsigned)ui->system_status.month,
                  (unsigned)ui->system_status.day);
-    else
-        snprintf(date_text, sizeof(date_text), "---- -- --");
+    else date_text[0] = '\0';
     label = make_label(ui->notification_panel, date_text, date_font,
                        color_token(ui, PXSYS_COLOR_TEXT_SECONDARY));
     ui->notification_date = label;
-    lv_obj_set_pos(label, content_x, header_y + time_height - 1);
-    lv_obj_set_size(label, content_width - ui_px(ui, 48), date_height);
+    lv_obj_set_pos(label, content_x + (inline_date ? time_width : 0),
+                   header_y + (inline_date ? (time_height - date_height) / 2
+                                            : time_height));
+    lv_obj_set_size(label,
+                    content_width - ui_px(ui, 48) - (inline_date ? time_width : 0),
+                    date_height);
 
     settings = lv_button_create(ui->notification_panel);
-    lv_obj_set_pos(settings, (int32_t)ui->display.width - right_inset - ui_px(ui, 34),
+    lv_obj_set_pos(settings, content_x + content_width - ui_px(ui, 42),
                    header_y);
-    lv_obj_set_size(settings, ui_px(ui, 34), ui_px(ui, 34));
-    lv_obj_set_style_bg_color(settings, color_token(ui, PXSYS_COLOR_SURFACE), 0);
+    lv_obj_set_size(settings, ui_px(ui, 42), ui_px(ui, 42));
+    lv_obj_set_style_bg_color(
+        settings, color_token(ui, PXSYS_COLOR_SURFACE_CONTAINER_HIGH), 0);
     lv_obj_set_style_bg_color(settings, color_token(ui, PXSYS_COLOR_BORDER),
                               LV_STATE_PRESSED);
     lv_obj_set_style_shadow_width(settings, 0, 0);
@@ -5211,36 +5889,34 @@ static void build_notification_shade(pxsys_reference_lvgl_t* ui,
     pxsys_lvgl_remove_flags(settings, LV_OBJ_FLAG_SCROLLABLE);
     label = make_label(settings, LV_SYMBOL_SETTINGS, typography_font(ui, PXSYS_TYPOGRAPHY_BODY),
                        color_token(ui, PXSYS_COLOR_TEXT_PRIMARY));
-    lv_obj_center(label);
+    center_symbol(label, 0xF013);
     lv_obj_add_event_cb(settings, shade_settings_clicked, LV_EVENT_CLICKED, ui);
 
-    body_y = header_y + time_height + date_height + ui_px(ui, 5);
-    body_bottom = (int32_t)panel_height;
-    if (body_bottom < body_y) body_bottom = body_y;
+    body_y = header_y + LV_MAX(ui_px(ui, 42),
+                              time_height + (inline_date ? 0 : date_height)) +
+             ui_px(ui, compact_panel ? 8 : 12);
     body = lv_obj_create(ui->notification_panel);
     ui->notification_content = body;
     style_plain(body);
     lv_obj_set_pos(body, 0, body_y);
-    lv_obj_set_size(body, (lv_coord_t)ui->display.width,
-                    body_bottom - body_y);
-    lv_obj_set_style_bg_opa(body, LV_OPA_TRANSP, 0);
+    lv_obj_set_width(body, panel_width);
     pxsys_lvgl_add_flags(body, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
     lv_obj_set_scroll_dir(body, LV_DIR_VER);
     lv_obj_set_scrollbar_mode(body, LV_SCROLLBAR_MODE_AUTO);
     style_scrollbar(ui, body);
-    lv_obj_set_style_pad_right(body,
-        ui->display.safe_insets.right + ui_px(ui, 2), LV_PART_SCROLLBAR);
-    lv_obj_set_style_pad_left(body,
-        ui->display.safe_insets.left + ui_px(ui, 2), LV_PART_SCROLLBAR);
     lv_obj_add_event_cb(body, shade_body_event, LV_EVENT_PRESSED, ui);
     lv_obj_add_event_cb(body, shade_body_event, LV_EVENT_PRESSING, ui);
     lv_obj_add_event_cb(body, shade_body_event, LV_EVENT_RELEASED, ui);
     lv_obj_add_event_cb(body, shade_body_event, LV_EVENT_PRESS_LOST, ui);
     lv_obj_add_event_cb(body, shade_body_event, LV_EVENT_SCROLL, ui);
 
-    tile_y = ui_px(ui, 6);
-    tile_gap = (int32_t)layout.item_gap;
-    tile_height = ui_px(ui, layout.size_class == PXSYS_UI_SIZE_COMPACT ? 58 : 64);
+    gap = ui_px(ui, 10);
+    const lv_font_t* tile_title_font = typography_font(ui, PXSYS_TYPOGRAPHY_BODY);
+    const lv_font_t* tile_state_font = typography_font(ui, PXSYS_TYPOGRAPHY_CAPTION);
+    tile_height = (tile_title_font ? tile_title_font->line_height : 18) +
+                  (tile_state_font ? tile_state_font->line_height : 16) +
+                  ui_px(ui, 12);
+    if (tile_height < ui_px(ui, 50)) tile_height = ui_px(ui, 50);
 #if PXSYS_REFERENCE_UI_WIFI
     wifi_visible = radio_supported(ui, PXSYS_NETWORK_WIFI);
 #endif
@@ -5248,16 +5924,21 @@ static void build_notification_shade(pxsys_reference_lvgl_t* ui,
     cellular_visible = radio_supported(ui, PXSYS_NETWORK_CELLULAR);
 #endif
     network_count = wifi_visible + cellular_visible;
-    tile_width = network_count > 1 ? (content_width - tile_gap) / 2
-                                   : content_width;
+    level_count = ui->system_status.volume_supported +
+                  ui->system_status.brightness_supported;
+    split_controls = content_width >= ui_px(ui, 420) && network_count && level_count;
+    tile_width = (split_controls || network_count > 1)
+        ? (content_width - gap) / 2 : content_width;
+#if PXSYS_REFERENCE_UI_WIFI
     if (wifi_visible) {
+        char ssid[PXSYS_REFERENCE_WIFI_SSID_MAX] = {0};
         ui->network_controls[0].ui = ui;
         ui->network_controls[0].network = PXSYS_NETWORK_WIFI;
         make_control_tile(
             ui, body,
-            content_x + network_index * (tile_width + tile_gap), tile_y,
+            content_x, 0,
             tile_width, tile_height, LV_SYMBOL_WIFI,
-            translated(ui, "settings.wifi", "Wi-Fi"),
+            wifi_control_title(ui, ssid),
             radio_connected(ui, PXSYS_NETWORK_WIFI)
                 ? translated(ui, "state.connected", "Connected")
                 : radio_enabled(ui, PXSYS_NETWORK_WIFI)
@@ -5267,12 +5948,14 @@ static void build_notification_shade(pxsys_reference_lvgl_t* ui,
             &ui->network_controls[0]);
         network_index++;
     }
+#endif
     if (cellular_visible) {
         ui->network_controls[1].ui = ui;
         ui->network_controls[1].network = PXSYS_NETWORK_CELLULAR;
         make_control_tile(
             ui, body,
-            content_x + network_index * (tile_width + tile_gap), tile_y,
+            content_x + (split_controls ? 0 : network_index * (tile_width + gap)),
+            split_controls ? network_index * (tile_height + gap) : 0,
             tile_width, tile_height, NULL,
             translated(ui, "control.mobile", "Mobile"),
             radio_connected(ui, PXSYS_NETWORK_CELLULAR)
@@ -5284,39 +5967,49 @@ static void build_notification_shade(pxsys_reference_lvgl_t* ui,
             control_network_clicked, &ui->network_controls[1]);
     }
 
-    slider_y = tile_y + (network_count ? tile_height + ui_px(ui, 10) : 0);
+    slider_y = !split_controls && network_count ? tile_height + gap : 0;
+    const int32_t min_slider_width = ui_px(ui, 42) + text_width("100%", date_font) + 2;
+    slider_columns = !split_controls && level_count == 2 && content_width >= 2 * min_slider_width + gap ? 2 : 1;
+    slider_x = content_x + (split_controls ? tile_width + gap : 0);
+    slider_width = split_controls || slider_columns > 1
+        ? (content_width - gap) / 2 : content_width;
+    slider_height = split_controls ? tile_height : ui_px(ui, 46);
     if (ui->system_status.volume_supported) {
-        ui->notification_volume = make_control_slider(ui, body, content_x, slider_y, content_width,
-                            LV_SYMBOL_VOLUME_MAX,
+        ui->notification_volume = make_control_slider(ui, body, slider_x,
+                            slider_y, slider_width, slider_height,
                             translated(ui, "control.volume", "Volume"),
                             ui->system_status.volume_percent,
                             PXSYS_LEVEL_CONTROL_VOLUME,
-                            &ui->level_controls[0]);
-        slider_y += ui_px(ui, 56);
+                            &ui->shade_levels[0]);
+        level_index++;
     }
     if (ui->system_status.brightness_supported) {
-        ui->notification_brightness = make_control_slider(ui, body, content_x, slider_y, content_width,
-                            LV_SYMBOL_EYE_OPEN,
+        ui->notification_brightness = make_control_slider(ui, body,
+                            slider_x + (level_index % slider_columns) * (slider_width + gap),
+                            slider_y + (level_index / slider_columns) * (slider_height + gap),
+                            slider_width, slider_height,
                             translated(ui, "control.brightness", "Brightness"),
                             ui->system_status.brightness_percent,
                             PXSYS_LEVEL_CONTROL_BRIGHTNESS,
-                            &ui->level_controls[1]);
-        slider_y += ui_px(ui, 56);
+                            &ui->shade_levels[1]);
     }
 
-    quick_y = slider_y + ui_px(ui, 8);
-    quick_size = ui_px(ui, layout.size_class == PXSYS_UI_SIZE_COMPACT ? 48 : 52);
+    quick_y = slider_y + ((level_count + slider_columns - 1) / slider_columns) *
+                         (slider_height + gap);
+    if (split_controls)
+        quick_y = LV_MAX(quick_y, network_count * (tile_height + gap));
+    quick_size = ui_px(ui, 44);
     quick_count = 1 + ui->system_status.bluetooth_supported +
                   ui->system_status.do_not_disturb_supported +
                   ui->system_status.flashlight_supported;
-    if (quick_count < 1) quick_count = 1;
-    quick_columns = layout.size_class == PXSYS_UI_SIZE_COMPACT ? 3 : 4;
-    if (quick_columns > quick_count) quick_columns = quick_count;
-    quick_slot_width = content_width / quick_columns;
+    quick_columns = content_width / ui_px(ui, 104);
+    if (quick_columns < 1) quick_columns = 1;
+    if (quick_columns > 4) quick_columns = 4;
+    quick_slot_width = (content_width + gap) / quick_columns;
     if (ui->system_status.bluetooth_supported) {
         ui->toggle_controls[0].ui = ui;
         ui->toggle_controls[0].control = PXSYS_TOGGLE_BLUETOOTH;
-        make_round_control(ui, body, content_x, quick_y, quick_slot_width,
+        make_quick_control(ui, body, content_x, quick_y, quick_slot_width - gap,
                            quick_size, LV_SYMBOL_BLUETOOTH,
                            translated(ui, "control.bluetooth", "Bluetooth"),
                            ui->system_status.bluetooth_enabled,
@@ -5326,11 +6019,11 @@ static void build_notification_shade(pxsys_reference_lvgl_t* ui,
     if (ui->system_status.do_not_disturb_supported) {
         ui->toggle_controls[1].ui = ui;
         ui->toggle_controls[1].control = PXSYS_TOGGLE_DO_NOT_DISTURB;
-        make_round_control(
+        make_quick_control(
             ui, body,
             content_x + (quick_index % quick_columns) * quick_slot_width,
-            quick_y + (quick_index / quick_columns) * ui_px(ui, 76),
-            quick_slot_width, quick_size, LV_SYMBOL_BELL,
+            quick_y + (quick_index / quick_columns) * (quick_size + gap),
+            quick_slot_width - gap, quick_size, LV_SYMBOL_BELL,
             translated(ui, "control.focus", "Focus"),
             ui->system_status.do_not_disturb_enabled,
             control_toggle_clicked, &ui->toggle_controls[1]);
@@ -5339,76 +6032,75 @@ static void build_notification_shade(pxsys_reference_lvgl_t* ui,
     if (ui->system_status.flashlight_supported) {
         ui->toggle_controls[2].ui = ui;
         ui->toggle_controls[2].control = PXSYS_TOGGLE_FLASHLIGHT;
-        make_round_control(
+        make_quick_control(
             ui, body,
             content_x + (quick_index % quick_columns) * quick_slot_width,
-            quick_y + (quick_index / quick_columns) * ui_px(ui, 76),
-            quick_slot_width, quick_size, LV_SYMBOL_CHARGE,
+            quick_y + (quick_index / quick_columns) * (quick_size + gap),
+            quick_slot_width - gap, quick_size, LV_SYMBOL_CHARGE,
             translated(ui, "control.light", "Flashlight"),
             ui->system_status.flashlight_enabled, control_toggle_clicked,
             &ui->toggle_controls[2]);
         quick_index++;
     }
-    make_round_control(
+    make_quick_control(
         ui, body,
         content_x + (quick_index % quick_columns) * quick_slot_width,
-        quick_y + (quick_index / quick_columns) * ui_px(ui, 76),
-        quick_slot_width, quick_size,
+        quick_y + (quick_index / quick_columns) * (quick_size + gap),
+        quick_slot_width - gap, quick_size,
         LV_SYMBOL_TINT,
-        translated(ui, "control.theme", "Theme"),
+        translated(ui, "control.theme", "Dark mode"),
         ui->theme.effective_scheme == PXSYS_COLOR_SCHEME_DARK,
         quick_theme_clicked, ui);
-    quick_index++;
-    {
-        lv_obj_t* scroll_extent = lv_obj_create(body);
-        style_plain(scroll_extent);
-        lv_obj_set_pos(scroll_extent, content_x,
-                       quick_y + ((quick_index - 1) / quick_columns) * ui_px(ui, 76) +
-                           quick_size + ui_px(ui, 26) + layout.safe_area.y +
-                           (ui->navigation_mode == PXSYS_NAVIGATION_GESTURES
-                                ? (int32_t)gesture_strip_height(&layout) : 0));
-        lv_obj_set_size(scroll_extent, 1, 1);
-    }
+    body_height = quick_y + ((quick_count - 1) / quick_columns) *
+                           (quick_size + gap) + quick_size;
+    grip_height = ui_px(ui, PXSYS_REFERENCE_UI_GESTURE_HANDLE ? 28 : 12);
+    panel_height = body_y + body_height;
+    if (panel_height > panel_limit - grip_height)
+        panel_height = panel_limit - grip_height;
+    if (panel_height < body_y) panel_height = body_y;
+    ui->notification_panel_height = panel_height;
+    lv_obj_set_height(ui->notification_panel, panel_height);
+    if (!ui->notification_fixed_viewport)
+        lv_obj_set_y(ui->notification_panel, -panel_height);
+    lv_obj_set_height(body, panel_height - body_y);
     shade_enable_pointer_bubble(body);
     lv_obj_update_layout(body);
     lv_obj_scroll_to_y(body, ui->notification_scroll_y, LV_ANIM_OFF);
-    scroll_mask = lv_obj_create(ui->notification_panel);
-    style_plain(scroll_mask);
-    lv_obj_set_pos(scroll_mask, 0, body_y);
-    lv_obj_set_size(scroll_mask, (lv_coord_t)ui->display.width, ui_px(ui, 6));
-    lv_obj_set_style_bg_color(scroll_mask,
-                              color_token(ui, PXSYS_COLOR_BACKGROUND), 0);
-    lv_obj_set_style_bg_opa(scroll_mask, LV_OPA_COVER, 0);
-    if (ui->navigation_mode == PXSYS_NAVIGATION_GESTURES) {
-        home_catcher = lv_obj_create(ui->notification_panel);
-        style_plain(home_catcher);
-        lv_obj_set_pos(
-            home_catcher, 0,
-            (int32_t)panel_height - (int32_t)gesture_strip_height(&layout));
-        lv_obj_set_size(home_catcher, (lv_coord_t)ui->display.width,
-                        (lv_coord_t)gesture_strip_height(&layout));
-        lv_obj_set_style_bg_opa(home_catcher, LV_OPA_TRANSP, 0);
-        pxsys_lvgl_add_flags(home_catcher,
-                        LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_PRESS_LOCK);
-        lv_obj_add_event_cb(home_catcher, shade_home_gesture_event,
-                            LV_EVENT_PRESSED, ui);
-        lv_obj_add_event_cb(home_catcher, shade_home_gesture_event,
-                            LV_EVENT_PRESSING, ui);
-        lv_obj_add_event_cb(home_catcher, shade_home_gesture_event,
-                            LV_EVENT_RELEASED, ui);
-        lv_obj_add_event_cb(home_catcher, shade_home_gesture_event,
-                            LV_EVENT_PRESS_LOST, ui);
+#if PXSYS_REFERENCE_UI_GESTURE_HANDLE
+    /* The backdrop receives the swipe, independent of the visible handle. */
+    lv_obj_t* grip = lv_obj_create(viewport);
+    ui->notification_grip = grip;
+    style_plain(grip);
+    lv_obj_set_size(grip, ui_px(ui, 40), ui_px(ui, 4));
+    lv_obj_align(grip, LV_ALIGN_BOTTOM_MID, 0,
+                 panel_limit - ui->notification_shade_height - ui_px(ui, 12));
+    lv_obj_set_style_bg_color(grip, color_token(ui, PXSYS_COLOR_BORDER), 0);
+    lv_obj_set_style_bg_opa(grip, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(grip, LV_RADIUS_CIRCLE, 0);
+#endif
+
+    ui->notification_motion_pending = 0;
+    ui->notification_progress = 0;
+    ui->status_rebuild_pending = 0;
+    show_notification_shade(ui, initial_progress);
+}
+
+static void open_notification_shade(pxsys_reference_lvgl_t* ui) {
+#if PXSYS_REFERENCE_UI_ENABLE_ANIMATIONS
+    lv_anim_delete(ui, notification_shade_progress_set);
+#endif
+    if (ui->notification_shade == NULL || ui->status_rebuild_pending) {
+        build_notification_shade(ui, 0);
+        return;
     }
-    pxsys_lvgl_remove_flags(ui->notification_shade, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_move_foreground(ui->notification_shade);
-    navigation_back_restack(ui);
-    if (ui->navigation_mode == PXSYS_NAVIGATION_BUTTONS &&
-        ui->navigation_bar != NULL)
-        lv_obj_move_foreground(ui->navigation_bar);
-    ui->notification_shade_open = 1;
-    notification_shade_progress_set(ui, initial_progress);
-    update_system_overlay(ui);
-    if (ui->toast_visible && ui->toast != NULL) toast_restack(ui);
+    /* Layout and theme rebuilds discard the shade. Changes to the available
+     * controls are picked up before the next pull. */
+    if (!ui->notification_shade_open) {
+        notification_shade_progress_set(ui, 0);
+        lv_obj_scroll_to_y(ui->notification_content, 0, LV_ANIM_OFF);
+        show_notification_shade(ui, 0);
+    }
+    notification_refresh_values(ui);
 }
 
 static void status_bar_event(lv_event_t* event) {
@@ -5419,7 +6111,7 @@ static void status_bar_event(lv_event_t* event) {
     if (!ui_valid(ui)) return;
     if (lv_event_get_code(event) == LV_EVENT_KEY) {
         if (!ui->locked && lv_event_get_key(event) == LV_KEY_ENTER) {
-            build_notification_shade(ui, 0);
+            open_notification_shade(ui);
             settle_notification_shade(ui, 256);
         }
         return;
@@ -5437,17 +6129,18 @@ static void status_bar_event(lv_event_t* event) {
         /* The transparent edge target owns the whole first gesture. Reveal
          * chrome only after release, so rebuilding cannot turn this same drag
          * into a notification-shade gesture or leak it to the game. */
-        if (distance <= 0 || !status_bar_is_visible(ui)) return;
+        if (!status_bar_is_visible(ui) ||
+            (distance < 4 && !ui->notification_shade_open)) return;
         if (distance >= 6) ui->notification_drag_moved = 1;
         if (ui->notification_shade == NULL ||
             !ui->notification_shade_open) {
-            build_notification_shade(ui, 0);
+            open_notification_shade(ui);
             ui->notification_dragging = 1;
             ui->notification_drag_moved = distance >= 6;
         }
         progress = (int32_t)((int64_t)point.y * 256 /
-                             ui->notification_panel_height);
-        notification_shade_progress_set(ui, progress);
+                             ui->notification_shade_height);
+        notification_drag_progress(ui, progress);
     } else if (lv_event_get_code(event) == LV_EVENT_RELEASED) {
         int32_t distance = point.y - ui->status_press_y;
         if (!status_bar_is_visible(ui) && distance >= 8) {
@@ -5461,7 +6154,7 @@ static void status_bar_event(lv_event_t* event) {
             settle_notification_shade(ui, open ? 256 : 0);
         } else if (point.y >= ui->status_press_y &&
                    status_bar_is_visible(ui)) {
-            build_notification_shade(ui, 0);
+            open_notification_shade(ui);
             settle_notification_shade(ui, 256);
         }
         ui->notification_dragging = 0;
@@ -5524,58 +6217,23 @@ static void navigation_gesture_event(lv_event_t* event) {
             ui->navigation_last_motion_tick = lv_tick_get();
         }
 #if PXSYS_REFERENCE_UI_ENABLE_ANIMATIONS
-        if (ui->animations_enabled && distance > 0) {
-            int32_t max_progress = (int32_t)ui->display.height * 2 / 3;
-            int32_t progress = distance > max_progress ? max_progress : distance;
-            int32_t horizontal = (point.x - ui->navigation_press_x) / 2;
-            int32_t scale = 256 - progress * 36 / max_progress;
-            int32_t radius = progress / 4;
-            int32_t translate_y = -progress / 3;
-            int32_t abs_x = horizontal < 0 ? -horizontal : horizontal;
-            int32_t abs_y = translate_y < 0 ? -translate_y : translate_y;
-            int32_t scale_x = 256 -
-                (int32_t)((int64_t)(abs_x + 4) * 512 / ui->display.width);
-            int32_t scale_y = 256 -
-                (int32_t)((int64_t)(abs_y + 4) * 512 / ui->display.height);
-            int32_t inset_x;
-            int32_t inset_y;
-            int32_t min_x;
-            int32_t max_x;
-            int32_t min_y;
-            int32_t max_y;
-            if (scale_x < scale) scale = scale_x;
-            if (scale_y < scale) scale = scale_y;
-            if (scale < 144) scale = 144;
-            inset_x = (int32_t)((int64_t)ui->display.width *
-                                (256 - scale) / 512);
-            inset_y = (int32_t)((int64_t)ui->display.height *
-                                (256 - scale) / 512);
-            min_x = (int32_t)ui->display.safe_insets.left + 4 - inset_x;
-            max_x = inset_x - (int32_t)ui->display.safe_insets.right - 4;
-            min_y = (int32_t)ui->display.safe_insets.top + 4 - inset_y;
-            max_y = inset_y - (int32_t)ui->display.safe_insets.bottom - 4;
-            if (min_x > max_x) {
-                min_x = 0;
-                max_x = 0;
+        if (ui->animations_enabled) {
+            const int32_t max_progress = (int32_t)ui->display.height / 3;
+            const int32_t progress = LV_CLAMP(0, distance, max_progress);
+            /* An integer slide keeps the app attached to the finger without
+             * rasterizing the full subtree into a transformed, masked layer
+             * on each sample. A direct Surface can supply one reusable image. */
+            if (!ui->navigation_from_home) {
+                lv_obj_t* app = application_root(ui);
+                const int32_t y = -progress / 3;
+                if (app != NULL && y != application_y_get(app)) {
+                    if (y != 0) application_motion_capture(ui, app);
+                    application_y_set(app, y);
+                }
             }
-            if (min_y > max_y) {
-                min_y = 0;
-                max_y = 0;
-            }
-            if (horizontal > max_x) horizontal = max_x;
-            if (horizontal < min_x) horizontal = min_x;
-            if (radius > 18) radius = 18;
-            if (translate_y < min_y) translate_y = min_y;
-            if (translate_y > max_y) translate_y = max_y;
-            /* The launcher page already is the system home; moving or scaling
-             * it only produces an empty backdrop. */
-            if (!ui->navigation_from_home)
-                application_motion_set(ui, scale, horizontal, translate_y,
-                                       radius);
             if (ui->navigation_handle != NULL) {
-                /* Feedback only: widen the pill. Moving it vertically would
-                 * clip it against the gesture strip on this LVGL version. */
-                lv_obj_set_width(ui->navigation_handle, 56 + progress / 2);
+                lv_obj_set_width(ui->navigation_handle,
+                                 ui->navigation_handle_width + progress / 3);
             }
         }
 #endif
@@ -5596,13 +6254,10 @@ static void navigation_gesture_event(lv_event_t* event) {
             build_task_switcher(ui);
             application_scale_reset(ui);
         } else {
-            capture_current_task(ui, 0);
-            animate_application(ui, 212, 0,
-                                -(int32_t)ui->display.height / 3,
-                                home_animation_completed);
+            return_to_home(ui);
         }
     } else {
-        animate_application(ui, 256, 0, 0, NULL);
+        animate_application(ui, 256, 0, 0);
     }
     ui->navigation_from_home = 0;
 }
@@ -5764,19 +6419,30 @@ static void make_battery_icon(pxsys_reference_lvgl_t* ui, lv_obj_t* parent,
     lv_obj_set_style_bg_opa(cap, LV_OPA_COVER, 0);
 }
 
+static int status_clock_refresh(pxsys_reference_lvgl_t* ui) {
+    char time[8];
+    if (ui->status_clock == NULL) return 0;
+    snprintf(time, sizeof(time),
+             ui->system_status.time_valid ? "%02u:%02u" : "--:--",
+             (unsigned)ui->system_status.hour, (unsigned)ui->system_status.minute);
+    if (strcmp(time, lv_label_get_text(ui->status_clock)) == 0) return 0;
+    lv_label_set_text(ui->status_clock, time);
+    return 1;
+}
+
 static void build_status_bar(pxsys_reference_lvgl_t* ui,
                              const pxsys_reference_layout_t* layout) {
     lv_obj_t* status = ui->status_bar;
     int reuse = status != NULL;
     if (reuse) lv_obj_clean(status);
     else status = lv_obj_create(ui->root);
-    lv_obj_t* time_label;
     pxsys_rect_t content_area = layout->safe_area;
+    const lv_font_t* clock_font = typography_font(ui, PXSYS_TYPOGRAPHY_LABEL);
     const int show_battery = ui->system_status.battery_valid ||
         (ui->system_status.external_power_supported && ui->system_status.external_power_connected);
     uint32_t content_height =
-        ui->text_font != NULL && ui->text_font->line_height > 0
-            ? (uint32_t)ui->text_font->line_height : 16u;
+        clock_font != NULL && clock_font->line_height > 0
+            ? (uint32_t)clock_font->line_height : 16u;
 #if PXSYS_REFERENCE_UI_BATTERY_PERCENT
     lv_obj_t* percent_label;
     const lv_font_t* percent_font;
@@ -5784,7 +6450,6 @@ static void build_status_bar(pxsys_reference_lvgl_t* ui,
     int32_t percent_width;
 #endif
 #endif
-    char time_text[8];
 #if PXSYS_REFERENCE_UI_BATTERY_PERCENT
     char percent_text[8];
 #endif
@@ -5819,13 +6484,10 @@ static void build_status_bar(pxsys_reference_lvgl_t* ui,
             lv_obj_add_event_cb(status, status_bar_event, LV_EVENT_KEY, ui);
         }
     }
-    snprintf(time_text, sizeof(time_text),
-             ui->system_status.time_valid ? "%02u:%02u" : "--:--",
-             (unsigned)ui->system_status.hour,
-             (unsigned)ui->system_status.minute);
-    time_label = make_label(status, time_text, ui->text_font,
-                            bar_icon_color(ui, 0, PXSYS_COLOR_TEXT_PRIMARY));
-    lv_obj_align(time_label, LV_ALIGN_LEFT_MID,
+    ui->status_clock = make_label(
+        status, "", clock_font, bar_icon_color(ui, 0, PXSYS_COLOR_TEXT_PRIMARY));
+    status_clock_refresh(ui);
+    lv_obj_align(ui->status_clock, LV_ALIGN_LEFT_MID,
                  content_area.x + (int32_t)layout->outer_padding,
                  align_y);
 #if PXSYS_REFERENCE_UI_BATTERY_PERCENT
@@ -5851,8 +6513,7 @@ static void build_status_bar(pxsys_reference_lvgl_t* ui,
                          (int32_t)layout->outer_padding - 29,
                      align_y);
 #if PXSYS_REFERENCE_UI_WIFI || PXSYS_REFERENCE_UI_CELLULAR
-        lv_obj_update_layout(status);
-        percent_width = lv_obj_get_width(percent_label);
+        percent_width = text_width(percent_text, percent_font);
 #endif
     }
 #endif
@@ -5881,22 +6542,42 @@ static void build_status_bar(pxsys_reference_lvgl_t* ui,
 #endif
     if (show_battery)
         make_battery_icon(ui, status, battery_x, center_y);
+    ui->status_bar_rebuild_pending = 0;
+}
+
+static pxa_lvgl_dialog_style_t dialog_style(const pxsys_reference_lvgl_t* ui) {
+    return (pxa_lvgl_dialog_style_t){
+        .surface = color_token(ui, PXSYS_COLOR_SURFACE),
+        .container = color_token(ui, PXSYS_COLOR_SURFACE_CONTAINER_HIGH),
+        .panel = color_token(ui, PXSYS_COLOR_SURFACE_CONTAINER_LOW),
+        .text = color_token(ui, PXSYS_COLOR_TEXT_PRIMARY),
+        .muted = color_token(ui, PXSYS_COLOR_TEXT_SECONDARY),
+        .outline = color_token(ui, PXSYS_COLOR_OUTLINE_VARIANT),
+        .primary = color_token(ui, PXSYS_COLOR_ACCENT),
+        .on_primary = color_token(ui, PXSYS_COLOR_ON_ACCENT),
+        .primary_container = color_token(ui, PXSYS_COLOR_PRIMARY_CONTAINER),
+        .on_primary_container = color_token(ui, PXSYS_COLOR_ON_PRIMARY_CONTAINER),
+        .error_container = color_token(ui, PXSYS_COLOR_ERROR_CONTAINER),
+        .on_error_container = color_token(ui, PXSYS_COLOR_ON_ERROR_CONTAINER),
+        .spacing = ui->theme.base_spacing_px,
+        .radius = ui->theme.base_radius_px,
+        .label_font = typography_font(ui, PXSYS_TYPOGRAPHY_LABEL),
+    };
 }
 
 static void toast_apply_theme(pxsys_reference_lvgl_t* ui,
                               pxsys_toast_tone_t tone) {
-    pxsys_color_token_t border = PXSYS_COLOR_BORDER;
     if (ui->toast == NULL) return;
-    if (tone == PXSYS_TOAST_SUCCESS) border = PXSYS_COLOR_SUCCESS;
-    else if (tone == PXSYS_TOAST_WARNING) border = PXSYS_COLOR_WARNING;
-    else if (tone == PXSYS_TOAST_ERROR) border = PXSYS_COLOR_ERROR;
-    lv_obj_set_style_bg_color(ui->toast,
-                              color_token(ui, PXSYS_COLOR_SURFACE), 0);
-    lv_obj_set_style_border_color(ui->toast, color_token(ui, border), 0);
-    lv_obj_set_style_shadow_color(ui->toast,
-                                  color_token(ui, PXSYS_COLOR_SCRIM), 0);
-    lv_obj_set_style_text_color(ui->toast_label,
-                                color_token(ui, PXSYS_COLOR_TEXT_PRIMARY), 0);
+    pxa_lvgl_dialog_style_t style = dialog_style(ui);
+    pxsys_color_token_t accent;
+    switch (tone) {
+        case PXSYS_TOAST_SUCCESS: accent = PXSYS_COLOR_SUCCESS; break;
+        case PXSYS_TOAST_WARNING: accent = PXSYS_COLOR_WARNING; break;
+        case PXSYS_TOAST_ERROR: accent = PXSYS_COLOR_ERROR; break;
+        default: accent = PXSYS_COLOR_SURFACE_CONTAINER_HIGH; break;
+    }
+    style.container = lv_color_mix(color_token(ui, accent), style.container, LV_OPA_10);
+    pxa_lvgl_toast_style(ui->toast, &style);
 }
 
 static void toast_reposition(pxsys_reference_lvgl_t* ui) {
@@ -5906,21 +6587,39 @@ static void toast_reposition(pxsys_reference_lvgl_t* ui) {
     if (ui->toast == NULL ||
         pxsys_reference_layout_compute(&ui->display, &layout) != PXSYS_STATUS_OK)
         return;
-    max_width = (int32_t)layout.safe_area.width -
-                2 * (int32_t)layout.outer_padding;
-    if (max_width > 420) max_width = 420;
-    if (max_width < 96) max_width = 96;
+    max_width = LV_MIN(ui_px(ui, 388), (int32_t)layout.safe_area.width -
+                      2 * (int32_t)layout.outer_padding);
+    max_width = LV_MAX(max_width, 1);
+    lv_obj_set_style_min_width(ui->toast, LV_MIN(ui_px(ui, 96), max_width), 0);
     lv_obj_set_style_max_width(ui->toast, max_width, 0);
-    lv_obj_set_style_max_width(ui->toast_label, max_width - 24, 0);
-    if (!(ui->active_chrome & PXSYS_REFERENCE_UI_NAVIGATION_BAR) ||
-        !navigation_bar_is_visible(ui)) {
-        bottom_offset = 16;
-    } else if (ui->navigation_mode == PXSYS_NAVIGATION_GESTURES) {
-        bottom_offset = layout.size_class == PXSYS_UI_SIZE_COMPACT ? 26 : 34;
-    } else {
-        bottom_offset = (int32_t)layout.navigation_bar.height + 10;
+    bottom_offset = (int32_t)ui->display.height -
+                    layout.safe_area.y - (int32_t)layout.safe_area.height;
+    if ((ui->active_chrome & PXSYS_REFERENCE_UI_NAVIGATION_BAR) &&
+        navigation_bar_is_visible(ui)) {
+        if (ui->navigation_mode == PXSYS_NAVIGATION_BUTTONS) {
+            bottom_offset = LV_MAX(bottom_offset, (int32_t)layout.navigation_bar.height);
+        } else if (ui->navigation_handle != NULL) {
+            bottom_offset = LV_MAX(bottom_offset, (int32_t)gesture_strip_height(&layout));
+        }
     }
-    lv_obj_align(ui->toast, LV_ALIGN_BOTTOM_MID, 0, -bottom_offset);
+    const int32_t x = layout.safe_area.x +
+        ((int32_t)layout.safe_area.width - (int32_t)ui->display.width) / 2;
+    if (ui->app_ime != NULL && !lv_obj_is_hidden(ui->app_ime)) {
+        lv_area_t keyboard;
+        lv_obj_get_coords(ui->app_ime, &keyboard);
+        /* On short, wide screens the field and its action occupy the gap
+         * just above the keyboard. The center of the header is free. */
+        if (layout.safe_area.width >= (uint32_t)ui_px(ui, 450) &&
+            keyboard.y1 < (int32_t)ui->display.height * 3 / 5) {
+            const int32_t top = status_bar_is_visible(ui)
+                ? layout.status_bar.y + (int32_t)layout.status_bar.height
+                : layout.safe_area.y;
+            lv_obj_align(ui->toast, LV_ALIGN_TOP_MID, x, top + ui_px(ui, 8));
+            return;
+        }
+        bottom_offset = LV_MAX(bottom_offset, (int32_t)ui->display.height - keyboard.y1);
+    }
+    lv_obj_align(ui->toast, LV_ALIGN_BOTTOM_MID, x, -(bottom_offset + ui_px(ui, 12)));
 }
 
 static void toast_restack(pxsys_reference_lvgl_t* ui) {
@@ -5952,10 +6651,6 @@ static void volume_osd_apply_theme(pxsys_reference_lvgl_t* ui) {
     if (ui->volume_osd == NULL) return;
     lv_obj_set_style_bg_color(ui->volume_osd,
                               color_token(ui, PXSYS_COLOR_SURFACE_CONTAINER_HIGH), 0);
-    lv_obj_set_style_border_color(ui->volume_osd,
-                                  color_token(ui, PXSYS_COLOR_BORDER), 0);
-    lv_obj_set_style_shadow_color(ui->volume_osd,
-                                  color_token(ui, PXSYS_COLOR_SCRIM), 0);
     lv_obj_set_style_text_color(ui->volume_osd_icon,
                                 color_token(ui, PXSYS_COLOR_TEXT_PRIMARY), 0);
     lv_obj_set_style_text_color(ui->volume_osd_value,
@@ -5983,27 +6678,27 @@ static void volume_osd_show(pxsys_reference_lvgl_t* ui, uint8_t percent) {
     if (!ui_valid(ui) || ui->parent == NULL ||
         pxsys_reference_layout_compute(&ui->display, &layout) != PXSYS_STATUS_OK)
         return;
-    width = (int32_t)layout.safe_area.width - 12;
-    if (width > 240) width = 240;
-    if (width < 160) width = 160;
-    top = (int32_t)layout.safe_area.y + 8;
+    const int32_t icon_width = ui_px(ui, 16);
+    const int32_t inset = ui_px(ui, 10);
+    const int32_t value_width = ui_px(ui, 40);
+    width = LV_MIN(ui_px(ui, 216), (int32_t)layout.safe_area.width - inset * 2);
+    if (width <= 0) return;
+    top = layout.safe_area.y;
+    if (status_bar_is_visible(ui))
+        top = LV_MAX(top, (int32_t)layout.status_bar.height);
+    top += ui_px(ui, 6);
     if (ui->volume_osd == NULL) {
         ui->volume_osd = lv_obj_create(ui->parent);
         style_plain(ui->volume_osd);
         lv_obj_set_style_bg_opa(ui->volume_osd, LV_OPA_COVER, 0);
-        lv_obj_set_style_radius(ui->volume_osd, 12, 0);
-        lv_obj_set_style_border_width(ui->volume_osd, 1, 0);
-        lv_obj_set_style_shadow_width(ui->volume_osd, 12, 0);
-        lv_obj_set_style_shadow_opa(ui->volume_osd, LV_OPA_30, 0);
-        lv_obj_set_style_pad_all(ui->volume_osd, 0, 0);
-        pxsys_lvgl_remove_flags(ui->volume_osd, LV_OBJ_FLAG_SCROLLABLE);
-        pxsys_lvgl_remove_flags(ui->volume_osd, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_set_style_radius(ui->volume_osd, LV_RADIUS_CIRCLE, 0);
         ui->volume_osd_icon = make_label(ui->volume_osd, LV_SYMBOL_VOLUME_MAX,
-                                          NULL, color_token(ui, PXSYS_COLOR_TEXT_PRIMARY));
-        lv_obj_set_pos(ui->volume_osd_icon, 12, 13);
+            typography_font(ui, PXSYS_TYPOGRAPHY_LABEL),
+            color_token(ui, PXSYS_COLOR_TEXT_PRIMARY));
+        lv_obj_align(ui->volume_osd_icon, LV_ALIGN_LEFT_MID, inset, 0);
         ui->volume_osd_bar = lv_bar_create(ui->volume_osd);
-        lv_obj_set_pos(ui->volume_osd_bar, 40, 20);
-        lv_obj_set_height(ui->volume_osd_bar, 8);
+        lv_obj_align(ui->volume_osd_bar, LV_ALIGN_LEFT_MID, inset * 2 + icon_width, 0);
+        lv_obj_set_height(ui->volume_osd_bar, ui_px(ui, 6));
         lv_bar_set_range(ui->volume_osd_bar, 0, 100);
         lv_obj_set_style_radius(ui->volume_osd_bar, LV_RADIUS_CIRCLE,
                                  LV_PART_MAIN);
@@ -6012,19 +6707,21 @@ static void volume_osd_show(pxsys_reference_lvgl_t* ui, uint8_t percent) {
         ui->volume_osd_value = make_label(
             ui->volume_osd, "", typography_font(ui, PXSYS_TYPOGRAPHY_LABEL),
             color_token(ui, PXSYS_COLOR_TEXT_PRIMARY));
-        lv_obj_set_pos(ui->volume_osd_value, width - 48, 12);
-        lv_obj_set_width(ui->volume_osd_value, 40);
+        lv_obj_set_width(ui->volume_osd_value, value_width);
+        lv_obj_align(ui->volume_osd_value, LV_ALIGN_RIGHT_MID, -inset, 0);
         lv_obj_set_style_text_align(ui->volume_osd_value, LV_TEXT_ALIGN_RIGHT, 0);
+        volume_osd_apply_theme(ui);
     }
-    lv_obj_set_size(ui->volume_osd, width, 48);
-    lv_obj_align(ui->volume_osd, LV_ALIGN_TOP_MID, 0, top);
-    lv_obj_set_width(ui->volume_osd_bar, width - 98);
-    lv_obj_set_x(ui->volume_osd_value, width - 48);
-    lv_label_set_text(ui->volume_osd_icon,
-                      percent == 0 ? LV_SYMBOL_MUTE : LV_SYMBOL_VOLUME_MAX);
+    lv_obj_set_size(ui->volume_osd, width, ui_px(ui, 36));
+    lv_obj_align(ui->volume_osd, LV_ALIGN_TOP_MID,
+        layout.safe_area.x + ((int32_t)layout.safe_area.width - (int32_t)ui->display.width) / 2,
+        top);
+    lv_obj_set_width(ui->volume_osd_bar,
+        LV_MAX(1, width - inset * 4 - icon_width - value_width));
+    lv_label_set_text_static(ui->volume_osd_icon,
+                             percent == 0 ? LV_SYMBOL_MUTE : LV_SYMBOL_VOLUME_MAX);
     lv_bar_set_value(ui->volume_osd_bar, percent, LV_ANIM_OFF);
     lv_label_set_text_fmt(ui->volume_osd_value, "%u%%", (unsigned)percent);
-    volume_osd_apply_theme(ui);
     pxsys_lvgl_remove_flags(ui->volume_osd, LV_OBJ_FLAG_HIDDEN);
     volume_osd_restack(ui);
     ui->volume_osd_visible = 1;
@@ -6041,6 +6738,7 @@ static void volume_osd_show(pxsys_reference_lvgl_t* ui, uint8_t percent) {
 static void toast_hide(lv_timer_t* timer) {
     pxsys_reference_lvgl_t* ui =
         (pxsys_reference_lvgl_t*)lv_timer_get_user_data(timer);
+    lv_timer_pause(timer);
     if (!ui_valid(ui) || ui->toast == NULL || !ui->toast_visible) return;
     ui->toast_visible = 0;
     pxsys_lvgl_add_flags(ui->toast, LV_OBJ_FLAG_HIDDEN);
@@ -6051,87 +6749,45 @@ static void toast_posted(void* context, const pxsys_toast_message_t* toast) {
     pxsys_reference_lvgl_t* ui = (pxsys_reference_lvgl_t*)context;
     uint32_t duration;
     if (!ui_valid(ui) || toast == NULL) return;
-    if (ui->toast == NULL) {
-        ui->toast = lv_obj_create(ui->parent);
-        lv_obj_set_size(ui->toast, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
-        lv_obj_set_style_min_width(ui->toast, 120, 0);
-        lv_obj_set_style_min_height(ui->toast, 42, 0);
-        lv_obj_set_style_radius(ui->toast, ui->theme.base_radius_px * 3u, 0);
-        lv_obj_set_style_border_width(ui->toast, 1, 0);
-        lv_obj_set_style_pad_hor(ui->toast, 12, 0);
-        lv_obj_set_style_pad_ver(ui->toast, 9, 0);
-        lv_obj_set_style_shadow_width(ui->toast, 14, 0);
-        lv_obj_set_style_shadow_opa(ui->toast, LV_OPA_30, 0);
-        lv_obj_set_style_shadow_offset_y(ui->toast, 4, 0);
-        pxsys_lvgl_remove_flags(ui->toast, LV_OBJ_FLAG_SCROLLABLE);
-        pxsys_lvgl_remove_flags(ui->toast, LV_OBJ_FLAG_CLICKABLE);
-        ui->toast_label = make_label(ui->toast, "",
-                                     typography_font(ui, PXSYS_TYPOGRAPHY_BODY),
-                                     color_token(ui, PXSYS_COLOR_TEXT_PRIMARY));
-        lv_label_set_long_mode(ui->toast_label, LV_LABEL_LONG_MODE_WRAP);
-        lv_obj_set_style_text_align(ui->toast_label, LV_TEXT_ALIGN_CENTER, 0);
-        lv_obj_center(ui->toast_label);
-    }
-    lv_label_set_text_fmt(ui->toast_label, "%.*s", (int)toast->message.size,
-                          toast->message.data);
-    toast_apply_theme(ui, toast->tone);
-    ui->toast_tone = toast->tone;
-    toast_reposition(ui);
-    pxsys_lvgl_remove_flags(ui->toast, LV_OBJ_FLAG_HIDDEN);
-    toast_restack(ui);
-    ui->toast_visible = 1;
-    update_system_overlay(ui);
-    lv_anim_delete(ui->toast, NULL);
-    lv_obj_set_style_opa(ui->toast, LV_OPA_COVER, 0);
-#if PXSYS_REFERENCE_UI_ENABLE_ANIMATIONS
-    if (ui->animations_enabled) {
-        lv_obj_set_style_opa(ui->toast, LV_OPA_TRANSP, 0);
-        lv_obj_fade_in(ui->toast, 140, 0);
-    }
-#endif
     duration = toast->duration_ms == 0 ? 2500 : toast->duration_ms;
     if (ui->toast_timer == NULL)
         ui->toast_timer = lv_timer_create(toast_hide, duration, ui);
-    else {
-        lv_timer_set_period(ui->toast_timer, duration);
-        lv_timer_reset(ui->toast_timer);
+    if (ui->toast_timer == NULL) return;
+    const bool create = ui->toast == NULL;
+    if (ui->toast == NULL) {
+        ui->toast = lv_label_create(ui->parent);
+        lv_obj_set_size(ui->toast, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
     }
-}
-
-#if PXSYS_REFERENCE_UI_BUILTIN_SETTINGS
-
-static void page_content_init(pxsys_reference_lvgl_t* ui,
-                              const pxsys_reference_layout_t* layout) {
-    lv_obj_set_layout(ui->content, LV_LAYOUT_FLEX);
-    lv_obj_set_flex_flow(ui->content, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_style_pad_row(
-        ui->content,
-        layout->size_class == PXSYS_UI_SIZE_COMPACT ? 8 : 10, 0);
-    lv_obj_set_style_pad_bottom(ui->content, 8, 0);
-    pxsys_lvgl_add_flags(ui->content,
-                    LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_set_scroll_dir(ui->content, LV_DIR_VER);
-    lv_obj_set_scrollbar_mode(ui->content, LV_SCROLLBAR_MODE_AUTO);
-}
-
-static pxa_lvgl_dialog_style_t dialog_style(const pxsys_reference_lvgl_t* ui) {
-    return (pxa_lvgl_dialog_style_t){
-        .surface = color_token(ui, PXSYS_COLOR_SURFACE),
-        .container = color_token(ui, PXSYS_COLOR_SURFACE_CONTAINER),
-        .panel = color_token(ui, PXSYS_COLOR_SURFACE_CONTAINER_HIGH),
-        .text = color_token(ui, PXSYS_COLOR_TEXT_PRIMARY),
-        .muted = color_token(ui, PXSYS_COLOR_TEXT_SECONDARY),
-        .outline = color_token(ui, PXSYS_COLOR_OUTLINE_VARIANT),
-        .primary = color_token(ui, PXSYS_COLOR_ACCENT),
-        .on_primary = color_token(ui, PXSYS_COLOR_ON_ACCENT),
-        .primary_container = color_token(ui, PXSYS_COLOR_PRIMARY_CONTAINER),
-        .on_primary_container = color_token(ui, PXSYS_COLOR_ON_PRIMARY_CONTAINER),
-        .error_container = color_token(ui, PXSYS_COLOR_ERROR_CONTAINER),
-        .on_error_container = color_token(ui, PXSYS_COLOR_ON_ERROR_CONTAINER),
-        .spacing = ui->theme.base_spacing_px,
-        .radius = ui->theme.base_radius_px,
-        .label_font = typography_font(ui, PXSYS_TYPOGRAPHY_LABEL),
-    };
+    const char* prefix = "";
+    switch (toast->tone) {
+        case PXSYS_TOAST_SUCCESS: prefix = LV_SYMBOL_OK "  "; break;
+        case PXSYS_TOAST_WARNING: prefix = LV_SYMBOL_WARNING "  "; break;
+        case PXSYS_TOAST_ERROR: prefix = LV_SYMBOL_CLOSE "  "; break;
+        default: break;
+    }
+    const size_t prefix_size = strlen(prefix);
+    const char* shown = lv_label_get_text(ui->toast);
+    const bool text_changed = strlen(shown) != prefix_size + toast->message.size ||
+        memcmp(shown, prefix, prefix_size) != 0 ||
+        memcmp(shown + prefix_size, toast->message.data, toast->message.size) != 0;
+    if (text_changed)
+        lv_label_set_text_fmt(ui->toast, "%s%.*s", prefix, (int)toast->message.size,
+                              toast->message.data);
+    const bool tone_changed = create || ui->toast_tone != toast->tone;
+    if (tone_changed) toast_apply_theme(ui, toast->tone);
+    ui->toast_tone = toast->tone;
+    if (!ui->toast_visible) {
+        toast_reposition(ui);
+        pxsys_lvgl_remove_flags(ui->toast, LV_OBJ_FLAG_HIDDEN);
+        toast_restack(ui);
+        ui->toast_visible = 1;
+        update_system_overlay(ui);
+    } else if (text_changed || tone_changed) {
+        update_system_overlay(ui);
+    }
+    lv_timer_set_period(ui->toast_timer, duration);
+    lv_timer_reset(ui->toast_timer);
+    lv_timer_resume(ui->toast_timer);
 }
 
 static lv_obj_t* make_page_button(pxsys_reference_lvgl_t* ui, lv_obj_t* parent,
@@ -6139,6 +6795,7 @@ static lv_obj_t* make_page_button(pxsys_reference_lvgl_t* ui, lv_obj_t* parent,
                                   lv_event_cb_t clicked, void* user_data) {
     const pxa_lvgl_dialog_style_t style = dialog_style(ui);
     lv_obj_t* button = lv_button_create(parent);
+    if (button == NULL) return NULL;
     navigation_tag_focus(button, text);
     lv_obj_set_width(button, LV_PCT(100));
     lv_obj_set_height(button, ui_px(ui, 42));
@@ -6146,32 +6803,51 @@ static lv_obj_t* make_page_button(pxsys_reference_lvgl_t* ui, lv_obj_t* parent,
     lv_obj_t* label = lv_label_create(button);
     lv_label_set_text(label, text);
     lv_label_set_long_mode(label, LV_LABEL_LONG_MODE_DOTS);
-    lv_obj_set_width(label, LV_PCT(100));
-    lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_center(label);
+    pxa_lvgl_dialog_center_action_label(label);
     if (clicked != NULL)
         lv_obj_add_event_cb(button, clicked, LV_EVENT_CLICKED, user_data);
     return button;
 }
 
+#if PXSYS_REFERENCE_UI_BUILTIN_SETTINGS
+
+static void style_settings_text_field(pxsys_reference_lvgl_t* ui, lv_obj_t* field) {
+    lv_obj_set_width(field, LV_PCT(100));
+    lv_obj_set_style_pad_hor(field, ui_px(ui, 12), 0);
+    lv_obj_set_style_pad_ver(field, ui_px(ui, 9), 0);
+    lv_obj_set_style_radius(field, ui_px(ui, 9), 0);
+    lv_obj_set_style_bg_color(field, color_token(ui, PXSYS_COLOR_SURFACE_CONTAINER_HIGH), 0);
+    lv_obj_set_style_border_width(field, 1, 0);
+    lv_obj_set_style_border_color(field, color_token(ui, PXSYS_COLOR_OUTLINE_VARIANT), 0);
+    lv_obj_set_style_border_color(field, color_token(ui, PXSYS_COLOR_ACCENT), LV_STATE_FOCUSED);
+    lv_obj_set_style_text_font(field, typography_font(ui, PXSYS_TYPOGRAPHY_BODY), 0);
+    lv_obj_set_style_text_color(field, color_token(ui, PXSYS_COLOR_TEXT_PRIMARY), 0);
+    lv_obj_set_style_text_color(field, color_token(ui, PXSYS_COLOR_TEXT_SECONDARY),
+                                LV_PART_TEXTAREA_PLACEHOLDER);
+    lv_obj_set_style_border_color(field, color_token(ui, PXSYS_COLOR_ACCENT),
+                                  LV_PART_CURSOR | LV_STATE_FOCUSED);
+}
+
 /* ---------------------------------------------------------------- Sound */
 
-static void make_level_control_block(pxsys_reference_lvgl_t* ui,
+static lv_obj_t* make_level_control_block(pxsys_reference_lvgl_t* ui,
                                      lv_obj_t* section, const char* title,
                                      pxsys_level_control_t control,
                                      uint8_t value,
+                                     bool share_width,
                                      level_control_t* context) {
     lv_obj_t* block = lv_obj_create(section);
     lv_obj_t* label;
     lv_obj_t* slider;
     int32_t minimum = control == PXSYS_LEVEL_CONTROL_BRIGHTNESS ? 2 : 0;
     style_plain(block);
-    lv_obj_set_width(block, LV_PCT(100));
+    lv_obj_set_width(block, share_width ? 0 : LV_PCT(100));
+    if (share_width) lv_obj_set_flex_grow(block, 1);
     lv_obj_set_height(block, LV_SIZE_CONTENT);
     lv_obj_set_layout(block, LV_LAYOUT_FLEX);
     lv_obj_set_flex_flow(block, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_style_pad_all(block, 10, 0);
-    lv_obj_set_style_pad_row(block, 8, 0);
+    lv_obj_set_style_pad_all(block, ui_px(ui, 12), 0);
+    lv_obj_set_style_pad_row(block, ui_px(ui, 10), 0);
     pxsys_lvgl_add_flags(block, LV_OBJ_FLAG_CLICKABLE);
     label = make_label(block, title,
                        typography_font(ui, PXSYS_TYPOGRAPHY_LABEL),
@@ -6179,6 +6855,8 @@ static void make_level_control_block(pxsys_reference_lvgl_t* ui,
     lv_obj_set_width(label, LV_PCT(100));
     slider = lv_slider_create(block);
     lv_obj_set_width(slider, LV_PCT(100));
+    lv_obj_set_height(slider, ui_px(ui, 8));
+    lv_obj_set_ext_click_area(slider, ui_px(ui, 9));
     lv_slider_set_range(slider, minimum, 100);
     lv_slider_set_value(slider, value < minimum ? minimum : value,
                         LV_ANIM_OFF);
@@ -6188,10 +6866,12 @@ static void make_level_control_block(pxsys_reference_lvgl_t* ui,
                               LV_PART_INDICATOR);
     lv_obj_set_style_bg_color(slider, color_token(ui, PXSYS_COLOR_ACCENT),
                               LV_PART_KNOB);
+    lv_obj_set_style_shadow_width(slider, 0, LV_PART_KNOB);
     context->ui = ui;
     context->control = control;
     lv_obj_add_event_cb(slider, control_level_released, LV_EVENT_RELEASED,
                         context);
+    return slider;
 }
 
 static const uint16_t kDimTimeouts[] = {15, 30, 60, 120, 300, 600};
@@ -6254,19 +6934,26 @@ static void build_sound_settings(pxsys_reference_lvgl_t* ui,
     if (ui->system_status.volume_supported ||
         ui->system_status.brightness_supported) {
         lv_obj_t* section = make_settings_section(
-            ui, translated(ui, "settings.section.device", "Device"));
+            ui, ui->content, translated(ui, "settings.section.device", "Device"));
+        const bool side_by_side = layout->content.width >= (uint32_t)ui_px(ui, 500) &&
+            ui->system_status.volume_supported && ui->system_status.brightness_supported;
+        if (side_by_side) {
+            lv_obj_set_flex_flow(section, LV_FLEX_FLOW_ROW);
+            lv_obj_set_style_pad_column(section, ui_px(ui, 6), 0);
+        }
         if (ui->system_status.volume_supported) {
-            make_level_control_block(
+            ui->settings_volume = make_level_control_block(
                 ui, section, translated(ui, "settings.sound.volume", "Volume"),
                 PXSYS_LEVEL_CONTROL_VOLUME, ui->system_status.volume_percent,
-                &ui->level_controls[0]);
+                side_by_side, &ui->level_controls[0]);
         }
         if (ui->system_status.brightness_supported) {
-            make_level_control_block(
+            ui->settings_brightness = make_level_control_block(
                 ui, section,
                 translated(ui, "settings.sound.brightness", "Brightness"),
                 PXSYS_LEVEL_CONTROL_BRIGHTNESS,
-                ui->system_status.brightness_percent, &ui->level_controls[1]);
+                ui->system_status.brightness_percent, side_by_side,
+                &ui->level_controls[1]);
         }
     } else {
         lv_obj_t* label = make_label(
@@ -6279,7 +6966,7 @@ static void build_sound_settings(pxsys_reference_lvgl_t* ui,
     }
     if (idle_policy_valid(&ui->idle_policy) && ui->idle_save != NULL) {
         lv_obj_t* section = make_settings_section(
-            ui, translated(ui, "settings.sound.idle", "Display timeout"));
+            ui, ui->content, translated(ui, "settings.sound.idle", "Display timeout"));
         char subtitle[48];
         lv_obj_t* row;
         if (ui->idle_dim != NULL && ui->system_status.brightness_supported) {
@@ -6341,26 +7028,25 @@ typedef struct {
     const char* section_default;
     const char* label_key;
     const char* label_default;
-    const char* symbol;
     pxsys_reference_device_field_t field;
 } device_info_row_t;
 
 static const device_info_row_t kDeviceInfoRows[] = {
     {"settings.about.section.system", "System", "settings.about.firmware.name",
-     "Firmware", LV_SYMBOL_SETTINGS, PXSYS_REFERENCE_DEVICE_FIRMWARE_NAME},
+     "Firmware", PXSYS_REFERENCE_DEVICE_FIRMWARE_NAME},
     {"settings.about.section.system", "System",
-     "settings.about.firmware.version", "Firmware version", LV_SYMBOL_UPLOAD,
+     "settings.about.firmware.version", "Firmware version",
      PXSYS_REFERENCE_DEVICE_FIRMWARE_VERSION},
     {"settings.about.section.system", "System",
-     "settings.about.system.version", "System version", LV_SYMBOL_LIST,
+     "settings.about.system.version", "System version",
      PXSYS_REFERENCE_DEVICE_SYSTEM_VERSION},
     {"settings.about.section.system", "System", "settings.about.display",
-     "Display", LV_SYMBOL_IMAGE, PXSYS_REFERENCE_DEVICE_DISPLAY},
+     "Display", PXSYS_REFERENCE_DEVICE_DISPLAY},
     {"settings.about.section.memory", "Memory & storage",
-     "settings.about.memory", "Memory", LV_SYMBOL_DRIVE,
+     "settings.about.memory", "Memory",
      PXSYS_REFERENCE_DEVICE_MEMORY},
     {"settings.about.section.memory", "Memory & storage",
-     "settings.about.storage", "Storage", LV_SYMBOL_SD_CARD,
+     "settings.about.storage", "Storage",
      PXSYS_REFERENCE_DEVICE_STORAGE},
 };
 
@@ -6389,20 +7075,30 @@ static void build_device_info_page(pxsys_reference_lvgl_t* ui,
     if (ui->device_info == NULL) return;
     memset(values, 0, sizeof(values));
     ui->device_info(ui->device_info_context, values);
+    const bool has_system = values[PXSYS_REFERENCE_DEVICE_FIRMWARE_NAME][0] ||
+        values[PXSYS_REFERENCE_DEVICE_FIRMWARE_VERSION][0] ||
+        values[PXSYS_REFERENCE_DEVICE_SYSTEM_VERSION][0] ||
+        values[PXSYS_REFERENCE_DEVICE_DISPLAY][0];
+    const bool has_storage = values[PXSYS_REFERENCE_DEVICE_MEMORY][0] ||
+        values[PXSYS_REFERENCE_DEVICE_STORAGE][0];
+    lv_obj_t* columns[2];
+    make_settings_columns(ui, layout, has_system && has_storage, columns);
     for (index = 0; index < sizeof(kDeviceInfoRows) / sizeof(kDeviceInfoRows[0]);
          ++index) {
         const device_info_row_t* row = &kDeviceInfoRows[index];
         if (values[row->field][0] == '\0') continue;
         if (section_key == NULL || strcmp(section_key, row->section_key) != 0) {
+            const bool storage = row->field == PXSYS_REFERENCE_DEVICE_MEMORY ||
+                                 row->field == PXSYS_REFERENCE_DEVICE_STORAGE;
             section = make_settings_section(
-                ui, translated(ui, row->section_key, row->section_default));
+                ui, columns[storage], translated(ui, row->section_key, row->section_default));
             section_key = row->section_key;
         }
         const bool unlock_row = !ui->developer_unlocked &&
             ui->performance_get != NULL && ui->performance_set != NULL &&
             row->field == PXSYS_REFERENCE_DEVICE_SYSTEM_VERSION;
         (void)make_settings_row(
-            ui, layout, section, row->symbol, PXSYS_COLOR_ACCENT,
+            ui, layout, section, NULL, PXSYS_COLOR_ACCENT,
             translated(ui, row->label_key, row->label_default),
             values[row->field],
             unlock_row ? system_version_clicked : NULL, unlock_row ? ui : NULL);
@@ -6411,7 +7107,7 @@ static void build_device_info_page(pxsys_reference_lvgl_t* ui,
         ui->performance_set == NULL)
         return;
     section = make_settings_section(
-        ui, translated(ui, "settings.section.developer", "Developer"));
+        ui, columns[1], translated(ui, "settings.section.developer", "Developer"));
     make_performance_setting(
         ui, layout, section, PXSYS_REFERENCE_PERFORMANCE_OVERLAY,
         translated(ui, "settings.performance.overlay", "Performance overlay"),
@@ -6450,6 +7146,17 @@ static void page_close_dialogs(pxsys_reference_lvgl_t* ui) {
     }
 }
 
+static void page_dismiss_dialog(pxsys_reference_lvgl_t* ui) {
+    if (!ui_valid(ui)) return;
+    if (ui->confirm_dialog != NULL) {
+        lv_obj_delete(ui->confirm_dialog);
+        ui->confirm_dialog = NULL;
+        if (ui->app_dialog != NULL) lv_obj_set_hidden(ui->app_dialog, false);
+    } else {
+        page_close_dialogs(ui);
+    }
+}
+
 static lv_obj_t* make_page_dialog(pxsys_reference_lvgl_t* ui,
                                   const pxsys_reference_layout_t* layout,
                                   lv_obj_t** out_panel) {
@@ -6457,29 +7164,43 @@ static lv_obj_t* make_page_dialog(pxsys_reference_lvgl_t* ui,
     lv_obj_t* panel;
     style_plain(dialog);
     lv_obj_set_size(dialog, LV_PCT(100), LV_PCT(100));
-    lv_obj_set_style_bg_color(dialog, color_token(ui, PXSYS_COLOR_SCRIM), 0);
-    lv_obj_set_style_bg_opa(dialog, LV_OPA_60, 0);
-    pxsys_lvgl_add_flags(dialog, LV_OBJ_FLAG_CLICKABLE);
+    pxa_lvgl_dialog_scrim_style(dialog, color_token(ui, PXSYS_COLOR_SCRIM));
     panel = lv_obj_create(dialog);
     style_plain(panel);
-    lv_obj_set_width(panel, LV_PCT(88));
+    lv_obj_set_width(panel, LV_MIN((int32_t)layout->content.width, ui_px(ui, 424)));
     lv_obj_set_height(panel, LV_SIZE_CONTENT);
     lv_obj_set_style_max_height(panel, (lv_coord_t)layout->content.height, 0);
-    lv_obj_align(panel, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_align(panel, LV_ALIGN_CENTER,
+                 layout->content.x + ((int32_t)layout->content.width - (int32_t)ui->display.width) / 2,
+                 layout->content.y + ((int32_t)layout->content.height - (int32_t)ui->display.height) / 2);
     const pxa_lvgl_dialog_style_t style = dialog_style(ui);
     pxa_lvgl_dialog_panel_style(panel, &style);
     lv_obj_set_layout(panel, LV_LAYOUT_FLEX);
     lv_obj_set_flex_flow(panel, LV_FLEX_FLOW_COLUMN);
     pxsys_lvgl_add_flags(panel, LV_OBJ_FLAG_CLICKABLE);
-    pxsys_lvgl_add_flags(panel,
-                    LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_SCROLL_ELASTIC);
+    pxsys_lvgl_add_flags(panel, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_scroll_dir(panel, LV_DIR_VER);
+    lv_obj_set_scrollbar_mode(panel, LV_SCROLLBAR_MODE_AUTO);
     style_scrollbar(ui, panel);
     *out_panel = panel;
     lv_obj_move_foreground(dialog);
     if (ui->status_bar != NULL) lv_obj_move_foreground(ui->status_bar);
     if (ui->navigation_bar != NULL) lv_obj_move_foreground(ui->navigation_bar);
     return dialog;
+}
+
+static lv_obj_t* make_dialog_actions(pxsys_reference_lvgl_t* ui, lv_obj_t* panel,
+                                     const pxsys_reference_layout_t* layout) {
+    if (layout->content.width < (uint32_t)ui_px(ui, 400)) return panel;
+    lv_obj_t* actions = lv_obj_create(panel);
+    style_plain(actions);
+    lv_obj_set_size(actions, LV_PCT(100), LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(actions, LV_FLEX_FLOW_ROW_WRAP);
+    lv_obj_set_flex_align(actions, LV_FLEX_ALIGN_SPACE_BETWEEN,
+                         LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+    lv_obj_set_style_pad_row(actions, ui_px(ui, 6), 0);
+    lv_obj_set_style_pad_column(actions, ui_px(ui, 6), 0);
+    return actions;
 }
 
 static void page_dialog_scrim_clicked(lv_event_t* event);
@@ -6584,7 +7305,8 @@ static void show_idle_timeout_choices(pxsys_reference_lvgl_t* ui,
 
 static void wifi_scan_clicked(lv_event_t* event) {
     pxsys_reference_lvgl_t* ui = (pxsys_reference_lvgl_t*)lv_event_get_user_data(event);
-    if (!ui_valid(ui) || ui->wifi_network_list == NULL) return;
+    if (!ui_valid(ui) || ui->wifi_network_list == NULL ||
+        ui->wifi_scan_state == PXSYS_REFERENCE_WIFI_SCANNING) return;
     if (ui->wifi_scan_start != NULL) {
         ui->wifi_scan_state = PXSYS_REFERENCE_WIFI_SCANNING;
         ui->wifi_scan_start(ui->wifi_context);
@@ -6594,6 +7316,8 @@ static void wifi_scan_clicked(lv_event_t* event) {
         ui->wifi_scan_state = ui->wifi_scan(ui->wifi_context, ui->wifi_networks,
                                             PXSYS_REFERENCE_WIFI_NETWORK_MAX);
         wifi_render_networks(ui, ui->wifi_scan_state);
+        if (ui->wifi_scan_state == PXSYS_REFERENCE_WIFI_SCANNING &&
+            ui->wifi_scan_timer != NULL) lv_timer_resume(ui->wifi_scan_timer);
     }
 }
 
@@ -6782,6 +7506,7 @@ static void app_input_method_close(pxsys_reference_lvgl_t* ui) {
         ui->app_ime = NULL;
         ui->app_ime_target = NULL;
         if (wifi_input_active) wifi_input_restore_viewport(ui);
+        if (ui->toast_visible) toast_reposition(ui);
         update_system_overlay(ui);
         return;
     }
@@ -6790,6 +7515,7 @@ static void app_input_method_close(pxsys_reference_lvgl_t* ui) {
     ui->app_ime=NULL;
     ui->app_ime_target = NULL;
     if (wifi_input_active) wifi_input_restore_viewport(ui);
+    if (ui->toast_visible) toast_reposition(ui);
     update_system_overlay(ui);
 }
 
@@ -6836,6 +7562,7 @@ static void app_input_method_open(pxsys_reference_lvgl_t *ui,lv_obj_t *target) {
     lv_obj_add_event_cb(target,app_input_method_target_deleted,LV_EVENT_DELETE,ui);
     ui->app_ime=pxsys_reference_ime_get_root(ui->app_ime_keypad);
     ui->app_ime_target=target;
+    if (ui->toast_visible) toast_reposition(ui);
     update_system_overlay(ui);
     if (target==ui->wifi_password_input)
         wifi_input_fit_above_keyboard(ui,pxsys_reference_ime_keyboard_top(ui->app_ime_keypad));
@@ -6979,6 +7706,7 @@ static void wifi_render_networks(pxsys_reference_lvgl_t* ui, size_t count) {
                            typography_font(ui, PXSYS_TYPOGRAPHY_BODY),
                            color_token(ui, PXSYS_COLOR_TEXT_SECONDARY));
         lv_obj_set_width(label, LV_PCT(100));
+        lv_obj_set_style_pad_all(label, ui_px(ui, 10), 0);
     }
     for (size_t index = 0; index < count; ++index) {
         char detail[48];
@@ -7005,7 +7733,11 @@ static void wifi_scan_poll(lv_timer_t* timer) {
     size_t count;
     if (!ui_valid(ui) || ui->active_page != REFERENCE_PAGE_WIFI ||
         ui->wifi_input_stage != 0 || ui->wifi_network_list == NULL ||
-        ui->wifi_scan == NULL) return;
+        ui->wifi_scan == NULL) {
+        lv_timer_pause(timer);
+        return;
+    }
+    if (status_interaction_active(ui)) return;
     count = ui->wifi_scan(ui->wifi_context, ui->wifi_networks, PXSYS_REFERENCE_WIFI_NETWORK_MAX);
     ui->wifi_scan_state = count;
     if (count != PXSYS_REFERENCE_WIFI_SCANNING) {
@@ -7034,11 +7766,7 @@ static void build_wifi_page(pxsys_reference_lvgl_t* ui,
     lv_obj_t* label;
     lv_obj_t* button;
     char connected_ssid[PXSYS_REFERENCE_WIFI_SSID_MAX] = {0};
-    lv_obj_set_layout(ui->content, LV_LAYOUT_FLEX);
-    lv_obj_set_flex_flow(ui->content, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_style_pad_row(ui->content, 10, 0);
-    lv_obj_set_scroll_dir(ui->content, LV_DIR_VER);
-    pxsys_lvgl_add_flags(ui->content, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+    page_content_init(ui, layout);
     if (ui->wifi_input_stage != 0) {
         const int entering_ssid = ui->wifi_input_stage == 1;
         label = make_label(ui->content,
@@ -7058,7 +7786,7 @@ static void build_wifi_page(pxsys_reference_lvgl_t* ui,
             lv_obj_set_width(label, LV_PCT(100));
         }
         ui->wifi_password_input = lv_textarea_create(ui->content);
-        lv_obj_set_width(ui->wifi_password_input, LV_PCT(100));
+        style_settings_text_field(ui, ui->wifi_password_input);
         lv_textarea_set_one_line(ui->wifi_password_input, true);
         lv_textarea_set_password_mode(ui->wifi_password_input, !entering_ssid);
         lv_textarea_set_max_length(ui->wifi_password_input, entering_ssid ? 32 : 64);
@@ -7068,8 +7796,6 @@ static void build_wifi_page(pxsys_reference_lvgl_t* ui,
                                           "settings.wifi.password",
                        entering_ssid ? "Network name (SSID)" : "Enter Wi-Fi password"));
         lv_textarea_set_text(ui->wifi_password_input, ui->wifi_input_draft);
-        lv_obj_set_style_text_font(ui->wifi_password_input,
-                                   typography_font(ui, PXSYS_TYPOGRAPHY_BODY), 0);
         lv_obj_add_event_cb(ui->wifi_password_input, wifi_keyboard_event,
                             LV_EVENT_READY, ui);
         ui->wifi_input_error = make_label(
@@ -7092,12 +7818,9 @@ static void build_wifi_page(pxsys_reference_lvgl_t* ui,
     if (ui->wifi_current != NULL &&
         ui->wifi_current(ui->wifi_context, connected_ssid,
                          sizeof(connected_ssid)) && connected_ssid[0] != '\0') {
-        label = make_label(ui->content,
-                           translated(ui, "settings.wifi.connected", "Connected network"),
-                           typography_font(ui, PXSYS_TYPOGRAPHY_TITLE),
-                           color_token(ui, PXSYS_COLOR_TEXT_PRIMARY));
-        lv_obj_set_width(label, LV_PCT(100));
-        (void)make_settings_row(ui, layout, ui->content, LV_SYMBOL_WIFI,
+        lv_obj_t* connected = make_settings_section(
+            ui, ui->content, translated(ui, "settings.wifi.connected", "Connected network"));
+        (void)make_settings_row(ui, layout, connected, LV_SYMBOL_WIFI,
                                 PXSYS_COLOR_SUCCESS, connected_ssid,
                                 translated(ui, "state.connected", "Connected"),
                                 NULL, NULL);
@@ -7107,32 +7830,31 @@ static void build_wifi_page(pxsys_reference_lvgl_t* ui,
             ui->wifi_context, ui->wifi_saved, PXSYS_REFERENCE_WIFI_NETWORK_MAX);
         if (ui->wifi_saved_count > PXSYS_REFERENCE_WIFI_NETWORK_MAX)
             ui->wifi_saved_count = PXSYS_REFERENCE_WIFI_NETWORK_MAX;
-        label = make_label(ui->content,
-                           translated(ui, "settings.wifi.saved", "Saved networks"),
-                           typography_font(ui, PXSYS_TYPOGRAPHY_TITLE),
-                           color_token(ui, PXSYS_COLOR_TEXT_PRIMARY));
-        lv_obj_set_width(label, LV_PCT(100));
+        lv_obj_t* saved = make_settings_section(
+            ui, ui->content, translated(ui, "settings.wifi.saved", "Saved networks"));
         if (ui->wifi_forget_failed) {
-            label = make_label(ui->content,
+            label = make_label(saved,
                                translated(ui, "settings.wifi.forget.failed",
                                           "Could not forget network"),
                                typography_font(ui, PXSYS_TYPOGRAPHY_BODY),
                                color_token(ui, PXSYS_COLOR_ERROR));
             lv_obj_set_width(label, LV_PCT(100));
+            lv_obj_set_style_pad_all(label, ui_px(ui, 10), 0);
         }
         if (ui->wifi_saved_count == 0) {
-            label = make_label(ui->content,
+            label = make_label(saved,
                                translated(ui, "settings.wifi.saved.none",
                                           "No saved networks"),
                                typography_font(ui, PXSYS_TYPOGRAPHY_BODY),
                                color_token(ui, PXSYS_COLOR_TEXT_SECONDARY));
             lv_obj_set_width(label, LV_PCT(100));
+            lv_obj_set_style_pad_all(label, ui_px(ui, 10), 0);
         }
         for (size_t index = 0; index < ui->wifi_saved_count; ++index) {
             ui->wifi_saved_controls[index].ui = ui;
             ui->wifi_saved_controls[index].index = index;
             (void)make_settings_row(
-                ui, layout, ui->content, LV_SYMBOL_WIFI, PXSYS_COLOR_ACCENT,
+                ui, layout, saved, LV_SYMBOL_WIFI, PXSYS_COLOR_ACCENT,
                 ui->wifi_saved[index].ssid,
                 connected_ssid[0] != '\0' &&
                         strcmp(ui->wifi_saved[index].ssid, connected_ssid) == 0
@@ -7142,26 +7864,24 @@ static void build_wifi_page(pxsys_reference_lvgl_t* ui,
                 wifi_saved_clicked, &ui->wifi_saved_controls[index]);
         }
     }
-    label = make_label(ui->content,
-                       translated(ui, "settings.wifi.networks", "Available networks"),
-                       typography_font(ui, PXSYS_TYPOGRAPHY_TITLE),
-                       color_token(ui, PXSYS_COLOR_TEXT_PRIMARY));
-    lv_obj_set_width(label, LV_PCT(100));
+    const bool wide = layout->content.width >= (uint32_t)ui_px(ui, 330);
+    lv_obj_t* actions = lv_obj_create(ui->content);
+    style_plain(actions);
+    lv_obj_set_size(actions, LV_PCT(100), LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(actions, wide ? LV_FLEX_FLOW_ROW : LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_gap(actions, ui_px(ui, 6), 0);
     button = make_page_button(
-        ui, ui->content, translated(ui, "settings.wifi.scan", "Refresh"),
+        ui, actions, translated(ui, "settings.wifi.scan", "Refresh"),
         PXA_LVGL_ACTION_PRIMARY, wifi_scan_clicked, ui);
-    lv_obj_set_width(button, LV_PCT(100));
+    lv_obj_set_width(button, wide ? 0 : LV_PCT(100));
+    if (wide) lv_obj_set_flex_grow(button, 1);
     button = make_page_button(
-        ui, ui->content, translated(ui, "settings.wifi.add", "Add network manually"),
-        PXA_LVGL_ACTION_PRIMARY, wifi_add_clicked, ui);
-    lv_obj_set_width(button, LV_PCT(100));
-    ui->wifi_network_list = lv_obj_create(ui->content);
-    style_plain(ui->wifi_network_list);
-    lv_obj_set_width(ui->wifi_network_list, LV_PCT(100));
-    lv_obj_set_height(ui->wifi_network_list, LV_SIZE_CONTENT);
-    lv_obj_set_layout(ui->wifi_network_list, LV_LAYOUT_FLEX);
-    lv_obj_set_flex_flow(ui->wifi_network_list, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_style_pad_row(ui->wifi_network_list, 8, 0);
+        ui, actions, translated(ui, "settings.wifi.add", "Add network manually"),
+        PXA_LVGL_ACTION_SECONDARY, wifi_add_clicked, ui);
+    lv_obj_set_width(button, wide ? 0 : LV_PCT(100));
+    if (wide) lv_obj_set_flex_grow(button, 1);
+    ui->wifi_network_list = make_settings_section(
+        ui, ui->content, translated(ui, "settings.wifi.networks", "Available networks"));
     wifi_render_networks(ui, ui->wifi_scan_state);
     if (ui->wifi_scan_state == PXSYS_REFERENCE_WIFI_SCANNING &&
         ui->wifi_scan_timer != NULL)
@@ -7176,9 +7896,8 @@ static void wifi_settings_clicked(lv_event_t* event) {
 #endif
 
 static void page_dialog_scrim_clicked(lv_event_t* event) {
-    page_close_dialogs(
+    page_dismiss_dialog(
         (pxsys_reference_lvgl_t*)lv_event_get_user_data(event));
-    rebuild((pxsys_reference_lvgl_t*)lv_event_get_user_data(event));
 }
 
 static void file_message(pxsys_reference_lvgl_t* ui, const char* message,
@@ -7196,27 +7915,29 @@ static void page_confirm_clicked(lv_event_t* event) {
     lv_obj_t* button = lv_event_get_current_target(event);
     int uninstalled = 0;
     if (!ui_valid(ui) || button == NULL) return;
-    if ((uintptr_t)lv_obj_get_user_data(button) != 0) {
-        if (ui->pending_kind == 0 && ui->app_action != NULL) {
-            int success = ui->app_action(
-                ui->app_manager_context, ui->pending_identity,
-                (pxsys_reference_app_action_t)ui->pending_action);
-            uninstalled = success &&
-                          ui->pending_action == PXSYS_REFERENCE_APP_ACTION_UNINSTALL;
-            if (!success)
-                file_message(ui, translated(ui, "settings.apps.failed", "App operation failed"), PXSYS_TOAST_ERROR);
-            ui->managed_apps_loaded = 0;
-        } else if (ui->pending_kind == 1 && ui->file_action != NULL) {
-            if (!ui->file_action(
-                    ui->file_manager_context, ui->pending_path, NULL,
-                    (pxsys_reference_file_action_t)ui->pending_action))
-                file_message(ui, translated(ui, "files.failed", "File operation failed"),
-                             PXSYS_TOAST_ERROR);
-            ui->file_entries_loaded = 0;
-        } else if (ui->pending_kind == 2 && ui->wifi_forget != NULL) {
-            ui->wifi_forget_failed = !ui->wifi_forget(
-                ui->wifi_context, ui->pending_wifi_ssid);
-        }
+    if (lv_obj_get_user_data(button) == NULL) {
+        page_dismiss_dialog(ui);
+        return;
+    }
+    if (ui->pending_kind == 0 && ui->app_action != NULL) {
+        int success = ui->app_action(
+            ui->app_manager_context, ui->pending_identity,
+            (pxsys_reference_app_action_t)ui->pending_action);
+        uninstalled = success &&
+                      ui->pending_action == PXSYS_REFERENCE_APP_ACTION_UNINSTALL;
+        if (!success)
+            file_message(ui, translated(ui, "settings.apps.failed", "App operation failed"), PXSYS_TOAST_ERROR);
+        ui->managed_apps_loaded = 0;
+    } else if (ui->pending_kind == 1 && ui->file_action != NULL) {
+        if (!ui->file_action(
+                ui->file_manager_context, ui->pending_path, NULL,
+                (pxsys_reference_file_action_t)ui->pending_action))
+            file_message(ui, translated(ui, "files.failed", "File operation failed"),
+                         PXSYS_TOAST_ERROR);
+        ui->file_entries_loaded = 0;
+    } else if (ui->pending_kind == 2 && ui->wifi_forget != NULL) {
+        ui->wifi_forget_failed = !ui->wifi_forget(
+            ui->wifi_context, ui->pending_wifi_ssid);
     }
     page_close_dialogs(ui);
     rebuild(ui);
@@ -7237,6 +7958,7 @@ static void show_page_confirm(pxsys_reference_lvgl_t* ui,
             PXSYS_STATUS_OK)
         return;
     expand_content_into_hidden_gesture_area(ui, &layout);
+    if (ui->app_dialog != NULL) lv_obj_set_hidden(ui->app_dialog, true);
     ui->confirm_dialog = make_page_dialog(ui, &layout, &panel);
     lv_obj_add_event_cb(ui->confirm_dialog, page_dialog_scrim_clicked,
                         LV_EVENT_CLICKED, ui);
@@ -7443,11 +8165,17 @@ static void show_app_detail(pxsys_reference_lvgl_t* ui,
     lv_obj_set_layout(info, LV_LAYOUT_FLEX);
     lv_obj_set_flex_flow(info, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_style_pad_row(info, 4, 0);
-    snprintf(buffer, sizeof(buffer), "%s: %s",
-             translated(ui, "settings.apps.version", "Version"),
-             app->version);
-    label = make_label(info, buffer,
-                       typography_font(ui, PXSYS_TYPOGRAPHY_CAPTION),
+    const char* state = managed_app_state(ui, app);
+    const char* origin = translated(ui,
+        app->built_in ? "settings.apps.system" : "settings.apps.user",
+        app->built_in ? "System app" : "User app");
+    if (app->version[0] != '\0')
+        snprintf(buffer, sizeof(buffer), "%s %s · %s%s%s",
+                 translated(ui, "settings.apps.version", "Version"), app->version,
+                 origin, *state ? " · " : "", state);
+    else
+        snprintf(buffer, sizeof(buffer), "%s%s%s", origin, *state ? " · " : "", state);
+    label = make_label(info, buffer, typography_font(ui, PXSYS_TYPOGRAPHY_CAPTION),
                        color_token(ui, PXSYS_COLOR_TEXT_SECONDARY));
     lv_obj_set_width(label, LV_PCT(100));
     const char *app_id = strchr(app->identity, ':');
@@ -7473,66 +8201,46 @@ static void show_app_detail(pxsys_reference_lvgl_t* ui,
                            color_token(ui, PXSYS_COLOR_TEXT_SECONDARY));
         lv_obj_set_width(label, LV_PCT(100));
     }
-    const char *state=managed_app_state(ui,app);
-    snprintf(buffer, sizeof(buffer), "%s%s%s",
-             translated(ui,
-                        app->built_in ? "settings.apps.system"
-                                      : "settings.apps.user",
-                        app->built_in ? "System app" : "User app"),
-             *state?" · ":"",state);
-    label = make_label(info, buffer,
-                       typography_font(ui, PXSYS_TYPOGRAPHY_CAPTION),
-                       color_token(ui, PXSYS_COLOR_TEXT_SECONDARY));
-    lv_obj_set_width(label, LV_PCT(100));
-
-    if (app->movable && !app->active) {
-        button=make_page_button(ui,panel,translated(ui,
-            app->archived?"settings.apps.move_archive":app->legacy_storage?"settings.apps.upgrade_storage":"settings.apps.move",
-            app->archived?"Move saved data":app->legacy_storage?"Upgrade storage layout":"Move app and data"),
-            PXA_LVGL_ACTION_SECONDARY,app_action_clicked,ui);
-        lv_obj_set_user_data(button,(void*)(uintptr_t)PXSYS_REFERENCE_APP_ACTION_MOVE);
-    }
-    if (app->resources_movable && !app->active) {
-        button=make_page_button(ui,panel,translated(ui,"settings.apps.move_resources","Move game resources"),
-            PXA_LVGL_ACTION_SECONDARY,app_action_clicked,ui);
-        lv_obj_set_user_data(button,(void*)(uintptr_t)PXSYS_REFERENCE_APP_ACTION_MOVE_RESOURCES);
-    }
 #if PXA_ENABLE_PERMISSIONS
     add_app_permissions(ui, &layout, panel, app);
 #endif
-
-    if (!app->archived) {
-        button = make_page_button(
-            ui, panel,
-            translated(ui,
-                       app->enabled ? "settings.apps.disable"
-                                    : "settings.apps.enable",
-                       app->enabled ? "Disable" : "Enable"),
-            PXA_LVGL_ACTION_SECONDARY, app_action_clicked, ui);
-        lv_obj_set_user_data(
-            button, (void*)(uintptr_t)(app->enabled
-                                           ? PXSYS_REFERENCE_APP_ACTION_DISABLE
-                                           : PXSYS_REFERENCE_APP_ACTION_ENABLE));
+    const struct {
+        bool available;
+        const char* key;
+        const char* label;
+        pxsys_reference_app_action_t action;
+    } options[] = {
+        {app->movable && !app->active,
+         app->archived ? "settings.apps.move_archive" :
+         app->legacy_storage ? "settings.apps.upgrade_storage" : "settings.apps.move",
+         app->archived ? "Move saved data" :
+         app->legacy_storage ? "Upgrade storage layout" : "Move app and data",
+         PXSYS_REFERENCE_APP_ACTION_MOVE},
+        {app->resources_movable && !app->active,
+         "settings.apps.move_resources", "Move game resources",
+         PXSYS_REFERENCE_APP_ACTION_MOVE_RESOURCES},
+        {!app->archived, app->enabled ? "settings.apps.disable" : "settings.apps.enable",
+         app->enabled ? "Disable" : "Enable",
+         app->enabled ? PXSYS_REFERENCE_APP_ACTION_DISABLE : PXSYS_REFERENCE_APP_ACTION_ENABLE},
+        {app->has_private_data, "settings.apps.clear", "Clear data",
+         PXSYS_REFERENCE_APP_ACTION_CLEAR_DATA},
+        {(app->installed || app->archived) && !app->built_in,
+         "settings.apps.uninstall", "Uninstall", PXSYS_REFERENCE_APP_ACTION_UNINSTALL},
+    };
+    lv_obj_t* actions = make_dialog_actions(ui, panel, &layout);
+    for (size_t i = 0; i < sizeof(options) / sizeof(options[0]); ++i) {
+        if (!options[i].available) continue;
+        button = make_page_button(ui, actions,
+            translated(ui, options[i].key, options[i].label), PXA_LVGL_ACTION_SECONDARY,
+            app_action_clicked, ui);
+        if (actions != panel) lv_obj_set_width(button, LV_PCT(48));
+        lv_obj_set_user_data(button, (void*)(uintptr_t)options[i].action);
     }
-    if (app->has_private_data) {
-        button = make_page_button(
-            ui, panel, translated(ui, "settings.apps.clear", "Clear data"),
-            PXA_LVGL_ACTION_DANGER, app_action_clicked, ui);
-        lv_obj_set_user_data(
-            button, (void*)(uintptr_t)PXSYS_REFERENCE_APP_ACTION_CLEAR_DATA);
-    }
-    if ((app->installed || app->archived) && !app->built_in) {
-        button = make_page_button(
-            ui, panel, translated(ui, "settings.apps.uninstall", "Uninstall"),
-            PXA_LVGL_ACTION_DANGER, app_action_clicked, ui);
-        lv_obj_set_user_data(
-            button, (void*)(uintptr_t)PXSYS_REFERENCE_APP_ACTION_UNINSTALL);
-    }
-    button = make_page_button(ui, panel,
+    button = make_page_button(ui, actions,
                               translated(ui, "settings.apps.close", "Close"),
                               PXA_LVGL_ACTION_SECONDARY,
                               page_dialog_scrim_clicked, ui);
-    (void)button;
+    if (actions != panel) lv_obj_set_width(button, LV_PCT(48));
 }
 
 static void app_row_clicked(lv_event_t* event) {
@@ -7557,15 +8265,10 @@ static void build_app_manager(pxsys_reference_lvgl_t* ui,
         ui->managed_apps_loaded = 1;
         ui->managed_app_count = 0;
         if (ui->app_list != NULL) {
-            size_t count = ui->app_list(ui->app_manager_context, NULL, 0, filter);
-            if (count > PXSYS_REFERENCE_MANAGED_APP_MAX)
-                count = PXSYS_REFERENCE_MANAGED_APP_MAX;
-            if (count != 0) {
-                ui->managed_app_count = ui->app_list(
-                    ui->app_manager_context, ui->managed_apps, count, filter);
-                if (ui->managed_app_count > count)
-                    ui->managed_app_count = count;
-            }
+            const size_t count = ui->app_list(
+                ui->app_manager_context, ui->managed_apps,
+                PXSYS_REFERENCE_MANAGED_APP_MAX, filter);
+            ui->managed_app_count = LV_MIN(count, PXSYS_REFERENCE_MANAGED_APP_MAX);
         }
     }
     if (ui->managed_app_count == 0) {
@@ -7577,15 +8280,14 @@ static void build_app_manager(pxsys_reference_lvgl_t* ui,
         lv_obj_set_width(label, LV_PCT(100));
         return;
     }
-    section = make_settings_section(
-        ui, translated(ui, input_methods?"input-method.apps.title":"settings.apps",
-                       input_methods?"Input method apps":"Apps"));
+    section = make_settings_section(ui, ui->content, NULL);
     for (index = 0; index < ui->managed_app_count; ++index) {
         pxsys_reference_managed_app_t* app = &ui->managed_apps[index];
         char subtitle[128];
         lv_obj_t* row;
         const char *state=managed_app_state(ui,app);
-        snprintf(subtitle, sizeof(subtitle), "%s · %s%s%s", app->version,
+        snprintf(subtitle, sizeof(subtitle), "%s%s%s%s%s", app->version,
+                 app->version[0] ? " · " : "",
                  app->built_in
                      ? translated(ui, "settings.apps.system", "System app")
                      : translated(ui, "settings.apps.user", "User app"),
@@ -7774,13 +8476,13 @@ static void show_file_properties(pxsys_reference_lvgl_t* ui,
             {PXSYS_REFERENCE_FILE_ACTION_MOVE, "files.move", "Move"},
             {PXSYS_REFERENCE_FILE_ACTION_DELETE, "files.delete", "Delete"},
         };
+        lv_obj_t* group = make_dialog_actions(ui, panel, &layout);
         for (size_t index = 0; index < sizeof(actions) / sizeof(actions[0]); ++index) {
             lv_obj_t* button = make_page_button(
-                ui, panel, translated(ui, actions[index].key, actions[index].fallback),
-                actions[index].action == PXSYS_REFERENCE_FILE_ACTION_DELETE
-                    ? PXA_LVGL_ACTION_DANGER : PXA_LVGL_ACTION_SECONDARY,
+                ui, group, translated(ui, actions[index].key, actions[index].fallback),
+                PXA_LVGL_ACTION_SECONDARY,
                 file_property_action, ui);
-            lv_obj_set_width(button, LV_PCT(100));
+            if (group != panel) lv_obj_set_width(button, LV_PCT(48));
             lv_obj_set_user_data(button, (void*)(uintptr_t)actions[index].action);
         }
     }
@@ -7932,18 +8634,24 @@ static void build_file_manager(pxsys_reference_lvgl_t* ui,
         ui->file_entries_loaded = 1;
         file_manager_reload(ui);
     }
-    if (ui->file_path[0] != '\0') {
-        lv_obj_t* button = make_page_button(
-            ui, ui->content,
-            translated(ui, "settings.files.up", "Up one level"),
-            PXA_LVGL_ACTION_SECONDARY,
-            file_manager_up_clicked, ui);
-        (void)button;
-    }
-    label = make_label(ui->content, ui->file_path[0] == '\0' ? "/" : ui->file_path,
+    lv_obj_t* path = lv_obj_create(ui->content);
+    style_plain(path);
+    lv_obj_set_size(path, LV_PCT(100), LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(path, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(path, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER,
+                           LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_all(path, ui_px(ui, 3), 0);
+    lv_obj_set_style_radius(path, ui_px(ui, 12), 0);
+    lv_obj_set_style_bg_color(path, color_token(ui, PXSYS_COLOR_SURFACE_CONTAINER_LOW), 0);
+    lv_obj_set_style_bg_opa(path, LV_OPA_COVER, 0);
+    if (ui->file_path[0] != '\0')
+        make_settings_header_button(ui, path, LV_SYMBOL_UP, 0xF077,
+                                    file_manager_up_clicked);
+    label = make_label(path, ui->file_path[0] == '\0' ? "/" : ui->file_path,
                        typography_font(ui, PXSYS_TYPOGRAPHY_CAPTION),
                        color_token(ui, PXSYS_COLOR_TEXT_SECONDARY));
-    lv_obj_set_width(label, LV_PCT(100));
+    lv_obj_set_flex_grow(label, 1);
+    lv_obj_set_style_pad_all(label, ui_px(ui, 9), 0);
     if (ui->file_action != NULL) {
         lv_obj_t* button;
         if (ui->file_clipboard[0] != '\0') {
@@ -7962,7 +8670,7 @@ static void build_file_manager(pxsys_reference_lvgl_t* ui,
                            color_token(ui, PXSYS_COLOR_TEXT_PRIMARY));
         lv_obj_set_width(label, LV_PCT(100));
         ui->file_edit_input = lv_textarea_create(ui->content);
-        lv_obj_set_width(ui->file_edit_input, LV_PCT(100));
+        style_settings_text_field(ui, ui->file_edit_input);
         lv_textarea_set_one_line(ui->file_edit_input, true);
         lv_textarea_set_max_length(ui->file_edit_input,
                                    PXSYS_REFERENCE_FILE_NAME_MAX - 1);
@@ -7994,8 +8702,7 @@ static void build_file_manager(pxsys_reference_lvgl_t* ui,
         lv_obj_set_width(label, LV_PCT(100));
         return;
     }
-    section = make_settings_section(
-        ui, translated(ui, "settings.files", "Files & storage"));
+    section = make_settings_section(ui, ui->content, NULL);
     for (index = 0; index < ui->file_entry_count; ++index) {
         pxsys_reference_file_entry_t* entry = &ui->file_entries[index];
         char subtitle[64];
@@ -8039,6 +8746,7 @@ static void rebuild(pxsys_reference_lvgl_t* ui) {
     (void)rebuild_started; /* LV_LOG_USER may be compiled out. */
     if (pxsys_reference_layout_compute(&ui->display, &layout) != PXSYS_STATUS_OK)
         return;
+    navigation_back_tap_clear(ui);
     /* The touch target overlays content. Only a visible gesture handle needs
      * an exclusive strip; otherwise return the reservation to the page. */
     expand_content_into_hidden_gesture_area(ui, &layout);
@@ -8079,6 +8787,8 @@ static void rebuild(pxsys_reference_lvgl_t* ui) {
     }
     ui->file_edit_input = NULL;
     ui->file_edit_error = NULL;
+    ui->settings_volume = NULL;
+    ui->settings_brightness = NULL;
     if (ui->wifi_password_input != NULL) {
         if (ui->wifi_input_stage != 0)
             snprintf(ui->wifi_input_draft, sizeof(ui->wifi_input_draft), "%s",
@@ -8102,7 +8812,10 @@ static void rebuild(pxsys_reference_lvgl_t* ui) {
             ui->notification_scroll_y =
                 lv_obj_get_scroll_y(ui->notification_content);
         ui->notification_shade = NULL;
+        ui->notification_motion_pending = 0;
+        ui->notification_viewport = NULL;
         ui->notification_panel = NULL;
+        ui->notification_grip = NULL;
         ui->notification_content = NULL;
         ui->notification_time = NULL;
         ui->notification_date = NULL;
@@ -8118,12 +8831,15 @@ static void rebuild(pxsys_reference_lvgl_t* ui) {
     if (ui->file_size_timer != NULL) lv_timer_pause(ui->file_size_timer);
     if (ui->file_size != NULL)
         (void)ui->file_size(ui->file_manager_context, NULL, NULL, NULL);
+    ui->page_opaque_section = NULL;
+    launcher_drag_finish(ui, NULL);
     lv_obj_clean(ui->root);
     /* The old launcher images no longer have widgets borrowing them. Release
      * their decoded caches even when the next view is an app or Settings;
      * retaining them until home is rebuilt fragments the next app's heap. */
     release_launcher_icons(ui);
     ui->status_bar = NULL;
+    ui->status_clock = NULL;
     ui->navigation_bar = NULL;
     ui->navigation_handle = NULL;
     ui->navigation_back_indicator = NULL;
@@ -8163,59 +8879,72 @@ static void rebuild(pxsys_reference_lvgl_t* ui) {
         }
     }
 
+    ui->page_frame = NULL;
     ui->content = NULL;
     ui->rendered_view_key = 0;
     ui->title = NULL;
     if (ui->content_active) {
-        ui->content = lv_obj_create(ui->root);
+        const bool home = ui->active_page == REFERENCE_PAGE_HOME;
+        const lv_font_t* title_font = home ? NULL :
+            typography_font(ui, PXSYS_TYPOGRAPHY_HEADLINE);
+        const int32_t title_height = LV_MAX(
+            layout.size_class == PXSYS_UI_SIZE_COMPACT ? 34 : 38,
+            title_font != NULL ? (int32_t)title_font->line_height + 6 : 34);
+        const int32_t header_height = LV_MAX(title_height, ui_px(ui, 42));
+        const int32_t list_top = header_height + page_row_gap(ui, &layout);
+        const bool fixed_header = (int32_t)layout.content.height >= list_top + ui_px(ui, 88) &&
+            (ui->active_page == REFERENCE_PAGE_APP_MANAGER ||
+             ui->active_page == REFERENCE_PAGE_INPUT_METHOD_APPS ||
+             (ui->active_page == REFERENCE_PAGE_FILE_MANAGER && ui->file_edit_mode == 0) ||
+             (ui->active_page == REFERENCE_PAGE_WIFI && ui->wifi_input_stage == 0));
+        int32_t viewport_height = (int32_t)layout.content.height;
+        int32_t bottom_padding = 0;
+        if (!home && (!has_navigation_bar(ui) ||
+                      ui->navigation_mode == PXSYS_NAVIGATION_GESTURES)) {
+            /* Keep the last row clear of the bottom gesture target. */
+            const int32_t safe_bottom = layout.safe_area.y + (int32_t)layout.safe_area.height;
+            bottom_padding = LV_MAX(0, safe_bottom - layout.content.y - viewport_height);
+            viewport_height += bottom_padding;
+        }
+        const int32_t frame_x = fixed_header ? layout.safe_area.x : 0;
+        const int32_t frame_y = fixed_header ? layout.content.y : 0;
+        lv_obj_t* parent = ui->root;
+        if (fixed_header) {
+            /* Scrolling invalidates the viewport. Keep the header outside it
+             * so the title and its actions stay put without being redrawn. */
+            ui->page_frame = lv_obj_create(ui->root);
+            style_plain(ui->page_frame);
+            lv_obj_set_pos(ui->page_frame, frame_x, frame_y);
+            lv_obj_set_size(ui->page_frame, (int32_t)layout.safe_area.width, viewport_height);
+            parent = ui->page_frame;
+        }
+        ui->content = lv_obj_create(parent);
         style_plain(ui->content);
-        lv_obj_set_pos(ui->content, layout.content.x, layout.content.y);
-        lv_obj_set_size(ui->content, (lv_coord_t)layout.content.width,
-                        (lv_coord_t)layout.content.height);
+        lv_obj_set_pos(ui->content, layout.content.x - frame_x,
+                       fixed_header ? list_top : layout.content.y);
+        lv_obj_set_size(ui->content, (int32_t)layout.content.width,
+                        viewport_height - (fixed_header ? list_top : 0));
         lv_obj_set_style_bg_opa(ui->content, LV_OPA_TRANSP, 0);
         lv_obj_set_style_pad_column(ui->content, layout.item_gap, 0);
         lv_obj_set_style_pad_row(ui->content, layout.item_gap, 0);
-        if (ui->active_page != REFERENCE_PAGE_HOME) {
-            /* Keep the existing content bounds, but let the scroll viewport
-             * reach the safe screen edges so the scrollbar is not inset with
-             * the cards. Gesture navigation overlays the bottom of the list;
-             * scroll padding keeps the last row clear of its handle without
-             * leaving a permanently clipped strip below the viewport.
-             * The launcher uses absolute page/grid coordinates. */
+        if (!home) {
+            /* The cards use the regular screen margins. Keep a separate
+             * scrollbar gutter so the indicator does not overlap them. */
+            const int32_t content_right = layout.content.x + (int32_t)layout.content.width;
+            const int32_t safe_right = layout.safe_area.x + (int32_t)layout.safe_area.width;
             const int32_t left_padding = layout.content.x - layout.safe_area.x;
-            const int32_t right_padding =
-                layout.safe_area.x + (int32_t)layout.safe_area.width -
-                layout.content.x - (int32_t)layout.content.width;
-            lv_obj_set_x(ui->content, layout.safe_area.x);
+            const int32_t right_padding = safe_right - content_right;
+            lv_obj_set_x(ui->content, layout.safe_area.x - frame_x);
             lv_obj_set_width(ui->content, (lv_coord_t)layout.safe_area.width);
             lv_obj_set_style_pad_left(ui->content, left_padding, 0);
             lv_obj_set_style_pad_right(ui->content, right_padding, 0);
-            if (!has_navigation_bar(ui) ||
-                ui->navigation_mode == PXSYS_NAVIGATION_GESTURES) {
-                const int32_t safe_bottom = layout.safe_area.y +
-                                           (int32_t)layout.safe_area.height;
-                const int32_t bottom_padding = safe_bottom -
-                    layout.content.y - (int32_t)layout.content.height;
-                if (bottom_padding > 0) {
-                    lv_obj_set_height(ui->content, safe_bottom - layout.content.y);
-                    lv_obj_set_style_pad_bottom(ui->content, bottom_padding, 0);
-                }
-            }
+            if (bottom_padding > 0)
+                lv_obj_set_style_pad_bottom(ui->content, bottom_padding, 0);
             style_scrollbar(ui, ui->content);
         }
-        if (ui->active_page == REFERENCE_PAGE_HOME) {
-            /* The launcher grid already fills the whole content area; a title
-             * row would only waste vertical space on small displays. */
-            ui->title = NULL;
-        } else {
+        if (!home) {
             const char* title_key = "settings.title";
             const char* title_default = "Settings";
-            const lv_font_t* title_font =
-                typography_font(ui, PXSYS_TYPOGRAPHY_HEADLINE);
-            int32_t title_height =
-                title_font != NULL ? (int32_t)title_font->line_height + 6 : 34;
-            int32_t minimum_title_height =
-                layout.size_class == PXSYS_UI_SIZE_COMPACT ? 34 : 38;
             if (ui->active_page == REFERENCE_PAGE_SOUND_SETTINGS) {
                 title_key = "settings.sound";
                 title_default = "Sound & display";
@@ -8241,58 +8970,42 @@ static void rebuild(pxsys_reference_lvgl_t* ui) {
                 title_key = "input-method.apps.title";
                 title_default = "Input method apps";
             }
-            if (title_height < minimum_title_height)
-                title_height = minimum_title_height;
             lv_obj_t* title_parent = ui->content;
             if (ui->active_page != REFERENCE_PAGE_SETTINGS) {
-                lv_obj_t* header = lv_obj_create(ui->content);
+                lv_obj_t* header = lv_obj_create(fixed_header ? ui->page_frame : ui->content);
                 style_plain(header);
-                lv_obj_set_size(header, LV_PCT(100), title_height + 4);
+                lv_obj_set_size(header, fixed_header ? (int32_t)layout.content.width :
+                                LV_PCT(100), header_height);
+                if (fixed_header) {
+                    lv_obj_set_pos(header, layout.content.x - frame_x, 0);
+                    lv_obj_move_to_index(header, 0);
+                }
                 lv_obj_set_layout(header, LV_LAYOUT_FLEX);
                 lv_obj_set_flex_flow(header, LV_FLEX_FLOW_ROW);
                 lv_obj_set_flex_align(header, LV_FLEX_ALIGN_START,
                                       LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-                lv_obj_set_style_pad_column(header, 6, 0);
-                lv_obj_t* back = lv_button_create(header);
+                lv_obj_set_style_pad_column(header, ui_px(ui, 10), 0);
+                lv_obj_t* back = make_settings_header_button(
+                    ui, header, LV_SYMBOL_LEFT, 0xF053, back_clicked);
                 navigation_tag_focus(back, "navigation.back");
-                lv_obj_set_size(back, 38, 38);
-                lv_obj_set_style_bg_opa(back, LV_OPA_TRANSP, 0);
-                lv_obj_set_style_border_width(back, 0, 0);
-                lv_obj_set_style_shadow_width(back, 0, 0);
-                lv_obj_set_style_pad_all(back, 0, 0);
-                lv_obj_t* arrow = make_label(
-                    back, LV_SYMBOL_LEFT,
-                    typography_font(ui, PXSYS_TYPOGRAPHY_TITLE),
-                    color_token(ui, PXSYS_COLOR_TEXT_PRIMARY));
-                lv_obj_align(arrow, LV_ALIGN_LEFT_MID, 5, -3);
-                lv_obj_add_event_cb(back, back_clicked, LV_EVENT_CLICKED, ui);
                 title_parent = header;
             }
             ui->title = make_label(title_parent,
                                    translated(ui, title_key, title_default),
                                    title_font,
                                    color_token(ui, PXSYS_COLOR_TEXT_PRIMARY));
-            if (title_parent == ui->content)
+            if (title_parent == ui->content) {
                 lv_obj_set_width(ui->title, LV_PCT(100));
-            else
+                lv_obj_set_height(ui->title, title_height);
+            } else {
                 lv_obj_set_flex_grow(ui->title, 1);
-            lv_obj_set_height(ui->title, title_height);
+            }
 #if PXSYS_REFERENCE_UI_BUILTIN_SETTINGS
             if (ui->active_page == REFERENCE_PAGE_FILE_MANAGER &&
                 ui->file_action != NULL && ui->file_edit_mode == 0) {
-                lv_obj_t* button = lv_button_create(title_parent);
-                lv_obj_set_size(button, 38, 38);
-                lv_obj_set_style_radius(button, LV_RADIUS_CIRCLE, 0);
-                lv_obj_set_style_bg_color(button,
-                    color_token(ui, PXSYS_COLOR_SURFACE_CONTAINER_HIGH), 0);
-                lv_obj_set_style_shadow_width(button, 0, 0);
-                lv_obj_set_style_border_width(button, 0, 0);
-                lv_obj_t* plus = make_label(
-                    button, LV_SYMBOL_PLUS, NULL,
-                    color_token(ui, PXSYS_COLOR_ACCENT));
-                lv_obj_center(plus);
-                lv_obj_add_event_cb(button, file_new_folder_clicked,
-                                    LV_EVENT_CLICKED, ui);
+                lv_obj_t* add = make_settings_header_button(
+                    ui, title_parent, LV_SYMBOL_PLUS, 0xF067, file_new_folder_clicked);
+                navigation_tag_focus(add, "settings.files.new_folder");
             }
 #endif
         }
@@ -8409,9 +9122,7 @@ static void rebuild(pxsys_reference_lvgl_t* ui) {
         int32_t top = (int32_t)layout.safe_area.y;
         int32_t bottom = (int32_t)ui->display.height -
                          (int32_t)gesture_strip_height(&layout);
-        /* The visible feedback belongs inside the safe area, but the swipe
-         * must begin at the physical edge, including the safe inset. */
-        int32_t edge_x = 0;
+        /* Cover the physical edge and the safe margin beside the content. */
         uint32_t edge_width = ui->back_gesture_edge_width != 0
                                   ? ui->back_gesture_edge_width
                                   : pxsys_reference_layout_back_gesture_width();
@@ -8420,9 +9131,11 @@ static void rebuild(pxsys_reference_lvgl_t* ui) {
             top += (int32_t)layout.status_bar.height;
         if (bottom > top) {
             ui->back_gesture_override = 0;
+            ui->navigation_back_tap_armed = 0;
+            ui->navigation_back_tap_target = NULL;
             back_gesture = lv_obj_create(ui->root);
             style_plain(back_gesture);
-            lv_obj_set_pos(back_gesture, edge_x, top);
+            lv_obj_set_pos(back_gesture, 0, top);
             lv_obj_set_size(back_gesture,
                             edge_width + layout.safe_area.x, bottom - top);
             lv_obj_set_style_bg_opa(back_gesture, LV_OPA_TRANSP, 0);
@@ -8463,6 +9176,7 @@ static void rebuild(pxsys_reference_lvgl_t* ui) {
         build_notification_shade(ui, ui->notification_dragging
                                          ? ui->notification_progress : 256);
     launcher_load_visible_icons(ui);
+    lock_screen_layout(ui);
     lock_screen_refresh(ui);
     update_system_overlay(ui);
     if (ui->performance_get && ui->performance_get(ui->performance_context,
@@ -8473,21 +9187,114 @@ static void rebuild(pxsys_reference_lvgl_t* ui) {
                     (unsigned long)lv_tick_elaps(rebuild_started));
 }
 
+static void lock_badge_draw(lv_event_t* event) {
+    pxsys_reference_lvgl_t* ui = lv_event_get_user_data(event);
+    lv_obj_t* badge = lv_event_get_target(event);
+    lv_layer_t* layer = lv_event_get_layer(event);
+    lv_area_t area;
+    lv_obj_get_coords(badge, &area);
+    const int32_t x = (area.x1 + area.x2) / 2;
+    const int32_t y = (area.y1 + area.y2) / 2;
+    const int32_t shackle_width = ui_px(ui, 5);
+    const int32_t body_width = ui_px(ui, 8);
+    lv_draw_rect_dsc_t draw;
+    lv_draw_rect_dsc_init(&draw);
+    draw.bg_opa = LV_OPA_TRANSP;
+    draw.border_width = ui_px(ui, 2);
+    draw.border_color = color_token(ui, PXSYS_COLOR_ON_PRIMARY_CONTAINER);
+    draw.radius = ui_px(ui, 4);
+    const lv_area_t shackle = {x - shackle_width, y - ui_px(ui, 9),
+                               x + shackle_width, y + ui_px(ui, 2)};
+    lv_draw_rect(layer, &draw, &shackle);
+    draw.bg_opa = LV_OPA_COVER;
+    draw.bg_color = draw.border_color;
+    draw.border_width = 0;
+    draw.radius = ui_px(ui, 3);
+    const lv_area_t body = {x - body_width, y - 1,
+                            x + body_width, y + ui_px(ui, 9)};
+    lv_draw_rect(layer, &draw, &body);
+}
+
+static void lock_screen_layout(pxsys_reference_lvgl_t* ui) {
+    pxsys_reference_layout_t layout;
+    if (ui->lock_screen == NULL ||
+        pxsys_reference_layout_compute(&ui->display, &layout) != PXSYS_STATUS_OK)
+        return;
+    const pxsys_rect_t safe = layout.safe_area;
+    const int32_t pad = ui_px(ui, 14);
+    const int32_t gap = ui_px(ui, 8);
+    const int32_t width = LV_MAX(1,
+        LV_MIN(ui_px(ui, 356), (int32_t)safe.width - 2 * gap));
+    const int32_t inner_width = LV_MAX(1, width - pad * 2);
+    const lv_font_t* hint_font = typography_font(ui, PXSYS_TYPOGRAPHY_LABEL);
+    const lv_font_t* date_font = typography_font(ui, PXSYS_TYPOGRAPHY_BODY);
+    if (hint_font == NULL) hint_font = LV_FONT_DEFAULT;
+    if (date_font == NULL) date_font = LV_FONT_DEFAULT;
+    const int32_t hint_height = hint_font->line_height;
+    const int32_t hint_y = safe.y + (int32_t)safe.height - hint_height - pad;
+    const int32_t available = hint_y - safe.y - gap;
+    const int32_t date_height = date_font->line_height;
+    const bool show_badge = available >= ui_px(ui, 116);
+    const int32_t badge_size = show_badge ? ui_px(ui, 36) : 0;
+    const int32_t badge_row = show_badge ? badge_size + gap : 0;
+    const lv_font_t* time_font = &pxsys_reference_lock_digits_72;
+    if (text_width("88:88", time_font) > inner_width ||
+        time_font->line_height + date_height + badge_row + pad * 2 + gap > available)
+        time_font = typography_font(ui, PXSYS_TYPOGRAPHY_DISPLAY);
+    if (time_font == NULL) time_font = LV_FONT_DEFAULT;
+    const int32_t time_height = time_font->line_height;
+    const int32_t card_height = pad * 2 + badge_row + time_height + gap + date_height;
+    const int32_t centered_x = safe.x + ((int32_t)safe.width - width) / 2;
+    const int32_t card_y = safe.y + LV_MAX(0, (available - card_height) / 2);
+
+    lv_obj_set_size(ui->lock_screen, (int32_t)ui->display.width,
+                    (int32_t)ui->display.height);
+    lv_obj_set_style_bg_color(ui->lock_screen,
+                             color_token(ui, PXSYS_COLOR_BACKGROUND), 0);
+    lv_obj_set_pos(ui->lock_clock_card, centered_x, card_y);
+    lv_obj_set_size(ui->lock_clock_card, width, card_height);
+    lv_obj_set_style_radius(ui->lock_clock_card, ui_px(ui, 24), 0);
+    lv_obj_set_style_bg_color(ui->lock_clock_card,
+                             color_token(ui, PXSYS_COLOR_SURFACE_CONTAINER_LOW), 0);
+    if (show_badge) {
+        lv_obj_set_size(ui->lock_badge, badge_size, badge_size);
+        lv_obj_align(ui->lock_badge, LV_ALIGN_TOP_MID, 0, pad);
+        lv_obj_set_style_bg_color(ui->lock_badge,
+                                 color_token(ui, PXSYS_COLOR_PRIMARY_CONTAINER), 0);
+        pxsys_lvgl_remove_flags(ui->lock_badge, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        pxsys_lvgl_add_flags(ui->lock_badge, LV_OBJ_FLAG_HIDDEN);
+    }
+
+    lv_obj_set_style_text_font(ui->lock_time, time_font, 0);
+    lv_obj_set_style_text_color(ui->lock_time,
+                               color_token(ui, PXSYS_COLOR_TEXT_PRIMARY), 0);
+    lv_obj_set_size(ui->lock_time, inner_width, time_height);
+    lv_obj_align(ui->lock_time, LV_ALIGN_TOP_MID, 0, pad + badge_row);
+
+    lv_obj_set_style_text_font(ui->lock_date, date_font, 0);
+    lv_obj_set_style_text_color(ui->lock_date,
+                               color_token(ui, PXSYS_COLOR_TEXT_SECONDARY), 0);
+    lv_obj_set_size(ui->lock_date, inner_width, date_height);
+    lv_obj_align(ui->lock_date, LV_ALIGN_TOP_MID, 0,
+                 pad + badge_row + time_height + gap);
+
+    lv_obj_set_style_text_font(ui->lock_hint, hint_font, 0);
+    lv_obj_set_style_text_color(ui->lock_hint,
+                               color_token(ui, PXSYS_COLOR_TEXT_SECONDARY), 0);
+    lv_label_set_text_fmt(ui->lock_hint, "%s  %s", LV_SYMBOL_UP,
+                         translated(ui, "lock.swipe", "Swipe up to unlock"));
+    lv_obj_set_style_max_width(ui->lock_hint, width, 0);
+    lv_obj_align(ui->lock_hint, LV_ALIGN_TOP_MID,
+                 safe.x + ((int32_t)safe.width - (int32_t)ui->display.width) / 2,
+                 hint_y);
+    lv_obj_move_foreground(ui->lock_screen);
+}
+
 static void lock_screen_refresh(pxsys_reference_lvgl_t* ui) {
     char time_text[8];
-    char date_text[20];
-    int32_t text_width;
-    int32_t bottom_inset;
+    char date_text[40];
     if (!ui_valid(ui) || ui->lock_screen == NULL) return;
-    lv_obj_set_size(ui->lock_screen, (lv_coord_t)ui->display.width,
-                    (lv_coord_t)ui->display.height);
-    lv_obj_set_style_bg_color(ui->lock_screen,
-                              color_token(ui, PXSYS_COLOR_BACKGROUND), 0);
-    text_width = (int32_t)ui->display.width -
-                 (int32_t)ui->display.safe_insets.left -
-                 (int32_t)ui->display.safe_insets.right - 24;
-    if (text_width < 96) text_width = (int32_t)ui->display.width - 24;
-    bottom_inset = ui->display.safe_insets.bottom;
 
     if (ui->system_status.time_valid) {
         snprintf(time_text, sizeof(time_text), "%02u:%02u",
@@ -8501,44 +9308,16 @@ static void lock_screen_refresh(pxsys_reference_lvgl_t* ui) {
                  (unsigned)ui->system_status.year,
                  (unsigned)ui->system_status.month,
                  (unsigned)ui->system_status.day);
-    } else {
+    } else if (!ui->system_status.time_valid) {
         snprintf(date_text, sizeof(date_text), "%s",
                  translated(ui, "lock.time_unavailable", "Time unavailable"));
+    } else {
+        date_text[0] = '\0';
     }
-    lv_label_set_text(ui->lock_time, time_text);
-    lv_obj_set_width(ui->lock_time, text_width);
-    lv_obj_set_style_text_align(ui->lock_time, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_set_style_text_color(ui->lock_time,
-                                color_token(ui, PXSYS_COLOR_TEXT_PRIMARY), 0);
-    lv_obj_set_style_text_font(
-        ui->lock_time, &pxsys_reference_lock_digits_72, 0);
-    lv_obj_align(ui->lock_time, LV_ALIGN_CENTER, 0, -30);
-
-    lv_label_set_text(ui->lock_date, date_text);
-    lv_obj_set_width(ui->lock_date, text_width);
-    lv_obj_set_style_text_align(ui->lock_date, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_set_style_text_color(ui->lock_date,
-                                color_token(ui, PXSYS_COLOR_TEXT_SECONDARY), 0);
-    lv_obj_set_style_text_font(
-        ui->lock_date, typography_font(ui, PXSYS_TYPOGRAPHY_BODY), 0);
-    lv_obj_align(ui->lock_date, LV_ALIGN_CENTER, 0, 27);
-
-    lv_label_set_text(ui->lock_hint,
-                      translated(ui, "lock.swipe", "Swipe up to unlock"));
-    lv_obj_set_width(ui->lock_hint, text_width);
-    lv_obj_set_style_text_align(ui->lock_hint, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_set_style_text_color(ui->lock_hint,
-                                color_token(ui, PXSYS_COLOR_TEXT_SECONDARY), 0);
-    lv_obj_set_style_text_font(
-        ui->lock_hint, typography_font(ui, PXSYS_TYPOGRAPHY_LABEL), 0);
-    lv_obj_align(ui->lock_hint, LV_ALIGN_BOTTOM_MID, 0,
-                 -(bottom_inset + 26));
-
-    lv_obj_set_style_bg_color(ui->lock_indicator,
-                              color_token(ui, PXSYS_COLOR_ACCENT), 0);
-    lv_obj_align(ui->lock_indicator, LV_ALIGN_BOTTOM_MID, 0,
-                 -(bottom_inset + 12));
-    lv_obj_move_foreground(ui->lock_screen);
+    if (strcmp(lv_label_get_text(ui->lock_time), time_text) != 0)
+        lv_label_set_text(ui->lock_time, time_text);
+    if (strcmp(lv_label_get_text(ui->lock_date), date_text) != 0)
+        lv_label_set_text(ui->lock_date, date_text);
 }
 
 static void lock_screen_event(lv_event_t* event) {
@@ -8569,13 +9348,22 @@ static void lock_screen_event(lv_event_t* event) {
     }
     if (!ui->lock_dragging) return;
     offset = point.y - ui->lock_press_y;
-    if (code == LV_EVENT_PRESSING) return;
+    if (code == LV_EVENT_PRESSING) {
+        if (ui->animations_enabled) {
+            const int32_t lift = LV_CLAMP(-ui_px(ui, 12), offset / 6, 0);
+            if (lv_obj_get_style_translate_y(ui->lock_hint, 0) != lift)
+                lv_obj_set_style_translate_y(ui->lock_hint, lift, 0);
+        }
+        return;
+    }
     if (code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST) {
         ui->lock_dragging = 0;
         threshold = (int32_t)ui->display.height / 5;
         if (threshold < 48) threshold = 48;
         if (code == LV_EVENT_RELEASED && offset <= -threshold) {
             (void)pxsys_reference_lvgl_set_locked(ui, false);
+        } else if (ui->animations_enabled) {
+            lv_obj_set_style_translate_y(ui->lock_hint, 0, 0);
         }
     }
 }
@@ -8601,24 +9389,33 @@ static int lock_screen_create(pxsys_reference_lvgl_t* ui) {
     lv_obj_add_event_cb(ui->lock_screen, lock_screen_event, LV_EVENT_RELEASED, ui);
     lv_obj_add_event_cb(ui->lock_screen, lock_screen_event, LV_EVENT_PRESS_LOST, ui);
     lv_obj_add_event_cb(ui->lock_screen, lock_screen_event, LV_EVENT_KEY, ui);
-    ui->lock_time = lv_label_create(ui->lock_screen);
-    ui->lock_date = lv_label_create(ui->lock_screen);
-    ui->lock_hint = lv_label_create(ui->lock_screen);
-    ui->lock_indicator = lv_obj_create(ui->lock_screen);
-    if (ui->lock_time == NULL || ui->lock_date == NULL ||
-        ui->lock_hint == NULL || ui->lock_indicator == NULL) {
-        lv_obj_delete(ui->lock_screen);
-        ui->lock_screen = NULL;
-        ui->lock_time = NULL;
-        ui->lock_date = NULL;
-        ui->lock_hint = NULL;
-        ui->lock_indicator = NULL;
+    ui->lock_clock_card = lv_obj_create(ui->lock_screen);
+    if (ui->lock_clock_card == NULL) {
+        lock_screen_destroy(ui);
         return 0;
     }
-    style_plain(ui->lock_indicator);
-    lv_obj_set_size(ui->lock_indicator, 44, 4);
-    lv_obj_set_style_bg_opa(ui->lock_indicator, LV_OPA_COVER, 0);
-    lv_obj_set_style_radius(ui->lock_indicator, LV_RADIUS_CIRCLE, 0);
+    ui->lock_badge = lv_obj_create(ui->lock_clock_card);
+    ui->lock_time = lv_label_create(ui->lock_clock_card);
+    ui->lock_date = lv_label_create(ui->lock_clock_card);
+    ui->lock_hint = lv_label_create(ui->lock_screen);
+    if (ui->lock_time == NULL || ui->lock_date == NULL ||
+        ui->lock_hint == NULL || ui->lock_badge == NULL) {
+        lock_screen_destroy(ui);
+        return 0;
+    }
+    style_plain(ui->lock_clock_card);
+    style_plain(ui->lock_badge);
+    lv_obj_set_style_bg_opa(ui->lock_clock_card, LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_opa(ui->lock_badge, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(ui->lock_badge, LV_RADIUS_CIRCLE, 0);
+    lv_obj_add_event_cb(ui->lock_badge, lock_badge_draw, LV_EVENT_DRAW_MAIN, ui);
+    lv_obj_set_style_text_align(ui->lock_time, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_text_align(ui->lock_date, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_text_align(ui->lock_hint, LV_TEXT_ALIGN_CENTER, 0);
+    lv_label_set_long_mode(ui->lock_time, LV_LABEL_LONG_MODE_CLIP);
+    lv_label_set_long_mode(ui->lock_date, LV_LABEL_LONG_MODE_CLIP);
+    lv_label_set_long_mode(ui->lock_hint, LV_LABEL_LONG_MODE_DOTS);
+    lock_screen_layout(ui);
     lock_screen_refresh(ui);
     return 1;
 }
@@ -8626,10 +9423,11 @@ static int lock_screen_create(pxsys_reference_lvgl_t* ui) {
 static void lock_screen_destroy(pxsys_reference_lvgl_t* ui) {
     if (ui->lock_screen != NULL) lv_obj_delete(ui->lock_screen);
     ui->lock_screen = NULL;
+    ui->lock_clock_card = NULL;
+    ui->lock_badge = NULL;
     ui->lock_time = NULL;
     ui->lock_date = NULL;
     ui->lock_hint = NULL;
-    ui->lock_indicator = NULL;
     ui->lock_dragging = 0;
 }
 
@@ -8658,27 +9456,6 @@ static void power_menu_action_clicked(lv_event_t* event) {
     }
 }
 
-static lv_obj_t* power_menu_button(pxsys_reference_lvgl_t* ui,
-                                   lv_obj_t* panel, const char* text,
-                                   pxsys_color_token_t background,
-                                   pxsys_color_token_t foreground) {
-    lv_obj_t* button = lv_button_create(panel);
-    lv_obj_t* label;
-    if (button == NULL) return NULL;
-    lv_obj_set_width(button, LV_PCT(100));
-    lv_obj_set_height(button, 44);
-    lv_obj_set_style_radius(button, 6, 0);
-    lv_obj_set_style_bg_color(button, color_token(ui, background), 0);
-    lv_obj_set_style_bg_opa(button, LV_OPA_COVER, 0);
-    lv_obj_set_style_shadow_width(button, 0, 0);
-    lv_obj_set_style_border_width(button, 0, 0);
-    label = make_label(button, text,
-                       typography_font(ui, PXSYS_TYPOGRAPHY_LABEL),
-                       color_token(ui, foreground));
-    if (label != NULL) lv_obj_center(label);
-    return button;
-}
-
 static int power_menu_create(pxsys_reference_lvgl_t* ui) {
     lv_obj_t* panel;
     lv_obj_t* title;
@@ -8695,30 +9472,20 @@ static int power_menu_create(pxsys_reference_lvgl_t* ui) {
     lv_obj_set_pos(ui->power_menu, 0, 0);
     lv_obj_set_size(ui->power_menu, (lv_coord_t)ui->display.width,
                     (lv_coord_t)ui->display.height);
-    lv_obj_set_style_bg_color(ui->power_menu,
-                              color_token(ui, PXSYS_COLOR_SCRIM), 0);
-    lv_obj_set_style_bg_opa(ui->power_menu, LV_OPA_60, 0);
-    pxsys_lvgl_add_flags(ui->power_menu, LV_OBJ_FLAG_CLICKABLE);
+    pxa_lvgl_dialog_scrim_style(ui->power_menu, color_token(ui, PXSYS_COLOR_SCRIM));
+    lv_obj_add_event_cb(ui->power_menu, power_menu_cancel_clicked, LV_EVENT_CLICKED, ui);
 
     panel_width = (int32_t)ui->display.width -
                   (int32_t)ui->display.safe_insets.left -
                   (int32_t)ui->display.safe_insets.right - 32;
-    if (panel_width > 280) panel_width = 280;
-    if (panel_width < 184) panel_width = 184;
+    panel_width = LV_CLAMP(1, panel_width, ui_px(ui, 276));
     panel = lv_obj_create(ui->power_menu);
     if (panel == NULL) goto failed;
+    style_plain(panel);
+    pxsys_lvgl_add_flags(panel, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_set_size(panel, panel_width, LV_SIZE_CONTENT);
-    lv_obj_set_style_min_height(panel, 222, 0);
-    lv_obj_set_style_radius(panel, 8, 0);
-    lv_obj_set_style_bg_color(panel, color_token(ui, PXSYS_COLOR_SURFACE), 0);
-    lv_obj_set_style_bg_opa(panel, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_width(panel, 1, 0);
-    lv_obj_set_style_border_color(
-        panel, color_token(ui, PXSYS_COLOR_BORDER), 0);
-    lv_obj_set_style_shadow_width(panel, 20, 0);
-    lv_obj_set_style_shadow_opa(panel, LV_OPA_30, 0);
-    lv_obj_set_style_pad_all(panel, 14, 0);
-    lv_obj_set_style_pad_row(panel, 10, 0);
+    const pxa_lvgl_dialog_style_t style = dialog_style(ui);
+    pxa_lvgl_dialog_panel_style(panel, &style);
     lv_obj_set_layout(panel, LV_LAYOUT_FLEX);
     lv_obj_set_flex_flow(panel, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_flex_align(panel, LV_FLEX_ALIGN_START,
@@ -8733,27 +9500,24 @@ static int power_menu_create(pxsys_reference_lvgl_t* ui) {
     lv_obj_set_width(title, LV_PCT(100));
     lv_obj_set_style_text_align(title, LV_TEXT_ALIGN_CENTER, 0);
 
-    button = power_menu_button(
+    button = make_page_button(
         ui, panel, translated(ui, "power.restart", "Restart"),
-        PXSYS_COLOR_ACCENT, PXSYS_COLOR_ON_ACCENT);
+        PXA_LVGL_ACTION_PRIMARY, power_menu_action_clicked, ui);
     if (button == NULL) goto failed;
     lv_obj_set_user_data(
         button, (void*)(uintptr_t)(PXSYS_REFERENCE_POWER_ACTION_RESTART + 1u));
-    lv_obj_add_event_cb(button, power_menu_action_clicked, LV_EVENT_CLICKED, ui);
 
-    button = power_menu_button(
+    button = make_page_button(
         ui, panel, translated(ui, "power.shutdown", "Power off"),
-        PXSYS_COLOR_ERROR, PXSYS_COLOR_ON_ACCENT);
+        PXA_LVGL_ACTION_DANGER, power_menu_action_clicked, ui);
     if (button == NULL) goto failed;
     lv_obj_set_user_data(
         button, (void*)(uintptr_t)(PXSYS_REFERENCE_POWER_ACTION_SHUTDOWN + 1u));
-    lv_obj_add_event_cb(button, power_menu_action_clicked, LV_EVENT_CLICKED, ui);
 
-    button = power_menu_button(
+    button = make_page_button(
         ui, panel, translated(ui, "power.cancel", "Cancel"),
-        PXSYS_COLOR_BACKGROUND, PXSYS_COLOR_TEXT_PRIMARY);
+        PXA_LVGL_ACTION_SECONDARY, power_menu_cancel_clicked, ui);
     if (button == NULL) goto failed;
-    lv_obj_add_event_cb(button, power_menu_cancel_clicked, LV_EVENT_CLICKED, ui);
     lv_obj_move_foreground(ui->power_menu);
     if (ui->power_menu_changed != NULL)
         ui->power_menu_changed(ui->power_menu_changed_context, true);
@@ -8810,6 +9574,14 @@ static int status_interaction_active(pxsys_reference_lvgl_t* ui) {
     return 0;
 }
 
+static void level_slider_refresh(lv_obj_t* slider, int32_t percent) {
+    if (slider == NULL) return;
+    percent = LV_CLAMP(lv_slider_get_min_value(slider), percent,
+                       lv_slider_get_max_value(slider));
+    if (lv_slider_get_value(slider) != percent)
+        lv_slider_set_value(slider, percent, LV_ANIM_OFF);
+}
+
 static void notification_refresh_values(pxsys_reference_lvgl_t* ui) {
     char text[40];
     if (!ui->notification_shade_open) return;
@@ -8823,16 +9595,16 @@ static void notification_refresh_values(pxsys_reference_lvgl_t* ui) {
         snprintf(text, sizeof(text), "%04u-%02u-%02u",
                  (unsigned)ui->system_status.year, (unsigned)ui->system_status.month,
                  (unsigned)ui->system_status.day);
-    else snprintf(text, sizeof(text), "---- -- --");
+    else text[0] = '\0';
     if (ui->notification_date != NULL &&
         strcmp(lv_label_get_text(ui->notification_date), text) != 0)
         lv_label_set_text(ui->notification_date, text);
-    if (ui->notification_volume != NULL &&
-        lv_slider_get_value(ui->notification_volume) != ui->system_status.volume_percent)
-        lv_slider_set_value(ui->notification_volume, ui->system_status.volume_percent, LV_ANIM_OFF);
-    if (ui->notification_brightness != NULL &&
-        lv_slider_get_value(ui->notification_brightness) != ui->system_status.brightness_percent)
-        lv_slider_set_value(ui->notification_brightness, ui->system_status.brightness_percent, LV_ANIM_OFF);
+    level_slider_refresh(ui->notification_volume, ui->system_status.volume_percent);
+    level_slider_refresh(ui->notification_brightness, ui->system_status.brightness_percent);
+    if (ui->notification_volume != NULL)
+        shade_level_readout(ui->notification_volume, &ui->shade_levels[0]);
+    if (ui->notification_brightness != NULL)
+        shade_level_readout(ui->notification_brightness, &ui->shade_levels[1]);
 }
 
 static void status_refresh_poll(lv_timer_t* timer) {
@@ -8840,24 +9612,36 @@ static void status_refresh_poll(lv_timer_t* timer) {
     if (!ui_valid(ui) || !ui->status_refresh_pending ||
         status_interaction_active(ui)) return;
     ui->status_refresh_pending = 0;
-    if (ui->status_rebuild_pending && ui->content_active &&
-        ui->active_page != REFERENCE_PAGE_HOME) {
+    const unsigned pending = ui->status_settings_pending;
+    ui->status_settings_pending = 0;
+    if (ui->content_active &&
+        (((pending & REFERENCE_SETTINGS_STATUS_NETWORK) &&
+          (ui->active_page == REFERENCE_PAGE_SETTINGS ||
+           (ui->active_page == REFERENCE_PAGE_WIFI &&
+            ui->wifi_input_stage == 0 && ui->app_dialog == NULL))) ||
+         ((pending & REFERENCE_SETTINGS_STATUS_LEVEL_SUPPORT) &&
+          ui->active_page == REFERENCE_PAGE_SOUND_SETTINGS))) {
         ui->status_rebuild_pending = 0;
         rebuild(ui);
     } else {
         pxsys_reference_layout_t layout;
-        int refresh_overlay = ui->notification_shade_open;
-        /* Control support/state may change the shade's structure, but never
-         * requires reloading launcher icons or rebuilding the chrome root. */
+        int refresh_overlay = 0;
+        level_slider_refresh(ui->settings_volume, ui->system_status.volume_percent);
+        level_slider_refresh(ui->settings_brightness, ui->system_status.brightness_percent);
+        /* Only controls that changed shape require rebuilding the shade.
+         * Text and slider updates already invalidate their own bounds. */
         if (ui->status_rebuild_pending && ui->notification_shade_open)
             build_notification_shade(ui, ui->notification_progress);
-        ui->status_rebuild_pending = 0;
         notification_refresh_values(ui);
-        if (ui->status_bar != NULL &&
-            status_bar_is_visible(ui) &&
-            pxsys_reference_layout_compute(&ui->display, &layout) == PXSYS_STATUS_OK) {
-            build_status_bar(ui, &layout);
-            refresh_overlay = 1;
+        if (ui->status_bar != NULL && status_bar_is_visible(ui)) {
+            if (ui->status_bar_rebuild_pending || ui->status_clock == NULL) {
+                if (pxsys_reference_layout_compute(&ui->display, &layout) == PXSYS_STATUS_OK) {
+                    build_status_bar(ui, &layout);
+                    refresh_overlay = 1;
+                }
+            } else {
+                refresh_overlay |= status_clock_refresh(ui);
+            }
         }
         lock_screen_refresh(ui);
         if (refresh_overlay) update_system_overlay(ui);
@@ -8871,35 +9655,44 @@ static void system_status_changed(
     const int volume_changed =
         ui->system_status.volume_supported && status->volume_supported &&
         ui->system_status.volume_percent != status->volume_percent;
-    const int levels_page_visible =
-        ui->content_active && ui->active_page == REFERENCE_PAGE_SOUND_SETTINGS;
-    /* Battery, clock and signal samples must not destroy the settings page,
-     * its scroll position or an open permission dialog. Rebuild content only
-     * when the controls represented on it actually change. */
     const pxsys_system_status_snapshot_t* old = &ui->system_status;
 #define CONTROL_CHANGED(field) (old->field != status->field)
-    int controls_changed =
+    const int network_changed =
         CONTROL_CHANGED(network_type) || CONTROL_CHANGED(network_connected) ||
         CONTROL_CHANGED(wifi_supported) || CONTROL_CHANGED(wifi_enabled) ||
         CONTROL_CHANGED(wifi_connected) || CONTROL_CHANGED(cellular_supported) ||
-        CONTROL_CHANGED(cellular_enabled) || CONTROL_CHANGED(cellular_connected) ||
-        CONTROL_CHANGED(volume_supported) || CONTROL_CHANGED(brightness_supported) ||
-        (levels_page_visible &&
-         (CONTROL_CHANGED(volume_percent) || CONTROL_CHANGED(brightness_percent))) ||
+        CONTROL_CHANGED(cellular_enabled) || CONTROL_CHANGED(cellular_connected);
+    const int level_support_changed =
+        CONTROL_CHANGED(volume_supported) || CONTROL_CHANGED(brightness_supported);
+    const int controls_changed = network_changed || level_support_changed ||
         CONTROL_CHANGED(bluetooth_supported) || CONTROL_CHANGED(bluetooth_enabled) ||
         CONTROL_CHANGED(do_not_disturb_supported) || CONTROL_CHANGED(do_not_disturb_enabled) ||
         CONTROL_CHANGED(flashlight_supported) || CONTROL_CHANGED(flashlight_enabled) ||
         CONTROL_CHANGED(airplane_mode_supported) || CONTROL_CHANGED(airplane_mode_enabled);
+    if (CONTROL_CHANGED(battery_valid) || CONTROL_CHANGED(battery_percent) ||
+        CONTROL_CHANGED(charging) || CONTROL_CHANGED(external_power_supported) ||
+        CONTROL_CHANGED(external_power_connected) ||
+        CONTROL_CHANGED(network_type) || CONTROL_CHANGED(network_connected) ||
+        CONTROL_CHANGED(network_signal_level) ||
+        CONTROL_CHANGED(wifi_supported) || CONTROL_CHANGED(wifi_enabled) ||
+        CONTROL_CHANGED(wifi_connected) || CONTROL_CHANGED(wifi_signal_level) ||
+        CONTROL_CHANGED(cellular_supported) || CONTROL_CHANGED(cellular_enabled) ||
+        CONTROL_CHANGED(cellular_connected) || CONTROL_CHANGED(cellular_signal_level))
+        ui->status_bar_rebuild_pending = 1;
 #undef CONTROL_CHANGED
     ui->system_status = *status;
     ui->status_refresh_pending = 1;
     if (controls_changed) ui->status_rebuild_pending = 1;
+    if (network_changed) ui->status_settings_pending |= REFERENCE_SETTINGS_STATUS_NETWORK;
+    if (level_support_changed)
+        ui->status_settings_pending |= REFERENCE_SETTINGS_STATUS_LEVEL_SUPPORT;
     /* Keep pressed and scrolling objects alive until their interaction ends.
      * Samples such as RSSI or a newly synchronized clock must not cancel the
      * notification drag, a slider or a settings-list scroll. */
     if (ui->status_refresh_timer != NULL)
         status_refresh_poll(ui->status_refresh_timer);
-    if (volume_changed) volume_osd_show(ui, status->volume_percent);
+    if (volume_changed && !ui->notification_shade_open && ui->settings_volume == NULL)
+        volume_osd_show(ui, status->volume_percent);
 }
 
 static int idle_policy_valid(const pxsys_reference_idle_policy_t* policy) {
@@ -9358,6 +10151,12 @@ pxsys_status_t pxsys_reference_lvgl_create(
     ui->magic = REFERENCE_MAGIC;
     ui->root = lv_obj_create(ui->parent);
     style_plain(ui->root);
+    if (ui->features & PXSYS_REFERENCE_UI_NOTIFICATION_SHADE)
+        ui->notification_refresh_hook = lv_display_add_event_cb(
+            lv_obj_get_display(ui->root), notification_refresh_event,
+            LV_EVENT_REFR_START, ui) != NULL;
+    lv_obj_add_event_cb(ui->root, page_background_draw,
+                        LV_EVENT_DRAW_MAIN | LV_EVENT_PREPROCESS, ui);
 #if PXSYS_REFERENCE_UI_BUILTIN_SETTINGS
     ui->app_ime_timer = lv_timer_create(app_input_method_poll, 200, ui);
 #endif
@@ -9480,6 +10279,7 @@ pxsys_status_t pxsys_reference_lvgl_home(pxsys_reference_lvgl_t* ui) {
     if (task_switcher_is_open(ui)) close_task_switcher(ui);
     if (ui->notification_shade_open) close_notification_shade(ui);
     capture_current_task(ui, 0);
+    application_scale_reset(ui);
     ui->launcher_editing = 0;
     ui->launcher_long_pressed = 0;
     return open_role(ui, PXSYS_ROLE_HOME);
@@ -9713,6 +10513,7 @@ pxsys_status_t pxsys_reference_lvgl_destroy(pxsys_reference_lvgl_t* ui) {
     size_t preview_index;
 #endif
     if (!ui_valid(ui)) return PXSYS_STATUS_INVALID_ARGUMENT;
+    navigation_back_tap_clear(ui);
     close_task_switcher(ui);
     application_scale_reset(ui);
     if (ui->idle_timer != NULL) lv_timer_delete(ui->idle_timer);
@@ -9782,6 +10583,10 @@ pxsys_status_t pxsys_reference_lvgl_destroy(pxsys_reference_lvgl_t* ui) {
     if (ui->volume_osd != NULL) lv_obj_delete(ui->volume_osd);
     if (ui->notification_shade != NULL) lv_obj_delete(ui->notification_shade);
     if (ui->task_switcher != NULL) lv_obj_delete(ui->task_switcher);
+    launcher_drag_finish(ui, NULL);
+    if (ui->notification_refresh_hook)
+        lv_display_remove_event_cb_with_user_data(lv_obj_get_display(ui->root),
+                                                   notification_refresh_event, ui);
     if (ui->root != NULL) lv_obj_delete(ui->root);
     release_launcher_icons(ui);
 #if PXSYS_REFERENCE_UI_TASK_SWITCHER == PXSYS_TASK_SWITCHER_CARDS && LV_USE_SNAPSHOT

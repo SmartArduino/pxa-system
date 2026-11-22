@@ -1,6 +1,6 @@
-# PXA Agent Kit 0.7.5
+# PXA Agent Kit 0.7.6
 
-0.7.5 配合 DevKit 0.11.2，更新随工具分发的开发上下文与能力检查。图片应用应先查询 Assets 2.7 的当前输入预算，在旧 Host 上保留 512 KiB 回退；查询结果不预留内存，仍需处理分配失败。
+0.7.6 配合 DevKit 0.12.0，更新随工具分发的开发上下文与能力检查。图片应用应先查询 Assets 2.7 的当前输入预算，在旧 Host 上保留 512 KiB 回退；查询结果不预留内存，仍需处理分配失败。
 
 0.7.4 新增 `reaction` 游戏配方：30 秒内点中 10 个目标，支持触摸、手柄、暂停/继续、点错或超时结束与重开。生成完整玩法与超时验收场景，帮助 AI 从可玩的循环继续扩展需求；不写存档或申请额外权限。
 
@@ -10,7 +10,7 @@
 
 0.7.1 新增带签名资源包的游戏验收：`verify APP --resource-package local/artifacts/game/resources.pxa --store-screenshots`（MCP：`pxa_verify(resource_package=...)`）。工具检查资源代次与应用绑定、签名身份及文件摘要，将素材接入隔离模拟器的只读媒体目录。再用场景输入进入关卡并检查原始截图；运行成功本身不代表游戏可玩。当前要求代码与资源使用同一签名密钥。
 
-配合 DevKit 0.11.2 与固件 0.11.4；Browser Host 独立编号。联机指引根据实际能力区分浏览器
+配合 DevKit 0.12.0 与固件 0.11.4；Browser Host 独立编号。联机指引根据实际能力区分浏览器
 原生 WebSocket、桌面/固件 TCP 客户端、监听、UDP 与 DNS-SD；补充权限生命周期、
 跨公网条件、真实消息验收以及真机锁屏对点按测试的影响。屏幕旋转沿用 Window 0.5。
 
@@ -36,7 +36,7 @@ uv run --python 3.12 https://pxa.doit.am/setup.py --workspace ./my-pxa
 uv run --python 3.12 --locked --project ./ai ./ai/agent.py --workspace ./my-pxa setup
 ```
 
-`setup` 自动选择官方 DevKit 0.11.2 或签名容器镜像，安装项目内的 skills、平台 MCP 配置、CLI 启动器，最后编译并运行真实 Guest、保存检查截图。失败时返回失败，不会把下载成功当成验收。`--sdk /path/to/devkit` 仅复用用户自己选择的完整 SDK，不宣称它经过下载签名校验。离线分发可以用 `setup.py --channel /path/to/ai-kit-0.7.5.json --manifest /path/to/distribution.json`，归档和签名放在各自清单旁。
+`setup` 自动选择官方 DevKit 0.12.0 或签名容器镜像，安装项目内的 skills、平台 MCP 配置、CLI 启动器，最后编译并运行真实 Guest、保存检查截图。失败时返回失败，不会把下载成功当成验收。`--sdk /path/to/devkit` 仅复用用户自己选择的完整 SDK，不宣称它经过下载签名校验。离线分发可以用 `setup.py --channel /path/to/ai-kit-0.7.6.json --manifest /path/to/distribution.json`，归档和签名放在各自清单旁。
 
 在 `my-pxa` 目录中使用以下命令（Windows 使用 `.pxa\pxa.cmd`）：
 

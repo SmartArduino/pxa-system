@@ -84,6 +84,8 @@ then explicitly reopen the default route. The shared mixer uses a bounded
 400-ms initial fill or startup deadline, including short replies, and flush
 resets both queued PCM and startup state. Default sessions retain four-packet
 backpressure even when the Host allocates a larger packet pool.
+C clients use `pxa_audio_open_pcm_buffered` and parse its reply with
+`pxa_audio_parse_pcm_buffered`; the ordinary PCM parser retains its 120-ms bound.
 
 The sink describes the actual route. A mono speaker can accept stereo source
 PCM and combine both channels on the Host; this does not imply stereo hardware.

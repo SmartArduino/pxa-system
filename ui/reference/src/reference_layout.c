@@ -213,4 +213,4 @@ uint32_t pxsys_reference_layout_gesture_strip_height(
                : size_class == PXSYS_UI_SIZE_REGULAR ? 24u : 28u;
 }
 
-uint32_t pxsys_reference_layout_back_gesture_width(void) { return 16u; }
+uint32_t pxsys_reference_layout_back_gesture_width(void) { return 8u; }

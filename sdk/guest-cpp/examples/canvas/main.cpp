@@ -23,9 +23,12 @@ struct CanvasApp {
         const auto length = std::snprintf(label, sizeof(label), "Touch / A: %d", taps);
         commands.reset();
         commands.rect(0, 0, 296, 240, 0x102030ff)
-                .rect(30, 70, 100, 80, 0x36bdeaff, 12)
+                .rect(30, 70, 100, 80, 0x36bdeaff, 12, 2, 0xffffffff)
+                .circle(200, 110, 32, 0xffcc40ff, 2, 0xffffffff)
+                .ellipse(164, 150, 72, 16, 0x36bdeaff)
                 .line(30, 180, 260, 180, 0xffcc40ff, 3)
-                .text(20, 20, 270, 0xffffffff, {label, static_cast<std::size_t>(length)});
+                .text_box({20, 12, 256, 40}, 0xffffffff,
+                          {label, static_cast<std::size_t>(length)}, 1, 1, 1);
         (void)canvas.present(commands);
     }
     void on_foreground(pxa::Context&) { draw(); }

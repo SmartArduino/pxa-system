@@ -270,7 +270,7 @@ def validate_specs() -> tuple[int, int]:
     require(set(specs) == {
         "assets", "audio", "clock", "container", "core", "device", "fs", "haptics", "ime", "ipc",
         "game-render", "log", "net", "package", "permission", "sensor", "storage", "surface", "ui",
-        "wasi", "window", "work", "store-installer",
+        "wasi", "window", "work", "store-installer", "video",
     }, "machine specification inventory mismatch")
 
     core = specs["core"]

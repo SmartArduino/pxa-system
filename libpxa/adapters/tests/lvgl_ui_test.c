@@ -21,6 +21,7 @@
 #include "test_lvgl_host.h"
 
 static unsigned g_native_snapshot_calls;
+static bool g_canvas_executor_busy;
 #ifdef PXA_TEST_WRAP_SNAPSHOT
 static unsigned g_snapshot_draw_calls, g_snapshot_fail_at;
 lv_result_t __real_lv_snapshot_take_to_draw_buf(lv_obj_t *, lv_color_format_t, lv_draw_buf_t *);
@@ -154,6 +155,12 @@ static pxa_status_t sync_execute(
     --g_execute_depth;
     if (allocator) allocator->fail_at = saved_failure;
     return PXA_STATUS_OK;
+}
+
+static pxa_status_t canvas_execute(
+    pxa_lvgl_ui_execute_callback_fn callback, void *callback_data, void *user_data) {
+    if (g_canvas_executor_busy) return PXA_STATUS_WOULD_BLOCK;
+    return sync_execute(callback, callback_data, user_data);
 }
 
 static uint64_t test_now_us(void *user_data) {
@@ -1289,6 +1296,7 @@ int main(void) {
     adapter_config.allocate = test_allocate;
     adapter_config.release = test_release;
     adapter_config.execute = sync_execute;
+    adapter_config.execute_canvas = canvas_execute;
     adapter_config.execute_user_data = &allocator;
     adapter_config.resolve_asset = resolve_asset;
     adapter_config.acquire_image = acquire_image;
@@ -1897,6 +1905,27 @@ int main(void) {
         g_test_rgb565_x=area.x1; g_test_rgb565_y=area.y1; g_test_rgb565_pixels=0;
         lv_obj_invalidate(object); test_lvgl_tick();
         assert(g_test_rgb565_pixels==15);
+        const uint64_t uncovered_snapshot = snapshot_hash(object);
+        const pxa_ui_canvas_view_t blocked = {
+            .node = 4, .node_handle = snapshot.backend_handle, .component = g_component,
+            .display_list = {frame.data, frame.size},
+        };
+        g_canvas_executor_busy = true;
+        assert(backend.present_canvas(backend.context, &blocked,
+            unexpected_frame_release, NULL) == PXA_STATUS_WOULD_BLOCK);
+        g_canvas_executor_busy = false;
+        assert(snapshot_hash(object) == uncovered_snapshot);
+        pxa_lvgl_ui_set_canvas_covered_top(adapter, area.y1 + 1);
+        g_test_rgb565_pixels = 0;
+        lv_obj_invalidate(object);
+        test_lvgl_tick();
+        assert(g_test_rgb565_pixels == 12);
+        assert(snapshot_hash(object) == uncovered_snapshot);
+        pxa_lvgl_ui_set_canvas_covered_top(adapter, 0);
+        g_test_rgb565_pixels = 0;
+        lv_obj_invalidate(object);
+        test_lvgl_tick();
+        assert(g_test_rgb565_pixels == 15);
         /* Sampling is per command: nearest retains the four source colors;
          * restoring the default restores the exact filtered snapshot. */
         bytes_t scaled=frame;

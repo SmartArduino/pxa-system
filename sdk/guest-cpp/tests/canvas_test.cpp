@@ -1,6 +1,7 @@
 #include "../../testing/pxa_control_capture.h"
 #include <pxa/ui.hpp>
 #include <cassert>
+#include <cstring>
 #include <vector>
 
 static std::vector<std::vector<std::byte>> packets;
@@ -71,6 +72,45 @@ int main() {
         assert(pxa::wire::get16(arc.data() + 50) == 315);
         assert(pxa::wire::get32(arc.data() + 52) == 0x123456ff);
         assert(pxa::wire::get16(arc.data() + 56) == 2);
+        commands.reset();
+        commands.rect(1, 2, 30, 20, 0, 4, 2, 0xff00ffff)
+                .ellipse(-4, 6, 24, 12, 0x12345678, 3, 0xabcdef90)
+                .circle(20, 30, 5, 0xffffffff)
+                .text_box({1, 2, 60, 40}, 0xabcdef12, "Box", 2, 1, 2);
+        const auto shapes_begin = packets.size();
+        assert(canvas.present(commands));
+        const auto& shapes = packets[shapes_begin + 1];
+        assert(shapes.size() == 32 + 32 + 30 + 30 + 31);
+        const auto* rectangle = shapes.data() + 36;
+        assert(pxa::wire::get16(rectangle + 22) == 2);
+        assert(pxa::wire::get32(rectangle + 24) == 0xff00ffff);
+        const auto* ellipse = shapes.data() + 64;
+        assert(ellipse[0] == std::byte{2} && pxa::wire::get16(ellipse + 2) == 26);
+        assert(pxa::wire::get32(ellipse + 4) == std::uint32_t(-4));
+        assert(pxa::wire::get16(ellipse + 24) == 3);
+        assert(pxa::wire::get32(ellipse + 26) == 0xabcdef90);
+        const auto* circle = ellipse + 30;
+        assert(circle[0] == std::byte{2});
+        assert(pxa::wire::get32(circle + 4) == 15 && pxa::wire::get32(circle + 8) == 25);
+        assert(pxa::wire::get32(circle + 12) == 10 && pxa::wire::get32(circle + 16) == 10);
+        const auto* box = circle + 30;
+        assert(box[0] == std::byte{9} && pxa::wire::get16(box + 2) == 27);
+        assert(box[24] == std::byte{2} && box[25] == std::byte{1} && box[26] == std::byte{2});
+        assert(box[27] == std::byte{} && std::memcmp(box + 28, "Box", 3) == 0);
+        for (unsigned invalid = 0; invalid < 7; ++invalid) {
+            commands.reset();
+            if (invalid == 0) commands.ellipse(0, 0, 0, 10, 0);
+            if (invalid == 1) commands.circle(0, 0, 0, 0);
+            if (invalid == 2) commands.circle(INT32_MIN, 0, 1, 0);
+            if (invalid == 3) commands.circle(0, 0, UINT32_MAX, 0);
+            if (invalid == 4) commands.text_box({0, 0, 0, 10}, 0, "");
+            if (invalid == 5) commands.text_box({0, 0, 10, 10}, 0, "", 4);
+            if (invalid == 6) commands.text_box({0, 0, 10, 10}, 0, "", 1, 0, 3);
+            const auto before_invalid = packets.size();
+            auto result = canvas.present(commands);
+            assert(!result && result.error() == pxa::Error::invalid_argument);
+            assert(packets.size() == before_invalid);
+        }
         commands.reset();commands.image({-2,3,64,36},77,ImageFit::cover,128);
         const auto image_begin=packets.size();assert(canvas.present(commands));
         const auto& image=packets[image_begin+1];
@@ -108,6 +148,8 @@ int main() {
         const auto stable = packets.size();
         auto overflow = canvas.present(tiny);
         assert(!overflow && overflow.error() == pxa::Error::limit_exceeded);
+        tiny.reset(); tiny.ellipse(0, 0, 1, 1, 0);
+        assert(!canvas.present(tiny));
         commands.reset(); commands.pop_clip();
         assert(!canvas.present(commands));
         commands.reset(); commands.clip({0, 0, 5, 5});

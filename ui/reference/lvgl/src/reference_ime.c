@@ -37,6 +37,8 @@ static pxa_lvgl_ui_theme_t theme(const pxsys_reference_ime_config_t *config) {
     if (config->theme) {
         result.rgba[PXA_UI_THEME_TEXT]=(config->theme->colors[PXSYS_COLOR_ON_SURFACE]<<8)|255;
         result.rgba[PXA_UI_THEME_SURFACE_CONTAINER]=(config->theme->colors[PXSYS_COLOR_SURFACE_CONTAINER]<<8)|255;
+        result.rgba[PXA_UI_THEME_SURFACE_CONTAINER_LOW]=(config->theme->colors[PXSYS_COLOR_SURFACE_CONTAINER_LOW]<<8)|255;
+        result.rgba[PXA_UI_THEME_SURFACE_CONTAINER_HIGH]=(config->theme->colors[PXSYS_COLOR_SURFACE_CONTAINER_HIGH]<<8)|255;
         result.rgba[PXA_UI_THEME_SURFACE_CONTAINER_HIGHEST]=(config->theme->colors[PXSYS_COLOR_SURFACE_CONTAINER_HIGHEST]<<8)|255;
         result.rgba[PXA_UI_THEME_OUTLINE_VARIANT]=(config->theme->colors[PXSYS_COLOR_OUTLINE_VARIANT]<<8)|255;
         result.rgba[PXA_UI_THEME_PRIMARY_CONTAINER]=(config->theme->colors[PXSYS_COLOR_PRIMARY_CONTAINER]<<8)|255;
@@ -69,8 +71,7 @@ void pxsys_reference_ime_update(pxsys_reference_ime_t *ime,const pxsys_reference
     pxa_lvgl_ui_theme_t colors=theme(config);
     pxa_ui_environment_t display=environment(config->display);
     pxa_lvgl_ime_set_preferences(ime->keyboard,(pxa_ime_preferences_t){config->layout,config->language});
-    pxa_lvgl_ime_set_theme(ime->keyboard,&colors);
-    pxa_lvgl_ime_set_environment(ime->keyboard,&display);
+    pxa_lvgl_ime_set_appearance(ime->keyboard,&display,&colors);
 }
 bool pxsys_reference_ime_is_visible(const pxsys_reference_ime_t *ime) {
     return ime && pxa_lvgl_ime_active(ime->keyboard);

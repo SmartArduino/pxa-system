@@ -29,7 +29,7 @@ Result<HttpRequestPacket> encode_http_request(const HttpRequest &r,
     auto upload = r.body.empty() ? r.upload_bytes : r.body.size();
     auto &o = r.options;
     if (!permission || !(permission.handle() >> 32) || r.url.empty() ||
-        r.url.size() > 512 ||
+        r.url.size() > 2048 ||
         !(r.url.starts_with("http://") || r.url.starts_with("https://")) ||
         method < 1 || method > 6 || o.buffer_bytes < 512 || o.buffer_bytes > 65536 ||
         (o.buffer_bytes & (o.buffer_bytes - 1)) || o.header_bytes < 16 ||

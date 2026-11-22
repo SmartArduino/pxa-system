@@ -338,7 +338,11 @@ static void check_dialog_actions(pxsys_reference_lvgl_t* ui) {
                 lv_obj_t* label = lv_obj_get_child(button, 0);
                 const lv_font_t* font = typography_font(ui, PXSYS_TYPOGRAPHY_LABEL);
                 assert(lv_obj_get_style_text_font(label, 0) == (font ? font : LV_FONT_DEFAULT));
-                assert(lv_obj_get_style_border_width(button, 0) == (!primary && !danger));
+                assert(lv_obj_get_style_border_width(button, 0) == 0);
+                assert(lv_obj_get_style_bg_opa(button, 0) == LV_OPA_COVER);
+                const pxsys_color_token_t rest = primary ? PXSYS_COLOR_ACCENT :
+                    danger ? PXSYS_COLOR_ERROR_CONTAINER : PXSYS_COLOR_SURFACE_CONTAINER_HIGH;
+                assert(lv_color_eq(lv_obj_get_style_bg_color(button, 0), color_token(ui, rest)));
                 assert(lv_obj_get_style_radius(button, 0) == ui->theme.base_radius_px * 2);
                 lv_obj_add_style(button, &board_focus, LV_STATE_FOCUSED | LV_STATE_FOCUS_KEY);
                 lv_obj_add_state(button, LV_STATE_FOCUSED | LV_STATE_FOCUS_KEY | LV_STATE_PRESSED);

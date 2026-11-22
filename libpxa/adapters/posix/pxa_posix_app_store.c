@@ -270,6 +270,38 @@ static pxa_status_t resources_ready(const pxa_posix_app_store_config_t *config,
         : PXA_STATUS_UNAVAILABLE;
 }
 
+static pxa_status_t finish_pending_home(const pxa_posix_app_store_config_t *config,
+    int directory, const pxa_posix_install_record_auth_t *auth,
+    pxa_posix_installer_t *installer, const pxa_posix_installer_identity_t *identity,
+    const pxa_posix_app_home_t *home, uint64_t current_generation) {
+    const pxa_install_record_t *pending = &home->record;
+    const int needs_commit = pending->generation != current_generation;
+    pxa_status_t status = resources_ready(config, pending);
+    if (status == PXA_STATUS_OK && config->prepare_home)
+        status = config->prepare_home(config->prepare_context, home);
+    if (status == PXA_STATUS_OK) status = resources_ready(config, pending);
+    if (status == PXA_STATUS_OK && config->commit_ready && needs_commit) {
+        status = config->commit_ready(config->commit_context, home);
+        if (status == PXA_STATUS_OK) status = resources_ready(config, pending);
+    }
+    if (status != PXA_STATUS_OK) {
+        /* Before metadata commits, restore previous code if resource or
+         * private-state preparation fails. Never rewind committed code. */
+        if (needs_commit) {
+            pxa_status_t rollback = pxa_posix_installer_finish(installer, identity, 1);
+            if (rollback == PXA_STATUS_OK) rollback = pending_remove(directory);
+            if (rollback != PXA_STATUS_OK) return rollback;
+        }
+        return status;
+    }
+    if (needs_commit)
+        status = pxa_posix_install_record_commit_with_auth(directory, current_generation, pending, auth);
+    if (status == PXA_STATUS_OK) status = pxa_posix_install_record_mirror(directory, pending, auth);
+    if (status == PXA_STATUS_OK) status = pxa_posix_installer_finish(installer, identity, 0);
+    if (status == PXA_STATUS_OK) status = pending_remove(directory);
+    return status;
+}
+
 static pxa_status_t recover_with_replacement(const pxa_posix_app_store_config_t *config,
     const char *locator, pxa_posix_installer_result_t *result, pxa_posix_app_home_t *output,
     const pxa_install_record_t *replacement) {
@@ -323,34 +355,8 @@ static pxa_status_t recover_with_replacement(const pxa_posix_app_store_config_t 
     code = pxa_posix_installer_load_current(installer, &identity, result);
     if (have_pending == PXA_STATUS_OK && code == PXA_STATUS_OK &&
         matches_manifest(&pending, result) == PXA_STATUS_OK) {
-        status = resources_ready(config, &pending);
-        if (status == PXA_STATUS_OK && config->prepare_home)
-            status = config->prepare_home(config->prepare_context, home);
-        if (status == PXA_STATUS_OK) status = resources_ready(config, &pending);
-        if (status == PXA_STATUS_OK && config->commit_ready &&
-            (have_current == PXA_STATUS_NOT_FOUND || pending.generation != current.generation)) {
-            status = config->commit_ready(config->commit_context, home);
-            if (status == PXA_STATUS_OK) status = resources_ready(config, &pending);
-        }
-        if (status != PXA_STATUS_OK) {
-            /* Before metadata commits, restore previous code if resource or
-             * private-state preparation fails. Never rewind committed code. */
-            if (have_current == PXA_STATUS_NOT_FOUND || pending.generation != current.generation) {
-                pxa_status_t rolled_back = pxa_posix_installer_finish(installer, &identity, 1);
-                if (rolled_back == PXA_STATUS_OK) rolled_back = pending_remove(directory);
-                if (rolled_back != PXA_STATUS_OK) status = rolled_back;
-            }
-            goto done;
-        }
-        if (have_current == PXA_STATUS_NOT_FOUND || pending.generation != current.generation) {
-            status = pxa_posix_install_record_commit_with_auth(directory,
-                have_current == PXA_STATUS_OK ? current.generation : 0, &pending,auth);
-            if (status != PXA_STATUS_OK) goto done;
-        }
-        status = pxa_posix_install_record_mirror(directory,&pending,auth);
-        if(status!=PXA_STATUS_OK)goto done;
-        status = pxa_posix_installer_finish(installer, &identity, 0);
-        if (status == PXA_STATUS_OK) status = pending_remove(directory);
+        status = finish_pending_home(config, directory, auth, installer, &identity, home,
+                                     have_current == PXA_STATUS_OK ? current.generation : 0);
         goto done;
     }
     if (have_current == PXA_STATUS_OK &&
@@ -522,10 +528,9 @@ pxa_status_t pxa_posix_app_store_install(const pxa_posix_app_store_config_t *con
      * additional kilobyte-sized copies above FAT/SPI driver calls. */
     status=paths(config,locator,home);
     if(status!=PXA_STATUS_OK)goto done;
-    {
-        pxa_posix_install_record_auth_t auth_storage;
-        status = pending_write(directory, &next,record_auth(config,locator,&auth_storage));
-    }
+    pxa_posix_install_record_auth_t auth_storage;
+    const pxa_posix_install_record_auth_t *auth = record_auth(config, locator, &auth_storage);
+    status = pending_write(directory, &next, auth);
     if (status != PXA_STATUS_OK) goto done;
     status = begin_installer(config, home->home, &installer, &workspace);
     if (status != PXA_STATUS_OK) goto done;
@@ -536,8 +541,18 @@ pxa_status_t pxa_posix_app_store_install(const pxa_posix_app_store_config_t *con
         ? pxa_posix_installer_adopt_directory(installer, source, &identity, result, &disposition)
         : pxa_posix_installer_install_for_identity(installer, source, &identity, result, &disposition);
     if (status != PXA_STATUS_OK) goto done;
-    end_installer(config,installer,workspace); installer = NULL; workspace = NULL;
-    status = pxa_posix_app_store_recover(config, locator, result, output);
+    /* The installer has verified and committed this executable generation.
+     * A live transaction can match its authenticated manifest immediately.
+     * Recovery still rereads and verifies current after any interruption. */
+    status = matches_manifest(&next, result);
+    if (status != PXA_STATUS_OK) {
+        pxa_status_t rollback = pxa_posix_installer_finish(installer, &identity, 1);
+        if (rollback == PXA_STATUS_OK) rollback = pending_remove(directory);
+        if (rollback != PXA_STATUS_OK) status = rollback;
+        goto done;
+    }
+    home->record = next;
+    status = finish_pending_home(config, directory, auth, installer, &identity, home, expected);
 done:
     end_installer(config,installer,workspace);
     if (directory >= 0) close(directory);

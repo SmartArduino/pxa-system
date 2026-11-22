@@ -26,7 +26,7 @@ or `http://8.166.128.230:3100`. The origin includes an explicit port, including
 pending operations and closes response streams through normal authority-bound
 Handle revocation.
 
-URLs are 1 to 512 bytes and start with lowercase `https://` or `http://`. The
+HTTP URLs are 1 to 2048 bytes and start with lowercase `https://` or `http://`. The
 host is a lowercase DNS name with labels of at most 63 bytes and total length
 at most 253 bytes; HTTP URLs also accept IPv4 literals for product endpoints.
 An optional decimal port is in the range 1..65535. A path or query may follow

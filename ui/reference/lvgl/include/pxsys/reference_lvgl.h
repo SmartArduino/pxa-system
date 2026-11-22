@@ -469,6 +469,9 @@ pxsys_status_t pxsys_reference_lvgl_set_animations_enabled(
 bool pxsys_reference_lvgl_animations_enabled(
     const pxsys_reference_lvgl_t* ui);
 bool pxsys_reference_lvgl_dismiss_overlay(pxsys_reference_lvgl_t* ui);
+/* Number of full-width display rows covered by the opaque notification shade.
+ * Call on the LVGL thread when the overlay objects are published. */
+int32_t pxsys_reference_lvgl_covered_top(const pxsys_reference_lvgl_t* ui);
 /* Hardware Back follows the same page/dialog/task path as the navigation bar.
  * Call from the LVGL task (or under its lock). */
 pxsys_status_t pxsys_reference_lvgl_back(pxsys_reference_lvgl_t* ui);

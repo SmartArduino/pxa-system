@@ -1,6 +1,7 @@
 #include "pxa/lvgl/pxa_lvgl_ui.h"
 
 #include <limits.h>
+#include <math.h>
 #include <stdint.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -25,6 +26,7 @@ typedef struct pxa_lvgl_ui_property_undo pxa_lvgl_ui_property_undo_t;
 typedef struct pxa_lvgl_ui_transaction pxa_lvgl_ui_transaction_t;
 typedef struct pxa_lvgl_ui_canvas_asset pxa_lvgl_ui_canvas_asset_t;
 typedef struct pxa_lvgl_ui_image pxa_lvgl_ui_image_t;
+typedef struct pxa_lvgl_canvas_index pxa_lvgl_canvas_index_t;
 typedef struct {
     pxa_handle64_t handle;
     pxa_lvgl_ui_image_t *image;
@@ -55,6 +57,8 @@ typedef struct {
     pxa_lvgl_ui_canvas_image_t *spare_images;
     size_t spare_image_capacity;
     pxa_lvgl_ui_image_t *free_images;
+    pxa_lvgl_canvas_index_t *index;
+    uint8_t index_probe_delay;
     pxa_ui_release_fn release;
     void *release_context;
 } pxa_lvgl_ui_canvas_t;
@@ -196,6 +200,7 @@ typedef struct {
     pxa_ui_release_fn release;
     void *execute_user_data;
     pxa_lvgl_ui_execute_fn execute;
+    pxa_lvgl_ui_execute_fn execute_canvas;
     pxa_lvgl_ui_resolve_asset_fn resolve_asset;
     pxa_lvgl_ui_acquire_image_fn acquire_image;
     pxa_lvgl_ui_release_asset_fn release_asset;
@@ -220,6 +225,7 @@ struct pxa_lvgl_ui {
     lv_image_decoder_t *image_decoder;
     pxa_lvgl_ui_theme_t theme;
     pxa_ui_environment_t primary_environment;
+    int32_t canvas_covered_top;
     pxa_lvgl_ui_node_t *nodes;
     pxa_lvgl_ui_node_t *primary_root;
     pxa_lvgl_ui_alpha_t alpha;
@@ -228,6 +234,7 @@ struct pxa_lvgl_ui {
     size_t snapshot_capacity;
     uint64_t event_timestamp_us;
     pxa_sized_font_t *sized_fonts;
+    pxa_lvgl_ui_canvas_index_stats_t canvas_index_stats;
 };
 
 static uint64_t g_alpha_revision;
@@ -478,6 +485,8 @@ static int32_t canvas_end_pixels(const pxa_lvgl_ui_t *ui, int64_t value) {
         ++result;
     return result;
 }
+
+#include "pxa_lvgl_canvas_index.h"
 
 static int32_t viewport_length(int32_t fraction_q16, uint32_t pixel_extent) {
     /* Environment extents are Surface pixels. Only dp lengths apply density;
@@ -807,6 +816,7 @@ static void on_node_delete(lv_event_t *event) {
                                   (void *)node->canvas->bytes);
         ui_release(node->ui, node->canvas->clip_stack);
         ui_release(node->ui, node->canvas->bitmap_images);
+        canvas_index_release(node->ui, node->canvas->index);
         release_canvas_assets(node->ui, node->canvas->assets);
         release_canvas_images(node->ui, node->canvas->images, node->canvas->image_count);
         ui_release(node->ui,node->canvas->spare_images);
@@ -2858,6 +2868,19 @@ static void commit_canvas_images(canvas_swap_t *swap, pxa_lvgl_ui_canvas_t *prev
     swap->image_count = 0;
 }
 
+static bool canvas_clip_visible_rows(const pxa_lvgl_ui_node_t *node,
+                                     lv_area_t *area) {
+    const int32_t covered_top = node->ui->canvas_covered_top;
+    if (covered_top <= 0 || area->y1 >= covered_top ||
+        node->surface != PXA_UI_PRIMARY_SURFACE) return true;
+    lv_display_t *display = lv_obj_get_display(node->object);
+    if (lv_display_get_rotation(display) != LV_DISPLAY_ROTATION_0 ||
+        lv_obj_get_screen(node->object) != lv_display_get_screen_active(display))
+        return true;
+    area->y1 = covered_top;
+    return area->y1 <= area->y2;
+}
+
 static void execute_canvas_swap(void *data) {
     canvas_swap_t *swap = (canvas_swap_t *)data;
     pxa_lvgl_ui_canvas_t *canvas = swap->node->canvas;
@@ -2888,6 +2911,45 @@ static void execute_canvas_swap(void *data) {
         memset(canvas, 0, sizeof(*canvas));
     }
     pxa_lvgl_ui_canvas_t previous = *canvas;
+    pxa_lvgl_ui_t *ui = swap->node->ui;
+    bool alpha_overlay = node_is_in_alpha_overlay(ui, swap->node);
+    pxa_lvgl_canvas_index_t *index = NULL;
+    uint8_t probe_delay = 0;
+    lv_area_t bounds;
+    if (!alpha_overlay && previous.bytes &&
+        canvas_index_local_update(ui, &swap->view, swap->node->object, &bounds)) {
+        if (previous.index_probe_delay) {
+            probe_delay = previous.index_probe_delay - 1;
+        } else if (previous.size != swap->view.display_list.size ||
+                   !canvas_index_same_geometry(previous.bytes,
+                       swap->view.display_list.data, previous.size)) {
+            /* An animated list need not pay to compare its geometry every frame. */
+            probe_delay = PXA_CANVAS_INDEX_PROBE_DELAY;
+        } else if (previous.index && previous.index->density == ui->primary_environment.density_q16) {
+            index = previous.index;
+            ++ui->canvas_index_stats.reuses;
+        } else {
+            size_t count = canvas_index_count(swap->view.display_list.data, previous.size);
+            if (count) {
+                index = canvas_index_allocate(ui, count);
+                if (index && canvas_index_build(ui, index,
+                    swap->view.display_list.data, swap->view.display_list.size,
+                    swap->grown_clips ? swap->grown_clips : previous.clip_stack,
+                    swap->clip_capacity, lv_area_get_height(&bounds))) {
+                    ++ui->canvas_index_stats.builds;
+                } else {
+                    if (!index) ++ui->canvas_index_stats.allocation_fallbacks;
+                    canvas_index_release(ui, index);
+                    index = NULL;
+                    probe_delay = PXA_CANVAS_INDEX_PROBE_DELAY;
+                }
+            } else {
+                probe_delay = PXA_CANVAS_INDEX_PROBE_DELAY;
+            }
+        }
+    }
+    canvas->index = index;
+    canvas->index_probe_delay = probe_delay;
     if (!swap->reuse_assets) canvas->assets = swap->assets;
     if (swap->grown_clips != NULL) {
         canvas->clip_stack = swap->grown_clips;
@@ -2907,8 +2969,8 @@ static void execute_canvas_swap(void *data) {
     canvas->release = swap->release;
     canvas->release_context = swap->release_context;
     swap->node->canvas = canvas;
-    if (node_is_in_alpha_overlay(swap->node->ui, swap->node) &&
-        !refresh_alpha_plane(swap->node->ui)) {
+    if (alpha_overlay && !refresh_alpha_plane(ui)) {
+        if (index != previous.index) canvas_index_release(ui, index);
         *canvas = previous;
         /* The bitmap descriptor array may have been reused while previewing. */
         populate_canvas_bitmaps(canvas);
@@ -2919,6 +2981,7 @@ static void execute_canvas_swap(void *data) {
         swap->status = PXA_STATUS_RESOURCE_LIMIT;
         return;
     }
+    if (index != previous.index) canvas_index_release(ui, previous.index);
     if (previous.release && previous.bytes)
         previous.release(previous.release_context, (void *)previous.bytes);
     if (!swap->reuse_assets) {
@@ -2953,7 +3016,8 @@ static void execute_canvas_swap(void *data) {
             area.y1 = LV_MAX(area.y1, origin.y1);
             area.x2 = LV_MIN(area.x2, origin.x2);
             area.y2 = LV_MIN(area.y2, origin.y2);
-            if (area.x1 <= area.x2 && area.y1 <= area.y2)
+            if (area.x1 <= area.x2 && area.y1 <= area.y2 &&
+                canvas_clip_visible_rows(swap->node, &area))
                 lv_obj_invalidate_area(swap->node->object, &area);
         }
     }
@@ -3025,8 +3089,8 @@ static pxa_status_t backend_canvas(
     }
     status = prepare_canvas_images(&swap);
     if (status == PXA_STATUS_OK)
-        status = ui->config.execute(execute_canvas_swap, &swap,
-                                    ui->config.execute_user_data);
+        status = ui->config.execute_canvas(execute_canvas_swap, &swap,
+                                           ui->config.execute_user_data);
     discard_canvas_images(&swap);
     release_canvas_assets(ui, swap.assets);
     ui_release(ui, swap.grown_clips);
@@ -3198,6 +3262,8 @@ static void intersect_clip(lv_area_t *target, const lv_area_t *clip) {
     if (target->y2 > clip->y2) target->y2 = clip->y2;
 }
 
+#include "pxa_lvgl_canvas_ellipse.h"
+
 static void on_canvas_draw(lv_event_t *event) {
     pxa_lvgl_ui_node_t *node =
         (pxa_lvgl_ui_node_t *)lv_event_get_user_data(event);
@@ -3213,18 +3279,63 @@ static void on_canvas_draw(lv_event_t *event) {
     if (node == NULL || node->canvas == NULL) return;
     data = node->canvas->bytes;
     size = node->canvas->size;
+    if (!size) return;
     layer = lv_event_get_layer(event);
     lv_obj_get_coords(node->object, &origin);
-    saved_clip = layer->_clip_area;
-    while (offset + 4u <= size) {
-        uint8_t type = data[offset];
-        uint8_t flags = data[offset + 1u];
-        uint16_t length = pxa_read_u16(data + offset + 2u);
+    const lv_area_t original_clip = layer->_clip_area;
+    saved_clip = original_clip;
+    if (node->ui->canvas_covered_top > 0 && layer->draw_buf != NULL &&
+        layer->draw_buf == lv_display_get_buf_active(lv_obj_get_display(node->object))) {
+        /* Snapshots have a separate buffer and still need the complete Canvas. */
+        if (!canvas_clip_visible_rows(node, &saved_clip)) return;
+        layer->_clip_area = saved_clip;
+    }
+    pxa_lvgl_canvas_index_t *index = PXA_LVGL_CANVAS_INDEX ? node->canvas->index : NULL;
+    /* Geometry is origin-relative. Moving/scrolling a node needs no rebuild;
+     * a density change uses the reference parser until the next submission. */
+    if (index && index->density != node->ui->primary_environment.density_q16) index = NULL;
+    canvas_index_iterator_t iterator = {0};
+    if (index) {
+        iterator.index = index;
+        iterator.first = canvas_index_band(index, (int64_t)saved_clip.y1 - origin.y1);
+        iterator.last = canvas_index_band(index, (int64_t)saved_clip.y2 - origin.y1);
+        if (iterator.last - iterator.first >= PXA_CANVAS_INDEX_BANDS / 2) index = NULL;
+    }
+    size_t candidates = 0;
+    for (;;) {
+        const canvas_index_record_t *record = NULL;
+        uint8_t type, flags;
+        uint16_t length;
         const uint8_t *value;
-        offset += 4;
-        if (length > size - offset) break;
-        value = data + offset;
-        offset += length;
+        if (index) {
+            record = canvas_index_next(&iterator);
+            if (!record) break;
+            ++candidates;
+            type = record->type; flags = record->flags; length = record->length;
+            value = data + record->offset;
+            layer->_clip_area = saved_clip;
+            lv_area_t clip = {
+                canvas_index_coord((int64_t)record->clip.x1 + origin.x1),
+                canvas_index_coord((int64_t)record->clip.y1 + origin.y1),
+                canvas_index_coord((int64_t)record->clip.x2 + origin.x1),
+                canvas_index_coord((int64_t)record->clip.y2 + origin.y1)};
+            intersect_clip(&layer->_clip_area, &clip);
+            if (layer->_clip_area.x1 > layer->_clip_area.x2 ||
+                layer->_clip_area.y1 > layer->_clip_area.y2 ||
+                (int64_t)record->bounds.x1 + origin.x1 > layer->_clip_area.x2 ||
+                (int64_t)record->bounds.y1 + origin.y1 > layer->_clip_area.y2 ||
+                (int64_t)record->bounds.x2 + origin.x1 < layer->_clip_area.x1 ||
+                (int64_t)record->bounds.y2 + origin.y1 < layer->_clip_area.y1) continue;
+            bitmap_index = image_index = record->resource;
+        } else {
+            if (size - offset < 4) break;
+            type = data[offset]; flags = data[offset + 1u];
+            length = pxa_read_u16(data + offset + 2u);
+            offset += 4;
+            if (length > size - offset) break;
+            value = data + offset;
+            offset += length;
+        }
         lv_image_dsc_t *bitmap_image = NULL;
         if (type == PXA_UI_CANVAS_BITMAP_RGB565 && length > 20u &&
             bitmap_index < node->canvas->bitmap_count)
@@ -3233,11 +3344,12 @@ static void on_canvas_draw(lv_event_t *event) {
         if (type == PXA_UI_CANVAS_IMAGE_HANDLE && length == 26 &&
             image_index < node->canvas->image_count)
             prepared_image = node->canvas->images[image_index++].image;
-        if ((type == PXA_UI_CANVAS_RECT && length == 28) ||
+        /* The indexed path already checked these rectangular bounds above. */
+        if (!index && ((type == PXA_UI_CANVAS_RECT && length == 28) ||
             (type == PXA_UI_CANVAS_ELLIPSE && length == 26) ||
             (type == PXA_UI_CANVAS_IMAGE && length > 18) ||
             (type == PXA_UI_CANVAS_IMAGE_HANDLE && length == 26) ||
-            (type == PXA_UI_CANVAS_BITMAP_RGB565 && length > 20)) {
+            (type == PXA_UI_CANVAS_BITMAP_RGB565 && length > 20))) {
             int32_t x = origin.x1 + canvas_pixels(node->ui,
                 (int32_t)pxa_read_u32(value));
             int32_t y = origin.y1 + canvas_pixels(node->ui,
@@ -3290,23 +3402,23 @@ static void on_canvas_draw(lv_event_t *event) {
             lv_draw_line(layer, &descriptor);
         } else if (type == PXA_UI_CANVAS_ELLIPSE && length == 26) {
             lv_area_t area;
-            lv_draw_rect_dsc_t descriptor;
             uint32_t fill = pxa_read_u32(value + 16);
             uint32_t border = pxa_read_u32(value + 22);
-            area.x1 = origin.x1 + canvas_pixels(node->ui,
-                (int32_t)pxa_read_u32(value));
-            area.y1 = origin.y1 + canvas_pixels(node->ui,
-                (int32_t)pxa_read_u32(value + 4));
-            area.x2 = area.x1 + canvas_pixels(node->ui,
-                pxa_read_u32(value + 8)) - 1;
-            area.y2 = area.y1 + canvas_pixels(node->ui,
-                pxa_read_u32(value + 12)) - 1;
+            int32_t border_width = canvas_pixels(node->ui, pxa_read_u16(value + 20));
+            area = canvas_index_box(node->ui, value);
+            lv_area_move(&area, origin.x1, origin.y1);
+            int32_t width = lv_area_get_width(&area), height = lv_area_get_height(&area);
+            if (width <= 0 || height <= 0) continue;
+            if (width != height) {
+                draw_canvas_ellipse(layer, &area, fill, border_width, border);
+                continue;
+            }
+            lv_draw_rect_dsc_t descriptor;
             lv_draw_rect_dsc_init(&descriptor);
             descriptor.bg_color = rgba_color(fill);
             descriptor.bg_opa = rgba_opa(fill);
             descriptor.radius = LV_RADIUS_CIRCLE;
-            descriptor.border_width = canvas_pixels(
-                node->ui, pxa_read_u16(value + 20));
+            descriptor.border_width = border_width;
             descriptor.border_color = rgba_color(border);
             descriptor.border_opa = rgba_opa(border);
             lv_draw_rect(layer, &descriptor, &area);
@@ -3537,7 +3649,14 @@ static void on_canvas_draw(lv_event_t *event) {
             layer->_clip_area = node->canvas->clip_stack[--clip_depth];
         }
     }
-    layer->_clip_area = saved_clip;
+    layer->_clip_area = original_clip;
+    if (index) {
+        ++node->ui->canvas_index_stats.indexed_draws;
+        node->ui->canvas_index_stats.candidate_commands += candidates;
+        node->ui->canvas_index_stats.skipped_commands += index->count - candidates;
+    } else {
+        ++node->ui->canvas_index_stats.streaming_draws;
+    }
 }
 
 /* LVGL inserts new indevs at the HEAD. Number pointers from the oldest
@@ -3636,6 +3755,8 @@ pxa_status_t pxa_lvgl_ui_init(void *workspace, size_t workspace_size,
         .release=config->release,
         .execute_user_data=config->execute_user_data,
         .execute=config->execute,
+        .execute_canvas=config->struct_size >= sizeof(*config) && config->execute_canvas
+            ? config->execute_canvas : config->execute,
         .resolve_asset=config->resolve_asset,
         .acquire_image=config->acquire_image,
         .release_asset=config->release_asset,
@@ -3647,8 +3768,10 @@ pxa_status_t pxa_lvgl_ui_init(void *workspace, size_t workspace_size,
         .snapshot_limit_bytes=config->snapshot_limit_bytes,
         .alpha_limit_bytes=config->alpha_limit_bytes,
         .sized_text_font_path=config->sized_text_font_path,
-        .sized_text_font=config->struct_size >= sizeof(*config) ? config->sized_text_font : NULL,
-        .sized_text_font_context=config->struct_size >= sizeof(*config) ? config->sized_text_font_context : NULL,
+        .sized_text_font=config->struct_size >= offsetof(pxa_lvgl_ui_config_t, execute_canvas)
+            ? config->sized_text_font : NULL,
+        .sized_text_font_context=config->struct_size >= offsetof(pxa_lvgl_ui_config_t, execute_canvas)
+            ? config->sized_text_font_context : NULL,
         .text_input_focus=config->text_input_focus,
         .text_input_context=config->text_input_context,
     };
@@ -3706,6 +3829,11 @@ pxa_status_t pxa_lvgl_ui_set_theme(
                               ui->config.execute_user_data);
 }
 
+void pxa_lvgl_ui_set_canvas_covered_top(pxa_lvgl_ui_t *ui, int32_t height) {
+    if (ui != NULL && ui->magic == PXA_LVGL_UI_MAGIC)
+        ui->canvas_covered_top = LV_MAX(0, height);
+}
+
 void pxa_lvgl_ui_reset(pxa_lvgl_ui_t *ui) {
     backend_reset(ui);
 }
@@ -3735,6 +3863,24 @@ bool pxa_lvgl_ui_alpha_plane(const pxa_lvgl_ui_t *ui,
     output->height = ui->alpha.content_height;
     output->revision = ui->alpha.revision;
     return true;
+}
+
+typedef struct {
+    const pxa_lvgl_ui_t *ui;
+    pxa_lvgl_ui_canvas_index_stats_t *output;
+} canvas_index_stats_query_t;
+
+static void execute_canvas_index_stats(void *context) {
+    canvas_index_stats_query_t *query = context;
+    *query->output = query->ui->canvas_index_stats;
+}
+
+pxa_status_t pxa_lvgl_ui_canvas_index_stats(pxa_lvgl_ui_t *ui,
+    pxa_lvgl_ui_canvas_index_stats_t *output) {
+    if (!ui || ui->magic != PXA_LVGL_UI_MAGIC || !output)
+        return PXA_STATUS_INVALID_ARGUMENT;
+    canvas_index_stats_query_t query = {ui, output};
+    return ui->config.execute(execute_canvas_index_stats, &query, ui->config.execute_user_data);
 }
 
 uint64_t pxa_lvgl_ui_event_timestamp_us(const pxa_lvgl_ui_t *ui) {

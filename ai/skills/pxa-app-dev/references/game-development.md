@@ -119,3 +119,19 @@ something. Use the same transform for drawing and hit testing. Reuse help and
 conditional teaching from `interface-content.md` rather than permanent controls
 paragraphs. Report measured scope honestly: submitted FPS, simulator throughput,
 first-frame preparation and physical display/audio latency are different results.
+
+## Reuse patterns from shipped game projects
+
+| Workload | Pattern to try | What to verify |
+| --- | --- | --- |
+| Tile maps and crowded battles (Tide Pact, Iron Dawn, Carrot Guard) | Cache terrain, roads and other stable layers. Rebuild only the affected cache when map state or scale changes. Cull sprites and update changed HUD regions. | Repeat the same drag and busy battle, then change territory or place a tower and check invalidation. |
+| CPU-rendered 3D (Skybreak Islands) | Keep the HUD at the output resolution and reduce only the world render resolution when it exceeds its frame budget. Use fixed simulation steps and precompute expensive scene data outside the frame path. | Compare controls and HUD legibility at the minimum render scale. Include time to first flight and a sustained frame-time sample. |
+| Art-heavy 2D (Windstone Town, Han Banners) | Export repeatable atlases and glyph subsets offline. Keep sprite anchors and nine-slice borders explicit. Select pixel or smooth glyphs using the available viewport and retain a fallback for dynamic text. | Inspect movement and combat at small and large sizes. Check long names, numbers, transparency and missing glyphs. |
+| Music and dense effects (Iron Dawn, Carrot Guard) | Stream music through the Host and prepare short effects once. Give important effects priority and discard stale events during heavy combat. | Check sustained playback while the frame budget is tight, then pause, resume and mute. |
+
+Begin with one representative playable scene and a deterministic input journey.
+Test rules and cache invalidation without a renderer where possible. During visual
+iteration run one matching screen with the existing build cache. Before delivery
+verify the smallest target, the main target and the least capable device under
+load. Compare screenshots and frame times at the same simulation state. Keep
+logs and samples in the local artifact directory.

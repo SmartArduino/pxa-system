@@ -54,6 +54,41 @@ static bool resolve_icon(void* context, const pxsys_app_descriptor_t* app,
     return true;
 }
 
+#if LV_USE_SNAPSHOT
+static void check_launcher_raster(lv_display_t* display) {
+    static uint32_t pixels[160 * 96];
+    for (unsigned y = 16; y < 80; ++y)
+        for (unsigned x = 20; x < 140; ++x)
+            pixels[y * 160 + x] = UINT32_C(0xffc08040);
+    const lv_image_dsc_t source = {
+        .header = {.magic = LV_IMAGE_HEADER_MAGIC, .cf = LV_COLOR_FORMAT_ARGB8888,
+                   .w = 160, .h = 96, .stride = 160 * sizeof(uint32_t)},
+        .data_size = sizeof(pixels), .data = (const uint8_t*)pixels};
+    launcher_item_t item = {.icon = {.source = &source}};
+    item.icon_marker = lv_obj_create(lv_display_get_layer_top(display));
+    style_plain(item.icon_marker);
+    lv_obj_set_size(item.icon_marker, 48, 48);
+    lv_obj_t* image = lv_image_create(item.icon_marker);
+    lv_obj_set_size(image, LV_PCT(100), LV_PCT(100));
+    lv_image_set_src(image, &source);
+    lv_image_set_inner_align(image, LV_IMAGE_ALIGN_CONTAIN);
+    lv_obj_center(image);
+    lv_draw_buf_t* original = lv_snapshot_take(image, LV_COLOR_FORMAT_ARGB8888);
+    assert(original != NULL && lv_image_get_scale(image) < LV_SCALE_NONE / 2);
+    launcher_rasterize_icon(&item);
+    assert(item.icon.source != &source && lv_image_get_scale(image) == LV_SCALE_NONE);
+    lv_draw_buf_t* raster = lv_snapshot_take(image, LV_COLOR_FORMAT_ARGB8888);
+    assert(raster != NULL && raster->header.w == 48 && raster->header.h == 48);
+    for (uint32_t y = 0; y < raster->header.h; ++y)
+        assert(memcmp(lv_draw_buf_goto_xy(original, 0, y),
+                      lv_draw_buf_goto_xy(raster, 0, y), 48 * sizeof(uint32_t)) == 0);
+    lv_draw_buf_destroy(original);
+    lv_draw_buf_destroy(raster);
+    lv_obj_delete(item.icon_marker);
+    item.icon.release(item.icon.release_context);
+}
+#endif
+
 static void focus_tile(pxsys_reference_lvgl_t* ui, lv_obj_t* tile,
                        uint16_t page) {
     lv_group_focus_obj(tile);
@@ -146,11 +181,14 @@ static void check_paging(lv_display_t* display, bool animations) {
     lv_indev_set_display(keypad, display);
     lv_indev_set_group(keypad, group);
     collect_launcher(ui, group);
-    /* A pointer drag exposes the neighboring page before focus changes. It
-     * must load those icons once, including while the snap returns to Home. */
+    /* Exposing the neighboring page must not resolve files synchronously.
+     * Once the snap settles on Home the idle timer preloads nearby icons. */
     lv_obj_scroll_to_x(ui->content, lv_obj_get_width(ui->content) / 2, LV_ANIM_OFF);
-    lv_tick_inc(500);
-    (void)lv_timer_handler();
+    assert(icons.acquired == per_page);
+    for (unsigned step = 0; step < 30; ++step) {
+        lv_tick_inc(10);
+        (void)lv_timer_handler();
+    }
     const size_t acquired = icons.acquired;
     assert(acquired > per_page && acquired <= 2u * per_page);
     lv_obj_scroll_to_x(ui->content, 0, LV_ANIM_OFF);
@@ -371,6 +409,9 @@ int main(void) {
     lv_display_t* display = lv_display_create(320, 240);
     lv_display_set_buffers(display, buffer, NULL, sizeof(buffer), LV_DISPLAY_RENDER_MODE_PARTIAL);
     lv_display_set_flush_cb(display, flush);
+#if LV_USE_SNAPSHOT
+    check_launcher_raster(display);
+#endif
     const int sizes[][2] = {{320, 240}, {240, 320}, {480, 320}};
     for (size_t i = 0; i < sizeof(sizes) / sizeof(sizes[0]); ++i) {
         lv_display_set_resolution(display, sizes[i][0], sizes[i][1]);

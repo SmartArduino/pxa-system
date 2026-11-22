@@ -36,7 +36,7 @@ extern "C" {
 #define PXA_NET_METHOD_PATCH UINT16_C(5)
 #define PXA_NET_METHOD_DELETE UINT16_C(6)
 #define PXA_NET_IO_READ UINT32_C(1)
-#define PXA_NET_MAX_URL_BYTES ((size_t)512)
+#define PXA_NET_MAX_URL_BYTES ((size_t)2048)
 #define PXA_NET_MAX_CONTENT_TYPE_BYTES ((size_t)96)
 #define PXA_NET_MAX_HEADERS ((size_t)8)
 #define PXA_NET_MAX_HEADER_NAME_BYTES ((size_t)64)

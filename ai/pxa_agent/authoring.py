@@ -15,6 +15,8 @@ AUTHORING_BRIEF = (
     "it in package.json; a declaration match is not hardware verification. "
     "For games, read pxa-app-dev's game-development reference: build a playable loop early, select rendering, "
     "text and audio paths from the pinned SDK, then measure cold start and representative interaction. "
+    "Start with a deterministic game journey and one representative screen; verify the smallest screen and "
+    "the least capable target under load before delivery. Keep the HUD legible when reducing world render cost. "
     "Review the normal post-tutorial screen as well as first use and relaunch; build success is insufficient."
     " For store delivery, use store build for a mandatory separate Wasm package plus requested native targets, "
     "then publish-targets; reuse compilation caches. Write factual listing copy about the actual task or gameplay, "

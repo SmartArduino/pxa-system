@@ -1,0 +1,127 @@
+diff --git a/core/iwasm/compilation/aot_emit_memory.c b/core/iwasm/compilation/aot_emit_memory.c
+index 420096c..4136aa0 100644
+--- a/core/iwasm/compilation/aot_emit_memory.c
++++ b/core/iwasm/compilation/aot_emit_memory.c
+@@ -10,6 +10,39 @@
+ #include "aot_intrinsic.h"
+ #include "aot_emit_control.h"
+ 
++/* A valid guest access cannot overwrite its runtime memory descriptor.
++ * Keep all guest scalar types in one alias class so Wasm type punning remains
++ * legal. Unknown calls still clobber both classes, including memory.grow.
++ * Leave imported/multiple/shared memories on the existing conservative path.
++ */
++static void
++set_memory_alias(AOTCompContext *comp_ctx, LLVMValueRef instruction,
++                 bool guest)
++{
++    LLVMContextRef ctx = comp_ctx->context;
++    WASMModule *module = comp_ctx->comp_data->wasm_module;
++    LLVMMetadataRef root, type, tag, operands[3];
++    const char *name = guest ? "WAMR linear bytes" : "WAMR memory descriptor";
++    if (module->import_memory_count != 0 || module->memory_count != 1)
++        return;
++#if WASM_ENABLE_SHARED_MEMORY != 0
++    if (comp_ctx->comp_data->memories[0].flags & SHARED_MEMORY_FLAG)
++        return;
++#endif
++    operands[0] = LLVMMDStringInContext2(ctx, "WAMR memory regions", 19);
++    root = LLVMMDNodeInContext2(ctx, operands, 1);
++    operands[0] = LLVMMDStringInContext2(ctx, name, strlen(name));
++    operands[1] = root;
++    type = LLVMMDNodeInContext2(ctx, operands, 2);
++    operands[0] = type;
++    operands[1] = type;
++    operands[2] = LLVMValueAsMetadata(
++        LLVMConstInt(LLVMInt64TypeInContext(ctx), 0, false));
++    tag = LLVMMDNodeInContext2(ctx, operands, 3);
++    LLVMSetMetadata(instruction, LLVMGetMDKindIDInContext(ctx, "tbaa", 4),
++                    LLVMMetadataAsValue(ctx, tag));
++}
++
+ #define BUILD_IS_NOT_NULL(value, res, name)                                \
+     do {                                                                   \
+         if (!(res = LLVMBuildIsNotNull(comp_ctx->builder, value, name))) { \
+@@ -122,6 +155,7 @@ get_memory_check_bound(AOTCompContext *comp_ctx, AOTFuncContext *func_ctx,
+         aot_set_last_error("llvm build load failed.");
+         return NULL;
+     }
++    set_memory_alias(comp_ctx, mem_check_bound, false);
+     return mem_check_bound;
+ }
+ 
+@@ -628,6 +662,7 @@ aot_check_memory_overflow(AOTCompContext *comp_ctx, AOTFuncContext *func_ctx,
+             aot_set_last_error("llvm build load failed.");
+             goto fail;
+         }
++        set_memory_alias(comp_ctx, mem_base_addr, false);
+     }
+ 
+     aot_value_top =
+@@ -729,6 +764,50 @@ aot_check_memory_overflow(AOTCompContext *comp_ctx, AOTFuncContext *func_ctx,
+         }
+     }
+ 
++    /* For memory32, an immediate offset inside the initial memory admits a
++     * single unsigned bound test: addr <= (size - bytes) - offset. Since
++     * memories never shrink, the subtraction cannot underflow. This also
++     * proves addr + offset cannot overflow, preserving both protections.
++     * Keep all other memory models and shared-heap addressing unchanged. */
++    if (!is_memory64 && comp_ctx->enable_bound_check && !enable_segue
++        && offset > 0 && (uint64)offset <= UINT32_MAX
++        && comp_ctx->comp_data->wasm_module->import_memory_count == 0
++        && comp_ctx->comp_data->wasm_module->memory_count == 1
++        && (uint64)offset + bytes
++               <= (uint64)comp_ctx->comp_data->memories[0].num_bytes_per_page
++                      * comp_ctx->comp_data->memories[0].init_page_count
++#if WASM_ENABLE_SHARED_MEMORY != 0
++        && !is_shared_memory
++#endif
++#if WASM_ENABLE_SHARED_HEAP != 0
++        && !comp_ctx->enable_shared_heap && !comp_ctx->enable_shared_chain
++#endif
++    ) {
++        LLVMValueRef limit;
++        if (!(mem_check_bound = get_memory_check_bound(comp_ctx, func_ctx,
++                                                       bytes)))
++            goto fail;
++        BUILD_OP(Sub, mem_check_bound, offset_const, limit, "address_limit");
++        BUILD_ICMP(LLVMIntUGT, addr, limit, cmp, "address_out_of_bounds");
++        ADD_BASIC_BLOCK(check_succ, "check_effective_address_succ");
++        LLVMMoveBasicBlockAfter(check_succ, block_curr);
++        if (!aot_emit_exception(comp_ctx, func_ctx,
++                                EXCE_OUT_OF_BOUNDS_MEMORY_ACCESS, true, cmp,
++                                check_succ))
++            goto fail;
++        SET_BUILD_POS(check_succ);
++        BUILD_OP(Add, offset_const, addr, offset1, "effective_offset");
++        if (!(maddr = LLVMBuildInBoundsGEP2(comp_ctx->builder, INT8_TYPE,
++                                            mem_base_addr, &offset1, 1,
++                                            "maddr")))
++            goto fail;
++        if (is_local_of_aot_value
++            && !aot_checked_addr_list_add(func_ctx, local_idx_of_aot_value,
++                                           offset, bytes))
++            goto fail;
++        return maddr;
++    }
++
+     /* offset1 = offset + addr; */
+     BUILD_OP(Add, offset_const, addr, offset1, "offset1");
+ 
+@@ -887,6 +966,7 @@ fail:
+             goto fail;                                                    \
+         }                                                                 \
+         LLVMSetAlignment(value, known_align);                             \
++        set_memory_alias(comp_ctx, value, true);                          \
+     } while (0)
+ 
+ #define BUILD_STORE()                                                   \
+@@ -897,6 +977,7 @@ fail:
+             goto fail;                                                  \
+         }                                                               \
+         LLVMSetAlignment(res, known_align);                             \
++        set_memory_alias(comp_ctx, res, true);                          \
+     } while (0)
+ 
+ #define BUILD_SIGN_EXT(dst_type)                                        \

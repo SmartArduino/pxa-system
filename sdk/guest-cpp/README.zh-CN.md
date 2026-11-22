@@ -848,7 +848,14 @@ Canvas 直接绘制位于 `<pxa/canvas.hpp>`：应用持有 `ui::CanvasRef` 和�
 `ui::CanvasCommands<N>`，用 `Canvas(ref, width, height)` 挂载（零宽高表示填满）。
 `commands.arc(cx, cy, radius, start, end, rgba, width)` 使用现有 Canvas 圆弧指令，
 角度从右侧起顺时针计算；无需把曲线拆成多条线或添加位图。命令直接写入固定容量包。
-命令支持矩形、圆角、线、文字和 clip/pop；`ref.present(commands)` 执行有界的
+命令支持矩形、圆角、边框、圆/椭圆、线、文字/文本框和 clip/pop；
+`rect(..., radius, border_width, border_rgba)` 和 `ellipse(..., border_width, border_rgba)`
+使用现有图元的填充/描边字段；透明填充 `0x00000000` 可画轮廓。
+`circle(cx, cy, radius, rgba, ...)` 以圆心定位，编码成椭圆，不增加协议指令。
+`text_box(box, rgba, text, font, align, vertical_align)` 使用字体角色，水平与垂直
+对齐分别为左/中/右、上/中/下（0/1/2）；`text_sized` 仍是独立的可选能力。
+颜色均为 `0xRRGGBBAA`，Canvas 坐标和线宽为逻辑像素，显式字号为 Surface 像素。
+`ref.present(commands)` 执行有界的
 BEGIN/WRITE/PRESENT，WRITE 直接使用命令缓冲中的最终协议包，没有第二份
 命令数组。容量不足、未闭合 clip、未挂载或已停止返回错误，不分配备用缓冲；
 当前直接控制包容量最多 4064 字节，不支持超出容量后的 StreamIO 分片。
@@ -942,6 +949,14 @@ alpha 层按内容边界缓存，只在 UI 属性变化时重新生成；设备�
 再通过 `pxa_add_app(... CPP MODULES model)` 组合。CPP 选项让模块同时获得
 SDK include、C++26 模式和异常/RTTI 配置，不依赖最终可执行文件反向传播编译选项。
 完整示例见 `examples/modules`。
+
+`pxa_add_app`、`pxa_add_component` 和 `pxa_add_module` 可分别添加 `BUILTINS`，
+例如 `pxa_add_module(compute BUILTINS SOURCES kernel.c)`，仅对该目标源码启用
+标准库内建优化。固定大小的 `memcpy` 等操作可因此内联，减少函数调用并帮助
+WAMR 优化内存访问。默认仍使用 `-fno-builtin`；此选项不会改变其他模块或 SDK
+运行时的编译参数。采用前应同时检查计算耗时和显示帧率，代码布局与调度变化
+可能使部分负载变慢。自定义标准库实现应保留默认参数。
+
 以下保留维护者使用的源码导出流程。它要求手动提供宿主依赖，不是完整 DevKit；普通 App 开发使用本文开头的 `pxa` 入口。
 
 使用仓库中的 `tools/package/build_guest_cpp_sdk.sh <输出目录>` 导出
