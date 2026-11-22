@@ -5374,6 +5374,7 @@ static void control_network_clicked(lv_event_t* event) {
         radio_enabled(control->ui, control->network) ? 0 : 1);
 }
 
+#if PXSYS_REFERENCE_UI_BUILTIN_SETTINGS
 static void control_level_released(lv_event_t* event) {
     level_control_t* control =
         (level_control_t*)lv_event_get_user_data(event);
@@ -5383,6 +5384,7 @@ static void control_level_released(lv_event_t* event) {
         pxsys_standard_system_status(control->ui->system), control->control,
         (uint8_t)lv_slider_get_value(slider));
 }
+#endif
 
 static int toggle_enabled(const pxsys_reference_lvgl_t* ui,
                           pxsys_toggle_control_t control) {
