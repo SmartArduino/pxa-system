@@ -916,6 +916,7 @@ static lv_obj_t *create_object(pxa_lvgl_ui_node_t *node,
         lv_obj_add_event_cb(object, on_canvas_pointer, LV_EVENT_PRESSING, node);
         lv_obj_add_event_cb(object, on_canvas_pointer, LV_EVENT_RELEASED, node);
         lv_obj_add_event_cb(object, on_canvas_pointer, LV_EVENT_PRESS_LOST, node);
+        lv_obj_add_event_cb(object, on_canvas_pointer, LV_EVENT_INDEV_RESET, node);
     }
     lv_obj_set_hidden(object, true);
     /* A node only takes pointer input when the Guest subscribes to events, so
@@ -1200,6 +1201,8 @@ static void apply_property(pxa_lvgl_ui_node_t *node,
                                     node);
                 lv_obj_add_event_cb(object, on_canvas_pointer,
                                     LV_EVENT_PRESS_LOST, node);
+                lv_obj_add_event_cb(object, on_canvas_pointer,
+                                    LV_EVENT_INDEV_RESET, node);
             }
             break;
         case PXA_UI_PROPERTY_WIDTH:
@@ -3676,8 +3679,9 @@ static uint8_t pointer_id_for_indev(lv_indev_t *input) {
 static void on_canvas_pointer(lv_event_t *event) {
     pxa_lvgl_ui_node_t *node =
         (pxa_lvgl_ui_node_t *)lv_event_get_user_data(event);
-    lv_indev_t *input = lv_event_get_indev(event);
     lv_event_code_t code = lv_event_get_code(event);
+    lv_indev_t *input = code == LV_EVENT_INDEV_RESET ?
+        lv_event_get_param(event) : lv_event_get_indev(event);
     lv_point_t point;
     lv_area_t area;
     uint8_t value[12] = {0};

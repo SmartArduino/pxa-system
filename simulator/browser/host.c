@@ -27,17 +27,23 @@ static pxa_window_service_t *window;
 static lv_obj_t *editor;
 static uint32_t editor_session;
 static lv_display_t *display;
-static lv_indev_t *pointer;
+enum { BROWSER_TOUCH_CONTACTS = 5 };
+enum { TOUCH_DOWN, TOUCH_MOVE, TOUCH_UP, TOUCH_CANCEL };
+static struct browser_contact {
+    lv_indev_t *input;
+    int x, y;
+    bool down;
+} contacts[BROWSER_TOUCH_CONTACTS];
 static uint8_t *frame;
 static uint32_t width, height, revision, clock_period;
 static uint32_t native_width, native_height;
 static uint8_t display_rotation;
+static bool ui_display_pending;
 EM_JS(void, notify_display, (uint32_t w, uint32_t h, uint8_t rotation), {
     Module.browserDisplay = {width:w,height:h,rotation};
     Module.browserNotify?.({type:'display-metrics',width:w,height:h,rotation});
 });
 static uint64_t current_us, next_tick;
-static int pointer_x, pointer_y, pointer_down;
 static pxa_handle64_t event_port;
 EM_JS(int, main_loop_enabled, (), {return !!Module.browserMainLoop;});
 static void close_event_port(void *context) {(void)context;event_port=0;}
@@ -170,8 +176,20 @@ static void flush(lv_display_t *d, const lv_area_t *area, uint8_t *pixels) {
     ++revision; browser_graphics_presented();lv_display_flush_ready(d);
 }
 static void read_pointer(lv_indev_t *i, lv_indev_data_t *data) {
-    (void)i; data->point.x = pointer_x; data->point.y = pointer_y;
-    data->state = pointer_down ? LV_INDEV_STATE_PRESSED : LV_INDEV_STATE_RELEASED;
+    const struct browser_contact *contact = lv_indev_get_driver_data(i);
+    data->point.x = contact->x;
+    data->point.y = contact->y;
+    data->state = contact->down ? LV_INDEV_STATE_PRESSED : LV_INDEV_STATE_RELEASED;
+}
+static void cancel_contact(struct browser_contact *contact) {
+    if (!contact->down) return;
+    contact->down = false;
+    lv_indev_reset(contact->input, NULL);
+    lv_indev_read(contact->input);
+}
+static void cancel_contacts(void) {
+    for (unsigned i = 0; i < BROWSER_TOUCH_CONTACTS; ++i)
+        cancel_contact(&contacts[i]);
 }
 static void ui_event(uint32_t surface, uint32_t node, pxa_ui_event_kind_t kind,
                      uint16_t flags, const void *value, size_t size, void *c) {
@@ -221,24 +239,28 @@ static pxa_status_t clock_call(void *c, pxa_runtime_t *rt, pxa_component_t id,
     }
     return PXA_STATUS_UNSUPPORTED;
 }
+static void publish_ui_display(void) {
+    pxa_ui_environment_t environment;
+    if (pxa_ui_get_environment(ui, component, PXA_UI_PRIMARY_SURFACE, &environment) != PXA_STATUS_OK)
+        return;
+    environment.width = width;
+    environment.height = height;
+    /* Orientation can change in app_start, before the Core accepts events. */
+    ui_display_pending = pxa_ui_update_environment(ui, component, &environment) == PXA_STATUS_BAD_STATE;
+}
 static pxa_status_t window_apply(void *c, const pxa_window_configuration_t *v) {
     (void)c;
     uint8_t rotation;
     if (!v || !pxa_display_resolve_rotation(native_width,native_height,0,
         display_rotation,v->orientation_preference,15,&rotation)) return PXA_STATUS_UNSUPPORTED;
     if (rotation != display_rotation) {
-        pointer_down=0;
-        lv_indev_reset(pointer,NULL);
+        cancel_contacts();
         width=pxa_display_logical_width(native_width,native_height,rotation);
         height=pxa_display_logical_height(native_width,native_height,rotation);
         display_rotation=rotation;
         lv_display_set_resolution(display,(int32_t)width,(int32_t)height);
         browser_graphics_resize(width,height);
-        pxa_ui_environment_t environment;
-        if (pxa_ui_get_environment(ui,component,PXA_UI_PRIMARY_SURFACE,&environment)==PXA_STATUS_OK) {
-            environment.width=width;environment.height=height;
-            (void)pxa_ui_update_environment(ui,component,&environment);
-        }
+        publish_ui_display();
         notify_display(width,height,rotation);
     }
     pxa_window_snapshot_t snapshot={.logical_width=width,.logical_height=height,
@@ -268,11 +290,16 @@ EMSCRIPTEN_KEEPALIVE int browser_init(uint32_t w, uint32_t h) {
     lv_display_set_color_format(display, LV_COLOR_FORMAT_XRGB8888);
     lv_display_set_buffers(display, frame, NULL, w * h * 4, LV_DISPLAY_RENDER_MODE_FULL);
     lv_display_set_flush_cb(display, flush);
-    pointer = lv_indev_create();
-    lv_indev_set_type(pointer, LV_INDEV_TYPE_POINTER);
-    lv_indev_set_display(pointer, display);
-    lv_indev_set_read_cb(pointer, read_pointer);
-    lv_indev_set_mode(pointer, LV_INDEV_MODE_EVENT);
+    for (unsigned i = 0; i < BROWSER_TOUCH_CONTACTS; ++i) {
+        lv_indev_t *input = lv_indev_create();
+        if (!input) return PXA_STATUS_RESOURCE_LIMIT;
+        contacts[i].input = input;
+        lv_indev_set_type(input, LV_INDEV_TYPE_POINTER);
+        lv_indev_set_display(input, display);
+        lv_indev_set_driver_data(input, &contacts[i]);
+        lv_indev_set_read_cb(input, read_pointer);
+        lv_indev_set_mode(input, LV_INDEV_MODE_EVENT);
+    }
     pxa_ui_config_t cfg; pxa_ui_config_init(&cfg);
     cfg.allocate = allocate; cfg.release = release; cfg.now_us = now_us;
     cfg.primary_width = w; cfg.primary_height = h;
@@ -335,6 +362,8 @@ EMSCRIPTEN_KEEPALIVE int browser_configuration(uint8_t *data, uint32_t capacity)
 EMSCRIPTEN_KEEPALIVE int browser_finish(int event, int result) {
     int status=event ? pxa_component_finish_event(runtime, component, result) : pxa_component_finish_start(runtime, component, result);
     if(!status&&!event&&!result){
+        if (ui_display_pending) publish_ui_display();
+        (void)pxa_window_flush_metrics(window, component);
         const uint8_t foreground=1;
         status=pxa_event_post_message(runtime,component,17,0x8005,0,(pxa_bytes_t){&foreground,1},0,UINT64_C(0x001100008005));
     }
@@ -399,10 +428,23 @@ EMSCRIPTEN_KEEPALIVE uint32_t browser_render(void) {
     browser_graphics_order();lv_timer_handler();return revision;
 }
 EMSCRIPTEN_KEEPALIVE uint8_t *browser_pixels(void) { return frame; }
+EMSCRIPTEN_KEEPALIVE unsigned browser_touch_capacity(void) { return BROWSER_TOUCH_CONTACTS; }
+EMSCRIPTEN_KEEPALIVE void browser_touch(unsigned slot, int x, int y, unsigned phase) {
+    if (slot >= BROWSER_TOUCH_CONTACTS || phase > TOUCH_CANCEL) return;
+    struct browser_contact *contact = &contacts[slot];
+    if (!contact->input || contact->down == (phase == TOUCH_DOWN)) return;
+    if (phase == TOUCH_CANCEL) {
+        cancel_contact(contact);
+        return;
+    }
+    contact->x = x < 0 ? 0 : x >= (int)width ? (int)width - 1 : x;
+    contact->y = y < 0 ? 0 : y >= (int)height ? (int)height - 1 : y;
+    contact->down = phase != TOUCH_UP;
+    lv_indev_read(contact->input);
+}
 EMSCRIPTEN_KEEPALIVE void browser_pointer(int x, int y, int down) {
-    pointer_x = x < 0 ? 0 : x >= (int)width ? (int)width - 1 : x;
-    pointer_y = y < 0 ? 0 : y >= (int)height ? (int)height - 1 : y;
-    pointer_down = !!down; lv_indev_read(pointer);
+    unsigned phase = down ? (contacts[0].down ? TOUCH_MOVE : TOUCH_DOWN) : TOUCH_UP;
+    browser_touch(0, x, y, phase);
 }
 EMSCRIPTEN_KEEPALIVE int browser_controller(uint32_t buttons) {
     uint32_t node=pxa_ui_event_root(ui,component,1,PXA_UI_EVENT_CONTROLLER_STATE);
@@ -431,6 +473,7 @@ EMSCRIPTEN_KEEPALIVE int browser_finish_stop(void) {
     return pxa_component_finish_stop(runtime,component);
 }
 EMSCRIPTEN_KEEPALIVE void browser_focus(int focused) {
+    if (!focused) cancel_contacts();
     pxa_window_snapshot_t snapshot;
     if (!pxa_window_get_snapshot(window,component,&snapshot)) {
         if(snapshot.focused!=!!focused){

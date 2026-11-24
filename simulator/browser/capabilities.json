@@ -1,5 +1,5 @@
 {
-  "version": "0.12.0",
+  "version": "0.12.1",
   "target": "browser",
   "engine": "webassembly",
   "core": "pxa.core.v2",
@@ -8,7 +8,7 @@
       "backend": "LVGL",
       "nativeFonts": "OffscreenCanvas",
       "textInput": "DOM composition",
-      "pointerContacts": 1,
+      "pointerContacts": 5,
       "packageImages": {
         "format": "PNG",
         "maxBytes": 1048576,

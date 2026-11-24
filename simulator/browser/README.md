@@ -44,6 +44,13 @@ resizes the logical viewport and emits `display-metrics` before the next frame;
 the embedding page must update its aspect ratio and pointer mapping. Square
 views remain square and shape preferences retain their angle.
 
+Browser Host 0.12.1 accepts five simultaneous canvas contacts. The Worker
+announces the limit as `touchContacts` in its ready message. Send a pointer
+slot in that range and a phase (down 0, move 1, up 2, cancel 3). Keep a slot for
+the lifetime of its contact. Guests receive independent standard PXA pointer
+IDs. Display rotation and focus loss cancel outstanding contacts. The older
+single-pointer message with a `down` boolean continues to use slot zero.
+
 ## Runtime contract
 
 - Each app runs in a fresh Worker with its own Guest and Host linear memory.

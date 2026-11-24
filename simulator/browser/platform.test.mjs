@@ -36,6 +36,48 @@ async function platform(options={},fixture='counter'){
   const permission=(name,scope)=>call(11,2,Buffer.concat([tlv(1,Buffer.from(name)),tlv(2,Buffer.from(scope))])).readBigUInt64LE(4);
   return {host,rt,call,io,active,permission};
 }
+test('Browser Host delivers independent pointer IDs and cancels them on rotation or focus loss',async()=>{
+  const {host,rt,call}=await platform({},'paddle');
+  const event=host._malloc(4096);
+  function pointers(){
+    const result=[];
+    for(let size;(size=host._browser_event(event,4096))>0;){
+      const message=Buffer.from(host.HEAPU8.subarray(event,event+size));
+      if(message.readUInt16LE(0)===3&&message.readUInt16LE(2)===0x8001&&message.readUInt16LE(32)===7){
+        result.push([message[44],message[45],message.readInt32LE(48),message.readInt32LE(52)]);
+      }
+    }
+    return result;
+  }
+  try{
+    assert.equal(rt.touchContacts,5);
+    host._browser_render();
+    const touch=(slot,x,y,phase)=>host._browser_touch(slot,x,y,phase);
+    touch(0,61,90,0);
+    touch(1,233,115,0);
+    assert.deepEqual(pointers().filter(([,p])=>p===0),[[0,0,61,90],[1,0,233,115]]);
+    touch(0,73,94,1);
+    touch(1,246,123,1);
+    assert.deepEqual(pointers().filter(([,p])=>p===1),[[0,1,73,94],[1,1,246,123]]);
+    touch(0,74,95,3);
+    touch(1,250,128,2);
+    assert.deepEqual(pointers().filter(([,p])=>p>=2),[[0,3,73,94],[1,2,250,128]]);
+    touch(0,84,110,0);
+    touch(1,115,137,0);
+    pointers();
+    call(2,1,tlv(9,num(7,1)),false);
+    assert.deepEqual(pointers().filter(([,p])=>p>=2),[[0,3,84,110],[1,3,115,137]]);
+    host._browser_render();
+    touch(4,79,120,0);
+    touch(5,78,120,0);
+    assert.deepEqual(pointers().filter(([,p])=>p===0),[[4,0,79,120]]);
+    host._browser_focus(0);
+    assert.deepEqual(pointers().filter(([,p])=>p>=2),[[4,3,79,120]]);
+  }finally{
+    host._free(event);
+    await rt.stop();
+  }
+});
 test('Surface RGB565 composition and frame accounting',async()=>{
   const {host,rt,call,io}=await platform();
   const handle=call(16,1,Buffer.from([2,0,2,0,1,0,2,0])).readBigUInt64LE(4);
@@ -75,6 +117,29 @@ test('Window preferences rotate tall/wide views, retain square shape, and expose
     }
     await rt.stop();
   }
+});
+test('a landscape request during startup delivers matching UI metrics to portrait-configured Guests',async()=>{
+  const host=await createHost(),event=host._malloc(4096);
+  assert.equal(host._browser_init(240,320),0);
+  assert.equal(host._browser_begin(0),0);
+  const orientation=tlv(9,num(2,1));
+  host.HEAPU8.set(orientation,event);
+  assert.equal(host._browser_call(2|(1<<16),0n,event,orientation.length),0);
+  assert.equal(host._browser_finish(0,0),0);
+  const geometry=[];
+  for(let size;(size=host._browser_event(event,4096))>0;){
+    const message=Buffer.from(host.HEAPU8.subarray(event,event+size));
+    if(message.readUInt16LE(0)!==3||message.readUInt16LE(2)!==0x8002)continue;
+    const values=new Map();
+    for(let at=20;at<message.length;){
+      const tag=message.readUInt16LE(at),length=message.readUInt16LE(at+2);
+      if(tag===2||tag===3)values.set(tag,message.readUInt32LE(at+4));
+      at+=4+length;
+    }
+    geometry.push([values.get(2),values.get(3)]);
+  }
+  host._free(event);
+  assert.deepEqual(geometry,[[320,240]]);
 });
 test('Sparse borrow runs real raster and PCM kernels, preserves guard bytes, rejects aliasing',async()=>{
   const {host,rt,call,active,permission}=await platform();

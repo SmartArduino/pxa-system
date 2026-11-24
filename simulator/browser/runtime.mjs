@@ -214,6 +214,8 @@ export async function createRuntime(host, binary, {width=320, height=240, log=()
   return {
     tick(ms){host._browser_tick(ms);drain();surface.collect();return host._browser_render();},
     pointer(x,y,down){host._browser_pointer(x,y,down?1:0);drain();},
+    touchContacts:host._browser_touch_capacity?.() ?? 1,
+    touch(slot,x,y,phase){host._browser_touch(slot,x,y,phase);drain();},
     controller(buttons){check(host._browser_controller(buttons),'Controller');drain();},
     back(){check(host._browser_back(),'Back');drain();},
     volumeKey(key){check(host._browser_volume_key(key),'Volume key');drain();},

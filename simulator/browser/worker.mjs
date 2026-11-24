@@ -53,7 +53,7 @@ onmessage=async({data})=>{
           }
         };
       }
-      postMessage({type:'ready'});nextDeadline=lastStats=performance.now();tick();
+      postMessage({type:'ready',touchContacts:runtime.touchContacts});nextDeadline=lastStats=performance.now();tick();
     }else if(data.type==='pause'&&runtime){
       clearTimeout(timer);paused=!!data.paused;
       runtime.focus(!paused);runtime.pause(paused);
@@ -62,7 +62,10 @@ onmessage=async({data})=>{
       if(!paused){nextDeadline=lastStats=performance.now();costSum=costSamples=0;tick();}
       else stats();
     }else if(data.type==='presented'&&presentPending){presentPending=false;frames++;}
-    else if(data.type==='pointer'&&runtime){runtime.pointer(data.x,data.y,data.down);}
+    else if(data.type==='pointer'&&runtime){
+      if(data.phase===undefined)runtime.pointer(data.x,data.y,data.down);
+      else runtime.touch(data.slot,data.x,data.y,data.phase);
+    }
     else if(data.type==='controller'&&runtime){runtime.controller(data.buttons);}
     else if(data.type==='back'&&runtime){runtime.back();}
     else if(data.type==='volume-key'&&runtime){runtime.volumeKey(data.key);}
