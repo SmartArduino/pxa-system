@@ -1,10 +1,10 @@
 diff --git a/core/iwasm/compilation/aot_emit_memory.c b/core/iwasm/compilation/aot_emit_memory.c
-index 420096c..4136aa0 100644
+index fb28a22f..0e82f6de 100644
 --- a/core/iwasm/compilation/aot_emit_memory.c
 +++ b/core/iwasm/compilation/aot_emit_memory.c
-@@ -10,6 +10,39 @@
- #include "aot_intrinsic.h"
+@@ -11,6 +11,39 @@
  #include "aot_emit_control.h"
+ #include "bh_safe_arith.h"
  
 +/* A valid guest access cannot overwrite its runtime memory descriptor.
 + * Keep all guest scalar types in one alias class so Wasm type punning remains
@@ -42,7 +42,7 @@ index 420096c..4136aa0 100644
  #define BUILD_IS_NOT_NULL(value, res, name)                                \
      do {                                                                   \
          if (!(res = LLVMBuildIsNotNull(comp_ctx->builder, value, name))) { \
-@@ -122,6 +155,7 @@ get_memory_check_bound(AOTCompContext *comp_ctx, AOTFuncContext *func_ctx,
+@@ -123,6 +156,7 @@ get_memory_check_bound(AOTCompContext *comp_ctx, AOTFuncContext *func_ctx,
          aot_set_last_error("llvm build load failed.");
          return NULL;
      }
@@ -50,7 +50,7 @@ index 420096c..4136aa0 100644
      return mem_check_bound;
  }
  
-@@ -628,6 +662,7 @@ aot_check_memory_overflow(AOTCompContext *comp_ctx, AOTFuncContext *func_ctx,
+@@ -645,6 +679,7 @@ aot_check_memory_overflow(AOTCompContext *comp_ctx, AOTFuncContext *func_ctx,
              aot_set_last_error("llvm build load failed.");
              goto fail;
          }
@@ -58,7 +58,7 @@ index 420096c..4136aa0 100644
      }
  
      aot_value_top =
-@@ -729,6 +764,50 @@ aot_check_memory_overflow(AOTCompContext *comp_ctx, AOTFuncContext *func_ctx,
+@@ -763,6 +798,50 @@ aot_check_memory_overflow(AOTCompContext *comp_ctx, AOTFuncContext *func_ctx,
          }
      }
  
@@ -109,7 +109,7 @@ index 420096c..4136aa0 100644
      /* offset1 = offset + addr; */
      BUILD_OP(Add, offset_const, addr, offset1, "offset1");
  
-@@ -887,6 +966,7 @@ fail:
+@@ -919,6 +998,7 @@ fail:
              goto fail;                                                    \
          }                                                                 \
          LLVMSetAlignment(value, known_align);                             \
@@ -117,7 +117,7 @@ index 420096c..4136aa0 100644
      } while (0)
  
  #define BUILD_STORE()                                                   \
-@@ -897,6 +977,7 @@ fail:
+@@ -929,6 +1009,7 @@ fail:
              goto fail;                                                  \
          }                                                               \
          LLVMSetAlignment(res, known_align);                             \
