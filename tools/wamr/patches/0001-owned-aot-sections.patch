@@ -1,6 +1,6 @@
 --- a/core/iwasm/aot/aot_loader.c
 +++ b/core/iwasm/aot/aot_loader.c
-@@ -4247,16 +4247,29 @@
+@@ -4231,16 +4231,29 @@
      AOTModule *module = create_module("", error_buf, error_buf_size);
  
      if (!module)

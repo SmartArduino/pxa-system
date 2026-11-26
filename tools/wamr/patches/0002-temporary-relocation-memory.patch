@@ -33,7 +33,7 @@
  }
  
  static void *
-@@ -3576,7 +3595,7 @@
+@@ -3560,7 +3579,7 @@
      }
  
      if (symbol_count > 0) {
@@ -42,7 +42,7 @@
                                  error_buf, error_buf_size);
          if (symbols == NULL) {
              goto fail;
-@@ -3823,7 +3842,7 @@
+@@ -3807,7 +3826,7 @@
      /* Allocate memory for relocation groups */
      size = sizeof(AOTRelocationGroup) * (uint64)group_count;
      if (size > 0
@@ -51,7 +51,7 @@
          goto fail;
      }
  
-@@ -3854,7 +3873,7 @@
+@@ -3838,7 +3857,7 @@
          /* Allocate memory for relocations */
          size = sizeof(AOTRelocation) * (uint64)group->relocation_count;
          if (!(group->relocations = relocation =
@@ -60,7 +60,7 @@
              ret = false;
              goto fail;
          }
-@@ -3958,13 +3977,13 @@
+@@ -3942,13 +3961,13 @@
  
  fail:
      if (symbols) {
