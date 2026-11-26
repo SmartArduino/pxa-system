@@ -16,7 +16,7 @@
     "flags": [
       "--target-abi=ilp32f",
       "--cpu=generic-rv32",
-      "--cpu-features=+m,+a,+f,+c,+zba,+zbb,+zbs,+zcb",
+      "--cpu-features=+m,+a,+f,+c,+zba,+zbb,+zbs,+zcb,+fast-unaligned-access,+xesppie",
       "--opt-level=3",
       "--size-level=3"
     ],
