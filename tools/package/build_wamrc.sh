@@ -9,10 +9,20 @@ if ! command -v "$python_bin" >/dev/null 2>&1; then
   printf 'Missing required command: %s\n' "$python_bin" >&2
   exit 1
 fi
-readonly wamr_commit="$("$python_bin" "$metadata_tool" commit)"
-readonly llvm_repo="$("$python_bin" "$metadata_tool" llvm.repository)"
-readonly llvm_ref="$("$python_bin" "$metadata_tool" llvm.ref)"
-readonly llvm_commit="$("$python_bin" "$metadata_tool" llvm.commit)"
+cached_only=false
+if [[ $# == 1 && $1 == --cached-only ]]; then
+  cached_only=true
+elif [[ $# != 0 ]]; then
+  printf 'Usage: %s [--cached-only]\n' "$0" >&2
+  exit 1
+fi
+pins="$("$python_bin" "$metadata_tool" commit llvm.repository llvm.ref llvm.commit)"
+{
+  read -r wamr_commit
+  read -r llvm_repo
+  read -r llvm_ref
+  read -r llvm_commit
+} <<< "$pins"
 wamr_source_dir="${PXA_WAMR_SOURCE_DIR:-${PXA_WAMR_COMPILER_DIR:-$pxa_system_dir/wamr}}"
 cache_dir="${PXA_WAMR_CACHE_DIR:-$pxa_system_dir/.pxa}"
 build_dir="${PXA_WAMR_BUILD_DIR:-$cache_dir/wamrc-build-$wamr_commit-llvm-$llvm_commit}"
@@ -40,9 +50,7 @@ require_command() {
   fi
 }
 
-for command in git cmake ninja flock "$host_cc" "$host_cxx" lld; do
-  require_command "$command"
-done
+require_command flock
 
 case "$host_arch" in
   x86_64|amd64) host_wamr_target="X86_64" ;;
@@ -56,6 +64,18 @@ mkdir -p "$(dirname "$lock_file")"
 exec 9>"$lock_file"
 flock 9
 
+if [[ -f "$wamrc_bin" && -x "$wamrc_bin" ]]; then
+  printf '%s\n' "$wamrc_bin"
+  exit 0
+fi
+if [[ $cached_only == true ]]; then
+  say "Offline: pinned wamrc is not installed at $wamrc_bin"
+  exit 1
+fi
+for command in git cmake ninja "$host_cc" "$host_cxx" lld; do
+  require_command "$command"
+done
+
 if [[ -z "$build_jobs" ]]; then
   if command -v nproc >/dev/null 2>&1; then
     build_jobs="$(nproc)"
@@ -65,11 +85,6 @@ if [[ -z "$build_jobs" ]]; then
   else
     build_jobs=1
   fi
-fi
-
-if [[ -x "$wamrc_bin" ]]; then
-  printf '%s\n' "$wamrc_bin"
-  exit 0
 fi
 
 if [[ -e "$wamr_source_dir" ]] \

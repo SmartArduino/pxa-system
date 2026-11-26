@@ -3,7 +3,9 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import os
 from pathlib import Path
+import platform
 import struct
 import subprocess
 import sys
@@ -11,14 +13,41 @@ import tarfile
 import tempfile
 import tracemalloc
 import unittest
+from unittest.mock import patch
 
 from .build import resource_inputs
 from .common import ToolError, digest, identity
 from .distribution import extract, fetch, verify_manifest
-from .project import Project, SDK_ROOT, TARGETS, aot_flags, sdk_identity
+from .project import Project, SDK_ROOT, TARGETS, aot_flags, resolve_tools, sdk_identity
 
 
 class DevelopmentToolsTest(unittest.TestCase):
+    @unittest.skipUnless(sys.platform.startswith('linux') and platform.machine() == 'x86_64',
+                         'Linux x64 source SDK bootstrap')
+    def test_offline_source_toolchain_uses_only_the_pinned_wamrc(self):
+        recipe = json.loads((SDK_ROOT / 'config/wamr.json').read_text())
+        with tempfile.TemporaryDirectory() as folder:
+            cache = Path(folder)
+            sdk = cache / 'sdk'
+            sdk.mkdir()
+            (sdk / 'tools').symlink_to(SDK_ROOT / 'tools', target_is_directory=True)
+            (sdk / 'config').symlink_to(SDK_ROOT / 'config', target_is_directory=True)
+            wasi = cache / 'wasi'
+            (wasi / 'bin').mkdir(parents=True)
+            (wasi / 'bin/clang++').touch()
+            env = {'PATH': os.defpath, 'PYTHON': sys.executable, 'WASI_SDK_DIR': str(wasi),
+                   'PXA_WAMR_CACHE_DIR': str(cache)}
+            with patch.dict(os.environ, env, clear=True):
+                pinned = cache / f"wamrc-build-{recipe['commit']}-llvm-{recipe['llvm']['commit']}" / 'wamrc'
+                stale = cache / 'wamrc-build-old-llvm-old' / 'wamrc'
+                stale.parent.mkdir()
+                stale.touch(mode=0o755)
+                with self.assertRaisesRegex(ToolError, 'Offline: pinned wamrc'):
+                    resolve_tools(sdk, offline=True)
+                pinned.parent.mkdir()
+                pinned.touch(mode=0o755)
+                self.assertEqual(resolve_tools(sdk, offline=True), (wasi, pinned))
+
     def test_unicode_project_names_do_not_share_an_implicit_application_id(self):
         from .cli import init_project
         with tempfile.TemporaryDirectory() as folder:

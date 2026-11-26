@@ -27,14 +27,16 @@ def lookup(document: dict[str, object], key: str) -> object:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("key", help="dotted metadata key, for example llvm.commit")
+    parser.add_argument("keys", nargs="+", help="dotted metadata keys, one output line per key")
     parser.add_argument("--metadata", type=pathlib.Path, default=DEFAULT_METADATA)
     arguments = parser.parse_args()
-    value = lookup(load(arguments.metadata), arguments.key)
-    if isinstance(value, (dict, list)):
-        print(json.dumps(value, separators=(",", ":")))
-    else:
-        print(value)
+    document = load(arguments.metadata)
+    for key in arguments.keys:
+        value = lookup(document, key)
+        if isinstance(value, (dict, list)):
+            print(json.dumps(value, separators=(",", ":")))
+        else:
+            print(value)
     return 0
 
 

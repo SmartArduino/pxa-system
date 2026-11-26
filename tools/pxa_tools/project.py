@@ -114,10 +114,14 @@ def resolve_tools(root: Path, *, offline=False) -> tuple[Path, Path]:
         wasi = Path(command(['bash', root / 'tools/package/resolve_wasi_sdk.sh'], env=env, capture=True))
     wamrc = Path(os.environ['WAMRC']) if 'WAMRC' in os.environ else executable(root / 'bin/wamrc')
     if not wamrc.is_file():
-        if offline:
-            raise ToolError('Offline: wamrc is not installed')
         bootstrap = ([sys.executable, root / 'tools/package/build_wamrc.py'] if os.name == 'nt'
                      else ['bash', root / 'tools/package/build_wamrc.sh'])
+        if offline:
+            if 'WAMRC' in os.environ:
+                raise ToolError(f'Offline: configured WAMRC is missing at {wamrc}')
+            if not bootstrap[1].is_file():
+                raise ToolError('Offline: wamrc is not installed')
+            bootstrap.append('--cached-only')
         wamrc = Path(command(bootstrap, capture=True))
     if not executable(wasi / 'bin/clang++').is_file() or not wamrc.is_file():
         raise ToolError('Incomplete PXA toolchain')

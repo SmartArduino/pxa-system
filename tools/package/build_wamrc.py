@@ -27,8 +27,10 @@ def invoke(args, *, capture=False):
     return result.stdout.strip() if capture else None
 
 
-def checkout(path, repository, commit):
+def checkout(path, repository, commit, *, offline=False):
     if not path.exists():
+        if offline:
+            raise ToolError(f'Offline: pinned source checkout is missing at {path}')
         invoke(['git', 'init', path])
         if os.name == 'nt':
             invoke(['git', '-C', path, 'config', 'core.longpaths', 'true'])
@@ -43,6 +45,7 @@ def checkout(path, repository, commit):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--cache', type=Path, default=Path(os.environ.get('PXA_WAMR_CACHE_DIR', ROOT / '.pxa')))
+    parser.add_argument('--cached-only', action='store_true', help='Reuse the pinned compiler without downloading or building')
     parser.add_argument('--jobs', type=int, default=int(os.environ.get('PXA_WAMR_JOBS', min(os.cpu_count() or 1, 8))))
     args = parser.parse_args()
     if platform.machine().lower() not in ('x86_64', 'amd64'):
@@ -59,9 +62,11 @@ def main():
     build = cache / ('wamrc-' + metadata['commit'] + '-' + llvm['commit'] + '-' + host)
     binary = executable(build / 'wamrc')
     with locked(build.with_suffix('.lock')):
+        if args.cached_only and not binary.is_file():
+            raise ToolError(f'Offline: pinned wamrc is not installed at {binary}')
         # Verify both source pins even when reusing an existing build.
-        checkout(source, metadata['repository'], metadata['commit'])
-        checkout(llvm_source, llvm['repository'], llvm['commit'])
+        checkout(source, metadata['repository'], metadata['commit'], offline=args.cached_only)
+        checkout(llvm_source, llvm['repository'], llvm['commit'], offline=args.cached_only)
         if not binary.is_file():
             options = ['-G', 'Ninja', '-DCMAKE_BUILD_TYPE=Release', '-DCMAKE_EXPORT_COMPILE_COMMANDS=ON']
             if os.name == 'nt':
