@@ -1477,6 +1477,29 @@ static void test_painter_perspective_uv(void) {
     }
 }
 
+static void test_truncated_batch_headers(void) {
+    uint16_t pixel;
+    const pxa_raster_target_t target = {
+        .pixels = &pixel, .width = 1, .height = 1, .stride_pixels = 1,
+    };
+    const pxa_raster_resources_t resources = {
+        .capabilities = PXA_RASTER_CAP_SPRITE_BATCH | PXA_RASTER_CAP_TRIANGLE_BATCH,
+    };
+    const uint8_t types[] = {
+        PXA_RASTER_RECORD_SPRITE, PXA_RASTER_RECORD_SPRITE_BATCH,
+        PXA_RASTER_RECORD_TRIANGLE_BATCH,
+    };
+    for (size_t i = 0; i < sizeof(types); ++i) {
+        uint8_t bytes[PXA_RASTER_DRAW_HEADER_BYTES + PXA_RASTER_RECORD_HEADER_BYTES];
+        pxa_raster_draw_list_view_t view;
+        const uint32_t offset = begin_list(bytes, resources.capabilities, 1, 1, sizeof(bytes));
+        bytes[offset] = types[i];
+        put_u16(bytes + offset + 2, PXA_RASTER_RECORD_HEADER_BYTES);
+        assert(pxa_raster_validate_draw_list(bytes, sizeof(bytes), &target,
+                                            &resources, &view) == PXA_STATUS_PROTOCOL_ERROR);
+    }
+}
+
 static void test_sprite_and_triangle_batches(void) {
     enum {
         SPRITE_RECORD_BYTES = PXA_RASTER_SPRITE_BATCH_HEADER_BYTES +
@@ -1625,6 +1648,7 @@ int main(void) {
     test_depth_cutout();
     test_fixed_alpha_blend();
     test_painter_perspective_uv();
+    test_truncated_batch_headers();
     test_sprite_and_triangle_batches();
     return 0;
 }
