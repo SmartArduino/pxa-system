@@ -236,7 +236,30 @@ static void test_atomic_metadata_update(void) {
     assert(allocations == 0);
 }
 
+static void test_catalog_iteration(void) {
+    size_t allocations = 0;
+    pxsys_app_registry_t* registry = create_registry(5, &allocations);
+    pxsys_app_descriptor_t a = descriptor(1, "one", "One", "native-static");
+    pxsys_app_descriptor_t b = descriptor(2, "two", "Two", "native-static");
+    pxsys_app_descriptor_t c = descriptor(3, "three", "Three", "native-static");
+    assert(pxsys_app_registry_register(registry, &a) == PXSYS_STATUS_OK);
+    assert(pxsys_app_registry_register(registry, &b) == PXSYS_STATUS_OK);
+    assert(pxsys_app_registry_register(registry, &c) == PXSYS_STATUS_OK);
+    assert(pxsys_app_registry_unregister(registry, &b.identity) == PXSYS_STATUS_OK);
+    size_t cursor = 0;
+    assert(pxsys_app_registry_next(registry, &cursor) == pxsys_app_registry_at(registry, 0));
+    assert(pxsys_app_registry_next(registry, &cursor) == pxsys_app_registry_at(registry, 1));
+    assert(pxsys_app_registry_next(registry, &cursor) == NULL);
+    assert(pxsys_app_registry_next(registry, &cursor) == NULL);
+    assert(pxsys_app_registry_register(registry, &b) == PXSYS_STATUS_OK);
+    cursor = 0;
+    for (size_t i = 0; i < 3; ++i)
+        assert(pxsys_app_registry_next(registry, &cursor) == pxsys_app_registry_at(registry, i));
+    assert(pxsys_app_registry_destroy(registry) == PXSYS_STATUS_OK && allocations == 0);
+}
+
 int main(void) {
+    test_catalog_iteration();
     test_identity_namespace_and_deep_copy();
     test_duplicate_capacity_and_remove();
     test_validation();

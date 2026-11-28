@@ -17,6 +17,7 @@ struct pxsys_service_registry {
     uint32_t magic;
     size_t capacity;
     size_t count;
+    size_t extent;
     size_t max_interface_id_bytes;
     size_t max_app_id_bytes;
     size_t max_component_id_bytes;
@@ -100,12 +101,12 @@ pxsys_status_t pxsys_service_registry_destroy(pxsys_service_registry_t* registry
     size_t index;
     if (!registry_valid(registry))
         return PXSYS_STATUS_INVALID_ARGUMENT;
-    for (index = 0; index < registry->capacity; ++index) {
+    for (index = 0; index < registry->extent; ++index) {
         if (registry->entries[index].occupied && registry->entries[index].active_calls != 0)
             return PXSYS_STATUS_BUSY;
     }
     allocator = registry->allocator;
-    for (index = 0; index < registry->capacity; ++index) {
+    for (index = 0; index < registry->extent; ++index) {
         if (registry->entries[index].occupied)
             allocator.release(allocator.context, registry->entries[index].interface_id);
     }
@@ -113,6 +114,17 @@ pxsys_status_t pxsys_service_registry_destroy(pxsys_service_registry_t* registry
     allocator.release(allocator.context, registry->entries);
     allocator.release(allocator.context, registry);
     return PXSYS_STATUS_OK;
+}
+
+static service_entry_t* find_provider(const pxsys_service_registry_t* registry,
+                                      pxsys_string_t id, uint16_t major) {
+    for (size_t i = 0; i < registry->extent; ++i) {
+        service_entry_t* entry = &registry->entries[i];
+        if (entry->occupied && entry->provider.version.major == major &&
+            string_equal(entry->provider.interface_id, id))
+            return entry;
+    }
+    return NULL;
 }
 
 pxsys_status_t pxsys_service_register(pxsys_service_registry_t* registry,
@@ -125,16 +137,11 @@ pxsys_status_t pxsys_service_register(pxsys_service_registry_t* registry,
         provider->invoke == NULL) {
         return PXSYS_STATUS_INVALID_ARGUMENT;
     }
-    for (index = 0; index < registry->capacity; ++index) {
-        entry = &registry->entries[index];
-        if (entry->occupied && string_equal(entry->provider.interface_id, provider->interface_id) &&
-            entry->provider.version.major == provider->version.major) {
-            return PXSYS_STATUS_ALREADY_EXISTS;
-        }
-    }
+    if (find_provider(registry, provider->interface_id, provider->version.major) != NULL)
+        return PXSYS_STATUS_ALREADY_EXISTS;
     if (registry->count == registry->capacity)
         return PXSYS_STATUS_RESOURCE_LIMIT;
-    for (index = 0; index < registry->capacity; ++index) {
+    for (index = 0; index < registry->extent; ++index) {
         if (!registry->entries[index].occupied)
             break;
     }
@@ -149,31 +156,26 @@ pxsys_status_t pxsys_service_register(pxsys_service_registry_t* registry,
     entry->provider.struct_size = sizeof(entry->provider);
     entry->provider.interface_id.data = entry->interface_id;
     entry->occupied = 1;
+    if (index == registry->extent) registry->extent++;
     registry->count++;
     return PXSYS_STATUS_OK;
 }
 
 pxsys_status_t pxsys_service_unregister(pxsys_service_registry_t* registry,
                                         pxsys_string_t interface_id, uint16_t major_version) {
-    size_t index;
     if (!registry_valid(registry) ||
         !pxsys_identifier_validate(interface_id, registry->max_interface_id_bytes)) {
         return PXSYS_STATUS_INVALID_ARGUMENT;
     }
-    for (index = 0; index < registry->capacity; ++index) {
-        service_entry_t* entry = &registry->entries[index];
-        if (!entry->occupied || !string_equal(entry->provider.interface_id, interface_id) ||
-            entry->provider.version.major != major_version) {
-            continue;
-        }
-        if (entry->active_calls != 0)
-            return PXSYS_STATUS_BUSY;
-        registry->allocator.release(registry->allocator.context, entry->interface_id);
-        memset(entry, 0, sizeof(*entry));
-        registry->count--;
-        return PXSYS_STATUS_OK;
-    }
-    return PXSYS_STATUS_NOT_FOUND;
+    service_entry_t* entry = find_provider(registry, interface_id, major_version);
+    if (entry == NULL) return PXSYS_STATUS_NOT_FOUND;
+    if (entry->active_calls != 0) return PXSYS_STATUS_BUSY;
+    registry->allocator.release(registry->allocator.context, entry->interface_id);
+    memset(entry, 0, sizeof(*entry));
+    registry->count--;
+    while (registry->extent != 0 && !registry->entries[registry->extent - 1u].occupied)
+        registry->extent--;
+    return PXSYS_STATUS_OK;
 }
 
 static void complete_once(void* context, uint64_t request_id, pxsys_status_t status,
@@ -193,9 +195,8 @@ pxsys_status_t pxsys_service_invoke(pxsys_service_registry_t* registry,
                                     const pxsys_service_request_t* request,
                                     void* completion_context, pxsys_service_complete_fn complete) {
     completion_gate_t* gate;
-    service_entry_t* selected = NULL;
+    service_entry_t* selected;
     pxsys_status_t status;
-    size_t index;
     if (!registry_valid(registry) || request == NULL || request->struct_size < sizeof(*request) ||
         !pxsys_identifier_validate(request->interface_id, registry->max_interface_id_bytes) ||
         request->caller == NULL || request->caller->struct_size < sizeof(*request->caller) ||
@@ -211,17 +212,8 @@ pxsys_status_t pxsys_service_invoke(pxsys_service_registry_t* registry,
         if (status != PXSYS_STATUS_OK)
             return status;
     }
-    for (index = 0; index < registry->capacity; ++index) {
-        service_entry_t* candidate = &registry->entries[index];
-        if (candidate->occupied &&
-            string_equal(candidate->provider.interface_id, request->interface_id) &&
-            candidate->provider.version.major == request->version.major &&
-            candidate->provider.version.minor >= request->version.minor) {
-            selected = candidate;
-            break;
-        }
-    }
-    if (selected == NULL)
+    selected = find_provider(registry, request->interface_id, request->version.major);
+    if (selected == NULL || selected->provider.version.minor < request->version.minor)
         return PXSYS_STATUS_UNSUPPORTED;
     gate = (completion_gate_t*)registry->allocator.allocate(registry->allocator.context,
                                                             sizeof(*gate));
@@ -260,7 +252,7 @@ pxsys_status_t pxsys_service_at(const pxsys_service_registry_t* registry, size_t
     size_t current = 0;
     if (!registry_valid(registry) || output == NULL || index >= registry->count)
         return PXSYS_STATUS_INVALID_ARGUMENT;
-    for (slot = 0; slot < registry->capacity; ++slot) {
+    for (slot = 0; slot < registry->extent; ++slot) {
         if (!registry->entries[slot].occupied)
             continue;
         if (current++ == index) {
@@ -274,24 +266,12 @@ pxsys_status_t pxsys_service_at(const pxsys_service_registry_t* registry, size_t
 pxsys_status_t pxsys_service_resolve(const pxsys_service_registry_t* registry,
                                      pxsys_string_t interface_id, pxsys_version_t minimum_version,
                                      pxsys_service_info_t* output) {
-    const service_entry_t* selected = NULL;
-    size_t index;
     if (!registry_valid(registry) || output == NULL ||
         !pxsys_identifier_validate(interface_id, registry->max_interface_id_bytes)) {
         return PXSYS_STATUS_INVALID_ARGUMENT;
     }
-    for (index = 0; index < registry->capacity; ++index) {
-        const service_entry_t* candidate = &registry->entries[index];
-        if (!candidate->occupied || !string_equal(candidate->provider.interface_id, interface_id) ||
-            candidate->provider.version.major != minimum_version.major ||
-            candidate->provider.version.minor < minimum_version.minor) {
-            continue;
-        }
-        if (selected == NULL ||
-            candidate->provider.version.minor < selected->provider.version.minor)
-            selected = candidate;
-    }
-    if (selected == NULL)
+    const service_entry_t* selected = find_provider(registry, interface_id, minimum_version.major);
+    if (selected == NULL || selected->provider.version.minor < minimum_version.minor)
         return PXSYS_STATUS_NOT_FOUND;
     project_service_info(selected, output);
     return PXSYS_STATUS_OK;
@@ -302,7 +282,7 @@ size_t pxsys_service_active_call_count(const pxsys_service_registry_t* registry)
     size_t index;
     if (!registry_valid(registry))
         return 0;
-    for (index = 0; index < registry->capacity; ++index) {
+    for (index = 0; index < registry->extent; ++index) {
         if (registry->entries[index].occupied)
             count += registry->entries[index].active_calls;
     }

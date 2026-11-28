@@ -86,6 +86,11 @@ const pxsys_app_descriptor_t* pxsys_app_registry_find(const pxsys_app_registry_t
                                                       const pxsys_app_identity_t* identity);
 const pxsys_app_descriptor_t* pxsys_app_registry_at(const pxsys_app_registry_t* registry,
                                                     size_t index);
+/* Start at zero and keep the cursor between calls. Iteration uses the same
+ * order as _at and returns NULL at the end. Removing the returned entry
+ * leaves the cursor valid. Restart after other registry changes. */
+const pxsys_app_descriptor_t* pxsys_app_registry_next(const pxsys_app_registry_t* registry,
+                                                       size_t* cursor);
 
 pxsys_app_ref_t pxsys_app_ref_invalid(void);
 pxsys_status_t pxsys_app_registry_acquire(pxsys_app_registry_t* registry,

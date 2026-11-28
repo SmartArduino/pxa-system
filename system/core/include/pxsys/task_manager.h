@@ -38,6 +38,8 @@ void pxsys_task_manager_config_init(pxsys_task_manager_config_t* config);
 pxsys_status_t pxsys_task_manager_create(const pxsys_task_manager_config_t* config,
                                          pxsys_task_manager_t** output);
 pxsys_status_t pxsys_task_manager_destroy(pxsys_task_manager_t* manager);
+/* CLEAR_TOP waits for async stops above the target. PENDING with an invalid
+ * instance means to retry the same Intent after reporting those stops. */
 pxsys_status_t pxsys_task_manager_start(pxsys_task_manager_t* manager, const pxsys_intent_t* intent,
                                         pxsys_instance_ref_t* instance);
 pxsys_status_t pxsys_task_manager_start_as(pxsys_task_manager_t* manager,
@@ -82,6 +84,11 @@ pxsys_status_t pxsys_task_manager_task(
     pxsys_instance_ref_t* instance, pxsys_instance_snapshot_t* snapshot);
 pxsys_status_t pxsys_task_manager_activate(
     pxsys_task_manager_t* manager, pxsys_instance_ref_t instance);
+/* Foregrounds the most recent instance of an App without delivering an Intent.
+ * Returns NOT_FOUND when the App has no task. Other errors leave the caller
+ * free to report the activation failure without starting a duplicate. */
+pxsys_status_t pxsys_task_manager_resume_app(pxsys_task_manager_t* manager,
+                                            const pxsys_app_identity_t* app);
 
 #ifdef __cplusplus
 }

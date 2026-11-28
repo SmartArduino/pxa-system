@@ -1,4 +1,5 @@
 #include "pxsys/runtime.h"
+#include "runtime_internal.h"
 
 #include <stddef.h>
 #include <string.h>
@@ -223,6 +224,12 @@ static pxsys_instance_entry_t* resolve_instance(const pxsys_runtime_t* runtime,
     return entry->occupied && entry->generation == reference.generation ? entry : NULL;
 }
 
+const pxsys_app_descriptor_t* pxsys_runtime_instance_app(
+    const pxsys_runtime_t* runtime, pxsys_instance_ref_t reference) {
+    const pxsys_instance_entry_t* instance = resolve_instance(runtime, reference);
+    return instance != NULL ? instance->app : NULL;
+}
+
 static void release_instance(pxsys_runtime_t* runtime, pxsys_instance_entry_t* instance) {
     pxsys_provider_entry_t* provider = &runtime->providers[instance->provider_slot];
     (void)pxsys_app_registry_release(runtime->apps, instance->app_ref);
@@ -421,6 +428,10 @@ pxsys_status_t pxsys_runtime_foreground(pxsys_runtime_t* runtime, pxsys_instance
     pxsys_status_t status;
     if (instance == NULL)
         return PXSYS_STATUS_NOT_FOUND;
+    if (instance->lifecycle.state == PXSYS_APP_STARTING) {
+        instance->foreground_requested = 1;
+        return PXSYS_STATUS_OK;
+    }
     if (instance->lifecycle.state == PXSYS_APP_FOREGROUND)
         return PXSYS_STATUS_OK;
     if (instance->lifecycle.state != PXSYS_APP_BACKGROUND)
@@ -437,14 +448,20 @@ pxsys_status_t pxsys_runtime_background(pxsys_runtime_t* runtime, pxsys_instance
     pxsys_status_t status;
     if (instance == NULL)
         return PXSYS_STATUS_NOT_FOUND;
-    if (instance->lifecycle.state == PXSYS_APP_BACKGROUND)
+    const int starting = instance->lifecycle.state == PXSYS_APP_STARTING;
+    if (instance->lifecycle.state == PXSYS_APP_BACKGROUND ||
+        (starting && !instance->foreground_requested))
         return PXSYS_STATUS_OK;
-    if (instance->lifecycle.state != PXSYS_APP_FOREGROUND)
+    if (!starting && instance->lifecycle.state != PXSYS_APP_FOREGROUND)
         return PXSYS_STATUS_BAD_STATE;
     provider = &runtime->providers[instance->provider_slot];
     status = provider->provider.background(provider->provider.context, instance->runtime_instance);
-    return status == PXSYS_STATUS_OK ? pxsys_app_lifecycle_background(&instance->lifecycle)
-                                     : status;
+    if (status != PXSYS_STATUS_OK) return status;
+    if (starting) {
+        instance->foreground_requested = 0;
+        return PXSYS_STATUS_OK;
+    }
+    return pxsys_app_lifecycle_background(&instance->lifecycle);
 }
 
 pxsys_status_t pxsys_runtime_deliver(pxsys_runtime_t* runtime, pxsys_instance_ref_t reference,
@@ -490,6 +507,11 @@ pxsys_status_t pxsys_runtime_stop(pxsys_runtime_t* runtime, pxsys_instance_ref_t
     pxsys_status_t status;
     if (instance == NULL)
         return PXSYS_STATUS_NOT_FOUND;
+    if (reason > PXSYS_STOP_SHUTDOWN)
+        return PXSYS_STATUS_INVALID_ARGUMENT;
+    if (instance->lifecycle.state == PXSYS_APP_STOPPING)
+        return PXSYS_STATUS_PENDING;
+    const pxsys_app_lifecycle_t previous = instance->lifecycle;
     status = pxsys_app_lifecycle_request_stop(&instance->lifecycle, reason);
     if (status != PXSYS_STATUS_OK)
         return status;
@@ -497,8 +519,10 @@ pxsys_status_t pxsys_runtime_stop(pxsys_runtime_t* runtime, pxsys_instance_ref_t
     if (provider->provider.request_stop != NULL) {
         status = provider->provider.request_stop(provider->provider.context,
                                                  instance->runtime_instance, reason);
-        if (status != PXSYS_STATUS_OK && status != PXSYS_STATUS_PENDING)
+        if (status != PXSYS_STATUS_OK && status != PXSYS_STATUS_PENDING) {
+            instance->lifecycle = previous;
             return status;
+        }
         (void)pxsys_app_lifecycle_begin_stop(&instance->lifecycle);
         if (status == PXSYS_STATUS_PENDING)
             return status;

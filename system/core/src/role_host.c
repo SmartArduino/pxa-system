@@ -3,6 +3,7 @@
 #include <string.h>
 
 #include "pxsys/intent_wire.h"
+#include "runtime_internal.h"
 
 #define PXSYS_ROLE_HOST_MAGIC UINT32_C(0x50585248)
 
@@ -13,6 +14,7 @@ typedef struct {
     pxsys_instance_ref_t incoming;
     pxsys_instance_ref_t retiring;
     uint8_t occupied;
+    uint8_t current_stopping;
 } role_instance_t;
 
 struct pxsys_role_host {
@@ -58,6 +60,7 @@ static role_instance_t* find_role(const pxsys_role_host_t* host,
 static role_instance_t* find_instance(const pxsys_role_host_t* host,
                                       pxsys_instance_ref_t instance) {
     size_t index;
+    if (!ref_valid(instance)) return NULL;
     for (index = 0; index < host->capacity; ++index) {
         role_instance_t* entry = &host->entries[index];
         if (entry->occupied &&
@@ -240,7 +243,6 @@ pxsys_status_t pxsys_role_host_start(pxsys_role_host_t* host,
                                      const pxsys_intent_t* intent,
                                      pxsys_instance_ref_t* instance) {
     const pxsys_app_descriptor_t* app;
-    pxsys_instance_snapshot_t current = {0};
     pxsys_message_t message;
     role_instance_t* entry;
     pxsys_status_t status;
@@ -248,7 +250,7 @@ pxsys_status_t pxsys_role_host_start(pxsys_role_host_t* host,
     if (instance == NULL)
         return PXSYS_STATUS_INVALID_ARGUMENT;
     *instance = pxsys_instance_ref_invalid();
-    if (!host_valid(host) || intent == NULL ||
+    if (!host_valid(host) || intent == NULL || intent->struct_size < sizeof(*intent) ||
         !pxsys_identifier_validate(role_id, host->max_role_id_bytes) ||
         (caller != NULL &&
          (caller->struct_size < sizeof(*caller) ||
@@ -260,14 +262,15 @@ pxsys_status_t pxsys_role_host_start(pxsys_role_host_t* host,
     if (status != PXSYS_STATUS_OK)
         return status;
     entry = find_role(host, role_id);
-    if (entry != NULL && (ref_valid(entry->incoming) || ref_valid(entry->retiring)))
+    if (entry != NULL && (entry->current_stopping || ref_valid(entry->incoming) ||
+                          ref_valid(entry->retiring)))
         return PXSYS_STATUS_BUSY;
     if (entry != NULL && ref_valid(entry->current)) {
-        current.struct_size = sizeof(current);
-        status = pxsys_runtime_snapshot(host->runtime, entry->current, &current);
-        if (status != PXSYS_STATUS_OK)
-            return status;
-        if (pxsys_app_identity_equal(&current.app->identity, &app->identity)) {
+        const pxsys_app_descriptor_t* current =
+            pxsys_runtime_instance_app(host->runtime, entry->current);
+        if (current == NULL)
+            return PXSYS_STATUS_NOT_FOUND;
+        if (current == app) {
             if (host->authorize != NULL &&
                 (status = host->authorize(host->policy_context, caller,
                                           PXSYS_INTENT_OPERATION_DELIVER,
@@ -326,8 +329,10 @@ pxsys_status_t pxsys_role_host_complete_start(pxsys_role_host_t* host,
         return PXSYS_STATUS_NOT_FOUND;
     status = pxsys_runtime_complete_start(host->runtime, instance, result);
     if (status != PXSYS_STATUS_OK) {
-        entry->incoming = pxsys_instance_ref_invalid();
-        release_if_empty(host, entry);
+        if (pxsys_runtime_instance_app(host->runtime, instance) == NULL) {
+            entry->incoming = pxsys_instance_ref_invalid();
+            release_if_empty(host, entry);
+        }
         return status;
     }
     return adopt_started(host, entry, instance);
@@ -346,8 +351,10 @@ pxsys_status_t pxsys_role_host_report_stopped(pxsys_role_host_t* host,
     status = pxsys_runtime_report_stopped(host->runtime, instance, reason);
     if (status != PXSYS_STATUS_OK)
         return status;
-    if (ref_equal(entry->current, instance))
+    if (ref_equal(entry->current, instance)) {
         entry->current = pxsys_instance_ref_invalid();
+        entry->current_stopping = 0;
+    }
     if (ref_equal(entry->incoming, instance))
         entry->incoming = pxsys_instance_ref_invalid();
     if (ref_equal(entry->retiring, instance))
@@ -356,66 +363,52 @@ pxsys_status_t pxsys_role_host_report_stopped(pxsys_role_host_t* host,
     return PXSYS_STATUS_OK;
 }
 
+static pxsys_status_t stop_role(pxsys_role_host_t* host, role_instance_t* entry,
+                                pxsys_stop_reason_t reason) {
+    pxsys_status_t result = ref_valid(entry->retiring) ? PXSYS_STATUS_PENDING : PXSYS_STATUS_OK;
+    pxsys_instance_ref_t* refs[] = {&entry->incoming, &entry->current};
+    for (size_t i = 0; i < sizeof(refs) / sizeof(refs[0]); ++i) {
+        pxsys_instance_ref_t* ref = refs[i];
+        if (!ref_valid(*ref)) continue;
+        pxsys_status_t status = pxsys_runtime_stop(host->runtime, *ref, reason);
+        if (status == PXSYS_STATUS_OK) {
+            *ref = pxsys_instance_ref_invalid();
+        } else if (status == PXSYS_STATUS_PENDING) {
+            if (ref == &entry->current) entry->current_stopping = 1;
+            if (result == PXSYS_STATUS_OK) result = status;
+        } else {
+            result = status;
+        }
+    }
+    release_if_empty(host, entry);
+    return result;
+}
+
 pxsys_status_t pxsys_role_host_stop(pxsys_role_host_t* host,
                                     pxsys_string_t role_id,
                                     pxsys_stop_reason_t reason) {
-    role_instance_t* entry;
-    pxsys_status_t status = PXSYS_STATUS_OK;
-    if (!host_valid(host) ||
-        !pxsys_identifier_validate(role_id, host->max_role_id_bytes)) {
+    if (!host_valid(host) || reason > PXSYS_STOP_SHUTDOWN ||
+        !pxsys_identifier_validate(role_id, host->max_role_id_bytes))
         return PXSYS_STATUS_INVALID_ARGUMENT;
-    }
-    entry = find_role(host, role_id);
-    if (entry == NULL)
-        return PXSYS_STATUS_NOT_FOUND;
-    if (ref_valid(entry->retiring))
-        return PXSYS_STATUS_BUSY;
-    if (ref_valid(entry->incoming)) {
-        status = pxsys_runtime_stop(host->runtime, entry->incoming, reason);
-        if (status == PXSYS_STATUS_PENDING) {
-            entry->retiring = entry->incoming;
-            entry->incoming = pxsys_instance_ref_invalid();
-            return PXSYS_STATUS_PENDING;
-        } else if (status == PXSYS_STATUS_OK) {
-            entry->incoming = pxsys_instance_ref_invalid();
-        } else {
-            return status;
-        }
-    }
-    if (ref_valid(entry->current)) {
-        pxsys_status_t current_status =
-            pxsys_runtime_stop(host->runtime, entry->current, reason);
-        if (current_status == PXSYS_STATUS_PENDING) {
-            if (ref_valid(entry->retiring))
-                return PXSYS_STATUS_BUSY;
-            entry->retiring = entry->current;
-            status = PXSYS_STATUS_PENDING;
-        } else if (current_status != PXSYS_STATUS_OK) {
-            return current_status;
-        }
-        entry->current = pxsys_instance_ref_invalid();
-    }
-    release_if_empty(host, entry);
-    return status;
+    role_instance_t* entry = find_role(host, role_id);
+    return entry != NULL ? stop_role(host, entry, reason) : PXSYS_STATUS_NOT_FOUND;
 }
 
 pxsys_status_t pxsys_role_host_stop_all(pxsys_role_host_t* host,
                                         pxsys_stop_reason_t reason) {
     size_t index;
     pxsys_status_t aggregate = PXSYS_STATUS_OK;
-    if (!host_valid(host))
+    if (!host_valid(host) || reason > PXSYS_STOP_SHUTDOWN)
         return PXSYS_STATUS_INVALID_ARGUMENT;
     for (index = 0; index < host->capacity; ++index) {
         role_instance_t* entry = &host->entries[index];
         pxsys_status_t status;
-        pxsys_string_t role_id;
         if (!entry->occupied)
             continue;
-        role_id = pxsys_string(entry->role_id, entry->role_id_size);
-        status = pxsys_role_host_stop(host, role_id, reason);
-        if (status == PXSYS_STATUS_PENDING || status == PXSYS_STATUS_BUSY)
+        status = stop_role(host, entry, reason);
+        if (status == PXSYS_STATUS_PENDING && aggregate == PXSYS_STATUS_OK)
             aggregate = PXSYS_STATUS_PENDING;
-        else if (status != PXSYS_STATUS_OK && aggregate == PXSYS_STATUS_OK)
+        else if (status != PXSYS_STATUS_PENDING && status != PXSYS_STATUS_OK)
             aggregate = status;
     }
     return aggregate;
@@ -433,7 +426,7 @@ pxsys_status_t pxsys_role_host_current(const pxsys_role_host_t* host,
         return PXSYS_STATUS_INVALID_ARGUMENT;
     }
     entry = find_role(host, role_id);
-    if (entry == NULL || !ref_valid(entry->current))
+    if (entry == NULL || entry->current_stopping || !ref_valid(entry->current))
         return PXSYS_STATUS_NOT_FOUND;
     *instance = entry->current;
     return PXSYS_STATUS_OK;

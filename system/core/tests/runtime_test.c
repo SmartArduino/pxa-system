@@ -375,7 +375,6 @@ static void test_pending_stop_completion(void) {
     pxsys_instance_ref_t instance;
     pxsys_instance_snapshot_t snapshot = {0};
 
-    fake.stop_result = PXSYS_STATUS_PENDING;
     create_system(&allocations, &apps, &runtime);
     async_provider = provider(&fake, "async-stop-runtime");
     async_provider.request_stop = fake_request_stop;
@@ -383,11 +382,20 @@ static void test_pending_stop_completion(void) {
     assert(pxsys_runtime_register_provider(runtime, &async_provider) == PXSYS_STATUS_OK);
     assert(pxsys_app_registry_register(apps, &app) == PXSYS_STATUS_OK);
     assert(pxsys_runtime_launch(runtime, &app.identity, NULL, 1, &instance) == PXSYS_STATUS_OK);
-    assert(pxsys_runtime_stop(runtime, instance, PXSYS_STOP_NORMAL) == PXSYS_STATUS_PENDING);
     snapshot.struct_size = sizeof(snapshot);
     assert(pxsys_runtime_snapshot(runtime, instance, &snapshot) == PXSYS_STATUS_OK);
+    const uint64_t generation = snapshot.lifecycle.generation;
+    fake.stop_result = PXSYS_STATUS_DENIED;
+    assert(pxsys_runtime_stop(runtime, instance, PXSYS_STOP_NORMAL) == PXSYS_STATUS_DENIED);
+    assert(pxsys_runtime_snapshot(runtime, instance, &snapshot) == PXSYS_STATUS_OK);
+    assert(snapshot.lifecycle.state == PXSYS_APP_FOREGROUND);
+    assert(snapshot.lifecycle.generation == generation);
+    fake.stop_result = PXSYS_STATUS_PENDING;
+    assert(pxsys_runtime_stop(runtime, instance, PXSYS_STOP_NORMAL) == PXSYS_STATUS_PENDING);
+    assert(pxsys_runtime_stop(runtime, instance, PXSYS_STOP_NORMAL) == PXSYS_STATUS_PENDING);
+    assert(pxsys_runtime_snapshot(runtime, instance, &snapshot) == PXSYS_STATUS_OK);
     assert(snapshot.lifecycle.state == PXSYS_APP_STOPPING);
-    assert(fake.stop_calls == 1 && fake.destroy_calls == 0);
+    assert(fake.stop_calls == 2 && fake.destroy_calls == 0);
     assert(pxsys_runtime_report_stopped(runtime, instance, PXSYS_STOP_NORMAL) == PXSYS_STATUS_OK);
     assert(pxsys_runtime_snapshot(runtime, instance, &snapshot) == PXSYS_STATUS_NOT_FOUND);
     assert(fake.destroy_calls == 1);

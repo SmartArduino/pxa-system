@@ -71,6 +71,17 @@ static void assert_keyboard_restored(pxsys_reference_ime_t *ime) {
     lv_obj_get_coords(candidates,&words);lv_obj_get_coords(letters,&keys);
     assert(words.y2<keys.y1);
 }
+static void assert_docked_panel(lv_obj_t *root, const pxsys_display_profile_t *display) {
+    lv_obj_update_layout(root);
+    lv_area_t panel;
+    lv_obj_get_coords(root,&panel);
+    assert(panel.x1==0 && panel.x2==display->width-1);
+    assert(panel.y1>=0 && panel.y2==display->height-1);
+    assert(lv_obj_get_style_radius(root,0)==0);
+    assert(lv_obj_get_style_border_width(root,0)==0);
+    assert(lv_obj_get_style_shadow_width(root,0)==0);
+    assert(lv_obj_get_style_bg_opa(root,0)==LV_OPA_COVER);
+}
 static void tool_cursor(pxsys_reference_ime_t *ime,bool right) {
     unsigned index=0;
     lv_obj_t *matrix=find(pxsys_reference_ime_get_root(ime),"返回",&index);assert(matrix);
@@ -141,6 +152,7 @@ int main(void) {
     check_cursor_boundary(input);
     pxsys_reference_ime_t *ime=pxsys_reference_ime_create(lv_screen_active(),input,&config);
     assert(ime && pxsys_reference_ime_is_visible(ime));
+    assert_docked_panel(pxsys_reference_ime_get_root(ime),&profile);
     if(!pxa_lvgl_ime_builtin_scripts()) {
         key(ime,"q");assert(!strcmp(lv_textarea_get_text(input),"q"));key(ime,"完成");
         pxsys_reference_ime_destroy(ime);lv_obj_delete(input);lv_display_delete(display);lv_deinit();
@@ -226,9 +238,7 @@ int main(void) {
             colors.colors[PXSYS_COLOR_SURFACE_CONTAINER]^=0x101010;
             pxsys_reference_ime_update(ime,&config);
             if(pass==0) {key(ime,LV_SYMBOL_SETTINGS);tool_cursor(ime,false);key(ime,"返回");}
-            lv_obj_t *root=pxsys_reference_ime_get_root(ime); lv_obj_update_layout(root);
-            lv_area_t box; lv_obj_get_coords(root,&box);
-            assert(box.x1>=0 && box.y1>=0 && box.x2<(int)profile.width && box.y2<(int)profile.height);
+            assert_docked_panel(pxsys_reference_ime_get_root(ime),&profile);
             if (pass==3) {
                 key(ime,"q"); assert(!strcmp(lv_textarea_get_text(input),"q"));
                 key(ime,LV_SYMBOL_SETTINGS);tool_cursor(ime,false);

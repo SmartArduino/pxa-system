@@ -270,13 +270,12 @@ static bool physical_point(const pxa_ui_environment_t *e,int x,int y) {
 }
 static void assert_keyboard_bounds(ime_test_t *test) {
     lv_obj_t *root=pxa_lvgl_ime_root(test->host->ime_keyboard); assert(root);
+    lv_obj_update_layout(root);
     lv_area_t box; lv_obj_get_coords(root,&box);
     const pxa_ui_environment_t *e=&test->host->ime_config.environment;
-    assert(box.x2>=box.x1 && box.y2>=box.y1);
-    if (e->display_shape==0) {
-        assert(physical_point(e,box.x1,box.y1) && physical_point(e,box.x2,box.y1));
-        assert(physical_point(e,box.x1,box.y2) && physical_point(e,box.x2,box.y2));
-    }
+    assert(box.x1==0 && box.x2==(int)e->width-1);
+    assert(box.y1>=0 && box.y2==(int)e->height-1);
+    assert(lv_obj_get_style_radius(root,0)==0 && lv_obj_get_style_border_width(root,0)==0);
     for (unsigned i=0;i<lv_obj_get_child_count(root);++i) {
         lv_obj_t *child=lv_obj_get_child(root,i);
         if (lv_obj_is_hidden(child)) continue;

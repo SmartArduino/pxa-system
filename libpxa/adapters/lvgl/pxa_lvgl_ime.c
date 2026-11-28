@@ -44,6 +44,7 @@ struct pxa_lvgl_ime {
     bool editing:1, sensitive:1, uppercase:1, caps_lock:1, more:1, held:1;
     bool ready:1, awaiting:1, expanded:1, gesture_swiped:1, drawn:1, provider_ready:1;
     bool waiting_release:1, arc_toolbar:1, local:1, dispatching:1, traditional:1;
+    bool layout_valid:1, layout_composing:1, layout_expanded:1;
 
 };
 /* One set of immutable maps serves both rectangular and contoured displays.
@@ -245,13 +246,15 @@ static void update_interactivity(pxa_lvgl_ime_t *ime) {
     for (unsigned row=0;row<4;++row)
         if (key_row(ime,row)) lv_obj_set_state(key_row(ime,row),LV_STATE_DISABLED,ime->queue_count==16 || ime->pending_switch || ime->waiting_release);
     if (ime->retry) {
-        if (busy(ime)) {
+        if (!ime->target) {
+            lv_timer_pause(ime->retry);
+        } else if (busy(ime)) {
             lv_timer_set_period(ime->retry,!ime->ready || ime->awaiting ? 100 : 8); lv_timer_resume(ime->retry);
-        } else if (ime->target) {
+        } else {
             /* LVGL has no public caret-changed event for programmatic moves.
              * O(1) caret/geometry polling reuses this timer; no Guest polling. */
             lv_timer_set_period(ime->retry,80); lv_timer_resume(ime->retry);
-        } else lv_timer_pause(ime->retry);
+        }
     }
 }
 static void flush_input(pxa_lvgl_ime_t *ime) {
@@ -999,12 +1002,8 @@ void pxa_lvgl_ime_set_theme(pxa_lvgl_ime_t *ime, const pxa_lvgl_ui_theme_t *them
     lv_obj_set_style_text_font(ime->root, &ime->font, 0);
     lv_obj_set_style_text_color(ime->root, lv_color_hex(theme->rgba[PXA_UI_THEME_TEXT] >> 8), 0);
     lv_obj_set_style_bg_color(ime->root, lv_color_hex(panel >> 8), 0);
-    lv_obj_set_style_border_color(ime->root,lv_color_hex(theme->rgba[PXA_UI_THEME_OUTLINE_VARIANT]>>8),0);
-    /* Only theme/environment updates change these panel properties. Setting
-     * them during each candidate layout invalidates the whole keyboard. */
+    /* Panel padding gives the keycaps room without exposing the app beneath. */
     lv_obj_set_style_pad_all(ime->root,ime->config.environment.display_shape==2?2:4,0);
-    lv_obj_set_style_border_width(ime->root,ime->config.environment.display_shape?0:1,0);
-    lv_obj_set_style_radius(ime->root,ime->config.environment.display_shape?0:px(ime,12),0);
     lv_obj_set_style_bg_opa(ime->root,LV_OPA_COVER,0);
     if (ime->preedit) {
         lv_obj_set_style_bg_color(ime->preedit,lv_color_hex(panel>>8),0);
@@ -1013,7 +1012,6 @@ void pxa_lvgl_ime_set_theme(pxa_lvgl_ime_t *ime, const pxa_lvgl_ui_theme_t *them
     }
     if (ime->editor_view) {
         lv_obj_set_style_bg_color(ime->editor_view,lv_color_hex(theme->rgba[PXA_UI_THEME_SURFACE_CONTAINER_HIGHEST]>>8),0);
-        lv_obj_set_style_border_color(ime->editor_view,lv_color_hex(theme->rgba[PXA_UI_THEME_OUTLINE_VARIANT]>>8),0);
         lv_obj_set_style_text_color(ime->editor_text,lv_color_hex(theme->rgba[PXA_UI_THEME_TEXT]>>8),0);
         lv_obj_set_style_bg_color(ime->editor_caret,lv_color_hex(theme->rgba[PXA_UI_THEME_TEXT]>>8),0);
     }
@@ -1053,9 +1051,9 @@ pxa_lvgl_ime_t *pxa_lvgl_ime_create(const pxa_lvgl_ime_config_t *config) {
     lv_style_set_bg_opa(&ime->pressed_style,LV_OPA_COVER);
     ime->root = lv_obj_create(config->parent ? config->parent : lv_layer_top());
     if (!ime->root) goto failed;
+    lv_obj_remove_style_all(ime->root);
     lv_obj_set_floating(ime->root, true); lv_obj_set_hidden(ime->root, true);
     lv_obj_set_scrollable(ime->root, false); lv_obj_set_click_focusable(ime->root, false);
-    lv_obj_set_style_pad_all(ime->root, 4, 0); lv_obj_set_style_border_width(ime->root, 1, 0);
     lv_obj_add_event_cb(ime->root,first_draw,LV_EVENT_DRAW_POST_END,ime);
     ime->candidates = matrix(ime->root, NULL, ime);
     if (ime->candidates) lv_obj_add_event_cb(ime->candidates,candidate_event,LV_EVENT_ALL,ime);
@@ -1123,20 +1121,19 @@ static void band_bounds(const pxa_ui_environment_t *e, int top, int bottom,
         if (*right>w-rr-margin) *right=w-rr-margin;
     }
 }
-static void section_bounds(pxa_lvgl_ime_t *ime,int y,int height,int *x,int *width) {
-    lv_area_t root; lv_obj_get_coords(ime->root,&root);
-    int padding=lv_obj_get_style_pad_left(ime->root,0)+lv_obj_get_style_border_width(ime->root,0);
+static void section_bounds(const pxa_ui_environment_t *environment,const lv_area_t *controls,
+    int inset,int y,int height,int *x,int *width) {
     int left,right;
-    band_bounds(&ime->config.environment,root.y1+padding+y,root.y1+padding+y+height-1,
-        ime->config.environment.display_shape==2?4:0,&left,&right);
-    int origin=root.x1+padding, end=root.x2-padding+1;
-    if (left<origin) left=origin;
-    if (right>end) right=end;
-    *x=left-origin; *width=right-left;
+    band_bounds(environment,controls->y1+y,controls->y1+y+height-1,
+        environment->display_shape==2?4:0,&left,&right);
+    if (left<controls->x1) left=controls->x1;
+    if (right>controls->x2+1) right=controls->x2+1;
+    *x=left-inset; *width=right-left;
 }
 static void layout(pxa_lvgl_ime_t *ime, bool choose_layout) {
     const pxa_ui_environment_t *e=&ime->config.environment;
     int w=(int)e->width, h=(int)e->height;
+    ime->layout_valid=false;
     if (w<=0 || h<=0) return;
     if (!ime->candidate_count) ime->expanded=false;
     bool circle=e->display_shape==2, contoured=e->display_shape!=0;
@@ -1149,7 +1146,7 @@ static void layout(pxa_lvgl_ime_t *ime, bool choose_layout) {
         if (ime->language==PXA_IME_ENGLISH) ime->layout=PXA_IME_K26;
     }
     if (ime->sensitive) ime->layout=PXA_IME_K26;
-    int margin=px(ime,4); if (margin>8) margin=8;
+    int margin=circle?LV_MIN(px(ime,4),8):0;
     int bottom=(int)e->safe_insets[2]+margin;
     int extent=circle && w<h?w:h;
     if (circle) {
@@ -1164,8 +1161,8 @@ static void layout(pxa_lvgl_ime_t *ime, bool choose_layout) {
     if (touch_header>extent/10) touch_header=extent/10;
     if (header_line<touch_header) header_line=touch_header;
     int maximum_header=header_line*2;
-    bool composing=*composition(ime) || ime->candidate_count;
-    int header=(!ime->language && composing)?maximum_header:header_line;
+    bool composing=!ime->language && (*composition(ime) || ime->candidate_count);
+    int header=composing?maximum_header:header_line;
     int footer=px(ime,40), view=ime->view_visible?line+(circle?6:12):0;
     if (footer>extent/9) footer=extent/9;
     if (footer<line+(circle?4:10)) footer=line+(circle?4:10);
@@ -1195,30 +1192,33 @@ static void layout(pxa_lvgl_ime_t *ime, bool choose_layout) {
             ime->arc_toolbar=true; height+=footer; footer*=2;
         }
     }
-    int left,right;
-    if (contoured) { left=(int)e->safe_insets[3]+margin; right=w-(int)e->safe_insets[1]-margin; }
-    else band_bounds(e,y,y+height-1,margin,&left,&right);
+    int left=(int)e->safe_insets[3]+margin, right=w-(int)e->safe_insets[1]-margin;
     int width=right-left, limit=px(ime,640);
     if (width>limit) { left+=(width-limit)/2; width=limit; }
     if (width<24 || height<header+footer+view+padding) return;
-    /* The panel covers text behind inter-key gaps. Physical display masking
-     * clips its background; each interactive row still fits the safe contour. */
-    lv_obj_set_size(ime->root,width,height); lv_obj_set_pos(ime->root,left,y);
+    const int inset=circle?2:4;
+    const lv_area_t controls={
+        .x1=left+inset,.y1=y+inset,.x2=left+width-inset-1,.y2=y+height-inset-1
+    };
+    /* The backdrop reaches the physical edges. Only the touch controls
+     * observe the safe area, screen contour and wide-display width limit. */
+    lv_obj_set_size(ime->root,w,h-y); lv_obj_set_pos(ime->root,0,y);
     lv_obj_update_layout(ime->root);
     /* Environment bounds are display coordinates; parent padding and scroll
      * offsets must not shift the keyboard out of the safe display area. */
     lv_area_t actual; lv_obj_get_coords(ime->root,&actual);
-    if (actual.x1!=left || actual.y1!=y) {
-        lv_obj_set_pos(ime->root,lv_obj_get_x(ime->root)+left-actual.x1,
+    if (actual.x1!=0 || actual.y1!=y) {
+        lv_obj_set_pos(ime->root,lv_obj_get_x(ime->root)-actual.x1,
             lv_obj_get_y(ime->root)+y-actual.y1);
         lv_obj_update_layout(ime->root);
     }
     int key_y=view+header, key_height=height-view-header-footer-padding;
-    int key_x,key_width; section_bounds(ime,key_y,key_height,&key_x,&key_width);
+    int key_x,key_width; section_bounds(e,&controls,inset,key_y,key_height,&key_x,&key_width);
     int footer_x,footer_width;
-    section_bounds(ime,height-footer-padding,ime->arc_toolbar?footer/2:footer,&footer_x,&footer_width);
+    section_bounds(e,&controls,inset,height-footer-padding,ime->arc_toolbar?footer/2:footer,
+        &footer_x,&footer_width);
     if (ime->editor_view) {
-        int x,inner; section_bounds(ime,0,view,&x,&inner);
+        int x,inner; section_bounds(e,&controls,inset,0,view,&x,&inner);
         lv_obj_set_hidden(ime->editor_view,!ime->view_visible);
         lv_obj_set_pos(ime->editor_view,x,0); lv_obj_set_size(ime->editor_view,inner,view);
         int navigation=line*3;
@@ -1228,7 +1228,7 @@ static void layout(pxa_lvgl_ime_t *ime, bool choose_layout) {
         lv_obj_set_pos(ime->editor_text,4,(view-line)/2);
         lv_obj_set_width(ime->editor_text,inner-navigation-10);
     }
-    int header_x,header_width; section_bounds(ime,view,header?header:1,&header_x,&header_width);
+    int header_x,header_width; section_bounds(e,&controls,inset,view,header,&header_x,&header_width);
     int preedit_w=0;
     if (ime->preedit) {
         lv_obj_set_pos(ime->preedit,header_x,view+2); lv_obj_set_width(ime->preedit,preedit_w);
@@ -1237,7 +1237,7 @@ static void layout(pxa_lvgl_ime_t *ime, bool choose_layout) {
     lv_obj_set_pos(ime->candidates,header_x+preedit_w,view);
     if (ime->expanded) {
         int expanded_x,expanded_width;
-        section_bounds(ime,view,header+key_height,&expanded_x,&expanded_width);
+        section_bounds(e,&controls,inset,view,header+key_height,&expanded_x,&expanded_width);
         lv_obj_set_pos(ime->candidates,expanded_x,view);
         lv_obj_set_size(ime->candidates,expanded_width,header+key_height);
     } else lv_obj_set_size(ime->candidates,header_width-preedit_w,header);
@@ -1250,7 +1250,7 @@ static void layout(pxa_lvgl_ime_t *ime, bool choose_layout) {
         if (ime->contour_keys) {
             offset=key_height*(int)row/(int)rows;
             height_row=key_height*(int)(row+1)/(int)rows-offset;
-            section_bounds(ime,key_y+offset,height_row,&x,&inner);
+            section_bounds(e,&controls,inset,key_y+offset,height_row,&x,&inner);
         }
         lv_obj_set_pos(object,x,key_y+offset); lv_obj_set_size(object,inner,height_row);
     }
@@ -1258,7 +1258,7 @@ static void layout(pxa_lvgl_ime_t *ime, bool choose_layout) {
     lv_obj_set_size(ime->toolbar,footer_width,footer);
     if (ime->arc_toolbar) {
         int lower_x,lower_width;
-        section_bounds(ime,height-footer/2-padding,footer/2,&lower_x,&lower_width);
+        section_bounds(e,&controls,inset,height-footer/2-padding,footer/2,&lower_x,&lower_width);
         /* The visible cells have widths 6:2. Round side weights outward,
          * reserving matrix padding/gaps so both hit targets fit the chord. */
         int available=lower_width-16; if (available<1) available=1;
@@ -1279,6 +1279,9 @@ static void layout(pxa_lvgl_ime_t *ime, bool choose_layout) {
     lv_obj_update_layout(ime->candidates);
     pack_spellings(ime);
     if (ime->preedit) lv_obj_set_hidden(ime->preedit,true);
+    ime->layout_valid=true;
+    ime->layout_composing=composing;
+    ime->layout_expanded=ime->expanded;
     refresh_editor(ime,true);
 }
 static lv_area_t cursor_line(pxa_lvgl_ime_t *ime) {
@@ -1340,11 +1343,8 @@ static bool create_editor_view(pxa_lvgl_ime_t *ime) {
     if (ime->editor_view) return true;
     ime->editor_view=lv_obj_create(ime->root);
     if (!ime->editor_view) return false;
-    lv_obj_set_style_pad_all(ime->editor_view,0,0);
-    lv_obj_set_style_radius(ime->editor_view,4,0);
-    lv_obj_set_style_border_width(ime->editor_view,1,0);
-    lv_obj_set_style_border_color(ime->editor_view,
-        lv_color_hex(ime->config.theme.rgba[PXA_UI_THEME_OUTLINE_VARIANT]>>8),0);
+    lv_obj_remove_style_all(ime->editor_view);
+    lv_obj_set_style_bg_opa(ime->editor_view,LV_OPA_COVER,0);
     lv_obj_set_style_bg_color(ime->editor_view,
         lv_color_hex(ime->config.theme.rgba[PXA_UI_THEME_SURFACE_CONTAINER_HIGHEST]>>8),0);
     lv_obj_set_style_text_color(ime->editor_view,
@@ -1635,6 +1635,8 @@ pxa_status_t pxa_lvgl_ime_present(pxa_lvgl_ime_t *ime, uint64_t generation, cons
     /* Pointer tables share the presentation allocation and only reserve the
      * actual reply window. Empty RESETs do not need three maximum-size maps. */
     size_t pointer_bytes=(count || spellings || frame->preedit.size)?presentation_pointers(count,spellings)*sizeof(char *):0;
+    const bool insert=frame->edit==PXA_IME_EDIT_INSERT;
+    const size_t commit_size=insert?frame->commit.size:0;
     size_t total=pointer_bytes+4;
     const size_t lengths[]={frame->preedit.size,frame->commit.size,frame->items.size};
     for (unsigned i=0;i<3;++i) {
@@ -1653,38 +1655,48 @@ pxa_status_t pxa_lvgl_ime_present(pxa_lvgl_ime_t *ime, uint64_t generation, cons
         checked+=n;
     }
     if (checked!=frame->items.size) return PXA_STATUS_INVALID_ARGUMENT;
-    char *buffer = malloc(total);
-    if (!buffer) return PXA_STATUS_RESOURCE_LIMIT;
-    char *cursor=buffer+pointer_bytes;
-    if (frame->commit.size) memcpy(cursor,frame->commit.data,frame->commit.size);
-    cursor[frame->commit.size]=0;
-    ime->editing = true;
-    if (frame->edit == PXA_IME_EDIT_INSERT) lv_textarea_add_text(ime->target,cursor);
-    else if (frame->edit == PXA_IME_EDIT_BACKSPACE) lv_textarea_delete_char(ime->target);
-    else if (frame->edit == PXA_IME_EDIT_CLEAR) lv_textarea_set_text(ime->target,"");
-    if (!ime->target || generation!=ime->generation) {
-        /* VALUE_CHANGED may replace the editor or make it sensitive. Its
-         * observer already reset the session; never restore old candidates. */
-        ime->editing=false; free(buffer); return PXA_STATUS_OK;
+    char *buffer=NULL, *cursor=NULL;
+    if (pointer_bytes || commit_size) {
+        buffer=malloc(total-(frame->commit.size-commit_size));
+        if (!buffer) return PXA_STATUS_RESOURCE_LIMIT;
+        cursor=buffer+pointer_bytes;
+        if (commit_size) memcpy(cursor,frame->commit.data,commit_size);
+        cursor[commit_size]=0;
     }
-    ime->fingerprint = text_fingerprint(ime->target); ime->editing = false;
-    cursor += frame->commit.size + 1;
-    if (frame->preedit.size) memcpy(cursor,frame->preedit.data,frame->preedit.size);
-    cursor[frame->preedit.size]=0;
-    if (ime->preedit) lv_label_set_text(ime->preedit,*cursor ? cursor : ime->language ? "English" : "拼音");
-    cursor += frame->preedit.size+1;
-    ime->candidate_map=pointer_bytes?(const char **)buffer:NULL;
-    size_t offset=0;
-    for (unsigned i=0;i<frame->candidate_count;++i) {
-        size_t n=frame->items.data[offset] | ((size_t)frame->items.data[offset+1]<<8); offset+=2;
-        if (i<count) { memcpy(cursor,frame->items.data+offset,n); cursor[n]=0; cursor+=n+1; }
-        offset+=n;
+    const bool edits_text=insert || frame->edit==PXA_IME_EDIT_BACKSPACE || frame->edit==PXA_IME_EDIT_CLEAR;
+    if (edits_text) {
+        ime->editing=true;
+        if (insert) lv_textarea_add_text(ime->target,cursor?cursor:"");
+        else if (frame->edit==PXA_IME_EDIT_BACKSPACE) lv_textarea_delete_char(ime->target);
+        else lv_textarea_set_text(ime->target,"");
+        ime->editing=false;
+        if (!ime->target || generation!=ime->generation) {
+            /* The editor observer may have reset the session during VALUE_CHANGED. */
+            free(buffer); return PXA_STATUS_OK;
+        }
+        ime->fingerprint=text_fingerprint(ime->target);
     }
+    if (pointer_bytes) {
+        cursor+=commit_size+1;
+        if (frame->preedit.size) memcpy(cursor,frame->preedit.data,frame->preedit.size);
+        cursor[frame->preedit.size]=0;
+        if (ime->preedit)
+            lv_label_set_text(ime->preedit,*cursor?cursor:ime->language?"English":"拼音");
+        cursor+=frame->preedit.size+1;
+        size_t offset=0;
+        for (unsigned i=0;i<(unsigned)frame->candidate_count+spellings;++i) {
+            size_t n=frame->items.data[offset] | ((size_t)frame->items.data[offset+1]<<8); offset+=2;
+            if (i<count || i>=frame->candidate_count) {
+                memcpy(cursor,frame->items.data+offset,n); cursor[n]=0; cursor+=n+1;
+            }
+            offset+=n;
+        }
+    } else {
+        if (ime->preedit) lv_label_set_text(ime->preedit,ime->language?"English":"拼音");
+        free(buffer); buffer=NULL;
+    }
+    ime->candidate_map=(const char **)buffer;
     ime->spelling_count=spellings;
-    for (unsigned i=0;i<spellings;++i) {
-        size_t n=frame->items.data[offset] | ((size_t)frame->items.data[offset+1]<<8); offset+=2;
-        memcpy(cursor,frame->items.data+offset,n); cursor[n]=0; cursor+=n+1; offset+=n;
-    }
     if (ime->spelling_start >= ime->spelling_count) ime->spelling_start = 0;
     ime->candidate_count = count;
     if (!frame->page_start) ime->page_depth = 0;
@@ -1693,8 +1705,14 @@ pxa_status_t pxa_lvgl_ime_present(pxa_lvgl_ime_t *ime, uint64_t generation, cons
     char *previous=ime->items; ime->items=buffer;
     /* A committed word returns to typing even when a partial selection leaves
      * more syllables. Paging and spelling-only replies keep the grid open. */
-    if (frame->edit==PXA_IME_EDIT_INSERT && frame->commit.size) ime->expanded=false;
-    layout(ime,false);
+    if (commit_size || !count) ime->expanded=false;
+    const bool composing=!ime->language && (*composition(ime) || count);
+    if (ime->layout_valid && ime->layout_composing==composing && ime->layout_expanded==ime->expanded) {
+        /* Repack the candidate rail without laying out the unchanged keys
+         * or measuring the editor again for a candidate-only reply. */
+        pack_spellings(ime);
+        if (edits_text) refresh_editor(ime,true);
+    } else layout(ime,false);
     free(previous);
     if (frame->edit == PXA_IME_EDIT_SUBMIT || (frame->flags & PXA_IME_SUBMIT)) {
         lv_obj_send_event(ime->target,LV_EVENT_READY,NULL); pxa_lvgl_ime_close(ime);

@@ -290,6 +290,48 @@ static void test_navigation_and_single_instance(void) {
            PXSYS_STATUS_OK);
     assert(fake.active == 0 && fake.stops == 5);
 
+    fake.pending_stop = 0;
+    intent.target = &home.identity;
+    assert(pxsys_task_manager_start(tasks, &intent, &home_instance) == PXSYS_STATUS_OK);
+    intent.target = &settings.identity;
+    assert(pxsys_task_manager_start(tasks, &intent, &settings_instance) == PXSYS_STATUS_OK);
+    pxsys_instance_ref_t newest;
+    assert(pxsys_task_manager_start(tasks, &intent, &newest) == PXSYS_STATUS_OK);
+    intent.flags = PXSYS_INTENT_FLAG_SINGLE_TOP;
+    assert(pxsys_task_manager_start(tasks, &intent, &instance) == PXSYS_STATUS_OK);
+    assert(instance.slot == newest.slot && instance.generation == newest.generation);
+    assert(pxsys_task_manager_count(tasks) == 3);
+    assert(pxsys_task_manager_resume_app(tasks, &home.identity) == PXSYS_STATUS_OK);
+    assert(pxsys_task_manager_resume_app(tasks, &settings.identity) == PXSYS_STATUS_OK);
+    assert(pxsys_task_manager_current(tasks, &instance) == PXSYS_STATUS_OK);
+    assert(instance.slot == newest.slot && instance.generation == newest.generation);
+
+    /* Removing the top while the next task is still stopping restores Home. */
+    assert(pxsys_task_manager_activate(tasks, settings_instance) == PXSYS_STATUS_OK);
+    assert(pxsys_task_manager_activate(tasks, newest) == PXSYS_STATUS_OK);
+    fake.pending_stop = 1;
+    assert(pxsys_task_manager_finish_instance(tasks, settings_instance, PXSYS_STOP_NORMAL) ==
+           PXSYS_STATUS_PENDING);
+    fake.pending_stop = 0;
+    assert(pxsys_task_manager_finish_top(tasks, PXSYS_STOP_NORMAL) == PXSYS_STATUS_OK);
+    assert(pxsys_task_manager_task(tasks, 0, &instance, &recent_snapshot) == PXSYS_STATUS_OK);
+    assert(instance.slot == home_instance.slot && instance.generation == home_instance.generation);
+    assert(recent_snapshot.lifecycle.state == PXSYS_APP_FOREGROUND);
+    assert(pxsys_task_manager_report_stopped(tasks, settings_instance, PXSYS_STOP_NORMAL) ==
+           PXSYS_STATUS_OK);
+    fake.pending_start = 1;
+    intent.flags = 0;
+    assert(pxsys_task_manager_start(tasks, &intent, &settings_instance) == PXSYS_STATUS_PENDING);
+    assert(pxsys_task_manager_resume_app(tasks, &home.identity) == PXSYS_STATUS_OK);
+    assert(pxsys_task_manager_complete_start(tasks, settings_instance, PXSYS_STATUS_OK) ==
+           PXSYS_STATUS_OK);
+    assert(pxsys_task_manager_task(tasks, 1, &instance, &recent_snapshot) == PXSYS_STATUS_OK);
+    assert(recent_snapshot.lifecycle.state == PXSYS_APP_BACKGROUND);
+    assert(pxsys_task_manager_activate(tasks, settings_instance) == PXSYS_STATUS_OK);
+    assert(pxsys_task_manager_task(tasks, 0, &instance, &recent_snapshot) == PXSYS_STATUS_OK);
+    assert(recent_snapshot.lifecycle.state == PXSYS_APP_FOREGROUND);
+    assert(pxsys_task_manager_finish_all(tasks, PXSYS_STOP_SHUTDOWN) == PXSYS_STATUS_OK);
+
     assert(pxsys_task_manager_destroy(tasks) == PXSYS_STATUS_OK);
     assert(pxsys_intent_resolver_destroy(resolver) == PXSYS_STATUS_OK);
     assert(pxsys_runtime_unregister_provider(runtime, pxsys_string_from_cstr("test-runtime")) ==

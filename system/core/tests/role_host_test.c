@@ -242,6 +242,26 @@ int main(void) {
     assert(pxsys_role_host_report_stopped(host, new_instance, PXSYS_STOP_SHUTDOWN) ==
            PXSYS_STATUS_OK);
     assert(pxsys_role_host_count(host) == 0 && fake.active == 0);
+    assert(fake.authorizations == 3);
+
+    fake.pending_stop = 0;
+    assert(pxsys_role_host_start(host, &caller, candidate.role_id, &intent,
+                                 &old_instance) == PXSYS_STATUS_OK);
+    assert(pxsys_role_candidates_unregister(roles, &replacement.identity) == PXSYS_STATUS_OK);
+    fake.pending_start = 1;
+    assert(pxsys_role_host_start(host, &caller, candidate.role_id, &intent,
+                                 &new_instance) == PXSYS_STATUS_PENDING);
+    assert(pxsys_role_host_complete_start(host, new_instance, PXSYS_STATUS_PENDING) ==
+           PXSYS_STATUS_INVALID_ARGUMENT);
+    assert(pxsys_role_host_count(host) == 1 && fake.active == 2);
+    fake.pending_stop = 1;
+    assert(pxsys_role_host_stop_all(host, PXSYS_STOP_SHUTDOWN) == PXSYS_STATUS_PENDING);
+    assert(pxsys_role_host_current(host, candidate.role_id, &current) == PXSYS_STATUS_NOT_FOUND);
+    assert(pxsys_role_host_complete_start(host, new_instance, PXSYS_STATUS_OK) ==
+           PXSYS_STATUS_BAD_STATE);
+    assert(pxsys_role_host_report_stopped(host, new_instance, PXSYS_STOP_SHUTDOWN) == PXSYS_STATUS_OK);
+    assert(pxsys_role_host_report_stopped(host, old_instance, PXSYS_STOP_SHUTDOWN) == PXSYS_STATUS_OK);
+    assert(pxsys_role_host_count(host) == 0 && fake.active == 0);
 
     assert(pxsys_role_host_destroy(host) == PXSYS_STATUS_OK);
     assert(pxsys_role_registry_destroy(roles) == PXSYS_STATUS_OK);
@@ -253,7 +273,6 @@ int main(void) {
     assert(pxsys_app_registry_unregister(apps, &replacement.identity) == PXSYS_STATUS_OK);
     assert(pxsys_app_registry_destroy(apps) == PXSYS_STATUS_OK);
     assert(outstanding == 0);
-    assert(fake.authorizations == 3);
     puts("role host tests passed");
     return 0;
 }

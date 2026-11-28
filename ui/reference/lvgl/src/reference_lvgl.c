@@ -55,6 +55,9 @@ extern const lv_font_t pxsys_reference_lock_digits_72;
 #error "Launcher columns and rows must be positive"
 #endif
 
+#define LAUNCHER_PER_PAGE (PXSYS_REFERENCE_UI_LAUNCHER_COLUMNS * PXSYS_REFERENCE_UI_LAUNCHER_ROWS)
+#define LAUNCHER_ORDER_LINE_MAX (2u * PXSYS_PUBLISHER_ROOT_BYTES + 1u + 64u + 1u)
+
 #define RESOURCE_ENTRY(key_value, text_value)                              \
     {{key_value, sizeof(key_value) - 1u}, {text_value, sizeof(text_value) - 1u}}
 
@@ -478,7 +481,6 @@ typedef struct {
     struct pxsys_reference_lvgl* ui;
     pxsys_app_identity_t identity;
     char app_id[65];
-    char runtime_name[12];
     pxsys_reference_lvgl_app_icon_t icon;
     lv_obj_t* tile;
     lv_obj_t* remove_button;
@@ -487,8 +489,10 @@ typedef struct {
 #if LV_USE_SNAPSHOT
     uint8_t icon_rasterized;
 #endif
+    uint8_t system_app;
     uint8_t uninstallable;
     uint8_t tap_cancelled;
+    uint8_t edit_styled;
     int32_t drag_start_x;
     int32_t drag_start_y;
 } launcher_item_t;
@@ -561,8 +565,6 @@ typedef struct {
 typedef struct {
     uint8_t publisher_root[PXSYS_PUBLISHER_ROOT_BYTES];
     char app_id[65];
-    char label[72];
-    uint32_t last_used;
 } recent_app_t;
 
 #define REFERENCE_RECENT_HISTORY 8u
@@ -658,11 +660,21 @@ struct pxsys_reference_lvgl {
     size_t max_launcher_apps;
     size_t launcher_count;
     launcher_item_t* launcher_items;
+    size_t launcher_window_first;
+    size_t launcher_window_end;
+    uint8_t launcher_updating;
+    uint8_t launcher_styles_ready;
+    uint8_t launcher_edit_style_ready;
+    uint8_t started;
+    lv_style_t launcher_tile_style;
+    lv_style_t launcher_press_style;
+    lv_style_t launcher_edit_style;
     lv_draw_buf_t* launcher_gear;
     lv_timer_t* launcher_icon_timer;
     uint16_t launcher_page;
     uint8_t launcher_gap;
-    char launcher_order[4096];
+    char* launcher_order;
+    size_t launcher_order_capacity;
     void* launcher_order_context;
     pxsys_reference_lvgl_launcher_save_fn launcher_order_save;
     uint8_t launcher_editing;
@@ -677,8 +689,8 @@ struct pxsys_reference_lvgl {
     size_t recent_history_count;
     pxsys_instance_ref_t pending_dismissals[12];
     size_t pending_dismissal_count;
-    uint32_t preview_clock;
 #if PXSYS_REFERENCE_UI_TASK_SWITCHER == PXSYS_TASK_SWITCHER_CARDS && LV_USE_SNAPSHOT
+    uint32_t preview_clock;
     task_preview_t task_previews[PXSYS_REFERENCE_UI_TASK_PREVIEW_COUNT];
     lv_obj_t* task_transition_image;
     lv_obj_t* task_transition_target;
@@ -729,6 +741,8 @@ struct pxsys_reference_lvgl {
     int32_t notification_scroll_y;
     navigation_state_t navigation_states[REFERENCE_NAVIGATION_STATE_COUNT];
     uint32_t launcher_focus_key;
+    reference_page_t content_owner;
+    reference_page_t settings_resume_page;
     uint32_t rendered_view_key;
     int32_t navigation_press_x;
     int32_t navigation_press_y;
@@ -883,6 +897,10 @@ struct pxsys_reference_lvgl {
 static void rebuild(pxsys_reference_lvgl_t* ui);
 static int status_interaction_active(pxsys_reference_lvgl_t* ui);
 static void launcher_load_visible_icons(pxsys_reference_lvgl_t* ui);
+static void launcher_prepare_edit(pxsys_reference_lvgl_t* ui);
+static void launcher_update_window(pxsys_reference_lvgl_t* ui);
+static void launcher_clear_window(pxsys_reference_lvgl_t* ui);
+static void launcher_release_tile(launcher_item_t* item);
 static void rebuild_resume(pxsys_reference_lvgl_t* ui) {
     --ui->rebuild_suspended;
     if (!ui->rebuild_suspended && ui->rebuild_requested) rebuild(ui);
@@ -1288,10 +1306,14 @@ static uint32_t navigation_text_key(const char* text) {
  * widget's user_data, which belongs to its action handler. */
 static void navigation_focus_tag(lv_event_t* event) { (void)event; }
 
+static void navigation_add_focus_key(lv_obj_t* object, uint32_t key) {
+    lv_obj_add_event_cb(object, navigation_focus_tag, LV_EVENT_FOCUSED,
+                        (void*)(uintptr_t)key);
+}
+
 static void navigation_tag_focus(lv_obj_t* object, const char* key) {
     lv_obj_remove_event_cb(object, navigation_focus_tag);
-    lv_obj_add_event_cb(object, navigation_focus_tag, LV_EVENT_FOCUSED,
-                        (void*)(uintptr_t)navigation_text_key(key));
+    navigation_add_focus_key(object, navigation_text_key(key));
 }
 
 static uint32_t navigation_object_key(lv_obj_t* content, lv_obj_t* object) {
@@ -1310,14 +1332,22 @@ static uint32_t navigation_object_key(lv_obj_t* content, lv_obj_t* object) {
 }
 
 static uint32_t navigation_view_key(pxsys_reference_lvgl_t* ui) {
-    uint32_t key = (uint32_t)ui->active_page + 1u;
+    const uint32_t key = (uint32_t)ui->active_page + 1u;
     if (ui->active_page == REFERENCE_PAGE_FILE_MANAGER) {
-        key = navigation_hash(key, navigation_text_key(ui->file_path));
-        key = navigation_hash(key, ui->file_edit_mode);
+        const uint32_t path = navigation_hash(key, navigation_text_key(ui->file_path));
+        return (navigation_hash(path, ui->file_edit_mode) & ~UINT32_C(0xff)) | key;
     } else if (ui->active_page == REFERENCE_PAGE_WIFI) {
-        key = navigation_hash(key, ui->wifi_input_stage);
+        return ((uint32_t)ui->wifi_input_stage << 8) | key;
     }
-    return key != 0 ? key : UINT32_MAX;
+    return key;
+}
+
+static bool navigation_key_owned_by(uint32_t key, reference_page_t owner) {
+    if (key == 0) return false;
+    const reference_page_t page = (reference_page_t)((key & UINT32_C(0xff)) - 1u);
+    return page == owner || (owner == REFERENCE_PAGE_SETTINGS &&
+        (page == REFERENCE_PAGE_WIFI || page == REFERENCE_PAGE_APPEARANCE ||
+         page == REFERENCE_PAGE_INPUT_METHOD || page == REFERENCE_PAGE_INPUT_METHOD_APPS));
 }
 
 static const navigation_state_t* navigation_state_find(
@@ -1346,6 +1376,7 @@ static lv_obj_t* navigation_page_root(const pxsys_reference_lvgl_t* ui) {
 
 static void navigation_state_capture(pxsys_reference_lvgl_t* ui) {
     if (ui->content == NULL || ui->rendered_view_key == 0) return;
+    if (ui->rendered_view_key == (uint32_t)REFERENCE_PAGE_HOME + 1u) return;
     size_t index;
     for (index = 0; index + 1u < REFERENCE_NAVIGATION_STATE_COUNT; ++index)
         if (ui->navigation_states[index].view_key == ui->rendered_view_key) break;
@@ -1393,14 +1424,16 @@ static void navigation_state_restore(pxsys_reference_lvgl_t* ui) {
      * entries. A long visit to Files must not reset the launcher selection. */
     const navigation_state_t* state = ui->active_page == REFERENCE_PAGE_HOME
         ? &home_state : navigation_state_find(ui, ui->rendered_view_key);
-    if (state == NULL || (ui->active_page == REFERENCE_PAGE_HOME && !state->focus_key)) return;
+    if (state == NULL) return;
     lv_obj_update_layout(ui->content);
     lv_group_t* group = navigation_keypad_group(ui);
-    if (state->focus_key != 0 && group != NULL && !ui->locked &&
+    if ((state->focus_key != 0 || ui->active_page == REFERENCE_PAGE_HOME) &&
+        group != NULL && !ui->locked &&
         ui->power_menu == NULL && !ui->notification_shade_open &&
         !task_switcher_is_open(ui)) {
         lv_obj_t* page = navigation_page_root(ui);
-        lv_obj_t* target = navigation_find_focus(page, page, state->focus_key);
+        lv_obj_t* target = state->focus_key != 0
+            ? navigation_find_focus(page, page, state->focus_key) : NULL;
         if (target == NULL && ui->active_page == REFERENCE_PAGE_HOME &&
             ui->launcher_count != 0) {
             size_t index = (size_t)ui->launcher_page *
@@ -1472,6 +1505,60 @@ static bool close_open_dropdown(lv_obj_t* parent) {
     return false;
 }
 
+static bool content_back(pxsys_reference_lvgl_t* ui) {
+    if (!ui->content_active) return false;
+#if PXSYS_REFERENCE_UI_BUILTIN_SETTINGS
+    if (ui->confirm_dialog != NULL || ui->app_dialog != NULL) {
+        page_dismiss_dialog(ui);
+        return true;
+    }
+    if (ui->active_page == REFERENCE_PAGE_FILE_MANAGER) {
+        if (ui->file_edit_mode != 0) {
+            ui->file_edit_mode = 0;
+            ui->file_edit_draft[0] = '\0';
+            rebuild(ui);
+            return true;
+        }
+        if (ui->file_path[0] != '\0') {
+            char* slash = strrchr(ui->file_path, '/');
+            if (slash != NULL) *slash = '\0';
+            else ui->file_path[0] = '\0';
+            ui->file_entries_loaded = 0;
+            rebuild(ui);
+            return true;
+        }
+    }
+#endif
+    if (ui->active_page == REFERENCE_PAGE_WIFI) {
+        if (ui->wifi_input_stage != 0) {
+            ui->wifi_input_stage = 0;
+            ui->wifi_input_draft[0] = '\0';
+        } else {
+            ui->active_page = REFERENCE_PAGE_SETTINGS;
+        }
+        rebuild(ui);
+        return true;
+    }
+    if (ui->active_page == REFERENCE_PAGE_INPUT_METHOD) {
+        if (close_open_dropdown(ui->content)) return true;
+        ui->active_page=REFERENCE_PAGE_SETTINGS;
+        rebuild(ui); return true;
+    }
+#if PXSYS_REFERENCE_UI_BUILTIN_SETTINGS
+    if (ui->active_page == REFERENCE_PAGE_INPUT_METHOD_APPS) {
+        if (ui->app_dialog || ui->confirm_dialog) page_close_dialogs(ui);
+        else ui->active_page=REFERENCE_PAGE_INPUT_METHOD;
+        rebuild(ui); return true;
+    }
+#endif
+    if (ui->active_page == REFERENCE_PAGE_APPEARANCE) {
+        ui->active_page = REFERENCE_PAGE_SETTINGS;
+        rebuild(ui);
+        return true;
+    }
+    return false;
+}
+
 static void navigation_back(pxsys_reference_lvgl_t* ui) {
     pxsys_back_result_t result;
     if (!ui_valid(ui)) return;
@@ -1494,55 +1581,7 @@ static void navigation_back(pxsys_reference_lvgl_t* ui) {
         close_language_dialog(ui);
         return;
     }
-#if PXSYS_REFERENCE_UI_BUILTIN_SETTINGS
-    if (ui->confirm_dialog != NULL || ui->app_dialog != NULL) {
-        page_dismiss_dialog(ui);
-        return;
-    }
-    if (ui->active_page == REFERENCE_PAGE_FILE_MANAGER) {
-        if (ui->file_edit_mode != 0) {
-            ui->file_edit_mode = 0;
-            ui->file_edit_draft[0] = '\0';
-            rebuild(ui);
-            return;
-        }
-        if (ui->file_path[0] != '\0') {
-            char* slash = strrchr(ui->file_path, '/');
-            if (slash != NULL) *slash = '\0';
-            else ui->file_path[0] = '\0';
-            ui->file_entries_loaded = 0;
-            rebuild(ui);
-            return;
-        }
-    }
-#endif
-    if (ui->active_page == REFERENCE_PAGE_WIFI) {
-        if (ui->wifi_input_stage != 0) {
-            ui->wifi_input_stage = 0;
-            ui->wifi_input_draft[0] = '\0';
-        } else {
-            ui->active_page = REFERENCE_PAGE_SETTINGS;
-        }
-        rebuild(ui);
-        return;
-    }
-    if (ui->active_page == REFERENCE_PAGE_INPUT_METHOD) {
-        if (close_open_dropdown(ui->content)) return;
-        ui->active_page=REFERENCE_PAGE_SETTINGS;
-        rebuild(ui); return;
-    }
-#if PXSYS_REFERENCE_UI_BUILTIN_SETTINGS
-    if (ui->active_page == REFERENCE_PAGE_INPUT_METHOD_APPS) {
-        if (ui->app_dialog || ui->confirm_dialog) page_close_dialogs(ui);
-        else ui->active_page=REFERENCE_PAGE_INPUT_METHOD;
-        rebuild(ui); return;
-    }
-#endif
-    if (ui->active_page == REFERENCE_PAGE_APPEARANCE) {
-        ui->active_page = REFERENCE_PAGE_SETTINGS;
-        rebuild(ui);
-        return;
-    }
+    if (content_back(ui)) return;
     ++ui->rebuild_suspended;
     (void)pxsys_task_manager_back(pxsys_standard_system_tasks(ui->system),
                                   &result);
@@ -1765,8 +1804,6 @@ static void theme_clicked(lv_event_t* event) {
 
 static void launcher_clicked(lv_event_t* event) {
     launcher_item_t* item = (launcher_item_t*)lv_event_get_user_data(event);
-    pxsys_intent_t intent = {0};
-    pxsys_instance_ref_t instance;
     if (item == NULL || !ui_valid(item->ui)) return;
     if (item->tap_cancelled || item->ui->launcher_drag_item != NULL) return;
     if (item->ui->launcher_long_pressed) {
@@ -1782,34 +1819,27 @@ static void launcher_clicked(lv_event_t* event) {
     pxsys_task_manager_t* tasks = pxsys_standard_system_tasks(ui->system);
     /* Resume an existing task without clearing the launcher or other apps
      * above it. Otherwise its next exit can leave no Home task to restore. */
-    for (size_t index = 0; index < pxsys_task_manager_count(tasks); ++index) {
-        pxsys_instance_snapshot_t snapshot = {.struct_size = sizeof(snapshot)};
-        if (pxsys_task_manager_task(tasks, index, &instance, &snapshot) ==
-                PXSYS_STATUS_OK &&
-            pxsys_app_identity_equal(&snapshot.app->identity, &item->identity)) {
-            ++ui->rebuild_suspended;
-            (void)pxsys_task_manager_activate(tasks, instance);
-            rebuild_resume(ui);
-            return;
-        }
-    }
-    intent.struct_size = sizeof(intent);
-    intent.target = &item->identity;
-    intent.action = pxsys_string_from_cstr("system.intent.main");
-    intent.flags = PXSYS_INTENT_FLAG_SINGLE_TOP;
     ++ui->rebuild_suspended;
-    (void)pxsys_task_manager_start(tasks, &intent, &instance);
+    if (pxsys_task_manager_resume_app(tasks, &item->identity) == PXSYS_STATUS_NOT_FOUND) {
+        pxsys_intent_t intent = {
+            .struct_size = sizeof(intent),
+            .target = &item->identity,
+            .action = pxsys_string_from_cstr("system.intent.main"),
+            .flags = PXSYS_INTENT_FLAG_SINGLE_TOP,
+        };
+        pxsys_instance_ref_t instance;
+        (void)pxsys_task_manager_start(tasks, &intent, &instance);
+    }
     rebuild_resume(ui);
 }
 
-static void launcher_position_tiles(pxsys_reference_lvgl_t* ui) {
+static void launcher_position_tiles(pxsys_reference_lvgl_t* ui, uint32_t width,
+                                     uint32_t height) {
     if (ui->content == NULL) return;
     const uint32_t columns = PXSYS_REFERENCE_UI_LAUNCHER_COLUMNS;
     const uint32_t rows = PXSYS_REFERENCE_UI_LAUNCHER_ROWS;
     const uint32_t per_page = columns * rows;
     const uint32_t gap = ui->launcher_gap;
-    const uint32_t width = (uint32_t)lv_obj_get_width(ui->content);
-    const uint32_t height = (uint32_t)lv_obj_get_height(ui->content);
     if (width == 0 || height == 0) return;
     const uint32_t tile_width = width > (columns - 1u) * gap
         ? (width - (columns - 1u) * gap) / columns : 1u;
@@ -1831,34 +1861,30 @@ static void launcher_position_tiles(pxsys_reference_lvgl_t* ui) {
 static void launcher_save_order(pxsys_reference_lvgl_t* ui) {
     size_t position = 0;
     size_t index;
+    if (ui->launcher_order == NULL) {
+        ui->launcher_order = ui->allocator.allocate(ui->allocator.context,
+                                                      ui->launcher_order_capacity);
+        if (ui->launcher_order == NULL) return;
+    }
     ui->launcher_order[0] = '\0';
     for (index = 0; index < ui->launcher_count; ++index) {
         lv_obj_t* tile = lv_obj_get_child(ui->content, (int32_t)index);
-        size_t item_index;
-        for (item_index = 0; item_index < ui->launcher_count; ++item_index) {
-            const launcher_item_t* item = &ui->launcher_items[item_index];
-            size_t length = strlen(item->app_id) +
-                            PXSYS_PUBLISHER_ROOT_BYTES * 2u + 1u;
-            static const char digits[] = "0123456789abcdef";
-            size_t root_index;
-            if (item->tile != tile) continue;
-            if (position + length + 2u > sizeof(ui->launcher_order)) break;
-            for (root_index = 0; root_index < PXSYS_PUBLISHER_ROOT_BYTES;
-                 ++root_index) {
-                ui->launcher_order[position + root_index * 2u] =
-                    digits[item->identity.publisher_root[root_index] >> 4];
-                ui->launcher_order[position + root_index * 2u + 1u] =
-                    digits[item->identity.publisher_root[root_index] & 15u];
-            }
-            ui->launcher_order[position + PXSYS_PUBLISHER_ROOT_BYTES * 2u] = ':';
-            memcpy(ui->launcher_order + position +
-                       PXSYS_PUBLISHER_ROOT_BYTES * 2u + 1u,
-                   item->app_id, strlen(item->app_id));
-            position += length;
-            ui->launcher_order[position++] = '\n';
-            ui->launcher_order[position] = '\0';
+        const launcher_item_t* item = tile ? lv_obj_get_user_data(tile) : NULL;
+        if (!item || item->tile != tile) continue;
+        const size_t id_size = strlen(item->app_id);
+        const size_t root_chars = PXSYS_PUBLISHER_ROOT_BYTES * 2u;
+        if (root_chars + 1u + id_size + 2u > ui->launcher_order_capacity - position)
             break;
+        static const char digits[] = "0123456789abcdef";
+        for (size_t byte = 0; byte < PXSYS_PUBLISHER_ROOT_BYTES; ++byte) {
+            ui->launcher_order[position++] = digits[item->identity.publisher_root[byte] >> 4];
+            ui->launcher_order[position++] = digits[item->identity.publisher_root[byte] & 15u];
         }
+        ui->launcher_order[position++] = ':';
+        memcpy(ui->launcher_order + position, item->app_id, id_size);
+        position += id_size;
+        ui->launcher_order[position++] = '\n';
+        ui->launcher_order[position] = '\0';
     }
     if (ui->launcher_order_save != NULL)
         ui->launcher_order_save(ui->launcher_order_context, ui->launcher_order);
@@ -1931,6 +1957,7 @@ static void launcher_edge_tick(lv_timer_t* timer) {
         return;
     }
     ui->launcher_page = (uint16_t)page;
+    launcher_update_window(ui);
     lv_obj_scroll_to_x(ui->content, page * lv_obj_get_width(ui->content), LV_ANIM_OFF);
 }
 
@@ -1995,14 +2022,20 @@ static void launcher_drag_finish(pxsys_reference_lvgl_t* ui, const lv_point_t* d
     lv_obj_set_hidden(lv_obj_get_child(item->tile, 1), false);
     lv_obj_set_scrollable(ui->content, ui->launcher_count > (size_t)per_page);
     if (destination != (int32_t)lv_obj_get_index(item->tile)) {
+        launcher_clear_window(ui);
         lv_obj_move_to_index(item->tile, destination);
-        launcher_position_tiles(ui);
+        launcher_position_tiles(ui, (uint32_t)lv_obj_get_width(ui->content),
+                                (uint32_t)lv_obj_get_height(ui->content));
         lv_obj_update_layout(ui->content);
         launcher_save_order(ui);
     }
+    launcher_update_window(ui);
     /* Keep the release from launching the tile or letting a scroll snap
      * overwrite the selected destination page. */
     ui->launcher_long_pressed = 1;
+    const size_t original_slot = lv_obj_get_index(item->tile);
+    if (original_slot < ui->launcher_window_first || original_slot >= ui->launcher_window_end)
+        launcher_release_tile(item);
     lv_obj_scroll_to_x(ui->content, ui->launcher_page * lv_obj_get_width(ui->content), LV_ANIM_OFF);
 }
 
@@ -2010,7 +2043,6 @@ static void launcher_gesture(lv_event_t* event) {
     launcher_item_t* item = lv_event_get_user_data(event);
     pxsys_reference_lvgl_t* ui;
     lv_event_code_t code;
-    size_t index;
     lv_point_t point;
     lv_indev_t* indev;
     if (item == NULL || !ui_valid(item->ui)) return;
@@ -2060,19 +2092,11 @@ static void launcher_gesture(lv_event_t* event) {
         lv_indev_get_point(indev, &point);
         item->drag_start_x = point.x;
         item->drag_start_y = point.y;
-        ui->launcher_editing = 1;
-        ui->launcher_long_pressed = 1;
-        for (index = 0; index < ui->launcher_count; ++index) {
-            launcher_item_t* other = &ui->launcher_items[index];
-            lv_obj_set_style_border_width(other->tile, 1, 0);
-            lv_obj_set_style_border_color(other->tile,
-                color_token(ui, PXSYS_COLOR_OUTLINE_VARIANT), 0);
-            lv_obj_set_style_bg_color(other->tile,
-                color_token(ui, PXSYS_COLOR_SURFACE_CONTAINER_LOW), 0);
-            lv_obj_set_style_bg_opa(other->tile, LV_OPA_20, 0);
-            if (other->remove_button != NULL)
-                pxsys_lvgl_remove_flags(other->remove_button, LV_OBJ_FLAG_HIDDEN);
+        if (!ui->launcher_editing) {
+            ui->launcher_editing = 1;
+            launcher_prepare_edit(ui);
         }
+        ui->launcher_long_pressed = 1;
         ui->launcher_drag_item = item;
         ui->launcher_drag_start_page = ui->launcher_page;
         lv_obj_set_scrollable(ui->content, false);
@@ -2106,11 +2130,22 @@ static void launcher_background_clicked(lv_event_t* event) {
     rebuild(ui);
 }
 
+static void launcher_page_selected(pxsys_reference_lvgl_t* ui) {
+    const size_t slot = (size_t)ui->launcher_page * LAUNCHER_PER_PAGE;
+    /* An adjacent page is already drawable. Do its eviction/prefetch after
+     * the input frame. Direct focus jumps still get a complete destination. */
+    if (ui->launcher_icon_timer == NULL || slot < ui->launcher_window_first ||
+        slot >= ui->launcher_window_end)
+        launcher_update_window(ui);
+    if (ui->launcher_icon_timer != NULL) lv_timer_resume(ui->launcher_icon_timer);
+}
+
 static void launcher_scroll_event(lv_event_t* event) {
     pxsys_reference_lvgl_t* ui = lv_event_get_user_data(event);
     if (!ui_valid(ui) || ui->content == NULL ||
         lv_event_get_current_target(event) != ui->content ||
-        ui->launcher_count == 0 || ui->launcher_drag_item != NULL) return;
+        ui->launcher_count == 0 || ui->launcher_drag_item != NULL ||
+        ui->launcher_updating) return;
     const lv_event_code_t code = lv_event_get_code(event);
     if (code == LV_EVENT_SCROLL) {
         if (ui->launcher_icon_timer != NULL) {
@@ -2132,6 +2167,7 @@ static void launcher_scroll_event(lv_event_t* event) {
     const size_t last_page = (ui->launcher_count - 1u) / per_page;
     const int32_t scroll_x = lv_obj_get_scroll_x(ui->content);
     if (code == LV_EVENT_SCROLL_THROW_BEGIN) {
+        const uint16_t previous_page = ui->launcher_page;
         int32_t offset = scroll_x - (int32_t)ui->launcher_page * width;
         /* Use release velocity only to choose a page. Do not run a long
          * inertial coast followed by a second snap animation. */
@@ -2143,6 +2179,10 @@ static void launcher_scroll_event(lv_event_t* event) {
             ui->launcher_page++;
         else if (offset < -width / 5 && ui->launcher_page > 0)
             ui->launcher_page--;
+        if (ui->launcher_page != previous_page) {
+            ui->launcher_focus_key = 0;
+            launcher_page_selected(ui);
+        }
         return;
     }
     const int32_t target_x = (int32_t)ui->launcher_page * width;
@@ -2155,7 +2195,7 @@ static void launcher_focused(lv_event_t* event) {
     launcher_item_t* item = lv_event_get_user_data(event);
     if (item == NULL || !ui_valid(item->ui)) return;
     pxsys_reference_lvgl_t* ui = item->ui;
-    if (ui->content == NULL || ui->launcher_drag_item != NULL ||
+    if (ui->content == NULL || ui->launcher_drag_item != NULL || ui->launcher_updating ||
         lv_obj_get_parent(item->tile) != ui->content ||
         ui->rendered_view_key != (uint32_t)REFERENCE_PAGE_HOME + 1u) return;
     const int32_t width = lv_obj_get_width(ui->content);
@@ -2165,9 +2205,21 @@ static void launcher_focused(lv_event_t* event) {
     /* Focus can cross pages without a pointer throw event. Set the snap page
      * before scrolling, otherwise SCROLL_END restores the previous page. The
      * current child slot also follows user-reordered launcher icons. */
-    ui->launcher_page = (uint16_t)(lv_obj_get_index(item->tile) / per_page);
+    const uint16_t page = (uint16_t)(lv_obj_get_index(item->tile) / per_page);
     ui->launcher_focus_key = navigation_object_key(ui->content, item->tile);
-    lv_obj_scroll_to_x(ui->content, (int32_t)ui->launcher_page * width, LV_ANIM_OFF);
+    const int32_t target_x = (int32_t)page * width;
+    const int32_t offset = lv_obj_get_scroll_x(ui->content);
+    const bool scrolling = lv_obj_is_scrolling(ui->content);
+    if (ui->launcher_page == page && offset == target_x && !scrolling) return;
+    ui->launcher_page = page;
+    launcher_page_selected(ui);
+    if (scrolling || lv_obj_get_style_base_dir(ui->content, LV_PART_MAIN) == LV_BASE_DIR_RTL) {
+        lv_obj_scroll_to_x(ui->content, target_x, LV_ANIM_OFF);
+    } else {
+        /* The selected tile and the page extent give an in-bounds target.
+         * Moving straight there avoids measuring every tile in LVGL. */
+        lv_obj_scroll_by(ui->content, offset - target_x, 0, LV_ANIM_OFF);
+    }
 }
 
 static void launcher_configure_paging(pxsys_reference_lvgl_t* ui) {
@@ -2467,11 +2519,7 @@ static void application_restore_completed(lv_anim_t* animation) {
 #endif
 
 static void return_to_home(pxsys_reference_lvgl_t* ui) {
-    capture_current_task(ui, 0);
-    /* Reset the departing root before switching tasks so an app can reopen
-     * without carrying over the transform from the drag. */
-    application_scale_reset(ui);
-    (void)open_role(ui, PXSYS_ROLE_HOME);
+    (void)pxsys_reference_lvgl_home(ui);
 }
 
 static void animate_application(pxsys_reference_lvgl_t* ui,
@@ -2524,6 +2572,8 @@ static int app_is_system_home(
 }
 
 #if PXSYS_REFERENCE_UI_TASK_SWITCHER == PXSYS_TASK_SWITCHER_CARDS && LV_USE_SNAPSHOT
+static void clear_task_transition(pxsys_reference_lvgl_t* ui);
+
 static int instance_equal(pxsys_instance_ref_t left,
                           pxsys_instance_ref_t right) {
     return left.slot == right.slot && left.generation == right.generation;
@@ -2540,6 +2590,40 @@ static task_preview_t* find_task_preview(pxsys_reference_lvgl_t* ui,
     return NULL;
 }
 
+static void release_task_preview(pxsys_reference_lvgl_t* ui, task_preview_t* preview) {
+    if (preview->image == NULL) return;
+    if (ui->task_transition_preview == preview) clear_task_transition(ui);
+    if (ui->task_switcher != NULL) {
+        lv_obj_t* panel = lv_obj_get_child(ui->task_switcher, 0);
+        lv_obj_t* strip = panel != NULL ? lv_obj_get_child(panel, 0) : NULL;
+        for (uint32_t i = 0; strip != NULL && i < lv_obj_get_child_count(strip); ++i) {
+            lv_obj_t* card = lv_obj_get_child(strip, (int32_t)i);
+            lv_obj_t* area = lv_obj_get_child(card, 0);
+            lv_obj_t* image = area != NULL ? lv_obj_get_child(area, 0) : NULL;
+            if (image != NULL && lv_image_get_src(image) == preview->image) {
+                lv_image_set_src(image, NULL);
+                lv_obj_set_hidden(image, true);
+            }
+        }
+    }
+    lv_image_cache_drop(preview->image);
+    lv_draw_buf_destroy(preview->image);
+    *preview = (task_preview_t){0};
+}
+
+static void prune_task_previews(pxsys_reference_lvgl_t* ui) {
+    pxsys_runtime_t* runtime = pxsys_standard_system_runtime(ui->system);
+    for (size_t i = 0; i < PXSYS_REFERENCE_UI_TASK_PREVIEW_COUNT; ++i) {
+        task_preview_t* preview = &ui->task_previews[i];
+        if (preview->image == NULL) continue;
+        pxsys_instance_snapshot_t snapshot = {.struct_size = sizeof(snapshot)};
+        if (pxsys_runtime_snapshot(runtime, preview->instance, &snapshot) != PXSYS_STATUS_OK ||
+            snapshot.lifecycle.state == PXSYS_APP_STOPPING ||
+            snapshot.lifecycle.state == PXSYS_APP_DESTROY_PENDING)
+            release_task_preview(ui, preview);
+    }
+}
+
 static int preview_memory_available(pxsys_reference_lvgl_t* ui) {
     uint64_t available = 0;
     uint64_t total = 0;
@@ -2550,11 +2634,8 @@ static int preview_memory_available(pxsys_reference_lvgl_t* ui) {
         !ui->memory_info(ui->memory_info_context, &available, &total) ||
         available >= needed)
         return 1;
-    for (index = 0; index < PXSYS_REFERENCE_UI_TASK_PREVIEW_COUNT; ++index) {
-        if (ui->task_previews[index].image != NULL)
-            lv_draw_buf_destroy(ui->task_previews[index].image);
-        ui->task_previews[index].image = NULL;
-    }
+    for (index = 0; index < PXSYS_REFERENCE_UI_TASK_PREVIEW_COUNT; ++index)
+        release_task_preview(ui, &ui->task_previews[index]);
     return ui->memory_info(ui->memory_info_context, &available, &total) &&
            available >= needed;
 }
@@ -2685,26 +2766,23 @@ static lv_draw_buf_t* capture_transformed_application(
 
 static void record_recent_history(pxsys_reference_lvgl_t* ui,
                                   const pxsys_app_descriptor_t* app) {
-    char app_id[65];
-    pxsys_string_t display_name;
+    const pxsys_string_t id = app->identity.app_id;
     size_t index;
     size_t match;
-    if (!ui_valid(ui) || app == NULL) return;
-    if (app->identity.app_id.size == 0 ||
-        app->identity.app_id.size >= sizeof(app_id))
+    if (id.size == 0 || id.size >= sizeof(ui->recent_history[0].app_id))
         return;
-    memcpy(app_id, app->identity.app_id.data, app->identity.app_id.size);
-    app_id[app->identity.app_id.size] = '\0';
     match = ui->recent_history_count;
     for (index = 0; index < ui->recent_history_count; ++index) {
         if (memcmp(ui->recent_history[index].publisher_root,
                    app->identity.publisher_root,
                    PXSYS_PUBLISHER_ROOT_BYTES) == 0 &&
-            strcmp(ui->recent_history[index].app_id, app_id) == 0) {
+            strncmp(ui->recent_history[index].app_id, id.data, id.size) == 0 &&
+            ui->recent_history[index].app_id[id.size] == '\0') {
             match = index;
             break;
         }
     }
+    if (match == 0 && ui->recent_history_count != 0) return;
     if (match == ui->recent_history_count) {
         if (ui->recent_history_count < REFERENCE_RECENT_HISTORY) {
             ui->recent_history_count++;
@@ -2712,19 +2790,13 @@ static void record_recent_history(pxsys_reference_lvgl_t* ui,
             match = REFERENCE_RECENT_HISTORY - 1u; /* reuse the oldest slot */
         }
     }
-    if (match != 0) {
-        recent_app_t entry = ui->recent_history[match];
+    if (match != 0)
         memmove(&ui->recent_history[1], &ui->recent_history[0],
-                match * sizeof(entry));
-        ui->recent_history[0] = entry;
-    }
+                match * sizeof(ui->recent_history[0]));
     memcpy(ui->recent_history[0].publisher_root, app->identity.publisher_root,
            PXSYS_PUBLISHER_ROOT_BYTES);
-    memcpy(ui->recent_history[0].app_id, app_id, sizeof(app_id));
-    display_name = localized_app_name(ui, app);
-    snprintf(ui->recent_history[0].label, sizeof(ui->recent_history[0].label),
-             "%.*s", (int)display_name.size, display_name.data);
-    ui->recent_history[0].last_used = ++ui->preview_clock;
+    memcpy(ui->recent_history[0].app_id, id.data, id.size);
+    ui->recent_history[0].app_id[id.size] = '\0';
 }
 
 static void capture_current_task(pxsys_reference_lvgl_t* ui,
@@ -2764,10 +2836,7 @@ static void capture_current_task(pxsys_reference_lvgl_t* ui,
             }
         }
         if (preview == NULL) return;
-        if (preview->image != NULL) {
-            lv_draw_buf_destroy(preview->image);
-            preview->image = NULL;
-        }
+        release_task_preview(ui, preview);
         image = capture_transformed_application(ui, &capture_bounds);
         if (image == NULL) return;
         preview->image = image;
@@ -2785,9 +2854,13 @@ static void capture_current_task(pxsys_reference_lvgl_t* ui,
 static void clear_task_transition(pxsys_reference_lvgl_t* ui) {
     if (ui->task_transition_preview != NULL)
         ui->task_transition_preview->transition_pending = 0;
+    lv_obj_t* image = ui->task_transition_image;
+    if (ui->task_transition_target != NULL)
+        lv_obj_set_hidden(ui->task_transition_target, false);
     ui->task_transition_image = NULL;
     ui->task_transition_target = NULL;
     ui->task_transition_preview = NULL;
+    if (image != NULL) lv_obj_delete(image);
 }
 
 #if PXSYS_REFERENCE_UI_ENABLE_ANIMATIONS
@@ -2795,10 +2868,6 @@ static void task_transition_completed(lv_anim_t* animation) {
     pxsys_reference_lvgl_t* ui =
         (pxsys_reference_lvgl_t*)lv_anim_get_user_data(animation);
     if (!ui_valid(ui)) return;
-    if (ui->task_transition_target != NULL)
-        pxsys_lvgl_remove_flags(ui->task_transition_target, LV_OBJ_FLAG_HIDDEN);
-    if (ui->task_transition_image != NULL)
-        lv_obj_delete(ui->task_transition_image);
     clear_task_transition(ui);
 }
 #endif
@@ -2853,7 +2922,6 @@ static int start_task_transition(pxsys_reference_lvgl_t* ui) {
     (void)image;
     (void)target_scale;
 #endif
-    pxsys_lvgl_remove_flags(target, LV_OBJ_FLAG_HIDDEN);
     clear_task_transition(ui);
     return 0;
 }
@@ -2863,6 +2931,7 @@ static void close_task_switcher(pxsys_reference_lvgl_t* ui) {
 #if PXSYS_REFERENCE_UI_TASK_SWITCHER == PXSYS_TASK_SWITCHER_CARDS && \
     LV_USE_SNAPSHOT
     clear_task_transition(ui);
+    prune_task_previews(ui);
 #endif
     /* Do not delete this tree while the LVGL input/event machinery may still
      * reference it. Some LVGL event stacks become cyclic during deletion,
@@ -2907,11 +2976,14 @@ static void recent_clicked(lv_event_t* event) {
         }
     }
 #endif
-    if (item->running && pxsys_task_manager_activate(
-                             pxsys_standard_system_tasks(item->ui->system),
-                             item->instance) == PXSYS_STATUS_OK) {
-        close_task_switcher(item->ui);
-        return;
+    pxsys_reference_lvgl_t* ui = item->ui;
+    if (item->running) {
+        ++ui->rebuild_suspended;
+        const pxsys_status_t status = pxsys_task_manager_activate(
+            pxsys_standard_system_tasks(ui->system), item->instance);
+        rebuild_resume(ui);
+        if (status == PXSYS_STATUS_OK) close_task_switcher(ui);
+        if (status != PXSYS_STATUS_NOT_FOUND) return;
     }
     /* A retained card can outlive its instance. Fall back to a cold start
      * rather than trying to activate an invalid instance reference. */
@@ -2922,12 +2994,14 @@ static void recent_clicked(lv_event_t* event) {
         intent.struct_size = sizeof(intent);
         intent.target = &item->identity;
         intent.action = pxsys_string_from_cstr("system.intent.main");
+        ++ui->rebuild_suspended;
         status = pxsys_task_manager_start(
-            pxsys_standard_system_tasks(item->ui->system), &intent, &instance);
+            pxsys_standard_system_tasks(ui->system), &intent, &instance);
+        rebuild_resume(ui);
         if (status != PXSYS_STATUS_OK && status != PXSYS_STATUS_PENDING)
             return;
     }
-    close_task_switcher(item->ui);
+    close_task_switcher(ui);
 }
 
 static int instance_same(pxsys_instance_ref_t left,
@@ -2985,9 +3059,11 @@ static void dismiss_recent_item(pxsys_reference_lvgl_t* ui,
                                 recent_item_t* item) {
     if (!ui_valid(ui) || item == NULL) return;
     if (item->running) {
+        ++ui->rebuild_suspended;
         pxsys_status_t status = pxsys_task_manager_finish_instance(
             pxsys_standard_system_tasks(ui->system), item->instance,
             PXSYS_STOP_NORMAL);
+        rebuild_resume(ui);
         if (status != PXSYS_STATUS_OK && status != PXSYS_STATUS_PENDING)
             return;
         if (status == PXSYS_STATUS_PENDING)
@@ -3139,6 +3215,7 @@ static void update_recent_card(pxsys_reference_lvgl_t* ui, lv_obj_t* card,
             pxsys_lvgl_add_flags(image, LV_OBJ_FLAG_HIDDEN);
         }
     } else {
+        lv_image_set_src(image, NULL);
         pxsys_lvgl_add_flags(image, LV_OBJ_FLAG_HIDDEN);
     }
 }
@@ -3246,6 +3323,7 @@ static void build_task_switcher(pxsys_reference_lvgl_t* ui) {
 #if PXSYS_REFERENCE_UI_TASK_SWITCHER == PXSYS_TASK_SWITCHER_CARDS && \
     LV_USE_SNAPSHOT
     clear_task_transition(ui);
+    prune_task_previews(ui);
     (void)preview_memory_available(ui);
     retained = ui->task_switcher != NULL;
 #else
@@ -3409,8 +3487,8 @@ static void build_task_switcher(pxsys_reference_lvgl_t* ui) {
             item->identity.app_id = pxsys_string_from_cstr(item->app_id);
             app = pxsys_app_registry_find(
                 pxsys_standard_system_apps(ui->system), &item->identity);
-            display_name = app == NULL ? pxsys_string_from_cstr(entry->label)
-                                       : localized_app_name(ui, app);
+            if (app == NULL || !(app->flags & PXSYS_APP_FLAG_ENABLED)) continue;
+            display_name = localized_app_name(ui, app);
             snprintf(item->label, sizeof(item->label), "%.*s",
                      (int)display_name.size, display_name.data);
             item->running = 0;
@@ -3587,33 +3665,107 @@ static void launcher_fill_icon(pxsys_reference_lvgl_t* ui, lv_obj_t* marker,
     lv_obj_add_event_cb(icon, launcher_fallback_draw, LV_EVENT_DRAW_MAIN, NULL);
 }
 
-static lv_obj_t* make_launcher_tile(pxsys_reference_lvgl_t* ui,
-                                    const char* name,
-                                    launcher_item_t* item) {
-    lv_obj_t* tile = lv_button_create(ui->content);
+static void launcher_add_remove_button(pxsys_reference_lvgl_t* ui, launcher_item_t* item) {
+    lv_obj_t* remove_button = lv_button_create(item->tile);
+    const int32_t hit_size = ui->display.width < 360 ? 40 :
+        pxsys_reference_display_scale_px(&ui->display, 40);
+    const int32_t disc_size = ui->display.width < 360 ? 32 :
+        pxsys_reference_display_scale_px(&ui->display, 30);
+    lv_obj_set_size(remove_button, hit_size, hit_size);
+    lv_obj_align(remove_button, LV_ALIGN_TOP_RIGHT, 0, -1);
+    lv_obj_set_style_radius(remove_button, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_bg_opa(remove_button, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(remove_button, 0, 0);
+    lv_obj_set_style_shadow_width(remove_button, 0, 0);
+    lv_obj_set_style_pad_all(remove_button, 0, 0);
+    pxsys_lvgl_remove_flags(remove_button,
+        LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_SCROLL_ON_FOCUS);
+    pxsys_lvgl_add_flags(remove_button, LV_OBJ_FLAG_PRESS_LOCK);
+    lv_obj_t* disc = lv_obj_create(remove_button);
+    style_plain(disc);
+    lv_obj_set_size(disc, disc_size, disc_size);
+    lv_obj_set_style_radius(disc, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_bg_color(disc,
+                              color_token(ui, PXSYS_COLOR_ERROR_CONTAINER), 0);
+    lv_obj_set_style_bg_opa(disc, LV_OPA_COVER, 0);
+    lv_obj_center(disc);
+    lv_obj_t* remove_icon = make_label(disc, LV_SYMBOL_CLOSE,
+        typography_font(ui, PXSYS_TYPOGRAPHY_LABEL),
+        color_token(ui, PXSYS_COLOR_ON_ERROR_CONTAINER));
+    lv_obj_center(remove_icon);
+    lv_obj_add_event_cb(remove_button, launcher_gesture, LV_EVENT_ALL, item);
+    lv_obj_add_event_cb(remove_button, launcher_remove_clicked,
+                        LV_EVENT_CLICKED, item);
+    lv_obj_add_event_cb(remove_button, launcher_focused, LV_EVENT_FOCUSED, item);
+    item->remove_button = remove_button;
+}
+
+static void launcher_apply_edit_style(pxsys_reference_lvgl_t* ui, launcher_item_t* item) {
+    if (!ui->launcher_editing || item->icon_marker == NULL) return;
+    if (!ui->launcher_edit_style_ready) {
+        lv_style_init(&ui->launcher_edit_style);
+        lv_style_set_border_width(&ui->launcher_edit_style, 1);
+        lv_style_set_border_color(&ui->launcher_edit_style, color_token(ui, PXSYS_COLOR_OUTLINE_VARIANT));
+        lv_style_set_bg_color(&ui->launcher_edit_style, color_token(ui, PXSYS_COLOR_SURFACE_CONTAINER_LOW));
+        lv_style_set_bg_opa(&ui->launcher_edit_style, LV_OPA_20);
+        ui->launcher_edit_style_ready = 1;
+    }
+    if (!item->edit_styled) {
+        lv_obj_add_style(item->tile, &ui->launcher_edit_style, LV_PART_MAIN);
+        item->edit_styled = 1;
+    }
+    if (item->uninstallable && item->remove_button == NULL)
+        launcher_add_remove_button(ui, item);
+}
+
+static void launcher_prepare_edit(pxsys_reference_lvgl_t* ui) {
+    bool needs_app_list = false;
+    for (size_t i = 0; i < ui->launcher_count; ++i) {
+        const launcher_item_t* item = &ui->launcher_items[i];
+        if (!item->system_app && !item->uninstallable) {
+            needs_app_list = true;
+            break;
+        }
+    }
+    if (needs_app_list && ui->app_action && ui->app_list) {
+        size_t count = ui->app_list(ui->app_manager_context, NULL, 0, PXSYS_REFERENCE_APPS_ALL);
+        pxsys_reference_managed_app_t* apps = ui->managed_apps;
+        if (count > PXSYS_REFERENCE_MANAGED_APP_MAX &&
+            count <= SIZE_MAX / sizeof(*apps))
+            apps = ui->allocator.allocate(ui->allocator.context, count * sizeof(*apps));
+        if (apps == NULL) apps = ui->managed_apps;
+        if (apps == ui->managed_apps) count = LV_MIN(count, PXSYS_REFERENCE_MANAGED_APP_MAX);
+        if (count != 0) {
+            const size_t written = ui->app_list(ui->app_manager_context, apps, count,
+                                                PXSYS_REFERENCE_APPS_ALL);
+            count = LV_MIN(count, written);
+        }
+        for (size_t i = 0; i < ui->launcher_count; ++i) {
+            launcher_item_t* item = &ui->launcher_items[i];
+            if (item->system_app || item->uninstallable) continue;
+            for (size_t m = 0; m < count; ++m) {
+                const pxsys_reference_managed_app_t* app = &apps[m];
+                if (app->installed && !app->built_in &&
+                    launcher_identity_matches(item, app->identity, strlen(app->identity))) {
+                    item->uninstallable = 1;
+                    break;
+                }
+            }
+        }
+        if (apps == ui->managed_apps) ui->managed_apps_loaded = 0;
+        else ui->allocator.release(ui->allocator.context, apps);
+    }
+    for (size_t i = 0; i < ui->launcher_count; ++i)
+        launcher_apply_edit_style(ui, &ui->launcher_items[i]);
+}
+
+static void launcher_decorate_tile(pxsys_reference_lvgl_t* ui, launcher_item_t* item,
+                                    const char* name) {
+    lv_obj_t* tile = item->tile;
     lv_obj_t* marker;
     lv_obj_t* label;
     const int32_t icon_size = ui_px(ui, ui->display.width < 360 ? 42 : 50);
     const int32_t label_gap = ui->display.width < 360 ? 5 : 6;
-    lv_obj_set_style_radius(tile, ui->theme.base_radius_px * 2u, 0);
-    lv_obj_set_style_bg_opa(tile, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_bg_color(tile, color_token(ui, PXSYS_COLOR_SURFACE),
-                              LV_STATE_PRESSED);
-    lv_obj_set_style_bg_opa(tile, LV_OPA_40, LV_STATE_PRESSED);
-    lv_obj_set_style_shadow_width(tile, 0, 0);
-    lv_obj_set_style_border_width(tile, 0, 0);
-    if (ui->launcher_editing) {
-        lv_obj_set_style_border_width(tile, 1, 0);
-        lv_obj_set_style_border_color(tile,
-            color_token(ui, PXSYS_COLOR_OUTLINE_VARIANT), 0);
-        lv_obj_set_style_bg_color(tile,
-            color_token(ui, PXSYS_COLOR_SURFACE_CONTAINER_LOW), 0);
-        lv_obj_set_style_bg_opa(tile, LV_OPA_20, 0);
-    }
-    lv_obj_set_style_pad_all(tile, 3, 0);
-    pxsys_lvgl_remove_flags(tile, LV_OBJ_FLAG_SCROLLABLE);
-    pxsys_lvgl_add_flags(tile, LV_OBJ_FLAG_PRESS_LOCK);
-    pxsys_lvgl_remove_flags(tile, LV_OBJ_FLAG_SCROLL_ON_FOCUS);
     marker = lv_obj_create(tile);
     item->icon_marker = marker;
     style_plain(marker);
@@ -3633,43 +3785,34 @@ static lv_obj_t* make_launcher_tile(pxsys_reference_lvgl_t* ui,
     const int32_t group_height = icon_size + label_gap + label_height;
     lv_obj_align(marker, LV_ALIGN_CENTER, 0, -(group_height - icon_size) / 2);
     lv_obj_align(label, LV_ALIGN_CENTER, 0, (group_height - label_height + 1) / 2);
-    item->tile = tile;
-    if (item->uninstallable) {
-        lv_obj_t* remove_button = lv_button_create(tile);
-        const int32_t hit_size = ui->display.width < 360 ? 40 :
-            pxsys_reference_display_scale_px(&ui->display, 40);
-        const int32_t disc_size = ui->display.width < 360 ? 32 :
-            pxsys_reference_display_scale_px(&ui->display, 30);
-        lv_obj_set_size(remove_button, hit_size, hit_size);
-        lv_obj_align(remove_button, LV_ALIGN_TOP_RIGHT, 0, -1);
-        lv_obj_set_style_radius(remove_button, LV_RADIUS_CIRCLE, 0);
-        lv_obj_set_style_bg_opa(remove_button, LV_OPA_TRANSP, 0);
-        lv_obj_set_style_border_width(remove_button, 0, 0);
-        lv_obj_set_style_shadow_width(remove_button, 0, 0);
-        lv_obj_set_style_pad_all(remove_button, 0, 0);
-        pxsys_lvgl_remove_flags(remove_button,
-            LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_SCROLL_ON_FOCUS);
-        pxsys_lvgl_add_flags(remove_button, LV_OBJ_FLAG_PRESS_LOCK);
-        lv_obj_t* disc = lv_obj_create(remove_button);
-        style_plain(disc);
-        lv_obj_set_size(disc, disc_size, disc_size);
-        lv_obj_set_style_radius(disc, LV_RADIUS_CIRCLE, 0);
-        lv_obj_set_style_bg_color(disc,
-                                  color_token(ui, PXSYS_COLOR_ERROR_CONTAINER), 0);
-        lv_obj_set_style_bg_opa(disc, LV_OPA_COVER, 0);
-        lv_obj_center(disc);
-        lv_obj_t* remove_icon = make_label(disc, LV_SYMBOL_CLOSE,
-            typography_font(ui, PXSYS_TYPOGRAPHY_LABEL),
-            color_token(ui, PXSYS_COLOR_ON_ERROR_CONTAINER));
-        lv_obj_center(remove_icon);
-        lv_obj_add_event_cb(remove_button, launcher_gesture, LV_EVENT_ALL, item);
-        lv_obj_add_event_cb(remove_button, launcher_remove_clicked,
-                            LV_EVENT_CLICKED, item);
-        lv_obj_add_event_cb(remove_button, launcher_focused, LV_EVENT_FOCUSED, item);
-        if (!ui->launcher_editing)
-            pxsys_lvgl_add_flags(remove_button, LV_OBJ_FLAG_HIDDEN);
-        item->remove_button = remove_button;
+    launcher_apply_edit_style(ui, item);
+}
+
+static lv_obj_t* make_launcher_tile(pxsys_reference_lvgl_t* ui,
+                                    const char* name,
+                                    launcher_item_t* item) {
+    lv_obj_t* tile = lv_button_create(ui->content);
+    if (tile == NULL) return NULL;
+    if (!ui->launcher_styles_ready) {
+        lv_style_init(&ui->launcher_tile_style);
+        lv_style_set_radius(&ui->launcher_tile_style, ui->theme.base_radius_px * 2u);
+        lv_style_set_bg_opa(&ui->launcher_tile_style, LV_OPA_TRANSP);
+        lv_style_set_shadow_width(&ui->launcher_tile_style, 0);
+        lv_style_set_border_width(&ui->launcher_tile_style, 0);
+        lv_style_set_pad_all(&ui->launcher_tile_style, 3);
+        lv_style_init(&ui->launcher_press_style);
+        lv_style_set_bg_color(&ui->launcher_press_style, color_token(ui, PXSYS_COLOR_SURFACE));
+        lv_style_set_bg_opa(&ui->launcher_press_style, LV_OPA_40);
+        ui->launcher_styles_ready = 1;
     }
+    lv_obj_add_style(tile, &ui->launcher_tile_style, LV_PART_MAIN);
+    lv_obj_add_style(tile, &ui->launcher_press_style, LV_STATE_PRESSED);
+    pxsys_lvgl_remove_flags(tile, LV_OBJ_FLAG_SCROLLABLE);
+    pxsys_lvgl_add_flags(tile, LV_OBJ_FLAG_PRESS_LOCK);
+    pxsys_lvgl_remove_flags(tile, LV_OBJ_FLAG_SCROLL_ON_FOCUS);
+    item->tile = tile;
+    lv_obj_set_user_data(tile, item);
+
     lv_obj_add_event_cb(tile, launcher_gesture, LV_EVENT_PRESSED, item);
     lv_obj_add_event_cb(tile, launcher_gesture, LV_EVENT_LONG_PRESSED, item);
     lv_obj_add_event_cb(tile, launcher_gesture, LV_EVENT_PRESSING, item);
@@ -3679,16 +3822,74 @@ static lv_obj_t* make_launcher_tile(pxsys_reference_lvgl_t* ui,
     lv_obj_add_event_cb(tile, launcher_focused, LV_EVENT_FOCUSED, item);
     /* A stable full-identity bookmark survives app reordering and rejects a
      * different publisher with the same App ID. This is never display text. */
-    char focus_identity[PXSYS_REFERENCE_MANAGED_APP_IDENTITY_MAX];
-    static const char hex[] = "0123456789abcdef";
-    for (size_t i = 0; i < PXSYS_PUBLISHER_ROOT_BYTES; ++i) {
-        focus_identity[i * 2] = hex[item->identity.publisher_root[i] >> 4];
-        focus_identity[i * 2 + 1] = hex[item->identity.publisher_root[i] & 15];
-    }
-    snprintf(focus_identity + PXSYS_PUBLISHER_ROOT_BYTES * 2,
-             sizeof(focus_identity) - PXSYS_PUBLISHER_ROOT_BYTES * 2, ":%s", item->app_id);
-    navigation_tag_focus(tile, focus_identity);
+    uint32_t focus_key = UINT32_C(2166136261);
+    for (size_t i = 0; i < PXSYS_PUBLISHER_ROOT_BYTES; ++i)
+        focus_key = navigation_hash(focus_key, item->identity.publisher_root[i]);
+    for (const unsigned char* p = (const unsigned char*)item->app_id; *p; ++p)
+        focus_key = navigation_hash(focus_key, *p);
+    navigation_add_focus_key(tile, focus_key);
+    if (name != NULL) launcher_decorate_tile(ui, item, name);
     return tile;
+}
+
+static void launcher_release_tile(launcher_item_t* item) {
+    if (item->icon_marker == NULL) return;
+    lv_obj_clean(item->tile);
+    item->icon_marker = NULL;
+    item->remove_button = NULL;
+    if (item->edit_styled) {
+        lv_obj_remove_style(item->tile, &item->ui->launcher_edit_style, LV_PART_MAIN);
+        item->edit_styled = 0;
+    }
+    if (item->icon.release != NULL) item->icon.release(item->icon.release_context);
+    item->icon = (pxsys_reference_lvgl_app_icon_t){0};
+    item->icon_attempted = 0;
+#if LV_USE_SNAPSHOT
+    item->icon_rasterized = 0;
+#endif
+}
+
+static launcher_item_t* launcher_item_at(const pxsys_reference_lvgl_t* ui, size_t slot) {
+    return lv_obj_get_user_data(lv_obj_get_child(ui->content, (int32_t)slot));
+}
+
+static void launcher_clear_window(pxsys_reference_lvgl_t* ui) {
+    ui->launcher_updating = 1;
+    for (size_t i = ui->launcher_window_first; i < ui->launcher_window_end; ++i)
+        launcher_release_tile(launcher_item_at(ui, i));
+    ui->launcher_window_first = ui->launcher_window_end = 0;
+    ui->launcher_updating = 0;
+}
+
+static void launcher_update_window(pxsys_reference_lvgl_t* ui) {
+    const size_t page = ui->launcher_page;
+    const size_t first = (page ? page - 1u : 0u) * LAUNCHER_PER_PAGE;
+    const size_t end = LV_MIN(ui->launcher_count, (page + 2u) * LAUNCHER_PER_PAGE);
+    if (ui->launcher_updating ||
+        (first == ui->launcher_window_first && end == ui->launcher_window_end))
+        return;
+    ui->launcher_updating = 1;
+    for (size_t i = ui->launcher_window_first; i < ui->launcher_window_end; ++i) {
+        if (i >= first && i < end) continue;
+        launcher_item_t* item = launcher_item_at(ui, i);
+        if (item != ui->launcher_drag_item) launcher_release_tile(item);
+    }
+    ui->launcher_window_first = first;
+    ui->launcher_window_end = end;
+    pxsys_app_registry_t* registry = pxsys_standard_system_apps(ui->system);
+    for (size_t i = first; i < end; ++i) {
+        launcher_item_t* item = launcher_item_at(ui, i);
+        if (item->icon_marker != NULL) continue;
+        const pxsys_app_descriptor_t* app = pxsys_app_registry_find(registry, &item->identity);
+        char name[96];
+        const pxsys_string_t title = app != NULL
+            ? localized_app_name(ui, app) : pxsys_string_from_cstr(item->app_id);
+        const size_t length = LV_MIN(title.size, sizeof(name) - 1u);
+        memcpy(name, title.data, length);
+        name[length] = '\0';
+        launcher_decorate_tile(ui, item, name);
+    }
+    ui->launcher_updating = 0;
 }
 
 static size_t launcher_load_icons(pxsys_reference_lvgl_t* ui, size_t page,
@@ -3696,11 +3897,11 @@ static size_t launcher_load_icons(pxsys_reference_lvgl_t* ui, size_t page,
     const size_t per_page = PXSYS_REFERENCE_UI_LAUNCHER_COLUMNS *
                             PXSYS_REFERENCE_UI_LAUNCHER_ROWS;
     pxsys_app_registry_t* registry = pxsys_standard_system_apps(ui->system);
-    for (size_t i = 0; i < ui->launcher_count && remaining != 0; ++i) {
-        launcher_item_t* item = &ui->launcher_items[i];
-        if (item->icon_attempted || item->tile == NULL) continue;
-        const size_t item_page = (size_t)lv_obj_get_index(item->tile) / per_page;
-        if (item_page + distance < page || item_page > page + distance) continue;
+    const size_t first = (page > distance ? page - distance : 0) * per_page;
+    const size_t end = LV_MIN(ui->launcher_count, (page + distance + 1u) * per_page);
+    for (size_t i = first; i < end && remaining != 0; ++i) {
+        launcher_item_t* item = launcher_item_at(ui, i);
+        if (item->icon_marker == NULL || item->icon_attempted) continue;
         item->icon_attempted = 1;
         --remaining;
         const pxsys_app_descriptor_t* app = pxsys_app_registry_find(registry, &item->identity);
@@ -3751,16 +3952,20 @@ static void launcher_rasterize_icon(launcher_item_t* item) {
 static void launcher_icons_idle(lv_timer_t* timer) {
     pxsys_reference_lvgl_t* ui = lv_timer_get_user_data(timer);
     if (ui->launcher_drag_item != NULL || lv_obj_is_scrolling(ui->content)) return;
-    const size_t per_page = PXSYS_REFERENCE_UI_LAUNCHER_COLUMNS *
-                            PXSYS_REFERENCE_UI_LAUNCHER_ROWS;
-    /* Fill the settled page after a focus jump or a quick swipe. Preload one
-     * nearby icon per idle tick before the next drag. */
-    launcher_load_icons(ui, ui->launcher_page, 0, per_page);
+    launcher_update_window(ui);
+    if (ui->resolve_app_icon == NULL) {
+        lv_timer_pause(timer);
+        return;
+    }
+    /* An icon can require a synchronous filesystem read. Admit one per
+     * idle tick, favoring the visible page, then its neighbors. */
+    if (launcher_load_icons(ui, ui->launcher_page, 0, 1) == 0)
+        return;
     if (launcher_load_icons(ui, ui->launcher_page, 1, 1) == 0)
         return;
 #if LV_USE_SNAPSHOT
-    for (size_t i = 0; i < ui->launcher_count; ++i) {
-        launcher_item_t* item = &ui->launcher_items[i];
+    for (size_t i = ui->launcher_window_first; i < ui->launcher_window_end; ++i) {
+        launcher_item_t* item = launcher_item_at(ui, i);
         if (item->icon.source == NULL || item->icon_rasterized) continue;
         launcher_rasterize_icon(item);
         return;
@@ -3771,18 +3976,26 @@ static void launcher_icons_idle(lv_timer_t* timer) {
 
 static void launcher_load_visible_icons(pxsys_reference_lvgl_t* ui) {
     if (ui->content == NULL || !ui->content_active ||
-        ui->rendered_view_key != (uint32_t)REFERENCE_PAGE_HOME + 1u ||
-        ui->resolve_app_icon == NULL) return;
+        ui->rendered_view_key != (uint32_t)REFERENCE_PAGE_HOME + 1u) return;
     const size_t per_page = PXSYS_REFERENCE_UI_LAUNCHER_COLUMNS *
                             PXSYS_REFERENCE_UI_LAUNCHER_ROWS;
-    launcher_load_icons(ui, ui->launcher_page, 0, per_page);
     if (ui->launcher_count > per_page)
-        ui->launcher_icon_timer = lv_timer_create(launcher_icons_idle, 64, ui);
+        ui->launcher_icon_timer = lv_timer_create(launcher_icons_idle, 32, ui);
+    if (ui->launcher_icon_timer == NULL && ui->resolve_app_icon != NULL)
+        launcher_load_icons(ui, ui->launcher_page, 0, per_page);
 }
 
 static void release_launcher_icons(pxsys_reference_lvgl_t* ui) {
     size_t index;
-    if (ui == NULL || ui->launcher_items == NULL) return;
+    if (ui->launcher_styles_ready) {
+        lv_style_reset(&ui->launcher_tile_style);
+        lv_style_reset(&ui->launcher_press_style);
+        ui->launcher_styles_ready = 0;
+    }
+    if (ui->launcher_edit_style_ready) {
+        lv_style_reset(&ui->launcher_edit_style);
+        ui->launcher_edit_style_ready = 0;
+    }
     if (ui->launcher_icon_timer != NULL) {
         lv_timer_delete(ui->launcher_icon_timer);
         ui->launcher_icon_timer = NULL;
@@ -3798,6 +4011,11 @@ static void release_launcher_icons(pxsys_reference_lvgl_t* ui) {
         memset(icon, 0, sizeof(*icon));
     }
     ui->launcher_count = 0;
+    ui->launcher_window_first = ui->launcher_window_end = 0;
+    if (ui->launcher_items != NULL) {
+        ui->allocator.release(ui->allocator.context, ui->launcher_items);
+        ui->launcher_items = NULL;
+    }
 }
 
 static int radio_has_explicit_capabilities(
@@ -4617,102 +4835,80 @@ static void build_home_wallpaper(pxsys_reference_lvgl_t* ui) {
 static void build_home(pxsys_reference_lvgl_t* ui,
                        const pxsys_reference_layout_t* layout) {
     pxsys_app_registry_t* registry = pxsys_standard_system_apps(ui->system);
-    size_t index;
-    size_t managed_count = 0;
-    uint32_t row_height;
-    uint32_t columns;
-    uint32_t rows;
-    uint32_t column_width;
+    const size_t columns = PXSYS_REFERENCE_UI_LAUNCHER_COLUMNS;
+    const size_t rows = PXSYS_REFERENCE_UI_LAUNCHER_ROWS;
     size_t page_count;
-    uint32_t gap = layout->size_class == PXSYS_UI_SIZE_COMPACT ? 4u : 8u;
-    if (ui->app_action != NULL && ui->app_list != NULL) {
-        managed_count = ui->app_list(ui->app_manager_context,
-                                     ui->managed_apps,
-                                     PXSYS_REFERENCE_MANAGED_APP_MAX,
-                                     PXSYS_REFERENCE_APPS_ALL);
-        if (managed_count > PXSYS_REFERENCE_MANAGED_APP_MAX)
-            managed_count = PXSYS_REFERENCE_MANAGED_APP_MAX;
-        ui->managed_apps_loaded = 0;
-    }
+    ui->launcher_gap = layout->size_class == PXSYS_UI_SIZE_COMPACT ? 4u : 8u;
     lv_obj_set_layout(ui->content, LV_LAYOUT_NONE);
-    columns = PXSYS_REFERENCE_UI_LAUNCHER_COLUMNS;
-    rows = PXSYS_REFERENCE_UI_LAUNCHER_ROWS;
-    ui->launcher_gap = (uint8_t)gap;
-    column_width = layout->content.width > (columns - 1u) * gap
-        ? (layout->content.width - (columns - 1u) * gap) / columns : 1u;
-    row_height = layout->content.height > (rows - 1u) * gap
-        ? (layout->content.height - (rows - 1u) * gap) / rows : 1u;
     pxsys_lvgl_add_flags(ui->content, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(ui->content, launcher_background_clicked,
                         LV_EVENT_CLICKED, ui);
 
-    for (index = 0; index < pxsys_app_registry_count(registry) &&
-                    ui->launcher_count < ui->max_launcher_apps; ++index) {
-        const pxsys_app_descriptor_t* app = pxsys_app_registry_at(registry, index);
-        launcher_item_t* item;
-        lv_obj_t* tile;
-        char name[96];
-        pxsys_string_t display_name;
-        size_t name_size;
-        if (app == NULL || !(app->flags & PXSYS_APP_FLAG_ENABLED) ||
-            !(app->flags & PXSYS_APP_FLAG_LAUNCHER))
-            continue;
-        item = &ui->launcher_items[ui->launcher_count];
-        memset(item, 0, sizeof(*item));
-        if (app->identity.app_id.size >= sizeof(item->app_id)) continue;
-        item->ui = ui;
-        memcpy(item->identity.publisher_root, app->identity.publisher_root,
-               PXSYS_PUBLISHER_ROOT_BYTES);
-        memcpy(item->app_id, app->identity.app_id.data, app->identity.app_id.size);
-        item->app_id[app->identity.app_id.size] = '\0';
-        item->identity.app_id = pxsys_string_from_cstr(item->app_id);
-        if (!(app->flags & PXSYS_APP_FLAG_SYSTEM)) {
-            size_t managed_index;
-            for (managed_index = 0; managed_index < managed_count;
-                 ++managed_index) {
-                const pxsys_reference_managed_app_t* managed =
-                    &ui->managed_apps[managed_index];
-                if (managed->installed && !managed->built_in &&
-                    launcher_identity_matches(item, managed->identity,
-                                               strlen(managed->identity))) {
-                    item->uninstallable = 1;
+    size_t capacity = LV_MIN(ui->max_launcher_apps, pxsys_app_registry_count(registry));
+    const size_t max_pages = layout->content.width != 0
+        ? LV_MIN((size_t)LV_COORD_MAX / layout->content.width, (size_t)UINT16_MAX) : 0;
+    capacity = LV_MIN(capacity, max_pages * LAUNCHER_PER_PAGE);
+    if (capacity != 0)
+        ui->launcher_items = ui->allocator.allocate(ui->allocator.context,
+                                                   capacity * sizeof(*ui->launcher_items));
+    if (ui->launcher_items != NULL) {
+        size_t cursor = 0;
+        const pxsys_app_descriptor_t* app;
+        const uint32_t flags = PXSYS_APP_FLAG_ENABLED | PXSYS_APP_FLAG_LAUNCHER;
+        while (ui->launcher_count < capacity &&
+               (app = pxsys_app_registry_next(registry, &cursor)) != NULL) {
+            launcher_item_t* item = &ui->launcher_items[ui->launcher_count];
+            if ((app->flags & flags) != flags ||
+                app->identity.app_id.size >= sizeof(item->app_id))
+                continue;
+            *item = (launcher_item_t){.ui = ui, .identity = app->identity,
+                .system_app = (app->flags & PXSYS_APP_FLAG_SYSTEM) != 0,
+                .uninstallable = ui->app_action != NULL &&
+                    (app->flags & (PXSYS_APP_FLAG_REMOVABLE | PXSYS_APP_FLAG_SYSTEM)) ==
+                        PXSYS_APP_FLAG_REMOVABLE};
+            memcpy(item->app_id, app->identity.app_id.data, app->identity.app_id.size);
+            item->app_id[app->identity.app_id.size] = '\0';
+            item->identity.app_id.data = item->app_id;
+            ui->launcher_count++;
+        }
+
+        launcher_item_t** ordered = NULL;
+        if (ui->launcher_count != 0 && ui->launcher_order != NULL && ui->launcher_order[0])
+            ordered = ui->allocator.allocate(ui->allocator.context,
+                                             ui->launcher_count * sizeof(*ordered));
+        if (ordered != NULL) {
+            for (size_t i = 0; i < ui->launcher_count; ++i)
+                ordered[i] = &ui->launcher_items[i];
+            const char* line = ui->launcher_order;
+            size_t next = 0;
+            while (*line != '\0' && next < ui->launcher_count) {
+                const char* end = strchr(line, '\n');
+                const size_t length = end != NULL ? (size_t)(end - line) : strlen(line);
+                for (size_t i = next; i < ui->launcher_count; ++i) {
+                    launcher_item_t* item = ordered[i];
+                    if (!launcher_identity_matches(item, line, length)) continue;
+                    memmove(&ordered[next + 1u], &ordered[next], (i - next) * sizeof(*ordered));
+                    ordered[next++] = item;
                     break;
                 }
+                if (end == NULL) break;
+                line = end + 1;
             }
         }
-        snprintf(item->runtime_name, sizeof(item->runtime_name), "%s",
-                 app->runtime_id.size == strlen(PXSYS_NATIVE_RUNTIME_ID) &&
-                         memcmp(app->runtime_id.data, PXSYS_NATIVE_RUNTIME_ID,
-                                app->runtime_id.size) == 0
-                     ? "Native" : "PXA");
-        display_name = localized_app_name(ui, app);
-        name_size = display_name.size < sizeof(name) - 1u
-                        ? display_name.size : sizeof(name) - 1u;
-        memcpy(name, display_name.data, name_size);
-        name[name_size] = '\0';
-        tile = make_launcher_tile(ui, name, item);
-        lv_obj_set_size(tile, (lv_coord_t)column_width, (lv_coord_t)row_height);
-        ui->launcher_count++;
-    }
-    if (ui->launcher_order[0] != '\0') {
-        const char* cursor = ui->launcher_order;
-        int32_t ordered = 0;
-        while (*cursor != '\0') {
-            const char* end = strchr(cursor, '\n');
-            size_t length = end != NULL ? (size_t)(end - cursor) : strlen(cursor);
-            for (index = 0; index < ui->launcher_count; ++index) {
-                launcher_item_t* item = &ui->launcher_items[index];
-                if (launcher_identity_matches(item, cursor, length)) {
-                    lv_obj_move_to_index(item->tile, ordered++);
-                    break;
-                }
-            }
-            if (end == NULL) break;
-            cursor = end + 1;
+        size_t visible = 0;
+        for (; visible < ui->launcher_count; ++visible) {
+            launcher_item_t* item = ordered != NULL
+                ? ordered[visible] : &ui->launcher_items[visible];
+            if (make_launcher_tile(ui, NULL, item) == NULL) break;
+        }
+        if (ordered != NULL) ui->allocator.release(ui->allocator.context, ordered);
+        if (visible != ui->launcher_count) {
+            lv_obj_clean(ui->content);
+            ui->launcher_count = 0;
         }
     }
-    lv_obj_update_layout(ui->content);
-    launcher_position_tiles(ui);
+    if (ui->launcher_editing) launcher_prepare_edit(ui);
+    launcher_position_tiles(ui, layout->content.width, layout->content.height);
     page_count = ui->launcher_count == 0 ? 1u :
         (ui->launcher_count + columns * rows - 1u) / (columns * rows);
     if (page_count > 1u) {
@@ -4733,6 +4929,7 @@ static void build_home(pxsys_reference_lvgl_t* ui,
     }
     if (ui->launcher_page >= page_count)
         ui->launcher_page = (uint16_t)(page_count - 1u);
+    launcher_update_window(ui);
     lv_obj_update_layout(ui->content);
     lv_obj_scroll_to_x(ui->content,
         (int32_t)ui->launcher_page * (int32_t)layout->content.width,
@@ -7555,7 +7752,9 @@ static void app_input_method_close(pxsys_reference_lvgl_t* ui) {
 
 static void app_input_method_closed(void *context) {
     pxsys_reference_lvgl_t *ui=context;
-    if (ui_valid(ui)) ui->app_ime_close_requested=1;
+    if (!ui_valid(ui)) return;
+    ui->app_ime_close_requested=1;
+    if (ui->app_ime_timer != NULL) lv_timer_ready(ui->app_ime_timer);
 }
 
 /* The Guest deletes its input when it replaces the surface; the delete
@@ -7847,6 +8046,7 @@ static void build_wifi_page(pxsys_reference_lvgl_t* ui,
             PXA_LVGL_ACTION_PRIMARY, wifi_confirm_clicked, ui);
         lv_obj_set_width(button, LV_PCT(100));
         lv_obj_add_state(ui->wifi_password_input, LV_STATE_FOCUSED);
+        if (ui->app_ime_timer != NULL) lv_timer_ready(ui->app_ime_timer);
         return;
     }
     if (ui->wifi_current != NULL &&
@@ -8712,6 +8912,7 @@ static void build_file_manager(pxsys_reference_lvgl_t* ui,
         lv_obj_add_event_cb(ui->file_edit_input, file_edit_save,
                             LV_EVENT_READY, ui);
         lv_obj_add_state(ui->file_edit_input, LV_STATE_FOCUSED);
+        if (ui->app_ime_timer != NULL) lv_timer_ready(ui->app_ime_timer);
         ui->file_edit_error = make_label(ui->content, "",
                                          typography_font(ui, PXSYS_TYPOGRAPHY_CAPTION),
                                          color_token(ui, PXSYS_COLOR_ERROR));
@@ -8804,6 +9005,9 @@ static void rebuild(pxsys_reference_lvgl_t* ui) {
         }
     }
     application_scale_reset(ui);
+#if PXSYS_REFERENCE_UI_TASK_SWITCHER == PXSYS_TASK_SWITCHER_CARDS && LV_USE_SNAPSHOT
+    prune_task_previews(ui);
+#endif
     application_backdrop_apply(ui);
     /* content_active/active_page may already describe the incoming task. The
      * old tree still belongs to rendered_view_key until it is deleted. */
@@ -8812,8 +9016,9 @@ static void rebuild(pxsys_reference_lvgl_t* ui) {
      * events must not replace the bookmark captured from the outgoing page. */
     ui->rendered_view_key = 0;
     if (ui->file_edit_input != NULL) {
-        snprintf(ui->file_edit_draft, sizeof(ui->file_edit_draft), "%s",
-                 lv_textarea_get_text(ui->file_edit_input));
+        if (ui->file_edit_mode != 0)
+            snprintf(ui->file_edit_draft, sizeof(ui->file_edit_draft), "%s",
+                     lv_textarea_get_text(ui->file_edit_input));
 #if PXSYS_REFERENCE_UI_BUILTIN_SETTINGS
         if (ui->app_ime_target == ui->file_edit_input)
             app_input_method_close(ui);
@@ -8867,6 +9072,7 @@ static void rebuild(pxsys_reference_lvgl_t* ui) {
         (void)ui->file_size(ui->file_manager_context, NULL, NULL, NULL);
     ui->page_opaque_section = NULL;
     launcher_drag_finish(ui, NULL);
+    ui->launcher_long_pressed = 0;
     lv_obj_clean(ui->root);
     /* The old launcher images no longer have widgets borrowing them. Release
      * their decoded caches even when the next view is an app or Settings;
@@ -9786,8 +9992,9 @@ static void window_changed(void* context,
     task_switcher_open = task_switcher_is_open(ui);
     ui->window = *window;
     /* A power-policy update must not rebuild chrome or cancel an active drag. */
-    if (chrome_unchanged && power_changed) {
-        if (ui->idle_timer != NULL) idle_policy_poll(ui->idle_timer);
+    if (chrome_unchanged && (power_changed ||
+        (!ui->transient_revealed && !ui->notification_shade_open))) {
+        if (power_changed && ui->idle_timer != NULL) idle_policy_poll(ui->idle_timer);
         return;
     }
     ui->transient_revealed = 0;
@@ -9833,7 +10040,9 @@ static pxsys_status_t app_foreground(void* context, void* instance) {
     (void)context;
     if (app == NULL || !ui_valid(app->ui)) return PXSYS_STATUS_BAD_STATE;
     if (page_is_content(app->page)) {
-        app->ui->active_page = app->page;
+        app->ui->content_owner = app->page;
+        app->ui->active_page = app->page == REFERENCE_PAGE_SETTINGS
+            ? app->ui->settings_resume_page : app->page;
         app->ui->content_active = 1;
         /* Storage-backed pages re-read their listing whenever they come
          * forward instead of on every status rebuild. */
@@ -9853,11 +10062,16 @@ static pxsys_status_t app_background(void* context, void* instance) {
     app_context_t* app = (app_context_t*)instance;
     (void)context;
     if (app == NULL || !ui_valid(app->ui)) return PXSYS_STATUS_BAD_STATE;
-    if (page_is_content(app->page))
-        app->ui->content_active = 0;
-    else
-        app->ui->active_chrome &= (uint8_t)~(1u << app->page);
-    rebuild(app->ui);
+    pxsys_reference_lvgl_t* ui = app->ui;
+    if (page_is_content(app->page)) {
+        if (!ui->content_active || ui->content_owner != app->page) return PXSYS_STATUS_OK;
+        if (app->page == REFERENCE_PAGE_SETTINGS) ui->settings_resume_page = ui->active_page;
+        if (app->page == REFERENCE_PAGE_HOME) ui->launcher_editing = ui->launcher_long_pressed = 0;
+        ui->content_active = 0;
+    } else {
+        ui->active_chrome &= (uint8_t)~(1u << app->page);
+    }
+    rebuild(ui);
     return PXSYS_STATUS_OK;
 }
 
@@ -9872,44 +10086,61 @@ static pxsys_status_t app_event(void* context, void* instance,
 static pxsys_back_result_t app_back(void* context, void* instance) {
     app_context_t* app = (app_context_t*)instance;
     (void)context;
-    /* Hardware/API Back must use the same subpage navigation as the header
-     * and edge gesture, instead of popping the owning Settings task. */
-    if (app && app->page==REFERENCE_PAGE_SETTINGS && ui_valid(app->ui) &&
-        (app->ui->active_page==REFERENCE_PAGE_INPUT_METHOD ||
-         app->ui->active_page==REFERENCE_PAGE_INPUT_METHOD_APPS)) {
-        navigation_back(app->ui);
+    if (app == NULL || !ui_valid(app->ui)) return PXSYS_BACK_UNHANDLED;
+    pxsys_reference_lvgl_t* ui = app->ui;
+    if (ui->content_active && ui->content_owner == app->page && content_back(ui))
         return PXSYS_BACK_HANDLED;
+    if (app->page != REFERENCE_PAGE_HOME) return PXSYS_BACK_UNHANDLED;
+    if (ui->launcher_editing) {
+        ui->launcher_editing = ui->launcher_long_pressed = 0;
+        rebuild(ui);
     }
-    /* Back on the launcher page must not pop it and surface an older task. */
-    if (app != NULL && app->page == REFERENCE_PAGE_HOME) {
-        if (ui_valid(app->ui) && app->ui->launcher_editing) {
-            app->ui->launcher_editing = 0;
-            app->ui->launcher_long_pressed = 0;
-            rebuild(app->ui);
-        }
-        return PXSYS_BACK_HANDLED;
-    }
-    return PXSYS_BACK_UNHANDLED;
+    return PXSYS_BACK_HANDLED;
 }
 
 static void app_stop(void* context, void* instance,
                      pxsys_stop_reason_t reason) {
-    app_context_t* app = (app_context_t*)instance;
     (void)context;
+    (void)instance;
     (void)reason;
-    if (app == NULL || !ui_valid(app->ui)) return;
-    if (page_is_content(app->page)) {
-        if (app->ui->active_page == app->page)
-            app->ui->content_active = 0;
-    } else {
-        app->ui->active_chrome &= (uint8_t)~(1u << app->page);
-    }
-    rebuild(app->ui);
 }
 
 static void app_destroy(void* context, void* instance) {
+    app_context_t* app = (app_context_t*)instance;
     (void)context;
-    (void)instance;
+    if (app == NULL || !ui_valid(app->ui)) return;
+    pxsys_reference_lvgl_t* ui = app->ui;
+    const bool content = page_is_content(app->page);
+    const bool visible = content
+        ? ui->content_active && ui->content_owner == app->page
+        : (ui->active_chrome & (1u << app->page)) != 0;
+    if (content) {
+        if (navigation_key_owned_by(ui->rendered_view_key, app->page))
+            ui->rendered_view_key = 0;
+        for (size_t i = 0; i < REFERENCE_NAVIGATION_STATE_COUNT; ++i)
+            if (navigation_key_owned_by(ui->navigation_states[i].view_key, app->page))
+                ui->navigation_states[i] = (navigation_state_t){0};
+        if (app->page == REFERENCE_PAGE_HOME) {
+            launcher_drag_finish(ui, NULL);
+            ui->launcher_page = 0;
+            ui->launcher_focus_key = 0;
+            ui->launcher_editing = ui->launcher_long_pressed = 0;
+        } else if (app->page == REFERENCE_PAGE_SETTINGS) {
+            ui->settings_resume_page = REFERENCE_PAGE_SETTINGS;
+            ui->wifi_input_stage = 0;
+            memset(ui->wifi_input_draft, 0, sizeof(ui->wifi_input_draft));
+            ui->pending_wifi_ssid[0] = '\0';
+        } else if (app->page == REFERENCE_PAGE_FILE_MANAGER) {
+            ui->file_path[0] = '\0';
+            ui->file_edit_mode = 0;
+            ui->file_edit_draft[0] = '\0';
+            ui->file_entries_loaded = 0;
+        }
+        if (visible) ui->content_active = 0;
+    } else {
+        ui->active_chrome &= (uint8_t)~(1u << app->page);
+    }
+    if (visible) rebuild(ui);
 }
 
 void pxsys_reference_lvgl_config_init(pxsys_reference_lvgl_config_t* config) {
@@ -10071,6 +10302,8 @@ pxsys_status_t pxsys_reference_lvgl_create(
     if (config == NULL || config->struct_size < sizeof(*config) ||
         config->system == NULL || config->parent == NULL ||
         config->max_launcher_apps == 0 ||
+        config->max_launcher_apps > SIZE_MAX / sizeof(launcher_item_t) ||
+        config->max_launcher_apps > (SIZE_MAX - 1u) / LAUNCHER_ORDER_LINE_MAX ||
         config->navigation_mode > PXSYS_NAVIGATION_GESTURES ||
         !languages_valid(config->languages, config->language_count) ||
         config->allocator.struct_size < sizeof(config->allocator) ||
@@ -10080,16 +10313,8 @@ pxsys_status_t pxsys_reference_lvgl_create(
         config->allocator.context, sizeof(*ui));
     if (ui == NULL) return PXSYS_STATUS_NO_MEMORY;
     memset(ui, 0, sizeof(*ui));
-    ui->launcher_items = (launcher_item_t*)config->allocator.allocate(
-        config->allocator.context,
-        config->max_launcher_apps * sizeof(*ui->launcher_items));
-    if (ui->launcher_items == NULL) {
-        config->allocator.release(config->allocator.context, ui);
-        return PXSYS_STATUS_NO_MEMORY;
-    }
-    memset(ui->launcher_items, 0,
-           config->max_launcher_apps * sizeof(*ui->launcher_items));
     ui->system = config->system;
+    ui->settings_resume_page = REFERENCE_PAGE_SETTINGS;
     ui->allocator = config->allocator;
     ui->parent = config->parent;
     ui->text_font = config->text_font;
@@ -10135,12 +10360,22 @@ pxsys_status_t pxsys_reference_lvgl_create(
     ui->app_action = config->app_action;
     ui->launcher_order_context = config->launcher_order_context;
     ui->launcher_order_save = config->launcher_order_save;
-    if (config->launcher_order_load != NULL &&
-        !config->launcher_order_load(config->launcher_order_context,
-                                     ui->launcher_order,
-                                     sizeof(ui->launcher_order)))
-        ui->launcher_order[0] = '\0';
-    ui->launcher_order[sizeof(ui->launcher_order) - 1u] = '\0';
+    ui->launcher_order_capacity = LV_MAX(4096u,
+        config->max_launcher_apps * LAUNCHER_ORDER_LINE_MAX + 1u);
+    if (config->launcher_order_load != NULL && (ui->features & PXSYS_REFERENCE_UI_HOME)) {
+        ui->launcher_order = ui->allocator.allocate(ui->allocator.context,
+                                                    ui->launcher_order_capacity);
+        if (ui->launcher_order != NULL) {
+            ui->launcher_order[0] = '\0';
+            if (config->launcher_order_load(config->launcher_order_context,
+                                             ui->launcher_order, ui->launcher_order_capacity)) {
+                ui->launcher_order[ui->launcher_order_capacity - 1u] = '\0';
+            } else {
+                ui->allocator.release(ui->allocator.context, ui->launcher_order);
+                ui->launcher_order = NULL;
+            }
+        }
+    }
     ui->file_manager_context = config->file_manager_context;
     ui->file_list = config->file_list;
     ui->file_action = config->file_action;
@@ -10278,6 +10513,7 @@ pxsys_status_t pxsys_reference_lvgl_start(pxsys_reference_lvgl_t* ui) {
     /* All three roles are started synchronously before the first frame.
      * Build their combined tree once instead of reopening every launcher
      * icon for the intermediate home/status/navigation configurations. */
+    ui->started = 1;
     ++ui->rebuild_suspended;
     if (ui->features & PXSYS_REFERENCE_UI_HOME) {
         status = pxsys_reference_lvgl_home(ui);
@@ -10315,14 +10551,22 @@ pxsys_status_t pxsys_reference_lvgl_home(pxsys_reference_lvgl_t* ui) {
     if (ui->notification_shade_open) close_notification_shade(ui);
     capture_current_task(ui, 0);
     application_scale_reset(ui);
+    const bool was_editing = ui->launcher_editing != 0;
     ui->launcher_editing = 0;
     ui->launcher_long_pressed = 0;
-    return open_role(ui, PXSYS_ROLE_HOME);
+    if (was_editing) {
+        ++ui->rebuild_suspended;
+        rebuild(ui);
+    }
+    const pxsys_status_t status = open_role(ui, PXSYS_ROLE_HOME);
+    if (was_editing) rebuild_resume(ui);
+    return status;
 }
 
 void pxsys_reference_lvgl_refresh_apps(pxsys_reference_lvgl_t* ui) {
     if (!ui_valid(ui)) return;
     ui->managed_apps_loaded = 0;
+    if (!ui->content_active) return;
     if (ui->active_page == REFERENCE_PAGE_HOME || ui->active_page == REFERENCE_PAGE_APP_MANAGER ||
         ui->active_page == REFERENCE_PAGE_INPUT_METHOD || ui->active_page == REFERENCE_PAGE_INPUT_METHOD_APPS) {
 #if PXSYS_REFERENCE_UI_BUILTIN_SETTINGS
@@ -10548,9 +10792,35 @@ pxsys_status_t pxsys_reference_lvgl_destroy(pxsys_reference_lvgl_t* ui) {
     size_t preview_index;
 #endif
     if (!ui_valid(ui)) return PXSYS_STATUS_INVALID_ARGUMENT;
+    if (ui->started) {
+        ++ui->rebuild_suspended;
+        pxsys_status_t status = pxsys_task_manager_finish_all(
+            pxsys_standard_system_tasks(ui->system), PXSYS_STOP_SHUTDOWN);
+        if (status == PXSYS_STATUS_OK) {
+            pxsys_role_host_t* host = pxsys_standard_system_role_host(ui->system);
+            if (ui->features & PXSYS_REFERENCE_UI_NAVIGATION_BAR) {
+                status = pxsys_role_host_stop(host, pxsys_string_from_cstr(PXSYS_ROLE_NAVIGATION_BAR),
+                                              PXSYS_STOP_SHUTDOWN);
+                if (status == PXSYS_STATUS_NOT_FOUND) status = PXSYS_STATUS_OK;
+            }
+            if (status == PXSYS_STATUS_OK && (ui->features & PXSYS_REFERENCE_UI_STATUS_BAR)) {
+                status = pxsys_role_host_stop(host, pxsys_string_from_cstr(PXSYS_ROLE_STATUS_BAR),
+                                              PXSYS_STOP_SHUTDOWN);
+                if (status == PXSYS_STATUS_NOT_FOUND) status = PXSYS_STATUS_OK;
+            }
+        }
+        if (status != PXSYS_STATUS_OK) {
+            rebuild_resume(ui);
+            return status;
+        }
+        --ui->rebuild_suspended;
+    }
     navigation_back_tap_clear(ui);
     close_task_switcher(ui);
     application_scale_reset(ui);
+#if PXSYS_REFERENCE_UI_BUILTIN_SETTINGS
+    if (ui->app_ime != NULL) app_input_method_close(ui);
+#endif
     if (ui->idle_timer != NULL) lv_timer_delete(ui->idle_timer);
     if (ui->idle_dimmed && ui->idle_dim != NULL)
         ui->idle_dim(ui->idle_context, false, ui->idle_policy.dim_percent);
@@ -10584,16 +10854,6 @@ pxsys_status_t pxsys_reference_lvgl_destroy(pxsys_reference_lvgl_t* ui) {
     if (ui->display_subscribed)
         (void)pxsys_display_service_unsubscribe(
             pxsys_standard_system_display(ui->system), ui, display_changed);
-    if (ui->features & PXSYS_REFERENCE_UI_NAVIGATION_BAR)
-        (void)pxsys_role_host_stop(pxsys_standard_system_role_host(ui->system),
-                                   pxsys_string_from_cstr(PXSYS_ROLE_NAVIGATION_BAR),
-                                   PXSYS_STOP_SHUTDOWN);
-    if (ui->features & PXSYS_REFERENCE_UI_STATUS_BAR)
-        (void)pxsys_role_host_stop(pxsys_standard_system_role_host(ui->system),
-                                   pxsys_string_from_cstr(PXSYS_ROLE_STATUS_BAR),
-                                   PXSYS_STOP_SHUTDOWN);
-    (void)pxsys_task_manager_finish_all(pxsys_standard_system_tasks(ui->system),
-                                        PXSYS_STOP_SHUTDOWN);
     unregister_apps(ui);
     if (ui->resource_catalog_zh_registered)
         (void)pxsys_resource_catalog_unregister(
@@ -10603,8 +10863,6 @@ pxsys_status_t pxsys_reference_lvgl_destroy(pxsys_reference_lvgl_t* ui) {
         (void)pxsys_resource_catalog_unregister(
             pxsys_standard_system_resources(ui->system),
             &reference_catalog_en);
-    if (ui->app_ime_keypad != NULL) pxsys_reference_ime_destroy(ui->app_ime_keypad);
-    if (ui->app_ime != NULL) lv_obj_delete(ui->app_ime);
     if (ui->app_ime_timer != NULL) lv_timer_delete(ui->app_ime_timer);
     if (ui->status_refresh_timer != NULL) lv_timer_delete(ui->status_refresh_timer);
     if (ui->wifi_scan_timer != NULL) lv_timer_delete(ui->wifi_scan_timer);
@@ -10617,6 +10875,10 @@ pxsys_status_t pxsys_reference_lvgl_destroy(pxsys_reference_lvgl_t* ui) {
     if (ui->toast != NULL) lv_obj_delete(ui->toast);
     if (ui->volume_osd != NULL) lv_obj_delete(ui->volume_osd);
     if (ui->notification_shade != NULL) lv_obj_delete(ui->notification_shade);
+#if PXSYS_REFERENCE_UI_TASK_SWITCHER == PXSYS_TASK_SWITCHER_CARDS && LV_USE_SNAPSHOT
+    for (preview_index = 0; preview_index < PXSYS_REFERENCE_UI_TASK_PREVIEW_COUNT; ++preview_index)
+        release_task_preview(ui, &ui->task_previews[preview_index]);
+#endif
     if (ui->task_switcher != NULL) lv_obj_delete(ui->task_switcher);
     launcher_drag_finish(ui, NULL);
     if (ui->notification_refresh_hook)
@@ -10624,17 +10886,9 @@ pxsys_status_t pxsys_reference_lvgl_destroy(pxsys_reference_lvgl_t* ui) {
                                                    notification_refresh_event, ui);
     if (ui->root != NULL) lv_obj_delete(ui->root);
     release_launcher_icons(ui);
-#if PXSYS_REFERENCE_UI_TASK_SWITCHER == PXSYS_TASK_SWITCHER_CARDS && LV_USE_SNAPSHOT
-    for (preview_index = 0;
-         preview_index < PXSYS_REFERENCE_UI_TASK_PREVIEW_COUNT;
-         ++preview_index) {
-        if (ui->task_previews[preview_index].image != NULL)
-            lv_draw_buf_destroy(ui->task_previews[preview_index].image);
-    }
-#endif
     allocator = ui->allocator;
     ui->magic = 0;
-    allocator.release(allocator.context, ui->launcher_items);
+    if (ui->launcher_order != NULL) allocator.release(allocator.context, ui->launcher_order);
     allocator.release(allocator.context, ui);
     return PXSYS_STATUS_OK;
 }

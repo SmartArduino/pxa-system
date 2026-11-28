@@ -65,6 +65,8 @@ typedef struct {
     pxsys_runtime_instantiate_fn instantiate;
     pxsys_runtime_start_fn start;
     pxsys_runtime_state_fn foreground;
+    /* Also called when moving a pending foreground launch to the background,
+     * so the provider can detach any window prepared before start completes. */
     pxsys_runtime_state_fn background;
     pxsys_runtime_event_fn event;
     pxsys_runtime_back_fn back;
@@ -118,6 +120,8 @@ pxsys_status_t pxsys_runtime_complete_start(pxsys_runtime_t* runtime, pxsys_inst
  * the provider stop callback, but always calls destroy and releases ownership. */
 pxsys_status_t pxsys_runtime_report_stopped(pxsys_runtime_t* runtime, pxsys_instance_ref_t instance,
                                             pxsys_stop_reason_t reason);
+/* For STARTING instances these calls update the presentation requested when
+ * complete_start reports readiness. */
 pxsys_status_t pxsys_runtime_foreground(pxsys_runtime_t* runtime, pxsys_instance_ref_t instance);
 pxsys_status_t pxsys_runtime_background(pxsys_runtime_t* runtime, pxsys_instance_ref_t instance);
 pxsys_status_t pxsys_runtime_deliver(pxsys_runtime_t* runtime, pxsys_instance_ref_t instance,

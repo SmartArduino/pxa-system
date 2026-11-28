@@ -740,19 +740,19 @@ static pxsys_status_t sync_installed_catalog(simulator_catalog_t* catalog) {
     apps = pxsys_standard_system_apps(catalog->system);
     // Installation scans add/update packages; they must also remove stale
     // registry entries so an uninstalled icon cannot survive until restart.
-    for (size_t i = 0; i < pxsys_app_registry_count(apps);) {
-        const pxsys_app_descriptor_t* app = pxsys_app_registry_at(apps, i);
+    size_t cursor = 0;
+    const pxsys_app_descriptor_t* app;
+    while ((app = pxsys_app_registry_next(apps, &cursor)) != NULL) {
         char id[131];
-        if (app != NULL && !(app->flags & PXSYS_APP_FLAG_SYSTEM) &&
+        if (!(app->flags & PXSYS_APP_FLAG_SYSTEM) &&
             app->identity.app_id.size < sizeof(id)) {
             memcpy(id, app->identity.app_id.data, app->identity.app_id.size);
             id[app->identity.app_id.size] = 0;
             if (!pxsys_desktop_package_installed(catalog->installed_packages_root, id) &&
                 stop_managed_app(catalog, &app->identity) == PXSYS_STATUS_OK) {
-                if (pxsys_app_registry_unregister(apps, &app->identity) == PXSYS_STATUS_OK) continue;
+                (void)pxsys_app_registry_unregister(apps, &app->identity);
             }
         }
-        ++i;
     }
     while ((entry = readdir(directory)) != NULL) {
         char package_root[1400];
@@ -944,16 +944,13 @@ static size_t simulator_list_apps(
     pxsys_reference_app_filter_t filter) {
     const simulator_catalog_t* catalog = (const simulator_catalog_t*)context;
     pxsys_app_registry_t* apps;
-    size_t count;
-    size_t index;
+    size_t cursor = 0;
     size_t written = 0;
     if (catalog == NULL || catalog->system == NULL) return 0;
     apps = pxsys_standard_system_apps(catalog->system);
-    count = pxsys_app_registry_count(apps);
-    for (index = 0; index < count; ++index) {
-        const pxsys_app_descriptor_t* app = pxsys_app_registry_at(apps, index);
+    const pxsys_app_descriptor_t* app;
+    while ((app = pxsys_app_registry_next(apps, &cursor)) != NULL) {
         pxsys_reference_managed_app_t* managed;
-        if (app == NULL) continue;
         if (filter==PXSYS_REFERENCE_APPS_INPUT_METHODS &&
             !(app->flags&PXSYS_APP_FLAG_INPUT_METHOD)) continue;
         if (output == NULL) { ++written; continue; }
@@ -1012,18 +1009,25 @@ static const pxsys_app_descriptor_t* find_managed_app(simulator_catalog_t* catal
                                                      const char* id) {
     pxsys_app_registry_t* apps = pxsys_standard_system_apps(catalog->system);
     const char* separator = strchr(id, ':');
-    const char* app_id = separator != NULL ? separator + 1 : id;
-    if (separator != NULL && separator - id != 64) return NULL;
-    static const char hex[] = "0123456789abcdef";
-    for (size_t i = 0; i < pxsys_app_registry_count(apps); ++i) {
-        const pxsys_app_descriptor_t* app = pxsys_app_registry_at(apps, i);
-        if (app == NULL || app->identity.app_id.size != strlen(app_id) ||
-            memcmp(app->identity.app_id.data, app_id, strlen(app_id))) continue;
-        bool match = true;
-        for (size_t byte = 0; separator != NULL && byte < 32; ++byte)
-            if (id[2 * byte] != hex[app->identity.publisher_root[byte] >> 4] ||
-                id[2 * byte + 1] != hex[app->identity.publisher_root[byte] & 15]) match = false;
-        if (match) return app;
+    if (separator != NULL) {
+        if (separator - id != PXSYS_PUBLISHER_ROOT_BYTES * 2) return NULL;
+        static const char hex[] = "0123456789abcdef";
+        pxsys_app_identity_t identity = {.app_id = pxsys_string_from_cstr(separator + 1)};
+        for (size_t i = 0; i < PXSYS_PUBLISHER_ROOT_BYTES; ++i) {
+            const char* high = strchr(hex, id[2u * i]);
+            const char* low = strchr(hex, id[2u * i + 1u]);
+            if (high == NULL || low == NULL) return NULL;
+            identity.publisher_root[i] = (uint8_t)((high - hex) * 16 + (low - hex));
+        }
+        return pxsys_app_registry_find(apps, &identity);
+    }
+    const size_t length = strlen(id);
+    size_t cursor = 0;
+    const pxsys_app_descriptor_t* app;
+    while ((app = pxsys_app_registry_next(apps, &cursor)) != NULL) {
+        if (app->identity.app_id.size == length &&
+            memcmp(app->identity.app_id.data, id, length) == 0)
+            return app;
     }
     return NULL;
 }
@@ -1146,6 +1150,7 @@ static bool simulator_launcher_load(void* context, char* order,
 
 static void simulator_launcher_save(void* context, const char* order) {
     char path[512];
+    char temporary[sizeof(path) + 4u];
     const char* root = context != NULL ? (const char*)context : getenv("HOME");
     FILE* file;
     if (root == NULL || order == NULL ||
@@ -1153,10 +1158,13 @@ static void simulator_launcher_save(void* context, const char* order) {
                  context != NULL ? "launcher-order" :
                                    ".pxa-simulator-launcher-order") >=
             (int)sizeof(path)) return;
-    file = fopen(path, "wb");
+    snprintf(temporary, sizeof(temporary), "%s.tmp", path);
+    file = fopen(temporary, "wb");
     if (file == NULL) return;
-    (void)fwrite(order, 1, strlen(order), file);
-    fclose(file);
+    const size_t size = strlen(order);
+    const bool written = fwrite(order, 1, size, file) == size;
+    if (fclose(file) != 0 || !written || rename(temporary, path) != 0)
+        (void)unlink(temporary);
 }
 
 /* Permissions. The desktop adapter reads declared permissions from the
@@ -1867,6 +1875,7 @@ static int run_simulator(const simulator_options_t* options) {
         PXSYS_STATUS_OK) goto done;
 
     pxsys_standard_system_config_init(&system_config);
+    system_config.max_apps = 128;
     system_config.allocator = allocator;
     system_config.initial_renderer = &renderer_provider;
     pxsys_display_profile_init(&system_config.initial_display,
@@ -2003,6 +2012,7 @@ static int run_simulator(const simulator_options_t* options) {
 
     catalog.runtime=simulator_runtime;
     pxsys_reference_lvgl_config_init(&ui_config);
+    ui_config.max_launcher_apps = system_config.max_apps;
     if (options->no_navigation_bar)
         ui_config.features &= ~PXSYS_REFERENCE_UI_NAVIGATION_BAR;
     ui_config.input_method_context=&catalog; ui_config.input_method_list=simulator_ime_list;

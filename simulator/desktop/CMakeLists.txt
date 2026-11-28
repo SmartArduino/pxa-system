@@ -144,6 +144,16 @@ if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
 endif()
 
 if(PXSYS_BUILD_TESTS OR BUILD_TESTING)
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        add_executable(pxsys_launcher_benchmark EXCLUDE_FROM_ALL
+            ../../ui/reference/tests/launcher_benchmark.c)
+        target_link_libraries(pxsys_launcher_benchmark PRIVATE
+            pxsys::reference_lvgl SDL2::SDL2)
+        target_include_directories(pxsys_launcher_benchmark PRIVATE
+            ../../libpxa/adapters/include)
+        target_compile_definitions(pxsys_launcher_benchmark PRIVATE
+            $<TARGET_PROPERTY:pxa_system_reference_lvgl,COMPILE_DEFINITIONS>)
+    endif()
     add_executable(pxsys_desktop_controller_test tests/controller_test.c)
     target_link_libraries(pxsys_desktop_controller_test PRIVATE pxa::pxa SDL2::SDL2)
     if(NOT MSVC)

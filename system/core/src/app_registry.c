@@ -425,6 +425,16 @@ const pxsys_app_descriptor_t* pxsys_app_registry_at(const pxsys_app_registry_t* 
     return NULL;
 }
 
+const pxsys_app_descriptor_t* pxsys_app_registry_next(const pxsys_app_registry_t* registry,
+                                                       size_t* cursor) {
+    if (!registry_valid(registry) || cursor == NULL) return NULL;
+    while (*cursor < registry->capacity) {
+        const pxsys_app_entry_t* entry = &registry->entries[(*cursor)++];
+        if (entry->occupied) return &entry->descriptor;
+    }
+    return NULL;
+}
+
 pxsys_app_ref_t pxsys_app_ref_invalid(void) {
     pxsys_app_ref_t reference;
     reference.slot = PXSYS_APP_REF_INVALID_SLOT;

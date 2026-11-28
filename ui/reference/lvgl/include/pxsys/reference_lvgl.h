@@ -462,6 +462,8 @@ pxsys_status_t pxsys_reference_lvgl_create(
     const pxsys_reference_lvgl_config_t* config,
     pxsys_reference_lvgl_t** output);
 pxsys_status_t pxsys_reference_lvgl_start(pxsys_reference_lvgl_t* ui);
+/* Retry after a pending runtime stop has been reported. The UI remains alive
+ * on failure so outstanding task callbacks still have a valid context. */
 pxsys_status_t pxsys_reference_lvgl_destroy(pxsys_reference_lvgl_t* ui);
 /* Brings the system launcher to the foreground through the role host. */
 pxsys_status_t pxsys_reference_lvgl_home(pxsys_reference_lvgl_t* ui);

@@ -20,6 +20,23 @@ static void flush(lv_display_t* display, const lv_area_t* area, uint8_t* pixels)
 }
 
 typedef struct { size_t live, acquired, released; } icon_counts_t;
+static size_t managed_list(void* context, pxsys_reference_managed_app_t* apps,
+                           size_t capacity, pxsys_reference_app_filter_t filter) {
+    assert(filter == PXSYS_REFERENCE_APPS_ALL);
+    if (apps == NULL) return 2;
+    assert(capacity >= 2);
+    ++*(unsigned*)context;
+    memset(apps, 0, 2 * sizeof(*apps));
+    strcpy(apps[0].identity, "focus-test-0");
+    strcpy(apps[1].identity, "focus-test-1");
+    apps[0].installed = apps[1].installed = apps[1].built_in = true;
+    return 2;
+}
+static bool app_action(void* context, const char* identity, pxsys_reference_app_action_t action) {
+    (void)context; (void)identity; (void)action;
+    assert(!"edit preparation must not perform an app action");
+    return false;
+}
 typedef struct {
     lv_image_dsc_t image;
     icon_counts_t* counts;
@@ -105,6 +122,11 @@ static void focus_tile(pxsys_reference_lvgl_t* ui, lv_obj_t* tile,
     lv_obj_get_coords(tile, &bounds);
     assert(bounds.x1 >= viewport.x1 && bounds.x2 <= viewport.x2);
     assert(bounds.y1 >= viewport.y1 && bounds.y2 <= viewport.y2);
+    for (size_t i = 0; i < PXSYS_REFERENCE_UI_LAUNCHER_COLUMNS *
+                            PXSYS_REFERENCE_UI_LAUNCHER_ROWS; ++i) {
+        lv_tick_inc(32);
+        (void)lv_timer_handler();
+    }
     for (size_t i = 0; i < ui->launcher_count; ++i) {
         launcher_item_t* item = &ui->launcher_items[i];
         if (lv_obj_get_index(item->tile) / (PXSYS_REFERENCE_UI_LAUNCHER_COLUMNS *
@@ -165,6 +187,10 @@ static void check_paging(lv_display_t* display, bool animations) {
                       PXSYS_REFERENCE_UI_NAVIGATION_BAR;
     config.max_launcher_apps = count;
     icon_counts_t icons = {0};
+    unsigned list_calls = 0;
+    config.app_manager_context = &list_calls;
+    config.app_list = managed_list;
+    config.app_action = app_action;
     config.app_icon_context = &icons;
     config.resolve_app_icon = resolve_icon;
     pxsys_reference_lvgl_t* ui = NULL;
@@ -172,8 +198,14 @@ static void check_paging(lv_display_t* display, bool animations) {
     assert(pxsys_reference_lvgl_set_animations_enabled(ui, animations) == PXSYS_STATUS_OK);
     assert(pxsys_reference_lvgl_start(ui) == PXSYS_STATUS_OK);
     assert(ui->launcher_count == count);
-    assert(icons.live == per_page);
-    /* Home resolves its visible page, not PNGs on every off-screen page. */
+    assert(icons.live == 0);
+    /* Home is interactive before any icon files are resolved. Each idle
+     * turn fills at most one slot of the visible page. */
+    for (size_t i = 0; i < per_page; ++i) {
+        lv_tick_inc(32);
+        (void)lv_timer_handler();
+        assert(icons.live == i + 1);
+    }
     assert(icons.acquired == per_page);
     lv_group_t* group = lv_group_create();
     lv_indev_t* keypad = lv_indev_create();
@@ -202,7 +234,8 @@ static void check_paging(lv_display_t* display, bool animations) {
     /* Reordered icons use their current slot, not their registration order. */
     lv_obj_t* moved = lv_obj_get_child(ui->content, 0);
     lv_obj_move_to_index(moved, (int32_t)per_page);
-    launcher_position_tiles(ui);
+    launcher_position_tiles(ui, (uint32_t)lv_obj_get_width(ui->content),
+                            (uint32_t)lv_obj_get_height(ui->content));
     focus_tile(ui, lv_obj_get_child(ui->content, 1), 0);
     focus_tile(ui, moved, 1);
     /* Reordering/rebuilding follows the signed application identity, even
@@ -224,7 +257,12 @@ static void check_paging(lv_display_t* display, bool animations) {
         rebuild(ui);
         assert(icons.live == 0);
         assert(app_foreground(NULL, &home) == PXSYS_STATUS_OK);
-        assert(ui->launcher_count == count && icons.live == per_page);
+        assert(ui->launcher_count == count && icons.live == 0);
+        for (size_t i = 0; i < per_page; ++i) {
+            lv_tick_inc(32);
+            (void)lv_timer_handler();
+        }
+        assert(icons.live == per_page);
         lv_tick_inc(500);
         (void)lv_timer_handler();
         assert(ui->launcher_page == 1);
@@ -249,6 +287,21 @@ static void check_paging(lv_display_t* display, bool animations) {
     assert(pxsys_app_registry_unregister(pxsys_standard_system_apps(system), &removed) == PXSYS_STATUS_OK);
     rebuild(ui);
     assert(ui->launcher_count == count - 1u && ui->launcher_page == 1);
+    assert(list_calls == 0);
+    for (size_t i = 0; i < ui->launcher_count; ++i)
+        assert(!ui->launcher_items[i].remove_button);
+    ui->launcher_editing = 1;
+    launcher_prepare_edit(ui);
+    assert(list_calls == 1);
+    unsigned removable = 0;
+    for (size_t i = 0; i < ui->launcher_count; ++i) {
+        launcher_item_t* item = &ui->launcher_items[i];
+        if (item->remove_button) {
+            assert(!strcmp(item->app_id, "focus-test-0"));
+            ++removable;
+        }
+    }
+    assert(removable == 1);
     assert(lv_group_get_focused(group) == lv_obj_get_child(ui->content, (int32_t)per_page));
     lv_indev_delete(keypad);
     lv_group_delete(group);
@@ -288,6 +341,13 @@ static void check_recent_delete(lv_display_t* display) {
     assert(pxsys_reference_lvgl_create(&config, &ui) == PXSYS_STATUS_OK);
     assert(pxsys_reference_lvgl_start(ui) == PXSYS_STATUS_OK);
     assert(open_role(ui, PXSYS_ROLE_SETTINGS) == PXSYS_STATUS_OK);
+#if PXSYS_REFERENCE_UI_TASK_SWITCHER == PXSYS_TASK_SWITCHER_CARDS && LV_USE_SNAPSHOT
+    task_preview_t* preview = &ui->task_previews[0];
+    assert(pxsys_task_manager_current(pxsys_standard_system_tasks(system), &preview->instance) ==
+           PXSYS_STATUS_OK);
+    preview->image = lv_draw_buf_create(16, 16, LV_COLOR_FORMAT_RGB565, LV_STRIDE_AUTO);
+    assert(preview->image != NULL);
+#endif
     assert(pxsys_reference_lvgl_home(ui) == PXSYS_STATUS_OK);
     assert(pxsys_reference_lvgl_show_recents(ui) == PXSYS_STATUS_OK);
     lv_obj_t* control = recent_control(ui->task_switcher);
@@ -303,6 +363,9 @@ static void check_recent_delete(lv_display_t* display) {
     (void)lv_timer_handler();
     assert(pxsys_task_manager_count(tasks) + 1u == before);
     assert(ui->recent_history_count == 0);
+#if PXSYS_REFERENCE_UI_TASK_SWITCHER == PXSYS_TASK_SWITCHER_CARDS && LV_USE_SNAPSHOT
+    assert(preview->image == NULL);
+#endif
     lv_group_delete(group);
     assert(pxsys_task_manager_finish_all(tasks, PXSYS_STOP_SHUTDOWN) == PXSYS_STATUS_OK);
     assert(pxsys_reference_lvgl_destroy(ui) == PXSYS_STATUS_OK);

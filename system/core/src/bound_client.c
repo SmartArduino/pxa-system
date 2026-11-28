@@ -11,7 +11,7 @@ struct pxsys_bound_client {
     pxsys_service_registry_t* services;
     pxsys_event_broker_t* events;
     pxsys_allocator_t allocator;
-    void* strings;
+    char strings[];
 };
 
 static int client_valid(const pxsys_bound_client_t* client) {
@@ -28,7 +28,7 @@ static int add_size(size_t* total, size_t value) {
 pxsys_status_t pxsys_bound_client_create(const pxsys_bound_client_config_t* config,
                                          pxsys_bound_client_t** output) {
     pxsys_bound_client_t* client;
-    size_t bytes = 0;
+    size_t bytes = sizeof(*client);
     char* cursor;
     if (output == NULL)
         return PXSYS_STATUS_INVALID_ARGUMENT;
@@ -44,18 +44,13 @@ pxsys_status_t pxsys_bound_client_create(const pxsys_bound_client_config_t* conf
         return PXSYS_STATUS_INVALID_ARGUMENT;
     }
     client = (pxsys_bound_client_t*)config->allocator.allocate(config->allocator.context,
-                                                               sizeof(*client));
+                                                               bytes);
     if (client == NULL)
         return PXSYS_STATUS_NO_MEMORY;
     memset(client, 0, sizeof(*client));
-    client->strings = config->allocator.allocate(config->allocator.context, bytes);
-    if (client->strings == NULL) {
-        config->allocator.release(config->allocator.context, client);
-        return PXSYS_STATUS_NO_MEMORY;
-    }
     client->caller = config->caller;
     client->caller.struct_size = sizeof(client->caller);
-    cursor = (char*)client->strings;
+    cursor = client->strings;
     memcpy(cursor, config->caller.app.app_id.data, config->caller.app.app_id.size);
     cursor[config->caller.app.app_id.size] = '\0';
     client->caller.app.app_id = pxsys_string(cursor, config->caller.app.app_id.size);
@@ -78,7 +73,6 @@ void pxsys_bound_client_destroy(pxsys_bound_client_t* client) {
         return;
     allocator = client->allocator;
     client->magic = 0;
-    allocator.release(allocator.context, client->strings);
     allocator.release(allocator.context, client);
 }
 

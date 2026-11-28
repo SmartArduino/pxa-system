@@ -354,6 +354,12 @@ static void check_subpages(fixture_t* f) {
         int32_t saved_y = scroll_to(f, control(ui->content, callbacks[i], NULL), 91);
         click(control(ui->content, callbacks[i], NULL));
         assert(ui->active_page == pages[i]);
+        pxsys_task_manager_t* tasks = pxsys_standard_system_tasks(f->system);
+        const size_t before = pxsys_task_manager_count(tasks);
+        assert(pxsys_reference_lvgl_home(ui) == PXSYS_STATUS_OK);
+        assert(ui->active_page == REFERENCE_PAGE_HOME);
+        assert(open_role(ui, PXSYS_ROLE_SETTINGS) == PXSYS_STATUS_OK);
+        assert(ui->active_page == pages[i] && pxsys_task_manager_count(tasks) == before);
         (void)header_back(ui);
         if (pages[i] == REFERENCE_PAGE_INPUT_METHOD) {
             click(control(ui->content, input_method_manage_clicked, NULL));
@@ -365,6 +371,12 @@ static void check_subpages(fixture_t* f) {
             click(control(ui->content, wifi_add_clicked, NULL));
             assert(ui->wifi_input_stage == 1 && ui->rendered_view_key != list_key);
             assert(ui->page_frame == NULL);
+            assert(ui->wifi_password_input != NULL);
+            lv_textarea_set_text(ui->wifi_password_input, "draft ssid");
+            assert(pxsys_reference_lvgl_home(ui) == PXSYS_STATUS_OK);
+            assert(open_role(ui, PXSYS_ROLE_SETTINGS) == PXSYS_STATUS_OK);
+            assert(ui->wifi_input_stage == 1 && ui->wifi_password_input != NULL);
+            assert(strcmp(lv_textarea_get_text(ui->wifi_password_input), "draft ssid") == 0);
             click(header_back(ui));
             assert(ui->wifi_input_stage == 0 && ui->rendered_view_key == list_key);
         }
@@ -417,6 +429,13 @@ static void check_files_and_cache(fixture_t* f) {
     lv_obj_send_event(control(ui->content, file_entry_clicked, NULL), LV_EVENT_SHORT_CLICKED, NULL);
     assert(lv_obj_get_scroll_y(ui->content) == child_y);
     uint32_t child_key = ui->rendered_view_key;
+    assert(pxsys_reference_lvgl_home(ui) == PXSYS_STATUS_OK);
+    assert(open_role(ui, PXSYS_ROLE_FILE_MANAGER) == PXSYS_STATUS_OK);
+    assert(ui->rendered_view_key == child_key && !strcmp(ui->file_path, "/item-00"));
+    assert(lv_obj_get_scroll_y(ui->content) == child_y);
+    /* Restore the original stack order before testing Back to Settings. */
+    assert(open_role(ui, PXSYS_ROLE_SETTINGS) == PXSYS_STATUS_OK);
+    assert(open_role(ui, PXSYS_ROLE_FILE_MANAGER) == PXSYS_STATUS_OK);
     click(control(navigation_page_root(ui), file_new_folder_clicked, NULL));
     assert(ui->file_edit_mode != 0 && ui->rendered_view_key != child_key);
     assert(ui->page_frame == NULL);
@@ -450,6 +469,11 @@ static void check_files_and_cache(fixture_t* f) {
     assert(lv_obj_get_scroll_y(ui->content) == 0);
     click(header_back(ui));
     assert(ui->active_page == REFERENCE_PAGE_SETTINGS);
+    assert(navigation_state_find(ui, child_key) == NULL);
+    assert(open_role(ui, PXSYS_ROLE_FILE_MANAGER) == PXSYS_STATUS_OK);
+    assert(ui->file_path[0] == '\0' && ui->file_edit_mode == 0);
+    assert(lv_obj_get_scroll_y(ui->content) == 0);
+    click(header_back(ui));
 }
 static void check_dynamic_apps(fixture_t* f) {
     pxsys_reference_lvgl_t* ui = f->ui;
