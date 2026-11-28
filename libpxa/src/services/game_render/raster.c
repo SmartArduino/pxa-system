@@ -1284,12 +1284,12 @@ typedef struct {
 
 typedef struct {
     const raster_vertex_t *vertices;
+    const int32_t *reciprocal;
     uint8_t count;
     uint8_t index;
     uint8_t remaining;
     uint8_t forward;
     uint8_t perspective;
-    uint8_t depth;
     raster_painter_edge_t edge;
 } raster_painter_chain_t;
 
@@ -1316,8 +1316,7 @@ static inline int painter_span_covered(const uint8_t *mask, int32_t first,
 
 static int painter_setup_edge(const raster_vertex_t *a,
                               const raster_vertex_t *b, int32_t start_row,
-                              uint8_t perspective,
-                              uint8_t depth,
+                              int32_t wa, int32_t wb, uint8_t perspective,
                               raster_painter_edge_t *edge) {
     const int32_t dy = (int32_t)b->y - a->y;
     int32_t first_row;
@@ -1347,9 +1346,7 @@ static int painter_setup_edge(const raster_vertex_t *a,
     edge->u = PXA_PAINTER_EDGE_AT(u0, edge->du);
     edge->v = PXA_PAINTER_EDGE_AT(v0, edge->dv);
     edge->light = PXA_PAINTER_EDGE_AT(light0, edge->dlight);
-    if (depth || perspective) {
-        const int32_t wa = (int32_t)reciprocal_depth(a->depth);
-        const int32_t wb = (int32_t)reciprocal_depth(b->depth);
+    if (wa != 0 || wb != 0) {
         edge->dw = (int32_t)((float)(wb - wa) * per_row);
         edge->w = painter_clamp32(wa + (((int64_t)edge->dw * rows16) >> 4));
         if (perspective) {
@@ -1387,8 +1384,9 @@ static int painter_advance_chain(raster_painter_chain_t *chain, int32_t row) {
             next = chain->index == 0 ? chain->count - 1u
                                      : chain->index - 1u;
         if (painter_setup_edge(&chain->vertices[chain->index],
-                               &chain->vertices[next], row, chain->perspective, chain->depth,
-                               &chain->edge)) {
+                               &chain->vertices[next], row,
+                               chain->reciprocal[chain->index], chain->reciprocal[next],
+                               chain->perspective, &chain->edge)) {
             chain->index = next;
             return 1;
         }
@@ -1408,11 +1406,15 @@ static void painter_step_edge(raster_painter_edge_t *edge) {
 }
 
 static uint8_t painter_texture_log2(uint16_t dimension) {
-    uint8_t result = 0;
     if (dimension == 0 || (dimension & (dimension - 1u)) != 0)
         return UINT8_MAX;
+#if defined(__GNUC__) || defined(__clang__)
+    return (uint8_t)__builtin_ctz((unsigned)dimension);
+#else
+    uint8_t result = 0;
     while ((UINT32_C(1) << result) != dimension) ++result;
     return result;
+#endif
 }
 
 static inline size_t painter_texture_index_pow2(
@@ -1677,6 +1679,7 @@ static uint32_t draw_painter_polygon(
     int32_t end;
     raster_painter_chain_t left;
     raster_painter_chain_t right;
+    int32_t reciprocal[4] = {0};  /* Painter inputs are triangles or quads. */
     uint32_t covered = 0;
     uint8_t i;
     uint8_t has_depth = 1;
@@ -1727,7 +1730,7 @@ static uint32_t draw_painter_polygon(
      * one that predates the perspective painter path sends no depth at all. */
     perspective = (uint8_t)(has_depth && !flat &&
                             (flags & PXA_RASTER_QUAD_AFFINE_UV) == 0);
-    if (perspective && !flat) {
+    if (perspective) {
         /* u/z and 1/z are held in 32 bits so the whole span setup stays on
          * hardware instructions. A face that would overflow that window keeps
          * the screen-linear mapping instead. */
@@ -1738,18 +1741,22 @@ static uint32_t draw_painter_polygon(
                 vertices[i].u < 0 ? -(int32_t)vertices[i].u : vertices[i].u;
             const int32_t v_abs =
                 vertices[i].v < 0 ? -(int32_t)vertices[i].v : vertices[i].v;
-            const int32_t reciprocal =
-                (int32_t)reciprocal_depth(vertices[i].depth);
+            reciprocal[i] = (int32_t)reciprocal_depth(vertices[i].depth);
             if (u_abs > uv_limit) uv_limit = u_abs;
             if (v_abs > uv_limit) uv_limit = v_abs;
-            if (reciprocal > depth_limit) depth_limit = reciprocal;
+            if (reciprocal[i] > depth_limit) depth_limit = reciprocal[i];
         }
-        if ((int64_t)uv_limit * depth_limit > RASTER_PERSPECTIVE_UV_LIMIT)
+        if ((int64_t)uv_limit * depth_limit > RASTER_PERSPECTIVE_UV_LIMIT) {
             perspective = 0;
+            if (coverage_mode != 3)
+                memset(reciprocal, 0, sizeof(reciprocal));
+        }
+    } else if (coverage_mode == 3) {
+        for (i = 0; i < count; ++i)
+            reciprocal[i] = (int32_t)reciprocal_depth(vertices[i].depth);
     }
-    memset(&left, 0, sizeof(left));
-    memset(&right, 0, sizeof(right));
     left.vertices = right.vertices = vertices;
+    left.reciprocal = right.reciprocal = reciprocal;
     left.count = right.count = count;
     left.index = right.index = top;
     left.remaining = right.remaining = count - 1u;
@@ -1757,12 +1764,13 @@ static uint32_t draw_painter_polygon(
     right.forward = area > 0;
     left.perspective = perspective;
     right.perspective = perspective;
-    // Depth interpolation is independent of UV interpolation: affine and
-    // RGB565 scanlines still need 1/z, but neither needs u/z or v/z.
-    left.depth = right.depth = coverage_mode == 3;
     if (!painter_advance_chain(&left, row) ||
         !painter_advance_chain(&right, row))
         return 0;
+    const uint16_t *depth_palette =
+        coverage_mode == 3 && !flat && min_light == max_light &&
+        texture_power_of_two && !blend_75
+            ? palette + (size_t)min_light * 256u : NULL;
     for (;;) {
         const raster_painter_edge_t *l = &left.edge;
         const raster_painter_edge_t *r = &right.edge;
@@ -1904,15 +1912,11 @@ static uint32_t draw_painter_polygon(
                     v_texture_q8 = v_end_q8;
                 }
                 if (coverage_mode == 3) {
-                    const uint16_t *constant_palette =
-                        !flat && min_light == max_light
-                            ? palette + (size_t)min_light * 256u : NULL;
-                    if (constant_palette != NULL && texture_power_of_two &&
-                        !blend_75) {
+                    if (depth_palette != NULL) {
                         const uint32_t pixels = (uint32_t)(bx1 - bx0);
                         covered += painter_span_depth_textured(
                             out, depth_out, pixels, u, v, du, dv,
-                            texture->pixels, constant_palette, texture_mask_u,
+                            texture->pixels, depth_palette, texture_mask_u,
                             texture_mask_v, texture_log2_width,
                             depth_w, dw, transparent);
                         out += pixels;
