@@ -891,6 +891,89 @@ static void test_depth_span_equivalence(void) {
     }
 }
 
+static void test_perspective_depth_span_occlusion(void) {
+    enum {
+        WIDTH = 160, HEIGHT = 4, LEFT = 47, RIGHT = 101,
+        CLEAR = PXA_RASTER_DRAW_HEADER_BYTES + PXA_RASTER_CLEAR_BYTES,
+        QUAD = PXA_RASTER_TEXTURED_QUAD_BYTES,
+    };
+    const uint8_t painter = PXA_RASTER_QUAD_PAINTER | PXA_RASTER_QUAD_LIT_PALETTE;
+    const uint16_t occluder = UINT16_C(0x18c3);
+    uint8_t bytes[CLEAR + 3 * QUAD], reference[CLEAR + QUAD];
+    uint8_t texels[16];
+    uint16_t palette[512], pixels[WIDTH * HEIGHT], depth[WIDTH * HEIGHT];
+    uint16_t expected[WIDTH * HEIGHT], expected_depth[WIDTH * HEIGHT];
+    pxa_raster_resources_t resources = {
+        .palette = palette, .palette_light_levels = 2,
+        .capabilities = PXA_RASTER_CAP_KNOWN_MASK,
+    };
+    pxa_raster_target_t target = {
+        .pixels = pixels, .depth_pixels = depth, .width = WIDTH, .height = HEIGHT,
+        .stride_pixels = WIDTH, .depth_stride_pixels = WIDTH,
+    };
+    pxa_raster_draw_list_view_t list;
+    const uint32_t caps = PXA_RASTER_CAP_TEXTURED_QUAD | PXA_RASTER_CAP_PAINTER_POLYGON |
+        PXA_RASTER_CAP_LIT_PALETTE_DEPTH | PXA_RASTER_CAP_PAINTER_DEPTH |
+        PXA_RASTER_CAP_FIXED_ALPHA_BLEND;
+    resources.textures[0].pixels = texels;
+    resources.textures[0].height = 1;
+    for (unsigned i = 0; i < sizeof(texels); ++i) texels[i] = i % 3 ? (uint8_t)i : 0;
+    for (unsigned i = 0; i < 512; ++i) palette[i] = (uint16_t)(0x4000u | (i * 233u));
+
+    begin_list(bytes, caps, 4, 65, sizeof(bytes));
+    bytes[PXA_RASTER_DRAW_HEADER_BYTES] = PXA_RASTER_RECORD_CLEAR_RGB565;
+    put_u16(bytes + PXA_RASTER_DRAW_HEADER_BYTES + 2, PXA_RASTER_CLEAR_BYTES);
+    for (unsigned i = 0; i < 2; ++i) {
+        uint8_t *record = bytes + CLEAR + i * QUAD;
+        record[0] = PXA_RASTER_RECORD_TEXTURED_QUAD;
+        record[1] = painter | PXA_RASTER_QUAD_SOLID_COLOR;
+        put_u16(record + 2, QUAD);
+        put_u16(record + 6, occluder);
+        for (unsigned v = 0; v < 4; ++v) {
+            const int x = (v == 0 || v == 3) ? (i == 0 ? 0 : RIGHT) :
+                                               (i == 0 ? LEFT : WIDTH);
+            put_vertex_depth(record + 8 + v * PXA_RASTER_VERTEX_BYTES,
+                             x * 16, v < 2 ? 0 : HEIGHT * 16, 0, 0, 0, 128);
+        }
+    }
+    uint8_t *far_face = bytes + CLEAR + 2 * QUAD;
+    far_face[0] = PXA_RASTER_RECORD_TEXTURED_QUAD;
+    put_u16(far_face + 2, QUAD);
+    begin_list(reference, caps, 2, 66, sizeof(reference));
+    memcpy(reference + PXA_RASTER_DRAW_HEADER_BYTES,
+           bytes + PXA_RASTER_DRAW_HEADER_BYTES, PXA_RASTER_CLEAR_BYTES);
+    for (unsigned sample = 0; sample < 8; ++sample) {
+        resources.textures[0].width = sample & 2 ? 13 : 16;
+        far_face[1] = painter | PXA_RASTER_QUAD_TRANSPARENT_INDEX0;
+        if (sample & 4) far_face[1] |= PXA_RASTER_QUAD_BLEND_75;
+        for (unsigned v = 0; v < 4; ++v) {
+            const int left = v == 0 || v == 3;
+            const int shallow = left != (int)(sample & 1);
+            put_vertex_depth(far_face + 8 + v * PXA_RASTER_VERTEX_BYTES,
+                             (left ? -8 : WIDTH + 8) * 16, v < 2 ? 0 : HEIGHT * 16,
+                             left ? -12 : 65 * 16, 0, (sample & 2) && left,
+                             shallow ? 256 : 1024);
+        }
+        memcpy(reference + CLEAR, far_face, QUAD);
+        assert(pxa_raster_validate_draw_list(reference, sizeof(reference), &target,
+                                             &resources, &list) == PXA_STATUS_OK);
+        pxa_raster_execute_draw_list(reference, &list, &target, &resources, NULL);
+        memcpy(expected, pixels, sizeof(pixels));
+        memcpy(expected_depth, depth, sizeof(depth));
+        assert(pxa_raster_validate_draw_list(bytes, sizeof(bytes), &target,
+                                             &resources, &list) == PXA_STATUS_OK);
+        pxa_raster_execute_draw_list(bytes, &list, &target, &resources, NULL);
+        for (unsigned y = 0; y < HEIGHT; ++y) {
+            for (unsigned x = 0; x < WIDTH; ++x) {
+                const unsigned i = y * WIDTH + x;
+                const int hidden = x < LEFT || x >= RIGHT;
+                assert(pixels[i] == (hidden ? occluder : expected[i]));
+                assert(depth[i] == (hidden ? 4096u : expected_depth[i]));
+            }
+        }
+    }
+}
+
 /* Regression: the Guest's voxel terrain submits painter quads over a 16x16
  * index8 texture with a 16 level lit palette, UVs that span several blocks and
  * the real camera depth. Reproduces the "painter quads render nothing" report
@@ -1641,6 +1724,7 @@ int main(void) {
     test_lit_palette_depth();
     test_painter_depth();
     test_depth_span_equivalence();
+    test_perspective_depth_span_occlusion();
     test_painter_depth_lit_terrain();
     test_painter_mixed_with_depth();
     test_coverage_mask();
