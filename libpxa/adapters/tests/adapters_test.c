@@ -2017,6 +2017,9 @@ static void test_volume_local_app_store(int authenticated) {
         snprintf(signature,sizeof(signature),"%s/package/signature.pxs",expected_home);
         snprintf(saved_signature,sizeof(saved_signature),"%s/signature.kept",expected_home);
         snprintf(manifest_path,sizeof(manifest_path),"%s/package/manifest.pxm",expected_home);
+        check_status("prepared manifest matches the committed installation",
+            pxa_posix_app_store_load_prepared(&config,"lucinhu/com.example.volume",&result,&reopened),
+            PXA_STATUS_OK);
         size_t version_offset=(size_t)(manifest->version.data-manifest->encoded.data)+4;
         size_t manifest_bytes=manifest->encoded.size;
         uint8_t *original=malloc(manifest_bytes);CHECK(original);
@@ -2031,6 +2034,9 @@ static void test_volume_local_app_store(int authenticated) {
             CHECK(manifest->version.size==5 && !memcmp(manifest->version.data,"1.0.1",5));
             CHECK(activation_verifications==0 && prepared.calls==1);
         }
+        check_status("prepared manifest must match the committed digest",
+            pxa_posix_app_store_load_prepared(&config,"lucinhu/com.example.volume",&result,&reopened),
+            PXA_STATUS_DENIED);
         check_status("explicit recovery still requires the signature",
             pxa_posix_app_store_recover(&config,"lucinhu/com.example.volume",&result,&reopened),PXA_STATUS_DENIED);
         write_file(manifest_path,original,manifest_bytes);free(original);

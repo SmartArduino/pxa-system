@@ -569,6 +569,14 @@ typedef struct {
 
 #define REFERENCE_RECENT_HISTORY 8u
 
+#if PXSYS_REFERENCE_UI_BUILTIN_SETTINGS
+typedef struct {
+    size_t row_index;
+    lv_obj_t* image;
+    pxsys_reference_lvgl_app_icon_t icon;
+} managed_app_icon_t;
+#endif
+
 #if PXSYS_REFERENCE_UI_TASK_SWITCHER == PXSYS_TASK_SWITCHER_CARDS && LV_USE_SNAPSHOT
 typedef struct {
     pxsys_instance_ref_t instance;
@@ -782,6 +790,7 @@ struct pxsys_reference_lvgl {
     pxsys_reference_lvgl_device_info_fn device_info;
     void* app_manager_context;
     pxsys_reference_lvgl_app_list_fn app_list;
+    pxsys_reference_lvgl_app_detail_fn app_detail;
     pxsys_reference_lvgl_app_action_fn app_action;
     void* file_manager_context;
     pxsys_reference_lvgl_file_list_fn file_list;
@@ -857,8 +866,20 @@ struct pxsys_reference_lvgl {
     pxsys_reference_lvgl_power_action_fn power_action;
     void* power_menu_changed_context;
     pxsys_reference_lvgl_lock_changed_fn power_menu_changed;
-    pxsys_reference_managed_app_t managed_apps[PXSYS_REFERENCE_MANAGED_APP_MAX];
+    pxsys_reference_managed_app_t* managed_apps;
     size_t managed_app_count;
+#if PXSYS_REFERENCE_UI_BUILTIN_SETTINGS
+    lv_obj_t* managed_app_rows;
+    lv_timer_t* managed_icon_timer;
+    managed_app_icon_t* managed_icons;
+    size_t managed_icon_capacity;
+    int32_t managed_row_height;
+    int32_t managed_icon_size;
+    int32_t managed_row_pad;
+    int32_t managed_text_gap;
+    lv_style_t managed_row_style;
+    lv_style_t managed_pressed_style;
+#endif
     pxsys_reference_file_entry_t file_entries[PXSYS_REFERENCE_FILE_ENTRY_MAX];
     pxsys_reference_file_entry_t file_selected;
     size_t file_entry_count;
@@ -3718,6 +3739,30 @@ static void launcher_apply_edit_style(pxsys_reference_lvgl_t* ui, launcher_item_
         launcher_add_remove_button(ui, item);
 }
 
+static pxsys_reference_managed_app_t* read_managed_apps(
+    pxsys_reference_lvgl_t* ui, pxsys_reference_app_filter_t filter, size_t* read_count) {
+    *read_count = 0;
+    if (ui->app_list == NULL) return NULL;
+    const size_t capacity = ui->app_list(ui->app_manager_context, NULL, 0, filter);
+    if (capacity == 0 || capacity > INT32_MAX || capacity > SIZE_MAX / sizeof(pxsys_reference_managed_app_t))
+        return NULL;
+    pxsys_reference_managed_app_t* apps = ui->allocator.allocate(
+        ui->allocator.context, capacity * sizeof(*apps));
+    if (apps != NULL) {
+        const size_t count = ui->app_list(ui->app_manager_context, apps, capacity, filter);
+        *read_count = LV_MIN(capacity, count);
+    }
+    return apps;
+}
+
+static void release_managed_apps(pxsys_reference_lvgl_t* ui) {
+    if (ui->managed_apps != NULL)
+        ui->allocator.release(ui->allocator.context, ui->managed_apps);
+    ui->managed_apps = NULL;
+    ui->managed_app_count = 0;
+    ui->managed_apps_loaded = 0;
+}
+
 static void launcher_prepare_edit(pxsys_reference_lvgl_t* ui) {
     bool needs_app_list = false;
     for (size_t i = 0; i < ui->launcher_count; ++i) {
@@ -3728,18 +3773,9 @@ static void launcher_prepare_edit(pxsys_reference_lvgl_t* ui) {
         }
     }
     if (needs_app_list && ui->app_action && ui->app_list) {
-        size_t count = ui->app_list(ui->app_manager_context, NULL, 0, PXSYS_REFERENCE_APPS_ALL);
-        pxsys_reference_managed_app_t* apps = ui->managed_apps;
-        if (count > PXSYS_REFERENCE_MANAGED_APP_MAX &&
-            count <= SIZE_MAX / sizeof(*apps))
-            apps = ui->allocator.allocate(ui->allocator.context, count * sizeof(*apps));
-        if (apps == NULL) apps = ui->managed_apps;
-        if (apps == ui->managed_apps) count = LV_MIN(count, PXSYS_REFERENCE_MANAGED_APP_MAX);
-        if (count != 0) {
-            const size_t written = ui->app_list(ui->app_manager_context, apps, count,
-                                                PXSYS_REFERENCE_APPS_ALL);
-            count = LV_MIN(count, written);
-        }
+        size_t count;
+        pxsys_reference_managed_app_t* apps =
+            read_managed_apps(ui, PXSYS_REFERENCE_APPS_ALL, &count);
         for (size_t i = 0; i < ui->launcher_count; ++i) {
             launcher_item_t* item = &ui->launcher_items[i];
             if (item->system_app || item->uninstallable) continue;
@@ -3752,8 +3788,7 @@ static void launcher_prepare_edit(pxsys_reference_lvgl_t* ui) {
                 }
             }
         }
-        if (apps == ui->managed_apps) ui->managed_apps_loaded = 0;
-        else ui->allocator.release(ui->allocator.context, apps);
+        if (apps != NULL) ui->allocator.release(ui->allocator.context, apps);
     }
     for (size_t i = 0; i < ui->launcher_count; ++i)
         launcher_apply_edit_style(ui, &ui->launcher_items[i]);
@@ -8412,16 +8447,12 @@ static void show_app_detail(pxsys_reference_lvgl_t* ui,
     label = make_label(info, buffer, typography_font(ui, PXSYS_TYPOGRAPHY_CAPTION),
                        color_token(ui, PXSYS_COLOR_TEXT_SECONDARY));
     lv_obj_set_width(label, LV_PCT(100));
-    const char *app_id = strchr(app->identity, ':');
-    bool signed_identity = app_id == app->identity + 64 && app_id[1] != '\0';
-    for (size_t i = 0; signed_identity && i < 64; ++i) {
-        const char c = app->identity[i];
-        if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')))
-            signed_identity = false;
-    }
+    pxsys_app_identity_t parsed;
+    const bool signed_identity = pxsys_app_identity_parse(
+        pxsys_string_from_cstr(app->identity), &parsed);
     snprintf(buffer, sizeof(buffer), "%s: %s",
              translated(ui, "settings.apps.app_id", "App ID"),
-             signed_identity ? app_id + 1 : app->identity);
+             signed_identity ? parsed.app_id.data : app->identity);
     label = make_label(info, buffer,
                        typography_font(ui, PXSYS_TYPOGRAPHY_CAPTION),
                        color_token(ui, PXSYS_COLOR_TEXT_SECONDARY));
@@ -8483,8 +8514,166 @@ static void app_row_clicked(lv_event_t* event) {
     lv_obj_t* row = lv_event_get_current_target(event);
     size_t index =
         row == NULL ? 0 : (size_t)(uintptr_t)lv_obj_get_user_data(row);
-    if (!ui_valid(ui) || index >= ui->managed_app_count) return;
-    show_app_detail(ui, &ui->managed_apps[index]);
+    if (!ui_valid(ui) || ui->app_dialog != NULL || index >= ui->managed_app_count) return;
+    pxsys_reference_managed_app_t* app = &ui->managed_apps[index];
+    if (ui->app_detail != NULL)
+        ui->app_detail(ui->app_manager_context, app);
+    show_app_detail(ui, app);
+}
+
+static void draw_managed_app_row(lv_event_t* event) {
+    pxsys_reference_lvgl_t* ui = lv_event_get_user_data(event);
+    lv_obj_t* row = lv_event_get_current_target(event);
+    lv_layer_t* layer = lv_event_get_layer(event);
+    const size_t index = (size_t)(uintptr_t)lv_obj_get_user_data(row);
+    const pxsys_reference_managed_app_t* app = &ui->managed_apps[index];
+    lv_area_t area;
+    lv_obj_get_coords(row, &area);
+    const int32_t pad = ui->managed_row_pad;
+    const int32_t chevron_width = ui_px(ui, 16);
+    const int32_t center = area.y1 + ui->managed_row_height / 2;
+    const int32_t text_left = area.x1 + pad * 2 + ui->managed_icon_size;
+    const int32_t text_right = area.x2 - pad * 2 - chevron_width;
+    const lv_color_t secondary = color_token(ui, PXSYS_COLOR_TEXT_SECONDARY);
+    const lv_font_t* title_font = typography_font(ui, PXSYS_TYPOGRAPHY_BODY);
+    const lv_font_t* detail_font = typography_font(ui, PXSYS_TYPOGRAPHY_CAPTION);
+    if (title_font == NULL) title_font = LV_FONT_DEFAULT;
+    if (detail_font == NULL) detail_font = LV_FONT_DEFAULT;
+
+    lv_draw_label_dsc_t label;
+    lv_draw_label_dsc_init(&label);
+    label.font = title_font;
+    label.align = LV_TEXT_ALIGN_CENTER;
+    if (lv_obj_get_child_count(row) == 0) {
+        label.text = LV_SYMBOL_LIST;
+        label.color = color_token(ui, PXSYS_COLOR_ACCENT);
+        const int32_t top = center - title_font->line_height / 2;
+        const lv_area_t icon = {area.x1 + pad, top,
+                                area.x1 + pad + ui->managed_icon_size - 1,
+                                top + title_font->line_height - 1};
+        lv_draw_label(layer, &label, &icon);
+    }
+    label.text = LV_SYMBOL_RIGHT;
+    label.font = LV_FONT_DEFAULT;
+    label.color = secondary;
+    const int32_t chevron_top = center - label.font->line_height / 2;
+    const lv_area_t chevron = {area.x2 - pad - chevron_width + 1, chevron_top,
+                               area.x2 - pad, chevron_top + label.font->line_height - 1};
+    lv_draw_label(layer, &label, &chevron);
+
+    const int32_t text_top = center -
+        (title_font->line_height + ui->managed_text_gap + detail_font->line_height) / 2;
+    const lv_area_t old_clip = layer->_clip_area;
+    const lv_area_t title = {text_left, text_top, text_right,
+                             text_top + title_font->line_height - 1};
+    label.font = title_font;
+    label.align = LV_TEXT_ALIGN_LEFT;
+    label.flag = LV_TEXT_FLAG_EXPAND;
+    label.text = app->name;
+    label.color = color_token(ui, PXSYS_COLOR_TEXT_PRIMARY);
+    if (lv_area_intersect(&layer->_clip_area, &old_clip, &title))
+        lv_draw_label(layer, &label, &title);
+
+    const int32_t subtitle_top = title.y2 + 1 + ui->managed_text_gap;
+    const lv_area_t subtitle = {text_left, subtitle_top, text_right,
+                                subtitle_top + detail_font->line_height - 1};
+    if (lv_area_intersect(&layer->_clip_area, &old_clip, &subtitle)) {
+        char text[128];
+        const char* state = managed_app_state(ui, app);
+        const char* origin = app->built_in
+            ? translated(ui, "settings.apps.system", "System app")
+            : translated(ui, "settings.apps.user", "User app");
+        snprintf(text, sizeof(text), "%s%s%s%s%s", app->version,
+                 app->version[0] ? " · " : "", origin, *state ? " · " : "", state);
+        label.font = detail_font;
+        label.color = secondary;
+        label.text = text;
+        label.text_local = 1;
+        lv_draw_label(layer, &label, &subtitle);
+    }
+    layer->_clip_area = old_clip;
+}
+
+static void release_managed_icon(managed_app_icon_t* slot, bool delete_image) {
+    if (delete_image && slot->image != NULL) lv_obj_delete(slot->image);
+    if (slot->icon.release != NULL) slot->icon.release(slot->icon.release_context);
+    else if (slot->icon.source != NULL) lv_image_cache_drop(slot->icon.source);
+    *slot = (managed_app_icon_t){0};
+}
+
+static void release_managed_app_view(pxsys_reference_lvgl_t* ui) {
+    if (ui->managed_icon_timer != NULL) {
+        lv_timer_delete(ui->managed_icon_timer);
+        ui->managed_icon_timer = NULL;
+    }
+    for (size_t i = 0; i < ui->managed_icon_capacity; ++i)
+        release_managed_icon(&ui->managed_icons[i], false);
+    if (ui->managed_icons != NULL)
+        ui->allocator.release(ui->allocator.context, ui->managed_icons);
+    ui->managed_icons = NULL;
+    ui->managed_icon_capacity = 0;
+    if (ui->managed_app_rows != NULL) {
+        lv_style_reset(&ui->managed_row_style);
+        lv_style_reset(&ui->managed_pressed_style);
+        ui->managed_app_rows = NULL;
+    }
+}
+
+static void load_managed_app_icons(lv_timer_t* timer) {
+    pxsys_reference_lvgl_t* ui = lv_timer_get_user_data(timer);
+    if (lv_obj_is_scrolling(ui->content)) return;
+    lv_area_t viewport, first_row;
+    lv_obj_update_layout(ui->content);
+    lv_obj_get_coords(ui->content, &viewport);
+    lv_obj_get_coords(lv_obj_get_child(ui->managed_app_rows, 0), &first_row);
+    const size_t first = (size_t)LV_MAX(0, viewport.y1 - first_row.y1) / ui->managed_row_height;
+    const size_t end = LV_MIN(ui->managed_app_count,
+        (size_t)LV_MAX(0, viewport.y2 - first_row.y1 + ui->managed_row_height) / ui->managed_row_height);
+    for (size_t i = 0; i < ui->managed_icon_capacity; ++i) {
+        managed_app_icon_t* slot = &ui->managed_icons[i];
+        if (slot->row_index != 0 && (slot->row_index <= first || slot->row_index > end))
+            release_managed_icon(slot, true);
+    }
+    pxsys_app_registry_t* registry = pxsys_standard_system_apps(ui->system);
+    /* Read at most one icon per tick and start after the scrolling settles. */
+    for (size_t index = first; index < end; ++index) {
+        managed_app_icon_t* slot = &ui->managed_icons[index % ui->managed_icon_capacity];
+        if (slot->row_index == index + 1) continue;
+        slot->row_index = index + 1;
+        const pxsys_string_t identity = pxsys_string_from_cstr(ui->managed_apps[index].identity);
+        const pxsys_app_descriptor_t* app = NULL;
+        pxsys_app_identity_t parsed;
+        if (pxsys_app_identity_parse(identity, &parsed)) {
+            app = pxsys_app_registry_find(registry, &parsed);
+        } else {
+            size_t cursor = 0;
+            while ((app = pxsys_app_registry_next(registry, &cursor)) != NULL) {
+                const pxsys_string_t id = app->identity.app_id;
+                if (id.size == identity.size && memcmp(id.data, identity.data, id.size) == 0)
+                    break;
+            }
+        }
+        if (app == NULL) continue;
+        if (ui->resolve_app_icon(ui->app_icon_context, app, &slot->icon) &&
+            slot->icon.source != NULL) {
+            lv_obj_t* row = lv_obj_get_child(ui->managed_app_rows, (int32_t)index);
+            slot->image = lv_image_create(row);
+            pxsys_lvgl_remove_flags(slot->image, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+            lv_obj_set_size(slot->image, ui->managed_icon_size, ui->managed_icon_size);
+            lv_image_set_src(slot->image, slot->icon.source);
+            lv_image_set_inner_align(slot->image, LV_IMAGE_ALIGN_CONTAIN);
+            lv_obj_align(slot->image, LV_ALIGN_LEFT_MID, ui->managed_row_pad, 0);
+            lv_obj_invalidate(row);
+        }
+        return;
+    }
+    lv_timer_pause(timer);
+}
+
+static void managed_app_view_scrolled(lv_event_t* event) {
+    pxsys_reference_lvgl_t* ui = lv_event_get_user_data(event);
+    lv_timer_reset(ui->managed_icon_timer);
+    lv_timer_resume(ui->managed_icon_timer);
 }
 
 static void build_app_manager(pxsys_reference_lvgl_t* ui,
@@ -8496,14 +8685,9 @@ static void build_app_manager(pxsys_reference_lvgl_t* ui,
         PXSYS_REFERENCE_APPS_INPUT_METHODS:PXSYS_REFERENCE_APPS_ALL;
     page_content_init(ui, layout);
     if (!ui->managed_apps_loaded) {
+        release_managed_apps(ui);
+        ui->managed_apps = read_managed_apps(ui, filter, &ui->managed_app_count);
         ui->managed_apps_loaded = 1;
-        ui->managed_app_count = 0;
-        if (ui->app_list != NULL) {
-            const size_t count = ui->app_list(
-                ui->app_manager_context, ui->managed_apps,
-                PXSYS_REFERENCE_MANAGED_APP_MAX, filter);
-            ui->managed_app_count = LV_MIN(count, PXSYS_REFERENCE_MANAGED_APP_MAX);
-        }
     }
     if (ui->managed_app_count == 0) {
         lv_obj_t* label = make_label(
@@ -8515,23 +8699,60 @@ static void build_app_manager(pxsys_reference_lvgl_t* ui,
         return;
     }
     section = make_settings_section(ui, ui->content, NULL);
+    ui->managed_app_rows = section;
+    const bool compact = layout->size_class == PXSYS_UI_SIZE_COMPACT;
+    const lv_font_t* title_font = typography_font(ui, PXSYS_TYPOGRAPHY_BODY);
+    const lv_font_t* detail_font = typography_font(ui, PXSYS_TYPOGRAPHY_CAPTION);
+    ui->managed_row_pad = ui_px(ui, 10);
+    ui->managed_text_gap = ui_px(ui, 3);
+    ui->managed_icon_size = ui_px(ui, compact ? 28 : 30);
+    const int32_t text_height = (title_font ? title_font : LV_FONT_DEFAULT)->line_height +
+        ui->managed_text_gap + (detail_font ? detail_font : LV_FONT_DEFAULT)->line_height;
+    ui->managed_row_height = LV_MAX(ui_px(ui, compact ? 46 : 50), text_height + ui_px(ui, 12));
+
+    lv_style_init(&ui->managed_row_style);
+    lv_style_set_width(&ui->managed_row_style, LV_PCT(100));
+    lv_style_set_height(&ui->managed_row_style, ui->managed_row_height);
+    lv_style_set_pad_all(&ui->managed_row_style, 0);
+    lv_style_set_border_width(&ui->managed_row_style, 1);
+    lv_style_set_border_post(&ui->managed_row_style, true);
+    lv_style_set_border_side(&ui->managed_row_style, LV_BORDER_SIDE_BOTTOM);
+    lv_style_set_border_color(&ui->managed_row_style, color_token(ui, PXSYS_COLOR_OUTLINE_VARIANT));
+    lv_style_set_bg_opa(&ui->managed_row_style, LV_OPA_TRANSP);
+    lv_style_init(&ui->managed_pressed_style);
+    lv_style_set_radius(&ui->managed_pressed_style, ui_px(ui, 8));
+    lv_style_set_bg_color(&ui->managed_pressed_style, color_token(ui, PXSYS_COLOR_SURFACE_CONTAINER_HIGH));
+    lv_style_set_bg_opa(&ui->managed_pressed_style, LV_OPA_COVER);
+
+    /* Every entry remains focusable by a controller. Its text and fallback
+     * are drawn only when visible, and no offscreen image widgets are built. */
     for (index = 0; index < ui->managed_app_count; ++index) {
-        pxsys_reference_managed_app_t* app = &ui->managed_apps[index];
-        char subtitle[128];
-        lv_obj_t* row;
-        const char *state=managed_app_state(ui,app);
-        snprintf(subtitle, sizeof(subtitle), "%s%s%s%s%s", app->version,
-                 app->version[0] ? " · " : "",
-                 app->built_in
-                     ? translated(ui, "settings.apps.system", "System app")
-                     : translated(ui, "settings.apps.user", "User app"),
-                 *state?" · ":"",state);
-        row = make_settings_row(ui, layout, section, LV_SYMBOL_LIST,
-                                PXSYS_COLOR_ACCENT, app->name, subtitle,
-                                app_row_clicked, ui);
-        navigation_tag_focus(row, app->identity);
+        lv_obj_t* row = lv_obj_create(section);
+        lv_obj_add_style(row, &ui->managed_row_style, LV_PART_MAIN);
+        lv_obj_add_style(row, &ui->managed_pressed_style, LV_STATE_PRESSED);
+        pxsys_lvgl_remove_flags(row, LV_OBJ_FLAG_SCROLLABLE);
+        pxsys_lvgl_add_flags(row, LV_OBJ_FLAG_CLICKABLE);
+        navigation_add_focus_key(row, navigation_text_key(ui->managed_apps[index].identity));
         lv_obj_set_user_data(row, (void*)(uintptr_t)index);
-        add_settings_chevron(ui, row);
+        lv_obj_add_event_cb(row, draw_managed_app_row, LV_EVENT_DRAW_MAIN, ui);
+        lv_obj_add_event_cb(row, app_row_clicked, LV_EVENT_CLICKED, ui);
+    }
+    lv_obj_set_style_border_side(lv_obj_get_child(section, -1), LV_BORDER_SIDE_NONE, 0);
+
+    if (ui->resolve_app_icon != NULL) {
+        const size_t capacity = LV_MIN(ui->managed_app_count,
+            layout->content.height / (uint32_t)ui->managed_row_height + 2u);
+        ui->managed_icons = ui->allocator.allocate(ui->allocator.context,
+                                                  capacity * sizeof(*ui->managed_icons));
+        if (ui->managed_icons != NULL) {
+            memset(ui->managed_icons, 0, capacity * sizeof(*ui->managed_icons));
+            ui->managed_icon_capacity = capacity;
+            ui->managed_icon_timer = lv_timer_create(load_managed_app_icons, 16, ui);
+            if (ui->managed_icon_timer != NULL) {
+                lv_obj_add_event_cb(ui->content, managed_app_view_scrolled, LV_EVENT_SCROLL, ui);
+                lv_timer_ready(ui->managed_icon_timer);
+            }
+        }
     }
 }
 
@@ -9074,6 +9295,12 @@ static void rebuild(pxsys_reference_lvgl_t* ui) {
     launcher_drag_finish(ui, NULL);
     ui->launcher_long_pressed = 0;
     lv_obj_clean(ui->root);
+#if PXSYS_REFERENCE_UI_BUILTIN_SETTINGS
+    release_managed_app_view(ui);
+#endif
+    if (!ui->content_active || (ui->active_page != REFERENCE_PAGE_APP_MANAGER &&
+                                ui->active_page != REFERENCE_PAGE_INPUT_METHOD_APPS))
+        release_managed_apps(ui);
     /* The old launcher images no longer have widgets borrowing them. Release
      * their decoded caches even when the next view is an app or Settings;
      * retaining them until home is rebuilt fragments the next app's heap. */
@@ -9798,6 +10025,7 @@ static void locale_changed(void* context,
     pxsys_reference_lvgl_t* ui = (pxsys_reference_lvgl_t*)context;
     if (!ui_valid(ui) || locale == NULL) return;
     ui->locale = *locale;
+    ui->managed_apps_loaded = 0;
     rebuild(ui);
 }
 
@@ -10299,7 +10527,7 @@ pxsys_status_t pxsys_reference_lvgl_create(
     pxsys_status_t status;
     if (output == NULL) return PXSYS_STATUS_INVALID_ARGUMENT;
     *output = NULL;
-    if (config == NULL || config->struct_size < sizeof(*config) ||
+    if (config == NULL || config->struct_size < offsetof(pxsys_reference_lvgl_config_t, app_detail) ||
         config->system == NULL || config->parent == NULL ||
         config->max_launcher_apps == 0 ||
         config->max_launcher_apps > SIZE_MAX / sizeof(launcher_item_t) ||
@@ -10358,6 +10586,7 @@ pxsys_status_t pxsys_reference_lvgl_create(
     ui->app_manager_context = config->app_manager_context;
     ui->app_list = config->app_list;
     ui->app_action = config->app_action;
+    if (config->struct_size >= sizeof(*config)) ui->app_detail = config->app_detail;
     ui->launcher_order_context = config->launcher_order_context;
     ui->launcher_order_save = config->launcher_order_save;
     ui->launcher_order_capacity = LV_MAX(4096u,
@@ -10885,6 +11114,10 @@ pxsys_status_t pxsys_reference_lvgl_destroy(pxsys_reference_lvgl_t* ui) {
         lv_display_remove_event_cb_with_user_data(lv_obj_get_display(ui->root),
                                                    notification_refresh_event, ui);
     if (ui->root != NULL) lv_obj_delete(ui->root);
+#if PXSYS_REFERENCE_UI_BUILTIN_SETTINGS
+    release_managed_app_view(ui);
+#endif
+    release_managed_apps(ui);
     release_launcher_icons(ui);
     allocator = ui->allocator;
     ui->magic = 0;

@@ -89,6 +89,10 @@ pxa_status_t pxa_posix_app_store_recover(const pxa_posix_app_store_config_t *,
  * explicit recover(); media_ready must likewise use a loading-only policy. */
 pxa_status_t pxa_posix_app_store_load(const pxa_posix_app_store_config_t *,
     const char *locator,pxa_posix_installer_result_t *,pxa_posix_app_home_t *);
+/* Use an already parsed manifest if its path and digest match the authenticated
+ * installation record. On failure the caller may use the ordinary load/recovery path. */
+pxa_status_t pxa_posix_app_store_load_prepared(const pxa_posix_app_store_config_t *,
+    const char *locator,pxa_posix_installer_result_t *,pxa_posix_app_home_t *);
 /* Authenticated local metadata for maintenance, without payload hashing.
  * Refuses an outstanding handoff. This does not authorize executing code. */
 pxa_status_t pxa_posix_app_store_lookup(const pxa_posix_app_store_config_t *,

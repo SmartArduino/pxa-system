@@ -4,16 +4,19 @@
 #include <assert.h>
 
 #define TEST_ITEMS 18u
+#define TEST_APP_ITEMS 80u
 
 typedef struct {
     pxsys_standard_system_t* system;
     pxsys_reference_lvgl_t* ui;
     lv_indev_t* device;
     lv_group_t* group;
-    unsigned order[TEST_ITEMS];
+    unsigned order[TEST_APP_ITEMS];
     size_t app_count;
     unsigned app_list_calls;
     unsigned retired_trees;
+    unsigned loaded_icons;
+    unsigned released_icons;
 } fixture_t;
 
 static void child_deleted(lv_event_t* event) {
@@ -46,12 +49,12 @@ static size_t apps(void* context, pxsys_reference_managed_app_t* output,
                    size_t capacity, pxsys_reference_app_filter_t filter) {
     fixture_t* f = context;
     (void)filter;
-    ++f->app_list_calls;
     if (output == NULL) return f->app_count;
+    ++f->app_list_calls;
     size_t count = f->app_count < capacity ? f->app_count : capacity;
     for (size_t i = 0; i < count; ++i) {
         memset(&output[i], 0, sizeof(output[i]));
-        snprintf(output[i].identity, sizeof(output[i].identity), "test:app-%02u", f->order[i]);
+        snprintf(output[i].identity, sizeof(output[i].identity), "test.app-%02u", f->order[i]);
         /* Deliberately duplicate labels: focus must follow identity. */
         snprintf(output[i].name, sizeof(output[i].name), "Shared app title");
         snprintf(output[i].version, sizeof(output[i].version), "1.0");
@@ -478,7 +481,7 @@ static void check_files_and_cache(fixture_t* f) {
 static void check_dynamic_apps(fixture_t* f) {
     pxsys_reference_lvgl_t* ui = f->ui;
     assert(open_role(ui, PXSYS_ROLE_APP_MANAGER) == PXSYS_STATUS_OK);
-    lv_obj_t* row = app_row(ui, ui->content, "test:app-08");
+    lv_obj_t* row = app_row(ui, ui->content, "test.app-08");
     assert(row != NULL);
     int32_t saved_y = scroll_to(f, row, 137);
     uint32_t key = navigation_object_key(ui->content, row);
@@ -487,7 +490,7 @@ static void check_dynamic_apps(fixture_t* f) {
     f->order[0] = moved;
     pxsys_reference_lvgl_refresh_apps(ui);
     assert(lv_obj_get_scroll_y(ui->content) == saved_y);
-    row = app_row(ui, ui->content, "test:app-08");
+    row = app_row(ui, ui->content, "test.app-08");
     assert(row != NULL && navigation_object_key(ui->content, row) == key);
     if (f->group != NULL) assert(lv_group_get_focused(f->group) == row);
     /* Remove the focused identity and shrink the list below the saved viewport. */
@@ -495,7 +498,7 @@ static void check_dynamic_apps(fixture_t* f) {
     f->app_count = 1;
     pxsys_reference_lvgl_refresh_apps(ui);
     settle(ui);
-    assert(app_row(ui, ui->content, "test:app-08") == NULL);
+    assert(app_row(ui, ui->content, "test.app-08") == NULL);
     assert(navigation_find_focus(ui->content, ui->content, key) == NULL);
     const int32_t scroll_y = lv_obj_get_scroll_y(ui->content);
     /* LVGL reports a negative bottom distance when all content fits. */
@@ -507,6 +510,66 @@ static void check_dynamic_apps(fixture_t* f) {
                object_is_within(focused, navigation_page_root(ui))));
     }
     click(header_back(ui));
+}
+
+static void release_test_app_icon(void* context) {
+    fixture_t* f = context;
+    ++f->released_icons;
+}
+
+static bool resolve_test_app_icon(void* context, const pxsys_app_descriptor_t* app,
+                                  pxsys_reference_lvgl_app_icon_t* icon) {
+    fixture_t* f = context;
+    assert(strncmp(app->identity.app_id.data, "test.app-", 9) == 0);
+    *icon = (pxsys_reference_lvgl_app_icon_t){
+        &launcher_gear_image, release_test_app_icon, f
+    };
+    ++f->loaded_icons;
+    return true;
+}
+
+static void check_large_app_list(fixture_t* f) {
+    pxsys_reference_lvgl_t* ui = f->ui;
+    pxsys_app_registry_t* registry = pxsys_standard_system_apps(f->system);
+    for (unsigned i = 0; i < TEST_APP_ITEMS; ++i) f->order[i] = i;
+    f->app_count = TEST_APP_ITEMS;
+    for (unsigned i = 0; i < TEST_APP_ITEMS; i += TEST_APP_ITEMS - 1u) {
+        char id[32];
+        snprintf(id, sizeof(id), "test.app-%02u", i);
+        pxsys_app_descriptor_t app = {
+            .struct_size = sizeof(app),
+            .identity.app_id = pxsys_string_from_cstr(id),
+            .display_name = pxsys_string_from_cstr(id),
+            .version = pxsys_string_from_cstr("1.0"),
+            .runtime_id = pxsys_string_from_cstr(PXSYS_NATIVE_RUNTIME_ID),
+            .flags = PXSYS_APP_FLAG_ENABLED,
+        };
+        assert(pxsys_app_registry_register(registry, &app) == PXSYS_STATUS_OK);
+    }
+    ui->resolve_app_icon = resolve_test_app_icon;
+    ui->app_icon_context = f;
+    assert(open_role(ui, PXSYS_ROLE_APP_MANAGER) == PXSYS_STATUS_OK);
+    assert(ui->managed_app_count == TEST_APP_ITEMS);
+    assert(lv_obj_get_child_count(ui->managed_app_rows) == TEST_APP_ITEMS);
+    assert(f->loaded_icons == 0);
+    lv_obj_scroll_to_y(ui->content, 0, LV_ANIM_OFF);
+    for (unsigned i = 0; i < 8; ++i) settle(ui);
+    lv_obj_t* first = app_row(ui, ui->content, "test.app-00");
+    lv_obj_t* last = app_row(ui, ui->content, "test.app-79");
+    assert(first != NULL && last != NULL);
+    assert(lv_obj_get_child_count(first) == 1);
+    assert(lv_obj_get_child_count(last) == 0);
+    lv_obj_scroll_to_y(ui->content, lv_obj_get_scroll_bottom(ui->content), LV_ANIM_OFF);
+    for (unsigned i = 0; i < 8; ++i) settle(ui);
+    assert(lv_obj_get_child_count(first) == 0);
+    assert(lv_obj_get_child_count(last) == 1);
+    assert(f->loaded_icons == 2 && f->released_icons == 1);
+    click(last);
+    assert(ui->app_dialog != NULL && strcmp(ui->pending_identity, "test.app-79") == 0);
+    page_close_dialogs(ui);
+    click(header_back(ui));
+    assert(f->released_icons == f->loaded_icons);
+    assert(ui->managed_apps == NULL && ui->managed_icon_timer == NULL);
 }
 static bool has_label(lv_obj_t* root, const char* text) {
     if (root == NULL) return false;
@@ -619,6 +682,7 @@ int main(void) {
             check_connected_wifi(&f);
             check_files_and_cache(&f);
             check_dynamic_apps(&f);
+            if (i == 0 && mode == 0) check_large_app_list(&f);
             check_app_identity_display(&f);
             check_developer_options(&f);
             destroy(&f);

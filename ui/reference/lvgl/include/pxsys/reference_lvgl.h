@@ -207,6 +207,9 @@ typedef enum {
 typedef size_t (*pxsys_reference_lvgl_app_list_fn)(
     void* context, pxsys_reference_managed_app_t* apps, size_t capacity,
     pxsys_reference_app_filter_t filter);
+/* Optionally fill live detail fields for the selected application. */
+typedef void (*pxsys_reference_lvgl_app_detail_fn)(
+    void* context, pxsys_reference_managed_app_t* app);
 typedef bool (*pxsys_reference_lvgl_app_action_fn)(
     void* context, const char* identity, pxsys_reference_app_action_t action);
 typedef bool (*pxsys_reference_lvgl_launcher_load_fn)(
@@ -453,6 +456,7 @@ typedef struct {
     /* Optional local display of Wi-Fi debug pairing information. */
     bool (*pxadb_lan_endpoint)(char *address, size_t address_size,
                               char *pairing, size_t pairing_size);
+    pxsys_reference_lvgl_app_detail_fn app_detail;
 } pxsys_reference_lvgl_config_t;
 
 typedef struct pxsys_reference_lvgl pxsys_reference_lvgl_t;

@@ -294,11 +294,12 @@ static void check_input_method_settings(pxsys_reference_lvgl_t *ui) {
 
 static bool manager_enabled[]={true,false},manager_present[]={true,true};
 static unsigned manager_moves;
+enum { ordinary_app_count = 50 };
 static const char *const manager_ids[]={"test:enabled-ime","test:disabled-ime"};
 static size_t managed_apps(void *context,pxsys_reference_managed_app_t *output,size_t capacity,
     pxsys_reference_app_filter_t filter) {
     (void)context; size_t count=0;
-    const unsigned ordinary=PXSYS_REFERENCE_MANAGED_APP_MAX+2;
+    const unsigned ordinary=ordinary_app_count;
     for (unsigned i=0;i<ordinary+2;++i) {
         bool ime=i>=ordinary;
         if (ime && !manager_present[i-ordinary]) continue;
@@ -331,22 +332,30 @@ static void click_label(lv_obj_t *root,const char *text) {
     while (object && !lv_obj_is_clickable(object)) object=lv_obj_get_parent(object);
     assert(object); lv_obj_send_event(object,LV_EVENT_CLICKED,NULL);
 }
+static void click_managed_app(pxsys_reference_lvgl_t *ui, size_t index) {
+    assert(index < ui->managed_app_count);
+    lv_obj_t *row = lv_obj_get_child(ui->managed_app_rows, (int32_t)index);
+    assert(row && lv_obj_is_clickable(row));
+    lv_obj_send_event(row, LV_EVENT_CLICKED, NULL);
+}
+
 static void check_input_method_app_manager(pxsys_reference_lvgl_t *ui) {
     ui->app_list=managed_apps; ui->app_action=managed_action;
     input_method_open(ui);
     click_label(ui->content,translated(ui,"input-method.manage","Manage installed input methods"));
     assert(ui->active_page==REFERENCE_PAGE_INPUT_METHOD_APPS && ui->managed_app_count==2);
-    assert(find_label(ui->content,"Enabled IME") && find_label(ui->content,"Disabled IME"));
-    assert(!find_label(ui->content,"Ordinary game"));
-    click_label(ui->content,"Disabled IME");
+    assert(!strcmp(ui->managed_apps[0].name,"Enabled IME"));
+    assert(!strcmp(ui->managed_apps[1].name,"Disabled IME"));
+    click_managed_app(ui,1);
     assert(!strcmp(ui->pending_identity,manager_ids[1]));
     click_label(ui->app_dialog,translated(ui,"settings.apps.enable","Enable"));
     assert(manager_enabled[1] && ui->managed_app_count==2 && !ui->app_dialog);
-    click_label(ui->content,"Disabled IME");
+    click_managed_app(ui,1);
     click_label(ui->app_dialog,translated(ui,"settings.apps.disable","Disable"));
-    assert(!manager_enabled[1] && find_label(ui->content,"Disabled IME"));
+    assert(!manager_enabled[1] && !ui->managed_apps[1].enabled);
     for (unsigned i=0;i<2;++i) {
-        click_label(ui->content,i?"Disabled IME":"Enabled IME");
+        click_managed_app(ui,0);
+        assert(!strcmp(ui->pending_identity,manager_ids[i]));
         click_label(ui->app_dialog,translated(ui,"settings.apps.uninstall","Uninstall"));
         assert(ui->confirm_dialog);
         click_label(ui->confirm_dialog,translated(ui,"settings.confirm","Confirm"));
@@ -355,8 +364,8 @@ static void check_input_method_app_manager(pxsys_reference_lvgl_t *ui) {
     assert(find_label(ui->content,translated(ui,"input-method.apps.empty","No installed input method apps")));
     navigation_back(ui); assert(ui->active_page==REFERENCE_PAGE_INPUT_METHOD);
     assert(!open_role(ui,PXSYS_ROLE_APP_MANAGER));
-    assert(ui->managed_app_count==PXSYS_REFERENCE_MANAGED_APP_MAX);
-    assert(find_label(ui->content,"Ordinary game"));
+    assert(ui->managed_app_count==ordinary_app_count);
+    assert(!strcmp(ui->managed_apps[0].name,"Ordinary game"));
     ui->managed_apps[0].movable=1;
     show_app_detail(ui,&ui->managed_apps[0]);
     click_label(ui->app_dialog,translated(ui,"settings.apps.move","Move app and data"));

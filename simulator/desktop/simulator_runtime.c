@@ -443,10 +443,10 @@ static pxsys_status_t backend_request_stop(
     return PXSYS_STATUS_PENDING;
 }
 
-void pxsys_desktop_runtime_poll(pxsys_desktop_runtime_t* runtime) {
+bool pxsys_desktop_runtime_poll(pxsys_desktop_runtime_t* runtime) {
     simulator_instance_t* instance;
     if (runtime == NULL || runtime->magic != PXSYS_DESKTOP_RUNTIME_MAGIC)
-        return;
+        return false;
     for (instance = runtime->instances; instance != NULL;
          instance = instance->next) {
         if (instance->product_launch_pending) {
@@ -497,7 +497,7 @@ void pxsys_desktop_runtime_poll(pxsys_desktop_runtime_t* runtime) {
             /* SDL window close destroys the display while the embedded
              * Guest loop is running. The outer loop owns process shutdown;
              * avoid stop notifications touching its deleted UI objects. */
-            if (lv_display_get_default() == NULL) return;
+            if (lv_display_get_default() == NULL) return true;
             if (status != 0)
                 fprintf(stderr, "PXA simulator: product exited status=%d\n",
                         status);
@@ -508,8 +508,9 @@ void pxsys_desktop_runtime_poll(pxsys_desktop_runtime_t* runtime) {
         (void)pxsys_task_manager_report_stopped(
             pxsys_standard_system_tasks(runtime->system), instance->reference,
             instance->stop_reason);
-        break;
+        return true;
     }
+    return false;
 }
 
 static void backend_destroy(void* context, void* opaque) {

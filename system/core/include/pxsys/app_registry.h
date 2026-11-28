@@ -68,6 +68,9 @@ void pxsys_app_registry_config_init(pxsys_app_registry_config_t* config);
 pxsys_status_t pxsys_app_identity_validate(const pxsys_app_identity_t* identity,
                                            size_t max_app_id_bytes);
 int pxsys_app_identity_equal(const pxsys_app_identity_t* left, const pxsys_app_identity_t* right);
+/* Read the canonical lowercase publisher-root:app-id form. The resulting
+ * app ID borrows the supplied string. */
+int pxsys_app_identity_parse(pxsys_string_t text, pxsys_app_identity_t* identity);
 
 pxsys_status_t pxsys_app_registry_create(const pxsys_app_registry_config_t* config,
                                          pxsys_app_registry_t** output);

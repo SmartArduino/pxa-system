@@ -625,6 +625,23 @@ pxa_status_t pxa_posix_app_store_load(const pxa_posix_app_store_config_t *config
     if(status!=PXA_STATUS_OK) {*result->manifest=NULL;memset(output,0,sizeof(*output));}
     return status;
 }
+pxa_status_t pxa_posix_app_store_load_prepared(const pxa_posix_app_store_config_t *config,
+    const char *locator,pxa_posix_installer_result_t *result,pxa_posix_app_home_t *output) {
+    if (!result || result->struct_size < sizeof(*result) || !result->root ||
+        !result->manifest || !*result->manifest || !output)
+        return PXA_STATUS_INVALID_ARGUMENT;
+    pxa_status_t status = pxa_posix_app_store_lookup(config, locator, output);
+    if (status != PXA_STATUS_OK || (output->record.flags & PXA_INSTALL_RECORD_ARCHIVED))
+        return status;
+    char package[PXA_POSIX_APP_PATH_BYTES];
+    status = pxa_posix_app_home_path(output, PXA_POSIX_APP_HOME_PACKAGE, package, sizeof(package));
+    if (status == PXA_STATUS_OK && strcmp(package, result->root)) status = PXA_STATUS_DENIED;
+    if (status == PXA_STATUS_OK) status = matches_manifest(&output->record, result);
+    if (status == PXA_STATUS_OK) status = resources_ready(config, &output->record);
+    if (status != PXA_STATUS_OK) memset(output, 0, sizeof(*output));
+    return status;
+}
+
 pxa_status_t pxa_posix_app_store_set_enabled(const pxa_posix_app_store_config_t *config,
     const char *locator,uint64_t expected,uint8_t enabled,pxa_posix_app_home_t *output) {
     local_change_t change;

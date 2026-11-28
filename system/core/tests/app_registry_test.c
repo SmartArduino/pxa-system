@@ -258,8 +258,29 @@ static void test_catalog_iteration(void) {
     assert(pxsys_app_registry_destroy(registry) == PXSYS_STATUS_OK && allocations == 0);
 }
 
+static void test_lookup_after_collision_and_slot_reuse(void) {
+    size_t allocations = 0;
+    pxsys_app_registry_t* registry = create_registry(4, &allocations);
+    const pxsys_app_descriptor_t a = descriptor(3, "app-a", "A", "native-static");
+    const pxsys_app_descriptor_t b = descriptor(3, "app-e", "E", "native-static");
+    const pxsys_app_descriptor_t c = descriptor(3, "app-i", "I", "native-static");
+    assert(pxsys_app_registry_register(registry, &a) == PXSYS_STATUS_OK);
+    assert(pxsys_app_registry_register(registry, &b) == PXSYS_STATUS_OK);
+    assert(pxsys_app_registry_register(registry, &c) == PXSYS_STATUS_OK);
+    assert(pxsys_app_registry_unregister(registry, &b.identity) == PXSYS_STATUS_OK);
+    assert(pxsys_app_registry_find(registry, &b.identity) == NULL);
+    assert(pxsys_app_registry_find(registry, &c.identity) != NULL);
+    assert(pxsys_app_registry_unregister(registry, &a.identity) == PXSYS_STATUS_OK);
+    assert(pxsys_app_registry_register(registry, &b) == PXSYS_STATUS_OK);
+    assert(pxsys_app_registry_find(registry, &b.identity) != NULL);
+    assert(pxsys_app_registry_find(registry, &c.identity) != NULL);
+    assert(pxsys_app_registry_find(registry, &a.identity) == NULL);
+    assert(pxsys_app_registry_destroy(registry) == PXSYS_STATUS_OK && allocations == 0);
+}
+
 int main(void) {
     test_catalog_iteration();
+    test_lookup_after_collision_and_slot_reuse();
     test_identity_namespace_and_deep_copy();
     test_duplicate_capacity_and_remove();
     test_validation();

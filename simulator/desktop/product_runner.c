@@ -4468,7 +4468,8 @@ static int run_product_simulator(const options_t *input,
     capabilities[4].service = PXA_AUDIO_SERVICE_ID; capabilities[4].version.major = PXA_AUDIO_SERVICE_MAJOR; capabilities[4].version.minor = PXA_AUDIO_SERVICE_MINOR;
     capabilities[5].service = PXA_PERMISSION_SERVICE_ID; capabilities[5].version.major = 0; capabilities[5].version.minor = 1;
     capabilities[6].service = PXA_STORAGE_SERVICE_ID; capabilities[6].version.major = 0; capabilities[6].version.minor = 1;
-    capabilities[7].service = PXA_SURFACE_SERVICE_ID; capabilities[7].version.major = 0; capabilities[7].version.minor = 2;
+    capabilities[7].service = PXA_SURFACE_SERVICE_ID;
+    capabilities[7].version = (pxa_package_version_t){PXA_SURFACE_SERVICE_MAJOR, PXA_SURFACE_SERVICE_MINOR};
     capabilities[8].service = PXA_GAME_RENDER_SERVICE_ID; capabilities[8].version.major = PXA_GAME_RENDER_SERVICE_MAJOR; capabilities[8].version.minor = PXA_GAME_RENDER_SERVICE_MINOR;
     capabilities[9].service = PXA_LOG_SERVICE_ID; capabilities[9].version.major = PXA_LOG_SERVICE_MAJOR; capabilities[9].version.minor = PXA_LOG_SERVICE_MINOR;
     capabilities[10].service = PXA_DEVICE_SERVICE_ID; capabilities[10].version.major = PXA_DEVICE_SERVICE_MAJOR; capabilities[10].version.minor = PXA_DEVICE_SERVICE_MINOR;
