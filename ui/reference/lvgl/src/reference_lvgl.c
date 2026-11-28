@@ -737,6 +737,7 @@ struct pxsys_reference_lvgl {
     uint8_t notification_close_armed;
     uint8_t notification_refresh_hook;
     uint8_t notification_motion_pending;
+    uint8_t notification_overlay_pending;
     uint8_t notification_fixed_viewport;
     uint8_t transient_revealed; /* CHROME_REVEALED_* bits; no extra state. */
     uint8_t navigation_dragging;
@@ -1003,6 +1004,7 @@ static pxsys_window_bar_mode_t navigation_bar_mode(const pxsys_reference_lvgl_t*
 static void update_system_overlay(pxsys_reference_lvgl_t* ui) {
     int visible;
     if (!ui_valid(ui)) return;
+    ui->notification_overlay_pending = 0;
     if (ui->system_overlay_objects_changed != NULL) {
         lv_obj_t* objects[8];
         size_t count = 0;
@@ -5523,6 +5525,23 @@ static void notification_refresh_event(lv_event_t* event) {
     pxsys_reference_lvgl_t* ui = lv_event_get_user_data(event);
     if (ui->notification_motion_pending)
         notification_shade_progress_set(ui, ui->notification_progress);
+    else if (ui->notification_overlay_pending)
+        update_system_overlay(ui);
+}
+
+static void notification_content_changed(pxsys_reference_lvgl_t* ui) {
+    if (ui->system_overlay_objects_changed == NULL ||
+        !ui->notification_shade_open || ui->notification_progress == 0 ||
+        ui->notification_shade == NULL ||
+        lv_obj_is_hidden(ui->notification_shade))
+        return;
+    if (!ui->notification_refresh_hook) {
+        update_system_overlay(ui);
+        return;
+    }
+    /* The game compositor uses a cached alpha plane. Publish changes at
+     * most once per LVGL refresh, even when several touch samples arrive. */
+    ui->notification_overlay_pending = 1;
 }
 
 static void notification_drag_progress(pxsys_reference_lvgl_t* ui, int32_t progress) {
@@ -5875,9 +5894,9 @@ static lv_obj_t* make_control_tile(pxsys_reference_lvgl_t* ui,
     return tile;
 }
 
-static void shade_level_readout(lv_obj_t* slider, shade_level_control_t* control) {
+static bool shade_level_readout(lv_obj_t* slider, shade_level_control_t* control) {
     const int32_t value = lv_slider_get_value(slider);
-    if (control->displayed_value == value) return;
+    if (control->displayed_value == value) return false;
     const int32_t previous = control->displayed_value;
     control->displayed_value = value;
     snprintf(control->text, sizeof(control->text), "%u%%", (unsigned)value);
@@ -5885,6 +5904,16 @@ static void shade_level_readout(lv_obj_t* slider, shade_level_control_t* control
     if (control->speaker != NULL && (previous < 0 || (previous == 0) != (value == 0))) {
         lv_label_set_text_static(control->speaker, value == 0 ? LV_SYMBOL_MUTE : LV_SYMBOL_VOLUME_MAX);
         center_symbol(control->speaker, value == 0 ? 0xF026 : 0xF028);
+    }
+    return true;
+}
+
+static void shade_level_refresh(lv_obj_t* slider, shade_level_control_t* control,
+                               bool state_changed) {
+    if (shade_level_readout(slider, control) || state_changed) {
+        notification_content_changed(control->level.ui);
+        /* The track is custom drawn and extends beyond the readout label. */
+        lv_obj_invalidate(slider);
     }
 }
 
@@ -5969,7 +5998,7 @@ static void shade_level_input(lv_event_t* event) {
     lv_obj_t* slider = lv_event_get_current_target(event);
     const lv_event_code_t code = lv_event_get_code(event);
     if (code == LV_EVENT_VALUE_CHANGED) {
-        shade_level_readout(slider, control);
+        shade_level_refresh(slider, control, false);
         return;
     }
     if (code == LV_EVENT_KEY) {
@@ -5999,7 +6028,6 @@ static void shade_level_input(lv_event_t* event) {
         lv_slider_set_value(slider, minimum +
             (LV_CLAMP(0, offset, length) * range + length / 2) / length, LV_ANIM_OFF);
     }
-    shade_level_readout(slider, control);
     if ((code == LV_EVENT_RELEASED && pointer && !scrolling) ||
         code == LV_EVENT_KEY || code == LV_EVENT_ROTARY) {
         /* The board reports its new value asynchronously. Commit each completed
@@ -6008,9 +6036,10 @@ static void shade_level_input(lv_event_t* event) {
         if (pxsys_system_status_service_set_level(
                 pxsys_standard_system_status(ui->system), control->level.control, value) != PXSYS_STATUS_OK) {
             lv_slider_set_value(slider, applied, LV_ANIM_OFF);
-            shade_level_readout(slider, control);
         }
     }
+    shade_level_refresh(slider, control, code == LV_EVENT_PRESSED ||
+                        code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST);
 }
 
 static lv_obj_t* make_control_slider(pxsys_reference_lvgl_t* ui, lv_obj_t* parent,
@@ -10234,9 +10263,9 @@ static void notification_refresh_values(pxsys_reference_lvgl_t* ui) {
     level_slider_refresh(ui->notification_volume, ui->system_status.volume_percent);
     level_slider_refresh(ui->notification_brightness, ui->system_status.brightness_percent);
     if (ui->notification_volume != NULL)
-        shade_level_readout(ui->notification_volume, &ui->shade_levels[0]);
+        shade_level_refresh(ui->notification_volume, &ui->shade_levels[0], false);
     if (ui->notification_brightness != NULL)
-        shade_level_readout(ui->notification_brightness, &ui->shade_levels[1]);
+        shade_level_refresh(ui->notification_brightness, &ui->shade_levels[1], false);
 }
 
 static void status_refresh_poll(lv_timer_t* timer) {
