@@ -64,6 +64,8 @@ extern const lv_font_t pxsys_reference_lock_digits_72;
 static const pxsys_resource_entry_t reference_en_resources[] = {
     RESOURCE_ENTRY("apps.empty", "No apps installed"),
     RESOURCE_ENTRY("recents.empty", "No recent apps"),
+    RESOURCE_ENTRY("recents.background", "Background"),
+    RESOURCE_ENTRY("recents.reopen", "Reopen"),
     RESOURCE_ENTRY("settings.title", "Settings"),
     RESOURCE_ENTRY("settings.wifi", "Wi-Fi"),
     RESOURCE_ENTRY("settings.mobile", "Mobile network"),
@@ -244,6 +246,8 @@ static const pxsys_resource_entry_t reference_en_resources[] = {
 static const pxsys_resource_entry_t reference_zh_resources[] = {
     RESOURCE_ENTRY("apps.empty", "没有已安装的应用"),
     RESOURCE_ENTRY("recents.empty", "没有最近任务"),
+    RESOURCE_ENTRY("recents.background", "后台"),
+    RESOURCE_ENTRY("recents.reopen", "重新打开"),
     RESOURCE_ENTRY("settings.title", "设置"),
     RESOURCE_ENTRY("settings.wifi", "无线网络"),
     RESOURCE_ENTRY("settings.mobile", "移动网络"),
@@ -568,6 +572,8 @@ typedef struct {
 } recent_app_t;
 
 #define REFERENCE_RECENT_HISTORY 8u
+#define REFERENCE_RECENT_ITEMS 12u
+#define REFERENCE_PREVIEW_MAX_EDGE 448u
 
 #if PXSYS_REFERENCE_UI_BUILTIN_SETTINGS
 typedef struct {
@@ -692,8 +698,8 @@ struct pxsys_reference_lvgl {
     lv_timer_t* launcher_edge_timer;
     uint16_t launcher_drag_start_page;
     int8_t launcher_drag_edge;
-    recent_item_t recent_items[12];
-    recent_app_t recent_history[REFERENCE_RECENT_HISTORY];
+    recent_item_t* recent_items;
+    recent_app_t* recent_history;
     size_t recent_history_count;
     pxsys_instance_ref_t pending_dismissals[12];
     size_t pending_dismissal_count;
@@ -736,6 +742,7 @@ struct pxsys_reference_lvgl {
     uint8_t animations_enabled;
     uint8_t navigation_from_home;
     uint8_t task_switcher_handoff;
+    uint8_t task_switcher_refresh_pending;
     uint8_t locked;
     uint8_t gamepad_consuming;
     uint32_t gamepad_buttons;
@@ -2735,9 +2742,13 @@ static lv_draw_buf_t* capture_transformed_application(
     capture_bounds->y = clipped.y1;
     capture_bounds->width = (uint32_t)result_width;
     capture_bounds->height = (uint32_t)result_height;
-    if (!borrowed && ext == 0 && source->header.w == (uint32_t)result_width &&
+    const int32_t sample = (LV_MAX(result_width, result_height) +
+        (int32_t)REFERENCE_PREVIEW_MAX_EDGE - 1) / (int32_t)REFERENCE_PREVIEW_MAX_EDGE;
+    if (sample == 1 && !borrowed && ext == 0 && source->header.w == (uint32_t)result_width &&
         source->header.h == (uint32_t)result_height && scale == LV_SCALE_NONE)
         return source;
+    result_width = (result_width + sample - 1) / sample;
+    result_height = (result_height + sample - 1) / sample;
     result = lv_draw_buf_create((uint32_t)result_width,
                                 (uint32_t)result_height,
                                 LV_COLOR_FORMAT_RGB565, LV_STRIDE_AUTO);
@@ -2749,11 +2760,12 @@ static lv_draw_buf_t* capture_transformed_application(
     const int64_t first_x = (int64_t)(clipped.x1 - transformed.x1) * source_width;
     const int32_t start_x = ext + (int32_t)(first_x / transformed_width);
     const int32_t start_remainder = (int32_t)(first_x % transformed_width);
-    const int32_t pixel_step = source_width / transformed_width;
-    const int32_t remainder_step = source_width % transformed_width;
+    const int64_t source_step = (int64_t)source_width * sample;
+    const int32_t pixel_step = (int32_t)(source_step / transformed_width);
+    const int32_t remainder_step = (int32_t)(source_step % transformed_width);
     for (y = 0; y < result_height; ++y) {
         int32_t source_y = ext +
-            (int32_t)(((int64_t)(clipped.y1 + y - transformed.y1) *
+            (int32_t)(((int64_t)(clipped.y1 + y * sample - transformed.y1) *
                        source_height) / transformed_height);
         uint16_t* destination_row =
             (uint16_t*)lv_draw_buf_goto_xy(result, 0, (uint32_t)y);
@@ -2763,7 +2775,7 @@ static lv_draw_buf_t* capture_transformed_application(
             source_y = ext + source_height - 1;
         source_row = (const uint16_t*)lv_draw_buf_goto_xy(
             source, 0, (uint32_t)source_y);
-        if (transformed_width == source_width) {
+        if (sample == 1 && transformed_width == source_width) {
             memcpy(destination_row, source_row + start_x,
                    (size_t)result_width * sizeof(*destination_row));
             continue;
@@ -2786,16 +2798,21 @@ static lv_draw_buf_t* capture_transformed_application(
 #endif
 
 static void record_recent_history(pxsys_reference_lvgl_t* ui,
-                                  const pxsys_app_descriptor_t* app) {
-    const pxsys_string_t id = app->identity.app_id;
+                                  const pxsys_app_identity_t* app) {
+    const pxsys_string_t id = app->app_id;
     size_t index;
     size_t match;
     if (id.size == 0 || id.size >= sizeof(ui->recent_history[0].app_id))
         return;
+    if (ui->recent_history == NULL) {
+        ui->recent_history = ui->allocator.allocate(
+            ui->allocator.context, REFERENCE_RECENT_HISTORY * sizeof(*ui->recent_history));
+        if (ui->recent_history == NULL) return;
+    }
     match = ui->recent_history_count;
     for (index = 0; index < ui->recent_history_count; ++index) {
         if (memcmp(ui->recent_history[index].publisher_root,
-                   app->identity.publisher_root,
+                   app->publisher_root,
                    PXSYS_PUBLISHER_ROOT_BYTES) == 0 &&
             strncmp(ui->recent_history[index].app_id, id.data, id.size) == 0 &&
             ui->recent_history[index].app_id[id.size] == '\0') {
@@ -2814,7 +2831,7 @@ static void record_recent_history(pxsys_reference_lvgl_t* ui,
     if (match != 0)
         memmove(&ui->recent_history[1], &ui->recent_history[0],
                 match * sizeof(ui->recent_history[0]));
-    memcpy(ui->recent_history[0].publisher_root, app->identity.publisher_root,
+    memcpy(ui->recent_history[0].publisher_root, app->publisher_root,
            PXSYS_PUBLISHER_ROOT_BYTES);
     memcpy(ui->recent_history[0].app_id, id.data, id.size);
     ui->recent_history[0].app_id[id.size] = '\0';
@@ -2825,14 +2842,15 @@ static void capture_current_task(pxsys_reference_lvgl_t* ui,
     pxsys_task_manager_t* tasks;
     pxsys_instance_ref_t current;
     pxsys_instance_snapshot_t snapshot = {0};
-    if (!ui_valid(ui)) return;
+    if (!ui_valid(ui) || (ui->content_active && ui->active_page == REFERENCE_PAGE_HOME)) return;
     tasks = pxsys_standard_system_tasks(ui->system);
     snapshot.struct_size = sizeof(snapshot);
     if (pxsys_task_manager_task(tasks, 0, &current, &snapshot) !=
             PXSYS_STATUS_OK ||
+        snapshot.lifecycle.state != PXSYS_APP_FOREGROUND ||
         snapshot.app == NULL || app_is_system_home(ui, snapshot.app))
         return;
-    record_recent_history(ui, snapshot.app);
+    record_recent_history(ui, &snapshot.app->identity);
 #if PXSYS_REFERENCE_UI_TASK_SWITCHER == PXSYS_TASK_SWITCHER_CARDS && \
     LV_USE_SNAPSHOT
     {
@@ -2928,7 +2946,8 @@ static int start_task_transition(pxsys_reference_lvgl_t* ui) {
                            target_area.x1);
         lv_anim_start(&animation);
         lv_anim_set_exec_cb(&animation, image_scale_set);
-        lv_anim_set_values(&animation, 256, target_scale);
+        const uint32_t start_scale = preview->capture_bounds.width * 256u / preview->image->header.w;
+        lv_anim_set_values(&animation, start_scale, target_scale);
         lv_anim_start(&animation);
         lv_anim_set_exec_cb(&animation, object_y_set);
         lv_anim_set_values(&animation, preview->capture_bounds.y,
@@ -2948,24 +2967,64 @@ static int start_task_transition(pxsys_reference_lvgl_t* ui) {
 }
 #endif
 
+static void delete_task_switcher(pxsys_reference_lvgl_t* ui) {
+    if (ui->task_switcher != NULL) lv_obj_delete(ui->task_switcher);
+    ui->task_switcher = NULL;
+    ui->task_switcher_memory = NULL;
+#if PXSYS_REFERENCE_UI_TASK_SWITCHER == PXSYS_TASK_SWITCHER_CARDS && LV_USE_SNAPSHOT
+    ui->task_switcher_empty = NULL;
+#endif
+    if (ui->recent_items != NULL) ui->allocator.release(ui->allocator.context, ui->recent_items);
+    ui->recent_items = NULL;
+}
+
+static void release_closed_task_switcher(void* context) {
+    pxsys_reference_lvgl_t* ui = context;
+    if (!ui_valid(ui) || task_switcher_is_open(ui)) return;
+    delete_task_switcher(ui);
+#if PXSYS_REFERENCE_UI_TASK_SWITCHER == PXSYS_TASK_SWITCHER_CARDS && LV_USE_SNAPSHOT
+    /* A resumed task already owns its live surface. Keep thumbnails only
+     * for instances that are still in the background. */
+    pxsys_instance_ref_t current;
+    if (pxsys_task_manager_current(pxsys_standard_system_tasks(ui->system), &current) ==
+        PXSYS_STATUS_OK) {
+        task_preview_t* preview = find_task_preview(ui, current);
+        if (preview != NULL) release_task_preview(ui, preview);
+    }
+#endif
+}
+
 static void close_task_switcher(pxsys_reference_lvgl_t* ui) {
+    if (!task_switcher_is_open(ui)) return;
 #if PXSYS_REFERENCE_UI_TASK_SWITCHER == PXSYS_TASK_SWITCHER_CARDS && \
     LV_USE_SNAPSHOT
     clear_task_transition(ui);
     prune_task_previews(ui);
 #endif
-    /* Do not delete this tree while the LVGL input/event machinery may still
-     * reference it. Some LVGL event stacks become cyclic during deletion,
-     * making lv_event_mark_deleted() spin until the task watchdog fires.
-     * Keep the bounded switcher tree and reuse it on its next invocation. */
-    if (ui->task_switcher != NULL)
-        pxsys_lvgl_add_flags(ui->task_switcher, LV_OBJ_FLAG_HIDDEN);
+    /* Input dispatch can still hold the clicked card. Retire the tree on
+     * the LVGL owner after that dispatch unwinds. */
+    pxsys_lvgl_add_flags(ui->task_switcher, LV_OBJ_FLAG_HIDDEN);
+    (void)lv_async_call(release_closed_task_switcher, ui);
     application_scale_reset(ui);
 }
 
 static int task_switcher_is_open(const pxsys_reference_lvgl_t* ui) {
     return ui->task_switcher != NULL &&
            !lv_obj_is_hidden(ui->task_switcher);
+}
+
+void pxsys_reference_lvgl_task_foregrounded(pxsys_reference_lvgl_t* ui,
+    const pxsys_app_identity_t* app, pxsys_instance_ref_t instance) {
+    if (!ui_valid(ui) || app == NULL || app->app_id.data == NULL) return;
+    record_recent_history(ui, app);
+#if PXSYS_REFERENCE_UI_TASK_SWITCHER == PXSYS_TASK_SWITCHER_CARDS && LV_USE_SNAPSHOT
+    if (!task_switcher_is_open(ui)) {
+        task_preview_t* preview = find_task_preview(ui, instance);
+        if (preview != NULL) release_task_preview(ui, preview);
+    }
+#else
+    (void)instance;
+#endif
 }
 
 static void recent_clicked(lv_event_t* event) {
@@ -3065,15 +3124,48 @@ static void recent_history_remove(pxsys_reference_lvgl_t* ui,
                     (ui->recent_history_count - index - 1u) *
                         sizeof(recent_app_t));
             ui->recent_history_count--;
+            if (ui->recent_history_count == 0) {
+                ui->allocator.release(ui->allocator.context, ui->recent_history);
+                ui->recent_history = NULL;
+            }
             return;
         }
     }
 }
 
 static void refresh_task_switcher_async(void* context) {
-    pxsys_reference_lvgl_t* ui = (pxsys_reference_lvgl_t*)context;
-    if (!ui_valid(ui) || ui->task_switcher == NULL) return;
-    build_task_switcher(ui);
+    pxsys_reference_lvgl_t* ui = context;
+    if (!ui_valid(ui)) return;
+    ui->task_switcher_refresh_pending = 0;
+    if (task_switcher_is_open(ui)) build_task_switcher(ui);
+}
+
+static void schedule_task_switcher_refresh(pxsys_reference_lvgl_t* ui) {
+    if (ui->task_switcher_refresh_pending || !task_switcher_is_open(ui)) return;
+    if (lv_async_call(refresh_task_switcher_async, ui) == LV_RESULT_OK)
+        ui->task_switcher_refresh_pending = 1;
+    else
+        close_task_switcher(ui);
+}
+
+void pxsys_reference_lvgl_task_destroyed(pxsys_reference_lvgl_t* ui,
+                                         pxsys_instance_ref_t instance) {
+    if (!ui_valid(ui)) return;
+#if PXSYS_REFERENCE_UI_TASK_SWITCHER == PXSYS_TASK_SWITCHER_CARDS && LV_USE_SNAPSHOT
+    task_preview_t* preview = find_task_preview(ui, instance);
+    if (preview != NULL) release_task_preview(ui, preview);
+#endif
+    for (size_t i = 0; i < ui->pending_dismissal_count; ++i) {
+        if (!instance_same(ui->pending_dismissals[i], instance)) continue;
+        --ui->pending_dismissal_count;
+        memmove(&ui->pending_dismissals[i], &ui->pending_dismissals[i + 1u],
+                (ui->pending_dismissal_count - i) * sizeof(ui->pending_dismissals[0]));
+        break;
+    }
+    if (task_switcher_is_open(ui)) {
+        ui->task_switcher_handoff = 1;
+        schedule_task_switcher_refresh(ui);
+    }
 }
 
 static void dismiss_recent_item(pxsys_reference_lvgl_t* ui,
@@ -3095,8 +3187,7 @@ static void dismiss_recent_item(pxsys_reference_lvgl_t* ui,
      * card without deleting the switcher tree during an input event. Delay
      * the refresh so a trailing CLICKED event still sees suppress_click. */
     ui->task_switcher_handoff = 1;
-    if (lv_async_call(refresh_task_switcher_async, ui) != LV_RESULT_OK)
-        close_task_switcher(ui);
+    schedule_task_switcher_refresh(ui);
 }
 
 static void recent_key(lv_event_t* event) {
@@ -3348,16 +3439,10 @@ static void build_task_switcher(pxsys_reference_lvgl_t* ui) {
     (void)preview_memory_available(ui);
     retained = ui->task_switcher != NULL;
 #else
-    if (ui->task_switcher != NULL) {
-        lv_obj_delete(ui->task_switcher);
-        ui->task_switcher = NULL;
-        ui->task_switcher_memory = NULL;
-    }
+    delete_task_switcher(ui);
 #endif
     tasks = pxsys_standard_system_tasks(ui->system);
     count = pxsys_task_manager_count(tasks);
-    if (count > sizeof(ui->recent_items) / sizeof(ui->recent_items[0]))
-        count = sizeof(ui->recent_items) / sizeof(ui->recent_items[0]);
     if (ui->task_switcher == NULL) {
         ui->task_switcher = lv_obj_create(ui->parent);
         style_plain(ui->task_switcher);
@@ -3418,8 +3503,12 @@ static void build_task_switcher(pxsys_reference_lvgl_t* ui) {
         lv_obj_t* strip = NULL;
 #endif
         uint32_t added = 0;
-        size_t item_capacity =
-            sizeof(ui->recent_items) / sizeof(ui->recent_items[0]);
+        if (ui->recent_items == NULL &&
+            (count > 1 || ui->recent_history_count != 0 ||
+             (count == 1 && !(ui->content_active && ui->active_page == REFERENCE_PAGE_HOME))))
+            ui->recent_items = ui->allocator.allocate(
+                ui->allocator.context, REFERENCE_RECENT_ITEMS * sizeof(*ui->recent_items));
+        const size_t item_capacity = ui->recent_items != NULL ? REFERENCE_RECENT_ITEMS : 0;
         size_t hindex;
 #if PXSYS_REFERENCE_UI_TASK_SWITCHER == PXSYS_TASK_SWITCHER_CARDS && LV_USE_SNAPSHOT
         int32_t card_width = panel_width * 4 / 5;
@@ -3463,12 +3552,20 @@ static void build_task_switcher(pxsys_reference_lvgl_t* ui) {
             item->ui = ui;
             if (pxsys_task_manager_task(tasks, index, &item->instance,
                                         &snapshot) != PXSYS_STATUS_OK ||
-                snapshot.app == NULL || app_is_system_home(ui, snapshot.app) ||
+                snapshot.app == NULL ||
+                (snapshot.lifecycle.state != PXSYS_APP_FOREGROUND &&
+                 snapshot.lifecycle.state != PXSYS_APP_BACKGROUND) ||
+                app_is_system_home(ui, snapshot.app) ||
                 dismissal_pending(ui, item->instance))
                 continue;
             display_name = localized_app_name(ui, snapshot.app);
-            snprintf(item->label, sizeof(item->label), "%.*s",
-                     (int)display_name.size, display_name.data);
+            if (snapshot.lifecycle.state == PXSYS_APP_BACKGROUND)
+                snprintf(item->label, sizeof(item->label), "%.*s · %s",
+                         (int)display_name.size, display_name.data,
+                         translated(ui, "recents.background", "Background"));
+            else
+                snprintf(item->label, sizeof(item->label), "%.*s",
+                         (int)display_name.size, display_name.data);
             memcpy(item->app_id, snapshot.app->identity.app_id.data,
                    snapshot.app->identity.app_id.size);
             item->app_id[snapshot.app->identity.app_id.size] = '\0';
@@ -3510,8 +3607,9 @@ static void build_task_switcher(pxsys_reference_lvgl_t* ui) {
                 pxsys_standard_system_apps(ui->system), &item->identity);
             if (app == NULL || !(app->flags & PXSYS_APP_FLAG_ENABLED)) continue;
             display_name = localized_app_name(ui, app);
-            snprintf(item->label, sizeof(item->label), "%.*s",
-                     (int)display_name.size, display_name.data);
+            snprintf(item->label, sizeof(item->label), "%.*s · %s",
+                     (int)display_name.size, display_name.data,
+                     translated(ui, "recents.reopen", "Reopen"));
             item->running = 0;
             added++;
         }
@@ -11064,6 +11162,7 @@ pxsys_status_t pxsys_reference_lvgl_destroy(pxsys_reference_lvgl_t* ui) {
         ui->content_insets_changed(ui->content_insets_context, 0, 0);
     (void)lv_async_call_cancel(rebuild_async, ui);
     (void)lv_async_call_cancel(refresh_task_switcher_async, ui);
+    (void)lv_async_call_cancel(release_closed_task_switcher, ui);
     if (ui->toast_subscribed)
         (void)pxsys_toast_service_unsubscribe(
             pxsys_standard_system_toasts(ui->system), ui, toast_posted);
@@ -11108,7 +11207,8 @@ pxsys_status_t pxsys_reference_lvgl_destroy(pxsys_reference_lvgl_t* ui) {
     for (preview_index = 0; preview_index < PXSYS_REFERENCE_UI_TASK_PREVIEW_COUNT; ++preview_index)
         release_task_preview(ui, &ui->task_previews[preview_index]);
 #endif
-    if (ui->task_switcher != NULL) lv_obj_delete(ui->task_switcher);
+    delete_task_switcher(ui);
+    if (ui->recent_history != NULL) ui->allocator.release(ui->allocator.context, ui->recent_history);
     launcher_drag_finish(ui, NULL);
     if (ui->notification_refresh_hook)
         lv_display_remove_event_cb_with_user_data(lv_obj_get_display(ui->root),

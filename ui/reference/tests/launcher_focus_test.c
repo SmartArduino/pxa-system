@@ -340,6 +340,13 @@ static void check_recent_delete(lv_display_t* display) {
     pxsys_reference_lvgl_t* ui = NULL;
     assert(pxsys_reference_lvgl_create(&config, &ui) == PXSYS_STATUS_OK);
     assert(pxsys_reference_lvgl_start(ui) == PXSYS_STATUS_OK);
+    assert(ui->recent_items == NULL && ui->recent_history == NULL);
+    assert(pxsys_reference_lvgl_show_recents(ui) == PXSYS_STATUS_OK);
+    assert(ui->recent_items == NULL);
+    assert(pxsys_reference_lvgl_show_recents(ui) == PXSYS_STATUS_OK);
+    lv_tick_inc(20);
+    (void)lv_timer_handler();
+    assert(ui->task_switcher == NULL && ui->recent_items == NULL);
     assert(open_role(ui, PXSYS_ROLE_SETTINGS) == PXSYS_STATUS_OK);
 #if PXSYS_REFERENCE_UI_TASK_SWITCHER == PXSYS_TASK_SWITCHER_CARDS && LV_USE_SNAPSHOT
     task_preview_t* preview = &ui->task_previews[0];
@@ -363,6 +370,7 @@ static void check_recent_delete(lv_display_t* display) {
     (void)lv_timer_handler();
     assert(pxsys_task_manager_count(tasks) + 1u == before);
     assert(ui->recent_history_count == 0);
+    assert(ui->recent_history == NULL);
 #if PXSYS_REFERENCE_UI_TASK_SWITCHER == PXSYS_TASK_SWITCHER_CARDS && LV_USE_SNAPSHOT
     assert(preview->image == NULL);
 #endif
@@ -423,6 +431,10 @@ static void check_hardware_navigation_previews(lv_display_t* display) {
     /* Closing and reopening refreshes content instead of reusing a stale image. */
     assert(pxsys_reference_lvgl_show_recents(ui) == PXSYS_STATUS_OK);
     assert(!task_switcher_is_open(ui));
+    lv_tick_inc(20);
+    (void)lv_timer_handler();
+    assert(ui->task_switcher == NULL && ui->recent_items == NULL);
+    assert(find_task_preview(ui, current) == NULL);
     lv_obj_set_style_bg_color(swatch, lv_color_hex(0x0000ff), 0);
     assert(pxsys_reference_lvgl_show_recents(ui) == PXSYS_STATUS_OK);
     preview = find_task_preview(ui, current);
@@ -460,6 +472,13 @@ static void check_hardware_navigation_previews(lv_display_t* display) {
     assert(instance_equal(active, current));
     assert(!task_switcher_is_open(ui));
     lv_indev_delete(keypad);
+    /* An external stop below Home must release its thumbnail even when the
+     * task manager does not foreground a replacement or rebuild the page. */
+    assert(pxsys_reference_lvgl_home(ui) == PXSYS_STATUS_OK);
+    assert(find_task_preview(ui, current) != NULL);
+    assert(pxsys_task_manager_finish_instance(tasks, current, PXSYS_STOP_NORMAL) == PXSYS_STATUS_OK);
+    pxsys_reference_lvgl_task_destroyed(ui, current);
+    assert(find_task_preview(ui, current) == NULL);
     assert(pxsys_task_manager_finish_all(tasks, PXSYS_STOP_SHUTDOWN) == PXSYS_STATUS_OK);
     assert(pxsys_reference_lvgl_destroy(ui) == PXSYS_STATUS_OK);
     assert(pxsys_standard_system_destroy(system) == PXSYS_STATUS_OK);

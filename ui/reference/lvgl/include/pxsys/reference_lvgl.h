@@ -486,6 +486,12 @@ int32_t pxsys_reference_lvgl_covered_top(const pxsys_reference_lvgl_t* ui);
  * Call from the LVGL task (or under its lock). */
 pxsys_status_t pxsys_reference_lvgl_back(pxsys_reference_lvgl_t* ui);
 pxsys_status_t pxsys_reference_lvgl_show_recents(pxsys_reference_lvgl_t* ui);
+/* Called on the LVGL owner when an external runtime has foregrounded a task. */
+void pxsys_reference_lvgl_task_foregrounded(pxsys_reference_lvgl_t* ui,
+    const pxsys_app_identity_t* app, pxsys_instance_ref_t instance);
+/* Release the thumbnail and refresh an open switcher after runtime teardown. */
+void pxsys_reference_lvgl_task_destroyed(pxsys_reference_lvgl_t* ui,
+    pxsys_instance_ref_t instance);
 /* Borrowed topmost modal scope for product-owned keypad focus. NULL means the
  * normal application and shell layers are available. Never retain across UI
  * mutations; modal scopes include the lock screen and built-in keyboard. */
