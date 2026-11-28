@@ -201,6 +201,7 @@ typedef struct {
     void *execute_user_data;
     pxa_lvgl_ui_execute_fn execute;
     pxa_lvgl_ui_execute_fn execute_canvas;
+    bool alpha_canvas_compositor_refresh;
     pxa_lvgl_ui_resolve_asset_fn resolve_asset;
     pxa_lvgl_ui_acquire_image_fn acquire_image;
     pxa_lvgl_ui_release_asset_fn release_asset;
@@ -1870,6 +1871,8 @@ static size_t snapshot_bytes(lv_obj_t *object) {
     int64_t height = (int64_t)lv_obj_get_height(object) + 2 * ext;
     if (width <= 0 || height <= 0 || width > UINT16_MAX || height > UINT16_MAX) return 0;
     uint64_t bytes = (uint64_t)lv_draw_buf_width_to_stride((uint32_t)width, LV_COLOR_FORMAT_ARGB8888) * height;
+    /* LVGL reshapes external buffers using the aligned storage size. */
+    bytes = (bytes + LV_DRAW_BUF_ALIGN - 1u) / LV_DRAW_BUF_ALIGN * LV_DRAW_BUF_ALIGN;
     return bytes > UINT32_MAX || bytes > SIZE_MAX ? 0 : (size_t)bytes;
 }
 
@@ -2972,7 +2975,15 @@ static void execute_canvas_swap(void *data) {
     canvas->release = swap->release;
     canvas->release_context = swap->release_context;
     swap->node->canvas = canvas;
-    if (alpha_overlay && !refresh_alpha_plane(ui)) {
+    const bool alpha_only = alpha_overlay && !first_frame &&
+                            ui->config.alpha_canvas_compositor_refresh;
+    lv_display_t *display = alpha_only ? lv_obj_get_display(swap->node->object) : NULL;
+    /* The snapshot temporarily restores styles that are transparent on the
+     * base display. Those temporary changes need no base invalidation. */
+    if (display) lv_display_enable_invalidation(display, false);
+    const bool alpha_ready = !alpha_overlay || refresh_alpha_plane(ui);
+    if (display) lv_display_enable_invalidation(display, true);
+    if (!alpha_ready) {
         if (index != previous.index) canvas_index_release(ui, index);
         *canvas = previous;
         /* The bitmap descriptor array may have been reused while previewing. */
@@ -3000,6 +3011,10 @@ static void execute_canvas_swap(void *data) {
         swap->grown_bitmap_images = NULL;
     }
     commit_canvas_images(swap,&previous);
+    if (alpha_only) {
+        swap->status = PXA_STATUS_OK;
+        return;
+    }
     if (first_frame || swap->view.dirty_count == 0) {
         lv_obj_invalidate(swap->node->object);
     } else {
@@ -3759,8 +3774,11 @@ pxa_status_t pxa_lvgl_ui_init(void *workspace, size_t workspace_size,
         .release=config->release,
         .execute_user_data=config->execute_user_data,
         .execute=config->execute,
-        .execute_canvas=config->struct_size >= sizeof(*config) && config->execute_canvas
+        .execute_canvas=config->struct_size >= offsetof(pxa_lvgl_ui_config_t, alpha_canvas_compositor_refresh) &&
+            config->execute_canvas
             ? config->execute_canvas : config->execute,
+        .alpha_canvas_compositor_refresh=config->struct_size >= sizeof(*config) &&
+            config->alpha_canvas_compositor_refresh,
         .resolve_asset=config->resolve_asset,
         .acquire_image=config->acquire_image,
         .release_asset=config->release_asset,

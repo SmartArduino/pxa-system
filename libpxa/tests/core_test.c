@@ -975,6 +975,21 @@ static pxa_status_t audio_submit(void *context, uint64_t provider_session,
     return PXA_STATUS_OK;
 }
 
+static int32_t audio_encoded_io(void *context, uint64_t session,
+                               const pxa_audio_format_t *format,
+                               uint32_t op, uint8_t *data, size_t size) {
+    test_audio_backend_t *backend = context;
+    assert(session == backend->session && format->sample_rate == 22050 && format->channels == 2);
+    if (op == PXA_AUDIO_IO_CONFIGURE_ENCODED) {
+        assert(size == 4 && !pxa_read_u16(data + 2));
+        return pxa_read_u16(data) == PXA_AUDIO_ENCODED_AAC_ADTS
+            ? PXA_STATUS_OK : PXA_STATUS_UNSUPPORTED;
+    }
+    if (op == PXA_AUDIO_IO_WRITE_ENCODED) return PXA_STATUS_WOULD_BLOCK;
+    assert(op == PXA_AUDIO_IO_FINISH_ENCODED && size == 0);
+    return PXA_STATUS_OK;
+}
+
 static pxa_status_t audio_play_tone(void *context,
                                     uint64_t provider_session,
                                     const pxa_audio_tone_t *tone) {
@@ -5626,6 +5641,7 @@ static void test_audio_service(void) {
     audio_config.backend.context = &backend;
     audio_config.backend.open = audio_open;
     audio_config.backend.open_pcm = audio_open_pcm;
+    audio_config.backend.encoded_io = audio_encoded_io;
     audio_config.backend.commit = audio_commit;
     audio_config.backend.submit = audio_submit;
     audio_config.backend.query = audio_query;
@@ -6010,6 +6026,26 @@ static void test_audio_service(void) {
             assert(pxa_read_u32(psg_voice + 12) == 2 && backend.submits == submits_before_psg);
             assert(dispatch_io64(test.runtime, v1_component, pcm_session,
                 PXA_AUDIO_IO_PSG_RENDER, mix_header, 20) == PXA_STATUS_BAD_STATE);
+            uint8_t encoded_config[4] = {0};
+            assert(dispatch_io64(test.runtime, v1_component, pcm_session,
+                PXA_AUDIO_IO_CONFIGURE_ENCODED, encoded_config, sizeof(encoded_config)) == PXA_STATUS_UNSUPPORTED);
+            assert(dispatch_io64(test.runtime, v1_component, pcm_session,
+                PXA_AUDIO_IO_FINISH_ENCODED, NULL, 0) == PXA_STATUS_BAD_STATE);
+            pxa_write_u16(encoded_config, PXA_AUDIO_ENCODED_AAC_ADTS);
+            assert(!dispatch_io64(test.runtime, v1_component, pcm_session,
+                PXA_AUDIO_IO_CONFIGURE_ENCODED, encoded_config, sizeof(encoded_config)));
+            assert(dispatch_io64(test.runtime, v1_component, pcm_session,
+                PXA_IO_WRITE, pcm, sizeof(pcm)) == PXA_STATUS_BAD_STATE);
+            assert(dispatch_io64(test.runtime, v1_component, pcm_session,
+                PXA_AUDIO_IO_WRITE_ENCODED, pcm, sizeof(pcm)) == PXA_STATUS_WOULD_BLOCK);
+            assert(!dispatch_io64(test.runtime, v1_component, pcm_session,
+                PXA_AUDIO_IO_FINISH_ENCODED, NULL, 0));
+            command_size = make_audio_v1_command(command, sizeof(command), PXA_AUDIO_FLUSH, 101, pcm_session);
+            (void)dispatch_control_completion(test.runtime, v1_component, command,
+                command_size, event_bytes, sizeof(event_bytes), &event);
+            assert((int32_t)pxa_read_u32(event.payload.data) == PXA_STATUS_OK);
+            assert(dispatch_io64(test.runtime, v1_component, pcm_session,
+                PXA_IO_WRITE, pcm, sizeof(pcm)) == 4);
             memset(mix_memory, 0, sizeof(mix_memory));
             pxa_write_u32(mix_header, 256); pxa_write_u32(mix_header + 4, 512);
             pxa_write_u16(mix_header + 8, 2); pxa_write_u16(mix_header + 10, 1);

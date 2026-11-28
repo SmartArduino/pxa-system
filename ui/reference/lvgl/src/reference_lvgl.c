@@ -119,6 +119,10 @@ static const pxsys_resource_entry_t reference_en_resources[] = {
     RESOURCE_ENTRY("settings.performance.log.detail", "Write frame and render timing to the log"),
     RESOURCE_ENTRY("settings.pxadb", "PXADB"),
     RESOURCE_ENTRY("settings.pxadb.detail", "Allow USB debugging and diagnostics"),
+    RESOURCE_ENTRY("settings.pxadb.lan", "Wi-Fi PXADB"),
+    RESOURCE_ENTRY("settings.pxadb.lan.detail", "Allow a paired computer on this Wi-Fi network"),
+    RESOURCE_ENTRY("settings.pxadb.lan.address", "Connection address"),
+    RESOURCE_ENTRY("settings.pxadb.lan.pairing", "Pairing code"),
     RESOURCE_ENTRY("settings.wifi.networks", "Available networks"),
     RESOURCE_ENTRY("settings.wifi.scan", "Refresh"),
     RESOURCE_ENTRY("settings.wifi.searching", "Searching…"),
@@ -295,6 +299,10 @@ static const pxsys_resource_entry_t reference_zh_resources[] = {
     RESOURCE_ENTRY("settings.performance.log.detail", "在日志中输出帧率和渲染耗时"),
     RESOURCE_ENTRY("settings.pxadb", "PXADB 调试"),
     RESOURCE_ENTRY("settings.pxadb.detail", "允许 USB 调试和诊断连接"),
+    RESOURCE_ENTRY("settings.pxadb.lan", "局域网 PXADB"),
+    RESOURCE_ENTRY("settings.pxadb.lan.detail", "允许同一 Wi-Fi 局域网中的已配对电脑调试"),
+    RESOURCE_ENTRY("settings.pxadb.lan.address", "连接地址"),
+    RESOURCE_ENTRY("settings.pxadb.lan.pairing", "配对码"),
     RESOURCE_ENTRY("settings.wifi.networks", "可用网络"),
     RESOURCE_ENTRY("settings.wifi.scan", "刷新"),
     RESOURCE_ENTRY("settings.wifi.searching", "搜索中…"),
@@ -737,7 +745,7 @@ struct pxsys_reference_lvgl {
     level_control_t level_controls[2];
     shade_level_control_t shade_levels[2];
     toggle_control_t toggle_controls[4];
-    performance_control_t performance_controls[3];
+    performance_control_t performance_controls[4];
     wifi_network_control_t wifi_network_controls[PXSYS_REFERENCE_WIFI_NETWORK_MAX];
     wifi_network_control_t wifi_saved_controls[PXSYS_REFERENCE_WIFI_NETWORK_MAX];
     settings_action_t settings_actions[REFERENCE_SETTINGS_ACTION_COUNT];
@@ -794,6 +802,8 @@ struct pxsys_reference_lvgl {
     void* performance_context;
     pxsys_reference_lvgl_performance_get_fn performance_get;
     pxsys_reference_lvgl_performance_set_fn performance_set;
+    bool (*pxadb_lan_endpoint)(char *address, size_t address_size,
+                              char *pairing, size_t pairing_size);
     void* wifi_context;
     pxsys_reference_lvgl_wifi_scan_fn wifi_scan;
     pxsys_reference_lvgl_wifi_connect_fn wifi_connect;
@@ -3884,6 +3894,10 @@ static void performance_switch_changed(lv_event_t* event) {
             if (enabled) lv_obj_remove_state(toggle, LV_STATE_CHECKED);
             else lv_obj_add_state(toggle, LV_STATE_CHECKED);
         }
+    } else if (control->option == PXSYS_REFERENCE_PXADB_LAN ||
+               (control->option == PXSYS_REFERENCE_PXADB &&
+                control->ui->pxadb_lan_endpoint != NULL)) {
+        rebuild(control->ui);
     }
 }
 
@@ -7128,6 +7142,24 @@ static void build_device_info_page(pxsys_reference_lvgl_t* ui,
         translated(ui, "settings.pxadb.detail",
                    "Allow USB debugging and diagnostics"),
         &ui->performance_controls[2]);
+    if (ui->pxadb_lan_endpoint != NULL &&
+        ui->performance_get(ui->performance_context, PXSYS_REFERENCE_PXADB)) {
+        make_performance_setting(
+            ui, layout, section, PXSYS_REFERENCE_PXADB_LAN,
+            translated(ui, "settings.pxadb.lan", "Wi-Fi PXADB"),
+            translated(ui, "settings.pxadb.lan.detail",
+                       "Allow a paired computer on this Wi-Fi network"),
+            &ui->performance_controls[3]);
+        char address[22], pairing[33];
+        if (ui->pxadb_lan_endpoint(address, sizeof(address), pairing, sizeof(pairing))) {
+            (void)make_settings_row(ui, layout, section, NULL, PXSYS_COLOR_ACCENT,
+                                    translated(ui, "settings.pxadb.lan.address", "Connection address"),
+                                    address, NULL, NULL);
+            (void)make_settings_row(ui, layout, section, NULL, PXSYS_COLOR_ACCENT,
+                                    translated(ui, "settings.pxadb.lan.pairing", "Pairing code"),
+                                    pairing, NULL, NULL);
+        }
+    }
 }
 
 /* ---------------------------------------------------------- Page dialogs */
@@ -10132,6 +10164,7 @@ pxsys_status_t pxsys_reference_lvgl_create(
     ui->system_overlay_objects_changed = config->system_overlay_objects_changed;
     ui->performance_context = config->performance_context;
     ui->performance_get = config->performance_get;
+    ui->pxadb_lan_endpoint = config->pxadb_lan_endpoint;
     ui->performance_set = config->performance_set;
     ui->developer_unlocked = !PXSYS_REFERENCE_UI_HIDE_DEVELOPER_OPTIONS;
     ui->wifi_context = config->wifi_context;

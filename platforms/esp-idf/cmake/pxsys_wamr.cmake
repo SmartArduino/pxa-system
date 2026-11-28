@@ -78,12 +78,15 @@ function(pxsys_configure_wamr_esp_idf wamr_component)
     set(relative_platform_source "core/shared/platform/esp-idf/espidf_platform.c")
     set(relative_file_source "core/shared/platform/esp-idf/espidf_file.c")
     set(relative_memmap_source "core/shared/platform/esp-idf/espidf_memmap.c")
+    set(relative_riscv_invoke "core/iwasm/common/arch/invokeNative_riscv.S")
     set(relative_xtensa_reloc "core/iwasm/aot/arch/aot_reloc_xtensa.c")
 
     set(required_overlay_sources
         ${relative_platform_header} ${relative_platform_source} ${relative_file_source})
     if(CONFIG_IDF_TARGET_ARCH_XTENSA)
         list(APPEND required_overlay_sources ${relative_xtensa_reloc})
+    elseif(CONFIG_IDF_TARGET_ARCH_RISCV)
+        list(APPEND required_overlay_sources ${relative_riscv_invoke})
     endif()
     foreach(relative_source IN LISTS required_overlay_sources)
         if(NOT EXISTS "${wamr_overlay}/${relative_source}")
@@ -106,6 +109,10 @@ function(pxsys_configure_wamr_esp_idf wamr_component)
         pxsys_replace_wamr_source(${wamr_component}
             "${wamr_root}/${relative_xtensa_reloc}"
             "${wamr_overlay}/${relative_xtensa_reloc}")
+    elseif(CONFIG_IDF_TARGET_ARCH_RISCV)
+        pxsys_replace_wamr_source(${wamr_component}
+            "${wamr_root}/${relative_riscv_invoke}"
+            "${wamr_overlay}/${relative_riscv_invoke}")
     endif()
     pxsys_replace_wamr_source(${wamr_component}
         "${wamr_root}/${relative_memmap_source}"

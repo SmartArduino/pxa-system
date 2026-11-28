@@ -84,6 +84,9 @@ typedef struct {
     /* Optional executor for the final Canvas swap. WOULD_BLOCK leaves the
      * current frame installed and lets the Guest retry its submission. */
     pxa_lvgl_ui_execute_fn execute_canvas;
+    /* The Canvas executor requests a compositor refresh after alpha updates.
+     * Repeated alpha Canvas draws can leave the base display clean. */
+    bool alpha_canvas_compositor_refresh;
 } pxa_lvgl_ui_config_t;
 
 typedef struct pxa_lvgl_ui pxa_lvgl_ui_t;

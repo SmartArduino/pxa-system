@@ -16,6 +16,7 @@
 #define PXA_SURFACE_PREMULTIPLIED_ALPHA 1u
 #define PXA_SURFACE_PREFER_DIRECT_SCANOUT 2u
 #define PXA_SURFACE_GUEST_MAPPED 4u
+#define PXA_SURFACE_HOST_PRODUCED 128u
 #define PXA_SURFACE_MAX_RECTS 8u
 #define PXA_SURFACE_IO_REGISTER_BUFFERS 0x100u
 #define PXA_SURFACE_IO_ACQUIRE 0x101u
@@ -83,7 +84,8 @@ static inline int pxa_surface_build_create(
         desc.height == 0 || desc.buffer_count < 2 ||
         (desc.format == PXA_SURFACE_RGB565 &&
          (desc.flags & ~(PXA_SURFACE_PREFER_DIRECT_SCANOUT |
-                         PXA_SURFACE_GUEST_MAPPED)) != 0) ||
+                         PXA_SURFACE_GUEST_MAPPED | PXA_SURFACE_HOST_PRODUCED)) != 0) ||
+        ((desc.flags & PXA_SURFACE_HOST_PRODUCED) && (desc.flags & PXA_SURFACE_GUEST_MAPPED)) ||
         (desc.format == PXA_SURFACE_ARGB8888_PREMULTIPLIED &&
          desc.flags != PXA_SURFACE_PREMULTIPLIED_ALPHA) ||
         (desc.format != PXA_SURFACE_RGB565 &&

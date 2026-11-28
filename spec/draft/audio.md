@@ -103,6 +103,33 @@ The C++ parser checks the source echo and closes a newly allocated Handle on
 malformed results or abandoned requests. Old Guests can keep using
 `open-session` and its unchanged 35-byte result.
 
+## Encoded producer on a PCM session (minor 17)
+
+A Host can expose a bounded, asynchronous decoder as a producer for an
+existing exact-format PCM session. Use the same playback permission, output
+format and graph commit as for PCM. After committing an empty session, use
+`CONFIGURE_ENCODED` (`0x10b`) with a little-endian `u16` codec ID and a zero
+`u16`. Codec 1 is AAC-LC with one complete ADTS frame per packet, matching
+the session's source rate and channels. An unavailable producer or codec
+returns `unsupported` so the Guest can use PCM on the same session.
+
+`WRITE_ENCODED` (`0x10c`) carries a little-endian `u16` packet count, a
+zero `u16`, then that many records containing `u64 pts_us`, `u16 bytes`,
+and the packet bytes. The maximums are eight records, 8191 bytes per packet,
+and 16384 bytes per write. Timestamps must be nondecreasing. The first PTS
+anchors the Guest timeline. The worker concatenates decoded source frames
+in submission order. A successful write copies the whole batch and returns
+its byte count. `would-block` consumes none of it. The session rejects raw
+PCM writes while the encoded producer is attached.
+
+`FINISH_ENCODED` (`0x10d`, empty payload) seals input and submits any partial
+final PCM block. `ENCODED_STATE` (`0x10e`, 4-byte output) sets bit 0 when all
+encoded input has been converted and submitted to the mixer. A decoder
+failure is returned as an I/O status. Use a fresh PCM state query after
+observing bit 0 to check that the mixer has consumed its queue. Flush
+detaches the encoded producer, and close retires the session. On either
+operation, in-flight decoder output cannot reach the cleared PCM queue.
+
 ## Current 16 kHz product profile
 
 ESP and desktop share an allocation-free PCM/tone mixer with three voices,

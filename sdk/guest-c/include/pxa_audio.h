@@ -26,6 +26,15 @@
 #define PXA_AUDIO_EFFECT_TRACK_COUNT 6u
 #define PXA_AUDIO_EFFECT_INDEPENDENT 255u
 #define PXA_AUDIO_IO_MIX_PCM 0x109u
+#define PXA_AUDIO_IO_CONFIGURE_ENCODED 0x10bu
+#define PXA_AUDIO_IO_WRITE_ENCODED 0x10cu
+#define PXA_AUDIO_IO_FINISH_ENCODED 0x10du
+#define PXA_AUDIO_IO_ENCODED_STATE 0x10eu
+#define PXA_AUDIO_ENCODED_AAC_ADTS 1u
+#define PXA_AUDIO_ENCODED_BATCH_MAX 8u
+#define PXA_AUDIO_ENCODED_BATCH_BYTES 16384u
+#define PXA_AUDIO_ENCODED_PACKET_BYTES 8191u
+#define PXA_AUDIO_ENCODED_DRAINED 1u
 #define PXA_AUDIO_PLAYBACK_EVENT 0x8001u
 #define PXA_AUDIO_PLAYBACK_READY 1u
 #define PXA_AUDIO_PLAYBACK_ENDED 2u
@@ -470,6 +479,30 @@ static inline int32_t pxa_audio_write_pcm(uint64_t session,
                                               uint8_t *pcm, uint32_t size) {
     if ((session >> 32) == 0 || (pcm == NULL && size != 0)) return -1;
     return pxa_io(session, PXA_AUDIO_IO_WRITE, pcm, size);
+}
+
+/* Audio 0.17. Optional compressed producer using an open PCM session. */
+static inline int32_t pxa_audio_configure_encoded(uint64_t session, uint16_t codec) {
+    uint8_t payload[4] = {0};
+    pxa_store_u16(payload, codec);
+    return pxa_io(session, PXA_AUDIO_IO_CONFIGURE_ENCODED, payload, sizeof(payload));
+}
+
+/* u16 count, u16 reserved, then repeated u64 pts_us, u16 bytes, payload. */
+static inline int32_t pxa_audio_write_encoded(uint64_t session, uint8_t *batch, uint32_t size) {
+    return pxa_io(session, PXA_AUDIO_IO_WRITE_ENCODED, batch, size);
+}
+
+static inline int32_t pxa_audio_finish_encoded(uint64_t session) {
+    return pxa_io(session, PXA_AUDIO_IO_FINISH_ENCODED, NULL, 0);
+}
+
+static inline int32_t pxa_audio_encoded_state(uint64_t session, uint32_t *flags) {
+    uint8_t payload[4] = {0};
+    if (!flags) return PXA_STATUS_INVALID_ARGUMENT;
+    const int32_t status = pxa_io(session, PXA_AUDIO_IO_ENCODED_STATE, payload, sizeof(payload));
+    if (!status) *flags = pxa_load_u32(payload);
+    return status;
 }
 
 static inline int32_t pxa_audio_play_tone(

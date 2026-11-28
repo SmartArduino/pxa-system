@@ -65,6 +65,8 @@ uint32_t pxa_http_ring_readable(const pxa_http_ring_t *ring);
 uint32_t pxa_http_ring_writable(const pxa_http_ring_t *ring);
 size_t pxa_http_ring_peek(pxa_http_ring_t *ring, uint8_t **data, int writing);
 void pxa_http_ring_advance(pxa_http_ring_t *ring, size_t count, int writing);
+/* Read or write the bytes currently available in a power-of-two stream ring. */
+size_t pxa_http_ring_transfer(pxa_http_ring_t *ring, uint8_t *data, size_t size, int writing);
 uint32_t pxa_http_stream_state(const pxa_http_stream_t *stream);
 void pxa_http_stream_limit(pxa_http_stream_t *stream, uint32_t reason);
 int pxa_http_stream_header(pxa_http_stream_t *stream, const uint8_t *name,

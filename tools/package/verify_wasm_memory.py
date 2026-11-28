@@ -58,7 +58,7 @@ def defined_memory_limits(data: bytes) -> tuple[int, int | None]:
     raise WasmMemoryError("WebAssembly module has no defined memory")
 
 
-def verify_maximum(path: Path, maximum_bytes: int) -> tuple[int, int]:
+def verify_maximum(path: Path, maximum_bytes: int, initial_bytes: int = 0) -> tuple[int, int]:
     if (maximum_bytes < WASM_PAGE_BYTES or
             maximum_bytes % WASM_PAGE_BYTES != 0):
         raise WasmMemoryError("maximum bytes must be a WebAssembly page multiple")
@@ -69,6 +69,9 @@ def verify_maximum(path: Path, maximum_bytes: int) -> tuple[int, int]:
     if maximum != expected_pages:
         raise WasmMemoryError(
             f"WebAssembly memory maximum is {maximum} pages, expected {expected_pages}")
+    if initial_bytes and minimum * WASM_PAGE_BYTES != initial_bytes:
+        raise WasmMemoryError(
+            f"WebAssembly memory minimum is {minimum} pages, expected {initial_bytes} bytes")
     if minimum > maximum:
         raise WasmMemoryError("WebAssembly memory minimum exceeds maximum")
     return minimum, maximum
@@ -78,9 +81,10 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("wasm", type=Path)
     parser.add_argument("--maximum-bytes", type=int, required=True)
+    parser.add_argument("--initial-bytes", type=int, default=0)
     args = parser.parse_args()
     try:
-        minimum, maximum = verify_maximum(args.wasm, args.maximum_bytes)
+        minimum, maximum = verify_maximum(args.wasm, args.maximum_bytes, args.initial_bytes)
     except (OSError, WasmMemoryError) as error:
         parser.error(str(error))
     print(f"Verified bounded linear memory: min={minimum} max={maximum} pages")

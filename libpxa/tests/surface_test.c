@@ -527,6 +527,7 @@ int main(void) {
            PXA_STATUS_OK);
     assert(pxa_component_finish_start(runtime, v1_component, PXA_STATUS_OK) ==
            PXA_STATUS_OK);
+    create_mapped[6] = 2;
     size = message(packet, sizeof(packet), PXA_SURFACE_CREATE, 21,
                    create_mapped, sizeof(create_mapped));
     assert(dispatch(runtime, v1_component, packet, size) == PXA_STATUS_OK);
@@ -538,7 +539,7 @@ int main(void) {
     assert(v1_handle > UINT32_MAX &&
            pxa_read_u32(event.payload.data + 12) == 8 &&
            pxa_read_u32(event.payload.data + 16) == 32 &&
-           event.payload.data[20] == 3);
+           event.payload.data[20] == 2);
 
     {
         uint8_t short_query[4];
@@ -564,8 +565,7 @@ int main(void) {
     assert(pxa_component_begin_event(runtime, v1_component) == PXA_STATUS_OK);
     assert(pxa_runtime_io64(runtime, v1_component, v1_handle,
                             PXA_SURFACE_IO_REGISTER_BUFFERS,
-                            mapped_pixels, sizeof(mapped_pixels)) ==
-           (int32_t)sizeof(mapped_pixels));
+                            mapped_pixels, 64) == 64);
     assert(pxa_component_finish_event(runtime, v1_component, 1) ==
            PXA_STATUS_OK);
     for (uint8_t index = 0; index < 2; ++index) {
@@ -586,7 +586,29 @@ int main(void) {
         assert(pxa_component_finish_event(runtime, v1_component, 1) ==
                PXA_STATUS_OK);
     }
-    assert(pxa_surface_service_flush_releases(surface) == 1);
+    /* A full mailbox must retain the old frame and keep its buffer busy. */
+    for (unsigned i = 0; i < limits.mailbox_capacity; ++i)
+        assert(pxa_event_post_message(runtime, v1_component, PXA_SURFACE_SERVICE_ID,
+                                      PXA_SURFACE_QUERY_STATE, 0, (pxa_bytes_t){0},
+                                      1, 0) == PXA_STATUS_OK);
+    assert(pxa_component_begin_event(runtime, v1_component) == PXA_STATUS_OK);
+    assert(pxa_runtime_io64(runtime, v1_component, v1_handle, PXA_SURFACE_IO_ACQUIRE,
+                            acquire_record, sizeof(acquire_record)) == PXA_STATUS_WOULD_BLOCK);
+    assert(pxa_component_finish_event(runtime, v1_component, 1) == PXA_STATUS_OK);
+    assert(backend.has_release && backend.state.free_buffers == 0);
+    for (unsigned i = 0; i < limits.mailbox_capacity; ++i) {
+        completion(runtime, v1_component, event_bytes, sizeof(event_bytes), &event);
+        assert(event.opcode == PXA_SURFACE_QUERY_STATE);
+    }
+    /* Both buffers are occupied until ACQUIRE publishes the pending release.
+     * The previous frame's event must still be delivered exactly once. */
+    assert(pxa_component_begin_event(runtime, v1_component) == PXA_STATUS_OK);
+    assert(pxa_runtime_io64(runtime, v1_component, v1_handle,
+                            PXA_SURFACE_IO_ACQUIRE, acquire_record,
+                            sizeof(acquire_record)) == (int32_t)sizeof(acquire_record));
+    assert(acquire_record[0] == 0);
+    assert(pxa_component_finish_event(runtime, v1_component, 1) == PXA_STATUS_OK);
+    assert(pxa_surface_service_flush_releases(surface) == 0);
     completion(runtime, v1_component, event_bytes, sizeof(event_bytes),
                &event);
     assert(event.opcode == PXA_SURFACE_RELEASED &&

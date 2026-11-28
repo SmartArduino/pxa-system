@@ -1,0 +1,40 @@
+diff --git a/core/iwasm/common/arch/invokeNative_riscv.S b/core/iwasm/common/arch/invokeNative_riscv.S
+--- a/core/iwasm/common/arch/invokeNative_riscv.S
++++ b/core/iwasm/common/arch/invokeNative_riscv.S
+@@ -71,8 +71,8 @@
+  *    |- caller saved
+  */
+ 
+-        /* reserve space on stack to save return address and frame pointer */
+-        addi             sp, sp, - 2 * RV_REG_SIZE
++        /* Keep sp 16-byte aligned even when all arguments fit in registers. */
++        addi             sp, sp, -16
+         RV_OP_STOREREG   fp, 0 * RV_REG_SIZE(sp)    /* save frame pointer */
+         RV_OP_STOREREG   ra, 1 * RV_REG_SIZE(sp)    /* save return address */
+ 
+@@ -114,14 +114,11 @@
+            x0 always holds 0 */
+         beq              t2, x0, call_func
+ 
+-        /* reserve enough stack space for function arguments */
+-        sll              t3, t2, RV_REG_SHIFT       /* shift left 3 bits. t3 = n_stacks * 8 */
++        /* Round the spill area up before changing sp to preserve alignment. */
++        slli             t3, t2, RV_REG_SHIFT
++        addi             t3, t3, 15
++        andi             t3, t3, -16
+         sub              sp, sp, t3
+-
+-        /* make 16-byte aligned */
+-        li               t3, 15
+-        not              t3, t3
+-        and              sp, sp, t3
+ 
+         /* save sp in t4 register */
+         mv               t4, sp
+@@ -144,5 +141,5 @@
+         mv               sp, fp                     /* restore sp saved in fp before function call */
+         RV_OP_LOADREG    fp, 0 * RV_REG_SIZE(sp)    /* load previous frame pointer to fp register */
+         RV_OP_LOADREG    ra, 1 * RV_REG_SIZE(sp)    /* load previous return address to ra register */
+-        addi             sp, sp, 2 * RV_REG_SIZE    /* pop frame, restore sp */
++        addi             sp, sp, 16                 /* pop frame, restore sp */
+         jr               ra

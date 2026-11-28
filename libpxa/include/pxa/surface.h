@@ -12,7 +12,7 @@ extern "C" {
 
 #define PXA_SURFACE_SERVICE_ID UINT16_C(16)
 #define PXA_SURFACE_SERVICE_MAJOR UINT16_C(0)
-#define PXA_SURFACE_SERVICE_MINOR UINT16_C(2)
+#define PXA_SURFACE_SERVICE_MINOR UINT16_C(3)
 #define PXA_SURFACE_SERVICE_PATCH UINT16_C(0)
 
 #define PXA_SURFACE_CREATE UINT16_C(1)
@@ -29,9 +29,10 @@ extern "C" {
  * compositor. The Host may still compose any frame when trusted UI is active. */
 #define PXA_SURFACE_FLAG_PREFER_DIRECT_SCANOUT UINT8_C(2)
 #define PXA_SURFACE_FLAG_GUEST_MAPPED UINT8_C(4)
+#define PXA_SURFACE_FLAG_HOST_PRODUCED UINT8_C(128)
 #define PXA_SURFACE_FLAG_KNOWN_MASK                                      \
     (PXA_SURFACE_FLAG_PREMULTIPLIED_ALPHA |                             \
-     PXA_SURFACE_FLAG_PREFER_DIRECT_SCANOUT | PXA_SURFACE_FLAG_GUEST_MAPPED)
+     PXA_SURFACE_FLAG_PREFER_DIRECT_SCANOUT | PXA_SURFACE_FLAG_GUEST_MAPPED | PXA_SURFACE_FLAG_HOST_PRODUCED)
 #define PXA_SURFACE_MAX_DAMAGE_RECTS UINT8_C(8)
 #define PXA_SURFACE_MAX_OPAQUE_UI_REGIONS UINT8_C(8)
 #define PXA_SURFACE_STATE_FLAG_SUPPORTS_OPAQUE_UI_REGIONS UINT32_C(1)
@@ -142,6 +143,26 @@ typedef pxa_status_t (*pxa_surface_query_fn)(
 typedef void (*pxa_surface_close_fn)(void *context,
                                       uint64_t provider_surface);
 
+/* Fill one reserved Host buffer synchronously on the Runtime owner thread.
+ * The address is valid only during the callback. A NULL fill discards an
+ * unpublished buffer, including on reset and producer close. */
+typedef void (*pxa_surface_fill_fn)(void *context, uint8_t *pixels,
+                                    uint32_t stride, uint8_t buffer_index);
+/* A synchronous producer replaces the whole RGB565 region and expects a
+ * black exterior. The optional status points at the inner fill's result,
+ * read only after it returns. Other backends can invoke this as a plain
+ * fill. The descriptor and its source are borrowed during stage only. */
+typedef struct {
+    pxa_surface_fill_fn fill;
+    void *source;
+    pxa_surface_damage_rect_t region;
+    const pxa_status_t *status;
+} pxa_surface_region_fill_t;
+void pxa_surface_fill_region(void *descriptor, uint8_t *pixels,
+                             uint32_t stride, uint8_t index);
+typedef pxa_status_t (*pxa_surface_stage_fn)(void *context, uint64_t surface,
+                                            pxa_surface_fill_fn fill, void *source);
+
 typedef struct {
     uint32_t struct_size;
     void *context;
@@ -157,6 +178,9 @@ typedef struct {
     pxa_surface_present_buffer_fn present_buffer;
     pxa_surface_peek_release_fn peek_release;
     pxa_surface_consume_release_fn consume_release;
+    pxa_surface_stage_fn stage;
+    /* Keep both the pending and the staged frame intact on WOULD_BLOCK. */
+    pxa_surface_queue_fn queue_ordered;
 } pxa_surface_backend_t;
 
 typedef struct {
@@ -173,6 +197,19 @@ typedef struct {
 } pxa_surface_config_t;
 
 typedef struct pxa_surface_service pxa_surface_service_t;
+
+/* Owner-thread native producer operations. Resolve both ownership and handle
+ * generation on each access. A producer handle identifies its exclusive binding. */
+pxa_status_t pxa_surface_bind_producer(pxa_runtime_t *, pxa_component_t,
+    pxa_handle64_t surface, pxa_handle64_t producer, pxa_surface_desc_t *desc);
+pxa_status_t pxa_surface_stage_producer(pxa_runtime_t *, pxa_component_t,
+    pxa_handle64_t surface, pxa_handle64_t producer, pxa_surface_fill_fn, void *source);
+pxa_status_t pxa_surface_present_producer(pxa_runtime_t *, pxa_component_t,
+    pxa_handle64_t surface, pxa_handle64_t producer, uint64_t frame_id);
+pxa_status_t pxa_surface_present_producer_ordered(pxa_runtime_t *, pxa_component_t,
+    pxa_handle64_t surface, pxa_handle64_t producer, uint64_t frame_id);
+void pxa_surface_unbind_producer(pxa_runtime_t *, pxa_component_t,
+    pxa_handle64_t surface, pxa_handle64_t producer);
 
 size_t pxa_surface_service_workspace_size(
     const pxa_surface_config_t *config);

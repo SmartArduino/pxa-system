@@ -1,11 +1,11 @@
 {
-  "schema": "pxa-audio-spec-0.16",
+  "schema": "pxa-audio-spec-0.17",
   "status": "draft",
   "service": {
     "name": "audio",
     "id": 10,
     "major": 0,
-    "minor": 16,
+    "minor": 17,
     "patch": 0
   },
   "opcodes": [
@@ -144,6 +144,34 @@
       "since": "0.12",
       "payload": "target:u32|frames:u32|voices:u32|ticks-per-sample:u32|count:u16|reserved:u16",
       "result": "payload-size-or-status"
+    },
+    {
+      "name": "configure-encoded",
+      "id": 267,
+      "since": "0.17",
+      "payload": "codec:u16=1 (AAC-LC ADTS)|reserved:u16=0",
+      "result": "status"
+    },
+    {
+      "name": "write-encoded",
+      "id": 268,
+      "since": "0.17",
+      "payload": "count:u16|reserved:u16=0|{pts_us:u64|packet-size:u16|packet-bytes}*",
+      "result": "payload-size-or-status, accepted atomically"
+    },
+    {
+      "name": "finish-encoded",
+      "id": 269,
+      "since": "0.17",
+      "payload": "empty",
+      "result": "status"
+    },
+    {
+      "name": "encoded-state",
+      "id": 270,
+      "since": "0.17",
+      "payload": "4-byte output",
+      "result": "status, output flags:u32 (bit 0: all encoded input and final PCM submitted)"
     }
   ],
   "record_tags": [
@@ -277,7 +305,7 @@
     "min_frame_ms": 5,
     "max_frame_ms": 120
   },
-  "protocol_version": "0.16.0",
+  "protocol_version": "0.17.0",
   "playback_event": {
     "id": 32769,
     "since": "0.7",
@@ -323,7 +351,7 @@
     "queue_frames": "default: 1..floor(source_rate * 120 / 1000); optional buffered mode since 0.16: 1..floor(source_rate * 480 / 1000)",
     "sink_format": "reported physical route; stereo source can be mixed to a mono speaker by the Host",
     "state_counters": "source sample frames, independent of channels; accepted means renderer consumption unless flags specify sink-submitted",
-    "operations": "WRITE, MIX_PCM (since 0.11), PSG_RENDER (since 0.12), commit-graph, query-state, flush and close; other resource I/O returns UNSUPPORTED",
+    "operations": "WRITE, MIX_PCM (since 0.11), PSG_RENDER (since 0.12), optional encoded producer (since 0.17), commit-graph, query-state, flush and close; other resource I/O returns UNSUPPORTED",
     "permission": "audio.playback media; authority, quotas and close rules match open-session",
     "reserved": "OPEN_PCM byte 13 bit 0 selects optional buffered mode since 0.16; all other flag bits and bytes 14..15 must be zero",
     "buffered": "Audio 0.16: OPEN_PCM byte 13 bit 0 requests optional buffered playback; other bits and bytes 14..15 must be zero. UNSUPPORTED when the route cannot buffer. Queue is bounded to 480 ms in source frames; default route remains bounded to 120 ms. Flush clears queued audio and resets startup buffering."

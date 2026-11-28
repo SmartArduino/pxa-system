@@ -379,7 +379,7 @@ static pxa_status_t desktop_net_start(void *context,
     pthread_t thread;
     size_t index;
     if (net == NULL || request == NULL || operation == NULL ||
-        request->struct_size < sizeof(*request) || request->url.data == NULL ||
+        request->struct_size < PXA_NET_REQUEST_BASE_BYTES || request->url.data == NULL ||
         request->url.size == 0 ||
         request->url.size >= DESKTOP_NET_MAX_URL_BYTES ||
         request->method < PXA_NET_METHOD_GET ||

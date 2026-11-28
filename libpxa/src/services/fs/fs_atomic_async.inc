@@ -117,7 +117,7 @@ static int fs_atomic_request_alive(fs_atomic_job_t *j) {
 }
 static void fs_atomic_poll(pxa_fs_service_t *s) {
     struct fs_atomic_state *a=s->atomic;
-    if(!a || a->stopping)return;
+    if(!s->atomic_reserved || !a || a->stopping)return;
     for(unsigned i=0;i<a->capacity;++i) {
         fs_atomic_job_t *j=&a->jobs[i];
         if(!j->used)continue;

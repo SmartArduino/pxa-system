@@ -591,44 +591,62 @@ pxa_status_t pxa_ui_queue_event(pxa_ui_service_t *service,
         parts, 2, reliable, key);
 }
 
+static uint64_t supported_events(const pxa_ui_service_t *service) {
+    uint64_t mask = (UINT64_C(1) << PXA_UI_EVENT_CONTROLLER_STATE) - 1u;
+    if (!(service->config.features & PXA_UI_FEATURE_CONTROLLER_INPUT))
+        mask &= ~PXA_UI_EVENT_MASK_CONTROLLER_STATE;
+    return mask;
+}
+
+static uint64_t event_bit(uint16_t kind) {
+    return kind >= PXA_UI_EVENT_ACTION && kind <= PXA_UI_EVENT_CONTROLLER_STATE
+               ? UINT64_C(1) << (kind - 1u) : 0;
+}
+
+uint64_t pxa_ui_subscribed_events(const pxa_ui_service_t *service,
+                                  pxa_component_t component,
+                                  uint32_t surface, uint32_t node) {
+    if (!service_valid(service)) return 0;
+    const pxa_ui_entry_t *entry = pxa_ui_find_entry_const(service, component);
+    const pxa_ui_node_t *target = pxa_ui_registry_find_const(entry, surface, node);
+    return target ? target->event_mask & supported_events(service) : 0;
+}
+
 bool pxa_ui_accepts_event(pxa_ui_service_t *service,
                           pxa_component_t component,
                           uint32_t surface, uint32_t node,
                           uint16_t kind) {
-    const pxa_ui_entry_t *entry;
-    const pxa_ui_node_t *target;
-    if (!service_valid(service) || kind < PXA_UI_EVENT_ACTION ||
-        kind > PXA_UI_EVENT_CONTROLLER_STATE) {
-        return false;
-    }
-    if (kind == PXA_UI_EVENT_CONTROLLER_STATE &&
-        (service->config.features & PXA_UI_FEATURE_CONTROLLER_INPUT) == 0)
-        return false;
-    entry = pxa_ui_find_entry_const(service, component);
-    target = pxa_ui_registry_find_const(entry, surface, node);
-    return target != NULL &&
-           (target->event_mask & (UINT64_C(1) << (kind - 1u))) != 0;
+    const uint64_t bit = event_bit(kind);
+    return bit && (pxa_ui_subscribed_events(service, component, surface, node) & bit);
 }
 
 uint32_t pxa_ui_event_target_generation(pxa_ui_service_t *service,
     pxa_component_t component, uint32_t surface, uint32_t node, uint16_t kind) {
-    if (!pxa_ui_accepts_event(service, component, surface, node, kind)) return 0;
-    const pxa_ui_surface_t *target = pxa_ui_find_surface_const(
-        pxa_ui_find_entry_const(service, component), surface);
-    return target ? target->generation : 0;
+    if (!service_valid(service)) return 0;
+    const uint64_t bit = event_bit(kind) & supported_events(service);
+    if (!bit) return 0;
+    const pxa_ui_entry_t *entry = pxa_ui_find_entry_const(service, component);
+    const pxa_ui_node_t *target = pxa_ui_registry_find_const(entry, surface, node);
+    if (!target || !(target->event_mask & bit)) return 0;
+    const pxa_ui_surface_t *state = pxa_ui_find_surface_const(entry, surface);
+    return state ? state->generation : 0;
 }
 
 uint32_t pxa_ui_event_root(pxa_ui_service_t *service,
-    pxa_component_t component,uint32_t surface,uint16_t kind) {
-    if(!service_valid(service)||kind<PXA_UI_EVENT_ACTION||kind>PXA_UI_EVENT_CONTROLLER_STATE)return 0;
-    const pxa_ui_entry_t *entry=pxa_ui_find_entry_const(service,component);
-    if(!entry)return 0;
-    uint32_t result=0;
-    for(const pxa_ui_node_chunk_t *chunk=entry->chunks;chunk;chunk=chunk->next)
-        for(size_t i=0;i<PXA_UI_NODE_CHUNK_COUNT;i++) {
-            const pxa_ui_node_t *n=&chunk->nodes[i];
-            if(n->occupied&&!n->parent&&n->surface==surface&&(!result||n->id<result)&&
-                pxa_ui_accepts_event(service,component,surface,n->id,kind))result=n->id;
+    pxa_component_t component, uint32_t surface, uint16_t kind) {
+    if (!service_valid(service)) return 0;
+    const uint64_t bit = event_bit(kind) & supported_events(service);
+    if (!bit) return 0;
+    const pxa_ui_entry_t *entry = pxa_ui_find_entry_const(service, component);
+    if (!entry) return 0;
+    uint32_t result = 0;
+    for (const pxa_ui_node_chunk_t *chunk = entry->chunks; chunk; chunk = chunk->next) {
+        for (size_t i = 0; i < PXA_UI_NODE_CHUNK_COUNT; ++i) {
+            const pxa_ui_node_t *node = &chunk->nodes[i];
+            if (node->occupied && !node->parent && node->surface == surface &&
+                (node->event_mask & bit) && (!result || node->id < result))
+                result = node->id;
         }
+    }
     return result;
 }

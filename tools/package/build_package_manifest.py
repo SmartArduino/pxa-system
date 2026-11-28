@@ -12,6 +12,7 @@ from pathlib import Path
 TOOL_DIR = Path(__file__).resolve().parent
 if str(TOOL_DIR) not in sys.path:
     sys.path.insert(0, str(TOOL_DIR))
+from linear_memory import memory_for_targets, targets_for_artifacts
 from publisher_profile import PROFILE_PATH, encode_publisher, PublisherProfileError
 from protocol_metadata import (  # noqa: E402
     DECLARABLE_SERVICE_IDS,
@@ -390,6 +391,11 @@ def parse_sdk(metadata, name, default):
 
 
 def main(argv):
+    memory_targets = None
+    if len(argv) >= 2 and argv[-2] == "--memory-targets":
+        memory_targets = argv[-1].split(",")
+        require(all(memory_targets), "memory targets must be a comma-separated list")
+        argv = argv[:-2]
     aot_only = False
     forced_mode = None
     if len(argv) == 6 and argv[-1] == "--aot-only":
@@ -401,7 +407,7 @@ def main(argv):
         argv = argv[:-2]
     require(len(argv) == 5,
             "usage: build_package_manifest.py <package.json> <package-dir> "
-            "<private-key.pem> <target> <engine-abi> [--aot-only]")
+            "<private-key.pem> <target> <engine-abi> [--artifact-mode aot|wasm] [--memory-targets targets]")
     metadata_path, package_dir_arg, private_key_path, target, engine_abi = argv
     package_dir = Path(package_dir_arg).resolve()
     package_source_dir = Path(metadata_path).resolve().parent
@@ -564,18 +570,6 @@ def main(argv):
     require(build_system in ("direct", "cmake"),
             "build system must be direct or cmake")
     linear_memory = build.get("linear_memory")
-    pinned_memory = False
-    if linear_memory is not None:
-        require(isinstance(linear_memory, dict) and
-                set(linear_memory) == {"maximum_bytes", "pinned"} and
-                isinstance(linear_memory["maximum_bytes"], int) and
-                not isinstance(linear_memory["maximum_bytes"], bool) and
-                65536 <= linear_memory["maximum_bytes"] <= 4294967296 and
-                linear_memory["maximum_bytes"] % 65536 == 0 and
-                isinstance(linear_memory["pinned"], bool),
-                "build linear_memory must declare a page-aligned maximum_bytes and boolean pinned")
-        pinned_memory = linear_memory["pinned"]
-
     declared_services = parse_services(metadata.get("services", []), "services")
     raw_components = metadata.get("components", [] if data_only else [{"id": "main", "kind": "ui"}])
     require(isinstance(raw_components, list) and
@@ -602,7 +596,7 @@ def main(argv):
             artifact_mode = "wasm"
         elif (aot_only or forced_mode == "aot") and artifact_mode != "wasm":
             artifact_mode = "aot"
-        flags = COMPONENT_FLAG_PINNED_MEMORY if pinned_memory else 0
+        flags = 0
         execution_model = item.get("execution_model", "callback")
         require(execution_model in ("callback", "main-loop"),
                 "component execution_model must be callback or main-loop")
@@ -623,6 +617,18 @@ def main(argv):
             "IPC endpoint references an unknown component")
 
     endpoint_components = {component_id for _, component_id, _ in ipc_entries}
+    artifact_sets = {cid: component_artifacts(file_paths, cid, target, mode)
+                     for cid, _, _, _, _, mode in components}
+    binary_targets = {platform for platforms, _ in artifact_sets.values() for platform in platforms}
+    # Wasm shipped alongside AOT, including Wasm-only companion components, shares
+    # the bundle policy. Only an explicitly requested generic target adds its defaults.
+    selected = targets_for_artifacts(binary_targets)
+    if binary_targets and memory_targets:
+        selected.extend(memory_targets)
+    try:
+        policy = memory_for_targets(linear_memory, selected)
+    except ValueError as error:
+        raise PackageError(str(error)) from error
     for component_id, kind, flags, service_requirements, wasi_features, artifact_mode in components:
         automatic_services = []
         if kind == COMPONENT_KINDS["ui"] and min_sdk[0] == 0:
@@ -644,8 +650,9 @@ def main(argv):
             services_by_id[service_id] = (
                 service_id, (major, minor), (major, 0xFFFF), wasi_features)
         services = [services_by_id[service_id] for service_id in sorted(services_by_id)]
-        aot_targets, include_wasm = component_artifacts(
-            file_paths, component_id, target, artifact_mode)
+        aot_targets, include_wasm = artifact_sets[component_id]
+        if policy.pinned:
+            flags |= COMPONENT_FLAG_PINNED_MEMORY
         top.append((16, component(component_id, kind, flags, aot_targets, engine_abi,
                                   services, include_wasm=include_wasm)))
 

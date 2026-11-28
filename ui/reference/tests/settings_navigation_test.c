@@ -87,13 +87,22 @@ static void device_info(void* context,
     for (size_t i = 0; i < PXSYS_REFERENCE_DEVICE_FIELD_COUNT; ++i)
         snprintf(values[i], PXSYS_REFERENCE_DEVICE_VALUE_MAX, "Navigation test");
 }
+static bool wifi_pxadb_enabled;
 static bool performance_get(void* context, pxsys_reference_performance_option_t option) {
     (void)context;
-    return option == PXSYS_REFERENCE_PXADB;
+    return option == PXSYS_REFERENCE_PXADB ||
+           (option == PXSYS_REFERENCE_PXADB_LAN && wifi_pxadb_enabled);
 }
 static bool performance_set(void* context, pxsys_reference_performance_option_t option,
                             bool enabled) {
-    (void)context; (void)option; (void)enabled;
+    (void)context;
+    if (option == PXSYS_REFERENCE_PXADB_LAN) wifi_pxadb_enabled = enabled;
+    return true;
+}
+static bool wifi_pxadb_endpoint(char* address, size_t address_size, char* pairing, size_t pairing_size) {
+    if (!wifi_pxadb_enabled) return false;
+    snprintf(address, address_size, "192.0.2.10:47012");
+    snprintf(pairing, pairing_size, "012345");
     return true;
 }
 static void methods(void* context, pxsys_reference_input_method_emit_fn emit, void* output) {
@@ -148,6 +157,18 @@ static void click(lv_obj_t* object) {
     assert(object != NULL);
     lv_obj_send_event(object, LV_EVENT_CLICKED, NULL);
 }
+static lv_obj_t* performance_toggle(lv_obj_t* root, const performance_control_t* control) {
+    for (uint32_t i = 0; i < lv_obj_get_event_count(root); ++i) {
+        lv_event_dsc_t* event = lv_obj_get_event_dsc(root, i);
+        if (lv_event_dsc_get_cb(event) == performance_switch_changed &&
+            lv_event_dsc_get_user_data(event) == control) return root;
+    }
+    for (uint32_t i = 0; i < lv_obj_get_child_count(root); ++i) {
+        lv_obj_t* found = performance_toggle(lv_obj_get_child(root, i), control);
+        if (found != NULL) return found;
+    }
+    return NULL;
+}
 static lv_obj_t* header_back(pxsys_reference_lvgl_t* ui) {
     lv_obj_t* button = control(navigation_page_root(ui), back_clicked, NULL);
     assert(button != NULL && lv_obj_is_clickable(button));
@@ -200,6 +221,7 @@ static void create(fixture_t* f, lv_display_t* display, bool animations, lv_inde
     config.device_info = device_info; config.input_method_list = methods;
     config.performance_get = performance_get;
     config.performance_set = performance_set;
+    config.pxadb_lan_endpoint = wifi_pxadb_endpoint;
     config.wifi_scan = wifi_scan; config.wifi_connect = wifi_connect;
     config.wifi_current = wifi_current;
     assert(pxsys_reference_lvgl_create(&config, &f->ui) == PXSYS_STATUS_OK);
@@ -513,6 +535,19 @@ static void check_developer_options(fixture_t* f) {
         assert(version == NULL);
     }
     assert(has_label(ui->content, translated(ui, "settings.pxadb", "PXADB")));
+    assert(has_label(ui->content, translated(ui, "settings.pxadb.lan", "Wi-Fi PXADB")));
+    assert(!has_label(ui->content, "192.0.2.10:47012"));
+    lv_obj_t* lan = performance_toggle(ui->content, &ui->performance_controls[3]);
+    assert(lan != NULL);
+    lv_obj_add_state(lan, LV_STATE_CHECKED);
+    lv_obj_send_event(lan, LV_EVENT_VALUE_CHANGED, NULL);
+    assert(has_label(ui->content, "192.0.2.10:47012"));
+    assert(has_label(ui->content, "012345"));
+    lan = performance_toggle(ui->content, &ui->performance_controls[3]);
+    assert(lan != NULL);
+    lv_obj_remove_state(lan, LV_STATE_CHECKED);
+    lv_obj_send_event(lan, LV_EVENT_VALUE_CHANGED, NULL);
+    assert(!has_label(ui->content, "192.0.2.10:47012"));
     click(header_back(ui));
 }
 static void check_app_identity_display(fixture_t* f) {

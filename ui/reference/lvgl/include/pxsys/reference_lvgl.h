@@ -132,6 +132,7 @@ typedef enum {
     PXSYS_REFERENCE_PERFORMANCE_OVERLAY = 0,
     PXSYS_REFERENCE_PERFORMANCE_LOG,
     PXSYS_REFERENCE_PXADB,
+    PXSYS_REFERENCE_PXADB_LAN,
 } pxsys_reference_performance_option_t;
 
 typedef bool (*pxsys_reference_lvgl_performance_get_fn)(
@@ -449,6 +450,9 @@ typedef struct {
     /* Optional system-owned asynchronous installer. It owns confirmation and
      * completion; returning true accepts the request without doing file I/O. */
     bool (*file_install)(void *context, const char *path);
+    /* Optional local display of Wi-Fi debug pairing information. */
+    bool (*pxadb_lan_endpoint)(char *address, size_t address_size,
+                              char *pairing, size_t pairing_size);
 } pxsys_reference_lvgl_config_t;
 
 typedef struct pxsys_reference_lvgl pxsys_reference_lvgl_t;

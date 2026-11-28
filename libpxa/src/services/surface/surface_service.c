@@ -5,6 +5,7 @@
 #include "common/status_internal.h"
 
 #include <limits.h>
+#include <stdbool.h>
 #include <stdint.h>
 #include <string.h>
 
@@ -37,6 +38,7 @@ struct pxa_surface_resource {
     pxa_component_t component;
     pxa_handle64_t handle;
     uint8_t wire_profile;
+    pxa_handle64_t producer;
     uint64_t provider_surface;
     uint32_t stride_bytes;
     uint32_t frame_bytes;
@@ -46,14 +48,15 @@ struct pxa_surface_resource {
 };
 
 static int config_valid(const pxa_surface_config_t *config) {
-    return config != NULL && config->struct_size >= sizeof(*config) &&
+    return config != NULL && config->struct_size >= offsetof(pxa_surface_config_t, backend) +
+               offsetof(pxa_surface_backend_t, stage) &&
            config->max_surfaces != 0 &&
            config->max_surfaces_per_component != 0 &&
            config->max_surfaces_per_component <= config->max_surfaces &&
            config->max_width != 0 && config->max_height != 0 &&
            config->max_frame_bytes != 0 && config->min_buffer_count != 0 &&
            config->min_buffer_count <= config->max_buffer_count &&
-           config->backend.struct_size >= sizeof(config->backend) &&
+           config->backend.struct_size >= offsetof(pxa_surface_backend_t, stage) &&
            config->backend.create != NULL && config->backend.write != NULL &&
            config->backend.queue != NULL &&
            config->backend.configure != NULL &&
@@ -101,7 +104,14 @@ pxa_status_t pxa_surface_service_init(
     cursor += (size_t)config->max_surfaces * sizeof(service->surfaces[0]);
     if (cursor > end) return PXA_STATUS_INVALID_ARGUMENT;
     service->runtime = runtime;
-    service->backend = config->backend;
+    memcpy(&service->backend, &config->backend, offsetof(pxa_surface_backend_t, stage));
+    if (config->struct_size >= offsetof(pxa_surface_config_t, backend) +
+            offsetof(pxa_surface_backend_t, queue_ordered) &&
+        config->backend.struct_size >= offsetof(pxa_surface_backend_t, queue_ordered))
+        service->backend.stage = config->backend.stage;
+    if (config->struct_size >= sizeof(*config) &&
+        config->backend.struct_size >= sizeof(config->backend))
+        service->backend.queue_ordered = config->backend.queue_ordered;
     service->max_surfaces = config->max_surfaces;
     service->max_surfaces_per_component =
         config->max_surfaces_per_component;
@@ -172,6 +182,7 @@ static void release_surface(pxa_surface_resource_t *surface) {
         service->surfaces[surface->next].previous = surface->previous;
     surface->component = PXA_COMPONENT_INVALID;
     surface->handle = PXA_HANDLE64_INVALID;
+    surface->producer = 0;
     surface->wire_profile = 0;
     surface->provider_surface = 0;
     surface->stride_bytes = 0;
@@ -193,6 +204,9 @@ static uint8_t surface_bytes_per_pixel(
     const pxa_surface_desc_t *desc) {
     if ((desc->flags & ~PXA_SURFACE_FLAG_KNOWN_MASK) != 0)
         return 0;
+    if ((desc->flags & PXA_SURFACE_FLAG_HOST_PRODUCED) &&
+        (desc->format != PXA_SURFACE_FORMAT_RGB565 || (desc->flags & PXA_SURFACE_FLAG_GUEST_MAPPED)))
+        return 0;
     if (desc->format == PXA_SURFACE_FORMAT_RGB565 &&
         (desc->flags & PXA_SURFACE_FLAG_PREMULTIPLIED_ALPHA) == 0 &&
         (desc->flags & ~PXA_SURFACE_FLAG_KNOWN_MASK) == 0)
@@ -205,11 +219,41 @@ static uint8_t surface_bytes_per_pixel(
     return 0;
 }
 
+/* One posted event makes its buffer reusable. Keep the release pending if
+ * the component's mailbox cannot accept it yet. */
+static int32_t post_surface_release(pxa_surface_resource_t *surface) {
+    pxa_surface_service_t *service = surface->service;
+    pxa_surface_release_t release;
+    uint8_t payload[PXA_SURFACE_RELEASED_V1_PAYLOAD_BYTES] = {0};
+    const size_t offset = surface->wire_profile == 1 ? 8u : 4u;
+    pxa_status_t status = pxa_status_normalize(
+        service->backend.peek_release(
+            service->backend.context, surface->provider_surface,
+            &release));
+    if (status == PXA_STATUS_WOULD_BLOCK) return 0;
+    if (status != PXA_STATUS_OK) return status;
+    if (surface->wire_profile == 1)
+        pxa_write_u64(payload, surface->handle);
+    else
+        pxa_write_u32(payload, (pxa_handle_t)surface->handle);
+    payload[offset] = release.buffer_index;
+    pxa_write_u64(payload + offset + 4u, release.frame_id);
+    status = pxa_event_post_message(
+        service->runtime, surface->component,
+        PXA_SURFACE_SERVICE_ID, PXA_SURFACE_RELEASED, 0,
+        (pxa_bytes_t){payload, offset + 12u}, 1, 0);
+    if (status != PXA_STATUS_OK) return status;
+    service->backend.consume_release(
+        service->backend.context, surface->provider_surface);
+    return 1;
+}
+
 static int32_t surface_io(void *context, uint32_t operation, uint8_t *data,
                           size_t size) {
     pxa_surface_resource_t *surface = (pxa_surface_resource_t *)context;
     pxa_status_t status;
     if (!surface_valid(surface)) return PXA_STATUS_BAD_STATE;
+    if (surface->desc.flags & PXA_SURFACE_FLAG_HOST_PRODUCED) return PXA_STATUS_DENIED;
     if (data == NULL) return PXA_STATUS_INVALID_ARGUMENT;
     if (operation == PXA_IO_WRITE) {
         if (size != surface->frame_bytes ||
@@ -241,6 +285,15 @@ static int32_t surface_io(void *context, uint32_t operation, uint8_t *data,
             surface->service->backend.acquire_buffer(
                 surface->service->backend.context,
                 surface->provider_surface, data));
+        /* A display completion can arrive while the Guest is decoding in a
+         * long-running event. Publish the release before retrying acquisition. */
+        if (status == PXA_STATUS_WOULD_BLOCK &&
+            surface->service->backend.peek_release != NULL &&
+            surface->service->backend.consume_release != NULL &&
+            post_surface_release(surface) > 0) {
+            status = pxa_status_normalize(surface->service->backend.acquire_buffer(
+                surface->service->backend.context, surface->provider_surface, data));
+        }
         if (status == PXA_STATUS_OK) data[1] = data[2] = data[3] = 0;
     } else if (operation == PXA_SURFACE_IO_PRESENT) {
         uint64_t frame_id;
@@ -265,6 +318,76 @@ static int32_t surface_io(void *context, uint32_t operation, uint8_t *data,
 
 static const pxa_resource_ops_t k_surface_resource_ops = {
     sizeof(pxa_resource_ops_t), surface_io};
+
+static pxa_status_t producer_surface(pxa_runtime_t *runtime, pxa_component_t owner,
+    pxa_handle64_t handle, pxa_surface_resource_t **out) {
+    pxa_resource_t resource;
+    pxa_status_t status = pxa_handle_get64(runtime, owner, handle, PXA_RESOURCE_SURFACE, &resource);
+    if (status) return status;
+    if (resource.operations != &k_surface_resource_ops) return PXA_STATUS_UNSUPPORTED;
+    pxa_surface_resource_t *surface = resource.context;
+    if (!surface_valid(surface) || !(surface->desc.flags & PXA_SURFACE_FLAG_HOST_PRODUCED))
+        return PXA_STATUS_UNSUPPORTED;
+    *out = surface;
+    return PXA_STATUS_OK;
+}
+
+pxa_status_t pxa_surface_bind_producer(pxa_runtime_t *runtime, pxa_component_t owner,
+    pxa_handle64_t handle, pxa_handle64_t producer, pxa_surface_desc_t *desc) {
+    pxa_surface_resource_t *surface;
+    if (!producer || !desc) return PXA_STATUS_INVALID_ARGUMENT;
+    pxa_status_t status = producer_surface(runtime, owner, handle, &surface);
+    if (status) return status;
+    if (surface->producer && surface->producer != producer) return PXA_STATUS_BUSY;
+    *desc = surface->desc;
+    surface->producer = producer;
+    return PXA_STATUS_OK;
+}
+
+void pxa_surface_fill_region(void *descriptor, uint8_t *pixels, uint32_t stride, uint8_t index) {
+    const pxa_surface_region_fill_t *region = descriptor;
+    region->fill(region->source, pixels, stride, index);
+}
+
+pxa_status_t pxa_surface_stage_producer(pxa_runtime_t *runtime, pxa_component_t owner,
+    pxa_handle64_t handle, pxa_handle64_t producer, pxa_surface_fill_fn fill, void *source) {
+    pxa_surface_resource_t *surface;
+    pxa_status_t status = producer_surface(runtime, owner, handle, &surface);
+    if (status) return status;
+    if (!producer || surface->producer != producer) return PXA_STATUS_DENIED;
+    return pxa_status_normalize(surface->service->backend.stage(surface->service->backend.context,
+        surface->provider_surface, fill, source));
+}
+
+static pxa_status_t present_producer(pxa_runtime_t *runtime, pxa_component_t owner,
+    pxa_handle64_t handle, pxa_handle64_t producer, uint64_t frame_id, bool ordered) {
+    pxa_surface_resource_t *surface;
+    pxa_status_t status = producer_surface(runtime, owner, handle, &surface);
+    if (status) return status;
+    if (!producer || surface->producer != producer) return PXA_STATUS_DENIED;
+    if (!frame_id) return PXA_STATUS_INVALID_ARGUMENT;
+    pxa_surface_queue_fn queue = ordered ? surface->service->backend.queue_ordered : surface->service->backend.queue;
+    if (!queue) return PXA_STATUS_UNSUPPORTED;
+    return pxa_status_normalize(queue(surface->service->backend.context, surface->provider_surface, frame_id, NULL, 0));
+}
+pxa_status_t pxa_surface_present_producer(pxa_runtime_t *runtime, pxa_component_t owner,
+    pxa_handle64_t handle, pxa_handle64_t producer, uint64_t frame_id) {
+    return present_producer(runtime, owner, handle, producer, frame_id, false);
+}
+
+pxa_status_t pxa_surface_present_producer_ordered(pxa_runtime_t *runtime, pxa_component_t owner,
+    pxa_handle64_t handle, pxa_handle64_t producer, uint64_t frame_id) {
+    return present_producer(runtime, owner, handle, producer, frame_id, true);
+}
+
+void pxa_surface_unbind_producer(pxa_runtime_t *runtime, pxa_component_t owner,
+    pxa_handle64_t handle, pxa_handle64_t producer) {
+    pxa_surface_resource_t *surface;
+    if (!producer || producer_surface(runtime, owner, handle, &surface) || surface->producer != producer)
+        return;
+    surface->service->backend.stage(surface->service->backend.context, surface->provider_surface, NULL, NULL);
+    surface->producer = 0;
+}
 
 static void close_surface(void *context) {
     pxa_surface_resource_t *surface = (pxa_surface_resource_t *)context;
@@ -318,6 +441,8 @@ static pxa_status_t create_surface(pxa_surface_service_t *service,
     desc.format = pxa_read_u16(payload.data + 4);
     desc.buffer_count = payload.data[6];
     desc.flags = payload.data[7];
+    if ((desc.flags & PXA_SURFACE_FLAG_HOST_PRODUCED) && (!service->backend.stage || wire_profile != 1))
+        return PXA_STATUS_UNSUPPORTED;
     bytes_per_pixel = surface_bytes_per_pixel(&desc);
     if (desc.width == 0 || desc.width > service->max_width ||
         desc.height == 0 || desc.height > service->max_height ||
@@ -442,7 +567,7 @@ static pxa_status_t queue_frame(pxa_surface_service_t *service,
     if (resolve_surface(service, component, handle, wire_profile,
                         &surface) != PXA_STATUS_OK)
         return PXA_STATUS_NOT_FOUND;
-    if ((surface->desc.flags & PXA_SURFACE_FLAG_GUEST_MAPPED) != 0)
+    if (surface->desc.flags & (PXA_SURFACE_FLAG_GUEST_MAPPED | PXA_SURFACE_FLAG_HOST_PRODUCED))
         return PXA_STATUS_BAD_STATE;
     for (index = 0; index < count; ++index) {
         const uint8_t *record = message->payload.data + offset + 12u +
@@ -637,31 +762,9 @@ int32_t pxa_surface_service_flush_releases(pxa_surface_service_t *service) {
     for (cursor = service->active_head; cursor != PXA_SURFACE_SLOT_NONE;
          cursor = service->surfaces[cursor].next) {
         pxa_surface_resource_t *surface = &service->surfaces[cursor];
-        for (;;) {
-            pxa_surface_release_t release;
-            uint8_t payload[PXA_SURFACE_RELEASED_V1_PAYLOAD_BYTES] = {0};
-            const size_t offset = surface->wire_profile == 1 ? 8u : 4u;
-            pxa_status_t status = pxa_status_normalize(
-                service->backend.peek_release(
-                    service->backend.context, surface->provider_surface,
-                    &release));
-            if (status == PXA_STATUS_WOULD_BLOCK) break;
-            if (status != PXA_STATUS_OK) return status;
-            if (surface->wire_profile == 1)
-                pxa_write_u64(payload, surface->handle);
-            else
-                pxa_write_u32(payload, (pxa_handle_t)surface->handle);
-            payload[offset] = release.buffer_index;
-            pxa_write_u64(payload + offset + 4u, release.frame_id);
-            status = pxa_event_post_message(
-                service->runtime, surface->component,
-                PXA_SURFACE_SERVICE_ID, PXA_SURFACE_RELEASED, 0,
-                (pxa_bytes_t){payload, offset + 12u}, 1, 0);
-            if (status != PXA_STATUS_OK) return status;
-            service->backend.consume_release(
-                service->backend.context, surface->provider_surface);
-            ++posted;
-        }
+        int32_t result;
+        while ((result = post_surface_release(surface)) > 0) ++posted;
+        if (result < 0) return result;
     }
     return posted;
 }

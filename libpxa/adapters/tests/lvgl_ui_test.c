@@ -1233,6 +1233,11 @@ static void test_density_icon_fonts(void) {
     puts("UI symbols: DPI selection, 60 original glyphs byte-exact, navigation growth and zero heap allocation passed");
 }
 
+static void count_invalidated_area(lv_event_t *event) {
+    unsigned *count = lv_event_get_user_data(event);
+    ++*count;
+}
+
 int main(void) {
     pxa_runtime_limits_t runtime_limits;
     pxa_ui_config_t service_config;
@@ -1297,6 +1302,7 @@ int main(void) {
     adapter_config.release = test_release;
     adapter_config.execute = sync_execute;
     adapter_config.execute_canvas = canvas_execute;
+    adapter_config.alpha_canvas_compositor_refresh = true;
     adapter_config.execute_user_data = &allocator;
     adapter_config.resolve_asset = resolve_asset;
     adapter_config.acquire_image = acquire_image;
@@ -1610,7 +1616,16 @@ int main(void) {
     assert(alpha_plane.revision != 0);
     alpha_before = alpha_plane_hash(&alpha_plane, &alpha_visible);
     assert(alpha_visible != 0);
-    present_canvas(6, 0);
+    {
+        lv_display_t *display = lv_obj_get_display(canvas);
+        const uint32_t index = lv_display_get_event_count(display);
+        unsigned invalidations = 0;
+        assert(lv_display_add_event_cb(display, count_invalidated_area,
+                                       LV_EVENT_INVALIDATE_AREA, &invalidations));
+        present_canvas(6, 0);
+        assert(invalidations == 0 && lv_display_is_invalidation_enabled(display));
+        assert(lv_display_remove_event(display, index));
+    }
     assert(pxa_lvgl_ui_alpha_plane(adapter, &alpha_plane));
     assert(alpha_plane.revision > 1);
     assert(alpha_plane_hash(&alpha_plane, &alpha_visible) != alpha_before);

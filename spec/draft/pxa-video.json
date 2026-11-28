@@ -1,10 +1,10 @@
 {
-  "schema": "pxa-video-spec-0.3",
+  "schema": "pxa-video-spec-0.4",
   "service": {
     "name": "video",
     "id": 24,
     "major": 0,
-    "minor": 3,
+    "minor": 4,
     "patch": 0
   },
   "features": [],
@@ -29,6 +29,14 @@
       "id": 17
     }
   ],
+  "events": [
+    {
+      "name": "decode-ready",
+      "opcode": 32769,
+      "request_token": "zero",
+      "payload": "decoder:handle64"
+    }
+  ],
   "io": {
     "read": 1,
     "decode": 256,
@@ -39,6 +47,14 @@
     "audio-read": 274,
     "read-scaled": 259,
     "configure-scaled": 260,
-    "read-scaled-pixels": 261
+    "read-scaled-pixels": 261,
+    "queue-decode": 262,
+    "poll-decode": 263,
+    "bind-surface": 265,
+    "prepare-surface": 266,
+    "present-surface": 267,
+    "preferred-size": 268,
+    "prepare-and-queue": 269,
+    "present-surface-ordered": 270
   }
 }

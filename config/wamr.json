@@ -1,7 +1,7 @@
 {
   "repository": "https://github.com/lucinhu/wasm-micro-runtime.git",
-  "commit": "75c67faa96c18e3863f79cd84b7fbcbac9a63af7",
-  "version": "pxa-wamr-75c67faa",
+  "commit": "f7ecaaa6a72acb9a1d1dbb6d3c7bbfacf8c84edb",
+  "version": "pxa-wamr-f7ecaaa6",
   "engine_abi": "wamr-pxa-aot-v6-core-1",
   "llvm": {
     "repository": "https://github.com/espressif/llvm-project.git",

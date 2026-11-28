@@ -1,4 +1,4 @@
-# PXA Surface Service 0.2.0
+# PXA Surface Service 0.3.0
 
 Surface is the bulk-pixel path for emulators, video and other producers that
 already own complete frames. It is independent from the retained UI service.
@@ -8,7 +8,7 @@ the bounded control envelope.
 
 ## Service and resource
 
-The service ID is 16 and this version is 0.2.0. `PXA_SURFACE_CREATE`
+The service ID is 16 and this version is 0.3.0. `PXA_SURFACE_CREATE`
 returns a `PXA_RESOURCE_SURFACE` handle. The handle is both the Surface lifetime
 token and its byte-stream endpoint. Closing it removes the layer and eventually
 releases all buffers after an active presenter lease completes.
@@ -236,3 +236,13 @@ unchanged. The v1 `pxa_io` import and Core close use the full 64-bit Handle.
 create, query-state and release events. GuestMapped registration still
 requires a signed pinned-memory declaration; the v1 WAMR adapter verifies it
 for Surface Handles before accepting the retained Guest pointer.
+
+
+## Host-produced RGB565 buffers
+
+Bit 7 in the create flags selects a profile-1 Surface with one native producer.
+It can be combined with PREFER_DIRECT_SCANOUT. The Guest retains ownership of
+the layer and can configure its bounds, overlays and visibility. The Host
+owns its pixel buffers. Guest writes, mapped-buffer operations and QUEUE_FRAME
+are rejected. Backends without synchronous native buffer staging reject
+creation with UNSUPPORTED. See [Video output binding](video.md#bound-surface-output).

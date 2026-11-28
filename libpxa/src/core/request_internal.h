@@ -76,8 +76,6 @@ pxa_status_t pxa_request_table_cancel(
     uint32_t owner_index, pxa_event_pool_t *event_pool,
     pxa_event_mailbox_t *mailbox, uint16_t mailbox_capacity,
     pxa_request_token_t request_token);
-int pxa_request_table_is_active(const pxa_request_table_t *table,
-                                uint32_t owner_index, pxa_request_token_t request_token);
 void pxa_request_table_revoke_authority(
     pxa_request_table_t *table, pxa_request_owner_t *owner,
     uint32_t owner_index, pxa_event_pool_t *event_pool,

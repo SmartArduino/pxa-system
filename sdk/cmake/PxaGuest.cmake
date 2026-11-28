@@ -282,6 +282,11 @@ function(pxa_add_component target)
         target_link_options(${target} PRIVATE
             "$<$<NOT:$<CONFIG:Debug>>:-Wl,--strip-debug>")
     endif()
+    if(DEFINED PXA_LINEAR_MEMORY_INITIAL AND
+       NOT PXA_LINEAR_MEMORY_INITIAL STREQUAL "0")
+        target_link_options(${target} PRIVATE
+            "-Wl,--initial-memory=${PXA_LINEAR_MEMORY_INITIAL}")
+    endif()
     if(DEFINED PXA_LINEAR_MEMORY_MAXIMUM AND
        NOT PXA_LINEAR_MEMORY_MAXIMUM STREQUAL "0")
         target_link_options(${target} PRIVATE

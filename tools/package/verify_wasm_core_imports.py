@@ -140,7 +140,7 @@ def verify_wasi_imports(data: bytes, features: set[str] | None) -> None:
 
 def component_wasi_features(path: Path, component_id: str) -> set[str] | None:
     manifest = json.loads(path.read_text(encoding="utf-8"))
-    for component in manifest.get("components", []):
+    for component in manifest.get("components", [{"id": "main"}]):
         if component.get("id") == component_id:
             wasi = component.get("wasi")
             return None if wasi is None else set(wasi.get("features", []))

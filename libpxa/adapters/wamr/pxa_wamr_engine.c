@@ -890,14 +890,17 @@ static int32_t native_io(void *opaque_exec_env, uint64_t handle,
             return PXA_STATUS_UNSUPPORTED;
     }
     uint64_t start=import_started(entry);
-    uint64_t begin = 0, end = 0;
+    uint8_t *begin = NULL, *end = NULL;
     int32_t result;
-    if (!wasm_runtime_get_app_addr_range(module, 0, &begin, &end) ||
-        begin != 0 || end == 0 || end > SIZE_MAX)
+    /* The *~ import already supplies a translated pointer. Query its current
+     * linear allocation once, including after a movable memory.grow. Empty
+     * operations accept an unused or one-past pointer, so anchor those at 0. */
+    uint8_t *anchor = size ? data : wasm_runtime_addr_app_to_native(module, 0);
+    if (!anchor || !wasm_runtime_get_native_addr_range(module, anchor, &begin, &end))
         return PXA_STATUS_INVALID_ARGUMENT;
     result = pxa_runtime_io64_memory(entry_engine(entry)->runtime,
         entry->component, handle, operation, data, size,
-        wasm_runtime_addr_app_to_native(module, 0), (size_t)end);
+        begin, (size_t)((uintptr_t)end - (uintptr_t)begin));
     import_finished(entry,"io",operation,size,start);
     return result;
 }
@@ -1547,6 +1550,8 @@ static pxa_status_t engine_instantiate(void *context, pxa_bytes_t package_root,
         wasm_runtime_lookup_function(slot->module_instance, "pxa_app_start");
     slot->event_fn =
         wasm_runtime_lookup_function(slot->module_instance, "pxa_app_on_event");
+    if (!has_signature(slot->module_instance, slot->event_fn, 2, 1))
+        slot->event_fn = NULL;
     slot->stop_fn =
         wasm_runtime_lookup_function(slot->module_instance, "pxa_app_stop");
     status = pxa_component_set_wire_profile(engine->runtime, component,
@@ -1589,6 +1594,21 @@ static pxa_status_t engine_start(void *context, pxa_component_t component) {
         log_runtime_failure("validate-start-export", NULL, NULL);
         return PXA_STATUS_UNSUPPORTED;
     }
+#if defined(CONFIG_IDF_TARGET_ESP32P4) && CONFIG_ESP32P4_REV_MIN_FULL >= 300 && defined(__riscv_zbb)
+    /* Old Hosts and all baseline targets leave the guest defaults intact. */
+    wasm_function_inst_t select = wasm_runtime_lookup_function(
+        entry->module_instance, "pxa_app_set_cpu_features");
+    if (select != NULL) {
+        wasm_valkind_t param;
+        if (!has_signature(entry->module_instance, select, 1, 0))
+            return PXA_STATUS_UNSUPPORTED;
+        wasm_func_get_param_types(select, entry->module_instance, &param);
+        if (param != WASM_I32) return PXA_STATUS_UNSUPPORTED;
+        uint32_t features = 1u; /* PXA_CPU_FEATURE_RV32_ZBB */
+        if (!call(engine, entry, select, 1, &features))
+            return PXA_STATUS_INTERNAL;
+    }
+#endif
     if (entry->has_config) {
         offset = wasm_runtime_module_malloc(entry->module_instance,
                                             entry->config_size, &native);
@@ -1718,7 +1738,7 @@ pxa_status_t pxa_wamr_engine_deliver_event_result(
     }
     fn = entry->event_fn;
     result = (int32_t)PXA_STATUS_INTERNAL;
-    if (has_signature(entry->module_instance, fn, 2, 1)) {
+    if (fn != NULL) {
         values[0] = offset;
         values[1] = (uint32_t)callback_size;
         if (call(engine, entry, fn, 2, values)) {

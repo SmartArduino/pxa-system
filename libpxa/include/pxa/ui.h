@@ -572,7 +572,11 @@ pxa_status_t pxa_ui_queue_event(pxa_ui_service_t *service,
 uint32_t pxa_ui_event_target_generation(pxa_ui_service_t *service,
     pxa_component_t component, uint32_t surface, uint32_t node, uint16_t kind);
 
-/* The caller must serialize this query with the UI service owner. */
+/* Committed subscriptions filtered by the Host's supported event kinds.
+ * A missing target returns zero. Serialize these queries with the UI owner. */
+uint64_t pxa_ui_subscribed_events(const pxa_ui_service_t *service,
+                                  pxa_component_t component,
+                                  uint32_t surface, uint32_t node);
 bool pxa_ui_accepts_event(pxa_ui_service_t *service,
                           pxa_component_t component,
                           uint32_t surface, uint32_t node,

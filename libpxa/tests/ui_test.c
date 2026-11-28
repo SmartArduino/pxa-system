@@ -811,6 +811,20 @@ static void test_events(pxa_runtime_t *runtime, pxa_component_t component,
                                 PXA_UI_EVENT_CONTROLLER_STATE));
     assert(pxa_ui_event_root(service,component,1,PXA_UI_EVENT_CONTROLLER_STATE)==1);
     assert(!pxa_ui_event_root(service,component,1,PXA_UI_EVENT_KEY));
+    assert(pxa_ui_subscribed_events(service, component, 1, 1) &
+           PXA_UI_EVENT_MASK_CONTROLLER_STATE);
+    assert(pxa_ui_subscribed_events(service, component, 1, 4) &
+           PXA_UI_EVENT_MASK_ACTION);
+    assert(!pxa_ui_subscribed_events(service, component, 1, 99));
+    const pxa_ui_features_t features = service->config.features;
+    service->config.features &= ~PXA_UI_FEATURE_CONTROLLER_INPUT;
+    assert(!(pxa_ui_subscribed_events(service, component, 1, 1) &
+             PXA_UI_EVENT_MASK_CONTROLLER_STATE));
+    assert(!pxa_ui_event_target_generation(service, component, 1, 1,
+                                           PXA_UI_EVENT_CONTROLLER_STATE));
+    assert(!pxa_ui_event_root(service, component, 1, PXA_UI_EVENT_CONTROLLER_STATE));
+    assert(pxa_ui_accepts_event(service, component, 1, 4, PXA_UI_EVENT_ACTION));
+    service->config.features = features;
     assert(pxa_ui_queue_event(service, component, 1, 1,
                               PXA_UI_EVENT_CONTROLLER_STATE,
                               PXA_UI_EVENT_FLAG_COALESCIBLE, 120,

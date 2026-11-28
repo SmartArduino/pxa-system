@@ -55,18 +55,21 @@ typedef struct {
     uint32_t pending_source_frames; /* Sub-output-period PCM, credited by the next packet. */
     int16_t previous_sample;
     uint8_t channels;
+    uint8_t has_synthesis; /* Set after a tone or effect is queued, cleared on flush. */
     float gain;
     uint8_t read, count, committed, eq_count;
     uint8_t queue_limit, buffered, started;
+    uint8_t pcm_stride; /* Integer source frames per sink sample, or zero for interpolation. */
     uint32_t startup_waited;
 } pxa_audio_mixer_voice_t;
 typedef struct {
     pxa_audio_mixer_voice_t voices[PXA_AUDIO_MIXER_VOICES];
 } pxa_audio_mixer_t;
 void pxa_audio_mixer_reset(pxa_audio_mixer_voice_t *voice);
-/* Configure an idle, uncommitted voice. Submission copies/downmixes S16LE at
- * source rate; the renderer upsamples into the advertised mono sink.
- * No submitted guest pointer survives the call. Only upsampling is supported.
+/* Configure an idle, uncommitted voice. Submission copies/downmixes S16LE.
+ * Integral downsampling stores the selected sink samples directly. Other
+ * rate conversions interpolate from private PCM in the renderer.
+ * No submitted guest pointer survives the call.
  * State counters measure source frames, independent of channel count. */
 pxa_status_t pxa_audio_mixer_configure(pxa_audio_mixer_voice_t *voice,
     uint32_t source_rate, uint8_t channels, uint32_t output_rate);
@@ -88,6 +91,9 @@ pxa_status_t pxa_audio_mixer_stop_effect(pxa_audio_mixer_voice_t *voice, uint8_t
  * accepted_samples counts renderer consumption, not physical DAC playback. */
 size_t pxa_audio_mixer_render(pxa_audio_mixer_t *mixer, int16_t *out,
                              size_t capacity);
+/* Same renderer for host-managed voice slots. A NULL slot contributes silence. */
+size_t pxa_audio_mixer_render_voices(pxa_audio_mixer_voice_t *const voices[PXA_AUDIO_MIXER_VOICES],
+                                    int16_t *out, size_t capacity);
 #ifdef __cplusplus
 }
 #endif

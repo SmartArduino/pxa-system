@@ -406,6 +406,91 @@ static void test_sprite_scaling_and_clipping(void) {
     }
 }
 
+static uint16_t reference_sprite_blend(uint16_t source, uint16_t dest,
+                                        uint32_t alpha) {
+    const uint32_t inv = 255u - alpha;
+    const uint32_t r = ((source >> 11) * alpha + (dest >> 11) * inv + 127u) / 255u;
+    const uint32_t g = (((source >> 5) & 63u) * alpha +
+                         ((dest >> 5) & 63u) * inv + 127u) / 255u;
+    const uint32_t b = ((source & 31u) * alpha + (dest & 31u) * inv + 127u) / 255u;
+    return (uint16_t)((r << 11) | (g << 5) | b);
+}
+
+static void test_sprite_texel_alpha(void) {
+    const uint8_t modes[] = {
+        PXA_RASTER_SPRITE_TRANSPARENT_INDEX0,
+        PXA_RASTER_SPRITE_TEXEL_ALPHA,
+        PXA_RASTER_SPRITE_TRANSPARENT_INDEX0 | PXA_RASTER_SPRITE_SOLID_COLOR |
+            PXA_RASTER_SPRITE_TEXEL_ALPHA,
+    };
+    const unsigned widths[] = {171, 256, 512};
+    const uint16_t tint = 0xe7a9u;
+    uint8_t bytes[PXA_RASTER_DRAW_HEADER_BYTES + PXA_RASTER_SPRITE_BYTES];
+    uint8_t texture[2 * 256];
+    uint16_t palette[256], pixels[4 * 259];
+    pxa_raster_target_t target = {
+        .pixels = pixels, .stride_pixels = 259, .width = 257, .height = 4,
+    };
+    pxa_raster_resources_t resources = {
+        .capabilities = PXA_RASTER_CAP_SPRITE_TEXEL_ALPHA, .palette = palette,
+    };
+    resources.textures[0].pixels = texture;
+    resources.textures[0].width = 256;
+    resources.textures[0].height = 2;
+    for (unsigned i = 0; i < 256; ++i) {
+        texture[i] = (uint8_t)i;
+        texture[i + 256] = (uint8_t)(255u - i);
+        palette[i] = (uint16_t)(i * 4571u);
+    }
+    for (unsigned mode = 0; mode < sizeof(modes); ++mode) {
+        for (unsigned scale = 0; scale < sizeof(widths) / sizeof(widths[0]); ++scale) {
+            const unsigned width = widths[scale];
+            pxa_raster_draw_list_view_t list;
+            pxa_raster_telemetry_t telemetry = {0};
+            for (unsigned i = 0; i < sizeof(pixels) / sizeof(pixels[0]); ++i)
+                pixels[i] = (uint16_t)(i * 4051u);
+            const uint32_t offset = begin_list(bytes, 0, 1, 2, sizeof(bytes));
+            uint8_t *record = bytes + offset;
+            record[0] = PXA_RASTER_RECORD_SPRITE;
+            record[1] = modes[mode];
+            put_u16(record + 2, PXA_RASTER_SPRITE_BYTES);
+            if ((modes[mode] & PXA_RASTER_SPRITE_SOLID_COLOR) != 0)
+                put_u16(record + 6, tint);
+            put_u16(record + 8, (uint16_t)-1);
+            put_u16(record + 10, (uint16_t)-1);
+            put_u16(record + 12, (uint16_t)width);
+            put_u16(record + 14, 4);
+            put_u16(record + 20, 256);
+            put_u16(record + 22, 2);
+            assert(pxa_raster_validate_draw_list(bytes, sizeof(bytes), &target,
+                                                &resources, &list) == PXA_STATUS_OK);
+            pxa_raster_execute_draw_list_rows(bytes, &list, &target, &resources, 0, 1, &telemetry);
+            pxa_raster_execute_draw_list_rows(bytes, &list, &target, &resources, 1, 4, &telemetry);
+            uint32_t covered = 0;
+            for (unsigned y = 0; y < 4; ++y) {
+                for (unsigned x = 0; x < target.stride_pixels; ++x) {
+                    const unsigned i = y * target.stride_pixels + x;
+                    uint16_t expected = (uint16_t)(i * 4051u);
+                    if (y + 1 < 4 && x < target.width && x + 1 < width) {
+                        const uint8_t alpha = texture[(y + 1) / 2 * 256 +
+                                                       (x + 1) * 256 / width];
+                        if (alpha != 0 || (modes[mode] &
+                                           PXA_RASTER_SPRITE_TRANSPARENT_INDEX0) == 0) {
+                            const uint16_t color = (modes[mode] & PXA_RASTER_SPRITE_SOLID_COLOR) != 0
+                                ? tint : palette[alpha];
+                            expected = (modes[mode] & PXA_RASTER_SPRITE_TEXEL_ALPHA) != 0
+                                ? reference_sprite_blend(color, expected, alpha) : color;
+                            ++covered;
+                        }
+                    }
+                    assert(pixels[i] == expected);
+                }
+            }
+            assert(telemetry.covered_pixels == covered);
+        }
+    }
+}
+
 static void test_sprite_scaling_ratios(void) {
     uint8_t bytes[PXA_RASTER_DRAW_HEADER_BYTES + PXA_RASTER_SPRITE_BYTES];
     uint8_t texture[16];
@@ -1526,6 +1611,7 @@ int main(void) {
     test_quads_clipping_uv_and_telemetry();
     test_additive_capability_fallback();
     test_sprite_scaling_and_clipping();
+    test_sprite_texel_alpha();
     test_sprite_scaling_ratios();
     test_perspective_uv_and_solid_depth();
     test_affine_uv_flag_and_depth();

@@ -1,11 +1,11 @@
 {
-  "schema": "pxa-surface-spec-0.2",
+  "schema": "pxa-surface-spec-0.3",
   "status": "draft",
   "service": {
     "name": "surface",
     "id": 16,
     "major": 0,
-    "minor": 2,
+    "minor": 3,
     "patch": 0
   },
   "opcodes": [
@@ -66,7 +66,8 @@
   "create_flags": [
     {"name": "premultiplied-alpha", "bit": 0},
     {"name": "prefer-direct-scanout", "bit": 1},
-    {"name": "guest-mapped", "bit": 2}
+    {"name": "guest-mapped", "bit": 2},
+    {"name": "host-produced", "bit": 7}
   ],
   "state_flags": [
     {"name": "supports-opaque-ui-regions", "bit": 0},
@@ -80,5 +81,5 @@
     "mapped_buffer_alignment": 64,
     "mapped_buffer_count_recommended": 3
   },
-  "protocol_version": "0.2.0"
+  "protocol_version": "0.3.0"
 }

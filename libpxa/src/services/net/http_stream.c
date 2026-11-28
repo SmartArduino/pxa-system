@@ -53,8 +53,13 @@ size_t pxa_http_ring_peek(pxa_http_ring_t *r, uint8_t **data, int writing) {
         *data = NULL;
         return 0;
     }
-    position = load(writing ? &r->write_position : &r->read_position);
-    count = writing ? pxa_http_ring_writable(r) : pxa_http_ring_readable(r);
+    if (writing) {
+        position = __atomic_load_n(&r->write_position, __ATOMIC_RELAXED);
+        count = r->capacity - (position - load(&r->read_position));
+    } else {
+        position = __atomic_load_n(&r->read_position, __ATOMIC_RELAXED);
+        count = load(&r->write_position) - position;
+    }
     position %= r->capacity;
     if (count > r->capacity - position)
         count = r->capacity - position;
@@ -63,7 +68,7 @@ size_t pxa_http_ring_peek(pxa_http_ring_t *r, uint8_t **data, int writing) {
 }
 void pxa_http_ring_advance(pxa_http_ring_t *r, size_t count, int writing) {
     uint32_t *position = writing ? &r->write_position : &r->read_position;
-    store(position, load(position) + (uint32_t)count);
+    store(position, __atomic_load_n(position, __ATOMIC_RELAXED) + (uint32_t)count);
 }
 uint32_t pxa_http_stream_state(const pxa_http_stream_t *s) {
     /* Internal diagnostic bits must not change the public lifecycle flags. */
@@ -118,23 +123,28 @@ void pxa_http_stream_done(pxa_http_stream_t *s, pxa_status_t error) {
     __atomic_fetch_or(&s->state, PXA_HTTP_STREAM_DONE, __ATOMIC_RELEASE);
 }
 
-static size_t transfer(pxa_http_ring_t *ring, uint8_t *data, size_t size, int writing) {
-    size_t total = 0;
-    while (total < size) {
-        uint8_t *block;
-        size_t count = pxa_http_ring_peek(ring, &block, writing);
-        if (count > size - total)
-            count = size - total;
-        if (!count)
-            break;
-        if (writing)
-            memcpy(block, data + total, count);
-        else
-            memcpy(data + total, block, count);
-        pxa_http_ring_advance(ring, count, writing);
-        total += count;
+size_t pxa_http_ring_transfer(pxa_http_ring_t *ring, uint8_t *data, size_t size, int writing) {
+    uint32_t *owned = writing ? &ring->write_position : &ring->read_position;
+    const uint32_t position = __atomic_load_n(owned, __ATOMIC_RELAXED);
+    const uint32_t available = writing
+        ? ring->capacity - (position - load(&ring->read_position))
+        : load(&ring->write_position) - position;
+    if (size > available) size = available;
+    if (!size) return 0;
+    /* Both stream initializers require a power-of-two ring. One acquire of
+     * the peer cursor covers both spans. Publish only after the last copy. */
+    const uint32_t offset = position & (ring->capacity - 1u);
+    size_t first = ring->capacity - offset;
+    if (first > size) first = size;
+    if (writing) {
+        memcpy(ring->data + offset, data, first);
+        if (first < size) memcpy(ring->data, data + first, size - first);
+    } else {
+        memcpy(data, ring->data + offset, first);
+        if (first < size) memcpy(data + first, ring->data, size - first);
     }
-    return total;
+    store(owned, position + (uint32_t)size);
+    return size;
 }
 
 int32_t pxa_http_stream_io(pxa_http_stream_t *s, uint32_t operation, uint8_t *data,
@@ -191,7 +201,7 @@ int32_t pxa_http_stream_io(pxa_http_stream_t *s, uint32_t operation, uint8_t *da
     case PXA_IO_READ:
         if (!size)
             return PXA_STATUS_INVALID_ARGUMENT;
-        count = transfer(&s->receive, data, size, 0);
+        count = pxa_http_ring_transfer(&s->receive, data, size, 0);
         if (count)
             return (int32_t)count;
         return state & PXA_HTTP_STREAM_DONE ? s->error : PXA_STATUS_WOULD_BLOCK;
@@ -203,7 +213,7 @@ int32_t pxa_http_stream_io(pxa_http_stream_t *s, uint32_t operation, uint8_t *da
                                                               : PXA_STATUS_BAD_STATE;
         if (size > s->upload_bytes - s->accepted_bytes)
             return PXA_STATUS_LIMIT_EXCEEDED;
-        count = transfer(&s->send, data, size, 1);
+        count = pxa_http_ring_transfer(&s->send, data, size, 1);
         s->accepted_bytes += count;
         return count ? (int32_t)count : PXA_STATUS_WOULD_BLOCK;
     default:

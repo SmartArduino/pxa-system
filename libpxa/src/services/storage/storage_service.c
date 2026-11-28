@@ -16,7 +16,6 @@ struct pxa_storage_service {
     uint32_t magic;
     pxa_runtime_t *runtime;
     pxa_storage_backend_t backend;
-    uint8_t *value_scratch;
     uint8_t *result_scratch;
     size_t max_value_bytes;
     size_t result_capacity;
@@ -87,8 +86,6 @@ size_t pxa_storage_service_workspace_size(const pxa_storage_config_t *config) {
     size = (size_t)pxa_internal_align_pointer(size, PXA_INTERNAL_WORKSPACE_ALIGNMENT);
     if (sizeof(pxa_storage_service_t) > SIZE_MAX - size) return 0;
     size += sizeof(pxa_storage_service_t);
-    if (config->max_value_bytes > SIZE_MAX - size) return 0;
-    size += config->max_value_bytes;
     if (result_capacity > SIZE_MAX - size) return 0;
     return size + result_capacity;
 }
@@ -117,13 +114,10 @@ pxa_status_t pxa_storage_service_init(
     if (result_capacity < PXA_STORAGE_LIST_RESULT_BYTES) {
         result_capacity = PXA_STORAGE_LIST_RESULT_BYTES;
     }
-    if (cursor > end || config->max_value_bytes > end - cursor ||
-        result_capacity > end - cursor - config->max_value_bytes) {
+    if (cursor > end || result_capacity > end - cursor) {
         return PXA_STATUS_INVALID_ARGUMENT;
     }
     memset(service, 0, sizeof(*service));
-    service->value_scratch = (uint8_t *)cursor;
-    cursor += config->max_value_bytes;
     service->result_scratch = (uint8_t *)cursor;
     service->runtime = runtime;
     service->backend = config->backend;
@@ -196,7 +190,7 @@ static pxa_status_t emit_list_key(void *context, pxa_bytes_t key) {
 
 static pxa_status_t execute_request(pxa_storage_service_t *service,
     uint16_t opcode, const pxa_storage_request_t *request,
-    uint8_t *value_scratch, uint8_t *result_scratch, size_t result_capacity,
+    uint8_t *result_scratch, size_t result_capacity,
     size_t *result_size) {
     pxa_writer_t result_writer;
     pxa_status_t result = PXA_STATUS_OK;
@@ -205,14 +199,16 @@ static pxa_status_t execute_request(pxa_storage_service_t *service,
                     result_capacity);
     if (result == PXA_STATUS_OK && opcode == PXA_STORAGE_GET) {
         result = service->backend.get(
-            service->backend.context, request->key, value_scratch,
+            service->backend.context, request->key, result_scratch + PXA_RECORD_HEADER_SIZE,
             service->max_value_bytes, &value_size);
         if (result == PXA_STATUS_OK && value_size > service->max_value_bytes) {
             result = PXA_STATUS_INTERNAL;
         }
         if (result == PXA_STATUS_OK) {
-            result = pxa_writer_record(&result_writer, 2,
-                                       value_scratch, value_size);
+            /* The backend has already filled this record's payload. */
+            pxa_write_u16(result_scratch + PXA_WIRE_RECORD_TAG_OFFSET, 2);
+            pxa_write_u16(result_scratch + PXA_WIRE_RECORD_PAYLOAD_LEN_OFFSET, (uint16_t)value_size);
+            result_writer.size = PXA_RECORD_HEADER_SIZE + value_size;
         }
     } else if (result == PXA_STATUS_OK &&
                opcode == PXA_STORAGE_SET) {
@@ -251,14 +247,15 @@ typedef struct {
     size_t key_size, value_size, result_size;
     pxa_status_t result;
     uint8_t key[PXA_STORAGE_MAX_KEY_BYTES];
-    uint8_t value[PXA_STORAGE_MAX_VALUE_BYTES];
-    uint8_t output[PXA_STORAGE_MAX_VALUE_BYTES + PXA_RECORD_HEADER_SIZE];
+    /* A SET owns its input until the write completes. GET and LIST own
+     * their result until delivery. Each job performs only one operation. */
+    uint8_t payload[PXA_STORAGE_MAX_VALUE_BYTES + PXA_RECORD_HEADER_SIZE];
 } pxa_storage_job_t;
 
 struct pxa_storage_async {
     pxa_storage_submit_fn submit;
     void *context;
-    uint16_t capacity, next;
+    uint16_t capacity, next, outstanding;
     pxa_storage_job_t jobs[];
 };
 
@@ -292,29 +289,30 @@ static void run_storage_job(void *context) {
     pxa_storage_request_t request;
     memset(&request, 0, sizeof(request));
     request.key = (pxa_bytes_t){job->key, job->key_size};
-    request.value = (pxa_bytes_t){job->value, job->value_size};
+    request.value = (pxa_bytes_t){job->payload, job->value_size};
     request.has_key = job->key_size != 0;
     request.has_value = job->opcode == PXA_STORAGE_SET;
     job->result = execute_request(job->service, job->opcode, &request,
-        job->value, job->output, sizeof(job->output), &job->result_size);
+        job->payload, sizeof(job->payload), &job->result_size);
     __atomic_store_n(&job->state, 2u, __ATOMIC_RELEASE);
 }
 
 int pxa_storage_service_poll(pxa_storage_service_t *service) {
     unsigned i;
     int completed = 0;
-    if (!service_valid(service) || !service->async) return 0;
+    if (!service_valid(service) || !service->async || !service->async->outstanding) return 0;
     for (i = 0; i < service->async->capacity; ++i) {
         pxa_storage_job_t *job = &service->async->jobs[i];
         if (__atomic_load_n(&job->state, __ATOMIC_ACQUIRE) != 2u) continue;
         if (pxa_request_identity(service->runtime, job->component, job->token) == job->identity) {
             if (pxa_request_complete(service->runtime, job->component, job->token,
-                    job->result, job->result == PXA_STATUS_OK ? job->output : NULL,
+                    job->result, job->result == PXA_STATUS_OK ? job->payload : NULL,
                     job->result_size) != PXA_STATUS_OK)
                 (void)pxa_request_cancel(service->runtime, job->component, job->token);
             completed = 1;
         }
         __atomic_store_n(&job->state, 0u, __ATOMIC_RELEASE);
+        --service->async->outstanding;
     }
     return completed;
 }
@@ -345,11 +343,15 @@ static pxa_status_t enqueue_request(pxa_storage_service_t *service,
     job->key_size = request->key.size;
     job->value_size = request->value.size;
     if (job->key_size) memcpy(job->key, request->key.data, job->key_size);
-    if (job->value_size) memcpy(job->value, request->value.data, job->value_size);
+    if (job->value_size) memcpy(job->payload, request->value.data, job->value_size);
     job->result_size = 0;
     __atomic_store_n(&job->state, 1u, __ATOMIC_RELEASE);
+    ++async->outstanding;
     result = async->submit(async->context, run_storage_job, job);
-    if (result != PXA_STATUS_OK) __atomic_store_n(&job->state, 0u, __ATOMIC_RELEASE);
+    if (result != PXA_STATUS_OK) {
+        --async->outstanding;
+        __atomic_store_n(&job->state, 0u, __ATOMIC_RELEASE);
+    }
     return result;
 }
 
@@ -390,7 +392,7 @@ static pxa_status_t storage_control(void *context, pxa_runtime_t *runtime,
         result = pxa_request_commit(service->runtime, component, message->request_token);
         if (result == PXA_STATUS_OK)
             result = execute_request(service, message->opcode, &request,
-                service->value_scratch, service->result_scratch,
+                service->result_scratch,
                 service->result_capacity, &result_size);
     }
     complete = pxa_request_complete(

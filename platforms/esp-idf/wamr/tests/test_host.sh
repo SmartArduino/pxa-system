@@ -3,9 +3,12 @@ set -euo pipefail
 test_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 test_build="$(mktemp -d)"
 trap 'rm -rf "$test_build"' EXIT
-"${CC:-cc}" -std=c11 -Wall -Wextra -Werror -Wno-unused-parameter \
-  -fsanitize=address,undefined -fno-omit-frame-pointer -pthread \
-  -DWASM_MEM_EXEC_IN_PSRAM=0 -DWASM_MEM_DUAL_BUS_MIRROR=0 \
-  -I"$test_dir/stubs" -I"$test_dir/../../../../libpxa/adapters/wamr" "$test_dir/memmap_test.c" \
-  "$test_dir/../overrides/espidf_memmap.c" -o "$test_build/memmap_test"
-"$test_build/memmap_test"
+for cache_line in 64 128; do
+  "${CC:-cc}" -std=c11 -Wall -Wextra -Werror -Wno-unused-parameter \
+    -fsanitize=address,undefined -fno-omit-frame-pointer -pthread \
+    -DCONFIG_CACHE_L2_CACHE_LINE_SIZE="$cache_line" \
+    -DWASM_MEM_EXEC_IN_PSRAM=0 -DWASM_MEM_DUAL_BUS_MIRROR=0 \
+    -I"$test_dir/stubs" -I"$test_dir/../../../../libpxa/adapters/wamr" "$test_dir/memmap_test.c" \
+    "$test_dir/../overrides/espidf_memmap.c" -o "$test_build/memmap_test"
+  "$test_build/memmap_test"
+done

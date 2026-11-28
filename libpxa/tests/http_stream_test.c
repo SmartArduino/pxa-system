@@ -230,6 +230,7 @@ static void legacy_close(void *context, void *stream) {
 static pxa_status_t exchange_open(void *context, const pxa_net_request_t *request,
                                   void **exchange) {
     exchange_backend_t *b = context;
+    assert(request->struct_size == sizeof(*request) && request->component != 0);
     assert(request->abi_minor == 2 && request->buffer_bytes == 512 &&
            request->response_header_bytes == 4096);
     assert(request->max_body_bytes == 1024 * 1024); /* independent of legacy cap */
@@ -438,7 +439,20 @@ static void test_exchange_service(int streaming) {
     free(pw);
     free(workspace);
 }
+static void test_wrapped_transfer(void) {
+    uint8_t storage[8], received[8];
+    uint8_t input[] = {11, 12, 13, 14, 15, 16, 17, 18, 19};
+    pxa_http_ring_t ring = {storage, sizeof(storage), UINT32_MAX-2, UINT32_MAX-2};
+    assert(pxa_http_ring_transfer(&ring, input, sizeof(input), 1) == 8);
+    assert(!pxa_http_ring_transfer(&ring, input, 1, 1));
+    assert(ring.write_position == 5 && storage[5] == 11 && storage[0] == 14);
+    assert(pxa_http_ring_transfer(&ring, received, sizeof(received), 0) == 8);
+    assert(!memcmp(received, input, 8) && ring.read_position == 5);
+    assert(!pxa_http_ring_transfer(&ring, received, 1, 0));
+}
+
 int main(void) {
+    test_wrapped_transfer();
     test_ring();
     {
         pxa_http_stream_t s;

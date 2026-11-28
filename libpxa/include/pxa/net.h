@@ -69,7 +69,10 @@ typedef struct {
     uint32_t response_header_bytes;
     uint64_t max_body_bytes;
     uint64_t upload_bytes;
+    /* Host metadata. Zero or an older struct disables component-scoped reuse. */
+    pxa_component_t component;
 } pxa_net_request_t;
+#define PXA_NET_REQUEST_BASE_BYTES offsetof(pxa_net_request_t, component)
 
 typedef struct {
     uint32_t struct_size;

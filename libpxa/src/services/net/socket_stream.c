@@ -108,25 +108,6 @@ void pxa_socket_stream_finish(pxa_socket_stream_t *s, int32_t error) {
   s->error = error;
   __atomic_fetch_or(&s->state, PXA_SOCKET_DONE, __ATOMIC_RELEASE);
 }
-static size_t transfer(pxa_http_ring_t *r, uint8_t *data, size_t size,
-                       int writing) {
-  size_t total = 0;
-  while (total < size) {
-    uint8_t *memory;
-    size_t n = pxa_http_ring_peek(r, &memory, writing);
-    if (!n)
-      break;
-    if (n > size - total)
-      n = size - total;
-    if (writing)
-      memcpy(memory, data + total, n);
-    else
-      memcpy(data + total, memory, n);
-    pxa_http_ring_advance(r, n, writing);
-    total += n;
-  }
-  return total;
-}
 int32_t pxa_socket_stream_io(pxa_socket_stream_t *s, uint32_t op, uint8_t *data,
                              size_t size) {
   uint32_t state = __atomic_load_n(&s->state, __ATOMIC_ACQUIRE);
@@ -149,7 +130,7 @@ int32_t pxa_socket_stream_io(pxa_socket_stream_t *s, uint32_t op, uint8_t *data,
   if (!data || !size)
     return PXA_STATUS_INVALID_ARGUMENT;
   if (op == PXA_IO_READ) {
-    size_t n = transfer(&s->receive, data, size, 0);
+    size_t n = pxa_http_ring_transfer(&s->receive, data, size, 0);
     return n                         ? (int32_t)n
            : state & PXA_SOCKET_DONE ? s->error
                                      : PXA_STATUS_WOULD_BLOCK;
@@ -159,7 +140,7 @@ int32_t pxa_socket_stream_io(pxa_socket_stream_t *s, uint32_t op, uint8_t *data,
       return s->error ? s->error : PXA_STATUS_BAD_STATE;
     if (!(state & PXA_SOCKET_CONNECTED))
       return PXA_STATUS_WOULD_BLOCK;
-    size_t n = transfer(&s->send, data, size, 1);
+    size_t n = pxa_http_ring_transfer(&s->send, data, size, 1);
     return n ? (int32_t)n : PXA_STATUS_WOULD_BLOCK;
   }
   return PXA_STATUS_UNSUPPORTED;

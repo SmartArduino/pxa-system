@@ -41,17 +41,22 @@ static uint16_t saturating_add_rgb565(uint16_t destination, uint16_t source) {
 
 /* Per-pixel coverage blend for PXA_RASTER_SPRITE_TEXEL_ALPHA: alpha 255 keeps
  * the source colour, 0 keeps the destination. */
-static uint16_t blend_rgb565_alpha(uint16_t source, uint16_t destination,
-                                   uint8_t alpha) {
+static RASTER_ALWAYS_INLINE uint16_t blend_rgb565_alpha(
+    uint16_t source, uint16_t destination, uint8_t alpha) {
     const uint32_t a = alpha;
     const uint32_t inverse = 255u - a;
-    const uint32_t red = (((source >> 11) & 31u) * a +
-                          ((destination >> 11) & 31u) * inverse + 127u) / 255u;
-    const uint32_t green = (((source >> 5) & 63u) * a +
-                            ((destination >> 5) & 63u) * inverse + 127u) / 255u;
-    const uint32_t blue = ((source & 31u) * a + (destination & 31u) * inverse +
-                           127u) / 255u;
-    return (uint16_t)((red << 11) | (green << 5) | blue);
+    /* Red and blue fit in separate 16-bit lanes even before rounding.
+     * Adding 128 and the high byte of each lane gives exact rounded /255. */
+    const uint32_t source_rb = ((uint32_t)(source & 0xf800u) << 5) | (source & 31u);
+    const uint32_t destination_rb =
+        ((uint32_t)(destination & 0xf800u) << 5) | (destination & 31u);
+    const uint32_t rb = source_rb * a + destination_rb * inverse + 0x00800080u;
+    const uint32_t green =
+        ((source >> 5) & 63u) * a + ((destination >> 5) & 63u) * inverse + 128u;
+    const uint32_t rounded_rb = rb + ((rb >> 8) & 0x00ff00ffu);
+    return (uint16_t)(((rounded_rb >> 13) & 0xf800u) |
+                      (((green + (green >> 8)) >> 8) << 5) |
+                      ((rounded_rb >> 8) & 31u));
 }
 
 static uint16_t light_rgb565(uint16_t color, uint8_t light) {
@@ -2249,6 +2254,27 @@ static uint32_t draw_quad(const uint8_t *record, uint8_t textured,
                          row_begin, row_end);
 }
 
+static RASTER_ALWAYS_INLINE uint32_t draw_masked_sprite_row(
+    uint16_t *destination, const uint8_t *source, const uint16_t *palette,
+    uint32_t count, uint32_t advance, uint32_t remainder_step,
+    uint32_t error, uint32_t width) {
+    uint32_t covered = 0, tx = 0;
+    for (uint32_t x = 0; x < count; ++x) {
+        const uint8_t texel = source[tx];
+        if (texel != 0) {
+            destination[x] = palette[texel];
+            ++covered;
+        }
+        tx += advance;
+        error += remainder_step;
+        if (error >= width) {
+            error -= width;
+            ++tx;
+        }
+    }
+    return covered;
+}
+
 static uint32_t draw_sprite_instance(
     const uint8_t *instance, const pxa_raster_texture_t *texture,
     uint8_t flags, uint16_t solid_color,
@@ -2299,22 +2325,44 @@ static uint32_t draw_sprite_instance(
         ty = source_y + y_numerator / height;
         y_error = y_numerator % height;
     }
-    /* Opaque INDEX8 with unit horizontal scale needs only palette lookup and
-     * a store. Keep clipping and rational vertical stepping identical to the
-     * general path; no per-pixel blend/flag/coordinate branches or scratch. */
-    if (flags == 0 && source_width == width) {
+    /* Select the operation per row and preserve exact scaling. At unit
+     * horizontal scale both INDEX8 sprites and glyph masks are contiguous. */
+    const uint8_t masked = PXA_RASTER_SPRITE_TRANSPARENT_INDEX0;
+    const uint8_t glyph = masked | PXA_RASTER_SPRITE_SOLID_COLOR |
+                         PXA_RASTER_SPRITE_TEXEL_ALPHA;
+    if (flags == masked || (source_width == width && (flags == 0 || flags == glyph))) {
+        const uint32_t count = dx_end - dx_begin;
+        const uint16_t *palette = resources->palette;
         for (dy = dy_begin; dy < dy_end; ++dy) {
             const uint8_t *source = texture->pixels + (size_t)ty * texture->width + tx_begin;
             uint16_t *destination = target->pixels +
                 (size_t)(y0 + (int32_t)dy) * target->stride_pixels + x0 + (int32_t)dx_begin;
             uint32_t dx;
-            for (dx = 0; dx < dx_end - dx_begin; ++dx)
-                destination[dx] = resources->palette[source[dx]];
+            if (flags == 0) {
+                for (dx = 0; dx < count; ++dx)
+                    destination[dx] = palette[source[dx]];
+            } else if (flags == masked) {
+                if (source_width == width)
+                    covered += draw_masked_sprite_row(destination, source, palette,
+                                                     count, 1, 0, 0, 1);
+                else
+                    covered += draw_masked_sprite_row(destination, source, palette,
+                                                     count, x_advance, x_remainder_step,
+                                                     x_error_begin, width);
+            } else {
+                for (dx = 0; dx < count; ++dx) {
+                    const uint8_t alpha = source[dx];
+                    if (alpha == 0) continue;
+                    destination[dx] = alpha == 255 ? solid_color :
+                        blend_rgb565_alpha(solid_color, destination[dx], alpha);
+                    ++covered;
+                }
+            }
             ty += y_advance;
             y_error += y_remainder_step;
             if (y_error >= height) { y_error -= height; ++ty; }
         }
-        return (dx_end - dx_begin) * (dy_end - dy_begin);
+        return flags == 0 ? count * (dy_end - dy_begin) : covered;
     }
     for (dy = dy_begin; dy < dy_end; ++dy) {
         const int32_t y = y0 + (int32_t)dy;
@@ -2344,10 +2392,11 @@ static uint32_t draw_sprite_instance(
                 }
                 destination =
                     target->pixels + (size_t)y * target->stride_pixels + x;
-                if ((flags & PXA_RASTER_SPRITE_TEXEL_ALPHA) != 0)
-                    *destination =
-                        blend_rgb565_alpha(color, *destination, texel);
-                else if ((flags & PXA_RASTER_SPRITE_ADDITIVE) != 0)
+                if ((flags & PXA_RASTER_SPRITE_TEXEL_ALPHA) != 0) {
+                    if (texel == 255) *destination = color;
+                    else if (texel != 0)
+                        *destination = blend_rgb565_alpha(color, *destination, texel);
+                } else if ((flags & PXA_RASTER_SPRITE_ADDITIVE) != 0)
                     *destination = saturating_add_rgb565(*destination, color);
                 else
                     *destination = color;

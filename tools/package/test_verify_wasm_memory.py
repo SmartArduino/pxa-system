@@ -34,15 +34,21 @@ def module_with_memory(minimum: int, maximum: int | None) -> bytes:
 
 
 class VerifyWasmMemoryTest(unittest.TestCase):
-    def verify(self, data: bytes, maximum_bytes: int):
+    def verify(self, data: bytes, maximum_bytes: int, initial_bytes: int = 0):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "app.wasm"
             path.write_bytes(data)
-            return MODULE.verify_maximum(path, maximum_bytes)
+            return MODULE.verify_maximum(path, maximum_bytes, initial_bytes)
 
     def test_accepts_matching_maximum(self):
         self.assertEqual(self.verify(module_with_memory(19, 32), 2 * 1024 * 1024),
                          (19, 32))
+
+    def test_explicit_initial_size_is_checked(self):
+        module = module_with_memory(22, 36)
+        self.assertEqual(self.verify(module, 36 * 65536, 22 * 65536), (22, 36))
+        with self.assertRaisesRegex(MODULE.WasmMemoryError, "minimum is 22"):
+            self.verify(module, 36 * 65536, 21 * 65536)
 
     def test_rejects_missing_maximum(self):
         with self.assertRaisesRegex(MODULE.WasmMemoryError, "no declared maximum"):

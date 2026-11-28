@@ -180,14 +180,24 @@ Manifest 0.7 adds one required Component record:
 component tag 3 | length 1 | flags:u8
 ```
 
-Bit 0 is `pinned_memory`. The package tool sets it only when a
-source package declares a page-aligned `build.linear_memory.maximum_bytes` and
-`build.linear_memory.pinned: true`; it applies to every Component produced by
-that direct or CMake build. `pinned: false` still bounds the WebAssembly memory maximum
-but leaves bit 0 clear and does not grant retained Guest pointers. The record
-is signed with the rest of the manifest. A Host
-that does not recognize this required record rejects the package instead of
-silently permitting retained Guest pointers.
+Bit 0 is `pinned_memory`. The package tool sets this signed Component flag
+when the selected linear-memory policy requires stable pointers. The same
+policy applies to every Component produced by the direct or CMake build. A
+Host that cannot interpret the required Component record rejects the package.
+
+Source packages can set `build.linear_memory.initial_bytes` to request an exact
+initial WebAssembly memory size. Omitting it lets the linker fit the static data
+and stack. Both the initial size and the required `maximum_bytes` use multiples
+of the 64 KiB WebAssembly page. The optional maps `initial_bytes_by_target`,
+`maximum_bytes_by_target` and `pinned_by_target` override their respective
+defaults for build targets such as `esp32p4`, `esp32s31` and `wasm`.
+
+A package built for a single architecture uses that target's policy for its
+AOT code and any Wasm fallback. A Wasm-only build uses the `wasm` policy.
+Explicitly requesting multiple targets builds their shared module with the
+largest requested initial size and the smallest maximum. The build rejects an
+empty intersection. If any selected target requires stable pointers, the
+packager sets the signed pin flag. These rules also apply to AOT-only builds.
 
 For a flagged Component, a compatible WAMR Host reserves its declared maximum
 linear-memory range during that Component's instantiation. This makes

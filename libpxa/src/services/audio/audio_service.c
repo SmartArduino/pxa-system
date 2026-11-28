@@ -39,6 +39,7 @@ struct pxa_audio_session {
     uint16_t next;
     uint16_t previous;
     uint8_t pcm_only;
+    uint8_t encoded;
 };
 
 void pxa_audio_service_poll(pxa_audio_service_t *service) {
@@ -297,6 +298,7 @@ static pxa_audio_session_t *allocate_session(pxa_audio_service_t *service) {
     }
     service->active_head = index;
     session->provider_session = 0;
+    session->encoded = 0;
     memset(&session->format, 0, sizeof(session->format));
     session->handle = PXA_HANDLE_INVALID;
     return session;
@@ -348,6 +350,19 @@ static int32_t audio_stream_io(void *context, uint32_t operation,
     if (session->pcm_only == 2)
         return session->service->backend.capture_io(session->service->backend.context,
             session->provider_session, operation, data, size);
+    if (operation >= PXA_AUDIO_IO_CONFIGURE_ENCODED && operation <= PXA_AUDIO_IO_ENCODED_STATE) {
+        pxa_audio_backend_t *backend = &session->service->backend;
+        if (session->pcm_only != 1 || !backend->encoded_io) return PXA_STATUS_UNSUPPORTED;
+        const int configure = operation == PXA_AUDIO_IO_CONFIGURE_ENCODED;
+        if (configure == !!session->encoded) return PXA_STATUS_BAD_STATE;
+        if ((size && !data) || size > PXA_AUDIO_ENCODED_BATCH_BYTES)
+            return PXA_STATUS_INVALID_ARGUMENT;
+        int32_t result = backend->encoded_io(backend->context, session->provider_session,
+            &session->format, operation, data, size);
+        if (configure && result == PXA_STATUS_OK) session->encoded = 1;
+        return result;
+    }
+    if (session->encoded && operation == PXA_IO_WRITE) return PXA_STATUS_BAD_STATE;
     if (operation == PXA_AUDIO_IO_MIX_PCM || operation == PXA_AUDIO_IO_PSG_RENDER) {
         uint8_t *memory = NULL;
         size_t memory_size = 0;
@@ -831,8 +846,10 @@ static pxa_status_t flush_session(pxa_audio_service_t *service,
     status = resolve_session(service, component, payload, wire_profile,
                              &session);
     if (status != PXA_STATUS_OK) return status;
-    return pxa_status_normalize(service->backend.flush(
+    status = pxa_status_normalize(service->backend.flush(
         service->backend.context, session->provider_session));
+    if (status == PXA_STATUS_OK) session->encoded = 0;
+    return status;
 }
 
 static pxa_status_t open_capture(pxa_audio_service_t *s, pxa_component_t component,

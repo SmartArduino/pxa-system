@@ -38,7 +38,26 @@
 
 /* One transaction per runtime owner thread. Other Host/Guest threads cannot
  * consume the reserved mapping while the loader builds permanent AOT data. */
+#if defined(CONFIG_CACHE_L2_CACHE_LINE_SIZE) && CONFIG_CACHE_L2_CACHE_LINE_SIZE > 64
+#define PXA_WAMR_LINEAR_ALIGNMENT CONFIG_CACHE_L2_CACHE_LINE_SIZE
+#else
 #define PXA_WAMR_LINEAR_ALIGNMENT 64u
+#endif
+
+#if (WASM_MEM_DUAL_BUS_MIRROR != 0)
+#define PXA_WAMR_DATA_CAPS MALLOC_CAP_SPIRAM
+#else
+#define PXA_WAMR_DATA_CAPS MALLOC_CAP_8BIT
+#endif
+#define PXA_WAMR_DATA_OVERHEAD (PXA_WAMR_LINEAR_ALIGNMENT - 1u + sizeof(uintptr_t))
+
+static uint8_t *
+aligned_data(void *origin)
+{
+    uintptr_t first = (uintptr_t)origin + sizeof(uintptr_t);
+    return (uint8_t *)((first + PXA_WAMR_LINEAR_ALIGNMENT - 1u)
+                       & ~(uintptr_t)(PXA_WAMR_LINEAR_ALIGNMENT - 1u));
+}
 
 static __thread struct {
     void *memory;
@@ -50,7 +69,7 @@ static __thread struct {
 void *
 os_mmap(void *hint, size_t size, int prot, int flags, os_file_handle file)
 {
-    if (size == 0 || size > SIZE_MAX - (PXA_WAMR_LINEAR_ALIGNMENT - 1u) - sizeof(uintptr_t)) {
+    if (size == 0 || size > SIZE_MAX - PXA_WAMR_DATA_OVERHEAD) {
         return NULL;
     }
     if (!(prot & MMAP_PROT_EXEC) && load_memory.memory && load_memory.ready
@@ -134,27 +153,20 @@ os_mmap(void *hint, size_t size, int prot, int flags, os_file_handle file)
 #endif
     }
     else {
-#if (WASM_MEM_DUAL_BUS_MIRROR != 0)
-        uint32_t mem_caps = MALLOC_CAP_SPIRAM;
-#else
-        uint32_t mem_caps = MALLOC_CAP_8BIT;
-#endif
-        void *buf_origin =
-            heap_caps_malloc(size + PXA_WAMR_LINEAR_ALIGNMENT - 1u + sizeof(uintptr_t), mem_caps);
+        void *buf_origin = heap_caps_malloc(size + PXA_WAMR_DATA_OVERHEAD,
+                                           PXA_WAMR_DATA_CAPS);
         if (!buf_origin) {
 #ifdef ESP_PLATFORM
             ESP_LOGE("PxaWamrMap", "data allocation failed: bytes=%u free=%u largest=%u",
-                     (unsigned)size, (unsigned)heap_caps_get_free_size(mem_caps),
-                     (unsigned)heap_caps_get_largest_free_block(mem_caps));
+                     (unsigned)size, (unsigned)heap_caps_get_free_size(PXA_WAMR_DATA_CAPS),
+                     (unsigned)heap_caps_get_largest_free_block(PXA_WAMR_DATA_CAPS));
 #endif
             return NULL;
         }
 
         /* Host workers partition byte-priority and RGB565 planes together.
          * Virtual alignment must survive translation to native cache lines. */
-        const uintptr_t first = (uintptr_t)buf_origin + sizeof(uintptr_t);
-        void *buf_fixed = (void *)((first + PXA_WAMR_LINEAR_ALIGNMENT - 1u)
-                                  & ~(uintptr_t)(PXA_WAMR_LINEAR_ALIGNMENT - 1u));
+        void *buf_fixed = aligned_data(buf_origin);
 
         uintptr_t *addr_field = (uintptr_t *)buf_fixed - 1;
         *addr_field = (uintptr_t)buf_origin;
@@ -223,6 +235,7 @@ void *
 os_mremap(void *old_addr, size_t old_size, size_t new_size)
 {
     if (old_addr != NULL && new_size > old_size) {
+        if (new_size > SIZE_MAX - PXA_WAMR_DATA_OVERHEAD) return NULL;
         /* Preserve AF07's reservation contract. Surface consumers retain
          * native pointers into pinned Guest memory across memory.grow. */
         void *origin = (void *)*((uintptr_t *)old_addr - 1);
@@ -232,6 +245,18 @@ os_mremap(void *old_addr, size_t old_size, size_t new_size)
             memset((uint8_t *)old_addr + old_size, 0, new_size - old_size);
             return old_addr;
         }
+        /* WAMR grows only data mappings. Let the ESP heap extend the block
+         * into adjacent free space before attempting to relocate it. */
+        uint8_t *resized = heap_caps_realloc(origin, new_size + PXA_WAMR_DATA_OVERHEAD,
+                                             PXA_WAMR_DATA_CAPS);
+        if (!resized) return NULL;
+        uint8_t *data = aligned_data(resized);
+        /* realloc preserves the old raw layout. A different cache-line
+         * residue at the new address shifts the aligned payload. */
+        if (data != resized + offset) memmove(data, resized + offset, old_size);
+        ((uintptr_t *)data)[-1] = (uintptr_t)resized;
+        memset(data + old_size, 0, new_size - old_size);
+        return data;
     }
     return os_mremap_slow(old_addr, old_size, new_size);
 }

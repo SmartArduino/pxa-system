@@ -295,7 +295,7 @@
       "id": 10,
       "state": "defined",
       "major": 0,
-      "minor": 16,
+      "minor": 17,
       "patch": 0
     },
     {
@@ -340,7 +340,7 @@
       "id": 16,
       "state": "defined",
       "major": 0,
-      "minor": 2,
+      "minor": 3,
       "patch": 0
     },
     {
@@ -396,7 +396,7 @@
       "id": 24,
       "state": "defined",
       "major": 0,
-      "minor": 3,
+      "minor": 4,
       "patch": 0
     }
   ],

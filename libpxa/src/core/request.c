@@ -396,18 +396,6 @@ pxa_status_t pxa_request_table_cancel(
     return PXA_STATUS_OK;
 }
 
-int pxa_request_table_is_active(const pxa_request_table_t *table,
-                                uint32_t owner_index, pxa_request_token_t request_token) {
-    uint32_t request_index =
-        find_request_index(table, owner_index, request_token);
-    const pxa_request_slot_t *request;
-    if (request_index == PXA_REQUEST_INDEX_NONE) return 0;
-    request = &table->slots[request_index];
-    return !request->cancelling && !request->completion_queued &&
-           (request->completion_event == PXA_REQUEST_INDEX_NONE ||
-            request->completion_reserved);
-}
-
 void pxa_request_table_revoke_authority(
     pxa_request_table_t *table, pxa_request_owner_t *owner,
     uint32_t owner_index, pxa_event_pool_t *event_pool,
@@ -635,28 +623,31 @@ pxa_status_t pxa_request_cancel(pxa_runtime_t *runtime,
         runtime->limits.mailbox_capacity, request_token);
 }
 
+static const pxa_request_slot_t *find_active_request(
+    const pxa_runtime_t *runtime, pxa_component_t component_ref,
+    pxa_request_token_t request_token) {
+    uint32_t component_index, index;
+    if (!pxa_runtime_is_valid(runtime) || request_token == 0 ||
+        pxa_runtime_find_component_const(runtime, component_ref,
+                                         &component_index) == NULL) return NULL;
+    index = find_request_index(&runtime->requests, component_index, request_token);
+    if (index == PXA_REQUEST_INDEX_NONE) return NULL;
+    const pxa_request_slot_t *request = &runtime->requests.slots[index];
+    if (request->cancelling || request->completion_queued ||
+        (request->completion_event != PXA_REQUEST_INDEX_NONE && !request->completion_reserved))
+        return NULL;
+    return request;
+}
+
 int pxa_request_is_active(const pxa_runtime_t *runtime,
                           pxa_component_t component_ref,
                           pxa_request_token_t request_token) {
-    uint32_t component_index;
-    if (!pxa_runtime_is_valid(runtime) || request_token == 0 ||
-        pxa_runtime_find_component_const(runtime, component_ref,
-                                         &component_index) == NULL) {
-        return 0;
-    }
-    return pxa_request_table_is_active(&runtime->requests, component_index,
-                                       request_token);
+    return find_active_request(runtime, component_ref, request_token) != NULL;
 }
 
 uint64_t pxa_request_identity(const pxa_runtime_t *runtime,
                               pxa_component_t component_ref,
                               pxa_request_token_t request_token) {
-    uint32_t component_index, index;
-    if (!pxa_runtime_is_valid(runtime) || request_token == 0 ||
-        pxa_runtime_find_component_const(runtime, component_ref,
-                                         &component_index) == NULL ||
-        !pxa_request_table_is_active(&runtime->requests, component_index,
-                                      request_token)) return 0;
-    index = find_request_index(&runtime->requests, component_index, request_token);
-    return runtime->requests.slots[index].identity;
+    const pxa_request_slot_t *request = find_active_request(runtime, component_ref, request_token);
+    return request ? request->identity : 0;
 }

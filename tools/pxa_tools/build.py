@@ -12,6 +12,7 @@ import time
 
 from .common import ToolError, atomic_json, command, digest, executable, identity, locked
 from .project import Project, SDK_ROOT, TARGETS, aot_flags, lock_project, resolve_tools
+from package.linear_memory import maximum_for_targets
 from .build_state import output_prefix, source_snapshot, dependency_snapshot, check_inputs
 
 
@@ -124,7 +125,7 @@ def build(project: Project, *, root=SDK_ROOT, targets=('simulator',), output=Non
     source = (project.path / project.metadata.get('build', {}).get('source_dir', '.')).resolve()
     if not source.is_relative_to(project.path) or not (source / 'CMakeLists.txt').is_file():
         raise ToolError('Invalid CMake source directory')
-    maximum = project.metadata.get('build', {}).get('linear_memory', {}).get('maximum_bytes', 0)
+    maximum = maximum_for_targets(project.metadata.get('build', {}).get('linear_memory'), targets)
     config = {'sdk': lock['sdk'], 'toolchain': lock['toolchain'], 'type': build_type,
               'definitions': list(definitions), 'maximum': maximum,
               # CMake caches absolute compiler/source locations. Keep that local

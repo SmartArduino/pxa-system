@@ -176,7 +176,9 @@ if [[ -n "$package_artifact_mode" && "$package_artifact_mode" != "aot" && "$pack
   echo "PXA_PACKAGE_ARTIFACT_MODE must be aot or wasm" >&2
   exit 2
 fi
-"${PYTHON:-python3}" - "$app_dir/package.json" "$build_settings" > "$component_rows" <<'PYTHON'
+memory_targets="${PXA_PACKAGE_MEMORY_TARGETS:-$package_target}"
+if [[ "$package_artifact_mode" == wasm ]]; then memory_targets=wasm; fi
+"${PYTHON:-python3}" - "$app_dir/package.json" "$build_settings" "$script_dir" "$memory_targets" > "$component_rows" <<'PYTHON'
 import json
 import os
 import sys
@@ -192,27 +194,11 @@ if build_system not in ("direct", "cmake"):
 source_dir = build.get("source_dir", ".")
 if not isinstance(source_dir, str) or not source_dir:
     raise SystemExit("build source_dir must be a non-empty string")
-linear_memory = build.get("linear_memory")
-linear_memory_maximum = 0
-if linear_memory is not None:
-    if (not isinstance(linear_memory, dict) or
-            set(linear_memory) != {"maximum_bytes", "pinned"}):
-        raise SystemExit(
-            "build linear_memory must contain maximum_bytes and pinned")
-    linear_memory_maximum = linear_memory["maximum_bytes"]
-    if (not isinstance(linear_memory_maximum, int) or
-            isinstance(linear_memory_maximum, bool) or
-            linear_memory_maximum < 65536 or
-            linear_memory_maximum > 4294967296 or
-            linear_memory_maximum % 65536 != 0):
-        raise SystemExit(
-            "build linear_memory maximum_bytes must be a WebAssembly page multiple")
-    if not isinstance(linear_memory["pinned"], bool):
-        raise SystemExit("build linear_memory pinned must be a boolean")
-open(sys.argv[2], "w", encoding="utf-8").write(
-    f"{build_system}\t{source_dir}\t{linear_memory_maximum}\t"
-    f"{metadata.get('min_sdk', [2, 0])[0]}\t"
-    f"{metadata.get('min_sdk', [2, 0])[1]}\n")
+sys.path.insert(0, sys.argv[3])
+from pathlib import Path
+from linear_memory import memory_for_targets, targets_for_artifacts
+
+aot_components = []
 components = metadata.get("components", [{"id": "main", "source": "main.c"}])
 if not isinstance(components, list) or not components:
     raise SystemExit("components must be a non-empty array")
@@ -230,6 +216,8 @@ for component in components:
         artifact = "wasm"
     elif mode == "aot" and artifact != "wasm":
         artifact = "aot"
+    if artifact != "wasm":
+        aot_components.append(component_id)
     if build_system == "cmake":
         # Match DevKit: pxa_add_app(<component-id>) needs no repeated target name.
         # Explicit targets remain supported for existing pxa_main-style projects.
@@ -250,9 +238,26 @@ for component in components:
         raise SystemExit("component sources must be a non-empty string array")
     for source in sources:
         print(f"{component_id}\t{artifact}\t{source}")
+
+targets = sys.argv[4].split(",") if aot_components else ["wasm"]
+extra_dir = os.environ.get("PXA_EXTRA_AOT_DIR")
+if extra_dir:
+    for component_id in aot_components:
+        prefix = component_id + "."
+        extra_targets = [path.name[len(prefix):-4] for path in Path(extra_dir).glob(prefix + "*.aot")]
+        if extra_targets:
+            targets.extend(targets_for_artifacts(extra_targets))
+try:
+    memory = memory_for_targets(build.get("linear_memory"), targets)
+except ValueError as error:
+    raise SystemExit(str(error)) from error
+Path(sys.argv[2]).write_text(
+    f"{build_system}\t{source_dir}\t{memory.initial}\t{memory.maximum}\t"
+    f"{metadata.get('min_sdk', [2, 0])[0]}\t{metadata.get('min_sdk', [2, 0])[1]}\t"
+    f"{','.join(dict.fromkeys(targets))}\n", encoding="utf-8")
 PYTHON
 
-IFS=$'\t' read -r build_system build_source_dir linear_memory_maximum core_major core_minor \
+IFS=$'\t' read -r build_system build_source_dir linear_memory_initial linear_memory_maximum core_major core_minor memory_targets \
   < "$build_settings"
 if [[ "$core_major" != "2" ]]; then
   echo "Core 2 is required for new packages" >&2
@@ -345,10 +350,8 @@ if [[ "$build_system" == "cmake" ]]; then
       echo "PXA_BUILD_CACHE_DIR must be outside the Package output directory" >&2
       exit 2
     fi
-    # The Guest is always wasm32-wasip1. Only the later AOT compiler and
-    # manifest depend on package_target; sharing this locked CMake build avoids
-    # recompiling the identical SDK and Guest for every architecture.
-    cache_key="$(printf '%s\0' "$app_dir" "$pxa_system_dir" "$wasi_sdk_dir" \
+    # Targets with the same memory limit can reuse the linked Wasm.
+    cache_key="$(printf '%s\0' "$app_dir" "$pxa_system_dir" "$wasi_sdk_dir" "$linear_memory_initial" "$linear_memory_maximum" \
       "${CMAKE_GENERATOR:-${cmake_generator_args[*]}}" |
       sha256sum | cut -c 1-16)"
     cache_dir="$cache_root/$app_name-wasm-$cache_key"
@@ -380,6 +383,7 @@ if [[ "$build_system" == "cmake" ]]; then
     -DCMAKE_CXX_COMPILER_LAUNCHER="${PXA_COMPILER_CACHE:-}" \
     -DPXA_GENERATED_INCLUDE_DIR="$generated_include_dir" \
     -DPXA_ARTIFACT_DIR="$cmake_artifact_dir" \
+    -DPXA_LINEAR_MEMORY_INITIAL="$linear_memory_initial" \
     -DPXA_LINEAR_MEMORY_MAXIMUM="$linear_memory_maximum" \
     -DPXA_APP_DEFINITIONS="$joined_definitions" \
     -DPXA_CMAKE_MODULE_DIR="$pxa_system_dir/sdk/cmake" \
@@ -406,8 +410,11 @@ else
     *) echo "PXA_KEEP_WASM_DEBUG must be ON or OFF" >&2; exit 2 ;;
   esac
   linear_memory_link_args=()
+  if [[ "$linear_memory_initial" -ne 0 ]]; then
+    linear_memory_link_args+=("-Wl,--initial-memory=$linear_memory_initial")
+  fi
   if [[ "$linear_memory_maximum" -ne 0 ]]; then
-    linear_memory_link_args=("-Wl,--max-memory=$linear_memory_maximum")
+    linear_memory_link_args+=("-Wl,--max-memory=$linear_memory_maximum")
   fi
   for component_id in "${component_ids[@]}"; do
     readarray -t component_sources <<< "${component_value_map[$component_id]}"
@@ -454,7 +461,7 @@ for component_id in "${component_ids[@]}"; do
   if [[ "$linear_memory_maximum" -ne 0 ]]; then
     "${PYTHON:-python3}" "$script_dir/verify_wasm_memory.py" \
       "$package_dir/artifacts/$component_id.wasm" \
-      --maximum-bytes "$linear_memory_maximum"
+      --maximum-bytes "$linear_memory_maximum" --initial-bytes "$linear_memory_initial"
   fi
   "${PYTHON:-python3}" "$script_dir/verify_wasm_core_imports.py" \
     "$package_dir/artifacts/$component_id.wasm" \
@@ -497,7 +504,7 @@ if [[ -n "$package_artifact_mode" ]]; then
 fi
 "${PYTHON:-python3}" "$script_dir/build_package_manifest.py" \
   "$app_dir/package.json" "$package_dir" "$private_key" \
-  "$manifest_target" "$engine_abi" "${manifest_mode_args[@]}"
+  "$manifest_target" "$engine_abi" "${manifest_mode_args[@]}" --memory-targets "$memory_targets"
 
 mkdir -p "$output_dir"
 find "$output_dir" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +

@@ -14,7 +14,7 @@ extern "C" {
 
 #define PXA_AUDIO_SERVICE_ID UINT16_C(10)
 #define PXA_AUDIO_SERVICE_MAJOR UINT16_C(0)
-#define PXA_AUDIO_SERVICE_MINOR UINT16_C(16)
+#define PXA_AUDIO_SERVICE_MINOR UINT16_C(17)
 #define PXA_AUDIO_SERVICE_PATCH UINT16_C(0)
 #define PXA_AUDIO_OPEN_SESSION UINT16_C(1)
 #define PXA_AUDIO_COMMIT_GRAPH UINT16_C(2)
@@ -39,6 +39,15 @@ extern "C" {
 #define PXA_AUDIO_IO_STOP_EFFECT UINT32_C(0x108)
 #define PXA_AUDIO_IO_MIX_PCM UINT32_C(0x109)
 #define PXA_AUDIO_IO_PSG_RENDER UINT32_C(0x10a)
+#define PXA_AUDIO_IO_CONFIGURE_ENCODED UINT32_C(0x10b)
+#define PXA_AUDIO_IO_WRITE_ENCODED UINT32_C(0x10c)
+#define PXA_AUDIO_IO_FINISH_ENCODED UINT32_C(0x10d)
+#define PXA_AUDIO_IO_ENCODED_STATE UINT32_C(0x10e)
+#define PXA_AUDIO_ENCODED_AAC_ADTS UINT16_C(1)
+#define PXA_AUDIO_ENCODED_BATCH_MAX 8u
+#define PXA_AUDIO_ENCODED_BATCH_BYTES 16384u
+#define PXA_AUDIO_ENCODED_PACKET_BYTES 8191u
+#define PXA_AUDIO_ENCODED_DRAINED UINT32_C(1)
 #define PXA_AUDIO_EFFECT_LAYERS 8u
 #define PXA_AUDIO_SOUND_TRACKS 6u
 #define PXA_AUDIO_SOUND_APPEND 255u
@@ -191,6 +200,10 @@ typedef struct {
      * Default OPEN_PCM continues to use its low latency queue. */
     pxa_status_t (*open_pcm_buffered)(void *, const pxa_audio_format_t *,
         pxa_audio_pcm_info_t *, uint64_t *provider_session);
+    /* Optional Audio 0.17 producer for an existing PCM session. Queue input
+     * by value. Flush and close must fence writes from retired decoder work. */
+    int32_t (*encoded_io)(void *, uint64_t, const pxa_audio_format_t *,
+        uint32_t, uint8_t *, size_t);
 } pxa_audio_backend_t;
 
 typedef struct {

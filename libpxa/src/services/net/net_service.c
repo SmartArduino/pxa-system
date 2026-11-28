@@ -507,7 +507,7 @@ static int exchanges_supported(const pxa_net_service_t *s) {
 
 static pxa_status_t open_exchange(pxa_net_service_t *s, pxa_component_t component,
     pxa_request_token_t token, pxa_authority_t authority,
-    const pxa_net_request_t *request, pxa_status_t status) {
+    pxa_net_request_t *request, pxa_status_t status) {
     pxa_net_stream_t *stream = NULL;
     pxa_resource_t resource;
     pxa_handle64_t handle = 0;
@@ -525,6 +525,7 @@ static pxa_status_t open_exchange(pxa_net_service_t *s, pxa_component_t componen
     if (status == PXA_STATUS_OK) {
         stream->active = 2;
         stream->cursor.owner = component;
+        request->component = component;
         status = s->backend.open_exchange(s->backend.context, request,
                                           &stream->body_stream);
         if (status == PXA_STATUS_OK && !stream->body_stream)
