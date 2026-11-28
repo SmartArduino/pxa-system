@@ -490,13 +490,11 @@ typedef struct {
     lv_obj_t* remove_button;
     lv_obj_t* icon_marker;
     uint8_t icon_attempted;
-#if LV_USE_SNAPSHOT
-    uint8_t icon_rasterized;
-#endif
     uint8_t system_app;
     uint8_t uninstallable;
     uint8_t tap_cancelled;
     uint8_t edit_styled;
+    uint32_t slot;
     int32_t drag_start_x;
     int32_t drag_start_y;
 } launcher_item_t;
@@ -674,8 +672,12 @@ struct pxsys_reference_lvgl {
     size_t max_launcher_apps;
     size_t launcher_count;
     launcher_item_t* launcher_items;
+    launcher_item_t** launcher_slots;
     size_t launcher_window_first;
     size_t launcher_window_end;
+    uint32_t launcher_width;
+    uint32_t launcher_height;
+    uint8_t launcher_keep_tiles;
     uint8_t launcher_updating;
     uint8_t launcher_styles_ready;
     uint8_t launcher_edit_style_ready;
@@ -925,7 +927,8 @@ struct pxsys_reference_lvgl {
 static void rebuild(pxsys_reference_lvgl_t* ui);
 static int status_interaction_active(pxsys_reference_lvgl_t* ui);
 static void launcher_load_visible_icons(pxsys_reference_lvgl_t* ui);
-static void launcher_prepare_edit(pxsys_reference_lvgl_t* ui);
+static bool launcher_prepare_edit(pxsys_reference_lvgl_t* ui);
+static bool launcher_materialize_all(pxsys_reference_lvgl_t* ui);
 static void launcher_update_window(pxsys_reference_lvgl_t* ui);
 static void launcher_clear_window(pxsys_reference_lvgl_t* ui);
 static void launcher_release_tile(launcher_item_t* item);
@@ -1861,9 +1864,8 @@ static void launcher_clicked(lv_event_t* event) {
     rebuild_resume(ui);
 }
 
-static void launcher_position_tiles(pxsys_reference_lvgl_t* ui, uint32_t width,
-                                     uint32_t height) {
-    if (ui->content == NULL) return;
+static void launcher_position_tile(pxsys_reference_lvgl_t* ui, lv_obj_t* tile,
+                                   uint32_t index, uint32_t width, uint32_t height) {
     const uint32_t columns = PXSYS_REFERENCE_UI_LAUNCHER_COLUMNS;
     const uint32_t rows = PXSYS_REFERENCE_UI_LAUNCHER_ROWS;
     const uint32_t per_page = columns * rows;
@@ -1873,16 +1875,21 @@ static void launcher_position_tiles(pxsys_reference_lvgl_t* ui, uint32_t width,
         ? (width - (columns - 1u) * gap) / columns : 1u;
     const uint32_t tile_height = height > (rows - 1u) * gap
         ? (height - (rows - 1u) * gap) / rows : 1u;
+    const uint32_t slot = index % per_page;
+    const uint32_t page = index / per_page;
+    lv_obj_set_pos(tile,
+        (int32_t)(page * width + (slot % columns) * (tile_width + gap)),
+        (int32_t)((slot / columns) * (tile_height + gap)));
+    lv_obj_set_size(tile, (lv_coord_t)tile_width, (lv_coord_t)tile_height);
+}
+
+static void launcher_position_tiles(pxsys_reference_lvgl_t* ui, uint32_t width,
+                                     uint32_t height) {
+    if (ui->content == NULL) return;
     for (size_t index = 0; index < ui->launcher_count; ++index) {
         lv_obj_t* tile = lv_obj_get_child(ui->content, (int32_t)index);
         if (tile == NULL) break;
-        const uint32_t slot = (uint32_t)index % per_page;
-        const uint32_t page = (uint32_t)index / per_page;
-        lv_obj_set_pos(tile,
-            (int32_t)(page * width + (slot % columns) * (tile_width + gap)),
-            (int32_t)((slot / columns) * (tile_height + gap)));
-        lv_obj_set_size(tile, (lv_coord_t)tile_width,
-                        (lv_coord_t)tile_height);
+        launcher_position_tile(ui, tile, (uint32_t)index, width, height);
     }
 }
 
@@ -2122,7 +2129,10 @@ static void launcher_gesture(lv_event_t* event) {
         item->drag_start_y = point.y;
         if (!ui->launcher_editing) {
             ui->launcher_editing = 1;
-            launcher_prepare_edit(ui);
+            if (!launcher_prepare_edit(ui)) {
+                ui->launcher_editing = 0;
+                return;
+            }
         }
         ui->launcher_long_pressed = 1;
         ui->launcher_drag_item = item;
@@ -2186,6 +2196,8 @@ static void launcher_scroll_event(lv_event_t* event) {
         lv_anim_t* animation = lv_event_get_param(event);
         if (animation != NULL)
             lv_anim_set_duration(animation, ui->animations_enabled ? 130 : 0);
+        else
+            launcher_update_window(ui);
         return;
     }
     const int32_t width = lv_obj_get_width(ui->content);
@@ -2233,7 +2245,9 @@ static void launcher_focused(lv_event_t* event) {
     /* Focus can cross pages without a pointer throw event. Set the snap page
      * before scrolling, otherwise SCROLL_END restores the previous page. The
      * current child slot also follows user-reordered launcher icons. */
-    const uint16_t page = (uint16_t)(lv_obj_get_index(item->tile) / per_page);
+    const uint32_t slot = ui->launcher_keep_tiles
+        ? (uint32_t)lv_obj_get_index(item->tile) : item->slot;
+    const uint16_t page = (uint16_t)(slot / per_page);
     ui->launcher_focus_key = navigation_object_key(ui->content, item->tile);
     const int32_t target_x = (int32_t)page * width;
     const int32_t offset = lv_obj_get_scroll_x(ui->content);
@@ -3861,7 +3875,9 @@ static void release_managed_apps(pxsys_reference_lvgl_t* ui) {
     ui->managed_apps_loaded = 0;
 }
 
-static void launcher_prepare_edit(pxsys_reference_lvgl_t* ui) {
+static bool launcher_prepare_edit(pxsys_reference_lvgl_t* ui) {
+    /* Reordering uses LVGL child order, including across an edge drag. */
+    if (!launcher_materialize_all(ui)) return false;
     bool needs_app_list = false;
     for (size_t i = 0; i < ui->launcher_count; ++i) {
         const launcher_item_t* item = &ui->launcher_items[i];
@@ -3888,8 +3904,11 @@ static void launcher_prepare_edit(pxsys_reference_lvgl_t* ui) {
         }
         if (apps != NULL) ui->allocator.release(ui->allocator.context, apps);
     }
+    if (ui->rendered_view_key == (uint32_t)REFERENCE_PAGE_HOME + 1u)
+        launcher_update_window(ui);
     for (size_t i = 0; i < ui->launcher_count; ++i)
         launcher_apply_edit_style(ui, &ui->launcher_items[i]);
+    return true;
 }
 
 static void launcher_decorate_tile(pxsys_reference_lvgl_t* ui, launcher_item_t* item,
@@ -3904,14 +3923,11 @@ static void launcher_decorate_tile(pxsys_reference_lvgl_t* ui, launcher_item_t* 
     style_plain(marker);
     lv_obj_set_size(marker, icon_size, icon_size);
     launcher_fill_icon(ui, marker, item, icon_size);
-    label = make_label(tile, name, typography_font(ui, PXSYS_TYPOGRAPHY_CAPTION),
+    const lv_font_t* font = typography_font(ui, PXSYS_TYPOGRAPHY_CAPTION);
+    label = make_label(tile, name, font,
                        color_token(ui, PXSYS_COLOR_TEXT_PRIMARY));
     lv_obj_set_width(label, LV_PCT(100));
-    const int32_t label_height =
-                      typography_font(ui, PXSYS_TYPOGRAPHY_CAPTION) != NULL
-                          ? (lv_coord_t)typography_font(
-                                ui, PXSYS_TYPOGRAPHY_CAPTION)->line_height + 2
-                          : 16;
+    const int32_t label_height = font != NULL ? (int32_t)font->line_height + 2 : 16;
     lv_obj_set_height(label, label_height);
     lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
     /* Center the icon and caption as one block, without another container. */
@@ -3966,24 +3982,59 @@ static lv_obj_t* make_launcher_tile(pxsys_reference_lvgl_t* ui,
 }
 
 static void launcher_release_tile(launcher_item_t* item) {
-    if (item->icon_marker == NULL) return;
-    lv_obj_clean(item->tile);
+    if (item->tile == NULL) return;
+    if (!item->ui->launcher_keep_tiles) {
+        lv_obj_delete(item->tile);
+        item->tile = NULL;
+        item->edit_styled = 0;
+    } else if (item->icon_marker != NULL) {
+        lv_obj_clean(item->tile);
+        if (item->edit_styled) {
+            lv_obj_remove_style(item->tile, &item->ui->launcher_edit_style, LV_PART_MAIN);
+            item->edit_styled = 0;
+        }
+    }
     item->icon_marker = NULL;
     item->remove_button = NULL;
-    if (item->edit_styled) {
-        lv_obj_remove_style(item->tile, &item->ui->launcher_edit_style, LV_PART_MAIN);
-        item->edit_styled = 0;
-    }
     if (item->icon.release != NULL) item->icon.release(item->icon.release_context);
     item->icon = (pxsys_reference_lvgl_app_icon_t){0};
     item->icon_attempted = 0;
-#if LV_USE_SNAPSHOT
-    item->icon_rasterized = 0;
-#endif
 }
 
 static launcher_item_t* launcher_item_at(const pxsys_reference_lvgl_t* ui, size_t slot) {
-    return lv_obj_get_user_data(lv_obj_get_child(ui->content, (int32_t)slot));
+    return ui->launcher_keep_tiles
+        ? lv_obj_get_user_data(lv_obj_get_child(ui->content, (int32_t)slot))
+        : ui->launcher_slots[slot];
+}
+
+static bool launcher_materialize_all(pxsys_reference_lvgl_t* ui) {
+    if (ui->launcher_keep_tiles) return true;
+    const bool reorder = lv_obj_get_child_count(ui->content) != 0;
+    size_t i;
+    for (i = 0; i < ui->launcher_count; ++i) {
+        launcher_item_t* item = ui->launcher_slots[i];
+        if (item->tile != NULL) continue;
+        if (make_launcher_tile(ui, NULL, item) == NULL) break;
+        launcher_position_tile(ui, item->tile, (uint32_t)i,
+                               ui->launcher_width, ui->launcher_height);
+    }
+    if (i != ui->launcher_count) {
+        /* Keep the live window intact if a focus or edit transition runs
+         * out of memory halfway through constructing its off-page buttons. */
+        for (size_t j = 0; j < i; ++j) {
+            if (j >= ui->launcher_window_first && j < ui->launcher_window_end) continue;
+            launcher_item_t* item = ui->launcher_slots[j];
+            lv_obj_delete(item->tile);
+            item->tile = NULL;
+        }
+        return false;
+    }
+    if (reorder) {
+        for (size_t j = 0; j < i; ++j)
+            lv_obj_move_to_index(ui->launcher_slots[j]->tile, (int32_t)j);
+    }
+    ui->launcher_keep_tiles = 1;
+    return true;
 }
 
 static void launcher_clear_window(pxsys_reference_lvgl_t* ui) {
@@ -3994,10 +4045,8 @@ static void launcher_clear_window(pxsys_reference_lvgl_t* ui) {
     ui->launcher_updating = 0;
 }
 
-static void launcher_update_window(pxsys_reference_lvgl_t* ui) {
-    const size_t page = ui->launcher_page;
-    const size_t first = (page ? page - 1u : 0u) * LAUNCHER_PER_PAGE;
-    const size_t end = LV_MIN(ui->launcher_count, (page + 2u) * LAUNCHER_PER_PAGE);
+static void launcher_set_window(pxsys_reference_lvgl_t* ui, size_t first,
+                                size_t end) {
     if (ui->launcher_updating ||
         (first == ui->launcher_window_first && end == ui->launcher_window_end))
         return;
@@ -4013,6 +4062,11 @@ static void launcher_update_window(pxsys_reference_lvgl_t* ui) {
     for (size_t i = first; i < end; ++i) {
         launcher_item_t* item = launcher_item_at(ui, i);
         if (item->icon_marker != NULL) continue;
+        if (item->tile == NULL) {
+            if (make_launcher_tile(ui, NULL, item) == NULL) continue;
+            launcher_position_tile(ui, item->tile, (uint32_t)i,
+                                   ui->launcher_width, ui->launcher_height);
+        }
         const pxsys_app_descriptor_t* app = pxsys_app_registry_find(registry, &item->identity);
         char name[96];
         const pxsys_string_t title = app != NULL
@@ -4024,6 +4078,16 @@ static void launcher_update_window(pxsys_reference_lvgl_t* ui) {
     }
     ui->launcher_updating = 0;
 }
+
+static void launcher_update_window(pxsys_reference_lvgl_t* ui) {
+    const size_t page = ui->launcher_page;
+    launcher_set_window(ui, (page ? page - 1u : 0u) * LAUNCHER_PER_PAGE,
+        LV_MIN(ui->launcher_count, (page + 2u) * LAUNCHER_PER_PAGE));
+}
+
+#if LV_USE_SNAPSHOT
+static void launcher_rasterize_icon(launcher_item_t* item);
+#endif
 
 static size_t launcher_load_icons(pxsys_reference_lvgl_t* ui, size_t page,
                                   size_t distance, size_t remaining) {
@@ -4046,6 +4110,11 @@ static size_t launcher_load_icons(pxsys_reference_lvgl_t* ui, size_t page,
         lv_obj_t* marker = item->icon_marker;
         lv_obj_clean(marker);
         launcher_fill_icon(ui, marker, item, lv_obj_get_style_width(marker, 0));
+#if LV_USE_SNAPSHOT
+        /* Replace a downscaled source before it reaches the next scroll
+         * frame, while only one icon's source and thumbnail coexist. */
+        launcher_rasterize_icon(item);
+#endif
     }
     return remaining;
 }
@@ -4058,7 +4127,7 @@ static void release_launcher_raster(void* data) {
 
 static void launcher_rasterize_icon(launcher_item_t* item) {
     lv_obj_t* image = lv_obj_get_child(item->icon_marker, 0);
-    item->icon_rasterized = 1;
+    if (image == NULL || !lv_obj_has_class(image, &lv_image_class)) return;
     lv_obj_update_layout(image);
     const int32_t width = lv_obj_get_width(image);
     const int32_t height = lv_obj_get_height(image);
@@ -4084,7 +4153,11 @@ static void launcher_rasterize_icon(launcher_item_t* item) {
 
 static void launcher_icons_idle(lv_timer_t* timer) {
     pxsys_reference_lvgl_t* ui = lv_timer_get_user_data(timer);
-    if (ui->launcher_drag_item != NULL || lv_obj_is_scrolling(ui->content)) return;
+    if (ui->launcher_drag_item != NULL || status_interaction_active(ui)) return;
+    /* Bring the visible page to its final appearance before prefetching
+     * off-screen objects or opening any of their icon files. */
+    if (ui->resolve_app_icon != NULL && launcher_load_icons(ui, ui->launcher_page, 0, 1) == 0)
+        return;
     launcher_update_window(ui);
     if (ui->resolve_app_icon == NULL) {
         lv_timer_pause(timer);
@@ -4092,18 +4165,8 @@ static void launcher_icons_idle(lv_timer_t* timer) {
     }
     /* An icon can require a synchronous filesystem read. Admit one per
      * idle tick, favoring the visible page, then its neighbors. */
-    if (launcher_load_icons(ui, ui->launcher_page, 0, 1) == 0)
-        return;
     if (launcher_load_icons(ui, ui->launcher_page, 1, 1) == 0)
         return;
-#if LV_USE_SNAPSHOT
-    for (size_t i = ui->launcher_window_first; i < ui->launcher_window_end; ++i) {
-        launcher_item_t* item = launcher_item_at(ui, i);
-        if (item->icon.source == NULL || item->icon_rasterized) continue;
-        launcher_rasterize_icon(item);
-        return;
-    }
-#endif
     lv_timer_pause(timer);
 }
 
@@ -4112,7 +4175,8 @@ static void launcher_load_visible_icons(pxsys_reference_lvgl_t* ui) {
         ui->rendered_view_key != (uint32_t)REFERENCE_PAGE_HOME + 1u) return;
     const size_t per_page = PXSYS_REFERENCE_UI_LAUNCHER_COLUMNS *
                             PXSYS_REFERENCE_UI_LAUNCHER_ROWS;
-    if (ui->launcher_count > per_page)
+    if (ui->launcher_count > per_page ||
+        (ui->launcher_count != 0 && ui->resolve_app_icon != NULL))
         ui->launcher_icon_timer = lv_timer_create(launcher_icons_idle, 32, ui);
     if (ui->launcher_icon_timer == NULL && ui->resolve_app_icon != NULL)
         launcher_load_icons(ui, ui->launcher_page, 0, per_page);
@@ -4144,6 +4208,8 @@ static void release_launcher_icons(pxsys_reference_lvgl_t* ui) {
         memset(icon, 0, sizeof(*icon));
     }
     ui->launcher_count = 0;
+    ui->launcher_slots = NULL;
+    ui->launcher_keep_tiles = 0;
     ui->launcher_window_first = ui->launcher_window_end = 0;
     if (ui->launcher_items != NULL) {
         ui->allocator.release(ui->allocator.context, ui->launcher_items);
@@ -4972,6 +5038,8 @@ static void build_home(pxsys_reference_lvgl_t* ui,
     const size_t rows = PXSYS_REFERENCE_UI_LAUNCHER_ROWS;
     size_t page_count;
     ui->launcher_gap = layout->size_class == PXSYS_UI_SIZE_COMPACT ? 4u : 8u;
+    ui->launcher_width = layout->content.width;
+    ui->launcher_height = layout->content.height;
     lv_obj_set_layout(ui->content, LV_LAYOUT_NONE);
     pxsys_lvgl_add_flags(ui->content, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(ui->content, launcher_background_clicked,
@@ -4983,8 +5051,9 @@ static void build_home(pxsys_reference_lvgl_t* ui,
     capacity = LV_MIN(capacity, max_pages * LAUNCHER_PER_PAGE);
     if (capacity != 0)
         ui->launcher_items = ui->allocator.allocate(ui->allocator.context,
-                                                   capacity * sizeof(*ui->launcher_items));
+            capacity * (sizeof(*ui->launcher_items) + sizeof(*ui->launcher_slots)));
     if (ui->launcher_items != NULL) {
+        ui->launcher_slots = (launcher_item_t**)(ui->launcher_items + capacity);
         size_t cursor = 0;
         const pxsys_app_descriptor_t* app;
         const uint32_t flags = PXSYS_APP_FLAG_ENABLED | PXSYS_APP_FLAG_LAUNCHER;
@@ -5002,16 +5071,12 @@ static void build_home(pxsys_reference_lvgl_t* ui,
             memcpy(item->app_id, app->identity.app_id.data, app->identity.app_id.size);
             item->app_id[app->identity.app_id.size] = '\0';
             item->identity.app_id.data = item->app_id;
+            ui->launcher_slots[ui->launcher_count] = item;
             ui->launcher_count++;
         }
 
-        launcher_item_t** ordered = NULL;
-        if (ui->launcher_count != 0 && ui->launcher_order != NULL && ui->launcher_order[0])
-            ordered = ui->allocator.allocate(ui->allocator.context,
-                                             ui->launcher_count * sizeof(*ordered));
-        if (ordered != NULL) {
-            for (size_t i = 0; i < ui->launcher_count; ++i)
-                ordered[i] = &ui->launcher_items[i];
+        if (ui->launcher_order != NULL && ui->launcher_order[0]) {
+            launcher_item_t** ordered = ui->launcher_slots;
             const char* line = ui->launcher_order;
             size_t next = 0;
             while (*line != '\0' && next < ui->launcher_count) {
@@ -5028,20 +5093,16 @@ static void build_home(pxsys_reference_lvgl_t* ui,
                 line = end + 1;
             }
         }
-        size_t visible = 0;
-        for (; visible < ui->launcher_count; ++visible) {
-            launcher_item_t* item = ordered != NULL
-                ? ordered[visible] : &ui->launcher_items[visible];
-            if (make_launcher_tile(ui, NULL, item) == NULL) break;
-        }
-        if (ordered != NULL) ui->allocator.release(ui->allocator.context, ordered);
-        if (visible != ui->launcher_count) {
-            lv_obj_clean(ui->content);
-            ui->launcher_count = 0;
-        }
+        for (size_t i = 0; i < ui->launcher_count; ++i)
+            ui->launcher_slots[i]->slot = (uint32_t)i;
     }
-    if (ui->launcher_editing) launcher_prepare_edit(ui);
-    launcher_position_tiles(ui, layout->content.width, layout->content.height);
+    /* Touch only needs the visible page and its neighbors. Keyboard
+     * navigation keeps button objects for the board's ordered LVGL group. */
+    if (ui->launcher_editing) {
+        if (!launcher_prepare_edit(ui)) ui->launcher_editing = 0;
+    } else if (navigation_keypad_group(ui) != NULL) {
+        (void)launcher_materialize_all(ui);
+    }
     page_count = ui->launcher_count == 0 ? 1u :
         (ui->launcher_count + columns * rows - 1u) / (columns * rows);
     if (page_count > 1u) {
@@ -5062,11 +5123,16 @@ static void build_home(pxsys_reference_lvgl_t* ui,
     }
     if (ui->launcher_page >= page_count)
         ui->launcher_page = (uint16_t)(page_count - 1u);
-    launcher_update_window(ui);
+    /* Home can draw as soon as its own page is bound. The idle timer or
+     * the start of a swipe materializes its neighbors. */
+    const size_t page_first = (size_t)ui->launcher_page * LAUNCHER_PER_PAGE;
+    launcher_set_window(ui, page_first, LV_MIN(ui->launcher_count, page_first + LAUNCHER_PER_PAGE));
+    ui->launcher_updating = 1;
     lv_obj_update_layout(ui->content);
     lv_obj_scroll_to_x(ui->content,
         (int32_t)ui->launcher_page * (int32_t)layout->content.width,
         LV_ANIM_OFF);
+    ui->launcher_updating = 0;
 }
 
 static void make_settings_columns(pxsys_reference_lvgl_t* ui,
@@ -10993,10 +11059,10 @@ lv_obj_t* pxsys_reference_lvgl_key_navigation_scope(pxsys_reference_lvgl_t* ui) 
      * Home key after the page has already returned. Reattach its remembered
      * target before the adapter recollects controls; never override live focus. */
     if (ui->content_active && ui->active_page == REFERENCE_PAGE_HOME &&
-        ui->rendered_view_key == (uint32_t)REFERENCE_PAGE_HOME + 1u &&
-        ui->launcher_focus_key != 0) {
+        ui->rendered_view_key == (uint32_t)REFERENCE_PAGE_HOME + 1u) {
         lv_group_t* group = navigation_keypad_group(ui);
-        if (group != NULL && lv_group_get_obj_count(group) == 0)
+        if (group != NULL && launcher_materialize_all(ui) &&
+            ui->launcher_focus_key != 0 && lv_group_get_obj_count(group) == 0)
             navigation_state_restore(ui);
     }
     return NULL;

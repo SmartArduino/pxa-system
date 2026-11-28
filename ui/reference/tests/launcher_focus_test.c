@@ -198,6 +198,9 @@ static void check_paging(lv_display_t* display, bool animations) {
     assert(pxsys_reference_lvgl_set_animations_enabled(ui, animations) == PXSYS_STATUS_OK);
     assert(pxsys_reference_lvgl_start(ui) == PXSYS_STATUS_OK);
     assert(ui->launcher_count == count);
+    assert(!ui->launcher_keep_tiles);
+    assert(lv_obj_get_child_count(ui->content) == per_page + 1u);
+    assert(launcher_item_at(ui, count - 1u)->tile == NULL);
     assert(icons.live == 0);
     /* Home is interactive before any icon files are resolved. Each idle
      * turn fills at most one slot of the visible page. */
@@ -212,6 +215,8 @@ static void check_paging(lv_display_t* display, bool animations) {
     lv_indev_set_type(keypad, LV_INDEV_TYPE_KEYPAD);
     lv_indev_set_display(keypad, display);
     lv_indev_set_group(keypad, group);
+    assert(pxsys_reference_lvgl_key_navigation_scope(ui) == NULL);
+    assert(lv_obj_get_child_count(ui->content) == count + 1u);
     collect_launcher(ui, group);
     /* Exposing the neighboring page must not resolve files synchronously.
      * Once the snap settles on Home the idle timer preloads nearby icons. */

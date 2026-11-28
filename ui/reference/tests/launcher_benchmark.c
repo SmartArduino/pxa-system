@@ -99,17 +99,22 @@ static void settle(void) {
 
 int main(int argc, char** argv) {
     const size_t count = argc > 1 ? (size_t)strtoul(argv[1], NULL, 10) : 80;
+    const bool touch = argc > 2 && strcmp(argv[2], "--touch") == 0;
     assert(count > 0 && count <= 512);
     SDL_SetMainReady();
     lv_init();
     lv_display_t* display = lv_sdl_window_create(320, 240);
     assert(display != NULL);
     lv_tick_set_cb(benchmark_ticks);
-    lv_group_t* group = lv_group_create();
-    lv_indev_t* keypad = lv_indev_create();
-    lv_indev_set_type(keypad, LV_INDEV_TYPE_KEYPAD);
-    lv_indev_set_display(keypad, display);
-    lv_indev_set_group(keypad, group);
+    lv_group_t* group = NULL;
+    lv_indev_t* keypad = NULL;
+    if (!touch) {
+        group = lv_group_create();
+        keypad = lv_indev_create();
+        lv_indev_set_type(keypad, LV_INDEV_TYPE_KEYPAD);
+        lv_indev_set_display(keypad, display);
+        lv_indev_set_group(keypad, group);
+    }
 
     pxsys_standard_system_config_t system_config;
     pxsys_standard_system_config_init(&system_config);
@@ -157,10 +162,17 @@ int main(int argc, char** argv) {
     const size_t per_page = PXSYS_REFERENCE_UI_LAUNCHER_COLUMNS *
                             PXSYS_REFERENCE_UI_LAUNCHER_ROWS;
     for (size_t slot = per_page; slot < count; slot += per_page) {
-        lv_obj_t* tile = lv_obj_get_child(ui->content, (int32_t)slot);
         start = monotonic_us();
-        lv_group_add_obj(group, tile);
-        lv_group_focus_obj(tile);
+        if (touch) {
+            ui->launcher_page = (uint16_t)(slot / per_page);
+            launcher_page_selected(ui);
+            lv_obj_scroll_to_x(ui->content, ui->launcher_page * lv_obj_get_width(ui->content),
+                               LV_ANIM_OFF);
+        } else {
+            lv_obj_t* tile = lv_obj_get_child(ui->content, (int32_t)slot);
+            lv_group_add_obj(group, tile);
+            lv_group_focus_obj(tile);
+        }
         lv_refr_now(display);
         report(ui, "page_frame", slot / per_page, monotonic_us() - start);
         assert(ui->launcher_page == slot / per_page);
@@ -179,8 +191,10 @@ int main(int argc, char** argv) {
     settle();
     report(ui, "return_settled", ui->launcher_page, 0);
 
-    lv_indev_delete(keypad);
-    lv_group_delete(group);
+    if (keypad != NULL) {
+        lv_indev_delete(keypad);
+        lv_group_delete(group);
+    }
     assert(pxsys_reference_lvgl_destroy(ui) == PXSYS_STATUS_OK);
     assert(pxsys_standard_system_destroy(system) == PXSYS_STATUS_OK);
     lv_display_delete(display);
