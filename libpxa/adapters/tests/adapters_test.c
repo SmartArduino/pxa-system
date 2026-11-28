@@ -2249,10 +2249,15 @@ static void test_volume_local_app_store(int authenticated) {
     approved=home.record;approved.data_generation=0;
     check_status("ordinary updates cannot replace the data generation",pxa_posix_app_store_install(&config,
         "012abc/com.example.volume",package,4,&approved,&result,&reopened),PXA_STATUS_BAD_STATE);
+    check_status("prepare the current manifest before archive",pxa_posix_app_store_load(&config,
+        "012abc/com.example.volume",&result,&reopened),PXA_STATUS_OK);
     write_file(fresh_save,(const uint8_t *)"new data",8);
     check_status("archive commits before retiring code",pxa_posix_app_store_archive(&config,
         "012abc/com.example.volume",4,&home),PXA_STATUS_OK);
     CHECK(home.record.generation==5 && (home.record.flags&PXA_INSTALL_RECORD_ARCHIVED));
+    check_status("prepared load honors the archived record",pxa_posix_app_store_load_prepared(&config,
+        "012abc/com.example.volume",&result,&reopened),PXA_STATUS_OK);
+    CHECK(!manifest && reopened.record.generation==5);
     CHECK(read_test_file(fresh_save,saved,sizeof(saved))==8 && !memcmp(saved,"new data",8));
     check_status("archived home can be recovered without executable",pxa_posix_app_store_recover(&config,
         "012abc/com.example.volume",&result,&reopened),PXA_STATUS_OK);
